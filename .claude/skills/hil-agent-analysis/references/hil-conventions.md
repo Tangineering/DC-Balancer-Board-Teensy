@@ -227,3 +227,19 @@ for f in *.meta.json; do grep -q '"results"' "$f" && ! grep -q '"results": *null
 - Cross-campaign baselines: cite the previous campaign's HIL_FINDINGS.md section numbers
   verbatim in the brief; drift > ~20% in any repeated metric is a finding; sub-1% repeats
   are ALSO a finding (repeatability is evidence).
+
+## Power-balance columns and figure (2026-09-01f)
+
+- Simulated CSVs written after 2026-09-01f carry six append-only tail columns after `error_code`:
+  `p_mot_w` (V-MOT node; + drawn, − regen), `p_fc_w` (V_bus·I_fc, bus side — NOT the stack power
+  Gfc uses), `p_batt_w` (V_bus·I_batt − V_batt·i_charge; + sourcing, − charging), `p_chop_w`,
+  `p_aux_w`, `p_bal_w` (= p_mot − (p_fc + p_batt + p_chop)). Blank on replay rows. The identity
+  is exact in simple-mode motoring (aux is the whole residual); in hi-fi the residual after aux
+  is ≤ ~0.4 W mean while motoring and ≈ −i_charge·(V_chg − V_batt) while charging, because the
+  simulated Ag105 is a 1:1 CURRENT-transfer element (no efficiency model — WORK_QUEUE §5).
+- `hil_power_balance.png` renders those; on legacy CSVs (every campaign ≤ 151156) it shows source
+  powers only — the `current` column is the VESC PHASE-current command, not bus current, so no
+  motor proxy is drawn. Do not read a legacy figure as a balance.
+- Files named `walk_*.png` (docs/modeling/sdp_alpha_sweep_20260901/plots/) are OFFLINE GOVERNOR
+  WALKS synthesized through the report figure builders, never board runs; a campaign glob must
+  match the unprefixed names only.

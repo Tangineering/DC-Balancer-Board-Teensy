@@ -1109,6 +1109,35 @@ in a *reduced* model (no share loop, no Ag105 settle/ramp, a 0.1 s stage, the
 gap, not a measurement of it. And the DP is open loop by construction: it cannot
 react to the board or the plant doing anything the generator did not predict.
 
+### 3.2.5 The offline EMS toolchain (no board required)
+
+Five tools reason about EMS strategies without the board (added 2026-09-01e/f):
+
+- `tools/governor_model.py` (stdlib) — a line-for-line port of the firmware's share-delivery
+  governor (setpoint latch, 0.60/0.55 A closed-loop hysteresis, open-loop HOLD/feedforward, the
+  minority clip, slew modes, both r-based cuts with the fw v25 load guard and survivor blanking).
+  `replay_governor()` scores it against a campaign CSV's MDAC codes (runs with no ratio motion are
+  reported UNSCORED). ems-sdp-braking is outside its fidelity claim.
+- `tools/ems_walk.py` (miniforge) — `walk(strategy, scenario, governor=True)` drives any registered
+  strategy through the DP demand/pack/H2 model with the governor at 1 kHz; with `governor=False` it
+  reproduces `gen_dp_ems_table.heuristic_walk()` exactly. It is the tool the standing rule "offline
+  walks must model the sub-0.55 A open-loop hold" requires; every FTP-75 expectation band is derived
+  with it. Its `trace=True` output can be synthesized into a HIL-schema CSV for the report figures.
+- `tools/dp_results_db.py` + `tools/dp_db/` — the ΔSoC-matched DP results database consumed by
+  `hil_report_analysis.py --matched-dp` (see the subsection under §5).
+- `tools/sdp_alpha_sweep.py` — the SDP α-sweep (`grid` / `solve` / `refine` / `evaluate` / `plots`);
+  artifacts under `tools/sdp_policies/sweep_20260901/`, results and walk-synthesized plots under
+  `docs/modeling/sdp_alpha_sweep_20260901/` (every plot's title says OFFLINE GOVERNOR WALK — not a
+  board run; the files carry a `walk_` prefix so no campaign glob ingests them).
+- `tools/benchlog_analysis/asymmetry_fit.py` (`.venv_benchlog`) — the converter-asymmetry fit from the
+  SD-card logs behind the plant's default-on `--asymmetry measured` (docs/modeling/
+  converter_asymmetry_20260901.md).
+
+Python interpreters: the simulator and suite are stdlib-only (`.venv_hil`); everything numpy-side
+runs under miniforge (`C:/Users/ricky/miniforge3/python.exe`). Test invocations: `.venv_hil\Scripts\
+python.exe -m pytest tools/ --ignore=tools/test_figures.py` and the miniforge run over the numpy
+suites (see CLAUDE.md's latest addendum for the current counts).
+
 ### 3.3 Adding a strategy
 
 A strategy is one function plus one registry line, in `tools/hil_plant_sim.py`
@@ -1211,6 +1240,11 @@ telemetry-only fields either.
 ---
 
 ## 4. Mode B walkthrough — a real Pi in the loop
+
+> **Pi-side prerequisite (audit 2026-09-01):** `docs/PI_BRIDGE_V4_AUDIT_20260901.md` verified the
+> `teensy_bridge_node_2026-08-17A.py` bridge byte-for-byte against telemetry v4; the Pi's
+> `sdp_ems_node_2026-03-16A.py` still reads the superseded 15-element layout and the default launch
+> file starts it — see `docs/pi_bridge_change_request_20260901.md` for the required Pi-side changes.
 
 ```powershell
 .venv_hil\Scripts\python.exe tools\hil_plant_sim.py --teensy-ip 192.168.1.50 --scenario steady --pi-live --duration 120 --csv pilive.csv --dash

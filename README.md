@@ -495,6 +495,11 @@ output — a wrap-straddling run decodes in full, a brownout tail is truncated a
 python tools/test_decode_benchlog.py
 ```
 
+The Python tooling (HIL simulator/suite, EMS tools, analysis) has its own pytest suites under
+`tools/`: stdlib-only ones run under `.venv_hil` (`.venv_hil\Scripts\python.exe -m pytest tools/
+--ignore=tools/test_figures.py`), numpy-side ones under miniforge — see `docs/HIL_USER_MANUAL.md`
+§3.2.5 and the latest CLAUDE.md addendum for the current counts.
+
 ## Notes for calibration
 
 Items marked `TODO(calibrate)` / `TODO(verify)` in the source still need bench values, including:
