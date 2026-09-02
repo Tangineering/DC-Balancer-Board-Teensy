@@ -689,7 +689,9 @@ online H2 proxy η 0.4; α-sweep all 21 then operator picks 3; DP results databa
   ems-sdp-braking outside the fidelity claim). The walk drives ANY registered strategy through the DP
   demand/pack/H2 model with the governor at 1 kHz: soc-band governor=False reproduces
   heuristic_walk EXACTLY; governed sdp-v3 on ems-sdp lands +0.48 % of the measured h2. It is the
-  offline-walk tool the standing "walks must model the open-loop hold" rule lacked. Fixed en route: the
+  offline-walk tool the standing "walks must model the open-loop hold AND the feedforward slew"
+  rule lacked (the rule named only the hold until 2026-09-02; open loop has two submodes and the
+  feedforward one writes the MDACs). Fixed en route: the
   DP generator's drain whitelist omitted ems-sdp (half demand).
 - **ΔSoC-matched DP post-pass + results database (items 2 + 4):** gen_dp_ems_table.py refactored into
   prepare_problem / solve_matched / solve_unmatched (committed tables byte-identical);
@@ -824,8 +826,15 @@ round. **FW stays v25 and the wire protocol is frozen; the board ran the fw v25 
   bus draw 0.9283 against 0.9799 A across engines that were 21.6 W apart. The regen cap is **output-referred
   and NOT netted against the chopper** — netting was measured and rejected, since it destroys 0.64 J hi-fi /
   1.43 J simple of genuine harvest and the chopper is a residual clamp, not a prior claimant. That leaves a
-  documented **6.5 % bus-sourced leak** (+0.0915 J of 1.4016 J), test-capped at 0.15 J / 12 %,
-  `TODO(verify)` a co-solved split. Seventh power column `p_chg_loss_w` follows the six of 2026-09-01f, so
+  **6.3 % bus contribution** (+0.0880 J of 1.4016 J). ⚠️ **MECHANISM CORRECTED 2026-09-02 (review
+  PLANT-R1-F2):** it is NOT a solver leak and NOT a co-solve problem — `MOT_PWR` is strict-forward, so
+  the contribution is ZERO in every bin while the chopper clamps (bus-fed clamping would need
+  V_BUS > 18.135 V, above the 17.5 V latch) and appears only AFTER clamp release, as a steady 0.118 W
+  of bus-fed CHARGING once V-MOT parks at V_BUS − 35.3 mV and MOT_PWR forward-conducts
+  BUS → MOT → REGEN → VCHG-IN (14.93 mA; deleting the stamp gives 0.000000 J). **The co-solve
+  `TODO(verify)` is RETIRED** and the 0.15 J / 12 % aggregate test ceiling is replaced by two
+  mechanism assertions (bus energy over chopper-active ticks within 1e-6 J of the charger-off run;
+  every non-zero dE_bus tick satisfies V_bus − V_rgn ≥ RT_V_FWD). Seventh power column `p_chg_loss_w` follows the six of 2026-09-01f, so
   the identity is `p_mot + p_chg_loss = p_fc + p_batt + p_chop + p_bal`. `constants_hash` `250683275d00874d…`
   → **`6a88d04ba8a36e61…`**; the design-mode bus anchor 15.624602041790853 is unmoved (pinned at
   `i_charge` = 0), so `--asymmetry off` byte-identity survives on charge-free traces. ⚠️ **η = 1.0 does not

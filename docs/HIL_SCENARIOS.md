@@ -193,7 +193,9 @@ Electrical engine: `"any"` scenarios run under the campaign's `--electrical-pref
 - **Pass/fail:** fault-free; in Run at t = 14.0; `REGEN_ENABLE` set for ≥ 0.5 s
   inside braking window 1; `I_charge` ≥ 0.045 A through that path (harvested, not
   bus-sourced); `V_rgn` ≥ 17.9 V inside the window and held there for ≥ 800 ms
-  (the bench signature — V-MOT lifting onto the 18.1 V clamp with V_bus unmoved);
+  (the bench signature — V-MOT lifting onto the 18.1 V clamp with V_bus unmoved;
+  **measured 1173 ms of continuous dwell** on campaign `hil_report_20260902_011926`, so
+  the 800 ms floor stands with 47 % of headroom and is not re-derived);
   every coalesced `chopper_clamp` episode ≥ 0.01 J; at least one episode
   ≥ **0.65 J**; and ≥ **1.9 J** of clamp energy over the run.
 - ⚠️ **Charger era (WP-1C, 2026-09-02) — the two chopper-energy bounds were
@@ -285,7 +287,17 @@ the fw v24 expectation; the fw v23 record it replaces is kept at the end.
   `charging_occurred` **0.70 A** (measured peak 0.8815, and above the fw v23 hunt's own
   0.4848 peak, so a hunt regression fails it too); `threshold_written` **12600**
   (measured 12900/12900); `refusal_absent` **20** (measured 0, against fw v23's 1481);
-  observed count band **[15, 19]**. Two additions came out of the same campaign:
+  observed count band **[15, 19]**. ⚠️ **THE FLOOR BINDS, and the eta era did not lift the
+  count** (measured 2026-09-02, campaign `hil_report_20260902_011926`). `ETA_CHG` = 0.88
+  raises `V_chg` by **+0.487 V** in the mean and **+0.774 V** at the window minimum, and
+  the band was predicted to move up to about 21–22. It did not: the cruise **peak is 19**,
+  because `V_chg` still sags to ≈ 14.45 V under charge, so (windowed minimum −
+  `AG105_MPPT_MARGIN_V` 3.0 V) = 11.27 V — below `AG105_MPPT_N_FLOOR`'s 12.320 V. The
+  effective margin is ≈ 2.13 V, not 3.0 V, over roughly 85 % of the harvest. Write a
+  cruise tripwire on this count as a **peak-reaching** bound (a `min_value` on the peak),
+  window it clear of the regen-lifted braking windows — where the HIL mirror alone reaches
+  27 — and do not re-provisionalise the band on the eta change alone. Two additions came
+  out of the same campaign:
   a **`column_range_at_least` ≥ 2** witness (`mppt_threshold_moved`), because the count
   PERSISTS across runs — it carried in at 15 from the predecessor, so the level check
   alone would pass on a run in which the manager never executed — and an **`I_fc` ≤
@@ -297,7 +309,12 @@ the fw v24 expectation; the fw v23 record it replaces is kept at the end.
   on how far `V_chg` sags under charge, and the simple engine's sag is unmeasured).
 - **⚠️ HIL-MIRROR BOUNDARY.** Under `HIL_SIM` the reg-0x02 count is computed by the
   mirror from the clamp arithmetic and published on frame byte 15 — the real write path
-  is bypassed. An HIL run validates the arithmetic, the clamp band and the frame
+  is bypassed, and the fw v24 threshold **manager is never called at all**. The mirror is
+  gated only on `chargerHasPower()`, so unlike the manager it also runs on the REGEN path,
+  where regen lifts `V_chg` toward the 18.1 V clamp: the mirror reads **27** inside a
+  braking window (switch 0x2f) where the board would hold 15–19, and 11.8 % of a run's
+  ticks differ by up to 12 counts. Any count read inside a braking window is a mirror
+  artifact by construction. An HIL run validates the arithmetic, the clamp band and the frame
   plumbing; it says NOTHING about the write policy, the deadband, the ≤2-per-session
   ratchet or the ≤8-per-boot EPROM budget. The campaign's 5-step-per-second ratchet is a
   mirror artifact and must never be cited as write-budget evidence.
@@ -815,12 +832,21 @@ identical all-zero charge map, while this scenario spans rows ~44–63.
   0.00, outside [`DROOP_R_MIN`, `DROOP_R_MAX`], so `updateShareSetpointCutoff()`
   cuts and then restores each bus switch — **cut-and-restore topology**. No preload
   (a preload would exceed the cut's 0.5 A/channel guard), so the share loop runs
-  open-loop feedforward — entirely at Vmax 1, and for ~4/5 of the run at Vmax 3
+  **open loop** — entirely at Vmax 1, and for ~4/5 of the run at Vmax 3
   (only **20.6 %** above the gate, campaign `hil_report_20260831_191509`; the model
   walk over the TABLE alone gives **12.7 %** — a different denominator, and the two
-  have NOT been reconciled: take 20.6 % as the measurement and 12.7 % as an
-  independent order-of-magnitude agreement, not as a discrepancy anyone has
-  explained). Cut/restore
+  have NOT been reconciled).
+  ⚠️ **AND 20.6 % DOES NOT REPRODUCE** (2026-09-02): three independent recomputations
+  give **16.98 %, 19.33 % and 19.13 %**. Quote the range, not either endpoint, until a
+  `tools/governor_model.py` replay of this leg settles the denominator. A raw
+  instantaneous `I_total` < 0.55 A proxy is NOT comparable with either figure — it reads
+  68.3 % (29 348 / 42 993 State-2 ticks on campaign `20260902_011926`) because the
+  governor gates on a FILTERED total with hysteresis.
+  ⚠️ Note also that "open loop" is not "inert": below the gate the firmware is in HOLD or
+  in slew-limited FEEDFORWARD, and this leg's commanded setpoint changes put it in the
+  latter — **356 open-loop MDAC-write ticks in 8 episodes** were measured on `b00-v3`
+  (campaign `20260902_011926`; largest episode 174 ticks, command 0.650 → 0.152, codes
+  (5354, 5279) → (8119, 4815)). Cut/restore
   verdicts are sound; share *amplitude* read off these runs is not.
 - **Pass/fail:** fault-free; the same two axis sweeps and the motor-peak check as
   b30; plus four switch assertions — BT_BUS cut in region 6 and restored in
@@ -898,6 +924,25 @@ above, with the EMS scenarios it belongs to.)*
   charger by construction. The evidence is the 61 s frontier: its MEASURED
   vs-reference ratio (0.9003 x, campaign `20260901_151156`) sits beside the
   physical-walk prediction (0.859) and nowhere near the plant-walk one (1.127).
+  (3) ⚠️ **THE CHARGE WINDOWS ARE NOW REACHABLE, AND THE FC-PEAK TRIPWIRE MUST SPLIT.**
+  Campaign `hil_report_20260902_011926` is the first in which this leg ever charged:
+  **five windows, 42.726 s, 30.608 C (+0.00170 SoC)** — 81.720–88.504, 96.785–120.197,
+  177.620–185.564, 320.557–323.898, 329.158–330.398 s. Inside the longest window the peak
+  `I_fc` is **1.1370 A** at t = 117.013 s, decomposed exactly: motor 0.4359 A
+  (5.964 W / 13.6829 V) + aux 0.1500 + charger bus 0.5293
+  (0.8 · 7.9390 / (0.88 · 13.6366)) + path/storage 0.0218. `V_bus` reads 13.68 V there
+  because the share loop winds `r` onto `DROOP_R_MIN` = 0.14988 at MDAC quantization while
+  `BT_BUS` is held open by `assertFcChargeEnable()` — designed behaviour, the FC channel at
+  its droop-gain ceiling. **η is what made this reachable**: at the 1:1 charger the bus
+  draw would be the full 0.8 A, putting `I_fc` at ≈ 1.41 A, at `LIMIT_I_FC_MAX` and above
+  `soc-band`'s own 1.30 A exit. Consequence for scoring: a single `I_fc` ≤ 0.85 A ceiling
+  now measures the charge windows rather than the share bias — **100 % of the excess is in
+  them** (masking FC_CHARGE ticks, the peak over (30, 340) is 0.6929 A at 244.003 s, 18 %
+  under the ceiling). The tripwire therefore splits into a **charge-free arm ≤ 0.85 A**
+  (FC_CHARGE ticks masked) and a **charge-window arm ≤ 1.25 A** (sourced from the
+  `LIMIT_I_FC_MAX` headroom), `socband_fc_carried` is re-pointed at the charge-free peak,
+  and the h2 band is re-derived to **[0.034, 0.051] g** from the measured 0.042427323 g.
+  Margins as run: 18.8 % under 1.4 A, 12.5 % under the 1.30 A exit.
   ⚠️ `soc-band` **saturates its bias at 0.75 by t = 46.8 s and holds it for the
   remaining 298 s** — past that point the run tests the firmware's share loop under
   one fixed setpoint, not the policy's law.

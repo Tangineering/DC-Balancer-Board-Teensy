@@ -246,7 +246,16 @@ telemetry-equivalent and available. The measured split identifies the applied
 ratio only where both channels conduct above the closed-loop entry threshold, so
 the correction is skipped below it and the model keeps its own state. Adding the
 two words to the feedback view is an additive registration step; see section 8,
-item 4. Until it lands, the `mdac_corrections` counter reads zero.
+item 4.
+
+⚠️ STALE, CORRECTED 2026-09-02. The sentence that stood here — "until it lands, the
+`mdac_corrections` counter reads zero" — is contradicted by the first live campaign.
+The simulator's energy-management feedback view DOES carry the two multiplying-DAC
+words, so the `r_from_codes()` correction is the path actually taken:
+`hil_report_20260902_011926`'s `ems-mpc-sto` log records **2968 MDAC corrections**.
+The registration step in section 8 item 4 is therefore already satisfied for that
+caller, and the delivered-share fallback described above is the exception rather than
+the rule.
 
 ### 2.6 Pack, demand and charger models
 
@@ -601,6 +610,32 @@ carried ratio toward the commanded share when the command has changed, which is
 cheaper than a full roll and addresses the measured class directly. Neither is in
 this round.
 
+**Live calibration, campaign `hil_report_20260902_011926` (added 2026-09-02).** The
+offline structure above is reproduced on the board, by mode, on three stimuli. On
+`ems-mpc` (60 decisions): all-decision mean 0.03236, maximum 0.21893; **closed-loop
+(n = 30) mean 0.00418, MEDIAN 1e-5, maximum 0.124; open-loop (n = 30) mean 0.06054,
+maximum 0.21893** — the worst at t = 9.07 s on the 0.50 → 0.25 → 0.50 excursion. On
+`ems-ftp75-mpc`, over 345 decisions: closed (n = 115) mean 0.00251, median 1e-5,
+maximum 0.110; open (n = 229) mean 0.04450, maximum 0.19924. Three readings follow.
+First, **closed-loop prediction is exact** to the resolution of the comparison — the
+median error is 1e-5 — so no closed-stage modelling work is indicated. Second, **all
+of the error is open-loop**, at a mean of 0.045–0.061 and a maximum of 0.219; the live
+maximum sits just under the offline Gate 1 maximum of 0.25, so the offline figure
+bounds the live one rather than under-reporting it. Third, and the point of recording
+it here, **the Gate 1 mechanism is now confirmed independently of this model** — the
+firmware source distinguishes a HOLD from a slew-limited FEEDFORWARD in its open-loop
+branch, and campaign `20260902_011926` measured 356 open-loop MDAC-write ticks on
+`ems-y-b00-v3` (`docs/HIL_PLANT.md` §4.4). The surrogate's hold assumption is
+therefore wrong about the board, not merely about the governor model, and the
+fallback named above is the correct response. The 0.30 prediction-error band on the
+live checks is kept.
+
+⚠️ **One caveat travels with every MPC reading from that campaign.** The
+343-candidate cap enumerates the no-charge axis first, so on a capped decision the
+search truncates **before** the charge axis is reached (13 of `ems-mpc-sto`'s
+decisions were cut by the cap). No conclusion of the form "the MPC chose not to
+charge" is supported by any leg until the cap is lifted and the legs re-run.
+
 ---
 
 ## 7. Evaluation plan
@@ -926,9 +961,15 @@ and catches all fourteen.
    is 0.00971 against a Gate 1 band of 5e-03, the maximum is 0.25000, and
    50.6 % of that stimulus sits in the open-loop regime. Section 6.5 gives the
    mechanism: the surrogate and the roll both model a HOLD, and a re-command
-   landing in an open stage produces a feedforward slew instead. The mitigations
-   are the per-decision commit state and the fallback the design already names,
-   rolling the full governor on open stages with a reduced candidate set.
+   landing in an open stage produces a feedforward slew instead. **Confirmed on
+   the board and in the firmware source** (campaign
+   `hil_report_20260902_011926`; section 6.5's live calibration and
+   `docs/HIL_PLANT.md` §4.4): closed-loop prediction is exact at a median error
+   of 1e-5, every open-loop stage carries the error at a mean of 0.045–0.061,
+   and the firmware's open-loop branch demonstrably writes the MDACs through a
+   slew limiter rather than holding. The mitigations are the per-decision commit
+   state and the fallback the design already names, rolling the full governor on
+   open stages with a reduced candidate set.
 2. The terminal price is a choice spanning 38 % across its three candidates
    (section 4).
 3. The charger-efficiency change moves the charge lever across the SDP's

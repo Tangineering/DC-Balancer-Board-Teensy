@@ -493,8 +493,14 @@ fixes → campaign → MPC (deterministic, then stochastic) → campaign → α 
   fix agent's deviation is ACCEPTED - netting the chopper out of the regen cap destroys 0.64 J
   (hi-fi) / 1.43 J (simple) of genuine harvest because the chopper is a residual voltage clamp,
   not a prior claimant (pre-existing WP-C test fails under netting). The un-netted output-
-  referred cap stays; the 6.5 % hi-fi bus-sourced leak (+0.0915 J of 1.4016 J) is documented
-  in HIL_PLANT.md 4.6.2 with TODO(verify), and a test caps it at 0.15 J / 12 %. Chord-conductance
+  referred cap stays; the hi-fi bus contribution (+0.0880 J of 1.4016 J, 6.3 %) is documented
+  in HIL_PLANT.md 3.4 / 4.6.2. [CORRECTED 2026-09-02, review PLANT-R1-F2: the figure was
+  recorded here as 6.5 % / +0.0915 J and called a LEAK with a TODO(verify) co-solve; it is
+  neither. MOT_PWR is strict-forward, so the contribution is ZERO in every bin while the
+  chopper clamps and appears only AFTER clamp release, as 0.118 W of bus-fed CHARGING through
+  a forward-conducting MOT_PWR (V-MOT at V_BUS - 35.3 mV, 14.93 mA; deleting the link gives
+  0.000000 J). The co-solve TODO is retired and the 0.15 J / 12 % test ceiling is replaced by
+  two mechanism-specific assertions.] Chord-conductance
   stamp: identical settled numbers, neg_clamp 0. Floor 8 V (bound 2.983 A). constants_hash now
   6a88d04ba8a36e61. Reversal: HIL_PLANT.md 4.6.2 six-item list.
 - WP-1B2a landed: tools/sdp_policies/sdp_policy_v4.json (lever, eta 0.88, alpha 0.11832639757736393,
@@ -573,3 +579,47 @@ fixes → campaign → MPC (deterministic, then stochastic) → campaign → α 
   legs incl. the four ems-mpc* legs). tools/ is edit-frozen until it completes. Python suites at
   launch: .venv_hil 1761 passed / 59 skipped (after re-pinning two stale tests); miniforge 2022
   passed / 1 skipped. Firmware suites untouched (fw v25's 3842/175/4324 stand).
+- **Campaign B done: hil_report_20260902_011926 — 58/66, 1:16:45 wall (campaign_meta.json:
+  runs 4240.9 s + overhead 363.9 s), 65 executed + drive SKIP.** FAILs: regen-harvest-true,
+  ems-ftp75-socband, ems-ftp75-mpc, ems-sdp-cross, ems-sdp-braking, ems-mpc, ems-mpc-cross,
+  mppt-tracking. Frontier cycle61 PASS (0.9632x vs soc-band, 1.0016x vs bound); ftp75 UNVERIFIED
+  (socband reference failed its own checks); both MPC tuples UNVERIFIED on a TOOLING defect: the
+  MPC legs' sidecars carry eta_chg None (registration seam) - queued for the fix round. Tool pass
+  running; analysis dispatch follows; physics review (adversarial-doc-review over HIL_PLANT.md)
+  starts now in parallel (read-only; the "after one eta-era campaign" condition is met).
+- Campaign B scout: the two FAIL classes on ems-sdp-cross/-braking (never launched, rc=2) and
+  ems-mpc/-cross/ems-ftp75-mpc (complete runs, rc=1 at the summary print) are ONE tooling
+  defect - a non-cp1252 glyph printed to the Windows console (the new charger-era mismatch
+  warning at the sdp-v2 bind; the mpc-det summary line). MPC run data intact; sidecars partial.
+  Also: MPC_CAMPAIGN_MAX_CANDIDATES 343 = one charge option's enumeration; the cap cut real
+  candidates on 13 decisions. eta billing verified active in the CSVs (p_chg_loss_w 0.866 W at
+  0.8 A). Five analysis agents dispatched (A1 charger/regen, A2 EMS eta-era + frontier, A3 MPC
+  + alpha, A4 PASS regressions, A5 replay audit); Codex round 1 of the HIL_PLANT.md review
+  running in parallel.
+- Campaign B analysis (A1-A4 in; A5 pending): ZERO board defects. FAIL classification: regen-harvest-true
+  = suite defect (min_ticks unimplemented on numeric columns; physics clears 800 at 1173 ms);
+  mppt-tracking = pin window overhangs the count-27 plateau in BOTH eras; ems-ftp75-socband =
+  walk-fidelity gap (charge windows unmodelled; peak decomposes exactly, 18.8 % under LIMIT_I_FC_MAX);
+  ems-sdp-cross/-braking + 3 MPC legs = the cp1252 defect (MPC data intact); ems-mpc-cross = genuine
+  -0.13 % h2 miss (real divergence; do not widen). Validated: eta 0.88 model on every axis (bus draw
+  0.58-0.69x sag-dependent, regen pack current x1.87-1.99, bookkeeping 1.9 mA, hardware charger draw
+  0.5 %); cycle61 frontier 0.9632/1.0016; ems-ftp75 frontier would read 0.9656/0.9986; MPC ties sdp-v4
+  (0.96212/1.00046; closed-loop prediction median 1e-5, all error open-loop, max 0.219); FIRST LIVE
+  ETA-ERA LEVERS L_chg 0.33214 / L_share 0.41688 SoC/g (ratio 0.797) - model ordering confirmed,
+  projected inversion REFUTED; sdp_policy_v4 = eq-H2 winner on the board (charge leg +3.81 % vs walk
+  +4.01 %). DOUBLE ERA BOUNDARY: 151156 predates the asymmetry default; scp i_cut record broken
+  (6.362275 vs 6.379737), comm-loss re-close split 0.3802/0.3381 about the old 0.3591 mean,
+  soc-depletion latch +272.6 ms - all asymmetry-era, re-pin after campaign C.
+- HIL_PLANT.md review: Codex round 1 = 8 findings; verifiers so far: F1 PARTIAL major (byte 15 is a
+  fiat mirror under HIL_SIM; two suite labels overclaim), F3 PARTIAL minor, F4 CONFIRMED major
+  (open-loop FEEDFORWARD writes the MDACs: 356 write ticks measured), F5 PARTIAL minor (mechanism
+  refuted; hold is the cause), F6 PARTIAL minor (consequence refuted: 99.98 % of ticks at h 50 us),
+  F7 CONFIRMED minor, F8 CONFIRMED minor (15/17 citations stale). F2 pending.
+- HIL_PLANT.md adversarial review CLOSED (docs/reviews/hil-plant/run-001-2026-09-02.md + ledger):
+  Codex round 2 conceded/refined everything; final F1/F2/F4 major, F3/F5-F8 minor, N2 minor, N1
+  nit, N4 open-unverified. Physics corrections the operator will care about: (F2) the "6.5 % regen
+  leak" was MISATTRIBUTED - it is post-clamp-release bus-fed charging through MOT_PWR forward
+  conduction (0.088 J), the co-solve TODO is retired; (F4) open-loop FEEDFORWARD writes the MDACs
+  (the MPC Gate-1 mechanism, confirmed in the firmware source and on the board); (F1) byte 15 is
+  a fiat mirror under HIL_SIM. Fix rounds dispatched: tooling (campaign fix queue + review code
+  items) and docs (HIL_PLANT.md + manual + conventions), disjoint files.

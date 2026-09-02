@@ -23,8 +23,11 @@
    Reversal if the legs are to be withdrawn: drop the four `ems-mpc*` scenarios, one commit.
 3. **Campaign C — after the physics review and its fixes.** It is the first campaign of the
    post-review era and should re-pin: the OC ceilings whose predicted peaks fell (sdp-cross ~0.84 A,
-   sdp-braking ~0.95 A, mppt ~0.72 A), the mppt peak tripwire held at ≤ 21 against a predicted
-   [15, 21–22], the socband FTP-75 h2 band 0.031/0.052, the `regen-harvest-true` floors, and the MPC
+   sdp-braking ~0.95 A, mppt ~0.72 A), the mppt peak tripwire (⚠️ the predicted [15, 21–22] band did
+   NOT materialise — measured cruise peak **19**, because `AG105_MPPT_N_FLOOR` binds; re-pin it as a
+   PEAK-reaching bound windowed clear of the regen-lifted braking windows, per PLANT-R1-N2), the
+   socband FTP-75 h2 band (re-derived to [0.034, 0.051] and split into charge-free ≤ 0.85 A /
+   charge-window ≤ 1.25 A FC arms), the `regen-harvest-true` floors, and the MPC
    bands de-provisionalised from campaign B. Run under hil-agent-analysis.
 
 ## 1. EMS test-program goals (operator directive 2026-09-01) — status
@@ -54,11 +57,14 @@
 6. **Converter asymmetry — DONE (2026-09-01e A4 + C1).** ΔV0 and ρ adopted as the M2 consistent pair,
    default-on, `--asymmetry off` byte-identical. The +8.1 % shared/single residual and the ~4×
    `K_DROOP` finding stay open. Bench `TODO(calibrate)`: an 'O' open-loop share sweep above 0.60 A.
-7. **Plant physics review against SD logs — SCHEDULED after the campaign-B analysis.** Inputs on
-   record: this round's charger-efficiency change and its documented 6.5 % bus-sourced regen leak,
-   the deferred chopper side of the residual identity, the mppt mirror's missing REGEN exclusion, the
-   comm-loss RT1987 ON-stamp shift, the `ems-ftp75-dp` table-fidelity gap, the b00-v3 gate-fraction
-   discrepancy, and the asymmetry corpus. Vehicle: adversarial-doc-review over `docs/HIL_PLANT.md`.
+7. **Plant physics review against SD logs — DONE (2026-09-02).** Run record
+   `docs/reviews/hil-plant/run-001-2026-09-02.md`, ledger `docs/reviews/hil-plant/ledger.md`.
+   Three major findings (byte-15 fiat mirror; the chopper/`MOT_PWR` topology; open-loop
+   HOLD-versus-FEEDFORWARD), five minor, one nit, one open-unverified (`PLANT-R1-N4`, the
+   `FC_BUS.i` INA proxy — needs a reproducible operating-point test before any doc entry). The
+   "6.5 % bus-sourced regen leak" input to this item was **misattributed** and is corrected to
+   **6.3 % / 0.0880 J of post-clamp-release bus-fed charging** (see §5 and §3); the co-solve
+   `TODO(verify)` is retired.
 
 ## 2. Pi bridge v4 parser audit — DONE (2026-09-01e)
 
@@ -75,10 +81,13 @@ sim-only strategies.
 - **Ag105 charge efficiency at OUR operating point — NEW.** The datasheet's 88 % typ is stated at
   25 °C, 12 Vin and 3S; the rig runs 15–16 Vin into a 2S pack, roughly a 1.9:1 conversion where the
   datasheet measured roughly 1.0:1. Bench-measure input and output power at 15–16 Vin, 2S.
-- **The 6.5 % bus-sourced regen leak — NEW.** +0.0915 J of a 1.4016 J charger input arrives from VBUS
-  through a closed `MOT_PWR` in the hi-fi engine, where simple mode leaks exactly zero. Closing it
-  needs the charger and the chopper clamp solved together at one node voltage; a test caps the leak
-  at 0.15 J / 12 % meanwhile.
+- **~~The 6.5 % bus-sourced regen leak~~ — CLOSED 2026-09-02, no bench work needed (PLANT-R1-F2).**
+  The number is **0.088059 J of a 1.4016 J charger input, 6.28 %**, and it is not a leak: `MOT_PWR`
+  is strict-forward, so the contribution is exactly zero while the chopper clamps and appears only
+  after clamp release, as 0.118 W of bus-fed CHARGING through a forward-conducting `MOT_PWR`
+  (V-MOT parked at V_BUS − 35.3 mV, 14.93 mA; deleting the link gives 0.000000 J). The queued
+  charger/clamp co-solve targeted a mechanism that does not exist and is **retired**; the 0.15 J /
+  12 % test ceiling is replaced by two mechanism-specific assertions.
 - **Re-measure the charge lever — NEW.** The 0.2364 SoC/g figure was measured on the 1:1
   current-transfer plant and only projected into this era. The projection is what makes the measured
   window UNDECIDABLE, and it is what the first η-era campaign tests.
@@ -108,19 +117,30 @@ sim-only strategies.
 - **`ems-ftp75-mpc` `dp_db` prefill is PENDING.** Its matched solve costs tens of minutes and the
   FTP-75 bound leg's own table is stale, so the entry was deferred rather than stored against a
   stimulus that is about to be regenerated. Prefill it before campaign C, never during a campaign.
-- **The chopper side of the residual identity is DEFERRED (physics review L3).** `p_chop` sits on the
-  source side although it is a dissipation, so a braking-window residual is dominated by `−2·p_chop`.
+- **The chopper side of the residual identity is DEFERRED (physics review L3, re-affirmed
+  PLANT-R1-F3).** `p_chop` sits on the source side although it is a dissipation, so a braking-window
+  residual is dominated by −2·p_chop. Measured on `regen-harvest-true`: chopper-active mean
+  `p_bal + p_aux` − 2.3876 W, of which − 2.0208 W is that term. `p_bal_w` is a pure observer — no
+  published number derives from it in a braking window — so the defect is wording, not a result.
   Moving it beside `p_mot` and `p_chg_loss` changes the meaning of `p_bal_w` in every CSV written
-  since 2026-09-01f, and that era boundary is better moved once, with any other identity change.
+  since 2026-09-01f, so the migration is tied to **the next change of the identity** rather than
+  scheduled on its own.
 - **`ems-ftp75-dp`: the table's walk-side fingerprint is stale.** `ftp75-mpc` reads vs_reference
   0.9738 and has no vs_bound prediction, because `dp_ems_table_ems-ftp75-dp.csv` carries a stale
   stimulus fingerprint and refuses to walk until it is regenerated. The older residual stands too:
   run h2 −2.15 % and ΔSoC +4.8 % against the table's own prediction, with a per-stage residual check
-  queued.
+  queued. ⚠️ **The gap WIDENED in the zero-preload / η / asymmetry era** (campaign
+  `20260902_011926`): `ems-ftp75-dp` now reads **−4.14 % / +19.6 %**, while `ems-dp-replay` reads
+  +0.33 % / −1.2 %. Attribution (PLANT-R1-F5): the generator has no share loop or governor, and at
+  zero preload the firmware's sub-0.55 A open-loop behaviour covers 64.5 % of the FTP-75 Run window.
+  The dynamic-versus-DC `Gfc` difference is only 0.01–0.03 % and does NOT explain it.
 - Does the charger lever clear the 0.31 SoC/g `sdp` charge-revisit condition in the η era? The model
   now puts `L_chg` at 0.396396 SoC/g, above that trigger, while `sdp_policy_v4` still rejects charging
   endogenously at α 0.118326. The question is settled by measurement, not arithmetic.
 - `ems-y` b00-v3 gate fraction (campaign 20.6 % against walk 12.7 %) — the governor walk can settle it.
+  ⚠️ **20.6 % does not reproduce** (2026-09-02): three recomputations give 16.98 / 19.33 / 19.13 %.
+  A raw instantaneous `I_total` < 0.55 A proxy reads 68.3 % and is not comparable with either — the
+  governor gates on a FILTERED total with hysteresis. Quote the range until the walk settles it.
 
 ## 6. Housekeeping
 

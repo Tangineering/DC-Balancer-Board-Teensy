@@ -31,6 +31,21 @@ warm_reset_times_s, tx/rx frames, send_errors, achieved_hz, final_state,
 final_fault_flags). The constants fingerprint moves whenever stimulus constants change —
 hash-different does not strictly imply model-different; check the commit.
 
+**RUN-ERA FIELDS AN ANALYST MUST READ BEFORE ANY CROSS-CAMPAIGN COMPARISON.** Four, not
+three. `scenario.eta_chg` (charger era, absent = the 1:1 sentinel), the droop mode from
+argv, `constants.*_PRELOAD_A` (the auxiliary preload era) — **and `config.asymmetry`,
+`config.asymmetry_dv0_v`, `config.asymmetry_droop_scale_fc`** (converter asymmetry;
+`measured`, ΔV₀ 0.013522 V, `droop_scale_fc` 0.9434 since the C1 default).
+⚠️ **Campaign `20260901_151156` predates the asymmetry default and its sidecars carry
+no `asymmetry` key at all**, so it is on the far side of TWO plant boundaries at once
+(charger and asymmetry). **No comparison spanning 151156 is bit-identical, including a
+leg that never charges.** Measured signature across that boundary: h2 **+15–16 %** on
+every low-current run (steady +10.1, sag +15.9, comm-loss +15.9, soc-depletion +15.9,
+v-bus-sense-offset +16.0), only +0.3–11 % on higher-current runs, `scp-inrush` i_cut
+6.362275 vs 6.379737 A (−0.27 %), `comm-loss` re-close split 0.3802/0.3381 A about the
+old 0.3591 A mean, `soc-depletion` latch +272.6 ms, `ems-sdp` +0.61 % on a commanded
+share that is bit-identical over 61 000 rows.
+
 ## CSV reading discipline
 
 - Interpreter: `.venv_hil\Scripts\python.exe` (stdlib only — NO numpy/pandas). Stream
@@ -181,6 +196,24 @@ hash-different does not strictly imply model-different; check the commit.
 
   A share cut that CAUSED a fault still lands well before its own latch and is caught.
   Residual: a share cut arriving after an UNRELATED fault is still missed.
+- **THE STANDING WALK RULE (restated 2026-09-02): an offline walk must model the
+  sub-0.55 A OPEN-LOOP HOLD *and* the FEEDFORWARD SLEW.** Open loop is two submodes, not
+  one. HOLD applies only when the closed loop has already run this profile, the setpoint
+  has not moved by more than `SHARE_SP_CHANGE_EPS` 1e-4, and no isolation is outstanding;
+  otherwise the firmware FEEDS THE SETPOINT FORWARD through the slew limiter
+  (`DROOP_RATIO_SLEW_PER_TICK` 0.02/tick, or `DROOP_RATIO_SLEW_HANDOFF_PER_TICK`
+  0.002/tick on a conduction handoff) and **writes the MDACs**. Measured on
+  `ems-y-b00-v3`: 356 open-loop MDAC-write ticks in 8 episodes (campaign
+  `20260902_011926`; 369 in `20260901_191509`). A walk that treats all sub-0.55 A
+  operation as inert is wrong in the feedforward episodes — the earlier form of this rule,
+  which named only the hold, is superseded. `tools/governor_model.py` implements both.
+- **The replay half CANNOT SCORE `share_cut_load_hazard` but DOES EXERCISE the firmware's
+  cut path.** No `sw_ring` events exist there (no electrical engine is constructed), so
+  the check is structurally unreachable and its absence is not coverage — but campaign
+  `20260902_011926` counted 163 in-Run FC_BUS/BT_BUS falling edges across six opt-in
+  replays, 12 of them with a CSV-bounded |I| over 0.5 A (max 0.6608 A). Do not call those
+  a guard failure: at the 1.9 ms round-trip and ~0.08 A tick noise, with currents climbing
+  through the threshold, that is the decision the guard is specified to make.
 - Under HIL_SIM, pollAg105() is mirrored by fiat — I2C config writes are NOT exercised;
   Ag105 lazy re-config claims need real hardware.
 - **THE MPPT-THRESHOLD MIRROR BOUNDARY** (fw v24+). The HIL mirror computes
@@ -188,7 +221,18 @@ hash-different does not strictly imply model-different; check the commit.
   15, bypassing the real write path entirely. What an HIL run VALIDATES: the arithmetic,
   the clamp band [15, 27], and the frame plumbing. What it does NOT touch: the write
   POLICY, the deadband, the ≤2-per-session ratchet, the ≤8-per-boot EPROM budget, and the
-  read-verify-write handshake. So COUNT MOTION IS A MIRROR ARTIFACT — campaign 080905's
+  read-verify-write handshake — **and the REGEN EXCLUSION**. The real manager samples only
+  while `fcChargePathIsPowering()` (FC_CHARGE high AND REGEN low) and is NEVER CALLED
+  under `HIL_SIM`; the mirror is gated only on `chargerHasPower()`, so it also runs on the
+  REGEN path, where regen lifts `V_chg` toward the 18.1 V clamp. Measured on campaign
+  `20260902_011926`: inside a braking window (switch 0x2f) the mirror reads 27 at `V_chg`
+  18.08 V where the board would hold 15–19; whole-run 11.8 % of ticks differ, by at most
+  12 counts (1.056 V). **A cruise tripwire on this count must be windowed clear of the
+  braking windows and written as a PEAK-reaching bound, not a floor**; the eta era lifts
+  `V_chg` by +0.487 V mean / +0.774 V minimum, but the measured cruise peak is still **19**
+  because `AG105_MPPT_N_FLOOR` binds (windowed minimum − 3.0 V = 11.27 V < 12.320 V), so
+  the earlier "band shifts up to about 21–22" prediction did not happen.
+  So COUNT MOTION IS A MIRROR ARTIFACT — campaign 080905's
   5-step-per-second ratchet is not write-budget evidence and must never be cited as such.
   The count also PERSISTS across the unpowered gaps between charge windows and across
   runs (`hilWarmReset()` preserves `ag105MpptRegCnt`; EPROM preserves the register), so a
@@ -205,11 +249,15 @@ hash-different does not strictly imply model-different; check the commit.
   `p_chg_loss = i_charge·V_pack·(1/ETA_CHG − 1)`.
 - **What that does to a charge window,** which is the thing to have in hand before
   reading any charging run:
-  - FC-fed (`FC_CHARGE_ENABLE` closed, input = VBUS): the charger's BUS current is now
-    ≈ **0.56 × i_charge**, not `i_charge`. So `I_fc` inside a charge window falls by
-    ≈ 0.44 × the charge ceiling — ~0.35 A at a 0.8 A ceiling, ~0.44 A at 1.0 A — and the
-    hydrogen billed for that window falls with it. Every OC/`I_fc` margin measured inside
-    a charge window before 2026-09-02 is stale in the SAFE direction.
+  - FC-fed (`FC_CHARGE_ENABLE` closed, input = VBUS): the charger's BUS current is now a
+    FRACTION of `i_charge`. ⚠️ **That fraction is PROBE-POINT-SPECIFIC, not a constant** —
+    it is `V_batt/(ETA_CHG·V_input)`, so it rises as the bus sags. The often-quoted
+    **0.5565** belongs to a ~15.9 V bus; at a sagged **14.10 V** bus the measured ratio is
+    **0.64** (campaign `20260902_011926`, `ems-soc-band`). Recompute it at the operating
+    point before using it; do not carry 0.56 into a sagged window. So `I_fc` inside a
+    charge window falls by (1 − that ratio) × the charge ceiling, and the hydrogen billed
+    for that window falls with it. Every OC/`I_fc` margin measured inside a charge window
+    before 2026-09-02 is stale in the SAFE direction.
   - Regen-fed (`REGEN_ENABLE` + `MOT_PWR_ENABLE`, input = V-MOT): the cap is now
     OUTPUT-referred, so the PACK current roughly DOUBLES (×`ETA_CHG·V_chg/V_pack` ≈ 2.05)
     and the chopper — a residual absorber, not a prior claimant — burns about half as
@@ -218,7 +266,11 @@ hash-different does not strictly imply model-different; check the commit.
     move by DIFFERENT factors because the clamp is a VOLTAGE clamp: the charger takes
     current, not volts.
   - `V_chg` rises ≈ +0.31 V at 1.4 A (≈ +0.22 V, ~2.5 reg-0x02 counts, at a 1.0 A
-    ceiling), so the `mppt_thresh_cnt` band shifts UP by about two counts.
+    ceiling), and the `mppt_thresh_cnt` band was predicted to shift UP by about two counts.
+    ⚠️ **It did not** (measured 2026-09-02): the cruise peak stayed at **19** because
+    `AG105_MPPT_N_FLOOR` binds — `V_chg` sags to ≈ 14.45 V under charge, so
+    (windowed minimum − 3.0 V) = 11.27 V, below the floor's 12.320 V, over ~85 % of the
+    harvest. The effective margin is ≈ 2.13 V, not 3.0 V.
   - PACK current on an FC-fed path is UNCHANGED. Eta moves what the charger COSTS, never
     what the pack RECEIVES at a given ceiling — so no `I_charge` band on an FC-fed
     scenario moved.
@@ -230,11 +282,17 @@ hash-different does not strictly imply model-different; check the commit.
   number reproduces that era — it billed the BUS voltage where the model bills the PACK
   voltage). `eta_chg` is also a frontier stimulus key, so a mixed-era frontier is refused
   rather than ranked.
-- **A leg that never charges is era-invariant** and IS comparable across the boundary —
-  bit-identically, not approximately. That covers `ems-sdp`, `ems-dp-replay`,
-  `ems-ftp75-5050`, `ems-ftp75-sdp`, `ems-ftp75-dp` and all 27 replays. The 8 ppm
-  `ems-sdp` h2 record survives for exactly this reason, and saying so is part of citing
-  it.
+- **A leg that never charges is era-invariant with respect to the CHARGER boundary** —
+  that covers `ems-sdp`, `ems-dp-replay`, `ems-ftp75-5050`, `ems-ftp75-sdp`,
+  `ems-ftp75-dp` and all 27 replays. ⚠️ **CORRECTED 2026-09-02: that does NOT make it
+  bit-identical across campaign `20260901_151156`**, which also predates the converter
+  asymmetry default (see the run-era fields above). The **8 ppm `ems-sdp` h2 record is
+  BROKEN** across that campaign — by the plant, not by the strategy: commanded share is
+  bit-identical over 61 000 rows and h2 still moves +0.61 %, with `I_fc` first diverging
+  at t = 0.540314 s (0.0790 → 0.0923 A, the +ΔV₀ FC-bias direction). The 27 replays are
+  the surviving exception in the strict sense: their injection fidelity is bit-identical
+  on all 27 × 6 channels because the replay half drives the rails from the log and never
+  constructs the electrical engine the asymmetry lives in.
 - **A charging leg can move UP.** `ems-ftp75-socband`'s walk h2 RISES 3.7526e-2 →
   4.1873e-2 g, because cheaper charging lets the heuristic open a third charge window and
   buy more SoC. "Charging got cheaper so hydrogen fell" is not a safe prior on a leg whose

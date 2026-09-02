@@ -119,8 +119,9 @@ investigation on the bit alone. What *would* be a finding is such a latch appear
 **after** the grace bound, or surviving a run boundary — both of which the suite already
 scores.
 
-**Why 1 kHz is enough for this plant.** Every dynamic in the model is far slower than the
-tick:
+**Why 1 kHz is enough for the SIMPLE engine.** This statement is scoped to the simple
+electrical engine and to the mechanical model. Every dynamic in *those* is far slower than
+the tick:
 
 | Timescale | Value | Source |
 |---|---|---|
@@ -130,11 +131,29 @@ tick:
 | Bus decay when dark | τ = `R_BUS_BLEED·C_BUS_F` = 0.94 s | §4 |
 | Injection tick | 1 ms | this loop |
 
-The fastest modelled pole is the 0.94 s bus decay; the fastest *consumer* is the 500 Hz
-controller. A 1 ms explicit-Euler step is one to three decades inside both, so the
-integration error is negligible compared with the model's structural simplifications
-(§4). What 1 kHz does **not** cover is anything the model omits — converter switching,
-RT1987 turn-on, encoder edges — and those are omitted by design, not by rate.
+Within that scope the fastest modelled pole is the 0.94 s bus decay; the fastest
+*consumer* is the 500 Hz controller. A 1 ms explicit-Euler step is one to three decades
+inside both, so the integration error is negligible compared with the model's structural
+simplifications (§4). What 1 kHz does **not** cover is anything the model omits —
+converter switching, RT1987 turn-on, encoder edges — and those are omitted by design, not
+by rate.
+
+**The hi-fi engine is a different statement, and the tick is not its step.** The hi-fi
+electrical engine (§8) contains dynamics far faster than 1 ms: a 0.77 µs switch/node RC
+(§8.2) and the 100 µs boost voltage-loop lag `τ_r` (§8.3). It does not integrate at the
+tick rate — it takes *n* backward-Euler substeps inside every tick, `n` chosen adaptively
+from measured wall-clock cost (§8.1), so the simulated step is `1 ms / n`. Backward Euler
+is L-stable at any `n`, so a coarse tick cannot destabilise the solve; what it can degrade
+is the accuracy of the repaired RT1987 soft-start current, which the engine's own comment
+bounds at a substep of about **125 µs** (`n ≥ 8`). Measured across campaign
+`hil_report_20260902_011926` (3.55 M ticks, `n` reconstructed from `elec_substep_hz`):
+**99.98 % of ticks ran at `n` = 20, i.e. h = 50 µs**, two ticks reached h = 142.9 µs (14 %
+over the caveat, both event-free), and every run whose verdict rests on sub-millisecond
+behaviour — `scp-inrush`, `sag`, `handoff-sag`, `comm-loss` — carried **zero** coarse
+ticks. The hazard if `n` ever fell to 1 is quantified: 4.27 A of soft-start current against
+the converged 0.22 A, i.e. a spurious `OC_FC`. Incidence to date is zero, and the
+`substep_resolution` suite gate (`n_min ≥ 8`, from the logged `elec_substep_n` column)
+exists so that it stays an assertion rather than an assumption.
 
 ---
 
@@ -235,9 +254,14 @@ The old floor violated the second line by setting its right-hand side to zero.
 **Where the energy actually goes, and why that is not a tuning knob.** `MOT_PWR` is an
 ideal diode, so regen current cannot flow back into VBUS: it charges the motor node until
 the chopper clamps at 18.1 V. That reproduces the bench observation — *V_rgn 13.3 → 18.1 V
-held, V_bus unmoved* (CLAUDE.md 2026-08-17b) — and the residual bus coupling is bounded by
-the RT1987's own 50 mV reverse-comparator band, i.e. the ~0.03–0.06 V the engine's chopper
-banner predicts. Meanwhile the Ag105 is dark for its first `AG105_SETTLE_S` (0.5 s) and
+held, V_bus unmoved* (CLAUDE.md 2026-08-17b). The coupling is not merely small, it is
+**structurally absent while the clamp is active**: `MOT_PWR` is instantiated
+`strict_forward`, so the model stamps no BUS↔MOT conductance unless `V_BUS − V_MOT`
+exceeds `RT_V_FWD` (35 mV). At the clamp `V_MOT` ≈ 18.1 V, so bus-fed clamping would need
+`V_BUS` > 18.135 V — above `LIMIT_V_BUS_MAX` 17.5 V, hence unreachable outside an OV
+latch. Measured clamp-attributable bus sag is **below 1e-5 V**; the "≈ 0.03–0.06 V of bus
+sag" this paragraph carried until 2026-09-02 was arithmetic on a mechanism the model does
+not instantiate. Meanwhile the Ag105 is dark for its first `AG105_SETTLE_S` (0.5 s) and
 then ramps on `AG105_TAU_S` (0.4 s), so the **first half-second of every braking window is
 burnt in the chopper, not banked**. That asymmetry — fast clamp primary, slow charger
 secondary — *falls out* of the model; it is not hardcoded anywhere.
@@ -500,7 +524,7 @@ none, both currents are zero. α is the converter-asymmetry law of §4.4a below;
 
 > **⚠️ THE SIGN WAS INVERTED HERE UNTIL 2026-09-01 (the C1 round), in this document
 > and in the code under it.** The firmware commands `g_FC = K_DROOP/(R_E,max·r)` and
-> `g_BT = K_DROOP/(R_E,max·(1−r))` (`.ino:10534-10535`), so a channel's MDAC code is
+> `g_BT = K_DROOP/(R_E,max·(1−r))` (the `droop_gain_FC_actual`/`droop_gain_BT_actual` assignment at the tail of `applyShareRatio()`), so a channel's MDAC code is
 > proportional to its droop **resistance** and its current is proportional to the
 > **reciprocal** of that code. **Raising the FC code raises the FC droop resistance and
 > LOWERS its current** — the opposite of the claim this section used to make. The error
@@ -517,18 +541,54 @@ direction*, that its cutoff/governor logic fires, and that its MDAC writes reach
 chokepoint. It is **not** adequate to tune share-loop gains, and the plant it implies is
 not the plant `controller_design/system_model.md` synthesizes against.
 
-> **⚠️ AND THE LOOP HAS NO AUTHORITY AT ALL BELOW 0.55 A** — a firmware property,
-> not a plant one, but it decides what a scenario or an offline walk may claim.
-> The firmware enters closed-loop share control above `2·SHARE_MINORITY_I_MIN_A`
-> = 0.60 A of source total and drops out below 0.55 A (`.ino:2181/2205`, gate at
-> `:9933`). In open-loop mode it does **not** write the MDACs: it holds the last
-> converged split. So under 0.55 A a `power_share_setpoint` is accepted, appears
-> in `cmd_share_sp`, and is **not acted on** — the codes this section models do
-> not move. Campaign `20260901_024231` measured a delivered share of **0.1656**
-> against a commanded 0.85 at a 0.355 A cruise, and an offline walk that assumed
-> otherwise put a suite check on a limit-cycle period **5.7× wrong** (see the
-> `ems-sdp-cross` row in the scenario table). Size a scenario's `aux_preload_a`
-> if the loop must be closed, and model the hold if it must not.
+> **⚠️ AND THE CLOSED LOOP HAS NO AUTHORITY AT ALL BELOW 0.55 A** — a firmware
+> property, not a plant one, but it decides what a scenario or an offline walk
+> may claim. The firmware enters closed-loop share control above
+> `2·SHARE_MINORITY_I_MIN_A` = 0.60 A of filtered source total and drops out
+> below 0.55 A (`SHARE_MINORITY_I_MIN_A`, `SHARE_GOV_OL_HYST_A`, and the
+> `shareClosedLoopMode` mode gate at the head of `powerBalance()`).
+>
+> **Open loop is TWO submodes, and only one of them holds** (corrected
+> 2026-09-02; the claim that open loop "does not write the MDACs" was false):
+>
+> - **HOLD.** Taken only when the closed loop has already run this profile
+>   (`shareClosedLoopRun`), the setpoint has not moved by more than
+>   `SHARE_SP_CHANGE_EPS` = 1e-4 since the last acted-on setpoint, and no
+>   controller-initiated isolation (`shareIsoFC` / `shareIsoBT`) is outstanding.
+>   `powerBalance()` then returns without calling `applyShareRatio()`, and
+>   `droopSlew_prev` keeps the last physically-applied ratio. This is the case
+>   the paragraph used to describe as the whole of open loop.
+> - **FEEDFORWARD.** Taken on a fresh profile with no closed-loop authority yet,
+>   on a **changed** setpoint while parked, or with an isolation recovery
+>   outstanding. The raw setpoint is fed forward through the same slew limiter
+>   the controller path uses — `DROOP_RATIO_SLEW_PER_TICK` **0.02**/tick, or
+>   `DROOP_RATIO_SLEW_HANDOFF_PER_TICK` **0.002**/tick when
+>   `updateShareSlewMode()` has flagged a conduction handoff this tick — and
+>   `applyShareRatio()` **writes the MDACs**. An out-of-band setpoint
+>   (outside `[DROOP_R_MIN, DROOP_R_MAX]`) is still never actuated here: the
+>   setpoint latch owns it.
+>
+> Measured, not inferred: on `ems-y-b00-v3` (campaign
+> `hil_report_20260902_011926`) **356 open-loop ticks wrote the MDACs, in 8
+> episodes**, the largest running 174 ticks and walking the command 0.650 →
+> 0.152 with the codes moving (5354, 5279) → (8119, 4815), i.e. 0.00286
+> ratio/tick — between the two slew constants, as both being in play predicts.
+> Campaign `hil_report_20260901_191509` shows 369 on the same leg.
+> `tools/governor_model.py` reproduces both submodes.
+>
+> So under 0.55 A a `power_share_setpoint` is accepted and appears in
+> `cmd_share_sp`, and whether it is acted on depends on which submode applies.
+> Campaign `20260901_024231` measured a delivered share of **0.1656** against a
+> commanded 0.85 at a 0.355 A cruise — a HOLD — and an offline walk that assumed
+> the loop was closed put a suite check on a limit-cycle period **5.7× wrong**
+> (see the `ems-sdp-cross` row in the scenario table). **The standing rule is
+> therefore: model the open-loop HOLD *and* the feedforward SLEW.** Size a
+> scenario's `aux_preload_a` if the loop must be closed instead.
+>
+> This is also the mechanism behind the governor-aware MPC's failing Gate 1:
+> its open-stage surrogate models a hold, and every re-command landing in an open
+> stage produces a feedforward slew it does not represent — see
+> `docs/modeling/mpc_design_20260901.md` §6.5.
 >
 > ⚠️ **THE PRELOAD IS NO LONGER A DRIVE-CYCLE DEFAULT (operator ruling,
 > 2026-09-01).** `aux_preload_a` is **0.0 on every drive-cycle scenario** — the
@@ -756,18 +816,59 @@ TL431/BSP170P chopper, not the Ag105, absorbs the transient — see §3.4).
 A scenario may set **`mppt_emulation`** to get the threshold gate as well
 (`AG105_MPPT_V_HYST` 0.5 V — the hysteresis is on the voltage *comparison*
 only, never on the pin, which is the firmware's output and must not be
-filtered). **THE THRESHOLD VALUE IS THE BOARD'S, from fw v24:** the firmware
-writes reg `0x02` and reports the count it believes is in force on
-observation-frame **byte 15**, and the model converts it with
-`ag105_mppt_volts()` (11.0 V + 0.088 V/count, `.ino:1671-1677`).
-`AG105_MPPT_V_THRESH` 18.0 V is now only the **fallback**, used when there is
+filtered). **THE THRESHOLD VALUE COMES OFF observation-frame byte 15**, which the
+model converts with `hil_plant_sim.ag105_mppt_volts()` — 11.0 V + 0.088 V/count,
+the firmware's `AG105_MPPT_V_BASE` / `AG105_MPPT_V_PER_CNT` / `AG105_MPPT_VOLTS`
+macros, pinned host-side by `tools/test_hil_plant_sim.py`'s `ag105_mppt_volts`
+test.
+
+> ⚠️ **BYTE 15 IS A FIAT HIL MIRROR, NOT A BOARD REGISTER WITNESS**
+> (corrected 2026-09-02; this section previously called it "the board's").
+> Under `HIL_SIM` the fw v24 threshold **manager is never called** — its sole
+> call site sits outside the HIL branch — and the branch instead recomputes
+> `ag105MpptRegCnt` by fiat from the injected `V_chg` on every settled tick,
+> gated only on `chargerHasPower()`. That bypasses the manager's entire state
+> machine: the windowed-minimum tracking, the ≤2-per-session monotone-lower
+> ratchet, the 3-count deadband, the ≤8-per-boot EPROM write budget, the
+> read-verify handshake — **and the regen exclusion**. The real manager samples
+> only while `fcChargePathIsPowering()` (`FC_CHARGE_ENABLE` high AND
+> `REGEN_ENABLE` low); the mirror also runs on the REGEN path, where regen lifts
+> `V_chg` toward the 18.1 V clamp. Divergence measured on campaign
+> `hil_report_20260902_011926`: inside a braking window (switch `0x2f` — REGEN,
+> no FC_CHARGE) the mirror reads **27** at `V_chg` 18.08 V while the board would
+> hold 15–19; over the whole run **11.8 % of ticks differ, by at most 12 counts
+> (1.056 V)**, with 40 gate-binding ticks either way (an observational tie here,
+> not a causal one).
+>
+> What an HIL run therefore validates: the count arithmetic, the clamp band
+> [15, 27], the frame plumbing, and the charger model's response to a threshold.
+> What it does **not** evidence: that the manager ran, that a write policy was
+> honoured, or that any count motion is write-budget evidence. Suite checks
+> named for the manager (`mppt_threshold_written`, `mppt_threshold_moved`) are
+> mirror-carried readings and are labelled as such.
+>
+> **Calibration note, corrected 2026-09-02 (N2).** The `ETA_CHG` = 0.88 charger
+> era lifts `V_chg` by **+0.487 V** in the mean (**+0.774 V** at the window
+> minimum), and the count band was predicted to shift up with it, to about
+> 21–22. It did not: the measured cruise **peak is 19**, because
+> `AG105_MPPT_N_FLOOR` **binds**. `V_chg` sags to ≈ 14.45 V under charge, so
+> (windowed minimum − `AG105_MPPT_MARGIN_V` 3.0 V) = 11.27 V, below the floor's
+> 12.320 V; the effective margin is therefore ≈ 2.13 V, not 3.0 V, over about
+> 85 % of the harvest. A cruise tripwire on this count must be written as a
+> **peak-reaching** bound (a `min_value` on the peak), not as a floor the count
+> must clear, and it must be windowed clear of the regen-lifted braking windows —
+> where the mirror alone reaches 27.
+
+`AG105_MPPT_V_THRESH` 18.0 V is only the **fallback**, used when there is
 no count to use — a count ≥251 (external-resistor mode / never written, which
 *is* the datasheet's 18 V default), a legacy 16-byte frame from a fw v21–v23
 flash, or the window before the first observation frame. In all three the
 module genuinely sits at its factory threshold, so the fallback is the
-physical value rather than a placeholder. Semantics, and the asymmetry is the datasheet's own: the threshold
-belongs to the MPPT regulator, so it binds **only while tracking is released** (pin
-HIGH). Below the threshold there the module reports GENSTAT **001 Low Power** with
+physical value rather than a placeholder.
+
+**The threshold's semantics carry an asymmetry, and it is the datasheet's own:**
+the threshold belongs to the MPPT regulator, so it binds **only while tracking is
+released** (pin HIGH). Below the threshold there the module reports GENSTAT **001 Low Power** with
 `MPPT_EN` set and `PWR_TRACK` **clear** — released, and refusing to track — and the
 current decays on `AG105_TAU_S`. With the pin LOW the existing constant-current
 behaviour is verbatim. Default **False**, so every scenario predating the key is
@@ -908,7 +1009,7 @@ charger may only have the remainder. Measured on a 2 s braking window (`v0` 3.0 
 |---|---|---|---|---|
 | simple | as shipped | 1.4388 J | 1.7128 J | +0.0000 J |
 | simple | netted | 0.0045 J | 3.1314 J | +0.0000 J |
-| hi-fi | as shipped | 1.4016 J | 1.3046 J | +0.0915 J |
+| hi-fi | as shipped | 1.4016 J | 1.3046 J | +0.0881 J |
 | hi-fi | netted | 0.7632 J | 1.7950 J | +0.0318 J |
 
 The netted form removes 0.06 J of bus-sourced leak and destroys 0.64 J (hi-fi) to 1.43 J
@@ -922,14 +1023,31 @@ test `test_charger_takes_its_share_once_powered_through_the_regen_path` fails ou
 under the netted form (0.0015 A peak against its 0.02 A floor). The un-netted cap is
 therefore kept.
 
-**What that leaves open.** The hi-fi row still shows **+0.0915 J of the 1.4016 J charger
-input arriving from VBUS** through a closed `MOT_PWR`, 6.5 % of the window's harvest. It is
-a transient of the node solve rather than a systematic double claim: simple mode, which has
-no such transient, leaks exactly zero. Closing it requires the charger and the clamp to be
-solved together at one node voltage instead of one capping the other.
-`TODO(verify)`: bound the leak with a co-solved split.
+**The hi-fi bus contribution, and what it actually is (mechanism identified 2026-09-02).**
+The hi-fi row shows **+0.088059 J of the 1.4016 J charger input arriving from VBUS**,
+**6.28 %** of the window's harvest. It is neither a solver transient nor a start-of-episode
+precharge, and it is not a double claim on the harvest. Three measurements identify it:
+
+- Binned at 100 ms, the bus contribution is **exactly zero in every bin in which the
+  chopper is clamping**. `MOT_PWR` is reverse-blocked there (see §3.4's strict-forward
+  bound), so no bus energy can reach the motor node at all.
+- It appears **after clamp release**, as a steady **0.118 W**. Once the braking transient
+  ends, `V_MOT` parks at `V_BUS − 35.3 mV`, which is on the conducting side of `RT_V_FWD`,
+  and `MOT_PWR` forward-conducts BUS → MOT → REGEN → VCHG-IN at `mp.i` = 14.93 mA. The
+  window tail is therefore **bus-fed charging** — the charger continuing to draw after the
+  kinetic energy is spent — not harvest attributed to the wrong source.
+- Deleting the `MOT_PWR` stamp drives the contribution to **0.000000 J** and leaves `V_mot`
+  ending at 8.44 V, confirming the link, and only the link, as the path.
+
+**The co-solve `TODO` is therefore retired.** It proposed solving the charger and the clamp
+at one node voltage to remove a leak that does not exist while the clamp is active; there
+is no mechanism there to close. The corresponding aggregate test ceiling (0.15 J / 12 % on
+the hi-fi contribution) was **not an invariant** — it bounded a number that legitimately
+scales with the tail's length — and is replaced by two mechanism-specific assertions: (a)
+bus energy over chopper-active ticks differs from the charger-off run by less than 1e-6 J,
+and (b) every tick with a non-zero `dE_bus` satisfies `V_bus − V_rgn ≥ RT_V_FWD`.
 `tests: test_regen_harvest_is_not_sourced_from_the_bus` pins the simple-mode zero, the
-one-for-one chopper displacement, and a 0.15 J ceiling on the hi-fi leak.
+one-for-one chopper displacement, and those two assertions.
 
 **Fingerprint and hash movement.**
 
@@ -1011,8 +1129,8 @@ runs neither the old conclusion nor this reversal should be quoted as a result.
 | **No boost-converter dynamics.** The bus is algebraic in `I_total`; there is no voltage loop, no RHP zero, no compensator lag. | Nothing here reproduces the boost-death class of failure, the τ_r lag the share-loop plant is built on, or a converter's transient response. Do not fit `τ_r` or any converter parameter against a HIL trace. |
 | **No RT1987 turn-on transient.** A switch bit change takes effect within the same tick. | The *ordering* of switch operations is fully observable at 1 ms; the *hot-plug energy* that killed a boost (Death 5) is not modelled at all. A HIL pass says the sequencing logic is right, not that a real closure would be survivable. |
 | **Split proportional to MDAC code ratio.** Sign- and monotonicity-preserving, wrong gain. | Share-loop *logic* testable; share-loop *tuning* not. |
-| **Regen modelled end to end (§3.4, WP-C 2026-09-01) — but on THREE unmeasured constants.** The floor is gone: braking energy reaches the chopper and the Ag105. `VESC_REGEN_I_MAX_A`, `ETA_REGEN` and `R_CHOPPER_REG` are all `TODO(verify)`. | The regen PATH, the chopper clamp and the energy BALANCE are now genuine HIL results. The MAGNITUDES are not: a harvest figure from a HIL run inherits the 1.5 A clip's unmeasured commanded-vs-delivered mapping and the 0.80 efficiency guess. Quote the ratio (what fraction the chopper burnt vs the charger banked), not the absolute joules. Bus-side regen rise is still absent by construction, and correctly so — `MOT_PWR` is an ideal diode. |
-| **Charger status-level only; MPPT modelled at the THRESHOLD, not the tracking.** `I_charge` and `ag105_status` are injected (§4.6), so `chargingControl()`'s readiness gating and the GENSTAT fault check are live and testable. SoC and the CV/Fully-Charged branch are modelled (§4.2). **MPPT (2026-08-31, scoped; dynamic from fw v24):** with `mppt_emulation` the part's real mechanism — the **input-voltage threshold** (datasheet p.10; **not** perturb-and-observe) — IS modelled at the value the BOARD reports (observation-frame byte 15), and `MPPT_DISABLE` becomes causal. The **tracking dynamics** (how the module walks its operating point once above the threshold) are **not** modelled, and neither is the I2C transport or config handshake. Off by default. | Sequencing and status-decode logic around the charger are meaningful HIL results, and so is the *threshold gate*'s interaction with the firmware's readiness-gated MPPT release (`mppt-tracking`). Charger **tuning** results are still not available. Charge **efficiency** is modelled from 2026-09-01 (§4.6.1) at a static `ETA_CHG` 0.88 whose datasheet point is not this rig's, so a harvest-efficiency figure from a HIL run is the model's constant played back, not a measurement. ⚠️ The `mppt-tracking` **hunt is fw v23 history and is now the FAILURE signature** — fw v24 lowers the threshold under the bus, so the scenario asserts harvest holding, not hunting. |
+| **Regen modelled end to end (§3.4, WP-C 2026-09-01) — but on THREE unmeasured constants.** The floor is gone: braking energy reaches the chopper and the Ag105. `VESC_REGEN_I_MAX_A`, `ETA_REGEN` and `R_CHOPPER_REG` are all `TODO(verify)`. | The regen PATH, the chopper clamp and the **§3.4 energy invariant tested by `test_regen_energy_balance`** are now genuine HIL results. ⚠️ That invariant is NOT the `p_bal_w` CSV column: `p_bal_w` carries `p_chop` on the source side although it is a dissipation, so on braking ticks the residual is dominated by `−2·p_chop` and closure cannot be read off it. Measured on `regen-harvest-true`, chopper-active mean `p_bal + p_aux` = **−2.3876 W**, of which **−2.0208 W** is the `−2·p_chop` term and the remaining −0.3668 W is the ordinary motoring floor. The column is a pure observer — no published number derives from it in a braking window — and the load-side migration stays deferred to **the next change of the identity** (§4.6.2). The MAGNITUDES are not: a harvest figure from a HIL run inherits the 1.5 A clip's unmeasured commanded-vs-delivered mapping and the 0.80 efficiency guess. Quote the ratio (what fraction the chopper burnt vs the charger banked), not the absolute joules. Bus-side regen rise is still absent by construction, and correctly so — `MOT_PWR` is an ideal diode. |
+| **Charger status-level only; MPPT modelled at the THRESHOLD, not the tracking.** `I_charge` and `ag105_status` are injected (§4.6), so `chargingControl()`'s readiness gating and the GENSTAT fault check are live and testable. SoC and the CV/Fully-Charged branch are modelled (§4.2). **MPPT (2026-08-31, scoped; dynamic from fw v24):** with `mppt_emulation` the part's real mechanism — the **input-voltage threshold** (datasheet p.10; **not** perturb-and-observe) — IS modelled at the value carried on observation-frame byte 15 — a **fiat HIL mirror**, not a board register witness (§4.6: the fw v24 manager is never called under `HIL_SIM`, and the mirror bypasses its window, ratchet, deadband, EPROM budget and regen exclusion) — and `MPPT_DISABLE` becomes causal. The **tracking dynamics** (how the module walks its operating point once above the threshold) are **not** modelled, and neither is the I2C transport or config handshake. Off by default. | Sequencing and status-decode logic around the charger are meaningful HIL results, and so is the *threshold gate*'s interaction with the firmware's readiness-gated MPPT release (`mppt-tracking`). Charger **tuning** results are still not available. Charge **efficiency** is modelled from 2026-09-01 (§4.6.1) at a static `ETA_CHG` 0.88 whose datasheet point is not this rig's, so a harvest-efficiency figure from a HIL run is the model's constant played back, not a measurement. ⚠️ The `mppt-tracking` **hunt is fw v23 history and is now the FAILURE signature** — fw v24 lowers the threshold under the bus, so the scenario asserts harvest holding, not hunting. |
 | **Single lumped bus node.** No wiring impedance, no per-source bus segment, no capacitance between nodes. | Handoff-gap phenomena of the TP0178 class (a source dropping out and the other ideal diode picking up only reactively) are not reproduced faithfully; the split here is instantaneous. |
 | **No sensor noise, no quantization, no ADC path.** | Steady-state error in a HIL drive run validates the loop's *structure*, not its noise rejection. There is no encoder jitter, so the current-side chatter seen on the bench cannot appear. |
 
@@ -1020,8 +1138,8 @@ runs neither the old conclusion nor this reversal should be quoted as a result.
 
 ## 5. Actuator inputs — what the plant consumes
 
-Everything the plant reads about the board comes from the **17-byte** (fw v24)
-observation frame, decoded by `parse_output()` (which validates length, sync
+Everything the plant reads about the board comes from the **18-byte** (fw v25;
+17 B under fw v24, 16 B before) observation frame, decoded by `parse_output()` (which validates length, sync
 `0xB6` and the length-derived XOR span, returning `None` on any failure). The
 **16-byte** fw v21–v23 layout is still accepted — same offsets below byte 15,
 XOR over bytes 1–14, and `mppt_cnt` decodes as `None`. `parse_output()` prints
@@ -1029,7 +1147,7 @@ the length once and warns loudly if a run sees both.
 
 | Frame field | Plant use |
 |---|---|
-| `mppt_cnt` (byte 15, fw v24) | the Ag105 reg-`0x02` count in force → the MPPT threshold the charger model gates on (§4.6); `None` on a legacy frame → the `AG105_MPPT_V_THRESH` fallback. Also written to the CSV as `mppt_thresh_cnt` |
+| `mppt_cnt` (byte 15, fw v24) | the reg-`0x02` count the **HIL mirror** computed → the MPPT threshold the charger model gates on (§4.6). ⚠️ Under `HIL_SIM` this is a fiat recomputation from injected `V_chg` on every settled `chargerHasPower()` tick, **not** the fw v24 manager's output — the manager is never called, and the mirror runs on the REGEN path the manager excludes. `None` on a legacy frame → the `AG105_MPPT_V_THRESH` fallback. Also written to the CSV as `mppt_thresh_cnt` |
 | `switch` bit `SW_FC_BUS` (0x01) | with `AUX_FC_REG` → `fc_live` (§4.1) |
 | `switch` bit `SW_BT_BUS` (0x02) | with `AUX_BT_REG` → `bt_live` |
 | `switch` bit `SW_MOT_PWR` (0x04) | `mot_live` → gates motor force (§3.3), motor bus draw (§4.3), and `V_rgn` = `V_bus` (the RGN-V divider is on V-MOT — §4.5) |
@@ -1070,17 +1188,17 @@ Selected with `--scenario`; `apply_scenario()` is re-evaluated every tick from `
 | `ems-dp-replay` **(EMS-driven, NON-CAUSAL BENCHMARK, 2026-08-31)** | the SAME 61 s profile and the SAME 1.0 A drain as `ems-soc-band` — the scenario entry is *derived* from it and shares the `ems_v_profile` **list object**, and `apply_scenario()` applies one drain branch to both names, so nothing but the decision rule differs. | The **`dp-replay`** playback of an offline dynamic-programming solution (§9.4): the share loop under a commanded rail, and the H2 metric (§9.3) as the comparison surface against `ems-soc-band`. | `cmd_share_sp` **0.250** while the bus is quiet, ramping from t = 4 and **pinned at 0.750 over t = 10.6–40.1** (`I_fc` ≈ 1.10 A of a ~1.46 A bus total), ≈ 0.525 through the low cruise, back to 0.250 by t = 55.5. `charge_goal` is **0 for the whole run** — a result, not a gap (§9.4). **Expected fault-free.** ⚠️ NOT a controller: it reads no feedback, and it refuses to start unless the active scenario's profile fingerprint matches the table's. |
 | `ems-sdp` **(EMS-driven, CAUSAL SDP POLICY, 2026-08-31; RE-MAPPED to `v2` the same day; REBOUND to the CALIBRATED `v3` artifact 2026-09-01 — see the role note at the end of this cell)** | the SAME 61 s profile and the SAME 1.0 A drain as `ems-soc-band` and `ems-dp-replay` — the entry is *derived* from the first and shares its `ems_v_profile` LIST OBJECT, and `apply_scenario()` matches all three names on one drain branch, so the three-way comparison is on a bit-identical stimulus. Charge ceiling **0.8 A**, inherited. `electrical: any` (unlike `ems-dp-replay`, this leg has no offline hydrogen accounting that must match the engine). | The **`sdp-v2`** strategy: a STATE-indexed policy (SoC x demand bin) baked offline by stochastic DP (`tools/sdp_ems_solver.py`, artifact `tools/sdp_policies/sdp_policy_v2.json`), looked up every `decision_dt_s` = 1 s and held between decisions. It is the CAUSAL optimal-by-construction leg between the `soc-band` heuristic and the non-causal `dp-replay` bound. ⚠️ **`v1` vs `v2`:** `sdp_policy_v1.json` was solved against the TPM sidecar's IDEAL-SCALING demand span (−1.125…+1.640 W). This rig measures 0…22.887 W, so campaign `hil_report_20260831_191509` clamped ~98 % of decisions into the top bin: the demand axis carried no information and one constant share was emitted for the whole run. `v2` is the SAME TPM re-solved against a **[0.0, 25.0] W consumer demand map** (solver D11 has the derivation); both files declare the same `schema`, so only `normalization` and the policy-block sha distinguish a `v1` trace from a `v2` one. | Measured by an OFFLINE WALK of the strategy's own decision path over the campaign's recorded P_dem/SoC trace (⚠️ open loop — it cannot contain the plant's response to a command `v2` issues and `v1` did not): **61 decisions, ZERO clamps either way, 13 distinct demand bins** (0, 2–7, 9, 10, 12, 16, 17, 22) against `v1`'s single bin 24. The share law is bang-bang by construction (the stage cost is piecewise-linear in the share, so its minimum is at a vertex): the table's whole value set is {0.00, 0.90, 0.95, 1.00}, and on this run it asks **0.95 over the drain plateau** (bin 22, t = 13…38) and **1.00** elsewhere. **Both emit as the HARDWARE-ENVELOPE CLAMP 0.8500** (`[SOC_BAND_SHARE_MIN, SOC_BAND_SHARE_MAX]`, `SdpStrategy.clamp_share()` — the same clamp `soc-band` applies, actuation-side only, table untouched, raw value counted and printed): a rail would sit outside `[DROOP_R_MIN, DROOP_R_MAX]`, cut BT off the bus and run single-source FC into the ~1.45 A drain past `LIMIT_I_FC_MAX` — an OC latch that would truncate the run and destroy the three-way comparison. ⚠️ **So `cmd_share_sp` cannot distinguish `v1` from `v2`; the `cmd_share_sp_raw` column (§7.1) can.** At the clamp the firmware's own governor clips further to `1 − I_min/I_tot` = 0.798 at the **measured 1.4866 A** drain peak: **I_fc 1.1866 A (15.2 % margin under LIMIT_I_FC_MAX)** — campaign `20260831_191509` measured values; the 1.462 A / ~1.16 A / 17 % triple this line used to carry was the pre-campaign estimate, BT minority exactly `SHARE_MINORITY_I_MIN_A` 0.30 A, no cut attempted, so `SHARE_CUT_MAX_HANDOFF_A` never enters. ⚠️ **NEW UNDER `v2`: a charge window is reachable.** The solver's FC-current budget forbids charging above bin 5 and its dwell rule above bin 11, so `charge_goal` = 1 exactly in bins 0–5 (P_dem < 6.0 W) below the relative target — which the walk lands on **t = 41…58**, the same post-drain 1.0 m/s cruise `soc-band` charges in, reached by a different rule. Budget: 5.593 W / 15.95 V = 0.351 A + 0.800 A ceiling = **1.151 A, 18 % margin**, i.e. `ems-soc-band`'s own validated charge-window operating point. ⚠️ **Predicted 1 Hz chatter of `FC_CHARGE_ENABLE`** (derived, not measured): opening the path adds ~0.8 A to I_fc, so the measured P_dem jumps ~5.6 → ~18.3 W = bin 18, which is charge-forbidden, and the next decision withdraws the intent. The policy is memoryless in the demand bin and has no hysteresis (`soc-band` avoids this with its dual i_tot gate), so ~8 open/close cycles are expected, each costing a BT_BUS cut and restore through `assertFcChargeEnable()`. Neither state exceeds a current limit; do **not** assert `I_charge` here the way `ems-soc-band` does, since the Ag105 may never reach `chargerReady` inside a 1 s window. **Expected fault-free over the full 61 s**; `h2_cum_g` ~1e-2 g. ⚠️ Read its `delta_soc` with the hydrogen number. ⚠️ SIM-ONLY (plant-truth SoC), like `soc-band`. PROVENANCE: the artifact's POLICY-BLOCK sha256 is `740c802e…` (`v1`'s was `dbe42d1b…`; recipe `sha256(json.dumps(doc["policy"], sort_keys=True))`) — the decision law, stable across a regeneration that did not change it, and the digest to quote. The FILE sha moves on every regeneration (`generated_utc`), so it is recorded PER RUN in the CSV meta sidecar under `config.sdp_policy` alongside the policy-block sha, `generated_utc`, the grid shape and the TPM sha. ⚠️ **REBOUND TO `sdp-v3` ON 2026-09-01 (the charge-economics ruling).** Campaign `20260901_000816` measured this leg OFF the EMS frontier (+12.78 % over the DP bound, 1.54 % worse than the `soc-band` heuristic), and the cause was the charge action described above: `v2`'s alpha prices SoC at 5.139 g/SoC, i.e. an admission threshold of **0.1946 SoC/g**, while the Ag105's measured charge lever is **0.2364** and the share lever is **0.409-0.415** — every lever in that gap is taken by the solver and scored as a loss. `sdp_policy_v3.json` (policy-block sha256 `0443febf…`) re-derives alpha by two-sided lever calibration and the charge action is then declined **ENDOGENOUSLY**: zero charge cells in all 101 x 25, `forbid_charge_all` FALSE. **So everything in this cell about the charge window is now HISTORY** — under `v3` the suite asserts `charge_path_never_opens` instead, and the chatter/hysteresis paragraphs describe a mechanism this leg no longer reaches. **The share half is unchanged:** the two artifacts' `policy.share` differ on SoC rows 1-2 only, which this trajectory (row 50, falling ~0.0017) never reaches. `sdp_policy_v2.json` is BYTE-FROZEN as the DYNAMICS DEMONSTRATION artifact for `ems-sdp-cross` / `ems-sdp-braking`. |
 | `ems-ftp75-sdp` **(EMS-driven, opt-in, SDP-INTERIOR ROUND, 2026-08-31; rebound to `sdp-v3` 2026-09-01)** | the SAME EPA FTP-75 profile LIST OBJECT as the other two FTP-75 scenarios, at **`FTP75_SDP_PRELOAD_A` = 0.0 A** since 2026-09-01 (it was a re-derived 0.45 A against the siblings' 0.65 A; ⚠️ EVERY WALK NUMBER IN THIS ROW BELONGS TO THE 0.45 A ERA — at preload 0 the governor walk gives a single flip at **t = 272.0 s** (band re-opened to (240, 295)), governed FC peak **0.7046 A** (50 % under `LIMIT_I_FC_MAX`, so the de-rating that sized the preload is moot), pre-flip window I_fc peak 0.0788 A through an OPEN-LOOP window, and `h2_cum_g` **0.019347 g**; every threshold on the entry is PROVISIONAL again), driven by **`sdp-v3`, playing `sdp_policy_v3.json` (policy-block sha256 `0443febf…`)** with **`sdp_soc_ref_offset` = +0.013**. (Every action quoted below was read off the `v2` artifact `740c802e…`; the two share maps are identical on SoC rows 3+ and this trajectory never leaves them — see the row-diff test.) | The SDP policy's **bang-bang SHARE law**, which no run before this round could put on the wire: every earlier `ems-sdp` run started EXACTLY on the policy's target node and could only discharge, so the table sat on its fuel-cell branch and the wire carried ONE constant clamped 0.8500 for the whole run. The offset starts the run 0.013 SoC ABOVE the node, i.e. on the table's OTHER branch (action 0.00, emitted at the `SOC_BAND_SHARE_MIN` clamp as **0.15**), and the cycle's own drain walks the state across the switching boundary. | OFFLINE WALK (2026-08-31, method in the SCENARIOS entry; cross-checked against the MEASURED `ems-ftp75-5050` trace of campaign 20260901_000816, which runs +2.6 % hot against the model): a SINGLE share step **0.15 -> 0.85 at t = 195.9 s**, +/-10 % of drain moving it to 180/205 s and +/-20 % to 158/216 s - hence the suite's (150, 250) s band. Raw table requests {0.00} before, {1.00, 0.95} after. **NO charge stage is reachable** (demand never falls below bin 9 in Run), so this is a pure share-axis test. Currents: on the battery-heavy branch the commanded 0.15 is always below the governor's minority floor, so **I_fc is pinned at 0.300 A** and peak I_bt is 0.676 A (77 % under `LIMIT_I_BT_MAX`); on the fuel-cell branch **I_fc = I_tot - 0.300**, peaking at 1.112 A model / **1.1546 A measured** (the ADDITIVE composition 0.15 + 0.45 + 0.8546 - 0.300; do not scale the model's FC branch by the +2.6 % offset, which also scales the firmware's fixed 0.300 A governor floor and reads 1.141 A) - **17.5 % under `LIMIT_I_FC_MAX`**, which is what sized the preload down from 0.65 A (there the same peak is 1.355 A, 3.2 % of margin, and an OC_FC latch would truncate the run at exactly its post-flip half). **Expected fault-free**; `allow_only: 0`, unlike its socband sibling. ✔ **CALIBRATED, campaign `20260901_024231`** (the `provisional_note` is deleted): flip MEASURED at **198.537 s** (+1.35 % on the walk — an integral quantity inside 1.4 %, this walk's best result), so the band tightened (150, 250) -> **(185, 212)**; `I_fc` peaks 0.3039 A pre-flip / 1.1516 A at the cycle peak (ceilings/floors now 0.35 / 1.08 A); `I_batt` peaks 0.7117 A **at the flip**, newly bounded at 0.90 A; `h2_cum_g` 0.0621749 g, band [0.020, 0.120] -> **[0.056, 0.070]**. Bin 24 was NOT entered, so the 0.89 raw floor deliberately stays at its boundary-case value rather than tightening to the measured 0.95. ⚠️ **REBOUND TO the calibrated `sdp-v3` artifact on 2026-09-01, AND THE WALK TRANSFERS VERBATIM.** The walk above was measured against `v2` and was NOT re-run, because a row-by-row diff settles it: `policy.share` is identical at every SoC row from 3 upward (the two artifacts differ in 30 cells, all on rows 1-2) and this scenario spans rows ~63 down to ~44. On the charge axis, `v2`'s cells sit in demand bins 0-5 only and this walk's demand never falls below bin 9 in Run, so `v3`'s zero map removes cells the trajectory could not visit either way — 'no charge stage is reachable' was already the claim and is now additionally true by construction. |
-| `ems-sdp-cross` **(EMS-driven, SDP-INTERIOR ROUND, 2026-08-31)** | a **two-level cruise** - 2.2 m/s to t = 70, then 1.0 m/s to the Run exit at 196 - with **no preload** (`I_AUX_A` alone), 200 s, charge ceiling 0.8 A, `sdp_soc_ref_offset` = **+0.0025**. The high level sits at P_dem ~10.6 W (bin 10, charge-FORBIDDEN) and above the 0.60 A closed-loop gate, so the governor's minority floor keeps 0.30 A on the standby channel and both the pre-flip drain and the post-flip node traverse are fast enough to fit a bench run; the low level sits at P_dem 5.37 W (bin 5, the top charge-admissible bin) - `ems-soc-band`'s own validated charge operating point. | The artifact's **two SoC switching surfaces**, which are one grid node apart: node >= 51 gives share 0.00 with no charging, node 50 gives 0.85 with no charging (a 1e-3-wide dead band), node <= 49 gives 0.85 **with** charging in bins 0-5. So this run crosses the SHARE threshold downward and then cycles on the CHARGE threshold. An UPWARD share crossing is **not reachable on this rig** - it would need a charge ceiling above 2.25 A, which on the single-source FC path is an immediate OC_FC - and nothing in the entry asserts one. | OFFLINE WALK: share **0.15 -> 0.85 at t = 43.85 s** (the run's only share transition), then **three sustained charge windows** - 75.4-83.8, 115.3-123.7, 172.9-180.9 s - each one `SDP_CHG_MIN_DWELL_S` long, period ~50-57 s. One 1.05 s admit-then-drop at t = 73.3 INSIDE the deceleration is EXPECTED and not asserted: the demand falls into bin 5 before the ramp ends and `charge_hold_status()`'s `SDP_CHG_CRUISE_DELTA_MPS` guard withdraws the intent on the next decision - the only live exercise that early-drop branch has ever had. Peak I_fc 1.1372 A (single-source FC carrying 0.337 A of load plus the 0.8 A ceiling), **18.8 % under `LIMIT_I_FC_MAX`**; peak I_bt 0.6087 A. SoC 0.700000 -> 0.697195. **Expected fault-free.** No board-side SHARE-BRANCH check is possible here and the suite entry says so: at 0.67 A of total the governor clips both branches to within 0.07 A of each other. ✔ **CALIBRATED, campaign `20260901_024231`** (the `provisional_note` is deleted) **— AND THIS SCENARIO PRODUCED THE ROUND'S ONE FAILURE.** MEASURED: flip **42.292 s** (-3.5 % on the walk, band (25, 65) -> **(35, 50)**); **NINE** charge windows at a **16.13 s** period, gaps 8.04-8.08 s (sigma 17 ms), 64103 of 120000 ticks over t = 70..190 (released fraction 0.466), longest hold **8.085 s** = `SDP_CHG_MIN_DWELL_S` + 1.1 %; `I_charge` reached its full 0.8000 A ceiling (floor 0.5 -> **0.75 A**); `I_fc` peaked **1.1920 A**, 14.9 % under `LIMIT_I_FC_MAX`, now bounded at 1.28 A. Both switching surfaces located for the first time: share at SoC 0.69800, charge at 0.69700, both on the predicted grid nodes. ⚠️ **THE WALK'S CHARGE PERIOD WAS WRONG BY 5.7x**, and the retired check `sdpx_charge_released_between` asserted the ABSENCE of a window at t = 90..108 s taken from it — so it sat on top of a real window and failed a correct board. Root cause: the walk applied the firmware's CLOSED-LOOP minority governor at a cruise drawing I_tot ~ 0.355 A, below the **0.55 A open-loop drop-out** (`.ino:9933`), where the board HOLDS its last converged split — delivered share **0.1656** against the commanded 0.85, so the real drain is -3.90e-5 SoC/s, not ~6.9e-6. The check is replaced by four PHASE-FREE properties (tick floor 12000 -> **45000**, `max_continuous_ticks` <= 9000, released-fraction ceiling 84000 ticks, `edge_count_between` (6, 12)). |
+| `ems-sdp-cross` **(EMS-driven, SDP-INTERIOR ROUND, 2026-08-31)** | a **two-level cruise** - 2.2 m/s to t = 70, then 1.0 m/s to the Run exit at 196 - with **no preload** (`I_AUX_A` alone), 200 s, charge ceiling 0.8 A, `sdp_soc_ref_offset` = **+0.0025**. The high level sits at P_dem ~10.6 W (bin 10, charge-FORBIDDEN) and above the 0.60 A closed-loop gate, so the governor's minority floor keeps 0.30 A on the standby channel and both the pre-flip drain and the post-flip node traverse are fast enough to fit a bench run; the low level sits at P_dem 5.37 W (bin 5, the top charge-admissible bin) - `ems-soc-band`'s own validated charge operating point. | The artifact's **two SoC switching surfaces**, which are one grid node apart: node >= 51 gives share 0.00 with no charging, node 50 gives 0.85 with no charging (a 1e-3-wide dead band), node <= 49 gives 0.85 **with** charging in bins 0-5. So this run crosses the SHARE threshold downward and then cycles on the CHARGE threshold. An UPWARD share crossing is **not reachable on this rig** - it would need a charge ceiling above 2.25 A, which on the single-source FC path is an immediate OC_FC - and nothing in the entry asserts one. | OFFLINE WALK: share **0.15 -> 0.85 at t = 43.85 s** (the run's only share transition), then **three sustained charge windows** - 75.4-83.8, 115.3-123.7, 172.9-180.9 s - each one `SDP_CHG_MIN_DWELL_S` long, period ~50-57 s. One 1.05 s admit-then-drop at t = 73.3 INSIDE the deceleration is EXPECTED and not asserted: the demand falls into bin 5 before the ramp ends and `charge_hold_status()`'s `SDP_CHG_CRUISE_DELTA_MPS` guard withdraws the intent on the next decision - the only live exercise that early-drop branch has ever had. Peak I_fc 1.1372 A (single-source FC carrying 0.337 A of load plus the 0.8 A ceiling), **18.8 % under `LIMIT_I_FC_MAX`**; peak I_bt 0.6087 A. SoC 0.700000 -> 0.697195. **Expected fault-free.** No board-side SHARE-BRANCH check is possible here and the suite entry says so: at 0.67 A of total the governor clips both branches to within 0.07 A of each other. ✔ **CALIBRATED, campaign `20260901_024231`** (the `provisional_note` is deleted) **— AND THIS SCENARIO PRODUCED THE ROUND'S ONE FAILURE.** MEASURED: flip **42.292 s** (-3.5 % on the walk, band (25, 65) -> **(35, 50)**); **NINE** charge windows at a **16.13 s** period, gaps 8.04-8.08 s (sigma 17 ms), 64103 of 120000 ticks over t = 70..190 (released fraction 0.466), longest hold **8.085 s** = `SDP_CHG_MIN_DWELL_S` + 1.1 %; `I_charge` reached its full 0.8000 A ceiling (floor 0.5 -> **0.75 A**); `I_fc` peaked **1.1920 A**, 14.9 % under `LIMIT_I_FC_MAX`, now bounded at 1.28 A. Both switching surfaces located for the first time: share at SoC 0.69800, charge at 0.69700, both on the predicted grid nodes. ⚠️ **THE WALK'S CHARGE PERIOD WAS WRONG BY 5.7x**, and the retired check `sdpx_charge_released_between` asserted the ABSENCE of a window at t = 90..108 s taken from it — so it sat on top of a real window and failed a correct board. Root cause: the walk applied the firmware's CLOSED-LOOP minority governor at a cruise drawing I_tot ~ 0.355 A, below the **0.55 A open-loop drop-out** (the `shareClosedLoopMode` gate in `powerBalance()`), where the board HOLDS its last converged split — delivered share **0.1656** against the commanded 0.85, so the real drain is -3.90e-5 SoC/s, not ~6.9e-6. The check is replaced by four PHASE-FREE properties (tick floor 12000 -> **45000**, `max_continuous_ticks` <= 9000, released-fraction ceiling 84000 ticks, `edge_count_between` (6, 12)). |
 | `ems-sdp-braking` **(EMS-driven, SDP-INTERIOR ROUND, 2026-08-31)** | **four braking cycles** - 10 s at 2.2 m/s, 3 s decel to 1.0 m/s, 12 s plateau, 6 s accel back - built from the `SDP_BRAKE_*` constants (the profile is GENERATED, and asserts that its last plateau ends exactly at the Run exit), 134 s, no preload, charge ceiling **0.7 A**, `sdp_soc_ref_offset` = **-0.005**. | The policy's **charge decision on the DEMAND axis alone**. Starting below the target node pins the share command at a constant 0.85 for the whole run BY DESIGN, so with the SoC axis held still every FC_CHARGE transition in the trace is attributable to demand: the low plateaus are bin 5 (admissible) and the cruises are bin 10 (forbidden). **HONEST CAPTION: the SoC rise is FUEL-CELL-FED through FC_CHARGE, not regen harvest** - by this scenario's own demand-axis design (the decel plateaus are the charge-admissible bins), this validates the policy's decel-window charge behaviour and NOT regen capture. The zero-regen-power floor this caption used to blame was removed by the regen-fidelity model round (WP-C, shipped 2026-09-01) — regen capture itself is now exercised by `regen-harvest-true`, not by this scenario. | OFFLINE WALK: **four sustained windows, one per plateau** - 21.3-34.4, 52.2-64.8, 83.7-96.3, 114.2-126.0 s, 50.1 s of charging total - and **ZERO charge ticks inside any of the four cruise holds**. Five ~1.05 s admit-then-drop blips (Run entry plus one per deceleration), same cruise-guard mechanism as `ems-sdp-cross`'s, each shorter than `AG105_SETTLE_S` so no charge is actually delivered; expected, not asserted. Peak I_fc **1.1671 A at t = 34.4**, which is the ONE-DECISION charge overhang into the acceleration out of a plateau - the cruise guard withdraws the latch only at the next decision, so the accel current adds to the charger's on the single-source FC channel. That peak is why BOTH `SDP_BRAKE_ACCEL_S` (6.0 s = 0.20 m/s^2) and `SDP_BRAKE_CHG_CEILING_A` (0.7 A) are current-budget constants: at 0.40 m/s^2 and 0.8 A the same peak is 1.379 A, **1.5 %** under `LIMIT_I_FC_MAX`. As shipped it is 16.6 % under. Peak I_bt 0.300 A (the minority floor, all run). SoC 0.700000 -> 0.699662 - very nearly charge-sustained. **Expected fault-free.** ✔ **CALIBRATED, campaign `20260901_024231`** (the `provisional_note` is deleted) **— AND THIS WALK WAS RIGHT, for a stated reason:** these windows are DEMAND-driven, so they land on the profile's own fixed instants rather than on an integrated drain (contrast `ems-sdp-cross`, whose SoC-driven period the same walk missed by 5.7x). MEASURED: four sustained windows of four, **52.479 s** (walk 50.1, +4.7 %; floor 25000 -> **45000** ticks), longest 13.108 s, **ZERO** ticks inside both asserted cruise windows (ceiling 500 -> **100**), and the walk's **five** cruise-guard early drops to the instant (t = 3.008 / 19.175 / 50.390 / 81.624 / 112.842) - the first live exercise of that branch, now censused by `sdpb_charge_edge_census` at 8-10 rising edges = 4 windows + 4-6 drops. `I_charge` reached its full 0.7000 A ceiling (floor 0.4 -> **0.65 A**). ⚠️ Peak `I_fc` **1.2617 A** at t = 65.51 in the one-decision overhang - **9.9 % under `LIMIT_I_FC_MAX`, the tightest margin in the suite** and 8.1 % above the walk's 1.1671 A. Newly asserted by `sdpb_fc_peak_bounded` at 1.32 A; never raise it to make a run green. |
-| `handoff-sag` **(hi-fi only)** | cruise from 4 s with a **+0.40 A pre-load** (pre-rail total ~0.74 A: above the 0.60 A closed-loop governor gate, below the cut's 0.5 A/channel handoff guard), share commanded to **0.0** at 6 s so the **FC** channel is cut, then a **+1.5 A** step at 20 s against the surviving BT channel (2.24 A vs `LIMIT_I_BT_MAX` 3.0 A, 25 % margin) | the share **setpoint latch** (`updateShareSetpointCutoff()`, `.ino:9231-9257`) opening a bus switch, its `SHARE_CUT_MAX_HANDOFF_A` 0.5 A load guard, and the single-source sag + UV dwell decision that follows | Bus switch open and held open, a deeper single-source droop, and either a clean ride or a correctly-latched `UV_BUS`. ⚠️ **Not** a reactive-pickup test: a setpoint-latched cut drives the switch EN-low, and an EN-low RT1987 does not conduct — nor will the firmware re-close it (the re-closers gate on `!shareSpCut*`). The rail direction is BT-surviving because at the FC rail the 1.4 A limit leaves too little perturbation budget to excite anything. Refused under `--electrical simple`. |
+| `handoff-sag` **(hi-fi only)** | cruise from 4 s with a **+0.40 A pre-load** (pre-rail total ~0.74 A: above the 0.60 A closed-loop governor gate, below the cut's 0.5 A/channel handoff guard), share commanded to **0.0** at 6 s so the **FC** channel is cut, then a **+1.5 A** step at 20 s against the surviving BT channel (2.24 A vs `LIMIT_I_BT_MAX` 3.0 A, 25 % margin) | the share **setpoint latch** (`updateShareSetpointCutoff()`) opening a bus switch, its `SHARE_CUT_MAX_HANDOFF_A` 0.5 A load guard, and the single-source sag + UV dwell decision that follows | Bus switch open and held open, a deeper single-source droop, and either a clean ride or a correctly-latched `UV_BUS`. ⚠️ **Not** a reactive-pickup test: a setpoint-latched cut drives the switch EN-low, and an EN-low RT1987 does not conduct — nor will the firmware re-close it (the re-closers gate on `!shareSpCut*`). The rail direction is BT-surviving because at the FC rail the 1.4 A limit leaves too little perturbation budget to excite anything. Refused under `--electrical simple`. |
 | `bringup` **(hi-fi only)** | none; plant from dark | the firmware's staged bring-up P0–P3 against the **real** RT1987 `t_D(ON)` 8 ms + soft-start ramps (~19.8 ms on the 100 nF switches, ~1.07 ms on the 5.6 nF ones) | Operator runs `'G'`; the phase timings in the USB log should sit outside the switch delays rather than racing them. |
 | `scp-inrush` **(hi-fi only)** | VESC input capacitance forced to the **top of the envelope (0.9 mF)**, and a **three-phase V-MOT load** (behind the switch, *not* `i_aux` on VBUS; 2026-08-31 deterministic redesign): the bring-up P3 ramp runs **unloaded**, a **6.5 A fold pulse** (`SCP_INRUSH_FOLD_LOAD_A`) steps in once V-MOT crosses `SCP_INRUSH_ARM_V` 1.2 V mid-soft-start (above the model's 1.0 V Norton load floor, so the full current appears in one substep and the cut fires inside that same 1 kHz tick — phase-independent of the firmware's OC teardown), a one-shot latch withdraws it, and a **5.0 A run load** at +110 ms latches `OC_FC`. The pre-redesign t = 0 flat 5.0 A load faded in through the Norton floor and its cut raced the firmware's teardown (the 2026-08-31 two-outcome episode); the older-still +6 A at t = 8 s arrived when `MOT_PWR` had been ON since t ≈ 0.62 s, and the foldback branch exists only in `SOFT`: **zero** `scp_cut`/fold events fired. | RT1987 soft-start **foldback** on `MOT_PWR` | `scp_cut` + `sw_ring` entries in the event sidecar. Verified offline: the margin holds at 2 A (soft-start completes, `V_mot` reaches 15.1 V) and breaks at ≥ 4 A into a **64 ms burst-retry cycle** — the Death-5-class ring pattern. **Not** the Death-5 stimulus itself: that was a full-bus hot-plug onto a discharged node, no longer reproducible (`MOT_PWR` carries a 100 nF CSS and the firmware pre-charges the node). This is the nearest *legitimate* case that can still bind the foldback. Ring peaks here stay under the 20 V abs-max because the cut happens at low `V_mot`; a cut at full bus on `--trace-config long` (BT, 3.480 nH) does cross it. |
-| `ems-y-b30-v1`, `ems-y-b30-v3` **(EMS-driven, 2026-08-31)** | the firmware's own `'Y'` combined table (16 regions, 40 s), copied VERBATIM from `.ino:3162-3179` into `hil_plant_sim.COMBINED_PROFILE` and walked by `y_profile_at()` — an exact reproduction of `advanceComboRegion()` (`.ino:7806-7836`), including the clip-AFTER-interpolation rule and its intended kink. Vmax 1 and 3 m/s at the firmware's documented bound b = 0.30, plus a **+0.85 A `aux_preload_a`** (`Y_AUX_LOAD_A`, raised from 0.60 A on 2026-08-31) that holds the source total in **1.00–2.27 A**, above the 0.60 A closed-loop governor gate for the whole table. ⚠️ **Why it was raised, and why b30 results do not cross the change:** at 0.60 A the firmware's minority-current governor clipped the share to `1 − I_min/I_tot` = **0.624 / 0.672** at region 6 — *below* the table's own 0.70 clip — so the hi bound was **structurally undeliverable** and every b30 run characterised the governor instead (campaign `hil_report_20260831_191509` measured the rails at 0.632 / 0.679). At 0.85 A the bounds land at 0.714 / 0.743 and both the hi (0.70) and lo (0.30) clips are reachable at both speeds. Worst channel currents 0.999 A FC (28.7 % under `LIMIT_I_FC_MAX`) / 1.475 A BT. ⚠️ The preload **ramps in** over `SOC_LOAD_RAMP_S` from t = 4.0, so the table's first **0.59 s** (was 1.25 s) is still below the gate — inside region 0's settle, so no assertion window is affected. ⚠️ The commands are evaluated at 50 Hz, not the firmware's ~1 kHz: the share axis is unaffected (the share loop's own tick is 50 Hz), and the motor axis quantises to ≤ 12 mm/s at Vmax 3, against `e_sat` ≈ 26.4 mm/s. | **Closed-loop share tracking** under a two-axis cross-coupled excitation — the reason the firmware's table exists — reachable unattended for the first time. | `cmd_share_sp` reaches its clip **0.70** in region 6 (t = 22.0–23.5), sweeps 0.65 → 0.30 across region 10 (t = 32.0–35.0); `cmd_v_sp` reaches ≈ 0.996·Vmax at the region-7 ramp top (t → 27.0); `I_fc` ≥ **0.50 A** (Vmax 1) / **0.66 A** (Vmax 3) through **region 3 alone** (t = 13.0–16.0, where v is held constant so only the share command moves `I_fc`), against measured 0.50-split peaks of 0.4353 / 0.5850 A and measured true-run peaks of 0.5659 / 0.7606 A. ⚠️ Window and floors RE-DERIVED FROM MEASUREMENT 2026-08-31 (campaign `hil_report_20260831_191509`): the previous t = 13–20 window included region 4's ramp, where a 0.50 split alone reaches 0.4915 / 0.9217 A, and the MODELLED 0.58 / 0.80 floors sat above the true run's own region-3 peaks; the 0.45 / 0.60 pair before them belongs to the 0.60 A stimulus. **Expected fault-free.** |
-| `ems-y-b00-v1`, `ems-y-b00-v3` **(EMS-driven, 2026-08-31)** | the same table at **b = 0.00** and with **NO preload**. Regions 6 and 11 command share 1.00 and 0.00, outside `[DROOP_R_MIN 0.15, DROOP_R_MAX 0.85]`. The preload is omitted deliberately: the cut is gated on the doomed channel's own current by `SHARE_CUT_MAX_HANDOFF_A` 0.5 A (`.ino:2018`), so a preload would put the load exactly where the latch is REFUSED. Source total spans 0.15–1.41 A. | The **cut-and-RESTORE topology** of `updateShareSetpointCutoff()`, both channels and both directions. The two RESTORE assertions are novel: `handoff-sag` asserts a cut and then perturbs, so nothing in this suite has ever checked that a latch is released. | `SW_BT_BUS` **clear** through region 6 (≤ 100 of ~1100 ticks) and **set** again through region 7 (≥ 2000 of 3000); `SW_FC_BUS` clear across regions 10/11 and set again from region 12. **Expected fault-free.** ⚠️ At Vmax 1 the total **never** reaches the 0.60 A governor gate, so the share loop runs **open-loop feedforward** for the whole run — and Vmax 3 is barely better: campaign `hil_report_20260831_191509` measured only **20.6 %** of that run above the gate. This pair is a **topology** test, not a tracking one; its cut/restore verdicts are sound and any share *amplitude* read off it is not. |
+| `ems-y-b30-v1`, `ems-y-b30-v3` **(EMS-driven, 2026-08-31)** | the firmware's own `'Y'` combined table (16 regions, 40 s), copied VERBATIM from the firmware's `COMBINED_PROFILE` region table into `hil_plant_sim.COMBINED_PROFILE` and walked by `y_profile_at()` — an exact reproduction of `advanceComboRegion()`, including the clip-AFTER-interpolation rule and its intended kink. Vmax 1 and 3 m/s at the firmware's documented bound b = 0.30, plus a **+0.85 A `aux_preload_a`** (`Y_AUX_LOAD_A`, raised from 0.60 A on 2026-08-31) that holds the source total in **1.00–2.27 A**, above the 0.60 A closed-loop governor gate for the whole table. ⚠️ **Why it was raised, and why b30 results do not cross the change:** at 0.60 A the firmware's minority-current governor clipped the share to `1 − I_min/I_tot` = **0.624 / 0.672** at region 6 — *below* the table's own 0.70 clip — so the hi bound was **structurally undeliverable** and every b30 run characterised the governor instead (campaign `hil_report_20260831_191509` measured the rails at 0.632 / 0.679). At 0.85 A the bounds land at 0.714 / 0.743 and both the hi (0.70) and lo (0.30) clips are reachable at both speeds. Worst channel currents 0.999 A FC (28.7 % under `LIMIT_I_FC_MAX`) / 1.475 A BT. ⚠️ The preload **ramps in** over `SOC_LOAD_RAMP_S` from t = 4.0, so the table's first **0.59 s** (was 1.25 s) is still below the gate — inside region 0's settle, so no assertion window is affected. ⚠️ The commands are evaluated at 50 Hz, not the firmware's ~1 kHz: the share axis is unaffected (the share loop's own tick is 50 Hz), and the motor axis quantises to ≤ 12 mm/s at Vmax 3, against `e_sat` ≈ 26.4 mm/s. | **Closed-loop share tracking** under a two-axis cross-coupled excitation — the reason the firmware's table exists — reachable unattended for the first time. | `cmd_share_sp` reaches its clip **0.70** in region 6 (t = 22.0–23.5), sweeps 0.65 → 0.30 across region 10 (t = 32.0–35.0); `cmd_v_sp` reaches ≈ 0.996·Vmax at the region-7 ramp top (t → 27.0); `I_fc` ≥ **0.50 A** (Vmax 1) / **0.66 A** (Vmax 3) through **region 3 alone** (t = 13.0–16.0, where v is held constant so only the share command moves `I_fc`), against measured 0.50-split peaks of 0.4353 / 0.5850 A and measured true-run peaks of 0.5659 / 0.7606 A. ⚠️ Window and floors RE-DERIVED FROM MEASUREMENT 2026-08-31 (campaign `hil_report_20260831_191509`): the previous t = 13–20 window included region 4's ramp, where a 0.50 split alone reaches 0.4915 / 0.9217 A, and the MODELLED 0.58 / 0.80 floors sat above the true run's own region-3 peaks; the 0.45 / 0.60 pair before them belongs to the 0.60 A stimulus. **Expected fault-free.** |
+| `ems-y-b00-v1`, `ems-y-b00-v3` **(EMS-driven, 2026-08-31)** | the same table at **b = 0.00** and with **NO preload**. Regions 6 and 11 command share 1.00 and 0.00, outside `[DROOP_R_MIN 0.15, DROOP_R_MAX 0.85]`. The preload is omitted deliberately: the cut is gated on the doomed channel's own current by `SHARE_CUT_MAX_HANDOFF_A` 0.5 A, so a preload would put the load exactly where the latch is REFUSED. Source total spans 0.15–1.41 A. | The **cut-and-RESTORE topology** of `updateShareSetpointCutoff()`, both channels and both directions. The two RESTORE assertions are novel: `handoff-sag` asserts a cut and then perturbs, so nothing in this suite has ever checked that a latch is released. | `SW_BT_BUS` **clear** through region 6 (≤ 100 of ~1100 ticks) and **set** again through region 7 (≥ 2000 of 3000); `SW_FC_BUS` clear across regions 10/11 and set again from region 12. **Expected fault-free.** ⚠️ At Vmax 1 the total **never** reaches the 0.60 A governor gate, so the share loop runs **open-loop** for the whole run — and Vmax 3 is barely better: campaign `hil_report_20260831_191509` measured only **20.6 %** of that run above the gate, against **12.7 %** from the model walk over the table alone. ⚠️ **The two figures are NOT reconciled and 20.6 % does not reproduce** — three later recomputations give 16.98 %, 19.33 % and 19.13 %. They are a denominator/stimulus discrepancy, not evidence about the share loop's modes; quote the range, not either endpoint, until a `governor_model.py` replay of this leg settles it. Note also that "open loop" here is not synonymous with "inert": below the gate the firmware is in HOLD or in slew-limited FEEDFORWARD (§4.4), and this leg's own commanded setpoint changes put it in the latter. This pair is a **topology** test, not a tracking one; its cut/restore verdicts are sound and any share *amplitude* read off it is not. |
 | `ems-ftp75-5050`, `ems-ftp75-socband` **(EMS-driven, opt-in, 2026-08-31)** | the **EPA FTP-75** cycle at raw t = 0..340 s inclusive, 341 samples at 1 Hz (the segment of `references/Systemic_Scaling_of_Powertrain_Models_with_Youla_Driver_Control.pdf`; the raw EPA file is committed at `references/drive_cycles/ftpcol.txt` and `tools/gen_ftp75_profile.py` verifies its sha256 before generating `tools/ftp75_profile.py` — 341 raw samples decimated to 234 points, worst reconstruction error 4.4e-16 m/s). Scaled by ONE constant, 3.0/56.7 m/s per mph, so the 56.7 mph peak lands on 3.0 m/s; shifted to start at t = 5.0; ends at rest (the trace is 0 mph from raw t = 333, so no synthetic tail is appended). 350 s each, `aux_preload_a` **0.0 A** (`FTP75_PRELOAD_A`) since 2026-09-01. ⚠️ IT WAS **+0.65 A**, which put 100.00 % of the post-ramp run above the 0.60 A governor gate at a 0.800 A floor; every number in this row's last two columns belongs to that era. At preload 0 the idle total is `I_AUX_A` = 0.15 A, the peak source total is **0.9603 A** (model) / ~0.985 A measured-scaled, the share loop runs OPEN-LOOP HOLD through the idle segments (walk: 9.71 % hold / 57.12 % feedforward / 33.17 % closed), and `soc-band`'s charge branch is REACHABLE again. | The EMS layer as an **endurance** test rather than a transient one: 345 s of continuous 50 Hz commanding, ~30 accelerate/cruise/decelerate/idle cycles, and an H2 total over a cycle a reader outside this project recognises. | `cmd_v_sp` reaches 3.0 m/s at t = 245; peak source total 1.613 A, so `hold-5050`'s fixed 0.50 split puts **0.807 A** on a channel (42 % under `LIMIT_I_FC_MAX`) and `soc-band`'s 0.75 ceiling puts **1.210 A** (14 %); `h2_cum_g` ≈ 5.5e-2 g (`hold-5050`) / 8.2e-2 g (`soc-band` saturated). Both legs are expected **fault-free**. ⚠️ **The `ems-ftp75-socband` `OC_FC` ALLOWANCE IS RETIRED** (operator ruling, 2026-09-01): six campaigns ran the scenario and never used it, the measured peak `I_fc` held the 14 % margin its derivation predicted, and an allowance nothing exercises is a hole rather than protection — it silently excused the one fault this scenario is most likely to produce. Operator ruling (b) itself is unchanged (`charge-cruise` still REQUIRES `OC_FC` under it); what is retired is hedging on this entry. ⚠️ **RETIRED 2026-09-01:** the 0.800 A floor was ABOVE `SOC_BAND_CHARGE_ENTER_ITOT_A` 0.60 A, so the policy's charging branch could not open here. With the preload removed the floor is 0.15 A and the branch IS reachable — newly asserted by `socband_ftp_charge_opened` (existence only; the window schedule is unmodelled because `ems_walk.py` gates charge admission on the DP's `charge_mask()`, not on the strategy's own hysteresis). PROVISIONAL bands at preload 0 **and at the plant's default converter asymmetry** (§4.4a, the M2 consistent pair): `I_fc` ≥ 0.40 A (5050) / 0.56 A and ≤ 0.85 A (socband) at the peak, `h2_cum_g` [0.022, 0.037] / [0.028, 0.046] g. ⚠️ **TWO ERA BOUNDARIES, and campaign `20260901_151156` is the last campaign on the far side of BOTH** — the preload removal and the asymmetry default. Symmetric → asymmetric governor-walk hydrogen deltas at the M2 pair: 5050 **+6.40 %**, socband **+3.22 %**, sdp **+2.95 %**, dp **+4.32 %**; every SoC fall shrinks correspondingly. (These are ~two thirds of the figures first recorded here, which were walked at the retired M1 ΔV₀ 0.0444 — the M2 partition puts most of the mismatch in the droop ratio, the weaker hydrogen lever.) The walk has no ρ, so it is driven at the ΔV₀ that reproduces the plant's own α at r = 0.5, 1.0155 A (0.030223 V); the two laws agree there and diverge away from it, well inside the ±25 % band. `V_bus`-referenced pins are **mean-preserved** and do not move (§4.4a). Do not quote a pre-2026-09-01 total against these bands. |
-| `mppt-tracking` **(EMS-driven, 2026-08-31)** | the `charge-regen` speed profile (**the same list object** — a comparison across the two is only meaningful on one stimulus) driven by `mppt-harvest`: `charge_goal` on the braking windows (regen path, `MPPT_DISABLE` held LOW by the firmware's own regen branch) **and** on the 0.4 m/s low-cruise plateaus (FC path, tracking released). `mppt_emulation` **True**; `chg_i_ceiling_a` **1.0 A**. The FC path is single-source (`assertFcChargeEnable()` drops BT off the bus), so the budget is 0.15 aux + ~0.06 motor + 1.0 charge = **1.21 A**, 14 % under `LIMIT_I_FC_MAX`. `mppt-harvest` is a SEPARATE function from `regen-harvest`, deliberately: `charge-regen` has pinned measurements across five campaigns and must not move because this scenario's windows did. | The **MPPT input-voltage threshold** against the firmware's readiness-gated MPPT release — the first scenario in which `MPPT_DISABLE` does anything causal. From fw v24 it also exercises the **threshold manager**: the FC path feeds the charger from the ~15.95 V bus, and the firmware must lower reg `0x02` under it rather than hunt against the 18 V default. | ⚠️ **THE OBJECTIVE INVERTED AT fw v24 — the hunt below is now the FAILURE signature.** fw v24's manager writes reg `0x02` to (windowed-min `V_chg` − 3.0 V), clamped in counts to **[15, 27] = 12.320–13.376 V** (`.ino:1671-1690`), so the module stops refusing, `ag105IsReady()` holds and the pin stays released. The suite's retired 2200-tick ceiling is replaced by a phase-free **edge census** (3–8 rises across the cruise windows), the Low-Power check is inverted to an absence bound, `MPPT_EN|PWR_TRACK` — unreachable under fw v23 — becomes the steady state, and the new `mppt_thresh_cnt` column is the positive evidence the manager ran. **THE fw v23 RECORD, kept because a regression reproduces it:** the firmware releases tracking only once the charger reports ready (`ag105IsReady()`, `.ino:10249-10255`), and releasing it is exactly what stopped the charging that made it ready, so the two **hunted**. Measured on hardware (campaign `20260831_191509`): full period **~40.05 ms** median — ⚠️ RECORD CORRECTED 2026-08-31, this line quoted the offline probe's 80.0 ms, which the campaign's 138 MPPT_DISABLE toggles over the cruise windows arithmetically rule out (80 ms would give about half that many). The firmware acts on the previous 50 Hz poll, so it lags by one tick in each direction. Pin HIGH 50.0 % of ticks, GENSTAT 001 on 50.0 %, `MPPT_EN`-without-`PWR_TRACK` on 50.0 %, `I_charge` equilibrium **0.465–0.525 A** — near half the ceiling, which is why the suite's `charging_occurred` floor is 0.25 A and not 0.5. The pin can only be HIGH inside the strategy's INSET cruise-charge windows, i.e. 3 × 1.5 s less 3 × `AG105_SETTLE_S` = **3.0 s**, so the hunt is ~1500 ticks and a stuck-high pin ~3000 — the retired `mppt_not_stuck_high` ceiling was **2200** between them. ⚠️ Under fw v24 the ~3000-tick outcome is the EXPECTED one, which is why that ceiling had to be replaced rather than re-tuned. **Expected fault-free**, though the realized FC-path margin narrows: the hunt used to hold the mean charge current near half the ceiling, and continuous harvest draws the full 1.0 A that the 1.21 A budget already assumes. |
+| `mppt-tracking` **(EMS-driven, 2026-08-31)** | the `charge-regen` speed profile (**the same list object** — a comparison across the two is only meaningful on one stimulus) driven by `mppt-harvest`: `charge_goal` on the braking windows (regen path, `MPPT_DISABLE` held LOW by the firmware's own regen branch) **and** on the 0.4 m/s low-cruise plateaus (FC path, tracking released). `mppt_emulation` **True**; `chg_i_ceiling_a` **1.0 A**. The FC path is single-source (`assertFcChargeEnable()` drops BT off the bus), so the budget is 0.15 aux + ~0.06 motor + 1.0 charge = **1.21 A**, 14 % under `LIMIT_I_FC_MAX`. `mppt-harvest` is a SEPARATE function from `regen-harvest`, deliberately: `charge-regen` has pinned measurements across five campaigns and must not move because this scenario's windows did. | The **MPPT input-voltage threshold** against the firmware's readiness-gated MPPT release — the first scenario in which `MPPT_DISABLE` does anything causal. From fw v24 it also exercises the **threshold manager**: the FC path feeds the charger from the ~15.95 V bus, and the firmware must lower reg `0x02` under it rather than hunt against the 18 V default. | ⚠️ **THE OBJECTIVE INVERTED AT fw v24 — the hunt below is now the FAILURE signature.** fw v24's manager writes reg `0x02` to (windowed-min `V_chg` − 3.0 V), clamped in counts to **[15, 27] = 12.320–13.376 V** (`AG105_MPPT_N_FLOOR` = 15 / `AG105_MPPT_N_CEIL` = 27 through `AG105_MPPT_VOLTS`), so the module stops refusing, `ag105IsReady()` holds and the pin stays released. The suite's retired 2200-tick ceiling is replaced by a phase-free **edge census** (3–8 rises across the cruise windows), the Low-Power check is inverted to an absence bound, `MPPT_EN|PWR_TRACK` — unreachable under fw v23 — becomes the steady state, and the new `mppt_thresh_cnt` column is the positive evidence the manager ran. **THE fw v23 RECORD, kept because a regression reproduces it:** the firmware releases tracking only once the charger reports ready (`ag105IsReady()`, in `chargingControl()`), and releasing it is exactly what stopped the charging that made it ready, so the two **hunted**. Measured on hardware (campaign `20260831_191509`): full period **~40.05 ms** median — ⚠️ RECORD CORRECTED 2026-08-31, this line quoted the offline probe's 80.0 ms, which the campaign's 138 MPPT_DISABLE toggles over the cruise windows arithmetically rule out (80 ms would give about half that many). The firmware acts on the previous 50 Hz poll, so it lags by one tick in each direction. Pin HIGH 50.0 % of ticks, GENSTAT 001 on 50.0 %, `MPPT_EN`-without-`PWR_TRACK` on 50.0 %, `I_charge` equilibrium **0.465–0.525 A** — near half the ceiling, which is why the suite's `charging_occurred` floor is 0.25 A and not 0.5. The pin can only be HIGH inside the strategy's INSET cruise-charge windows, i.e. 3 × 1.5 s less 3 × `AG105_SETTLE_S` = **3.0 s**, so the hunt is ~1500 ticks and a stuck-high pin ~3000 — the retired `mppt_not_stuck_high` ceiling was **2200** between them. ⚠️ Under fw v24 the ~3000-tick outcome is the EXPECTED one, which is why that ceiling had to be replaced rather than re-tuned. **Expected fault-free**, though the realized FC-path margin narrows: the hunt used to hold the mean charge current near half the ceiling, and continuous harvest draws the full 1.0 A that the 1.21 A budget already assumes. |
 | `charge-to-full` **(2026-08-31)** | `pi_timeline`: MODE_SAFE 0.5, MODE_HYBRID 3.0, `v_setpoint` **0.0** and share 0.5 at 5.0, `charge_goal` 1.0 at 8.0. 130 s, `chg_i_ceiling_a` **1.0 A**, and the suite overrides **`--soc0 0.990`** (the second such override, mirroring `soc-depletion`'s — which starts LOW to reach a UV latch where this one starts next to FULL). 0.995 − 0.990 = 0.005 of a 5 Ah pack = 90 A·s = **90 s** at the ceiling, so FULL is expected ~t = 100. Standstill is load-bearing: `v_setpoint` 0 < `V_SP_ZERO_THRESH` means 0 A to the motor, which is what makes the single-source budget 0.15 + 1.0 = **1.15 A** (18 % margin) work for 120 s. ⚠️ `mppt_emulation` is deliberately **OFF**, and stays off under fw v24 — the 18 V gate would have blocked this very path outright, and the fw v24 clamped threshold would simply be inert on a continuously-fed standstill charge. | The Ag105 **Fully-Charged / CV** branch, never reached by any prior campaign (largest SoC rise on record ~0.0009 against the ~0.29 that `--soc0 0.7` needs), and the firmware's deliberate **no-action** response to it. | `I_charge` ≥ 0.8 A in CC (t = 10–60); GENSTAT **011** and the **CV** flag held ≥ 500 ticks after t = 60; `I_charge` ≤ 0.05 A after t = 125 (the new `max_value` ceiling kind); and `SW_FC_CHARGE` **still set** after t = 110 — the no-action baseline made visible, so a future policy change to it fails a check instead of surprising a reader. **Expected fault-free.** ⚠️ Zero drive-channel coverage. `CHARGER_STAT` (pin 6) is on neither HIL frame and `chargingControl()` does not read it, so its Fully-Charged blink signature is out of scope; carrying it would be a frame extension. |
-| `pi-silence` **(EMS-driven, 2026-08-31)** | `hold-5050` with **no `ems_v_profile`**, so it falls back to `EMS_DEFAULT_CRUISE_MPS` = 1.2 m/s — that fallback IS the setpoint here, chosen because the model's ~3.5 A hold current makes the motor cut-off unmistakable. The commander goes **permanently silent at t = 8.0** (`pi_mute_after_s`): `PiCommander.tick()` returns `None` without advancing its timeline, counter or `next_tx`, so a dead Pi neither scripts nor queues. The **injection** stream keeps running at full rate. 14 s. | The firmware's **Pi watchdog** (`checkPiWatchdog()`, `.ino:4976-4985`, `PI_TIMEOUT_MS` 500, armed in State 2/3 once `pi_ever_connected`), isolated from the HIL link. Its clock is stamped **only** by the 22-byte command branch (`:5043-5044`); every prior stimulus gated both streams together (`apply_scenario`'s `tx_enabled`, `:4172`/`:4192`) and tripped the HIL staleness path instead. | **`FAULT_PI_TIMEOUT` REQUIRED**, `not_before_s` 8.0, in State 2 at t = 7.5. Plus `motor_halted`: commanded `current` falls ≥ 2.0 A across the latch — the fault's consequence, not just its flag. ⚠️ 0x0010 is shared with `FAULT_HIL_LINK`, so the entry declares **`child_tx_healthy`**. From **fw v25** that is a DIRECT READ of frame byte 16 (`ERR_PI_TIMEOUT` 0x05 vs `ERR_HIL_STALE` 0x10); on fw v21–v24 it falls back to the older inference **by elimination** (a continuous injection stream rules the alias out). Injection never stops, so no fw v23 run boundary forms and the latch persists; a mid-run warm reset would prove contamination *and* clear `pi_ever_connected`, disarming the watchdog under test — which is why `warm_resets_expected` is deliberately absent. |
+| `pi-silence` **(EMS-driven, 2026-08-31)** | `hold-5050` with **no `ems_v_profile`**, so it falls back to `EMS_DEFAULT_CRUISE_MPS` = 1.2 m/s — that fallback IS the setpoint here, chosen because the model's ~3.5 A hold current makes the motor cut-off unmistakable. The commander goes **permanently silent at t = 8.0** (`pi_mute_after_s`): `PiCommander.tick()` returns `None` without advancing its timeline, counter or `next_tx`, so a dead Pi neither scripts nor queues. The **injection** stream keeps running at full rate. 14 s. | The firmware's **Pi watchdog** (`checkPiWatchdog()`, `PI_TIMEOUT_MS` 500, armed in State 2/3 once `pi_ever_connected`), isolated from the HIL link. Its clock is stamped **only** by `receiveCommands()`’s 22-byte command branch; every prior stimulus gated both streams together (`apply_scenario()`’s `tx_enabled` return) and tripped the HIL staleness path instead. | **`FAULT_PI_TIMEOUT` REQUIRED**, `not_before_s` 8.0, in State 2 at t = 7.5. Plus `motor_halted`: commanded `current` falls ≥ 2.0 A across the latch — the fault's consequence, not just its flag. ⚠️ 0x0010 is shared with `FAULT_HIL_LINK`, so the entry declares **`child_tx_healthy`**. From **fw v25** that is a DIRECT READ of frame byte 16 (`ERR_PI_TIMEOUT` 0x05 vs `ERR_HIL_STALE` 0x10); on fw v21–v24 it falls back to the older inference **by elimination** (a continuous injection stream rules the alias out). Injection never stops, so no fw v23 run boundary forms and the latch persists; a mid-run warm reset would prove contamination *and* clear `pi_ever_connected`, disarming the watchdog under test — which is why `warm_resets_expected` is deliberately absent. |
 | `share-staircase` **(2026-08-31)** | **Motor-free** (`v_setpoint` 0 for the whole run — a drive transient would move I_tot and therefore move the governor rails mid-staircase). **Two loads**, a bespoke `apply_scenario()` branch because the generic `aux_preload_a` ramps a load in once and cannot bring it back down: `STAIRCASE_LOAD_A` **+1.05 A** from t = 4 (I_tot **1.20 A**, so the rails land on the round 0.25/0.75), dropped to `STAIRCASE_LOAD_B` **+0.40 A** at t = 29 (I_tot **0.55 A**), both edges ramped over `SOC_LOAD_RAMP_S`. Timeline: 0.80 → 0.20 in 0.10 steps every 3 s from t = 6, recentre 0.50 at 27, then 0.95 / 0.50 / 0.05 / 0.50 at 33 / 36 / 39 / 42. | **Phase A** — the governor's clip band `SHARE_MINORITY_I_MIN_A/I_tot` = [0.25, 0.75], measured only incidentally by campaign TP0170–0180, swept deliberately in both directions. **Phase B** — `updateShareSetpointCutoff()`'s **cut AND restore** on both channels, with the latency of each. The two loads cannot be one: at 1.20 A a 50/50 split is 0.60 A, over the cut's `SHARE_CUT_MAX_HANDOFF_A` 0.5 A guard, so the latch would **defer** rather than fire. | `cmd_share_sp` reaches 0.80 and sweeps ≥ 0.55 down; `I_fc` ≥ 0.80 A at the top step (the 0.75 rail on 1.20 A is 0.90 A; a run that ignored the command and held 0.50 would show 0.60) and falls ≥ 0.50 A across the sweep; `SW_BT_BUS` and `SW_FC_BUS` each **cut and restored**; and **four latency measurements** via `switch_fall_latency_ms` (both `fall` and `rise` edges), tripwire 40 ms. **Expected fault-free** (worst channel 0.90 A vs 1.4 A). ⚠️ The measured latency is the **deliverable**; the bound is a regression tripwire and must never be raised to make a run pass. Corrected premise: the [0, 20) ms spread is **command-arrival phase** at `PI_CMD_HZ` 50, not a firmware tick — `POWER_BAL_PERIOD_US` and `SHARE_CTRL_TS_US` are both 1000 µs. ⚠️ Phase B's 0.55 A sits ON the closed-loop exit hysteresis, so do not read share-*tracking* numbers off it; Phase A is where the loop is unambiguously closed. |
 
 Three scenario notes. First, `sag` injects an **offset on the bus node**, not a source
@@ -1207,6 +1325,10 @@ One row per tick. The base schema is **19 columns and is frozen**; everything si
   mode, where the plant integrator is bypassed and a column of zeros would read as "this
   run burned no hydrogen". ⚠️ **The Gfc model's estimate** — scale-portable map, stack
   not identified against this rig (`TODO(calibrate)`); §9.3.
+  ⚠️ **Do not reconstruct these columns from `V_fc·I_fc`.** `Gfc` takes the fuel cell's
+  **stack** power, not the bus-side product of the two logged rails; reconstructing
+  `h2_cum_g` from `V_fc·I_fc` reads **31 % low**. If a consumer needs hydrogen, it reads
+  these columns; there is no supported way to re-derive them from the rail columns.
 - `h2_sdp_cum_g` (appended after them, 2026-08-31) — **simulated runs only, and
   unconditional there**: the run's cumulative hydrogen on the **student's static
   proxy** `P_fc/(eta_fc·Q_LHV)` at `eta_fc = 0.5`, `Q_LHV = 120000 J/g`
@@ -1288,6 +1410,15 @@ One row per tick. The base schema is **19 columns and is frozen**; everything si
      is grouped with the sources, so during a braking window it enters the
      residual twice. This form predates the charger-efficiency round and is
      unchanged by it; the braking residual is dominated by `−2·p_chop`.
+     Measured on `regen-harvest-true`, chopper-active mean `p_bal + p_aux` is
+     **−2.3876 W**, of which **−2.0208 W** is that doubled term and the residual
+     −0.3668 W is the ordinary motoring floor of items 2–4. **Consequence:
+     `p_bal_w` is not a closure test in any chopper-active interval.** It is a
+     pure observer — no published result in this document derives from it in a
+     braking window — and the §3.4 energy invariant, which `test_regen_energy_balance`
+     asserts, is the statement that actually carries closure. Moving `p_chop` to
+     the load side is deferred to **the next change of the identity**, so the
+     column's era boundary moves once rather than twice.
 
   ⚠️ **THE CHARGER LEFT THIS LIST ON 2026-09-01.** It used to be item 2 and the
   largest term of all: the model's Ag105 was a **1:1 current transfer element**,
@@ -1419,7 +1550,19 @@ loop.
   that cannot afford the ceiling runs coarser *and says so*, rather than overrunning.
 - `N_SUB_MAX` (400) caps the count regardless, so a mis-measured cost cannot stall a frame.
 
-Observed on a typical host: ~20 substeps/tick, **~30–40 kHz achieved**.
+Observed on a typical host: **20 substeps/tick, 55.9–77.0 kHz achieved** (campaign
+`hil_report_20260902_011926`, per-run means; the earlier "~30–40 kHz" figure is stale).
+Single-tick dips to ~2–10 kHz on host descheduling are normal and are absorbed by the
+EWMA; the 6859 Hz minimum recorded in that campaign is one stalled tick, and `n` never
+fell below 17 around it.
+
+⚠️ **Two reporting caveats.** First, the sidecar's `achieved_substep_hz` is the
+**last-tick** rate, not a run aggregate — read the CSV column, not the sidecar, when the
+question is about the run. Second, the rate alone does not answer the accuracy question:
+the quantity the 125 µs caveat (§2) constrains is the substep **count**, so the
+`elec_substep_n` column is logged per tick and the `substep_resolution` suite gate asserts
+`n_min ≥ 8` (equivalently h ≤ 125 µs). The gate is non-vacuous: it fires on two runs of
+that campaign. Tick 0 initialises at `n` = 8 before the first cost measurement exists.
 
 ### 8.2 The node network
 
@@ -1468,7 +1611,7 @@ only numerically stable form here.
 > rail-to-rail. **The limiter is the discretization, not the physics** — resolving that
 > loop needs ~1 MHz substeps. The model was therefore dropped to the level this repo has
 > already validated for this bandwidth: the simplified share plant of
-> `tps61288_full_model.py:188-191` / system_model.md §6d.
+> `tps61288_full_model.py` (its simplified share plant) / system_model.md §6d.
 >
 > **Kept:** the FB-node superposition droop, the OPA197 ceiling, the 19 V OVP trip,
 > enable/disable, the disabled-boost body-diode passthrough.
@@ -1583,23 +1726,35 @@ part's specification rather than scripted.
 ### 8.6 Regen chopper
 
 The TL431 + BSP170P clamp on the regen node is autonomous — **not** under firmware
-control. Above `V_CHOPPER_TRIP` a shunt of `V_rgn / 47 Ω` conducts (47 Ω / 20 W dump
-resistor). The chopper sits directly on V-MOT (2026-08-30 topology fix — upstream of
+control. The chopper sits directly on V-MOT (2026-08-30 topology fix — upstream of
 the REGEN switch, matching the bench observation that the clamp held 18.1 V with
-`REGEN_ENABLE` open), so it does not reach the bus through the REGEN path. However,
-it **does** couple to `V_bus` through a closed `MOT_PWR`, which conducts BUS ↔ MOT.
-At the 18.1 V clamp the shunt draws ≈ 18.1 / 47 = **0.385 A**, and the droop law
-(0.074 V/A both-sources, 0.16 V/A single-source) turns that into **≈ 0.03–0.06 V** of
-bus sag — small enough to be consistent with the bench observation "`V_bus` unmoved"
-(CLAUDE.md 2026-08-17b) rather than contradicting it.
+`REGEN_ENABLE` open), so it does not reach the bus through the REGEN path.
+
+**It is a REGULATING clamp, not a bare shunt** (wording corrected 2026-09-02). The bare
+`V_rgn / 47 Ω` description, and the 0.385 A it implies, describe the dump resistor alone
+and are retired: the modelled clamp regulates the node and draws **0.1248 A at 18.1624 V**
+at its operating point. The bare 47 Ω conduction is reached only above **18.294 V**, i.e.
+on an excursion the clamp cannot hold.
+
+**There is no bus KCL term for the clamp current, and there cannot be one at the clamp.**
+`MOT_PWR` is instantiated `strict_forward`, so BUS↔MOT is stamped only when
+`V_BUS − V_MOT` > `RT_V_FWD` (35 mV). Holding V-MOT at 18.1 V therefore requires
+`V_BUS` > 18.135 V to source anything — above `LIMIT_V_BUS_MAX` 17.5 V, unreachable
+outside an OV latch. `MOT_PWR` is measured **open throughout** the clamp; the
+clamp-attributable bus sag is **below 1e-5 V**, not the 0.03–0.06 V this section carried
+until 2026-09-02. That is agreement with the bench observation "`V_bus` unmoved"
+(CLAUDE.md 2026-08-17b) by construction rather than by margin. §3.4 records what the
+post-release bus current actually is.
 The clamp level is **bench-calibrated at 18.1 V** (operator, 2026-08-27, from the
 observed 13.3 → 18.1 V clamping excursion, CLAUDE.md 2026-08-17b; the earlier 16.5 V
 `TODO(calibrate)` placeholder is retired).
 
 **The reason the chopper is simulated at all is the power question:** does dissipation
-in the 47 Ω dump resistor ever exceed its **20 W rating**? At the 18.1 V clamp the
-steady dissipation is `18.1²/47 ≈ 6.97 W`; the rating is only reached through
-excursions past `√(20·47) ≈ 30.7 V`. The engine computes `V_rgn²/47` per substep
+in the 47 Ω dump resistor ever exceed its **20 W rating**? The bare-shunt bound at the
+clamp is `18.1²/47 ≈ 6.97 W`, and the rating is only reached through excursions past
+`√(20·47) ≈ 30.7 V`. ⚠️ That bound is **conservative by about 3×** for the regulating
+clamp described above: at its measured operating point (0.1248 A into 18.1624 V) the
+steady dissipation is ≈ 2.27 W. The engine computes `V_rgn²/47` per substep
 while the chopper conducts, keeps the worst value (`chopper_peak_w`, reported in
 `summary()`), and emits a `chopper_over_power` event once per excursion above
 `P_CHOPPER_MAX_W` — which `run_hil_suite.py` turns into a failing check.
@@ -1609,7 +1764,7 @@ while the chopper conducts, keeps the worst value (`chopper_peak_w`, reported in
 Applied to the **injected values**, never to the internal states.
 
 - **ADC quantization** is real and computed from the firmware's own scale constants
-  (`teensy_controller.ino:1128-1144`): `V_fc` 3.01 mV/count, `V_batt` 2.11, `V_bus` 4.55,
+  (the firmware's `SCALE_V_*` / `SCALE_I_*` constants): `V_fc` 3.01 mV/count, `V_batt` 2.11, `V_bus` 4.55,
   `V_chg`/`V_rgn` 7.15, currents **8.06 mA/count**.
 - **Gaussian sigmas default to ZERO** (a noise-free run stays deterministic), and
   `NoiseConfig.suggested()` now carries **per-rail sigmas MEASURED from the bench-log
@@ -1922,7 +2077,7 @@ Initial SOC is `--soc0` (default 0.7).
 >    proxy-based numbers.
 > 3. **Dynamics.** Its dominant time constant **0.2212 s** is a *consumption*-dynamics
 >    claim (fuel delivery / stack thermodynamics) and is a **different quantity** from the
->    *electrical* `FC_TAU_S = 0.020 s` double-layer lag in `hil_electrical.py:405`. They
+>    *electrical* `FC_TAU_S = 0.020 s` double-layer lag `hil_electrical.FC_TAU_S`. They
 >    are not alternatives and must not be reconciled with each other.
 
 **Discretization (measured; do not revisit).** A characterization round (scipy,
@@ -1954,7 +2109,7 @@ physical operating point here, and a negative rate would be an unphysical hydrog
 **Scope.** Simulated mode only, by construction: it is stepped from `Plant.step()`, and
 `--replay` bypasses the plant integrator. It is a pure **observer** — no plant state, no
 injected frame, no policy and no firmware path reads it back, so enabling it cannot change
-a trace. The wire protocol was untouched by that round (40 B inject / 16 B observe / 22 B command); **fw v24 grew the observation frame to 17 B** — see §5.
+a trace. The wire protocol was untouched by that round (40 B inject / 16 B observe / 22 B command); **fw v24 grew the observation frame to 17 B and fw v25 to 18 B** (error_code at offset 16) — see §5.
 
 ### 9.4 The DP-optimal EMS benchmark — `dp-replay` and its table
 
@@ -1965,6 +2120,12 @@ a trace. The wire protocol was untouched by that round (40 B inject / 16 B obser
 > nothing. It exists to be the **lower-bound reference** the causal strategies are ranked
 > against, and it is **meaningless against any profile other than the one it was generated
 > for** — which is why it refuses to start on a fingerprint mismatch.
+>
+> ⚠️ And it is a **bound on the generator's model**, not on the board. The generator has
+> no share loop and no governor, so it cannot represent the firmware's sub-0.55 A open-loop
+> behaviour (§4.4); the measured table-versus-run gaps below are attributed to exactly that.
+> Read a deviation as "the run departed from the modelled optimum", never as "the run beat
+> the optimum".
 
 **Generator:** `tools/gen_dp_ems_table.py` (offline; needs **numpy**, so miniforge, not
 `.venv_hil`). **Table:** `tools/dp_tables/dp_ems_table_<scenario>.csv`, checked in,
@@ -1983,7 +2144,7 @@ change what the answer *means* are:
 | D1 | **Linear** interpolation of `J(:,k+1)` at `SOC_next`; off-grid transitions are **infeasible**, not clamped | the MATLAB snaps to the nearest grid index (`DP_EnergyManagement2.m:39`), which on its own grid quantizes ~99 % of realistic steps to "no change at all" |
 | D2 | the argmin **policy is stored**; the forward pass is a table lookup | the MATLAB re-solves the whole minimisation forward (`:61-95` duplicates `:23-53`) |
 | D3 | an infeasible state the forward pass **reaches** raises | the MATLAB silently commands `P_fc = 0` (`:96`), handing the demand to the battery — the limit the feasibility test was protecting |
-| D4 | stage cost uses the **`Gfc` DC gain** (§9.3), imported from `hil_plant_sim.py` | makes the objective and the logged `h2_cum_g` the same model; `DPtrial.m:43`'s static proxy disagrees by +16.4 % |
+| D4 | stage cost uses the **`Gfc` DC gain** (§9.3), imported from `hil_plant_sim.py` | puts the objective and the logged `h2_cum_g` on the **same `Gfc` map**; `DPtrial.m:43`'s static proxy disagrees by +16.4 %. ⚠️ Same map, not the same evaluation: the run integrates `Gfc`'s **dynamics** (0.2212 s, ZOH) and the DP takes its **DC gain**. Measured on this campaign's own inputs, that difference is **−0.0116 %** of the integrated total on `ems-ftp75-dp` and **−0.0316 %** on `ems-dp-replay` — two orders below the observed table-versus-run gaps below, so it does **not** explain them |
 | D6 | SoC dynamics are the **simulator's `BatterySource`** (OCV table, `Rs(SOC)`, coulomb count) | **operator ruling: match the plant.** The MATLAB's constant `Em = 720 V` lossless pack is retired; the problem becomes nonlinear in the state |
 | D7 | the demand is **derived from the scenario, imported at generation time** | no hand-copied profile — retuning the scenario changes the fingerprint and invalidates the table |
 | D10 | charging is a **discrete second control**, masked to cruise regions and an FC-current budget | on this board a negative pack current can only come from the Ag105, and `assertFcChargeEnable()` drops BT off the bus. Never during acceleration (operator ruling (b)). Precedent: `ems_regen_harvest` windows `charge_goal` off the same profile |
@@ -2049,6 +2210,34 @@ independent of the control and the stage cost stays separable). So the −14.33 
 the **measured** runs on the report's `h2_cum_g` / `delta_soc` pair, and treat a hydrogen
 difference at visibly different `delta_soc` as uninterpretable.
 
+**The measured table-versus-run gap, by era.** The qualitative "the realised run will
+differ" caveat above is now quantified. Each row is the run's own `h2_cum_g` / `delta_soc`
+against the table its `dp-replay` played:
+
+| Era / campaign | Leg | h2, run vs table | ΔSoC, run vs table |
+|---|---|---|---|
+| `hil_report_20260901_151156` (0.65 A preload, 1:1 charger) | `ems-ftp75-dp` | **−2.15 %** | **+4.8 %** more depleted |
+| `hil_report_20260902_011926` (zero preload, `ETA_CHG` 0.88, asymmetry default) | `ems-ftp75-dp` | 0.0380476458 g vs 0.0396922994 g = **−4.14 %** | −0.007940 vs −0.006636163 = **+19.6 %** more depleted |
+| `hil_report_20260902_011926` | `ems-dp-replay` | **+0.33 %** | **−1.2 %** |
+
+**Attribution: the firmware's open-loop hold, not `Gfc` dynamics.** The dynamic-versus-DC
+`Gfc` difference is −0.0116 % / −0.0316 % (D4 above) and cannot produce a percent-scale
+gap. The generator has no share loop and no governor, while the firmware runs **open-loop**
+(HOLD or feedforward slew, §4.4) below 0.55 A — and at zero preload that covers **64.5 % of
+the FTP-75 Run window**. The 61 s `ems-dp-replay` cycle, which is loaded above the gate for
+most of its length, gaps by only +0.33 %. The gap grew from −2.15 % to −4.14 % across the
+preload removal, which is the direction that attribution predicts.
+
+**Regen exposure is bounded, and on the frontier legs it is exactly zero.** The generator's
+demand model has no regen term (`gen_dp_ems_table.build_demand`); the deceleration demand
+itself is unchanged, so what is omitted is only the **returned** energy. All 11
+frontier/EMS runs carry **0.000 J** of regen energy — no drive cycle in this suite ever
+commands a negative motor current — so on those legs the omission is exact, not merely
+small. Regen-bearing scenarios are `frontier_eligible: False` by role, and the residual
+optimism there is bounded at **≤ 0.9 % of `h2`** (measured on `charge-regen`). A run whose
+`∫min(p_mot, 0) dt` is negative is labelled **regen-bearing** in the matched-DP block so
+the boundary travels with the number.
+
 
 ---
 
@@ -2063,25 +2252,29 @@ as the injection frames — the firmware's `receiveCommands()` drains both frame
 dispatches by length (fw v21 bounded drain).
 
 Packet layout, **verified from `teensy_controller/teensy_controller.ino`
-`processPiCommandPacket()` lines 4806-4852** (`SYNC_BYTE_RX` at line 2528) — nothing
-guessed, and the firmware body is byte-frozen because the Pi bridge parses fixed offsets:
+`processPiCommandPacket()`** and the `SYNC_BYTE_RX` constant, and **pinned by
+`test/test_main.cpp`'s `test_command_parsing`** — nothing guessed, and the firmware body is
+byte-frozen because the Pi bridge parses fixed offsets. (⚠️ The line numbers this table
+carried until 2026-09-02 were stale by roughly 600 lines and pointed into the main loop;
+provenance is symbol- and test-based from here on, because a line number ages silently
+while a fixed-offset consumer diverges in the same silence.)
 
-| Offset | Type | Field | `.ino` |
-|---|---|---|---|
-| 0 | u8 | sync `0xBB` | :2528, :4810 |
-| 1 | u32 | timestamp | :4825–4826 |
-| 5 | u16 | `pkt_counter_Pi` | :4828–4829 |
-| 7 | f32 | `v_setpoint` (constrained ±20 m/s) | :4842, :4846 |
-| 11 | f32 | `power_share_setpoint` (constrained [0,1]) | :4843, :4847 |
-| 15 | f32 | `charge_goal` | :4844, :4848 |
-| 19 | u8 | `mode_cmd` — 0 HYBRID, 1 FC_ONLY, 2 BATT, 3 CHARGE, 4 SAFE | :4850, :4857 |
-| 20 | u8 | `droop_enable` — **reserved**, parsed and discarded | :4851–4852 |
-| 21 | u8 | XOR over bytes 1..20 | :4812–4814 |
+| Offset | Type | Field |
+|---|---|---|
+| 0 | u8 | sync `0xBB` (`SYNC_BYTE_RX`) |
+| 1 | u32 | timestamp |
+| 5 | u16 | `pkt_counter_Pi` |
+| 7 | f32 | `v_setpoint` (constrained ±20 m/s) |
+| 11 | f32 | `power_share_setpoint` (constrained [0,1]) |
+| 15 | f32 | `charge_goal` |
+| 19 | u8 | `mode_cmd` — 0 HYBRID, 1 FC_ONLY, 2 BATT, 3 CHARGE, 4 SAFE |
+| 20 | u8 | `droop_enable` — **reserved**, parsed and discarded |
+| 21 | u8 | XOR over bytes 1..20 |
 
 A timeline is `[(t_seconds, {field: value}), …]`; unspecified fields **hold** their
 previous value, matching the firmware, which also holds a field it rejects. The commander
 transmits at **50 Hz** and keeps sending the held state between entries, because a
-command packet is what marks the Pi link alive (`last_rx_ms`, :4854).
+command packet is what marks the Pi link alive (`last_rx_ms`, stamped in `processPiCommandPacket()`).
 
 ### 10.1 `SCENARIOS` registry
 
@@ -2114,9 +2307,20 @@ The model is trustworthy for:
 It is **not** trustworthy for: control gains of any kind, **boost voltage-loop stability
 or margin** (§8.3 — use `tps61288_full_model.py`), switching-ripple or converter waveform
 behaviour, the parasitic ringing *waveform* (§8.5 detects the event, it does not simulate
-it), charger *energy* behaviour beyond the coulomb count (no CV taper, no simulated MPPT
-loop — §4.6), encoder/estimator behaviour, or anything the board's analog front end does
-beyond the quantization of §8.7.
+it), charger *energy* behaviour beyond the coulomb count (no **MPPT tracking loop** — only
+the input-voltage threshold is modelled, §4.6), encoder/estimator behaviour, or anything
+the board's analog front end does beyond the quantization of §8.7.
+
+⚠️ **On the CV branch specifically** (wording corrected 2026-09-02; this list previously
+read "no CV taper", which contradicts the implementation). The model **does** produce a
+CV/Fully-Charged branch: at `soc >= 0.995` it sets `AG105_ST_FULL | AG105_FLAG_CV` in the
+injected status byte and decays `i_charge` on `AG105_TAU_S`. That is a **synthetic status
+and taper stimulus**, not simulated Ag105 constant-voltage regulation — Ag105 Table 6
+defines the status fields but justifies neither the 0.995 threshold nor the taper law, and
+`AG105_TAU_S` (0.4 s) is simulator-local and `TODO(verify)` (see its caveat in §4.6). What
+`charge-to-full` therefore validates is the **firmware's handling of an injected FULL/CV
+status** — that it takes no wrong action on it — and nothing about the charger's own CV
+physics.
 
 What **moved out** of that list since the first revision: the bus droop is now measured
 (§4.2), sensor quantization exists (§8.7), and hot-plug / handoff / SCP behaviour is
@@ -2140,4 +2344,4 @@ the *magnitudes* are plausible rather than measured.
 | **H2 model identification** | §9.3. `Gfc` is scale-portable by design (operator ruling 2026-08-31; the `den[0]` provenance question is CLOSED — 720 V is the full-size FC's OCV) but not identified against the actual H-20 class stack. One open item: an identification run against the real stack, which also settles whether the 0.2212 s consumption lag and the η 47.25 %-vs-55 % model choice transfer. |
 | **A closed-loop DP** | §9.4's benchmark is open loop and single-profile: it is a solution of ONE cycle, replayed. The natural next steps are (a) an ECMS/co-state extraction from the DP's own value function, which WOULD be causal and Pi-portable, and (b) regenerating the table under `--charger-accounting simple` whenever a campaign is run with `--electrical simple`, since a table optimised for the wrong accounting is not a bound. |
 | **A portable SoC estimator** | The `soc-band` EMS strategy closes on plant-truth `fb["soc"]`, which no real Pi can see (v4 telemetry has no SoC field). A `V_batt`-based estimator on the Pi (OCV lookup + coulomb counting off the telemetry `I_batt`) would feed the same law unchanged and make the strategy Mode-B portable. Does not exist. |
-| **Battery state of charge / CV taper / MPPT loop** | The Ag105 model (§4.6) is status-level only; a stateful SoC model would let `AG105_ST_FULL` and a genuine CV taper appear in a HIL run. |
+| **A physical Ag105 CV loop and MPPT tracking** | ⚠️ Corrected 2026-09-02 — this row used to say a stateful SoC model "would let `AG105_ST_FULL` and a genuine CV taper appear". SoC **is** modelled (§4.2) and the FULL/CV branch **is** reached (`soc >= 0.995`, `charge-to-full`), so what remains open is different: the branch is a **synthetic** status + `AG105_TAU_S` taper rather than a regulated constant-voltage loop, and the MPPT **tracking** dynamics above the threshold are still unmodelled (§4.6). Closing either needs a bench charge cycle, not a simulator state. |

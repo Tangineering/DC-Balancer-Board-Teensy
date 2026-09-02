@@ -95,9 +95,11 @@ take in the morning).
   fractions, counts, bands on levels. A position/absence assertion at a
   model-predicted instant fails on model error while the mechanism works (the S2
   FAIL: walk period wrong 5.7×).
-- Offline walks must state which firmware MODE they assume per segment; the
-  sub-0.55 A open-loop hold broke two walks the same way. The strategy-authoring
-  notes are required walk inputs.
+- Offline walks must state which firmware MODE they assume per segment, and must
+  model BOTH sub-0.55 A open-loop submodes: the HOLD (which broke two walks the same
+  way) AND the slew-limited FEEDFORWARD that writes the MDACs on a changed setpoint
+  (which failed the MPC's Gate 1, 2026-09-02). The strategy-authoring notes are
+  required walk inputs.
 - provisional_note on every unmeasured band; the first campaign is the calibration
   source; delete the note when pinning. Never widen a threshold to pass a known
   artifact.

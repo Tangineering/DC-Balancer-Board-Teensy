@@ -136,11 +136,27 @@ Replay is **open loop** (see `HIL_MODE.md` §"Fidelity caveat"). Concretely:
   path the board actually had open. Clean as of campaign `20260831_000518` —
   ML0203's `OC_FC` latch had `FC_BUS` closed — but check `switch_state` at the
   latch time before reading a replay OC result as a hardware statement.
-- **The replay half cannot exercise `share_cut_load_hazard`.** That tripwire scores
+- **The replay half cannot SCORE `share_cut_load_hazard`, but it does EXERCISE the
+  firmware path** (corrected 2026-09-02; this entry previously said the guards were
+  "exercised only by the scenario half", which is half wrong). The tripwire scores
   `sw_ring` events emitted by the hi-fi electrical engine, and a replay run drives the
-  rails from the log and constructs no engine at all — so the check is structurally
-  unreachable here and its absence from a replay verdict is not coverage. The share-cut
-  guards of fw v25 are exercised only by the scenario half.
+  rails from the log and constructs no engine at all — 0 `events.jsonl` entries across
+  all 27 replay folders — so the *check* is structurally unreachable here and its
+  absence from a replay verdict is not coverage. The firmware's cut path, however, runs:
+  campaign `hil_report_20260902_011926` counted **163 in-Run `FC_BUS`/`BT_BUS` falling
+  edges across six opt-in replays** (ML0203 119, YP0196 23, ML0151 13, YP0214 4,
+  ML0165 3, ML0137 1; state 2 on both sides; not the `FC_CHARGE` ordering path).
+  ⚠️ Twelve of those carry a CSV-bounded `|I|` above 0.5 A — 8 on the cut's own row
+  (max 0.6608 A), 4 on the preceding row (max 0.5722 A). **That is not a guard
+  failure**: at the ~1.9 ms observation round-trip and ~0.08 A of tick noise, with the
+  currents climbing through the threshold, it is exactly the decision the guard is
+  specified to make, open loop, with no collapse able to follow. A CSV-based tripwire
+  on this half (switch edges plus adjacent `|I|` > 0.5 A) is queued against that
+  baseline of 163 cuts / 0.6608 A maximum. Two further behaviours here are unscored by
+  anything: 58 of ML0203's 119 cuts follow a dwell under 5 ms (minimum 0.5 ms —
+  `BT_BUS` chatter at the band edge), and ML0151 cuts a channel 2.0 ms after that
+  channel's own rise, inside an unfinished CSS soft-start that the survivor-keyed
+  30 ms blanking does not cover.
 - **`no_sustained_rail` is deliberately not used in this half.** It asserts that
   no rail episode outlasts 1.0 s, which is a windup symptom *on a closed loop*.
   Open loop, a correct controller facing a standing error is supposed to stay on

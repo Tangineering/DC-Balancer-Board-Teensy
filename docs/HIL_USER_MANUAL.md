@@ -1172,7 +1172,9 @@ Five tools reason about EMS strategies without the board (added 2026-09-01e/f):
 - `tools/ems_walk.py` (miniforge) — `walk(strategy, scenario, governor=True)` drives any registered
   strategy through the DP demand/pack/H2 model with the governor at 1 kHz; with `governor=False` it
   reproduces `gen_dp_ems_table.heuristic_walk()` exactly. It is the tool the standing rule "offline
-  walks must model the sub-0.55 A open-loop hold" requires; every FTP-75 expectation band is derived
+  walks must model the sub-0.55 A open-loop HOLD **and** the FEEDFORWARD SLEW" requires
+  (restated 2026-09-02: open loop is two submodes, and the feedforward one writes the MDACs
+  through the slew limiter — see `docs/HIL_PLANT.md` §4.4); every FTP-75 expectation band is derived
   with it. Its `trace=True` output can be synthesized into a HIL-schema CSV for the report figures.
 - `tools/dp_results_db.py` + `tools/dp_db/` — the ΔSoC-matched DP results database consumed by
   `hil_report_analysis.py --matched-dp` (see the subsection under §5).
@@ -1748,13 +1750,22 @@ reads moves. `--matched-dp-strict` turns drift into a miss instead, which is the
 setting for a figure that must not come from a differently-parameterised plant.
 
 **Three boundaries on every figure this produces.** First, the DP's demand model has
-no regen term (`gen_dp_ems_table.build_demand`), so a regen-bearing scenario is
-ranked against a regen-free bound and its deviation is optimistic by an unquantified
-margin. Second, the run's hydrogen total is the dynamic Gfc integrator
-(`H2Consumption`, a ZOH discretization) while the DP's stage cost is the Gfc DC
-gain; the two agree at steady state and differ through every transient, so a
-deviation of a few tenths of a percent lies inside a systematic, one-directional
-bias and is not a policy result. Third, the baseline is solved on the run-era
+no regen term (`gen_dp_ems_table.build_demand`): the deceleration **demand** is
+identical, and what is omitted is the returned energy, so a regen-bearing scenario is
+ranked against a regen-free bound and its deviation is optimistic. That optimism is
+now bounded rather than unquantified — every frontier/EMS leg in this suite carries
+**0.000 J** of regen energy (no drive cycle commands a negative motor current), so on
+those legs the omission is exact; regen-bearing scenarios are `frontier_eligible:
+False` by role and their residual optimism measures **≤ 0.9 % of `h2`**. Second, the
+run's hydrogen total is the dynamic Gfc integrator (`H2Consumption`, a ZOH
+discretization) while the DP's stage cost is the Gfc DC gain; the two agree at steady
+state and differ through every transient. ⚠️ **Corrected 2026-09-02 — that bias is
+about 10× smaller than this paragraph used to imply.** Measured on the same inputs it
+is **0.0116 % (`ems-ftp75-dp`) to 0.0316 % (`ems-dp-replay`)** of the integrated
+total, so a deviation of a few tenths of a percent is *outside* it and must not be
+written off as Gfc discretization. The percent-scale table-versus-run gaps this suite
+measures are attributed instead to the firmware's sub-0.55 A open-loop behaviour,
+which the generator does not model (`docs/HIL_PLANT.md` §9.4). Third, the baseline is solved on the run-era
 stimulus: every fingerprint key the sidecar can source is put back (the auxiliary
 preload from its `constants` block, the charge ceiling from `config`, the rest from
 its `scenario` block), and the applied set is recorded in
