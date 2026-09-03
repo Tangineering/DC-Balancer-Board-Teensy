@@ -2467,3 +2467,78 @@ def test_v_absmax_is_not_relaxed_by_the_gate():
     """The 20 V abs-max is the RT1987 datasheet limit and never moves; the
     round changed which cuts are JUDGED against it, not the number."""
     assert he.V_ABSMAX == 20.0
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# THE OFFLINE SPLIT LAW AGAINST THIS ENGINE (2026-09-03, review run-002,
+# PLANT-R2-F3)
+#
+# `governor_model.GovernorModel.delivered_share()` is a CLOSED FORM for the
+# static operating point this engine reaches by solving the network. The two
+# must agree, and they are written independently: the engine stamps two Boost
+# Thevenin sources behind their own droop resistances into a node solve, and the
+# model evaluates a two-branch divider. This section is where the closed form is
+# held to the engine, and where the model's literal copies of this module's
+# constants are held to this module.
+# ═════════════════════════════════════════════════════════════════════════════
+import governor_model as _gm_mod   # noqa: E402
+
+
+def test_the_offline_governor_model_copies_this_modules_split_constants():
+    """`tools/test_governor_model.py` is stdlib-only and cannot import this
+    module, so it carries the three split-law constants as literals. This is
+    where those literals are pinned to their definitions -- a change here that
+    is not mirrored there fails HERE, by name."""
+    assert he.ASYM_DV0_V == 0.013522
+    assert he.ASYM_DROOP_SCALE_FC == 0.9434
+    assert he.DROOP_FIXED_SERIES_OHM == pytest.approx(0.033, abs=1e-12)
+
+
+def _static_split_point(r, i_motor_a=1.5, asymmetry_mode="measured",
+                        droop_mode="design", ticks=1500):
+    """Settle the engine at a commanded droop ratio and return (I_tot, alpha).
+
+    The firmware's own gain map is applied here -- g_FC = K_DROOP/(RE_MAX*r),
+    g_BT = K_DROOP/(RE_MAX*(1-r)) (.ino:10534-10535) -- so the engine is driven
+    by exactly the words the board would carry at that ratio."""
+    e = he.ElectricalSim(trace_config="short", asymmetry_mode=asymmetry_mode,
+                         droop_mode=droop_mode, substep_pin=8)
+    k_d = _gm_mod.GOV_CONST["K_DROOP"]
+    re_max = _gm_mod.GOV_CONST["RE_MAX"]
+    act = _actuators(sw=SW_FC_BUS | SW_BT_BUS | SW_BT_SEQ | SW_MOT_PWR,
+                     aux=AUX_FC_REG | AUX_BT_REG, i_motor_a=i_motor_a,
+                     code_fc=k_d / (re_max * r), code_bt=k_d / (re_max * (1.0 - r)))
+    rails = None
+    for _ in range(ticks):
+        rails = e.step(1e-3, act)
+    total = rails["I_fc"] + rails["I_batt"]
+    return total, rails["I_fc"] / total
+
+
+def test_split_law_matches_this_engines_dc_solve_at_three_ratios():
+    """The closed form against the network solve, asymmetry MEASURED, droop
+    DESIGN -- the configuration every campaign runs."""
+    model = _gm_mod.GovernorModel(
+        dv0_v=he.ASYM_DV0_V, droop_scale_fc=he.ASYM_DROOP_SCALE_FC,
+        r_series_ohm=he.DROOP_FIXED_SERIES_OHM)
+    for r in (0.20, 0.50, 0.80):
+        total, alpha_engine = _static_split_point(r)
+        alpha_model = model.delivered_share(r, total, True, True)
+        assert alpha_model == pytest.approx(alpha_engine, abs=1e-3), (
+            r, total, alpha_model, alpha_engine)
+
+
+def test_split_law_matches_this_engines_dc_solve_with_the_asymmetry_off():
+    """N2: the closed form must track the engine in the OFF mode too, where
+    the series floor is the only term left. The old dV0-only law was the
+    IDENTITY here and the engine was not."""
+    model = _gm_mod.GovernorModel(dv0_v=0.0, droop_scale_fc=1.0,
+                                  r_series_ohm=he.DROOP_FIXED_SERIES_OHM)
+    old = _gm_mod.GovernorModel(dv0_v=0.0)
+    for r in (0.20, 0.80):
+        total, alpha_engine = _static_split_point(r, asymmetry_mode="off")
+        assert model.delivered_share(r, total, True, True) == pytest.approx(
+            alpha_engine, abs=1e-3), (r, alpha_engine)
+        # ...and the identity map it replaced is measurably outside that band.
+        assert abs(old.delivered_share(r, total, True, True)
+                   - alpha_engine) > 5e-3

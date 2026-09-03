@@ -16,6 +16,23 @@ mask and pack steps) and against scipy's MAT reader are guarded with
 between the scalar ports here and the numpy originals they were transcribed
 from, which is the drift this repository has already recorded twice.  A change
 to either side must be validated under miniforge, not under `.venv_hil` alone.
+
+⚠️ THREE TESTS ARE WALL-CLOCK-BUDGET TESTS (2026-09-03 fix round, L5).  The
+MPC's search width is bounded by a solve BUDGET IN MILLISECONDS, so a host that
+is running something else explores fewer candidates and can commit a different
+plan.  These three exercise that path and are the file's only known flakes
+under concurrent load; each passes in isolation, and a failure is a scheduling
+observation until it is reproduced ALONE:
+
+    test_transition_roll_slices_and_completes
+    test_the_search_width_reads_no_clock
+    test_the_committed_plan_is_insensitive_to_the_projection
+
+    <interpreter> -m pytest tools/test_mpc_ems.py -q -k "<name>"
+
+They are NOT marked skip or xfail: each asserts a real invariant and must fail
+loudly when the invariant breaks.  Do not widen their tolerances to absorb host
+load -- rerun them alone instead.
 """
 import math
 import os
@@ -434,7 +451,11 @@ def test_transition_roll_reproduces_a_full_roll():
 
 
 def test_transition_roll_slices_and_completes():
-    """The slicing mechanism completes inside 50 callbacks (adjudication 2.2)."""
+    """The slicing mechanism completes inside 50 callbacks (adjudication 2.2).
+
+    WALL-CLOCK-BUDGET TEST -- run it alone before believing a failure (see the
+    module docstring; the other two are `test_the_search_width_reads_no_clock`
+    and `test_the_committed_plan_is_insensitive_to_the_projection`)."""
     # Four transitions in the horizon - RollJob.MAX_TRANSITIONS, the
     # adjudication's own bound on the slice.
     prof = lambda t: 1.2 if (t < 4.0 or 8.0 <= t < 12.0 or t >= 16.0) else 0.35
@@ -2081,7 +2102,12 @@ def test_the_search_width_reads_no_clock():
 
     The measurement is captured and asserted to be reported, not consumed: a
     strategy whose measured cost is driven far above the nominal must still
-    produce the same active set."""
+    produce the same active set.
+
+    WALL-CLOCK-BUDGET TEST -- run it alone before believing a failure (see the
+    module docstring; the other two are
+    `test_transition_roll_slices_and_completes` and
+    `test_the_committed_plan_is_insensitive_to_the_projection`)."""
     seen = []
     s = _bound(budget_ms=15.0)
     orig = s.planner.solve
@@ -2226,7 +2252,15 @@ def test_the_committed_plan_is_insensitive_to_the_projection():
     coarsened decision could not reach ladder index 5 and the cruise share moved
     from 0.6667 to 0.75.  With the incumbent's neighbours unioned in, a 5x sweep
     of the projection moves the total by well under a per cent and the cruise
-    share does not move at all.  A regression here is the return of the cliff."""
+    share does not move at all.  A regression here is the return of the cliff.
+
+    WALL-CLOCK-BUDGET TEST -- run it alone before believing a failure (see the
+    module docstring; the other two are
+    `test_transition_roll_slices_and_completes` and
+    `test_the_search_width_reads_no_clock`).  Observed 2026-09-03: the cruise
+    count read 260 under concurrent load against 270 alone, because the loaded
+    host coarsened one more decision inside the same millisecond budget.  That
+    is the budget acting as designed, not the cliff returning."""
     pytest.importorskip("numpy")
     ems_walk = pytest.importorskip("ems_walk")
     out = []
@@ -3122,3 +3156,108 @@ def test_the_census_reports_the_columns_the_search_walked():
     # OFF: the key is present and zero, so a sidecar never has to guess.
     off = _bound(loss_map=sim.plant_loss_map())
     assert off.timing()["ss_searched"] == 0
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# 21. The split law reaches every model this module builds (2026-09-03 fix
+#     round, M1).  `dv0_v` had wiring tests; its two siblings had none, so a
+#     revert of the plumbing would have been caught nowhere in this file.
+# ═════════════════════════════════════════════════════════════════════════════
+_PLANT_RHO = 0.9434                # hil_electrical.ASYM_DROOP_SCALE_FC
+_PLANT_R_SERIES = 0.033            # hil_electrical.DROOP_FIXED_SERIES_OHM
+
+
+def test_the_planner_keeps_a_map_with_the_asymmetry_off():
+    """N2, ON THE PLANNER'S OWN SHORTCUT. The `_map is None` test used to key on
+    `dv0_v == 0.0` alone. With the series floor in the law that predicate stops
+    meaning "the map is the identity": an `--asymmetry off` run carries
+    dV0 = 0.0 and rho = 1.0 but STILL realizes 0.033 ohm, and a planner that
+    dropped its map there would predict alpha = r on a plant that delivers
+    up to 0.0096 of share away from it.
+
+    REVERT GUARD: with the shortcut keyed on `dv0_v` alone the FIRST assertion
+    of this test fails, because that is exactly the configuration the old key
+    called trivial."""
+    p = M.Planner(dv0_v=0.0, r_series_ohm=_PLANT_R_SERIES)
+    assert p._map is not None
+    assert p._map.r_series_ohm == _PLANT_R_SERIES
+    assert p._map.droop_scale_fc == 1.0
+    # rho alone is enough on its own, for the same reason.
+    assert M.Planner(dv0_v=0.0, droop_scale_fc=_PLANT_RHO)._map is not None
+    # ...and all three trivial is the only configuration that drops the map,
+    # which is what keeps every pre-2026-09-03 caller bit-identical.
+    assert M.Planner()._map is None
+    assert M.Planner(dv0_v=0.0, droop_scale_fc=1.0, r_series_ohm=0.0)._map \
+        is None
+
+
+def test_the_strategy_hands_the_split_law_to_every_model_it_builds():
+    """M1: the three parameters are one law, so a model built by this strategy
+    that carries only `dv0_v` predicts a plant the run does not drive. The
+    shadow governor, its rollout copy and the planner are asserted TOGETHER
+    because each is a separate construction site."""
+    s = M.MpcStrategy("mpc-det", dv0_v=sim.ASYM_DV0_V,
+                      droop_scale_fc=_PLANT_RHO,
+                      r_series_ohm=_PLANT_R_SERIES)
+    for name, g in (("shadow", s.shadow.model),
+                    ("shadow copy", s._ss_shadow_copy())):
+        assert g.dv0_v == sim.ASYM_DV0_V, name
+        assert g.droop_scale_fc == _PLANT_RHO, name
+        assert g.r_series_ohm == _PLANT_R_SERIES, name
+        assert not g.map_is_identity(), name
+    # The planner is built by bind_scenario(), which is where the run's own
+    # kwargs become a search.
+    s.bind_scenario(SCEN, _meta())
+    assert s.planner.droop_scale_fc == _PLANT_RHO
+    assert s.planner.r_series_ohm == _PLANT_R_SERIES
+    assert s.planner._map is not None
+    assert s.planner._map.r_series_ohm == _PLANT_R_SERIES
+    # ...and the provenance records all three, so a trace planned on the
+    # corrected law can be told from one planned on the law it replaced.
+    prov = s._provenance()
+    assert prov["dv0_v"] == sim.ASYM_DV0_V
+    assert prov["droop_scale_fc"] == _PLANT_RHO
+    assert prov["r_series_ohm"] == _PLANT_R_SERIES
+
+
+def test_the_roll_job_hands_the_split_law_to_the_governor_it_builds():
+    """M1: `RollJob._roll_begin()` builds its own `GovernorModel` per ladder
+    point, so it is a construction site of its own and a dropped parameter
+    there would silently make the transition rolls the only part of the plan
+    computed on the wrong law."""
+    prof = lambda t: 1.2 if (t < 4.0 or t >= 8.0) else 0.35
+    prev = _synthetic_preview(prof, n_stages=12)
+    pre = M.precompute_stages(prev, 0, 12, mode_seed=M.STAGE_CLOSED)
+    ladder = [0.25 + i * 0.5 / 6.0 for i in range(7)]
+    job = M.RollJob(pre, ladder, dv0_v=sim.ASYM_DV0_V,
+                    droop_scale_fc=_PLANT_RHO,
+                    r_series_ohm=_PLANT_R_SERIES)
+    assert job.droop_scale_fc == _PLANT_RHO
+    assert job.r_series_ohm == _PLANT_R_SERIES
+    seen = []
+    orig = M.gov_mod.GovernorModel
+
+    def spy(*a, **kw):
+        seen.append(kw)
+        return orig(*a, **kw)
+
+    M.gov_mod.GovernorModel = spy
+    try:
+        job.run_all()
+    finally:
+        M.gov_mod.GovernorModel = orig
+    assert seen, "the roll built no governor"
+    for kw in seen:
+        assert kw["dv0_v"] == sim.ASYM_DV0_V
+        assert kw["droop_scale_fc"] == _PLANT_RHO
+        assert kw["r_series_ohm"] == _PLANT_R_SERIES
+
+
+def test_the_probe_and_this_module_agree_on_the_split_constants():
+    """The literals above are this file's copy of the plant's constants; pinned
+    here so a fit that moves in `hil_electrical` fails by name rather than
+    quietly re-planning against a plant nobody runs."""
+    assert _PLANT_RHO == pytest.approx(
+        sim.ASYM_DROOP_SCALE_FC / sim.ASYM_DROOP_SCALE_BT, abs=1e-12)
+    assert _PLANT_R_SERIES == pytest.approx(sim.DROOP_FIXED_SERIES_OHM,
+                                            abs=1e-12)

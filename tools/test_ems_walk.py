@@ -1045,3 +1045,71 @@ def test_the_walk_and_the_planner_share_one_single_source_demand_model():
         for gi, mi in ((2, 2), (3, 3), (4, 4)):     # p_dem, v_bus, i_total
             assert np.allclose(np.asarray(g[gi]), np.asarray(m[mi]),
                                rtol=0, atol=1e-12), mode
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# THE SPLIT LAW REACHES THE WALK (2026-09-03, review run-002, PLANT-R2-F3/N2)
+#
+# `walk()` carried `dv0_v` alone, which is one of the law's three parameters.
+# These pin that the other two arrive, that the defaults are still the identity
+# map, and that an asymmetry-OFF walk is NOT the same as a walk with no map --
+# the N2 trap, which is invisible unless something asserts it.
+# ─────────────────────────────────────────────────────────────────────────────
+_PLANT_DV0_V = 0.013522
+_PLANT_RHO = 0.9434
+_PLANT_R_SERIES = 0.033
+
+
+def _delivered_span(**kw):
+    """The delivered-share trace of a short governed walk under `kw`."""
+    r = ew.walk("soc-band", "ems-soc-band", soc0=0.7, governor=True, **kw)
+    return list(r.share_delivered)
+
+
+def test_walk_defaults_deliver_the_commanded_ratio():
+    """No split-law argument means the identity map, exactly as before."""
+    base = _delivered_span()
+    with_r = ew.walk("soc-band", "ems-soc-band", soc0=0.7, governor=True)
+    assert list(with_r.share_delivered) == base
+    assert base and max(base) <= 1.0
+
+
+def test_the_walk_carries_rho_and_the_series_floor():
+    """Each parameter moves the delivered share on its own, so neither can be
+    dropped silently on the way to the governor."""
+    base = _delivered_span()
+    full = _delivered_span(dv0_v=_PLANT_DV0_V, droop_scale_fc=_PLANT_RHO,
+                           r_series_ohm=_PLANT_R_SERIES)
+    dv0_only = _delivered_span(dv0_v=_PLANT_DV0_V)
+    assert len(full) == len(base) == len(dv0_only)
+    assert full != base
+    assert full != dv0_only
+    # The correction is a share offset of the order the review reports, not a
+    # different trajectory.
+    worst = max(abs(a - b) for a, b in zip(full, dv0_only))
+    assert 1e-3 < worst < 0.05
+
+
+def test_an_asymmetry_off_walk_still_carries_the_series_floor():
+    """N2: the floor is era-independent physics, so `--asymmetry off` is a walk
+    with rho = 1 and R_f = 0.033, NOT a walk with no map at all."""
+    base = _delivered_span()
+    off = _delivered_span(dv0_v=0.0, droop_scale_fc=1.0,
+                          r_series_ohm=_PLANT_R_SERIES)
+    assert off != base
+
+
+def test_the_walk_cli_exposes_all_three_split_parameters():
+    """A parameter the CLI cannot set is a parameter an operator cannot match
+    to the plant."""
+    import argparse
+    import contextlib
+    import io as _io
+    buf = _io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        with pytest.raises(SystemExit):
+            ew.main(["--help"])
+    text = buf.getvalue()
+    for flag in ("--dv0", "--droop-scale-fc", "--r-series"):
+        assert flag in text, flag
+    assert argparse is not None

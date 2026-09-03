@@ -441,6 +441,7 @@ def _instantiate(sim, strategy_name: str, scenario: str, meta,
 def walk(strategy_name: str, scenario_name: str, *, soc0: float = 0.7,
          capacity_ah: Optional[float] = None, accounting: str = "physical",
          governor: bool = True, dv0_v: float = 0.0,
+         droop_scale_fc: float = 1.0, r_series_ohm: float = 0.0,
          policy_file: Optional[str] = None,
          strategy_kwargs: Optional[dict] = None,
          dt_decision: Optional[float] = None,
@@ -631,7 +632,16 @@ def walk(strategy_name: str, scenario_name: str, *, soc0: float = 0.7,
         raise ValueError("dt_decision (%g) must be an integer multiple of "
                          "gov_dt_s (%g)" % (dt, gov_dt_s))
 
+    # THE STATIC SPLIT LAW'S THREE PARAMETERS (2026-09-03, review run-002
+    # PLANT-R2-F3/N2).  `dv0_v` alone is NOT the map: `droop_scale_fc` (rho) and
+    # `r_series_ohm` (R_f) are the other two, and R_f is present with the
+    # asymmetry OFF as well.  All three default to the identity map, so a walk
+    # that passes none is bit-identical to a pre-2026-09-03 walk; a walk that is
+    # to predict THIS plant takes all three from
+    # `hil_plant_sim.resolve_asymmetry_dv0_v()` / `resolve_asymmetry_split()`.
     g = gov_mod.GovernorModel(dt_s=gov_dt_s, dv0_v=dv0_v,
+                              droop_scale_fc=droop_scale_fc,
+                              r_series_ohm=r_series_ohm,
                               conv_tau_s=conv_tau_s,
                               seed_r=sim.SOC_BAND_SHARE_NOMINAL)
 
@@ -930,7 +940,22 @@ def main(argv=None):      # pragma: no cover - operator convenience
     ap.add_argument("--soc0", type=float, default=0.7)
     ap.add_argument("--policy-file", default=None)
     ap.add_argument("--no-governor", action="store_true")
-    ap.add_argument("--dv0", type=float, default=0.0)
+    ap.add_argument("--dv0", type=float, default=0.0,
+                    help="split law: the converter-asymmetry DeltaV0 [V] "
+                         "(the plant's measured value is 0.013522)")
+    ap.add_argument("--droop-scale-fc", type=float, default=1.0,
+                    help="split law: rho, the FC channel's droop-resistance "
+                         "multiplier (the plant's measured value is 0.9434, "
+                         "1.0 with --asymmetry off)")
+    ap.add_argument("--r-series", type=float, default=0.0,
+                    help="split law: R_f, the series resistance common to both "
+                         "channels [ohm] (the plant's value is 0.033 in BOTH "
+                         "asymmetry modes). NOTE: this walk has no droop mode "
+                         "- the split law it applies is exact only against a "
+                         "plant run at `--droop design` (every campaign on "
+                         "record); see "
+                         "docs/modeling/governor_split_law_20260903.md "
+                         "section 6.")
     ap.add_argument("--accounting", choices=("physical", "simple"),
                     default="physical")
     ap.add_argument("--dt", type=float, default=None,
@@ -962,6 +987,7 @@ def main(argv=None):      # pragma: no cover - operator convenience
 
     r = walk(a.strategy, a.scenario, soc0=a.soc0, accounting=a.accounting,
              governor=not a.no_governor, dv0_v=a.dv0,
+             droop_scale_fc=a.droop_scale_fc, r_series_ohm=a.r_series,
              policy_file=a.policy_file, dt_decision=a.dt,
              eta_fc_proxy=a.eta_fc, charge_admission=a.charge_admission,
              eta_chg=(None if a.eta_chg_none else a.eta_chg),

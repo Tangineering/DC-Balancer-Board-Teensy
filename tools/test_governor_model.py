@@ -1079,3 +1079,203 @@ def test_an_out_of_band_setpoint_is_never_clamped():
     # And the band edges themselves ARE clamped, so the gate is a strict
     # out-of-band test and not an off-by-one that disables the clamp at 0.85.
     assert gm.ceiling_bounded_share(0.85, 2.0) < 0.85
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# THE STATIC SPLIT LAW (2026-09-03, physics review run-002, PLANT-R2-F3/N1/N2)
+#
+# `delivered_share()` carried only the dV0 half of the M2 asymmetry fit and no
+# series floor. The corrected law is the two-branch divider
+#     R_FC = rho*k_d/r + R_f,  R_BT = k_d/(1-r) + R_f,
+#     alpha = (dV0/I_tot + R_BT) / (R_FC + R_BT)
+# and the design record is docs/modeling/governor_split_law_20260903.md.
+# ═════════════════════════════════════════════════════════════════════════════
+# The plant's own constants, as literals so this file keeps its stdlib-only,
+# governor_model-only import contract. `tools/test_hil_electrical.py` pins each
+# against hil_electrical, which is where they are defined.
+_PLANT_DV0_V = 0.013522          # hil_electrical.ASYM_DV0_V
+_PLANT_RHO = 0.9434              # hil_electrical.ASYM_DROOP_SCALE_FC
+_PLANT_R_SERIES = 0.033          # hil_electrical.DROOP_FIXED_SERIES_OHM
+
+
+def _full_law_model(**kw):
+    """A model carrying the plant's three split-law parameters."""
+    p = dict(dv0_v=_PLANT_DV0_V, droop_scale_fc=_PLANT_RHO,
+             r_series_ohm=_PLANT_R_SERIES)
+    p.update(kw)
+    return gm.GovernorModel(**p)
+
+
+def _bisect_ratio(model, alpha, i_tot, iters=200):
+    """The ratio delivering `alpha`, by bisection on the FORWARD law.
+
+    Written here rather than taken from a root-finding package: the suite is
+    stdlib-only, and an independent bracketing solve is exactly what the
+    closed-form inverse has to be checked against."""
+    lo, hi = 1e-12, 1.0 - 1e-12
+    f_lo = model.delivered_share(lo, i_tot, True, True) - alpha
+    for _ in range(iters):
+        mid = 0.5 * (lo + hi)
+        f_mid = model.delivered_share(mid, i_tot, True, True) - alpha
+        if f_lo * f_mid <= 0.0:
+            hi = mid
+        else:
+            lo, f_lo = mid, f_mid
+    return 0.5 * (lo + hi)
+
+
+# The four campaign-F windows the review inverted the law against
+# (hil_report_20260903_063659, `fw26-clamp-sweep` and `fw26-clamp-cruise`; the
+# ratio is MDAC-derived and the total and delivered share are the scored
+# window's means). `board_r` is the hardware; the last column is how far the
+# pre-2026-09-03 law's inverse sat from it, in per cent.
+#   label            alpha       I_tot     board r    dv0-only error
+_BOARD_WINDOWS = (
+    ("sweep r12", 0.500005, 1.2008, 0.475805, +3.11),
+    ("sweep r05", 0.399996, 1.8417, 0.374986, +5.11),
+    ("sweep r07", 0.200010, 2.0362, 0.177878, +10.48),
+    ("sweep r01", 0.750162, 1.2008, 0.742468, +0.07),
+)
+
+
+def test_split_law_inverts_the_campaign_f_windows_to_the_board():
+    """THE PRIMARY VALIDATION: the law reproduces the hardware.
+
+    The board is the authority here, not another model. On all four converged
+    windows the inverse lands within 5e-4 of the ratio the board's own MDAC
+    words carry."""
+    g = _full_law_model()
+    for label, alpha, i_tot, board_r, _pct in _BOARD_WINDOWS:
+        r = g._ratio_for_delivered(alpha, i_tot)
+        assert r == pytest.approx(board_r, abs=5e-4), (label, r, board_r)
+        # ...and the FORWARD law closes the loop on the board's own ratio.
+        assert g.delivered_share(board_r, i_tot, True,
+                                 True) == pytest.approx(alpha, abs=1e-3), label
+
+
+def test_the_dv0_only_law_is_wrong_at_low_share_and_stays_refused():
+    """A REGRESSION GUARD AGAINST REVERTING, not a property of the new law.
+
+    The dV0-only law (rho = 1, R_f = 0) misses the board's ratio by more than
+    5 % at share 0.20, which is the error that made campaign F's region-12 MDAC
+    pin an adjudicated FAIL. If someone restores it, this fails."""
+    old = gm.GovernorModel(dv0_v=_PLANT_DV0_V)
+    label, alpha, i_tot, board_r, pct = _BOARD_WINDOWS[2]
+    assert label == "sweep r07"
+    r_old = old._ratio_for_delivered(alpha, i_tot)
+    err_pct = 100.0 * (r_old - board_r) / board_r
+    assert err_pct > 5.0, err_pct
+    assert err_pct == pytest.approx(pct, abs=0.05)
+    # The full law is more than an order of magnitude better on the same window.
+    r_new = _full_law_model()._ratio_for_delivered(alpha, i_tot)
+    assert abs(r_new - board_r) < 0.05 * abs(r_old - board_r)
+
+
+# CAL-1 (docs/modeling/converter_asymmetry_20260901.md): delivered share at a
+# COMMANDED ratio of 0.5, at three totals.
+_CAL1 = ((0.452, 0.5354), (0.935, 0.5262), (1.346, 0.5327))
+
+
+def _cal1_rms(model):
+    e = [model.delivered_share(0.5, i, True, True) - a for i, a in _CAL1]
+    return math.sqrt(sum(x * x for x in e) / len(e))
+
+
+def test_split_law_reproduces_the_cal1_fit_residual():
+    """SECOND, INDEPENDENT VALIDATION: the corpus the fit itself was made on.
+
+    The M2 pair's own RMS on CAL-1 is 0.0063; the law evaluated at the plant's
+    constants must not be worse than the fit that produced them, and the
+    dV0-only pairing the fit document rejects must be visibly worse."""
+    # 0.006414, which is the review's quoted 0.0064 to its stated precision.
+    assert _cal1_rms(_full_law_model()) == pytest.approx(0.006414, abs=5e-6)
+    assert _cal1_rms(_full_law_model()) <= 0.0065
+    assert _cal1_rms(gm.GovernorModel(dv0_v=_PLANT_DV0_V,
+                                      droop_scale_fc=1.0,
+                                      r_series_ohm=0.0)) > 0.015
+
+
+def test_the_closed_form_inverse_matches_a_bracketing_root_finder():
+    """The inverse is a quadratic root and root SELECTION is where a closed
+    form goes wrong, so it is checked against a bracketing solve of the forward
+    law over the band and over the whole current range the rig reaches."""
+    g = _full_law_model()
+    worst = 0.0
+    for i_tot in (0.3, 0.5, 0.8, 1.2, 2.0, 3.0, 4.0):
+        for alpha in (0.16, 0.25, 0.35, 0.50, 0.65, 0.75, 0.84):
+            worst = max(worst, abs(g._ratio_for_delivered(alpha, i_tot)
+                                   - _bisect_ratio(g, alpha, i_tot)))
+    assert worst <= 1e-6, worst
+
+
+def test_the_inverse_round_trips_the_forward_law():
+    g = _full_law_model()
+    worst = 0.0
+    for i_tot in (0.3, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0):
+        for r in (0.15, 0.25, 0.35, 0.50, 0.65, 0.75, 0.85):
+            worst = max(worst, abs(g._ratio_for_delivered(
+                g.delivered_share(r, i_tot, True, True), i_tot) - r))
+    assert worst <= 1e-9, worst
+
+
+def test_the_shipped_defaults_are_still_the_identity_map():
+    """BIT-IDENTITY FOR EVERY EXISTING CALLER. The two new parameters default
+    to the values at which the law collapses to alpha = r, so a caller that
+    passes neither is unchanged."""
+    g = gm.GovernorModel()
+    assert g.droop_scale_fc == 1.0 and g.r_series_ohm == 0.0
+    assert g.map_is_identity()
+    for i_tot in (0.3, 1.0, 4.0):
+        for r in (0.0, 0.15, 0.5, 0.84, 1.0):
+            assert g.delivered_share(r, i_tot, True, True) == r
+            assert g._ratio_for_delivered(r, i_tot) == r
+
+
+def test_the_identity_shortcut_keys_on_all_three_parameters():
+    """N2: the shortcut used to key on `dv0_v == 0.0` alone. With R_f present
+    the map is NOT the identity at dV0 = 0, so an asymmetry-off caller taking
+    that shortcut would silently keep the wrong map."""
+    assert not gm.GovernorModel(r_series_ohm=_PLANT_R_SERIES).map_is_identity()
+    assert not gm.GovernorModel(droop_scale_fc=_PLANT_RHO).map_is_identity()
+    assert gm.GovernorModel(dv0_v=0.0).map_is_identity()
+
+
+def test_asymmetry_off_still_carries_the_series_floor():
+    """N2 as a number: with dV0 = 0 and rho = 1 the map is still not the
+    identity, and the deviation at the droop band's rails is the review's
+    +/-0.0096 of share. It is SYMMETRIC (r = 0.5 is a fixed point) and always
+    toward 0.5, which is what a resistance common to both branches does."""
+    g = gm.GovernorModel(dv0_v=0.0, droop_scale_fc=1.0,
+                         r_series_ohm=_PLANT_R_SERIES)
+    assert g.delivered_share(0.5, 1.5, True, True) == pytest.approx(0.5,
+                                                                    abs=1e-12)
+    lo = g.delivered_share(gm.GOV_CONST["DROOP_R_MIN"], 1.5, True, True)
+    hi = g.delivered_share(gm.GOV_CONST["DROOP_R_MAX"], 1.5, True, True)
+    assert lo - gm.GOV_CONST["DROOP_R_MIN"] == pytest.approx(+0.0095, abs=5e-5)
+    assert hi - gm.GOV_CONST["DROOP_R_MAX"] == pytest.approx(-0.0095, abs=5e-5)
+    # Current-independent, unlike the dV0 term.
+    for i_tot in (0.3, 4.0):
+        assert g.delivered_share(0.2, i_tot, True, True) == pytest.approx(
+            g.delivered_share(0.2, 1.5, True, True), abs=1e-12)
+
+
+def test_the_split_law_rejects_impossible_parameters():
+    with pytest.raises(ValueError):
+        gm.GovernorModel(droop_scale_fc=0.0)
+    with pytest.raises(ValueError):
+        gm.GovernorModel(r_series_ohm=-1e-9)
+
+
+def test_topology_and_degenerate_ratios_are_unchanged_by_the_new_law():
+    """The cut/dark arms and the r = 0 / r = 1 rails come BEFORE the law and
+    must stay exactly where they were."""
+    g = _full_law_model()
+    assert g.delivered_share(0.5, 1.5, False, False) == 0.0
+    assert g.delivered_share(0.5, 1.5, False, True) == 0.0
+    assert g.delivered_share(0.5, 1.5, True, False) == 1.0
+    assert g.delivered_share(0.0, 1.5, True, True) == 0.0
+    assert g.delivered_share(1.0, 1.5, True, True) == 1.0
+    # No current means no delivered share to speak of: the applied ratio is
+    # returned, as it was before the law changed.
+    assert g.delivered_share(0.37, 0.0, True, True) == 0.37
+    assert g._ratio_for_delivered(0.37, 0.0) == 0.37

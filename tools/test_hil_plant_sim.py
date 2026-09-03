@@ -507,8 +507,22 @@ def test_mdac_split_both_live_unequal_codes():
     out = plant.step(1e-3, obs)
     total = out["I_fc"] + out["I_batt"]
     assert total == pytest.approx(hil.I_AUX_A, abs=1e-6)
-    assert out["I_fc"] == pytest.approx(total * 0.25, rel=1e-6)
-    assert out["I_batt"] == pytest.approx(total * 0.75, rel=1e-6)
+    # RE-PINNED 2026-09-03 (review run-002, PLANT-R2-N2): 0.25 -> 0.259904.
+    # The commanded code ratio is still 0.25; what the NETWORK delivers is the
+    # divider of the two branch resistances, and each branch carries
+    # DROOP_FIXED_SERIES_OHM = 0.033 in SERIES with its droop term. A common
+    # series resistance pulls any split toward 0.5, so the minority channel
+    # gets more than its code ratio:
+    #   alpha = (k_d/0.75 + R_f) / (k_d/0.25 + k_d/0.75 + 2*R_f)
+    #         = 0.433 / 1.666 = 0.2599039...
+    # The old 0.25 was the R_f = 0 idealization, and it was wrong in BOTH
+    # asymmetry modes, which is why this off-mode test moves at all.
+    want = ((hil.K_DROOP_FW_OHM / 0.75 + hil.DROOP_FIXED_SERIES_OHM)
+            / (hil.K_DROOP_FW_OHM / 0.25 + hil.K_DROOP_FW_OHM / 0.75
+               + 2.0 * hil.DROOP_FIXED_SERIES_OHM))
+    assert want == pytest.approx(0.2599039, abs=1e-7)
+    assert out["I_fc"] == pytest.approx(total * want, rel=1e-6)
+    assert out["I_batt"] == pytest.approx(total * (1.0 - want), rel=1e-6)
 
 
 def test_mdac_split_only_fc_live():
@@ -9502,10 +9516,23 @@ def test_bind_scenario_refuses_the_stale_pre_removal_fingerprint(tmp_path):
 # C1 round (2026-09-01), PART A — simple-mode static converter-asymmetry law
 # ─────────────────────────────────────────────────────────────────────────
 
-def _static_law(r, i_total, dv0=None, k_d=hil.K_DROOP_FW_OHM):
+def _static_law(r, i_total, dv0=None, k_d=hil.K_DROOP_FW_OHM, rho=None,
+                r_f=None):
+    """The split law, written out independently of the implementation.
+
+    RE-WRITTEN 2026-09-03 (review run-002, PLANT-R2-F3/N1). It carried
+    `alpha = r + dV0*r(1-r)/(k_d*I_tot)`, the dV0 half of the M2 fit with
+    rho pinned at 1 and no series floor -- the pairing
+    docs/modeling/converter_asymmetry_20260901.md rejects."""
     if dv0 is None:
         dv0 = hil.ASYM_DV0_V
-    alpha = r + (dv0 * r * (1.0 - r) / (k_d * i_total))
+    if rho is None:
+        rho = hil.ASYM_DROOP_SCALE_FC
+    if r_f is None:
+        r_f = hil.DROOP_FIXED_SERIES_OHM
+    r_fc = rho * k_d / r + r_f
+    r_bt = k_d / (1.0 - r) + r_f
+    alpha = (dv0 / i_total + r_bt) / (r_fc + r_bt)
     return min(1.0, max(0.0, alpha))
 
 
@@ -9528,10 +9555,36 @@ def test_plant_asym_dv0_v_resolved_from_mode_and_ina_offsets():
     assert p.asym_dv0_v != pytest.approx(hil.ASYM_DV0_V)
 
 
-def test_apply_simple_asymmetry_off_mode_is_inert():
+def test_apply_simple_asymmetry_off_mode_still_carries_the_series_floor():
+    """RE-PINNED 2026-09-03 (review run-002, PLANT-R2-N2): off mode is NOT
+    inert, and the test that asserted it was is the defect stated as a test.
+
+    `--asymmetry off` sets dV0 = 0 and rho = 1 -- both halves of the fit -- but
+    DROOP_FIXED_SERIES_OHM is not part of the fit at all: it is the boost
+    Thevenin term, the RT1987 pass FET and the sense shunt, present on every
+    board in every mode. What off mode restores is SYMMETRY between the two
+    channels (r = 0.5 is a fixed point), not the identity map."""
     plant = hil.Plant(asymmetry_mode="off")
-    for r, i_total in ((0.5, 1.0), (0.2, 0.5), (0.9, 2.0)):
-        assert plant._apply_simple_asymmetry(r, i_total) == r
+    assert plant._apply_simple_asymmetry(0.5, 1.0) == pytest.approx(0.5,
+                                                                    abs=1e-12)
+    for r, i_total in ((0.2, 0.5), (0.9, 2.0)):
+        got = plant._apply_simple_asymmetry(r, i_total)
+        assert got != r
+        assert got == pytest.approx(_static_law(r, i_total, dv0=0.0, rho=1.0),
+                                    abs=1e-12)
+        # ...and toward 0.5, by an amount of the order the review reports.
+        assert abs(got - 0.5) < abs(r - 0.5)
+        assert abs(got - r) < 0.011
+    # THE REVIEW'S OWN FIGURE, at the firmware droop band's rails: +/-0.0096 of
+    # share with the asymmetry OFF (the deviation is not monotone in r -- it
+    # peaks near r = 0.2 at 0.0102 -- so the rails are quoted, not the maximum).
+    import governor_model as _gm
+    for r in (_gm.GOV_CONST["DROOP_R_MIN"], _gm.GOV_CONST["DROOP_R_MAX"]):
+        dev = _static_law(r, 1.0, dv0=0.0, rho=1.0) - r
+        assert abs(dev) == pytest.approx(0.0095, abs=5e-5)
+    # The identity is recovered only by removing the floor as well.
+    assert _static_law(0.2, 0.5, dv0=0.0, rho=1.0,
+                       r_f=0.0) == pytest.approx(0.2, abs=1e-12)
 
 
 def test_apply_simple_asymmetry_matches_the_static_law_at_three_currents():
@@ -9580,11 +9633,12 @@ def test_apply_simple_asymmetry_clips_to_unit_interval():
     assert lo == 0.0
 
 
-def test_apply_simple_asymmetry_off_restores_pure_code_ratio_in_step():
-    """Integration check through Plant.step(): with asymmetry off, the FC
-    share is exactly the code-ratio law (code_bt/(code_fc+code_bt)); with
-    asymmetry on (default), the same codes deliver a measurably different
-    split at a current above ASYM_SIMPLE_I_MIN_A."""
+def test_apply_simple_asymmetry_off_is_the_symmetric_network_in_step():
+    """Integration check through Plant.step(): with asymmetry off the FC share
+    is the SYMMETRIC network's divider on the code-ratio share (still not the
+    bare code ratio -- the series floor survives the mode, N2); with asymmetry
+    on (default), the same codes deliver a measurably different split at a
+    current above ASYM_SIMPLE_I_MIN_A."""
     mdac_fc = hil.MDAC_CMD_LOAD_UPDATE | 3000
     mdac_bt = hil.MDAC_CMD_LOAD_UPDATE | 1000
     obs = _obs(switch=hil.SW_FC_BUS | hil.SW_BT_BUS,
@@ -9594,7 +9648,10 @@ def test_apply_simple_asymmetry_off_restores_pure_code_ratio_in_step():
     plant_off = hil.Plant(asymmetry_mode="off")
     out_off = plant_off.step(1e-3, obs)
     total = out_off["I_fc"] + out_off["I_batt"]
-    assert out_off["I_fc"] == pytest.approx(total * 0.25, rel=1e-6)
+    # RE-PINNED 2026-09-03: 0.25 -> the symmetric two-branch divider at the
+    # code-ratio share 0.25 (see test_mdac_split_both_live_unequal_codes).
+    assert out_off["I_fc"] == pytest.approx(
+        total * _static_law(0.25, total, dv0=0.0, rho=1.0), rel=1e-6)
 
     plant_on = hil.Plant(asymmetry_mode="measured")
     out_on = plant_on.step(1e-3, obs)
@@ -10371,16 +10428,22 @@ def test_mpc_configure_kwargs_defaults_to_the_shipped_design():
     untouched command line reproduces the shipped controller exactly. That is
     the property that makes a scenario's `ems` key alone reproducible.
 
-    `dv0_v` is the ONE exception and is always present: it is not a tuning
-    choice but a property of the plant the run drives (2026-09-02)."""
-    # Nothing but the asymmetry on a scenario that declares no MPC key at all...
+    The THREE SPLIT-LAW PARAMETERS are the exception and are always present:
+    they are not tuning choices but properties of the plant the run drives
+    (`dv0_v` 2026-09-02; `droop_scale_fc` and `r_series_ohm` 2026-09-03, review
+    run-002 PLANT-R2-F3)."""
+    # Nothing but the split law on a scenario that declares no MPC key at all...
     assert hil.mpc_configure_kwargs(_mpc_ns(), {}) == {
-        "dv0_v": hil.ASYM_DV0_V}
+        "dv0_v": hil.ASYM_DV0_V,
+        "droop_scale_fc": hil.ASYM_DROOP_SCALE_FC,
+        "r_series_ohm": hil.DROOP_FIXED_SERIES_OHM}
     # ...and on a registered leg, that plus ONLY the deterministic candidate
     # cap, which is a scenario declaration rather than a controller default.
     assert hil.mpc_configure_kwargs(_mpc_ns(), hil.SCENARIOS["ems-mpc"]) == {
         "max_candidates": hil.MPC_CAMPAIGN_MAX_CANDIDATES,
-        "dv0_v": hil.ASYM_DV0_V}
+        "dv0_v": hil.ASYM_DV0_V,
+        "droop_scale_fc": hil.ASYM_DROOP_SCALE_FC,
+        "r_series_ohm": hil.DROOP_FIXED_SERIES_OHM}
     # The scenario's own SoC placement is NOT smuggled in here: the strategy's
     # bind_scenario() reads it off `meta`, so passing it as a constructor kwarg
     # too would give one quantity two owners.
@@ -10451,7 +10514,9 @@ def test_mpc_flags_reach_the_constructor_kwargs():
     assert kw == {"horizon": 8, "share_band": (0.30, 0.70), "share_levels": 5,
                   "budget_ms": 3.0, "roll_budget_ms": 0.5,
                   "terminal_price_mode": "metric", "h2_map": "proxy",
-                  "dv0_v": hil.ASYM_DV0_V}
+                  "dv0_v": hil.ASYM_DV0_V,
+                  "droop_scale_fc": hil.ASYM_DROOP_SCALE_FC,
+                  "r_series_ohm": hil.DROOP_FIXED_SERIES_OHM}
 
 
 def test_mpc_flags_exist_on_the_command_line():
@@ -12617,3 +12682,216 @@ def test_the_proxy_carries_no_unread_single_source_mirror():
     # The mirrors that ARE wired stay wired.
     for name in ("solve_ms_last", "share_pred_err", "budget_hit_last"):
         assert hasattr(hil._MpcProxy, name), name
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# THE SPLIT LAW'S OTHER TWO PARAMETERS (2026-09-03, review run-002,
+# PLANT-R2-F3/N1/N2)
+# ═════════════════════════════════════════════════════════════════════════════
+def test_resolve_asymmetry_split_is_one_owner_for_rho_and_the_floor():
+    """The sibling of `resolve_asymmetry_dv0_v`, resolved in the same order.
+
+    THE ASSERTION THAT MATTERS IS THE SECOND ELEMENT: R_f is returned in BOTH
+    asymmetry modes, because the series floor is not part of the fit. Returning
+    0.0 with the asymmetry off is the N2 defect, and it would be invisible in
+    every campaign (which run `measured`) while quietly mis-splitting every
+    `--asymmetry off` walk."""
+    assert hil.resolve_asymmetry_split("off") == (
+        1.0, hil.DROOP_FIXED_SERIES_OHM)
+    assert hil.resolve_asymmetry_split("measured") == (
+        hil.ASYM_DROOP_SCALE_FC, hil.DROOP_FIXED_SERIES_OHM)
+
+    class _Elec:
+        # BOTH scales, because rho is their RATIO (2026-09-03 fix round, L2).
+        asym_droop_scale_fc = 0.91
+        asym_droop_scale_bt = 1.000
+    assert hil.resolve_asymmetry_split("measured", _Elec()) == (
+        0.91, hil.DROOP_FIXED_SERIES_OHM)
+
+    assert hil.resolve_asymmetry_split(
+        "off", plant=hil.Plant(asymmetry_mode="off")) == (
+            1.0, hil.DROOP_FIXED_SERIES_OHM)
+    assert hil.resolve_asymmetry_split(
+        "measured", plant=hil.Plant(asymmetry_mode="measured")) == (
+            hil.ASYM_DROOP_SCALE_FC, hil.DROOP_FIXED_SERIES_OHM)
+
+
+def test_rho_is_the_ratio_of_the_two_droop_scales_not_the_fc_one():
+    """L2 (2026-09-03 fix round). The split law sees only the RATIO of the two
+    channels' realized droop resistances. `ASYM_DROOP_SCALE_BT` is 1.000 today,
+    so the two readings coincide and the defect was invisible; a fit that moves
+    the battery channel would make the engine branch return a rho the plant
+    does not have."""
+    class _Elec:
+        asym_droop_scale_fc = 0.9434
+        asym_droop_scale_bt = 1.100
+    rho, r_f = hil.resolve_asymmetry_split("measured", _Elec())
+    assert rho == pytest.approx(0.9434 / 1.100, rel=1e-15)
+    assert rho != pytest.approx(0.9434, rel=1e-9), (
+        "rho was read as the FC scale alone")
+    assert r_f == hil.DROOP_FIXED_SERIES_OHM
+    # ...and the module-constant branches quote the same ratio, which is
+    # ASYM_DROOP_SCALE_FC exactly while the BT scale is 1.000.
+    assert hil.ASYM_DROOP_SCALE_BT == 1.000
+    assert hil.resolve_asymmetry_split("measured")[0] == pytest.approx(
+        hil.ASYM_DROOP_SCALE_FC / hil.ASYM_DROOP_SCALE_BT, rel=1e-15)
+
+
+def test_the_split_law_is_resolved_off_the_engines_like_dv0_is(monkeypatch):
+    """M2 (2026-09-03 fix round). `dv0_v` and its two siblings are ONE law, so
+    they must come from ONE authority. Before this round `mpc_configure_kwargs`
+    resolved rho from `args.asymmetry` alone while its caller resolved `dv0_v`
+    off the live engine -- a run could inject one plant and plan against
+    another.
+
+    Two halves: the kwarg honours a caller-supplied `split`, and the
+    PRODUCTION call site in `main()` is the one that supplies it, from the
+    engines."""
+    # 1. A caller-supplied split overrides the args-only fallback, exactly as
+    #    an explicit `dv0_v` does.
+    kw = hil.mpc_configure_kwargs(_mpc_ns(asymmetry="off"), {},
+                                  dv0_v=0.004, split=(0.91, 0.044))
+    assert kw["dv0_v"] == 0.004
+    assert kw["droop_scale_fc"] == 0.91
+    assert kw["r_series_ohm"] == 0.044
+    # 2. ...and omitting it still falls back to the mode, for a test or an
+    #    ad-hoc caller that holds no engine.
+    kw2 = hil.mpc_configure_kwargs(_mpc_ns(asymmetry="off"), {})
+    assert kw2["droop_scale_fc"] == 1.0
+    assert kw2["r_series_ohm"] == hil.DROOP_FIXED_SERIES_OHM
+    # 3. The production call site: `main()` must pass BOTH resolvers the
+    #    engines. Asserted on the source, as the sibling dv0 test does, because
+    #    the branch itself needs a full run to reach.
+    src = open(os.path.join(HERE, "hil_plant_sim.py"), encoding="utf-8").read()
+    assert ("dv0_v=resolve_asymmetry_dv0_v(asymmetry_mode, electrical,\n"
+            "                                                  plant),\n"
+            "                    split=resolve_asymmetry_split(asymmetry_mode, "
+            "electrical,\n"
+            "                                                  plant)") in src
+
+
+_SPLIT_DROOP_WARN = ("WARNING: the OFFLINE governor split law")
+
+
+def test_droop_measured_warns_that_the_offline_split_law_is_a_design_model(
+        tmp_path, monkeypatch, capsys):
+    """M3 (2026-09-03 fix round). Under `--droop measured` the engine realizes
+    DROOP_SCALE*k_d and scales the injected dV0 by the same factor, while the
+    0.033 ohm series floor stays unscaled and the offline `GovernorModel`
+    carries the FIRMWARE's design k_d. The engine then reads alpha 0.2571 at
+    r 0.20, 1.5 A where the model reads 0.2208 -- 16 percent relative.
+
+    The scaling is NOT shipped (it would give `dv0_v` two meanings; see the
+    design note section 6), so the run must SAY SO. Nothing else in this round
+    protects a `--droop measured` walk or MPC comparison."""
+    fake_dir = tmp_path / "HIL Results"
+    monkeypatch.setattr(hil, "HIL_RESULTS_DIR", str(fake_dir))
+    rc = hil.main(["--teensy-ip", "127.0.0.1", "--port", "58971",
+                   "--bind-port", "0", "--rate", "200", "--scenario", "steady",
+                   "--electrical", "hifi", "--droop", "measured",
+                   "--duration", "0.02", "--no-csv"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert _SPLIT_DROOP_WARN in out
+    assert "governor_split_law_20260903.md" in out
+    # ASCII only -- this stream is cp1252 on the bench PC's console.
+    for line in out.splitlines():
+        if _SPLIT_DROOP_WARN in line:
+            line.encode("ascii")
+
+
+def test_droop_design_does_not_warn_about_the_split_law(tmp_path, monkeypatch,
+                                                        capsys):
+    """The converse, so the warning stays specific: `--droop design` is the
+    configuration the law is EXACT in and every campaign on record runs."""
+    fake_dir = tmp_path / "HIL Results"
+    monkeypatch.setattr(hil, "HIL_RESULTS_DIR", str(fake_dir))
+    rc = hil.main(["--teensy-ip", "127.0.0.1", "--port", "58972",
+                   "--bind-port", "0", "--rate", "200", "--scenario", "steady",
+                   "--electrical", "hifi", "--droop", "design",
+                   "--duration", "0.02", "--no-csv"])
+    assert rc == 0
+    assert _SPLIT_DROOP_WARN not in capsys.readouterr().out
+
+
+def test_the_split_resolvers_agree_through_a_configure_double():
+    """M2's behavioural half: an engine double whose applied scale differs from
+    the fitted constant must reach the strategy's kwargs, not be overwritten by
+    the args-only resolution."""
+    class _Elec:
+        asym_dv0_v = 0.006
+        asym_droop_scale_fc = 0.900
+        asym_droop_scale_bt = 1.000
+    kw = hil.mpc_configure_kwargs(
+        _mpc_ns(), {},
+        dv0_v=hil.resolve_asymmetry_dv0_v("measured", _Elec()),
+        split=hil.resolve_asymmetry_split("measured", _Elec()))
+    assert kw["dv0_v"] == 0.006
+    assert kw["droop_scale_fc"] == pytest.approx(0.900, rel=1e-15)
+    assert kw["r_series_ohm"] == hil.DROOP_FIXED_SERIES_OHM
+
+
+def test_the_split_parameters_are_refused_when_the_strategy_has_none():
+    """Same discipline as `max_candidates` and `dv0_v`: a checkout whose
+    `mpc_ems` cannot carry the plant's split law must fail loudly rather than
+    plan on a network it does not have."""
+    ns = _mpc_ns()
+    kw = hil.mpc_configure_kwargs(ns, {})
+    if hil.mpc_supports_kwarg("droop_scale_fc"):
+        assert kw["droop_scale_fc"] == hil.ASYM_DROOP_SCALE_FC
+    if hil.mpc_supports_kwarg("r_series_ohm"):
+        assert kw["r_series_ohm"] == hil.DROOP_FIXED_SERIES_OHM
+    # The refusal is UNCONDITIONAL on the floor, unlike dv0's: there is no
+    # asymmetry mode in which dropping it is harmless.
+    ns_off = _mpc_ns(asymmetry="off")
+    kw_off = hil.mpc_configure_kwargs(ns_off, {})
+    assert kw_off["dv0_v"] == 0.0
+    assert kw_off["droop_scale_fc"] == 1.0
+    assert kw_off["r_series_ohm"] == hil.DROOP_FIXED_SERIES_OHM
+
+
+def test_simple_mode_split_agrees_with_the_offline_governor_model():
+    """N1 and F3 are ONE law, so the simple-mode plant and the offline
+    controller model must not be able to drift apart. Both are evaluated at
+    each mode's own parameters over the droop band and three totals."""
+    import governor_model as _gm
+    for mode in ("measured", "off"):
+        plant = hil.Plant(asymmetry_mode=mode)
+        rho, r_f = hil.resolve_asymmetry_split(mode, plant=plant)
+        model = _gm.GovernorModel(dv0_v=plant.asym_dv0_v, droop_scale_fc=rho,
+                                  r_series_ohm=r_f)
+        for i_total in (0.5, 1.2, 2.5):
+            for r in (0.15, 0.35, 0.50, 0.70, 0.85):
+                assert plant._apply_simple_asymmetry(r, i_total) == \
+                    pytest.approx(model.delivered_share(r, i_total, True, True),
+                                  abs=1e-12), (mode, r, i_total)
+
+
+def test_simple_mode_split_moved_by_the_review_amount():
+    """The size of the simple-mode trace movement this change causes, pinned so
+    it is a known quantity rather than a surprise in the next comparison. The
+    review quotes "up to 0.019 of share" against the law it replaced (run-002,
+    N1); over the droop band and 0.5-3.0 A the maximum is 0.0210, at the corner
+    of that grid (0.5 A, r = 0.15) where the dV0 term is largest. Both figures
+    are the same statement at different grid extents; this pins the one this
+    grid measures."""
+    plant = hil.Plant(asymmetry_mode="measured")
+    worst = 0.0
+    for i_total in (0.5, 1.0, 2.0, 3.0):
+        for r in (0.15, 0.25, 0.35, 0.50, 0.65, 0.75, 0.85):
+            old = r + (plant.asym_dv0_v * r * (1.0 - r)
+                       / (hil.K_DROOP_FW_OHM * i_total))
+            worst = max(worst, abs(plant._apply_simple_asymmetry(r, i_total)
+                                   - old))
+    assert worst == pytest.approx(0.0210, abs=5e-4)
+    # THE CORRECTION DOES NOT VANISH AT r = 0.5, and that is the shape of the
+    # defect rather than an incidental number: rho lowers the FUEL-CELL branch
+    # resistance at every ratio, so even the symmetric split delivers 0.0135
+    # more share to the fuel cell than the old law said. It is also nearly
+    # current-independent there, where the dV0 term goes as 1/I_tot.
+    mids = [plant._apply_simple_asymmetry(0.5, i_total)
+            - (0.5 + plant.asym_dv0_v * 0.25
+               / (hil.K_DROOP_FW_OHM * i_total))
+            for i_total in (1.0, 2.0, 3.0)]
+    assert min(mids) == pytest.approx(0.0135, abs=5e-4)
+    assert max(mids) - min(mids) < 5e-4

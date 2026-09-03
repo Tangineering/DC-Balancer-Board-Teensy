@@ -45,11 +45,20 @@ FIDELITY BOUNDARIES
    ``conv_tau_s`` parameter inserts a first-order lag between the governed
    reference and the controller's demanded ratio so a later round can fit one;
    it defaults to 0 (arrival is instantaneous once the slew limiter allows it).
-2. THE PLANT IS THE STATIC DROOP LAW. Delivered share follows
-   ``alpha = r + dV0*r*(1-r)/(k_d*I_tot)`` (``controller_design/system_model.md``
-   sections at lines 105-110 and 189-203). ``dv0_v`` defaults to 0.0; the
-   CAL-1 adopted value is +0.05 V
-   (``controller_design/calibration/dv0_sweep_20260811.csv``). In closed loop
+2. THE PLANT IS THE STATIC DROOP LAW. Delivered share follows the two-branch
+   divider of the droop network,
+   ``alpha = (dV0/I_tot + R_BT) / (R_FC + R_BT)`` with
+   ``R_FC = rho*k_d/r + R_f`` and ``R_BT = k_d/(1-r) + R_f``
+   (``docs/modeling/governor_split_law_20260903.md``; the M2 fit pair of
+   ``docs/modeling/converter_asymmetry_20260901.md`` section 9 plus the common
+   series floor ``hil_electrical.py:277``). The three parameters ``dv0_v``,
+   ``droop_scale_fc`` and ``r_series_ohm`` default to 0.0 / 1.0 / 0.0, at which
+   the law is exactly ``alpha = r``; the plant's values are 0.013522 V /
+   0.9434 / 0.033 ohm. THE 2026-09-03 CORRECTION: this module carried only the
+   ``dV0`` term (``alpha = r + dV0*r*(1-r)/(k_d*I_tot)``,
+   ``controller_design/system_model.md`` lines 105-110 and 189-203), which
+   mis-inverts the ratio by up to +10.5 % at low share and is wrong with the
+   asymmetry off as well. In closed loop
    the integral action absorbs the offset, so the model inverts the law to find
    the ratio that delivers the reference. In open-loop hold or feedforward there
    is no integral action, so the law is applied forward to the held ratio.
@@ -481,6 +490,18 @@ class GovernorModel:
     dv0_v       source open-circuit-voltage difference V_0F - V_0B, in volts.
     k_droop     droop scale used by the static plant law. Defaults to the
                 firmware's ``K_DROOP``.
+    droop_scale_fc
+                rho, the fuel-cell channel's droop-resistance multiplier
+                relative to the battery channel (the SECOND parameter of the
+                M2 asymmetry fit, ``hil_electrical.ASYM_DROOP_SCALE_FC``
+                = 0.9434). 1.0 is the symmetric chain and the module default.
+    r_series_ohm
+                R_f, the unscalable series resistance COMMON to both channels
+                between a regulated node and the bus
+                (``hil_electrical.DROOP_FIXED_SERIES_OHM`` = 0.033, i.e.
+                the boost Thevenin term + the RT1987 pass FET + the sense
+                shunt). It is present in BOTH asymmetry modes; 0.0 is the
+                idealized chain and the module default.
     conv_tau_s  optional first-order lag on the controller's demanded ratio
                 (fidelity boundary 1). 0 disables it.
     seed_r      initial ``droopSlew_prev``. The firmware boots at 0.5.
@@ -489,7 +510,8 @@ class GovernorModel:
     def __init__(self, dt_s: float = 1e-3, dv0_v: float = 0.0,
                  k_droop: float = GOV_CONST["K_DROOP"],
                  conv_tau_s: float = 0.0, seed_r: float = 0.5,
-                 v_bus_ok: bool = True):
+                 v_bus_ok: bool = True, droop_scale_fc: float = 1.0,
+                 r_series_ohm: float = 0.0):
         if dt_s <= 0.0:
             raise ValueError("dt_s must be positive")
         if not 0.0 <= seed_r <= 1.0:
@@ -498,9 +520,19 @@ class GovernorModel:
             raise ValueError("k_droop must be positive")
         if conv_tau_s < 0.0:
             raise ValueError("conv_tau_s must not be negative")
+        if droop_scale_fc <= 0.0:
+            raise ValueError("droop_scale_fc must be positive")
+        if r_series_ohm < 0.0:
+            raise ValueError("r_series_ohm must not be negative")
         self.dt_s = float(dt_s)
         self.dv0_v = float(dv0_v)
         self.k_droop = float(k_droop)
+        # THE TWO SPLIT-LAW PARAMETERS ADDED 2026-09-03 (review run-002,
+        # PLANT-R2-F3/N1/N2). See `delivered_share()` for the law they enter.
+        # The defaults are the IDENTITY MAP, so every caller that predates them
+        # is bit-identical.
+        self.droop_scale_fc = float(droop_scale_fc)
+        self.r_series_ohm = float(r_series_ohm)
         self.conv_tau_s = float(conv_tau_s)
         self.seed_r = float(seed_r)
         # Stands in for the ``V_bus >= V_BUS_CHARGED_THRESH`` and
@@ -621,11 +653,38 @@ class GovernorModel:
         share is undefined and 0.0 is returned; the caller is expected to know
         there is no source.
 
-        With both live, the static droop law of
-        ``controller_design/system_model.md`` applies:
-        ``alpha = r + dV0*r*(1-r)/(k_d*I_tot)``. It degenerates to
-        ``alpha = r`` at ``dV0 = 0`` (the module default) and is clamped to
-        [0, 1] because the linear law has no validity outside it."""
+        With both live, the delivered share is the TWO-BRANCH DIVIDER of the
+        static droop network (review run-002, PLANT-R2-F3, 2026-09-03). Each
+        channel is a Thevenin source behind its own realized droop resistance
+        plus the series resistance common to both branches:
+
+            R_FC = rho * k_d / r     + R_f
+            R_BT =       k_d / (1-r) + R_f
+            alpha = (dV0 / I_tot + R_BT) / (R_FC + R_BT)
+
+        with ``rho = droop_scale_fc`` (``hil_electrical.ASYM_DROOP_SCALE_FC``
+        = 0.9434 in the measured mode, 1.0 off) and ``R_f = r_series_ohm``
+        (``hil_electrical.DROOP_FIXED_SERIES_OHM`` = 0.033, PRESENT IN BOTH
+        MODES). ``dV0`` is the voltage half of the same M2 fit; the two fit
+        parameters are one fit and must move together
+        (``docs/modeling/converter_asymmetry_20260901.md`` section 9,
+        ``hil_electrical.py:277``). The law and its validations are recorded in
+        ``docs/modeling/governor_split_law_20260903.md``.
+
+        ⚠️ WHAT THIS REPLACED, and why it is not a refinement. Until 2026-09-03
+        this method carried ``alpha = r + dV0*r*(1-r)/(k_d*I_tot)``, i.e. the
+        dV0 half of the fit alone with rho pinned at 1 and no series floor —
+        the M1/M2 mixture the fit document rejects. Against campaign F's
+        converged sweep windows it mis-inverted the ratio by +3.1 % at
+        alpha 0.50 and +10.5 % at alpha 0.20; it was ALSO wrong with the
+        asymmetry off, by up to 0.0096 of share at the band rails, because the
+        0.033 ohm floor is era-independent.
+
+        The law degenerates to ``alpha = r`` at ``dV0 = 0``, ``rho = 1``,
+        ``R_f = 0`` (the module defaults), and is clamped to [0, 1] because it
+        has no validity outside it. With no current there is no delivered
+        share to speak of, so ``i_tot <= 0`` returns the applied ratio, exactly
+        as before."""
         if not fc_on and not bt_on:
             return 0.0
         if not fc_on:
@@ -633,29 +692,72 @@ class GovernorModel:
         if not bt_on:
             return 1.0
         rr = _constrain(float(r), 0.0, 1.0)
-        if self.dv0_v == 0.0 or i_tot <= 0.0:
+        if self.map_is_identity() or i_tot <= 0.0:
             return rr
-        alpha = rr + self.dv0_v * rr * (1.0 - rr) / (self.k_droop * i_tot)
+        if rr <= 0.0:
+            return 0.0
+        if rr >= 1.0:
+            return 1.0
+        r_fc = self.droop_scale_fc * self.k_droop / rr + self.r_series_ohm
+        r_bt = self.k_droop / (1.0 - rr) + self.r_series_ohm
+        alpha = (self.dv0_v / float(i_tot) + r_bt) / (r_fc + r_bt)
         return _constrain(alpha, 0.0, 1.0)
+
+    def map_is_identity(self) -> bool:
+        """Whether ``delivered_share()`` is the identity on an interior ratio.
+
+        ALL THREE PARAMETERS HAVE TO BE TRIVIAL (N2, 2026-09-03). The shortcut
+        used to key on ``dv0_v == 0.0`` alone, which was correct only while the
+        law had no other term: with ``r_series_ohm`` present the map is NOT the
+        identity at ``dV0 = 0``, and an ``--asymmetry off`` walk taking the old
+        shortcut would silently keep the wrong map.
+
+        PUBLIC (2026-09-03 fix round, L3). It is not an implementation detail:
+        ``mpc_ems.Planner.__init__`` keys its ``_map is None`` shortcut on this
+        predicate rather than re-deriving it, which is the whole point of
+        having one owner for the question."""
+        return (self.dv0_v == 0.0 and self.droop_scale_fc == 1.0
+                and self.r_series_ohm == 0.0)
 
     def _ratio_for_delivered(self, alpha: float, i_tot: float) -> float:
         """Invert the static law: the ratio whose delivered share is ``alpha``.
 
-        This is what the closed loop's integral action finds. Solving
-        ``alpha = r + c*r*(1-r)`` with ``c = dV0/(k_d*I_tot)`` gives the
-        quadratic ``c*r^2 - (1+c)*r + alpha = 0``; the physical root is the one
-        that tends to ``alpha`` as ``c -> 0``."""
+        This is what the closed loop's integral action finds. Multiplying
+        ``alpha*(R_FC + R_BT) = dV0/I_tot + R_BT`` through by ``r*(1-r)`` gives
+        the quadratic ``A*r^2 + B*r + C = 0`` with
+
+            P = (2*alpha - 1) * R_f - dV0/I_tot
+            A = -P
+            B =  P + k_d * (alpha*(1 - rho) - 1)
+            C =  alpha * rho * k_d
+
+        At the trivial parameters A -> 0, B -> -k_d and C -> alpha*k_d, so the
+        physical root is the one that tends to ``-C/B = alpha``. It is taken
+        through the numerically stable pairing ``q = -(B + sign(B)*sqrt(D))/2``,
+        ``r = C/q``, which does not cancel catastrophically as A -> 0 (the
+        textbook ``(-B + sqrt(D))/(2A)`` form does, and A is small on every
+        physical parameter set). The degenerate cases are handled exactly as
+        the pre-2026-09-03 code handled them: an unusable discriminant or a
+        vanishing leading pair returns ``alpha`` rather than raising."""
         a = _constrain(float(alpha), 0.0, 1.0)
-        if self.dv0_v == 0.0 or i_tot <= 0.0:
+        if self.map_is_identity() or i_tot <= 0.0:
             return a
-        c = self.dv0_v / (self.k_droop * i_tot)
-        if abs(c) < 1e-12:
-            return a
-        disc = (1.0 + c) ** 2 - 4.0 * c * a
+        p = (2.0 * a - 1.0) * self.r_series_ohm - self.dv0_v / float(i_tot)
+        qa = -p
+        qb = p + self.k_droop * (a * (1.0 - self.droop_scale_fc) - 1.0)
+        qc = a * self.droop_scale_fc * self.k_droop
+        if abs(qa) < 1e-15:
+            if abs(qb) < 1e-15:
+                return a
+            return _constrain(-qc / qb, 0.0, 1.0)
+        disc = qb * qb - 4.0 * qa * qc
         if disc < 0.0:
             return a
-        r = ((1.0 + c) - math.sqrt(disc)) / (2.0 * c)
-        return _constrain(r, 0.0, 1.0)
+        sq = math.sqrt(disc)
+        q = -0.5 * (qb + (sq if qb >= 0.0 else -sq))
+        if q == 0.0:
+            return a
+        return _constrain(qc / q, 0.0, 1.0)
 
     # ── switch bookkeeping ───────────────────────────────────────────────────
     def _observe_switches(self, sw_fc: bool, sw_bt: bool, t_ms: float) -> None:

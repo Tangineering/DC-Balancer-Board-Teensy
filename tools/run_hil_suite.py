@@ -542,8 +542,10 @@ _BLEED_ERA_PROVISIONAL = (
 #                   7.601060 s, and the PI_TIMEOUT latch is UNMOVED at
 #                   5.251066 s. ⚠️ THE INRUSH COLLAPSED -71/-76 % against the
 #                   asymmetry era's 0.3801 / 0.3379 A, and the mechanism is the
-#                   bleed itself: the 470 uF V-MOT node now RETAINS 92 % of its
-#                   charge across the 2.323 s teardown (tau 0.94 -> 28.2 s), so
+#                   bleed itself: the 970 uF V-MOT node (470 uF + 0.5 mF VESC)
+#                   now RETAINS 95.15 % of its charge across the 2.323 s teardown
+#                   (hi-fi tau 1.94 -> 58.20 s; run 002 F2 corrected the earlier
+#                   470 uF / 92 % / 28.2 s figures), so
 #                   the re-close is a 0.040 A step onto a nearly-full node
 #                   rather than a charge-up. The COLD bring-up peak, which
 #                   starts from 0 V, moved only -1.5 % (0.4906 vs 0.4983 A) --
@@ -1156,9 +1158,12 @@ FAULT_EXPECTATIONS = {
         # The verdict is now gated on the load-dump class
         # (`hil_electrical.SW_RING_LOAD_DUMP_I_A` = the firmware's own
         # `SHARE_CUT_MAX_HANDOFF_A` 0.5 A); the events and their `peak_v` are
-        # still emitted.  V_ABSMAX is NOT relaxed.  The physically-correct fix is
-        # the i·sqrt(L/C) bound, which re-bands every historical `peak_v` and is
-        # deferred to the physics review.
+        # still emitted.  V_ABSMAX is NOT relaxed.  Physics review run 002 (F5):
+        # the i*sqrt(L/C) node ring is the WRONG loop for the recorded mechanism
+        # (the boost output-cap hot loop, boost-bringup-debug.md:1572-1573); the
+        # defensible current-scaled form is peak = v_node + 0.130 V/A * i_cut
+        # (1.95 V / 15 A), verdict-invariant over every recorded event, and the
+        # 0.5 A load-dump gate stands.
         "provisional_note": _ETA_ERA_PROVISIONAL + " (the two chopper-energy "
                             "bounds are re-derived; the I_charge, V_rgn and "
                             "clamp-dwell bounds are unchanged 1:1-era "
@@ -5419,7 +5424,7 @@ FAULT_EXPECTATIONS["ems-sdp-alpha-charge"] = _alpha_expectation(
 #   PRESENCE is replaced by one that bounds its ABSENCE, and the positive
 #   evidence moves to the new observation-frame field: `mppt_thresh_cnt`, the
 #   reg-0x02 count the firmware reports it believes is in force (frame byte 15,
-#   .ino:2911-2938; the HIL mirror that computes it, .ino:11185-11201).
+#   .ino:3115 / :3371; the HIL mirror that computes it, .ino:9066-9075).
 #
 # R1 IS NO LONGER A CONTINGENCY.  Table 7 encodes reg 0x02 values 0-250 as
 # REGISTER mode and >=251 as the external MPPTS resistor, so a firmware write
@@ -5449,7 +5454,7 @@ _MPPT_ALL_CRUISE_W = (EMS_MPPT_CRUISE_WINDOWS[0][0],
 # keeps these specs from asserting anything about the pre-write value — which is
 # legitimately 0xFF and must not read as a failure.  The count PERSISTS across the
 # unpowered gaps between windows (EPROM semantics: the !powered path re-arms the
-# session but deliberately KEEPS ag105MpptRegCnt, .ino:10769-10775), so the whole
+# session but deliberately KEEPS ag105MpptRegCnt, .ino:11410-11432), so the whole
 # span carries a value, not just the charge windows.
 _MPPT_THRESH_W = (EMS_MPPT_CRUISE_WINDOWS[1][0], _MPPT_ALL_CRUISE_W[1])   # 28.1-41.0
 # ── PART B3 (C1 round, 2026-09-01) ──────────────────────────────────────────
@@ -5464,8 +5469,9 @@ _MPPT_THRESH_W = (EMS_MPPT_CRUISE_WINDOWS[1][0], _MPPT_ALL_CRUISE_W[1])   # 28.1
 #
 # THE 27 IS A MIRROR ARTIFACT, NOT A BOARD READING.  Under HIL_SIM the .ino
 # short-circuits the reg-0x02 write path and mirrors the count onto the
-# observation frame directly (.ino:11185-11201).  The real manager EXCLUDES
-# regen from its V_chg window sampling (.ino:11090-11095 — the window minimum
+# observation frame directly (.ino:9066-9075).  The real manager EXCLUDES
+# regen from its V_chg window sampling (.ino:11461-11467 and :11531-11534 via
+# fcChargePathIsPowering(), .ino:11950; pinned by test_mppt_regen_excluded_from_window — the window minimum
 # is sampled only while FC_CHARGE powers the charger), so a real board would
 # never track the braking node's lift into its threshold at all. The mirror has
 # no such exclusion, which is why the artifact exists only in emulation.
@@ -6487,32 +6493,55 @@ FAULT_EXPECTATIONS["fw26-clamp-cruise"] = {
 #
 # Walked with tools/governor_model.py at the plant's measured asymmetry
 # (dv0 0.013522 V) and at zero; the two agree on every current to four decimals.
-# Per region, over the settled window (region start + 1.5 s to region end):
+# REGENERATED 2026-09-03 with the corrected split law - run
+#     C:/Users/ricky/miniforge3/python.exe tools/probes/probe_fw26_clamp_walk.py
+# and paste; `test_fw26_sweep_walk_regenerates_the_region_table` fails if this
+# table and that probe disagree. The CURRENTS did not move (the clamp pins the
+# fuel-cell current and the law moves only the RATIO that delivers it); every
+# mdac column did, by up to +4.5 % on the code. See
+# docs/modeling/governor_split_law_20260903.md.
+# Per region, over the settled window (region start + 2.5 s to region end):
 #
 #   reg   v    sp    I_tot    I_fc    I_batt   duty   mdac_fc  mdac_bt  clamp?
-#    1   0.0  0.84   1.200   0.9000   0.3000  0.000     4917     6468   no
-#    2   3.0  0.84   2.016   1.2500   0.7663  1.000     5088     5679   YES
-#    3   0.5  0.84   1.284   0.9844   0.3000  0.000     4898     6638   no
-#    4   2.5  0.84   1.827   1.2500   0.5775  1.000     4995     5994   YES
-#    5   2.5  0.40   1.827   0.7310   1.0965  0.000     5644     5102   no
-#    6   3.0  0.84   2.016   1.2500   0.7663  1.000     5088     5679   YES
-#    7   3.0  0.20   2.016   0.4033   1.6130  0.000     7201     4855   no
-#    8   0.0  0.84   1.200   0.9000   0.3000  0.000     4917     6468   no
-#    9   3.0  0.84   2.016   1.2500   0.7663  1.000     5088     5679   YES
-#   10   0.5  0.50   1.284   0.6422   0.6422  0.000     5337     5295   no
-#   11   2.5  0.84   1.827   1.2500   0.5775  1.000     4995     5994   YES
-#   12   0.0  0.50   1.200   0.6000   0.6000  0.000     5339     5293   no
+#    1   0.0  0.84   1.200   0.9000   0.3000  0.000     4917     6464   no
+#    2   3.0  0.84   2.016   1.2500   0.7663  1.000     5100     5648   YES
+#    3   0.5  0.84   1.284   0.9844   0.3000  0.000     4898     6641   no
+#    4   2.5  0.84   1.827   1.2500   0.5775  1.000     5000     5972   YES
+#    5   2.5  0.40   1.827   0.7310   1.0965  0.000     5723     5072   no
+#    6   3.0  0.84   2.016   1.2500   0.7663  1.000     5100     5648   YES
+#    7   3.0  0.20   2.016   0.4033   1.6130  0.000     7527     4838   no
+#    8   0.0  0.84   1.200   0.9000   0.3000  0.000     4917     6464   no
+#    9   3.0  0.84   2.016   1.2500   0.7663  1.000     5100     5648   YES
+#   10   0.5  0.50   1.284   0.6422   0.6422  0.000     5376     5261   no
+#   11   2.5  0.84   1.827   1.2500   0.5775  1.000     5000     5972   YES
+#   12   0.0  0.50   1.200   0.6000   0.6000  0.000     5378     5259   no
 #
 # Whole run: 29996 clamped ticks of 80000, zero cut refusals, zero BT-clamp
 # ticks, |I_tot - I_fc - I_batt| identically zero.
 #
+# THE CAMPAIGN-F BOARD PAIRS, beside the walk that now predicts them (mean over
+# each region's scored window, campaign hil_report_20260903_063659):
+#
+#   reg   board mdac_fc/bt   walk         old-law walk   board alpha   walk r
+#    1      4917 / 6463      4917 / 6464  4917 / 6468    0.750162      0.7426
+#    3      4898 / 6643      4898 / 6641  4898 / 6638    0.766980      0.7606
+#    5      5723 / 5072      5723 / 5072  5644 / 5102    0.399996      0.3750
+#    7      7525 / 4838      7527 / 4838  7201 / 4855    0.200010      0.1778
+#   10      5376 / 5261      5376 / 5261  5337 / 5295    0.500001      0.4764
+#   12      5378 / 5260      5378 / 5259  5339 / 5293    0.500005      0.4758
+#
+# Every sub-threshold region now agrees with the board to within 2 codes; the
+# old law missed region 12 by 3.1 % against its own 2 % band (an adjudicated
+# campaign-F FAIL) and region 7 by 4.5 %.
+#
 # THE BIT-IDENTITY EVIDENCE. The same walk with the ceilings pinned out of reach
 # - the fw v25 arithmetic - reproduces the mdac pair EXACTLY on all seven
 # sub-threshold regions and differs on all five clamped ones (region 2, for
-# instance, reads (4824, 7837) with the clamp absent against (5088, 5679) with
+# instance, reads (4822, 7895) with the clamp absent against (5100, 5648) with
 # it). Regions 1, 8 and 12 are commanded at standstill, so their total is the
 # aux load alone and carries none of the drive loop's uncertainty; those three
-# are where the codes are PINNED on the board. That is the on-board statement of
+# are where the codes are PINNED on the board, joined since 2026-09-03 by
+# region 10 (0.5 m/s), the only sub-threshold region commanded at share 0.50. That is the on-board statement of
 # "below the ceiling, fw v26 is arithmetically identical to fw v25" - the host
 # suite asserts it as an equality, and this asserts it against the hardware.
 # WARNING - SETTLE RAISED 1.5 -> 2.5 s (H3, 2026-09-02). Regions 2 and 9 step
@@ -6563,20 +6592,53 @@ _FW26_SWEEP_BUS_HOLD_TICKS = int(0.98 * _FW26_SWEEP_CADENCE_ROWS)
 #    against the walk's. It is kept, and relabelled to say so.
 #
 #    THE ACTUAL v25-vs-v26 DISCRIMINATOR IS A CLAMPED REGION'S PAIR. Region 2
-#    reads (4824, 7837) with the clamp absent and (5088, 5679) with it present:
-#    codes 728 against 992 on FC (+36 %) and 3741 against 1583 on BT (-58 %).
+#    reads (4822, 7895) with the clamp absent and (5100, 5648) with it present:
+#    codes 726 against 1004 on FC (+38 %) and 3799 against 1552 on BT (-59 %).
 #    That pin is added below. It sits on a DRIVEN region, so it carries the
 #    drive loop's own uncertainty and takes a wider band - still an order of
 #    magnitude inside the gap it has to resolve.
 _FW26_MDAC_NIBBLE = gov_mod.GOV_CONST["MDAC_CMD_LOAD_UPDATE"]     # 0x1000
 _FW26_SWEEP_MDAC_TOL = 0.02          # standstill regions, code-space
 _FW26_SWEEP_MDAC_TOL_DRIVEN = 0.10   # clamped regions, code-space
-# Walked (mdac_fc, mdac_bt) raw words at each STANDSTILL region, clamp ABSENT
-# and clamp present alike - they are identical there.
-_FW26_SWEEP_MDAC_PIN = {1: (4917, 6468), 8: (4917, 6468), 12: (5339, 5293)}
+# Walked (mdac_fc, mdac_bt) raw words at each SUB-THRESHOLD region, clamp
+# ABSENT and clamp present alike - they are identical there.
+#
+# RE-WALKED 2026-09-03 (review run-002, PLANT-R2-F3). `governor_model`'s split
+# law carried only the dV0 half of the M2 asymmetry fit and no series floor, so
+# every one of these words was an output of a wrong law:
+#
+#   region 1/8   (4917, 6468) -> (4917, 6464)   board 4917 / 6463
+#   region 12    (5339, 5293) -> (5378, 5259)   board 5378 / 5260
+#
+# Region 12 is why this is a re-pin and not a refinement: its old pair sat
+# 3.1 % from the board on a +/- 2 % band and FAILED in campaign F. Regions 1
+# and 8 moved by 4 codes (0.17 %) because their r ~ 0.743 is close to where the
+# rho and R_f terms cancel - the same reason they passed all along.
+_FW26_SWEEP_MDAC_PIN = {1: (4917, 6464), 8: (4917, 6464),
+                        10: (5376, 5261), 12: (5378, 5259)}
+# ── REGION 10, ADDED 2026-09-03 ─────────────────────────────────────────────
+# THE ONLY PINNED REGION THAT IS NOT AT STANDSTILL, and it is added
+# deliberately: it is the sweep's only sub-threshold region commanded at share
+# 0.50, i.e. at the ratio where the corrected law's correction is LARGEST
+# (+3.1 % of r) while regions 1/8 sit where it nearly vanishes. A pin table
+# made only of standstill regions therefore cannot see the defect this round
+# fixed.
+#
+# Its total carries a drive-loop term - 0.0844 A of 1.284 A at 0.5 m/s - so it
+# takes its own wider band rather than the standstill 2 %. The band is set at
+# 5 %: the walk reproduces the board's region-10 pair EXACTLY (5376 / 5261 on
+# both), and the neighbouring 0.5 m/s region 3 to within 2 codes (0.03 %), so
+# 5 % is ~150x the observed model error and still 3x tighter than the driven
+# clamped band.
+_FW26_SWEEP_MDAC_TOL_R10 = 0.05
+_FW26_SWEEP_MDAC_TOL_BY_REGION = {10: _FW26_SWEEP_MDAC_TOL_R10}
 # Walked (mdac_fc, mdac_bt) raw words at a CLAMPED region, clamp PRESENT, with
 # the clamp-absent pair recorded beside it as the value this pin refuses.
-_FW26_SWEEP_MDAC_CLAMPED_PIN = {2: ((5088, 5679), (4824, 7837))}
+# RE-WALKED 2026-09-03 with the corrected law: present (5088, 5679) ->
+# (5100, 5648), absent (4824, 7837) -> (4822, 7895). The board read
+# (5110, 5626), so the re-walked pair is 1.0 % / 1.4 % from it where the old
+# one was 2.2 % / 3.5 %.
+_FW26_SWEEP_MDAC_CLAMPED_PIN = {2: ((5100, 5648), (4822, 7895))}
 
 
 def _fw26_mdac_band(word, tol):
@@ -6663,10 +6725,15 @@ def _fw26_sweep_signals():
             # the clamp is present or not. What it pins is the board's droop
             # codes against the walk's at a known standstill total, where the
             # total is the aux load alone and carries none of the drive loop's
-            # uncertainty.
+            # uncertainty. REGION 10 IS THE ONE EXCEPTION (2026-09-03): it is
+            # commanded at 0.5 m/s and at share 0.50, which is where the split
+            # law's correction is largest, and it takes its own wider band -
+            # see _FW26_SWEEP_MDAC_TOL_BY_REGION.
+            _tol = _FW26_SWEEP_MDAC_TOL_BY_REGION.get(i,
+                                                      _FW26_SWEEP_MDAC_TOL)
             for col, want in zip(("mdac_fc", "mdac_bt"),
                                  _FW26_SWEEP_MDAC_PIN[i]):
-                lo, hi = _fw26_mdac_band(want, _FW26_SWEEP_MDAC_TOL)
+                lo, hi = _fw26_mdac_band(want, _tol)
                 out.append(
                     {"name": "sweep_r%02d_%s_lo" % (i, col), "column": col,
                      "floor_min_value": lo, "t_window": w,
@@ -6676,7 +6743,7 @@ def _fw26_sweep_signals():
                               "evidence - the clamp is the identity here by "
                               "construction"
                               % (i, col, lo, want, want & 0x0FFF,
-                                 100.0 * _FW26_SWEEP_MDAC_TOL)})
+                                 100.0 * _tol)})
                 out.append(
                     {"name": "sweep_r%02d_%s_hi" % (i, col), "column": col,
                      "max_value": hi, "t_window": w,
@@ -6685,11 +6752,11 @@ def _fw26_sweep_signals():
         if i in _FW26_SWEEP_MDAC_CLAMPED_PIN:
             # THE fw v25 / fw v26 DISCRIMINATOR (M1, new 2026-09-02). A CLAMPED
             # region's droop pair is the only mdac observable the clamp
-            # actually moves. Region 2 walks to (5088, 5679) with the clamp
-            # present and (4824, 7837) without it - codes 992 against 728 on FC
-            # and 1583 against 3741 on BT. The band is +/- 10 % in code space
+            # actually moves. Region 2 walks to (5100, 5648) with the clamp
+            # present and (4822, 7895) without it - codes 1004 against 726 on
+            # FC and 1552 against 3799 on BT. The band is +/- 10 % in code space
             # because this is a DRIVEN region and the board's own drive loop
-            # sets the total; the gap it has to resolve is 36 % and 58 %.
+            # sets the total; the gap it has to resolve is 38 % and 59 %.
             _present, _absent = _FW26_SWEEP_MDAC_CLAMPED_PIN[i]
             for col, want, refuse in zip(("mdac_fc", "mdac_bt"),
                                          _present, _absent):

@@ -11252,9 +11252,22 @@ def test_fw26_clamp_sweep_mdac_pins_apply_their_band_to_the_gain_code():
         assert region[3] is False, (
             "region %d is a CLAMPING region and must not carry a "
             "sub-threshold code pin" % i)
-        assert region[1] == 0.0, (
+        # A DRIVEN REGION MUST DECLARE ITS OWN BAND (2026-09-03). Standstill was
+        # the blanket rule while every pin was at standstill; region 10 is
+        # pinned at 0.5 m/s because it is the only sub-threshold region at
+        # share 0.50, where the split law's correction is largest, and it pays
+        # for the drive-loop term in its total with a wider band declared in
+        # `_FW26_SWEEP_MDAC_TOL_BY_REGION`.
+        tol = rhs._FW26_SWEEP_MDAC_TOL_BY_REGION.get(
+            i, rhs._FW26_SWEEP_MDAC_TOL)
+        assert region[1] == 0.0 or i in rhs._FW26_SWEEP_MDAC_TOL_BY_REGION, (
             "region %d is not at standstill; its total carries the drive "
-            "loop's uncertainty and its codes must not be pinned" % i)
+            "loop's uncertainty, so it must declare its own wider band or "
+            "not be pinned" % i)
+        if region[1] != 0.0:
+            assert tol > rhs._FW26_SWEEP_MDAC_TOL, (
+                "region %d is driven and its band must be wider than the "
+                "standstill one" % i)
         for col, want in (("mdac_fc", want_fc), ("mdac_bt", want_bt)):
             lo = by["sweep_r%02d_%s_lo" % (i, col)]["floor_min_value"]
             hi = by["sweep_r%02d_%s_hi" % (i, col)]["max_value"]
@@ -11262,7 +11275,7 @@ def test_fw26_clamp_sweep_mdac_pins_apply_their_band_to_the_gain_code():
             # The band, referred to the CODE, is the requested tolerance.
             code = want & 0x0FFF
             assert (hi - lo) / float(code) <= \
-                2.0 * rhs._FW26_SWEEP_MDAC_TOL + 2.0 / code, (i, col)
+                2.0 * tol + 2.0 / code, (i, col)
             # ...and the bounds are still WORDS, i.e. they carry the nibble.
             assert lo > nib and hi > nib, (i, col)
 
@@ -11356,6 +11369,22 @@ def _fw26_walk():
     return mod
 
 
+def test_fw26_probe_split_constants_match_hil_electrical():
+    """L1 (2026-09-03 fix round): the probe carries the three split-law
+    parameters as LITERALS so it keeps its stdlib-only, no-plant-import
+    property. Its header says this test pins them; before this round it said so
+    and no such assertion existed. A constant that moves in `hil_electrical`
+    and not in the probe would silently re-walk every `fw26-clamp-*` bound
+    against a plant the campaign does not run."""
+    import hil_electrical as he
+    probe = _fw26_walk()
+    assert probe.DV0_MEASURED_V == he.ASYM_DV0_V
+    assert probe.RHO_MEASURED == pytest.approx(
+        he.ASYM_DROOP_SCALE_FC / he.ASYM_DROOP_SCALE_BT, abs=1e-12)
+    assert probe.R_SERIES_OHM == pytest.approx(
+        he.DROOP_FIXED_SERIES_OHM, abs=1e-12)
+
+
 def test_fw26_cruise_walk_regenerates_the_figures_the_entry_is_cut_from():
     """L11: every bound in `fw26-clamp-cruise` is a WALK, and a walk nobody can
     regenerate is a number nobody can check. The probe reproduces it, and the
@@ -11374,7 +11403,13 @@ def test_fw26_cruise_walk_regenerates_the_figures_the_entry_is_cut_from():
     assert a["settled_i_fc_min"] == pytest.approx(1.2500, abs=1e-4)
     assert a["i_batt"] == pytest.approx(0.7500, abs=1e-4)
     assert a["balance_residual"] == pytest.approx(0.0, abs=1e-12)
-    assert a["r_applied"] == pytest.approx(0.6197, abs=5e-4)
+    # RE-PINNED 2026-09-03 (review run-002, PLANT-R2-F3): 0.6197 -> 0.6125.
+    # The delivered CURRENT is unchanged (the clamp pins it); what moved is the
+    # ratio the corrected split law says delivers it. The board read 0.612185
+    # over this same window in campaign F (hil_report_20260903_063659,
+    # MDAC-derived, t = 9-24 s), so the re-walked value is 2.8e-4 from the
+    # hardware where the old law was +1.2 % away.
+    assert a["r_applied"] == pytest.approx(0.6125, abs=5e-4)
     assert a["switch_low_ticks"] == 0
     # PHASE B: the same-run negative control releases completely.
     assert b["settled_clamped_ticks"] == 0

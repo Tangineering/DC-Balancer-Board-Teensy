@@ -42,19 +42,44 @@ import governor_model as gov_mod                                # noqa: E402
 # pins the fuel-cell CURRENT and the asymmetry moves only the RATIO that
 # delivers it.
 DV0_MEASURED_V = 0.013522
+# ── THE OTHER TWO SPLIT-LAW PARAMETERS (2026-09-03, review run-002
+#    PLANT-R2-F3) ────────────────────────────────────────────────────────────
+# The delivered share is the two-branch divider of the droop network, not the
+# dV0 term alone: rho is the FC channel's droop-resistance multiplier (the
+# second parameter of the same M2 fit) and R_f the series resistance common to
+# both branches, which is present in BOTH asymmetry modes. Walking without them
+# mis-inverts the ratio by +3.1 % at share 0.50 and +10.5 % at 0.20, which is
+# what made this probe's region-12 MDAC pin (5339, 5293) miss the board's
+# (5378, 5260) by 3.1 % against a 2 % band in campaign F.
+#
+# They are LITERALS here, like DV0_MEASURED_V above, so the probe keeps its
+# stdlib-only, no-plant-import property. All three are pinned against their
+# definitions by
+# `test_run_hil_suite.py::test_fw26_probe_split_constants_match_hil_electrical`;
+# `test_hil_electrical.py::test_the_offline_governor_model_copies_this_modules_split_constants`
+# pins the same three against `test_governor_model.py`'s own copies.
+RHO_MEASURED = 0.9434              # ASYM_DROOP_SCALE_FC / ASYM_DROOP_SCALE_BT
+R_SERIES_OHM = 0.033               # hil_electrical.DROOP_FIXED_SERIES_OHM
 
 DT_S = 1e-3
 
 
+def _gov(seed_r, dv0_v, rho=RHO_MEASURED, r_series=R_SERIES_OHM):
+    """One construction site for the walk's governor, so the split law cannot
+    be carried by one phase and dropped by another."""
+    return gov_mod.GovernorModel(dt_s=DT_S, seed_r=seed_r, dv0_v=dv0_v,
+                                 droop_scale_fc=rho, r_series_ohm=r_series)
+
+
 def walk_phase(total_a, share, seconds, *, dv0_v=0.0, gov=None, t0=0.0,
-               settle_s=0.0):
+               settle_s=0.0, rho=RHO_MEASURED, r_series=R_SERIES_OHM):
     """Tick the governor at a constant total and commanded share.
 
     Returns (gov, stats) so a caller can carry one governor across phases, which
     is what makes the release in `fw26-clamp-cruise`'s phase B a SAME-RUN
     negative control rather than a second run."""
     if gov is None:
-        gov = gov_mod.GovernorModel(dt_s=DT_S, seed_r=0.5, dv0_v=dv0_v)
+        gov = _gov(0.5, dv0_v, rho, r_series)
     d = 0.5
     n = int(round(seconds / DT_S))
     clamped = 0
@@ -214,7 +239,8 @@ SETTLED_MOTOR_A = {0.0: 0.0, 0.5: 0.0844, 1.5: 0.3143, 2.5: 0.6275,
 
 
 def reconstruct_sweep(regions=None, bridge_s=None, dv0_v=DV0_MEASURED_V,
-                      t_start=5.0, t_end=80.0, pre_share=0.50):
+                      t_start=5.0, t_end=80.0, pre_share=0.50,
+                      rho=RHO_MEASURED, r_series=R_SERIES_OHM):
     """Tick the sweep's commands at 1 kHz through the rail model.
 
     Returns (rows, peaks): `rows` is a list of
@@ -228,7 +254,7 @@ def reconstruct_sweep(regions=None, bridge_s=None, dv0_v=DV0_MEASURED_V,
     cmds = ([(t_start, {"v_setpoint": 0.0,
                         "power_share_setpoint": pre_share})]
             + sim.fw26_sweep_commands(regions, bridge_s, pre_share=pre_share))
-    g = gov_mod.GovernorModel(dt_s=DT_S, seed_r=0.5, dv0_v=dv0_v)
+    g = _gov(0.5, dv0_v, rho, r_series)
     d = pre_share
     v_act, v_cmd, sp = 0.0, 0.0, pre_share
     idx = 0

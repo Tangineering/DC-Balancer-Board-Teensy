@@ -1216,11 +1216,15 @@ class RollJob:
 
     def __init__(self, pre, ladder, dt_dec=DECISION_DT_S, dv0_v=0.0,
                  charge_stage=None, tick_s=GOV_TICK_S,
-                 max_transitions=None):
+                 max_transitions=None, droop_scale_fc=1.0, r_series_ohm=0.0):
         self.pre = pre
         self.ladder = list(ladder)
         self.dt_dec = float(dt_dec)
         self.dv0_v = float(dv0_v)
+        # The other two split-law parameters (2026-09-03).  See the block in
+        # `MpcStrategy.__init__` for why all three travel together.
+        self.droop_scale_fc = float(droop_scale_fc)
+        self.r_series_ohm = float(r_series_ohm)
         self.tick_s = float(tick_s)
         self.charge_stage = charge_stage or (lambda j: False)
         cap = self.MAX_TRANSITIONS if max_transitions is None else int(max_transitions)
@@ -1307,6 +1311,8 @@ class RollJob:
         lo0 = pre.lo[j][0]
         seed = min(max(s, lo0), 1.0 - lo0)
         g = gov_mod.GovernorModel(dt_s=self.tick_s, dv0_v=self.dv0_v,
+                                  droop_scale_fc=self.droop_scale_fc,
+                                  r_series_ohm=self.r_series_ohm,
                                   seed_r=seed)
         # Enter the stage already in a converged closed-loop run when the
         # preview says the stage opens closed; otherwise let the model decide.
@@ -1732,7 +1738,7 @@ class Planner:
                  eta_chg=chg_mod.ETA_CHG_DEFAULT, chg_a=0.8,
                  cap_as=5.0 * 3600.0, h2_map="proxy", h2_convex=None,
                  dt_dec=DECISION_DT_S, dv0_v=0.0, ff_dark_model=False,
-                 single_source=False):
+                 single_source=False, droop_scale_fc=1.0, r_series_ohm=0.0):
         if sum(blocks) != horizon:
             raise ValueError("move blocks %r do not sum to the horizon %d"
                              % (blocks, horizon))
@@ -1803,9 +1809,21 @@ class Planner:
         # corrects the offset out by integral action, so its surrogate is
         # unchanged in either case.
         self.dv0_v = float(dv0_v)
-        self._map = (None if self.dv0_v == 0.0
-                     else gov_mod.GovernorModel(dt_s=GOV_TICK_S,
-                                                dv0_v=self.dv0_v))
+        # The other two split-law parameters (2026-09-03).  See the block in
+        # `MpcStrategy.__init__` for why all three travel together.
+        #
+        # THE `_map is None` SHORTCUT KEYS ON ALL THREE (N2).  It used to key on
+        # `dv0_v == 0.0` alone, which stopped meaning "the map is the identity"
+        # the moment R_f entered the law: an `--asymmetry off` run would keep
+        # the WRONG map (no map at all) while its plant realizes the 0.033 ohm
+        # floor.  The predicate is asked of `GovernorModel` rather than
+        # re-derived here, so the two cannot drift.
+        self.droop_scale_fc = float(droop_scale_fc)
+        self.r_series_ohm = float(r_series_ohm)
+        _m = gov_mod.GovernorModel(dt_s=GOV_TICK_S, dv0_v=self.dv0_v,
+                                   droop_scale_fc=self.droop_scale_fc,
+                                   r_series_ohm=self.r_series_ohm)
+        self._map = None if _m.map_is_identity() else _m
         # ── THE HANDOFF CEILING, AND WHY THE DEFAULT IS `False` ────────────
         # `updateShareSlewMode()` selects the 0.002/tick ceiling while a channel
         # is DARK, and the dark flags are FILTERED (0.05/tick) with hysteresis
@@ -2437,9 +2455,12 @@ class ShadowGovernor:
        docs/modeling/mpc_design_20260901.md §2.5 carries the same stale
        sentence; it is the docs agent's to correct."""
 
-    def __init__(self, dv0_v=0.0, seed_r=0.5, tick_s=GOV_TICK_S):
+    def __init__(self, dv0_v=0.0, seed_r=0.5, tick_s=GOV_TICK_S,
+                 droop_scale_fc=1.0, r_series_ohm=0.0):
         self.tick_s = float(tick_s)
         self.model = gov_mod.GovernorModel(dt_s=tick_s, dv0_v=dv0_v,
+                                           droop_scale_fc=droop_scale_fc,
+                                           r_series_ohm=r_series_ohm,
                                            seed_r=seed_r)
         self.last_t = None
         self.mdac_corrections = 0
@@ -2579,7 +2600,8 @@ class MpcStrategy:
                  h2_map="proxy", h2_convex=None, dv0_v=0.0,
                  soc_ref_offset=0.0, eta_chg=chg_mod.ETA_CHG_DEFAULT,
                  tpm_path=None, preview_dt_s=PREVIEW_DT_S,
-                 ff_dark_model=False, loss_map=None, single_source=False):
+                 ff_dark_model=False, loss_map=None, single_source=False,
+                 droop_scale_fc=1.0, r_series_ohm=0.0):
         if variant not in ("det", "sto"):
             raise ValueError("variant must be 'det' or 'sto'")
         self.name = name
@@ -2617,6 +2639,20 @@ class MpcStrategy:
         self.h2_map = h2_map
         self.h2_convex = h2_convex
         self.dv0_v = float(dv0_v)
+        # ── THE OTHER TWO SPLIT-LAW PARAMETERS (2026-09-03, review run-002
+        #    PLANT-R2-F3/N2) ──────────────────────────────────────────────────
+        # THE CANONICAL STATEMENT; `Planner.__init__`, `RollJob.__init__` and
+        # `ShadowGovernor` carry the same pair and point here.
+        # `dv0_v` is only one of three: `droop_scale_fc` (rho) and
+        # `r_series_ohm` (R_f) complete the static split law, and R_f is
+        # present with the asymmetry OFF as well.  All three default to the
+        # identity map, so a caller that passes none is bit-identical to the
+        # pre-2026-09-03 planner.  This class is the one that receives them
+        # from `hil_plant_sim.mpc_configure_kwargs()` and hands them on to
+        # every model it builds, so a parameter dropped here is dropped
+        # everywhere.
+        self.droop_scale_fc = float(droop_scale_fc)
+        self.r_series_ohm = float(r_series_ohm)
         self.ff_dark_model = bool(ff_dark_model)
         # ── SINGLE-SOURCE CANDIDATES (2026-09-03) ──────────────────────────
         # OFF by default and deliberately so: with it off this class is
@@ -2668,6 +2704,8 @@ class MpcStrategy:
         self.last_goal = 0.0
         self.latch = ChargeLatch()
         self.shadow = ShadowGovernor(dv0_v=self.dv0_v,
+                                     droop_scale_fc=self.droop_scale_fc,
+                                     r_series_ohm=self.r_series_ohm,
                                      seed_r=sim.SOC_BAND_SHARE_NOMINAL)
         self.roll_job = None
         self.r_hold = {}
@@ -2937,6 +2975,8 @@ class MpcStrategy:
                                cap_as=self.cap_as,
                                h2_map=self.h2_map, h2_convex=self.h2_convex,
                                dv0_v=self.dv0_v,
+                               droop_scale_fc=self.droop_scale_fc,
+                               r_series_ohm=self.r_series_ohm,
                                ff_dark_model=self.ff_dark_model,
                                single_source=self.single_source)
         if self.variant == "sto":
@@ -3078,6 +3118,12 @@ class MpcStrategy:
                 gov_mod.GOV_CONST["SHARE_CUT_MAX_HANDOFF_A"]
                 if self.single_source else None),
             "dv0_v": self.dv0_v,
+            # THE SPLIT LAW THE PLANNER PREDICTED WITH (2026-09-03, review
+            # run-002 PLANT-R2-F3).  Recorded beside `dv0_v` because the three
+            # are one law: a trace that says only which dV0 was modelled cannot
+            # be told apart from one planned on the pre-2026-09-03 map.
+            "droop_scale_fc": self.droop_scale_fc,
+            "r_series_ohm": self.r_series_ohm,
             "governor_commit": True,
             "preview_source": ("scenario_profile" if self.variant == "det"
                                else "tpm"),
@@ -3183,7 +3229,9 @@ class MpcStrategy:
         The admissibility roll must not disturb the committed estimate, so it
         runs on a copy.  ``GovernorState`` is a dataclass of scalars and one
         counter dict, so ``copy.deepcopy`` is exact and cheap (~6 us)."""
-        g = gov_mod.GovernorModel(dt_s=GOV_TICK_S, dv0_v=self.dv0_v)
+        g = gov_mod.GovernorModel(dt_s=GOV_TICK_S, dv0_v=self.dv0_v,
+                                  droop_scale_fc=self.droop_scale_fc,
+                                  r_series_ohm=self.r_series_ohm)
         g.v_bus_ok = self.shadow.model.v_bus_ok
         g.state = copy.deepcopy(self.shadow.model.state)
         return g
@@ -3485,6 +3533,8 @@ class MpcStrategy:
             self.roll_job = RollJob(pre,
                                     self.planner.ladder[:self.planner.n_band],
                                     dv0_v=self.dv0_v,
+                                    droop_scale_fc=self.droop_scale_fc,
+                                    r_series_ohm=self.r_series_ohm,
                                     charge_stage=lambda j, o=charge_options[-1]: o[j])
             self.rolls_started += 1
 
