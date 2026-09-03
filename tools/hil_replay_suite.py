@@ -2161,6 +2161,7 @@ def check_fault_not_latched(data, spec):
                       + (" — the recorded floor never crosses the limit, so this "
                          "check is VACUOUS on this stimulus (see the "
                          "companion `uv_margin_pinned` check)"
+                         + STIMULUS_VACUOUS_TAG
                          if lo >= LIMIT_V_BUS_MIN_V else ""))
     return True, (f"{_fault_names(bit)} never latched across {len(data.faults)} "
                   f"ticks at t >= {data.grace_s:.1f}s{note}{margin}"
@@ -2608,6 +2609,25 @@ NOT_EXERCISED_TAG = (
     "NOT drive on an uncommanded stimulus — nothing about the controller's "
     "response to this log. Set `replay_commands: True` on the entry to exercise "
     "it. Measured detail follows — ")
+
+# ── STIMULUS VACUITY (2026-09-03) ───────────────────────────────────────────
+# A THIRD, DISJOINT KIND OF NON-EVIDENCE, and the one the counter could not
+# see. `VACUOUS_TAG` and `NOT_EXERCISED_TAG` both say the COMMAND stream was
+# absent; this one says the STIMULUS itself cannot fail the check. On
+# TP0178 and TP0201 the recorded V_bus floor never crosses LIMIT_V_BUS_MIN,
+# so the firmware's dwell integrator accumulates 0.0 ms and NO possible
+# firmware could fail `uv_not_latched`. The detail has said so in prose
+# since 2026-08-31, but the census matched on the two command tags only, so
+# both rows counted as SUBSTANTIVE and every campaign's tally was two
+# generous (campaign 20260902_220604 F3).
+#
+# `passed` STAYS True for `NOT_EXERCISED_TAG`'s reason: the assertion the
+# check made is true and the companion `uv_margin_pinned` check is what
+# makes a stimulus change loud. The distinct result is the tag and the
+# count, not a red tick.
+STIMULUS_VACUOUS_TAG = (
+    " **(stimulus-vacuous — the recorded stimulus cannot fail this check on "
+    "any firmware, so the green tick carries no evidence about the board)**")
 
 # The check kinds whose verdict is read off `data.current`, i.e. the ones the
 # tag above applies to.  Named explicitly rather than inferred, so adding a
@@ -3079,15 +3099,29 @@ def check_latch_precedes_uv(data, spec):
 # verdict needs a refused-cut counter on the observation frame, which does not
 # exist yet.
 #
-# BASELINE (campaign 20260902_041414, whole replay half, scored by THIS
-# FUNCTION): 118 cuts, 6 with the cut's own row over 0.5 A, 2 more on the
-# preceding row, peak 0.5722 A.
-# ⚠️ THE 163 / 8 / 4 / 0.6608 A FIGURES QUOTED FOR CAMPAIGN 20260902_011926 ARE
-# NOT THIS TOOL'S NUMBERS. They were derived by hand under a different
-# definition (before the in-Run/state gating and the teardown exclusion this
-# function applies), so the two counts are not a trend and the drop from 163 to
-# 118 is not a change in board behaviour. Compare a future campaign against the
-# 118 / 6 / 2 baseline only.
+# ⚠️ THE CENSUS IS A SPREAD, NOT A PIN, AND CARRIES NO THRESHOLD
+# (corrected 2026-09-03). Two campaigns scored by THIS FUNCTION, byte-identical
+# between them:
+#     20260902_041414   118 cuts / 6 own-row > 0.5 A / 2 prev-row / peak 0.5722 A
+#     20260902_220604   157 cuts / 10 own-row      / 9 prev-row  / peak 0.7575 A
+# The 118 / 6 / 2 figures were briefly written here as a "baseline". They are
+# not one: the observed range is 118-157 and neither end is its centre.
+# MECHANISM, located on YP0214 over t = 25.8-29.5 s: the injected currents and
+# `cmd_share_sp` are identical to 4 dp between the two campaigns, but the MDAC
+# channels are BRANCH-SWAPPED and the switch alternates where it previously sat
+# still, producing 15 extra BT_BUS cuts at ~0.46 s spacing. The open-loop share
+# PI winds against a constant error and RAILS; WHICH rail it settles on is set
+# by initial conditions and UDP timing, and the cut count follows the rail. It
+# is neither a scorer change (this function is byte-identical) nor the fw v26
+# clamp (the aux ceiling bits are zero on all 27 replays, every tick).
+# So: report the numbers, compare them across campaigns as a spread, and do NOT
+# open a finding on a count inside 118-157 or on a CSV-bounded current inside
+# ~0.57-0.76 A. A real verdict still needs a refused-cut counter on the
+# observation frame, which does not exist yet.
+# ⚠️ The 163 / 8 / 4 / 0.6608 A figures quoted for campaign 20260902_011926 are
+# NOT this tool's numbers — they were derived by hand before the in-Run/state
+# gating and the teardown exclusion this function applies, so they do not belong
+# in the spread above.
 INFORMATIONAL_PREFIX = "**INFORMATIONAL (reports, never fails)**"
 
 
@@ -3416,8 +3450,17 @@ def evaluate_replay_csv(entry, csv_path):
     n_total = len(result["checks"])
     n_not_exercised = sum(1 for c in result["checks"]
                           if c["detail"].startswith(NOT_EXERCISED_PREFIX))
-    n_vacuous = sum(1 for c in result["checks"]
-                    if VACUOUS_TAG in c["detail"]) + n_not_exercised
+    # STIMULUS VACUITY (2026-09-03) counts as non-evidence alongside the two
+    # command tags, and on its own axis as well so a reader can tell the
+    # three apart. The three are DISJOINT: the command tags are applied by
+    # the loop above from `data.command_is_identically_zero()`, and this one
+    # is emitted by `check_fault_not_latched()` from the recorded V_bus
+    # floor, on a kind that is not a motor-response kind.
+    n_stimulus_vacuous = sum(1 for c in result["checks"]
+                             if STIMULUS_VACUOUS_TAG in c["detail"])
+    n_vacuous = (sum(1 for c in result["checks"]
+                     if VACUOUS_TAG in c["detail"])
+                 + n_not_exercised + n_stimulus_vacuous)
     # An INFORMATIONAL row (only present if an entry declares the
     # `share_cut_census` kind explicitly) asserts nothing and must not inflate
     # the substantive count or the vacuity fraction, which is a statement about
@@ -3427,6 +3470,7 @@ def evaluate_replay_csv(entry, csv_path):
     result["n_checks"] = n_total
     result["n_checks_vacuous"] = n_vacuous
     result["n_checks_not_exercised"] = n_not_exercised
+    result["n_checks_stimulus_vacuous"] = n_stimulus_vacuous
     result["n_checks_informational"] = n_informational
     result["n_checks_substantive"] = n_total - n_vacuous - n_informational
     if n_not_exercised:
@@ -3436,11 +3480,18 @@ def evaluate_replay_csv(entry, csv_path):
             f"board never left Idle and the motor command is identically 0 A. Those "
             f"checks assert only that the firmware did not drive on an uncommanded "
             f"stimulus.")
-    if n_vacuous - n_not_exercised:
+    n_command_vacuous = n_vacuous - n_not_exercised - n_stimulus_vacuous
+    if n_command_vacuous:
         result["notes"].append(
-            f"{n_vacuous - n_not_exercised} of {n_total} checks are VACUOUS on this "
+            f"{n_command_vacuous} of {n_total} checks are VACUOUS on this "
             f"run: the observed motor command is identically 0 A. SUBSTANTIVE "
             f"checks: {n_total - n_vacuous}.")
+    if n_stimulus_vacuous:
+        result["notes"].append(
+            f"{n_stimulus_vacuous} of {n_total} checks are STIMULUS-VACUOUS on "
+            f"this run: the recorded stimulus cannot fail them on any "
+            f"firmware, so their green ticks are not evidence about the "
+            f"board. SUBSTANTIVE checks: {n_total - n_vacuous}.")
     # `all_passed` is unaffected by the census (it never sets passed False), and
     # `entry["checks"]` is still the emptiness test — an entry that declares no
     # checks is not rescued into a PASS by an appended informational row.

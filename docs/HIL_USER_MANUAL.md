@@ -734,7 +734,8 @@ The five `ems-ftp75c-*` scenarios declare `"drag": "scaled-air"`, so the operato
 does not have to remember the flag; an explicit `--drag` overrides the scenario
 key, and `config.drag_from` in the sidecar records which of the two decided. The
 sidecar also carries `config.drag`, the resolved `config.drag_k_air`,
-`config.regen_manager`, `config.regen_windows` and `config.regen_duty_s`, plus
+`config.regen_manager`, `config.regen_windows`, `config.regen_duty_s` and
+`config.regen_early_releases`, plus
 the two era keys `scenario.drag` and `scenario.eta_regen`. Read them before
 comparing any two runs: an **absent** era key means the pre-compensation, pre-regen
 model, and a compensated run is a different vehicle from a rig-drag one, because the
@@ -752,9 +753,32 @@ Three things to know before reading a `ftp75c` trace:
   about 1.4 % of the cycle drain, a SoC gain near +5.5e-5 against a −0.0054
   excursion. Read the harvest off `I_charge`, the `chopper_clamp` event's
   `energy_j` and the plant's `regen_energy_j` counter.
-* ⚠️ **Every band on this family is PROVISIONAL**: no campaign has run any of
-  it, the values are governor-walk predictions, and `ETA_REGEN` = 0.80 and
-  `VESC_REGEN_I_MAX_A` = 1.5 A are both `TODO(verify)`.
+* ⚠️ **The bands on this family were first-campaign predictions.** Campaign
+  `hil_report_20260902_220604` ran all five legs and the plant behaved: 6 regen
+  windows carrying 19.21–19.25 s against a modelled 6 / 19.6 s, chopper energy
+  5.4558–5.4911 J against a 2.5 J floor. `ETA_REGEN` = 0.80 and
+  `VESC_REGEN_I_MAX_A` = 1.5 A remain `TODO(verify)`, and the **realizable regen
+  fraction measured 0.63**, not the design's modelled 0.707 — the cause is the
+  window-length distribution against the Ag105's ~0.9 s dead time, not either
+  constant. Those figures are **pre-D-4**: that campaign held `charge_goal` to
+  each window's wall-clock end, so the next campaign runs a different commanded
+  stimulus (about 0.35 s less commanded regen) and its duty and pack charge must
+  be re-pinned, not differenced against these.
+* ⚠️ **A regen window now ENDS on a condition, not on the clock** (2026-09-03).
+  `RegenManager` releases `charge_goal` when the commanded motor current reaches
+  −0.1 A, the firmware's own `regenActive` exit, or at the window's end,
+  whichever comes first. The window OPENS at −0.2 A, so the two levels form a
+  hysteresis band: releasing at the opening level is a zero-hysteresis comparator
+  and closed two windows mid-braking on the measured trace (review finding H1;
+  `docs/HIL_PLANT.md` §3.4). On campaign `hil_report_20260902_220604`'s trace the
+  released count is **2 of 6**, both at genuine standstills.
+  `config.regen_early_releases` counts the windows that
+  ended on the current, and `config.regen_duty_s` remains the WALL-CLOCK duty,
+  i.e. an UPPER BOUND on the commanded one whenever that count is non-zero. The
+  release reads the observation frame's commanded motor current, which an offline
+  `ems_walk` does not have, so a WALK still models the longer window; a
+  walk-versus-run comparison of regen duty on these legs is expected to differ in
+  that direction.
 * ⚠️ `ems-ftp75c-socband` runs **per-scenario charge thresholds**, 0.18074 A enter
   and 0.33107 A exit, because the shipped 0.60 A entry threshold sits above this
   cycle's entire source total. If that leg reads as permanently charging, the

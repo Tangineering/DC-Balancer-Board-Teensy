@@ -629,8 +629,30 @@ def pack_current_from_bus_power(p_bt_bus_w, soc):
 # baseline solved for one of them against HALF the demand would be a bound the
 # run cannot honestly be scored against.  `ems-mpc-cross` is absent, exactly as
 # `ems-sdp-cross` is — it carries no SoC-band drain.
-SOC_BAND_DRAIN_SCENARIOS = ("ems-soc-band", "ems-dp-replay", "ems-sdp",
-                            "ems-mpc", "ems-mpc-det")
+#
+# ⚠️ THE SAME DEFECT RECURRED, AND THE LIST IS NO LONGER TYPED HERE
+# (2026-09-03, campaign hil_report_20260902_220604 A6). The three
+# `ems-sdp-alpha-*` sweep legs were added to the SIMULATOR's list when they were
+# registered — they are the `ems-sdp` stimulus by construction, same profile
+# object, same drain, same charge ceiling — and this mirror was not extended with
+# it. The registration block said so and predicted the consequence exactly. When
+# the matched-DP baselines were finally SOLVED for those three legs the
+# prediction landed: `ems-sdp-alpha-cal` has a delta-SoC IDENTICAL to `ems-sdp`
+# and a run hydrogen within 24 ppm of it, yet its bound came out at 0.0034595 g
+# against `ems-sdp`'s 0.0124009 g — a +258 % "deviation" that is the missing 1.0 A
+# drain and nothing else. (0.0034 g is the SAME number the B2 note above records
+# for `ems-sdp` in 2026-09-01. The defect is not a coincidence; the duplicated
+# list is.) `alpha-greedy` read +268 % with `lambda_term` pinned at 1.000000, NOT
+# converged, because no lambda can match a terminal SoC the demand cannot reach.
+#
+# IT IS NOW DERIVED FROM THE SIMULATOR'S OWN LIST, which is the only copy that
+# can be authoritative: `apply_scenario()` is what actually applies the drain, so
+# a mirror that can disagree with it is a defect waiting for its third instance.
+# Membership is UNCHANGED for every previously-listed scenario, so the three
+# committed tables regenerate byte-identical; the only names this adds are the
+# three alpha legs, which have no committed table. `ems-mpc-cross` and
+# `ems-sdp-cross` remain absent because the SIMULATOR omits them.
+SOC_BAND_DRAIN_SCENARIOS = tuple(sim.SOC_BAND_DRAIN_SCENARIO_NAMES)
 
 
 def scenario_drain_a(scenario, t, aux_preload_a=None):
@@ -1499,7 +1521,7 @@ def prepare_problem(scenario, meta, *, soc0, capacity_ah, stage_dt, n_share,
     #
     # ⚠️ IT IS GATED ON THE REGEN ERA, AND THE GATE IS ABOUT ARTIFACTS, NOT
     # ABOUT PHYSICS.  The guard is correct for every solve; applying it
-    # universally would move the SoC grid of all three committed tables and
+    # universally would move the SoC grid of all four committed tables and
     # every stored dp_db record, for a defect none of them actually hit at
     # soc0.  Measured on `ems-dp-replay`: 611 stages climb 0.003055 SoC from a
     # bottom edge 0.001782 below `reach_lo`, so the poison DOES enter the low

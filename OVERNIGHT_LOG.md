@@ -950,3 +950,56 @@ board per the operator.
   Implementer deviations recorded (the committed walk figures were wrong: engagement on the first
   tick, duty 1.0000, I_fc pinned 1.2500 A with no overshoot when the pre-phase is walked; L6 bound 70;
   ROLL constants not re-measured). Orchestrator suite rerun in progress; commit follows.
+- **Commit c8b50ff (pushed): fw v26 tools mirror + fix round.** Orchestrator suites: .venv_hil 2087 /
+  80 skipped; miniforge 2778 / 1 skipped + 1 wall-clock flake (test_the_search_width_reads_no_clock,
+  3/3 in isolation, under the concurrent matched-DP load). **Post-campaign-D fix round dispatched
+  (Opus):** A1-A5 scoring defects (signal_the relocation + import guards; MPC floor/ceil from
+  SHARE_BAND_DP with the right shape; D-2 estimator verdict gate at the 0.5 A load-guard class;
+  mppt cruise window after the mirror goes live; ftp75c fc_bounded split), B1 the D-4 regen-manager
+  trailing-edge release, C the BLEED-ERA re-pins from the ledger, D1-D9 conventions/reporting
+  (comm-loss re-close mechanism, census as a spread, replay zero-coverage of v26, ML0217 chain
+  exception, vacuity counter + tripwire denominator, MPC summary windowing, ftp75c-mpc marker,
+  candidate_cost_ms), E docs. Matched-DP solves still running from the worktree.
+- **Campaign D closed out:** matched-DP solves merged into tools/dp_db (20 records; the three
+  sdp-sweep alpha-leg records are WRONG - resolution defect, add-on item A6 sent to the fix agent),
+  worktree DC-Balancer-D removed, EMS_COMPARISON.md commentary written, FINAL SUMMARY in
+  HIL_FINDINGS.md, HIL_SUMMARY.md written. Loss-map bound validated on the board (dp-replay
+  -0.18 % / +0.06 %). Waiting on the post-campaign fix round; campaign E (validation of the fix
+  round + the two clamp scenarios + the D-4 regen-manager change) is the planned second campaign.
+- **Post-campaign-D fix round landed (Opus): A1-A6, B1, C, D1-D9, E all applied**; campaign D
+  re-judged offline to 0 FAILs on all eight formerly-failing runs; suites 2113 / 80 and 2809 / 1.
+  A6 mechanism: SOC_BAND_DRAIN_SCENARIOS was a hand-typed mirror missing the three alpha legs (the
+  B2 defect of 2026-09-01 again, at the identical 0.0034 g) - now derived from the simulator in all
+  three offline mirrors; the three wrong solve records deleted, re-solve launched from main.
+  **Implementer deviation on B1:** the manager's early release reads the observation-frame motor
+  current, which the walk's feedback view lacks, so the walk keeps the wall-clock end (walk regen
+  duty is an upper bound on the live one; documented). D8 CANDIDATE_COST_MS_NOMINAL 0.0300 ->
+  0.0392 is a behavioural change to the MPC plan (bounded by the existing < 0.5 % sweep test).
+  Regen-harvest-true chopper floors, mppt dwell and the ems-y band deliberately NOT raised onto
+  the bleed-era values (bench bleed calibration outstanding). Opus review dispatched (scoring
+  semantics changed: adversarial audit is not streamlined away).
+- **Fix-round review (Opus): SHIP-AFTER-FIXES, 1 HIGH / 4 MED / 6 LOW; A1-A6, C, D verified clean
+  (803 sw_ring events across 18 campaign folders: over_absmax fired 3 times ever, all the 65 mA
+  REGEN opens; 0 events >= 0.5 A ever raised it; mppt window 29.1 s clears every mirror-live onset
+  by 137-151 ms; every re-pin matches the ledger to the digit; no band widened; D8 inert on the
+  plan, real in the search).** H1: the D-4 release was a zero-hysteresis comparator at -0.2 A and
+  fires on threshold chatter during genuine braking (campaign D W1 at 23.385 s, W6 at 167.116 s
+  with 3.94 s of -8 A braking still to come); the latched release then drops regen_commanded and
+  lifts the "regen window must not arm an FC dwell" guard mid-braking. **D-4 refined:** arm at
+  -0.2 A, RELEASE at -0.1 A (= the firmware's regenActive exit) so the host release strictly
+  trails the firmware's; the reviewer verified on the trace that this suppresses all three spurious
+  releases and keeps both genuine ones. M2 mppt_threshold_moved at exact zero margin (range 2) ->
+  range >= 1; M3 four ftp75c legs at electrical any cannot pass the hi-fi-only aggregator -> hifi
+  + guard; M4 the 67.2 s handoff lands inside one commander period and is bounded by arm 2, not
+  closed; lens-3 ruling: store drain membership in new dp_db records and warn on read-time
+  mismatch (no re-solve, no orphaning). Fix agent 2 dispatched.
+- **Fix round 2 landed (Opus):** two-level regen-manager rule (arm -0.2 A, release -0.1 A) replayed
+  on the campaign-D ftp75c-5050 trace: releases only at the two true standstills (W3 67.2041 s,
+  W6 171.0441 s; W1/W5 grazes suppressed), 198-sample measured fixture pins it; M2 range >= 1
+  (measured exactly 2 in B, C, D); M3 four ftp75c legs pinned hifi + a fourth import guard; M4
+  re-measured: nine of ten release-to-FC_CHARGE margins (1.0-20.3 ms) sit inside one commander
+  period, so the handoff may occur at BOTH edges and arm 2 bounds it (the "3.9 s margin" at 171 s
+  was an artefact of the single-level rule); M5 all three alpha records post-fix (09:10-09:11Z),
+  alpha-cal bit-identical to ems-sdp's bound; drain-membership witness stored on new dp_db records
+  with a read-time warning; L1-L6. Implementer suites 2129 / 80 and 2825 / 1 (the review's 2826 was
+  the miscount, 2809 + 16). Orchestrator rerun in progress.

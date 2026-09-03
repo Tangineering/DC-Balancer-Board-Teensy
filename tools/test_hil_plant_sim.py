@@ -1382,7 +1382,17 @@ def test_scenarios_hifi_only_set():
                          # joins for `ems-dp-replay`'s reason exactly -- its
                          # shipped table is solved --charger-accounting
                          # physical and bind_scenario() refuses the mismatch.
-                         "ems-ftp75c-dp"}
+                         "ems-ftp75c-dp",
+                         # 2026-09-03 (review finding M3): the other four
+                         # ftp75c legs join for regen-harvest-true's reason
+                         # instead -- each carries a `chopper_clamp` events
+                         # aggregator, and only the hi-fi engine emits events.
+                         # Under the simple engine the stream is empty, the
+                         # aggregate reads 0.0, and the 2.5 J floor fails a
+                         # correct board. run_hil_suite's fourth import guard
+                         # refuses the `any` shape outright.
+                         "ems-ftp75c-5050", "ems-ftp75c-socband",
+                         "ems-ftp75c-sdp", "ems-ftp75c-mpc"}
 
 
 def test_ems_soc_band_stays_any_while_ems_dp_replay_is_hifi():
@@ -10274,8 +10284,19 @@ def test_mpc_offline_drain_mirrors_agree_with_the_simulator():
     import ems_walk
     for name in ("ems-mpc", "ems-mpc-det"):
         assert name in gen.SOC_BAND_DRAIN_SCENARIOS
-        assert name in ems_walk._SIM_SOC_BAND_DRAIN_SCENARIOS
+        assert name in ems_walk._sim_drain_scenarios(hil)
     assert "ems-mpc-cross" not in gen.SOC_BAND_DRAIN_SCENARIOS
+    # STRENGTHENED 2026-09-03 (campaign 20260902_220604 A6): the mirrors are
+    # now DERIVED, so assert the derivation rather than two names. The list
+    # went stale a SECOND time -- the three `ems-sdp-alpha-*` sweep legs were
+    # missing from the generator's copy -- and a name-by-name test cannot see
+    # the next omission either.
+    assert (tuple(gen.SOC_BAND_DRAIN_SCENARIOS)
+            == tuple(hil.SOC_BAND_DRAIN_SCENARIO_NAMES))
+    assert (tuple(ems_walk._sim_drain_scenarios(hil))
+            == tuple(hil.SOC_BAND_DRAIN_SCENARIO_NAMES))
+    for name in hil.SDP_ALPHA_SCENARIOS:
+        assert name in gen.SOC_BAND_DRAIN_SCENARIOS, name
 
 
 def test_mpc_soc_ref_offset_key_is_live_only_on_an_mpc_scenario():
@@ -11796,6 +11817,112 @@ def _mgr(windows=((10.0, 20.0), (30.0, 31.0))):
     return hil.RegenManager(windows)
 
 
+# ── H1 FIXTURE: the `ems-ftp75c-5050` regen windows AS MEASURED ─────────────
+# Campaign `hil_report_20260902_220604`, scenario `ems-ftp75c-5050_hifi`,
+# column `current` of `hil_scenario_ems-ftp75c-5050_hifi.csv`.  THIS IS THE
+# TRACE THE ZERO-HYSTERESIS DEFECT WAS FOUND ON, and a synthetic -12 -> 0 step
+# cannot stand in for it: the defect is a GRAZE (-0.1999 A and -0.1997 A) in
+# the middle of sustained braking, which no step contains.  The windows are
+# `derive_regen_windows()`'s own output for that scenario, restated here so the
+# fixture pins the pairing rather than re-deriving it.
+
+_FTP75C_REGEN_WINDOWS = (
+    (23.2000, 24.3000),
+    (30.2000, 31.8000),
+    (62.7000, 67.3000),
+    (96.2000, 97.8000),
+    (159.2000, 162.8000),
+    (164.2000, 171.3000),
+)
+
+# (t, current) samples per window, decimated to the 100 ms bin MAXIMUM
+# (a max is exact for a "rises to" test) with the first sample above
+# -0.2 A and the first at or above -0.1 A pinned verbatim.
+_FTP75C_REGEN_CURRENT = (
+    (   # window 1, 11 samples
+        (23.2614, -0.2012), (23.3854, -0.1999), (23.4481, -0.2006),
+        (23.5076, -0.2082), (23.6001, -1.2937), (23.7984, -1.4242),
+        (23.8992, -1.2943), (23.9825, -1.2667), (24.0872, -0.9779),
+        (24.1882, -0.8631), (24.2073, -0.8652),
+    ),
+    (   # window 2, 16 samples
+        (30.2964, -0.5908), (30.3991, -0.5365), (30.4382, -0.5180),
+        (30.5007, -0.5175), (30.6024, -0.9990), (30.7912, -1.0496),
+        (30.8933, -1.0302), (30.9772, -1.0121), (31.0981, -0.8667),
+        (31.1820, -0.8061), (31.2234, -0.7877), (31.3074, -0.8164),
+        (31.4714, -0.8429), (31.5973, -0.5749), (31.6785, -0.4941),
+        (31.7206, -0.4968),
+    ),
+    (   # window 3, 46 samples
+        (62.7071, -1.6275), (62.8933, -1.5054), (62.9933, -1.3107),
+        (63.0171, -1.2671), (63.1171, -1.3736), (63.2214, -1.4188),
+        (63.3015, -1.4233), (63.4473, -1.4348), (63.5696, -1.4462),
+        (63.6094, -1.4351), (63.7122, -1.4525), (63.8141, -1.4826),
+        (63.9183, -1.5009), (64.0203, -1.5645), (64.1020, -1.6082),
+        (64.2263, -1.7290), (64.3084, -1.8436), (64.4100, -2.0400),
+        (64.5142, -2.2259), (64.6001, -2.4652), (64.7001, -2.7328),
+        (64.8001, -3.0543), (64.9044, -3.4748), (65.0064, -3.9039),
+        (65.1094, -4.4259), (65.2133, -4.9641), (65.3003, -5.5467),
+        (65.4004, -6.1071), (65.5001, -6.7978), (65.6011, -7.5504),
+        (65.7012, -8.3680), (65.8071, -9.2482), (65.9004, -10.1213),
+        (66.0004, -11.1281), (66.1002, -12.0000), (66.2001, -12.0000),
+        (66.3005, -12.0000), (66.4005, -12.0000), (66.5005, -12.0000),
+        (66.6002, -12.0000), (66.7008, -12.0000), (66.8001, -12.0000),
+        (66.9002, -12.0000), (67.0001, -12.0000), (67.1003, -12.0000),
+        (67.2041, 0.0000),
+    ),
+    (   # window 4, 16 samples
+        (96.2986, -1.1581), (96.3614, -1.0972), (96.4213, -1.0752),
+        (96.5993, -0.5415), (96.6873, -0.3691), (96.7065, -0.3735),
+        (96.8105, -0.4439), (96.9125, -0.4987), (97.0002, -0.5227),
+        (97.1003, -1.4352), (97.2022, -1.9592), (97.3064, -2.4575),
+        (97.4086, -2.9419), (97.5982, -2.7496), (97.6984, -1.0205),
+        (97.7966, -0.2788),
+    ),
+    (   # window 5, 37 samples
+        (159.2443, -0.2000), (159.3870, -0.2064), (159.4312, -0.2075),
+        (159.5115, -0.2114), (159.6003, -0.5064), (159.7812, -0.5535),
+        (159.8613, -0.5479), (159.9433, -0.5252), (160.0873, -0.4050),
+        (160.1692, -0.3591), (160.2073, -0.3718), (160.3093, -0.3820),
+        (160.4114, -0.4037), (160.5131, -0.4145), (160.6005, -0.5643),
+        (160.7395, -0.5876), (160.8247, -0.5781), (160.9259, -0.5786),
+        (161.0923, -0.4308), (161.1765, -0.3560), (161.2161, -0.3618),
+        (161.3201, -0.3871), (161.4041, -0.4066), (161.5865, -0.3881),
+        (161.6923, -0.3641), (161.7102, -0.3649), (161.8790, -0.3727),
+        (161.9425, -0.3842), (162.0861, -0.2675), (162.1891, -0.2197),
+        (162.2070, -0.2135), (162.3314, -0.2369), (162.4555, -0.2543),
+        (162.5955, -0.2174), (162.6572, -0.1988), (162.6591, -0.1927),
+        (162.7212, -0.2028),
+    ),
+    (   # window 6, 72 samples
+        (164.2625, -0.3267), (164.3861, -0.2951), (164.4281, -0.2910),
+        (164.5105, -0.2853), (164.6105, -0.5572), (164.7761, -0.5704),
+        (164.8584, -0.5514), (164.9443, -0.5464), (165.0045, -0.5535),
+        (165.1056, -1.1600), (165.2911, -1.2037), (165.3934, -1.1542),
+        (165.4552, -1.1407), (165.5154, -1.1737), (165.6004, -1.4289),
+        (165.7004, -1.6326), (165.8032, -1.7536), (165.9053, -1.8994),
+        (166.0992, -0.9266), (166.1974, -0.2788), (166.2154, -0.2773),
+        (166.3004, -0.3839), (166.4024, -0.5390), (166.5902, -0.4220),
+        (166.6921, -0.3461), (166.7121, -0.3517), (166.8140, -0.3784),
+        (166.9162, -0.3918), (167.0987, -0.2194), (167.1162, -0.1997),
+        (167.1822, -0.1631), (167.2020, -0.1661), (167.3062, -0.1885),
+        (167.4301, -0.2068), (167.5123, -0.2133), (167.6001, -0.6480),
+        (167.7823, -0.7055), (167.8824, -0.6784), (167.9645, -0.6474),
+        (168.0484, -0.6383), (168.1283, -0.6518), (168.2721, -0.6552),
+        (168.3131, -0.6541), (168.4791, -0.6605), (168.5001, -0.6673),
+        (168.6019, -1.3686), (168.7032, -1.6449), (168.8072, -1.7583),
+        (168.9887, -1.7834), (169.0995, -0.8881), (169.1973, -0.5662),
+        (169.2152, -0.5712), (169.3002, -0.6495), (169.4035, -0.7694),
+        (169.5052, -0.8066), (169.6070, -1.3566), (169.7735, -1.4108),
+        (169.8350, -1.3512), (169.9795, -1.3084), (170.0002, -1.3213),
+        (170.1041, -1.5840), (170.2084, -1.9532), (170.3100, -2.4416),
+        (170.4001, -3.0359), (170.5001, -3.6945), (170.6004, -4.4019),
+        (170.7000, -5.1952), (170.8002, -6.0679), (170.9023, -7.0394),
+        (171.0441, 0.0000), (171.1002, 0.0000), (171.2001, 0.0000),
+    ),
+)
+
+
 def test_regen_manager_rule_1_forces_charge_goal_inside_a_window():
     mgr = _mgr()
     out = mgr.apply(12.0, {}, {"power_share_setpoint": 0.4, "charge_goal": 0.0})
@@ -12235,3 +12362,201 @@ def test_bind_accepts_every_committed_rig_table_unchanged(tmp_path):
     s2, meta2 = _era_table(tmp_path, scenario="myscen2")
     s2.bind_scenario("myscen2", meta2, drag_mode=hil.DRAG_MODE_RIG)
     assert s2.path is not None
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# THE REGEN MANAGER'S TRAILING EDGE (2026-09-03, ruling D-4)
+#
+# The manager used to command `charge_goal = 1.0` to a window's WALL-CLOCK end.
+# Campaign 20260902_220604 measured what that costs on `ftp75c`: on windows 3
+# and 6 the vehicle reaches standstill BEFORE the window ends, the firmware's
+# commanded motor current leaves the braking region (-12.0 -> 0.0 A at
+# t = 67.2051 s against a window end of 67.217 s), `regenActive` goes FALSE
+# while the host is still asserting charge intent, and `chargingControl()` falls
+# through to its CRUISE branch -- `assertFcChargeEnable(true)`, BT dropped off
+# the bus, the whole load carried single-source on the FC. Measured handoffs
+# 0.08-0.46 s at 0.37-0.38 A on every leg (79.8-100.1 ms at ~67.22 s,
+# 200.0-281.2 ms at ~171.05 s, and socband's 460.1 ms at 163.5763 s):
+# the recorded OC_FC topology.
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_a_window_whose_vehicle_stops_early_releases_before_its_wall_clock_end():
+    """THE DEFECT, in the campaign's own geometry. The current rails at -12 A
+    through the window and steps to 0 shortly before the end; the manager must
+    stop commanding charge at that instant, not at the window edge."""
+    mgr = _mgr(((10.0, 20.0),))
+    policy = mgr.wrap(lambda t, fb: {"power_share_setpoint": 0.5,
+                                     "charge_goal": 0.0})
+    for t in (10.5, 12.0, 15.0, 19.0):
+        fb = {"current": -12.0}
+        assert policy(t, fb)["charge_goal"] == 1.0, t
+        assert fb["regen_commanded"] is True, t
+    fb = {"current": 0.0}
+    out = policy(19.5, fb)
+    assert out["charge_goal"] == 0.0
+    assert fb["regen_commanded"] is False
+    assert mgr.early_releases == 1
+    # ... and the release is LATCHED for the remainder of the window, so a
+    # current chattering back across the level cannot re-open the path.
+    fb = {"current": -12.0}
+    assert policy(19.7, fb)["charge_goal"] == 0.0
+    assert fb["regen_commanded"] is False
+    assert mgr.early_releases == 1
+
+
+def test_a_window_still_braking_at_its_end_releases_at_the_end_as_before():
+    """The wall clock is still the OTHER release condition, and the windows
+    that behaved correctly must be unchanged: campaign 20260902_220604 measured
+    windows 1/2/4/5 still commanding -0.9 / -0.55 / -0.31 / -0.23 A at their
+    edges and releasing cleanly."""
+    mgr = _mgr(((10.0, 20.0),))
+    policy = mgr.wrap(lambda t, fb: {"power_share_setpoint": 0.5})
+    for t in (10.0, 15.0, 19.999):
+        assert policy(t, {"current": -0.9})["charge_goal"] == 1.0, t
+    assert mgr.early_releases == 0
+    out = policy(20.0, {"current": -0.9})
+    assert "charge_goal" not in out
+
+
+def test_the_leading_edge_trim_is_unchanged_and_the_release_must_arm_first():
+    """A window OPENS on the derived trim, not on the live current: the lead-in
+    still carries a POSITIVE commanded current for a moment, and releasing there
+    would close a window before it started. The release arms only after the
+    firmware has actually been seen braking inside the window."""
+    mgr = _mgr(((10.0, 20.0),))
+    policy = mgr.wrap(lambda t, fb: {"power_share_setpoint": 0.5})
+    assert policy(10.0, {"current": 3.0})["charge_goal"] == 1.0
+    assert policy(10.1, {"current": 0.5})["charge_goal"] == 1.0
+    assert mgr.early_releases == 0
+    assert policy(11.0, {"current": -12.0})["charge_goal"] == 1.0
+    assert "charge_goal" not in policy(12.0, {"current": 0.0})
+    assert mgr.early_releases == 1
+
+
+def test_the_arm_and_release_levels_are_two_distinct_levels():
+    """THE COMPARATOR HAS HYSTERESIS (review finding H1). The window ARMS at
+    the level the windows were derived at, `EMS_REGEN_MGR_I_MARGIN` x
+    `REGEN_ACTIVE_I_A` = -0.2 A, and RELEASES at the firmware's own
+    `regenActive` exit, `-REGEN_ACTIVE_I_A` = -0.1 A. Arming and releasing at
+    ONE level is a zero-hysteresis comparator, and because the release is
+    latched a single grazing sample closes the window permanently."""
+    mgr = _mgr(((10.0, 20.0),))
+    assert mgr.i_arm_a == pytest.approx(
+        -hil.EMS_REGEN_MGR_I_MARGIN * hil.REGEN_ACTIVE_I_A)
+    assert mgr.i_release_a == pytest.approx(-hil.REGEN_ACTIVE_I_A)
+    assert mgr.i_release_a > mgr.i_arm_a
+    policy = mgr.wrap(lambda t, fb: {"power_share_setpoint": 0.5})
+    assert policy(11.0, {"current": -12.0})["charge_goal"] == 1.0
+    # inside the hysteresis band: above the arm level, below the release level
+    assert policy(12.0, {"current": mgr.i_arm_a})["charge_goal"] == 1.0
+    assert policy(12.1, {"current": mgr.i_arm_a + 1e-9})["charge_goal"] == 1.0
+    assert policy(12.2, {"current": -0.15})["charge_goal"] == 1.0
+    assert policy(12.3,
+                  {"current": mgr.i_release_a - 1e-9})["charge_goal"] == 1.0
+    assert mgr.early_releases == 0
+    # AT the release level, not merely above it: the firmware's exit is
+    # `current < -0.1f`, so -0.1 A is already NOT regen to the firmware.
+    assert "charge_goal" not in policy(13.0, {"current": mgr.i_release_a})
+    assert mgr.early_releases == 1
+
+
+def test_a_new_window_re_arms_the_latch():
+    mgr = _mgr(((10.0, 20.0), (30.0, 40.0)))
+    policy = mgr.wrap(lambda t, fb: {"power_share_setpoint": 0.5})
+    policy(11.0, {"current": -12.0})
+    assert "charge_goal" not in policy(12.0, {"current": 0.0})
+    assert policy(30.0, {"current": -12.0})["charge_goal"] == 1.0
+    assert "charge_goal" not in policy(35.0, {"current": 0.0})
+    assert mgr.early_releases == 2
+
+
+def _drive_regen_manager(mgr, per_window):
+    """Feed one window's samples at a time and return the release instants."""
+    policy = mgr.wrap(lambda t, fb: {"power_share_setpoint": 0.5})
+    releases = []
+    for seg in per_window:
+        before = mgr.early_releases
+        released = False
+        for t, i in seg:
+            out = policy(t, {"current": i})
+            if mgr.early_releases > before:
+                releases.append((round(t, 4), round(i, 4)))
+                before = mgr.early_releases
+                released = True
+            elif released:
+                # LATCHED for the remainder of the window, by construction.
+                assert "charge_goal" not in out, (t, i)
+            else:
+                assert out["charge_goal"] == 1.0, (t, i)
+    return releases
+
+
+def test_the_measured_ftp75c_trace_releases_only_at_the_two_standstills():
+    """H1, ON THE TRACE. Driven with the campaign-D `ems-ftp75c-5050` current,
+    the manager must release ONLY where the vehicle actually stops. The two
+    grazes that a single-level comparator released on - window 1 at
+    t = 23.3854 s (-0.1999 A, 200 ms before a -1.55 A brake) and window 6 at
+    t = 167.1162 s (-0.1997 A, 3.94 s of -0.65...-8.09 A braking still to
+    come) - must NOT release, because releasing there drops `regen_commanded`
+    through heavy braking and unguards the three consumers that refuse an
+    FC-charge dwell inside a braking window."""
+    mgr = _mgr(_FTP75C_REGEN_WINDOWS)
+    releases = _drive_regen_manager(mgr, _FTP75C_REGEN_CURRENT)
+    assert releases == [(67.2041, 0.0), (171.0441, 0.0)]
+    assert mgr.early_releases == 2                     # 2 of 6 windows
+    assert len(_FTP75C_REGEN_WINDOWS) == 6
+
+
+def test_the_single_level_rule_would_have_released_on_the_measured_grazes():
+    """THE DISCRIMINATOR. Same trace, same manager, only the release level
+    moved back onto the arm level: three spurious releases appear, two of them
+    (23.3854 s and 167.1162 s) in the middle of braking and one (162.6572 s,
+    window 5) 0.14 s early. This test FAILS if the fix is reverted, and it is
+    what makes the test above a measurement rather than a restatement."""
+    mgr = _mgr(_FTP75C_REGEN_WINDOWS)
+    mgr.i_release_a = mgr.i_arm_a + 1e-9               # the pre-fix behaviour
+    releases = _drive_regen_manager(mgr, _FTP75C_REGEN_CURRENT)
+    assert [t for t, _ in releases] == [23.3854, 67.2041, 162.6572, 167.1162]
+    assert mgr.early_releases == 4
+
+
+def test_the_release_level_trails_the_firmware_regen_active_exit():
+    """THE SAFETY DIRECTION, asserted as an inequality rather than as a pair of
+    literals. `chargingControl()` leaves its regen branch at
+    `current >= -REGEN_ACTIVE_I_A` (.ino:10807); the host must not drop regen
+    intent BEFORE the firmware does, so the host release level must be at or
+    above the firmware's exit, and the arm level strictly below it."""
+    mgr = _mgr(((10.0, 20.0),))
+    assert mgr.i_release_a >= -hil.REGEN_ACTIVE_I_A
+    assert mgr.i_arm_a < -hil.REGEN_ACTIVE_I_A
+
+
+def test_a_feedback_view_with_no_live_current_falls_back_to_the_wall_clock():
+    """THE WALK EXEMPTION, asserted rather than assumed. `fb["current"]` is the
+    HIL observation frame's commanded motor current: it is NOT
+    telemetry-equivalent and `ems_walk`'s reduced feedback view does not carry
+    it. With the key absent the manager must behave EXACTLY as it did before
+    this change, so every offline walk is unchanged across the round and only a
+    live run sees the new trailing edge."""
+    mgr = _mgr(((10.0, 20.0),))
+    policy = mgr.wrap(lambda t, fb: {"power_share_setpoint": 0.5})
+    for t in (10.0, 15.0, 19.999):
+        fb = {"t": t, "soc": 0.7}           # an ems_walk-shaped view
+        assert policy(t, fb)["charge_goal"] == 1.0, t
+        assert fb["regen_commanded"] is True, t
+    assert mgr.early_releases == 0
+    assert "charge_goal" not in policy(20.0, {"t": 20.0})
+
+
+def test_apply_advances_the_latch_exactly_once_per_wrapped_call():
+    """`wrap()` advances the latch and hands the decision to `apply()`; a
+    DIRECT `apply()` call advances it itself. Either way the state moves once,
+    which is what keeps `forced` and `regen_commanded` describing the same
+    command stream."""
+    mgr = _mgr(((10.0, 20.0),))
+    policy = mgr.wrap(lambda t, fb: {"power_share_setpoint": 0.5})
+    policy(11.0, {"current": -12.0})
+    assert mgr.calls == 1 and mgr.forced == 1
+    assert mgr.apply(12.0, {"current": -12.0},
+                     {"power_share_setpoint": 0.5})["charge_goal"] == 1.0
+    assert mgr.calls == 2 and mgr.forced == 2

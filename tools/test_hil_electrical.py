@@ -2395,3 +2395,75 @@ def test_the_bleed_current_a_settled_bus_carries_matches_the_loss_map():
     v_mot_pred = ((r["V_bus"] - he.RT_V_FWD - he.RT_R_ON * 0.35)
                   / (1.0 + he.RT_R_ON * g[he.N_MOT]))
     assert e.v[he.N_MOT] == pytest.approx(v_mot_pred, abs=1e-9)
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# THE LOAD-DUMP CLASS GATE ON THE sw_ring VERDICT (2026-09-03, ruling D-2)
+#
+# `DI_DT_LOAD_DUMP` is a FIXED worst-case slew with no i_cut scaling, so
+# `_open()` adds the same 1.95 V ring allowance whether the switch was carrying
+# 6 A or 65 mA. Campaign 20260902_220604 measured the consequence:
+# `regen-harvest-true` FAILED on its three commanded REGEN opens (65 mA, node
+# on the chopper clamp at 18.0639 V, estimated peak 20.0139 V) — over the 20 V
+# abs-max by 13.9 mV against a PHYSICAL ring of 0.80 mV. The verdict is now
+# confined to cuts at or above the firmware's own share-cut load guard
+# (`SHARE_CUT_MAX_HANDOFF_A` 0.5 A); the event and its `peak_v` are unchanged.
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_a_milliamp_regen_open_on_the_chopper_clamp_raises_no_over_absmax():
+    """THE CAMPAIGN'S OWN NUMBERS, reproduced. The estimator's implied node
+    ceiling `V_ABSMAX - 1.95` = 18.050 V sits 50 mV BELOW the clamp's
+    forward-conduction state, which `regen-harvest-true` REQUIRES for >= 800
+    ticks — so before the gate, ANY commanded REGEN open on the clamp failed in
+    ANY era at any cut above the 50 mA emission gate."""
+    sw = he.Rt1987("REGEN", 0, 1, css_nf=5.6, c_load_f=30e-6)
+    sw.i = 0.0654
+    events = []
+    sw._open(events, t_now=15.418, trace_l_nh=1.5, v_node=18.063946,
+             reason="en_low")
+    rings = [e for e in events if e["kind"] == "sw_ring"]
+    assert len(rings) == 1
+    # The EVENT and the PEAK are still emitted — only the verdict is gated.
+    assert rings[0]["peak_v"] > he.V_ABSMAX
+    assert rings[0]["i_cut"] == pytest.approx(0.0654)
+    assert rings[0]["load_dump_class"] is False
+    assert rings[0]["over_absmax"] is False
+
+
+def test_a_multi_amp_scp_cut_still_raises_over_absmax():
+    """The Death-5 class is untouched: every recorded datapoint is multi-amp
+    and the largest legitimate non-teardown cut in the campaign census is
+    0.66 A, so the class still contains every cut the verdict was written
+    for."""
+    sw = he.Rt1987("MOT_PWR", 0, 1, css_nf=5.6, c_load_f=30e-6)
+    sw.i = 6.0
+    events = []
+    sw._open(events, t_now=0.602, trace_l_nh=50.0, v_node=15.0,
+             reason="scp_cut")
+    rings = [e for e in events if e["kind"] == "sw_ring"]
+    assert len(rings) == 1
+    assert rings[0]["load_dump_class"] is True
+    assert rings[0]["over_absmax"] is True
+
+
+def test_the_load_dump_gate_is_the_firmwares_own_share_cut_load_guard():
+    """The threshold is NOT fitted to the census: it is the firmware's own
+    definition of a hazardous cut, `SHARE_CUT_MAX_HANDOFF_A` = 0.5 A
+    (teensy_controller.ino:2290), so the estimator's load-dump class and the
+    firmware's refused-cut class coincide. The boundary is INCLUSIVE."""
+    assert he.SW_RING_LOAD_DUMP_I_A == 0.5
+    for i_cut, want in ((0.4999, False), (0.5, True), (0.5001, True)):
+        sw = he.Rt1987("T", 0, 1, css_nf=5.6, c_load_f=30e-6)
+        sw.i = i_cut
+        events = []
+        sw._open(events, t_now=0.0, trace_l_nh=50.0, v_node=15.0,
+                 reason="en_low")
+        ring = [e for e in events if e["kind"] == "sw_ring"][0]
+        assert ring["load_dump_class"] is want, i_cut
+        assert ring["over_absmax"] is want, i_cut
+
+
+def test_v_absmax_is_not_relaxed_by_the_gate():
+    """The 20 V abs-max is the RT1987 datasheet limit and never moves; the
+    round changed which cuts are JUDGED against it, not the number."""
+    assert he.V_ABSMAX == 20.0

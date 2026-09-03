@@ -19,6 +19,7 @@ to either side must be validated under miniforge, not under `.venv_hil` alone.
 """
 import math
 import os
+import json
 import sys
 import time
 
@@ -151,6 +152,26 @@ def test_pack_steps_match_numpy_originals(gen, eta_chg):
             b = gen.step_charge(soc, p_dem, 15.9, 0.8, 0.1, cap_as, eta_chg)
             for x, y in zip(a, b):
                 assert x == pytest.approx(float(y), rel=1e-12, abs=1e-18)
+
+
+def test_the_drain_scenario_name_is_a_real_tuple():
+    """L1 (2026-09-03). The name reads as a tuple, so it must BE one. It was a
+    custom object implementing only `__contains__`/`__iter__`/`__len__`/
+    `__eq__`, and every other tuple operation raised: indexing, `hash()`,
+    `json.dumps()`, and `== None` (which raised instead of returning False, so
+    an ordinary None-guard blew up). PEP 562 defers the simulator import
+    exactly as far and returns the genuine article."""
+    d = M.SOC_BAND_DRAIN_SCENARIOS
+    assert type(d) is tuple
+    assert d[0] and isinstance(d[0], str)          # indexable
+    assert hash(d) == hash(tuple(d))               # hashable
+    assert json.loads(json.dumps(d)) == list(d)    # JSON-serialisable
+    assert (d == None) is False                    # noqa: E711 - the point
+    assert d != ()
+    assert "ems-soc-band" in d and len(d) == len(set(d))
+    # ...and the deferral it exists for: a bad name still raises AttributeError
+    with pytest.raises(AttributeError):
+        M.NO_SUCH_MODULE_ATTRIBUTE
 
 
 def test_drain_and_demand_match_numpy_originals(gen):
@@ -2204,7 +2225,11 @@ def test_the_committed_plan_is_insensitive_to_the_projection():
     pytest.importorskip("numpy")
     ems_walk = pytest.importorskip("ems_walk")
     out = []
-    for cost in (0.0097, 0.0300, 0.0500):
+    # L2 (2026-09-03): the SHIPPED projection is in the sample. The sweep
+    # bracketed `CANDIDATE_COST_MS_NOMINAL` = 0.0392 without containing it, so
+    # the one value the planner actually runs at was the only one never
+    # measured here.
+    for cost in (0.0097, 0.0300, M.CANDIDATE_COST_MS_NOMINAL, 0.0500):
         r = ems_walk.walk("mpc-det", SCEN, soc0=0.7, governor=True,
                           strategy_kwargs={"budget_ms": 15.0,
                                            "candidate_cost_ms": cost})

@@ -3264,3 +3264,67 @@ def test_share_cut_census_is_a_registered_check_kind_that_passes():
     """Registered so an entry can carry it explicitly the day one wants a
     per-entry row; it must never be able to fail."""
     assert rs.CHECK_KINDS["share_cut_census"] is rs.check_share_cut_census
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# STIMULUS VACUITY (2026-09-03, campaign 20260902_220604 F3)
+#
+# `uv_not_latched` on TP0178 and TP0201 has DECLARED itself vacuous in its own
+# detail prose since 2026-08-31 — their recorded V_bus floors never cross
+# LIMIT_V_BUS_MIN, so the firmware's dwell integrator accumulates 0.0 ms and no
+# possible firmware could fail the check. The census matched on the two COMMAND
+# tags only, so both rows counted as SUBSTANTIVE and every campaign's tally was
+# two generous.
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_a_uv_check_whose_stimulus_never_crosses_the_limit_is_stimulus_vacuous(tmp_path):
+    """The V_bus floor is held 1.0 V ABOVE LIMIT_V_BUS_MIN, so the check cannot
+    fail on any firmware."""
+    floor = rs.LIMIT_V_BUS_MIN_V + 1.0
+    rows = _with_bringup_and_grace(
+        _uniform_rows(0.2, 0.005, fault_flags=lambda t: 0,
+                      V_bus=lambda t: floor))
+    path = tmp_path / "a.csv"
+    write_replay_csv(path, rows)
+    spec = {"kind": "fault_not_latched", "name": "uv_not_latched",
+            "bit": rs.FAULT_UV_BUS}
+    res = rs.evaluate_replay_csv(_entry([spec]), str(path))
+    assert res["passed"] is True
+    detail = next(c["detail"] for c in res["checks"]
+                  if c["name"] == "uv_not_latched")
+    assert rs.STIMULUS_VACUOUS_TAG in detail
+    assert res["n_checks_stimulus_vacuous"] == 1
+    # ... and it is counted as NON-EVIDENCE, which is the whole point.
+    assert res["n_checks_vacuous"] >= 1
+    assert res["n_checks_substantive"] == res["n_checks"] - res["n_checks_vacuous"]
+    assert any("STIMULUS-VACUOUS" in n for n in res["notes"])
+
+
+def test_a_uv_check_whose_stimulus_does_cross_the_limit_stays_substantive(tmp_path):
+    """The discriminating half: a stimulus that DOES go under the limit could
+    have failed the check, so the green tick is evidence and must be counted."""
+    floor = rs.LIMIT_V_BUS_MIN_V - 1.0
+    rows = _with_bringup_and_grace(
+        _uniform_rows(0.2, 0.005, fault_flags=lambda t: 0,
+                      V_bus=lambda t: floor))
+    path = tmp_path / "a.csv"
+    write_replay_csv(path, rows)
+    spec = {"kind": "fault_not_latched", "name": "uv_not_latched",
+            "bit": rs.FAULT_UV_BUS}
+    res = rs.evaluate_replay_csv(_entry([spec]), str(path))
+    detail = next(c["detail"] for c in res["checks"]
+                  if c["name"] == "uv_not_latched")
+    assert rs.STIMULUS_VACUOUS_TAG not in detail
+    assert res["n_checks_stimulus_vacuous"] == 0
+
+
+def test_the_three_non_evidence_tags_are_disjoint():
+    """`n_checks_vacuous` is the sum of the three and each is also reported on
+    its own axis, so a reader can tell a command-free run from a
+    stimulus-vacuous check. The tag STRINGS must not contain one another, or
+    the substring matching that counts them would double-count."""
+    tags = (rs.VACUOUS_TAG, rs.NOT_EXERCISED_TAG, rs.STIMULUS_VACUOUS_TAG)
+    for i, a in enumerate(tags):
+        for j, b in enumerate(tags):
+            if i != j:
+                assert a not in b, (i, j)

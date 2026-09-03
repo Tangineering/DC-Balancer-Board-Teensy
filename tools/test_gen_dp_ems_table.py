@@ -818,7 +818,7 @@ def test_prepare_problem_rejects_an_impossible_efficiency():
 
 def test_render_table_emits_the_eta_chg_header_only_in_the_new_era(tmp_path):
     """The line is EMITTED ONLY when an efficiency is in force.  Adding
-    `eta_chg: none` to every table would move the bytes of all three committed
+    `eta_chg: none` to every table would move the bytes of all four committed
     tables without changing a number in them; its ABSENCE is the old era."""
     out_old = str(tmp_path / "old.csv")
     out_new = str(tmp_path / "new.csv")
@@ -1186,7 +1186,7 @@ def test_the_default_flag_regenerates_an_old_era_table_byte_identically(tmp_path
     `--loss-map none` must be byte-identical, and NEITHER may carry the
     `# loss_map:` header line or the flag in its reconstructed command: the
     ABSENCE of the line is the pre-2026-09-02 era's record, and emitting it
-    unconditionally would have moved the bytes of all three committed tables
+    unconditionally would have moved the bytes of all four committed tables
     without changing a number in any of them.
 
     The full-resolution claim was verified once by hand on the shipped
@@ -1490,7 +1490,7 @@ def test_the_grid_edge_pad_guard_is_gated_on_either_era_key():
     the whole horizon's climb makes it structurally unable to reach the
     reachable window.
 
-    Applying it universally would move the SoC grid of all three committed
+    Applying it universally would move the SoC grid of all four committed
     tables for a defect none of them hits at soc0, so it is gated -- and the
     absence of the guard is part of what "the pre-round era" means.  Both
     halves are asserted here.
@@ -1896,3 +1896,73 @@ def test_solve_dp_feasibility_uses_commanded_fc_and_delivered_bt():
     # ...and the COST is still billed on the delivered fuel-cell power.
     assert "d_share = delivered_share(shares, P / V)" in src
     assert "p_fc = d_share * P" in src
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# THE DRAIN-SCENARIO LIST IS THE SIMULATOR'S (2026-09-03, campaign
+# 20260902_220604 A6)
+#
+# This module used to carry its own transcription of the names whose auxiliary
+# load is the bespoke SoC-band drain. It went stale twice. The first time
+# (2026-09-01, B2) `ems-sdp` was missing and its matched-DP baseline modelled
+# half the demand: 0.0034 g against a real 0.0125 g. The second time the three
+# `ems-sdp-alpha-*` sweep legs were missing, and when their baselines were
+# finally solved they came out at exactly the same 0.0034595 g against
+# `ems-sdp`'s 0.0124009 g -- a +258 % "deviation" that is the missing 1.0 A
+# drain and nothing else, on a leg whose delta-SoC is IDENTICAL to `ems-sdp`'s
+# and whose run hydrogen is within 24 ppm of it.
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_the_drain_scenario_list_is_the_simulators_own():
+    """Not a transcription of it. `apply_scenario()` is what actually applies
+    the drain, so any copy that CAN disagree with it is a defect waiting for
+    its third instance."""
+    assert (tuple(gen.SOC_BAND_DRAIN_SCENARIOS)
+            == tuple(hil.SOC_BAND_DRAIN_SCENARIO_NAMES))
+
+
+def test_every_alpha_sweep_leg_carries_the_ems_sdp_drain():
+    """The three sweep legs ARE the `ems-sdp` stimulus by construction -- same
+    profile object, same drain, same charge ceiling -- so their drain must be
+    bit-identical to it at every instant, not merely close."""
+    assert hil.SDP_ALPHA_SCENARIOS, "the alpha legs are not registered"
+    for name in hil.SDP_ALPHA_SCENARIOS:
+        assert name in gen.SOC_BAND_DRAIN_SCENARIOS, name
+        for t in (0.0, 5.0, 12.5, 30.0, 45.0, 58.0, 61.0):
+            assert (gen.scenario_drain_a(name, t)
+                    == gen.scenario_drain_a("ems-sdp", t)), (name, t)
+    # ... and the drain is the SoC-band one, not the bare auxiliary floor: the
+    # defect's signature is exactly `I_AUX_A` alone in the plateau.
+    assert gen.scenario_drain_a("ems-sdp-alpha-cal", 30.0) > hil.I_AUX_A
+
+
+def test_the_alpha_legs_matched_dp_demand_equals_ems_sdps():
+    """The end-to-end property the bound is scored on. `build_demand()` is what
+    a matched-DP solve prices, so pinning the drain alone would leave the
+    profile, the bus law and the charge mask untested."""
+    np = pytest.importorskip("numpy")
+    times = np.arange(0.0, 61.0, 0.1)
+
+    def demand(name):
+        return gen.build_demand(name, hil.SCENARIOS[name], times, 0.1,
+                                loss_map=hil.plant_loss_map(), eta_chg=0.88)
+
+    ref = demand("ems-sdp")
+    for name in hil.SDP_ALPHA_SCENARIOS:
+        got = demand(name)
+        assert len(got) == len(ref), name
+        for i, label in enumerate(["v", "a", "p_dem", "v_bus", "i_total",
+                                   "cruise", "i_regen"]):
+            a = np.asarray(ref[i], dtype=float)
+            b = np.asarray(got[i], dtype=float)
+            assert np.array_equal(a, b), (name, label,
+                                          float(np.nanmax(np.abs(a - b))))
+
+
+def test_the_cross_legs_are_deliberately_absent_from_the_drain_list():
+    """The discriminating half: `ems-sdp-cross` and `ems-mpc-cross` carry NO
+    SoC-band drain -- their two cruise levels ARE the stimulus -- so deriving
+    the list must not sweep them in."""
+    for name in ("ems-sdp-cross", "ems-mpc-cross"):
+        assert name not in gen.SOC_BAND_DRAIN_SCENARIOS, name
+        assert gen.scenario_drain_a(name, 30.0) == pytest.approx(hil.I_AUX_A)

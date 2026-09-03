@@ -3144,21 +3144,131 @@ class RegenManager:
     later, and a strategy under walk and the same strategy under the simulator
     are wrapped identically."""
 
-    def __init__(self, windows):
+    def __init__(self, windows, i_active_a=REGEN_ACTIVE_I_A,
+                 i_margin=EMS_REGEN_MGR_I_MARGIN):
         self.windows = tuple((float(a), float(b)) for a, b in windows)
+        # TWO LEVELS, NOT ONE.  `i_arm_a` is the level the windows were derived
+        # at (`i_margin` x the firmware threshold); `i_release_a` is the
+        # firmware's OWN `regenActive` exit.  The gap between them is the
+        # hysteresis band.  See `_update()`.
+        self.i_arm_a = -float(i_margin) * float(i_active_a)
+        self.i_release_a = -float(i_active_a)
         # Observability, consumed by the run banner and the sidecar.  Counted
         # rather than derived so a window list and the ticks actually spent
         # inside it can be compared after the fact.
         self.calls = 0
         self.forced = 0
+        # Trailing-edge bookkeeping, also observability: how many windows ended
+        # on the CURRENT rule rather than on the wall clock.
+        self.early_releases = 0
+        # Per-window latch state: the index of the window the manager is in,
+        # whether the firmware has been SEEN braking inside it, and whether it
+        # has been released for the remainder of it.
+        self._win_idx = None
+        self._entered_braking = False
+        self._released = False
 
     def duty_s(self):
         return sum(b - a for a, b in self.windows)
 
     def active(self, t):
+        """Wall-clock window membership.  PURE, and deliberately NOT the
+        command decision — see `_update()` for the trailing-edge rule."""
         return any(a <= t < b for a, b in self.windows)
 
-    def apply(self, t, fb, out):
+    def window_index(self, t):
+        """Index of the window containing `t`, or None.  PURE."""
+        for i, (a, b) in enumerate(self.windows):
+            if a <= t < b:
+                return i
+        return None
+
+    # ── THE TRAILING EDGE (ruling D-4, 2026-09-03) ──────────────────────────
+    # The manager used to command `charge_goal = 1.0` to a window's WALL-CLOCK
+    # END.  Campaign 20260902_220604 measured what that costs on `ftp75c`: on
+    # windows 3 and 6 the vehicle reaches standstill BEFORE the window ends, the
+    # firmware's commanded motor current leaves the braking region (measured
+    # -12.0 -> 0.0 A at t = 67.2051 s, window end 67.217 s), `regenActive` goes
+    # FALSE while the host is still asserting charge intent, and
+    # `chargingControl()` falls through to its CRUISE branch — which calls
+    # `assertFcChargeEnable(true)`, drops BT off the bus and carries the whole
+    # load single-source on the FC.  Measured handoffs: 0.08-0.10 s at 67.22 s
+    # and 0.26-0.28 s at 171.04-171.06 s on EVERY leg, peak `I_fc` 0.37-0.38 A.
+    # That is the recorded OC_FC topology, reached here at 27 % of
+    # LIMIT_I_FC_MAX only because the compensated cycle is light.
+    #
+    # THE RULE IS A TWO-LEVEL COMPARATOR, NOT A SYMMETRIC ONE.  The window
+    # OPENS on the required motor current entering the braking region at
+    # `EMS_REGEN_MGR_I_MARGIN` x `REGEN_ACTIVE_I_A` = -0.2 A (that is what
+    # `derive_regen_windows()` trims to, and the LEADING-EDGE TRIM IS
+    # UNCHANGED), and it RELEASES on the commanded motor current reaching
+    # `-REGEN_ACTIVE_I_A` = -0.1 A, THE FIRMWARE'S OWN `regenActive` EXIT
+    # (.ino:10807), whichever comes first with the wall clock.
+    #
+    # ⚠️ A SINGLE LEVEL WAS A ZERO-HYSTERESIS COMPARATOR AND THAT WAS A DEFECT
+    # (review of the 2026-09-03 round, finding H1).  Arming and releasing at the
+    # SAME -0.2 A means any sample that grazes the level closes the window, and
+    # because the release is LATCHED the window is then closed for good.  On
+    # campaign 20260902_220604's `ems-ftp75c-5050` trace that fired on window 1
+    # at t = 23.3854 s (`current` = -0.1999 A while the vehicle was still 200 ms
+    # from a -1.55 A brake) and on window 6 at t = 167.1162 s (-0.1997 A, with
+    # 3.94 s of -0.65...-8.09 A braking still to come).  `regen_commanded` then
+    # read False THROUGH heavy braking, which is exactly the guard the three
+    # consumers of that flag rely on to refuse an FC-charge dwell inside a
+    # braking window - the hazard ruling D-4 exists to close.
+    #
+    # THE RELEASE LEVEL STRICTLY TRAILS THE FIRMWARE'S EXIT, so the host can
+    # never drop regen intent while the firmware still calls the instant regen.
+    # Measured on the same trace: the two spurious releases above disappear and
+    # window 5's 0.14 s-early release (benign, but not a real standstill either)
+    # goes with them, while BOTH genuine standstill releases survive - window 3
+    # at t = 67.2041 s and window 6 at t = 171.0441 s, i.e.
+    # `regen_early_releases` reads 2 of 6.
+    #
+    # TWO PROPERTIES THE LATCH BUYS.  (a) The release is ARMED only after the
+    # firmware has actually been seen braking inside the window, so the lead-in
+    # ramp cannot release the window before it starts.  (b) The release is
+    # LATCHED for the remainder of that window, so a current chattering across
+    # the release level cannot re-open the path; a new window re-arms it.  With
+    # one level (a) and (b) COMPOUNDED the defect rather than containing it.
+    #
+    # ⚠️ THE SIGNAL IS THE OBSERVATION FRAME'S COMMANDED MOTOR CURRENT
+    # (`fb["current"]`), which is NOT telemetry-equivalent and is NOT produced
+    # by `ems_walk`'s reduced feedback view.  When the key is absent or None the
+    # manager falls back to the wall-clock end, i.e. to the previous behaviour
+    # EXACTLY — so a walk is bit-identical across this change and only a live
+    # run (or a test that supplies the key) sees the new trailing edge.  The
+    # asymmetry is recorded rather than hidden: a walk therefore models the
+    # LONGER window, and its regen duty is an upper bound on the live one.
+    def _update(self, t, fb):
+        """Advance the per-window latch and return the command decision.
+
+        NOT PURE — this is the one state advance per commander tick, and
+        `wrap()` calls it exactly once."""
+        idx = self.window_index(t)
+        if idx != self._win_idx:
+            self._win_idx = idx
+            self._entered_braking = False
+            self._released = False
+        if idx is None:
+            return False
+        if self._released:
+            return False
+        i_cmd = fb.get("current") if isinstance(fb, dict) else None
+        if i_cmd is None:
+            return True                      # no live signal: wall-clock end
+        i_cmd = float(i_cmd)
+        if not self._entered_braking:
+            if i_cmd <= self.i_arm_a:
+                self._entered_braking = True
+            return True
+        if i_cmd >= self.i_release_a:
+            self._released = True
+            self.early_releases += 1
+            return False
+        return True
+
+    def apply(self, t, fb, out, commanded=None):
         """Rules 1-3 of the design note, in order.
 
         1. Inside a window, force `charge_goal = 1.0` and touch nothing else.
@@ -3167,9 +3277,15 @@ class RegenManager:
            NOT win: the window does.  The firmware's `regenActive` branch takes
            precedence over the cruise branch anyway, so the host's model of
            WHICH PATH IS OPEN has to match, or the dwell accounting and the
-           charge census describe a run that did not happen."""
+           charge census describe a run that did not happen.
+
+        `commanded` is the decision `wrap()` already advanced the latch for.
+        A direct caller that passes nothing advances the latch here instead, so
+        the state moves exactly once per call either way."""
         self.calls += 1
-        if not self.active(t):
+        if commanded is None:
+            commanded = self._update(t, fb)
+        if not commanded:
             return out
         self.forced += 1
         out = dict(out or {})
@@ -3183,13 +3299,19 @@ class RegenManager:
         is called, so a strategy's charge bookkeeping can exclude a regen tick
         from its FC-path dwell (see the dwell note in the block comment).  The
         key is always present - True or False - so a strategy cannot read
-        "absent" as "no manager" on a run that has one."""
+        "absent" as "no manager" on a run that has one.
+
+        ⚠️ `regen_commanded` follows the SAME decision the command does, so a
+        window released early stops counting as a regen tick at the same instant
+        it stops being commanded; the dwell accounting and the charge census
+        cannot disagree with the command stream."""
         mgr = self
 
         def wrapped(t, fb):
+            commanded = mgr._update(t, fb)
             if isinstance(fb, dict):
-                fb["regen_commanded"] = mgr.active(t)
-            return mgr.apply(t, fb, policy(t, fb))
+                fb["regen_commanded"] = commanded
+            return mgr.apply(t, fb, policy(t, fb), commanded=commanded)
 
         # Forward the binding hook and the diagnostics attributes main() and
         # ems_walk resolve BY TYPE (`sdp_raw_src`, `dp_table_src`, `mpc_src`),
@@ -9356,6 +9478,18 @@ SCENARIOS["ems-ftp75c-socband"]["soc_band_charge_exit_itot_a"] = \
 # the shipped table is solved `--charger-accounting physical`, and
 # bind_scenario() refuses the mismatch.
 SCENARIOS["ems-ftp75c-dp"]["electrical"] = "hifi"
+# ⚠️ THE OTHER FOUR LEGS ARE HI-FI TOO, FOR A DIFFERENT REASON (review finding
+# M3, 2026-09-03).  Each carries a `chopper_clamp` `total_of` aggregator in its
+# `events_require`, and the plant emits `chopper_clamp` events from the HI-FI
+# engine only.  Under `--electrical-pref simple` the event stream is EMPTY, an
+# empty `total_of` sums to 0.0, and the 2.5 J floor then fails a correct board
+# on a run that measured nothing.  Declaring `hifi` is what makes the check a
+# measurement; the import guard in run_hil_suite.py refuses the `any` shape so a
+# leg added later cannot re-open the hole.
+for _name in ("ems-ftp75c-5050", "ems-ftp75c-socband", "ems-ftp75c-sdp",
+              "ems-ftp75c-mpc"):
+    SCENARIOS[_name]["electrical"] = "hifi"
+del _name
 # The MPC leg's two planner keys, by reference off the FTP-75 twin.
 SCENARIOS["ems-ftp75c-mpc"]["mpc_max_candidates"] = MPC_CAMPAIGN_MAX_CANDIDATES
 SCENARIOS["ems-ftp75c-mpc"]["mpc_loss_map"] = plant_loss_map()
@@ -12305,6 +12439,13 @@ def main(argv=None):
                                   else [list(w) for w in regen_mgr.windows]),
                 "regen_duty_s": (None if regen_mgr is None
                                  else regen_mgr.duty_s()),
+                # Trailing-edge rule (D-4): how many windows the manager
+                # released EARLY, on the commanded motor current leaving the
+                # braking region, rather than on the wall clock. `regen_duty_s`
+                # above is the WALL-CLOCK duty and is therefore an upper bound
+                # on the commanded one whenever this is non-zero.
+                "regen_early_releases": (None if regen_mgr is None
+                                         else regen_mgr.early_releases),
                 "vesc_cap_f": (getattr(electrical, "c_vesc", None)
                                if electrical is not None else None),
                 "noise": bool(args.noise),

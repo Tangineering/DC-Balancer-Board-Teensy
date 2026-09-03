@@ -216,6 +216,31 @@ Electrical engine: `"any"` scenarios run under the campaign's `--electrical-pref
 - ⚠️ **All five bands remain `provisional`** — the two energy floors come from
   an offline plant probe and the other three are 1:1-era campaign measurements
   re-checked against it. Re-derive them from the first eta-era campaign.
+- ⚠️ **THE `sw_ring` VERDICT AND THE CLAMP THIS SCENARIO REQUIRES WERE IN
+  STRUCTURAL CONFLICT BY 50 mV** (found campaign `hil_report_20260902_220604`,
+  fixed 2026-09-03). `Rt1987._open()` adds a FIXED 1.95 V load-dump ring
+  allowance at every cut above 50 mA, so its implied node ceiling
+  `V_ABSMAX − 1.95` = 18.050 V sits **below** the chopper clamp's
+  forward-conduction state `V_CHOPPER_TRIP − RT_V_FWD` = 18.065 V — which this
+  scenario REQUIRES for ≥ 800 ticks. Every commanded `REGEN` open at the end of a
+  braking window therefore raised `over_absmax` on a correct board (three events,
+  `i_cut` 0.065 A, estimated peak 20.0139 V, over by 13.9 mV, against a physical
+  ring of 0.80 mV). The VERDICT is now gated on the load-dump class
+  (`hil_electrical.SW_RING_LOAD_DUMP_I_A` = the firmware's own
+  `SHARE_CUT_MAX_HANDOFF_A` 0.5 A); the events and their `peak_v` are still
+  emitted, `V_ABSMAX` is not relaxed, and `docs/HIL_PLANT.md` §8.5 carries the
+  physics. Campaign `20260902_041414` passed only because its 2 kΩ bleed had
+  pulled the node ~2 V off the clamp before the window closed.
+- ✅ **BLEED-ERA MEASUREMENT (campaign `hil_report_20260902_220604`), floors
+  UNCHANGED.** With `R_NODE_BLEED_OTHER` 60 kΩ the residual clamp no longer
+  releases mid-window, so the run coalesced **3** `chopper_clamp` episodes where
+  the previous campaign had 6: clamp dwell **1418 ticks** (was 1227, +15.6 %),
+  largest episode **2.6707 J** (was 1.5938, +67.6 %), run total **7.9741 J** (was
+  6.3578, +25.4 %), `V_rgn` peak 18.1732 V, `I_charge` peak 0.1333 A. The 1.0 J /
+  3.0 J / 800-tick floors are **held**: each is 35–53 % under the LOW end of the
+  two-era spread, which is the margin class they have always carried, and pinning
+  one era's episode coalescing into a cross-era bound would not survive the bench
+  bleed calibration that is still outstanding.
 - ⚠️ **Do not read SoC direction here.** The harvest is single-digit joules
   against a pack simultaneously carrying the bus, so pack SoC still falls across
   the run. Read `I_charge`, the clamp event's `energy_j`, and the plant's
@@ -274,6 +299,35 @@ the fw v24 expectation; the fw v23 record it replaces is kept at the end.
   `mppt_thresh_cnt` CSV column, a **written** reg-`0x02` count (bit 7 clear, i.e.
   not the `0xFF` resistor sentinel) for ≥ 9000 ticks after t = 28.1, with the count
   inside **[15, 27]**.
+- ⚠️ **THE CRUISE TRIPWIRE'S WINDOW NOW OPENS AFTER THE MIRROR IS LIVE**
+  (campaign `hil_report_20260902_220604`, fixed 2026-09-03). The
+  operating-point tripwire (`mppt_threshold_peak_tripwire`, count ≤ 21) used to
+  open AT `EMS_MPPT_CRUISE_WINDOWS[1][0]` = 28.1 s. That excluded the BRAKING
+  window but not the value the mirror CARRIES OUT OF IT: the HIL mirror is the
+  instantaneous `V_chg`, recomputed only on a settled POWERED tick and FROZEN
+  across the dark gap in between (EPROM semantics — the unpowered path re-arms
+  the session and deliberately keeps `ag105MpptRegCnt`). Measured geometry:
+  `REGEN` closes 28.0063 s, `FC_CHARGE` opens 28.4268 s, the first mirror-live
+  tick is 28.9494 s — so the frozen braking value **27** was carried **849 ticks**
+  into a window written to exclude it, and the tripwire failed a correct board.
+  The left edge is now DERIVED as `EMS_MPPT_CRUISE_WINDOWS[1][0] +
+  EMS_MPPT_CRUISE_LEAD_IN_S + AG105_SETTLE_S + 0.2` ≈ **29.1 s**, and
+  `mppt_threshold_moved` is re-pointed at the same window (it read a range of 12
+  in both 2026-09-02 campaigns for the WRONG reason — the carried 27 down to the
+  harvest floor; on mirror-live ticks the range is **2**, bins 15/16/17 only, in
+  each of campaigns 011926, 041414 and 220604 — the 18/19 bins fall in
+  28.949–29.100 s, inside the 0.2 s settle pad). **The ≤ 21 band is
+  UNCHANGED and must not be widened to 27:** on mirror-live ticks the measured
+  peak is 19 in both bleed eras, and the harvest operating point [15, 19] has not
+  moved. The artifact **cannot occur on hardware** — the real
+  `ag105ManageMpptThreshold()` gates its `V_chg` window on
+  `fcChargePathIsPowering()`, so regen is structurally excluded.
+- **Bleed-era anchors for this scenario** (campaign `hil_report_20260902_220604`,
+  against `20260902_041414`): braking-window clamp dwell **1962 of 2100 ticks**
+  (was 1035), chopper **0.9132 J** per window (was 0.4908), full-run ticks at
+  count 27 **6635** (was 2164 — the intermediate ratchet bins 21–26 vanish because
+  the mirror never leaves the clamp mid-braking). Harvest unchanged:
+  ∫`I_charge` 2.1137 C (+0.47 %), `I_charge` peak 0.8815 A, `I_fc` peak 1.1638 A.
 - **Why useful:** it is the only scenario that can tell "the hunt is absent because
   fw v24 fixed it" from "the hunt is absent because the charge windows never
   opened" — the threshold count on the wire is the positive evidence, and a run
@@ -298,7 +352,10 @@ the fw v24 expectation; the fw v23 record it replaces is kept at the end.
   window it clear of the regen-lifted braking windows — where the HIL mirror alone reaches
   27 — and do not re-provisionalise the band on the eta change alone. Two additions came
   out of the same campaign:
-  a **`column_range_at_least` ≥ 2** witness (`mppt_threshold_moved`), because the count
+  a **`column_range_at_least` ≥ 1** witness (`mppt_threshold_moved`; the bound was
+  ≥ 2 until 2026-09-03, when the re-pointed cruise window was measured at a range of
+  EXACTLY 2 in campaigns 011926, 041414 and 220604 and the check was found to be
+  passing with zero margin), because the count
   PERSISTS across runs — it carried in at 15 from the predecessor, so the level check
   alone would pass on a run in which the manager never executed — and an **`I_fc` ≤
   1.30 A** tripwire (`mppt_fc_headroom`, measured peak 1.1638), because the OC budget
@@ -1268,7 +1325,7 @@ strategy-independent by construction, so one builder emits the same four checks
 everywhere and a drift between them would read as a strategy difference the
 design says cannot exist:
 
-- `ftp75c_regen_duty`: `SW_REGEN` set for at least 20 000 ticks over
+- `ftp75c_regen_duty`: `SW_REGEN` set for at least 15 000 ticks over
   (5.0, 175.0) s, against a modelled 19.6 s. An **aggregate** duty and not a
   phase-locked window assertion, per the standing guidance.
 - `ftp75c_regen_charge`: `I_charge` ≥ 0.06 A inside the cycle's first long
@@ -1277,6 +1334,22 @@ design says cannot exist:
 - the chopper's `total_of` `chopper_clamp` `energy_j` ≥ 2.5 J, against a
   modelled 4.2 J in-window plus 0.5 J outside. The chopper is a **residual
   absorber**, so this is evidence of harvest and not of loss.
+  ⚠️ **THIS CHECK LIVES IN `events_require`, NOT IN `signals_require`** (fixed
+  2026-09-03). It shipped in the signals list on all five legs and could not pass
+  on any run on any board: `scan_signals()` reads columns, so an aggregator with
+  no `column` recorded nothing and `min_value` failed an unmeasured peak by
+  design; with no `name` the judge named it from the label's first word, so five
+  identical checks were reported as `signal_the`. It failed all five ftp75c legs
+  of campaign `hil_report_20260902_220604` and left both ftp75c frontier tuples
+  UNVERIFIED. Three import guards now refuse the shape: every `signals_require`
+  spec must declare an observable, none may carry `total_of`/`max_of`, and every
+  one needs an explicit `name`.
+  ✅ **MEASURED, and the floor is UNCHANGED at 2.5 J:** the physics clears it 2.2×
+  — **5.4558–5.4911 J** across the five legs (events sum, cross-checked against
+  ∫`p_chop_w` to under 0.1 %), of which 3.83–3.87 J is in-window (model 4.2,
+  −8 %) and **1.60–1.63 J outside** (model 0.5, **3.2×** — a bleed-era shift: with
+  `R_NODE_BLEED_OTHER` 60 kΩ the RGN node parks at 18.10–18.11 V between windows
+  and the chopper trickles ~11 mW).
 - `ftp75c_node_lift`: `V_rgn` ≥ 17.9 V for at least 400 ms of the same window.
   The one check that cannot be satisfied by bookkeeping: it asserts that V-MOT
   actually lifted onto the 18.1 V clamp.
@@ -1290,6 +1363,83 @@ window, so every window-scoped bound is judged on a complete cycle),
 The ceiling is per leg because the four legs command four different splits of one
 0.3311 A source total, so a single shared bound would be vacuous on the
 `mpc-sto` leg and a tripwire on the `sdp-v4` one.
+
+⚠️ **`ftp75c_fc_bounded` IS TWO ARMS FROM 2026-09-03**, the
+`socband_fc_peak_bounded` shape applied to this family. The single 2×-walk
+ceiling failed `-5050` (+4.58 %) and `-socband` (+2.86 %) in campaign
+`hil_report_20260902_220604` on a correct board and a correct plant: on **all
+five** legs the in-window `I_fc` maximum is a CHARGE-HANDOFF TRANSIENT at
+t ≈ 171.31 s with switch 0x35 (`BT_BUS` LOW — the `assertFcChargeEnable()`
+exclusion, so the FC carries the load single-source) and the vehicle STOPPED
+(v 0.090 m/s, `p_mot` 0): `I_fc` 0.3698 / 0.3818 / 0.3810 / 0.3716 / 0.3769 A =
+aux 2.27–2.36 W plus the charger's referred bus draw at `I_charge` 0.38–0.40 A.
+Only two legs failed because their walk peaks are the lowest, which makes the old
+check a threshold-ordering accident rather than a test.
+
+**The walk's drive-peak model is accurate and the arm that tests it does not
+move.** With `SW_FC_CHARGE` masked the drive peaks are 0.1844 / 0.1898 / 0.2917 /
+0.2536 A at t ≈ 143.7 s (v 2.87 m/s) against walk 0.1768 / 0.1856 / 0.2872 /
+0.2490 — **+4.3 / +2.3 / +1.6 / +1.8 %**, and 47–95 % under their own ceilings.
+Arm 1 keeps the 2×-walk bound with `exclude_when_switch_bit` `SW_FC_CHARGE` and
+`exclude_hold_ms` **300**, a SETTLING TAIL allowance and not a window cover: the
+`SW_FC_CHARGE` ticks are masked in full however long the bit stays set, and the
+hold runs after it clears, because the charger's referred bus draw does not stop
+at that instant. The measured charge windows are **0.08–0.46 s** long
+(79.8–100.1 ms at ≈ 67.22 s, 200.0–281.2 ms at ≈ 171.05 s, and
+`ems-ftp75c-socband`'s 460.1 ms at 163.5763–164.0364 s), so an earlier reading
+of "0.08–0.28 s, longest 281 ms, the hold must cover the whole transient" was
+wrong in both halves and 300 ms nevertheless stands. Arm 2,
+`ftp75c_fc_bounded_charging`, is a whole-window **0.60 A** ceiling — unmasked, for
+`socband_fc_peak_charging`'s reason (a mask keeping only charge ticks would be
+vacuous on a leg that never charged) — against a measured maximum of 0.3818 A and
+43 % under `LIMIT_I_FC_MAX`. It is a fixed number rather than a multiple of the
+walk peak because the quantity has nothing to do with the leg's commanded split.
+
+⚠️ **THE HANDOFF ITSELF IS A SCENARIO-DESIGN GAP AND IT IS FIXED SEPARATELY**
+(ruling D-4). `RegenManager` forced `charge_goal` to the window's wall-clock end,
+and on windows 3 and 6 the vehicle stops first, so the firmware read cruise with
+charge intent and opened the single-source `FC_CHARGE` path. The manager now
+releases on the commanded motor current reaching the firmware's own `regenActive`
+exit, −0.1 A, which is ABOVE the −0.2 A the window opens on: the two levels form a
+hysteresis band, and a single level was itself a defect (review finding H1 —
+`docs/HIL_PLANT.md` §3.4 carries the trace).
+
+⚠️ **THE HANDOFF IS BOUNDED, NOT CLOSED, AND ARM 2 IS WHAT BOUNDS IT.** The host
+commands at 50 Hz, so a release lands up to 20 ms before the new command reaches the
+firmware. Measured on campaign `hil_report_20260902_220604`, release instant to the
+first `FC_CHARGE` rise: **12.93 / 20.25 / 4.88 / 13.04 / 1.04 ms** at window 3
+(≈ 67.2 s) and **15.98 / 6.29 / 10.75 / 1.95 / 7.30 ms** at window 6 (≈ 171.04 s),
+across `-5050` / `-dp` / `-mpc` / `-sdp` / `-socband`. Nine of the ten are inside one
+commander period, so a short single-source `FC_CHARGE` handoff may still occur at
+BOTH edges. Arm 2 therefore stays: it bounds whatever handoff remains rather than
+assuming there is none.
+
+✅ **FIRST-OF-KIND ftp75c PHYSICS** (campaign `hil_report_20260902_220604`, all
+five legs): **6 REGEN windows carrying 19.21–19.25 s** on four legs against a
+modelled 6 / 19.6 s (−2 %); the socband leg reads 7 because a 20 ms drop-out
+splits window 6. `REGEN` and `FC_CHARGE` are never simultaneously high (0 overlap
+ticks, five legs), `MOT_PWR` is high on every regen tick, the 8 s dwell is
+respected, and every `BT_BUS` cut (0.052–0.120 A) and `FC_CHARGE` cut
+(0.082–0.231 A) is under the 0.5 A guard. **Regen charge to the pack is
+0.734–0.737 C per cycle** against the walk's ~1.17 C, a realizable fraction of
+**0.63** against the design's modelled 70.7 % — and the cause is the
+WINDOW-LENGTH DISTRIBUTION (four windows of 1.0–1.6 s against ~0.9 s of Ag105
+dead time), not `ETA_REGEN` or the VESC clip. The SoC credit remains unresolvable
+(+4.1e-5, below the column's quantization), which confirms the standing rule
+below.
+
+⚠️ **THESE ANCHORS ARE PRE-D-4 AND ARE NOT DIRECTLY COMPARABLE WITH THE NEXT
+CAMPAIGN'S.** Campaign `hil_report_20260902_220604` ran with the manager holding
+`charge_goal` to each window's WALL-CLOCK end, so its 6 windows / 19.21–19.25 s /
+0.734–0.737 C were measured on a DIFFERENT COMMANDED STIMULUS from the one the next
+campaign will run. Ruling D-4 releases windows 3 and 6 at the vehicle's standstill,
+which removes about 0.10 s and 0.26 s of commanded regen respectively: the expected
+live duty is **≈ 19.25 s minus ~0.35 s**, and the pack charge falls with it by
+roughly the same fraction. Re-pin all three anchors from the first post-D-4
+campaign rather than reading a drift into the difference. The `ftp75c_regen_duty`
+floor of 15 000 ticks survives that reduction with ~26 % margin. The walk still
+takes the wall-clock fallback (it does not carry `fb["current"]`), so its 19.600 s /
+1.172913 C remain UPPER BOUNDS on the live figures rather than predictions of them.
 
 ⚠️ **DO NOT ASSERT SoC DIRECTION ON THESE LEGS.** `HIL_SCENARIOS.md` already
 states this for `regen-harvest-true`, and the reason applies with more force
@@ -1533,7 +1683,23 @@ that changes the plant.
   **1.5180 A** for **11 ticks** at t = 27.020 s
   (`tools/probes/probe_fw26_clamp_reachability.py`; campaign B: 1.5173 A /
   9 ticks) - but only as an 11 ms transient at a region boundary, which cannot
-  bound a held current or a controlled release. Nothing else on the registered
+  bound a held current or a controlled release.
+  ✅ **MEASURED ON THE BOARD** (campaign `hil_report_20260902_220604`, the first
+  fw v26 campaign): the clamp engaged on `ems-y-b30-v3` and **only** there — aux
+  bits 4/5 zero on the other 42 scenario runs and on all 27 replays — for
+  **12 ticks, t = 27.009387 to 27.020033 s**, FC flag only (aux 0x13), the BT flag
+  never set. The reconstruction was right to a tick. Engagement recomputed from
+  the trace: share step 0.35 → 0.65 at 27.006249 s, filtered total 2.3191 A
+  (EMA α 0.05), implied FC demand 1.5074 A = +20.6 % over the ceiling; release
+  when the demand first falls below 1.20 A at 27.018192 s, flag off 27.021046 s
+  (the ~1.9 ms round trip) — **hysteresis confirmed, engagement-only**. The
+  `fw26_ceiling_engaged` / `_transient` band [1, 60] stands as written.
+  ⚠️ **The one live engagement fired on a STALE filtered total** (EMA 2.32 A while
+  the load had already fallen to 1.00 A one tick after the share step), and
+  delivered `I_fc` 0.67 A = 46 % under the ceiling. That is intended
+  reference-side behaviour, not a genuine FC overdraw. The clamp explains
+  5.78e-08 g = **0.054 %** of the leg's whole-run h2 delta; ≥ 99.9 % is the bleed
+  era. Nothing else on the registered
   set gets there: the next-highest commanded fuel-cell current is `ems-sdp`'s
   **1.1861 A**. Motor-free, like `share-staircase` and for the same reason:
   the acceptance criteria bound `I_fc` inside a 0.10 A window, and a drive

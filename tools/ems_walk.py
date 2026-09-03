@@ -265,16 +265,29 @@ class WalkResult:
 # The reconciliation is never silent: when it fires, ``walk()`` records which
 # scenarios it substituted for in ``WalkResult.notes``.
 # ─────────────────────────────────────────────────────────────────────────────
-_SIM_SOC_BAND_DRAIN_SCENARIOS = ("ems-soc-band", "ems-dp-replay", "ems-sdp",
-                                 "ems-mpc", "ems-mpc-det")
+# ⚠️ DERIVED, NOT TYPED (2026-09-03, campaign 20260902_220604 A6). This was the
+# THIRD copy of the same list, and the generator's copy had gone stale against the
+# simulator for the three `ems-sdp-alpha-*` legs — which made every matched-DP
+# baseline solved for them model half the demand. This mirror exists to DETECT
+# exactly that, so it must be the simulator's list and not a transcription of it,
+# or a detector can go stale in the same way as the thing it detects.
+# A FUNCTION, not a module constant: the simulator is imported LAZILY here (see
+# `_load()` above), so a module-level read would either force the import at
+# collection time or capture nothing.
+def _sim_drain_scenarios(sim) -> tuple:
+    return tuple(sim.SOC_BAND_DRAIN_SCENARIO_NAMES)
+
+
 _GEN_DRAIN_FALLBACK = ("ems-soc-band", "ems-dp-replay")
 
 
-def _gap_drain_scenarios(gen) -> tuple:
+def _gap_drain_scenarios(gen, sim=None) -> tuple:
     """Scenarios the simulator drains but this generator does not."""
     covered = tuple(getattr(gen, "SOC_BAND_DRAIN_SCENARIOS",
                             _GEN_DRAIN_FALLBACK))
-    return tuple(sc for sc in _SIM_SOC_BAND_DRAIN_SCENARIOS
+    if sim is None:
+        sim = _load()[0]
+    return tuple(sc for sc in _sim_drain_scenarios(sim)
                  if sc not in covered)
 
 
@@ -297,7 +310,7 @@ class _drain_override(object):
 
     def __init__(self, gen, sim, scenario):
         self.gen, self.sim, self.scenario = gen, sim, scenario
-        self.gap = _gap_drain_scenarios(gen)
+        self.gap = _gap_drain_scenarios(gen, sim)
         self.fired = scenario in self.gap
         self.saved = None
 

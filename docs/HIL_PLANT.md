@@ -497,6 +497,89 @@ and 163.700–171.300 s. Under `--drag rig` the same derivation yields **zero** 
 is the correct behaviour for a control run: the manager is re-derived at run time from the
 resolved drag mode, not from the scenario's declared one.
 
+⚠️ **THE TRAILING EDGE IS NOW A CONDITION, NOT A WALL CLOCK (ruling D-4,
+2026-09-03).** The leading-edge trim above is unchanged; what changed is where a
+window ENDS. The manager used to command `charge_goal = 1.0` to the window's
+wall-clock end, and campaign `hil_report_20260902_220604` measured what that costs:
+on windows 3 and 6 the vehicle reaches **standstill before the window ends**, so the
+firmware's commanded motor current leaves the braking region (measured −12.0 → 0.0 A
+at t = 67.2051 s against a window end of 67.217 s), `regenActive` goes FALSE while
+the host is still asserting charge intent, and `chargingControl()` falls through to
+its CRUISE branch — `assertFcChargeEnable(true)`, BT dropped off the bus, the whole
+load carried single-source on the FC. That is the hazard the LEADING-edge trim was
+written to prevent, arriving at the other edge. Measured on every one of the five
+legs: handoff windows at 67.22 s (0.08–0.10 s, 6–9.5 mC) and 171.04–171.06 s
+(0.26–0.28 s, 55–64 mC), peak `I_fc` 0.37–0.38 A — 27 % of `LIMIT_I_FC_MAX`, and the
+recorded `OC_FC` topology reached on a light cycle.
+
+**The rule is a two-level comparator.** A window OPENS on the required motor current
+ENTERING the braking region at `EMS_REGEN_MGR_I_MARGIN` × `REGEN_ACTIVE_I_A` =
+−0.2 A (`RegenManager.i_arm_a`), and it RELEASES on the commanded motor current
+reaching −`REGEN_ACTIVE_I_A` = −0.1 A (`RegenManager.i_release_a`), the firmware's
+own `regenActive` exit, whichever comes first with the wall clock. The release is ARMED only after the firmware has been seen
+braking inside the window (so the lead-in ramp cannot close a window before it
+starts) and LATCHED for the remainder of it (so a current chattering across the level
+cannot re-open the path). `regen_commanded` on the feedback view follows the same
+decision, so the dwell accounting and the charge census cannot disagree with the
+command stream. Mutual exclusion and the 8 s dwell semantics are unchanged.
+`regen_early_releases` in the sidecar counts the windows that ended on the current
+rather than on the clock, and `regen_duty_s` remains the WALL-CLOCK duty, i.e. an
+upper bound on the commanded one whenever that count is non-zero.
+
+⚠️ **THE TWO LEVELS ARE NOT INTERCHANGEABLE, AND ONE LEVEL WAS A DEFECT** (review
+finding H1, 2026-09-03). The rule shipped with a single level: arm at −0.2 A,
+release at −0.2 A. That is a zero-hysteresis comparator, and because the release is
+LATCHED, one sample grazing the level closes the window for the rest of the cycle.
+Replayed against campaign `hil_report_20260902_220604`'s own `ems-ftp75c-5050`
+`current` column it fires twice in the middle of braking: window 1 releases at
+t = 23.3854 s at −0.1999 A, 200 ms before the vehicle brakes to −1.55 A, and window
+6 releases at t = 167.1162 s at −0.1997 A with 3.94 s of −0.65 … −8.09 A braking
+still to come. `regen_commanded` then reads False THROUGH heavy braking, which
+un-guards the three consumers that read it to refuse an FC-charge dwell inside a
+braking window, i.e. it re-creates the hazard this ruling exists to close.
+
+The release level is therefore the firmware's own exit, so the host can never drop
+regen intent while the firmware still calls the instant regen. On the same trace the
+two spurious releases disappear, window 5's benign 0.14 s-early release goes with
+them, and both genuine standstill releases survive — window 3 at t = 67.2041 s and
+window 6 at t = 171.0441 s, that is `regen_early_releases` = **2 of 6**. The
+regression fixture is the measured trace itself
+(`test_hil_plant_sim._FTP75C_REGEN_CURRENT`); a synthetic −12 → 0 A step cannot
+stand in for it, because the defect is a graze in the middle of sustained braking
+and no step contains one.
+
+⚠️ **THE 67.22 s HANDOFF IS BOUNDED, NOT CLOSED.** The release condition removes
+the host's charge intent, but the host commands at **50 Hz**, so a release lands up
+to 20 ms before the next command reaches the firmware. Measured on campaign
+`hil_report_20260902_220604`, release instant to the first `FC_CHARGE` rise:
+
+| leg | window 3 (≈ 67.2 s) | window 6 (≈ 171.04 s) |
+|---|---|---|
+| `ems-ftp75c-5050` | 12.93 ms | 15.98 ms |
+| `ems-ftp75c-dp` | 20.25 ms | 6.29 ms |
+| `ems-ftp75c-mpc` | 4.88 ms | 10.75 ms |
+| `ems-ftp75c-sdp` | 13.04 ms | 1.95 ms |
+| `ems-ftp75c-socband` | 1.04 ms | 7.30 ms |
+
+Nine of those ten margins are INSIDE one commander period, so a short single-source
+`FC_CHARGE` handoff may still occur at both edges on a live run. The earlier reading
+that the 171.04 s handoff was closed with a 3.9 s margin was an artefact of the
+single-level release closing window 6 at 167.1162 s, and it does not survive the H1
+fix. `ftp75c_fc_bounded_charging` (arm 2, a 0.60 A whole-window ceiling against a
+measured 0.3818 A) is what BOUNDS the residual handoff; closing it needs either a
+commander-rate change or a firmware-side standstill guard, and neither is in this
+round.
+
+⚠️ **THE WALK DOES NOT SEE THE NEW TRAILING EDGE, and this is recorded rather than
+hidden.** The release reads `fb["current"]`, the HIL observation frame's commanded
+motor current, which is not telemetry-equivalent and is not produced by `ems_walk`'s
+reduced feedback view. With the key absent the manager falls back to the wall-clock
+end exactly as before, so **every offline walk is unchanged across this round** — the
+five `ems-ftp75c-*` legs still walk six windows carrying 19.600 s and 1.172913 C to
+the pack — and only a live run sees the shorter windows. A walk therefore models the
+LONGER window and its regen duty is an upper bound on the live one. Closing that gap
+needs a standstill model in the walk's demand chain, which it does not have.
+
 **The credit is small against the drain, and no conclusion may rest on it being otherwise.**
 Roughly 1.39 C reaches the pack per cycle against roughly 96.8 A·s of pack draw, that is
 1.4 %, a SoC gain near +5.5e-5 against a −0.0054 excursion. Because the regen manager is a
@@ -544,7 +627,7 @@ before making it unconditional.
 and `eta_regen`, and they are two rather than one because they are independent: a rig-drag run
 in the regen era is legitimate and earns zero credit, and a compensated run in the pre-regen
 era is a defined configuration. Both are **omitted entirely** when they resolve to `rig` and
-`None`, which is what keeps the three committed tables, the SDP policy artifacts and all 16
+`None`, which is what keeps the four committed tables, the SDP policy artifacts and all 16
 `dp_db` records reachable and byte-identical. `DpReplayStrategy.bind_scenario()` gains a third
 era guard, alongside the accounting and `eta_chg` guards, and it states in its message that the
 fingerprint cannot catch the `eta_regen` half at all and catches the `drag` half only when the
@@ -1549,7 +1632,8 @@ stored baselines are keyed on the demand model those coefficients produce.
    `DP_DROOP_G_PAR` coefficients are **bleed-specific**. They cannot be reverted by
    arithmetic; the probe of `dp_loss_map_20260902.md` §3 must be re-run against the reverted
    bleed, or the map dropped entirely.
-4. `tools/dp_tables/` — all three committed tables must be regenerated.
+4. `tools/dp_tables/` — all FOUR committed tables must be regenerated
+   (`ems-dp-replay`, `ems-ftp75-5050`, `ems-ftp75-dp`, `ems-ftp75c-dp`).
 5. `tools/dp_db` — the prefilled records must be re-prefilled against the regenerated tables.
 6. `tools/run_hil_suite.py` — the bands re-derived for this change must be re-derived again.
 
@@ -1564,6 +1648,54 @@ cycle and −2.9 % on FTP-75, with the `soc-depletion` latch about 1.5 s later. 
 `scp-inrush`, `handoff-sag`, `comm-loss` and `share-staircase` anchors must be re-measured
 rather than predicted, and their bit-exactness records are expected to break. Because both
 values are `TODO(calibrate)`, a second move is expected after the bench decay capture.
+
+**FIRST BLEED-ERA CAMPAIGN, and what it actually measured**
+(`hil_report_20260902_220604`, fw v26, 65 of 65 executed runs correct, zero board
+defects). Every prediction above is confirmed in direction, one is confirmed to a
+tenth of a percent, one is 70 % optimistic, and one mechanism was not predicted at
+all.
+
+| quantity | predicted | measured | note |
+|---|---|---|---|
+| `h2`, loaded 61 s legs | −1.7 % | **−1.2 to −2.0 %** | confirmed |
+| `h2`, `ems-ftp75-5050` | −2.9 % | **−2.88 %** | confirmed to 0.1 % |
+| `h2`, low-current runs | (not predicted) | **−8 %** | `sag` −7.96, `v-bus-sense-offset` −8.01, `comm-loss` −8.54, `bringup` −8.02, `soc-depletion` −7.86 |
+| `soc-depletion` UV_BATT latch | +1.5 s | **+2.6174 s** (273.593513 s) | the latch-shift model is ~70 % optimistic |
+| `scp-inrush` `i_cut` | re-measure | **6.360327 A** (−0.031 %) | 16-digit bit-exactness broken as predicted; band ±0.5 % |
+| `handoff-sag` cut | re-measure | **0.370455804372 A** (−1.98 %) | same |
+| `comm-loss` warm re-close | re-measure | **`I_fc` 0.1088 / `I_batt` 0.0816 A** (−71 / −76 %) | see below |
+| `share-staircase` | re-measure | **0.9008 / 0.5981 A** | FC high step / redistribution |
+
+The **low-current runs move about four times as far as the loaded ones**, and in the
+correct direction: the removed static bleed is a larger FRACTION of a light run's
+draw. A single era percentage must not be applied across scenario classes.
+
+**The `comm-loss` collapse is the bleed itself, not a board drift**, and the control
+that identifies it is in the same run. The 470 µF V-MOT node now retains **92 %** of
+its charge across the 2.323 s teardown (τ 0.94 → 28.2 s), so the warm `MOT_PWR`
+re-close is a small step onto a nearly-full node — predicted 0.05 A, measured
+0.040 A — rather than a charge-up. The COLD bring-up peak, which starts from 0 V,
+moved only **−1.5 %** (0.4906 vs 0.4983 A) across the same boundary. A −72 % warm
+collapse beside a −1.5 % cold peak is node retention. Report both channels: they
+have not been equal since the converter-asymmetry default landed.
+
+**Two chopper quantities rose with the bleed**, because with 60 kΩ the residual
+clamp no longer releases mid-window: on `regen-harvest-true` the clamp dwell is 1418
+ticks against 1227 (+15.6 %), the run coalesced **3** clamp episodes where the
+asymmetry era had 6, the largest episode rose 1.5938 → **2.6707 J** (+67.6 %) and the
+run total 6.3578 → **7.9741 J** (+25.4 %). On `mppt-tracking` the same mechanism
+gives a clamp dwell of 1962 of 2100 ticks against 1035, and 0.9132 J per window
+against 0.4908. The `ems-ftp75c-*` legs' OUT-OF-WINDOW chopper energy is
+1.60–1.63 J against a 0.5 J model, 3.2×, for the same reason: the RGN node parks at
+18.10–18.11 V between windows and the chopper trickles about 11 mW.
+
+**Realizable regen fraction on `ftp75c`: 0.63, not the modelled 0.707.** Regen charge
+to the pack is 0.734–0.737 C per cycle (whole run 0.796–0.809 C) against the walk's
+~1.17 C. The cause is the WINDOW-LENGTH DISTRIBUTION — four of the six windows are
+1.0–1.6 s against roughly 0.9 s of Ag105 dead time — and not `ETA_REGEN` or the VESC
+clip. The SoC credit remains unresolvable in the trace (+4.1e-5 SoC, below the
+column's quantization, against a cycle drain near −0.0019), which confirms the
+standing rule that `ftp75c` is a model validation and not an EMS discriminator.
 
 **The unbilled `FC_BUS`/`BT_BUS` diode-drop artefact.** The two boost-link switches drop
 `rt_v_fwd + i·(rt_r_on + R_SHUNT)`, and that drop **is** burnt in the plant. It is
@@ -2162,6 +2294,39 @@ part's specification rather than scripted.
 > as a flagged event; it does **not** simulate the ringing waveform. An `sw_ring` event
 > with `over_absmax: true` is the boost-death signature, and the run summary calls it out.
 
+**The `over_absmax` VERDICT is confined to the load-dump class (2026-09-03).**
+`DI_DT_LOAD_DUMP` is a FIXED worst-case slew with no `i_cut` scaling — the constant
+says so — so `_open()` adds the same **1.95 V** allowance (1.5 nH × 1.3e9 A/s)
+whether the switch was carrying 6 A or 65 mA. That is a defensible bound for a
+Death-5-class cut and a nonsense one for a milliamp release.
+
+The conflict this created is **structural, not a calibration**. The estimator's
+implied node ceiling is `V_ABSMAX − 1.95` = **18.050 V**, which sits **50 mV BELOW**
+the chopper clamp's forward-conduction state `V_CHOPPER_TRIP − RT_V_FWD` =
+**18.065 V**. `regen-harvest-true` REQUIRES that clamp (`signal_regen_clamp_dwell`
+≥ 800 ticks), so **any commanded REGEN open while the chopper conducts failed the
+check, in any era, at any cut above the 50 mA emission gate**. Campaign
+`hil_report_20260902_220604` measured it: three commanded REGEN opens at `i_cut`
+0.065 A, `v_node` 18.0639 V, estimated peak 20.0139 V — over by 13.9 mV, against a
+PHYSICAL ring of `i·sqrt(L/C)` = **0.80 mV** and a stored energy of 3.2 pJ. Campaign
+`20260902_041414` passed only because its 2 kΩ bleed had pulled the node ~2 V off
+the clamp before the window closed.
+
+The gate uses **the firmware's own definition of a hazardous cut** rather than a
+number fitted to the census: `SW_RING_LOAD_DUMP_I_A` = 0.5 A =
+`SHARE_CUT_MAX_HANDOFF_A` (`teensy_controller.ino:2290`), the fw v6 share-cut load
+guard — a cut of a channel carrying more than this is exactly what the firmware
+refuses to perform. Every Death-5 datapoint is multi-amp and the largest legitimate
+non-teardown cut in the campaign census is 0.66 A, so the class still contains every
+cut the verdict was written for.
+
+**`V_ABSMAX` is NOT relaxed, and neither is the emission gate.** An `sw_ring` event
+with its `peak_v` is still emitted for every cut above 0.05 A, so the census and the
+peak history are unchanged; each event now carries a `load_dump_class` boolean
+saying which side of the gate it fell. The physically correct fix is to replace the
+fixed allowance with the `i·sqrt(L/C)` bound, which re-bands every historical
+`peak_v` and is **deferred to the physics review**.
+
 ### 8.6 Regen chopper
 
 The TL431 + BSP170P clamp on the regen node is autonomous — **not** under firmware
@@ -2730,6 +2895,52 @@ Table 9.4.1 shows both legs landing inside ±0.31 % with the map applied, agains
 −0.20 % before. However, the middle row of each pair is the reason the two defects are fixed
 together: the bleed change alone moves the 61 s cycle from −0.198 % to −2.627 %, because it
 removes the cancellation without correcting the droop-mode term.
+
+✅ **FIRST BLEED-ERA READING OF THE BOUND, and its SIGN (campaign
+`hil_report_20260902_220604`).** The `dp-replay` legs now sit slightly **BELOW**
+their matched bound: `ems-dp-replay` **−0.18 %**, `ems-sdp` **−0.09 %**,
+`ems-mpc-cross` **−0.80 %**. A causal run below its own non-causal bound is not a
+result and not a defect — it is the DOCUMENTED STAGE-COST BIAS, quoted with its
+sign for the first time. The two hydrogen totals are computed by different halves
+of one model: the run's `h2_cum_g` is the **dynamic Gfc integrator**
+(`H2Consumption`, a ZOH discretization of the transfer function) while the DP's
+stage cost is the **Gfc DC gain** times stage energy. The two agree at steady
+state and differ through every transient, always in one direction for a given
+transient shape. **A deviation of a few tenths of a percent, of EITHER sign, is
+inside this bias and is not a policy result.** The standing text is
+`hil_report_analysis.MATCHED_DP_GFC_NOTE`; the magnitude to carry is
+**|deviation| ≤ ~0.8 %** on the legs measured so far, and a bound-crossing inside
+it must not be read as a controller beating the optimum.
+
+⚠️ **THE DRAIN-SCENARIO LIST WENT STALE TWICE, and the second instance was found
+in this campaign's matched-DP pass (2026-09-03).** `gen_dp_ems_table.py` carried
+its own transcription of the scenario names whose auxiliary load is the bespoke
+1.0 A SoC-band drain rather than the generic `aux_preload_a` term. It omitted
+`ems-sdp` in 2026-09-01 (defect B2) and it omitted the three `ems-sdp-alpha-*`
+sweep legs until now. The consequence is the same both times and is large:
+`ems-sdp-alpha-cal` has a delta-SoC IDENTICAL to `ems-sdp` and a run hydrogen
+within 24 ppm of it, yet its solved bound came out at **0.0034595 g** against
+`ems-sdp`'s **0.0124009 g** — a **+258 %** apparent deviation that is the missing
+drain and nothing else (`alpha-charge` +170 %, `alpha-greedy` +268 % with
+`lambda_term` pinned at 1.000000 and NOT converged, because no lambda can match a
+terminal SoC the demand cannot reach). 0.0034 g is the same figure the B2 note
+records for `ems-sdp`. The list is now **derived from
+`hil_plant_sim.SOC_BAND_DRAIN_SCENARIO_NAMES`** in both offline mirrors
+(`gen_dp_ems_table.py` and `ems_walk.py`), since `apply_scenario()` is what
+actually applies the drain and any copy that can disagree with it is a defect
+waiting for a third instance. Membership is unchanged for every previously-listed
+scenario, so the four committed tables are unaffected.
+⚠️ **THE FINGERPRINT DOES NOT COVER THIS.** `dp_profile_fingerprint()` hashes the
+drain CONSTANTS but not whether a scenario is inside the drain branch, so a stale
+mirror produces a wrong record under a correct key and no lookup can detect it.
+The three affected records were therefore DELETED rather than invalidated, then
+RE-SOLVED against the corrected derivation: `7d8f75b3…` (alpha-cal),
+`92fdcbbc…` (alpha-charge) and `af588d59…` (alpha-greedy) all carry
+`created_utc` 2026-09-03T09:10–09:11Z, all three converged, and `alpha-cal`'s
+`h2_g` is **0.012400850710342052**, bit-identical to `ems-sdp`'s own record
+(`6bc5a65c…`) as the identical drain and terminal SoC require. The store
+therefore holds **71 records**, not 68; a reading of "71 → 68" describes the
+window between the deletion and the re-solve and is not the shipped state.
 
 ⚠️ **A matched-DP baseline now carries a demand-model era.** `loss_map` joins the DP
 fingerprint keys and `dp_results_db.KEY_FIELDS` as an **optional** key, so an absent

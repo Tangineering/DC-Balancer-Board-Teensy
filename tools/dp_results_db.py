@@ -62,6 +62,7 @@ import os
 import sys
 import time
 import uuid
+import warnings
 from datetime import datetime, timezone
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -564,6 +565,65 @@ def record_provenance_drift(rec, live_hash=None):
     return stored != live_hash
 
 
+# ── THE DRAIN-MEMBERSHIP WITNESS (review Lens-3, 2026-09-03) ────────────────
+# `dp_profile_fingerprint()` hashes the SoC-band drain CONSTANTS but not WHICH
+# SCENARIOS the drain branch applies to, so a stale mirror of that list produces
+# a wrong record under a CORRECT key and no lookup can detect it.  That has now
+# happened twice (defect B2 omitted `ems-sdp`; the 2026-09-03 pass omitted the
+# three `ems-sdp-alpha-*` legs), each time worth hundreds of percent on the
+# solved bound.  The list is now derived from `apply_scenario()`'s own source in
+# both offline mirrors, which prevents a THIRD divergence but says nothing about
+# records already on disk.
+#
+# So each new record carries the membership it was solved under, and a read
+# compares it against the live one.  It is a WITNESS, not a key: adding it to
+# the key would orphan all 71 stored records for a quantity that is identical in
+# all of them.  A mismatch WARNS and annotates; it never refuses, because the
+# record may still be the one the caller wants and the operator is the judge.
+# A record with no `drain_membership` field predates the witness and is accepted
+# SILENTLY - there is nothing to compare it against, and a warning on every old
+# record teaches the reader to ignore the warning.
+def drain_membership(scenario):
+    """The resolved SoC-band-drain membership for `scenario`, as stored.
+
+    Both halves matter.  `in_soc_band_drain` is the answer for THIS scenario;
+    `names_sha256` witnesses the whole resolved list, so a change that moves a
+    DIFFERENT scenario in or out is still visible on a re-read."""
+    import hil_plant_sim as sim
+    names = tuple(getattr(sim, "SOC_BAND_DRAIN_SCENARIO_NAMES", ()) or ())
+    return {
+        "in_soc_band_drain": scenario in names,
+        "names_sha256": hashlib.sha256(
+            json.dumps(sorted(names), separators=(",", ":")).encode("utf-8")
+        ).hexdigest(),
+    }
+
+
+def record_drain_membership_drift(rec):
+    """A human-readable mismatch string for `rec`, or None.
+
+    None means EITHER "agrees" or "the record predates the witness"; the two
+    are deliberately not distinguished at this level, because neither is
+    actionable."""
+    stored = (rec or {}).get("drain_membership")
+    if not isinstance(stored, dict):
+        return None                       # pre-witness record: silent, by rule
+    scenario = ((rec or {}).get("key_fields") or {}).get("scenario")
+    if scenario is None:
+        return None
+    try:
+        live = drain_membership(scenario)
+    except Exception:                     # pragma: no cover - defensive
+        return None
+    if stored == live:
+        return None
+    return ("scenario %r: stored in_soc_band_drain=%r names_sha256=%s, live "
+            "in_soc_band_drain=%r names_sha256=%s"
+            % (scenario, stored.get("in_soc_band_drain"),
+               str(stored.get("names_sha256"))[:12],
+               live["in_soc_band_drain"], live["names_sha256"][:12]))
+
+
 def lookup(fields, tol_soc=DP_DB_LOOKUP_TOL, db_dir=DP_DB_DIR, strict=False):
     """The nearest stored solve for `fields`, or None.
 
@@ -588,6 +648,19 @@ def lookup(fields, tol_soc=DP_DB_LOOKUP_TOL, db_dir=DP_DB_DIR, strict=False):
             return None
         rec = dict(rec)
         rec["provenance_drift"] = bool(drift)
+        # The drain-membership witness: WARN, annotate, and return the record.
+        # It is not gated on `strict` — `strict` is about the constants hash,
+        # and a membership mismatch is a different claim with a different fix.
+        mismatch = record_drain_membership_drift(rec)
+        rec["drain_membership_drift"] = mismatch
+        if mismatch:
+            warnings.warn(
+                "dp_results_db: stored SoC-band drain membership disagrees "
+                "with this checkout (%s). The record's bound was solved "
+                "under a different auxiliary load, which is worth hundreds "
+                "of percent on the solved hydrogen. Re-solve it before "
+                "quoting the deviation." % mismatch,
+                RuntimeWarning, stacklevel=2)
         return rec
 
     rec = _accept(get(make_key(fields), db_dir))
@@ -618,9 +691,12 @@ def lookup(fields, tol_soc=DP_DB_LOOKUP_TOL, db_dir=DP_DB_DIR, strict=False):
 def store(record, db_dir=DP_DB_DIR):
     """Write one record and rebuild the index.  Returns the record's path.
 
-    `provenance_drift` is a LOOKUP-TIME annotation and never a stored field; a
-    record round-tripped through lookup() and back must not acquire one."""
-    record = {k: v for k, v in record.items() if k != "provenance_drift"}
+    `provenance_drift` and `drain_membership_drift` are LOOKUP-TIME annotations
+    and never stored fields; a record round-tripped through lookup() and back
+    must not acquire one.  (`drain_membership` itself IS stored — it is the
+    witness the annotation is computed from.)"""
+    record = {k: v for k, v in record.items()
+              if k not in ("provenance_drift", "drain_membership_drift")}
     key = record["key"]
     path = os.path.join(db_dir, "solves", "%s.json" % key)
     _write_json_atomic(path, record)
@@ -761,6 +837,9 @@ def solve_and_store(fields, target_soc, *, match_tol=2.0e-6, db_dir=DP_DB_DIR,
         "key": make_key(fields),
         "non_target_hash": non_target_hash(fields),
         "key_fields": {k: fields.get(k) for k in KEY_FIELDS},
+        # The drain-membership WITNESS, not a key field.  See
+        # `drain_membership()`: it is compared at read time and warns.
+        "drain_membership": drain_membership(scenario),
         "created_utc": datetime.now(timezone.utc).strftime(
             "%Y-%m-%dT%H:%M:%SZ"),
         "target_soc": float(target_soc),

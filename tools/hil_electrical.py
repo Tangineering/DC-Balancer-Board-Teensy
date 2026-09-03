@@ -606,6 +606,38 @@ TRACE_L_NH = {
     # assumed FC-like.  TODO(verify): needs its own FastHenry run.
     "short": {"FC": 1.5, "BT": 1.5, "OTHER": 1.5},
 }
+# ── THE LOAD-DUMP CLASS, AND WHY THE VERDICT IS GATED ON IT ────────────────
+# `DI_DT_LOAD_DUMP` below is a FIXED worst-case slew with no `i_cut` scaling, so
+# `_open()` adds the SAME 1.95 V ring allowance (1.5 nH x 1.3e9 A/s) to the node
+# whether the switch was carrying 6 A or 65 mA.  That is a defensible bound for a
+# Death-5-class cut and a nonsense one for a milliamp release, and campaign
+# 20260902_220604 measured the consequence: `regen-harvest-true` FAILED
+# `sw_ring_over_absmax` on its three COMMANDED REGEN opens (i_cut 0.065 A,
+# v_node 18.0639 V, estimated peak 20.0139 V) — over the 20 V abs-max by 13.9 mV.
+#
+# THE CONFLICT IS STRUCTURAL, NOT A CALIBRATION.  The estimator's implied node
+# ceiling is `V_ABSMAX - 1.95` = 18.050 V, which sits 50 mV BELOW the
+# chopper-clamp forward-conduction state `V_CHOPPER_TRIP - RT_V_FWD` = 18.065 V.
+# The scenario REQUIRES that clamp (`signal_regen_clamp_dwell` >= 800 ticks), so
+# ANY commanded REGEN open while the chopper conducts fails the check in ANY
+# era at ANY cut above the 50 mA emission gate.  The physical ring at 65 mA is
+# ΔV = i·sqrt(L/C) = 0.80 mV; the 20.01 V is an estimator margin figure, not a
+# node voltage.
+#
+# THE GATE USES THE FIRMWARE'S OWN DEFINITION OF A HAZARDOUS CUT rather than a
+# number fitted to the census, so the estimator's load-dump class and the
+# firmware's refused-cut class coincide: `SHARE_CUT_MAX_HANDOFF_A = 0.5f`
+# (teensy_controller.ino:2290), the fw v6 share-cut LOAD GUARD — a cut of a
+# channel carrying more than this is exactly what the firmware refuses to
+# perform.  Every Death-5 datapoint is multi-amp and the largest legitimate
+# non-teardown cut in the campaign census is 0.66 A, so the class still contains
+# every cut the verdict was written for.
+#
+# ⚠️ V_ABSMAX IS NOT TOUCHED, and neither is the emission gate: a `sw_ring`
+# event with its `peak_v` is still emitted for every cut above 0.05 A, so the
+# census and the peak history are unchanged.  Only the VERDICT is gated, and
+# each event now carries `load_dump_class` saying which side of the gate it fell.
+SW_RING_LOAD_DUMP_I_A = 0.5   # A  == SHARE_CUT_MAX_HANDOFF_A (.ino:2290)
 DI_DT_LOAD_DUMP = 1.3e9     # A/s  ~1.3 A/ns class slew on an SCP cut
                             #      (docs/boost-bringup-debug.md, Death-5 analysis).
                             #      L1: this is a FIXED WORST-CASE bound applied
@@ -1528,9 +1560,17 @@ class Rt1987:
             # backstops above did not fully suppress) could manufacture an
             # over_absmax verdict on its own, independent of any real di/dt event.
             plausible = v_node <= V_ABSMAX
+            # THE LOAD-DUMP CLASS (2026-09-03) — see SW_RING_LOAD_DUMP_I_A.
+            # `DI_DT_LOAD_DUMP` is a fixed worst case with no i_cut scaling, so
+            # the 1.95 V allowance only describes a cut in that class. The event
+            # and its `peak_v` are emitted for every cut above the 0.05 A gate
+            # regardless; only the VERDICT is confined to the class.
+            load_dump = i_before >= SW_RING_LOAD_DUMP_I_A
             ev = {"t": t_now, "kind": "sw_ring", "switch": self.name,
                   "reason": reason, "i_cut": i_before, "peak_v": peak,
-                  "over_absmax": bool(plausible and peak > V_ABSMAX)}
+                  "load_dump_class": bool(load_dump),
+                  "over_absmax": bool(load_dump and plausible
+                                      and peak > V_ABSMAX)}
             events.append(ev)
         if reason == "scp_cut":
             events.append({"t": t_now, "kind": "scp_cut", "switch": self.name,

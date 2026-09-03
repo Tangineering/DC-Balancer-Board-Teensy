@@ -406,16 +406,37 @@ BUDGET_MS_CEILING = 15.0        # `ems-mpc-cross`'s hand-set budget (5f1cfed)
 # configurations, so a 1.4x slower machine moved the headline number silently.
 #
 # The projection is therefore a NAMED CONSTANT and the measurement is a
-# DIAGNOSTIC.  0.0300 ms is the slowest per-candidate cost observed in this
-# round (0.0261 ms) plus 15 %, the same headroom factor `LADDER_ENUM_SAFETY`
-# and the overcurrent margin use.  `timing()` reports the nominal, the largest
-# cost actually measured, and a flag when the measurement exceeded the nominal,
-# so a host slow enough to invalidate the projection is VISIBLE rather than
+# DIAGNOSTIC.  The rule is: the slowest per-candidate cost yet MEASURED on a
+# live leg, plus 15 % - the same headroom factor `LADDER_ENUM_SAFETY` and the
+# overcurrent margin use.  `timing()` reports the nominal, the largest cost
+# actually measured, and a flag when the measurement exceeded the nominal, so
+# a host slow enough to invalidate the projection is VISIBLE rather than
 # silently re-planned around.
+#
+# RE-DERIVED 2026-09-03 (campaign hil_report_20260902_220604 F7): 0.0300 ->
+# 0.0392 ms.  The 0.0300 figure was the offline round's 0.0261 ms plus 15 %,
+# and it was UNDER the measurement on the board: two live legs measured
+# 0.0313 and 0.0341 ms per candidate, so `candidate_cost_over_nominal` was
+# raised on both and the projection was optimistic on every decision of the
+# campaign.  0.0341 x 1.15 = 0.0392.
+#
+# THE TRADE-OFF, stated because raising this constant is not free.  A HIGHER
+# projection coarsens EARLIER, so the ladder subset a decision walks is
+# smaller; campaign 20260902_220604 already coarsened on 100 % of decisions
+# (4-8 points searched of 9) at the old value, so the widened ladder is only
+# partly realized at run time and this makes it slightly less so.  What it
+# buys is the property the constant exists for: an enumeration that is
+# projected to fit the budget actually fits it, so the search COMPLETES on a
+# coarser subset instead of being CUT on a finer one - and a cut search is
+# biased toward the incumbent while a coarse one is merely coarse.  The cost
+# is bounded and measured: `test_the_committed_plan_is_insensitive_to_the_
+# projection` sweeps the projection over 0.0097-0.0500 ms, which BRACKETS
+# both the old and the new value, and holds the committed hydrogen to under
+# 0.5 % and the cruise-share command exactly constant.
 #
 # A caller may still pin its own value through `candidate_cost_ms`; nothing
 # reads the clock for this quantity.
-CANDIDATE_COST_MS_NOMINAL = 0.0300
+CANDIDATE_COST_MS_NOMINAL = 0.0392
 LADDER_ENUM_SAFETY = 0.85
 # Ladder sizes the coarsening may select, largest first.  Three is the floor:
 # the two rails and the centre, which is the smallest set that still spans the
@@ -568,7 +589,10 @@ def scenario_drain_a(scenario, t, aux_preload_a=None):
     strategy's modelled demand - the defect ems_walk._drain_override() exists to
     catch."""
     sim = _load_sim()
-    if scenario not in SOC_BAND_DRAIN_SCENARIOS:
+    # `_soc_band_drain_scenarios()` and NOT the module attribute: PEP 562's
+    # module `__getattr__` is consulted for an ATTRIBUTE access from outside,
+    # never for a bare global name resolved inside the module itself.
+    if scenario not in _soc_band_drain_scenarios():
         if aux_preload_a is None:
             preload = sim.scenario_aux_preload_a(scenario, t)
         elif not aux_preload_a:
@@ -582,13 +606,31 @@ def scenario_drain_a(scenario, t, aux_preload_a=None):
     return sim.I_AUX_A + sim.SOC_BAND_DRAIN_LOAD_A * (ramp_in - ramp_out)
 
 
-# The simulator's own whitelist (hil_plant_sim.apply_scenario()), restated for
-# the reason scenario_drain_a() above gives.  A new MPC scenario that shares the
-# `ems-soc-band` stimulus MUST be added here AND to
-# gen_dp_ems_table.SOC_BAND_DRAIN_SCENARIOS at registration - the B2 defect of
-# 2026-09-01 was exactly that omission.
-SOC_BAND_DRAIN_SCENARIOS = ("ems-soc-band", "ems-dp-replay", "ems-sdp",
-                            "ems-mpc", "ems-mpc-det")
+# The simulator's own whitelist (hil_plant_sim.apply_scenario()), now READ FROM IT
+# rather than restated.  This was the FOURTH copy of one list, and the copies had
+# gone stale twice: `ems-sdp` in 2026-09-01 (defect B2) and the three
+# `ems-sdp-alpha-*` sweep legs until 2026-09-03, each time producing a matched-DP
+# baseline against roughly half the real demand.  A LAZY module-level read is safe
+# here for the reason `_load_sim()` exists at all: this module is stdlib-only and
+# the simulator import is deferred, so the value is resolved on first use.
+def _soc_band_drain_scenarios():
+    return tuple(_load_sim().SOC_BAND_DRAIN_SCENARIO_NAMES)
+
+
+# `SOC_BAND_DRAIN_SCENARIOS` IS A REAL TUPLE, RESOLVED LAZILY THROUGH PEP 562
+# (review finding L1, 2026-09-03).  It was first written as a custom object
+# implementing `__contains__`/`__iter__`/`__len__`/`__eq__`, on the reasoning
+# that a plain tuple would have to be built at import and would force the
+# simulator import this module deliberately defers.  The reasoning holds; the
+# object did not.  A name that reads as a tuple must BE one: `d[0]`, `hash(d)`,
+# `json.dumps(d)` and even `d == None` all raised on the custom object, so any
+# reader treating it as the tuple its name promises failed in a way the type
+# gave no warning of.  A module-level `__getattr__` defers exactly as far and
+# hands back the genuine article.
+def __getattr__(name):
+    if name == "SOC_BAND_DRAIN_SCENARIOS":
+        return tuple(_soc_band_drain_scenarios())
+    raise AttributeError("module %r has no attribute %r" % (__name__, name))
 
 
 def build_demand(scenario, meta, times, dt, aux_preload_a=None,
@@ -2340,6 +2382,19 @@ class MpcStrategy:
         self.share_pred_err_max = 0.0
         self.share_pred_err_sum = 0.0
         self.share_pred_err_n = 0
+        # -- THE SAME PAIR, WINDOWED TO THE SCORED WINDOW (2026-09-03) ------
+        # The four accumulators above run from the FIRST decision, which is
+        # before Run entry: campaign 20260902_220604 reported a whole-run
+        # maximum of 0.4067-0.4113 whose entire population is ~3020 pre-Run
+        # ticks in t in [1.003, 4.031] s, while the run's own
+        # `mpc_share_prediction` check reads 0.0604 over its Run window. The
+        # headline figure therefore described a phase nothing scores, and it
+        # read as a near-miss of the 0.30 band. These accumulate only over
+        # in-Run decisions, and the summary line reports them FIRST with the
+        # whole-run pair beside them, explicitly labelled.
+        self.share_pred_err_run_max = 0.0
+        self.share_pred_err_run_sum = 0.0
+        self.share_pred_err_run_n = 0
         self._stage_share_sum = 0.0
         self._stage_share_n = 0
         self.rolls_started = 0
@@ -2914,6 +2969,15 @@ class MpcStrategy:
             self.share_pred_err_max = max(self.share_pred_err_max, err)
             self.share_pred_err_sum += err
             self.share_pred_err_n += 1
+            # ... and again over the SCORED window alone. The stage just
+            # scored ENDS at this decision, so `t` is the right instant to
+            # ask the question at.
+            if sim.EMS_RUN_ENTRY_S <= t < sim.ems_run_exit(fb,
+                                                          self.run_exit_s):
+                self.share_pred_err_run_max = max(
+                    self.share_pred_err_run_max, err)
+                self.share_pred_err_run_sum += err
+                self.share_pred_err_run_n += 1
         self._stage_share_sum = 0.0
         self._stage_share_n = 0
         # Predicted delivered share of the stage about to run, scored at the
@@ -3048,7 +3112,10 @@ class MpcStrategy:
                     "candidate_cost_ms_nominal": self.candidate_cost_ms_used,
                     "candidate_cost_ms_seen": 0.0,
                     "candidate_cost_over_nominal": False,
-                    "share_pred_err_mean": None, "share_pred_err_max": 0.0}
+                    "share_pred_err_mean": None, "share_pred_err_max": 0.0,
+                    "share_pred_err_run_mean": None,
+                    "share_pred_err_run_max": 0.0,
+                    "share_pred_err_run_n": 0}
 
         def _stats(xs):
             """min / median / max of a per-decision series."""
@@ -3109,7 +3176,15 @@ class MpcStrategy:
                 "share_pred_err_mean": (
                     self.share_pred_err_sum / self.share_pred_err_n
                     if self.share_pred_err_n else None),
-                "share_pred_err_max": self.share_pred_err_max}
+                "share_pred_err_max": self.share_pred_err_max,
+                # THE SCORED-WINDOW PAIR (2026-09-03). The two above are
+                # WHOLE-RUN and include the pre-Run decisions; these are
+                # what `mpc_share_prediction` judges.
+                "share_pred_err_run_mean": (
+                    self.share_pred_err_run_sum / self.share_pred_err_run_n
+                    if self.share_pred_err_run_n else None),
+                "share_pred_err_run_max": self.share_pred_err_run_max,
+                "share_pred_err_run_n": self.share_pred_err_run_n}
 
     def summary_line(self):
         if not self.decisions:
@@ -3130,10 +3205,15 @@ class MpcStrategy:
                 "search depth and not about the command; incumbent retained on "
                 "%d; roll table published %d times (%d completed jobs held no "
                 "transition and were merged as no-ops, %d transitions dropped "
-                "by the cap of %d); share prediction error %s mean / %.4f max "
+                "by the cap of %d); share prediction error IN THE RUN WINDOW "
+                "%s mean / %.4f max over %d decisions, WHOLE RUN %s mean / "
+                "%.4f max "
                 "(predicted minus delivered STAGE-MEAN share, charge windows "
                 "excluded — the claim this strategy makes, reported as a "
-                "level); shadow governor %d ticks, %d MDAC "
+                "level. The WHOLE-RUN pair includes the pre-Run decisions, "
+                "whose error is large and is scored by nothing; the RUN "
+                "figures are what `mpc_share_prediction` judges); "
+                "shadow governor %d ticks, %d MDAC "
                 "corrections, %d current-derived corrections, %d mode "
                 "mismatches; charge dwell latches %d, early drops %d%s; "
                 "terminal price %s = %.6f g/SoC in the eta_fc %.2f proxy basis; "
@@ -3158,6 +3238,10 @@ class MpcStrategy:
                    self.incumbent_retained,
                    tm["rolls_published"], tm["rolls_empty"],
                    tm["roll_dropped_transitions"], RollJob.MAX_TRANSITIONS,
+                   ("n/a" if tm["share_pred_err_run_mean"] is None
+                    else "%.4f" % tm["share_pred_err_run_mean"]),
+                   tm["share_pred_err_run_max"],
+                   tm["share_pred_err_run_n"],
                    ("n/a" if tm["share_pred_err_mean"] is None
                     else "%.4f" % tm["share_pred_err_mean"]),
                    self.share_pred_err_max,

@@ -19,6 +19,7 @@ Run:
 import json
 import os
 import sys
+import warnings
 
 import pytest
 
@@ -262,6 +263,94 @@ def test_problem_fields_none_aux_preload_still_collides_with_zero_when_scenario_
     assert none_fields["aux_preload_a"] == 0.0
     assert zero_fields["aux_preload_a"] == 0.0
     assert db.make_key(none_fields) == db.make_key(zero_fields)
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Lens-3 (2026-09-03): the SoC-band drain-membership WITNESS.
+#
+# `dp_profile_fingerprint()` hashes the drain CONSTANTS but not the list of
+# scenarios the drain applies to, so a stale mirror of that list writes a WRONG
+# record under a CORRECT key. That happened twice. The witness cannot prevent
+# the third instance — the derived list does that — but it makes an already
+# stored record's assumption READABLE at lookup time.
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_drain_membership_reports_both_halves():
+    m = db.drain_membership("ems-soc-band")
+    assert m["in_soc_band_drain"] is True
+    assert len(m["names_sha256"]) == 64
+    other = db.drain_membership("steady")
+    assert other["in_soc_band_drain"] is False
+    # the list witness is a property of the LIST, not of the scenario asked
+    assert other["names_sha256"] == m["names_sha256"]
+
+
+def test_a_stored_record_carries_the_membership_it_was_solved_under(tmp_path):
+    db_dir = str(tmp_path / "db")
+    fields = _fields(target_soc=0.698)
+    rec = _record(fields)
+    rec["drain_membership"] = db.drain_membership(fields["scenario"])
+    db.store(rec, db_dir=db_dir)
+    got = db.lookup(fields, db_dir=db_dir)
+    assert got["drain_membership"]["in_soc_band_drain"] is True
+    assert got["drain_membership_drift"] is None          # agrees: no warning
+
+
+def test_a_membership_mismatch_warns_and_still_returns_the_record(tmp_path):
+    """THE DISCRIMINATOR. A record solved when `ems-soc-band` was NOT in the
+    drain branch is exactly the defect shape (its bound is worth hundreds of
+    percent less than the correct one), and the store must say so on the read
+    rather than hand the number over silently. It must still RETURN it: the
+    operator decides whether to re-solve."""
+    db_dir = str(tmp_path / "db")
+    fields = _fields(target_soc=0.698)
+    rec = _record(fields)
+    rec["drain_membership"] = {"in_soc_band_drain": False,
+                               "names_sha256": "0" * 64}
+    db.store(rec, db_dir=db_dir)
+    with pytest.warns(RuntimeWarning, match="drain membership"):
+        got = db.lookup(fields, db_dir=db_dir)
+    assert got is not None                                # warned, not refused
+    assert got["h2_g"] == pytest.approx(rec["h2_g"])
+    assert "ems-soc-band" in got["drain_membership_drift"]
+
+
+def test_a_pre_witness_record_is_accepted_silently(tmp_path):
+    """EVERY RECORD ALREADY ON DISK predates the witness, and a warning on all
+    71 of them would teach the reader to ignore the warning."""
+    db_dir = str(tmp_path / "db")
+    fields = _fields(target_soc=0.698)
+    rec = _record(fields)
+    assert "drain_membership" not in rec
+    db.store(rec, db_dir=db_dir)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")                    # any warning fails
+        got = db.lookup(fields, db_dir=db_dir)
+    assert got["drain_membership_drift"] is None
+
+
+def test_the_drift_annotation_is_never_a_stored_field(tmp_path):
+    """A record round-tripped through lookup() and stored again must not
+    acquire the annotation, on `provenance_drift`'s rule exactly."""
+    db_dir = str(tmp_path / "db")
+    fields = _fields(target_soc=0.698)
+    rec = _record(fields)
+    rec["drain_membership"] = db.drain_membership(fields["scenario"])
+    db.store(rec, db_dir=db_dir)
+    got = db.lookup(fields, db_dir=db_dir)
+    assert "drain_membership_drift" in got
+    path = db.store(got, db_dir=db_dir)
+    on_disk = json.load(open(path, encoding="utf-8"))
+    assert "drain_membership_drift" not in on_disk
+    assert "provenance_drift" not in on_disk
+    assert on_disk["drain_membership"] == rec["drain_membership"]
+
+
+def test_the_membership_witness_is_not_a_key_field():
+    """Adding it to the key would ORPHAN every stored record for a quantity
+    that is identical in all of them."""
+    assert "drain_membership" not in db.KEY_FIELDS
+    assert "drain_membership" not in db.OPTIONAL_KEY_FIELDS
 
 
 # ─────────────────────────────────────────────────────────────────────────

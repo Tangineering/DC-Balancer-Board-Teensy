@@ -21,6 +21,7 @@ sys.path.insert(0, HERE)
 
 import run_hil_suite as rhs  # noqa: E402
 import hil_replay_suite as hrs  # noqa: E402
+import hil_plant_sim as hil  # noqa: E402
 from hil_plant_sim import (SCENARIOS, AG105_ST_CHARGING,  # noqa: E402
                            SW_FC_BUS, SW_BT_BUS)
 from hil_replay_suite import REPLAY_SUITE  # noqa: E402
@@ -3420,7 +3421,10 @@ def test_mppt_tracking_carries_the_080905_calibration_batch():
     assert rhs._MPPT_THRESH_MIN_TICKS == 12600             # meas 12900/12900
     assert rhs._MPPT_RISE_BAND == (3, 5)                   # meas 3
     # F1: the carried-in-count witness.
-    assert by["mppt_threshold_moved"]["column_range_at_least"] == 2  # meas 4
+    # M2 (2026-09-03): the bound is 1, and 2 is the MEASUREMENT on the
+    # re-pointed cruise window in all three campaigns that carry the column.
+    # At 2 the check passed with zero margin.
+    assert by["mppt_threshold_moved"]["column_range_at_least"] == 1  # meas 2
     # F4: the OC budget, between the measurement (1.1638) and the limit (1.4).
     assert by["mppt_fc_headroom"]["column"] == "I_fc"
     assert 1.1638 < by["mppt_fc_headroom"]["max_value"] == 1.30 < 1.4
@@ -4785,6 +4789,54 @@ def test_m4_run_plan_calls_write_outputs_after_every_run(monkeypatch):
     assert calls[1][1]["partial"] is False
 
 
+def test_a_child_process_failure_row_is_counted_in_BOTH_census_halves(
+        monkeypatch):
+    """L3 (2026-09-03). `_run_plan()` appends a `child_process` row when the
+    child exits badly, and that row reached the DENOMINATOR (`len(checks) + 1`)
+    while `n_checks_substantive` was computed from the replay half's own count,
+    which never saw it. The census then under-reported by one on exactly the
+    runs a reader most needs it honest on. The row is scored and can fail, so
+    it is substantive on the same test the warm-reset tripwire passes."""
+    def fake_run_child(item, args):
+        return {"status": "failed", "returncode": 2, "wall_s": 0.01,
+                "log": item["log"],
+                "summary": {"achieved_hz": 1000.0, "tx_frames": 10,
+                            "rx_frames": 10, "rx_bad": 0}}
+
+    def fake_evaluate_replay_csv(entry, csv_path):
+        return {"passed": True,
+                "checks": [{"name": "no_fault", "passed": True, "detail": "."},
+                           {"name": "bc", "passed": True,
+                            "detail": "vacuous-tagged"}],
+                "notes": [], "n_obs": 10,
+                "n_checks_vacuous": 1, "n_checks_substantive": 1}
+
+    monkeypatch.setattr(rhs, "run_child", fake_run_child)
+    monkeypatch.setattr(rhs, "evaluate_replay_csv", fake_evaluate_replay_csv)
+    args = _args(only=["ML0146"], keep_going=True, settle_s=0.0)
+    plan = rhs.build_plan(args)
+    results, _aborted = rhs._run_plan(plan, args, [], [], lambda m, r: None)
+    r = results[0]
+    # two replay-half rows + the appended child_process row + the warm-reset
+    # tripwire (appended into the same list after the counts are taken) = 4
+    assert any(c["name"] == "child_process" for c in r["checks"])
+    assert len(r["checks"]) == 4
+    assert r["n_checks_total"] == 4
+    # 1 (replay half) + 1 (tripwire) + 1 (child_process) = 3, NOT 2
+    assert r["n_checks_substantive"] == 3
+    assert r["n_checks_substantive"] <= r["n_checks_total"]
+    assert r["passed"] is False
+
+
+def test_plus_tripwire_counts_only_the_rows_it_is_told_about():
+    """The helper, driven directly. None in, None out is load-bearing: an
+    entry whose counter never ran must not acquire a count."""
+    assert rhs._plus_tripwire(1) == 2                  # tripwire only
+    assert rhs._plus_tripwire(1, 2) == 3               # + child_process
+    assert rhs._plus_tripwire(None) is None
+    assert rhs._plus_tripwire(None, 2) is None
+
+
 def test_run_plan_replay_key_metrics_shows_substantive_not_evidence_split_no_command_replay(
         monkeypatch):
     """Item 5/L3, wording updated 2026-08-30 (fix-round): a replay run's
@@ -4822,9 +4874,14 @@ def test_run_plan_replay_key_metrics_shows_substantive_not_evidence_split_no_com
     assert len(results) == 1
     r = results[0]
     assert r["n_checks_vacuous"] == 1
-    assert r["n_checks_substantive"] == 1
+    assert r["n_checks_substantive"] == 2      # +1 for the warm-reset tripwire
+    assert r["n_checks_total"] == 3
     assert "2/2 checks passed" in r["key_metrics"]
-    assert "1 substantive, 1 not evidence — no command replay" in r["key_metrics"]
+    # The warm-reset tripwire is COUNTED since 2026-09-03 (campaign
+    # 20260902_220604 F4): it is appended after the replay half finishes
+    # counting, so its own row used to be missing from BOTH the substantive
+    # count and the denominator. 1 substantive of 2 rows becomes 2 of 3.
+    assert "2 substantive of 3, 1 not evidence — no command replay" in r["key_metrics"]
     assert "commands replayed" not in r["key_metrics"]
     assert "no commander" not in r["key_metrics"]   # the old wording is gone entirely
 
@@ -4857,7 +4914,7 @@ def test_run_plan_replay_key_metrics_defensive_suite_bug_branch(monkeypatch):
     r = results[0]
     assert r["replay_commands"] is True
     assert r["n_checks_not_exercised"] == 1
-    assert "0 substantive, 1 not evidence — opt-in entry tagged NOT EXERCISED (suite bug)" \
+    assert "1 substantive of 2, 1 not evidence — opt-in entry tagged NOT EXERCISED (suite bug)" \
         in r["key_metrics"]
 
 
@@ -4887,7 +4944,11 @@ def test_run_plan_replay_key_metrics_labels_no_command_replay_when_not_exercised
     results, _aborted = rhs._run_plan(plan, args, [], [], lambda m, r: None)
     r = results[0]
     assert r["n_checks_not_exercised"] == 1
-    assert "1 substantive, 1 not evidence — no command replay" in r["key_metrics"]
+    # The warm-reset tripwire is COUNTED since 2026-09-03 (campaign
+    # 20260902_220604 F4): it is appended after the replay half finishes
+    # counting, so its own row used to be missing from BOTH the substantive
+    # count and the denominator. 1 substantive of 2 rows becomes 2 of 3.
+    assert "2 substantive of 3, 1 not evidence — no command replay" in r["key_metrics"]
     assert "commands replayed" not in r["key_metrics"]
 
 
@@ -7105,8 +7166,18 @@ def test_ftp75_5050_h2_band_is_two_specs_045_to_085():
     # driven at the dv0 that reproduces the plant's own alpha at r = 0.5,
     # 1.0155 A (0.030223 V). Walk 2.9888e-2 g, band +/-25 %. Symmetric walk
     # 2.809e-2; the retired M1-era walk 3.0729e-2.
-    assert floor["min_value"] == pytest.approx(0.022)
-    assert ceiling["max_value"] == pytest.approx(0.037)
+    # RE-PINNED ON THE BOARD (2026-09-03, campaign 20260902_220604, the first
+    # bleed-era campaign): MEASURED 0.0290697451 g against the asymmetry era's
+    # 0.0299327016 (-2.88 %, against a predicted -2.9 %). The band is +/-25 %
+    # of the MEASUREMENT rather than of the walk.
+    _MEASURED_5050 = 0.0290697451
+    assert floor["min_value"] == pytest.approx(0.0218)
+    assert ceiling["max_value"] == pytest.approx(0.0363)
+    assert floor["min_value"] < _MEASURED_5050 < ceiling["max_value"]
+    assert floor["min_value"] == pytest.approx(0.75 * _MEASURED_5050, rel=0.01)
+    assert ceiling["max_value"] == pytest.approx(1.25 * _MEASURED_5050, rel=0.01)
+    # The M2-equivalent walk (2.9888e-2) must still sit inside it, or the band
+    # has moved off the model as well as onto the board.
     assert floor["min_value"] < 2.9888e-2 < ceiling["max_value"]
     for s in h2_specs:
         assert s.get("provisional_note")
@@ -7148,17 +7219,21 @@ def test_ftp75_socband_h2_band_is_now_two_sided():
     #     0.042427323 g, i.e. the physical walk's 4.1873e-2 confirmed to
     #     +1.3 %. The band is now +/-20 % on the MEASUREMENT, and the two specs
     #     are no longer provisional.
+    #   * RE-PINNED AGAIN (2026-09-03, campaign 20260902_220604, the first
+    #     bleed-era campaign to run this leg): MEASURED 0.0407628763 g against
+    #     the asymmetry era's 0.0423184751 (-3.68 %). The band stays +/-20 %
+    #     of the measurement and simply follows it.
     _WALK = 4.1873e-2
-    _MEASURED = 0.042427323
-    assert floor["min_value"] == pytest.approx(rhs._FTP_H2_FLOOR_SOCBAND) == pytest.approx(0.034)
-    assert ceiling["max_value"] == pytest.approx(0.051)
+    _MEASURED = 0.0407628763
+    assert floor["min_value"] == pytest.approx(rhs._FTP_H2_FLOOR_SOCBAND) == pytest.approx(0.0326)
+    assert ceiling["max_value"] == pytest.approx(0.0489)
     # The band must BRACKET both the prediction and the measurement with real
     # margin on both sides -- a floor above either, or a ceiling below either,
     # would fail a correct board.
     assert floor["min_value"] < _WALK < ceiling["max_value"]
     assert floor["min_value"] < _MEASURED < ceiling["max_value"]
-    # +/-20 % on the measurement is [0.033942, 0.050913]; the shipped bounds are
-    # those rounded to three decimals ([0.034, 0.051]), so allow 1 % of rounding
+    # +/-20 % on the measurement is [0.032610, 0.048915]; the shipped bounds are
+    # those rounded to four decimals ([0.0326, 0.0489]), so allow 1 % of rounding
     # slack rather than pinning the unrounded edges.
     assert floor["min_value"] == pytest.approx(0.80 * _MEASURED, rel=0.01)
     assert ceiling["max_value"] == pytest.approx(1.20 * _MEASURED, rel=0.01)
@@ -8830,7 +8905,9 @@ def test_ems_ftp75_dp_h2_band_is_the_union_of_its_siblings_bands():
     # Then the socband band was re-derived from the BOARD (campaign
     # 20260902_011926, measured 0.042427 g +/-20 %), tightening the ceiling
     # 0.052 -> 0.051; the union follows.
-    assert (lo, hi) == (0.022, 0.051)
+    # RE-PINNED ON THE BOARD (2026-09-03): both siblings' bands moved onto
+    # their first bleed-era measurements, and the union follows them.
+    assert (lo, hi) == (0.0218, 0.0489)
     # The solver's own matched-SoC optimum must land inside the live band, or
     # the two accountings have diverged by more than the band admits.
     assert lo < 0.0396922 < hi
@@ -10161,6 +10238,83 @@ def test_signal_spec_guard_refuses_a_hold_without_its_mask():
     assert "UN-exclude" in str(exc2.value)
 
 
+# ─────────────────────────────────────────────────────────────────────────
+# M3 (2026-09-03): an events aggregator only measures something on the hi-fi
+# engine, so the scenario carrying one must pin that engine.
+# ─────────────────────────────────────────────────────────────────────────
+
+
+def test_every_events_aggregator_leg_pins_the_hifi_engine():
+    """THE TABLE-WIDE INVARIANT. `_judge_event_spec()` aggregates an EMPTY
+    event stream to 0.0 rather than to "not measured", and the simple engine
+    emits no plant events at all, so a `total_of` floor on an
+    `electrical: "any"` scenario fails a correct board under
+    `--electrical-pref simple` and a `max_of` ceiling passes vacuously. Four
+    `ems-ftp75c-*` legs shipped that shape for a whole campaign."""
+    carriers = [n for n, e in rhs.FAULT_EXPECTATIONS.items()
+                for spec in (e.get("events_require") or ())
+                if isinstance(spec, dict)
+                and ("total_of" in spec or "max_of" in spec)]
+    assert set(carriers) >= {"ems-ftp75c-5050", "ems-ftp75c-socband",
+                             "ems-ftp75c-sdp", "ems-ftp75c-dp",
+                             "ems-ftp75c-mpc", "regen-harvest-true"}
+    for name in carriers:
+        assert hil.SCENARIOS[name]["electrical"] == "hifi", name
+
+
+def test_event_spec_guard_refuses_an_aggregator_on_a_non_hifi_scenario():
+    """THE GUARD, driven over one synthetic entry. It is keyed on a REAL
+    scenario name whose `electrical` is not `hifi`, so the test cannot pass by
+    the lookup missing."""
+    victim = next(n for n, sc in hil.SCENARIOS.items()
+                  if sc.get("electrical") != "hifi")
+    entry = {"events_require": [
+        {"total_of": "chopper_clamp", "field": "energy_j", "min_value": 2.5}]}
+    with pytest.raises(AssertionError) as exc:
+        rhs._assert_event_spec_shapes(victim, entry)
+    assert "not 'hifi'" in str(exc.value)
+    # a `max_of` ceiling is refused for the same reason, and passes once the
+    # scenario does pin the engine
+    entry2 = {"events_require": [
+        {"max_of": "chopper_clamp", "field": "energy_j", "max_value": 9.0}]}
+    with pytest.raises(AssertionError):
+        rhs._assert_event_spec_shapes(victim, entry2)
+    hifi = next(n for n, sc in hil.SCENARIOS.items()
+                if sc.get("electrical") == "hifi")
+    rhs._assert_event_spec_shapes(hifi, entry)          # must not raise
+    rhs._assert_event_spec_shapes(hifi, entry2)         # must not raise
+
+
+def test_the_ftp75c_mpc_rail_marker_is_pinned_at_the_value_it_evaluates_to():
+    """L5 (2026-09-03). The bound is written as an EXPRESSION — the low rail
+    plus half a ladder step over the widened [0.15, 0.85] band — and it
+    evaluates to 0.1937, not the 0.194 the round report quoted. Pin the number
+    so the band and the ladder cannot move it silently, and assert the property
+    the expression encodes: strictly above the rail, strictly below the first
+    rung the planner could step to."""
+    spec = next(s for s in rhs.FAULT_EXPECTATIONS["ems-ftp75c-mpc"]
+                ["signals_require"]
+                if s["name"] == "ftp75c_mpc_share_railed_low")
+    assert spec["max_value"] == 0.1937
+    lo, hi = rhs._MPC_SHARE_BAND
+    assert lo < spec["max_value"] < lo + (hi - lo) / 8.0
+    assert spec["informational"] is True          # warns, never fails
+
+
+def test_the_dp_table_directory_holds_four_committed_tables():
+    """L5. Every "all three committed tables" statement in the docs was one
+    table behind `tools/dp_tables/`; this pins the count so the next one is
+    caught here rather than in a review."""
+    import glob
+    names = sorted(os.path.basename(p) for p in
+                   glob.glob(os.path.join(HERE, "dp_tables",
+                                         "dp_ems_table_*.csv")))
+    assert names == ["dp_ems_table_ems-dp-replay.csv",
+                     "dp_ems_table_ems-ftp75-5050.csv",
+                     "dp_ems_table_ems-ftp75-dp.csv",
+                     "dp_ems_table_ems-ftp75c-dp.csv"]
+
+
 def test_socband_arms_carry_the_settling_hold():
     for name in ("socband_fc_peak_bounded", "socband_fc_carried"):
         assert _socband_spec(name)["exclude_hold_ms"] == 10.0
@@ -10168,7 +10322,11 @@ def test_socband_arms_carry_the_settling_hold():
 
 def test_socband_h2_band_is_the_measured_one():
     assert (rhs._FTP_H2_FLOOR_SOCBAND, rhs._FTP_H2_CEILING_SOCBAND) == (
-        0.034, 0.051)
+        0.0326, 0.0489)
+    # The BLEED-ERA measurement the band is now centred on, and the
+    # asymmetry-era one it superseded: both must sit inside, or the band has
+    # been moved further than the era shift justifies.
+    assert rhs._FTP_H2_FLOOR_SOCBAND < 0.0407628763 < rhs._FTP_H2_CEILING_SOCBAND
     assert rhs._FTP_H2_FLOOR_SOCBAND < 0.042427323 < rhs._FTP_H2_CEILING_SOCBAND
 
 
@@ -10494,12 +10652,26 @@ def test_every_ftp75c_scenario_has_a_fault_expectation_entry():
 def _sig_names(entry):
     """The signal identifiers of one expectation entry.
 
-    `name` is OPTIONAL on an AGGREGATE spec (`total_of` / `max_of`), which the
-    judge tags by its aggregate key instead -- so the chopper-energy check has
-    no `name` and must be resolved through its own key."""
+    UPDATED 2026-09-03: every `signals_require` spec now carries an explicit
+    `name` (the import guard refuses one without), and an AGGREGATE spec
+    (`total_of` / `max_of`) is no longer allowed in this list at all -- it is an
+    events check. `_event_names()` below reads those."""
+    return {spec["name"] for spec in entry["signals_require"]}
+
+
+def _event_names(entry):
+    """The event identifiers of one expectation entry.
+
+    An `events_require` list mixes bare kind strings, `{"kind": ...}` specs and
+    the `total_of`/`max_of` aggregators, which the judge tags by their aggregate
+    key."""
     out = set()
-    for spec in entry["signals_require"]:
-        out.add(spec.get("name") or spec.get("total_of") or spec.get("max_of"))
+    for spec in entry.get("events_require") or ():
+        if isinstance(spec, str):
+            out.add(spec)
+        else:
+            out.add(spec.get("name") or spec.get("kind")
+                    or spec.get("total_of") or spec.get("max_of"))
     return out
 
 
@@ -10514,8 +10686,15 @@ def test_the_ftp75c_expectations_carry_the_regen_signal_block():
         got = _sig_names(rhs.FAULT_EXPECTATIONS[name])
         by_leg[name] = got
         for want in ("ftp75c_regen_duty", "ftp75c_regen_charge",
-                     "chopper_clamp", "ftp75c_node_lift"):
+                     "ftp75c_node_lift"):
             assert want in got, (name, want)
+        # THE CHOPPER AGGREGATOR IS AN EVENTS CHECK, and asserting WHICH LIST it
+        # sits in is the point of this line: it shipped inside
+        # `signals_require`, where `scan_signals()` measured nothing and the
+        # `min_value` failed an unmeasured peak on all five legs for a whole
+        # campaign (20260902_220604, `signal_the`).
+        assert "chopper_clamp" in _event_names(rhs.FAULT_EXPECTATIONS[name]), name
+        assert "chopper_clamp" not in got, name
     # THE FOUR NON-MPC LEGS additionally share the cycle-shape block. The MPC
     # leg is built from `_mpc_expectation()` and carries its own `mpc_*`
     # equivalents of the cadence and FC-budget checks, so it is EXCLUDED here
@@ -11027,3 +11206,187 @@ def test_fw26_sweep_settle_clears_the_drive_controller_rail():
     rail_s = -math.log(1.0 - 3.0 / 13.19) / 0.1526
     assert rail_s == pytest.approx(1.69, abs=0.02)
     assert rhs._FW26_SWEEP_SETTLE_S > rail_s
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# THE THREE signals_require IMPORT GUARDS (2026-09-03)
+#
+# An `events_require` aggregator was written into a `signals_require` list on
+# five `ems-ftp75c-*` entries and shipped a whole campaign (20260902_220604),
+# failing every one of them on a check that could not pass on any board:
+# `scan_signals()` records nothing for a spec with no observable, so `min_value`
+# failed an unmeasured peak by design; with no `name` the judge named the check
+# from the label's first word ("the"); and the aggregator shape guard iterates
+# `events_require` only, so nothing refused it. The guards are driven over
+# SYNTHETIC specs here, through the same function the import loop calls, so a
+# guard cannot be tested by the very table it is meant to police.
+# ─────────────────────────────────────────────────────────────────────────
+
+def _guard(spec):
+    """Run the signals-spec shape guards over ONE synthetic spec."""
+    rhs._assert_signal_spec_shapes("steady", {"signals_require": [spec]})
+
+
+def test_a_signals_spec_that_names_no_observable_is_refused_at_import():
+    with pytest.raises(AssertionError) as exc:
+        _guard({"name": "nothing", "min_value": 2.5,
+                "label": "measured against nothing"})
+    assert "declares no observable" in str(exc.value)
+
+
+def test_an_events_aggregator_in_a_signals_list_is_refused_at_import():
+    """THE CAMPAIGN'S OWN SPEC, verbatim in shape: `total_of` + `field` +
+    `min_value`, no `column`, no `name`."""
+    for agg in ("total_of", "max_of"):
+        with pytest.raises(AssertionError) as exc:
+            _guard({agg: "chopper_clamp", "field": "energy_j",
+                    "min_value": 2.5,
+                    "label": "the braking chopper burned at least 2.5 J"})
+        assert "EVENTS aggregator" in str(exc.value)
+        assert "events_require" in str(exc.value)
+
+
+def test_a_signals_spec_without_an_explicit_name_is_refused_at_import():
+    with pytest.raises(AssertionError) as exc:
+        _guard({"column": "I_fc", "max_value": 1.0,
+                "label": "the fuel cell stayed bounded"})
+    assert "needs an explicit `name`" in str(exc.value)
+
+
+def test_a_well_formed_signals_spec_still_passes_every_guard():
+    _guard({"name": "ok", "column": "I_fc", "max_value": 1.0, "label": "x"})
+    _guard({"name": "ok_bit", "switch_bit": rhs.SW_REGEN, "min_ticks": 10,
+            "label": "x"})
+    _guard({"name": "ok_rows", "min_rows": 10, "label": "x"})
+
+
+def test_every_shipped_signals_spec_satisfies_the_three_guards():
+    """The table itself, which is what the guards exist to keep clean."""
+    for name, entry in rhs.FAULT_EXPECTATIONS.items():
+        for i, spec in enumerate(entry.get("signals_require") or ()):
+            assert spec.get("name"), (name, i)
+            assert "total_of" not in spec and "max_of" not in spec, (name, i)
+            assert (any(k in spec for k in
+                        ("column", "switch_bit", "aux_bit", "min_rows",
+                         "fault_latch_bit", "sum_of", "ratio_of"))
+                    or spec.get("any_of")), (name, i)
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# THE MPC LADDER BOUNDS ARE DERIVED, NOT TYPED (2026-09-03)
+#
+# The pair was hand-written as 0.24/0.76 against a (0.25, 0.75) band and the
+# ca2d084 widening to (0.15, 0.85) left it behind: campaign 20260902_220604
+# failed `ems-ftp75c-mpc` (railed at ladder rung 1, 0.1500) and `ems-mpc-cross`
+# (rung 2, 0.2375) on a bound that no longer described the ladder they ran on.
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_the_mpc_share_bounds_follow_the_planners_own_band():
+    import mpc_ems
+    lo, hi = mpc_ems.SHARE_BAND_DP
+    assert rhs._MPC_SHARE_FLOOR == pytest.approx(lo - 0.01)
+    assert rhs._MPC_SHARE_CEIL == pytest.approx(hi + 0.01)
+    # The margins absorb the 4-decimal CSV rendering and nothing more.
+    assert rhs._MPC_SHARE_FLOOR < lo < hi < rhs._MPC_SHARE_CEIL
+
+
+def test_the_mpc_ladders_own_rungs_all_sit_inside_the_derived_bounds():
+    """The campaign's failing samples ARE ladder rungs: 0.1500 is rung 1 and
+    0.2375 rung 2 of the shipped 9-point ladder. Every rung must clear both
+    arms, or the bound is failing the planner for planning."""
+    import mpc_ems
+    lo, hi = mpc_ems.SHARE_BAND_DP
+    n = mpc_ems.SHARE_LEVELS
+    rungs = [lo + (hi - lo) * k / (n - 1) for k in range(n)]
+    for r in rungs:
+        assert rhs._MPC_SHARE_FLOOR <= r <= rhs._MPC_SHARE_CEIL, r
+    assert min(rungs) == pytest.approx(0.15)
+    assert max(rungs) == pytest.approx(0.85)
+
+
+def test_the_mpc_share_floor_arm_is_an_invariant_not_a_peak():
+    """`min_value` judges the in-window PEAK, so the floor arm used to assert
+    'the share reached 0.24 at least once' — satisfied by a run that spent the
+    rest of the window below it. The claim is the in-window MINIMUM, which is
+    `floor_min_value`. The ceiling arm keeps `max_value`, which is already the
+    peak-side invariant."""
+    for name in ("ems-mpc", "ems-mpc-det", "ems-mpc-cross", "ems-ftp75-mpc",
+                 "ems-ftp75c-mpc"):
+        specs = {s["name"]: s
+                 for s in rhs.FAULT_EXPECTATIONS[name]["signals_require"]}
+        lo = specs["mpc_share_floor"]
+        hi = specs["mpc_share_ceiling"]
+        assert "floor_min_value" in lo and "min_value" not in lo, name
+        assert lo["floor_min_value"] == rhs._MPC_SHARE_FLOOR, name
+        assert hi["max_value"] == rhs._MPC_SHARE_CEIL, name
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# THE MPPT CRUISE TRIPWIRE OPENS AFTER THE MIRROR IS LIVE (2026-09-03)
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_the_mppt_cruise_window_opens_after_the_mirrors_first_live_tick():
+    """Campaign 20260902_220604 measured the geometry: REGEN closes 28.0063 s,
+    FC_CHARGE opens 28.4268 s, and the mirror's first live tick is 28.9494 s —
+    849 ticks after the OLD left edge of 28.1 s, over which the frozen braking
+    count 27 was carried into a window written to exclude it. The left edge is
+    now derived from the lead-in, the Ag105 settle and a poll margin."""
+    lo, hi = rhs._MPPT_THRESH_CRUISE_W
+    assert lo == pytest.approx(hil.EMS_MPPT_CRUISE_WINDOWS[1][0]
+                               + hil.EMS_MPPT_CRUISE_LEAD_IN_S
+                               + hil.AG105_SETTLE_S + 0.2)
+    assert lo > 28.9494, "the window must open after the measured first live tick"
+    assert hi == 37.0
+
+
+def test_the_mppt_peak_tripwire_band_is_unchanged_at_21():
+    """The FIX IS THE WINDOW, NOT THE BAND. On mirror-live ticks the campaign's
+    peak is 19 in both bleed eras, so 21 survives both unchanged; widening it
+    to 27 would retire the operating-point tripwire."""
+    specs = {s["name"]: s
+             for s in rhs.FAULT_EXPECTATIONS["mppt-tracking"]["signals_require"]}
+    assert specs["mppt_threshold_peak_tripwire"]["max_value"] == 21
+    assert (specs["mppt_threshold_peak_tripwire"]["t_window"]
+            == rhs._MPPT_THRESH_CRUISE_W)
+    # ... and `mppt_threshold_moved` is re-derived on the SAME window: on the
+    # old one it read a range of 12 for the wrong reason (the carried 27 down
+    # to the harvest floor), not motion of the live mirror.
+    assert specs["mppt_threshold_moved"]["t_window"] == rhs._MPPT_THRESH_CRUISE_W
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# THE ftp75c FC BUDGET IS SPLIT INTO A DRIVE ARM AND A CHARGE ARM (2026-09-03)
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_the_ftp75c_fc_budget_masks_the_charge_handoff_out_of_the_drive_arm():
+    """On ALL five legs the in-window `I_fc` maximum is a charge-handoff
+    transient at t ~ 171.31 s with the vehicle STOPPED and BT_BUS LOW — aux
+    plus the charger's referred bus draw carried single-source. It is not the
+    drive peak and the 2x-walk ceiling never described it."""
+    for name in sorted(rhs.FTP75C_SCENARIOS - {"ems-ftp75c-mpc"}):
+        specs = {s["name"]: s
+                 for s in rhs.FAULT_EXPECTATIONS[name]["signals_require"]}
+        drive = specs["ftp75c_fc_bounded"]
+        assert drive["exclude_when_switch_bit"] == rhs.SW_FC_CHARGE, name
+        # A SETTLING TAIL allowance, not a window cover (L4, 2026-09-03):
+        # the bit's own ticks are masked in full, and the hold runs after it
+        # clears. Measured windows are 0.08-0.46 s (socband's longest is
+        # 460.1 ms at 163.5763-164.0364 s), and 300 ms still stands.
+        assert drive["exclude_hold_ms"] == 300.0, name
+        charge = specs["ftp75c_fc_bounded_charging"]
+        assert charge["max_value"] == 0.60, name
+        assert "exclude_when_switch_bit" not in charge, name
+        assert charge.get("provisional_note"), name
+
+
+def test_the_ftp75c_drive_arm_ceiling_is_still_twice_the_legs_own_walk_peak():
+    """The bound the split PRESERVES. The walk's drive-peak model is accurate
+    (measured charge-free peaks +1.6 to +4.3 % of the walk), so the arm that
+    tests it does not move."""
+    for name, walk in (("ems-ftp75c-5050", 0.1768),
+                       ("ems-ftp75c-socband", 0.1856),
+                       ("ems-ftp75c-sdp", 0.2872),
+                       ("ems-ftp75c-dp", 0.2490)):
+        specs = {s["name"]: s
+                 for s in rhs.FAULT_EXPECTATIONS[name]["signals_require"]}
+        assert specs["ftp75c_fc_bounded"]["max_value"] == round(2.0 * walk, 4)

@@ -120,6 +120,10 @@ sys.path.insert(0, _HERE)
 # the .ino by tools/test_governor_model.py, so a ceiling retune reaches every
 # bound written against it.
 import governor_model as gov_mod                                   # noqa: E402
+# The MPC's own share band, so the `ems-mpc*` ladder bounds below are DERIVED
+# from the ladder rather than typed beside it (campaign 20260902_220604,
+# `signal_mpc_share_floor`). Stdlib-only, like every other import in this file.
+import mpc_ems                                                     # noqa: E402
 
 from hil_plant_sim import (                                        # noqa: E402
     SCENARIOS, TEENSY_PORT_DEFAULT, WARM_RESET_GRACE_S, REPLAY_PREAMBLE_S,
@@ -164,6 +168,9 @@ from hil_plant_sim import (                                        # noqa: E402
     # are DERIVED from the same constants the stimulus is.
     EMS_REGEN_BRAKE_WINDOWS, EMS_MPPT_CRUISE_WINDOWS,
     EMS_MPPT_CRUISE_LEAD_IN_S, EMS_MPPT_CRUISE_LEAD_OUT_S,
+    # The Ag105 bring-up window (AG105_SETTLE_MS in the .ino), for the
+    # mirror-live left edge of the MPPT threshold tripwire's cruise window.
+    AG105_SETTLE_S,
     # The emulated Pi's command cadence, for the `strictly_decreases_by` window
     # guard below.  Imported (not re-typed) for the same reason every other
     # stimulus constant here is: moving PI_CMD_HZ must move the guard with it.
@@ -270,11 +277,19 @@ SUBSTEP_COLLAPSE_FRACTION = 0.001
 #     BAND WIDENED 2026-09-02 (campaign C item 5): 080905 measured
 #     0.095-0.117 ms and a later reading reached 0.541 ms; campaign
 #     20260902_041414's four teardown cuts over 0.5 A measured 0.044-0.086 ms.
-#     0.04-0.55 ms is the envelope of everything measured to date.
+#     ⚠️ THE EMPIRICAL BAND IS RETIRED (2026-09-03) IN FAVOUR OF THE
+#     STRUCTURAL STATEMENT IT WAS APPROXIMATING: the lead is STRICTLY UNDER
+#     1 ms, because the event stamps are QUANTIZED TO 1 ms (the 1 kHz CSV
+#     tick) and a teardown cut and the latch it precedes are the same tick
+#     or adjacent ones. Campaign 20260902_220604 measured 0.500 / 0.513 /
+#     0.500 / 0.595 ms, which sits OUTSIDE the 0.04-0.55 ms envelope while
+#     being entirely unremarkable under the structural bound -- i.e. the
+#     band was fitting quantization noise. Quote '< 1 ms, quantized',
+#     never an envelope.
 #   * genuine share-path hazards lead their (caused) latch by >= 13.8 ms.
-# 5.0 ms sits ~9x above the largest measured teardown lead and ~2.8x below the
-# smallest genuine hazard lead — comfortable on both sides, and TEARDOWN_LEAD_MS
-# does NOT move on the widened band.
+# 5.0 ms sits 5x above the structural 1 ms quantization bound and ~2.8x below
+# the smallest genuine hazard lead (13.8 ms) — comfortable on both sides.
+# TEARDOWN_LEAD_MS is UNCHANGED and does not move with the re-statement.
 #
 # WHY THE ANCHOR EXCLUDES CARRIED-IN LATCHES: every real run carries a latch in
 # from its predecessor at ~1.3 ms, so an unfiltered whole-run cutoff excludes
@@ -505,68 +520,75 @@ _BLEED_ERA_PROVISIONAL = (
 #                                     `constants` block
 
 # ─────────────────────────────────────────────────────────────────────────────
-# ASYMMETRY-ERA REPEATABILITY ANCHORS (2026-09-02, campaign C item 4)
+# BLEED-ERA REPEATABILITY ANCHORS (re-pinned 2026-09-03 from campaign
+# hil_report_20260902_220604, the FIRST campaign of the era)
 #
 # The suite's repeatability record is kept in the campaign ledgers, but the
 # numbers a future round compares against are read HERE, next to the bounds they
-# justify. Every figure below is from the FIRST campaigns of the converter-
-# asymmetry era (default-on, docs/modeling/converter_asymmetry_20260901.md):
-# hil_report_20260902_011926 and hil_report_20260902_041414.
+# justify. Every figure below is MEASURED on that campaign, which ran fw v26,
+# `R_NODE_BLEED_BUS` 30 kOhm / `R_NODE_BLEED_OTHER` 60 kOhm,
+# `hil_plant_sim.R_BUS_BLEED` 30 kOhm, ETA_CHG 0.88, asymmetry `measured`
+# (dv0 0.013522 V, droop_scale_fc 0.9434) and `--droop design`.
 #
-#   scp-inrush      i_cut 6.362274641096594 A, BIT-EXACT across both campaigns
-#                   (the pre-asymmetry record was 6.3797373 A; the band
-#                   [6.15, 6.55] contains both and does not move).
-#   comm-loss       re-close I_fc 0.3801 A / I_batt 0.3379 A, mean 0.3590 A.
-#                   ⚠️ THE CHANNELS ARE NO LONGER EQUAL: the old 0.3591 /
-#                   0.3696 A/ch figures are PRE-ASYMMETRY symmetric readings, so
-#                   a per-channel comparison against them compares across eras.
-#                   Compare per channel, or compare the mean.
-#   soc-depletion   UV_BATT latch at 270.976 s (the entry's own comment records
-#                   the pre-asymmetry 270.704 s).
-#   handoff-sag     0.37793 A.
-#   share-staircase 0.28276 A / 0.30183 A (the two phases).
-#   h2 totals       ems-sdp 0.012619 g +-40 ppm, ems-dp-replay 0.0117951 g,
-#                   ems-soc-band 0.012084 g (-286 ppm spread).
+#   scp-inrush      MOT_PWR i_cut 6.360327 A at 0.602 s. ⚠️ BIT-EXACTNESS IS
+#                   RETIRED, as the era change predicted: the asymmetry-era
+#                   record 6.362274641096594 A held to 16 digits over two
+#                   campaigns, and the bleed moved it by -0.031 %. Compare
+#                   against a +-0.5 % BAND ([6.328, 6.392] A), not against the
+#                   digits. Its own OC_FC latch: 0.715500 s.
+#   handoff-sag     cut 0.370455804372 A at 6.019 s (asymmetry era 0.377928765310
+#                   at 6.005 s; -1.98 %). Same rule: band, not digits.
+#   comm-loss       warm MOT_PWR re-close I_fc 0.1088 A / I_batt 0.0816 A at
+#                   7.601060 s, and the PI_TIMEOUT latch is UNMOVED at
+#                   5.251066 s. ⚠️ THE INRUSH COLLAPSED -71/-76 % against the
+#                   asymmetry era's 0.3801 / 0.3379 A, and the mechanism is the
+#                   bleed itself: the 470 uF V-MOT node now RETAINS 92 % of its
+#                   charge across the 2.323 s teardown (tau 0.94 -> 28.2 s), so
+#                   the re-close is a 0.040 A step onto a nearly-full node
+#                   rather than a charge-up. The COLD bring-up peak, which
+#                   starts from 0 V, moved only -1.5 % (0.4906 vs 0.4983 A) --
+#                   which is the control that identifies the mechanism.
+#                   ⚠️ REPORT BOTH CHANNELS. They have not been equal since the
+#                   asymmetry era; a single "A/ch" figure compares across eras.
+#   soc-depletion   UV_BATT latch at 273.593513 s (asymmetry era 270.976079;
+#                   +2.6174 s against a PREDICTED +1.5 s, i.e. the latch-shift
+#                   model is ~70 % optimistic). Teardown BT_BUS i_cut 2.350718 A.
+#   share-staircase FC high step 0.9008 A / redistribution 0.5981 A (asymmetry
+#                   era 0.9155 / 0.6128); latencies 6.44 / 10.02 / 18.43 /
+#                   5.05 ms, all command-phase jitter and all <= 40 ms.
+#   h2 totals       ems-sdp 0.0123897811 g +-50 ppm; ems-dp-replay
+#                   0.0114663632 g; ems-soc-band 0.0118423093 g;
+#                   ems-ftp75-5050 0.0290697451 g; ems-ftp75-socband
+#                   0.0407628763 g.
+#   ems-y quartet   b30-v1 0.00764561286 g, b30-v3 0.00908186759,
+#                   b00-v1 0.00186021222, b00-v3 0.00315531053, each +-0.5 %.
+#                   ⚠️ THE +-800 ppm PIN IS RETIRED ON THIS FAMILY. All four
+#                   legs moved -1.17 to -6.12 % across the bleed boundary, and
+#                   the fw v26 clamp accounts for 0.054 % of the b30-v3 delta
+#                   (5.78e-08 g of -1.076e-04 g) -- i.e. >= 99.9 % of it is the
+#                   PLANT. A +-800 ppm band cannot survive an era change and
+#                   asserting one again would fail a correct board.
 #
 # ⚠️ THE SAME-CONFIG h2 REPEATABILITY FLOOR IS ~50 ppm, NOT 8 ppm. The 8 ppm
 # figure quoted in the ledgers is a bit-exactness record between two runs of ONE
-# artifact, not a noise floor: the spreads above (40 ppm on ems-sdp, 286 ppm on
-# ems-soc-band) are what the same configuration actually reproduces to. Do not
-# open a finding on an h2 difference under ~50 ppm, and do not size a band on
-# the 8 ppm figure.
+# artifact, not a noise floor. Three campaigns now bound it: `alpha-cal` against
+# `ems-sdp` -- identical policy block, same campaign -- reads 0.79 ppm, 44.5 ppm
+# and -23.7 ppm. Do not open a finding on an h2 difference under ~50 ppm, do not
+# size a band on the 8 ppm figure, and do not resolve a frontier margin under
+# ~0.1 %.
 #
-# ⚠️⚠️ BLEED ERA (2026-09-02, the DP-bound round): EVERY ANCHOR ABOVE IS TO BE
-# RE-PINNED ON THE NEXT CAMPAIGN, and none of them may be quoted across the
-# boundary. `hil_electrical.R_NODE_BLEED` (one 2 kOhm value on every node) split
-# into `R_NODE_BLEED_BUS` 30 kOhm and `R_NODE_BLEED_OTHER` 60 kOhm on the
-# operator's 30-60 s dark-bus decay recollection, and
-# `hil_plant_sim.R_BUS_BLEED` followed to 30 kOhm. That removes a static load
-# the sources were carrying on EVERY tick of EVERY run, so it moves every
-# energy total and every settled operating point, whether or not the scenario
-# charges. The predicted moves, from the campaign 20260902_041414 traces and
-# the offline walks:
-#
-#   anchor              predicted move            confidence
-#   ------------------  ------------------------  ---------------------------
-#   h2 on a cycle       -1.7 % (61 s cycle)       computed from the trace's
-#                       -2.9 % (FTP-75)           own bleed integral; every
-#                                                 leg on a stimulus moves by
-#                                                 the SAME percentage
-#   soc-depletion latch +1.5 s later              the pack carries less static
-#                                                 load, so it walks down more
-#                                                 slowly
-#   scp-inrush i_cut    RE-MEASURE, do not        the cut is a foldback
-#   handoff-sag cut     predict                   trajectory through a node
-#                                                 whose bleed moved; the
-#                                                 BIT-EXACTNESS records above
-#                                                 are EXPECTED TO BREAK
-#   comm-loss re-close  RE-MEASURE                same argument
-#   share-staircase     RE-MEASURE                same argument
+# ⚠️ THE ERA'S OWN MOVE, measured against the asymmetry era and matching both
+# walk predictions: loaded 61 s legs -1.2 to -2.0 % (predicted -1.7),
+# ems-ftp75-5050 -2.88 % (predicted -2.9). LOW-CURRENT runs move ~-8 % (sag
+# -7.96, v-bus-sense-offset -8.01, comm-loss -8.54, bringup -8.02,
+# soc-depletion -7.86) because the removed static bleed is a larger FRACTION of
+# their draw -- the correct direction, and the reason a single era percentage
+# must not be applied across scenario classes.
 #
 # The bleed values are `TODO(calibrate)` -- the operator's recollection, not a
 # measurement -- so the first campaign after the bench decay capture
-# (`hil_electrical.R_NODE_BLEED_BUS`) will move them AGAIN. Do not spend a
-# tightening pass on these bands until that capture exists.
+# (`hil_electrical.R_NODE_BLEED_BUS`) will move every anchor above AGAIN. Do not
+# spend a tightening pass on these bands until that capture exists.
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Which scenarios EXPECT the board to latch a fault.
@@ -1082,6 +1104,16 @@ FAULT_EXPECTATIONS = {
             # which is what `max_of` measures, and its 37 % margin is stated on
             # that basis. Bounding the per-window sum would need an episode
             # grouper the event stream does not carry.
+            # ── BLEED-ERA RE-PIN (campaign hil_report_20260902_220604) ───────
+            # `R_NODE_BLEED` 2 kOhm -> 30/60 kOhm removed ~18 mA of node load
+            # against a ~76 mA charger draw, so the residual clamp no longer
+            # drops out mid-window: the run coalesced 3 episodes where campaign
+            # 20260902_041414 had 6, and the max EPISODE rose 1.5938 -> 2.6707 J
+            # (+67.6 %). THE FLOOR IS UNCHANGED AT 1.0 J and deliberately so:
+            # the observed spread is now 1.5938-2.6707 J across two eras, and
+            # 1.0 J is 37 % under the LOW end of it, the margin class this bound
+            # has always carried. Raising it to the bleed-era measurement would
+            # pin one era's episode coalescing into a cross-era bound.
             {"max_of": "chopper_clamp", "field": "energy_j", "min_value": 1.0},
             # SUM: the run's whole harvest. Measured 6.9 - 8.6 J; floor 3.0 J,
             # 57 % under the low end for the same reason. F4: also a
@@ -1097,6 +1129,11 @@ FAULT_EXPECTATIONS = {
             # Unlike the `max_of` arm this one IS a per-window quantity summed:
             # it totals every episode in the run, so the window split above does
             # not affect it (campaign 20260902_041414: 6.3578 J).
+            # ── BLEED-ERA RE-PIN (campaign hil_report_20260902_220604): 7.9741 J
+            # over the run, +25.4 % on campaign 20260902_041414's 6.3578 J, for
+            # the mechanism recorded on the `max_of` arm above. The 3.0 J floor
+            # is UNCHANGED: it is 53 % under the low end of the 6.3525-7.9741 J
+            # spread that three campaigns now describe.
             {"total_of": "chopper_clamp", "field": "energy_j", "min_value": 3.0},
         ],
         # ⚠️ CHARGER ERA (WP-1C): the two chopper-energy bounds above are
@@ -1104,6 +1141,24 @@ FAULT_EXPECTATIONS = {
         # the three signal bounds below are 1:1-era MEASUREMENTS re-checked
         # against that probe rather than re-derived (each says how). The first
         # eta-era campaign is the calibration source for all five.
+        # ⚠️ THE `sw_ring` VERDICT AND THE CLAMP THIS SCENARIO REQUIRES ARE IN
+        # STRUCTURAL CONFLICT BY 50 mV, and the conflict is recorded here rather
+        # than papered over.  `Rt1987._open()` adds a FIXED 1.95 V load-dump ring
+        # allowance to the node at every cut above 50 mA, so its implied node
+        # ceiling is `V_ABSMAX - 1.95` = 18.050 V — 50 mV BELOW the
+        # forward-conduction state of the chopper clamp
+        # (`V_CHOPPER_TRIP - RT_V_FWD` = 18.065 V) that
+        # `signal_regen_clamp_dwell` below REQUIRES for >= 800 ticks.  Every
+        # commanded REGEN open at the end of a braking window therefore lands on
+        # the clamp, and in campaign 20260902_220604 all three (i_cut 0.065 A,
+        # v_node 18.0639 V, estimated peak 20.0139 V) raised `over_absmax` on a
+        # correct board — over by 13.9 mV, against a PHYSICAL ring of 0.80 mV.
+        # The verdict is now gated on the load-dump class
+        # (`hil_electrical.SW_RING_LOAD_DUMP_I_A` = the firmware's own
+        # `SHARE_CUT_MAX_HANDOFF_A` 0.5 A); the events and their `peak_v` are
+        # still emitted.  V_ABSMAX is NOT relaxed.  The physically-correct fix is
+        # the i·sqrt(L/C) bound, which re-bands every historical `peak_v` and is
+        # deferred to the physics review.
         "provisional_note": _ETA_ERA_PROVISIONAL + " (the two chopper-energy "
                             "bounds are re-derived; the I_charge, V_rgn and "
                             "clamp-dwell bounds are unchanged 1:1-era "
@@ -1150,10 +1205,18 @@ FAULT_EXPECTATIONS = {
             # The plant probe measures 1026 ms of clamp in a 1500 ms window
             # against the 1:1 era's 1148 ms (-11 %), leaving the 800-tick floor
             # 22 % under the new expectation.
+            # ⚠️ BLEED-ERA RE-PIN (campaign hil_report_20260902_220604):
+            # MEASURED 1418 ticks against campaign 20260902_041414's 1227
+            # (+15.6 %) — the 30/60 kOhm bleed no longer pulls the node off the
+            # clamp mid-window, which is the same mechanism that raised the two
+            # chopper-energy figures above. The 800-tick floor is UNCHANGED and
+            # is now 35 % under the low end of the 1227-1418 spread.
             {"name": "regen_clamp_dwell", "column": "V_rgn", "min_value": 17.9,
              "min_ticks": 800, "t_window": (14.0, 15.5),
              "label": "V-MOT held on the chopper clamp for at least 800 ms of "
-                      "braking window 1 (measured 1148 ms)"},
+                      "braking window 1 (measured 1148 ms in the 1:1 era, "
+                      "1227 ticks in campaign 20260902_041414 and 1418 in the "
+                      "bleed-era campaign 20260902_220604)"},
         ],
     },
     "charge-fault": {
@@ -1252,7 +1315,9 @@ FAULT_EXPECTATIONS = {
         # 0.20 - 0.113 = 0.087, i.e. 1.74x the 0.05 threshold, and the latch is
         # expected at ~13 + 0.087*18000/6.03 ~= 273 s on the measured mean pack
         # current.  MEASURED 270.704 s (round-1 campaign 20260831_000518; the
-        # ASYMMETRY-ERA reading is 270.976 s, +0.10 %) — 0.8 %
+        # ASYMMETRY-ERA reading is 270.976 s, +0.10 %; the BLEED-ERA reading is
+        # 273.593513 s, campaign 20260902_220604, +2.6174 s against a predicted
+        # +1.5 s — the latch-shift model is ~70 % optimistic) — 0.8 %
         # under the mean-based estimate, and 1.7 % over the older 6.19 A point
         # estimate's ~266 s.  Both estimates are close enough that the 400 s
         # duration is comfortable either way.
@@ -2479,13 +2544,17 @@ for _vmax, _b in ((1.0, 0.30), (3.0, 0.30), (1.0, 0.00), (3.0, 0.00)):
              "min_ticks": 1, "t_window": _Y_CEIL_W,
              "label": "the fw v26 FC current ceiling BOUND at the region-7/8 "
                       "boundary (reconstruction: 9-11 ticks at a commanded "
-                      "1.517-1.518 A against the 1.25 A ceiling) - the only "
-                      "registered stimulus that reaches the clamp"},
+                      "1.517-1.518 A against the 1.25 A ceiling; MEASURED 12 "
+                      "ticks at t = 27.009-27.020 s, campaign "
+                      "20260902_220604) - the only registered stimulus that "
+                      "reaches the clamp"},
             {"name": "fw26_ceiling_transient", "aux_bit": "fc_ceiling_active",
              "max_ticks": 60, "t_window": _Y_CEIL_W,
              "label": "... and released again inside the window (<= 60 ticks; "
-                      "the reconstruction gives 9-11, and a clamp that latches "
-                      "on is a hysteresis defect, not a load reading)"},
+                      "the reconstruction gives 9-11 and the first live "
+                      "engagement MEASURED 12, so the band stands as "
+                      "written; a clamp that latches on is a hysteresis "
+                      "defect, not a load reading)"},
         ]
     if not _b:
         # 4-7 (b00 only). THE CUT-AND-RESTORE TOPOLOGY, both directions and
@@ -2692,7 +2761,15 @@ _FTP_SURVIVE_T = 300.0
 # carrying on every tick, worth about -2.9 % of h2 on a 340 s cycle (computed
 # from campaign 20260902_041414's own bleed integral). That is still well
 # inside the band. Re-derive both from the first bleed-era campaign.
-_FTP_H2_BAND_5050 = (0.022, 0.037)
+# ⚠️ RE-PINNED ON THE BOARD (2026-09-03, campaign hil_report_20260902_220604 —
+# the first bleed-era campaign). MEASURED h2 0.0290697451 g against the
+# asymmetry era's 0.0299327016 (-2.88 %, against a predicted -2.9 %: the walk's
+# bleed prediction is confirmed to a tenth of a percent). The band is now +-25 %
+# of the MEASUREMENT rather than of the walk: [0.0218, 0.0363]. It is narrower
+# than the walk-derived pair on the ceiling side because the walk's own
+# hydrogen sat 2.7 % above the board's; the shape (+-25 %, a scale and
+# accumulation tripwire rather than a model tolerance) is unchanged.
+_FTP_H2_BAND_5050 = (0.0218, 0.0363)
 # soc-band: a TWO-SIDED band, [0.070, 0.115] around the measured 9.159e-2
 # (-24 % / +26 %, the same shape as the 5050 band above).
 #
@@ -2806,8 +2883,15 @@ _FTP_H2_FLOOR = 5.0e-3          # the 5050 variant's own conservative floor
 #    half-width. The first bleed-era campaign that runs this leg RE-PINS it
 #    from its own h2_cum_g, and until then a reading in the lower half of the
 #    band is expected rather than a finding.
-_FTP_H2_FLOOR_SOCBAND = 0.034
-_FTP_H2_CEILING_SOCBAND = 0.051
+# 6. ⚠️ RE-PINNED ON THE BOARD (2026-09-03, campaign hil_report_20260902_220604,
+#    the first bleed-era campaign to run this leg). MEASURED h2 0.0407628763 g
+#    against the asymmetry era's 0.0423184751 (-3.68 %, which is the -2.9 %
+#    bleed prediction plus this leg's own charge schedule). The band returns to
+#    +-20 % of a MEASUREMENT, which is what item 5 above was waiting for:
+#    [0.0326, 0.0489]. The "lower half of the band is expected" caveat is
+#    RETIRED with it -- the band is centred again.
+_FTP_H2_FLOOR_SOCBAND = 0.0326
+_FTP_H2_CEILING_SOCBAND = 0.0489
 
 FAULT_EXPECTATIONS["ems-ftp75-5050"] = {
     "source": ("hil_plant_sim.py SCENARIOS['ems-ftp75-5050'] + the generated "
@@ -3775,6 +3859,12 @@ FAULT_EXPECTATIONS["ems-sdp-cross"] = {
         #    plus the decision quantum). 9000 ticks = 9.0 s = dwell + 12.5 %,
         #    so a latch that failed to release is caught at the first extra
         #    decision stage while decision-phase jitter is not.
+        #    ⚠️ THREE CAMPAIGNS, AND THE HOLD IS THE ERA-INVARIANT HALF
+        #    (2026-09-03). Measured longest hold 8.0640 s (20260902_041414),
+        #    8.0647 s (20260902_220604, bleed era) against 8.085 s (024231) —
+        #    invariant to under 0.3 %, because the 8 s dwell hysteresis sets
+        #    it and not charge economics. THE PERIOD IS NOT INVARIANT: see
+        #    `sdpx_charge_window_count` below.
         {"name": "sdpx_charge_max_hold", "switch_bit": SW_FC_CHARGE,
          "max_continuous_ticks": 9000, "t_window": (70.0, 190.0),
          "label": "... and no single charge window outlasted the 8.0 s "
@@ -3799,11 +3889,20 @@ FAULT_EXPECTATIONS["ems-sdp-cross"] = {
         #    which brackets a period anywhere in 10..20 s. This is the check
         #    that distinguishes "one long window" (1 edge) from "the limit
         #    cycle" without naming an instant.
+        #    ⚠️ "ERA-INVARIANT" IS WRONG FOR THE PERIOD (2026-09-03). Three
+        #    campaigns all measure 9 windows, but the period band is
+        #    16.10-17.12 s, not a single figure: campaign 20260902_220604
+        #    measures periods ALTERNATING 16.105 / 17.105 s where
+        #    20260902_041414 measured 16.084-16.122 s. The [6, 12] edge band
+        #    brackets both and does not move; what moves is the claim in the
+        #    prose. MEDIUM confidence on the alternation — one campaign.
         {"name": "sdpx_charge_window_count", "switch_bit": SW_FC_CHARGE,
          "edge_count_between": (6, 12), "edge": "rise",
          "t_window": (70.0, 190.0),
-         "label": "... across 6-12 distinct charge windows (measured 9, i.e. a "
-                  "16.13 s period, campaign 024231)"},
+         "label": "... across 6-12 distinct charge windows (measured 9 in "
+                  "each of three campaigns, at a period of 16.13 s in "
+                  "campaign 024231 and 16.10-17.12 s in the bleed-era "
+                  "campaign 20260902_220604)"},
         # 8. THE CHARGER ACTUALLY CHARGED. Peak-over-window, so any one window
         #    satisfies it. Each is SDP_CHG_MIN_DWELL_S = 8 s long against
         #    AG105_SETTLE_S 0.5 s + AG105_TAU_S 0.4 s, so I_charge reaches the
@@ -3888,6 +3987,22 @@ FAULT_EXPECTATIONS["ems-sdp-braking"] = {
     # IF THIS FAILS ON A fw v25 CAMPAIGN it is a guard regression and the
     # suite-wide `share_cut_load_hazard` tripwire should name it in the same
     # run. Do not relax this entry to accommodate it.
+    #
+    # ── GUARD ANCHORS AT THIS SCENARIO'S OWN OPERATING POINT ───────────────
+    # Three campaigns have now read the guard here; the bleed-era figures
+    # (campaign 20260902_220604) are the ones to compare against.
+    #   sw_ring events        19 (20260902_041414: 19)
+    #   max i_cut             0.4517172287 A (041414: 0.4517 class; every
+    #                         cut UNDER the 0.5 A load guard, so none is a
+    #                         hazard cut and none is in the load-dump class)
+    #   peak I_batt at the    0.4511 / 0.4625 / 0.4177 A
+    #   three heavy BT        (041414: 0.4687 / 0.4791 / 0.4324;
+    #   restores               20260902_011926: 0.52; PRE-GUARD fw v24
+    #                          campaign 080905: 4.64 A)
+    # At each restore `r` pins at 0.14987 = DROOP_R_MIN and the refused-cut
+    # slew carries it back over ~300 ms; V_bus dips to ~14 V and RISES.
+    # Campaign-wide in 20260902_220604: 112 sw_ring events, 0 hazard cuts,
+    # max non-teardown FC_BUS/BT_BUS `en_low` 0.3705 A (handoff-sag).
     "allow_only": 0,
     # Past the third of four braking cycles.
     "survive_to": {"t": 100.0, "states": {2, 3}},
@@ -4130,13 +4245,23 @@ _MPC_PRED_PROVISIONAL = (
     "campaign feeds `mdac_fc`/`mdac_bt` and reads the applied ratio directly "
     "in every mode")
 
-# The share ladder's structural bounds.  `mpc_ems.SHARE_BAND_DP` is (0.25,
-# 0.75) and the command is quantized ONTO that closed interval, so a sample
-# outside it is a plumbing defect (a clamp applied to the wrong quantity, a
-# ladder built from the wrong band) rather than a policy result.  The 0.01
-# margins absorb the 4-decimal CSV rendering.
-_MPC_SHARE_FLOOR = 0.24
-_MPC_SHARE_CEIL = 0.76
+# The share ladder's structural bounds, DERIVED FROM THE LADDER'S OWN BAND.
+# The command is quantized ONTO the closed interval `mpc_ems.SHARE_BAND_DP`, so
+# a sample outside it is a plumbing defect (a clamp applied to the wrong
+# quantity, a ladder built from the wrong band) rather than a policy result.
+# The 0.01 margins absorb the 4-decimal CSV rendering.
+#
+# ⚠️ IMPORTED, NEVER TYPED (campaign 20260902_220604, `signal_mpc_share_floor`).
+# The pair was hand-written as 0.24/0.76 against a (0.25, 0.75) band, and the
+# ca2d084 widening to (DROOP_R_MIN, DROOP_R_MAX) = (0.15, 0.85) left it behind:
+# `ems-ftp75c-mpc` railed at ladder rung 1 (0.1500) for the whole cycle and
+# `ems-mpc-cross` touched rung 2 (0.2375), and BOTH were failed by a bound that
+# no longer described the ladder they ran on. Deriving the pair means the next
+# widening moves it, and the CEILING arm — which at 0.76 would have failed the
+# first leg to select rung 8 or 9 — moves with it.
+_MPC_SHARE_BAND = tuple(float(_v) for _v in mpc_ems.SHARE_BAND_DP)
+_MPC_SHARE_FLOOR = round(_MPC_SHARE_BAND[0] - 0.01, 6)
+_MPC_SHARE_CEIL = round(_MPC_SHARE_BAND[1] + 0.01, 6)
 # The overcurrent budget the planner itself enforces (mpc_ems.I_FC_MAX_A =
 # 0.85 * LIMIT_I_FC_MAX 1.4 A).  Asserted as a CEILING on the FC channel rather
 # than as a longest-run bound: the suite has no numeric-threshold run kind
@@ -4175,12 +4300,20 @@ def _mpc_expectation(*, scenario, walk_h2, duration_s, survive_t,
         # 2-3. THE COMMANDED SHARE STAYED ON ITS OWN LADDER.  Two specs, floor
         #    and ceiling, because a single spec carrying both bounds silently
         #    drops one (see the min/max guard above).
+        # ⚠️ `floor_min_value`, NOT `min_value` (2026-09-03). `min_value` judges
+        #    the in-window PEAK, so the floor arm asserted "the share reached
+        #    0.24 at least once" — satisfied by any run whose maximum clears the
+        #    bound, including one that spent the rest of the window below it.
+        #    The claim is an INVARIANT ("no sample left the ladder's band
+        #    downward"), which is the in-window MINIMUM. The ceiling arm keeps
+        #    `max_value`, which is already the peak-side invariant.
         {"name": "mpc_share_floor", "column": "cmd_share_sp",
-         "min_value": _MPC_SHARE_FLOOR, "t_window": run_window,
+         "floor_min_value": _MPC_SHARE_FLOOR, "t_window": run_window,
          "provisional_note": _MPC_PROVISIONAL,
-         "label": "the commanded share reached the ladder's own interval "
-                  "[0.25, 0.75] — a sample below %.2f means the ladder was "
-                  "built from the wrong band" % _MPC_SHARE_FLOOR},
+         "label": "the commanded share never left the ladder's own interval "
+                  "[%.2f, %.2f] downward — a sample below %.2f means the "
+                  "ladder was built from the wrong band"
+                  % (_MPC_SHARE_BAND[0], _MPC_SHARE_BAND[1], _MPC_SHARE_FLOOR)},
         {"name": "mpc_share_ceiling", "column": "cmd_share_sp",
          "max_value": _MPC_SHARE_CEIL, "t_window": run_window,
          "provisional_note": _MPC_PROVISIONAL,
@@ -4362,6 +4495,15 @@ FAULT_EXPECTATIONS["ems-mpc-cross"] = _mpc_expectation(
     # which smooths the two cruise levels this stimulus exists to separate,
     # so it commands a narrower walk across the same operating region.
     # 0.05 is ~0.6x the walk and still refuses a constant command.
+    # ⚠️ RE-DERIVED FROM A POST-WIDENING WALK AND HELD AT 0.05 (2026-09-03,
+    # campaign 20260902_220604 F6). The walk at the shipped ladder commands
+    # min 0.1500 / max 0.2375, i.e. a range of EXACTLY 0.0875 = one ladder
+    # step, and the live run reproduced it (0.1500 on 99.45 % of ticks,
+    # 0.2375 on 1010 ticks - one 1.01 s excursion). 0.05 is 0.57x that.
+    # NOT RAISED: the walk's range IS one ladder step, so any floor above
+    # 0.0875 asserts a second step this stimulus does not produce, and a
+    # floor just under it would be decided by whether that single excursion
+    # happens to land inside the window.
     survive_t=180.0, run_window=(5.0, 190.0), share_range_min=0.05,
     pred_err_max=0.30, budget_hit_max_ticks=190000, charge_edges=6,
     min_rows=150000, h2_floor_informational=True,
@@ -4449,14 +4591,20 @@ _FTP75C_SURVIVE_T = 150.0
 # a sub-tick phase offset cannot decide the verdict.
 _FTP75C_W5 = (62.5, 68.0)
 _FTP75C_PROVISIONAL = (
-    "FIRST CAMPAIGN ON A ROAD-LOAD-COMPENSATED PLANT: every band here is an "
-    "offline governor-walk prediction and none has been measured. The harvest "
-    "column is LINEAR in ETA_REGEN (0.80, TODO(verify)) and roughly linear in "
-    "VESC_REGEN_I_MAX_A (1.5 A, TODO(verify)), and the walk BANKS the credit "
+    "ONE CAMPAIGN (hil_report_20260902_220604, the first on a "
+    "road-load-compensated plant). The bands were governor-walk predictions and "
+    "the campaign confirmed the SHAPE of the model: 6 REGEN windows carrying "
+    "19.21-19.25 s against a modelled 6 / 19.6 s, chopper 5.4558-5.4911 J "
+    "against a 2.5 J floor, drive-peak I_fc within +1.6 to +4.3 % of the walk "
+    "on all four legs. The harvest column is LINEAR in ETA_REGEN (0.80, "
+    "TODO(verify)) and roughly linear in VESC_REGEN_I_MAX_A (1.5 A, "
+    "TODO(verify)). ONE MODELLED FIGURE DID NOT HOLD: the walk BANKS the credit "
     "from the first tick of a window while the plant burns ~0.9 s of every "
-    "window in the chopper first (the walk's own idealized-harvest note): the "
-    "realizable fraction modelled at 70.7 %. Re-derive from the first campaign "
-    "that runs it.")
+    "window in the chopper, and the realizable fraction MEASURED 0.63 against "
+    "the modelled 70.7 % -- 0.734-0.737 C to the pack per cycle against the "
+    "walk's ~1.17 C. The cause is the WINDOW-LENGTH DISTRIBUTION (four windows "
+    "of 1.0-1.6 s against the ~0.9 s dead time), not either TODO(verify) "
+    "constant. A second campaign settles whether these are pins or a spread.")
 
 
 def _ftp75c_regen_signals():
@@ -4494,16 +4642,8 @@ def _ftp75c_regen_signals():
          "label": "the Ag105 delivered charge current inside the cycle's "
                   "first long regen window (>= 0.06 A; modelled peak 0.124 A, "
                   "so the floor carries a factor of two)"},
-        # 3. THE CHOPPER TOOK THE RESIDUAL. `total_of` and not `max_of`: the
-        #    latter bounds the largest single COALESCED episode rather than a
-        #    per-window sum, which on a nine-window cycle is the weaker of the
-        #    two statements.
-        {"total_of": "chopper_clamp", "field": "energy_j", "min_value": 2.5,
-         "provisional_note": _FTP75C_PROVISIONAL,
-         "label": "the braking chopper burned at least 2.5 J of residual "
-                  "(modelled 4.2 J in-window plus 0.5 J outside). The chopper "
-                  "is a RESIDUAL absorber, not a prior claimant, so this is "
-                  "evidence of harvest and not of loss"},
+        # 3. THE CHOPPER TOOK THE RESIDUAL — moved OUT of this list on
+        #    2026-09-03; see `_ftp75c_regen_events()` below.
         # 4. V-MOT ACTUALLY LIFTED ONTO THE CLAMP. This is what distinguishes
         #    real energy capture from a closed switch with a dark node, and it
         #    is the one check here that cannot be satisfied by bookkeeping.
@@ -4512,6 +4652,53 @@ def _ftp75c_regen_signals():
          "provisional_note": _FTP75C_PROVISIONAL,
          "label": "V-MOT lifted onto the 18.1 V chopper clamp for at least "
                   "400 ms of the first long regen window"},
+    ]
+
+
+def _ftp75c_regen_events():
+    """The chopper-energy aggregator every ftp75c leg carries.  PURE.
+
+    ⚠️ THIS LIVES IN `events_require`, NOT IN `signals_require`, AND THE
+    SEPARATION IS THE WHOLE POINT OF THE FUNCTION (campaign
+    hil_report_20260902_220604, `signal_the`).  The spec was written into
+    `_ftp75c_regen_signals()` and could not pass on any run on any board:
+    `scan_signals()` reads columns, so an aggregator with no `column` records
+    nothing and `min_value` then fails an unmeasured peak by design; with no
+    `name` key `judge_signals()` named the check from the label's first word
+    ("the"); and the `total_of`/`max_of` shape guard iterated `events_require`
+    only, so no import guard saw it.  The physics cleared the floor 2.2x on all
+    five legs (measured 5.4558-5.4911 J against the 2.5 J floor), so the FLOOR
+    IS UNCHANGED — only the list it sits in.  The import guards added in the
+    same round refuse both halves of the mistake for good.
+
+    The `regen-harvest-true` sibling carries the identical spec shape in the
+    right list; that entry is what this one should have been copied from.
+
+    ⚠️ THE MOVE COUPLES THESE LEGS TO THE HI-FI ENGINE, and the coupling is
+    stated rather than left to be discovered.  Only the hi-fi engine emits
+    `events.jsonl`, so under `--electrical-pref simple` this check has no
+    stream to aggregate.  Four of the five legs declare `electrical: any`
+    (`ems-ftp75c-dp` declares `hifi`), and the suite's default preference IS
+    `hifi`, so a normal campaign is unaffected; a deliberate simple-engine run
+    of this family will fail here.  That is the same trade `regen-harvest-true`
+    already makes and documents ("hi-fi is REQUIRED, not preferred"), and it is
+    strictly better than the alternative, which was a check that failed on
+    EVERY engine."""
+    return [
+        # `total_of` and not `max_of`: the latter bounds the largest single
+        # COALESCED episode rather than a per-window sum, which on a nine-window
+        # cycle is the weaker of the two statements.
+        {"total_of": "chopper_clamp", "field": "energy_j", "min_value": 2.5,
+         "provisional_note": _FTP75C_PROVISIONAL,
+         "label": "the braking chopper burned at least 2.5 J of residual "
+                  "(modelled 4.2 J in-window plus 0.5 J outside; MEASURED "
+                  "5.4558-5.4911 J across the five legs in campaign "
+                  "20260902_220604, of which 1.60-1.63 J fell OUTSIDE the "
+                  "windows — the bleed-era shift, 3.2x the 0.5 J model, "
+                  "because with R_NODE_BLEED_OTHER 60 kOhm the RGN node parks "
+                  "at 18.10 V between windows and the chopper trickles "
+                  "~11 mW). The chopper is a RESIDUAL absorber, not a prior "
+                  "claimant, so this is evidence of harvest and not of loss"},
     ]
 
 
@@ -4544,14 +4731,80 @@ def _ftp75c_expectation(*, scenario, ems, i_fc_peak_walk, extra=(), note=""):
         # THE FC CHANNEL STAYED INSIDE ITS BUDGET. A CEILING and not a floor:
         # on this plant the whole cycle sits at ~20 % of LIMIT_I_FC_MAX, so a
         # floor would assert a share the compensated demand cannot produce.
+        #
+        # ⚠️ SPLIT INTO TWO ARMS (2026-09-03, campaign 20260902_220604), the
+        # `socband_fc_peak_bounded` shape applied to this family for the same
+        # reason.  The single 2x-walk ceiling FAILED `-5050` (+4.58 %) and
+        # `-socband` (+2.86 %) on a correct board and a correct plant: on ALL
+        # FIVE legs the in-window `I_fc` maximum is a CHARGE-HANDOFF TRANSIENT
+        # at t ~ 171.31 s with switch 0x35 (BT_BUS LOW — the
+        # `assertFcChargeEnable()` exclusion, so the FC carries the load
+        # single-source) and the vehicle STOPPED (v 0.090 m/s, p_mot 0), i.e.
+        # aux 2.27-2.36 W plus the charger's bus draw at `I_charge` 0.38-0.40 A.
+        # It is not the drive peak and the 2x-walk ceiling never described it.
+        # Only two legs failed because their walk peaks are the lowest, which
+        # makes the old check a threshold-ordering accident rather than a test.
+        #
+        # THE WALK'S DRIVE-PEAK MODEL IS ACCURATE and the arm that tests it is
+        # unchanged: with `SW_FC_CHARGE` masked the drive peaks are 0.1844 /
+        # 0.1898 / 0.2917 / 0.2536 A at t ~ 143.7 s (v 2.87 m/s) against walk
+        # 0.1768 / 0.1856 / 0.2872 / 0.2490 (+4.3 / +2.3 / +1.6 / +1.8 %),
+        # 47-95 % under their own ceilings.
+        #
+        # ARM 1 — the DRIVE budget, charge windows masked out. The 2x-walk bound
+        # is UNCHANGED. `exclude_hold_ms` is 300 rather than the socband
+        # family's 10 because the DECAY TAIL here is long: the charger's bus
+        # draw does not stop at the instant `FC_CHARGE_ENABLE` clears.
+        # ⚠️ RATIONALE CORRECTED 2026-09-03 (review finding L4). It previously
+        # read "the handoff windows are 0.08-0.28 s long and the longest
+        # measured is 281 ms, so the hold has to cover the WHOLE transient".
+        # Both halves were wrong. The hold runs AFTER the bit clears — the bit
+        # itself is already masked, however long it stays set — and the longest
+        # measured window is `ems-ftp75c-socband`'s 460.1 ms at
+        # 163.5763-164.0364 s, not 281 ms (campaign 20260902_220604 FC_CHARGE
+        # high spans: 79.8-100.1 ms at ~67.22 s, 200.0-281.2 ms at
+        # ~171.05 s, plus that leg's two extra windows). 300 ms STANDS: it is a
+        # settling allowance on the tail, and 460 > 300 does not weaken it.
         {"name": "ftp75c_fc_bounded", "column": "I_fc", "max_value": ceil,
          "t_window": _FTP75C_RUN_W,
+         "exclude_when_switch_bit": SW_FC_CHARGE, "exclude_hold_ms": 300.0,
          "provisional_note": _FTP75C_PROVISIONAL,
-         "label": "the FC channel stayed under %.4f A - 2x this leg's own "
-                  "modelled peak of %.4f A, and %.0f %% of LIMIT_I_FC_MAX "
-                  "1.4 A. A BUDGET bound; the compensated cycle's whole peak "
-                  "source total is 0.3311 A"
+         "label": "the FC channel stayed under %.4f A OUTSIDE the charge "
+                  "windows - 2x this leg's own modelled peak of %.4f A, and "
+                  "%.0f %% of LIMIT_I_FC_MAX 1.4 A. A BUDGET bound; the "
+                  "compensated cycle's whole peak source total is 0.3311 A. "
+                  "Ticks with FC_CHARGE_ENABLE set are excluded, plus a 300 ms "
+                  "settling hold after each close (a tail allowance; the "
+                  "measured charge windows themselves are 0.08-0.46 s long "
+                  "and are masked in full), and are judged by "
+                  "`ftp75c_fc_bounded_charging` instead"
                   % (ceil, i_fc_peak_walk, 100.0 * ceil / 1.4)},
+        # ARM 2 — the CHARGE-WINDOW ceiling, whole-window and unmasked, exactly
+        # as `socband_fc_peak_charging` is: a mask keeping ONLY charge ticks
+        # would make the arm vacuous on a leg whose charge branch never opened.
+        # A FIXED 0.60 A rather than a multiple of the walk peak, because the
+        # quantity it bounds has nothing to do with the leg's commanded split -
+        # it is aux plus the charger's own referred bus draw carried
+        # single-source, and it is therefore the SAME on all five legs
+        # (measured maximum 0.3818 A across them). 0.60 A is +57 % on that
+        # measurement and 43 % under LIMIT_I_FC_MAX 1.4 A, so an FC channel
+        # running away in a handoff still fails here.
+        {"name": "ftp75c_fc_bounded_charging", "column": "I_fc",
+         "max_value": 0.60, "t_window": _FTP75C_RUN_W,
+         "provisional_note": (
+             "ONE CAMPAIGN (20260902_220604). The bound is a fixed 0.60 A "
+             "against a measured maximum of 0.3818 A over five legs, and the "
+             "quantity is aux plus the charger's referred bus draw carried "
+             "single-source after assertFcChargeEnable() drops BT - so it "
+             "moves with ETA_CHG, with the Ag105 charge ceiling and with the "
+             "bus voltage at the handoff, none of which this bound tracks. "
+             "Re-derive it if any of the three moves."),
+         "label": "the FC channel stayed under 0.60 A across the whole cycle, "
+                  "INCLUDING the charge-handoff transients that arm 1 masks "
+                  "out (measured maximum 0.3818 A over the five legs; 43 %% "
+                  "under LIMIT_I_FC_MAX 1.4 A). The transient is aux plus the "
+                  "charger's referred bus draw carried single-source, not the "
+                  "share loop"},
     ]
     sigs.extend(_ftp75c_regen_signals())
     sigs.extend(extra)
@@ -4583,6 +4836,9 @@ def _ftp75c_expectation(*, scenario, ems, i_fc_peak_walk, extra=(), note=""):
         "allow_only": 0,
         "survive_to": {"t": _FTP75C_SURVIVE_T, "states": {2}},
         "signals_require": sigs,
+        # The chopper aggregator is an EVENTS check; see
+        # `_ftp75c_regen_events()` for why it is not in `sigs`.
+        "events_require": list(_ftp75c_regen_events()),
     }
 
 
@@ -4737,6 +4993,43 @@ FAULT_EXPECTATIONS["ems-ftp75c-mpc"] = _mpc_expectation(
 # a single caller's benefit.
 FAULT_EXPECTATIONS["ems-ftp75c-mpc"]["signals_require"].extend(
     _ftp75c_regen_signals())
+# ── THE RAIL, MADE OBSERVABLE (2026-09-03, campaign 20260902_220604) ──────
+# This leg carries no `share_range_min` (see the block above: the walk
+# commands a CONSTANT 0.1500 for the whole cycle, range exactly 0.0000, and a
+# motion floor would fail a correct board on its first run). The campaign
+# then measured exactly that -- `cmd_share_sp` 0.1500 on 175 000 of 175 000
+# ticks -- and NOTHING IN THE ENTRY SAID SO, so the only check that mentioned
+# the rail was the stale floor that failed it.
+#
+# THE MARKER IS INFORMATIONAL, and deliberately: it is EVALUATED and REPORTED
+# and WARNS on a miss, but never fails the run. The entry's own note already
+# says that a moving share here IS the finding (it would mean the live
+# plant's demand is materially above the walk's), and a finding is something
+# an analyst reads, not something a correct board is failed for.
+# THE BOUND is the low rail plus HALF a ladder step (0.15 + 0.0875/2), so it
+# is missed by the first rung the planner could move to and by nothing less.
+# It evaluates to 0.1937 (L5, 2026-09-03 — an earlier note quoted 0.194); the
+# value is pinned in `test_run_hil_suite.py` so the band or the ladder cannot
+# move it silently.
+FAULT_EXPECTATIONS["ems-ftp75c-mpc"]["signals_require"].append(
+    {"name": "ftp75c_mpc_share_railed_low", "column": "cmd_share_sp",
+     "max_value": round(_MPC_SHARE_BAND[0]
+                       + 0.5 * (_MPC_SHARE_BAND[1] - _MPC_SHARE_BAND[0]) / 8.0,
+                       4),
+     "t_window": (5.0, 175.0),
+     "informational": True,
+     "provisional_note": _MPC_PROVISIONAL,
+     "label": "OBSERVABILITY MARKER, never a failure: the commanded share "
+              "stayed on the ladder's LOW RAIL for the whole cycle, which "
+              "is what the walk predicts (a constant 0.1500, range 0.0000; "
+              "campaign 20260902_220604 measured 0.1500 on 175 000 of "
+              "175 000 ticks). A WARNING here means the share MOVED, i.e. "
+              "the live plant's demand is materially above the walk's - "
+              "which is a finding to read, not a board defect"})
+# ... and the chopper aggregator, into the list it belongs in.  `_mpc_expectation()`
+# builds no `events_require`, so this leg gets one here.
+FAULT_EXPECTATIONS["ems-ftp75c-mpc"].setdefault("events_require", []).extend(
+    _ftp75c_regen_events())
 
 # ── ems-ftp75-mpc: the drive-cycle candidate, behind --with-ftp75 ───────────
 FAULT_EXPECTATIONS["ems-ftp75-mpc"] = _mpc_expectation(
@@ -5062,7 +5355,30 @@ _MPPT_THRESH_W = (EMS_MPPT_CRUISE_WINDOWS[1][0], _MPPT_ALL_CRUISE_W[1])   # 28.1
 # own pin ASSERTING the artifact at exactly 27 — so the day the mirror is
 # taught the regen exclusion, this entry fails and gets rewritten rather than
 # the change landing unobserved.
-_MPPT_THRESH_CRUISE_W = (EMS_MPPT_CRUISE_WINDOWS[1][0], 37.0)     # 28.1-37.0
+#
+# ── THE LEFT EDGE MOVED (campaign 20260902_220604, `mppt_threshold_peak_tripwire`)
+# The window used to open AT `EMS_MPPT_CRUISE_WINDOWS[1][0]` = 28.1 s, which
+# excluded the BRAKING WINDOW but not the value the mirror CARRIES OUT OF IT.
+# The HIL mirror is the INSTANTANEOUS V_chg recomputed on every settled POWERED
+# tick and FROZEN across unpowered spans (EPROM semantics: the !powered path
+# re-arms the session and deliberately KEEPS `ag105MpptRegCnt`). Between the
+# braking window closing and the cruise charger settling there is a DARK GAP:
+# REGEN closes, FC_CHARGE opens `EMS_MPPT_CRUISE_LEAD_IN_S` into the cruise
+# window, and the count cannot move until `AG105_SETTLE_S` after that plus a
+# poll. Campaign 20260902_220604 measured the frozen braking value 27 carried
+# 849 ticks into the window (REGEN closes 28.0063 s, FC_CHARGE opens 28.4268 s,
+# first mirror-live tick 28.9494 s) and the tripwire failed a correct board on a
+# value the window was written to exclude.
+#
+# The left edge is now DERIVED from that geometry — lead-in, settle, and 0.2 s
+# of poll/phase margin — so it opens after the mirror is demonstrably live. On
+# mirror-live ticks the campaign's peak is 19, so the <= 21 band survives BOTH
+# bleed eras UNCHANGED. In campaign 20260902_041414 the 2 kOhm bleed released
+# the clamp mid-window and the carried value happened to be a benign 19; the
+# leak existed there too and carried a number that did not fail.
+_MPPT_THRESH_CRUISE_W = (EMS_MPPT_CRUISE_WINDOWS[1][0]
+                         + EMS_MPPT_CRUISE_LEAD_IN_S + AG105_SETTLE_S + 0.2,
+                         37.0)                                    # 29.1-37.0
 # TRIMMED TO THE MEASURED PLATEAU (2026-09-02, campaign C item 3): the old
 # right edge 38.529 overhung the clamp by ~62 ms, which is what made a per-tick
 # floor unsatisfiable in the first place. Measured plateaus: 37.719-38.432
@@ -5070,6 +5386,15 @@ _MPPT_THRESH_CRUISE_W = (EMS_MPPT_CRUISE_WINDOWS[1][0], 37.0)     # 28.1-37.0
 # 38.44) sits inside BOTH with ~20 ms of lead-in margin and still contains
 # 690 (011926) / 683 (041414) in-window ticks against the `min_ticks` 600
 # dwell, both scored offline through scan_signals on the campaigns' own CSVs.
+#
+# BLEED-ERA ANCHORS for this scenario (campaign 20260902_220604, recorded so a
+# later reader can tell an era shift from a regression): the braking window's
+# clamp dwell is 1962 of 2100 ticks against campaign 20260902_041414's 1035 —
+# with the 30/60 kOhm bleed the residual clamp no longer releases mid-window —
+# the chopper burns 0.9132 J per window against 0.4908, and the FULL-RUN count
+# of ticks at 27 is 6635 against 2164 (the intermediate ratchet bins 21-26
+# vanish because the mirror never leaves the clamp mid-braking). The harvest
+# operating point is UNMOVED at [15, 19].
 _MPPT_THRESH_BRAKE_W = (37.75, 38.44)
 # ~12.9 s of rows at the CSV's 1 kHz rate; 9000 is 70 % of them, leaving room for
 # dropped observation frames while still FAILING LOUDLY on a run whose column is
@@ -5181,8 +5506,9 @@ FAULT_EXPECTATIONS["mppt-tracking"] = {
     # Consequence: a V_chg shift of this size moves NOTHING in this entry while
     # the floor binds. All five mppt_thresh_cnt pins are measured across two
     # charger eras and are no longer provisional on that account.
-    "provisional_note": ("mppt_threshold_moved's range bound (2) is derived "
-                         "from ONE hifi campaign (measured 4); the ratchet span "
+    "provisional_note": ("mppt_threshold_moved's range bound (1) is measured "
+                         "on three hifi campaigns (range 2 on each); the "
+                         "ratchet span "
                          "depends on how far V_chg sags under charge and the "
                          "simple engine's sag is unmeasured. Every other bound "
                          "in this entry is measured, now across BOTH charger "
@@ -5356,13 +5682,34 @@ FAULT_EXPECTATIONS["mppt-tracking"] = {
         #     PROVISIONAL: 4 is ONE campaign's measurement of a quantity that
         #     depends on how far V_chg sags under charge, which differs between
         #     the simple and hi-fi engines — and this scenario runs "any".
+        #     ⚠️ WINDOW RE-DERIVED 2026-09-03 onto `_MPPT_THRESH_CRUISE_W`,
+        #     the same mirror-live cruise window the peak tripwire now uses.
+        #     On `_MPPT_THRESH_W` (28.1-41.0) this check read a range of 12 in
+        #     BOTH 2026-09-02 campaigns — and read it for the WRONG REASON: the
+        #     span opened on the frozen braking value 27 carried out of the
+        #     preceding braking window, so 12 was the distance from that
+        #     artifact down to the harvest floor, not motion of the live
+        #     mirror. Re-pointing the window makes the check assert what its
+        #     label claims.
+        #     ⚠️ BOUND LOWERED 2 -> 1 ON MEASUREMENT (2026-09-03, review
+        #     finding M2).  The "measured 4" above was read on the OLD window;
+        #     on `_MPPT_THRESH_CRUISE_W` the range is EXACTLY 2 in all three
+        #     campaigns that carry the column (011926, 041414, 220604 — bins
+        #     15/16/17 only, the 18/19 bins falling in 28.949-29.100 s inside
+        #     the 0.2 s settle pad), so a bound of 2 passed with ZERO margin and
+        #     one fewer ratchet step would have failed a correct board.  The
+        #     check's CLAIM is "the column is LIVE", and one count of motion
+        #     establishes that; the harvest operating point is asserted by the
+        #     min/max pins below, not here.
         {"name": "mppt_threshold_moved", "column": "mppt_thresh_cnt",
-         "column_range_at_least": 2, "t_window": _MPPT_THRESH_W,
+         "column_range_at_least": 1, "t_window": _MPPT_THRESH_CRUISE_W,
          # RELABELLED 2026-09-02 (review PLANT-R1-F1), same reason as the pin
          # above: a moving count proves the column is LIVE in this run, not that
          # the threshold manager ran — under HIL_SIM it never does.
          "label": "the mirrored reg-0x02 count MOVED inside this run "
-                  "(range >= 2 counts; measured 4) — the column tracked THIS "
+                  "(range >= 1 count; measured 2 on this window in campaigns "
+                  "011926, 041414 and 220604) — the "
+                  "column tracked THIS "
                   "run's V_chg rather than carrying a predecessor's value. "
                   "Under HIL_SIM this is the MIRROR moving, not the manager"},
         # 8-9. ... and the count it reported sits inside the firmware's own clamp
@@ -6564,7 +6911,15 @@ del _n, _names, _got
 # `min_value`/`max_value` to compare it against, or the spec aggregates nothing
 # meaningful and always passes -- the same failure-shape the other guards in
 # this section exist to catch at import instead of mid-campaign.
-for _n, _e in FAULT_EXPECTATIONS.items():
+# A FUNCTION rather than an inline loop (2026-09-03, review finding M3), for the
+# reason `_assert_signal_spec_shapes()` already carries: a guard is the only
+# thing between a malformed spec and a campaign that measures nothing, so it
+# needs coverage of its own, and a test that re-implements it would drift.
+def _assert_event_spec_shapes(_n, _e):
+    """Assert the shape of every events_require aggregator in ONE entry.
+
+    Raises AssertionError naming the entry and the aggregator. Pure: reads the
+    entry and SCENARIOS, writes nothing."""
     for _s in _e.get("events_require", ()):
         if not isinstance(_s, dict):
             continue
@@ -6586,6 +6941,30 @@ for _n, _e in FAULT_EXPECTATIONS.items():
                 "FAULT_EXPECTATIONS[%r]: a `%s` spec with neither "
                 "`min_value` nor `max_value` compares nothing and always "
                 "passes." % (_n, _agg_key))
+            # ── (d) AN AGGREGATOR NEEDS THE ENGINE THAT EMITS THE EVENTS ─────
+            # (review finding M3, 2026-09-03.)  The plant's event stream is a
+            # HI-FI product: the simple engine emits none.  `_judge_event_spec`
+            # aggregates an empty stream to 0.0 rather than to "not measured",
+            # so a `min_value` floor on a scenario running the simple engine
+            # fails a correct board on a run that measured nothing at all —
+            # which is what four `ems-ftp75c-*` legs did for a whole campaign
+            # while declaring `electrical: "any"`.  A `max_value` ceiling is no
+            # better: it PASSES vacuously on the same empty stream.  The
+            # scenario must therefore pin the engine.
+            assert (SCENARIOS.get(_n) or {}).get("electrical") == "hifi", (
+                "FAULT_EXPECTATIONS[%r] carries a `%s` events aggregator but "
+                "SCENARIOS[%r]['electrical'] is %r, not 'hifi'. Plant events "
+                "are emitted by the hi-fi engine ONLY; under the simple engine "
+                "the stream is empty, an aggregate reads 0.0, and the bound "
+                "then judges a quantity the run never measured. Declare "
+                "`electrical: \"hifi\"` on the scenario, or move the claim to "
+                "a signals check that reads a column."
+                % (_n, _agg_key, _n, (SCENARIOS.get(_n) or {}).get("electrical")))
+
+
+for _n, _e in FAULT_EXPECTATIONS.items():
+    _assert_event_spec_shapes(_n, _e)
+del _n, _e
 
 # Shape of the 2026-08-31 signal kinds, asserted at import for the same reason
 # every bound here is: each of them fails SILENTLY when malformed.  A `value_mask`
@@ -6632,6 +7011,50 @@ def _assert_signal_spec_shapes(_n, _e):
     Raises AssertionError with a message naming the entry and the spec.  Pure:
     reads the entry, SCENARIOS, and module constants, and writes nothing."""
     for _i, _spec in enumerate(_e.get("signals_require") or ()):
+        # ── 2026-09-03: THE THREE GUARDS THAT WOULD HAVE CAUGHT `signal_the` ──
+        # An `events_require` aggregator was written into a `signals_require`
+        # list on five `ems-ftp75c-*` entries and shipped a whole campaign,
+        # failing every one of them on a check that could not pass on any board.
+        # Nothing refused it: the aggregator shape guard iterates
+        # `events_require` only, and the scanner's silence on a spec with no
+        # observable is indistinguishable from "the observable was never seen".
+        #
+        # (a) AN AGGREGATOR IS NEVER A SIGNAL. `total_of`/`max_of` are judged by
+        #     the events path, which iterates `events_require`; in this list they
+        #     are inert keys beside a value bound with no measurement behind it.
+        for _agg in ("total_of", "max_of"):
+            assert _agg not in _spec, (
+                "FAULT_EXPECTATIONS[%r].signals_require[%d]: `%s` is an EVENTS "
+                "aggregator and is judged only from `events_require`. In a "
+                "signals list it measures nothing and the spec fails on every "
+                "run (campaign 20260902_220604, `signal_the`). Move the spec "
+                "into this entry's `events_require`." % (_n, _i, _agg))
+        # (b) EVERY signals_require SPEC MUST NAME AN OBSERVABLE. `scan_signals()`
+        #     reads a numeric `column` (or a `sum_of`/`ratio_of` derived from
+        #     columns), a `switch_bit`/`aux_bit` of the bit words, the cadence
+        #     census (`min_rows`), or the fault word (`fault_latch_bit`). A spec
+        #     declaring none of those is measured against nothing.
+        assert (any(_k in _spec for _k in
+                    ("column", "switch_bit", "aux_bit", "min_rows",
+                     "fault_latch_bit", "sum_of", "ratio_of"))
+                or _spec.get("any_of")), (
+            "FAULT_EXPECTATIONS[%r].signals_require[%d] (%r) declares no "
+            "observable. scan_signals() measures a `column` (or a `sum_of`/"
+            "`ratio_of` derived from columns), a `switch_bit`/`aux_bit`, "
+            "`min_rows`, or a `fault_latch_bit`; a spec carrying none of those "
+            "is scanned against nothing and its value bound then fails an "
+            "UNMEASURED quantity on every run. If the spec aggregates plant "
+            "EVENTS (`total_of`/`max_of`), it belongs in `events_require`."
+            % (_n, _i, _spec.get("name") or _spec.get("label", "")[:40]))
+        # (c) A SIGNAL SPEC IS NAMED BY ITS AUTHOR, never by its prose.
+        #     judge_signals() falls back to the label's first word, which is how
+        #     five identical checks came to be reported as `signal_the` — a name
+        #     that names nothing, is not greppable, and collides across entries.
+        assert _spec.get("name"), (
+            "FAULT_EXPECTATIONS[%r].signals_require[%d]: every signals_require "
+            "spec needs an explicit `name`; the check is reported under it and "
+            "a label-derived name is neither greppable nor unique."
+            % (_n, _i))
         for _sub in [_spec] + list(_spec.get("any_of") or ()):
             _tag = _sub.get("name") or _spec.get("name") or "signal[%d]" % _i
             if "value_mask" in _sub:
@@ -11692,6 +12115,25 @@ def main(argv=None):
     return 0 if npass == len(results) and results else 1
 
 
+def _plus_tripwire(n, n_appended=1):
+    """A replay entry's substantive-check count, INCLUDING the rows this file
+    appends AFTER the replay half has finished counting.
+
+    `n_appended` is 1 for the warm-reset tripwire alone, and 2 when a
+    `child_process` failure row was appended beside it.
+
+    ⚠️ L3 (2026-09-03): the `child_process` row used to reach the DENOMINATOR
+    (`len(checks) + 1`) and never the substantive count, so every entry whose
+    child failed reported one fewer substantive check than it had rows — on the
+    one class of run where the reader most needs the census to be honest. That
+    row is substantive by every test applied to the tripwire: it is scored, it
+    can fail, and its failure is the finding.
+
+    None in, None out: an entry whose counter never ran must not acquire a
+    count here."""
+    return None if n is None else int(n) + int(n_appended)
+
+
 def _census_scalars(census):
     """The share-cut census WITHOUT its per-cut list (L4, 2026-09-02).
 
@@ -11809,6 +12251,16 @@ def _run_plan(plan, args, problems, results, write_outputs):
                                                                child["returncode"])})
             passed = ev["passed"] and child["status"] == "ok"
             npass = sum(1 for c in checks if c["passed"])
+            # ── L3 (2026-09-03): ONE substantive count, used by results.json
+            # and by key_metrics.  It counts the rows this file appends AFTER
+            # the replay half finished counting: the warm-reset tripwire
+            # always, and the `child_process` row when the child failed.  The
+            # two sites used to compute it separately and BOTH omitted the
+            # `child_process` row, which is in `len(checks)` and therefore in
+            # the denominator — so a failed child under-reported the census by
+            # one on exactly the runs a reader most needs it honest on.
+            n_subst = _plus_tripwire(ev.get("n_checks_substantive"),
+                                     1 + (0 if child["status"] == "ok" else 1))
             # L2/L3: THREE distinct reasons a replay check can carry no evidence,
             # and they mean different things to a reader. Branch on the ENTRY's own
             # `replay_commands` (the intent), not on the observed counters, so an
@@ -11842,8 +12294,25 @@ def _run_plan(plan, args, problems, results, write_outputs):
                    "events": {}, "child": child,
                    "csv": item["csv"], "events_path": None, "log_path": item["log"],
                    "n_checks_vacuous": ev.get("n_checks_vacuous"),
-                   "n_checks_substantive": ev.get("n_checks_substantive"),
+                   # ── THE CENSUS DENOMINATOR (2026-09-03, campaign
+                   # 20260902_220604 F4). `evaluate_replay_csv()` counted
+                   # substantive-vs-total over the rows IT built, and the
+                   # `warm_reset_tripwire` is appended one level up, AFTER
+                   # the counter has run -- so the replay half reported its
+                   # fractions over 111 rows while the report rendered 138.
+                   # The tripwire IS substantive (it is scored, it can fail,
+                   # and a silently-cleared latch is exactly what it catches),
+                   # so it is COUNTED here rather than excluded, and both the
+                   # totals and `key_metrics` below now describe every row.
+                   # ...and the `child_process` row, when one was appended, on
+                   # exactly the same reasoning (L3, 2026-09-03): `checks`
+                   # already carries it, so it is in the denominator either way
+                   # and must be in the numerator too.
+                   "n_checks_substantive": n_subst,
+                   "n_checks_total": len(checks) + 1,
                    "n_checks_not_exercised": ev.get("n_checks_not_exercised"),
+                   "n_checks_stimulus_vacuous":
+                       ev.get("n_checks_stimulus_vacuous"),
                    "n_checks_informational": ev.get("n_checks_informational"),
                    # The replay half's share-cut census (2026-09-02). Reported,
                    # never scored -- carried into results.json so a campaign can
@@ -11867,8 +12336,9 @@ def _run_plan(plan, args, problems, results, write_outputs):
                                   + (" (commands replayed)"
                                      if ev.get("replay_commands") else "")
                                   + ("" if not ev.get("n_checks_vacuous") else
-                                     " (%d substantive, %d not evidence — %s)"
-                                     % (ev.get("n_checks_substantive") or 0,
+                                     " (%d substantive of %d, %d not evidence — %s)"
+                                     % (n_subst,
+                                        len(checks) + 1,
                                         ev["n_checks_vacuous"], nonevidence_why))}
             # L8: evaluate_replay_csv() now returns a structured "n_obs" (None if
             # the CSV itself could not be loaded/parsed at all) instead of forcing
