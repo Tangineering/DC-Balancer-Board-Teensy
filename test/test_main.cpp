@@ -9685,6 +9685,137 @@ static void test_mppt_0xff_discriminator() {
     check(ag105MpptDefers == 0, "defer-clear: a readable in-range register clears the defer streak");
 }
 
+// ─── 3b. REGEN exclusion from the observation window (PLANT-R2-N9) ───────────
+// fcChargePathIsPowering() (.ino:11950) is FC_CHARGE_ENABLE && !REGEN_ENABLE, so raising
+// REGEN_ENABLE mid-window makes pathPowering false and the OBSERVE case (.ino:11531-11534)
+// abandons the window. This test drives that transition with a deliberately LOW V_chg sample —
+// the regen node sitting on the chopper clamp is NOT the FC bus's contribution, and folding it
+// into the windowed minimum would drive the threshold target to the floor.
+static void test_mppt_regen_excluded_from_window() {
+    test_group("Ag105 MPPT (fw v24): REGEN_ENABLE mid-window abandons OBSERVE, never poisons the minimum");
+
+    // Poison value chosen so the two outcomes are far apart and unambiguous: a window minimum of
+    // 16.0 V targets count 22, while the 11.5 V regen sample would target clamp(count(8.5)) = the
+    // floor, 15. If the regen sample leaked into the minimum the write below would land at 15.
+    const float kGoodVchg   = 16.0f;
+    const float kRegenVchg  = 11.5f;
+    check(ag105MpptClampCount(ag105MpptCountFromVolts(kRegenVchg - AG105_MPPT_MARGIN_V))
+              == (uint8_t)AG105_MPPT_N_FLOOR,
+          "(setup) the regen-window sample would target the floor (15) — distinct from 22");
+
+    reset_test_state();
+    mainState = 2;                                   // fw v24 review M7: manager runs in Run only
+    Wire.reg_file[AG105_REG_MPPT_V]   = AG105_MPPT_N_RESISTOR;   // 0xFF — genuine resistor mode
+    Wire.reg_file[AG105_REG_VIN_MEAS] = 113;                     // 113*0.141=15.933V, agrees with 16.0V
+
+    // Open the FC-charge path alone and let the window start.
+    g_pin_value[FC_CHARGE_ENABLE] = HIGH;
+    g_pin_value[REGEN_ENABLE]     = LOW;
+    V_chg = kGoodVchg;
+    g_mock_millis = 0;
+    ag105ManageMpptThreshold();                      // path-open edge; IDLE holds for the skip wait
+    check(ag105MpptState == AG105_MPPT_IDLE, "(setup) still IDLE inside the OBS_SKIP_MS settle wait");
+
+    uint32_t tObs = AG105_MPPT_OBS_SKIP_MS + 10;
+    g_mock_millis = tObs;
+    ag105ManageMpptThreshold();                      // IDLE -> OBSERVE
+    check(ag105MpptState == AG105_MPPT_OBSERVE, "(setup) window opened: OBSERVE");
+    g_mock_millis = tObs + 40;
+    ag105ManageMpptThreshold();                      // one more in-window sample at 16.0 V
+    check(ag105MpptObsSamples == 2, "(setup) two samples folded before regen is raised");
+    check(fabsf(ag105MpptVchgMin - kGoodVchg) < 1e-4f, "(setup) windowed minimum is the FC-only 16.0 V");
+
+    // ── REGEN_ENABLE goes HIGH mid-window, with a low V_chg that WOULD lower the minimum ──
+    unsigned long txBefore = Wire.transactions;
+    Wire.write_log.clear();
+    g_pin_value[REGEN_ENABLE] = HIGH;
+    V_chg = kRegenVchg;
+    g_mock_millis = tObs + 90;
+    ag105ManageMpptThreshold();
+
+    // (a) the window is abandoned per the implemented rule (.ino:11534)
+    check(ag105MpptState == AG105_MPPT_IDLE,
+          "regen mid-window: OBSERVE abandons to IDLE (fcChargePathIsPowering() false)");
+    check(ag105MpptObsSamples == 0, "regen mid-window: the sample count is zeroed");
+    // (b) the tracked minimum is NOT lowered by the regen sample, and no belief/target moved
+    check(ag105MpptVchgMin >= kGoodVchg - 1e-4f,
+          "regen mid-window: the windowed minimum is NOT lowered by the regen-node sample");
+    check(ag105MpptTargetCnt == 0, "regen mid-window: no target was evaluated");
+    check(!ag105MpptRegKnown, "regen mid-window: reg 0x02 was never read, so the belief stays unknown");
+    check(ag105MpptRegCnt == (uint8_t)AG105_MPPT_N_RESISTOR,
+          "regen mid-window: the reg-0x02 count belief is unchanged (0xFF pre-read default)");
+    // (c) no I2C traffic at all — not merely no write
+    check(Wire.write_log.empty(), "regen mid-window: zero I2C writes to reg 0x02");
+    check(Wire.transactions == txBefore, "regen mid-window: zero I2C transactions of any kind");
+    // budgets are untouched by an abandon — it is not a failure, a defer or a write
+    check(ag105MpptWrites == 0,   "regen mid-window: EPROM write budget untouched (0 writes)");
+    check(ag105MpptRatchets == 0, "regen mid-window: ratchet budget untouched (0 ratchets)");
+    check(ag105MpptDefers == 0,   "regen mid-window: defer streak untouched (0 defers)");
+    check(ag105MpptFails == 0,    "regen mid-window: fail budget untouched (0 fails)");
+
+    // While REGEN stays HIGH the manager cannot re-open a window (IDLE's !pathPowering return),
+    // however low V_chg goes.
+    for (int i = 0; i < 5; i++) {
+        g_mock_millis = tObs + 200 + (uint32_t)i * 50;
+        V_chg = 10.0f;
+        ag105ManageMpptThreshold();
+    }
+    check(ag105MpptState == AG105_MPPT_IDLE, "regen held HIGH: no window re-opens while REGEN_ENABLE is HIGH");
+    check(ag105MpptObsSamples == 0, "regen held HIGH: still zero samples");
+    check(Wire.transactions == txBefore, "regen held HIGH: still zero I2C transactions");
+
+    // ── REGEN drops; the FC path alone powers again — a clean restart, then a real write ──
+    uint32_t tRe = 5000;
+    g_pin_value[REGEN_ENABLE] = LOW;
+    V_chg = kGoodVchg;
+    g_mock_millis = tRe;
+    ag105ManageMpptThreshold();                      // fresh path-open edge re-stamps the skip wait
+    check(ag105MpptState == AG105_MPPT_IDLE, "restart: the fresh path-open edge re-arms the settle wait");
+
+    uint32_t tObs2 = tRe + AG105_MPPT_OBS_SKIP_MS + 10;
+    g_mock_millis = tObs2;
+    ag105ManageMpptThreshold();                      // IDLE -> OBSERVE (window restarted from scratch)
+    check(ag105MpptState == AG105_MPPT_OBSERVE, "restart: a new window opens once the path settles");
+    check(ag105MpptObsSamples == 1, "restart: the sample count restarts at 1");
+    check(fabsf(ag105MpptVchgMin - kGoodVchg) < 1e-4f, "restart: the minimum re-seeds from the live V_chg");
+
+    g_mock_millis = tObs2 + AG105_MPPT_OBS_MS;
+    ag105ManageMpptThreshold();                      // OBSERVE -> READ
+    ag105ManageMpptThreshold();                      // READ phase 0 (reg 0x02)
+    ag105ManageMpptThreshold();                      // READ phase 1 (reg 0x07) + EVALUATE
+    check(ag105MpptState == AG105_MPPT_WRITE, "restart: EVALUATE decides to take over from resistor mode");
+    check(ag105MpptPendingCnt == 22,
+          "restart: pending count == 22, derived from the FC-only 16.0 V minimum (not the 11.5 V regen sample)");
+    mpptFinishWrite();
+    check(ag105MpptState == AG105_MPPT_DONE, "restart: settles to DONE");
+    check(ag105MpptRegCnt == 22, "restart: the later legitimate minimum IS applied (reg 0x02 == 22)");
+    check(Wire.reg_file[AG105_REG_MPPT_V] == 22, "restart: reg 0x02 landed at 22 in the emulated EPROM");
+    check(ag105MpptWrites == 1, "restart: exactly one EPROM write spent across the whole sequence");
+    check(ag105MpptRatchets == 0, "restart: a takeover does not consume the ratchet budget");
+
+    // ── The ratchet guard's proximity dwell is broken by REGEN too (.ino:11504 'pathPowering &&') ──
+    // With a KNOWN in-band belief and a proximate V_chg the dwell accumulates; raising REGEN takes
+    // the else-branch and restarts the dwell from scratch even though V_chg is still proximate.
+    reset_test_state();
+    mainState = 2;
+    ag105MpptRegKnown = true;
+    ag105MpptRegCnt   = 26;                          // volts(26) = 13.288 V
+    Wire.reg_file[AG105_REG_MPPT_V] = 26;
+    g_pin_value[FC_CHARGE_ENABLE] = HIGH;
+    g_pin_value[REGEN_ENABLE]     = LOW;
+    V_chg = 13.7f;                                   // 0.412 V above the belief — inside GUARD_V (0.5)
+    g_mock_millis = 0;
+    ag105ManageMpptThreshold();
+    check(ag105MpptGuardSinceKnown, "ratchet guard: proximity dwell started while the FC path alone powers");
+    g_pin_value[REGEN_ENABLE] = HIGH;                // V_chg still proximate — only the path changed
+    g_mock_millis = 100;
+    ag105ManageMpptThreshold();
+    check(!ag105MpptGuardSinceKnown,
+          "ratchet guard: REGEN_ENABLE HIGH breaks proximity and restarts the dwell from scratch");
+    check(ag105MpptGuardSinceMs == 0, "ratchet guard: the dwell timestamp is cleared");
+    check(!ag105MpptGuardArmed, "ratchet guard: the guard never armed off a regen-polluted sample");
+}
+
 // ─── 4. MPPT release holdoff (chargingControl()) ─────────────────────────────
 static void test_mppt_release_holdoff() {
     test_group("Ag105 MPPT (fw v24): release holdoff (chargingControl())");
@@ -20743,6 +20874,7 @@ int main() {
     test_mppt_quantization();
     test_mppt_write_rules();
     test_mppt_0xff_discriminator();
+    test_mppt_regen_excluded_from_window();
     test_mppt_release_holdoff();
     test_mppt_uv_backoff();
     test_mppt_sentinel_fix();
