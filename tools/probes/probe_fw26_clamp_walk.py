@@ -285,6 +285,108 @@ def reconstruct_sweep(regions=None, bridge_s=None, dv0_v=DV0_MEASURED_V,
     return rows, peaks
 
 
+# -- fw26-clamp-joint (2026-09-03) --------------------------------------------
+#
+# THE JOINT TRANSIENT, as a number.  `docs/fw26_current_ceiling_governor.md`
+# section 8.6.5 designed this leg and did not ship it; the operator ruled it in
+# on 2026-09-03.  The stimulus is motor-free, so there is no drive rail and none
+# of `reconstruct_sweep()`'s modelling uncertainty: the auxiliary preload STEPS
+# from a 1.20 A two-source total to 1.65 A at the same instant a commanded share
+# step of 0.40 -> 0.84 lands.
+#
+# WHAT SETS THE PEAK, and it is NOT the ceiling.  During the transient the
+# governor's ~20 ms load EMA still reads the OLD total, so the clamp's rail
+# `SHARE_GOV_I_FC_CEIL_A / filt` is above the minority clip's rail
+# `1 - SHARE_MINORITY_I_MIN_A / filt` and the CLIP is what binds.  The two rails
+# cross exactly at filt = SHARE_GOV_I_FC_CEIL_A + SHARE_MINORITY_I_MIN_A =
+# 1.55 A, and the delivered current is largest there.  The structural bound is
+#
+#     (I_tot - SHARE_MINORITY_I_MIN_A) - SHARE_GOV_I_FC_CEIL_A = 0.10 A
+#
+# over the ceiling, i.e. 1.35 A at this total, and the acceptance bound is
+# 1.36 A.
+#
+# THE COMMANDER-CADENCE SKEW IS BOUNDED AND HARMLESS.  On the board the share
+# step arrives on the Pi's own 50 Hz packet while `apply_scenario()` steps the
+# load at 1 kHz, so the two can be up to one commander period apart in either
+# order.  The peak is set by the RAIL CROSSING, not by the order: whichever axis
+# moves first, the reference has reached 0.84 well before the filtered total
+# passes 1.55 A.  Both orders are walked below and reported.
+JOINT_PRE_TOTAL_A = 1.20
+JOINT_STEP_TOTAL_A = 1.65
+JOINT_PRE_SHARE = 0.40
+JOINT_STEP_SHARE = 0.84
+JOINT_SETTLE_S = 1.0
+
+
+def joint(dv0_v=DV0_MEASURED_V, skew_ms=0.0, pre_s=8.0, post_s=12.0,
+          rho=RHO_MEASURED, r_series=R_SERIES_OHM,
+          pre_total=JOINT_PRE_TOTAL_A, step_total=JOINT_STEP_TOTAL_A,
+          pre_share=JOINT_PRE_SHARE, step_share=JOINT_STEP_SHARE):
+    """Walk the joint transient at 1 kHz.
+
+    ``skew_ms`` > 0 delays the SHARE step behind the load step; < 0 delays the
+    LOAD step behind the share step.  0 is simultaneous.
+
+    Returns a stats dict: the whole-run and post-step peak delivered ``I_fc``,
+    the clamp duty over the settled window, the clip rail, and the instant the
+    clamp first engaged relative to the step."""
+    g = _gov(0.5, dv0_v, rho, r_series)
+    d = 0.5
+    t_step = pre_s
+    t_share = t_step + max(0.0, skew_ms) * 1e-3
+    t_load = t_step + max(0.0, -skew_ms) * 1e-3
+    n = int(round((pre_s + post_s) / DT_S))
+    i_fc_peak = 0.0
+    i_fc_peak_post = 0.0
+    clamp_first_s = None
+    clamped_post = 0
+    n_post = 0
+    s_clamped = 0
+    s_n = 0
+    s_min = float("inf")
+    s_max = 0.0
+    i_fc_last = 0.0
+    i_bt_last = 0.0
+    codes = (None, None)
+    r_last = None
+    for k in range(n):
+        t = k * DT_S
+        tot = step_total if t >= t_load - 1e-9 else pre_total
+        sp = step_share if t >= t_share - 1e-9 else pre_share
+        i_fc = d * tot
+        o = g.step(sp, i_fc, tot - i_fc, True, True, t * 1000.0)
+        d = g.delivered_share(o.r_applied, tot, o.fc_bus_req, o.bt_bus_req)
+        i_fc_last, i_bt_last = d * tot, (1.0 - d) * tot
+        i_fc_peak = max(i_fc_peak, i_fc_last)
+        codes = (o.code_fc, o.code_bt)
+        r_last = o.r_applied
+        ceil = bool(o.ceil_fc or o.ceil_bt)
+        if t >= t_step - 1e-9:
+            n_post += 1
+            i_fc_peak_post = max(i_fc_peak_post, i_fc_last)
+            clamped_post += int(ceil)
+            if ceil and clamp_first_s is None:
+                clamp_first_s = t - t_step
+        if t >= t_step + JOINT_SETTLE_S - 1e-9:
+            s_n += 1
+            s_clamped += int(ceil)
+            s_min = min(s_min, i_fc_last)
+            s_max = max(s_max, i_fc_last)
+    return {"i_fc_peak": i_fc_peak, "i_fc_peak_post": i_fc_peak_post,
+            "clamp_first_s": clamp_first_s,
+            "clamp_ticks_post": clamped_post,
+            "clamp_duty_post": clamped_post / float(n_post) if n_post else 0.0,
+            "settled_clamp_duty": s_clamped / float(s_n) if s_n else 0.0,
+            "settled_i_fc_min": (None if s_min == float("inf") else s_min),
+            "settled_i_fc_max": s_max,
+            "i_fc": i_fc_last, "i_batt": i_bt_last,
+            "balance_residual": abs(step_total - i_fc_last - i_bt_last),
+            "mdac_fc": codes[0], "mdac_bt": codes[1], "r_applied": r_last,
+            "clip_rail_a": step_total - 0.30,
+            "crossover_total_a": 1.25 + 0.30}
+
+
 def boundary_report(regions=None, bridge_s=None, dv0_v=DV0_MEASURED_V):
     """(peaks, whole-table peak) for one table - the probe's print and the
     discriminating test in `tools/test_run_hil_suite.py` read the same call."""
@@ -344,6 +446,30 @@ def main(argv=None):
     print("  whole-table peak: bridged %.4f A, unbridged %.4f A "
           "(LIMIT_I_FC_MAX 1.40 A, bridge %.2f s)"
           % (run_fix, run_raw, _sim.FW26_CLAMP_SWEEP_BRIDGE_S))
+
+    print("")
+    print("fw26-clamp-joint, dv0 %.6f V, %.2f -> %.2f A total, share %.2f -> "
+          "%.2f" % (args.dv0, JOINT_PRE_TOTAL_A, JOINT_STEP_TOTAL_A,
+                    JOINT_PRE_SHARE, JOINT_STEP_SHARE))
+    print("  skew          peak I_fc  post-step peak  clamp @ +ms  clamp "
+          "ticks  post duty  settled I_fc      I_batt   residual")
+    for label, skew in (("simultaneous", 0.0),
+                        ("share +20 ms", 20.0),
+                        ("load  +20 ms", -20.0)):
+        j = joint(args.dv0, skew_ms=skew)
+        print("  %-13s %8.4f  %14.4f  %11s  %11d  %9.4f  [%.4f, %.4f]  "
+              "%7.4f  %.1e"
+              % (label, j["i_fc_peak"], j["i_fc_peak_post"],
+                 ("n/a" if j["clamp_first_s"] is None
+                  else "%.1f" % (j["clamp_first_s"] * 1e3)),
+                 j["clamp_ticks_post"], j["clamp_duty_post"],
+                 j["settled_i_fc_min"], j["settled_i_fc_max"], j["i_batt"],
+                 j["balance_residual"]))
+    j0 = joint(args.dv0)
+    print("  clip rail %.4f A, rail crossover at filtered total %.2f A, "
+          "structural bound %.4f A over the 1.25 A ceiling"
+          % (j0["clip_rail_a"], j0["crossover_total_a"],
+             j0["clip_rail_a"] - 1.25))
     return 0
 
 

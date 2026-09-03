@@ -669,3 +669,90 @@ comparison per candidate and needs the stage's own predicted total, which
 hazard is unreachable on the current stimulus set and because a guard that
 silently removes candidates changes the frontier numbers; that is a measured
 change and belongs in its own round.
+
+### Implemented, 2026-09-03 (operator ruling)
+
+The guard the paragraph above queued is shipped. It is a
+candidate-admissibility constraint at block 0 of the enumeration, in
+`tools/mpc_ems.py`.
+
+**The constant.** `SHARE_STEP_GUARD_I_TOT_A` = 1.65 A, named once in
+`mpc_ems.py`. Two derivations bound it and the shipped value is above both.
+The first is `LIMIT_I_FC_MAX / DROOP_R_MAX` = 1.40 / 0.85 = 1.6471 A under the
+pre-2026-09-03 split law, which is the necessary condition stated earlier in
+this section. The second is the same ratio under the corrected split law (rho
+plus the 0.033 ohm series floor, `governor_split_law_20260903.md`), which is
+1.645 A. The shipped 1.65 A is the design figure of
+`fw26_current_ceiling_governor.md` section 8.6.3, so the guard engages no later
+than either derivation requires.
+
+**The definition of "rising".** Both halves of the rule are judged at the
+decision boundary, over the stages the block-0 command is held for.
+`Planner.share_step_guard_stage()` fires on the first stage `j` of block 0 for
+which the predicted two-source stage-mean total exceeds the constant AND
+exceeds the total at stage `j-1`, where stage `-1` is the total the PREVIOUS
+decision predicted for the stage that has just run. The carried value is what
+makes stage 0 testable at all, and stage 0 is precisely where a 1 Hz re-command
+lands on an acceleration. On the first decision of a run there is no carried
+total, so stage 0 is treated as not rising.
+
+**What is refused.** When the stage test fires, every block-0 candidate column
+whose share is strictly above the governor's committed ratio is removed. Block
+0 alone is scoped, because block 0 alone is committed; the later blocks are a
+receding-horizon tail that is re-planned before it is issued. The single-source
+columns are inside the guard rather than exempt from it: `SS_MODE_FC` commands
+share 1.0, the largest upward step available, and is refused by the same
+comparison, while `SS_MODE_BT` commands 0.0 and always survives. The column set
+is never emptied — if every column sits above the committed share the
+lowest-share one is kept, because an infeasible decision hands the fallback a
+command nobody chose. A consequence to record: with the committed ratio at 0.0 (a battery-only
+command from the single-source enumeration), the guard admits only the
+battery-only column while the total is rising above the threshold, so the
+restore into the band is deferred to the next decision. No registered
+stimulus reaches the threshold; `ems-mpc-single` is where this would first
+appear.
+
+**Inertness, measured.** The guard fires on zero decisions and refuses zero
+columns on all six registered MPC scenarios. Driving each strategy over its
+whole duration at 50 Hz, as shipped and again with the constant raised to
+infinity, produces byte-identical command streams:
+
+| scenario | commands | largest predicted two-source total | guard decisions |
+|:--|--:|--:|--:|
+| `ems-mpc` | 6100 | 1.4714 A | 0 |
+| `ems-mpc-det` | 6100 | 1.4714 A | 0 |
+| `ems-mpc-single` | 6100 | 1.4714 A | 0 |
+| `ems-mpc-cross` | 20000 | 0.9141 A | 0 |
+| `ems-ftp75-mpc` | 35002 | 0.9771 A | 0 |
+| `ems-ftp75c-mpc` | 18000 | 0.3311 A | 0 |
+
+Of the six rows, the `ems-mpc` stream is pinned by a committed fixture
+(`test_the_feature_off_plan_matches_the_pre_round_fixture`, sha against
+`d941170`, at a 1e5 ms budget); the other five are a one-off measurement at
+the campaign budget. Inertness is by construction rather than by timing: the
+stage test runs before the timed search, and when it does not fire the
+candidate columns are byte-identical. The sidecar's
+`share_step_guard_decisions` is the per-run witness.
+
+The largest figure, `ems-mpc`'s 1.4714 A, is 10.8 % under the guard. The 61 s
+stimulus additionally keeps its pre-round command-stream digest
+(`test_the_feature_off_plan_matches_the_pre_round_fixture`), which is pinned
+against commit `d941170`.
+
+**Observability.** `config.mpc.share_step_guard_i_tot_a` records the threshold a
+run planned under. `config.mpc.timing.share_step_guard_decisions` counts the
+decisions the rule fired on and
+`config.mpc.timing.share_step_refusals` is the refusal census keyed by
+`share_step_rising_demand`, in the single-source census's vocabulary. Both are
+refreshed by `finalize_meta()` after the run, not read from a pre-run snapshot.
+The summary line grows a fragment only when the guard fired, so a line that
+carries it is itself the finding.
+
+**Tests.** `tools/test_mpc_ems.py`: the constant against both derivations; the
+stage test on a synthetic stage rising across the guard (refused), at the same
+total falling (admitted), below the guard while rising (admitted), on the first
+decision (admitted) and outside block 0 (admitted); the column filter at block
+0 with the tail untouched; a downward step admitting the whole ladder; the
+never-emptied set; the single-source columns; the inertness gate; and a
+mutation test that lowers the constant onto the 61 s stimulus and requires both
+censuses to move.

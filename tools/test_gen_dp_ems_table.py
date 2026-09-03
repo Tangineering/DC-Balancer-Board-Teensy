@@ -713,7 +713,7 @@ def test_render_table_records_the_aux_preload_a_header_for_every_committed_table
     and must not move a data row.
     """
     import hil_plant_sim as sim
-    for name in ("ems-dp-replay", "ems-ftp75-5050", "ems-ftp75-dp"):
+    for name in ("ems-dp-replay", "ems-ftp75-dp"):
         path = gen.default_table_path(name)
         text = open(path, encoding="utf-8").read()
         header = text.split("t,power_share_setpoint,charge_goal", 1)[0]
@@ -905,7 +905,7 @@ def test_committed_tables_are_eta_era_and_record_it_in_the_header():
     sentinel in both eras and cannot separate them (hil_plant_sim.dp_eta_chg).
     This test is therefore the drift guard the fingerprint is not."""
     import hil_plant_sim as sim
-    for name in ("ems-dp-replay", "ems-ftp75-5050", "ems-ftp75-dp"):
+    for name in ("ems-dp-replay", "ems-ftp75-dp"):
         path = gen.default_table_path(name)
         if not os.path.exists(path):
             pytest.skip("committed table %s not present" % name)
@@ -1168,7 +1168,7 @@ def test_prepare_problem_carries_the_map_and_defaults_to_the_old_era():
 def test_the_committed_tables_record_their_demand_era_in_the_header():
     """A loss-map table must SAY so, and a loss-map-free one must say nothing,
     so the absence of the line is the old era's record."""
-    for scen in ("ems-dp-replay", "ems-ftp75-dp", "ems-ftp75-5050"):
+    for scen in ("ems-dp-replay", "ems-ftp75-dp"):
         path = os.path.join(HERE, "dp_tables",
                             "dp_ems_table_%s.csv" % scen)
         if not os.path.exists(path):
@@ -1587,7 +1587,7 @@ def test_the_generator_emits_the_four_new_header_lines_only_in_the_new_eras():
     del args
     # The committed OLD-ERA tables must carry none of them, which is the same
     # claim seen from the artifact side.
-    for name in ("ems-dp-replay", "ems-ftp75-dp", "ems-ftp75-5050"):
+    for name in ("ems-dp-replay", "ems-ftp75-dp"):
         path = os.path.join(HERE, "dp_tables", "dp_ems_table_%s.csv" % name)
         with open(path, encoding="utf-8") as fh:
             text = fh.read()
@@ -1728,18 +1728,13 @@ def test_the_clamp_cannot_rescue_a_single_source_charge_stage():
 # that reads the table as "the DP bound" is quietly reading a stale one -- which
 # is exactly what happened when `ems-ftp75-5050` was left behind at the old
 # 41-point [0.25, 0.75] grid through the 2026-09-02 band widening.
-_DP_TABLE_SKIP = {
-    # ORPHANED, NOT REGENERATED, and that is an OPERATOR decision (2026-09-02).
-    # This table is the only one still on the pre-widening 41-point
-    # [0.25, 0.75] grid. It is not deleted and not regenerated here: nothing in
-    # the suite binds `ems-ftp75-5050` to a DP strategy, and regenerating it
-    # would silently change a comparison surface that a campaign ledger already
-    # quotes. Skipped by NAME with this reason rather than by a wildcard, so a
-    # SECOND table falling behind fails loudly instead of joining a blanket
-    # exemption.
-    "ems-ftp75-5050": "orphaned pre-widening grid; regeneration is an operator "
-                      "decision, not a test fix",
-}
+# `dp_ems_table_ems-ftp75-5050.csv` was DELETED 2026-09-03 (operator ruling);
+# its data rows were byte-identical to `ems-ftp75-dp`'s, so the skip entry it
+# needed is gone with it. The dict is kept EMPTY on purpose: it is the place a
+# future stale table would have to declare itself, and
+# test_dp_table_skip_list_names_only_tables_that_exist_and_gives_a_reason()
+# keeps it honest.
+_DP_TABLE_SKIP = {}
 
 
 def _dp_table_headers():

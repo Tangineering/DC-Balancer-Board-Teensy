@@ -149,6 +149,9 @@ from hil_plant_sim import (                                        # noqa: E402
     # region table IS the stimulus, and the checks are generated from it.
     FW26_CLAMP_SWEEP_REGIONS, FW26_CLAMP_SWEEP_REGION_S,
     FW26_CLAMP_SWEEP_PRELOAD_A, FW26_CLAMP_SWEEP_BRIDGE_S, I_AUX_A,
+    # fw26-clamp-joint's acceptance bound, imported for the same reason:
+    # the stimulus and the check that judges it quote ONE number.
+    FW26_CLAMP_JOINT_ACCEPT_PEAK_A,
     # `v-bus-sense-offset` stimulus geometry — imported so the windows below are
     # DERIVED from the same constants the stimulus is, never re-typed. Moving an
     # excursion in the simulator moves the checks that judge it.
@@ -5023,7 +5026,14 @@ FAULT_EXPECTATIONS["ems-ftp75c-socband"] = _ftp75c_expectation(
           "leg, running PER-SCENARIO charge thresholds re-derived for the "
           "compensated demand: 0.60/1.30 A percentile-matched against the "
           "rig leg to 0.18074/0.33107 A. Walk: h2 0.006455604 g, dSoC -0.001859, "
-          "zero charge windows under the DP mask."))
+          "zero charge windows under the DP mask. "
+          "ACCEPTED CHARGE-FREE BY DESIGN (operator ruling 2026-09-03): the "
+          "two genuine charge windows this leg opens on the board (0.20 s "
+          "and 0.48 s) are shorter than the Ag105 settle and harvest "
+          "nothing, so the reference is charge-free in energy terms. That is "
+          "accepted as-is - no minimum charge dwell and no widened exit "
+          "threshold will be added, because constraining how a policy pulls "
+          "OUT of charge mode would change the reference's decision law."))
 
 FAULT_EXPECTATIONS["ems-ftp75c-sdp"] = _ftp75c_expectation(
     scenario="ems-ftp75c-sdp", ems="sdp-v4", i_fc_peak_walk=0.2872,
@@ -6871,6 +6881,363 @@ FAULT_EXPECTATIONS["fw26-clamp-sweep"] = {
     # Past the last clamped region and into the closing sub-threshold one.
     "survive_to": {"t": 74.0, "states": {2, 3}},
     "signals_require": _fw26_sweep_signals(),
+}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# fw26-clamp-joint — the JOINT transient, as a number
+#
+# THE THIRD fw v26 LEG, ruled in by the operator on 2026-09-03. It pins, at a
+# total the fault limit cannot be reached from, the coincidence that latched
+# OC_FC on `fw26-clamp-sweep` in campaign E: an upward commanded share step
+# landing in the same instant as an upward demand step. Design
+# docs/fw26_current_ceiling_governor.md section 8.6.5; stimulus derivation at
+# SCENARIOS["fw26-clamp-joint"].
+#
+# WHY THIS LEG IS SAFE WHERE THE SWEEP WAS NOT. The necessary condition for the
+# hazard is a two-source total above LIMIT_I_FC_MAX / DROOP_R_MAX = 1.647 A
+# (1.645 A under the corrected split law). This leg steps to 1.65 A, which is
+# 0.10 A above the 1.55 A reachability threshold and 0.003 A above the
+# condition. The sweep reached 2.99 A.
+#
+# WHAT SETS THE PEAK, AND IT IS NOT THE CEILING. Through the transient the
+# governor's ~20 ms load EMA still reads the OLD total, so the clamp's rail
+# SHARE_GOV_I_FC_CEIL_A / filt sits ABOVE the minority clip's rail
+# 1 - SHARE_MINORITY_I_MIN_A / filt and the CLIP binds. The two cross at
+# filt = 1.25 + 0.30 = 1.55 A, and the delivered current is largest there. The
+# structural bound is
+#
+#     (I_tot - SHARE_MINORITY_I_MIN_A) - SHARE_GOV_I_FC_CEIL_A = 0.10 A
+#
+# over the ceiling, i.e. 1.35 A; the acceptance bound is 1.36 A, 0.4 % above
+# the walk and 2.9 % under LIMIT_I_FC_MAX.
+#
+# ⚠️ EVERY BOUND BELOW IS A WALK, NOT A MEASUREMENT, through
+# tools/probes/probe_fw26_clamp_walk.joint() at the plant's measured asymmetry
+# and the CORRECTED split law (rho 0.9434, R_f 0.033 ohm):
+#
+#   pre-step, share 0.40, total 1.20 A, t = 9..15.9
+#       clamp duty 0.0000 (unclamped demand 0.48 A, 62 % under the ceiling)
+#       I_fc 0.4800 A, I_batt 0.7200 A, mdac (5736, 5067)
+#   THE JOINT STEP at t = 16.0, to share 0.84 and total 1.65 A
+#       peak delivered I_fc      1.3303 A   <- the acceptance bound judges this
+#       first clamp engagement   +29 ms
+#       I_fc into the band       +82 ms, i.e. 53 ms after engagement
+#       clamp duty, post-step    0.9976
+#   post-step settled, t = 17..26.5
+#       clamp duty 1.0000, I_fc 1.2500 A, I_batt 0.4000 A,
+#       balance residual 5.6e-17, applied ratio 0.7524, mdac (4906, 6560)
+#
+# THE CLAMP-ABSENT ARM, walked the same way with the ceilings pinned out of
+# reach - fw v25's arithmetic. It is what makes this leg a DISCRIMINATOR rather
+# than a description: the settled current is 1.3500 A (the clip rail) against
+# 1.2500 A, I_batt 0.3000 A against 0.4000 A, and mdac (4843, 7413) against
+# (4906, 6560). The settled I_fc band below refuses 1.3500 A by 0.05 A.
+#
+# THE WALK IS SPLIT-LAW INVARIANT, and that is worth recording rather than
+# assuming. Re-run with rho = 1 and R_f = 0 (the pre-2026-09-03 law) the peak is
+# 1.3303 A and the codes are (4906, 6560) to the digit: the firmware pins the
+# applied RATIO on its own rails, and the split law only re-inverts the ratio
+# that delivers it. The design record's section 8.6.5 table carries both rows.
+#
+# THE COMMANDER-CADENCE SKEW IS BOUNDED AND HARMLESS. The share step arrives on
+# the Pi's own ~50 Hz packet while apply_scenario() steps the load at 1 kHz, so
+# the two land up to one commander period apart in either order. Walked at
+# +/- 20 ms the peak is 1.3303 A (share first, or simultaneous) or 1.2931 A
+# (load first) - the order cannot make it worse than simultaneous, because the
+# peak is set by the rail crossing and the reference has reached 0.84 long
+# before the filtered total passes 1.55 A. The transient window below is 300 ms
+# wide, so it contains the peak under every skew.
+_JOINT_STEP_T = 16.0                  # SCENARIOS[...]["pi_timeline"] and the
+                                      # second aux_preload_step entry
+_JOINT_STEP_WIN_S = 0.30              # the transient window, > the 20 ms skew
+_JOINT_A0, _JOINT_A1 = 9.0, 15.9      # pre-step, inset past the load plateau
+_JOINT_B0, _JOINT_B1 = 17.0, 26.5     # post-step settled, inset past the step
+# THE CADENCE GATE AND THE TICK FLOORS ARE ONE NUMBER, the `fw26-clamp-cruise`
+# M8 rule: a lossy stream must fail HERE by name and not as a spurious "a bus
+# switch opened" or "the clamp never engaged".
+_JOINT_CADENCE_COVER = 0.98
+_JOINT_CADENCE_ROWS = int(1000.0 * (_JOINT_B1 - _JOINT_A0)
+                          * _JOINT_CADENCE_COVER)              # 17150
+_JOINT_BUS_HOLD_TICKS = int(0.98 * _JOINT_CADENCE_ROWS)        # 16807
+# 78 % of the settled window, the `fw26-clamp-sweep` duty rule: loose enough for
+# a slow engagement, unreachable by a clamp that merely chattered.
+_JOINT_SETTLED_DUTY_TICKS = int(0.78 * 1000.0 * (_JOINT_B1 - _JOINT_B0))  # 7410
+# THE ACCEPTANCE BOUND on the transient peak. Named once.
+_JOINT_ACCEPT_PEAK_A = FW26_CLAMP_JOINT_ACCEPT_PEAK_A          # 1.36
+_JOINT_PROVISIONAL = (
+    "PROVISIONAL - EVERY BOUND IN THIS ENTRY IS WALKED AND NONE HAS BEEN "
+    "SCORED ON THE BOARD. The scenario is registered as of 2026-09-03 "
+    "(operator ruling) and has never run. The walk carries no drive-loop "
+    "uncertainty - the leg is motor-free, so the two-source total is the "
+    "scripted aux load alone - and the MDAC pins are walked at the corrected "
+    "split law (fe92a50, which closed campaign F's region-12 code-mapping gap "
+    "to <= 0.05 % on every settled window); their band is wider than the "
+    "currents' only because this leg has never been executed. The first "
+    "campaign that runs this leg "
+    "re-derives all of it; read a miss against the ceiling's own "
+    "TODO(calibrate) rather than by widening a bound.")
+
+
+
+# ── fw26-clamp-joint: the settled droop-code pins ────────────────────────────
+# Walked (mdac_fc, mdac_bt) raw words over the post-step settled window, clamp
+# PRESENT, with the clamp-ABSENT pair recorded beside each as the value the pin
+# refuses. Both from probe_fw26_clamp_walk.joint() at the corrected split law.
+#
+# ⚠️ ONLY `mdac_bt` DISCRIMINATES, and the entry says so rather than implying
+# both do. Clamp-present (4906, 6560) against clamp-absent (4843, 7413): the BT
+# code moves 11.5 % and the FC code only 1.3 %, because the clamp and the clip
+# rails differ mainly in how much load they push onto the BATTERY. The FC pin is
+# therefore a MODEL-FIDELITY pin, in `fw26-clamp-sweep`'s standstill sense.
+#
+# THE BAND IS 8 %, wider than the sweep's standstill 2 %, for one stated reason:
+# the leg has never been executed. The code-mapping gap campaign F measured
+# (exact at share 0.84, +3.1 % at 0.50) was CLOSED by the corrected split law
+# (fe92a50: rho + the 0.033 ohm floor; board windows reproduced to <= 1.1e-4),
+# and this walk uses that law, so the residual model error at the settled
+# ratio 0.7524 is expected at the sweep's 2 % level. The 8 % is first-execution
+# headroom, to be tightened to the sweep's band once a campaign has scored it.
+# 8 % still refuses the clamp-absent BT code by 26.6 % of the code (band
+# (6362, 6758) against 7413; 9.7 % of the raw word), which is asserted below
+# rather than asserted by eye.
+_FW26_JOINT_MDAC_TOL = 0.08
+_FW26_JOINT_MDAC_PIN = ((4906, 6560), (4843, 7413))   # (present, absent)
+
+
+def _fw26_joint_mdac_signals():
+    """The two settled droop-code pins, generated so the band arithmetic and
+    the discrimination assertion cannot drift from the walked pair."""
+    out = []
+    present, absent = _FW26_JOINT_MDAC_PIN
+    for col, want, refuse, kind in zip(
+            ("mdac_fc", "mdac_bt"), present, absent,
+            ("MODEL FIDELITY - the clamp moves this code only 1.3 %, so it "
+             "cannot discriminate fw v25 from fw v26",
+             "THE fw v25/v26 DISCRIMINATOR in code space - the clamp-absent "
+             "value is refused by this band")):
+        lo, hi = _fw26_mdac_band(want, _FW26_JOINT_MDAC_TOL)
+        discriminates = not (lo <= refuse <= hi)
+        if col == "mdac_bt":
+            assert discriminates, (
+                "fw26-clamp-joint mdac_bt: the +/- %.0f %% band [%d, %d] "
+                "admits the CLAMP-ABSENT value %d, so this pin cannot "
+                "discriminate fw v25 from fw v26"
+                % (100.0 * _FW26_JOINT_MDAC_TOL, lo, hi, refuse))
+        out.append(
+            {"name": "joint_%s_lo" % col, "column": col,
+             "floor_min_value": lo, "t_window": (_JOINT_B0, _JOINT_B1),
+             "provisional_note": _JOINT_PROVISIONAL,
+             "label": "settled %s tracks the walk on every sample (>= %d; "
+                      "walked %d = 0x1000 | %d, +/- %.0f %% on the 12-bit "
+                      "CODE; clamp-absent %d). %s"
+                      % (col, lo, want, want & 0x0FFF,
+                         100.0 * _FW26_JOINT_MDAC_TOL, refuse, kind)})
+        out.append(
+            {"name": "joint_%s_hi" % col, "column": col,
+             "max_value": hi, "t_window": (_JOINT_B0, _JOINT_B1),
+             "provisional_note": _JOINT_PROVISIONAL,
+             "label": "settled %s tracks the walk (<= %d; clamp-absent %d)"
+                      % (col, hi, refuse)})
+    return out
+
+
+FAULT_EXPECTATIONS["fw26-clamp-joint"] = {
+    "source": ("applyShareCurrentCeilings() (.ino:10273-10313) with "
+               "SHARE_GOV_I_FC_CEIL_A 1.25 A and SHARE_GOV_CEIL_HYST_A 0.05 A "
+               "(.ino:2406/:2430) and the minority clip SHARE_MINORITY_I_MIN_A "
+               "0.30 A (.ino:2002), against LIMIT_I_FC_MAX 1.4 A (.ino:1425). "
+               "Stimulus derivation at hil_plant_sim.SCENARIOS"
+               "['fw26-clamp-joint']; bounds from "
+               "tools/probes/probe_fw26_clamp_walk.joint(), including the "
+               "clamp-absent arm the discriminating bounds refuse. Design "
+               "docs/fw26_current_ceiling_governor.md section 8.6.5."),
+    "provisional_note": _JOINT_PROVISIONAL,
+    # FAULT-FREE, and OC_FC in particular. This leg exists because the same
+    # coincidence latched OC_FC on the sweep at a 2.99 A total; at 1.65 A the
+    # clip bounds the peak 0.05 A under the limit. A latch here is not a failed
+    # check, it is a falsified bound.
+    "allow_only": 0,
+    # Past the settled window: a run that latched on the step never reached the
+    # half of the scenario that shows the clamp holding.
+    "survive_to": {"t": 26.0, "states": {2, 3}},
+    "signals_require": [
+        # 0. THE CADENCE CENSUS, so nothing below can pass on a stalled stream.
+        {"name": "joint_cadence", "min_rows": _JOINT_CADENCE_ROWS,
+         "t_window": (_JOINT_A0, _JOINT_B1),
+         "provisional_note": _JOINT_PROVISIONAL,
+         "label": "the run streamed at full cadence across both phases "
+                  "(>= %d rows in a %.1f s window = %.0f %% of the 1 kHz "
+                  "nominal)" % (_JOINT_CADENCE_ROWS, _JOINT_B1 - _JOINT_A0,
+                                100.0 * _JOINT_CADENCE_COVER)},
+        # 1-2. THE STIMULUS WAS DELIVERED, on both axes. 0.83 and 0.41 rather
+        #    than 0.84 and 0.40: the value round-trips through a float32 UDP
+        #    field.
+        {"name": "joint_share_pre", "column": "cmd_share_sp",
+         "max_value": 0.41, "t_window": (_JOINT_A0, _JOINT_A1),
+         "provisional_note": _JOINT_PROVISIONAL,
+         "label": "the pre-step share 0.40 was commanded and held (unclamped "
+                  "FC demand 0.48 A at the 1.20 A total, 62 % under the "
+                  "ceiling)"},
+        {"name": "joint_share_stepped", "column": "cmd_share_sp",
+         "min_value": 0.83, "t_window": (_JOINT_B0, _JOINT_B1),
+         "provisional_note": _JOINT_PROVISIONAL,
+         "label": "the share step to 0.84 landed (unclamped FC demand 1.386 A "
+                  "at the stepped 1.65 A total, 0.136 A over the ceiling)"},
+        # 3. THE DEMAND STEPPED TOO, which is the other half of the stimulus
+        #    and the half no share column can show. I_fc + I_batt is the
+        #    two-source total; a run whose aux load did not step is a
+        #    `fw26-clamp-cruise` at a different share, not this leg.
+        {"name": "joint_total_pre", "column": "I_batt",
+         "floor_min_value": 0.62, "t_window": (_JOINT_A0, _JOINT_A1),
+         "provisional_note": _JOINT_PROVISIONAL,
+         "label": "the pre-step battery current is the 1.20 A total's 0.60 "
+                  "share (>= 0.62 A on every sample; walk 0.7200 A) - the "
+                  "witness that the load plateau stood before the step"},
+        # 4. THE ACCEPTANCE BOUND, and the headline of the whole leg. The peak
+        #    delivered fuel-cell current across the joint step. 1.36 A is
+        #    0.4 % above the 1.3303 A walk and 2.9 % under LIMIT_I_FC_MAX.
+        {"name": "joint_transient_peak", "column": "I_fc",
+         "max_value": _JOINT_ACCEPT_PEAK_A,
+         "t_window": (_JOINT_STEP_T, _JOINT_STEP_T + _JOINT_STEP_WIN_S),
+         "provisional_note": _JOINT_PROVISIONAL,
+         "label": "THE ACCEPTANCE BOUND: the joint share-and-demand step at "
+                  "t = %.1f s did not drive I_fc above %.2f A in its first "
+                  "%.0f ms (walk 1.3303 A; the structural bound is the "
+                  "minority clip's (I_tot - 0.30) = 1.35 A, and "
+                  "LIMIT_I_FC_MAX is 1.40 A). The same coincidence at a "
+                  "2.99 A total delivered 1.4890 A and latched OC_FC on "
+                  "`fw26-clamp-sweep` in campaign E"
+                  % (_JOINT_STEP_T, _JOINT_ACCEPT_PEAK_A,
+                     1e3 * _JOINT_STEP_WIN_S)},
+        # 5. ... and it never came back up. The same bound over the whole
+        #    post-step span, which a late excursion would fail and check 4
+        #    could not see.
+        {"name": "joint_peak_held_down", "column": "I_fc",
+         "max_value": _JOINT_ACCEPT_PEAK_A,
+         "t_window": (_JOINT_STEP_T, _JOINT_B1),
+         "provisional_note": _JOINT_PROVISIONAL,
+         "label": "I_fc stayed under %.2f A for the whole post-step span, not "
+                  "only across the transient" % _JOINT_ACCEPT_PEAK_A},
+        # 6. THE CLAMP ENGAGED INSIDE THE TRANSIENT. The walk engages at
+        #    +29 ms of the 300 ms window, i.e. 271 ticks; 150 is a floor with
+        #    an 81 % margin that a run engaging as late as +150 ms still meets.
+        {"name": "joint_clamp_engaged", "aux_bit": "fc_ceiling_active",
+         "min_ticks": 150,
+         "t_window": (_JOINT_STEP_T, _JOINT_STEP_T + _JOINT_STEP_WIN_S),
+         "provisional_note": _JOINT_PROVISIONAL,
+         "label": "the FC ceiling BOUND inside the transient window (>= 150 "
+                  "of %.0f ticks; walk: first engagement +29 ms, duty 0.9976 "
+                  "post-step)" % (1e3 * _JOINT_STEP_WIN_S)},
+        # 7. AND SETTLED, measured from the aux bit's own rising edge so the
+        #    figure is the clamp's and not the Pi command cadence's.
+        {"name": "joint_clamp_settling", "column": "I_fc",
+         "min_value": 1.2450, "aux_bit": "fc_ceiling_active",
+         "reach_within_ms": 120.0,
+         "t_window": (_JOINT_STEP_T, _JOINT_STEP_T + 0.6),
+         "provisional_note": _JOINT_PROVISIONAL,
+         "label": "I_fc reached the ceiling band within 120 ms of the clamp "
+                  "ENGAGING (walk 53 ms). Longer than "
+                  "`fw26-clamp-cruise`'s 60 ms on purpose: there the total was "
+                  "SETTLED at the step, here the load EMA has 0.45 A to walk "
+                  "through first, and that lag IS the hazard"},
+        # 8. THE CLAMP HELD through the settled window.
+        {"name": "joint_clamp_duty", "aux_bit": "fc_ceiling_active",
+         "min_ticks": _JOINT_SETTLED_DUTY_TICKS,
+         "t_window": (_JOINT_B0, _JOINT_B1),
+         "provisional_note": _JOINT_PROVISIONAL,
+         "label": "the FC ceiling was BINDING for >= %d of the settled "
+                  "window's %.0f ticks (walk: 1.0000 duty)"
+                  % (_JOINT_SETTLED_DUTY_TICKS,
+                     1000.0 * (_JOINT_B1 - _JOINT_B0))},
+        # 9. THE PRE-STEP NEGATIVE CONTROL, same run and same governor. At
+        #    share 0.40 on a 1.20 A total the demand is 0.48 A, 0.77 A under
+        #    the ceiling, so the flag must be down for the WHOLE window.
+        {"name": "joint_clamp_inert_pre", "aux_bit": "fc_ceiling_active",
+         "max_ticks": 0, "t_window": (_JOINT_A0, _JOINT_A1),
+         "provisional_note": _JOINT_PROVISIONAL,
+         "vacuity_note": ("the aux column cannot be blank across this window: "
+                          "`joint_clamp_duty` asserts >= %d ticks with the "
+                          "same bit SET later in the same run, which is only "
+                          "reachable if the byte streamed and parsed. A zero "
+                          "count here is a read of the bit, not an absent "
+                          "column." % _JOINT_SETTLED_DUTY_TICKS),
+         "label": "the FC ceiling did NOT bind before the step (0 ticks; "
+                  "below the ceiling fw v26 is fw v25)"},
+        # 10-11. THE SETTLED CURRENT, two-sided - AND THE DISCRIMINATOR. The
+        #    clamp-absent walk settles at 1.3500 A, which the upper bound
+        #    refuses by 0.05 A. `floor_min_value` on the lower bound because
+        #    the claim is that the current was HELD at the ceiling throughout,
+        #    which is the in-window MINIMUM (`min_value` tests the maximum and
+        #    passes on one tick - the H2 lesson).
+        {"name": "joint_fc_at_the_ceiling", "column": "I_fc",
+         "floor_min_value": 1.20, "t_window": (_JOINT_B0, _JOINT_B1),
+         "provisional_note": _JOINT_PROVISIONAL,
+         "label": "I_fc never fell below the ceiling band after the step "
+                  "(>= 1.20 A = SHARE_GOV_I_FC_CEIL_A - SHARE_GOV_CEIL_HYST_A, "
+                  "on every sample; walk 1.2500 A)"},
+        {"name": "joint_fc_under_the_band", "column": "I_fc",
+         "max_value": 1.30, "t_window": (_JOINT_B0, _JOINT_B1),
+         "provisional_note": _JOINT_PROVISIONAL,
+         "label": "and I_fc settled INSIDE the band (<= 1.30 A; walk "
+                  "1.2500 A). THE fw v25/v26 DISCRIMINATOR: without the clamp "
+                  "the minority clip alone settles this stimulus at 1.3500 A, "
+                  "which this bound refuses by 0.05 A"},
+        # 12-13. THE BALANCE CLOSED ONTO THE BATTERY. Motor-free with a
+        #    constant post-step total, so this is a two-sided bound on I_batt
+        #    around 1.65 - 1.25 = 0.40 A. It confirms the amps the ceiling
+        #    refused the fuel cell WENT somewhere. The clamp-absent value is
+        #    0.3000 A and the lower bound refuses it.
+        {"name": "joint_batt_took_the_rest", "column": "I_batt",
+         "floor_min_value": 0.34, "t_window": (_JOINT_B0, _JOINT_B1),
+         "provisional_note": _JOINT_PROVISIONAL,
+         "label": "the battery carried the amps the ceiling refused the fuel "
+                  "cell on every sample (>= 0.34 A; walk 0.4000 A, "
+                  "clamp-absent 0.3000 A)"},
+        {"name": "joint_batt_bounded", "column": "I_batt",
+         "max_value": 0.46, "t_window": (_JOINT_B0, _JOINT_B1),
+         "provisional_note": _JOINT_PROVISIONAL,
+         "label": "and no more than that (<= 0.46 A) - the pair is "
+                  "|I_tot - I_fc - I_batt| <= 0.06 A at a 1.65 A total"},
+        # 14. THE BATTERY CEILING IS NOT EXERCISED and must not fire: it would
+        #    need 2.70 A on one channel against a 1.65 A bus.
+        {"name": "joint_bt_ceiling_never", "aux_bit": "bt_ceiling_active",
+         "max_ticks": 0, "t_window": (_JOINT_A0, _JOINT_B1),
+         "provisional_note": _JOINT_PROVISIONAL,
+         "vacuity_note": ("`joint_clamp_duty` asserts >= %d ticks with the FC "
+                          "bit SET in the same column, so a zero count here "
+                          "reads the BT bit rather than an absent column."
+                          % _JOINT_SETTLED_DUTY_TICKS),
+         "label": "the BT ceiling never bound (it would need 2.70 A on one "
+                  "channel against a 1.65 A bus)"},
+        # 15-17. THE CLAMP NEVER OPENED A BUS SWITCH. A reference outside the
+        #    droop band IS the channel-cutoff signal, so the band constraint at
+        #    the tail of applyShareCurrentCeilings() is structural rather than
+        #    arithmetical, and this is what asserts it on the board. The tick
+        #    floors are derived from the cadence gate (the M8 rule), and the
+        #    edge count closes the cut-then-restore case the floors cannot see.
+        {"name": "joint_fc_bus_held", "switch_bit": SW_FC_BUS,
+         "min_ticks": _JOINT_BUS_HOLD_TICKS,
+         "t_window": (_JOINT_A0, _JOINT_B1),
+         "provisional_note": _JOINT_PROVISIONAL,
+         "label": "FC_BUS_ENABLE stayed high across both phases (>= %d ticks "
+                  "= 98 %% of the rows `joint_cadence` guarantees) - a current "
+                  "ceiling must never open a bus switch"
+                  % _JOINT_BUS_HOLD_TICKS},
+        {"name": "joint_bt_bus_held", "switch_bit": SW_BT_BUS,
+         "min_ticks": _JOINT_BUS_HOLD_TICKS,
+         "t_window": (_JOINT_A0, _JOINT_B1),
+         "provisional_note": _JOINT_PROVISIONAL,
+         "label": "BT_BUS_ENABLE stayed high across both phases (>= %d ticks) "
+                  "- the split is genuinely two-source, which is what makes "
+                  "the clamp reachable at all" % _JOINT_BUS_HOLD_TICKS},
+        {"name": "joint_no_switch_ring", "switch_bit": SW_FC_BUS,
+         "edge_count_between": (0, 0), "edge": "rise",
+         "t_window": (_JOINT_A0, _JOINT_B1),
+         "provisional_note": _JOINT_PROVISIONAL,
+         "label": "no FC_BUS rising edge in either phase - no cut, and "
+                  "therefore no sw_ring"},
+    ] + _fw26_joint_mdac_signals(),
 }
 
 

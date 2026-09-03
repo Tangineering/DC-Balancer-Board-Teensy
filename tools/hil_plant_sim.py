@@ -9436,14 +9436,8 @@ SCENARIOS["ems-ftp75-sdp"] = {
 # "hifi", for `ems-dp-replay`'s reason exactly: the shipped table is solved
 # --charger-accounting physical and bind_scenario() refuses the mismatch.
 #
-# ⚠️ `tools/dp_tables/dp_ems_table_ems-ftp75-5050.csv` IS NOW ORPHANED and can
-# never load: its `profile_fingerprint` is keyed to the scenario name
-# `ems-ftp75-5050`, which is not a dp-replay scenario, and it was computed
-# under the pre-WP-E key tuple that did not cover `aux_preload_a`. Nothing is
-# lost by deleting it — the new table's DATA ROWS were verified BYTE-IDENTICAL
-# to it (3501 rows, independently re-solved 2026-09-01), so it is the same
-# solution under a covered fingerprint. It is left in place rather than
-# deleted here because removing a committed artifact is an operator decision.
+# `tools/dp_tables/dp_ems_table_ems-ftp75-5050.csv` was deleted 2026-09-03
+# (operator ruling); its rows were identical to `ems-ftp75-dp`'s.
 SCENARIOS["ems-ftp75-dp"] = {
     "description": ("%.0f s EPA FTP-75 study segment (the SAME profile object "
                     "and the SAME %.2f A preload as `ems-ftp75-5050` and "
@@ -9568,6 +9562,16 @@ FTP75C_REGEN_WINDOWS = derive_regen_windows(FTP75C_PROFILE,
 # Scenario-scoped: the 61 s and `ftp75` legs read the module constants and are
 # untouched.  Literals rather than a computed expression because deriving them
 # needs numpy and a full demand build, which this module must not do at import.
+#
+# ACCEPTED CHARGE-FREE BY DESIGN (operator ruling 2026-09-03).  On the board
+# this pair opens charge windows, but only two are genuine and they are 0.20 s
+# and 0.48 s long - both shorter than the Ag105 settle, so the reference leg
+# harvests nothing.  That is ACCEPTED.  Do NOT add a minimum charge dwell and
+# do NOT widen the exit threshold to hold a window open: constraining how a
+# policy pulls OUT of charge mode would change the reference's decision law,
+# and the frontier's REFERENCE must be the policy as shipped.  What the
+# thresholds still have to guarantee is that the mechanism is EXERCISED
+# (`ftp75c_socband_charged_at_all`), not that it harvests.
 FTP75C_SOCBAND_CHARGE_ENTER_A = 0.18074
 FTP75C_SOCBAND_CHARGE_EXIT_A = 0.33107
 
@@ -10662,6 +10666,109 @@ SCENARIOS["fw26-clamp-sweep"] = {
         + [(80.0, {"v_setpoint": 0.0, "mode_cmd": MODE_SAFE})]),
 }
 
+# ── fw26-clamp-joint: the JOINT transient, as a number ──────────────────────
+#
+# THE THIRD fw v26 LEG.  `docs/fw26_current_ceiling_governor.md` section 8.6.5
+# designed it and did not ship it; the operator ruled it in on 2026-09-03.  It
+# pins, at a total the fault limit cannot be reached from, the transient that
+# latched `FAULT_OC_FC` on `fw26-clamp-sweep` in campaign E: an upward commanded
+# share step landing in the same instant as an upward demand step.
+#
+# WHY THIS IS SAFE WHERE THE SWEEP WAS NOT.  The necessary condition for the
+# hazard is a two-source total above `LIMIT_I_FC_MAX / DROOP_R_MAX` = 1.647 A
+# (1.645 A under the corrected split law).  This leg steps to 1.65 A, which is
+# 0.10 A above the 1.55 A REACHABILITY threshold and 0.002 A above the necessary
+# condition - so the clamp is unambiguously exercised while the peak stays
+# bounded well under the limit.  The sweep reached 2.99 A.
+#
+# WHY MOTOR-FREE.  `v_setpoint` is held at 0.0 for the whole run, so the motor is
+# in reset by V_SP_ZERO_THRESH and EVERY amp on the bus is the scripted aux load.
+# There is no drive rail, so this leg carries NONE of the modelling uncertainty
+# `probe_fw26_clamp_walk.reconstruct_sweep()`'s rail model absorbs - which is
+# exactly what lets its acceptance bound be a number rather than a band.
+#
+# WHAT SETS THE PEAK, AND IT IS NOT THE CEILING.  During the transient the
+# governor's ~20 ms load EMA still reads the OLD total, so the clamp's rail
+# `SHARE_GOV_I_FC_CEIL_A / filt` sits ABOVE the minority clip's rail
+# `1 - SHARE_MINORITY_I_MIN_A / filt` and the CLIP is what binds.  The two cross
+# at filt = 1.25 + 0.30 = 1.55 A, and the delivered current is largest there.
+# The structural bound is
+#
+#     (I_tot - SHARE_MINORITY_I_MIN_A) - SHARE_GOV_I_FC_CEIL_A = 0.10 A
+#
+# over the ceiling, i.e. 1.35 A.  The acceptance bound is 1.36 A, 0.4 % above
+# the walk and 2.9 % under LIMIT_I_FC_MAX.
+#
+# THE WALK, RE-RUN UNDER THE CORRECTED SPLIT LAW (2026-09-03, rho 0.9434 and the
+# 0.033 ohm series floor).  Peak delivered I_fc 1.3303 A, first clamp engagement
+# 29 ms after the step, clamp duty 0.9976 of the post-step window, settled I_fc
+# 1.2500 A / I_batt 0.4000 A with a balance residual of 5.6e-17, MDAC codes
+# (4906, 6560).  The peak is IDENTICAL to the pre-correction walk's 1.3303 A to
+# six digits, and so are the codes: the firmware pins the applied RATIO on its
+# own rails, and the split law only re-inverts the ratio that delivers it.  The
+# design record's section 8.6.5 table carries both readings.
+#
+# THE COMMANDER-CADENCE SKEW IS BOUNDED AND HARMLESS.  The share step arrives on
+# the Pi's own ~50 Hz packet while apply_scenario() steps the load at 1 kHz, so
+# the two land up to one commander period apart in either order.  Walked at
+# +/- 20 ms of skew the peak is 1.3303 A (share first, or simultaneous) or
+# 1.2931 A (load first): the order cannot make it worse than the simultaneous
+# case, because the peak is set by the rail crossing and the reference has
+# reached 0.84 long before the filtered total passes 1.55 A.
+FW26_CLAMP_JOINT_PRELOAD_A = 1.05        # + I_AUX_A 0.15 -> 1.20 A total
+FW26_CLAMP_JOINT_STEP_PRELOAD_A = 1.50   # + I_AUX_A 0.15 -> 1.65 A total
+FW26_CLAMP_JOINT_STEP_S = 16.0           # both axes move here
+FW26_CLAMP_JOINT_PRE_SHARE = 0.40
+FW26_CLAMP_JOINT_STEP_SHARE = 0.84
+# The walked peak and the acceptance bound, named here so the scenario, the
+# expectation and the probe quote ONE number each.
+FW26_CLAMP_JOINT_WALK_PEAK_A = 1.3303
+FW26_CLAMP_JOINT_ACCEPT_PEAK_A = 1.36
+
+SCENARIOS["fw26-clamp-joint"] = {
+    "description": ("30 s motor-free JOINT-TRANSIENT leg: the auxiliary "
+                    "preload steps the two-source total from 1.20 A to 1.65 A "
+                    "at the same instant a commanded share step of 0.40 -> "
+                    "0.84 lands, which is the coincidence that latched OC_FC "
+                    "on `fw26-clamp-sweep` in campaign E. 1.65 A is 0.10 A "
+                    "above the clamp's reachability threshold and just above "
+                    "the 1.647 A necessary condition for the hazard, so the "
+                    "clamp is exercised while the peak stays bounded: the "
+                    "minority clip, not the ceiling, sets it at 1.3303 A "
+                    "walked against a 1.36 A acceptance bound and "
+                    "LIMIT_I_FC_MAX 1.40 A."),
+    # "any", for `fw26-clamp-cruise`'s reason exactly: the clamp is firmware
+    # arithmetic on a filtered total and the split is the droop network's.
+    "electrical": "any",
+    "duration_s": 30.0,
+    # THE STEPPED PRELOAD.  The first entry RAMPS in over SOC_LOAD_RAMP_S from
+    # t = 4.0 (so the plateau stands from t = 7.0, nine seconds before the
+    # step); the second is a TRUE STEP, which is the whole stimulus.  See
+    # scenario_aux_preload_a().
+    # 4.0 is AUX_PRELOAD_START_S, spelled as a literal because that constant
+    # is defined BELOW the registry; the assertion block after
+    # scenario_aux_preload_a() pins the two together.
+    "aux_preload_step": [(4.0, FW26_CLAMP_JOINT_PRELOAD_A),
+                         (FW26_CLAMP_JOINT_STEP_S,
+                          FW26_CLAMP_JOINT_STEP_PRELOAD_A)],
+    "pi_timeline": [
+        (0.5, {"mode_cmd": MODE_SAFE}),
+        (3.0, {"mode_cmd": MODE_HYBRID}),
+        # Standstill for the whole run. The pre-step share is commanded from
+        # t = 5.0, so the governor enters the step CONVERGED at 0.40 - the
+        # `fw26-clamp-cruise` pre-phase lesson, which is what keeps the walk's
+        # transient the scenario's and not the constructor seed's.
+        (5.0, {"v_setpoint": 0.0,
+               "power_share_setpoint": FW26_CLAMP_JOINT_PRE_SHARE}),
+        # THE JOINT STEP. The same commander path `fw26-clamp-cruise` uses;
+        # the load steps at the same instant through `aux_preload_step`.
+        (FW26_CLAMP_JOINT_STEP_S,
+         {"power_share_setpoint": FW26_CLAMP_JOINT_STEP_SHARE}),
+        # Close the run out Run -> Finish -> Idle, leaving 3 s.
+        (27.0, {"mode_cmd": MODE_SAFE}),
+    ],
+}
+
 # ── pi-silence: the firmware's Pi watchdog, isolated from the HIL link ───────
 #
 # A VERIFIED COVERAGE GAP, closed.  checkPiWatchdog() (.ino:4976-4985, called
@@ -10937,6 +11044,18 @@ for _n, _m in SCENARIOS.items():
         "%r to a bespoke branch that never reads it — the load would be "
         "silently absent from the run. Fold the preload into that branch, or "
         "remove the bespoke branch." % (_n, _n))
+    # `aux_preload_step` (2026-09-03) reaches the run through the SAME generic
+    # branch, so it inherits both obligations: it cannot sit on a bespoke
+    # scenario, and it cannot coexist with `aux_preload_a` — the resolver reads
+    # the step list FIRST, so a scenario declaring both would silently run only
+    # one of them.
+    assert not (_m.get("aux_preload_step") and _n in _AUX_PRELOAD_BESPOKE), (
+        "SCENARIOS[%r] declares aux_preload_step, but apply_scenario() "
+        "dispatches %r to a bespoke branch that never reads it." % (_n, _n))
+    assert not (_m.get("aux_preload_step") and _m.get("aux_preload_a")), (
+        "SCENARIOS[%r] declares BOTH aux_preload_a and aux_preload_step. "
+        "scenario_aux_preload_a() reads the step list first, so the ramped "
+        "value would be silently discarded." % _n)
 del _n, _m
 
 # `soc-depletion`: seconds over which the SOC_ENDURANCE_LOAD_A bus-side endurance
@@ -11232,20 +11351,109 @@ STAIRCASE_LOAD_B = 0.40
 STAIRCASE_DROP_S = 29.0
 
 
+# ── `aux_preload_step`: a STEPPED auxiliary preload (2026-09-03) ────────────
+#
+# WHY THE GENERIC KEY CANNOT EXPRESS IT.  `aux_preload_a` ramps ONE load in over
+# SOC_LOAD_RAMP_S and holds it forever.  `fw26-clamp-joint` needs the load to
+# STEP mid-run, at the same instant as a commanded share step, because the
+# simultaneity IS the stimulus: the hazard campaign E found is a share step and
+# a demand step landing in one decision (docs/fw26_current_ceiling_governor.md
+# section 8.6).  A ramped demand cannot produce it.
+#
+# THE SHAPE.  `aux_preload_step` is a list of `(t_s, amps)` pairs in
+# non-decreasing time.  The preload is the `amps` of the last pair whose `t_s`
+# has passed, and 0.0 before the first.  The FIRST pair is RAMPED in over
+# SOC_LOAD_RAMP_S from its own `t_s`, exactly as `aux_preload_a` is and for the
+# same reason: bring-up P0 pre-charges the bus through the source switches'
+# body-diode path and extra load inside that window risks failing the P0
+# voltage gate for reasons unrelated to the scenario under test.  EVERY LATER
+# PAIR IS A TRUE STEP.
+#
+# ⚠️ THE soc-depletion LESSON IS KNOWINGLY SET ASIDE FOR THE LATER PAIRS, and
+# only for them.  A stepped multi-amp bus load splits 50/50 for the one tick
+# before the droop reapportions it, which is how campaign 20260830_214819
+# latched OC_FC on a single sample.  A scenario declaring this key is asserting
+# that the step is the measurement.  It is the SCENARIO's obligation to keep the
+# stepped total inside the fault limits at every share the timeline commands -
+# `fw26-clamp-joint` does so by construction, and its walk is the evidence.
+#
+# ERA-SAFE.  A scenario that declares no `aux_preload_step` reaches none of this
+# code, so every pre-2026-09-03 trace is byte-identical.
 def scenario_aux_preload_a(scenario, t):
-    """The scenario's declared `aux_preload_a`, ramped in, at time t [A].
+    """The scenario's declared auxiliary preload at time t [A].
 
     0.0 for a scenario that declares none — which is EVERY scenario that
     predates this key, so the existing hardcoded branches in apply_scenario()
     are untouched and their traces are byte-identical.
 
+    Handles both `aux_preload_a` (one ramped load, held) and
+    `aux_preload_step` (a ramped first load then true steps); the two are
+    mutually exclusive and the registry check below refuses a scenario that
+    declares both.
+
     Read by apply_scenario() and, so the offline DP solves against the same
     demand the run will see, by gen_dp_ems_table.scenario_drain_a()."""
-    preload = (SCENARIOS.get(scenario) or {}).get("aux_preload_a")
+    meta = SCENARIOS.get(scenario) or {}
+    steps = meta.get("aux_preload_step")
+    if steps:
+        t0, a0 = steps[0]
+        if t < t0:
+            return 0.0
+        # The INDEX of the last pair whose time has passed, not its value: a
+        # later pair may legitimately repeat the first pair's amps, and
+        # comparing values would re-ramp it.
+        idx = 0
+        for k in range(1, len(steps)):
+            if t >= steps[k][0]:
+                idx = k
+            else:
+                break
+        if idx == 0:
+            ramp = (t - t0) / SOC_LOAD_RAMP_S
+            return float(a0) * max(0.0, min(1.0, ramp))
+        return float(steps[idx][1])
+    preload = meta.get("aux_preload_a")
     if not preload:
         return 0.0
     ramp = (t - AUX_PRELOAD_START_S) / SOC_LOAD_RAMP_S
     return float(preload) * max(0.0, min(1.0, ramp))
+
+
+# THE SHAPE CHECKS for `aux_preload_step`, HERE rather than beside the
+# `aux_preload_a` bespoke-branch assertion, for one reason: they need
+# AUX_PRELOAD_START_S and SOC_LOAD_RAMP_S, and both are defined below the
+# registry. Checked at import, so a malformed list fails by name at startup
+# instead of producing a stimulus nobody can read off the trace.
+def validate_aux_preload_step(name, steps, also_ramped=None):
+    """Raise AssertionError unless `steps` is a well-formed step list.
+
+    A FUNCTION rather than an inline loop so the tests can drive every arm
+    without reloading this module - reloading it mid-session rebinds SCENARIOS
+    underneath every other module that already imported it."""
+    assert len(steps) >= 2, (
+        "SCENARIOS[%r]'s aux_preload_step has one entry, which is what "
+        "aux_preload_a already expresses." % name)
+    assert all(steps[i][0] < steps[i + 1][0] for i in range(len(steps) - 1)), (
+        "SCENARIOS[%r]'s aux_preload_step times must strictly increase" % name)
+    assert steps[0][0] >= AUX_PRELOAD_START_S, (
+        "SCENARIOS[%r]'s aux_preload_step starts at %.3f s, inside the "
+        "bring-up window AUX_PRELOAD_START_S = %.1f s guards."
+        % (name, steps[0][0], AUX_PRELOAD_START_S))
+    assert steps[1][0] >= steps[0][0] + SOC_LOAD_RAMP_S, (
+        "SCENARIOS[%r]'s first aux_preload_step ramp (%.1f s) has not finished "
+        "when the second entry steps at %.3f s, so the run's pre-step plateau "
+        "never stands." % (name, SOC_LOAD_RAMP_S, steps[1][0]))
+    assert not also_ramped, (
+        "SCENARIOS[%r] declares BOTH aux_preload_a and aux_preload_step. "
+        "scenario_aux_preload_a() reads the step list first, so the ramped "
+        "value would be silently discarded." % name)
+
+
+for _sn, _sm in SCENARIOS.items():
+    if _sm.get("aux_preload_step"):
+        validate_aux_preload_step(_sn, _sm["aux_preload_step"],
+                                  also_ramped=_sm.get("aux_preload_a"))
+del _sn, _sm
 
 
 def apply_scenario(plant, scenario, t):

@@ -3139,7 +3139,11 @@ def test_the_admission_roll_grid_maximum_and_its_margin():
 
 def test_the_census_reports_the_columns_the_search_walked():
     """LOW-3.  `Decision.ss_offered` was written and never read; it is now the
-    census's `ss_searched`, which is the invariant that says an ADMITTED mode
+    census's `ss_searched`, which says an ADMITTED mode reached the planner.
+    Since the share-step guard the two may legitimately differ when the guard
+    removes an admitted `SS_MODE_FC` column (`share_step_refusals` > 0); on
+    this stimulus the guard never fires, so equality still holds and this
+    test asserts it together with that precondition. It
     actually reached the planner's block-0 column set."""
     s = _bound(loss_map=sim.plant_loss_map(), single_source=True,
                budget_ms=1e5, roll_budget_ms=1e5)
@@ -3152,6 +3156,7 @@ def test_the_census_reports_the_columns_the_search_walked():
               "V_bus": prev.v_bus[k], "I_charge": 0.0, "v_profile": 1.5})
         t += 0.02
     tm = s.timing()
+    assert tm.get("share_step_guard_decisions", 0) == 0
     assert tm["ss_searched"] == tm["ss_admissible"] > 0
     # OFF: the key is present and zero, so a sidecar never has to guess.
     off = _bound(loss_map=sim.plant_loss_map())
@@ -3261,3 +3266,194 @@ def test_the_probe_and_this_module_agree_on_the_split_constants():
         sim.ASYM_DROOP_SCALE_FC / sim.ASYM_DROOP_SCALE_BT, abs=1e-12)
     assert _PLANT_R_SERIES == pytest.approx(sim.DROOP_FIXED_SERIES_OHM,
                                             abs=1e-12)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# THE SHARE-STEP GUARD (2026-09-03, the operator ruling)
+#
+# The rule: no strategy may command an upward share step in the same decision
+# as an upward demand step, wherever the resulting two-source total exceeds
+# 1.65 A.  See `mpc_ems.SHARE_STEP_GUARD_I_TOT_A` for both derivations of the
+# constant and `docs/fw26_current_ceiling_governor.md` section 8.6 for the
+# hazard it names.
+# ═════════════════════════════════════════════════════════════════════════════
+def test_the_share_step_guard_constant_covers_both_derivations():
+    """The shipped constant is the 1.65 A DESIGN figure, and it must sit at or
+    above BOTH necessary conditions: the pre-2026-09-03 split law's
+    LIMIT_I_FC_MAX / DROOP_R_MAX = 1.6471 A, and the corrected law's 1.645 A.
+    A constant below either would engage later than the hazard requires."""
+    import governor_model as gm
+    old_law = M.LIMIT_I_FC_MAX_A / gm.GOV_CONST["DROOP_R_MAX"]
+    assert old_law == pytest.approx(1.6471, abs=5e-4)
+    assert M.SHARE_STEP_GUARD_I_TOT_A >= old_law
+    # The corrected law's figure, from
+    # docs/modeling/governor_split_law_20260903.md.
+    assert M.SHARE_STEP_GUARD_I_TOT_A >= 1.645
+    # ...and it is not so far above either that it stops being the design
+    # constant the two records name.
+    assert M.SHARE_STEP_GUARD_I_TOT_A == 1.65
+
+
+def test_the_guard_stage_test_fires_on_a_rising_crossing_only():
+    """THE THREE CASES THE RULE DISTINGUISHES, on a synthetic stage.
+
+    `share_step_guard_stage()` is the whole "when" half of the rule, so it is
+    tested as a pure function.  Rising ACROSS the guard fires; the same level
+    reached while FALLING does not; and neither does a level below the guard,
+    however fast it is rising."""
+    g = M.SHARE_STEP_GUARD_I_TOT_A
+    # (a) RISING across the guard at stage 0, measured against the total the
+    #     previous decision carried.  Fires.
+    pre = _const_pre(4, g + 0.35)
+    assert M.Planner.share_step_guard_stage(pre, 1.20, 2) == 0
+    # (b) THE SAME TOTAL, FALLING.  The level half is satisfied and the rising
+    #     half is not, so the rule does not apply: a share step onto a demand
+    #     that is coming DOWN cannot outrun the load filter upward.
+    assert M.Planner.share_step_guard_stage(pre, g + 0.80, 2) is None
+    # (c) BELOW the guard, rising hard.  The droop band itself bounds the
+    #     fuel-cell demand there, which is what the necessary condition says.
+    lo = _const_pre(4, 1.40)
+    assert M.Planner.share_step_guard_stage(lo, 0.20, 2) is None
+    # (d) THE FIRST DECISION OF A RUN has no carried total, so nothing stepped
+    #     and stage 0 is not rising.
+    assert M.Planner.share_step_guard_stage(pre, None, 2) is None
+    # (e) The window is BLOCK 0 only: a crossing at stage 2 is outside a
+    #     two-stage block-0 and is not this decision's to refuse.
+    ramp = _const_pre(4, 0.0)
+    ramp.i_tot_mean = [1.00, 1.20, g + 0.30, g + 0.30]
+    assert M.Planner.share_step_guard_stage(ramp, 0.90, 2) is None
+    assert M.Planner.share_step_guard_stage(ramp, 0.90, 4) == 2
+
+
+def _pre_for_solve(s, t=10.0):
+    """A real stage precompute off a bound strategy, for `solve()`."""
+    k0 = s.preview.index(t)
+    return M.precompute_stages(s.preview, k0, s.horizon)
+
+
+def test_the_guard_refuses_upward_columns_at_block_zero_only():
+    """The "what" half: with the guard armed at a committed share of 0.15, the
+    committed block-0 command may not exceed it, while the LATER blocks - which
+    are a receding-horizon tail and are never issued as planned - keep the whole
+    ladder."""
+    s = _bound(loss_map=sim.plant_loss_map(), budget_ms=1e5, roll_budget_ms=1e5)
+    pre = _pre_for_solve(s)
+    opts = [[False] * s.horizon]
+    free = s.planner.solve(0.7, 0.7, pre, {}, 0.5, opts)
+    assert free.share_step_guarded is False and free.share_step_refused == 0
+    s.planner.incumbent = None
+    guarded = s.planner.solve(0.7, 0.7, pre, {}, 0.5, opts,
+                              share_step_guard_r=0.15)
+    assert guarded.share_step_guarded is True
+    assert guarded.share_step_refused == s.planner.n_band - 1
+    assert guarded.share <= 0.15 + 1e-9
+    # The tail is untouched: some later stage still carries a value above the
+    # guarded rail, so the guard did not collapse the whole plan.
+    assert max(guarded.plan_share) > 0.15
+    # A DOWNWARD step is always admissible: guarding at the TOP rail refuses
+    # nothing, because no column is above it.
+    s.planner.incumbent = None
+    down = s.planner.solve(0.7, 0.7, pre, {}, 0.5, opts,
+                           share_step_guard_r=max(s.planner.ladder))
+    assert down.share_step_refused == 0
+    assert down.share == pytest.approx(free.share)
+
+
+def test_the_guard_never_empties_the_block_zero_column_set():
+    """A guard reference BELOW every rung must still leave one command, and it
+    must be the LOWEST one - refusing the whole block would make the decision
+    infeasible and hand the fallback a command nobody chose."""
+    s = _bound(loss_map=sim.plant_loss_map(), budget_ms=1e5, roll_budget_ms=1e5)
+    pre = _pre_for_solve(s)
+    dec = s.planner.solve(0.7, 0.7, pre, {}, 0.5, [[False] * s.horizon],
+                          share_step_guard_r=-1.0)
+    assert dec.share == pytest.approx(min(s.planner.ladder[:s.planner.n_band]))
+    assert dec.share_step_refused == s.planner.n_band - 1
+    assert dec.feasible
+
+
+def test_the_guard_catches_the_fc_single_source_column_too():
+    """`SS_MODE_FC` commands share 1.0, the largest upward step available, so it
+    must be inside the guard.  `SS_MODE_BT` commands 0.0 and is always
+    downward, so it must survive."""
+    pl = M.Planner(horizon=20, blocks=(2, 6, 12), share_levels=9,
+                   single_source=True)
+    assert pl.ladder[pl.ss_index[M.SS_MODE_FC]] == 1.0
+    assert pl.ladder[pl.ss_index[M.SS_MODE_BT]] == 0.0
+    # Judged by the same comparison every rung is judged by.
+    r_ref = 0.50
+    assert pl.ladder[pl.ss_index[M.SS_MODE_FC]] > r_ref
+    assert pl.ladder[pl.ss_index[M.SS_MODE_BT]] <= r_ref
+
+
+def test_the_guard_is_inert_on_the_registered_61_s_stimulus():
+    """THE INERTNESS GATE for this round.  The largest two-source total any
+    registered EMS stimulus commands is `ems-mpc`'s 1.4714 A, 10.7 % under the
+    guard, so the rule must fire on ZERO decisions and refuse ZERO columns -
+    which is what keeps every campaign anchor comparable.
+
+    `test_the_feature_off_plan_matches_the_pre_round_fixture()` above is the
+    other half: it pins the same stimulus's command stream, byte for byte,
+    against the pre-round commit."""
+    s = _bound(loss_map=sim.plant_loss_map(), budget_ms=1e5,
+               roll_budget_ms=1e5)
+    prev = s.preview
+    t = 0.0
+    i_tot_max = 0.0
+    while t < 61.0:
+        k = prev.index(t)
+        i_tot = prev.i_total[k]
+        i_tot_max = max(i_tot_max, i_tot)
+        s(t, {"soc": 0.7, "I_fc": 0.5 * i_tot, "I_batt": 0.5 * i_tot,
+              "V_bus": prev.v_bus[k], "I_charge": 0.0, "v_profile": 1.5})
+        t += 0.02
+    tm = s.timing()
+    assert tm["share_step_guard_decisions"] == 0
+    assert tm["share_step_refusals"] == {}
+    assert i_tot_max < M.SHARE_STEP_GUARD_I_TOT_A
+    assert i_tot_max == pytest.approx(1.4714, abs=5e-4)
+
+
+def test_the_guard_is_not_dead_code_on_a_stimulus_that_reaches_it():
+    """The mutation the inertness gate cannot see.  Lowering the constant onto
+    the 61 s stimulus's own totals must make the rule FIRE and must be counted
+    in both censuses."""
+    s = _bound(loss_map=sim.plant_loss_map(), budget_ms=1e5,
+               roll_budget_ms=1e5)
+    old = M.SHARE_STEP_GUARD_I_TOT_A
+    M.SHARE_STEP_GUARD_I_TOT_A = 0.50
+    try:
+        prev = s.preview
+        t = 0.0
+        while t < 20.0:
+            k = prev.index(t)
+            i_tot = prev.i_total[k]
+            s(t, {"soc": 0.7, "I_fc": 0.5 * i_tot, "I_batt": 0.5 * i_tot,
+                  "V_bus": prev.v_bus[k], "I_charge": 0.0, "v_profile": 1.5})
+            t += 0.02
+        tm = s.timing()
+    finally:
+        M.SHARE_STEP_GUARD_I_TOT_A = old
+    assert tm["share_step_guard_decisions"] > 0
+    assert tm["share_step_refusals"].get(M.SHARE_STEP_REFUSE_UPWARD, 0) > 0
+    # The census keys are the guard's own vocabulary, not a free-form string.
+    assert set(tm["share_step_refusals"]) == {M.SHARE_STEP_REFUSE_UPWARD}
+
+
+def test_the_guard_census_reaches_the_sidecar_blocks():
+    """OBSERVABILITY.  The constant belongs in `config.mpc` (which era a run
+    planned under) and the counts in `timing()`, which `finalize_meta()`
+    refreshes AFTER the run - the `regen_early_releases` lesson."""
+    s = _bound(loss_map=sim.plant_loss_map(), budget_ms=1e5, roll_budget_ms=1e5)
+    prov = s._provenance()
+    assert prov["share_step_guard_i_tot_a"] == M.SHARE_STEP_GUARD_I_TOT_A
+    # Present on the EMPTY timing block too, so a run that ended before its
+    # first decision still reports the field rather than omitting it.
+    empty = s.timing()
+    for k in ("share_step_guard_i_tot_a", "share_step_guard_decisions",
+              "share_step_refusals"):
+        assert k in empty
+    assert empty["decisions"] == 0
+    src = open(M.__file__, encoding="utf-8").read()
+    # ... and the constant is named ONCE, in its own definition.
+    assert src.count("SHARE_STEP_GUARD_I_TOT_A = ") == 1

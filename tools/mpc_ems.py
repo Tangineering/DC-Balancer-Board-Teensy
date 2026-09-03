@@ -388,6 +388,42 @@ SS_REFUSE_CUT_NEVER = "cut_never_engaged"
 SS_REFUSE_OC = "single_source_overcurrent"
 SS_REFUSE_RESTORE = "restore_overcurrent"
 
+# ── THE SHARE-STEP GUARD (2026-09-03, the operator ruling) ──────────────────
+# THE RULE, verbatim from `docs/fw26_current_ceiling_governor.md` section 8.6.3
+# and `docs/modeling/mpc_design_20260902_nonlinearities.md` ("2026-09-03: a
+# hazard the stage model does not represent"):
+#
+#     No strategy may command an upward share step in the same decision as an
+#     upward demand step, wherever the resulting two-source total exceeds
+#     1.65 A.
+#
+# WHY THE HAZARD EXISTS.  fw v26's `applyShareCurrentCeilings()` clamps the
+# commanded share against a ~20 ms EMA of the two-source total
+# (`SHARE_GOV_FILT_ALPHA` 0.05 per tick), while the reference itself moves at
+# `DROOP_RATIO_SLEW_PER_TICK` 0.02.  When BOTH axes step upward in one packet
+# the slew-limited reference crosses the safe delivered share in about 4 ticks
+# while the filter needs about 25 to see the new total, so the clamp holds what
+# it believes is 1.2500 A while the board delivers more.  Campaign E measured
+# 1.4890 A on `fw26-clamp-sweep` and latched `FAULT_OC_FC`; the filter
+# under-read the rising total by 25.6 % against a 12 % design headroom.
+#
+# THE GUARD CONSTANT, and it has TWO derivations that must both be cited:
+#   * `LIMIT_I_FC_MAX / DROOP_R_MAX` = 1.40 / 0.85 = **1.6471 A** under the
+#     pre-2026-09-03 split law - the necessary condition quoted in both design
+#     records and in the CLAUDE.md campaign-E addendum.  Below it the droop
+#     band itself bounds the fuel-cell demand and no share step can reach the
+#     fault limit.
+#   * the same ratio under the CORRECTED split law (rho plus the 0.033 ohm
+#     series floor, `docs/modeling/governor_split_law_20260903.md`) moves it to
+#     **1.645 A**.
+# The shipped constant is the 1.65 A DESIGN figure, which is above both, i.e.
+# the guard engages no earlier than either derivation requires.  Named ONCE
+# here; nothing else in the tree may restate the number.
+SHARE_STEP_GUARD_I_TOT_A = 1.65
+# The refusal reason, in the `ss_refusals` census's own vocabulary.  It counts
+# CANDIDATE COLUMNS removed from block 0, not decisions - see `timing()`.
+SHARE_STEP_REFUSE_UPWARD = "share_step_rising_demand"
+
 # Hydrogen proxy.  ems_walk.H2_PROXY_ETA_FC / H2_LHV_J_PER_G, restated so the
 # runtime path does not import ems_walk (which lazily imports numpy modules).
 ETA_FC_PROXY = 0.4
@@ -1722,6 +1758,13 @@ class Decision:
     # otherwise - which is every decision of a run with the feature off.
     single_source: object = None
     ss_offered: int = 0           # admissible single-source columns searched
+    # ── THE SHARE-STEP GUARD (2026-09-03) ──────────────────────────────────
+    # `share_step_guarded` is True on a decision whose block-0 column set was
+    # filtered by the rule; `share_step_refused` counts the columns it removed.
+    # Both are 0/False on every decision the guard did not fire on, which is
+    # every decision of every registered stimulus.
+    share_step_guarded: bool = False
+    share_step_refused: int = 0
 
 
 class Planner:
@@ -2204,9 +2247,42 @@ class Planner:
         return cost, soc, d_tab[0][block_idx[0]]
 
     # -- enumeration --------------------------------------------------------
+    @staticmethod
+    def share_step_guard_stage(pre, i_tot_prev, block0_len):
+        """The block-0 stage the share-step rule fires on, or ``None``.
+
+        THE DEFINITION OF "RISING", stated once and encoded here.  The rule
+        names "an upward share step IN THE SAME DECISION AS an upward demand
+        step", so both halves are judged at the DECISION BOUNDARY, over the
+        stages the block-0 command is actually held for:
+
+            stage j (0 <= j < block0_len) fires when
+                i_tot_mean[j] >  SHARE_STEP_GUARD_I_TOT_A          (the level)
+            AND i_tot_mean[j] >  i_tot_mean[j - 1]                 (rising)
+
+        where ``i_tot_mean[-1]`` is ``i_tot_prev``, the total the PREVIOUS
+        decision predicted for the stage that has just run.  That is what makes
+        stage 0 - the stage the new command lands on - testable at all: without
+        the carried value there is no earlier total to compare it against, and
+        stage 0 is precisely where a re-command lands on an acceleration.  On
+        the FIRST decision of a run ``i_tot_prev`` is None and stage 0 is
+        treated as NOT rising (nothing stepped; the run has only just begun).
+
+        Returns the first firing stage index, or None.  A pure function, so the
+        tests can drive it without a strategy."""
+        prev = i_tot_prev
+        n = min(int(block0_len), pre.n)
+        for j in range(n):
+            cur = pre.i_tot_mean[j]
+            if cur > SHARE_STEP_GUARD_I_TOT_A and prev is not None and cur > prev:
+                return j
+            prev = cur
+        return None
+
     def solve(self, soc0, soc_ref, pre, r_hold, r_seed, charge_options,
               i_tot_oc=None, budget_ms=None, sp_acted=None, run_seed=None,
-              handoff=None, active=None, ss_modes=(), pre_ss=None):
+              handoff=None, active=None, ss_modes=(), pre_ss=None,
+              share_step_guard_r=None):
         """Search the candidate set.  Returns a ``Decision``.
 
         ``charge_options`` is a list of per-stage boolean lists, the first of
@@ -2249,6 +2325,43 @@ class Planner:
                         if m in self.ss_index)
         cols0 = cols + tuple(c for c in ss_cols if c not in cols)
 
+        # ── THE SHARE-STEP GUARD, applied to BLOCK 0 (2026-09-03) ──────────
+        # `share_step_guard_r` is the COMMITTED share (the governor's standing
+        # ratio) when the caller's stage test fired, and None otherwise.  Every
+        # block-0 column whose share is strictly ABOVE it is an upward share
+        # step landing on a rising demand step, and is refused.
+        #
+        # SCOPE, and why it is block 0 only: block 0 is the only block that is
+        # COMMITTED, so it is the only one that can command the packet the
+        # hazard needs.  The later blocks are a receding-horizon tail, re-planned
+        # before they are ever issued.  This is the same scoping the
+        # single-source columns carry, for the same reason.
+        #
+        # THE SINGLE-SOURCE COLUMNS ARE INSIDE THE GUARD, not exempt from it:
+        # `SS_MODE_FC` is share 1.0, the largest upward step available, so the
+        # comparison catches it exactly as it catches a rung.  `SS_MODE_BT` is
+        # share 0.0 and is always downward, so it always survives.
+        #
+        # THE SET IS NEVER EMPTIED.  If every block-0 column is above the
+        # committed share (a coarsened ladder whose rungs all sit above it), the
+        # LOWEST-SHARE column is kept: refusing the whole block would make the
+        # decision infeasible and hand the fallback a command nobody chose,
+        # which is a worse outcome than the smallest upward step available.
+        n_step_refused = 0
+        if share_step_guard_r is not None:
+            r_ref = float(share_step_guard_r)
+            keep = tuple(c for c in cols0 if self.ladder[c] <= r_ref + 1e-9)
+            if not keep:
+                keep = (min(cols0, key=lambda c: (self.ladder[c], c)),)
+            n_step_refused = len(cols0) - len(keep)
+            cols0 = keep
+        # THE BLOCK-0 FALLBACK POOL.  Both fallbacks below (the seed and L5)
+        # choose a BLOCK-0 command, so under the guard they must choose from the
+        # surviving set - and they may only index `tabs0`, which is built over
+        # `cols0`.  Unguarded this is `cols` itself, so every pre-2026-09-03
+        # path is unchanged.
+        cols_fb = tuple(c for c in cols if c in cols0) or (cols0[0],)
+
         # THE INFEASIBLE FALLBACK, stated: if no candidate is feasible the
         # decision keeps this seed - the lowest ladder point, no charge, which
         # is the least fuel-cell-loaded command available - and
@@ -2256,11 +2369,15 @@ class Planner:
         # decision that commanded nothing would leave the previous share
         # standing without saying so.
         best = Decision(cost=float("inf"))
-        best.share = self.ladder[cols[0]]
-        best.plan_share = [self.ladder[cols[0]]] * pre.n
+        best.share = self.ladder[cols_fb[0]]
+        best.plan_share = [self.ladder[cols_fb[0]]] * pre.n
         best.plan_charge = list(charge_options[0])
         best.ladder_points = len(cols)
-        best.ss_offered = len(ss_cols)
+        # Counted AFTER the share-step filter: a single-source column the guard
+        # removed was not searched, and `ss_searched` must not claim it was.
+        best.ss_offered = sum(1 for c in ss_cols if c in cols0)
+        best.share_step_guarded = share_step_guard_r is not None
+        best.share_step_refused = n_step_refused
         order = self._enumeration_order(cols, nb, cols0=cols0)
         n_eval = 0
         pruned = 0
@@ -2316,8 +2433,9 @@ class Planner:
         # and on a battery-side violation it is the worst point on the ladder.
         if not math.isfinite(best.cost) and tabs0 is not None:
             viol = tabs0[4]
-            worst = {si: max(viol[j][si] for j in range(pre.n)) for si in cols}
-            si_best = min(cols, key=lambda i: (worst[i], i))
+            worst = {si: max(viol[j][si] for j in range(pre.n))
+                     for si in cols_fb}
+            si_best = min(cols_fb, key=lambda i: (worst[i], i))
             best.share = self.ladder[si_best]
             best.plan_share = [self.ladder[si_best]] * pre.n
             best.share_pred = tabs0[0][0][si_best]
@@ -2774,10 +2892,12 @@ class MpcStrategy:
         self.ss_offered = 0
         self.ss_admissible = 0
         # Columns the SEARCH actually walked, summed from `Decision.ss_offered`
-        # (2026-09-03, review LOW-3).  It differs from `ss_admissible` only if a
-        # mode the rollout test admitted failed to reach the planner - which it
-        # cannot today - so it is a plumbing invariant, and a silent one until
-        # it is read.  It is read here.
+        # (2026-09-03, review LOW-3).  It differs from `ss_admissible` when a
+        # mode the rollout test admitted failed to reach the planner - a
+        # plumbing defect - OR, since the share-step guard (2026-09-03), when
+        # the guard removed an admitted `SS_MODE_FC` column (share 1.0 is
+        # inside the guard).  The second path is legitimate and is counted
+        # under `share_step_refusals`; the first is a defect.  Read here.
         self.ss_searched = 0
         self.ss_selected_fc = 0
         self.ss_selected_bt = 0
@@ -2785,6 +2905,20 @@ class MpcStrategy:
         self.ss_refusals = {}
         self.ss_admit_ms_max = 0.0
         self.ss_admit_ticks_max = 0
+        # ── THE SHARE-STEP GUARD CENSUS (2026-09-03) ───────────────────────
+        # `decisions` counts the decisions the rule FIRED on (level and rising
+        # both true somewhere in block 0); `refusals` is the reason census of
+        # the candidate COLUMNS it removed, in `ss_refusals`'s vocabulary.  A
+        # decision can fire and refuse nothing - that is the case where every
+        # block-0 column was already at or below the committed share, i.e. the
+        # planner was not going to step up anyway, and the two counters have to
+        # be able to say so separately.  `_i_tot_prev` is the carried total the
+        # "rising" half is judged against; it is per-run state, so it resets
+        # with the census.
+        self.share_step_guard_decisions = 0
+        self.share_step_guard_stage_last = None
+        self.share_step_refusals = {}
+        self._i_tot_prev = None
         if self.planner is not None:
             self.planner.incumbent = None
 
@@ -3117,6 +3251,13 @@ class MpcStrategy:
             "single_source_cut_guard_a": (
                 gov_mod.GOV_CONST["SHARE_CUT_MAX_HANDOFF_A"]
                 if self.single_source else None),
+            # ── THE SHARE-STEP GUARD (2026-09-03) ──────────────────────────
+            # Recorded for `single_source`'s reason exactly: the guard changes
+            # the CONTROL SET at block 0, so a trace that does not say which
+            # threshold it was planned under cannot be compared with one that
+            # does.  It is always armed - there is no flag - so the constant is
+            # the whole declaration; the counts are in `timing()`.
+            "share_step_guard_i_tot_a": SHARE_STEP_GUARD_I_TOT_A,
             "dv0_v": self.dv0_v,
             # THE SPLIT LAW THE PLANNER PREDICTED WITH (2026-09-03, review
             # run-002 PLANT-R2-F3).  Recorded beside `dv0_v` because the three
@@ -3631,13 +3772,37 @@ class MpcStrategy:
             if len(active) >= self.planner.n_band:
                 active = None
 
+        # ── THE SHARE-STEP GUARD (2026-09-03, the operator ruling) ─────────
+        # Evaluated HERE, after the stochastic variant has moved `pre` onto the
+        # TPM's conditional mean: the rule is about the demand the planner is
+        # ACTING ON, so it must read the same forecast the delivery table does.
+        # `self._i_tot_prev` is the total the previous decision predicted for
+        # the stage that has just run - see `Planner.share_step_guard_stage()`
+        # for the definition of "rising" and why the carried value is what makes
+        # stage 0 testable.  The reference the upward step is measured FROM is
+        # the governor's committed ratio `self.shadow.r`, which is the same
+        # quantity `solve()` already takes as `r_seed`.
+        step_guard_r = None
+        j_fire = Planner.share_step_guard_stage(
+            pre, self._i_tot_prev, self.planner.blocks[0])
+        if j_fire is not None:
+            step_guard_r = self.shadow.r
+            self.share_step_guard_decisions += 1
+            self.share_step_guard_stage_last = j_fire
+        self._i_tot_prev = pre.i_tot_mean[0] if pre.n else None
+
         dec = self.planner.solve(soc, self.soc_ref, pre, self.r_hold,
                                  self.shadow.r, charge_options,
                                  i_tot_oc=i_tot_oc, budget_ms=budget_ms,
                                  sp_acted=self.shadow.acted_sp,
                                  run_seed=self.shadow.closed_loop_run,
                                  handoff=self.r_handoff, active=active,
-                                 ss_modes=ss_modes, pre_ss=pre_ss)
+                                 ss_modes=ss_modes, pre_ss=pre_ss,
+                                 share_step_guard_r=step_guard_r)
+        if dec.share_step_refused:
+            self.share_step_refusals[SHARE_STEP_REFUSE_UPWARD] = (
+                self.share_step_refusals.get(SHARE_STEP_REFUSE_UPWARD, 0)
+                + dec.share_step_refused)
         self.ss_searched += int(dec.ss_offered)
         if dec.single_source == SS_MODE_FC:
             self.ss_selected_fc += 1
@@ -3839,7 +4004,10 @@ class MpcStrategy:
                     "ss_searched": 0,
                     "ss_selected_fc": 0, "ss_selected_bt": 0,
                     "ss_refusals": {}, "ss_admit_ms_max": 0.0,
-                    "ss_admit_ticks_max": 0}
+                    "ss_admit_ticks_max": 0,
+                    "share_step_guard_i_tot_a": SHARE_STEP_GUARD_I_TOT_A,
+                    "share_step_guard_decisions": 0,
+                    "share_step_refusals": {}}
 
         def _stats(xs):
             """min / median / max of a per-decision series."""
@@ -3923,7 +4091,19 @@ class MpcStrategy:
                 "ss_selected_bt": self.ss_selected_bt,
                 "ss_refusals": dict(self.ss_refusals),
                 "ss_admit_ms_max": self.ss_admit_ms_max,
-                "ss_admit_ticks_max": self.ss_admit_ticks_max}
+                "ss_admit_ticks_max": self.ss_admit_ticks_max,
+                # ── THE SHARE-STEP GUARD CENSUS (2026-09-03) ───────────────
+                # The guard constant is reported BESIDE its counts so a sidecar
+                # says which threshold the run was guarded at, not merely that
+                # it was guarded.  `decisions` is the count the rule fired on,
+                # `refusals` the reason census of the block-0 candidate columns
+                # it removed.  Both are 0 on every registered stimulus: the
+                # largest two-source total any of them commands is 1.4714 A,
+                # 10.7 % under the guard.  A NONZERO value is the signal that a
+                # new stimulus has entered the hazard's regime.
+                "share_step_guard_i_tot_a": SHARE_STEP_GUARD_I_TOT_A,
+                "share_step_guard_decisions": self.share_step_guard_decisions,
+                "share_step_refusals": dict(self.share_step_refusals)}
 
     def summary_line(self):
         if not self.decisions:
@@ -4004,7 +4184,8 @@ class MpcStrategy:
                    ("" if self.variant != "sto" else
                     "; demand bin clamped HIGH on %d and LOW on %d"
                     % (self.clamped_bin_high, self.clamped_bin_low)))
-                + self._ss_summary_fragment(tm))
+                + self._ss_summary_fragment(tm)
+                + self._share_step_summary_fragment(tm))
 
     def _ss_summary_fragment(self, tm):
         """The single-source census, appended to the summary line.
@@ -4023,6 +4204,24 @@ class MpcStrategy:
                    tm["ss_admit_ticks_max"], tm["ss_admit_ms_max"],
                    tm["ss_selected_fc"], tm["ss_selected_bt"],
                    ("" if not txt else "; refusals by reason: " + txt)))
+
+    def _share_step_summary_fragment(self, tm):
+        """The share-step guard census, appended to the summary line.
+
+        EMPTY when the guard never fired, which is every registered stimulus,
+        so a line that carries it is itself the finding.  ASCII only."""
+        if not tm["share_step_guard_decisions"]:
+            return ""
+        reasons = tm["share_step_refusals"]
+        txt = ", ".join("%s %d" % (k, reasons[k]) for k in sorted(reasons))
+        return ("; share-step guard FIRED on %d decisions at %.2f A of "
+                "predicted two-source total (an upward share step was refused "
+                "in the same decision as a rising demand step; last firing "
+                "block-0 stage %s)%s"
+                % (tm["share_step_guard_decisions"],
+                   tm["share_step_guard_i_tot_a"],
+                   self.share_step_guard_stage_last,
+                   ("" if not txt else "; refused columns by reason: " + txt)))
 
 
 def make_mpc(name="mpc-det", **kwargs):

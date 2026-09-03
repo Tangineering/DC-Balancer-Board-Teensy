@@ -498,7 +498,11 @@ The obligations fall on the stimulus and on the energy-management strategies ins
   demand step, wherever the resulting two-source total exceeds 1.65 A. The model-predictive
   controller's ladder moves one rung of 0.0875 per decision, so the rule constrains it only where
   a demand step lands on the same decision boundary; see
-  `docs/modeling/mpc_design_20260902_nonlinearities.md`.
+  `docs/modeling/mpc_design_20260902_nonlinearities.md`. **IMPLEMENTED 2026-09-03** (operator
+  ruling) as a block-0 candidate-admissibility constraint in `tools/mpc_ems.py`, named
+  `SHARE_STEP_GUARD_I_TOT_A`; inert on all six registered MPC scenarios, whose largest predicted
+  two-source total is `ems-mpc`'s 1.4714 A. The design record's "Implemented, 2026-09-03" section
+  carries the definition of "rising", the plan-invariance table and the observability contract.
 
 #### 8.6.4 First calibration of the clamp
 
@@ -516,12 +520,16 @@ Every figure below is from campaign E and supersedes the walked values wherever 
 | release, phase B | 0 clamped ticks, `I_fc` 0.8003 A | the same-run negative control |
 | battery ceiling | 0 ticks | never exercised, as designed |
 
-#### 8.6.5 A joint-transient leg was designed and not shipped
+#### 8.6.5 The joint-transient leg, designed 2026-09-03 and registered the same day
+
+**Status.** Registered as `fw26-clamp-joint` on 2026-09-03 (operator ruling), in the default
+suite plan. The history below is kept as written, because it is the derivation of the
+operating point; what changed is that the leg exists.
 
 A third scenario was designed to pin the joint transient as a number at a total the fault limit
 cannot be reached from: motor-free, with the auxiliary preload stepping upward at the same instant
-as a commanded share step of 0.40 to 0.84. It is not registered, and the reason is a result rather
-than a deferral.
+as a commanded share step of 0.40 to 0.84. It was not registered at first, and the reason was a
+result rather than a deferral.
 
 The proposed operating point, a step from 1.20 A to 1.55 A, **does not exercise the clamp at all**.
 The reachability threshold is `SHARE_GOV_I_FC_CEIL_A + SHARE_MINORITY_I_MIN_A` = 1.55 A exactly, so
@@ -548,12 +556,41 @@ share step of 0.40 to 0.84:
 | 1.62 A | 1.3062 A | 5966 | 1.3200 A |
 | 1.65 A | 1.3303 A | 5971 | 1.3500 A |
 
+Re-walked on 2026-09-03 under the **corrected split law** (rho 0.9434 plus the 0.033 ohm series
+floor, `docs/modeling/governor_split_law_20260903.md`), at the shipped 1.65 A operating point:
+
+| law | walked peak `I_fc` | first engagement | post-step clamp duty | settled `I_fc` / `I_batt` | settled MDAC (fc, bt) |
+|:--|--:|--:|--:|--:|--:|
+| pre-correction | 1.3303 A | +29 ms | 0.9976 | 1.2500 / 0.4000 A | (4906, 6560) |
+| corrected | 1.3303 A | +29 ms | 0.9976 | 1.2500 / 0.4000 A | (4906, 6560) |
+
+The two rows are identical to six digits, and that is a result rather than a coincidence: the
+firmware pins the applied **ratio** on its own rails, so the split law only re-inverts the ratio
+that delivers a current it does not move. The clamp-absent arm, walked the same way with the
+ceilings pinned out of reach, settles at 1.3500 A with `I_batt` 0.3000 A and MDAC (4843, 7413) --
+which is what makes the leg a fw v25 / fw v26 discriminator rather than a description of the plant.
+
+The commander-cadence skew was walked as well. The share step arrives on the Pi's own ~50 Hz packet
+while the auxiliary load steps at 1 kHz, so the two land up to one commander period apart in either
+order. At +/- 20 ms the peak is 1.3303 A (share first, or simultaneous) or 1.2931 A (load first):
+the order cannot make it worse than simultaneous, because the peak is set by the rail crossing and
+the reference has reached 0.84 long before the filtered total passes 1.55 A.
+
+As registered, the leg is 30 s and motor-free. The auxiliary preload ramps to 1.05 A from t = 4 s
+and **steps** to 1.50 A at t = 16.0 s, at the same instant the Pi timeline commands the share step;
+the stepped load needs the `aux_preload_step` scenario key, which the generic `aux_preload_a`
+cannot express. `FAULT_EXPECTATIONS["fw26-clamp-joint"]` carries twenty-two walked specs behind a
+`provisional_note`, including the 1.36 A acceptance bound on the transient peak, a settled band that
+refuses the 1.3500 A clamp-absent point, and the two settled droop-code pins. Nothing in the entry
+has been scored on the board; the first campaign that runs the leg re-derives all of it.
+
 **The shippable design is a step to 1.65 A**, which is 0.10 A above the reachability threshold, or
 twice `SHARE_GOV_CEIL_HYST_A`, so a small modelling error cannot make the leg inert. Its acceptance
 bound is 1.36 A, which is 0.4 % above the walk and 2.9 % under `LIMIT_I_FC_MAX`. The leg is
 motor-free, so there is no drive rail and the walk carries none of the modelling uncertainty the
-sweep's boundaries do. Registering it needs a stepped auxiliary-load branch in `apply_scenario()`,
-which the generic `aux_preload_a` key cannot express, and it therefore belongs in its own round.
+sweep's boundaries do. Registering it needed a stepped auxiliary-load branch in `apply_scenario()`,
+which the generic `aux_preload_a` key cannot express; that branch is the `aux_preload_step`
+scenario key, shipped 2026-09-03.
 
 ### 8.7 Open items
 

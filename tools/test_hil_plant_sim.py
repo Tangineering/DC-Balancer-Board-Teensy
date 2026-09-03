@@ -1335,6 +1335,8 @@ EXPECTED_SCENARIO_NAMES = {
     # fw v26 tools round (2026-09-02): the only stimulus that reaches the
     # source current-ceiling clamp.
     "fw26-clamp-cruise", "fw26-clamp-sweep",
+    # 2026-09-03 (operator ruling): the joint share-and-demand transient.
+    "fw26-clamp-joint",
     # 2026-08-31 SDP round: the online stochastic-DP policy scenario.
     "ems-sdp",
     # 2026-09-02 (WP-1B2b): the alpha sweep's three live points, all on the
@@ -1457,6 +1459,7 @@ EXPECTED_SCENARIO_DURATIONS_S = {
     "share-staircase": 47.0,
     "fw26-clamp-cruise": 38.0,
     "fw26-clamp-sweep": 84.0,
+    "fw26-clamp-joint": 30.0,
     # 2026-08-31 SDP round: derived by reference from ems-soc-band's own
     # duration_s (SCENARIOS["ems-sdp"]["duration_s"] = SCENARIOS["ems-soc-band"]
     # ["duration_s"]).
@@ -9320,7 +9323,11 @@ _Y_B30_EXEMPT_NAMES = frozenset({"ems-y-b30-v1", "ems-y-b30-v3"})
 # the load IS what puts the run there, and without it the scenario tests
 # nothing. It is exempted BY NAME, in its own set rather than by widening the
 # y-b30 one, so a reader sees two distinct stimuli and not one list that grew.
-_CEILING_EXEMPT_NAMES = frozenset({"fw26-clamp-cruise", "fw26-clamp-sweep"})
+# `fw26-clamp-joint` (2026-09-03) is the same case a third time, and it
+# reaches the plant through `aux_preload_step` rather than `aux_preload_a`
+# - see test_preload_tripwire_covers_the_stepped_key_too().
+_CEILING_EXEMPT_NAMES = frozenset({"fw26-clamp-cruise", "fw26-clamp-sweep",
+                                   "fw26-clamp-joint"})
 
 _PRELOAD_EXEMPT_NAMES = _Y_B30_EXEMPT_NAMES | _CEILING_EXEMPT_NAMES
 
@@ -9333,9 +9340,16 @@ def test_preload_tripwire_every_declared_aux_preload_is_zero_except_y_b30():
     does not mask an open-loop mode the way FTP75_PRELOAD_A did, so it is not
     a case of the same rule and must never be swept in by a numeric
     tolerance."""
+    # BOTH KEYS (2026-09-03). `aux_preload_step` reaches the plant through the
+    # SAME generic branch, so a drive-cycle scenario could otherwise carry a
+    # non-zero preload through it and evade this ruling entirely. A step list
+    # contributes its LARGEST value, which is the load the ruling is about.
     declaring = {name: meta["aux_preload_a"]
                 for name, meta in hil.SCENARIOS.items()
                 if meta.get("aux_preload_a") is not None}
+    for name, meta in hil.SCENARIOS.items():
+        if meta.get("aux_preload_step"):
+            declaring[name] = max(a for _t, a in meta["aux_preload_step"])
     # Sanity: the exemption list must not go stale -- every name in it must
     # actually be a scenario that declares aux_preload_a, or the exemption is
     # dead and the test would pass for the wrong reason.
@@ -9379,7 +9393,11 @@ def test_preload_tripwire_ftp75_legs_are_exactly_the_non_exempt_set():
     directly."""
     declaring = {name for name, meta in hil.SCENARIOS.items()
                 if meta.get("aux_preload_a") is not None}
-    assert declaring == _PRELOAD_EXEMPT_NAMES | {
+    # `fw26-clamp-joint` is in the exemption set but declares the STEPPED key,
+    # not this one, so it is subtracted from the expected side rather than the
+    # exemption set being split - the set exists to name clamp legs, and it
+    # names three.
+    assert declaring == (_PRELOAD_EXEMPT_NAMES - {"fw26-clamp-joint"}) | {
         "ems-ftp75-5050", "ems-ftp75-socband", "ems-ftp75-sdp", "ems-ftp75-dp",
         # 2026-09-02: the fifth FTP-75 leg. It declares the key at
         # FTP75_PRELOAD_A (0.0) exactly as its four siblings do, which is what
@@ -12895,3 +12913,147 @@ def test_simple_mode_split_moved_by_the_review_amount():
             for i_total in (1.0, 2.0, 3.0)]
     assert min(mids) == pytest.approx(0.0135, abs=5e-4)
     assert max(mids) - min(mids) < 5e-4
+
+
+# =========================================================================
+# `aux_preload_step` (2026-09-03): a STEPPED auxiliary preload
+#
+# The generic `aux_preload_a` ramps one load in and holds it, which cannot
+# express `fw26-clamp-joint`'s stimulus: the load has to STEP at the same
+# instant as a commanded share step, because the simultaneity IS the
+# measurement. The two keys share one resolver, so these tests carry two
+# obligations - the new shape, and the ERA-SAFETY of the old one.
+# =========================================================================
+def test_aux_preload_step_is_absent_from_every_pre_2026_09_03_scenario():
+    """ERA SAFETY, from the registry side: only the leg that introduced the key
+    declares it, so no existing stimulus can have moved."""
+    declaring = [n for n, m in hil.SCENARIOS.items()
+                 if m.get("aux_preload_step")]
+    assert declaring == ["fw26-clamp-joint"]
+
+
+def test_aux_preload_step_leaves_the_ramped_key_byte_identical():
+    """ERA SAFETY, from the resolver side. `scenario_aux_preload_a()` grew a
+    branch ahead of the `aux_preload_a` arithmetic; a scenario declaring no
+    step list must reach the OLD expression exactly, so every pre-2026-09-03
+    trace is unchanged. Re-derived here from the formula rather than compared
+    against a stored value, so it fails if either side moves."""
+    for name, meta in hil.SCENARIOS.items():
+        pre = meta.get("aux_preload_a")
+        if not pre or meta.get("aux_preload_step"):
+            continue
+        for t in (0.0, 3.0, hil.AUX_PRELOAD_START_S,
+                  hil.AUX_PRELOAD_START_S + 0.5 * hil.SOC_LOAD_RAMP_S,
+                  hil.AUX_PRELOAD_START_S + hil.SOC_LOAD_RAMP_S,
+                  60.0, 340.0):
+            ramp = (t - hil.AUX_PRELOAD_START_S) / hil.SOC_LOAD_RAMP_S
+            want = float(pre) * max(0.0, min(1.0, ramp))
+            assert hil.scenario_aux_preload_a(name, t) == want, (name, t)
+    # ... and a scenario declaring NEITHER key still gets exactly 0.0, which is
+    # what the fall-through left behind before either key existed.
+    for name in ("steady", "mppt-tracking", "charge-to-full"):
+        for t in (0.0, 5.0, 40.0):
+            assert hil.scenario_aux_preload_a(name, t) == 0.0, (name, t)
+
+
+def test_aux_preload_step_ramps_the_first_entry_and_steps_the_rest():
+    """THE SHAPE. The first pair is RAMPED over SOC_LOAD_RAMP_S, for the same
+    bring-up reason `aux_preload_a` is; every later pair is a TRUE STEP, which
+    is what the generic key cannot express."""
+    n = "fw26-clamp-joint"
+    steps = hil.SCENARIOS[n]["aux_preload_step"]
+    (t0, a0), (t1, a1) = steps[0], steps[1]
+    # Nothing before the first entry - the bring-up window is untouched.
+    for t in (0.0, 1.0, t0 - 1e-6):
+        assert hil.scenario_aux_preload_a(n, t) == 0.0, t
+    # ... a linear ramp across it ...
+    assert hil.scenario_aux_preload_a(n, t0) == pytest.approx(0.0)
+    assert hil.scenario_aux_preload_a(n, t0 + 0.5 * hil.SOC_LOAD_RAMP_S) == \
+        pytest.approx(0.5 * a0)
+    # ... a plateau that STANDS until the step ...
+    for t in (t0 + hil.SOC_LOAD_RAMP_S, t0 + hil.SOC_LOAD_RAMP_S + 1.0,
+              t1 - 1e-3):
+        assert hil.scenario_aux_preload_a(n, t) == pytest.approx(a0), t
+    # ... and a STEP, not a ramp: the value is fully applied on the first
+    # sample at or after the declared instant.
+    assert hil.scenario_aux_preload_a(n, t1) == pytest.approx(a1)
+    assert hil.scenario_aux_preload_a(n, t1 + 1e-3) == pytest.approx(a1)
+    assert hil.scenario_aux_preload_a(n, hil.SCENARIOS[n]["duration_s"]) == \
+        pytest.approx(a1)
+
+
+def test_aux_preload_step_index_walk_survives_a_repeated_value():
+    """The resolver picks the last pair by INDEX, not by value. Selecting by
+    value would re-enter the first entry's RAMP whenever a later step happened
+    to repeat it - a load that silently faded back in mid-run."""
+    n = "fw26-clamp-joint"
+    fake = dict(hil.SCENARIOS[n], aux_preload_step=[(4.0, 1.0), (10.0, 2.0),
+                                                    (20.0, 1.0)])
+    saved = hil.SCENARIOS[n]
+    hil.SCENARIOS[n] = fake
+    try:
+        assert hil.scenario_aux_preload_a(n, 20.5) == pytest.approx(1.0)
+        # ...and it is the STEP value, not a ramp restarted at t = 20.
+        assert hil.scenario_aux_preload_a(n, 20.001) == pytest.approx(1.0)
+    finally:
+        hil.SCENARIOS[n] = saved
+
+
+def test_aux_preload_step_reaches_the_plant_through_the_generic_branch():
+    """The key is only useful if `apply_scenario()` applies it, and it does so
+    through the SAME fall-through branch `aux_preload_a` uses - which is why the
+    registry refuses it on any scenario with a bespoke branch."""
+    class _P:
+        i_aux = None
+    p = _P()
+    n = "fw26-clamp-joint"
+    (t0, a0), (t1, a1) = hil.SCENARIOS[n]["aux_preload_step"][:2]
+    hil.apply_scenario(p, n, t1 - 1e-3)
+    assert p.i_aux == pytest.approx(hil.I_AUX_A + a0)
+    hil.apply_scenario(p, n, t1)
+    assert p.i_aux == pytest.approx(hil.I_AUX_A + a1)
+    # The two totals are the stimulus the design record names.
+    assert hil.I_AUX_A + a0 == pytest.approx(1.20)
+    assert hil.I_AUX_A + a1 == pytest.approx(1.65)
+
+
+def test_aux_preload_step_shape_guards_refuse_the_malformed_cases():
+    """The import-time guards, exercised through the function the import loop
+    calls. Each case is a stimulus that would RUN and silently not be what the
+    registry says it is."""
+    good = [(4.0, 1.05), (16.0, 1.5)]
+    hil.validate_aux_preload_step("ok", good)          # the shipped shape
+    bad = [
+        # one entry: `aux_preload_a` already expresses that
+        [(4.0, 1.05)],
+        # non-increasing times
+        [(4.0, 1.05), (4.0, 1.5)],
+        [(16.0, 1.5), (4.0, 1.05)],
+        # inside the bring-up window AUX_PRELOAD_START_S guards
+        [(1.0, 1.05), (16.0, 1.5)],
+        # the first ramp has not finished when the second entry steps, so the
+        # run's pre-step plateau never stands
+        [(4.0, 1.05), (4.0 + hil.SOC_LOAD_RAMP_S - 0.5, 1.5)],
+    ]
+    for steps in bad:
+        with pytest.raises(AssertionError):
+            hil.validate_aux_preload_step("bad", steps)
+    # BOTH KEYS at once: the resolver reads the step list first, so the ramped
+    # value would be silently discarded.
+    with pytest.raises(AssertionError):
+        hil.validate_aux_preload_step("both", good, also_ramped=1.05)
+
+
+def test_the_shape_guard_actually_runs_over_the_registry():
+    """A validator nobody calls is documentation. The import loop must reach
+    every declaring scenario, which is what makes the guards above live."""
+    src = open(hil.__file__, encoding="utf-8").read()
+    i = src.index("def validate_aux_preload_step(")
+    tail = src[i:]
+    assert "validate_aux_preload_step(_sn, _sm[\"aux_preload_step\"]," in tail
+    assert "also_ramped=_sm.get(\"aux_preload_a\"))" in tail
+    for name, meta in hil.SCENARIOS.items():
+        if meta.get("aux_preload_step"):
+            hil.validate_aux_preload_step(
+                name, meta["aux_preload_step"],
+                also_ramped=meta.get("aux_preload_a"))

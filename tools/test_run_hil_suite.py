@@ -69,9 +69,11 @@ def test_build_plan_full_count_40_runs():
     # WP-B: +v-bus-sense-offset (the UV-dwell objective's own home)
     # 2026-09-03 (the MPC single-source round): +ems-mpc-single -> 47
     # scenarios, 74 slots.
-    assert len(plan) == len(SCENARIOS) + len(REPLAY_SUITE) == 74
+    # 2026-09-03 (the operator-rulings round): +fw26-clamp-joint -> 48
+    # scenarios, 75 slots.
+    assert len(plan) == len(SCENARIOS) + len(REPLAY_SUITE) == 75
     kinds = [p["kind"] for p in plan]
-    assert kinds.count("scenario") == 47
+    assert kinds.count("scenario") == 48
     assert kinds.count("replay") == 27
 
 
@@ -83,7 +85,8 @@ def test_build_plan_replay_only():
 
 def test_build_plan_scenarios_only():
     plan = rhs.build_plan(_args(scenarios_only=True))
-    assert len(plan) == 47      # 2026-09-03: +ems-mpc-single;
+    assert len(plan) == 48      # 2026-09-03: +fw26-clamp-joint;
+                                # 2026-09-03: +ems-mpc-single;
                                 # fw v26 tools round: +the two fw26-clamp-* legs;
                                 # WP-C: +regen-harvest-true; WP-E: +ems-ftp75-dp;
                             # 2026-09-02: +the four MPC legs;
@@ -5315,6 +5318,8 @@ PI_LIVE_SKIP_SCENARIOS = {
     # "pi_timeline", the same rule `share-staircase` and `charge-to-full`
     # join by, and no new code path.
     "fw26-clamp-cruise", "fw26-clamp-sweep",
+    # 2026-09-03 (operator ruling): the joint share-and-demand transient.
+    "fw26-clamp-joint",
     # 2026-08-31: both new EMS-driven scenarios join the skip set via their
     # "ems" metadata key -- same rule as ems-drive-cycle, no new code path.
     "ems-soc-band", "ems-dp-replay",
@@ -5427,7 +5432,8 @@ def test_build_plan_pi_live_total_count_still_40():
     is unchanged under --pi-live, only their kind (executed vs skipped)
     differs."""
     plan = rhs.build_plan(_args(pi_live=True))
-    assert len(plan) == 74      # 2026-09-03: +ems-mpc-single;
+    assert len(plan) == 75      # 2026-09-03: +fw26-clamp-joint;
+                                # 2026-09-03: +ems-mpc-single;
                                 # fw v26 tools round: +the two fw26-clamp-* legs;
                                 # WP-C: +regen-harvest-true; WP-B: +v-bus-sense-offset;
                                 # WP-1C: +the ems-sdp-alpha-* trio;
@@ -10532,16 +10538,20 @@ def test_the_ftp75c_mpc_rail_marker_is_pinned_at_the_value_it_evaluates_to():
     assert spec["informational"] is True          # warns, never fails
 
 
-def test_the_dp_table_directory_holds_four_committed_tables():
+def test_the_dp_table_directory_holds_three_committed_tables():
     """L5. Every "all three committed tables" statement in the docs was one
     table behind `tools/dp_tables/`; this pins the count so the next one is
-    caught here rather than in a review."""
+    caught here rather than in a review.
+
+    `dp_ems_table_ems-ftp75-5050.csv` was DELETED 2026-09-03 (operator ruling):
+    it was orphaned - keyed to a non-dp-replay scenario under a pre-WP-E
+    fingerprint, so it could never load - and its data rows were verified
+    byte-identical to `ems-ftp75-dp`'s."""
     import glob
     names = sorted(os.path.basename(p) for p in
                    glob.glob(os.path.join(HERE, "dp_tables",
                                          "dp_ems_table_*.csv")))
     assert names == ["dp_ems_table_ems-dp-replay.csv",
-                     "dp_ems_table_ems-ftp75-5050.csv",
                      "dp_ems_table_ems-ftp75-dp.csv",
                      "dp_ems_table_ems-ftp75c-dp.csv"]
 
@@ -11849,3 +11859,160 @@ def test_the_single_source_leg_declares_a_15_ms_solve_budget():
     assert SCENARIOS["ems-mpc-single"]["mpc_budget_ms"] == 15.0
     declared = sorted(n for n, m in SCENARIOS.items() if "mpc_budget_ms" in m)
     assert declared == ["ems-mpc-single"], declared
+
+
+# =========================================================================
+# fw26-clamp-joint (2026-09-03, operator ruling): the JOINT transient
+# =========================================================================
+def _joint_by():
+    return {x["name"]: x for x in
+            rhs.FAULT_EXPECTATIONS["fw26-clamp-joint"]["signals_require"]}
+
+
+def test_fw26_joint_walk_regenerates_the_figures_the_entry_is_cut_from():
+    """L11, the joint half. Every bound in `fw26-clamp-joint` is a WALK, and a
+    walk nobody can regenerate is a number nobody can check. The probe
+    reproduces it and the entry's bounds are asserted against what it
+    produces, so a governor change that moves the walk fails HERE rather than
+    mid-campaign."""
+    probe = _fw26_walk()
+    j = probe.joint()
+    by = _joint_by()
+
+    # THE HEADLINE: the peak delivered fuel-cell current across the joint step.
+    assert j["i_fc_peak"] == pytest.approx(1.3303, abs=5e-4)
+    # ... and the acceptance bound brackets it with margin, while still sitting
+    # under LIMIT_I_FC_MAX.
+    peak_bound = by["joint_transient_peak"]["max_value"]
+    assert peak_bound == pytest.approx(hil.FW26_CLAMP_JOINT_ACCEPT_PEAK_A)
+    assert j["i_fc_peak"] < peak_bound < 1.40
+
+    # THE STRUCTURAL BOUND the design record states: the minority clip's rail,
+    # not the ceiling, is what caps the transient.
+    assert j["clip_rail_a"] == pytest.approx(
+        hil.I_AUX_A + hil.FW26_CLAMP_JOINT_STEP_PRELOAD_A - 0.30, abs=1e-9)
+    assert j["i_fc_peak"] <= j["clip_rail_a"] + 1e-9
+    # The two rails cross at ceiling + minority clip, which is the reachability
+    # threshold, and that is where the peak lands.
+    import governor_model as _gm
+    assert j["crossover_total_a"] == pytest.approx(
+        _gm.CEILING_REACHABLE_I_TOT_A, abs=1e-9)
+
+    # THE SETTLED POINT, and the entry's two-sided bands bracket it.
+    assert j["settled_clamp_duty"] == pytest.approx(1.0)
+    assert j["settled_i_fc_min"] == pytest.approx(1.2500, abs=1e-4)
+    assert j["settled_i_fc_max"] == pytest.approx(1.2500, abs=1e-4)
+    assert j["i_batt"] == pytest.approx(0.4000, abs=1e-4)
+    assert j["balance_residual"] == pytest.approx(0.0, abs=1e-12)
+    assert by["joint_fc_at_the_ceiling"]["floor_min_value"] \
+        <= j["settled_i_fc_min"]
+    assert by["joint_fc_under_the_band"]["max_value"] >= j["settled_i_fc_max"]
+    assert by["joint_batt_took_the_rest"]["floor_min_value"] <= j["i_batt"]
+    assert by["joint_batt_bounded"]["max_value"] >= j["i_batt"]
+
+    # THE ENGAGEMENT lands inside the transient window the peak is judged over.
+    assert j["clamp_first_s"] == pytest.approx(0.029, abs=2e-3)
+    assert j["clamp_first_s"] < rhs._JOINT_STEP_WIN_S
+
+
+def test_fw26_joint_walk_discriminates_fw_v25_from_fw_v26():
+    """A leg that cannot tell the clamp from its absence describes the plant
+    instead of testing the firmware. Without the ceilings the minority clip
+    alone settles this stimulus at the 1.35 A clip rail; the entry's upper band
+    refuses that value."""
+    probe = _fw26_walk()
+    import governor_model as gm
+    saved = (gm.CEILING_REACHABLE_I_TOT_A, gm._FC_CEIL_A, gm._BT_CEIL_A)
+    gm._FC_CEIL_A = 1e9
+    gm._BT_CEIL_A = 1e9
+    gm.CEILING_REACHABLE_I_TOT_A = 1e9
+    try:
+        absent = probe.joint()
+    finally:
+        (gm.CEILING_REACHABLE_I_TOT_A, gm._FC_CEIL_A,
+         gm._BT_CEIL_A) = saved
+    present = probe.joint()
+    by = _joint_by()
+
+    assert absent["settled_i_fc_max"] == pytest.approx(1.3500, abs=1e-4)
+    assert absent["i_batt"] == pytest.approx(0.3000, abs=1e-4)
+    # The current bands refuse the clamp-absent operating point outright.
+    assert by["joint_fc_under_the_band"]["max_value"] < absent["settled_i_fc_max"]
+    assert by["joint_batt_took_the_rest"]["floor_min_value"] > absent["i_batt"]
+    # ... and the pinned pair is exactly what the two arms produce.
+    want_present, want_absent = rhs._FW26_JOINT_MDAC_PIN
+    assert (present["mdac_fc"], present["mdac_bt"]) == tuple(want_present)
+    assert (absent["mdac_fc"], absent["mdac_bt"]) == tuple(want_absent)
+
+
+def test_fw26_joint_walk_is_split_law_invariant():
+    """RECORDED, not assumed. The corrected split law (rho + the 0.033 ohm
+    series floor) re-inverts the ratio that delivers a current; it does not
+    move the current, because the firmware pins the applied RATIO on its own
+    rails. So this leg's peak and its codes are the same under both laws - which
+    is why the design record's section 8.6.5 table carries two identical rows
+    rather than a correction."""
+    probe = _fw26_walk()
+    new = probe.joint()
+    old = probe.joint(rho=1.0, r_series=0.0)
+    assert new["i_fc_peak"] == pytest.approx(old["i_fc_peak"], abs=1e-6)
+    assert (new["mdac_fc"], new["mdac_bt"]) == (old["mdac_fc"], old["mdac_bt"])
+    assert new["settled_i_fc_max"] == pytest.approx(old["settled_i_fc_max"],
+                                                    abs=1e-6)
+
+
+def test_fw26_joint_commander_skew_cannot_make_the_peak_worse():
+    """The share step arrives on the Pi's ~50 Hz packet while the load steps at
+    1 kHz, so the two can land up to one commander period apart in EITHER
+    order. The acceptance bound has to hold for both, and the transient window
+    has to contain the peak in both."""
+    probe = _fw26_walk()
+    bound = _joint_by()["joint_transient_peak"]["max_value"]
+    sim_peak = probe.joint()["i_fc_peak"]
+    for skew in (20.0, -20.0, 40.0, -40.0):
+        j = probe.joint(skew_ms=skew)
+        assert j["i_fc_peak"] <= sim_peak + 1e-9, skew
+        assert j["i_fc_peak"] < bound, skew
+        assert j["clamp_first_s"] is not None, skew
+
+
+def test_fw26_joint_windows_lie_inside_the_stimulus_they_judge():
+    """The windows are hand-written, so they are checked against the timeline
+    rather than against each other: the pre-step window must close before the
+    step, the settled window must open after it, and both must close before the
+    run is torn down."""
+    meta = hil.SCENARIOS["fw26-clamp-joint"]
+    step_t = hil.FW26_CLAMP_JOINT_STEP_S
+    assert rhs._JOINT_STEP_T == step_t
+    # The timeline commands the share step at exactly the instant the load
+    # steps - the whole stimulus.
+    tl = dict((t, p) for t, p in meta["pi_timeline"])
+    assert tl[step_t]["power_share_setpoint"] == pytest.approx(
+        hil.FW26_CLAMP_JOINT_STEP_SHARE)
+    assert meta["aux_preload_step"][1][0] == step_t
+    # The pre-step window is clear of both the load plateau and the step.
+    plateau_done = meta["aux_preload_step"][0][0] + hil.SOC_LOAD_RAMP_S
+    assert rhs._JOINT_A0 >= plateau_done
+    assert rhs._JOINT_A1 < step_t
+    # The settled window opens after the step and closes before the MODE_SAFE
+    # teardown and the end of the run.
+    teardown = min(t for t, p in meta["pi_timeline"]
+                   if p.get("mode_cmd") == hil.MODE_SAFE and t > step_t)
+    assert step_t < rhs._JOINT_B0 < rhs._JOINT_B1 <= teardown
+    assert rhs._JOINT_B1 < meta["duration_s"]
+    assert rhs.FAULT_EXPECTATIONS["fw26-clamp-joint"]["survive_to"]["t"] \
+        <= teardown
+
+
+def test_fw26_joint_entry_is_fault_free_and_carries_a_provisional_note():
+    """A never-run leg must say so on every spec it ships, so a report cannot
+    quote one of its bounds as measured."""
+    e = rhs.FAULT_EXPECTATIONS["fw26-clamp-joint"]
+    assert e["allow_only"] == 0
+    assert "PROVISIONAL" in e["provisional_note"]
+    for s in e["signals_require"]:
+        assert s.get("provisional_note"), s["name"]
+        assert s["name"].startswith("joint_"), s["name"]
+    # ... and the names are unique, which a generated block can silently break.
+    names = [s["name"] for s in e["signals_require"]]
+    assert len(names) == len(set(names))
