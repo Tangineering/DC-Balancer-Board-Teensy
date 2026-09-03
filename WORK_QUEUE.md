@@ -316,6 +316,43 @@ sim-only strategies.
 - MPC: a mean-side assertion on `mpc_share_pred_err` would be the better check (the mean is 26× under
   the max), but `run_hil_suite.py` has no column-mean check kind.
 
+- **EMS share-range rule (operator ruling 2026-09-02).** Every EMS strategy must have access to
+  the full firmware command band [0.15, 0.85]. The DP grid and the MPC ladder were narrowed to
+  [0.25, 0.75] on 2026-08-31 and are being widened (stage-2 follow-up). Still narrower by
+  design: `soc-band` (0.50 +/- 0.25) -- widening its span changes the frontier REFERENCE leg and
+  is an operator call. RULING (later 2026-09-02): the 0 / 1 single-source command
+  (through the firmware's setpoint latch / cut-and-restore topology, subject to the 0.5 A
+  share-cut load guard) is added to the MPC ONLY (its governor rolls make the guard and the
+  restore slew exact) and OMITTED from the DP and SDP (a 3-value mode state, ~3x solve cost,
+  and little hydrogen value while ETA_BOOST is flat and Gfc is linear). Bench prerequisite for
+  any of it to matter: TPS61288 efficiency vs load (TODO(calibrate)).
+
+- **FIRMWARE (fw v26 candidate): FC-current-ceiling share governor (operator directive
+  2026-09-02).** Keep the `OC_FC` fault unchanged. Add a governor extension in the share loop:
+  when the fuel-cell current approaches its limit, clamp the delivered FC share so that
+  `I_fc` holds at a ceiling below `LIMIT_I_FC_MAX` and the share falls as the total current
+  rises, i.e. `share_max(I_tot) = I_FC_CEILING / I_tot`, so the battery supplies every ampere
+  above the ceiling. Purpose: fewer `OC_FC` latches while permitting higher-power actions.
+  Design points to settle in the round: the ceiling and its margin/hysteresis under
+  `LIMIT_I_FC_MAX` 1.4 A (fast enough against the OC detection window, no chatter at the
+  ceiling); interaction with the minority-current clip (`SHARE_MINORITY_I_MIN_A`), the
+  setpoint band and cut latch, the slew limiter and the fw v25 share-cut guard (the clamp
+  must never command a cut); behaviour in the open-loop HOLD/FEEDFORWARD submodes (the clamp
+  needs a current measurement, so it is a closed-loop-mode feature - decide what open loop
+  does); a symmetric battery-side ceiling (RULED IN, later 2026-09-02: much higher ceiling, not expected to bind often); IN PROGRESS as fw v26 (implementer launched 2026-09-02 evening for a same-night flash); a telemetry
+  indicator that the clamp is active (a status bit - protocol bump if added); host-native
+  tests; bench validation on the `charge-cruise` / `ems-ftp75-socband` class of stimulus
+  that latched `OC_FC` before. Documentation: CLAUDE.md governor section, PLAN.md,
+  docs/firmware-versions.md, HIL_PLANT.md section 4.4 (the governor modes), HIL_SCENARIOS
+  (the `OC_FC` allowances that become reachable-but-clamped). Modelling: `governor_model.py`
+  port + firmware-equivalence test; `ems_walk.py`; the DP/SDP demand-side FC-budget test
+  (`charge_mask()` currently treats over-limit stages as infeasible; with the clamp the
+  delivered share is `min(commanded, ceiling/I_tot)` instead); the MPC closed-stage surrogate
+  gains the clamp as a delivered-share bound and the transition rolls pick it up from the
+  governor port; Gate 1 re-measured. Sequencing: after the current DP round; the HIL plant
+  and MPC model the clamp only once the firmware defines it, so the firmware design comes
+  first.
+
 ## Shipped 2026-09-02 (overnight)
 
 - **Ag105 charge efficiency `ETA_CHG` = 0.88 in both HIL engines** (chord-conductance stamp, 8.0 V

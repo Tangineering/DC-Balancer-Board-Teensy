@@ -1,6 +1,56 @@
 /*
  * teensy_controller.ino — Scale Car DC Balancer Board, Rev 20260622
  *
+ * fw v26 (2026-09-02) — SOURCE CURRENT-CEILING GOVERNOR IN THE SHARE LOOP. Purpose: fewer
+ *   FAULT_OC_FC latches while allowing higher-power actions. FAULT_OC_FC ITSELF IS UNCHANGED
+ *   (detectFaults() still latches on a single raw sample above LIMIT_I_FC_MAX = 1.4 A); the new
+ *   mechanism is a REFERENCE-side bound that holds the COMMANDED fuel-cell current at a ceiling
+ *   below the fault limit and pushes every further amp of total demand onto the battery.
+ *     (a) applyShareCurrentCeilings() bounds the effective share setpoint (the FC FRACTION) as
+ *         sp <= SHARE_GOV_I_FC_CEIL_A / I_tot and sp >= 1 - SHARE_GOV_I_BT_CEIL_A / I_tot,
+ *         evaluated on share_govTotAFilt (the governor's ~20 ms filtered total, never a raw ADC
+ *         read). Ceilings: FC 1.25 A (0.15 A / 10.7 % under the 1.4 A limit; OC_FC has NO
+ *         persistence filter, so the margin must cover raw-vs-filtered noise, EMA lag and the
+ *         loop's tracking error; headroom over the largest legitimate FC peak measured to date,
+ *         1.1920 A on campaign B `ems-sdp-cross`, is only 0.058 A), BT 2.70 A (0.30 A / 10 %
+ *         under LIMIT_I_BT_MAX 3.0 A — much higher, and not expected to bind). Engage/release
+ *         hysteresis SHARE_GOV_CEIL_HYST_A 0.05 A, same value and class as SHARE_GOV_OL_HYST_A.
+ *     (a2) REACHABILITY, AND THE HONEST SCOPE OF THIS ROUND. The minority clip runs first, so the
+ *         largest commandable FC current is min(0.85·I_tot, I_tot − 0.30) and the clamp can act
+ *         only above I_tot = SHARE_GOV_I_FC_CEIL_A + SHARE_MINORITY_I_MIN_A = **1.55 A of
+ *         TWO-SOURCE total** (measured first engagement 1.60 A at sp 0.85). Every OC_FC-class FC
+ *         excursion measured on this board is a SINGLE-SOURCE FC-charge window — BT_BUS is held
+ *         LOW by assertFcChargeEnable(), I_tot == I_fc, r pinned at DROOP_R_MIN — where the clamp
+ *         is structurally inert and could not help anyway, because the load has nowhere to go.
+ *         **fw v26 is therefore INERT on the registered stimulus set**; validating it needs a
+ *         deliberately-constructed two-source high-total run (docs/fw26_current_ceiling_governor.md
+ *         §8.2/§8.3). Below 1.55 A the firmware is arithmetically identical to fw v25.
+ *     (b) ORDERING. Applied after the minority-current clip (conduction feasibility keeps the
+ *         floor) and before the fw v6 effective-setpoint slew, so the clamp reaches the
+ *         controller through the same rate limit as every other reference movement. BT bound
+ *         first, FC bound second, so the FC ceiling wins the infeasible pair above 3.95 A of
+ *         total — which is BELOW the platform's ~4.2-5.4 A budget, so that corner sits INSIDE the
+ *         operating envelope. Above 4.25 A the commanded battery current crosses LIMIT_I_BT_MAX
+ *         and ERR_OC_BT is the intended latch. The result is finally clamped into
+ *         [DROOP_R_MIN, DROOP_R_MAX]: the clamp can NEVER command a cut, because out-of-band IS
+ *         the cutoff signal.
+ *     (c) SUPPRESSED while a fw v25 deferred cut is outstanding — that deferral has parked the
+ *         reference on a band edge to starve a doomed channel and the ceiling would claw it back.
+ *         One owner per tick.
+ *     (d) OPEN LOOP. HOLD is untouched (it writes nothing, and its < 0.55 A total cannot reach a
+ *         1.25 A ceiling); FEEDFORWARD takes the clamp, where it is provably inert today and
+ *         guards a future retune. The clamp state is dropped on every frozen-loop path and in
+ *         resetShareControlState().
+ *     (e) OBSERVABILITY, NO WIRE CHANGE. BLG flags bit7 (either ceiling binding) — a spare bit in
+ *         an existing byte, record size and BLG v7 unchanged; HIL observation-frame aux byte
+ *         bits 4 (FC) and 5 (BT) — spare bits, HIL_OUTPUT_SIZE stays 18; and a State-98 'S' dump
+ *         line. The v4/58-byte telemetry packet is UNCHANGED: switch_state bits 0x40/0x80 are
+ *         still free but are deliberately left free, because switch_state is the topology word
+ *         the plant simulator solves from and the campaign records compare numerically. Exposing
+ *         the clamp to the Pi is a protocol-bump follow-up.
+ *   Below the ceilings the firmware is bit-identical to fw v25: no arithmetic touches the
+ *   setpoint unless a clamp is engaged. See docs/fw26_current_ceiling_governor.md.
+ *
  * fw v25 (2026-09-01) — SHARE-CUT HANDOFF GUARDS: LOAD-AWARE r-BASED CUT + SURVIVOR-TURN-ON
  *   BLANKING. Campaign hil_report_20260901_080905 latched ERR_OC_BT on a share cut that opened
  *   the only CONDUCTING source 5 ms after the survivor's bus switch closed. Every FC-charge
@@ -2218,7 +2268,10 @@ const float SHARE_I_TOT_MIN_A = 0.075f;
 // TODO(calibrate): refine via the quasi-static dropout-boundary mapping (bench
 // plan step 3) — the bracket is 45 mA wide and was measured at ONE total
 // current, so the floor's I_tot dependence is still unmeasured.
-const float SHARE_MINORITY_I_MIN_A = 0.30f;
+// constexpr, not const: the fw v26 ceiling static_asserts below need a constant expression, so
+// that they can be written against THIS SYMBOL rather than a restated 0.30f literal (a literal
+// would silently stop tracking the constant the moment this value is retuned).
+constexpr float SHARE_MINORITY_I_MIN_A = 0.30f;
 
 // A — LOAD CEILING on the SETPOINT-LATCHED CUTOFF ENTRY (fw v6, 2026-08-12). The cutoff opens one
 // bus switch in a single tick, which hands the doomed channel's ENTIRE instantaneous current to
@@ -2301,6 +2354,99 @@ const int SHARE_HANDOFF_DWELL_MAX_TICKS = 175;
 // The governor bounds depend on measured current; unfiltered, ADC noise would
 // dither sp_eff and feed measurement noise straight into the setpoint.
 const float SHARE_GOV_FILT_ALPHA = 0.05f;
+
+// ── Source current-ceiling governor (fw v26, 2026-09-02) ─────────────────────
+// PURPOSE: fewer FAULT_OC_FC latches at high power, WITHOUT weakening the fault. The OC_FC
+// check in detectFaults() is UNCHANGED (single-sample, raw I_fc, LIMIT_I_FC_MAX = 1.4 A) — this
+// governor is a REFERENCE-SIDE constraint that keeps the commanded FC current at a ceiling BELOW
+// the fault limit and forces every additional amp of total demand onto the battery. The share
+// setpoint the loop tracks is the FC FRACTION (powerBalance():
+// power_share_actual_local = |I_fc|/(|I_fc|+|I_batt|)), so a ceiling on FC current is an UPPER
+// bound on the effective setpoint, sp_eff <= I_FC_CEIL / I_tot, and a ceiling on BT current is a
+// LOWER bound, sp_eff >= 1 - I_BT_CEIL / I_tot. Both bounds are evaluated against the GOVERNOR's
+// filtered total share_govTotAFilt (SHARE_GOV_FILT_ALPHA, ~20 ms), never a raw ADC read — the
+// governor doctrine is that no raw measurement gates the reference, and a raw bound would dither
+// the setpoint by the per-tick ADC noise.
+//
+// A — FC ceiling. LIMIT_I_FC_MAX is 1.4 A bus-side; 1.25 A leaves 0.15 A (10.7 %) of margin.
+// WHY THE MARGIN IS THAT SIZE, argued against the OC_FC detection window actually found in
+// detectFaults(): OC_FC has NO persistence filter and NO dwell — unlike FAULT_OV_BUS
+// (OV_BUS_PERSIST_MS/OV_BUS_MAX_GAP_MS) and FAULT_UV_BUS (UV_BUS_DWELL_*), a SINGLE raw sample
+// above 1.4 A latches State 99. The clamp cannot answer a single sample: it acts on a ~20 ms EMA
+// and moves the reference at DROOP_RATIO_SLEW_PER_TICK (0.02/tick, ~35 ticks full band). So the
+// margin must absorb (i) raw-vs-filtered sample noise, (ii) the EMA's lag over a load ramp, and
+// (iii) the closed loop's own share tracking error against the clamped reference. 0.15 A is ~4x
+// the per-channel post-averaging idle noise implied by SHARE_I_TOT_MIN_A (0.075 A total at ~9
+// sigma) and leaves the ceiling ABOVE the largest legitimate FC peak measured to date on the
+// board — 1.1920 A (campaign B `ems-sdp-cross`; `ems-sdp-alpha-cal` reached 1.1863 A and
+// `ems-ftp75-socband` 1.1370 A) — so the clamp does not cap ordinary operation. HEADROOM OVER
+// THAT PEAK IS ONLY 0.058 A, and that is the number to watch on the first fw v26 campaign: a
+// clamp that engages on `ems-sdp-cross` means the ceiling is set too low, not that it is working.
+// TODO(calibrate): re-derive from the first fw v26 campaign's I_fc peak distribution under a
+// bound clamp; the margin is argued from the detection semantics, not measured.
+//
+// ── REACHABILITY: WHERE THIS CEILING CAN ACT AT ALL (fw v26 review HIGH-1) ───
+// The minority-current clip runs FIRST, so the largest FC current the loop can ever command is
+//     I_fc_cmd_max = min(DROOP_R_MAX, 1 - SHARE_MINORITY_I_MIN_A/I_tot) * I_tot
+//                  = min(0.85 * I_tot, I_tot - 0.30)
+// The second term is the tighter one, so I_fc_cmd_max exceeds this ceiling only above
+//     I_tot > SHARE_GOV_I_FC_CEIL_A + SHARE_MINORITY_I_MIN_A = 1.55 A     (TWO-SOURCE total)
+// The DROOP_R_MAX branch alone would admit it from 1.47 A. Measured first engagement on the host
+// suite: 1.60 A at sp 0.85. **1.55 A is the governing reachability number for this feature** —
+// below it, fw v26 is arithmetically identical to fw v25.
+//
+// CONSEQUENCE, STATED PLAINLY: THE CLAMP CANNOT ACT IN AN FC-CHARGE WINDOW. Every OC_FC-class FC
+// excursion measured on this board to date is SINGLE-SOURCE: assertFcChargeEnable() holds
+// BT_BUS_ENABLE LOW for the whole window, so I_tot == I_fc, the share ratio is pinned at
+// DROOP_R_MIN, and there is no second channel to move load onto. At 1.40 A single-source the
+// clamp does not engage — and could not help if it did, because the load has nowhere else to go.
+// fw v26 is therefore INERT on the registered stimulus set as it stands. Validating it needs a
+// deliberately-constructed TWO-SOURCE high-total run; the State-98 command line and the HIL
+// scenario proposed for the tools round are in docs/fw26_current_ceiling_governor.md §8.2/§8.3.
+constexpr float SHARE_GOV_I_FC_CEIL_A = 1.25f;   // A (BUS-SIDE), constexpr for the static_asserts
+// A — BT ceiling, same form and the same fractional margin. LIMIT_I_BT_MAX is 3.0 A (the
+// validated per-channel envelope; see its block), so 2.70 A is 0.30 A / 10 % under it. This
+// ceiling is 2.16x the FC ceiling and is not expected to bind in ordinary operation.
+//
+// WHAT HAPPENS ABOVE THE FEASIBLE TOTAL (corrected, fw v26 review MED-1). The two ceilings
+// together admit only SHARE_GOV_I_FC_CEIL_A + SHARE_GOV_I_BT_CEIL_A = 3.95 A of total bus
+// current, which is BELOW the platform's ~4.2-5.4 A budget — so this corner is INSIDE the
+// operating envelope, not above it. Above 3.95 A of total no split keeps both channels under
+// their ceilings, the FC-last rule in applyShareCurrentCeilings() resolves it in the fuel cell's
+// favour, and the commanded battery current is therefore knowingly pushed over 2.70 A. It crosses
+// LIMIT_I_BT_MAX (3.0 A) at I_tot > SHARE_GOV_I_FC_CEIL_A + LIMIT_I_BT_MAX = 4.25 A (measured:
+// 3.15 A of commanded battery current at I_tot = 4.40 A), from which point ERR_OC_BT is the
+// INTENDED latch: the fuel cell is the fragile source, the battery has a 10 A pack behind it, and
+// FAULT_OC_BT is unchanged and still guards it. The operator surface for this regime is the
+// I_bt_cmd figure on the State-98 'S' dump's `share I-ceiling:` line — if it reads above 3.0 A
+// the board is in the FC-priority corner and an OC_BT latch is the design's own answer, not a
+// defect. TODO(calibrate): the 4.25 A crossing has never been reached on hardware.
+constexpr float SHARE_GOV_I_BT_CEIL_A = 2.70f;   // A (BUS-SIDE)
+// A — release hysteresis on the clamp ENGAGE/RELEASE decision. Same value and the same class as
+// SHARE_GOV_OL_HYST_A: a demanded channel current sitting exactly on its ceiling must not
+// chatter the clamp flag (and its BLG/HIL observability bits) tick to tick. The clamp engages
+// when the demanded channel current exceeds the ceiling and releases only once it falls
+// SHARE_GOV_CEIL_HYST_A below it.
+constexpr float SHARE_GOV_CEIL_HYST_A = 0.05f;
+// Tripwires. (1) Each ceiling must sit strictly under its fault limit, or the governor would be
+// chasing a latch it can never beat. (2) Each ceiling must sit ABOVE SHARE_MINORITY_I_MIN_A, or
+// the ceiling clamp could demand a channel current below the light-load conduction floor the
+// minority clip enforces — the two bounds would then be in direct conflict and the dropout limit
+// cycle (TP0010/TP0013) would be commanded by the very mechanism meant to protect the source.
+// (3) The hysteresis must be smaller than the FC margin, or a released clamp would sit at or
+// above the fault limit. Assertion (2) is written against the SYMBOL SHARE_MINORITY_I_MIN_A —
+// which is constexpr for exactly this reason — so a retune of the conduction floor is checked
+// here automatically; an earlier draft restated 0.30f as a literal and would have stopped
+// tracking it silently.
+static_assert(SHARE_GOV_I_FC_CEIL_A < LIMIT_I_FC_MAX,
+              "FC current ceiling must sit under LIMIT_I_FC_MAX or the clamp cannot prevent OC_FC");
+static_assert(SHARE_GOV_I_BT_CEIL_A < LIMIT_I_BT_MAX,
+              "BT current ceiling must sit under LIMIT_I_BT_MAX");
+static_assert(SHARE_GOV_I_FC_CEIL_A > SHARE_MINORITY_I_MIN_A &&
+              SHARE_GOV_I_BT_CEIL_A > SHARE_MINORITY_I_MIN_A,
+              "a ceiling below SHARE_MINORITY_I_MIN_A would fight the conduction floor");
+static_assert(SHARE_GOV_CEIL_HYST_A < LIMIT_I_FC_MAX - SHARE_GOV_I_FC_CEIL_A,
+              "release hysteresis must stay inside the FC ceiling margin");
 
 const float motorConstant = 0.1f;   // TODO: tune this
 // A — HARD ceiling on the current actually handed to the VESC. Enforced at the single chokepoint
@@ -2806,7 +2952,7 @@ bool wheelSpeedResetPending = false;
 // header (format v2 and later, offset 18) so logged data is attributable to the
 // firmware that produced it, printed at boot and in the State-98 'S' status.
 // 0 is reserved for "pre-versioning" (logs PS0001–TP0005 and earlier).
-#define FW_VERSION 25
+#define FW_VERSION 26
 
 #ifndef BENCH_TEST
 #define BENCH_TEST 1
@@ -2957,6 +3103,10 @@ uint16_t       pkt_counter_T = 0;
 //    3  |  1   | switch_state bitmask (SW_* — same packing as telemetry offset 52)
 //    4  |  1   | aux pins: bit0 FC_REG_ENABLE, bit1 BT_REG_ENABLE,
 //       |      |           bit2 MPPT_DISABLE,  bit3 CBAL_DISABLE
+//       |      |   bits 4/5 are NOT pin levels (fw v26): bit4 = the FC source current-ceiling
+//       |      |   clamp is binding, bit5 = the BT clamp is binding. Spare bits in an existing
+//       |      |   byte — frame size, offsets and XOR span are unchanged, so HIL_OUTPUT_SIZE
+//       |      |   stays 18 and a host that does not know them masks them off.
 //    5  |  4   | current [A] — post-clamp commanded motor current
 //    9  |  2   | last MDAC code written to the FC channel (raw 16-bit SPI word)
 //   11  |  2   | last MDAC code written to the BT channel
@@ -3108,6 +3258,13 @@ uint8_t readSwitchState() {
     return s;
 }
 
+// fw v26 source current-ceiling governor state, DEFINED with the share loop further down (next to
+// updateShareSlewMode(), which owns the governor's filters). Declared here because the three
+// observability sites — readHilAuxState() below, the BLG record packer and printTestStatus() —
+// all precede that definition.
+extern bool shareGovFcClamped;
+extern bool shareGovBtClamped;
+
 // Aux (non-ideal-diode) control pins the simulator needs to model the sources and the
 // charger: the two boost enables plus the two active-LOW disable lines.
 uint8_t readHilAuxState() {
@@ -3116,6 +3273,15 @@ uint8_t readHilAuxState() {
     if (digitalRead(BT_REG_ENABLE)) a |= 0x02;
     if (digitalRead(MPPT_DISABLE))  a |= 0x04;
     if (digitalRead(CBAL_DISABLE))  a |= 0x08;
+    // fw v26 — bits 4/5 are NOT pin levels: they mirror the source current-ceiling governor's
+    // clamp state (bit4 = FC ceiling binding, bit5 = BT ceiling binding). They live here rather
+    // than in the switch_state byte deliberately: switch_state is the TOPOLOGY word the plant
+    // simulator solves the network from and the campaign records compare numerically, and a
+    // non-switch semantic in it would perturb that reading. Frame size, offsets and checksum span
+    // are unchanged — these are spare bits in an existing byte, so HIL_OUTPUT_SIZE stays 18 and
+    // no protocol version moves. A host that does not know the bits masks them off as before.
+    if (shareGovFcClamped) a |= 0x10;
+    if (shareGovBtClamped) a |= 0x20;
     return a;
 }
 
@@ -3823,8 +3989,12 @@ extern float shareHandoffIFcFilt;
 extern float shareHandoffIBtFilt;
 extern int   shareHandoffDwell;
 extern float shareSlewStepThisTick;
+// fw v26 current-ceiling governor: the two clamp flags are declared further up (next to
+// readHilAuxState(), the earliest of the three observability sites); these are its entry points.
 const char *shareSlewModeName();
 void updateShareSlewMode();
+float applyShareCurrentCeilings(float sp);
+void  clearShareCeilingState();
 void assertFcChargeEnable(bool enable);
 bool motPwrConnectBlocked();
 bool assertMotPwrEnable(bool enable);
@@ -3999,7 +4169,17 @@ struct __attribute__((packed)) BenchLogRecord {
                            //        byte-indistinguishable from a real bench run and can be
                            //        mistaken for hardware evidence (fw v21). Record size and
                            //        header are UNCHANGED — this is a spare bit in an existing
-                           //        byte, so BLG stays v7.
+                           //        byte, so BLG stays v7;
+                           // bit7 = a SOURCE CURRENT CEILING is binding the effective share
+                           //        setpoint this tick — either channel (fw v26). The HIL aux
+                           //        byte's bits 4/5 and the State-98 'S' dump separate FC from
+                           //        BT. NOT a compile-time constant, unlike bit4-bit6: this one
+                           //        varies tick to tick. Same spare-bit discipline — record size
+                           //        and BLG v7 unchanged, no new CSV column. It is the ONLY
+                           //        in-log observable for the clamp: the bound is on the
+                           //        REFERENCE, so "the governor held FC at its ceiling" and "the
+                           //        load happened to stop there" are indistinguishable from the
+                           //        logged currents alone.
     uint8_t  pad[2];       // zero
     // Format v5 (fw v11, 2026-08-16): drive-controller internals, APPENDED at the end so every
     // v1–v4 field offset is unchanged and a decoder needs only the two new tail fields.
@@ -4525,6 +4705,13 @@ void logSampleTick() {
 #if HIL_SIM
     r.flags |= 0x40;
 #endif
+    // fw v26: a source current ceiling is BINDING the effective share setpoint this tick (either
+    // channel; the HIL aux byte and the 'S' dump separate FC from BT). Same class as bit6 — a
+    // spare bit in an existing byte, so the record size and BLG format v7 are unchanged and no
+    // new CSV column appears. This is the only in-log observable for the clamp: it is a
+    // reference-side bound, so "the governor held FC at its ceiling" and "the load stopped there"
+    // are indistinguishable from the logged currents alone.
+    if (shareGovFcClamped || shareGovBtClamped) r.flags |= 0x80;
     r.pad[0] = 0;
     r.pad[1] = 0;
     // Format v5 (fw v11): drive-controller internals. EXPOSE the stored values — never re-run the
@@ -5932,6 +6119,14 @@ void doState3() {
     // this run would corrupt the first velocity samples).
     wheelSpeedResetPending = true;
 
+    // fw v26 (review LOW-1): drop the source current-ceiling clamp flags. The Run→Finish→Idle exit
+    // is not a share-loop freeze — powerBalance() simply stops being called — so without this the
+    // flags would survive the whole of Idle and publish a stale clamp on the BLG bit7 / HIL aux
+    // bits 4-5 / 'S' dump for as long as the board sat there. State 99 is still deliberately NOT a
+    // clear site (see clearShareCeilingState()): a latched board should show what was binding when
+    // it faulted, whereas a clean Finish should not.
+    clearShareCeilingState();
+
     Serial.println("State 3 -> State 1 (IDLE)");
     mainState = 1;
 }
@@ -7010,6 +7205,12 @@ void doState98() {
                 trapCmdA                = 0.0f;
                 wCmdA                   = 0.0f;
                 powerBalanceLive        = false;
+                // fw v26 (self-review, extends review LOW-1): drop the source current-ceiling
+                // clamp flags. This is the SAME gap LOW-1 found in doState3() — powerBalance()
+                // simply stops being called on the way to Idle, which is not a share-loop freeze,
+                // so without an explicit clear a State-98 profile that exited while clamped would
+                // publish a stale clamp on the BLG bit7 / HIL aux bits / 'S' dump through Idle.
+                clearShareCeilingState();
                 vescWatchActive         = false;   // stop the blocking poll from running outside State 98
                 pendingInput            = PEND_NONE;   // also drops a half-typed trapezoid line
                 inputBufIdx             = 0;
@@ -9172,6 +9373,20 @@ void printTestStatus() {
     Serial.print(")  dwell=");   Serial.print(shareHandoffDwell);
     Serial.print("/");           Serial.print(SHARE_HANDOFF_DWELL_MAX_TICKS);
     Serial.print("  step=");     Serial.println(shareSlewStepThisTick, 4);
+    // fw v26: the source current-ceiling governor. Like the slew mode above, this is a
+    // REFERENCE-side bound and is not reconstructible from the logged currents — print the flags,
+    // the ceilings and the currents the ceilings are compared against.
+    Serial.print("share I-ceiling:    FC=");
+    Serial.print(shareGovFcClamped ? "CLAMP" : "off");
+    Serial.print(" (<="); Serial.print(SHARE_GOV_I_FC_CEIL_A, 2);
+    Serial.print(" A, limit "); Serial.print(LIMIT_I_FC_MAX, 2);
+    Serial.print(")  BT="); Serial.print(shareGovBtClamped ? "CLAMP" : "off");
+    Serial.print(" (<="); Serial.print(SHARE_GOV_I_BT_CEIL_A, 2);
+    Serial.print(" A, limit "); Serial.print(LIMIT_I_BT_MAX, 2);
+    Serial.print(")  sp_eff="); Serial.print(share_spEffPrev, 3);
+    Serial.print(" -> I_fc_cmd="); Serial.print(share_spEffPrev * share_govTotAFilt, 3);
+    Serial.print(" A, I_bt_cmd="); Serial.print((1.0f - share_spEffPrev) * share_govTotAFilt, 3);
+    Serial.println(" A");
     Serial.print("manualMotorMode:    ");
     Serial.println(manualMotorMode == MOTOR_TEST_OFF      ? "OFF"
                  : manualMotorMode == MOTOR_TEST_CURRENT  ? "CURRENT"
@@ -9978,6 +10193,123 @@ float shareHandoffPrevRatio = 0.5f;   // droopSlew_prev as of the previous updat
                                       //  first tick after boot cannot read as spurious motion)
 float shareSlewStepThisTick = DROOP_RATIO_SLEW_HANDOFF_PER_TICK;   // THE tick's ceiling
 
+// ── Source current-ceiling governor state (fw v26) ───────────────────────────
+// TRUE while THAT channel's ceiling is actively bounding the effective setpoint. Hysteretic (see
+// applyShareCurrentCeilings()), and the ONLY observable for the clamp: it is a reference-side
+// bound, so a decoded run cannot distinguish "the governor held FC at 1.25 A" from "the load
+// happened to stop there" out of the logged currents alone. Mirrored into the BLG flags byte
+// (bit7), the HIL observation frame's aux byte (bits 4/5) and the State-98 'S' dump.
+bool shareGovFcClamped = false;
+bool shareGovBtClamped = false;
+
+// Drop the clamp state. Called on every path that FREEZES the share loop (the setpoint-latch
+// return, the minimum-load return, the open-loop HOLD) and from resetShareControlState(). WHY it
+// is not simply cleared at the top of powerBalance(): the flags carry the hysteresis memory, so a
+// per-tick clear would defeat SHARE_GOV_CEIL_HYST_A. A frozen loop, on the other hand, is by
+// definition not clamping anything — leaving the flag set there would publish a stale clamp for
+// as long as the freeze lasts.
+// STATE 99 IS DELIBERATELY NOT A CLEAR SITE. powerBalance() does not run once the board has
+// latched, so the two flags freeze at their value on the latching tick — the same semantics as
+// fault_flags, and the reading an operator wants out of the observation frame ("was a ceiling
+// binding when it faulted?"). doState99() therefore does not touch them.
+void clearShareCeilingState() {
+    shareGovFcClamped = false;
+    shareGovBtClamped = false;
+}
+
+// ── The fw v26 current-ceiling clamp ─────────────────────────────────────────
+// Bound the effective share setpoint so the COMMANDED per-channel current stays at or below that
+// channel's ceiling, forcing every further amp of total demand onto the other source. Returns the
+// bounded setpoint; the caller feeds it into the fw v6 reference slew, so the clamp never steps
+// the reference.
+//
+// CONVENTION (confirmed from powerBalance(), not assumed): sp is the FC FRACTION of the total
+// source current. Therefore
+//   FC ceiling -> sp <= SHARE_GOV_I_FC_CEIL_A / I_tot        (an UPPER bound)
+//   BT ceiling -> sp >= 1 - SHARE_GOV_I_BT_CEIL_A / I_tot    (a LOWER bound)
+// evaluated on share_govTotAFilt, the governor's filtered total.
+//
+// ORDER OF APPLICATION, and why (requirement (b)):
+//   1. The caller applies the MINORITY-CURRENT CLIP first. That clip is a CONDUCTION FEASIBILITY
+//      floor — commanding below it ignites the TP0010/TP0013 dropout limit cycle, which collapses
+//      the bus. This clamp is fault-AVOIDANCE. The two cannot actually conflict (a static_assert
+//      at the constants pins each ceiling above SHARE_MINORITY_I_MIN_A, so the FC upper bound
+//      I_FC_CEIL/tot is always above the floor lo = I_min/tot, and symmetrically for BT), but the
+//      ordering is fixed anyway so that the conduction floor is never the thing that gets
+//      overwritten if a future retune breaks that inequality.
+//      HONEST NOTE ON TESTABILITY (fw v26 review MED-4): because the two bounds provably cannot
+//      conflict at the SHIPPED constants, swapping this order — running the ceiling clamp BEFORE
+//      the minority clip — is an EQUIVALENT MUTANT today, and no host test can distinguish it.
+//      The ordering is a guard against a future retune, not a behaviour the current suite
+//      verifies. The static_asserts are what make the equivalence true, so they are the thing
+//      that must not be deleted.
+//   2. BT lower bound, then FC upper bound. The pair is INFEASIBLE above
+//      I_FC_CEIL + I_BT_CEIL = 3.95 A of total, where no split keeps both channels under their
+//      ceilings. That total is BELOW the platform's ~4.2-5.4 A budget, so the corner is inside
+//      the operating envelope. Applying FC LAST makes the FC ceiling win it, which is the correct
+//      priority: the FC is the fragile source (1.4 A limit, single-sample OC_FC, a fuel-cell
+//      stack behind it) while the BT ceiling has the 3.0 A LIMIT_I_BT_MAX and a 10 A pack behind
+//      it, and FAULT_OC_BT still guards the battery independently. Above
+//      I_FC_CEIL + LIMIT_I_BT_MAX = 4.25 A of total the commanded battery current crosses
+//      LIMIT_I_BT_MAX and ERR_OC_BT becomes the INTENDED latch — see the SHARE_GOV_I_BT_CEIL_A
+//      block for the full statement of that regime.
+//   3. Finally clamp into [DROOP_R_MIN, DROOP_R_MAX] (requirement (a)). The clamp must NEVER
+//      command a ratio outside the droop band: out-of-band is the channel-CUTOFF signal, and a
+//      current ceiling must not open a bus switch. At 1.25 A the FC bound only leaves the band
+//      above 8.33 A of total — unreachable on this board — but the clamp is structural, not
+//      arithmetical: no path through this function can produce a cut.
+//
+// INTERACTION WITH THE fw v25 SHARE-CUT GUARD (requirement (e)): while a deferred cut is
+// outstanding, the caller has already pulled the reference onto a band edge to STARVE the doomed
+// channel, and that deferral exists because a cut was refused on load. A ceiling clamp would pull
+// the reference back off that edge (e.g. a deferred BT cut parks sp at 0.85, which the FC ceiling
+// would claw back above 1.47 A of total) and fight the handoff. One owner per tick: the caller
+// suppresses this clamp entirely while either deferral flag is set. OC_FC remains the protection
+// in that window, unchanged.
+//
+// INERTNESS (requirement (f)): with no ceiling exceeded, sp is returned BYTE-IDENTICALLY — no
+// arithmetic touches it, so a stimulus that never reaches a ceiling produces the same droop codes
+// as fw v25.
+float applyShareCurrentCeilings(float sp) {
+    const float tot = share_govTotAFilt;
+    // Below the minimum-load threshold the ratio itself is noise; the caller never reaches here
+    // in that regime, but guard the divide structurally rather than by argument.
+    if (!(tot > SHARE_I_TOT_MIN_A)) { clearShareCeilingState(); return sp; }
+
+    // BT side (lower bound on the FC fraction). Demanded BT current at the incoming setpoint:
+    const float demandBt = (1.0f - sp) * tot;
+    if (shareGovBtClamped) {
+        if (demandBt < SHARE_GOV_I_BT_CEIL_A - SHARE_GOV_CEIL_HYST_A) shareGovBtClamped = false;
+    } else if (demandBt > SHARE_GOV_I_BT_CEIL_A) {
+        shareGovBtClamped = true;
+    }
+    if (shareGovBtClamped) {
+        const float loBound = 1.0f - SHARE_GOV_I_BT_CEIL_A / tot;
+        if (sp < loBound) sp = loBound;
+    }
+
+    // FC side (upper bound on the FC fraction), applied SECOND so it wins an infeasible pair.
+    // The demand is re-derived from the possibly BT-raised sp, which is correct: the question is
+    // whether the ratio this function is about to command overdraws the fuel cell.
+    const float demandFc = sp * tot;
+    if (shareGovFcClamped) {
+        if (demandFc < SHARE_GOV_I_FC_CEIL_A - SHARE_GOV_CEIL_HYST_A) shareGovFcClamped = false;
+    } else if (demandFc > SHARE_GOV_I_FC_CEIL_A) {
+        shareGovFcClamped = true;
+    }
+    if (shareGovFcClamped) {
+        const float hiBound = SHARE_GOV_I_FC_CEIL_A / tot;
+        if (sp > hiBound) sp = hiBound;
+    }
+
+    // Band clamp — structural, see (3) above. Only reached when a clamp is engaged, so an
+    // unclamped setpoint is returned untouched.
+    if (shareGovFcClamped || shareGovBtClamped) {
+        sp = constrain(sp, DROOP_R_MIN, DROOP_R_MAX);
+    }
+    return sp;
+}
+
 // Compute THIS tick's droop-ratio slew ceiling, once per powerBalance() tick (fw v19, TP0201).
 //
 // WHY A REDUCED RATE AT ALL. While a channel is not meaningfully conducting its ideal diode is
@@ -10084,7 +10416,9 @@ void powerBalance() {
     // the ENTIRE share loop is frozen — no governor, no controller step, no MDAC
     // write — so the standing (topology-forced) share error can never wind the
     // controller back over the re-entry hysteresis (TP0015).
-    if (updateShareSetpointCutoff()) return;
+    // fw v26: a frozen share loop is not clamping anything — drop the ceiling-clamp state so the
+    // BLG/HIL/'S' observables cannot publish a stale clamp for the duration of the freeze.
+    if (updateShareSetpointCutoff()) { clearShareCeilingState(); return; }
 
     float totalA = fabsf(I_fc) + fabsf(I_batt);
     // Minimum-load gate (was a bare 1e-6 divide-by-zero guard): below
@@ -10095,7 +10429,7 @@ void powerBalance() {
     // which is the correct starting point for the next launch. On the first
     // tick back above threshold the Youla wrapper's Ts gate has long expired,
     // so the controller resumes immediately with the fresh measurement.
-    if (totalA < SHARE_I_TOT_MIN_A) return;
+    if (totalA < SHARE_I_TOT_MIN_A) { clearShareCeilingState(); return; }   // fw v26: see above
 
     // Governor load estimate (filtered so ADC noise doesn't dither the bounds).
     // Updated only on ticks that reach here — below SHARE_I_TOT_MIN_A the whole
@@ -10171,7 +10505,13 @@ void powerBalance() {
         if (shareClosedLoopRun) {
             bool spChanged      = fabsf(power_share_setpoint - share_actedSp) > SHARE_SP_CHANGE_EPS;
             bool isoOutstanding = shareIsoFC || shareIsoBT;
-            if (!spChanged && !isoOutstanding) return;   // HOLD
+            // fw v26: HOLD writes NOTHING to the MDACs, by design — so the current-ceiling clamp
+            // is deliberately NOT applied here (applying it would require a write and break the
+            // hold invariant). It is also structurally unreachable: HOLD only runs in open-loop
+            // mode, i.e. share_govTotAFilt < 2*SHARE_MINORITY_I_MIN_A - SHARE_GOV_OL_HYST_A =
+            // 0.55 A, and no channel can carry 1.25 A out of a 0.55 A total. The clamp state is
+            // dropped for the same reason as the two frozen returns above.
+            if (!spChanged && !isoOutstanding) { clearShareCeilingState(); return; }   // HOLD
             // A changed setpoint re-arms the feedforward path (a still-outstanding
             // cutoff does NOT: once it clears, the hold resumes).
             if (spChanged) shareClosedLoopRun = false;
@@ -10197,6 +10537,13 @@ void powerBalance() {
         // (chargingControl(), doState2()) key on shareSpCut*, so an shareIso*-claimed cut can be
         // re-closed by them and immediately re-cut here — switch cycling. Returning quietly leaves
         // exactly one idle tick, after which the latch's own entry branch claims the new side.
+        // fw v26 (review LOW-2): this quiet return deliberately does NOT clear the ceiling-clamp
+        // flags, unlike the three freeze paths above. Reaching it with a flag set is provably
+        // impossible: a flag can only be set by a tick whose filtered total exceeded
+        // SHARE_GOV_I_FC_CEIL_A / DROOP_R_MAX = 1.47 A, and this branch is inside OPEN-LOOP mode,
+        // which exists only below 0.55 A. Any tick that could arrive here with a flag set would
+        // have cleared it on the HOLD or minimum-load path first. Left uncleared so the release
+        // tick this branch exists for stays a one-line no-op.
         if (power_share_setpoint < DROOP_R_MIN || power_share_setpoint > DROOP_R_MAX) return;
 
         // Same slew constraint and the same origin as the controller path below, so mode changes
@@ -10206,7 +10553,14 @@ void powerBalance() {
         // site takes the reduced rate too. It reads the value updateShareSlewMode() stored at the
         // top of this tick; it does not recompute it.
         const float slewStep = shareSlewStepThisTick;
-        float target = constrain(power_share_setpoint,
+        // fw v26: the FEEDFORWARD submode DOES write the MDACs, so it takes the current-ceiling
+        // clamp — against the same filtered total the closed-loop path uses. It is INERT today
+        // and provably so: this branch runs only in open-loop mode, where share_govTotAFilt is
+        // below 0.60 A, and neither ceiling (1.25 / 2.70 A) can be reached out of that total. It
+        // is applied anyway so a future ceiling retune cannot silently leave a writing path
+        // unguarded — the cost is one multiply on a branch that is already off the fast path.
+        float ffSp = applyShareCurrentCeilings(power_share_setpoint);
+        float target = constrain(ffSp,
                                  droopSlew_prev - slewStep,
                                  droopSlew_prev + slewStep);
         applyShareRatio(target);
@@ -10267,6 +10621,21 @@ void powerBalance() {
         if (lo > 0.5f) lo = 0.5f;
         float hi = 1.0f - lo;
         spTarget = constrain(spTarget, lo, hi);
+    }
+
+    // ── Source current-ceiling clamp (fw v26) ────────────────────────────────
+    // Applied AFTER the minority-current clip (conduction feasibility owns the floor; see the
+    // ordering argument in applyShareCurrentCeilings()) and BEFORE the effective-setpoint slew
+    // below, so the clamp reaches the controller through the SAME rate limit as every other
+    // reference movement and can never step the reference.
+    // SUPPRESSED while a deferred cut is outstanding: the deferral clip immediately above has
+    // deliberately parked the reference on a band edge to starve a doomed channel, and the FC
+    // ceiling would claw it back off that edge above ~1.47 A of total. One owner per tick — the
+    // fw v25 share-cut guard wins, and FAULT_OC_FC (unchanged) is the protection in that window.
+    if (!(shareCutDeferredFC || shareCutDeferredBT)) {
+        spTarget = applyShareCurrentCeilings(spTarget);
+    } else {
+        clearShareCeilingState();
     }
 
     // ── Effective-setpoint slew (fw v6, 2026-08-12) ──────────────────────────
@@ -10637,6 +11006,9 @@ void resetShareControlState() {
     // reset — see the header comment), so a literal seed would make the first tick after a reset
     // read as spurious motion and burn a dwell tick that nothing moved.
     shareHandoffPrevRatio = droopSlew_prev;
+    // fw v26 current-ceiling governor: a reset means no run is in progress, so no clamp is
+    // binding. The flags carry hysteresis memory and must not survive into the next run.
+    clearShareCeilingState();
 }
 
 float youlaController_Power(float setpoint, float alphaRaw) {

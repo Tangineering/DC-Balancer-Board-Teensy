@@ -881,3 +881,52 @@ round. **FW stays v25 and the wire protocol is frozen; the board ran the fw v25 
   correct with every fix validated — and a third campaign would only add repeat datapoints to quantities
   now pinned by two readings, while the operator's own review of the physics record, the MPC design and
   the α question governs what should run next (the stop-at-four precedent, 2026-09-01).
+
+---
+
+## Status & session addendum (2026-09-02b, fw v26: FC/BT current-ceiling share clamp — PENDING FLASH)
+
+Operator directive (2026-09-02): keep `OC_FC` unchanged, but extend the share governor so that
+when the fuel-cell current approaches its limit the delivered FC share is clamped and the
+battery supplies the excess; a battery-side ceiling of the same form was ruled in (much
+higher, not expected to bind). Shipped as **fw v26** (Opus implementer, Opus safety review,
+fix round, orchestrator rebuild 3926 / 175 / 4408 checks, 0 warnings on the production and
+HIL builds). `docs/fw26_current_ceiling_governor.md` is the design record; ledger row 26.
+
+- `applyShareCurrentCeilings(sp)`: `sp <= SHARE_GOV_I_FC_CEIL_A / share_govTotAFilt` (**1.25 A**,
+  0.15 A under `LIMIT_I_FC_MAX`, which has NO persistence filter — a single raw sample latches)
+  and `sp >= 1 - SHARE_GOV_I_BT_CEIL_A / share_govTotAFilt` (**2.70 A**), hysteresis
+  `SHARE_GOV_CEIL_HYST_A` 0.05 A on engagement only, against the governor's ~20 ms EMA. Minority
+  clip runs FIRST; result constrained into `[DROOP_R_MIN, DROOP_R_MAX]` (can never command a
+  cut); applied downstream of the `share_actedSp` bookkeeping (cannot toggle HOLD/FEEDFORWARD);
+  HOLD: no clamp, FEEDFORWARD: clamped; suppressed while a deferred cut owns the setpoint;
+  bit-identical to fw v25 below the ceilings (fixture MDAC-code comparison). Flags cleared on
+  every frozen-loop return, `resetShareControlState()`, `doState3()` and the State-98 `'Q'`
+  exit; State 99 freezes them like `fault_flags`. `SHARE_MINORITY_I_MIN_A` is now `constexpr`
+  and the ceilings are `static_assert`ed against it.
+- ⚠️ **REACHABILITY (the governing number):** the minority clip bounds the commandable FC
+  current to `min(0.85·I_tot, I_tot − 0.30)`, so the clamp can act only above **1.55 A of
+  TWO-SOURCE total** (first engagement measured 1.60 A). In an FC-charge window
+  `assertFcChargeEnable()` holds `BT_BUS` LOW, `I_tot == I_fc`, `r` is pinned at `DROOP_R_MIN`,
+  and the clamp is structurally inert — every `OC_FC` latch on record (`charge-cruise` 1.40 A
+  single-source) is in that regime. **fw v26 is inert on the entire registered stimulus set**;
+  the largest two-source totals in campaigns B and C were ~1.4 A and the largest legitimate FC
+  peak is 1.1920 A (`ems-sdp-cross`, campaign B; headroom 0.058 A). Bench validation is the
+  State-98 `W 4.0 0.15` profile (design note §8.2.1); a two-source high-total HIL scenario is
+  queued for the tools round. A charge-window guard (reduce Ag105 charge current / close the
+  path when single-sourced `I_fc` nears the limit) is the mechanism that would address the
+  recorded latches — separate design, not in v26.
+- Infeasible pair above 3.95 A total (INSIDE the 4.2–5.4 A platform budget): FC bound wins;
+  above 4.25 A the governor commands `I_batt > LIMIT_I_BT_MAX` and `ERR_OC_BT` is the intended
+  latch. Sustained regime found (4.0 A, sp 0.60): `droopSlew_prev` pins at `DROOP_R_MIN` and the
+  load guard refuses the FC cut on every tick — no cut, both switches HIGH, tested.
+- Observability, no wire change: HIL observation-frame aux byte **bits 4/5** (FC/BT clamp),
+  BLG `flags` **bit7** (either clamp), State-98 `'S'` line (`share I-ceiling:` with both
+  commanded channel currents). `switch_state` deliberately untouched (the HIL plant solves the
+  network from it); Pi exposure is a protocol-bump follow-up. Neither bit has a suite mask or a
+  benchlog decoder helper yet (manual observables this round).
+- Tools follow-ups (queued, WORK_QUEUE §7): `governor_model.py` port of the clamp in the
+  firmware's order + equivalence test; `ems_walk.py` walks the CLAMPED share; the DP/SDP
+  `charge_mask()` delivered-share semantics; the MPC surrogate/rolls; suite `aux_bit` masks
+  for bits 4/5; `_ALPHA_FC_CEIL` 1.28 A now exceeds what the board can command;
+  `FAULT_EXPECTATIONS["charge-cruise"]` (requires `OC_FC`) needs operator re-adjudication.

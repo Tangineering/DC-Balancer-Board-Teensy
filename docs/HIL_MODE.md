@@ -107,7 +107,7 @@ Rejections are counted and shown in the `'S'` dump.
 | 1 | 1 | `seq` echo | last **accepted** injection seq — round-trip latency measure |
 | 2 | 1 | `mainState` | 0/1/2/3/98/99 |
 | 3 | 1 | `switch_state` | `SW_FC_BUS` 0x01, `SW_BT_BUS` 0x02, `SW_MOT_PWR` 0x04, `SW_REGEN` 0x08, `SW_FC_CHARGE` 0x10, `SW_BT_SEQ` 0x20 — same packing as telemetry offset 52 |
-| 4 | 1 | aux pins | bit0 `FC_REG_ENABLE`, bit1 `BT_REG_ENABLE`, bit2 `MPPT_DISABLE`, bit3 `CBAL_DISABLE` |
+| 4 | 1 | aux pins + governor mirrors | bit0 `FC_REG_ENABLE`, bit1 `BT_REG_ENABLE`, bit2 `MPPT_DISABLE`, bit3 `CBAL_DISABLE`; **bits 4/5 are NOT pin levels** (fw v26) — bit4 = the FC source current-ceiling clamp is binding, bit5 = the BT clamp is binding (see `docs/fw26_current_ceiling_governor.md` §6). Frame size, offsets and checksum span are unchanged; a host that does not know the bits masks them off as before |
 | 5 | 4 | `current` | float32 A, **post-clamp** motor-current command |
 | 9 | 2 | MDAC code FC | raw 16-bit AD5443 word (`0x1000` control nibble + 12-bit code) |
 | 11 | 2 | MDAC code BT | ditto |

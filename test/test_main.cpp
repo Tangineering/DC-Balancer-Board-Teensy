@@ -176,6 +176,10 @@ static void reset_test_state() {
     shareCutRefusedLoad  = 0;
     shareCutRefusedBlank = 0;
     shareRatioFromController = false;   // fw v25 review M2: the controller-path call marker
+    // fw v26 source current-ceiling governor: the two clamp flags carry hysteresis memory across
+    // ticks, so a case that ended with a clamp engaged must not hand it to the next case (the
+    // release test would then start already-engaged and read as a pass for the wrong reason).
+    clearShareCeilingState();
     // .ino State-98 trapezoid SHARE-SETPOINT SWEEP ('T … [t,r1..rn]'). Cleared here rather than
     // relying on tsweepFinish()/tsweepCancel(): a case that leaves a sweep mid-cool-down would
     // otherwise fire a trapezoid inside the NEXT case's first doState98() tick.
@@ -4091,8 +4095,14 @@ static void test_share_eff_setpoint_slew_converges_to_clipped_target() {
     V_bus = 16.0f;
     shareClosedLoopMode = true;
     shareClosedLoopRun  = true;
-    share_govTotAFilt   = 4.0f;              // well above the hysteresis sliver -- the clip is a no-op here
-    I_fc = 1.6f; I_batt = 2.4f;              // I_tot=4.0A, matches filt (no drift)
+    // fw v26: 4.0 A -> 2.0 A. The fixture's INTENT is "the governor is a no-op here", and at
+    // 4.0 A total a 0.30 setpoint now commands 2.8 A of battery, above SHARE_GOV_I_BT_CEIL_A
+    // (2.70 A), so the current-ceiling clamp would legitimately move the target. At 2.0 A the
+    // commanded pair is FC 0.60 A / BT 1.40 A — under BOTH ceilings — so the minority clip and
+    // the ceiling clamp are both inert and this test measures the slew convergence it was
+    // written to measure. The ceilings themselves are covered by their own tests.
+    share_govTotAFilt   = 2.0f;              // well above the hysteresis sliver -- the clip is a no-op here
+    I_fc = 0.8f; I_batt = 1.2f;              // I_tot=2.0A, matches filt (no drift)
     power_share_setpoint = 0.30f;            // in-band, well clear of the lo/hi clip at this load
     uint32_t t = 0;
     for (int i = 0; i < 200; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
@@ -4318,7 +4328,7 @@ static void test_share_handoff_mode_constants() {
           "constants: (setup) SHARE_GOV_FILT_ALPHA is the EMA weight the handoff filters share "
           "with the governor's load filter");
     // fw v23 (any-fault run-boundary-gated HIL recovery): stale pin updated.
-    check(FW_VERSION == 25, "pin: FW_VERSION == 25");
+    check(FW_VERSION == 26, "pin: FW_VERSION == 26");
 }
 
 // DARK seed (item B3): resetShareControlState() (and reset_test_state()'s mirror of it) seeds
@@ -4690,9 +4700,13 @@ static void test_share_handoff_slew_full_rate_preserved() {
     digitalWrite(BT_BUS_ENABLE, HIGH);
     V_bus = 16.0f;
 
-    I_fc = 1.6f; I_batt = 2.4f;              // totalA = 4.0A, both well above SHARE_HANDOFF_LIVE_A
-    share_govTotAFilt = 4.0f;
-    power_share_setpoint = 0.60f;            // in-band, well clear of the governor's clip at 4.0A
+    // fw v26: 4.0 A -> 1.5 A, for the same reason as the eff-slew fixture above — at 4.0 A a
+    // 0.60 setpoint commands 2.4 A of FC, far over SHARE_GOV_I_FC_CEIL_A (1.25 A), and the
+    // current-ceiling clamp would move the reference. At 1.5 A the pair is FC 0.90 A / BT 0.60 A,
+    // under both ceilings, so this test still measures only the slew RATE.
+    I_fc = 0.6f; I_batt = 0.9f;              // totalA = 1.5A, both well above SHARE_HANDOFF_LIVE_A
+    share_govTotAFilt = 1.5f;
+    power_share_setpoint = 0.60f;            // in-band, clear of BOTH governor clips at 1.5A
 
     uint32_t t = 0;
     float prev = droopSlew_prev;
@@ -5663,6 +5677,488 @@ static void test_share_setpoint_cutoff_blanking(void) {
 // out-of-band ratios through unlimited on the premise that they become a TOPOLOGY action, not an
 // MDAC write; the fw v25 guards falsify that premise, so applyShareRatio() re-applies this tick's
 // ceiling at the band-edge clip when — and only when — a cut was refused.
+// ═════════════════════════════════════════════════════════════════════════════
+// fw v26 — SOURCE CURRENT-CEILING GOVERNOR
+// ═════════════════════════════════════════════════════════════════════════════
+// Helper: drive the closed-loop share path with a FIXED measured pair and a fixed filtered
+// total, for `n` ticks. The harness has no physical feedback (I_fc/I_batt do not respond to the
+// droop command), which is exactly what these tests want: the reference-side bound is the thing
+// under test, and holding the measurement still isolates it from the controller's own response.
+static void gov_run_closed_loop(float ifc, float ibatt, float totFilt, float sp, int n,
+                                uint32_t &t) {
+    I_fc = ifc; I_batt = ibatt;
+    share_govTotAFilt   = totFilt;
+    power_share_setpoint = sp;
+    shareClosedLoopMode = true;
+    shareClosedLoopRun  = true;
+    for (int i = 0; i < n; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
+}
+
+static void gov_fixture(void) {
+    reset_test_state();
+    digitalWrite(FC_BUS_ENABLE, HIGH);
+    digitalWrite(BT_BUS_ENABLE, HIGH);
+    V_bus = 16.0f;
+}
+
+// The constants themselves, pinned against the fault limits they are derived from. These are the
+// tripwires the static_asserts in the .ino cannot express (SHARE_MINORITY_I_MIN_A is a const
+// float, not a constant expression) plus the numeric values the design note quotes.
+static void test_share_current_ceiling_constants(void) {
+    test_group("fw v26: current-ceiling constants and their relation to the OC limits");
+    check(fabsf(SHARE_GOV_I_FC_CEIL_A - 1.25f) < 1e-6f,
+          "constants: SHARE_GOV_I_FC_CEIL_A pins the 1.25 A fuel-cell ceiling");
+    check(fabsf(SHARE_GOV_I_BT_CEIL_A - 2.70f) < 1e-6f,
+          "constants: SHARE_GOV_I_BT_CEIL_A pins the 2.70 A battery ceiling");
+    check(fabsf(SHARE_GOV_CEIL_HYST_A - 0.05f) < 1e-6f,
+          "constants: SHARE_GOV_CEIL_HYST_A pins the 0.05 A release hysteresis");
+    check(SHARE_GOV_I_FC_CEIL_A < LIMIT_I_FC_MAX,
+          "constants: the FC ceiling sits UNDER LIMIT_I_FC_MAX — the clamp can outrun the fault");
+    check(fabsf((LIMIT_I_FC_MAX - SHARE_GOV_I_FC_CEIL_A) - 0.15f) < 1e-6f,
+          "constants: the FC margin is 0.15 A (10.7 % of the 1.4 A limit)");
+    check(SHARE_GOV_I_BT_CEIL_A < LIMIT_I_BT_MAX,
+          "constants: the BT ceiling sits UNDER LIMIT_I_BT_MAX");
+    check(SHARE_GOV_I_BT_CEIL_A > SHARE_GOV_I_FC_CEIL_A,
+          "constants: the battery ceiling is the much higher one, as designed");
+    // The conflict the .ino's static_assert can only approximate with a literal 0.30f.
+    check(SHARE_GOV_I_FC_CEIL_A > SHARE_MINORITY_I_MIN_A &&
+          SHARE_GOV_I_BT_CEIL_A > SHARE_MINORITY_I_MIN_A,
+          "constants: both ceilings sit ABOVE SHARE_MINORITY_I_MIN_A, so the ceiling clamp can "
+          "never demand a channel current below the conduction floor the minority clip enforces");
+    check(SHARE_GOV_CEIL_HYST_A < LIMIT_I_FC_MAX - SHARE_GOV_I_FC_CEIL_A,
+          "constants: the release hysteresis stays inside the FC margin — a released clamp is "
+          "still under the fault limit");
+    // Open-loop reachability: the clamp is inert in open loop by construction, and this is the
+    // inequality that makes it so.
+    check(SHARE_GOV_I_FC_CEIL_A > 2.0f * SHARE_MINORITY_I_MIN_A,
+          "constants: the FC ceiling is above the closed-loop ENTRY threshold, so no open-loop "
+          "total (< 0.60 A) can reach it");
+}
+
+// (f) INERTNESS / BIT-IDENTITY. Below the ceilings the clamp must not touch a single float.
+// Asserted the strongest way available on this harness: run an identical fixture with the clamp
+// arithmetic reachable, and compare the DROOP CODES the MDAC saw against the fw v25 expectation
+// that the reference converges exactly on the commanded setpoint.
+static void test_share_current_ceiling_inert_below_ceiling(void) {
+    test_group("fw v26: below both ceilings the loop is bit-identical to fw v25");
+
+    uint32_t t = 0;
+    gov_fixture();
+    // 1.5 A total at sp 0.60 commands FC 0.90 A / BT 0.60 A — under 1.25 and 2.70.
+    gov_run_closed_loop(0.6f, 0.9f, 1.5f, 0.60f, 300, t);
+    check(!shareGovFcClamped && !shareGovBtClamped,
+          "inert: neither clamp engages when both commanded currents are under their ceilings");
+    check(fabsf(share_spEffPrev - 0.60f) < 1e-6f,
+          "inert: the reference still converges EXACTLY on the commanded setpoint — the clamp "
+          "applied no arithmetic to it");
+    uint16_t fcCode = mdacLastCodeFC;
+    uint16_t btCode = mdacLastCodeBT;
+
+    // Same run again from a clean state: identical droop codes, i.e. no hidden state from the
+    // clamp path leaks into the actuation.
+    t = 0;
+    gov_fixture();
+    gov_run_closed_loop(0.6f, 0.9f, 1.5f, 0.60f, 300, t);
+    check(mdacLastCodeFC == fcCode && mdacLastCodeBT == btCode,
+          "inert: the droop codes are reproducible across runs — the clamp is a pure no-op here");
+
+    // A sub-ceiling run that ends near, but under, the FC ceiling (1.20 A of 1.25) must also stay
+    // clear: the engage test is strict '>' on the ceiling, not '>='.
+    t = 0;
+    gov_fixture();
+    gov_run_closed_loop(1.2f, 0.8f, 2.0f, 0.60f, 50, t);
+    check(!shareGovFcClamped,
+          "inert: a commanded 1.20 A of FC (0.05 A under the ceiling) does NOT engage the clamp");
+}
+
+// The core behaviour: as total demand rises, the clamp holds the COMMANDED FC current at the
+// ceiling and every further amp goes to the battery.
+static void test_share_current_ceiling_fc_binds_and_holds(void) {
+    test_group("fw v26: the FC ceiling binds and holds I_fc_cmd at 1.25 A as demand rises");
+
+    uint32_t t = 0;
+    gov_fixture();
+    // sp 0.60 at 3.0 A total demands 1.80 A of FC — well over the 1.25 A ceiling.
+    gov_run_closed_loop(1.8f, 1.2f, 3.0f, 0.60f, 400, t);
+    check(shareGovFcClamped, "FC clamp: engages when the commanded FC current exceeds the ceiling");
+    check(!shareGovBtClamped,
+          "FC clamp: the BT ceiling stays clear (1.75 A commanded, under 2.70)");
+    float expected = SHARE_GOV_I_FC_CEIL_A / 3.0f;      // 0.41667
+    check(fabsf(share_spEffPrev - expected) < 1e-4f,
+          "FC clamp: the effective setpoint settles EXACTLY on I_FC_CEIL / I_tot");
+    check(fabsf(share_spEffPrev * share_govTotAFilt - SHARE_GOV_I_FC_CEIL_A) < 1e-3f,
+          "FC clamp: the COMMANDED FC current is held at the ceiling, not at the setpoint");
+
+    // Raise the total demand: the FC command must NOT rise with it — the battery absorbs it all.
+    float fcCmdBefore = share_spEffPrev * share_govTotAFilt;
+    float btCmdBefore = (1.0f - share_spEffPrev) * share_govTotAFilt;
+    gov_run_closed_loop(2.4f, 1.6f, 4.0f, 0.60f, 400, t);
+    float fcCmdAfter = share_spEffPrev * share_govTotAFilt;
+    float btCmdAfter = (1.0f - share_spEffPrev) * share_govTotAFilt;
+    check(fabsf(fcCmdAfter - SHARE_GOV_I_FC_CEIL_A) < 1e-3f,
+          "FC clamp: after a 3.0 -> 4.0 A demand step the commanded FC current is STILL at the "
+          "ceiling");
+    check(fabsf(fcCmdAfter - fcCmdBefore) < 1e-3f,
+          "FC clamp: the FC command did not move with the demand");
+    check(btCmdAfter > btCmdBefore + 0.9f,
+          "FC clamp: the whole 1.0 A increase went to the battery (the governor's purpose)");
+    check(share_spEffPrev >= DROOP_R_MIN && share_spEffPrev <= DROOP_R_MAX,
+          "FC clamp: the clamped reference stays inside [DROOP_R_MIN, DROOP_R_MAX]");
+    check(digitalRead(FC_BUS_ENABLE) == HIGH && digitalRead(BT_BUS_ENABLE) == HIGH &&
+          !shareIsoFC && !shareIsoBT,
+          "FC clamp: no channel cutoff — a current ceiling must never open a bus switch");
+}
+
+// Hysteretic release.
+static void test_share_current_ceiling_hysteresis(void) {
+    test_group("fw v26: the ceiling clamp releases with SHARE_GOV_CEIL_HYST_A hysteresis");
+
+    uint32_t t = 0;
+    gov_fixture();
+    gov_run_closed_loop(1.8f, 1.2f, 3.0f, 0.60f, 200, t);
+    check(shareGovFcClamped, "hysteresis: (setup) the clamp is engaged");
+
+    // Fall back to a demand still INSIDE the hysteresis band: 1.22 A commanded is under the
+    // 1.25 A ceiling but above the 1.20 A release point, so the clamp must HOLD.
+    //   sp 0.61 at 2.0 A total => 1.22 A commanded.
+    gov_run_closed_loop(1.22f, 0.78f, 2.0f, 0.61f, 5, t);
+    check(shareGovFcClamped,
+          "hysteresis: a demand inside the band (1.22 A, under the ceiling but over "
+          "ceiling - hyst) does NOT release the clamp");
+
+    // Below the release point: 0.60 * 2.0 = 1.20 A, exactly ceiling - hyst, so strictly-below is
+    // needed — step a little further down to 1.10 A.
+    gov_run_closed_loop(1.1f, 0.9f, 2.0f, 0.55f, 5, t);
+    check(!shareGovFcClamped,
+          "hysteresis: a demand below ceiling - SHARE_GOV_CEIL_HYST_A releases the clamp");
+}
+
+// The BT side is the same mechanism mirrored, and the infeasible pair resolves FC-first.
+static void test_share_current_ceiling_bt_side_and_priority(void) {
+    test_group("fw v26: the BT ceiling is symmetric, and the FC ceiling wins an infeasible pair");
+
+    uint32_t t = 0;
+    gov_fixture();
+    // sp 0.20 at 3.5 A total demands 2.80 A of BT — over the 2.70 A ceiling; the BT bound raises
+    // sp to 0.2286, whose 0.80 A of FC is under the FC ceiling, so ONLY the BT bound acts. The
+    // total is deliberately under I_FC_CEIL + I_BT_CEIL = 3.95 A, where the pair is still
+    // feasible; the infeasible corner is the second half of this test.
+    gov_run_closed_loop(0.7f, 2.8f, 3.5f, 0.20f, 400, t);
+    check(shareGovBtClamped, "BT clamp: engages when the commanded BT current exceeds 2.70 A");
+    check(!shareGovFcClamped, "BT clamp: the FC ceiling stays clear at this operating point");
+    float expected = 1.0f - SHARE_GOV_I_BT_CEIL_A / 3.5f;   // 0.22857
+    check(fabsf(share_spEffPrev - expected) < 1e-4f,
+          "BT clamp: the effective setpoint settles EXACTLY on 1 - I_BT_CEIL / I_tot");
+    check(fabsf((1.0f - share_spEffPrev) * share_govTotAFilt - SHARE_GOV_I_BT_CEIL_A) < 1e-3f,
+          "BT clamp: the commanded BT current is held at its ceiling");
+    check(share_spEffPrev >= DROOP_R_MIN && share_spEffPrev <= DROOP_R_MAX,
+          "BT clamp: the clamped reference stays inside the droop band");
+
+    // INFEASIBLE PAIR: above I_FC_CEIL + I_BT_CEIL = 3.95 A no split satisfies both. At 5.0 A
+    // the FC bound (0.25) is below the BT bound (0.46), and FC — the fragile source — must win.
+    t = 0;
+    gov_fixture();
+    gov_run_closed_loop(2.5f, 2.5f, 5.0f, 0.50f, 400, t);
+    check(shareGovFcClamped,
+          "infeasible pair: the FC clamp is engaged above 3.95 A of total demand");
+    check(fabsf(share_spEffPrev - SHARE_GOV_I_FC_CEIL_A / 5.0f) < 1e-4f,
+          "infeasible pair: the FC bound WINS — sp settles on I_FC_CEIL / I_tot, so the fuel "
+          "cell (1.4 A limit, single-sample OC_FC) is the protected source");
+    check((1.0f - share_spEffPrev) * share_govTotAFilt > SHARE_GOV_I_BT_CEIL_A,
+          "infeasible pair: the battery is knowingly asked for more than its ceiling — "
+          "FAULT_OC_BT (unchanged) remains its independent protection");
+}
+
+// (a)/(b) The clamp must never leave the droop band, and must never fight the minority clip.
+static void test_share_current_ceiling_band_and_minority_clip(void) {
+    test_group("fw v26: the ceiling clamp respects the droop band and the minority-current clip");
+
+    uint32_t t = 0;
+    gov_fixture();
+    // 10 A of total would put the raw FC bound at 0.125, below DROOP_R_MIN. Physically
+    // unreachable on this board, but the band clamp is structural.
+    gov_run_closed_loop(6.0f, 4.0f, 10.0f, 0.60f, 400, t);
+    check(shareGovFcClamped, "band: (setup) the FC clamp is engaged at 10 A of total");
+    check(share_spEffPrev >= DROOP_R_MIN - 1e-6f,
+          "band: the reference is clamped at DROOP_R_MIN, NOT driven below it — an out-of-band "
+          "reference is the channel-CUTOFF signal, and a current ceiling must never open a switch");
+    check(digitalRead(FC_BUS_ENABLE) == HIGH && !shareIsoFC,
+          "band: FC stays on the bus — the ceiling produced no cutoff");
+
+    // Minority clip: at 0.70 A of total the clip's floor is 0.30/0.70 = 0.4286 and the FC
+    // ceiling's bound is 1.25/0.70 = 1.79 — far above the band. The ceiling is inert and the
+    // minority clip owns the answer.
+    t = 0;
+    gov_fixture();
+    gov_run_closed_loop(0.1f, 0.6f, 0.70f, 0.20f, 300, t);
+    check(!shareGovFcClamped && !shareGovBtClamped,
+          "minority clip: at light load neither ceiling engages — the conduction floor is the "
+          "only active bound");
+    check(fabsf(share_spEffPrev - (SHARE_MINORITY_I_MIN_A / 0.70f)) < 1e-4f,
+          "minority clip: the reference sits on the conduction floor, untouched by the ceiling "
+          "clamp");
+}
+
+// (e) The clamp must not fight the fw v25 share-cut guard.
+static void test_share_current_ceiling_deferral_suppression(void) {
+    test_group("fw v26: the ceiling clamp is suppressed while a fw v25 deferred cut is outstanding");
+
+    uint32_t t = 0;
+    gov_fixture();
+    // Out-of-band setpoint (0.95) with a heavily-loaded BT: the setpoint latch WANTS to cut BT,
+    // the load guard refuses, and the deferral clips the reference to DROOP_R_MAX. At 3.0 A of
+    // total that band edge commands 2.55 A of FC, which the FC ceiling would otherwise claw back
+    // to 0.4167 — defeating the starve-BT handoff the deferral exists to perform.
+    I_fc = 1.5f; I_batt = 1.5f;
+    share_govTotAFilt   = 3.0f;
+    power_share_setpoint = 0.95f;
+    shareClosedLoopMode = true;
+    shareClosedLoopRun  = true;
+    for (int i = 0; i < 200; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
+    check(shareCutDeferredBT,
+          "deferral: (setup) the BT cut is deferred — refused on SHARE_CUT_MAX_HANDOFF_A");
+    check(!shareGovFcClamped && !shareGovBtClamped,
+          "deferral: BOTH clamp flags are dropped while a deferral is outstanding — one owner "
+          "per tick, and the fw v25 guard is the owner");
+    check(share_spEffPrev > 0.80f,
+          "deferral: the reference stays on the DROOP_R_MAX band edge, so the deferral's "
+          "starve-BT handoff is not clawed back by the ceiling");
+}
+
+// (d) Open-loop behaviour: HOLD writes nothing and clamps nothing; FEEDFORWARD takes the clamp
+// but is structurally inert there.
+static void test_share_current_ceiling_open_loop(void) {
+    test_group("fw v26: open-loop HOLD and FEEDFORWARD behaviour under the ceiling governor");
+
+    uint32_t t = 0;
+    gov_fixture();
+    // Engage the clamp in closed loop, then collapse the load so the loop drops to open loop.
+    gov_run_closed_loop(1.8f, 1.2f, 3.0f, 0.60f, 200, t);
+    check(shareGovFcClamped, "open loop: (setup) the clamp is engaged in closed loop");
+    uint16_t codeBeforeHold = mdacLastCodeFC;
+
+    // Collapse to a total below the open-loop exit threshold and let the filter follow.
+    I_fc = 0.10f; I_batt = 0.10f;
+    for (int i = 0; i < 400; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
+    check(!shareClosedLoopMode, "open loop: (setup) the loop left closed-loop mode");
+    check(!shareGovFcClamped && !shareGovBtClamped,
+          "open loop: the clamp state is DROPPED once the loop stops running closed — a frozen "
+          "or held loop must not publish a stale clamp on the BLG/HIL observables");
+
+    // HOLD: no MDAC write at all. Park the loop in HOLD (closed loop has run, setpoint
+    // unchanged, no outstanding isolation) and confirm the code does not move.
+    uint16_t codeAtHold = mdacLastCodeFC;
+    for (int i = 0; i < 50; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
+    check(mdacLastCodeFC == codeAtHold,
+          "open loop (HOLD): no MDAC write — the ceiling clamp does not break the hold invariant");
+    (void)codeBeforeHold;
+
+    // FEEDFORWARD: a fresh run, no closed-loop authority yet, light load. The clamp runs here and
+    // must be inert: no open-loop total can reach 1.25 A.
+    t = 0;
+    gov_fixture();
+    I_fc = 0.20f; I_batt = 0.20f;
+    share_govTotAFilt   = 0.40f;
+    power_share_setpoint = 0.70f;
+    for (int i = 0; i < 100; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
+    check(!shareClosedLoopMode && !shareClosedLoopRun,
+          "open loop (FEEDFORWARD): (setup) the loop is in the feedforward submode");
+    check(!shareGovFcClamped && !shareGovBtClamped,
+          "open loop (FEEDFORWARD): the clamp is structurally inert — the largest open-loop "
+          "total (0.60 A) is under both ceilings");
+    check(fabsf(droopSlew_prev - 0.70f) < 1e-4f,
+          "open loop (FEEDFORWARD): the commanded setpoint is actuated unchanged");
+}
+
+// The fault is UNCHANGED: the clamp bounds the SHARE, so a single-source overload still latches.
+static void test_share_current_ceiling_oc_fc_still_latches(void) {
+    test_group("fw v26: FAULT_OC_FC still latches — the clamp does not weaken the fault");
+
+#if !BENCH_TEST
+    uint32_t t = 0;
+    gov_fixture();
+    mainState = 2;
+    // Single-sourced FC: BT off the bus, so no share command can move the fuel-cell current.
+    digitalWrite(BT_BUS_ENABLE, LOW);
+    // sp 0.85 (DROOP_R_MAX, in band) at 1.7 A: the minority clip trims it to 0.8235, commanding
+    // 1.40 A of FC — over the ceiling, so the clamp IS engaged while the measured current is
+    // over the fault limit. (A setpoint below DROOP_R_MIN would be owned by the setpoint latch
+    // and never reach the governor at all.)
+    gov_run_closed_loop(1.7f, 0.0f, 1.7f, 0.85f, 20, t);
+    check(shareGovFcClamped,
+          "OC_FC: the governor IS clamping (the commanded FC current is over the ceiling)");
+    V_batt = 7.4f; V_fc = 7.0f; V_bus = 16.0f;
+    detectFaults();
+    check((fault_flags & FAULT_OC_FC) != 0 && error_code == ERR_OC_FC && mainState == 99,
+          "OC_FC: a measured I_fc of 1.70 A still latches FAULT_OC_FC / ERR_OC_FC / State 99 — "
+          "the clamp is a reference-side bound and protects nothing the fault used to catch");
+#else
+    check(true, "OC_FC: skipped under BENCH_TEST (the OC checks are compiled out)");
+#endif
+}
+
+// Observability: the BLG flags bit and the HIL aux bits.
+static void test_share_current_ceiling_observability(void) {
+    test_group("fw v26: clamp observability — BLG flags bit7 and HIL aux bits 4/5");
+
+    gov_fixture();
+    clearShareCeilingState();
+    check((readHilAuxState() & 0x30) == 0,
+          "aux: with no clamp engaged, aux bits 4/5 are clear");
+
+    shareGovFcClamped = true;
+    check((readHilAuxState() & 0x10) != 0 && (readHilAuxState() & 0x20) == 0,
+          "aux: bit4 mirrors the FC clamp only");
+    shareGovFcClamped = false; shareGovBtClamped = true;
+    check((readHilAuxState() & 0x20) != 0 && (readHilAuxState() & 0x10) == 0,
+          "aux: bit5 mirrors the BT clamp only");
+
+    // The four pin bits must be untouched by the two new flags.
+    shareGovFcClamped = true; shareGovBtClamped = true;
+    digitalWrite(FC_REG_ENABLE, HIGH); digitalWrite(BT_REG_ENABLE, LOW);
+    digitalWrite(MPPT_DISABLE, HIGH);  digitalWrite(CBAL_DISABLE, LOW);
+    check((readHilAuxState() & 0x0F) == 0x05,
+          "aux: the four pin bits (0..3) are unchanged by the clamp mirrors");
+
+    // switch_state is DELIBERATELY untouched: the clamp must not appear in the topology word.
+    uint8_t swWithClamp = readSwitchState();
+    clearShareCeilingState();
+    check(readSwitchState() == swWithClamp,
+          "switch_state: unchanged by the clamp — the topology word the plant simulator solves "
+          "from carries no governor semantics");
+    check((swWithClamp & 0xC0) == 0,
+          "switch_state: bits 0x40/0x80 stay free (reserved for the protocol-bump follow-up)");
+    // The third observable, BLG flags bit7, is asserted on a PACKED RECORD in
+    // test_sdlog_ceiling_clamp_flag_bit() — it needs the SD helpers, which are defined further
+    // down this file.
+}
+
+// HIGH-1: the REACHABILITY threshold. The minority clip runs first, so the largest FC current the
+// loop can command is min(DROOP_R_MAX·I_tot, I_tot − SHARE_MINORITY_I_MIN_A). The second term is
+// tighter, so the ceiling can only be exceeded above
+//     I_tot > SHARE_GOV_I_FC_CEIL_A + SHARE_MINORITY_I_MIN_A = 1.55 A
+// of TWO-SOURCE total. This test pins that number, because it is the single fact that decides
+// whether the feature can act on any given stimulus — and it is the fact that makes fw v26 inert
+// on the currently-registered set (every measured OC_FC-class excursion is single-source).
+static void test_share_current_ceiling_reachability_threshold(void) {
+    test_group("fw v26: the clamp is unreachable below 1.55 A of two-source total");
+
+    const float analytic = SHARE_GOV_I_FC_CEIL_A + SHARE_MINORITY_I_MIN_A;
+    check(fabsf(analytic - 1.55f) < 1e-6f,
+          "reachability: the analytic threshold is I_FC_CEIL + I_MIN = 1.55 A");
+    check(SHARE_GOV_I_FC_CEIL_A / DROOP_R_MAX < analytic,
+          "reachability: the DROOP_R_MAX branch (1.47 A) is the LOOSER bound — the minority clip "
+          "is what actually sets the threshold");
+
+    // Sweep the total upward at the most FC-biased in-band setpoint and find the first engagement.
+    float firstEngage = -1.0f;
+    for (int i = 0; i <= 40 && firstEngage < 0.0f; i++) {
+        float tot = 1.20f + 0.05f * (float)i;
+        uint32_t t = 0;
+        gov_fixture();
+        // sp 0.85 = DROOP_R_MAX, the most FC-biased setpoint the band admits.
+        gov_run_closed_loop(0.85f * tot, 0.15f * tot, tot, 0.85f, 200, t);
+        if (shareGovFcClamped) firstEngage = tot;
+    }
+    check(firstEngage > 0.0f, "reachability: (setup) the sweep found an engagement point");
+    check(firstEngage >= 1.55f && firstEngage <= 1.60f,
+          "reachability: first engagement lands in [1.55, 1.60] A of total — the analytic "
+          "threshold plus at most one 0.05 A sweep step");
+
+    // Below the threshold the clamp cannot engage at ANY in-band setpoint.
+    for (float sp = DROOP_R_MIN; sp <= DROOP_R_MAX + 1e-6f; sp += 0.05f) {
+        uint32_t t = 0;
+        gov_fixture();
+        gov_run_closed_loop(sp * 1.50f, (1.0f - sp) * 1.50f, 1.50f, sp, 150, t);
+        if (shareGovFcClamped) {
+            check(false, "reachability: a setpoint below 1.55 A of total engaged the clamp");
+            break;
+        }
+    }
+    check(true, "reachability: no in-band setpoint engages the clamp at 1.50 A of total");
+
+    // SINGLE-SOURCE FC-charge window: BT_BUS held LOW, so I_tot == I_fc and the share ratio is
+    // pinned. This is the regime EVERY measured OC_FC-class excursion on the board sits in, and
+    // the clamp is structurally inert in it — the load has no second channel to move to.
+    uint32_t t = 0;
+    gov_fixture();
+    digitalWrite(BT_BUS_ENABLE, LOW);            // as assertFcChargeEnable() leaves it
+    gov_run_closed_loop(1.40f, 0.0f, 1.40f, DROOP_R_MIN, 200, t);
+    check(!shareGovFcClamped,
+          "reachability: at 1.40 A SINGLE-SOURCE (an FC-charge window) the clamp does NOT engage "
+          "— fw v26 cannot act on the excursions that actually latch OC_FC on this board");
+}
+
+// LOW-1 plus the self-review's symmetric case: the two exits to Idle are NOT share-loop freezes
+// (powerBalance() simply stops being called), so each needs an explicit clear or the flags would
+// publish a stale clamp on all three observables for as long as the board sits in Idle.
+static void test_share_current_ceiling_cleared_on_idle_exits(void) {
+    test_group("fw v26: the clamp flags are dropped on both exits to Idle");
+
+    // doState3(): the Run -> Finish -> Idle exit.
+    reset_test_state();
+    mainState           = 3;
+    shareGovFcClamped   = true;
+    shareGovBtClamped   = true;
+    doState3();
+    check(mainState == 1, "doState3: (setup) the exit reached Idle");
+    check(!shareGovFcClamped && !shareGovBtClamped,
+          "doState3: both ceiling-clamp flags are cleared on the Run->Finish->Idle exit");
+    check((readHilAuxState() & 0x30) == 0,
+          "doState3: the HIL aux mirrors follow — no stale clamp is published through Idle");
+
+    // State-98 'Q': the operator exit. Same gap, same fix.
+    reset_test_state();
+    mainState         = 98;
+    shareGovFcClamped = true;
+    shareGovBtClamped = true;
+    Serial.rx_queue.push('Q');
+    doState98();
+    check(mainState == 1, "'Q': (setup) the exit reached Idle");
+    check(!shareGovFcClamped && !shareGovBtClamped,
+          "'Q': both ceiling-clamp flags are cleared on the State-98 exit to Idle");
+
+    // State 99 is the deliberate NON-clear site: a latched board must still show what was
+    // binding on the tick it faulted, exactly as fault_flags does.
+    reset_test_state();
+    mainState         = 2;
+    shareGovFcClamped = true;
+    triggerFault(FAULT_OC_FC, ERR_OC_FC);
+    check(mainState == 99, "State 99: (setup) the board latched");
+    check(shareGovFcClamped,
+          "State 99: the clamp flag is deliberately NOT cleared — the latched board reports what "
+          "was binding when it faulted");
+}
+
+// LOW-3: the sustained regime the reviewer found. At 4.0 A of total with sp 0.60 the FC clamp
+// pulls the reference well below the measured share, the controller winds r down onto
+// DROOP_R_MIN, and applyShareRatio() refuses the resulting FC cut on load EVERY tick. That is
+// benign — no cut, no latch, the channel stays on the bus and droop authority stays live — but it
+// is a NEW steady state (fw v25 never parked there) and the refusal counter grows without bound.
+static void test_share_current_ceiling_sustained_refusal_regime(void) {
+    test_group("fw v26: the sustained clamped regime refuses cuts every tick without cutting");
+
+    uint32_t t = 0;
+    gov_fixture();
+    gov_run_closed_loop(2.4f, 1.6f, 4.0f, 0.60f, 600, t);
+
+    check(shareGovFcClamped, "sustained: (setup) the FC ceiling is binding at 4.0 A of total");
+    check(digitalRead(FC_BUS_ENABLE) == HIGH && !shareIsoFC,
+          "sustained: FC_BUS_ENABLE stays HIGH and no controller isolation is claimed — the "
+          "refusal guard holds for the whole regime");
+    check(digitalRead(BT_BUS_ENABLE) == HIGH && !shareIsoBT,
+          "sustained: BT_BUS_ENABLE stays HIGH too — neither channel is cut");
+    check(!shareSpCutFC && !shareSpCutBT,
+          "sustained: no setpoint-latch cut either (the commanded setpoint stayed in band)");
+    check(droopSlew_prev >= DROOP_R_MIN - 1e-6f,
+          "sustained: the applied ratio pins at DROOP_R_MIN rather than passing below it");
+    check(shareCutRefusedLoad > 0,
+          "sustained: the load guard is exercised — the refusal counter grows, which is the "
+          "documented cost of this regime, not a defect");
+    check(mainState != 99,
+          "sustained: the board does not fault — the regime is benign, just noisy");
+}
+
 static void test_refused_cut_band_edge_clip_is_slewed(void) {
     test_group("fw v25: a refused cut's band-edge clip is slew-limited, not slammed");
 
@@ -5673,7 +6169,13 @@ static void test_refused_cut_band_edge_clip_is_slewed(void) {
     digitalWrite(FC_BUS_ENABLE, HIGH);
     digitalWrite(BT_BUS_ENABLE, HIGH);
     V_bus = 16.0f;
-    I_fc = 1.6f; I_batt = 2.4f;            // I_tot 4.0 A; BT far above SHARE_CUT_MAX_HANDOFF_A
+    // fw v26: 4.0 A -> 1.5 A. At 4.0 A the 0.60 setpoint commands 2.4 A of FC, over
+    // SHARE_GOV_I_FC_CEIL_A, so the current-ceiling clamp pulled the reference DOWN and the run
+    // drove r toward DROOP_R_MIN instead of DROOP_R_MAX — a different refusal than this test is
+    // about. At 1.5 A both ceilings are inert (FC 0.90 A / BT 0.60 A commanded) while BT still
+    // carries 0.9 A, far above SHARE_CUT_MAX_HANDOFF_A (0.5 A), so the refusal under test is
+    // unchanged. The pre-clamp step figure quoted above was measured on the 4.0 A fixture.
+    I_fc = 0.6f; I_batt = 0.9f;            // I_tot 1.5 A; BT far above SHARE_CUT_MAX_HANDOFF_A
     power_share_setpoint = 0.60f;
     uint32_t t = 0;
     float prev = droopSlew_prev, maxStep = 0.0f;
@@ -15016,6 +15518,59 @@ static void test_sdlog_overflow_drop_count() {
 }
 
 // ─── 6. Golden record schema: byte-exact field layout (format v7, fw v20) ────
+// fw v26 (review LOW-4): the ceiling-clamp bit on a PACKED RECORD. The observability group
+// asserts the HIL aux bits and that switch_state is untouched, but only a written record proves
+// the BLG bit reaches the card. The golden-schema test below covers the bit7-CLEAR case (its
+// expected flags byte omits 0x80); this covers bit7 SET, and that it tracks the flag per record
+// rather than latching for the rest of the run.
+static void test_sdlog_ceiling_clamp_flag_bit() {
+    test_group("fw v26: BLG flags bit7 marks the ticks on which a source ceiling was binding");
+    reset_test_state();
+
+    g_mock_millis = 5000;
+    g_mock_micros = 50000;
+    logOpenForProfile(LOG_TYPE_PS);
+    check(logActive, "BLG bit7: (setup) the log opened for a PS-type run");
+
+    shareGovFcClamped = true;            // a ceiling is binding on this tick
+    g_mock_micros = 123456;
+    logSampleTick();
+    logDrainTick();
+
+    const std::string *bf = sd_file("PS0001.BLG");
+    check(bf != nullptr && bf->size() >= LOG_HDR_SIZE + LOG_REC_SIZE,
+          "BLG bit7: (setup) one record reached the card");
+    if (bf != nullptr && bf->size() >= LOG_HDR_SIZE + LOG_REC_SIZE) {
+        uint8_t recFlags = (uint8_t)(*bf)[LOG_HDR_SIZE + REC_OFF_FLAGS];
+        check((recFlags & 0x80) != 0,
+              "BLG bit7: a record packed while a ceiling was binding carries flags bit7 SET");
+        check((recFlags & 0x40) == (uint8_t)(HIL_SIM ? 0x40 : 0x00),
+              "BLG bit7: the fw v21 HIL-provenance bit6 is unaffected by the new bit7");
+        // bit1 = velocity chain valid (reset_test_state() leaves it set); bit0 = a profile or the
+        // live share loop is driving the MDACs, which this fixture deliberately does not do.
+        check((recFlags & 0x03) == 0x02,
+              "BLG bit7: the pre-existing low flag bits are unaffected by the new bit7");
+    }
+
+    // Released: the very next record must read bit7 clear, so the bit tracks the flag per tick
+    // rather than latching on the first clamp of a run.
+    clearShareCeilingState();
+    g_mock_micros = 223456;
+    logSampleTick();
+    logDrainTick();
+    const std::string *bf2 = sd_file("PS0001.BLG");
+    check(bf2 != nullptr && bf2->size() >= LOG_HDR_SIZE + 2 * LOG_REC_SIZE,
+          "BLG bit7: (setup) the second record reached the card");
+    if (bf2 != nullptr && bf2->size() >= LOG_HDR_SIZE + 2 * LOG_REC_SIZE) {
+        uint8_t recFlags2 = (uint8_t)(*bf2)[LOG_HDR_SIZE + LOG_REC_SIZE + REC_OFF_FLAGS];
+        check((recFlags2 & 0x80) == 0,
+              "BLG bit7: the next record, packed with the clamp released, has bit7 CLEAR");
+    }
+
+    logRequestClose(LOG_CLOSE_COMPLETE);
+    logDrainTick();
+}
+
 static void test_sdlog_record_schema() {
     test_group("SD log: one record's 106 bytes match the documented v7 field layout exactly");
     reset_test_state();
@@ -20323,6 +20878,20 @@ int main() {
     test_share_r_cutoff_blanking_bt_mirror();
     test_share_setpoint_cutoff_blanking();
     test_refused_cut_band_edge_clip_is_slewed();
+    // fw v26 source current-ceiling governor
+    test_share_current_ceiling_constants();
+    test_share_current_ceiling_inert_below_ceiling();
+    test_share_current_ceiling_fc_binds_and_holds();
+    test_share_current_ceiling_hysteresis();
+    test_share_current_ceiling_bt_side_and_priority();
+    test_share_current_ceiling_band_and_minority_clip();
+    test_share_current_ceiling_deferral_suppression();
+    test_share_current_ceiling_open_loop();
+    test_share_current_ceiling_oc_fc_still_latches();
+    test_share_current_ceiling_observability();
+    test_share_current_ceiling_reachability_threshold();
+    test_share_current_ceiling_cleared_on_idle_exits();
+    test_share_current_ceiling_sustained_refusal_regime();
     test_bus_switch_chokepoint_coverage();
     test_share_cut_deferred_suppresses_r_cutoff_sustained();
     test_share_cut_deferred_clips_reference_to_band_edge();
@@ -20351,6 +20920,7 @@ int main() {
     test_sdlog_no_card();
     test_sdlog_overflow_drop_count();
     test_sdlog_record_schema();
+    test_sdlog_ceiling_clamp_flag_bit();
     test_sdlog_header_v4_profile_params();
     test_benchlogrecord_v3_layout();
     test_sdlog_flags_share_loop_mode_bits();

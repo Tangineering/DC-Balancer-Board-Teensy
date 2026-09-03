@@ -838,6 +838,9 @@ consolidated list of these; the authoritative derivations live at each constant 
 | `SHARE_HANDOFF_MIN_A` | **0.15 A** (fw v19) | DARK threshold. A channel below this is **not meaningfully conducting** — its ideal diode is effectively open, so load it is commanded to take up requires an *analog* handoff the reactive RT1987 completes only after the bus sags. Set above TP0201's 0.08 A pre-arm trickle and at half `SHARE_MINORITY_I_MIN_A`, so a channel the governor considers healthy is never called dark. Tested on a **filtered** magnitude (EMA at `SHARE_GOV_FILT_ALPHA`), never a raw ADC read. |
 | `SHARE_HANDOFF_LIVE_A` | **0.20 A** (fw v19) | LIVE re-entry threshold — hysteresis on the same test, so a filtered magnitude sitting on 0.15 A cannot chatter the ceiling. |
 | `DROOP_RATIO_SLEW_HANDOFF_PER_TICK` | **0.002/tick** (fw v19) | The reduced ceiling used while either channel is dark — 10× slower, ~170 ms for a 0.3-span walk at the ~880 Hz loop rate. |
+| `SHARE_GOV_I_FC_CEIL_A` | **1.25 A** (fw v26) | Source current-ceiling governor, FC side. Upper bound on the effective setpoint: `sp ≤ 1.25 / I_tot_filt`, so the COMMANDED fuel-cell current is held at 1.25 A and every further amp of total demand goes to the battery. 0.15 A / 10.7 % under `LIMIT_I_FC_MAX` (1.4 A). The margin is sized against the OC_FC detection semantics — that check has **no persistence filter and no dwell**, so a single raw sample latches and a ~20 ms-filtered, slew-limited reference can never answer one; the margin absorbs raw-vs-filtered noise, EMA lag and loop tracking error. Also above the largest legitimate FC peak measured to date (**1.1920 A**, campaign B `ems-sdp-cross`; `ems-sdp-alpha-cal` 1.1863 A, `ems-ftp75-socband` 1.1370 A) — headroom over that peak is only **0.058 A**, so a clamp that engages on `ems-sdp-cross` means the ceiling is too low, not that it works. `TODO(calibrate)`. |
+| `SHARE_GOV_I_BT_CEIL_A` | **2.70 A** (fw v26) | The same form on the battery side — a LOWER bound, `sp ≥ 1 − 2.70 / I_tot_filt`. 0.30 A / 10 % under `LIMIT_I_BT_MAX` (3.0 A). Much higher than the FC ceiling and not expected to bind. Above `I_FC_CEIL + I_BT_CEIL` = 3.95 A of total the pair is infeasible and the **FC bound wins** (applied second). That 3.95 A sits **BELOW** the platform's ~4.2–5.4 A bus budget, so the corner is INSIDE the operating envelope, not above it. Above `I_FC_CEIL + LIMIT_I_BT_MAX` = **4.25 A** the commanded battery current crosses `LIMIT_I_BT_MAX` (measured 3.15 A commanded at 4.40 A total) and **`ERR_OC_BT` is the INTENDED latch** — both faults unchanged. Operator surface: the `I_bt_cmd` figure on the `'S'` dump's `share I-ceiling:` line. |
+| `SHARE_GOV_CEIL_HYST_A` | **0.05 A** (fw v26) | Engage/release hysteresis on the ceiling clamp; same value and class as `SHARE_GOV_OL_HYST_A`. |
 | `SHARE_HANDOFF_DWELL_MAX_TICKS` | **175 ticks** ≈ 200 ms (fw v19) | Maximum slew-limited ticks **on which the ratio actually moved** per dark event. Past the cap the FULL rate resumes even while the channel stays dark; the allowance re-arms only on a LIVE transition, so a persistently dark channel cannot pin the loop slow. The **motion gate is load-bearing**: TP0201's pre-arm was a ~1.7 s in-band feedforward *hold* with BT dark, so an elapsed-tick counter would have spent the whole allowance before the arming walk and run the hazardous crossing at the full rate. Motion is read from `droopSlew_prev`, the MDAC-truth ratio, with a deliberate one-tick lag. |
 
 `updateShareSlewMode()` runs **once per `powerBalance()` tick**, above the open-loop feedforward
@@ -852,6 +855,39 @@ motion gate leaves that walk-length bound intact, since S4's hazard is the walk 
 `updateShareSlewMode()`, in the fw v19 changelog entry, and in `docs/boost-bringup-debug.md`
 (TP0178/TP0201 handoff-gap entry). Converged holds with both channels conducting are
 bit-identical to fw v18. State is seeded DARK at boot and by `resetShareControlState()`.
+
+`applyShareCurrentCeilings()` (fw v26) runs in the closed-loop path **after** the minority-current
+clip and **before** the effective-setpoint slew, so the clamp reaches the controller through the
+same `shareSlewStepThisTick` ceiling as every other reference movement and can never step it. The
+minority clip keeps the floor (conduction feasibility outranks fault avoidance; ONE
+`static_assert` — written against the `constexpr SHARE_MINORITY_I_MIN_A` symbol, not a literal —
+pins BOTH ceilings above the conduction floor, so the two bounds provably cannot conflict; the
+consequence is that swapping the two is an EQUIVALENT MUTANT at the shipped constants and no host
+test can distinguish it). The clamped result is finally constrained into
+`[DROOP_R_MIN, DROOP_R_MAX]` — an out-of-band reference **is** the channel-cutoff signal, so no
+path through the clamp opens a bus switch. It is **suppressed** while a fw v25 deferred cut is
+outstanding (that deferral has parked the reference on a band edge to starve a doomed channel, and
+the FC ceiling would claw it back above ~1.47 A of total; one owner per tick). The open-loop
+`FEEDFORWARD` submode takes the clamp and is structurally inert there (open-loop mode EXITS at
+0.55 A of filtered total — 0.60 A is the re-entry threshold — and neither ceiling is reachable out
+of a 0.55 A total); `HOLD` does not take it, because it performs no MDAC write. Clamp state is
+dropped on every frozen-loop path, in `resetShareControlState()`, in `doState3()` and on the
+State-98 `'Q'` exit (neither exit is a freeze — `powerBalance()` just stops being called — so
+without the clear the flags would publish a stale clamp through Idle), and deliberately
+**freezes** in State 99 like `fault_flags`.
+**REACHABILITY (the governing number):** the minority clip runs first, so the largest commandable
+FC current is `min(0.85·I_tot, I_tot − 0.30)` and the clamp can act only above
+`SHARE_GOV_I_FC_CEIL_A + SHARE_MINORITY_I_MIN_A` = **1.55 A of TWO-SOURCE total** (measured first
+engagement 1.60 A at sp 0.85). Every OC_FC-class FC excursion measured on this board is a
+SINGLE-SOURCE FC-charge window (`assertFcChargeEnable()` holds BT_BUS LOW, `I_tot == I_fc`), where
+the clamp is structurally inert and could not help anyway. **fw v26 is therefore inert on the
+registered stimulus set**; validating it needs a purpose-built two-source high-total run — the
+State-98 `W 4.0 0.15` bench line and a proposed HIL scenario are in the design note §8.2.
+Observability without a wire change: BLG `flags` **bit7** (either ceiling binding), HIL
+observation-frame **aux bits 4/5**, and a `share I-ceiling:` line in the State-98 `'S'` dump. The
+v4/58-byte telemetry packet is unchanged; `switch_state` bits 0x40/0x80 stay free for the
+protocol-bump follow-up. Full design and validation plan:
+`docs/fw26_current_ceiling_governor.md`.
 
 **Operator note.** A setpoint-latch release with the re-closed channel still dark walks at the
 handoff rate for up to ~200 ms before reverting to the full rate. That lag is the mitigation
@@ -1003,7 +1039,7 @@ appear as `t_us` gaps (the decoder reports max interval / missed periods). A sam
 | `ps_phase` | u8 | `powerShareProfilePhaseIdx`, 0xFF when the PS profile isn't running |
 | `dc_phase` | u8 | `driveCyclePhaseIdx`, 0xFF when the drive cycle isn't running |
 | `trap_phase` | u8 | `trapPhase`, 0xFF when the trapezoid isn't running |
-| `flags` | u8 | bit0 = a profile / live share loop is driving the droop MDACs this tick (gFC/gBT are closed-loop output, not a static operator write); bit1 = velocity chain valid (encoder fitted + `velocityChainCalibrated()`); rest reserved |
+| `flags` | u8 | bit0 = a profile / live share loop is driving the droop MDACs this tick (gFC/gBT are closed-loop output, not a static operator write); bit1 = velocity chain valid (encoder fitted + `velocityChainCalibrated()`); bit2/bit3 = share loop mode (fw v5); bit4/bit5 = build identity (fw v11); **bit6 = HIL_SIM build** — every sensor column in the record is simulated, not measured (fw v21); **bit7 = a source current ceiling is binding the effective share setpoint on this tick, either channel** (fw v26; the HIL aux bits 4/5 and the State-98 `'S'` dump separate FC from BT). Unlike bits 4-6, bit7 is not a compile-time constant — it varies tick to tick. Record size and BLG v7 unchanged; no new CSV column |
 | pad | u8x2 | zero |
 
 `v_sp`/`v_act` are logged unconditionally (the globals always exist), but `flags` bit1 tells the
