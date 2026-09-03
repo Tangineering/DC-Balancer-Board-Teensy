@@ -564,3 +564,23 @@ sim-only strategies.
   matched-DP post-pass; tools/sdp_alpha_sweep.py + 21 artifacts; tools/benchlog_analysis/
   asymmetry_fit.py + docs/modeling/converter_asymmetry_20260901.md; the Pi bridge audit pair;
   preload removal (B1); asymmetry-in-plant + simple-mode sign fix + campaign fix queue (C1).
+
+## 0c. Operator rulings 2026-09-03 (morning review of the overnight round)
+
+1. **MPC share-step rule: RULED IN.** Add to the MPC stage model: no upward share step in the same
+   decision as an upward demand step above 1.647 A two-source (design record §8.6).
+2. **Joint-transient clamp leg: BUILD** the 1.65 A version (§8.6.5) with a stepped aux-load branch.
+3. **α re-solve: APPROVED** on the measured levers (five readings, α ≈ 0.134); supersedes "α stays v4".
+4. **ftp75c socband reference: charge-free ACCEPTED**; no constraints on leaving charge mode.
+5. **`dp_ems_table_ems-ftp75-5050.csv`: DELETE** (stale, unused).
+6. **MDAC-code finding re-explained:** not quantization (< 0.25 %). `governor_model`'s static law
+   carries the dV0 term of the asymmetry fit but not its droop-slope term (`ASYM_DROOP_SCALE_FC`
+   0.9434, "two parameters of one fit"), so the model's converged ratio (0.491 at share 0.50) differs
+   from the board's (0.476 from its codes); the loop delivers the share exactly and the codes carry
+   the correction. Fix: add the slope term to `_delivered_share()` / `_ratio_for_delivered()`.
+7. **Sequencing: the HIL_PLANT.md physics review (run 002) runs BEFORE items 1–6.**
+8. **HIL_PLANT.md physics review run 002 DONE** (`docs/reviews/hil-plant/run-002-2026-09-03.md`,
+   ledger updated): 1 major (PLANT-R2-F3, the governor map's split law - the same mechanism as
+   item 6 plus the 0.033 Ohm series floor), 7 minor, 6 adjacent; no safety or campaign verdict
+   changes. Fix order per the adjudication: F3/N1/N2 (model + tests + re-walk + re-pin) -> docs
+   (F2, F5, F4, F7, F6, F1, F8, N3, N5, N6) -> the N9 bench test -> the dark-node decay capture.
