@@ -5528,9 +5528,48 @@ SDP_POLICY_DIR = os.path.join(REPO_ROOT, "tools", "sdp_policies")
 #     it is the OLD-ERA (1:1 charger) calibration, retained for comparability
 #     with campaigns <= 20260901_151156, not a candidate to be scored beside a
 #     run whose charger is a different device.
+#   sdp_policy_v5.json  THE MEASURED-LEVER RE-SOLVE from 2026-09-03, `sdp-v5`,
+#     NOT frontier_eligible — and the reason it is not is the whole finding.
+#     Design note: docs/modeling/sdp_alpha_resolve_20260903.md.
+#     Operator ruling (2026-09-03, WORK_QUEUE §0c item 3) approved re-deriving
+#     alpha on the MEASURED levers, which now have five eta-era readings:
+#     L_share 0.4165286, L_chg 0.3337114 SoC/g (unweighted mean of campaigns
+#     20260902_011926 / 20260902_041414 / 20260902_220604 / 20260903_031220 /
+#     20260903_063659). The two-sided placement on that pair gives
+#     alpha = 0.05/sqrt(0.4165286*0.3337114) = 0.134110280093, which sits
+#     INSIDE the measured admission window (0.120040, 0.149830) where v4's
+#     0.118326 sat 1.43 % BELOW it. `alpha.admission.in_window_measured` is
+#     TRUE on this artifact — the first SDP artifact for which it is not null.
+#     ⚠️ AND THE MODEL WINDOW REJECTS IT. The solver's own charge lever is
+#     eta_chg * L_share = 0.396396, so the MODEL window is
+#     (0.111000, 0.126136) and this alpha is 6.3 % above its upper edge. The
+#     stage cost is built from the MODEL constants, so an alpha priced on the
+#     measured pair prices SoC ABOVE the model's charge lever and CHARGING IS
+#     ADMITTED: 558 of 2525 cells, every admissible bin (0-11) at every SoC row
+#     strictly below the relative target (rows 3-49). v4 has ZERO.
+#     ⚠️ v4 vs v5, MEASURED (not assumed):
+#       SHARE MAP  differs on exactly THREE SoC rows — 3, 4, 5 (SoC
+#                  0.553-0.555), 56 cells of 2525 — i.e. 45-47 grid nodes BELOW
+#                  the target node, outside every trajectory, exactly as the
+#                  v3-vs-v4 diff was.
+#       CHARGE MAP differs on 47 rows and 558 cells, and FORTY of those rows
+#                  are INSIDE the +-0.040 reachable band around the target.
+#                  Every `ems-sdp` family trajectory descends below its
+#                  captured soc0 on the first decision, so v5 would command
+#                  FC_CHARGE for essentially the whole run.
+#     THEREFORE: no scenario is rebound this round. `sdp-v4` remains the
+#     frontier leg, every walk-derived expectation stands verbatim, and v5 is
+#     registered as a NON-frontier artifact so the measured economics can be
+#     put on the wire deliberately (a `sdp-sweep`-style leg) rather than by
+#     inheriting a frontier name. The two coherent resolutions — solve at the
+#     measured round trip --eta-chg 0.801173 (verified: 0 charge cells, alpha
+#     inside BOTH windows, at the cost of a permanent CHARGER-ERA MISMATCH
+#     banner), or accept the charge admission — are the operator's, and D14 of
+#     tools/sdp_ems_solver.py states both with their numbers.
 SDP_POLICY_FILE_V2 = "sdp_policy_v2.json"
 SDP_POLICY_FILE_V3 = "sdp_policy_v3.json"
 SDP_POLICY_FILE_V4 = "sdp_policy_v4.json"
+SDP_POLICY_FILE_V5 = "sdp_policy_v5.json"
 SDP_POLICY_SCHEMA = "sdp-policy-v1"
 
 # ── THE SCENARIO-SUPPLIED ARTIFACT (2026-09-02) ─────────────────────────────
@@ -7034,6 +7073,16 @@ ems_sdp_v3 = SdpStrategy("sdp-v3", SDP_POLICY_FILE_V3)
 # THE SHIPPED CALIBRATED BENCHMARK from 2026-09-02 — see SDP_POLICY_FILE_V4.
 ems_sdp_v4 = SdpStrategy("sdp-v4", SDP_POLICY_FILE_V4,
                          require_calibrated_benchmark=True)
+# THE MEASURED-LEVER RE-SOLVE, 2026-09-03 — see SDP_POLICY_FILE_V5.  NO
+# certificate is demanded, and that is not an oversight: this artifact FAILS
+# two of the certificate's clauses (alpha.mode is "lever-measured", not
+# "lever", and alpha.admission.in_window_model is False), which is exactly why
+# it is not the frontier leg.  Demanding the certificate here would make the
+# strategy unloadable; binding it to a frontier name would smuggle an
+# uncertified policy onto the frontier.  The third option — a NON-frontier
+# registration with a role note — is the one `sdp-v2` and `sdp-v3` already
+# established for artifacts that are real results but not competitive scores.
+ems_sdp_v5 = SdpStrategy("sdp-v5", SDP_POLICY_FILE_V5)
 # THE SCENARIO-SUPPLIED ROLE: one strategy, no artifact of its own, playing
 # whatever its scenario names in `sdp_policy_file`. It exists so an artifact
 # that is deliberately OUTSIDE the lever windows (an alpha-sweep point) has a
@@ -7824,6 +7873,11 @@ EMS_STRATEGIES = {
     "sdp-v2": ems_sdp_v2,
     "sdp-v3": ems_sdp_v3,
     "sdp-v4": ems_sdp_v4,
+    # 2026-09-03: `sdp-v5` is THE MEASURED-LEVER RE-SOLVE — a real calibration
+    # on five campaign lever readings whose alpha the MODEL window rejects, so
+    # it ADMITS the charge action in 558 cells. Off the frontier by that fact,
+    # not by convention. See SDP_POLICY_FILE_V5.
+    "sdp-v5": ems_sdp_v5,
     "sdp-sweep": ems_sdp_sweep,
     # The firmware's own 'Y' combined drive-cycle + power-share table (16
     # regions, 40 s), commanded from the EMS layer instead of the USB console.
@@ -7949,6 +8003,29 @@ EMS_STRATEGY_META = {
     # THE CALIBRATED BENCHMARK for the eta_chg = 0.88 charger.
     "sdp-v4":        {"policy_file": SDP_POLICY_FILE_V4,
                       "frontier_eligible": True},
+    # THE MEASURED-LEVER RE-SOLVE, 2026-09-03 — see SDP_POLICY_FILE_V5.
+    "sdp-v5":        {"policy_file": SDP_POLICY_FILE_V5,
+                      "frontier_eligible": False,
+                      "role_note":
+                          "ROLE: THE MEASURED-LEVER RE-SOLVE — alpha "
+                          "(0.134110280093) is D12's two-sided placement on "
+                          "the FIVE measured eta-era lever readings "
+                          "(share 0.4165286, charge 0.3337114 SoC/g), and it "
+                          "is the first SDP artifact whose "
+                          "`in_window_measured` is TRUE rather than null. It "
+                          "is NOT frontier-eligible because the MODEL window "
+                          "(0.111000, 0.126136) rejects that alpha: the "
+                          "solver bills a charge stage at the model's "
+                          "eta_chg = 0.88 while the board measures the "
+                          "end-to-end round trip at 0.801173, so the policy "
+                          "ADMITS charging in 558 of 2525 cells where "
+                          "`sdp-v4` admits none. Five campaigns measure the "
+                          "charge leg 3.4-4.1 %% worse in equivalent hydrogen "
+                          "than the charge-free calibration, so this leg's "
+                          "h2/delta_soc pair is a real measurement OF THE "
+                          "MEASURED ECONOMICS and must not be ranked against "
+                          "`sdp-v4` until the operator rules on the charger "
+                          "disagreement (D14, tools/sdp_ems_solver.py)."},
     # THE SCENARIO-SUPPLIED ROLE — the alpha-sweep legs' home.
     "sdp-sweep":     {"policy_file": SDP_POLICY_FROM_SCENARIO,
                       "frontier_eligible": False,

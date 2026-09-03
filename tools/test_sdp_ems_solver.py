@@ -20,6 +20,7 @@ generated with (see tools/sdp_policies/sdp_policy_v1.json's own `solver` and
 against the SHIPPED artifact (item 1); everything else uses the reduced grid
 to keep the suite fast, per a session-scoped fixture that solves it ONCE.
 """
+import hashlib
 import json
 import os
 import sys
@@ -1202,3 +1203,217 @@ def test_share_ladder_snap_does_not_swallow_a_deliberate_neighbour():
     near = np.array([edge - 1e-6, edge + 1e-6])
     out = solver._snap_ladder_to_band(near)
     assert np.array_equal(out, near)
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# 12. D14 -- `--alpha-mode lever-measured`, the five-reading estimator, and
+#     the model/measured charger disagreement it exposes.
+# ─────────────────────────────────────────────────────────────────────────
+
+# The five eta-era campaign readings' unweighted mean, and the alpha it gives.
+# Pinned as literals for the reason the D12 block states: a helper that
+# recomputed its own formula would agree with itself.
+L_SHARE_MEASURED_ETA_MEAN = 0.4165286
+L_CHG_MEASURED_ETA_MEAN = 0.3337114
+ALPHA_LEVER_MEASURED = 0.13411028009327516
+WINDOW_MEASURED_ETA = (0.1200397763, 0.1498300628)
+# The shipped v4 alpha (D13's `lever` mode at eta_chg 0.88), restated so the
+# "v4 sits BELOW the measured window" comparison reads without the artifact.
+ALPHA_LEVER_SHIPPED_ETA_V4 = 0.11832639757736393
+SHIPPED_V5_PATH = os.path.join(HERE, "sdp_policies", "sdp_policy_v5.json")
+V5_POLICY_SHA256 = (
+    "1644f6e4483b9c17e55317549d96a7e93e5382fd2117ceca1991e42c38aed130")
+_LM_ARGV = ["--soc-n", "11", "--share-n", "5", "--eta-chg", "0.88",
+            "--alpha-mode", "lever-measured"]
+
+
+def test_eta_lever_readings_table_has_five_campaigns_and_its_means():
+    """The estimator is the table's unweighted mean, and the table is the audit
+    trail.  A sixth reading is one row -- and it must move both means, which is
+    what this pin checks was not hand-typed alongside them instead."""
+    assert len(solver.EMS_LEVER_ETA_READINGS) == 5
+    campaigns = [r[0] for r in solver.EMS_LEVER_ETA_READINGS]
+    assert campaigns == ["hil_report_20260902_011926",
+                         "hil_report_20260902_041414",
+                         "hil_report_20260902_220604",
+                         "hil_report_20260903_031220",
+                         "hil_report_20260903_063659"]
+    # The FIRST reading is the one the pre-existing single-reading constants
+    # hold, so the two records cannot drift apart.
+    assert solver.EMS_LEVER_ETA_READINGS[0][1] == \
+        solver.EMS_LEVER_SHARE_ETA_SOC_PER_G
+    assert solver.EMS_LEVER_ETA_READINGS[0][2] == \
+        solver.EMS_LEVER_CHARGE_ETA_SOC_PER_G
+    assert solver.EMS_LEVER_SHARE_ETA_MEAN_SOC_PER_G == pytest.approx(
+        L_SHARE_MEASURED_ETA_MEAN)
+    assert solver.EMS_LEVER_CHARGE_ETA_MEAN_SOC_PER_G == pytest.approx(
+        L_CHG_MEASURED_ETA_MEAN)
+    # The board's end-to-end charge round trip, against the model's 0.88.
+    ratio = (solver.EMS_LEVER_CHARGE_ETA_MEAN_SOC_PER_G
+             / solver.EMS_LEVER_SHARE_ETA_MEAN_SOC_PER_G)
+    assert ratio == pytest.approx(0.801173, abs=1e-6)
+    assert ratio < solver.ETA_CHG_MODEL          # the charger model is optimistic
+
+
+def test_alpha_lever_measured_is_the_geometric_mean_of_the_measured_window():
+    """alpha = (1-gamma)/sqrt(L_share*L_chg) on the MEASURED pair, landing
+    inside the measured admission window that v4's alpha sits below."""
+    lo, hi = solver.admission_window(0.05, L_SHARE_MEASURED_ETA_MEAN,
+                                     L_CHG_MEASURED_ETA_MEAN)
+    assert (lo, hi) == pytest.approx(WINDOW_MEASURED_ETA, abs=1e-9)
+    a = solver.alpha_lever(0.05, L_SHARE_MEASURED_ETA_MEAN,
+                           L_CHG_MEASURED_ETA_MEAN)
+    assert a == pytest.approx(ALPHA_LEVER_MEASURED, rel=1e-12)
+    assert lo < a < hi
+    # v4's alpha is BELOW the window -- the reason for the re-solve.
+    assert ALPHA_LEVER_SHIPPED_ETA_V4 < lo
+    # ... and the MODEL window's upper edge is below the measured alpha, which
+    # is the disagreement D14 records.
+    assert 0.05 / solver.model_levers(eta_chg=0.88)[1] < a
+
+
+def test_lever_measured_mode_refuses_without_the_override(tmp_path, capsys):
+    """The MODEL window rejects the measured-lever alpha, so the D12 tripwire
+    fires -- and its message names D14's two coherent resolutions.  This is
+    what keeps the disagreement from shipping silently."""
+    out = tmp_path / "lm_refused.json"
+    rc = solver.main(_LM_ARGV + ["--out", str(out)])
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "lies OUTSIDE the MODEL" in err
+    assert "lever-measured (D14)" in err
+    assert "--eta-chg 0.801173" in err
+    assert not out.exists()
+
+
+def test_lever_measured_mode_writes_the_measured_window_and_readings(tmp_path):
+    """With the override the artifact records the MEASURED pair as measured --
+    not as a projection -- with a true `in_window_measured`, a false
+    `in_window_model`, and the five readings it averaged."""
+    out = tmp_path / "lm.json"
+    rc = solver.main(_LM_ARGV + ["--allow-out-of-window", "--out", str(out)])
+    assert rc == 0
+    with open(out, encoding="utf-8") as fh:
+        doc = json.load(fh)
+    alpha = doc["alpha"]
+    assert alpha["mode"] == "lever-measured"
+    assert alpha["value"] == pytest.approx(ALPHA_LEVER_MEASURED, rel=1e-12)
+    assert alpha["candidates"]["lever_measured"] == pytest.approx(
+        ALPHA_LEVER_MEASURED, rel=1e-12)
+    lev = alpha["levers_soc_per_g"]
+    assert lev["share_measured"] == pytest.approx(L_SHARE_MEASURED_ETA_MEAN)
+    assert lev["charge_measured"] == pytest.approx(L_CHG_MEASURED_ETA_MEAN)
+    assert lev["charge_measured_is_projection"] is False
+    assert len(lev["measured_readings"]) == 5
+    assert lev["measured_round_trip"] == pytest.approx(0.801173, abs=1e-6)
+    adm = alpha["admission"]
+    assert adm["window_measured"] == pytest.approx(WINDOW_MEASURED_ETA,
+                                                   abs=1e-9)
+    assert adm["in_window_measured"] is True
+    assert adm["in_window_model"] is False
+    assert adm["model_window_disagrees"] is True
+
+
+def test_lever_measured_at_the_measured_round_trip_lands_in_both_windows(
+        tmp_path):
+    """D14 resolution (i), MEASURED not asserted: solving at the board's own
+    end-to-end round trip puts the SAME alpha inside BOTH windows and the
+    charge map goes back to empty.  No tripwire override is needed, which is
+    the whole difference between the two resolutions."""
+    out = tmp_path / "lm_eta.json"
+    rc = solver.main(["--soc-n", "11", "--share-n", "5",
+                      "--eta-chg", "0.801173",
+                      "--alpha-mode", "lever-measured", "--out", str(out)])
+    assert rc == 0
+    with open(out, encoding="utf-8") as fh:
+        doc = json.load(fh)
+    assert doc["alpha"]["value"] == pytest.approx(ALPHA_LEVER_MEASURED,
+                                                  rel=1e-12)
+    assert doc["alpha"]["admission"]["in_window_model"] is True
+    assert doc["alpha"]["admission"]["in_window_measured"] is True
+    assert doc["alpha"]["admission"]["allow_out_of_window"] is False
+    assert not any(v > 0.0 for row in doc["policy"]["charge_goal"]
+                   for v in row)
+
+
+def test_lever_flags_are_rejected_outside_lever_measured_mode(tmp_path, capsys):
+    """--lever-share under `lever` would let a reader believe the measured pair
+    priced an artifact that the model constants priced."""
+    out = tmp_path / "nope.json"
+    with pytest.raises(SystemExit):
+        solver.main(_REDUCED_ARGV + ["--lever-share", "0.4", "--out", str(out)])
+    assert "--lever-share applies only to --alpha-mode lever-measured" in \
+        capsys.readouterr().err
+    assert not out.exists()
+
+
+def test_lever_measured_rejects_a_non_positive_lever(tmp_path, capsys):
+    out = tmp_path / "nope2.json"
+    with pytest.raises(SystemExit):
+        solver.main(_LM_ARGV + ["--lever-chg", "0", "--out", str(out)])
+    assert "--lever-chg must be > 0" in capsys.readouterr().err
+    assert not out.exists()
+
+
+def test_lever_measured_refuses_a_pair_that_does_not_order(tmp_path, capsys):
+    """If a future campaign measures the charger as the BETTER lever there is
+    no alpha that admits share and rejects charge, and the mode says so rather
+    than emitting a NaN alpha."""
+    out = tmp_path / "nope3.json"
+    rc = solver.main(_LM_ARGV + ["--lever-share", "0.30", "--lever-chg", "0.40",
+                                 "--out", str(out)])
+    assert rc == 2
+    assert "MEASURED share lever to BEAT" in capsys.readouterr().err
+    assert not out.exists()
+
+
+def test_lever_measured_needs_an_eta_era(tmp_path, capsys):
+    """The measured pair was taken on the ETA_CHG 0.88 plant and says nothing
+    about the retired 1:1 charger, so --eta-chg-none is refused here."""
+    out = tmp_path / "nope4.json"
+    with pytest.raises(SystemExit):
+        solver.main(["--soc-n", "11", "--share-n", "5", "--eta-chg-none",
+                     "--alpha-mode", "lever-measured", "--out", str(out)])
+    assert "use_measured_eta needs an eta era" in capsys.readouterr().err
+    assert not out.exists()
+
+
+def test_explicit_levers_replace_the_table_and_drop_the_readings(tmp_path):
+    """An explicit --lever-* pair must NOT publish the built-in readings as its
+    provenance: they are not the numbers that were averaged."""
+    out = tmp_path / "lm_explicit.json"
+    rc = solver.main(_LM_ARGV + ["--lever-share", "0.42", "--lever-chg", "0.34",
+                                 "--lever-source", "unit test",
+                                 "--allow-out-of-window", "--out", str(out)])
+    assert rc == 0
+    with open(out, encoding="utf-8") as fh:
+        lev = json.load(fh)["alpha"]["levers_soc_per_g"]
+    assert lev["share_measured"] == pytest.approx(0.42)
+    assert lev["charge_measured"] == pytest.approx(0.34)
+    assert lev["measured_source"] == "unit test"
+    assert "measured_readings" not in lev
+    assert "explicit --lever-share" in lev["measured_estimator"]
+
+
+def test_shipped_v5_artifact_is_the_measured_lever_resolve():
+    """The shipped v5 artifact, pinned: its alpha, its policy-block digest, and
+    the 558 charge cells that keep it OFF the frontier."""
+    assert os.path.isfile(SHIPPED_V5_PATH)
+    with open(SHIPPED_V5_PATH, encoding="utf-8") as fh:
+        doc = json.load(fh)
+    assert doc["schema"] == solver.SCHEMA
+    assert doc["charger"]["eta_chg"] == pytest.approx(0.88)
+    assert doc["alpha"]["mode"] == "lever-measured"
+    assert doc["alpha"]["value"] == pytest.approx(ALPHA_LEVER_MEASURED,
+                                                  rel=1e-12)
+    assert doc["alpha"]["admission"]["in_window_measured"] is True
+    assert doc["alpha"]["admission"]["in_window_model"] is False
+    # ENDOGENOUS, not masked -- the charge cells are the optimizer's verdict
+    # under the measured pricing, which is exactly what makes them a finding.
+    assert doc["actions"]["forbid_charge_all"] is False
+    n_chg = sum(1 for row in doc["policy"]["charge_goal"] for v in row
+                if v > 0.0)
+    assert n_chg == 558, n_chg
+    digest = hashlib.sha256(
+        json.dumps(doc["policy"], sort_keys=True).encode("utf-8")).hexdigest()
+    assert digest == V5_POLICY_SHA256, digest
