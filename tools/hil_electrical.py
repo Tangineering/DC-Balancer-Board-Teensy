@@ -620,9 +620,9 @@ TRACE_L_NH = {
 # chopper-clamp forward-conduction state `V_CHOPPER_TRIP - RT_V_FWD` = 18.065 V.
 # The scenario REQUIRES that clamp (`signal_regen_clamp_dwell` >= 800 ticks), so
 # ANY commanded REGEN open while the chopper conducts fails the check in ANY
-# era at ANY cut above the 50 mA emission gate.  The physical ring at 65 mA is
-# ΔV = i·sqrt(L/C) = 0.80 mV; the 20.01 V is an estimator margin figure, not a
-# node voltage.
+# era at ANY cut above the 50 mA emission gate.  The hot-loop, current-scaled
+# bound at 65 mA is ΔV = 0.130 V/A * i_cut = 8.5 mV (provenance below); the
+# 20.01 V is an estimator margin figure, not a node voltage.
 #
 # THE GATE USES THE FIRMWARE'S OWN DEFINITION OF A HAZARDOUS CUT rather than a
 # number fitted to the census, so the estimator's load-dump class and the
@@ -641,11 +641,20 @@ SW_RING_LOAD_DUMP_I_A = 0.5   # A  == SHARE_CUT_MAX_HANDOFF_A (.ino:2290)
 DI_DT_LOAD_DUMP = 1.3e9     # A/s  ~1.3 A/ns class slew on an SCP cut
                             #      (docs/boost-bringup-debug.md, Death-5 analysis).
                             #      L1: this is a FIXED WORST-CASE bound applied
-                            #      regardless of the actual cut current i_cut -- no
-                            #      scaling law vs i_cut is documented anywhere in
-                            #      this repo, so none is invented here.  Treat the
-                            #      resulting peak_v as "at least this bad", not a
-                            #      current-dependent prediction.
+                            #      regardless of the actual cut current i_cut.  A
+                            #      scaling law vs i_cut IS documented in this repo
+                            #      (docs/boost-bringup-debug.md:195): the hot-loop
+                            #      current-scaled form is peak = v_node +
+                            #      0.130 V/A * i_cut (1.95 V / 15 A from the FC
+                            #      output-cap hot-loop commutation record,
+                            #      docs/boost-bringup-debug.md:1572-1573).  This
+                            #      fixed allowance is a non-certifying bound, not
+                            #      that scaling law; the two are verdict-invariant
+                            #      against each other and against the node's own
+                            #      i*sqrt(L/C) ring over the corpus's 1028
+                            #      sw_ring events.  Treat the resulting peak_v as
+                            #      "at least this bad", not a current-dependent
+                            #      prediction.
 
 # ─────────────────────────────────────────────────────────────────────────────
 # ADC quantization — computed from the firmware's own scale constants

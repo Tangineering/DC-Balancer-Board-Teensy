@@ -687,8 +687,8 @@ campaign-E fix round (last commit of the session; hash in the log).
   `ems-ftp75-5050` −2.88 % (walk −2.9 %), low-current runs −8 % (the removed static bleed is a larger
   fraction of their draw). Every lightly loaded node now parks on its clamp or rail: the regen node at
   18.10 V between windows (out-of-window chopper 1.6 J vs modelled 0.5), the chopper never releases
-  mid-window (clamp events 6 → 3, dwell 1962/2100), the 470 µF V-MOT node retains 92 % over a teardown
-  (comm-loss warm re-close **0.1088 / 0.0816 A**, −72 %; τ 0.94 → 28.2 s; the cold bring-up peak moved
+  mid-window (clamp events 6 → 3, dwell 1962/2100), the 970 µF V-MOT node retains 95.15 % over a teardown
+  (comm-loss warm re-close **0.1088 / 0.0816 A**, −72 %; τ 1.94 → 58.20 s; the cold bring-up peak moved
   −1.5 %), the soc-depletion latch moved **+2.62 s** (predicted +1.5). Anchors re-pinned (scp-inrush
   6.360327 A, handoff-sag 0.370456 A, soc-depletion 273.5935 s, ems-sdp 0.0123898 ± 50 ppm, the FTP-75
   h2 bands, sdp-cross period 16.10–17.12 s with an era-invariant 8.06 s hold, the ems-y quartet). The
@@ -738,7 +738,7 @@ campaign-E fix round (last commit of the session; hash in the log).
   I_tot > LIMIT_I_FC_MAX / DROOP_R_MAX = 1.647 A; no registered EMS stimulus exceeds 1.4714 A.**
   Firmware closure (α ≥ ~0.25 or slew ≤ 0.0027/tick) was NOT proposed under the design-intent ruling; the
   sweep is bridged (velocity first, share 1.5 s later — the drive rail lasts up to 1.08 s at region 11;
-  walked peaks 1.311 A bridged vs 1.722 A unbridged) and the EMS rule "no upward share step in the same
+  walked peaks 1.311 A bridged vs 1.712 A unbridged, corrected split law) and the EMS rule "no upward share step in the same
   decision as an upward demand step above 1.65 A two-source" is queued for the MPC stage model (a
   0.0875 rung at 2.0 A is 0.175 A of demand against 0.15 A of headroom). After a State-99 latch every
   aux-bit and MDAC-mirror check reads the frozen value (13 consequential FAILs, ten non-evidence

@@ -1685,7 +1685,8 @@ MATCHED_DP_REGEN_NOTE = (
 MATCHED_DP_GFC_NOTE = (
     "run hydrogen is the DYNAMIC Gfc integrator (H2Consumption, ZOH) while "
     "the DP stage cost is the Gfc DC gain: a small, systematic, "
-    "one-directional bias between the two totals")
+    "one-directional bias between the two totals -- causal runs land 0.09-0.80 % "
+    "BELOW their matched bound; |dev| <= ~0.8 % is this bias, not a policy result")
 
 def matched_dp_cost_estimate_s(duration_s):
     """Rough wall time [s] of one matched DP baseline for a cycle of this

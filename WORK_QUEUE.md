@@ -584,3 +584,12 @@ sim-only strategies.
    item 6 plus the 0.033 Ohm series floor), 7 minor, 6 adjacent; no safety or campaign verdict
    changes. Fix order per the adjudication: F3/N1/N2 (model + tests + re-walk + re-pin) -> docs
    (F2, F5, F4, F7, F6, F1, F8, N3, N5, N6) -> the N9 bench test -> the dark-node decay capture.
+9. **Run-002 fix round SHIPPED (2026-09-03):** F3/N1/N2 (full split law, re-walk, re-pins, Gate 1
+   mpc-det now PASSES at 0.000740), all document corrections, the N9 firmware test. Opened: (a) the
+   split law under `--droop measured` needs a ruling (scale the pair `r_series_ohm = R_f/s`,
+   `dv0_v = dV0/s` inside a governor-specific resolver, or give `GovernorModel` a realized k_d; a
+   runtime warning ships meanwhile; design note section 6); (b) the MPPT regen exclusion is a level
+   test at the 50 Hz tick (a sub-tick regen pulse could fold a sample) and the abandoned window's
+   minimum stays visible in the State-98 diagnostics — both recorded, no firmware change proposed;
+   (c) `test_the_committed_plan_is_insensitive_to_the_projection` joins the wall-clock-sensitive
+   list; (d) the first campaign after this change is a new baseline for `mpc_share_pred_err`.

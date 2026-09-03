@@ -453,11 +453,11 @@ The **slew-limited reference** crosses the safe delivered share `LIMIT_I_FC_MAX 
 The **load filter** makes the clamp bind only after the filtered total exceeds
 `SHARE_GOV_I_FC_CEIL_A / s_new`, which takes
 
-    ln(1 - (I_new - I_new * SHARE_GOV_I_FC_CEIL_A / LIMIT_I_FC_MAX) / (I_new - I_old))
+    ln((I_new - I_new * SHARE_GOV_I_FC_CEIL_A / LIMIT_I_FC_MAX) / (I_new - I_old))
     / ln(1 - SHARE_GOV_FILT_ALPHA)                                       ticks.
 
-At the measured operating point the first is 4.3 ticks and the second is 25 ticks, a factor of
-5.8 short. The clamp cannot win that race.
+At the measured operating point the first is 4.3 ticks and the second is 24.9 ticks, a factor
+of 5.8 (24.9 / 4.3) short. The clamp cannot win that race.
 
 A necessary condition follows. The commanded fuel-cell demand can reach `LIMIT_I_FC_MAX` only
 where the droop band itself allows it, so no share step can produce `OC_FC` below

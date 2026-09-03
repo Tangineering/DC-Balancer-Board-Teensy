@@ -33,3 +33,5 @@ stated explicitly in the run record.
 | PLANT-R2-N6 | accepted (nit) | tau figures mix node capacitances across engines | One capacitance per engine in 4.8. Run 002 |
 | PLANT-R2-N7 | settled-caveat (nit) | p_bal_w item 4 bills the MOT_PWR drop but not the two boost-link drops | Observer column only; scope or add. Run 002 |
 | PLANT-R2-N8 | open (unverified) | comm-loss trace reports V_bus 0.0000 one tick after the latch while N_MOT holds 15.78 V (C_VBUS should decay at ~1 s) | Report-side liveness zeroing vs engine behaviour not settled; inspect before the next physics change. Run 002 |
+
+Run-002 fix round (2026-09-03): F3/N1/N2 fixed in tooling (design note `docs/modeling/governor_split_law_20260903.md`); F1, F2, F4, F5, F6, F7, F8, N3, N4, N5, N6, N7, N10 fixed in the documents; N9 fixed by `test_mppt_regen_excluded_from_window`; N8 still open. New open item from the fix review: the split law under `--droop measured` (runtime warning shipped; scaling awaits an operator ruling).

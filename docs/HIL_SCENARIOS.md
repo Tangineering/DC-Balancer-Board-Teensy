@@ -330,7 +330,9 @@ the fw v24 expectation; the fw v23 record it replaces is kept at the end.
   ∫`I_charge` 2.1137 C (+0.47 %), `I_charge` peak 0.8815 A, `I_fc` peak 1.1638 A.
 - **Why useful:** it is the only scenario that can tell "the hunt is absent because
   fw v24 fixed it" from "the hunt is absent because the charge windows never
-  opened" — the threshold count on the wire is the positive evidence, and a run
+  opened" — the threshold count on the wire is positive evidence a charge window
+  opened (the fiat mirror's own derived value, not evidence the real manager
+  executed), and a run
   against a fw v21–v23 flash (16-byte frame, blank column) FAILS the count checks
   loudly instead of passing vacuously. **R1 (is an MPPTS resistor fitted?) is no
   longer a contingency:** Table 7 encodes reg `0x02` 0–250 as register mode and
@@ -1894,7 +1896,7 @@ that changes the plant.
   AND with a drive-rail model of the total, fitted to campaign E's three
   measured boundaries. It is the only walk that can see a boundary at all: the
   bridged table's worst reconstructed `I_fc` is 1.3114 A at region 4 (a pure
-  upward load step, measured 1.2954 A on the board), against 1.7223 A at region
+  upward load step, measured 1.2954 A on the board), against 1.7120 A at region
   6 with the bridge removed.
 - **⚠️ `OC_FC` in an FC-charge window is design intent, not a target of this
   feature.** That regime is single-source — `assertFcChargeEnable()` holds

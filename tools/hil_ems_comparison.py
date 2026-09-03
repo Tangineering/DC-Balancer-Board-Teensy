@@ -674,7 +674,7 @@ def render_group_markdown(group, index):
     L.append("")
     L.append("- reference leg: %s" % ("`%s`" % ref if ref else
                                       "none registered on this profile"))
-    L.append("- lower-bound leg: %s" % ("`%s`" % bnd if bnd else
+    L.append("- offline model-optimum leg: %s" % ("`%s`" % bnd if bnd else
                                         "none registered on this profile"))
     L.append("- reference delta SoC: %s" % _num(group.get("dsoc_ref"), "%+.6f"))
     L.append("")
@@ -695,8 +695,10 @@ def render_group_markdown(group, index):
               "",
               "![Figure %d.2](%s)" % (index, fig2), ""]
 
-    L += ["Table %d.1 lists the measured totals, the matched bound, and the "
-          "SoC-priced ranking." % index,
+    L += ["Table %d.1 lists the measured totals, the matched offline "
+          "model-optimum bound (a lower bound on the Gfc DC-gain stage cost, "
+          "not on the logged h2 -- causal runs land 0.09-0.80 %% below it), "
+          "and the SoC-priced ranking." % index,
           "",
           "| run | strategy | role | h2 run (g) | delta SoC (run) |"
           " h2 DP bound (g) | deviation vs DP | lambda_term |"
