@@ -3,7 +3,7 @@
 ## 0. NEXT — operator review (2026-09-03 morning), in this order
 
 The overnight session 2026-09-02/03 ran two full campaigns on fw v26 (D `hil_report_20260902_220604`,
-E `hil_report_20260903_031220`) plus, if it launched, campaign F (see OVERNIGHT_LOG.md §MORNING DIGEST).
+E `hil_report_20260903_031220`) plus campaign F (`hil_report_20260903_063659`, launched 06:37 from `885b436`; analysis pending — see OVERNIGHT_LOG.md §MORNING DIGEST).
 Read the MORNING DIGEST first, then the CLAUDE.md addendum 2026-09-03, then the two ledgers. Items
 that need a decision or a read:
 

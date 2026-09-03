@@ -1105,3 +1105,132 @@ board per the operator.
   the 2026-09-03 addendum appended; WORK_QUEUE.md section 0 rewritten for the morning, section 7b
   opened, Shipped 2026-09-03 added; firmware-versions.md rows 25/26 marked FLASHED with the fw v26
   calibration and step-transient limit.
+- **Commit 885b436 (pushed): campaign-E fix round + close-out documents.** Sonnet review SHIP (two
+  doc nits, one fixed inline). **Campaign F launched from 885b436** (folder `HIL Results/hil_report_20260903_063659`; log
+  scratchpad/campaign_F_20260903.log): the bridged sweep, the cruise step pins, the first live
+  ems-mpc-single, regen_early_releases recorded. Budget after F: 3 of 5. Its analysis is left to the
+  morning (tool pass + hil-agent-analysis) unless it completes before this session ends.
+
+# MORNING DIGEST — read this first (2026-09-03, ~06:45)
+
+## What you asked for, and where it stands
+
+You said "fw v26 is flashed, begin the overnight campaign(s)". Three campaigns ran (budget 5):
+
+- **Campaign D** `HIL Results/hil_report_20260902_220604` (22:06–23:44, tooling 201de7b from a detached
+  worktree): 70 of 70 executed runs correct, zero board defects; eight FAILs = four tooling artefacts
+  plus one scenario gap, all classified during the run and fixed in `d941170`.
+- **Campaign E** `HIL Results/hil_report_20260903_031220` (03:12–04:53, tooling d941170): 72 of 72
+  correct, zero board defects; all eight D FAILs pass for the right reason; the fw v26 clamp calibrated;
+  the one FAIL is the clamp's real step-transient limit on a stimulus that stepped two axes at once
+  (scenario gap, fixed in `885b436`).
+- **Campaign F** (launched 06:37 from `885b436`; folder `HIL Results/hil_report_20260903_063659`; log
+  `scratchpad/campaign_F_20260903.log`): the bridged sweep, the cruise step pins, the first live
+  `ems-mpc-single`, `regen_early_releases` finally recorded. If it is still running when you read this,
+  leave it; its analysis is not done — run the tool pass and the `hil-agent-analysis` skill on it.
+
+Commits (all pushed to origin main): `c8b50ff` fw v26 tools mirror; `d941170` post-D fix round;
+`5e2e3fd` conventions; `7de3f11` + merge `4887bd3` MPC single-source; `885b436` post-E fix round +
+close-out docs. Suites at close: `.venv_hil` 2178 / 80, miniforge 2878 / 1; firmware untouched
+(fw v26 3926 / 175 / 4408 stand).
+
+## The night's headline findings (detail: CLAUDE.md addendum 2026-09-03; ledgers in the two folders)
+
+1. **fw v26 works, exactly as designed, and its limit is now a number.** At a settled total the clamp is
+   exact (I_fc 1.2500 ± 0.0002 A, duty 1.0000, 35 ms settling, 0 switch events). A commanded share step
+   concurrent with a rising total defeats it (the 20 ms EMA under-reads by 25.6 % against a 12 %
+   headroom; OC_FC in 29 ms). Necessary condition: I_tot > 1.647 A two-source; no registered EMS
+   stimulus exceeds 1.4714 A. No firmware change proposed (your design-intent ruling); the EMS rule is
+   queued. `docs/fw26_current_ceiling_governor.md` §8.6.
+2. **The loss-map DP bound is validated on the board** (dp-replay −0.17 / +0.06 %); the four charge-free
+   FTP-75 strategies are tied within 0.15 %; soc-band is 3.3–3.8 % worse; the compressed-cycle
+   frontier is certified (sdp-v4 1.009 = "no more than 2 % worse"; mpc-sto 0.993).
+3. **Bleed era confirmed and baselined**: every walk prediction held (−1.7 % / −2.9 % / −8 % classes);
+   every anchor re-pinned and reproduced (scp-inrush bit-exact to 7 digits; floor ~65 ppm within a
+   campaign, ~250 ppm across).
+4. **MPC 0/1 single-source enumeration shipped**: the board executes exact 0/1 through the existing
+   packet; the gain is 0.01–0.43 % of equivalent hydrogen (completeness, not performance); the load
+   guard turns out to delay, never refuse, above 0.6 A total.
+5. **Two data-integrity defects in the tooling**: `regen_early_releases` was frozen at 0 in every
+   sidecar ever written; the α-leg matched-DP bounds were solved against the wrong drain (a hand-typed
+   mirror — the 2026-09-01 B2 defect again). Both fixed; a read-time witness guards the second class.
+
+## Decisions you may want to review or reverse (all reversible; reversal paths in the log entries)
+
+- **D-1** campaigns from a detached worktree at the committed tooling (procedural).
+- **D-2** the `sw_ring` `over_absmax` VERDICT is gated on the 0.5 A load-dump class (the firmware's own
+  share-cut guard threshold); the event and `peak_v` are still emitted. Reversal: one constant.
+- **D-3** the DP judges feasibility on the COMMANDED FC current (the clamp is credited only for cost and
+  dynamics) — and campaign E then measured exactly the step case D-3 excluded.
+- **D-4** the regen manager releases on the observed motor current (arm −0.2 A, release −0.1 A = the
+  firmware's regenActive exit); the first single-level version chattered and was caught by review.
+- `CANDIDATE_COST_MS_NOMINAL` 0.0300 → 0.0392 → 0.0360 (rule changed from max+15 % to the mean).
+- The α-leg dp_db records were deleted and re-solved; the campaign-D α rows in `EMS_COMPARISON.md` are
+  the corrected rendering.
+
+## Your bench / decision list for today (also WORK_QUEUE.md §0)
+
+1. Read `docs/fw26_current_ceiling_governor.md` §8.6 and decide on the EMS share-step rule.
+2. Approve or drop the joint-transient clamp leg (§8.6.5) and the stepped aux-load branch it needs.
+3. The orphaned `ems-ftp75-5050` DP table: regenerate or delete.
+4. The ftp75c socband reference's zero-harvest charge windows (exit threshold / minimum dwell).
+5. The α re-solve (four readings; v4 sits 1.3–1.5 % below the measured window).
+6. Bench: calibrate `R_NODE_BLEED_*` (moves the comm-loss re-close and the soc-depletion latch again).
+7. Not run overnight: the `docs/HIL_PLANT.md` physics review (run 002) over the bleed, the loss map, the
+   regen model and the estimator's physical option.
+
+# RETROSPECTIVE — the 2026-09-02/03 session (feeds .claude/skills/overnight-autonomous-session)
+
+## What worked, with evidence
+
+1. **A campaign from a detached worktree while a tooling round edits the main tree.** Campaign D ran
+   from `DC-Balancer-D` at 201de7b with `--out` into the main tree's `HIL Results/`, while the fw v26
+   tools-mirror round rewrote ~20 files in `tools/`; the children imported a coherent snapshot and the
+   round landed with review and fixes before the campaign ended. The same isolation ran the MPC 0/1
+   round in a `.claude/worktrees/` branch during campaign E and merged cleanly afterwards.
+2. **Live classification of FAILs during the campaign.** All eight campaign-D FAILs were classified
+   (scoring defect / bleed-era artefact / scenario gap) by per-run Opus agents before the suite
+   finished, so the post-campaign fix round started within minutes of completion and campaign E
+   validated it 4.5 hours after D launched.
+3. **Two-lens review after every scoring-semantics change caught what tests could not.** The regen
+   manager's single-level release (would have chattered on 3 of 6 measured windows), the MPC seed
+   snapping to the opposite rail, the sweep's both-axes step (predicted as a bus-current concern, then
+   measured as an OC_FC latch), the `steady` first-run comparability, the frozen sidecar counter — each
+   came from a reviewer or a validation agent, not from a green suite.
+4. **Rulings with reversal paths let the session move without the operator** (D-1 to D-4), and the
+   refinement of D-4 by review shows the ruling-then-review order is right.
+5. **Recomputing everything from the raw CSV.** The EMA decomposition of the sweep latch closed to
+   0.2 mA; the ftp75c handoff-window collapse was predicted by the fix-round review and measured to
+   the commander period.
+
+## What failed, and the correction adopted
+
+1. **A file a fix round touched was left out of the commit** (`hil-conventions.md` in `d941170`),
+   discovered only when the next merge refused. Correction: stage from `git status` after every round,
+   never from the implementer's list; verify with `git status --short` that only operator files remain.
+2. **A stray uncommitted edit of unknown provenance** (duplicate `--eta-chg` argparse registrations)
+   broke a CLI that no test imports through `main()`. Correction: smoke the CLIs of every module a round
+   touched (`--help`) before committing; recorded in memory.
+3. **Inline python with backticks inside a double-quoted bash string** was mangled by command
+   substitution and half-applied a two-file edit. Correction: write scripts to the scratchpad with the
+   Write tool and run them by path (the heredoc lesson from the previous session, now extended to
+   `python -c`).
+4. **Opus API 500s killed a reviewer twice** with no salvageable transcript. Correction: a narrower
+   brief on a different model, and the orchestrator running the suites itself in parallel so the commit
+   did not wait on the reviewer's test run.
+5. **A walk-derived scenario stepped two axes at once** where the firmware's own profiles interpolate,
+   and no walk had the EMA lag to see it. Correction: every stepped table gets a shape test (one axis
+   per boundary) and an EMA-lag reconstruction bound; recorded in the conventions.
+6. **A sidecar field written before the run loop** read 0 in every campaign since it existed.
+   Correction: any counter the run loop updates must be refreshed in `finalize_meta()`; the validation
+   brief now asks for the sidecar value against the trace.
+7. **After a State-99 latch, ten PASSing checks were non-evidence** (frozen aux bit and MDAC mirrors).
+   Correction: the analysis conventions carry the trap; aux checks are windowed post-grace.
+
+## Economics (for future scaling judgment)
+
+About 20 subagents (13 Opus, 1 Sonnet, plus review-spawned sub-agents), 0 decision pairs (every
+judgment call had a measurement behind it), 3 campaigns totalling ~5 h of board time, 5 fix rounds,
+7 commits. Board time was the bottleneck again; the two wall-clock wins were the worktree isolation
+(a tooling round per campaign) and live per-run classification (the fix round was ready when the
+campaign ended). The one loss was ~45 minutes to the API outage on the last review.

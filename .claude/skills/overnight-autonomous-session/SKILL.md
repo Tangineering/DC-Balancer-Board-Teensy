@@ -150,3 +150,30 @@ for today. The digest cites; it never contains numbers absent from a ledger.
 End with a retrospective in OVERNIGHT_LOG.md (what worked with evidence, what failed
 with the correction, economics) — and fold any NEW failure mode into this skill so
 the next session inherits it.
+
+## Additions from the 2026-09-02/03 session (fw v26 campaigns D, E, F)
+
+- **Isolate every campaign from concurrent tooling work.** Run the suite from a detached
+  `git worktree` at the committed tooling with `--out` into the main tree's `HIL Results/`, and
+  run tooling rounds during a campaign in `isolation: worktree` agents; merge after the campaign.
+  Traps: `core.autocrlf` turns generated modules CRLF in a fresh worktree (`.gitattributes -text`);
+  worktree suites skip tests that need gitignored artifacts.
+- **Stage from `git status`, never from the implementer's file list**, and smoke the CLIs
+  (`--help`) of every module a round touched before committing: one round left a file unstaged
+  and a stray edit of unknown provenance broke a CLI no test imports through `main()`.
+- **Never put backticks in a `python -c` string under bash** — command substitution mangles it
+  and half-applies multi-file edits. Write scripts to the scratchpad and run them by path.
+- **When a reviewer dies to an API error, re-dispatch a narrower brief on another model** and run
+  the suites yourself in parallel so the commit does not wait on the reviewer's test run.
+- **Stepped stimulus tables need a shape test (one axis per boundary) and an EMA-lag
+  reconstruction bound**; a walk without the governor's filter lag cannot see a step-transient
+  latch. The firmware's own profiles interpolate for this reason.
+- **Any sidecar counter the run loop updates must be refreshed in `finalize_meta()`**; a field
+  written at construction reads its initial value forever. Validation briefs compare the sidecar
+  value against the trace.
+- **After a State-99 latch, every aux-bit and mirror check reads the frozen value**: downstream
+  PASSes are non-evidence and the successor inherits the bits until its warm reset. Window such
+  checks post-grace and say so in the ledger.
+- **Classify FAILs live, per run, while the campaign runs** (read-only agents on the finalized
+  sidecars): the fix round is then ready at completion and the next campaign validates it within
+  the same night.
