@@ -1003,3 +1003,55 @@ board per the operator.
   alpha-cal bit-identical to ems-sdp's bound; drain-membership witness stored on new dp_db records
   with a read-time warning; L1-L6. Implementer suites 2129 / 80 and 2825 / 1 (the review's 2826 was
   the miscount, 2809 + 16). Orchestrator rerun in progress.
+- **Commit d941170 (pushed): post-campaign-D fix round + review fixes + 20 matched-DP records.**
+  Orchestrator suites 2129 / 80 and 2825 / 1. **Campaign E launched from main at d941170**
+  (`--with-ftp75 --with-ftp75c --with-alpha`, 73 runs incl. fw26-clamp-cruise / -sweep, ~98 min):
+  validates the fix round on the board (eight formerly-failing runs, the two-level regen release,
+  the clamp scenarios' first measurement, the ems-y-b30-v3 aux bounds). tools/ edit-frozen; the MPC
+  0/1 single-source enumeration round runs in an isolated worktree meanwhile. Campaign budget after
+  E: 2 of 5.
+- Hygiene items from the reviewer's A6 verification sub-agent (tools/ frozen during campaign E;
+  queue for the close-out pass): hil_plant_sim.py ~8744 banner names a non-existent
+  `_SIM_SOC_BAND_DRAIN_SCENARIOS` and says "two mirrors / alpha legs not needed" (three mirrors,
+  alpha legs included); HIL_PLANT.md ~2882 "both mirrors" -> three; gen_dp_ems_table.py prints a
+  full summary at exit 2 when refusing to overwrite without --force (regeneration scripts must
+  check the exit code); gen's drain tuple is an import-time snapshot while mpc/walk resolve at
+  use (monkeypatch-visible only). Confirmed: alpha-leg build_demand bit-identical to ems-sdp in
+  both engines and both loss-map eras; all 71 dp_db records reachable.
+- **MPC single-source round landed in worktree branch worktree-agent-ad89e0a117aa9b279 (Opus,
+  based on d941170; merge deferred until campaign E completes).** Transport confirmed: .ino:5663
+  constrains the received setpoint to [0, 1], not the band, so exact 0/1 reaches
+  updateShareSetpointCutoff() unchanged (the ems-y-b00 profiles already use it); no protocol change.
+  Rollout-time admissibility (_ss_admissible over the shadow governor, 200-tick window, seven refusal
+  reasons), block-0-only candidates appended after the ladder, single-source bus law billing,
+  survivor-referred OC bound, guards for regen / FC-charge / deferred cut / latch. FINDING: the load
+  guard never refuses permanently inside the OC-admissible region - the deferral clips the reference
+  into band and walks the doomed channel down until the guard admits (delay, not verdict; worst 34
+  ticks measured), contrary to the design record's resolution 1. Economics: eq-H2 gains 0.01-0.43 %
+  on the five MPC legs (BT-only 8-83 stages; FC-only admissible, never selected) - a control-set
+  completeness change, not a performance one. ems-mpc-single registered (default plan, 61 s).
+  Worktree suites 2151/80 and 2835/17, one CRLF-environmental failure. Review dispatched.
+- **MPC single-source review (Opus): SHIP-AFTER-FIXES, 4 MED / 5 LOW, no safety defect.** Firmware
+  trace confirmed end to end (0/1 consumed by updateShareSetpointCutoff(); the deferral is a live
+  reference clip into band at .ino:10610; the release arm carries no load guard; the FC-cut ->
+  charge-window dark-bus ordering is already closed by the S2 restore at .ino:9489; the fw v26
+  clamp is cleared before either writing arm under MODE_LATCHED). Plan invariance verified against
+  d941170 itself: 3050 commands identical, candidates_max 1536 both ways. MED-1 the incumbent snap
+  after a BT-only commit seeds the FC rail (index distance, not share distance) - live-reachable on
+  a budget expiry; MED-2 the ems-mpc-single h2 band is scored from an unbounded search; MED-3 the
+  regen guard reads a host key the leg never writes; MED-4 the inertness test compares the module
+  with itself. LOW-1 grid worst-case deferral 88 ticks (2.3x margin under the 200-tick window, not
+  "six blanking windows"). Fix agent dispatched into the worktree; merge after campaign E.
+- **Campaign E done: hil_report_20260903_031220 - 72/73, 72 executed + drive SKIP, wall 1:40:26.**
+  All eight campaign-D FAILs read PASS on the board; all six frontier tuples PASS (cycle61 0.9635 /
+  1.0018, ftp75 0.9657 / 0.9994, cycle61-mpc 0.9634 / 1.0017, ftp75-mpc 0.9649 / 0.9986, **ftp75c
+  1.0091 / 1.0076 and ftp75c-mpc 0.9931 / 0.9916 - first certified compressed-cycle readings**);
+  fw26-clamp-cruise PASS 13/13 on its first execution; ems-y-b30-v3's aux checks PASS. **The one
+  FAIL is fw26-clamp-sweep, and it is BOARD-REAL: at t = 38.000 s the sweep steps the commanded share
+  0.40 -> 0.84 at I_tot 1.84 A; the clamp engaged at +18 ms (aux 0x13) but I_fc rose 0.737 -> 1.489 A
+  in the next 10 ms and OC_FC latched at 38.029 s (State 99 for the rest of the run, so 13 downstream
+  checks fail as consequences).** This is the D-3 step-transient regime measured: the clamp bounds the
+  reference on the filtered total, the network re-splits at the plant's time constant, and a 0.44 share
+  step at 1.84 A outruns it. Design intent (OC_FC is the feedback) - not a firmware defect; a
+  scenario-design gap in the sweep (it STEPS the share where the ems-y legs interpolate). Tool pass
+  running; per-run Opus agent on the sweep + a consolidated validation agent follow.

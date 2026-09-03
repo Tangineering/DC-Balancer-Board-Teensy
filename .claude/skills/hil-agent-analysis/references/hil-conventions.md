@@ -211,6 +211,14 @@ share that is bit-identical over 61 000 rows.
   `CARRIED_IN_LATCH_MAX_S` in the tooling. The fw v22/v23 recovery warm-resets it at
   t ≈ 0.500 s (HIL_RECOVER_DEBOUNCE_MS after the run's frames start). Predecessor-clean
   → 0x8010; predecessor OC → 0x8011; predecessor INIT_FAIL → 0xA010; etc.
+  ⚠️ **ML0217 IS A STANDING EXCEPTION TO THE NAIVE CHAIN AUDIT.** It carries
+  `skip_preamble`, so it opens onto a DARK BUS and latches its OWN designed
+  INIT_FAIL about 301 ms after State-0 entry (inside the [200, 450] ms band the
+  entry asserts). A campaign therefore sees ML0217 open at **0xa010 after a clean
+  predecessor**, which fails `carried == predecessor_final | 0x8010` on that one
+  link and is NOT a chain break — the extra 0x2000 is the entry's own stimulus
+  working. Every other link in a campaign holds exactly. Do not open a finding on
+  it, and do not "fix" the audit by widening the rule for every entry.
 - **Grace scoring:** fault checks judge the POST-GRACE union (t ≥ WARM_RESET_GRACE_S =
   2.0 s, inclusive at the boundary); carried-in bits (pre-grace-only) are excused and
   named in check details. Self-guarding: a board still latched shows its bits post-grace.
@@ -222,13 +230,21 @@ share that is bit-identical over 61 000 rows.
 - Mid-run warm resets (mainState 99→non-99 after the 2.0 s grace) mark a run INCONCLUSIVE
   unless the scenario declares `warm_resets_expected` (comm-loss = 1). The sidecar's
   counts are the authority.
-- **comm-loss warm `MOT_PWR` re-close current — RE-BASELINED 0.3696 → 0.3591 A/ch**
-  (campaign 20260901_151156). The 0.3696 A/ch figure was bit-exact across eight campaigns
-  up to and including 20260901_080905; the WP-C regen-fidelity plant model (fw v25 round)
-  moved the V-MOT node's energy accounting, and 0.3591 A/ch is the first reading after it.
-  Treat 0.3591 as the current baseline and 0.3696 as the pre-WP-C one — quoting a run
-  against the wrong era reads as a −2.8 % board drift that is not there. ⚠️ ONE reading;
-  the second fw v25 campaign settles whether it is the new bit-exact value or a spread.
+- **comm-loss warm `MOT_PWR` re-close current — RE-PINNED FOR THE BLEED ERA:
+  `I_fc` 0.1088 A / `I_batt` 0.0816 A** (campaign `hil_report_20260902_220604`, at
+  t = 7.601060 s). This SUPERSEDES the 0.3591 A/ch line, which itself superseded
+  0.3696 A/ch — both are pre-bleed and neither may be quoted against a bleed-era run.
+  **Report BOTH channels, never an "A/ch" figure:** the channels have not been equal
+  since the converter-asymmetry default landed.
+  **Mechanism, and it is the bleed itself.** The 470 uF V-MOT node now retains **92 %**
+  of its charge across the 2.323 s teardown (tau 0.94 → 28.2 s), so the re-close is a
+  small step onto a nearly-full node (predicted 0.05 A, measured 0.040 A) rather than a
+  charge-up. The CONTROL that identifies the mechanism is the COLD bring-up peak, which
+  starts from 0 V and moved only −1.5 % (0.4906 vs 0.4983 A) across the same boundary.
+  A −72 % collapse on the warm re-close beside a −1.5 % cold peak is the node's
+  retention, not a board drift.
+  ⚠️ **This figure moves AGAIN when the bleed is bench-calibrated** (both bleed values
+  are `TODO(calibrate)`), because the retention fraction is what it measures.
   Not pinned by any check — this is a ledger convention, not a threshold.
 - FAULT_EXPECTATIONS (run_hil_suite.py) is declarative: require / allow_only /
   not_before_s / survive_to / events_require / signals_require, each entry with a source
@@ -253,6 +269,28 @@ share that is bit-identical over 61 000 rows.
   the firmware commands. An opt-in run is a REACTION test, and the drive loop is EXPECTED to
   fight the recorded trajectory where the recorded and flashed laws differ. Do not report
   that divergence as a board finding.
+- ⚠️ **THE REPLAY HALF PROVIDES ZERO COVERAGE OF THE fw v26 CURRENT-CEILING
+  GOVERNOR, and a green 27/27 must never be read as clamp validation.** The aux
+  ceiling bits (`AUX_FC_CEILING` / `AUX_BT_CEILING`) are ZERO on all 27 replays on
+  every tick (campaign `hil_report_20260902_220604`). They are not dead bits — the
+  same campaign carries them for 12 ticks on `ems-y-b30-v3`. The reason is
+  STRUCTURAL and will not change with a different log: the clamp acts on the
+  REFERENCE side, on the governor's filtered total, and the largest commanded FC
+  demand (`sp` x `I_tot_filt`) anywhere in the half is **1.165 A on ML0165** — 93 %
+  of the 1.25 A ceiling (ML0169 1.133, ML0151 1.103, YP0166 1.063, ML0203 1.039).
+  Open-loop injection means a large INJECTED current (ML0203 2.11 A, WP0097 3.60 A,
+  ML0169 3.42 A two-source) cannot drive a reference-side clamp at all. The only
+  registered stimulus that reaches it is the scenario half's `ems-y-b30-v3`.
+- **Check-census vocabulary (2026-09-03).** A replay entry now reports THREE
+  disjoint kinds of non-evidence, all counted inside `n_checks_vacuous` and each
+  also on its own axis: `n_checks_not_exercised` (no command replay),
+  command-vacuity (`VACUOUS_TAG`, the observed motor command is identically 0 A),
+  and `n_checks_stimulus_vacuous` — the recorded STIMULUS cannot fail the check on
+  any firmware, which is the case for `uv_not_latched` on TP0178 and TP0201, whose
+  V_bus floors never cross LIMIT_V_BUS_MIN. The `warm_reset_tripwire` row is
+  appended by `run_hil_suite.py` after the replay half has counted, and IS
+  substantive; both it and the denominator are folded in, so `n_checks_total` and
+  the `key_metrics` fraction now describe every row rather than 111 of 138.
 
 ## Known model-fidelity boundaries (do not report as board findings)
 
@@ -434,6 +472,18 @@ for f in *.meta.json; do grep -q '"results"' "$f" && ! grep -q '"results": *null
 # not in the baseline); append it to the baseline and exit 0 to notify.
 # Separate long-poll: exit when results.json contains '"partial": false' (suite complete).
 ```
+
+## Reading a `signal_*` check detail
+
+- **PARSE THE LAST NUMBER, NOT THE FIRST.** Several `signal_*` details embed a
+  HISTORICAL calibration value inside the check's rationale prose ("measured
+  0.6929 A", "campaign 024231") BEFORE the run's own measurement, which is
+  rendered at the end as `peak X in t=[...]`. Reading the first number in the
+  detail reports a previous campaign's figure as this run's. The run's own value
+  is always the one in the trailing `peak`/`min`/`ticks` clause.
+- A detail may also carry a `provisional_note`, which says the bound is an
+  offline prediction rather than a measurement. Quote the note whenever you quote
+  the bound.
 
 ## Statistics hygiene
 
