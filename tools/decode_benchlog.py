@@ -94,6 +94,25 @@ The firmware writer lives in teensy_controller/teensy_controller.ino
     the file has bit6 set) plus a WARNING line/banner note, so a HIL log
     is identifiable without inspecting individual records.
 
+  Record, format v7 (fw v26): flags gains a further bit in the SAME
+    byte/offset -- bit7 (0x80) = a source current ceiling of the fw v26
+    share governor was BINDING on this tick (either channel; the record
+    does not separate FC from BT, only the HIL observation frame's aux
+    byte and the State-98 'S' dump do). The record size and the v7 record
+    layout are UNCHANGED: bit7 was a spare bit in an existing byte, so no
+    format version moves. The raw byte still passes through the CSV
+    `flags` column exactly as bits 0-6 do; in addition, and unlike bit4-
+    bit6, v7 rows carry a derived 0/1 helper column `share_gov_ceiling` at
+    the END of the row (see the format-v7 CSV paragraph below). The
+    helper exists because the clamp is a REFERENCE-side bound: "the
+    governor held the channel at its ceiling" and "the load stopped
+    there" are indistinguishable from the logged currents alone, so the
+    bit is the only in-log observable and every consumer would otherwise
+    re-implement the same mask. It is emitted for v7 ONLY -- bit7 is a
+    fw v26 observable and fw v26 writes format v7, and the pre-v7 CSV
+    layouts stay pinned by their regression tests. On a v7 log written by
+    fw v21-v25 the bit is never set and the column reads 0 throughout.
+
   Header, format v6 (fw v16): adds no header fields -- v6 is IDENTICAL to
     v4/v5 in the header (32 B layout, same offsets). Only the RECORD format
     changes; see below. The existing `if version >= 4:` header branches
@@ -220,6 +239,16 @@ header itself is unchanged from v4/v5/v6 (RECORD_INFO[7] has its own
 record fmt/size/csv_fields/csv_header but reuses v4's header decode path
 unmodified).
 
+Format v7 also carries one DERIVED column -- `share_gov_ceiling`, the fw v26
+current-ceiling bit (flags bit7, 0x80) as a 0/1 integer. It is appended
+AFTER `flags`, at the very end of the row, so every established v7 column
+index is unchanged and the row grows to 32 columns. It is derived, not a
+record field, which is why it does not sit with the record fields before
+fault_flags and why it is absent from CSV_FIELDS_V7 (that list names the
+float channel columns only, exactly as it excludes fault_flags/flags).
+The raw `flags` byte is still emitted unchanged beside it, so a consumer
+that prefers its own mask is unaffected.
+
 Gap statistics (printed to stderr): max_interval_us is the largest modular
 step between consecutive records; missed_periods sums, over every step,
 max(round(delta_us / 1000) - 1, 0) -- i.e. how many 1 kHz control ticks
@@ -336,7 +365,13 @@ CSV_HEADER_V7 = ("t_us,share_sp,share_act,v_sp,v_act,I_fc,I_batt,gFC,gBT,"
                   "encoder_pos,enc_period_ref_us,enc_multi_pitch_count,"
                   "enc_spurious_drop_count,enc_edge_count_a,enc_edge_count_b,"
                   "enc_phase_ewma,enc_duty_a_ewma,enc_duty_b_ewma,"
-                  "fault_flags,ps_phase,dc_phase,trap_phase,flags")
+                  "fault_flags,ps_phase,dc_phase,trap_phase,flags,"
+                  "share_gov_ceiling")
+
+# fw v26 share-governor current-ceiling bit in the record's `flags` byte.
+# Named here rather than inlined so the decoder and its tests share one
+# vocabulary, the way the firmware and the IO CSV do.
+FLAGS_SHARE_CEILING = 0x80
 
 RECORD_INFO = {
     1: {"fmt": RECORD_FMT, "size": RECORD_SIZE, "csv_fields": CSV_FIELDS,
@@ -552,6 +587,13 @@ def decode_blg(data):
                     "%.9g" % (enc_duty_a_ewma / 256.0),
                     "%.9g" % (enc_duty_b_ewma / 256.0)]
         row += [fault_flags, ps_cell, dc_cell, tp_cell, flags]
+        if version == 7:
+            # DERIVED, not a record field, so it is appended after the raw
+            # `flags` byte rather than inserted with the record fields
+            # before fault_flags -- every established v7 index is unchanged.
+            # 0/1 integer, matching the plain-int style of fault_flags and
+            # the encoder counters (the "%.9g" form is for float channels).
+            row.append(1 if flags & FLAGS_SHARE_CEILING else 0)
         csv_rows.append(",".join(str(c) for c in row))
         records_read += 1
 

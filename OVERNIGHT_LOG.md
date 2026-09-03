@@ -852,3 +852,101 @@ board time, 5 fix rounds, 16 commits. Board time was again the bottleneck, and t
 wall-clock wins were unchanged from the previous session: running orchestrated rounds on disjoint
 files against a live campaign, and folding several work packages into one campaign because `tools/`
 is edit-frozen while a campaign runs.
+
+# Overnight autonomous session log - 2026-09-02/03
+
+**Mandate (operator, 2026-09-02 evening, verbatim):** "fw v26 is flashed, begin the overnight
+campaign(s)". Plan as presented and accepted: campaign D = full suite with
+`--with-ftp75 --with-ftp75c --with-alpha` (first bleed-era campaign on fw v26; goals in
+priority order: zero board defects and bit-identity to v25 below the clamp ceiling; loss-map
+bound within 0.3 % on dp-replay legs and SDP legs at or above bound; BLEED-ERA anchors
+re-pinned; first ftp75c legs; mpc-sto as frontier MPC on the 9-point ladder). Campaign E only
+if D surfaces a tooling defect needing board validation, or once the fw v26 clamp scenarios
+land (mirror round in progress). Budget: 5 overnight, stop early when clean. Standing
+constraints: PSCAD/, USER_NOTES.md, references/ and the two .ino flag lines never committed;
+no tree-wide git ops by subagents; tools/ edit-frozen for the running campaign's tree.
+
+**Start commit:** 201de7b (main). Board reachable (ping 192.168.1.50, 0 % loss). fw v26 on the
+board per the operator.
+
+## Decisions (with reversal paths)
+
+- **D-1 Campaign D runs from a detached git worktree at 201de7b**
+  (`C:/Life Ops/School/Thesis/DC-Balancer-D`, `--out` into the main tree's `HIL Results/`).
+  Reason: the fw v26 tools-mirror agent has uncommitted edits across ~20 tools/ files in the main
+  tree, and campaign children import tools/ fresh per run; launching from main would mix code
+  versions. The worktree pins every child to the committed 201de7b tooling, and the mirror round
+  continues in main in parallel (disjoint trees). Consequence: campaign D carries NO clamp
+  scenarios and no fw v26 tooling mirror (aux bits 4/5 unmasked; the clamp is inert on the
+  registered stimulus set anyway, design note section 8). Reversal: none needed; the worktree is
+  removed after the campaign (`git worktree remove`).
+- Launch: 20260902_220604, log scratchpad/campaign_D_20260902_220604.log.
+- **fw v26 tools-mirror round landed** (uncommitted, main tree): governor_model port + firmware
+  equivalence harness (test/gov_ceiling_harness.cpp vs tools/test_governor_ceiling_equivalence.py,
+  700-row sequence, flags exact / setpoints float32), delivered-share semantics in DP/SDP/MPC/walk
+  (three committed tables byte-identical, no fingerprint key), suite aux-bit masks, _ALPHA_FC_CEIL
+  1.30 A, scenarios fw26-clamp-cruise / fw26-clamp-sweep, BLG bit-7 + plant CSV columns, docs.
+  Implementer suites: .venv_hil 2080 / miniforge 2761. Flagged: ems-ftp75-5050 DP table is stale
+  against the ca2d084 grid widening (header still 0.25..0.75). Opus review dispatched.
+- **Campaign D, run 9 `regen-harvest-true` FAIL = FALSE FAIL (scoring defect).** The sw_ring
+  estimator adds a fixed 1.95 V Death-5 load-dump term to the node at every cut > 50 mA; with the
+  60 kOhm bleed the charger node now sits ON the chopper clamp (18.064 V) when the 65 mA REGEN
+  open is commanded, and 18.064 + 1.95 = 20.014 V > 20 V abs-max. Structural: the estimator's
+  ceiling (18.050 V) is 50 mV below the clamp state the scenario REQUIRES. Physical ring 0.8 mV.
+  Board correct. Fix queued for the post-campaign round (verdict gate on the load-dump class).
+  **D-2 ruling:** the verdict gate uses the firmware's share-cut load-guard threshold (0.5 A),
+  not the agent's census-derived 1.0 A, so the estimator's hazard class equals the firmware's
+  refused-cut class. Reversal: change one constant in hil_electrical.py. Chopper energies moved
+  +25 % / +68 % inside their provisional bands (bleed-era re-pin).
+- **fw v26 mirror review (Opus): SHIP-AFTER-FIXES, 4 HIGH / 8 MED / 11 LOW, firmware port exact.**
+  H1: the reachability claim "inert on every registered stimulus" is FALSE - ems-y-b30-v3's
+  filtered I_tot peaks 2.3355 A with post-clip FC demand 1.5180 A (11 ticks > 1.25 A at t ~ 27.02 s,
+  campaign C CSV; campaign B 9 ticks), so it is NOT v25-identical on fw v26 (campaign D run 23
+  already PASSed its +/-800 ppm h2 anchor: analysis item). H2: min_value scores the window PEAK,
+  every "held at" claim must be floor_min_value. H3: sweep settle 1.5 s < 1.69 s rise of the 0 -> 3
+  m/s step (I_tot ~3.35 A, I_batt ~2.10 A in the tail; no latch, unbounded). H4: solve_dp()'s OC
+  feasibility test is dead once delivered_share() caps FC at 1.25 A, and there is no BT arm.
+  **D-3 ruling (H4):** the DP judges FEASIBILITY on the COMMANDED (pre-clamp) FC current against
+  LIMIT_I_FC_MAX, as before, and on the delivered BT current against LIMIT_I_BT_MAX; COST and
+  DYNAMICS use the delivered share. Reason: a stage-to-stage demand step splits at the converged
+  ratio within one sample while the clamp needs ~5 slew ticks + ~20 ms EMA, so a DP that relied on
+  the clamp for feasibility would command OC_FC latches on steps; the clamp is credited only where
+  it is exact (ramps). Reversal: one predicate in solve_dp(). All MED/LOW accepted; ems-ftp75-5050
+  stale table confirmed ORPHANED (nothing consumes it) - left alone, operator decision
+  (regenerate or delete) queued; the WORK_QUEUE charge_mask() delivered-share line closes
+  NOT-APPLICABLE (single-source window, clamp inert). Fix round dispatched (Opus).
+- **Campaign D FAILs classified (runs 31-35, 40, 41; agents' evidence in HIL_FINDINGS.md):** all
+  board/plant correct. ftp75c x5 `signal_the` = aggregator in the wrong spec list (structurally
+  impossible check; physics 5.46-5.49 J vs 2.5 J); MPC share floor = constants left at the pre-widening
+  band (0.15 / 0.2375 are ladder rungs 1 / 2; cross leg now 0 % expiry vs C's 57.4 %); ftp75c
+  fc_bounded = charge-handoff transient at the regen manager's trailing edge; mppt-tracking = the
+  frozen mirror carries the braking 27 into the cruise window (bleed keeps the node clamped). Both
+  ftp75c frontier tuples PASS by hand (1.0088 / 1.0107 and 0.9903 / 0.9920 at lambda 0.41).
+  **D-4 ruling (regen manager trailing edge):** the manager releases `charge_goal` on the same
+  condition it uses to open - the commanded motor current leaving the braking region at 2x the
+  firmware's regenActive threshold - instead of at the window's wall-clock end, so a vehicle that
+  stops early never hands off into a single-source FC_CHARGE window; the fc_bounded split (charge-free
+  arm unchanged + a 0.60 A charge-window arm) ships as well so the handoff regime stays bounded if it
+  recurs. Reversal: one predicate in RegenManager.apply(). All fixes go in the post-campaign round
+  after the fw v26 fix agent lands (same files).
+- **Campaign D done: hil_report_20260902_220604 - suite tally 63/71 (rc 1 = failing-suite exit),
+  70 executed + drive SKIP.** All eight FAILs classified DURING the run as tooling artefacts (ledger):
+  regen-harvest-true (estimator), ftp75c x5 (impossible check / handoff transient), ems-mpc-cross
+  and ems-ftp75c-mpc (stale ladder constants), mppt-tracking (frozen mirror carry). Frontiers: cycle61
+  0.9638x / 1.0018x, ftp75 0.9656x / 0.9992x, cycle61-mpc 0.9638x / 1.0017x, ftp75-mpc 0.9653x /
+  0.9988x (all PASS); ftp75c and ftp75c-mpc UNVERIFIED on the impossible check only (hand-computed
+  PASS 1.0088 / 1.0107 and 0.9903 / 0.9920). Tool pass running from the 201de7b worktree
+  (coherent with the CSVs; the main-tree analysis module is mid-edit). Consolidated validation
+  agent + replay audit follow the tool pass.
+- **fw v26 mirror fix round landed (Opus): 25/25 findings applied.** Reachability probe committed
+  (tools/probes/probe_fw26_clamp_reachability.py: ems-y-b30-v3 is the ONLY registered stimulus over
+  the ceiling, 11 ticks predicted from campaign C; campaign D measured 12 - inside the new [1, 60]
+  aux_bit band); floor_min_value on every level spec; sweep settle 2.5 s + I_batt/total bounds; D-3
+  feasibility split (commanded FC / delivered BT) with the three tables byte-identical; MDAC bands on
+  the 12-bit code at 2 %, sub-threshold arm relabelled model-fidelity, clamped-region pin added;
+  reachability guard at 1.55 A in both helpers; SDP ladder snapped (v3/v4 shas exact); TARGET_FW 26;
+  aux names validated at import; constants_hash back to HEAD's c5e8d151 (the review's 45845c95 was
+  the round's own value); BLG bit-7 column renamed share_gov_ceiling; BenchLogAnalyzer.exe rebuilt.
+  Implementer deviations recorded (the committed walk figures were wrong: engagement on the first
+  tick, duty 1.0000, I_fc pinned 1.2500 A with no overshoot when the pre-phase is walked; L6 bound 70;
+  ROLL constants not re-measured). Orchestrator suite rerun in progress; commit follows.

@@ -1,3 +1,7 @@
 run_tests
 run_tests_bench
 run_tests_hil
+# fw v26: the firmware-equivalence harness for the current-ceiling clamp,
+# built on demand by tools/test_governor_ceiling_equivalence.py.
+gov_ceiling_harness
+gov_ceiling_harness.exe

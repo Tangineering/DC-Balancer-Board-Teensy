@@ -905,6 +905,70 @@ not the plant `controller_design/system_model.md` synthesizes against.
 > 0.00 % / closed 98.25 % at 0.65 A. Any check whose derivation assumed a
 > closed loop through an idle segment was re-derived with the ruling.
 
+> **⚠️ A THIRD BOUND SITS ON THE REFERENCE FROM fw v26: the source
+> current-ceiling clamp** (`applyShareCurrentCeilings()`,
+> `docs/fw26_current_ceiling_governor.md`). It bounds the **commanded** fuel-cell
+> fraction so the commanded per-channel current stays at or under that channel's
+> ceiling, and forces every further amp of total demand onto the other source:
+>
+> ```
+>     sp <= SHARE_GOV_I_FC_CEIL_A / I_tot          (1.25 A, an UPPER bound)
+>     sp >= 1 - SHARE_GOV_I_BT_CEIL_A / I_tot      (2.70 A, a LOWER bound)
+> ```
+>
+> Both are evaluated on `share_govTotAFilt`, the governor's approximately 20 ms
+> filtered total, never on a raw sample. The order is fixed: the
+> minority-current clip first (conduction feasibility owns the floor), then the
+> battery bound, then the fuel-cell bound so the fuel cell wins the infeasible
+> pair above 3.95 A of total, then a constrain into
+> `[DROOP_R_MIN, DROOP_R_MAX]` applied only where a ceiling actually bound.
+> Release is hysteretic at `SHARE_GOV_CEIL_HYST_A` = 0.05 A.
+>
+> **Which submode takes it.** FEEDFORWARD does, because it writes the
+> converters. HOLD does not, because it writes nothing and applying the clamp
+> there would break the hold invariant. The clamp is also suppressed while a
+> deferred cut owns the setpoint: the fw v25 share-cut guard has parked the
+> reference on a band edge to starve a doomed channel, and one owner per tick
+> applies.
+>
+> **Reachability, and why every registered stimulus is unaffected.** The
+> minority clip caps the commanded fuel-cell fraction at
+> `1 - SHARE_MINORITY_I_MIN_A/I_tot`, so the fuel-cell ceiling is reachable only
+> above **1.55 A of two-source total**. It cannot act at all in a fuel-cell
+> charge window, where `assertFcChargeEnable()` holds `BT_BUS_ENABLE` low and
+> there is no second channel to move load onto. Measured offline on the walks
+> that carry the Gate tables: the highest two-source total on `ems-soc-band` is
+> **1.462 A** and the clamp engages on **0 of 61 000** governor ticks, so
+> Gate 1 and Gate 2 are unmoved to every digit they are quoted at.
+>
+> WARNING - corrected 2026-09-02: "every registered stimulus is unaffected" is
+> not true of the whole set. The statement above is measured on the EMS legs,
+> and the `ems-y` quartet is not one of them. Reconstructing the governor's own
+> filtered total and minority clip from the campaign CSVs
+> (`tools/probes/probe_fw26_clamp_reachability.py`, both campaigns of
+> 2026-09-02) puts **`ems-y-b30-v3`** over the ceiling: filtered `I_tot`
+> **2.3355 A**, commanded `I_fc` **1.5180 A**, **11 ticks** at
+> t = 27.020-27.029 s (campaign B: 2.3343 A / 1.5173 A / 9 ticks at 27.007 s).
+> That leg carries no hydrogen anchor and no offline walk, and what the clamp
+> withholds there is 0.268 A of bus-side fuel cell for 11 ms - 2.9 mC, or
+> 9.7e-07 g of hydrogen. Nothing else on the registered set reaches the
+> ceiling: the next-highest commanded fuel-cell current is `ems-sdp`'s
+> **1.1861 A**, 5.1 % under it. The Gate figures above stand, because
+> `ems-soc-band` is genuinely clear.
+>
+> Validating the mechanism under control requires the two deliberately
+> constructed scenarios
+> `fw26-clamp-cruise` and `fw26-clamp-sweep` (`docs/HIL_SCENARIOS.md`). The
+> first holds one high two-source total and steps the share once; the second is
+> a `'Y'`-shaped twelve-region sweep that crosses the boundary on both axes and
+> carries the on-board bit-identity pin, which asserts that below the ceiling
+> fw v26 reproduces the fw v25 droop codes.
+>
+> `tools/governor_model.py` ports the clamp in the firmware's exact order, and
+> `tools/test_governor_ceiling_equivalence.py` compares the port against the
+> compiled firmware over one scripted sequence rather than against a written
+> expectation.
+
 ### 4.4a Converter asymmetry (`--asymmetry`, 2026-09-01)
 
 The two boost chains are not identical parts. `--asymmetry` selects whether the plant

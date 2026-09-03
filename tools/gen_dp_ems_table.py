@@ -273,6 +273,7 @@ REPO_ROOT = os.path.dirname(_HERE)
 import hil_plant_sim as sim                                        # noqa: E402
 from hil_electrical import (                                       # noqa: E402
     LIPO_OCV_SOC, LIPO_OCV_V, BATT_CELLS, BATT_RS_NOM, BATT_CAPACITY_AH)
+import governor_model as gov_mod                                   # noqa: E402
 import regen_power                                                 # noqa: E402
 from charger_power import (                                        # noqa: E402
     ETA_CHG_DEFAULT, charger_bus_current_a, charger_bus_power_w,
@@ -288,6 +289,77 @@ from charger_power import (                                        # noqa: E402
 # restated here with its citation rather than imported.  Every FC-side
 # feasibility test below is against this value.
 LIMIT_I_FC_MAX_A = 1.4
+
+# .ino LIMIT_I_BT_MAX (.ino:1476) — the battery channel's bus-side overcurrent
+# limit, 3.0 A.  Restated here for the same reason and matching
+# `mpc_ems.LIMIT_I_BT_MAX_A`.  It became load-bearing with fw v26: the current
+# ceiling moves the fuel cell's surplus onto the pack, so a control the FC arm
+# admits can now overdraw the BATTERY.  Before fw v26 nothing moved load there
+# and the DP carried no battery-side feasibility test at all.
+LIMIT_I_BT_MAX_A = 3.0
+
+# ── fw v26 delivered-share semantics ─────────────────────────────────────────
+# The firmware's source current-ceiling governor (fw v26,
+# docs/fw26_current_ceiling_governor.md) bounds the COMMANDED fuel-cell
+# fraction so the commanded channel current stays at or below
+# SHARE_GOV_I_FC_CEIL_A, and forces every further amp of total demand onto the
+# battery.  The consequence for a demand model is that a stage whose commanded
+# share would overdraw the fuel cell is NO LONGER INFEASIBLE: the board delivers
+# the CLAMPED share and the battery takes the rest.
+#
+# THE INFEASIBILITY BOUNDARY SURVIVES ONLY WHERE THE CLAMP CANNOT ACT.  In an
+# FC-charge window `assertFcChargeEnable()` holds BT_BUS low, so the fuel cell
+# is the single source, I_fc equals I_tot and no share command can move load
+# anywhere.  `charge_mask()`'s single-source budget test is therefore UNCHANGED
+# by this round; only the two-source SHARE controls gain the clamp.
+#
+# The scalar authority is `governor_model.ceiling_bounded_share()`.  This is its
+# vectorised image and nothing else; `test_gen_dp_ems_table.py` pins the two
+# elementwise so a divergence cannot be introduced silently.
+GOV_I_FC_CEIL_A = gov_mod.GOV_CONST["SHARE_GOV_I_FC_CEIL_A"]
+GOV_I_BT_CEIL_A = gov_mod.GOV_CONST["SHARE_GOV_I_BT_CEIL_A"]
+GOV_I_TOT_MIN_A = gov_mod.GOV_CONST["SHARE_I_TOT_MIN_A"]
+
+
+def delivered_share(share, i_tot):
+    """Fuel-cell fraction the board DELIVERS for a commanded `share` at `i_tot`.
+
+    Vectorised over both arguments by numpy broadcasting.  The order is the
+    firmware's: battery lower bound first, fuel-cell upper bound second (so the
+    fuel cell wins the infeasible pair above I_FC_CEIL + I_BT_CEIL = 3.95 A of
+    total), then the droop band, and the band is applied only where a ceiling
+    actually bound.  Below both ceilings the commanded share is returned
+    unmodified, so a table whose stages stay under them is byte-identical to its
+    pre-fw-v26 self."""
+    s = np.asarray(share, dtype=float)
+    tot = np.asarray(i_tot, dtype=float)
+    s, tot = np.broadcast_arrays(s, tot)
+    out = np.array(s, dtype=float)
+    # AN OUT-OF-BAND COMMANDED SETPOINT IS NEVER CLAMPED -- it is owned by the
+    # firmware's setpoint latch, not by the share loop.  See the contract in
+    # `governor_model.ceiling_bounded_share()`.  The DP's own grid is the droop
+    # band, so this term is inert here; it is present because the helper's
+    # semantics must not depend on which caller is asking.
+    in_band = (out >= gov_mod.GOV_CONST["DROOP_R_MIN"]) &               (out <= gov_mod.GOV_CONST["DROOP_R_MAX"])
+    # ⚠️ THE REACHABILITY GUARD, and it is a CORRECTNESS term (2026-09-02).
+    # The clamp runs AFTER the firmware's minority-current clip, which caps the
+    # commanded fuel-cell fraction at 1 - SHARE_MINORITY_I_MIN_A/I_tot.  A
+    # stage-level demand model carries no conduction floor, so without this
+    # guard it clamps on totals the board cannot clamp at: 250 of
+    # `ems-dp-replay`'s 34 827 cells bound at I_tot 1.47137 A, where the board's
+    # clip caps the fuel cell at 1.1714 A.  `CEILING_REACHABLE_I_TOT_A` is
+    # I_FC_CEIL + SHARE_MINORITY_I_MIN_A = 1.55 A, and is conservative for the
+    # battery ceiling as well (its own threshold is 3.00 A).
+    live = (tot >= gov_mod.CEILING_REACHABLE_I_TOT_A) & in_band
+    safe = np.where(live, tot, 1.0)
+    bt_bind = live & (((1.0 - out) * safe) > GOV_I_BT_CEIL_A)
+    out = np.where(bt_bind, np.maximum(out, 1.0 - GOV_I_BT_CEIL_A / safe), out)
+    fc_bind = live & ((out * safe) > GOV_I_FC_CEIL_A)
+    out = np.where(fc_bind, np.minimum(out, GOV_I_FC_CEIL_A / safe), out)
+    bound = bt_bind | fc_bind
+    out = np.where(bound, np.clip(out, gov_mod.GOV_CONST["DROOP_R_MIN"],
+                                  gov_mod.GOV_CONST["DROOP_R_MAX"]), out)
+    return out
 
 # ── Share control authority ────────────────────────────────────────
 # THE DP'S SHARE GRID SPANS THE FULL FIRMWARE COMMAND BAND, [0.15, 0.85].
@@ -988,7 +1060,14 @@ def solve_dp(soc0, times, p_dem, v_bus, chg_ok, dt, cap_as, chg_a,
         R = 0.0 if i_regen is None else float(i_regen[k])
 
         # ── split controls ──────────────────────────────────────────────────
-        p_fc = shares * P                      # (m,)
+        # fw v26 DELIVERED-SHARE SEMANTICS.  The commanded share is a REQUEST;
+        # the board's current-ceiling governor delivers `delivered_share()` of
+        # it and puts the remainder on the battery.  Two consequences, and both
+        # are the point of the change: the stage COST is billed on the fuel-cell
+        # power actually delivered, and a stage whose commanded share would have
+        # overdrawn the fuel cell is feasible instead of infeasible.
+        d_share = delivered_share(shares, P / V)   # (m,)
+        p_fc = d_share * P                     # (m,)
         p_bt = P - p_fc
         i0 = p_bt[None, :] / (sim.ETA_BOOST * ocv[:, None])
         v1 = np.maximum(ocv[:, None] - i0 * rs[:, None], 1.0)
@@ -999,8 +1078,41 @@ def solve_dp(soc0, times, p_dem, v_bus, chg_ok, dt, cap_as, chg_a,
         stage[:, :m] = sim.H2_GFC_DC_GAIN_GPS_PER_W * (p_fc / sim.ETA_BOOST) * dt
 
         feas = np.empty((n, ctrl_n), dtype=bool)
-        # FC channel current limit, control-wise (state-independent).
-        feas[:, :m] = ((p_fc / V) <= LIMIT_I_FC_MAX_A)[None, :]
+        # ── FEASIBILITY IS JUDGED ON THE COMMANDED CURRENT (operator ruling
+        #    D-3, 2026-09-02) ──────────────────────────────────────────────────
+        # COST and DYNAMICS above use the DELIVERED share; feasibility does not.
+        # The distinction is a transient one and it is the reason the guard is
+        # not simply moved onto the clamped current:
+        #
+        #   WHAT THE CLAMP COVERS.  A slow ramp at an already-converged share
+        #   ratio.  The reference is bounded before the controller ever tracks
+        #   it, so the delivered fuel-cell current rises MONOTONICALLY to
+        #   SHARE_GOV_I_FC_CEIL_A = 1.25 A and stops: `fw26-clamp-cruise`'s
+        #   walk (tools/probes/probe_fw26_clamp_walk.py, entered from the
+        #   scenario's own converged 0.50 pre-phase) shows a phase-A peak of
+        #   exactly 1.2500 A and NO overshoot at all.
+        #
+        #   WHAT IT DOES NOT COVER.  A stage-to-stage DEMAND STEP.  The extra
+        #   amps arrive at the CONVERGED droop ratio within one 1 ms sample,
+        #   while the clamp needs roughly five reference-slew ticks plus the
+        #   ~20 ms lag of the governor's own load EMA before it can move the
+        #   ratio.  `detectFaults()` latches FAULT_OC_FC on a single raw sample
+        #   above 1.4 A and has NO persistence filter, so a stage the clamp
+        #   would settle can still latch on the way in.
+        #
+        # A DP stage boundary is exactly such a step, so the pre-clamp grid
+        # point is the current the board can actually see, and the pre-fw-v26
+        # predicate is restored unchanged.
+        i_fc_cmd = shares * P / V                  # (m,) COMMANDED
+        feas[:, :m] = (i_fc_cmd <= LIMIT_I_FC_MAX_A)[None, :]
+        # ...and the BATTERY arm, new this round and the clamp's own liability.
+        # Moving load off the fuel cell puts it on the pack, so a control the FC
+        # arm now admits can overdraw the BATTERY -- which the DP had no test
+        # for, because before fw v26 nothing moved load there. Judged on the
+        # DELIVERED current, because the surplus is delivered: this is where the
+        # clamp actually put the amps. Mirrors `mpc_ems.Planner._roll()`, which
+        # bounds `(1 - d) * i_tot` against LIMIT_I_BT_MAX on the same reasoning.
+        feas[:, :m] &= ((p_bt / V) <= LIMIT_I_BT_MAX_A)[None, :]
 
         # ── charge control ──────────────────────────────────────────────────
         # `R` is provably zero here - `charge_mask()` refuses a regen-capable
@@ -1079,18 +1191,45 @@ def forward_pass(soc0, times, p_dem, v_bus, chg_ok, dt, cap_as, chg_a,
             share_out[k] = DP_CHARGE_SHARE
             charge_out[k] = 1.0
         else:
-            share = float(shares[u])
-            if (share * p_dem[k] / v_bus[k]) > LIMIT_I_FC_MAX_A + 1e-12:
+            # fw v26 + operator ruling D-3.  THE COMMANDED share is the grid
+            # point the backward pass chose and the value the BOARD is
+            # commanded with; the DELIVERED share is what the ceiling governor
+            # lets through, and is what the dynamics and the cost see.  The two
+            # feasibility raises use the same split as `solve_dp()`, so a
+            # forward pass cannot accept a control the backward pass refused:
+            #   * the FC raise is on the COMMANDED current (a stage-boundary
+            #     demand step arrives at the converged ratio inside one 1 ms
+            #     sample, before the clamp's ~5 slew ticks and ~20 ms EMA lag,
+            #     and FAULT_OC_FC has no persistence filter);
+            #   * the BT raise is on the DELIVERED current, because that is
+            #     where the clamp actually put the surplus amps.
+            i_tot_k = p_dem[k] / v_bus[k]
+            share_cmd = float(shares[u])
+            share = float(delivered_share(share_cmd, i_tot_k))
+            if (share_cmd * i_tot_k) > LIMIT_I_FC_MAX_A + 1e-12:
                 raise DpInfeasible(
                     "policy selected an FC-overcurrent share at stage %d "
-                    "(t=%.3f s): share %.4f x %.3f W / %.3f V = %.4f A > %.2f A"
-                    % (k, times[k], share, p_dem[k], v_bus[k],
-                       share * p_dem[k] / v_bus[k], LIMIT_I_FC_MAX_A))
+                    "(t=%.3f s): commanded share %.4f x %.3f W / %.3f V = "
+                    "%.4f A > %.2f A"
+                    % (k, times[k], share_cmd, p_dem[k], v_bus[k],
+                       share_cmd * i_tot_k, LIMIT_I_FC_MAX_A))
+            if ((1.0 - share) * i_tot_k) > LIMIT_I_BT_MAX_A + 1e-12:
+                raise DpInfeasible(
+                    "policy selected a BT-overcurrent share at stage %d "
+                    "(t=%.3f s): delivered battery share %.4f x %.3f W / "
+                    "%.3f V = %.4f A > %.2f A"
+                    % (k, times[k], 1.0 - share, p_dem[k], v_bus[k],
+                       (1.0 - share) * i_tot_k, LIMIT_I_BT_MAX_A))
             soc, dh2, dh2p = step_discharge(soc, share, p_dem[k], v_bus[k],
                                             dt, cap_as,
                                             0.0 if i_regen is None
                                             else float(i_regen[k]))
-            share_out[k] = share
+            # THE BOARD IS COMMANDED WITH THE GRID POINT, not with the clamped
+            # value: the ceiling is the FIRMWARE's to apply, and emitting the
+            # clamped share would command a split the board would then clamp a
+            # second time. The delivered share is used for the dynamics above
+            # and nowhere else.
+            share_out[k] = share_cmd
         h2 += dh2
         h2_plant += dh2p
         soc_traj[k + 1] = soc
@@ -1140,8 +1279,10 @@ def heuristic_walk(scenario, meta, soc0, times, p_dem, v_bus, i_total, dt,
 
     for k, t in enumerate(times):
         if t >= next_cmd:
-            # Feedback view: the keys SocBandStrategy actually reads.
-            i_fc = share * i_total[k]
+            # Feedback view: the keys SocBandStrategy actually reads.  fw v26:
+            # the policy measures the DELIVERED fuel-cell current, not the one
+            # it asked for, so the feedback carries the clamped share.
+            i_fc = float(delivered_share(share, i_total[k])) * i_total[k]
             fb = {"t": t, "v_profile": sim.piecewise(prof, t), "soc": soc,
                   "I_fc": i_fc, "I_batt": i_total[k] - i_fc}
             out = policy(t, fb)
@@ -1160,8 +1301,12 @@ def heuristic_walk(scenario, meta, soc0, times, p_dem, v_bus, i_total, dt,
             soc, dh2, dh2p = step_charge(soc, p_dem[k], v_bus[k], chg_a, dt,
                                          cap_as, eta_chg, reg)
         else:
-            soc, dh2, dh2p = step_discharge(soc, share, p_dem[k], v_bus[k],
-                                            dt, cap_as, reg)
+            # fw v26: the policy COMMANDS a share; the board's current-ceiling
+            # governor DELIVERS the bounded one.  Same helper the DP uses, so
+            # the matched-model comparison stays matched.
+            soc, dh2, dh2p = step_discharge(
+                soc, float(delivered_share(share, i_total[k])), p_dem[k],
+                v_bus[k], dt, cap_as, reg)
         h2 += dh2
         h2_plant += dh2p
     return {"h2_g": h2, "h2_plant_g": h2_plant, "soc_final": soc,

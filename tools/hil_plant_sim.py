@@ -41,7 +41,16 @@ Wire protocol (mirrored from teensy_controller.ino, fw v21 — keep in lockstep)
     2  u8    mainState
     3  u8    switch_state bitmask (see SW_* below)
     4  u8    aux: bit0 FC_REG_ENABLE, bit1 BT_REG_ENABLE,
-                  bit2 MPPT_DISABLE,  bit3 CBAL_DISABLE
+                  bit2 MPPT_DISABLE,  bit3 CBAL_DISABLE,
+                  bit4 FC ceiling clamp active  APPENDED fw v26,
+                  bit5 BT ceiling clamp active  APPENDED fw v26 — the source
+                  current-ceiling governor's per-channel clamp state, NOT pin
+                  levels.  Spare bits in an existing byte, so HIL_OUTPUT_SIZE
+                  stays 18 and the checksum span is unchanged.  A frame from
+                  fw v21-v25 simply never sets them, and the CSV columns
+                  `fc_ceil`/`bt_ceil` then read 0 rather than blank: absence of
+                  the bit is a real observation ("not clamped"), unlike
+                  mppt_thresh_cnt/error_code, whose BYTES are absent.
     5  f32   current [A] (post-clamp motor-current command)
     9  u16   last MDAC word, FC channel
    11  u16   last MDAC word, BT channel
@@ -168,6 +177,14 @@ SW_REGEN, SW_FC_CHARGE, SW_BT_SEQ = 0x08, 0x10, 0x20
 
 AUX_FC_REG, AUX_BT_REG = 0x01, 0x02
 AUX_MPPT_DISABLE, AUX_CBAL_DISABLE = 0x04, 0x08
+# fw v26 (.ino readHilAuxState) — bits 4/5 are NOT pin levels like bits 0-3:
+# they mirror the source current-ceiling governor's clamp state per channel.
+# They live in the aux byte rather than in `switch_state` deliberately, because
+# `switch_state` is the TOPOLOGY word this simulator solves the network from.
+# Spare bits in an existing byte: HIL_OUTPUT_SIZE stays 18 and the checksum span
+# is unchanged, so no protocol version moves and a host that does not know them
+# masks them off exactly as before.
+AUX_FC_CEILING, AUX_BT_CEILING = 0x10, 0x20
 
 # ── Mid-run warm-reset tripwire ─────────────────────────────────────────────
 # From fw v23 the board can leave its latched State 99 on its own: after a RUN
@@ -772,10 +789,17 @@ def unique_output_path(path: str) -> str:
 # the switch/aux bitmask definitions.  Without this filter a protocol edit or a
 # tripwire retune moved `constants_hash` exactly as loudly as a K_F correction,
 # which is precisely the confusion the fingerprint exists to prevent.
+# `FW26_` joins them for the same reason (2026-09-02): FW26_CLAMP_CRUISE_LOAD_A
+# and the two FW26_CLAMP_SWEEP_* constants are ONE SCENARIO'S STIMULUS SHAPE,
+# not plant or electrical model values.  Leaving them in moved the fingerprint
+# on a commit that changed no model coefficient, which is exactly the false
+# alarm the filter exists to prevent: every pre-round sidecar would have read as
+# "the model moved" against a checkout in which it had not.  A scenario's own
+# numbers are already recorded per run in its sidecar.
 CONSTANTS_EXCLUDE_PREFIXES = (
     "META_", "WARM_RESET_", "HIL_SYNC_", "HIL_INJECT_", "HIL_OUTPUT_",
     "TEENSY_PORT", "SW_", "AUX_", "MDAC_CMD_", "CONSTANTS_EXCLUDE",
-    "UDP_", "PI_CMD_", "FB_",
+    "UDP_", "PI_CMD_", "FB_", "FW26_",
 )
 
 
@@ -9992,6 +10016,213 @@ SCENARIOS["charge-to-full"] = {
     ],
 }
 
+# ── fw26-clamp-cruise: the fw v26 source current-ceiling clamp ───────────────────
+#
+# THE ONLY STIMULUS THAT EXERCISES fw v26 DELIBERATELY.  The clamp bounds the
+# COMMANDED fuel-cell fraction at SHARE_GOV_I_FC_CEIL_A / I_tot, and the
+# minority-current clip runs first, so the largest fuel-cell current the loop
+# can command is min(DROOP_R_MAX, 1 - SHARE_MINORITY_I_MIN_A/I_tot) * I_tot.
+# The ceiling is therefore reachable only above
+#     SHARE_GOV_I_FC_CEIL_A + SHARE_MINORITY_I_MIN_A = 1.55 A
+# of TWO-SOURCE total.
+#
+# ⚠️ CORRECTED 2026-09-02.  This block said no registered scenario reached the
+# ceiling, quoting `ems-soc-band`'s 1.462 A as the set maximum.  That figure is
+# the EMS legs' maximum and it is the RAW total, not the governor's own filtered
+# total after the minority clip.  Reconstructing what the governor actually
+# commands (`tools/probes/probe_fw26_clamp_reachability.py`, over both campaigns
+# of 2026-09-02) gives one registered scenario over the ceiling:
+#
+#     `ems-y-b30-v3`   filtered I_tot 2.3355 A, commanded I_fc 1.5180 A,
+#                      11 ticks over the ceiling at t = 27.020..27.029 s
+#                      (campaign B: 2.3343 A / 1.5173 A / 9 ticks at 27.007 s)
+#
+# and nothing else: the next-highest commanded fuel-cell current on the whole
+# registered set is `ems-sdp`'s 1.1861 A, 5.1 % under the ceiling. The
+# `ems-y-b30-v3` engagement is an 11 ms transient at one region boundary, so it
+# proves the mechanism is live but cannot hold it, bound it, or release it under
+# control. Without THIS scenario a campaign still cannot exercise the feature.
+#
+# WHY MOTOR-FREE, against the design note's sketch (deviation, stated).
+# `docs/fw26_current_ceiling_governor.md` section 8.2.2 sketches "an auxiliary
+# preload plus a steady drive command".  This scenario carries the preload and
+# holds `v_setpoint` at 0.0 for the whole run instead, for the reason
+# `share-staircase` is motor-free: the acceptance criteria bound I_fc inside a
+# 0.10 A window and bound the balance residual, and a drive transient moves
+# I_tot, which moves BOTH the clamp's engagement boundary and the window the
+# criteria are written against.  With the motor held in reset by
+# V_SP_ZERO_THRESH every amp on the bus is the scripted aux load, so the total
+# is ONE constant and the clamp window is deterministic.
+#
+# THE LOAD.  FW26_CLAMP_CRUISE_LOAD_A + I_AUX_A puts the two-source total at 2.00 A,
+# which sits in the design note's 1.8 A to 2.4 A band and 29 % clear of the
+# 1.55 A threshold.  At a commanded share of 0.75 the UNCLAMPED fuel-cell demand
+# is 1.50 A, above the 1.25 A ceiling by 0.25 A — twenty times the per-channel
+# post-averaging idle noise implied by SHARE_I_TOT_MIN_A, so the clamp's action
+# is not a noise-floor reading.
+#
+# TWO PHASES, and the second is the negative control.
+#   PHASE A (t = 8..24, share 0.75) — THE CLAMP BINDS.  Offline walk through
+#       `tools/governor_model.py` at the measured asymmetry: first engagement
+#       on the FIRST tick after the setpoint step - the governor enters the
+#       phase converged at r = 0.4944 from the timeline's own 0.50 pre-phase -
+#       clamp duty 1.000 of the phase, delivered I_fc pinned at 1.2500 A with
+#       NO overshoot (whole-phase peak 1.2500 A),
+#       I_batt 0.7500 A, balance residual identically zero, applied ratio
+#       0.6197, both bus switches high, no cut and no refusal.
+#   PHASE B (t = 26..34, share 0.40) — THE CLAMP RELEASES, SAME RUN, SAME LOAD.
+#       The unclamped demand is 0.80 A, well under the ceiling, so the flags
+#       must fall on the setpoint step and I_fc must sit at 0.80 A.  This is the
+#       control that separates "the governor held the fuel cell at 1.25 A" from
+#       "the load happened to stop there", which the currents alone cannot.
+#
+# The BATTERY ceiling is NOT exercised: it would need 2.70 A on one channel,
+# i.e. a total the platform's validated budget does not admit at a share this
+# scenario could command.  That ceiling has never been exercised on hardware
+# and is not expected to bind (design note section 8.6).
+#
+# ⚠️ THE CLAMP IS NOT EXPECTED TO ACT IN AN FC-CHARGE WINDOW, AND THIS SCENARIO
+# OPENS NONE.  `assertFcChargeEnable()` holds BT_BUS low for the whole of such a
+# window, so the fuel cell is the single source, I_fc equals I_tot and there is
+# no second channel to move load onto.  Every overcurrent-class fuel-cell
+# excursion measured on this board is of that kind, and `OC_FC` there is DESIGN
+# INTENT — the EMS reads the latch as feedback about a charge window it should
+# not have opened (see FAULT_EXPECTATIONS["charge-cruise"], operator ruling (b)
+# of 2026-08-30).  fw v26 does not change that and is not meant to.
+FW26_CLAMP_CRUISE_LOAD_A = 1.85
+
+SCENARIOS["fw26-clamp-cruise"] = {
+    "description": ("38 s motor-free two-source high-total run that is the "
+                    "only stimulus reaching the fw v26 source current-ceiling "
+                    "clamp: a 2.00 A two-source total held across a commanded "
+                    "share of 0.75 (unclamped FC demand 1.50 A, clamped to the "
+                    "1.25 A ceiling with the remainder forced onto the "
+                    "battery) and then 0.40 in the same run, which releases "
+                    "the clamp and gives a same-run negative control."),
+    # "any": the clamp is firmware arithmetic on a filtered total and the split
+    # is the droop network's; neither needs ideal-diode dynamics, so the
+    # scenario is valid under either engine. A campaign runs it under ONE, so
+    # "a free cross-check" was not a property of running it -- it would take a
+    # second run, at this scenario's own 38 s, and nothing schedules one.
+    "electrical": "any",
+    "duration_s": 38.0,
+    # Generic preload branch: ramped in over SOC_LOAD_RAMP_S from
+    # AUX_PRELOAD_START_S = 4.0 s, so the plateau stands from t = 7.0 and
+    # Phase A starts a full second after it.
+    "aux_preload_a": FW26_CLAMP_CRUISE_LOAD_A,
+    "pi_timeline": [
+        (0.5, {"mode_cmd": MODE_SAFE}),
+        (3.0, {"mode_cmd": MODE_HYBRID}),
+        # Standstill for the whole run; 0.50 is the firmware's own default
+        # split and is below the ceiling at this total (1.00 A of 2.00 A).
+        (5.0, {"v_setpoint": 0.0, "power_share_setpoint": 0.50}),
+        # PHASE A. 16 s, against the >= 10 s the design note asks for.
+        (8.0, {"power_share_setpoint": 0.75}),
+        # PHASE B, the in-run release and the negative control. 8 s.
+        (26.0, {"power_share_setpoint": 0.40}),
+        # Close the run out Run -> Finish -> Idle, leaving 3 s.
+        (35.0, {"mode_cmd": MODE_SAFE}),
+    ],
+}
+
+# ── fw26-clamp-sweep: the clamp's engagement and release, repeatedly ─────────
+#
+# THE SECOND HALF OF THE fw v26 VALIDATION PAIR, and the one that separates the
+# two ways the clamp can release.  `fw26-clamp-cruise` holds ONE total and steps
+# the share once; this leg is shaped like the firmware's own 'Y' table — velocity
+# setpoint segments against a commanded share sweep — and crosses the clamp
+# boundary on BOTH axes, five times up and five times down, in one run.
+#
+# THE TWO AXES, and why both are needed.  A clamp that released only when the
+# share fell could be a share-loop artefact; one that released only when the load
+# fell could be a load artefact.  The table therefore carries:
+#   * regions that cross by TOTAL   — same commanded share 0.84, the two-source
+#     total stepped between 1.20 A and 2.02 A by the velocity setpoint;
+#   * regions that cross by SHARE   — same total, the commanded share stepped
+#     between 0.84 and 0.40 or 0.20.
+#
+# THE LOAD.  FW26_CLAMP_SWEEP_PRELOAD_A + I_AUX_A is a 1.20 A floor; the motor
+# adds 0.0844 A at 0.5 m/s, 0.6275 A at 2.5 m/s and 0.8163 A at 3.0 m/s on the
+# demand model, giving region totals of 1.200 / 1.284 / 1.827 / 2.016 A.  The
+# 1.55 A reachability threshold is crossed between the second and the third, and
+# the clamp boundary at the commanded 0.84 share is 1.25/0.84 = 1.488 A, so the
+# sub-threshold regions clear it by 0.20 A to 0.29 A and the high regions exceed
+# it by 0.29 A to 0.45 A of fuel-cell demand.
+#
+# ⚠️ THOSE MOTOR NUMBERS ARE THE HOST DEMAND MODEL'S, not the board's.  In a HIL
+# run the BOARD's drive loop sets the VESC current and therefore the total, so
+# the region totals are a prediction and the margins above are what absorbs the
+# difference.  The first campaign that runs this scenario re-derives them.
+#
+# WHY 0.84 AND NOT DROOP_R_MAX 0.85.  The commanded share round-trips through a
+# float32 UDP field, and 0.85 is the band EDGE: a round-trip landing at
+# 0.850000024 is OUTSIDE the band, which is the channel-cutoff signal and would
+# make `updateShareSetpointCutoff()` open BT_BUS.  This scenario must never cut,
+# so every commanded share sits strictly inside the band.  0.20 rather than 0.15
+# at the bottom, for the same reason.
+#
+# ⚠️ THE CLAMP IS NOT EXPECTED TO ACT IN AN FC-CHARGE WINDOW, AND THIS SCENARIO
+# OPENS NONE.  `assertFcChargeEnable()` holds BT_BUS low for the whole of such a
+# window, so the fuel cell is the single source, I_fc equals I_tot and there is
+# no second channel to move load onto.  Every overcurrent-class fuel-cell
+# excursion measured on this board is of that kind, and `OC_FC` there is DESIGN
+# INTENT — the EMS reads the latch as feedback about a charge window it should
+# not have opened (see FAULT_EXPECTATIONS["charge-cruise"], operator ruling (b)
+# of 2026-08-30).  fw v26 does not change that and is not meant to.
+FW26_CLAMP_SWEEP_PRELOAD_A = 1.05
+FW26_CLAMP_SWEEP_REGION_S = 6.0
+
+# (t_start, v_setpoint, commanded share, expected to clamp).  The fourth field
+# is DOCUMENTATION consumed by run_hil_suite.py's expectation builder, so the
+# check windows and this table cannot drift apart: a region's classification is
+# written once, here, beside the stimulus that produces it.
+FW26_CLAMP_SWEEP_REGIONS = (
+    ( 8.0, 0.0, 0.84, False),   # 1.200 A — sub-threshold, bit-identity region
+    (14.0, 3.0, 0.84, True),    # 2.016 A — clamped
+    (20.0, 0.5, 0.84, False),   # 1.284 A — released BY TOTAL
+    (26.0, 2.5, 0.84, True),    # 1.827 A — clamped
+    (32.0, 2.5, 0.40, False),   # 1.827 A — released BY SHARE, same total
+    (38.0, 3.0, 0.84, True),    # 2.016 A — clamped
+    (44.0, 3.0, 0.20, False),   # 2.016 A — released at the band's lower rail
+    (50.0, 0.0, 0.84, False),   # 1.200 A — sub-threshold, bit-identity region
+    (56.0, 3.0, 0.84, True),    # 2.016 A — clamped
+    (62.0, 0.5, 0.50, False),   # 1.284 A — sub-threshold
+    (68.0, 2.5, 0.84, True),    # 1.827 A — clamped
+    (74.0, 0.0, 0.50, False),   # 1.200 A — sub-threshold, closes the run
+)
+
+SCENARIOS["fw26-clamp-sweep"] = {
+    "description": ("84 s 'Y'-shaped sweep that crosses the fw v26 current "
+                    "ceiling five times in each direction, on BOTH axes: the "
+                    "two-source total is stepped 1.20 -> 2.02 A by the velocity "
+                    "setpoint at a fixed commanded share, and the commanded "
+                    "share is stepped 0.84 -> 0.40/0.20 at a fixed total. "
+                    "Five regions clamp and SEVEN are sub-threshold; the three "
+                    "STANDSTILL ones among those seven carry the model-fidelity "
+                    "droop-code pin: "
+                    "below the ceiling fw v26 is arithmetically identical to "
+                    "fw v25, and their droop codes are pinned to the "
+                    "clamp-absent walk."),
+    # "any": the clamp is firmware arithmetic on a filtered total; the split is
+    # the droop network's. Neither needs ideal-diode dynamics, so the scenario
+    # is valid under either engine. A campaign runs it under ONE; a comparison
+    # across the two would cost a second 84 s run and nothing schedules one.
+    "electrical": "any",
+    "duration_s": 84.0,
+    "aux_preload_a": FW26_CLAMP_SWEEP_PRELOAD_A,
+    "pi_timeline": (
+        [(0.5, {"mode_cmd": MODE_SAFE}),
+         (3.0, {"mode_cmd": MODE_HYBRID}),
+         # Standstill and the firmware's own default split while the preload
+         # ramps in (AUX_PRELOAD_START_S 4.0 + SOC_LOAD_RAMP_S 3.0 = 7.0 s), so
+         # region 1 opens a full second after the load has settled.
+         (5.0, {"v_setpoint": 0.0, "power_share_setpoint": 0.50})]
+        + [(_t, {"v_setpoint": _v, "power_share_setpoint": _sp})
+           for _t, _v, _sp, _c in FW26_CLAMP_SWEEP_REGIONS]
+        # Close the run out Run -> Finish -> Idle, leaving 4 s.
+        + [(80.0, {"v_setpoint": 0.0, "mode_cmd": MODE_SAFE})]),
+}
+
 # ── pi-silence: the firmware's Pi watchdog, isolated from the HIL link ───────
 #
 # A VERIFIED COVERAGE GAP, closed.  checkPiWatchdog() (.ino:4976-4985, called
@@ -11845,6 +12076,23 @@ def main(argv=None):
         #                      decision — never 0, which would read as "the
         #                      budget was met" on a run that had not solved.
         header_row += ["mpc_solve_ms", "mpc_share_pred_err", "mpc_budget_hit"]
+        # ── fc_ceil / bt_ceil — APPENDED LAST, BOTH SCHEMAS (fw v26) ─────────
+        # Observation-frame byte 4, bits 4/5: the source current-ceiling
+        # governor's per-channel clamp state.  Same class as `state`/`switch`/
+        # `aux`/`mppt_thresh_cnt`/`error_code` — an observed BOARD field, not a
+        # plant quantity — so the same rules: declared in BOTH schemas, and
+        # appended after every established column so no index moves.
+        # The raw `aux` byte is still emitted unchanged at its own index; these
+        # two are the decoded 0/1 form, so the scoring layer does not have to
+        # re-implement the mask (run_hil_suite reads them by name, and
+        # hil_report_analysis.aux_bits() draws the same two bits as lanes).
+        # 0/1 rather than blank when a frame is present: the bit being clear is
+        # a real observation ("this channel was not clamped"), unlike
+        # mppt_thresh_cnt/error_code, whose BYTES can be absent from a legacy
+        # frame.  BLANK only when there is no observation frame for the tick at
+        # all — the same rule every other observed column follows, and the
+        # honest value for "the board said nothing".
+        header_row += ["fc_ceil", "bt_ceil"]
         writer.writerow(header_row)
 
     # M3: open the electrical-events sidecar UP FRONT and stream into it as events
@@ -12638,6 +12886,15 @@ def main(argv=None):
                     row.append("" if _sms is None else f"{_sms:.3f}")
                     row.append("" if _spe is None else f"{_spe:.5f}")
                     row.append("" if _bh is None else int(_bh))
+                # fc_ceil / bt_ceil (fw v26) — appended in BOTH schemas, see
+                # the header comment.  Decoded from the aux byte already in
+                # hand, so this costs two mask tests per written row.
+                if obs is None:
+                    row += ["", ""]
+                else:
+                    _aux = obs["aux"]
+                    row.append(1 if _aux & AUX_FC_CEILING else 0)
+                    row.append(1 if _aux & AUX_BT_CEILING else 0)
                 writer.writerow(row)
 
             ticks += 1

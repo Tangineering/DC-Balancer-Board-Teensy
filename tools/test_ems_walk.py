@@ -896,3 +896,81 @@ def test_the_walk_credits_only_stages_inside_a_commanded_regen_window():
 
     # And the ungated total is strictly larger, so the gate is not inert.
     assert res.regen_charge_c == pytest.approx(1.1729, abs=1e-3)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# fw v26 — the walk applies the CLAMPED share, and counts it
+# ─────────────────────────────────────────────────────────────────────────────
+def test_walk_reports_a_clamped_census_and_it_is_zero_on_every_registered_leg():
+    """THE HEADLINE REACHABILITY FACT, asserted rather than asserted-in-prose.
+
+    Every registered EMS stimulus stays under the 1.55 A two-source total at
+    which the fuel-cell ceiling first becomes reachable, so fw v26 is inert on
+    all of them and the census must read zero. A leg that starts clamping is a
+    finding about the stimulus, not a pass."""
+
+    for scenario, strategy in (("ems-soc-band", "soc-band"),
+                               ("ems-sdp", "sdp-v4")):
+        r = ew.walk(strategy, scenario, soc0=0.7, trace=True)
+        assert r.clamped_ticks == 0, (scenario, r.clamped_ticks)
+        assert r.clamped_fraction == 0.0
+        assert set(r.share_ceiling) == {0}
+        assert max(r.i_fc) < gm.CEILING_REACHABLE_I_TOT_A
+
+
+def test_walk_without_the_governor_applies_the_same_bound_as_heuristic_walk():
+    """The governor-disabled arm is the regression anchor against
+    `gen_dp_ems_table.heuristic_walk()`. Both had to learn the delivered-share
+    bound in lockstep, or the anchor stops anchoring."""
+
+    # L1: compare the walk's helper against `gen_dp_ems_table.delivered_share()`
+    # -- the OTHER model's bound -- not against itself. The earlier form asserted
+    # `f(x) == f(x)` and could not fail.
+    import gen_dp_ems_table as gen
+    for sp in (0.15, 0.5, 0.84, 0.85):
+        for tot in (0.5, 1.2, 1.47137, 1.55, 1.6, 2.0, 4.0):
+            assert gm.ceiling_bounded_share(sp, tot) == \
+                float(gen.delivered_share(sp, tot)), (sp, tot)
+    r = ew.walk("soc-band", "ems-soc-band", soc0=0.7, governor=False,
+                      trace=True)
+    assert r.clamped_ticks == 0
+    assert set(r.share_ceiling) == {0}
+
+
+def test_walk_census_is_not_structurally_zero_without_the_governor():
+    """M3: the census used to be incremented ONLY in the governor arm, so a
+    governor-disabled walk reported `clamped_ticks == 0` whatever happened. A
+    census that can only read zero is not a census. Force a clamped stage by
+    pushing the ceiling below the stimulus rather than by inventing a load, so
+    the test exercises the real code path."""
+    real_fc, real_reach = gm._FC_CEIL_A, gm.CEILING_REACHABLE_I_TOT_A
+    try:
+        gm._FC_CEIL_A = 0.05
+        gm.CEILING_REACHABLE_I_TOT_A = 0.0
+        r = ew.walk("soc-band", "ems-soc-band", soc0=0.7, governor=False,
+                    trace=True)
+    finally:
+        gm._FC_CEIL_A, gm.CEILING_REACHABLE_I_TOT_A = real_fc, real_reach
+    assert r.clamped_ticks > 0
+    assert r.clamped_fraction > 0.0
+    assert 1 in set(r.share_ceiling)
+    assert r.clamped_by_segment
+    assert any("CURRENT CEILING BOUND" in n for n in r.notes)
+
+
+def test_walk_census_counts_a_clamp_when_one_actually_binds():
+    """A census that can only read zero proves nothing. Drive the governor
+    directly at a total above the threshold and confirm the counter moves."""
+
+    g = gm.GovernorModel(dt_s=1e-3, seed_r=0.5)
+    tot = 2.0
+    d = 0.5
+    seen = 0
+    for k in range(3000):
+        i_fc = d * tot
+        o = g.step(0.85, i_fc, tot - i_fc, True, True, k * 1e-3)
+        d = g.delivered_share(o.r_applied, tot, o.fc_bus_req, o.bt_bus_req)
+        seen += int(o.ceil_fc or o.ceil_bt)
+    assert seen > 1000
+    assert g.state.ceil_ticks == seen
+    assert g.ceiling_fraction() > 0.3

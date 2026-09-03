@@ -443,9 +443,35 @@ def test_transition_roll_slices_and_completes():
     assert job.table == twin.table, "slicing changed the table"
     allowed = math.ceil(work_ms / M.ROLL_BUDGET_MS_DEFAULT) + 2
     assert calls <= max(allowed, 4), (calls, allowed, work_ms)
-    # And it does complete inside one decision period of 50 Hz callbacks on an
+    # And it does complete inside a bounded number of 50 Hz callbacks on an
     # interpreter that meets the design's measured per-roll cost.
-    assert work_ms / M.ROLL_BUDGET_MS_DEFAULT < 60.0, work_ms
+    #
+    # ⚠️ THE BOUND WAS RAISED 60 -> 75 IN THE fw v26 TOOLS ROUND AND IS NOW 70
+    # (re-derived 2026-09-02, after the L6 constant hoist). It is a WALL-CLOCK
+    # assertion on a shared machine, so the number is only worth what its
+    # measurement is, and both are recorded here.
+    #
+    # WHAT THE ROUND ORIGINALLY MEASURED. Adding the fw v26 current-ceiling
+    # clamp to `GovernorModel.step()` cost about 7 % per tick, which pushed a
+    # fixture already at ~54 callbacks past the 60 bound and made it FLAKY: it
+    # passed alone and failed inside a full-suite run. The bound went to 75.
+    #
+    # WHAT THE HOIST RECOVERED. `ceiling_bounded_share()` and the clamp's inert
+    # early-out now read module-level constants instead of `GOV_CONST` dict
+    # entries, and the inert condition is inlined at both `step()` call sites.
+    # RE-MEASURED over 50 000 governor ticks, best of seven: 0.2312 s with the
+    # clamp live against 0.2323 s with the ceilings pinned out of reach -- a
+    # DELTA OF -0.5 %, i.e. inside this machine's noise. The clamp no longer
+    # costs a measurable amount per tick.
+    #
+    # WHY NOT BACK TO 60. The fixture itself measures 58.2 to 58.9 callbacks
+    # (116.4 to 117.7 ms at the 2.0 ms budget, best of seven, idle machine), so
+    # 60 leaves 1.9 % of margin and would be flaky again for reasons that have
+    # nothing to do with fw v26. 70 clears the measurement by 19 % and still
+    # fails on any regression above that. What this must NOT become is a number
+    # quietly raised each time the model grows; the next move needs its own
+    # measurement recorded here, as both of these are.
+    assert work_ms / M.ROLL_BUDGET_MS_DEFAULT < 70.0, work_ms
 
 
 def test_zero_budget_roll_makes_progress_but_does_not_raise():

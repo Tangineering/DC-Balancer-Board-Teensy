@@ -1191,6 +1191,12 @@ HIL_CSV_COLUMNS = [
     # getattr, so a non-MPC run - which is every walk this module synthesizes -
     # writes them blank rather than a fabricated 0.
     "mpc_solve_ms", "mpc_share_pred_err", "mpc_budget_hit",
+    # fw v26 source current-ceiling clamp state, decoded from observation-frame
+    # aux bits 4/5 and appended to BOTH schemas 2026-09-02.  The reduced walk
+    # has no governor, so it cannot say whether a ceiling would have bound;
+    # both columns are written BLANK rather than 0, which would be a positive
+    # claim ("no channel was clamped") the walk did not make.
+    "fc_ceil", "bt_ceil",
 ]
 
 # Documented constants for the columns the reduced model does not produce.
@@ -1277,6 +1283,7 @@ def synthesize_hil_csv(path, result, sim, scenario_meta, dt_s):
                 "", "", "", "", "", "",                       # power balance
                 "",                                           # p_chg_loss_w
                 "", "", "",                                   # mpc diagnostics
+                "", "",                                       # fc_ceil, bt_ceil
             ])
     return len(result.t)
 

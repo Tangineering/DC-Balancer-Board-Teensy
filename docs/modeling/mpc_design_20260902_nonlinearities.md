@@ -115,6 +115,37 @@ that carries the item, or states that none does.
 | 9 | Regen: the demand model has no regen term, and neither the VESC regen clip nor the braking chopper appears in it | NO — honest limit 1 of the module docstring | not measurable on Gate 1, which scores a delivered SHARE and not a demand. The error is in the DEMAND path and shows up in the hydrogen total, not in the share prediction | prediction model, but a separate round. Adding a regen term changes the demand model the DP bound is computed against, so the DP tables and the bound would have to move with it. Out of scope for a delivery-model round |
 | 10 | The power-share PI transient and its `sampleTime` gating | YES, as a settled surrogate — the closed-stage arm predicts the converged clip and not the approach | 0.000022 mean over 30 closed stages after the change | prediction model. No further work indicated: the residual is four orders below the acceptance band |
 | 11 | The `Gfc` dynamic map against the `eta_fc` 0.4 stage-cost proxy, a constant factor 1.1811885 | YES, as a documented constant, `PROXY_OVER_READ` | none: this is a COST nonlinearity, not a delivery one, and Gate 1 does not score it | prediction model, as is. The constant cancels in a ranking at matched terminal state of charge and does not cancel against the terminal price, which is why the terminal price is quoted in the proxy basis |
+| 12 | fw v26 source current-ceiling clamp, `applyShareCurrentCeilings()`: `sp <= 1.25/I_tot` and `sp >= 1 - 2.70/I_tot` on the filtered total, hysteretic at 0.05 A, applied after the minority clip and before the reference slew, suppressed under a deferred cut, taken by FEEDFORWARD and not by HOLD | **YES, since the fw v26 tools round (2026-09-02)** - the closed-stage arm bounds the delivered share with `governor_model.ceiling_bounded_share()` immediately after the minority clip, the feedforward arm bounds the setpoint it slews toward, and the transition rolls carry the clamp because they run the real `GovernorModel` | **ZERO, and structurally so.** The clamp is reachable only above 1.55 A of two-source total; the highest two-source total on the `ems-soc-band` Gate 1 stimulus is 1.462 A and the clamp engages on 0 of 61 000 governor ticks. RE-MEASURED 2026-09-02 with the clamp active and with its ceilings neutralised to the identity, over ALL decisions of the `ems-soc-band` walk, feedforward-aware stage model: `mpc-det` symmetric 0.000298924 / 0.012110000, `mpc-det` measured `dv0` 0.013522 0.000778842 / 0.028885150, `mpc-sto` symmetric 0.004098072 / 0.117956053, `mpc-sto` measured 0.007527726 / 0.118573641 - **identical to nine decimals in both arms of all four pairs, delta exactly 0.0**. Gate 2 is likewise bit-identical on all four legs | prediction model, as implemented. It is inert on every registered stimulus except an ~11 ms transient on `ems-y-b30-v3` (see below), and is present so that a stimulus which does reach the ceiling cannot silently diverge. Re-measure on the `fw26-clamp-cruise` scenario, which is built to reach it |
+
+### 2.0.1 Two Gate-1 populations, and which figure belongs to which
+
+Two pairs of Gate-1 numbers circulate for `ems-soc-band` and they are not
+comparable. Both are the SAME population -- all decisions of the walk, `mpc-det`
+-- and they differ by the STAGE MODEL the controller was carrying:
+
+- **0.00971 mean / 0.25000 maximum** is the HOLD-ONLY stage model, the
+  configuration shipped on 2026-09-01, and is the FAIL recorded in the session
+  ledger. Table 1's first row measures the same thing at 0.010334 / 0.250000; the
+  maximum is identical because it is one stage, and the means differ by the tree
+  state the two were taken on.
+- **0.000700697 / 0.024310000**, quoted in item 12 above, is the
+  FEEDFORWARD-AWARE stage model on the measured plant -- Table 1's sixth row
+  class. Re-measured on 2026-09-02 it reads 0.000778842 / 0.028885150.
+
+An earlier reading of 0.00389 was taken on a controller that never consulted the
+roll table and is superseded by both.
+
+### 2.0.2 The clamp's reachability, corrected
+
+Item 12 says the clamp is inert on every registered stimulus. That is true of the
+EMS legs, on which it was measured, and NOT of the whole registered set: the
+`ems-y` quartet was not among them.
+`tools/probes/probe_fw26_clamp_reachability.py` reconstructs the governor's own
+filtered total and minority clip from a campaign CSV and puts **`ems-y-b30-v3`**
+over the ceiling -- commanded `I_fc` **1.5180 A** for **11 ticks** at
+t = 27.020 s (campaign B: 1.5173 A / 9 ticks). Nothing else on the set reaches it;
+the next-highest commanded fuel-cell current is `ems-sdp`'s 1.1861 A. The Gate
+figures are unaffected, because `ems-soc-band` is genuinely clear.
 
 ### 2.1 Ranking
 
@@ -133,6 +164,7 @@ points; a decision builds at most three of them, one per charge option.
 | 5 | 6, an instantaneous dark-flag proxy | NEGATIVE: it ADDS 0.000220 | measured; rejected |
 | 6 | 7, MDAC quantization | at most 0.00043 | negligible |
 | — | 9, a regen demand term | not scored by Gate 1 | out of scope; moves the DP bound |
+| — | 12, the fw v26 current-ceiling clamp | ZERO on the Gate 1 stimulus, by reachability (1.55 A of two-source total against `ems-soc-band`'s 1.462 A peak); delta exactly 0.0 in all four re-measured pairs | one comparison per closed sub-sample; under the measurement floor |
 
 ---
 

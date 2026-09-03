@@ -1609,3 +1609,290 @@ def test_the_generator_emits_the_four_new_header_lines_only_in_the_new_eras():
         == repr(float(hil.VESC_REGEN_I_MAX_A))
     assert re.search(r"^# drag_k_air: (\S+)$", text, re.M).group(1) == \
         repr(hil.drag_k_air(hil.DRAG_MODE_SCALED_AIR))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# fw v26 — DELIVERED-SHARE SEMANTICS, ACROSS THE THREE DEMAND MODELS
+#
+# The firmware's source current-ceiling governor bounds the COMMANDED fuel-cell
+# fraction, so a stage whose commanded share would overdraw the fuel cell is no
+# longer infeasible: the board delivers the clamped share and the battery takes
+# the rest. Three demand models had to learn that in lockstep — this file's DP,
+# `tools/sdp_ems_solver.py` and `tools/mpc_ems.py`. There is ONE authority for
+# the bound, `governor_model.ceiling_bounded_share()`; the SDP and the MPC call
+# it directly and the DP uses the vectorised image below. These tests pin the
+# image to the authority and the semantics to the firmware's own reachability
+# argument.
+# ─────────────────────────────────────────────────────────────────────────────
+def test_delivered_share_matches_the_scalar_authority_elementwise():
+    """The vectorised image and the scalar authority must agree EXACTLY, not
+    approximately: the DP bills a stage cost with one and the SDP and the MPC
+    judge feasibility with the other, and a difference in the last bit is a
+    difference in which control gets chosen."""
+    import governor_model as gm
+    shares = np.linspace(0.0, 1.0, 41)
+    totals = np.concatenate([np.linspace(0.0, 0.2, 9),
+                             np.linspace(0.2, 6.0, 88)])
+    got = gen.delivered_share(shares[None, :], totals[:, None])
+    want = np.array([[gm.ceiling_bounded_share(float(s), float(t))
+                      for s in shares] for t in totals])
+    assert got.shape == want.shape
+    assert np.array_equal(got, want)
+
+
+def test_delivered_share_is_the_identity_below_the_reachability_threshold():
+    """THE IDENTITY HOLDS ALL THE WAY TO 1.55 A, not merely to 1.47 A.
+
+    The naive onset is I_FC_CEIL / DP_SHARE_MAX = 1.47 A, but the board cannot
+    clamp there: the minority-current clip runs FIRST and caps the commanded
+    fuel-cell current at I_tot - SHARE_MINORITY_I_MIN_A, which does not reach
+    the 1.25 A ceiling until 1.55 A of total. A demand model that clamped in
+    (1.47, 1.55) would be modelling a board action that does not happen -- and
+    it did: 250 of `ems-dp-replay`'s cells bound at I_tot 1.47137 A, where the
+    board delivers 1.1714 A. The sweep therefore runs PAST the naive onset and
+    up to the real threshold."""
+    import governor_model as gm
+    shares = np.linspace(gen.DP_SHARE_MIN, gen.DP_SHARE_MAX, 57)
+    onset = gen.GOV_I_FC_CEIL_A / gen.DP_SHARE_MAX
+    assert gm.CEILING_REACHABLE_I_TOT_A > onset
+    for tot in np.linspace(0.0, gm.CEILING_REACHABLE_I_TOT_A - 1e-9, 120):
+        out = gen.delivered_share(shares, tot)
+        assert np.array_equal(out, shares), tot
+    # The naive onset specifically -- the regression this test exists for.
+    for tot in (onset, onset + 1e-6, 1.47137, 1.50, 1.5499999):
+        assert np.array_equal(gen.delivered_share(shares, tot), shares), tot
+    # ...and the threshold itself IS live, so the guard is a threshold and not
+    # a disabled clamp.
+    at = gen.delivered_share(gen.DP_SHARE_MAX, gm.CEILING_REACHABLE_I_TOT_A)
+    assert float(at) < gen.DP_SHARE_MAX
+
+
+def test_delivered_share_reachability_guard_matches_the_scalar_authority():
+    """The vectorised guard and the scalar one must switch at the same total,
+    or the DP and the SDP/MPC disagree about which stages clamp."""
+    import governor_model as gm
+    for tot in (1.4, 1.47, 1.5499999, gm.CEILING_REACHABLE_I_TOT_A,
+                1.5500001, 1.6, 2.0):
+        for sp in (0.15, 0.5, 0.84, 0.85):
+            assert float(gen.delivered_share(sp, tot)) == \
+                gm.ceiling_bounded_share(sp, tot), (tot, sp)
+
+
+def test_delivered_share_bounds_the_fuel_cell_and_gives_the_rest_to_the_pack():
+    """The mechanism. At 2.0 A of total and a commanded 0.85 the fuel cell
+    would take 1.70 A; the delivered split must hold it at the 1.25 A ceiling
+    and put 0.75 A on the battery."""
+    tot = 2.0
+    d = float(gen.delivered_share(gen.DP_SHARE_MAX, tot))
+    assert d * tot == pytest.approx(gen.GOV_I_FC_CEIL_A, abs=1e-12)
+    assert (1.0 - d) * tot == pytest.approx(tot - gen.GOV_I_FC_CEIL_A,
+                                            abs=1e-12)
+    # And it is under the fault limit the DP's feasibility test judges, which is
+    # exactly why the stage is now feasible instead of refused.
+    assert d * tot < gen.LIMIT_I_FC_MAX_A
+
+
+def test_the_clamp_cannot_rescue_a_single_source_charge_stage():
+    """THE INFEASIBILITY BOUNDARY THAT SURVIVES. In an FC-charge window
+    `assertFcChargeEnable()` holds BT_BUS low, so I_fc equals I_tot and no share
+    command can move load anywhere. `charge_mask()`'s single-source budget test
+    is therefore unchanged by fw v26, and a total over the limit must still be
+    refused."""
+    import governor_model as gm
+    # Single source: the whole total is on the fuel cell, i.e. share 1.0. The
+    # clamp cannot help, because the droop band bottoms out at DROOP_R_MIN and
+    # there is no second channel on the bus at all.
+    for tot in (1.45, 1.60, 2.00):
+        # The share loop is topology-pinned in the window; what the mask judges
+        # is the RAW single-source total against the limit.
+        assert tot > gm.GOV_CONST["SHARE_GOV_I_FC_CEIL_A"]
+        assert tot > gen.DP_CHARGE_FC_MARGIN * gen.LIMIT_I_FC_MAX_A
+
+    times = np.array([10.0, 10.1])
+    p_dem = np.array([25.0, 25.0])
+    v_bus = np.array([15.6, 15.6])
+    cruise = np.array([True, True])
+    ok = gen.charge_mask(times, p_dem, v_bus, cruise, 0.8, 58.0,
+                         eta_chg=0.88, v_pack_ref=7.9)
+    # 25 W / 15.6 V = 1.60 A single-source before the charger's own draw: over
+    # the margin, and the clamp is not consulted.
+    assert not ok.any()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Committed-table header consistency: n_share and the control span
+# ─────────────────────────────────────────────────────────────────────────────
+# A DP table's header records the grid it was solved on. If that grid drifts
+# from the generator's current defaults, the table is a solve of a DIFFERENT
+# control set than the one the code would produce today, and every comparison
+# that reads the table as "the DP bound" is quietly reading a stale one -- which
+# is exactly what happened when `ems-ftp75-5050` was left behind at the old
+# 41-point [0.25, 0.75] grid through the 2026-09-02 band widening.
+_DP_TABLE_SKIP = {
+    # ORPHANED, NOT REGENERATED, and that is an OPERATOR decision (2026-09-02).
+    # This table is the only one still on the pre-widening 41-point
+    # [0.25, 0.75] grid. It is not deleted and not regenerated here: nothing in
+    # the suite binds `ems-ftp75-5050` to a DP strategy, and regenerating it
+    # would silently change a comparison surface that a campaign ledger already
+    # quotes. Skipped by NAME with this reason rather than by a wildcard, so a
+    # SECOND table falling behind fails loudly instead of joining a blanket
+    # exemption.
+    "ems-ftp75-5050": "orphaned pre-widening grid; regeneration is an operator "
+                      "decision, not a test fix",
+}
+
+
+def _dp_table_headers():
+    """{scenario: {field: value}} from every committed table's header."""
+    import glob
+    import re
+    out = {}
+    d = os.path.join(os.path.dirname(os.path.abspath(gen.__file__)),
+                     "dp_tables")
+    for path in sorted(glob.glob(os.path.join(d, "dp_ems_table_*.csv"))):
+        name = os.path.basename(path)[len("dp_ems_table_"):-len(".csv")]
+        hdr = {}
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                if not line.startswith("#"):
+                    break
+                m = re.match(r"#\s*([a-z_0-9]+):\s*(.*)$", line.strip())
+                if m:
+                    hdr[m.group(1)] = m.group(2).strip()
+        out[name] = hdr
+    return out
+
+
+def test_committed_dp_tables_match_the_generator_share_grid():
+    """Every committed table must have been solved on the generator's CURRENT
+    share grid, or it is a bound over a different control set."""
+    import re
+    headers = _dp_table_headers()
+    assert headers, "no committed DP tables found"
+    checked = 0
+    for name, hdr in headers.items():
+        if name in _DP_TABLE_SKIP:
+            continue
+        assert "n_share" in hdr, name
+        m = re.match(r"(\d+)\s+\(control span ([0-9.]+) \.\. ([0-9.]+)",
+                     hdr["n_share"])
+        assert m, (name, hdr["n_share"])
+        assert int(m.group(1)) == gen.DP_N_SHARE, (
+            "%s was solved with n_share %s against the generator's current "
+            "default %d" % (name, m.group(1), gen.DP_N_SHARE))
+        assert float(m.group(2)) == pytest.approx(gen.DP_SHARE_MIN), name
+        assert float(m.group(3)) == pytest.approx(gen.DP_SHARE_MAX), name
+        checked += 1
+    assert checked >= 3, "the check ran on too few tables to mean anything"
+
+
+def test_dp_table_skip_list_names_only_tables_that_exist_and_gives_a_reason():
+    """A skip list is a place stale exemptions hide. Every entry must name a
+    table that is actually committed, and carry a reason."""
+    headers = _dp_table_headers()
+    for name, reason in _DP_TABLE_SKIP.items():
+        assert name in headers, (
+            "%s is skipped but no such table is committed - drop the skip"
+            % name)
+        assert reason and len(reason) > 20, name
+    # ...and the skipped table must genuinely differ, or the skip is stale.
+    import re
+    for name in _DP_TABLE_SKIP:
+        m = re.match(r"(\d+)", _dp_table_headers()[name]["n_share"])
+        assert int(m.group(1)) != gen.DP_N_SHARE, (
+            "%s now matches the generator default - remove it from "
+            "_DP_TABLE_SKIP" % name)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Ruling D-3: feasibility on the COMMANDED FC current, on the DELIVERED BT one
+# ─────────────────────────────────────────────────────────────────────────────
+def test_forward_pass_fc_raise_is_on_the_commanded_share_not_the_clamped_one():
+    """M7 + D-3. The FC raise must be reachable on the COMMANDED grid point.
+
+    fw v26 clamps the fuel-cell fraction, so evaluating the raise on the
+    DELIVERED share made it unreachable: the clamp holds the delivered current
+    at 1.25 A, under the 1.4 A limit, whatever the grid point asked for. That
+    is wrong as well as unreachable -- a stage-boundary demand step arrives at
+    the converged ratio inside one 1 ms sample, before the clamp's ~5 slew
+    ticks and ~20 ms EMA lag, and FAULT_OC_FC has no persistence filter -- so
+    the guard is on the commanded current."""
+    soc_grid = np.array([0.50, 0.51, 0.52])
+    times = np.array([0.0])
+    # 30 W on a 15 V bus is 2.0 A of total, well over the 1.55 A at which the
+    # clamp becomes reachable, so the DELIVERED current here is 1.25 A and a
+    # delivered-side guard would NOT fire.
+    p_dem = np.array([30.0])
+    v_bus = np.array([15.0])
+    chg_ok = np.array([False])
+    shares = np.array([gen.DP_SHARE_MAX])       # 0.85 * 2.0 A = 1.70 A
+    Uopt = np.zeros((3, 1), dtype=np.int16)
+    i_tot = float(p_dem[0] / v_bus[0])
+    assert i_tot > 1.55
+    delivered = float(gen.delivered_share(gen.DP_SHARE_MAX, i_tot))
+    assert delivered * i_tot == pytest.approx(gen.GOV_I_FC_CEIL_A, abs=1e-9)
+    assert delivered * i_tot < gen.LIMIT_I_FC_MAX_A       # the raise would NOT
+    assert gen.DP_SHARE_MAX * i_tot > gen.LIMIT_I_FC_MAX_A  # ...but this does
+    with pytest.raises(gen.DpInfeasible, match="commanded share"):
+        gen.forward_pass(0.51, times, p_dem, v_bus, chg_ok, 0.1, 18000.0, 0.8,
+                         shares, soc_grid, Uopt)
+
+
+def test_forward_pass_raises_on_a_delivered_battery_overcurrent():
+    """D-3's new arm. The clamp moves the fuel cell's surplus onto the PACK, so
+    a control the FC arm admits can overdraw the BATTERY -- a failure mode the
+    DP had no test for at all before fw v26, because nothing moved load there.
+    It is judged on the DELIVERED current, because that is where the amps go."""
+    soc_grid = np.array([0.50, 0.51, 0.52])
+    times = np.array([0.0])
+    # A total whose DELIVERED battery current exceeds 3.0 A. The clamp holds
+    # the fuel cell at 1.25 A, so the pack carries I_tot - 1.25 A and the
+    # battery limit is crossed above 4.25 A of total -- the regime the design
+    # note names as the one where ERR_OC_BT is the intended latch.
+    p_dem = np.array([70.0])
+    v_bus = np.array([15.0])                      # 4.667 A of total
+    chg_ok = np.array([False])
+    shares = np.array([gen.DP_SHARE_MIN])         # 0.15 -> 3.4 A on the pack
+    Uopt = np.zeros((3, 1), dtype=np.int16)
+    i_tot = float(p_dem[0] / v_bus[0])
+    assert gen.DP_SHARE_MIN * i_tot < gen.LIMIT_I_FC_MAX_A   # FC arm is happy
+    d = float(gen.delivered_share(gen.DP_SHARE_MIN, i_tot))
+    assert (1.0 - d) * i_tot > gen.LIMIT_I_BT_MAX_A
+    with pytest.raises(gen.DpInfeasible, match="BT-overcurrent"):
+        gen.forward_pass(0.51, times, p_dem, v_bus, chg_ok, 0.1, 18000.0, 0.8,
+                         shares, soc_grid, Uopt)
+
+
+def test_forward_pass_emits_the_grid_point_not_the_clamped_share():
+    """The BOARD is commanded with the grid point: the ceiling is the
+    FIRMWARE's to apply, and emitting the clamped value would command a split
+    the board then clamps a second time. The delivered share is used for the
+    dynamics and nowhere else."""
+    soc_grid = np.array([0.50, 0.51, 0.52])
+    times = np.array([0.0])
+    p_dem = np.array([25.0])
+    v_bus = np.array([15.0])                      # 1.667 A, over 1.55 A
+    chg_ok = np.array([False])
+    shares = np.array([0.80])
+    Uopt = np.zeros((3, 1), dtype=np.int16)
+    i_tot = float(p_dem[0] / v_bus[0])
+    assert i_tot > 1.55
+    assert float(gen.delivered_share(0.80, i_tot)) < 0.80   # the clamp acts
+    assert 0.80 * i_tot < gen.LIMIT_I_FC_MAX_A              # ...and no raise
+    share_out, _, _, _, _ = gen.forward_pass(
+        0.51, times, p_dem, v_bus, chg_ok, 0.1, 18000.0, 0.8,
+        shares, soc_grid, Uopt)
+    assert share_out[0] == pytest.approx(0.80)
+
+
+def test_solve_dp_feasibility_uses_commanded_fc_and_delivered_bt():
+    """The backward pass must use the SAME split as the forward pass, or a
+    forward pass can accept a control the backward pass refused."""
+    import inspect
+    src = inspect.getsource(gen.solve_dp)
+    assert "i_fc_cmd = shares * P / V" in src
+    assert "feas[:, :m] = (i_fc_cmd <= LIMIT_I_FC_MAX_A)[None, :]" in src
+    assert "feas[:, :m] &= ((p_bt / V) <= LIMIT_I_BT_MAX_A)[None, :]" in src
+    # ...and the COST is still billed on the delivered fuel-cell power.
+    assert "d_share = delivered_share(shares, P / V)" in src
+    assert "p_fc = d_share * P" in src

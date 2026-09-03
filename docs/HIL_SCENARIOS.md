@@ -1521,6 +1521,114 @@ that changes the plant.
   a designed, bidirectional sweep, and it is the only scenario that quantifies the
   cut/restore latency rather than just their occurrence.
 
+### fw26-clamp-cruise (38 s, any engine)
+
+- **Tests:** the fw v26 source current-ceiling clamp
+  (`applyShareCurrentCeilings()`) under control. The clamp is reachable only
+  above **1.55 A of two-source total** (`SHARE_GOV_I_FC_CEIL_A` 1.25 A plus the
+  minority-current floor 0.30 A). WARNING - corrected 2026-09-02: this entry
+  said it was the only stimulus that reaches the clamp at all, quoting a
+  1.462 A set maximum that is the EMS legs' figure and omits the `ems-y`
+  quartet. `ems-y-b30-v3` does reach it - reconstructed commanded `I_fc`
+  **1.5180 A** for **11 ticks** at t = 27.020 s
+  (`tools/probes/probe_fw26_clamp_reachability.py`; campaign B: 1.5173 A /
+  9 ticks) - but only as an 11 ms transient at a region boundary, which cannot
+  bound a held current or a controlled release. Nothing else on the registered
+  set gets there: the next-highest commanded fuel-cell current is `ems-sdp`'s
+  **1.1861 A**. Motor-free, like `share-staircase` and for the same reason:
+  the acceptance criteria bound `I_fc` inside a 0.10 A window, and a drive
+  transient would move `I_tot` and with it both the engagement boundary and the
+  window. An auxiliary preload puts the two-source total at a constant 2.00 A.
+  Phase A (t = 8..24, share 0.75) asks for 1.50 A of fuel-cell current and must
+  get 1.25 A, with the remaining 0.75 A forced onto the battery. Phase B
+  (t = 26..34, share 0.40) asks for 0.80 A, which releases the clamp: the
+  same-run negative control.
+- **Pass/fail:** fault-free — an `OC_FC` latch here does not merely fail a
+  check, it falsifies the mechanism; survive to t = 30 in Run or Finish; the FC
+  clamp bit set for at least 12 000 ticks of phase A and for **zero** ticks of
+  phase B; `I_fc` inside **[1.20, 1.30] A** through phase A (the ceiling plus
+  and minus `SHARE_GOV_CEIL_HYST_A`) and at or under 0.95 A through phase B;
+  `I_batt` in [0.65, 0.85] A, which at a 2.00 A total is exactly
+  `|I_tot - I_fc - I_batt| <= 0.10 A`; both bus switches high across both
+  phases with **zero** rising edges; and the BT ceiling never binding.
+- **Why useful:** the clamp is a reference-side bound, so a decoded run cannot
+  distinguish "the governor held the fuel cell at 1.25 A" from "the load
+  happened to stop there" out of the logged currents alone. The aux-byte bit is
+  the evidence, and the phase-B control is what makes the phase-A reading mean
+  something.
+- **⚠️ Every bound is WALKED, not measured.** The scenario has never been run on
+  the board. The numbers come from an offline walk through
+  `tools/governor_model.py` at the plant's measured asymmetry and at zero: first
+  engagement on the FIRST tick after the setpoint step - the governor enters
+  phase A converged at r = 0.4944 from the timeline's own 0.50 pre-phase - clamp
+  duty 1.0000 of phase A, `I_fc` pinned at 1.2500 A with NO overshoot, `I_batt` 0.7500 A, applied ratio
+  0.6197, zero cut refusals and zero switch edges. The first campaign that runs
+  it re-derives all of them, and a miss is read against the ceiling's own
+  `TODO(calibrate)` (design note section 8.6) rather than absorbed by widening a
+  bound.
+
+### fw26-clamp-sweep (84 s, any engine)
+
+- **Tests:** the second half of the fw v26 validation pair, and the one that
+  separates the two ways the clamp can release. Shaped like the firmware's own
+  `'Y'` table — velocity setpoint segments against a commanded share sweep —
+  scripted through the Pi command path as twelve 6 s regions. It crosses the
+  clamp boundary on **both axes**: five regions step the two-source total
+  between 1.20 A and 2.02 A at a fixed commanded share of 0.84, and two more
+  step the commanded share between 0.84 and 0.40 or 0.20 at a fixed total. A
+  release that happened only when the share fell could be a share-loop artefact;
+  one that happened only when the load fell could be a load artefact. An
+  auxiliary preload of 1.05 A puts the standstill total at 1.20 A, below the
+  1.55 A reachability threshold; the motor carries it to 1.83 A and 2.02 A in
+  the high regions.
+- **Pass/fail:** fault-free — an `OC_FC` latch falsifies the mechanism; survive
+  to t = 74 in Run or Finish; per region, the FC clamp bit set for at least 78 %
+  of the settled window in each of the five clamping regions and for **zero**
+  ticks in each of the seven others; `I_fc` inside **[1.20, 1.30] A** through
+  every clamping region, the floor on every sample; the BT ceiling never
+  binding; `BT_BUS_ENABLE` high across the whole table with **zero** `FC_BUS`
+  rising edges; and two whole-table current bounds that cover the region
+  transitions the per-region windows exclude — `I_batt` at or under **2.4 A**
+  (walked worst case 1.6130 A, `LIMIT_I_BT_MAX` 3.0 A) and `I_fc + I_batt` at or
+  under **3.6 A** (walked worst case 2.016 A). ⚠️ The settled window is inset
+  **2.5 s** from each region start, not 1.5 s: regions 2 and 9 step from
+  standstill to 3.0 m/s and rail the drive controller at its 12 A clamp for
+  about 1.69 s.
+- **The droop-code pins, on the board.** Two arms, and only the second
+  discriminates fw v25 from fw v26.
+  - *Model fidelity, three standstill sub-threshold regions.* The droop codes
+    of regions 1, 8 and 12 are pinned to the walk — `(mdac_fc, mdac_bt)` =
+    (4917, 6468) in regions 1 and 8 and (5339, 5293) in region 12, at **±2 % of
+    the 12-bit gain CODE** (the raw word carries `MDAC_CMD_LOAD_UPDATE` 0x1000,
+    and a band applied to the word is diluted by that constant offset — a ±6 %
+    word band was ±36 % on the code). Standstill regions only: their total is
+    the aux load alone and carries none of the drive loop's uncertainty. ⚠️ This
+    arm is **not** clamp evidence: at every sub-threshold region the fuel-cell
+    bound `1.25/I_tot` exceeds `DROOP_R_MAX`, so the clamp is the identity by
+    construction and the pin cannot fail from a clamp defect however it is
+    tuned. What it asserts is that the board's droop chain tracks the model.
+  - *The fw v25/v26 discriminator, one clamped region.* Region 2's pair is
+    (5088, 5679) with the clamp present and (4824, 7837) without it — codes 992
+    against 728 on FC and 1583 against 3741 on BT. That pin, at ±10 % of the
+    code because the region is driven, is the only `mdac` observable the clamp
+    actually moves, and it is asserted to refuse the clamp-absent value.
+- **Why useful:** `fw26-clamp-cruise` shows the clamp holding one operating
+  point. This one shows it engaging and releasing repeatedly, from both
+  directions, and shows that it does nothing at all where it should do nothing.
+- **⚠️ Every bound is WALKED, and one input to it is a prediction.** The region
+  totals are the host demand model's, while in a HIL run the board's own drive
+  loop sets the VESC current and therefore the total. The margins absorb that:
+  sub-threshold regions clear the clamp boundary by 0.20 A to 0.29 A of
+  fuel-cell demand, clamping regions exceed it by 0.29 A to 0.45 A. The first
+  campaign that runs the scenario re-derives all of it.
+- **⚠️ `OC_FC` in an FC-charge window is design intent, not a target of this
+  feature.** That regime is single-source — `assertFcChargeEnable()` holds
+  `BT_BUS_ENABLE` low, so `I_fc` equals `I_tot` and there is no second channel
+  to move load onto — the clamp is structurally inert there, and the EMS reads
+  the latch as feedback about a charge window it should not have opened
+  (`charge-cruise`, operator ruling (b) of 2026-08-30). Neither clamp scenario
+  opens a charge window.
+
 ## 8. Hi-fi bring-up and RT1987 scenarios
 
 ### bringup (8 s, hifi only)

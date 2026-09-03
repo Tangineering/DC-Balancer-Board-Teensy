@@ -100,6 +100,19 @@ CSV_COLUMNS_V7 = ["t_us", "share_sp", "share_act", "v_sp", "v_act", "I_fc",
                   "enc_duty_b_ewma", "fault_flags", "ps_phase",
                   "dc_phase", "trap_phase", "flags"]
 
+# The SAME v7 record layout, decoded by a decoder that also emits the fw v26
+# `share_gov_ceiling` helper column (flags bit7, 0x80 -- a source current ceiling
+# was binding on that tick) at the END of the row. It is a DERIVED column, not
+# a record field, so the record format and BLG format v7 are unchanged and
+# every established column index above is unchanged too.
+# BOTH lists are accepted, deliberately: a v7 CSV decoded before the helper
+# column existed is still on disk in ingested run folders, and re-ingesting
+# every historical run is not a precondition for reading one. A 31-column v7
+# CSV therefore parses exactly as it always did, and its returned dict simply
+# lacks the `share_gov_ceiling` key -- the same "pre-vN dicts lack the keys"
+# contract the version-gated figures already rely on.
+CSV_COLUMNS_V7_SHARE_CEILING = CSV_COLUMNS_V7 + ["share_gov_ceiling"]
+
 _decoder = None
 
 
@@ -186,7 +199,9 @@ def load_csv(csv_path):
     enc_period_ref_us, enc_multi_pitch_count, enc_spurious_drop_count after
     drive_x0), or v7 (31-column, CSV_COLUMNS_V7 -- further adds
     enc_edge_count_a, enc_edge_count_b, enc_phase_ewma, enc_duty_a_ewma,
-    enc_duty_b_ewma after enc_spurious_drop_count)
+    enc_duty_b_ewma after enc_spurious_drop_count), or v7 decoded with the
+    fw v26 helper column (32-column, CSV_COLUMNS_V7_SHARE_CEILING -- appends
+    the derived `share_gov_ceiling` after `flags`)
     header; the matching column list is used to parse the rest of
     the file, so a v1/v2 CSV's returned dict has exactly the same 16 keys
     it always has, a v3/v4 CSV's dict additionally has the four voltage
@@ -213,12 +228,15 @@ def load_csv(csv_path):
         columns = CSV_COLUMNS_V6
     elif header == CSV_COLUMNS_V7:
         columns = CSV_COLUMNS_V7
+    elif header == CSV_COLUMNS_V7_SHARE_CEILING:
+        columns = CSV_COLUMNS_V7_SHARE_CEILING
     else:
         raise ValueError(
             f"unexpected CSV header in {csv_path}: {header!r}, "
             f"expected {CSV_COLUMNS!r} (v1/v2), {CSV_COLUMNS_V3!r} (v3/v4), "
-            f"{CSV_COLUMNS_V5!r} (v5), {CSV_COLUMNS_V6!r} (v6), or "
-            f"{CSV_COLUMNS_V7!r} (v7)")
+            f"{CSV_COLUMNS_V5!r} (v5), {CSV_COLUMNS_V6!r} (v6), "
+            f"{CSV_COLUMNS_V7!r} (v7), or "
+            f"{CSV_COLUMNS_V7_SHARE_CEILING!r} (v7 + fw v26 share_gov_ceiling)")
 
     n = len(rows)
     data = {col: np.full(n, np.nan, dtype=np.float64) for col in columns}

@@ -360,6 +360,21 @@ sim-only strategies.
   `_n_sub` from a wall-clock EWMA. `substep_pin=` exists since stage 1; sweep the suite for
   tests that assert energies/voltages to tight tolerances and pin them.
 
+- **fw v26 framing (operator, 2026-09-02 evening):** `OC_FC` latching in an FC-charge window is
+  DESIGN INTENT - it is feedback to the EMS that charging should not have been enabled while the
+  motor demand exceeded the fuel cell's headroom. The FC-share clamp is intended functionality
+  regardless of prior campaign results, not a fix for the recorded latches. FC charging should
+  only be admitted when the system has headroom for it (an EMS-side admission rule).
+- **LOW priority (tomorrow or later): charge-window guard / Ag105 charge-current reduction.**
+  Lowering the Ag105 charge current from the EMS during FC charging while motor load rises is
+  "nice to have"; design it as an EMS-side headroom rule first (admission = predicted I_fc with
+  charging below the ceiling), firmware-side only if the EMS latency proves too slow. Not before
+  the fw v26 clamp is validated on the bench.
+- **MPC 0/1 single-source enumeration: RULED rollout-time cut-guard test** (2026-09-02). A
+  candidate whose cut the guard would refuse is rejected inside its own transition roll (the
+  rolls already run the real governor model along the candidate's path); implement after the
+  fw v26 tools mirror lands (same files), in a worktree if a campaign is live.
+
 ## Shipped 2026-09-02 (overnight)
 
 - **Ag105 charge efficiency `ETA_CHG` = 0.88 in both HIL engines** (chord-conductance stamp, 8.0 V

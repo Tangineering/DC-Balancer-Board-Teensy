@@ -2992,21 +2992,33 @@ def test_vacuous_tag_absent_when_current_is_not_all_zero(tmp_path):
 # TARGET_FW_VERSION / LIMIT_V_BUS_MAX_V (item 2)
 # ─────────────────────────────────────────────────────────────────────────
 
-def test_target_fw_version_is_25():
-    """21 -> 23 -> 24 -> 25. The target must say what it actually runs against:
-    fw v25 (share-cut handoff guards + the 18-byte observation frame).
-    COMPARABLE_FW_MIN is a SEPARATE constant and stays at 18 -- neither v24 nor
-    v25 changed an encoder constant or a drive coefficient, so no entry's
-    conformance/stability classification moves."""
-    assert rs.TARGET_FW_VERSION == 25
+def test_target_fw_version_is_26():
+    """21 -> 23 -> 24 -> 25 -> 26. The target must say what it actually runs
+    against: fw v26 (the source current-ceiling share governor).
+    COMPARABLE_FW_MIN is a SEPARATE constant and stays at 18 -- none of v24,
+    v25 or v26 changed an encoder constant or a drive coefficient, so no
+    entry's conformance/stability classification moves."""
+    assert rs.TARGET_FW_VERSION == 26
     assert rs.COMPARABLE_FW_MIN == 18
-    for v in (22, 23, 24, 25):
+    for v in (22, 23, 24, 25, 26):
         assert v in rs.FW_DELTA_NOTES
     # The v24 and v25 rows must both say the drive law and the wheel did NOT
     # move -- that is the claim every replay comparison across the boundary
     # rests on.
-    for v in (24, 25):
+    for v in (24, 25, 26):
         assert "SAME WHEEL AND SAME DRIVE LAW" in rs.FW_DELTA_NOTES[v]
+
+
+def test_fw26_delta_note_states_the_reachability_argument():
+    """The v26 row must carry the STRUCTURAL reason the current-ceiling clamp
+    cannot reach a replay entry -- the minority clip's 1.55 A two-source
+    threshold -- so a replay reader does not go looking for a clamped tick."""
+    note = rs.FW_DELTA_NOTES[26]
+    assert "SHARE_GOV_I_FC_CEIL_A" in note
+    assert "SHARE_MINORITY_I_MIN_A" in note
+    assert "1.55 A" in note
+    assert "UNREACHABLE BY ANY REPLAY ENTRY" in note
+    assert "No entry's expectations move." in note
 
 
 def test_fw25_delta_note_states_the_expectation_relevant_guard_consequence():

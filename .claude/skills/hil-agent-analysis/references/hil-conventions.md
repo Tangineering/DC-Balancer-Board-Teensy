@@ -142,6 +142,33 @@ share that is bit-identical over 61 000 rows.
 - `mdac_fc`/`mdac_bt` carry the 0x1000 LOAD_UPDATE command nibble: 5316 = 0x1000|1220 →
   gain 1220/4095 = 0.298. Mask before reading the code.
 - Switch/aux bit definitions: read the SW_*/AUX_* constants from the tools — never guess.
+  Aux byte (observation-frame offset 4): `AUX_MPPT_DISABLE`, plus **`AUX_FC_CEILING`
+  (0x10) and `AUX_BT_CEILING` (0x20), the fw v26 source current-ceiling clamp flags**,
+  logged as the CSV columns `fc_ceil` / `bt_ceil` and available to an expectation as the
+  named `aux_bit` masks `fc_ceiling_active` / `bt_ceiling_active`. Both are spare bits in
+  an existing byte: `HIL_OUTPUT_SIZE` stays 18 and the checksum span is unchanged, so a
+  host that does not know them masks them off as before. Expect them to read ZERO on
+  every stimulus except the two `fw26-clamp-*` legs **and `ems-y-b30-v3`**: the clamp is
+  reachable only above 1.55 A of two-source total, and those three are the only registered
+  scenarios that get there. On `ems-y-b30-v3` it is an ~11 ms transient at the region-7/8
+  boundary (t ~ 27.02 s, reconstructed commanded `I_fc` 1.5180 A, 9-11 ticks over both
+  campaigns of 2026-09-02); the next-highest commanded fuel-cell current anywhere else is
+  `ems-sdp`'s 1.1861 A, 5.1 % under the ceiling. Re-derive with
+  `tools/probes/probe_fw26_clamp_reachability.py --report <folder>`.
+
+  **One clamp, four names.** They are deliberately different because they name different
+  things, and this table is the cross-reference:
+
+  | Name | Where | What it is |
+  |:--|:--|:--|
+  | `shareGovFcClamped` / `shareGovBtClamped` | firmware (`.ino`) | the per-channel clamp state variables |
+  | `fc_ceiling_active` / `bt_ceiling_active` | suite `aux_bit` masks | the names an expectation writes |
+  | `fc_ceil` / `bt_ceil` | HIL run CSV columns | the decoded 0/1 per tick |
+  | `share_gov_ceiling` | bench-log CSV (BLG flags bit 7) | EITHER channel, from the on-board log |
+
+  The bench-log column is `share_gov_ceiling` rather than `share_ceiling` so it cannot be
+  read as the MPC's `mpc_share_ceiling`, which is a different quantity (a planner bound,
+  not a governor state).
   Reference values seen in campaigns: 0x27 = FC_BUS|BT_BUS|MOT_PWR|BT_SEQ (normal Idle/Run),
   0x2F adds REGEN, 0x35/0x39 during bring-up phases, 0x20/0x28/0x34 teardown phases.
 - Masked signal specs (`exclude_when_switch_bit`, + `exclude_hold_ms`, 2026-09-02) drop

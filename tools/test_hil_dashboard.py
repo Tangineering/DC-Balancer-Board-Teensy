@@ -392,12 +392,13 @@ def test_without_dash_behavior_unchanged_csv_header_and_scenario_list(tmp_path, 
     # schemas, so the nine of them are the tail in that order.
     # ... and the three MPC diagnostics after p_chg_loss_w (2026-09-02 MPC
     # registration; blank on every non-MPC row), so the tail is twelve.
-    assert header[-12:] == ["mppt_thresh_cnt", "error_code",
+    assert header[-2:] == ["fc_ceil", "bt_ceil"]        # fw v26 aux bits 4/5
+    assert header[-14:-2] == ["mppt_thresh_cnt", "error_code",
                             "p_mot_w", "p_fc_w", "p_batt_w",
                             "p_chop_w", "p_aux_w", "p_bal_w", "p_chg_loss_w",
                             "mpc_solve_ms", "mpc_share_pred_err",
                             "mpc_budget_hit"]
-    assert header[-19:-12] == ["soc", "cmd_v_sp", "cmd_share_sp",
+    assert header[-21:-14] == ["soc", "cmd_v_sp", "cmd_share_sp",
                                "h2_rate_gps", "h2_cum_g", "h2_sdp_cum_g",
                                "cmd_share_sp_raw"]
 

@@ -744,6 +744,54 @@ def test_compute_replay_metrics_empty_alignment_returns_zeroed_shell():
     assert out["injection"] == {} and out["response"] == {}
 
 
+def test_aux_bits_names_and_masks_match_the_simulator():
+    """aux_bits() is the analysis-side vocabulary for observation-frame byte
+    4. Pinned by NAME here because the run_hil_suite expectation layer refers
+    to the two fw v26 entries by name, and by MASK against hil_plant_sim so
+    the two modules can never drift."""
+    bits = hra.aux_bits()
+    assert [n for _m, n in bits] == ["FC_REG", "BT_REG", "MPPT_DISABLE",
+                                     "CBAL_DISABLE", "fc_ceiling_active",
+                                     "bt_ceiling_active"]
+    assert dict((n, m) for m, n in bits)["fc_ceiling_active"] ==         _sim.AUX_FC_CEILING == 0x10
+    assert dict((n, m) for m, n in bits)["bt_ceiling_active"] ==         _sim.AUX_BT_CEILING == 0x20
+
+
+def test_aux_bits_appends_the_ceiling_entries_without_moving_the_pin_levels():
+    """APPEND-only: the four pin-level entries keep their index, so every
+    established lane in the aux panel keeps its row."""
+    bits = hra.aux_bits()
+    assert bits[:4] == [(_sim.AUX_FC_REG, "FC_REG"),
+                        (_sim.AUX_BT_REG, "BT_REG"),
+                        (_sim.AUX_MPPT_DISABLE, "MPPT_DISABLE"),
+                        (_sim.AUX_CBAL_DISABLE, "CBAL_DISABLE")]
+    assert len(bits) == 6
+    masks = [m for m, _n in bits]
+    assert len(set(masks)) == len(masks), "aux masks must not collide"
+
+
+def test_hil_state_and_switches_aux_lane_includes_the_two_clamp_rows():
+    """The clamp lanes come for free from aux_bits(): the aux panel must now
+    carry six labelled rows, the last two being the fw v26 clamp states."""
+    n = 5
+    data = {"t_s": np.arange(n, dtype=np.float64),
+            "state": np.full(n, 2.0), "switch": np.full(n, 0x3F),
+            "aux": np.full(n, float(_sim.AUX_FC_REG | _sim.AUX_FC_CEILING)),
+            "fault_flags": np.zeros(n)}
+    fig = hra.hil_state_and_switches(data, {"_run_name": "run"})
+    aux_ax = fig.axes[2]
+    labels = [t.get_text() for t in aux_ax.get_yticklabels()]
+    assert labels == ["FC_REG", "BT_REG", "MPPT_DISABLE", "CBAL_DISABLE",
+                      "fc_ceiling_active", "bt_ceiling_active"]
+    # _bit_lane emits a step line then a baseline axhline per bit, so the
+    # step for row i is lines[2*i]. The FC clamp lane must be high while the
+    # BT one stays low -- the two masks are read independently, not shared.
+    assert len(aux_ax.lines) == 2 * len(labels)
+    fc_lane, bt_lane = aux_ax.lines[8], aux_ax.lines[10]
+    assert np.allclose(fc_lane.get_ydata(), 4 + 0.78)
+    assert np.allclose(bt_lane.get_ydata(), 5.0)
+
+
 def test_decode_fault_bits_zero_is_empty_list():
     assert hra.decode_fault_bits(0) == []
 
@@ -3212,3 +3260,21 @@ def test_the_two_new_era_keys_are_in_the_recorded_fingerprint_key_list():
     out = _mdp_call(_mdp_cfg())
     keys = out["stimulus_era"]["fingerprint_keys"]
     assert "drag" in keys and "eta_regen" in keys
+
+
+def test_named_aux_masks_agree_with_the_suite_expectation_layer():
+    """LOCKSTEP. `run_hil_suite._AUX_BIT_NAMES` writes the two fw v26 clamp
+    labels out rather than importing them, because this module requires numpy
+    and the suite must stay importable under the stdlib-only interpreter. That
+    duplication is only honest if something compares the two, which is this.
+
+    A drift would be silent in the worst way: a check would test one bit and
+    the report's figure lane would draw the other."""
+    import run_hil_suite as rhs
+    here = {label: mask for mask, label in hra.aux_bits()}
+    for name, mask in rhs._AUX_BIT_NAMES.items():
+        assert name in here, (
+            "run_hil_suite names aux bit %r, which aux_bits() does not" % name)
+        assert here[name] == mask, (
+            "aux bit %r is 0x%02x in run_hil_suite and 0x%02x here"
+            % (name, mask, here[name]))

@@ -115,6 +115,12 @@ _REPO = os.path.dirname(_HERE)
 HIL_RESULTS_DIR = os.path.join(_REPO, "HIL Results")
 sys.path.insert(0, _HERE)
 
+# Firmware constants for the fw v26 source current-ceiling governor. Imported
+# from the port, never re-typed: `governor_model.GOV_CONST` is scraped against
+# the .ino by tools/test_governor_model.py, so a ceiling retune reaches every
+# bound written against it.
+import governor_model as gov_mod                                   # noqa: E402
+
 from hil_plant_sim import (                                        # noqa: E402
     SCENARIOS, TEENSY_PORT_DEFAULT, WARM_RESET_GRACE_S, REPLAY_PREAMBLE_S,
     # switch_state bit masks, for FAULT_EXPECTATIONS' signals_require specs.
@@ -125,14 +131,20 @@ from hil_plant_sim import (                                        # noqa: E402
     # never re-declared, for the same reason as the switch masks: the enum is the
     # firmware's and a second copy here would drift.
     ERR_PI_TIMEOUT, ERR_HIL_STALE, error_code_name,
-    # aux-byte bit mask, for the `aux_bit` specs.  Same rule as the switch masks:
-    # imported, never re-declared (.ino:2823 packs this byte).
-    AUX_MPPT_DISABLE,
+    # aux-byte bit masks, for the `aux_bit` specs.  Same rule as the switch masks:
+    # imported, never re-declared (.ino:2823 packs this byte).  The two fw v26
+    # ceiling bits are spare bits in the same byte, so HIL_OUTPUT_SIZE stays 18
+    # and the checksum span is unchanged.
+    AUX_MPPT_DISABLE, AUX_FC_CEILING, AUX_BT_CEILING,
     # The `ems-y-*` profile geometry, so the signal windows below are DERIVED
     # from the same constants the stimulus is (EMS_Y_START_S and the region
     # table), not re-typed. A table edit that moves a region boundary must move
     # these windows, and importing them is what makes that visible.
     EMS_Y_START_S, COMBINED_PROFILE,
+    # fw v26 clamp-sweep geometry, imported for the same reason: the
+    # region table IS the stimulus, and the checks are generated from it.
+    FW26_CLAMP_SWEEP_REGIONS, FW26_CLAMP_SWEEP_REGION_S,
+    FW26_CLAMP_SWEEP_PRELOAD_A, I_AUX_A,
     # `v-bus-sense-offset` stimulus geometry — imported so the windows below are
     # DERIVED from the same constants the stimulus is, never re-typed. Moving an
     # excursion in the simulator moves the checks that judge it.
@@ -341,6 +353,10 @@ from hil_replay_suite import (                                      # noqa: E402
     # .ino:1434 — the firmware's bus UV limit (12.0 V), the threshold the
     # `v-bus-sense-offset` scenario walks the sensed rail across.
     LIMIT_V_BUS_MIN_V,
+    # .ino:1425 / :1476 — the two channel overcurrent limits, imported rather
+    # than re-typed for the same reason as the bus pair.  `LIMIT_I_FC_MAX_A` is
+    # what `_ALPHA_FC_CEIL` is a margin under.
+    LIMIT_I_FC_MAX_A,
     # .ino:2237 again — the replay half transcribes it for its own share-cut
     # census (2026-09-02).  Imported here only to ASSERT the two copies agree:
     # one number in two modules, and a campaign whose replay-side census used a
@@ -856,6 +872,21 @@ FAULT_EXPECTATIONS = {
                   "190 ms charger ramp, bus bookkeeping closing to 9 mA — "
                   "1:1-CHARGER ERA; under ETA_CHG 0.88 the predicted crossing "
                   "is ~9.1 s (WP-1A physics review item 7a)",
+        # ⚠️ FLAGGED FOR OPERATOR RE-ADJUDICATION (fw v26 tools round,
+        # 2026-09-02; docs/fw26_current_ceiling_governor.md section 8.6).
+        # THE EXPECTATION IS CORRECT AS WRITTEN AND fw v26 CANNOT CHANGE IT.
+        # This scenario reaches the overcurrent condition SINGLE-SOURCE:
+        # `assertFcChargeEnable()` holds BT_BUS low for the whole window, so
+        # I_fc equals I_tot, the share ratio is pinned at DROOP_R_MIN and there
+        # is no second channel to move load onto. The fw v26 current-ceiling
+        # clamp is structurally inert here, and it could not help if it were
+        # not, because the load has nowhere else to go. What needs a DECISION
+        # rather than a fix is the registered INTENT: a scenario whose pass
+        # condition is an overcurrent latch now sits beside a mechanism whose
+        # whole purpose is to prevent that class of latch elsewhere. The
+        # question for the operator is whether `charge-cruise` should keep
+        # asserting the design boundary or be re-pointed at a ceiling or a load.
+        # This is a decision, not a defect, and nothing here was changed for it.
         "require": FAULT_OC_FC,
         "allow_only": FAULT_OC_FC | FAULT_UV_BUS | FAULT_ERROR,
         # The charge_goal step is at t = 8.0 (SCENARIOS['charge-cruise']). An OC_FC
@@ -2408,7 +2439,55 @@ for _vmax, _b in ((1.0, 0.30), (3.0, 0.30), (1.0, 0.00), (3.0, 0.00)):
                       % (_Y_ITOT_FLOOR_A, _Y_ITOT_MEASURED_MIN_A[_vmax],
                          100.0 * (_Y_ITOT_MEASURED_MIN_A[_vmax]
                                   / _Y_ITOT_FLOOR_A - 1.0))})
-    else:
+    if _b and _vmax == 3.0:
+        # 10-11 (b30-v3 ONLY). THE fw v26 CURRENT CEILING, ON A REGISTERED
+        # STIMULUS.
+        #
+        # ⚠️ THIS IS THE ONLY REGISTERED SCENARIO THE CLAMP REACHES, and the
+        # fw v26 tools round shipped saying no registered scenario did. That
+        # claim was written from the EMS legs alone and against the RAW total;
+        # `tools/probes/probe_fw26_clamp_reachability.py` reconstructs the
+        # governor's own filtered total and minority clip from a campaign CSV
+        # and finds b30-v3 over the ceiling. RECONSTRUCTED, both campaigns of
+        # 2026-09-02, on fw v25 traces:
+        #
+        #     campaign      filtered I_tot   commanded I_fc   ticks   window
+        #     C (041414)        2.3355 A        1.5180 A        11    27.020-27.029
+        #     B (011926)        2.3343 A        1.5173 A         9    27.007-27.015
+        #
+        # The next-highest run on the whole registered set is `ems-sdp` at a
+        # commanded 1.1861 A, 5.1 % under the ceiling.
+        #
+        # THE BAND IS DELIBERATELY WIDE. The reconstruction is open-loop: on
+        # fw v26 the clamp moves the delivered share, which moves I_fc and
+        # I_batt, which moves the filtered total the clamp is evaluated on. The
+        # duration is therefore a prediction and the check asserts the
+        # MECHANISM (it engaged at all, and it did not latch on) rather than the
+        # count. Re-derive the band from the first fw v26 campaign.
+        #
+        # NO h2 BAND MOVES FOR THIS. The leg carries no h2 anchor -- its checks
+        # are share, current and switch bounds -- and it has no offline walk at
+        # all (`ems-y-b30-v3` defines no `ems_v_profile`, so `ems_walk` refuses
+        # it; the stimulus is the firmware's own COMBINED_PROFILE). The size of
+        # what the clamp withholds is stated instead: 0.268 A of bus-side fuel
+        # cell for 11 ms, 2.9 mC, worth 9.7e-07 g of hydrogen -- about 77 ppm of
+        # a typical EMS leg's total, and above the ~50 ppm same-config
+        # repeatability floor, so it would be visible if this leg had an anchor.
+        _Y_CEIL_W = (_YR[8][0] - 0.2, _YR[8][0] + 0.4)             # 26.8-27.4
+        _sig += [
+            {"name": "fw26_ceiling_engaged", "aux_bit": "fc_ceiling_active",
+             "min_ticks": 1, "t_window": _Y_CEIL_W,
+             "label": "the fw v26 FC current ceiling BOUND at the region-7/8 "
+                      "boundary (reconstruction: 9-11 ticks at a commanded "
+                      "1.517-1.518 A against the 1.25 A ceiling) - the only "
+                      "registered stimulus that reaches the clamp"},
+            {"name": "fw26_ceiling_transient", "aux_bit": "fc_ceiling_active",
+             "max_ticks": 60, "t_window": _Y_CEIL_W,
+             "label": "... and released again inside the window (<= 60 ticks; "
+                      "the reconstruction gives 9-11, and a clamp that latches "
+                      "on is a hysteresis defect, not a load reading)"},
+        ]
+    if not _b:
         # 4-7 (b00 only). THE CUT-AND-RESTORE TOPOLOGY, both directions and
         # both channels. Region 6 commands share 1.00, above DROOP_R_MAX 0.85,
         # so updateShareSetpointCutoff() (.ino:9231-9257) drives BT_BUS_ENABLE
@@ -2473,10 +2552,18 @@ for _vmax, _b in ((1.0, 0.30), (3.0, 0.30), (1.0, 0.00), (3.0, 0.00)):
         "allow_only": 0,
         "survive_to": {"t": _Y_SURVIVE_T, "states": {2, 3}},
         "signals_require": _sig,
-        "provisional_note": "baseline-era thresholds (pre-WP-C regen-fidelity "
-                            "fix) — re-derive after the first post-WP-C "
-                            "campaign; this scenario brakes past the regen "
-                            "clip (reviewer H1, 2026-09-01)",
+        "provisional_note": ("baseline-era thresholds (pre-WP-C regen-fidelity "
+                             "fix) — re-derive after the first post-WP-C "
+                             "campaign; this scenario brakes past the regen "
+                             "clip (reviewer H1, 2026-09-01)"
+                             + (". The two fw26_ceiling_* checks are "
+                                "RECONSTRUCTED from fw v25 traces (probe "
+                                "tools/probes/probe_fw26_clamp_reachability.py)"
+                                ", never measured on fw v26: the clamp is "
+                                "closed-loop, so its duration on the board is "
+                                "a prediction. Re-derive the tick band from "
+                                "the first fw v26 campaign."
+                                if (_b and _vmax == 3.0) else "")),
     }
 del _vmax, _b, _n, _hi, _sig
 
@@ -4716,13 +4803,35 @@ _ALPHA_PROVISIONAL = (
     "Re-derive all of them from the first campaign that runs the alpha legs")
 
 # The shared OC budget. `ems-sdp-cross` MEASURED 1.1920 A at this stimulus's
-# single-source charge operating point and bounds it at 1.28 A (7.4 % over the
-# measurement, 8.6 % under LIMIT_I_FC_MAX 1.4 A). Two of these three legs never
-# open the charger at all and the third opens it at the same 0.8 A ceiling, so
-# 1.28 A is an upper bound for all three. See `sdpx_fc_peak_bounded` for the
-# charger-era note: post-eta the expected peak is ~0.84 A, so this is a budget
-# bound with slack, not a tripwire.
-_ALPHA_FC_CEIL = 1.28
+# single-source charge operating point. Two of these three legs never open the
+# charger at all and the third opens it at the same 0.8 A ceiling, so one bound
+# serves all three. See `sdpx_fc_peak_bounded` for the charger-era note:
+# post-eta the expected peak is ~0.84 A, so this is a budget bound with slack,
+# not a tripwire.
+#
+# -- RE-DERIVED 2026-09-02, AND FROM THE FAULT LIMIT ------------------------
+# The value was a hand-typed 1.28 A. It is now DERIVED, at
+# LIMIT_I_FC_MAX - _ALPHA_FC_MARGIN_A = 1.4 - 0.10 = 1.30 A.
+#
+# WHY THE FAULT LIMIT AND NOT THE fw v26 CEILING. An earlier form of this
+# re-derivation wrote SHARE_GOV_I_FC_CEIL_A + SHARE_GOV_CEIL_HYST_A, which is
+# also 1.30 A but says the wrong thing. These three legs reach their fuel-cell
+# peak inside a SINGLE-SOURCE charge window, where `assertFcChargeEnable()` has
+# dropped BT off the bus: I_fc equals I_tot, the ratio is pinned at
+# DROOP_R_MIN, and the fw v26 clamp is STRUCTURALLY INERT. Tying the bound to
+# the clamp's constants would make a ceiling retune move a check the ceiling
+# does not govern. LIMIT_I_FC_MAX is what the hardware enforces here, and it is
+# what this bound is a margin under.
+#
+# THE MARGIN. 0.10 A, chosen against the two measurements that bracket this
+# operating point: `ems-sdp-cross` MEASURED 1.1920 A at the single-source charge
+# peak, and `ems-sdp`'s own governed peak is 1.1866 A (campaign
+# 20260831_191509). 1.30 A is 9.1 % above the governing 1.1920 A and 7.1 % under
+# the fault limit -- a budget bound with slack rather than a tripwire, which is
+# what the trio needs. Post-eta the expected peak is ~0.84 A, so the slack is
+# larger than the numbers above suggest.
+_ALPHA_FC_MARGIN_A = 0.10
+_ALPHA_FC_CEIL = LIMIT_I_FC_MAX_A - _ALPHA_FC_MARGIN_A            # 1.30 A
 
 
 def _alpha_expectation(walk_h2_g, share_spec, charge_edges, note):
@@ -4769,9 +4878,13 @@ def _alpha_expectation(walk_h2_g, share_spec, charge_edges, note):
             {"name": "alpha_fc_peak_bounded", "column": "I_fc",
              "max_value": _ALPHA_FC_CEIL, "t_window": (5.0, 54.0),
              "label": "the FC channel stayed inside the single-source charge "
-                      "budget (<= %.2f A; `ems-sdp-cross` measured 1.1920 A at "
-                      "this operating point, LIMIT_I_FC_MAX is 1.4 A)"
-                      % _ALPHA_FC_CEIL},
+                      "budget (<= %.2f A = LIMIT_I_FC_MAX - %.2f A; "
+                      "`ems-sdp-cross` measured 1.1920 A at this operating "
+                      "point and `ems-sdp`'s governed peak is 1.1866 A. The "
+                      "fw v26 clamp is INERT here - the window is "
+                      "single-source - so the fault limit is the only bound "
+                      "the hardware enforces)"
+                      % (_ALPHA_FC_CEIL, _ALPHA_FC_MARGIN_A)},
             # 4. THE CHARGE-PATH CENSUS — the trio's headline discriminator,
             #    and a COUNT rather than a window so a model error in WHEN the
             #    window opens cannot fail a run in which the mechanism worked.
@@ -5574,6 +5687,544 @@ _SS_LATENCY_MAX_MS = 40.0     # 20 (command phase) + 1 (share tick)
 # 2 s after the stimulus — five times the tripwire.
 _SS_BT_CUT_T, _SS_BT_RESTORE_T = 33.0, 36.0
 _SS_FC_CUT_T, _SS_FC_RESTORE_T = 39.0, 42.0
+# ─────────────────────────────────────────────────────────────────────────────
+# fw26-clamp-cruise — the fw v26 source current-ceiling clamp
+#
+# THE FIRST STIMULUS THAT EXERCISES THE FEATURE UNDER CONTROL.
+#
+# ⚠️ CORRECTED 2026-09-02: this said "the first stimulus that reaches the
+# feature at all", which is false. `ems-y-b30-v3` reaches the ceiling too --
+# reconstructed commanded I_fc 1.5180 A for 11 ticks at t = 27.020 s (campaign
+# B: 1.5173 A / 9 ticks), by
+# `tools/probes/probe_fw26_clamp_reachability.py`. It is an 11 ms transient at a
+# region boundary and cannot bound a held current or a release, which is what
+# this pair is for. Nothing ELSE on the registered set gets there: the
+# next-highest commanded fuel-cell current is `ems-sdp`'s 1.1861 A.
+#
+# Derivation of the load and
+# of the two phases is at SCENARIOS["fw26-clamp-cruise"]; the reachability argument
+# is docs/fw26_current_ceiling_governor.md section 4.1.1 and the acceptance
+# criteria are its section 8.3.
+#
+# ⚠️ EVERY BOUND BELOW IS A WALK, NOT A MEASUREMENT. The numbers come from an
+# offline walk of this stimulus through tools/governor_model.py at the plant's
+# measured asymmetry (dv0 0.013522 V) and at dv0 = 0; the two agree on every
+# current to four decimals, because the clamp pins the fuel-cell current rather
+# than the ratio and the asymmetry moves only the ratio that delivers it
+# (0.6197 against 0.6250). The walk, at the shipped 2.00 A total:
+#
+#   phase A, share 0.75, t = 8..24
+#       first engagement on the FIRST tick after the setpoint step (the
+#       governor enters phase A converged at r = 0.4944 from the timeline's
+#       own 0.50 pre-phase), clamp duty 1.0000 of the phase
+#       I_fc  1.2500 A held, whole-phase peak 1.2500 A - NO overshoot
+#       I_batt 0.7500 A, |I_tot - I_fc - I_batt| identically 0
+#       applied ratio 0.6197, inside [DROOP_R_MIN, DROOP_R_MAX]
+#       0 cut refusals, 0 switch edges, both bus switches high throughout
+#   phase B, share 0.40, t = 26..34
+#       clamp duty 0.0000, I_fc 0.8000 A
+#
+# THE FIRST CAMPAIGN THAT RUNS THIS SCENARIO RE-DERIVES ALL OF IT. A miss on the
+# duty floor or on the I_fc window is a calibration event and is read against
+# the ceiling's own TODO(calibrate) (design note section 8.6), not absorbed by
+# widening a bound.
+_CEILING_A0, _CEILING_A1 = 8.5, 24.0     # phase A, inset from the 8.0 command
+_CEILING_B0, _CEILING_B1 = 27.0, 34.0    # phase B, inset from the 26.0 command
+# ⚠️ THE CADENCE GATE AND THE TICK FLOORS ARE ONE NUMBER (M8, 2026-09-02).
+# The entry's tick floors assume near-full 1 kHz coverage; its cadence gate
+# originally admitted 3.9 % of it. A stream defect then failed a TOPOLOGY check
+# instead of the cadence check. `_CEILING_CADENCE_COVER` is the coverage this
+# entry requires, everything else is derived from it, and a lossy stream now
+# fails `ceiling_cadence` by name.
+_CEILING_CADENCE_COVER = 0.98
+_CEILING_CADENCE_ROWS = int(1000.0 * (_CEILING_B1 - _CEILING_A0)
+                            * _CEILING_CADENCE_COVER)          # 24990
+_CEILING_BUS_HOLD_TICKS = int(0.98 * _CEILING_CADENCE_ROWS)    # 24490
+
+FAULT_EXPECTATIONS["fw26-clamp-cruise"] = {
+    "source": ("applyShareCurrentCeilings() (.ino:10273-10313) with "
+               "SHARE_GOV_I_FC_CEIL_A 1.25 A, SHARE_GOV_I_BT_CEIL_A 2.70 A and "
+               "SHARE_GOV_CEIL_HYST_A 0.05 A (.ino:2406/:2424/:2430), against "
+               "LIMIT_I_FC_MAX 1.4 A (.ino:1425). Load derivation at "
+               "hil_plant_sim.FW26_CLAMP_CRUISE_LOAD_A; bounds from the offline "
+               "governor_model walk recorded above; design note "
+               "docs/fw26_current_ceiling_governor.md sections 4.1.1 and 8.3."),
+    "provisional_note": ("EVERY BOUND IN THIS ENTRY IS WALKED, NOT MEASURED - "
+                         "this scenario has never been run on the board. "
+                         "Re-derive all of them from the first campaign that "
+                         "runs it, and read a miss against the ceiling's own "
+                         "TODO(calibrate) rather than by widening a bound."),
+    # FAULT-FREE, and that is half the claim. The whole point of the clamp is
+    # that the fuel cell is held at 1.25 A instead of climbing to the 1.4 A
+    # latch; a run that latches OC_FC here has not merely failed a check, it has
+    # falsified the mechanism.
+    "allow_only": 0,
+    # Past the release and into the negative control: a run that latched during
+    # phase A never reached the half of the scenario that discriminates.
+    "survive_to": {"t": 30.0, "states": {2, 3}},
+    "signals_require": [
+        # 0. THE CADENCE CENSUS, so nothing below can pass on a run whose
+        #    observation stream stalled. Its own spec: `min_rows` returns before
+        #    every value and tick bound.
+        {"name": "ceiling_cadence", "min_rows": _CEILING_CADENCE_ROWS,
+         "t_window": (_CEILING_A0, _CEILING_B1),
+         "label": "the run streamed at full cadence across both phases "
+                  "(>= %d rows in a %.1f s window = %.0f %% of the 1 kHz "
+                  "nominal)" % (_CEILING_CADENCE_ROWS,
+                                _CEILING_B1 - _CEILING_A0,
+                                100.0 * _CEILING_CADENCE_COVER)},
+        # 1. THE STIMULUS WAS DELIVERED. 0.74 rather than 0.75: the value
+        #    round-trips through a float32 UDP field.
+        {"name": "ceiling_share_commanded", "column": "cmd_share_sp",
+         "min_value": 0.74, "t_window": (_CEILING_A0, _CEILING_A1),
+         "label": "phase A commanded share 0.75 (unclamped FC demand 1.50 A at "
+                  "the 2.00 A total, 0.25 A over the 1.25 A ceiling)"},
+        # 2. THE CLAMP ENGAGED, and held. The phase A window is 15.5 s; the walk
+        #    puts the duty at 1.0000, so 12000 ticks is a floor at 77 % of the
+        #    window - loose enough for a slow engagement, and unreachable by a
+        #    run in which the clamp merely chattered.
+        {"name": "fc_ceiling_active_duty", "aux_bit": "fc_ceiling_active",
+         "min_ticks": 12000, "t_window": (_CEILING_A0, _CEILING_A1),
+         "label": "the FC current ceiling was BINDING for >= 12000 ticks of "
+                  "phase A (walk: 1.0000 duty) - the only evidence the "
+                  "mechanism acted, since a reference-side bound cannot be "
+                  "told from a load that happened to stop there"},
+        # 3. THE NEGATIVE CONTROL, same run and same load. At share 0.40 the
+        #    demand is 0.80 A, 0.45 A under the ceiling and well past the 0.05 A
+        #    release hysteresis, so the flag must be down for the WHOLE window.
+        {"name": "fc_ceiling_released", "aux_bit": "fc_ceiling_active",
+         "max_ticks": 0, "t_window": (_CEILING_B0, _CEILING_B1),
+         "label": "the FC ceiling released on the setpoint step and stayed "
+                  "released through the control phase (0 ticks)"},
+        # 4. THE BATTERY CEILING IS NOT EXERCISED, and must not fire. It would
+        #    need 2.70 A on one channel; the whole bus carries 2.00 A.
+        {"name": "bt_ceiling_never", "aux_bit": "bt_ceiling_active",
+         "max_ticks": 0, "t_window": (2.5, _CEILING_B1),
+         "vacuity_note": ("the aux column cannot be blank across this window: "
+                          "`fc_ceiling_active_duty` above asserts >= 12000 "
+                          "ticks with an aux bit SET inside it, which is only "
+                          "reachable if the same byte streamed and parsed. A "
+                          "zero count here is therefore a read of the BT bit, "
+                          "not an absent column."),
+         "label": "the BT ceiling never bound (it would need 2.70 A on one "
+                  "channel against a 2.00 A bus)"},
+        # 5-6. I_fc INSIDE THE ACCEPTANCE BAND, two-sided. Two specs, because
+        #    one spec cannot carry both bounds. The band is the ceiling plus and
+        #    minus the hysteresis, [1.20, 1.30] A, exactly as the design note's
+        #    section 8.3 states it; the walk sits at 1.2500 exactly, with no
+        #    overshoot, so both edges have margin.
+        # ⚠️ `floor_min_value`, NOT `min_value` (H2, 2026-09-02). `min_value`
+        #    tests the in-window MAXIMUM, i.e. "it reached 1.20 A at least
+        #    once", which any run that touches the ceiling for one tick
+        #    satisfies. The claim here is an INVARIANT -- the current was HELD
+        #    at the ceiling for the whole phase -- so it wants the in-window
+        #    MINIMUM, which is what `floor_min_value` tests.
+        {"name": "ceiling_fc_at_the_ceiling", "column": "I_fc",
+         "floor_min_value": 1.20, "t_window": (_CEILING_A0, _CEILING_A1),
+         "label": "FC current NEVER fell below the ceiling band through phase "
+                  "A (>= 1.20 A = SHARE_GOV_I_FC_CEIL_A - "
+                  "SHARE_GOV_CEIL_HYST_A, on every sample)"},
+        {"name": "ceiling_fc_under_the_limit", "column": "I_fc",
+         "max_value": 1.30, "t_window": (_CEILING_A0, _CEILING_A1),
+         "label": "FC current never left the acceptance band (<= 1.30 A, "
+                  "against LIMIT_I_FC_MAX 1.4 A - the clamp's whole purpose). "
+                  "HEADROOM: the walk pins I_fc at 1.2500 A with no "
+                  "overshoot, so this bound sits 4.0 % above the value it is "
+                  "judging - it is a tripwire, not a budget, and a miss is a "
+                  "calibration event"},
+        # 7-8. THE BALANCE CLOSED ONTO THE BATTERY. The scenario is motor-free
+        #    and its total is one constant, so |I_tot - I_fc - I_batt| <= 0.10 A
+        #    is exactly a two-sided bound on I_batt around 2.00 - 1.25 = 0.75 A.
+        #    This is the check that confirms the current the fuel cell did not
+        #    supply actually WENT somewhere, rather than the load having fallen.
+        # `floor_min_value` for the same reason as the check above: the claim
+        # is that the battery carried the surplus THROUGHOUT, not once.
+        {"name": "ceiling_batt_took_the_rest", "column": "I_batt",
+         "floor_min_value": 0.65, "t_window": (_CEILING_A0, _CEILING_A1),
+         "label": "the battery carried the amps the ceiling refused the fuel "
+                  "cell on every sample (>= 0.65 A; walk 0.7500 A, balance "
+                  "bound 0.10 A)"},
+        {"name": "ceiling_batt_bounded", "column": "I_batt",
+         "max_value": 0.85, "t_window": (_CEILING_A0, _CEILING_A1),
+         "label": "and no more than that (<= 0.85 A) - the two bounds together "
+                  "are |I_tot - I_fc - I_batt| <= 0.10 A at a 2.00 A total"},
+        # 9. THE CONTROL PHASE'S OWN CURRENT. At share 0.40 the fuel cell must
+        #    fall to 0.80 A; 0.95 is a ceiling under the 1.20 A phase-A floor by
+        #    a wide margin, so a run that never released fails here as well as
+        #    on check 3.
+        {"name": "ceiling_control_fc", "column": "I_fc", "max_value": 0.95,
+         "t_window": (_CEILING_B0, _CEILING_B1),
+         "label": "FC current fell to the commanded 0.40 split in the control "
+                  "phase (<= 0.95 A; walk 0.8000 A)"},
+        # 10-11. THE CLAMP NEVER OPENED A BUS SWITCH. A reference outside the
+        #    droop band IS the channel-cutoff signal, so the band constraint at
+        #    the tail of applyShareCurrentCeilings() is structural rather than
+        #    arithmetical - and this is what asserts it on the board. Both
+        #    switches must be high for essentially the whole of both phases;
+        #    25000 ticks is 98 % of the 25.5 s span.
+        # ⚠️ DERIVED FROM THE CADENCE GATE (M8, 2026-09-02). These floors were
+        #    a hand-typed 25000 ticks, 98 % of the window's 1 kHz nominal,
+        #    while `ceiling_cadence` above admitted a run with 1000 rows in the
+        #    same window - 3.9 % coverage. A run streaming at half cadence
+        #    would have passed the cadence gate and then failed HERE, reporting
+        #    "a bus switch opened" for a stream defect. The two are now one
+        #    number: the cadence gate guarantees `_CEILING_CADENCE_ROWS` rows,
+        #    and these floors ask for 98 % of THAT, so a miss is a topology
+        #    finding and a stream stall is reported by the check that means it.
+        {"name": "ceiling_fc_bus_held", "switch_bit": SW_FC_BUS,
+         "min_ticks": _CEILING_BUS_HOLD_TICKS,
+         "t_window": (_CEILING_A0, _CEILING_B1),
+         "label": "FC_BUS_ENABLE stayed high across both phases (>= %d ticks = "
+                  "98 %% of the rows `ceiling_cadence` guarantees) - a current "
+                  "ceiling must never open a bus switch"
+                  % _CEILING_BUS_HOLD_TICKS},
+        {"name": "ceiling_bt_bus_held", "switch_bit": SW_BT_BUS,
+         "min_ticks": _CEILING_BUS_HOLD_TICKS,
+         "t_window": (_CEILING_A0, _CEILING_B1),
+         "label": "BT_BUS_ENABLE stayed high across both phases (>= %d ticks) "
+                  "- the split is genuinely two-source, which is what makes "
+                  "the clamp reachable at all" % _CEILING_BUS_HOLD_TICKS},
+        # 12. AND NO CUT WAS EVEN ATTEMPTED. Zero rising edges on either bus
+        #    switch: a cut followed by a restore would satisfy the two tick
+        #    floors above and is exactly the failure they cannot see.
+        {"name": "ceiling_no_switch_ring", "switch_bit": SW_FC_BUS,
+         "edge_count_between": (0, 0), "edge": "rise",
+         "t_window": (_CEILING_A0, _CEILING_B1),
+         "label": "no FC_BUS rising edge in either phase - no cut, and "
+                  "therefore no sw_ring"},
+    ],
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# fw26-clamp-sweep — the clamp's engagement and release, six times each way
+#
+# THE ENTRY IS BUILT FROM THE STIMULUS TABLE, not written out region by region.
+# `FW26_CLAMP_SWEEP_REGIONS` carries each region's velocity, commanded share and
+# expected classification, so a table edit that moves a boundary moves the checks
+# with it. Writing twelve regions out by hand is exactly how a check window and
+# the stimulus it judges drift apart.
+#
+# ⚠️ EVERY BOUND IS A WALK, NOT A MEASUREMENT, and one input to it is a
+# prediction: the region totals are the HOST demand model's, while in a HIL run
+# the board's own drive loop sets the VESC current and therefore the total. The
+# margins are what absorbs that (sub-threshold regions clear the clamp boundary
+# by 0.20 A to 0.29 A of fuel-cell demand, clamped ones exceed it by 0.29 A to
+# 0.45 A). The first campaign that runs this scenario re-derives all of it.
+#
+# ⚠️ THE CLAMP IS NOT EXPECTED TO ACT IN AN FC-CHARGE WINDOW, and this scenario
+# opens none. That regime is single-source by construction and `OC_FC` there is
+# DESIGN INTENT, read by the EMS as feedback about a charge window it should not
+# have opened - see FAULT_EXPECTATIONS["charge-cruise"]. fw v26 does not change
+# it and is not meant to.
+#
+# Walked with tools/governor_model.py at the plant's measured asymmetry
+# (dv0 0.013522 V) and at zero; the two agree on every current to four decimals.
+# Per region, over the settled window (region start + 1.5 s to region end):
+#
+#   reg   v    sp    I_tot    I_fc    I_batt   duty   mdac_fc  mdac_bt  clamp?
+#    1   0.0  0.84   1.200   0.9000   0.3000  0.000     4917     6468   no
+#    2   3.0  0.84   2.016   1.2500   0.7663  1.000     5088     5679   YES
+#    3   0.5  0.84   1.284   0.9844   0.3000  0.000     4898     6638   no
+#    4   2.5  0.84   1.827   1.2500   0.5775  1.000     4995     5994   YES
+#    5   2.5  0.40   1.827   0.7310   1.0965  0.000     5644     5102   no
+#    6   3.0  0.84   2.016   1.2500   0.7663  1.000     5088     5679   YES
+#    7   3.0  0.20   2.016   0.4033   1.6130  0.000     7201     4855   no
+#    8   0.0  0.84   1.200   0.9000   0.3000  0.000     4917     6468   no
+#    9   3.0  0.84   2.016   1.2500   0.7663  1.000     5088     5679   YES
+#   10   0.5  0.50   1.284   0.6422   0.6422  0.000     5337     5295   no
+#   11   2.5  0.84   1.827   1.2500   0.5775  1.000     4995     5994   YES
+#   12   0.0  0.50   1.200   0.6000   0.6000  0.000     5339     5293   no
+#
+# Whole run: 29996 clamped ticks of 80000, zero cut refusals, zero BT-clamp
+# ticks, |I_tot - I_fc - I_batt| identically zero.
+#
+# THE BIT-IDENTITY EVIDENCE. The same walk with the ceilings pinned out of reach
+# - the fw v25 arithmetic - reproduces the mdac pair EXACTLY on all seven
+# sub-threshold regions and differs on all five clamped ones (region 2, for
+# instance, reads (4824, 7837) with the clamp absent against (5088, 5679) with
+# it). Regions 1, 8 and 12 are commanded at standstill, so their total is the
+# aux load alone and carries none of the drive loop's uncertainty; those three
+# are where the codes are PINNED on the board. That is the on-board statement of
+# "below the ceiling, fw v26 is arithmetically identical to fw v25" - the host
+# suite asserts it as an equality, and this asserts it against the hardware.
+# WARNING - SETTLE RAISED 1.5 -> 2.5 s (H3, 2026-09-02). Regions 2 and 9 step
+# the velocity setpoint from standstill to 3.0 m/s, which RAILS the drive
+# controller at its 12 A current clamp for about 1.69 s:
+# v(t) = 13.19 (1 - exp(-0.1526 t)) at K_F 0.7538, F_COULOMB 2.00 N,
+# B_EFF 0.534 and M_EFF 3.5 kg. A 1.5 s inset therefore opened every such
+# window while the drive loop was still saturated, so the first ~190 ms of the
+# "settled" window carried a moving total and a moving clamp boundary. 2.5 s
+# clears the rail by 0.81 s.
+_FW26_SWEEP_SETTLE_S = 2.5
+_FW26_SWEEP_SPAN_TICKS = int(1000.0 * (FW26_CLAMP_SWEEP_REGION_S
+                                       - _FW26_SWEEP_SETTLE_S))       # 3500
+_FW26_SWEEP_DUTY_TICKS = int(0.78 * _FW26_SWEEP_SPAN_TICKS)           # 2730
+# The cadence gate this entry's tick floors are derived from (M8). It was 4000
+# rows in a 72 s window, 5.6 % coverage, while the switch floors below assumed
+# 94 %; a half-cadence stream then failed a TOPOLOGY check instead of the
+# cadence check.
+_FW26_SWEEP_CADENCE_COVER = 0.94
+_FW26_SWEEP_CADENCE_ROWS = int(1000.0 * 72.0 * _FW26_SWEEP_CADENCE_COVER)
+_FW26_SWEEP_BUS_HOLD_TICKS = int(0.98 * _FW26_SWEEP_CADENCE_ROWS)
+
+# -- THE MDAC PIN (M1, corrected 2026-09-02) ---------------------------------
+# TWO CORRECTIONS, and the second changes what the arm claims.
+#
+# 1. THE TOLERANCE WAS APPLIED TO THE WRONG NUMBER. `mdac_fc` / `mdac_bt` carry
+#    the RAW AD5443 command word, which is MDAC_CMD_LOAD_UPDATE (0x1000) OR'd
+#    with the 12-bit gain code. A +/- 6 % band on the WORD is a +/- 36 % band
+#    on the CODE at region 1 (word 4917 = 0x1000 | 821), because the constant
+#    4096 offset dilutes it. The nibble is now stripped, the band is applied to
+#    the code, and the bound is offset back into word space.
+#
+# 2. THE SUB-THRESHOLD ARM IS NOT A BIT-IDENTITY DISCRIMINATOR. At every
+#    sub-threshold region the fuel-cell bound 1.25/I_tot EXCEEDS DROOP_R_MAX,
+#    so `applyShareCurrentCeilings()` is the identity BY CONSTRUCTION and the
+#    arm cannot fail from a clamp defect however it is tuned. What it does pin
+#    is MODEL FIDELITY: the board's droop codes at a known standstill total
+#    against the walk's. It is kept, and relabelled to say so.
+#
+#    THE ACTUAL v25-vs-v26 DISCRIMINATOR IS A CLAMPED REGION'S PAIR. Region 2
+#    reads (4824, 7837) with the clamp absent and (5088, 5679) with it present:
+#    codes 728 against 992 on FC (+36 %) and 3741 against 1583 on BT (-58 %).
+#    That pin is added below. It sits on a DRIVEN region, so it carries the
+#    drive loop's own uncertainty and takes a wider band - still an order of
+#    magnitude inside the gap it has to resolve.
+_FW26_MDAC_NIBBLE = gov_mod.GOV_CONST["MDAC_CMD_LOAD_UPDATE"]     # 0x1000
+_FW26_SWEEP_MDAC_TOL = 0.02          # standstill regions, code-space
+_FW26_SWEEP_MDAC_TOL_DRIVEN = 0.10   # clamped regions, code-space
+# Walked (mdac_fc, mdac_bt) raw words at each STANDSTILL region, clamp ABSENT
+# and clamp present alike - they are identical there.
+_FW26_SWEEP_MDAC_PIN = {1: (4917, 6468), 8: (4917, 6468), 12: (5339, 5293)}
+# Walked (mdac_fc, mdac_bt) raw words at a CLAMPED region, clamp PRESENT, with
+# the clamp-absent pair recorded beside it as the value this pin refuses.
+_FW26_SWEEP_MDAC_CLAMPED_PIN = {2: ((5088, 5679), (4824, 7837))}
+
+
+def _fw26_mdac_band(word, tol):
+    """[lo, hi] raw-word bounds for a walked word at `tol` in CODE space.
+
+    The nibble is stripped, the tolerance applied to the 12-bit gain code, and
+    the result offset back into word space -- so a 2 % band is 2 % of the
+    quantity that actually moves (M1)."""
+    code = int(word) & 0x0FFF
+    lo = _FW26_MDAC_NIBBLE + int(code * (1.0 - tol))
+    hi = _FW26_MDAC_NIBBLE + int(code * (1.0 + tol)) + 1
+    return lo, hi
+
+
+def _fw26_sweep_signals():
+    """The twelve regions' checks, generated from the stimulus table."""
+    out = [
+        # 0. THE CADENCE CENSUS, so nothing below can pass on a run whose
+        #    observation stream stalled.
+        # Its floor is the one every tick floor in this entry is derived
+        # from (M8): a lossy stream must fail HERE, by name, and not as a
+        # spurious "a bus switch opened" or "the clamp never engaged".
+        {"name": "sweep_cadence", "min_rows": _FW26_SWEEP_CADENCE_ROWS,
+         "t_window": (8.0, 80.0),
+         "label": "the run streamed at full cadence across the whole region "
+                  "table (>= %d rows in a 72 s window = %.0f %% of the 1 kHz "
+                  "nominal)" % (_FW26_SWEEP_CADENCE_ROWS,
+                                100.0 * _FW26_SWEEP_CADENCE_COVER)},
+    ]
+    for i, (t0, v, sp, clamped) in enumerate(FW26_CLAMP_SWEEP_REGIONS,
+                                             start=1):
+        w = (t0 + _FW26_SWEEP_SETTLE_S, t0 + FW26_CLAMP_SWEEP_REGION_S)
+        if clamped:
+            # THE CLAMP BOUND, and held for essentially the whole settled
+            # window. 78 % of it is a floor loose enough for a slow engagement
+            # and unreachable by a run in which the clamp merely chattered.
+            out.append(
+                {"name": "sweep_r%02d_clamped" % i,
+                 "aux_bit": "fc_ceiling_active",
+                 "min_ticks": _FW26_SWEEP_DUTY_TICKS,
+                 "t_window": w,
+                 "label": "region %d (v %.1f m/s, share %.2f, walked total "
+                          "%.3f A - the HOST demand model's, not the board's): "
+                          "the FC ceiling BOUND for >= %d of the settled "
+                          "window's %d ticks"
+                          % (i, v, sp, _fw26_region_total(v),
+                             _FW26_SWEEP_DUTY_TICKS, _FW26_SWEEP_SPAN_TICKS)})
+            # ... and the acceptance band on the delivered current, two-sided.
+            out.append(
+                # `floor_min_value`: the claim is that I_fc was HELD at the
+                # ceiling for the whole settled window, which is the in-window
+                # MINIMUM. `min_value` tests the maximum and would pass on a
+                # single tick (H2).
+                {"name": "sweep_r%02d_fc_at_ceiling" % i, "column": "I_fc",
+                 "floor_min_value": 1.20, "t_window": w,
+                 "label": "region %d: I_fc never fell below the ceiling band "
+                          "(>= 1.20 A on every sample)" % i})
+            out.append(
+                {"name": "sweep_r%02d_fc_under_limit" % i, "column": "I_fc",
+                 "max_value": 1.30, "t_window": w,
+                 "label": "region %d: I_fc inside the acceptance band "
+                          "(<= 1.30 A, against LIMIT_I_FC_MAX 1.4 A)" % i})
+        else:
+            # THE CLAMP DID NOTHING. Below the ceiling fw v26 is arithmetically
+            # identical to fw v25, and the aux bit is the board's own statement
+            # of that.
+            out.append(
+                {"name": "sweep_r%02d_inert" % i,
+                 "aux_bit": "fc_ceiling_active", "max_ticks": 0, "t_window": w,
+                 "vacuity_note": ("the aux column cannot be blank here: the "
+                                  "clamped regions' `min_ticks` checks assert "
+                                  "the same byte streamed and parsed with a "
+                                  "bit SET, so a zero count is a read of the "
+                                  "bit and not an absent column"),
+                 "label": "region %d (v %.1f m/s, share %.2f, walked total "
+                          "%.3f A): the FC ceiling did NOT bind - below it "
+                          "fw v26 is fw v25"
+                          % (i, v, sp, _fw26_region_total(v))})
+        if i in _FW26_SWEEP_MDAC_PIN:
+            # THE MODEL-FIDELITY PIN, on the board (M1, relabelled 2026-09-02).
+            # NOT a clamp discriminator: at a sub-threshold region the
+            # fuel-cell bound 1.25/I_tot exceeds DROOP_R_MAX, so the clamp is
+            # the identity BY CONSTRUCTION and this pair cannot move whether
+            # the clamp is present or not. What it pins is the board's droop
+            # codes against the walk's at a known standstill total, where the
+            # total is the aux load alone and carries none of the drive loop's
+            # uncertainty.
+            for col, want in zip(("mdac_fc", "mdac_bt"),
+                                 _FW26_SWEEP_MDAC_PIN[i]):
+                lo, hi = _fw26_mdac_band(want, _FW26_SWEEP_MDAC_TOL)
+                out.append(
+                    {"name": "sweep_r%02d_%s_lo" % (i, col), "column": col,
+                     "floor_min_value": lo, "t_window": w,
+                     "label": "region %d: %s tracks the walk on every sample "
+                              "(>= %d; walked %d = 0x1000 | %d, +/- %.0f %% on "
+                              "the 12-bit CODE). MODEL FIDELITY, not clamp "
+                              "evidence - the clamp is the identity here by "
+                              "construction"
+                              % (i, col, lo, want, want & 0x0FFF,
+                                 100.0 * _FW26_SWEEP_MDAC_TOL)})
+                out.append(
+                    {"name": "sweep_r%02d_%s_hi" % (i, col), "column": col,
+                     "max_value": hi, "t_window": w,
+                     "label": "region %d: %s tracks the walk (<= %d)"
+                              % (i, col, hi)})
+        if i in _FW26_SWEEP_MDAC_CLAMPED_PIN:
+            # THE fw v25 / fw v26 DISCRIMINATOR (M1, new 2026-09-02). A CLAMPED
+            # region's droop pair is the only mdac observable the clamp
+            # actually moves. Region 2 walks to (5088, 5679) with the clamp
+            # present and (4824, 7837) without it - codes 992 against 728 on FC
+            # and 1583 against 3741 on BT. The band is +/- 10 % in code space
+            # because this is a DRIVEN region and the board's own drive loop
+            # sets the total; the gap it has to resolve is 36 % and 58 %.
+            _present, _absent = _FW26_SWEEP_MDAC_CLAMPED_PIN[i]
+            for col, want, refuse in zip(("mdac_fc", "mdac_bt"),
+                                         _present, _absent):
+                lo, hi = _fw26_mdac_band(want, _FW26_SWEEP_MDAC_TOL_DRIVEN)
+                assert not (lo <= refuse <= hi), (
+                    "region %d %s: the +/- %.0f %% band [%d, %d] admits the "
+                    "CLAMP-ABSENT value %d, so this pin cannot discriminate "
+                    "fw v25 from fw v26"
+                    % (i, col, 100.0 * _FW26_SWEEP_MDAC_TOL_DRIVEN, lo, hi,
+                       refuse))
+                out.append(
+                    {"name": "sweep_r%02d_%s_clamped_lo" % (i, col),
+                     "column": col, "floor_min_value": lo, "t_window": w,
+                     "label": "region %d: %s matches the CLAMP-PRESENT walk on "
+                              "every sample (>= %d; walked %d, the "
+                              "clamp-ABSENT value is %d and is refused by this "
+                              "band) - THE fw v25/v26 DISCRIMINATOR"
+                              % (i, col, lo, want, refuse)})
+                out.append(
+                    {"name": "sweep_r%02d_%s_clamped_hi" % (i, col),
+                     "column": col, "max_value": hi, "t_window": w,
+                     "label": "region %d: %s matches the CLAMP-PRESENT walk "
+                              "(<= %d; clamp-absent %d)"
+                              % (i, col, hi, refuse)})
+    # ── whole-run structure ─────────────────────────────────────────────────
+    out += [
+        # THE BATTERY CEILING IS NOT EXERCISED at any region's total.
+        {"name": "sweep_bt_ceiling_never", "aux_bit": "bt_ceiling_active",
+         "max_ticks": 0, "t_window": (8.0, 80.0),
+         "vacuity_note": ("the aux column cannot be blank across this window: "
+                          "the clamped regions assert the same byte with a bit "
+                          "SET inside it"),
+         "label": "the BT ceiling never bound (it would need 2.70 A on one "
+                  "channel against a 2.02 A worst-case bus)"},
+        # THE CLAMP NEVER OPENED A BUS SWITCH. A reference outside the droop
+        # band IS the channel-cutoff signal, so the band constraint at the tail
+        # of applyShareCurrentCeilings() is structural; this asserts it on the
+        # board. Zero rising edges: a cut followed by a restore would satisfy a
+        # tick floor and is exactly the failure a tick floor cannot see.
+        {"name": "sweep_no_switch_ring", "switch_bit": SW_FC_BUS,
+         "edge_count_between": (0, 0), "edge": "rise", "t_window": (8.0, 80.0),
+         "label": "no FC_BUS rising edge anywhere in the table - no cut, and "
+                  "therefore no sw_ring"},
+        {"name": "sweep_bt_bus_held", "switch_bit": SW_BT_BUS,
+         "min_ticks": _FW26_SWEEP_BUS_HOLD_TICKS, "t_window": (8.0, 80.0),
+         "label": "BT_BUS_ENABLE stayed high across the whole table (>= %d "
+                  "ticks = 98 %% of the rows `sweep_cadence` guarantees) - the "
+                  "split is genuinely two-source, which is what makes the "
+                  "clamp reachable at all" % _FW26_SWEEP_BUS_HOLD_TICKS},
+        # -- WHOLE-TABLE CURRENT BOUNDS (H3, 2026-09-02) --------------------
+        # The per-region checks bound the FUEL CELL only, and only inside the
+        # settled windows. The clamp's whole action is to move current onto the
+        # BATTERY, so the quantity the mechanism can run away in was
+        # unbounded, and the region transitions - where the drive controller
+        # rails at 12 A for ~1.69 s - were outside every window. These two
+        # bounds cover the whole table, transitions included.
+        #
+        # The walked worst case is region 7's 1.6130 A of battery and region
+        # 2/6/9's 2.016 A of total. LIMIT_I_BT_MAX is 3.0 A. 2.4 A gives the
+        # battery 49 % over its walked worst case and 20 % under the fault
+        # limit; 3.6 A gives the total 79 % over its walked worst case and sits
+        # under the FC + BT fault pair (4.4 A).
+        {"name": "sweep_batt_bounded", "column": "I_batt",
+         "max_value": 2.4, "t_window": (8.0, 80.0),
+         "label": "the battery never carried more than 2.4 A anywhere in the "
+                  "table, transitions included (walked worst case 1.6130 A in "
+                  "region 7; LIMIT_I_BT_MAX is 3.0 A) - the clamp's own "
+                  "liability, since what it takes off the fuel cell goes here"},
+        {"name": "sweep_total_bounded", "sum_of": ["I_fc", "I_batt"],
+         "max_value": 3.6, "t_window": (8.0, 80.0),
+         "label": "the two-source total never exceeded 3.6 A anywhere in the "
+                  "table (walked worst case 2.016 A) - the drive controller "
+                  "rails at 12 A for ~1.69 s on the standstill-to-3.0 m/s "
+                  "steps of regions 2 and 9, and this is the bound on what "
+                  "that puts on the bus"},
+    ]
+    return out
+
+
+def _fw26_region_total(v):
+    """The walked two-source total at a region's velocity setpoint [A].
+
+    The motor terms are the demand model's at a constant setpoint; the floor is
+    the aux load. Stated here rather than re-typed into twelve labels."""
+    motor = {0.0: 0.0, 0.5: 0.0844, 1.5: 0.3143, 2.5: 0.6275, 3.0: 0.8163}
+    return I_AUX_A + FW26_CLAMP_SWEEP_PRELOAD_A + motor[v]
+
+
+FAULT_EXPECTATIONS["fw26-clamp-sweep"] = {
+    "source": ("applyShareCurrentCeilings() (.ino:10273-10313) with "
+               "SHARE_GOV_I_FC_CEIL_A 1.25 A and SHARE_GOV_CEIL_HYST_A 0.05 A "
+               "(.ino:2406/:2430), against LIMIT_I_FC_MAX 1.4 A (.ino:1425). "
+               "Region table and load derivation at "
+               "hil_plant_sim.FW26_CLAMP_SWEEP_REGIONS; bounds from the "
+               "offline governor_model walk recorded above, including the "
+               "clamp-absent arm the mdac pins come from."),
+    "provisional_note": ("EVERY BOUND IN THIS ENTRY IS WALKED, NOT MEASURED - "
+                         "this scenario has never been run on the board, and "
+                         "the region TOTALS are the host demand model's while "
+                         "the board's own drive loop sets the real ones. "
+                         "Re-derive all of them from the first campaign that "
+                         "runs it."),
+    # FAULT-FREE, and OC_FC in particular: the whole point of the clamp is that
+    # the fuel cell is held at 1.25 A instead of climbing to the 1.4 A latch. A
+    # run that latches OC_FC here has not failed a check, it has falsified the
+    # mechanism.
+    "allow_only": 0,
+    # Past the last clamped region and into the closing sub-threshold one.
+    "survive_to": {"t": 74.0, "states": {2, 3}},
+    "signals_require": _fw26_sweep_signals(),
+}
+
+
 FAULT_EXPECTATIONS["share-staircase"] = {
     "source": (".ino:9231-9257 (updateShareSetpointCutoff, DROOP_R_MIN 0.15 / "
                "DROOP_R_MAX 0.85, SHARE_CUT_MAX_HANDOFF_A 0.5 A at :9234/:9250) + "
@@ -5805,6 +6456,58 @@ def _expectation_time_bounds(entry):
                 yield "signals_require[%s].t_window[1]" % _leaf, _w[1]
             if _sub.get("after_t") is not None:
                 yield "signals_require[%s].after_t" % _leaf, _sub["after_t"]
+
+
+# -----------------------------------------------------------------------------
+# NAMED AUX-BYTE MASKS (fw v26).
+#
+# `aux_bit` has always taken a numeric mask. The fw v26 clamp bits are the first
+# aux bits an expectation is likely to want to name in prose as well as to test,
+# and a bare 0x10 in a check is unreadable and unsearchable, so a STRING is
+# accepted as well and resolved here.
+#
+# THE MASK VALUES ARE NOT DECLARED HERE. They are the AUX_* constants imported
+# from `hil_plant_sim`, which mirror the firmware's own packing of the aux byte.
+# Only the LABELS are written out, and they are the same strings
+# `hil_report_analysis.aux_bits()` draws its figure bit-lanes from, so a check
+# and a figure lane cannot disagree about which bit is which. They are not
+# imported from there because that module requires numpy and this one must stay
+# importable under the stdlib-only interpreter; `test_run_hil_suite.py` asserts
+# the two maps agree, which is what keeps the duplication honest.
+#
+# An unknown name raises at resolution rather than silently masking with 0 - a
+# zero mask reads as "the bit was never set", which is a PASS on a
+# `max_ticks: 0` spec and therefore the worst possible failure mode.
+#
+# WARNING - DECLARED ABOVE THE SPEC-VALIDATION LOOP (M6, 2026-09-02). It used to
+# sit beside `scan_signals()`, so the only thing that checked a name was the
+# per-row scan, mid-campaign, on the runs that reach the spec. A typo in an
+# `aux_bit` name therefore survived import and every dry run, and surfaced as a
+# KeyError partway through a scenario. The validation loop below now resolves
+# every `aux_bit` name at IMPORT, which is where every other malformed spec in
+# this table fails.
+_AUX_BIT_NAMES = {
+    "fc_ceiling_active": AUX_FC_CEILING,
+    "bt_ceiling_active": AUX_BT_CEILING,
+}
+
+
+def _resolve_bit_mask(spec):
+    """The numeric mask a `switch_bit` / `aux_bit` spec names."""
+    if "switch_bit" in spec:
+        return int(spec["switch_bit"])
+    v = spec.get("aux_bit", 0)
+    if isinstance(v, str):
+        try:
+            return int(_AUX_BIT_NAMES[v])
+        except KeyError:
+            raise KeyError(
+                "unknown aux_bit name %r (known: %s). The names are "
+                "hil_report_analysis.aux_bits()' labels; an unknown one must "
+                "raise, because a zero mask would read as 'the bit was never "
+                "set' and PASS a max_ticks: 0 check."
+                % (v, ", ".join(sorted(_AUX_BIT_NAMES))))
+    return int(v)
 
 
 # events_any_of shape, asserted at import for the same reason every other bound
@@ -6054,6 +6757,18 @@ def _assert_signal_spec_shapes(_n, _e):
             # Same silent-drop rule as every other kind: _judge_signal_leaf()
             # tests it BEFORE the tick and value bounds, so anything paired with
             # it would be dropped.  It reads no column by design.
+            # -- M6: an `aux_bit` NAME is resolved at IMPORT ------------
+            # `_resolve_bit_mask()` raises on an unknown name, but it only ran
+            # inside the per-row scan, so a typo survived import and every dry
+            # run and surfaced mid-campaign. Resolving here makes a bad name a
+            # table defect at load time, like every other malformed spec.
+            if isinstance(_sub.get("aux_bit"), str):
+                try:
+                    _resolve_bit_mask(_sub)
+                except KeyError as _exc:
+                    raise AssertionError(
+                        "FAULT_EXPECTATIONS[%r].signals_require[%r]: %s"
+                        % (_n, _tag, _exc.args[0]))
             if "min_rows" in _sub:
                 assert not ({"min_ticks", "max_ticks", "max_ms",
                              "max_continuous_ticks", "edge_count_between",
@@ -7441,7 +8156,7 @@ def scan_signals(csv_path, specs, grace_s=WARM_RESET_GRACE_S):
                             bits = int(cell, 0)
                         except ValueError:
                             continue
-                        mask = int(spec.get("switch_bit", spec.get("aux_bit", 0)))
+                        mask = _resolve_bit_mask(spec)
                         cur = 1 if (bits & mask) else 0
                         # The latency kind is selected by `max_ms`, which no other
                         # kind carries.  (There is no "switch_fall_latency_ms"

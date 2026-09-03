@@ -82,7 +82,13 @@ must be inferred from the last records and flagged as inferred.
   better defined by signal level (e.g. `I_cmd >= 5.99` for a 6 A hold) than phase byte.
 - `flags`: bit2 = closed-loop mode, bit3 = closed-loop-has-run, bit4 = command from the
   Youla drive controller, bit5 = share loop is the Youla build (v5-era bits — records are
-  law-self-identifying).
+  law-self-identifying), bit6 = HIL provenance (fw v21), **bit7 = a source current
+  ceiling was binding on this tick (fw v26)**. Bit 7 is decoded as the helper column
+  `share_ceiling` by `tools/decode_benchlog.py`; it is a spare bit in an existing byte,
+  so the record size and BLG format v7 are unchanged. It is the ONLY bench-log evidence
+  that the clamp acted: the clamp is a reference-side bound, so a decoded run cannot
+  distinguish "the governor held the fuel cell at 1.25 A" from "the load happened to
+  stop there" out of the logged currents alone.
 
 ## v5 drive-controller fields (`u_unsat`, `drive_x0`)
 

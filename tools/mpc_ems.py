@@ -371,6 +371,15 @@ ROLL_BUDGET_MS_DEFAULT = 2.0
 # entirely, which is also what makes a run bit-reproducible (M6).
 COMMAND_PERIOD_MS = 20.0        # 1000 / PiCommander.PI_CMD_HZ, restated
 BUDGET_MARGIN_MS = 2.0          # the stated headroom against the command period
+# ⚠️ NOT RE-MEASURED IN THE fw v26 TOOLS ROUND (2026-09-02), and stated
+# rather than assumed. Both constants below are wall-clock costs of the
+# 50 Hz surface and of one roll chunk. The round added the fw v26
+# current-ceiling clamp to `GovernorModel.step()`, which the rolls tick,
+# so both are in principle affected. After the L6 constant hoist the
+# clamp's per-tick cost measures at -0.5 % over 50 000 ticks (0.2312 s
+# live against 0.2323 s with the ceilings out of reach, best of seven),
+# i.e. inside the machine's noise, so neither constant was moved. A
+# future ceiling change that is NOT free per tick must re-measure them.
 SURFACE_MS_NOMINAL = 0.17       # the 50 Hz surface's own work, measured
 ROLLOUT_MS_NOMINAL = 0.012      # one candidate rollout of expiry overshoot
 ROLL_CHUNK_OVERSHOOT_MS = 0.296  # one TICK_CHUNK of roll-slice overshoot
@@ -1810,6 +1819,14 @@ class Planner:
                     if pre.mode[j][sub] == STAGE_CLOSED:
                         lo = pre.lo[j][sub]
                         d = min(max(s, lo), 1.0 - lo)
+                        # fw v26 CURRENT-CEILING CLAMP, in the firmware's own
+                        # order: the minority-current clip above owns the floor,
+                        # and the ceiling clamp bounds the result before it
+                        # becomes the reference the controller tracks
+                        # (.ino:10635).  It is what makes the DELIVERED share
+                        # differ from the commanded one on a high-total stage,
+                        # and therefore a component of `mpc_share_pred_err`.
+                        d = gov_mod.ceiling_bounded_share(d, i_tot_sub)
                         carried = self._ratio_for(d, i_tot_sub)
                         self.closed_cells += 1
                         acted = s
@@ -1841,8 +1858,14 @@ class Planner:
                                        or (1.0 - carried) * i_tot_sub
                                        < HANDOFF_DARK_A)):
                             step_slow = SLEW_HANDOFF_PER_TICK
+                        # fw v26: the FEEDFORWARD submode DOES write the
+                        # MDACs, so it takes the clamp too (.ino:10562); HOLD
+                        # does not, and is left alone above.  Inert at every
+                        # reachable open-loop total, applied so a ceiling
+                        # retune cannot leave a writing path unguarded.
+                        s_ff_c = gov_mod.ceiling_bounded_share(s_ff, i_tot_sub)
                         r_mean, carried, dwell_left = ramp_mean(
-                            carried, s_ff, ticks_per_sub,
+                            carried, s_ff_c, ticks_per_sub,
                             step_fast=SLEW_FULL_PER_TICK,
                             step_slow=step_slow, dwell_left=dwell_left)
                         # The asymmetry map is evaluated at the sub-sample's mean

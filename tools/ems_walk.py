@@ -157,6 +157,17 @@ class WalkResult:
     delta_soc: float = 0.0
     mode_fractions: dict = field(default_factory=dict)
     mode_fractions_by_segment: dict = field(default_factory=dict)
+
+    # -- fw v26 current-ceiling census (ADDITIVE, 2026-09-02) ----------------
+    # `clamped_ticks` counts governor ticks on which either channel ceiling was
+    # binding; `clamped_fraction` is that count over the governor's own tick
+    # total, and `clamped_by_segment` splits it the way `mode_fractions_by_
+    # segment` splits the modes.  All three are zero on any stimulus whose
+    # two-source total stays under governor_model.CEILING_REACHABLE_I_TOT_A
+    # (1.55 A), which is every registered EMS stimulus at the time of writing.
+    clamped_ticks: int = 0
+    clamped_fraction: float = 0.0
+    clamped_by_segment: dict = field(default_factory=dict)
     share_cmd: list = field(default_factory=list)
     share_delivered: list = field(default_factory=list)
     r_applied: list = field(default_factory=list)
@@ -192,6 +203,9 @@ class WalkResult:
     sw_fc_charge: list = field(default_factory=list) # 1 inside a charge window
     mdac_fc: list = field(default_factory=list)      # governor MDAC word, FC
     mdac_bt: list = field(default_factory=list)      # governor MDAC word, BT
+    share_ceiling: list = field(default_factory=list) # 1 where the fw v26 clamp
+                                                      # bound on any sub-tick of
+                                                      # the stage
 
     def summary(self) -> str:
         lines = [
@@ -207,6 +221,12 @@ class WalkResult:
         ]
         for t0, t1 in self.charge_windows:
             lines.append("    %8.3f .. %8.3f s" % (t0, t1))
+        # Printed unconditionally: the delivered share is bounded in the
+        # governor-disabled arm too, so hiding the census behind
+        # `mode_fractions` would report nothing on exactly the walk whose
+        # census used to be structurally zero.
+        lines.append("current-ceiling clamp : %d tick(s), %.2f %%"
+                     % (self.clamped_ticks, 100.0 * self.clamped_fraction))
         if self.mode_fractions:
             lines.append("firmware mode fractions (governor ticks):")
             for m in gov_mod.MODES:
@@ -562,6 +582,8 @@ def walk(strategy_name: str, scenario_name: str, *, soc0: float = 0.7,
             "(see _soc_band_drain_a); without it the modelled demand for this "
             "scenario is materially low." % (", ".join(_ov.gap),))
     seg_counts = {"discharge": {}, "charge": {}}
+    seg_ceil = {"discharge": 0, "charge": 0}
+    seg_ticks = {"discharge": 0, "charge": 0}
     soc = float(soc0)
     share = sim.SOC_BAND_SHARE_NOMINAL
     delivered = share
@@ -605,6 +627,7 @@ def walk(strategy_name: str, scenario_name: str, *, soc0: float = 0.7,
             charge_now = bool(charging
                               and sim.EMS_RUN_ENTRY_S <= t < run_exit_s)
 
+        stage_clamped = False
         if governor:
             # EXTERNAL SWITCH OWNERS, re-asserted EVERY tick exactly as the
             # firmware does. doState2() writes FC_BUS_ENABLE HIGH on every Run
@@ -638,12 +661,35 @@ def walk(strategy_name: str, scenario_name: str, *, soc0: float = 0.7,
                                               o.fc_bus_req, o.bt_bus_req)
                 acc += delivered
                 seg_counts[seg][o.mode] = seg_counts[seg].get(o.mode, 0) + 1
+                seg_ticks[seg] += 1
+                if o.ceil_fc or o.ceil_bt:
+                    seg_ceil[seg] += 1
+                    stage_clamped = True
             stage_share = acc / n_sub
             r_now = g.state.r_prev
         else:
-            stage_share = share
-            delivered = share
-            r_now = share
+            # GOVERNOR DISABLED.  This arm reproduces
+            # gen_dp_ems_table.heuristic_walk()'s model, so it takes the same
+            # fw v26 delivered-share bound that model takes: the commanded
+            # share is a request and the current ceiling decides what is
+            # delivered.  The hysteresis-free helper is the correct one here -
+            # this arm has no tick history to carry a release memory in.
+            stage_share = gov_mod.ceiling_bounded_share(share,
+                                                        float(i_total[k]))
+            delivered = stage_share
+            stage_clamped = stage_share != share
+            r_now = stage_share
+            # THE CENSUS COUNTS THIS ARM TOO (2026-09-02).  It was governor-only
+            # at first, which made `clamped_ticks` structurally zero on every
+            # governor-disabled walk -- a census that can only read zero is not
+            # a census, and it would have reported "fw v26 never bound" on a
+            # walk in which the delivered share had in fact been bounded.  The
+            # unit here is the STAGE rather than the governor sub-tick, since
+            # this arm has no sub-ticks; the segment split is the same one.
+            seg = "charge" if charge_now else "discharge"
+            seg_ticks[seg] += 1
+            if stage_clamped:
+                seg_ceil[seg] += 1
 
         soc_stage_start = soc
         # THE BRAKING CREDIT (2026-09-02).  Share-independent and mask-excluded
@@ -724,6 +770,7 @@ def walk(strategy_name: str, scenario_name: str, *, soc0: float = 0.7,
             res.p_fc_bus_w.append(float(p_fc_bus))
             res.h2_cum_g.append(res.h2_g)
             res.sw_fc_charge.append(1 if charge_now else 0)
+            res.share_ceiling.append(1 if stage_clamped else 0)
             # The governor's own MDAC words. With the governor disabled there
             # is no write path to report, so the words stay absent (None).
             res.mdac_fc.append(None if last_out is None else last_out.code_fc)
@@ -734,6 +781,28 @@ def walk(strategy_name: str, scenario_name: str, *, soc0: float = 0.7,
 
     res.soc_final = soc
     res.delta_soc = soc - float(soc0)
+    # ── fw v26 current-ceiling census, BOTH ARMS ────────────────────────────
+    # Outside the `if governor:` block deliberately: the delivered share is
+    # bounded in either arm, so a census that only reported the governor arm
+    # would read zero on a governor-disabled walk that had in fact been
+    # clamped. The tick unit differs between the arms (governor sub-ticks
+    # against stages) and the note says which.
+    res.clamped_ticks = seg_ceil["discharge"] + seg_ceil["charge"]
+    n_gov = seg_ticks["discharge"] + seg_ticks["charge"]
+    res.clamped_fraction = (res.clamped_ticks / float(n_gov)
+                            if n_gov else 0.0)
+    res.clamped_by_segment = {
+        seg: seg_ceil[seg] / float(seg_ticks[seg])
+        for seg in seg_ticks if seg_ticks[seg]}
+    if res.clamped_ticks:
+        res.notes.append(
+            "fw v26 CURRENT CEILING BOUND the commanded share on %d %s "
+            "(%.2f %% of them); the delivered fuel-cell current was held at "
+            "SHARE_GOV_I_FC_CEIL_A / SHARE_GOV_I_BT_CEIL_A and the remainder "
+            "went to the other source"
+            % (res.clamped_ticks,
+               "governor tick(s)" if governor else "stage(s)",
+               100.0 * res.clamped_fraction))
     if governor:
         res.mode_fractions = g.mode_fractions()
         res.mode_fractions_by_segment = {

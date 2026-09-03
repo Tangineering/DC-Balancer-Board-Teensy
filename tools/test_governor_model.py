@@ -63,6 +63,13 @@ _FW_CONST_PATTERNS = {
     "SHARE_HANDOFF_LIVE_A": r"const(?:expr)?\s+float\s+SHARE_HANDOFF_LIVE_A\s*=\s*([0-9.]+)f",
     "SHARE_HANDOFF_DWELL_MAX_TICKS": r"const\s+int\s+SHARE_HANDOFF_DWELL_MAX_TICKS\s*=\s*(\d+)",
     "SHARE_GOV_FILT_ALPHA": r"const(?:expr)?\s+float\s+SHARE_GOV_FILT_ALPHA\s*=\s*([0-9.]+)f",
+    # fw v26 source current-ceiling governor.  These three are `constexpr float`
+    # in the firmware BY DESIGN -- the static_asserts at the constants are
+    # written against the symbols -- so the optional `expr` group above is
+    # load-bearing here rather than merely tolerant.
+    "SHARE_GOV_I_FC_CEIL_A": r"const(?:expr)?\s+float\s+SHARE_GOV_I_FC_CEIL_A\s*=\s*([0-9.]+)f",
+    "SHARE_GOV_I_BT_CEIL_A": r"const(?:expr)?\s+float\s+SHARE_GOV_I_BT_CEIL_A\s*=\s*([0-9.]+)f",
+    "SHARE_GOV_CEIL_HYST_A": r"const(?:expr)?\s+float\s+SHARE_GOV_CEIL_HYST_A\s*=\s*([0-9.]+)f",
     "SHARE_CUTOFF_HYST": r"const(?:expr)?\s+float\s+SHARE_CUTOFF_HYST\s*=\s*([0-9.]+)f",
     "SHARE_CUT_SURVIVOR_BLANK_MS": r"const\s+uint32_t\s+SHARE_CUT_SURVIVOR_BLANK_MS\s*=\s*(\d+)u",
     "SHARE_SP_CHANGE_EPS": r"const(?:expr)?\s+float\s+SHARE_SP_CHANGE_EPS\s*=\s*([0-9.eE+-]+)f",
@@ -801,3 +808,274 @@ def test_the_setpoint_cut_port_covers_both_directions_and_both_guards():
     #    candidate's rollout must carry across a restore.
     assert C["DROOP_RATIO_SLEW_HANDOFF_PER_TICK"] == 0.002
     assert C["SHARE_CUT_SURVIVOR_BLANK_MS"] == 30.0
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# fw v26 — source current-ceiling governor
+#
+# The FIRMWARE-EQUIVALENCE evidence for the clamp lives in
+# tools/test_governor_ceiling_equivalence.py, which drives the real
+# applyShareCurrentCeilings() and this port through one scripted sequence. The
+# tests below assert the things that file cannot: the constants' relation to
+# the fault limits, the reachability threshold as a WHOLE-LOOP property, and
+# the clamp's interaction with the rest of powerBalance().
+# ─────────────────────────────────────────────────────────────────────────────
+def test_ceiling_constants_sit_below_their_fault_limits(ino_text):
+    """The four firmware static_asserts, re-asserted against the live
+    constants. A ceiling at or above its fault limit would make the clamp chase
+    a latch it can never beat."""
+    C = gm.GOV_CONST
+    m_fc = re.search(r"#define\s+LIMIT_I_FC_MAX\s+([0-9.]+)f", ino_text)
+    m_bt = re.search(r"#define\s+LIMIT_I_BT_MAX\s+([0-9.]+)f", ino_text)
+    assert m_fc and m_bt, "could not find the two fault limits in the firmware"
+    lim_fc, lim_bt = float(m_fc.group(1)), float(m_bt.group(1))
+    assert C["SHARE_GOV_I_FC_CEIL_A"] < lim_fc
+    assert C["SHARE_GOV_I_BT_CEIL_A"] < lim_bt
+    # Each ceiling above the light-load conduction floor, so a ceiling can never
+    # demand a channel current below it. This is what makes the minority clip
+    # and the ceiling clamp provably non-conflicting.
+    assert C["SHARE_GOV_I_FC_CEIL_A"] > C["SHARE_MINORITY_I_MIN_A"]
+    assert C["SHARE_GOV_I_BT_CEIL_A"] > C["SHARE_MINORITY_I_MIN_A"]
+    # The release hysteresis stays inside the fuel-cell margin, so a released
+    # clamp is still under the fault limit.
+    assert C["SHARE_GOV_CEIL_HYST_A"] < lim_fc - C["SHARE_GOV_I_FC_CEIL_A"]
+
+
+def test_reachability_threshold_is_1p55_a_through_the_whole_loop():
+    """1.55 A of TWO-SOURCE total is the governing number for this feature.
+
+    Asserted through step(), not through the clamp alone, because the threshold
+    is a property of the ORDER: the minority-current clip caps the commanded
+    fuel-cell fraction at 1 - SHARE_MINORITY_I_MIN_A/I_tot, and only that cap
+    puts the first engagement at I_FC_CEIL + I_MINORITY rather than at
+    I_FC_CEIL / DROOP_R_MAX = 1.47 A."""
+    assert gm.CEILING_REACHABLE_I_TOT_A == pytest.approx(1.55, abs=1e-12)
+
+    def first_engagement(sp):
+        tot = 1.40
+        while tot <= 2.20:
+            g = gm.GovernorModel(dt_s=1e-3, seed_r=0.5)
+            d = 0.5
+            for k in range(3000):
+                i_fc = d * tot
+                o = g.step(sp, i_fc, tot - i_fc, True, True, k * 1e-3)
+                d = g.delivered_share(o.r_applied, tot, o.fc_bus_req,
+                                      o.bt_bus_req)
+                if o.ceil_fc:
+                    return tot
+            tot = round(tot + 0.05, 4)
+        return None
+
+    at = first_engagement(gm.GOV_CONST["DROOP_R_MAX"])
+    assert at is not None, "the clamp never engaged up to 2.20 A"
+    assert at >= 1.55 - 1e-9, ("engaged at %.4f A, below the 1.55 A "
+                               "reachability threshold" % at)
+    assert at <= 1.60 + 1e-9, ("engaged at %.4f A, more than one 0.05 A sweep "
+                               "step above 1.55 A" % at)
+
+
+def test_clamp_is_inert_and_bit_identical_below_the_ceilings():
+    """fw v26 is arithmetically identical to fw v25 below the ceilings. Two
+    identical runs at a total under the threshold must produce the same MDAC
+    codes and never raise a flag."""
+    def run(tot, sp):
+        g = gm.GovernorModel(dt_s=1e-3, seed_r=0.5)
+        d = 0.5
+        codes = []
+        flags = 0
+        for k in range(2000):
+            i_fc = d * tot
+            o = g.step(sp, i_fc, tot - i_fc, True, True, k * 1e-3)
+            d = g.delivered_share(o.r_applied, tot, o.fc_bus_req, o.bt_bus_req)
+            codes.append((o.code_fc, o.code_bt))
+            flags += int(o.ceil_fc or o.ceil_bt)
+        return codes, flags, g.state.ceil_ticks
+
+    codes_a, flags_a, ticks_a = run(1.20, 0.85)
+    codes_b, flags_b, ticks_b = run(1.20, 0.85)
+    assert codes_a == codes_b
+    assert flags_a == 0 and flags_b == 0
+    assert ticks_a == 0 and ticks_b == 0
+
+
+def test_clamp_holds_the_fuel_cell_at_the_ceiling_and_the_battery_takes_it():
+    """The mechanism, stated as a measurement: at 2.0 A of two-source total and
+    a commanded share of 0.75 the unclamped fuel-cell demand is 1.50 A. The
+    clamp must hold the delivered fuel-cell current at the ceiling and put the
+    remaining 0.75 A on the battery."""
+    tot = 2.0
+    g = gm.GovernorModel(dt_s=1e-3, seed_r=0.5)
+    d = 0.5
+    for k in range(4000):
+        i_fc = d * tot
+        o = g.step(0.75, i_fc, tot - i_fc, True, True, k * 1e-3)
+        d = g.delivered_share(o.r_applied, tot, o.fc_bus_req, o.bt_bus_req)
+    assert o.ceil_fc is True and o.ceil_bt is False
+    i_fc = d * tot
+    assert i_fc == pytest.approx(gm.GOV_CONST["SHARE_GOV_I_FC_CEIL_A"],
+                                 abs=1e-3)
+    assert tot - i_fc == pytest.approx(0.75, abs=1e-3)
+    # And the clamp never opened a bus switch.
+    assert o.fc_bus_req and o.bt_bus_req
+    assert gm.GOV_CONST["DROOP_R_MIN"] <= o.r_applied \
+        <= gm.GOV_CONST["DROOP_R_MAX"]
+    assert g.ceiling_fraction() > 0.5
+
+
+def test_clamp_state_is_dropped_on_the_minimum_load_return():
+    """A frozen loop is by definition not clamping anything. Leaving a flag set
+    would publish a stale clamp on all three observables for as long as the
+    freeze lasts."""
+    tot = 2.0
+    g = gm.GovernorModel(dt_s=1e-3, seed_r=0.5)
+    d = 0.5
+    for k in range(3000):
+        i_fc = d * tot
+        o = g.step(0.75, i_fc, tot - i_fc, True, True, k * 1e-3)
+        d = g.delivered_share(o.r_applied, tot, o.fc_bus_req, o.bt_bus_req)
+    assert o.ceil_fc is True, "the fixture never clamped"
+
+    o2 = g.step(0.75, 0.01, 0.01, True, True, 3.0)
+    assert o2.mode == gm.MODE_FROZEN
+    assert o2.ceil_fc is False and o2.ceil_bt is False
+    assert g.state.gov_fc_clamped is False
+
+
+def test_clamp_is_suppressed_while_a_deferred_cut_owns_the_setpoint():
+    """One owner per tick. A deferral has parked the reference on a band edge
+    to starve a doomed channel, and the fuel-cell ceiling would claw it back
+    off that edge. The clamp is suppressed and its flags dropped."""
+    g = gm.GovernorModel(dt_s=1e-3, seed_r=0.5)
+    tot = 2.0
+    # An out-of-band setpoint with the DOOMED channel hot. The doomed channel
+    # for sp > DROOP_R_MAX is the BATTERY, so the battery must be the one
+    # carrying more than SHARE_CUT_MAX_HANDOFF_A for the cut to be refused on
+    # load and the deferral to stand.
+    o = None
+    for k in range(200):
+        o = g.step(0.95, 0.25 * tot, 0.75 * tot, True, True, k * 1e-3)
+    assert g.state.deferred_bt is True, "the fixture never deferred"
+    assert g.state.gov_fc_clamped is False and g.state.gov_bt_clamped is False
+    assert o.ceil_fc is False and o.ceil_bt is False
+
+
+def test_ceiling_bounded_share_is_the_converged_image_of_the_dynamic_clamp():
+    """The demand models use the hysteresis-free helper. It must agree with the
+    dynamic port wherever the dynamic port has converged, which is the only
+    regime a stage-level demand model claims to describe.
+
+    ⚠️ THE TOTALS ARE AT OR ABOVE CEILING_REACHABLE_I_TOT_A, and that is the
+    contract rather than a convenience. The dynamic port is entered from
+    `step()` only AFTER the minority-current clip has run, so its caller
+    guarantees the total is one at which the clamp can act. The scalar helper
+    has no such caller and carries the reachability threshold itself; below it
+    the two DELIBERATELY differ, and
+    `test_ceiling_bounded_share_is_the_identity_below_the_threshold` pins that
+    difference."""
+    for tot in (gm.CEILING_REACHABLE_I_TOT_A, 1.6, 2.0, 2.5, 3.0, 4.0, 4.4,
+                6.0):
+        for sp in (0.15, 0.25, 0.5, 0.75, 0.85):
+            g = gm.GovernorModel(dt_s=1e-3)
+            g.state.filt_total = tot
+            got = None
+            for _ in range(5):
+                got = g._apply_share_current_ceilings(sp)
+            assert got == pytest.approx(gm.ceiling_bounded_share(sp, tot),
+                                        abs=1e-12), (tot, sp)
+
+
+def test_ceiling_bounded_share_is_the_identity_below_the_threshold():
+    """THE REACHABILITY GUARD, on the scalar helper the demand models call.
+
+    Below 1.55 A of two-source total the board's minority-current clip has
+    already capped the commanded fuel-cell current under the 1.25 A ceiling, so
+    no clamp occurs and the helper must return its argument. Without this the
+    demand models clamped in (1.47, 1.55) -- 250 of `ems-dp-replay`'s 34 827
+    cells did, at I_tot 1.47137 A where the board delivers 1.1714 A."""
+    naive_onset = gm.GOV_CONST["SHARE_GOV_I_FC_CEIL_A"] / gm.GOV_CONST[
+        "DROOP_R_MAX"]
+    assert naive_onset < gm.CEILING_REACHABLE_I_TOT_A
+    for tot in (0.5, 1.0, 1.2, naive_onset, 1.47137, 1.50,
+                gm.CEILING_REACHABLE_I_TOT_A - 1e-9):
+        for sp in (0.15, 0.5, 0.75, 0.84, 0.85):
+            assert gm.ceiling_bounded_share(sp, tot) == sp, (tot, sp)
+    # The threshold itself is live: the guard is a threshold, not an off switch.
+    assert gm.ceiling_bounded_share(0.85, gm.CEILING_REACHABLE_I_TOT_A) < 0.85
+    # The DYNAMIC port, whose caller owns the clip, still clamps below it --
+    # which is why the two helpers must not be assumed interchangeable.
+    g = gm.GovernorModel(dt_s=1e-3)
+    g.state.filt_total = 1.50
+    assert g._apply_share_current_ceilings(0.85) < 0.85
+
+
+def test_ceiling_bounded_share_resolves_the_infeasible_pair_to_the_fuel_cell():
+    """Above I_FC_CEIL + I_BT_CEIL = 3.95 A no split keeps both channels under
+    their ceilings. The fuel-cell bound is applied second and must win; the
+    commanded battery current is knowingly pushed over its own ceiling, and
+    FAULT_OC_BT is the intended latch from 4.25 A of total."""
+    C = gm.GOV_CONST
+    assert C["SHARE_GOV_I_FC_CEIL_A"] + C["SHARE_GOV_I_BT_CEIL_A"] == \
+        pytest.approx(3.95)
+    tot = 4.40
+    sp = gm.ceiling_bounded_share(0.15, tot)
+    assert sp * tot == pytest.approx(C["SHARE_GOV_I_FC_CEIL_A"], abs=1e-9)
+    i_bt = (1.0 - sp) * tot
+    assert i_bt == pytest.approx(3.15, abs=1e-9)
+    assert i_bt > C["SHARE_GOV_I_BT_CEIL_A"]
+
+
+def test_the_clamp_never_leaves_the_droop_band():
+    """A reference outside the band IS the channel-cutoff signal. A current
+    ceiling must never open a bus switch, so the constraint is structural."""
+    for tot in (1.5, 2.0, 4.0, 8.0, 8.34, 12.0, 40.0):
+        for sp in (0.0, 0.15, 0.5, 0.85, 1.0):
+            out = gm.ceiling_bounded_share(sp, tot)
+            if out != sp:
+                assert gm.GOV_CONST["DROOP_R_MIN"] <= out \
+                    <= gm.GOV_CONST["DROOP_R_MAX"], (tot, sp, out)
+
+
+def test_hysteresis_delays_the_release_but_not_the_engagement():
+    """The clamp engages when the demand exceeds the ceiling and releases only
+    when it falls SHARE_GOV_CEIL_HYST_A below it. Asserted on the clamp
+    directly, because the release boundary is the half a converged demand model
+    cannot see."""
+    C = gm.GOV_CONST
+    g = gm.GovernorModel(dt_s=1e-3)
+    tot = 2.0
+    ceil = C["SHARE_GOV_I_FC_CEIL_A"]
+    hyst = C["SHARE_GOV_CEIL_HYST_A"]
+    # Just under the ceiling: no engagement.
+    g.state.filt_total = tot
+    g._apply_share_current_ceilings((ceil - 1e-6) / tot)
+    assert g.state.gov_fc_clamped is False
+    # Just over: engagement.
+    g._apply_share_current_ceilings((ceil + 1e-6) / tot)
+    assert g.state.gov_fc_clamped is True
+    # Back to a demand inside the hysteresis band: still engaged.
+    g._apply_share_current_ceilings((ceil - 0.5 * hyst) / tot)
+    assert g.state.gov_fc_clamped is True
+    # Below the band: released.
+    g._apply_share_current_ceilings((ceil - 1.5 * hyst) / tot)
+    assert g.state.gov_fc_clamped is False
+
+
+def test_an_out_of_band_setpoint_is_never_clamped():
+    """THE SETPOINT LATCH OWNS OUT-OF-BAND, NOT THE CEILING CLAMP.
+
+    In the firmware there is no path on which a setpoint outside
+    [DROOP_R_MIN, DROOP_R_MAX] reaches applyShareCurrentCeilings(): the latch
+    either freezes the whole loop or defers, and the deferral branch suppresses
+    the clamp explicitly. A demand model whose share grid spans the full [0, 1]
+    -- the stochastic dynamic program's does -- therefore keeps its full-span
+    single-source commands intact.
+
+    This was found by a real failure: applying the bound to the SDP solver's
+    grid pulled its share-1.0 commands into the droop band and changed the
+    shipped policy."""
+    for tot in (1.6, 2.0, 4.0, 8.0):
+        for sp in (0.0, 0.05, 0.1499, 0.8501, 0.95, 1.0):
+            assert gm.ceiling_bounded_share(sp, tot) == sp, (tot, sp)
+    # And the band edges themselves ARE clamped, so the gate is a strict
+    # out-of-band test and not an off-by-one that disables the clamp at 0.85.
+    assert gm.ceiling_bounded_share(0.85, 2.0) < 0.85

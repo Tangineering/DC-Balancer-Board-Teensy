@@ -77,7 +77,7 @@ unchanged from v4/v5/v6):
   (u) header parse: record_size=106, version=7, fw_version/profileAmp/
       profileB carried through the same v4 header path unmodified.
   (v) record decode: the five new fields at their documented CSV positions
-      (indices 21-25, right after enc_spurious_drop_count), the 31-column
+      (indices 21-25, right after enc_spurious_drop_count), the 32-column
       CSV_HEADER_V7, and the fixed-point /256 exactness of the three EWMA
       level columns (fp 64 -> 0.25, fp 128 -> 0.5).
   (w) near-wrap u32 values (e.g. 0xFFFFFFF0) decode as large unsigned
@@ -85,6 +85,10 @@ unchanged from v4/v5/v6):
       negative DIFF across the wrap is a consumer-side concern, not a
       decode transform.
   (x) v7 record_size/version self-consistency hard error, mirroring (r).
+  (aa) fw v26 flags bit7 (0x80): the derived `share_gov_ceiling` tail column
+      on v7 rows -- set and clear records, per-record independence,
+      coexistence with bits 0-6, pre-v26 v7 logs reading 0, and v5/v6
+      keeping their own layouts.
   (y) v6 regression: v6 decode (header + 26-column CSV) is unchanged after
       adding v7 support.
 """
@@ -129,7 +133,8 @@ CSV_HEADER_V7 = ("t_us,share_sp,share_act,v_sp,v_act,I_fc,I_batt,gFC,gBT,"
                   "encoder_pos,enc_period_ref_us,enc_multi_pitch_count,"
                   "enc_spurious_drop_count,enc_edge_count_a,enc_edge_count_b,"
                   "enc_phase_ewma,enc_duty_a_ewma,enc_duty_b_ewma,"
-                  "fault_flags,ps_phase,dc_phase,trap_phase,flags")
+                  "fault_flags,ps_phase,dc_phase,trap_phase,flags,"
+                  "share_gov_ceiling")
 
 _passed = 0
 _failed = 0
@@ -880,7 +885,8 @@ def test_v7_header_and_record(tmpdir):
     unmodified, the five new fields at their documented CSV positions
     (indices 21-25, right after enc_spurious_drop_count), the /256
     fixed-point exactness of the three EWMA level columns, and the
-    31-column v7 CSV header."""
+    32-column v7 CSV header (31 record-derived columns plus the derived
+    fw v26 `share_gov_ceiling` tail column)."""
     sys.path.insert(0, str(HERE))
     import decode_benchlog as db
 
@@ -909,13 +915,13 @@ def test_v7_header_and_record(tmpdir):
     check("v7: profile_amp/profile_b decoded (v4 header path unmodified)",
           abs(res.header["profile_amp"] - 2.0) < 1e-5
           and abs(res.header["profile_b"] - 0.30) < 1e-5, repr(res.header))
-    check("v7: csv_header is the 31-column v7 header",
+    check("v7: csv_header is the 32-column v7 header",
           res.csv_header == CSV_HEADER_V7, res.csv_header)
     check("v7: emits all records", len(res.csv_rows) == n,
           f"csv data rows={len(res.csv_rows)}, expected {n}")
 
     first_fields = res.csv_rows[0].split(",")
-    check("v7: row has 31 fields", len(first_fields) == 31,
+    check("v7: row has 32 fields", len(first_fields) == 32,
           repr(first_fields))
     # Column order: ...enc_spurious_drop_count(20),enc_edge_count_a(21),
     # enc_edge_count_b(22),enc_phase_ewma(23),enc_duty_a_ewma(24),
@@ -1020,7 +1026,7 @@ def test_hil_build_flag(tmpdir):
     check("hil_build: no HIL warning when bit6 clear",
           not any("HIL_SIM" in w for w in res.warnings), repr(res.warnings))
     check("hil_build: CSV flags column untouched (0x03) when bit6 clear",
-          res.csv_rows[0].split(",")[-1] == "3", res.csv_rows[0])
+          res.csv_rows[0].split(",")[-2] == "3", res.csv_rows[0])
 
     # (2) bit6 set on every record, combined with bit4/bit5 (0x40|0x10|0x20
     # = 0x70) -- hil_build True, warning present, and the CSV flags column
@@ -1041,7 +1047,7 @@ def test_hil_build_flag(tmpdir):
           any("HIL_SIM" in l for l in res.report_lines),
           repr(res.report_lines))
     check("hil_build: CSV flags column carries the full byte (0x70) through",
-          res.csv_rows[0].split(",")[-1] == str(0x70), res.csv_rows[0])
+          res.csv_rows[0].split(",")[-2] == str(0x70), res.csv_rows[0])
 
     # (3) bit6 set on only ONE of several records: still detected (the
     # header-level flag is an ANY-record OR, not an all-records AND).
@@ -1072,6 +1078,100 @@ def test_hil_build_flag(tmpdir):
     res_v6 = db.decode_blg(data_v6)
     check("hil_build: v6 surfaces hil_build too",
           res_v6.header["hil_build"] is True, repr(res_v6.header))
+
+
+def test_share_ceiling_column(tmpdir):
+    """(aa) fw v26 flags bit7 (0x80, a source current ceiling was binding on
+    this tick) is decoded into the v7 CSV tail column `share_gov_ceiling` as a
+    0/1 integer, while the raw `flags` byte continues to pass through
+    unchanged beside it. Covers a record with the bit set and one without,
+    per-record independence, coexistence with bits 0-6 in the same byte, and
+    the v5/v6 layouts staying free of the column."""
+    sys.path.insert(0, str(HERE))
+    import decode_benchlog as db
+
+    check("share_gov_ceiling: FLAGS_SHARE_CEILING is bit7 (0x80)",
+          db.FLAGS_SHARE_CEILING == 0x80, hex(db.FLAGS_SHARE_CEILING))
+    check("share_gov_ceiling: v7 header names the column last",
+          db.CSV_HEADER_V7.split(",")[-1] == "share_gov_ceiling",
+          db.CSV_HEADER_V7)
+    check("share_gov_ceiling: `flags` keeps its index (now second-from-last)",
+          db.CSV_HEADER_V7.split(",")[-2] == "flags", db.CSV_HEADER_V7)
+
+    # Alternate set/clear records in ONE file, so the column is proven to be
+    # per-record rather than a file-level OR (the mistake hil_build's own
+    # semantics would invite). Bit7 is combined with bits 0-6 on the set
+    # records (0xF3 = 0x80|0x70|0x03) to show it neither disturbs nor is
+    # disturbed by the drive/share/HIL bits sharing the byte.
+    n = 6
+    data = pack_header_v7(fw_version=26)
+    for i in range(n):
+        data += pack_record_v7(t_us=i * 1000,
+                                flags=(0xF3 if i % 2 else 0x03))
+    data += pack_trailer(records_written=n, dropped=0, close_reason=1,
+                          record_size=RECORD_SIZE_V7)
+    res = db.decode_blg(data)
+
+    check("share_gov_ceiling: csv_header matches the 32-column v7 header",
+          res.csv_header == CSV_HEADER_V7, res.csv_header)
+    check("share_gov_ceiling: every row has 32 fields",
+          all(len(r.split(",")) == 32 for r in res.csv_rows),
+          repr(res.csv_rows[0]))
+
+    ceil_col = [r.split(",")[-1] for r in res.csv_rows]
+    flags_col = [r.split(",")[-2] for r in res.csv_rows]
+    check("share_gov_ceiling: bit7 clear decodes to 0",
+          ceil_col[0] == "0", ceil_col[0])
+    check("share_gov_ceiling: bit7 set decodes to 1",
+          ceil_col[1] == "1", ceil_col[1])
+    check("share_gov_ceiling: column follows the per-record bit, not a file OR",
+          ceil_col == ["0", "1"] * (n // 2), repr(ceil_col))
+    check("share_gov_ceiling: raw flags byte still passes through unchanged",
+          flags_col == [str(0x03), str(0xF3)] * (n // 2), repr(flags_col))
+    check("share_gov_ceiling: bit7 does not disturb the bit6 hil_build decode",
+          res.header["hil_build"] is True, repr(res.header))
+
+    # A v7 log from a pre-v26 flash never sets the bit: the column is present
+    # and reads 0 throughout, rather than being absent or blank.
+    data = pack_header_v7(fw_version=25)
+    for i in range(3):
+        data += pack_record_v7(t_us=i * 1000, flags=0x33)
+    data += pack_trailer(records_written=3, dropped=0, close_reason=1,
+                          record_size=RECORD_SIZE_V7)
+    res = db.decode_blg(data)
+    check("share_gov_ceiling: pre-v26 v7 log reads 0 on every row",
+          [r.split(",")[-1] for r in res.csv_rows] == ["0", "0", "0"],
+          repr(res.csv_rows))
+
+    # v5/v6 keep their own layouts: the derived column is v7-only, so their
+    # last CSV field is still the raw flags byte even with bit7 set.
+    data_v5 = pack_header_v5(fw_version=26)
+    data_v5 += pack_record_v5(t_us=0, flags=0x80)
+    data_v5 += pack_trailer(records_written=1, dropped=0, close_reason=1,
+                             record_size=RECORD_SIZE_V5)
+    res_v5 = db.decode_blg(data_v5)
+    check("share_gov_ceiling: v5 gains no column (last field is raw flags)",
+          res_v5.csv_header == CSV_HEADER_V5
+          and res_v5.csv_rows[0].split(",")[-1] == str(0x80),
+          res_v5.csv_rows[0])
+
+    data_v6 = pack_header_v6(fw_version=26)
+    data_v6 += pack_record_v6(t_us=0, flags=0x80)
+    data_v6 += pack_trailer(records_written=1, dropped=0, close_reason=1,
+                             record_size=RECORD_SIZE_V6)
+    res_v6 = db.decode_blg(data_v6)
+    check("share_gov_ceiling: v6 gains no column (last field is raw flags)",
+          res_v6.csv_header == CSV_HEADER_V6
+          and res_v6.csv_rows[0].split(",")[-1] == str(0x80),
+          res_v6.csv_rows[0])
+
+    # CLI level: the header line the tool actually prints carries the column.
+    path = write_blg(tmpdir, "v7_ceiling.BLG", data)
+    rc, out, err = run_decoder(path)
+    check("share_gov_ceiling CLI: exits 0", rc == 0, f"rc={rc} stderr={err}")
+    check("share_gov_ceiling CLI: stdout header ends with share_gov_ceiling",
+          bool(out) and out.splitlines()[0].endswith(",share_gov_ceiling"),
+          out.splitlines()[0] if out else "")
 
 
 def test_v6_regression(tmpdir):
@@ -1204,6 +1304,7 @@ def main():
         test_v7_near_wrap_edge_counters(tmpdir)
         test_v7_record_size_mismatch(tmpdir)
         test_hil_build_flag(tmpdir)
+        test_share_ceiling_column(tmpdir)
         test_v6_regression(tmpdir)
         test_v5_regression(tmpdir)
         test_v5_real_log_regression(tmpdir)

@@ -1155,3 +1155,50 @@ def test_measured_levers_opt_in_returns_the_measured_pair():
 def test_measured_levers_opt_in_refuses_the_old_era():
     with pytest.raises(ValueError):
         solver.measured_levers(eta_chg=None, use_measured_eta=True)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# M4: the share ladder must land ON the droop band edges, not one ULP outside
+# ─────────────────────────────────────────────────────────────────────────────
+def test_share_ladder_snaps_to_the_droop_band_edges():
+    """`np.linspace(0, 1, 21)[17]` is 0.8500000000000001, strictly greater than
+    DROOP_R_MAX.  Every consumer that asks "is this setpoint inside the
+    firmware's command band?" -- the fw v26 current ceiling first among them --
+    then reads the intended band edge as a SINGLE-SOURCE command.  The ladder
+    is a designed set of setpoints, so the snap belongs at its construction."""
+    import governor_model as gm
+    raw = np.linspace(0.0, 1.0, 21)
+    assert raw[17] > gm.GOV_CONST["DROOP_R_MAX"], "fixture assumption broken"
+    snapped = solver._snap_ladder_to_band(raw)
+    assert snapped[17] == gm.GOV_CONST["DROOP_R_MAX"]
+    assert not (snapped[17] > gm.GOV_CONST["DROOP_R_MAX"])
+    # Points genuinely outside the band are left exactly where they are: the
+    # single-source commands are a real part of this solver's control set.
+    for i in (0, 18, 19, 20):
+        assert snapped[i] == raw[i], i
+    # The LOWER edge is snapped for the same reason: raw[3] is
+    # 0.15000000000000002, which is inside the band but is not the band edge
+    # the ladder designer wrote.
+    assert raw[3] != gm.GOV_CONST["DROOP_R_MIN"]
+    assert snapped[3] == gm.GOV_CONST["DROOP_R_MIN"]
+    # Every other point is untouched.
+    for i in (1, 2, 4, 5, 10, 16):
+        assert snapped[i] == raw[i], i
+
+
+def test_share_ladder_snap_moves_nothing_at_a_ladder_that_lands_exactly():
+    """A ladder whose points already land on the edges must be untouched, so
+    the snap can never be the reason two ladders differ."""
+    exact = np.array([0.0, 0.15, 0.5, 0.85, 1.0])
+    assert np.array_equal(solver._snap_ladder_to_band(exact), exact)
+
+
+def test_share_ladder_snap_does_not_swallow_a_deliberate_neighbour():
+    """The tolerance is 1e-9, nine orders below the smallest gap between two
+    ladder points at any accepted ladder size, so a deliberately nearby control
+    survives."""
+    import governor_model as gm
+    edge = gm.GOV_CONST["DROOP_R_MAX"]
+    near = np.array([edge - 1e-6, edge + 1e-6])
+    out = solver._snap_ladder_to_band(near)
+    assert np.array_equal(out, near)

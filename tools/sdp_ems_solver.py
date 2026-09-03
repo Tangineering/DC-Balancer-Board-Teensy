@@ -430,6 +430,7 @@ if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 REPO_ROOT = os.path.dirname(_HERE)
 
+import governor_model as gov_mod                                      # noqa: E402
 from charger_power import (                                          # noqa: E402
     ETA_CHG_DEFAULT, charger_billing_voltage_v, charger_bus_current_a,
     charger_bus_power_w, check_eta_chg, era_label)
@@ -1019,6 +1020,45 @@ def charge_forbidden_bins(side, p_centers, quantile, chg_a, eta_chg=None):
 # ---------------------------------------------------------------------------
 # The solver
 # ---------------------------------------------------------------------------
+# The largest float error `np.linspace(0, 1, n)` puts on a ladder point.  One
+# ULP at 1.0 is 2.22e-16; 1e-9 is seven orders of magnitude of headroom and
+# still nine orders below the smallest gap between two ladder points at any
+# ladder size this solver accepts.
+_BAND_EDGE_EPS = 1e-9
+
+
+def _snap_ladder_to_band(shares):
+    """Snap ladder points that land within a float hair of a droop-band edge.
+
+    ⚠️ A LADDER POINT ONE ULP OUTSIDE THE BAND IS A DIFFERENT CONTROL.
+    `np.linspace(0, 1, 21)[17]` is 0.8500000000000001, not 0.85, so it is
+    strictly greater than DROOP_R_MAX.  Everything downstream that asks "is
+    this setpoint inside the firmware's command band?" -- the fw v26 current
+    ceiling first among them -- answers NO for it, and the point is then
+    treated as a single-source command rather than as the band edge the ladder
+    designer wrote.  At the top bin's 1.536 A that read the fuel cell at
+    1.3056 A, above the 1.25 A ceiling, on a control the board would have
+    clamped.
+
+    The ladder is a DESIGNED set of setpoints, so the fix belongs here rather
+    than in the consumers: an intended 0.85 becomes 0.85, and the same is done
+    at DROOP_R_MIN, where `linspace`'s 0.15000000000000002 is inside the band
+    but is still not the edge the designer wrote.  Points GENUINELY outside the
+    band -- 0.0, 0.9, 1.0, the single-source commands this solver deliberately
+    carries -- are left exactly where they are.
+
+    VERIFIED NOT TO MOVE A SHIPPED ARTIFACT: with the snap in place
+    `sdp_policy_v3` still reproduces at policy-block sha256 `0443febf...` and
+    `sdp_policy_v4` at `8ca7dcee...`, both exact.
+    """
+    out = np.array(shares, dtype=float)
+    for edge in (gov_mod.GOV_CONST["DROOP_R_MIN"],
+                 gov_mod.GOV_CONST["DROOP_R_MAX"]):
+        near = np.abs(out - edge) <= _BAND_EDGE_EPS
+        out[near] = edge
+    return out
+
+
 def build_stage(p_centers, shares, soc_grid, alpha, dt, cap_as, chg_a,
                 chg_allowed, soc_target, soc_lo, soc_hi, eta_chg=None):
     """Per-bin (stage_cost, soc_next, feasible) arrays.
@@ -1039,7 +1079,30 @@ def build_stage(p_centers, shares, soc_grid, alpha, dt, cap_as, chg_a,
     for j, p in enumerate(p_centers):
         # D4: regen bins put nothing through the share path.
         p_pos = max(float(p), 0.0)
-        p_fc = shares * p_pos                                    # (m,)
+        # fw v26 DELIVERED-SHARE SEMANTICS.  The firmware's source
+        # current-ceiling governor bounds the COMMANDED fuel-cell fraction, so
+        # the share this bin actually delivers is the bounded one and the
+        # battery takes the remainder.  The scalar authority is
+        # `governor_model.ceiling_bounded_share()`; it is applied per share
+        # point rather than through a second vectorised copy, so this solver and
+        # the DP cannot drift apart on the bound.
+        #
+        # INERT AT THIS DEMAND SCALE, stated with the real numbers rather than
+        # with an approximation (corrected 2026-09-02).  The earlier comment
+        # said the bin totals were "far under 1.47 A"; the TOP BIN CENTRE is
+        # 1.536050 A, which is not far under it, and the naive 1.47 A figure was
+        # itself the wrong threshold.  The governing threshold is
+        # `governor_model.CEILING_REACHABLE_I_TOT_A` = 1.55 A of two-source
+        # total -- the minority-current clip caps the commanded fuel-cell
+        # current at I_tot - 0.30 A, which does not reach the 1.25 A ceiling
+        # sooner -- so the top bin centre clears it by 0.014 A.  The margin is
+        # thin, which is exactly why the call is here and not replaced by a
+        # comment: a rescaled TPM must not be able to produce a policy the board
+        # would clamp without the solver knowing.
+        i_tot_bin = p_pos / V_BUS_NOMINAL_V
+        d_share = np.array([gov_mod.ceiling_bounded_share(float(sv), i_tot_bin)
+                            for sv in shares])
+        p_fc = d_share * p_pos                                   # (m,)
         p_bt = p_pos - p_fc
         i_batt = p_bt / V_PACK_NOMINAL_V                         # + = discharge
         d_soc = -i_batt * dt / cap_as                            # (m,)
@@ -1504,7 +1567,7 @@ def main(argv=None):
 
     # ── grids ────────────────────────────────────────────────────────────────
     soc_grid = np.linspace(args.soc_min, args.soc_max, args.soc_n)
-    shares = np.linspace(0.0, 1.0, args.share_n)
+    shares = _snap_ladder_to_band(np.linspace(0.0, 1.0, args.share_n))
     cap_as = args.capacity_ah * 3600.0
     chg_a = float(args.charge_i_ceiling)
 

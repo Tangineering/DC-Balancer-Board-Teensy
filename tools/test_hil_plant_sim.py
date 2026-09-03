@@ -1318,6 +1318,9 @@ EXPECTED_SCENARIO_NAMES = {
     "ems-y-b30-v1", "ems-y-b30-v3", "ems-y-b00-v1", "ems-y-b00-v3",
     "ems-ftp75-5050", "ems-ftp75-socband",
     "mppt-tracking", "charge-to-full", "pi-silence", "share-staircase",
+    # fw v26 tools round (2026-09-02): the only stimulus that reaches the
+    # source current-ceiling clamp.
+    "fw26-clamp-cruise", "fw26-clamp-sweep",
     # 2026-08-31 SDP round: the online stochastic-DP policy scenario.
     "ems-sdp",
     # 2026-09-02 (WP-1B2b): the alpha sweep's three live points, all on the
@@ -1424,6 +1427,8 @@ EXPECTED_SCENARIO_DURATIONS_S = {
     "charge-to-full": 130.0,
     "pi-silence": 14.0,
     "share-staircase": 47.0,
+    "fw26-clamp-cruise": 38.0,
+    "fw26-clamp-sweep": 84.0,
     # 2026-08-31 SDP round: derived by reference from ems-soc-band's own
     # duration_s (SCENARIOS["ems-sdp"]["duration_s"] = SCENARIOS["ems-soc-band"]
     # ["duration_s"]).
@@ -2032,11 +2037,14 @@ def test_csv_schema_sim_mode_appends_soc(tmp_path):
     # seventh-from-last.
     # mppt_thresh_cnt (fw v24) is appended AFTER the per-mode blocks, in BOTH
     # schemas — it is an observed BOARD field, not a plant quantity.
-    assert header[-12:] == ["mppt_thresh_cnt", "error_code",
+    # fc_ceil/bt_ceil (fw v26, aux bits 4/5) are appended after the MPC
+    # block in BOTH schemas -- observed BOARD fields, like mppt_thresh_cnt.
+    assert header[-2:] == ["fc_ceil", "bt_ceil"]
+    assert header[-14:-2] == ["mppt_thresh_cnt", "error_code",
                            "p_mot_w", "p_fc_w", "p_batt_w",
                            "p_chop_w", "p_aux_w", "p_bal_w", "p_chg_loss_w",
                            "mpc_solve_ms", "mpc_share_pred_err", "mpc_budget_hit"]
-    assert header[-19:-12] == ["soc", "cmd_v_sp", "cmd_share_sp",
+    assert header[-21:-14] == ["soc", "cmd_v_sp", "cmd_share_sp",
                               "h2_rate_gps", "h2_cum_g", "h2_sdp_cum_g",
                               "cmd_share_sp_raw"]
     assert "elec_substep_hz" not in header
@@ -2047,13 +2055,16 @@ def test_csv_schema_sim_mode_appends_soc(tmp_path):
 def test_csv_schema_hifi_mode_appends_elec_columns(tmp_path):
     header, _rows = _run_main_csv(
         tmp_path, ["--scenario", "steady", "--electrical", "hifi", "--duration", "0.02"])
-    assert header[-12:] == ["mppt_thresh_cnt", "error_code",
+    # fc_ceil/bt_ceil (fw v26, aux bits 4/5) are appended after the MPC
+    # block in BOTH schemas -- observed BOARD fields, like mppt_thresh_cnt.
+    assert header[-2:] == ["fc_ceil", "bt_ceil"]
+    assert header[-14:-2] == ["mppt_thresh_cnt", "error_code",
                            "p_mot_w", "p_fc_w", "p_batt_w",
                            "p_chop_w", "p_aux_w", "p_bal_w", "p_chg_loss_w",
                            "mpc_solve_ms", "mpc_share_pred_err", "mpc_budget_hit"]  # fw v24/v25 tail
     # `elec_substep_n` (2026-09-02, review PLANT-R1-F6) is appended AFTER the
     # two established elec columns, so nothing downstream of them moves.
-    assert header[-22:-12] == ["soc", "elec_substep_hz", "elec_events",
+    assert header[-24:-14] == ["soc", "elec_substep_hz", "elec_events",
                               "elec_substep_n",
                               "cmd_v_sp", "cmd_share_sp",
                               "h2_rate_gps", "h2_cum_g", "h2_sdp_cum_g",
@@ -2087,15 +2098,17 @@ def test_csv_schema_replay_mode_appends_cmd_columns_after_replay_rec(tmp_path):
     # reason: declared in BOTH schemas so their tail indices are fixed. They
     # are BLANK on every replay row -- no plant integrator ran -- which the
     # blanking test below pins; here only their POSITION is pinned.
+    # fc_ceil/bt_ceil (fw v26) follow the same rule again: observed board
+    # fields, declared in BOTH schemas, appended after everything established.
     POWER_TAIL = ["p_mot_w", "p_fc_w", "p_batt_w",
                   "p_chop_w", "p_aux_w", "p_bal_w", "p_chg_loss_w",
                   "mpc_solve_ms", "mpc_share_pred_err",
-                  "mpc_budget_hit"]
+                  "mpc_budget_hit", "fc_ceil", "bt_ceil"]
     assert header == (REPLAY_CSV_HEADER_PIN
                       + ["cmd_v_sp", "cmd_share_sp", "mppt_thresh_cnt",
                          "error_code"] + POWER_TAIL)
     assert header.index("replay_rec") == REPLAY_CSV_HEADER_PIN.index("replay_rec")
-    assert header[-14:] == ["cmd_v_sp", "cmd_share_sp", "mppt_thresh_cnt",
+    assert header[-16:] == ["cmd_v_sp", "cmd_share_sp", "mppt_thresh_cnt",
                             "error_code"] + POWER_TAIL
 
 
@@ -2356,7 +2369,8 @@ def test_replay_commands_csv_header_cmd_columns_after_replay_rec(tmp_path):
                          "error_code", "p_mot_w", "p_fc_w", "p_batt_w",
                          "p_chop_w", "p_aux_w", "p_bal_w",
                          "p_chg_loss_w", "mpc_solve_ms",
-                         "mpc_share_pred_err", "mpc_budget_hit"])
+                         "mpc_share_pred_err", "mpc_budget_hit",
+                         "fc_ceil", "bt_ceil"])
     assert header.index("replay_rec") == REPLAY_CSV_HEADER_PIN.index("replay_rec")
 
 
@@ -2373,7 +2387,8 @@ def test_replay_plain_csv_header_unchanged_cmd_columns_blank(tmp_path):
                          "error_code", "p_mot_w", "p_fc_w", "p_batt_w",
                          "p_chop_w", "p_aux_w", "p_bal_w",
                          "p_chg_loss_w", "mpc_solve_ms",
-                         "mpc_share_pred_err", "mpc_budget_hit"])
+                         "mpc_share_pred_err", "mpc_budget_hit",
+                         "fc_ceil", "bt_ceil"])
     v_sp_idx = header.index("cmd_v_sp")
     share_sp_idx = header.index("cmd_share_sp")
     assert rows, "sanity"
@@ -2682,11 +2697,14 @@ def test_m3_hifi_with_csv_creates_events_sidecar(tmp_path):
     # SDP round) is appended after THAT, and cmd_share_sp_raw (2026-08-31
     # ledger fix queue) is appended after THAT -- so elec_events is now
     # seventh-from-last, not third-from-last.
-    assert header[-12:] == ["mppt_thresh_cnt", "error_code",
+    # fc_ceil/bt_ceil (fw v26, aux bits 4/5) are appended after the MPC
+    # block in BOTH schemas -- observed BOARD fields, like mppt_thresh_cnt.
+    assert header[-2:] == ["fc_ceil", "bt_ceil"]
+    assert header[-14:-2] == ["mppt_thresh_cnt", "error_code",
                            "p_mot_w", "p_fc_w", "p_batt_w",
                            "p_chop_w", "p_aux_w", "p_bal_w", "p_chg_loss_w",
                            "mpc_solve_ms", "mpc_share_pred_err", "mpc_budget_hit"]  # fw v24/v25 tail
-    assert header[-18:-12] == ["cmd_v_sp", "cmd_share_sp", "h2_rate_gps",
+    assert header[-20:-14] == ["cmd_v_sp", "cmd_share_sp", "h2_rate_gps",
                              "h2_cum_g", "h2_sdp_cum_g", "cmd_share_sp_raw"]
     # Resolved BY NAME rather than by a negative index: the fw v24 column
     # shifted every from-the-end offset by one, which is exactly the breakage
@@ -3259,11 +3277,14 @@ def test_pi_live_csv_cmd_columns_blank(tmp_path):
     # cmd_share_sp, and cmd_share_sp_raw (2026-08-31 ledger fix queue) is now
     # the last column in simulated-plant mode -- blank here too, since no SDP
     # policy drives a --pi-live run (no commander is even constructed).
-    assert header[-12:] == ["mppt_thresh_cnt", "error_code",
+    # fc_ceil/bt_ceil (fw v26, aux bits 4/5) are appended after the MPC
+    # block in BOTH schemas -- observed BOARD fields, like mppt_thresh_cnt.
+    assert header[-2:] == ["fc_ceil", "bt_ceil"]
+    assert header[-14:-2] == ["mppt_thresh_cnt", "error_code",
                            "p_mot_w", "p_fc_w", "p_batt_w",
                            "p_chop_w", "p_aux_w", "p_bal_w", "p_chg_loss_w",
                            "mpc_solve_ms", "mpc_share_pred_err", "mpc_budget_hit"]  # fw v24/v25 tail
-    assert header[-18:-12] == ["cmd_v_sp", "cmd_share_sp", "h2_rate_gps",
+    assert header[-20:-14] == ["cmd_v_sp", "cmd_share_sp", "h2_rate_gps",
                              "h2_cum_g", "h2_sdp_cum_g", "cmd_share_sp_raw"]
     v_idx, share_idx = header.index("cmd_v_sp"), header.index("cmd_share_sp")
     raw_idx = header.index("cmd_share_sp_raw")
@@ -3949,8 +3970,27 @@ def test_d9_collect_model_constants_specific_excluded_names_absent():
     for excluded in ("META_FORMAT_VERSION", "WARM_RESET_GRACE_S",
                      "WARM_RESET_TIMES_MAX", "HIL_SYNC_INJECT", "HIL_INJECT_SIZE",
                      "HIL_OUTPUT_SIZE", "TEENSY_PORT_DEFAULT", "SW_FC_BUS",
-                     "AUX_FC_REG", "MDAC_CMD_LOAD_UPDATE", "PI_CMD_SIZE"):
+                     "AUX_FC_REG", "MDAC_CMD_LOAD_UPDATE", "PI_CMD_SIZE",
+                     # fw v26 tools round: one scenario's stimulus shape, not a
+                     # model coefficient. Leaving these in moved the
+                     # fingerprint on a commit that changed no model value.
+                     "FW26_CLAMP_CRUISE_LOAD_A", "FW26_CLAMP_SWEEP_PRELOAD_A",
+                     "FW26_CLAMP_SWEEP_REGION_S"):
         assert excluded not in names, excluded
+
+
+def test_d9_fw26_stimulus_constants_do_not_move_the_fingerprint():
+    """The fw v26 clamp scenarios' load/geometry constants are a STIMULUS
+    shape.  Retuning one must not read as "the plant model moved" against
+    every sidecar written before the scenarios existed."""
+    before = hil.constants_hash(hil.collect_model_constants())
+    monkeypatch_value = hil.FW26_CLAMP_CRUISE_LOAD_A + 0.25
+    old = hil.FW26_CLAMP_CRUISE_LOAD_A
+    try:
+        hil.FW26_CLAMP_CRUISE_LOAD_A = monkeypatch_value
+        assert hil.constants_hash(hil.collect_model_constants()) == before
+    finally:
+        hil.FW26_CLAMP_CRUISE_LOAD_A = old
 
 
 def test_d9_collect_model_constants_no_duplicate_bare_names_across_modules():
@@ -8049,12 +8089,15 @@ def test_csv_header_carries_h2_sdp_cum_g_at_expected_position(tmp_path):
         tmp_path, ["--scenario", "steady", "--electrical", "simple", "--duration", "0.02"])
     # cmd_share_sp_raw (2026-08-31 ledger fix queue) is now appended after
     # h2_sdp_cum_g, so h2_sdp_cum_g is no longer the last column.
-    assert header[-12:] == ["mppt_thresh_cnt", "error_code",
+    # fc_ceil/bt_ceil (fw v26, aux bits 4/5) are appended after the MPC
+    # block in BOTH schemas -- observed BOARD fields, like mppt_thresh_cnt.
+    assert header[-2:] == ["fc_ceil", "bt_ceil"]
+    assert header[-14:-2] == ["mppt_thresh_cnt", "error_code",
                            "p_mot_w", "p_fc_w", "p_batt_w",
                            "p_chop_w", "p_aux_w", "p_bal_w", "p_chg_loss_w",
                            "mpc_solve_ms", "mpc_share_pred_err", "mpc_budget_hit"]  # fw v24/v25 tail
-    assert header[-13] == "cmd_share_sp_raw"
-    assert header[-16:-12] == ["h2_rate_gps", "h2_cum_g", "h2_sdp_cum_g",
+    assert header[-15] == "cmd_share_sp_raw"
+    assert header[-18:-14] == ["h2_rate_gps", "h2_cum_g", "h2_sdp_cum_g",
                               "cmd_share_sp_raw"]
 
 
@@ -8342,7 +8385,7 @@ def test_csv_mppt_thresh_cnt_blank_before_the_first_frame_then_populated(
     header, rows = _run_scripted_csv(tmp_path, monkeypatch, frames,
                                      duration=0.1, port=58961)
     idx = header.index("mppt_thresh_cnt")
-    assert idx == len(header) - 12     # appended; error_code + 7 power + 3 mpc cols after
+    assert idx == len(header) - 14     # error_code + 7 power + 3 mpc + 2 ceil after
     assert rows[0][idx] == ""                          # no frame yet
     assert rows[-1][idx] == "19"
     # 255 is written as 255, not blanked: "external-resistor mode / never
@@ -8374,6 +8417,89 @@ def test_csv_mppt_thresh_cnt_blank_for_every_row_of_a_legacy_run(
     assert any(r[st] == "2" for r in rows)
 
 
+def test_aux_ceiling_masks_are_bits_4_and_5():
+    """fw v26 aux bits 4/5, pinned literally rather than derived from each
+    other -- a wrong mask is self-consistent everywhere else in the file."""
+    assert hil.AUX_FC_CEILING == 0x10
+    assert hil.AUX_BT_CEILING == 0x20
+    # They must not collide with the four pin-level bits already in the byte.
+    pins = (hil.AUX_FC_REG | hil.AUX_BT_REG | hil.AUX_MPPT_DISABLE
+            | hil.AUX_CBAL_DISABLE)
+    assert pins & (hil.AUX_FC_CEILING | hil.AUX_BT_CEILING) == 0
+
+
+def test_aux_ceiling_masks_are_excluded_from_the_constants_fingerprint():
+    """AUX_* is a bitmask family, not a model constant: adding the two masks
+    must not move `constants_hash`, or a protocol edit reads as a plant
+    change (the exact confusion CONSTANTS_EXCLUDE_PREFIXES exists to stop)."""
+    names = collect = hil.collect_model_constants()
+    assert not any(k.endswith(".AUX_FC_CEILING") or
+                   k.endswith(".AUX_BT_CEILING") for k in names), sorted(names)
+
+
+def test_aux_ceiling_bits_survive_the_observation_frame_round_trip():
+    """The bits ride in an existing byte: an 18-byte frame carrying them
+    parses with HIL_OUTPUT_SIZE and the checksum span unchanged, and the two
+    clamp bits do not disturb the four pin-level bits beside them."""
+    frame = hil.pack_output(seq=1, state=2, sw=0x07,
+                            aux=hil.AUX_FC_REG | hil.AUX_BT_CEILING,
+                            current=0.0, mdac_fc=0, mdac_bt=0, faults=0,
+                            mppt_cnt=19, error_code=0)
+    assert len(frame) == hil.HIL_OUTPUT_SIZE == 18
+    dec = hil.parse_output(frame)
+    assert dec is not None
+    assert dec["aux"] & hil.AUX_BT_CEILING
+    assert not dec["aux"] & hil.AUX_FC_CEILING
+    assert dec["aux"] & hil.AUX_FC_REG
+    assert not dec["aux"] & hil.AUX_BT_REG
+
+
+def test_csv_ceiling_columns_blank_before_the_first_frame_then_zero_or_one(
+        tmp_path, monkeypatch):
+    """fc_ceil/bt_ceil: BLANK before any observation frame (the board said
+    nothing), then 0/1 per aux bit -- 0, not blank, because a clear bit IS an
+    observation ("this channel was not clamped"), unlike mppt_thresh_cnt,
+    whose BYTE can be absent."""
+    frames = {50: _make_output_frame(state=2, aux=hil.AUX_FC_REG
+                                     | hil.AUX_FC_CEILING, mppt_cnt=19,
+                                     error_code=0)}
+    header, rows = _run_scripted_csv(tmp_path, monkeypatch, frames,
+                                     duration=0.1, port=58981)
+    fc = header.index("fc_ceil")
+    bt = header.index("bt_ceil")
+    assert (fc, bt) == (len(header) - 2, len(header) - 1)
+    assert rows[0][fc] == "" and rows[0][bt] == ""      # no frame yet
+    assert rows[-1][fc] == "1"
+    assert rows[-1][bt] == "0"                          # observed clear, not blank
+
+
+def test_csv_ceiling_columns_report_the_bt_channel_independently(
+        tmp_path, monkeypatch):
+    """The two columns are decoded from separate masks, so a BT-only clamp
+    must not light fc_ceil -- the mistake a single shared mask would make."""
+    frames = {5: _make_output_frame(state=2, aux=hil.AUX_BT_REG
+                                    | hil.AUX_BT_CEILING, mppt_cnt=19,
+                                    error_code=0)}
+    header, rows = _run_scripted_csv(tmp_path, monkeypatch, frames,
+                                     duration=0.05, port=58982)
+    assert rows[-1][header.index("fc_ceil")] == "0"
+    assert rows[-1][header.index("bt_ceil")] == "1"
+
+
+def test_csv_ceiling_columns_zero_on_a_legacy_frame_that_cannot_set_them(
+        tmp_path, monkeypatch):
+    """A fw v21-v25 flash never sets bits 4/5, so both columns read 0 on every
+    observed row. That is the correct reading: the BYTE is present and the
+    bits are clear, which is a positive "not clamped", unlike the absent
+    mppt_thresh_cnt byte the same frame lacks."""
+    frames = {5: _make_output_frame(state=2, aux=0x0F, mppt_cnt=None)}
+    header, rows = _run_scripted_csv(tmp_path, monkeypatch, frames,
+                                     duration=0.05, port=58983)
+    fc, bt = header.index("fc_ceil"), header.index("bt_ceil")
+    assert any(r[fc] == "0" and r[bt] == "0" for r in rows)
+    assert all(r[fc] in ("", "0") and r[bt] in ("", "0") for r in rows)
+
+
 def test_csv_error_code_blank_before_the_first_frame_then_populated(
         tmp_path, monkeypatch):
     """fw v25 byte 16 lands in its own appended column, blank until observed."""
@@ -8381,7 +8507,7 @@ def test_csv_error_code_blank_before_the_first_frame_then_populated(
     header, rows = _run_scripted_csv(tmp_path, monkeypatch, frames,
                                      duration=0.1, port=58971)
     idx = header.index("error_code")
-    assert idx == len(header) - 11     # appended; 7 power + 3 mpc columns after
+    assert idx == len(header) - 13     # 7 power + 3 mpc + 2 ceil columns after
     assert rows[0][idx] == ""                           # no frame yet
     assert rows[-1][idx] == "16"                        # 0x10 ERR_HIL_STALE
 
@@ -9156,6 +9282,18 @@ def test_explicit_droop_flag_is_not_detected_by_sniffing_argv():
 # `aux_preload_a` and NOT in this set must be exactly 0.0.
 _Y_B30_EXEMPT_NAMES = frozenset({"ems-y-b30-v1", "ems-y-b30-v3"})
 
+# THE SECOND EXEMPTION, and it is the same rule rather than a new one (fw v26
+# tools round, 2026-09-02). The operator ruling exempts a preload that
+# CONSTRUCTS the stimulus from the rule against a preload that MASKS an
+# open-loop mode. `fw26-clamp-cruise` is the constructing case in its purest form:
+# the fw v26 current ceiling is reachable only above 1.55 A of two-source total,
+# the load IS what puts the run there, and without it the scenario tests
+# nothing. It is exempted BY NAME, in its own set rather than by widening the
+# y-b30 one, so a reader sees two distinct stimuli and not one list that grew.
+_CEILING_EXEMPT_NAMES = frozenset({"fw26-clamp-cruise", "fw26-clamp-sweep"})
+
+_PRELOAD_EXEMPT_NAMES = _Y_B30_EXEMPT_NAMES | _CEILING_EXEMPT_NAMES
+
 
 def test_preload_tripwire_every_declared_aux_preload_is_zero_except_y_b30():
     """Every scenario that declares `aux_preload_a` (the drive-cycle-role
@@ -9171,22 +9309,36 @@ def test_preload_tripwire_every_declared_aux_preload_is_zero_except_y_b30():
     # Sanity: the exemption list must not go stale -- every name in it must
     # actually be a scenario that declares aux_preload_a, or the exemption is
     # dead and the test would pass for the wrong reason.
-    assert _Y_B30_EXEMPT_NAMES <= set(declaring), (
-        "the ems-y-b30-* exemption list no longer matches the registry -- "
-        "update _Y_B30_EXEMPT_NAMES")
+    assert _PRELOAD_EXEMPT_NAMES <= set(declaring), (
+        "the preload exemption list no longer matches the registry -- "
+        "update _Y_B30_EXEMPT_NAMES / _CEILING_EXEMPT_NAMES")
     for name, val in declaring.items():
-        if name in _Y_B30_EXEMPT_NAMES:
+        if name in _PRELOAD_EXEMPT_NAMES:
             continue
         assert val == pytest.approx(0.0), (
             "%r declares aux_preload_a=%r, not 0.0 -- every drive-cycle "
             "scenario must carry the removed preload (operator ruling "
             "2026-09-01); if this is a genuinely new exception it must be "
-            "added to _Y_B30_EXEMPT_NAMES by name, never by loosening this "
+            "added to an exemption set by name, never by loosening this "
             "assertion" % (name, val))
     # And the exempted ones must NOT be zero -- Y_AUX_LOAD_A is unchanged.
     for name in _Y_B30_EXEMPT_NAMES:
         assert declaring[name] == pytest.approx(hil.Y_AUX_LOAD_A)
         assert declaring[name] != pytest.approx(0.0)
+    # ... and `fw26-clamp-cruise` carries the load that puts the two-source total
+    # over the clamp's reachability threshold, which is what it is for.
+    import governor_model as _gm
+    assert declaring["fw26-clamp-cruise"] == pytest.approx(
+        hil.FW26_CLAMP_CRUISE_LOAD_A)
+    assert (declaring["fw26-clamp-cruise"] + hil.I_AUX_A
+            > _gm.CEILING_REACHABLE_I_TOT_A)
+    # The sweep's preload deliberately sits BELOW the threshold on its own: the
+    # velocity setpoint is what carries the run over it in the high regions, and
+    # the sub-threshold regions are where the bit-identity evidence lives.
+    assert declaring["fw26-clamp-sweep"] == pytest.approx(
+        hil.FW26_CLAMP_SWEEP_PRELOAD_A)
+    assert (declaring["fw26-clamp-sweep"] + hil.I_AUX_A
+            < _gm.CEILING_REACHABLE_I_TOT_A)
 
 
 def test_preload_tripwire_ftp75_legs_are_exactly_the_non_exempt_set():
@@ -9197,7 +9349,7 @@ def test_preload_tripwire_ftp75_legs_are_exactly_the_non_exempt_set():
     directly."""
     declaring = {name for name, meta in hil.SCENARIOS.items()
                 if meta.get("aux_preload_a") is not None}
-    assert declaring == _Y_B30_EXEMPT_NAMES | {
+    assert declaring == _PRELOAD_EXEMPT_NAMES | {
         "ems-ftp75-5050", "ems-ftp75-socband", "ems-ftp75-sdp", "ems-ftp75-dp",
         # 2026-09-02: the fifth FTP-75 leg. It declares the key at
         # FTP75_PRELOAD_A (0.0) exactly as its four siblings do, which is what
@@ -9454,19 +9606,21 @@ def test_power_balance_csv_header_tail_both_schemas(tmp_path):
     sim_header, _ = _run_main_csv(
         tmp_path, ["--scenario", "steady", "--electrical", "simple",
                    "--duration", "0.02"], name="sim.csv")
-    assert sim_header[-10:] == ["p_mot_w", "p_fc_w", "p_batt_w",
+    assert sim_header[-2:] == ["fc_ceil", "bt_ceil"]
+    assert sim_header[-12:-2] == ["p_mot_w", "p_fc_w", "p_batt_w",
                                "p_chop_w", "p_aux_w", "p_bal_w",
                                "p_chg_loss_w", "mpc_solve_ms", "mpc_share_pred_err", "mpc_budget_hit"]
-    assert sim_header[-12:-10] == ["mppt_thresh_cnt", "error_code"]
+    assert sim_header[-14:-12] == ["mppt_thresh_cnt", "error_code"]
 
     blg_path = _write_synthetic_blg(tmp_path, fw_version=14, v3=True)
     replay_header, _ = _run_main_csv(
         tmp_path, ["--replay", blg_path, "--duration", "0.02"],
         name="replay.csv")
-    assert replay_header[-10:] == ["p_mot_w", "p_fc_w", "p_batt_w",
+    assert replay_header[-2:] == ["fc_ceil", "bt_ceil"]
+    assert replay_header[-12:-2] == ["p_mot_w", "p_fc_w", "p_batt_w",
                                   "p_chop_w", "p_aux_w", "p_bal_w",
                                   "p_chg_loss_w", "mpc_solve_ms", "mpc_share_pred_err", "mpc_budget_hit"]
-    assert replay_header[-12:-10] == ["mppt_thresh_cnt", "error_code"]
+    assert replay_header[-14:-12] == ["mppt_thresh_cnt", "error_code"]
     # Every established replay-schema index is unchanged: replay_rec keeps
     # its documented position, and the pinned prefix matches byte-for-byte.
     assert replay_header[:len(REPLAY_CSV_HEADER_PIN)] == REPLAY_CSV_HEADER_PIN
@@ -9894,7 +10048,19 @@ def _brake_window_energies(hifi, charger_on, seconds=2.0):
     ceiling is set to zero, so every other term (the brake, the node, the
     chopper law) is identical and the DIFFERENCE isolates the charger."""
     from hil_electrical import ElectricalSim
-    pl = hil.Plant(electrical=ElectricalSim() if hifi else None, soc0=0.7)
+    # SUBSTEP PINNED (2026-09-02, fw v26 tools round). The mechanism assertions
+    # this helper feeds compare two arms tick by tick at 1e-9 J, and
+    # `ElectricalSim` re-derives its substep count from a wall-clock EWMA at the
+    # end of every tick. Un-pinned, the two arms could therefore be solved at
+    # DIFFERENT resolutions depending on machine load, and
+    # `test_regen_harvest_is_not_sourced_from_the_bus` failed inside a full-suite
+    # run while passing alone -- the documented flake this parameter exists to
+    # remove (see the `substep_pin` banner in hil_electrical.py, which names two
+    # byte-identity tests that flaked the same way). 8 is the engine's own
+    # starting count, so the pinned resolution is the one the un-pinned helper
+    # used on an idle machine and the recorded figures are unchanged.
+    pl = hil.Plant(electrical=ElectricalSim(substep_pin=8) if hifi else None,
+                   soc0=0.7)
     pl.v_bus = 15.9
     pl.v = 3.0
     if not charger_on:
@@ -10131,8 +10297,11 @@ def test_mpc_csv_columns_follow_p_chg_loss_w():
     j = src.index('"mpc_solve_ms", "mpc_share_pred_err", "mpc_budget_hit"')
     assert i < j, ("the MPC columns must be appended AFTER p_chg_loss_w, or an "
                    "existing tail offset moves")
-    # ...and they are the LAST append, so nothing sits between the two blocks.
-    assert src.rindex("header_row += [") < j
+    # ...and nothing sits between the two blocks: the only append AFTER the
+    # MPC one is the fw v26 fc_ceil/bt_ceil pair, which is itself the last.
+    k = src.index('header_row += ["fc_ceil", "bt_ceil"]')
+    assert j < k
+    assert src.rindex("header_row += [") == k
     # The row site mirrors the header: three values, blank when no MPC ran.
     assert 'if mpc_src is None:\n                    row += ["", "", ""]' in src
 

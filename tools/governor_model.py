@@ -26,6 +26,8 @@ PORTED FIRMWARE SITES
 ``updateShareSlewMode()``         .ino:10035-10064 -> ``_slew_mode()``
 ``powerBalance()``                .ino:10079-10378 -> ``GovernorModel.step()``
 ``applyShareRatio()``             .ino:10379-10537 -> ``_apply_share_ratio()``
+``applyShareCurrentCeilings()``   .ino:10273-10313 -> ``_apply_share_current_ceilings()``
+``clearShareCeilingState()``      .ino:10215-10218 -> ``_clear_ceiling_state()``
 ``setDroopMdac()``                .ino:10740-10748 -> ``_mdac_codes()``
 ``busSwitchBlanked()``            .ino:3406-3416   -> ``_blanked()``
 ``resetShareControllerCore()``    .ino:10577-10604 -> ``_reset_controller_core()``
@@ -178,6 +180,10 @@ GOV_CONST = {
     "SHARE_HANDOFF_LIVE_A": 0.20,               # A                  .ino:2288
     "SHARE_HANDOFF_DWELL_MAX_TICKS": 175,       # ticks              .ino:2298
     "SHARE_GOV_FILT_ALPHA": 0.05,               # per tick           .ino:2303
+    # Source current-ceiling governor (fw v26).
+    "SHARE_GOV_I_FC_CEIL_A": 1.25,              # A (bus-side)       .ino:2406
+    "SHARE_GOV_I_BT_CEIL_A": 2.70,              # A (bus-side)       .ino:2424
+    "SHARE_GOV_CEIL_HYST_A": 0.05,              # A                  .ino:2430
     # Actuation.
     "SHARE_CUTOFF_HYST": 0.01,                  #                    .ino:3258
     "SHARE_CUT_SURVIVOR_BLANK_MS": 30.0,        # ms                 .ino:3353
@@ -194,6 +200,26 @@ GOV_CONST = {
 _RE_MAX = GOV_CONST["RE_MAX"]
 _R_MIN = GOV_CONST["DROOP_R_MIN"]
 _R_MAX = GOV_CONST["DROOP_R_MAX"]
+
+# Reachability threshold for the fw v26 fuel-cell ceiling (docs/fw26_current_
+# ceiling_governor.md section 4.1.1). The minority-current clip runs FIRST, so
+# the largest fuel-cell current the loop can command is
+#     min(DROOP_R_MAX, 1 - SHARE_MINORITY_I_MIN_A/I_tot) * I_tot
+# whose second term is the tighter one. The fuel-cell ceiling is therefore
+# reachable only above I_FC_CEIL + I_MINORITY of TWO-SOURCE total. Below this
+# total the clamp is arithmetically inert and fw v26 equals fw v25.
+CEILING_REACHABLE_I_TOT_A = (GOV_CONST["SHARE_GOV_I_FC_CEIL_A"]
+                             + GOV_CONST["SHARE_MINORITY_I_MIN_A"])   # 1.55 A
+
+# Hoisted out of GOV_CONST for the per-tick path. `_apply_share_current_
+# ceilings()` runs on EVERY closed-loop tick of every offline walk, and a dict
+# lookup per constant per tick is measurable at the tick counts the MPC's roll
+# jobs reach. The values are the dictionary's, read once at import, so there is
+# no second declaration to drift.
+_FC_CEIL_A = GOV_CONST["SHARE_GOV_I_FC_CEIL_A"]
+_BT_CEIL_A = GOV_CONST["SHARE_GOV_I_BT_CEIL_A"]
+_CEIL_HYST_A = GOV_CONST["SHARE_GOV_CEIL_HYST_A"]
+_I_TOT_MIN_A = GOV_CONST["SHARE_I_TOT_MIN_A"]
 
 MODE_FROZEN = "frozen_min_load"
 MODE_LATCHED = "latched"
@@ -260,6 +286,14 @@ class GovernorState:
     handoff_prev_ratio: float = 0.5    # shareHandoffPrevRatio      .ino:9973
     slew_step: float = GOV_CONST["DROOP_RATIO_SLEW_HANDOFF_PER_TICK"]
 
+    # Source current-ceiling governor (fw v26). Hysteretic, so the two flags
+    # carry memory across ticks; they are dropped on every path that freezes
+    # the share loop and on a reset (.ino:10202-10218).
+    gov_fc_clamped: bool = False       # shareGovFcClamped          .ino:10202
+    gov_bt_clamped: bool = False       # shareGovBtClamped          .ino:10203
+    ceil_ticks: int = 0                # ticks with either flag set after the
+                                       # clamp ran; the walk's `clamped` census
+
     # Controller surrogate (see fidelity boundary 1)
     ctrl_out: float = 0.5
 
@@ -291,6 +325,12 @@ class GovernorOut:
     g_bt: float
     code_fc: int
     code_bt: int
+    # fw v26 current-ceiling clamp flags, as of the end of this tick. Mirrored
+    # on the board into HIL observation-frame aux bits 4/5, bench-log flags bit
+    # 7 and the State-98 'S' dump. False on every tick that did not reach the
+    # clamp (the clamp is cleared on all of those).
+    ceil_fc: bool = False
+    ceil_bt: bool = False
     # True when this tick actually reached setDroopMdac(). False on every
     # non-writing return (frozen, latched, hold, F1 idle) AND on a write that
     # applyShareRatio() abandoned because a channel is isolated (.ino:10492),
@@ -324,6 +364,83 @@ def mdac_fraction(word: Optional[int]) -> Optional[float]:
     if (w & 0xF000) != GOV_CONST["MDAC_CMD_LOAD_UPDATE"]:
         return 0.0
     return (w & 0x0FFF) / float(GOV_CONST["MDAC_RES"])
+
+
+def ceiling_bounded_share(sp: float, i_tot: float) -> float:
+    """Steady-state (hysteresis-free) image of ``applyShareCurrentCeilings()``.
+
+    THE DELIVERED-SHARE SEMANTIC FOR THE OFFLINE DEMAND MODELS. The dynamic
+    port is ``GovernorModel._apply_share_current_ceilings()``, which carries the
+    ``SHARE_GOV_CEIL_HYST_A`` release memory. A stage-level demand model has no
+    tick history, so it uses the converged bound instead: the hysteresis only
+    delays a RELEASE, and a converged stage is either clamped or not.
+
+    Order is the firmware's: battery lower bound first, fuel-cell upper bound
+    second (so the fuel cell wins the infeasible pair above
+    ``I_FC_CEIL + I_BT_CEIL`` = 3.95 A of total), then the droop band. The
+    minority-current clip is the CALLER's, applied before this, exactly as
+    ``powerBalance()`` does.
+
+    AN OUT-OF-BAND COMMANDED SETPOINT IS NEVER CLAMPED. This is not a
+    convenience: in the firmware an out-of-band setpoint is owned by
+    ``updateShareSetpointCutoff()``, which either latches (freezing the whole
+    share loop, so the clamp never runs) or defers (in which case
+    ``powerBalance()`` suppresses the clamp explicitly and drops its flags).
+    The open-loop path returns quietly on the same condition. There is
+    therefore NO path through the firmware on which a setpoint outside
+    ``[DROOP_R_MIN, DROOP_R_MAX]`` reaches the clamp, and a demand model whose
+    share grid spans the full ``[0, 1]`` (the stochastic dynamic program's
+    does) must not have its full-span single-source commands pulled into the
+    droop band by this helper.
+
+    Returns ``sp`` unmodified when neither ceiling is exceeded, so a demand
+    model below the ceilings is bit-identical to its pre-fw-v26 self.
+
+    ⚠️ THE REACHABILITY GUARD IS PART OF THE CONTRACT, NOT AN OPTIMISATION
+    (2026-09-02).  The docstring above says the minority-current clip is the
+    caller's.  That is true of ``GovernorModel.step()``, which applies it; it is
+    NOT true of the stage-level demand models, none of which carries a
+    conduction floor.  Without the guard those models clamped on totals the
+    board cannot clamp at: 250 of ``ems-dp-replay``'s 34 827 cells bound at
+    I_tot 1.47137 A, where the board's own clip caps the fuel cell at 1.1714 A
+    and no ceiling can bind.  The guard therefore encodes the reachability
+    threshold ``CEILING_REACHABLE_I_TOT_A`` = I_FC_CEIL + I_MINORITY = 1.55 A
+    directly, and it is conservative for the battery ceiling too, whose own
+    threshold is I_BT_CEIL + I_MINORITY = 3.00 A.
+
+    RESIDUAL, stated rather than implied: between the clip's own onset and
+    1.55 A the board still delivers slightly less fuel-cell current than this
+    helper reports, because the CLIP is active there while the CEILING is not.
+    That gap is the minority clip's and is not this helper's to close; the
+    dynamic port models it, and the demand models' own share grids
+    ([0.15, 0.85]) keep the error under 0.05 A."""
+    tot = float(i_tot)
+    sp = float(sp)
+    if sp < _R_MIN or sp > _R_MAX:
+        return sp
+    # THE INERT EARLY-OUT, FIRST, ON HOISTED CONSTANTS (2026-09-02).
+    # This helper is called per share point per stage by the DP's vectorised
+    # image, per sub-sample by the MPC's transition rolls and per stage by the
+    # walk, and every one of those calls returns the argument untouched on the
+    # entire registered stimulus set. A dict lookup per constant per call was
+    # measurable at those counts (0.147 us/call against 0.070 us/call hoisted),
+    # so the module-level names read once at import are used instead. They are
+    # the dictionary's own values, so there is no second declaration to drift.
+    if tot < CEILING_REACHABLE_I_TOT_A or not tot > _I_TOT_MIN_A:
+        return sp
+    if sp * tot <= _FC_CEIL_A and (1.0 - sp) * tot <= _BT_CEIL_A:
+        return sp
+    clamped = False
+    lo_demand = (1.0 - sp) * tot
+    if lo_demand > _BT_CEIL_A:
+        sp = max(sp, 1.0 - _BT_CEIL_A / tot)
+        clamped = True
+    if sp * tot > _FC_CEIL_A:
+        sp = min(sp, _FC_CEIL_A / tot)
+        clamped = True
+    if clamped:
+        sp = _constrain(sp, _R_MIN, _R_MAX)
+    return sp
 
 
 def r_from_codes(code_fc: Optional[int], code_bt: Optional[int]) -> Optional[float]:
@@ -424,6 +541,75 @@ class GovernorModel:
         seed = _constrain(float(seed_ratio), 0.0, 1.0)
         st.ctrl_out = seed
         st.sp_eff_prev = _constrain(seed, _R_MIN, _R_MAX)
+
+    # ── applyShareCurrentCeilings() (fw v26) ─────────────────────────────────
+    def _clear_ceiling_state(self) -> None:
+        """``clearShareCeilingState()`` (.ino:10215). Called from every path
+        that FREEZES the share loop, so a frozen loop never publishes a stale
+        clamp. State 99 is deliberately not one of those paths; the model has
+        no fault path, so that asymmetry does not arise here."""
+        self.state.gov_fc_clamped = False
+        self.state.gov_bt_clamped = False
+
+    def _apply_share_current_ceilings(self, sp: float) -> float:
+        """Port of ``applyShareCurrentCeilings()`` (.ino:10273-10313).
+
+        Bounds the effective setpoint (the FUEL-CELL FRACTION) so the commanded
+        per-channel current stays at or below that channel's ceiling, evaluated
+        on ``state.filt_total`` (the firmware's ``share_govTotAFilt``), never on
+        a raw total. Order, verbatim from the firmware:
+
+        1. the caller has already applied the minority-current clip;
+        2. battery LOWER bound, hysteretic;
+        3. fuel-cell UPPER bound, hysteretic, re-derived from the possibly
+           battery-raised setpoint so the fuel cell wins an infeasible pair;
+        4. the droop band, and only when a clamp is engaged, so an unclamped
+           setpoint is returned untouched (fw v26 inertness).
+        """
+        st = self.state
+        tot = st.filt_total
+        if not tot > _I_TOT_MIN_A:
+            if st.gov_fc_clamped or st.gov_bt_clamped:
+                self._clear_ceiling_state()
+            return sp
+
+        bt_ceil = _BT_CEIL_A
+        fc_ceil = _FC_CEIL_A
+        hyst = _CEIL_HYST_A
+
+        # FAST PATH. With no flag standing and neither demand over its ceiling
+        # the firmware's arithmetic reduces to returning the argument, which is
+        # the fw v26 inertness property stated as code rather than as a comment.
+        if not (st.gov_fc_clamped or st.gov_bt_clamped):
+            if sp * tot <= fc_ceil and (1.0 - sp) * tot <= bt_ceil:
+                return sp
+
+        demand_bt = (1.0 - sp) * tot
+        if st.gov_bt_clamped:
+            if demand_bt < bt_ceil - hyst:
+                st.gov_bt_clamped = False
+        elif demand_bt > bt_ceil:
+            st.gov_bt_clamped = True
+        if st.gov_bt_clamped:
+            lo_bound = 1.0 - bt_ceil / tot
+            if sp < lo_bound:
+                sp = lo_bound
+
+        demand_fc = sp * tot
+        if st.gov_fc_clamped:
+            if demand_fc < fc_ceil - hyst:
+                st.gov_fc_clamped = False
+        elif demand_fc > fc_ceil:
+            st.gov_fc_clamped = True
+        if st.gov_fc_clamped:
+            hi_bound = fc_ceil / tot
+            if sp > hi_bound:
+                sp = hi_bound
+
+        if st.gov_fc_clamped or st.gov_bt_clamped:
+            sp = _constrain(sp, _R_MIN, _R_MAX)
+            st.ceil_ticks += 1
+        return sp
 
     # ── plant law ────────────────────────────────────────────────────────────
     def delivered_share(self, r: float, i_tot: float,
@@ -636,6 +822,9 @@ class GovernorModel:
         st.handoff_dwell = 0
         st.slew_step = GOV_CONST["DROOP_RATIO_SLEW_HANDOFF_PER_TICK"]
         st.handoff_prev_ratio = st.r_prev
+        # fw v26 (.ino:11011): resetShareControlState() drops the clamp state.
+        st.gov_fc_clamped = False
+        st.gov_bt_clamped = False
 
     # ── updateShareSlewMode() ────────────────────────────────────────────────
     def _slew_mode(self, i_fc: float, i_batt: float) -> None:
@@ -777,11 +966,15 @@ class GovernorModel:
         #    (.ino:10087).
         if self._setpoint_cutoff(sp, i_fc, i_batt, t_ms):
             st.latched = True
+            if st.gov_fc_clamped or st.gov_bt_clamped:
+                self._clear_ceiling_state()      # .ino:10421 (fw v26)
             return self._out(MODE_LATCHED, False, False)
         st.latched = False
 
         # 2. Minimum-load gate: hold everything (.ino:10099).
         if total < GOV_CONST["SHARE_I_TOT_MIN_A"]:
+            if st.gov_fc_clamped or st.gov_bt_clamped:
+                self._clear_ceiling_state()      # .ino:10432 (fw v26)
             return self._out(MODE_FROZEN, False, False)
 
         # 3. Governor load filter (.ino:10104).
@@ -814,6 +1007,10 @@ class GovernorModel:
             if not sp_changed and not iso_outstanding:
                 # HOLD. No MDAC write; the converged split stands. This is the
                 # behaviour two offline walks in this repository missed.
+                # fw v26: HOLD writes nothing, so the clamp is deliberately NOT
+                # applied and its state is dropped (.ino:10514).
+                if st.gov_fc_clamped or st.gov_bt_clamped:
+                    self._clear_ceiling_state()
                 return self._out(MODE_OPEN_HOLD, False, False)
             if sp_changed:
                 st.closed_loop_run = False
@@ -824,7 +1021,18 @@ class GovernorModel:
             return self._out(MODE_OPEN_F1_IDLE, False, False)
 
         slew = st.slew_step
-        target = _constrain(sp, st.r_prev - slew, st.r_prev + slew)
+        # fw v26: FEEDFORWARD does write the MDACs, so it takes the clamp
+        # (.ino:10562). Inert at every reachable open-loop total (below 0.60 A
+        # no channel can carry 1.25 A), applied so a future ceiling retune
+        # cannot leave a writing path unguarded.
+        # Same inlined inert guard as the closed-loop path; see the note there.
+        ff_sp = sp
+        _tot = st.filt_total
+        if (st.gov_fc_clamped or st.gov_bt_clamped
+                or sp * _tot > _FC_CEIL_A
+                or (1.0 - sp) * _tot > _BT_CEIL_A):
+            ff_sp = self._apply_share_current_ceilings(sp)
+        target = _constrain(ff_sp, st.r_prev - slew, st.r_prev + slew)
         wrote, rl, rb = self._apply_share_ratio(target, i_fc, i_batt, t_ms,
                                                 from_controller=False)
         st.acted_sp = sp
@@ -852,6 +1060,32 @@ class GovernorModel:
                 lo = 0.5
             hi = 1.0 - lo
             sp_target = _constrain(sp_target, lo, hi)
+
+        # Source current-ceiling clamp (fw v26, .ino:10635-10640). AFTER the
+        # minority-current clip (conduction feasibility owns the floor) and
+        # BEFORE the effective-setpoint slew, so the clamp reaches the
+        # controller through the same rate limit as every other reference
+        # movement. SUPPRESSED while a deferred cut owns the setpoint: the
+        # deferral clip above has parked the reference on a band edge to starve
+        # a doomed channel, and one owner per tick applies.
+        # PERFORMANCE (2026-09-02). The guard below is the clamp's own inert
+        # condition, inlined so that a tick on which no ceiling is near does no
+        # call at all. `_apply_share_current_ceilings()` returns its argument
+        # untouched in exactly that case, so the two are equivalent by
+        # construction: the method is entered whenever a flag stands (the
+        # hysteresis and its clearing are the method's), or whenever either
+        # demand is over its ceiling. This matters because the model is ticked
+        # at 1 kHz inside the MPC's transition rolls, which run against a
+        # per-callback budget.
+        if st.deferred_fc or st.deferred_bt:
+            if st.gov_fc_clamped or st.gov_bt_clamped:
+                self._clear_ceiling_state()
+        else:
+            _tot = st.filt_total
+            if (st.gov_fc_clamped or st.gov_bt_clamped
+                    or sp_target * _tot > _FC_CEIL_A
+                    or (1.0 - sp_target) * _tot > _BT_CEIL_A):
+                sp_target = self._apply_share_current_ceilings(sp_target)
 
         # Effective-setpoint slew (.ino:10290).
         st.sp_eff_prev = _constrain(sp_target, st.sp_eff_prev - slew,
@@ -932,6 +1166,8 @@ class GovernorModel:
             code_fc=_mdac_code(g_fc),
             code_bt=_mdac_code(g_bt),
             wrote=bool(wrote) and mode not in NON_WRITING_MODES,
+            ceil_fc=st.gov_fc_clamped,
+            ceil_bt=st.gov_bt_clamped,
         )
 
     # ── convenience ──────────────────────────────────────────────────────────
@@ -941,6 +1177,13 @@ class GovernorModel:
         if n == 0:
             return {m: 0.0 for m in MODES}
         return {m: st.mode_counts.get(m, 0) / float(n) for m in MODES}
+
+    def ceiling_fraction(self) -> float:
+        """Fraction of MODE-counted ticks on which the fw v26 clamp was
+        engaged. Zero on any stimulus below CEILING_REACHABLE_I_TOT_A."""
+        st = self.state
+        n = sum(st.mode_counts.values())
+        return 0.0 if n == 0 else st.ceil_ticks / float(n)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

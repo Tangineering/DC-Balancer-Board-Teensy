@@ -21,7 +21,8 @@ sys.path.insert(0, HERE)
 
 import run_hil_suite as rhs  # noqa: E402
 import hil_replay_suite as hrs  # noqa: E402
-from hil_plant_sim import SCENARIOS, AG105_ST_CHARGING  # noqa: E402
+from hil_plant_sim import (SCENARIOS, AG105_ST_CHARGING,  # noqa: E402
+                           SW_FC_BUS, SW_BT_BUS)
 from hil_replay_suite import REPLAY_SUITE  # noqa: E402
 
 
@@ -60,11 +61,14 @@ def test_build_plan_full_count_40_runs():
     # ftp75c round (2026-09-02): +5 scenarios, the `ems-ftp75c-*` family ->
     # 44 scenarios, 71 slots. They are SKIP records by default (--with-ftp75c),
     # and a skip record still occupies a plan slot.
+    # fw v26 tools round (2026-09-02): +1 scenario, `fw26-clamp-cruise`, the only
+    # stimulus that reaches the source current-ceiling clamp -> 45 scenarios,
+    # 72 slots.
     plan = rhs.build_plan(_args())
     # WP-B: +v-bus-sense-offset (the UV-dwell objective's own home)
-    assert len(plan) == len(SCENARIOS) + len(REPLAY_SUITE) == 71
+    assert len(plan) == len(SCENARIOS) + len(REPLAY_SUITE) == 73
     kinds = [p["kind"] for p in plan]
-    assert kinds.count("scenario") == 44
+    assert kinds.count("scenario") == 46
     assert kinds.count("replay") == 27
 
 
@@ -76,7 +80,8 @@ def test_build_plan_replay_only():
 
 def test_build_plan_scenarios_only():
     plan = rhs.build_plan(_args(scenarios_only=True))
-    assert len(plan) == 44      # WP-C: +regen-harvest-true; WP-E: +ems-ftp75-dp;
+    assert len(plan) == 46      # fw v26 tools round: +the two fw26-clamp-* legs;
+                                # WP-C: +regen-harvest-true; WP-E: +ems-ftp75-dp;
                             # 2026-09-02: +the four MPC legs;
                                 # WP-B: +v-bus-sense-offset;
                                 # WP-1C: +the ems-sdp-alpha-* trio;
@@ -3893,17 +3898,40 @@ def test_alpha_share_signatures_separate_the_degenerate_leg():
                 == rhs._SDP_HIGH_RAIL_FLOOR)
 
 
-def test_alpha_fc_ceiling_is_the_ems_sdp_cross_budget():
-    """Inherited, not invented: the same 1.28 A single-source charge budget
-    `ems-sdp-cross` measured 1.1920 A against, on the same stimulus and the
-    same 0.8 A ceiling."""
-    cross = next(c for c in
-                 rhs.FAULT_EXPECTATIONS["ems-sdp-cross"]["signals_require"]
-                 if c["name"] == "sdpx_fc_peak_bounded")
+def test_alpha_fc_ceiling_is_derived_from_the_fault_limit():
+    """RE-DERIVED 2026-09-02. The bound was a hand-typed 1.28 A and is now
+    `LIMIT_I_FC_MAX - _ALPHA_FC_MARGIN_A` = 1.4 - 0.10 = 1.30 A.
+
+    IT IS DERIVED FROM THE FAULT LIMIT, NOT FROM THE fw v26 CEILING
+    CONSTANTS, although both arithmetics give 1.30 A. These three legs reach
+    their fuel-cell peak inside a SINGLE-SOURCE charge window, where
+    `assertFcChargeEnable()` has dropped BT off the bus; the clamp is
+    STRUCTURALLY INERT there, so tying this bound to `SHARE_GOV_I_FC_CEIL_A`
+    would let a ceiling retune move a check the ceiling does not govern. The
+    assertion below is exactly that: the value must NOT track the clamp
+    constants.
+
+    The three legs must still SHARE the bound - that is the point of the trio -
+    and it must still clear the governing 1.1920 A measurement."""
+    import governor_model as gm
+    assert rhs._ALPHA_FC_CEIL == pytest.approx(rhs.LIMIT_I_FC_MAX_A
+                                               - rhs._ALPHA_FC_MARGIN_A)
+    assert rhs._ALPHA_FC_CEIL == pytest.approx(1.30)
+    assert rhs._ALPHA_FC_CEIL > 1.1920          # the governing measurement
+    assert rhs._ALPHA_FC_CEIL > 1.1866          # `ems-sdp`'s governed peak
+    assert rhs._ALPHA_FC_CEIL < rhs.LIMIT_I_FC_MAX_A
+    # A ceiling retune must NOT move this bound: it judges a single-source
+    # window in which the clamp cannot act.
+    _saved = gm.GOV_CONST["SHARE_GOV_I_FC_CEIL_A"]
+    try:
+        gm.GOV_CONST["SHARE_GOV_I_FC_CEIL_A"] = 0.90
+        assert rhs._ALPHA_FC_CEIL == pytest.approx(1.30)
+    finally:
+        gm.GOV_CONST["SHARE_GOV_I_FC_CEIL_A"] = _saved
     for name in rhs.ALPHA_SCENARIOS:
         c = next(x for x in rhs.FAULT_EXPECTATIONS[name]["signals_require"]
                  if x["name"] == "alpha_fc_peak_bounded")
-        assert c["max_value"] == cross["max_value"] == rhs._ALPHA_FC_CEIL
+        assert c["max_value"] == rhs._ALPHA_FC_CEIL
 
 
 # -------------------------------------------------------------------------
@@ -4994,6 +5022,10 @@ def test_m4_main_keyboardinterrupt_writes_partial_report(tmp_path, monkeypatch):
 PI_LIVE_SKIP_SCENARIOS = {
     "charge-cruise", "charge-regen", "charge-fault", "soc-depletion",
     "handoff-sag", "ems-drive-cycle",
+    # fw v26 tools round (2026-09-02): both `fw26-clamp-*` legs join via
+    # "pi_timeline", the same rule `share-staircase` and `charge-to-full`
+    # join by, and no new code path.
+    "fw26-clamp-cruise", "fw26-clamp-sweep",
     # 2026-08-31: both new EMS-driven scenarios join the skip set via their
     # "ems" metadata key -- same rule as ems-drive-cycle, no new code path.
     "ems-soc-band", "ems-dp-replay",
@@ -5104,7 +5136,8 @@ def test_build_plan_pi_live_total_count_still_40():
     is unchanged under --pi-live, only their kind (executed vs skipped)
     differs."""
     plan = rhs.build_plan(_args(pi_live=True))
-    assert len(plan) == 71      # WP-C: +regen-harvest-true; WP-B: +v-bus-sense-offset;
+    assert len(plan) == 73      # fw v26 tools round: +the two fw26-clamp-* legs;
+                                # WP-C: +regen-harvest-true; WP-B: +v-bus-sense-offset;
                                 # WP-1C: +the ems-sdp-alpha-* trio;
                                 # 2026-09-02: +the four MPC legs;
                                 # ftp75c round: +the five ems-ftp75c-* legs
@@ -10587,3 +10620,410 @@ def test_the_with_ftp75c_gate_is_ordered_after_the_pi_live_gate():
     for name in sorted(rhs.FTP75C_SCENARIOS):
         reason = plan[name].get("skip_reason")
         assert reason and "--pi-live" in reason, name
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# fw v26 — the named aux-bit masks and the `fw26-clamp-cruise` scenario
+# ═════════════════════════════════════════════════════════════════════════
+def test_named_aux_bit_masks_resolve_to_the_firmware_masks():
+    """The names are the expectation layer's vocabulary; the VALUES are the
+    firmware's, imported from hil_plant_sim and never re-typed here."""
+    from hil_plant_sim import AUX_FC_CEILING, AUX_BT_CEILING
+    assert rhs._AUX_BIT_NAMES["fc_ceiling_active"] == AUX_FC_CEILING == 0x10
+    assert rhs._AUX_BIT_NAMES["bt_ceiling_active"] == AUX_BT_CEILING == 0x20
+    assert rhs._resolve_bit_mask({"aux_bit": "fc_ceiling_active"}) == 0x10
+    assert rhs._resolve_bit_mask({"aux_bit": "bt_ceiling_active"}) == 0x20
+    # A numeric mask still works, so every pre-existing spec is unaffected.
+    assert rhs._resolve_bit_mask({"aux_bit": 0x04}) == 0x04
+    assert rhs._resolve_bit_mask({"switch_bit": 0x02}) == 0x02
+
+
+def test_an_unknown_aux_bit_name_raises_rather_than_masking_with_zero():
+    """THE FAILURE MODE THIS GUARDS. A zero mask reads as 'the bit was never
+    set', which PASSES a `max_ticks: 0` spec — so a typo in a name would turn a
+    negative control into a check that cannot fail."""
+    with pytest.raises(KeyError):
+        rhs._resolve_bit_mask({"aux_bit": "fc_ceiling_activ"})
+    with pytest.raises(KeyError):
+        rhs._resolve_bit_mask({"aux_bit": "no_such_bit"})
+
+
+def test_share_ceiling_scenario_is_registered_and_reaches_the_clamp():
+    """The scenario exists to reach a threshold no other stimulus reaches;
+    assert the arithmetic that makes it do so, not merely that it is present."""
+    import governor_model as gm
+    import hil_plant_sim as hps
+    meta = SCENARIOS["fw26-clamp-cruise"]
+    # The total is one constant, because the run is motor-free.
+    total = hps.FW26_CLAMP_CRUISE_LOAD_A + hps.I_AUX_A
+    assert total == pytest.approx(2.00)
+    # Clear of the reachability threshold, and inside the design note's band.
+    assert total > gm.CEILING_REACHABLE_I_TOT_A
+    assert 1.8 <= total <= 2.4
+    # The commanded share overdraws the fuel cell by a real margin.
+    sp_a = 0.75
+    assert sp_a * total > gm.GOV_CONST["SHARE_GOV_I_FC_CEIL_A"]
+    assert (sp_a * total - gm.GOV_CONST["SHARE_GOV_I_FC_CEIL_A"]
+            > 4.0 * gm.GOV_CONST["SHARE_GOV_CEIL_HYST_A"])
+    # ... and the control phase's share does not, past the release hysteresis.
+    sp_b = 0.40
+    assert (sp_b * total
+            < gm.GOV_CONST["SHARE_GOV_I_FC_CEIL_A"]
+            - gm.GOV_CONST["SHARE_GOV_CEIL_HYST_A"])
+    # The battery ceiling is out of reach at this total, in both phases.
+    for sp in (sp_a, sp_b):
+        assert (1.0 - sp) * total < gm.GOV_CONST["SHARE_GOV_I_BT_CEIL_A"]
+    # Motor-free: v_setpoint is commanded 0.0 and never moved.
+    vs = [c.get("v_setpoint") for _, c in meta["pi_timeline"]
+          if "v_setpoint" in c]
+    assert vs == [0.0]
+    # The two phases are actually commanded, in order.
+    shares = [(t, c["power_share_setpoint"]) for t, c in meta["pi_timeline"]
+              if "power_share_setpoint" in c]
+    assert shares == [(5.0, 0.50), (8.0, sp_a), (26.0, sp_b)]
+    # And the preload has fully ramped in before phase A opens.
+    assert hps.scenario_aux_preload_a("fw26-clamp-cruise", 8.0) == \
+        pytest.approx(hps.FW26_CLAMP_CRUISE_LOAD_A)
+
+
+def test_share_ceiling_expectation_is_fault_free_and_two_sided():
+    """The entry's own shape: fault-free, a duty floor, a same-run negative
+    control, and a two-sided I_fc band that is the clamp's acceptance band."""
+    import governor_model as gm
+    e = rhs.FAULT_EXPECTATIONS["fw26-clamp-cruise"]
+    assert e["allow_only"] == 0
+    assert e["provisional_note"]
+    by = {c["name"]: c for c in e["signals_require"]}
+    # The clamp bound, and the control released.
+    assert by["fc_ceiling_active_duty"]["aux_bit"] == "fc_ceiling_active"
+    assert by["fc_ceiling_active_duty"]["min_ticks"] > 0
+    assert by["fc_ceiling_released"]["aux_bit"] == "fc_ceiling_active"
+    assert by["fc_ceiling_released"]["max_ticks"] == 0
+    # The two windows do not overlap, or the control is not a control.
+    a = by["fc_ceiling_active_duty"]["t_window"]
+    b = by["fc_ceiling_released"]["t_window"]
+    assert a[1] <= b[0]
+    # The I_fc band IS the ceiling plus and minus the hysteresis.
+    ceil = gm.GOV_CONST["SHARE_GOV_I_FC_CEIL_A"]
+    hyst = gm.GOV_CONST["SHARE_GOV_CEIL_HYST_A"]
+    # H2: the level bound is an INVARIANT, so it is a `floor_min_value`
+    # (in-window MINIMUM), never a `min_value` (in-window MAXIMUM).
+    assert "min_value" not in by["ceiling_fc_at_the_ceiling"]
+    assert by["ceiling_fc_at_the_ceiling"]["floor_min_value"] == \
+        pytest.approx(ceil - hyst)
+    assert "min_value" not in by["ceiling_batt_took_the_rest"]
+    assert by["ceiling_fc_under_the_limit"]["max_value"] == \
+        pytest.approx(ceil + hyst)
+    # ... and it is under the fault limit the clamp exists to avoid.
+    assert by["ceiling_fc_under_the_limit"]["max_value"] < 1.4
+    # M8: the switch tick floors must not demand a cadence the cadence gate
+    # does not guarantee, or a stream defect fails a TOPOLOGY check.
+    assert by["ceiling_fc_bus_held"]["min_ticks"] <= \
+        by["ceiling_cadence"]["min_rows"]
+    assert by["ceiling_bt_bus_held"]["min_ticks"] <= \
+        by["ceiling_cadence"]["min_rows"]
+    assert by["fc_ceiling_active_duty"]["min_ticks"] <= \
+        by["ceiling_cadence"]["min_rows"]
+    # No cut: both switches held, and no rising edge.
+    assert by["ceiling_fc_bus_held"]["switch_bit"] == SW_FC_BUS
+    assert by["ceiling_bt_bus_held"]["switch_bit"] == SW_BT_BUS
+    assert by["ceiling_no_switch_ring"]["edge_count_between"] == (0, 0)
+    # The BT ceiling must never fire, and that check carries its vacuity note.
+    assert by["bt_ceiling_never"]["max_ticks"] == 0
+    assert by["bt_ceiling_never"]["vacuity_note"]
+
+
+def test_fw26_clamp_sweep_regions_cross_the_threshold_on_both_axes():
+    """The sweep's whole claim is that it crosses the clamp boundary in BOTH
+    directions and on BOTH axes. Assert the arithmetic that makes it do so.
+
+    A clamp that released only when the share fell could be a share-loop
+    artefact; one that released only when the load fell could be a load
+    artefact. The table must therefore contain a pair that differs only in the
+    total, and a pair that differs only in the share."""
+    import governor_model as gm
+    import hil_plant_sim as hps
+    regions = hps.FW26_CLAMP_SWEEP_REGIONS
+    ceil = gm.GOV_CONST["SHARE_GOV_I_FC_CEIL_A"]
+
+    def total(v):
+        return rhs._fw26_region_total(v)
+
+    # 1. Every region's CLASSIFICATION agrees with the arithmetic, with margin.
+    #    0.10 A on each side, so a modest error in the modelled motor current
+    #    cannot flip a region into the wrong class.
+    for i, (t0, v, sp, clamped) in enumerate(regions, start=1):
+        demand = sp * total(v)
+        if clamped:
+            assert demand > ceil + 0.10, (i, demand)
+        else:
+            assert demand < ceil - 0.10, (i, demand)
+
+    # 2. BOTH classes are actually present, several times each.
+    assert sum(1 for r in regions if r[3]) >= 5
+    assert sum(1 for r in regions if not r[3]) >= 5
+
+    # 3. A pair differing ONLY in the total (same commanded share).
+    by_share = [(v, c) for _, v, sp, c in regions if sp == 0.84]
+    assert any(c for _, c in by_share) and any(not c for _, c in by_share)
+
+    # 4. A pair differing ONLY in the share (same velocity, hence same total).
+    by_v = {}
+    for _, v, sp, c in regions:
+        by_v.setdefault(v, set()).add(c)
+    assert any(len(cs) == 2 for cs in by_v.values()), (
+        "no velocity is visited with both a clamping and a non-clamping share, "
+        "so the table cannot separate a release-by-share from a "
+        "release-by-total")
+
+    # 5. The total genuinely crosses the 1.55 A reachability threshold.
+    totals = sorted(total(v) for _, v, _, _ in regions)
+    assert totals[0] < gm.CEILING_REACHABLE_I_TOT_A < totals[-1]
+
+    # 6. NO COMMANDED SHARE TOUCHES THE BAND EDGE. The value round-trips through
+    #    a float32 UDP field, and an out-of-band setpoint is the channel-cutoff
+    #    signal - this scenario must never cut.
+    for _, _, sp, _ in regions:
+        assert gm.GOV_CONST["DROOP_R_MIN"] < sp < gm.GOV_CONST["DROOP_R_MAX"]
+
+    # 7. The BT ceiling is out of reach at every region.
+    for _, v, sp, _ in regions:
+        assert (1.0 - sp) * total(v) < gm.GOV_CONST["SHARE_GOV_I_BT_CEIL_A"]
+
+    # 8. The table fits the duration with the closing command after it.
+    last_t = regions[-1][0] + hps.FW26_CLAMP_SWEEP_REGION_S
+    assert last_t <= hps.SCENARIOS["fw26-clamp-sweep"]["duration_s"]
+    assert hps.SCENARIOS["fw26-clamp-sweep"]["duration_s"] <= 90.0
+
+
+def test_fw26_clamp_sweep_expectation_is_generated_from_the_region_table():
+    """The entry must be BUILT from the stimulus, not written out beside it: a
+    table edit that moves a boundary has to move the checks with it."""
+    import hil_plant_sim as hps
+    e = rhs.FAULT_EXPECTATIONS["fw26-clamp-sweep"]
+    assert e["allow_only"] == 0
+    assert e["provisional_note"]
+    by = {c["name"]: c for c in e["signals_require"]}
+    for i, (t0, v, sp, clamped) in enumerate(hps.FW26_CLAMP_SWEEP_REGIONS,
+                                             start=1):
+        key = "sweep_r%02d_%s" % (i, "clamped" if clamped else "inert")
+        assert key in by, key
+        c = by[key]
+        assert c["aux_bit"] == "fc_ceiling_active"
+        # The window is inside the region it judges, and excludes the slew.
+        assert c["t_window"][0] > t0
+        assert c["t_window"][1] <= t0 + hps.FW26_CLAMP_SWEEP_REGION_S
+        if clamped:
+            assert c["min_ticks"] > 0
+            assert "min_value" not in by["sweep_r%02d_fc_at_ceiling" % i]
+            assert by["sweep_r%02d_fc_at_ceiling" % i]["floor_min_value"] \
+                == 1.20
+            assert by["sweep_r%02d_fc_under_limit" % i]["max_value"] == 1.30
+        else:
+            assert c["max_ticks"] == 0
+            assert c["vacuity_note"]
+
+
+def test_fw26_clamp_sweep_mdac_pins_apply_their_band_to_the_gain_code():
+    """M1: the pin band is applied to the 12-BIT GAIN CODE, not to the raw word.
+
+    `mdac_fc` / `mdac_bt` carry `MDAC_CMD_LOAD_UPDATE` (0x1000) OR'd with the
+    code, so a percentage band on the WORD is diluted by the constant 4096
+    offset -- the shipped +/- 6 % word band was +/- 36 % on the code at region
+    1. The band must therefore be the requested fraction of the CODE."""
+    import governor_model as gm
+    e = rhs.FAULT_EXPECTATIONS["fw26-clamp-sweep"]
+    by = {c["name"]: c for c in e["signals_require"]}
+    nib = gm.GOV_CONST["MDAC_CMD_LOAD_UPDATE"]
+    pinned = rhs._FW26_SWEEP_MDAC_PIN
+    assert pinned, "the model-fidelity pin table is empty"
+    for i, (want_fc, want_bt) in pinned.items():
+        region = rhs.FW26_CLAMP_SWEEP_REGIONS[i - 1]
+        assert region[3] is False, (
+            "region %d is a CLAMPING region and must not carry a "
+            "sub-threshold code pin" % i)
+        assert region[1] == 0.0, (
+            "region %d is not at standstill; its total carries the drive "
+            "loop's uncertainty and its codes must not be pinned" % i)
+        for col, want in (("mdac_fc", want_fc), ("mdac_bt", want_bt)):
+            lo = by["sweep_r%02d_%s_lo" % (i, col)]["floor_min_value"]
+            hi = by["sweep_r%02d_%s_hi" % (i, col)]["max_value"]
+            assert lo < want < hi, (i, col, lo, want, hi)
+            # The band, referred to the CODE, is the requested tolerance.
+            code = want & 0x0FFF
+            assert (hi - lo) / float(code) <= \
+                2.0 * rhs._FW26_SWEEP_MDAC_TOL + 2.0 / code, (i, col)
+            # ...and the bounds are still WORDS, i.e. they carry the nibble.
+            assert lo > nib and hi > nib, (i, col)
+
+
+def test_fw26_clamp_sweep_pins_a_clamped_region_as_the_v25_v26_discriminator():
+    """M1: the SUB-THRESHOLD pins cannot discriminate fw v25 from fw v26.
+
+    At every sub-threshold region the fuel-cell bound 1.25/I_tot exceeds
+    DROOP_R_MAX, so `applyShareCurrentCeilings()` is the identity BY
+    CONSTRUCTION and those pins cannot fail from a clamp defect however they
+    are tuned -- they are a MODEL-FIDELITY pin. The discriminator has to sit on
+    a CLAMPED region, whose pair the clamp actually moves, and its band must
+    REFUSE the clamp-absent value."""
+    import governor_model as gm
+    e = rhs.FAULT_EXPECTATIONS["fw26-clamp-sweep"]
+    by = {c["name"]: c for c in e["signals_require"]}
+    pins = rhs._FW26_SWEEP_MDAC_CLAMPED_PIN
+    assert pins, "no clamped-region pin: nothing discriminates v25 from v26"
+    # The sub-threshold pins are the identity by construction -- assert that,
+    # so the claim in the entry's comment is checked and not merely stated.
+    for i in rhs._FW26_SWEEP_MDAC_PIN:
+        v = rhs.FW26_CLAMP_SWEEP_REGIONS[i - 1][1]
+        i_tot = rhs._fw26_region_total(v)
+        assert gm.GOV_CONST["SHARE_GOV_I_FC_CEIL_A"] / i_tot > \
+            gm.GOV_CONST["DROOP_R_MAX"], i
+    for i, (present, absent) in pins.items():
+        assert rhs.FW26_CLAMP_SWEEP_REGIONS[i - 1][3] is True, (
+            "region %d is not a clamping region and cannot discriminate" % i)
+        for col, want, refuse in zip(("mdac_fc", "mdac_bt"), present, absent):
+            lo = by["sweep_r%02d_%s_clamped_lo" % (i, col)]["floor_min_value"]
+            hi = by["sweep_r%02d_%s_clamped_hi" % (i, col)]["max_value"]
+            assert lo < want < hi, (i, col, lo, want, hi)
+            assert not (lo <= refuse <= hi), (
+                "region %d %s: the band [%d, %d] admits the clamp-ABSENT "
+                "value %d" % (i, col, lo, hi, refuse))
+
+
+def test_both_fw26_clamp_scenarios_are_in_the_default_plan():
+    """Not opt-in. The feature has no other coverage at all, so a default
+    campaign that skipped them would exercise fw v26 nowhere."""
+    plan = rhs.build_plan(_args())
+    names = {p["name"] for p in plan if p["kind"] == "scenario"}
+    assert {"fw26-clamp-cruise", "fw26-clamp-sweep"} <= names
+    for n in ("fw26-clamp-cruise", "fw26-clamp-sweep"):
+        rec = next(p for p in plan if p["name"] == n)
+        assert rec.get("skip_reason") in (None, ""), rec
+
+
+def test_fc_charge_window_note_is_recorded_beside_the_clamp_scenarios():
+    """OC_FC in an FC-charge window is DESIGN INTENT, read by the EMS as
+    feedback about a charge window it should not have opened, and the clamp is
+    structurally inert there (single-source: BT_BUS is held low, so I_fc equals
+    I_tot and there is no second channel to move load onto).
+
+    The note must live where a reader of these scenarios will meet it, or the
+    next person to see an OC_FC latch beside a clamp feature will read it as a
+    regression."""
+    src = rhs.FAULT_EXPECTATIONS["fw26-clamp-sweep"]["source"]
+    assert "applyShareCurrentCeilings" in src
+    import inspect
+    import hil_plant_sim as hps
+    text = inspect.getsource(hps)
+    i = text.index('SCENARIOS["fw26-clamp-sweep"]')
+    # Normalise the comment wrapping before matching: the phrase is split
+    # across a line break in the source and a raw substring test would pass or
+    # fail on where the line happened to wrap.
+    block = " ".join(text[max(0, i - 6000):i].replace("#", " ").split())
+    assert "charge" in block.lower()
+    assert "single source" in block.lower()
+    assert "DESIGN INTENT" in block
+    assert "charge-cruise" in block
+
+
+# =========================================================================
+# L11: the fw26 clamp walk is REGENERATED, not quoted from a hand-run
+# =========================================================================
+def _fw26_walk():
+    """`tools/probes/probe_fw26_clamp_walk.py`, imported by path."""
+    import importlib.util
+    import os
+    path = os.path.join(os.path.dirname(os.path.dirname(
+        os.path.abspath(rhs.__file__))), "tools", "probes",
+        "probe_fw26_clamp_walk.py")
+    if not os.path.isfile(path):                      # running from tools/
+        path = os.path.join(os.path.dirname(os.path.abspath(rhs.__file__)),
+                            "probes", "probe_fw26_clamp_walk.py")
+    spec = importlib.util.spec_from_file_location("probe_fw26_clamp_walk",
+                                                  path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_fw26_cruise_walk_regenerates_the_figures_the_entry_is_cut_from():
+    """L11: every bound in `fw26-clamp-cruise` is a WALK, and a walk nobody can
+    regenerate is a number nobody can check. The probe reproduces it, and the
+    entry's own bounds are asserted against what it produces -- so a governor
+    change that moves the walk fails HERE rather than mid-campaign."""
+    probe = _fw26_walk()
+    c = probe.cruise()
+    a, b = c["phase_a"], c["phase_b"]
+    by = {x["name"]: x for x in
+          rhs.FAULT_EXPECTATIONS["fw26-clamp-cruise"]["signals_require"]}
+
+    # PHASE A: the clamp holds for the whole settled window, at the ceiling,
+    # with no overshoot.
+    assert a["settled_clamp_duty"] == pytest.approx(1.0)
+    assert a["settled_i_fc_peak"] == pytest.approx(1.2500, abs=1e-4)
+    assert a["settled_i_fc_min"] == pytest.approx(1.2500, abs=1e-4)
+    assert a["i_batt"] == pytest.approx(0.7500, abs=1e-4)
+    assert a["balance_residual"] == pytest.approx(0.0, abs=1e-12)
+    assert a["r_applied"] == pytest.approx(0.6197, abs=5e-4)
+    assert a["switch_low_ticks"] == 0
+    # PHASE B: the same-run negative control releases completely.
+    assert b["settled_clamped_ticks"] == 0
+    assert b["settled_i_fc_peak"] == pytest.approx(0.8000, abs=1e-4)
+
+    # The entry's bounds must bracket what the walk produces.
+    assert by["ceiling_fc_at_the_ceiling"]["floor_min_value"] \
+        <= a["settled_i_fc_min"]
+    assert by["ceiling_fc_under_the_limit"]["max_value"] \
+        >= a["settled_i_fc_peak"]
+    assert by["ceiling_batt_took_the_rest"]["floor_min_value"] <= a["i_batt"]
+    assert by["ceiling_batt_bounded"]["max_value"] >= a["i_batt"]
+    assert by["ceiling_control_fc"]["max_value"] >= b["settled_i_fc_peak"]
+
+
+def test_fw26_sweep_walk_regenerates_the_region_table():
+    """L11, the sweep half. The twelve-region table in the entry's comment and
+    the two mdac pin dictionaries all come from this walk; regenerate them."""
+    probe = _fw26_walk()
+    rows = {r["region"]: r for r in probe.sweep()}
+    absent = {r["region"]: r for r in probe.sweep(neutralise=True)}
+
+    for i, r in rows.items():
+        # The table's own classification is what the walk produces.
+        if r["expected_clamp"]:
+            assert r["settled_clamp_duty"] == pytest.approx(1.0), i
+            assert r["i_fc"] == pytest.approx(1.2500, abs=1e-4), i
+        else:
+            assert r["settled_clamped_ticks"] == 0, i
+        # The balance closes onto the battery in every region.
+        assert r["balance_residual"] == pytest.approx(0.0, abs=1e-12), i
+        # No cut anywhere in the table.
+        assert r["switch_low_ticks"] == 0, i
+        # THE INERTNESS CLAIM, as an equality: below the ceiling fw v26 IS
+        # fw v25, so the codes must be identical to the clamp-absent walk.
+        if not r["expected_clamp"]:
+            assert (r["mdac_fc"], r["mdac_bt"]) == \
+                (absent[i]["mdac_fc"], absent[i]["mdac_bt"]), i
+        else:
+            assert (r["mdac_fc"], r["mdac_bt"]) != \
+                (absent[i]["mdac_fc"], absent[i]["mdac_bt"]), i
+
+    # The pins in the entry are exactly what the walk gives.
+    for i, (want_fc, want_bt) in rhs._FW26_SWEEP_MDAC_PIN.items():
+        assert (rows[i]["mdac_fc"], rows[i]["mdac_bt"]) == (want_fc, want_bt), i
+    for i, (present, gone) in rhs._FW26_SWEEP_MDAC_CLAMPED_PIN.items():
+        assert (rows[i]["mdac_fc"], rows[i]["mdac_bt"]) == tuple(present), i
+        assert (absent[i]["mdac_fc"], absent[i]["mdac_bt"]) == tuple(gone), i
+
+    # And the duty floor the entry asks for is reachable on the walk.
+    assert rhs._FW26_SWEEP_DUTY_TICKS <= rhs._FW26_SWEEP_SPAN_TICKS
+
+
+def test_fw26_sweep_settle_clears_the_drive_controller_rail():
+    """H3: regions 2 and 9 step standstill -> 3.0 m/s and rail the drive
+    controller at 12 A for about 1.69 s. The settled window must open after
+    that, or it measures a moving total."""
+    import math
+    # v(t) = 13.19 (1 - exp(-0.1526 t)) while the controller is railed.
+    rail_s = -math.log(1.0 - 3.0 / 13.19) / 0.1526
+    assert rail_s == pytest.approx(1.69, abs=0.02)
+    assert rhs._FW26_SWEEP_SETTLE_S > rail_s

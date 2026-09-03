@@ -169,11 +169,21 @@ def switch_bits():
 
 
 def aux_bits():
-    """[(mask, name)] for the observation frame's aux byte, LSB first."""
+    """[(mask, name)] for the observation frame's aux byte, LSB first.
+
+    Bits 0-3 are pin levels. Bits 4-5 (fw v26) are NOT: they mirror the source
+    current-ceiling governor's per-channel clamp state, which is why their
+    names read as states rather than as nets. They are appended, so every
+    established lane in the aux panel of hil_state_and_switches() keeps its
+    row and two new lanes appear above them. Masks come from hil_plant_sim so
+    the two can never drift.
+    """
     m = _plant_sim_module()
     return [(m.AUX_FC_REG, "FC_REG"), (m.AUX_BT_REG, "BT_REG"),
             (m.AUX_MPPT_DISABLE, "MPPT_DISABLE"),
-            (m.AUX_CBAL_DISABLE, "CBAL_DISABLE")]
+            (m.AUX_CBAL_DISABLE, "CBAL_DISABLE"),
+            (m.AUX_FC_CEILING, "fc_ceiling_active"),
+            (m.AUX_BT_CEILING, "bt_ceiling_active")]
 
 
 def fault_names():

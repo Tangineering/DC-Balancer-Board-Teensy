@@ -184,6 +184,9 @@ LIMIT_V_BUS_MIN_V = 12.0
 # (TPS61288 hardware OVP is 19 V; the 20 V abs-max above that is V_ABSMAX in
 # hil_electrical.py.)  Re-exported for run_hil_suite.py's ring reporting.
 LIMIT_V_BUS_MAX_V = 17.5
+# teensy_controller/teensy_controller.ino:1476
+#   #define LIMIT_I_BT_MAX    3.0f  // A (BUS-SIDE) - validated per-channel envelope
+LIMIT_I_BT_MAX_A = 3.0
 # teensy_controller/teensy_controller.ino:1284
 #   #define UV_BUS_DWELL_LATCH_MS 20.0f  // ms of accumulated net under-dwell → latch
 UV_BUS_DWELL_LATCH_MS = 20.0
@@ -376,7 +379,24 @@ FW_DELTA_NOTES = {
           "suite asserts its absence for fw >= 25 (see the "
           "share_cut_load_hazard tripwire). State-99 TEARDOWN cuts are NOT "
           "share cuts and are unaffected. Cuts at light load past the blanking "
-          "window are unchanged in effect. THE FLASHED TARGET.",
+          "window are unchanged in effect.",
+    26:   "fw v26: the SOURCE CURRENT-CEILING SHARE GOVERNOR "
+          "(applyShareCurrentCeilings()). SAME WHEEL AND SAME DRIVE LAW as "
+          "v18-v25 — the round touched the share governor's reference bound, "
+          "two spare HIL aux bits and one spare bench-log flags bit, and "
+          "nothing else — so v_act and every drive-channel comparison carries "
+          "across unchanged, and no encoder constant or drive coefficient "
+          "moved. WHAT CHANGED: the commanded fuel-cell fraction is bounded so "
+          "the commanded channel current stays at or below "
+          "SHARE_GOV_I_FC_CEIL_A (1.25 A) or SHARE_GOV_I_BT_CEIL_A (2.70 A), "
+          "with SHARE_GOV_CEIL_HYST_A (0.05 A) of release hysteresis. IT IS "
+          "UNREACHABLE BY ANY REPLAY ENTRY, and by a STRUCTURAL argument: the "
+          "minority-current clip runs first, so the fuel-cell ceiling is "
+          "reachable only above SHARE_GOV_I_FC_CEIL_A + "
+          "SHARE_MINORITY_I_MIN_A = 1.55 A of TWO-SOURCE total, and no replay "
+          "entry commands a two-source total anywhere near it. A refused or "
+          "bound reference is not a fault and sets no flag. No entry's "
+          "expectations move. THE FLASHED TARGET.",
 }
 
 # The firmware version currently flashed / targeted by this suite.
@@ -399,7 +419,14 @@ FW_DELTA_NOTES = {
 # feeds the REPORT header's firmware expectation only, and COMPARABLE_FW_MIN
 # stays 18 because v25 changed no encoder constant and no drive coefficient, so
 # no entry's conformance/stability classification moves.
-TARGET_FW_VERSION = 25
+# 25 -> 26 (2026-09-02): fw v26 is the target (the source current-ceiling share
+# governor, `applyShareCurrentCeilings()`).  Same reasoning again: this constant
+# feeds the REPORT header's firmware expectation only, and COMPARABLE_FW_MIN
+# stays 18 because v26 changed no encoder constant and no drive coefficient.
+# The clamp itself cannot reach a replay: every replay is single-source or below
+# the 1.55 A two-source reachability threshold, so no entry's conformance or
+# stability classification moves either.
+TARGET_FW_VERSION = 26
 # Logs at or above this fw version share the current control law AND wheel.
 COMPARABLE_FW_MIN = 18
 

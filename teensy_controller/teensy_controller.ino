@@ -4707,8 +4707,10 @@ void logSampleTick() {
 #endif
     // fw v26: a source current ceiling is BINDING the effective share setpoint this tick (either
     // channel; the HIL aux byte and the 'S' dump separate FC from BT). Same class as bit6 — a
-    // spare bit in an existing byte, so the record size and BLG format v7 are unchanged and no
-    // new CSV column appears. This is the only in-log observable for the clamp: it is a
+    // spare bit in an existing byte, so the record size and BLG format v7 are unchanged. The
+    // decoder does append one DERIVED helper column, `share_gov_ceiling` (0/1), at the END of a v7
+    // CSV row, so no established column index moves; see tools/decode_benchlog.py. This is the
+    // only in-log observable for the clamp: it is a
     // reference-side bound, so "the governor held FC at its ceiling" and "the load stopped there"
     // are indistinguishable from the logged currents alone.
     if (shareGovFcClamped || shareGovBtClamped) r.flags |= 0x80;
