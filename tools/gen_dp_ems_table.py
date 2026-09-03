@@ -273,6 +273,7 @@ REPO_ROOT = os.path.dirname(_HERE)
 import hil_plant_sim as sim                                        # noqa: E402
 from hil_electrical import (                                       # noqa: E402
     LIPO_OCV_SOC, LIPO_OCV_V, BATT_CELLS, BATT_RS_NOM, BATT_CAPACITY_AH)
+import regen_power                                                 # noqa: E402
 from charger_power import (                                        # noqa: E402
     ETA_CHG_DEFAULT, charger_bus_current_a, charger_bus_power_w,
     check_eta_chg, era_label, resolve_eta_chg)
@@ -288,38 +289,87 @@ from charger_power import (                                        # noqa: E402
 # feasibility test below is against this value.
 LIMIT_I_FC_MAX_A = 1.4
 
-# ── Share control authority ─────────────────────────────────────────────────
-# The DP's share grid spans EXACTLY the authority the causal `soc-band` policy
-# gives itself: SOC_BAND_SHARE_NOMINAL +/- SOC_BAND_SHARE_SPAN = [0.25, 0.75].
-# TWO reasons, and the first is a safety one:
+# ── Share control authority ────────────────────────────────────────
+# THE DP'S SHARE GRID SPANS THE FULL FIRMWARE COMMAND BAND, [0.15, 0.85].
 #
-#  1. NEVER COMMAND THE CUT BAND'S EDGE.  updateShareSetpointCutoff()
-#     (.ino:9377-9385, latch .ino:9231-9257) drives a channel's *_BUS_ENABLE
-#     LOW for a setpoint outside [DROOP_R_MIN 0.15, DROOP_R_MAX 0.85].  An
-#     unconstrained DP happily sits at 0.15 and 0.85 — measured, before this
-#     band was applied — i.e. exactly ON the boundary, where a float
-#     round-trip through the 22-byte command packet decides whether the cut
-#     fires.  Exercising that latch is `handoff-sag`'s job; this scenario must
-#     never trip it, so the span stops 0.10 short of both rails, which is the
-#     same margin and the same reasoning SOC_BAND_SHARE_SPAN records.
-#  2. EQUAL ACTUATOR AUTHORITY.  A benchmark that is allowed a wider split
-#     range than the strategy it bounds is not measuring the POLICY, it is
-#     measuring the range.  Same band, same limits, so the difference is the
-#     decision rule alone.
+# STANDING OPERATOR RULE (2026-09-02): every EMS strategy gets access to the
+# full [0.15, 0.85] range.  The DP and the MPC are strategies for this purpose
+# - a benchmark that cannot reach the operating points the causal policies use
+# is not a benchmark of them - so the grid is the BAND, taken from the firmware
+# constants and never re-typed.
 #
-# FC-current budget at the widest point: 0.75 x the drain phase's 1.462 A bus
-# total = 1.10 A, 22 % under LIMIT_I_FC_MAX — the `ems-soc-band` entry's own
-# budget, unchanged.
-DP_SHARE_MIN = sim.SOC_BAND_SHARE_NOMINAL - sim.SOC_BAND_SHARE_SPAN
-DP_SHARE_MAX = sim.SOC_BAND_SHARE_NOMINAL + sim.SOC_BAND_SHARE_SPAN
+# ⚠️ WIDENED FROM [0.25, 0.75] ON 2026-09-02.  The previous grid was
+# SOC_BAND_SHARE_NOMINAL +/- SOC_BAND_SHARE_SPAN, and it rested on two reasons.
+# Both are answered:
+#
+#  1. "NEVER COMMAND THE CUT BAND'S EDGE."  updateShareSetpointCutoff()
+#     (.ino:9377-9385, latch .ino:9231-9257) opens a channel's *_BUS_ENABLE for
+#     a setpoint OUTSIDE the band, on a STRICT comparison: 0.15 and 0.85
+#     themselves are IN band.  The old grid stopped 0.10 short of both rails
+#     against a float round-trip through the 22-byte packet.  THE EVIDENCE NOW
+#     SAYS THAT MARGIN IS NOT NEEDED.  `SdpStrategy.clamp_share()` emits the
+#     rail EXACTLY - it is the same float object the firmware compares - and
+#     `sdp-v4` has railed at 0.8500 on 100 % of ticks across campaigns
+#     20260902_011926 and 20260902_041414 with ZERO hazard cuts.  The firmware
+#     also carries SHARE_CUTOFF_HYST 0.01 BEYOND the band (.ino:3258), so the
+#     cut needs a setpoint past 0.86 / under 0.14, not past the rail.  The grid
+#     edges below are therefore the SAME floats the SDP clamp emits, which
+#     `test_the_dp_grid_edges_match_the_sdp_clamp_through_the_packet` pins
+#     through the actual command packet.
+#  2. "EQUAL ACTUATOR AUTHORITY."  This reason is RESTORED by the widening
+#     rather than answered.  The old grid was NARROWER than the policies it
+#     bounded: `SdpStrategy.clamp_share()` clamps to the BAND, so on every
+#     `ems-*-sdp` leg the DP was solving over a control set that did not
+#     contain the policy's own operating point, and the causal run BEAT its own
+#     "lower bound" (measured ~3 % on `ems-ftp75c-sdp`, ~0.35 % on `ems-sdp`).
+#     A benchmark the referent beats ranks nothing.  With the band matched the
+#     bound is a bound again, and the SDP legs' matched-DP deviation is
+#     expected to be <= 0.
+#
+# n_share 57 KEEPS THE CONTROL SPACING AT 0.0125.  The old grid was 41 points
+# over 0.50; the band is 0.70, and 0.70/0.0125 + 1 = 57.  Holding the spacing
+# rather than the point count is what keeps the widening a change of REACH and
+# not of resolution, at 1.39x the control count and about 2x the solve cost
+# once the wider reachable window's larger SoC grid is counted.
+#
+# ERA HANDLING.  `n_share` and `share_span` are already KEY FIELDS
+# (`dp_results_db.KEY_FIELDS`) and are already recorded in the table header and
+# checked by `DpReplayStrategy.bind_scenario()`'s drift guard, so a record or a
+# table solved on the old grid keys and binds as ITS OWN ERA rather than
+# colliding with a new one.  Nothing is orphaned; the old artifacts simply stop
+# matching a live scenario, which is the correct outcome for a benchmark solved
+# over a control set the firmware no longer bounds the strategies to.
+#
+# TODO(queued): SINGLE-SOURCE COMMANDS (share 0 / 1) are NOT in this grid and
+#   are a separate extension.  They are commanded through the setpoint latch
+#   rather than through the share loop, and they are subject to the fw v25
+#   share-cut load guard (no cut above 0.5 A of survivor current), so they need
+#   their own control column with its own feasibility test rather than two more
+#   points on this axis.  See the standing rule in docs/HIL_SCENARIOS.md.
+#
+# FC-current budget at the widest point: 0.85 x the drain phase's 1.462 A bus
+# total = 1.24 A, 11 % under LIMIT_I_FC_MAX.  Tighter than the old grid's 22 %,
+# and still inside the margin `charge_mask()`'s DP_CHARGE_FC_MARGIN enforces on
+# the charge column; `forward_pass()` refuses an FC-overcurrent share outright,
+# so an infeasible rail fails loudly rather than being emitted.
+DP_SHARE_MIN = sim.SOC_BAND_SHARE_MIN
+DP_SHARE_MAX = sim.SOC_BAND_SHARE_MAX
 
 # The share value written into the table for a CHARGING stage.  With
 # FC_CHARGE_ENABLE open the firmware has already dropped BT off the bus
 # (assertFcChargeEnable(), .ino:10046), so the share loop has no minority
 # channel to apportion and the commanded value is informational.  It is set to
 # DP_SHARE_MAX rather than 1.0 so that IF the charge path fails to open and
-# both channels are in fact still on the bus, the command is still an ordinary
-# in-band split and cannot trip the cut.
+# both channels are in fact still on the bus, the command is still an in-band
+# split and cannot trip the cut.
+#
+# ⚠️ IT IS NOW ON THE RAIL (2026-09-02, the band widening): DP_SHARE_MAX is
+# 0.85, the band edge itself, where it used to be 0.75 with 0.10 of margin.
+# The reasoning is UNCHANGED and still holds, because
+# updateShareSetpointCutoff() compares STRICTLY - 0.85 is IN band - and the
+# firmware carries SHARE_CUTOFF_HYST 0.01 beyond it.  What has gone is the
+# margin, not the guarantee.  A future retune that made the comparison
+# inclusive would break this and the band guard in prepare_problem() together.
 DP_CHARGE_SHARE = DP_SHARE_MAX
 
 # Headroom kept on LIMIT_I_FC_MAX when admitting a charge stage.  0.85 -> the
@@ -350,11 +400,21 @@ DP_STAGE_DT_S = 0.1
 # doubles memory (int16 policy table) and changes the answer in the 5th digit.
 DP_SOC_STEP = 5.0e-6
 
-# Number of share controls, spanning [SOC_BAND_SHARE_MIN, SOC_BAND_SHARE_MAX].
-# 41 points = 0.0175 share resolution; at the drain phase's ~1.45 A bus total
-# that is 25 mA of FC current per step, well under the share loop's own
-# tracking spread (0.503 +/- 0.028 measured, CLAUDE.md 2026-08-17b).
-DP_N_SHARE = 41
+# Number of share controls, spanning [DP_SHARE_MIN, DP_SHARE_MAX] = the full
+# firmware command band [0.15, 0.85].
+#
+# ⚠️ 41 -> 57 ON 2026-09-02, WITH THE GRID WIDENING, and the point of the
+# change is that the SPACING IS HELD rather than the count.  41 points over the
+# old 0.50-wide grid was 0.0125 spacing; 57 points over the 0.70-wide band is
+# the SAME 0.0125.  Holding the count instead would have coarsened the control
+# to 0.0175 and made the widening a change of resolution as well as of reach,
+# which would have confounded any before/after comparison.
+#
+# At the drain phase's ~1.45 A bus total, 0.0125 is 18 mA of FC current per
+# step, well under the share loop's own tracking spread (0.503 +/- 0.028
+# measured, CLAUDE.md 2026-08-17b).  Cost: 1.39x the control count, and about
+# 2x the solve once the wider reachable window's larger SoC grid is counted.
+DP_N_SHARE = 57
 
 # Reachability padding (D8): the SoC window is [min, max] of the two extreme
 # forward walks, expanded by this fraction of the span on each side (and by at
@@ -535,8 +595,31 @@ def scenario_drain_a(scenario, t, aux_preload_a=None):
     return sim.I_AUX_A + sim.SOC_BAND_DRAIN_LOAD_A * (ramp_in - ramp_out)
 
 
-def build_demand(scenario, meta, times, dt, aux_preload_a=None, loss_map=None):
-    """Per-stage (v, a, P_dem_bus, V_bus, I_total, cruise) arrays.
+def build_demand(scenario, meta, times, dt, aux_preload_a=None, loss_map=None,
+                 drag_mode=None, eta_regen=None, eta_chg=None,
+                 v_pack_ref=None, regen_i_max_a=None):
+    """Per-stage (v, a, P_dem_bus, V_bus, I_total, cruise, I_regen) arrays.
+
+    ⚠️ THE RETURN GREW A SEVENTH ELEMENT on 2026-09-02 (the ftp75c round).
+    `i_regen` is the pack charge current a braking stage delivers, in AMPS, and
+    it is ALL ZEROS in the pre-regen era, so every old-era caller that unpacks
+    six gets a loud TypeError rather than a silently mis-priced demand.
+
+    `drag_mode` (2026-09-02) selects the ROAD-LOAD PROFILE.  `None` and `"rig"`
+    are the MEASURED bench road load `F_c*sgn(v) + b_eff*v`, which is what every
+    committed table was solved against; the compensated modes replace it with
+    `k_air*v*|v|` and zero Coulomb.  It changes the TRACTIVE demand, not only
+    the braking credit, so it is fingerprinted.
+
+    `eta_regen` selects the REGEN DEMAND ERA, in the shape `eta_chg` and
+    `loss_map` established.  `None` is the pre-2026-09-02 model - the REGEN
+    DIVERGENCE documented below - and a float credits braking stages through
+    `tools/regen_power.py`, the one chain the plant, this generator, the walk
+    and the MPC share.  `eta_chg`, `v_pack_ref` and `regen_i_max_a` price the
+    credit's last stage (the Ag105's output-referred cap) and are REQUIRED when
+    `eta_regen` is set: the reference pack voltage is a single scalar, not the
+    trajectory's, so `i_regen` stays STATE-INDEPENDENT and the stage cost stays
+    separable.
 
     `loss_map` (2026-09-02) selects the DEMAND-MODEL ERA, in the shape
     `eta_chg` established for the charger.  `None` is the pre-2026-09-02 model
@@ -568,22 +651,39 @@ def build_demand(scenario, meta, times, dt, aux_preload_a=None, loss_map=None):
                                         (regen is a torque clip on this rig, not
                                         a dump path — CLAUDE.md 2026-08-17b)
 
-    ⚠️ REGEN DIVERGENCE, stated (E-M2, 2026-09-01; DIRECTION CORRECTED
-    2026-09-02, review PLANT-R1-F5): the DP's demand model has NO regen term
-    (p_mech = max(0, F*v)); the live plant now returns braking energy to the
-    pack — divergence deliberate, magnitude unquantified for the live
-    comparison; the live comparison inherits it.
-    THE DECELERATION DEMAND IS IDENTICAL, NOT OVERSTATED.  `max(0, F*v)` and
-    the plant both bill ZERO motor demand while F*v < 0; what the DP omits is
-    the ENERGY THE PLANT GIVES BACK on those stages, which is a credit to the
-    battery, not a load.  The earlier "over-states demand on every decelerating
-    stage" reading had the sign of the omission backwards.  Consequence at a
-    MATCHED terminal SoC: the DP must buy with hydrogen the SoC the live run
-    got back from braking, so its total is INFLATED and a regen-bearing run's
-    deviation against it is flattered.  `hil_report_analysis.matched_dp_for_run`
-    prices that bound per run (`regen_bound`, the returned energy at the Gfc DC
-    gain).  Quantifying it inside the DP needs a regen term in `build_demand`,
-    which is deliberately absent.
+    ⚠️ THE REGEN DIVERGENCE IS CLOSED IN THE REGEN ERA, AND OPEN OUTSIDE IT
+    (E-M2, 2026-09-01; direction corrected 2026-09-02, review PLANT-R1-F5;
+    CLOSED 2026-09-02, the ftp75c round).
+    THE DECELERATION DEMAND WAS NEVER OVERSTATED.  `max(0, F*v)` and the plant
+    both bill ZERO motor demand while F*v < 0; what the DP omitted is the
+    ENERGY THE PLANT GIVES BACK on those stages, which is a credit to the
+    battery, not a load.  Consequence at a MATCHED terminal SoC: the DP had to
+    supply with hydrogen the SoC the live run got back from braking, so its
+    total was INFLATED and a regen-bearing run's deviation against it was
+    correspondingly optimistic.
+    `hil_report_analysis.matched_dp_for_run` prices that bound per run
+    (`regen_bound`, the returned energy at the Gfc DC gain).
+    WITH `eta_regen` SET the credit is inside the DP and that per-run bound goes
+    to zero, which is the purpose of the change: the bound stops being an
+    unquantified inflation of the DP hydrogen total.
+    WITHOUT IT the divergence stands exactly as it did - and on the MEASURED RIG
+    PROFILE it is 0.001 J of a 30.8 J braking kinetic energy, because the rig
+    road load exceeds the inertial force at every deceleration in every
+    registered cycle.  That is why the pre-regen era remains the default and why
+    every committed table is still a bound on the run it was solved for.
+
+    THE CREDIT IS EXPRESSED AS A PACK CURRENT, NOT AS A NEGATIVE `p_dem`, and
+    this is the central design choice.  Four reasons, each rooted in code below:
+      * NOTHING FLOWS BACK TO THE BUS.  `MOT_PWR` is instantiated strict-forward
+        and docs/HIL_PLANT.md records the bus contribution as structurally zero
+        while the chopper clamps.  A negative `p_dem` would credit the bus.
+      * `solve_dp()`'s split-control feasibility test `(p_fc / V) <=
+        LIMIT_I_FC_MAX_A` and its stage cost both assume `p_dem >= 0`.  A
+        negative `p_dem` would bill NEGATIVE HYDROGEN.
+      * `charge_mask()`'s budget test would become trivially true on braking
+        stages and would admit FC charge windows the firmware never opens there.
+      * The MPC's violation tables bound `d*i_tot` and `(1-d)*i_tot`
+        one-sidedly and would not catch a regen current limit.
     ELECTRICS:
         i_motor = p_mech/(ETA_BOOST*V_bus);  I_total = i_motor + i_aux(t)
         V_bus   = V_BUS_DROOP_V0 - K_DROOP_BUS_SHARED*I_total
@@ -616,10 +716,47 @@ def build_demand(scenario, meta, times, dt, aux_preload_a=None, loss_map=None):
                 - sim.piecewise(prof, t - 0.5 * dt)) / dt
         i_aux[k] = scenario_drain_a(scenario, t, aux_preload_a)
 
-    f_coul = np.where(v > sim.V_STICTION, sim.F_COULOMB,
-                      np.where(v < -sim.V_STICTION, -sim.F_COULOMB, 0.0))
-    force = sim.M_EFF * a + f_coul + sim.B_EFF * v
+    # ── ROAD LOAD ────────────────────────────────────────────────────────────
+    # `rig` is the pre-2026-09-02 expression VERBATIM (kept as its own arm so an
+    # old-era table regenerates byte-identically); the compensated modes carry
+    # ONE quadratic term and no Coulomb term, in the signed `v*|v|` form that
+    # keeps the drag opposing motion.  This mirrors `Plant.step()`'s two arms
+    # term for term, minus the stiction deadband - the profile never dwells
+    # inside V_STICTION while commanding force.
+    k_air = sim.drag_k_air(sim.DRAG_MODE_RIG if drag_mode is None
+                           else drag_mode)
+    if k_air == 0.0:
+        f_coul = np.where(v > sim.V_STICTION, sim.F_COULOMB,
+                          np.where(v < -sim.V_STICTION, -sim.F_COULOMB, 0.0))
+        force = sim.M_EFF * a + f_coul + sim.B_EFF * v
+    else:
+        force = sim.M_EFF * a + k_air * v * np.abs(v)
     p_mech = np.maximum(0.0, force * v)
+
+    # ── THE BRAKING CREDIT (2026-09-02) ─────────────────────────────────────
+    # `p_pos = max(0, F*v)` above is UNCHANGED, which is the point of the
+    # 2026-09-02 correction: the DP's deceleration demand was never overstated.
+    # What it omitted was the credit, and this is it - the whole chain from
+    # `tools/regen_power.py`, so the plant, this generator, the walk and the MPC
+    # cannot price a braking stage four different ways.
+    eta_regen = regen_power.check_eta_regen(eta_regen)
+    if eta_regen is None:
+        i_regen = np.zeros(n)
+    else:
+        if v_pack_ref is None or regen_i_max_a is None:
+            raise ValueError(
+                "build_demand needs v_pack_ref and regen_i_max_a when "
+                "eta_regen is set: the credit's last stage is the Ag105's "
+                "output-referred cap, and the reference pack voltage must be a "
+                "SCALAR so `i_regen` stays state-independent and the DP's "
+                "stage cost stays separable")
+        i_regen = np.empty(n)
+        for k in range(n):
+            i_regen[k] = regen_power.regen_pack_current_from_force_a(
+                float(force[k]), float(v[k]), eta_regen=eta_regen,
+                eta_chg=eta_chg, v_pack_v=float(v_pack_ref),
+                k_f=sim.K_F, i_clip_a=sim.VESC_REGEN_I_MAX_A,
+                i_max_a=float(regen_i_max_a))
 
     if loss_map is None:
         # THE PRE-2026-09-02 MODEL, kept verbatim so an old-era table
@@ -654,11 +791,11 @@ def build_demand(scenario, meta, times, dt, aux_preload_a=None, loss_map=None):
     # than on a trailing window, because a table generator HAS the profile.
     cruise = (np.abs(a) <= sim.SOC_BAND_CRUISE_SLOPE_MAX) & \
              (v >= sim.SOC_BAND_CRUISE_MIN_MPS)
-    return v, a, p_dem, v_bus, i_total, cruise
+    return v, a, p_dem, v_bus, i_total, cruise, i_regen
 
 
 def charge_mask(times, p_dem, v_bus, cruise, chg_ceiling_a, run_exit_s,
-                eta_chg=None, v_pack_ref=None):
+                eta_chg=None, v_pack_ref=None, i_regen=None):
     """Per-stage boolean: may the DP open the charger path at this stage? (D10)
 
     `eta_chg` / `v_pack_ref` select the charger era (D12).  The OLD era needs
@@ -690,6 +827,25 @@ def charge_mask(times, p_dem, v_bus, cruise, chg_ceiling_a, run_exit_s,
                                       eta_chg)
     budget_ok = ((p_dem / v_bus + i_chg_bus)
                  <= DP_CHARGE_FC_MARGIN * LIMIT_I_FC_MAX_A)
+    # ── EXCLUSIVITY (2026-09-02) ────────────────────────────────────────────
+    # A STAGE CANNOT BOTH FC-CHARGE AND REGEN-CHARGE.  This is the host-side
+    # image of the hardware guard in `assertFcChargeEnable()`, which drives
+    # BT_BUS LOW, then REGEN LOW, waits 100 us, then raises FC_CHARGE - so the
+    # board can never have both paths open and a table that assumed it could is
+    # optimizing over an infeasible control.
+    #
+    # `cruise` already excludes MOST braking stages but not all: a shallow
+    # deceleration inside SOC_BAND_CRUISE_SLOPE_MAX can be regen-capable under
+    # the compensated drag, where the inertial force needs only to beat a
+    # quadratic term that vanishes at low speed.  The explicit term makes the
+    # exclusion EXACT rather than incidental.
+    #
+    # It keeps the mask STATE-INDEPENDENT, which is the property that makes the
+    # stage cost separable and the DP tractable: `i_regen` is a per-stage
+    # constant computed against a reference pack voltage, not against the
+    # trajectory's.
+    if i_regen is not None:
+        budget_ok = budget_ok & (i_regen <= 0.0)
     return in_run & cruise & budget_ok
 
 
@@ -697,17 +853,25 @@ def charge_mask(times, p_dem, v_bus, cruise, chg_ceiling_a, run_exit_s,
 # Forward dynamics shared by the DP, the reachability walk and the heuristic
 # reference walk — ONE implementation, so the three cannot disagree.
 # ─────────────────────────────────────────────────────────────────────────────
-def step_discharge(soc, share, p_dem, v_bus, dt, cap_as):
-    """One stage on the split control.  Returns (soc_next, h2_g, h2_plant_g)."""
+def step_discharge(soc, share, p_dem, v_bus, dt, cap_as, i_regen=0.0):
+    """One stage on the split control.  Returns (soc_next, h2_g, h2_plant_g).
+
+    `i_regen` (2026-09-02) is the braking credit in AMPS INTO THE PACK, and it
+    is SHARE-INDEPENDENT by construction: the flywheel returns what it returns
+    whatever the split is doing.  That is what keeps the DP separable - the
+    credit is a per-stage constant added to the transition, never a term the
+    control index can move.  Zero in the pre-regen era, so every old-era total
+    is bit-identical."""
     p_fc_bus = share * p_dem
     p_bt_bus = p_dem - p_fc_bus
     i_pack = pack_current_from_bus_power(p_bt_bus, soc)
-    soc_next = soc - i_pack * dt / cap_as
+    soc_next = soc - i_pack * dt / cap_as + i_regen * dt / cap_as
     h2 = sim.H2_GFC_DC_GAIN_GPS_PER_W * (p_fc_bus / sim.ETA_BOOST) * dt
     return soc_next, h2, h2
 
 
-def step_charge(soc, p_dem, v_bus, chg_a, dt, cap_as, eta_chg=None):
+def step_charge(soc, p_dem, v_bus, chg_a, dt, cap_as, eta_chg=None,
+                i_regen=0.0):
     """One stage on the charge control.  Returns (soc_next, h2_g, h2_plant_g).
 
     D11: `h2_g` charges the fuel cell for the charger energy (the physical
@@ -717,7 +881,15 @@ def step_charge(soc, p_dem, v_bus, chg_a, dt, cap_as, eta_chg=None):
     D12: `eta_chg` selects the charger era.  The pack receives `chg_a` in BOTH
     eras - the efficiency is on the INPUT side - so `soc_next` never moves
     with it; only the bus power the fuel cell is billed for does."""
-    soc_next = soc + chg_a * dt / cap_as
+    # `i_regen` is PROVABLY ZERO on any stage reachable here: `charge_mask()`
+    # ANDs `i_regen <= 0.0` in, which is the host-side image of
+    # `assertFcChargeEnable()`'s hardware exclusion.  It is threaded anyway, and
+    # deliberately: this function is also called by `reachable_soc_window()`'s
+    # extreme-policy walk and by `ems_walk`, and a future admission rule that
+    # relaxed the mask would otherwise silently drop the credit here instead of
+    # failing.  The term is the same one `step_discharge()` adds, so the two
+    # cannot price a braking stage differently.
+    soc_next = soc + chg_a * dt / cap_as + i_regen * dt / cap_as
     p_fc_bus_phys = p_dem + charger_bus_power_w(
         chg_a, v_bus, pack_charge_voltage(soc, chg_a), eta_chg)
     h2 = sim.H2_GFC_DC_GAIN_GPS_PER_W * (p_fc_bus_phys / sim.ETA_BOOST) * dt
@@ -729,7 +901,7 @@ def step_charge(soc, p_dem, v_bus, chg_a, dt, cap_as, eta_chg=None):
 # Reachability walk (D8)
 # ─────────────────────────────────────────────────────────────────────────────
 def reachable_soc_window(soc0, p_dem, v_bus, chg_ok, dt, cap_as, chg_a,
-                         share_lo, share_hi, eta_chg=None):
+                         share_lo, share_hi, eta_chg=None, i_regen=None):
     """[lo, hi] SoC bounds over the two extreme admissible policies.
 
     THE DEMAND-MODEL ERA is likewise transparent here: it enters only through
@@ -746,18 +918,30 @@ def reachable_soc_window(soc0, p_dem, v_bus, chg_ok, dt, cap_as, chg_a,
     eta era's smaller bus draw admits charging at more stages (measured on
     ems-dp-replay: 129 -> 157 admitted stages, and the SoC grid it sizes 1746
     -> 1764 points) - so the two eras' windows do differ, through `chg_ok`."""
+    # THE REGEN CREDIT MUST BE HERE (2026-09-02).  Regeneration raises the
+    # upper bound reachable from any state, and transitions off the grid are
+    # INFEASIBLE rather than clamped (see solve_dp's `feas &= (soc_next >= lo)`
+    # test), so a window sized WITHOUT the credit would sit below trajectories
+    # the DP can actually reach and would silently TRUNCATE the optimum.  It
+    # also lowers the all-battery floor slightly, which is harmless but is the
+    # same term and is applied on both walks for that reason.
+    def _reg(k):
+        return 0.0 if i_regen is None else float(i_regen[k])
+
     lo = hi = soc0
     s = soc0
     for k in range(len(p_dem)):        # all-battery: the deepest discharge
-        s, _, _ = step_discharge(s, share_lo, p_dem[k], v_bus[k], dt, cap_as)
+        s, _, _ = step_discharge(s, share_lo, p_dem[k], v_bus[k], dt, cap_as,
+                                 _reg(k))
         lo = min(lo, s)
     s = soc0
     for k in range(len(p_dem)):        # all-FC + charge whenever admitted
         if chg_ok[k]:
             s, _, _ = step_charge(s, p_dem[k], v_bus[k], chg_a, dt, cap_as,
-                                  eta_chg)
+                                  eta_chg, _reg(k))
         else:
-            s, _, _ = step_discharge(s, share_hi, p_dem[k], v_bus[k], dt, cap_as)
+            s, _, _ = step_discharge(s, share_hi, p_dem[k], v_bus[k], dt,
+                                     cap_as, _reg(k))
         hi = max(hi, s)
         lo = min(lo, s)
     return lo, hi
@@ -768,7 +952,7 @@ def reachable_soc_window(soc0, p_dem, v_bus, chg_ok, dt, cap_as, chg_a,
 # ─────────────────────────────────────────────────────────────────────────────
 def solve_dp(soc0, times, p_dem, v_bus, chg_ok, dt, cap_as, chg_a,
              shares, soc_grid, lam_dev, lam_term, charger_accounting,
-             eta_chg=None):
+             eta_chg=None, i_regen=None):
     """Backward Bellman induction (D1-D3, D5).
 
     Controls are indexed 0..m-1 = the share grid, and index m = CHARGE (present
@@ -796,6 +980,12 @@ def solve_dp(soc0, times, p_dem, v_bus, chg_ok, dt, cap_as, chg_a,
     for k in range(n_stages - 1, -1, -1):
         P = p_dem[k]
         V = v_bus[k]
+        # THE BRAKING CREDIT, share-independent by construction (2026-09-02).
+        # A scalar per stage, so it enters BOTH transitions as one added term
+        # and the stage cost stays separable: SoC gains on a braking stage
+        # WHATEVER the share decision is, which is exactly what makes the DP
+        # tractable at the same complexity as before.
+        R = 0.0 if i_regen is None else float(i_regen[k])
 
         # ── split controls ──────────────────────────────────────────────────
         p_fc = shares * P                      # (m,)
@@ -805,7 +995,7 @@ def solve_dp(soc0, times, p_dem, v_bus, chg_ok, dt, cap_as, chg_a,
         i_pack = p_bt[None, :] / (sim.ETA_BOOST * v1)
         soc_next = np.empty((n, ctrl_n))
         stage = np.empty((n, ctrl_n))
-        soc_next[:, :m] = soc_col - i_pack * dt / cap_as
+        soc_next[:, :m] = soc_col - i_pack * dt / cap_as + R * dt / cap_as
         stage[:, :m] = sim.H2_GFC_DC_GAIN_GPS_PER_W * (p_fc / sim.ETA_BOOST) * dt
 
         feas = np.empty((n, ctrl_n), dtype=bool)
@@ -813,7 +1003,9 @@ def solve_dp(soc0, times, p_dem, v_bus, chg_ok, dt, cap_as, chg_a,
         feas[:, :m] = ((p_fc / V) <= LIMIT_I_FC_MAX_A)[None, :]
 
         # ── charge control ──────────────────────────────────────────────────
-        soc_next[:, m] = soc_grid + chg_a * dt / cap_as
+        # `R` is provably zero here - `charge_mask()` refuses a regen-capable
+        # stage - but the term is written so the two columns cannot drift.
+        soc_next[:, m] = soc_grid + chg_a * dt / cap_as + R * dt / cap_as
         # D11: which bus power the charge stage is billed for.  `physical`
         # charges the FC for the charger's draw; `simple` omits it, mirroring
         # the simple-mode plant's own bus node (and its logged h2_cum_g).
@@ -846,7 +1038,7 @@ def solve_dp(soc0, times, p_dem, v_bus, chg_ok, dt, cap_as, chg_a,
 
 
 def forward_pass(soc0, times, p_dem, v_bus, chg_ok, dt, cap_as, chg_a,
-                 shares, soc_grid, Uopt, eta_chg=None):
+                 shares, soc_grid, Uopt, eta_chg=None, i_regen=None):
     """Table-lookup rollout at the CONTINUOUS SoC (D2), raising on D3.
 
     The POLICY lookup is nearest-neighbour on the SoC grid — the control index
@@ -881,7 +1073,9 @@ def forward_pass(soc0, times, p_dem, v_bus, chg_ok, dt, cap_as, chg_a,
                     "charge mask forbids it - the backward pass and the mask "
                     "disagree" % (k, times[k]))
             soc, dh2, dh2p = step_charge(soc, p_dem[k], v_bus[k], chg_a, dt,
-                                         cap_as, eta_chg)
+                                         cap_as, eta_chg,
+                                         0.0 if i_regen is None
+                                         else float(i_regen[k]))
             share_out[k] = DP_CHARGE_SHARE
             charge_out[k] = 1.0
         else:
@@ -893,7 +1087,9 @@ def forward_pass(soc0, times, p_dem, v_bus, chg_ok, dt, cap_as, chg_a,
                     % (k, times[k], share, p_dem[k], v_bus[k],
                        share * p_dem[k] / v_bus[k], LIMIT_I_FC_MAX_A))
             soc, dh2, dh2p = step_discharge(soc, share, p_dem[k], v_bus[k],
-                                            dt, cap_as)
+                                            dt, cap_as,
+                                            0.0 if i_regen is None
+                                            else float(i_regen[k]))
             share_out[k] = share
         h2 += dh2
         h2_plant += dh2p
@@ -906,7 +1102,8 @@ def forward_pass(soc0, times, p_dem, v_bus, chg_ok, dt, cap_as, chg_a,
 # Causal reference walk — the SAME reduced model, driven by `soc-band`
 # ─────────────────────────────────────────────────────────────────────────────
 def heuristic_walk(scenario, meta, soc0, times, p_dem, v_bus, i_total, dt,
-                   cap_as, chg_a, run_exit_s, eta_chg=None):
+                   cap_as, chg_a, run_exit_s, eta_chg=None, i_regen=None,
+                   socband_kwargs=None):
     """Walk hil_plant_sim's SocBandStrategy through this script's model.
 
     The point is a MATCHED-MODEL comparison: the causal policy's hydrogen and
@@ -922,7 +1119,13 @@ def heuristic_walk(scenario, meta, soc0, times, p_dem, v_bus, i_total, dt,
     causal and current-based and can differ by a fraction of a second at the
     window edge.
     """
-    policy = sim.SocBandStrategy()
+    # `socband_kwargs` carries the PER-SCENARIO charge thresholds (2026-09-02).
+    # Without them the reference walk on a compensated profile would admit a
+    # charge window at the first cruise sample and never exit it by current -
+    # the shipped 0.60 A entry threshold sits ABOVE that cycle's entire source
+    # total - so the "causal reference" recorded in a table header would be a
+    # charge-saturated control rather than the policy.
+    policy = sim.SocBandStrategy(**(socband_kwargs or {}))
     cmd_period = 1.0 / sim.PiCommander.PI_CMD_HZ
     soc = float(soc0)
     h2 = 0.0
@@ -952,12 +1155,13 @@ def heuristic_walk(scenario, meta, soc0, times, p_dem, v_bus, i_total, dt,
                 sat_t = t
             if charging and charge_t is None:
                 charge_t = t
+        reg = 0.0 if i_regen is None else float(i_regen[k])
         if charging and sim.EMS_RUN_ENTRY_S <= t < run_exit_s:
             soc, dh2, dh2p = step_charge(soc, p_dem[k], v_bus[k], chg_a, dt,
-                                         cap_as, eta_chg)
+                                         cap_as, eta_chg, reg)
         else:
             soc, dh2, dh2p = step_discharge(soc, share, p_dem[k], v_bus[k],
-                                            dt, cap_as)
+                                            dt, cap_as, reg)
         h2 += dh2
         h2_plant += dh2p
     return {"h2_g": h2, "h2_plant_g": h2_plant, "soc_final": soc,
@@ -990,6 +1194,8 @@ class Problem:
     aux_preload_a: object          # None = the live registry value
     eta_chg: object                # None = the 1:1 current-transfer era (D12)
     loss_map: object               # None = the loss-map-free demand model
+    drag_mode: object              # None = the measured rig road load
+    eta_regen: object              # None = the pre-regen demand model
     fingerprint: str
     chg_a: float
     cap_as: float
@@ -1001,6 +1207,7 @@ class Problem:
     v_bus: object
     i_total: object
     cruise: object
+    i_regen: object
     chg_ok: object
     shares: object
     soc_grid: object
@@ -1031,7 +1238,8 @@ class MatchedSolve:
 def prepare_problem(scenario, meta, *, soc0, capacity_ah, stage_dt, n_share,
                     soc_step, run_exit, charger_accounting,
                     lambda_dev=DP_LAMBDA_DEV_G_PER_SOC_S,
-                    aux_preload_a=None, eta_chg=None, loss_map=None):
+                    aux_preload_a=None, eta_chg=None, loss_map=None,
+                    drag_mode=None, eta_regen=None):
     """Resolve the demand, the control grid and the SoC grid for one scenario.
 
     Raises ValueError on an argument the solve cannot honour, so a library
@@ -1056,6 +1264,13 @@ def prepare_problem(scenario, meta, *, soc0, capacity_ah, stage_dt, n_share,
     # is the DEFAULT, for the same reason `eta_chg`'s default is None: a caller
     # that predates the map solves exactly the problem it used to.
     loss_map = sim.check_loss_map(loss_map)
+    # THE ROAD-LOAD AND REGEN ERAS (2026-09-02), on identical terms: both
+    # default to the pre-round configuration, so a caller that predates them
+    # solves exactly the problem it used to.
+    if drag_mode is not None and drag_mode not in sim.DRAG_MODES:
+        raise ValueError("drag_mode must be one of %s, got %r"
+                         % (list(sim.DRAG_MODES), drag_mode))
+    eta_regen = regen_power.check_eta_regen(eta_regen)
 
     duration = float(meta["duration_s"])
     dt = float(stage_dt)
@@ -1064,31 +1279,100 @@ def prepare_problem(scenario, meta, *, soc0, capacity_ah, stage_dt, n_share,
     cap_as = capacity_ah * 3600.0
     chg_a = sim.dp_chg_ceiling_a(meta)
 
-    v, a, p_dem, v_bus, i_total, cruise = build_demand(
-        scenario, meta, times, dt, aux_preload_a, loss_map=loss_map)
-    # The FC-budget term of the mask needs ONE representative pack voltage in
-    # the new era (D12); the initial SoC's is used, so the mask stays
-    # state-independent and the stage cost stays separable.
-    v_pack_ref = (None if eta_chg is None
-                  else float(pack_charge_voltage(float(soc0), chg_a)))
+    # ONE representative pack voltage, at the SOLVE'S INITIAL SoC.  Used by the
+    # mask's FC-budget term (D12) AND by the regen credit's output-referred cap,
+    # so both stay state-independent and the stage cost stays separable.
+    # Computed unconditionally now that a second consumer needs it in an era
+    # where `eta_chg` may still be None.
+    v_pack_ref_all = float(pack_charge_voltage(float(soc0), chg_a))
+    v_pack_ref = None if eta_chg is None else v_pack_ref_all
+
+    v, a, p_dem, v_bus, i_total, cruise, i_regen = build_demand(
+        scenario, meta, times, dt, aux_preload_a, loss_map=loss_map,
+        drag_mode=drag_mode, eta_regen=eta_regen, eta_chg=eta_chg,
+        v_pack_ref=v_pack_ref_all,
+        # The Ag105's own ceiling bounds the regen credit exactly as it bounds
+        # the FC-path charge current, and it is the SAME scenario key.
+        regen_i_max_a=chg_a)
     chg_ok = charge_mask(times, p_dem, v_bus, cruise, chg_a, run_exit,
-                         eta_chg, v_pack_ref)
+                         eta_chg, v_pack_ref,
+                         i_regen if eta_regen is not None else None)
 
     shares = np.linspace(DP_SHARE_MIN, DP_SHARE_MAX, n_share)
-    if not (sim.SOC_BAND_SHARE_MIN < shares[0]
-            and shares[-1] < sim.SOC_BAND_SHARE_MAX):
+    # THE BAND IS INCLUSIVE, so the test is <= / >= (2026-09-02).
+    # updateShareSetpointCutoff() compares STRICTLY (.ino:9231-9257): a
+    # setpoint outside [0.15, 0.85] opens the minority channel's bus switch,
+    # and 0.15 and 0.85 THEMSELVES ARE IN BAND.  The grid's own edges are those
+    # two floats exactly - the same ones SdpStrategy.clamp_share() emits - so a
+    # strict test here would refuse the shipped grid.  What must still be
+    # refused is a grid that CROSSES the band, which is the real hazard.
+    if not (sim.SOC_BAND_SHARE_MIN <= shares[0]
+            and shares[-1] <= sim.SOC_BAND_SHARE_MAX):
         raise ValueError(
-            "share control grid [%.4f, %.4f] touches or crosses the "
-            "share-cut band [%.2f, %.2f] - commanding its edge risks "
-            "updateShareSetpointCutoff() opening a bus switch"
+            "share control grid [%.4f, %.4f] CROSSES the share-cut band "
+            "[%.2f, %.2f] - commanding outside it makes "
+            "updateShareSetpointCutoff() open a bus switch"
             % (shares[0], shares[-1], sim.SOC_BAND_SHARE_MIN,
                sim.SOC_BAND_SHARE_MAX))
 
     lo, hi = reachable_soc_window(soc0, p_dem[:n_stages], v_bus[:n_stages],
                                   chg_ok[:n_stages], dt, cap_as, chg_a,
-                                  shares[0], shares[-1], eta_chg)
+                                  shares[0], shares[-1], eta_chg,
+                                  i_regen[:n_stages])
     span = max(hi - lo, DP_SOC_WINDOW_MIN_PAD)
     pad = max(DP_SOC_WINDOW_PAD_FRAC * span, DP_SOC_WINDOW_MIN_PAD)
+    # ── THE GRID-EDGE INFEASIBILITY POISON (found 2026-09-02) ───────────────
+    # THE MECHANISM, and it is a property of the GRID, not of the physics.  At
+    # the BOTTOM grid row every discharge control steps below `soc_grid[0]`, and
+    # `feas &= (soc_next >= lo)` marks all of them infeasible - correctly, since
+    # the transition leaves the model.  That row's cost-to-go is therefore
+    # `inf`.  On the NEXT backward stage a row one step above it lands on a
+    # point that BRACKETS the inf row, `np.interp` returns inf for any positive
+    # bracket weight, and the row goes infinite too.  The infeasibility
+    # therefore CREEPS UPWARD, and it does so at ROUGHLY one grid row per
+    # stage.  ⚠️ "EXACTLY ONE ROW PER STAGE WHATEVER THE STEP SIZES" WAS
+    # OVERSTATED and is retracted: the rate is set by how far a transition's
+    # landing point reaches above its own row, so it depends on the step sizes
+    # after all, and it was MEASURED at 1.94 and 2.91 rows per stage on two
+    # configurations rather than at 1.  The bound the guard needs is therefore
+    # `>= n_stages * soc_step` of climb, which is what it pads by; the pad is
+    # CONSERVATIVE by whatever the true rate exceeds 1, and over-padding costs
+    # solve time and nothing else.  TODO(verify): measure the rate as a
+    # function of the step sizes and size the pad from it.
+    #
+    # WHEN THAT MATTERS.  It matters when the climb reaches the INITIAL STATE,
+    # at which point the solve reports "the initial state has infinite
+    # cost-to-go" and the DP is not merely inaccurate but unusable.  On
+    # `ems-ftp75c-dp` it does: 1800 stages against a 1861-row grid whose bottom
+    # pad is 219 rows, so the poison climbs past soc0's row 1046 at stage ~650.
+    # The compensated road load is what exposes it - the tractive demand falls
+    # ~4.5x, so the reachable window narrows, so the proportional pad narrows,
+    # while the stage count is unchanged.
+    #
+    # THE GUARD.  Pad by at least the whole horizon's climb, which makes the
+    # poison structurally unable to reach the reachable window at all.
+    #
+    # ⚠️ IT IS GATED ON THE REGEN ERA, AND THE GATE IS ABOUT ARTIFACTS, NOT
+    # ABOUT PHYSICS.  The guard is correct for every solve; applying it
+    # universally would move the SoC grid of all three committed tables and
+    # every stored dp_db record, for a defect none of them actually hit at
+    # soc0.  Measured on `ems-dp-replay`: 611 stages climb 0.003055 SoC from a
+    # bottom edge 0.001782 below `reach_lo`, so the poison DOES enter the low
+    # end of that table's reachable window - it simply never reaches 0.7.
+    # TODO(verify): re-solve the pre-regen tables under this guard and quantify
+    # the change before making it unconditional.  Until then the pre-round
+    # artifacts keep the grid they were solved on, and the absence of the guard
+    # is part of what "the pre-regen era" means.
+    # GATED ON EITHER ERA KEY (M3, 2026-09-02).  Keying it on `eta_regen`
+    # alone left `prepare_problem(drag_mode="scaled-air", eta_regen=None)` -
+    # a legitimate configuration, and the one a compensated ZERO-REGEN CONTROL
+    # solve uses - producing an infinite cost-to-go at the initial state.  The
+    # poison is a property of the STAGE COUNT against the GRID WIDTH, and the
+    # compensated road load narrows the reachable window whichever era the
+    # credit is in.  Byte identity is preserved: a pre-round table carries
+    # NEITHER key, so neither arm fires and its grid is untouched.
+    if eta_regen is not None or drag_mode not in (None, sim.DRAG_MODE_RIG):
+        pad = max(pad, (n_stages + 1) * soc_step)
     g_lo, g_hi = lo - pad, hi + pad
     n_soc = int(round((g_hi - g_lo) / soc_step)) + 1
     soc_grid = g_lo + np.arange(n_soc) * soc_step
@@ -1099,10 +1383,12 @@ def prepare_problem(scenario, meta, *, soc0, capacity_ah, stage_dt, n_share,
         soc_step=float(soc_step), run_exit=float(run_exit),
         charger_accounting=charger_accounting, lambda_dev=float(lambda_dev),
         aux_preload_a=aux_preload_a, eta_chg=eta_chg, loss_map=loss_map,
+        drag_mode=drag_mode, eta_regen=eta_regen,
         fingerprint=sim.dp_profile_fingerprint(scenario, meta),
         chg_a=float(chg_a), cap_as=float(cap_as), n_stages=n_stages,
         times=times, v=v, a=a, p_dem=p_dem, v_bus=v_bus, i_total=i_total,
-        cruise=cruise, chg_ok=chg_ok, shares=shares, soc_grid=soc_grid,
+        cruise=cruise, i_regen=i_regen, chg_ok=chg_ok, shares=shares,
+        soc_grid=soc_grid,
         grid_info={"n": n_soc, "lo": float(soc_grid[0]),
                    "hi": float(soc_grid[-1])},
         reach_lo=float(lo), reach_hi=float(hi),
@@ -1116,7 +1402,7 @@ def _roll(problem, lam_term):
     J0, Uopt = solve_dp(p.soc0, p.times[:n], p.p_dem[:n], p.v_bus[:n],
                         p.chg_ok[:n], p.stage_dt, p.cap_as, p.chg_a, p.shares,
                         p.soc_grid, p.lambda_dev, lam_term,
-                        p.charger_accounting, p.eta_chg)
+                        p.charger_accounting, p.eta_chg, p.i_regen[:n])
     if not np.isfinite(J0[p.i0]):
         raise DpInfeasible(
             "the initial state (SoC %.6f) has infinite cost-to-go: no "
@@ -1125,7 +1411,7 @@ def _roll(problem, lam_term):
             "(%.3f A)." % (p.soc0, LIMIT_I_FC_MAX_A, p.i_total.max()))
     out = forward_pass(p.soc0, p.times[:n], p.p_dem[:n], p.v_bus[:n],
                        p.chg_ok[:n], p.stage_dt, p.cap_as, p.chg_a, p.shares,
-                       p.soc_grid, Uopt, p.eta_chg)
+                       p.soc_grid, Uopt, p.eta_chg, p.i_regen[:n])
     return (J0[p.i0],) + out
 
 
@@ -1185,10 +1471,18 @@ def heuristic_reference(problem):
     """The causal `soc-band` walk through this problem's reduced model."""
     p = problem
     n = p.n_stages
+    # The scenario's own soc-band charge thresholds, if it declares them: the
+    # reference must be the POLICY on this stimulus, not a charge-saturated
+    # control (see heuristic_walk).
+    sb = {}
+    for key, arg in (("soc_band_charge_enter_itot_a", "charge_enter_itot_a"),
+                     ("soc_band_charge_exit_itot_a", "charge_exit_itot_a")):
+        if p.meta.get(key) is not None:
+            sb[arg] = float(p.meta[key])
     return heuristic_walk(p.scenario, p.meta, p.soc0, p.times[:n],
                           p.p_dem[:n], p.v_bus[:n], p.i_total[:n],
                           p.stage_dt, p.cap_as, p.chg_a, p.run_exit,
-                          p.eta_chg)
+                          p.eta_chg, p.i_regen[:n], sb or None)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1241,6 +1535,16 @@ def render_table(scenario, meta, args, fingerprint, times, share, charge,
     # byte-identically and the ABSENCE of the flag is the record of its era.
     if loss_map is not None:
         cmd += " --loss-map plant"
+    # The road-load and regen eras append their own flags, on exactly the terms
+    # above: the RIG profile and the PRE-REGEN model append NOTHING, so a table
+    # solved before 2026-09-02 regenerates byte-identically and the ABSENCE of
+    # each flag is the record of its era.
+    drag_mode = getattr(args, "drag", None)
+    if drag_mode is not None and drag_mode != sim.DRAG_MODE_RIG:
+        cmd += " --drag %s" % drag_mode
+    eta_regen = getattr(args, "eta_regen", None)
+    if eta_regen is not None:
+        cmd += " --eta-regen %r" % float(eta_regen)
     L = []
     A = L.append
     A("# ══════════════════════════════════════════════════════════════════════")
@@ -1307,6 +1611,30 @@ def render_table(scenario, meta, args, fingerprint, times, share, charge,
         A("#   A table with NO loss_map line was solved against the")
         A("#   motor-plus-drain model on V_BUS_DROOP_V0 - K_DROOP_BUS_SHARED*I")
         A("#   and is not comparable. See hil_plant_sim's loss-map block.")
+    # THE ROAD-LOAD PROFILE and THE REGEN ERA (2026-09-02), each emitted ONLY
+    # when it is not the pre-round configuration, so a rig / pre-regen table
+    # keeps its exact bytes and the absence of each line is that era's record.
+    if drag_mode is not None and drag_mode != sim.DRAG_MODE_RIG:
+        A("# drag: %s" % drag_mode)
+        A("# drag_k_air: %r" % sim.drag_k_air(drag_mode))
+        A("#   2026-09-02 - the mechanical road load is the study vehicle's")
+        A("#   SCALED AIR DRAG (k_air*v*|v|, F_c = 0), not this bench's")
+        A("#   measured F_c + b_eff*v. It cuts the tractive demand by roughly")
+        A("#   4.5x and is what makes braking regenerative at all. A table")
+        A("#   with NO drag line was solved against the rig road load.")
+    if eta_regen is not None:
+        A("# eta_regen: %r" % float(eta_regen))
+        A("# vesc_regen_i_max_a: %r" % float(sim.VESC_REGEN_I_MAX_A))
+        A("#   2026-09-02 - a braking stage is CREDITED with the pack current")
+        A("#   the regen chain delivers (tools/regen_power.py): the VESC clip")
+        A("#   as a force, ETA_REGEN to the V-MOT node, then the Ag105's")
+        A("#   output-referred cap. A table with NO eta_regen line was solved")
+        A("#   against p_mech = max(0, F*v) and NO credit, so at a matched")
+        A("#   terminal SoC it must buy that SoC with hydrogen and its total")
+        A("#   is INFLATED. The two are not comparable.")
+        A("#   BOTH constants are recorded here and checked by")
+        A("#   DpReplayStrategy.bind_scenario()'s drift guard - the")
+        A("#   pre-committed obligation the NOT RECORDED note below carried.")
     A("# gfc_dc_gain_gps_per_w: %r" % sim.H2_GFC_DC_GAIN_GPS_PER_W)
     A("# eta_boost: %r" % sim.ETA_BOOST)
     A("# limit_i_fc_max_a: %r" % LIMIT_I_FC_MAX_A)
@@ -1323,19 +1651,19 @@ def render_table(scenario, meta, args, fingerprint, times, share, charge,
     A("# share_span: %r" % float(sim.SOC_BAND_SHARE_SPAN))
     A("# cruise_slope_max: %r" % float(sim.SOC_BAND_CRUISE_SLOPE_MAX))
     A("# cruise_min_mps: %r" % float(sim.SOC_BAND_CRUISE_MIN_MPS))
-    # ── NOT RECORDED, and why: ETA_REGEN / VESC_REGEN_I_MAX_A (E-M2) ─────────
-    # These two govern the LIVE plant's regen injection.  They are deliberately
-    # NOT in this header and NOT in the drift guard, on the same rule the
-    # `limit_i_fc_max_a` note below uses: the guard's job is to refuse a table
-    # solved against values that no longer hold, and neither constant ENTERS THE
-    # SOLVE — build_demand() has no regen term at all (p_mech = max(0, F*v)), so
-    # retuning either one cannot make this table the optimum of a different
-    # problem.  What they DO move is the live trajectory the table is replayed
-    # against, i.e. the size of the deliberate divergence documented in
-    # build_demand()'s docstring.  Recording them here would assert a
-    # dependency the solve does not have; the honest place for them is that
-    # divergence note.  ⚠️ If a future generator ever gives the demand model a
-    # regen term, BOTH must move into this header and into the guard.
+    # ── THE PRE-COMMITTED CONTRACT ON ETA_REGEN / VESC_REGEN_I_MAX_A ─────────
+    # (E-M2, 2026-09-01; DISCHARGED 2026-09-02, the ftp75c round.)
+    # The note that stood here said: these two govern the LIVE plant's regen
+    # injection, they are NOT in this header and NOT in the guard because
+    # neither ENTERS THE SOLVE — build_demand() had no regen term — and "⚠️ If a
+    # future generator ever gives the demand model a regen term, BOTH must move
+    # into this header and into the guard."
+    # THAT GENERATOR IS THIS ONE.  Both constants now appear above, and both are
+    # in the drift guard, WHENEVER the table is solved in the regen era.  In the
+    # PRE-REGEN era the original argument still holds word for word — neither
+    # constant enters that solve — so neither line is emitted and the committed
+    # tables keep their exact bytes.  The contract is discharged by making the
+    # obligation ERA-CONDITIONAL, not by weakening it.
     A("#")
     A("# ── tunables ─────────────────────────────────────────────────────────")
     # DOCUMENTATION ONLY (MED-4, 2026-09-01). The auxiliary preload is
@@ -1499,6 +1827,26 @@ def main(argv=None):
                          "delta-SoC-matched bound tighter and "
                          "bleed-invariant. See hil_plant_sim's loss-map "
                          "block for the fit and its residuals.")
+    ap.add_argument("--drag", default=None, choices=list(sim.DRAG_MODES),
+                    help="ROAD-LOAD PROFILE (2026-09-02). Omitted = the "
+                         "scenario's own `drag` key, or 'rig' - this bench's "
+                         "MEASURED F_c + b_eff*v, which regenerates nothing "
+                         "and regenerates every committed table "
+                         "byte-identically. A compensated mode replaces it "
+                         "with the study vehicle's scaled air drag and cuts "
+                         "the tractive demand by roughly 4.5x, so it MUST "
+                         "match the mode the run will replay under.")
+    ap.add_argument("--eta-regen", type=float, default=None,
+                    help="REGEN DEMAND ERA (2026-09-02). Omitted (the "
+                         "default) = NO braking credit, p_mech = max(0, F*v), "
+                         "which is what every pre-2026-09-02 table was solved "
+                         "against. A value (the plant's is %g) credits a "
+                         "braking stage with the pack current the regen chain "
+                         "delivers, which is what stops the bound being "
+                         "inflated by the energy the run gets back. It only "
+                         "does anything under a compensated --drag: on the rig "
+                         "road load the credit is 0.001 J of 30.8 J."
+                         % regen_power.ETA_REGEN_DEFAULT)
     ap.add_argument("--no-compare-heuristic", dest="compare_heuristic",
                     action="store_false",
                     help="skip the matched-model `soc-band` reference walk")
@@ -1556,6 +1904,34 @@ def main(argv=None):
                   "will replay this table under."
                   % (era_label(args.eta_chg), _live, _live), file=sys.stderr)
 
+    # ── THE ROAD-LOAD PROFILE (2026-09-02) ──────────────────────────────────
+    # CLI wins over the scenario key, and absent from both = the rig profile.
+    # Unlike `eta_chg` this key IS declared by scenarios, so the common case
+    # needs no flag: `--scenario ems-ftp75c-dp` solves the compensated demand
+    # because that scenario declares `drag`.
+    if args.drag is None:
+        args.drag = meta.get("drag") or sim.DRAG_MODE_RIG
+    if args.drag not in sim.DRAG_MODES:
+        ap.error("unknown --drag %r (choices: %s)"
+                 % (args.drag, ", ".join(sim.DRAG_MODES)))
+    # ── THE REGEN ERA (2026-09-02) ──────────────────────────────────────────
+    # DEFAULTED FROM THE DRAG PROFILE, and this is the one era default in this
+    # file that is derived rather than sentinel-absent.  The reason is that the
+    # two are not independent in practice: a compensated run REGENERATES, and a
+    # table solved for it without the credit is inflated by exactly the energy
+    # the run gets back - which is the defect this round exists to close, and
+    # `DpReplayStrategy.bind_scenario()` refuses such a table anyway.  A rig
+    # solve still defaults to the pre-regen era and is byte-identical.  Either
+    # direction can be forced: `--eta-regen 0.8` on a rig solve, or
+    # `--eta-regen 0` is REFUSED by check_eta_regen (0 is not an era, it is an
+    # invalid efficiency; the era is the ABSENCE of the term).
+    if args.eta_regen is None and args.drag != sim.DRAG_MODE_RIG:
+        args.eta_regen = float(sim.ETA_REGEN)
+    try:
+        args.eta_regen = regen_power.check_eta_regen(args.eta_regen)
+    except ValueError as exc:
+        ap.error(str(exc))
+
     duration = float(meta["duration_s"])
     dt = float(args.stage_dt)
     try:
@@ -1566,7 +1942,8 @@ def main(argv=None):
             run_exit=args.run_exit,
             charger_accounting=args.charger_accounting,
             lambda_dev=args.lambda_dev, eta_chg=args.eta_chg,
-            loss_map=resolve_loss_map_arg(args.loss_map))
+            loss_map=resolve_loss_map_arg(args.loss_map),
+            drag_mode=args.drag, eta_regen=args.eta_regen)
     except ValueError as exc:
         # GUARD ORDER, deliberately changed (LOW-4, 2026-09-01): the scalar
         # argument checks and the share-cut-band check moved INTO
@@ -1589,6 +1966,13 @@ def main(argv=None):
     print("[dp] scenario %s: %.1f s, %d stages of %g s, chg ceiling %.2f A"
           % (args.scenario, duration, n_stages, dt, chg_a))
     print("[dp] charger era: %s" % era_label(args.eta_chg))
+    print("[dp] road load: %s" % sim.drag_era_label(args.drag))
+    print("[dp] regen era: %s" % regen_power.era_label(args.eta_regen))
+    if args.eta_regen is not None:
+        _reg = problem.i_regen[:n_stages]
+        _nz = int((_reg > 0.0).sum())
+        print("[dp] regen credit: %d/%d stages, peak %.4f A, %.4f C total"
+              % (_nz, n_stages, float(_reg.max()), float(_reg.sum()) * dt))
     print("[dp] demand: peak %.3f W (%.3f A bus), mean %.3f W; "
           "charge-admissible stages %d/%d"
           % (p_dem.max(), i_total.max(), p_dem.mean(),

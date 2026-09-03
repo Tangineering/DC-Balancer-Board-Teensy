@@ -654,6 +654,51 @@ def test_charger_via_regen_and_mot_pwr_path():
     assert out["ag105_status"] & 0x07 == hil.AG105_ST_CHARGING
 
 
+def test_regen_cap_is_not_applied_when_fc_charge_is_also_closed():
+    """THE PLANT-SIDE REGEN / FC_CHARGE EXCLUSION, driven through the PLANT.
+
+    ⚠️ WHY THIS TEST EXISTS AND WHY THE MASK TESTS DO NOT COVER IT (M1,
+    2026-09-02).  `charge_mask()`'s `i_regen <= 0` term is the OFFLINE half of
+    the exclusion and is well covered.  The PLANT carries the other half at
+    three sites -- the V-MOT sink current, `v_chg`, and the Ag105 target cap --
+    each written `(sw & SW_REGEN) and not (sw & SW_FC_CHARGE)`.  Deleting the
+    `not (sw & SW_FC_CHARGE)` clause from all three left the whole suite GREEN,
+    which is a mutation the round shipped without catching.
+
+    THE OBSERVABLE that separates the two.  With FC_CHARGE closed the charger is
+    BUS-fed and its target is the configured ceiling, whatever the flywheel is
+    doing.  Under the mutation the regen cap would apply anyway, and with no
+    braking at all (`p_regen_w` = 0) it would pin `i_charge` at zero.  So: both
+    switches closed, motor idle, charger must reach its ceiling."""
+    plant = hil.Plant()
+    plant.v_bus = hil.V_BUS_NOMINAL
+    sw = hil.SW_REGEN | hil.SW_FC_CHARGE | hil.SW_MOT_PWR | hil.SW_FC_BUS
+    obs = _obs(switch=sw, aux=hil.AUX_FC_REG, current=0.0)
+    for _ in range(int(hil.AG105_SETTLE_S / 1e-3) + 4000):
+        plant.step(1e-3, obs)
+    assert plant.p_regen_w == 0.0                     # nothing is braking
+    # FC-fed: the ceiling, NOT the (zero) regen cap.
+    assert plant.i_charge > 0.9 * plant.ag105_i_max, plant.i_charge
+    # ... and the charger sees the BUS, not the regen node.
+    assert plant.v_chg == pytest.approx(plant.v_bus)
+
+
+def test_regen_cap_does_apply_when_fc_charge_is_open():
+    """THE OTHER ARM, so the test above cannot pass by the cap being dead.
+
+    Identical switches EXCEPT FC_CHARGE, and identical (zero) braking.  Here
+    the regen cap IS in force, so the charger is held at zero -- which is what
+    makes the previous test's ceiling reading meaningful rather than vacuous."""
+    plant = hil.Plant()
+    plant.v_bus = hil.V_BUS_NOMINAL
+    sw = hil.SW_REGEN | hil.SW_MOT_PWR | hil.SW_FC_BUS
+    obs = _obs(switch=sw, aux=hil.AUX_FC_REG, current=0.0)
+    for _ in range(int(hil.AG105_SETTLE_S / 1e-3) + 4000):
+        plant.step(1e-3, obs)
+    assert plant.p_regen_w == 0.0
+    assert plant.i_charge < 1e-6, plant.i_charge
+
+
 def test_charger_regen_alone_without_mot_pwr_is_unpowered():
     plant = hil.Plant()
     plant.v_bus = hil.V_BUS_NOMINAL
@@ -1290,6 +1335,13 @@ EXPECTED_SCENARIO_NAMES = {
     # ORDINARY runs; `ems-ftp75-mpc` is gated behind --with-ftp75 with its
     # siblings.
     "ems-mpc", "ems-mpc-det", "ems-mpc-cross", "ems-ftp75-mpc",
+    # 2026-09-02 (the ftp75c round,
+    # docs/modeling/ftp75c_regen_cycle_design_20260902.md): the five
+    # COMPRESSED-cycle legs, on the road-load-compensated plant. All five are
+    # gated behind run_hil_suite.py --with-ftp75c (FTP75C_SCENARIOS), which is
+    # a suite-side gate and does not change the registry.
+    "ems-ftp75c-5050", "ems-ftp75c-socband", "ems-ftp75c-sdp",
+    "ems-ftp75c-dp", "ems-ftp75c-mpc",
 }
 
 
@@ -1322,7 +1374,12 @@ def test_scenarios_hifi_only_set():
                          # sensed-rail-only, so it perturbs the quantity under
                          # test and nothing else.
                          "v-bus-sense-offset",
-                         "regen-harvest-true", "ems-ftp75-dp"}
+                         "regen-harvest-true", "ems-ftp75-dp",
+                         # 2026-09-02 (the ftp75c round): `ems-ftp75c-dp`
+                         # joins for `ems-dp-replay`'s reason exactly -- its
+                         # shipped table is solved --charger-accounting
+                         # physical and bind_scenario() refuses the mismatch.
+                         "ems-ftp75c-dp"}
 
 
 def test_ems_soc_band_stays_any_while_ems_dp_replay_is_hifi():
@@ -1391,6 +1448,15 @@ EXPECTED_SCENARIO_DURATIONS_S = {
     "ems-mpc-det": 61.0,
     "ems-mpc-cross": 200.0,
     "ems-ftp75-mpc": 350.0,
+    # 2026-09-02 (the ftp75c round): all five legs share ONE stimulus, so all
+    # five carry FTP75C_DURATION_S by reference -- 176.0 s Run exit plus the
+    # 4 s Run -> Finish -> Idle tail. HALF the `ftp75` family's 350 s, which
+    # is the --time-factor 0.5 compression showing up in the plan's wall clock.
+    "ems-ftp75c-5050": 180.0,
+    "ems-ftp75c-socband": 180.0,
+    "ems-ftp75c-sdp": 180.0,
+    "ems-ftp75c-dp": 180.0,
+    "ems-ftp75c-mpc": 180.0,
 }
 
 
@@ -1547,6 +1613,14 @@ def test_scenarios_chg_i_ceiling_a_only_on_charge_regen_and_charge_fault():
                       # against never had.
                       "ems-mpc", "ems-mpc-det", "ems-mpc-cross",
                       "ems-ftp75-mpc",
+                      # 2026-09-02 (the ftp75c round): ALL FIVE compressed
+                      # legs declare the ceiling off `ems-soc-band`'s entry --
+                      # the same 0.8 A object. `ems-ftp75c-5050` declares it
+                      # even though `hold-5050` never commands `charge_goal`,
+                      # because on this family the REGEN MANAGER commands it
+                      # for every leg, so the ceiling is live and not inert.
+                      "ems-ftp75c-5050", "ems-ftp75c-socband",
+                      "ems-ftp75c-sdp", "ems-ftp75c-dp", "ems-ftp75c-mpc",
                       "ems-sdp-cross", "ems-ftp75-sdp", "ems-ftp75-socband"):
             assert meta["chg_i_ceiling_a"] == pytest.approx(0.8)
         elif name == "regen-harvest-true":
@@ -4785,8 +4859,9 @@ def _live_table_meta_lines(scenario, fp, charger_accounting="physical",
         "chg_ceiling_a: %r" % float(chg_ceiling_a),
         "eta_boost: %r" % float(hil.ETA_BOOST),
         "gfc_dc_gain_gps_per_w: %r" % float(hil.H2_GFC_DC_GAIN_GPS_PER_W),
-        "charge_share_value: %r" % float(hil.SOC_BAND_SHARE_NOMINAL
-                                         + hil.SOC_BAND_SHARE_SPAN),
+        # The DP's charge-stage share is its GRID'S TOP, which is the band's
+        # top, not the soc-band span (2026-09-02, the band widening).
+        "charge_share_value: %r" % float(hil.SOC_BAND_SHARE_MAX),
         "share_span: %r" % float(hil.SOC_BAND_SHARE_SPAN),
         "cruise_slope_max: %r" % float(hil.SOC_BAND_CRUISE_SLOPE_MAX),
         "cruise_min_mps: %r" % float(hil.SOC_BAND_CRUISE_MIN_MPS),
@@ -4957,15 +5032,30 @@ def test_shipped_dp_table_parses():
 
 
 def test_shipped_dp_table_share_stays_within_the_authority_band():
+    """THE SHIPPED TABLE COMMANDS ONLY WHAT THE FIRMWARE ACCEPTS.
+
+    ⚠️ THE BAND IS THE FIRMWARE'S NOW (2026-09-02).  This used to assert the
+    soc-band span [0.25, 0.75]; the standing operator rule gives every EMS
+    strategy the full command band, so the DP grid is
+    [DROOP_R_MIN, DROOP_R_MAX] and the table reaches both rails.  That is safe
+    because `updateShareSetpointCutoff()` compares STRICTLY, so the rails are
+    IN band -- which is exactly what the second pair of assertions pins."""
     _meta, _times, shares, _goals = hil.load_dp_table(
         os.path.join(hil.DP_TABLE_DIR, "dp_ems_table_ems-dp-replay.csv"))
-    lo = hil.SOC_BAND_SHARE_NOMINAL - hil.SOC_BAND_SHARE_SPAN
-    hi = hil.SOC_BAND_SHARE_NOMINAL + hil.SOC_BAND_SHARE_SPAN
+    lo, hi = hil.SOC_BAND_SHARE_MIN, hil.SOC_BAND_SHARE_MAX
     assert min(shares) >= lo - 1e-9
     assert max(shares) <= hi + 1e-9
-    # 0.25 == lo and 0.75 == hi -- the DP grid spans exactly the band.
+    # The table REACHES the low rail: the widening is not decorative, the
+    # optimum actually uses the reach it gained.  (It does not reach the high
+    # rail on this stimulus -- the shipped table tops out at 0.8125 -- and that
+    # is a property of the OPTIMUM, not of the grid, so it is not asserted.)
     assert min(shares) == pytest.approx(lo)
-    assert max(shares) == pytest.approx(hi)
+    assert max(shares) <= hi + 1e-9
+    # ... and NOTHING outside it, which is the property the cut depends on:
+    # a setpoint strictly outside opens the minority channel's bus switch.
+    import governor_model as _gm
+    assert lo == _gm.GOV_CONST["DROOP_R_MIN"]
+    assert hi == _gm.GOV_CONST["DROOP_R_MAX"]
 
 
 def test_shipped_dp_table_charge_goal_is_zero_on_every_row():
@@ -5108,15 +5198,18 @@ def test_shipped_dp_table_sha_is_unchanged_by_the_header_exclusion_refactor():
     the shipped table's recorded law digest is pinned literally here."""
     path = os.path.join(hil.DP_TABLE_DIR, "dp_ems_table_ems-dp-replay.csv")
     _file_sha, table_sha = hil.dp_table_digests(path)
-    # RE-PINNED 2026-09-02: the table was regenerated as a LOSS-MAP-ERA
-    # solve (`--loss-map plant`), so its decision law genuinely changed.
-    # The pre-round digest was
-    # 5ad85569d9572fac4a5c44cb5ee2633f743b5cd3c41d24a2a01984973bf830b2.
+    # RE-PINNED 2026-09-02 (TWICE, and both times the LAW really changed).
+    # First the table was regenerated as a LOSS-MAP-ERA solve
+    # (`--loss-map plant`); the pre-round digest was
+    # 5ad85569d9572fac4a5c44cb5ee2633f743b5cd3c41d24a2a01984973bf830b2 and
+    # then 4175fb27b42d86e1f49ab7bd69e817300a60e0c3cd9f523b07af66f8d344a750.
+    # Then the SHARE GRID was widened to the firmware band [0.15, 0.85] at
+    # n_share 57, which changes the control set the solve optimises over.
     # The CLAIM this test makes is unchanged: the header exclusion covers
     # exactly the metadata lines, so a table whose LAW is identical keeps
     # this digest across a header edit.
     assert table_sha == (
-        "4175fb27b42d86e1f49ab7bd69e817300a60e0c3cd9f523b07af66f8d344a750")
+        "80cea51b0d56dc0a580909178c345a4bed43abf04265e594b8f01b0835701e95")
 
 
 def test_dp_table_digests_raises_oserror_on_missing_file(tmp_path):
@@ -9110,7 +9203,15 @@ def test_preload_tripwire_ftp75_legs_are_exactly_the_non_exempt_set():
         # FTP75_PRELOAD_A (0.0) exactly as its four siblings do, which is what
         # keeps the drive-cycle frontier's stimulus-coherence precondition
         # satisfied by construction rather than by whitelist.
-        "ems-ftp75-mpc"}
+        "ems-ftp75-mpc",
+        # 2026-09-02 (the ftp75c round): the five COMPRESSED legs declare the
+        # key at FTP75C_PRELOAD_A (0.0) for their `ftp75` siblings' reason
+        # exactly -- the drive-cycle preload removal is a stimulus property,
+        # not a per-strategy one, and declaring it on all five is what makes
+        # the `ftp75c` frontier tuple's stimulus-coherence precondition hold
+        # by construction.
+        "ems-ftp75c-5050", "ems-ftp75c-socband", "ems-ftp75c-sdp",
+        "ems-ftp75c-dp", "ems-ftp75c-mpc"}
 
 
 # ── Requirement 2: sidecar aux_preload_a correctness ────────────────────────
@@ -10127,17 +10228,19 @@ def test_mpc_campaign_legs_all_declare_the_deterministic_cap():
     """An MPC leg without `mpc_max_candidates` is wall-clock bounded, so two
     runs of it explore different candidate sets and the leg is not even
     self-comparable. The import guard refuses that; this pins the VALUE and the
-    reason 1029 is the number."""
+    reason 2187 is the number."""
     for name in MPC_SCENARIOS:
         assert (hil.SCENARIOS[name]["mpc_max_candidates"]
-                == hil.MPC_CAMPAIGN_MAX_CANDIDATES == 1029)
-    # 1029 = 7**3 x 3: the FULL enumeration at the shipped 7-level ladder over
+                == hil.MPC_CAMPAIGN_MAX_CANDIDATES == 2187)
+    # 2187 = 9**3 x 3: the FULL enumeration at the shipped 9-level ladder over
     # three move blocks, TIMES the three charge plans a decision offers, so the
     # cap removes the clock's influence without removing a single candidate. A
     # `--mpc-share-levels` override breaks that identity and the constant does
     # not follow it.
+    # ⚠️ 1029 = 7**3 x 3 BEFORE THE 2026-09-02 BAND WIDENING, which took the
+    # ladder to 9 points so its SPACING was held across the wider band.
     import mpc_ems
-    assert mpc_ems.SHARE_LEVELS ** len(mpc_ems.MOVE_BLOCKS) == 343
+    assert mpc_ems.SHARE_LEVELS ** len(mpc_ems.MOVE_BLOCKS) == 729
     # A command-line cap OVERRIDES the scenario's.
     assert hil.mpc_configure_kwargs(
         _mpc_ns(mpc_max_candidates=17),
@@ -10332,7 +10435,16 @@ def test_mpc_sidecar_block_is_written_from_the_provenance():
     only for an MPC run, keyed off the STRATEGY TYPE so a rename cannot silently
     drop it — and `timing()` is merged into the SAME block at finalize."""
     src = open(os.path.join(HERE, "hil_plant_sim.py"), encoding="utf-8").read()
-    assert 'mpc_src = ems_policy if isinstance(ems_policy, _MpcProxy) else None' in src
+    # ⚠️ 2026-09-02 (the ftp75c round): the isinstance() test now runs against
+    # `_ems_impl`, NOT against `ems_policy` -- a scenario declaring
+    # `ems_regen_manager` has its strategy WRAPPED by RegenManager.wrap(), and
+    # a wrapped policy is a plain function. `_ems_impl` is
+    # `unwrap_policy(ems_policy)`, so the type resolution survives the wrapper.
+    # The pin is kept on the source text (the closure is unreachable without a
+    # board), and this is the exact rename that would silently blank
+    # `config.mpc` on `ems-ftp75c-mpc`.
+    assert 'mpc_src = _ems_impl if isinstance(_ems_impl, _MpcProxy) else None' in src
+    assert 'unwrap_policy' in src
     assert '**({"mpc": mpc_src.provenance}' in src
     assert 'meta_doc["config"]["mpc"]["timing"] = _tm' in src
 
@@ -10864,3 +10976,1093 @@ def test_the_bind_scenario_hook_contract_is_uniform_across_strategies():
         for kw in ("electrical_mode", "args", "droop_mode", "asymmetry_mode"):
             assert kw in params, (name, kw)
     assert seen >= 3
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# W2 -- THE ftp75c ROUND (2026-09-02).
+#       docs/modeling/ftp75c_regen_cycle_design_20260902.md
+#
+# A compressed FTP-75 cycle and a road-load-compensated plant profile, so the
+# rig regenerates on a drive cycle for the first time.  The sections below
+# follow the design note's own order: the cycle, the drag profile, the regen
+# chain, the commanded regen windows, and the two era conventions (`drag` and
+# `eta_regen`) that keep every pre-round artifact reachable.
+# ═════════════════════════════════════════════════════════════════════════════
+
+import ftp75c_profile as _ftp75c          # noqa: E402
+import regen_power as _regen              # noqa: E402
+
+
+# ── W2.1  The compressed cycle and its generator ────────────────────────────
+
+def test_ftp75c_profile_constants_agree_with_the_module_header():
+    assert len(_ftp75c.FTP75C_PROFILE) == 234 == _ftp75c.FTP75C_POINTS
+    assert _ftp75c.FTP75C_TIME_FACTOR == 0.5
+    assert _ftp75c.FTP75C_T_START == pytest.approx(5.0)
+    assert _ftp75c.FTP75C_T_END == pytest.approx(175.0)
+    assert _ftp75c.FTP75C_PEAK_MPS == pytest.approx(3.0)
+    assert _ftp75c.FTP75C_PEAK_T == pytest.approx(125.0)
+
+
+def test_ftp75c_keeps_the_uncompressed_cycles_point_count_and_provenance():
+    """THE POINT-COUNT INVARIANT, stated on the artifacts rather than on the
+    generator's guard.  `decimate_collinear()` compares a RATIO of time
+    differences, so it cannot see a uniform time scaling and both tables must
+    reduce to the same 234 points from the same 341 raw samples.  A divergence
+    would mean the scaling change perturbed the decimation, which is a defect
+    and not a stimulus choice."""
+    assert len(_ftp75c.FTP75C_PROFILE) == len(_ftp75.FTP75_PROFILE)
+    assert _ftp75c.FTP75C_POINTS == _gen_ftp75.POINTS_INVARIANT == 234
+    assert _ftp75c.FTP75C_RAW_SAMPLES == _ftp75.FTP75_RAW_SAMPLES == 341
+    # ONE raw file, ONE velocity scaling: the compression touches the time axis
+    # only, so these two must be identical across the pair.
+    assert _ftp75c.FTP75C_RAW_SHA256 == _ftp75.FTP75_RAW_SHA256 \
+        == _gen_ftp75.RAW_SHA256
+    assert _ftp75c.FTP75C_SCALE_MPH_TO_MPS == _ftp75.FTP75_SCALE_MPH_TO_MPS
+
+
+def test_ftp75c_time_axis_is_exactly_half_the_uncompressed_one():
+    """The compression is ONE multiply applied to the RAW time BEFORE the
+    profile offset -- the offset is a simulator-clock placement and must not
+    scale with the cycle.  Asserted point by point, on both tables at once,
+    which is the strongest available form: the velocity columns must be
+    IDENTICAL and the time columns related by exactly the factor."""
+    for (t_c, v_c), (t_f, v_f) in zip(_ftp75c.FTP75C_PROFILE,
+                                      _ftp75.FTP75_PROFILE):
+        assert v_c == v_f
+        assert t_c == pytest.approx(
+            _gen_ftp75.PROFILE_START_S
+            + 0.5 * (t_f - _gen_ftp75.PROFILE_START_S), abs=1e-12)
+
+
+def test_ftp75c_starts_and_ends_at_rest_on_its_shifted_time_base():
+    t0, v0 = _ftp75c.FTP75C_PROFILE[0]
+    t1, v1 = _ftp75c.FTP75C_PROFILE[-1]
+    assert t0 == pytest.approx(_gen_ftp75.PROFILE_START_S)
+    assert v0 == pytest.approx(0.0)
+    assert v1 == pytest.approx(0.0)
+    assert t1 == pytest.approx(_gen_ftp75.PROFILE_START_S
+                               + 0.5 * _gen_ftp75.SEGMENT_END_S) == 175.0
+    ts = [t for t, _v in _ftp75c.FTP75C_PROFILE]
+    assert all(a < b for a, b in zip(ts, ts[1:]))
+
+
+def test_ftp75c_reconstruction_error_is_at_the_float_noise_floor():
+    """4.44e-16 m/s against EVERY original sample -- identical to `ftp75`'s,
+    which is the decimation's scale invariance showing up as a number.  This is
+    a REDUNDANCY REMOVAL and not a smoothing, so the bound is the noise floor
+    and not a physically-motivated tolerance."""
+    rows, digest = _gen_ftp75.read_raw(_gen_ftp75.RAW_PATH)
+    assert digest == _gen_ftp75.RAW_SHA256
+    full = [(float(t) * 0.5 + _gen_ftp75.PROFILE_START_S,
+             float(mph) * _gen_ftp75.SCALE_MPH_TO_MPS)
+            for (t, mph) in _gen_ftp75.slice_segment(rows)]
+    reduced = _gen_ftp75.decimate_collinear(full)
+    assert reduced == list(_ftp75c.FTP75C_PROFILE)
+    worst_err, _worst_t = _gen_ftp75.max_reconstruction_error(reduced, full)
+    assert worst_err == pytest.approx(4.44e-16, abs=1e-17)
+    assert worst_err <= _gen_ftp75.RECON_ERR_MAX
+
+
+def test_ftp75c_peak_acceleration_is_double_the_uncompressed_cycles():
+    """THE WHOLE POINT OF THE COMPRESSION, in one number.  The velocity axis is
+    untouched and the time axis halves, so every acceleration doubles: 0.1746
+    -> 0.3492 m/s^2.  Section 1 of the design note shows that this alone still
+    does NOT reach the rig's 0.571 m/s^2 regeneration floor -- the compression
+    is necessary and the road-load compensation is what actually creates the
+    regenerative energy."""
+    def peak_accel(profile):
+        return max(abs((v1 - v0) / (t1 - t0))
+                   for (t0, v0), (t1, v1) in zip(profile, profile[1:]))
+    a_c = peak_accel(_ftp75c.FTP75C_PROFILE)
+    a_f = peak_accel(_ftp75.FTP75_PROFILE)
+    assert a_c == pytest.approx(0.3492063492, rel=1e-9)
+    assert a_c == pytest.approx(2.0 * a_f, rel=1e-12)
+    # And it is STILL below the rig's own floor at standstill, which is why
+    # `--drag rig` regenerates nothing on this cycle (asserted in W2.2).
+    assert a_c < hil.F_COULOMB / hil.M_EFF
+
+
+def test_gen_ftp75_profile_regenerates_both_modules_byte_identically(tmp_path):
+    """BOTH generated modules, through `main()` and compared as BYTES.
+
+    The 1.0 arm is the load-bearing half: the compression landed as a change to
+    a generator that already had one committed output, and a byte for byte
+    reproduction of `tools/ftp75_profile.py` is the only evidence that the
+    change did not move the uncompressed stimulus.  The 0.5 arm then pins the
+    committed `tools/ftp75c_profile.py` the same way.
+
+    Written through `main()` rather than through `render_module()` so the
+    sha256 gate, the reconstruction-error gate, the point-count invariant and
+    the file's utf-8 + LF encoding are all on the path."""
+    for factor, committed in ((1.0, "ftp75_profile.py"),
+                              (0.5, "ftp75c_profile.py")):
+        out = os.path.join(str(tmp_path), "regen_%s" % committed)
+        rc = _gen_ftp75.main(["--time-factor", repr(factor),
+                              "--out", out, "--force"])
+        assert rc == 0
+        with open(out, "rb") as fh:
+            got = fh.read()
+        with open(os.path.join(HERE, committed), "rb") as fh:
+            want = fh.read()
+        assert got == want, committed
+
+
+def test_resolve_factor_returns_the_registered_prefix_and_output_module():
+    prefix, path = _gen_ftp75.resolve_factor(1.0)
+    assert prefix == "FTP75" and os.path.basename(path) == "ftp75_profile.py"
+    prefix, path = _gen_ftp75.resolve_factor(0.5)
+    assert prefix == "FTP75C" and os.path.basename(path) == "ftp75c_profile.py"
+    # An int and a float spelling of a registered factor are ONE key.
+    assert _gen_ftp75.resolve_factor(1) == _gen_ftp75.resolve_factor(1.0)
+
+
+@pytest.mark.parametrize("bad", [0.25, 2.0, 0.51, 0.0])
+def test_resolve_factor_refuses_an_unregistered_factor(bad):
+    """A factor not in `TIME_FACTORS` has no agreed constant prefix and no
+    agreed module name, and `hil_plant_sim.py` imports both BY NAME -- so the
+    generator refuses rather than inventing either.  The same discipline the
+    sha256 gate applies to the input side."""
+    with pytest.raises(ValueError) as exc:
+        _gen_ftp75.resolve_factor(bad)
+    text = str(exc.value)
+    assert "unregistered --time-factor" in text
+    assert "1.0" in text and "0.5" in text      # names what IS registered
+
+
+def test_generator_cli_refuses_an_unregistered_factor():
+    """argparse's `ap.error()` path, i.e. SystemExit rather than a traceback --
+    what an operator at the console actually sees."""
+    with pytest.raises(SystemExit):
+        _gen_ftp75.main(["--time-factor", "0.25", "--dry-run"])
+
+
+def test_generator_refuses_a_factor_whose_decimation_moves_the_point_count(
+        tmp_path, monkeypatch):
+    """THE POINT-COUNT REFUSAL, exercised on its own terms.
+
+    Both REGISTERED factors reduce to 234 points, so the guard cannot be
+    reached by passing a different factor -- which is the guard working.  It is
+    provoked instead by moving the invariant, which is the same divergence seen
+    from the other side: `len(reduced) != POINTS_INVARIANT` means the scaling
+    change perturbed the decimation, and the generator must refuse rather than
+    emit a table whose shape differs from its sibling's for an unexplained
+    reason."""
+    monkeypatch.setattr(_gen_ftp75, "POINTS_INVARIANT", 233)
+    out = os.path.join(str(tmp_path), "never_written.py")
+    with pytest.raises(SystemExit):
+        _gen_ftp75.main(["--time-factor", "0.5", "--out", out, "--force"])
+    assert not os.path.exists(out), "a refused generation must write nothing"
+
+
+def test_ftp75c_t_end_drives_the_scenario_run_exit_arithmetic():
+    """FTP75C_RUN_EXIT_S / FTP75C_DURATION_S are DERIVED from FTP75C_T_END,
+    term for term as the FTP-75 pair is -- MODE_SAFE 1 s after the table's last
+    point, then 4 s for Run -> Finish -> Idle."""
+    assert hil.FTP75C_RUN_EXIT_S == pytest.approx(_ftp75c.FTP75C_T_END + 1.0)
+    assert hil.FTP75C_DURATION_S == pytest.approx(hil.FTP75C_RUN_EXIT_S + 4.0)
+    for name in ("ems-ftp75c-5050", "ems-ftp75c-socband", "ems-ftp75c-sdp",
+                 "ems-ftp75c-dp", "ems-ftp75c-mpc"):
+        meta = hil.SCENARIOS[name]
+        assert meta["ems_v_profile"] is _ftp75c.FTP75C_PROFILE
+        assert meta["ems_run_exit_s"] == pytest.approx(hil.FTP75C_RUN_EXIT_S)
+        assert meta["duration_s"] == pytest.approx(hil.FTP75C_DURATION_S)
+        assert meta["drag"] == hil.DRAG_MODE_SCALED_AIR
+        assert meta["ems_regen_manager"] is True
+
+
+# ── W2.2  The drag profile ──────────────────────────────────────────────────
+
+def test_drag_k_air_per_mode_and_the_two_derived_constants():
+    """Every constant RECOMPUTED from its own definition rather than
+    transcribed, so an operator correction to `Cd * A_f` (both are assumptions,
+    `TODO(verify: operator)`) fails this test instead of silently rescaling
+    every drag-dependent figure in the round."""
+    assert hil.DRAG_SCALE_LENGTH == pytest.approx(3.0 / 25.3472, rel=1e-15)
+    assert hil.DRAG_INERTIA_RESIDUAL == pytest.approx(
+        hil.DRAG_SCALE_LENGTH ** 2 * 2242.0 * 0.5 / hil.M_EFF, rel=1e-15)
+    assert hil.DRAG_INERTIA_RESIDUAL == pytest.approx(4.486628331803267,
+                                                      rel=1e-12)
+    assert hil.K_AIR == pytest.approx(0.059806901748516605, rel=1e-12)
+    assert hil.K_AIR_MATCHED == pytest.approx(0.013330032560214096, rel=1e-12)
+    assert hil.K_AIR_MATCHED == pytest.approx(
+        hil.K_AIR / hil.DRAG_INERTIA_RESIDUAL, rel=1e-15)
+    # ZERO IS THE RIG SENTINEL, and the tick loop dispatches on it: `k_air == 0`
+    # selects the measured Coulomb-plus-viscous arm of the force branch.
+    assert hil.drag_k_air(hil.DRAG_MODE_RIG) == 0.0
+    assert hil.drag_k_air(hil.DRAG_MODE_SCALED_AIR) == hil.K_AIR
+    assert hil.drag_k_air(hil.DRAG_MODE_SCALED_AIR_MATCHED) == hil.K_AIR_MATCHED
+    assert hil.DRAG_MODE_DEFAULT == hil.DRAG_MODE_RIG
+    assert hil.DRAG_MODES == (hil.DRAG_MODE_RIG, hil.DRAG_MODE_SCALED_AIR,
+                              hil.DRAG_MODE_SCALED_AIR_MATCHED)
+
+
+@pytest.mark.parametrize("bad", ["", "air", "scaled_air", "RIG", None, 0.0])
+def test_drag_k_air_refuses_an_unknown_mode(bad):
+    """Resolved ONCE in the constructor so the tick loop can neither
+    re-dispatch on the mode string nor read a mode the constructor did not
+    validate -- which means this is the only place the refusal can happen."""
+    with pytest.raises(ValueError) as exc:
+        hil.drag_k_air(bad)
+    assert "drag_mode" in str(exc.value)
+
+
+def test_plant_constructor_refuses_an_unknown_drag_mode():
+    with pytest.raises(ValueError):
+        hil.Plant(drag_mode="scaled_air")
+
+
+def _rig_force_law(v, f_drive, dt):
+    """THE PRE-2026-09-02 FORCE LAW, transcribed from the arm the round kept
+    verbatim.  Returns the next velocity.  A second implementation is the point
+    here: `--drag rig` must be BIT-IDENTICAL to the pre-round plant, and the
+    only way to say that without a checked-out old revision is to carry the law
+    forward and compare."""
+    if abs(v) < hil.V_STICTION:
+        if abs(f_drive) <= hil.F_COULOMB:
+            return 0.0
+        f_net = f_drive - (hil.F_COULOMB if f_drive > 0 else -hil.F_COULOMB) \
+            - hil.B_EFF * v
+    else:
+        f_sign = 1.0 if v > 0 else -1.0
+        f_net = f_drive - f_sign * hil.F_COULOMB - hil.B_EFF * v
+        v_try = v + (f_net / hil.M_EFF) * dt
+        if f_drive == 0.0 and (v_try * v) < 0.0:
+            return 0.0
+    return v + (f_net / hil.M_EFF) * dt
+
+
+# A scripted tick sequence that visits every branch of the rig arm: breakaway
+# from rest, sustained drive, coast down through the stiction band, a braking
+# command beyond the VESC regen clip, and a reversal.
+_RIG_SCRIPT = ([1.0] * 50 + [6.0] * 2000 + [0.0] * 300 + [-4.0] * 400
+               + [0.0] * 200 + [-6.0] * 1200)
+
+
+def test_rig_drag_arm_is_bit_identical_to_the_pre_round_force_law():
+    """THE NON-REGRESSION THE WHOLE ROUND RESTS ON.  Every recorded campaign
+    ran the rig road load, so `--drag rig` reproducing the pre-round trajectory
+    EXACTLY (`==`, not `approx`) is what keeps those campaigns comparable with
+    anything run after this round.
+
+    The rig arm is kept as its own branch rather than generalised with a
+    per-mode `F_c`, and this test is why: the Coulomb SIGN LOGIC does not
+    degrade at `F_c = 0` -- see the coasting test below."""
+    plant = hil.Plant(drag_mode=hil.DRAG_MODE_RIG)
+    plant.v_bus = hil.V_BUS_NOMINAL
+    default = hil.Plant()                     # the shipped default IS the rig
+    default.v_bus = hil.V_BUS_NOMINAL
+    v_ref = 0.0
+    v_peak = 0.0
+    for i_cmd in _RIG_SCRIPT:
+        obs = _obs(switch=SW_ALL_LIVE, aux=AUX_BOTH_REG, current=i_cmd)
+        plant.step(1e-3, obs)
+        default.step(1e-3, obs)
+        # The plant clips the REGEN side of the command before the force
+        # develops; the reference law is handed the same clipped force.
+        i_eff = i_cmd if i_cmd >= 0.0 else max(i_cmd, -hil.VESC_REGEN_I_MAX_A)
+        v_ref = _rig_force_law(v_ref, hil.K_F * i_eff, 1e-3)
+        assert plant.v == v_ref
+        assert default.v == v_ref
+        v_peak = max(v_peak, v_ref)
+    # NOT VACUOUS: the script actually accelerated the body, then braked it
+    # back to rest through the stiction band.
+    assert v_peak > 1.0
+    assert v_ref == 0.0
+    # ⚠️ AND IT CANNOT REVERSE, which is worth recording rather than working
+    # around: the regen-side clip caps the braking force at
+    # K_F*VESC_REGEN_I_MAX_A = 1.131 N, below the rig's own 2.00 N of Coulomb
+    # friction, so no braking command can break the rig away backwards. Reverse
+    # motion on this plant is reachable only under a compensated drag profile.
+    assert hil.K_F * hil.VESC_REGEN_I_MAX_A < hil.F_COULOMB
+
+
+def test_compensated_drag_opposes_motion_in_BOTH_directions():
+    """THE SIGNED `v*|v|` FORM IS LOAD-BEARING, and this is the assertion that
+    makes it so.  The rig profile's drag always opposes motion through
+    `f_sign`; a bare `v**2` term would ACCELERATE the body in reverse, and
+    nothing else in the suite drives the compensated plant backwards.
+
+    Asserted as a DECELERATION under zero drive from both signs of velocity,
+    which is the physical statement and is independent of the constant."""
+    for v0 in (2.5, -2.5, 0.4, -0.4):
+        plant = hil.Plant(drag_mode=hil.DRAG_MODE_SCALED_AIR)
+        plant.v_bus = hil.V_BUS_NOMINAL
+        plant.v = v0
+        for _ in range(200):
+            plant.step(1e-3, _obs(switch=SW_ALL_LIVE, aux=AUX_BOTH_REG,
+                                  current=0.0))
+        assert abs(plant.v) < abs(v0), v0            # slowed, not accelerated
+        assert plant.v * v0 > 0.0, v0                # and did not cross zero
+    # And the drag force itself, read straight off the law, is signed.
+    assert hil.K_AIR * 2.0 * abs(2.0) > 0.0
+    assert hil.K_AIR * -2.0 * abs(-2.0) < 0.0
+
+
+def test_compensated_coasting_body_inside_v_stiction_keeps_its_momentum():
+    """THE DEGRADATION THE TWO-ARM BRANCH EXISTS TO AVOID.
+
+    One shared expression with a per-mode `F_c` would have kept the rig arm's
+    breakaway test, `abs(f_drive) <= F_COULOMB`.  At `F_c = 0` that reads
+    `abs(f_drive) <= 0`, which is TRUE for a coasting body under zero drive
+    inside the stiction band -- the branch would then set `v = 0.0` and DELETE
+    the momentum.  On a road load that vanishes with speed the physically
+    correct behaviour is to creep, and that is what is asserted here.
+
+    ⚠️ This is exactly the regime the compressed cycle's stops live in, so the
+    defect would have been a silent physics error on the one profile the round
+    adds."""
+    v0 = 0.5 * hil.V_STICTION                   # comfortably inside the band
+    plant = hil.Plant(drag_mode=hil.DRAG_MODE_SCALED_AIR)
+    plant.v_bus = hil.V_BUS_NOMINAL
+    plant.v = v0
+    for _ in range(100):
+        plant.step(1e-3, _obs(switch=SW_ALL_LIVE, aux=AUX_BOTH_REG,
+                              current=0.0))
+    assert plant.v > 0.0, "the compensated arm deleted a creeping body's speed"
+    # Quadratic drag at 0.01 m/s is ~6e-6 N against 3.5 kg: over 0.1 s the
+    # speed falls by ~17 ppm, which is "essentially unchanged" and is the
+    # claim. The bound is on the DECAY, not on a pinned value.
+    assert plant.v == pytest.approx(v0, rel=1e-4)
+    assert plant.v < v0                      # and it is still decelerating
+    # THE RIG ARM, on the same input, DOES stop it -- and correctly so: its
+    # 2.00 N of Coulomb friction is real. The two arms are different physics,
+    # not two spellings of one.
+    rig = hil.Plant(drag_mode=hil.DRAG_MODE_RIG)
+    rig.v_bus = hil.V_BUS_NOMINAL
+    rig.v = v0
+    rig.step(1e-3, _obs(switch=SW_ALL_LIVE, aux=AUX_BOTH_REG, current=0.0))
+    assert rig.v == 0.0
+
+
+def _drive_profile_open_loop(drag_mode, dt=5e-3):
+    """Drive the plant along `ftp75c` by inverse dynamics under `drag_mode`.
+
+    Returns (regen_energy_j, braking_kinetic_energy_j).  The commanded current
+    is the force the profile requires divided by K_F, i.e. the same reduction
+    `gen_dp_ems_table.build_demand()` makes, so the plant is exercised on the
+    trajectory the DP prices."""
+    k_air = hil.drag_k_air(drag_mode)
+    prof = _ftp75c.FTP75C_PROFILE
+    plant = hil.Plant(drag_mode=drag_mode)
+    plant.v_bus = hil.V_BUS_NOMINAL
+    obs = _obs(switch=SW_ALL_LIVE | hil.SW_BT_SEQ, aux=AUX_BOTH_REG)
+    t0, t1 = prof[0][0], prof[-1][0]
+    ke = 0.0
+    for k in range(int((t1 - t0) / dt)):
+        t = t0 + k * dt
+        v = hil.piecewise(prof, t)
+        a = (hil.piecewise(prof, t + 0.5 * dt)
+             - hil.piecewise(prof, t - 0.5 * dt)) / dt
+        if k_air:
+            f_road = k_air * v * abs(v)
+        else:
+            f_road = (hil.F_COULOMB if v > hil.V_STICTION else
+                      (-hil.F_COULOMB if v < -hil.V_STICTION else 0.0)) \
+                + hil.B_EFF * v
+        if a < 0.0:
+            ke += -hil.M_EFF * v * a * dt
+        obs["current"] = (hil.M_EFF * a + f_road) / hil.K_F
+        plant.step(dt, obs)
+    return plant.regen_energy_j, ke
+
+
+def test_the_compensated_plant_regenerates_on_ftp75c_and_the_rig_does_not():
+    """THE ROUND'S HEADLINE CLAIM, measured on the PLANT rather than argued
+    from the force law.
+
+    Design note Table 2: the rig road load exceeds the inertial force at every
+    deceleration this cycle contains (regeneration needs
+    |a| > 0.571 + 0.153*v m/s^2 against a 0.349 m/s^2 peak), so `--drag rig`
+    returns EXACTLY zero.  Under `scaled-air` roughly half the braking kinetic
+    energy reaches the shaft and ~12.5 J reaches the V-MOT node.
+
+    Bounds are deliberately loose -- the exact figure moves with the
+    integration step -- because the claim under test is "materially above zero
+    versus identically zero", not a specific joule count."""
+    e_sa, ke_sa = _drive_profile_open_loop(hil.DRAG_MODE_SCALED_AIR)
+    e_rig, ke_rig = _drive_profile_open_loop(hil.DRAG_MODE_RIG)
+    # The braking kinetic energy is a property of the SPEED PROFILE alone, so
+    # the two runs must agree on it -- which is what makes the shares
+    # comparable.
+    assert ke_sa == pytest.approx(ke_rig, rel=1e-9)
+    assert ke_sa == pytest.approx(30.82, rel=0.02)
+    assert e_rig == 0.0
+    # 12.53 J at 1 kHz in the design note; >= 10 J is the "materially above
+    # zero" claim with room for the coarser step used here.
+    assert e_sa > 10.0
+    assert e_sa / ke_sa > 0.35
+    # ETA_REGEN bounds it from above: the node cannot receive more than the
+    # efficiency times the braking kinetic energy.
+    assert e_sa < hil.ETA_REGEN * ke_sa
+
+
+# ── W2.3  The regen chain: ONE implementation, four consumers ───────────────
+
+def test_the_plants_own_regen_chain_is_regen_powers_chain():
+    """THE SINGLE MOST IMPORTANT EQUALITY OF THE ROUND, plant half.
+
+    `regen_power.py` exists because four consumers price braking energy -- the
+    plant, the DP generator, the offline walk and the MPC's prediction model --
+    and the failure mode of four copies is the one `charger_power.py` was
+    created to close: a correction lands in one copy, the four totals stop
+    being comparable, and nothing refuses.
+
+    The plant is the one consumer that does NOT call the module (it is the
+    original, and the module was extracted from it), so the equality has to be
+    asserted rather than obtained by construction.  Two claims:
+
+      1. the force/current CLIP EQUIVALENCE -- `Plant.step()` clips the CURRENT
+         command and the module clips the FORCE, and they are the same number;
+      2. `regen_node_power_w()` reproduces `Plant.p_regen_w` on a scripted
+         braking tick, under BOTH drag profiles."""
+    for mode in (hil.DRAG_MODE_RIG, hil.DRAG_MODE_SCALED_AIR):
+        for i_cmd in (-0.4, -1.5, -4.0, -12.0, 0.0, 3.0):
+            plant = hil.Plant(drag_mode=mode)
+            plant.v_bus = hil.V_BUS_NOMINAL
+            plant.v = 2.5
+            plant.step(1e-3, _obs(switch=SW_ALL_LIVE, aux=AUX_BOTH_REG,
+                                  current=i_cmd))
+            # (1) the clip, on both sides of the equivalence.
+            f_clipped = _regen.clip_regen_force_n(hil.K_F * i_cmd, hil.K_F,
+                                                  hil.VESC_REGEN_I_MAX_A)
+            assert f_clipped == pytest.approx(
+                hil.K_F * max(i_cmd, -hil.VESC_REGEN_I_MAX_A), rel=1e-15)
+            # (2) the node power. `Plant.step()` evaluates `p_shaft` on the
+            # POST-integration velocity, so the module is handed the same one.
+            want = _regen.regen_node_power_w(f_clipped, plant.v, hil.ETA_REGEN,
+                                             hil.K_F, hil.VESC_REGEN_I_MAX_A)
+            assert plant.p_regen_w == want, (mode, i_cmd)
+    # NOT VACUOUS: a hard braking command really did return power.
+    plant = hil.Plant(drag_mode=hil.DRAG_MODE_SCALED_AIR)
+    plant.v_bus = hil.V_BUS_NOMINAL
+    plant.v = 2.5
+    plant.step(1e-3, _obs(switch=SW_ALL_LIVE, aux=AUX_BOTH_REG, current=-4.0))
+    assert plant.p_regen_w > 1.0
+
+
+def test_the_offline_consumers_agree_with_regen_power_stage_for_stage():
+    """THE OTHER THREE CONSUMERS: the DP generator's `i_regen` column, the
+    MPC's scalar port, and `regen_power`'s own chain, on the same inputs.
+
+    The generator and the port are compared to each other over the whole
+    profile in `test_ems_walk.py`'s lockstep test; what is added here is the
+    third leg of the triangle -- both of them against the MODULE, evaluated
+    stage by stage from the module's own primitives.  Without it the two could
+    agree with each other on a shared mistake."""
+    np = pytest.importorskip("numpy")
+    gen = pytest.importorskip("gen_dp_ems_table")
+    import mpc_ems as M
+    import charger_power as chg
+    scen = "ems-ftp75c-dp"
+    meta = hil.SCENARIOS[scen]
+    dt = 0.5
+    n = int(round(float(meta["duration_s"]) / dt))
+    times = [k * dt for k in range(n + 1)]
+    chg_a = hil.dp_chg_ceiling_a(meta)
+    v_pack = float(gen.pack_charge_voltage(0.7, chg_a))
+    kw = dict(loss_map=hil.plant_loss_map(),
+              drag_mode=hil.DRAG_MODE_SCALED_AIR,
+              eta_regen=float(hil.ETA_REGEN), eta_chg=chg.ETA_CHG_DEFAULT,
+              v_pack_ref=v_pack, regen_i_max_a=chg_a)
+    g = gen.build_demand(scen, meta, np.asarray(times), dt, **kw)
+    m = M.build_demand(scen, meta, times, dt, **kw)
+    k_air = hil.drag_k_air(hil.DRAG_MODE_SCALED_AIR)
+    nonzero = 0
+    for k in range(n + 1):
+        v = float(g[0][k])
+        a = float(g[1][k])
+        force = hil.M_EFF * a + k_air * v * abs(v)
+        want = _regen.regen_pack_current_from_force_a(
+            force, v, eta_regen=float(hil.ETA_REGEN),
+            eta_chg=chg.ETA_CHG_DEFAULT, v_pack_v=v_pack, k_f=hil.K_F,
+            i_clip_a=hil.VESC_REGEN_I_MAX_A, i_max_a=chg_a)
+        assert float(g[6][k]) == pytest.approx(want, rel=1e-12, abs=1e-18)
+        assert float(m.i_regen[k] if hasattr(m, "i_regen") else m[6][k]) \
+            == pytest.approx(want, rel=1e-12, abs=1e-18)
+        nonzero += want > 0.0
+    assert nonzero > 0, "the fixture no longer contains a braking stage"
+
+
+# ── W2.4  The commanded regen windows and the manager ───────────────────────
+
+def test_derive_regen_windows_pins_the_ftp75c_window_table():
+    """DERIVED, NEVER HAND-TABULATED -- a 234-point drive cycle cannot be
+    treated the way the two hand-built regen stimuli are, and a table typed
+    once would silently stop matching the profile the next time either moved.
+
+    The figures below are the derivation's output at the shipped constants, so
+    a change to the lead times, the minimum window, the drag constant or the
+    REGEN THRESHOLD fails here with the new values in the message.
+
+    RE-PINNED (H1, 2026-09-02).  Trimming against the firmware's own
+    `regenActive` test with a 2x margin, instead of against `force < 0`,
+    removed three windows and 8.8 s of commanded duty: nine windows / 28.400 s
+    became SIX / 19.600 s.  That cost is the price of never provoking
+    `chargingControl()`'s cruise branch inside a commanded window."""
+    w = hil.derive_regen_windows(_ftp75c.FTP75C_PROFILE,
+                                 hil.DRAG_MODE_SCALED_AIR)
+    assert len(w) == 6
+    assert w[0] == pytest.approx((23.2, 24.3))
+    assert w[2] == pytest.approx((62.7, 67.3))
+    assert w[-1] == pytest.approx((164.2, 171.3))
+    assert sum(b - a for a, b in w) == pytest.approx(19.600, abs=1e-3)
+    # The rig road load still yields NOTHING, which is the control.
+    assert hil.derive_regen_windows(_ftp75c.FTP75C_PROFILE,
+                                    hil.DRAG_MODE_RIG) == ()
+    # The module-scope constant is this derivation, not a second copy of it.
+    assert hil.FTP75C_REGEN_WINDOWS == w
+    # Ordered, disjoint, and each at least the minimum length.
+    for (a0, b0), (a1, _b1) in zip(w, w[1:]):
+        assert b0 < a1
+    for a, b in w:
+        assert (b - a) >= hil.EMS_REGEN_MGR_MIN_WINDOW_S
+
+
+def test_derive_regen_windows_is_empty_under_the_rig_road_load():
+    """THE PHYSICAL STATEMENT, not a configuration one: the rig road load
+    exceeds the inertial force at every deceleration this cycle contains, so
+    there is nothing to command.  A rig-drag control run of an `ems-ftp75c-*`
+    scenario therefore gets the empty window list its own physics implies,
+    which is why the windows are re-derived at run time from whatever `--drag`
+    resolves to rather than read off the scenario."""
+    assert hil.derive_regen_windows(_ftp75c.FTP75C_PROFILE,
+                                    hil.DRAG_MODE_RIG) == ()
+    assert hil.derive_regen_windows(_ftp75c.FTP75C_PROFILE) == ()   # default
+
+
+def test_derive_regen_windows_on_the_uncompressed_cycle_finds_seven():
+    """The UNCOMPRESSED cycle under the same compensated drag: fewer windows
+    and a different table, which is what makes `ftp75c` a separate stimulus
+    rather than a re-timing of `ftp75`."""
+    w = hil.derive_regen_windows(_ftp75.FTP75_PROFILE,
+                                 hil.DRAG_MODE_SCALED_AIR)
+    assert len(w) == 7
+
+
+def _required_force(t, drag_mode):
+    """The motor force the profile requires at `t`, under `drag_mode`."""
+    prof = _ftp75c.FTP75C_PROFILE
+    k_air = hil.drag_k_air(drag_mode)
+    h = 1e-7
+    v = hil.piecewise(prof, t)
+    a = (hil.piecewise(prof, t + h) - hil.piecewise(prof, t - h)) / (2.0 * h)
+    if k_air:
+        return hil.M_EFF * a + k_air * v * abs(v)
+    f_c = hil.F_COULOMB if v > hil.V_STICTION else (
+        -hil.F_COULOMB if v < -hil.V_STICTION else 0.0)
+    return hil.M_EFF * a + f_c + hil.B_EFF * v
+
+
+def test_every_commanded_regen_window_is_braking_at_every_instant():
+    """THE SAFETY PROPERTY THE BISECTION TRIM EXISTS FOR, and it is a safety
+    property rather than a refinement.
+
+    The design note's rule ("negative force at either endpoint") ADMITS a
+    segment whose force crosses zero inside it, and a window built on the whole
+    segment then commands `charge_goal = 1.0` over an interval in which the
+    motor command is POSITIVE.  The firmware would take the CRUISE branch
+    there, call `assertFcChargeEnable(true)`, drop BT off the bus and create
+    the single-source condition that has latched OC_FC before.
+
+    THE THRESHOLD IS THE FIRMWARE'S, NOT ZERO (H1, 2026-09-02).  This test
+    used to assert `force < 0`, which ENCODED THE DEFECT: `chargingControl()`
+    branches on `regenActive = (current < -0.1f)` (.ino:10807), so an instant
+    whose required current sits in (-0.1, 0) A is braking in physics and
+    NOT-REGEN IN FIRMWARE, and commanding `charge_goal` there takes the cruise
+    branch anyway.  Trimming on zero left 2.900 s of such instants across seven
+    of nine windows, one of them (57.2-57.8 s) for 100 % of its length.
+
+    Asserted on a dense sample of every window, so the claim is about the
+    windows and not about the endpoints the derivation happens to return."""
+    for a, b in hil.FTP75C_REGEN_WINDOWS:
+        for i in range(201):
+            t = a + (b - a) * i / 200.0
+            f = _required_force(t, hil.DRAG_MODE_SCALED_AIR)
+            # The firmware's own test, without the host margin.
+            assert f < -hil.REGEN_ACTIVE_I_A * hil.K_F, (t, f)
+
+
+def test_every_commanded_regen_window_clears_the_firmware_threshold_with_margin():
+    """THE MARGIN, asserted separately from the threshold it is a margin ON.
+
+    The host commands a `v_setpoint`; the CURRENT the firmware's drive
+    controller then develops is not the host's to know exactly, so the windows
+    are trimmed at `EMS_REGEN_MGR_I_MARGIN` x the firmware's own threshold
+    rather than at it.  Splitting the two assertions keeps the margin a
+    reviewable choice rather than a number buried in a bound: this test fails
+    if the margin is reduced, the one above fails only if the windows become
+    outright unsafe."""
+    level = hil.EMS_REGEN_MGR_I_MARGIN * hil.REGEN_ACTIVE_I_A
+    worst = float("-inf")
+    for a, b in hil.FTP75C_REGEN_WINDOWS:
+        for i in range(201):
+            t = a + (b - a) * i / 200.0
+            i_req = _required_force(t, hil.DRAG_MODE_SCALED_AIR) / hil.K_F
+            assert i_req <= -level + 1e-9, (t, i_req)
+            worst = max(worst, i_req)
+    # The measured worst in-window required current, pinned so a profile or
+    # threshold change that erodes the margin is visible as a number.
+    assert -0.2100 < worst < -0.2000, worst
+
+
+def test_the_endpoint_only_rule_would_have_opened_a_window_at_53_6_s():
+    """THE MEASURED COUNTEREXAMPLE the trim was introduced for.
+
+    Segment t = 53.5 .. 54.0 s is a shallow deceleration whose required force
+    crosses zero inside it; the whole-segment rule opened an FC charge window
+    at t = 53.6 s.  Both halves are asserted here -- the force at 53.6 s IS
+    non-negative, and no derived window contains it -- so the test fails if
+    either the profile moves or the trim is removed."""
+    assert _required_force(53.6, hil.DRAG_MODE_SCALED_AIR) >= 0.0
+    assert not any(a <= 53.6 < b for a, b in hil.FTP75C_REGEN_WINDOWS)
+    # The segment itself is still a DECELERATION -- i.e. the endpoint rule had
+    # a reason to look at it, and the trim is what refines the answer.
+    v0 = hil.piecewise(_ftp75c.FTP75C_PROFILE, 53.5)
+    v1 = hil.piecewise(_ftp75c.FTP75C_PROFILE, 54.0)
+    assert v1 < v0
+
+
+def _mgr(windows=((10.0, 20.0), (30.0, 31.0))):
+    return hil.RegenManager(windows)
+
+
+def test_regen_manager_rule_1_forces_charge_goal_inside_a_window():
+    mgr = _mgr()
+    out = mgr.apply(12.0, {}, {"power_share_setpoint": 0.4, "charge_goal": 0.0})
+    assert out["charge_goal"] == 1.0
+    # ... and touches nothing else.
+    assert out["power_share_setpoint"] == 0.4
+    assert mgr.forced == 1 and mgr.calls == 1
+
+
+def test_regen_manager_rule_2_leaves_a_command_untouched_outside_every_window():
+    mgr = _mgr()
+    cmd = {"power_share_setpoint": 0.4, "charge_goal": 0.0}
+    out = mgr.apply(25.0, {}, cmd)
+    assert out is cmd                       # not even copied
+    assert mgr.forced == 0 and mgr.calls == 1
+
+
+def test_regen_manager_rule_3_overrides_a_strategys_own_positive_goal():
+    """A strategy's own `charge_goal` at the start of a window does NOT win:
+    the window does.  The firmware's `regenActive` branch takes precedence over
+    the cruise branch anyway, so the host's model of WHICH PATH IS OPEN has to
+    match, or the dwell accounting and the charge census describe a run that
+    did not happen."""
+    mgr = _mgr()
+    out = mgr.apply(10.0, {}, {"charge_goal": 0.5})
+    assert out["charge_goal"] == 1.0
+    # The window is half-open [a, b): its own end instant is outside.
+    assert mgr.active(10.0) and not mgr.active(20.0)
+
+
+def test_regen_manager_duty_is_the_sum_of_its_windows():
+    assert _mgr().duty_s() == pytest.approx(11.0)
+
+
+def test_regen_manager_wrap_writes_regen_commanded_before_the_strategy_runs():
+    """`regen_commanded` is written onto the FEEDBACK VIEW BEFORE the strategy
+    is called, so a strategy's charge bookkeeping can exclude a regen tick from
+    its FC-path dwell.  The key is ALWAYS present -- True or False -- so a
+    strategy cannot read "absent" as "no manager" on a run that has one."""
+    seen = []
+
+    def policy(t, fb):
+        seen.append(fb.get("regen_commanded"))
+        return {"charge_goal": 0.0}
+
+    wrapped = _mgr().wrap(policy)
+    wrapped(12.0, {})
+    wrapped(25.0, {})
+    assert seen == [True, False]
+
+
+def test_regen_manager_wrap_preserves_type_resolution_through_unwrap_policy():
+    """`main()` resolves the SDP / DP / MPC diagnostics sources BY TYPE, and a
+    wrapped policy is a plain function.  Every such isinstance() test goes
+    through `unwrap_policy()` so a scenario that declares `ems_regen_manager`
+    does not silently lose its `cmd_share_sp_raw` column or its `config.mpc`
+    sidecar block -- the exact failure the round's own source-text pin (see
+    `test_mpc_sidecar_block_is_written_from_the_provenance`) guards."""
+    inner = hil.SocBandStrategy()
+    wrapped = _mgr().wrap(inner)
+    assert not isinstance(wrapped, hil.SocBandStrategy)     # the hazard
+    assert hil.unwrap_policy(wrapped) is inner              # the fix
+    assert wrapped.regen_manager is not None
+    # An UNWRAPPED policy round-trips as itself, so the call site needs no
+    # special case for a scenario without a manager.
+    assert hil.unwrap_policy(inner) is inner
+    assert hil.unwrap_policy(None) is None
+
+
+def test_soc_band_does_not_count_a_regen_tick_as_an_fc_charge_window():
+    """MUTUAL EXCLUSION, soc-band half.  Inside a regen window the manager
+    forces `charge_goal` to 1.0 and the FIRMWARE opens the REGEN path, not the
+    FC path.  Counting the tick as an FC charge window would put a window in
+    the census that never existed, and would let the latch hold through a
+    braking event on the strength of a current the charger was not drawing."""
+    policy = hil.SocBandStrategy()
+    dt = 0.02
+    t = hil.EMS_RUN_ENTRY_S
+    soc_ref = 0.70
+
+    def tick(soc, regen=None):
+        nonlocal t
+        fb = {"t": t, "v_profile": 1.0, "soc": soc, "I_fc": 0.05,
+              "I_batt": 0.05}
+        if regen is not None:
+            fb["regen_commanded"] = regen
+        out = policy(t, fb)
+        t += dt
+        return out
+
+    for _ in range(60):
+        tick(soc_ref)
+    deficit_soc = soc_ref - hil.SOC_BAND_HALF - 0.0002
+    for _ in range(10):
+        tick(deficit_soc)
+    assert policy.charging is True          # the FC window is genuinely open
+    # One regen-commanded tick, on identical inputs, must shut the latch.
+    tick(deficit_soc, regen=True)
+    assert policy.charging is False
+    # And an explicit False behaves exactly as the absent key does, so a run
+    # WITH a manager and a run WITHOUT one agree outside the windows.
+    for _ in range(10):
+        tick(deficit_soc, regen=False)
+    assert policy.charging is True
+
+
+def test_sdp_does_not_arm_its_eight_second_dwell_on_a_regen_tick(tmp_path):
+    """MUTUAL EXCLUSION, SDP half, and the consequence is the sharper one:
+    `SDP_CHG_MIN_DWELL_S` is a HOST construct governing the FC-PATH charge
+    windows, so arming a latch inside a regen window would pin the charge
+    intent HIGH for 8 s after the braking ended -- past the window, into the
+    re-acceleration, on a path the firmware never opened."""
+    s = _sdp_charge_strategy(tmp_path)
+    fb = _sdp_charge_fb(10.0, p_dem=-0.5)
+    fb["regen_commanded"] = True
+    _share, goal = s.decide(fb, t=10.0)
+    assert goal > 0.0                    # the TABLE still says charge ...
+    assert s.chg_holds == 0              # ... but no FC dwell was armed
+    assert s.chg_hold_until is None or s.chg_hold_until <= 10.0
+    # The same decision WITHOUT the regen flag does arm one -- so the test is
+    # about the flag and not about the fixture.
+    s2 = _sdp_charge_strategy(tmp_path)
+    s2.decide(_sdp_charge_fb(10.0, p_dem=-0.5), t=10.0)
+    assert s2.chg_holds == 1
+    assert s2.chg_hold_until == pytest.approx(10.0 + hil.SDP_CHG_MIN_DWELL_S)
+
+
+# ── W2.5  The soc-band per-scenario charge thresholds ───────────────────────
+
+def test_soc_band_threshold_override_defaults_to_the_module_constants():
+    """`None` keeps the module constants, so every existing construction is
+    byte-identical and the 61 s and `ftp75` legs are untouched."""
+    s = hil.SocBandStrategy()
+    assert s.charge_enter_itot_a == hil.SOC_BAND_CHARGE_ENTER_ITOT_A == 0.60
+    assert s.charge_exit_itot_a == hil.SOC_BAND_CHARGE_EXIT_ITOT_A == 1.30
+    assert hil.SocBandStrategy(charge_enter_itot_a=None,
+                               charge_exit_itot_a=None).charge_enter_itot_a \
+        == hil.SOC_BAND_CHARGE_ENTER_ITOT_A
+
+
+def test_soc_band_constructor_refuses_an_inverted_hysteresis():
+    """The pair IS a hysteresis, and an inverted one latches a window shut the
+    instant it opens -- a silently useless leg rather than a failing one."""
+    with pytest.raises(ValueError) as exc:
+        hil.SocBandStrategy(charge_enter_itot_a=0.30, charge_exit_itot_a=0.10)
+    assert "EXIT" in str(exc.value) and "ENTER" in str(exc.value)
+    # EQUAL is admissible: a zero-width hysteresis is degenerate but defined.
+    hil.SocBandStrategy(charge_enter_itot_a=0.3, charge_exit_itot_a=0.3)
+
+
+def test_soc_band_bind_scenario_reads_the_thresholds_off_the_scenario_meta():
+    """The override arrives through the SAME hook a strategy's other scenario
+    keys do, instead of through a constructor a scenario registry cannot
+    reach."""
+    s = hil.SocBandStrategy()
+    s.bind_scenario("ems-ftp75c-socband",
+                    hil.SCENARIOS["ems-ftp75c-socband"])
+    assert s.charge_enter_itot_a == pytest.approx(
+        hil.FTP75C_SOCBAND_CHARGE_ENTER_A)
+    assert s.charge_exit_itot_a == pytest.approx(
+        hil.FTP75C_SOCBAND_CHARGE_EXIT_A)
+    # A scenario that declares neither key leaves the constants alone.
+    s2 = hil.SocBandStrategy()
+    s2.bind_scenario("ems-soc-band", hil.SCENARIOS["ems-soc-band"])
+    assert s2.charge_enter_itot_a == hil.SOC_BAND_CHARGE_ENTER_ITOT_A
+
+
+def test_soc_band_bind_scenario_refuses_an_inverted_pair_and_names_the_scenario():
+    s = hil.SocBandStrategy()
+    with pytest.raises(ValueError) as exc:
+        s.bind_scenario("myscen", {"soc_band_charge_enter_itot_a": 0.5,
+                                   "soc_band_charge_exit_itot_a": 0.1})
+    assert "myscen" in str(exc.value)
+
+
+def test_ftp75c_socband_thresholds_are_the_shipped_derivation():
+    """PERCENTILE-MATCHED against the rig leg, NOT scaled by the drag ratio.
+
+    ⚠️ DIVIDING BY `DRAG_INERTIA_RESIDUAL` WAS THE DEFECT (H2, 2026-09-02) and
+    it failed SILENTLY.  The source total is `I_AUX_A + i_motor + i_par`, and
+    the 0.15 A auxiliary floor does not scale with the road load -- only the
+    motor term does.  Scaling the whole threshold put ENTER at 0.13373 A,
+    BELOW this cycle's own minimum source total of 0.15079 A, so the leg opened
+    ZERO charge windows and the frontier's REFERENCE never exercised the
+    soc-band mechanism at all.
+
+    The floor is asserted explicitly below, because "enter is above the
+    cycle's own minimum" is the property that makes the pair usable and it is
+    the one the arithmetic silently violated."""
+    assert hil.FTP75C_SOCBAND_CHARGE_ENTER_A == pytest.approx(0.18074, rel=1e-12)
+    assert hil.FTP75C_SOCBAND_CHARGE_EXIT_A == pytest.approx(0.33107, rel=1e-12)
+    # ORDERED, and a real hysteresis rather than a degenerate one.
+    assert hil.FTP75C_SOCBAND_CHARGE_ENTER_A < hil.FTP75C_SOCBAND_CHARGE_EXIT_A
+    # ⚠️ THE PROPERTY THE OLD PAIR VIOLATED: the enter threshold must sit ABOVE
+    # this cycle's own minimum source total, or no window can ever open.  The
+    # 0.15079 A minimum is `I_AUX_A` plus the parallel bleed at standstill.
+    assert hil.FTP75C_SOCBAND_CHARGE_ENTER_A > 0.15079
+    # ... and the REJECTED drag-scaled pair is recorded as the counterexample,
+    # so a return to it fails here rather than passing silently.
+    assert (hil.SOC_BAND_CHARGE_ENTER_ITOT_A
+            / hil.DRAG_INERTIA_RESIDUAL) < 0.15079
+    meta = hil.SCENARIOS["ems-ftp75c-socband"]
+    assert meta["soc_band_charge_enter_itot_a"] == \
+        hil.FTP75C_SOCBAND_CHARGE_ENTER_A
+    assert meta["soc_band_charge_exit_itot_a"] == \
+        hil.FTP75C_SOCBAND_CHARGE_EXIT_A
+
+
+def _socband_latches_at(strategy, i_tot, ticks=200):
+    """Run `strategy` at a constant source total and a constant deficit.
+    Returns whether the charge window is open at the end."""
+    dt = 0.02
+    t = hil.EMS_RUN_ENTRY_S
+    soc_ref = 0.70
+    for k in range(ticks):
+        soc = soc_ref if k < 60 else soc_ref - hil.SOC_BAND_HALF - 0.0002
+        strategy(t, {"t": t, "v_profile": 1.0, "soc": soc,
+                     "I_fc": 0.5 * i_tot, "I_batt": 0.5 * i_tot})
+        t += dt
+    return strategy.charging
+
+
+def test_the_shipped_threshold_would_latch_permanently_on_the_compensated_cycle():
+    """THE WHOLE REASON THE OVERRIDE EXISTS, asserted as behaviour.
+
+    `SOC_BAND_CHARGE_ENTER_ITOT_A` (0.60 A) is an ABSOLUTE current calibrated
+    against a plant carrying the measured rig road load.  The compensated
+    cycle's PEAK source total is 0.330 A -- BELOW THE ENTRY THRESHOLD AT EVERY
+    INSTANT -- so the shipped strategy admits a charge window at the first
+    cruise sample and never exits it by current.  That is not a defect in the
+    policy; it is a threshold calibrated against a plant with 4.5x the drag,
+    and a permanently-open window would make the leg useless as the frontier's
+    REFERENCE."""
+    i_peak = 0.330            # the compensated cycle's whole peak source total
+    assert i_peak < hil.SOC_BAND_CHARGE_ENTER_ITOT_A
+    shipped = hil.SocBandStrategy()
+    assert _socband_latches_at(shipped, i_peak) is True
+    overridden = hil.SocBandStrategy(
+        charge_enter_itot_a=hil.FTP75C_SOCBAND_CHARGE_ENTER_A,
+        charge_exit_itot_a=hil.FTP75C_SOCBAND_CHARGE_EXIT_A)
+    assert _socband_latches_at(overridden, i_peak) is False
+    # And the override is not simply "never charges": well under its own entry
+    # threshold it still admits.
+    assert _socband_latches_at(
+        hil.SocBandStrategy(
+            charge_enter_itot_a=hil.FTP75C_SOCBAND_CHARGE_ENTER_A,
+            charge_exit_itot_a=hil.FTP75C_SOCBAND_CHARGE_EXIT_A),
+        0.05) is True
+
+
+# ── W2.6  The two era conventions: `drag` and `eta_regen` ───────────────────
+
+def test_dp_drag_mode_treats_rig_and_an_absent_key_as_one_statement():
+    """THE ERA SENTINEL is None, and it names the MEASURED RIG PROFILE -- the
+    only road load that existed before 2026-09-02 and the one the bench still
+    runs.  An absent `drag` key and an explicit "rig" are the SAME statement,
+    so a scenario that predates the key fingerprints exactly as it did."""
+    assert hil.dp_drag_mode({}) is None
+    assert hil.dp_drag_mode({"drag": None}) is None
+    assert hil.dp_drag_mode({"drag": hil.DRAG_MODE_RIG}) is None
+    assert hil.dp_drag_mode({}) == hil.dp_drag_mode({"drag": "rig"})
+    assert hil.dp_drag_mode({"drag": hil.DRAG_MODE_SCALED_AIR}) == "scaled-air"
+    with pytest.raises(ValueError):
+        hil.dp_drag_mode({"drag": "scaled_air"})
+
+
+def test_dp_eta_regen_sentinel_is_the_pre_regen_demand_model():
+    assert hil.dp_eta_regen({}) is None
+    assert hil.dp_eta_regen({"eta_regen": None}) is None
+    assert hil.dp_eta_regen({"eta_regen": 0.8}) == 0.8
+    # ONE convention, shared with regen_power.resolve_eta_regen().
+    assert hil.dp_eta_regen({}) is _regen.resolve_eta_regen({})
+    assert hil.dp_eta_regen({"eta_regen": 0.8}) == \
+        _regen.resolve_eta_regen({"eta_regen": 0.8})
+
+
+def test_plant_drag_mode_and_plant_eta_regen_answer_the_binders_question():
+    """`plant_eta_regen()` is NOT "does the plant regenerate" -- it has done so
+    under every drag profile since the WP-C round.  What it answers is the
+    question the bind-time guard asks: MUST THE DEMAND MODEL CARRY THE CREDIT
+    FOR THIS RUN'S BOUND TO BE A BOUND?  Under the rig profile the answer is no
+    for a physical reason (0.001 J over a 340 s segment against ~30.8 J of
+    braking kinetic energy), which is what keeps every committed table
+    reachable."""
+    assert hil.plant_drag_mode(None) is None            # the shipped default
+    assert hil.plant_drag_mode(hil.DRAG_MODE_RIG) is None
+    assert hil.plant_drag_mode(hil.DRAG_MODE_SCALED_AIR) == "scaled-air"
+    with pytest.raises(ValueError):
+        hil.plant_drag_mode("nope")
+    assert hil.plant_eta_regen(None) is None
+    assert hil.plant_eta_regen(hil.DRAG_MODE_RIG) is None
+    assert hil.plant_eta_regen(hil.DRAG_MODE_SCALED_AIR) == \
+        pytest.approx(float(hil.ETA_REGEN))
+    assert hil.plant_eta_regen(hil.DRAG_MODE_SCALED_AIR_MATCHED) == \
+        pytest.approx(float(hil.ETA_REGEN))
+
+
+def test_both_new_keys_are_optional_fingerprint_keys():
+    assert "drag" in hil.DP_FINGERPRINT_META_KEYS
+    assert "eta_regen" in hil.DP_FINGERPRINT_META_KEYS
+    assert {"drag", "eta_regen"} <= hil.DP_FINGERPRINT_OPTIONAL_KEYS
+
+
+def test_the_three_committed_table_fingerprints_are_unmoved():
+    """THE ARTIFACT-REACHABILITY CLAIM, pinned on the three digests that
+    actually name committed tables.  Both new keys are OMITTED at their
+    sentinels, which is what keeps every committed DP table, every SDP policy
+    artifact and every dp_db record reachable and byte-identical -- adding a
+    key that wrote `drag=None` into the digest would have moved all three for a
+    problem none of them solves differently."""
+    assert hil.dp_profile_fingerprint(
+        "ems-dp-replay", hil.SCENARIOS["ems-dp-replay"]).startswith("02683031")
+    assert hil.dp_profile_fingerprint(
+        "ems-ftp75-dp", hil.SCENARIOS["ems-ftp75-dp"]).startswith("403c5e71")
+    assert hil.dp_profile_fingerprint(
+        "ems-ftp75-5050",
+        hil.SCENARIOS["ems-ftp75-5050"]).startswith("50fe8c40")
+
+
+def test_a_compensated_scenario_hashes_differently_from_a_rig_one():
+    """`drag` IS a scenario key, so the fingerprint separates a compensated
+    table from a rig table by itself -- unlike `eta_regen`, which no live
+    scenario declares and which needs the bind-time guard instead."""
+    meta = {"ems_v_profile": [(0.0, 0.0), (10.0, 1.0)], "duration_s": 10.0}
+    base = hil.dp_profile_fingerprint("myscen", meta)
+    assert hil.dp_profile_fingerprint(
+        "myscen", dict(meta, drag="rig")) == base
+    assert hil.dp_profile_fingerprint(
+        "myscen", dict(meta, drag=None)) == base
+    assert hil.dp_profile_fingerprint(
+        "myscen", dict(meta, drag="scaled-air")) != base
+    assert hil.dp_profile_fingerprint(
+        "myscen", dict(meta, drag="scaled-air-matched")) != \
+        hil.dp_profile_fingerprint("myscen", dict(meta, drag="scaled-air"))
+    # And `eta_regen`, on the same terms.
+    assert hil.dp_profile_fingerprint(
+        "myscen", dict(meta, eta_regen=None)) == base
+    assert hil.dp_profile_fingerprint(
+        "myscen", dict(meta, eta_regen=0.8)) != base
+
+
+# ── W2.7  The bind-time era guards (block 0c) ───────────────────────────────
+
+def _era_table(tmp_path, scenario="myscen", table_drag=None, table_er=None,
+               meta_drag=None):
+    """Write a table whose ONLY perturbation is its `drag` / `eta_regen`
+    header lines, and return (strategy, meta).  The scenario meta's own `drag`
+    is settable independently so the fingerprint can be made to agree while the
+    RUN's resolved mode disagrees -- which is the case `--drag` creates and the
+    fingerprint cannot catch."""
+    meta = {"ems_v_profile": [(0.0, 0.0), (10.0, 1.0)], "duration_s": 10.0,
+            "chg_i_ceiling_a": 0.8}
+    if meta_drag is not None:
+        meta["drag"] = meta_drag
+    fp = hil.dp_profile_fingerprint(scenario, meta)
+    lines = _live_table_meta_lines(scenario, fp)
+    if table_drag is not None:
+        lines = ["drag: %s" % table_drag] + lines
+    if table_er is not None:
+        lines = ["eta_regen: %r" % float(table_er)] + lines
+    path = os.path.join(str(tmp_path), hil.DP_TABLE_NAME % scenario)
+    _write_dp_table(path, lines, [(0.0, 0.5, 0.0), (5.0, 0.6, 1.0)])
+    return hil.DpReplayStrategy(table_dir=str(tmp_path)), meta
+
+
+def test_bind_refuses_a_compensated_table_under_a_rig_run(tmp_path):
+    """The road-load profile sets the TRACTIVE DEMAND -- the compensated
+    profiles cut the FTP-75 peak bus current by roughly 4.5x -- so a mismatch
+    means the table's stage costs minimise a different problem and replaying it
+    bounds nothing."""
+    s, meta = _era_table(tmp_path, table_drag="scaled-air", table_er=0.8,
+                         meta_drag="scaled-air")
+    with pytest.raises(ValueError) as exc:
+        s.bind_scenario("myscen", meta, drag_mode=hil.DRAG_MODE_RIG)
+    text = str(exc.value)
+    assert "drag" in text and "scaled-air" in text
+    assert "eta_regen" in text
+
+
+def test_bind_refuses_a_rig_table_under_a_compensated_run(tmp_path):
+    """THE OTHER DIRECTION, and it is the one the FINGERPRINT CANNOT CATCH:
+    `--drag` OVERRIDES a scenario key, so an operator running an `ems-ftp75c-*`
+    leg at `--drag scaled-air` against a rig-solved table passes every other
+    check.  The guard compares the table against the mode the run WILL ACTUALLY
+    APPLY, which is the only claim worth making."""
+    s, meta = _era_table(tmp_path, meta_drag="scaled-air")   # rig-era table
+    with pytest.raises(ValueError) as exc:
+        s.bind_scenario("myscen", meta, drag_mode=hil.DRAG_MODE_SCALED_AIR)
+    text = str(exc.value)
+    assert "drag" in text
+    assert "no `# eta_regen:` header line" in text
+    assert "--drag scaled-air" in text          # the regeneration recipe
+
+
+def test_bind_refuses_a_regen_era_table_under_a_pre_regen_run(tmp_path):
+    """`eta_regen` alone, with `drag` agreeing on both sides.  A table solved
+    WITH the credit replayed on a run that earns none prices SoC the run never
+    gets back."""
+    s, meta = _era_table(tmp_path, table_er=0.8)      # rig drag both sides
+    with pytest.raises(ValueError) as exc:
+        s.bind_scenario("myscen", meta, drag_mode=hil.DRAG_MODE_RIG)
+    text = str(exc.value)
+    assert "eta_regen" in text
+    assert "no regen term" in text                    # the run's own era
+
+
+def test_bind_refuses_a_pre_regen_table_under_a_regen_run(tmp_path):
+    """AND ITS MIRROR, which is the divergence this round closes: a table
+    solved WITHOUT the credit must buy with hydrogen the SoC a regen-bearing
+    run gets back from braking, so its total is INFLATED and the run's
+    deviation against it is FLATTERED.  Re-opening that silently is worse than
+    never having closed it."""
+    s, meta = _era_table(tmp_path, table_drag="scaled-air",
+                         meta_drag="scaled-air")
+    with pytest.raises(ValueError) as exc:
+        s.bind_scenario("myscen", meta, drag_mode=hil.DRAG_MODE_SCALED_AIR)
+    text = str(exc.value)
+    assert "no `# eta_regen:` header line" in text
+    assert "--eta-regen" in text
+
+
+def test_bind_accepts_a_matching_compensated_table_and_records_it(tmp_path):
+    s, meta = _era_table(tmp_path, table_drag="scaled-air", table_er=0.8,
+                         meta_drag="scaled-air")
+    s.bind_scenario("myscen", meta, drag_mode=hil.DRAG_MODE_SCALED_AIR)
+    assert s.path is not None
+
+
+def test_bind_accepts_every_committed_rig_table_unchanged(tmp_path):
+    """THE REACHABILITY CLAIM AT THE BIND SITE.  Under the rig profile
+    `plant_eta_regen()` returns the sentinel, so a table with NO `drag` and NO
+    `eta_regen` header line -- i.e. every table committed before this round --
+    binds clean.  Asserted through the guard rather than argued from it."""
+    s, meta = _era_table(tmp_path)               # no drag, no eta_regen lines
+    s.bind_scenario("myscen", meta)              # drag_mode omitted entirely
+    assert s.path is not None
+    s2, meta2 = _era_table(tmp_path, scenario="myscen2")
+    s2.bind_scenario("myscen2", meta2, drag_mode=hil.DRAG_MODE_RIG)
+    assert s2.path is not None

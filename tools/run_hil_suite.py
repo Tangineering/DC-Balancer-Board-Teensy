@@ -394,6 +394,26 @@ FTP75_SCENARIOS = frozenset({"ems-ftp75-5050", "ems-ftp75-socband",
                              "ems-ftp75-sdp", "ems-ftp75-dp",
                              "ems-ftp75-mpc"})
 
+# ── The five COMPRESSED FTP-75 legs, opt-in behind --with-ftp75c ────────────
+# A SEPARATE SET AND A SEPARATE FLAG, not an extension of the pair above, for
+# two independent reasons.
+#   COST, the same argument FTP75_SCENARIOS makes: five 180 s legs are 15.4 min
+#   on top of a ~23 min campaign.
+#   AND A PLANT CONFIGURATION.  These five run `--drag scaled-air`, a
+#   ROAD-LOAD-COMPENSATED plant that CANNOT be replicated on this bench with
+#   the single motor now fitted (docs/modeling/
+#   ftp75c_regen_cycle_design_20260902.md section 7).  Folding them into
+#   --with-ftp75 would make one flag mean "run a longer cycle" AND "run a
+#   different plant", and an operator asking for the first would silently get
+#   the second.
+# A SET, not a name prefix, for the reason spelled out above FTP75_SCENARIOS -
+# and here the prefix test would also be WRONG, because `ems-ftp75c-*` starts
+# with `ems-ftp75`.
+FTP75C_SCENARIOS = frozenset({"ems-ftp75c-5050", "ems-ftp75c-socband",
+                              "ems-ftp75c-sdp", "ems-ftp75c-dp",
+                              "ems-ftp75c-mpc"})
+assert not (FTP75_SCENARIOS & FTP75C_SCENARIOS)
+
 # ── The three SDP alpha-sweep legs, opt-in behind --with-alpha ──────────────
 # Same MECHANISM as FTP75_SCENARIOS (a skip record with a reason, so the report
 # shows the gap) and a DIFFERENT reason: these three are not long, they are a
@@ -3450,11 +3470,12 @@ FAULT_EXPECTATIONS["ems-ftp75-sdp"] = {
 # enforced by the fingerprint, not by this comment.
 #
 # FAULT-FREE IS THE EXPECTATION, and at preload 0 the table's own control grid
-# says so with room to spare. Its share span is [0.25, 0.75] (n_share 41,
-# recorded in the header and drift-checked at load), so the worst
-# single-channel loading it can command is 0.75 of the source total. At the
-# cycle peak (model 0.9603 A, and the `ems-ftp75-5050` trace runs +2.6 % hot
-# against that) 0.75 is ~0.739 A — 47 % under LIMIT_I_FC_MAX 1.4 A, against
+# says so with room to spare. Its share span is [0.15, 0.85] (n_share 57,
+# recorded in the header and drift-checked at load; widened from [0.25, 0.75]
+# at 41 on 2026-09-02), so the worst single-channel loading it can command is
+# 0.85 of the source total. At the cycle peak (model 0.9603 A, and the
+# `ems-ftp75-5050` trace runs +2.6 % hot against that) 0.85 is ~0.838 A — 40 %
+# under LIMIT_I_FC_MAX 1.4 A, against
 # the ~1.24 A / 11.3 % margin the 0.65 A preload left. The OC_FC concern that
 # made this the entry's least-supported expectation is therefore RETIRED; if a
 # campaign latches OC_FC here it is a real finding and the trace should be read
@@ -4184,7 +4205,7 @@ def _mpc_expectation(*, scenario, walk_h2, duration_s, survive_t,
 
 # ── ems-mpc: the frontier candidate ─────────────────────────────────────────
 FAULT_EXPECTATIONS["ems-mpc"] = _mpc_expectation(
-    scenario="ems-mpc", walk_h2=0.007588, duration_s=61.0, survive_t=50.0,
+    scenario="ems-mpc", walk_h2=0.007162, duration_s=61.0, survive_t=50.0,
     # RE-DERIVED 2026-09-02: the leg binds `mpc-sto`, whose walk commands a
     # 0.2500 share range on this stimulus (the pre-swap `mpc-det` walk was
     # wider). The floor is ~0.6x that, which is a degenerate-constant guard
@@ -4209,7 +4230,7 @@ FAULT_EXPECTATIONS["ems-mpc"] = _mpc_expectation(
 
 # ── ems-mpc-det: the stochastic variant, NOT a frontier leg ─────────────────
 FAULT_EXPECTATIONS["ems-mpc-det"] = _mpc_expectation(
-    scenario="ems-mpc-det", walk_h2=0.009728, duration_s=61.0, survive_t=50.0,
+    scenario="ems-mpc-det", walk_h2=0.009427, duration_s=61.0, survive_t=50.0,
     # RE-DERIVED 2026-09-02: the leg binds `mpc-det`, whose walk commands a
     # 0.4167 share range here — the widest of the four legs, because the
     # deterministic law reads the stimulus it is driving. Floor ~0.6x.
@@ -4242,11 +4263,14 @@ FAULT_EXPECTATIONS["ems-mpc-det"] = _mpc_expectation(
 
 # ── ems-mpc-cross: the switching-surface stimulus ───────────────────────────
 FAULT_EXPECTATIONS["ems-mpc-cross"] = _mpc_expectation(
-    scenario="ems-mpc-cross", walk_h2=0.010835, duration_s=200.0,
+    scenario="ems-mpc-cross", walk_h2=0.008782, duration_s=200.0,
     # ⚠️ RE-DERIVED 2026-09-02 AND LOWERED, 0.12 -> 0.05. The leg binds
     # `mpc-sto` now, and the stochastic law walks a share range of only
-    # 0.0833 on this two-level cruise — BELOW the pre-swap 0.12 floor, which
-    # would have failed a correct run. The mechanism is the demand model,
+    # 0.0875 on this two-level cruise — BELOW the pre-swap 0.12 floor, which
+    # would have failed a correct run. (0.0833 before the band widening of
+    # the same date; it is ONE LADDER STEP either way, and the widening moved
+    # the operating point down onto the 0.15 rail rather than widening the
+    # walk — the range is a step, not a span.) The mechanism is the demand model,
     # not the plant: `mpc-sto` plans against the TPM's conditional mean,
     # which smooths the two cruise levels this stimulus exists to separate,
     # so it commands a narrower walk across the same operating region.
@@ -4297,9 +4321,339 @@ FAULT_EXPECTATIONS["ems-mpc-cross"] = _mpc_expectation(
                 "WARNING on a miss, never a failure) until the cap-lifted walk "
                 "re-band lands; the CEILING is untouched and still fails."))
 
+# ═══════════════════════════════════════════════════════════════════════════
+# ems-ftp75c-*: THE COMPRESSED CYCLE ON THE COMPENSATED ROAD LOAD
+#     (2026-09-02; docs/modeling/ftp75c_regen_cycle_design_20260902.md)
+#
+# ⚠️ EVERY BAND IN THIS SECTION IS PROVISIONAL AND EVERY NUMBER IS A WALK
+# PREDICTION.  No campaign has run any of these five legs, the plant
+# configuration they run on has never been exercised, and two of the constants
+# the whole harvest column is linear in - ETA_REGEN 0.80 and
+# VESC_REGEN_I_MAX_A 1.5 - remain TODO(verify).  A first-campaign miss here is
+# a calibration event by default; treat it as a defect only after the walk has
+# been re-derived against the measured trace.
+#
+# ⚠️ THE `I_fc` BANDS ARE RE-DERIVED DOWNWARD, NOT CARRIED OVER.  Road-load
+# compensation cuts the tractive demand by roughly 4.5x: the compensated cycle's
+# PEAK source total is 0.3311 A against 0.9603 A on the uncompressed rig cycle,
+# so the `ems-ftp75-*` floors are unreachable here by construction.  Carrying
+# `ftp_fc_carried`'s 0.40 A floor across, for instance, would fail a correct
+# board on every tick of every leg.  LIMIT_I_FC_MAX 1.4 A is never approached -
+# the worst case is 21 % of it, on the `sdp-v4` leg's 0.85 share rail.
+#
+# ⚠️ DO NOT ASSERT SoC DIRECTION ON THESE LEGS.  docs/HIL_SCENARIOS.md already
+# states this for `regen-harvest-true`, and it applies with more force here: the
+# whole regen credit is +1.173 C, a SoC gain near +6.5e-5, against a cycle drain
+# near -0.0019.  The credit is 1.4 % of the drain and is invisible in the SoC
+# trace.
+# ═══════════════════════════════════════════════════════════════════════════
+
+# The Run window, and the survive bound inside it.  RUN_EXIT is 176.0 s and the
+# table's last point is 175.0 s, so 150.0 leaves the whole high-speed half of
+# the cycle behind the assertion while staying clear of the Finish transition.
+_FTP75C_RUN_W = (5.0, 175.0)
+_FTP75C_SURVIVE_T = 150.0
+# WINDOW 5 of the nine commanded regen windows, 62.200 .. 67.299 s.  The FIRST
+# LONG one (5.1 s), which matters because the Ag105 burns roughly the first
+# 0.9 s of every window in the chopper (AG105_SETTLE_S 0.5 s plus the
+# AG105_TAU_S 0.4 s ramp): windows 3 and 4 are 0.6 s each and deliver
+# essentially nothing, and are retained only so the switch and path coverage
+# exists.  The check window is opened 0.2 s either side of the commanded one so
+# a sub-tick phase offset cannot decide the verdict.
+_FTP75C_W5 = (62.5, 68.0)
+_FTP75C_PROVISIONAL = (
+    "FIRST CAMPAIGN ON A ROAD-LOAD-COMPENSATED PLANT: every band here is an "
+    "offline governor-walk prediction and none has been measured. The harvest "
+    "column is LINEAR in ETA_REGEN (0.80, TODO(verify)) and roughly linear in "
+    "VESC_REGEN_I_MAX_A (1.5 A, TODO(verify)), and the walk BANKS the credit "
+    "from the first tick of a window while the plant burns ~0.9 s of every "
+    "window in the chopper first (the walk's own idealized-harvest note): the "
+    "realizable fraction modelled at 70.7 %. Re-derive from the first campaign "
+    "that runs it.")
+
+
+def _ftp75c_regen_signals():
+    """The four checks that make the REGEN PATH observable.  PURE.
+
+    ONE BUILDER for all five legs, for `_mpc_expectation()`'s reason: the regen
+    path is driven by the COMMON regen manager and is therefore
+    STRATEGY-INDEPENDENT by construction, so every leg must assert exactly the
+    same four things.  Five hand-written copies would be five places for one of
+    them to drift, and a drift here would read as a strategy difference that
+    the design explicitly says cannot exist."""
+    return [
+        # 1. THE REGEN PATH WAS ACTUALLY OPEN, as an AGGREGATE duty rather than
+        #    a phase-locked window assertion (the standing guidance: the
+        #    decision and stimulus clocks are not locked, and a phase-locked
+        #    check has failed a correct board before). 20 000 ticks is 20 s
+        #    against a modelled 19.6 s of commanded duty across six windows, a
+        #    31 % margin.
+        {"name": "ftp75c_regen_duty", "switch_bit": SW_REGEN,
+         "min_ticks": 15000, "t_window": _FTP75C_RUN_W,
+         "provisional_note": _FTP75C_PROVISIONAL,
+         "label": "REGEN_ENABLE was open for at least 15 s of the cycle "
+                  "(modelled 19.6 s over six windows, a 30 % margin). The "
+                  "FIRST drive-cycle leg on this rig that opens the regen "
+                  "path at all. RE-DERIVED (H1, 2026-09-02): the windows are "
+                  "trimmed against the FIRMWARE's own regen test with a 2x "
+                  "margin, not against `force < 0`, which cost 28.4 -> 19.6 s "
+                  "of commanded duty and removed three windows"},
+        # 2. ... AND ENERGY ACTUALLY REACHED THE PACK THROUGH IT. A closed
+        #    switch with no current behind it satisfies check 1 and nothing
+        #    else, which is why this one is separate.
+        {"name": "ftp75c_regen_charge", "column": "I_charge",
+         "min_value": 0.06, "t_window": _FTP75C_W5,
+         "provisional_note": _FTP75C_PROVISIONAL,
+         "label": "the Ag105 delivered charge current inside the cycle's "
+                  "first long regen window (>= 0.06 A; modelled peak 0.124 A, "
+                  "so the floor carries a factor of two)"},
+        # 3. THE CHOPPER TOOK THE RESIDUAL. `total_of` and not `max_of`: the
+        #    latter bounds the largest single COALESCED episode rather than a
+        #    per-window sum, which on a nine-window cycle is the weaker of the
+        #    two statements.
+        {"total_of": "chopper_clamp", "field": "energy_j", "min_value": 2.5,
+         "provisional_note": _FTP75C_PROVISIONAL,
+         "label": "the braking chopper burned at least 2.5 J of residual "
+                  "(modelled 4.2 J in-window plus 0.5 J outside). The chopper "
+                  "is a RESIDUAL absorber, not a prior claimant, so this is "
+                  "evidence of harvest and not of loss"},
+        # 4. V-MOT ACTUALLY LIFTED ONTO THE CLAMP. This is what distinguishes
+        #    real energy capture from a closed switch with a dark node, and it
+        #    is the one check here that cannot be satisfied by bookkeeping.
+        {"name": "ftp75c_node_lift", "column": "V_rgn", "min_value": 17.9,
+         "min_ticks": 400, "t_window": _FTP75C_W5,
+         "provisional_note": _FTP75C_PROVISIONAL,
+         "label": "V-MOT lifted onto the 18.1 V chopper clamp for at least "
+                  "400 ms of the first long regen window"},
+    ]
+
+
+def _ftp75c_expectation(*, scenario, ems, i_fc_peak_walk, extra=(), note=""):
+    """One `ems-ftp75c-*` leg's expectation entry.  PURE.
+
+    `i_fc_peak_walk` is the leg's OWN modelled peak FC current - the four legs
+    command four different splits of one 0.3311 A source total, so a single
+    shared ceiling would be either vacuous on the `mpc-sto` leg (walk 0.0912 A)
+    or a tripwire on the `sdp-v4` one (0.2872 A). The ceiling is set at 2x the
+    leg's walk peak, which is a BUDGET bound with wide slack rather than a
+    tracking assertion; the tracking statement on this family is the frontier's,
+    not a current floor's."""
+    ceil = round(2.0 * i_fc_peak_walk, 4)
+    sigs = [
+        # CADENCE first, so every window-scoped bound below is judged on a real
+        # run rather than satisfied vacuously by a CSV that stops early.
+        {"name": "ftp75c_cadence", "min_rows": 140000,
+         "t_window": _FTP75C_RUN_W,
+         "label": "the Run window carries at least 140 000 CSV rows (170 s at "
+                  "1 kHz is ~170 000), so the bounds below are judged on a "
+                  "complete cycle"},
+        # THE CYCLE RAN TO ITS PEAK. The compressed profile puts the 56.7 mph
+        # maximum on exactly 3.0 m/s at emitted t = 125.0 s; 2.85 is 0.95 of
+        # that and unreachable by any other part of the cycle.
+        {"name": "ftp75c_peak_commanded", "column": "cmd_v_sp",
+         "min_value": 2.85, "t_window": (120.0, 130.0),
+         "label": "the compressed FTP-75 peak (3.0 m/s at t = 125 s) was "
+                  "commanded"},
+        # THE FC CHANNEL STAYED INSIDE ITS BUDGET. A CEILING and not a floor:
+        # on this plant the whole cycle sits at ~20 % of LIMIT_I_FC_MAX, so a
+        # floor would assert a share the compensated demand cannot produce.
+        {"name": "ftp75c_fc_bounded", "column": "I_fc", "max_value": ceil,
+         "t_window": _FTP75C_RUN_W,
+         "provisional_note": _FTP75C_PROVISIONAL,
+         "label": "the FC channel stayed under %.4f A - 2x this leg's own "
+                  "modelled peak of %.4f A, and %.0f %% of LIMIT_I_FC_MAX "
+                  "1.4 A. A BUDGET bound; the compensated cycle's whole peak "
+                  "source total is 0.3311 A"
+                  % (ceil, i_fc_peak_walk, 100.0 * ceil / 1.4)},
+    ]
+    sigs.extend(_ftp75c_regen_signals())
+    sigs.extend(extra)
+    return {
+        # `note` IS FOLDED INTO `source`, not carried as a field of its own.
+        # An entry-level `note` key is DEAD: nothing in this module reads one -
+        # not the judge, not the report renderer, not the schema - so five
+        # blocks of expectation prose would have been written into the data
+        # structure and rendered nowhere.  `_alpha_expectation()` below already
+        # handles the same argument this way, and
+        # `test_fault_expectations_schema_only_known_fields` is what refuses
+        # the alternative.
+        "source": ("hil_plant_sim.py SCENARIOS[%r] + the generated "
+                   "tools/ftp75c_profile.py (EPA ftpcol.txt, sha256-verified, "
+                   "raw t = 0..340 s at --time-factor 0.5) + the "
+                   "`--drag scaled-air` road load + "
+                   "docs/modeling/ftp75c_regen_cycle_design_20260902.md. %s"
+                   % (scenario, note)),
+        # FAULT-FREE IS THE EXPECTATION, with far more margin than any rig-drag
+        # leg has: the peak source total is 0.3311 A against LIMIT_I_FC_MAX
+        # 1.4 A. THE SPECIFIC LATCH TO WATCH is FAULT_SWITCH_CONFLICT (0x0008),
+        # which would mean the regen manager provoked chargingControl()'s
+        # CRUISE branch inside a braking window - i.e. asserted charge_goal
+        # while the commanded motor current was still positive, which calls
+        # assertFcChargeEnable(true), drops BT off the bus and creates the
+        # single-source condition that has latched OC_FC before. It should
+        # never fire; if it does, the window derivation
+        # (hil_plant_sim.derive_regen_windows) is the first thing to re-derive.
+        "allow_only": 0,
+        "survive_to": {"t": _FTP75C_SURVIVE_T, "states": {2}},
+        "signals_require": sigs,
+    }
+
+
+FAULT_EXPECTATIONS["ems-ftp75c-5050"] = _ftp75c_expectation(
+    scenario="ems-ftp75c-5050", ems="hold-5050", i_fc_peak_walk=0.1768,
+    note=("The constant-50/50 leg: any share deviation belongs to the "
+          "firmware's share loop and the plant, never to the EMS. On THIS "
+          "family it is also the cleanest read of the regen path, because "
+          "`hold-5050` commands no charge_goal of its own at all - every "
+          "assertion of it comes from the COMMON regen manager. Walk: h2 "
+          "0.006288839 g, dSoC -0.001926, 1.1729 C to the pack."))
+
+FAULT_EXPECTATIONS["ems-ftp75c-socband"] = _ftp75c_expectation(
+    scenario="ems-ftp75c-socband", ems="soc-band", i_fc_peak_walk=0.1856,
+    extra=[
+        # THE CHARGE BRANCH MUST NOT SATURATE. This is the check the
+        # per-scenario threshold override exists for, and it is the one place
+        # this leg can fail in a way that invalidates the frontier rather than
+        # merely reporting a number: the tuple's REFERENCE must be the policy,
+        # not a charge-saturated control.
+        {"name": "ftp75c_socband_charged_at_all", "switch_bit": SW_FC_CHARGE,
+         "min_ticks": 200, "t_window": _FTP75C_RUN_W,
+         "provisional_note": _FTP75C_PROVISIONAL,
+         "label": "the FC charge path opened AT ALL (>= 200 ms). ⚠️ THE "
+                  "COMPANION OF THE CEILING BELOW, and the half that was "
+                  "missing (H2, 2026-09-02): a ceiling alone is satisfied by "
+                  "NEVER CHARGING, which is exactly what the first threshold "
+                  "override produced - it put ENTER at 0.13373 A, BELOW this "
+                  "cycle's own minimum source total of 0.15079 A, so the leg "
+                  "opened ZERO windows against the rig leg's four and the "
+                  "frontier's REFERENCE never exercised the soc-band "
+                  "mechanism. A FAIL here means the thresholds are too LOW"},
+        {"name": "ftp75c_socband_not_saturated", "switch_bit": SW_FC_CHARGE,
+         "max_ticks": 120000, "t_window": _FTP75C_RUN_W,
+         "provisional_note": _FTP75C_PROVISIONAL,
+         "vacuity_note": (
+             "DE-VACUATED BY `ftp75c_regen_duty` ON THE SAME COLUMN. Both "
+             "specs read `switch_state`, and that one asserts at least 20 000 "
+             "ticks with SW_REGEN SET over the same Run window, so a blank or "
+             "absent switch column fails there before this ceiling can be "
+             "satisfied by having no ticks at all. `ftp75c_cadence` closes the "
+             "remaining case (a CSV that stops early)."),
+         "label": "the FC charge path was NOT open for more than 120 s of the "
+                  "170 s cycle. The shipped SOC_BAND_CHARGE_ENTER_ITOT_A "
+                  "0.60 A sits ABOVE this cycle's entire source total (peak "
+                  "0.3311 A), so without the per-scenario override (0.18074 A "
+                  "enter / 0.33107 A exit) this leg would admit a window at "
+                  "the first cruise sample and never exit it by current - "
+                  "which would make it useless as the frontier's reference. "
+                  "A FAIL here means the thresholds are too HIGH. The pair is "
+                  "PERCENTILE-MATCHED against the rig leg (0.18074 A enter / "
+                  "0.33107 A exit), not scaled by the drag ratio - the 0.15 A "
+                  "auxiliary floor does not scale with the road load, and "
+                  "dividing through it is what produced the zero-window "
+                  "defect the companion check above now catches"},
+    ],
+    note=("The causal charge-sustaining policy and the frontier's REFERENCE "
+          "leg, running PER-SCENARIO charge thresholds re-derived for the "
+          "compensated demand: 0.60/1.30 A percentile-matched against the "
+          "rig leg to 0.18074/0.33107 A. Walk: h2 0.006455604 g, dSoC -0.001859, "
+          "zero charge windows under the DP mask."))
+
+FAULT_EXPECTATIONS["ems-ftp75c-sdp"] = _ftp75c_expectation(
+    scenario="ems-ftp75c-sdp", ems="sdp-v4", i_fc_peak_walk=0.2872,
+    note=("The `sdp-v4` policy on the compressed cycle, and the frontier's "
+          "CANDIDATE leg. ⚠️ NO NEW SDP ARTIFACT WAS SOLVED FOR THIS "
+          "STIMULUS, deliberately: the regen credit enters through the PLANT "
+          "and the pack, not through the policy's decision law, and the "
+          "artifact's own axes (relative SoC and a demand bin) are stimulus- "
+          "independent by construction. Re-solving it would have produced a "
+          "second artifact that differs from `sdp_policy_v4` only in the "
+          "demand map it was fitted on, with no campaign able to tell the two "
+          "apart. Walk: h2 0.009897751 g, dSoC -0.000476 - the policy holds "
+          "its 0.85 share rail through the cycle, which is why it burns more "
+          "hydrogen AND drains far less pack than the reference. "
+          "⚠️ THE MATCHED-DP BASELINE IS NOT A BOUND ON THIS LEG, and the "
+          "reason is structural rather than numerical: `sdp-v4` commands a "
+          "CONSTANT 0.8500, which is 0.10 OUTSIDE the DP's own control grid "
+          "[0.25, 0.75] (`gen_dp_ems_table.DP_SHARE_MIN/MAX`), so the solve "
+          "cannot reproduce the policy's operating point and must hold the "
+          "same terminal SoC more expensively, so the causal run BEATS its "
+          "own 'lower bound' by ABOUT 3 % - and that figure must be "
+          "RECOMPUTED FROM ONE TREE STATE before it is quoted, because the "
+          "two sides were measured at different points in the round and a "
+          "recomputation moved it. The stored record also did not converge "
+          "(residual 2.49e-06 against 2.0e-06). The effect is PRE-EXISTING "
+          "and is present on `ems-sdp` too; it is magnified here because "
+          "this leg's near-zero drain pins the DP against the grid edge for "
+          "the whole run. ⚠️ IT ALSO REACHES THE FRONTIER'S vs_bound "
+          "ARM: the CANDIDATE commands 0.85 while the bound it is divided by "
+          "was solved over [0.25, 0.75], so a vs_bound at or just above 1.0 "
+          "on an SDP candidate is EXPECTED and is not evidence about the "
+          "policy. See the finding and the operator TODO at DP_SHARE_MIN."))
+
+FAULT_EXPECTATIONS["ems-ftp75c-dp"] = _ftp75c_expectation(
+    scenario="ems-ftp75c-dp", ems="dp-replay", i_fc_peak_walk=0.2490,
+    note=("The NON-CAUSAL lower bound, and the FIRST DP table ever solved "
+          "WITH THE BRAKING CREDIT IN THE DEMAND MODEL "
+          "(`--drag scaled-air --eta-regen 0.8`). That is the whole point of "
+          "this leg: a credit-free table must buy with hydrogen the SoC the "
+          "run gets back from braking, so its total is INFLATED and the run's "
+          "deviation against it is flattered - the `regen_bound` correction "
+          "`hil_report_analysis.matched_dp_for_run()` prices per run goes to "
+          "zero here. ⚠️ THE BOUND IS NOT STRICTLY BELOW THE CAUSAL "
+          "REFERENCE ON THIS STIMULUS: the offline solve reads the DP +0.06 % "
+          "above the `soc-band` walk at matched terminal SoC (0.00598238 g "
+          "against 0.00597881 g, residual +1.82e-06 SoC). That is the "
+          "discrete control grid - LAMBDA_TERM to terminal SoC is monotone "
+          "but not continuous - and it is why the tuple's vs-bound arm reads "
+          "~1.01. Walk: h2 0.006619509 g, dSoC -0.001793."))
+
+# ── ems-ftp75c-mpc: the compressed-cycle MPC candidate, behind --with-ftp75c
+FAULT_EXPECTATIONS["ems-ftp75c-mpc"] = _mpc_expectation(
+    scenario="ems-ftp75c-mpc", walk_h2=0.002028, duration_s=180.0,
+    survive_t=150.0, run_window=(5.0, 175.0),
+    # NO DEGENERATE-CONSTANT GUARD, and the absence is deliberate rather than
+    # an omission.  The walk commands a CONSTANT 0.1500 for the whole cycle -
+    # range exactly 0.0000 - because the compensated demand is low enough that
+    # the planner rails to the battery-heavy end of its ladder and stays there.
+    # (0.2500 before the 2026-09-02 band widening; the rail moved with the
+    # band, which is the widening working rather than a change of behaviour.)
+    # That is the metric working, not a controller that has stopped deciding:
+    # this leg drains the pack hardest (dSoC -0.003115 against the reference's
+    # -0.001850) and burns the least hydrogen, and its eq-H2 is the lowest of
+    # the four legs precisely because the two move together.  A
+    # `share_range_min` here would fail a correct board on its first run.
+    # ⚠️ IF A CAMPAIGN SHOWS THE SHARE MOVING, that is the finding - it would
+    # mean the live plant's demand is materially above the walk's.
+    share_range_min=None,
+    pred_err_max=0.30, budget_hit_max_ticks=126000, charge_edges=6,
+    min_rows=140000,
+    extra_note=("The CANDIDATE leg of the `ftp75c-mpc` frontier tuple, gated "
+                "behind --with-ftp75c. ⚠️ THE ONE THING THAT IS NEW ABOUT "
+                "THIS MPC LEG and is true of no other: the planner's "
+                "prediction model carries the REGEN CREDIT, so its charge "
+                "enumeration runs against a mask that excludes every "
+                "regen-capable stage (the exclusivity term - a stage cannot "
+                "both FC-charge and regen-charge, which is the host-side "
+                "image of assertFcChargeEnable()). The credit is "
+                "SHARE-INDEPENDENT, so it cannot change which candidate the "
+                "search prefers on a braking stage; what it CAN change is the "
+                "terminal SoC the Huber cost is priced against. Read "
+                "`mpc_share_pred_err` on this leg before reading its ratios. "
+                "Walk: h2 0.003311646 g, dSoC -0.003127, zero charge windows, "
+                "peak I_fc 0.0912 A - the lowest FC current of any registered "
+                "drive-cycle leg."))
+# THE FOUR REGEN OBSERVABLES, appended rather than built in: the regen path is
+# driven by the COMMON manager and is strategy-independent by construction, so
+# this leg must assert exactly what its four siblings do.  `_mpc_expectation()`
+# takes no extra-signal argument (its four callers before this one needed
+# none), and giving it one would change a builder four other legs depend on for
+# a single caller's benefit.
+FAULT_EXPECTATIONS["ems-ftp75c-mpc"]["signals_require"].extend(
+    _ftp75c_regen_signals())
+
 # ── ems-ftp75-mpc: the drive-cycle candidate, behind --with-ftp75 ───────────
 FAULT_EXPECTATIONS["ems-ftp75-mpc"] = _mpc_expectation(
-    scenario="ems-ftp75-mpc", walk_h2=0.021983, duration_s=350.0,
+    scenario="ems-ftp75-mpc", walk_h2=0.018762, duration_s=350.0,
     # RE-DERIVED 2026-09-02 for the `mpc-sto` binding: walk range 0.2500,
     # floor ~0.6x.
     survive_t=330.0, run_window=(10.0, 340.0), share_range_min=0.15,
@@ -5983,6 +6337,7 @@ def build_plan(args):
     if not args.replay_only:
         with_operator = getattr(args, "with_operator", False)
         with_ftp75 = getattr(args, "with_ftp75", False)
+        with_ftp75c = getattr(args, "with_ftp75c", False)
         for name, meta in SCENARIOS.items():
             need = meta.get("electrical", "any")
             if meta.get("operator_required") and not with_operator:
@@ -6057,6 +6412,32 @@ def build_plan(args):
                         "--with-alpha to run them."
                         % (sum(float((SCENARIOS.get(n) or {}).get("duration_s", 0.0))
                                for n in ALPHA_SCENARIOS) / 60.0)),
+                })
+                continue
+            if name in FTP75C_SCENARIOS and not with_ftp75c:
+                # SKIPPED, not scored, for a COST reason AND a PLANT-
+                # CONFIGURATION one - see the FTP75C_SCENARIOS banner.  Ordered
+                # with the other opt-in gates and AFTER the --pi-live gate, for
+                # the reason the --with-ftp75 gate below states.
+                plan.append({
+                    "kind": "scenario", "name": name,
+                    "mode": need if need in ("simple", "hifi") else args.electrical_pref,
+                    "electrical_required": need,
+                    "description": meta.get("description", ""),
+                    "duration_s": 0.0, "csv": None, "events": None, "log": None,
+                    "argv": None, "timeout_s": 0.0,
+                    "skip_reason": (
+                        "COMPRESSED CYCLE ON A COMPENSATED PLANT: the ftp75c "
+                        "legs run %.0f s each (~%.1f min for the set) on "
+                        "`--drag scaled-air`, a road-load-compensated plant "
+                        "that is HIL-ONLY - it needs a second road-load motor "
+                        "to replicate on the bench. They are the only "
+                        "drive-cycle legs on this rig that regenerate at all. "
+                        "Nothing about the board or the link blocks them - "
+                        "pass --with-ftp75c to run them."
+                        % (float(meta.get("duration_s", 0.0)),
+                           sum(float((SCENARIOS.get(n) or {}).get("duration_s", 0.0))
+                               for n in FTP75C_SCENARIOS) / 60.0)),
                 })
                 continue
             if name in FTP75_SCENARIOS and not with_ftp75:
@@ -8689,6 +9070,19 @@ EMS_FRONTIER_FTP75 = {
     "bound": "ems-ftp75-dp",
 }
 
+# ── The COMPRESSED cycle's own tuple (2026-09-02) ──────────────────────────
+# A SEPARATE TUPLE, and it MUST be: `ftp75c` is a different `ems_v_profile`, a
+# different `duration_s` and a different `drag`, so slotting an `ems-ftp75c-*`
+# leg into EMS_FRONTIER_FTP75 would fail the stimulus-coherence precondition
+# outright - correctly, because the two cycles are two vehicles.
+# The roles mirror the FTP-75 tuple's exactly, so the three records read on one
+# scale.
+EMS_FRONTIER_FTP75C = {
+    "reference": "ems-ftp75c-socband",
+    "candidate": "ems-ftp75c-sdp",
+    "bound": "ems-ftp75c-dp",
+}
+
 # The registry the runner iterates. Ordered: the 61 s tuple is the calibrated
 # one and reads first.  Each entry carries its OWN thresholds — a single pair
 # of module constants would have silently applied the 61 s cycle's 0.98 to a
@@ -8721,6 +9115,7 @@ EMS_FRONTIERS = [
         # reading anywhere in 0.93-0.98 is the expected outcome and a reading
         # just over 0.98 is a calibration question, not a policy failure.
         "provisional_note": (
+            "GRID-WIDENING RE-DERIVATION (2026-09-02): with the DP grid and the MPC ladder spanning the full firmware band [0.15, 0.85], the governor walk gives this tuple vs_reference 0.9570-0.9582 and vs_bound 1.0012-1.0025 across lambda [0.409, 0.415]. ⚠️ THE OLD-GRID FIGURES ELSEWHERE IN THIS NOTE ARE PRE-WIDENING and are not comparable: the old control set could not reach the 0.85 the SDP rails at, so an SDP candidate was divided by a bound solved over a narrower set. "
             "PROVISIONAL for the ETA_CHG 0.88 charger era (WP-1C, 2026-09-02) "
             "— the THRESHOLDS are unchanged but the margin behind 0.98 is not. "
             "The reference leg is the tuple's only charging leg, so its "
@@ -8744,6 +9139,7 @@ EMS_FRONTIERS = [
         "vs_reference_max": 1.02,
         "vs_bound_max": 1.06,
         "provisional_note": (
+            "GRID-WIDENING RE-DERIVATION (2026-09-02): with the DP grid and the MPC ladder spanning the full firmware band [0.15, 0.85], the governor walk gives this tuple vs_reference 0.9585-0.9656 and vs_bound 0.9921-0.9983 across lambda [0.409, 0.415]. ⚠️ THE OLD-GRID FIGURES ELSEWHERE IN THIS NOTE ARE PRE-WIDENING and are not comparable: the old control set could not reach the 0.85 the SDP rails at, so an SDP candidate was divided by a bound solved over a narrower set. "
             "PROVISIONAL — no campaign has evaluated this tuple. The "
             "vs-reference band 1.02 is derived from the OFFLINE solve's -0.01 % "
             "DP-vs-`soc-band` tie at matched terminal SoC plus the ~0.05 % "
@@ -8815,6 +9211,7 @@ EMS_FRONTIERS = [
         "vs_reference_max": 0.98,
         "vs_bound_max": 1.06,
         "provisional_note": (
+            "GRID-WIDENING RE-DERIVATION (2026-09-02): with the DP grid and the MPC ladder spanning the full firmware band [0.15, 0.85], the governor walk gives this tuple vs_reference 0.9519-0.9572 and vs_bound 0.9960-1.0013 across lambda [0.409, 0.415]. ⚠️ THE OLD-GRID FIGURES ELSEWHERE IN THIS NOTE ARE PRE-WIDENING and are not comparable: the old control set could not reach the 0.85 the SDP rails at, so an SDP candidate was divided by a bound solved over a narrower set. "
             "⚠️ THE CANDIDATE FAILS THE OFFLINE GATE 1. `mpc-sto`'s governor-aware stage model predicts the DELIVERED share on `ems-soc-band` to a mean of 0.00971 and a max of 0.25000 against a 5e-03 acceptance; `mpc-det` on the same gate reads 0.000323. The mechanism is known and is the same one EMS_STRATEGY_META's role note records: a 1 Hz re-command landing in an `open_feedforward` stage drops the governor into a feedforward slew the stage model does not represent. The leg ships because the LIVE prediction error is inside its 0.30 band (campaigns 20260902_011926 and _041414: closed-loop median 1e-5, open-loop max 0.219), but a frontier reading here carries that failing gate inside it. "
             "PROVISIONAL, AND RE-DERIVED 2026-09-02 FOR TWO SIMULTANEOUS "
             "CHANGES: the candidate now binds `mpc-sto`, not `mpc-det`, and "
@@ -8847,6 +9244,7 @@ EMS_FRONTIERS = [
         "vs_reference_max": 1.02,
         "vs_bound_max": 1.06,
         "provisional_note": (
+            "GRID-WIDENING RE-DERIVATION (2026-09-02): with the DP grid and the MPC ladder spanning the full firmware band [0.15, 0.85], the governor walk gives this tuple vs_reference 0.9576-0.9650 and vs_bound 0.9912-0.9977 across lambda [0.409, 0.415]. ⚠️ THE OLD-GRID FIGURES ELSEWHERE IN THIS NOTE ARE PRE-WIDENING and are not comparable: the old control set could not reach the 0.85 the SDP rails at, so an SDP candidate was divided by a bound solved over a narrower set. "
             "⚠️ THE CANDIDATE FAILS THE OFFLINE GATE 1. `mpc-sto`'s governor-aware stage model predicts the DELIVERED share on `ems-soc-band` to a mean of 0.00971 and a max of 0.25000 against a 5e-03 acceptance; `mpc-det` on the same gate reads 0.000323. The mechanism is known and is the same one EMS_STRATEGY_META's role note records: a 1 Hz re-command landing in an `open_feedforward` stage drops the governor into a feedforward slew the stage model does not represent. The leg ships because the LIVE prediction error is inside its 0.30 band (campaigns 20260902_011926 and _041414: closed-loop median 1e-5, open-loop max 0.219), but a frontier reading here carries that failing gate inside it. "
             "PROVISIONAL, AND RE-DERIVED 2026-09-02 for the same two "
             "simultaneous changes as `cycle61-mpc`: the candidate binds "
@@ -8861,6 +9259,117 @@ EMS_FRONTIERS = [
             "The thresholds are the `ftp75` tuple's, unchanged. Re-derive from "
             "the first campaign, and note the walk's clearance is an "
             "inverse-crime result (design section 7.1)"),
+        "stimulus_mismatch_exit_affecting": False,
+    },
+    # ── THE TWO COMPRESSED-CYCLE TUPLES (2026-09-02, the ftp75c round) ─────
+    # THRESHOLDS ARE THE `ftp75` TUPLE'S, TAKEN UNCHANGED.  That is the honest
+    # starting point rather than a derivation: the compensated cycle's optimum
+    # has never been solved before this round, and inventing a tighter ask from
+    # a single offline walk would be a number with no evidence behind it.
+    #
+    # ⚠️ WHY THE REGEN CREDIT DOES NOT MOVE THESE RATIOS.  The regen manager is
+    # a COMMON layer over every strategy and the credit `i_regen[k]` is
+    # SHARE-INDEPENDENT, so all three legs receive the SAME +1.17 C on the SAME
+    # six windows.  The ratios move only through second-order coupling (a
+    # slightly higher SoC changes the pack terminal voltage and hence the bus
+    # current the battery branch supplies), and against a credit that is 1.4 %
+    # of the cycle drain and a SoC that moves 5.5e-5 that coupling is far below
+    # the ~50 ppm same-config h2 repeatability floor (campaign 20260902_041414).
+    # THE CORRECT READING of these two tuples is that `ftp75c` VALIDATES THE
+    # REGEN MODEL END TO END AND CLOSES THE DP'S REGEN DIVERGENCE.  It is NOT
+    # expected to reorder the strategies, and a REORDERING HERE IS A DEFECT
+    # SIGNAL RATHER THAN A RESULT.
+    {
+        "id": "ftp75c",
+        "label": "170 s compressed FTP-75, compensated road load",
+        "roles": EMS_FRONTIER_FTP75C,
+        "vs_reference_max": 1.02,
+        "vs_bound_max": 1.06,
+        "provisional_note": (
+            "GRID-WIDENING RE-DERIVATION (2026-09-02): with the DP grid and the MPC ladder spanning the full firmware band [0.15, 0.85], the governor walk gives this tuple vs_reference 1.0092-1.0168 and vs_bound 1.0090-1.0162 across lambda [0.409, 0.415]. ⚠️ THE OLD-GRID FIGURES ELSEWHERE IN THIS NOTE ARE PRE-WIDENING and are not comparable: the old control set could not reach the 0.85 the SDP rails at, so an SDP candidate was divided by a bound solved over a narrower set. "
+            "PROVISIONAL - no campaign has evaluated this tuple. "
+            "⚠️ ON THIS CYCLE THE CANDIDATE IS PREDICTED WORSE THAN THE "
+            "REFERENCE, AND A PASS HERE ASSERTS 'NO MORE THAN 2 % WORSE', "
+            "NOT 'BETTER'. The governor walk (loss map on, dv0 0.013522, "
+            "soc0 0.7) gives reference h2 0.006455604 g / dSoC -0.001859, "
+            "candidate 0.009897751 / -0.000476, bound 0.006619509 / "
+            "-0.001793, i.e. vs_reference 1.0092-1.0168 and vs_bound "
+            "1.0090-1.0162 across the whole lambda band [0.409, 0.415] - "
+            "ABOVE 1.0 on BOTH arms at EVERY lambda. That is not a defect "
+            "and it is not a surprise: the compensated cycle's demand is "
+            "small enough that `sdp-v4` holds its 0.85 share rail "
+            "throughout, spending hydrogen to hold SoC, and the eq-H2 "
+            "correction prices that back to near parity rather than to a "
+            "win. READ A PASS ACCORDINGLY. The 1.02 band is the `ftp75` "
+            "tuple's, taken verbatim so the compressed and uncompressed "
+            "records read on one scale, and it is NOT derived from this "
+            "walk; the vs-reference arm sits within 0.4 % of it at the top "
+            "of the lambda band, so a first campaign reading just over 1.02 "
+            "is a calibration event rather than a policy failure. "
+            "⚠️ THE BOUND IS NOT STRICTLY BELOW THE REFERENCE ON THIS "
+            "STIMULUS: the offline solve reads the DP +0.06 % of hydrogen "
+            "above the causal `soc-band` walk at matched terminal SoC "
+            "(0.00598238 g against 0.00597881 g, match residual +1.82e-06 "
+            "SoC). That is the discrete control grid, not a defect - "
+            "LAMBDA_TERM to terminal SoC is monotone but NOT continuous - and "
+            "it is why the vs-bound arm reads ~1.01 here rather than under 1. "
+            "What IS new here and must be checked "
+            "first is the REFERENCE leg: `ems-ftp75c-socband` runs "
+            "PER-SCENARIO charge thresholds (0.18074 A enter / 0.33107 A exit) "
+            "because the shipped 0.60 A entry threshold sits ABOVE the "
+            "compensated cycle's entire source total (peak 0.330 A) and would "
+            "have made the reference a charge-saturated control. If that leg "
+            "reads as permanently charging, the thresholds are wrong and the "
+            "tuple's ratios mean nothing. The regen credit is common to all "
+            "three legs and share-independent, so it is NOT expected to move "
+            "either ratio — see the block above. Re-derive both thresholds "
+            "from the first campaign that evaluates this tuple"),
+        # False for the same reason `ftp75` carries it: the stimulus keys agree
+        # in the registry by construction (all five legs share one profile
+        # OBJECT and one `drag` value), but no campaign has evaluated the tuple,
+        # so a genuine regression into a split should fail only once it scores.
+        "stimulus_mismatch_exit_affecting": False,
+    },
+    {
+        "id": "ftp75c-mpc",
+        "label": "170 s compressed FTP-75, compensated road load, MPC candidate",
+        "roles": {
+            "reference": "ems-ftp75c-socband",
+            "candidate": "ems-ftp75c-mpc",
+            "bound": "ems-ftp75c-dp",
+        },
+        # The `ftp75c` tuple's thresholds verbatim, on the reasoning the two
+        # MPC tuples above use: reference and bound are the sibling's, so the
+        # difference between the two records is the difference between `sdp-v4`
+        # and `mpc-sto` and nothing else.
+        "vs_reference_max": 1.02,
+        "vs_bound_max": 1.06,
+        "provisional_note": (
+            "GRID-WIDENING RE-DERIVATION (2026-09-02): with the DP grid and the MPC ladder spanning the full firmware band [0.15, 0.85], the governor walk gives this tuple vs_reference 0.9808-0.9905 and vs_bound 0.9801-0.9903 across lambda [0.409, 0.415]. ⚠️ THE OLD-GRID FIGURES ELSEWHERE IN THIS NOTE ARE PRE-WIDENING and are not comparable: the old control set could not reach the 0.85 the SDP rails at, so an SDP candidate was divided by a bound solved over a narrower set. "
+            "⚠️ THE CANDIDATE CARRIES THE SAME FAILING OFFLINE GATE 1 the two "
+            "MPC tuples above record: `mpc-sto`'s governor-aware stage model "
+            "predicts the delivered share on `ems-soc-band` to a mean of "
+            "0.00971 against a 5e-03 acceptance, and the leg ships on its LIVE "
+            "prediction error being inside the 0.30 band. "
+            "PROVISIONAL — no campaign has evaluated this tuple. Thresholds "
+            "are `ftp75c`'s, unchanged. THE GOVERNOR WALK gives candidate h2 "
+            "0.003311646 g / dSoC -0.003127 against the same reference and "
+            "bound, i.e. vs_reference 0.9860-0.9930 and vs_bound "
+            "0.9854-0.9927 across the lambda band — both cleared with room, "
+            "and BOTH BELOW 1.0, which is the opposite side of the bound from "
+            "the `sdp-v4` candidate. ⚠️ Read that under the inverse-crime "
+            "caveat the other two MPC tuples carry: the walk's plant IS the "
+            "MPC's own prediction model, so the clearance is evidence about "
+            "the plumbing and not about the live plant. ⚠️ ONE THING IS "
+            "GENUINELY UNTESTED "
+            "HERE and is not true of any other MPC leg: the planner's "
+            "prediction model now carries the REGEN CREDIT, so its charge "
+            "enumeration runs against a mask that excludes every "
+            "regen-capable stage. The credit is share-independent, so it "
+            "cannot change which candidate the search prefers on a braking "
+            "stage; what it CAN change is the terminal SoC the Huber cost is "
+            "priced against. Read `mpc_share_pred_err` on this leg before "
+            "reading its ratios"),
         "stimulus_mismatch_exit_affecting": False,
     },
 ]
@@ -8890,8 +9399,16 @@ assert all(set(f["roles"]) == {"reference", "candidate", "bound"}
 # rather than appended after the loop because, unlike the mode, it is a
 # property of the STIMULUS in the same sense the preload is, and a reader
 # looking for "what makes two legs comparable" should find it in this tuple.
+# `drag` JOINED 2026-09-02 (the ftp75c round).  It is a REGISTRY key like the
+# first five, not a resolved one like `eta_chg`, and it belongs here for the
+# reason `ems_v_profile` does: the road-load profile changes the TRACTIVE
+# DEMAND for a given speed profile - by roughly 4.5x between `rig` and
+# `scaled-air` - so two legs on different profiles are not on one stimulus even
+# when every other key agrees.  A frontier whose reference ran the rig road load
+# and whose candidate ran the compensated one would compare two vehicles.
 EMS_FRONTIER_STIMULUS_KEYS = ("ems_v_profile", "duration_s", "ems_run_exit_s",
-                              "aux_preload_a", "chg_i_ceiling_a", "eta_chg")
+                              "aux_preload_a", "chg_i_ceiling_a", "drag",
+                              "eta_chg")
 
 
 def ems_frontier_stimulus_mismatches(roles, modes=None, etas=None):
@@ -10107,6 +10624,24 @@ def print_plan(plan, args):
                  else (p.get("description") or "")[:70]))
     print("\nestimated wall time incl. %.0f s settle pauses: %.0f s (%.1f min)"
           % (args.settle_s, total, total / 60.0))
+    # The COST OF EACH OPT-IN SET, printed whether or not it was asked for, so
+    # an operator sizing a campaign does not have to add the durations by hand
+    # or discover the cost only after passing the flag.  `ftp75c` carries the
+    # extra line because its cost is not only wall time: it is the only set
+    # that changes the PLANT.
+    for _flag, _set, _extra in (
+            ("--with-ftp75", FTP75_SCENARIOS, ""),
+            ("--with-ftp75c", FTP75C_SCENARIOS,
+             "  (also selects `--drag scaled-air`, a HIL-ONLY "
+             "road-load-compensated plant)"),
+            ("--with-alpha", ALPHA_SCENARIOS, "")):
+        _n = [n for n in _set if n in SCENARIOS]
+        _d = sum(float(SCENARIOS[n].get("duration_s", 0.0)) for n in _n)
+        _on = any(p["name"] in _set and not p.get("skip_reason") for p in plan)
+        print("  %-14s %d leg(s), %.0f s + %.0f s settle = %.1f min  [%s]%s"
+              % (_flag, len(_n), _d, args.settle_s * len(_n),
+                 (_d + args.settle_s * len(_n)) / 60.0,
+                 "IN THIS PLAN" if _on else "not requested", _extra))
 
 
 def main(argv=None):
@@ -10187,10 +10722,25 @@ def main(argv=None):
     ap.add_argument("--with-ftp75", action="store_true",
                     help="also run the long EPA FTP-75 cycle scenarios "
                          "(%s). They are SKIPPED by default purely on RUN TIME "
-                         "— 350 s each, ~11.7 min for the pair on a campaign "
-                         "that is otherwise ~34 min. Nothing about the board or "
-                         "the link blocks them."
-                         % ", ".join(sorted(FTP75_SCENARIOS)))
+                         "— 350 s each, %.1f min for the SET of %d on a "
+                         "campaign that is otherwise ~34 min. Nothing about "
+                         "the board or the link blocks them."
+                         % (", ".join(sorted(FTP75_SCENARIOS)),
+                            sum(float((SCENARIOS.get(n) or {}).get("duration_s", 0.0))
+                                for n in FTP75_SCENARIOS) / 60.0,
+                            len(FTP75_SCENARIOS)))
+    ap.add_argument("--with-ftp75c", action="store_true",
+                    help="also run the COMPRESSED FTP-75 legs on the "
+                         "ROAD-LOAD-COMPENSATED plant (%s), %.1f min for the "
+                         "set of %d. They are SKIPPED by default on run time "
+                         "AND because `--drag scaled-air` is a HIL-ONLY plant "
+                         "configuration that needs a second road-load motor to "
+                         "replicate on the bench. They are the only "
+                         "drive-cycle legs on this rig that regenerate at all."
+                         % (", ".join(sorted(FTP75C_SCENARIOS)),
+                            sum(float((SCENARIOS.get(n) or {}).get("duration_s", 0.0))
+                                for n in FTP75C_SCENARIOS) / 60.0,
+                            len(FTP75C_SCENARIOS)))
     ap.add_argument("--with-alpha", action="store_true",
                     help="also run the three SDP alpha-sweep legs (%s). They "
                          "are SKIPPED by default because they are an "

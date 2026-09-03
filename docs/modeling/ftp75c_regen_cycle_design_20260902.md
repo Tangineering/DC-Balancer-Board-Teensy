@@ -642,7 +642,7 @@ branch must supply for a given power. Against a 1.4 % credit on the drain and a 
 50 ppm on h2.
 
 The correct statement for the campaign report is therefore that `ftp75c` **validates the regen
-model end to end and closes the DP regen divergence**, and that it is **not** expected to
+model end to end and REDUCES the DP regen divergence**, and that it is **not** expected to
 reorder the strategies. A reordering on this stimulus should be treated as a defect signal rather
 than as a result.
 
@@ -843,3 +843,64 @@ profile remains the only physically honest configuration, and it regenerates not
     regen era, and the new scenarios.
 12. `tools/test_*.py`: coverage for each of the above, including the byte-identity fixtures that
     prove the rig and pre-regen eras are unchanged.
+
+---
+
+## 10. Implementation corrections (2026-09-02, stage-2 fix round)
+
+This note is a DESIGN record and is preserved above as written. Four of its decisions did
+not survive implementation and review, and the corrections are recorded here rather than
+edited into the sections, so the reasoning that produced them stays legible.
+
+### 10.1 The regen-window rule is the firmware's, not the physics'
+
+Section 4.4 derives the windows from `M_EFF*a + F_road(v) < 0`. That is the wrong
+threshold. `chargingControl()` branches on `regenActive = (current < -0.1f)`
+(`teensy_controller.ino:10807`), so an instant whose required current lies in
+(-0.1, 0) A is braking in physics and NOT regen in firmware. Commanding `charge_goal`
+there takes the CRUISE branch, calls `assertFcChargeEnable(true)` and drops BT off the
+bus, which is the single-source condition that has latched `OC_FC` before;
+`FAULT_SWITCH_CONFLICT` does not catch it, because FC_CHARGE with BT open is legal.
+
+Measured on `ftp75c` under `scaled-air`, the force rule left 2.900 s of such instants
+across seven of its nine windows, one of them (57.200-57.800 s) for the whole of its
+length. The implementation trims against the firmware's own test with a 2x margin
+instead. Table 10.1 gives the cost.
+
+| Quantity | Section 4.4 rule | Shipped |
+|---|---|---|
+| Commanded windows | 9 | 6 |
+| Commanded duty | 28.400 s | 19.600 s |
+| Duty as a fraction of the cycle | 16.7 % | 11.5 % |
+| Worst in-window required current | -0.0021 A | -0.2045 A |
+
+The shipped windows are 23.200-24.300, 30.200-31.800, 62.700-67.300, 96.200-97.800,
+159.200-162.800 and 164.200-171.300 s.
+
+### 10.2 The soc-band thresholds are percentile-matched, not drag-scaled
+
+Section 6.3 recommends scaling both thresholds by the drag ratio. The source total is
+`I_AUX_A + i_motor + i_par`, and the 0.15 A auxiliary floor does not scale with the road
+load; only the motor term does. Scaling the whole threshold put the entry at 0.13373 A,
+below this cycle's own minimum source total of 0.15079 A, so the leg opened ZERO charge
+windows and the frontier's reference never exercised the soc-band mechanism.
+
+The shipped pair is percentile-matched against the rig leg: 0.18074 A enter and
+0.33107 A exit. An aux-preserving alternative, scaling only the motor term, gives
+0.25030 A and 0.40632 A and is unusable, because the exit sits above this cycle's
+maximum source total and the hysteresis then has no upper arm.
+
+### 10.3 The credit is gated on the commanded window
+
+The walk initially credited every regen-CAPABLE stage. Energy reaches the pack only where
+the manager has commanded `charge_goal` and the firmware has opened `REGEN_ENABLE`, and
+the two sets differ by the lead times, the minimum-window drop and the threshold of
+§10.1. The ungated form banked 4.0 % of the credit on stages where no path was open.
+
+### 10.4 The divergence is reduced, not closed
+
+Section 5 states that the regen term "closes the DP regen divergence". It reduces it. The
+bound now earns the same braking credit the run earns, which removes the systematic term,
+but the Ag105 settle and ramp still cost roughly the first 0.9 s of every window, and the
+realizable fraction of §4.5 (70.7 %) is the residual. That residual is disclosed on every
+walk that carries the credit.

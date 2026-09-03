@@ -323,3 +323,60 @@ the walk fails that test rather than passing unnoticed.
   to the next round, together with the stage-cost treatment they need.
 - `TODO(verify)` — the ±0.9 % share dependence of the realized slope (§3.4) is unmodelled and
   is the map's largest stated approximation.
+
+---
+
+## Addendum: the single-source bus law (2026-09-02, the MPC 0/1 round)
+
+The bus law fitted above is a **two-source** law. Its `g_par` is the parallel droop code
+`g_fc*g_bt/(g_fc+g_bt)`, and with one channel off the bus that parallel combination does
+not exist. The MPC gains single-source candidates (share 0 and 1), which take one channel
+off the bus through the setpoint latch, so it needs a law for that topology.
+
+### Measurement
+
+The hi-fi engine was probed at `--droop design --asymmetry measured` by sweeping the
+auxiliary load over 0.15 to 1.6 A with the motor idle and regressing `V_bus` against the
+source total. The engine solves a linear network at steady state, so the fit is exact to
+the printed precision, with a maximum residual under 0.005 mV over four points. The probe
+was repeated at three droop codes to establish that the result is a property of the
+topology rather than of the operating point. Table A.1 gives the measurement.
+
+| Droop code | `K` both (ohm) | `K` FC only (ohm) | ratio | `K` BT only (ohm) | ratio |
+|---|---|---|---|---|---|
+| 0.3499 | 0.35857 | 0.69775 | 1.9459 | 0.73764 | 2.0572 |
+| 0.4999 | 0.50513 | 0.98258 | 1.9452 | 1.03955 | 2.0580 |
+| 0.6999 | 0.70062 | 1.36249 | 1.9447 | 1.44225 | 2.0585 |
+
+The no-load intercepts are 15.87821 V for FC only and 15.86468 V for BT only, against
+15.87172 V for the two-source law.
+
+### The law
+
+The ratios hold to within 0.03 % over a factor-of-two code range, so the single-source
+law is the two-source law with one scale factor on its slope and its own intercept.
+`hil_plant_sim.single_source_bus_law()` is the single implementation.
+
+```
+    K_single = (R_FIX + K_G * g_par) * scale_mode
+    V0_single = V0_mode
+    scale_fc = 1.9453   V0_fc = 15.87821 V
+    scale_bt = 2.0579   V0_bt = 15.86468 V
+```
+
+The two ratios are not both 2.000 because the two channels are not identical under
+`--asymmetry measured`. That asymmetry is the whole 5.8 % spread between them, and using
+a nominal 2.0 for both would misprice the BT-only arm by 2.9 %.
+
+### Scope, and why these are not in the loss map
+
+⚠️ **The four constants are MPC-only and are deliberately outside the loss map.** The map
+is a fingerprinted era key (`hil_plant_sim.DP_FINGERPRINT_OPTIONAL_KEYS`), so adding
+fields to it would move `loss_map_canonical()` and orphan every committed DP table and
+every stored `dp_db` record. The DP and the SDP do not receive single-source candidates
+(operator ruling, 2026-09-02), so nothing that consumes the map needs them.
+
+The consequence at the operating point is not small: on the 61 s cycle the peak bus
+voltage falls from 15.42 V two-source to 14.99 V FC-only and 14.92 V BT-only, so a
+single-source stage planned on the two-source law would over-state the bus by roughly
+0.45 V and under-state the source current correspondingly.

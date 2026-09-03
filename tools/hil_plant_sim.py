@@ -335,6 +335,85 @@ VESC_REGEN_I_MAX_A = 1.5     # A   regen-side clip on the commanded motor curren
 # it is a modelling choice, not a measurement, and the same bench item closes it.
 ETA_REGEN = 0.80             # -   mechanical braking power -> electrical, at V-MOT
 
+# ── ROAD-LOAD DRAG PROFILES (2026-09-02, the ftp75c round) ──────────────────
+# THE PROBLEM.  The rig road load is F_road(v) = F_COULOMB*sgn(v) + B_EFF*v,
+# which exceeds 2.00 N at any speed above the stiction band.  Regeneration needs
+# M_EFF*|a| > F_road(v), i.e. |a| > 0.571 + 0.153*v m/s^2 - and the FTP-75
+# segment's peak deceleration is 0.175 m/s^2 (0.349 m/s^2 compressed).  THE RIG,
+# AS INSTRUMENTED, REGENERATES NOTHING, and time compression alone does not
+# change that.  Road-load COMPENSATION does, and it is the compensation and not
+# the compression that creates the braking energy.
+#
+# THE DERIVATION (docs/modeling/ftp75c_regen_cycle_design_20260902.md §3.2).
+# The paper vehicle's road load is taken as air drag alone,
+#     F_d(v_v) = 0.5*rho*Cd*A_f*v_v^2 = 0.505313 * v_v^2   [N]
+# and the scaling study's force scale is S_L^3 at the corresponding vehicle
+# speed v_v = v/S_L, so the RIG drag collapses to a single quadratic constant:
+#     k_air = 0.5*rho*Cd*A_f*S_L = 0.505313 * 0.1183563 = 0.0598069 N/(m/s)^2
+# with S_L = 3.0/25.3472 the study's length scale.  The Coulomb term is ZERO in
+# the compensated profiles: the compensation REPLACES the rig's friction rather
+# than adding to it.
+#
+# ⚠️ Cd = 0.33 and A_f = 2.5 m^2 are NEXO-class ASSUMPTIONS - neither is in the
+# extracted text of the scaling paper.  TODO(verify: operator).  k_air is LINEAR
+# in their product, so an operator correction of Cd*A_f scales it and every
+# drag-dependent figure proportionally.
+#
+# THE TWO COMPENSATED MODES, and why there are two.  `scaled-air` is the ruled
+# derivation above and delivers 51.25 % of braking kinetic energy as shaft regen
+# on `ftp75c`.  The FULL-SCALE vehicle on the same air-drag-only road load
+# delivers 79.09 %.  The gap is exactly the residual drag-to-inertia ratio
+#     (drag/inertia)_rig / (drag/inertia)_vehicle
+#         = S_L^2 * 2242 kg * TIME_FACTOR / M_EFF = 4.4866
+# - the rig is still 4.49x too light for the drag it has been given, even after
+# compression halves the deficit.  Dividing k_air by that residual gives
+# `scaled-air-matched`, which reproduces the full-scale share to five
+# significant figures.  ⚠️ THE `ems-ftp75c-*` SCENARIOS RUN `scaled-air`
+# (operator ruling, 2026-09-02); `scaled-air-matched` ships as a named profile
+# so the choice between the two can be made on measurements rather than on a
+# re-derivation.
+#
+# ⚠️ THE MEASURED RIG PROFILE REMAINS THE DEFAULT AND THE BENCH PROFILE.  It is
+# what the hardware actually does, and §7 of the design note records why the
+# compensation cannot be replicated on the bench with the single motor now
+# fitted (a friction feedforward keeps the net motor force POSITIVE through a
+# stop, so no current ever reverses; it needs a second, road-load motor).
+DRAG_MODE_RIG = "rig"
+DRAG_MODE_SCALED_AIR = "scaled-air"
+DRAG_MODE_SCALED_AIR_MATCHED = "scaled-air-matched"
+DRAG_MODES = (DRAG_MODE_RIG, DRAG_MODE_SCALED_AIR, DRAG_MODE_SCALED_AIR_MATCHED)
+DRAG_MODE_DEFAULT = DRAG_MODE_RIG
+# The scaling study's length scale, 3.0 m/s rig peak against the cycle's
+# 25.3472 m/s (56.7 mph) vehicle peak.
+DRAG_SCALE_LENGTH = 3.0 / 25.3472
+# Residual drag-to-inertia ratio of the COMPRESSED rig against the vehicle, at
+# the registered TIME_FACTOR of 0.5 (see the derivation above).
+DRAG_INERTIA_RESIDUAL = DRAG_SCALE_LENGTH ** 2 * 2242.0 * 0.5 / M_EFF
+K_AIR = 0.5 * 1.225 * 0.33 * 2.5 * DRAG_SCALE_LENGTH   # N/(m/s)^2, 0.0598069
+K_AIR_MATCHED = K_AIR / DRAG_INERTIA_RESIDUAL          # N/(m/s)^2, 0.0133300
+
+
+def drag_k_air(drag_mode):
+    """The quadratic drag coefficient [N/(m/s)^2] a drag mode realizes.
+
+    ZERO for `rig`, which carries no quadratic term at all - its road load is
+    the Coulomb-plus-viscous pair.  A caller testing `k_air == 0.0` is testing
+    "is this the measured rig profile", and that is the intended reading."""
+    if drag_mode not in DRAG_MODES:
+        raise ValueError("drag_mode must be one of %s, got %r"
+                         % (DRAG_MODES, drag_mode))
+    if drag_mode == DRAG_MODE_RIG:
+        return 0.0
+    return K_AIR if drag_mode == DRAG_MODE_SCALED_AIR else K_AIR_MATCHED
+
+
+def drag_era_label(drag_mode):
+    """A short, printable name for a drag profile - for headers and manifests."""
+    if drag_mode == DRAG_MODE_RIG:
+        return "measured rig road load (F_c + b_eff*v)"
+    return "%s road-load compensation (k_air = %r N/(m/s)^2, F_c = 0)" % (
+        drag_mode, drag_k_air(drag_mode))
+
 # Lumped simple-mode motor-node model (hi-fi solves the real network instead).
 # The RT1987 in MOT_PWR is an IDEAL DIODE: it conducts bus->motor, and its reverse
 # comparator opens it once the motor node rises RT_V_REV (50 mV) above the bus.
@@ -461,6 +540,12 @@ from hil_electrical import (                                   # noqa: E402
     ASYM_DROOP_SCALE_FC, ASYM_DROOP_SCALE_BT,
 )
 
+# The shared regen chain (2026-09-02).  STDLIB ONLY, imported as a module so the
+# era-label vocabulary reads the same here as it does in the DP generator, the
+# walk and the MPC.  See tools/regen_power.py's docstring for why the chain is
+# shared rather than written four times.
+import regen_power                                             # noqa: E402
+
 # ── PART A: simple-mode share-law constants ─────────────────────────────────
 #: the firmware's droop design constant k_d, ohm (`K_DROOP`, .ino:2166-2167).
 #: Simple mode needs it because the static asymmetry law is written in terms of
@@ -508,6 +593,40 @@ if (FTP75_RAW_SHA256 != gen_ftp75_profile.RAW_SHA256
         "    .venv_hil/Scripts/python.exe tools/gen_ftp75_profile.py --force"
         % (FTP75_RAW_SHA256, gen_ftp75_profile.RAW_SHA256,
            FTP75_SCALE_MPH_TO_MPS, gen_ftp75_profile.SCALE_MPH_TO_MPS))
+
+# THE COMPRESSED CYCLE (2026-09-02), from the SAME generator and the SAME EPA
+# bytes at --time-factor 0.5.  See the `ems-ftp75c-*` scenarios and
+# docs/modeling/ftp75c_regen_cycle_design_20260902.md.
+from ftp75c_profile import (                                   # noqa: E402
+    FTP75C_PROFILE, FTP75C_T_END, FTP75C_POINTS, FTP75C_RAW_SHA256,
+    FTP75C_SCALE_MPH_TO_MPS, FTP75C_TIME_FACTOR,
+)
+# The same end-to-end binding the uncompressed table gets, plus ONE more
+# equality that is specific to this table: the POINT COUNT.  The collinear
+# decimation compares a RATIO of time differences and is therefore invariant
+# under a uniform time scaling, so the compressed table must reduce to exactly
+# the same 234 points as its sibling.  A divergence would mean the time-scaling
+# change perturbed the decimation - a defect, not a stimulus choice - and it is
+# the one failure the sha256 and the scale constant between them cannot see.
+if (FTP75C_RAW_SHA256 != gen_ftp75_profile.RAW_SHA256
+        or FTP75C_SCALE_MPH_TO_MPS != gen_ftp75_profile.SCALE_MPH_TO_MPS
+        or FTP75C_POINTS != gen_ftp75_profile.POINTS_INVARIANT
+        or len(FTP75C_PROFILE) != len(FTP75_PROFILE)):
+    raise ImportError(
+        "tools/ftp75c_profile.py is STALE or HAND-EDITED - it does not match "
+        "tools/gen_ftp75_profile.py.\n"
+        "  raw sha256 : generated %s\n"
+        "               generator %s\n"
+        "  mph->m/s   : generated %r\n"
+        "               generator %r\n"
+        "  points     : generated %d (table %d), invariant %d, ftp75 %d\n"
+        "Regenerate with:\n"
+        "    .venv_hil/Scripts/python.exe tools/gen_ftp75_profile.py "
+        "--time-factor 0.5 --force"
+        % (FTP75C_RAW_SHA256, gen_ftp75_profile.RAW_SHA256,
+           FTP75C_SCALE_MPH_TO_MPS, gen_ftp75_profile.SCALE_MPH_TO_MPS,
+           FTP75C_POINTS, len(FTP75C_PROFILE),
+           gen_ftp75_profile.POINTS_INVARIANT, len(FTP75_PROFILE)))
 
 # ── Output artifact convention ──────────────────────────────────────────────
 # Every HIL artifact this tool writes lands under "<repo>/HIL Results" unless the
@@ -1255,7 +1374,8 @@ class Plant:
     def __init__(self, electrical=None, soc0=0.7, capacity_ah=BATT_CAPACITY_AH,
                  ag105_i_max=AG105_I_MAX, mppt_emulation=False,
                  asymmetry_mode=ASYMMETRY_MODE_DEFAULT,
-                 ina_offset_fc=0.0, ina_offset_bt=0.0, noise_active=None):
+                 ina_offset_fc=0.0, ina_offset_bt=0.0, noise_active=None,
+                 drag_mode=DRAG_MODE_DEFAULT):
         # ── PART A (C1, 2026-09-01): converter asymmetry, SIMPLE MODE ────────
         # In hi-fi mode the asymmetry lives in the two Boost objects and this
         # plant never applies it.  Simple mode has no converter models at all,
@@ -1266,6 +1386,17 @@ class Plant:
         if asymmetry_mode not in ASYMMETRY_MODES:
             raise ValueError("asymmetry_mode must be one of %s"
                              % (ASYMMETRY_MODES,))
+        # ── THE ROAD-LOAD PROFILE (2026-09-02) ───────────────────────────────
+        # `rig` is the DEFAULT and reproduces every recorded campaign byte for
+        # byte: the force branch of step() below takes an explicit `rig` arm
+        # that is the pre-2026-09-02 code verbatim.  The two compensated modes
+        # replace the Coulomb-plus-viscous road load with a single quadratic
+        # term and set F_c to zero, which is what makes braking regenerative on
+        # this rig at all.  `k_air` is resolved ONCE here so the tick loop
+        # neither re-dispatches on the mode string nor can read a mode the
+        # constructor did not validate.
+        self.drag_mode = drag_mode
+        self.k_air = drag_k_air(drag_mode)      # raises on an unknown mode
         # F3 (fix round, 2026-09-01): discriminated on the INA offsets this run
         # actually injects, not on whether a NoiseConfig object exists.  Simple
         # mode NEVER constructs one (hil_plant_sim.py:8087-8094 vs :8163), so
@@ -1419,17 +1550,48 @@ class Plant:
         # every pre-WP-C drive trace bit-identical.
         i_cmd_eff = i_cmd if i_cmd >= 0.0 else max(i_cmd, -VESC_REGEN_I_MAX_A)
         f_drive = K_F * i_cmd_eff if (mot_live and bus_up) else 0.0
-        if abs(self.v) < V_STICTION:
-            # Static-friction deadband: no breakaway until the drive force exceeds F_c.
-            if abs(f_drive) <= F_COULOMB:
-                f_net = 0.0
-                self.v = 0.0
+        if self.k_air == 0.0:
+            # ── THE MEASURED RIG PROFILE (`--drag rig`, the default) ─────────
+            # VERBATIM pre-2026-09-02 code.  Kept as its own arm rather than
+            # generalized with a per-mode F_c, because the Coulomb SIGN LOGIC
+            # DOES NOT DEGRADE at F_c = 0: the deadband test `abs(f_drive) <=
+            # F_COULOMB` becomes `abs(f_drive) <= 0`, which is TRUE for a
+            # coasting body under zero drive inside the stiction band, and the
+            # branch would then set `self.v = 0.0` and delete its momentum.
+            # One shared expression would have been a silent physics defect on
+            # exactly the profile this round adds.
+            if abs(self.v) < V_STICTION:
+                # Static-friction deadband: no breakaway until the drive force exceeds F_c.
+                if abs(f_drive) <= F_COULOMB:
+                    f_net = 0.0
+                    self.v = 0.0
+                else:
+                    f_net = f_drive - (F_COULOMB if f_drive > 0 else -F_COULOMB) - B_EFF * self.v
             else:
-                f_net = f_drive - (F_COULOMB if f_drive > 0 else -F_COULOMB) - B_EFF * self.v
+                f_sign = 1.0 if self.v > 0 else -1.0
+                f_net = f_drive - f_sign * F_COULOMB - B_EFF * self.v
+                # Do not let friction alone push the body through zero within one tick.
+                v_try = self.v + (f_net / M_EFF) * dt
+                if f_drive == 0.0 and (v_try * self.v) < 0.0:
+                    self.v = 0.0
+                    f_net = 0.0
         else:
-            f_sign = 1.0 if self.v > 0 else -1.0
-            f_net = f_drive - f_sign * F_COULOMB - B_EFF * self.v
-            # Do not let friction alone push the body through zero within one tick.
+            # ── ROAD-LOAD COMPENSATED (`scaled-air` / `scaled-air-matched`) ──
+            # ONE quadratic term and NO Coulomb term (the compensation replaces
+            # the rig's friction rather than adding to it), so there is no
+            # breakaway to test and no stiction deadband: a body inside
+            # V_STICTION is free to creep, which is the physically correct
+            # behaviour for a road load that vanishes with speed.
+            #
+            # THE SIGNED FORM `v*|v|` IS LOAD-BEARING.  The rig profile's drag
+            # always opposes motion through `f_sign`; a bare `v**2` term would
+            # ACCELERATE the body in reverse.
+            f_net = f_drive - self.k_air * self.v * abs(self.v)
+            # The zero-crossing guard is KEPT.  Quadratic drag alone cannot push
+            # the body through zero, so this arm is unreachable in exact
+            # arithmetic; it is retained because its ABSENCE would be a silent
+            # behavioural difference between the two profiles, and it costs one
+            # comparison per tick.
             v_try = self.v + (f_net / M_EFF) * dt
             if f_drive == 0.0 and (v_try * self.v) < 0.0:
                 self.v = 0.0
@@ -2764,6 +2926,265 @@ EMS_REGEN_CHARGE_LEAD_OUT_S = 0.10
 EMS_REGEN_RUN_EXIT_S = 43.0
 
 
+# ═════════════════════════════════════════════════════════════════════════════
+# THE REGEN MANAGER (2026-09-02, the ftp75c round)
+#
+# WHAT IT IS.  A COMMON LAYER over every EMS strategy's returned command, not
+# per-strategy logic.  Inside a commanded regen window it forces
+# `charge_goal = 1.0` and leaves every other field exactly as the strategy
+# returned it; outside every window it does nothing at all.
+#
+# WHY IT IS COMMON, and this is the design decision rather than a convenience:
+#   * Regen admission is a function of the STIMULUS, not of the energy-
+#     management decision.  Every strategy brakes at the same instants, because
+#     every strategy follows the same `ems_v_profile`.
+#   * Making it common makes regeneration STRATEGY-INDEPENDENT, which is what
+#     lets a frontier comparison on `ftp75c` remain a comparison of share
+#     policies rather than a comparison of which strategy remembered to close a
+#     switch.
+#   * Duplicating the lead-in / lead-out reasoning across six strategies is
+#     exactly the failure `assertFcChargeEnable()`'s history warns about.
+#
+# WHAT THE FIRMWARE DOES WITH IT.  `chargingControl()` (.ino:10771-10893) takes
+# its REGEN branch when `charge_goal > 0.05` AND `regenActive`, where
+# `regenActive = (current < -0.1f)` reads the COMMANDED motor current.  That
+# branch drives `assertFcChargeEnable(false)`, `REGEN_ENABLE` HIGH and
+# `MPPT_DISABLE` LOW, and leaves BT on the bus; `MOT_PWR_ENABLE` is already
+# closed throughout Run.  So the host commands ONE field and the firmware opens
+# the path - the manager must not, and does not, try to sequence switches.
+#
+# THE MUTUAL EXCLUSION IS THE FIRMWARE'S.  `assertFcChargeEnable()` drives
+# BT_BUS LOW, then REGEN LOW, waits 100 us, then raises FC_CHARGE, and
+# `detectFaults()` latches FAULT_SWITCH_CONFLICT on the illegal combination.
+# The host cannot make the board charge from both paths at once and does not
+# need to enforce that invariant.  What it MUST avoid is provoking the WRONG
+# BRANCH: asserting `charge_goal > 0` one tick before the commanded current has
+# gone negative takes the CRUISE branch, which calls
+# `assertFcChargeEnable(true)`, drops BT off the bus and creates the
+# single-source condition that previously latched OC_FC
+# (hil_plant_sim.py's own ems_regen_harvest() note).  That is what the lead-in
+# below exists for.
+#
+# THE DWELL.  `SDP_CHG_MIN_DWELL_S` is a HOST construct governing the FC-path
+# charge windows.  A regen window overlapping a latched FC window does not
+# violate it - the firmware silently moves from the cruise branch to the regen
+# branch and back - but the strategies' own charge bookkeeping must NOT count
+# regen-window ticks as FC charge ticks, or the dwell accounting and the
+# `chg_holds` census are both wrong.  The manager therefore sets
+# `regen_commanded` on the FEEDBACK VIEW, before the strategy is called, and the
+# charge bookkeeping excludes it.
+# ═════════════════════════════════════════════════════════════════════════════
+
+# Lead-in: identical to EMS_REGEN_CHARGE_LEAD_IN_S and for its reason exactly.
+EMS_REGEN_MGR_LEAD_IN_S = 0.20
+# Lead-out: LENGTHENED from ems_regen_harvest()'s 0.10 s.  A compressed drive
+# cycle's decelerations end in immediate re-acceleration far more often than the
+# hand-built regen scenarios do, and a late release would take the cruise branch
+# with a still-negative bus.
+EMS_REGEN_MGR_LEAD_OUT_S = 0.20
+# Windows shorter than this AFTER trimming are dropped: below roughly half a
+# second nothing reaches the pack anyway (AG105_SETTLE_S 0.5 s plus the
+# AG105_TAU_S 0.4 s ramp cost ~0.9 s at the head of every window), and a
+# sub-tick window is a switch transient rather than a harvest.
+EMS_REGEN_MGR_MIN_WINDOW_S = 0.50
+# -- THE FIRMWARE'S OWN REGEN THRESHOLD, MIRRORED (H1, 2026-09-02) -----------
+# `chargingControl()` does NOT branch on "is the required force negative".  It
+# branches on the COMMANDED MOTOR CURRENT against a literal:
+#     bool regenActive = (current < -0.1f);        // .ino:10807
+# so a stage whose required current sits in (-0.1, 0) A is BRAKING IN PHYSICS
+# AND NOT-REGEN IN FIRMWARE.  Commanding `charge_goal` there takes the CRUISE
+# branch, which calls `assertFcChargeEnable(true)`, drops BT off the bus and
+# creates the single-source FC condition that has latched OC_FC before - and
+# `FAULT_SWITCH_CONFLICT` does NOT catch it, because FC_CHARGE with BT open is
+# a LEGAL combination.
+#
+# TRIMMING ON `force < 0` WAS THE DEFECT.  Measured on `ftp75c` under
+# `scaled-air`: SEVEN of the nine windows the force rule produced contained
+# 2.900 s in total where the required current was inside that dead band, and
+# window 4 (57.200-57.800 s) was inside it for 100 % OF ITS LENGTH.
+#
+# THE MARGIN IS 2x AND IT IS DELIBERATE.  The host commands a v_setpoint; the
+# CURRENT the firmware's drive controller then develops is not the host's to
+# know exactly, so trimming AT the firmware's own threshold would put the
+# window edge on the decision boundary.  2x puts the worst in-window required
+# current at -0.2045 A, i.e. 2.05x the threshold.
+REGEN_ACTIVE_I_A = 0.1          # A, the firmware's literal (.ino:10807)
+EMS_REGEN_MGR_I_MARGIN = 2.0    # x, host-side margin on it
+
+
+def derive_regen_windows(profile, drag_mode=None,
+                         lead_in_s=EMS_REGEN_MGR_LEAD_IN_S,
+                         lead_out_s=EMS_REGEN_MGR_LEAD_OUT_S,
+                         min_window_s=EMS_REGEN_MGR_MIN_WINDOW_S,
+                         i_active_a=REGEN_ACTIVE_I_A,
+                         i_margin=EMS_REGEN_MGR_I_MARGIN):
+    """Regen-capable windows of a piecewise-linear speed profile.
+
+    DERIVED, NEVER HAND-TABULATED.  `EMS_REGEN_BRAKE_WINDOWS` and
+    `EMS_REGENTRUE_BRAKE_WINDOWS` are hand-built tables for two hand-built
+    stimuli; a 234-point drive cycle cannot be treated that way, and a table
+    typed once would silently stop matching the profile the next time either
+    moved.
+
+    THE RULE IS THE FIRMWARE'S, NOT THE PHYSICS'.  An instant is admitted when
+    the REQUIRED MOTOR CURRENT is at or below `-i_margin * i_active_a`, i.e.
+    when the required force is at or below `-i_margin * i_active_a * K_F`.
+    `chargingControl()` branches on `regenActive = (current < -0.1f)`
+    (.ino:10807), so "the force is negative" and "the firmware calls this
+    regen" are DIFFERENT STATEMENTS, and the gap between them is a hazard
+    rather than a rounding detail - see the REGEN_ACTIVE_I_A block above.
+
+    Within one segment of a piecewise-linear profile `a` is CONSTANT and `v` is
+    affine and monotone, and `F_road` is monotone in `v` on the forward
+    half-line (`k_air*v^2` and `F_c + b_eff*v` both are), so the force is
+    MONOTONE IN TIME inside a segment and crosses ANY level at most once.  That
+    crossing is located by bisection, which is exact to float precision and does
+    not have to know which road-load law is in force.
+
+    ⚠️ AN ENDPOINT TEST ALONE IS NOT ENOUGH, and this is a safety property
+    rather than a refinement.  The design note's rule ("negative at either
+    endpoint") ADMITS a segment that crosses the level inside it, and a window
+    built on the whole segment then commands `charge_goal = 1.0` over an
+    interval the firmware does not consider regen at all.  Measured on
+    `ftp75c`: the whole-segment rule opened an FC charge window at t = 53.6 s.
+    The sub-interval is therefore trimmed to the crossing, so EVERY instant of
+    EVERY commanded window satisfies the firmware's own test with the margin.
+
+    Regen-capable sub-intervals that meet at a segment boundary are merged, the
+    lead times trim the merged interval, and anything shorter than
+    `min_window_s` after trimming is dropped.  Returns a tuple of
+    (t_start, t_end) pairs in profile time."""
+    k_air = drag_k_air(DRAG_MODE_DEFAULT if drag_mode is None else drag_mode)
+
+    def f_road(v):
+        if k_air:
+            return k_air * v * abs(v)
+        f_c = F_COULOMB if v > V_STICTION else (
+            -F_COULOMB if v < -V_STICTION else 0.0)
+        return f_c + B_EFF * v
+
+    # THE ADMISSION LEVEL, as a FORCE.  `force = K_F * i_cmd`, so the
+    # firmware's current test maps onto a force test by one multiply, and the
+    # margin is applied to the current because that is the quantity the
+    # firmware compares.
+    f_level = -float(i_margin) * float(i_active_a) * K_F
+
+    def force_at(t0, v0, a, t):
+        return M_EFF * a + f_road(v0 + a * (t - t0))
+
+    def cross(t0, v0, a, t_in, t_out):
+        """The time between `t_in` (force < f_level) and `t_out` (force >=
+        f_level) at which the force reaches `f_level`.  60 bisections is
+        float-exact over any interval this profile contains."""
+        lo, hi = t_in, t_out
+        for _ in range(60):
+            mid = 0.5 * (lo + hi)
+            if force_at(t0, v0, a, mid) < f_level:
+                lo = mid
+            else:
+                hi = mid
+        return 0.5 * (lo + hi)
+
+    merged = []
+    for (t0, v0), (t1, v1) in zip(profile, profile[1:]):
+        if t1 <= t0:
+            continue
+        a = (v1 - v0) / (t1 - t0)
+        f0 = force_at(t0, v0, a, t0)
+        f1 = force_at(t0, v0, a, t1)
+        if f0 >= f_level and f1 >= f_level:
+            continue
+        ta = t0 if f0 < f_level else cross(t0, v0, a, t1, t0)
+        tb = t1 if f1 < f_level else cross(t0, v0, a, t0, t1)
+        if tb <= ta:
+            continue
+        if merged and abs(merged[-1][1] - ta) <= 1e-9:
+            merged[-1] = (merged[-1][0], tb)
+        else:
+            merged.append((ta, tb))
+    out = []
+    for t0, t1 in merged:
+        w0, w1 = t0 + lead_in_s, t1 - lead_out_s
+        if (w1 - w0) >= min_window_s:
+            out.append((w0, w1))
+    return tuple(out)
+
+
+class RegenManager:
+    """The common regen-command layer.  See the block comment above.
+
+    Constructed by `main()` (and by `ems_walk`) for a scenario that declares
+    `ems_regen_manager`, and applied by WRAPPING the strategy callable rather
+    than by editing each strategy: the wrapper is the same layer that already
+    validates POLICY_ALLOWED_FIELDS, it cannot be forgotten by a strategy added
+    later, and a strategy under walk and the same strategy under the simulator
+    are wrapped identically."""
+
+    def __init__(self, windows):
+        self.windows = tuple((float(a), float(b)) for a, b in windows)
+        # Observability, consumed by the run banner and the sidecar.  Counted
+        # rather than derived so a window list and the ticks actually spent
+        # inside it can be compared after the fact.
+        self.calls = 0
+        self.forced = 0
+
+    def duty_s(self):
+        return sum(b - a for a, b in self.windows)
+
+    def active(self, t):
+        return any(a <= t < b for a, b in self.windows)
+
+    def apply(self, t, fb, out):
+        """Rules 1-3 of the design note, in order.
+
+        1. Inside a window, force `charge_goal = 1.0` and touch nothing else.
+        2. Outside every window, leave `charge_goal` exactly as returned.
+        3. A strategy's own positive `charge_goal` at the start of a window does
+           NOT win: the window does.  The firmware's `regenActive` branch takes
+           precedence over the cruise branch anyway, so the host's model of
+           WHICH PATH IS OPEN has to match, or the dwell accounting and the
+           charge census describe a run that did not happen."""
+        self.calls += 1
+        if not self.active(t):
+            return out
+        self.forced += 1
+        out = dict(out or {})
+        out["charge_goal"] = 1.0
+        return out
+
+    def wrap(self, policy):
+        """Return `policy` with the manager applied to every returned command.
+
+        `regen_commanded` is written onto the FEEDBACK VIEW BEFORE the strategy
+        is called, so a strategy's charge bookkeeping can exclude a regen tick
+        from its FC-path dwell (see the dwell note in the block comment).  The
+        key is always present - True or False - so a strategy cannot read
+        "absent" as "no manager" on a run that has one."""
+        mgr = self
+
+        def wrapped(t, fb):
+            if isinstance(fb, dict):
+                fb["regen_commanded"] = mgr.active(t)
+            return mgr.apply(t, fb, policy(t, fb))
+
+        # Forward the binding hook and the diagnostics attributes main() and
+        # ems_walk resolve BY TYPE (`sdp_raw_src`, `dp_table_src`, `mpc_src`),
+        # so wrapping a strategy cannot blank a CSV column or a sidecar block.
+        wrapped.__wrapped__ = policy
+        wrapped.regen_manager = mgr
+        return wrapped
+
+
+def unwrap_policy(policy):
+    """The underlying strategy object behind a possible RegenManager wrapper.
+
+    `main()` resolves the SDP / DP / MPC diagnostics sources by TYPE, and a
+    wrapped policy is a plain function; every such isinstance() test goes
+    through this so a scenario that declares `ems_regen_manager` does not
+    silently lose its `cmd_share_sp_raw` column or its `config.mpc` block."""
+    return getattr(policy, "__wrapped__", policy)
+
+
 def ems_regen_harvest(t, fb):
     """regen-harvest — cruise/brake cycling that harvests on the REGEN path only.
 
@@ -3191,8 +3612,59 @@ class SocBandStrategy:
     inherit the first run's reference.
     """
 
-    def __init__(self):
+    def __init__(self, charge_enter_itot_a=None, charge_exit_itot_a=None):
+        # ── PER-SCENARIO CURRENT THRESHOLDS (2026-09-02) ─────────────────────
+        # THE PROBLEM THEY SOLVE.  `SOC_BAND_CHARGE_ENTER_ITOT_A` (0.60 A) and
+        # `SOC_BAND_CHARGE_EXIT_ITOT_A` (1.30 A) are ABSOLUTE currents,
+        # calibrated against a plant carrying the measured rig road load.  Under
+        # `--drag scaled-air` the compensated cycle's peak source total is
+        # 0.330 A - BELOW THE ENTRY THRESHOLD AT EVERY INSTANT - so the strategy
+        # would admit a charge window at the first cruise sample and never exit
+        # it by current.  That is not a defect in the policy; it is a threshold
+        # calibrated against a plant with 4.5x the drag, and a permanently-open
+        # window would make the leg useless as a frontier REFERENCE.
+        #
+        # THE OVERRIDE IS SCENARIO-SCOPED, so the 61 s and `ftp75` legs are
+        # untouched: `None` keeps the module constants and every existing
+        # construction is byte-identical.  The `ems-ftp75c-socband` values are
+        # derived at their registration site, not here - see
+        # FTP75C_SOCBAND_CHARGE_ENTER_A.
+        self.charge_enter_itot_a = (SOC_BAND_CHARGE_ENTER_ITOT_A
+                                    if charge_enter_itot_a is None
+                                    else float(charge_enter_itot_a))
+        self.charge_exit_itot_a = (SOC_BAND_CHARGE_EXIT_ITOT_A
+                                   if charge_exit_itot_a is None
+                                   else float(charge_exit_itot_a))
+        if self.charge_exit_itot_a < self.charge_enter_itot_a:
+            raise ValueError(
+                "soc-band charge EXIT threshold (%r A) must be at or above the "
+                "ENTER threshold (%r A) - the pair is a hysteresis and an "
+                "inverted one latches a window shut the instant it opens"
+                % (self.charge_exit_itot_a, self.charge_enter_itot_a))
         self.reset()
+
+    def bind_scenario(self, scenario, meta, electrical_mode=None, args=None,
+                      droop_mode=None, asymmetry_mode=None, drag_mode=None):
+        """Read the per-scenario threshold overrides.  Never refuses.
+
+        The generic startup hook, in the shape `main()` calls it.  Unlike the
+        DP and SDP binders this one validates nothing about an artifact - it has
+        none - so it cannot refuse; what it does is make the override arrive
+        through the SAME path a strategy's other scenario keys do, instead of
+        through a constructor a scenario registry cannot reach."""
+        enter = (meta or {}).get("soc_band_charge_enter_itot_a")
+        exit_ = (meta or {}).get("soc_band_charge_exit_itot_a")
+        if enter is not None:
+            self.charge_enter_itot_a = float(enter)
+        if exit_ is not None:
+            self.charge_exit_itot_a = float(exit_)
+        if self.charge_exit_itot_a < self.charge_enter_itot_a:
+            raise ValueError(
+                "scenario %r declares a soc-band charge EXIT threshold (%r A) "
+                "below its ENTER threshold (%r A)"
+                % (scenario, self.charge_exit_itot_a, self.charge_enter_itot_a))
+        self.reset()
+        return None
 
     def reset(self):
         self.soc_ref = None         # captured on the first call that sees a SoC
@@ -3280,10 +3752,20 @@ class SocBandStrategy:
         deficit_gate = deficit > (0.0 if self.charging else SOC_BAND_HALF)
         if self.charging:
             self.charging = (deficit_gate and cruising
-                             and i_tot <= SOC_BAND_CHARGE_EXIT_ITOT_A)
+                             and i_tot <= self.charge_exit_itot_a)
         else:
             self.charging = (deficit_gate and cruising
-                             and i_tot <= SOC_BAND_CHARGE_ENTER_ITOT_A)
+                             and i_tot <= self.charge_enter_itot_a)
+        # A REGEN WINDOW IS NOT AN FC CHARGE WINDOW (2026-09-02).  Inside one
+        # the regen manager forces `charge_goal` to 1.0 and the FIRMWARE opens
+        # the REGEN path, not the FC path; counting the tick as an FC charge
+        # window would put a window in the census that never existed and would
+        # let this latch hold through a braking event on the strength of a
+        # current the charger was not drawing.  `regen_commanded` is written by
+        # RegenManager.wrap() BEFORE this call and is absent on every run that
+        # has no manager, which reads as False.
+        if fb.get("regen_commanded"):
+            self.charging = False
 
         in_run = EMS_RUN_ENTRY_S <= t < ems_run_exit(fb, SOC_BAND_RUN_EXIT_S)
         if not in_run:
@@ -3381,8 +3863,20 @@ DP_TABLE_NAME = "dp_ems_table_%s.csv"
 # the plant's static losses, and a table solved with a map is not a table for a
 # solve without one. It is OPTIONAL, so an old-era digest is bit-identical to
 # its pre-key value; see DP_FINGERPRINT_OPTIONAL_KEYS.
+# `drag` and `eta_regen` JOINED THIS TUPLE 2026-09-02 (the ftp75c round), on
+# the same OPTIONAL terms as the two keys above and for the two halves of one
+# reason.  `drag` changes the TRACTIVE DEMAND for a given speed profile - the
+# compensated profiles cut the FTP-75 peak bus current by roughly 4.5x - which
+# is exactly the class of change `eta_chg` was.  `eta_regen` changes what the
+# demand model CREDITS on a braking stage.  They are TWO keys and not one
+# because they are independent: a rig-drag run in the regen era is legitimate
+# and earns (structurally) zero credit, and a compensated run in the pre-regen
+# era is a defined, if pointless, configuration.  Both are OMITTED at their
+# sentinels ("rig" and None), which is what keeps every committed DP table,
+# every SDP policy artifact and every dp_db record reachable and byte-identical.
 DP_FINGERPRINT_META_KEYS = ("ems_v_profile", "duration_s", "chg_i_ceiling_a",
-                            "aux_preload_a", "eta_chg", "loss_map")
+                            "aux_preload_a", "eta_chg", "loss_map",
+                            "drag", "eta_regen")
 
 # Keys whose SENTINEL VALUE is written into the digest as an OMITTED LINE
 # rather than as `key=None` (orchestrator ruling, 2026-09-02; the convention
@@ -3393,7 +3887,8 @@ DP_FINGERPRINT_META_KEYS = ("ems_v_profile", "duration_s", "chg_i_ceiling_a",
 # about the problem any of them solved.  With the line omitted an old-era
 # digest is bit-identical to its pre-key value, and only a run or sidecar that
 # DECLARES an efficiency hashes differently.
-DP_FINGERPRINT_OPTIONAL_KEYS = frozenset({"eta_chg", "loss_map"})
+DP_FINGERPRINT_OPTIONAL_KEYS = frozenset({"eta_chg", "loss_map",
+                                          "drag", "eta_regen"})
 
 
 def _dp_fp_resolve(key, meta):
@@ -3402,7 +3897,90 @@ def _dp_fp_resolve(key, meta):
         return dp_eta_chg(meta)
     if key == "loss_map":
         return dp_loss_map(meta)
+    if key == "drag":
+        return dp_drag_mode(meta)
+    if key == "eta_regen":
+        return dp_eta_regen(meta)
     return meta.get(key)
+
+
+def dp_drag_mode(meta):
+    """The ROAD-LOAD PROFILE a DP table is solved / replayed against, or None.
+
+    THE ERA SENTINEL is `None`, and it names the MEASURED RIG PROFILE - the
+    only road load that existed before 2026-09-02 and the one the bench still
+    runs.  An absent `drag` key and an explicit `"rig"` are the SAME statement
+    and both resolve to None, so a scenario that predates the key fingerprints
+    exactly as it did.
+
+    Unlike `dp_eta_chg()` this key IS declared by scenarios (the `ems-ftp75c-*`
+    family declares `"drag": "scaled-air"`), so the fingerprint separates a
+    compensated table from a rig table by itself and no bind-time era guard is
+    needed for it.  The guard that IS needed is the RUN's: `--drag` can override
+    a scenario, which is what `DpReplayStrategy.bind_scenario()` checks."""
+    v = meta.get("drag")
+    if v in (None, DRAG_MODE_RIG):
+        return None
+    if v not in DRAG_MODES:
+        raise ValueError("unknown drag profile %r (choices: %s)"
+                         % (v, ", ".join(DRAG_MODES)))
+    return v
+
+
+def plant_drag_mode(drag_mode=None):
+    """`dp_drag_mode()`'s vocabulary for a RESOLVED run configuration.
+
+    `drag_mode` is the mode the run will actually apply (CLI, or the scenario's
+    own key).  None means the caller is asking about the SHIPPED default, which
+    is the rig profile.  Returns the sentinel None for `rig` and the mode string
+    otherwise, so the value is directly comparable with a table header's."""
+    if drag_mode is None:
+        drag_mode = DRAG_MODE_DEFAULT
+    if drag_mode not in DRAG_MODES:
+        raise ValueError("drag_mode must be one of %s, got %r"
+                         % (DRAG_MODES, drag_mode))
+    return None if drag_mode == DRAG_MODE_RIG else drag_mode
+
+
+def dp_eta_regen(meta):
+    """The REGEN EFFICIENCY a DP table is solved / replayed against, or None.
+
+    THE ERA SENTINEL is `None` and it names the PRE-REGEN DEMAND MODEL -
+    `p_mech = max(0, F*v)` with no credit at all, which is what every DP table,
+    SDP policy and dp_db record committed before 2026-09-02 was solved against.
+    One convention, shared with `tools/regen_power.py`'s `resolve_eta_regen()`.
+
+    A live SCENARIO declares nothing, so `dp_profile_fingerprint()` hashes the
+    sentinel for both eras and CANNOT separate them - exactly as with `eta_chg`
+    and `loss_map`.  The table's own `# eta_regen:` header line is the record,
+    and `DpReplayStrategy.bind_scenario()` is where the eras are compared."""
+    v = meta.get("eta_regen")
+    return None if v is None else float(v)
+
+
+def plant_eta_regen(drag_mode=None):
+    """THE REGEN ERA A RUN'S DP BOUND MUST CARRY, in `dp_eta_regen()`'s terms.
+
+    ⚠️ THIS IS NOT "does the plant regenerate".  The plant has returned braking
+    energy to the pack since the WP-C round and does so under EVERY drag
+    profile.  What this function answers is the question the bind-time guard
+    actually asks: MUST THE DEMAND MODEL CARRY THE CREDIT FOR THIS RUN'S BOUND
+    TO BE A BOUND?
+
+    Under the MEASURED RIG PROFILE the answer is no, and it is no for a physical
+    reason rather than by convention: the rig road load exceeds the inertial
+    force at every deceleration in every registered cycle, so the braking energy
+    that reaches the pack is 0.001 J over a 340 s FTP-75 segment (measured, and
+    against a ~30.8 J braking kinetic energy).  A pre-regen table is a valid
+    bound on such a run to well inside the ~50 ppm h2 repeatability floor, and
+    treating it otherwise would orphan every committed table for a credit that
+    does not exist.
+
+    Under a COMPENSATED profile the answer is yes: 12.5 J reaches the V-MOT node
+    on `ftp75c`, and a table solved without the credit must buy that SoC with
+    hydrogen, which INFLATES the bound and flatters the run it is scored
+    against.  That is the divergence this round closes."""
+    return None if plant_drag_mode(drag_mode) is None else float(ETA_REGEN)
 
 
 def dp_eta_chg(meta):
@@ -3552,9 +4130,14 @@ def eta_chg_era_label(eta):
 # 0.067 % of V_bus.  K_EFF at the firmware-held g_par is 0.308502 V/A against
 # the board's regressed 0.3015-0.3057 V/A.
 #
-# ⚠️ SCOPE.  The map is a STATIC map.  It carries no regen term (the DP's
-# demand is still `max(0, F*v)`; see `build_demand`'s regen note) and no
-# charger-node arm.  The charger arm was PROBED and its coefficients hold to
+# ⚠️ SCOPE.  The map is a STATIC map.  It carries no regen term of its
+# own and no charger-node arm.  ⚠️ THE REGEN HALF OF THIS SCOPE NOTE IS
+# CLOSED (2026-09-02, the ftp75c round): the DP's demand DOES carry a
+# braking credit in the regen era, through `build_demand`'s `eta_regen`
+# argument and `tools/regen_power.py`.  It is not part of THIS map,
+# because the credit is a pack CURRENT and the map prices BUS losses -
+# two different nodes - so the two compose rather than overlap.  The
+# charger-node arm below is still deferred.  The charger arm was PROBED and its coefficients hold to
 # 2.3e-04 A -- the N_CHG bleed adds `V_CHG*g_node_other` and V_CHG follows
 # `V_bus - RT_V_FWD - RT_R_ON*i_chg_in` to 4.8e-06 V -- but it is deliberately
 # NOT applied to the charge stage cost in this round.
@@ -3573,6 +4156,65 @@ DP_BUS_V0_EFF = 15.871722    # V         no-load bus intercept of the boost pair
 DP_BUS_R_FIX = 0.017986      # ohm       share-independent series resistance
 DP_BUS_K_G = 1.95079         # ohm/unit  parallel droop code -> source resistance
 DP_DROOP_G_PAR = 0.148922    # -         the firmware-held parallel droop code
+
+# ── THE SINGLE-SOURCE BUS LAW (2026-09-02, the MPC 0/1 round) ───────────────
+# WHAT IT IS FOR.  The MPC gains SINGLE-SOURCE candidates (share 0 and 1),
+# which take one channel off the bus through the setpoint latch.  The bus law
+# above was fitted TWO-SOURCE: its `g_par` is the PARALLEL droop code
+# `g_fc*g_bt/(g_fc+g_bt)`, and with one channel gone that parallel combination
+# does not exist.  Planning a single-source stage on the two-source law would
+# under-state the droop by about a factor of two and over-state the bus voltage
+# by ~0.5 V at 1.6 A.
+#
+# ⚠️ THESE ARE MPC-ONLY AND ARE DELIBERATELY *NOT* IN THE LOSS MAP.  The map is
+# a fingerprinted era key (`DP_FINGERPRINT_OPTIONAL_KEYS`), so adding fields to
+# it would move `loss_map_canonical()` and orphan every committed DP table and
+# every stored `dp_db` record.  The DP and the SDP do NOT get single-source
+# candidates (operator ruling, 2026-09-02), so nothing that consumes the map
+# needs these, and keeping them out of it costs nothing.
+#
+# MEASURED on the hi-fi engine at `--droop design --asymmetry measured`, by
+# sweeping the auxiliary load 0.15-1.6 A with the motor idle and regressing
+# V_bus against the source total.  The fit is EXACT to the printed precision
+# (max residual under 0.005 mV over four points), because the engine solves a
+# linear network at steady state.  Probed at THREE droop codes (0.35, 0.50,
+# 0.70) to establish that the RATIO is a property of the topology and not of
+# the operating point:
+#
+#     code    K_both     K_fc (ratio)      K_bt (ratio)
+#     0.3499  0.35857    0.69775 (1.9459)  0.73764 (2.0572)
+#     0.4999  0.50513    0.98258 (1.9452)  1.03955 (2.0580)
+#     0.6999  0.70062    1.36249 (1.9447)  1.44225 (2.0585)
+#
+# The ratios hold to +/-0.03 % across a 2x code range, so the single-source law
+# is the two-source law with ONE SCALE FACTOR on its slope and its own no-load
+# intercept.  The two ratios are NOT both 2.000 because the channels are not
+# identical under `--asymmetry measured`; that asymmetry is the whole 5.8 %
+# spread between them, and using a nominal 2.0 for both would misprice the
+# BT-only arm by 2.9 %.
+DP_BUS_SINGLE_K_SCALE_FC = 1.9453   # -   K_EFF(FC only) / K_EFF(both)
+DP_BUS_SINGLE_K_SCALE_BT = 2.0579   # -   K_EFF(BT only) / K_EFF(both)
+DP_BUS_SINGLE_V0_FC = 15.87821      # V   no-load intercept, FC only
+DP_BUS_SINGLE_V0_BT = 15.86468      # V   no-load intercept, BT only
+
+
+def single_source_bus_law(loss_map, source_mode):
+    """(v0_eff, k_eff) for a source topology.  PURE.
+
+    `source_mode` is "both", "fc" or "bt".  "both" returns the loss map's own
+    two-source law unchanged, so a caller that never plans a single-source
+    stage is bit-identical to one that predates this function."""
+    if loss_map is None:
+        raise ValueError("single_source_bus_law needs a loss map")
+    k_both = loss_map["r_fix"] + loss_map["k_g"] * loss_map["g_par"]
+    if source_mode == "both":
+        return float(loss_map["v0_eff"]), float(k_both)
+    if source_mode == "fc":
+        return DP_BUS_SINGLE_V0_FC, k_both * DP_BUS_SINGLE_K_SCALE_FC
+    if source_mode == "bt":
+        return DP_BUS_SINGLE_V0_BT, k_both * DP_BUS_SINGLE_K_SCALE_BT
+    raise ValueError("source_mode must be 'both', 'fc' or 'bt', got %r"
+                     % (source_mode,))
 # Picard iterations for the demand solve.  The old two-term model contracted at
 # ~0.7 %/step and used 4; the loss map adds two coupled unknowns (V_MOT and
 # i_par) and a ~4x steeper bus slope, so it is iterated to convergence instead
@@ -3804,10 +4446,19 @@ def dp_profile_fingerprint(scenario, meta):
             # key separates is an ARCHIVED run's era, which its sidecar
             # carries explicitly.
             val = dp_eta_chg(meta)
+        if key == "drag":
+            # ERA SENTINEL, resolved through `dp_drag_mode()`: an absent key
+            # and an explicit "rig" are the SAME statement and both omit the
+            # line above, so a rig table's digest is exactly its pre-key value.
+            # A compensated mode hashes as its own STRING - it is a named
+            # profile, not a number.
+            val = dp_drag_mode(meta)
+        if key == "eta_regen":
+            val = dp_eta_regen(meta)
         if key == "ems_v_profile" and val:
             val = [(float(a), float(b)) for a, b in val]
-        elif key == "loss_map":
-            pass                 # already the canonical string, not a scalar
+        elif key in ("loss_map", "drag"):
+            pass                 # already canonical text, not a scalar
         elif val is not None:
             val = float(val)
         parts.append("%s=%r" % (key, val))
@@ -4002,7 +4653,7 @@ class DpReplayStrategy:
     # avoided is a run that looks fine and means nothing.
     def bind_scenario(self, scenario, meta, electrical_mode=None,
                       args=None, droop_mode=None,
-                      asymmetry_mode=None):
+                      asymmetry_mode=None, drag_mode=None):
         """Load and validate this scenario's table.  Raises ValueError to refuse.
 
         main() calls this before the run starts (the generic `bind_scenario`
@@ -4133,6 +4784,63 @@ class DpReplayStrategy:
                    loss_map_canonical(want_lm), regen,
                    "" if want_lm is None else " --loss-map plant"))
 
+        # ── (0c) THE ROAD-LOAD AND REGEN ERAS (2026-09-02, the ftp75c round) ─
+        # THIRD, AND STILL BEFORE THE FINGERPRINT, and for ONE of the two keys
+        # the fingerprint genuinely cannot help.
+        #
+        # `drag` IS a scenario key, so the fingerprint separates a compensated
+        # table from a rig table by itself - but ONLY when the scenario declares
+        # it.  `--drag` OVERRIDES a scenario key, and an operator running an
+        # `ems-ftp75c-*` leg at `--drag rig` as a zero-regen control would
+        # otherwise replay a table solved against 4.5x less tractive demand
+        # while every other check passed.  The guard compares the table against
+        # the mode the run WILL ACTUALLY APPLY, which is the only claim worth
+        # making.
+        #
+        # `eta_regen` is a pure era sentinel like `eta_chg`: a live scenario
+        # declares none, so both eras hash the same and the table's own
+        # `# eta_regen:` header line is the only record.  A table solved WITHOUT
+        # the credit must supply with hydrogen the SoC a regen-bearing run gets
+        # back from braking, so its total is INFLATED and the run's deviation
+        # against it is correspondingly optimistic - the divergence this round
+        # closes, and re-opening it silently is worse than never having closed
+        # it.  Under the rig profile `plant_eta_regen()` returns the sentinel
+        # (the credit is 0.001 J of 30.8 J - see that function), so every
+        # committed rig-drag table binds clean.
+        want_drag = plant_drag_mode(drag_mode)
+        got_drag = dp_drag_mode(table_meta)
+        want_er = plant_eta_regen(drag_mode)
+        got_er = dp_eta_regen(table_meta)
+        er_same = (want_er is None and got_er is None) or (
+            want_er is not None and got_er is not None
+            and abs(want_er - got_er) <= 1e-12 * max(1.0, abs(want_er)))
+        if want_drag != got_drag or not er_same:
+            raise ValueError(
+                "DP table %s was solved against %s with %s, but this run's "
+                "plant carries %s with %s.\n"
+                "  table  drag=%r  eta_regen=%s%s\n"
+                "  run    drag=%r  eta_regen=%s\n"
+                "  The road-load profile sets the TRACTIVE DEMAND (the "
+                "compensated profiles cut the peak bus current by roughly "
+                "4.5x) and the regen era sets what a braking stage is "
+                "CREDITED, so a mismatch on either means the table's stage "
+                "costs minimise a different problem and replaying it bounds "
+                "nothing. NOTE the profile fingerprint cannot catch the "
+                "`eta_regen` half at all, and catches the `drag` half only "
+                "when the scenario declares the key - `--drag` overrides it.\n"
+                "  Regenerate for this era:\n%s%s%s"
+                % (path, drag_era_label(got_drag or DRAG_MODE_RIG),
+                   regen_power.era_label(got_er),
+                   drag_era_label(want_drag or DRAG_MODE_RIG),
+                   regen_power.era_label(want_er),
+                   got_drag, got_er,
+                   "" if "eta_regen" in table_meta
+                   else " (no `# eta_regen:` header line - a table that "
+                        "predates the regen demand term)",
+                   want_drag, want_er, regen,
+                   "" if want_drag is None else " --drag %s" % want_drag,
+                   "" if want_er is None else " --eta-regen %g" % want_er))
+
         want = dp_profile_fingerprint(scenario, meta)
         got = table_meta.get("profile_fingerprint")
         if got != want:
@@ -4189,10 +4897,20 @@ class DpReplayStrategy:
                 # would both duplicate the firmware value a third time and move
                 # `constants_hash` for a value the simulator never uses.  The
                 # generator's literal is the single record of it.
+                # ⚠️ THE DP'S CHARGE SHARE IS ITS GRID'S TOP, NOT THE
+                # soc-band SPAN (2026-09-02, the band widening).  This used to
+                # read `SOC_BAND_SHARE_NOMINAL + SOC_BAND_SHARE_SPAN` = 0.75,
+                # which happened to equal `gen_dp_ems_table.DP_SHARE_MAX` while
+                # the DP grid was the soc-band span.  It is no longer the same
+                # quantity: the grid spans the firmware band and
+                # `DP_CHARGE_SHARE` follows `DP_SHARE_MAX` = 0.85.  Comparing
+                # against the span refused every freshly generated table.  The
+                # live value is `SOC_BAND_SHARE_MAX`, which is the band's top
+                # and the same constant the generator's grid is built from.
                 ("charge_share_value",
-                 float(SOC_BAND_SHARE_NOMINAL + SOC_BAND_SHARE_SPAN),
-                 "DP charge-stage share "
-                 "(= SOC_BAND_SHARE_NOMINAL + SOC_BAND_SHARE_SPAN)"),
+                 float(SOC_BAND_SHARE_MAX),
+                 "DP charge-stage share (= DP_SHARE_MAX = SOC_BAND_SHARE_MAX, "
+                 "the top of the firmware command band)"),
                 # RESOLVED per-scenario value, not the bare model constant: a
                 # scenario may override the Run exit with `ems_run_exit_s`
                 # (2026-08-31), and the DP's own stage grid is solved against
@@ -4214,6 +4932,22 @@ class DpReplayStrategy:
                 ("cruise_min_mps", float(SOC_BAND_CRUISE_MIN_MPS),
                  "model constant SOC_BAND_CRUISE_MIN_MPS"),
             ]
+            # ── THE REGEN-ERA CONSTANTS (2026-09-02) ────────────────────────
+            # `gen_dp_ems_table.py` pre-committed to this in 2026-09-01: "If a
+            # future generator ever gives the demand model a regen term, BOTH
+            # [ETA_REGEN and VESC_REGEN_I_MAX_A] must move into this header and
+            # into the guard."  This is the guard half.  Appended CONDITIONALLY,
+            # because in the pre-regen era neither constant enters the solve and
+            # demanding the lines would refuse every committed table.
+            if want_er is not None:
+                checks.append(
+                    ("eta_regen", float(ETA_REGEN), "model constant ETA_REGEN"))
+                checks.append(
+                    ("vesc_regen_i_max_a", float(VESC_REGEN_I_MAX_A),
+                     "model constant VESC_REGEN_I_MAX_A"))
+                checks.append(
+                    ("drag_k_air", float(drag_k_air(want_drag)),
+                     "resolved road-load coefficient (--drag %s)" % want_drag))
             drift = []
             for key, live, what in checks:
                 raw = table_meta.get(key)
@@ -5606,7 +6340,7 @@ class SdpStrategy:
 
     def bind_scenario(self, scenario, meta, electrical_mode=None,
                       args=None, droop_mode=None,
-                      asymmetry_mode=None):
+                      asymmetry_mode=None, drag_mode=None):
         """Generic startup hook (see main()).  Loads and validates the policy.
 
         Unlike DpReplayStrategy's binder this does NOT check the scenario: an
@@ -5992,7 +6726,15 @@ class SdpStrategy:
             # re-admit on the same tick would make the fault and cruise exits
             # no-ops whenever the (uncorrected) demand still reads low.
             goal = 0.0
-        elif goal > 0.0 and t is not None:
+        elif goal > 0.0 and t is not None and not fb.get("regen_commanded"):
+            # A REGEN WINDOW MUST NOT ARM AN FC DWELL (2026-09-02).  The dwell
+            # is a HOST construct governing the FC-PATH charge windows; inside a
+            # regen window the firmware's `regenActive` branch owns the charger
+            # and the FC path is shut, so arming a latch here would put a window
+            # in `chg_holds` that never existed and would pin the intent high
+            # for 8 s after the braking ended.  `regen_commanded` is written by
+            # RegenManager.wrap() before this call; it is absent, i.e. False, on
+            # every run without a manager, so no existing trace moves.
             self.chg_hold_until = float(t) + SDP_CHG_MIN_DWELL_S
             self.chg_hold_v_ref = (None if fb.get("v_profile") is None
                                    else float(fb["v_profile"]))
@@ -6443,7 +7185,7 @@ class _MpcProxy:
     # -- the strategy surface ----------------------------------------------
     def bind_scenario(self, scenario, meta, electrical_mode=None,
                       args=None, droop_mode=None,
-                      asymmetry_mode=None):
+                      asymmetry_mode=None, drag_mode=None):
         """The generic startup hook, FORWARDED (2026-09-02, fix M1).
 
         `electrical_mode`, `droop_mode` and `asymmetry_mode` used to be dropped
@@ -6457,11 +7199,17 @@ class _MpcProxy:
         the run's own configuration and would record `None`. Plan and bound on
         two different demand models is precisely what this round removed, so
         the modes are forwarded and MpcStrategy.bind_scenario() reconciles
-        them. `args` is still dropped."""
+        them. `args` is still dropped.
+
+        `drag_mode` (2026-09-02) is forwarded for the identical reason one step
+        further on: the road-load profile changes the DEMAND PREVIEW itself, and
+        `--drag` can override the scenario key, so a planner reading the key
+        alone would predict on a cycle the run is not driving."""
         impl = self._build()
         self.provenance = impl.bind_scenario(
             scenario, meta, electrical_mode=electrical_mode,
-            droop_mode=droop_mode, asymmetry_mode=asymmetry_mode)
+            droop_mode=droop_mode, asymmetry_mode=asymmetry_mode,
+            drag_mode=drag_mode)
         return self.provenance
 
     def reset(self):
@@ -6563,7 +7311,12 @@ ems_mpc_sto = _MpcProxy("mpc-sto")
 # bounded, and the board's own timing is not deterministic either. An MPC run
 # must never enter a repeatability ledger beside the `scp` i_cut or `ems-sdp` h2
 # records.
-MPC_CAMPAIGN_MAX_CANDIDATES = 1029
+# ⚠️ 1029 -> 2187 (2026-09-02, the grid-widening round).  The cap is the FULL
+# enumeration at the shipped ladder, which is what makes it remove the wall
+# clock from the candidate count without dropping a candidate: 9 ladder points
+# over three move blocks is 9**3 = 729, times the three charge options, is
+# 2187.  Measured at 0 % budget expiry over 183 decisions x 3 repeats.
+MPC_CAMPAIGN_MAX_CANDIDATES = 2187
 
 
 def resolve_asymmetry_dv0_v(asymmetry_mode, electrical=None, plant=None):
@@ -8403,6 +9156,186 @@ SCENARIOS["ems-ftp75-dp"] = {
     "chg_i_ceiling_a": SCENARIOS["ems-soc-band"]["chg_i_ceiling_a"],
 }
 
+# ═════════════════════════════════════════════════════════════════════════════
+# ems-ftp75c-*: THE COMPRESSED FTP-75 SEGMENT ON A COMPENSATED ROAD LOAD
+#     (2026-09-02; docs/modeling/ftp75c_regen_cycle_design_20260902.md)
+#
+# WHY THIS FAMILY EXISTS.  THE RIG, AS INSTRUMENTED, REGENERATES NOTHING.  Its
+# road load exceeds the inertial force at every deceleration the FTP-75 segment
+# contains, so the measured regen share of braking kinetic energy is 0.00 % on
+# `ftp75` AND 0.00 % on the compressed cycle at rig drag (0.001 J of 30.82 J).
+# The regen path, the Ag105's regen branch and the DP's braking credit have
+# therefore never been exercised by a drive cycle at all.
+#
+# WHAT THE TWO CHANGES DO, separately.  TIME COMPRESSION (factor 0.5, velocity
+# untouched) doubles every acceleration, which brings the required regen current
+# into the same decade as the VESC clip and halves the rig's inertia deficit
+# against dynamic similarity.  ROAD-LOAD COMPENSATION (`--drag scaled-air`)
+# replaces the measured Coulomb-plus-viscous load with the scaled air drag of
+# the study vehicle, and it is THIS that creates the regenerative energy.  On
+# the compensated compressed cycle 51.25 % of braking kinetic energy is
+# available at the shaft, 15.66 J survives the 1.5 A VESC clip and 12.53 J
+# reaches the V-MOT node.
+#
+# ⚠️ NO DYNAMIC-SIMILARITY CLAIM.  The compressed rig is still 4.49x more
+# drag-dominated than the vehicle it stands for (DRAG_INERTIA_RESIDUAL), which
+# is exactly why the ruled `scaled-air` profile reaches 51.25 % where the
+# full-scale vehicle reaches 79.09 %.  `ftp75c` is a stimulus chosen so the
+# regenerative mechanism is exercised at currents the hardware can produce.  It
+# does not amend the published scaling study, which deliberately did not
+# time-scale its cycle.
+#
+# ⚠️ THE CREDIT IS SMALL AGAINST THE DRAIN, and no frontier conclusion may rest
+# on it being otherwise.  0.99 C reaches the pack per cycle against roughly
+# 96.8 A s of pack draw - 1.4 %, a SoC gain near +5.5e-5 against a -0.0054
+# excursion.  Because the regen manager is COMMON and the credit is
+# share-independent, EVERY strategy receives the same credit on the same
+# windows: `ftp75c` validates the regen model end to end and closes the DP's
+# regen divergence, and it is NOT expected to reorder the strategies.  A
+# reordering on this stimulus is a DEFECT SIGNAL, not a result.
+#
+# ⚠️ NOT BENCH-REPLICABLE.  Road-load compensation needs a SECOND motor acting
+# as a road-load brake on the flywheel (~3.1 N, 0.24 N m, 400 rpm, under 10 W,
+# four-quadrant).  A friction feedforward through the traction motor keeps the
+# net motor force POSITIVE through a stop, so no current reverses and there is
+# nothing to measure.  On the bench the rig profile remains the only physically
+# honest configuration, and it regenerates nothing.  Design note section 7.
+# ═════════════════════════════════════════════════════════════════════════════
+FTP75C_PRELOAD_A = 0.0
+# The same derivation as the FTP-75 pair, term for term: MODE_SAFE 1 s after the
+# table's last point, then 4 s for Run -> Finish -> Idle.  The 1 s margin rather
+# than the usual 3 s is justified for the same reason and by the same evidence -
+# raw t = 333 onward is 0 mph, which compresses to a 3.5 s idle tail, so the
+# table already ends at rest.
+FTP75C_RUN_EXIT_S = FTP75C_T_END + 1.0        # 176.0
+FTP75C_DURATION_S = FTP75C_RUN_EXIT_S + 4.0   # 180.0
+# THE COMMANDED REGEN WINDOWS, derived from the profile and the drag profile at
+# module scope rather than hand-tabulated - see derive_regen_windows().  Bound
+# to the SCENARIOS entries so a reader can see them, and re-derived at run time
+# from whatever `--drag` actually resolves to, so a rig-drag control run of the
+# same scenario gets the (empty) window list its own physics implies.
+FTP75C_REGEN_WINDOWS = derive_regen_windows(FTP75C_PROFILE,
+                                            DRAG_MODE_SCALED_AIR)
+# ── THE soc-band CURRENT THRESHOLDS ON THIS PROFILE ─────────────────────────
+# `SOC_BAND_CHARGE_ENTER_ITOT_A` is 0.60 A and the compensated cycle's PEAK
+# source total is 0.331 A, so the shipped threshold sits above the whole cycle:
+# the strategy would admit a charge window at the first cruise sample and never
+# exit it by current, and a charge-saturated leg is useless as the frontier's
+# REFERENCE.  Both thresholds therefore need a per-scenario override.
+#
+# ⚠️ DIVIDING BY `DRAG_INERTIA_RESIDUAL` WAS WRONG, AND IT FAILED SILENTLY
+# (H2, 2026-09-02).  The source total is `I_AUX_A + i_motor + i_par`, and the
+# 0.15 A auxiliary floor DOES NOT SCALE with the road load - only the motor term
+# does.  Scaling the whole threshold put ENTER at 0.13373 A, BELOW the walk's
+# own minimum source total of 0.15079 A, so `ems-ftp75c-socband` opened ZERO
+# charge windows against the rig leg's four.  The reference leg did not exercise
+# the soc-band mechanism at all, and `ftp75c_socband_not_saturated` bounded only
+# `max_ticks`, so never charging passed it silently.
+#
+# THE SHIPPED PAIR IS PERCENTILE-MATCHED against the rig leg, so the threshold
+# occupies the same POSITION IN THE DEMAND DISTRIBUTION on both cycles rather
+# than the same absolute current.  That is the right invariant: what the
+# threshold selects is "a low-demand cruise", which is a statement about the
+# cycle's own distribution.
+#     ENTER 0.18074 A - the 57.9th percentile of this leg's Run-window source
+#                       total, the position 0.60 A occupies on the rig leg.
+#     EXIT  0.33107 A - this cycle's MAXIMUM source total, which is where
+#                       1.30 A lands: it is above the rig leg's own maximum
+#                       (0.977 A), so on both cycles the exit threshold is
+#                       "never exit by current alone".
+#
+# ⚠️ THE CONVENTION IS NOT UNIQUE, and the alternative is recorded rather than
+# hidden.  Matching on the rig leg's Run-window percentile of 0.60 A (66.6th)
+# rather than on this leg's own gives ENTER 0.20715 A.  Both clear the 0.15079 A
+# floor and both open windows; 0.18074 is the ruled value and is the more
+# conservative of the two.  A re-derivation must state which convention it used.
+#
+# ⚠️ REJECTED: THE AUX-PRESERVING PAIR.  Scaling only the motor term,
+# `I_AUX_A + (thresh - I_AUX_A)/DRAG_INERTIA_RESIDUAL`, gives 0.25030 A enter /
+# 0.40632 A exit.  It is the most principled-looking of the three and it is
+# UNUSABLE: 0.40632 A is above this cycle's maximum source total of 0.33107 A,
+# so the exit threshold is unreachable and the hysteresis has no upper arm at
+# all.  The enter value would also admit ~97 % of the cycle.
+#
+# Scenario-scoped: the 61 s and `ftp75` legs read the module constants and are
+# untouched.  Literals rather than a computed expression because deriving them
+# needs numpy and a full demand build, which this module must not do at import.
+FTP75C_SOCBAND_CHARGE_ENTER_A = 0.18074
+FTP75C_SOCBAND_CHARGE_EXIT_A = 0.33107
+
+_FTP75C_COMMON = {
+    "electrical": "any",
+    "duration_s": FTP75C_DURATION_S,
+    # THE SAME LIST OBJECT for all five, as the FTP-75 family shares one: the
+    # legs differ only in the strategy driving them, and a comparison between
+    # them is meaningless on different stimuli.
+    "ems_v_profile": FTP75C_PROFILE,
+    "ems_run_exit_s": FTP75C_RUN_EXIT_S,
+    "aux_preload_a": FTP75C_PRELOAD_A,
+    # THE ROAD-LOAD PROFILE.  Declared as a scenario key so the operator does
+    # not have to remember `--drag scaled-air`, and FINGERPRINTED
+    # (DP_FINGERPRINT_META_KEYS) because it changes the tractive demand.
+    "drag": DRAG_MODE_SCALED_AIR,
+    # THE REGEN MANAGER.  A common layer over every strategy's command - see the
+    # RegenManager block.  Windows are derived at bind time from this
+    # scenario's own profile and the RESOLVED drag mode.
+    "ems_regen_manager": True,
+}
+
+for _name, _ems, _what in (
+    ("ems-ftp75c-5050", "hold-5050",
+     "constant 50/50 split, so any share deviation belongs to the firmware's "
+     "share loop and the plant and never to the EMS"),
+    ("ems-ftp75c-socband", "soc-band",
+     "the causal charge-sustaining policy, on charge thresholds re-derived for "
+     "the compensated demand (%.4f A enter / %.4f A exit)"
+     % (FTP75C_SOCBAND_CHARGE_ENTER_A, FTP75C_SOCBAND_CHARGE_EXIT_A)),
+    ("ems-ftp75c-sdp", "sdp-v4",
+     "the causal SDP policy, which earns the braking credit through the PLANT "
+     "rather than through a re-solved artifact"),
+    ("ems-ftp75c-dp", "dp-replay",
+     "the NON-CAUSAL lower bound, solved with the regen credit in the demand "
+     "model so the bound stops being inflated by the energy the run gets back"),
+    ("ems-ftp75c-mpc", "mpc-sto",
+     "the governor-aware receding-horizon controller, whose prediction model "
+     "carries the same braking credit the bound does"),
+):
+    SCENARIOS[_name] = dict(_FTP75C_COMMON)
+    SCENARIOS[_name]["ems"] = _ems
+    SCENARIOS[_name]["description"] = (
+        "%.0f s EPA FTP-75 study segment TIME-COMPRESSED by %r (raw t = 0..340 s "
+        "inclusive; velocity axis untouched, so every acceleration doubles) on "
+        "the `%s` ROAD-LOAD COMPENSATED plant, driven by the `%s` EMS strategy: "
+        "%s. The first drive-cycle family on this rig that regenerates at all. "
+        "Gated behind run_hil_suite.py --with-ftp75c."
+        % (FTP75C_DURATION_S, FTP75C_TIME_FACTOR, DRAG_MODE_SCALED_AIR,
+           _ems, _what))
+del _name, _ems, _what
+
+# The charger ceiling, declared on every leg that can command `charge_goal`.
+# `ems-ftp75c-5050` is deliberately excluded on the FTP-75 family's reasoning:
+# `hold-5050` never commands it, so the key would be dead declaration - EXCEPT
+# that on this family the REGEN MANAGER commands `charge_goal` for it, so the
+# ceiling is live here and IS declared.  All five carry one value, which is what
+# the frontier's stimulus-coherence precondition asserts.
+for _name in ("ems-ftp75c-5050", "ems-ftp75c-socband", "ems-ftp75c-sdp",
+              "ems-ftp75c-dp", "ems-ftp75c-mpc"):
+    SCENARIOS[_name]["chg_i_ceiling_a"] = (
+        SCENARIOS["ems-soc-band"]["chg_i_ceiling_a"])
+del _name
+
+SCENARIOS["ems-ftp75c-socband"]["soc_band_charge_enter_itot_a"] = \
+    FTP75C_SOCBAND_CHARGE_ENTER_A
+SCENARIOS["ems-ftp75c-socband"]["soc_band_charge_exit_itot_a"] = \
+    FTP75C_SOCBAND_CHARGE_EXIT_A
+# `ems-ftp75c-dp` needs the hi-fi engine for `ems-dp-replay`'s reason exactly:
+# the shipped table is solved `--charger-accounting physical`, and
+# bind_scenario() refuses the mismatch.
+SCENARIOS["ems-ftp75c-dp"]["electrical"] = "hifi"
+# The MPC leg's two planner keys, by reference off the FTP-75 twin.
+SCENARIOS["ems-ftp75c-mpc"]["mpc_max_candidates"] = MPC_CAMPAIGN_MAX_CANDIDATES
+SCENARIOS["ems-ftp75c-mpc"]["mpc_loss_map"] = plant_loss_map()
+
 # ── ems-sdp-cross / ems-sdp-braking: the SDP policy's two thresholds ────────
 #
 # THE ARTIFACT HAS TWO SWITCHING SURFACES ON THE SoC AXIS, one node apart, and
@@ -9954,6 +10887,25 @@ def main(argv=None):
                          "identical chains and is byte-identical to every "
                          "campaign recorded before this flag existed. Applies "
                          "to BOTH electrical engines")
+    # ── ROAD-LOAD PROFILE (2026-09-02, the ftp75c round) ────────────────────
+    # Shaped like --asymmetry: a mode choice with a stated default that is
+    # BYTE-IDENTICAL to every campaign recorded before the flag existed.  A
+    # scenario meta key `drag` supplies the mode when the flag is absent, on
+    # --droop's default-vs-explicit rule, so the `ems-ftp75c-*` scenarios need
+    # no flag from the operator and an operator asking for a comparison is not
+    # silently overruled by the registry.
+    ap.add_argument("--drag", default=DRAG_MODE_DEFAULT,
+                    choices=list(DRAG_MODES),
+                    help="mechanical road load: 'rig' (DEFAULT) is the "
+                         "MEASURED F_c + b_eff*v of this bench and regenerates "
+                         "nothing on any registered cycle; 'scaled-air' "
+                         "replaces it with the study vehicle's scaled air drag "
+                         "(k_air 0.0598 N/(m/s)^2, F_c 0) and delivers 51 %% of "
+                         "braking energy to the shaft; 'scaled-air-matched' "
+                         "divides k_air by the rig's residual drag-to-inertia "
+                         "ratio and reproduces the FULL-SCALE 79 %% share. The "
+                         "two compensated modes are HIL-ONLY - they need a "
+                         "second road-load motor to replicate on the bench")
     ap.add_argument("--trace-config", default="short", choices=["long", "short"],
                     help="hi-fi parasitic-inductance set: 'long' = as-manufactured "
                          "FastHenry extraction (FC 1.538 nH / BT 3.480 nH), 'short' = "
@@ -10307,6 +11259,36 @@ def main(argv=None):
     # plant asks for it on the command line, and the sidecar records which was
     # used on EVERY run (see `config.asymmetry` below).
     asymmetry_mode = args.asymmetry
+
+    # ── ROAD-LOAD PROFILE (2026-09-02) ───────────────────────────────────────
+    # Resolution order is `--droop`'s, term for term, and for its reason: a
+    # scenario may declare `drag` and it WINS over the CLI DEFAULT, but an
+    # EXPLICIT --drag wins over the scenario, so an operator running the
+    # `ems-ftp75c-*` family at `--drag rig` as a ZERO-REGEN CONTROL is not
+    # silently overruled by the registry.  Passing the default explicitly
+    # (`--drag rig`) is indistinguishable from not passing it and the scenario
+    # key wins; that is the safe direction, for the same reason it is there.
+    drag_mode = args.drag
+    _drag_from = "--drag"
+    if not args.replay and meta.get("drag") and args.drag == DRAG_MODE_DEFAULT:
+        drag_mode = str(meta["drag"])
+        _drag_from = "scenario key drag"
+        if drag_mode not in DRAG_MODES:
+            raise SystemExit("[hil] SCENARIOS[%r] declares drag=%r, which is "
+                             "not one of %s"
+                             % (scenario, drag_mode, list(DRAG_MODES)))
+    if drag_mode != DRAG_MODE_DEFAULT:
+        # ASCII only: this stream is cp1252 on the bench PC's console.
+        print("[hil] drag=%s (k_air %.7f N/(m/s)^2, F_c 0, from %s)"
+              % (drag_mode, drag_k_air(drag_mode), _drag_from))
+        print("[hil] WARNING: road-load COMPENSATION is a HIL-ONLY plant "
+              "configuration. It cannot be replicated on this bench with the "
+              "single motor now fitted (a friction feedforward keeps the net "
+              "motor force POSITIVE through a stop, so no current reverses); "
+              "it needs a second road-load motor. Traces are NOT comparable "
+              "with any rig-drag run - the tractive demand falls by roughly "
+              "4.5x and braking becomes regenerative.")
+
     electrical = None
     if args.electrical == "hifi" and not args.replay:
         c_vesc = (args.vesc_cap_uf * 1e-6) if args.vesc_cap_uf is not None \
@@ -10402,7 +11384,11 @@ def main(argv=None):
                   ina_offset_fc=(electrical.asym_ina_offset_fc
                                  if electrical is not None else 0.0),
                   ina_offset_bt=(electrical.asym_ina_offset_bt
-                                 if electrical is not None else 0.0))
+                                 if electrical is not None else 0.0),
+                  # THE RESOLVED ROAD-LOAD PROFILE (2026-09-02).  Mechanical
+                  # only, so unlike the asymmetry it has no hi-fi counterpart to
+                  # keep in step: the electrical engines never see it.
+                  drag_mode=drag_mode)
     # Scenario-level Pi-commander mute (SCENARIOS[...]["pi_mute_after_s"]).  Read
     # ONCE here and handed to whichever commander is constructed below; None (the
     # default, and every scenario but `pi-silence`) means "never mute".  Not
@@ -10417,6 +11403,7 @@ def main(argv=None):
     # default : commander driven by the scenario's pi_timeline (unchanged)
     commander = None
     ems_policy = None
+    regen_mgr = None            # RegenManager, or None on every other run
     if args.replay and args.replay_commands:
         # Empty timeline, no policy: every field of `state` is written by the
         # main loop from THIS tick's replay record before commander.tick() runs,
@@ -10479,7 +11466,13 @@ def main(argv=None):
                            # reconciliation in MpcStrategy's) is a claim about
                            # the plant that will actually run.
                            droop_mode=droop_mode,
-                           asymmetry_mode=asymmetry_mode)
+                           asymmetry_mode=asymmetry_mode,
+                           # The RESOLVED road-load profile, for the same
+                           # reason the two above are resolved: `--drag` can
+                           # override a scenario key, and the REGEN-ERA guard
+                           # (block 0c) is a claim about the plant that will
+                           # actually run.
+                           drag_mode=drag_mode)
                 except UnicodeEncodeError:
                     # NOT a bind refusal (2026-09-02).  UnicodeEncodeError is a
                     # ValueError subclass, so the clause below used to convert a
@@ -10506,6 +11499,33 @@ def main(argv=None):
                 except (ValueError, OSError) as exc:
                     ap.error("--ems %s cannot run scenario '%s':\n%s"
                              % (ems_name, scenario, exc))
+            # ── THE REGEN MANAGER (2026-09-02) ──────────────────────────────
+            # Applied AFTER bind_scenario(), so a strategy still binds against
+            # the scenario itself and never against a wrapper, and BEFORE the
+            # commander is constructed, so the wrapped callable is what runs.
+            # Windows are derived from the scenario's own profile and the
+            # RESOLVED drag mode, so a `--drag rig` control run of an
+            # `ems-ftp75c-*` leg gets the empty window list its own physics
+            # implies rather than the compensated profile's nine.
+            if meta.get("ems_regen_manager") and meta.get("ems_v_profile"):
+                regen_mgr = RegenManager(
+                    derive_regen_windows(meta["ems_v_profile"], drag_mode))
+                ems_policy = regen_mgr.wrap(ems_policy)
+                print("[hil] regen manager: %d window(s), %.3f s of commanded "
+                      "duty (%.1f %% of the cycle), drag=%s. charge_goal is "
+                      "forced to 1.0 inside a window; the FIRMWARE picks its "
+                      "REGEN branch off the commanded motor current "
+                      "(regenActive) and opens REGEN_ENABLE with FC_CHARGE shut."
+                      % (len(regen_mgr.windows), regen_mgr.duty_s(),
+                         100.0 * regen_mgr.duty_s()
+                         / max(1e-9, float(meta.get("duration_s") or 1.0)),
+                         drag_mode))
+                if not regen_mgr.windows:
+                    print("[hil] NOTE: NO regen window is derivable on this "
+                          "profile and drag profile - the road load exceeds "
+                          "the inertial force at every deceleration, so the "
+                          "manager is inert and this leg is a ZERO-REGEN "
+                          "CONTROL.")
             if meta.get("pi_timeline"):
                 print(f"[hil] NOTICE: --ems {ems_name} REPLACES scenario "
                       f"'{scenario}''s pi_timeline ({len(meta['pi_timeline'])} "
@@ -10537,18 +11557,23 @@ def main(argv=None):
     # under another name must still populate the column, and a name test would
     # silently blank it.  None on every other run -> the column is written
     # blank, which is the honest reading of "no table request exists".
-    sdp_raw_src = ems_policy if isinstance(ems_policy, SdpStrategy) else None
+    # UNWRAPPED, because the regen manager wraps the strategy in a plain
+    # function: a scenario that declares `ems_regen_manager` must not silently
+    # lose its `cmd_share_sp_raw` column, its DP provenance or its `config.mpc`
+    # block, and an isinstance() test against the wrapper would blank all three.
+    _ems_impl = unwrap_policy(ems_policy)
+    sdp_raw_src = _ems_impl if isinstance(_ems_impl, SdpStrategy) else None
     # The DP table's provenance source, resolved the same way and for the same
     # reason (by TYPE, not by strategy NAME: a future table played by this same
     # class under another name must still record its artifact).  Consumed ONLY
     # by the meta sidecar below — there is no DP equivalent of the
     # `cmd_share_sp_raw` column, because dp-replay emits its table value
     # unclamped.
-    dp_table_src = ems_policy if isinstance(ems_policy, DpReplayStrategy) else None
+    dp_table_src = _ems_impl if isinstance(_ems_impl, DpReplayStrategy) else None
     # The MPC's diagnostics source, resolved by TYPE for the same reason the two
     # above are.  Consumed by the three CSV columns and by `config.mpc` in the
     # sidecar; None on every other run, which blanks all three columns.
-    mpc_src = ems_policy if isinstance(ems_policy, _MpcProxy) else None
+    mpc_src = _ems_impl if isinstance(_ems_impl, _MpcProxy) else None
     if commander is not None and commander.mute_after is not None:
         print(f"[hil] Pi commander MUTES at t={commander.mute_after:g}s "
               f"(scenario key pi_mute_after_s): the 22-byte command stream stops "
@@ -10938,6 +11963,17 @@ def main(argv=None):
             # `None` and is never priced against a hi-fi map.
             "loss_map": loss_map_for_config(
                 args.electrical, droop_mode, asymmetry_mode),
+            # THE ROAD-LOAD ERA and THE REGEN ERA (2026-09-02), on the
+            # `eta_chg` / `loss_map` terms exactly: a sidecar that PREDATES
+            # either key carries neither, and that ABSENCE is the sentinel for
+            # the MEASURED RIG PROFILE and for the pre-regen demand model
+            # respectively (see `dp_drag_mode()` and `dp_eta_regen()`).  Both
+            # are resolved from THIS RUN's configuration rather than from a
+            # scenario key, so a `--drag rig` control run of a compensated
+            # scenario records `None` on both and is never priced against a
+            # regen-bearing bound.
+            "drag": plant_drag_mode(drag_mode),
+            "eta_regen": plant_eta_regen(drag_mode),
         }
         meta_doc = {
             "format_version": META_FORMAT_VERSION,
@@ -11005,6 +12041,22 @@ def main(argv=None):
                                              if electrical is not None else None),
                 "asymmetry_droop_scale_bt": (electrical.asym_droop_scale_bt
                                              if electrical is not None else None),
+                # THE ROAD-LOAD PROFILE THIS RUN CARRIED (2026-09-02).
+                # Recorded UNCONDITIONALLY, for `droop_mode`'s reason: a key
+                # that is absent reads as "old tool", not as "rig".
+                # `drag_k_air` is the RESOLVED coefficient, on the
+                # `asymmetry_dv0_v` pattern, so a reader never has to
+                # re-derive it from Cd and A_f.  `drag_regen_windows` records
+                # what the manager actually commanded, which is the only place
+                # a trace says WHERE it was allowed to harvest.
+                "drag": drag_mode,
+                "drag_k_air": drag_k_air(drag_mode),
+                "drag_from": _drag_from if not args.replay else None,
+                "regen_manager": regen_mgr is not None,
+                "regen_windows": (None if regen_mgr is None
+                                  else [list(w) for w in regen_mgr.windows]),
+                "regen_duty_s": (None if regen_mgr is None
+                                 else regen_mgr.duty_s()),
                 "vesc_cap_f": (getattr(electrical, "c_vesc", None)
                                if electrical is not None else None),
                 "noise": bool(args.noise),

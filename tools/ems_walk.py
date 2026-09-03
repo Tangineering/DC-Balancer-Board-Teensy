@@ -30,9 +30,21 @@ MODEL COMPOSITION
 
 FIDELITY BOUNDARIES
 -------------------
-* Everything ``gen_dp_ems_table``'s model already declares: no regen term in
-  the demand (it over-states demand on decelerating stages), a shared-droop bus
+* Everything ``gen_dp_ems_table``'s model already declares: a shared-droop bus
   voltage used even inside charge windows, and no Ag105 settle or ramp.
+
+  ⚠️ THE REGEN STATEMENT THAT STOOD HERE WAS WRONG AND IS RETRACTED. It read
+  "no regen term in the demand (it over-states demand on decelerating stages)".
+  ``max(0, F*v)`` and the plant both bill ZERO motor demand while ``F*v < 0``;
+  what the pre-regen model omitted is the ENERGY THE PLANT GIVES BACK, which is
+  a credit to the battery and not a load. The sign of the omission was
+  backwards. From 2026-09-02 the credit exists and is selected by ``eta_regen``
+  (see REGEN ERA below).
+* The Ag105 SETTLE and RAMP are still absent, so a walk over-states the harvest
+  of a SHORT regen window: the plant burns roughly the first 0.9 s of every
+  window in the chopper (``AG105_SETTLE_S`` 0.5 s plus the ``AG105_TAU_S``
+  0.4 s ramp), and this model banks it. On ``ftp75c`` that is a 29 % gap
+  between the idealized 11.0 J and the realizable 7.8 J into the pack.
 * Everything ``governor_model`` declares, in particular that the Youla share
   controller is modelled by a slew-limited walk to the governed reference.
 * The strategy is called with a feedback view built from this reduced model, so
@@ -53,6 +65,23 @@ MISSING key means the old era.
 
 The SoC integrator is untouched by the era: the pack receives ``i_chg`` in
 both, because the efficiency sits on the charger's INPUT side.
+
+ROAD-LOAD PROFILE AND REGEN ERA
+-------------------------------
+``drag_mode`` selects the mechanical road load and ``eta_regen`` the braking
+credit, both threaded to ``build_demand()`` in LOCKSTEP with the DP generator
+and ``mpc_ems``. Both DEFAULT to the pre-2026-09-02 configuration - the
+MEASURED rig road load and NO credit - so every regression anchor in this
+docstring is unmoved. A campaign-facing caller passes the scenario's own
+``drag`` key; ``walk()`` reads it automatically when ``drag_mode`` is omitted,
+because unlike ``eta_chg`` it IS a scenario key. A walk used to predict a
+table's bound MUST carry the same pair that table was solved with, or the two
+are not comparable.
+
+The REGEN MANAGER is applied for any scenario declaring ``ems_regen_manager``,
+exactly as ``hil_plant_sim.main()`` applies it, so a walk and a live run drive
+the same wrapped strategy. Its windows are derived from the scenario's own
+profile and the RESOLVED drag mode.
 
 REGRESSION ANCHOR
 -----------------
@@ -75,6 +104,7 @@ if _TOOLS not in sys.path:
 
 import charger_power as chg_mod        # stdlib only
 import governor_model as gov_mod        # stdlib only
+import regen_power as regen_mod         # stdlib only
 
 # NumPy-needing modules are imported lazily so that merely importing this file
 # (a test collection, a --help) does not require the miniforge environment.
@@ -134,6 +164,18 @@ class WalkResult:
     charge_windows: list = field(default_factory=list)
     notes: list = field(default_factory=list)
 
+    # -- regen accounting (ADDITIVE, 2026-09-02) ------------------------------
+    # Zero on every pre-regen walk, so a consumer written against the earlier
+    # WalkResult is unaffected.  `regen_charge_c` is COULOMBS INTO THE PACK -
+    # the quantity the campaign's `ftp75c_regen_charge` expectation is derived
+    # from - and `regen_windows` is what the manager COMMANDED, which is not the
+    # same thing (a window shorter than the Ag105's settle-plus-ramp delivers
+    # essentially nothing and is retained only for switch and path coverage).
+    regen_charge_c: float = 0.0
+    regen_stages: int = 0
+    regen_windows: list = field(default_factory=list)
+    regen_duty_s: float = 0.0
+
     # -- per-stage signal trace (ADDITIVE, 2026-09-01) ------------------------
     # Filled only when ``trace=True``; every field defaults to an empty list, so
     # a consumer written against the earlier WalkResult is unaffected. The
@@ -159,6 +201,9 @@ class WalkResult:
             "SoC final          : %.6f  (delta %+.6f)" % (self.soc_final,
                                                           self.delta_soc),
             "charge windows     : %d" % len(self.charge_windows),
+            "regen to pack      : %.6f C over %d stage(s), %d window(s), "
+            "%.3f s duty" % (self.regen_charge_c, self.regen_stages,
+                             len(self.regen_windows), self.regen_duty_s),
         ]
         for t0, t1 in self.charge_windows:
             lines.append("    %8.3f .. %8.3f s" % (t0, t1))
@@ -266,7 +311,8 @@ def _fractions(counts: dict) -> dict:
 
 
 def _instantiate(sim, strategy_name: str, scenario: str, meta,
-                 policy_file: Optional[str], strategy_kwargs: Optional[dict]):
+                 policy_file: Optional[str], strategy_kwargs: Optional[dict],
+                 drag_mode: Optional[str] = None):
     """Build the strategy object the simulator would use.
 
     The registry holds SHARED instances (``hil_plant_sim.py:5050``), so a walk
@@ -342,7 +388,11 @@ def _instantiate(sim, strategy_name: str, scenario: str, meta,
 
     binder = getattr(policy, "bind_scenario", None)
     if binder is not None:
-        binder(scenario, meta)
+        # `drag_mode` is the RESOLVED road-load profile and MUST be forwarded:
+        # `DpReplayStrategy.bind_scenario()`'s era guard compares the table
+        # against the mode the run will actually apply, and a binder called
+        # without it resolves to `rig` and REFUSES every compensated table.
+        binder(scenario, meta, drag_mode=drag_mode)
     elif hasattr(policy, "reset"):
         policy.reset()
     return policy
@@ -358,6 +408,8 @@ def walk(strategy_name: str, scenario_name: str, *, soc0: float = 0.7,
          charge_admission: Optional[str] = None,
          eta_chg: Optional[float] = chg_mod.ETA_CHG_DEFAULT,
          loss_map: Optional[dict] = None,
+         drag_mode: Optional[str] = None,
+         eta_regen: Optional[float] = None,
          gov_dt_s: float = 1e-3,
          conv_tau_s: float = 0.0,
          trace: bool = True) -> WalkResult:
@@ -430,6 +482,22 @@ def walk(strategy_name: str, scenario_name: str, *, soc0: float = 0.7,
     # same map that table was solved with or the two are not comparable.
     loss_map = sim.check_loss_map(loss_map)
     meta = sim.SCENARIOS[scenario_name]
+    # ── THE ROAD-LOAD PROFILE AND THE REGEN ERA (2026-09-02) ────────────────
+    # `drag_mode` reads the SCENARIO's own key when omitted, unlike `loss_map`
+    # and `eta_chg`, because it IS a scenario key: an `ems-ftp75c-*` walk with
+    # no arguments must model the plant that scenario runs on, or it predicts a
+    # cycle nobody will drive.  `eta_regen` is then defaulted FROM the drag
+    # profile on the generator's own rule (a compensated run regenerates and a
+    # credit-free bound for it is inflated); a rig walk keeps the pre-regen era
+    # and every anchor in the docstring is bit-identical.
+    if drag_mode is None:
+        drag_mode = meta.get("drag") or sim.DRAG_MODE_RIG
+    if drag_mode not in sim.DRAG_MODES:
+        raise ValueError("drag_mode must be one of %s, got %r"
+                         % (list(sim.DRAG_MODES), drag_mode))
+    if eta_regen is None and drag_mode != sim.DRAG_MODE_RIG:
+        eta_regen = float(sim.ETA_REGEN)
+    eta_regen = regen_mod.check_eta_regen(eta_regen)
 
     import numpy as np
 
@@ -446,21 +514,34 @@ def walk(strategy_name: str, scenario_name: str, *, soc0: float = 0.7,
     duration = float(meta["duration_s"])
     n_stages = int(round(duration / dt))
     times = np.arange(n_stages + 1) * dt
+    # ONE reference pack voltage at the walk's initial SoC, matching
+    # prepare_problem(): it prices the mask's single-source FC budget AND the
+    # regen credit's output-referred cap, and both must stay state-independent.
+    v_pack_ref_all = float(gen.pack_charge_voltage(float(soc0), chg_a))
+    v_pack_ref = None if eta_chg is None else v_pack_ref_all
     _ov = _drain_override(gen, sim, scenario_name)
     with _ov:
-        v, a, p_dem, v_bus, i_total, cruise = gen.build_demand(
-            scenario_name, meta, times, dt, loss_map=loss_map)
-    # The mask's single-source FC budget counts the charger's INPUT current,
-    # which is era-dependent; the reference pack voltage is the walk's initial
-    # SoC, matching prepare_problem().
-    v_pack_ref = (None if eta_chg is None
-                  else float(gen.pack_charge_voltage(float(soc0), chg_a)))
+        v, a, p_dem, v_bus, i_total, cruise, i_regen = gen.build_demand(
+            scenario_name, meta, times, dt, loss_map=loss_map,
+            drag_mode=drag_mode, eta_regen=eta_regen, eta_chg=eta_chg,
+            v_pack_ref=v_pack_ref_all, regen_i_max_a=chg_a)
     chg_ok = gen.charge_mask(times, p_dem, v_bus, cruise, chg_a, run_exit_s,
-                             eta_chg, v_pack_ref)
+                             eta_chg, v_pack_ref,
+                             i_regen if eta_regen is not None else None)
 
     prof = meta.get("ems_v_profile")
     policy = _instantiate(sim, strategy_name, scenario_name, meta,
-                          policy_file, strategy_kwargs)
+                          policy_file, strategy_kwargs, drag_mode)
+    # THE REGEN MANAGER, applied exactly as hil_plant_sim.main() applies it -
+    # AFTER the binding and by WRAPPING - so a walk drives the same command
+    # stream a live run does.  Windows follow the RESOLVED drag mode, so a
+    # rig-drag walk of a compensated scenario gets the empty list its own
+    # physics implies.
+    regen_mgr = None
+    if meta.get("ems_regen_manager") and prof:
+        regen_mgr = sim.RegenManager(
+            sim.derive_regen_windows(prof, drag_mode))
+        policy = regen_mgr.wrap(policy)
 
     cmd_period = 1.0 / sim.PiCommander.PI_CMD_HZ
     n_sub = max(1, int(round(dt / float(gov_dt_s))))
@@ -565,12 +646,32 @@ def walk(strategy_name: str, scenario_name: str, *, soc0: float = 0.7,
             r_now = share
 
         soc_stage_start = soc
+        # THE BRAKING CREDIT (2026-09-02).  Share-independent and mask-excluded
+        # from every FC charge stage (`charge_mask()` ANDs `i_regen <= 0`), so
+        # in practice it reaches the discharge arm only - which is the physical
+        # statement: during braking the FIRMWARE opens the REGEN path and the FC
+        # charge path is shut.  Threaded to both arms anyway so the two cannot
+        # price a stage differently.
+        # GATED ON THE COMMANDED WINDOW (M5, 2026-09-02), not on the physics.
+        # `i_regen[k]` says the stage is regen-CAPABLE; energy only reaches the
+        # pack where the manager has actually commanded `charge_goal` and the
+        # firmware has therefore opened REGEN_ENABLE.  Crediting the capable
+        # stages instead banked 0.0558 C over 50 stages - 4.0 % of the total -
+        # on stages where no path was open, which is a walk of a run nobody
+        # would get.  A scenario with NO manager keeps the ungated credit,
+        # because there the windows are not the manager's to withhold.
+        reg_k = float(i_regen[k])
+        if regen_mgr is not None and not regen_mgr.active(t):
+            reg_k = 0.0
+        res.regen_charge_c += reg_k * dt
+        if reg_k > 0.0:
+            res.regen_stages += 1
         if charge_now:
             if not in_window:
                 in_window, window_t0 = True, t
             soc, dh2, dh2p = gen.step_charge(soc, float(p_dem[k]),
                                              float(v_bus[k]), chg_a, dt,
-                                             cap_as, eta_chg)
+                                             cap_as, eta_chg, reg_k)
             # The proxy is billed for the SAME bus power step_charge() charges
             # the Gfc total for - one era switch, one expression, so the two
             # hydrogen figures cannot end up on different charger models.
@@ -585,7 +686,8 @@ def walk(strategy_name: str, scenario_name: str, *, soc0: float = 0.7,
                 in_window, window_t0 = False, None
             soc, dh2, dh2p = gen.step_discharge(soc, stage_share,
                                                 float(p_dem[k]),
-                                                float(v_bus[k]), dt, cap_as)
+                                                float(v_bus[k]), dt, cap_as,
+                                                reg_k)
             p_fc_bus = stage_share * float(p_dem[k])
 
         res.h2_g += dh2
@@ -651,9 +753,21 @@ def walk(strategy_name: str, scenario_name: str, *, soc0: float = 0.7,
             "GOVERNOR DISABLED: the commanded share was applied directly. This "
             "reproduces gen_dp_ems_table.heuristic_walk()'s model and is a "
             "regression anchor, NOT a prediction of board behaviour.")
+    if regen_mgr is not None:
+        res.regen_windows = [list(w) for w in regen_mgr.windows]
+        res.regen_duty_s = regen_mgr.duty_s()
     res.notes.append("charge admission: %s" % charge_admission)
     res.notes.append("charger era: %s" % chg_mod.era_label(eta_chg))
     res.notes.append("demand era: %s" % sim.loss_map_era_label(loss_map))
+    res.notes.append("road load: %s" % sim.drag_era_label(drag_mode))
+    res.notes.append("regen era: %s" % regen_mod.era_label(eta_regen))
+    if eta_regen is not None:
+        res.notes.append(
+            "REGEN HARVEST IS IDEALIZED: this model banks the credit from the "
+            "first tick of a window, while the plant burns roughly the first "
+            "0.9 s of every window in the chopper (AG105_SETTLE_S 0.5 s plus "
+            "the AG105_TAU_S 0.4 s ramp). Measured on ftp75c the realizable "
+            "fraction is 70.7 %.")
     return res
 
 
@@ -687,6 +801,12 @@ def main(argv=None):      # pragma: no cover - operator convenience
                          "plant's static losses and the realized `--droop "
                          "design` bus law. Must MATCH the --loss-map a DP "
                          "table being compared against was solved with.")
+    ap.add_argument("--drag", default=None,
+                    help="ROAD-LOAD PROFILE (2026-09-02). Omitted = the "
+                         "scenario's own `drag` key, or 'rig'.")
+    ap.add_argument("--eta-regen", type=float, default=None,
+                    help="REGEN DEMAND ERA (2026-09-02). Omitted = derived "
+                         "from --drag (the pre-regen era on the rig profile).")
     ap.add_argument("--csv", default=None, help="write the per-stage trace here")
     a = ap.parse_args(argv)
 
@@ -695,7 +815,8 @@ def main(argv=None):      # pragma: no cover - operator convenience
              policy_file=a.policy_file, dt_decision=a.dt,
              eta_fc_proxy=a.eta_fc, charge_admission=a.charge_admission,
              eta_chg=(None if a.eta_chg_none else a.eta_chg),
-             loss_map=gen.resolve_loss_map_arg(a.loss_map))
+             loss_map=_load()[1].resolve_loss_map_arg(a.loss_map),
+             drag_mode=a.drag, eta_regen=a.eta_regen)
     print("strategy %s on scenario %s" % (a.strategy, a.scenario))
     print(r.summary())
     if a.csv:

@@ -339,6 +339,301 @@ the claim did NOT reproduce under two tested cold-start stimuli — see the L5 n
 `hil_electrical.py`'s `strict_forward` block; UNVERIFIED as stated) — and needs its own A/B
 round against the bench.
 
+### 3.5 Road-load drag profiles (`--drag`, 2026-09-02)
+
+The road load in the §3 force law is one of **three named profiles**, selected by
+`--drag {rig,scaled-air,scaled-air-matched}` and defaulting to `rig`. The flag mirrors
+`--asymmetry` and `--droop` in shape: a mode choice whose default reproduces every campaign
+recorded before the flag existed. A scenario may declare a `drag` meta key; an explicit
+`--drag` overrides it, and the resolution source is recorded as `config.drag_from`.
+
+Table 3.5 gives the three profiles and what each does to the braking energy of the
+compressed FTP-75 cycle `ftp75c`.
+
+| Mode | Road load `F_road(v)` | `k_air` [N/(m/s)²] | Regen share of braking KE on `ftp75c` |
+|---|---|---|---|
+| `rig` *(default)* | `sgn(v)·F_COULOMB + B_EFF·v` | 0.0 | 0.00 % |
+| `scaled-air` | `k_air·v·abs(v)`, `F_c = 0` | 0.059806901748516605 | 51.25 % |
+| `scaled-air-matched` | `k_air·v·abs(v)`, `F_c = 0` | 0.013330032560214096 | 79.09 % |
+
+The compensated coefficient follows from the scaling study's own similarity rules and one
+pair of vehicle assumptions. The vehicle road load is taken as air drag alone,
+`0.5·rho·Cd·A_f·v_v²`, and the study scales a force by `S_L³` at the corresponding vehicle
+speed `v_v = v / S_L`, so the rig coefficient collapses to a single constant:
+
+```
+    S_L    = 3.0 / 25.3472 = 0.1183563                     (DRAG_SCALE_LENGTH)
+    k_air  = 0.5 · rho · Cd · A_f · S_L
+           = 0.5 · 1.225 · 0.33 · 2.5 · 0.1183563
+           = 0.059806901748516605                          (K_AIR)
+```
+
+`Cd` = 0.33 and `A_f` = 2.5 m² are **NEXO-class assumptions and are not present in the
+extracted text of the scaling paper**, `TODO(verify: operator)`. `k_air` is linear in their
+product, so an operator correction of `Cd·A_f` rescales `K_AIR`, `K_AIR_MATCHED` and every
+energy figure in this subsection proportionally. `rho` = 1.225 kg/m³ is the standard
+sea-level value.
+
+At the cycle peak of 3.0 m/s the compensated load is 0.538 N against the rig's own 3.602 N,
+so the compensated plant is approximately 6.7 times more freely rolling there. The Coulomb
+term is **zero** in both compensated modes, because the compensation replaces the rig
+friction rather than adding to it. `M_EFF` stays at 3.5 kg: the flywheel inertia is a
+physical property of the rig, and moving it would invalidate the `K_F` and drag
+identification of `motor_id_20260815.md`.
+
+**The third mode exists because the rig is still too light for the drag it is given.** The
+compressed rig's drag-to-inertia ratio, referred to the vehicle it stands for, is
+
+```
+    DRAG_INERTIA_RESIDUAL = S_L² · 2242 · TIME_FACTOR / M_EFF = 4.486628331803267
+```
+
+so `scaled-air` reaches only 51.25 % of braking kinetic energy where the full-scale vehicle
+reaches 79.09 %. Dividing `k_air` by that residual gives `K_AIR_MATCHED`, which reproduces
+the full-scale share to five significant figures. **The `ems-ftp75c-*` scenarios run
+`scaled-air`** (operator ruling, 2026-09-02); `scaled-air-matched` ships as a named profile
+so the choice between the two can be made on measurements, and **no registered scenario runs
+it**.
+
+The two compensated arms share one implementation property worth stating. `Plant.step()`
+carries **two force branches, not one generalized expression**: the `rig` arm is the
+pre-2026-09-02 code verbatim, and the compensated arm is `f_net = f_drive − k_air·v·abs(v)`
+with no Coulomb term and no stiction deadband. A single expression parameterized by `F_c`
+would be a silent physics defect, because the deadband test `abs(f_drive) <= F_COULOMB`
+becomes trivially true at `F_c = 0` and would delete a coasting body's momentum. The signed
+form `v·abs(v)` is load-bearing for the same class of reason: a bare `v²` term accelerates
+the body in reverse. The `v_try` zero-crossing guard is kept on both arms although quadratic
+drag alone cannot push the body through zero, so that the two profiles differ only where
+they are meant to.
+
+**Effect on the drive controller: none that needs re-synthesis.** The drag term enters the
+Youla plant as a single pole, `−B_EFF/M_EFF` = −0.1526 rad/s under `rig` and
+`−2·k_air·v/M_EFF` under compensation, which is −0.1025 rad/s at 3.0 m/s and zero at
+standstill. The largest possible pole movement is therefore 0.1526 rad/s, 0.88 % of the
+17.25 rad/s crossover, and it moves the pole toward the origin, that is toward the
+free-integrator plant the synthesis corners already bracket. Removing the Coulomb term
+reduces a constant load disturbance from 2.00 N to zero, which reduces integrator excursion
+and cannot destabilize the loop.
+
+⚠️ **THE COMPENSATED MODES ARE HIL-ONLY AND CANNOT BE REPLICATED ON THIS BENCH WITH THE
+SINGLE MOTOR NOW FITTED.** The reason is structural, not one of tuning. Compensation would
+have to be a friction feedforward cancelling `F_COULOMB + B_EFF·v`, up to 3.60 N at 3.0 m/s,
+and the only actuator able to apply it is the traction motor itself. A feedforward of that
+form keeps the net motor force **positive** through a stop, because the motor is supplying
+the friction the compensation cancels. No instant exists at which the current reverses, so
+there is no physical regeneration to measure, and a bench run would exercise the firmware
+regen branch only if the command were falsified. Replicating the profile needs a **second
+motor acting as a road-load brake on the flywheel**, sized in
+`docs/modeling/ftp75c_regen_cycle_design_20260902.md` §7 at approximately **3.1 N rim force,
+0.24 N·m, 400 rpm, under 10 W, four-quadrant**, under torque control rather than speed
+control. Three requirements attach to it, and none is optional.
+
+- **Coast-down calibration** of `F_COULOMB` and `B_EFF`, repeated after any drivetrain
+  rework. The compensation is only as good as the friction model it cancels, and the
+  FITTED values, not the model constants, must drive the road-load command.
+- A **speed-floor interlock** below approximately 0.2 m/s. The friction model is
+  unreliable there and the Coulomb term's sign is ill-defined, so the brake motor can
+  otherwise drive the flywheel backwards through zero.
+- A **setpoint-zero interlock**. A standing torque command at standstill is a stall
+  condition on a sub-10 W motor, which is a thermal hazard.
+
+### 3.6 Physics change record: road-load compensation and the regen credit (2026-09-02)
+
+*Written in the §4.6.2 pattern.*
+
+**What changed.** Three things landed together, and they are one round because the middle one
+is unobservable without the first and the third is unusable without the middle. First, the
+plant gained the two compensated road-load profiles of §3.5, so that a registered drive cycle
+can brake regeneratively at all. Second, a compressed FTP-75 cycle `ftp75c` was generated
+(`tools/gen_ftp75_profile.py --time-factor 0.5` → `tools/ftp75c_profile.py`, 234 points,
+t = 5.0–175.0 s, peak 3.0 m/s at t = 125.0 s), doubling every acceleration to ±0.3492 m/s²
+and bringing the required regen current into the same decade as the VESC clip. Third, the
+offline demand model shared by the DP generator, the offline walk and the MPC gained a
+**regen credit**, expressed as a per-stage pack current; §9.4.2 states that half.
+
+**Why the compression alone is not enough, and the compensation is.** Under the rig road load
+regeneration requires `M_EFF·|a| > F_road(v)`, that is `|a| > 0.571 + 0.153·v` m/s². The
+compressed cycle's peak deceleration is 0.3492 m/s², still below the 0.571 m/s² floor at
+standstill. Table 3.6 gives the measured energy chain, at 1 kHz inverse dynamics over the
+piecewise linear speed table.
+
+| Configuration | Braking KE (J) | Shaft regen, PRE-CLIP (J) | Regen share |
+|---|---|---|---|
+| `ftp75`, `rig` | 30.819 | 0.001 | 0.00 % |
+| `ftp75c`, `rig` | 30.818 | 0.001 | 0.00 % |
+| `ftp75c`, `scaled-air` | 30.818 | 15.794 | 51.25 % |
+| `ftp75c`, `scaled-air-matched` | 30.818 | 24.373 | 79.09 % |
+
+Table 3.6 shows that the compression moves the regen share not at all and the compensation
+moves it to half the braking energy. The compression is nonetheless load-bearing: on
+`scaled-air` the peak drive current is 1.7789 A and the peak unclipped regen current is
+−1.6210 A, so the mechanism is exercised against the 1.5 A `VESC_REGEN_I_MAX_A` clip rather
+than far below it. 14.94 % of braking samples sit above that clip, which costs 0.83 % of
+shaft regen energy: 15.794 J becomes **15.662 J**, and at `ETA_REGEN` = 0.80 that is
+**12.530 J** at the regen node.
+
+**The commanded regen windows, and one deviation from the design note.** The scenario layer
+does not harvest wherever the physics allows; it commands `charge_goal = 1.0` over derived
+windows, because asserting `charge_goal` one tick before the commanded current has gone
+negative takes `chargingControl()`'s CRUISE branch, calls `assertFcChargeEnable(true)`, drops
+BT off the bus and creates the single-source condition that has latched `OC_FC` before.
+`derive_regen_windows()` therefore applies a 0.20 s lead-in, a 0.20 s lead-out and a 0.50 s
+minimum duration. **The design note's segment rule was tightened in implementation.** Its
+rule admits a profile segment when the required motor force is negative at *either* endpoint,
+which admits a segment whose force crosses zero inside it and builds a window over an interval
+where the motor command is still positive; measured on `ftp75c`, that rule opened an FC charge
+window at t = 53.6 s and yielded ten windows carrying 29.000 s. The implementation trims each
+segment to the exact sub-interval over which the force is negative, located by bisection,
+which is valid because the force is monotone in time inside a segment: the acceleration is
+constant, the velocity affine and the road load monotone in velocity on the forward half-line.
+With the trim the derivation reproduces the design note's Table 5 exactly: **nine windows
+carrying 28.400 s of commanded duty, 16.7 % of the 170 s cycle**
+
+⚠️ **RE-DERIVED (H1, 2026-09-02).** The windows above were trimmed against `force < 0`. The firmware branches on `regenActive = (current < -0.1f)` (.ino:10807). An instant whose required current sits in (-0.1, 0) A is therefore braking in physics and NOT-REGEN in firmware. Commanding `charge_goal` there takes the cruise branch, calls `assertFcChargeEnable(true)` and drops BT off the bus. Seven of the nine windows contained 2.900 s of such instants, one of them for 100 % of its length. The trim is now against the firmware's own test with a 2x margin. That costs three windows and 8.8 s of duty, leaving **six windows carrying 19.600 s, 11.5 % of the 170 s cycle**. They are 23.200-24.300, 30.200-31.800, 62.700-67.300, 96.200-97.800, 159.200-162.800 and 164.200-171.300 s, and the worst in-window required current is -0.2045 A.
+, from 12 regen-capable
+intervals totalling 34.0 s before trimming. The windows are 21.200–24.300, 30.200–31.800,
+41.700–42.300, 57.200–57.800, 62.200–67.300, 91.700–92.800, 95.700–98.300, 156.700–162.800
+and 163.700–171.300 s. Under `--drag rig` the same derivation yields **zero** windows, which
+is the correct behaviour for a control run: the manager is re-derived at run time from the
+resolved drag mode, not from the scenario's declared one.
+
+**The credit is small against the drain, and no conclusion may rest on it being otherwise.**
+Roughly 1.39 C reaches the pack per cycle against roughly 96.8 A·s of pack draw, that is
+1.4 %, a SoC gain near +5.5e-5 against a −0.0054 excursion. Because the regen manager is a
+**common layer over every strategy** and the credit is share-independent, all five
+`ems-ftp75c-*` legs receive the identical **1.1729 C** on the identical six windows,
+confirmed in the governor walk, which is the design's share-independence property measured
+rather than assumed. `ftp75c` therefore validates the regen model end to end and REDUCES the DP's
+regen divergence rather than closing it. The bound earns the same credit the run
+does; what remains is the Ag105 settle and ramp, which cost roughly the first
+0.9 s of every window and hold the realizable fraction near 70.7 %. However, it is **not** expected to reorder the strategies, and a
+reordering on this stimulus is a defect signal rather than a result.
+
+**What it does to the offline bound.** The `ems-ftp75c-dp` table is the first DP table ever
+solved with the braking credit in its demand model. A credit-free table must supply with
+hydrogen the SoC the run gets back from braking, so its total is inflated and the run's
+deviation against it is correspondingly optimistic. The `regen_bound` correction that
+`hil_report_analysis.matched_dp_for_run()` prices per run goes to zero on a regen-era run.
+⚠️ **The bound is not strictly below the causal reference on this stimulus.** The offline
+matched solve reads the DP **+0.06 % above** the causal `soc-band` walk at matched terminal
+SoC (0.00598238 g against 0.00597881 g; matched terminal SoC target 0.697961, `lambda_term`
+2.48383 in 21 solves, match residual +1.82e-06 SoC). That is the discrete control grid;
+`LAMBDA_TERM` to terminal SoC is monotone but not continuous, and it is why the `ftp75c`
+tuple's vs-bound arm reads about 1.01 rather than under 1.
+
+**A DP grid-sizing guard was required, and it is gated on the regen era.** The first
+`ems-ftp75c-dp` solve failed with an infinite cost-to-go at the initial state. The mechanism
+is a grid-edge artefact and not a regen defect: at the bottom grid row every discharge control
+steps below `soc_grid[0]` and is marked infeasible, its cost-to-go becomes infinite, and on
+the next backward stage a row one step above brackets the infinite row, so `np.interp` returns
+infinity. The infeasibility therefore creeps upward at **exactly one grid row per stage**. On
+`ems-ftp75c-dp` that is 1800 stages against an 1861-row grid whose bottom pad is 219 rows, so
+it climbs past the initial state's row 1046. The compensated road load is what exposes it: the
+tractive demand falls by roughly 4.5×, so the reachable window narrows, so the proportional
+pad narrows, while the stage count is unchanged. The guard pads the grid by at least
+`(n_stages + 1) * soc_step`. **The gate is about artefacts, not about physics.** The guard is
+correct for every solve, and applying it universally would move the SoC grid of all three
+committed pre-regen tables and every stored `dp_db` record for a defect none of them reaches
+at their own initial state. Measured on `ems-dp-replay`: 611 stages climb 0.003055 SoC from a
+bottom edge 0.001782 below the reachable low, so the poison does enter the low end of that
+table's reachable window and simply never reaches 0.7. A `TODO(verify)` at the site records
+the outstanding work: re-solve the pre-regen tables under the guard and quantify the change
+before making it unconditional.
+
+**Fingerprint and era keys.** The DP profile fingerprint gains **two optional keys**, `drag`
+and `eta_regen`, and they are two rather than one because they are independent: a rig-drag run
+in the regen era is legitimate and earns zero credit, and a compensated run in the pre-regen
+era is a defined configuration. Both are **omitted entirely** when they resolve to `rig` and
+`None`, which is what keeps the three committed tables, the SDP policy artifacts and all 16
+`dp_db` records reachable and byte-identical. `DpReplayStrategy.bind_scenario()` gains a third
+era guard, alongside the accounting and `eta_chg` guards, and it states in its message that the
+fingerprint cannot catch the `eta_regen` half at all and catches the `drag` half only when the
+scenario declares the key. `K_AIR` and the other new module constants are swept up by
+`collect_model_constants()`, so `constants_hash` moves; that is correct, and a run recorded
+before the change carries the old hash and neither era key, which places it unambiguously.
+
+**No new SDP artifact was solved for `ems-ftp75c-sdp`,** and the omission is deliberate rather
+than deferred. The regen credit enters through the plant and the pack, not through the policy's
+decision law, and `sdp_policy_v4`'s axes, relative SoC and a demand bin, are
+stimulus-independent by construction. Re-solving would have produced a second artifact
+differing from `sdp_policy_v4` only in the demand map it was fitted on, with no campaign able
+to tell the two apart.
+
+**Downstream comparability.** No campaign has run any of this. Every trace in the archive
+carries the rig road load and the pre-regen demand model, so the boundary is entered rather
+than crossed: a compensated run is a different vehicle and is not comparable with any `ftp75`
+or 61 s leg, and a rig-drag run is unaffected because both era keys resolve to their absent
+sentinels. Every `ems-ftp75c-*` expectation band and both compressed-cycle frontier tuples are
+**PROVISIONAL on the first campaign that evaluates them**, and `ETA_REGEN` = 0.80 and
+`VESC_REGEN_I_MAX_A` = 1.5 A remain `TODO(verify)`, with the whole harvest column linear in
+the first.
+
+**REVERSAL PATH: thirteen edits, not one.** Setting `--drag rig` and `eta_regen = None` puts a
+single run back in the old era; it does not revert the round, because the era plumbing, the
+generated cycle, the scenarios and the solved artifacts remain. A return to the rig-only,
+credit-free configuration must touch every item below.
+
+1. `tools/hil_plant_sim.py`: drop `DRAG_MODES`, `DRAG_MODE_*`, `K_AIR`, `K_AIR_MATCHED`,
+   `DRAG_SCALE_LENGTH`, `DRAG_INERTIA_RESIDUAL`, `drag_k_air()` and `drag_era_label()`, the
+   `--drag` flag and its scenario-key resolution, and collapse `Plant.step()` back to the
+   single `rig` force branch.
+2. `tools/hil_plant_sim.py`: drop `derive_regen_windows()`, the `RegenManager` class,
+   `unwrap_policy()` and the `ems_regen_manager` scenario key.
+3. `tools/hil_plant_sim.py`: drop the `ftp75c` profile import and its generator gate, the
+   `FTP75C_*` constants, the five `ems-ftp75c-*` scenario entries,
+   `FTP75C_SOCBAND_CHARGE_ENTER_A` / `_EXIT_A`, and `SocBandStrategy`'s per-scenario
+   charge-threshold overrides with its `bind_scenario()`.
+4. `tools/hil_plant_sim.py`: drop the fingerprint and sidecar plumbing, that is `drag` and
+   `eta_regen` from `DP_FINGERPRINT_META_KEYS` and `DP_FINGERPRINT_OPTIONAL_KEYS`,
+   `dp_drag_mode()`, `plant_drag_mode()`, `dp_eta_regen()`, `plant_eta_regen()`, the third era
+   guard in `DpReplayStrategy.bind_scenario()`, and the `drag` / `drag_k_air` / `drag_from` /
+   `regen_manager` / `regen_windows` / `regen_duty_s` sidecar keys.
+5. `tools/gen_dp_ems_table.py`: restore `build_demand()`'s five-tuple return, drop the
+   `i_regen` credit from both SoC transitions and from `reachable_soc_window()`'s two extreme
+   walks, drop `charge_mask()`'s `i_regen <= 0` exclusivity term, drop the `--drag` and
+   `--eta-regen` flags and the four era header lines, restore the pre-committed E-M2 contract
+   text, and drop the era-gated grid-sizing guard.
+6. `tools/mpc_ems.py` and `tools/ems_walk.py`: the same demand port in lockstep, that is
+   `Preview.i_regen`, `StagePrecompute.i_regen_mean`, the `_rollout()` SoC integrator, the
+   charge-enumeration admissibility, and the walk's `regen_charge_c` / `regen_windows` /
+   `regen_duty_s`.
+7. `tools/regen_power.py`: delete.
+8. `tools/gen_ftp75_profile.py`: drop `--time-factor`, the `TIME_FACTORS` registry and the
+   `POINTS_INVARIANT` generation-time assertion; delete `tools/ftp75c_profile.py`.
+9. `tools/dp_tables/dp_ems_table_ems-ftp75c-dp.csv`: delete. The three pre-regen tables are
+   byte-identical across this round and need no regeneration, which is the whole point of
+   omitting an absent era key from the fingerprint.
+10. `tools/dp_results_db.py`: drop `drag` and `eta_regen` from `KEY_FIELDS` and
+    `OPTIONAL_KEY_FIELDS`, and drop any `ems-ftp75c-*` record prefilled by then. The 16
+    pre-regen records keep their keys.
+11. `tools/run_hil_suite.py`: drop `FTP75C_SCENARIOS`, `--with-ftp75c` and its gate, the
+    `ftp75c` and `ftp75c-mpc` frontier tuples, the five expectation blocks, `drag` from
+    `EMS_FRONTIER_STIMULUS_KEYS`, and the opt-in-set cost line's `ftp75c` entry.
+12. `tools/hil_report_analysis.py` and `tools/hil_ems_comparison.py`: drop the two era keys
+    from the matched-DP resolution and `drag` from the comparison's profile-group identity.
+13. `docs/HIL_PLANT.md` §3.5, §3.6 and §9.4.2, `docs/HIL_SCENARIOS.md` §6.2,
+    `docs/HIL_USER_MANUAL.md` §3.2.1c and the run-era field list in
+    `.claude/skills/hil-agent-analysis/references/hil-conventions.md`.
+14. The NINE test modules: `tools/test_regen_power.py` (delete), and the additions to
+    `test_hil_plant_sim.py`, `test_gen_dp_ems_table.py`, `test_ems_walk.py`,
+    `test_mpc_ems.py`, `test_run_hil_suite.py`, `test_dp_results_db.py`,
+    `test_hil_ems_comparison.py` and `test_hil_report_analysis.py`. Several of them
+    ASSERT the new behaviour rather than merely exercising it, so they fail loudly on a
+    partial reversal, which is the intended behaviour.
+15. The FIVE prefilled matched-DP solves under `tools/dp_db/solves/` and the
+    `tools/dp_db/index.json` entries that point at them. They are keyed on the two era
+    keys, so they become unreachable rather than wrong once the keys are dropped;
+    deleting them is a housekeeping step and not a correctness one.
+16. `tools/hil_report_analysis.py`'s two prose records: `MATCHED_DP_REGEN_NOTE`, which
+    states the era-conditional form of the boundary, and the note built inside
+    `_matched_dp_regen_bound()`, which records that the per-run bound goes to zero in
+    the regen era. Both revert to their unconditional pre-round wording.
+
+Items 1 to 3 are behavioural, 4 and 10 are the baseline keying, 5 to 7 are the offline demand
+model, 8 and 9 are generated artefacts, and 11 to 13 are the campaign and documentation
+surface. Reverting a subset leaves a plant running one road load and a demand model priced
+against another, which is the state this round's era keys exist to make impossible.
+
 ---
 
 ## 4. Electrical model
@@ -2308,15 +2603,26 @@ the FTP-75 Run window**. The 61 s `ems-dp-replay` cycle, which is loaded above t
 most of its length, gaps by only +0.33 %. The gap grew from −2.15 % to −4.14 % across the
 preload removal, which is the direction that attribution predicts.
 
-**Regen exposure is bounded, and on the frontier legs it is exactly zero.** The generator's
-demand model has no regen term (`gen_dp_ems_table.build_demand`); the deceleration demand
-itself is unchanged, so what is omitted is only the **returned** energy. All 11
-frontier/EMS runs carry **0.000 J** of regen energy — no drive cycle in this suite ever
-commands a negative motor current — so on those legs the omission is exact, not merely
-small. Regen-bearing scenarios are `frontier_eligible: False` by role, and the residual
-optimism there is bounded at **≤ 0.9 % of `h2`** (measured on `charge-regen`). A run whose
-`∫min(p_mot, 0) dt` is negative is labelled **regen-bearing** in the matched-DP block so
-the boundary travels with the number.
+**Regen exposure is era-dependent, and on the rig-drag legs it is exactly zero.**
+
+⚠️ **This paragraph described the PRE-REGEN era and is now scoped to it.** Section 9.4.2
+below carries the current model. Two eras have to be read apart:
+
+- **Pre-regen era** (`eta_regen` absent, and every campaign on record). The generator's
+  demand model has no regen term; the deceleration demand itself is unchanged, so what
+  is omitted is only the **returned** energy. All 11 rig-drag frontier/EMS runs carry
+  **0.000 J** of regen energy, because no rig-drag drive cycle in this suite ever
+  commands a negative motor current, so on those legs the omission is exact rather than
+  merely small.
+- **Regen era** (`eta_regen` set, which the `ems-ftp75c-*` family is the first family to
+  use). `build_demand()` carries the braking credit, so the bound earns what the run
+  earns and the omission is not the boundary any more. The residual there is the Ag105
+  settle and ramp, disclosed in 9.4.2.
+
+Regen-bearing scenarios outside those two cases are `frontier_eligible: False` by role,
+and the residual optimism there is bounded at **≤ 0.9 % of `h2`** (measured on
+`charge-regen`). A run whose `∫min(p_mot, 0) dt` is negative is labelled
+**regen-bearing** in the matched-DP block so the boundary travels with the number.
 
 #### 9.4.1 The demand model, and the static-loss map (2026-09-02)
 
@@ -2368,6 +2674,100 @@ key. A baseline solved in one era is not comparable with one solved in the other
 `hil_report_analysis.matched_dp_for_run()` resolves the era from the run's own
 `config.electrical` / `config.droop_mode` / `config.asymmetry`, exactly as it resolves
 `accounting` and `eta_chg`, and names the demand era in every run's `notes`.
+
+#### 9.4.2 The regen credit in the demand model (2026-09-02)
+
+**Until this round the offline demand model had no regen term at all.** `build_demand()`
+computed `p_mech = max(0.0, force * v)` and stopped there, so a braking stage cost nothing and
+returned nothing. The traction half of that was never wrong, since the 2026-09-02 correction at the
+site records that the DP deceleration demand was not overstated. However, the credit was missing,
+and a bound that omits energy the run gets back must buy that energy with hydrogen.
+
+**One chain, four consumers.** `tools/regen_power.py` is stdlib-only, on
+`tools/charger_power.py`'s constraint, and holds the chain the plant, the DP generator, the
+offline walk and the MPC all price braking with: `resolve_eta_regen()`, `check_eta_regen()`,
+`clip_regen_force_n()`, `regen_shaft_power_w()`, `regen_node_power_w()`,
+`regen_pack_current_a()`, `regen_pack_current_from_force_a()` and `era_label()`. The chain, in
+the order the energy flows, is
+
+```
+    f_regen = max(force, -K_F * VESC_REGEN_I_MAX_A)          the clip, as a FORCE
+    p_brake = max(0.0, -(f_regen * v))                       shaft power available
+    p_regen = ETA_REGEN * p_brake                            electrical, at V-MOT
+    i_pack  = min(ETA_CHG * p_regen / V_pack, ag105_i_max)   output-referred, un-netted
+```
+
+The clip is applied before the force becomes motion, so braking force and electrical return
+come from one number, exactly as `Plant.step()` does it. The last line is deliberately **not
+netted** against the braking chopper, on §4.6.2's measured ruling: the clamp is a residual
+absorber and not a prior claimant.
+
+**The credit is a pack CURRENT and not a negative `p_dem`,** and the choice is not
+presentational. Four properties of the existing code depend on it.
+
+- Nothing flows back to the bus. `MOT_PWR` is instantiated strict-forward, and §4.6.2 records
+  the bus contribution as structurally zero while the chopper clamps. A negative `p_dem` would
+  credit the bus for energy that never reaches it.
+- `solve_dp()`'s split-control feasibility test, `(p_fc / V) <= LIMIT_I_FC_MAX_A`, and its
+  stage cost both assume `p_dem >= 0`. A negative `p_dem` would bill negative hydrogen.
+- `charge_mask()`'s budget test, `(p_dem / v_bus + i_chg_bus) <= margin * LIMIT_I_FC_MAX_A`,
+  would become trivially true on braking stages and would admit FC charge windows the firmware
+  never opens there.
+- The MPC's violation tables bound `d * i_tot` and `(1 - d) * i_tot` one-sidedly and would not
+  catch a regen current limit.
+
+**Where it enters, and the property that keeps the DP tractable.** `build_demand()` now returns
+a seven-tuple `(v, a, p_dem, v_bus, i_total, cruise, i_regen)` and takes `drag_mode`,
+`eta_regen`, `eta_chg`, `v_pack_ref` and `regen_i_max_a`. `i_regen[k]` is a **per-stage,
+share-independent** pack current, added to the SoC transition of both the split column and the
+charge column and mirrored term for term in `step_discharge()` and `step_charge()`. Because it
+does not depend on the control index, the stage cost stays separable and the DP stays tractable
+at the same complexity, and SoC gains during braking stages independently of the share decision.
+`reachable_soc_window()` carries the credit on both extreme-policy walks, because regeneration
+raises the upper bound reachable from any state and a transition off the grid is infeasible
+rather than clamped.
+
+**Exclusivity, and its hardware origin.** A stage cannot both FC-charge and regen-charge, so
+`charge_mask()` gains one term, `i_regen <= 0.0`. This is the host-side image of
+`assertFcChargeEnable()`, which drives `BT_BUS_ENABLE` low, then `REGEN_ENABLE` low, then waits
+100 µs before raising `FC_CHARGE_ENABLE`, with `detectFaults()` latching
+`FAULT_SWITCH_CONFLICT` if the illegal combination is ever observed. The `cruise` term already
+excludes most braking stages but not all, since a shallow deceleration inside the cruise-slope
+tolerance can be regen-capable under the compensated drag; the explicit term makes the
+exclusion exact rather than incidental. It also keeps the mask **state-independent**, which is
+the property that makes the stage cost separable.
+
+Table 9.4.2 gives the demand the round produces on `ems-ftp75c-dp`, that is `ftp75c` under
+`scaled-air`, over its 1800 stages.
+
+| Quantity | Value |
+|---|---|
+| Peak `p_dem` | 5.221 W (0.331 A of bus current) |
+| Mean `p_dem` | 3.011 W |
+| Charge-admissible stages | 609 of 1800 |
+| Stages carrying a regen credit | 329 of 1800 |
+| Peak `i_regen` | 0.1441 A |
+| Total credit over the cycle | 1.1729 C |
+
+Table 9.4.2 shows the credit reaching 329 of the cycle's 1800 stages, at a peak of about
+44 % of the peak bus current the same cycle demands. The two masks are disjoint by
+construction rather than by measurement, because `charge_mask()` ANDs the exclusivity term in.
+
+**The pre-committed contract is discharged era-conditionally.** `gen_dp_ems_table.py` recorded
+in advance that `ETA_REGEN` and `VESC_REGEN_I_MAX_A` were absent from the table header and the
+drift guard *because* the demand model had no regen term, and that a generator gaining one must
+move both into the header and the guard. The generator now takes `--drag` and `--eta-regen` and
+emits `# drag:`, `# drag_k_air:`, `# eta_regen:` and `# vesc_regen_i_max_a:` **only in the new
+eras**, so a pre-regen table's header is byte-identical and its drift guard checks exactly what
+it checked before.
+
+⚠️ **An absent `eta_regen` key means the pre-regen era,** on `charger_power.eta_chg`'s
+convention verbatim, and `resolve_eta_regen()` maps the absence onto `None`. A consumer must
+resolve the era through that function rather than defaulting an efficiency, or a table solved
+for an archived run will price a credit that run never earned. The era is **not** the drag
+profile: `eta_regen` and `drag` are two independent optional keys, and both join
+`dp_results_db.KEY_FIELDS` and `OPTIONAL_KEY_FIELDS` on `loss_map`'s terms, so all 16 stored
+records keep their meaning and their key.
 
 ---
 
@@ -2475,3 +2875,102 @@ the *magnitudes* are plausible rather than measured.
 | **A closed-loop DP** | §9.4's benchmark is open loop and single-profile: it is a solution of ONE cycle, replayed. The natural next steps are (a) an ECMS/co-state extraction from the DP's own value function, which WOULD be causal and Pi-portable, and (b) regenerating the table under `--charger-accounting simple` whenever a campaign is run with `--electrical simple`, since a table optimised for the wrong accounting is not a bound. |
 | **A portable SoC estimator** | The `soc-band` EMS strategy closes on plant-truth `fb["soc"]`, which no real Pi can see (v4 telemetry has no SoC field). A `V_batt`-based estimator on the Pi (OCV lookup + coulomb counting off the telemetry `I_batt`) would feed the same law unchanged and make the strategy Mode-B portable. Does not exist. |
 | **A physical Ag105 CV loop and MPPT tracking** | ⚠️ Corrected 2026-09-02 — this row used to say a stateful SoC model "would let `AG105_ST_FULL` and a genuine CV taper appear". SoC **is** modelled (§4.2) and the FULL/CV branch **is** reached (`soc >= 0.995`, `charge-to-full`), so what remains open is different: the branch is a **synthetic** status + `AG105_TAU_S` taper rather than a regulated constant-voltage loop, and the MPPT **tracking** dynamics above the threshold are still unmodelled (§4.6). Closing either needs a bench charge cycle, not a simulator state. |
+
+---
+
+### 9.4.3 The share-control band: widened to the firmware command band (2026-09-02)
+
+The DP's share grid and the MPC's ladder both spanned [0.25, 0.75], and both now span the
+full firmware command band [0.15, 0.85]. This subsection records the change, its measured
+consequences and its reversal path.
+
+**The standing rule.** Every EMS strategy has access to the full [0.15, 0.85] range, and
+the benchmarks are strategies for this purpose (operator ruling, 2026-09-02). The band is
+taken from `governor_model.GOV_CONST["DROOP_R_MIN"/"DROOP_R_MAX"]` and never re-typed.
+
+**Why the old margin was not needed.** The old grid stopped 0.10 short of both rails so
+that `updateShareSetpointCutoff()` could never latch. Three facts retire that margin.
+The cut compares **strictly** (`.ino:9231-9257`), so 0.15 and 0.85 are themselves IN
+band. The firmware carries `SHARE_CUTOFF_HYST` = 0.01 **beyond** the band on top of that.
+And `sdp-v4` has railed at 0.8500 on 100 % of ticks across campaigns `20260902_011926`
+and `20260902_041414` with zero hazard cuts. The grid edges are the same floats
+`SdpStrategy.clamp_share()` emits, and they round-trip through the 22-byte command
+packet to the same float32.
+
+**What it fixes.** The old grid was NARROWER than the policies it bounded, because
+`SdpStrategy.clamp_share()` clamps to the band. On every `ems-*-sdp` leg the DP was
+solving over a control set that did not contain the policy's operating point, and the
+causal run beat its own lower bound. That is a benchmark the referent beats, which ranks
+nothing.
+
+**Resolution is held, not the point count.** The DP goes 41 points over 0.50 to 57 over
+0.70, both at 0.0125 spacing. The MPC goes 7 points to 9, spacing 0.0833 to 0.0875, a
+5 % coarsening against 20 % at 8 points and 40 % at 7. Holding the count instead would
+have made the widening a change of resolution as well as of reach and confounded every
+before/after comparison. Cost: about 2x the DP solve, and 2187 MPC candidates against
+1029, measured at 0 % budget expiry over 183 decisions x 3 repeats on a loaded host.
+
+**Era handling.** `n_share` and `share_span` are already key fields of
+`dp_results_db.KEY_FIELDS`, are already written into every table header and are already
+checked by `DpReplayStrategy.bind_scenario()`'s drift guard. A table or a stored record
+solved on the old grid therefore keys and binds as its own era rather than colliding with
+a new one. Nothing is orphaned; old artifacts simply stop matching a live scenario, which
+is the correct outcome for a benchmark solved over a control set the firmware does not
+bound the strategies to.
+
+⚠️ **Single-source commands (share 0 and 1) are NOT in either control set.** They are
+issued through the setpoint latch rather than through the share loop and are subject to
+the fw v25 share-cut load guard, so they need their own control column with its own
+feasibility test. Queued as a separate round.
+
+**REVERSAL PATH.** Seven items.
+
+1. `tools/gen_dp_ems_table.py`: `DP_SHARE_MIN`/`DP_SHARE_MAX` back to
+   `SOC_BAND_SHARE_NOMINAL -/+ SOC_BAND_SHARE_SPAN`, `DP_N_SHARE` back to 41,
+   `DP_CHARGE_SHARE` follows `DP_SHARE_MAX` automatically, and the
+   `prepare_problem()` band guard back to a strict comparison.
+2. `tools/mpc_ems.py`: `SHARE_BAND_DP` back to the literal `(0.25, 0.75)`,
+   `SHARE_BAND_SDP` back to `(0.15, 0.85)`, `SHARE_LEVELS` back to 7.
+3. `tools/hil_plant_sim.py`: `MPC_CAMPAIGN_MAX_CANDIDATES` back to 1029.
+4. Regenerate every committed table under `tools/dp_tables/`, and re-prefill every
+   `tools/dp_db/` record solved on the wide grid. Both are era-keyed, so the old
+   artifacts remain valid and reachable throughout.
+5. `tools/run_hil_suite.py`: the five `walk_h2` pins on the MPC legs, the
+   `ems-mpc-cross` share-range note, the `ems-ftp75c-mpc` constant-share note, and
+   every frontier `provisional_note` that quotes a re-derived ratio.
+6. The tests that encode the band: `test_no_candidate_leaves_the_share_band`,
+   `test_delivery_table_applies_the_minority_clip`,
+   `test_index_five_is_reachable_from_a_coarsened_decision`,
+   `test_the_terminal_price_moves_the_first_move` (its explicit budget),
+   `test_the_committed_plan_is_insensitive_to_the_projection` (its 0.675 pin), and the
+   old-grid restoration inside
+   `test_old_era_regeneration_reproduces_the_pre_change_table_byte_for_byte`.
+7. The standing rule in `docs/HIL_SCENARIOS.md` §6.0 and the share-band era note in
+   `.claude/skills/hil-agent-analysis/references/hil-conventions.md`.
+
+**Single-source topology, and what the plant already models.** The MPC is to gain 0 and 1
+single-source commands as candidates (operator ruling, 2026-09-02; the DP and the SDP are
+not). Two plant-side facts bear on that and are recorded here because they are properties
+of the plant rather than of the planner.
+
+The **bus law changes with the topology.** The loss map's `g_par` is the parallel droop
+code `g_fc*g_bt/(g_fc+g_bt)`, which does not exist with one channel off the bus. Probing
+the hi-fi engine at `--droop design --asymmetry measured` over three droop codes gives a
+slope ratio of 1.9453 for FC-only and 2.0579 for BT-only against the two-source law, each
+stable to 0.03 % across a factor-of-two code range, with no-load intercepts of 15.87821 V
+and 15.86468 V. `hil_plant_sim.single_source_bus_law()` is the implementation and
+`docs/modeling/dp_loss_map_20260902.md` carries the measurement. The four constants sit
+outside the loss map deliberately: the map is a fingerprinted era key, and adding fields
+would orphan every committed DP table and every stored `dp_db` record.
+
+The **cut and its restore are already ported.** `governor_model._setpoint_cutoff()`
+carries the firmware's own sequence in both directions: the last-source guard, the load
+guard (`abs(i) <= SHARE_CUT_MAX_HANDOFF_A` 0.5 A, with refusals counted), survivor
+turn-on blanking over `SHARE_CUT_SURVIVOR_BLANK_MS` 30 ms, the S1 ownership self-heal, and
+the release path with its charged-bus guard and its
+`DROOP_RATIO_SLEW_HANDOFF_PER_TICK` 0.002/tick restore slew. No porting is required before
+the candidates are added.
+
+⚠️ **No run commands 0 or 1 today.** The candidate enumeration is not implemented, for the
+path-dependence reason set out in `docs/modeling/mpc_design_20260901.md`, section
+2026-09-02. A trace that shows a commanded share outside [0.15, 0.85] is a defect.

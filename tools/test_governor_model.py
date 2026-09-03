@@ -43,23 +43,29 @@ def ino_text():
 
 
 # name in GOV_CONST -> (regex to find the firmware literal, expected value)
+# ⚠️ `const` OR `constexpr` (2026-09-02).  The firmware moved several of these
+# declarations from `const float` to `constexpr float`; the VALUES are
+# unchanged, and this scrape is about the values.  Matching only `const float`
+# turned a declaration-style edit into "could not find firmware literal", which
+# reads as a drift and is not one.  The optional group keeps the check on the
+# NUMBER, which is what the governor model has to agree with.
 _FW_CONST_PATTERNS = {
-    "K_DROOP": r"const\s+float\s+K_DROOP\s*=\s*([0-9.]+)f",
-    "DROOP_R_MIN": r"const\s+float\s+DROOP_R_MIN\s*=\s*([0-9.]+)f",
-    "DROOP_R_MAX": r"const\s+float\s+DROOP_R_MAX\s*=\s*([0-9.]+)f",
-    "SHARE_I_TOT_MIN_A": r"const\s+float\s+SHARE_I_TOT_MIN_A\s*=\s*([0-9.]+)f",
-    "SHARE_MINORITY_I_MIN_A": r"const\s+float\s+SHARE_MINORITY_I_MIN_A\s*=\s*([0-9.]+)f",
-    "SHARE_CUT_MAX_HANDOFF_A": r"const\s+float\s+SHARE_CUT_MAX_HANDOFF_A\s*=\s*([0-9.]+)f",
-    "SHARE_GOV_OL_HYST_A": r"const\s+float\s+SHARE_GOV_OL_HYST_A\s*=\s*([0-9.]+)f",
-    "DROOP_RATIO_SLEW_PER_TICK": r"const\s+float\s+DROOP_RATIO_SLEW_PER_TICK\s*=\s*([0-9.]+)f",
-    "SHARE_HANDOFF_MIN_A": r"const\s+float\s+SHARE_HANDOFF_MIN_A\s*=\s*([0-9.]+)f",
-    "DROOP_RATIO_SLEW_HANDOFF_PER_TICK": r"const\s+float\s+DROOP_RATIO_SLEW_HANDOFF_PER_TICK\s*=\s*([0-9.]+)f",
-    "SHARE_HANDOFF_LIVE_A": r"const\s+float\s+SHARE_HANDOFF_LIVE_A\s*=\s*([0-9.]+)f",
+    "K_DROOP": r"const(?:expr)?\s+float\s+K_DROOP\s*=\s*([0-9.]+)f",
+    "DROOP_R_MIN": r"const(?:expr)?\s+float\s+DROOP_R_MIN\s*=\s*([0-9.]+)f",
+    "DROOP_R_MAX": r"const(?:expr)?\s+float\s+DROOP_R_MAX\s*=\s*([0-9.]+)f",
+    "SHARE_I_TOT_MIN_A": r"const(?:expr)?\s+float\s+SHARE_I_TOT_MIN_A\s*=\s*([0-9.]+)f",
+    "SHARE_MINORITY_I_MIN_A": r"const(?:expr)?\s+float\s+SHARE_MINORITY_I_MIN_A\s*=\s*([0-9.]+)f",
+    "SHARE_CUT_MAX_HANDOFF_A": r"const(?:expr)?\s+float\s+SHARE_CUT_MAX_HANDOFF_A\s*=\s*([0-9.]+)f",
+    "SHARE_GOV_OL_HYST_A": r"const(?:expr)?\s+float\s+SHARE_GOV_OL_HYST_A\s*=\s*([0-9.]+)f",
+    "DROOP_RATIO_SLEW_PER_TICK": r"const(?:expr)?\s+float\s+DROOP_RATIO_SLEW_PER_TICK\s*=\s*([0-9.]+)f",
+    "SHARE_HANDOFF_MIN_A": r"const(?:expr)?\s+float\s+SHARE_HANDOFF_MIN_A\s*=\s*([0-9.]+)f",
+    "DROOP_RATIO_SLEW_HANDOFF_PER_TICK": r"const(?:expr)?\s+float\s+DROOP_RATIO_SLEW_HANDOFF_PER_TICK\s*=\s*([0-9.]+)f",
+    "SHARE_HANDOFF_LIVE_A": r"const(?:expr)?\s+float\s+SHARE_HANDOFF_LIVE_A\s*=\s*([0-9.]+)f",
     "SHARE_HANDOFF_DWELL_MAX_TICKS": r"const\s+int\s+SHARE_HANDOFF_DWELL_MAX_TICKS\s*=\s*(\d+)",
-    "SHARE_GOV_FILT_ALPHA": r"const\s+float\s+SHARE_GOV_FILT_ALPHA\s*=\s*([0-9.]+)f",
-    "SHARE_CUTOFF_HYST": r"const\s+float\s+SHARE_CUTOFF_HYST\s*=\s*([0-9.]+)f",
+    "SHARE_GOV_FILT_ALPHA": r"const(?:expr)?\s+float\s+SHARE_GOV_FILT_ALPHA\s*=\s*([0-9.]+)f",
+    "SHARE_CUTOFF_HYST": r"const(?:expr)?\s+float\s+SHARE_CUTOFF_HYST\s*=\s*([0-9.]+)f",
     "SHARE_CUT_SURVIVOR_BLANK_MS": r"const\s+uint32_t\s+SHARE_CUT_SURVIVOR_BLANK_MS\s*=\s*(\d+)u",
-    "SHARE_SP_CHANGE_EPS": r"const\s+float\s+SHARE_SP_CHANGE_EPS\s*=\s*([0-9.eE+-]+)f",
+    "SHARE_SP_CHANGE_EPS": r"const(?:expr)?\s+float\s+SHARE_SP_CHANGE_EPS\s*=\s*([0-9.eE+-]+)f",
     "MDAC_RES": r"const\s+int\s+MDAC_res\s*=\s*(\d+)",
     "POWER_BAL_PERIOD_US": r"#define\s+POWER_BAL_PERIOD_US\s+(\d+)u",
 }
@@ -749,3 +755,49 @@ def test_charge_path_claim_bt_restores_fc_when_share_loop_held_it_off():
 
 if __name__ == "__main__":  # pragma: no cover
     raise SystemExit(pytest.main([__file__, "-v"]))
+
+
+def test_the_setpoint_cut_port_covers_both_directions_and_both_guards():
+    """THE PORT THE MPC's SINGLE-SOURCE CANDIDATES WILL DEPEND ON.
+
+    The MPC is to gain 0 and 1 commands as candidates (operator ruling,
+    2026-09-02), and those go through the firmware's setpoint latch rather than
+    through the share loop.  Before that work can be scheduled the port has to
+    be known to cover the firmware's whole sequence, in BOTH directions, with
+    the fw v25 guards.  This test is that verification, asserted through
+    behaviour rather than by reading the source.
+
+    Four properties, each one a thing a partial port would get wrong."""
+    C = gm.GOV_CONST
+    cut = C["SHARE_CUT_MAX_HANDOFF_A"]
+
+    def _fresh():
+        g = gm.GovernorModel(dt_s=1e-3, seed_r=0.5)
+        g.v_bus_ok = True
+        return g
+
+    # 1. THE LOAD GUARD REFUSES a cut whose doomed channel is carrying current,
+    #    and COUNTS the refusal.  This is the fw v25 guard, and it is the one
+    #    the MPC's feasibility test has to respect.
+    g = _fresh()
+    for k in range(50):
+        g.step(0.05, 2.0, 0.2, True, True, k * 1e-3)   # sp below the rail, FC hot
+    assert g.state.sp_cut_fc is False, "a cut was taken over a hot channel"
+    assert g.state.refused_load > 0, "the refusal was not counted"
+
+    # 2. ... AND ALLOWS it once that channel is under the guard.
+    g = _fresh()
+    for k in range(50):
+        g.step(0.05, 0.5 * cut, 0.9, True, True, k * 1e-3)
+    assert g.state.sp_cut_fc is True, "a legal cut was refused"
+
+    # 3. THE RESTORE PATH exists and clears the latch when the setpoint comes
+    #    back in band -- a port with only the cut would leave it latched.
+    for k in range(50, 120):
+        g.step(0.5, 0.0, 0.9, False, True, k * 1e-3)
+    assert g.state.sp_cut_fc is False, "the latch never released"
+
+    # 4. THE SLEW CONSTANT the restore runs at is the firmware's, and is what a
+    #    candidate's rollout must carry across a restore.
+    assert C["DROOP_RATIO_SLEW_HANDOFF_PER_TICK"] == 0.002
+    assert C["SHARE_CUT_SURVIVOR_BLANK_MS"] == 30.0

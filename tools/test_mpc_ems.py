@@ -183,7 +183,11 @@ def test_drain_and_demand_match_numpy_originals(gen):
         run_exit = float(sim.SOC_BAND_RUN_EXIT_S
                          if meta.get("ems_run_exit_s") is None
                          else meta["ems_run_exit_s"])
-        _, _, p_dem, v_bus, _, cruise = got
+        # SEVEN elements since the 2026-09-02 regen round.
+        _, _, p_dem, v_bus, _, cruise, i_regen = got
+        # Pre-regen era on every one of these rig-drag scenarios: the credit
+        # is the ABSENCE of the term, so the column is exactly zero.
+        assert not any(i_regen)
         for eta in (None, chg.ETA_CHG_DEFAULT):
             vref = None if eta is None else M.pack_charge_voltage(0.7, chg_a)
             mine = M.charge_mask(times, p_dem, v_bus, cruise, chg_a, run_exit,
@@ -474,11 +478,20 @@ def test_no_candidate_leaves_the_share_band():
         assert p.ladder[0] == pytest.approx(band[0])
         assert p.ladder[-1] == pytest.approx(band[1])
         assert all(band[0] - 1e-15 <= s <= band[1] + 1e-15 for s in p.ladder)
-        # The DP band stops short of the cut rails, so the setpoint latch can
-        # never fire (adjudication 2.3).
-        if band == M.SHARE_BAND_DP:
-            assert p.ladder[0] > gm.GOV_CONST["DROOP_R_MIN"]
-            assert p.ladder[-1] < gm.GOV_CONST["DROOP_R_MAX"]
+        # ⚠️ THE BAND IS THE CUT BAND NOW (2026-09-02).  This used to assert
+        # that the DP band stopped SHORT of the rails, so the setpoint latch
+        # could never fire.  The standing operator rule gives every EMS
+        # strategy the full [0.15, 0.85] range, so the ladder ends ON the
+        # rails -- and that is safe for the reason the widening rests on:
+        # updateShareSetpointCutoff() compares STRICTLY, so the rails are IN
+        # band, and the firmware carries SHARE_CUTOFF_HYST beyond them on top.
+        # What must still hold is that no candidate goes OUTSIDE.
+        assert p.ladder[0] >= gm.GOV_CONST["DROOP_R_MIN"]
+        assert p.ladder[-1] <= gm.GOV_CONST["DROOP_R_MAX"]
+        # ... and the ladder edges are the rails EXACTLY, so the emitted
+        # setpoint is the same float the firmware compares.
+        assert p.ladder[0] == gm.GOV_CONST["DROOP_R_MIN"]
+        assert p.ladder[-1] == gm.GOV_CONST["DROOP_R_MAX"]
 
 
 def test_commanded_share_stays_in_band_over_a_run():
@@ -538,6 +551,57 @@ def test_charge_is_never_commanded_outside_the_mask():
             assert s.latch.hold_until is not None
         soc -= 2e-5
         t += 0.02
+
+
+def test_a_regen_window_does_not_arm_the_fc_dwell():
+    """THE REGEN GUARD ON THE 8 s FC DWELL (M2, 2026-09-02).
+
+    `SdpStrategy.decide()` and `SocBandStrategy.__call__()` both refuse to arm
+    the minimum-dwell latch on a tick the regen manager has claimed, and the MPC
+    did not.  The dwell is a HOST construct governing the FC-PATH windows;
+    inside a regen window the firmware's `regenActive` branch owns the charger
+    and the FC path is SHUT, so arming there records a window that never existed
+    and pins the intent high for 8 s after the braking ends.
+
+    ⚠️ THE CHARGE DECISION IS FORCED, and deliberately.  On every registered
+    stimulus this controller declines to charge on its own economics, so a
+    black-box drive never reaches the `goal > 0.0` branch the guard lives on and
+    would assert nothing.  Forcing the planner's decision is the only way to
+    exercise it; everything downstream of `solve()` -- the latch, the guard, the
+    emitted goal -- is the shipped code.  The two runs differ ONLY in
+    `regen_commanded`."""
+    def _run(regen_commanded):
+        s = _bound()
+        real = s.planner.solve
+
+        def _always_charge(*a, **k):
+            dec = real(*a, **k)
+            dec.charge = True
+            return dec
+
+        s.planner.solve = _always_charge
+        prev = s.preview
+        k0 = prev.index(20.0)
+        fb = {"t": 20.0, "soc": 0.66, "V_bus": prev.v_bus[k0],
+              "I_fc": 0.5 * prev.i_total[k0],
+              "I_batt": 0.5 * prev.i_total[k0],
+              "v_profile": sim.piecewise(_meta()["ems_v_profile"], 20.0),
+              "regen_commanded": regen_commanded}
+        out = s(20.0, fb)
+        return out["charge_goal"], s.latch.hold_until
+
+    # The forcing works and the branch is reached: without the flag the leg
+    # emits the intent AND arms the dwell.  That is what makes the assertion
+    # below a statement about the guard rather than about a dead branch.
+    goal_off, hold_off = _run(False)
+    assert goal_off > 0.0
+    assert hold_off is not None
+
+    # With the tick claimed by the manager, the intent still goes out -- the
+    # firmware's regen branch is what consumes it -- but NO FC dwell is armed.
+    goal_on, hold_on = _run(True)
+    assert goal_on > 0.0
+    assert hold_on is None
 
 
 def test_planner_refuses_a_band_that_does_not_span_the_blocks():
@@ -891,20 +955,30 @@ class _Args:
 def test_bind_scenario_signature_matches_the_hook_contract():
     """H3: `main()` calls the binder BY NAME with its trailing arguments.
 
-    ⚠️ FOUR, not two, since the 2026-09-02 fix round: `droop_mode` and
-    `asymmetry_mode` joined the contract so the demand-model era can be
-    resolved from the RUN rather than taken blind from the scenario key (fix
-    M1). Every implementation must accept all four or a campaign dies at bind
-    time with a TypeError."""
+    ⚠️ FIVE, not two, since the 2026-09-02 ftp75c round: `droop_mode` and
+    `asymmetry_mode` joined the contract in the earlier fix round so the
+    demand-model era could be resolved from the RUN rather than taken blind
+    from the scenario key (fix M1), and `drag_mode` joined for the same reason
+    again -- `--drag` OVERRIDES a scenario's own `drag` key, so a binder handed
+    only the meta would resolve the wrong road-load era. Every implementation
+    must accept all five or a campaign dies at bind time with a TypeError.
+
+    ALL FOUR BINDERS are compared, not just the SDP one: the DP and soc-band
+    binders take the same trailing arguments from the same call site, and the
+    soc-band binder is the newest of them (its per-scenario charge thresholds
+    arrive through this hook).
+    """
     import inspect
-    ours = list(inspect.signature(M.MpcStrategy.bind_scenario).parameters)
-    theirs = list(inspect.signature(sim.SdpStrategy.bind_scenario).parameters)
-    assert ours == theirs == ["self", "scenario", "meta", "electrical_mode",
-                              "args", "droop_mode", "asymmetry_mode"]
+    want = ["self", "scenario", "meta", "electrical_mode",
+            "args", "droop_mode", "asymmetry_mode", "drag_mode"]
+    for cls in (M.MpcStrategy, sim.SdpStrategy, sim.DpReplayStrategy,
+                sim.SocBandStrategy):
+        assert list(inspect.signature(cls.bind_scenario).parameters) == want,             cls.__name__
     # And the call `main()` actually makes must not raise.
     s = M.MpcStrategy("mpc-det")
     s.bind_scenario(SCEN, _meta(), electrical_mode="hifi", args=_Args(),
-                    droop_mode="design", asymmetry_mode="measured")
+                    droop_mode="design", asymmetry_mode="measured",
+                    drag_mode=None)
     assert s.electrical_mode == "hifi"
 
 
@@ -1014,13 +1088,17 @@ def test_delivery_table_applies_the_minority_clip():
     d = p.delivery_table(pre, {}, 0.5, [False] * 4)[0]
     lo = M.GOV_MINORITY_A / 0.7
     assert lo == pytest.approx(0.42857142857142855)
-    # The bottom ladder point 0.25 is BELOW the floor and must come back clipped.
-    assert p.ladder[0] == pytest.approx(0.25)
+    # The bottom ladder point 0.15 is BELOW the floor and must come back
+    # clipped.  (0.25 before the 2026-09-02 band widening; the clip binds
+    # HARDER now, which is the point of asserting it here.)
+    assert p.ladder[0] == pytest.approx(0.15)
     assert d[0][0] == pytest.approx(lo)
-    # The top point 0.75 is above 1 - lo and must come back clipped too.
+    # The top point 0.85 is above 1 - lo and must come back clipped too.
     assert d[0][-1] == pytest.approx(1.0 - lo)
     # And the middle point, which the clip does not bind on, is untouched.
-    assert d[0][3] == pytest.approx(0.5)
+    # Index 4 is the centre of a NINE-point ladder (0.15 + 4*0.0875 = 0.50).
+    assert p.ladder[4] == pytest.approx(0.5)
+    assert d[0][4] == pytest.approx(0.5)
 
 
 def test_charge_stage_cost_carries_the_charger_bus_power():
@@ -1094,11 +1172,25 @@ def test_charge_stage_cost_tracks_the_charger_era(eta):
 
 
 def test_the_terminal_price_moves_the_first_move():
-    """H4 mutation 5: a zeroed terminal cost is not a silent no-op."""
+    """H4 mutation 5: a zeroed terminal cost is not a silent no-op.
+
+    ⚠️ AN EXPLICIT, LARGE BUDGET IS REQUIRED (2026-09-02, the band widening).
+    This test asserts a property of the OPTIMUM -- that a dearer terminal state
+    of charge never asks less of the fuel cell -- and the search is ANYTIME, so
+    at the default budget it returns a truncated incumbent instead.  At nine
+    ladder points the enumeration is 729 candidates for a single charge option
+    against 343 before, and the default budget explored only 433-540 of them:
+    the sequence came back [0.15, 0.5, 0.675, 0.5, 0.5], non-monotone purely
+    because the later solves saw fewer candidates.  With the budget lifted it
+    is [0.15, 0.15, 0.85, 0.85, 0.85], which is monotone AND spans the full
+    band -- a stronger reading of the same property than the old ladder could
+    express.  Nothing about the controller changed; a test of the optimum must
+    not be a test of the wall clock."""
     shares = []
     for rho in (0.0, 1.0, M.RHO_METRIC_G_PER_SOC, M.RHO_SDP_SHADOW_G_PER_SOC,
                 20.0):
-        s = M.MpcStrategy("mpc-det", terminal_price_mode=rho)
+        s = M.MpcStrategy("mpc-det", terminal_price_mode=rho,
+                          budget_ms=1.0e5)
         s.bind_scenario(SCEN, _meta())
         pre = M.precompute_stages(s.preview, s.preview.index(20.0),
                                   M.HORIZON_N, mode_seed=M.STAGE_CLOSED)
@@ -1893,22 +1985,30 @@ def test_a_frozen_sub_sample_holds_whatever_the_setpoint_did():
 # 16. The fix round of 2026-09-02: the search width is wall-clock-free.
 # ═════════════════════════════════════════════════════════════════════════════
 def test_index_five_is_reachable_from_a_coarsened_decision():
-    """H1: the cruise share 0.6667 must not be structurally unreachable.
+    """H1: a share the coarse rule skips must not be structurally unreachable.
 
-    At seven levels the evenly-spaced rule can only produce {0,2,3,4,6} or
-    {0,3,6}, so indices 1 and 5 appear in NO coarse set.  Index 5 is 0.6667, the
-    share `mpc-det` commands through cruise.  The incumbent's NEIGHBOURS are
-    unioned in so any index is one coarsened decision from an adjacent one."""
+    The evenly-spaced coarse rule cannot produce every index, so some appear in
+    NO coarse set.  The incumbent's NEIGHBOURS are unioned in so any index is
+    one coarsened decision from an adjacent one.
+
+    ⚠️ RE-DERIVED FOR THE NINE-POINT LADDER (2026-09-02).  The fixture used to
+    name index 5 of a SEVEN-point ladder over [0.25, 0.75], which was 0.6667,
+    the share `mpc-det` commanded through cruise.  The ladder is now nine
+    points over [0.15, 0.85], so the skipped indices and their shares both
+    move; the PROPERTY under test is unchanged and the indices are recomputed
+    from the rule rather than retyped."""
     p = M.Planner()
-    assert p.ladder[5] == pytest.approx(0.6666666666666666)
-    bare = M.coarse_ladder_set(7, 5)
-    assert 5 not in bare and 1 not in bare, "the fixture no longer bites"
-    for inc in ((4, 4, 4), (6, 6, 6), (4, 6, 4)):
-        act = M.coarsen_ladder(7, 3, 3, incumbent=inc, budget_ms=10.0)
-        assert 5 in act, "0.6667 unreachable from incumbent %r: %r" % (inc, act)
-    # ...and symmetrically for index 1 (0.3333) from either side.
+    assert len(p.ladder) == 9
+    bare = M.coarse_ladder_set(9, 5)
+    skipped = [i for i in range(9) if i not in bare]
+    assert skipped, "the fixture no longer bites"
+    for i in skipped:
+        for inc in ((max(0, i - 1),) * 3, (min(8, i + 1),) * 3,
+                    (max(0, i - 1), min(8, i + 1), max(0, i - 1))):
+            act = M.coarsen_ladder(9, 3, 3, incumbent=inc, budget_ms=10.0)
+            assert i in act,                 "index %d unreachable from incumbent %r: %r" % (i, inc, act)
     for inc in ((0, 0, 0), (2, 2, 2)):
-        act = M.coarsen_ladder(7, 3, 3, incumbent=inc, budget_ms=10.0)
+        act = M.coarsen_ladder(9, 3, 3, incumbent=inc, budget_ms=10.0)
         assert 1 in act, "0.3333 unreachable from incumbent %r: %r" % (inc, act)
 
 
@@ -2082,7 +2182,11 @@ def test_the_committed_plan_is_insensitive_to_the_projection():
         r = ems_walk.walk("mpc-det", SCEN, soc0=0.7, governor=True,
                           strategy_kwargs={"budget_ms": 15.0,
                                            "candidate_cost_ms": cost})
-        cruise = sum(1 for x in r.share_cmd if abs(x - 0.6666666666666666) < 1e-9)
+        # 0.675 is ladder index 6 of the NINE-point ladder
+        # (0.15 + 6*0.0875); it was 0.6667 = index 5 of seven over
+        # [0.25, 0.75] before the 2026-09-02 band widening.  The PROPERTY is
+        # unchanged: the cruise command must not move with the projection.
+        cruise = sum(1 for x in r.share_cmd if abs(x - 0.675) < 1e-9)
         out.append((cost, r.h2_g, cruise))
     base = out[0][1]
     for cost, h2, cruise in out:
@@ -2157,3 +2261,190 @@ def test_a_scenario_may_bind_the_demand_era(monkeypatch):
     s2 = M.MpcStrategy(name="mpc-det", variant="det", loss_map=lm)
     s2.bind_scenario(SCEN, sim.SCENARIOS[SCEN])
     assert s2.loss_map == lm
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# THE BRAKING CREDIT IN THE PLANNER'S PREDICTION MODEL (2026-09-02, ftp75c)
+#
+# The planner's model and the bound it is scored against must carry the SAME
+# credit, or the MPC systematically under-values coasting relative to a DP that
+# priced it.  The demand-port equality itself is asserted in
+# `test_ems_walk.py`'s lockstep test (both eras, random preview grids); what is
+# covered here is the MPC-side plumbing: the preview column, the stage
+# precompute, the rollout integrator, and the provenance the sidecar records.
+# ═════════════════════════════════════════════════════════════════════════
+_FTP75C = "ems-ftp75c-mpc"
+
+
+def test_mpc_build_demand_defaults_to_the_pre_regen_era():
+    import inspect
+    sig = inspect.signature(M.build_demand).parameters
+    assert sig["drag_mode"].default is None
+    assert sig["eta_regen"].default is None
+    assert sig["v_pack_ref"].default is None
+    assert sig["regen_i_max_a"].default is None
+
+
+def test_mpc_build_demand_returns_the_seventh_element_and_zeroes_it_old_era():
+    meta = _meta()
+    dt = M.PREVIEW_DT_S
+    n = int(round(float(meta["duration_s"]) / dt)) + 1
+    times = [k * dt for k in range(n)]
+    out = M.build_demand(SCEN, meta, times, dt)
+    assert len(out) == 7
+    assert not any(out[6])
+    assert len(out[6]) == n
+
+
+def test_mpc_build_demand_refuses_the_new_era_without_its_two_references():
+    """Same refusal as the numpy original's, for the same reason: the credit's
+    last stage is the Ag105's output-referred cap and the reference pack
+    voltage must be a SCALAR, or the stage tables stop being a lookup."""
+    meta = sim.SCENARIOS[_FTP75C]
+    times = [0.5 * k for k in range(11)]
+    with pytest.raises(ValueError, match="v_pack_ref"):
+        M.build_demand(_FTP75C, meta, times, 0.5,
+                       drag_mode=sim.DRAG_MODE_SCALED_AIR, eta_regen=0.8)
+
+
+def test_bind_scenario_resolves_the_drag_profile_and_the_regen_era():
+    """`--drag` OVERRIDES a scenario's own key, so the binder must resolve off
+    the RUN configuration when `main()` supplies one and off the scenario key
+    otherwise -- a walk and a live run then predict on the same plant.
+    `eta_regen` FOLLOWS the drag profile, on the generator's rule."""
+    s = M.MpcStrategy("mpc-sto")
+    s.bind_scenario(_FTP75C, sim.SCENARIOS[_FTP75C])
+    assert s.drag_mode == sim.DRAG_MODE_SCALED_AIR
+    assert s.eta_regen == pytest.approx(float(sim.ETA_REGEN))
+    # A rig-drag override of the same scenario drops the credit with it.
+    s2 = M.MpcStrategy("mpc-sto")
+    s2.bind_scenario(_FTP75C, sim.SCENARIOS[_FTP75C],
+                     drag_mode=sim.DRAG_MODE_RIG)
+    assert s2.drag_mode == sim.DRAG_MODE_RIG
+    assert s2.eta_regen is None
+    # And a scenario that declares nothing stays in the pre-round configuration.
+    s3 = _bound()
+    assert s3.drag_mode == sim.DRAG_MODE_RIG
+    assert s3.eta_regen is None
+
+
+def test_the_preview_carries_a_non_empty_credit_column_on_a_compensated_leg():
+    s = M.MpcStrategy("mpc-sto")
+    s.bind_scenario(_FTP75C, sim.SCENARIOS[_FTP75C])
+    assert len(s.preview.i_regen) == len(s.preview.times)
+    assert max(s.preview.i_regen) > 0.0
+    # EXCLUSIVITY holds on the preview's own two masks, which is what the
+    # planner enumerates over.
+    for k, ok in enumerate(s.preview.chg_ok):
+        assert not (ok and s.preview.i_regen[k] > 0.0), k
+    # ... and a pre-regen preview's column is all zeros rather than absent, so
+    # every consumer indexes it the same way.
+    base = _bound()
+    assert len(base.preview.i_regen) == len(base.preview.times)
+    assert not any(base.preview.i_regen)
+
+
+def test_the_stage_precompute_averages_the_credit_over_its_substeps():
+    """`StagePrecompute.i_regen_mean` is a per-stage MEAN, not a sample: the
+    decision grid is coarser than the preview grid, and a braking window that
+    covers part of a stage must be credited for that part."""
+    s = M.MpcStrategy("mpc-sto")
+    s.bind_scenario(_FTP75C, sim.SCENARIOS[_FTP75C])
+    prev = s.preview
+    # A decision stage covering the middle of the first commanded window.
+    k0 = prev.index(sim.FTP75C_REGEN_WINDOWS[0][0])
+    pre = M.precompute_stages(prev, k0, s.planner.horizon, s.planner.dt_dec,
+                              mode_seed=M.STAGE_OPEN, chg_seed=None) \
+        if hasattr(M, "precompute_stages") else None
+    if pre is None:                      # helper is private in this build
+        pytest.skip("precompute_stages is not exposed under this name")
+    n_sub = int(round(s.planner.dt_dec / prev.dt))
+    assert len(pre.i_regen_mean) == s.planner.horizon
+    for j, mean in enumerate(pre.i_regen_mean):
+        want = sum(prev.i_regen[min(len(prev.i_regen) - 1, k0 + j * n_sub + t)]
+                   for t in range(n_sub)) / n_sub
+        assert mean == pytest.approx(want, rel=1e-12, abs=1e-18)
+    assert max(pre.i_regen_mean) > 0.0
+
+
+def test_the_credit_is_share_independent_in_the_rollout():
+    """Its share-independence is what keeps it OUT of the candidate comparison
+    entirely -- every candidate gains the same SoC on a braking stage -- so the
+    search cannot "choose" to regenerate.  Asserted structurally on the
+    rollout's own source: the credit enters BOTH transitions and is read from
+    the stage, never from the control index."""
+    src = open(os.path.join(HERE, "mpc_ems.py"), encoding="utf-8").read()
+    i = src.index("def _rollout")
+    body = src[i:i + 8000]
+    assert "pre.i_regen_mean[stage]" in body
+    assert "soc = soc + (self.chg_a + reg) * self.dt_dec / self.cap_as" in body
+    assert "soc = soc + (reg - i_pack) * self.dt_dec / self.cap_as" in body
+
+
+def test_the_provenance_records_both_new_era_keys():
+    """`config.mpc` is the sidecar's only record of what the planner PREDICTED
+    ON, and `eta_regen` in particular is invisible to the fingerprint -- no
+    live scenario declares one."""
+    s = M.MpcStrategy("mpc-sto")
+    prov = s.bind_scenario(_FTP75C, sim.SCENARIOS[_FTP75C])
+    assert prov["drag"] == sim.DRAG_MODE_SCALED_AIR
+    assert prov["eta_regen"] == pytest.approx(float(sim.ETA_REGEN))
+    base = M.MpcStrategy("mpc-det")
+    prov2 = base.bind_scenario(SCEN, _meta())
+    assert prov2["drag"] == sim.DRAG_MODE_RIG
+    assert prov2["eta_regen"] is None
+
+
+def test_the_single_source_bus_law_is_the_two_source_law_scaled():
+    """THE MEASURED SINGLE-SOURCE TOPOLOGY (2026-09-02, the MPC 0/1 round).
+
+    The fitted bus law is TWO-SOURCE: its `g_par` is the parallel droop code
+    `g_fc*g_bt/(g_fc+g_bt)`, which does not exist with one channel off the bus.
+    Probing the hi-fi engine at three droop codes showed the single-source
+    slope is the two-source slope times a constant, stable to 0.03 % over a
+    factor-of-two code range, with its own no-load intercept.
+
+    ⚠️ THE TWO RATIOS ARE NOT BOTH 2.000, and that is the asymmetry rather
+    than noise: under `--asymmetry measured` the channels differ, and using a
+    nominal 2.0 for both would misprice the BT-only arm by 2.9 %."""
+    lm = sim.plant_loss_map()
+    v0_b, k_b = sim.single_source_bus_law(lm, "both")
+    v0_f, k_f = sim.single_source_bus_law(lm, "fc")
+    v0_t, k_t = sim.single_source_bus_law(lm, "bt")
+    # "both" is the map's own law, untouched -- so a caller that never plans a
+    # single-source stage is bit-identical to one predating the function.
+    assert v0_b == lm["v0_eff"]
+    assert k_b == pytest.approx(lm["r_fix"] + lm["k_g"] * lm["g_par"])
+    # The measured ratios and intercepts.
+    assert k_f / k_b == pytest.approx(1.9453, rel=1e-9)
+    assert k_t / k_b == pytest.approx(2.0579, rel=1e-9)
+    assert v0_f == pytest.approx(15.87821)
+    assert v0_t == pytest.approx(15.86468)
+    # Single-source droops HARDER than two-source, which is the whole point.
+    assert k_f > k_b and k_t > k_b
+    with pytest.raises(ValueError):
+        sim.single_source_bus_law(lm, "neither")
+
+
+def test_the_demand_port_selects_the_single_source_bus_law():
+    """`source_mode` reaches the DEMAND, not just the constants.
+
+    Asserted through the bus voltage, because that is the quantity the law
+    sets and the one a mis-selected law would silently over-state: on the 61 s
+    cycle's peak the two-source law reads ~15.42 V and the single-source laws
+    ~14.99 V (FC) and ~14.92 V (BT).  A `source_mode` that did not reach
+    `build_demand()` would leave all three identical."""
+    meta = _meta()
+    lm = sim.plant_loss_map()
+    dt = 1.0
+    times = [k * dt for k in range(int(float(meta["duration_s"]) / dt) + 1)]
+    out = {}
+    for mode in ("both", "fc", "bt"):
+        o = M.build_demand(SCEN, meta, times, dt, loss_map=lm,
+                           source_mode=mode)
+        out[mode] = min(o[3])
+    assert out["both"] > out["fc"] > out["bt"]
+    assert out["both"] - out["fc"] == pytest.approx(0.428, abs=0.02)
+    # DEFAULT IS "both", so every pre-round caller is unchanged.
+    o = M.build_demand(SCEN, meta, times, dt, loss_map=lm)
+    assert min(o[3]) == out["both"]

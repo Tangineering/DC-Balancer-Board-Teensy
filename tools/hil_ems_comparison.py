@@ -25,8 +25,13 @@ GROUPING IS BY STIMULUS, NOT BY NAME.  Equivalent-hydrogen arithmetic corrects
 for state of charge, not for demand, so two runs may only be compared when
 they saw the same drive profile.  Runs are therefore grouped by the
 fingerprint of ``hil_plant_sim.SCENARIOS[<name>]["ems_v_profile"]`` together
-with the scenario duration; the FTP-75 legs share one profile object and fall
-into one group without any name matching.
+with the scenario duration AND its declared ``drag`` road-load profile; the
+FTP-75 legs share one profile object and fall into one group without any name
+matching, and the compressed ``ems-ftp75c-*`` legs fall into a second one for
+the same reason.  ``drag`` joined the identity on 2026-09-02: the same speed
+table on a road-load-compensated plant draws roughly 4.5x less tractive
+current and regenerates where the rig cannot, so it is a different stimulus
+even though the profile is unchanged.
 
 Requires numpy and matplotlib for the collection and figure stages, which is
 why every import of ``hil_report_analysis`` is deferred into a function: the
@@ -100,7 +105,7 @@ def _sim():
 # Pure arithmetic and grouping
 # ==========================================================================
 
-def profile_fingerprint(profile):
+def profile_fingerprint(profile, drag=None):
     """Stable short identity for a drive-velocity profile.
 
     The profile is a list of (time, velocity) pairs.  It is serialized with
@@ -110,6 +115,16 @@ def profile_fingerprint(profile):
     if not profile:
         return None
     payload = ";".join("%.9g,%.9g" % (float(t), float(v)) for t, v in profile)
+    # THE ROAD-LOAD PROFILE JOINS THE IDENTITY (2026-09-02), and only when it
+    # is not the measured rig load, so every pre-round fingerprint is
+    # byte-identical.  A speed profile is not a stimulus on its own once the
+    # road load can differ: the same table on `--drag scaled-air` draws roughly
+    # 4.5x less tractive current than on `rig` and regenerates where the rig
+    # cannot, so grouping the two together would put two vehicles in one
+    # comparison.  This is EMS_FRONTIER_STIMULUS_KEYS' `drag` term, in the
+    # place this module decides what "the same drive profile" means.
+    if drag and drag != "rig":
+        payload += "|drag=%s" % drag
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:12]
 
 
@@ -121,7 +136,8 @@ def group_key(scen_meta):
     """
     if not scen_meta:
         return None
-    fp = profile_fingerprint(scen_meta.get("ems_v_profile"))
+    fp = profile_fingerprint(scen_meta.get("ems_v_profile"),
+                             scen_meta.get("drag"))
     if fp is None:
         return None
     return (fp, float(scen_meta.get("duration_s") or 0.0))

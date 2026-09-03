@@ -552,3 +552,37 @@ the branch is unreachable without them; constructing the strategy with
 search exactly; and `--asymmetry off` resolves `dv0_v` to 0.0, which restores the
 symmetric prediction model. The three reversals are independent. The `RollJob.handoff` table, the `ramp_mean()` helper and the
 `dv0_v` plumbing are additive and inert at their defaults.
+
+
+---
+
+## 2026-09-02: survey item 5 becomes a control, not a constraint
+
+Survey item 5 records the setpoint cut and its restore as a **constraint** the planner
+must stay clear of: the ladder band stopped 0.10 short of both rails so
+`updateShareSetpointCutoff()` could never latch, and the cut was something the plan
+avoided rather than something it used.
+
+⚠️ **That framing is superseded by the operator ruling of 2026-09-02.** The ladder now
+spans the full firmware band [0.15, 0.85], and the MPC is to gain 0 and 1 single-source
+commands as **candidates**. The cut and its restore therefore move from the constraint
+side of the model to the control side: a single-source command is a deliberate topology
+change issued through the setpoint latch, and its cost, its feasibility and its restore
+transient all belong inside the search rather than outside it.
+
+Three consequences follow, and the first is the one that is not yet resolved.
+
+- **The cut guard is path-dependent.** The doomed channel is cut only when its own
+  current is at or under `SHARE_CUT_MAX_HANDOFF_A` 0.5 A, and that current depends on the
+  share the plan held in the previous stage. The planner's stage tables are
+  control-independent by construction, so the guard does not fit them. The three candidate
+  resolutions are set out in `mpc_design_20260901.md`, section "2026-09-02"; the choice is
+  open.
+- **The bus law changes with the topology.** The fitted law is two-source and its `g_par`
+  is a parallel droop code. The single-source law is measured and implemented
+  (`dp_loss_map_20260902.md`, addendum): the same slope scaled by 1.9453 for FC-only and
+  2.0579 for BT-only, each with its own no-load intercept.
+- **The minority-current floor does not apply.** `SHARE_MINORITY_I_MIN_A` 0.30 A clips the
+  delivered share toward the middle when both channels are on the bus. With one channel
+  off there is no minority to protect, so the closed-stage surrogate must not clip a 0 or
+  1 candidate. This is a change to `delivery_table()` and not to the governor.

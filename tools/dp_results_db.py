@@ -113,6 +113,7 @@ KEY_FIELDS = (
     "scenario", "profile_fingerprint", "soc0", "capacity_ah",
     "charger_accounting", "stage_dt", "n_share", "soc_step", "chg_a",
     "lambda_dev", "aux_preload_a", "eta_chg", "loss_map",
+    "drag", "eta_regen",
     "gfc_dc_gain", "eta_boost", "limit_i_fc_max_a", "charge_share_value",
     "share_span", "cruise_slope_max", "cruise_min_mps", "run_entry_s",
     "run_exit_s",
@@ -141,7 +142,14 @@ KEY_FIELDS = (
 # they answer.  It is carried as the CANONICAL STRING
 # (`hil_plant_sim.loss_map_canonical`), not as a dict: `_canonical()` renders a
 # str verbatim and a float through repr(), and a dict is neither.
-OPTIONAL_KEY_FIELDS = ("eta_chg", "loss_map")
+# `drag` and `eta_regen` JOINED 2026-09-02 (the ftp75c round), on exactly
+# these terms again.  An ABSENT `drag` names the MEASURED RIG ROAD LOAD and
+# an ABSENT `eta_regen` the PRE-REGEN demand model, which is what every
+# record in this store was solved against, so omitting both keeps all of
+# them reachable.  `drag` is carried as its MODE STRING (`_canonical()`
+# renders a str verbatim), and the rig mode resolves to None rather than to
+# the literal "rig" so that "absent" and "rig" are one statement.
+OPTIONAL_KEY_FIELDS = ("eta_chg", "loss_map", "drag", "eta_regen")
 
 _NON_TARGET_FIELDS = tuple(f for f in KEY_FIELDS if f != "target_soc_q")
 
@@ -263,6 +271,17 @@ def fingerprint_parts(scenario, meta):
             _dpl = getattr(sim, "dp_loss_map", None)
             if callable(_canon) and callable(_dpl):
                 val = _canon(_dpl(meta))
+        elif key == "drag":
+            # Mirrors dp_profile_fingerprint(): a MODE STRING, hashed as
+            # itself, with the rig mode resolved to None by `_dp_fp_resolve`
+            # above and therefore already omitted.
+            _dd = getattr(sim, "dp_drag_mode", None)
+            if callable(_dd):
+                val = _dd(meta)
+        elif key == "eta_regen":
+            _de = getattr(sim, "dp_eta_regen", None)
+            if callable(_de):
+                val = _de(meta)
         elif key == "ems_v_profile" and val:
             val = [(float(a), float(b)) for a, b in val]
         elif val is not None:
@@ -331,7 +350,8 @@ def model_fields():
 def problem_fields(scenario, *, profile_fingerprint, soc0, capacity_ah,
                    charger_accounting, stage_dt, n_share, soc_step, chg_a,
                    lambda_dev, aux_preload_a, run_exit_s, target_soc,
-                   era_overrides=None, eta_chg=None, loss_map=None):
+                   era_overrides=None, eta_chg=None, loss_map=None,
+                   drag=None, eta_regen=None):
     """A complete key-field dict.
 
     `aux_preload_a=None` means "whatever the scenario declares", which is what
@@ -375,6 +395,11 @@ def problem_fields(scenario, *, profile_fingerprint, soc0, capacity_ah,
         "eta_chg": (None if eta_chg is None else float(eta_chg)),
         "loss_map": (None if loss_map is None
                      else sim.loss_map_canonical(sim.check_loss_map(loss_map))),
+        # THE ROAD-LOAD AND REGEN ERAS (2026-09-02).  `drag` is normalised
+        # through `plant_drag_mode()` so the rig profile keys as an OMISSION
+        # whether the caller passed None or the literal "rig".
+        "drag": sim.plant_drag_mode(drag),
+        "eta_regen": (None if eta_regen is None else float(eta_regen)),
         "run_exit_s": float(run_exit_s),
         # Not a key field: the map DICT, carried so `solve_and_store()` can
         # rebuild the problem without re-parsing the canonical string.
@@ -403,6 +428,8 @@ def fields_from_problem(problem, target_soc):
         lambda_dev=problem.lambda_dev, aux_preload_a=problem.aux_preload_a,
         eta_chg=getattr(problem, "eta_chg", None),
         loss_map=getattr(problem, "loss_map", None),
+        drag=getattr(problem, "drag_mode", None),
+        eta_regen=getattr(problem, "eta_regen", None),
         run_exit_s=problem.run_exit, target_soc=target_soc)
 
 
@@ -664,6 +691,14 @@ def solve_and_store(fields, target_soc, *, match_tol=2.0e-6, db_dir=DP_DB_DIR,
     # CANONICAL STRING and not the dict the caller built; parsing the string
     # back is what lets a prefill fed a stored record reconstruct the same
     # problem instead of refusing it for fingerprint drift.
+    # THE ROAD-LOAD AND REGEN ERAS of the stored record, replayed into the
+    # meta the re-solve fingerprints against, exactly as `eta_chg` is.
+    _drag = fields.get("drag")
+    if _drag is not None and "drag" not in era_overrides:
+        meta["drag"] = str(_drag)
+    _er = fields.get("eta_regen")
+    if _er is not None and "eta_regen" not in era_overrides:
+        meta["eta_regen"] = float(_er)
     _lm = fields.get("loss_map_dict")
     if _lm is None:
         _lm = sim.loss_map_from_canonical(fields.get("loss_map"))
@@ -679,7 +714,9 @@ def solve_and_store(fields, target_soc, *, match_tol=2.0e-6, db_dir=DP_DB_DIR,
         lambda_dev=fields["lambda_dev"],
         aux_preload_a=(None if aux is None else float(aux)),
         eta_chg=fields.get("eta_chg"),
-        loss_map=_lm)
+        loss_map=_lm,
+        drag_mode=(None if _drag is None else str(_drag)),
+        eta_regen=(None if _er is None else float(_er)))
     if problem.fingerprint != fields["profile_fingerprint"]:
         # The era overrides could not put the run's stimulus back.  Name what
         # they DID reconcile and what they could not, so the reader sees which
@@ -959,7 +996,22 @@ def _cmd_prefill(args):
     # (dp_profile_fingerprint omits the term when it resolves to None).
     eta_resolved = None if args.eta_chg_none else args.eta_chg
     lm_resolved = gen.resolve_loss_map_arg(getattr(args, "loss_map", "none"))
+    # THE ROAD-LOAD AND REGEN ERAS (2026-09-02), on the identical M4(b)
+    # argument: both have to reach the FINGERPRINT or the record is
+    # unreachable.  `drag` is the one era key a SCENARIO declares, so it
+    # defaults to the scenario's own value rather than to the pre-round
+    # sentinel; `eta_regen` then follows the drag profile on the generator's
+    # rule.  Either can be forced from the command line.
+    drag_resolved = getattr(args, "drag", None)
+    if drag_resolved is None:
+        drag_resolved = meta.get("drag") or sim.DRAG_MODE_RIG
+    er_resolved = getattr(args, "eta_regen", None)
+    if er_resolved is None and drag_resolved != sim.DRAG_MODE_RIG:
+        er_resolved = float(sim.ETA_REGEN)
     fp_meta = dict(meta)
+    fp_meta["drag"] = drag_resolved
+    if er_resolved is not None:
+        fp_meta["eta_regen"] = float(er_resolved)
     if eta_resolved is not None:
         fp_meta["eta_chg"] = float(eta_resolved)
     # The same M4(b) argument for the demand-model era: the map has to reach
@@ -970,6 +1022,9 @@ def _cmd_prefill(args):
 
     print("[dp_db] scenario %s, soc0 %.4f, accounting %s, %d target(s)"
           % (args.scenario, args.soc0, args.accounting, len(targets)))
+    print("[dp_db] road load %s, regen era %s"
+          % (drag_resolved,
+             "none" if er_resolved is None else repr(float(er_resolved))))
     solved_n = skipped_n = 0
     for target in targets:
         fields = problem_fields(
@@ -982,7 +1037,8 @@ def _cmd_prefill(args):
             lambda_dev=gen.DP_LAMBDA_DEV_G_PER_SOC_S,
             aux_preload_a=aux, run_exit_s=run_exit, target_soc=target,
             eta_chg=(None if args.eta_chg_none else args.eta_chg),
-            loss_map=lm_resolved)
+            loss_map=lm_resolved,
+            drag=drag_resolved, eta_regen=er_resolved)
         hit = lookup(fields, tol_soc=args.tol, db_dir=args.db_dir)
         if hit is not None:
             skipped_n += 1
@@ -1060,6 +1116,19 @@ def main(argv=None):
                         "loss-map-free model every record solved before "
                         "2026-09-02 used; 'plant' carries the plant's static "
                         "losses and the realized `--droop design` bus law.")
+    p.add_argument("--drag", default=None,
+                   help="ROAD-LOAD PROFILE (2026-09-02). Omitted = the "
+                        "SCENARIO's own `drag` key, or 'rig' - the measured "
+                        "bench road load every record solved before this date "
+                        "used. Unlike the other three era flags this one "
+                        "defaults to the registry rather than to the "
+                        "sentinel, because it is the only era key a scenario "
+                        "declares.")
+    p.add_argument("--eta-regen", type=float, default=None,
+                   help="REGEN DEMAND ERA (2026-09-02). Omitted = derived "
+                        "from --drag: the pre-regen era (no braking credit) "
+                        "on the rig profile, and the plant's ETA_REGEN on a "
+                        "compensated one.")
     p.add_argument("--run-exit", type=float, default=None,
                    help="strategy run-exit time in s (default: the "
                         "scenario's ems_run_exit_s, else SOC_BAND_RUN_EXIT_S)")

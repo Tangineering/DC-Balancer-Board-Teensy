@@ -685,6 +685,131 @@ The latency is dominated by **command-arrival phase** (the emulated Pi's 50 Hz
 cadence), not by a firmware tick: `POWER_BAL_PERIOD_US` and `SHARE_CTRL_TS_US` are
 both 1000 µs.
 
+### 3.2.1c The compressed FTP-75 legs, `--with-ftp75c` and `--drag` (2026-09-02)
+
+Five scenarios drive a **time-compressed FTP-75 cycle on a road-load-compensated
+plant**: `ems-ftp75c-5050`, `-socband`, `-sdp`, `-dp` and `-mpc`. They are the
+first drive-cycle legs on this rig that regenerate at all. Each runs **180 s**:
+
+```
+.venv_hil\Scripts\python.exe tools\hil_plant_sim.py --teensy-ip 192.168.1.50 --scenario ems-ftp75c-5050 --dash
+```
+
+`run_hil_suite.py` renders all five **SKIPPED** unless you pass `--with-ftp75c`:
+
+```
+.venv_hil\Scripts\python.exe tools\run_hil_suite.py --teensy-ip 192.168.1.50 --with-ftp75c
+```
+
+The set costs **925 s, 15.4 min** on bench (five legs at 180 s plus five 5 s
+settle pauses). `run_hil_suite.py --list` prints that figure alongside the other
+opt-in sets, with an extra line recording that this is the only set which changes
+the **plant**. That is the second half of the gate: `--with-ftp75` is a run-time
+gate alone, while `--with-ftp75c` also selects a plant configuration that cannot
+be replicated on this bench.
+
+The speed profile is **generated, never hand-edited**, exactly as `ftp75` is.
+`tools/gen_ftp75_profile.py` gained a `--time-factor` flag with a registry of the
+two registered factors, and `hil_plant_sim.py` imports the generator to compare
+the two tables, so a stale or hand-edited `ftp75c_profile.py` is an import error
+rather than a silent wrong stimulus:
+
+```
+.venv_hil\Scripts\python.exe tools\gen_ftp75_profile.py --time-factor 0.5 --force
+```
+
+Time compression halves the time axis and leaves the velocity axis untouched, so
+the table keeps the same 234 points and the same 3.0 m/s peak (now at t = 125 s)
+while **every acceleration doubles**, to ±0.3492 m/s².
+
+**`--drag` selects the road load, and `rig` is the default.**
+
+```
+--drag rig                 the MEASURED bench road load, F_c + b_eff*v.  DEFAULT.
+--drag scaled-air          the study vehicle's scaled air drag, k_air 0.0598, F_c 0.
+--drag scaled-air-matched  k_air / 4.4866, which reproduces the FULL-SCALE share.
+```
+
+The five `ems-ftp75c-*` scenarios declare `"drag": "scaled-air"`, so the operator
+does not have to remember the flag; an explicit `--drag` overrides the scenario
+key, and `config.drag_from` in the sidecar records which of the two decided. The
+sidecar also carries `config.drag`, the resolved `config.drag_k_air`,
+`config.regen_manager`, `config.regen_windows` and `config.regen_duty_s`, plus
+the two era keys `scenario.drag` and `scenario.eta_regen`. Read them before
+comparing any two runs: an **absent** era key means the pre-compensation, pre-regen
+model, and a compensated run is a different vehicle from a rig-drag one, because the
+tractive demand differs by roughly 4.5×.
+
+Passing `--drag rig` to one of these scenarios is a legitimate **zero-regen
+control run**: the regen manager re-derives its windows from the resolved mode
+and gets an empty list, and both era keys record `None`. It is not, however, the
+same experiment, and `run_hil_suite.py` has no `--drag` flag of its own, so a
+control run is driven from `hil_plant_sim.py` directly.
+
+Three things to know before reading a `ftp75c` trace:
+
+* ⚠️ **Do not read SoC direction on these legs.** The regen credit is 1.1729 C,
+  about 1.4 % of the cycle drain, a SoC gain near +5.5e-5 against a −0.0054
+  excursion. Read the harvest off `I_charge`, the `chopper_clamp` event's
+  `energy_j` and the plant's `regen_energy_j` counter.
+* ⚠️ **Every band on this family is PROVISIONAL**: no campaign has run any of
+  it, the values are governor-walk predictions, and `ETA_REGEN` = 0.80 and
+  `VESC_REGEN_I_MAX_A` = 1.5 A are both `TODO(verify)`.
+* ⚠️ `ems-ftp75c-socband` runs **per-scenario charge thresholds**, 0.18074 A enter
+  and 0.33107 A exit, because the shipped 0.60 A entry threshold sits above this
+  cycle's entire source total. If that leg reads as permanently charging, the
+  override did not arrive and the frontier's ratios mean nothing.
+
+`ems-ftp75c-dp` is **hifi only**. Every leg of this family runs 180 s, which is
+above `MATCHED_DP_LONG_DURATION_S` = 100.0 s, so a matched-DP baseline for any of
+them needs `--matched-dp-allow-long` or a prefilled `dp_db` record; prefilling
+moves the solve off the campaign critical path. **All five are prefilled**, each
+at its own governor-walk terminal SoC, so a campaign that lands near those
+targets hits the store and costs no compute. The five solves took 1367 s
+(22.8 min) together; `docs/HIL_SCENARIOS.md` §6.2 carries the table. Re-run them
+with, per leg,
+
+```
+C:/Users/ricky/miniforge3/python.exe tools/dp_results_db.py prefill \
+    --scenario ems-ftp75c-5050 --soc0 0.7 --accounting physical \
+    --eta-chg 0.88 --loss-map plant "--dsoc-span=-0.001914:-0.001914:1"
+```
+
+`--drag` and `--eta-regen` default to the scenario's own road load and the era
+derived from it, so neither has to be passed for these five.
+⚠️ `ems-ftp75c-sdp`'s record is stored with `converged: false` (residual
+2.49e-06 against a 2.0e-06 tolerance), and its matched-DP figure is **not a
+bound** on that leg at all: `sdp-v4` commands a constant 0.8500, outside the
+DP's own control grid `[0.25, 0.75]`. Read `docs/HIL_SCENARIOS.md` §6.2 before
+quoting it.
+
+#### ⚠️ Bench replication of the compensated plant
+
+Road-load compensation **cannot be replicated on this bench with the single motor
+now fitted**, and the reason is structural rather than one of tuning. The
+compensation would have to be a friction feedforward cancelling
+`F_COULOMB + B_EFF*v`, up to 3.60 N at 3.0 m/s, and the only actuator able to
+apply it is the traction motor itself. A feedforward of that form keeps the net
+motor force **positive** through a stop, because the motor is supplying the
+friction the compensation cancels. No instant exists at which the current
+reverses, so there is no physical regeneration to measure, and a bench run would
+exercise the firmware regen branch only if the command were falsified. That is
+not a measurement.
+
+Replication needs a **second motor acting as a road-load brake on the flywheel**,
+sized at approximately 3.1 N rim force, 0.24 N·m, 400 rpm, under 10 W and
+four-quadrant, under torque control rather than speed control, with coast-down
+calibration of `F_COULOMB` and `B_EFF`, a speed-floor interlock below about
+0.2 m/s and a setpoint-zero interlock at standstill. None of that is in scope for
+the HIL work; the sizing and the interlocks are recorded in
+`docs/modeling/ftp75c_regen_cycle_design_20260902.md` §7 and summarised in
+`docs/HIL_PLANT.md` §3.5.
+
+**On the bench, `--drag rig` remains the only physically honest configuration,
+and it regenerates nothing on any registered cycle.** A `ftp75c` harvest figure
+is a HIL result about the model and the firmware's regen path, and it must never
+be quoted as a bench measurement.
+
 ### 3.2.2 `soc-band` and the H2 metric — a walkthrough
 
 ```powershell
@@ -1749,14 +1874,19 @@ it `provenance_drift`, because the hash also moves when a constant the solve nev
 reads moves. `--matched-dp-strict` turns drift into a miss instead, which is the
 setting for a figure that must not come from a differently-parameterised plant.
 
-**Three boundaries on every figure this produces.** First, the DP's demand model has
-no regen term (`gen_dp_ems_table.build_demand`): the deceleration **demand** is
-identical, and what is omitted is the returned energy, so a regen-bearing scenario is
-ranked against a regen-free bound and its deviation is optimistic. That optimism is
-now bounded rather than unquantified — every frontier/EMS leg in this suite carries
-**0.000 J** of regen energy (no drive cycle commands a negative motor current), so on
-those legs the omission is exact; regen-bearing scenarios are `frontier_eligible:
-False` by role and their residual optimism measures **≤ 0.9 % of `h2`**. Second, the
+**Three boundaries on every figure this produces.** First, whether the DP's demand
+model carries a regen term is an ERA (`gen_dp_ems_table.build_demand`'s `eta_regen`).
+In the **pre-regen** era, which is every campaign on record, it does not: the
+deceleration **demand** is identical and what is omitted is the returned energy, so a
+regen-bearing scenario is ranked against a regen-free bound and its deviation is
+optimistic. That optimism is bounded rather than unquantified — every rig-drag
+frontier/EMS leg in this suite carries **0.000 J** of regen energy (no rig-drag drive
+cycle commands a negative motor current), so on those legs the omission is exact;
+regen-bearing scenarios are `frontier_eligible: False` by role and their residual
+optimism measures **≤ 0.9 % of `h2`**. In the **regen** era, which the
+`ems-ftp75c-*` family is the first to use, the bound earns the same braking credit the
+run does and this boundary is replaced by the Ag105 settle and ramp
+(`docs/HIL_PLANT.md` §9.4.2). Second, the
 run's hydrogen total is the dynamic Gfc integrator (`H2Consumption`, a ZOH
 discretization) while the DP's stage cost is the Gfc DC gain; the two agree at steady
 state and differ through every transient. ⚠️ **Corrected 2026-09-02 — that bias is

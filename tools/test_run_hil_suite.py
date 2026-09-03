@@ -57,11 +57,14 @@ def test_build_plan_full_count_40_runs():
     # WP-1C (2026-09-02): +3 scenarios, the `ems-sdp-alpha-*` trio -> 35
     # scenarios, 62 slots. They are SKIP records by default (--with-alpha), and
     # a skip record still occupies a plan slot, which is what this counts.
+    # ftp75c round (2026-09-02): +5 scenarios, the `ems-ftp75c-*` family ->
+    # 44 scenarios, 71 slots. They are SKIP records by default (--with-ftp75c),
+    # and a skip record still occupies a plan slot.
     plan = rhs.build_plan(_args())
     # WP-B: +v-bus-sense-offset (the UV-dwell objective's own home)
-    assert len(plan) == len(SCENARIOS) + len(REPLAY_SUITE) == 66
+    assert len(plan) == len(SCENARIOS) + len(REPLAY_SUITE) == 71
     kinds = [p["kind"] for p in plan]
-    assert kinds.count("scenario") == 39
+    assert kinds.count("scenario") == 44
     assert kinds.count("replay") == 27
 
 
@@ -73,10 +76,11 @@ def test_build_plan_replay_only():
 
 def test_build_plan_scenarios_only():
     plan = rhs.build_plan(_args(scenarios_only=True))
-    assert len(plan) == 39      # WP-C: +regen-harvest-true; WP-E: +ems-ftp75-dp;
+    assert len(plan) == 44      # WP-C: +regen-harvest-true; WP-E: +ems-ftp75-dp;
                             # 2026-09-02: +the four MPC legs;
                                 # WP-B: +v-bus-sense-offset;
-                                # WP-1C: +the ems-sdp-alpha-* trio
+                                # WP-1C: +the ems-sdp-alpha-* trio;
+                                # ftp75c round: +the five ems-ftp75c-* legs
     assert all(p["kind"] == "scenario" for p in plan)
 
 
@@ -211,7 +215,9 @@ def test_build_plan_with_operator_does_not_affect_other_scenarios():
     # WP-1C: the ems-sdp-alpha-* trio is excluded for exactly the reason the
     # FTP-75 set is -- they carry a skip_reason on BOTH sides of this
     # comparison (the --with-alpha gate, unrelated to --with-operator).
-    gated = rhs.FTP75_SCENARIOS | rhs.ALPHA_SCENARIOS
+    # The `ems-ftp75c-*` family joins for the same reason again (2026-09-02):
+    # its own --with-ftp75c gate carries a skip_reason on BOTH sides.
+    gated = rhs.FTP75_SCENARIOS | rhs.ALPHA_SCENARIOS | rhs.FTP75C_SCENARIOS
     for name in plan_default:
         if name == "drive":
             continue
@@ -5029,6 +5035,12 @@ PI_LIVE_SKIP_SCENARIOS = {
     # `ems-ftp75-mpc` is in FTP75_SCENARIOS as well and is listed here for
     # its siblings' reason: the --pi-live gate is ordered FIRST.
     "ems-mpc", "ems-mpc-det", "ems-mpc-cross", "ems-ftp75-mpc",
+    # 2026-09-02 (the ftp75c round): the five compressed legs join for the
+    # same reason -- each declares an "ems" key, and the --pi-live gate is
+    # ordered BEFORE the --with-ftp75c gate, so under --pi-live they carry the
+    # pi-live skip reason rather than the ftp75c one.
+    "ems-ftp75c-5050", "ems-ftp75c-socband", "ems-ftp75c-sdp",
+    "ems-ftp75c-dp", "ems-ftp75c-mpc",
 }
 
 
@@ -5092,9 +5104,10 @@ def test_build_plan_pi_live_total_count_still_40():
     is unchanged under --pi-live, only their kind (executed vs skipped)
     differs."""
     plan = rhs.build_plan(_args(pi_live=True))
-    assert len(plan) == 66      # WP-C: +regen-harvest-true; WP-B: +v-bus-sense-offset;
+    assert len(plan) == 71      # WP-C: +regen-harvest-true; WP-B: +v-bus-sense-offset;
                                 # WP-1C: +the ems-sdp-alpha-* trio;
-                                # 2026-09-02: +the four MPC legs
+                                # 2026-09-02: +the four MPC legs;
+                                # ftp75c round: +the five ems-ftp75c-* legs
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -8200,8 +8213,14 @@ def test_frontier_registry_shape_and_thresholds():
     point: the 61 s cycle's optimum beats its reference by 14 %, while the
     OFFLINE drive-cycle solve measured the DP at -0.01 % -- a TIE. Applying
     0.98 at drive-cycle scale would fail a correct candidate."""
+    # `ftp75c` / `ftp75c-mpc` joined 2026-09-02. They are SEPARATE tuples and
+    # must be: a compressed profile is a different `ems_v_profile`, a
+    # different `duration_s` AND a different `drag`, so slotting an
+    # `ems-ftp75c-*` leg into the `ftp75` tuple fails the stimulus-coherence
+    # precondition by construction.
     assert [f["id"] for f in rhs.EMS_FRONTIERS] == [
-        "cycle61", "ftp75", "cycle61-mpc", "ftp75-mpc"]
+        "cycle61", "ftp75", "cycle61-mpc", "ftp75-mpc",
+        "ftp75c", "ftp75c-mpc"]
     assert CYCLE61_SPEC["vs_reference_max"] == 0.98
     assert FTP75_SPEC["vs_reference_max"] == 1.02      # does NOT assume a win
     assert FTP75_SPEC["vs_bound_max"] == CYCLE61_SPEC["vs_bound_max"] == 1.06
@@ -9664,8 +9683,13 @@ def test_mpc_h2_bands_bracket_the_gate2_walk():
     # per-node bleed. The pre-round set was ems-mpc 0.010429,
     # ems-mpc-sto 0.009313, ems-mpc-cross 0.014134, ems-ftp75-mpc
     # 0.023771, and none of those values applies to any leg as it stands.
-    walks = {"ems-mpc": 0.007588, "ems-mpc-det": 0.009728,
-             "ems-mpc-cross": 0.010835, "ems-ftp75-mpc": 0.021983}
+    # RE-WALKED AGAIN 2026-09-02 for the BAND WIDENING: the ladder spans the
+    # firmware band [0.15, 0.85] at nine points, so every leg now reaches the
+    # low rail and every total moved.  The pre-widening set was ems-mpc
+    # 0.007588, ems-mpc-det 0.009728, ems-mpc-cross 0.010835, ems-ftp75-mpc
+    # 0.021983.
+    walks = {"ems-mpc": 0.007162, "ems-mpc-det": 0.009427,
+             "ems-mpc-cross": 0.008782, "ems-ftp75-mpc": 0.018762}
     for name, walk in walks.items():
         specs = {s["name"]: s for s in
                  rhs.FAULT_EXPECTATIONS[name]["signals_require"]}
@@ -10325,11 +10349,22 @@ def test_the_cross_stimulus_wide_share_walk_is_not_available_from_either_law():
     The `ems-sdp-cross` two-level cruise was built so a share-shifting law
     would walk WIDE across the switching region, and `ems-mpc-cross`'s registry
     entry still describes that walk as its observable. It is not available:
-    measured in the 2026-09-02 fix round, BOTH `mpc-det` and `mpc-sto` command
-    a share range of exactly 0.0833 over [0.2500, 0.3333] on that stimulus, in
-    BOTH demand eras, with bit-identical hydrogen. It reproduces on the
-    PRE-ROUND tree at commit 8dc180d, so it is neither a consequence of the
-    `mpc-sto` promotion nor of the static-loss map.
+measured in the 2026-09-02 fix round, BOTH `mpc-det` and `mpc-sto` command
+    a share range of exactly ONE LADDER STEP on that stimulus, in BOTH demand
+    eras, with bit-identical hydrogen. It reproduces on the PRE-ROUND tree at
+    commit 8dc180d, so it is neither a consequence of the `mpc-sto` promotion
+    nor of the static-loss map.
+
+    ⚠️ RE-PINNED FOR THE BAND WIDENING (2026-09-02), AND THE GAP DID NOT
+    CLOSE. Before the widening the walk was 0.0833 over [0.2500, 0.3333], one
+    step of a seven-point ladder over [0.25, 0.75]. It is now 0.0875 over
+    [0.1500, 0.2375], one step of a NINE-point ladder over the firmware band.
+    The finding is therefore UNCHANGED IN KIND -- the walk is still a single
+    ladder step and the two laws still coincide bit for bit -- and what moved
+    is the OPERATING POINT, which has dropped onto the low rail the old band
+    could not express. A wider band did not buy a wider walk, which sharpens
+    the original reading: the limit is the terminal economics on a two-level
+    cruise, not the reach of the ladder.
 
     Two shipped numbers were already wrong at 8dc180d because of it: the
     `share_range_min` 0.12 was UNSATISFIABLE against a 0.0833 walk, and the
@@ -10354,9 +10389,16 @@ def test_the_cross_stimulus_wide_share_walk_is_not_available_from_either_law():
         sc = [float(x) for x in r.share_cmd]
         seen[strat] = (min(sc), max(sc), float(r.h2_g))
     for strat, (lo, hi, h2) in seen.items():
-        assert hi - lo == pytest.approx(0.0833, abs=1e-3), (strat, lo, hi)
-        assert lo == pytest.approx(0.2500, abs=1e-4), strat
-        assert hi == pytest.approx(0.3333, abs=1e-4), strat
+        assert hi - lo == pytest.approx(0.0875, abs=1e-3), (strat, lo, hi)
+        assert lo == pytest.approx(0.1500, abs=1e-4), strat
+        assert hi == pytest.approx(0.2375, abs=1e-4), strat
+        # ONE LADDER STEP, asserted against the ladder rather than as a
+        # literal, so the next band or level change re-states the finding
+        # instead of silently re-pinning it.
+        import mpc_ems as _m
+        step = ((_m.SHARE_BAND_DP[1] - _m.SHARE_BAND_DP[0])
+                / (_m.SHARE_LEVELS - 1))
+        assert hi - lo == pytest.approx(step, abs=1e-9), (strat, step)
     # The two laws COINCIDE on this stimulus, which is why the withdrawn
     # ablation leg would have measured nothing.
     assert seen["mpc-det"] == seen["mpc-sto"]
@@ -10364,7 +10406,7 @@ def test_the_cross_stimulus_wide_share_walk_is_not_available_from_either_law():
     # 0.12 it replaced.
     specs = {s["name"]: s for s in
              rhs.FAULT_EXPECTATIONS["ems-mpc-cross"]["signals_require"]}
-    assert specs["mpc_share_moved"]["column_range_at_least"] < 0.0833
+    assert specs["mpc_share_moved"]["column_range_at_least"] < 0.0875
 
 
 def test_no_ems_mpc_det_cross_leg_is_registered():
@@ -10376,3 +10418,172 @@ def test_no_ems_mpc_det_cross_leg_is_registered():
     sim = pytest.importorskip("hil_plant_sim")
     assert "ems-mpc-det-cross" not in sim.SCENARIOS
     assert "ems-mpc-det-cross" not in rhs.FAULT_EXPECTATIONS
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# THE COMPRESSED-CYCLE OPT-IN SET (2026-09-02, the ftp75c round)
+#
+# `FTP75C_SCENARIOS` is a FROZEN SET and not a name prefix, and the prefix test
+# would be actively wrong here: `ems-ftp75c-*` starts with `ems-ftp75`, so a
+# prefix gate would sweep the compressed family into `--with-ftp75`.
+# ─────────────────────────────────────────────────────────────────────────
+_FTP75C_NAMES = {"ems-ftp75c-5050", "ems-ftp75c-socband", "ems-ftp75c-sdp",
+                 "ems-ftp75c-dp", "ems-ftp75c-mpc"}
+
+
+def test_ftp75c_scenario_set_matches_the_registry_and_is_disjoint_from_ftp75():
+    assert rhs.FTP75C_SCENARIOS == _FTP75C_NAMES
+    assert _FTP75C_NAMES <= set(SCENARIOS)
+    assert not (rhs.FTP75_SCENARIOS & rhs.FTP75C_SCENARIOS)
+    # THE PREFIX HAZARD, stated as a test rather than as a comment: every
+    # compressed name starts with an uncompressed one's prefix, so a gate
+    # written as `name.startswith("ems-ftp75")` would sweep all five in.
+    assert all(n.startswith("ems-ftp75") for n in rhs.FTP75C_SCENARIOS)
+
+
+def test_every_ftp75c_scenario_has_a_fault_expectation_entry():
+    """A scenario with no entry is JUDGED BY THE DEFAULT, which is a weaker
+    claim than any of these legs is meant to make -- and, being a default, it
+    would not say so anywhere in the report."""
+    for name in sorted(rhs.FTP75C_SCENARIOS):
+        entry = rhs.FAULT_EXPECTATIONS.get(name)
+        assert entry, name
+        assert entry.get("source"), name
+        # FAULT-FREE IS THE EXPECTATION on this family: the peak source total
+        # is 0.3311 A against LIMIT_I_FC_MAX 1.4 A. THE SPECIFIC LATCH TO
+        # WATCH is FAULT_SWITCH_CONFLICT, which would mean the regen manager
+        # provoked chargingControl()'s CRUISE branch inside a braking window.
+        assert entry["allow_only"] == 0, name
+        assert 2 in entry["survive_to"]["states"], name
+        assert entry["signals_require"], name
+
+
+def _sig_names(entry):
+    """The signal identifiers of one expectation entry.
+
+    `name` is OPTIONAL on an AGGREGATE spec (`total_of` / `max_of`), which the
+    judge tags by its aggregate key instead -- so the chopper-energy check has
+    no `name` and must be resolved through its own key."""
+    out = set()
+    for spec in entry["signals_require"]:
+        out.add(spec.get("name") or spec.get("total_of") or spec.get("max_of"))
+    return out
+
+
+def test_the_ftp75c_expectations_carry_the_regen_signal_block():
+    """THE FOUR REGEN SIGNALS are what make this family different from every
+    other drive-cycle leg. They are shared BY CONSTRUCTION (one helper, five
+    call sites) because the regen path is driven by the COMMON regen manager
+    and is STRATEGY-INDEPENDENT -- a drift between legs would read as a
+    strategy difference the design explicitly says cannot exist."""
+    by_leg = {}
+    for name in sorted(rhs.FTP75C_SCENARIOS):
+        got = _sig_names(rhs.FAULT_EXPECTATIONS[name])
+        by_leg[name] = got
+        for want in ("ftp75c_regen_duty", "ftp75c_regen_charge",
+                     "chopper_clamp", "ftp75c_node_lift"):
+            assert want in got, (name, want)
+    # THE FOUR NON-MPC LEGS additionally share the cycle-shape block. The MPC
+    # leg is built from `_mpc_expectation()` and carries its own `mpc_*`
+    # equivalents of the cadence and FC-budget checks, so it is EXCLUDED here
+    # deliberately rather than by omission.
+    for name in sorted(rhs.FTP75C_SCENARIOS - {"ems-ftp75c-mpc"}):
+        for want in ("ftp75c_cadence", "ftp75c_peak_commanded",
+                     "ftp75c_fc_bounded"):
+            assert want in by_leg[name], (name, want)
+    assert "mpc_cadence" in by_leg["ems-ftp75c-mpc"]
+    # The socband leg carries its own extra check -- the one the per-scenario
+    # threshold override exists for -- and no other leg does.
+    assert "ftp75c_socband_not_saturated" in by_leg["ems-ftp75c-socband"]
+    for name, got in by_leg.items():
+        if name != "ems-ftp75c-socband":
+            assert "ftp75c_socband_not_saturated" not in got, name
+
+
+def test_the_two_compressed_frontier_tuples_resolve_their_three_legs():
+    """Registered as SEPARATE tuples, which they must be: a compressed profile
+    is a different `ems_v_profile`, a different `duration_s` AND a different
+    `drag`, so slotting an `ems-ftp75c-*` leg into the `ftp75` tuple fails the
+    stimulus-coherence precondition by construction."""
+    by_id = {f["id"]: f for f in rhs.EMS_FRONTIERS}
+    assert {"ftp75c", "ftp75c-mpc"} <= set(by_id)
+    for fid, candidate in (("ftp75c", "ems-ftp75c-sdp"),
+                           ("ftp75c-mpc", "ems-ftp75c-mpc")):
+        roles = by_id[fid]["roles"]
+        assert roles == {"reference": "ems-ftp75c-socband",
+                         "candidate": candidate,
+                         "bound": "ems-ftp75c-dp"}
+        for leg in roles.values():
+            assert leg in SCENARIOS, (fid, leg)
+        # PROVISIONAL until a campaign evaluates them, and the thresholds are
+        # the `ftp75` tuple's verbatim so the compressed and uncompressed
+        # records read on one scale.
+        assert by_id[fid]["vs_reference_max"] == 1.02
+        assert by_id[fid]["vs_bound_max"] == 1.06
+        assert "PROVISIONAL" in by_id[fid]["provisional_note"]
+
+
+def test_the_ftp75c_frontier_legs_agree_on_every_stimulus_key():
+    """The precondition the tuple is scored under, asserted on the REGISTRY --
+    where it is knowable before a single run starts, which is the whole reason
+    the check is registry-read.  `drag` joined the key list this round, so a
+    leg that dropped the compensated plant would fail here."""
+    for fid in ("ftp75c", "ftp75c-mpc"):
+        spec = next(f for f in rhs.EMS_FRONTIERS if f["id"] == fid)
+        assert rhs.ems_frontier_stimulus_mismatches(spec["roles"]) == []
+    assert "drag" in rhs.EMS_FRONTIER_STIMULUS_KEYS
+    # And a leg with the key removed WOULD be caught -- the check is not
+    # vacuous on a family that all declares the same value.
+    spec = next(f for f in rhs.EMS_FRONTIERS if f["id"] == "ftp75c")
+    saved = SCENARIOS["ems-ftp75c-sdp"]["drag"]
+    try:
+        SCENARIOS["ems-ftp75c-sdp"]["drag"] = "rig"
+        keys = [k for k, _v in
+                rhs.ems_frontier_stimulus_mismatches(spec["roles"])]
+        assert "drag" in keys
+    finally:
+        SCENARIOS["ems-ftp75c-sdp"]["drag"] = saved
+
+
+def test_build_plan_skip_records_the_ftp75c_set_without_the_flag():
+    plan = {p["name"]: p for p in rhs.build_plan(_args())
+            if p["kind"] == "scenario"}
+    for name in sorted(rhs.FTP75C_SCENARIOS):
+        entry = plan[name]
+        reason = entry.get("skip_reason")
+        assert reason, name
+        # The reason must name BOTH costs -- the wall clock and the PLANT
+        # CONFIGURATION, which is what makes this set unlike --with-ftp75.
+        assert "--with-ftp75c" in reason, name
+        assert "scaled-air" in reason, name
+        assert entry["argv"] is None and entry["duration_s"] == 0.0, name
+
+
+def test_build_plan_with_ftp75c_produces_real_plan_entries():
+    plan = {p["name"]: p for p in rhs.build_plan(_args(with_ftp75c=True))
+            if p["kind"] == "scenario"}
+    for name in sorted(rhs.FTP75C_SCENARIOS):
+        entry = plan[name]
+        assert not entry.get("skip_reason"), name
+        assert entry["argv"], name
+        assert entry["duration_s"] == pytest.approx(180.0), name
+        assert entry["csv"], name
+    # ... and the flag touches NOTHING else: every other scenario's argv is
+    # identical with the flag on and off.
+    off = {p["name"]: p for p in rhs.build_plan(_args())
+           if p["kind"] == "scenario"}
+    for name, entry in plan.items():
+        if name in rhs.FTP75C_SCENARIOS:
+            continue
+        assert entry["argv"] == off[name]["argv"], name
+
+
+def test_the_with_ftp75c_gate_is_ordered_after_the_pi_live_gate():
+    """All five legs are EMS-driven, so under --pi-live they are skipped
+    whatever this flag says -- and the honest reason is the pi-live one."""
+    plan = {p["name"]: p for p in
+            rhs.build_plan(_args(pi_live=True, with_ftp75c=True))
+            if p["kind"] == "scenario"}
+    for name in sorted(rhs.FTP75C_SCENARIOS):
+        reason = plan[name].get("skip_reason")
+        assert reason and "--pi-live" in reason, name

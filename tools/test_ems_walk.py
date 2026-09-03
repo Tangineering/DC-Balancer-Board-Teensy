@@ -24,6 +24,7 @@ np = pytest.importorskip("numpy")
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
+import charger_power as chgmod           # noqa: E402
 import ems_walk as ew                    # noqa: E402
 import governor_model as gm              # noqa: E402
 import gen_dp_ems_table as gen           # noqa: E402
@@ -65,7 +66,13 @@ def test_walk_soc_band_no_governor_matches_heuristic_walk_exactly():
     # ems-soc-band is NOT in ems_walk's own gap set, so the drain override is a
     # transparent pass-through here; this reproduces exactly what walk() does
     # internally to build the demand.
-    v, a, p_dem, v_bus, i_total, cruise = gen.build_demand(scenario, meta, times, dt)
+    # SEVEN elements since 2026-09-02: the seventh is `i_regen`, the braking
+    # credit. It is IDENTICALLY ZERO on this anchor -- `ems-soc-band` declares
+    # no `drag`, so the walk runs the measured rig road load in the pre-regen
+    # era -- and the anchor is an old-era claim exactly as `eta_chg=None` is.
+    v, a, p_dem, v_bus, i_total, cruise, i_regen = gen.build_demand(
+        scenario, meta, times, dt)
+    assert not i_regen.any()
 
     expected = gen.heuristic_walk(scenario, meta, soc0, times[:n_stages],
                                   p_dem[:n_stages], v_bus[:n_stages],
@@ -221,7 +228,7 @@ def test_ems_sdp_walk_demand_equals_reconciled_build_demand():
     n_stages = int(round(duration / dt))
     times = np.arange(n_stages + 1) * dt
     with ew._drain_override(gen, sim, "ems-sdp"):
-        _, _, _, _, i_total_expected, _ = gen.build_demand(
+        _, _, _, _, i_total_expected, _, _ = gen.build_demand(
             "ems-sdp", meta, times, dt)
 
     got = ew.walk("soc-band", "ems-sdp", governor=False, soc0=0.7, trace=True)
@@ -439,8 +446,9 @@ def test_walk_regression_anchor_requires_the_old_era_explicitly():
     dt = gen.DP_STAGE_DT_S
     n = int(round(float(sim_meta["duration_s"]) / dt))
     times = np.arange(n + 1) * dt
-    v, a, p_dem, v_bus, i_total, cruise = gen.build_demand(
+    v, a, p_dem, v_bus, i_total, cruise, i_regen = gen.build_demand(
         "ems-soc-band", sim_meta, times, dt)
+    assert not i_regen.any()      # rig drag, pre-regen era: no credit exists
     want = gen.heuristic_walk(
         "ems-soc-band", sim_meta, 0.7, times[:n], p_dem[:n], v_bus[:n],
         i_total[:n], dt, sim.BATT_CAPACITY_AH * 3600.0,
@@ -639,38 +647,252 @@ def test_the_loss_map_lowers_the_walk_bus_and_moves_its_hydrogen():
 def test_the_three_demand_models_agree_stage_for_stage_in_both_eras():
     """THE LOCKSTEP ASSERTION.
 
-    ⚠️ THERE ARE TWO IMPLEMENTATIONS, NOT THREE, and the name of this test used
-    to imply otherwise.  `gen_dp_ems_table.build_demand()` is the numpy
-    original and `mpc_ems.build_demand()` is an independent scalar port;
-    `ems_walk` has no copy at all and DELEGATES to the generator's, so a walk
-    agrees with the generator by construction and only the port can drift.
+    THERE ARE TWO IMPLEMENTATIONS, NOT THREE.  `gen_dp_ems_table.build_demand()`
+    is the numpy original and `mpc_ems.build_demand()` is an independent scalar
+    port; `ems_walk` has no copy at all and DELEGATES to the generator's, so a
+    walk agrees with the generator by construction and only the port can drift.
     This test is therefore a check on the PORT, and the walk is included as the
-    delegation's own regression: if `ems_walk` ever grows a third copy, the
-    grid below starts covering it without an edit.
+    delegation's own regression: if `ems_walk` ever grows a third copy, the grid
+    below starts covering it without an edit.
 
-    The planner's prediction and the bound it is scored against are on one
-    model only as long as the port agrees.  Asserted on a RANDOM preview grid
-    in BOTH demand eras, so a divergence that only shows up off the 0.1 s stage
-    grid is caught too."""
+    EXTENDED 2026-09-02 (the ftp75c round) ON TWO AXES.  The tuple is now SEVEN
+    elements, and the seventh -- `i_regen`, the braking credit -- is the one
+    element the two implementations could disagree on WITHOUT any other column
+    moving: it is a pure function of `force` and `v`, which both sides already
+    agree on, routed through `regen_power.py`.  A port that forgot the VESC
+    clip, or applied `eta_chg` on one side only, shows up here and nowhere else.
+
+    The grid is also swept over BOTH REGEN ERAS, because the pre-regen era is
+    the ABSENCE of the term and not the term at zero: an implementation that
+    computed `eta_regen = 0.0` arithmetic instead of honouring the sentinel
+    would still agree column for column on a rig-drag scenario and diverge on a
+    compensated one.  The compensated leg therefore runs on `ems-ftp75c-dp`,
+    the only registered stimulus whose credit column is not identically zero.
+    The loss-map and stage-grid sweeps are unchanged."""
     import random
+    import numpy as _np
     import mpc_ems as M
     rng = random.Random(20260902)
-    scen = "ems-soc-band"
-    meta = sim.SCENARIOS[scen]
-    dur = float(meta["duration_s"])
-    for loss_map in (None, sim.plant_loss_map()):
-        for _ in range(3):
-            dt = rng.choice([0.1, 0.25, 0.5, 1.0])
-            n = int(dur / dt)
-            times = [k * dt for k in range(n + 1)]
-            import numpy as _np
-            g_out = gen.build_demand(scen, meta, _np.asarray(times), dt,
-                                     loss_map=loss_map)
-            m_out = M.build_demand(scen, meta, times, dt, loss_map=loss_map)
-            for gi, mi, name in zip(g_out, m_out,
-                                    ("v", "a", "p_dem", "v_bus", "i_total",
-                                     "cruise")):
-                for k in range(0, n + 1, max(1, n // 37)):
-                    assert float(gi[k]) == pytest.approx(float(mi[k]),
-                                                         rel=1e-12, abs=1e-12), \
-                        (name, dt, k, loss_map is not None)
+    # (scenario, drag_mode, eta_regen).  The first row is the PRE-REGEN era on
+    # the measured rig road load -- the configuration every committed table was
+    # solved against.
+    eras = (
+        ("ems-soc-band", None, None),
+        ("ems-ftp75c-dp", sim.DRAG_MODE_SCALED_AIR, float(sim.ETA_REGEN)),
+    )
+    names = ("v", "a", "p_dem", "v_bus", "i_total", "cruise", "i_regen")
+    for scen, drag_mode, eta_regen in eras:
+        meta = sim.SCENARIOS[scen]
+        dur = float(meta["duration_s"])
+        chg_a = sim.dp_chg_ceiling_a(meta)
+        for loss_map in (None, sim.plant_loss_map()):
+            for _ in range(3):
+                dt = rng.choice([0.1, 0.25, 0.5, 1.0])
+                n = int(dur / dt)
+                times = [k * dt for k in range(n + 1)]
+                # The credit's last stage is the Ag105's output-referred cap,
+                # so both sides need the SAME reference pack voltage and the
+                # SAME ceiling -- passed explicitly here exactly as
+                # `prepare_problem()` passes them.
+                kw = dict(loss_map=loss_map, drag_mode=drag_mode,
+                          eta_regen=eta_regen, eta_chg=chgmod.ETA_CHG_DEFAULT,
+                          v_pack_ref=float(gen.pack_charge_voltage(0.7, chg_a)),
+                          regen_i_max_a=chg_a)
+                g_out = gen.build_demand(scen, meta, _np.asarray(times), dt,
+                                         **kw)
+                m_out = M.build_demand(scen, meta, times, dt, **kw)
+                assert len(g_out) == len(m_out) == 7
+                for gi, mi, name in zip(g_out, m_out, names):
+                    for k in range(0, n + 1, max(1, n // 37)):
+                        assert float(gi[k]) == pytest.approx(
+                            float(mi[k]), rel=1e-12, abs=1e-12),                             (scen, name, dt, k, loss_map is not None)
+                # The era is a BEHAVIOURAL claim, not a plumbing one: assert
+                # the credit column is what the era says it is, so a silently
+                # zeroed compensated leg cannot pass this test vacuously.
+                reg = _np.asarray(g_out[6], dtype=float)
+                if eta_regen is None:
+                    assert not reg.any()
+                else:
+                    assert reg.max() > 0.0
+
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# THE REGEN MANAGER AND THE BRAKING CREDIT IN THE WALK (2026-09-02, ftp75c)
+#
+# The walk is the offline twin of a live run, and on the `ems-ftp75c-*` family
+# it has to reproduce two things the live simulator does: the COMMON regen
+# command layer (`RegenManager`, applied by wrapping the strategy rather than
+# by editing each one), and the credit that layer's windows earn.
+# ─────────────────────────────────────────────────────────────────────────────
+_FTP75C_LEGS = (
+    ("ems-ftp75c-5050", "hold-5050"),
+    ("ems-ftp75c-socband", "soc-band"),
+    ("ems-ftp75c-sdp", "sdp-v4"),
+    ("ems-ftp75c-dp", "dp-replay"),
+    ("ems-ftp75c-mpc", "mpc-sto"),
+)
+
+
+def _ftp75c_walk(scenario, strategy, **kw):
+    """One governor walk of a compressed-cycle leg at the campaign's own
+    configuration -- loss map on and the measured converter asymmetry, which is
+    what every figure quoted for this family was taken at."""
+    return ew.walk(strategy, scenario, soc0=0.7,
+                   loss_map=sim.plant_loss_map(),
+                   dv0_v=sim.resolve_asymmetry_dv0_v("measured"), **kw)
+
+
+def test_walk_defaults_the_two_new_eras_to_the_pre_round_configuration():
+    import inspect
+    sig = inspect.signature(ew.walk).parameters
+    assert sig["drag_mode"].default is None
+    assert sig["eta_regen"].default is None
+    # A scenario with no `drag` key walks the measured rig road load and earns
+    # no credit -- i.e. every pre-round walk is unmoved.
+    res = ew.walk("soc-band", "ems-soc-band", governor=False, eta_chg=None)
+    assert res.regen_charge_c == 0.0
+    assert res.regen_stages == 0
+    assert res.regen_windows == []
+    assert res.regen_duty_s == 0.0
+
+
+def test_walk_reads_the_drag_profile_off_the_scenario_when_not_given():
+    """`drag_mode` reads the SCENARIO's own key when omitted -- unlike
+    `loss_map`, which is a RUN configuration -- because a compensated cycle
+    walked on the rig road load is a cycle nobody will drive.  `eta_regen` is
+    then defaulted FROM the drag profile, on the generator's rule."""
+    res = _ftp75c_walk(*_FTP75C_LEGS[0])
+    notes = " ".join(res.notes)
+    assert "scaled-air" in notes or "compensated" in notes.lower()
+    assert res.regen_charge_c > 0.0
+    # An explicit rig override of the same scenario walks the zero-regen
+    # control, which is the run an operator gets from `--drag rig`.
+    rig = _ftp75c_walk(*_FTP75C_LEGS[0], drag_mode=sim.DRAG_MODE_RIG)
+    assert rig.regen_charge_c == 0.0
+    assert rig.regen_windows == []
+    assert rig.h2_g > res.h2_g, (
+        "the rig road load must cost MORE hydrogen: it is ~4.5x the tractive "
+        "demand and returns nothing")
+
+
+def test_walk_refuses_an_unknown_drag_mode():
+    with pytest.raises(ValueError):
+        ew.walk("hold-5050", "ems-ftp75c-5050", drag_mode="scaled_air")
+
+
+def test_the_regen_manager_is_applied_to_every_scenario_that_declares_it():
+    """The manager is COMMON and the credit is SHARE-INDEPENDENT, so every
+    strategy receives the same credit on the same windows.  `ftp75c` validates
+    the regen model end to end and is NOT expected to reorder the strategies --
+    a reordering on this stimulus is a DEFECT SIGNAL, not a result.
+
+    ⚠️ The `mpc-sto` leg is the slow one here (a few seconds): it runs the
+    planner's own search at every decision.  It is included deliberately -- the
+    MPC is the one consumer whose prediction model carries the credit, so a leg
+    that silently lost the manager would be invisible everywhere else."""
+    charges = {}
+    for scenario, strategy in _FTP75C_LEGS:
+        res = _ftp75c_walk(scenario, strategy)
+        charges[scenario] = res.regen_charge_c
+        assert len(res.regen_windows) == 6, scenario
+        assert res.regen_duty_s == pytest.approx(19.600, abs=1e-3), scenario
+        # ⚠️ CREDITED STAGES ARE THE COMMANDED ONES, NOT THE CAPABLE ONES
+        # (M5, 2026-09-02).  `i_regen[k]` says a stage is regen-CAPABLE;
+        # energy reaches the pack only where the manager has actually
+        # commanded `charge_goal` and the firmware has opened REGEN_ENABLE.
+        # Crediting the capable stages banked 4.0 % of the total on stages
+        # where no path was open.  Every credited stage must therefore lie
+        # inside a commanded window.
+        assert res.regen_stages < 329, scenario
+        # The walk's windows ARE the derivation's, not a second copy.
+        assert [tuple(w) for w in res.regen_windows] == \
+            list(sim.derive_regen_windows(sim.SCENARIOS[scenario]
+                                          ["ems_v_profile"],
+                                          sim.DRAG_MODE_SCALED_AIR)), scenario
+    # IDENTICALLY on all five, to the last bit: the credit does not depend on
+    # the strategy, so an implementation that let a strategy influence it would
+    # show up as a spread here and nowhere else.
+    vals = set(charges.values())
+    assert len(vals) == 1, charges
+    assert vals.pop() == pytest.approx(1.1729, abs=1e-4)
+
+
+def test_the_walks_credit_equals_the_dp_generators_own_column():
+    """The walk DELEGATES its demand to `gen_dp_ems_table.build_demand()`, so
+    the coulombs it banks must be that column's integral -- the same number the
+    bound was solved against, which is the whole point of the round."""
+    p = gen.prepare_problem(
+        "ems-ftp75c-dp", sim.SCENARIOS["ems-ftp75c-dp"], soc0=0.7,
+        capacity_ah=5.0, stage_dt=gen.DP_STAGE_DT_S, n_share=41,
+        soc_step=5e-6, run_exit=float(sim.FTP75C_RUN_EXIT_S),
+        charger_accounting="physical", lambda_dev=0.0, eta_chg=0.88,
+        loss_map=sim.plant_loss_map(), drag_mode=sim.DRAG_MODE_SCALED_AIR,
+        eta_regen=float(sim.ETA_REGEN))
+    n = p.n_stages
+    # ⚠️ THE WALK'S CREDIT IS THE GENERATOR'S COLUMN RESTRICTED TO THE
+    # COMMANDED WINDOWS (M5, 2026-09-02), not the raw column.  The two differ
+    # because a stage can be regen-CAPABLE without being inside a window: the
+    # windows carry lead times, drop anything under 0.50 s, and are trimmed
+    # against the firmware's own regen threshold.  Asserting raw equality was
+    # asserting a walk of a run nobody would get.
+    wins = sim.derive_regen_windows(
+        sim.SCENARIOS["ems-ftp75c-dp"]["ems_v_profile"],
+        sim.DRAG_MODE_SCALED_AIR)
+
+    def _in(t):
+        return any(a <= t < b for a, b in wins)
+
+    want_c = float(sum(p.i_regen[k] for k in range(n)
+                       if _in(float(p.times[k]))) * p.stage_dt)
+    want_stages = sum(1 for k in range(n)
+                      if p.i_regen[k] > 0.0 and _in(float(p.times[k])))
+    res = _ftp75c_walk("ems-ftp75c-dp", "dp-replay")
+    assert res.regen_charge_c == pytest.approx(want_c, rel=1e-12)
+    assert res.regen_stages == want_stages
+    # ... and the RAW column is strictly larger, so the restriction is not
+    # inert and a regression to the ungated form fails here.
+    assert float(p.i_regen[:n].sum() * p.stage_dt) > want_c
+
+
+def test_the_walk_forwards_the_resolved_drag_mode_to_the_strategy_binder():
+    """`--drag` OVERRIDES a scenario key, so a binder handed only the meta
+    would resolve the WRONG road-load era -- and `DpReplayStrategy` would then
+    accept a table solved against 4.5x the tractive demand.  Asserted through
+    the refusal, which is the observable consequence."""
+    with pytest.raises(ValueError) as exc:
+        _ftp75c_walk("ems-ftp75c-dp", "dp-replay",
+                     drag_mode=sim.DRAG_MODE_RIG)
+    text = str(exc.value)
+    assert "drag" in text and "eta_regen" in text
+
+
+def test_the_walk_credits_only_stages_inside_a_commanded_regen_window():
+    """THE CREDIT IS GATED ON THE MANAGER, NOT ON THE PHYSICS (M5, 2026-09-02).
+
+    `i_regen[k]` says a stage is regen-CAPABLE.  Energy only reaches the pack
+    where the manager has actually commanded `charge_goal` and the firmware has
+    therefore opened REGEN_ENABLE, and the two sets are NOT the same: the
+    windows carry a 0.20 s lead-in and lead-out, drop anything under 0.50 s, and
+    are trimmed against the firmware's own regen threshold rather than against
+    zero.  Crediting the capable stages banked 0.0558 C over 50 stages -- 4.0 %
+    of the total -- on stages where no path was open, which is a walk of a run
+    nobody would get.
+
+    Asserted two ways: the total moved DOWN, and every credited stage lies
+    inside a window."""
+    res = _ftp75c_walk("ems-ftp75c-5050", "hold-5050")
+    wins = [tuple(w) for w in res.regen_windows]
+    assert wins, "the leg lost its regen manager"
+
+    # The trace carries no per-stage credit column, so the property is
+    # asserted through the COUNT: no more stages may be credited than the
+    # commanded windows cover.
+    inside = 0
+    for k, t in enumerate(res.t):
+        if any(a <= t < b for a, b in wins):
+            inside += 1
+    assert res.regen_stages <= inside, (res.regen_stages, inside)
+
+    # And the ungated total is strictly larger, so the gate is not inert.
+    assert res.regen_charge_c == pytest.approx(1.1729, abs=1e-3)

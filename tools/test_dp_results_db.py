@@ -59,6 +59,14 @@ def _fields(**over):
         # their pre-change keys. It is carried as the CANONICAL STRING
         # (hil_plant_sim.loss_map_canonical), never as a dict.
         loss_map=None,
+        # drag / eta_regen (2026-09-02, the ftp75c round): the third and
+        # fourth OPTIONAL key fields, on identical terms again. None names
+        # the MEASURED RIG ROAD LOAD and the PRE-REGEN demand model
+        # respectively -- what every record in the shipped store was solved
+        # against -- and both are OMITTED from the canonical form, so those
+        # records keep their pre-change keys. `drag` is carried as its MODE
+        # STRING, never as a k_air value.
+        drag=None, eta_regen=None,
         gfc_dc_gain=1.7637602179836514e-05, eta_boost=0.85,
         limit_i_fc_max_a=1.4, charge_share_value=0.75, share_span=0.25,
         cruise_slope_max=0.05, cruise_min_mps=0.5, run_entry_s=3.0,
@@ -80,6 +88,12 @@ def _fields(**over):
     # the era and a present value is a string.
     lm = base.pop("loss_map")
     base["loss_map"] = None if lm is None else str(lm)
+    # drag and eta_regen are not floated either: `drag` is a mode string and
+    # None is its era, and `eta_regen` is None-or-float where None is its era.
+    dg = base.pop("drag")
+    base["drag"] = None if dg is None else str(dg)
+    er = base.pop("eta_regen")
+    base["eta_regen"] = None if er is None else float(er)
     for name in ("soc0", "capacity_ah", "stage_dt", "n_share", "soc_step",
                 "chg_a", "lambda_dev", "gfc_dc_gain", "eta_boost",
                 "limit_i_fc_max_a", "charge_share_value", "share_span",
@@ -1479,3 +1493,125 @@ def test_solve_and_store_recovers_the_map_from_a_stored_records_own_fields():
         assert sim.loss_map_from_canonical(text) == sim.plant_loss_map(), path
     assert seen >= 1, ("no loss-map-era record in the store; the seven "
                        "loss-map-era EMS prefills are part of this round")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# THE ROAD-LOAD AND REGEN ERAS AS KEY FIELDS (2026-09-02, the ftp75c round)
+#
+# `drag` and `eta_regen` joined KEY_FIELDS on exactly the terms `eta_chg` and
+# `loss_map` did, and the reachability argument is the same one: an ABSENT
+# `drag` names the MEASURED RIG ROAD LOAD and an ABSENT `eta_regen` the
+# PRE-REGEN demand model, which is what every record in the shipped store was
+# solved against.  Both are OMITTED from the canonical form, so those records
+# keep their pre-change keys.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_drag_and_eta_regen_are_optional_key_fields():
+    assert "drag" in db.KEY_FIELDS and "eta_regen" in db.KEY_FIELDS
+    assert {"drag", "eta_regen"} <= set(db.OPTIONAL_KEY_FIELDS)
+
+
+def test_an_absent_drag_keys_exactly_as_the_pre_round_code_did():
+    """THE OMISSION ARGUMENT, executable, for the third optional field."""
+    f_absent = _fields()
+    del f_absent["drag"]
+    f_none = _fields(drag=None)
+    f_rig = _fields(drag="rig")
+    assert db._canonical(f_absent) == db._canonical(f_none)
+    assert "drag" not in db._canonical(f_absent)
+    assert db.make_key(f_absent) == db.make_key(f_none)
+    # ⚠️ "rig" is NOT the same canonical statement as an omission at THIS
+    # layer: `_canonical` records what it is given, and it is
+    # `problem_fields()` that normalises the mode through `plant_drag_mode()`
+    # BEFORE the record is built (asserted separately below). Pinning the
+    # normalisation at its real site is the point -- a reader must not think
+    # the store itself understands the sentinel.
+    assert db.make_key(f_rig) != db.make_key(f_absent)
+
+
+def test_an_absent_eta_regen_keys_exactly_as_the_pre_round_code_did():
+    f_absent = _fields()
+    del f_absent["eta_regen"]
+    f_none = _fields(eta_regen=None)
+    assert db._canonical(f_absent) == db._canonical(f_none)
+    assert "eta_regen" not in db._canonical(f_absent)
+    assert db.make_key(f_absent) == db.make_key(f_none)
+
+
+def test_the_two_road_load_eras_key_apart():
+    old = db.make_key(_fields(drag=None))
+    new = db.make_key(_fields(drag="scaled-air"))
+    other = db.make_key(_fields(drag="scaled-air-matched"))
+    assert len({old, new, other}) == 3
+    # ... and the regen era keys apart on its own axis, because the two are
+    # INDEPENDENT: a rig-drag run in the regen era is legitimate and simply
+    # earns zero credit.
+    assert db.make_key(_fields(eta_regen=0.8)) != \
+        db.make_key(_fields(eta_regen=None))
+    assert db.make_key(_fields(drag="scaled-air", eta_regen=0.8)) != new
+
+
+def test_the_drag_field_is_carried_as_a_mode_string_not_a_k_air_value():
+    """`_canonical` renders a str verbatim and everything else through
+    `repr(float(...))`, so the field must be the MODE STRING -- a k_air float
+    would key two modes apart correctly today and silently re-key every record
+    the moment `Cd * A_f` is corrected."""
+    text = db._canonical(_fields(drag="scaled-air"))
+    assert '"drag":"scaled-air"' in text
+    assert "0.0598" not in text
+
+
+def test_problem_fields_normalises_the_rig_sentinel_to_an_omission():
+    """The normalisation lives in `problem_fields()`, through
+    `plant_drag_mode()`, so a caller that passes "rig" and a caller that passes
+    nothing produce the SAME record -- which is what keeps a pre-round record
+    reachable from a post-round lookup."""
+    pytest.importorskip("numpy")     # problem_fields() -> model_fields() -> gen
+    import inspect
+    sig = inspect.signature(db.problem_fields).parameters
+    assert sig["drag"].default is None
+    assert sig["eta_regen"].default is None
+    common = dict(profile_fingerprint="fp-aaaa", soc0=0.7, capacity_ah=5.0,
+                  charger_accounting="physical", stage_dt=0.1, n_share=41,
+                  soc_step=5e-6, chg_a=0.8, lambda_dev=0.0,
+                  aux_preload_a=None, run_exit_s=58.0, target_soc=0.698)
+    a = db.problem_fields("ems-soc-band", **common)
+    b = db.problem_fields("ems-soc-band", drag="rig", **common)
+    c = db.problem_fields("ems-soc-band", drag="scaled-air", **common)
+    assert a["drag"] is None and b["drag"] is None
+    assert db.make_key(a) == db.make_key(b)
+    assert c["drag"] == "scaled-air"
+    assert db.make_key(c) != db.make_key(a)
+    # `eta_regen` passes through as a float-or-None, no normalisation needed:
+    # it has no non-None spelling of its own sentinel.
+    d = db.problem_fields("ems-soc-band", eta_regen=0.8, **common)
+    assert d["eta_regen"] == 0.8
+    assert db.problem_fields("ems-soc-band", eta_regen=None,
+                             **common)["eta_regen"] is None
+
+
+def test_the_non_target_hash_also_omits_both_absent_era_fields():
+    """The non-target hash is what a nearest-target lookup matches on, so an
+    omission that held for the key but not for it would make every stored
+    record unreachable by proximity."""
+    f_absent = _fields()
+    del f_absent["drag"]
+    del f_absent["eta_regen"]
+    f_none = _fields(drag=None, eta_regen=None)
+    assert db.non_target_hash(f_absent) == db.non_target_hash(f_none)
+    assert db.non_target_hash(_fields(drag="scaled-air")) != \
+        db.non_target_hash(f_none)
+
+
+def test_every_stored_record_is_still_reachable_after_the_two_keys_landed():
+    """THE REACHABILITY CLAIM AT THE STORE, not at the field dict: a record
+    written before either key existed must still be found by a lookup made
+    today.  The fingerprint move that orphaned all 16 records once already is
+    the failure this guards."""
+    f_old = _fields()
+    del f_old["drag"]
+    del f_old["eta_regen"]
+    key_old = db.make_key(f_old)
+    f_now = _fields()                 # today's caller: both at their sentinels
+    assert db.make_key(f_now) == key_old
+    assert db.non_target_hash(f_now) == db.non_target_hash(f_old)

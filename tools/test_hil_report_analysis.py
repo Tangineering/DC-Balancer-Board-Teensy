@@ -3121,3 +3121,94 @@ def test_matched_dp_records_the_plant_era_fields_for_the_analyst():
     other = _mdp_call(_mdp_cfg(droop_mode="measured"))["stimulus_era"]
     assert other["plant_era"]["droop_mode"] == "measured"
     assert other["plant_era"]["loss_map"] is None
+
+
+# ── the road-load and regen eras in the matched-DP baseline (2026-09-02) ────
+#
+# Both are resolved from the RUN's own config, on the identical argument
+# `accounting`, `eta_chg` and `loss_map` are: a baseline solved for a different
+# plant is not a baseline for this run.  `drag` is the sharper of the two --
+# it is the only one of the four era keys a SCENARIO declares, so a run that
+# overrode it with `--drag` would otherwise fingerprint against the registry's
+# value rather than its own.
+
+def _mdp_call_named(scenario, cfg, scen_block=None):
+    analysis = {"kind": "scenario", "name": scenario}
+    hil = _mdp_hil([0.70, 0.699, 0.698], h2_cum_g=[0.0, 0.006, 0.0118])
+    meta = {"config": cfg}
+    if scen_block is not None:
+        meta["scenario"] = scen_block
+    return hra.matched_dp_for_run(analysis, meta, hil, mode="lookup")
+
+
+def test_matched_dp_resolves_the_road_load_era_from_the_runs_own_config():
+    out = _mdp_call_named("ems-ftp75c-dp",
+                          _mdp_cfg(drag="scaled-air")["config"])
+    assert out is not None
+    assert out["key_fields"]["drag"] == "scaled-air"
+    assert out["stimulus_era"]["plant_era"]["drag"] == "scaled-air"
+    # ... and the era reaches the FINGERPRINT, not only the key field, or the
+    # record a prefill stores would be unreachable by this lookup.
+    assert "drag" in out["stimulus_era"]["overrides"]
+
+
+def test_an_absent_drag_key_is_a_pre_round_sidecar_and_resolves_to_the_rig():
+    """`config.drag` is written UNCONDITIONALLY by every run from 2026-09-02,
+    so an ABSENT key is a pre-round sidecar -- the era SENTINEL, not a
+    default."""
+    out = _mdp_call(_mdp_cfg())                 # no `drag` key at all
+    assert out["key_fields"]["drag"] is None
+    assert out["stimulus_era"]["plant_era"]["drag"] is None
+    # An explicit "rig" is the same statement, so a pre-round record stays
+    # reachable from a post-round lookup.
+    same = _mdp_call(_mdp_cfg(drag="rig"))
+    assert same["key"] == out["key"]
+    assert same["key_fields"]["profile_fingerprint"] == \
+        out["key_fields"]["profile_fingerprint"]
+
+
+def test_matched_dp_records_a_deliberate_rig_override_of_a_compensated_leg():
+    """The zero-regen CONTROL run: the scenario declares `scaled-air` and the
+    operator passed `--drag rig`.  The override must be recorded, or the
+    baseline is solved against the compensated demand the run did not draw."""
+    out = _mdp_call_named("ems-ftp75c-dp", _mdp_cfg(drag="rig")["config"])
+    assert out["key_fields"]["drag"] is None            # the rig sentinel
+    assert out["stimulus_era"]["overrides"]["drag"] == _sim.DRAG_MODE_RIG
+    # ... and it keys apart from the same leg run as registered.
+    other = _mdp_call_named("ems-ftp75c-dp",
+                            _mdp_cfg(drag="scaled-air")["config"])
+    assert out["key"] != other["key"]
+    assert out["key_fields"]["profile_fingerprint"] != \
+        other["key_fields"]["profile_fingerprint"]
+
+
+def test_matched_dp_resolves_the_regen_era_from_the_scenario_block_first():
+    """`eta_regen` is read from the run's `scenario` block, where
+    `plant_eta_regen()` already resolved it against the run's drag mode, and
+    falls back to that resolution for a sidecar written before the key
+    existed."""
+    cfg = _mdp_cfg(drag="scaled-air")["config"]
+    declared = _mdp_call_named("ems-ftp75c-dp", cfg, {"eta_regen": 0.75})
+    assert declared["key_fields"]["eta_regen"] == pytest.approx(0.75)
+    fallback = _mdp_call_named("ems-ftp75c-dp", cfg)
+    assert fallback["key_fields"]["eta_regen"] == \
+        pytest.approx(float(_sim.ETA_REGEN))
+    assert declared["key"] != fallback["key"]
+
+
+def test_a_rig_run_carries_no_regen_era_at_all():
+    """THE SENTINEL IS THE ABSENCE OF THE TERM.  Under the rig profile the
+    credit is 0.001 J over a 340 s segment, so a pre-regen table is a valid
+    bound and treating it otherwise would orphan every committed table for a
+    credit that does not exist."""
+    out = _mdp_call(_mdp_cfg())
+    assert out["key_fields"]["eta_regen"] is None
+    assert out["stimulus_era"]["plant_era"]["eta_regen"] is None
+
+
+def test_the_two_new_era_keys_are_in_the_recorded_fingerprint_key_list():
+    """The analyst reads the key list off the matched-DP block rather than off
+    the module, so it must carry both."""
+    out = _mdp_call(_mdp_cfg())
+    keys = out["stimulus_era"]["fingerprint_keys"]
+    assert "drag" in keys and "eta_regen" in keys

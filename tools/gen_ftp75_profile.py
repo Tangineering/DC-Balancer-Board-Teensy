@@ -50,6 +50,31 @@ whole cycle sits above the drive design's 0.5 m/s validity floor only
 intermittently — the standstill and creep segments of the FTP are part of the
 stimulus, not a defect.  See docs/HIL_PLANT.md.
 
+TIME COMPRESSION (`--time-factor`, 2026-09-02).  The generator emits TWO
+profiles from the same EPA bytes.  `--time-factor 1.0` (the default) writes
+`tools/ftp75_profile.py` and is BYTE-IDENTICAL to every version of it that
+predates the flag.  `--time-factor 0.5` writes `tools/ftp75c_profile.py`, the
+COMPRESSED cycle: the time axis is multiplied by the factor BEFORE the profile
+offset is applied and the velocity axis is untouched, so every acceleration is
+divided by the factor while the speeds are the same.
+
+WHY A COMPRESSED CYCLE EXISTS.  The rig road load exceeds the inertial force at
+every deceleration the uncompressed cycle contains, so `ftp75` regenerates
+nothing.  Compression doubles the deceleration and, together with the road-load
+compensation of `hil_plant_sim.py`'s `--drag scaled-air`, brings the required
+regen current into the same decade as the VESC clip.  The derivation, the
+energy chain and the limits of the claim are in
+docs/modeling/ftp75c_regen_cycle_design_20260902.md.  `ftp75c` makes NO
+dynamic-similarity claim, and it does not amend the published scaling study,
+which deliberately did not time-scale its cycle.
+
+POINT-COUNT INVARIANCE, ASSERTED.  `decimate_collinear()` tests a RATIO of time
+differences, which is invariant under a uniform scaling of the time axis, so
+the compressed table must keep exactly the same points as the uncompressed one.
+That is asserted at generation time (POINTS_INVARIANT): a divergence would mean
+the time-scaling change had perturbed the decimation, which is a defect and not
+a stimulus choice.
+
 DECIMATION.  The raw cycle is sampled at 1 Hz, and long stretches of it are
 exactly linear (constant-acceleration ramps and constant-speed cruises), so
 most interior points are redundant under the piecewise-linear interpolation
@@ -115,6 +140,35 @@ RECON_ERR_MAX = 1.0e-9
 
 OUT_REL = os.path.join("tools", "ftp75_profile.py")
 OUT_PATH = os.path.join(REPO_ROOT, OUT_REL)
+
+# ── Time compression ────────────────────────────────────────────────────────
+# The REGISTERED factors, and only these.  A factor that is not in this table
+# has no agreed module name and no agreed constant prefix, so the generator
+# refuses it rather than inventing either — the same discipline the sha256 gate
+# on the raw file applies to the input side.
+#   factor -> (constant prefix, output module basename)
+TIME_FACTORS = {
+    1.0: ("FTP75", "ftp75_profile.py"),
+    0.5: ("FTP75C", "ftp75c_profile.py"),
+}
+DEFAULT_TIME_FACTOR = 1.0
+# The decimated point count EVERY registered factor must produce.  See the
+# TIME COMPRESSION note in the module docstring: the collinear test is
+# scale-invariant, so a divergence here is a defect in the scaling change.
+POINTS_INVARIANT = 234
+
+
+def resolve_factor(time_factor):
+    """(prefix, out_path) for a registered `--time-factor`.  Raises otherwise."""
+    key = float(time_factor)
+    if key not in TIME_FACTORS:
+        raise ValueError(
+            "unregistered --time-factor %r (registered: %s). A new factor needs "
+            "a constant prefix and an output module name agreed in "
+            "TIME_FACTORS, because hil_plant_sim.py imports both by name."
+            % (time_factor, ", ".join(repr(k) for k in sorted(TIME_FACTORS))))
+    prefix, base = TIME_FACTORS[key]
+    return prefix, os.path.join(REPO_ROOT, "tools", base)
 
 
 def read_raw(path):
@@ -222,21 +276,36 @@ def max_reconstruction_error(reduced, full):
     return worst, worst_t
 
 
-def render_module(reduced, full, digest, worst_err, worst_t):
-    """The generated tools/ftp75_profile.py source text."""
+def render_module(reduced, full, digest, worst_err, worst_t,
+                  prefix="FTP75", time_factor=DEFAULT_TIME_FACTOR):
+    """The generated tools/ftp75*_profile.py source text.
+
+    `prefix` names the emitted constants and `time_factor` the compression.
+    At the DEFAULTS this function is BYTE-IDENTICAL to its pre-2026-09-02 form:
+    every compression-specific line is emitted only when the factor is not 1.0,
+    so `tools/ftp75_profile.py` regenerates exactly as it stands."""
     peak_v = max(v for _t, v in full)
     # `full` is ALREADY shifted, so this is the EMITTED-table time; the raw time
     # is it minus PROFILE_START_S.  Confusing the two is exactly the
     # transcription class this generator exists to remove.
     peak_t_out = next(t for t, v in full if v == peak_v)
-    peak_t_raw = peak_t_out - PROFILE_START_S
+    peak_t_raw = (peak_t_out - PROFILE_START_S) / time_factor
     lines = []
     A = lines.append
-    A('"""FTP-75 first %d s, rescaled to this rig — GENERATED FILE, DO NOT EDIT.'
-      % SEGMENT_END_S)
+    if time_factor == 1.0:
+        A('"""FTP-75 first %d s, rescaled to this rig — GENERATED FILE, DO NOT EDIT.'
+          % SEGMENT_END_S)
+    else:
+        A('"""FTP-75 first %d s, rescaled to this rig and TIME-COMPRESSED by '
+          '%r —' % (SEGMENT_END_S, time_factor))
+        A("GENERATED FILE, DO NOT EDIT.")
     A("")
     A("Regenerate with:")
-    A("    .venv_hil/Scripts/python.exe tools/gen_ftp75_profile.py --force")
+    if time_factor == 1.0:
+        A("    .venv_hil/Scripts/python.exe tools/gen_ftp75_profile.py --force")
+    else:
+        A("    .venv_hil/Scripts/python.exe tools/gen_ftp75_profile.py "
+          "--time-factor %r --force" % time_factor)
     A("")
     A("SOURCE")
     A("    %s" % SOURCE_URL)
@@ -265,6 +334,11 @@ def render_module(reduced, full, digest, worst_err, worst_t):
     A("    (CLAUDE.md fw v16, ML0169).  No dynamic-similarity claim is made.")
     A("")
     A("TIME BASE")
+    if time_factor != 1.0:
+        A("    Raw time multiplied by %r BEFORE the offset, velocity untouched,"
+          % time_factor)
+        A("    so every acceleration is %r x the uncompressed cycle's."
+          % (1.0 / time_factor))
     A("    Shifted by +%g s, so the cycle starts %g s into Run"
       % (PROFILE_START_S, PROFILE_START_S))
     A("    (EMS_RUN_ENTRY_S = 3.0).  Table spans t = %r .. %r s."
@@ -277,41 +351,56 @@ def render_module(reduced, full, digest, worst_err, worst_t):
       % COLLINEAR_TOL)
     A("    original sample: %.3g m/s%s."
       % (worst_err, "" if worst_t is None else " (at raw t = %g s)"
-         % (worst_t - PROFILE_START_S)))
+         % ((worst_t - PROFILE_START_S) / time_factor)))
     A("    The reduction saves work in hil_plant_sim.piecewise(); it does not")
     A("    change the stimulus.")
     A('"""')
     A("")
     A("# (t_seconds, v_setpoint_mps) — piecewise-linear, consumed as a")
     A("# scenario's `ems_v_profile` (hil_plant_sim.SCENARIOS).")
-    A("FTP75_PROFILE = [")
+    A("%s_PROFILE = [" % prefix)
     for t, v in reduced:
         A("    (%r, %r)," % (float(t), float(v)))
     A("]")
     A("")
     A("# Convenience constants, all DERIVED from the table above.")
-    A("FTP75_T_START = %r" % float(reduced[0][0]))
-    A("FTP75_T_END = %r" % float(reduced[-1][0]))
-    A("FTP75_PEAK_MPS = %r" % float(peak_v))
-    A("FTP75_PEAK_T = %r" % float(peak_t_out))
-    A("FTP75_POINTS = %d" % len(reduced))
-    A("FTP75_RAW_SAMPLES = %d" % len(full))
-    A("FTP75_RAW_SHA256 = %r" % digest)
-    A("FTP75_SCALE_MPH_TO_MPS = %r" % SCALE_MPH_TO_MPS)
+    A("%s_T_START = %r" % (prefix, float(reduced[0][0])))
+    A("%s_T_END = %r" % (prefix, float(reduced[-1][0])))
+    A("%s_PEAK_MPS = %r" % (prefix, float(peak_v)))
+    A("%s_PEAK_T = %r" % (prefix, float(peak_t_out)))
+    A("%s_POINTS = %d" % (prefix, len(reduced)))
+    A("%s_RAW_SAMPLES = %d" % (prefix, len(full)))
+    A("%s_RAW_SHA256 = %r" % (prefix, digest))
+    A("%s_SCALE_MPH_TO_MPS = %r" % (prefix, SCALE_MPH_TO_MPS))
+    if time_factor != 1.0:
+        A("%s_TIME_FACTOR = %r" % (prefix, float(time_factor)))
     A("")
     return "\n".join(lines)
 
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--out", default=OUT_PATH,
-                    help="output module path (default %s)"
+    ap.add_argument("--time-factor", type=float, default=DEFAULT_TIME_FACTOR,
+                    help="multiply the RAW time axis by this before the "
+                         "profile offset; the velocity axis is untouched. "
+                         "1.0 (default) emits tools/ftp75_profile.py; 0.5 "
+                         "emits the compressed tools/ftp75c_profile.py. See "
+                         "docs/modeling/ftp75c_regen_cycle_design_20260902.md.")
+    ap.add_argument("--out", default=None,
+                    help="output module path (default: the module registered "
+                         "for --time-factor, e.g. %s at 1.0)"
                          % OUT_REL.replace(os.sep, "/"))
     ap.add_argument("--force", action="store_true",
                     help="overwrite an existing output file")
     ap.add_argument("--dry-run", action="store_true",
                     help="report the reduction and write nothing")
     args = ap.parse_args(argv)
+
+    try:
+        prefix, default_out = resolve_factor(args.time_factor)
+    except ValueError as exc:
+        ap.error(str(exc))
+    out_path = default_out if args.out is None else args.out
 
     if not os.path.isfile(RAW_PATH):
         ap.error("raw data missing: %s (see references/drive_cycles/"
@@ -325,38 +414,59 @@ def main(argv=None):
                  % (RAW_PATH, RAW_SHA256, digest, SOURCE_URL))
 
     segment = slice_segment(rows)
-    full = [(float(t) + PROFILE_START_S, float(mph) * SCALE_MPH_TO_MPS)
+    # THE COMPRESSION IS ONE MULTIPLY, applied to the RAW time BEFORE the
+    # profile offset (the offset is a simulator-clock placement and must not be
+    # scaled with the cycle).  The velocity axis is untouched.
+    full = [(float(t) * args.time_factor + PROFILE_START_S,
+             float(mph) * SCALE_MPH_TO_MPS)
             for (t, mph) in segment]
     reduced = decimate_collinear(full)
     worst_err, worst_t = max_reconstruction_error(reduced, full)
     if worst_err > RECON_ERR_MAX:
         ap.error("decimation error %.3g m/s exceeds RECON_ERR_MAX %g — refusing "
                  "to emit a table that is not the cycle" % (worst_err, RECON_ERR_MAX))
+    # POINT-COUNT INVARIANCE (2026-09-02).  The collinear test compares a RATIO
+    # of time differences, so it cannot see a uniform time scaling; every
+    # registered factor must therefore reduce to the same point count.  A
+    # divergence means the scaling change perturbed the decimation, which is a
+    # defect, not a stimulus choice — refuse rather than emit a table whose
+    # shape differs from its sibling's for an unexplained reason.
+    if len(reduced) != POINTS_INVARIANT:
+        ap.error("decimation produced %d points at --time-factor %r, but every "
+                 "registered factor must produce %d (the collinear test is "
+                 "invariant under a uniform time scaling). Re-check the "
+                 "scaling change before emitting this table."
+                 % (len(reduced), args.time_factor, POINTS_INVARIANT))
 
+    tag = prefix.lower()
     peak_v = max(v for _t, v in full)
-    print("[ftp75] raw          %s (%d bytes, sha256 %s...)"
-          % (RAW_REL.replace(os.sep, "/"), RAW_SIZE, digest[:16]))
-    print("[ftp75] segment      %d samples, raw t = 0..%d s (study segment; "
-          "idle from t = %d)" % (len(segment), SEGMENT_END_S, SEGMENT_IDLE_FROM_S))
-    print("[ftp75] scale        mph * %r  (peak %g mph -> %g m/s)"
-          % (SCALE_MPH_TO_MPS, peak_v / SCALE_MPH_TO_MPS, peak_v))
-    print("[ftp75] shifted to   t = %g .. %g s"
-          % (reduced[0][0], reduced[-1][0]))
-    print("[ftp75] decimation   %d -> %d points, worst reconstruction error "
-          "%.3g m/s" % (len(full), len(reduced), worst_err))
+    print("[%s] raw          %s (%d bytes, sha256 %s...)"
+          % (tag, RAW_REL.replace(os.sep, "/"), RAW_SIZE, digest[:16]))
+    print("[%s] segment      %d samples, raw t = 0..%d s (study segment; "
+          "idle from t = %d)"
+          % (tag, len(segment), SEGMENT_END_S, SEGMENT_IDLE_FROM_S))
+    print("[%s] time factor  %r  (velocity axis untouched)"
+          % (tag, args.time_factor))
+    print("[%s] scale        mph * %r  (peak %g mph -> %g m/s)"
+          % (tag, SCALE_MPH_TO_MPS, peak_v / SCALE_MPH_TO_MPS, peak_v))
+    print("[%s] shifted to   t = %g .. %g s"
+          % (tag, reduced[0][0], reduced[-1][0]))
+    print("[%s] decimation   %d -> %d points, worst reconstruction error "
+          "%.3g m/s" % (tag, len(full), len(reduced), worst_err))
 
-    text = render_module(reduced, full, digest, worst_err, worst_t)
+    text = render_module(reduced, full, digest, worst_err, worst_t,
+                         prefix=prefix, time_factor=args.time_factor)
     if args.dry_run:
-        print("[ftp75] --dry-run: nothing written")
+        print("[%s] --dry-run: nothing written" % tag)
         return 0
-    if os.path.exists(args.out) and not args.force:
-        ap.error("%s already exists; pass --force to overwrite" % args.out)
+    if os.path.exists(out_path) and not args.force:
+        ap.error("%s already exists; pass --force to overwrite" % out_path)
     # utf-8 + LF, explicitly: the docstring carries em-dashes, and letting the
     # platform pick either would make the output non-deterministic across
     # machines — the property this generator exists to guarantee.
-    with open(args.out, "w", encoding="utf-8", newline="\n") as fh:
+    with open(out_path, "w", encoding="utf-8", newline="\n") as fh:
         fh.write(text)
-    print("[ftp75] wrote        %s" % args.out)
+    print("[%s] wrote        %s" % (tag, out_path))
     return 0
 
 

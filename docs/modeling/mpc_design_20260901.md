@@ -1080,3 +1080,105 @@ expectation table, a frontier list, a set of appended columns or a set of
 flags with inert defaults. No firmware, wire protocol, artifact, table or
 existing constant is touched, so the reverse leaves every earlier campaign's
 comparability intact.
+
+---
+
+## 2026-09-02: the command band, and single-source candidates
+
+### The ladder spans the firmware band
+
+⚠️ **Operator ruling, 2026-09-02.** Every EMS strategy has access to the full firmware
+command band **[0.15, 0.85]**, and the MPC is a strategy for this purpose. The ladder band
+moves from `(0.25, 0.75)` to the band, taken from
+`governor_model.GOV_CONST["DROOP_R_MIN"/"DROOP_R_MAX"]` and never re-typed;
+`SHARE_BAND_DP` and `SHARE_BAND_SDP` are now the same band.
+
+Commanding the rails is safe. `updateShareSetpointCutoff()` compares **strictly**, so 0.15
+and 0.85 are in band; the firmware carries `SHARE_CUTOFF_HYST` 0.01 beyond them; and
+`sdp-v4` has railed at 0.8500 on 100 % of ticks across campaigns `20260902_011926` and
+`20260902_041414` with zero hazard cuts.
+
+**The ladder holds its spacing, not its count**: 7 points to 9, spacing 0.0833 to 0.0875,
+a 5 % coarsening against 20 % at 8 points and 40 % at 7. Enumeration goes 1029 to 2187
+candidates, and `MPC_CAMPAIGN_MAX_CANDIDATES` follows so the cap remains the full
+enumeration. Measured before choosing, on a host already running a DP solve: all of 7, 8
+and 9 gave **zero** budget expiries, and over three repeats of `ems-mpc` (183 decisions)
+the worst single solve was 11.28 ms at 8 points and 10.11 ms at 9, with 0 hits in both.
+The budget arithmetic permits 9, so resolution decided it.
+
+Table B.1 gives the re-derived walk figures. Every `walk_h2` pin in `run_hil_suite.py`
+moved with them.
+
+| Leg | walk h2 (g) | dSoC | commanded share range |
+|---|---|---|---|
+| `ems-mpc` | 0.007162 | -0.003764 | 0.1500 to 0.5000 |
+| `ems-mpc-det` | 0.009427 | -0.002830 | 0.1500 to 0.6750 |
+| `ems-mpc-cross` | 0.008782 | -0.008152 | 0.1500 to 0.2375 |
+| `ems-ftp75-mpc` | 0.018762 | -0.015103 | 0.1500 to 0.5000 |
+| `ems-ftp75c-mpc` | 0.002028 | -0.003645 | 0.1500 constant |
+
+Every leg now reaches the low rail, which the old band could not express. The
+`ems-mpc-cross` share range is 0.0875, one ladder step, against 0.0833 before: the
+widening moved the operating point down onto the rail rather than widening the walk, so
+the `share_range_min` 0.05 floor still passes and is not re-derived.
+
+### Single-source candidates: the measured foundation, and the open design question
+
+⚠️ **Operator ruling, 2026-09-02.** The MPC gains 0 and 1 single-source commands as
+candidates. The DP and the SDP do not.
+
+**What is implemented and measured.** A single-source stage has a different bus law,
+because the fitted law's `g_par` is a parallel droop code that does not exist with one
+channel off the bus. That law is now measured, implemented and documented
+(`docs/modeling/dp_loss_map_20260902.md`, addendum;
+`hil_plant_sim.single_source_bus_law()`), and `mpc_ems.build_demand()` takes a
+`source_mode` of `"both"`, `"fc"` or `"bt"` that selects it. At the 61 s cycle's peak the
+bus falls from 15.42 V two-source to 14.99 V FC-only and 14.92 V BT-only, so the
+distinction is worth about 0.45 V and is not a refinement.
+
+**What is not implemented, and the reason.** The candidate enumeration itself is not
+shipped. Scoping it surfaced a design question that the ruling's constraints do not
+settle, and that must be settled before the code is written:
+
+> **The cut guard is path-dependent, and the search model is not.**
+> `updateShareSetpointCutoff()` cuts the doomed channel only when **that channel's own
+> current** is at or under `SHARE_CUT_MAX_HANDOFF_A` 0.5 A. That current is
+> `delivered_share x i_total` at the instant of the cut, so it depends on the share the
+> plan held in the **previous** stage, which is a property of the candidate path. The
+> planner's whole search model is a table over `(stage, ladder index)` built **once per
+> decision** precisely because the delivered share is control-independent within a stage
+> (Property A, `StagePrecompute`). A per-candidate feasibility test that reads the
+> previous stage's share does not fit that table and would have to move into
+> `_rollout()`, which is the inner loop the anytime budget is spent in.
+
+Three resolutions are available and the choice is a design decision, not an
+implementation detail:
+
+1. **Conservative table test.** Admit a single-source candidate at a stage only when the
+   two-source `i_total` there is at or under `2 x 0.5 A`, so that *either* channel is
+   under the guard whatever the previous share was. Keeps the table control-independent
+   and the search a lookup; refuses some feasible cuts.
+2. **Rollout-time test.** Evaluate the guard inside `_rollout()` where the path is known.
+   Exact, and it puts a branch in the inner loop; the budget impact needs measuring
+   against the 2187-candidate enumeration.
+3. **Plan-then-verify.** Enumerate freely and reject a committed plan whose first cut the
+   guard would refuse, falling back to the shifted incumbent. Cheapest, and it can commit
+   a plan whose *later* stages rely on a refused cut, which is the failure the ruling
+   names explicitly.
+
+⚠️ **Shipping any of these unverified would be the hazard the ruling warns about** — "the
+plan must not rely on a refused cut" — so nothing was shipped. The remaining work, once
+the resolution is chosen, is: the two extra candidate indices and their handling in
+`delivery_table()` (single-source demand, no minority clip, the guard test); per-mode
+demand arrays in `StagePrecompute`; the restore slew's intermediate shares in
+`_rollout()`, at `DROOP_RATIO_SLEW_HANDOFF_PER_TICK` 0.002/tick with
+`SHARE_CUT_SURVIVOR_BLANK_MS` 30 ms; single-source OC feasibility (FC-only against
+`LIMIT_I_FC_MAX` with margin, BT-only against the pack limits); `coarsen_ladder()` keeping
+both rails reachable from an incumbent on a rail; and a re-measurement of Gate 1, Gate 2,
+the expiry table and the four walks with the candidates in the search.
+
+**The governor port is ready.** `governor_model._setpoint_cutoff()` was checked against
+the firmware and covers both directions: the last-source guard, the load guard
+(`abs(i) <= SHARE_CUT_MAX_HANDOFF_A`, with `refused_load` counted), survivor-turn-on
+blanking (`refused_blank`), the S1 self-heal, and the release path with its charged-bus
+guard. No porting work is needed first.

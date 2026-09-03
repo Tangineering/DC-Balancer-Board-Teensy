@@ -154,10 +154,16 @@ HONEST LIMITS
   forecast that calls a stage closed where the plant leaves it open puts a whole
   stage of commanded share into the wrong arm.  Every registered stimulus is
   deterministic, so that forecast has nothing to average over.
-* The demand model has NO REGEN TERM (inherited from ``build_demand()``), so
-  the controller over-states demand on every decelerating stage and under-values
-  coasting.  The live plant has injected regen since the WP-C round, so the
-  divergence is larger now than when the DP tables were generated.  Unquantified.
+* THE REGEN TERM IS ERA-SELECTED (2026-09-02), and the statement that stood
+  here was wrong in its sign.  It read "the controller over-states demand on
+  every decelerating stage": it does not.  ``max(0, F*v)`` bills ZERO motor
+  demand while ``F*v < 0``, exactly as the plant does; what the pre-regen model
+  omitted is the ENERGY THE PLANT GIVES BACK, a CREDIT to the battery.  With
+  ``eta_regen`` set the credit is modelled here, in the DP bound and in the walk
+  from ONE chain (``tools/regen_power.py``).  In the pre-regen era the omission
+  stands, and on the MEASURED RIG PROFILE it is 0.001 J of a 30.8 J braking
+  kinetic energy, because the rig road load exceeds the inertial force at every
+  deceleration in every registered cycle.
 * The stage cost is the ``eta_fc = 0.4`` proxy and the scored quantity is the
   plant's Gfc map, a constant 1.1812 apart.  The constant cancels in a ranking
   at matched terminal state of charge; it does not cancel against the terminal
@@ -187,6 +193,7 @@ if _TOOLS not in sys.path:
     sys.path.insert(0, _TOOLS)
 
 import charger_power as chg_mod          # stdlib only
+import regen_power as regen_mod          # stdlib only
 import governor_model as gov_mod         # stdlib only
 # The pack constants live in hil_electrical (stdlib, math + time only); the DP
 # generator imports the SAME names from the SAME module, so the two models
@@ -227,14 +234,39 @@ HORIZON_N = 20
 # Move blocks (adjudication section 2.3, Opus's parametrization).
 MOVE_BLOCKS = (2, 6, 12)
 
-# Ladder band.  The default is the DP's own [DP_SHARE_MIN, DP_SHARE_MAX]
-# (gen_dp_ems_table.py) - it stops 0.10 short of DROOP_R_MIN/DROOP_R_MAX, so
-# updateShareSetpointCutoff() can never latch and applyShareRatio() can never
-# attempt an r-based cut.  The SDP envelope is selectable for a like-for-like
-# leg against sdp-v3 (adjudication section 2.3).
-SHARE_BAND_DP = (0.25, 0.75)
-SHARE_BAND_SDP = (0.15, 0.85)
-SHARE_LEVELS = 7
+# Ladder band.  THE FULL FIRMWARE COMMAND BAND, taken from the firmware
+# constants through `governor_model.GOV_CONST` and NEVER RE-TYPED.
+#
+# STANDING OPERATOR RULE (2026-09-02): every EMS strategy gets access to the
+# full [0.15, 0.85] range.  The MPC is a strategy for this purpose, and a
+# planner that cannot reach the operating points the causal policies use plans
+# over a control set the plant does not have.
+#
+# ⚠️ WIDENED FROM (0.25, 0.75) ON 2026-09-02, in lockstep with the DP grid.
+# The old default stopped 0.10 short of DROOP_R_MIN/DROOP_R_MAX so
+# updateShareSetpointCutoff() could never latch.  That margin is not needed:
+# the cut compares STRICTLY, so the rails themselves are IN band, and the
+# firmware carries SHARE_CUTOFF_HYST 0.01 BEYOND the band on top of that.
+# `sdp-v4` has railed at 0.8500 on 100 % of ticks across two campaigns with
+# zero hazard cuts.  `SHARE_BAND_SDP` and `SHARE_BAND_DP` are now the SAME
+# band; both names are kept because scenarios and tests select by name.
+SHARE_BAND_DP = (gov_mod.GOV_CONST["DROOP_R_MIN"], gov_mod.GOV_CONST["DROOP_R_MAX"])
+SHARE_BAND_SDP = (gov_mod.GOV_CONST["DROOP_R_MIN"], gov_mod.GOV_CONST["DROOP_R_MAX"])
+# Ladder points across that band.  ⚠️ 7 -> 9 WITH THE WIDENING (2026-09-02),
+# so the SPACING is held rather than the count: 0.0833 over the old 0.50-wide
+# band becomes 0.0875 over the 0.70-wide one, a 5 % coarsening, against 20 % at
+# 8 points and 40 % at 7.  That is the DP grid's own principle applied here -
+# holding the count instead would have made the widening a change of resolution
+# as well as of reach, and confounded any before/after comparison.
+#
+# MEASURED BEFORE CHOOSING, on `ems-mpc` and `ems-mpc-cross`, on a host already
+# running a DP solve (so the readings are pessimistic).  All of 7, 8 and 9 gave
+# ZERO budget expiries; over three repeats of `ems-mpc` (183 decisions) the
+# worst single solve was 11.28 ms at 8 points and 10.11 ms at 9, with 0 hits in
+# both.  The budget arithmetic therefore permits 9, which is what the operator
+# ruling conditions the choice on, so resolution decides it.
+# Cost: 2187 candidates against 1029 - see MPC_CAMPAIGN_MAX_CANDIDATES.
+SHARE_LEVELS = 9
 
 # ── THE CHARGE AXIS OF THE ENUMERATION (2026-09-02) ─────────────────────────
 # `MpcStrategy.__call__()` builds AT MOST three per-stage charge plans per
@@ -551,7 +583,9 @@ SOC_BAND_DRAIN_SCENARIOS = ("ems-soc-band", "ems-dp-replay", "ems-sdp",
 
 
 def build_demand(scenario, meta, times, dt, aux_preload_a=None,
-                 loss_map=None):
+                 loss_map=None, drag_mode=None, eta_regen=None,
+                 eta_chg=None, v_pack_ref=None, regen_i_max_a=None,
+                 source_mode="both"):
     """Per-stage ``(v, a, p_dem, v_bus, i_total, cruise)`` lists - D7, scalar.
 
     A term-for-term port of gen_dp_ems_table.build_demand(), including the
@@ -565,10 +599,19 @@ def build_demand(scenario, meta, times, dt, aux_preload_a=None,
     equality is the only thing keeping the planner's prediction and the bound
     it is scored against on one model.
 
-    ⚠️ NO REGEN TERM (``p_mech = max(0, F*v)``), inherited deliberately: this is
-    the model the DP bound is computed against, and a controller predicting on a
-    different demand model could not be compared with it.  The consequence is
-    that demand is over-stated on decelerating stages."""
+    ``drag_mode`` and ``eta_regen`` (2026-09-02) select the ROAD-LOAD PROFILE
+    and the REGEN DEMAND ERA, threaded in the same LOCKSTEP and defaulting to
+    the same pre-round configuration.  The seventh return element ``i_regen``
+    is the pack charge current a braking stage delivers, all zeros in the
+    pre-regen era.
+
+    ⚠️ THE RETRACTED STATEMENT.  This docstring used to say the model
+    "over-states demand on decelerating stages".  It does not and never did:
+    ``max(0, F*v)`` and the plant both bill ZERO motor demand while ``F*v < 0``.
+    What the pre-regen model omitted is the ENERGY THE PLANT GIVES BACK, a
+    CREDIT to the battery rather than a load, so the omission's sign was
+    backwards.  With ``eta_regen`` set the credit is modelled and the
+    controller's prediction and the DP bound carry the same one."""
     sim = _load_sim()
     prof = meta.get("ems_v_profile")
     if not prof:
@@ -586,16 +629,33 @@ def build_demand(scenario, meta, times, dt, aux_preload_a=None,
                 - sim.piecewise(prof, t - 0.5 * dt)) / dt
         i_aux[k] = scenario_drain_a(scenario, t, aux_preload_a)
 
+    k_air = sim.drag_k_air(sim.DRAG_MODE_RIG if drag_mode is None
+                           else drag_mode)
+    eta_regen = regen_mod.check_eta_regen(eta_regen)
+    if eta_regen is not None and (v_pack_ref is None or regen_i_max_a is None):
+        raise ValueError(
+            "build_demand needs v_pack_ref and regen_i_max_a when eta_regen "
+            "is set - see the generator's own note on state-independence")
     p_mech = [0.0] * n
+    i_regen = [0.0] * n
     for k in range(n):
-        if v[k] > sim.V_STICTION:
-            f_coul = sim.F_COULOMB
-        elif v[k] < -sim.V_STICTION:
-            f_coul = -sim.F_COULOMB
+        if k_air:
+            force = sim.M_EFF * a[k] + k_air * v[k] * abs(v[k])
         else:
-            f_coul = 0.0
-        force = sim.M_EFF * a[k] + f_coul + sim.B_EFF * v[k]
+            if v[k] > sim.V_STICTION:
+                f_coul = sim.F_COULOMB
+            elif v[k] < -sim.V_STICTION:
+                f_coul = -sim.F_COULOMB
+            else:
+                f_coul = 0.0
+            force = sim.M_EFF * a[k] + f_coul + sim.B_EFF * v[k]
         p_mech[k] = max(0.0, force * v[k])
+        if eta_regen is not None:
+            i_regen[k] = regen_mod.regen_pack_current_from_force_a(
+                force, v[k], eta_regen=eta_regen, eta_chg=eta_chg,
+                v_pack_v=float(v_pack_ref), k_f=sim.K_F,
+                i_clip_a=sim.VESC_REGEN_I_MAX_A,
+                i_max_a=float(regen_i_max_a))
 
     lm = sim.check_loss_map(loss_map)
     i_total = [0.0] * n
@@ -613,8 +673,13 @@ def build_demand(scenario, meta, times, dt, aux_preload_a=None,
             i_total[k] = i_motor + i_aux[k]
             p_dem[k] = v_bus[k] * i_total[k]
     else:
-        v0 = lm["v0_eff"]
-        k_eff = lm["r_fix"] + lm["k_g"] * lm["g_par"]
+        # ``source_mode`` selects the BUS TOPOLOGY (2026-09-02, the MPC 0/1
+        # round).  "both" is the two-source law the map was fitted on and is
+        # bit-identical to the pre-round code; "fc"/"bt" are the measured
+        # single-source law, which is the same slope scaled and its own no-load
+        # intercept (hil_plant_sim.single_source_bus_law).  It matters: at
+        # 1.6 A the two differ by ~0.5 V of bus voltage.
+        v0, k_eff = sim.single_source_bus_law(lm, source_mode)
         g_bus, g_oth = lm["g_node_bus"], lm["g_node_other"]
         v_fwd, r_on = lm["rt_v_fwd"], lm["rt_r_on"]
         v_bus = [v0] * n
@@ -635,12 +700,17 @@ def build_demand(scenario, meta, times, dt, aux_preload_a=None,
 
     cruise = [(abs(a[k]) <= sim.SOC_BAND_CRUISE_SLOPE_MAX
                and v[k] >= sim.SOC_BAND_CRUISE_MIN_MPS) for k in range(n)]
-    return v, a, p_dem, v_bus, i_total, cruise
+    return v, a, p_dem, v_bus, i_total, cruise, i_regen
 
 
 def charge_mask(times, p_dem, v_bus, cruise, chg_ceiling_a, run_exit_s,
-                eta_chg=None, v_pack_ref=None):
-    """Per-stage boolean: may a charge window open here? - D10, scalar port."""
+                eta_chg=None, v_pack_ref=None, i_regen=None):
+    """Per-stage boolean: may a charge window open here? - D10, scalar port.
+
+    ``i_regen`` (2026-09-02) carries the EXCLUSIVITY term: a stage cannot both
+    FC-charge and regen-charge, because ``assertFcChargeEnable()`` drives REGEN
+    LOW before it raises FC_CHARGE and ``detectFaults()`` latches
+    FAULT_SWITCH_CONFLICT on the illegal pair."""
     sim = _load_sim()
     chg_mod.check_eta_chg(eta_chg)
     if eta_chg is not None and v_pack_ref is None:
@@ -653,6 +723,8 @@ def charge_mask(times, p_dem, v_bus, cruise, chg_ceiling_a, run_exit_s,
                                                   v_pack_ref, eta_chg)
         budget_ok = ((p_dem[k] / v_bus[k] + i_chg_bus)
                      <= OC_MARGIN * LIMIT_I_FC_MAX_A)
+        if i_regen is not None and i_regen[k] > 0.0:
+            budget_ok = False
         out.append(bool(in_run and cruise[k] and budget_ok))
     return out
 
@@ -799,6 +871,9 @@ class Preview:
     i_total: list = field(default_factory=list)
     cruise: list = field(default_factory=list)
     chg_ok: list = field(default_factory=list)
+    # THE BRAKING CREDIT [A into the pack] (2026-09-02), per preview sample.
+    # Empty on a pre-regen preview, which every consumer reads as zero.
+    i_regen: list = field(default_factory=list)
     dt: float = PREVIEW_DT_S
 
     def index(self, t):
@@ -831,6 +906,10 @@ class StagePrecompute:
     p_dem_mean: list = field(default_factory=list)
     v_bus_mean: list = field(default_factory=list)
     i_tot_mean: list = field(default_factory=list)
+    # Stage-mean braking credit [A].  The MEAN is the right reduction: the
+    # rollout integrates it over `dt_dec`, so mean x dt_dec is exactly the
+    # charge the sub-samples deliver.  Zero on a pre-regen preview.
+    i_regen_mean: list = field(default_factory=list)
     # ABSOLUTE preview sample at each stage's start.  The transition-roll table
     # is keyed on this, not on the horizon-relative index: a table computed at
     # one decision may still be in use one or two decisions later (it is sliced
@@ -885,6 +964,8 @@ def precompute_stages(prev, k0, horizon, dt_dec=DECISION_DT_S,
     npv = len(prev.times)
     for j in range(horizon):
         it, pd, vb, lo, md, ok = [], [], [], [], [], True
+        reg_acc = 0.0
+        reg_src = prev.i_regen
         out.mode_entry.append(mode)
         out.run_entry.append(run_seen)
         changed = False
@@ -911,6 +992,7 @@ def precompute_stages(prev, k0, horizon, dt_dec=DECISION_DT_S,
             pd.append(prev.p_dem[k])
             vb.append(prev.v_bus[k])
             lo.append(min(0.5, GOV_MINORITY_A / i_tot) if i_tot > 0.0 else 0.5)
+            reg_acc += (reg_src[k] if k < len(reg_src) else 0.0)
             md.append(m)
             c = bool(prev.chg_ok[k])
             if chg_state is None:
@@ -925,6 +1007,7 @@ def precompute_stages(prev, k0, horizon, dt_dec=DECISION_DT_S,
         out.lo.append(lo)
         out.mode.append(md)
         out.chg_ok.append(ok)
+        out.i_regen_mean.append(reg_acc / n_sub)
         out.transition.append(changed)
         # THE ABSOLUTE STAGE KEY, on the DECISION grid rather than the preview
         # grid.  A key of `k0 + j*n_sub` is a preview-sample index, and the
@@ -1622,12 +1705,20 @@ class Planner:
         (L1, review of 2026-09-02).  `_open_loop()` holds on a standing run AND
         an unchanged setpoint AND ``!(shareIsoFC || shareIsoBT)`` (.ino:10173).
         This table models the first two.  An outstanding isolation is a state the
-        table has no seed for - it is a consequence of a cut, and the ladder band
-        ``[0.25, 0.75]`` is chosen so that no candidate can cause one - and where
-        it does arise the transition rolls carry the real flag, because they run
-        the real `GovernorModel`.  A stage the model holds and the firmware slews
-        for this reason is therefore possible only after a cut the search cannot
-        command.
+        table has no seed for - it is a consequence of a cut - and where it does
+        arise the transition rolls carry the real flag, because they run the real
+        `GovernorModel`.
+
+        ⚠️ THE BAND NO LONGER RULES A CUT OUT (2026-09-02).  This used to say
+        the ladder band ``[0.25, 0.75]`` was chosen so no candidate could cause
+        an isolation, so a held-versus-slewed disagreement was possible only
+        after a cut the search could not command.  The ladder now spans the
+        firmware band ``[0.15, 0.85]``.  A cut still needs a setpoint OUTSIDE
+        that band (the firmware compares strictly, and carries
+        ``SHARE_CUTOFF_HYST`` beyond it), so no LADDER candidate can command
+        one; but the single-source candidates the operator ruling adds are
+        exactly such a command, and when they land this seed has to carry the
+        isolation state rather than assume it away.
 
         ⚠️ THE MODELLED RAMP IS NOT BAND-CUT (L2, same review).  ``carried``
         walks freely in [0, 1] and the delivered share follows the droop map,
@@ -1802,17 +1893,25 @@ class Planner:
                     break
                 if not ok_tab[stage][si]:
                     return None, 0.0, 0.0
+                # THE BRAKING CREDIT (2026-09-02), in LOCKSTEP with
+                # gen_dp_ems_table.step_discharge()/step_charge(): a per-stage
+                # constant, share-INDEPENDENT, added to both transitions.  Its
+                # share-independence is what keeps it out of the candidate
+                # comparison entirely - every candidate gains the same SoC on a
+                # braking stage - so the search cannot "choose" to regenerate.
+                reg = (pre.i_regen_mean[stage]
+                       if stage < len(pre.i_regen_mean) else 0.0)
                 if charge_stages[stage]:
                     p_fc_bus = (pre.p_dem_mean[stage]
                                 + chg_mod.charger_bus_power_w(
                                     self.chg_a, pre.v_bus_mean[stage],
                                     pack_charge_voltage(soc, self.chg_a),
                                     self.eta_chg))
-                    soc = soc + self.chg_a * self.dt_dec / self.cap_as
+                    soc = soc + (self.chg_a + reg) * self.dt_dec / self.cap_as
                 else:
                     p_fc_bus = pfc_tab[stage][si]
                     i_pack = pack_current_from_bus_power(pbt_tab[stage][si], soc)
-                    soc = soc - i_pack * self.dt_dec / self.cap_as
+                    soc = soc + (reg - i_pack) * self.dt_dec / self.cap_as
                 cost += self.h2_rate_gps(p_fc_bus / sim.ETA_BOOST) * self.dt_dec
                 if cost >= bound:
                     # Sound: the remaining stage costs are non-negative and the
@@ -2238,7 +2337,8 @@ class MpcStrategy:
             self.planner.incumbent = None
 
     def bind_scenario(self, scenario, meta, electrical_mode=None,
-                      args=None, droop_mode=None, asymmetry_mode=None):
+                      args=None, droop_mode=None, asymmetry_mode=None,
+                      drag_mode=None):
         """Build the preview and the planner for one scenario.
 
         The four trailing arguments are the generic startup hook's contract
@@ -2334,15 +2434,39 @@ class MpcStrategy:
         dt = self.preview_dt_s
         n = int(round(duration / dt)) + 1
         times = [k * dt for k in range(n)]
-        v, a, p_dem, v_bus, i_total, cruise = build_demand(
-            scenario, meta, times, dt, loss_map=self.loss_map)
-        v_pack_ref = (None if self.eta_chg is None
-                      else pack_charge_voltage(0.7, chg_a))
+        # -- THE ROAD-LOAD PROFILE AND THE REGEN ERA (2026-09-02) --------
+        # Resolved off the RESOLVED run configuration when `main()` supplies
+        # it, and off the scenario's own key otherwise, so a walk and a live
+        # run predict on the same plant.  `eta_regen` follows the drag profile
+        # on the generator's rule: a compensated run regenerates, and a planner
+        # that did not model the credit would systematically under-value
+        # coasting relative to the bound it is scored against.
+        drag = drag_mode or meta.get("drag") or sim.DRAG_MODE_RIG
+        self.drag_mode = drag
+        self.eta_regen = (None if drag == sim.DRAG_MODE_RIG
+                          else float(sim.ETA_REGEN))
+        # ONE reference pack voltage, at the NOMINAL 0.7 SoC.  The 0.7 is this
+        # module's existing convention for `v_pack_ref` (it predates the regen
+        # term and prices the charge mask's FC budget), and the regen credit
+        # reuses it rather than minting a second reference: both quantities
+        # must stay STATE-INDEPENDENT for the stage tables to remain a lookup.
+        # ⚠️ The DP generator and the walk price the same two quantities at the
+        # SOLVE'S OWN soc0. Every registered scenario runs soc0 = 0.7, so the
+        # three agree today; a campaign at another soc0 would move the
+        # planner's credit by the pack's OCV slope over that offset and no
+        # other consumer's.
+        v_pack_ref_all = pack_charge_voltage(0.7, chg_a)
+        v, a, p_dem, v_bus, i_total, cruise, i_regen = build_demand(
+            scenario, meta, times, dt, loss_map=self.loss_map,
+            drag_mode=drag, eta_regen=self.eta_regen, eta_chg=self.eta_chg,
+            v_pack_ref=v_pack_ref_all, regen_i_max_a=chg_a)
+        v_pack_ref = (None if self.eta_chg is None else v_pack_ref_all)
         chg_ok = charge_mask(times, p_dem, v_bus, cruise, chg_a, run_exit_s,
-                             self.eta_chg, v_pack_ref)
+                             self.eta_chg, v_pack_ref,
+                             i_regen if self.eta_regen is not None else None)
         self.preview = Preview(times=times, p_dem=p_dem, v_bus=v_bus,
                                i_total=i_total, cruise=cruise, chg_ok=chg_ok,
-                               dt=dt)
+                               i_regen=i_regen, dt=dt)
         self.run_exit_s = run_exit_s
         self.chg_a = chg_a
         self.planner = Planner(horizon=self.horizon, blocks=self.blocks,
@@ -2456,6 +2580,12 @@ class MpcStrategy:
             "eta_chg": self.eta_chg,
             "loss_map": (None if self.loss_map is None
                          else dict(self.loss_map)),
+            # THE ROAD-LOAD PROFILE AND THE REGEN ERA the planner PREDICTED ON
+            # (2026-09-02).  Recorded for `loss_map`'s reason: `config.mpc` is
+            # the only place a trace says which demand model the controller
+            # carried, and a mismatch against the plant is invisible otherwise.
+            "drag": getattr(self, "drag_mode", None),
+            "eta_regen": getattr(self, "eta_regen", None),
             # None means ADAPTIVE: the per-decision budget is derived by
             # `derive_budget_ms()` and reported in `timing()` as the
             # budget_ms_min/median/max triple, because it is no longer a
@@ -2773,7 +2903,16 @@ class MpcStrategy:
             goal = sim.SOC_BAND_CHARGE_GOAL
         elif hold == "dropped":
             goal = 0.0
-        elif goal > 0.0:
+        elif goal > 0.0 and not fb.get("regen_commanded"):
+            # A REGEN WINDOW MUST NOT ARM AN FC DWELL (M2, 2026-09-02), the
+            # same guard `SdpStrategy.decide()` and `SocBandStrategy.__call__()`
+            # already carry.  The 8 s dwell is a HOST construct governing the
+            # FC-PATH windows; inside a regen window the firmware's
+            # `regenActive` branch owns the charger and the FC path is shut, so
+            # arming here would put a window in the census that never existed
+            # and would pin the intent high for 8 s after the braking ended.
+            # `regen_commanded` is absent, i.e. False, on every run without a
+            # regen manager, so no existing trace moves.
             self.latch.arm(t, fb.get("v_profile"))
         self.last_share = share
         self.last_goal = goal

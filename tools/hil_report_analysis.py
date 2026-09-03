@@ -1656,8 +1656,13 @@ SCENARIO_PRELOAD_CONSTANT = {
 # Standing boundaries on every matched-DP comparison this tool renders. Both
 # are properties of the DP's demand model, not of a particular run.
 MATCHED_DP_REGEN_NOTE = (
-    "DP demand model has no regen term (gen_dp_ems_table.build_demand); "
-    "regen-bearing scenarios compare against a regen-free bound")
+    "DP demand model carries a regen term ONLY in the regen era "
+    "(gen_dp_ems_table.build_demand's `eta_regen`, 2026-09-02). Outside "
+    "it a regen-bearing scenario compares against a regen-free bound, "
+    "which at a matched terminal SoC is INFLATED by the energy the run "
+    "got back from braking; `regen_bound` below prices that per run. In "
+    "the regen era the bound earns the same credit and `regen_bound` "
+    "goes to zero. Read `stimulus_era.plant_era.eta_regen` to tell which")
 
 # The two hydrogen totals in the comparison are computed by DIFFERENT halves
 # of one model, and the difference is systematic rather than random: the run's
@@ -1813,7 +1818,12 @@ def _matched_dp_regen_bound(hil, fields, h2_run):
     pct = (None if (grams is None or not h2_run)
            else 100.0 * grams / float(h2_run))
     note = ("regen-bearing: bound optimistic by <= %s (%.3f J returned at the "
-            "motor node). The DP's demand omits regen, so at a matched "
+            "motor node). PRE-REGEN-ERA STATEMENT, and it is CORRECT ONLY "
+            "WHEN THE BASELINE WAS SOLVED WITHOUT THE CREDIT: from 2026-09-02 "
+            "a baseline solved with `eta_regen` earns the same braking credit "
+            "the run does, and this bound then goes to ZERO rather than "
+            "merely being small. Read `stimulus_era.plant_era.eta_regen` "
+            "alongside it. The DP's demand omits regen, so at a matched "
             "terminal SoC it buys with hydrogen what this run got back from "
             "braking — its total is inflated by at most that energy priced at "
             "the Gfc DC gain, and the deviation below is biased in the run's "
@@ -1878,6 +1888,20 @@ def matched_dp_for_run(analysis, meta, hil, mode="lookup",
     # hi-fi map would bound it with losses its plant never took.
     run_loss_map = sim.loss_map_for_config(
         cfg.get("electrical"), cfg.get("droop_mode"), cfg.get("asymmetry"))
+    # THE ROAD-LOAD AND REGEN ERAS (2026-09-02), resolved from the RUN's own
+    # config on the identical argument.  `config.drag` is written
+    # UNCONDITIONALLY by every run from that date, so an ABSENT key is a
+    # pre-round sidecar and resolves to the measured rig road load - the era
+    # sentinel, not a default.  `eta_regen` is then read from the run's
+    # `scenario` block, where `plant_eta_regen()` already resolved it against
+    # the run's drag mode, and falls back to that resolution for a sidecar
+    # written before the key existed.
+    run_drag = sim.plant_drag_mode(cfg.get("drag"))
+    _scen_blk = meta.get("scenario") or {}
+    run_eta_regen = _scen_blk.get("eta_regen")
+    if run_eta_regen is None:
+        run_eta_regen = sim.plant_eta_regen(cfg.get("drag"))
+    run_eta_regen = (None if run_eta_regen is None else float(run_eta_regen))
     capacity_ah = float(cfg.get("capacity_ah") or 5.0)
     # Resolved against the run's own config first: `chg_i_ceiling_a` there is
     # the ceiling the run APPLIED, which is what its demand carried, whatever
@@ -1937,6 +1961,23 @@ def matched_dp_for_run(analysis, meta, hil, mode="lookup",
         # argument dp_results_db makes for `eta_chg`, verbatim.
         fp_meta["loss_map"] = run_loss_map
         era_overrides.setdefault("loss_map", dict(run_loss_map))
+    # Both new eras reach the FINGERPRINT for the same reason, and `drag`
+    # doubly so: it is the only one of the four era keys a SCENARIO declares,
+    # so a run that overrode it with `--drag` would otherwise fingerprint
+    # against the registry's value rather than its own.
+    if run_drag is not None:
+        fp_meta["drag"] = run_drag
+        era_overrides.setdefault("drag", run_drag)
+    elif fp_meta.get("drag") is not None:
+        # The run resolved to the RIG profile while the scenario declares a
+        # compensated one, i.e. a deliberate `--drag rig` zero-regen control.
+        # The override must be recorded, or the baseline is solved against the
+        # compensated demand the run did not draw.
+        fp_meta["drag"] = sim.DRAG_MODE_RIG
+        era_overrides.setdefault("drag", sim.DRAG_MODE_RIG)
+    if run_eta_regen is not None:
+        fp_meta["eta_regen"] = run_eta_regen
+        era_overrides.setdefault("eta_regen", run_eta_regen)
     if isinstance(stimulus_era, dict):
         stimulus_era["overrides"] = dict(era_overrides)
         stimulus_era["fingerprint_keys"] = list(sim.DP_FINGERPRINT_META_KEYS)
@@ -1954,6 +1995,8 @@ def matched_dp_for_run(analysis, meta, hil, mode="lookup",
             "eta_chg": cfg.get("eta_chg"),
             "loss_map": (None if run_loss_map is None
                          else sim.loss_map_canonical(run_loss_map)),
+            "drag": run_drag,
+            "eta_regen": run_eta_regen,
         }
     fields = dpdb.problem_fields(
         scenario,
@@ -1975,7 +2018,13 @@ def matched_dp_for_run(analysis, meta, hil, mode="lookup",
         # defaults it to None (the loss-map-free era), and leaving the default
         # in place on a loss-map-era run would key the run against a baseline
         # solved on a different demand model.
-        loss_map=run_loss_map)
+        loss_map=run_loss_map,
+        # THE ROAD-LOAD AND REGEN ERAS, on the identical argument again: the
+        # defaults are the pre-round configuration, and leaving them in place
+        # on a compensated regen-era run would key it against a baseline
+        # solved on a demand model 4.5x larger with no braking credit.
+        drag=fp_meta.get("drag"),
+        eta_regen=run_eta_regen)
     key = dpdb.make_key(fields)
 
     h2_run = _last_finite(hil["h2_cum_g"]) if "h2_cum_g" in hil else None

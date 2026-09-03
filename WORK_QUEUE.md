@@ -353,6 +353,13 @@ sim-only strategies.
   and MPC model the clamp only once the firmware defines it, so the firmware design comes
   first.
 
+- **Test hygiene: pin the wall-clock-adaptive hi-fi substep in every energy-tolerance test.**
+  `test_regen_harvest_is_not_sourced_from_the_bus` (and earlier today
+  `test_eta_chg_is_inert_on_a_charge_free_trace`, `test_asymmetry_off_is_byte_identical...`)
+  fails under concurrent load and passes in isolation because `ElectricalSim.step()` re-derives
+  `_n_sub` from a wall-clock EWMA. `substep_pin=` exists since stage 1; sweep the suite for
+  tests that assert energies/voltages to tight tolerances and pin them.
+
 ## Shipped 2026-09-02 (overnight)
 
 - **Ag105 charge efficiency `ETA_CHG` = 0.88 in both HIL engines** (chord-conductance stamp, 8.0 V

@@ -45,13 +45,66 @@ warm_reset_times_s, tx/rx frames, send_errors, achieved_hz, final_state,
 final_fault_flags). The constants fingerprint moves whenever stimulus constants change —
 hash-different does not strictly imply model-different; check the commit.
 
-**RUN-ERA FIELDS AN ANALYST MUST READ BEFORE ANY CROSS-CAMPAIGN COMPARISON.** Five, not
+⚠️ **THE SHARE-BAND ERA (2026-09-02).** Every EMS strategy, INCLUDING the DP and the
+MPC benchmarks, has access to the full firmware command band **[0.15, 0.85]**. The DP
+grid was widened from [0.25, 0.75] at 41 points to the band at 57 (spacing held at
+0.0125) and the MPC ladder from 7 points over [0.25, 0.75] to 9 over the band (spacing
+0.0833 -> 0.0875). `n_share` and `share_span` are KEY FIELDS, so a table or a `dp_db`
+record solved on the old grid keys as its own era and does not collide. ⚠️ AN SDP LEG'S
+MATCHED-DP DEVIATION FROM AN OLD-GRID BASELINE IS NOT COMPARABLE with one from a
+new-grid baseline: the old grid could not reach the 0.85 the SDP rails at, so the causal
+run beat its own bound (~0.35 % on `ems-sdp`, ~3 % on `ems-ftp75c-sdp`). **SINGLE-SOURCE COMMANDS (share 0 / 1) ARE AN **MPC-ONLY** EXTENSION** (operator ruling,
+2026-09-02): the MPC is to gain them as candidates, the DP and the SDP are NOT. They are
+issued through the firmware's setpoint latch rather than through the share loop and are
+subject to the 0.5 A share-cut load guard. ⚠️ NOT YET IN ANY CONTROL SET: the measured
+single-source bus law is implemented (`hil_plant_sim.single_source_bus_law()`, and
+`mpc_ems.build_demand(source_mode=...)`), but the candidate enumeration is NOT, because
+the cut guard is path-dependent and the planner's stage tables are control-independent.
+See `docs/modeling/mpc_design_20260901.md`, section 2026-09-02. Until it lands, no run
+commands 0 or 1.
+
+**RUN-ERA FIELDS AN ANALYST MUST READ BEFORE ANY CROSS-CAMPAIGN COMPARISON.** Seven, not
 three. `scenario.eta_chg` (charger era, absent = the 1:1 sentinel), **`config.droop_mode`**
 (`design` on every campaign; `measured` is opt-in and its sag depths are a different
 population), `constants.*_PRELOAD_A` (the auxiliary preload era), **`config.asymmetry`,
 `config.asymmetry_dv0_v`, `config.asymmetry_droop_scale_fc`** (converter asymmetry;
-`measured`, ΔV₀ 0.013522 V, `droop_scale_fc` 0.9434 since the C1 default) — **and the BLEED
-ERA** (below).
+`measured`, ΔV₀ 0.013522 V, `droop_scale_fc` 0.9434 since the C1 default), **the ROAD-LOAD
+and REGEN ERAS** (immediately below), **and the BLEED ERA** (after them).
+
+⚠️ **THE ROAD-LOAD AND REGEN ERAS (2026-09-02, the `ftp75c` round).** Eight fields, two of
+them era keys.
+
+- `config.drag`: the road-load profile the run realized, one of `rig` (the MEASURED bench load
+  `F_c + b_eff*v`, the DEFAULT and every campaign on record), `scaled-air` (the study
+  vehicle's scaled air drag, `k_air` 0.059806901748516605 N/(m/s)², `F_c` 0) or
+  `scaled-air-matched` (`k_air` 0.013330032560214096, no registered scenario runs it).
+- `config.drag_k_air`: the RESOLVED coefficient, on the `asymmetry_dv0_v` pattern, so a
+  reader never re-derives it from `Cd` and `A_f`. It is 0.0 under `rig`, and a caller
+  testing `drag_k_air == 0.0` is testing "is this the measured rig profile".
+- `config.drag_from`: `"--drag"` or `"scenario key drag"`, that is which of the two decided.
+- `config.regen_manager` / `config.regen_windows` / `config.regen_duty_s`: whether the
+  common regen-command layer was active, the windows it actually commanded, and their total
+  duty. These are the ONLY place a trace says WHERE it was allowed to harvest. On
+  `ems-ftp75c-*` under `scaled-air` the manager commands nine windows and 28.400 s; under
+  `--drag rig` the same derivation yields ZERO windows, so a rig control run records an empty
+  list.
+- `scenario.drag` and `scenario.eta_regen`: **THE TWO ERA KEYS**, resolved from the RUN's
+  own configuration and not from a scenario key. An **ABSENT `drag` names the measured rig
+  road load; an ABSENT `eta_regen` names the PRE-REGEN demand model**, which is what every DP
+  table, SDP policy and `dp_db` record committed before 2026-09-02 was solved against. That
+  absence is the same convention `eta_chg` and `loss_map` use, and it is what keeps every
+  archived artefact reachable and byte-identical. Both are `None` on a `--drag rig` run,
+  including a rig control run of a compensated scenario.
+
+⚠️ **The two era keys are INDEPENDENT.** A rig-drag run in the regen era is legitimate and
+simply earns zero credit, and a compensated run in the pre-regen era is a defined
+configuration. Do not read one from the other.
+
+⚠️ **A compensated run is a DIFFERENT VEHICLE, not a longer cycle.** The compensated profiles
+cut the peak bus current by roughly 4.5×, so no energy total, current peak or share figure
+compares against a `rig` run of any scenario. `drag` is in `EMS_FRONTIER_STIMULUS_KEYS`, so a
+frontier whose legs disagree on it is refused rather than ranked. Record:
+`docs/HIL_PLANT.md` §3.5, §3.6 and §9.4.2.
 
 ⚠️ **THE BLEED ERA (2026-09-02).** Every campaign up to and including
 `hil_report_20260902_041414` ran the **uniform 2 kΩ** node bleed; the split to **30 kΩ on

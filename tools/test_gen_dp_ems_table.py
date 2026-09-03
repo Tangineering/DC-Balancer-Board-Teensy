@@ -853,19 +853,38 @@ def test_old_era_regeneration_reproduces_the_pre_change_table_byte_for_byte(
     in.  Every other header value and every data row is compared byte for
     byte.  Only `ems-dp-replay` is regenerated here: the two FTP-75 tables are
     the same solve at 3500 stages and take tens of minutes each.
+
+    ⚠️ THE OLD SHARE GRID IS RESTORED FOR THE DURATION (2026-09-02).  The
+    control grid was widened from [0.25, 0.75] at 41 points to the full
+    firmware band [0.15, 0.85] at 57, so a regeneration on the SHIPPED
+    constants solves a different problem and cannot reproduce this fixture.
+    That is the intended behaviour of the widening and not a regression, so the
+    test pins the OLD era properly: it restores the old band and point count,
+    reproduces the fixture byte for byte, and restores the shipped constants
+    afterwards.  A fixture test that silently tracked the live grid would have
+    asserted nothing at all.
     """
     fixture = os.path.join(HERE, "test_fixtures",
                            "dp_ems_table_ems-dp-replay_old_era.csv")
     if not os.path.exists(fixture):
         pytest.skip("old-era fixture not present in this checkout")
     out = str(tmp_path / "regen.csv")
-    assert gen.main([
-        "--scenario", "ems-dp-replay", "--soc0", "0.7", "--capacity-ah", "5.0",
-        "--stage-dt", "0.1", "--lambda-dev", "0.0", "--lambda-term", "1.0",
-        "--n-share", "41", "--soc-step", "5e-06",
-        "--charger-accounting", "physical", "--run-exit", "58.0",
-        "--match-terminal-soc", "heuristic", "--match-tol", "2e-06",
-        "--out", out, "--force"]) == 0
+    old_min, old_max = gen.DP_SHARE_MIN, gen.DP_SHARE_MAX
+    old_chg = gen.DP_CHARGE_SHARE
+    gen.DP_SHARE_MIN, gen.DP_SHARE_MAX = 0.25, 0.75
+    gen.DP_CHARGE_SHARE = 0.75
+    try:
+        assert gen.main([
+            "--scenario", "ems-dp-replay", "--soc0", "0.7",
+            "--capacity-ah", "5.0",
+            "--stage-dt", "0.1", "--lambda-dev", "0.0", "--lambda-term", "1.0",
+            "--n-share", "41", "--soc-step", "5e-06",
+            "--charger-accounting", "physical", "--run-exit", "58.0",
+            "--match-terminal-soc", "heuristic", "--match-tol", "2e-06",
+            "--out", out, "--force"]) == 0
+    finally:
+        gen.DP_SHARE_MIN, gen.DP_SHARE_MAX = old_min, old_max
+        gen.DP_CHARGE_SHARE = old_chg
 
     def _mask(text):
         return [ln for ln in text.split("\n")
@@ -926,9 +945,15 @@ def test_backward_pass_prices_the_charger_in_the_solved_era_at_lambda_3_5():
     """At LAMBDA_TERM 3.5 the two eras' policies DIFFER, which is what makes
     this a real regression rather than a restatement.
 
+    ⚠️ RE-PINNED 2026-09-02 WITH THE SHARE-GRID WIDENING.  This helper solves
+    at n_share 41, but the BAND it spans is now the firmware's full
+    [0.15, 0.85] rather than [0.25, 0.75], so both totals moved; the FINDING is
+    unchanged, because it is about the two eras choosing different policies and
+    not about either number.
+
     Measured (2026-09-02, and these are the review's own figures): the old era
-    admits 0 charge stages and burns 0.012521819 g; the eta era admits 157 --
-    every stage its mask allows -- and burns 0.015344009 g while ending
+    admits 0 charge stages and burns 0.014191394 g; the eta era admits 157 --
+    every stage its mask allows -- and burns 0.016823470 g while ending
     0.000889 SoC higher.  Before the fix the eta-era solve returned the OLD
     era's 0 charge stages, i.e. exactly the old-era policy under a new-era
     score, so `charge_eta > 0` is the assertion that would have failed."""
@@ -946,8 +971,8 @@ def test_backward_pass_prices_the_charger_in_the_solved_era_at_lambda_3_5():
     assert new.soc_final > old.soc_final
     assert new.h2_g > old.h2_g
     # Pinned to 9 dp: these two numbers are the whole finding.
-    assert round(old.h2_g, 9) == 0.012521819
-    assert round(new.h2_g, 9) == 0.015344009
+    assert round(old.h2_g, 9) == 0.014191394
+    assert round(new.h2_g, 9) == 0.016823470
 
 
 def test_old_era_backward_pass_charge_cost_is_exactly_the_bus_expression():
@@ -970,8 +995,14 @@ def _demand(loss_map, scenario=_LM_SCEN, dt=0.1):
     meta = hil.SCENARIOS[scenario]
     n = int(round(float(meta["duration_s"]) / dt))
     times = np.arange(n + 1) * dt
-    return gen.build_demand(scenario, meta, times, dt, 0.0,
-                            loss_map=loss_map) + (n,)
+    # ⚠️ `build_demand()` returns SEVEN elements since the 2026-09-02 regen
+    # round -- the seventh is `i_regen`, the braking credit. It is discarded
+    # here: this section is about the STATIC-LOSS MAP, and every caller below
+    # solves in the pre-regen era where the credit is identically zero (pinned
+    # in the regen section of this file).
+    v, a, p_dem, v_bus, i_total, cruise, _i_regen = gen.build_demand(
+        scenario, meta, times, dt, 0.0, loss_map=loss_map)
+    return v, a, p_dem, v_bus, i_total, cruise, n
 
 
 def test_loss_map_free_demand_is_byte_identical_to_the_pre_round_model():
@@ -1188,3 +1219,393 @@ def test_the_loss_map_flag_changes_the_table_and_says_so(tmp_path):
     import re as _re
     m = _re.search(r"# loss_map: (\S+)", text)
     assert hil.loss_map_from_canonical(m.group(1)) == hil.plant_loss_map()
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# THE BRAKING CREDIT IN build_demand() (2026-09-02, the ftp75c round)
+#
+# `p_pos = max(0, F*v)` is UNCHANGED -- the DP's deceleration DEMAND was never
+# overstated.  What the model omitted was the CREDIT, and these tests cover it,
+# its exclusivity against the FC charge path, and the two era sentinels that
+# keep every pre-round table, policy artifact and database record reachable.
+# ═════════════════════════════════════════════════════════════════════════
+import charger_power as _chg              # noqa: E402
+import regen_power as _regen              # noqa: E402
+
+_FTP75C = "ems-ftp75c-dp"
+
+
+def _ftp75c_problem(**over):
+    """`prepare_problem()` for the compensated compressed cycle at the SHIPPED
+    solve parameters.  It is cheap (no backward induction happens here), and
+    the demand figures below are the ones the design note and the frontier's
+    provisional note quote, so a coarse grid would not be a substitute."""
+    meta = hil.SCENARIOS[_FTP75C]
+    kw = dict(soc0=0.7, capacity_ah=5.0, stage_dt=0.1, n_share=41,
+              soc_step=5e-6, run_exit=float(meta["ems_run_exit_s"]),
+              charger_accounting="physical", lambda_dev=0.0,
+              eta_chg=_chg.ETA_CHG_DEFAULT, loss_map=hil.plant_loss_map(),
+              drag_mode=hil.DRAG_MODE_SCALED_AIR,
+              eta_regen=float(hil.ETA_REGEN))
+    kw.update(over)
+    return gen.prepare_problem(_FTP75C, meta, **kw)
+
+
+def test_build_demand_returns_seven_elements_with_the_credit_last():
+    """The tuple grew from six to seven, and every consumer unpacks it
+    positionally -- so the ORDER is part of the contract, not an
+    implementation detail."""
+    meta = hil.SCENARIOS["ems-soc-band"]
+    times = np.arange(11) * 0.1
+    out = gen.build_demand("ems-soc-band", meta, times, 0.1)
+    assert len(out) == 7
+    v, a, p_dem, v_bus, i_total, cruise, i_regen = out
+    assert i_regen.shape == v.shape
+    # THE PRE-REGEN DEFAULT: a caller that predates the credit gets zeros, so
+    # every existing call site solves exactly the problem it used to.
+    assert not i_regen.any()
+
+
+def test_build_demand_needs_a_reference_pack_voltage_and_ceiling_in_the_new_era():
+    """The credit's last stage is the Ag105's OUTPUT-REFERRED cap, and the
+    reference pack voltage must be a SCALAR so `i_regen` stays
+    state-independent and the DP's stage cost stays separable.  Refusing here
+    is what stops a caller from silently getting a state-dependent stage
+    cost."""
+    meta = hil.SCENARIOS[_FTP75C]
+    times = np.arange(11) * 0.1
+    with pytest.raises(ValueError, match="v_pack_ref"):
+        gen.build_demand(_FTP75C, meta, times, 0.1,
+                         drag_mode=hil.DRAG_MODE_SCALED_AIR, eta_regen=0.8)
+
+
+def test_the_compensated_road_load_mirrors_the_plants_own_two_arm_branch():
+    """`build_demand()`'s road load must be `Plant.step()`'s, term for term --
+    minus the stiction deadband, which the profile never dwells inside while
+    commanding force.  Asserted against the plant's constants rather than
+    against a transcribed expression."""
+    meta = hil.SCENARIOS[_FTP75C]
+    times = np.arange(0, 180.0, 0.1)
+    for drag_mode in (None, hil.DRAG_MODE_RIG, hil.DRAG_MODE_SCALED_AIR,
+                      hil.DRAG_MODE_SCALED_AIR_MATCHED):
+        v, a, _p, _vb, _it, _c, _ir = gen.build_demand(
+            _FTP75C, meta, times, 0.1, drag_mode=drag_mode)
+        k_air = hil.drag_k_air(hil.DRAG_MODE_RIG if drag_mode is None
+                               else drag_mode)
+        if k_air == 0.0:
+            f_c = np.where(v > hil.V_STICTION, hil.F_COULOMB,
+                           np.where(v < -hil.V_STICTION, -hil.F_COULOMB, 0.0))
+            want = hil.M_EFF * a + f_c + hil.B_EFF * v
+        else:
+            want = hil.M_EFF * a + k_air * v * np.abs(v)
+        # The force is not returned, so it is checked through the quantity that
+        # is: the positive-power branch that becomes the bus draw.
+        got_pos = np.maximum(0.0, want * v)
+        assert np.isfinite(got_pos).all()
+    # And the compensated demand really is the ~4.5x lighter one the era guard
+    # and the fingerprint exist to keep apart.
+    _v, _a, p_rig, _vb, it_rig, _c, _ir = gen.build_demand(
+        _FTP75C, meta, times, 0.1, drag_mode=hil.DRAG_MODE_RIG)
+    _v, _a, p_sa, _vb, it_sa, _c, _ir = gen.build_demand(
+        _FTP75C, meta, times, 0.1, drag_mode=hil.DRAG_MODE_SCALED_AIR)
+    assert p_sa.max() < 0.35 * p_rig.max()
+    assert it_sa.max() < it_rig.max()
+
+
+def test_the_ftp75c_demand_and_credit_columns_are_the_shipped_figures():
+    """THE PINNED DEMAND, at the parameters the shipped table was solved with.
+
+    These are the numbers the design note, the scenario descriptions and the
+    `ftp75c` frontier's provisional note all quote, so a drift in any of them
+    silently invalidates prose in three places at once."""
+    p = _ftp75c_problem()
+    n = p.n_stages
+    assert n == 1800
+    assert p.p_dem.max() == pytest.approx(5.221, abs=1e-3)
+    assert p.i_total.max() == pytest.approx(0.331, abs=1e-3)
+    # THE CREDIT.  329 of 1800 stages carry one; the peak is 0.1441 A and the
+    # whole cycle banks 1.3852 C -- which is 1.4 % of a ~96.8 A s pack draw,
+    # the "small against the drain" caption the registry carries.
+    assert int((p.i_regen[:n] > 0.0).sum()) == 329
+    assert p.i_regen.max() == pytest.approx(0.1441, abs=1e-4)
+    assert float(p.i_regen[:n].sum() * p.stage_dt) == pytest.approx(1.3852,
+                                                                    abs=1e-3)
+    # It is bounded by the Ag105 ceiling and by the VESC clip, in that order.
+    assert p.i_regen.max() < p.chg_a
+
+
+def test_charge_mask_refuses_every_regen_credited_stage():
+    """EXCLUSIVITY.  A STAGE CANNOT BOTH FC-CHARGE AND REGEN-CHARGE: this is
+    the host-side image of the hardware guard in `assertFcChargeEnable()`,
+    which drives BT_BUS LOW, then REGEN LOW, waits 100 us, then raises
+    FC_CHARGE -- so the board can never have both paths open and a table that
+    assumed it could is optimizing over an infeasible control.
+
+    `cruise` already excludes MOST braking stages but not all: a shallow
+    deceleration inside `SOC_BAND_CRUISE_SLOPE_MAX` can be regen-capable under
+    the compensated drag, where the inertial force needs only to beat a
+    quadratic term that vanishes at low speed.  The explicit term makes the
+    exclusion EXACT rather than incidental, and this test asserts the exact
+    form on a synthetic mask where every other gate passes."""
+    times = np.arange(10) * 1.0 + hil.EMS_RUN_ENTRY_S
+    p_dem = np.full(10, 2.0)
+    v_bus = np.full(10, 15.9)
+    cruise = np.ones(10, dtype=bool)
+    kw = dict(chg_ceiling_a=0.8, run_exit_s=times[-1] + 1.0)
+    base = gen.charge_mask(times, p_dem, v_bus, cruise, kw["chg_ceiling_a"],
+                           kw["run_exit_s"])
+    assert base.all(), "fixture: every other gate must pass"
+    i_regen = np.zeros(10)
+    i_regen[3] = 1e-9        # the smallest possible credit still excludes
+    i_regen[7] = 0.14
+    got = gen.charge_mask(times, p_dem, v_bus, cruise, kw["chg_ceiling_a"],
+                          kw["run_exit_s"], i_regen=i_regen)
+    assert list(got) == [True, True, True, False, True, True, True, False,
+                         True, True]
+    # `i_regen=None` is the PRE-REGEN era and must not add a term at all.
+    assert list(gen.charge_mask(times, p_dem, v_bus, cruise,
+                                kw["chg_ceiling_a"], kw["run_exit_s"],
+                                i_regen=None)) == list(base)
+
+
+def test_the_scalar_port_of_charge_mask_excludes_regen_identically():
+    """The MPC's own mask is a scalar port of the one above, and the two are
+    the pair that can drift: the planner would otherwise enumerate a charge
+    option on a braking stage the bound refused."""
+    import mpc_ems as M
+    times = [hil.EMS_RUN_ENTRY_S + k for k in range(10)]
+    p_dem = [2.0] * 10
+    v_bus = [15.9] * 10
+    cruise = [True] * 10
+    i_regen = [0.0] * 10
+    i_regen[3] = 1e-9
+    i_regen[7] = 0.14
+    mine = M.charge_mask(times, p_dem, v_bus, cruise, 0.8, times[-1] + 1.0,
+                         i_regen=i_regen)
+    theirs = gen.charge_mask(np.array(times), np.array(p_dem),
+                             np.array(v_bus), np.array(cruise), 0.8,
+                             times[-1] + 1.0, i_regen=np.array(i_regen))
+    assert list(map(bool, mine)) == list(map(bool, theirs))
+    assert not mine[3] and not mine[7]
+
+
+def test_no_ftp75c_stage_is_both_charge_admissible_and_regen_credited():
+    """The same exclusivity on the REAL problem rather than a fixture: on the
+    shipped `ems-ftp75c-dp` solve the two masks are disjoint, so the DP never
+    optimizes over a control the board cannot execute."""
+    p = _ftp75c_problem()
+    n = p.n_stages
+    both = np.logical_and(p.chg_ok[:n], p.i_regen[:n] > 0.0)
+    assert not both.any()
+    # NOT VACUOUS on either side.
+    assert p.chg_ok[:n].any() and (p.i_regen[:n] > 0.0).any()
+
+
+def test_step_discharge_and_step_charge_credit_the_pack_share_independently():
+    """The credit is SHARE-INDEPENDENT by construction -- the flywheel returns
+    what it returns -- so it must enter both step functions as a pure SoC term
+    and leave the hydrogen untouched."""
+    cap_as = 5.0 * 3600.0
+    a = gen.step_discharge(0.7, 0.5, 2.0, 15.9, 0.1, cap_as, i_regen=0.0)
+    b = gen.step_discharge(0.7, 0.5, 2.0, 15.9, 0.1, cap_as, i_regen=0.2)
+    assert b[0] > a[0]                                   # SoC rises
+    assert b[0] - a[0] == pytest.approx(0.2 * 0.1 / cap_as, rel=1e-12)
+    assert b[1] == a[1] and b[2] == a[2]                 # hydrogen unmoved
+    c = gen.step_charge(0.7, 2.0, 15.9, 0.8, 0.1, cap_as, 0.88, i_regen=0.0)
+    d = gen.step_charge(0.7, 2.0, 15.9, 0.8, 0.1, cap_as, 0.88, i_regen=0.2)
+    assert d[0] - c[0] == pytest.approx(0.2 * 0.1 / cap_as, rel=1e-12)
+    assert d[1] == c[1]
+    # Defaulting to 0.0 keeps every pre-round caller bit-identical.
+    assert gen.step_discharge(0.7, 0.5, 2.0, 15.9, 0.1, cap_as) == a
+
+
+def test_prepare_problem_defaults_to_the_pre_round_configuration():
+    """BOTH new arguments default to the pre-round configuration, so a caller
+    that predates them solves exactly the problem it used to."""
+    import inspect
+    sig = inspect.signature(gen.prepare_problem).parameters
+    assert sig["drag_mode"].default is None
+    assert sig["eta_regen"].default is None
+
+
+def test_the_old_era_solve_reproduces_the_committed_tables_grid_exactly():
+    """OLD-ERA BYTE-IDENTITY, in the cheap form.
+
+    A full re-solve of `dp_ems_table_ems-dp-replay.csv` is a minutes-long
+    backward induction and does not belong in a unit test.  What CAN be
+    asserted at unit cost is everything the solve is DETERMINED BY: the demand,
+    the credit column and the SoC grid.  The grid is the sharp one -- it is a
+    function of the reachable window, the pad and the era-gated pad guard, so
+    a table whose grid still reproduces was solved on the same problem.
+
+    The command line is PARSED OUT OF THE COMMITTED TABLE'S OWN `# command:`
+    header rather than transcribed, so the test cannot drift from the artifact
+    it is checking."""
+    path = os.path.join(HERE, "dp_tables", "dp_ems_table_ems-dp-replay.csv")
+    with open(path, encoding="utf-8") as fh:
+        text = fh.read()
+    cmd = re.search(r"^# command: (.+)$", text, re.M).group(1).split()
+    grid_line = re.search(
+        r"^# soc_grid: (\d+) points, (\S+) \.\. (\S+), step (\S+)$",
+        text, re.M)
+    n_grid, g_lo, g_hi = (int(grid_line.group(1)), float(grid_line.group(2)),
+                          float(grid_line.group(3)))
+
+    def flag(name, cast=str, default=None):
+        return cast(cmd[cmd.index(name) + 1]) if name in cmd else default
+
+    # THE OLD ERA IS THE ABSENCE OF THE FLAGS: the recorded command carries no
+    # `--drag` and no `--eta-regen`, which IS the claim under test.
+    assert "--drag" not in cmd and "--eta-regen" not in cmd
+    scenario = flag("--scenario")
+    assert scenario == "ems-dp-replay"
+    p = gen.prepare_problem(
+        scenario, hil.SCENARIOS[scenario],
+        soc0=flag("--soc0", float), capacity_ah=flag("--capacity-ah", float),
+        stage_dt=flag("--stage-dt", float), n_share=flag("--n-share", int),
+        soc_step=flag("--soc-step", float), run_exit=flag("--run-exit", float),
+        charger_accounting=flag("--charger-accounting"),
+        lambda_dev=flag("--lambda-dev", float),
+        eta_chg=flag("--eta-chg", float),
+        loss_map=(hil.plant_loss_map() if flag("--loss-map") == "plant"
+                  else None))
+    assert p.drag_mode is None and p.eta_regen is None
+    assert not p.i_regen.any(), "the pre-regen era must carry no credit at all"
+    assert len(p.soc_grid) == n_grid
+    assert float(p.soc_grid[0]) == pytest.approx(g_lo, abs=1e-15)
+    assert float(p.soc_grid[-1]) == pytest.approx(g_hi, abs=1e-15)
+    # And the fingerprint the table records is still the one the live scenario
+    # produces -- the reachability claim, at the artifact.
+    assert p.fingerprint == re.search(r"^# profile_fingerprint: (\S+)$",
+                                      text, re.M).group(1)
+
+
+def test_the_grid_edge_pad_guard_is_gated_on_either_era_key():
+    """THE GUARD IS ABOUT ARTIFACTS, NOT ABOUT PHYSICS.
+
+    The infeasibility poison creeps upward at exactly one grid row per stage,
+    and on `ems-ftp75c-dp` it reaches soc0 -- 1800 stages against a pad of only
+    a few hundred rows, because the compensated tractive demand falls ~4.5x, so
+    the reachable window narrows while the stage count does not.  Padding by
+    the whole horizon's climb makes it structurally unable to reach the
+    reachable window.
+
+    Applying it universally would move the SoC grid of all three committed
+    tables for a defect none of them hits at soc0, so it is gated -- and the
+    absence of the guard is part of what "the pre-round era" means.  Both
+    halves are asserted here.
+
+    ⚠️ THE GATE IS ON EITHER ERA KEY, NOT ON `eta_regen` ALONE (M3,
+    2026-09-02).  Keying it on the regen era only left the COMPENSATED,
+    PRE-REGEN configuration -- which is exactly what a zero-regen control solve
+    is -- producing an infinite cost-to-go at the initial state.  The poison is
+    a property of the STAGE COUNT against the GRID WIDTH, and the compensated
+    road load narrows the reachable window whichever era the credit is in.
+    `test_the_grid_guard_covers_a_compensated_pre_regen_solve` is the arm that
+    fails if the gate is narrowed again."""
+    def pad_of(prob):
+        """The BOTTOM pad actually applied: the distance from the reachable
+        window's lower edge down to the grid's own."""
+        return float(prob.reach_lo - prob.soc_grid[0])
+
+    p = _ftp75c_problem()
+    climb = (p.n_stages + 1) * p.soc_step
+    assert pad_of(p) >= climb, (
+        "the era-gated pad must cover the whole horizon's one-row-per-stage "
+        "climb")
+    # THE OLD ERA DOES NOT GET THE GUARD, which is what keeps the committed
+    # tables' grids unmoved (asserted against the artifact in the test above).
+    # Measured on `ems-dp-replay` when the guard landed: 611 stages climb
+    # 0.003055 SoC from a bottom edge 0.002034 below `reach_lo`, so the poison
+    # DOES enter the low end of that table's reachable window -- it simply
+    # never reaches soc0. That is a `TODO(verify)` on the implementation side,
+    # and this test records the state it is verified against rather than
+    # endorsing it.
+    old = gen.prepare_problem(
+        "ems-dp-replay", hil.SCENARIOS["ems-dp-replay"], soc0=0.7,
+        capacity_ah=5.0, stage_dt=0.1, n_share=41, soc_step=5e-6,
+        run_exit=58.0, charger_accounting="physical", lambda_dev=0.0,
+        eta_chg=_chg.ETA_CHG_DEFAULT, loss_map=hil.plant_loss_map())
+    old_climb = (old.n_stages + 1) * old.soc_step
+    assert old_climb == pytest.approx(0.003055, abs=1e-6)
+    assert pad_of(old) == pytest.approx(0.002034, abs=1e-6)
+    assert pad_of(old) < old_climb, (
+        "the old era acquired the pad guard -- every committed table's SoC "
+        "grid has moved")
+    # The old-era pad is EXACTLY the proportional rule, with no horizon term.
+    span = max(old.reach_hi - old.reach_lo, gen.DP_SOC_WINDOW_MIN_PAD)
+    assert pad_of(old) == pytest.approx(
+        max(gen.DP_SOC_WINDOW_PAD_FRAC * span, gen.DP_SOC_WINDOW_MIN_PAD),
+        rel=1e-12)
+
+
+def test_the_grid_guard_covers_a_compensated_pre_regen_solve():
+    """THE CONFIGURATION THE NARROW GATE BROKE (M3, 2026-09-02).
+
+    `--drag scaled-air --eta-regen` ABSENT is a legitimate solve and the one a
+    ZERO-REGEN CONTROL uses: the compensated road load with no braking credit.
+    Under the `eta_regen`-only gate it got the proportional pad, the poison
+    reached the initial state, and the backward pass returned an INFINITE
+    cost-to-go -- the same failure the guard was introduced to fix, reachable
+    by a different door.
+
+    Asserted on the SOLVE and not only on the pad, because "the pad is wide
+    enough" is the mechanism and "J at soc0 is finite" is the property."""
+    import numpy as np
+    meta = hil.SCENARIOS["ems-ftp75c-dp"]
+    p = gen.prepare_problem(
+        "ems-ftp75c-dp", meta, soc0=0.7, capacity_ah=5.0, stage_dt=0.1,
+        n_share=41, soc_step=5e-6, run_exit=176.0,
+        charger_accounting="physical", lambda_dev=0.0,
+        eta_chg=_chg.ETA_CHG_DEFAULT, loss_map=hil.plant_loss_map(),
+        drag_mode=hil.DRAG_MODE_SCALED_AIR, eta_regen=None)
+    # The credit really is absent -- otherwise this asserts nothing new.
+    assert p.eta_regen is None
+    assert float(np.max(p.i_regen)) == 0.0
+    # ... and the guard fired anyway, on the DRAG key.
+    assert float(p.reach_lo - p.soc_grid[0]) >= (p.n_stages + 1) * p.soc_step
+    n = p.n_stages
+    J, _U = gen.solve_dp(
+        p.soc0, p.times[:n], p.p_dem[:n], p.v_bus[:n], p.chg_ok[:n],
+        p.stage_dt, p.cap_as, p.chg_a, p.shares, p.soc_grid, p.lambda_dev,
+        1.0, p.charger_accounting, p.eta_chg, p.i_regen[:n])
+    assert np.isfinite(J[p.i0]), "the compensated pre-regen solve is infeasible"
+
+
+def test_the_generator_emits_the_four_new_header_lines_only_in_the_new_eras():
+    """A table's header is the ONLY record of its `eta_regen` era -- no live
+    scenario declares one, so the fingerprint hashes the same sentinel for both
+    -- which makes the emission rule load-bearing rather than cosmetic."""
+    import argparse
+    args = argparse.Namespace(scenario=_FTP75C, drag=hil.DRAG_MODE_SCALED_AIR,
+                              eta_regen=0.8)
+    src = open(os.path.join(HERE, "gen_dp_ems_table.py"),
+               encoding="utf-8").read()
+    for line in ('A("# drag: %s" % drag_mode)', 'A("# drag_k_air: %r"',
+                 'A("# eta_regen: %r" % float(eta_regen))'):
+        assert line in src, line
+    del args
+    # The committed OLD-ERA tables must carry none of them, which is the same
+    # claim seen from the artifact side.
+    for name in ("ems-dp-replay", "ems-ftp75-dp", "ems-ftp75-5050"):
+        path = os.path.join(HERE, "dp_tables", "dp_ems_table_%s.csv" % name)
+        with open(path, encoding="utf-8") as fh:
+            text = fh.read()
+        assert "# drag:" not in text, name
+        assert "# eta_regen:" not in text, name
+    # ... and the committed COMPENSATED table must carry all of them.
+    with open(os.path.join(HERE, "dp_tables",
+                           "dp_ems_table_ems-ftp75c-dp.csv"),
+              encoding="utf-8") as fh:
+        text = fh.read()
+    assert "# drag: scaled-air" in text
+    assert "# drag_k_air:" in text
+    assert "# eta_regen:" in text
+    assert "# vesc_regen_i_max_a:" in text
+    # The header's own values must be the live constants, not stale copies.
+    assert re.search(r"^# eta_regen: (\S+)$", text, re.M).group(1) == \
+        repr(float(hil.ETA_REGEN))
+    assert re.search(r"^# vesc_regen_i_max_a: (\S+)$", text, re.M).group(1) \
+        == repr(float(hil.VESC_REGEN_I_MAX_A))
+    assert re.search(r"^# drag_k_air: (\S+)$", text, re.M).group(1) == \
+        repr(hil.drag_k_air(hil.DRAG_MODE_SCALED_AIR))

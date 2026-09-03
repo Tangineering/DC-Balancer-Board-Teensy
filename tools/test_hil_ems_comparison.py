@@ -651,3 +651,79 @@ def test_a_group_whose_only_notes_were_prefill_hints_drops_the_header():
     text = "\n".join(ec.render_group_markdown(g, 2))
     assert "Boundaries carried from" not in text
     assert "No matched-DP bound is stored for" in text
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# THE ROAD-LOAD PROFILE IN THE COMPARISON IDENTITY (2026-09-02, ftp75c)
+#
+# `drag` joined `profile_fingerprint()` because the same speed table on two
+# road loads is not the same stimulus: the compensated profiles cut the peak
+# bus current by roughly 4.5x, and grouping the two together would put runs
+# that drew different demands into one comparison.
+# ─────────────────────────────────────────────────────────────────────────────
+_PROF = [(0.0, 0.0), (5.0, 2.0), (10.0, 0.0)]
+
+
+def test_profile_fingerprint_is_unchanged_at_the_rig_sentinel():
+    """THE REACHABILITY CLAIM for this module's own identity: an absent `drag`
+    and an explicit "rig" are the SAME statement, so every group formed before
+    the key existed forms identically today."""
+    base = ec.profile_fingerprint(_PROF)
+    assert ec.profile_fingerprint(_PROF, None) == base
+    assert ec.profile_fingerprint(_PROF, "rig") == base
+    assert ec.profile_fingerprint(None) is None
+
+
+def test_profile_fingerprint_separates_a_compensated_stimulus():
+    base = ec.profile_fingerprint(_PROF)
+    sa = ec.profile_fingerprint(_PROF, "scaled-air")
+    matched = ec.profile_fingerprint(_PROF, "scaled-air-matched")
+    assert len({base, sa, matched}) == 3
+
+
+def test_group_key_separates_the_ftp75_and_ftp75c_families():
+    """Three independent reasons at once -- a different `ems_v_profile`, a
+    different `duration_s` AND a different `drag` -- which is why `ftp75c`
+    needs its own frontier tuple rather than a slot in `ftp75`'s."""
+    sim = pytest.importorskip("hil_plant_sim")
+    keys = {name: ec.group_key(sim.SCENARIOS[name])
+            for name in ("ems-ftp75-socband", "ems-ftp75-sdp", "ems-ftp75-dp",
+                         "ems-ftp75c-socband", "ems-ftp75c-sdp",
+                         "ems-ftp75c-dp")}
+    ftp75 = {keys[n] for n in keys if not n.startswith("ems-ftp75c")}
+    ftp75c = {keys[n] for n in keys if n.startswith("ems-ftp75c")}
+    assert len(ftp75) == 1 and len(ftp75c) == 1
+    assert ftp75.isdisjoint(ftp75c)
+    # The five compressed legs share ONE key -- they are one stimulus driven by
+    # five strategies, which is what makes a comparison between them mean
+    # anything.
+    all_c = {ec.group_key(sim.SCENARIOS[n]) for n in
+             ("ems-ftp75c-5050", "ems-ftp75c-socband", "ems-ftp75c-sdp",
+              "ems-ftp75c-dp", "ems-ftp75c-mpc")}
+    assert len(all_c) == 1
+    # And the duration alone would not have separated them from a hypothetical
+    # 180 s rig-drag cycle: the `drag` term is doing real work here.
+    rig_like = dict(sim.SCENARIOS["ems-ftp75c-dp"])
+    rig_like["drag"] = "rig"
+    assert ec.group_key(rig_like) != ec.group_key(
+        sim.SCENARIOS["ems-ftp75c-dp"])
+
+
+def test_match_frontier_resolves_the_ftp75c_tuple_on_its_three_legs():
+    spec = ec.match_frontier({"ems-ftp75c-socband", "ems-ftp75c-sdp",
+                              "ems-ftp75c-dp"})
+    assert spec is not None
+    assert spec["id"] == "ftp75c"
+    assert spec["roles"] == {"reference": "ems-ftp75c-socband",
+                             "candidate": "ems-ftp75c-sdp",
+                             "bound": "ems-ftp75c-dp"}
+    # The MPC candidate resolves its own tuple off the same reference and
+    # bound, so the difference between the two records is the difference
+    # between `sdp-v4` and `mpc-sto` and nothing else.
+    spec_mpc = ec.match_frontier({"ems-ftp75c-socband", "ems-ftp75c-mpc",
+                                  "ems-ftp75c-dp"})
+    assert spec_mpc["id"] == "ftp75c-mpc"
+    assert spec_mpc["roles"]["reference"] == spec["roles"]["reference"]
+    assert spec_mpc["roles"]["bound"] == spec["roles"]["bound"]
+    # A group missing the candidate resolves nothing rather than the wrong one.
+    assert ec.match_frontier({"ems-ftp75c-socband", "ems-ftp75c-dp"}) is None
