@@ -438,15 +438,33 @@ than through the share loop, and it is subject to the fw v25 **share-cut load
 guard** (the doomed channel is cut only when its own current is at or under
 0.5 A). It is NOT two more points on the share axis.
 
-⚠️ **NOT YET IN THE SEARCH.** The measured single-source bus law is implemented
+✔ **IN THE SEARCH SINCE 2026-09-03**, on the operator's **rollout-time test**
+ruling. The candidate enumeration was held until then because the cut guard
+reads the doomed channel's own current, which depends on the share the plan held
+in the previous stage, while the planner's stage tables are control-independent
+by construction. The resolution: the two candidates are offered at **block 0
+only**, and admissibility is decided per decision by rolling the real
+`GovernorModel` forward from the committed shadow state and evaluating the guard
+on that path. `docs/modeling/mpc_design_20260901.md`, section 2026-09-03, has
+the design, the admissibility statistics and the Gate-2 table.
+
+The measured single-source bus law is what a latched stage is billed on
 (`hil_plant_sim.single_source_bus_law()`, and `mpc_ems.build_demand()`'s
 `source_mode`), and it matters: the peak bus falls 15.42 V two-source to
-14.99 V FC-only. The candidate enumeration is not, because the cut guard reads
-the doomed channel's own current, which depends on the share the plan held in
-the previous stage, while the planner's stage tables are control-independent by
-construction. The three candidate resolutions and the remaining work are set
-out in `docs/modeling/mpc_design_20260901.md`, section 2026-09-02. Until it
-lands, **no run commands 0 or 1**, and a trace that shows one is a defect.
+14.99 V FC-only.
+
+⚠️ **THE READING RULE IS NOW PER LEG.** `ems-mpc-single` is the only registered
+scenario that arms `mpc_single_source`; there, exactly 0.0 and exactly 1.0 are
+legal commands, the two band checks exempt them and report the exempt count, and
+any *other* value outside `[0.15, 0.85]` is still a defect. On **every other
+leg** the old rule stands unchanged: a commanded share outside `[0.15, 0.85]` is
+a defect.
+
+⚠️ **The gain is on the SoC lever, not on a loss.** The offline walks move
+equivalent hydrogen by **0.01–0.43 %** while the hydrogen headline moves up to
+**49 %**, because a stage commanded at share 0 burns no hydrogen and the battery
+pays for it. Quote the pair. This is a control-set completeness change, not a
+performance one.
 
 
 Alongside the frontier check, every scenario in this section is also ranked
@@ -1211,6 +1229,52 @@ fraction as a `mpc-det`-versus-`mpc-sto` difference was wrong.
   without moving its value. ⚠️ Its governor mode fractions are **bit-identical**
   to `ems-mpc`'s, because the two legs share one stimulus; see the mode table in
   §6.1 before reading either run as evidence about the governor.
+
+#### ems-mpc-single (61 s, any engine, EMS `mpc-det` — SINGLE-SOURCE 0/1)
+
+- **Tests:** the `ems-mpc-det` stimulus and law with **one scenario key
+  changed**, `mpc_single_source: true`. The planner may then command a share of
+  exactly **0.0** or exactly **1.0**, which takes one boost off the bus through
+  `updateShareSetpointCutoff()` and leaves the other carrying the whole load.
+  The pair against `ems-mpc-det` is a controlled A/B on the control set alone.
+- **Admissibility is decided by a ROLLOUT-TIME test** (operator ruling,
+  2026-09-02, "let's do the rollout-time test"): the real `GovernorModel` is
+  rolled forward from the committed shadow state at 1 kHz and the firmware's
+  0.5 A share-cut **load guard** is evaluated on the path. See
+  `docs/modeling/mpc_design_20260901.md`, the 2026-09-03 section.
+- **Pass/fail:** the `ems-mpc` list with two differences. (1) The two band
+  checks **exempt exactly 0.0 and 1.0 and report the exempt sample count** — a
+  share outside `[0.15, 0.85]` that is *not* one of those two values still
+  fails, so the exemption cannot hide a real excursion. (2) The share-motion
+  floor is **0.40**, against `ems-mpc-det`'s 0.25, because the walk's commanded
+  range is 0.675 here (the low rail is 0.0, not 0.15).
+- **Walk pair (provisional, one offline walk):** h2 **0.004770 g** at ΔSoC
+  **−0.004710**, eq-H2 **0.016257 g** at λ 0.41, against `ems-mpc-det`'s
+  0.009353 / −0.002859 / 0.016327. Single-source is committed on **24 of 61**
+  decisions, all of them **BT-only**; FC-only is admissible at times and is
+  never selected.
+- ⚠️ **The equivalent hydrogen is the result and the hydrogen alone is NOT.**
+  The headline h2 falls **49 %** and eq-H2 improves **0.43 %**: the command
+  moves the operating point along the SoC lever, not along a loss. A ±25 % h2
+  band on a quantity that halves with one decision is a plumbing check, and the
+  expectation says so.
+- **What to read first on the first campaign:** the `single-source 0/1
+  candidates ARMED` fragment of the run's summary line — offered / admitted /
+  committed plus the refusal-reason census. A leg that admits nothing is not a
+  failure (it is the cut guard doing its job), but it makes every other number
+  on the run a two-source number.
+- **Solve budget 15 ms**, the only registered leg that declares one
+  (`mpc_budget_ms`). The single-source columns widen the block-0 arm and add two
+  admissibility rolls to the same callback: the full-search median moved
+  9.65 → 11.04 ms on this stimulus, above the 10 ms default. They also sort
+  **last** in the enumeration order, so an expiry drops them first — a leg that
+  expires does not degrade gracefully, it degrades into `ems-mpc-det`.
+- ⚠️ **Two arms are INFORMATIONAL on the first campaign.** `mpc_h2_accounted`
+  (its band comes from an *unbounded* walk, so measure the expiry fraction
+  before scoring it) and `mpc_single_source_exercised` (a floor of one exempt
+  sample: a run that admits nothing is legitimate, and the arm exists so that
+  run is self-describing rather than indistinguishable from one that committed
+  24 stages).
 
 #### ems-mpc-cross (200 s, any engine, EMS `mpc-sto`)
 

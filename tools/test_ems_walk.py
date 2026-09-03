@@ -974,3 +974,74 @@ def test_walk_census_counts_a_clamp_when_one_actually_binds():
     assert seen > 1000
     assert g.state.ceil_ticks == seen
     assert g.ceiling_fraction() > 0.3
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# `single_source_demand` (2026-09-03, the MPC 0/1 round)
+#
+# The walk's plant and the planner's prediction must price a LATCHED stage on
+# ONE bus law, or the walk scores a controller against a plant it did not plan
+# for.  These pin the flag's three properties: it is inert by default, it
+# REFUSES without a loss map, and where it fires it agrees term for term with
+# `mpc_ems.build_demand(source_mode=...)`.
+# ─────────────────────────────────────────────────────────────────────────────
+_SS_KW = {"budget_ms": 1e5, "roll_budget_ms": 1e5, "single_source": True}
+
+
+def test_single_source_demand_is_inert_on_a_walk_that_never_latches():
+    """`soc-band` commands only in-band shares, so NO latch ever stands and the
+    flag must be BIT-IDENTICAL there.  That is what makes it safe to leave the
+    demand switch permanently in the stage loop."""
+    lm = sim.plant_loss_map()
+    a = ew.walk("soc-band", "ems-soc-band", soc0=0.7, loss_map=lm, trace=False)
+    b = ew.walk("soc-band", "ems-soc-band", soc0=0.7, loss_map=lm,
+                single_source_demand=True, trace=False)
+    assert a.h2_g == b.h2_g
+    assert a.delta_soc == b.delta_soc
+
+
+def test_single_source_demand_refuses_without_a_loss_map():
+    """The measured single-source law is a SCALING of the loss map and has no
+    loss-map-free form."""
+    with pytest.raises(ValueError) as exc:
+        ew.walk("soc-band", "ems-soc-band", soc0=0.7,
+                single_source_demand=True, trace=False)
+    assert "loss_map" in str(exc.value)
+
+
+def test_single_source_demand_moves_a_cut_bearing_walk():
+    """`ems-mpc-single` commands share 0.0 on 24 of its 61 decisions, so the
+    latch DOES stand and the two bus laws must not agree.  A walk that priced a
+    latched stage on the two-source law would under-state the bus sag by about
+    0.45 V at the cycle's peak, and would therefore score the controller against
+    a plant it did not plan for."""
+    lm = sim.plant_loss_map()
+    off = ew.walk("mpc-det", "ems-mpc-single", soc0=0.7, loss_map=lm,
+                  strategy_kwargs=dict(_SS_KW), trace=True)
+    on = ew.walk("mpc-det", "ems-mpc-single", soc0=0.7, loss_map=lm,
+                 single_source_demand=True, strategy_kwargs=dict(_SS_KW),
+                 trace=True)
+    assert min(off.share_cmd) == 0.0          # the latch really was commanded
+    assert on.h2_g != off.h2_g
+
+
+def test_the_walk_and_the_planner_share_one_single_source_demand_model():
+    """LOCKSTEP, asserted the way the two-source models are: the walk's arrays
+    come from `gen_dp_ems_table.build_demand(source_mode=...)` (numpy) and the
+    planner's from `mpc_ems.build_demand(source_mode=...)` (stdlib port), and
+    the two must agree stage for stage.  Without this the planner could plan a
+    single-source stage on one bus law while the walk scored it on another."""
+    import mpc_ems as M
+    meta = sim.SCENARIOS["ems-soc-band"]
+    lm = sim.plant_loss_map()
+    dt = 0.1
+    n = int(round(float(meta["duration_s"]) / dt))
+    times = np.arange(n + 1) * dt
+    for mode in ("both", "fc", "bt"):
+        g = gen.build_demand("ems-soc-band", meta, times, dt, loss_map=lm,
+                             source_mode=mode)
+        m = M.build_demand("ems-soc-band", meta, list(times), dt, loss_map=lm,
+                           source_mode=mode)
+        for gi, mi in ((2, 2), (3, 3), (4, 4)):     # p_dem, v_bus, i_total
+            assert np.allclose(np.asarray(g[gi]), np.asarray(m[mi]),
+                               rtol=0, atol=1e-12), mode

@@ -691,7 +691,7 @@ def scenario_drain_a(scenario, t, aux_preload_a=None):
 
 def build_demand(scenario, meta, times, dt, aux_preload_a=None, loss_map=None,
                  drag_mode=None, eta_regen=None, eta_chg=None,
-                 v_pack_ref=None, regen_i_max_a=None):
+                 v_pack_ref=None, regen_i_max_a=None, source_mode="both"):
     """Per-stage (v, a, P_dem_bus, V_bus, I_total, cruise, I_regen) arrays.
 
     ⚠️ THE RETURN GREW A SEVENTH ELEMENT on 2026-09-02 (the ftp75c round).
@@ -864,16 +864,25 @@ def build_demand(scenario, meta, times, dt, aux_preload_a=None, loss_map=None,
         i_total = i_motor + i_aux
     else:
         lm = sim.check_loss_map(loss_map)
-        k_eff = lm["r_fix"] + lm["k_g"] * lm["g_par"]
+        # `source_mode` selects the BUS TOPOLOGY (2026-09-03, the MPC 0/1
+        # round), in LOCKSTEP with `mpc_ems.build_demand()`.  "both" returns
+        # the map's own `(v0_eff, r_fix + k_g*g_par)` and is BIT-IDENTICAL to
+        # the pre-round expression; "fc"/"bt" return the MEASURED
+        # single-source law, which is that slope scaled by 1.9453 / 2.0579
+        # with its own no-load intercept.  ⚠️ THE DP AND THE SDP NEVER PASS
+        # ANYTHING BUT "both": single-source control is the MPC's alone
+        # (operator ruling, 2026-09-02), and this argument exists so the walk
+        # and the planner can price a latched stage on the same law.
+        v0_eff, k_eff = sim.single_source_bus_law(lm, source_mode)
         g_bus, g_oth = lm["g_node_bus"], lm["g_node_other"]
         v_fwd, r_on = lm["rt_v_fwd"], lm["rt_r_on"]
-        v_bus = np.full(n, lm["v0_eff"])
+        v_bus = np.full(n, v0_eff)
         for _ in range(sim.DP_LOSS_MAP_PICARD_ITERS):
             i_motor = p_mech / (sim.ETA_BOOST * v_bus)
             v_mot = (v_bus - v_fwd - r_on * i_motor) / (1.0 + r_on * g_oth)
             i_par = v_bus * g_bus + v_mot * g_oth
             i_total = i_motor + i_aux + i_par
-            v_bus = lm["v0_eff"] - k_eff * i_total
+            v_bus = v0_eff - k_eff * i_total
         i_motor = p_mech / (sim.ETA_BOOST * v_bus)
         v_mot = (v_bus - v_fwd - r_on * i_motor) / (1.0 + r_on * g_oth)
         i_par = v_bus * g_bus + v_mot * g_oth

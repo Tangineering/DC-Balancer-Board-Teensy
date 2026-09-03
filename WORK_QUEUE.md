@@ -370,10 +370,20 @@ sim-only strategies.
   "nice to have"; design it as an EMS-side headroom rule first (admission = predicted I_fc with
   charging below the ceiling), firmware-side only if the EMS latency proves too slow. Not before
   the fw v26 clamp is validated on the bench.
-- **MPC 0/1 single-source enumeration: RULED rollout-time cut-guard test** (2026-09-02). A
-  candidate whose cut the guard would refuse is rejected inside its own transition roll (the
-  rolls already run the real governor model along the candidate's path); implement after the
-  fw v26 tools mirror lands (same files), in a worktree if a campaign is live.
+- ~~**MPC 0/1 single-source enumeration: RULED rollout-time cut-guard test** (2026-09-02).~~
+  **SHIPPED 2026-09-03** — two candidate columns at block 0, admissibility by a bounded roll of
+  the real `GovernorModel` from the committed shadow state, `ems-mpc-single` registered in the
+  default plan, band checks exempting exactly 0.0/1.0. Design record + Gate-2 table:
+  `docs/modeling/mpc_design_20260901.md` §2026-09-03. ⚠️ **The gain is 0.01–0.43 % of equivalent
+  hydrogen** while the hydrogen headline moves up to 49 % — a control-set completeness change,
+  not a performance one. Two follow-ups left open:
+  - **Gate 1 was not re-measured single-source-aware.** A latched stage delivers an exact rail,
+    so `mpc_share_pred_err` is trivially satisfied there and the whole-run figure is diluted
+    rather than tested. The honest form is an in-band-stages-only split.
+  - **`ems_walk`'s single-source demand is opt-in** (`single_source_demand=True`).
+    `ems-y-b00-v1` and `-v3` have always commanded 1.00 and 0.00 through that walk on the
+    TWO-source bus law; closing that older fidelity gap moves those anchors and is a separate
+    decision.
 
 ## Shipped 2026-09-02 (overnight)
 

@@ -1776,9 +1776,14 @@ def test_disabling_the_feedforward_branch_raises_the_prediction_error():
 
             def patched(self, pre, r_hold, r_seed, charge_stages,
                         i_tot_oc=None, soc_hint=0.6, sp_acted=None,
-                        run_seed=None, handoff=None, active=None):
+                        run_seed=None, handoff=None, active=None,
+                        pre_ss=None):
+                # `pre_ss` (2026-09-03) is FORWARDED rather than dropped: this
+                # mutation disables the FEEDFORWARD seeds only, and a patch
+                # that also dropped the single-source demand would measure two
+                # mutations at once.
                 return orig(self, pre, r_hold, r_seed, charge_stages, i_tot_oc,
-                            soc_hint, None, None, None, active)
+                            soc_hint, None, None, None, active, pre_ss)
             s.planner.delivery_table = patched.__get__(s.planner, M.Planner)
         g = gm.GovernorModel(dt_s=M.GOV_TICK_S,
                              seed_r=sim.SOC_BAND_SHARE_NOMINAL)
@@ -2499,3 +2504,621 @@ def test_the_demand_port_selects_the_single_source_bus_law():
     # DEFAULT IS "both", so every pre-round caller is unchanged.
     o = M.build_demand(SCEN, meta, times, dt, loss_map=lm)
     assert min(o[3]) == out["both"]
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# THE SINGLE-SOURCE (0/1) CANDIDATES (2026-09-03, the operator ruling)
+#
+# The ruling names the MECHANISM, not just the feature: "let's do the
+# rollout-time test".  So the first tests below are about the ROLL - that the
+# firmware's 0.5 A share-cut load guard is evaluated on the PATH, that a doomed
+# channel over the guard is refused and one under it is accepted, and that the
+# state guards suppress the candidate outright.  The rest pin the enumeration's
+# shape, the byte-identity of a feature-off run, and the census.
+# ═════════════════════════════════════════════════════════════════════════════
+def _ss_bound(**kw):
+    """A single-source-armed strategy on the `ems-soc-band` stimulus."""
+    kw.setdefault("loss_map", sim.plant_loss_map())
+    kw.setdefault("single_source", True)
+    return _bound(**kw)
+
+
+def test_single_source_needs_a_loss_map_and_says_so():
+    """REFUSED, not degraded.  The measured single-source bus law is a SCALING
+    of the loss map and has no loss-map-free form, so binding without one would
+    silently bill a latched stage on the two-source law - which under-states the
+    bus sag by ~0.45 V at the 61 s cycle's peak."""
+    s = M.MpcStrategy("mpc-det", single_source=True)
+    with pytest.raises(ValueError) as exc:
+        s.bind_scenario(SCEN, _meta())
+    assert "loss" in str(exc.value).lower()
+
+
+def test_the_ladder_grows_by_exactly_two_columns_and_the_band_does_not():
+    """The two columns are APPENDED, so every in-band index keeps its meaning -
+    which is what lets the roll table, the coarsening and every pre-round caller
+    go on using the indices they used."""
+    off = _bound(loss_map=sim.plant_loss_map())
+    on = _ss_bound()
+    assert off.planner.ladder == on.planner.ladder[:off.planner.n_band]
+    assert on.planner.n_band == off.planner.n_band == off.share_levels
+    assert len(on.planner.ladder) == on.planner.n_band + 2
+    assert on.planner.ladder[on.planner.ss_index[M.SS_MODE_BT]] == 0.0
+    assert on.planner.ladder[on.planner.ss_index[M.SS_MODE_FC]] == 1.0
+    assert off.planner.ss_index == {}
+
+
+def _admit_fixture(strategy, i_fc_a, i_bt_a):
+    """Seed the shadow governor so the FC channel carries exactly ``i_fc_a``.
+
+    The load guard reads the DELIVERED split at the instant of the cut, so the
+    fixture sets the applied ratio and pins the preview totals to make that
+    split the number the test names."""
+    tot = i_fc_a + i_bt_a
+    st = strategy.shadow.model.state
+    st.sw_fc = st.sw_bt = True
+    st.sw_init = True
+    st.r_prev = i_fc_a / tot
+    st.closed_loop_mode = True
+    st.closed_loop_run = True
+    st.filt_total = tot
+    prev = strategy.preview
+    pre = M.precompute_stages(prev, 0, strategy.horizon)
+    pre_ss = {m: M.precompute_stages(strategy.preview_ss[m], 0,
+                                     strategy.horizon)
+              for m in strategy.preview_ss}
+    for j in range(pre.n):
+        for s_i in range(len(pre.i_tot[j])):
+            pre.i_tot[j][s_i] = tot
+        pre.i_tot_mean[j] = tot
+        for m in pre_ss:
+            for s_i in range(len(pre_ss[m].i_tot[j])):
+                pre_ss[m].i_tot[j][s_i] = tot
+            pre_ss[m].i_tot_mean[j] = tot
+    return pre, pre_ss
+
+
+def test_the_load_guard_delays_a_cut_of_a_channel_carrying_0_6_a():
+    """THE RULING'S OWN TEST, and its answer is NOT the one a static rule gives.
+
+    `updateShareSetpointCutoff()` cuts the doomed channel only while
+    `abs(i) <= SHARE_CUT_MAX_HANDOFF_A` 0.5 A, and that current is a property of
+    the PATH.  The only thing that differs between this test and its twin is the
+    doomed channel's current, 0.6 A against 0.4 A, across the firmware's own
+    0.5 A guard.
+
+    ⚠️ WHAT THE ROLL FINDS, and what a table test could not: at 0.6 A the guard
+    refuses the FIRST tick and the firmware's own DEFERRAL then clips the
+    closed-loop reference back into [DROOP_R_MIN, DROOP_R_MAX], which walks the
+    fuel-cell current DOWN until the guard admits.  The cut therefore happens -
+    17 ticks later.  A conservative table test (resolution 1 of the design
+    record) would have refused this candidate outright; the rollout-time test
+    says it is feasible and says what it costs."""
+    s = _ss_bound()
+    pre, pre_ss = _admit_fixture(s, 0.6, 0.4)
+    ok, reason, ticks, _ms = s._ss_admissible(M.SS_MODE_BT, 0.0, pre, pre_ss)
+    assert ok is True and reason is None
+    assert ticks > 1                     # the first tick WAS refused
+    assert ticks <= 40                   # and the deferral cleared it promptly
+
+
+def test_the_load_guard_accepts_a_cut_of_a_channel_carrying_0_4_a():
+    """The twin.  Under the guard the cut fires on the FIRST tick, which is what
+    makes the pair a discrimination rather than two spellings of the same
+    verdict."""
+    s = _ss_bound()
+    pre, pre_ss = _admit_fixture(s, 0.4, 0.6)
+    ok, reason, ticks, _ms = s._ss_admissible(M.SS_MODE_BT, 0.0, pre, pre_ss)
+    assert ok is True
+    assert reason is None
+    assert ticks == 1
+
+
+def test_a_cut_that_cannot_engage_inside_the_window_is_refused_on_load(
+        monkeypatch):
+    """The REFUSAL path, reached by shortening the admission window.
+
+    ⚠️ A FINDING, recorded rather than papered over: inside the OVERCURRENT-
+    admissible region the load guard can never refuse a single-source cut
+    PERMANENTLY.  The deferral's band clip floors the doomed channel at
+    `DROOP_R_MIN * I_tot`, which exceeds the 0.5 A guard only above 3.33 A of
+    total - and both survivor bounds (1.19 A fuel cell, 2.55 A battery) refuse
+    the candidate long before that.  So `SS_REFUSE_CUT_LOAD` is a DEFENSIVE
+    path, and the honest way to exercise it is to shorten the window until the
+    17-tick cut of the test above no longer fits."""
+    monkeypatch.setattr(M, "SS_ADMIT_MAX_TICKS", 5)
+    s = _ss_bound()
+    pre, pre_ss = _admit_fixture(s, 0.6, 0.4)
+    ok, reason, ticks, _ms = s._ss_admissible(M.SS_MODE_BT, 0.0, pre, pre_ss)
+    assert ok is False
+    assert reason == M.SS_REFUSE_CUT_LOAD
+    assert ticks == 5
+
+
+def test_the_admissibility_roll_does_not_disturb_the_committed_shadow():
+    """It runs on a COPY.  A test that only checked the verdict would pass on an
+    implementation that latched the real shadow governor while asking."""
+    s = _ss_bound()
+    pre, pre_ss = _admit_fixture(s, 0.4, 0.6)
+    keys = ("sp_cut_fc", "sp_cut_bt", "sw_fc", "sw_bt", "r_prev", "ticks")
+    before = tuple(getattr(s.shadow.model.state, k) for k in keys)
+    s._ss_admissible(M.SS_MODE_BT, 0.0, pre, pre_ss)
+    after = tuple(getattr(s.shadow.model.state, k) for k in keys)
+    assert before == after
+
+
+def test_a_single_source_candidate_over_the_survivors_limit_is_refused():
+    """CONDITION 1: the survivor carries `i_total`, not a share of it.  FC-only
+    is bounded at 0.85 x LIMIT_I_FC_MAX = 1.19 A, so a 1.5 A total refuses it
+    while BT-only (2.55 A) is still admissible at the same load."""
+    s = _ss_bound()
+    pre, pre_ss = _admit_fixture(s, 0.4, 1.1)          # 1.5 A total
+    ok, reason, _t, _m = s._ss_admissible(M.SS_MODE_FC, 0.0, pre, pre_ss)
+    assert ok is False and reason == M.SS_REFUSE_OC
+    ok2, reason2, _t2, _m2 = s._ss_admissible(M.SS_MODE_BT, 0.0, pre, pre_ss)
+    assert ok2 is True and reason2 is None
+
+
+def test_the_restore_stage_is_judged_against_the_survivors_own_bound():
+    """CONDITION 2.  The RELEASE arm of `updateShareSetpointCutoff()` carries no
+    load guard - only the charged-bus condition - so there is nothing
+    path-dependent to roll there.  What CAN still bite is the survivor carrying
+    the whole load through the restored channel's 30 ms blanking, and that is
+    what this condition checks: block 0 under the bound, the first restore stage
+    over it."""
+    s = _ss_bound()
+    pre, pre_ss = _admit_fixture(s, 0.4, 0.4)          # 0.8 A: FC-only is fine
+    n0 = s.planner.blocks[0]
+    for s_i in range(len(pre_ss[M.SS_MODE_FC].i_tot[n0])):
+        pre_ss[M.SS_MODE_FC].i_tot[n0][s_i] = 2.0      # over 1.19 A
+    ok, reason, _t, _m = s._ss_admissible(M.SS_MODE_FC, 0.0, pre, pre_ss)
+    assert ok is False and reason == M.SS_REFUSE_RESTORE
+
+
+@pytest.mark.parametrize("fb_extra,charge,expect", [
+    ({"regen_commanded": True}, False, M.SS_REFUSE_REGEN),
+    ({}, True, M.SS_REFUSE_CHARGE),
+])
+def test_the_state_guards_suppress_the_candidate_outright(fb_extra, charge,
+                                                          expect):
+    """The regen and FC-charge guards, each counted TWICE (both modes refused)
+    and each named in the census.  A regen window and a charge window are both
+    topologies somebody else already owns."""
+    s = _ss_bound()
+    pre, pre_ss = _admit_fixture(s, 0.4, 0.6)
+    opts = [[False] * pre.n]
+    if charge:
+        opts.append([True] + [False] * (pre.n - 1))
+    fb = dict({"soc": 0.7}, **fb_extra)
+    assert s._ss_state_guards_pass(fb, opts) is False
+    assert s.ss_refusals.get(expect) == 2
+
+
+def test_a_standing_latch_and_a_deferred_cut_both_suppress_the_candidate():
+    """The other two state guards.  A deferred cut means the load guard is
+    ALREADY refusing a handoff the firmware wants, so commanding a second one is
+    the leak the fw v6 deferral exists to prevent; a standing latch means the
+    decision has already been made."""
+    s = _ss_bound()
+    pre, pre_ss = _admit_fixture(s, 0.4, 0.6)
+    opts = [[False] * pre.n]
+    s.shadow.model.state.deferred_fc = True
+    assert s._ss_state_guards_pass({"soc": 0.7}, opts) is False
+    assert s.ss_refusals.get(M.SS_REFUSE_DEFERRED) == 2
+    s.shadow.model.state.deferred_fc = False
+    s.shadow.model.state.sp_cut_bt = True
+    assert s._ss_state_guards_pass({"soc": 0.7}, opts) is False
+    assert s.ss_refusals.get(M.SS_REFUSE_LATCHED) == 2
+    # ... and with the state clear the cheap guards pass and the ROLL decides.
+    s.shadow.model.state.sp_cut_bt = False
+    assert s._ss_state_guards_pass({"soc": 0.7}, opts) is True
+    assert s._ss_modes(0.0, pre, pre_ss) == (M.SS_MODE_BT, M.SS_MODE_FC)
+
+
+def test_the_single_source_columns_are_offered_at_block_zero_only():
+    """THE SCOPING DEVIATION, pinned.  The rollout-time test is a fact about the
+    CURRENT governor state, so a single-source value is admissible for the
+    committed block and for nothing else; blocks 1 and 2 walk the in-band
+    ladder.  Checked on the enumeration itself rather than on a comment."""
+    s = _ss_bound()
+    p = s.planner
+    band = tuple(range(p.n_band))
+    ss = tuple(p.ss_index[m] for m in (M.SS_MODE_BT, M.SS_MODE_FC))
+    order = p._enumeration_order(band, len(p.blocks), cols0=band + ss)
+    assert len(order) == (p.n_band + 2) * p.n_band * p.n_band
+    assert any(c[0] in ss for c in order)
+    assert not any(c[1] in ss or c[2] in ss for c in order)
+
+
+def test_the_delivery_table_refuses_a_single_source_column_without_its_demand():
+    """A LOUD refusal, not a fallback to the two-source arrays.  Substituting
+    them is exactly the mis-billing the `pre_ss` argument exists to prevent."""
+    s = _ss_bound()
+    pre, _pre_ss = _admit_fixture(s, 0.4, 0.6)
+    with pytest.raises(ValueError) as exc:
+        s.planner.delivery_table(pre, {}, 0.5, [False] * pre.n,
+                                 active=(0, s.planner.ss_index[M.SS_MODE_BT]))
+    assert "single-source" in str(exc.value)
+
+
+def test_a_single_source_column_delivers_a_rail_and_bills_the_single_law():
+    """The column's three defining properties in one place: the delivered share
+    is EXACTLY a rail (the latch freezes the whole share loop, so neither the
+    minority clip nor the fw v26 ceiling can move it), the power is billed on
+    the SINGLE-SOURCE demand, and a charge stage is infeasible."""
+    s = _ss_bound()
+    pre, pre_ss = _admit_fixture(s, 0.4, 0.6)
+    si_bt = s.planner.ss_index[M.SS_MODE_BT]
+    si_fc = s.planner.ss_index[M.SS_MODE_FC]
+    d, pfc, pbt, _ok, _v = s.planner.delivery_table(
+        pre, {}, 0.5, [False] * pre.n, active=(0, si_bt, si_fc),
+        pre_ss=pre_ss)
+    assert d[0][si_bt] == 0.0 and d[0][si_fc] == 1.0
+    assert pfc[0][si_bt] == 0.0
+    assert pbt[0][si_fc] == 0.0
+    assert pfc[0][si_fc] == pytest.approx(pre_ss[M.SS_MODE_FC].p_dem_mean[0])
+    assert pbt[0][si_bt] == pytest.approx(pre_ss[M.SS_MODE_BT].p_dem_mean[0])
+    _d2, _f2, _b2, ok2, _v2 = s.planner.delivery_table(
+        pre, {}, 0.5, [True] + [False] * (pre.n - 1), active=(0, si_bt),
+        pre_ss=pre_ss)
+    assert ok2[0][si_bt] is False
+
+
+def test_the_shadow_governor_lets_the_latch_own_the_switches_only_at_0_or_1():
+    """The switch-ownership predicate, and its INERTNESS in band.  Asserting the
+    switches HIGH every tick while a latch stands would trip the S1 self-heal
+    and erase the latch; doing it for an IN-BAND command would change every
+    pre-2026-09-03 run."""
+    s = _ss_bound()
+    fb = {"I_fc": 0.4, "I_batt": 0.4}
+    s.shadow.last_t = 0.0
+    s.shadow.model.state.sw_init = True
+    s.shadow.model.state.sw_fc = True
+    s.shadow.model.state.sw_bt = True
+    s.shadow.tick_to(0.05, 0.0, fb)                  # single-source command
+    assert s.shadow.sp_cut == "fc"                   # the FC is off the bus
+    s.shadow.tick_to(0.10, 0.0, fb)
+    assert s.shadow.sp_cut == "fc"                   # and it SURVIVES
+    s2 = _ss_bound()
+    s2.shadow.last_t = 0.0
+    s2.shadow.model.state.sw_init = True
+    s2.shadow.model.state.sw_fc = True
+    s2.shadow.model.state.sw_bt = True
+    s2.shadow.tick_to(0.05, 0.5, fb)
+    assert s2.shadow.sp_cut is None
+    assert s2.shadow.model.state.sw_fc and s2.shadow.model.state.sw_bt
+
+
+def _drive_61s(**kw):
+    """Command sequence over the whole 61 s stimulus, as a list of floats."""
+    s = _bound(loss_map=sim.plant_loss_map(), budget_ms=1e5,
+               roll_budget_ms=1e5, **kw)
+    prev = s.preview
+    out = []
+    t = 0.0
+    while t < 61.0:
+        k = prev.index(t)
+        i_tot = prev.i_total[k]
+        r = s(t, {"soc": 0.7, "I_fc": 0.5 * i_tot, "I_batt": 0.5 * i_tot,
+                  "V_bus": prev.v_bus[k], "I_charge": 0.0, "v_profile": 1.5})
+        out.append(r["power_share_setpoint"])
+        t += 0.02
+    return out
+
+
+def test_the_feature_off_plan_is_byte_identical():
+    """THE INERTNESS GATE.  A strategy with the feature off must produce the
+    SAME command sequence it produced before the round, so every Gate-1/Gate-2
+    record and every campaign anchor stays comparable."""
+    assert _drive_61s() == _drive_61s(single_source=False)
+
+
+def test_the_armed_strategy_is_a_different_controller():
+    """The mutation the test above cannot see: a feature that never ran would
+    satisfy the equality and prove nothing."""
+    assert _drive_61s(single_source=True) != _drive_61s()
+
+
+def test_the_stochastic_forecast_reaches_the_single_source_demand_too():
+    """One decision must not sit on TWO demand forecasts.
+
+    `mpc-sto` replaces the previewed demand with the TPM's conditional mean by
+    scaling `pre` in place.  If that scale did not also reach the single-source
+    precomputes, the survivor's overcurrent condition would be judged on the
+    DETERMINISTIC preview while the two-source table was judged on the forecast
+    — a silent inconsistency inside one decision.  Asserted by driving a `sto`
+    strategy and comparing the single-source stage means against the two-source
+    ones through the FIXED bus-law ratio, which is the only thing that may
+    differ between them."""
+    if not os.path.exists(TPM_PATH):
+        pytest.skip("the demand TPM is not present in this checkout")
+    s = M.MpcStrategy("mpc-sto", variant="sto", loss_map=sim.plant_loss_map(),
+                      single_source=True, budget_ms=1e5, roll_budget_ms=1e5)
+    s.bind_scenario(SCEN, _meta())
+    seen = {}
+
+    orig = M.MpcStrategy._ss_modes
+
+    def spy(self, t, pre, pre_ss, i_tot_oc=None):
+        seen.setdefault("pre", pre)
+        seen.setdefault("pre_ss", pre_ss)
+        # `i_tot_oc` (2026-09-03, review LOW-2): the quantile tightening now
+        # reaches the admissibility test too, so the spy has to carry it or the
+        # sto arm is judged on a demand the shipped code does not use.
+        seen.setdefault("i_tot_oc", i_tot_oc)
+        return orig(self, t, pre, pre_ss, i_tot_oc=i_tot_oc)
+
+    s._ss_modes = spy.__get__(s, M.MpcStrategy)
+    prev = s.preview
+    t = 0.0
+    while t < 30.0 and "pre" not in seen:
+        k = prev.index(t)
+        i_tot = prev.i_total[k]
+        s(t, {"soc": 0.7, "I_fc": 0.5 * i_tot, "I_batt": 0.5 * i_tot,
+              "V_bus": prev.v_bus[k], "I_charge": 0.0, "v_profile": 1.5})
+        t += 0.02
+    assert "pre" in seen, "no decision reached the single-source path"
+    pre, pre_ss = seen["pre"], seen["pre_ss"]
+    # The two-source and single-source previews differ ONLY in the bus law, so
+    # the ratio of their stage-mean BUS POWERS is fixed by the profile and does
+    # NOT move with the forecast. Comparing it against the same ratio taken
+    # from the UNSCALED previews is what detects a scale applied to one arm and
+    # not the other.
+    base = {m: M.precompute_stages(s.preview_ss[m], 0, s.horizon)
+            for m in s.preview_ss}
+    base2 = M.precompute_stages(s.preview, 0, s.horizon)
+    moved = False
+    for j in range(pre.n):
+        if abs(pre.p_dem_mean[j] - base2.p_dem_mean[j]) > 1e-12:
+            moved = True
+        for m in pre_ss:
+            got = pre_ss[m].p_dem_mean[j] / pre.p_dem_mean[j]
+            want = base[m].p_dem_mean[j] / base2.p_dem_mean[j]
+            assert got == pytest.approx(want, rel=1e-9), (m, j)
+    assert moved, "the forecast never moved the demand - the test proved nothing"
+    # ...and the OVERCURRENT arm of the same decision got the quantile, not the
+    # mean - the two arms of one decision on one forecast (review LOW-2).
+    assert seen["i_tot_oc"] is not None
+
+
+def test_the_census_counts_offers_admissions_and_commitments():
+    """The reporting surface a campaign reads.  The summary fragment is ASCII
+    (the cp1252 console rule) and is EMPTY when the feature is off."""
+    off = _bound(loss_map=sim.plant_loss_map())
+    assert off._ss_summary_fragment(off.timing()) == ""
+    s = _bound(loss_map=sim.plant_loss_map(), single_source=True,
+               budget_ms=1e5, roll_budget_ms=1e5)
+    prev = s.preview
+    t = 0.0
+    while t < 61.0:
+        k = prev.index(t)
+        i_tot = prev.i_total[k]
+        s(t, {"soc": 0.7, "I_fc": 0.5 * i_tot, "I_batt": 0.5 * i_tot,
+              "V_bus": prev.v_bus[k], "I_charge": 0.0, "v_profile": 1.5})
+        t += 0.02
+    tm = s.timing()
+    assert tm["single_source"] is True
+    assert tm["ss_offered"] > 0
+    # Every offer is accounted for: admitted, or refused with a named reason.
+    assert tm["ss_offered"] == tm["ss_admissible"] + sum(
+        tm["ss_refusals"].values())
+    frag = s._ss_summary_fragment(tm)
+    assert "single-source 0/1 candidates ARMED" in frag
+    frag.encode("cp1252")               # the console rule, asserted
+    assert s.provenance["single_source"] is True
+    assert s.provenance["single_source_cut_guard_a"] == \
+        gm.GOV_CONST["SHARE_CUT_MAX_HANDOFF_A"]
+
+
+# =============================================================================
+# 20. The 2026-09-03 review fix round.  One discriminating test per finding;
+#     each names the finding it pins so a future edit that reverts the fix
+#     fails with the reason attached.
+# =============================================================================
+def test_the_incumbent_seed_snaps_by_share_not_by_index():
+    """MED-1.  The single-source columns are APPENDED, so index distance is not
+    share distance for them.  Before the fix, an incumbent at the BT-only column
+    (index `n_band`, share 0.0) snapped to index `n_band - 1` - share 0.85, the
+    OPPOSITE rail - and a budget expiry committed that as the warm start."""
+    pl = M.Planner(horizon=20, blocks=(2, 6, 12), share_levels=9,
+                   single_source=True)
+    n = pl.n_band
+    assert pl.ladder[pl.ss_index[M.SS_MODE_BT]] == 0.0
+    assert pl.ladder[pl.ss_index[M.SS_MODE_FC]] == 1.0
+    cols = tuple(range(n))              # the in-band ladder, no ss columns
+    # BT-only incumbent (share 0.0) -> the LOW rail, 0.15.
+    pl.incumbent = (pl.ss_index[M.SS_MODE_BT],) * 3
+    seed = pl._enumeration_order(cols, 3)[0]
+    assert pl.ladder[seed[0]] == pytest.approx(0.15)
+    assert seed[0] == 0
+    # FC-only incumbent (share 1.0) -> the HIGH rail, 0.85.
+    pl._order_cache.clear()
+    pl.incumbent = (pl.ss_index[M.SS_MODE_FC],) * 3
+    seed = pl._enumeration_order(cols, 3)[0]
+    assert pl.ladder[seed[0]] == pytest.approx(0.85)
+    assert seed[0] == n - 1
+    # The pre-round behaviour is untouched: an in-band incumbent inside the
+    # active set still snaps to ITSELF, on both metrics.
+    for x in range(n):
+        pl._order_cache.clear()
+        pl.incumbent = (x,) * 3
+        assert pl._enumeration_order(cols, 3)[0][0] == x
+
+
+def test_the_seed_snap_is_index_distance_for_an_out_of_range_incumbent():
+    """The fallback arm of `_snap_seed()`: an incumbent index the ladder no
+    longer has (a caller whose ladder shrank between decisions) has no share to
+    compare, so index distance is the only metric left."""
+    pl = M.Planner(horizon=20, blocks=(2, 6, 12), share_levels=9)
+    assert pl._snap_seed(99, tuple(range(pl.n_band))) == pl.n_band - 1
+    assert pl._snap_seed(-4, tuple(range(pl.n_band))) == 0
+
+
+# The command sequence a feature-OFF strategy produces over the whole 61 s
+# stimulus, as a sha256 over the little-endian float64 encoding of all 3050
+# values.  COMPUTED FROM d941170's `mpc_ems.py` - the commit before the
+# single-source round - and re-checked against this worktree, so it pins the
+# inertness claim against the module as it was, not against itself (MED-4).
+_FEATURE_OFF_SEQ_SHA256 = (
+    "412c282009c3c84eb4fca1d55bee61cc072465e3461e6f27524ed402b8f7202d")
+_FEATURE_OFF_SEQ_LEN = 3050
+
+
+def _seq_sha256(seq):
+    import hashlib
+    import struct
+    return hashlib.sha256(
+        b"".join(struct.pack("<d", float(v)) for v in seq)).hexdigest()
+
+
+def test_the_feature_off_plan_matches_the_pre_round_fixture():
+    """MED-4.  `test_the_feature_off_plan_is_byte_identical()` compares the new
+    module WITH ITSELF, so a regression that moved both sides would satisfy it.
+    This one compares against a sequence taken from the pre-round commit."""
+    seq = _drive_61s()
+    assert len(seq) == _FEATURE_OFF_SEQ_LEN
+    assert _seq_sha256(seq) == _FEATURE_OFF_SEQ_SHA256
+
+
+def test_the_regen_guard_reads_the_observed_switch_bit():
+    """MED-3.  `regen_commanded` is a HOST key written by a scenario's
+    `RegenManager`; `ems-mpc-single` has none, so before the fix the guard was
+    inert on the one leg that ships the feature.  The observed `switch` word
+    carries `SW_REGEN` whoever opened the path."""
+    s = _bound(loss_map=sim.plant_loss_map(), single_source=True,
+               budget_ms=1e5, roll_budget_ms=1e5)
+    opts = [[False] * s.horizon]
+    # NO host key, REGEN observed open -> refused, and counted as a regen
+    # refusal rather than as something else.
+    assert s._ss_state_guards_pass({"switch": M.SW_REGEN_BIT}, opts) is False
+    assert s.ss_refusals.get(M.SS_REFUSE_REGEN) == 2
+    # Another switch bit is NOT the regen bit.
+    s.reset()
+    assert s._ss_state_guards_pass({"switch": sim.SW_MOT_PWR}, opts) is True
+    assert M.SS_REFUSE_REGEN not in s.ss_refusals
+    # A missing `switch` (no observation frame yet) degrades to the host key.
+    s.reset()
+    assert s._ss_state_guards_pass({}, opts) is True
+
+
+def test_the_regen_switch_mask_is_the_simulators_own():
+    """The mask is restated in `mpc_ems` to keep the runtime path stdlib-only,
+    so it needs a test that the two cannot drift."""
+    assert M.SW_REGEN_BIT == sim.SW_REGEN
+
+
+def _const_pre(n, i_tot, nsub=10):
+    """A stage precompute of CONSTANT current - enough for `_ss_admissible()`,
+    which reads only `n`, `i_tot` and `i_tot_mean`."""
+    class _P:
+        pass
+    p = _P()
+    p.n = n
+    p.i_tot = [[i_tot] * nsub for _ in range(n)]
+    p.i_tot_mean = [i_tot] * n
+    p.p_dem = [[0.0] * nsub for _ in range(n)]
+    p.p_dem_mean = [0.0] * n
+    return p
+
+
+def test_the_quantile_tightening_reaches_the_admissibility_test():
+    """LOW-2.  `mpc-sto` judges the single-source COLUMN on the 90 % quantile
+    (`delivery_table`'s `oc_scale`) and, before the fix, judged the same
+    candidate's ADMISSIBILITY on the unscaled conditional mean - so a candidate
+    the table would mark infeasible could still be admitted."""
+    s = _bound(loss_map=sim.plant_loss_map(), single_source=True,
+               budget_ms=1e5, roll_budget_ms=1e5)
+    # FC-only survives; its bound is 1.19 A. 1.00 A of mean demand is inside it.
+    i_mean = 1.00
+    pre = _const_pre(s.horizon, i_mean)
+    pre_ss = {m: _const_pre(s.horizon, i_mean) for m in
+              (M.SS_MODE_BT, M.SS_MODE_FC)}
+    assert i_mean < M.SS_LIMIT_A[M.SS_MODE_FC]
+    _ok, reason_plain, _t, _ms = s._ss_admissible(
+        M.SS_MODE_FC, 0.0, pre, pre_ss)
+    assert reason_plain != M.SS_REFUSE_OC
+    # The same candidate with a quantile 1.5x the mean is over the bound.
+    oc = [i_mean * 1.5] * s.horizon
+    ok, reason, _t2, _ms2 = s._ss_admissible(M.SS_MODE_FC, 0.0, pre, pre_ss,
+                                             i_tot_oc=oc)
+    assert ok is False and reason == M.SS_REFUSE_OC
+    assert i_mean * 1.5 > M.SS_LIMIT_A[M.SS_MODE_FC]
+
+
+# LOW-1: what the admission roll actually costs, on a GRID.
+# Measured 2026-09-03 through the shipped `_ss_admissible()` path, at the
+# measured plant dv0 0.013522 V, over I_tot in [0.60, 2.55] A (0.05 A steps) x
+# r0 in {0.15, 0.30, 0.50, 0.70, 0.85} x both modes.  The two figures below are
+# the whole point of the window's size and are pinned so a governor change that
+# lengthens the handoff fails here rather than silently in a campaign.
+_SS_GRID_MAX_TICKS = 118          # at I_tot 0.75 A, r0 0.85, BT-only
+_SS_GRID_TIMEOUTS = 2             # both at I_tot 0.60 A, at the two rails
+_SS_GRID_DV0_V = 0.013522
+
+
+def _ss_grid(factory):
+    """(max engage ticks, [(i_tot, r0, mode) that timed out on the load guard])."""
+    worst, timeouts = 0, []
+    i_tot = 0.60
+    while i_tot <= 2.5501:
+        for r0 in (0.15, 0.30, 0.50, 0.70, 0.85):
+            for mode in (M.SS_MODE_BT, M.SS_MODE_FC):
+                s = factory()
+                st = s.shadow.model.state
+                st.sw_init = True
+                st.sw_fc = True
+                st.sw_bt = True
+                st.r_prev = r0
+                s.shadow.last_t = 0.0
+                pre = _const_pre(s.horizon, i_tot)
+                pre_ss = {m: _const_pre(s.horizon, i_tot)
+                          for m in (M.SS_MODE_BT, M.SS_MODE_FC)}
+                ok, reason, ticks, _ms = s._ss_admissible(mode, 0.0, pre,
+                                                          pre_ss)
+                if ok:
+                    worst = max(worst, ticks)
+                elif reason == M.SS_REFUSE_CUT_LOAD:
+                    timeouts.append((round(i_tot, 3), r0, mode))
+        i_tot += 0.05
+    return worst, timeouts
+
+
+def test_the_admission_roll_grid_maximum_and_its_margin():
+    """LOW-1.  The design record's deferral table was four hand-picked points
+    with a 34-tick maximum; the grid's maximum is 118 ticks, so the 200-tick
+    window's margin is 1.69x, NOT the "six blanking windows" the constant's
+    comment claimed.  118 ms of a 1 s stage is 11.8 % of a stage the plan
+    modelled single-source and ran two-source, and the roll carries NO plant
+    current lag, so 118 is a LOWER bound on what the board would take."""
+    worst, timeouts = _ss_grid(
+        lambda: _bound(loss_map=sim.plant_loss_map(), single_source=True,
+                       budget_ms=1e5, roll_budget_ms=1e5,
+                       dv0_v=_SS_GRID_DV0_V))
+    assert worst == _SS_GRID_MAX_TICKS
+    assert worst < M.SS_ADMIT_MAX_TICKS
+    # ...and the load-guard refusal is REACHABLE, not merely defensive: at
+    # I_tot 0.60 A from either rail the doomed channel parks at 0.5157 A, just
+    # over the 0.5 A guard, the reference never moves, and the roll expires.
+    assert len(timeouts) == _SS_GRID_TIMEOUTS
+    assert all(t[0] == 0.60 for t in timeouts), timeouts
+
+
+def test_the_census_reports_the_columns_the_search_walked():
+    """LOW-3.  `Decision.ss_offered` was written and never read; it is now the
+    census's `ss_searched`, which is the invariant that says an ADMITTED mode
+    actually reached the planner's block-0 column set."""
+    s = _bound(loss_map=sim.plant_loss_map(), single_source=True,
+               budget_ms=1e5, roll_budget_ms=1e5)
+    prev = s.preview
+    t = 0.0
+    while t < 61.0:
+        k = prev.index(t)
+        i_tot = prev.i_total[k]
+        s(t, {"soc": 0.7, "I_fc": 0.5 * i_tot, "I_batt": 0.5 * i_tot,
+              "V_bus": prev.v_bus[k], "I_charge": 0.0, "v_profile": 1.5})
+        t += 0.02
+    tm = s.timing()
+    assert tm["ss_searched"] == tm["ss_admissible"] > 0
+    # OFF: the key is present and zero, so a sidecar never has to guess.
+    off = _bound(loss_map=sim.plant_loss_map())
+    assert off.timing()["ss_searched"] == 0

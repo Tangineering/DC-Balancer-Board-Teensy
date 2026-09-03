@@ -67,9 +67,11 @@ def test_build_plan_full_count_40_runs():
     # 72 slots.
     plan = rhs.build_plan(_args())
     # WP-B: +v-bus-sense-offset (the UV-dwell objective's own home)
-    assert len(plan) == len(SCENARIOS) + len(REPLAY_SUITE) == 73
+    # 2026-09-03 (the MPC single-source round): +ems-mpc-single -> 47
+    # scenarios, 74 slots.
+    assert len(plan) == len(SCENARIOS) + len(REPLAY_SUITE) == 74
     kinds = [p["kind"] for p in plan]
-    assert kinds.count("scenario") == 46
+    assert kinds.count("scenario") == 47
     assert kinds.count("replay") == 27
 
 
@@ -81,7 +83,8 @@ def test_build_plan_replay_only():
 
 def test_build_plan_scenarios_only():
     plan = rhs.build_plan(_args(scenarios_only=True))
-    assert len(plan) == 46      # fw v26 tools round: +the two fw26-clamp-* legs;
+    assert len(plan) == 47      # 2026-09-03: +ems-mpc-single;
+                                # fw v26 tools round: +the two fw26-clamp-* legs;
                                 # WP-C: +regen-harvest-true; WP-E: +ems-ftp75-dp;
                             # 2026-09-02: +the four MPC legs;
                                 # WP-B: +v-bus-sense-offset;
@@ -1715,6 +1718,80 @@ def test_scan_signals_no_specs_is_free_and_returns_nothing(tmp_path):
     returns an empty list without even opening the CSV."""
     out = rhs.scan_signals("/nonexistent/path/nope.csv", [])
     assert out == []
+
+
+# -- exempt_values (2026-09-03, the MPC single-source round) ----------------
+
+def _share_csv(tmp_path, values):
+    rows = [{"t": "%.2f" % (3.0 + 0.1 * i), "fault_flags": "0",
+             "cmd_share_sp": "%.4f" % v} for i, v in enumerate(values)]
+    path = tmp_path / "share.csv"
+    _write_scenario_csv(path, rows, extra_cols=("cmd_share_sp",))
+    return path
+
+
+def _share_band_specs(exempt):
+    """The two MPC band arms, in the shape `_mpc_expectation()` builds them."""
+    base = [{"name": "floor", "column": "cmd_share_sp",
+             "floor_min_value": rhs._MPC_SHARE_FLOOR},
+            {"name": "ceil", "column": "cmd_share_sp",
+             "max_value": rhs._MPC_SHARE_CEIL}]
+    if exempt:
+        for sp in base:
+            sp["exempt_values"] = list(rhs._MPC_SINGLE_SOURCE_VALUES)
+    return base
+
+
+def test_exempt_values_lets_the_single_source_commands_through_and_counts_them(
+        tmp_path):
+    """A single-source leg commands exactly 0.0 and exactly 1.0, which the
+    firmware constrains to [0, 1] and reads as a TOPOLOGY instruction, not a
+    band excursion.  Both band arms must pass, and the verdict text must say how
+    many samples the bound was not applied to - an exemption that hid its own
+    population would be indistinguishable from a widened bound."""
+    path = _share_csv(tmp_path, [0.15, 0.0, 0.5, 1.0, 0.85])
+    specs = _share_band_specs(exempt=True)
+    checks = rhs.judge_signals(specs, rhs.scan_signals(str(path), specs,
+                                                       grace_s=0.0), "why")
+    assert [c["passed"] for c in checks] == [True, True]
+    assert "2 sample(s) exempt at 0/1" in checks[0]["detail"]
+    assert "2 sample(s) exempt at 0/1" in checks[1]["detail"]
+
+
+def test_exempt_values_does_not_hide_a_real_band_excursion(tmp_path):
+    """THE MUTATION the test above cannot see.  0.10 is NOT one of the exempt
+    values, so the floor arm must still fail on it - the exemption is two
+    points, not a widened interval."""
+    path = _share_csv(tmp_path, [0.15, 0.0, 0.10, 1.0])
+    specs = _share_band_specs(exempt=True)
+    checks = rhs.judge_signals(specs, rhs.scan_signals(str(path), specs,
+                                                       grace_s=0.0), "why")
+    assert checks[0]["passed"] is False
+    assert "0.1000" in checks[0]["detail"]
+
+
+def test_without_exempt_values_a_zero_share_still_fails_the_floor(tmp_path):
+    """The four two-source MPC legs declare NO exemption, so a 0.0 sample there
+    IS a defect and must keep failing.  This is what makes the exemption a
+    per-leg statement rather than a change to the check."""
+    path = _share_csv(tmp_path, [0.15, 0.0, 0.5])
+    specs = _share_band_specs(exempt=False)
+    checks = rhs.judge_signals(specs, rhs.scan_signals(str(path), specs,
+                                                       grace_s=0.0), "why")
+    assert checks[0]["passed"] is False
+    assert "exempt" not in checks[0]["detail"]
+
+
+def test_the_single_source_leg_is_the_only_expectation_carrying_the_exemption():
+    """Registry-level: exactly one leg declares it, and it is the one whose
+    scenario arms `mpc_single_source`."""
+    def _arms(name):
+        sigs = rhs.FAULT_EXPECTATIONS[name]["signals_require"]
+        return any(s.get("exempt_values") for s in sigs)
+    armed = [n for n in rhs.FAULT_EXPECTATIONS
+             if "signals_require" in rhs.FAULT_EXPECTATIONS[n] and _arms(n)]
+    assert armed == ["ems-mpc-single"]
+    assert SCENARIOS["ems-mpc-single"].get("mpc_single_source") is True
 
 
 # -- switch_bit / min_ticks -----------------------------------------------
@@ -5128,6 +5205,8 @@ PI_LIVE_SKIP_SCENARIOS = {
     # `ems-ftp75-mpc` is in FTP75_SCENARIOS as well and is listed here for
     # its siblings' reason: the --pi-live gate is ordered FIRST.
     "ems-mpc", "ems-mpc-det", "ems-mpc-cross", "ems-ftp75-mpc",
+    # 2026-09-03: the single-source leg is EMS-driven like its four siblings.
+    "ems-mpc-single",
     # 2026-09-02 (the ftp75c round): the five compressed legs join for the
     # same reason -- each declares an "ems" key, and the --pi-live gate is
     # ordered BEFORE the --with-ftp75c gate, so under --pi-live they carry the
@@ -5197,7 +5276,8 @@ def test_build_plan_pi_live_total_count_still_40():
     is unchanged under --pi-live, only their kind (executed vs skipped)
     differs."""
     plan = rhs.build_plan(_args(pi_live=True))
-    assert len(plan) == 73      # fw v26 tools round: +the two fw26-clamp-* legs;
+    assert len(plan) == 74      # 2026-09-03: +ems-mpc-single;
+                                # fw v26 tools round: +the two fw26-clamp-* legs;
                                 # WP-C: +regen-harvest-true; WP-B: +v-bus-sense-offset;
                                 # WP-1C: +the ems-sdp-alpha-* trio;
                                 # 2026-09-02: +the four MPC legs;
@@ -11390,3 +11470,79 @@ def test_the_ftp75c_drive_arm_ceiling_is_still_twice_the_legs_own_walk_peak():
         specs = {s["name"]: s
                  for s in rhs.FAULT_EXPECTATIONS[name]["signals_require"]}
         assert specs["ftp75c_fc_bounded"]["max_value"] == round(2.0 * walk, 4)
+
+
+# -- 2026-09-03 review fix round: MED-2 and LOW-4 ---------------------------
+
+def test_exempt_min_count_fails_when_the_feature_never_fired(tmp_path):
+    """LOW-4.  `exempt_values` alone bounds NOTHING: a leg that exempted zero
+    samples passed every band arm exactly as one that exempted 3000 did, so a
+    run in which the single-source command was never issued read identically to
+    one in which it was issued constantly."""
+    spec = {"name": "fired", "column": "cmd_share_sp",
+            "exempt_values": list(rhs._MPC_SINGLE_SOURCE_VALUES),
+            "exempt_min_count": 1}
+    # No 0.0/1.0 sample anywhere -> the tally is zero -> the arm fails.
+    path = _share_csv(tmp_path, [0.15, 0.5, 0.85])
+    checks = rhs.judge_signals([spec], rhs.scan_signals(str(path), [spec],
+                                                        grace_s=0.0), "why")
+    assert checks[0]["passed"] is False
+    assert "0 sample(s)" in checks[0]["detail"]
+    # One single-source command is enough.
+    path2 = tmp_path / "b"
+    path2.mkdir()
+    p2 = _share_csv(path2, [0.15, 0.0, 0.85])
+    checks2 = rhs.judge_signals([spec], rhs.scan_signals(str(p2), [spec],
+                                                         grace_s=0.0), "why")
+    assert checks2[0]["passed"] is True
+    assert "1 sample(s)" in checks2[0]["detail"]
+
+
+def test_the_single_source_leg_registers_the_exercised_arm_informational():
+    """The arm ships INFORMATIONAL on its first campaign: a controller that
+    declines every candidate is the rollout-time cut guard doing its job, not a
+    board defect, and the walk's 24 commitments were measured on an unbounded
+    search."""
+    sigs = rhs.FAULT_EXPECTATIONS["ems-mpc-single"]["signals_require"]
+    arm = [s for s in sigs if s.get("name") == "mpc_single_source_exercised"]
+    assert len(arm) == 1
+    assert arm[0]["exempt_min_count"] == 1
+    assert arm[0]["informational"] is True
+    # ...and no OTHER leg carries it, for the same reason no other leg carries
+    # the exemption.
+    for name, exp in rhs.FAULT_EXPECTATIONS.items():
+        if name == "ems-mpc-single":
+            continue
+        for s in exp.get("signals_require", ()):
+            assert "exempt_min_count" not in s, name
+
+
+def test_the_single_source_h2_floor_is_informational_with_its_own_reason():
+    """MED-2.  The band comes from a walk at `budget_ms` 1e5 - an UNBOUNDED
+    search - while the leg runs a 15 ms budget, and the single-source columns
+    sort LAST so an expiry drops them first.  The floor is therefore reported
+    without a verdict for the first campaign, and its note must say THAT
+    reason, not the cross leg's run-to-run-spread one."""
+    sigs = rhs.FAULT_EXPECTATIONS["ems-mpc-single"]["signals_require"]
+    floor = [s for s in sigs if s.get("name") == "mpc_h2_accounted"][0]
+    assert floor["informational"] is True
+    assert "UNBOUNDED search" in floor["label"]
+    assert "run-to-run spread" not in floor["label"]
+    # The CEILING keeps its verdict - a scale or accumulation error must still
+    # fail rather than read as a result.
+    ceil = [s for s in sigs if s.get("name") == "mpc_h2_bounded"][0]
+    assert not ceil.get("informational")
+    # The cross leg keeps the note it had.
+    cross = [s for s in rhs.FAULT_EXPECTATIONS["ems-mpc-cross"]
+             ["signals_require"] if s.get("name") == "mpc_h2_accounted"][0]
+    assert "run-to-run spread" in cross["label"]
+
+
+def test_the_single_source_leg_declares_a_15_ms_solve_budget():
+    """MED-2.  The full-search median on this stimulus moved 9.65 -> 11.04 ms,
+    i.e. above the 10 ms default, and an expiry drops the single-source columns
+    FIRST - so the leg does not degrade gracefully, it degrades into
+    `ems-mpc-det`."""
+    assert SCENARIOS["ems-mpc-single"]["mpc_budget_ms"] == 15.0
+    declared = sorted(n for n, m in SCENARIOS.items() if "mpc_budget_ms" in m)
+    assert declared == ["ems-mpc-single"], declared

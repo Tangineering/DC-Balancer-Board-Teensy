@@ -7393,6 +7393,14 @@ class _MpcProxy:
         never otherwise — and needs no change to that module."""
         return None if self.impl is None else self._budget_hit_held
 
+    # NOTE (2026-09-03, review LOW-3): a `single_source_last` mirror was
+    # written in this round and DELETED unread.  There is no CSV column for it -
+    # the drain writes three MPC columns and adding a fourth is a schema change
+    # the round did not make - so it was a property no consumer could reach.
+    # The single-source verdict is reported per RUN through the census in
+    # `MpcStrategy.timing()` and the summary line.  A per-tick column is a
+    # deliberate follow-up, not an oversight.
+
     # Held state for the derivation above.  None until the first decision, so
     # the column is BLANK before the controller has decided anything — never 0,
     # which would read as "the budget was met" on a run that had not solved yet.
@@ -7547,6 +7555,20 @@ def mpc_configure_kwargs(args, meta, dv0_v=None):
     band = getattr(args, "mpc_share_band", None)
     if band is not None:
         out["share_band"] = parse_share_band(band)
+    # ── THE SINGLE-SOURCE CANDIDATES (2026-09-03) ──────────────────────────
+    # A store_true flag, so False is "not asked for" and never overrides a
+    # scenario that arms the feature through `mpc_single_source`: only True is
+    # passed, and `MpcStrategy.bind_scenario()` ORs the two.  Refused loudly on
+    # a checkout whose `mpc_ems` has no such argument, for `max_candidates`'
+    # reason - dropping it silently would run the shipped controller while the
+    # command line said otherwise.
+    if getattr(args, "mpc_single_source", False):
+        if not mpc_supports_kwarg("single_source"):
+            raise ValueError(
+                "--mpc-single-source was given but this checkout's "
+                "mpc_ems.MpcStrategy has no `single_source` argument; the run "
+                "would silently be the two-source controller")
+        out["single_source"] = True
     # A DETERMINISTIC candidate cap, when the strategy offers one.  It is the
     # only lever that makes an MPC run reproducible — the search is otherwise
     # bounded by WALL CLOCK, so a loaded campaign host explores fewer candidates
@@ -8782,7 +8804,14 @@ SDP_ALPHA_SCENARIOS = tuple(sorted(
 # mirrors named above carry these two names as well.
 SOC_BAND_DRAIN_SCENARIO_NAMES = ("ems-soc-band", "ems-dp-replay",
                                  "ems-sdp", "ems-mpc",
-                                 "ems-mpc-det") + SDP_ALPHA_SCENARIOS
+                                 "ems-mpc-det",
+                                 # 2026-09-03: `ems-mpc-single` is
+                                 # `ems-mpc-det` with ONE key changed, so it
+                                 # must carry the identical load. Omitting it
+                                 # here is exactly the B2 defect of
+                                 # 2026-09-01, which halved a scenario's
+                                 # modelled demand.
+                                 "ems-mpc-single") + SDP_ALPHA_SCENARIOS
 
 # ── ems-y-*: the firmware's 'Y' combined profile, four variants ─────────────
 #
@@ -9958,6 +9987,70 @@ SCENARIOS["ems-mpc-det"] = {
     "mpc_max_candidates": MPC_CAMPAIGN_MAX_CANDIDATES,
     # THE DEMAND-MODEL ERA THE PLANNER PREDICTS ON — see `ems-mpc`.
     "mpc_loss_map": plant_loss_map(),
+    "ems": "mpc-det",
+}
+
+# ── ems-mpc-single: the single-source (0/1) demonstration ───────────────────
+#
+# ⚠️ THE ONLY REGISTERED LEG THAT ARMS `mpc_single_source` (2026-09-03,
+# operator ruling).  Everything else about it is `ems-mpc-det` BY REFERENCE -
+# the same stimulus, the same law, the same cap, the same era - so the pair is
+# a controlled A/B on ONE key and the difference between them is the feature.
+#
+# THE ECONOMICS, MEASURED BEFORE REGISTERING (offline walk, soc0 0.7, loss-map
+# era, dv0 0, unbounded search).  The plant DOES reward the command, and it
+# rewards it much less than the headline suggests:
+#     h2       0.009353166 -> 0.004769930 g      -49.0 %
+#     dSoC     -0.002859   -> -0.004710
+#     eq-H2    0.016327096 -> 0.016256629 g      -0.43 %  (lambda 0.41)
+# The mechanism is that a stage commanded at share 0 burns NO hydrogen at all,
+# so the headline halves; but the battery pays for it, and at the suite's own
+# exchange rate the net is under half a percent.  ⚠️ The equivalent-hydrogen
+# gain is the RESULT and the hydrogen alone is NOT - the same warning the four
+# other MPC legs carry, and it is larger here than anywhere else.
+#
+# Single-source is chosen on 24 of 61 decisions on this stimulus, ALL of them
+# BT-only (share 0.0); FC-only (share 1.0) is admissible at times and NEVER
+# selected, which is the expected sign - carrying the bus on the fuel cell
+# alone maximises the quantity the objective minimises.
+SCENARIOS["ems-mpc-single"] = {
+    "description": ("The `ems-mpc-det` stimulus and law with the MPC's "
+                    "SINGLE-SOURCE (0/1) candidates ARMED: the planner may "
+                    "command a share of exactly 0.0 or exactly 1.0, which "
+                    "takes one boost off the bus through "
+                    "updateShareSetpointCutoff() and leaves the other carrying "
+                    "the whole load. Admissibility is decided by a "
+                    "ROLLOUT-TIME test - the real GovernorModel is rolled "
+                    "forward from the committed shadow state and the "
+                    "firmware's 0.5 A share-cut LOAD GUARD is evaluated on the "
+                    "path, not on a static rule (operator ruling, 2026-09-02). "
+                    "Run it BESIDE `ems-mpc-det`, which is the identical "
+                    "scenario with the feature off. "
+                    "(!) The commanded share leaves [0.15, 0.85] BY DESIGN on "
+                    "this leg, so its band checks exempt exactly 0.0 and 1.0 "
+                    "and COUNT the exempt samples."),
+    "electrical": "any",
+    "duration_s": SCENARIOS["ems-soc-band"]["duration_s"],
+    "chg_i_ceiling_a": SCENARIOS["ems-soc-band"]["chg_i_ceiling_a"],
+    # THE SAME LIST OBJECT as `ems-mpc-det`'s profile.
+    "ems_v_profile": SCENARIOS["ems-soc-band"]["ems_v_profile"],
+    "mpc_max_candidates": MPC_CAMPAIGN_MAX_CANDIDATES,
+    "mpc_loss_map": plant_loss_map(),
+    # ── THE SOLVE BUDGET (2026-09-03, review MED-2) ────────────────────────
+    # 15 ms, not the 10 ms default, and this is the ONLY leg that declares one.
+    # The single-source columns widen the BLOCK-0 arm of the enumeration and add
+    # two admissibility rolls to the same callback: the full-search median moved
+    # 9.65 -> 11.04 ms on this stimulus, i.e. ABOVE the default budget. They also
+    # sort LAST in the enumeration order, so an expiry drops them FIRST - a leg
+    # that expires does not fall back gracefully, it falls back to being
+    # `ems-mpc-det`. The 15 ms is the same value `ems-mpc-cross` carried for the
+    # same reason before the adaptive budget retired its need (2026-09-02); the
+    # first campaign measures whether it is still needed here.
+    "mpc_budget_ms": 15.0,
+    # THE ONE KEY THAT DIFFERS FROM `ems-mpc-det`.  Read by
+    # MpcStrategy.bind_scenario(); it ORs with the constructor flag and with
+    # `--mpc-single-source`.
+    "mpc_single_source": True,
     "ems": "mpc-det",
 }
 
@@ -11324,6 +11417,15 @@ def main(argv=None):
                          "an MPC run must never enter a repeatability ledger. "
                          "Refused if this checkout's mpc_ems has no such "
                          "argument")
+    ap.add_argument("--mpc-single-source", action="store_true",
+                    help="MPC: arm the SINGLE-SOURCE (0/1) candidates - the "
+                         "planner may command a share of exactly 0.0 or 1.0, "
+                         "which takes one boost off the bus through the "
+                         "firmware's setpoint latch. Admissibility is decided "
+                         "by a ROLLOUT-TIME test of the 0.5 A share-cut load "
+                         "guard. OFF by default; `ems-mpc-single` is the "
+                         "registered leg that arms it through its own "
+                         "`mpc_single_source` key. Needs a demand loss map")
     ap.add_argument("--mpc-h2-map", default=None,
                     help="MPC: stage hydrogen map, 'proxy' (default, the "
                          "operator-ruled eta_fc 0.40 online proxy) or 'convex' "
@@ -12209,6 +12311,13 @@ def main(argv=None):
         #                      between decisions.  Blank before the first
         #                      decision — never 0, which would read as "the
         #                      budget was met" on a run that had not solved.
+        # ⚠️ NO FOURTH COLUMN FOR THE SINGLE-SOURCE VERDICT (2026-09-03), and
+        # the reason is that the CSV already carries better evidence for it: a
+        # single-source stage has ONE OF THE TWO BUS BITS LOW in `switch`, which
+        # is an OBSERVED BOARD field rather than a host-side mirror of the
+        # planner's intention.  The per-decision census (offered / admitted /
+        # committed, and the refusal-reason breakdown) is in the run's summary
+        # line and in the sidecar's `config.mpc` + timing block.
         header_row += ["mpc_solve_ms", "mpc_share_pred_err", "mpc_budget_hit"]
         # ── fc_ceil / bt_ceil — APPENDED LAST, BOTH SCHEMAS (fw v26) ─────────
         # Observation-frame byte 4, bits 4/5: the source current-ceiling

@@ -1182,3 +1182,296 @@ the firmware and covers both directions: the last-source guard, the load guard
 (`abs(i) <= SHARE_CUT_MAX_HANDOFF_A`, with `refused_load` counted), survivor-turn-on
 blanking (`refused_blank`), the S1 self-heal, and the release path with its charged-bus
 guard. No porting work is needed first.
+
+---
+
+## 2026-09-03: single-source candidates, shipped on the rollout-time test
+
+⚠️ **Operator ruling.** Resolution 2 of the three above is the one that ships: "let's do
+the rollout-time test." The section above is superseded from "What is not implemented"
+onward; the measured bus-law foundation it describes is unchanged and is what the
+implementation reads.
+
+### 1. Transport — can the board execute an exact 0 or 1?
+
+**Yes, and no protocol change is implied.** The chain was checked end to end.
+
+| Stage | What it does to the value |
+|---|---|
+| `MpcStrategy.__call__` → `power_share_setpoint` | float, unconstrained |
+| `PiCommander.state` → `pack_pi_command()` | `struct.pack("<IHfffBB", …)`, plain float32 |
+| firmware `receiveCommands()` (.ino:5663) | `power_share_setpoint = constrain(share_sp_rx, 0.0f, 1.0f)` |
+
+The firmware clamps to **[0, 1]**, not to `[DROOP_R_MIN, DROOP_R_MAX]`. An out-of-band
+setpoint is not an error there — it is the *input* `updateShareSetpointCutoff()` exists to
+consume: `sp < DROOP_R_MIN` opens `FC_BUS_ENABLE`, `sp > DROOP_R_MAX` opens
+`BT_BUS_ENABLE`, each behind the last-source guard, the 0.5 A load guard and the 30 ms
+survivor blanking. The firmware's own `ems-y-b00-*` bench profiles already command 1.00
+and 0.00 through this path. Nothing in the simulator's command chain clamps to the band
+either — `SocBandStrategy.clamp_share()` is that strategy's own hardware-envelope clamp
+and reaches no other policy.
+
+### 2. What ships
+
+**Two extra columns, appended after the in-band ladder** (`Planner.ss_index`), so every
+in-band index keeps its meaning and the roll table, the coarsening and every pre-round
+caller are untouched. `n_band` is the count the coarsening is sized on; `len(ladder)` is
+the full column set.
+
+**Block 0 only — a deviation from the scoping this record sketched, and the reason it is
+the right one.** The remaining-work list above reads as "two extra rungs at every block".
+They are offered at the committed block alone, because:
+
+1. the admissibility test is a **roll from the current governor state**, which is a fact
+   about *now*; admitting a single-source value at block 1 would need the governor state
+   six stages into a candidate *path*, i.e. one roll per path — the inner loop the anytime
+   budget is spent in, which is precisely what resolution 2 was warned about;
+2. only block 0 is ever **committed** — the horizon recedes every stage, so a block-1
+   single-source value is a tail estimate and an inadmissible one would bias the tail;
+3. the **enumeration**: two rungs at every block take 9³ to 11³ = 1331 per charge option
+   (+83 %); at block 0 alone it is 11·9·9 = 891 (+21 %).
+
+**The modelling residual, stated:** the restore from a single-source block into block 1's
+in-band value is a transient of at most the 30 ms blanking plus 175 ticks of
+conduction-handoff slew, against the 6 s of block 1 — under 3.5 % of that block, and it is
+not modelled.
+
+**The single-source column** (`Planner.delivery_table`) differs from an in-band rung in
+three ways, each of which is why it is a branch and not a rung with an extreme value: the
+demand comes from a preview built with `build_demand(source_mode=…)` on the **measured
+single-source bus law**; the minority clip, the fw v26 ceiling clamp and the feedforward
+slew are all **unreachable** (the latch returns `MODE_LATCHED` with the whole share loop
+frozen, `.ino:10087`), so the delivered share is exactly a rail; and the overcurrent bound
+is the **survivor's own** — it carries `i_total`, not a share of it.
+
+**The fw v26 current-ceiling clamp is irrelevant single-source**, for two independent
+reasons: `applyShareCurrentCeilings()` runs inside the closed-loop and feedforward arms,
+which the latch returns before; and it constrains its result into
+`[DROOP_R_MIN, DROOP_R_MAX]`, so it could not express a single-source split even if it
+ran. The survivor's overcurrent is bounded by condition 1 of the admissibility test
+instead, at the same 0.85 margin.
+
+### 3. The rollout-time test as implemented
+
+`MpcStrategy._ss_admissible(mode, t, pre, pre_ss)`, four conditions in the order they are
+cheapest to fail:
+
+1. **Survivor overcurrent** over block 0, on the single-source demand, against
+   0.85·`LIMIT_I_FC_MAX` = 1.19 A (FC-only) or 0.85·`LIMIT_I_BT_MAX` = 2.55 A (BT-only).
+2. **Restore reachability** — the first stage after block 0, against the *same* survivor
+   bound. ⚠️ Checked **algebraically, not rolled**, and the firmware is why: the RELEASE
+   arm of `updateShareSetpointCutoff()` carries **no load guard**, only the
+   charged-bus/boost-enabled condition (`v_bus_ok`), so there is nothing path-dependent to
+   roll. What can still bite is the survivor carrying the whole load through the restored
+   channel's 30 ms blanking, which is what the bound expresses.
+3. **The cut itself, rolled.** A deep copy of the shadow governor is ticked at 1 kHz with
+   the single-source setpoint commanded, the plant currents taken from the stage-0
+   sub-samples and the **model's own switch beliefs fed back** — the shadow's usual
+   "assert both switches HIGH" would trip the S1 self-heal and erase the latch being
+   modelled. Admissible iff the latch engages within `SS_ADMIT_MAX_TICKS` = 200 ticks.
+4. **The refusal reason**, from the roll's own `refused_load` / `refused_blank` counters.
+
+Cost: ~0.75 ms for both candidates per decision, measured, against the 2.761 ms a single
+1000-tick transition roll costs. It is charged to the decision's own budget.
+
+**Three state guards suppress the candidate before any roll:** a regen window, an FC-charge
+option at stage 0 (`assertFcChargeEnable()` already owns the topology), and a standing latch
+or a deferred cut (the fw v6 "one owner per setpoint" invariant).
+
+⚠️ **The regen guard reads two sources, and neither is complete on its own** (corrected
+2026-09-03, review MED-3). `regen_commanded` is a *host* key, written onto the feedback view
+by a scenario's `RegenManager`; `ems-mpc-single` has no such manager, so on the one leg that
+ships the feature that key is never present and the guard was **inert**. The observed
+`switch` word is therefore consulted as well: `SW_REGEN` set means the board has the regen
+path open, whoever opened it — including the firmware's own `regenActive` branch, which the
+host key does not see. **The limitation, stated:** the observed bit is one HIL round trip
+behind (about 1.9 ms) and is blank until the first observation frame decodes, so on a run
+without a `RegenManager` the guard is a one-frame-late detector rather than a predictive one.
+It is the only regen evidence such a run has.
+
+⚠️ **The restore runs concurrently with an open-loop window, and that is not modelled.**
+After the release, `resetShareControlState()` zeroes `share_govTotAFilt`, so the governor
+spends roughly 20-40 ms refilling that EMA — an open-loop feedforward slew that overlaps the
+restored channel's own 30 ms turn-on blanking. No test covers the overlap directly. What
+bounds it is the survivor's own current bound (condition 2 above), which is judged on the
+restore stage's opening sub-sample, plus the campaign-B precedent of 163 in-Run bus-switch
+edges across six replays with no guard event over 0.5 A.
+
+### 4. ⚠️ What the roll actually found, and it is not what resolution 1 assumed
+
+**The load guard never refuses a single-source cut permanently inside the
+overcurrent-admissible region.** When it refuses the first tick, the firmware's own
+**deferral** clips the closed-loop reference back into `[DROOP_R_MIN, DROOP_R_MAX]`, which
+walks the doomed channel's current *down* until the guard admits. The deferral's floor is
+`DROOP_R_MIN · I_tot`, which clears the 0.5 A guard only above 3.33 A of total — and both
+survivor bounds refuse the candidate long before that.
+
+So what the roll returns is, over most of the region, a **delay** rather than a verdict.
+
+⚠️ **RE-DERIVED FROM A GRID, 2026-09-03 (review LOW-1).** The four hand-picked points this
+section first quoted (maximum 34 ticks) are not the worst case. A grid over
+`I_tot` in [0.60, 2.55] A in 0.05 A steps, times `r0` in {0.15, 0.30, 0.50, 0.70, 0.85},
+times both modes, at the measured plant `dv0` 0.013522 V and through the shipped
+`_ss_admissible()`, gives:
+
+| Quantity | Value | Where |
+|---|---|---|
+| Worst engage delay | **118 ticks** | `I_tot` 0.75 A, `r0` 0.85, BT-only |
+| Margin against `SS_ADMIT_MAX_TICKS` 200 | **1.69x** | — |
+| Unmodelled two-source residual at that point | **11.8 %** of a 1 s stage | — |
+| Grid points refused on the load guard | **2 of 400** | `I_tot` 0.60 A, both rails |
+
+Two corrections follow. First, the residual is 11.8 % of a stage, not 3.4 %; it is still
+inside every band this leg carries, and it is no longer negligible. Second,
+`SS_REFUSE_CUT_LOAD` is **not** purely defensive: at `I_tot` 0.60 A commanded from either
+rail the doomed channel parks at 0.5157 A — a hair over the 0.5 A guard — the reference does
+not walk down, and the roll expires. The claim "the load guard never refuses a single-source
+cut permanently inside the overcurrent-admissible region" holds over most of the region and
+fails in its low-current corner.
+
+The roll carries **no plant current lag** — the doomed channel's current follows the model's
+own delivered split instantly — so 118 ticks is a *lower* bound on what the board would take.
+`test_the_admission_roll_grid_maximum_and_its_margin` pins both figures.
+
+**The conservative table test (resolution 1) would still have refused every one of these
+candidates**, which is the concrete value of the ruling.
+
+### 5. Admissibility statistics — the five MPC walks
+
+Offline walks, soc0 0.7, loss-map era, dv0 0, unbounded search; the walk's plant switched
+to the single-source law on every latched stage (`ems_walk.walk(single_source_demand=…)`).
+"Offered" is 2 per decision the feature was armed for.
+
+| Leg | Decisions | Offered | Admitted | Committed BT-only | Committed FC-only | Refusals (reason census) |
+|---|---|---|---|---|---|---|
+| `ems-mpc` | 61 | 122 | 50 | 10 | 0 | charge 26, latch 16, OC 28, never 2 |
+| `ems-mpc-det` | 61 | 122 | 34 | 24 | 0 | charge 26, latch 46, OC 14, never 2 |
+| `ems-mpc-cross` | 200 | 400 | 20 | 8 | 0 | charge 362, latch 16, never 2 |
+| `ems-ftp75-mpc` | 350 | 700 | 380 | 83 | 0 | charge 164, latch 154, never 2 |
+| `ems-ftp75c-mpc` | 180 | 360 | 128 | 64 | 0 | charge 90, latch 104, regen 36, never 2 |
+
+**FC-only is admissible and is never selected on any leg.** That is the expected sign:
+carrying the bus on the fuel cell alone maximises exactly the quantity the objective
+minimises. The feature is, in practice, a *battery-only* option.
+
+**The `charge_window` refusal dominates on `ems-mpc-cross`** (362 of 400), because that
+stimulus spends most of its run with a charge option open at stage 0. It also means the
+enumeration never grows on a decision that already carries three charge options —
+`candidates_max` is unchanged at 1536 with and without the feature on every 61 s leg.
+`ems-ftp75c-mpc` is the one leg whose regen manager fires the `regen_commanded` guard (36
+of 360 offers), and it is the only evidence that guard has.
+
+**`latch_standing` is the second-largest refusal on four of the five legs**, and it is a
+deliberate conservatism rather than a defect: once a channel is off the bus the *next*
+decision refuses both candidates, so a single-source window cannot be extended by
+re-commanding it — it must release into the band first and be re-admitted. That bounds a
+window at one decision block and is why no leg shows a long single-source hold.
+
+### 6. Gate 2 — the walk table, with and without
+
+λ = 0.41 (`EMS_EQ_H2_LAMBDA_SOC_PER_G`); eq-H2 = h2 + (−ΔSoC)/λ.
+
+| Leg | h2 off | h2 on | ΔSoC off | ΔSoC on | eq-H2 off | eq-H2 on | Δ eq-H2 |
+|---|---|---|---|---|---|---|---|
+| `ems-mpc` | 0.0071038 | 0.0068492 | −0.003787 | −0.003889 | 0.0163409 | 0.0163349 | **−0.04 %** |
+| `ems-mpc-det` | 0.0093532 | 0.0047699 | −0.002859 | −0.004710 | 0.0163271 | 0.0162566 | **−0.43 %** |
+| `ems-mpc-cross` | 0.0085269 | 0.0082418 | −0.008256 | −0.008372 | 0.0286637 | 0.0286604 | **−0.01 %** |
+| `ems-ftp75-mpc` | 0.0185959 | 0.0170927 | −0.015169 | −0.015773 | 0.0555939 | 0.0555634 | **−0.05 %** |
+| `ems-ftp75c-mpc` | 0.0016885 | 0.0011063 | −0.003782 | −0.004012 | 0.0109136 | 0.0108924 | **−0.19 %** |
+
+**The economics finding.** The plant *does* reward single-source, and it rewards it far
+less than the headline suggests. A stage commanded at share 0 burns **no hydrogen at
+all**, so h2 falls by up to 49 %; the battery pays for it, and at the suite's own exchange
+rate the net gain is **0.01 % to 0.43 %** of equivalent hydrogen. Every leg improves and
+none improves much: the command moves the operating point along the **SoC lever**, not
+along a loss. That is smaller than the ~0.15 % spread within which campaign C's four
+charge-free FTP-75 strategies were already unresolved, and it is far under the live
+repeatability floor (~50 ppm on h2, but a *policy* difference of 0.4 % on eq-H2 sits
+inside the λ band's own sensitivity). **The honest reading is that this is a control-set
+completeness change, not a performance one.**
+
+⚠️ The single-source bus law works *against* the gain: with one channel off the bus the
+effective droop is 1.9453× (FC) or 2.0579× (BT) the two-source slope, so the same
+mechanical demand costs more current and more bus sag. Billing single-source stages on the
+two-source law — which is what a walk without `single_source_demand=True` does — over-states
+the benefit.
+
+### 7. Solve-time impact and the cap consequence
+
+Measured on the unbounded-budget walks above (so these are *full-search* times, not
+budgeted ones). ⚠️ **Wall clock on a loaded host — read the off→on delta, not the
+absolute.** A repeat of the same table under a concurrent test suite moved every absolute
+figure by 1–10 ms while the deltas held: the 61 s legs +1.4 to +1.8 ms of median,
+`ems-mpc-cross` ≈ 0 (its charge guard refuses 362 of 400 offers before any roll runs). The
+h2/ΔSoC/eq-H2 columns of section 6 reproduced **bit for bit** across the two runs.
+
+| Leg | median off → on | max off → on |
+|---|---|---|
+| `ems-mpc` | 9.17 → 10.60 ms | 18.64 → 18.70 ms |
+| `ems-mpc-det` | 9.65 → 11.04 ms | 20.70 → 20.44 ms |
+| `ems-mpc-cross` | 12.81 → 12.80 ms | 20.08 → 21.15 ms |
+| `ems-ftp75-mpc` | 9.39 → 11.31 ms | 19.60 → 17.77 ms |
+
+Two terms: the admissibility rolls (≤ 0.79 ms per decision, both candidates) and the wider
+block-0 arm. At `CANDIDATE_COST_MS_NOMINAL` 0.0392 ms the arithmetic is
+`+2·k² · 0.0392` ms per charge option at a realised ladder of `k` points — 5.0 ms at
+k = 8, 2.0 ms at k = 5. `coarsen_ladder()` is charged for it: `decide()` scales the option
+count by `(k + n_ss)/k` before sizing the allowance, and `coarsen_ladder()` now takes a
+**float** option count so the fractional surcharge is not truncated away. The observable
+consequence is that a decision offering both candidates may coarsen one step further than
+the same decision would without them.
+
+**The cap.** `MPC_CAMPAIGN_MAX_CANDIDATES` is **unchanged at 2187**, and the walks show why
+that is enough rather than lucky: the `charge_window` guard refuses both candidates on
+every decision that carries three charge options, so the two growth terms never coincide.
+`candidates_max` reads 1536 on `ems-mpc` with and without the feature. Should a future
+stimulus break that coincidence, the cap would truncate the **single-source columns first**
+— they sort last in the enumeration order, because the distance metric puts an appended
+column further from any incumbent than any rung is. That direction is the safe one (an
+expiry keeps the in-band search) and it is stated rather than relied upon.
+
+### 8. What is registered
+
+`ems-mpc-single` — the `ems-mpc-det` stimulus and law by reference, with
+`mpc_single_source: true` as the single differing key, in the **default** plan (61 s).
+`--mpc-single-source` arms it on any other leg. The two suite band checks exempt exactly
+0.0 and 1.0 and report the exempt sample count, and a third arm
+(`mpc_single_source_exercised`, informational) puts a floor of one under that count so a run
+that admitted nothing is self-describing.
+
+The leg declares **`mpc_budget_ms` 15.0** (2026-09-03, review MED-2) and is the only
+registered scenario that declares a budget. Section 7's full-search median on this stimulus
+is 11.04 ms, above the 10 ms default, and the single-source columns sort last so an expiry
+drops them first — a leg that expires degrades into `ems-mpc-det` rather than degrading
+gracefully. For the same reason the `mpc_h2_accounted` floor ships **informational** for the
+first campaign: its band is a walk prediction taken at `budget_ms` 1e5. The four existing MPC legs are **not**
+armed, so every Gate-1/Gate-2 record and every campaign anchor stays comparable; a
+byte-identity test over the whole 61 s stimulus pins that.
+
+### 9. Not done
+
+- **Gate 1 was not re-measured.** The prediction claim `mpc_share_pred_err` is scored on
+  the delivered stage share, and a single-source stage delivers an exact rail, so the
+  metric is trivially satisfied there and the whole-run figure is diluted rather than
+  tested. A single-source-aware Gate-1 split (in-band stages only) is the honest form and
+  is not written.
+- **The restore transient is not modelled** (section 2).
+- **The walk's single-source demand is opt-in.** `ems-y-b00-v1` and `-v3` have always
+  commanded 1.00 and 0.00 through `ems_walk` on the two-source law; the flag is off by
+  default so those anchors do not move, and closing that older gap is a separate decision.
+
+### 10. Tests, and one environment note
+
+The round added **26** host-native tests — 18 in `tools/test_mpc_ems.py`, 4 in
+`tools/test_ems_walk.py`, 4 in `tools/test_run_hil_suite.py`. The 2026-09-03 review fix round
+added 8 more in `test_mpc_ems.py`, 4 in `test_run_hil_suite.py` and 1 in
+`test_hil_plant_sim.py`, one per finding.
+
+⚠️ **A worktree failure that is not a defect.**
+`test_gen_ftp75_profile_regenerates_both_modules_byte_identically` compares
+`tools/ftp75_profile.py` and `tools/ftp75c_profile.py` byte for byte against a fresh
+regeneration. The generator writes LF; with the `core.autocrlf true` this repository is
+checked out under, git rewrites both files to CRLF on checkout and the comparison fails on
+line endings alone. A `.gitattributes` at the repository root now marks both files `-text`,
+which disables the conversion for future checkouts. An existing checkout keeps its CRLF copy
+until those two files are checked out again.

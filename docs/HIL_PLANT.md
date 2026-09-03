@@ -3246,6 +3246,26 @@ the release path with its charged-bus guard and its
 `DROOP_RATIO_SLEW_HANDOFF_PER_TICK` 0.002/tick restore slew. No porting is required before
 the candidates are added.
 
-⚠️ **No run commands 0 or 1 today.** The candidate enumeration is not implemented, for the
-path-dependence reason set out in `docs/modeling/mpc_design_20260901.md`, section
-2026-09-02. A trace that shows a commanded share outside [0.15, 0.85] is a defect.
+⚠️ **SUPERSEDED 2026-09-03. One registered scenario now commands 0 or 1.** The statement
+that stood here — "no run commands 0 or 1 today; a trace showing a commanded share outside
+[0.15, 0.85] is a defect" — held only until the enumeration shipped on the operator's
+**rollout-time test** ruling (`docs/modeling/mpc_design_20260901.md`, section 2026-09-03).
+
+The reading rule is now per leg:
+
+* **`ems-mpc-single`** arms `mpc_single_source` and may command exactly **0.0** or exactly
+  **1.0**. Those two values are LEGAL there — the firmware constrains a received setpoint
+  to `[0, 1]` (.ino:5663) and `updateShareSetpointCutoff()` reads an out-of-band value as a
+  topology instruction — and the suite's two band checks exempt them and report the exempt
+  sample count. A share outside `[0.15, 0.85]` that is **not** one of those two values is
+  still a defect there.
+* **Every other leg** keeps the old rule verbatim: any commanded share outside
+  `[0.15, 0.85]` is a defect.
+
+**Plant-side consequence:** a latched stage must be priced on the single-source bus law
+above, not on the two-source one — at the 61 s cycle's peak that is worth about 0.45 V of
+bus. The live plant does this by construction (it solves the network from `switch_state`).
+The offline walk does **not** by default: `ems_walk.walk(single_source_demand=True)` is the
+opt-in that switches its demand arrays on every latched stage, and it is off by default so
+the `ems-y-b00-*` anchors — which have always commanded 1.00 and 0.00 through that walk on
+the two-source law — do not move.
