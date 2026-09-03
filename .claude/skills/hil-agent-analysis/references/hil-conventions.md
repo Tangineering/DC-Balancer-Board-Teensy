@@ -54,14 +54,26 @@ record solved on the old grid keys as its own era and does not collide. ⚠️ A
 MATCHED-DP DEVIATION FROM AN OLD-GRID BASELINE IS NOT COMPARABLE with one from a
 new-grid baseline: the old grid could not reach the 0.85 the SDP rails at, so the causal
 run beat its own bound (~0.35 % on `ems-sdp`, ~3 % on `ems-ftp75c-sdp`). **SINGLE-SOURCE COMMANDS (share 0 / 1) ARE AN **MPC-ONLY** EXTENSION** (operator ruling,
-2026-09-02): the MPC is to gain them as candidates, the DP and the SDP are NOT. They are
+2026-09-02): the MPC gains them as candidates, the DP and the SDP do NOT. They are
 issued through the firmware's setpoint latch rather than through the share loop and are
-subject to the 0.5 A share-cut load guard. ⚠️ NOT YET IN ANY CONTROL SET: the measured
-single-source bus law is implemented (`hil_plant_sim.single_source_bus_law()`, and
-`mpc_ems.build_demand(source_mode=...)`), but the candidate enumeration is NOT, because
-the cut guard is path-dependent and the planner's stage tables are control-independent.
-See `docs/modeling/mpc_design_20260901.md`, section 2026-09-02. Until it lands, no run
-commands 0 or 1.
+subject to the 0.5 A share-cut load guard.
+
+⚠️ **SHIPPED 2026-09-03 on the ROLLOUT-TIME test** (operator ruling; the enumeration was
+held until then because the cut guard is path-dependent). The reading rule is now PER
+LEG, and the sentence "no run commands 0 or 1" is RETIRED:
+* **`ems-mpc-single`** — the ONLY registered leg that arms `mpc_single_source`. Exactly
+  0.0 and exactly 1.0 are LEGAL commands there (the firmware constrains a received
+  setpoint to [0, 1], .ino:5663), the suite's two band checks EXEMPT them and report the
+  exempt sample count, and a share outside [0.15, 0.85] that is not one of those two IS
+  still a defect.
+* **Every other leg** — any commanded share outside [0.15, 0.85] is a defect, unchanged.
+Admissibility is decided per decision by rolling the real `GovernorModel` forward from the
+committed shadow state; the run's summary line carries a `single-source 0/1 candidates
+ARMED` fragment with offered / admitted / committed and a refusal-reason census. READ IT
+FIRST on that leg: a run that admitted nothing is a two-source run wearing the leg's name.
+⚠️ The gain is small and is on the SoC lever, not on a loss: the offline walks move eq-H2
+by 0.01-0.43 % while the hydrogen headline moves up to 49 %. See
+`docs/modeling/mpc_design_20260901.md`, section 2026-09-03.
 
 **RUN-ERA FIELDS AN ANALYST MUST READ BEFORE ANY CROSS-CAMPAIGN COMPARISON.** Seven, not
 three. `scenario.eta_chg` (charger era, absent = the 1:1 sentinel), **`config.droop_mode`**

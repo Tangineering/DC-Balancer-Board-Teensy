@@ -180,6 +180,7 @@ HONEST LIMITS
 from __future__ import annotations
 
 import bisect
+import copy
 import math
 import os
 import struct
@@ -298,6 +299,94 @@ LIMIT_I_BT_MAX_A = 3.0
 OC_MARGIN = 0.85
 I_FC_MAX_A = OC_MARGIN * LIMIT_I_FC_MAX_A          # 1.19 A
 I_BT_MAX_A = OC_MARGIN * LIMIT_I_BT_MAX_A          # 2.55 A
+
+# ── SINGLE-SOURCE (0/1) CANDIDATES (2026-09-03, the operator ruling) ─────────
+# The MPC may command a share of exactly 0 or exactly 1, which takes one boost
+# OFF the bus through `updateShareSetpointCutoff()` and leaves the other
+# carrying the whole load.  The DP and the SDP do NOT get these candidates
+# (operator ruling, 2026-09-02); the MPC does, and the ruling on the cut
+# guard's path dependence is "the rollout-time test" - see `_ss_admissible()`
+# and `docs/modeling/mpc_design_20260901.md`, section "Single-source
+# candidates".
+#
+# NAMING.  The mode names the SURVIVING source, which is the one that carries
+# the bus.  `SS_MODE_BT` commands share 0.0, so the FUEL CELL is cut and the
+# battery survives; `SS_MODE_FC` commands 1.0 and the battery is cut.
+SS_MODE_BT = "bt"
+SS_MODE_FC = "fc"
+SS_SHARE = {SS_MODE_BT: 0.0, SS_MODE_FC: 1.0}
+# The channel the setpoint latch CUTS in each mode, for the load guard.
+SS_CUT_CHANNEL = {SS_MODE_BT: "fc", SS_MODE_FC: "bt"}
+# The survivor's own overcurrent bound, at the same 0.85 margin the two-source
+# table uses.  Single-source is the whole reason these differ: with one channel
+# off the bus the survivor carries `i_total`, not its share of it.
+SS_LIMIT_A = {SS_MODE_BT: I_BT_MAX_A, SS_MODE_FC: I_FC_MAX_A}
+# How far the admissibility roll runs, in 1 kHz governor ticks.  The cut is
+# evaluated at the TOP of every `powerBalance()` tick, so an admissible cut
+# fires within a few ticks of the command; the window exists to let a REFUSED
+# cut clear - the survivor's 30 ms blanking is the longest such refusal, and
+# the load guard's own current is the filtered plant split, which moves on the
+# governor's ~20 ms EMA.  200 ticks is 200 ms, and it costs ~0.55 ms per
+# candidate against the 2.761 ms a full 1000-tick transition roll costs.
+#
+# ⚠️ THE MARGIN, RE-DERIVED FROM A GRID (2026-09-03, review LOW-1).  The
+# earlier justification "six blanking windows and ten filter time constants"
+# was arithmetic on the mechanisms, not a measurement of the roll.  A grid over
+# I_tot in [0.60, 2.55] A (0.05 A steps) x r0 in {0.15, 0.30, 0.50, 0.70, 0.85}
+# x both modes, at the measured plant dv0 0.013522 V and through this module's
+# own `_ss_admissible()`, engages at up to **118 ticks** (I_tot 0.75 A, r0
+# 0.85, BT-only).  So the margin is **1.69x**, not six windows, and the
+# unmodelled two-source residual at the worst grid point is 11.8 % of a 1 s
+# stage rather than the design record's 3.4 %.  The roll carries NO plant
+# current lag - the doomed channel's current follows the model's own delivered
+# split instantly - so 118 is a LOWER bound on what the board would take.
+# `test_the_admission_roll_grid_maximum_and_its_margin` pins both figures.
+SS_ADMIT_MAX_TICKS = 200
+# ⚠️ WHAT THE ROLL ACTUALLY FINDS, measured (2026-09-03) and recorded because it
+# is not what the design record's resolution 1 assumed.  The load guard does NOT
+# permanently refuse a cut anywhere in the OVERCURRENT-admissible region: when
+# it refuses the first tick, the firmware's own DEFERRAL clips the closed-loop
+# reference back into [DROOP_R_MIN, DROOP_R_MAX], which walks the doomed
+# channel's current DOWN until the guard admits.  The deferral's floor is
+# `DROOP_R_MIN * I_tot`, which clears the 0.5 A guard only above 3.33 A of
+# total, and both survivor bounds (1.19 A fuel cell, 2.55 A battery) refuse the
+# candidate long before that.  So what the roll returns is a DELAY, not a
+# verdict: 1 tick at 0.4 A on the doomed channel, 17 at 0.6 A, 34 at the largest
+# case measured.  34 ms of a 1 s stage is 3.4 % of a stage run two-source that
+# the plan modelled single-source, which is inside every band this leg carries.
+# The consequence for the CONSERVATIVE TABLE TEST the design record offered as
+# resolution 1: it would have refused every one of those candidates.
+#
+# ⚠️ CORRECTED 2026-09-03 (review LOW-1), on the grid the constant above
+# describes.  Two claims in the paragraph above are too strong.  (a) The
+# maximum delay is **118 ticks**, not 34 - the four points quoted were
+# hand-picked.  (b) `SS_REFUSE_CUT_LOAD` is NOT purely defensive: at
+# I_tot 0.60 A commanded from either rail the doomed channel parks at
+# 0.5157 A, a hair over the 0.5 A guard, the reference does NOT walk down, and
+# the roll expires - 2 of the 400 grid points refuse on load.  The sentence
+# "the load guard does NOT permanently refuse a cut anywhere in the
+# overcurrent-admissible region" holds for most of the region and not for its
+# low-current corner.  `test_the_admission_roll_grid_maximum_and_its_margin`
+# pins both, and `test_a_cut_that_cannot_engage_inside_the_window_is_refused_
+# on_load` still exercises the path directly.
+#
+# Refusal reasons, reported per decision.  One string per mechanism, so a
+# campaign can tell a guard refusal from an overcurrent one.
+# The observation frame's `REGEN_ENABLE` bit, restated so the runtime path does
+# not import `hil_plant_sim` (which pulls numpy in lazily) for one mask.  It is
+# `hil_plant_sim.SW_REGEN` and a test pins the two together; the simulator's own
+# header calls it offset 3, bit 3 of `switch_state`.
+SW_REGEN_BIT = 0x08
+
+SS_REFUSE_REGEN = "regen_commanded"
+SS_REFUSE_CHARGE = "charge_window"
+SS_REFUSE_DEFERRED = "deferred_cut"
+SS_REFUSE_LATCHED = "latch_standing"
+SS_REFUSE_CUT_LOAD = "cut_refused_load"
+SS_REFUSE_CUT_BLANK = "cut_refused_blank"
+SS_REFUSE_CUT_NEVER = "cut_never_engaged"
+SS_REFUSE_OC = "single_source_overcurrent"
+SS_REFUSE_RESTORE = "restore_overcurrent"
 
 # Hydrogen proxy.  ems_walk.H2_PROXY_ETA_FC / H2_LHV_J_PER_G, restated so the
 # runtime path does not import ems_walk (which lazily imports numpy modules).
@@ -1560,7 +1649,11 @@ def coarsen_ladder(n_levels, n_blocks, n_options, incumbent=None,
     chosen = None
     for k in admissible:
         cand = coarse_ladder_set(n_levels, k, incumbent)
-        if int(n_options) * len(cand) ** int(n_blocks) <= allowance:
+        # `float(n_options)`, not `int()` (2026-09-03): the MPC's
+        # single-source round passes a FRACTIONAL option count to charge the
+        # extra block-0 columns to the same allowance, and `int()` truncated
+        # that surcharge away.  Every integer caller is unaffected.
+        if float(n_options) * len(cand) ** int(n_blocks) <= allowance:
             chosen = cand
             break
     if chosen is None:
@@ -1591,6 +1684,12 @@ class Decision:
     share_pred: float = 0.5       # predicted DELIVERED share of stage 0
     feasible: bool = True
     ladder_points: int = 0        # ladder points this decision's search walked
+    # ── SINGLE-SOURCE (2026-09-03) ─────────────────────────────────────────
+    # `single_source` names the SURVIVING source ("fc"/"bt") when the committed
+    # block-0 command is one of the two single-source columns, and is None
+    # otherwise - which is every decision of a run with the feature off.
+    single_source: object = None
+    ss_offered: int = 0           # admissible single-source columns searched
 
 
 class Planner:
@@ -1606,7 +1705,8 @@ class Planner:
                  max_candidates=None,
                  eta_chg=chg_mod.ETA_CHG_DEFAULT, chg_a=0.8,
                  cap_as=5.0 * 3600.0, h2_map="proxy", h2_convex=None,
-                 dt_dec=DECISION_DT_S, dv0_v=0.0, ff_dark_model=False):
+                 dt_dec=DECISION_DT_S, dv0_v=0.0, ff_dark_model=False,
+                 single_source=False):
         if sum(blocks) != horizon:
             raise ValueError("move blocks %r do not sum to the horizon %d"
                              % (blocks, horizon))
@@ -1618,6 +1718,22 @@ class Planner:
         self.ladder = [self.band[0] + (self.band[1] - self.band[0])
                        * i / float(share_levels - 1)
                        for i in range(share_levels)]
+        # ── THE SINGLE-SOURCE COLUMNS (2026-09-03) ─────────────────────────
+        # Appended AFTER the in-band ladder, so every index the coarsening, the
+        # roll table and every pre-2026-09-03 caller use keeps its meaning.
+        # `n_band` is the number of IN-BAND rungs and is what `coarsen_ladder()`
+        # is sized on; `len(self.ladder)` is the full column set.  With
+        # `single_source` False the two are equal and this class is bit-for-bit
+        # what it was.
+        self.n_band = int(share_levels)
+        self.single_source = bool(single_source)
+        self.ss_index = {}
+        if self.single_source:
+            self.ss_index = {SS_MODE_BT: len(self.ladder),
+                             SS_MODE_FC: len(self.ladder) + 1}
+            self.ladder = self.ladder + [SS_SHARE[SS_MODE_BT],
+                                         SS_SHARE[SS_MODE_FC]]
+        self.ss_mode_of = {v: k for k, v in self.ss_index.items()}
         self.terminal_mode = terminal_mode
         self.rho = terminal_price(terminal_mode)
         self.budget_ms = float(budget_ms)
@@ -1716,7 +1832,7 @@ class Planner:
 
     def delivery_table(self, pre, r_hold, r_seed, charge_stages, i_tot_oc=None,
                        soc_hint=0.6, sp_acted=None, run_seed=None,
-                       handoff=None, active=None):
+                       handoff=None, active=None, pre_ss=None):
         """Per (stage, ladder point): delivered share, FC power, BT power, feasibility.
 
         This is the whole search model.  It is built ONCE per decision, so the
@@ -1793,7 +1909,11 @@ class Planner:
         # The columns left out are never read - `solve()` walks the same set -
         # and the ladder itself is untouched, so the roll table's keys still
         # mean what they meant.
-        cols = (tuple(range(len(self.ladder))) if active is None
+        # `active=None` means THE IN-BAND LADDER, not every column: the
+        # single-source columns need a `pre_ss` demand and are opt-in per
+        # decision, so a caller that names no active set gets exactly the
+        # pre-2026-09-03 table.
+        cols = (tuple(range(self.n_band)) if active is None
                 else tuple(int(i) for i in active))
         ticks_per_sub = max(1, int(round(self.dt_dec / len(pre.i_tot[0])
                                          / GOV_TICK_S))) if pre.n else 1
@@ -1805,6 +1925,59 @@ class Planner:
         viol_tab = [[0.0] * n_s for _ in range(pre.n)]
         v_chg = pack_charge_voltage(soc_hint, self.chg_a)
         for si in cols:
+            # ── THE SINGLE-SOURCE COLUMNS (2026-09-03) ─────────────────────
+            # A column of its own, and it shares nothing with the in-band
+            # branch below except the table it writes into.  THREE differences,
+            # each of which is why the branch exists rather than being a rung
+            # with an extreme value:
+            #  * THE BUS LAW.  With one channel off the bus the fitted
+            #    two-source law's `g_par` is a parallel droop code that does not
+            #    exist, so the demand is read from a preview built with
+            #    `build_demand(source_mode=...)` - the measured single-source
+            #    law (`hil_plant_sim.single_source_bus_law()`).  At the 61 s
+            #    cycle's peak that is worth ~0.45 V of bus voltage.
+            #  * THE MINORITY CLIP DOES NOT APPLY.  `updateShareSetpointCutoff()`
+            #    returns True for an out-of-band setpoint and the whole share
+            #    loop is FROZEN (.ino:10087), so the closed-loop clip, the fw
+            #    v26 ceiling clamp and the feedforward slew are all unreachable.
+            #    The delivered share is exactly 1.0 or exactly 0.0.
+            #  * THE OVERCURRENT BOUND IS THE SURVIVOR'S OWN.  It carries
+            #    `i_total`, not a share of it.
+            # ADMISSIBILITY is decided OUTSIDE this table, by the rollout-time
+            # test in `MpcStrategy._ss_admissible()`; a column that reaches here
+            # has already been admitted, and this branch judges only the
+            # steady-state overcurrent of the stages it would run.
+            if si in self.ss_mode_of:
+                mode = self.ss_mode_of[si]
+                if not pre_ss or mode not in pre_ss:
+                    raise ValueError(
+                        "delivery_table was given single-source column %d "
+                        "(%s) with no `pre_ss` demand for it; the two-source "
+                        "law is NOT the single-source law and substituting it "
+                        "would under-state the bus sag" % (si, mode))
+                p = pre_ss[mode]
+                lim = SS_LIMIT_A[mode]
+                d_fixed = 1.0 if mode == SS_MODE_FC else 0.0
+                for j in range(pre.n):
+                    oc_scale = ((i_tot_oc[j] / pre.i_tot_mean[j])
+                                if (i_tot_oc and pre.i_tot_mean[j] > 0.0)
+                                else 1.0)
+                    worst = 0.0
+                    for sub in range(len(p.i_tot[j])):
+                        worst = max(worst, p.i_tot[j][sub] * oc_scale - lim)
+                    d_tab[j][si] = d_fixed
+                    pfc_tab[j][si] = d_fixed * p.p_dem_mean[j]
+                    pbt_tab[j][si] = (1.0 - d_fixed) * p.p_dem_mean[j]
+                    # A CHARGE STAGE IS NEVER SINGLE-SOURCE-COMMANDABLE.
+                    # `assertFcChargeEnable()` already holds BT_BUS LOW and owns
+                    # the topology; a setpoint latch on top of that is a second
+                    # owner of the same switch, which is the "one owner per
+                    # setpoint" invariant the firmware carries.  The guard in
+                    # `MpcStrategy.decide()` refuses the candidate outright, and
+                    # this is the table-side backstop.
+                    ok_tab[j][si] = (worst <= 0.0) and not charge_stages[j]
+                    viol_tab[j][si] = max(0.0, worst)
+                continue
             s = self.ladder[si]
             carried = r_seed
             acted = sp_acted
@@ -1989,7 +2162,7 @@ class Planner:
     # -- enumeration --------------------------------------------------------
     def solve(self, soc0, soc_ref, pre, r_hold, r_seed, charge_options,
               i_tot_oc=None, budget_ms=None, sp_acted=None, run_seed=None,
-              handoff=None, active=None):
+              handoff=None, active=None, ss_modes=(), pre_ss=None):
         """Search the candidate set.  Returns a ``Decision``.
 
         ``charge_options`` is a list of per-stage boolean lists, the first of
@@ -2001,10 +2174,36 @@ class Planner:
         budget_s = (self.budget_ms if budget_ms is None else float(budget_ms)) * 1e-3
         n_s = len(self.ladder)
         nb = len(self.blocks)
-        cols = (tuple(range(n_s)) if active is None
+        cols = (tuple(range(self.n_band)) if active is None
                 else tuple(sorted(set(int(i) for i in active))))
         if not cols:
             raise ValueError("the active ladder set is empty")
+        # ── THE SINGLE-SOURCE COLUMNS, BLOCK 0 ONLY (2026-09-03) ───────────
+        # ⚠️ A DEVIATION FROM THE DESIGN RECORD'S SCOPING, and it is what makes
+        # the rollout-time test EXACT rather than approximate.  The record's
+        # remaining-work list says "the two extra candidate indices", which
+        # reads as two extra rungs available at every block.  They are offered
+        # at BLOCK 0 ONLY, for three reasons:
+        #  1. THE ADMISSIBILITY TEST IS A ROLL FROM THE CURRENT GOVERNOR STATE.
+        #     `_ss_admissible()` rolls the real `GovernorModel` from the shadow
+        #     estimate, which is a fact only about NOW.  Admitting a
+        #     single-source value at block 1 would need the governor state six
+        #     stages into a candidate PATH, i.e. one roll per path - the inner
+        #     loop the anytime budget is spent in, which is exactly what
+        #     resolution 2 of the design record warns about.
+        #  2. ONLY BLOCK 0 IS COMMITTED.  The horizon recedes every stage, so a
+        #     block-1 single-source value is never executed as planned; it is a
+        #     tail estimate, and an inadmissible one would bias the tail.
+        #  3. THE ENUMERATION.  Two extra rungs at every block take 9^3 to
+        #     11^3 = 1331 per charge option, +83 %.  At block 0 alone it is
+        #     11*9*9 = 891, +21 %, which the coarsening arithmetic can absorb.
+        # THE MODELLING RESIDUAL, stated: the restore from a single-source block
+        # into block 1's in-band value is a transient of at most the 30 ms
+        # blanking plus 175 ticks of conduction-handoff slew, against the 6 s of
+        # block 1 - under 3.5 % of that block, and it is not modelled.
+        ss_cols = tuple(self.ss_index[m] for m in (ss_modes or ())
+                        if m in self.ss_index)
+        cols0 = cols + tuple(c for c in ss_cols if c not in cols)
 
         # THE INFEASIBLE FALLBACK, stated: if no candidate is feasible the
         # decision keeps this seed - the lowest ladder point, no charge, which
@@ -2017,7 +2216,8 @@ class Planner:
         best.plan_share = [self.ladder[cols[0]]] * pre.n
         best.plan_charge = list(charge_options[0])
         best.ladder_points = len(cols)
-        order = self._enumeration_order(cols, nb)
+        best.ss_offered = len(ss_cols)
+        order = self._enumeration_order(cols, nb, cols0=cols0)
         n_eval = 0
         pruned = 0
         hit = False
@@ -2034,7 +2234,7 @@ class Planner:
             tabs = self.delivery_table(pre, r_hold, r_seed, cs, i_tot_oc,
                                        soc_hint=soc0, sp_acted=sp_acted,
                                        run_seed=run_seed, handoff=handoff,
-                                       active=cols)
+                                       active=cols0, pre_ss=pre_ss)
             if oi == 0:
                 tabs0 = tabs
             for block_idx in order:
@@ -2055,6 +2255,7 @@ class Planner:
                     best.share = self.ladder[block_idx[0]]
                     best.charge = bool(cs[0])
                     best.share_pred = d0
+                    best.single_source = self.ss_mode_of.get(block_idx[0])
                     best.plan_share = self._expand(block_idx)
                     best.plan_charge = list(cs)
                     self.incumbent = tuple(block_idx)
@@ -2085,8 +2286,37 @@ class Planner:
         best.solve_ms = (time.perf_counter() - t0) * 1e3
         return best
 
-    def _enumeration_order(self, cols, nb):
+    def _snap_seed(self, x, pool):
+        """The column of ``pool`` nearest to incumbent column ``x`` BY SHARE.
+
+        Distance is measured on the ladder VALUE, with the column index as the
+        tiebreak.  See the note in `_enumeration_order()`: the single-source
+        columns are appended, so index distance would snap a share-0.0
+        incumbent onto the 0.85 rung.  An index outside the ladder (a caller
+        whose ladder shrank between decisions) falls back to index distance,
+        which is the only metric available for it."""
+        x = int(x)
+        if 0 <= x < len(self.ladder):
+            xv = self.ladder[x]
+            return min(pool, key=lambda c: (abs(self.ladder[c] - xv), c))
+        return min(pool, key=lambda c: (abs(c - x), c))
+
+    def _enumeration_order(self, cols, nb, cols0=None):
         """Candidates ordered outward in ladder distance from the incumbent.
+
+        ``cols0`` (2026-09-03) is the column set BLOCK 0 draws from, which is
+        ``cols`` plus this decision's admissible single-source columns; the
+        remaining blocks always draw from ``cols``.  It defaults to ``cols``, so
+        every pre-2026-09-03 caller gets the order it got.
+
+        ⚠️ THE SINGLE-SOURCE COLUMNS SORT LAST, and that is a property of the
+        distance metric rather than a ranking.  They are appended after the
+        in-band ladder, so ``|c - seed|`` puts them further from any incumbent
+        than any rung is - which means a BUDGET EXPIRY drops them first.  That
+        direction is the safe one (an expiry keeps the in-band search it was
+        going to commit anyway), and the ladder coarsening exists precisely so
+        the enumeration COMPLETES; a decision that expires with single-source
+        columns offered is reported through ``budget_hits`` like any other.
 
         THE SHIFT IS DEGENERATE HERE, and that is a property of the
         parametrization rather than an omission: with a FIXED block partition
@@ -2101,17 +2331,31 @@ class Planner:
         ``(n_s, nb, seed)`` and rebuilding 343 tuples per decision is work the
         budget of section 2.2 should not be spending."""
         cols = tuple(int(i) for i in cols)
+        cols0 = cols if cols0 is None else tuple(int(i) for i in cols0)
         mid = cols[len(cols) // 2]
         seed = self.incumbent if self.incumbent is not None else (mid,) * nb
         # An incumbent index outside the active set is snapped to the nearest
         # active one, so the warm start still starts near where the last
         # decision left off.  `coarsen_ladder()` unions the incumbent in, so
         # this only ever fires for a caller that supplied its own active set.
-        seed = tuple(min(cols, key=lambda c, x=int(x): (abs(c - x), c))
-                     for x in seed[:nb])
+        #
+        # ⚠️ SNAPPED BY LADDER VALUE, NOT BY INDEX (fixed 2026-09-03, review
+        # MED-1).  The single-source columns are APPENDED after the in-band
+        # ladder, so index distance is not share distance for them: after a
+        # BT-only commit the incumbent is index `n_band` (share 0.0) and the
+        # nearest index in a full in-band set is `n_band - 1`, which is share
+        # 0.85 - the OPPOSITE rail.  A budget expiry then commits that seed,
+        # which is a 0.85 command issued as the "warm start" of a decision whose
+        # last command was 0.0.  Snapping by |ladder[c] - ladder[x]| puts the
+        # same case on 0.15, the nearest rung to what was actually commanded.
+        # The index tiebreak is kept, so an in-band incumbent inside the active
+        # set still snaps to itself and every pre-2026-09-03 order is unchanged
+        # (an in-band ladder is monotone, so value order IS index order there).
+        seed = tuple(self._snap_seed(x, (cols0 if bi == 0 else cols))
+                     for bi, x in enumerate(seed[:nb]))
         if len(seed) < nb:
             seed = seed + (seed[-1],) * (nb - len(seed))
-        key = (cols, nb, seed)
+        key = (cols, cols0, nb, seed)
         cached = self._order_cache.get(key)
         if cached is not None:
             return cached
@@ -2121,7 +2365,7 @@ class Planner:
             if len(prefix) == nb:
                 all_idx.append(tuple(prefix))
                 return
-            for i in cols:
+            for i in (cols0 if not prefix else cols):
                 rec(prefix + [i])
 
         rec([])
@@ -2203,6 +2447,25 @@ class ShadowGovernor:
         """``shareClosedLoopRun`` - the flag that makes an unchanged setpoint HOLD."""
         return bool(self.model.state.closed_loop_run)
 
+    @property
+    def sp_cut(self):
+        """The standing setpoint latch: ``"fc"``, ``"bt"`` or None.
+
+        Names the channel that is OFF the bus, so ``"fc"`` means the FUEL CELL
+        is cut and the battery is carrying the load."""
+        st = self.model.state
+        if st.sp_cut_fc:
+            return "fc"
+        if st.sp_cut_bt:
+            return "bt"
+        return None
+
+    @property
+    def deferred(self):
+        """True while the load guard is holding a cut off - ``shareCutDeferred*``."""
+        st = self.model.state
+        return bool(st.deferred_fc or st.deferred_bt)
+
     def observe(self, fb):
         """Correct the model from one feedback sample."""
         r_obs = gov_mod.r_from_codes(fb.get("mdac_fc"), fb.get("mdac_bt"))
@@ -2237,10 +2500,28 @@ class ShadowGovernor:
         n = min(n, max_ticks)
         i_fc = float(fb.get("I_fc") or 0.0)
         i_bt = float(fb.get("I_batt") or 0.0)
+        st = self.model.state
         for k in range(n):
             ts = self.last_t + k * self.tick_s
-            sw_fc = True
-            sw_bt = not charging
+            # ── WHO OWNS THE SWITCH BELIEFS (2026-09-03) ────────────────────
+            # Normally the shadow asserts the Run-state topology: both boosts on
+            # the bus, BT held LOW by the charge path while a window is open.
+            # Once the COMMANDED setpoint leaves [DROOP_R_MIN, DROOP_R_MAX] -
+            # which only a single-source command does - the setpoint latch is
+            # the switch's owner, and asserting FC HIGH every tick would trip
+            # the S1 self-heal (`if sp_cut_fc and sw_fc: clear`) and erase the
+            # very latch being modelled.  So while a single-source command
+            # stands, or while a latch is standing from one, the MODEL's own
+            # beliefs are fed back.
+            # ⚠️ INERT WITH THE FEATURE OFF.  No in-band setpoint can latch, so
+            # the predicate is False on every tick of every pre-2026-09-03 run
+            # and the two lines below are the two lines that were there.
+            if (share < DROOP_R_MIN or share > DROOP_R_MAX
+                    or st.sp_cut_fc or st.sp_cut_bt):
+                sw_fc, sw_bt = st.sw_fc, st.sw_bt
+            else:
+                sw_fc = True
+                sw_bt = not charging
             self.model.step(share, i_fc, i_bt, sw_fc, sw_bt, ts,
                             charge_path_owns_bt=charging)
             self.ticks += 1
@@ -2272,7 +2553,7 @@ class MpcStrategy:
                  h2_map="proxy", h2_convex=None, dv0_v=0.0,
                  soc_ref_offset=0.0, eta_chg=chg_mod.ETA_CHG_DEFAULT,
                  tpm_path=None, preview_dt_s=PREVIEW_DT_S,
-                 ff_dark_model=False, loss_map=None):
+                 ff_dark_model=False, loss_map=None, single_source=False):
         if variant not in ("det", "sto"):
             raise ValueError("variant must be 'det' or 'sto'")
         self.name = name
@@ -2311,6 +2592,13 @@ class MpcStrategy:
         self.h2_convex = h2_convex
         self.dv0_v = float(dv0_v)
         self.ff_dark_model = bool(ff_dark_model)
+        # ── SINGLE-SOURCE CANDIDATES (2026-09-03) ──────────────────────────
+        # OFF by default and deliberately so: with it off this class is
+        # bit-for-bit the 2026-09-02 controller, which is what keeps every
+        # Gate-1/Gate-2 record and every campaign anchor comparable.  A scenario
+        # turns it on with the `mpc_single_source` key, or a caller with this
+        # constructor argument; `--mpc-single-source` is the command line's.
+        self.single_source = bool(single_source)
         self.soc_ref_offset = float(soc_ref_offset)
         self.eta_chg = chg_mod.check_eta_chg(eta_chg)
         # THE DEMAND-MODEL ERA (2026-09-02).  `None` (the default) is the
@@ -2337,6 +2625,7 @@ class MpcStrategy:
         self.electrical_mode = None
         self.cap_as = BATT_CAPACITY_AH * 3600.0
         self.preview = None
+        self.preview_ss = {}
         self.planner = None
         self.reset()
 
@@ -2411,6 +2700,27 @@ class MpcStrategy:
         self.infeasible_decisions = 0
         self.clamped_bin_high = 0
         self.clamped_bin_low = 0
+        # ── SINGLE-SOURCE CENSUS (2026-09-03) ──────────────────────────────
+        # Per DECISION, not per tick.  `offered` counts the two candidates a
+        # decision could have tested (2 whenever the feature is armed and the
+        # run is inside a decision), `admissible` those the rollout-time test
+        # accepted, `selected_*` the decisions whose COMMITTED command was one.
+        # `refusals` is a reason census, so a campaign can say WHY the feature
+        # did nothing rather than only that it did.
+        self.ss_offered = 0
+        self.ss_admissible = 0
+        # Columns the SEARCH actually walked, summed from `Decision.ss_offered`
+        # (2026-09-03, review LOW-3).  It differs from `ss_admissible` only if a
+        # mode the rollout test admitted failed to reach the planner - which it
+        # cannot today - so it is a plumbing invariant, and a silent one until
+        # it is read.  It is read here.
+        self.ss_searched = 0
+        self.ss_selected_fc = 0
+        self.ss_selected_bt = 0
+        self.ss_selected_last = None
+        self.ss_refusals = {}
+        self.ss_admit_ms_max = 0.0
+        self.ss_admit_ticks_max = 0
         if self.planner is not None:
             self.planner.incumbent = None
 
@@ -2547,6 +2857,47 @@ class MpcStrategy:
                                i_regen=i_regen, dt=dt)
         self.run_exit_s = run_exit_s
         self.chg_a = chg_a
+        # ── THE TWO SINGLE-SOURCE PREVIEWS (2026-09-03) ────────────────────
+        # Built ONCE per scenario, not per decision: they are the same demand
+        # model on the same profile with a different BUS LAW, and that law is a
+        # property of the topology rather than of the state.  A scenario key
+        # ORs with the constructor flag, so `--mpc-single-source` can arm a
+        # scenario that does not declare it and vice versa.
+        if meta.get("mpc_single_source"):
+            self.single_source = True
+        self.preview_ss = {}
+        if self.single_source:
+            if self.loss_map is None:
+                # REFUSED, NOT DEGRADED.  `single_source_bus_law()` is a
+                # SCALING of the fitted loss map's own effective droop
+                # (1.9453x FC-only, 2.0579x BT-only); with no map there is no
+                # law to scale, and billing a single-source stage on the
+                # two-source law under-states the bus sag by ~0.45 V at the
+                # 61 s cycle's peak.  Predicting a topology on the wrong bus
+                # law is the class of defect this repository has had to retract
+                # before, so the bind fails loudly instead.
+                raise ValueError(
+                    "%s: single-source candidates need a demand LOSS MAP - "
+                    "the measured single-source bus law is a scaling of it "
+                    "(hil_plant_sim.single_source_bus_law) and there is no "
+                    "loss-map-free form of it. Bind the scenario with "
+                    "`mpc_loss_map`, or run without --mpc-single-source."
+                    % self.name)
+            for _mode in (SS_MODE_FC, SS_MODE_BT):
+                _v, _a, _pd, _vb, _it, _cr, _ir = build_demand(
+                    scenario, meta, times, dt, loss_map=self.loss_map,
+                    drag_mode=drag, eta_regen=self.eta_regen,
+                    eta_chg=self.eta_chg, v_pack_ref=v_pack_ref_all,
+                    regen_i_max_a=chg_a, source_mode=_mode)
+                # `chg_ok` is ALL FALSE on a single-source preview and that is
+                # not a shortcut: a charge window is itself a single-source
+                # topology owned by `assertFcChargeEnable()`, and the two owners
+                # are mutually exclusive (see `delivery_table`'s backstop and
+                # the `SS_REFUSE_CHARGE` guard).
+                self.preview_ss[_mode] = Preview(
+                    times=times, p_dem=_pd, v_bus=_vb, i_total=_it,
+                    cruise=_cr, chg_ok=[False] * len(times),
+                    i_regen=_ir, dt=dt)
         self.planner = Planner(horizon=self.horizon, blocks=self.blocks,
                                share_band=self.share_band,
                                share_levels=self.share_levels,
@@ -2560,7 +2911,8 @@ class MpcStrategy:
                                cap_as=self.cap_as,
                                h2_map=self.h2_map, h2_convex=self.h2_convex,
                                dv0_v=self.dv0_v,
-                               ff_dark_model=self.ff_dark_model)
+                               ff_dark_model=self.ff_dark_model,
+                               single_source=self.single_source)
         if self.variant == "sto":
             self._load_tpm()
         self.provenance = self._provenance()
@@ -2688,6 +3040,17 @@ class MpcStrategy:
             "enumeration_size": enumeration_size(self.share_levels, self.blocks),
             "max_charge_options": MAX_CHARGE_OPTIONS,
             "soc_ref_offset": self.soc_ref_offset,
+            # ── SINGLE-SOURCE (2026-09-03) ─────────────────────────────────
+            # Recorded for `loss_map`'s reason: it changes the CONTROL SET, so
+            # a trace that does not say whether it was armed cannot be compared
+            # with one that does.  `single_source_admit_ticks` is the roll
+            # window the admissibility test spends per candidate.
+            "single_source": self.single_source,
+            "single_source_admit_ticks": (SS_ADMIT_MAX_TICKS
+                                          if self.single_source else None),
+            "single_source_cut_guard_a": (
+                gov_mod.GOV_CONST["SHARE_CUT_MAX_HANDOFF_A"]
+                if self.single_source else None),
             "dv0_v": self.dv0_v,
             "governor_commit": True,
             "preview_source": ("scenario_profile" if self.variant == "det"
@@ -2787,6 +3150,212 @@ class MpcStrategy:
         return means, quants
 
     # -- one decision -------------------------------------------------------
+    # ── THE ROLLOUT-TIME CUT-GUARD TEST (2026-09-03) ───────────────────────
+    def _ss_shadow_copy(self):
+        """A throwaway ``GovernorModel`` carrying the shadow's committed state.
+
+        The admissibility roll must not disturb the committed estimate, so it
+        runs on a copy.  ``GovernorState`` is a dataclass of scalars and one
+        counter dict, so ``copy.deepcopy`` is exact and cheap (~6 us)."""
+        g = gov_mod.GovernorModel(dt_s=GOV_TICK_S, dv0_v=self.dv0_v)
+        g.v_bus_ok = self.shadow.model.v_bus_ok
+        g.state = copy.deepcopy(self.shadow.model.state)
+        return g
+
+    def _ss_admissible(self, mode, t, pre, pre_ss, i_tot_oc=None):
+        """Is the single-source command ``mode`` admissible from HERE?
+
+        THE OPERATOR'S RULING, implemented: "let's do the rollout-time test".
+        The firmware's share-cut load guard refuses a cut while the DOOMED
+        channel carries more than ``SHARE_CUT_MAX_HANDOFF_A`` 0.5 A, and that
+        current is the DELIVERED split at the instant of the cut - a property of
+        the path, not of the stage.  So the test rolls the REAL
+        ``GovernorModel`` forward from the shadow governor's committed state, at
+        1 kHz, with the single-source setpoint commanded and the plant currents
+        taken from this stage's preview sub-samples, and asks whether the latch
+        actually engages.
+
+        Returns ``(ok, reason, ticks, ms)``.  ``reason`` is None when admissible
+        and one of the ``SS_REFUSE_*`` strings otherwise.
+
+        FOUR CONDITIONS, in the order they are cheapest to fail:
+
+        1. THE SURVIVOR'S OWN OVERCURRENT, over the stages the candidate would
+           run (block 0).  With one channel off the bus the survivor carries
+           ``i_total`` on the SINGLE-SOURCE bus law, judged against 0.85 x its
+           firmware limit - 1.19 A for the fuel cell, 2.55 A for the battery.
+           Scaled by ``i_tot_oc`` where the caller supplies one, so `mpc-sto`
+           judges this condition on the SAME quantile-tightened demand
+           ``delivery_table()`` judges the column on.
+        2. THE RESTORE, over the first stage after block 0.  ⚠️ CHECKED
+           ALGEBRAICALLY, NOT ROLLED, and the reason is in the firmware: the
+           RELEASE arm of ``updateShareSetpointCutoff()`` carries NO load guard
+           (.ino, and ``governor_model._setpoint_cutoff()``'s release branch) -
+           it tests only the charged-bus/boost-enabled condition, modelled as
+           ``v_bus_ok``.  There is therefore nothing path-dependent to roll.
+           What CAN still bite is the survivor carrying the whole load through
+           the restored channel's 30 ms turn-on blanking, so the restore stage's
+           opening current is judged against the SAME survivor bound.
+        3. THE CUT ITSELF, rolled.  Admissible only if the latch engages within
+           ``SS_ADMIT_MAX_TICKS``.
+        4. THE REFUSAL REASON, if it does not: the roll's own
+           ``refused_load`` / ``refused_blank`` counters say which guard held it
+           off, and a roll that never even proposed a cut reports
+           ``cut_never_engaged``."""
+        t0 = time.perf_counter()
+        lim = SS_LIMIT_A[mode]
+        p = pre_ss[mode]
+        n_block0 = min(pre.n, self.blocks[0])
+
+        # THE QUANTILE TIGHTENING REACHES CONDITIONS 1 AND 2 (fixed
+        # 2026-09-03, review LOW-2).  On `mpc-sto` the demand the table is
+        # SCORED on is the TPM's conditional mean, while the demand it is
+        # judged OVERCURRENT-safe on is the 90 % quantile - that is what
+        # `i_tot_oc` is.  `delivery_table()` applies the per-stage ratio to the
+        # single-source column; this test judged the SAME candidate on the
+        # unscaled mean, so a candidate the table would mark infeasible could
+        # still be admitted here.  The ratio is taken against the TWO-source
+        # stage mean exactly as `delivery_table()` takes it: it is a
+        # DEMAND-FORECAST scale, not a topology one, so the same number applies
+        # to both bus laws.  `None` (the deterministic variant) leaves 1.0.
+        def _oc(j):
+            if i_tot_oc and 0 <= j < pre.n and pre.i_tot_mean[j] > 0.0:
+                return i_tot_oc[j] / pre.i_tot_mean[j]
+            return 1.0
+
+        for j in range(n_block0):
+            sc = _oc(j)
+            for sub in range(len(p.i_tot[j])):
+                if p.i_tot[j][sub] * sc > lim:
+                    return (False, SS_REFUSE_OC, 0,
+                            (time.perf_counter() - t0) * 1e3)
+        if n_block0 < pre.n and p.i_tot[n_block0]:
+            # The restore stage's OPENING sub-sample: the blanking window is
+            # 30 ms and a sub-sample is 100 ms, so the opening sample is the one
+            # the survivor carries alone.
+            if p.i_tot[n_block0][0] * _oc(n_block0) > lim:
+                return (False, SS_REFUSE_RESTORE, 0,
+                        (time.perf_counter() - t0) * 1e3)
+
+        sp = SS_SHARE[mode]
+        cut_ch = SS_CUT_CHANNEL[mode]
+        g = self._ss_shadow_copy()
+        st = g.state
+        load0, blank0 = st.refused_load, st.refused_blank
+        # The plant the roll is driven by is the TWO-SOURCE preview, because
+        # until the cut fires both channels are on the bus - which is exactly
+        # the current the load guard reads.
+        n_sub = len(pre.i_tot[0])
+        per = max(1, int(round(DECISION_DT_S / GOV_TICK_S)) // n_sub)
+        delivered = self.shadow.model.delivered_share(
+            st.r_prev, pre.i_tot[0][0], st.sw_fc, st.sw_bt)
+        engaged = None
+        for tk in range(SS_ADMIT_MAX_TICKS):
+            sub = min(n_sub - 1, tk // per)
+            i_tot = pre.i_tot[0][sub]
+            i_fc = delivered * i_tot
+            o = g.step(sp, i_fc, i_tot - i_fc, st.sw_fc, st.sw_bt,
+                       float(t) + tk * GOV_TICK_S)
+            delivered = g.delivered_share(o.r_applied, i_tot,
+                                          o.fc_bus_req, o.bt_bus_req)
+            if (st.sp_cut_fc if cut_ch == "fc" else st.sp_cut_bt):
+                engaged = tk + 1
+                break
+        ms = (time.perf_counter() - t0) * 1e3
+        if engaged is not None:
+            return True, None, engaged, ms
+        if st.refused_load > load0:
+            return False, SS_REFUSE_CUT_LOAD, SS_ADMIT_MAX_TICKS, ms
+        if st.refused_blank > blank0:
+            return False, SS_REFUSE_CUT_BLANK, SS_ADMIT_MAX_TICKS, ms
+        return False, SS_REFUSE_CUT_NEVER, SS_ADMIT_MAX_TICKS, ms
+
+    def _ss_refuse(self, reason, n=1):
+        self.ss_refusals[reason] = self.ss_refusals.get(reason, 0) + n
+
+    def _ss_state_guards_pass(self, fb, charge_options):
+        """The CHEAP guards, evaluated before any preview work is done.
+
+        Split out from `_ss_modes()` so a decision the state already forbids
+        costs nothing: on `ems-mpc-cross` the charge guard alone refuses 362 of
+        400 offers, and building two extra stage precomputes for them would be
+        work spent inside the callback bound for a verdict already known."""
+        if not self.single_source or not self.planner.ss_index:
+            return False
+        self.ss_offered += 2
+        # ── THE THREE STATE GUARDS (deliverable 3) ─────────────────────────
+        # 1. A REGEN WINDOW.  The firmware's `regenActive` branch owns REGEN and
+        #    MOT_PWR and the braking chopper is clamping; a setpoint latch on
+        #    top of a regen transient hands the whole braking current to one
+        #    channel through a 30 ms blanking window.  The same guard the charge
+        #    dwell already carries.
+        #    ⚠️ TWO SOURCES, EITHER OF WHICH REFUSES (fixed 2026-09-03, review
+        #    MED-3).  `regen_commanded` is a HOST key, written onto the feedback
+        #    view by the scenario's `RegenManager`; a scenario without one -
+        #    `ems-mpc-single` is exactly that - never carries the key, and the
+        #    guard was inert there while the FIRMWARE's own `regenActive` can
+        #    still open `REGEN_ENABLE` off the commanded current.  So the
+        #    OBSERVED switch word is consulted too: `SW_REGEN` set in the
+        #    observation frame's `switch` byte means the board has the regen
+        #    path open right now, whoever opened it.
+        #    THE LIMITATION, stated: the observed bit is one HIL round trip
+        #    behind (~1.9 ms) and is BLANK before the first observation frame
+        #    decodes, so on a run with no `RegenManager` the guard is a
+        #    one-frame-late detector rather than a predictive one.  It is the
+        #    only regen evidence such a run has.
+        _sw = fb.get("switch")
+        if fb.get("regen_commanded") or (_sw is not None
+                                         and (int(_sw) & SW_REGEN_BIT)):
+            self._ss_refuse(SS_REFUSE_REGEN, 2)
+            return False
+        # 2. AN FC-CHARGE WINDOW.  `assertFcChargeEnable()` ALREADY holds BT off
+        #    the bus, so the topology is single-source and the share loop is
+        #    pinned; a second owner of the same switch is the "one owner per
+        #    setpoint" invariant broken.  Judged on the option the decision may
+        #    COMMIT, which is stage 0 of any offered option.
+        if any(o[0] for o in charge_options):
+            self._ss_refuse(SS_REFUSE_CHARGE, 2)
+            return False
+        # 3. A DEFERRED CUT OR A STANDING LATCH.  A deferred cut means the load
+        #    guard is already refusing a handoff the firmware wants; commanding
+        #    a second one is the leak the fw v6 deferral exists to prevent.  A
+        #    standing latch means one channel is already off the bus, so the
+        #    candidate is not a decision the planner still has to make.
+        if self.shadow.deferred:
+            self._ss_refuse(SS_REFUSE_DEFERRED, 2)
+            return False
+        if self.shadow.sp_cut is not None:
+            self._ss_refuse(SS_REFUSE_LATCHED, 2)
+            return False
+        # ⚠️ THE fw v26 CURRENT-CEILING CLAMP IS IRRELEVANT HERE, and this is
+        # why.  `applyShareCurrentCeilings()` runs inside `powerBalance()`'s
+        # CLOSED-LOOP and FEEDFORWARD arms; an out-of-band setpoint returns from
+        # `updateShareSetpointCutoff()` with the whole share loop FROZEN before
+        # either arm is reached (.ino:10087, and `GovernorModel.step()`'s
+        # `MODE_LATCHED` return, which explicitly clears the clamp state).  The
+        # clamp also constrains its result into [DROOP_R_MIN, DROOP_R_MAX], so
+        # it could not express a single-source split even if it ran.  The
+        # survivor's overcurrent is bounded by condition 1 of
+        # `_ss_admissible()` instead, at the same 0.85 margin.
+        return True
+
+    def _ss_modes(self, t, pre, pre_ss, i_tot_oc=None):
+        """The single-source modes this decision may search, after the cheap
+        guards have already passed.  Tuple, possibly empty; every refusal is
+        counted in ``ss_refusals`` by reason."""
+        out = []
+        for mode in (SS_MODE_BT, SS_MODE_FC):
+            ok, reason, ticks, ms = self._ss_admissible(
+                mode, t, pre, pre_ss, i_tot_oc=i_tot_oc)
+            self.ss_admit_ms_max = max(self.ss_admit_ms_max, ms)
+            if ok:
+                self.ss_admissible += 1
+                self.ss_admit_ticks_max = max(self.ss_admit_ticks_max, ticks)
+                out.append(mode)
+            else:
+                self._ss_refuse(reason)
+        return tuple(out)
+
     def decide(self, t, fb):
         """One decision.  Returns ``(share, goal)`` and updates diagnostics."""
         sim = _load_sim()
@@ -2812,6 +3381,11 @@ class MpcStrategy:
         # The stochastic variant replaces the previewed demand with the TPM's
         # conditional mean and tightens the overcurrent bound to the quantile.
         i_tot_oc = None
+        # The per-stage forecast scale, kept so the SINGLE-SOURCE precomputes
+        # can be moved onto the SAME demand the two-source one was moved onto
+        # (2026-09-03).  `None` on the deterministic variant, where nothing is
+        # scaled.
+        sto_scale = None
         if self.variant == "sto":
             p_meas = ((fb.get("V_bus") or 0.0)
                       * ((fb.get("I_fc") or 0.0) + (fb.get("I_batt") or 0.0)))
@@ -2829,10 +3403,12 @@ class MpcStrategy:
                 p_chg = ((fb.get("V_bus") or 0.0) * (fb.get("I_charge") or 0.0))
                 p_meas = max(self.tpm_map_w[0], p_meas - p_chg)
             means, quants = self._tpm_forecast(self._bin_of(p_meas))
+            sto_scale = [1.0] * pre.n
             for j in range(pre.n):
                 vb = pre.v_bus_mean[j]
                 scale = (means[j] / pre.p_dem_mean[j]
                          if pre.p_dem_mean[j] > 0.0 else 1.0)
+                sto_scale[j] = scale
                 for sub in range(len(pre.p_dem[j])):
                     pre.p_dem[j][sub] *= scale
                     pre.i_tot[j][sub] *= scale
@@ -2873,7 +3449,16 @@ class MpcStrategy:
         # runs in __call__() ahead of the decision gate; this path only CREATES
         # the job, and only when none is in flight.
         if self.roll_job is None:
-            self.roll_job = RollJob(pre, self.planner.ladder, dv0_v=self.dv0_v,
+            # ⚠️ THE IN-BAND LADDER ONLY (2026-09-03).  A transition roll
+            # produces `r_hold[stage][ladder index]`, the ratio a HELD in-band
+            # command leaves standing across a mode change.  A single-source
+            # column has no such carry - the share loop is frozen and the ratio
+            # is whatever the latch left - and rolling the two extra columns
+            # would add 22 % to the slice for entries `delivery_table()` never
+            # reads.
+            self.roll_job = RollJob(pre,
+                                    self.planner.ladder[:self.planner.n_band],
+                                    dv0_v=self.dv0_v,
                                     charge_stage=lambda j, o=charge_options[-1]: o[j])
             self.rolls_started += 1
 
@@ -2901,6 +3486,46 @@ class MpcStrategy:
             budget_ms = (BUDGET_MS_DEFAULT if self.budget_ms is None
                          else self.budget_ms)
 
+        # ── THE SINGLE-SOURCE CANDIDATES (2026-09-03) ──────────────────────
+        # Resolved BEFORE the coarsening, because the coarsening's allowance has
+        # to be sized on the enumeration the search will actually walk, and an
+        # admitted single-source column adds a block-0 value to it.  The
+        # admissibility rolls are charged to THIS decision's budget: they are
+        # wall-clock work inside the same callback, and leaving them out would
+        # make the derived budget a bound the callback does not meet.
+        ss_modes = ()
+        pre_ss = None
+        if (self.preview_ss
+                and self._ss_state_guards_pass(fb, charge_options)):
+            _t_ss = time.perf_counter()
+            pre_ss = {m: precompute_stages(
+                self.preview_ss[m], k0, self.horizon,
+                mode_seed=(STAGE_CLOSED if self.shadow.closed
+                           else STAGE_OPEN))
+                for m in self.preview_ss}
+            # THE STOCHASTIC VARIANT'S FORECAST REACHES THE SINGLE-SOURCE
+            # DEMAND TOO (2026-09-03).  Without this the survivor's overcurrent
+            # condition would be judged on the DETERMINISTIC preview while the
+            # two-source table was judged on the TPM's conditional mean, i.e.
+            # the two arms of one decision would sit on two demand forecasts.
+            # The scale is the same per-stage ratio, applied to the
+            # single-source arrays: the bus law differs between the two
+            # previews, the DEMAND FORECAST does not.
+            if sto_scale is not None:
+                for p_m in pre_ss.values():
+                    for j in range(p_m.n):
+                        sc = sto_scale[j]
+                        if sc == 1.0:
+                            continue
+                        for sub in range(len(p_m.i_tot[j])):
+                            p_m.i_tot[j][sub] *= sc
+                            p_m.p_dem[j][sub] *= sc
+                        p_m.i_tot_mean[j] *= sc
+                        p_m.p_dem_mean[j] *= sc
+            ss_modes = self._ss_modes(t, pre, pre_ss, i_tot_oc=i_tot_oc)
+            budget_ms = max(BUDGET_MS_FLOOR,
+                            budget_ms - (time.perf_counter() - _t_ss) * 1e3)
+
         # ── THE LADDER COARSENING ──────────────────────────────────────────
         # A pure function of the ladder size, the block count, this decision's
         # charge-option count, the previewed transition count and the budget.
@@ -2908,16 +3533,26 @@ class MpcStrategy:
         self.transition_stages_last = n_trans
         active = None
         if self.coarsen_ladder_enabled:
-            active = coarsen_ladder(len(self.planner.ladder),
+            # ⚠️ SIZED ON `n_band`, NOT ON `len(ladder)` (2026-09-03).  The
+            # coarsening chooses a subset of the IN-BAND rungs; the
+            # single-source columns are not rungs and are never coarsened away
+            # (they are already admissible or already refused).  Their cost is
+            # charged instead through `n_options`, below: an admitted
+            # single-source column multiplies the block-0 arm of the
+            # enumeration by (k + n_ss)/k, and scaling the option count by the
+            # same factor is the same allowance.
+            _ss_growth = ((len(ss_modes) + self.planner.n_band)
+                          / float(self.planner.n_band)) if ss_modes else 1.0
+            active = coarsen_ladder(self.planner.n_band,
                                     len(self.planner.blocks),
-                                    len(charge_options),
+                                    len(charge_options) * _ss_growth,
                                     incumbent=self.planner.incumbent,
                                     budget_ms=budget_ms,
                                     n_transitions=n_trans,
                                     candidate_cost_ms=(
                                         self.candidate_cost_ms
                                         or CANDIDATE_COST_MS_NOMINAL))
-            if len(active) >= len(self.planner.ladder):
+            if len(active) >= self.planner.n_band:
                 active = None
 
         dec = self.planner.solve(soc, self.soc_ref, pre, self.r_hold,
@@ -2925,7 +3560,14 @@ class MpcStrategy:
                                  i_tot_oc=i_tot_oc, budget_ms=budget_ms,
                                  sp_acted=self.shadow.acted_sp,
                                  run_seed=self.shadow.closed_loop_run,
-                                 handoff=self.r_handoff, active=active)
+                                 handoff=self.r_handoff, active=active,
+                                 ss_modes=ss_modes, pre_ss=pre_ss)
+        self.ss_searched += int(dec.ss_offered)
+        if dec.single_source == SS_MODE_FC:
+            self.ss_selected_fc += 1
+        elif dec.single_source == SS_MODE_BT:
+            self.ss_selected_bt += 1
+        self.ss_selected_last = dec.single_source
         self.budget_ms_all.append(budget_ms)
         self.ladder_points_all.append(dec.ladder_points)
         if active is not None:
@@ -3115,7 +3757,13 @@ class MpcStrategy:
                     "share_pred_err_mean": None, "share_pred_err_max": 0.0,
                     "share_pred_err_run_mean": None,
                     "share_pred_err_run_max": 0.0,
-                    "share_pred_err_run_n": 0}
+                    "share_pred_err_run_n": 0,
+                    "single_source": self.single_source,
+                    "ss_offered": 0, "ss_admissible": 0,
+                    "ss_searched": 0,
+                    "ss_selected_fc": 0, "ss_selected_bt": 0,
+                    "ss_refusals": {}, "ss_admit_ms_max": 0.0,
+                    "ss_admit_ticks_max": 0}
 
         def _stats(xs):
             """min / median / max of a per-decision series."""
@@ -3184,7 +3832,22 @@ class MpcStrategy:
                     self.share_pred_err_run_sum / self.share_pred_err_run_n
                     if self.share_pred_err_run_n else None),
                 "share_pred_err_run_max": self.share_pred_err_run_max,
-                "share_pred_err_run_n": self.share_pred_err_run_n}
+                "share_pred_err_run_n": self.share_pred_err_run_n,
+                # ── THE SINGLE-SOURCE CENSUS (2026-09-03) ──────────────────
+                # Per DECISION.  `offered` is 2 per decision the feature was
+                # armed for, `admissible` the rollout-time test's acceptances,
+                # `selected_*` the committed commands, and `refusals` the reason
+                # census - which is what says whether the feature was inert
+                # because the plant refused it or because the economics did.
+                "single_source": self.single_source,
+                "ss_offered": self.ss_offered,
+                "ss_admissible": self.ss_admissible,
+                "ss_searched": self.ss_searched,
+                "ss_selected_fc": self.ss_selected_fc,
+                "ss_selected_bt": self.ss_selected_bt,
+                "ss_refusals": dict(self.ss_refusals),
+                "ss_admit_ms_max": self.ss_admit_ms_max,
+                "ss_admit_ticks_max": self.ss_admit_ticks_max}
 
     def summary_line(self):
         if not self.decisions:
@@ -3264,7 +3927,26 @@ class MpcStrategy:
                     if self.variant == "det" else "the demand TPM (causal)"),
                    ("" if self.variant != "sto" else
                     "; demand bin clamped HIGH on %d and LOW on %d"
-                    % (self.clamped_bin_high, self.clamped_bin_low))))
+                    % (self.clamped_bin_high, self.clamped_bin_low)))
+                + self._ss_summary_fragment(tm))
+
+    def _ss_summary_fragment(self, tm):
+        """The single-source census, appended to the summary line.
+
+        EMPTY when the feature is off, so every pre-2026-09-03 line is
+        unchanged character for character.  ASCII only - see the note on the
+        cp1252 console above."""
+        if not self.single_source:
+            return ""
+        reasons = tm["ss_refusals"]
+        txt = ", ".join("%s %d" % (k, reasons[k]) for k in sorted(reasons))
+        return ("; single-source 0/1 candidates ARMED: %d offered, %d admitted "
+                "by the ROLLOUT-TIME cut-guard test (worst roll %d ticks / "
+                "%.3f ms), committed %d times FC-only and %d times BT-only%s"
+                % (tm["ss_offered"], tm["ss_admissible"],
+                   tm["ss_admit_ticks_max"], tm["ss_admit_ms_max"],
+                   tm["ss_selected_fc"], tm["ss_selected_bt"],
+                   ("" if not txt else "; refusals by reason: " + txt)))
 
 
 def make_mpc(name="mpc-det", **kwargs):

@@ -1,0 +1,12 @@
+# Generated Python profile modules are compared BYTE FOR BYTE against a fresh
+# regeneration by `tools/test_ftp75_profile.py`
+# (`test_gen_ftp75_profile_regenerates_both_modules_byte_identically`).  The
+# generator writes LF; with the global `core.autocrlf true` this checkout uses,
+# git rewrites them to CRLF on checkout and the comparison fails on line endings
+# alone.  It is an ENVIRONMENT failure, not a content one, and it bites every
+# fresh worktree (recorded 2026-09-03, MPC single-source review round).
+#
+# `-text` disables end-of-line conversion for these two files in both
+# directions, so a worktree gets them exactly as committed.
+tools/ftp75_profile.py -text
+tools/ftp75c_profile.py -text

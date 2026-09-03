@@ -1338,6 +1338,10 @@ EXPECTED_SCENARIO_NAMES = {
     # ORDINARY runs; `ems-ftp75-mpc` is gated behind --with-ftp75 with its
     # siblings.
     "ems-mpc", "ems-mpc-det", "ems-mpc-cross", "ems-ftp75-mpc",
+    # 2026-09-03 (the MPC single-source round): `ems-mpc-det`'s stimulus and
+    # law with `mpc_single_source` armed, so the planner may command exactly
+    # 0.0 or 1.0. The ONLY registered leg that arms it; an ORDINARY run.
+    "ems-mpc-single",
     # 2026-09-02 (the ftp75c round,
     # docs/modeling/ftp75c_regen_cycle_design_20260902.md): the five
     # COMPRESSED-cycle legs, on the road-load-compensated plant. All five are
@@ -1461,6 +1465,8 @@ EXPECTED_SCENARIO_DURATIONS_S = {
     # SDP_CROSS_DURATION_S, the FTP-75 leg off FTP75_DURATION_S.
     "ems-mpc": 61.0,
     "ems-mpc-det": 61.0,
+    # 2026-09-03, the MPC single-source round: `ems-mpc-det` by reference.
+    "ems-mpc-single": 61.0,
     "ems-mpc-cross": 200.0,
     "ems-ftp75-mpc": 350.0,
     # 2026-09-02 (the ftp75c round): all five legs share ONE stimulus, so all
@@ -1627,7 +1633,7 @@ def test_scenarios_chg_i_ceiling_a_only_on_charge_regen_and_charge_fault():
                       # would hand it a 2.5 A lever the legs it is ranked
                       # against never had.
                       "ems-mpc", "ems-mpc-det", "ems-mpc-cross",
-                      "ems-ftp75-mpc",
+                      "ems-ftp75-mpc", "ems-mpc-single",
                       # 2026-09-02 (the ftp75c round): ALL FIVE compressed
                       # legs declare the ceiling off `ems-soc-band`'s entry --
                       # the same 0.8 A object. `ems-ftp75c-5050` declares it
@@ -10558,9 +10564,15 @@ def test_mpc_cross_no_longer_declares_a_solve_budget():
     that leg to 0 % expiry at a 7.41 ms median, so the 15 ms key changed
     nothing and read as a still-measured need."""
     assert "mpc_budget_ms" not in hil.SCENARIOS["ems-mpc-cross"]
+    # The KEY is still read — the mechanism outlived its one user, and
+    # 2026-09-03 gave it a NEW one. `ems-mpc-single` is the only scenario that
+    # may declare a budget; the assertion is written that way rather than as a
+    # source-text grep so a third declaration is caught by name.
+    declared = sorted(n for n, m in hil.SCENARIOS.items()
+                      if "mpc_budget_ms" in m)
+    assert declared == ["ems-mpc-single"], declared
+    assert hil.SCENARIOS["ems-mpc-single"]["mpc_budget_ms"] == 15.0
     src = open(os.path.join(HERE, "hil_plant_sim.py"), encoding="utf-8").read()
-    assert '"mpc_budget_ms": 15.0' not in src
-    # The KEY is still read — the mechanism outlived its one user.
     assert '"mpc_budget_ms"' in src
 
 
@@ -12560,3 +12572,15 @@ def test_apply_advances_the_latch_exactly_once_per_wrapped_call():
     assert mgr.apply(12.0, {"current": -12.0},
                      {"power_share_setpoint": 0.5})["charge_goal"] == 1.0
     assert mgr.calls == 2 and mgr.forced == 2
+
+
+def test_the_proxy_carries_no_unread_single_source_mirror():
+    """2026-09-03, review LOW-3. A `single_source_last` property was written in
+    the single-source round and had no consumer: the drain writes three MPC
+    columns and the round added no fourth, so nothing could reach it. It was
+    deleted rather than left as a surface a reader would assume is scored. The
+    verdict is reported per RUN through the census in `MpcStrategy.timing()`."""
+    assert not hasattr(hil._MpcProxy, "single_source_last")
+    # The mirrors that ARE wired stay wired.
+    for name in ("solve_ms_last", "share_pred_err", "budget_hit_last"):
+        assert hasattr(hil._MpcProxy, name), name

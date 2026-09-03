@@ -1237,11 +1237,26 @@ drive them are `ems-mpc`, `ems-mpc-sto`, `ems-mpc-cross` and `ems-ftp75-mpc`
    candidate — and `--mpc-max-candidates N` overrides it. The roll-table
    slicing and the board itself remain non-deterministic.
 3. **`--mpc-horizon`, `--mpc-share-band`, `--mpc-share-levels`,
-   `--mpc-budget-ms`, `--mpc-roll-budget-ms`, `--mpc-terminal-price` and
-   `--mpc-h2-map`** override the controller. Every one defaults to the shipped
-   design, so a scenario's `ems` key alone reproduces it, and every resolved
-   value lands in the sidecar's `config.mpc` block whether it came from a flag or
-   from the default.
+   `--mpc-budget-ms`, `--mpc-roll-budget-ms`, `--mpc-terminal-price`,
+   `--mpc-h2-map` and `--mpc-single-source`** override the controller. Every one
+   defaults to the shipped design, so a scenario's `ems` key alone reproduces
+   it, and every resolved value lands in the sidecar's `config.mpc` block
+   whether it came from a flag or from the default.
+4. **SINGLE-SOURCE (0/1) COMMANDS (2026-09-03).** `--mpc-single-source`, and the
+   `mpc_single_source` scenario key that `ems-mpc-single` carries, let the
+   planner command a share of exactly **0.0** or **1.0** — one boost off the
+   bus through `updateShareSetpointCutoff()`, the other carrying the whole load.
+   Admissibility is decided per decision by rolling the real `GovernorModel`
+   forward from the committed state and evaluating the firmware's 0.5 A
+   share-cut load guard on that path (operator ruling; design record section
+   2026-09-03). **Read the `single-source 0/1 candidates ARMED` fragment of the
+   run's summary line first** — offered / admitted / committed plus a
+   refusal-reason census. A run that admitted nothing is a two-source run
+   wearing the leg's name, and every other number on it is a two-source number.
+   ⚠️ The gain is on the SoC lever, not on a loss: the offline walks move
+   equivalent hydrogen by 0.01–0.43 % while the hydrogen headline moves up to
+   49 %. Quote the pair, never the hydrogen alone. The feature is OFF on the
+   four other MPC legs, so their records stay comparable.
 
 ⚠️ Gate 1 of the design's offline evaluation FAILS as shipped: the prediction
 surrogate's delivered-share error on the `ems-soc-band` stimulus is mean

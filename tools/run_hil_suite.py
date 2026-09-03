@@ -4278,16 +4278,64 @@ _MPC_SHARE_CEIL = round(_MPC_SHARE_BAND[1] + 0.01, 6)
 _MPC_I_FC_CEIL = 1.19
 
 
+# ── THE SINGLE-SOURCE COMMANDS (2026-09-03) ────────────────────────────────
+# `ems-mpc-single` may command a share of exactly 0.0 or exactly 1.0, which is
+# a LEGAL command and not a band excursion: the firmware constrains the received
+# setpoint to [0, 1] (.ino:5663) and `updateShareSetpointCutoff()` takes the
+# out-of-band value as a topology instruction.  The two band checks therefore
+# EXEMPT those two values on that leg and report the exempt COUNT, so "the share
+# left the ladder's band" and "the controller went single-source N times" stay
+# distinguishable in the verdict text.  Every other MPC leg keeps the plain
+# bound - a 0.0 sample there IS a defect.
+_MPC_SINGLE_SOURCE_VALUES = (0.0, 1.0)
+
+# The two reasons an MPC leg's h2 FLOOR is reported without a verdict.  Passed
+# to `_mpc_expectation(h2_informational_note=...)`; the first is the default,
+# because it was the first leg to need one.
+_MPC_H2_INFORMATIONAL_SPREAD = (
+    " — INFORMATIONAL: this floor sits INSIDE the leg's measured "
+    "run-to-run spread (campaign 20260902_011926 -0.13 % of the band edge, "
+    "campaign 20260902_041414 +0.10 %), so a verdict here would score noise. "
+    "It is reported, with a WARNING when the bound is missed, until the "
+    "cap-lifted walk re-band lands")
+# 2026-09-03, review MED-2.  `ems-mpc-single`'s walk ran at `budget_ms` 1e5 -
+# an UNBOUNDED search - while the leg runs at a 15 ms campaign budget, and the
+# single-source columns sort LAST in the enumeration, so they are the first
+# thing an expiry drops.  A leg that expires on many decisions therefore commits
+# fewer single-source stages than the walk did and lands nearer `ems-mpc-det`'s
+# 0.009353 g, i.e. ABOVE this band's ceiling and far above its floor.  Both arms
+# stay as the walk PREDICTION; the floor is reported without a verdict for the
+# first campaign, which is what measures the expiry fraction.
+_MPC_H2_INFORMATIONAL_UNBOUNDED_WALK = (
+    " — INFORMATIONAL for the first campaign: the walk this band comes "
+    "from ran an UNBOUNDED search (budget_ms 1e5, full-search median 11.04 ms "
+    "against a 15 ms campaign budget) and the single-source columns are the "
+    "first an expiry drops, so a live leg that expires commits fewer "
+    "single-source stages than the walk and moves toward ems-mpc-det's "
+    "0.009353 g. Read `mpc_budget_hit` and the census fragment FIRST, then "
+    "re-band from the measured expiry fraction")
+
+
 def _mpc_expectation(*, scenario, walk_h2, duration_s, survive_t,
                      run_window, share_range_min=None, pred_err_max,
                      budget_hit_max_ticks, charge_edges, min_rows, extra_note,
-                     h2_floor_informational=False):
+                     h2_floor_informational=False,
+                     h2_informational_note=None, single_source=False):
     """One MPC leg's expectation entry.  PURE.
 
     ONE BUILDER for all four, for `_alpha_expectation()`'s reason: the four legs
     assert the SAME properties and only their numbers differ, so a hand-written
     fourth copy is a place for one of them to drift."""
     lo, hi = round(walk_h2 * 0.75, 6), round(walk_h2 * 1.25, 6)
+    # The band exemption, applied to BOTH arms or to neither.  A dict spread so
+    # a leg without the feature produces the identical spec dict it always did.
+    _ss = ({"exempt_values": list(_MPC_SINGLE_SOURCE_VALUES)}
+           if single_source else {})
+    _ss_label = ("" if not single_source else
+                 " Exactly 0.0 and 1.0 are EXEMPT and COUNTED on this leg: "
+                 "they are the single-source commands, which the firmware "
+                 "constrains to [0, 1] and reads as a topology instruction, "
+                 "not band excursions.")
     sigs = [
         # 1. CADENCE — de-vacuates every window-scoped check below.  A run whose
         #    CSV is short (a child that died early, a link that never came up)
@@ -4307,18 +4355,38 @@ def _mpc_expectation(*, scenario, walk_h2, duration_s, survive_t,
         #    The claim is an INVARIANT ("no sample left the ladder's band
         #    downward"), which is the in-window MINIMUM. The ceiling arm keeps
         #    `max_value`, which is already the peak-side invariant.
-        {"name": "mpc_share_floor", "column": "cmd_share_sp",
-         "floor_min_value": _MPC_SHARE_FLOOR, "t_window": run_window,
-         "provisional_note": _MPC_PROVISIONAL,
-         "label": "the commanded share never left the ladder's own interval "
-                  "[%.2f, %.2f] downward — a sample below %.2f means the "
-                  "ladder was built from the wrong band"
-                  % (_MPC_SHARE_BAND[0], _MPC_SHARE_BAND[1], _MPC_SHARE_FLOOR)},
-        {"name": "mpc_share_ceiling", "column": "cmd_share_sp",
-         "max_value": _MPC_SHARE_CEIL, "t_window": run_window,
-         "provisional_note": _MPC_PROVISIONAL,
-         "label": "... and never left it upward (peak <= %.2f)"
-                  % _MPC_SHARE_CEIL},
+        dict({"name": "mpc_share_floor", "column": "cmd_share_sp",
+              "floor_min_value": _MPC_SHARE_FLOOR, "t_window": run_window,
+              "provisional_note": _MPC_PROVISIONAL,
+              "label": "the commanded share never left the ladder's own "
+                       "interval [%.2f, %.2f] downward - a sample below %.2f "
+                       "means the ladder was built from the wrong band.%s"
+                       % (_MPC_SHARE_BAND[0], _MPC_SHARE_BAND[1],
+                          _MPC_SHARE_FLOOR, _ss_label)}, **_ss),
+        dict({"name": "mpc_share_ceiling", "column": "cmd_share_sp",
+              "max_value": _MPC_SHARE_CEIL, "t_window": run_window,
+              "provisional_note": _MPC_PROVISIONAL,
+              "label": "... and never left it upward (peak <= %.2f)"
+                       % _MPC_SHARE_CEIL}, **_ss),
+    ] + ([] if not single_source else [
+        # 3b. DID THE FEATURE FIRE AT ALL (2026-09-03, review LOW-4)?  The two
+        #     band arms above exempt 0.0/1.0; this one puts a FLOOR under the
+        #     tally, so a leg that committed no single-source stage is
+        #     self-describing rather than silently indistinguishable from one
+        #     that committed 24.  INFORMATIONAL on the first campaign - the
+        #     rollout-time cut guard declining every candidate is a legitimate
+        #     result, and the walk's 24 commitments were measured on an
+        #     unbounded search.
+        {"name": "mpc_single_source_exercised", "column": "cmd_share_sp",
+         "exempt_values": list(_MPC_SINGLE_SOURCE_VALUES),
+         "exempt_min_count": 1, "t_window": run_window,
+         "provisional_note": _MPC_PROVISIONAL, "informational": True,
+         "label": "the single-source command was actually issued at least once "
+                  "(a sample at exactly 0.0 or exactly 1.0) — "
+                  "INFORMATIONAL: a run that admits nothing is the cut guard "
+                  "doing its job, but it makes every other number on this leg "
+                  "a two-source number, so the count is reported either way"},
+    ]) + [
         # 4. THE OVERCURRENT BUDGET the planner enforces on its own plan.
         {"name": "mpc_fc_peak_bounded", "column": "I_fc",
          "max_value": _MPC_I_FC_CEIL, "t_window": run_window,
@@ -4353,12 +4421,7 @@ def _mpc_expectation(*, scenario, walk_h2, duration_s, survive_t,
                   "(>= %.6f g = governor walk %.6f g -25 %%)%s"
                   % (lo, walk_h2,
                      "" if not h2_floor_informational else
-                     " — INFORMATIONAL: this floor sits INSIDE the leg's "
-                     "measured run-to-run spread (campaign 20260902_011926 "
-                     "-0.13 %% of the band edge, campaign 20260902_041414 "
-                     "+0.10 %%), so a verdict here would score noise. It is "
-                     "reported, with a WARNING when the bound is missed, until "
-                     "the cap-lifted walk re-band lands")},
+                     (h2_informational_note or _MPC_H2_INFORMATIONAL_SPREAD))},
         {"name": "mpc_h2_bounded", "column": "h2_cum_g",
          "max_value": hi, "t_window": run_window,
          "provisional_note": _MPC_PROVISIONAL,
@@ -4480,6 +4543,52 @@ FAULT_EXPECTATIONS["ems-mpc-det"] = _mpc_expectation(
                 "two plans spend materially different fractions of the run "
                 "below the 0.55 A line — so the two runs are NOT "
                 "interchangeable evidence about the governor."))
+
+# ── ems-mpc-single: the single-source (0/1) demonstration ──────────────────
+#
+# PROVISIONAL, and every number below is from ONE offline walk (soc0 0.7,
+# loss-map era, dv0 0, unbounded search) - the same status the four MPC legs
+# carried at their own first registration.  Re-pin from the first campaign that
+# runs it.
+#
+# THE WALK: h2 0.004770 g, dSoC -0.004710, share range 0.0 .. 0.6750, 24 of 61
+# decisions committed BT-only (share 0.0), 0 committed FC-only.  Against
+# `ems-mpc-det`, the SAME stimulus and law with the feature off: h2 0.009353,
+# dSoC -0.002859, range 0.15 .. 0.6750.
+#
+# ⚠️ THE h2 BAND IS THE WIDE ONE THE FEATURE FORCES.  Single-source moves the
+# operating point along the SoC lever, not along a loss, so the HYDROGEN swings
+# by 49 % between the two legs while the EQUIVALENT hydrogen moves 0.43 %.  A
+# +/-25 % band on a quantity that halves with one decision is a plumbing check
+# and nothing more, and it is labelled as one.
+FAULT_EXPECTATIONS["ems-mpc-single"] = _mpc_expectation(
+    scenario="ems-mpc-single", walk_h2=0.004770, duration_s=61.0,
+    survive_t=50.0, run_window=(5.0, 58.0),
+    # The walk's commanded range is 0.675 here against `ems-mpc-det`'s 0.525:
+    # the low rail is now 0.0, not 0.15.  Floor ~0.6x, the family's rule.
+    share_range_min=0.40,
+    pred_err_max=0.30, budget_hit_max_ticks=52000, charge_edges=4,
+    min_rows=40000, single_source=True,
+    h2_floor_informational=True,
+    h2_informational_note=_MPC_H2_INFORMATIONAL_UNBOUNDED_WALK,
+    extra_note=("THE SINGLE-SOURCE (0/1) LEG, and the only registered "
+                "scenario that arms `mpc_single_source`. Run it BESIDE "
+                "`ems-mpc-det`, which is the identical stimulus and law with "
+                "the feature OFF - the pair is a controlled A/B on one "
+                "scenario key. The two band checks EXEMPT exactly 0.0 and 1.0 "
+                "and report the exempt sample count; a share outside "
+                "[0.15, 0.85] that is NOT one of those two values still "
+                "fails, so the exemption cannot hide a real excursion. "
+                "WHAT TO READ FIRST on the first campaign: the "
+                "`single-source 0/1 candidates ARMED` fragment of the summary "
+                "line, which carries offered / admitted / committed and the "
+                "refusal reason census. A leg that admits nothing is not a "
+                "failure - it is the rollout-time cut guard doing its job - "
+                "but it makes every other number here a two-source number. "
+                "⚠️ The equivalent hydrogen is the result and this h2 band is "
+                "NOT: the offline pair reads eq-H2 0.016257 against "
+                "`ems-mpc-det`'s 0.016327 at lambda 0.41, a 0.43 % gain, "
+                "while the hydrogen alone falls 49 %."))
 
 # ── ems-mpc-cross: the switching-surface stimulus ───────────────────────────
 FAULT_EXPECTATIONS["ems-mpc-cross"] = _mpc_expectation(
@@ -8459,6 +8568,12 @@ def scan_signals(csv_path, specs, grace_s=WARM_RESET_GRACE_S):
                 # treating it as a break would report a hold as two shorter ones
                 # every time an observation frame was dropped.
                 "run": 0, "max_run": 0,
+                # `exempt_values` state (2026-09-03, the MPC 0/1 round): how
+                # many samples were EXCLUDED from the value bounds because they
+                # matched a declared exempt value exactly.  Reported on every
+                # verdict of a spec that declares them, so an exemption can
+                # never quietly hide a population.
+                "exempt": 0,
                 # `edge_count_between` state: how many qualifying transitions the
                 # window contained.  Counted against `prev_bit`, exactly as the
                 # latency kind does, so a blank row cannot forge an edge.
@@ -8720,6 +8835,23 @@ def scan_signals(csv_path, specs, grace_s=WARM_RESET_GRACE_S):
                         v = float(cell)
                     except ValueError:
                         continue
+                    # ── `exempt_values` (2026-09-03) ─────────────────────────
+                    # A list of values a numeric bound does NOT apply to,
+                    # matched within `exempt_tol` (default 1e-9).  It exists for
+                    # one situation: a column whose legal alphabet is an
+                    # INTERVAL plus a few DISCRETE points outside it.  The MPC's
+                    # commanded share is that column - the ladder spans
+                    # [0.15, 0.85] and the single-source candidates command
+                    # exactly 0.0 or exactly 1.0, which are legal commands and
+                    # not band excursions.  The exempt sample is counted and
+                    # reported, so "the share left the band" and "the controller
+                    # went single-source N times" stay distinguishable.
+                    _ex = spec.get("exempt_values")
+                    if _ex:
+                        _tol = float(spec.get("exempt_tol", 1e-9))
+                        if any(abs(v - float(x)) <= _tol for x in _ex):
+                            m["exempt"] += 1
+                            continue
                     _record_value(spec, m, v)
     except OSError as exc:
         for m in leaf_m:
@@ -8738,9 +8870,32 @@ def _judge_signal_leaf(spec, m):
                                 if spec["t_window"][1] is not None else "end"))
     if m.get("error"):
         return False, "could not read the CSV: %s" % m["error"]
+    # `exempt_values` (2026-09-03): appended to whatever measurement text the
+    # kind below produces, so a reader always sees how many samples the bound
+    # was NOT applied to.  Empty when the spec declares no exemptions.
+    _exn = m.get("exempt", 0) if spec.get("exempt_values") else 0
+    _extx = ("" if not spec.get("exempt_values") else
+             " [%d sample(s) exempt at %s]"
+             % (_exn, "/".join("%g" % float(x)
+                               for x in spec["exempt_values"])))
     if not m["rows"]:
         return False, ("no observed rows%s — the window this arm lives in was "
                        "never reached" % win)
+    if "exempt_min_count" in spec:
+        # `exempt_min_count` (2026-09-03, review LOW-4): a FLOOR on the exempt
+        # tally itself.  `exempt_values` alone bounds nothing - a leg could
+        # exempt zero samples and every band arm would still pass, so a run in
+        # which the feature never fired would read exactly like one in which it
+        # fired constantly.  This arm makes that difference legible.  It is
+        # registered INFORMATIONAL on its first leg: a controller declining
+        # every single-source candidate is a legitimate outcome of the
+        # rollout-time guard, not a board defect.
+        need = int(spec["exempt_min_count"])
+        return (_exn >= need,
+                "%d sample(s) at %s%s, need >= %d"
+                % (_exn, "/".join("%g" % float(x)
+                                  for x in spec.get("exempt_values", ())),
+                   win, need))
     if "max_ms" in spec:
         # LATENCY MEASUREMENT (the "switch_fall_latency_ms" kind; `max_ms` is its
         # discriminator — no other kind carries it).  The number is the
@@ -8859,9 +9014,9 @@ def _judge_signal_leaf(spec, m):
         # as max_value: a window with no parseable samples has proved nothing.
         lo = m.get("trough")   # absent == unmeasured, see column_range_at_least
         return (lo is not None and lo >= float(spec["floor_min_value"]),
-                "minimum %s%s, need >= %g"
+                "minimum %s%s, need >= %g%s"
                 % ("unmeasured" if lo is None else "%.4f" % lo, win,
-                   float(spec["floor_min_value"])))
+                   float(spec["floor_min_value"]), _extx))
     if "min_value" in spec:
         peak = m["peak"]
         return (peak is not None and peak >= float(spec["min_value"]),
@@ -8874,9 +9029,9 @@ def _judge_signal_leaf(spec, m):
         # whole point of this table is that gaps must not read as passes.
         peak = m["peak"]
         return (peak is not None and peak <= float(spec["max_value"]),
-                "peak %s%s, need <= %g"
+                "peak %s%s, need <= %g%s"
                 % ("unmeasured" if peak is None else "%.4f" % peak, win,
-                   float(spec["max_value"])))
+                   float(spec["max_value"]), _extx))
     if "strictly_decreases_by" in spec:
         need = float(spec["strictly_decreases_by"])
         have = (None if m["first"] is None or m["last"] is None

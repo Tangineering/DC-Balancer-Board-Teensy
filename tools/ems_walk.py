@@ -175,6 +175,13 @@ class WalkResult:
     charge_windows: list = field(default_factory=list)
     notes: list = field(default_factory=list)
 
+    # -- THE STRATEGY INSTANCE (ADDITIVE, 2026-09-03) ------------------------
+    # `None` for a plain callable, the bound instance for a class strategy.  It
+    # exists so a caller can read the strategy's OWN census after a walk - the
+    # MPC's `timing()` dict, in particular, which carries the single-source
+    # admissibility statistics.  Nothing in `walk()` reads it back.
+    policy: object = None
+
     # -- regen accounting (ADDITIVE, 2026-09-02) ------------------------------
     # Zero on every pre-regen walk, so a consumer written against the earlier
     # WalkResult is unaffected.  `regen_charge_c` is COULOMBS INTO THE PACK -
@@ -445,6 +452,7 @@ def walk(strategy_name: str, scenario_name: str, *, soc0: float = 0.7,
          eta_regen: Optional[float] = None,
          gov_dt_s: float = 1e-3,
          conv_tau_s: float = 0.0,
+         single_source_demand: bool = False,
          trace: bool = True) -> WalkResult:
     """Walk one strategy through the reduced model.
 
@@ -492,6 +500,24 @@ def walk(strategy_name: str, scenario_name: str, *, soc0: float = 0.7,
                     is a prediction and must not be able to open a window the DP
                     forbids. Resolving per mode keeps both properties; either
                     can be demanded explicitly.
+    ``single_source_demand``
+                    (2026-09-03, the MPC 0/1 round) switch the DEMAND ARRAYS to
+                    the measured single-source bus law on every stage a setpoint
+                    latch is standing.
+
+                    ⚠️ OFF BY DEFAULT, AND THE DEFAULT IS A KNOWN FIDELITY GAP,
+                    NOT A CHOICE OF MODEL.  With one channel off the bus the
+                    fitted loss map's ``g_par`` is a parallel droop code that
+                    does not exist, and the two-source law under-states the bus
+                    sag by about 0.45 V at the 61 s cycle's peak.  The gap
+                    PREDATES this round - ``ems-y-b00-v1`` and ``-v3`` have
+                    always commanded 1.00 and 0.00 through this walk on the
+                    two-source law - so the flag is opt-in: turning it on by
+                    default would silently move every ``ems-y-b00-*`` anchor
+                    along with the MPC's.  It requires ``loss_map``, because the
+                    single-source law is a SCALING of that map
+                    (``hil_plant_sim.single_source_bus_law()``) and has no
+                    loss-map-free form.
     """
     sim, gen = _load()
 
@@ -561,6 +587,26 @@ def walk(strategy_name: str, scenario_name: str, *, soc0: float = 0.7,
     chg_ok = gen.charge_mask(times, p_dem, v_bus, cruise, chg_a, run_exit_s,
                              eta_chg, v_pack_ref,
                              i_regen if eta_regen is not None else None)
+    # ── THE TWO SINGLE-SOURCE DEMAND ARRAYS (2026-09-03) ────────────────────
+    # Built once, consulted per stage while a setpoint latch stands.  Empty
+    # when the flag is off, and the stage loop then reads the two-source arrays
+    # exactly as it did - so every pre-2026-09-03 walk is bit-identical.
+    ss_dem = {}
+    if single_source_demand:
+        if loss_map is None:
+            raise ValueError(
+                "single_source_demand needs a loss_map: the measured "
+                "single-source bus law is a scaling of it "
+                "(hil_plant_sim.single_source_bus_law) and has no "
+                "loss-map-free form")
+        for _mode in ("fc", "bt"):
+            with _ov:
+                _r = gen.build_demand(
+                    scenario_name, meta, times, dt, loss_map=loss_map,
+                    drag_mode=drag_mode, eta_regen=eta_regen, eta_chg=eta_chg,
+                    v_pack_ref=v_pack_ref_all, regen_i_max_a=chg_a,
+                    source_mode=_mode)
+            ss_dem[_mode] = {"p_dem": _r[2], "v_bus": _r[3], "i_total": _r[4]}
 
     prof = meta.get("ems_v_profile")
     policy = _instantiate(sim, strategy_name, scenario_name, meta,
@@ -570,6 +616,9 @@ def walk(strategy_name: str, scenario_name: str, *, soc0: float = 0.7,
     # stream a live run does.  Windows follow the RESOLVED drag mode, so a
     # rig-drag walk of a compensated scenario gets the empty list its own
     # physics implies.
+    # Captured BEFORE the regen manager's wrap: the wrapper is a plain callable
+    # and would hide the instance's own census (2026-09-03).
+    policy_instance = policy if hasattr(policy, "timing") else None
     regen_mgr = None
     if meta.get("ems_regen_manager") and prof:
         regen_mgr = sim.RegenManager(
@@ -606,20 +655,38 @@ def walk(strategy_name: str, scenario_name: str, *, soc0: float = 0.7,
     window_t0 = None
     last_out = None
 
+    # THE STAGE'S OWN DEMAND ARRAYS (2026-09-03).  Rebound at the top of every
+    # stage from the topology the governor model reports, so a latched stage is
+    # priced on the single-source law and every other stage on the two-source
+    # one.  With `single_source_demand` off these three names are the module's
+    # own arrays on every stage and nothing below can tell the difference.
+    s_p_dem, s_v_bus, s_i_total = p_dem, v_bus, i_total
     for k in range(n_stages):
         t = float(times[k])
+        if ss_dem:
+            # The SURVIVOR names the mode: `sp_cut_fc` means the fuel cell is
+            # off the bus and the BATTERY is carrying it.
+            _m = ("bt" if g.state.sp_cut_fc
+                  else ("fc" if g.state.sp_cut_bt else None))
+            _d = ss_dem.get(_m) if _m else None
+            if _d is None:
+                s_p_dem, s_v_bus, s_i_total = p_dem, v_bus, i_total
+            else:
+                s_p_dem = _d["p_dem"]
+                s_v_bus = _d["v_bus"]
+                s_i_total = _d["i_total"]
         if t >= next_cmd:
             # Feedback view. The first five keys are exactly what
             # heuristic_walk() supplies (gen_dp_ems_table.py:740-743); the rest
             # are keys the richer strategies read and the reduced model can
             # honestly produce.
-            i_fc = delivered * float(i_total[k])
+            i_fc = delivered * float(s_i_total[k])
             fb = {"t": t,
                   "v_profile": (None if prof is None else sim.piecewise(prof, t)),
                   "soc": soc,
                   "I_fc": i_fc,
-                  "I_batt": float(i_total[k]) - i_fc,
-                  "V_bus": float(v_bus[k]),
+                  "I_batt": float(s_i_total[k]) - i_fc,
+                  "V_bus": float(s_v_bus[k]),
                   "I_charge": (chg_a if charging else 0.0)}
             if meta.get("ems_run_exit_s") is not None:
                 fb["ems_run_exit_s"] = meta["ems_run_exit_s"]
@@ -661,16 +728,16 @@ def walk(strategy_name: str, scenario_name: str, *, soc0: float = 0.7,
             seg = "charge" if charge_now else "discharge"
             for j in range(n_sub):
                 ts = t + j * gov_dt_s
-                i_fc = delivered * float(i_total[k])
+                i_fc = delivered * float(s_i_total[k])
                 sw_fc = True if not g.state.sp_cut_fc else g.state.sw_fc
                 if charge_now:
                     sw_bt = False
                 else:
                     sw_bt = True if not g.state.sp_cut_bt else g.state.sw_bt
-                o = last_out = g.step(share, i_fc, float(i_total[k]) - i_fc,
+                o = last_out = g.step(share, i_fc, float(s_i_total[k]) - i_fc,
                            sw_fc, sw_bt, ts,
                            charge_path_owns_bt=charge_now)
-                delivered = g.delivered_share(o.r_applied, float(i_total[k]),
+                delivered = g.delivered_share(o.r_applied, float(s_i_total[k]),
                                               o.fc_bus_req, o.bt_bus_req)
                 acc += delivered
                 seg_counts[seg][o.mode] = seg_counts[seg].get(o.mode, 0) + 1
@@ -688,7 +755,7 @@ def walk(strategy_name: str, scenario_name: str, *, soc0: float = 0.7,
             # delivered.  The hysteresis-free helper is the correct one here -
             # this arm has no tick history to carry a release memory in.
             stage_share = gov_mod.ceiling_bounded_share(share,
-                                                        float(i_total[k]))
+                                                        float(s_i_total[k]))
             delivered = stage_share
             stage_clamped = stage_share != share
             r_now = stage_share
@@ -728,26 +795,26 @@ def walk(strategy_name: str, scenario_name: str, *, soc0: float = 0.7,
         if charge_now:
             if not in_window:
                 in_window, window_t0 = True, t
-            soc, dh2, dh2p = gen.step_charge(soc, float(p_dem[k]),
-                                             float(v_bus[k]), chg_a, dt,
+            soc, dh2, dh2p = gen.step_charge(soc, float(s_p_dem[k]),
+                                             float(s_v_bus[k]), chg_a, dt,
                                              cap_as, eta_chg, reg_k)
             # The proxy is billed for the SAME bus power step_charge() charges
             # the Gfc total for - one era switch, one expression, so the two
             # hydrogen figures cannot end up on different charger models.
-            p_fc_bus = (float(p_dem[k]) + chg_mod.charger_bus_power_w(
-                            chg_a, float(v_bus[k]),
+            p_fc_bus = (float(s_p_dem[k]) + chg_mod.charger_bus_power_w(
+                            chg_a, float(s_v_bus[k]),
                             gen.pack_charge_voltage(soc_stage_start, chg_a),
                             eta_chg)
-                        if accounting == "physical" else float(p_dem[k]))
+                        if accounting == "physical" else float(s_p_dem[k]))
         else:
             if in_window:
                 res.charge_windows.append((window_t0, t))
                 in_window, window_t0 = False, None
             soc, dh2, dh2p = gen.step_discharge(soc, stage_share,
-                                                float(p_dem[k]),
-                                                float(v_bus[k]), dt, cap_as,
+                                                float(s_p_dem[k]),
+                                                float(s_v_bus[k]), dt, cap_as,
                                                 reg_k)
-            p_fc_bus = stage_share * float(p_dem[k])
+            p_fc_bus = stage_share * float(s_p_dem[k])
 
         res.h2_g += dh2
         res.h2_plant_g += dh2p
@@ -839,6 +906,7 @@ def walk(strategy_name: str, scenario_name: str, *, soc0: float = 0.7,
         res.regen_windows = [list(w) for w in regen_mgr.windows]
         res.regen_duty_s = regen_mgr.duty_s()
     res.notes.append("charge admission: %s" % charge_admission)
+    res.policy = policy_instance
     res.notes.append("charger era: %s" % chg_mod.era_label(eta_chg))
     res.notes.append("demand era: %s" % sim.loss_map_era_label(loss_map))
     res.notes.append("road load: %s" % sim.drag_era_label(drag_mode))
