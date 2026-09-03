@@ -593,3 +593,12 @@ sim-only strategies.
    minimum stays visible in the State-98 diagnostics — both recorded, no firmware change proposed;
    (c) `test_the_committed_plan_is_insensitive_to_the_projection` joins the wall-clock-sensitive
    list; (d) the first campaign after this change is a new baseline for `mpc_share_pred_err`.
+10. **Rulings round SHIPPED (2026-09-03, `88f8e2d`, `96800c7`):** items 1, 2, 4, 5 as ruled; item 3
+    shipped as `sdp_policy_v5` NON-frontier. **Two rulings now open:** (a) **the α re-solve admits
+    charging** (558 cells) because the stage cost bills η_chg 0.88 against a measured 0.801 round trip —
+    solve at `--eta-chg 0.801173` (0 charge cells, era banner) or accept charge admission; until ruled,
+    v4 stays the frontier; (b) the split law under `--droop measured` (design note §6). Watch on the
+    first campaign: `fw26-clamp-joint`'s 1.36 A bound is 0.4 % above a never-measured walk (a miss
+    latches OC_FC); the guard's `share_step_guard_decisions` must read 0; `mpc_share_pred_err` is a new
+    baseline. Follow-ups: tighten the joint leg's 8 % MDAC band to the sweep's 2 % after its first
+    campaign; Gate 1 single-source-aware; the F2/F3/F4 campaign-F items still open in §7b.
