@@ -1124,10 +1124,14 @@ You said "fw v26 is flashed, begin the overnight campaign(s)". Three campaigns r
   correct, zero board defects; all eight D FAILs pass for the right reason; the fw v26 clamp calibrated;
   the one FAIL is the clamp's real step-transient limit on a stimulus that stepped two axes at once
   (scenario gap, fixed in `885b436`).
-- **Campaign F** (launched 06:37 from `885b436`; folder `HIL Results/hil_report_20260903_063659`; log
-  `scratchpad/campaign_F_20260903.log`): the bridged sweep, the cruise step pins, the first live
-  `ems-mpc-single`, `regen_early_releases` finally recorded. If it is still running when you read this,
-  leave it; its analysis is not done — run the tool pass and the `hil-agent-analysis` skill on it.
+- **Campaign F** `HIL Results/hil_report_20260903_063659` (06:37–08:19, tooling 885b436): 73 of 73
+  executed runs correct, zero board defects. The bridged sweep scored all 12 regions (five clamping
+  regions at 1.2500 ± 0.0004 A, whole-run peak 1.2978 A); the MPC single-source enumeration executed
+  22 battery-only cuts through the guard (deferral 24–45 ms on loaded cuts, firing at 0.44–0.50 A) with
+  clean restores — and reads 0.18 % WORSE in eq-H2 than the same MPC without 0/1 (walk said 0.04 %
+  better). One FAIL: two region-12 MDAC model-fidelity pins (the governor model's code mapping is
+  exact only at share 0.84). Analysis done; ledger + digest in the folder. Budget 3 of 5; STOPPED
+  after F (clean; a fourth campaign would add repeat datapoints only).
 
 Commits (all pushed to origin main): `c8b50ff` fw v26 tools mirror; `d941170` post-D fix round;
 `5e2e3fd` conventions; `7de3f11` + merge `4887bd3` MPC single-source; `885b436` post-E fix round +
@@ -1234,3 +1238,23 @@ judgment call had a measurement behind it), 3 campaigns totalling ~5 h of board 
 7 commits. Board time was the bottleneck again; the two wall-clock wins were the worktree isolation
 (a tooling round per campaign) and live per-run classification (the fix round was ready when the
 campaign ended). The one loss was ~45 minutes to the API outage on the last review.
+- **Campaign F done: hil_report_20260903_063659 - 73/74 (drive SKIP), wall 1:41:35.** The bridged
+  sweep SURVIVED fault-free (faults none; all five clamping regions at the ceiling; regions 6-12
+  scored for the first time) and fails only two region-12 MODEL-FIDELITY MDAC pins by ~1 % of the
+  12-bit code (5378 vs <= 5364; 5259 vs >= 5269) - a first-execution re-pin, not a defect.
+  fw26-clamp-cruise PASS incl. the two new step pins. **ems-mpc-single PASS on its first execution:
+  h2 0.004896 g inside the walk band [0.003577, 0.005962] (walk 0.004770), the single-source command
+  was issued at least once (informational marker true), faults none.** All six frontiers PASS
+  (cycle61 0.9638 / 1.0018; ftp75 0.9650 / 0.9990; cycle61-mpc 0.9658 / 1.0038; ftp75-mpc 0.9643 /
+  0.9982; ftp75c 1.0091 / 1.0077; ftp75c-mpc 0.9928 / 0.9914). Tool pass running; one consolidated
+  Opus agent follows (sweep regions, mpc-single first execution, repeatability vs E,
+  regen_early_releases). Budget: 3 of 5 used; stopping after F (clean, and a fourth campaign would
+  add repeat datapoints only).
+- **Campaign F analysed (Opus): 73/73 correct, 0 board defects; ledger FINAL SUMMARY + HIL_SUMMARY.md
+  written; EMS commentary written; ems-mpc-single matched-DP solved (+0.17 %). Findings queued in
+  WORK_QUEUE section 7b: F1 MED governor_model MDAC mapping accurate only at share 0.84 (0 % at 0.84,
+  +3.1 % at 0.50, +10.4 % at 0.20; delivered currents match to 0.07 %); F2 MED the single-source walk
+  does not model the 24-45 ms cut deferral (+0.22 pp eq-H2 divergence); F3 MED the 68 s bridge clears
+  by margin (total still climbing at the share step); F4 LOW the settling metric is cadence-phased;
+  F5-F10 LOW. **Stop decision: three campaigns of five; F was clean and every open item is a tooling
+  re-derivation, not a board question.** Final commit follows.

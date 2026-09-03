@@ -777,7 +777,23 @@ campaign-E fix round (last commit of the session; hash in the log).
   not comparable between a post-flash campaign and a chained one (499 ticks in State 99).
 - **Tests at close:** `.venv_hil` **2178 passed / 80 skipped**; miniforge **2877 passed / 1 skipped**
   (one known wall-clock flake under load). Firmware suites untouched — fw v26's 3926 / 175 / 4408 stand.
-- **Campaign budget: 2 of 5 used at the time of writing** (F, if launched, is the third: the bridged
-  sweep, the cruise step pins and the first live `ems-mpc-single`). The physics review of
-  `docs/HIL_PLANT.md` (run 002: bleed, loss map, regen model, the estimator's physical option) was
-  deliberately not run overnight (host load during campaigns) and is queued.
+- **Campaign F (`hil_report_20260903_063659`, tooling 885b436, 74 planned, 73 executed; suite 73/74;
+  wall 1:41:35): 73 of 73 correct, zero board defects.** The bridged sweep scored all 12 regions with no
+  OC_FC: five clamping regions at **1.2500 ± 0.0004 A, duty 1.0000**, seven inert regions at zero aux,
+  whole-run peak 1.2978 A (7.3 % under the limit) at the region the walk named; the 38 s bridge is a
+  clean clamp event (1.2646 A on the velocity step, 1.2503 A on the deferred share step); the 68 s bridge
+  clears by margin (total still climbing at the share step; 1.2586 A). One FAIL: two region-12 MDAC
+  model-fidelity pins — `governor_model`'s code mapping is exact only at share 0.84 (+3.1 % at 0.50,
+  +10.4 % at 0.20) while delivered currents match to 0.07 % (re-derivation queued). **`ems-mpc-single`
+  first execution: the board executed 22 battery-only (share 0.0) commands through the fw v25 guard —
+  loaded cuts deferred 24–45 ms and fired at 0.44–0.50 A, 21 clean restores, no fault, no ring — the
+  "delay, not verdict" finding measured; eq-H2 +0.18 % WORSE than `ems-mpc` on the identical stimulus
+  (walk −0.04 %): the surrogate does not model the deferral; a wash, not a win.** `regen_early_releases`
+  reads 2 on all ftp75c legs; cruise step pins 1.2502 A on two campaigns; cost 0.0360 moved MPC medians
+  +40–60 % with 0 cap hits and moved the mpc-sto plan +0.2 % eq-H2 inside the tie band. Third bleed-era
+  reading: scp-inrush cut bit-exact to 16 digits (three campaigns), 33 of 45 shared runs within ±500 ppm,
+  levers L_share 0.416271 / L_chg 0.338414 (the noisier lever, 2.1 % spread over C–F), sdp_policy_v4 the
+  eq-H2 winner a fifth time; TP0053's ERROR latch is bimodal (quote the UV_BUS instant).
+- **Campaign budget: 3 of 5 used; stopped after F** (clean; every open item is a tooling re-derivation).
+  The physics review of `docs/HIL_PLANT.md` (run 002: bleed, loss map, regen model, the estimator's
+  physical option) was deliberately not run overnight (host load during campaigns) and is queued.

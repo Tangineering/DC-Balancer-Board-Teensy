@@ -16,14 +16,16 @@ that need a decision or a read:
    §8.6. **Decision:** whether an EMS-side rule ("no upward share step in the same decision as an
    upward demand step above 1.65 A") goes into the MPC stage model now (queued in §7) — the
    firmware closure (α ≥ 0.25 or slew ≤ 0.0027/tick) was NOT proposed, per the design-intent ruling.
-2. **The sweep scenario is now bridged** (velocity first, share 1.5 s later at the two both-axes
-   boundaries); its first execution is campaign F if it ran, else the next campaign. The joint-
+2. **The sweep scenario is now bridged and MEASURED (campaign F):** all 12 regions scored, no OC_FC,
+   five clamping regions at 1.2500 ± 0.0004 A; the 68 s bridge clears by margin only (§7b F3). The joint-
    transient leg design (1.65 A step, walked peak 1.3303 A) is recorded in §8.6.5 and needs a stepped
    aux-load branch — approve or drop.
 3. **MPC single-source (0/1) enumeration shipped** (`4887bd3`): the board executes exact 0/1 through
    the existing packet; admissibility by a rollout of the real governor; the gain is **0.01–0.43 %
    of equivalent hydrogen** (a control-set completeness change, not a performance one).
-   `ems-mpc-single` is in the default plan; its first live reading is campaign F or the next.
+   `ems-mpc-single` ran in campaign F: 22 battery-only cuts executed cleanly through the guard
+   (deferral 24–45 ms), but eq-H2 +0.18 % WORSE than the same MPC without 0/1 (walk −0.04 %): the
+   walk does not model the deferral (§7b F2). A wash, not a win, until re-derived.
    Finding to read: the share-cut load guard never refuses permanently above 0.6 A total (the
    deferral walks the doomed channel down — a delay, not a verdict), contrary to the design record's
    resolution 1.
@@ -482,7 +484,22 @@ sim-only strategies.
   tuple is an import-time snapshot while mpc/walk resolve at use; `gen_dp_ems_table.py` prints a
   full summary at exit 2 when refusing to overwrite; the known wall-clock flakes
   (`test_the_search_width_reads_no_clock`, `test_transition_roll_slices_and_completes`).
-- **`share_cut_census` is a spread (118–157) not a pin**; TP0053's latch instant marginal to one tick.
+- **`share_cut_census` is a spread (118–157) not a pin**; TP0053's ERROR latch is bimodal (quote the
+  UV_BUS first-detection instant, stable to 0.4 ms).
+- **Campaign F findings (2026-09-03 08:19):** F1 MED `governor_model`'s MDAC code mapping is exact only
+  at commanded share 0.84 (`mdac_fc` +1.3 % at 0.84 loaded, +3.1 % at 0.50, +5.0 % at 0.40, +10.4 % at
+  0.20; `mdac_bt` −2.2 to −3.4 %) while delivered currents match to 0.07 % — re-derive across the band,
+  then re-pin sweep region 12 (`mdac_fc` 5377–5378 / `mdac_bt` 5259–5260) and add pins to region 10.
+  F2 MED the single-source surrogate credits the 0/1 stage at its command instant; the board defers the
+  cut 24–45 ms on loaded commits (fires at 0.44–0.50 A) — model the deferral before the leg ranks
+  anything; keep its h2 band informational. F3 MED the 1.5 s bridge at region 10 → 11 covers the drive
+  rail but not the settling tail (total 1.61 → 1.81 A still climbing at the share step; peak 1.2586 A,
+  9.4 % margin) — extend to ~2.5 s there or record the margin. F4 LOW `ceiling_step_settling` measures
+  Pi-cadence phase (aux rise 3.3–15.8 ms after the command); re-reference to the command instant
+  (40.9 / 38.3 ms). F5 LOW `CANDIDATE_COST_MS_NOMINAL` 0.0360 under-reads on two legs (seen
+  0.0268–0.0380): per-leg cost or stop re-tuning. F6 LOW `ems-mpc-single` ends Run with FC_BUS open
+  (document). F8 LOW `ems-sdp-braking` h2 +1.0 % on an unchanged stimulus (eq-H2 +0.15 %). F10 LOW
+  L_chg spread 2.1 % over four campaigns (0.3313 / 0.3318 / 0.3333 / 0.3384).
 
 ## Shipped 2026-09-02 (overnight)
 
