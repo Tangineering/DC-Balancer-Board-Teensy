@@ -349,6 +349,57 @@ D13. THE CHARGER HAS TWO ERAS, AND EVERY LEVER NUMBER ABOVE BELONGS TO ONE
     post-2026-09-01 campaign; until then no alpha decision may rest on the
     projected measured pair alone.
 
+D14. THE MEASURED LEVERS ARE NOW A FIRST-CLASS ALPHA SOURCE
+    (2026-09-03, operator ruling item 3, and it CLOSES D13's TODO(verify)).
+    The charge lever has been re-measured on the eta-era plant FIVE times
+    (EMS_LEVER_ETA_READINGS).  The projection D13 warned about is refuted by
+    every one of them: the charger is still the WORSE lever (mean 0.333711
+    against a share lever of 0.416529), so the model's ORDERING stands and the
+    measured pair is no longer undecidable.  `--alpha-mode lever-measured`
+    therefore applies D12's geometric-mean placement to the MEASURED pair
+    instead of the modelled one:
+
+        alpha = (1 - gamma) / sqrt(L_share_meas * L_chg_meas)
+              = 0.05 / sqrt(0.4165286 * 0.3337114)
+              = 0.134110280093
+
+    and the artifact records the readings, the estimator, the real measured
+    window (0.120040, 0.149830) and `in_window_measured` true.  The mode takes
+    `--lever-share` / `--lever-chg` / `--lever-source` so a sixth reading needs
+    no code change.
+
+    ⚠️ THE MODEL WINDOW REJECTS THAT ALPHA, AND THAT IS THE WHOLE FINDING.  The
+    modelled charge lever is eta_chg * L_share = 0.396396 (D13's exact
+    identity), so the MODEL window is (0.111000, 0.126136) and 0.134110 sits
+    6.3 % ABOVE its upper edge.  The two windows overlap only on
+    (0.120040, 0.126136).  The disagreement is not a rounding matter: the board
+    measures the end-to-end charge round trip at L_chg/L_share = 0.801173,
+    where the model asserts ETA_CHG 0.88 - a 9.0 % optimism in the charger, the
+    bus sag billed to the charge leg that the block above already identified.
+
+    THE CONSEQUENCE, MEASURED NOT ARGUED.  The stage cost is built from the
+    MODEL constants (build_stage bills a charge stage at V_pack/eta_chg), so an
+    alpha priced on the measured pair and solved against the model pair prices
+    SoC ABOVE the model's charge lever: charging is ADMITTED, in 558 of 2525
+    cells.  That is the same class of incoherence as D12's defect, arrived at
+    from the other side - there the alpha came from a derivation the charge
+    action was never checked against, here it comes from a lever pair the
+    SOLVE does not use.  Two coherent resolutions exist and the choice is the
+    operator's, not this file's:
+      (i)  solve at the MEASURED round trip, --eta-chg 0.801173.  alpha
+           0.134110 then lies inside BOTH windows (model becomes
+           (0.111000, 0.138547)) and the charge map is EMPTY again - verified
+           by solve, 0 cells.  Cost: the artifact's `charger.eta_chg` no longer
+           equals the plant's hil_electrical.ETA_CHG, so every run prints
+           SdpStrategy's CHARGER-ERA MISMATCH banner.
+      (ii) accept the charge admission as the measured economics' verdict.
+           Cost: five campaigns measure the charge leg 3.4-4.1 % WORSE in
+           equivalent hydrogen than the charge-free calibration, so this
+           knowingly demotes the benchmark.
+    Until that ruling, `sdp_policy_v5.json` ships as a REGISTERED,
+    NON-frontier artifact and `sdp_policy_v4.json` remains the frontier leg;
+    see docs/modeling/sdp_alpha_resolve_20260903.md.
+
 ============================================================================
 WHAT THIS MODEL DOES NOT CONTAIN
 ============================================================================
@@ -390,6 +441,12 @@ Usage:
         --alpha-mode lever       --out <path> --force   # alpha 0.1183264, 0 charge cells
     C:/Users/ricky/miniforge3/python.exe tools/sdp_ems_solver.py \
         --alpha-mode charge-edge --out <path> --force   # alpha 0.1262625, 540 charge cells
+    # the MEASURED-LEVER re-solve, sdp_policy_v5.json (D14).  --allow-out-of-
+    # window is REQUIRED and is not a formality: the model window rejects this
+    # alpha and the artifact charges in 558 cells.  Read D14.
+    C:/Users/ricky/miniforge3/python.exe tools/sdp_ems_solver.py \
+        --eta-chg 0.88 --alpha-mode lever-measured --allow-out-of-window \
+        --out tools/sdp_policies/sdp_policy_v5.json --force
     # reproduce v2's economics (the shipped-and-corrected alpha, D12); the
     # window assert refuses it without the explicit override:
     C:/Users/ricky/miniforge3/python.exe tools/sdp_ems_solver.py \
@@ -625,6 +682,42 @@ EMS_LEVER_SHARE_ETA_SOC_PER_G = 0.41688
 EMS_LEVER_CHARGE_ETA_SOC_PER_G = 0.33214
 EMS_LEVERS_ETA_SOURCE = ("campaign hil_report_20260902_011926, alpha-sweep legs "
                          "greedy/cal/charge (ETA_CHG 0.88, zero preload)")
+
+# ── D14.  THE FIVE ETA-ERA LEVER READINGS, AND THE RE-SOLVE THEY LICENSE ────
+# (2026-09-03, operator ruling item 3: "alpha re-solve: APPROVED on the
+# measured levers (five readings, alpha ~ 0.134); supersedes 'alpha stays v4'".)
+#
+# The block above holds ONE reading and says to hold it for a second.  There
+# are now FIVE, each taken by the same alpha-sweep construction (the `cal` and
+# `charge` legs command an identical constant share, so their difference is
+# purely the charge windows; `cal` minus `greedy` is purely the share lever) on
+# the same 61 s stimulus.  They are recorded here as a table rather than as two
+# scalars, because the SPREAD is the finding: the share lever is repeatable to
+# 150 ppm across five campaigns and the charge lever is not (2.1 % over C-F).
+#
+#   campaign                    L_share      L_chg
+EMS_LEVER_ETA_READINGS = (
+    ("hil_report_20260902_011926", 0.41688,  0.33214),    # B
+    ("hil_report_20260902_041414", 0.416896, 0.331758),   # C
+    ("hil_report_20260902_220604", 0.416279, 0.332947),   # D
+    ("hil_report_20260903_031220", 0.416317, 0.333298),   # E
+    ("hil_report_20260903_063659", 0.416271, 0.338414),   # F
+)
+# THE ESTIMATOR IS THE UNWEIGHTED MEAN of the five readings, and it is stated
+# rather than fitted: each reading is one campaign's marginal rate on the same
+# stimulus, the readings carry no per-campaign uncertainty estimate that would
+# justify a weighting, and a median would discard the only reading (F) that
+# carries the charge lever's drift.  Deriving the constants from the table
+# means a sixth reading is one row, not three edits.
+EMS_LEVER_SHARE_ETA_MEAN_SOC_PER_G = (
+    sum(r[1] for r in EMS_LEVER_ETA_READINGS) / len(EMS_LEVER_ETA_READINGS))
+EMS_LEVER_CHARGE_ETA_MEAN_SOC_PER_G = (
+    sum(r[2] for r in EMS_LEVER_ETA_READINGS) / len(EMS_LEVER_ETA_READINGS))
+EMS_LEVERS_ETA_MEAN_SOURCE = (
+    "unweighted mean of %d eta-era campaign lever readings (%s), "
+    "alpha-sweep legs greedy/cal/charge at ETA_CHG 0.88, zero preload"
+    % (len(EMS_LEVER_ETA_READINGS),
+       ", ".join(r[0].replace("hil_report_", "") for r in EMS_LEVER_ETA_READINGS)))
 
 # Full-size reference numbers, used ONLY by the alpha derivation below.
 # SDP_EnergyManagement2.m:8-10, :16.
@@ -1307,7 +1400,8 @@ def main(argv=None):
                          "(a delivered amp costs a BUS amp). Required to "
                          "reproduce any artifact baked before 2026-09-01.")
     ap.add_argument("--alpha-mode", default="lever",
-                    choices=["lever", "charge-edge", "marginal", "level"],
+                    choices=["lever", "lever-measured", "charge-edge",
+                             "marginal", "level"],
                     help="how alpha is derived (default lever - D12's "
                          "two-sided lever calibration, the SHIPPED value). "
                          "'charge-edge' (D13) places alpha just inside the "
@@ -1318,7 +1412,25 @@ def main(argv=None):
                          "lever; needs --allow-out-of-window). 'level' "
                          "reproduces the REJECTED power-span scaling, which "
                          "collapses the policy to pure hydrogen greed - kept "
-                         "for inspection only.")
+                         "for inspection only. 'lever-measured' (D14) is "
+                         "'lever' applied to the MEASURED lever pair "
+                         "(--lever-share / --lever-chg) instead of the "
+                         "modelled one.")
+    ap.add_argument("--lever-share", type=float, default=None,
+                    help="MEASURED share lever in SoC per gram, for "
+                         "--alpha-mode lever-measured (default %.9g, the mean "
+                         "of the %d eta-era campaign readings in "
+                         "EMS_LEVER_ETA_READINGS)"
+                         % (EMS_LEVER_SHARE_ETA_MEAN_SOC_PER_G,
+                            len(EMS_LEVER_ETA_READINGS)))
+    ap.add_argument("--lever-chg", type=float, default=None,
+                    help="MEASURED charge lever in SoC per gram, for "
+                         "--alpha-mode lever-measured (default %.9g, same "
+                         "estimator)" % EMS_LEVER_CHARGE_ETA_MEAN_SOC_PER_G)
+    ap.add_argument("--lever-source", default=None,
+                    help="provenance string recorded beside the measured "
+                         "levers in the artifact (default: the estimator and "
+                         "the campaigns it averages)")
     ap.add_argument("--allow-out-of-window", action="store_true",
                     help="permit an alpha OUTSIDE the lever admission windows "
                          "(D12). Required to reproduce v1/v2's economics; "
@@ -1370,6 +1482,20 @@ def main(argv=None):
                  "(1-gamma)/alpha is undefined at 0)")
     if not 0.0 < args.charge_quantile <= 1.0:
         ap.error("--charge-quantile must be in (0, 1]")
+    # D14.  The measured-lever knobs belong to ONE mode.  Accepting them
+    # silently under `lever` would let a caller believe the measured pair
+    # priced an artifact that was priced from the model constants.
+    for _flag, _val in (("--lever-share", args.lever_share),
+                        ("--lever-chg", args.lever_chg),
+                        ("--lever-source", args.lever_source)):
+        if _val is not None and args.alpha_mode != "lever-measured":
+            ap.error("%s applies only to --alpha-mode lever-measured (got %r)"
+                     % (_flag, args.alpha_mode))
+    for _flag, _val in (("--lever-share", args.lever_share),
+                        ("--lever-chg", args.lever_chg)):
+        if _val is not None and _val <= 0.0:
+            ap.error("%s must be > 0 (a lever is SoC gained per gram of "
+                     "hydrogen; its admission bound is undefined at 0)" % _flag)
     # D13.  --eta-chg-none is not "--eta-chg 1.0": the old era bills at the
     # BUS voltage and eta = 1.0 would bill at the PACK voltage, which is a
     # third model neither plant ever implemented.  Hence a flag, not a value.
@@ -1444,7 +1570,33 @@ def main(argv=None):
     one_minus_gamma = 1.0 - gamma
     l_share, l_chg = model_levers(capacity_ah=args.capacity_ah,
                                   eta_chg=args.eta_chg)
-    l_share_meas, l_chg_meas = measured_levers(args.eta_chg)
+    # ── WHICH MEASURED PAIR (D14) ───────────────────────────────────────────
+    # Every historical mode reads the OLD-ERA pair, PROJECTED onto the era
+    # being solved (measured_levers()'s default) - unchanged, so every shipped
+    # artifact regenerates bit-for-bit in its policy block.  `lever-measured`
+    # reads the ETA-ERA readings themselves, which is the whole point of the
+    # mode: the projection was refuted by all five of them.
+    if args.alpha_mode == "lever-measured":
+        try:
+            l_share_meas, l_chg_meas = measured_levers(
+                args.eta_chg,
+                share=(EMS_LEVER_SHARE_ETA_MEAN_SOC_PER_G
+                       if args.lever_share is None else args.lever_share),
+                charge=(EMS_LEVER_CHARGE_ETA_MEAN_SOC_PER_G
+                        if args.lever_chg is None else args.lever_chg),
+                use_measured_eta=True)
+        except ValueError as exc:
+            ap.error(str(exc))
+        meas_is_projection = False
+        meas_source = (args.lever_source if args.lever_source
+                       else EMS_LEVERS_ETA_MEAN_SOURCE)
+    else:
+        l_share_meas, l_chg_meas = measured_levers(args.eta_chg)
+        meas_is_projection = args.eta_chg is not None
+        meas_source = ("share 0.409-0.415 on two stimuli, campaign "
+                       "hil_report_20260831_191509; charge C1->C2 marginal "
+                       "accounting, campaigns 20260831_222036 / "
+                       "20260901_000816")
 
     # The REQUIRED window depends on what the alpha mode is trying to do
     # (D13): `lever` admits the better lever and rejects the worse, so its
@@ -1465,6 +1617,12 @@ def main(argv=None):
     alpha_two_sided = (alpha_lever(one_minus_gamma, l_share, l_chg)
                        if l_share > l_chg else float("nan"))
     alpha_edge = alpha_charge_edge(one_minus_gamma, l_share, l_chg)
+    # D14.  The same geometric-mean placement, on the MEASURED pair.  NaN when
+    # the measured pair does not order (the projected old-era pair does not, in
+    # the eta era), exactly as `alpha_two_sided` is NaN in that case.
+    alpha_two_sided_meas = (
+        alpha_lever(one_minus_gamma, l_share_meas, l_chg_meas)
+        if l_share_meas > l_chg_meas else float("nan"))
     if args.alpha is not None:
         alpha = float(args.alpha)
         alpha_mode_used = "explicit"
@@ -1487,6 +1645,35 @@ def main(argv=None):
                            % (alpha_marginal / one_minus_gamma,
                               one_minus_gamma / alpha_marginal, l_chg,
                               ALPHA_DERIVATION))
+    elif args.alpha_mode == "lever-measured":
+        alpha = alpha_two_sided_meas
+        alpha_mode_used = "lever-measured"
+        alpha_rationale = ("--alpha-mode lever-measured (D14): D12's "
+                           "geometric-mean placement applied to the MEASURED "
+                           "lever pair - share %.6f, charge %.6f SoC/g, "
+                           "admission bound %.6f SoC/g (era: %s). Source: %s. "
+                           "The MODELLED pair (share %.6f, charge %.6f) gives "
+                           "a window of (%.6f, %.6f), which this alpha is %s; "
+                           "read D14 before treating that as a defect or as a "
+                           "pass.\n\n%s"
+                           % (l_share_meas, l_chg_meas,
+                              one_minus_gamma / alpha
+                              if alpha == alpha else float("nan"),
+                              era_label(args.eta_chg), meas_source,
+                              l_share, l_chg,
+                              one_minus_gamma / l_share,
+                              one_minus_gamma / l_chg,
+                              "INSIDE"
+                              if (one_minus_gamma / l_share) < alpha
+                              < (one_minus_gamma / l_chg) else "OUTSIDE",
+                              ALPHA_DERIVATION))
+        if not (alpha == alpha):        # NaN: the measured levers do not order
+            print("[sdp] REFUSING to solve: --alpha-mode lever-measured needs "
+                  "the MEASURED share lever to BEAT the MEASURED charge lever, "
+                  "and it does not (share %.6f, charge %.6f). Pass "
+                  "--lever-share / --lever-chg, or use --alpha-mode lever."
+                  % (l_share_meas, l_chg_meas), file=sys.stderr)
+            return 2
     elif args.alpha_mode == "charge-edge":
         alpha = alpha_edge
         alpha_mode_used = "charge-edge"
@@ -1558,10 +1745,20 @@ def main(argv=None):
             "%.4f measured.\n"
             "[sdp]   This is the tripwire that would have caught "
             "sdp_policy_v2.json. Use --alpha-mode lever, or pass "
-            "--allow-out-of-window to reproduce a historical artifact."
+            "--allow-out-of-window to reproduce a historical artifact.%s"
             % (alpha, alpha_mode_used, " and ".join(which),
                "" if len(which) == 1 else "s", one_minus_gamma / alpha,
-               l_share, l_share_meas, l_chg, l_chg_meas),
+               l_share, l_share_meas, l_chg, l_chg_meas,
+               ("\n[sdp]   MODE lever-measured (D14): the MODEL and MEASURED "
+                "pairs disagree about the charger, so the two windows need "
+                "not overlap at the measured geometric mean. The coherent "
+                "resolutions are --eta-chg %.6f (the MEASURED end-to-end "
+                "round trip L_chg/L_share, under which both windows contain "
+                "this alpha) or --allow-out-of-window to ship the measured "
+                "economics as they stand. Read D14 first: the second one "
+                "ADMITS the charge action."
+                % (l_chg_meas / l_share_meas))
+               if alpha_mode_used == "lever-measured" else ""),
             file=sys.stderr)
         return 2
 
@@ -1611,14 +1808,21 @@ def main(argv=None):
           "marginal %.12g, level %.12g)"
           % (alpha, alpha_mode_used, alpha_two_sided, alpha_edge,
              alpha_marginal, alpha_level))
+    if alpha_mode_used == "lever-measured":
+        print("[sdp] measured levers (D14): share %.9g, charge %.9g SoC/g "
+              "(ratio %.6f = the board's end-to-end charge round trip against "
+              "the model's eta_chg %s)"
+              % (l_share_meas, l_chg_meas, l_chg_meas / l_share_meas,
+                 "None" if args.eta_chg is None else "%.6g" % args.eta_chg))
+        print("[sdp]   source: %s" % meas_source)
     # ── D12 acceptance report: the lever economics this alpha implies ────────
     bound = one_minus_gamma / alpha
     print("[sdp] levers (SoC/g): share %.6f model / %.6f measured; "
           "charge %.6f model / %.6f measured%s"
           % (l_share, l_share_meas, l_chg, l_chg_meas,
-             "" if args.eta_chg is None
-             else "  (the measured charge lever is an OLD-ERA measurement "
-                  "PROJECTED onto this era - see measured_levers())"))
+             "  (the measured charge lever is an OLD-ERA measurement "
+             "PROJECTED onto this era - see measured_levers())"
+             if meas_is_projection else ""))
     print("[sdp] shadow price alpha/(1-gamma) = %.6f g/SoC -> admission "
           "threshold (1-gamma)/alpha = %.6f SoC/g" % (alpha / one_minus_gamma,
                                                       bound))
@@ -1643,10 +1847,20 @@ def main(argv=None):
               "reading the first new-era campaign has to settle."
               % (" and ".join(undecidable), win_intent), file=sys.stderr)
     if not checked_ok:
-        print("[sdp] WARNING: alpha is OUT of a lever admission window and "
-              "--allow-out-of-window was given - this artifact reproduces a "
-              "historical economics, it is not the shipped calibration (D12).",
-              file=sys.stderr)
+        if alpha_mode_used == "lever-measured":
+            print("[sdp] WARNING: alpha is OUT of the MODEL lever admission "
+                  "window and --allow-out-of-window was given. This is D14's "
+                  "stated disagreement, not a historical reproduction: alpha "
+                  "was priced on the MEASURED pair and the stage cost bills "
+                  "the charger at the MODEL pair, so the charge action is "
+                  "admitted by construction. Check the charge-cell count "
+                  "below before shipping this artifact anywhere.",
+                  file=sys.stderr)
+        else:
+            print("[sdp] WARNING: alpha is OUT of a lever admission window and "
+                  "--allow-out-of-window was given - this artifact reproduces "
+                  "a historical economics, it is not the shipped calibration "
+                  "(D12).", file=sys.stderr)
     if args.forbid_charge:
         print("[sdp] --forbid-charge: the charge action is MASKED in all %d "
               "bins (not the shipped mechanism - see D12)" % n_bin)
@@ -1776,12 +1990,9 @@ def main(argv=None):
                 "charge_model": float(l_chg),
                 "share_measured": float(l_share_meas),
                 "charge_measured": float(l_chg_meas),
-                "charge_measured_is_projection": bool(args.eta_chg is not None),
+                "charge_measured_is_projection": bool(meas_is_projection),
                 "charge_measured_as_measured": EMS_LEVER_CHARGE_SOC_PER_G,
-                "measured_source":
-                    "share 0.409-0.415 on two stimuli, campaign "
-                    "hil_report_20260831_191509; charge C1->C2 marginal "
-                    "accounting, campaigns 20260831_222036 / 20260901_000816",
+                "measured_source": meas_source,
             },
             "admission": {
                 "shadow_price_g_per_soc": float(alpha / one_minus_gamma),
@@ -1840,6 +2051,33 @@ def main(argv=None):
             "charge_goal": [[float(v) for v in row] for row in pol_charge],
         },
     }
+    # ── D14 EXTRAS, ADDED ONLY IN `lever-measured` MODE ─────────────────────
+    # Conditional, not unconditional-with-a-default: every artifact solved in
+    # another mode keeps the alpha block SHAPE it shipped with, so a v1..v4
+    # regeneration differs from its shipped file in nothing but
+    # `generated_utc`.  A reader of a lever-measured artifact gets the readings
+    # the estimator averaged, which is the only way to audit the alpha without
+    # this file's constants.
+    if alpha_mode_used == "lever-measured":
+        meta["alpha"]["candidates"]["lever_measured"] = float(alpha)
+        if args.lever_share is None and args.lever_chg is None:
+            # The built-in table IS the pair that was averaged, so it can be
+            # published as the audit trail.  Under an explicit --lever-* it is
+            # NOT, and publishing it would claim a provenance the numbers do
+            # not have; `measured_source` carries the caller's own instead.
+            meta["alpha"]["levers_soc_per_g"]["measured_estimator"] = (
+                "unweighted mean of the readings below")
+            meta["alpha"]["levers_soc_per_g"]["measured_readings"] = [
+                {"campaign": c, "share_soc_per_g": s, "charge_soc_per_g": g}
+                for c, s, g in EMS_LEVER_ETA_READINGS]
+        else:
+            meta["alpha"]["levers_soc_per_g"]["measured_estimator"] = (
+                "explicit --lever-share / --lever-chg; see measured_source")
+        meta["alpha"]["levers_soc_per_g"]["measured_round_trip"] = float(
+            l_chg_meas / l_share_meas)
+        meta["alpha"]["admission"]["model_window_disagrees"] = bool(
+            win_model is not None and not in_model)
+
     obj = render_policy_json(args, meta)
 
     if args.dry_run:

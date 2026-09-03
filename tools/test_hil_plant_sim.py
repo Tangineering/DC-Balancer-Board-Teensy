@@ -7275,9 +7275,11 @@ def test_frontier_roles_are_the_ruled_ones():
 def test_sdp_instances_bind_their_own_artifacts_and_certificate_flags():
     v2, v3 = hil.EMS_STRATEGIES["sdp-v2"], hil.EMS_STRATEGIES["sdp-v3"]
     v4, sweep = hil.EMS_STRATEGIES["sdp-v4"], hil.EMS_STRATEGIES["sdp-sweep"]
+    v5 = hil.EMS_STRATEGIES["sdp-v5"]
     assert (v2.name, v2.policy_file) == ("sdp-v2", hil.SDP_POLICY_FILE_V2)
     assert (v3.name, v3.policy_file) == ("sdp-v3", hil.SDP_POLICY_FILE_V3)
     assert (v4.name, v4.policy_file) == ("sdp-v4", hil.SDP_POLICY_FILE_V4)
+    assert (v5.name, v5.policy_file) == ("sdp-v5", hil.SDP_POLICY_FILE_V5)
     # The scenario-supplied role has NO artifact of its own -- a sentinel, not
     # a path, so it can never silently load a default.
     assert (sweep.name, sweep.policy_file) == ("sdp-sweep",
@@ -7286,10 +7288,13 @@ def test_sdp_instances_bind_their_own_artifacts_and_certificate_flags():
     # comparability leg must not claim it (the import assert ties the flag to
     # `frontier_eligible`, and this is the same property re-derived).
     assert v4.require_calibrated_benchmark is True
-    for demoted in (v2, v3, sweep):
+    # `sdp-v5` (2026-09-03) is in this list on PURPOSE: the measured-lever
+    # artifact FAILS two certificate clauses, so demanding the certificate of
+    # it would make the strategy unloadable rather than merely unranked.
+    for demoted in (v2, v3, v5, sweep):
         assert demoted.require_calibrated_benchmark is False, demoted.name
     assert hil.SDP_STRATEGY_NAMES == frozenset({"sdp-v2", "sdp-v3", "sdp-v4",
-                                                "sdp-sweep"})
+                                                "sdp-v5", "sdp-sweep"})
 
 
 def test_shipped_v3_artifact_carries_the_calibrated_benchmark_certificate():
@@ -7461,6 +7466,86 @@ def test_shipped_v4_artifact_carries_the_certificate_under_the_era_allowance():
     assert "UNDECIDABLE" in waived[0] and "TODO(verify)" in waived[0]
     # ENDOGENOUS rejection, in the new era too.
     assert sum(1 for row in pol["charge_goal"] for v in row if v > 0.0) == 0
+
+
+def test_sdp_v4_v5_share_maps_agree_on_traversed_rows():
+    """THE 2026-09-03 MEASURED-LEVER RE-SOLVE, pinned in both directions.
+
+    Two claims, and they point opposite ways -- which is why the pin matters:
+
+      SHARE MAP   v4 and v5 differ on exactly THREE rows (3, 4, 5; SoC
+                  0.553-0.555), 56 cells of 2525, all 45-47 grid nodes BELOW
+                  the target node and outside every trajectory.  So the SHARE
+                  half of a walk-derived expectation would transfer verbatim.
+      CHARGE MAP  they differ on 47 rows and 558 cells, and FORTY of those rows
+                  lie INSIDE the same +-0.040 reachable band the v3/v4 pin
+                  uses.  v5 charges in every admissible bin (0-11) at every row
+                  strictly below the relative target.  So NO expectation that
+                  touches the charge path transfers, and `sdp-v5` may not be
+                  bound to a scenario in `sdp-v4`'s place.
+
+    A failure of the SHARE half means the two artifacts now differ where runs
+    go.  A failure of the CHARGE half means the charger disagreement D14
+    records has been resolved one way or the other -- and the registration and
+    the design note must be re-read before anything is rebound."""
+    v4 = hil.load_sdp_policy(
+        os.path.join(hil.SDP_POLICY_DIR, hil.SDP_POLICY_FILE_V4), "sdp-v4")
+    v5 = hil.load_sdp_policy(
+        os.path.join(hil.SDP_POLICY_DIR, hil.SDP_POLICY_FILE_V5), "sdp-v5")
+    assert (v4["n_soc"], v4["n_bins"]) == (v5["n_soc"], v5["n_bins"])
+    assert v4["soc_grid"] == v5["soc_grid"]
+    raw5 = v5["raw"]
+    assert raw5["alpha"]["mode"] == "lever-measured"
+    assert raw5["alpha"]["value"] == pytest.approx(0.134110280093, rel=1e-11)
+    # The measured window is REAL on this artifact -- the first one for which
+    # it is not null -- and the model window rejects it.  Both are the finding.
+    assert raw5["alpha"]["admission"]["in_window_measured"] is True
+    assert raw5["alpha"]["admission"]["in_window_model"] is False
+    assert raw5["alpha"]["admission"]["model_window_disagrees"] is True
+    assert raw5["alpha"]["levers_soc_per_g"][
+        "charge_measured_is_projection"] is False
+    assert len(raw5["alpha"]["levers_soc_per_g"]["measured_readings"]) == 5
+    # SHARE: the differing rows and their cell count.
+    differing = [i for i in range(v4["n_soc"])
+                 if v4["share"][i] != v5["share"][i]]
+    assert differing == [3, 4, 5], differing
+    n_cells = sum(1 for i in differing for j in range(v4["n_bins"])
+                  if v4["share"][i][j] != v5["share"][i][j])
+    assert n_cells == 56, n_cells
+    BAND = 0.040
+    grid = v5["soc_grid"]
+    reachable = [i for i in range(len(grid))
+                 if abs(grid[i] - v5["soc_target"]) <= BAND]
+    assert len(reachable) >= 40
+    assert all(i not in differing for i in reachable)
+    # CHARGE: v4 declines everywhere, v5 does not, and the difference is
+    # REACHABLE.  This is the clause that keeps v5 off every scenario.
+    assert not any(v > 0.0 for row in v4["charge_goal"] for v in row)
+    chg_rows = [i for i in range(v5["n_soc"])
+                if any(v > 0.0 for v in v5["charge_goal"][i])]
+    assert len(chg_rows) == 47 and chg_rows[0] == 3 and chg_rows[-1] == 49
+    assert sum(1 for row in v5["charge_goal"] for v in row if v > 0.0) == 558
+    assert len([i for i in chg_rows if i in reachable]) == 40
+
+
+def test_sdp_v5_is_registered_but_not_frontier_eligible():
+    """v5 is a REAL calibration that fails the frontier's certificate, so the
+    registration must say both things: present in EMS_STRATEGIES (it can be
+    run deliberately) and `frontier_eligible: False` with a role note (it is
+    never ranked beside `sdp-v4`).  Pinned because the failure mode is silent:
+    a True here would put a charge-admitting policy on the frontier."""
+    assert "sdp-v5" in hil.EMS_STRATEGIES
+    meta = hil.EMS_STRATEGY_META["sdp-v5"]
+    assert meta["policy_file"] == hil.SDP_POLICY_FILE_V5
+    assert meta["frontier_eligible"] is False
+    assert "MEASURED-LEVER" in meta["role_note"]
+    # v4 keeps the frontier role this round.
+    assert hil.EMS_STRATEGY_META["sdp-v4"]["frontier_eligible"] is True
+    # And the certificate would REFUSE v5 if anything ever demanded it.
+    pol = hil.load_sdp_policy(
+        os.path.join(hil.SDP_POLICY_DIR, hil.SDP_POLICY_FILE_V5), "sdp-v5")
+    with pytest.raises(ValueError):
+        hil.sdp_assert_calibrated_benchmark(pol, "sdp-v5")
 
 
 _DROP = object()
