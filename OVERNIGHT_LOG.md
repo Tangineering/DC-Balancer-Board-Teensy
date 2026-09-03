@@ -1055,3 +1055,53 @@ board per the operator.
   step at 1.84 A outruns it. Design intent (OC_FC is the feedback) - not a firmware defect; a
   scenario-design gap in the sweep (it STEPS the share where the ems-y legs interpolate). Tool pass
   running; per-run Opus agent on the sweep + a consolidated validation agent follow.
+- **MPC single-source fix round landed and MERGED (7de3f11 on the worktree branch; merge 4887bd3
+  on main; conventions leftovers 5e2e3fd).** MED-1 value-based seed snap (BT-only incumbent seeds
+  0.15, FC-only 0.85); MED-2 ems-mpc-single gets mpc_budget_ms 15 and an informational h2 band;
+  MED-3 the regen guard also reads the observed REGEN switch bit; MED-4 feature-off plan pinned by
+  sha over 3050 commands (identical to d941170); LOW-1 grid worst-case deferral **118 ticks**
+  (1.69x under the 200-tick window; 2 of 400 grid points refuse on the load guard at 0.60 A total,
+  so SS_REFUSE_CUT_LOAD is reachable); .gitattributes -text on the two generated profile modules.
+  **Incident:** main's working copy of tools/dp_results_db.py carried a duplicate --eta-chg argparse
+  registration of unknown provenance (CLI dead: "conflicting option string") - not in any commit;
+  restored to d941170's version (single-file checkout by the orchestrator). Worktree removed.
+- **Pushed 4887bd3 (MPC single-source merged); main suites 2165 / 80 and 2865 / 1 (the CRLF test
+  passes in the LF main tree).** Campaign E sweep analysis (Opus) in the E ledger: REAL, board correct,
+  scenario steps velocity AND share upward in one packet at region 5->6 (and 10->11); the clamp engaged
+  on the first tick, the slew limiter bounded the reference for 9 of 12 ticks, the 20 ms EMA under-read
+  the rising total by 25.6 % against a 12 % headroom (decomposition +0.4298 filter / -0.1910 plant lag =
+  +0.2388 A, closure 0.2 mA); neither axis alone latches; the cruise leg pins the clamp exact at a
+  settled total (1.2502 A, 35 ms, 0.016 % overshoot). Necessary condition for a share-step OC_FC is
+  I_tot > 1.647 A; no registered EMS stimulus exceeds 1.4714 A. Fix round dispatched (bridging
+  sub-regions >= 100 ms at both-axes boundaries, cruise step pins, optional joint-transient leg, the
+  race statement in the design record + MPC nonlinearities record).
+- **Campaign E validated (Opus): 72 of 72 executed runs correct, 0 board defects.** All eight D FAILs
+  closed by their fixes acting (estimator still emits the 20.014 V events, now non-load-dump; ftp75c
+  chopper 5.24-5.49 J scored; MPC band from the ladder; mppt cruise peak 18, zero frozen 27s). fw v26
+  clamp calibrated on the cruise leg (engagement +3.32 ms, duty 1.0000, I_fc 1.2499-1.2502 A, closure
+  <= 0.8 mA, 0 switch events). Two-level regen release: handoff windows 80-280 ms -> 18-20 ms (one
+  commander period), suppressed on the sdp leg. Frontiers all certified incl. ftp75c 1.0091 / 1.0076
+  and ftp75c-mpc 0.9931 / 0.9916. Anchors: scp-inrush bit-exact to 7 digits, five bit-exact, 30 of 43
+  within +/-250 ppm (floor ~65 ppm within / ~250 ppm across campaigns). Levers fourth reading
+  0.416317 / 0.333298; alpha 1.477 % below the window. New: regen_early_releases frozen at 0 in every
+  sidecar (HIGH, tooling); aux ceiling bits inherit through State 99 (window post-grace); steady's h2
+  not comparable across a re-flash. Add-ons sent to the running fix round; ems-ftp75c-dp /
+  ems-ftp75-mpc bounds solving. E ledger FINAL SUMMARY + HIL_SUMMARY.md written.
+- **Campaign-E fix round landed (Opus):** sweep bridged at both both-axes boundaries (velocity first,
+  share 1.5 s later - the drive rail lasts up to 1.08 s at region 11, so the brief's 100 ms was
+  necessary but not sufficient); walked peaks with the EMA-lag reconstruction 1.3114 A max bridged vs
+  1.7223 A unbridged (region 6), test asserts <= 1.35 A and that the unbridged table exceeds 1.40 A;
+  cruise pins ceiling_step_overshoot / ceiling_step_settling (new spec kind reach_within_ms referenced
+  to the aux rise); joint leg NOT shipped (1.55 A = CEIL + SHARE_MINORITY_I_MIN_A makes the minority
+  clip binding, 0 clamp ticks; a 1.65 A design is recorded for its own round); design record section
+  8.6 (race arithmetic); MPC nonlinearities hazard item (the stage model does NOT exclude the
+  combination - guard queued); A6 regen_early_releases refreshed in finalize_meta(); A7 no code
+  change (scan_signals drops pre-grace rows); A8 CANDIDATE_COST 0.0392 -> 0.0360 as the two-campaign
+  mean (rule change stated); A9/A10/A12 + re-pins. Suites 2178 / 80 and 2877 / 1. Review dispatched.
+- **Incident:** the campaign-E fix-round reviewer was killed twice by API 500s (once mid-run, once on
+  resume); its transcript could not be salvaged. A fresh, narrower reviewer was dispatched (stdlib
+  suite + the three changed numpy modules only, mutation on the bridge). Close-out documents drafted
+  meanwhile: CLAUDE.md rotated (2026-09-02 overnight addendum -> archive range 7; 78 -> 58 KB) with
+  the 2026-09-03 addendum appended; WORK_QUEUE.md section 0 rewritten for the morning, section 7b
+  opened, Shipped 2026-09-03 added; firmware-versions.md rows 25/26 marked FLASHED with the fw v26
+  calibration and step-transient limit.

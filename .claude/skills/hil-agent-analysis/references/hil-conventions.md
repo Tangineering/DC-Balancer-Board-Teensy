@@ -200,6 +200,21 @@ share that is bit-identical over 61 000 rows.
 
 ## Fault/scoring semantics (fw v22+ / tooling commit 7802466+)
 
+- ⚠️ **A CHECK THAT PASSES AFTER A STATE-99 LATCH IS NON-EVIDENCE.** This is the
+  trap campaign E set, and it caught the first analyst who read the run's verdict
+  table: `fw26-clamp-sweep` latched at t = 38.029 s, and **ten** of its later
+  checks then PASSED. Every one of them passed for the wrong reason. In State 99
+  the aux byte and the MDAC mirrors **FREEZE at their last pre-teardown value**
+  (`aux` 0x13 then 0x10 from t = 38.048 s to the end of the run; `mdac_fc`/
+  `mdac_bt` frozen at 5368 / 5268), so an `aux_bit` `min_ticks` check reads a
+  frozen bit as a held one and an MDAC pin reads a frozen word as a tracking
+  one; and the bus goes dark, so every `max_value` bound on a current passes at
+  0.0000 A. **Rule: after the latch instant, read only the fault bits, the
+  `error_code` and the switch teardown sequence. Treat every value and tick
+  verdict in the post-latch window as unscored, and say so in the ledger** --
+  `allow_only` fails the run once, and the remaining rows are consequences, not
+  independent confirmations.
+
 - `triggerFault()` always ORs FAULT_ERROR 0x8000; a bare latch is observed as
   0x8010-family, never 0x0010 alone. Fault bit values: read FAULT_NAMES in
   hil_replay_suite.py (OC_FC 0x0001, UV_BATT 0x0002, UV_BUS 0x0100, PI_TIMEOUT/HIL_LINK
@@ -223,6 +238,17 @@ share that is bit-identical over 61 000 rows.
   `CARRIED_IN_LATCH_MAX_S` in the tooling. The fw v22/v23 recovery warm-resets it at
   t ≈ 0.500 s (HIL_RECOVER_DEBOUNCE_MS after the run's frames start). Predecessor-clean
   → 0x8010; predecessor OC → 0x8011; predecessor INIT_FAIL → 0xA010; etc.
+  ⚠️ **THE AUX BYTE PARTICIPATES IN THE CARRIED-IN SIGNATURE TOO, INCLUDING
+  THE fw v26 CEILING BITS (campaign E, 2026-09-03).** `pi-silence` opened with
+  **499 FC-ceiling ticks at t = 0.0014 to 0.4994 s**, inherited from its
+  predecessor's latched State 99 and cleared by the warm reset at 0.5004 s -- the
+  predecessor was `fw26-clamp-sweep`, whose clamp bit froze SET when it latched.
+  The suite is structurally safe here (`scan_signals()` drops every row before
+  `WARM_RESET_GRACE_S` = 2.0 s, so no check can see them), but a hand census of
+  the `fc_ceil` / `bt_ceil` columns is not. **Read every aux bit post-grace, the
+  same way fault bits are read**, and never report a pre-grace aux tick as the
+  clamp having engaged on that run.
+
   ⚠️ **ML0217 IS A STANDING EXCEPTION TO THE NAIVE CHAIN AUDIT.** It carries
   `skip_preamble`, so it opens onto a DARK BUS and latches its OWN designed
   INIT_FAIL about 301 ms after State-0 entry (inside the [200, 450] ms band the
@@ -498,6 +524,17 @@ for f in *.meta.json; do grep -q '"results"' "$f" && ! grep -q '"results": *null
   the bound.
 
 ## Statistics hygiene
+
+- ⚠️ **`steady`'s h2 IS NOT COMPARABLE BETWEEN A POST-FLASH CAMPAIGN AND A
+  CHAINED ONE (campaign E, 2026-09-03).** A plan's FIRST run opens carrying the
+  previous campaign's final latch, and while that latch stands the board is in
+  State 99 with the bus torn down, so the run produces no hydrogen for those
+  ticks. Campaign E's `steady` opened latched from campaign D's last run, spent
+  **499 ticks** in State 99, and read **-5.16 %** h2 against D's -- a predicted
+  loss of 1.435e-05 g against a measured 1.481e-05 g, which is the whole
+  discrepancy. A campaign launched after a re-flash carries no latch and loses
+  nothing. **Prefer a post-grace-windowed h2 for a plan's first run**, and never
+  quote a first-run h2 delta across a flash boundary as drift.
 
 - Recompute everything the suite self-reports that a verdict rests on — the standard is
   "PASS for the right reason", proven by independent bit-exact recomputation of the fault

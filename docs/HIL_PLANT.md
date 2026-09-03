@@ -1051,6 +1051,31 @@ not the plant `controller_design/system_model.md` synthesizes against.
 > `tools/test_governor_ceiling_equivalence.py` compares the port against the
 > compiled firmware over one scripted sequence rather than against a written
 > expectation.
+>
+> **THE THIRD CASE (campaign E, 2026-09-03).** This note named two regimes -- a
+> demand step at the converged ratio, and the clamp's own roughly 5 slew ticks
+> plus 20 ms filter -- and both were confirmed numerically on the board. It did
+> not name the regime that latched `FAULT_OC_FC` on `fw26-clamp-sweep`: a
+> **demand step CONCURRENT with an upward share request**, where the two errors
+> add. The filter under-read the rising total by **25.6 %** against the clamp's
+> 12 % design headroom, and the governor held what it believed was 1.2500 A
+> while the board delivered **1.4890 A**. The governing comparison is a race
+> between the slew-limited reference (4.3 ticks to cross the safe delivered
+> share) and the filter (25 ticks to make the clamp bind), and the necessary
+> condition is `I_tot > LIMIT_I_FC_MAX / DROOP_R_MAX` = **1.647 A** two-source.
+> No registered EMS stimulus exceeds 1.4714 A, so the hazard is presently
+> unreachable on the registered set -- a statement about the stimuli, not a
+> structural guarantee. The firmware is unchanged by operator ruling (closing
+> the race would need the filter alpha at or above 0.25, or a share slew at or
+> under 0.0027 per tick); the sweep's stimulus now carries a bridging
+> sub-region and the EMS strategies carry a rule. Full statement:
+> `docs/fw26_current_ceiling_governor.md` section 8.6.
+>
+> **First hardware calibration** (`fw26-clamp-cruise`, campaign E): engagement
+> 3.3 to 17.7 ms and Pi-cadence-limited rather than clamp-limited; the
+> reference walks onto the bound in about 6 ticks; settling 35 ms; overshoot
+> 0.016 % at a settled total and +0.031 to +0.045 A on a pure upward load step
+> at an already-clamped share.
 
 ### 4.4a Converter asymmetry (`--asymmetry`, 2026-09-01)
 

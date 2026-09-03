@@ -1,6 +1,53 @@
 # Work queue — updated post round 2026-09-02 (Ag105 η = 0.88, η-era DP/SDP, MPC live, campaigns B and C analysed, physics review closed, session closed out)
 
-## 0. NEXT — operator review, in this order
+## 0. NEXT — operator review (2026-09-03 morning), in this order
+
+The overnight session 2026-09-02/03 ran two full campaigns on fw v26 (D `hil_report_20260902_220604`,
+E `hil_report_20260903_031220`) plus, if it launched, campaign F (see OVERNIGHT_LOG.md §MORNING DIGEST).
+Read the MORNING DIGEST first, then the CLAUDE.md addendum 2026-09-03, then the two ledgers. Items
+that need a decision or a read:
+
+1. **fw v26 on the board — one number matters.** The clamp is exact at a settled total (cruise leg:
+   I_fc 1.2500 ± 0.0002 A, duty 1.0000, 35 ms settling) and is defeated by a commanded share step
+   CONCURRENT with a rising total: the sweep latched OC_FC at 38.029 s on a 0.40 → 0.84 step while the
+   drive railed 1.84 → 2.99 A (EMA under-read 25.6 % against a 12 % headroom). Necessary condition
+   for that hazard: I_tot > LIMIT_I_FC_MAX / DROOP_R_MAX = **1.647 A**; the largest registered EMS
+   two-source total is 1.4714 A (10.7 % margin). Design record `docs/fw26_current_ceiling_governor.md`
+   §8.6. **Decision:** whether an EMS-side rule ("no upward share step in the same decision as an
+   upward demand step above 1.65 A") goes into the MPC stage model now (queued in §7) — the
+   firmware closure (α ≥ 0.25 or slew ≤ 0.0027/tick) was NOT proposed, per the design-intent ruling.
+2. **The sweep scenario is now bridged** (velocity first, share 1.5 s later at the two both-axes
+   boundaries); its first execution is campaign F if it ran, else the next campaign. The joint-
+   transient leg design (1.65 A step, walked peak 1.3303 A) is recorded in §8.6.5 and needs a stepped
+   aux-load branch — approve or drop.
+3. **MPC single-source (0/1) enumeration shipped** (`4887bd3`): the board executes exact 0/1 through
+   the existing packet; admissibility by a rollout of the real governor; the gain is **0.01–0.43 %
+   of equivalent hydrogen** (a control-set completeness change, not a performance one).
+   `ems-mpc-single` is in the default plan; its first live reading is campaign F or the next.
+   Finding to read: the share-cut load guard never refuses permanently above 0.6 A total (the
+   deferral walks the doomed channel down — a delay, not a verdict), contrary to the design record's
+   resolution 1.
+4. **The loss-map DP bound is validated on the board** (dp-replay −0.17 % / +0.06 %; sdp-v4 −0.09 /
+   +0.44 %; the four frontier strategies tied within 0.15 % on FTP-75; soc-band 3.3–3.8 % worse).
+   The compressed-cycle frontier is certified (sdp-v4 1.0091 / 1.0076 = "no more than 2 % worse";
+   mpc-sto 0.9931 / 0.9916). The ftp75c MPC candidate is a constant-0.15 hold for the whole cycle.
+5. **The α decision now rests on four readings** (v4's α 1.34–1.49 % below the measured admission
+   window; L_chg ≈ 0.333, L_share ≈ 0.416 SoC/g). Unchanged ruling: α stays v4 until you re-solve.
+6. **Bleed era is the new baseline.** Every anchor re-pinned from D and reproduced by E (scp-inrush
+   bit-exact to 7 digits; floor ~65 ppm within / ~250 ppm across campaigns). The bench calibration of
+   `R_NODE_BLEED_*` (30 kΩ / 60 kΩ, `TODO(calibrate)`) moves the comm-loss re-close (0.109 / 0.082 A)
+   and the soc-depletion latch (273.59 s) again.
+7. **Two tooling data-integrity items you should know about:** `regen_early_releases` was frozen at 0
+   in every sidecar ever written (fixed this round); the three α-leg matched-DP records were solved
+   against the wrong drain (a hand-typed mirror — the 2026-09-01 B2 defect again; now derived from
+   the simulator, records re-solved, a read-time drain-membership witness added).
+8. **Operator-only items:** regenerate or delete the orphaned `dp_ems_table_ems-ftp75-5050.csv`
+   (41-point [0.25, 0.75] grid, nothing loads it); the ftp75c socband reference's two genuine charge
+   windows (0.20 / 0.48 s) are shorter than the Ag105 settle and harvest nothing — widen the exit
+   threshold or add a minimum dwell if the reference is meant to harvest; TP0053's UV latch moved
+   −58.6 ms on an identical injected stimulus (re-measure before quoting it as an anchor).
+
+## 0b. Carried from the 2026-09-02 review list (still open where not struck)
 
 The session is closed. Two campaigns ran of a budget of five; campaign C is analysed and its fix
 round is committed (`5f1cfed`). Read `OVERNIGHT_LOG.md` §MORNING DIGEST (FINAL) first, then the
@@ -384,6 +431,58 @@ sim-only strategies.
     `ems-y-b00-v1` and `-v3` have always commanded 1.00 and 0.00 through that walk on the
     TWO-source bus law; closing that older fidelity gap moves those anchors and is a separate
     decision.
+
+## Shipped 2026-09-03 (overnight, fw v26 campaigns D and E)
+
+- **fw v26 tools mirror** (`c8b50ff`): `governor_model.py` clamp port proven equivalent to the
+  firmware by `test/gov_ceiling_harness.cpp` vs `tools/test_governor_ceiling_equivalence.py`;
+  delivered-share semantics in DP/SDP/MPC/walk with feasibility on the COMMANDED FC current and
+  the delivered BT current (ruling D-3); `fw26-clamp-cruise` / `fw26-clamp-sweep` scenarios; aux-bit
+  masks; BLG `share_gov_ceiling`; reachability corrected (`ems-y-b30-v3` is the only registered
+  stimulus over the ceiling; 12–13 ticks measured).
+- **Post-campaign-D fix round** (`d941170`): ftp75c chopper aggregator relocated + three import
+  guards; MPC share band from `SHARE_BAND_DP`; `sw_ring` `over_absmax` verdict gated at the 0.5 A
+  load-dump class (ruling D-2); mppt cruise window after the mirror goes live; ftp75c FC budget
+  split; regen-manager two-level release (arm −0.2 A / release −0.1 A, ruling D-4 refined); BLEED-ERA
+  anchors re-pinned; drain-scenario mirror derived from the simulator + read-time witness; 20
+  matched-DP records.
+- **MPC single-source enumeration** (`7de3f11` / merge `4887bd3`): see §7 entry (struck).
+- **Campaign-E fix round** (this session's last commit): sweep bridging at the both-axes boundaries;
+  cruise step pins (`reach_within_ms` spec kind); design record §8.6; `regen_early_releases`
+  refreshed in `finalize_meta()`; `CANDIDATE_COST_MS_NOMINAL` 0.0360; `load_dump_rings` census row;
+  conventions (State-99 non-evidence trap, aux carried-in rule, `steady` first-run rule).
+- **Campaigns:** D (70/70 correct, first bleed era, loss-map bound validated, first ftp75c legs) and
+  E (72/72 correct, eight D FAILs closed by their fixes, clamp calibrated, first certified ftp75c
+  frontier). Ledgers under `HIL Results/`.
+
+## 7b. Opened 2026-09-03 (from campaigns D and E)
+
+- **MPC stage-model guard against a share step during a rising demand** (from the sweep latch):
+  the ladder moves 0.0875 per decision; at 2.0 A that is 0.175 A of FC demand against the clamp's
+  0.15 A headroom, and the stage model does not exclude an upward rung concurrent with an upward
+  demand step. Rule: no upward share step in the same decision as an upward demand step above
+  1.647 A two-source. Design: `docs/modeling/mpc_design_20260902_nonlinearities.md` hazard item.
+- **Joint-transient clamp leg** (`fw26_current_ceiling_governor.md` §8.6.5): aux load step
+  1.20 → 1.65 A concurrent with share 0.40 → 0.84 (walked peak 1.3303 A, 5971 clamp ticks); needs a
+  stepped aux-load branch in `apply_scenario()`. The 1.55 A version cannot exercise the clamp
+  (minority clip binding).
+- **MPC Gate 1 single-source-aware** (in-band stages only) and the `ems_walk` two-source-law gap on
+  `ems-y-b00-*` (from the MPC 0/1 round).
+- **`CANDIDATE_COST_MS_NOMINAL` rule**: shipped as the two-campaign mean 0.0360 (max+15 % would be
+  0.0427 and coarsen harder); read `mpc_budget_hit` / `candidate_cost_over_nominal` on the next
+  campaign before settling the rule.
+- **ftp75c realizable regen fraction** 0.63 vs the design note's 0.707 (window-length distribution
+  against the ~0.9 s Ag105 dead time) — update `ftp75c_regen_cycle_design_20260902.md`.
+- **Physics review of `docs/HIL_PLANT.md` (run 002)** over the bleed change, the loss map, the regen
+  model, the estimator's physical option (i·√(L/C) in place of the fixed 1.95 V Death-5 term), and
+  the ~70 %-optimistic latch-shift model — per the standing "after one campaign" rule; not run
+  overnight (host load during campaigns).
+- **Hygiene:** `hil_plant_sim.py` ~8744 banner names a non-existent `_SIM_SOC_BAND_DRAIN_SCENARIOS`
+  ("two mirrors" → three, alpha legs included); `HIL_PLANT.md` ~2882 "both mirrors"; `gen`'s drain
+  tuple is an import-time snapshot while mpc/walk resolve at use; `gen_dp_ems_table.py` prints a
+  full summary at exit 2 when refusing to overwrite; the known wall-clock flakes
+  (`test_the_search_width_reads_no_clock`, `test_transition_roll_slices_and_completes`).
+- **`share_cut_census` is a spread (118–157) not a pin**; TP0053's latch instant marginal to one tick.
 
 ## Shipped 2026-09-02 (overnight)
 

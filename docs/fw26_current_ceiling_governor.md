@@ -336,7 +336,7 @@ finding rather than a success:
 - `ems-sdp-alpha-cal`, peak `I_fc` 1.1863 A;
 - `ems-sdp-cross`, peak `I_fc` 1.1920 A — the closest to the ceiling, with 0.058 A of headroom;
 - `charge-cruise`, which reaches the overcurrent condition single-source and is discussed in
-  section 8.6.
+  section 8.7.
 
 Validation requires a deliberately constructed two-source high-total run. Two are specified
 below: a bench run that can be performed tonight, and a HIL scenario for the tools round.
@@ -424,7 +424,138 @@ longer be read as evidence that a rare refusal happened. A host test asserts the
 properties: no cut, both bus switches high, no fault, and the applied ratio pinned at
 `DROOP_R_MIN`.
 
-### 8.6 Open items
+### 8.6 A commanded share step during a rising total
+
+Campaign E (`hil_report_20260903_031220`) produced the first hardware measurement of this
+governor, and the `fw26-clamp-sweep` leg latched `FAULT_OC_FC` at t = 38.029241 s with a
+fuel-cell current of 1.4890 A. The board behaved as designed. This section states the regime the
+design record did not predict, because section 5 treats the commanded share and the load as
+independent inputs and they are not.
+
+The stimulus stepped both inputs upward in one command packet: the velocity setpoint from 2.5 m/s
+to 3.0 m/s, which railed the drive controller at its 12 A current clamp and moved the two-source
+total from 1.8418 A to 2.9895 A, and the commanded share from 0.40 to 0.84. The clamp engaged on
+the first tick that carried the new setpoint, so there was no engagement delay. At the latch tick
+the governor's filtered total read 2.2244 A against a true 2.9895 A, an under-read of 25.6 %,
+against a design headroom of `LIMIT_I_FC_MAX - SHARE_GOV_I_FC_CEIL_A` = 0.15 A = 12 % of the
+ceiling. The +0.2390 A error decomposes exactly: the filter under-read contributes +0.4298 A and
+the plant lagging the reference contributes -0.1910 A.
+
+#### 8.6.1 The governing comparison is a race
+
+Two clocks run from the command edge, and the fuel cell is protected only if the second finishes
+first.
+
+The **slew-limited reference** crosses the safe delivered share `LIMIT_I_FC_MAX / I_tot,new` in
+
+    (LIMIT_I_FC_MAX / I_tot,new - s_prev) / DROOP_RATIO_SLEW_PER_TICK    ticks.
+
+The **load filter** makes the clamp bind only after the filtered total exceeds
+`SHARE_GOV_I_FC_CEIL_A / s_new`, which takes
+
+    ln(1 - (I_new - I_new * SHARE_GOV_I_FC_CEIL_A / LIMIT_I_FC_MAX) / (I_new - I_old))
+    / ln(1 - SHARE_GOV_FILT_ALPHA)                                       ticks.
+
+At the measured operating point the first is 4.3 ticks and the second is 25 ticks, a factor of
+5.8 short. The clamp cannot win that race.
+
+A necessary condition follows. The commanded fuel-cell demand can reach `LIMIT_I_FC_MAX` only
+where the droop band itself allows it, so no share step can produce `OC_FC` below
+
+    I_tot > LIMIT_I_FC_MAX / DROOP_R_MAX = 1.4 / 0.85 = 1.647 A       (two-source).
+
+No registered energy-management stimulus exceeds 1.4714 A, which is `ems-mpc`'s peak, so the
+margin on the current stimulus set is 10.7 %. That is a statement about the stimuli, not a
+structural guarantee.
+
+#### 8.6.2 The three controls, measured in one campaign
+
+| stimulus | what steps | total at the step | peak `I_fc` | outcome |
+|:--|:--|--:|--:|:--|
+| `fw26-clamp-cruise`, t = 8.0 s | share 0.50 -> 0.75 | settled 2.0007 A | 1.2502 A | 0.016 % overshoot, 35 ms settling |
+| `fw26-clamp-sweep`, regions 1->2 and 3->4 | load only, share already 0.84 | rising | 1.2811 / 1.2954 A | clamp catches it, 7.5 % clear of the limit |
+| `ems-y-b30-v3`, t = 27.011 s | share 0.35 -> 0.65 while the load FALLS | falling | 0.6505 A | the filter over-reads, so the clamp is conservative |
+| `fw26-clamp-sweep`, region 5->6 | share 0.40 -> 0.84 AND load up | rising 1.84 -> 2.99 A | 1.4890 A | `OC_FC` latch |
+
+A commanded share step is therefore safe at a settled total and unsafe during a rising one. Each
+error alone is contained; the two add.
+
+#### 8.6.3 Ruling: the stimulus must not create the condition
+
+Closing the race in firmware would require `SHARE_GOV_FILT_ALPHA` at or above approximately 0.25,
+or a share slew at or below 0.0027 per tick, which is one seventh of the shipped value. Both were
+rejected by the operator's design-intent ruling: a faster filter surrenders the noise immunity the
+governor's approximately 20 ms averaging exists for, a slower slew makes every commanded share
+change sluggish, and `OC_FC` in this regime is the intended feedback. The firmware is unchanged.
+
+The obligations fall on the stimulus and on the energy-management strategies instead.
+
+- The `fw26-clamp-sweep` table now carries an unscored bridging sub-region at every boundary that
+  would move both axes upward, at `hil_plant_sim.FW26_CLAMP_SWEEP_BRIDGE_S` = 1.5 s. The velocity
+  axis steps first, at the previous region's commanded share, and the share axis steps once the
+  drive controller's own current rail has cleared.
+- **EMS rule.** No strategy may command an upward share step in the same decision as an upward
+  demand step, wherever the resulting two-source total exceeds 1.65 A. The model-predictive
+  controller's ladder moves one rung of 0.0875 per decision, so the rule constrains it only where
+  a demand step lands on the same decision boundary; see
+  `docs/modeling/mpc_design_20260902_nonlinearities.md`.
+
+#### 8.6.4 First calibration of the clamp
+
+Every figure below is from campaign E and supersedes the walked values wherever the two disagree.
+
+| quantity | measured | note |
+|:--|:--|:--|
+| engagement latency | 3.3 to 17.7 ms | Pi-cadence-limited at 48.7 Hz, not clamp-limited; the clamp engages on the first tick that carries the new setpoint |
+| reference slew to the bound | about 6 ticks | `DROOP_RATIO_SLEW_PER_TICK` 0.02 |
+| settling | 35 ms | `fw26-clamp-cruise`, at a settled total |
+| overshoot, settled total | 0.016 % | 1.2502 A against the 1.2500 A ceiling |
+| overshoot, upward load step at a clamped share | +0.031 to +0.045 A | sweep regions 1->2 and 3->4 |
+| held current, phase A | 1.2499 to 1.2502 A | duty 15500 of 15500 ticks |
+| battery, phase A | 0.7505 to 0.7508 A | balance closure at or below 0.0008 A |
+| release, phase B | 0 clamped ticks, `I_fc` 0.8003 A | the same-run negative control |
+| battery ceiling | 0 ticks | never exercised, as designed |
+
+#### 8.6.5 A joint-transient leg was designed and not shipped
+
+A third scenario was designed to pin the joint transient as a number at a total the fault limit
+cannot be reached from: motor-free, with the auxiliary preload stepping upward at the same instant
+as a commanded share step of 0.40 to 0.84. It is not registered, and the reason is a result rather
+than a deferral.
+
+The proposed operating point, a step from 1.20 A to 1.55 A, **does not exercise the clamp at all**.
+The reachability threshold is `SHARE_GOV_I_FC_CEIL_A + SHARE_MINORITY_I_MIN_A` = 1.55 A exactly, so
+at that total the minority-current clip bounds the commandable fuel-cell share at
+`1 - 0.30/1.55` = 0.8065 and the delivered current at 1.2500 A. Walked through
+`tools/governor_model.py`, the clamp engages on **zero** ticks and the peak is 1.2500 A with no
+overshoot. The "worst case at the band rail, 0.85 x 1.55 = 1.32 A" reasoning that produced the
+figure omits the clip, and 0.85 is not commandable at that total.
+
+The walk also identifies what the leg would actually measure. During the transient the peak
+delivered current is set by the **minority clip**, not by the ceiling: the clip rail is
+`I_tot - SHARE_MINORITY_I_MIN_A`, the load filter has not yet seen the new total, and the clamp
+therefore binds only after the filter catches up. The joint overshoot is bounded by
+
+    (I_tot - 0.30) - SHARE_GOV_I_FC_CEIL_A ,
+
+which is a structural statement worth pinning. Walked peaks against a 1.20 A pre-step total, at a
+share step of 0.40 to 0.84:
+
+| step total | walked peak `I_fc` | clamp ticks | clip rail |
+|--:|--:|--:|--:|
+| 1.55 A | 1.2500 A | 0 | 1.2500 A |
+| 1.60 A | 1.2900 A | 5960 | 1.3000 A |
+| 1.62 A | 1.3062 A | 5966 | 1.3200 A |
+| 1.65 A | 1.3303 A | 5971 | 1.3500 A |
+
+**The shippable design is a step to 1.65 A**, which is 0.10 A above the reachability threshold, or
+twice `SHARE_GOV_CEIL_HYST_A`, so a small modelling error cannot make the leg inert. Its acceptance
+bound is 1.36 A, which is 0.4 % above the walk and 2.9 % under `LIMIT_I_FC_MAX`. The leg is
+motor-free, so there is no drive rail and the walk carries none of the modelling uncertainty the
+sweep's boundaries do. Registering it needs a stepped auxiliary-load branch in `apply_scenario()`,
+which the generic `aux_preload_a` key cannot express, and it therefore belongs in its own round.
+
+### 8.7 Open items
 
 - `TODO(calibrate)` at `SHARE_GOV_I_FC_CEIL_A`: the 0.15 A margin is argued, not measured, and
   the headroom over the measured peak is only 0.058 A.
@@ -463,7 +594,7 @@ These are not part of this firmware round.
   current the board can command in the clamped regime, 1.25 A, so a check written against it can
   no longer fail for the reason it was written to catch. It needs re-pointing at
   `SHARE_GOV_I_FC_CEIL_A` or re-adjudicating.
-- `FAULT_EXPECTATIONS["charge-cruise"]` requires `FAULT_OC_FC`. See section 8.6: correct as
+- `FAULT_EXPECTATIONS["charge-cruise"]` requires `FAULT_OC_FC`. See section 8.7: correct as
   written, but flagged for operator re-adjudication.
 - The Raspberry Pi bridge exposure of the clamp requires a telemetry protocol bump, using the two
   free `switch_state` bits.

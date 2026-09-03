@@ -154,6 +154,16 @@
   },
   {
    "converged": true,
+   "created_utc": "2026-09-03T12:40:52Z",
+   "h2_dp_g": 0.019050954597514432,
+   "key": "bbb01b149a3fe2a849dacb54ac4d86070f9080f47d84a7ac2ccfc0050c0f51c7",
+   "non_target_hash": "21e31803a4ebc44ea011a31b86f1ecb2542b38790e7c7a60894131a81203dd59",
+   "scenario": "ems-ftp75-mpc",
+   "target_soc": 0.68502,
+   "target_soc_q": 0.68502
+  },
+  {
+   "converged": true,
    "created_utc": "2026-09-03T07:39:43Z",
    "h2_dp_g": 0.019151319673291797,
    "key": "43b82c0463dc896e7710c916b86248f1ee326627a127024ee2470b0ee599c8e5",
@@ -311,6 +321,16 @@
    "scenario": "ems-ftp75c-dp",
    "target_soc": 0.6982189999999999,
    "target_soc_q": 0.69822
+  },
+  {
+   "converged": true,
+   "created_utc": "2026-09-03T12:45:29Z",
+   "h2_dp_g": 0.00666864844443781,
+   "key": "dcaa5f3866b81919486c74f6002e52a5f3c5bf81578d032c009a441f272303cf",
+   "non_target_hash": "bffc5b33c68455e7e245b9bb422cd769b5f4e7e84ed784422d3af5d109a0f5ec",
+   "scenario": "ems-ftp75c-dp",
+   "target_soc": 0.69824,
+   "target_soc_q": 0.69824
   },
   {
    "converged": true,

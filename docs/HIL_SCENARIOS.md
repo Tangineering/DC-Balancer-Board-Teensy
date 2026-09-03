@@ -1786,15 +1786,29 @@ that changes the plant.
   happened to stop there" out of the logged currents alone. The aux-byte bit is
   the evidence, and the phase-B control is what makes the phase-A reading mean
   something.
-- **⚠️ Every bound is WALKED, not measured.** The scenario has never been run on
-  the board. The numbers come from an offline walk through
+- **MEASURED, campaign E (2026-09-03), 20 of 20 checks.** The leg passed and is
+  now the calibration source for the whole feature: engagement +3.32 ms after
+  the commanded step (Pi-cadence-limited, not clamp-limited), clamp duty
+  15 500 of 15 500 ticks, `I_fc` 1.2499 to 1.2502 A, `I_batt` 0.7505 to
+  0.7508 A, balance closure at or under 0.0008 A, phase B 0 clamped ticks at
+  `I_fc` 0.8003 A, and the BT ceiling never binding.
+- **Two step pins were added after that campaign** (fix round, 2026-09-03),
+  because every other check in the entry is inset past the step and the step is
+  where the sweep leg latched: `ceiling_step_overshoot` bounds the peak `I_fc`
+  in t = [8.000, 8.100] at 1.30 A (measured 1.2502 A, 0.016 % over the
+  ceiling), and `ceiling_step_settling` bounds the interval from the clamp's own
+  aux-bit rise to the first sample at or above 1.2450 A at 60 ms (measured
+  35 ms). The settling is measured from the BIT, not from the command, so the
+  figure is the clamp's and not the 3.3 to 17.7 ms command cadence.
+- **⚠️ The pre-campaign bounds were WALKED.** They come from an offline walk
+  through
   `tools/governor_model.py` at the plant's measured asymmetry and at zero: first
   engagement on the FIRST tick after the setpoint step - the governor enters
   phase A converged at r = 0.4944 from the timeline's own 0.50 pre-phase - clamp
   duty 1.0000 of phase A, `I_fc` pinned at 1.2500 A with NO overshoot, `I_batt` 0.7500 A, applied ratio
-  0.6197, zero cut refusals and zero switch edges. The first campaign that runs
-  it re-derives all of them, and a miss is read against the ceiling's own
-  `TODO(calibrate)` (design note section 8.6) rather than absorbed by widening a
+  0.6197, zero cut refusals and zero switch edges - every one of which campaign
+  E reproduced. A miss is read against the ceiling's own
+  `TODO(calibrate)` (design note section 8.7) rather than absorbed by widening a
   bound.
 
 ### fw26-clamp-sweep (84 s, any engine)
@@ -1845,12 +1859,43 @@ that changes the plant.
 - **Why useful:** `fw26-clamp-cruise` shows the clamp holding one operating
   point. This one shows it engaging and releasing repeatedly, from both
   directions, and shows that it does nothing at all where it should do nothing.
-- **⚠️ Every bound is WALKED, and one input to it is a prediction.** The region
-  totals are the host demand model's, while in a HIL run the board's own drive
-  loop sets the VESC current and therefore the total. The margins absorb that:
+- **⚠️ THE BRIDGING SUB-REGION (campaign E, 2026-09-03).** The first campaign
+  that ran this leg latched `FAULT_OC_FC` at t = 38.029 s with `I_fc` 1.4890 A.
+  The board was correct and the stimulus was wrong: the region 5 to 6 boundary
+  stepped the velocity setpoint 2.5 to 3.0 m/s AND the commanded share 0.40 to
+  0.84 in one Pi packet, so the drive controller railed at its 12 A clamp
+  (`I_tot` 1.8418 to 2.9895 A) while the share loop was slewing its reference
+  upward, and the governor's 20 ms load EMA under-read the total by 25.6 %
+  against the clamp's 12 % design headroom. Region 10 to 11 is the same defect.
+  Every boundary that would move both axes upward now carries an **unscored
+  1.5 s bridging sub-region**: the velocity axis steps first, at the previous
+  region's commanded share, and the share axis steps once the drive
+  controller's own current rail has cleared (0.27 s and 1.08 s at the two
+  boundaries, at the measured 1.85 m/s² rail acceleration). The bridge ends
+  1.0 s before the 2.5 s settle inset opens the first scored sample, and
+  `run_hil_suite.py` asserts that relation at import. The hazard statement is
+  `docs/fw26_current_ceiling_governor.md` section 8.6.
+- **⚠️ Ten of the entry's checks PASSED on that run and every one is
+  non-evidence.** After the State-99 latch the aux byte and the MDAC mirrors
+  freeze, so the region 6, 9 and 11 clamp checks passed on a frozen bit and the
+  `I_fc` ceilings passed at 0.0000 A on a dark bus. Regions 1 to 5 and the
+  pre-latch aggregates are the only real readings: `I_batt` peak 2.0863 A
+  against the 2.4 A bound and `I_fc + I_batt` peak 3.3480 A against 3.6 A.
+- **⚠️ Regions 6 to 12 are still WALKED, and one input is a prediction.** The
+  region totals are the host demand model's, while in a HIL run the board's own
+  drive loop sets the VESC current and therefore the total. Campaign E measured
+  the settled totals of regions 1 to 5 within 1.5 % of the model, so the
+  prediction is good where it has been checked. The margins absorb the rest:
   sub-threshold regions clear the clamp boundary by 0.20 A to 0.29 A of
   fuel-cell demand, clamping regions exceed it by 0.29 A to 0.45 A. The first
-  campaign that runs the scenario re-derives all of it.
+  campaign that runs the BRIDGED table to completion re-derives regions 6 to 12.
+- **The boundary reconstruction.** `tools/probes/probe_fw26_clamp_walk.py`
+  walks the table with the governor's load EMA and reference slew
+  AND with a drive-rail model of the total, fitted to campaign E's three
+  measured boundaries. It is the only walk that can see a boundary at all: the
+  bridged table's worst reconstructed `I_fc` is 1.3114 A at region 4 (a pure
+  upward load step, measured 1.2954 A on the board), against 1.7223 A at region
+  6 with the bridge removed.
 - **⚠️ `OC_FC` in an FC-charge window is design intent, not a target of this
   feature.** That regime is single-source — `assertFcChargeEnable()` holds
   `BT_BUS_ENABLE` low, so `I_fc` equals `I_tot` and there is no second channel

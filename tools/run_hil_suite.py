@@ -148,7 +148,7 @@ from hil_plant_sim import (                                        # noqa: E402
     # fw v26 clamp-sweep geometry, imported for the same reason: the
     # region table IS the stimulus, and the checks are generated from it.
     FW26_CLAMP_SWEEP_REGIONS, FW26_CLAMP_SWEEP_REGION_S,
-    FW26_CLAMP_SWEEP_PRELOAD_A, I_AUX_A,
+    FW26_CLAMP_SWEEP_PRELOAD_A, FW26_CLAMP_SWEEP_BRIDGE_S, I_AUX_A,
     # `v-bus-sense-offset` stimulus geometry — imported so the windows below are
     # DERIVED from the same constants the stimulus is, never re-typed. Moving an
     # excursion in the simulator moves the checks that judge it.
@@ -895,7 +895,7 @@ FAULT_EXPECTATIONS = {
                   "1:1-CHARGER ERA; under ETA_CHG 0.88 the predicted crossing "
                   "is ~9.1 s (WP-1A physics review item 7a)",
         # ⚠️ FLAGGED FOR OPERATOR RE-ADJUDICATION (fw v26 tools round,
-        # 2026-09-02; docs/fw26_current_ceiling_governor.md section 8.6).
+        # 2026-09-02; docs/fw26_current_ceiling_governor.md section 8.7).
         # THE EXPECTATION IS CORRECT AS WRITTEN AND fw v26 CANNOT CHANGE IT.
         # This scenario reaches the overcurrent condition SINGLE-SOURCE:
         # `assertFcChargeEnable()` holds BT_BUS low for the whole window, so
@@ -2545,16 +2545,18 @@ for _vmax, _b in ((1.0, 0.30), (3.0, 0.30), (1.0, 0.00), (3.0, 0.00)):
              "label": "the fw v26 FC current ceiling BOUND at the region-7/8 "
                       "boundary (reconstruction: 9-11 ticks at a commanded "
                       "1.517-1.518 A against the 1.25 A ceiling; MEASURED 12 "
-                      "ticks at t = 27.009-27.020 s, campaign "
-                      "20260902_220604) - the only registered stimulus that "
-                      "reaches the clamp"},
+                      "ticks at t = 27.009-27.020 s in campaign "
+                      "20260902_220604 and 13 in campaign E "
+                      "20260903_031220) - the only registered EMS stimulus "
+                      "that reaches the clamp"},
             {"name": "fw26_ceiling_transient", "aux_bit": "fc_ceiling_active",
              "max_ticks": 60, "t_window": _Y_CEIL_W,
              "label": "... and released again inside the window (<= 60 ticks; "
-                      "the reconstruction gives 9-11 and the first live "
-                      "engagement MEASURED 12, so the band stands as "
-                      "written; a clamp that latches on is a hysteresis "
-                      "defect, not a load reading)"},
+                      "the reconstruction gives 9-11 and the two live "
+                      "engagements MEASURED 12 (campaign 20260902_220604) and "
+                      "13 (campaign E), so the band stands as "
+                      "written on two readings; a clamp that latches on is a "
+                      "hysteresis defect, not a load reading)"},
         ]
     if not _b:
         # 4-7 (b00 only). THE CUT-AND-RESTORE TOPOLOGY, both directions and
@@ -4802,7 +4804,10 @@ def _ftp75c_regen_events():
          "label": "the braking chopper burned at least 2.5 J of residual "
                   "(modelled 4.2 J in-window plus 0.5 J outside; MEASURED "
                   "5.4558-5.4911 J across the five legs in campaign "
-                  "20260902_220604, of which 1.60-1.63 J fell OUTSIDE the "
+                  "20260902_220604 and 5.24-5.49 J in campaign E "
+                  "20260903_031220 - two campaigns, one band, floor cleared "
+                  "2.1x on the worse of them - of which 1.60-1.63 J fell "
+                  "OUTSIDE the "
                   "windows — the bleed-era shift, 3.2x the 0.5 J model, "
                   "because with R_NODE_BLEED_OTHER 60 kOhm the RGN node parks "
                   "at 18.10 V between windows and the chopper trickles "
@@ -4884,8 +4889,12 @@ def _ftp75c_expectation(*, scenario, ems, i_fc_peak_walk, extra=(), note=""):
                   "compensated cycle's whole peak source total is 0.3311 A. "
                   "Ticks with FC_CHARGE_ENABLE set are excluded, plus a 300 ms "
                   "settling hold after each close (a tail allowance; the "
-                  "measured charge windows themselves are 0.08-0.46 s long "
-                  "and are masked in full), and are judged by "
+                  "measured charge windows themselves were 0.08-0.46 s long "
+                  "in campaign 20260902_220604 and COLLAPSED to 18-20 ms - "
+                  "one commander period, 0.38-0.47 mC - in campaign E after "
+                  "the two-level regen release shipped, with the sdp leg "
+                  "suppressing the 171 s window entirely; they are masked in "
+                  "full either way), and are judged by "
                   "`ftp75c_fc_bounded_charging` instead"
                   % (ceil, i_fc_peak_walk, 100.0 * ceil / 1.4)},
         # ARM 2 — the CHARGE-WINDOW ceiling, whole-window and unmasked, exactly
@@ -4901,8 +4910,9 @@ def _ftp75c_expectation(*, scenario, ems, i_fc_peak_walk, extra=(), note=""):
         {"name": "ftp75c_fc_bounded_charging", "column": "I_fc",
          "max_value": 0.60, "t_window": _FTP75C_RUN_W,
          "provisional_note": (
-             "ONE CAMPAIGN (20260902_220604). The bound is a fixed 0.60 A "
-             "against a measured maximum of 0.3818 A over five legs, and the "
+             "TWO CAMPAIGNS (20260902_220604 and E, 20260903_031220). The "
+             "bound is a fixed 0.60 A against a measured maximum of 0.3818 A "
+             "over five legs, and the "
              "quantity is aux plus the charger's referred bus draw carried "
              "single-source after assertFcChargeEnable() drops BT - so it "
              "moves with ETA_CHG, with the Ag105 charge ceiling and with the "
@@ -5616,7 +5626,8 @@ FAULT_EXPECTATIONS["mppt-tracking"] = {
     # the floor binds. All five mppt_thresh_cnt pins are measured across two
     # charger eras and are no longer provisional on that account.
     "provisional_note": ("mppt_threshold_moved's range bound (1) is measured "
-                         "on three hifi campaigns (range 2 on each); the "
+                         "on four hifi campaigns (range 2 on the first "
+                         "three, 3 on campaign E); the "
                          "ratchet span "
                          "depends on how far V_chg sags under charge and the "
                          "simple engine's sag is unmeasured. Every other bound "
@@ -5817,7 +5828,9 @@ FAULT_EXPECTATIONS["mppt-tracking"] = {
          # the threshold manager ran — under HIL_SIM it never does.
          "label": "the mirrored reg-0x02 count MOVED inside this run "
                   "(range >= 1 count; measured 2 on this window in campaigns "
-                  "011926, 041414 and 220604) — the "
+                  "011926, 041414 and 220604, and 3 in campaign E "
+                  "20260903_031220 on the post-A4 window: min 15, max 18, "
+                  "histogram 15:7599 16:147 17:147 18:7, peak 18) — the "
                   "column tracked THIS "
                   "run's V_chg rather than carrying a predecessor's value. "
                   "Under HIL_SIM this is the MIRROR moving, not the manager"},
@@ -6182,8 +6195,13 @@ _SS_FC_CUT_T, _SS_FC_RESTORE_T = 39.0, 42.0
 #
 # THE FIRST CAMPAIGN THAT RUNS THIS SCENARIO RE-DERIVES ALL OF IT. A miss on the
 # duty floor or on the I_fc window is a calibration event and is read against
-# the ceiling's own TODO(calibrate) (design note section 8.6), not absorbed by
+# the ceiling's own TODO(calibrate) (design note section 8.7), not absorbed by
 # widening a bound.
+# The phase A command instant, and the window the two step pins judge. Those
+# two judge the TRANSIENT, so they are written against the command instant
+# itself rather than as an offset from the steady-state inset.
+_CEILING_STEP_T = 8.0                    # SCENARIOS[...]["pi_timeline"]
+_CEILING_STEP_WIN_S = 0.1
 _CEILING_A0, _CEILING_A1 = 8.5, 24.0     # phase A, inset from the 8.0 command
 _CEILING_B0, _CEILING_B1 = 27.0, 34.0    # phase B, inset from the 26.0 command
 # ⚠️ THE CADENCE GATE AND THE TICK FLOORS ARE ONE NUMBER (M8, 2026-09-02).
@@ -6192,6 +6210,31 @@ _CEILING_B0, _CEILING_B1 = 27.0, 34.0    # phase B, inset from the 26.0 command
 # instead of the cadence check. `_CEILING_CADENCE_COVER` is the coverage this
 # entry requires, everything else is derived from it, and a lossy stream now
 # fails `ceiling_cadence` by name.
+#
+# ── CAMPAIGN E (hil_report_20260903_031220): MEASURED, 20 of 20 ─────────────
+# This leg PASSED and is now the calibration source for the whole feature. The
+# walk above is reproduced on every axis it predicted:
+#
+#   engagement            +3.32 ms after the commanded step, and the latency is
+#                         PI-CADENCE-LIMITED rather than clamp-limited - the
+#                         clamp engages on the first tick that carries the new
+#                         setpoint. Across both fw26 legs the figure ranges
+#                         3.3 ms (here) to 17.7 ms (the sweep's region 5 -> 6
+#                         boundary), which is the 48.7 Hz command phase.
+#   reference slew        ~6 ticks to walk the droop ratio onto the bound
+#   settling              35 ms to the ceiling band
+#   overshoot             0.016 % - peak I_fc 1.2502 A against the 1.2500 A
+#                         ceiling, at a SETTLED total of 2.0007 A
+#   phase A duty          15500 of 15500 ticks
+#   phase A currents      I_fc 1.2499-1.2502 A, I_batt 0.7505-0.7508 A,
+#                         |I_tot - I_fc - I_batt| <= 0.0008 A
+#   phase B               0 clamped ticks, I_fc 0.8003 A
+#   BT ceiling            0 ticks
+#
+# ⚠️ THE 0.016 % OVERSHOOT IS A PROPERTY OF THE SETTLED TOTAL, NOT OF THE CLAMP.
+# The same mechanism, stepped while the total was RISING, delivered 1.4890 A on
+# `fw26-clamp-sweep` and latched OC_FC. See design note section 8.6; the two
+# numbers together are the hazard statement.
 _CEILING_CADENCE_COVER = 0.98
 _CEILING_CADENCE_ROWS = int(1000.0 * (_CEILING_B1 - _CEILING_A0)
                             * _CEILING_CADENCE_COVER)          # 24990
@@ -6205,11 +6248,14 @@ FAULT_EXPECTATIONS["fw26-clamp-cruise"] = {
                "hil_plant_sim.FW26_CLAMP_CRUISE_LOAD_A; bounds from the offline "
                "governor_model walk recorded above; design note "
                "docs/fw26_current_ceiling_governor.md sections 4.1.1 and 8.3."),
-    "provisional_note": ("EVERY BOUND IN THIS ENTRY IS WALKED, NOT MEASURED - "
-                         "this scenario has never been run on the board. "
-                         "Re-derive all of them from the first campaign that "
-                         "runs it, and read a miss against the ceiling's own "
-                         "TODO(calibrate) rather than by widening a bound."),
+    "provisional_note": ("MEASURED (campaign E, 2026-09-03, 20 of 20). The "
+                         "bounds were WALKED and the campaign reproduced every "
+                         "one of them - see the calibration block above. The "
+                         "two step pins are pinned on ONE reading each "
+                         "(1.2502 A and 35 ms), so they are provisional on "
+                         "that account and on nothing else. Read a miss "
+                         "against the ceiling's own TODO(calibrate) rather "
+                         "than by widening a bound."),
     # FAULT-FREE, and that is half the claim. The whole point of the clamp is
     # that the fuel cell is held at 1.25 A instead of climbing to the 1.4 A
     # latch; a run that latches OC_FC here has not merely failed a check, it has
@@ -6348,6 +6394,32 @@ FAULT_EXPECTATIONS["fw26-clamp-cruise"] = {
          "t_window": (_CEILING_A0, _CEILING_B1),
          "label": "no FC_BUS rising edge in either phase - no cut, and "
                   "therefore no sw_ring"},
+        # ── 13-14. THE STEP ITSELF (campaign E fix round, 2026-09-03) ────────
+        # Every check above is INSET past the step, so the transient the clamp
+        # actually has to survive was unscored - and the transient is where the
+        # sweep leg latched. These two pin it, and they are the ONLY measured
+        # bounds in this entry.
+        #
+        # WHY THIS LEG AND NOT THE SWEEP: here the total is SETTLED at the step
+        # (2.0007 A, motor-free), so the load EMA is accurate and the figures
+        # are the clamp's own. On the sweep's region 5 -> 6 boundary the total
+        # was RISING and the same mechanism read 1.4890 A. The difference
+        # between the two numbers IS the hazard of design note section 8.6.
+        {"name": "ceiling_step_overshoot", "column": "I_fc",
+         "max_value": 1.30, "t_window": (_CEILING_STEP_T,
+                      _CEILING_STEP_T + _CEILING_STEP_WIN_S),
+         "label": "the commanded share step at t = 8.0 s did not overshoot the "
+                  "acceptance band in its first 100 ms (<= 1.30 A; MEASURED "
+                  "1.2502 A in campaign E = 0.016 % over the 1.2500 A "
+                  "ceiling). A tripwire on the transient, not a budget"},
+        {"name": "ceiling_step_settling", "column": "I_fc",
+         "min_value": 1.2450, "aux_bit": "fc_ceiling_active",
+         "reach_within_ms": 60.0,
+         "t_window": (_CEILING_STEP_T, _CEILING_STEP_T + 0.5),
+         "label": "I_fc reached the ceiling band within 60 ms of the clamp "
+                  "ENGAGING (MEASURED 35 ms in campaign E). Measured from the "
+                  "aux bit's own rising edge, so the figure is the clamp's "
+                  "settling and not the 3.3 - 17.7 ms Pi command cadence"},
     ],
 }
 
@@ -6372,6 +6444,46 @@ FAULT_EXPECTATIONS["fw26-clamp-cruise"] = {
 # DESIGN INTENT, read by the EMS as feedback about a charge window it should not
 # have opened - see FAULT_EXPECTATIONS["charge-cruise"]. fw v26 does not change
 # it and is not meant to.
+#
+# ── CAMPAIGN E (hil_report_20260903_031220): THE FIRST RUN, AND THE SCENARIO
+#    DEFECT IT FOUND ─────────────────────────────────────────────────────────
+# The run LATCHED `OC_FC` at t = 38.029241 s, I_fc 1.4890 A. The board was
+# CORRECT and the stimulus was wrong: the region 5 -> 6 boundary stepped
+# v_setpoint 2.5 -> 3.0 m/s AND the commanded share 0.40 -> 0.84 in the SAME Pi
+# packet, so the drive controller railed at its 12 A clamp (I_tot 1.8418 ->
+# 2.9895 A) while the share loop was slewing its reference upward. The clamp
+# engaged on the first tick it saw the new share - zero engagement delay - but
+# its ~20 ms load EMA under-read the total by 25.6 % against the clamp's 12 %
+# design headroom, so it held what it believed was 1.2500 A while the board
+# delivered 1.4890 A. Decomposition of the +0.2390 A error: filter under-read
+# +0.4298 A, plant lagging the reference -0.1910 A. Region 10 -> 11 is the same
+# defect. FIXED by the bridging sub-region at hil_plant_sim
+# FW26_CLAMP_SWEEP_BRIDGE_S; hazard statement at
+# docs/fw26_current_ceiling_governor.md section 8.6.
+#
+# ⚠️ TRAP FOR THE NEXT ANALYST. Ten of this entry's checks PASSED on that run
+# and every one of them is NON-EVIDENCE: after the State-99 latch the aux byte
+# and the MDAC mirrors FREEZE, so `sweep_r06/r09/r11_clamped` passed on a frozen
+# bit, the `*_fc_under_limit` bounds passed at 0.0000 A on a dark bus, and four
+# MDAC pins passed on frozen words. Only regions 1-5 and the pre-latch
+# aggregates were real.
+#
+# ── FIRST CALIBRATION OF THE CLAMP (campaign E, the numbers this entry's future
+#    bounds are read against) ────────────────────────────────────────────────
+#   engagement latency   3.3 - 17.7 ms, and it is PI-CADENCE-LIMITED, not
+#                        clamp-limited: the 48.7 Hz command cadence sets the
+#                        phase (17.7 ms at the sweep's region 5 -> 6 boundary,
+#                        3.3 ms on `fw26-clamp-cruise`). The clamp itself
+#                        engages on the first tick it sees the new setpoint.
+#   reference slew       ~6 ticks to walk the droop ratio onto the bound
+#                        (DROOP_RATIO_SLEW_PER_TICK 0.02)
+#   settling             35 ms to the ceiling band, measured on
+#                        `fw26-clamp-cruise` at a settled total
+#   overshoot, settled   0.016 % (1.2502 A against the 1.2500 A ceiling)
+#   overshoot, load step +0.031 A (region 1 -> 2, 1.2811 A) to +0.045 A
+#                        (region 3 -> 4, 1.2954 A) on a PURE upward load step at
+#                        an already-clamped share - 7.5 % clear of the 1.4 A
+#                        limit at the worse of the two
 #
 # Walked with tools/governor_model.py at the plant's measured asymmetry
 # (dv0 0.013522 V) and at zero; the two agree on every current to four decimals.
@@ -6412,6 +6524,16 @@ FAULT_EXPECTATIONS["fw26-clamp-cruise"] = {
 # "settled" window carried a moving total and a moving clamp boundary. 2.5 s
 # clears the rail by 0.81 s.
 _FW26_SWEEP_SETTLE_S = 2.5
+# THE BRIDGE MUST BE UNSCORED (campaign E, 2026-09-03). Two boundaries carry a
+# bridging sub-region that holds the previous region's share for
+# FW26_CLAMP_SWEEP_BRIDGE_S after the velocity step, so a region window that
+# opened before the bridge closed would score the PREVIOUS share against THIS
+# region's classification. The settle inset already excludes it; this asserts
+# the relation instead of leaving it to be noticed.
+assert FW26_CLAMP_SWEEP_BRIDGE_S < _FW26_SWEEP_SETTLE_S, (
+    "the fw26 sweep bridge (%.3f s) must close before the settle inset "
+    "(%.3f s) opens each region's scored window"
+    % (FW26_CLAMP_SWEEP_BRIDGE_S, _FW26_SWEEP_SETTLE_S))
 _FW26_SWEEP_SPAN_TICKS = int(1000.0 * (FW26_CLAMP_SWEEP_REGION_S
                                        - _FW26_SWEEP_SETTLE_S))       # 3500
 _FW26_SWEEP_DUTY_TICKS = int(0.78 * _FW26_SWEEP_SPAN_TICKS)           # 2730
@@ -6665,11 +6787,15 @@ FAULT_EXPECTATIONS["fw26-clamp-sweep"] = {
                "offline governor_model walk recorded above, including the "
                "clamp-absent arm the mdac pins come from."),
     "provisional_note": ("EVERY BOUND IN THIS ENTRY IS WALKED, NOT MEASURED - "
-                         "this scenario has never been run on the board, and "
-                         "the region TOTALS are the host demand model's while "
-                         "the board's own drive loop sets the real ones. "
-                         "Re-derive all of them from the first campaign that "
-                         "runs it."),
+                         "regions 6-12 have still never been SCORED on the "
+                         "board: campaign E (2026-09-03) latched OC_FC at the "
+                         "then-unbridged region 5 -> 6 boundary and every "
+                         "later check passed on a frozen aux byte and frozen "
+                         "MDAC mirrors. Regions 1-5 and the pre-latch "
+                         "aggregates ARE measured, and the settled region "
+                         "totals matched the host demand model to within "
+                         "1.5 %. Re-derive the rest from the first campaign "
+                         "that runs the BRIDGED table."),
     # FAULT-FREE, and OC_FC in particular: the whole point of the clamp is that
     # the fuel cell is held at 1.25 A instead of climbing to the 1.4 A latch. A
     # run that latches OC_FC here has not failed a check, it has falsified the
@@ -7425,6 +7551,32 @@ def _assert_signal_spec_shapes(_n, _e):
                 "extends `exclude_when_switch_bit` past the bit's fall and has "
                 "no meaning without it." % (_n, _tag))
             assert_derived_source_shape(_n, _tag, _sub)
+            if "reach_within_ms" in _sub:
+                # THE SETTLING KIND (2026-09-03). It reads TWO columns on one
+                # row — a bit to find the reference instant, a numeric column to
+                # find the crossing — so its shape is fully pinned here rather
+                # than left to be discovered by a silent misread.
+                assert ("aux_bit" in _sub) or ("switch_bit" in _sub), (
+                    "FAULT_EXPECTATIONS[%r].signals_require[%r]: "
+                    "`reach_within_ms` needs an `aux_bit` or `switch_bit` whose "
+                    "RISING edge is the instant the settling is measured from."
+                    % (_n, _tag))
+                assert _sub.get("column") and _sub.get("min_value") is not None, (
+                    "FAULT_EXPECTATIONS[%r].signals_require[%r]: "
+                    "`reach_within_ms` needs a `column` and the `min_value` "
+                    "that column has to reach." % (_n, _tag))
+                assert not ({"min_ticks", "max_ticks", "max_value", "max_ms",
+                             "floor_min_value", "max_continuous_ticks",
+                             "edge_count_between"} & set(_sub)), (
+                    "FAULT_EXPECTATIONS[%r].signals_require[%r]: a "
+                    "`reach_within_ms` spec carries a bound the settling kind "
+                    "never reads, so the author asked for two assertions and "
+                    "got one. Split it into two specs." % (_n, _tag))
+                assert _sub.get("t_window"), (
+                    "FAULT_EXPECTATIONS[%r].signals_require[%r]: "
+                    "`reach_within_ms` needs a `t_window` that OPENS BEFORE the "
+                    "bit rises, or the pre-edge level is unknown and the check "
+                    "can only report 'the bit never rose'." % (_n, _tag))
             if "max_ms" in _sub:
                 # L5: the latency kind is SELECTED by `max_ms` and ignores tick
                 # bounds entirely, so a tick bound written beside it is silently
@@ -8584,7 +8736,12 @@ def scan_signals(csv_path, specs, grace_s=WARM_RESET_GRACE_S):
                 # keeps excluding rows for `exclude_hold_ms` after the bit
                 # clears.  None until the bit has been seen set at all — a run
                 # whose masked branch never opened gets no exclusion.
-                "mask_last_set_t": None}
+                "mask_last_set_t": None,
+                # `reach_within_ms` state (2026-09-03): the sim time of the
+                # first sample at or above the spec's `min_value` at or after
+                # the watched bit's rising edge (`edge_t`).  None until that
+                # happens, which is what "never reached the band" reports.
+                "reach_t": None}
 
     _thr_cache = {}
 
@@ -8677,6 +8834,45 @@ def scan_signals(csv_path, specs, grace_s=WARM_RESET_GRACE_S):
                                 m["latch_t"] = t
                         continue
                     m["rows"] += 1
+                    # ── SETTLING MEASUREMENT: `reach_within_ms` ──────────────
+                    # (2026-09-03, campaign E fix round, item 2.)  THE ONLY
+                    # KIND THAT READS TWO COLUMNS ON ONE ROW, and it has to:
+                    # the question is "how long after the mechanism ENGAGED did
+                    # the current reach its band", and the engagement instant is
+                    # the aux bit's rising edge, not the commanded step.  The
+                    # two are different numbers on this board - the commanded
+                    # step reaches the firmware a Pi cadence period late
+                    # (3.3 - 17.7 ms measured, campaign E), and folding that
+                    # into the settling figure measures the LINK, not the clamp.
+                    # The reference instant is therefore MEASURED, not assumed.
+                    if "reach_within_ms" in spec:
+                        bcol = ("switch" if "switch_bit" in spec else "aux")
+                        cell = (row.get(bcol) or "").strip()
+                        if cell:
+                            try:
+                                bits = int(cell, 0)
+                            except ValueError:
+                                bits = None
+                            if bits is not None:
+                                cur = 1 if (bits & _resolve_bit_mask(spec)) else 0
+                                if (m["edge_t"] is None
+                                        and m["prev_bit"] is not None
+                                        and m["prev_bit"] == 0 and cur == 1):
+                                    m["edge_t"] = t
+                                m["prev_bit"] = cur
+                        if m["edge_t"] is not None and m["reach_t"] is None:
+                            raw = (row.get(spec["column"]) or "").strip()
+                            if raw:
+                                try:
+                                    val = float(raw)
+                                except ValueError:
+                                    val = None
+                                if val is not None:
+                                    if val >= float(spec["min_value"]):
+                                        m["reach_t"] = t
+                                    if m["peak"] is None or val > m["peak"]:
+                                        m["peak"] = val
+                        continue
                     # ── bit-valued specs: switch_state or the aux byte ────────
                     # ONE source resolution for all three bit kinds, so a spec
                     # cannot mean a different column depending on which
@@ -8896,6 +9092,32 @@ def _judge_signal_leaf(spec, m):
                 % (_exn, "/".join("%g" % float(x)
                                   for x in spec.get("exempt_values", ())),
                    win, need))
+    if "reach_within_ms" in spec:
+        # SETTLING MEASUREMENT (2026-09-03).  Like the latency kind, the NUMBER
+        # is the deliverable and is printed on both outcomes so a campaign can
+        # track its distribution; the bound is a regression tripwire and must
+        # never be raised to make a run pass.  Unlike the latency kind, the
+        # reference instant is MEASURED (the watched bit's rising edge) rather
+        # than declared, so the figure is the mechanism's own settling and does
+        # not carry the Pi command cadence.
+        lim = float(spec["reach_within_ms"])
+        t_edge, t_reach = m.get("edge_t"), m.get("reach_t")
+        if t_edge is None:
+            return False, ("the watched bit never rose%s, so there is no "
+                           "instant to measure the settling FROM" % win)
+        if t_reach is None:
+            return False, ("%s never reached %g after the bit rose at "
+                           "t=%.4f s%s (peak %s) — tripwire <= %g ms"
+                           % (spec.get("column"), float(spec["min_value"]),
+                              t_edge, win,
+                              "n/a" if m.get("peak") is None
+                              else "%.4f" % m["peak"], lim))
+        ms = (t_reach - t_edge) * 1000.0
+        return (ms <= lim,
+                "MEASURED settling %.2f ms (%s reached %g at t=%.4f s, bit rose "
+                "at t=%.4f s)%s, tripwire <= %g ms"
+                % (ms, spec.get("column"), float(spec["min_value"]), t_reach,
+                   t_edge, win, lim))
     if "max_ms" in spec:
         # LATENCY MEASUREMENT (the "switch_fall_latency_ms" kind; `max_ms` is its
         # discriminator — no other kind carries it).  The number is the
@@ -9517,6 +9739,12 @@ def analyze_events(path):
     """Event counts by kind from a hi-fi .events.jsonl sidecar."""
     out = {"path": path, "total": 0, "kinds": {}, "over_absmax": 0,
            "worst_ring_v": None, "worst_over_absmax_ring_v": None,
+           # A10 (campaign E, 2026-09-03): how many rings the estimator put in
+           # the LOAD-DUMP class.  `over_absmax` is that class GATED on the
+           # plausibility test and on the 20 V abs-max, so a run can carry
+           # load-dump rings and still report zero over-abs-max ones - and the
+           # unconditional check row below has to be able to say which.
+           "load_dump_rings": 0,
            "field_values": {}, "events_by_kind": {}, "read_error": None}
     if not path or not os.path.isfile(path):
         return out
@@ -9566,6 +9794,8 @@ def analyze_events(path):
                     if pv is not None and (out["worst_ring_v"] is None
                                            or pv > out["worst_ring_v"]):
                         out["worst_ring_v"] = pv
+                    if e.get("load_dump_class"):
+                        out["load_dump_rings"] += 1
                     if e.get("over_absmax"):
                         out["over_absmax"] += 1
                         if pv is not None and (
@@ -9967,14 +10197,44 @@ def judge_scenario(name, metrics, events, child, pi_live=False, duration_s=None,
                        "detail": "not measurable — --dashboard passed stdout through; "
                                  "rate gate SKIPPED"})
 
-    if events["over_absmax"]:
-        checks.append({"name": "sw_ring_over_absmax", "passed": False,
-                       "detail": "%d switching event(s) with an estimated ring peak above "
-                                 "the %.0f V abs-max — the boost-death signature; worst %s V"
-                                 % (events["over_absmax"], V_ABSMAX_V,
-                                    ("%.2f" % events["worst_over_absmax_ring_v"])
-                                    if events.get("worst_over_absmax_ring_v") is not None
-                                    else "?")})
+    # ── A10 (campaign E, 2026-09-03): ALWAYS EMIT THE ROW ───────────────────
+    # This used to append only when `over_absmax` was non-zero, so a run whose
+    # ring was GATED out of that class - by the plausibility test or by falling
+    # under the 20 V abs-max - produced no row at all, and the check count
+    # simply dropped (`regen-harvest-true`, 17 -> 16 between two campaigns). A
+    # vanishing row reads as "not applicable" and is indistinguishable from a
+    # scoring path that was never reached, which is the failure mode the whole
+    # census vocabulary exists to prevent. The row now always states the worst
+    # estimated peak and how many rings fell in the LOAD-DUMP class, so a
+    # campaign can see the margin move before it crosses.
+    # The row is emitted whenever there is a stream to aggregate, and ALWAYS
+    # when the count is non-zero - a non-zero count must never be silent, even
+    # on a measurement dict that carries no path.
+    if events.get("over_absmax") or (events.get("path")
+                                     and not events.get("read_error")):
+        _n_over = events.get("over_absmax", 0)
+        _worst = events.get("worst_ring_v")
+        _ld = events.get("load_dump_rings", 0)
+        # ⚠️ ITEM 9 STILL HOLDS ON THE FAILING BRANCH: it reports the
+        # over-abs-max SUBSET's peak and must NOT quote `worst_ring_v`, which
+        # can be a lower sub-abs-max ring from a cleaner switching event. The
+        # unconditional worst-ring figure belongs to the PASSING branch, where
+        # it is the whole point of emitting a row at all.
+        checks.append({
+            "name": "sw_ring_over_absmax", "passed": _n_over == 0,
+            "detail": ("no switching event rang above the %.0f V abs-max "
+                       "(worst estimated ring peak %s V, %d load-dump-class "
+                       "ring(s))"
+                       % (V_ABSMAX_V,
+                          "n/a" if _worst is None else "%.2f" % _worst, _ld))
+                      if _n_over == 0 else
+                      ("%d switching event(s) with an estimated ring peak above "
+                       "the %.0f V abs-max — the boost-death signature; worst "
+                       "%s V, %d load-dump-class ring(s)"
+                       % (_n_over, V_ABSMAX_V,
+                          ("%.2f" % events["worst_over_absmax_ring_v"])
+                          if events.get("worst_over_absmax_ring_v") is not None
+                          else "?", _ld))})
 
     # ── SUITE-WIDE SHARE-CUT HAZARD TRIPWIRE (fw >= 25, 2026-09-01) ──────────
     # THE HAZARD, measured: campaign 20260901_080905's ems-sdp-braking latched

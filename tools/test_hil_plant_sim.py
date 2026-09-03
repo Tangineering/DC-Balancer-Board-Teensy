@@ -12392,6 +12392,39 @@ def test_bind_accepts_every_committed_rig_table_unchanged(tmp_path):
 # the recorded OC_FC topology.
 # ─────────────────────────────────────────────────────────────────────────
 
+def test_regen_early_releases_is_refreshed_at_finalize_not_captured(tmp_path):
+    """A6 (campaign E, 2026-09-03): the sidecar's `regen_early_releases` was
+    STRUCTURALLY FROZEN AT 0.
+
+    `meta_doc` is built once, before the run loop, and `early_releases` is a
+    counter the loop increments - so the sidecar recorded the counter's initial
+    value and never anything else. All five ftp75c sidecars of campaign E read
+    0 while the traces show BOTH designed standstill releases firing on every
+    leg (window 3 at ~67.213 s, window 6 at ~171.034 s), i.e. the D-4
+    trailing-edge rule's own observability reported the opposite of what
+    happened.
+
+    THIS IS A SOURCE-STRUCTURE TEST, and it says so. `finalize_meta()` is a
+    closure inside `main()` and cannot be driven without a socket, a board and
+    a run; what CAN be pinned is that the refresh exists, that it reads the
+    manager rather than a captured value, and that it sits after the meta_doc
+    construction the defect came from. The counter's own arithmetic is covered
+    by the RegenManager tests below."""
+    import inspect
+    src = inspect.getsource(hil)
+    i_build = src.index('"regen_early_releases": (None if regen_mgr is None')
+    i_fin = src.index("def finalize_meta(")
+    assert i_fin > i_build, "finalize_meta must come after the construction"
+    tail = src[i_fin:]
+    j = tail.index('meta_doc["config"]["regen_early_releases"]')
+    assert "int(regen_mgr.early_releases)" in tail[j:j + 200], (
+        "the refresh must read the manager's live counter, not a captured "
+        "value - capturing is exactly the defect")
+    # ... and it must run BEFORE the sidecar is written, or it refreshes
+    # nothing.
+    assert j < tail.index("write_meta_sidecar(args.csv, meta_doc)")
+
+
 def test_a_window_whose_vehicle_stops_early_releases_before_its_wall_clock_end():
     """THE DEFECT, in the campaign's own geometry. The current rails at -12 A
     through the window and steps to 0 shortly before the end; the manager must

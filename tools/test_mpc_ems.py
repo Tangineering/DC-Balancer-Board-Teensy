@@ -2231,7 +2231,7 @@ def test_the_committed_plan_is_insensitive_to_the_projection():
     ems_walk = pytest.importorskip("ems_walk")
     out = []
     # L2 (2026-09-03): the SHIPPED projection is in the sample. The sweep
-    # bracketed `CANDIDATE_COST_MS_NOMINAL` = 0.0392 without containing it, so
+    # bracketed `CANDIDATE_COST_MS_NOMINAL` = 0.0392 (the value shipped at the time; now 0.0360, read live from the module) without containing it, so
     # the one value the planner actually runs at was the only one never
     # measured here.
     for cost in (0.0097, 0.0300, M.CANDIDATE_COST_MS_NOMINAL, 0.0500):

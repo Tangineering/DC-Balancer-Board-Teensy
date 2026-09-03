@@ -1822,6 +1822,132 @@ def test_scan_signals_switch_bit_min_ticks_fail_not_enough_ticks(tmp_path):
     assert "bit set on 1 tick" in checks[0]["detail"]
 
 
+def test_aux_bit_ticks_before_the_grace_window_are_never_counted(tmp_path):
+    """A7 (campaign E, 2026-09-03): THE AUX BYTE PARTICIPATES IN THE CARRIED-IN
+    SIGNATURE, the fw v26 ceiling bits included.
+
+    `pi-silence` opened with 499 FC-ceiling ticks at t = 0.0014 to 0.4994 s,
+    inherited from its predecessor's latched State 99 - the predecessor was
+    `fw26-clamp-sweep`, whose clamp bit froze SET when it latched - and cleared
+    by the warm reset at 0.5004 s. Scoring is structurally safe because
+    `scan_signals()` drops every row before `WARM_RESET_GRACE_S`, exactly as it
+    does for the fault bits. That is asserted here rather than assumed, because
+    the alternative is a check reporting a predecessor's clamp as this run's."""
+    mask = rhs._AUX_BIT_NAMES["fc_ceiling_active"]
+    rows = ([{"t": "%.4f" % (0.001 * k), "aux": str(mask), "fault_flags": "0"}
+             for k in range(500)]
+            + [{"t": "%.4f" % (0.5 + 0.001 * k), "aux": "0",
+                "fault_flags": "0"} for k in range(3000)])
+    path = tmp_path / "a.csv"
+    _write_scenario_csv(path, rows)
+    specs = [{"name": "clamp", "aux_bit": "fc_ceiling_active", "max_ticks": 0,
+              "vacuity_note": "synthetic"}]
+    # At the production grace the carried-in ticks are invisible ...
+    measured = rhs.scan_signals(str(path), specs,
+                                grace_s=hil.WARM_RESET_GRACE_S)
+    assert rhs.judge_signals(specs, measured, "why")[0]["passed"] is True
+    # ... and they are genuinely present in the stream, so the assertion above
+    # is about the grace window and not about an empty column.
+    assert rhs.scan_signals(str(path), specs, grace_s=0.0)[0]["ticks"] == 500
+
+
+# -- reach_within_ms: the SETTLING kind (2026-09-03, campaign E item 2) ------
+#
+# The kind reads TWO columns on one row: a bit whose RISING edge is the
+# reference instant, and a numeric column whose first crossing is the measured
+# one. Every other kind reads one, so the negative cases below are not
+# decoration - a misread here would report the Pi command cadence as the
+# clamp's settling time, which is the number the check exists to separate.
+
+def _reach_rows(bit_at, cross_at, mask, col="I_fc", n=20, step=0.001):
+    rows = []
+    for k in range(n):
+        t = 3.0 + k * step
+        rows.append({"t": "%.4f" % t, "fault_flags": "0",
+                     "aux": str(mask) if t >= bit_at - 1e-9 else "0",
+                     col: "1.3000" if t >= cross_at - 1e-9 else "0.9000"})
+    return rows
+
+
+def test_reach_within_ms_measures_from_the_bit_rise_not_the_window(tmp_path):
+    """The deliverable is the NUMBER, and it is measured from the edge."""
+    mask = rhs._AUX_BIT_NAMES["fc_ceiling_active"]
+    path = tmp_path / "a.csv"
+    _write_scenario_csv(path, _reach_rows(3.005, 3.012, mask))
+    specs = [{"name": "settle", "column": "I_fc", "min_value": 1.2450,
+              "aux_bit": "fc_ceiling_active", "reach_within_ms": 60.0,
+              "t_window": (3.0, 3.5)}]
+    checks = rhs.judge_signals(specs,
+                               rhs.scan_signals(str(path), specs, grace_s=0.0),
+                               "why")
+    assert checks[0]["passed"] is True
+    # 3.012 - 3.005 = 7 ms, NOT the 12 ms from the window's own opening.
+    assert "settling 7.00 ms" in checks[0]["detail"]
+
+
+def test_reach_within_ms_fails_when_the_column_never_reaches_the_band(tmp_path):
+    mask = rhs._AUX_BIT_NAMES["fc_ceiling_active"]
+    path = tmp_path / "a.csv"
+    _write_scenario_csv(path, _reach_rows(3.005, 99.0, mask))
+    specs = [{"name": "settle", "column": "I_fc", "min_value": 1.2450,
+              "aux_bit": "fc_ceiling_active", "reach_within_ms": 60.0,
+              "t_window": (3.0, 3.5)}]
+    checks = rhs.judge_signals(specs,
+                               rhs.scan_signals(str(path), specs, grace_s=0.0),
+                               "why")
+    assert checks[0]["passed"] is False
+    assert "never reached" in checks[0]["detail"]
+
+
+def test_reach_within_ms_fails_when_the_bit_never_rose(tmp_path):
+    """A run in which the mechanism never engaged has nothing to measure FROM,
+    and must not pass by defaulting the reference instant to the window."""
+    mask = rhs._AUX_BIT_NAMES["fc_ceiling_active"]
+    path = tmp_path / "a.csv"
+    _write_scenario_csv(path, _reach_rows(99.0, 3.002, mask))
+    specs = [{"name": "settle", "column": "I_fc", "min_value": 1.2450,
+              "aux_bit": "fc_ceiling_active", "reach_within_ms": 60.0,
+              "t_window": (3.0, 3.5)}]
+    checks = rhs.judge_signals(specs,
+                               rhs.scan_signals(str(path), specs, grace_s=0.0),
+                               "why")
+    assert checks[0]["passed"] is False
+    assert "never rose" in checks[0]["detail"]
+
+
+def test_reach_within_ms_fails_a_slow_settle(tmp_path):
+    mask = rhs._AUX_BIT_NAMES["fc_ceiling_active"]
+    path = tmp_path / "a.csv"
+    _write_scenario_csv(path, _reach_rows(3.002, 3.018, mask, n=40))
+    specs = [{"name": "settle", "column": "I_fc", "min_value": 1.2450,
+              "aux_bit": "fc_ceiling_active", "reach_within_ms": 10.0,
+              "t_window": (2.9, 3.5)}]
+    checks = rhs.judge_signals(specs,
+                               rhs.scan_signals(str(path), specs, grace_s=0.0),
+                               "why")
+    assert checks[0]["passed"] is False
+    assert "tripwire <= 10" in checks[0]["detail"]
+
+
+def test_reach_within_ms_import_guard_refuses_a_malformed_spec():
+    """A `reach_within_ms` spec that carries a bound the kind never reads asked
+    for two assertions and would get one."""
+    base = {"name": "s", "column": "I_fc", "min_value": 1.0,
+            "aux_bit": "fc_ceiling_active", "reach_within_ms": 60.0,
+            "t_window": (0.0, 1.0)}
+    rhs._assert_signal_spec_shapes("x", {"signals_require": [dict(base)]})
+    for bad in ({"min_ticks": 5}, {"max_value": 2.0}, {"max_ms": 5.0}):
+        d = dict(base)
+        d.update(bad)
+        with pytest.raises(AssertionError):
+            rhs._assert_signal_spec_shapes("x", {"signals_require": [d]})
+    for drop in ("aux_bit", "column", "min_value", "t_window"):
+        d = dict(base)
+        d.pop(drop)
+        with pytest.raises(AssertionError):
+            rhs._assert_signal_spec_shapes("x", {"signals_require": [d]})
+
+
 # -- switch_bit / max_ticks -------------------------------------------------
 
 def test_scan_signals_switch_bit_max_ticks_pass_bit_stayed_clear(tmp_path):
@@ -2602,6 +2728,31 @@ def test_judge_scenario_observation_frames_post_grace_detail_handles_missing_las
     post = [c for c in checks if c["name"] == "observation_frames_post_grace"][0]
     assert post["passed"] is False
     assert "?" in post["detail"]
+
+
+def test_sw_ring_over_absmax_row_is_emitted_on_a_clean_stream(tmp_path):
+    """A10 (campaign E): a run whose ring was GATED out of the over-abs-max
+    class used to produce NO row at all, and the check count simply dropped
+    (`regen-harvest-true`, 17 -> 16 between two campaigns). A vanishing row
+    reads as "not applicable" and cannot be told from a scoring path that was
+    never reached, so the row is now always emitted when there is a stream to
+    aggregate - carrying the worst estimated peak and the load-dump census, so
+    a campaign can watch the margin move before it crosses."""
+    path = tmp_path / "e.events.jsonl"
+    path.write_text(
+        '{"kind": "sw_ring", "peak_v": 17.578, "load_dump_class": true}\n'
+        '{"kind": "sw_ring", "peak_v": 12.0}\n', encoding="utf-8")
+    ev = rhs.analyze_events(str(path))
+    assert ev["over_absmax"] == 0
+    assert ev["load_dump_rings"] == 1
+    m = _metrics(fault_bits_seen=0, final_fault_flags=0)
+    passed, checks = rhs.judge_scenario("steady", m, ev, _child())
+    row = [c for c in checks if c["name"] == "sw_ring_over_absmax"]
+    assert len(row) == 1
+    assert row[0]["passed"] is True
+    assert "17.58" in row[0]["detail"]
+    assert "1 load-dump-class" in row[0]["detail"]
+    assert passed is True
 
 
 def test_judge_scenario_sw_ring_over_absmax_fails_even_if_no_fault():
@@ -11275,6 +11426,123 @@ def test_fw26_sweep_walk_regenerates_the_region_table():
 
     # And the duty floor the entry asks for is reachable on the walk.
     assert rhs._FW26_SWEEP_DUTY_TICKS <= rhs._FW26_SWEEP_SPAN_TICKS
+
+
+# =========================================================================
+# CAMPAIGN E (2026-09-03): THE BRIDGING SUB-REGION, and the two checks that
+# would have caught the OC_FC latch before the board did
+# =========================================================================
+def _fw26_axis_steps():
+    """[(t, d_v, d_share)] for every command the sweep's timeline carries.
+
+    Built from the SCENARIO's own `pi_timeline`, not from the region table, so
+    a bridge that failed to be applied is visible here."""
+    tl = hil.SCENARIOS["fw26-clamp-sweep"]["pi_timeline"]
+    out = []
+    v = sp = None
+    for t, payload in tl:
+        nv = payload.get("v_setpoint", v)
+        nsp = payload.get("power_share_setpoint", sp)
+        if v is not None and sp is not None:
+            out.append((t, (nv or 0.0) - (v or 0.0), (nsp or 0.0) - (sp or 0.0)))
+        v, sp = nv, nsp
+    return out
+
+
+def test_fw26_sweep_never_steps_both_axes_upward_in_one_packet():
+    """THE CAMPAIGN E DEFECT, as a table-shape assertion.
+
+    The run latched OC_FC at t = 38.029 s because ONE Pi packet raised the
+    velocity setpoint (2.5 -> 3.0 m/s, railing the drive controller) and the
+    commanded share (0.40 -> 0.84) together: the clamp engaged immediately but
+    its load EMA under-read the rising total by 25.6 % against a 12 % design
+    headroom. A DOWNWARD share step beside a rising velocity is explicitly
+    allowed - it lowers the fuel-cell demand, so the EMA's under-read is
+    conservative - and that asymmetry is the whole content of the rule."""
+    bad = [(t, dv, dsp) for t, dv, dsp in _fw26_axis_steps()
+           if dv > 1e-9 and dsp > 1e-9]
+    assert not bad, (
+        "these commands step BOTH the velocity setpoint and the commanded "
+        "share upward in one packet, which is the campaign E OC_FC mechanism: "
+        "%r. Bridge the boundary (hil_plant_sim.fw26_sweep_commands)." % bad)
+
+
+def test_fw26_sweep_bridge_lands_inside_every_scored_window_s_inset():
+    """The bridge is UNSCORED, and that has to be structural rather than
+    noticed: a region window opening before the bridge closed would judge the
+    PREVIOUS region's commanded share against THIS region's classification."""
+    assert hil.FW26_CLAMP_SWEEP_BRIDGE_S < rhs._FW26_SWEEP_SETTLE_S
+    starts = {t for t, _v, _sp, _c in hil.FW26_CLAMP_SWEEP_REGIONS}
+    for t, payload in hil.SCENARIOS["fw26-clamp-sweep"]["pi_timeline"]:
+        if (t in starts or "v_setpoint" in payload
+                or "power_share_setpoint" not in payload):
+            continue
+        # A bare share command is a bridge closure; it must sit inside some
+        # region's inset.
+        owner = max(x for x in starts if x <= t)
+        assert t - owner <= rhs._FW26_SWEEP_SETTLE_S, (t, owner)
+
+
+def test_fw26_sweep_bridged_boundaries_hold_the_reconstructed_fc_current():
+    """THE CHECK THAT WOULD HAVE CAUGHT IT, and its teeth.
+
+    `sweep()` walks each region at a CONSTANT total, so it cannot see a
+    boundary at all. `reconstruct_sweep()` adds the two lags that produced the
+    latch - the governor's 0.05/tick load EMA and its 0.02/tick reference slew
+    - and drives them with the drive controller's own current rail, fitted to
+    campaign E's three measured boundaries.
+
+    Two assertions, and the second is the one that makes the first meaningful:
+    the SHIPPED table stays inside the acceptance band at every boundary, and
+    the same table with the bridge removed goes over LIMIT_I_FC_MAX, i.e. the
+    check can fail."""
+    probe = _fw26_walk()
+    peaks, run_peak = probe.boundary_report()
+
+    # 1.35 A, not the cruise leg's 1.30: two boundaries in this table are PURE
+    # upward load steps at an already-clamped share (regions 4 and 11), which
+    # reconstruct at 1.3114 A against 1.2954 A measured on the board. The
+    # reconstruction is deliberately conservative, so the bound is written
+    # against what it produces and stays 3.5 % under LIMIT_I_FC_MAX 1.4 A.
+    assert run_peak <= 1.35, peaks
+    for t0, pk in peaks.items():
+        assert pk is not None and pk <= 1.35, (t0, pk)
+
+    # TEETH. Without the bridge the region 5 -> 6 boundary reconstructs over
+    # the 1.4 A limit - which is what the board measured (1.4890 A at latch).
+    raw, raw_peak = probe.boundary_report(bridge_s=0.0)
+    assert raw[38.0] > 1.40, raw
+    assert raw_peak > run_peak
+
+
+def test_fw26_boundary_reconstruction_matches_the_suite_s_settled_totals():
+    """The probe carries its own settled-motor table so it does not import the
+    suite for one number; the two must agree, or the reconstruction and the
+    region labels describe different stimuli."""
+    probe = _fw26_walk()
+    for v, motor in probe.SETTLED_MOTOR_A.items():
+        assert rhs._fw26_region_total(v) == pytest.approx(
+            hil.I_AUX_A + hil.FW26_CLAMP_SWEEP_PRELOAD_A + motor, abs=1e-12), v
+
+
+def test_fw26_cruise_step_pins_are_written_against_the_command_instant():
+    """The two campaign E step pins judge the TRANSIENT, so their windows must
+    open AT the commanded step and not at the steady-state inset - every other
+    check in the entry is inset past exactly the interval that latched the
+    sweep leg."""
+    by = {x["name"]: x for x in
+          rhs.FAULT_EXPECTATIONS["fw26-clamp-cruise"]["signals_require"]}
+    over = by["ceiling_step_overshoot"]
+    settle = by["ceiling_step_settling"]
+    assert over["t_window"] == (rhs._CEILING_STEP_T,
+                                rhs._CEILING_STEP_T + rhs._CEILING_STEP_WIN_S)
+    assert over["t_window"][0] < rhs._CEILING_A0
+    assert settle["t_window"][0] == rhs._CEILING_STEP_T
+    # Measured 1.2502 A / 35 ms in campaign E: the bounds must bracket them.
+    assert over["max_value"] >= 1.2502
+    assert settle["reach_within_ms"] >= 35.0
+    assert settle["min_value"] < 1.2502
+    assert settle["aux_bit"] == "fc_ceiling_active"
 
 
 def test_fw26_sweep_settle_clears_the_drive_controller_rail():

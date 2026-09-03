@@ -523,9 +523,35 @@ BUDGET_MS_CEILING = 15.0        # `ems-mpc-cross`'s hand-set budget (5f1cfed)
 # both the old and the new value, and holds the committed hydrogen to under
 # 0.5 % and the cruise-share command exactly constant.
 #
+# RE-PINNED 2026-09-03 (campaign E, hil_report_20260903_031220, A8):
+# 0.0392 -> 0.0360 ms, AND THE RULE CHANGED WITH IT.  Campaign E measured
+# `candidate_cost_ms_seen` on all five live MPC legs - 0.03512, 0.03623,
+# 0.03552, 0.03520 and 0.03711 ms - so 0.0392 over-estimated the measurement
+# by 5.6 % to 11.6 % on every leg, and the ladder coarsened on 100 % of
+# decisions (4-8 points searched of 9).
+#
+# THE RULE IS NOW THE MEAN, NOT THE MAXIMUM PLUS HEADROOM.  Under the old rule
+# the new maximum 0.03711 would project 0.0427 and coarsen harder still.  That
+# rule was written when an under-estimate had no observable, and it no longer
+# does: `timing()` reports `candidate_cost_ms_seen` and raises
+# `candidate_cost_over_nominal` on any decision whose measured cost exceeds the
+# nominal, and a search that is nevertheless cut returns the shifted incumbent
+# rather than an unsafe command.  0.0360 sits 0.5 % above the campaign-E mean
+# 0.03584 and 3.0 % below the two-campaign maximum 0.03711.
+#
+# ⚠️ THE TRADE-OFF REVERSES DIRECTION, and is stated for the same reason the
+# 0.0392 note stated its own.  A LOWER projection coarsens LATER, so a decision
+# walks a finer ladder subset; the cost is that a decision whose true cost sits
+# at the 0.03711 maximum may now be CUT instead of coarsened, and a cut search
+# is biased toward the incumbent while a coarse one is merely coarse. The
+# bracketing test `test_the_committed_plan_is_insensitive_to_the_projection`
+# sweeps 0.0097-0.0500 ms, which still brackets this value; campaign F must
+# read `mpc_budget_hit` and `candidate_cost_over_nominal` on every MPC leg
+# before this pin is treated as settled.
+#
 # A caller may still pin its own value through `candidate_cost_ms`; nothing
 # reads the clock for this quantity.
-CANDIDATE_COST_MS_NOMINAL = 0.0392
+CANDIDATE_COST_MS_NOMINAL = 0.0360
 LADDER_ENUM_SAFETY = 0.85
 # Ladder sizes the coarsening may select, largest first.  Three is the floor:
 # the two rails and the centre, which is the smallest set that still spans the

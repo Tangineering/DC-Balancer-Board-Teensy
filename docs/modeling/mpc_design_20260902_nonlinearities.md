@@ -618,3 +618,54 @@ Three consequences follow, and the first is the one that is not yet resolved.
   delivered share toward the middle when both channels are on the bus. With one channel
   off there is no minority to protect, so the closed-stage surrogate must not clip a 0 or
   1 candidate. This is a change to `delivery_table()` and not to the governor.
+
+
+---
+
+## 2026-09-03: a hazard the stage model does not represent
+
+Campaign E (`hil_report_20260903_031220`) latched `FAULT_OC_FC` on the
+`fw26-clamp-sweep` leg. The board was correct; the stimulus was not. The full
+statement is `docs/fw26_current_ceiling_governor.md` section 8.6, and this is the
+part of it the planner owns.
+
+**The hazard.** A commanded share step that is raised in the same decision as a
+rising demand defeats the fw v26 current ceiling. The clamp engages immediately,
+but its load filter (`SHARE_GOV_FILT_ALPHA` 0.05 per tick, about 20 ms) needs
+roughly 25 ticks to see the new total while the slew-limited reference crosses
+the safe delivered share in roughly 4 ticks. The two errors add: the filter
+under-read the total by 25.6 % against the clamp's 12 % design headroom, so the
+governor held what it believed was 1.2500 A while the board delivered 1.4890 A.
+
+**The necessary condition** is `I_tot > LIMIT_I_FC_MAX / DROOP_R_MAX` = 1.647 A
+of two-source total. Below it no share step can reach the fault limit, because
+the droop band itself bounds the demand.
+
+**The rule.** No strategy may command an upward share step in the same decision
+as an upward demand step wherever the resulting two-source total exceeds 1.65 A.
+
+**Whether the MPC's stage model already excludes the combination: it does not,
+and no guard is implemented this round.**
+
+- The ladder moves the commanded share by one rung of 0.0875 per decision, so
+  the share half of the combination is bounded but not zero. A 0.0875 rung at a
+  2.0 A total moves the fuel-cell demand by 0.175 A, which is larger than the
+  clamp's whole 0.15 A headroom.
+- The demand half is not the planner's to command: the demand step comes from
+  the drive cycle, and a 1 Hz re-command that lands on an acceleration is
+  exactly the coincidence the rule names. The `open_feedforward` stage is where
+  the two meet, and it is already the stage the surrogate represents worst
+  (section 3.2).
+- The largest fuel-cell current any registered EMS stimulus has commanded is
+  `ems-mpc`'s 1.4714 A, which is 10.7 % under the 1.647 A condition, so the
+  hazard is presently unreachable on the registered set. That is a property of
+  the stimuli, not of the planner.
+
+**A guard is queued, not implemented.** The natural form is a rejection at
+candidate-generation time: refuse an upward share rung on any stage whose
+predicted two-source total both exceeds 1.65 A and is rising. It costs one
+comparison per candidate and needs the stage's own predicted total, which
+`delivery_table()` already carries. It is not implemented here because the
+hazard is unreachable on the current stimulus set and because a guard that
+silently removes candidates changes the frontier numbers; that is a measured
+change and belongs in its own round.

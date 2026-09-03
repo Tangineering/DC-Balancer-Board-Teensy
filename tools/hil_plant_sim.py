@@ -10306,7 +10306,7 @@ SCENARIOS["charge-to-full"] = {
 # The BATTERY ceiling is NOT exercised: it would need 2.70 A on one channel,
 # i.e. a total the platform's validated budget does not admit at a share this
 # scenario could command.  That ceiling has never been exercised on hardware
-# and is not expected to bind (design note section 8.6).
+# and is not expected to bind (design note section 8.7).
 #
 # ⚠️ THE CLAMP IS NOT EXPECTED TO ACT IN AN FC-CHARGE WINDOW, AND THIS SCENARIO
 # OPENS NONE.  `assertFcChargeEnable()` holds BT_BUS low for the whole of such a
@@ -10399,6 +10399,52 @@ SCENARIOS["fw26-clamp-cruise"] = {
 FW26_CLAMP_SWEEP_PRELOAD_A = 1.05
 FW26_CLAMP_SWEEP_REGION_S = 6.0
 
+# ── THE BRIDGING SUB-REGION (campaign E, 2026-09-03) ────────────────────────
+#
+# WHY IT EXISTS.  The first campaign that ran this scenario LATCHED `OC_FC` at
+# t = 38.029 s, because the region 5 -> 6 boundary stepped BOTH axes upward in
+# one Pi packet — v_setpoint 2.5 -> 3.0 m/s AND the commanded share 0.40 -> 0.84
+# — violating the one-axis-per-boundary discipline the table's own comment
+# states.  Region 10 -> 11 (t = 68, v 0.5 -> 2.5 and share 0.50 -> 0.84) is the
+# same defect and would have been the second latch.  The board was CORRECT: the
+# clamp engaged on the first tick it saw the new share, but its ~20 ms load EMA
+# under-read the rising two-source total by 25.6 % against the clamp's 12 %
+# design headroom (LIMIT_I_FC_MAX 1.4 A - SHARE_GOV_I_FC_CEIL_A 1.25 A), so the
+# governor believed it was delivering 1.2500 A while the board delivered 1.4890.
+# The hazard statement is `docs/fw26_current_ceiling_governor.md` section 8.6.
+#
+# WHAT IT DOES.  At every boundary that moves both axes UPWARD the timeline is
+# split in two: the VELOCITY axis steps first, at the PREVIOUS region's share,
+# and the SHARE axis steps `FW26_CLAMP_SWEEP_BRIDGE_S` later.  Neither packet
+# then moves two axes up at once, which is the condition the ledger's race
+# analysis identifies.  A boundary that moves the share DOWN while the velocity
+# rises is left alone: a falling share reduces the fuel-cell demand and the EMA's
+# under-read is then conservative.
+#
+# THE DURATION, and why the 100 ms EMA floor is NOT the binding derivation.
+# Tracking the total to within the 12 % headroom takes ln(0.12/rho)/ln(0.95) =
+# 23 ticks at the measured step ratio rho = 0.385, and the clamp's own settling
+# was measured at 35 ms on `fw26-clamp-cruise`, so 100 ms = 5 EMA time constants
+# is the floor.  It is not sufficient here, because the DRIVE LOOP's own
+# transient outlasts it: an upward velocity step rails the drive controller at
+# its 12 A current clamp for (v_new - v_prev) / A_RAIL seconds — 0.27 s at the
+# region 5 -> 6 step and 1.08 s at region 10 -> 11, at the measured rail
+# acceleration 1.85 m/s^2 — and during the rail the two-source total is still
+# climbing.  The share step must land on a SETTLED total, which is the condition
+# `fw26-clamp-cruise` measured (1.2502 A peak, 0.016 % overshoot).  1.5 s covers
+# the longer rail with 39 % margin.
+#
+# THE BRIDGE IS UNSCORED, and is inside every check window's own inset: the
+# expectation builder insets each region window by `_FW26_SWEEP_SETTLE_S` = 2.5 s
+# from the region start, so the bridge ends 1.0 s before the first scored sample.
+# `run_hil_suite.py` asserts that relation at import.
+#
+# WALKED PEAKS, reconstructed with the EMA lag and the drive rail
+# (`tools/probes/probe_fw26_clamp_walk.py`): region 6's boundary
+# falls 1.7223 -> 1.2771 A and region 11's 1.3114 -> 1.2634 A; the whole-table
+# peak becomes region 4's unchanged 1.3114 A, 6.3 % under LIMIT_I_FC_MAX.
+FW26_CLAMP_SWEEP_BRIDGE_S = 1.5
+
 # (t_start, v_setpoint, commanded share, expected to clamp).  The fourth field
 # is DOCUMENTATION consumed by run_hil_suite.py's expectation builder, so the
 # check windows and this table cannot drift apart: a region's classification is
@@ -10418,6 +10464,33 @@ FW26_CLAMP_SWEEP_REGIONS = (
     (74.0, 0.0, 0.50, False),   # 1.200 A — sub-threshold, closes the run
 )
 
+def fw26_sweep_commands(regions=None, bridge_s=None, pre_share=0.50,
+                        pre_v=0.0):
+    """The region table's Pi commands, bridged.
+
+    Emits one `(t, payload)` pair per region, EXCEPT at a boundary that would
+    step both the velocity setpoint and the commanded share upward in the same
+    packet: there it emits the velocity step at the previous region's share and
+    the share step `bridge_s` later.  See the FW26_CLAMP_SWEEP_BRIDGE_S block.
+
+    `regions` / `bridge_s` are arguments rather than reads of the module
+    constants so a test can walk a deliberately UNBRIDGED table and show the
+    check has teeth."""
+    regions = FW26_CLAMP_SWEEP_REGIONS if regions is None else regions
+    bridge_s = FW26_CLAMP_SWEEP_BRIDGE_S if bridge_s is None else bridge_s
+    out = []
+    prev_v, prev_sp = pre_v, pre_share
+    for t0, v, sp, _clamped in regions:
+        if bridge_s > 0.0 and v > prev_v and sp > prev_sp:
+            out.append((t0, {"v_setpoint": v,
+                             "power_share_setpoint": prev_sp}))
+            out.append((t0 + bridge_s, {"power_share_setpoint": sp}))
+        else:
+            out.append((t0, {"v_setpoint": v, "power_share_setpoint": sp}))
+        prev_v, prev_sp = v, sp
+    return out
+
+
 SCENARIOS["fw26-clamp-sweep"] = {
     "description": ("84 s 'Y'-shaped sweep that crosses the fw v26 current "
                     "ceiling five times in each direction, on BOTH axes: the "
@@ -10429,7 +10502,10 @@ SCENARIOS["fw26-clamp-sweep"] = {
                     "droop-code pin: "
                     "below the ceiling fw v26 is arithmetically identical to "
                     "fw v25, and their droop codes are pinned to the "
-                    "clamp-absent walk."),
+                    "clamp-absent walk. The two boundaries that would step "
+                    "both axes upward in one packet carry an unscored 1.5 s "
+                    "bridging sub-region that moves the velocity axis first "
+                    "and the share axis second."),
     # "any": the clamp is firmware arithmetic on a filtered total; the split is
     # the droop network's. Neither needs ideal-diode dynamics, so the scenario
     # is valid under either engine. A campaign runs it under ONE; a comparison
@@ -10444,8 +10520,9 @@ SCENARIOS["fw26-clamp-sweep"] = {
          # ramps in (AUX_PRELOAD_START_S 4.0 + SOC_LOAD_RAMP_S 3.0 = 7.0 s), so
          # region 1 opens a full second after the load has settled.
          (5.0, {"v_setpoint": 0.0, "power_share_setpoint": 0.50})]
-        + [(_t, {"v_setpoint": _v, "power_share_setpoint": _sp})
-           for _t, _v, _sp, _c in FW26_CLAMP_SWEEP_REGIONS]
+        # Bridged at the two boundaries that would otherwise step both axes
+        # upward in one packet — see the FW26_CLAMP_SWEEP_BRIDGE_S block.
+        + fw26_sweep_commands()
         # Close the run out Run -> Finish -> Idle, leaving 4 s.
         + [(80.0, {"v_setpoint": 0.0, "mode_cmd": MODE_SAFE})]),
 }
@@ -12679,6 +12756,24 @@ def main(argv=None):
                 if _tm:
                     meta_doc["config"].setdefault("mpc", {})
                     meta_doc["config"]["mpc"]["timing"] = _tm
+        except Exception:                       # pragma: no cover - defensive
+            pass
+        # ── A6 (campaign E, 2026-09-03): `regen_early_releases` WAS
+        # STRUCTURALLY FROZEN AT 0.  It is a COUNTER that the run loop
+        # increments, but `meta_doc` is built once, before the loop, so the
+        # sidecar recorded the counter's initial value and nothing else. All
+        # five ftp75c sidecars of campaign E read 0 while the traces show both
+        # designed standstill releases firing on every leg (window 3 at
+        # ~67.213 s, window 6 at ~171.034 s) - the D-4 trailing-edge rule's own
+        # observability was reporting the opposite of what happened. Refreshed
+        # here, the same way `config.mpc.timing` above is, and for the same
+        # reason: an accumulated quantity has to be read AFTER the run.
+        # `regen_duty_s` beside it needs no refresh - it is a pure function of
+        # the static window list.
+        try:
+            if regen_mgr is not None:
+                meta_doc["config"]["regen_early_releases"] = \
+                    int(regen_mgr.early_releases)
         except Exception:                       # pragma: no cover - defensive
             pass
         write_meta_sidecar(args.csv, meta_doc)
