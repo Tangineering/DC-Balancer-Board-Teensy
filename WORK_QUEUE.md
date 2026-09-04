@@ -66,6 +66,11 @@ today. Bench is NOT available; the HIL rig IS.
       motion only). TO-DO (operator): hold vs return-to-battery on re-entering the open-loop region.
 - [ ] 3. Load-scheduled droop scale, closed loop only: k_d = RE_MAX * max(DROOP_R_MIN, I_min/I_tot_filt) * s,
       **s = 0.9** (operator); k_d and r slewed under one limiter/hysteresis from the same filtered total;
+      **COURSE CORRECTION (operator, evening): constant low-current authority D = 0.30 V, not 0.60 V ->
+      SHARE_MINORITY_I_MIN_A 0.30 -> 0.15 A; closed-loop gate 0.30 A (exit 0.25 A); schedule meets the
+      0.30 ohm floor at ~0.91 A (fw v26 recovered above it); fw v26 clamp reachability moves to 1.40 A
+      (static_asserts re-derived); conduction at a 0.15 A minority under the constant margin is a bench
+      HYPOTHESIS the HIL plant cannot test.**
       g <= 1 guard at the code-write site; reseed under the new k_d at the handover; bit-identical to fw v26
       above 2.0 A (schedule floors at 0.30 ohm). Bus sag becomes ~0.6 V design-scale below 2 A.
 - [ ] 4. **BLG v8** record format: the live k_d per record (operator ruled the bump); decoder
