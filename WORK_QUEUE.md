@@ -100,6 +100,32 @@ today. Bench is NOT available; the HIL rig IS.
       watch first), v6 legs, share-step guard witness = 0, `mpc_share_pred_err` baseline, k_d schedule
       observables, battery-only start on every leg.
 
+
+**fw v27 rev 3 / fw v28 spec seed (from campaigns G + G2, 2026-09-04; operator to rule and flash - NOT built overnight):**
+- [ ] F1 **Break-before-make at the FC-charge window entry from a battery-only state.** The arm is suppressed,
+      not disarmed, when FC_CHARGE opens, so assertFcChargeEnable() re-closes FC_BUS from cold and drops
+      BT_BUS/REGEN in the same tick; RT1987 t_D_ON 8 ms leaves the bus source-less; V_bus collapses at
+      I_AUX/C_VBUS; UV dwell 19.07 ms (charge-to-full) / 17.9 ms (ftp75c x2) vs the 20 ms latch. Preferred:
+      chargingControl() clears the arm one commander period BEFORE raising FC_CHARGE so the setpoint latch's
+      guarded release re-closes FC_BUS onto a live bus, charge path next tick. Alternative: make-before-break
+      with an >= t_D_ON dwell inside assertFcChargeEnable(). Hardware question: the VESC below the sim's 5 V floor.
+- [ ] F2 **The arm never releases below the 0.30 A gate** - every cycle whose total stays under it (ftp75c: max
+      0.278 A; standstill) runs battery-only for the whole run (h2 -99 %, pack drained). Ruling: release rule at
+      low totals (time-based, SoC-based, or a lower gate), or accept.
+- [ ] F3 **Forced-0.5000 regime** for totals in 0.25-0.30 A (closed loop below its own entry, empty minority band):
+      0.14 A per channel for whole cruise spans (ems-sdp-cross). Ruling: raise the exit to the entry, or clip to
+      the rail instead of 0.5, or accept.
+- [ ] F4 **Scheduled k_d saturates in single-source FC-charge windows** (k_d 0.906 ohm, mdac_fc 4095, single-source
+      droop x3, charge-window sag x3). Hold k_d at K_DROOP while FC_CHARGE is open / a channel is cut.
+- [ ] F5 **Share-cut chatter**: SHARE_MINORITY_I_MIN_A 0.15 == SHARE_HANDOFF_MIN_A, so a channel at the floor reads
+      dark and the load guard cycles it (58 cuts / 90 s on ems-ftp75-sdp, max 0.21 A, safe). Re-derive
+      SHARE_HANDOFF_MIN_A / SHARE_HANDOFF_LIVE_A relative to the floor.
+- [ ] F6 The share-loop feedback EMA lets the reference overshoot the clamped rail by ~3 % of r for ~12 ms after
+      the fw v26 clamp engages (+0.039 A at 1.57 A; half the ceiling margin) - hazard-budget item, and the walk
+      must model it.
+- [ ] F7 The battery-only re-entry closes FC_BUS on inherited MDAC codes (r ~0.5): a ~12 ms turn-on overshoot
+      (0.2355 A on ems-ftp75-sdp) - benign; consider re-seeding the codes at the clipped band edge on release.
+
 **Deferred / not tonight:** the alpha sweep re-run at the measured billing (anchor index 7 -> 8; then move the
 three `ems-sdp-alpha-*` legs); the long matched-DP re-solves after the I_AUX_A change; the `--droop measured`
 split-law scaling (ruling open); the fw v26 joint-leg 8 % MDAC band tightening (after its first campaign);

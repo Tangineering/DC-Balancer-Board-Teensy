@@ -1386,3 +1386,28 @@ the bus through the pre-gate window) - fixed before the campaign and the six MPC
   **G2 launched (00:31)**: the ten long-cycle legs (`--with-ftp75 --with-ftp75c --only 'ems-ftp75*'`) from the
   same worktree; expect UV_BUS indications on the socband legs (the charge-to-full mechanism). Tool pass on G
   deferred until G2 finishes (host load during a live campaign).
+- **Campaign G replay audit: 27/27 PASS confirmed real** (138 rows / 128 substantive / 10 non-evidence, the
+  same census as D-F; injection fidelity at the print floor on 25/27; chain 26/27 exact + the ML0217 INIT_FAIL
+  exception at 300.99 ms). The finding is coverage, not scoring: fw v27 is plainly visible on the replays on
+  three axes no replay check reads - every command-driven entry starts battery-only (SY0001 stays battery-only
+  for its whole run: injected total 0.100 A < the gate; the release totals 0.2549-0.3288 A calibrate the 0.30 A
+  gate), FC MDAC codes saturate at 4095 below the 0.906 A crossover (0 ticks in F, up to 32 865 in G), and the
+  share_cut_census rose 5.3x (786 vs 149; the halved entry gate puts these injected totals inside the closed
+  loop). Fix queue R1-R6 (topology observable HIGH; census re-pin; ratio tagging at 4095; windows end at the
+  latch; TARGET_FW_VERSION; skip_preamble scoring).
+- **G2 `ems-ftp75-sdp`: fw v27 consequence #4 - SHARE-CUT CHATTER.** With the floor halved to 0.15 A it now
+  equals SHARE_HANDOFF_MIN_A, so a channel commanded at the floor reads DARK and the load guard cut/restore
+  cycles it: 58 en_low FC_BUS cuts over 205-295 s of high cruise (max i_cut 0.21 A, no hazard), each ~20 ms
+  dark gap putting the whole cruise total on the battery (peak 0.9211 A vs the 0.9 A pin). The fw v27 ledger
+  row had flagged the coincidence; this is the measurement. **Operator design item: re-derive
+  SHARE_HANDOFF_MIN_A relative to the floor (fw v27 rev 3 / v28).** Also measured: the battery-only re-entry's
+  turn-on overshoot on inherited MDAC codes (0.2355 A for ~12 ms; the design note's M3 watch item, benign).
+- **G2 ftp75c family = the sequencing defect AT SCALE:** the compressed cycle never reaches the 0.30 A release
+  gate (max 0.278 A), so the whole cycle runs battery-only (h2 -99.2 % vs F; the pack carries everything) and
+  the two regen early releases hand off break-before-make (UV dwell 17.9 ms vs 20; 1.18 A FC bus-recharge
+  inrush). Regen harvest itself is unchanged (19.24 s, 0.7365 C, chopper 5.47 J). All five ftp75c legs FAIL the
+  same triple; the ftp75 (uncompressed) half is clean because it crosses the gate. On hardware the bus keeps
+  falling below the sim's 5 V floor: the VESC's brown-out behaviour is the open question (the Teensy is on the
+  battery regulator). **Operator: fw v27's battery-only start + suppressed-not-disarmed arm needs the F1 fix
+  (preferred: clear the arm one commander period before FC_CHARGE opens) before the next flash; the ftp75c
+  frontier is UNVERIFIED this campaign by construction.**
