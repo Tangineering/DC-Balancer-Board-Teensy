@@ -1430,3 +1430,55 @@ the bus through the pre-gate window) - fixed before the campaign and the six MPC
   ratio tagging + latch-ended windows + skip_preamble scoring, sdpftp premise + 150 ms turn-on hold, bt_peak
   1.00, ftp75c rationale (bound held, FAILing by design), walk-era notes. Not done: the fw26-clamp-joint
   re-pin (1.3243 / 1.3296) - queued for the next round.
+- **Decision D-4 (02:26): campaign H launched** from a detached worktree `DC-Balancer-H` at `c708d71` (the post-G
+  fix round, reviewed twice), full plan WITH `--with-ftp75 --with-ftp75c` (~100 min), same fw v27 rev 2 on the
+  board. Purpose: validate the tools round on the board (the re-pins, the teardown anchor, the MPC battery-only
+  branch + BT-only release preview, the mppt window, the replay census/windows) - NOT to re-measure the firmware
+  defect. Pre-classified expected FAILs: comm-loss (soft-start artefact reduced 34 -> 3.75 A, still latches
+  OC_FC), ems-mpc / -det / ems-ftp75-mpc (prediction error persists ~1.3 s past the release on the stale plan;
+  peak should be smaller than 0.55), ems-sdp (bin-21 plateau, ruling open), charge-to-full + the five ftp75c
+  legs (the firmware defect: fault_allow_only only; survives_to now PASSes), ems-mpc-cross (forced-0.5 regime).
+  Budget: G+G2 = 1, H = 2 of 5. Stop after H unless it exposes a tooling defect worth one more validation.
+
+# MORNING DIGEST (2026-09-04, written 02:27; campaign H still running - its result is appended below when it lands)
+
+**Asked:** "fw v27 is flashed, begin the overnight campaign". **Delivered:** campaign G + its supplementary pass
+G2 (one campaign against the budget), a two-round tools fix (reviewed twice), the tool pass, ledgers, FINAL
+SUMMARY and HIL_SUMMARY in both folders, a CLAUDE.md addendum (2026-09-04) and campaign H (validation of the
+tools round) launched at 02:26. **No firmware change, no flash.** Commits: `e85d570`, `ea99b7f`, `093227f`,
+`c708d71` (all pushed).
+
+## Headline findings (every number in a ledger)
+1. **fw v27 rev 2 has a sequencing defect you must fix before the next flash** (charge-to-full; the five ftp75c
+   legs): the battery-only arm is suppressed, not disarmed, when an FC-charge window opens; from a still-cut
+   state the firmware re-closes FC_BUS and drops BT_BUS/REGEN in the same tick, the RT1987 8 ms turn-on delay
+   leaves the bus source-less, and the UV_BUS dwell reaches 19.07 / 17.9 ms against the 20 ms latch. The arm
+   never releases on any cycle under the 0.30 A gate (standstill; the compressed cycle at max 0.278 A), so those
+   runs are battery-only end to end. WORK_QUEUE 0d F1 (preferred fix: clear the arm one commander period before
+   FC_CHARGE opens) and F2 (the release rule at low totals). Hardware question: the VESC below 5 V.
+2. **Three more fw v27 design consequences** (F3-F5): the forced-0.5000 split for totals in 0.25-0.30 A; the k_d
+   schedule saturating in single-source charge windows (bus sag x3); share-cut chatter because the 0.15 A floor
+   equals SHARE_HANDOFF_MIN_A (58-61 cuts / 90 s, safe).
+3. **What fw v27 got right on the board:** the battery-only start on every leg that reaches Run; the clamp
+   calibration (cruise 1.2502 A, sweep 12/12 at I_min 0.15, the joint leg 1.3243 A vs a 1.3241 A bound with a
+   named walk gap: the share-loop feedback EMA overshoot, F6); the anchors (scp-inrush -0.094 %, bring-up P0 =
+   pin, soc-depletion +12.7 s, charge-cruise +24.7 ms explained by the aux era).
+4. **Tooling:** comm-loss was a sim artefact (RT1987 soft-start degeneracy at v_ss_start = 0; reduced, not
+   closed - the constant-slew ramp is an A/B round for you); the MPC delivery table had no battery-only branch
+   (added); six aux/fw27-era scoring items fixed or re-pinned from measurement; the replay half 27/27 real with
+   three fw v27 axes now reported. The long-cycle legs are opt-in flags my first launch omitted (D-3).
+
+## Decisions you may want to reverse (all one-commit)
+- D-2 joint-leg step 1.65 -> 1.57 A (the 1.65 A step's bound exceeded LIMIT_I_FC_MAX at I_min 0.15).
+- D-3 G2 as a supplementary pass; D-4 campaign H on the tools round.
+- The RT1987 one-sided SOFT stamp (cold pins byte-identical; provisional 3.7476 A pin on the warm re-close).
+- The replay windows ending at the first latch with floors re-pinned (ML0169 0.33 / ML0165 0.43 / ML0203 0.45).
+
+## Rulings waiting on you (WORK_QUEUE 0c/0d)
+F1-F7 (firmware spec seed); the ems-sdp stimulus knob (bin-21 plateau); the RT1987 constant-slew ramp A/B;
+the MPC residual past the release; ASYM_SIMPLE_I_MIN_A at the 0.09 A idle; `--droop measured` scaling.
+
+## Bench list (no access tonight; unchanged)
+Two-axis dropout sweep at controlled slew; the pack repeat of WP0073/WP0100; the AD5443/OPA197 DMM measurement
+(design 0.1000 / 0.0500 / 0.2510 V at 1 A, g 0.5); the dark-node decay capture; the tau_r step; a standstill
+capture with the VESC powered (I_AUX_A); the VESC's behaviour below 5 V on the bus.
