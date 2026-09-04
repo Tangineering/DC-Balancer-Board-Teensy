@@ -1525,3 +1525,17 @@ capture with the VESC powered (I_AUX_A); the VESC's behaviour below 5 V on the b
 Two campaign passes (G 0:53, G2 0:46) + H (~1:40, running); ~22 subagents (Opus analyses x12, reviews x4,
 implementers x4, Sonnet x3); five commits; zero destructive actions; the operator's morning list is one
 firmware ruling (F1) with six design consequences behind it.
+- **Campaign H, NEW FACT ON THE DEFECT: two ftp75c legs LATCHED UV_BUS (State 99 mid-cycle)** - ems-ftp75c-socband
+  and -sdp (G2 had bare bits only, 17.9 ms dwell vs the 20 ms latch); -5050 and -dp stayed bare. The margin
+  is real and lands on either side run to run, as the G2 analysis predicted. No damage path; the runs ended in
+  State 99 with the downstream checks (regen duty, charged-at-all) post-latch non-evidence. Sharpens F1's
+  priority: on hardware a mid-cycle State-99 latch from a regen handoff is now a measured outcome, not a
+  margin argument.
+- **Campaign H COMPLETE (04:05): 75/75 executed (with the long-cycle legs), suite 63 PASS / 12 FAIL - the twelve
+  FAILs are EXACTLY the pre-classified set** (comm-loss artefact; ems-sdp bin-21 ruling; ems-mpc / -det /
+  ems-ftp75-mpc / -cross MPC residuals; charge-to-full + the five ftp75c legs = the firmware defect, two of
+  them LATCHED this time). Every leg the tools round re-pinned or fixed PASSED on the board: charge-cruise
+  (anchor), ems-y-b30-v1 (0.91 A load), ems-sdp-cross, ems-sdp-braking, mppt-tracking, ems-ftp75-sdp (both
+  checks), the survives_to rendering on six legs, all three fw26 clamp legs, all 27 replays. Stop after H
+  (budget 2 of 5): the marginal campaign would only repeat datapoints; every open item is a firmware ruling or
+  a tooling round that needs one. Tool pass running; a consolidated classification pass follows.
