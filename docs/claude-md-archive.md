@@ -3238,3 +3238,68 @@ round. **FW stays v25 and the wire protocol is frozen; the board ran the fw v25 
   the α question governs what should run next (the stop-at-four precedent, 2026-09-01).
 
 ---
+
+---
+
+# Range 8 (rotated 2026-09-04): the 2026-09-02c addendum
+
+## Status & session addendum (2026-09-02c, DP-bound round: per-node bleed, loss map, droop-mode bus law, ftp75c compressed cycle + regen term, grid/ladder widening, mpc-sto default)
+
+Daytime round after the overnight session (operator present; rulings in
+`WORK_QUEUE.md` §7 and the memory file). Commits `51e20b8` (EMS-comparison stage + N4 rejected),
+`82edd3c` (stage 1), `ca2d084` (stage 2 + widening). fw v26 (`45d9c95`) is a separate addendum.
+
+- **N4 rejected by probe:** the hi-fi `I_fc` is the FC_BUS branch current WITH the INA shunt in
+  series (INA sits between the TPS61288 output and the RT1987 input); the "half step" was the
+  two-source share split; reported step 99.3 % of the boost-output step at the first 1 kHz
+  sample. `tools/probes/probe_n4_ina_proxy.py`, four pinning tests.
+- **EMS-comparison stage** (`tools/hil_ems_comparison.py`, `EMS_COMPARISON.md` per campaign,
+  hand-written Commentary carried across re-renders; skill Stage 0/4). Campaign C FTP-75: four
+  charge-free strategies within 0.15 % eq-H2 (unresolved under the λ band), soc-band 3.4 % worse.
+- **The dp-replay gap decomposed** (`docs/modeling/dp_loss_map_20260902.md`): +4.35 % (FTP-75) /
+  −0.20 % (61 s) = node bleeds at 2 kΩ (+4.90 / +2.58 % of h2) + aux billed at the `--droop
+  measured` bus law 0.074 Ω while campaigns run `design` 0.308 Ω (−0.67 / −2.73 %); the 61 s
+  figure was a cancellation. Gfc dynamics contribute −0.01 %.
+- **Physics change (operator ruling): `R_NODE_BLEED` 2 kΩ → `R_NODE_BLEED_BUS` 30 kΩ /
+  `R_NODE_BLEED_OTHER` 60 kΩ** (`TODO(calibrate)`, bench decay capture); simple engine
+  `R_BUS_BLEED` 30 kΩ (τ 0.94 → 14.1 s). Every h2 anchor moves (61 s −1.7 %, FTP-75 −2.9 %,
+  soc-depletion latch ≈ +1.5 s; scp-inrush/handoff-sag bit-exactness lost) — **BLEED-ERA block in
+  run_hil_suite.py; re-pin on the next campaign.** Reversal path in HIL_PLANT.md.
+- **Structural loss map** in `build_demand()` / `ems_walk` / `mpc_ems` (lockstep 0.0 over 90
+  previews): per-live-node bleed, MOT_PWR drop, bus law V0_EFF 15.871722 V, R_FIX 0.017986 Ω,
+  K_G 1.95079 at the firmware-held `g_par` 0.148922 (= K_DROOP/RE_MAX, share cancels: separable).
+  Optional fingerprint key `loss_map` (omitted when None; 37/37 records reachable); era guards in
+  `DpReplayStrategy.bind_scenario()` (review H1) and `MpcStrategy.bind_scenario()` (run config
+  wins). dp-replay deviation ems-ftp75-dp **+0.029 %**, ems-dp-replay **−0.303 %**, bleed-invariant.
+  `droop_mode` is a run-era field. `ElectricalSim(substep_pin=)` for deterministic tests.
+- **mpc-sto is the frontier MPC** (operator ruling; ems-mpc/-cross/-ftp75-mpc); `ems-mpc-det` is the
+  ablation. ⚠️ mpc-sto fails the offline Gate 1 at the measured plant dv0 (mean 0.009 vs 5e-3; a
+  forecast error on one open_hold stage) — stated on both MPC frontier notes. The ems-mpc-cross
+  share-motion floor 0.12 → 0.05: the 0.12 was unsatisfiable at the previous commit under BOTH
+  laws (walk 0.0833) and unchanged by the widening (one ladder step from the low rail).
+- **ftp75c** (design `docs/modeling/ftp75c_regen_cycle_design_20260902.md`): FTP-75 at time factor
+  0.5 (234 points, 170 s, peak accel ±0.349 m/s²) on the **`scaled-air` drag profile** (k_air
+  0.0598069 N/(m/s)², F_c 0, M_EFF 3.5 kg; 51 % regen share — the operator chose it over
+  `scaled-air-matched` 79 %; the published scaling did NOT time-scale, this is a separate cycle).
+  `tools/regen_power.py` is the one regen chain; `RegenManager` opens REGEN+MOT_PWR on braking for
+  every strategy, windows trimmed at **2× the firmware's regenActive threshold** (review H1: a
+  force<0 trim commanded charge_goal while the firmware read cruise → the OC_FC path; 6 windows /
+  19.6 s). Signed regen term in the DP (share-independent credit, charge/regen exclusivity,
+  era-gated grid guard, `drag`/`eta_regen` optional keys). soc-band overrides 0.18074 / 0.33107 A
+  (review H2). Regen to pack ≈ 1.17 C / cycle (SoC +6.5e-5): a model validation, NOT an EMS
+  discriminator. Bench replication of option 1 needs an external road-load motor on the flywheel
+  (single-motor feedforward cannot produce physical regen).
+- **Share-range ruling:** every EMS strategy gets the full firmware band [0.15, 0.85]; soc-band
+  stays 0.50 ± 0.25 by design; 0/1 single-source in the MPC ONLY (foundation shipped: measured
+  single-source bus laws 1.9453×/2.0579×; enumeration held on the cut-guard path-dependence
+  question — three resolutions in the MPC design record). DP grid [0.15, 0.85] n_share 57 (edges
+  = the SDP clamp's float32): ems-sdp matched-DP −0.35 % → **+0.052 %**; ems-ftp75c-sdp −0.72 %
+  residual. MPC ladder 9 points over the band, 0 % expiry, cap 2187. Frontier (walk): cycle61
+  0.957 / 1.002, ftp75 0.959–0.966 / 0.992–0.998, ftp75c 1.009–1.017 (candidate WORSE than the
+  reference; a PASS asserts "no more than 2 % worse") / 1.009–1.016.
+- **Standing corrections:** the same-config h2 repeatability floor is ~50 ppm; the FC_BUS/BT_BUS
+  diode drops are billed to neither source (stack current referred at V_bus) — model artefact,
+  recorded; `MATCHED_DP_LONG_DURATION_S` 100 s means every FTP-75/ftp75c matched solve needs
+  `--matched-dp-allow-long` or a prefill.
+- **Suites at close:** miniforge 2734 passed (one known wall-clock flake, WORK_QUEUE hygiene item),
+  `.venv_hil` 2047 passed. Firmware: fw v26 3926 / 175 / 4408.

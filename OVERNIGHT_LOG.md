@@ -1411,3 +1411,22 @@ the bus through the pre-gate window) - fixed before the campaign and the six MPC
   battery regulator). **Operator: fw v27's battery-only start + suppressed-not-disarmed arm needs the F1 fix
   (preferred: clear the arm one commander period before FC_CHARGE opens) before the next flash; the ftp75c
   frontier is UNVERIFIED this campaign by construction.**
+- **G2 COMPLETE (01:17): 10/10 executed, suite 3 PASS / 7 FAIL.** Corrected: the three FTP-75 charge-free/soc
+  legs clean (5050 +0.05 %, socband -0.25 %, dp within band vs walk); ems-ftp75-mpc = the MPC battery-only-branch
+  defect; ems-ftp75-sdp = two fw v27 consequences vs stale pins (re-entry transient, share-cut chatter); all
+  five ftp75c legs = the sequencing defect at scale (board-real; the compressed cycle never releases the arm).
+  Zero board defects OUTSIDE fw v27's own new mechanisms. Tool pass running on G and G2; fix round (tools) in
+  progress on the main tree.
+- **Post-G fix round landed (01:29, tools only, under review):** 16 items - teardown anchor on latches only
+  (union of the whole-run and post-grace latch maps; charge-cruise re-scores PASS), RT1987 one-sided SOFT stamp
+  + HWM scoping (cold pins byte-identical; the 0.44 V warm re-close falls 34.3 -> 3.75 A - STILL enough to
+  latch OC_FC on comm-loss: the artefact is reduced, not closed; the constant-slew ramp is its own A/B round -
+  **expect comm-loss to FAIL again on campaign H, pre-classified**), Y_AUX_LOAD_A 0.91, ems-sdp provisional
+  tags (bound untouched, ruling open), sdpx re-pins, sdpb (10, 14), the MPC battery-only branch (stage-0
+  prediction 0.50 -> 0.00, no plan sha or h2 moved; the interim mask does not close the ems-mpc FAILs - the
+  error persists ~1.3 s past the release on the stale committed plan: **expect ems-mpc / -det to FAIL again on H
+  with a smaller peak**; ems-mpc-cross is the forced-0.5 regime, unmodelled), TARGET_FW_VERSION 27, docstring
+  flags, mppt window (28.4, 37.0), survives_to from the latch map, replay topology census (report-only) +
+  ratio tagging + latch-ended windows + skip_preamble scoring, sdpftp premise + 150 ms turn-on hold, bt_peak
+  1.00, ftp75c rationale (bound held, FAILing by design), walk-era notes. Not done: the fw26-clamp-joint
+  re-pin (1.3243 / 1.3296) - queued for the next round.
