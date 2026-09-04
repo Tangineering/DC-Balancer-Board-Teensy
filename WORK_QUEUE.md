@@ -81,8 +81,16 @@ today. Bench is NOT available; the HIL rig IS.
       with the flag flip, push. Then operator flashes.
 
 **Tools era round (one boundary: fw v27 + I_AUX_A 0.09 A), queued behind the firmware:**
-- [ ] 6. I_AUX_A 0.15 -> 0.09 A in both engines (IN PROGRESS, agent): fingerprint staleness handling, short DP
-      re-solves, per-leg walk-predicted h2 deltas, AUX-ERA re-pins, HIL_PLANT.md 4.2 numbers.
+- [x] 6. I_AUX_A 0.15 -> 0.09 A in both engines (DONE, under review): fingerprint refusal names the era; all
+      three DP tables re-solved (ems-ftp75-dp ~15 min); all 75 dp_db matched records flagged provenance_drift
+      (NOT re-solved - queue); walked h2 deltas -6.0 % (ems-sdp) to -30.4 % (ems-ftp75c-sdp), the fixed
+      0.060 A as a fraction of each run's draw; AUX-ERA anchors block; four fw26 stimulus preloads raised
+      0.06 A to keep the designed totals (joint step stays 1.65 A). RULING NEEDED: standstill total 0.090 A
+      is below ASYM_SIMPLE_I_MIN_A 0.10 A, so the simple engine's split law no longer applies at idle
+      (code ratio 0.25 vs 0.2599) - lower the floor or accept and record (hi-fi engine unaffected).
+      Queue: re-solve the 75 matched-DP records (`dp_results_db.py prefill`, long spans need
+      `--matched-dp-allow-long`); alpha-sweep re-run at the measured billing; bench standstill capture
+      with the VESC powered to replace the 0.075 A term.
 - [ ] 7. governor_model / ems_walk / MPC surrogate mirror of fw v27 rev 2 (battery-only start, hold, k_d
       schedule), equivalence harness against the firmware (the fw v26 discipline), HIL_PLANT.md FEEDFORWARD
       paragraph; simple-engine bus law and the loss-map DP bound re-derived for the scheduled k_d

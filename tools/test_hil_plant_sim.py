@@ -521,8 +521,25 @@ def test_mdac_split_both_live_unequal_codes():
             / (hil.K_DROOP_FW_OHM / 0.25 + hil.K_DROOP_FW_OHM / 0.75
                + 2.0 * hil.DROOP_FIXED_SERIES_OHM))
     assert want == pytest.approx(0.2599039, abs=1e-7)
-    assert out["I_fc"] == pytest.approx(total * want, rel=1e-6)
-    assert out["I_batt"] == pytest.approx(total * (1.0 - want), rel=1e-6)
+    # AUX-ERA CONSEQUENCE 2026-09-03 (`I_AUX_A` 0.15 -> 0.09 A), and it is a
+    # REGIME CHANGE, not a re-pin. The standstill total is now 0.090 A, BELOW
+    # `ASYM_SIMPLE_I_MIN_A` = 0.10 A, so `_apply_simple_asymmetry()` returns
+    # early and the simple engine delivers the commanded code ratio exactly.
+    # The law itself is unchanged and is asserted directly below, at a total
+    # above the floor. Flagged rather than papered over: at 0.15 A the idle
+    # segments of every simple-mode drive cycle were split by the law and they
+    # are now split by the code ratio, a difference of 0.0099 of share at this
+    # code pair.
+    assert total < hil.ASYM_SIMPLE_I_MIN_A
+    assert out["I_fc"] == pytest.approx(total * 0.25, rel=1e-6)
+    assert out["I_batt"] == pytest.approx(total * 0.75, rel=1e-6)
+    # THE LAW, at a total above the floor. Driven through the method rather
+    # than through `step()` because the standstill stimulus above can no longer
+    # reach that regime on its own.
+    assert plant._apply_simple_asymmetry(0.25, 0.40) == pytest.approx(
+        want, rel=1e-6)
+    assert plant._apply_simple_asymmetry(0.25, hil.ASYM_SIMPLE_I_MIN_A) == (
+        pytest.approx(want, rel=1e-6))
 
 
 def test_mdac_split_only_fc_live():
@@ -5281,8 +5298,14 @@ def test_shipped_dp_table_sha_is_unchanged_by_the_header_exclusion_refactor():
     # The CLAIM this test makes is unchanged: the header exclusion covers
     # exactly the metadata lines, so a table whose LAW is identical keeps
     # this digest across a header edit.
+    # RE-PINNED AGAIN 2026-09-03 (the AUX era): `I_AUX_A` 0.15 -> 0.09 A is a
+    # term in the DEMAND the DP solves against, so the table was re-solved and
+    # its LAW really changed. The previous digest was
+    # 80cea51b0d56dc0a580909178c345a4bed43abf04265e594b8f01b0835701e95.
+    # provisional_note: re-walked for the I_AUX_A 0.09 A era,
+    # 2026-09-03; pin on campaign G.
     assert table_sha == (
-        "80cea51b0d56dc0a580909178c345a4bed43abf04265e594b8f01b0835701e95")
+        "725c3996b4b0f0c0e983b346d87760f4623045d733e336ed13badc689912d31b")
 
 
 def test_dp_table_digests_raises_oserror_on_missing_file(tmp_path):
@@ -7930,10 +7953,20 @@ def test_dp_fingerprint_omits_the_old_era_sentinel():
     # A declared efficiency is a DIFFERENT problem and must not collide.
     assert hil.dp_profile_fingerprint("myscen", dict(meta, eta_chg=0.88)) != base
     # The live scenarios' digests are the pre-round ones again.
+    # AUX-ERA RE-PIN 2026-09-03: `I_AUX_A` 0.15 -> 0.09 A is HASHED into
+    # every profile fingerprint (it is one of the five drain constants
+    # dp_profile_fingerprint() appends), so all three digests moved and
+    # every table solved before that date is stale by construction. The
+    # claim these lines make is unchanged.
+    #   ems-dp-replay  02683031 -> c71c2eb7
+    #   ems-ftp75-dp   403c5e71 -> 678104d3
+    #   ems-ftp75-5050 50fe8c40 -> f4606d73
+    # provisional_note: re-walked for the I_AUX_A 0.09 A era,
+    # 2026-09-03; pin on campaign G.
     assert hil.dp_profile_fingerprint(
-        "ems-dp-replay", hil.SCENARIOS["ems-dp-replay"]).startswith("02683031")
+        "ems-dp-replay", hil.SCENARIOS["ems-dp-replay"]).startswith("c71c2eb7")
     assert hil.dp_profile_fingerprint(
-        "ems-ftp75-dp", hil.SCENARIOS["ems-ftp75-dp"]).startswith("403c5e71")
+        "ems-ftp75-dp", hil.SCENARIOS["ems-ftp75-dp"]).startswith("678104d3")
 
 
 # -- The three alpha-sweep legs ----------------------------------------------
@@ -8230,8 +8263,15 @@ def test_sdp_chg_block_predicts_ems_sdp_cross_not_the_retired_ems_sdp():
 
 def test_ems_sdp_cross_low_cruise_demand_is_charge_admissible():
     """The whole scenario turns on the low cruise landing in a bin the solver
-    allows charging in (bins 0-5, P_dem < 6.0 W).  Walk: 0.337 A of source
-    total on a ~15.9 V bus = 5.37 W, 11 % under the bin-6 edge."""
+    allows charging in (bins 0-5, P_dem < 6.0 W).
+
+    AUX-ERA RE-PIN 2026-09-03 (`I_AUX_A` 0.15 -> 0.09 A): the walk was 0.337 A
+    of source total on a ~15.9 V bus = 5.37 W, 11 % under the bin-6 edge, and
+    is now 0.277 A = 4.41 W, 26 % under it. The scenario's premise is
+    UNCHANGED and is in fact further inside the admissible bin, which is the
+    direction that matters here: a lighter housekeeping load cannot push a
+    charge-admissible cruise out of its bin. provisional_note: re-walked for
+    the I_AUX_A 0.09 A era, 2026-09-03; pin on campaign G."""
     v = hil.SDP_CROSS_CRUISE_LO_MPS
     p_mech = (hil.F_COULOMB + hil.B_EFF * v) * v
     v_bus = hil.V_BUS_DROOP_V0
@@ -8239,7 +8279,7 @@ def test_ems_sdp_cross_low_cruise_demand_is_charge_admissible():
         i_tot = p_mech / (hil.ETA_BOOST * v_bus) + hil.I_AUX_A
         v_bus = hil.V_BUS_DROOP_V0 - hil.K_DROOP_BUS_SHARED * i_tot
     p_dem = v_bus * i_tot
-    assert p_dem == pytest.approx(5.37, abs=0.15)
+    assert p_dem == pytest.approx(4.41, abs=0.15)
     assert p_dem < 6.0
 
 
@@ -9783,7 +9823,7 @@ def test_sidecar_aux_preload_a_absent_specifically_on_replay_runs(tmp_path):
 
 # ── Requirement 7 (hil_plant_sim.py half): DP table fingerprint pins ────────
 
-def test_ftp75_dp_table_fingerprint_starts_with_403c5e71_and_zero_preload():
+def test_ftp75_dp_table_fingerprint_is_pinned_and_zero_preload():
     """Pins the shipped table's header against the zero-preload re-solve
     (2026-09-01): the fingerprint moved when FTP75_PRELOAD_A moved, because
     `aux_preload_a` is in DP_FINGERPRINT_META_KEYS. A stale checked-in table
@@ -9804,7 +9844,11 @@ def test_ftp75_dp_table_fingerprint_starts_with_403c5e71_and_zero_preload():
                         hil.DP_TABLE_NAME % "ems-ftp75-dp")
     meta, _times, _shares, _goals = hil.load_dp_table(path)
     fp = meta.get("profile_fingerprint", "")
-    assert fp.startswith("403c5e71"), fp
+    # AUX-ERA RE-PIN 2026-09-03: 403c5e71... -> 678104d3..., because `I_AUX_A`
+    # 0.15 -> 0.09 A is hashed into every profile fingerprint. The table was
+    # re-solved in the same change. provisional_note: re-walked for the I_AUX_A 0.09 A era,
+    # 2026-09-03; pin on campaign G.
+    assert fp.startswith("678104d3"), fp
     # The header has no literal "aux_preload_a" field of its own -- the
     # constant's contribution is folded into profile_fingerprint (it is a
     # DP_FINGERPRINT_META_KEYS member). So "the header declares aux_preload_a
@@ -9979,14 +10023,29 @@ def test_apply_simple_asymmetry_off_is_the_symmetric_network_in_step():
     plant_off = hil.Plant(asymmetry_mode="off")
     out_off = plant_off.step(1e-3, obs)
     total = out_off["I_fc"] + out_off["I_batt"]
-    # RE-PINNED 2026-09-03: 0.25 -> the symmetric two-branch divider at the
-    # code-ratio share 0.25 (see test_mdac_split_both_live_unequal_codes).
-    assert out_off["I_fc"] == pytest.approx(
-        total * _static_law(0.25, total, dv0=0.0, rho=1.0), rel=1e-6)
-
     plant_on = hil.Plant(asymmetry_mode="measured")
     out_on = plant_on.step(1e-3, obs)
-    assert out_on["I_fc"] != pytest.approx(out_off["I_fc"], rel=1e-6)
+
+    # AUX-ERA 2026-09-03 (`I_AUX_A` 0.15 -> 0.09 A). This stimulus is a
+    # standstill, so its total is now 0.090 A, BELOW ASYM_SIMPLE_I_MIN_A =
+    # 0.10 A, and BOTH modes return early with the bare code ratio. The
+    # integration claim the test carries - that step() routes the codes through
+    # _apply_simple_asymmetry() and that the two modes differ - is therefore
+    # asserted at a total ABOVE the floor, through the method that step() calls,
+    # while the floor behaviour itself is pinned here.
+    assert total == pytest.approx(hil.I_AUX_A, abs=1e-6)
+    assert total < hil.ASYM_SIMPLE_I_MIN_A
+    assert out_off["I_fc"] == pytest.approx(total * 0.25, rel=1e-6)
+    assert out_on["I_fc"] == pytest.approx(out_off["I_fc"], rel=1e-9), (
+        "below the floor the two asymmetry modes must be identical")
+
+    # RE-PINNED 2026-09-03: 0.25 -> the symmetric two-branch divider at the
+    # code-ratio share 0.25 (see test_mdac_split_both_live_unequal_codes).
+    i_above = 0.40
+    assert plant_off._apply_simple_asymmetry(0.25, i_above) == pytest.approx(
+        _static_law(0.25, i_above, dv0=0.0, rho=1.0), rel=1e-6)
+    assert plant_on._apply_simple_asymmetry(0.25, i_above) != pytest.approx(
+        plant_off._apply_simple_asymmetry(0.25, i_above), rel=1e-6)
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -10230,17 +10289,34 @@ def test_eta_chg_charger_conserves_power_within_the_substep_tolerance(hifi):
     subtracted). The tolerance is loose in hi-fi (0.5 W against ~12.5 W, i.e.
     4 %) because that engine's remaining residual -- bulk-capacitor storage,
     the conductance stamp's transient term and the RT1987 servo drops, together
-    the measured -0.3957 W -- sits inside this same bus balance and is not
+    the measured +0.0576 W (unchanged between the 0.15 A and 0.09 A I_AUX_A
+    eras) -- sits inside this same bus balance and is not
     separable here; simple mode has none of them, so it is held tight. A
     REGRESSION TO THE 1:1 CHARGER would put this quantity at p_out (11.06 W),
-    9 sigma outside even the loose bound."""
+    9 sigma outside even the loose bound.
+
+    ⚠️ THE SIMPLE-MODE BOUND WAS 1e-6 W AND IS NOW 2e-6 W (2026-09-03), and the
+    honest statement is that the tighter one was never justified. The simple
+    engine does NOT conserve this quantity exactly: the residual is about
+    -1e-6 W, it is monotone in the bus load, and it was ALREADY -9.05e-7 W at
+    the pre-round `I_AUX_A` of 0.15 A - 90 % of the bound it was passing. The
+    0.15 -> 0.09 A ruling only moved it to -1.043e-6 and exposed that. Measured
+    across the change, so the trend is on the record rather than inferred:
+
+        I_AUX_A   0.150      0.120      0.100      0.090      0.050
+        residual  -9.05e-7   -9.70e-7   -1.014e-6  -1.043e-6  -1.131e-6
+
+    The bound is therefore set at 2e-6 W, which is 1.6e-7 of the 12.4 W
+    quantity and still leaves a 1:1-charger regression 6.6 million sigma
+    outside it. Closing the residual itself is a model question and is not this
+    round's; it is a `TODO(verify)` on the simple engine bus solve."""
     pl, out = _eta_charge_probe(hifi)
     assert pl.i_charge == pytest.approx(1.4, rel=1e-3)
     p_out = out["V_batt"] * pl.i_charge
     p_batt_gross = out["V_bus"] * out["I_batt"]
     p_in = (out["p_fc_w"] + p_batt_gross) - out["p_aux_w"]
     assert p_in == pytest.approx(p_out / hil.ETA_CHG,
-                                 abs=0.5 if hifi else 1e-6)
+                                 abs=0.5 if hifi else 2e-6)
 
 
 @pytest.mark.parametrize("hifi", [False, True])
@@ -10307,7 +10383,7 @@ def test_eta_chg_charge_window_residual_drops_to_the_aux_level(hifi, bound):
     the charger. With the eta model it must fall to the aux-plus-storage
     level: float-noise zero in simple mode (no storage, no motor stamp -- the
     measured 8.4e-7 W is IEEE-754 associativity on the split-current products,
-    not physics) and the documented ~-0.40 W in hi-fi (bulk-capacitor storage
+    not physics) and the documented +0.0576 W in hi-fi (bulk-capacitor storage
     plus the conductance stamp's transient term). Both bounds sit orders of
     magnitude below the retired 11 W, which is the regression this test exists
     to catch."""
@@ -11358,9 +11434,14 @@ def test_loss_map_is_an_optional_fingerprint_key_so_the_old_era_is_unmoved():
     assert "loss_map" in hil.DP_FINGERPRINT_META_KEYS
     assert "loss_map" in hil.DP_FINGERPRINT_OPTIONAL_KEYS
     assert hil._dp_fp_resolve("loss_map", {}) is None
-    # The two committed DP scenarios' PRE-ROUND digests, as literals.
-    for scen, want in (("ems-dp-replay", "02683031"),
-                       ("ems-ftp75-dp", "403c5e71")):
+    # The two committed DP scenarios' digests, as literals.
+    # AUX-ERA RE-PIN 2026-09-03 (`I_AUX_A` 0.15 -> 0.09 A, a hashed drain
+    # constant): 02683031 -> c71c2eb7 and 403c5e71 -> 678104d3. The claim is
+    # unchanged - it is about `loss_map` being OMITTED at its sentinel, not
+    # about the particular digest. provisional_note: re-walked for the I_AUX_A 0.09 A era,
+    # 2026-09-03; pin on campaign G.
+    for scen, want in (("ems-dp-replay", "c71c2eb7"),
+                       ("ems-ftp75-dp", "678104d3")):
         meta = hil.SCENARIOS[scen]
         assert hil.dp_profile_fingerprint(scen, meta).startswith(want)
         with_map = dict(meta, loss_map=hil.plant_loss_map())
@@ -12641,13 +12722,23 @@ def test_the_three_committed_table_fingerprints_are_unmoved():
     artifact and every dp_db record reachable and byte-identical -- adding a
     key that wrote `drag=None` into the digest would have moved all three for a
     problem none of them solves differently."""
+    # AUX-ERA RE-PIN 2026-09-03: `I_AUX_A` 0.15 -> 0.09 A is HASHED into
+    # every profile fingerprint (it is one of the five drain constants
+    # dp_profile_fingerprint() appends), so all three digests moved and
+    # every table solved before that date is stale by construction. The
+    # claim these lines make is unchanged.
+    #   ems-dp-replay  02683031 -> c71c2eb7
+    #   ems-ftp75-dp   403c5e71 -> 678104d3
+    #   ems-ftp75-5050 50fe8c40 -> f4606d73
+    # provisional_note: re-walked for the I_AUX_A 0.09 A era,
+    # 2026-09-03; pin on campaign G.
     assert hil.dp_profile_fingerprint(
-        "ems-dp-replay", hil.SCENARIOS["ems-dp-replay"]).startswith("02683031")
+        "ems-dp-replay", hil.SCENARIOS["ems-dp-replay"]).startswith("c71c2eb7")
     assert hil.dp_profile_fingerprint(
-        "ems-ftp75-dp", hil.SCENARIOS["ems-ftp75-dp"]).startswith("403c5e71")
+        "ems-ftp75-dp", hil.SCENARIOS["ems-ftp75-dp"]).startswith("678104d3")
     assert hil.dp_profile_fingerprint(
         "ems-ftp75-5050",
-        hil.SCENARIOS["ems-ftp75-5050"]).startswith("50fe8c40")
+        hil.SCENARIOS["ems-ftp75-5050"]).startswith("f4606d73")
 
 
 def test_a_compensated_scenario_hashes_differently_from_a_rig_one():
@@ -13370,3 +13461,15 @@ def test_the_shape_guard_actually_runs_over_the_registry():
             hil.validate_aux_preload_step(
                 name, meta["aux_preload_step"],
                 also_ramped=meta.get("aux_preload_a"))
+
+
+def test_era_hint_empty_header_value_yields_a_hint_not_an_exception():
+    """REGRESSION (reviewer MEDIUM-2): a table header line with no value at
+    all (`# i_aux_a:`) parses to an empty string, so `raw.split()` returns []
+    and `[0]` raised IndexError -- turning a stale-table refusal message into
+    an unrelated traceback instead of the intended hint. IndexError must be
+    caught alongside TypeError/ValueError so the key is skipped like any
+    other unparseable value."""
+    meta = {"i_aux_a": ""}
+    hint = hil.dp_fingerprint_era_hint(meta)
+    assert isinstance(hint, str)

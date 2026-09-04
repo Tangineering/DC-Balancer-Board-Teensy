@@ -1858,6 +1858,17 @@ def render_table(scenario, meta, args, fingerprint, times, share, charge,
          else float(meta.get("aux_preload_a") or 0.0)))
     A("#   Documentation, not a drift guard: profile_fingerprint above")
     A("#   already covers it.")
+    # THE HASHED PLANT CONSTANTS, recorded so a fingerprint refusal can NAME
+    # its cause (2026-09-03, the `I_AUX_A` 0.15 -> 0.09 A ruling). These are
+    # already inside profile_fingerprint, so they are documentation in exactly
+    # the sense aux_preload_a is - what they add is diagnosability: without
+    # them a stale table and a mis-registered scenario produce the same
+    # message. Read back by `hil_plant_sim.dp_fingerprint_era_hint()`.
+    for _k, _live, _name in sim.DP_FINGERPRINT_ERAS:
+        A("# %s: %r" % (_k, float(_live())))
+    A("#   Hashed into profile_fingerprint; recorded so a refusal can say")
+    A("#   WHICH constant moved. A table without these lines predates")
+    A("#   2026-09-03.")
     A("# charger_accounting: %s" % args.charger_accounting)
     A("#   D11 — which of the two hydrogen totals the DP minimised.")
     A("#   'simple'   matches a --electrical simple run's logged h2_cum_g")

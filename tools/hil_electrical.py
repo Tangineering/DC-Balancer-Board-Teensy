@@ -591,7 +591,23 @@ V_FC_OPEN = 13.0            # V     H-20 fuel cell, open-circuit class
 R_FC_INT = 0.45             # ohm   effective bench IR sag  TODO(calibrate)
 V_BT_OPEN = 8.0             # V     2S LiPo mid-charge (SOC ~0.7 on the OCV curve)
 R_BT_INT = 0.05             # ohm   TODO(verify)
-I_AUX_A = 0.15              # A     housekeeping load on VBUS
+I_AUX_A = 0.09              # A     housekeeping load on VBUS
+# 0.15 -> 0.09 A, operator ruling 2026-09-03.  PROVENANCE, because the number
+# is a fingerprint key and a wrong one silently mis-bills every walk:
+#   * The bench evidence that had been read as 0.15 A is 98 standstill windows
+#     across 213 bench logs, whose raw source total is 0.0150 A — INSIDE the
+#     0.020 A INA253 offset, so it bounds the load rather than measuring it,
+#     and it was taken with the VESC UNPOWERED.
+#   * The Teensy is fed from the battery's own 5 V regulator and never appears
+#     on VBUS at all.
+#   * The VESC draws about 1.2 W from the bus, that is 0.075 A at 15.9 V.
+#   * The INA253s, the RT1987 controllers and the OPA197 MDAC buffers ride the
+#     bus chain and make up the remainder.
+# Pinned equal to `hil_plant_sim.I_AUX_A` by test, and carried in
+# DP_FINGERPRINT_META_KEYS, so a DP table or matched-DP record solved at 0.15 A
+# is REFUSED rather than silently mis-loaded.  TODO(calibrate): a standstill
+# capture with the VESC powered would replace the 0.075 A term with a
+# measurement.
 # Operator ruling 2026-09-03 (physics review run 002, item N8): below 5 V
 # everything downstream of VBUS shuts down anyway, so the housekeeping sink
 # must drop out rather than keep pulling a dark node down to exactly 0.000 V

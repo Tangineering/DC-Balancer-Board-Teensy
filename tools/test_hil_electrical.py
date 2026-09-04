@@ -1225,7 +1225,13 @@ def test_soft_start_cold_start_bringup_peaks_preserved():
     # against the node's own bleed, so a 15x weaker bleed on N_BUS leaves
     # 11.3 mA less to supply at the peak.  The MOVE IS THE PLANT'S, not a
     # tolerance drift: the pre-round value was 0.2224 at the uniform 2 kOhm.
-    assert p0_peak_fc == pytest.approx(0.2112, abs=2e-3)
+    # AUX-ERA RE-PIN 2026-09-03 (`I_AUX_A` 0.15 -> 0.09 A): 0.211185 ->
+    # 0.151185, that is EXACTLY -0.060000 A. P0 supplies the housekeeping load
+    # out of the fuel-cell branch alone, so the peak moves by the whole change
+    # in that load and by nothing else. The move is arithmetic, not a fit.
+    # provisional_note: re-walked for the I_AUX_A 0.09 A era,
+    # 2026-09-03; pin on campaign G.
+    assert p0_peak_fc == pytest.approx(0.1512, abs=2e-3)
 
     aux = AUX_FC_REG | AUX_BT_REG
     for _ in range(400):       # P1: boosts enabled
@@ -1240,8 +1246,14 @@ def test_soft_start_cold_start_bringup_peaks_preserved():
     # RE-PINNED 2026-09-02, same cause: 0.4739 -> 0.466706 once N_MOT's own
     # bleed drops from 1/2 kOhm to 1/60 kOhm.  Symmetry between the channels
     # is preserved exactly, which is the property this pair actually guards.
-    assert full_peak_fc == pytest.approx(0.4667, abs=2e-3)
-    assert full_peak_bt == pytest.approx(0.4667, abs=2e-3)
+    # AUX-ERA RE-PIN 2026-09-03: 0.466706 -> 0.436707 on both channels, that is
+    # -0.030000 A each - half the 0.060 A change in the housekeeping load, which
+    # is what a symmetric two-source split delivers. The symmetry this pair
+    # actually guards is preserved exactly.
+    # provisional_note: re-walked for the I_AUX_A 0.09 A era,
+    # 2026-09-03; pin on campaign G.
+    assert full_peak_fc == pytest.approx(0.4367, abs=2e-3)
+    assert full_peak_bt == pytest.approx(0.4367, abs=2e-3)
     assert full_peak_fc == pytest.approx(full_peak_bt, abs=1e-6)
 
     # Cold-start invariant this fix must not disturb: v_ss_start stays ~0 at
@@ -1754,7 +1766,15 @@ def test_droop_default_mode_is_design_and_solved_point_is_bit_identical():
     # line makes is UNCHANGED: the design-mode solved point is bit-stable
     # across the droop-mode refactor, which the two `==` comparisons above
     # assert directly and this literal only records.
-    assert repr(r_old["V_bus"]) == "15.633912867500921"
+    # AUX-ERA RE-PIN 2026-09-03 (`I_AUX_A` 0.15 -> 0.09 A): 15.633912867500921
+    # -> 15.652904138318075, that is +18.99 mV. The anchor is a SOLVED NODE
+    # VOLTAGE, so it moves with the bus load by construction: 0.060 A less
+    # housekeeping current draws that much less droop across the source
+    # resistances. 15.624602041790853 was the value at the uniform 2 kOhm bleed.
+    # The claim this line makes is UNCHANGED.
+    # provisional_note: re-walked for the I_AUX_A 0.09 A era,
+    # 2026-09-03; pin on campaign G.
+    assert repr(r_old["V_bus"]) == "15.652904138318075"
 
 
 def test_droop_measured_mode_actually_moves_the_solution():

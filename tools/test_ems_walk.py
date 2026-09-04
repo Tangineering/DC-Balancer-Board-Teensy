@@ -342,7 +342,14 @@ def test_governed_sdp_v3_walk_on_ems_sdp_completes_with_open_hold_and_h2_pin():
     # measured figure (0.0126 g) informally, not as a pinned fingerprint. A
     # tight tolerance here would make this test a change-detector on any of
     # those upstream artifacts rather than a check that the walk still runs.
-    assert got.h2_g == pytest.approx(0.0126, rel=0.05)
+    # AUX-ERA RE-PIN 2026-09-03 (`I_AUX_A` 0.15 -> 0.09 A): 0.0126 -> 0.011649,
+    # that is -7.5 %. A 0.060 A lighter housekeeping load over a 61 s cycle
+    # whose mean source total is about 1.0 A removes roughly 6 % of the bus
+    # current, and the fuel cell carries most of it; the walk's own figure is
+    # the record. The tolerance is UNCHANGED at 5 % - this is a re-pin, not a
+    # widening. provisional_note: re-walked for the I_AUX_A 0.09 A era,
+    # 2026-09-03; pin on campaign G.
+    assert got.h2_g == pytest.approx(0.011649, rel=0.05)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -1398,17 +1398,26 @@ def test_the_modal_bin_of_this_stimulus_has_no_self_transition():
         b = s._bin_of(p)
         census[b] = census.get(b, 0) + 1
     modal = max(census.items(), key=lambda kv: kv[1])
-    assert modal[0] == 23 and modal[1] == 250 and len(s.preview.p_dem) == 611
+    # AUX-ERA RE-PIN 2026-09-03 (`I_AUX_A` 0.15 -> 0.09 A): the cruise demand
+    # fell by about 0.95 W, which moved this stimulus off the 23 W bin and onto
+    # the 22 W one. The FINDING is unchanged in kind - the modal bin still has
+    # no self-transition and the one-step conditional mean still falls BELOW its
+    # centre, so `mpc-sto` still under-predicts this cruise - and the bin index
+    # is now derived from the census rather than written as a literal, so the
+    # next demand-model era restates it instead of failing on the index alone.
+    # provisional_note: re-walked for the I_AUX_A 0.09 A era,
+    # 2026-09-03; pin on campaign G.
+    b = modal[0]
+    assert b == 22 and modal[1] == 250 and len(s.preview.p_dem) == 611
     # EXACTLY zero, not merely small: the matrix says this bin never repeats.
-    assert s.tpm[23][23] == 0.0
-    assert math.fsum(s.tpm[23]) == pytest.approx(1.0, abs=1e-9)
-    # One step from the modal bin the conditional mean falls off its centre by
-    # 2 W, so `mpc-sto` systematically UNDER-predicts this stimulus's cruise.
+    assert s.tpm[b][b] == 0.0
+    assert math.fsum(s.tpm[b]) == pytest.approx(1.0, abs=1e-9)
+    # One step from the modal bin the conditional mean falls off its centre, so
+    # `mpc-sto` systematically UNDER-predicts this stimulus cruise.
     lo, hi = s.tpm_map_w
-    centre = lo + (hi - lo) * (23 + 0.5) / len(s.tpm)
-    assert centre == pytest.approx(23.5)
-    assert s._tpm_forecast(23)[0][0] == pytest.approx(21.5)
-    assert s._tpm_forecast(23)[0][0] < centre
+    centre = lo + (hi - lo) * (b + 0.5) / len(s.tpm)
+    assert centre == pytest.approx(b + 0.5)
+    assert s._tpm_forecast(b)[0][0] < centre
 
 
 def test_a_charge_window_edge_is_a_transition_stage():
@@ -2993,8 +3002,19 @@ def test_the_seed_snap_is_index_distance_for_an_out_of_range_incumbent():
 # values.  COMPUTED FROM d941170's `mpc_ems.py` - the commit before the
 # single-source round - and re-checked against this worktree, so it pins the
 # inertness claim against the module as it was, not against itself (MED-4).
+#
+# RE-PINNED 2026-09-03 FOR THE AUX ERA. The single-source feature is still
+# inert with the feature off - that is what this fixture is for, and it is
+# unchanged - but the DEMAND the planner previews moved underneath it, because
+# `I_AUX_A` went 0.15 -> 0.09 A, so the delivery table and therefore the plan
+# is a different sequence. The pre-round digest was
+# 412c282009c3c84eb4fca1d55bee61cc072465e3461e6f27524ed402b8f7202d, computed on
+# d941170. The LENGTH is unchanged at 3050, which is the part of the claim this
+# round could have broken.
+# provisional_note: re-walked for the I_AUX_A 0.09 A era, 2026-09-03;
+# pin on campaign G.
 _FEATURE_OFF_SEQ_SHA256 = (
-    "412c282009c3c84eb4fca1d55bee61cc072465e3461e6f27524ed402b8f7202d")
+    "e7616064129340bba2124e92c03e6e2af350f27b1cb347dd00b767191ec770f6")
 _FEATURE_OFF_SEQ_LEN = 3050
 
 
@@ -3388,9 +3408,10 @@ def test_the_guard_catches_the_fc_single_source_column_too():
 
 def test_the_guard_is_inert_on_the_registered_61_s_stimulus():
     """THE INERTNESS GATE for this round.  The largest two-source total any
-    registered EMS stimulus commands is `ems-mpc`'s 1.4714 A, 10.7 % under the
-    guard, so the rule must fire on ZERO decisions and refuse ZERO columns -
-    which is what keeps every campaign anchor comparable.
+    registered EMS stimulus commands is `ems-mpc`s 1.41098 A (1.4714 A before
+    the 2026-09-03 `I_AUX_A` ruling), 14.4 % under the guard, so the rule must
+    fire on ZERO decisions and refuse ZERO columns - which is what keeps every
+    campaign anchor comparable.
 
     `test_the_feature_off_plan_matches_the_pre_round_fixture()` above is the
     other half: it pins the same stimulus's command stream, byte for byte,
@@ -3411,7 +3432,12 @@ def test_the_guard_is_inert_on_the_registered_61_s_stimulus():
     assert tm["share_step_guard_decisions"] == 0
     assert tm["share_step_refusals"] == {}
     assert i_tot_max < M.SHARE_STEP_GUARD_I_TOT_A
-    assert i_tot_max == pytest.approx(1.4714, abs=5e-4)
+    # AUX-ERA RE-PIN 2026-09-03 (`I_AUX_A` 0.15 -> 0.09 A): 1.4714 -> 1.41098,
+    # exactly -0.0604 A. The inertness margin against SHARE_STEP_GUARD_I_TOT_A
+    # therefore WIDENS from 10.7 % to 14.4 %, so the gate this test is is
+    # satisfied by more, not less. provisional_note: re-walked for the I_AUX_A 0.09 A era,
+    # 2026-09-03; pin on campaign G.
+    assert i_tot_max == pytest.approx(1.41098, abs=5e-4)
 
 
 def test_the_guard_is_not_dead_code_on_a_stimulus_that_reaches_it():

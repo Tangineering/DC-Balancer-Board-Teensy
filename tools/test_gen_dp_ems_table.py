@@ -123,10 +123,16 @@ def test_render_table_records_real_match_fields_under_heuristic_matching(tmp_pat
     be REAL numbers, not the none/n/a placeholders -- and match_converged
     must be a real yes/no verdict."""
     out = str(tmp_path / "a.csv")
-    # n-share 11 (vs the coarser 5 elsewhere in this file) actually converges
-    # within the default --match-tol 2e-6 -- measured residual +1.19e-7.
+    # AUX-ERA RE-PIN 2026-09-03 (`I_AUX_A` 0.15 -> 0.09 A): n-share 11 used to
+    # converge within the default --match-tol 2e-6 at residual +1.19e-7 and now
+    # lands at +3.1e-6, because the lighter bus load moved the reachable SoC
+    # grid and the bisection step no longer straddles the target as finely.
+    # n-share 31 converges (residual +5.6e-8) and is used instead. The subject
+    # of this test - that the three match fields are REAL numbers under the
+    # heuristic - is unchanged; a coarser grid would have made it assert
+    # nothing at all.
     argv = ["--scenario", "ems-soc-band", "--stage-dt", "1.0",
-            "--soc-step", "5e-5", "--n-share", "11", "--out", out]
+            "--soc-step", "5e-5", "--n-share", "31", "--out", out]
     assert gen.main(argv) == 0
     with open(out, encoding="utf-8") as fh:
         text = fh.read()
@@ -439,8 +445,23 @@ def test_prepare_problem_and_solve_unmatched_reproduce_main_dry_run(capsys):
         stage_dt=1.0, n_share=5, soc_step=5e-5,
         run_exit=float(hil.SOC_BAND_RUN_EXIT_S), charger_accounting="physical")
     solved = gen.solve_unmatched(problem, gen.DP_LAMBDA_TERM_G_PER_SOC)
-    assert solved.h2_g == pytest.approx(h2_expected, rel=1e-6)
-    assert solved.soc_final == pytest.approx(soc_final_expected, rel=1e-6)
+    # THE TOLERANCE IS THE PRINT, not the solver (corrected 2026-09-03).
+    # `h2_expected` is parsed out of a "%.6g" line (gen_dp_ems_table.py:2250),
+    # so it carries at most six significant figures and its half-ulp is
+    # 2.2e-6 RELATIVE. rel=1e-6 was therefore tighter than the evidence ever
+    # supported and passed on the old value by luck; the `I_AUX_A` 0.15 ->
+    # 0.09 A change landed on a value whose rounding error is 2.0e-6 and
+    # exposed it. The claim - that the dry-run path IS the library call - is
+    # unchanged.
+    #
+    # `soc_final_expected` is parsed out of a DIFFERENT print, "%.6f"
+    # (gen_dp_ems_table.py ~:2254), a fixed-decimal format whose half-ulp is
+    # 5e-7 ABSOLUTE, i.e. ~7.2e-7 RELATIVE at this scenario's soc_final. The
+    # 5e-6 bound below is therefore generous for soc_final on its own basis
+    # (~6.9x its own half-ulp) — it is widened to match the h2 assertion for
+    # a single shared tolerance, not because soc_final needed the extra room.
+    assert solved.h2_g == pytest.approx(h2_expected, rel=5e-6)
+    assert solved.soc_final == pytest.approx(soc_final_expected, rel=5e-6)
 
 
 def test_solve_matched_reports_closest_visited_point_when_bracket_exits(tmp_path):
@@ -471,9 +492,14 @@ def test_solve_matched_converges_and_reports_true_within_tolerance():
     """The positive case of item 2: a generous --match-tol converges, and
     converged/residual agree (|residual| <= match_tol)."""
     meta = hil.SCENARIOS["ems-soc-band"]
+    # AUX-ERA RE-PIN 2026-09-03: n_share 11 -> 31, for the reason recorded on
+    # test_render_table_records_real_match_fields_under_heuristic_matching. At
+    # 0.09 A of housekeeping load the 11-point grid bisection lands at +3.1e-6,
+    # outside the 2e-6 tolerance this test asserts; 31 lands at +5.6e-8. The
+    # positive case still has to be a genuinely converging solve.
     problem = gen.prepare_problem(
         "ems-soc-band", meta, soc0=0.7, capacity_ah=gen.BATT_CAPACITY_AH,
-        stage_dt=1.0, n_share=11, soc_step=5e-5,
+        stage_dt=1.0, n_share=31, soc_step=5e-5,
         run_exit=float(hil.SOC_BAND_RUN_EXIT_S), charger_accounting="physical")
     href = gen.heuristic_reference(problem)
     solved = gen.solve_matched(problem, target_soc=href["soc_final"],
@@ -868,11 +894,22 @@ def test_old_era_regeneration_reproduces_the_pre_change_table_byte_for_byte(
                            "dp_ems_table_ems-dp-replay_old_era.csv")
     if not os.path.exists(fixture):
         pytest.skip("old-era fixture not present in this checkout")
+    import hil_electrical as _he
+    import hil_plant_sim as _sim
     out = str(tmp_path / "regen.csv")
     old_min, old_max = gen.DP_SHARE_MIN, gen.DP_SHARE_MAX
     old_chg = gen.DP_CHARGE_SHARE
     gen.DP_SHARE_MIN, gen.DP_SHARE_MAX = 0.25, 0.75
     gen.DP_CHARGE_SHARE = 0.75
+    # ⚠️ THE OLD AUXILIARY LOAD IS RESTORED FOR THE DURATION (2026-09-03), for
+    # exactly the reason the old share grid is: `I_AUX_A` moved 0.15 -> 0.09 A,
+    # it is a term in the DEMAND the DP solves against, and a regeneration on
+    # the shipped constant therefore solves a different problem and cannot
+    # reproduce this fixture. Restoring it keeps the test pinning what it was
+    # written to pin - that the charger-efficiency key does not move an old-era
+    # solve - instead of silently tracking the live constant.
+    old_aux_sim, old_aux_he = _sim.I_AUX_A, _he.I_AUX_A
+    _sim.I_AUX_A = _he.I_AUX_A = 0.15
     try:
         assert gen.main([
             "--scenario", "ems-dp-replay", "--soc0", "0.7",
@@ -885,10 +922,23 @@ def test_old_era_regeneration_reproduces_the_pre_change_table_byte_for_byte(
     finally:
         gen.DP_SHARE_MIN, gen.DP_SHARE_MAX = old_min, old_max
         gen.DP_CHARGE_SHARE = old_chg
+        _sim.I_AUX_A, _he.I_AUX_A = old_aux_sim, old_aux_he
+
+    # TWO CLASSES OF LINE ARE MASKED. `profile_fingerprint` for the reason in
+    # the docstring; and the plant-constant provenance block, which was added to
+    # the header on 2026-09-03 so a fingerprint refusal can name the constant
+    # that moved. Those lines document values already hashed into the
+    # fingerprint, they did not exist when the fixture was taken, and none of
+    # them can change a solve.
+    _added = tuple("# %s:" % k for k, _l, _n in _sim.DP_FINGERPRINT_ERAS) + (
+        "#   Hashed into profile_fingerprint",
+        "#   WHICH constant moved.",
+        "#   2026-09-03.")
 
     def _mask(text):
         return [ln for ln in text.split("\n")
-                if not ln.startswith("# profile_fingerprint:")]
+                if not ln.startswith("# profile_fingerprint:")
+                and not ln.startswith(_added)]
 
     got = _mask(open(out, encoding="utf-8", newline="").read())
     want = _mask(open(fixture, encoding="utf-8", newline="").read())
@@ -971,8 +1021,14 @@ def test_backward_pass_prices_the_charger_in_the_solved_era_at_lambda_3_5():
     assert new.soc_final > old.soc_final
     assert new.h2_g > old.h2_g
     # Pinned to 9 dp: these two numbers are the whole finding.
-    assert round(old.h2_g, 9) == 0.014191394
-    assert round(new.h2_g, 9) == 0.016823470
+    # AUX-ERA RE-PIN 2026-09-03 (`I_AUX_A` 0.15 -> 0.09 A): 0.014191394 ->
+    # 0.013168363 (-7.2 %) and 0.016823470 -> 0.015790789 (-6.1 %); the admitted
+    # charge-stage count moved 157 -> 159 with the lighter demand. The FINDING
+    # is unchanged - the two eras still choose different policies, and the eta
+    # era still charges on every admitted stage. provisional_note: re-walked for
+    # the I_AUX_A 0.09 A era, 2026-09-03; pin on campaign G.
+    assert round(old.h2_g, 9) == 0.013168363
+    assert round(new.h2_g, 9) == 0.015790789
 
 
 def test_old_era_backward_pass_charge_cost_is_exactly_the_bus_expression():
@@ -1321,8 +1377,15 @@ def test_the_ftp75c_demand_and_credit_columns_are_the_shipped_figures():
     p = _ftp75c_problem()
     n = p.n_stages
     assert n == 1800
-    assert p.p_dem.max() == pytest.approx(5.221, abs=1e-3)
-    assert p.i_total.max() == pytest.approx(0.331, abs=1e-3)
+    # AUX-ERA RE-PIN 2026-09-03 (`I_AUX_A` 0.15 -> 0.09 A): the peak demand
+    # 5.221 -> 4.276 W and the peak source total 0.331 -> 0.271 A. The whole
+    # 0.060 A of the change lands on the total, and the demand follows it at
+    # about 15.9 V. THE CREDIT COLUMN BELOW DOES NOT MOVE, and that is the
+    # check worth keeping: regen is a braking-side term and carries no bus
+    # load. provisional_note: re-walked for the I_AUX_A 0.09 A era,
+    # 2026-09-03; pin on campaign G.
+    assert p.p_dem.max() == pytest.approx(4.276, abs=1e-3)
+    assert p.i_total.max() == pytest.approx(0.271, abs=1e-3)
     # THE CREDIT.  329 of 1800 stages carry one; the peak is 0.1441 A and the
     # whole cycle banks 1.3852 C -- which is 1.4 % of a ~96.8 A s pack draw,
     # the "small against the drain" caption the registry carries.
@@ -1521,6 +1584,13 @@ def test_the_grid_edge_pad_guard_is_gated_on_either_era_key():
     # never reaches soc0. That is a `TODO(verify)` on the implementation side,
     # and this test records the state it is verified against rather than
     # endorsing it.
+    # AUX-ERA RE-PIN 2026-09-03 (`I_AUX_A` 0.15 -> 0.09 A): the pad is a
+    # proportional rule on the REACHABLE SPAN, and a lighter bus load narrows
+    # that span, so 0.002034 -> 0.001896. The climb is a stage count times a
+    # grid step and does NOT move. The inequality this test turns on -
+    # pad < climb, i.e. the old era did not acquire the guard - is unchanged
+    # and is now satisfied by a larger margin. provisional_note: re-walked for
+    # the I_AUX_A 0.09 A era, 2026-09-03; pin on campaign G.
     old = gen.prepare_problem(
         "ems-dp-replay", hil.SCENARIOS["ems-dp-replay"], soc0=0.7,
         capacity_ah=5.0, stage_dt=0.1, n_share=41, soc_step=5e-6,
@@ -1528,7 +1598,7 @@ def test_the_grid_edge_pad_guard_is_gated_on_either_era_key():
         eta_chg=_chg.ETA_CHG_DEFAULT, loss_map=hil.plant_loss_map())
     old_climb = (old.n_stages + 1) * old.soc_step
     assert old_climb == pytest.approx(0.003055, abs=1e-6)
-    assert pad_of(old) == pytest.approx(0.002034, abs=1e-6)
+    assert pad_of(old) == pytest.approx(0.001896, abs=1e-6)
     assert pad_of(old) < old_climb, (
         "the old era acquired the pad guard -- every committed table's SoC "
         "grid has moved")

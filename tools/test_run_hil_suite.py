@@ -11357,7 +11357,12 @@ def test_fc_charge_window_note_is_recorded_beside_the_clamp_scenarios():
     # Normalise the comment wrapping before matching: the phrase is split
     # across a line break in the source and a raw substring test would pass or
     # fail on where the line happened to wrap.
-    block = " ".join(text[max(0, i - 6000):i].replace("#", " ").split())
+    # The window is a source-scan span, not a physical bound: it was 6000 and
+    # was widened to 8000 on 2026-09-03, when the AUX-ERA provenance notes on
+    # the three fw26 preload constants were added to the same comment region and
+    # pushed the phrase past the old span. The claim is unchanged - the note
+    # must live in the block a reader of these scenarios meets first.
+    block = " ".join(text[max(0, i - 8000):i].replace("#", " ").split())
     assert "charge" in block.lower()
     assert "single source" in block.lower()
     assert "DESIGN INTENT" in block

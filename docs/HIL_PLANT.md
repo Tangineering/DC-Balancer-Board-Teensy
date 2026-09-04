@@ -871,13 +871,20 @@ RC through the bulk capacitance:
     V_bus += (−V_bus / tau) · dt
 ```
 
-**The hi-fi engine's dark bus collapses in about 3.7 ms, not 14.1 s** (physics review run 002,
+**The hi-fi engine's dark bus collapses in about 6 ms, not 14.1 s** (physics review run 002,
 N8, settled 2026-09-03 on the campaign D/E/F `comm-loss` traces). N_BUS carries `C_VBUS` = 35 µF
 (the 470 µF sits on N_MOT, behind the MOT_PWR switch, together with the 0.5 mF VESC input) and the
-0.15 A `I_AUX_A` housekeeping sink is stamped on it unconditionally, so after a State-99 latch the
-node falls 0.15 A × 1 ms / 35 µF = 4.29 V per plant tick (measured 4.2947 and 4.2906 V; the 30 kΩ
-bleed adds 0.53 mA, a factor 285 smaller than the sink) and reads 0.0000 V four ticks after the
-latch, while N_MOT holds 15.78 V because the MOT_PWR ideal diode reverse-blocks. The reported
+`I_AUX_A` housekeeping sink is stamped on it, so after a State-99 latch the node falls
+`I_AUX_A` × 1 ms / 35 µF per plant tick. **AT `I_AUX_A` = 0.09 A (operator ruling, 2026-09-03)
+that rate is 2.57 V per tick**, so the node needs six ticks rather than four to reach the 5 V
+`V_AUX_DROPOUT_V` floor, below which the sink is withheld and the decay is the bleed's alone. The
+figures the campaign D/E/F traces measured — 4.29 V per tick (4.2947 and 4.2906 measured) and
+0.0000 V four ticks after the latch — belong to the 0.15 A era and are superseded; the 30 kΩ
+bleed still adds only 0.53 mA, a factor 171 smaller than the sink at the new value. The 5 V floor
+now stops the collapse before zero, so the "reads 0.0000 V" behaviour is retired twice over — by
+the floor and by the constant. N_MOT still holds 15.78 V because the MOT_PWR ideal diode
+reverse-blocks. **PROVISIONAL** — the 2.57 V/tick figure is arithmetic, not a re-measured trace:
+`provisional_note: re-walked for the I_AUX_A 0.09 A era, 2026-09-03; pin on campaign G.` The reported
 `V_bus` is the solved node in both engines; the section 4.1 liveness gate is simple-engine only.
 The energy closes (½·35 µF·15.83² = 4.38 mJ against the integrated sink). No pinned anchor reads
 the post-latch value; the comm-loss re-close inrush is an N_MOT retention effect. Consequence not
@@ -907,8 +914,15 @@ bus current. **`TODO(verify)`** — the value coincides numerically with the dri
 names it as a converter efficiency, and no source in the repo measures either. The
 `V_bus > 1.0 V` guard is a division safeguard, distinct from the 5 V `bus_up` torque gate.
 
-`i_aux` = `I_AUX_A` = 0.15 A is a fixed housekeeping load, raised by the `step-load`
-scenario. **`TODO(verify)`** — no measurement cited. **`ElectricalSim` (the hi-fi engine, §8)
+`i_aux` = `I_AUX_A` = **0.09 A** is a fixed housekeeping load, raised by the `step-load`
+scenario. It was 0.15 A until the operator ruling of 2026-09-03, which decomposed it: the Teensy
+is fed from the battery's own 5 V regulator and is not a bus load at all; the VESC draws about
+1.2 W from the bus, that is 0.075 A at 15.9 V; and the INA253s, the RT1987 controllers and the
+OPA197 buffers ride the bus chain for the remainder. The bench evidence previously read as 0.15 A
+is 98 standstill windows over 213 logs at a raw source total of 0.0150 A, which is inside the
+0.020 A INA253 offset and was taken with the VESC unpowered — it bounds the load, it does not
+measure it. **`TODO(calibrate)`** — a standstill capture with the VESC powered would replace the
+0.075 A term with a measurement. **`ElectricalSim` (the hi-fi engine, §8)
 applies `V_AUX_DROPOUT_V` = 5.0 V as a dropout floor on this stamp (operator ruling, 2026-09-03,
 physics review run 002, item N8): the sink is withheld on any substep whose PREVIOUS substep's
 `N_BUS` node voltage is below 5 V.** The value matches the firmware's own `bus_up` 5 V torque

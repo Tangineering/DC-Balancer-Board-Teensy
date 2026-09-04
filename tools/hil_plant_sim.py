@@ -500,7 +500,18 @@ V_BUS_DROOP_V0 = 15.95       # V    measured no-load intercept
 K_DROOP_BUS = K_DROOP_BUS_SHARED
 
 ETA_BOOST = 0.85         # boost-stage efficiency, motor draw -> bus current
-I_AUX_A = 0.15           # A     fixed housekeeping load on the bus
+I_AUX_A = 0.09           # A     fixed housekeeping load on the bus
+# 0.15 -> 0.09 A, operator ruling 2026-09-03.  The full provenance is on the
+# hi-fi engine's copy (`hil_electrical.I_AUX_A`), to which this one is pinned
+# equal by test: the Teensy sits on the battery's own 5 V regulator and is not
+# a bus load at all; the VESC draws ~1.2 W = 0.075 A at 15.9 V; the INA253s,
+# RT1987s and MDAC buffers ride the bus chain; and the 0.0150 A raw figure from
+# 98 standstill windows over 213 bench logs sits inside the 0.020 A INA offset
+# AND was taken with the VESC unpowered.
+# ERA CONSEQUENCE, stated here because this constant is a DP fingerprint key:
+# every `tools/dp_tables/*.csv` and every matched-DP record solved before
+# 2026-09-03 was solved at 0.15 A and is STALE.  The loader refuses them by
+# fingerprint; regenerate rather than override.
 C_BUS_F = 470e-6         # F     bus bulk capacitance (decay when no source is closed)
 # ohm   effective bleed across that capacitance.  2000 -> 30e3 on 2026-09-02
 # (operator ruling, the DP-bound round): the physical bus decays full-to-near-
@@ -4659,6 +4670,61 @@ def dp_profile_fingerprint(scenario, meta):
     return hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()
 
 
+DP_FINGERPRINT_ERAS = (
+    # (header key a table may carry, the live constant, a name for the era)
+    # ONE row per constant that is hashed into the fingerprint but is NOT a
+    # scenario metadata key, so a stale table can be told from a mis-registered
+    # one WITHOUT re-deriving the digest by hand.  Added 2026-09-03 with the
+    # `I_AUX_A` 0.15 -> 0.09 A ruling: the refusal above named the mismatch but
+    # not its CAUSE, and a reader who could not name the cause could not tell a
+    # constant retune from a scenario edit.
+    ("i_aux_a", lambda: I_AUX_A, "I_AUX_A"),
+    ("soc_load_ramp_s", lambda: SOC_LOAD_RAMP_S, "SOC_LOAD_RAMP_S"),
+    ("soc_band_drain_load_a", lambda: SOC_BAND_DRAIN_LOAD_A,
+     "SOC_BAND_DRAIN_LOAD_A"),
+    ("soc_band_drain_start_s", lambda: SOC_BAND_DRAIN_START_S,
+     "SOC_BAND_DRAIN_START_S"),
+    ("soc_band_drain_end_s", lambda: SOC_BAND_DRAIN_END_S,
+     "SOC_BAND_DRAIN_END_S"),
+)
+
+
+def dp_fingerprint_era_hint(table_meta):
+    """A human-readable cause for a fingerprint refusal, or ''.
+
+    A DP table records the plant constants it was solved at in its header. When
+    one of them no longer matches the live module, the table is stale for a
+    reason that has a NAME, and the refusal should say the name rather than
+    leaving a reader to diff two digests. Returns a block of lines ready to be
+    interpolated into that message, or the empty string when no recorded
+    constant explains the mismatch (in which case the profile itself moved)."""
+    lines = []
+    for key, live, name in DP_FINGERPRINT_ERAS:
+        raw = table_meta.get(key)
+        if raw is None:
+            continue
+        try:
+            was = float(str(raw).split()[0])
+        except (TypeError, ValueError, IndexError):
+            continue
+        now = float(live())
+        if was != now:
+            lines.append("  ERA: %s was %r when this table was solved and is "
+                         "%r now.\n" % (name, was, now))
+    if not lines:
+        if not any(table_meta.get(k) is not None
+                   for k, _, _ in DP_FINGERPRINT_ERAS):
+            return ("  This table RECORDS NONE of the hashed plant constants "
+                    "(the header lines were added 2026-09-03), so the cause "
+                    "cannot be named from the file: it is either a plant "
+                    "constant retune - `I_AUX_A` moved 0.15 -> 0.09 A on that "
+                    "date - or a scenario edit. Regenerating settles it.\n")
+        return ("  Every recorded plant constant still matches, so the cause "
+                "is of the constants it records (a profile point, a preload, "
+                "a drag or charger era key) - not established which.\n")
+    return "".join(lines)
+
+
 def load_dp_table(path):
     """Parse a generated DP table.  Returns (meta_dict, times, shares, goals).
 
@@ -4924,7 +4990,8 @@ class DpReplayStrategy:
         # block (0) is: a live scenario declares no `loss_map` either, so
         # `dp_profile_fingerprint()` hashes the sentinel None for BOTH eras and
         # the shipped loss-map tables therefore still carry their PRE-round
-        # digests (`ems-dp-replay` 02683031..., `ems-ftp75-dp` 403c5e71...).
+        # digests (`ems-dp-replay` c71c2eb7..., `ems-ftp75-dp` 678104d3...
+        # since the 2026-09-03 `I_AUX_A` ruling moved both).
         # The fingerprint cannot see this and is not intended to.
         #
         # WHAT GOES WRONG WITHOUT THE GUARD, concretely.  `--loss-map` defaults
@@ -5037,13 +5104,14 @@ class DpReplayStrategy:
                 "scenario now being run.\n"
                 "  table  scenario=%r fingerprint=%s\n"
                 "  active scenario=%r fingerprint=%s\n"
+                "%s"
                 "  A DP table is a NON-CAUSAL solution of ONE specific drive "
                 "cycle and auxiliary load; replaying it against another "
                 "profile is not a benchmark, it is noise. Regenerate:\n"
                 "      C:/Users/ricky/miniforge3/python.exe "
                 "tools/gen_dp_ems_table.py --scenario %s --force"
                 % (path, table_meta.get("scenario"), got, scenario, want,
-                   scenario))
+                   dp_fingerprint_era_hint(table_meta), scenario))
 
         # ── (a) M1: accounting vs the RESOLVED electrical engine ─────────────
         if electrical_mode is not None:
@@ -7401,7 +7469,7 @@ EMS_Y_DURATION_S = EMS_Y_RUN_EXIT_S + 3.0   # 49.0
 # WHY 0.85 AND NOT MORE.  The governor bound moves as 1 - I_min/I_tot, so
 # reaching 0.70 needs I_tot > 0.30/0.30 = 1.000 A at region 6.  Region 6 is the
 # LIGHTEST loaded assertion point in the table (v = 0.3*Vmax, no accel), so it
-# binds:  I_AUX_A 0.15 + preload + i_motor(0.3*Vmax) >= 1.000 A.  At Vmax 1 the
+# binds:  I_AUX_A + preload + i_motor(0.3*Vmax) >= 1.000 A.  At Vmax 1 the
 # motor contributes 0.048 A there, so preload >= 0.802 A.  0.85 A gives 1.048 A,
 # i.e. 4.8 % over the 1.000 A break-even — enough that model error cannot put
 # the bound back out of reach, and no more than that.
@@ -7411,6 +7479,8 @@ EMS_Y_DURATION_S = EMS_Y_RUN_EXIT_S + 3.0   # 49.0
 #     2*SHARE_MINORITY_I_MIN_A = 0.60 A of source total.  The total now spans
 #     1.000-2.274 A (was 0.750-2.023), so the binding standstill case is
 #     I_AUX_A 0.15 + 0.85 = 1.000 A, 67 % clear of the gate (was 25 %).
+#     AUX ERA 2026-09-03: 0.09 + 0.85 = 0.940 A, 57 % clear. Still clear,
+#     and the ruling this derivation supports is unchanged.
 #   * HEADROOM.  Worst per-channel current is FC at region 4's entry, where the
 #     table commands share 0.65 on a Vmax-3 load: 0.9986 A against
 #     LIMIT_I_FC_MAX 1.4 A, a 28.7 % margin (was 0.836 A / 40 %).  At Vmax 1 the
@@ -8855,6 +8925,7 @@ SCENARIOS = {
     #   (b) the share loop must be in CLOSED-LOOP mode for the run to mean anything
     #       as a share test at all, which needs the filtered total > 0.60 A.
     # Window: pre-rail total in (0.60, 1.00) A.  Chosen 0.74 A:
+    #     AUX ERA 2026-09-03: read 0.09, not 0.15, and the total below as 0.68 A.
     #     I_AUX_A 0.15 + HANDOFF_PRELOAD_A 0.40 + i_motor 0.19 (1.0 m/s cruise)
     #   -> 0.37 A per channel: 23 % over the governor gate, 26 % under the cut guard.
     #
@@ -9297,7 +9368,8 @@ del _vmax, _b, _tag
 # The preload existed to hold the source total above the firmware's
 # closed-loop share gate, 2*SHARE_MINORITY_I_MIN_A = 0.60 A, through the
 # cycle's idle segments.  The FTP-75 is roughly a third idle and its own load
-# leaves the total at I_AUX_A = 0.15 A there, so +0.65 A put the standstill
+# leaves the total at I_AUX_A (0.15 A at the time; 0.09 A since the
+# 2026-09-03 ruling) there, so +0.65 A put the standstill
 # total at 0.800 A and made 100.00 % of the post-ramp run closed-loop.  The
 # cost was stated at the time and is what the ruling acts on:
 #   * it FORECLOSED `soc-band`'s charge branch on this cycle
@@ -9387,7 +9459,8 @@ for _name, _ems, _what in (
     #     smaller, so the deficit takes longer to open.
     #   * THE CHARGE BRANCH IS REACHABLE AGAIN.  `soc-band` admits a charge
     #     window below SOC_BAND_CHARGE_ENTER_ITOT_A = 0.60 A of source total,
-    #     and the idle source total is now I_AUX_A = 0.15 A — a factor of four
+    #     and the idle source total is now I_AUX_A (0.15 A at the time;
+    #     0.09 A since 2026-09-03) — a factor of four
     #     under the gate, in every one of the cycle's idle segments.  The
     #     scenario therefore exercises BOTH of the policy's branches for the
     #     first time.
@@ -10539,6 +10612,8 @@ SCENARIOS["ems-mpc-cross"] = {
 # so the whole load lands on FC.  Budget at the 0.4 m/s plateau against
 # LIMIT_I_FC_MAX 1.4 A:
 #       I_AUX_A 0.15 + motor ~0.06 + chg_i_ceiling_a 1.0  =  1.21 A   (14 % margin)
+#       AUX ERA 2026-09-03: 0.09 + 0.06 + 1.0 = 1.15 A (18 % margin). The
+#       margin WIDENS, so the budget this line justifies is unweakened.
 # The 2.5 m/s cruise segments would add ~0.6 A of motor draw and latch OC_FC,
 # which is why the charge windows are on the LOW plateaus and the ceiling is
 # de-rated to 1.0 A.  ⚠️ MODEL currents (M_EFF/K_F/F_COULOMB/B_EFF + the droop
@@ -10597,6 +10672,7 @@ SCENARIOS["mppt-tracking"] = {
 # V_SP_ZERO_THRESH (0.07 m/s), so the firmware commands 0 A and the drive loop is
 # held in reset.  That is what makes the FC-path budget work — the charge path is
 # single-source, so the budget is I_AUX_A 0.15 + 0 motor + 1.0 ceiling = 1.15 A
+# (AUX ERA 2026-09-03: 0.09 + 0 + 1.0 = 1.09 A; the margin widens)
 # against LIMIT_I_FC_MAX 1.4 A, an 18 % margin, sustained for 120 s.  THE COST,
 # stated rather than discovered: this run exercises the DRIVE channel not at all.
 #
@@ -10721,7 +10797,12 @@ SCENARIOS["charge-to-full"] = {
 # INTENT — the EMS reads the latch as feedback about a charge window it should
 # not have opened (see FAULT_EXPECTATIONS["charge-cruise"], operator ruling (b)
 # of 2026-08-30).  fw v26 does not change that and is not meant to.
-FW26_CLAMP_CRUISE_LOAD_A = 1.85
+# AUX-ERA 2026-09-03: RAISED 1.85 -> 1.91 so the DESIGNED two-source
+# total is preserved across the `I_AUX_A` 0.15 -> 0.09 A ruling. This
+# constant is a STIMULUS, not an expectation: the leg exists to put the
+# board at a stated total, and leaving the number alone would have moved
+# that total to 1.94 A and quietly weakened the test.
+FW26_CLAMP_CRUISE_LOAD_A = 1.91      # + I_AUX_A 0.09 -> 2.00 A total
 
 SCENARIOS["fw26-clamp-cruise"] = {
     "description": ("38 s motor-free two-source high-total run that is the "
@@ -10801,7 +10882,10 @@ SCENARIOS["fw26-clamp-cruise"] = {
 # INTENT — the EMS reads the latch as feedback about a charge window it should
 # not have opened (see FAULT_EXPECTATIONS["charge-cruise"], operator ruling (b)
 # of 2026-08-30).  fw v26 does not change that and is not meant to.
-FW26_CLAMP_SWEEP_PRELOAD_A = 1.05
+# AUX-ERA 2026-09-03: RAISED 1.05 -> 1.11 so the designed 1.20 A floor is
+# preserved across the `I_AUX_A` 0.15 -> 0.09 A ruling. Same reasoning as
+# FW26_CLAMP_CRUISE_LOAD_A above: the floor is the stimulus.
+FW26_CLAMP_SWEEP_PRELOAD_A = 1.11    # + I_AUX_A 0.09 -> 1.20 A floor
 FW26_CLAMP_SWEEP_REGION_S = 6.0
 
 # ── THE BRIDGING SUB-REGION (campaign E, 2026-09-03) ────────────────────────
@@ -10983,8 +11067,14 @@ SCENARIOS["fw26-clamp-sweep"] = {
 # 1.2931 A (load first): the order cannot make it worse than the simultaneous
 # case, because the peak is set by the rail crossing and the reference has
 # reached 0.84 long before the filtered total passes 1.55 A.
-FW26_CLAMP_JOINT_PRELOAD_A = 1.05        # + I_AUX_A 0.15 -> 1.20 A total
-FW26_CLAMP_JOINT_STEP_PRELOAD_A = 1.50   # + I_AUX_A 0.15 -> 1.65 A total
+# AUX-ERA 2026-09-03: BOTH RAISED BY 0.06 A across the `I_AUX_A`
+# 0.15 -> 0.09 A ruling, because the second one is load-bearing to the
+# digit. The step total 1.65 A sits just above the campaign-E necessary
+# condition `LIMIT_I_FC_MAX / DROOP_R_MAX` = 1.647 A; leaving the preload
+# at 1.50 would have put the step at 1.59 A, BELOW that threshold, and
+# the leg would have exercised nothing while still passing.
+FW26_CLAMP_JOINT_PRELOAD_A = 1.11        # + I_AUX_A 0.09 -> 1.20 A total
+FW26_CLAMP_JOINT_STEP_PRELOAD_A = 1.56   # + I_AUX_A 0.09 -> 1.65 A total
 FW26_CLAMP_JOINT_STEP_S = 16.0           # both axes move here
 FW26_CLAMP_JOINT_PRE_SHARE = 0.40
 FW26_CLAMP_JOINT_STEP_SHARE = 0.84
@@ -11341,6 +11431,8 @@ SOC_LOAD_RAMP_S = 3.0
 # to BT.  There is no SHARE_MINORITY_I_MIN_A floor keeping current on FC; FC is off.
 # So BT alone carries:
 #     I_AUX_A 0.15 + SOC_ENDURANCE_LOAD_A 2.2 = 2.35 A
+#     AUX ERA 2026-09-03: 0.09 + 2.2 = 2.29 A against LIMIT_I_BT_MAX 3.0 A,
+#     a 23.7 % margin instead of 21.7 %. The BT budget widens.
 # against LIMIT_I_BT_MAX 3.0 A -> 21.7 % margin, held for the whole ~880 s run.
 # At the previous 3.0 A the figure was 3.15 A... no: 0.15 + 3.0 = 3.15 A, ABOVE the
 # 3.0 A limit outright, and even discounting model error it sat at 88-105 % of the
@@ -11360,7 +11452,8 @@ SOC_ENDURANCE_LOAD_A = 2.2
 # ~60 s HIL run.  Two constraints bound it, and they are tight:
 #
 #   UPPER — LIMIT_I_FC_MAX 1.4 A.  The drain phase cruises at 1.5 m/s, so the
-#   bus total is I_AUX_A 0.15 + i_motor 0.30 + drain.  Once the SoC leaves the
+#   bus total is I_AUX_A (0.09 A since 2026-09-03) + i_motor 0.30 + drain.
+#   Once the SoC leaves the
 #   band the policy biases the split to SOC_BAND_SHARE_NOMINAL +
 #   SOC_BAND_SHARE_SPAN = 0.75, and
 #   the FC channel then carries 0.75 x total.  At drain = 1.0 A:
