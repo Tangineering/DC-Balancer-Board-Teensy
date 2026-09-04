@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Decode .BLG bench-log files (format versions 1-7) into CSV.
+"""Decode .BLG bench-log files (format versions 1-8) into CSV.
 
 The firmware writer lives in teensy_controller/teensy_controller.ino
 (State 98 SD-card logging, see PLAN.md sec 9g). File layout:
@@ -108,10 +108,10 @@ The firmware writer lives in teensy_controller/teensy_controller.ino
     governor held the channel at its ceiling" and "the load stopped
     there" are indistinguishable from the logged currents alone, so the
     bit is the only in-log observable and every consumer would otherwise
-    re-implement the same mask. It is emitted for v7 ONLY -- bit7 is a
-    fw v26 observable and fw v26 writes format v7, and the pre-v7 CSV
-    layouts stay pinned by their regression tests. On a v7 log written by
-    fw v21-v25 the bit is never set and the column reads 0 throughout.
+    re-implement the same mask. It is emitted for v7 AND v8 -- bit7 keeps
+    its fw v26 meaning in the v8 record, and the pre-v7 CSV layouts stay
+    pinned by their regression tests. On a v7 log written by fw v21-v25 the
+    bit is never set and the column reads 0 throughout.
 
   Header, format v6 (fw v16): adds no header fields -- v6 is IDENTICAL to
     v4/v5 in the header (32 B layout, same offsets). Only the RECORD format
@@ -182,6 +182,45 @@ The firmware writer lives in teensy_controller/teensy_controller.ino
     As with the v6 counters, this decoder does no unwrap correction on the
     counter classes; it exposes the raw cumulative values.
 
+  Header, format v8 (fw v27 rev 2): adds no header fields -- v8 is IDENTICAL
+    to v4/v5/v6/v7 in the header (32 B layout, same offsets). The existing
+    `if version >= 4:` header branches already cover v8 unchanged. One
+    SEMANTIC change, with no layout consequence: the u16 K_DROOP_x1000 field
+    at offset 16 still carries the firmware's fixed K_DROOP constant, but
+    from fw v27 rev 2 that constant is the load schedule's FLOOR, not the
+    droop scale in use. The scale actually applied varies with load and is
+    carried per record; see `k_d` below.
+
+  Record, format v8 (112 B, LE): the v7 106 B record (offsets 0-105
+    unchanged) with two more fields APPENDED at the end:
+      offset 106-107: u16 g_clamp_count -- CUMULATIVE, SATURATING count of
+                     MDAC writes whose commanded droop gain exceeded full
+                     scale and was clamped to 1.0 by setDroopMdac(). Diff
+                     consecutive samples for a rate, but note it STOPS at
+                     65535 instead of wrapping, so a run of equal maximum
+                     values means "saturated", not "quiet". A non-zero value
+                     means the governor's ~20 ms filtered total and the
+                     applied droop ratio disagreed about the load; the CODE
+                     was clipped, the ratio was not.
+      offset 108-111: f32 k_d -- the LIVE load-scheduled droop scale [ohm]
+                     this record's gFC/gBT were computed with, i.e.
+                     gFC = k_d / (RE_MAX * r) and gBT = k_d / (RE_MAX *
+                     (1 - r)). It is a LEVEL: read it directly, never
+                     difference it. WHY IT IS A RECORD FIELD AND NOT A
+                     HEADER FIELD: through format v7 the droop scale was the
+                     compile-time constant K_DROOP, so the header value plus
+                     gFC recovered the applied ratio exactly. fw v27 rev 2
+                     schedules the scale on the filtered total current, so a
+                     single header value no longer describes a run and a v7
+                     decoder's ratio recovery would be silently wrong. Above
+                     RE_MAX * SHARE_KD_SAFETY * SHARE_MINORITY_I_MIN_A /
+                     K_DROOP = 0.906 A of filtered total the
+                     schedule floors at K_DROOP and this column equals the
+                     header's k_droop_ohm exactly.
+    The v6/v7 THREE-CLASS field contract extends to these two: k_d joins the
+    LEVELS, g_clamp_count joins the counters as a saturating boot-monotonic
+    one (setDroopMdac() has no clear site; only hilWarmReset() zeroes it).
+
   Trailer: a record with t_us == 0xFFFFFFFF (sentinel), reinterpreted as
     u32 sentinel, u32 records_written, u32 dropped_count, u8 close_reason
     (1=complete, 2=stop, 3=X, 4=Q, 5=fault, 6=io_error), u8 error_code,
@@ -249,6 +288,16 @@ float channel columns only, exactly as it excludes fault_flags/flags).
 The raw `flags` byte is still emitted unchanged beside it, so a consumer
 that prefers its own mask is unaffected.
 
+Format v8 adds two more CSV columns -- g_clamp_count and k_d -- APPENDED
+after enc_duty_b_ewma (i.e. still before fault_flags), giving a 34-column
+CSV_HEADER_V8. The derived `share_gov_ceiling` helper column described above
+is emitted for v8 as well as v7 (flags bit7 keeps its fw v26 meaning), still
+at the very end of the row. The header itself is unchanged from v4-v7
+(RECORD_INFO[8] has its own record fmt/size/csv_fields/csv_header but reuses
+v4's header decode path unmodified). v1-v7 decoding is byte-identical to
+before this version existed: every pre-v8 format has its own RECORD_INFO
+entry and its own CSV header constant, none of which this bump touches.
+
 Gap statistics (printed to stderr): max_interval_us is the largest modular
 step between consecutive records; missed_periods sums, over every step,
 max(round(delta_us / 1000) - 1, 0) -- i.e. how many 1 kHz control ticks
@@ -265,7 +314,8 @@ result's csv_header (not the module-level CSV_HEADER constant) is the
 correct CSV header line for the decoded file's version -- v1/v2 files get
 the 16-column CSV_HEADER, v3/v4 files get the 20-column CSV_HEADER_V3, v5
 files get the 22-column CSV_HEADER_V5, v6 files get the 26-column
-CSV_HEADER_V6, and v7 files get the 31-column CSV_HEADER_V7.
+CSV_HEADER_V6, v7 files get the 31-column CSV_HEADER_V7, and v8 files get
+the 34-column CSV_HEADER_V8.
 DecodeResult.header also carries "profile_amp" and "profile_b" (float or
 None -- None for v1-v3 files and for a v4 file whose corresponding valid
 bit is clear).
@@ -311,11 +361,18 @@ RECORD_SIZE_V6 = 92
 RECORD_FMT_V7 = "<I14fHBBBB2xffiIIIIIHHH"
 RECORD_SIZE_V7 = 106
 
+# v8 record layout: v7's 106 B record with g_clamp_count (u16) and k_d (f32)
+# APPENDED at the end (offsets 0-105 unchanged). The u16 sits first so the
+# f32 lands 4-byte aligned in the firmware struct and the record carries no
+# implicit padding -- 112 is a multiple of 4.
+RECORD_FMT_V8 = "<I14fHBBBB2xffiIIIIIHHHHf"
+RECORD_SIZE_V8 = 112
+
 TRAILER_FMT = "<IIIBBI"
 CLOSE_REASONS = {1: "complete", 2: "stop", 3: "X", 4: "Q", 5: "fault",
                   6: "io_error"}
 
-SUPPORTED_VERSIONS = (1, 2, 3, 4, 5, 6, 7)
+SUPPORTED_VERSIONS = (1, 2, 3, 4, 5, 6, 7, 8)
 
 # Per-version record format/size and CSV header/field list. v1 and v2 share
 # a record layout; v3 appends the four new voltage channels after I_cmd.
@@ -368,6 +425,16 @@ CSV_HEADER_V7 = ("t_us,share_sp,share_act,v_sp,v_act,I_fc,I_batt,gFC,gBT,"
                   "fault_flags,ps_phase,dc_phase,trap_phase,flags,"
                   "share_gov_ceiling")
 
+CSV_FIELDS_V8 = CSV_FIELDS_V7 + ["g_clamp_count", "k_d"]
+CSV_HEADER_V8 = ("t_us,share_sp,share_act,v_sp,v_act,I_fc,I_batt,gFC,gBT,"
+                 "V_bus,I_cmd,V_fc,V_batt,V_chg,V_rgn,u_unsat,drive_x0,"
+                 "encoder_pos,enc_period_ref_us,enc_multi_pitch_count,"
+                 "enc_spurious_drop_count,enc_edge_count_a,enc_edge_count_b,"
+                 "enc_phase_ewma,enc_duty_a_ewma,enc_duty_b_ewma,"
+                 "g_clamp_count,k_d,"
+                 "fault_flags,ps_phase,dc_phase,trap_phase,flags,"
+                 "share_gov_ceiling")
+
 # fw v26 share-governor current-ceiling bit in the record's `flags` byte.
 # Named here rather than inlined so the decoder and its tests share one
 # vocabulary, the way the firmware and the IO CSV do.
@@ -388,6 +455,8 @@ RECORD_INFO = {
         "csv_fields": CSV_FIELDS_V6, "csv_header": CSV_HEADER_V6},
     7: {"fmt": RECORD_FMT_V7, "size": RECORD_SIZE_V7,
         "csv_fields": CSV_FIELDS_V7, "csv_header": CSV_HEADER_V7},
+    8: {"fmt": RECORD_FMT_V8, "size": RECORD_SIZE_V8,
+        "csv_fields": CSV_FIELDS_V8, "csv_header": CSV_HEADER_V8},
 }
 
 # 30 s: longer than any profile's worst card-stall gap (ring = 1024 rec ~=
@@ -534,7 +603,17 @@ def decode_blg(data):
         prev_t_us = t_us
 
         fields = struct.unpack_from(record_fmt, chunk, 0)
-        if version == 7:
+        g_clamp_count = None
+        k_d = None
+        if version == 8:
+            (_t, share_sp, share_act, v_sp, v_act, i_fc, i_batt, gfc, gbt,
+             v_bus, i_cmd, v_fc, v_batt, v_chg, v_rgn, fault_flags, ps_phase,
+             dc_phase, trap_phase, flags, u_unsat, drive_x0, encoder_pos,
+             enc_period_ref_us, enc_multi_pitch_count,
+             enc_spurious_drop_count, enc_edge_count_a,
+             enc_edge_count_b, enc_phase_ewma, enc_duty_a_ewma,
+             enc_duty_b_ewma, g_clamp_count, k_d) = fields
+        elif version == 7:
             (_t, share_sp, share_act, v_sp, v_act, i_fc, i_batt, gfc, gbt,
              v_bus, i_cmd, v_fc, v_batt, v_chg, v_rgn, fault_flags, ps_phase,
              dc_phase, trap_phase, flags, u_unsat, drive_x0, encoder_pos,
@@ -571,23 +650,28 @@ def decode_blg(data):
         row = [t_us, "%.9g" % share_sp, "%.9g" % share_act, v_sp_cell,
                v_act_cell, "%.9g" % i_fc, "%.9g" % i_batt, "%.9g" % gfc,
                "%.9g" % gbt, "%.9g" % v_bus, "%.9g" % i_cmd]
-        if version in (3, 4, 5, 6, 7):
+        if version in (3, 4, 5, 6, 7, 8):
             row += ["%.9g" % v_fc, "%.9g" % v_batt, "%.9g" % v_chg,
                     "%.9g" % v_rgn]
-        if version in (5, 6, 7):
+        if version in (5, 6, 7, 8):
             row += ["%.9g" % u_unsat, "%.9g" % drive_x0]
-        if version in (6, 7):
+        if version in (6, 7, 8):
             row += [encoder_pos, enc_period_ref_us, enc_multi_pitch_count,
                     enc_spurious_drop_count]
-        if version == 7:
+        if version in (7, 8):
             # The three EWMA levels are 1/256 fixed point on the wire; the
             # CSV carries the direct fractions (raw/256.0) -- see docstring.
             row += [enc_edge_count_a, enc_edge_count_b,
                     "%.9g" % (enc_phase_ewma / 256.0),
                     "%.9g" % (enc_duty_a_ewma / 256.0),
                     "%.9g" % (enc_duty_b_ewma / 256.0)]
+        if version == 8:
+            # g_clamp_count is a plain saturating count (int style, like
+            # fault_flags); k_d is a float channel and takes the same
+            # "%.9g" form as every other float column.
+            row += [g_clamp_count, "%.9g" % k_d]
         row += [fault_flags, ps_cell, dc_cell, tp_cell, flags]
-        if version == 7:
+        if version in (7, 8):
             # DERIVED, not a record field, so it is appended after the raw
             # `flags` byte rather than inserted with the record fields
             # before fault_flags -- every established v7 index is unchanged.

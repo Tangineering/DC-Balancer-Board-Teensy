@@ -135,6 +135,16 @@ CSV_HEADER_V7 = ("t_us,share_sp,share_act,v_sp,v_act,I_fc,I_batt,gFC,gBT,"
                   "enc_phase_ewma,enc_duty_a_ewma,enc_duty_b_ewma,"
                   "fault_flags,ps_phase,dc_phase,trap_phase,flags,"
                   "share_gov_ceiling")
+RECORD_FMT_V8 = "<I14fHBBBB2xffiIIIIIHHHHf"
+RECORD_SIZE_V8 = 112
+CSV_HEADER_V8 = ("t_us,share_sp,share_act,v_sp,v_act,I_fc,I_batt,gFC,gBT,"
+                 "V_bus,I_cmd,V_fc,V_batt,V_chg,V_rgn,u_unsat,drive_x0,"
+                 "encoder_pos,enc_period_ref_us,enc_multi_pitch_count,"
+                 "enc_spurious_drop_count,enc_edge_count_a,enc_edge_count_b,"
+                 "enc_phase_ewma,enc_duty_a_ewma,enc_duty_b_ewma,"
+                 "g_clamp_count,k_d,"
+                 "fault_flags,ps_phase,dc_phase,trap_phase,flags,"
+                 "share_gov_ceiling")
 
 _passed = 0
 _failed = 0
@@ -328,6 +338,50 @@ def pack_record_v7(t_us, share_sp=0.5, share_act=0.5, v_sp=0.0, v_act=0.0,
                        enc_duty_a_ewma & 0xFFFF,
                        enc_duty_b_ewma & 0xFFFF)
     assert len(rec) == RECORD_SIZE_V7
+    return rec
+
+
+def pack_header_v8(profile_type=1, start_millis=0, start_micros=0,
+                   k_droop_x1000=300, fw_version=27, param_flags=0x03,
+                   profile_amp=6.0, profile_b=0.15):
+    """v8 header: byte-identical to v4/v5/v6/v7 (see pack_header_v4) except
+    record_size=112 (v8's own record layout). k_droop_x1000 keeps its offset
+    and its units; from fw v27 rev 2 it means the load schedule's FLOOR
+    rather than the scale in use, which is per-record."""
+    hdr = struct.pack(HEADER_FMT, MAGIC, 8, RECORD_SIZE_V8, profile_type,
+                      param_flags, start_millis, start_micros, k_droop_x1000)
+    hdr += struct.pack("<H", fw_version)
+    hdr += b"\x00" * (HEADER_SIZE - len(hdr))
+    hdr = bytearray(hdr)
+    struct.pack_into("<ff", hdr, 20, profile_amp, profile_b)
+    assert len(hdr) == HEADER_SIZE
+    return bytes(hdr)
+
+
+def pack_record_v8(t_us, share_sp=0.5, share_act=0.5, v_sp=0.0, v_act=0.0,
+                   i_fc=0.0, i_batt=0.0, gfc=0.0, gbt=0.0, v_bus=17.5,
+                   i_cmd=0.0, v_fc=12.5, v_batt=8.0, v_chg=12.0, v_rgn=0.5,
+                   fault_flags=0, ps_phase=0xFF, dc_phase=0xFF,
+                   trap_phase=0xFF, flags=0, u_unsat=0.0, drive_x0=0.0,
+                   encoder_pos=0, enc_period_ref_us=0,
+                   enc_multi_pitch_count=0, enc_spurious_drop_count=0,
+                   enc_edge_count_a=0, enc_edge_count_b=0,
+                   enc_phase_ewma=64, enc_duty_a_ewma=128,
+                   enc_duty_b_ewma=128, g_clamp_count=0, k_d=0.30):
+    rec = struct.pack(RECORD_FMT_V8, t_us & 0xFFFFFFFF, share_sp, share_act,
+                      v_sp, v_act, i_fc, i_batt, gfc, gbt, v_bus, i_cmd,
+                      v_fc, v_batt, v_chg, v_rgn, fault_flags, ps_phase,
+                      dc_phase, trap_phase, flags, u_unsat, drive_x0,
+                      encoder_pos, enc_period_ref_us & 0xFFFFFFFF,
+                      enc_multi_pitch_count & 0xFFFFFFFF,
+                      enc_spurious_drop_count & 0xFFFFFFFF,
+                      enc_edge_count_a & 0xFFFFFFFF,
+                      enc_edge_count_b & 0xFFFFFFFF,
+                      enc_phase_ewma & 0xFFFF,
+                      enc_duty_a_ewma & 0xFFFF,
+                      enc_duty_b_ewma & 0xFFFF,
+                      g_clamp_count & 0xFFFF, k_d)
+    assert len(rec) == RECORD_SIZE_V8
     return rec
 
 
@@ -1001,6 +1055,157 @@ def test_v7_record_size_mismatch(tmpdir):
           "unexpected record_size 92" in err and "expected 106" in err, err)
 
 
+def test_v8_header_and_record(tmpdir):
+    """fw v27 rev 2 v8 header + record decode: record_size=112, version=8,
+    the v4 header path carried through unmodified, the two new fields at
+    their documented CSV positions (indices 26/27, right after
+    enc_duty_b_ewma and still BEFORE fault_flags), every established v7
+    column index unchanged, and the derived `share_gov_ceiling` helper
+    still last -- 34 columns."""
+    sys.path.insert(0, str(HERE))
+    import decode_benchlog as db
+
+    n = 30
+    data = pack_header_v8(profile_type=8, fw_version=27, param_flags=0x03,
+                          profile_amp=2.0, profile_b=0.30)
+    for i in range(n):
+        data += pack_record_v8(t_us=i * 1000, encoder_pos=1000 + i * 2,
+                               enc_period_ref_us=4200,
+                               enc_multi_pitch_count=7,
+                               enc_spurious_drop_count=12,
+                               enc_edge_count_a=100_000 + i * 4,
+                               enc_edge_count_b=100_150 + i * 4,
+                               enc_phase_ewma=64, enc_duty_a_ewma=128,
+                               enc_duty_b_ewma=131,
+                               g_clamp_count=i, k_d=0.5)
+    data += pack_trailer(records_written=n, dropped=0, close_reason=1,
+                         record_size=RECORD_SIZE_V8)
+
+    res = db.decode_blg(data)
+    check("v8: header version=8", res.header["version"] == 8,
+          repr(res.header))
+    check("v8: header record_size=112", res.header["record_size"] == 112,
+          repr(res.header))
+    check("v8: fw_version=27 carried through v4 header path",
+          res.header["fw_version"] == 27, repr(res.header))
+    check("v8: k_droop_ohm still decoded from header offset 16 (now the "
+          "schedule's floor)", abs(res.header["k_droop_ohm"] - 0.30) < 1e-9,
+          repr(res.header))
+    check("v8: profile_amp/profile_b decoded (v4 header path unmodified)",
+          abs(res.header["profile_amp"] - 2.0) < 1e-5
+          and abs(res.header["profile_b"] - 0.30) < 1e-5, repr(res.header))
+    check("v8: csv_header is the 34-column v8 header",
+          res.csv_header == CSV_HEADER_V8, res.csv_header)
+    check("v8: emits all records", len(res.csv_rows) == n,
+          f"csv data rows={len(res.csv_rows)}, expected {n}")
+
+    first_fields = res.csv_rows[0].split(",")
+    check("v8: row has 34 fields", len(first_fields) == 34,
+          repr(first_fields))
+    # Every v7 index is unchanged: encoder_pos(17)...enc_duty_b_ewma(25),
+    # then the two v8 fields g_clamp_count(26)/k_d(27), then fault_flags(28).
+    check("v8: v6/v7 fields keep their positions (encoder_pos at 17, "
+          "enc_duty_b_ewma at 25)",
+          first_fields[17] == "1000" and first_fields[25] == "0.51171875",
+          repr(first_fields[17:26]))
+    check("v8: g_clamp_count at index 26", first_fields[26] == "0",
+          first_fields[26])
+    check("v8: k_d at index 27 is the plain float channel value",
+          first_fields[27] == "0.5", first_fields[27])
+    check("v8: fault_flags follows the two new fields, at index 28",
+          first_fields[28] == "0", first_fields[28])
+    check("v8: share_gov_ceiling is still the LAST column and reads 0 with "
+          "flags bit7 clear", first_fields[33] == "0", first_fields[33])
+
+    last_fields = res.csv_rows[-1].split(",")
+    check("v8: g_clamp_count advances across records (cumulative)",
+          last_fields[26] == str(n - 1), last_fields[26])
+
+    # CLI-level check too, mirroring the v6/v7 CLI checks.
+    path = write_blg(tmpdir, "v8.BLG", data)
+    rc, out, err = run_decoder(path)
+    check("v8 CLI: exits 0", rc == 0, f"rc={rc} stderr={err}")
+    check("v8 CLI: version=8 reported", "version=8" in err, err)
+    check("v8 CLI: records read == n", f"records read: {n}" in err, err)
+    check("v8 CLI: trailer found (close_reason=complete)",
+          "close_reason=complete" in err, err)
+
+
+def test_v8_saturating_count_kd_level_and_ceiling_bit(tmpdir):
+    """The v8 field contract: g_clamp_count is a SATURATING u16 (the max
+    value decodes verbatim, with no unwrap transform), k_d is a LEVEL that
+    varies record to record, and flags bit7 still drives the derived
+    `share_gov_ceiling` helper on a v8 row exactly as it does on a v7 one."""
+    sys.path.insert(0, str(HERE))
+    import decode_benchlog as db
+
+    data = pack_header_v8(fw_version=27)
+    data += pack_record_v8(t_us=0, g_clamp_count=0xFFFF, k_d=0.90625,
+                           flags=0x80)
+    data += pack_record_v8(t_us=1000, g_clamp_count=0xFFFF, k_d=0.25,
+                           flags=0x00)
+    data += pack_trailer(records_written=2, dropped=0, close_reason=1,
+                         record_size=RECORD_SIZE_V8)
+
+    res = db.decode_blg(data)
+    f0 = res.csv_rows[0].split(",")
+    f1 = res.csv_rows[1].split(",")
+    check("v8: saturated g_clamp_count decodes as 65535 verbatim",
+          f0[26] == "65535" and f1[26] == "65535", repr([f0[26], f1[26]]))
+    check("v8: k_d is a per-record LEVEL, not a header constant",
+          f0[27] == "0.90625" and f1[27] == "0.25", repr([f0[27], f1[27]]))
+    check("v8: flags bit7 still sets share_gov_ceiling on a v8 row",
+          f0[33] == "1" and f1[33] == "0", repr([f0[33], f1[33]]))
+    check("v8: the raw flags byte is still emitted beside the helper",
+          f0[32] == "128" and f1[32] == "0", repr([f0[32], f1[32]]))
+
+
+def test_v8_record_size_mismatch(tmpdir):
+    """A v8 header claiming the v7 record_size (106, self-inconsistent with
+    version=8) is a hard error, mirroring test_v7_record_size_mismatch."""
+    data = bytearray(pack_header_v8())
+    data[5] = RECORD_SIZE_V7  # corrupt record_size byte: 112 -> 106
+    data = bytes(data) + pack_trailer(records_written=0, dropped=0,
+                                      close_reason=1,
+                                      record_size=RECORD_SIZE_V8)
+
+    path = write_blg(tmpdir, "v8_badsize.BLG", data)
+    rc, out, err = run_decoder(path)
+    check("v8 bad record_size: decoder exits nonzero", rc != 0, f"rc={rc}")
+    check("v8 bad record_size: error names both values",
+          "unexpected record_size 106" in err and "expected 112" in err, err)
+
+
+def test_v7_unchanged_by_the_v8_bump(tmpdir):
+    """A v7 file must decode EXACTLY as it did before format v8 existed:
+    same 32-column header, same row width, same trailing
+    `share_gov_ceiling` helper. Pinned separately from
+    test_v7_header_and_record because the v8 branch touches the shared row
+    builder, where an over-broad `version in (...)` edit would silently
+    widen every older layout."""
+    sys.path.insert(0, str(HERE))
+    import decode_benchlog as db
+
+    data = pack_header_v7(fw_version=26)
+    data += pack_record_v7(t_us=0, flags=0x80)
+    data += pack_trailer(records_written=1, dropped=0, close_reason=1,
+                         record_size=RECORD_SIZE_V7)
+
+    res = db.decode_blg(data)
+    fields = res.csv_rows[0].split(",")
+    check("v7 after the v8 bump: csv_header is still the 32-column v7 header",
+          res.csv_header == CSV_HEADER_V7, res.csv_header)
+    check("v7 after the v8 bump: the row is still 32 fields wide",
+          len(fields) == 32, repr(fields))
+    check("v7 after the v8 bump: no g_clamp_count/k_d columns leaked in "
+          "(fault_flags is still at index 26)",
+          fields[26] == "0", repr(fields[24:28]))
+    check("v7 after the v8 bump: share_gov_ceiling is still the last column",
+          fields[31] == "1", fields[31])
+    check("v7 record size is still 106", res.header["record_size"] == 106,
+          repr(res.header))
+
+
 def test_hil_build_flag(tmpdir):
     """(z) flags bit6 (0x40, fw v21 HIL_SIM build) is surfaced as
     header["hil_build"] -- true if ANY record has the bit set, false if
@@ -1303,6 +1508,10 @@ def main():
         test_v7_header_and_record(tmpdir)
         test_v7_near_wrap_edge_counters(tmpdir)
         test_v7_record_size_mismatch(tmpdir)
+        test_v8_header_and_record(tmpdir)
+        test_v8_saturating_count_kd_level_and_ceiling_bit(tmpdir)
+        test_v8_record_size_mismatch(tmpdir)
+        test_v7_unchanged_by_the_v8_bump(tmpdir)
         test_hil_build_flag(tmpdir)
         test_share_ceiling_column(tmpdir)
         test_v6_regression(tmpdir)

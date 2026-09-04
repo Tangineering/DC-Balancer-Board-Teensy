@@ -113,6 +113,23 @@ CSV_COLUMNS_V7 = ["t_us", "share_sp", "share_act", "v_sp", "v_act", "I_fc",
 # contract the version-gated figures already rely on.
 CSV_COLUMNS_V7_SHARE_CEILING = CSV_COLUMNS_V7 + ["share_gov_ceiling"]
 
+# v8 decode_benchlog CSVs (tools/decode_benchlog.py CSV_HEADER_V8, fw v27
+# rev 2) add g_clamp_count and k_d after enc_duty_b_ewma (i.e. still before
+# fault_flags), and carry the derived `share_gov_ceiling` helper at the end
+# of the row exactly as a v7 CSV does -- 34 columns. FIELD CONTRACT: k_d is a
+# LEVEL in ohms (the LIVE load-scheduled droop scale this row's gFC/gBT were
+# computed with, so r = k_d / (RE_MAX * gFC) recovers the applied ratio);
+# g_clamp_count is a SATURATING boot-monotonic counter (diff for a rate, but
+# it stops at 65535 rather than wrapping). Pre-v8 dicts simply lack the two
+# keys -- the same "pre-vN dicts lack the keys" contract as every bump before
+# it. NOTE for any consumer that recovered the applied ratio from the header's
+# k_droop_ohm: that is correct only through v7. From v8 the header value is
+# the schedule's FLOOR and the per-row k_d is the scale in use.
+CSV_COLUMNS_V8 = (CSV_COLUMNS_V7[:CSV_COLUMNS_V7.index("fault_flags")]
+                  + ["g_clamp_count", "k_d"]
+                  + CSV_COLUMNS_V7[CSV_COLUMNS_V7.index("fault_flags"):]
+                  + ["share_gov_ceiling"])
+
 _decoder = None
 
 
@@ -201,7 +218,9 @@ def load_csv(csv_path):
     enc_edge_count_a, enc_edge_count_b, enc_phase_ewma, enc_duty_a_ewma,
     enc_duty_b_ewma after enc_spurious_drop_count), or v7 decoded with the
     fw v26 helper column (32-column, CSV_COLUMNS_V7_SHARE_CEILING -- appends
-    the derived `share_gov_ceiling` after `flags`)
+    the derived `share_gov_ceiling` after `flags`), or v8 (34-column,
+    CSV_COLUMNS_V8 -- further adds g_clamp_count, k_d after
+    enc_duty_b_ewma, plus the same trailing share_gov_ceiling helper)
     header; the matching column list is used to parse the rest of
     the file, so a v1/v2 CSV's returned dict has exactly the same 16 keys
     it always has, a v3/v4 CSV's dict additionally has the four voltage
@@ -230,13 +249,16 @@ def load_csv(csv_path):
         columns = CSV_COLUMNS_V7
     elif header == CSV_COLUMNS_V7_SHARE_CEILING:
         columns = CSV_COLUMNS_V7_SHARE_CEILING
+    elif header == CSV_COLUMNS_V8:
+        columns = CSV_COLUMNS_V8
     else:
         raise ValueError(
             f"unexpected CSV header in {csv_path}: {header!r}, "
             f"expected {CSV_COLUMNS!r} (v1/v2), {CSV_COLUMNS_V3!r} (v3/v4), "
             f"{CSV_COLUMNS_V5!r} (v5), {CSV_COLUMNS_V6!r} (v6), "
-            f"{CSV_COLUMNS_V7!r} (v7), or "
-            f"{CSV_COLUMNS_V7_SHARE_CEILING!r} (v7 + fw v26 share_gov_ceiling)")
+            f"{CSV_COLUMNS_V7!r} (v7), "
+            f"{CSV_COLUMNS_V7_SHARE_CEILING!r} (v7 + fw v26 share_gov_ceiling), "
+            f"or {CSV_COLUMNS_V8!r} (v8)")
 
     n = len(rows)
     data = {col: np.full(n, np.nan, dtype=np.float64) for col in columns}

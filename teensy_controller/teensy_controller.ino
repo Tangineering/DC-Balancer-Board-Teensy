@@ -1,7 +1,44 @@
 /*
  * teensy_controller.ino — Scale Car DC Balancer Board, Rev 20260622
  *
- * fw v27 (2026-09-03) — THE GOVERNOR'S MINORITY-CURRENT CLIP IS APPLIED ON THE OPEN-LOOP
+ * fw v27 REV 2 (2026-09-03) — THE GOVERNOR PACKAGE. Rev 2 SUPERSEDES rev 1 BEFORE ANY FLASH:
+ *   FW_VERSION stays 27, and no board has ever run rev 1, so there is no rev-1 era in the ledger.
+ *   Rev 1 (the feedforward clip and its hold, described immediately below) is kept in full and
+ *   unchanged — rev 2 ADDS three mechanisms around it and retunes one constant.
+ *     (1) BATTERY-ONLY START. From a profile start until the share loop first CLOSES, the fuel
+ *         cell is held OFF the bus and the battery carries the load, through the EXISTING
+ *         controller-initiated cut path: updateShareSetpointCutoff() is fed an effective setpoint
+ *         of 0.0 while the arm is up, so the cut inherits the last-source guard, the fw v25 load
+ *         guard, the survivor blanking and the deferral, and the re-entry is the latch's own
+ *         guarded release. NO second cut mechanism exists. Armed at Idle→Run and at the five
+ *         State-98 profile starts ('R', 'D', 'T', 'Y', 'W'); dropped the moment the filtered total
+ *         crosses the closed-loop gate, and never re-armed by the release's own
+ *         resetShareControlState() — so the release cannot cycle. Suppressed (not disarmed) inside
+ *         an FC-charge window, where BT_BUS is already LOW and FC is the only source; DISARMED on
+ *         sight of an out-of-band commanded setpoint, which the latch owns.
+ *     (2) LOAD-SCHEDULED DROOP SCALE. k_d is no longer the fixed K_DROOP: in CLOSED LOOP it
+ *         follows k_d = max(K_DROOP, RE_MAX·clamp(I_min/I_tot_filt, DROOP_R_MIN, 0.5)·0.9) on a
+ *         hysteretic sample of the filtered total, rate-bounded per tick so it can never move the
+ *         MDAC codes faster than a full ratio step. Effect: the droop AUTHORITY k_d·I_tot stops
+ *         collapsing with load and becomes the constant 0.272 V (design scale) below the
+ *         crossover. Above RE_MAX·0.9·I_min/K_DROOP = 0.906 A of filtered total the schedule
+ *         floors at K_DROOP and the firmware is bit-identical to fw v26. A hard g ≤ 1 clamp plus a
+ *         saturating counter now sits at the MDAC write site (setDroopMdac()).
+ *     (3) SHARE_MINORITY_I_MIN_A 0.30 → 0.15 A (operator ruling). The (0.245, 0.29] A bench
+ *         bracket was measured at a FIXED droop scale; with the authority held constant the
+ *         operator's target is D = RE_MAX·I_min = 0.302 V of bus sag. Everything downstream is
+ *         derived from the symbol and moves with it: the gate 2·I_min = 0.30 A (exit 0.25 A), the
+ *         clip band [0.15/I_tot, 1 − 0.15/I_tot], the schedule crossover 0.906 A, and the fw v26
+ *         ceiling reachability (1.55 → 1.471 A, now set by DROOP_R_MAX rather than by the floor).
+ *         ⚠️ THE LOAD-INDEPENDENT-CONDUCTION CLAIM IS A HYPOTHESIS AND THE HIL PLANT CANNOT TEST
+ *         IT (no PFM / light-load model). Bench-only validation — see docs/fw27_governor_package.md.
+ *     (4) BLG FORMAT v8 (112 B): the record appends g_clamp_count (u16, saturating) and the LIVE
+ *         k_d (f32). Required, not optional: with a scheduled scale the header's K_DROOP field no
+ *         longer recovers the applied ratio from gFC/gBT. Header layout unchanged; the header
+ *         field now means the schedule's FLOOR. UDP telemetry v4/58 B and the HIL 40 B/18 B frames
+ *         are UNCHANGED.
+ *
+ * fw v27 rev 1 (2026-09-03) — THE GOVERNOR'S MINORITY-CURRENT CLIP IS APPLIED ON THE OPEN-LOOP
  *   FEEDFORWARD PATH, IN A RELAXING FORM. Purpose: make the open→closed handover continuous in
  *   the reference MAGNITUDE, which is the exposure the fw v6 ladder dropouts measured (TP0105 at
  *   r_min and TP0115 at r_max, both AT the handover, 5.9 ms of total source dropout and a
@@ -18,9 +55,10 @@
  *         balanced 0.5 split at ~0.2 A of total, and the MOVE — the source commutation it forces —
  *         was the ignition. A hold commands no motion at all.
  *     (c) AT THE SHIPPED CONSTANTS THE FEEDFORWARD CLIP IS ALWAYS THE HOLD. SHARE_MINORITY_I_MIN_A
- *         is 0.30 A and the closed-loop entry gate is 2·SHARE_MINORITY_I_MIN_A = 0.60 A, so every
- *         tick that reaches the feedforward branch has share_govTotAFilt ≤ 0.60 A and the band is
- *         empty (degenerate to the single point 0.5 exactly AT 0.60 A, which the strict-'>' entry
+ *         is 0.15 A (fw v27 rev 2; 0.30 A at rev 1) and the closed-loop entry gate is
+ *         2·SHARE_MINORITY_I_MIN_A = 0.30 A, so every tick that reaches the feedforward branch
+ *         has share_govTotAFilt <= the gate and the band is
+ *         empty (degenerate to the single point 0.5 exactly AT the gate, which the strict-'>' entry
  *         test does not enter). The relaxing branch is therefore structurally unreachable today
  *         and exists so a future retune of either constant cannot leave a writing path unguarded —
  *         the same discipline as fw v26's inert feedforward ceiling call. CONSEQUENCE, STATED
@@ -88,7 +126,7 @@
  *     (c) SUPPRESSED while a fw v25 deferred cut is outstanding — that deferral has parked the
  *         reference on a band edge to starve a doomed channel and the ceiling would claw it back.
  *         One owner per tick.
- *     (d) OPEN LOOP. HOLD is untouched (it writes nothing, and its < 0.55 A total cannot reach a
+ *     (d) OPEN LOOP. HOLD is untouched (it writes nothing, and its sub-gate total cannot reach a
  *         1.25 A ceiling); FEEDFORWARD takes the clamp, where it is provably inert today and
  *         guards a future retune. The clamp state is dropped on every frozen-loop path and in
  *         resetShareControlState().
@@ -2269,7 +2307,10 @@ const float K_DROOP = 0.30f;        // ohm — design droop scale k_d; TODO(cali
                                     // decision, see controller_design/system_model.md §9.
                                     // Hard bound RE_MAX·DROOP_R_MIN = 0.302 Ω
 const float DROOP_R_MIN = 0.15f;    // usable droop-ratio span for g ≤ 1 at K_DROOP = 0.30
-const float DROOP_R_MAX = 0.85f;
+// constexpr (fw v27 rev 2): the reachability static_assert below is written against this symbol
+// rather than a restated 0.85f literal, for the same reason SHARE_MINORITY_I_MIN_A is constexpr —
+// a literal would stop tracking the band the moment it is retuned.
+constexpr float DROOP_R_MAX = 0.85f;
 
 // A — share-loop hold threshold. Below this total measured current the share
 // ratio |I_fc|/(|I_fc|+|I_batt|) is a quotient of two near-zero ADC readings,
@@ -2315,14 +2356,40 @@ const float SHARE_I_TOT_MIN_A = 0.075f;
 // (0.245, 0.29] A, and the shipped 0.20 A sat below the whole bracket — it
 // governed nothing at the setpoints that failed. 0.30 A sits just above the
 // clean bracket edge. The collapse-to-0.5 threshold follows automatically
-// (2·I_min: 0.40 → 0.60 A of total current before closed-loop control engages).
+// (2·I_min: 0.40 → 0.60 A of total current before closed-loop control engages; fw v27 rev 2
+// lowered it again to 0.30 A with the floor — see the fw v27 rev 2 note below).
 // TODO(calibrate): refine via the quasi-static dropout-boundary mapping (bench
 // plan step 3) — the bracket is 45 mA wide and was measured at ONE total
 // current, so the floor's I_tot dependence is still unmeasured.
+//
+// Value (LOWERED 0.30 → 0.15 A, fw v27 rev 2, 2026-09-03 — operator ruling). This is NOT a claim
+// that the bracket above was wrong. It is a claim that the bracket no longer applies, because the
+// quantity it measured has changed. The (0.245, 0.29] A bracket was measured at a FIXED droop
+// scale K_DROOP = 0.30 Ω, where the droop authority k_d·I_tot COLLAPSES with load: at 0.6 A of
+// total it is 0.18 V, and a minority channel commanded below ~0.29 A had under 100 mV of bus-
+// versus-reference margin to conduct against. fw v27 rev 2 schedules k_d on the load so that the
+// authority is CONSTANT at RE_MAX·I_min·SHARE_KD_SAFETY = 0.272 V (design scale) everywhere below
+// the crossover — the operator's target D = RE_MAX·I_min = 0.302 V at unity safety factor. The
+// floor is then set by the margin the schedule guarantees, not by the current the old fixed scale
+// happened to leave.
+// OPERATOR'S RATIONALE, VERBATIM: "Using D=0.30V as the constant bus sag in the low current region
+// still gives plenty more droop strength and enough of a voltage differential to ensure conduction
+// when a source re-enters the bus."
+// ⚠️ THIS IS A HYPOTHESIS, NOT A MEASUREMENT. Nothing has yet demonstrated that conduction margin
+// is load-INDEPENDENT once the authority is held constant, and the HIL plant cannot demonstrate
+// it: the hi-fi engine has no PFM and no light-load converter model (system_model.md §6e item 3;
+// hil_electrical.py has no light-load branch), so a channel commanded to 0.15 A in the model
+// simply carries 0.15 A. Only the bench can falsify this — see the risk section of
+// docs/fw27_governor_package.md. TODO(calibrate): the two-axis dropout-boundary sweep, per
+// channel direction, at the SCHEDULED droop scale.
+// EVERYTHING DOWNSTREAM MOVES WITH THIS CONSTANT, and each is derived from the symbol rather than
+// restated: the closed-loop gate 2·I_min = 0.30 A (exit at 0.25 A through SHARE_GOV_OL_HYST_A);
+// the minority clip band [0.15/I_tot, 1 − 0.15/I_tot]; the schedule's crossover to K_DROOP at
+// RE_MAX·SHARE_KD_SAFETY·I_min/K_DROOP = 0.906 A; and the fw v26 ceiling clamp's reachability.
 // constexpr, not const: the fw v26 ceiling static_asserts below need a constant expression, so
-// that they can be written against THIS SYMBOL rather than a restated 0.30f literal (a literal
+// that they can be written against THIS SYMBOL rather than a restated 0.15f literal (a literal
 // would silently stop tracking the constant the moment this value is retuned).
-constexpr float SHARE_MINORITY_I_MIN_A = 0.30f;
+constexpr float SHARE_MINORITY_I_MIN_A = 0.15f;
 
 // A — LOAD CEILING on the SETPOINT-LATCHED CUTOFF ENTRY (fw v6, 2026-08-12). The cutoff opens one
 // bus switch in a single tick, which hands the doomed channel's ENTIRE instantaneous current to
@@ -2341,10 +2408,15 @@ constexpr float SHARE_MINORITY_I_MIN_A = 0.30f;
 const float SHARE_CUT_MAX_HANDOFF_A = 0.5f;
 
 // A — hysteresis on the CLOSED→OPEN loop-mode exit (fw v5, 2026-08-12). 2·SHARE_MINORITY_I_MIN_A
-// (0.60 A of filtered total) is the entry into closed-loop share control; the exit back to
-// open-loop is SHARE_GOV_OL_HYST_A lower (0.55 A) so a total current dithering on the threshold
+// (fw v27 rev 2: 0.30 A of filtered total; 0.60 A through fw v27 rev 1) is the entry into
+// closed-loop share control; the exit back to open-loop is SHARE_GOV_OL_HYST_A lower (0.25 A;
+// 0.55 A before) so a total current dithering on the threshold
 // cannot chatter the two modes (each transition reseeds the controller, which is not free).
-// Value: ~8% of the threshold, well above the filtered ADC noise on |I_fc|+|I_batt| at that level.
+// Value: ~17 % of the fw v27 rev 2 threshold (was ~8 % at the 0.60 A gate), still well above the
+// filtered ADC noise on |I_fc|+|I_batt| at that level — the governor filter cuts the total-current
+// sigma by ~0.16, so 0.05 A remains several sigma wide. It is now a LARGER fraction of the gate,
+// which widens the sliver in which the closed-loop clip degenerates to the balanced split; that
+// sliver is handled explicitly (see the lo > 0.5 clamp in powerBalance()).
 // TODO(calibrate) against the fw v5 re-sweep.
 const float SHARE_GOV_OL_HYST_A = 0.05f;
 
@@ -2372,9 +2444,20 @@ const float DROOP_RATIO_SLEW_PER_TICK = 0.02f;
 // already conducting 0.556 A. The hazard precondition is therefore not "arming" but: THE RATIO IS
 // SLEWING WHILE A CHANNEL THAT MUST PICK UP LOAD IS NOT MEANINGFULLY CONDUCTING.
 // VALUE: above TP0201's 0.08 A pre-arm trickle (which still gapped) and half of
-// SHARE_MINORITY_I_MIN_A (0.30 A, the light-load conduction floor the governor enforces), so a
-// channel the governor considers healthy is never called dark. TODO(calibrate) against a repeat
-// arming sweep once the mitigation has bench data.
+// SHARE_MINORITY_I_MIN_A (0.30 A at fw v19, the light-load conduction floor the governor
+// enforces), so a channel the governor considers healthy is never called dark. TODO(calibrate)
+// against a repeat arming sweep once the mitigation has bench data.
+// ⚠️ fw v27 rev 2 BREAKS THAT LAST PROPERTY, deliberately and in the conservative direction.
+// SHARE_MINORITY_I_MIN_A is now 0.15 A — EQUAL to this threshold and BELOW SHARE_HANDOFF_LIVE_A
+// (0.20 A) — so a channel commanded exactly at the conduction floor is no longer "comfortably
+// above dark": it sits on the dark boundary, and the hysteresis holds it DARK until it reaches
+// 0.20 A. Consequence: the reduced handoff slew ceiling is selected far more often at light load
+// than it was, for up to SHARE_HANDOFF_DWELL_MAX_TICKS of ratio motion per dark event, after
+// which the full rate resumes. That is slower, not faster, so it cannot create the slam the
+// limiter exists to prevent; it can only lengthen a light-load reference walk (the fw v19 S4
+// relaxation, already documented at updateShareSlewMode()). These two constants were NOT retuned
+// in this round — the operator ruling moved the conduction floor only — and re-deriving them
+// against the scheduled droop authority is queued with the two-axis bench sweep.
 const float SHARE_HANDOFF_MIN_A = 0.15f;
 
 // per powerBalance() tick — the REDUCED ratio-slew ceiling used while either channel is dark.
@@ -2405,6 +2488,89 @@ const int SHARE_HANDOFF_DWELL_MAX_TICKS = 175;
 // The governor bounds depend on measured current; unfiltered, ADC noise would
 // dither sp_eff and feed measurement noise straight into the setpoint.
 const float SHARE_GOV_FILT_ALPHA = 0.05f;
+
+// ── Load-scheduled droop scale k_d (fw v27 rev 2, 2026-09-03) ────────────────
+// The MDAC map is g = k_d/(RE_MAX·r) with g ≤ 1, so a FIXED k_d must be sized for the WORST
+// case r = DROOP_R_MIN, which is why K_DROOP is 0.30 Ω and why at r = 0.5 the MDACs use only
+// 30 % of their range. The minority clip already confines the closed-loop reference to
+// [I_min/I_tot, 1 − I_min/I_tot], so the admissible scale at a given load is
+//     k_d(I_tot) = RE_MAX · clamp(SHARE_MINORITY_I_MIN_A / I_tot, DROOP_R_MIN, 0.5) · SAFETY
+// and the realized droop AUTHORITY k_d·I_tot stops collapsing with load: it becomes the constant
+// RE_MAX·I_min·SAFETY = 2.0136·0.15·0.9 = 0.272 V (design scale) instead of 0.045 V at 0.30 A of
+// total. The operator sized the target as D = RE_MAX·I_min = 0.302 V at unity safety factor. That
+// attacks
+// the bus-versus-reference race behind the light-load dropouts directly — see
+// docs/modeling/low_current_share_stability_20260903.md §4.1, Table 4.
+//
+// THE 0.5 CAP mirrors the closed-loop clip's own `if (lo > 0.5f) lo = 0.5f` sliver rule: the
+// reference can never be pushed past 0.5 by the clip, so the schedule must not size k_d for a
+// band edge above 0.5 either. Without the cap, the 0.25–0.30 A hysteresis sliver would ask for
+// k_d up to RE_MAX·0.60·0.9 = 1.087 Ω against a reference the clip pins at 0.5.
+//
+// THE FLOOR IS max(K_DROOP, schedule), NOT the bare schedule. The bare schedule at r_lo =
+// DROOP_R_MIN is RE_MAX·0.15·0.9 = 0.272 Ω, which is BELOW the shipped K_DROOP = 0.30 Ω, so a
+// pure schedule would WEAKEN the droop at high load — a change nobody asked for and one that
+// would move every fw v26 anchor. Taking the max recovers fw v26 EXACTLY above the crossover
+// total at which the schedule meets 0.30 Ω:
+//     RE_MAX·SAFETY·(I_min/I_tot) = K_DROOP  →  I_tot = RE_MAX·SAFETY·I_min/K_DROOP
+//                                            = 2.0136·0.9·0.15/0.30 = 0.906 A
+// At and above 0.906 A of filtered total the scale IS K_DROOP and every fw v26 fixture that runs
+// above it holds bit-exact. (At fw v27 rev 1's I_min = 0.30 A the crossover was 1.812 A; halving
+// the floor halves it, because the schedule is proportional to I_min.)
+//
+// g ≤ 1 BY CONSTRUCTION AT THE BAND EDGE: at r = r_lo the schedule gives
+// g = RE_MAX·r_lo·SAFETY/(RE_MAX·r_lo) = SAFETY = 0.9, and the majority channel's
+// g = k_d/(RE_MAX·(1−r_lo)) is smaller still. It is NOT guaranteed off the band edge, because
+// the ~20 ms governor filter under-reads a RISING total (the fw v26 clamp-sweep finding): the
+// schedule can hold a light-load k_d while the controller has already slewed r toward a
+// high-load value. That residual is caught by the hard clamp + counter at the MDAC write site
+// (setDroopMdac()), which is the only place the code can actually saturate.
+constexpr float SHARE_KD_SAFETY = 0.9f;   // operator ruling 2026-09-03 — margin on g ≤ 1
+
+// A — hysteresis on the SCHEDULE INPUT (a held sample of share_govTotAFilt), same 0.05 A class
+// and the same purpose as the loop-mode gate's: without it every ADC-noise wiggle in the filtered
+// total would re-target k_d and the slew below would never settle. Written against the existing
+// symbol rather than a second literal, so the two can never drift apart.
+const float SHARE_KD_HYST_A = SHARE_GOV_OL_HYST_A;
+
+// Per-tick FRACTIONAL bound on k_d motion. DERIVATION: with g = k_d/(RE_MAX·r), a k_d step Δk at
+// fixed r moves the code by |Δg|/g = Δk/k_d, while the ratio limiter's own full step Δr at fixed
+// k_d moves it by |Δg|/g = Δr/r. The ratio path's SMALLEST admissible fractional motion over the
+// band is therefore DROOP_RATIO_SLEW_PER_TICK/DROOP_R_MAX (at r = 0.85). Bounding the k_d path by
+// that value guarantees a k_d step can never move the MDAC codes faster than a full-rate ratio
+// step already may, anywhere in the band. Value: 0.02/0.85 = 2.353 %/tick, so the widest excursion
+// (K_DROOP 0.30 Ω to the 0.5-capped maximum RE_MAX·0.5·0.9 = 0.906 Ω) takes
+// ln(3.02)/ln(1.02353) ≈ 47 ticks ≈ 47 ms — one to two orders of magnitude
+// shorter than the ~50–60 ms dropout-cycle period it exists to keep clear of, and far slower than
+// one write.
+const float SHARE_KD_SLEW_FRAC_PER_TICK = DROOP_RATIO_SLEW_PER_TICK / DROOP_R_MAX;
+
+// BUS-SAG ARITHMETIC (LIMIT_V_BUS_MIN margin). The droop sag contributed by a channel is
+// R_ch·I_ch = (k_d/r)·(r·I_tot) = k_d·I_tot, so the schedule caps the DESIGN-scale sag at
+// RE_MAX·SHARE_MINORITY_I_MIN_A·SHARE_KD_SAFETY = 2.0136·0.15·0.9 = 0.272 V, against fw v26's
+// 0.30·I_tot (0.09 V at 0.30 A, 0.272 V at 0.906 A — i.e. the schedule never exceeds what fw v26
+// already produces at the crossover). Worst case bus = V_BUS_NOMINAL − 0.272 = 15.73 V, which is
+// 3.73 V above LIMIT_V_BUS_MIN = 12.0 V and 2.23 V above V_BUS_CHARGED_THRESH = 13.5 V.
+// REALIZED, not design: docs/modeling/droop_authority_gap_20260903.md measures the AD5443→OPA197
+// injection chain delivering about ONE QUARTER of the design droop, so the sag actually seen on
+// this board is ~0.068 V and the margin is correspondingly larger. Both figures clear the limit;
+// the schedule is correct either way, but its on-board payoff is hardware-gated until that gap is
+// closed.
+//
+// ── The battery-only start (fw v27 rev 2, 2026-09-03) ────────────────────────
+// Operator ruling: from a profile start until the share loop first CLOSES, the fuel-cell channel
+// is held OFF the bus and the battery carries the whole load. Mechanism: the EXISTING
+// controller-initiated cut path — updateShareSetpointCutoff() is fed an effective setpoint of 0.0
+// (share-0 semantics) while the arm is up, so the cut inherits the last-source guard, the fw v25
+// load guard (SHARE_CUT_MAX_HANDOFF_A), the survivor-turn-on blanking and the deferral, and the
+// re-entry is the latch's own release. NO second cut mechanism is introduced.
+// WHY: below the 2·I_min gate (0.30 A at fw v27 rev 2) the loop has neither the authority nor the
+// conduction margin to hold
+// a two-source split (the fw v5 TP0053 evidence), and fw v27 rev 1's answer was to FREEZE the
+// split there. Freezing still leaves both sources on the bus at a split nothing is regulating.
+// One source cannot commutate against itself, so a single-source start removes the failure mode
+// rather than holding still inside it.
+constexpr float SHARE_BATTERY_ONLY_SP = 0.0f;   // the effective setpoint the arm feeds the latch
 
 // ── Source current-ceiling governor (fw v26, 2026-09-02) ─────────────────────
 // PURPOSE: fewer FAULT_OC_FC latches at high power, WITHOUT weakening the fault. The OC_FC
@@ -2439,12 +2605,23 @@ const float SHARE_GOV_FILT_ALPHA = 0.05f;
 // ── REACHABILITY: WHERE THIS CEILING CAN ACT AT ALL (fw v26 review HIGH-1) ───
 // The minority-current clip runs FIRST, so the largest FC current the loop can ever command is
 //     I_fc_cmd_max = min(DROOP_R_MAX, 1 - SHARE_MINORITY_I_MIN_A/I_tot) * I_tot
-//                  = min(0.85 * I_tot, I_tot - 0.30)
-// The second term is the tighter one, so I_fc_cmd_max exceeds this ceiling only above
-//     I_tot > SHARE_GOV_I_FC_CEIL_A + SHARE_MINORITY_I_MIN_A = 1.55 A     (TWO-SOURCE total)
-// The DROOP_R_MAX branch alone would admit it from 1.47 A. Measured first engagement on the host
-// suite: 1.60 A at sp 0.85. **1.55 A is the governing reachability number for this feature** —
-// below it, fw v26 is arithmetically identical to fw v25.
+//                  = min(0.85 * I_tot, I_tot - SHARE_MINORITY_I_MIN_A)
+// so the clamp can bind only where BOTH terms exceed the ceiling:
+//     0.85 * I_tot          > 1.25  ->  I_tot > SHARE_GOV_I_FC_CEIL_A / DROOP_R_MAX      = 1.471 A
+//     I_tot - I_min         > 1.25  ->  I_tot > SHARE_GOV_I_FC_CEIL_A + I_min
+// RE-DERIVED FOR fw v27 rev 2 (SHARE_MINORITY_I_MIN_A 0.30 -> 0.15 A). The conduction-floor term
+// is now 1.25 + 0.15 = 1.40 A and the DROOP_R_MAX term is unchanged at 1.471 A, so THE GOVERNING
+// TERM HAS SWAPPED: the band edge, not the conduction floor, now sets reachability, and the
+// number moves 1.55 A -> **1.471 A of TWO-SOURCE total**. Below it fw v26 remains arithmetically
+// identical to fw v25. Two consequences worth stating explicitly:
+//   - the conduction-floor term now lands at exactly LIMIT_I_FC_MAX (1.25 + 0.15 = 1.40 A). That
+//     is a coincidence of the two constants, not a design coupling; the band clamp keeps the real
+//     engagement 0.071 A above it, so the clamp still cannot first engage at the fault limit.
+//   - the fw v26 host measurement "first engagement 1.60 A at sp 0.85" and the fw v26 bench/HIL
+//     validation artefacts — the joint-transient leg, the bridged clamp sweep, the
+//     `fw26-clamp-*` scenarios — were all DESIGNED at I_min = 0.30 A. Their stimulus arithmetic
+//     does not carry over unchanged and the tools round must re-derive them; this round only
+//     flags it. See docs/fw27_governor_package.md.
 //
 // CONSEQUENCE, STATED PLAINLY: THE CLAMP CANNOT ACT IN AN FC-CHARGE WINDOW. Every OC_FC-class FC
 // excursion measured on this board to date is SINGLE-SOURCE: assertFcChargeEnable() holds
@@ -2489,6 +2666,15 @@ constexpr float SHARE_GOV_CEIL_HYST_A = 0.05f;
 // which is constexpr for exactly this reason — so a retune of the conduction floor is checked
 // here automatically; an earlier draft restated 0.30f as a literal and would have stopped
 // tracking it silently.
+// fw v27 rev 2 RE-DERIVATION. Assertion (2) is still TRUE (1.25 and 2.70 both exceed 0.15) but it
+// has become weak: at I_min = 0.15 A it no longer says anything a reader would doubt. The
+// assertion that now carries the load is (4) below — the ceiling must stay REACHABLE, i.e. the
+// total at which the clamp can first bind must sit strictly under the fault limit it protects. At
+// I_min = 0.30 A that was implied by the conduction-floor term (1.55 A > 1.40 A would have made
+// the clamp UNREACHABLE before OC_FC, which is the failure mode fw v26's HIGH-1 review found).
+// The ceilings are NOT loosened to satisfy it: the assertion is written as the arithmetic that
+// must hold, so a future retune of either the floor or a ceiling fails the build instead of
+// silently producing a clamp that can never act in time.
 static_assert(SHARE_GOV_I_FC_CEIL_A < LIMIT_I_FC_MAX,
               "FC current ceiling must sit under LIMIT_I_FC_MAX or the clamp cannot prevent OC_FC");
 static_assert(SHARE_GOV_I_BT_CEIL_A < LIMIT_I_BT_MAX,
@@ -2498,6 +2684,18 @@ static_assert(SHARE_GOV_I_FC_CEIL_A > SHARE_MINORITY_I_MIN_A &&
               "a ceiling below SHARE_MINORITY_I_MIN_A would fight the conduction floor");
 static_assert(SHARE_GOV_CEIL_HYST_A < LIMIT_I_FC_MAX - SHARE_GOV_I_FC_CEIL_A,
               "release hysteresis must stay inside the FC ceiling margin");
+// (4) fw v27 rev 2 — REACHABILITY. The largest FC current the loop can command is
+// min(DROOP_R_MAX, 1 - I_min/I_tot)*I_tot, so the smallest two-source total at which the clamp
+// can bind is max(CEIL/DROOP_R_MAX, CEIL + I_min). That total must sit strictly under
+// LIMIT_I_FC_MAX/DROOP_R_MAX — the total at which the BAND EDGE alone already commands the fault
+// limit — or the clamp could never engage before OC_FC latches and the whole feature would be
+// decoration. At the shipped constants: max(1.4706, 1.40) = 1.4706 A against 1.4/0.85 = 1.6471 A.
+static_assert((SHARE_GOV_I_FC_CEIL_A / DROOP_R_MAX > SHARE_GOV_I_FC_CEIL_A + SHARE_MINORITY_I_MIN_A
+                   ? SHARE_GOV_I_FC_CEIL_A / DROOP_R_MAX
+                   : SHARE_GOV_I_FC_CEIL_A + SHARE_MINORITY_I_MIN_A)
+                  < LIMIT_I_FC_MAX / DROOP_R_MAX,
+              "the FC ceiling must become reachable BELOW the total at which the band edge alone "
+              "commands LIMIT_I_FC_MAX, or the clamp can never act before OC_FC latches");
 
 const float motorConstant = 0.1f;   // TODO: tune this
 // A — HARD ceiling on the current actually handed to the VESC. Enforced at the single chokepoint
@@ -4051,6 +4249,16 @@ void  clearShareCeilingState();
 // used by powerBalance() and by printTestStatus()'s 'S' dump.
 float shareFeedforwardClipTarget(float sp, float prevRatio);
 bool  shareFeedforwardClipHolding();
+// fw v27 rev 2 load-scheduled droop scale + battery-only start. Declared here because the BLG
+// writer (logSampleTick()) and the State-98 'S' dump both precede the definitions.
+extern float    shareDroopKd;             // live droop scale k_d [ohm] — what applyShareRatio() maps
+extern float    shareKdSchedTot;          // hysteretic schedule input [A] (held share_govTotAFilt)
+extern uint16_t shareGGuardCount;         // MDAC g>1 clamp events, saturating (setDroopMdac())
+extern float    shareIsoPropRatio;        // feedforward proposal while a cut is outstanding
+extern bool     shareBatteryOnlyArmed;    // profile has not closed the loop yet
+extern bool     shareBatteryOnlyActive;   // ...and the arm actually owns the setpoint this tick
+float shareDroopScaleTarget(float totFilt);
+void  armShareBatteryOnlyStart();
 void assertFcChargeEnable(bool enable);
 bool motPwrConnectBlocked();
 bool assertMotPwrEnable(bool enable);
@@ -4129,23 +4337,26 @@ void parseKLogLine(const char *line);
 //     tearing down (state99Phase == 3) — never between its sequencing phases.
 //
 // Retrieval is by card pull; tools/decode_benchlog.py turns a .BLG into CSV.
-#define LOG_REC_SIZE        106u                // bytes per record (format v7) — static_assert'ed
+#define LOG_REC_SIZE        112u                // bytes per record (format v8) — static_assert'ed
 #define LOG_RING_RECORDS    1024u               // ~1.0 s of 1 kHz coverage; covers a ~250 ms card
                                                 // stall with 4x margin — the STALL rationale is in
                                                 // RECORDS (1024 samples = 1.024 s at 1 kHz) and is
-                                                // therefore unchanged by the record growing (106 KB
-                                                // of the Teensy's 1 MB — 108544 B, up from 92 KB at
-                                                // record format v6; still DMAMEM/RAM2, which has room)
+                                                // therefore unchanged by the record growing (112 KB
+                                                // of the Teensy's 1 MB — 114688 B, up from 92 KB at
+                                                // record format v6; still DMAMEM/RAM2, which has
+                                                // room). 114688 is a whole multiple of the 512 B SD
+                                                // block (224 blocks), so the ring wrap never splits
+                                                // a block boundary awkwardly
 #define LOG_RING_BYTES      (LOG_REC_SIZE * LOG_RING_RECORDS)
-#define LOG_CHUNK_MAX       512u                // one SD block per loop tick: >=424 B/ms drained
-                                                // against a 106 B/ms fill (4.0x, down from 5.0x at
+#define LOG_CHUNK_MAX       512u                // one SD block per loop tick: >=448 B/ms drained
+                                                // against a 112 B/ms fill (4.0x, down from 5.0x at
                                                 // v6's 92 B — 5 x 92 = 460 B — and 6.0x at v5's
                                                 // 76 B), so catch-up is slower but
                                                 // still four times the fill — a full ring drains in
-                                                // ~0.34 s. Chunks are floored to whole records below
-                                                // (4 x 106 = 424 B; 512/106 = 4), so the drain
-                                                // accounting stays exact
-#define LOG_PREALLOC_BYTES  (32u * 1024u * 1024u)  // ~5.3 min at 106 KB/s (33554432 / 106000 = 316 s);
+                                                // ~0.34 s (4 x 112 = 448 B; 512/112 = 4). The drain
+                                                // itself is BYTE-based, not record-based:
+                                                // logDrainTick() writes min(pending, toEnd, 512)
+#define LOG_PREALLOC_BYTES  (32u * 1024u * 1024u)  // ~5.0 min at 112 KB/s (33554432 / 112000 = 300 s);
                                                 // truncate()d at close.
                                                 // Contiguous allocation keeps per-chunk latency in
                                                 // the tens of us (no FAT-chain seeks mid-run)
@@ -4317,8 +4528,30 @@ struct __attribute__((packed)) BenchLogRecord {
     uint16_t enc_phase_ewma;           // encPhaseEwma — A-rise to B-rise, forward direction only
     uint16_t enc_duty_a_ewma;          // encDutyAEwma — channel A high time / period
     uint16_t enc_duty_b_ewma;          // encDutyBEwma — channel B high time / period
+    // Format v8 (fw v27 rev 2, 2026-09-03): the share governor's ACTUATOR PARAMETERS, APPENDED at
+    // the end so every v1–v7 field keeps its byte offset. WHY a format bump and not a flag bit:
+    // both of these are VALUES, not booleans, and neither is reconstructible offline. Until fw v27
+    // the droop scale was the compile-time K_DROOP, logged once in the header, and gFC/gBT plus
+    // that constant recovered the applied ratio exactly. With a LOAD-SCHEDULED k_d the pair
+    // (gFC, gBT) no longer determines r — r = k_d/(RE_MAX·gFC) needs the live scale — so a v7
+    // decoder reading a v27 run would silently mis-recover every applied ratio. The header's
+    // K_DROOP_x1000 field is retained and still carries the FIXED design constant; it is now the
+    // schedule's FLOOR, not the value in use.
+    // FIELD CLASSES (the v6/v7 three-class contract, extended): g_clamp_count is a BOOT-MONOTONIC
+    // SATURATING counter — diff for a rate, but it STOPS at 65535 rather than wrapping, so a
+    // sequence of equal maximum values means "saturated", not "quiet". k_d is a LEVEL in ohms;
+    // read it directly, never difference it.
+    uint16_t g_clamp_count;            // shareGGuardCount — MDAC writes clamped at g = 1 since
+                                       //   boot (saturating at 65535). Non-zero means the ~20 ms
+                                       //   schedule input disagreed with the applied ratio about
+                                       //   the load; the code was clipped, not the ratio
+    float    k_d;                      // shareDroopKd [ohm] — the LIVE droop scale this record's
+                                       //   gFC/gBT were computed with. Equals K_DROOP exactly
+                                       //   above RE_MAX*SHARE_KD_SAFETY*SHARE_MINORITY_I_MIN_A
+                                       //   /K_DROOP = 0.906 A of filtered
+                                       //   total, where fw v26 behaviour is recovered bit-for-bit
 };
-static_assert(sizeof(BenchLogRecord) == LOG_REC_SIZE, "BenchLogRecord must stay 106 bytes (format v7)");
+static_assert(sizeof(BenchLogRecord) == LOG_REC_SIZE, "BenchLogRecord must stay 112 bytes (format v8)");
 // The header's record-size field is ONE byte (hdr[5] = (uint8_t)LOG_REC_SIZE). Past 255 that cast
 // truncates SILENTLY and every decoder — which reads the record stride from the header rather than
 // assuming it — would misparse the whole file instead of failing loudly. Caught at compile time.
@@ -4336,6 +4569,8 @@ static_assert(offsetof(BenchLogRecord, enc_edge_count_b)        == 96, "v7 layou
 static_assert(offsetof(BenchLogRecord, enc_phase_ewma)          == 100, "v7 layout");
 static_assert(offsetof(BenchLogRecord, enc_duty_a_ewma)         == 102, "v7 layout");
 static_assert(offsetof(BenchLogRecord, enc_duty_b_ewma)         == 104, "v7 layout");
+static_assert(offsetof(BenchLogRecord, g_clamp_count)            == 106, "v8 layout");
+static_assert(offsetof(BenchLogRecord, k_d)                      == 108, "v8 layout");
 
 #define LOG_PHASE_NONE 0xFFu   // "this profile was not running for this sample"
 
@@ -4603,7 +4838,7 @@ void logOpenForProfile(uint8_t typeMask) {
     uint8_t hdr[32];
     memset(hdr, 0, sizeof(hdr));
     hdr[0] = 'B'; hdr[1] = 'L'; hdr[2] = 'G'; hdr[3] = '1';
-    hdr[4] = 7;                       // format version (v2 added fw_version at offset 18; v3 added
+    hdr[4] = 8;                       // format version (v2 added fw_version at offset 18; v3 added
                                       // V_fc/V_batt/V_chg/V_rgn to the record → 68 B; v4 added the
                                       // committed per-run profile parameters below, with the RECORD
                                       // unchanged from v3; v5 (fw v11) APPENDS u_unsat and
@@ -4611,7 +4846,9 @@ void logOpenForProfile(uint8_t typeMask) {
                                       // v6 (fw v16) APPENDS the four encoder/estimator diagnostics
                                       // → 92 B; v7 (fw v20) APPENDS the two raw per-channel ISR
                                       // edge counters AND the three phase/duty geometry levels
-                                      // → 106 B. HEADER LAYOUT IS UNCHANGED from
+                                      // → 106 B; v8 (fw v27 rev 2) APPENDS the share governor's
+                                      // g-clamp count and the LIVE load-scheduled droop scale
+                                      // k_d → 112 B. HEADER LAYOUT IS UNCHANGED from
                                       // v4 — only hdr[4] and hdr[5] (the record size, which is
                                       // already read from the header) differ, and every v1–v6
                                       // record field keeps its offset, so a v6 decoder needs only
@@ -4655,7 +4892,11 @@ void logOpenForProfile(uint8_t typeMask) {
     uint32_t startUs = micros();
     memcpy(hdr + 8,  &startMs, 4);
     memcpy(hdr + 12, &startUs, 4);
-    uint16_t kDroopMilli = (uint16_t)(K_DROOP * 1000.0f + 0.5f);   // droop scale in use, for the decoder
+    // fw v27 rev 2: this field still carries the FIXED design constant K_DROOP, unchanged in
+    // meaning and value. From format v8 that constant is the load schedule's FLOOR, not the scale
+    // in use — the LIVE k_d is a per-record field (BenchLogRecord::k_d), because it varies with
+    // load and one header value could no longer describe a run.
+    uint16_t kDroopMilli = (uint16_t)(K_DROOP * 1000.0f + 0.5f);   // droop-scale FLOOR, for the decoder
     memcpy(hdr + 16, &kDroopMilli, 2);
     uint16_t fwVersion = FW_VERSION;  // which firmware produced this data (docs/firmware-versions.md)
     memcpy(hdr + 18, &fwVersion, 2);
@@ -4809,6 +5050,12 @@ void logSampleTick() {
     r.enc_phase_ewma          = encPhaseEwma;
     r.enc_duty_a_ewma         = encDutyAEwma;
     r.enc_duty_b_ewma         = encDutyBEwma;
+    // Format v8 (fw v27 rev 2): the share governor's actuator parameters. Plain copies, like every
+    // other field here — the logger never recomputes. k_d is what THIS record's gFC/gBT were
+    // mapped through, so r = k_d/(RE_MAX*gFC) recovers the applied ratio exactly; the header's
+    // K_DROOP field alone no longer does.
+    r.g_clamp_count           = shareGGuardCount;
+    r.k_d                     = shareDroopKd;
 
     memcpy(&logRing[logRingHead], &r, LOG_REC_SIZE);
     logRingHead = (logRingHead + LOG_REC_SIZE) % LOG_RING_BYTES;
@@ -6097,6 +6344,15 @@ void doState1() {
         // Zeroing costs at most one tick of tracking: the Pi rewrites v_setpoint within one
         // packet period, and a Run that is genuinely meant to move starts from 0 m/s anyway.
         v_setpoint = 0.0f;
+        // fw v27 rev 2: Idle→Run IS the production profile boundary — the one the five State-98
+        // profile starts stand in for on the bench — so the battery-only start is armed here.
+        // NOTE this does NOT reset the share loop: the paragraph above states why the share loop
+        // resumes rather than restarts across Idle (its actuator state is physically held on the
+        // MDACs). The arm is a separate flag precisely so that invariant is preserved: it changes
+        // which channel is on the bus for the first sub-0.30 A window, not the split the MDACs
+        // hold. Run is entered at standstill (v_setpoint is zeroed immediately above), so the cut
+        // is taken at ~0 A — the validated-clean handoff case, not the 1.3-1.5 A one.
+        armShareBatteryOnlyStart();
         mainState = 2;
     }
 }
@@ -6279,6 +6535,22 @@ void hilWarmReset() {
     // the fw v19 conduction-aware slew limiter with a single unbounded step. Follow the hardware.
     droopSlew_prev         = 0.5f;
     shareHandoffPrevRatio  = 0.5f;
+    // fw v27 rev 2 review L4: the isolated-walk anchor is the THIRD MDAC-truth anchor and follows
+    // the same argument — the four isolation/cut latches were just cleared above, so no proposal
+    // is outstanding, and the hardware is at 50/50.
+    shareIsoPropRatio      = 0.5f;
+    // fw v27 rev 2: same argument for the droop SCALE. initMdacOutputs() writes the 50/50 codes
+    // at g = K_DROOP/(RE_MAX·0.5), so after a warm reset the hardware is on K_DROOP whatever the
+    // schedule had reached. Leaving shareDroopKd at (say) 0.906 Ω would make the next run's first
+    // write jump the codes by a factor of three — the same defeat of the rate limiter the two
+    // lines above exist to prevent. Follow the hardware. The battery-only arm is DROPPED rather
+    // than set: a warm reset is not a profile start, and the recovery re-enters through
+    // State 1 → State 2, which arms it at the boundary that actually is one.
+    shareDroopKd           = K_DROOP;
+    shareKdSchedTot        = 0.0f;
+    shareGGuardCount       = 0;
+    shareBatteryOnlyArmed  = false;
+    shareBatteryOnlyActive = false;
 
     // ── Control rate limiters ────────────────────────────────────────────────
     // Back-dated so the first tick of the new run is a control tick (and its first logged sample).
@@ -6840,6 +7112,7 @@ void doState98() {
                         haltMotorOutput();
                         resetControlRateLimiters();   // first tick drives immediately
                         resetShareControlState();     // known share-loop state per run (2026-08-11)
+                        armShareBatteryOnlyStart();   // fw v27 rev 2: battery-only start
                         driveCycleActive     = true;
                         driveCyclePhaseIdx   = 0;
                         driveCyclePhaseStart = millis();
@@ -7615,6 +7888,7 @@ void startPowerShareProfile() {
     wCmdA                       = 0.0f;
     resetControlRateLimiters();   // first tick drives immediately
     resetShareControlState();     // known share-loop state per run (2026-08-11)
+    armShareBatteryOnlyStart();   // fw v27 rev 2: this profile starts battery-only
     powerShareProfileActive     = true;
     powerShareProfilePhaseIdx   = 0;
     powerShareProfilePhaseStart = millis();
@@ -8297,6 +8571,7 @@ void startTrapProfile(float imax, uint32_t holdMs, float rateAps) {
     haltMotorOutput();
     resetControlRateLimiters();
     resetShareControlState();     // known share-loop state per run (2026-08-11)
+    armShareBatteryOnlyStart();   // fw v27 rev 2: this profile starts battery-only
 
     trapImax    = imax;
     trapHoldMs  = holdMs;
@@ -8603,6 +8878,7 @@ void startCombinedProfile(float vmax, float boundLo) {
     haltMotorOutput();
     resetControlRateLimiters();
     resetShareControlState();     // known share-loop state per run (2026-08-11)
+    armShareBatteryOnlyStart();   // fw v27 rev 2: this profile starts battery-only
 
     yProfileVmax    = vmax;
     yProfileBoundLo = boundLo;
@@ -8814,6 +9090,7 @@ void startCurrentComboProfile(float imax, float boundLo) {
     haltMotorOutput();
     resetControlRateLimiters();
     resetShareControlState();     // known share-loop state per run (2026-08-11)
+    armShareBatteryOnlyStart();   // fw v27 rev 2: this profile starts battery-only
 
     wProfileImax    = imax;
     wProfileBoundLo = boundLo;
@@ -9432,6 +9709,33 @@ void printTestStatus() {
     }
     Serial.print("  I_min="); Serial.print(SHARE_MINORITY_I_MIN_A, 2);
     Serial.println(" A");
+    // fw v27 rev 2: the load-scheduled droop scale. k_d is not reconstructible from the logged
+    // currents (it is an actuator parameter, not a measurement), so this line and the BLG v8
+    // record are its only observables. sched-in is the HELD, hysteretic schedule input, which is
+    // deliberately NOT share_govTotAFilt — printing both is how a stale schedule is spotted.
+    // g-clamp counts MDAC writes whose commanded gain exceeded full scale and was clipped; any
+    // non-zero value means the schedule and the ratio disagreed about the load.
+    Serial.print("share droop k_d:    "); Serial.print(shareDroopKd, 4);
+    Serial.print(" ohm (fixed "); Serial.print(K_DROOP, 3);
+    Serial.print(", target "); Serial.print(shareDroopScaleTarget(shareKdSchedTot), 4);
+    Serial.print(")  sched-in="); Serial.print(shareKdSchedTot, 3);
+    // The crossover total, where the schedule meets K_DROOP: RE_MAX*SHARE_KD_SAFETY*I_min/I_tot
+    // = K_DROOP  =>  I_tot = RE_MAX*SHARE_KD_SAFETY*SHARE_MINORITY_I_MIN_A/K_DROOP = 0.906 A.
+    // (fw v27 rev 2 review M1: this printed RE_MAX*SHARE_KD_SAFETY = 1.812 A, which is the
+    // crossover only at rev 1's I_min = 0.30 A.)
+    Serial.print(" A  crossover=");
+    Serial.print(RE_MAX * SHARE_KD_SAFETY * SHARE_MINORITY_I_MIN_A / K_DROOP, 3);
+    Serial.print(" A  g-clamp="); Serial.println(shareGGuardCount);
+    // fw v27 rev 2: the battery-only start. ARMED means the share loop has not closed since this
+    // profile began; ACTIVE means the arm is also feeding the setpoint latch a 0.0 this tick (it
+    // is suppressed by an out-of-band command, which the latch owns, and inside an FC-charge
+    // window, where FC is the only source). "cut" reports whether the cut has actually been taken
+    // — it can be deferred by the fw v25 load guard or the survivor blanking.
+    Serial.print("share batt-only:    ");
+    Serial.print(shareBatteryOnlyArmed ? "ARMED" : "done");
+    Serial.print(shareBatteryOnlyActive ? " (active)" : " (inactive)");
+    Serial.print("  cut=");  Serial.print(shareSpCutFC ? "FC off bus" : "no");
+    Serial.print("  deferred="); Serial.println(shareCutDeferredFC ? "yes" : "no");
     // fw v19 (review S6): the conduction-aware slew mode. This is the ONLY observable for it — the
     // decision runs on FILTERED per-channel magnitudes with hysteresis and a dwell counter, none of
     // which are in the BLG record, so it cannot be reconstructed from the logged raw currents.
@@ -10048,6 +10352,39 @@ float share_spEffPrev     = 0.5f;
 // mistaken for noise.
 const float SHARE_SP_CHANGE_EPS = 1e-4f;
 
+// ── fw v27 rev 2 state: load-scheduled droop scale, and the battery-only start ──────────────
+// shareDroopKd is MDAC TRUTH, exactly like droopSlew_prev: it is the scale the gains currently on
+// the AD5443s were computed with. It is therefore deliberately NOT reset by
+// resetShareControlState() — the MDACs physically hold their codes across a profile boundary, and
+// snapping k_d back to K_DROOP there would jump the codes by the full schedule span in one write,
+// which is the slam DROOP_RATIO_SLEW_PER_TICK exists to prevent. The ONE place it is re-anchored
+// is hilWarmReset(), for the same reason droopSlew_prev is: the post-recovery bring-up re-runs
+// initMdacOutputs(), which writes the K_DROOP-based 50/50 codes, so the hardware really does move.
+float    shareDroopKd    = K_DROOP;   // ohm — the scale applyShareRatio() maps through
+// The schedule INPUT is a held (hysteretic) sample of share_govTotAFilt, not the filter itself, so
+// noise around the current operating point cannot re-target k_d every tick. Zero at boot means the
+// first closed-loop tick always takes a sample (|tot − 0| > 0.05 A above the 0.30 A gate).
+// Zeroed WITH share_govTotAFilt by resetShareControlState(): it is a load estimate, not MDAC truth.
+float    shareKdSchedTot = 0.0f;      // A
+// Saturating count of MDAC writes whose commanded gain exceeded full scale and was clamped by
+// setDroopMdac(). Diagnostic only — the clamp itself is what protects the hardware. Non-zero means
+// the schedule and the ratio disagreed about the load (the ~20 ms filter under-reading a rising
+// total is the known mechanism), and it is the fw v27 rev 2 observable for that.
+uint16_t shareGGuardCount = 0;
+// Battery-only start. ARMED sets "this profile has not closed the share loop yet"; ACTIVE is the
+// per-tick derivation that also requires the commanded setpoint to be IN BAND (an out-of-band
+// setpoint is owned by the latch — one owner per setpoint) and no FC-charge window to be open.
+// ACTIVE is derived at the top of powerBalance() and read by updateShareSetpointCutoff(), the 'S'
+// dump and the BLG record; nothing else may write it.
+// fw v27 rev 2: the open-loop feedforward PROPOSAL while a controller-initiated cut is
+// outstanding. Not MDAC truth (an isolated tick writes nothing) -- it is the accumulating walk the
+// bypass needs, because droopSlew_prev is frozen for the duration of the cut. Re-anchored to
+// droopSlew_prev on every non-isolated feedforward tick, so it can never drift from the hardware.
+// 0.5f matches droopSlew_prev's own initializer.
+float    shareIsoPropRatio = 0.5f;
+bool     shareBatteryOnlyArmed  = false;
+bool     shareBatteryOnlyActive = false;
+
 // ── Setpoint-latched channel cutoff ("one owner per setpoint", 2026-08-12) ───
 // EVIDENCE (fw v3 validation sweep TP0014–TP0038; docs/share_sweep_whitepaper):
 // before this function existed, an out-of-band *setpoint* had no owner. The
@@ -10072,7 +10409,16 @@ const float SHARE_SP_CHANGE_EPS = 1e-4f;
 // Returns true while a setpoint latch is active, i.e. the caller must freeze the
 // whole share loop this tick.
 static bool updateShareSetpointCutoff() {
-    float sp = power_share_setpoint;
+    // fw v27 rev 2 BATTERY-ONLY START. While the arm owns the setpoint this function sees 0.0
+    // instead of the commanded share, which is EXACTLY the share-0 cut this path already
+    // implements — the entry keeps its last-source guard, its SHARE_CUT_MAX_HANDOFF_A load guard,
+    // its survivor-turn-on blanking and its deferral, and the re-entry is this function's own
+    // release branch. No second cut mechanism exists, and no caller of this function has to know.
+    // shareBatteryOnlyActive is derived ONCE per tick at the top of powerBalance() (it is false
+    // whenever the commanded setpoint is out of band, so the latch and the arm can never both
+    // claim the same setpoint), and every ONE-SHOT caller of powerBalance()'s neighbours reads it
+    // in the conservative direction, exactly as they already read shareCutDeferred*.
+    float sp = shareBatteryOnlyActive ? SHARE_BATTERY_ONLY_SP : power_share_setpoint;
     bool  releasedThisTick = false;
 
     // Deferral flags are PER-TICK DERIVED (fw v6 review S1): cleared here, set only by the entry
@@ -10217,8 +10563,21 @@ static bool updateShareSetpointCutoff() {
     // (fraction-vs-absolute, next round).
     if (!shareSpCutFC && !shareSpCutBT) {
         if (sp < DROOP_R_MIN) {
+            // SURVIVOR-REGULATOR GUARD (fw v27 rev 2 review H1). The last-source guard tests the
+            // two BUS switches; it must also test that the SURVIVOR'S BOOST IS ENABLED, exactly as
+            // the release branches above and the r-based re-entry in applyShareRatio() do (the S5
+            // back-feed rule, CLAUDE.md §2). Reachable case: the State-98 profile starts fire the
+            // battery-only cut unconditionally, and the bench operator can leave BT_BUS_ENABLE
+            // HIGH with BT_REG_ENABLE LOW (the 'B'/'2' toggles are independent). Opening FC_BUS
+            // then leaves the bus fed by a DISABLED TPS61288 - capacitive decay to ERR_UV_BUS,
+            // and the release is V_BUS_CHARGED_THRESH-gated so it can never re-close. Blocked
+            // here means the same fall-through as the last-source guard: no latch, no deferral
+            // flag, live governed control, and the entry simply re-runs next tick (so the
+            // battery-only arm is SUPPRESSED, not disarmed - it takes effect on the first tick
+            // the operator enables the battery boost).
             if (digitalRead(FC_BUS_ENABLE) == HIGH &&
-                digitalRead(BT_BUS_ENABLE) == HIGH) {
+                digitalRead(BT_BUS_ENABLE) == HIGH &&
+                digitalRead(BT_REG_ENABLE) == HIGH) {
                 if (fabsf(I_fc) <= SHARE_CUT_MAX_HANDOFF_A &&
                     busSwitchBlanked(BT_BUS_ENABLE)) {
                     // SURVIVOR-TURN-ON BLANKING (fw v25). The load guard below has always been
@@ -10234,6 +10593,7 @@ static bool updateShareSetpointCutoff() {
                                                         // droop gain — the bus feed is
                                                         // handed over, never dropped
                     shareIsoFC   = true;   // topology owner (telemetry/status truth)
+                    shareIsoPropRatio = droopSlew_prev;   // fw v27 rev 2, as above
                     shareSpCutFC = true;   // latched by the setpoint
                 } else {
                     // Wanted, refused on load only — deferred (see above). Deliberately NOT set
@@ -10244,8 +10604,10 @@ static bool updateShareSetpointCutoff() {
                 }
             }
         } else if (sp > DROOP_R_MAX) {
+            // Survivor-regulator guard - mirror of the FC branch above (fw v27 rev 2, H1).
             if (digitalRead(BT_BUS_ENABLE) == HIGH &&
-                digitalRead(FC_BUS_ENABLE) == HIGH) {
+                digitalRead(FC_BUS_ENABLE) == HIGH &&
+                digitalRead(FC_REG_ENABLE) == HIGH) {
                 if (fabsf(I_batt) <= SHARE_CUT_MAX_HANDOFF_A &&
                     busSwitchBlanked(FC_BUS_ENABLE)) {
                     shareCutRefusedBlank++;             // fw v25 — mirror of the FC branch
@@ -10253,6 +10615,7 @@ static bool updateShareSetpointCutoff() {
                     writeBusSwitch(BT_BUS_ENABLE, LOW);   // FC stays HIGH and keeps its
                                                         // droop gain (see above)
                     shareIsoBT   = true;
+                    shareIsoPropRatio = droopSlew_prev;   // fw v27 rev 2, as above
                     shareSpCutBT = true;
                 } else {
                     shareCutDeferredBT = true;          // mirror of the FC branch
@@ -10405,16 +10768,17 @@ float applyShareCurrentCeilings(float sp) {
 // WHY (fw v6 ladder, whitepaper §"A residual at the band edge"). Both dropouts observed anywhere
 // in that campaign — TP0115 at r_max = 0.85 and the smaller fuel-cell-only TP0105 at
 // r_min = 0.15 — occurred AT the open→closed handover, at an exact band edge. Every run crosses
-// into closed loop at the same 0.6 A of total, where the 0.30 A floor demands half the total from
+// into closed loop at the same 2·I_min of total, where the floor demands half the total from
 // a channel the open-loop feedforward had been running at 61 mA. fw v6 slewed the reference RATE;
-// the exposure is the reference MAGNITUDE — a 0.42 swing in commanded share at 0.6 A of total
+// the exposure is the reference MAGNITUDE — a 0.42 swing in commanded share at the gate
 // opens both channels at once however slowly it is applied. The clip removes the swing by never
 // letting the feedforward walk out to the extreme in the first place.
 //
 // THE BAND, AND WHY AN EMPTY BAND IS A HOLD (the fw v5 counter-argument, answered).
 // fw v5 deleted the old collapse-to-0.5 fallback because it IGNITED the failure it existed to
-// prevent (TP0053): below 2·SHARE_MINORITY_I_MIN_A it forced sp_eff = 0.5, which at 0.075–0.60 A
-// of filtered total commands 0.038–0.30 A per channel — at or below the very conduction floor it
+// prevent (TP0053): below 2·SHARE_MINORITY_I_MIN_A it forced sp_eff = 0.5, which at the fw v4-era
+// constants (I_min 0.20-0.30 A) commanded 0.038-0.30 A per channel — at or below the very
+// conduction floor it
 // was enforcing — and the resulting source commutation relayed the bus down to 7–9 V. The whitepaper
 // re-states that argument as still sound. It is: what fw v5 refuted is COMMANDING A MOVE to a
 // balanced split at a total that cannot carry one. This function never commands a move. When the
@@ -10449,7 +10813,7 @@ float applyShareCurrentCeilings(float sp) {
 //
 // THE fw v26 CEILINGS ARE NOT PART OF THIS. They remain a separate, later call on this path
 // (see the caller): they are reference-side bounds against 1.25 / 2.70 A and are arithmetically
-// unreachable out of a ≤ 0.60 A total, so they neither help nor interfere here.
+// unreachable out of a ≤ 2·I_min total (0.30 A), so they neither help nor interfere here.
 float shareFeedforwardClipTarget(float sp, float prevRatio) {
     const float tot = share_govTotAFilt;
     // Structural divide guard, mirroring applyShareCurrentCeilings(): the caller has already
@@ -10470,6 +10834,41 @@ bool shareFeedforwardClipHolding() {
     const float tot = share_govTotAFilt;
     if (!(tot > SHARE_I_TOT_MIN_A)) return true;
     return !(SHARE_MINORITY_I_MIN_A / tot < 1.0f - SHARE_MINORITY_I_MIN_A / tot);
+}
+
+// ── The load-scheduled droop scale (fw v27 rev 2) ────────────────────────────
+// Pure function of a filtered total: the admissible scale at that load, floored at K_DROOP.
+// See the SHARE_KD_SAFETY block for the derivation, the 0.5 cap, the max(K_DROOP, ·) floor and
+// the crossover above which this returns K_DROOP exactly (fw v26 recovered bit-for-bit):
+// RE_MAX*SHARE_KD_SAFETY*SHARE_MINORITY_I_MIN_A/K_DROOP = 0.906 A of filtered total.
+// It is NOT the value applied — updateShareDroopScale() slews toward this under
+// SHARE_KD_SLEW_FRAC_PER_TICK, so a schedule step can never step the MDAC codes.
+float shareDroopScaleTarget(float totFilt) {
+    // Structural divide guard, same class as shareFeedforwardClipTarget()'s: a non-positive or
+    // tiny total carries no information about the admissible scale, so HOLD the live value.
+    if (!(totFilt > SHARE_I_TOT_MIN_A)) return shareDroopKd;
+    float rLo = SHARE_MINORITY_I_MIN_A / totFilt;
+    if (rLo < DROOP_R_MIN) rLo = DROOP_R_MIN;
+    if (rLo > 0.5f)        rLo = 0.5f;      // the closed-loop clip's own sliver rule
+    const float kd = RE_MAX * rLo * SHARE_KD_SAFETY;
+    return (kd < K_DROOP) ? K_DROOP : kd;   // never WEAKEN the shipped droop
+}
+
+// Advance k_d one tick. CLOSED-LOOP ONLY: called from the closed-loop branch of powerBalance().
+// The open-loop HOLD writes no MDACs at all, so scheduling there would publish a scale the
+// hardware does not have; and the feedforward submode is deliberately left on the fixed K_DROOP
+// era value it inherited, because below the gate the schedule's input is the very filtered total
+// the gate says is not yet trustworthy for a two-source split.
+static void updateShareDroopScale() {
+    // Hysteretic schedule input — see SHARE_KD_HYST_A.
+    if (fabsf(share_govTotAFilt - shareKdSchedTot) > SHARE_KD_HYST_A) {
+        shareKdSchedTot = share_govTotAFilt;
+    }
+    const float target = shareDroopScaleTarget(shareKdSchedTot);
+    // Fractional per-tick bound, derived in the SHARE_KD_SLEW_FRAC_PER_TICK block so that a k_d
+    // move can never shift the MDAC codes faster than a full-rate ratio step already may.
+    const float step = shareDroopKd * SHARE_KD_SLEW_FRAC_PER_TICK;
+    shareDroopKd = constrain(target, shareDroopKd - step, shareDroopKd + step);
 }
 
 // Compute THIS tick's droop-ratio slew ceiling, once per powerBalance() tick (fw v19, TP0201).
@@ -10580,7 +10979,50 @@ void powerBalance() {
     // controller back over the re-entry hysteresis (TP0015).
     // fw v26: a frozen share loop is not clamping anything — drop the ceiling-clamp state so the
     // BLG/HIL/'S' observables cannot publish a stale clamp for the duration of the freeze.
-    if (updateShareSetpointCutoff()) { clearShareCeilingState(); return; }
+    // ── fw v27 rev 2 BATTERY-ONLY START: derive the arm's ownership for this tick ─────────────
+    // ACTIVE requires three things, and each is a design point in its own right:
+    //  (c) the commanded setpoint is IN BAND. An out-of-band command (0.0, 1.0, 0.95) is a CUT
+    //      owned by the setpoint latch — "one owner per setpoint". The arm must not fight it, so
+    //      it DISARMS permanently on sight of one: the profile's topology is the operator's/EMS's
+    //      to command, and a battery-only rule that re-took FC after the operator's own 1.0 cut
+    //      released would be a second owner arriving late.
+    //  (f) no FC-charge window is open. assertFcChargeEnable() holds BT_BUS LOW there, so FC is
+    //      the ONLY source: a battery-only cut is arithmetically impossible (the entry's
+    //      last-source guard requires BOTH switches HIGH and would refuse), and asking for it
+    //      would only burn ticks. Suppressed rather than disarmed — the window is transient, and
+    //      the loop still runs, closes, and disarms the arm through the normal path below.
+    //  and the arm itself, which is dropped the moment the closed loop earns the bus (below).
+    if (shareBatteryOnlyArmed &&
+        (power_share_setpoint < DROOP_R_MIN || power_share_setpoint > DROOP_R_MAX)) {
+        shareBatteryOnlyArmed = false;   // (c) the latch owns this setpoint
+    }
+    shareBatteryOnlyActive = shareBatteryOnlyArmed &&
+                             digitalRead(FC_CHARGE_ENABLE) == LOW;   // (f)
+
+    if (updateShareSetpointCutoff()) {
+        clearShareCeilingState();
+        // ── The one thing a battery-only freeze must NOT inherit ─────────────────────────────
+        // A latched cut returns here BEFORE share_govTotAFilt is updated, by design: a frozen
+        // loop has no governed state to advance. That is fatal for the battery-only arm, whose
+        // release condition IS the filtered total crossing the closed-loop gate — a frozen filter
+        // can never cross it and the profile would run single-sourced forever. So while the arm
+        // owns the cut, and ONLY then, keep the governor's load estimate alive and drop the arm
+        // the instant the gate is met. The very next tick then sees ACTIVE false, the commanded
+        // in-band setpoint reaches the release branch, FC re-closes on a charged bus through the
+        // latch's own guarded release, and resetShareControlState() hands the loop back to
+        // open-loop feedforward (fw v5 S9) for the ~20-40 ms the re-zeroed EMA needs. The arm is
+        // ONE-SHOT: it is not re-armed by that reset, so the release cannot cycle.
+        if (shareBatteryOnlyActive) {
+            const float totBoArm = fabsf(I_fc) + fabsf(I_batt);
+            if (totBoArm >= SHARE_I_TOT_MIN_A) {
+                share_govTotAFilt += SHARE_GOV_FILT_ALPHA * (totBoArm - share_govTotAFilt);
+                if (share_govTotAFilt > 2.0f * SHARE_MINORITY_I_MIN_A) {
+                    shareBatteryOnlyArmed = false;
+                }
+            }
+        }
+        return;
+    }
 
     float totalA = fabsf(I_fc) + fabsf(I_batt);
     // Minimum-load gate (was a bare 1e-6 divide-by-zero guard): below
@@ -10609,9 +11051,9 @@ void powerBalance() {
     // ── Loop-mode decision: closed loop vs open-loop feedforward (fw v5) ──────
     // EVIDENCE (fw v4 validation sweep TP0041–TP0068): the governor's old
     // collapse-to-0.5 fallback IGNITED the failure it existed to prevent. Below
-    // 2·SHARE_MINORITY_I_MIN_A it forced sp_eff = 0.5, which at 0.075–0.60 A of
-    // filtered total commands 0.038–0.30 A PER CHANNEL — at or below the very
-    // 0.30 A conduction floor the constant enforces — against only ~20 mV of
+    // 2·SHARE_MINORITY_I_MIN_A it forced sp_eff = 0.5, which at the fw v4-era
+    // constants commanded 0.038–0.30 A PER CHANNEL — at or below the very
+    // conduction floor the constant enforces — against only ~20 mV of
     // droop authority at those currents. Six runs source-commutation relayed,
     // collapsed the bus to 7–9 V and latched ERR_UV_BUS. A closed loop cannot
     // be asked to hold a split it has neither the authority nor the conduction
@@ -10644,10 +11086,11 @@ void powerBalance() {
         // limiter and this whole mitigation family exist to remove.
         //
         // PRODUCTION SEMANTICS (State 2 cruise/regen, review-traced): a cruise or
-        // regen window that drops the total below 0.55 A parks the split here.
+        // regen window that drops the total below the 2·I_min − SHARE_GOV_OL_HYST_A exit (0.25 A at
+        // fw v27 rev 2) parks the split here.
         // chargingControl()/doState2() may re-close BT_BUS in that window; the
         // droop gains simply stay at the converged split until the load brings
-        // the filtered total back over 0.60 A, at which point the controller
+        // the filtered total back over the 2·I_min gate (0.30 A), at which point the controller
         // restarts seeded from that same split. Nothing re-commands the MDACs in
         // between — by design.
         //
@@ -10671,7 +11114,8 @@ void powerBalance() {
             // is deliberately NOT applied here (applying it would require a write and break the
             // hold invariant). It is also structurally unreachable: HOLD only runs in open-loop
             // mode, i.e. share_govTotAFilt < 2*SHARE_MINORITY_I_MIN_A - SHARE_GOV_OL_HYST_A =
-            // 0.55 A, and no channel can carry 1.25 A out of a 0.55 A total. The clamp state is
+            // 0.25 A (fw v27 rev 2), and no channel can carry 1.25 A out of a 0.25 A total. The
+            // clamp state is
             // dropped for the same reason as the two frozen returns above.
             if (!spChanged && !isoOutstanding) { clearShareCeilingState(); return; }   // HOLD
             // A changed setpoint re-arms the feedforward path (a still-outstanding
@@ -10690,7 +11134,7 @@ void powerBalance() {
         // limit-cycle, and the operator's setpoint is honoured as typed." The fw v6 ladder
         // falsified the premise — the exposure is not a limit cycle but the CONDUCTION state the
         // feedforward leaves behind at the handover (TP0105/TP0115: a channel run down to 61 mA,
-        // then a 0.42 swing in commanded share at 0.6 A of total). The clip is applied below, in
+        // then a 0.42 swing in commanded share at the gate). The clip is applied below, in
         // the relaxing form, which honours the setpoint as soon as the load can carry it.
         // F1 (2026-08-12 fw v5 review): an OUT-OF-BAND setpoint is NEVER actuated here — the
         // setpoint latch owns it ("one owner per setpoint"), and this path must not act as a
@@ -10708,7 +11152,8 @@ void powerBalance() {
         // flags, unlike the three freeze paths above. Reaching it with a flag set is provably
         // impossible: a flag can only be set by a tick whose filtered total exceeded
         // SHARE_GOV_I_FC_CEIL_A / DROOP_R_MAX = 1.47 A, and this branch is inside OPEN-LOOP mode,
-        // which exists only below 0.55 A. Any tick that could arrive here with a flag set would
+        // which exists only below 0.25 A (fw v27 rev 2). Any tick that could arrive here with a
+        // flag set would
         // have cleared it on the HOLD or minimum-load path first. Left uncleared so the release
         // tick this branch exists for stays a one-line no-op.
         if (power_share_setpoint < DROOP_R_MIN || power_share_setpoint > DROOP_R_MAX) return;
@@ -10723,7 +11168,8 @@ void powerBalance() {
         // fw v26: the FEEDFORWARD submode DOES write the MDACs, so it takes the current-ceiling
         // clamp — against the same filtered total the closed-loop path uses. It is INERT today
         // and provably so: this branch runs only in open-loop mode, where share_govTotAFilt is
-        // below 0.60 A, and neither ceiling (1.25 / 2.70 A) can be reached out of that total. It
+        // below the 2·I_min gate (0.30 A), and neither ceiling (1.25 / 2.70 A) can be reached out of
+        // that total. It
         // is applied anyway so a future ceiling retune cannot silently leave a writing path
         // unguarded — the cost is one multiply on a branch that is already off the fast path.
         // fw v27: the governor's MINORITY-CURRENT CLIP now runs here too, in the relaxing form —
@@ -10744,9 +11190,9 @@ void powerBalance() {
         // applyShareRatio() returns BEFORE it records droopSlew_prev, so droopSlew_prev is FROZEN
         // at the last in-band ratio actually written — and in the converge-to-a-rail case that is
         // exactly DROOP_R_MIN (or DROOP_R_MAX), one hysteresis width short of re-entry. Feeding
-        // the clip there returns prevRatio unchanged (the band is empty below 0.60 A), so the
+        // the clip there returns prevRatio unchanged (the band is empty below 2·I_min), so the
         // proposed ratio would be pinned at the rail forever and the cut channel would never come
-        // back on the bus for the whole sub-0.60 A window — the exact stranding exception (a)
+        // back on the bus for the whole sub-gate window — the exact stranding exception (a)
         // exists to prevent. fw v26 fed the RAW setpoint here, which walks the proposed ratio off
         // the rail and re-enters. So does this: while shareIso* is outstanding the clip is skipped
         // and the raw setpoint is fed forward, bit-identically to fw v26. Nothing is lost by the
@@ -10755,15 +11201,46 @@ void powerBalance() {
         // protect. The moment the re-entry fires, applyShareRatio() records the new droopSlew_prev
         // and the very next tick sees shareIso* clear, so the clip resumes from the ratio that was
         // actually written.
+        // fw v27 rev 2 — THE BYPASS NEEDS ITS OWN WALK ANCHOR, OR IT CANNOT RE-ENTER.
+        // The bypass above feeds the raw setpoint, but the SLEW below used to walk from
+        // droopSlew_prev — and droopSlew_prev is FROZEN while a channel is isolated (that is the
+        // whole premise of the bypass). So every isolated tick proposed the SAME
+        // rail + slewStep, and the proposal could never accumulate. That is harmless only while
+        // one step is big enough to clear the re-entry hysteresis on its own:
+        //     DROOP_RATIO_SLEW_PER_TICK (0.02) > SHARE_CUTOFF_HYST (0.01)   -> re-enters, 1 tick
+        //     DROOP_RATIO_SLEW_HANDOFF_PER_TICK (0.002) < SHARE_CUTOFF_HYST -> NEVER re-enters
+        // Through fw v27 rev 1 that second case was reachable but rare: it needed a channel to
+        // read dark, which takes ~30 ticks of EMA decay after a cut. At fw v27 rev 2 it is the
+        // ORDINARY case — the gate is 2*I_min = 0.30 A, so no sub-gate total can hold both
+        // channels above SHARE_HANDOFF_LIVE_A (0.20 A each is 0.40 A), the conduction-aware
+        // ceiling is therefore ALWAYS the handoff one below the gate, and the cut channel would
+        // be stranded off the bus for the entire sub-gate window. That is exactly the stranding
+        // fw v5 exception (a) and the fw v27 rev 1 HIGH-1 bypass exist to prevent, so the walk
+        // gets a separate anchor: shareIsoPropRatio accumulates the PROPOSAL across isolated
+        // ticks, re-anchored to the MDAC truth on every tick that is not isolated.
+        // The rate bound is preserved end to end: the proposal advances by at most slewStep per
+        // tick, and the write the re-entry finally makes lands AT the proposal — never more than
+        // one slewStep past the rail. How far past depends on which slewStep is live (fw v27
+        // rev 2 review L2 — the earlier "<= 0.01 off the rail" wording was exact only at the
+        // HANDOFF rate):
+        //     DROOP_RATIO_SLEW_HANDOFF_PER_TICK (0.002): the proposal accumulates in 0.002 steps
+        //         and re-entry fires on the first step past SHARE_CUTOFF_HYST, so the write lands
+        //         at most 0.002 beyond 0.15 + 0.01 — i.e. <= 0.012 off the rail;
+        //     DROOP_RATIO_SLEW_PER_TICK (0.02): one step clears the hysteresis outright, so the
+        //         write lands at 0.15 + 0.02 = 0.17, i.e. 0.02 off the rail.
+        // Either way the motion is bounded by one full-rate step. No slam.
         const float prevRatio     = droopSlew_prev;
         const bool  isoOutstanding = shareIsoFC || shareIsoBT;
+        if (!isoOutstanding) shareIsoPropRatio = prevRatio;   // follow the hardware
         float ffSp = isoOutstanding
                          ? power_share_setpoint                                    // fw v26 behaviour
                          : shareFeedforwardClipTarget(power_share_setpoint, prevRatio);
         ffSp = applyShareCurrentCeilings(ffSp);
+        const float walkFrom = isoOutstanding ? shareIsoPropRatio : prevRatio;
         float target = constrain(ffSp,
-                                 prevRatio - slewStep,
-                                 prevRatio + slewStep);
+                                 walkFrom - slewStep,
+                                 walkFrom + slewStep);
+        if (isoOutstanding) shareIsoPropRatio = target;
         // On a CLIPPED held tick target == prevRatio exactly, so this call moves no gains; it is
         // made anyway because it is the site of the guarded channel re-entry (fw v5 exception (a))
         // — that is the ONLY thing that still separates FEEDFORWARD from HOLD below the gate. On
@@ -10787,6 +11264,17 @@ void powerBalance() {
     // ── CLOSED-LOOP mode ─────────────────────────────────────────────────────
     shareClosedLoopRun = true;
     share_actedSp      = power_share_setpoint;
+    // fw v27 rev 2: the loop has closed, so the battery-only start is over for this profile —
+    // whichever way this tick was reached (the deferral fall-through, an FC-charge window, or the
+    // frozen-path release above). Belt and braces with the gate test on the frozen path: that
+    // path is the only one that can be taken while the cut is latched, this one is the only one
+    // that can be taken while it is not, and between them the arm cannot survive a closed loop.
+    shareBatteryOnlyArmed = false;
+    // The load-scheduled droop scale advances HERE and nowhere else — closed loop only, one call
+    // per tick, above every write site so the reference clip, the fw v26 ceilings and the fw v25
+    // load guard (all of which work in CURRENT space and never see k_d) run against the same
+    // scale applyShareRatio() will map through at the bottom of this tick.
+    updateShareDroopScale();
 
     // fw v19: the tick's conduction-aware slew ceiling, stored by updateShareSlewMode() above and
     // used by BOTH the reference slew and the actuation slew below. Read once, never recomputed —
@@ -10828,12 +11316,12 @@ void powerBalance() {
     if (spTarget >= DROOP_R_MIN && spTarget <= DROOP_R_MAX) {
         float lo = SHARE_MINORITY_I_MIN_A / share_govTotAFilt;
         // Ceiling at 0.5 for the HYSTERESIS SLIVER only: closed-loop mode is held down to
-        // 2·I_min − SHARE_GOV_OL_HYST_A (0.55 A), where the raw bound would be lo = 0.545 > hi =
+        // 2·I_min − SHARE_GOV_OL_HYST_A (0.25 A at fw v27 rev 2), where the raw bound would be lo = 0.6 > hi =
         // 0.455 — an INVERTED pair, and constrain(x, lo, hi) with lo > hi returns lo, i.e. it
         // would command the minority split on the WRONG side (0.25 A minority, below the floor).
         // Clamping lo to 0.5 makes the bound degenerate to the balanced split across that 0.05 A
         // sliver instead, which is the least-asymmetric feasible command while the loop is on its
-        // way out to open-loop mode. Above 0.60 A (the entry threshold) this branch never fires.
+        // way out to open-loop mode. Above the 2·I_min entry threshold this branch never fires.
         if (lo > 0.5f) lo = 0.5f;
         float hi = 1.0f - lo;
         spTarget = constrain(spTarget, lo, hi);
@@ -10856,11 +11344,11 @@ void powerBalance() {
 
     // ── Effective-setpoint slew (fw v6, 2026-08-12) ──────────────────────────
     // The OPEN→CLOSED handover used to STEP the controller's reference: open loop feeds the RAW
-    // setpoint forward (through fw v26 the governor's clip was not applied there — below 0.60 A
+    // setpoint forward (through fw v26 the governor's clip was not applied there — below the gate
     // the bound is lo = I_min/tot ≥ 0.5, so a clip could only do nothing or command the very 0.5
     // split fw v5 deliberately deleted; fw v27 resolves that dilemma with a third option, HOLD,
     // and does apply the clip on the feedforward path), while the first closed-loop tick hands the
-    // controller the FLOOR-CLIPPED value. At the 0.60 A crossing that is a discontinuity of up to
+    // controller the FLOOR-CLIPPED value. At the crossing that is a discontinuity of up to
     // 0.35 share (e.g. raw 0.15 → clipped 0.50) applied to the reference in one tick, right at the
     // load level where the sweep's failures live.
     // The fix wraps the REFERENCE, not the controller: share_spEffPrev walks toward the clipped
@@ -11025,6 +11513,12 @@ void applyShareRatio(float ratio) {
             } else {
                 writeBusSwitch(FC_BUS_ENABLE, LOW);
                 shareIsoFC = true;
+                // fw v27 rev 2: anchor the feedforward PROPOSAL at the ratio physically on the
+                // MDACs the instant the cut is taken. droopSlew_prev freezes here, so the walk
+                // that the HIGH-1 bypass performs during the cut has to start from this value --
+                // and this write may come from a ONE-SHOT caller (State-98 'O', the completion
+                // restore, a fixture), which never reaches the feedforward branch's own anchor.
+                shareIsoPropRatio = droopSlew_prev;
             }
         }
     } else if (shareIsoFC && !shareSpCutFC &&
@@ -11056,6 +11550,7 @@ void applyShareRatio(float ratio) {
             } else {
                 writeBusSwitch(BT_BUS_ENABLE, LOW);
                 shareIsoBT = true;
+                shareIsoPropRatio = droopSlew_prev;   // mirror of the FC branch (fw v27 rev 2)
             }
         }
     } else if (shareIsoBT && !shareSpCutBT &&
@@ -11117,8 +11612,15 @@ void applyShareRatio(float ratio) {
     // new starting point instead of leaving the limiter with a stale origin.
     droopSlew_prev = rc;
 
-    droop_gain_FC_actual = K_DROOP / (RE_MAX * rc);
-    droop_gain_BT_actual = K_DROOP / (RE_MAX * (1.0f - rc));
+    // fw v27 rev 2: the scale is shareDroopKd, the LOAD-SCHEDULED k_d, not the fixed K_DROOP.
+    // Above RE_MAX*SHARE_KD_SAFETY*SHARE_MINORITY_I_MIN_A/K_DROOP = 0.906 A of filtered total
+    // shareDroopKd IS K_DROOP (see shareDroopScaleTarget()), so
+    // this line is bit-identical to fw v26 there; below it the gains rise toward the constant
+    // authority the schedule buys. The open→closed reseed needs no special case: the codes are
+    // recomputed from droopSlew_prev under whatever k_d is live on the handover tick, and both
+    // quantities are rate-bounded, so the handover carries no jump in either factor.
+    droop_gain_FC_actual = shareDroopKd / (RE_MAX * rc);
+    droop_gain_BT_actual = shareDroopKd / (RE_MAX * (1.0f - rc));
     setDroopMdac(droop_gain_FC_actual, droop_gain_BT_actual);
 }
 
@@ -11226,6 +11728,29 @@ void resetShareControlState() {
     // fw v26 current-ceiling governor: a reset means no run is in progress, so no clamp is
     // binding. The flags carry hysteresis memory and must not survive into the next run.
     clearShareCeilingState();
+    // fw v27 rev 2: the k_d SCHEDULE INPUT is a load estimate and goes with share_govTotAFilt.
+    // shareDroopKd itself is deliberately NOT reset — it is MDAC truth (see its declaration), and
+    // the first closed-loop tick of the next run slews it toward the fresh schedule.
+    shareKdSchedTot = 0.0f;
+    // The battery-only ARM is deliberately NOT set here. This function is called from the latch's
+    // own release path (updateShareSetpointCutoff()), so arming here would re-arm the cut the
+    // release just undid, on the very tick it undid it — a permanent cut/release cycle. Arming is
+    // an explicit PROFILE-BOUNDARY action; see armShareBatteryOnlyStart() and its call sites.
+}
+
+// Arm the fw v27 rev 2 battery-only start. Called at the profile boundaries ONLY, which are, in
+// full: State 1 -> State 2 (production Run entry) and the five State-98 profile starts 'R'
+// (power-share), 'D' (drive cycle), 'T' (trapezoid/sweep), 'Y' (combined velocity+share) and 'W'
+// (combined current+share). Deliberately NOT armed by: resetShareControlState() (see above),
+// setPowerShareSetpointLive() (the 'P' key is a setpoint change inside a run, not a new run),
+// the State-98 'O' one-shot droop write, or any fault/teardown path — after State 99 the bus is
+// torn down and the next Run entry arms it anyway.
+// BENCH EXPECTATION (design point (d)): all five State-98 profiles therefore start SINGLE-SOURCED
+// on the battery, and the 'S' dump's "share batt-only" line says so while it lasts. An operator
+// running 'T' or 'W' to characterise a two-source split must read the early window as
+// battery-only by design, not as an FC fault.
+void armShareBatteryOnlyStart() {
+    shareBatteryOnlyArmed = true;
 }
 
 float youlaController_Power(float setpoint, float alphaRaw) {
@@ -11329,6 +11854,34 @@ float PI_Controller_Power(float error) {
 }
 
 void setDroopMdac(float fc_gain, float bt_gain) {
+    // ── fw v27 rev 2 HARD g-GUARD, at the only site where the code can saturate ──────────────
+    // The load-scheduled k_d keeps g ≤ SHARE_KD_SAFETY at the band edge BY CONSTRUCTION, but that
+    // is a statement about the reference, and the schedule reads a ~20 ms filtered total that
+    // UNDER-READS a rising load (the fw v26 clamp-sweep finding: 25.6 % under-read against a 12 %
+    // design headroom). A stale light-load k_d against an already-slewed high-load r gives
+    // g = k_d/(RE_MAX·r) > 1, which the constrain() below has always silently clipped. Count it,
+    // so "the droop network is saturated" stops being invisible: the count is on the 'S' dump and
+    // in the BLG v8 record. The CLAMP is the protection; the counter is the observability.
+    // Saturating, not wrapping — a wrapped-to-zero count would read as "never happened".
+    //
+    // DIRECTION OF THE ERROR IT LEAVES (fw v27 rev 2 review L1). g is inversely proportional to
+    // the channel's droop resistance, so clamping g DOWN to 1 CAPS that channel's droop at RE_MAX,
+    // which makes the clamped channel OVER-deliver relative to the command. Worst case at the
+    // schedule's ceiling k_d = RE_MAX*SHARE_KD_SAFETY*SHARE_MINORITY_I_MIN_A/K_DROOP-crossover
+    // value 0.906 Ω with r = DROOP_R_MIN = 0.15:
+    //     commanded  g_FC = 0.906/(2.0136*0.15) = 3.00  -> clamped to 1.00 -> r_FC,eff = 0.450
+    //                g_BT = 0.906/(2.0136*0.85) = 0.529 -> unclamped       -> r_BT,eff = 0.850
+    //     delivered FC fraction = 0.450/(0.450+0.850) = 0.346, against 0.15 commanded.
+    // The share is therefore WRONG, not dangerous: the total is still shared between two live
+    // channels and no channel is starved, so this is not an over-current path. It is also
+    // REACHABLE ONLY WHERE k_d > K_DROOP, i.e. below the 0.906 A crossover — at k_d = K_DROOP the
+    // largest g the band can ask for is 0.30/(2.0136*0.15) = 0.993 < 1 and the guard is
+    // structurally dead, which is why fw v26 never needed it. Note the fw v26 current ceilings
+    // cannot see this: they act on the REFERENCE, upstream of the code mapping, so a clamped
+    // write is invisible to them — the counter is the only observable.
+    if (fc_gain > 1.0f || bt_gain > 1.0f) {
+        if (shareGGuardCount < 0xFFFFu) shareGGuardCount++;
+    }
     // Word = load-and-update control nibble + 12-bit code (ad5426_5432_5443.pdf Fig 49 +
     // Table 10 — a bare code has control 0000 = NOP and the DAC never leaves zero scale; this
     // was the 2026-08-07 droop-immovable bench bug).
