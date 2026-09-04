@@ -49,6 +49,54 @@ that need a decision or a read:
    threshold or add a minimum dwell if the reference is meant to harvest; TP0053's UV latch moved
    −58.6 ms on an identical injected stimulus (re-measure before quoting it as an anchor).
 
+## 0d. TONIGHT (2026-09-03 evening) — what is actually being worked, to check tomorrow morning
+
+Operator rulings this afternoon (all recorded in §0c items 9–14 and the memory file): SDP v6 at the measured
+0.801 round trip (DONE, `0848c91`); fw v27 built now, operator flashes before campaign G; I_AUX_A dropout floor
+at 5 V (DONE); the 4x droop loss investigated (DONE, localized); I_AUX_A -> 0.09 A at the next era boundary;
+the fw v27 feedforward redesign REVISED: the proposed "wait until the raw command is inside the band" closing
+rule was RETRACTED (band-edge policies would never close the loop below 2.0 A); the loop-closing point stays as
+today. Bench is NOT available; the HIL rig IS.
+
+**fw v27 (rev 2) — the governor package, being built now (host-only; supersedes `2d200b1` before flash):**
+- [ ] 1. Never-closed profile runs battery-only: FC cut through the existing cut path (load guard, deferral,
+      survivor blanking) from profile start until the loop first closes at 0.60 A; re-entry via the existing
+      hysteresis/blanking, the closed-loop clip at the band edge, slew from there. Replaces the seed-at-0.5.
+- [ ] 2. Closed-before hold (as committed in `2d200b1`, incl. the cut-outstanding bypass; `share_actedSp` on
+      motion only). TO-DO (operator): hold vs return-to-battery on re-entering the open-loop region.
+- [ ] 3. Load-scheduled droop scale, closed loop only: k_d = RE_MAX * max(DROOP_R_MIN, I_min/I_tot_filt) * s,
+      **s = 0.9** (operator); k_d and r slewed under one limiter/hysteresis from the same filtered total;
+      g <= 1 guard at the code-write site; reseed under the new k_d at the handover; bit-identical to fw v26
+      above 2.0 A (schedule floors at 0.30 ohm). Bus sag becomes ~0.6 V design-scale below 2 A.
+- [ ] 4. **BLG v8** record format: the live k_d per record (operator ruled the bump); decoder
+      (`tools/decode_benchlog.py`) + tests + the benchlog analysis package updated in lockstep; the 18 B HIL
+      frame stays frozen; State-98 'S' line prints k_d.
+- [ ] 5. Review (Opus, safety-first), fix round, three builds (baseline 4024 / 175 / 4506), design record
+      `docs/fw27_feedforward_clip.md` -> rename/extend to the governor package, ledger row 27 rev 2, commit
+      with the flag flip, push. Then operator flashes.
+
+**Tools era round (one boundary: fw v27 + I_AUX_A 0.09 A), queued behind the firmware:**
+- [ ] 6. I_AUX_A 0.15 -> 0.09 A in both engines (IN PROGRESS, agent): fingerprint staleness handling, short DP
+      re-solves, per-leg walk-predicted h2 deltas, AUX-ERA re-pins, HIL_PLANT.md 4.2 numbers.
+- [ ] 7. governor_model / ems_walk / MPC surrogate mirror of fw v27 rev 2 (battery-only start, hold, k_d
+      schedule), equivalence harness against the firmware (the fw v26 discipline), HIL_PLANT.md FEEDFORWARD
+      paragraph; simple-engine bus law and the loss-map DP bound re-derived for the scheduled k_d
+      (V0_EFF/R_FIX/K_G at the new g_par law); every anchor re-walked and pinned provisional for campaign G.
+- [ ] 8. Suites, commit, push; CLAUDE.md addendum 2026-09-03c; memory.
+- [ ] 9. Campaign G (HIL, after the operator's v27 flash): the new era baseline — joint leg (1.36 A bound,
+      watch first), v6 legs, share-step guard witness = 0, `mpc_share_pred_err` baseline, k_d schedule
+      observables, battery-only start on every leg.
+
+**Deferred / not tonight:** the alpha sweep re-run at the measured billing (anchor index 7 -> 8; then move the
+three `ems-sdp-alpha-*` legs); the long matched-DP re-solves after the I_AUX_A change; the `--droop measured`
+split-law scaling (ruling open); the fw v26 joint-leg 8 % MDAC band tightening (after its first campaign);
+the two-axis dropout sweep, the pack repeat, the AD5443/OPA197 DMM measurement, the dark-node decay capture and
+the tau_r step test (ALL bench, no access).
+
+**Done today (for the morning check):** `fe92a50` split law; `7b1f602` run-002 docs; `26ae346` N9 test;
+`88f8e2d` rulings A; `cd296a3`/`96800c7` v5; `9cc2618` addendum; `0848c91` v6 + aux floor + N8 + Step 0 +
+droop gap; `2d200b1` fw v27 rev 1 (to be superseded by rev 2 tonight).
+
 ## 0b. Carried from the 2026-09-02 review list (still open where not struck)
 
 The session is closed. Two campaigns ran of a budget of five; campaign C is analysed and its fix
