@@ -177,3 +177,22 @@ the next session inherits it.
 - **Classify FAILs live, per run, while the campaign runs** (read-only agents on the finalized
   sidecars): the fix round is then ready at completion and the next campaign validates it within
   the same night.
+
+## Additions from the 2026-09-03/04 session
+
+- **Opt-in legs:** the HIL suite hides its long-cycle and alpha legs behind flags (`--with-ftp75
+  --with-ftp75c --with-alpha`); a bare launch runs 61 of 75 and reports the rest as vacuous PASSes. Read the
+  `--list` footer ("[IN THIS PLAN]") before every launch; the launch script carries the flags.
+- **Watchers are harness-tracked or nothing:** never `nohup ... &` / `& disown`; they lose their output and
+  linger. A tracked watcher that exits on each event and is re-armed is the only pattern.
+- **Never chain a stdin-reading command in a Bash call** (`cat > path` without a heredoc hangs to the timeout).
+  Scripts go through the Write tool and run by path with `</dev/null`.
+- **First-sighting anchors must exclude the carried-in window** (a predecessor's latch bit can shadow a run's
+  own later fault and disable a teardown exclusion, fail-open).
+- **Era re-pins enumerate every quantised axis each strategy reads** (demand bins, gates, thresholds), not
+  only the h2 anchors; h2 is blind to a raw request the firmware clamps.
+- **A stimulus expressed as a designed total is re-derived at every governor-constant change** with its
+  structural bound stated (the joint leg's 1.65 A step exceeded the fault limit at I_min 0.15).
+- **Pre-classify the next pass from the current one:** when a mechanism is found on one leg, name the legs
+  it must also hit before they run; the analysis then needs one agent per mechanism, not per run.
+- **A sim fix is closed only by a re-executed PASS**, never by the model's own before/after numbers.

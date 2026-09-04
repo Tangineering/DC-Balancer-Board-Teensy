@@ -1482,3 +1482,46 @@ the MPC residual past the release; ASYM_SIMPLE_I_MIN_A at the 0.09 A idle; `--dr
 Two-axis dropout sweep at controlled slew; the pack repeat of WP0073/WP0100; the AD5443/OPA197 DMM measurement
 (design 0.1000 / 0.0500 / 0.2510 V at 1 A, g 0.5); the dark-node decay capture; the tau_r step; a standstill
 capture with the VESC powered (I_AUX_A); the VESC's behaviour below 5 V on the bus.
+
+# RETROSPECTIVE - the 2026-09-03/04 session (feeds .claude/skills/overnight-autonomous-session)
+
+## What worked, with evidence
+- **Waiting for the tools mirror before launching (D-1).** Every campaign-G FAIL was scored against a fw v27
+  walk, so the twelve FAILs decomposed cleanly into one firmware defect, three design consequences, one sim
+  artefact, six era pins and one surrogate gap; a launch on fw v26 walks would have produced ~30 FAILs with no
+  attribution.
+- **Opus on every first-of-kind FAIL, immediately.** The charge-to-full agent found the sequencing defect
+  (break-before-make, 0.93 ms from a latch) on the first pass; the comm-loss agent found the soft-start
+  degeneracy by the p_fc_w = -p_bal_w identity; the mppt agent found the k_d saturation as an ADJACENT finding
+  that then explained charge-to-full's suspect and G2's whole ftp75c family before those runs finished.
+- **Pre-classification carried across passes.** G2's seven FAILs were named before the first long-cycle leg
+  finalized (the sequencing defect at scale; the MPC branch), so G2 needed two agents, not ten.
+- **The right-reason standard on PASSes** caught `signal_joint_clamp_settling` passing on an up-crossing and
+  the 14 vacuous SKIP PASSes in the suite tally.
+- **Two-review discipline on the fix round** (review, then a fix-of-fixes review) caught the BT-only release
+  preview gap that would have produced a NEW unmasked FAIL class on campaign H.
+
+## What failed, and the correction adopted
+1. **The long-cycle legs are opt-in flags and the launch script omitted them** (13 vacuous PASSes; a
+   supplementary pass cost 45 min). Correction: the flags are in the launch script and the suite's module
+   docstring; the plan `--list` footer is the check ("[IN THIS PLAN]").
+2. **Untracked inline watchers** were started twice (`nohup ... &`, `& disown`) against the standing rule; one
+   was killed by pattern, the other by pid. Correction: only `run_in_background` watchers; never `&`.
+3. **A `cat > file` with no heredoc hung a Bash call to its timeout** (an unset variable made the redirect
+   target a bare path). Correction: scripts via the Write tool, run by path with `</dev/null`.
+4. **A carried-in OC_FC shadowed a scoring anchor** (charge-cruise): the first-sighting map filled from the
+   predecessor's latch. Correction shipped (latch-only anchors); rule: any anchor keyed on "first fault" must
+   exclude the carried-in window explicitly.
+5. **An era round re-derived the MPC's demand bin but not the SDP's** (ems-sdp's plateau moved to bin 21
+   unnoticed because h2 is blind to the raw request under the clamp). Rule: an era re-pin must enumerate every
+   quantised axis (bins, gates, thresholds) each strategy reads, not only the h2 anchors.
+6. **The RT1987 fix reduced the artefact 9x but did not close it**; the report said so honestly. Rule: a
+   sim fix is "closed" only when the re-executed scenario passes, never on the model's own before/after.
+7. **A stimulus designed at one floor (1.65 A at I_min 0.30) was re-used at another** until the mirror review
+   caught the bound exceeding the fault limit. Rule: every stimulus expressed as a designed total is re-derived
+   at each governor-constant change, with the structural bound stated.
+
+## Economics
+Two campaign passes (G 0:53, G2 0:46) + H (~1:40, running); ~22 subagents (Opus analyses x12, reviews x4,
+implementers x4, Sonnet x3); five commits; zero destructive actions; the operator's morning list is one
+firmware ruling (F1) with six design consequences behind it.
