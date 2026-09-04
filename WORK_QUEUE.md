@@ -293,6 +293,13 @@ sim-only strategies.
 - MPPTD-disabled-charge semantics.
 - Silvertel EPROM endurance — `TODO(verify: Silvertel)`.
 - Open-loop share sweep ('O' command) above 0.60 A for the asymmetry fit (§1 item 6).
+- **Two-axis per-channel dropout-boundary sweep — NEW 2026-09-03 (§7c prerequisite).** Setpoint at
+  fixed I_max and I_max at fixed setpoint, run separately for the FC-minority and BT-minority
+  directions; repeat WP0073/WP0100 on the pack rather than the 1.0–1.35 Ω bench battery supply.
+  Sizes `M_floor` for the margin-referred governor and how far the floor moves under a scheduled
+  `k_d`. The share-sweep whitepaper's standing recommendation (conclusions 11 and 15), absent from
+  this queue until now. Existing brackets: FC-minority (0.245, 0.29] A at 1.6 A total; BT-minority
+  (0.381, 0.399) A at 1.6–1.7 A and dropouts at 0.55–1.04 A in the W cluster.
 
 ## 4. Protocol flags
 
@@ -500,6 +507,64 @@ sim-only strategies.
   0.0268–0.0380): per-leg cost or stop re-tuning. F6 LOW `ems-mpc-single` ends Run with FC_BUS open
   (document). F8 LOW `ems-sdp-braking` h2 +1.0 % on an unchanged stimulus (eq-H2 +0.15 %). F10 LOW
   L_chg spread 2.1 % over four campaigns (0.3313 / 0.3318 / 0.3333 / 0.3384).
+
+## 7c. Opened 2026-09-03 (low-current share stability exploration)
+
+Source: `docs/modeling/low_current_share_stability_20260903.md` (census, noise measurements, offset
+estimates, ranked options). Framing: on campaign F the share loop is in open-loop HOLD for 45 % of
+`ems-sdp` and 66 % of `ems-ftp75-*`, and on every SDP/DP leg the minority clip binds for the whole
+closed-loop remainder (the policies command band edges), so the delivered minority is pinned at
+`SHARE_MINORITY_I_MIN_A` and the commanded share is never tracked. Stronger current filtering cannot
+lower the floor (measured loop-attenuated minority jitter 4–10 mA rms against a bench-bracketed
+conduction floor of (0.245, 0.29] A; the noise above 0.4 A is common-mode load ripple that cancels in
+the ratio). The three firmware items below raise the light-load conduction margin instead. **All
+three are bench-only validation: the HIL plant has no PFM / light-load converter model.**
+
+- **FIRMWARE: load-scheduled droop scale `k_d(I_tot)`.** Today `K_DROOP` = 0.30 Ω is fixed by
+  `g = K_DROOP/(RE_MAX·r) ≤ 1` at the band edge, so the droop authority `k_d·I_tot` collapses with
+  load (0.18 V at 0.6 A, design scale). In closed loop the minority clip already confines r to
+  `[r_lo, 1−r_lo]`, `r_lo = I_min/I_tot_filt`, so `k_d = RE_MAX·r_lo·(safety factor)` keeps `g ≤ 1`
+  by construction and makes the FC/BT conduction margin `RE_MAX·I_min/(1−r) ± dV0` independent of
+  load (0.60 V design scale, ~0.13 V at the measured 4× weaker droop) — 3.4× more margin at 0.6 A,
+  1.0× at 2 A. Static plant gain stays exactly 1 for any k_d, so the Youla-H controller is untouched;
+  only the disturbance term shrinks. Design points: closed-loop only (HOLD writes nothing;
+  FEEDFORWARD can carry a raw 0.15 setpoint at 0.3 A where a scheduled k_d would push g past 1);
+  k_d and r slewed under the same limiter/hysteresis so they never combine to g > 1 during a slew,
+  the deferred-cut band-edge clip, or the open→closed reseed (recompute codes from `droopSlew_prev`
+  under the new k_d); bus sag becomes a constant 0.6 V (design) below 2 A — harmless against
+  `LIMIT_V_BUS_MIN` but it moves the simple engine's bus law, `governor_model.py`, the loss-map bound,
+  the fw v26 clamp arithmetic in the tools, and every h2 anchor (hi-fi engine follows the mirrored
+  MDAC codes automatically). BLG/HIL observability: log the active k_d (BLG header carries only the
+  fixed `K_DROOP_x1000`). Prerequisite: the two-axis per-channel dropout-boundary sweep (§3) to size
+  how far the floor moves; informed by the unexplained 4× droop gap (`HIL_PLANT.md` §4.2).
+- **FIRMWARE: margin-referred governor (replace the current floor with a conduction-margin floor).**
+  Whitepaper conclusion 11: no constant-current floor separates stable from cycling (BT minority
+  drops at 0.55–1.04 A while FC holds 0.63 A; 27 mV of bus separates WP0100 from WP0095). In closed
+  loop `d_hat = sp − r` is the standing offset, `dV0_hat = d_hat·k_d·I_tot/(r(1−r))`, and the
+  minority margin `M = k_d·I_tot/(1−r) + dV0_hat` (mirror for BT). Clip the reference to keep
+  `M ≥ M_floor` (a voltage from the bench sweep) instead of `I_min ≥ 0.30 A`; in current terms that
+  is `M_floor·r(1−r)/k_d`, larger at the band edges, smaller when the offset favours the minority.
+  Bench offset estimates already show the asymmetry: near zero FC-minority, +0.20 A at 1 A rising to
+  +0.42 A at 2 A BT-minority (droop-scale-mismatch signature, ρ = 0.9434). Closed-loop only (needs
+  `d_hat`); does not add authority, so pair with the scheduled k_d. **Step 0, no firmware:** compute
+  `d_hat` and `M` from existing BLG records (`share_sp`, `gFC`, `gBT`, currents) on the dropout runs
+  (TP0016, WP0073, WP0100) and their clean neighbours (TP0017, WP0071, WP0095) and check that one
+  `M_floor` separates them — if not, the hypothesis is wrong and only the two-axis sweep remains.
+- **FIRMWARE: apply the governor clip on the open-loop FEEDFORWARD path.** Whitepaper items 16–17:
+  both fw v6 ladder dropouts (TP0105 at r_min, TP0115 at r_max; 5.9 ms both-dark, bus 12.19 V)
+  occurred at the open→closed handover, where the reference jumps from the raw fed-forward setpoint
+  to the floor-clipped one — a 0.42 swing in commanded share at 0.6 A total, which opens both
+  channels however slowly it is slewed (fw v6 slewed the rate; the exposure is the magnitude).
+  Clipping the feedforward against the same filtered total makes the handover continuous. Note the
+  fw v5 review argument against clipping feedforward (no loop to limit-cycle; honour the operator's
+  setpoint) — the clip must be the relaxing form `[I_min/I_tot_filt, 1 − I_min/I_tot_filt]` with the
+  0.5 ceiling, never the collapse-to-0.5 that ignited TP0053. Prerequisite for any lowering of the
+  closed-loop gate; small on its own. Cheapest of the three; can ship first.
+
+Added to §3 (bench): the two-axis per-channel dropout-boundary sweep (setpoint at fixed I_max, I_max
+at fixed setpoint, both minority directions, and a repeat of WP0073/WP0100 on the pack instead of
+the 1.0–1.35 Ω bench battery supply) — the whitepaper's standing recommendation, previously absent
+from this queue.
 
 ## Shipped 2026-09-02 (overnight)
 
