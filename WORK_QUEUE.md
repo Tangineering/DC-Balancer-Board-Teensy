@@ -59,12 +59,12 @@ rule was RETRACTED (band-edge policies would never close the loop below 2.0 A); 
 today. Bench is NOT available; the HIL rig IS.
 
 **fw v27 (rev 2) — the governor package, being built now (host-only; supersedes `2d200b1` before flash):**
-- [ ] 1. Never-closed profile runs battery-only: FC cut through the existing cut path (load guard, deferral,
+- [x] 1. (DONE `153562f`) Never-closed profile runs battery-only: FC cut through the existing cut path (load guard, deferral,
       survivor blanking) from profile start until the loop first closes at 0.60 A; re-entry via the existing
       hysteresis/blanking, the closed-loop clip at the band edge, slew from there. Replaces the seed-at-0.5.
-- [ ] 2. Closed-before hold (as committed in `2d200b1`, incl. the cut-outstanding bypass; `share_actedSp` on
+- [x] 2. (DONE) Closed-before hold (as committed in `2d200b1`, incl. the cut-outstanding bypass; `share_actedSp` on
       motion only). TO-DO (operator): hold vs return-to-battery on re-entering the open-loop region.
-- [ ] 3. Load-scheduled droop scale, closed loop only: k_d = RE_MAX * max(DROOP_R_MIN, I_min/I_tot_filt) * s,
+- [x] 3. (DONE) Load-scheduled droop scale, closed loop only: k_d = RE_MAX * max(DROOP_R_MIN, I_min/I_tot_filt) * s,
       **s = 0.9** (operator); k_d and r slewed under one limiter/hysteresis from the same filtered total;
       **COURSE CORRECTION (operator, evening): constant low-current authority D = 0.30 V, not 0.60 V ->
       SHARE_MINORITY_I_MIN_A 0.30 -> 0.15 A; closed-loop gate 0.30 A (exit 0.25 A); schedule meets the
@@ -73,10 +73,10 @@ today. Bench is NOT available; the HIL rig IS.
       HYPOTHESIS the HIL plant cannot test.**
       g <= 1 guard at the code-write site; reseed under the new k_d at the handover; bit-identical to fw v26
       above 2.0 A (schedule floors at 0.30 ohm). Bus sag becomes ~0.6 V design-scale below 2 A.
-- [ ] 4. **BLG v8** record format: the live k_d per record (operator ruled the bump); decoder
+- [x] 4. (DONE) **BLG v8** record format: the live k_d per record (operator ruled the bump); decoder
       (`tools/decode_benchlog.py`) + tests + the benchlog analysis package updated in lockstep; the 18 B HIL
       frame stays frozen; State-98 'S' line prints k_d.
-- [ ] 5. Review (Opus, safety-first), fix round, three builds (baseline 4024 / 175 / 4506), design record
+- [x] 5. (DONE: review SHIP WITH FIXES, H1 survivor-regulator guard + 8 items applied; 4114 / 175 / 4596; committed `153562f` with the flag flip; operator to flash) Review (Opus, safety-first), fix round, three builds (baseline 4024 / 175 / 4506), design record
       `docs/fw27_feedforward_clip.md` -> rename/extend to the governor package, ledger row 27 rev 2, commit
       with the flag flip, push. Then operator flashes.
 
@@ -91,7 +91,7 @@ today. Bench is NOT available; the HIL rig IS.
       Queue: re-solve the 75 matched-DP records (`dp_results_db.py prefill`, long spans need
       `--matched-dp-allow-long`); alpha-sweep re-run at the measured billing; bench standstill capture
       with the VESC powered to replace the 0.075 A term.
-- [ ] 7. governor_model / ems_walk / MPC surrogate mirror of fw v27 rev 2 (battery-only start, hold, k_d
+- [ ] 7. (IN PROGRESS, agent) governor_model / ems_walk / MPC surrogate mirror of fw v27 rev 2 (battery-only start, hold, k_d
       schedule), equivalence harness against the firmware (the fw v26 discipline), HIL_PLANT.md FEEDFORWARD
       paragraph; simple-engine bus law and the loss-map DP bound re-derived for the scheduled k_d
       (V0_EFF/R_FIX/K_G at the new g_par law); every anchor re-walked and pinned provisional for campaign G.
