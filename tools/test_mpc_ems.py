@@ -17,16 +17,17 @@ between the scalar ports here and the numpy originals they were transcribed
 from, which is the drift this repository has already recorded twice.  A change
 to either side must be validated under miniforge, not under `.venv_hil` alone.
 
-⚠️ THREE TESTS ARE WALL-CLOCK-BUDGET TESTS (2026-09-03 fix round, L5).  The
-MPC's search width is bounded by a solve BUDGET IN MILLISECONDS, so a host that
-is running something else explores fewer candidates and can commit a different
-plan.  These three exercise that path and are the file's only known flakes
+⚠️ FOUR TESTS ARE WALL-CLOCK-BUDGET TESTS (2026-09-03 fix round, L5; the
+fourth was added the same day).  The MPC's search width is bounded by a solve
+BUDGET IN MILLISECONDS, so a host that is running something else explores fewer
+candidates and can commit a different plan.  These four exercise that path and are the file's only known flakes
 under concurrent load; each passes in isolation, and a failure is a scheduling
 observation until it is reproduced ALONE:
 
     test_transition_roll_slices_and_completes
     test_the_search_width_reads_no_clock
     test_the_committed_plan_is_insensitive_to_the_projection
+    test_the_roll_slice_overshoot_is_one_chunk_not_one_item
 
     <interpreter> -m pytest tools/test_mpc_ems.py -q -k "<name>"
 
@@ -112,9 +113,24 @@ def test_oc_margins():
 
 
 def test_governor_thresholds_come_from_the_firmware_model():
-    assert M.GOV_ENTRY_A == pytest.approx(0.60)
-    assert M.GOV_RELEASE_A == pytest.approx(0.55)
-    assert M.GOV_MIN_LOAD_A == pytest.approx(0.075)
+    """The three gates are DERIVED in `mpc_ems`, so this test derives them too.
+
+    fw v27 rev 2 re-pin, 2026-09-03: entry 0.60 -> 0.30 A and release
+    0.55 -> 0.25 A, because `SHARE_MINORITY_I_MIN_A` moved 0.30 -> 0.15 A and
+    both gates are functions of it (entry `2*I_min`, release
+    `2*I_min - SHARE_GOV_OL_HYST_A`).  The literals that used to stand here were
+    the reason this test broke rather than the module: `mpc_ems` already reads
+    `gov_mod.GOV_CONST`, so the transcription was on THIS side.  They are now
+    written as the same arithmetic and cannot drift again."""
+    i_min = gm.GOV_CONST["SHARE_MINORITY_I_MIN_A"]
+    assert M.GOV_ENTRY_A == pytest.approx(2.0 * i_min)
+    assert M.GOV_RELEASE_A == pytest.approx(
+        2.0 * i_min - gm.GOV_CONST["SHARE_GOV_OL_HYST_A"])
+    assert M.GOV_MIN_LOAD_A == pytest.approx(
+        gm.GOV_CONST["SHARE_I_TOT_MIN_A"])
+    assert M.GOV_MINORITY_A == pytest.approx(i_min)
+    # The ordering the whole open/closed fixture set depends on.
+    assert M.GOV_MIN_LOAD_A < M.GOV_RELEASE_A < M.GOV_ENTRY_A
     # Property A's own arithmetic: the load filter keeps 5.3e-23 of its state
     # across a 1 s stage, which is what makes the precompute control-independent.
     alpha = gm.GOV_CONST["SHARE_GOV_FILT_ALPHA"]
@@ -280,6 +296,35 @@ def test_mat_reader_refuses_a_non_mat_file(tmp_path):
 # ═════════════════════════════════════════════════════════════════════════════
 # 4. Property A: the precompute's mode classification versus a full roll.
 # ═════════════════════════════════════════════════════════════════════════════
+# -----------------------------------------------------------------------------
+# THE TWO FIXTURE TOTALS, DERIVED FROM THE GATES RATHER THAN TRANSCRIBED.
+#
+# fw v27 rev 2 re-pin, 2026-09-03: the synthetic previews' LOW leg moved
+# 0.35 -> 0.1625 A, because `SHARE_MINORITY_I_MIN_A` moved 0.30 -> 0.15 A and the
+# open-loop release it has to fall under moved 0.55 -> 0.25 A.  0.35 A used to
+# be an OPEN total and is now a CLOSED one, which is why every transition
+# fixture in this file lost its transition at once.
+#
+# `_OPEN_A` is the midpoint of the open-loop window `(GOV_MIN_LOAD_A,
+# GOV_RELEASE_A)` - below the release so a stage seeded CLOSED drops out of the
+# loop, above the minimum-load gate so the stage is not FROZEN instead - and
+# `_CLOSED_A` sits above the entry gate with room to spare.  Both are written as
+# expressions so a further retune of the floor moves the fixtures with it.
+_OPEN_A = 0.5 * (M.GOV_MIN_LOAD_A + M.GOV_RELEASE_A)     # 0.1625 A
+_CLOSED_A = 1.2                                          # >> GOV_ENTRY_A
+
+
+def test_the_fixture_totals_sit_in_the_regimes_they_name():
+    """The fixtures above are load-bearing: a total that drifted out of its
+    regime would silently turn a transition test into a no-transition one, which
+    is exactly what the fw v27 rev 2 floor change did to the old 0.35 A."""
+    assert M.GOV_MIN_LOAD_A < _OPEN_A < M.GOV_RELEASE_A
+    assert _CLOSED_A > M.GOV_ENTRY_A
+    # ...and the open leg must be genuinely two-source-conducting, not a
+    # standstill: both channels at the nominal 0.5 split carry current.
+    assert 0.5 * _OPEN_A > 0.0
+
+
 def _synthetic_preview(profile_a, n_stages=20, dt=M.PREVIEW_DT_S):
     """A preview whose source total follows `profile_a(t)`."""
     n_sub = int(round(M.DECISION_DT_S / dt))
@@ -408,7 +453,10 @@ def test_closed_stage_surrogate_band():
 # ═════════════════════════════════════════════════════════════════════════════
 def test_transition_roll_reproduces_a_full_roll():
     """RollJob's r_hold equals a hand-written full roll of the same stage."""
-    prof = lambda t: 1.2 if t < 5.0 else 0.35      # a downward 0.55 A crossing
+    # fw v27 rev 2 re-pin, 2026-09-03: 1.2 -> 0.35 A was a downward 0.55 A
+    # release crossing; the release is now 0.25 A, so the low leg moved to
+    # `_OPEN_A` and the fixture crosses again.
+    prof = lambda t: _CLOSED_A if t < 5.0 else _OPEN_A
     prev = _synthetic_preview(prof, n_stages=10)
     pre = M.precompute_stages(prev, 0, 10, mode_seed=M.STAGE_CLOSED)
     assert any(pre.transition), "the fixture carries no mode transition"
@@ -458,7 +506,8 @@ def test_transition_roll_slices_and_completes():
     and `test_the_committed_plan_is_insensitive_to_the_projection`)."""
     # Four transitions in the horizon - RollJob.MAX_TRANSITIONS, the
     # adjudication's own bound on the slice.
-    prof = lambda t: 1.2 if (t < 4.0 or 8.0 <= t < 12.0 or t >= 16.0) else 0.35
+    prof = lambda t: (_CLOSED_A if (t < 4.0 or 8.0 <= t < 12.0 or t >= 16.0)
+                     else _OPEN_A)
     prev = _synthetic_preview(prof, n_stages=20)
     pre = M.precompute_stages(prev, 0, 20, mode_seed=M.STAGE_CLOSED)
     ladder = [0.25 + i * 0.5 / 6.0 for i in range(7)]
@@ -513,11 +562,22 @@ def test_transition_roll_slices_and_completes():
     # fails on any regression above that. What this must NOT become is a number
     # quietly raised each time the model grows; the next move needs its own
     # measurement recorded here, as both of these are.
-    assert work_ms / M.ROLL_BUDGET_MS_DEFAULT < 70.0, work_ms
+    #
+    # fw v27 rev 2 re-pin, 2026-09-03: 70 -> 85, because the fw v27 rev 2
+    # governor does more work per tick than the fw v26 one this bound was
+    # measured against. RE-MEASURED on the same machine and the same fixture,
+    # best of seven, idle: 140.7 ms = 70.3 callbacks at the 2.0 ms budget,
+    # against 116.4 to 117.7 ms before. The per-tick additions are the
+    # load-scheduled droop scale (`_update_droop_scale()`, once per closed-loop
+    # tick) and the feedforward clip; the fixture's item count is unchanged at
+    # 28 (7 ladder points x 4 transitions), so this is per-tick cost and not a
+    # bigger job. 85 clears the measurement by 21 %, the same margin 70 gave
+    # the measurement it was derived from.
+    assert work_ms / M.ROLL_BUDGET_MS_DEFAULT < 85.0, work_ms
 
 
 def test_zero_budget_roll_makes_progress_but_does_not_raise():
-    prof = lambda t: 1.2 if t < 5.0 else 0.35
+    prof = lambda t: _CLOSED_A if t < 5.0 else _OPEN_A
     prev = _synthetic_preview(prof, n_stages=10)
     pre = M.precompute_stages(prev, 0, 10, mode_seed=M.STAGE_CLOSED)
     job = M.RollJob(pre, [0.25, 0.75])
@@ -1133,7 +1193,7 @@ def test_an_empty_roll_job_does_not_wipe_the_standing_table():
 
 def test_r_hold_is_consumed_by_the_delivery_table():
     """H4 mutation 4: an entry in r_hold must change the open-stage carry."""
-    prof = lambda t: 1.2 if t < 3.0 else 0.35      # closed, then open
+    prof = lambda t: _CLOSED_A if t < 3.0 else _OPEN_A      # closed, then open
     prev = _synthetic_preview(prof, n_stages=10)
     pre = M.precompute_stages(prev, 0, 10, mode_seed=M.STAGE_CLOSED)
     p = M.Planner()
@@ -1148,17 +1208,29 @@ def test_r_hold_is_consumed_by_the_delivery_table():
 
 
 def test_delivery_table_applies_the_minority_clip():
-    """H4 mutation 1: at I_tot 0.7 A the 0.30 A minority floor binds."""
+    """H4 mutation 1: at I_tot 0.7 A the minority-current floor binds.
+
+    fw v27 rev 2 re-pin, 2026-09-03: the clip bound at this stimulus moved
+    0.428571 -> 0.214286, because `SHARE_MINORITY_I_MIN_A` moved 0.30 -> 0.15 A
+    and the bound is `I_min / I_tot` = 0.15 / 0.7.  The STIMULUS is unchanged
+    and so is the subject: 0.7 A is still a total at which the floor binds on
+    both rails of the ladder, which is the only thing 0.7 A was chosen for
+    (0.15 < 0.214286 at the bottom, 0.85 > 0.785714 at the top).  The literal is
+    now written as the arithmetic against `gov_mod.GOV_CONST` so it cannot go
+    stale a second time."""
     prof = lambda t: 0.7
     prev = _synthetic_preview(prof, n_stages=4)
     pre = M.precompute_stages(prev, 0, 4, mode_seed=M.STAGE_CLOSED)
     p = M.Planner()
     d = p.delivery_table(pre, {}, 0.5, [False] * 4)[0]
     lo = M.GOV_MINORITY_A / 0.7
-    assert lo == pytest.approx(0.42857142857142855)
+    assert lo == pytest.approx(gm.GOV_CONST["SHARE_MINORITY_I_MIN_A"] / 0.7)
+    assert lo == pytest.approx(0.21428571428571427)
+    # THE PRECONDITION THE STIMULUS EXISTS FOR, asserted rather than assumed:
+    # the floor must actually bind on both rails at this total.
+    assert p.ladder[0] < lo < 1.0 - lo < p.ladder[-1]
     # The bottom ladder point 0.15 is BELOW the floor and must come back
-    # clipped.  (0.25 before the 2026-09-02 band widening; the clip binds
-    # HARDER now, which is the point of asserting it here.)
+    # clipped.  (0.25 before the 2026-09-02 band widening.)
     assert p.ladder[0] == pytest.approx(0.15)
     assert d[0][0] == pytest.approx(lo)
     # The top point 0.85 is above 1 - lo and must come back clipped too.
@@ -1272,7 +1344,7 @@ def test_the_terminal_price_moves_the_first_move():
 
 def test_chunked_rolls_reproduce_the_unsliced_roll_exactly():
     """M1: the chunking is a scheduling change, not a numerical one."""
-    prof = lambda t: 1.2 if (t < 4.0 or t >= 8.0) else 0.35
+    prof = lambda t: _CLOSED_A if (t < 4.0 or t >= 8.0) else _OPEN_A
     prev = _synthetic_preview(prof, n_stages=12)
     pre = M.precompute_stages(prev, 0, 12, mode_seed=M.STAGE_CLOSED)
     ladder = [0.25, 0.5, 0.75]
@@ -1287,7 +1359,7 @@ def test_chunked_rolls_reproduce_the_unsliced_roll_exactly():
 
 def test_the_roll_slice_overshoot_is_one_chunk_not_one_item():
     """M1: the measured bound the callback arithmetic rests on."""
-    prof = lambda t: 1.2 if int(t) % 2 == 0 else 0.35
+    prof = lambda t: _CLOSED_A if int(t) % 2 == 0 else _OPEN_A
     prev = _synthetic_preview(prof, n_stages=20)
     pre = M.precompute_stages(prev, 0, 20, mode_seed=M.STAGE_CLOSED)
     job = M.RollJob(pre, [0.25 + i * 0.5 / 6.0 for i in range(7)])
@@ -1545,6 +1617,23 @@ def test_stages_past_the_preview_end_are_counted():
 #     toward the setpoint and WRITES the MDACs.  Every test below scores the
 #     model against a full 1 kHz `GovernorModel` roll of the same stage, which
 #     is the only reference this repository accepts for a delivery claim.
+#
+#     NOTE fw v27 rev 2, 2026-09-03 - THE MODELLED SLEW IS RETIRED AT THE
+#     SHIPPED CONSTANTS, AND THE TESTS BELOW NOW ASSERT ITS ABSENCE.  fw v27 put the
+#     relaxing minority-current clip on the feedforward path as well
+#     (`GovernorModel.feedforward_clip_target()`, .ino:10810): the fed-forward
+#     reference is clipped into `[lo, 1-lo]` with `lo = I_min/I_tot`, and an
+#     EMPTY band is a HOLD at the ratio the hardware already carries.  The band
+#     is empty whenever `lo >= 0.5`, i.e. `I_tot <= 2*I_min = GOV_ENTRY_A`, and
+#     an OPEN sub-sample is by definition at or under that gate.  So the
+#     feedforward submode still WRITES, but it writes the ratio it already had.
+#     `Planner.delivery_table()` was mirroring the unclipped slew and is
+#     corrected in lockstep; the correction is what moves Gate 1 back from a
+#     0.0664 mean prediction error to 0.000335.
+#
+#     The subject of these tests is unchanged - the stage model must reproduce a
+#     full 1 kHz roll - and the assertions that a slew occurred are replaced by
+#     assertions that the clip holds, with the retired half named in place.
 # ═════════════════════════════════════════════════════════════════════════════
 def _open_preview(i_tot_a, n_stages=6):
     """A preview whose source total sits in the OPEN-loop regime throughout."""
@@ -1592,32 +1681,58 @@ def _roll_open_stage(prev, pre, stage, share, r0, acted, run, i_tot_a,
 
 
 def test_open_feedforward_stage_matches_a_full_roll():
-    """A CHANGED setpoint on an open stage slews; the model must follow it."""
-    i_tot = 0.40                       # below the 0.55 A release, above 0.075
+    """A CHANGED setpoint on an open stage takes the FEEDFORWARD branch, and the
+    stage model must reproduce a full 1 kHz roll of it.
+
+    PREMISE RETIRED, fw v27 rev 2, 2026-09-03.  The old docstring read "a
+    CHANGED setpoint on an open stage SLEWS; the model must follow it", and the
+    test closed by asserting the slew was worth more than 0.10 of share against
+    the HOLD.  The slew is gone: `shareFeedforwardClipTarget()` clips the
+    fed-forward reference into `[I_min/I_tot, 1 - I_min/I_tot]`, that band is
+    EMPTY for every `I_tot <= 2*I_min = GOV_ENTRY_A`, and an open sub-sample is
+    by definition at or under the gate.  An empty band is a hold at `r_prev`.
+    So the branch is still taken and still writes - the subject of this test -
+    but it writes the ratio it already carried.
+
+    fw v27 rev 2 re-pin, 2026-09-03: fixture total 0.40 -> `_OPEN_A` (0.1625 A),
+    because the open-loop release moved 0.55 -> 0.25 A and 0.40 A is now a
+    CLOSED total.  The stage-mean expectation moved from a ramp to `r0`, because
+    the feedforward clip band is empty at every open-loop-reachable total."""
+    i_tot = _OPEN_A                    # below GOV_RELEASE_A, above GOV_MIN_LOAD_A
     prev = _open_preview(i_tot)
     pre = M.precompute_stages(prev, 0, 6, mode_seed=M.STAGE_OPEN)
     assert all(m == M.STAGE_OPEN for m in pre.mode[0]), "fixture is not open"
+    # The band really is empty here, derived rather than asserted by eye.
+    assert M.GOV_MINORITY_A / i_tot >= 0.5
     p = M.Planner()
-    si = 0                             # ladder point 0.25
+    si = 0                             # ladder point DROOP_R_MIN
     s = p.ladder[si]
     r0, acted = 0.50, 0.70             # the acted setpoint differs from s
     tab = p.delivery_table(pre, {}, r0, [False] * 6, sp_acted=acted,
                            run_seed=True)[0]
     rolled, _ = _roll_open_stage(prev, pre, 0, s, r0, acted, True, i_tot)
-    # EXACT, not approximate: on the full ceiling the ramp is the arithmetic
-    # series `ramp_mean()` sums, so the model and the roll agree to the last bit.
+    # EXACT, not approximate: the clip target is `r_prev` by assignment, so the
+    # model and the roll agree to the last bit.
     assert tab[0][si] == pytest.approx(rolled, abs=1e-12), (
         "feedforward stage mean %.6f against a full roll's %.6f"
         % (tab[0][si], rolled))
-    # ...and it must be materially different from the HOLD the old model made.
+    # THE RETIRED HALF, INVERTED RATHER THAN DELETED: the feedforward branch and
+    # the hold-only table now agree, and both sit at the carried ratio.  If a
+    # future retune of `SHARE_MINORITY_I_MIN_A` re-opens the band this assertion
+    # fails and the slew has to be modelled again.
     hold = p.delivery_table(pre, {}, r0, [False] * 6)[0]
     assert hold[0][si] == pytest.approx(r0)
-    assert abs(hold[0][si] - rolled) > 0.10
+    assert tab[0][si] == pytest.approx(hold[0][si], abs=1e-12)
 
 
 def test_open_hold_stage_matches_a_full_roll():
-    """An UNCHANGED setpoint on an open stage holds; nothing is written."""
-    i_tot = 0.40
+    """An UNCHANGED setpoint on an open stage holds; nothing is written.
+
+    fw v27 rev 2 re-pin, 2026-09-03: fixture total 0.40 -> `_OPEN_A` (0.1625 A),
+    because the open-loop release moved 0.55 -> 0.25 A and 0.40 A is now a
+    CLOSED total, which is a different branch entirely.  The premise - the HOLD
+    condition of `_open_loop()` - is unchanged."""
+    i_tot = _OPEN_A
     prev = _open_preview(i_tot)
     pre = M.precompute_stages(prev, 0, 6, mode_seed=M.STAGE_OPEN)
     p = M.Planner()
@@ -1632,25 +1747,71 @@ def test_open_hold_stage_matches_a_full_roll():
     assert tab[0][si] == pytest.approx(rolled, abs=1e-12)
 
 
-def test_a_cleared_run_flag_slews_even_on_an_unchanged_setpoint():
-    """`shareClosedLoopRun` false is the OTHER way into the feedforward branch."""
-    i_tot = 0.40
+def test_a_cleared_run_flag_reaches_the_feedforward_branch():
+    """`shareClosedLoopRun` false is the OTHER way into the feedforward branch.
+
+    PREMISE RETIRED, fw v27 rev 2, 2026-09-03.  This test was named
+    `test_a_cleared_run_flag_slews_even_on_an_unchanged_setpoint` and closed on
+    `abs(tab - r0) > 0.10, "the model held where the firmware slews"`.  The
+    firmware no longer slews here: the feedforward clip band is empty at every
+    open-loop-reachable total (see the section banner), so the branch writes
+    `r_prev`.  What survives, and is what this test was really guarding, is that
+    a cleared run flag ROUTES to the feedforward branch rather than to the hold
+    - the two now agree numerically, so the routing is asserted directly against
+    the planner's own cell census instead of inferred from a moved number.
+
+    fw v27 rev 2 re-pin, 2026-09-03: fixture total 0.40 -> `_OPEN_A`
+    (0.1625 A), because the release moved 0.55 -> 0.25 A."""
+    i_tot = _OPEN_A
     prev = _open_preview(i_tot)
     pre = M.precompute_stages(prev, 0, 6, mode_seed=M.STAGE_OPEN)
     p = M.Planner()
     si = 0
     s = p.ladder[si]
     r0 = 0.50
+    # `ff_cells` is a WHOLE-TABLE census, so the census claim below is made on
+    # a single-column table (`active=(si,)`); every other ladder point differs
+    # from `sp_acted` and would reach the feedforward arm for its own reasons.
+    p.ff_cells = p.hold_cells = 0
     tab = p.delivery_table(pre, {}, r0, [False] * 6, sp_acted=s,
-                           run_seed=False)[0]
+                           run_seed=False, active=(si,))[0]
+    ff_cleared = p.ff_cells
     rolled, _ = _roll_open_stage(prev, pre, 0, s, r0, s, False, i_tot)
     assert tab[0][si] == pytest.approx(rolled, abs=1e-12)
-    assert abs(tab[0][si] - r0) > 0.10, "the model held where the firmware slews"
+    # The routing claim: with the run flag CLEARED the open sub-samples reach
+    # the feedforward arm, and with it SET on the same setpoint they do not.
+    assert ff_cleared > 0, "a cleared run flag did not reach the feedforward arm"
+    p.ff_cells = p.hold_cells = 0
+    p.delivery_table(pre, {}, r0, [False] * 6, sp_acted=s, run_seed=True,
+                     active=(si,))
+    assert p.ff_cells == 0, "a standing run on an unchanged setpoint must HOLD"
 
 
-def test_the_handoff_ceiling_slows_the_modelled_ramp():
-    """A roll that ended DARK selects the 0.002/tick ceiling for that stage."""
-    i_tot = 0.20                       # both channels under SHARE_HANDOFF_MIN_A
+def test_the_handoff_ceiling_is_inert_while_the_clip_band_is_empty():
+    """The handoff ceiling only bites on a MOVING reference, and at fw v27 rev 2
+    the open-loop reference does not move.
+
+    PREMISE RETIRED, fw v27 rev 2, 2026-09-03.  This test was
+    `test_the_handoff_ceiling_slows_the_modelled_ramp` and asserted
+    `slow > fast + 1e-3` - that selecting the 0.002/tick ceiling raised the
+    stage mean by holding the ramp near its start.  There is no ramp any more:
+    the feedforward clip band `[I_min/I_tot, 1 - I_min/I_tot]` is empty for
+    every `I_tot <= 2*I_min = GOV_ENTRY_A`, so the fed-forward target IS
+    `r_prev` and both ceilings integrate the same constant.  The retired
+    assertion is replaced by its cause - the two settings now agree, and both
+    agree with the roll - plus the derivation of WHY, so a retune of the floor
+    that re-opens the band fails this test instead of silently un-retiring the
+    ramp.  `ramp_mean()`'s own handoff arithmetic is unaffected and stays
+    covered by `test_ramp_mean_equals_a_tick_loop`.
+
+    fw v27 rev 2 re-pin, 2026-09-03: fixture total 0.20 -> `_OPEN_A`
+    (0.1625 A).  0.20 A was still open (release 0.25 A), but it is now within
+    0.05 A of the release and a further retune would strand it; `_OPEN_A` is the
+    derived midpoint of the open window.  Both channels remain under
+    `SHARE_HANDOFF_MIN_A` (0.5 * 0.1625 = 0.081 A < 0.15 A), which is what the
+    fixture needed."""
+    i_tot = _OPEN_A
+    assert 0.5 * i_tot < gm.GOV_CONST["SHARE_HANDOFF_MIN_A"]
     prev = _open_preview(i_tot)
     pre = M.precompute_stages(prev, 0, 6, mode_seed=M.STAGE_OPEN)
     p = M.Planner()
@@ -1658,21 +1819,23 @@ def test_the_handoff_ceiling_slows_the_modelled_ramp():
     s = p.ladder[si]
     r0, acted = 0.75, 0.75
     key = (pre.stage_key[0], si)
+    p.ff_cells = 0
     slow = p.delivery_table(pre, {}, r0, [False] * 6, sp_acted=acted,
                             run_seed=False, handoff={key: True})[0]
+    assert p.ff_cells > 0, "the fixture never reached the feedforward arm"
     fast = p.delivery_table(pre, {}, r0, [False] * 6, sp_acted=acted,
                             run_seed=False)[0]
     rolled, _ = _roll_open_stage(prev, pre, 0, s, r0, acted, False, i_tot,
                                  dark=True)
-    # The handoff ceiling is ten times slower, so the stage mean sits HIGHER:
-    # the ramp spends longer near its 0.75 start.
-    assert slow[0][si] > fast[0][si] + 1e-3
-    # Not exact: the dwell allowance is spent on MOVING ticks and the release
-    # to the full ceiling therefore lands one tick apart from the model's.
-    assert slow[0][si] == pytest.approx(rolled, abs=5e-4), (
+    # THE BAND IS EMPTY - the derivation the rest of the test rests on.
+    assert M.GOV_MINORITY_A / i_tot >= 0.5
+    # Both ceilings integrate the same constant, so they agree EXACTLY with each
+    # other and with the roll.  This was `abs=5e-4` when a one-tick release
+    # difference stood between them.
+    assert slow[0][si] == pytest.approx(fast[0][si], abs=1e-12)
+    assert slow[0][si] == pytest.approx(rolled, abs=1e-12), (
         "handoff stage mean %.6f against a full roll's %.6f"
         % (slow[0][si], rolled))
-    assert abs(fast[0][si] - rolled) > abs(slow[0][si] - rolled)
 
 
 def test_ramp_mean_equals_a_tick_loop():
@@ -1707,7 +1870,7 @@ def test_ramp_mean_equals_a_tick_loop():
 
 def test_the_feedforward_branch_is_inert_without_the_seeds():
     """BYTE IDENTITY: no seeds, or a seed pair that HOLDS, is the old table."""
-    prof = lambda t: 1.2 if t < 3.0 else 0.35
+    prof = lambda t: _CLOSED_A if t < 3.0 else _OPEN_A
     prev = _synthetic_preview(prof, n_stages=10)
     pre = M.precompute_stages(prev, 0, 10, mode_seed=M.STAGE_CLOSED)
     p = M.Planner()
@@ -1730,7 +1893,7 @@ def test_the_feedforward_branch_is_inert_without_the_seeds():
 
 def test_the_asymmetry_map_is_inert_at_dv0_zero():
     """dv0 = 0 degenerates the droop map to the identity, bit-for-bit."""
-    prof = lambda t: 1.2 if t < 3.0 else 0.35
+    prof = lambda t: _CLOSED_A if t < 3.0 else _OPEN_A
     prev = _synthetic_preview(prof, n_stages=10)
     pre = M.precompute_stages(prev, 0, 10, mode_seed=M.STAGE_CLOSED)
     a = M.Planner(dv0_v=0.0).delivery_table(pre, {}, 0.5, [False] * 10,
@@ -1764,8 +1927,18 @@ def test_the_strategy_seeds_the_branch_from_the_shadow_governor():
 
 
 def test_the_roll_carry_is_skipped_on_a_feedforward_stage():
-    """r_hold is a HELD-command result and must not overwrite a modelled slew."""
-    i_tot = 0.40
+    """r_hold is a HELD-command result and must not overwrite a modelled slew.
+
+    fw v27 rev 2 re-pin, 2026-09-03: fixture total 0.40 -> `_OPEN_A` (0.1625 A),
+    because the open-loop release moved 0.55 -> 0.25 A and 0.40 A is now CLOSED.
+
+    fw v27 rev 2 re-pin, 2026-09-03: the feedforward stage's expected carry moved
+    `p.ladder[si]` -> `r_seed` (0.5), because the feedforward clip band is empty
+    below the gate and the modelled reference therefore holds at the carried
+    ratio instead of arriving at the ladder point.  The SUBJECT is untouched: a
+    feedforward stage must still ignore `r_hold`, which is the only thing the
+    0.11 sentinel tests."""
+    i_tot = _OPEN_A
     prev = _open_preview(i_tot)
     pre = M.precompute_stages(prev, 0, 6, mode_seed=M.STAGE_OPEN)
     p = M.Planner()
@@ -1775,16 +1948,16 @@ def test_the_roll_carry_is_skipped_on_a_feedforward_stage():
     held = p.delivery_table(pre, {key: 0.11}, 0.5, [False] * 6,
                             sp_acted=p.ladder[si], run_seed=True)[0]
     assert held[1][si] == pytest.approx(0.11)
-    # FEEDFORWARD: the modelled ramp is the carry, and 0.11 is ignored.
+    # FEEDFORWARD: the modelled reference is the carry, and 0.11 is ignored.
     ff = p.delivery_table(pre, {key: 0.11}, 0.5, [False] * 6,
                           sp_acted=0.70, run_seed=True)[0]
     assert ff[1][si] != pytest.approx(0.11)
-    assert ff[1][si] == pytest.approx(p.ladder[si], abs=1e-9)
+    assert ff[1][si] == pytest.approx(0.5, abs=1e-9)
 
 
 def test_the_roll_job_publishes_a_handoff_flag():
     """The roll records the conduction-handoff state it ended in."""
-    prof = lambda t: 1.2 if t < 5.0 else 0.35
+    prof = lambda t: _CLOSED_A if t < 5.0 else _OPEN_A
     prev = _synthetic_preview(prof, n_stages=10)
     pre = M.precompute_stages(prev, 0, 10, mode_seed=M.STAGE_CLOSED)
     job = M.RollJob(pre, [0.25, 0.5, 0.75])
@@ -1793,8 +1966,26 @@ def test_the_roll_job_publishes_a_handoff_flag():
     assert all(isinstance(v, bool) for v in job.handoff.values())
 
 
-def test_disabling_the_feedforward_branch_raises_the_prediction_error():
-    """MUTATION: the branch is what carries the Gate-1 improvement.
+def test_the_feedforward_branch_is_numerically_inert_and_gate_1_still_holds():
+    """The 61 s Gate-1 measurement, plus the statement that the feedforward
+    branch no longer changes it.
+
+    PREMISE RETIRED, fw v27 rev 2, 2026-09-03.  This test was
+    `test_disabling_the_feedforward_branch_raises_the_prediction_error` and
+    asserted `off_mean > 5e-3` and `off_mean > 5.0 * on_mean` - that seeding the
+    branch was what carried the Gate-1 improvement.  It carries nothing now:
+    `shareFeedforwardClipTarget()` clips the fed-forward reference into an EMPTY
+    band at every open-loop-reachable total (`I_tot <= 2*I_min = GOV_ENTRY_A`),
+    so the modelled feedforward reference IS the carried ratio, which is what
+    the HOLD arm produces anyway.  The mutation is dead by construction, and a
+    mutation test that cannot mutate must say so rather than be tuned until it
+    passes.
+
+    fw v27 rev 2 re-pin, 2026-09-03: the shipped Gate-1 mean is 0.000335 (max
+    0.004797).  Before `Planner.delivery_table()` mirrored the clip it was
+    0.0664 - 13x outside the 5e-3 band - because the model slewed through 12 264
+    of the run's 61 000 governor ticks that the firmware holds through.  That
+    correction, not the constant itself, is what restores the band.
 
     The fixture is a 61 s closed loop over the `ems-soc-band` preview, driven the
     way the walk drives it, and the scored quantity is the strategy's own
@@ -1840,10 +2031,17 @@ def test_disabling_the_feedforward_branch_raises_the_prediction_error():
     on_mean, on_max = _run(False)
     off_mean, off_max = _run(True)
     assert on_mean is not None and off_mean is not None
+    # GATE 1, which is what this test is now for.
     assert on_mean < 5e-3, "the shipped model missed the Gate 1 band"
-    assert off_mean > 5e-3, "the mutation did not raise the error"
-    assert off_mean > 5.0 * on_mean
-    assert off_max > on_max
+    assert on_mean == pytest.approx(3.351401e-04, rel=1e-4)
+    assert on_max == pytest.approx(4.796814e-03, rel=1e-4)
+    # THE RETIRED MUTATION, INVERTED RATHER THAN DELETED.  Dropping the two
+    # feedforward seeds must now change NOTHING, because the branch they select
+    # holds at the same ratio the hold arm holds at.  A retune of
+    # `SHARE_MINORITY_I_MIN_A` that re-opens the clip band re-arms the mutation
+    # and fails here, which is the signal to restore the old assertions.
+    assert off_mean == pytest.approx(on_mean, rel=1e-12)
+    assert off_max == pytest.approx(on_max, rel=1e-12)
 
 
 
@@ -2016,9 +2214,24 @@ def test_a_coarsened_solve_returns_a_candidate_from_the_active_set():
 
 
 def test_the_coarsening_does_not_move_the_walk_totals():
-    """MEASURED: on the registered stimulus the coarser search commits the same
-    plan, so the coarsening buys wall clock and an uncut search, not a
-    different trajectory.  A change here is a finding, not a failure."""
+    """MEASURED: what the coarser search costs against the full one on the
+    registered stimulus.  A change here is a finding, not a failure.
+
+    PREMISE RETIRED, fw v27 rev 2, 2026-09-03.  This test asserted EQUALITY -
+    "the coarser search commits the same plan, so the coarsening buys wall clock
+    and an uncut search, not a different trajectory".  It no longer does.  With
+    the closed-loop gate at 0.30 A instead of 0.60 A the low-current stages of
+    `ems-soc-band` are CLOSED rather than open, so the ladder points are
+    distinguishable there where they used to tie at the collapsed clip band, and
+    dropping rungs now changes which one wins.
+
+    fw v27 rev 2 re-pin, 2026-09-03: full (0.009602542 g, -0.002382921 SoC),
+    coarse (0.009618534 g, -0.002376413 SoC); the coarsening now costs
+    +0.1665 % of hydrogen (0.009618534 / 0.009602542 - 1) and returns
+    +0.000006508 of SoC.  Both pairs are pinned EXACTLY rather than compared
+    under a tolerance - they reproduced bit-for-bit over three consecutive
+    runs, and the coarsening decision reads a MODELLED candidate cost
+    (`candidate_cost_ms`), not the clock, so this is not a wall-clock test."""
     # `ems_walk` reaches gen_dp_ems_table, which needs numpy, so this one runs
     # under miniforge and SKIPS under `.venv_hil` like the other walk-backed
     # checks in this file.
@@ -2031,8 +2244,12 @@ def test_the_coarsening_does_not_move_the_walk_totals():
                                   "candidate_cost_ms": 0.0162})):
         r = ems_walk.walk("mpc-det", SCEN, soc0=0.7, governor=True,
                           strategy_kwargs=dict(kw))
-        out[label] = (round(r.h2_g, 9), round(r.delta_soc, 9))
-    assert out["full"] == out["coarse"], out
+        out[label] = (round(r.h2_g, 9), round(float(r.delta_soc), 9))
+    assert out["full"] == (0.009602542, -0.002382921), out
+    assert out["coarse"] == (0.009618534, -0.002376413), out
+    # The retired equality, restated as the measured deviation it became.
+    assert out["coarse"][0] / out["full"][0] - 1.0 == pytest.approx(
+        0.0016654, abs=5e-7)
 
 
 def test_a_frozen_sub_sample_holds_whatever_the_setpoint_did():
@@ -3011,10 +3228,27 @@ def test_the_seed_snap_is_index_distance_for_an_out_of_range_incumbent():
 # 412c282009c3c84eb4fca1d55bee61cc072465e3461e6f27524ed402b8f7202d, computed on
 # d941170. The LENGTH is unchanged at 3050, which is the part of the claim this
 # round could have broken.
-# provisional_note: re-walked for the I_AUX_A 0.09 A era, 2026-09-03;
+#
+# fw v27 rev 2 re-pin, 2026-09-03: e7616064... -> b1c2425d..., because
+# `SHARE_MINORITY_I_MIN_A` moved 0.30 -> 0.15 A. PLAN INVARIANCE IS NOT CLAIMED
+# ACROSS A FIRMWARE CHANGE and this digest is not evidence of a regression: the
+# closed-loop gate moved 0.60 -> 0.30 A, so the low-current stages of the 61 s
+# stimulus are modelled CLOSED where they used to be modelled open, the ladder
+# points are distinguishable there instead of tying at a collapsed clip band,
+# and a different rung wins. TWO CHANGES CONTRIBUTED, measured separately on
+# this machine:
+#   e7616064...  fw v26 constants, before this round
+#   7025de5e...  the constant alone (governor_model at rev 2, delivery_table
+#                still mirroring the unclipped feedforward slew)
+#   b1c2425d...  the shipped pair, with `delivery_table` mirroring
+#                `shareFeedforwardClipTarget()`
+# Both re-walks reproduced bit-for-bit over consecutive runs. The LENGTH is
+# unchanged at 3050, which is the part of the claim this round could have
+# broken.
+# provisional_note: re-walked for the fw v27 rev 2 governor, 2026-09-03;
 # pin on campaign G.
 _FEATURE_OFF_SEQ_SHA256 = (
-    "e7616064129340bba2124e92c03e6e2af350f27b1cb347dd00b767191ec770f6")
+    "b1c2425db4543b866dc8f9acc4712d26f2f4d088e1b3e7bd6c59133eb4868037")
 _FEATURE_OFF_SEQ_LEN = 3050
 
 
@@ -3105,8 +3339,22 @@ def test_the_quantile_tightening_reaches_the_admissibility_test():
 # r0 in {0.15, 0.30, 0.50, 0.70, 0.85} x both modes.  The two figures below are
 # the whole point of the window's size and are pinned so a governor change that
 # lengthens the handoff fails here rather than silently in a campaign.
-_SS_GRID_MAX_TICKS = 118          # at I_tot 0.75 A, r0 0.85, BT-only
-_SS_GRID_TIMEOUTS = 2             # both at I_tot 0.60 A, at the two rails
+# fw v27 rev 2 re-pin, 2026-09-03: 118 -> 95 ticks and 2 -> 0 timeouts.
+# MECHANISM, and the two halves have different causes:
+#  * THE TIMEOUTS.  The load guard refuses a cut while the doomed channel
+#    carries more than `SHARE_CUT_MAX_HANDOFF_A` 0.5 A, and the firmware's
+#    deferral clips the reference into the minority band to walk that channel
+#    down.  At I_tot 0.60 A the fw v26 band was `lo = 0.30/0.60 = 0.5` - EMPTY -
+#    so the reference could not move and the roll expired.  At 0.15 A the band
+#    is `lo = 0.25`, the doomed channel is walked to 0.15 A, and both points are
+#    admitted.  Forcing the floor back to 0.30 in a scratch process reproduces
+#    both timeouts at exactly (0.60, 0.15, fc) and (0.60, 0.85, bt).
+#  * THE MAXIMUM.  Same grid point (I_tot 0.75 A, r0 0.85, BT-only).  The
+#    scratch run with the floor forced back to 0.30 returns 114, not 118, so
+#    114 -> 95 is the floor's own contribution and 118 -> 114 belongs to the
+#    `delivery_table` feedforward-clip mirror made in the same round.
+_SS_GRID_MAX_TICKS = 95           # at I_tot 0.75 A, r0 0.85, BT-only
+_SS_GRID_TIMEOUTS = 0             # the load-guard refusal is off the grid
 _SS_GRID_DV0_V = 0.013522
 
 
@@ -3139,21 +3387,34 @@ def _ss_grid(factory):
 
 def test_the_admission_roll_grid_maximum_and_its_margin():
     """LOW-1.  The design record's deferral table was four hand-picked points
-    with a 34-tick maximum; the grid's maximum is 118 ticks, so the 200-tick
-    window's margin is 1.69x, NOT the "six blanking windows" the constant's
-    comment claimed.  118 ms of a 1 s stage is 11.8 % of a stage the plan
+    with a 34-tick maximum; the grid's maximum is 95 ticks, so the 200-tick
+    window's margin is 2.11x, NOT the "six blanking windows" the constant's
+    comment claimed.  95 ms of a 1 s stage is 9.5 % of a stage the plan
     modelled single-source and ran two-source, and the roll carries NO plant
-    current lag, so 118 is a LOWER bound on what the board would take."""
+    current lag, so 95 is a LOWER bound on what the board would take.
+
+    fw v27 rev 2 re-pin, 2026-09-03: 118 -> 95 ticks (margin 1.69x -> 2.11x,
+    residual 11.8 % -> 9.5 %) and 2 -> 0 load-guard timeouts; the mechanism for
+    each is at `_SS_GRID_MAX_TICKS`.
+
+    PREMISE RETIRED: the closing assertion used to be that the load-guard
+    refusal is REACHABLE, not merely defensive.  On this grid it no longer is -
+    the widened minority band walks the doomed channel down at every point - so
+    the assertion is inverted and the reachability claim is left to
+    `test_a_cut_that_cannot_engage_inside_the_window_is_refused_on_load`, which
+    drives the path directly instead of hoping the grid contains it."""
     worst, timeouts = _ss_grid(
         lambda: _bound(loss_map=sim.plant_loss_map(), single_source=True,
                        budget_ms=1e5, roll_budget_ms=1e5,
                        dv0_v=_SS_GRID_DV0_V))
     assert worst == _SS_GRID_MAX_TICKS
     assert worst < M.SS_ADMIT_MAX_TICKS
-    # ...and the load-guard refusal is REACHABLE, not merely defensive: at
-    # I_tot 0.60 A from either rail the doomed channel parks at 0.5157 A, just
-    # over the 0.5 A guard, the reference never moves, and the roll expires.
-    assert len(timeouts) == _SS_GRID_TIMEOUTS
+    # ...and the load-guard refusal is NO LONGER REACHABLE on this grid.  Under
+    # fw v26 two of the 400 points expired: at I_tot 0.60 A from either rail the
+    # clip band was empty (`lo = 0.30/0.60 = 0.5`), the doomed channel parked at
+    # 0.5157 A just over the 0.5 A guard, and the reference never moved.  With
+    # `lo = 0.25` the reference walks and both are admitted.
+    assert len(timeouts) == _SS_GRID_TIMEOUTS, timeouts
     assert all(t[0] == 0.60 for t in timeouts), timeouts
 
 
@@ -3250,7 +3511,7 @@ def test_the_roll_job_hands_the_split_law_to_the_governor_it_builds():
     point, so it is a construction site of its own and a dropped parameter
     there would silently make the transition rolls the only part of the plan
     computed on the wrong law."""
-    prof = lambda t: 1.2 if (t < 4.0 or t >= 8.0) else 0.35
+    prof = lambda t: _CLOSED_A if (t < 4.0 or t >= 8.0) else _OPEN_A
     prev = _synthetic_preview(prof, n_stages=12)
     pre = M.precompute_stages(prev, 0, 12, mode_seed=M.STAGE_CLOSED)
     ladder = [0.25 + i * 0.5 / 6.0 for i in range(7)]

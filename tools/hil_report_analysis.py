@@ -1688,6 +1688,30 @@ MATCHED_DP_GFC_NOTE = (
     "one-directional bias between the two totals -- causal runs land 0.09-0.80 % "
     "BELOW their matched bound; |dev| <= ~0.8 % is this bias, not a policy result")
 
+# ── THE fw v27 rev 2 PROVISIONAL, ON EVERY MATCHED-DP DEVIATION ────────────
+# WHY IT IS ON EVERY RUN AND NOT ONLY ON THE LOW-CURRENT ONES. The DP bound is
+# priced on a loss map whose parallel droop code `g_par` is the fw v26 CONSTANT
+# (`hil_plant_sim.DP_BUS_K_G` at the firmware-held 0.148922). fw v27 rev 2
+# SCHEDULES `k_d` on the filtered total, so below the 0.9061287 A crossover the
+# map UNDERSTATES the bus sag - by up to 1.110 % of `V0_EFF` at the 0.30 A gate
+# corner, and by more than the map's own stated |dev| <= 0.8 % envelope
+# anywhere under 0.4694 A of filtered total (arithmetic and table at
+# `hil_plant_sim.scheduled_g_par`). The map was NOT re-fitted, because moving it
+# orphans every committed DP table and every `dp_db` record. A reader cannot
+# tell from the deviation figure alone whether a run spent time in that band,
+# so the caveat goes on all of them.
+MATCHED_DP_FW27_SCHEDULE_NOTE = (
+    "FW27-ERA PROVISIONAL: the DP bound is priced on the fw v26 CONSTANT droop "
+    "code, and fw v27 rev 2 schedules k_d on the filtered total. Below "
+    "0.9061287 A the loss map understates the bus sag -- up to 1.110 % of "
+    "V0_EFF at the 0.30 A gate corner, and past the map's own 0.8 % envelope "
+    "anywhere under 0.4694 A. The bound was NOT re-fitted for the schedule "
+    "(that is a DP re-solve round; see the TODO(fw27) at "
+    "hil_plant_sim.scheduled_g_par), so a fw v27 run is priced OPTIMISTICALLY "
+    "about its bus losses by that much and its deviation is biased in its own "
+    "favour. Pin on campaign G.")
+
+
 def matched_dp_cost_estimate_s(duration_s):
     """Rough wall time [s] of one matched DP baseline for a cycle of this
     length.
@@ -2040,6 +2064,9 @@ def matched_dp_for_run(analysis, meta, hil, mode="lookup",
 
     h2_run = _last_finite(hil["h2_cum_g"]) if "h2_cum_g" in hil else None
     notes.append(MATCHED_DP_GFC_NOTE)
+    # The fw v27 rev 2 schedule bias, on EVERY matched-DP deviation. See the
+    # constant's block for why it is unconditional.
+    notes.append(MATCHED_DP_FW27_SCHEDULE_NOTE)
     # The demand-model era, stated on EVERY run: which of the two models the
     # baseline was priced with is the single largest source of deviation the
     # 2026-09-02 decomposition found, and a reader comparing two runs across

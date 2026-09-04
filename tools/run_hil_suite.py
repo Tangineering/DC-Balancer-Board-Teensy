@@ -131,6 +131,15 @@ from hil_plant_sim import (                                        # noqa: E402
     # Imported, never re-declared: they mirror the firmware's switch_state packing
     # and a second copy here would be a silent divergence waiting to happen.
     SW_FC_BUS, SW_BT_BUS, SW_REGEN, SW_FC_CHARGE,
+    # fw v27 rev 2 (2026-09-03): the stimulus geometry the BATTERY-ONLY START's
+    # windows are derived from.  Imported, never re-typed, for the same reason
+    # the region tables are: a scenario edit that moves the Run entry or the
+    # auxiliary preload ramp must move the battery-only windows with it, and a
+    # literal here would silently survive that edit and then measure the wrong
+    # span.  `EMS_RUN_ENTRY_S` is the Idle -> Run instant every scripted
+    # `pi_timeline` in the registry also uses (all step at 3.0 s).
+    AUX_PRELOAD_START_S, SOC_LOAD_RAMP_S, EMS_RUN_ENTRY_S,
+    FW26_CLAMP_CRUISE_LOAD_A, FW26_CLAMP_JOINT_PRELOAD_A,
     # ErrorCode_t values + renderer (fw v25 observation-frame byte 16).  Imported,
     # never re-declared, for the same reason as the switch masks: the enum is the
     # firmware's and a second copy here would drift.
@@ -689,6 +698,11 @@ _BLEED_ERA_PROVISIONAL = (
 # condition LIMIT_I_FC_MAX / DROOP_R_MAX = 1.647 A, and leaving the preload
 # alone would have put the step at 1.59 A - below it - so the leg would have
 # exercised nothing while still passing.
+# SUPERSEDED AT fw v27 rev 2 (2026-09-03): `FW26_CLAMP_JOINT_STEP_PRELOAD_A`
+# 1.56 -> 1.48 (1.57 A total). At SHARE_MINORITY_I_MIN_A 0.15 A a step ABOVE
+# the 1.647 A condition is exactly what the leg must not do, because the
+# conduction clip no longer caps the transient under LIMIT_I_FC_MAX. See the
+# fw v27 block on FAULT_EXPECTATIONS["fw26-clamp-joint"].
 #
 # EVERY COMMITTED DP TABLE AND ALL 75 `tools/dp_db` RECORDS WERE SOLVED AT
 # 0.15 A. `I_AUX_A` is hashed into `dp_profile_fingerprint`, so the three
@@ -719,6 +733,213 @@ _AUX_ERA_PROVISIONAL = (
     "TODO(calibrate) - no standstill capture with the VESC powered exists - so "
     "expect a second move after that capture; do not spend a tightening pass "
     "here before it")
+
+# =============================================================================
+# FW27-ERA ANCHORS (2026-09-03) - firmware version 27 revision 2, the GOVERNOR
+# PACKAGE. THE SIBLING OF THE BLEED-ERA AND AUX-ERA BLOCKS ABOVE, and it
+# supersedes both wherever the three disagree. EVERYTHING HERE IS PROVISIONAL:
+# no board has ever run fw v27, campaign G is the first that will.
+#
+# WHAT CHANGED. Four mechanisms and one retuned constant
+# (docs/fw27_governor_package.md sections 8-13). The wire protocol, the pin map,
+# the fault limits, the controller coefficients and the 40/18-byte HIL frames
+# are ALL unchanged - this is a governor change and nothing else.
+#
+#   1. `SHARE_MINORITY_I_MIN_A` 0.30 -> 0.15 A, the light-load conduction floor.
+#      Everything else in this list follows from it or sits beside it.
+#        closed-loop gate      2 * I_min      0.60 -> 0.30 A  (exit 0.25 A)
+#        minority clip band    [I_min/I, 1 - I_min/I], half the former inset
+#        clamp reachability    max(1.25/0.85, 1.25 + I_min)  1.55 -> 1.4706 A
+#      ⚠️ THE REACHABILITY THRESHOLD CHANGED HANDS, and that matters more than
+#      the number: at 0.30 A the CONDUCTION FLOOR was the tighter term, at
+#      0.15 A the BAND EDGE 1.25/DROOP_R_MAX is. Every "1.55 A" this file used
+#      to carry is now 1.4706 A, and every bound that was really a statement
+#      about the conduction clip has to be re-read as a statement about
+#      DROOP_R_MAX. `fw26-clamp-joint` is where that bit: its 1.65 A step
+#      total lost its structural bound and was re-derived to 1.57 A - see the
+#      fw v27 rev 2 block on that entry.
+#   2. THE BATTERY-ONLY START. The fuel cell is cut at every profile start -
+#      in an HIL build, the State 1 -> State 2 Run entry - and re-enters on the
+#      one tick the filtered total first crosses the 0.30 A gate. SW_FC_BUS
+#      therefore reads LOW at the start of every run that reaches Run and rises
+#      EXACTLY ONCE. This is a VALUE change on an unchanged frame.
+#   3. THE LOAD-SCHEDULED DROOP SCALE.
+#      k_d = max(K_DROOP, RE_MAX * clamp(I_min/I_filt, 0.15, 0.5) * 0.9), with
+#      RE_MAX 2.013619 ohm and SHARE_KD_SAFETY 0.9. At and above the crossover
+#      RE_MAX * 0.9 * 0.15 / 0.30 = 0.9061287 A of FILTERED total, k_d IS
+#      K_DROOP and every fw v26 code is bit-identical. EVERY REGISTERED
+#      fw26-clamp WINDOW IS ABOVE THAT CROSSOVER (the lowest is 1.200 A), so the
+#      schedule's ACTIVE branch has NO stimulus in this suite - see the
+#      DIRECTION-ONLY section.
+#   4. The g-guard at `setDroopMdac()`, and bench-log format version 8. Neither
+#      is on the observation frame; see the frame inventory beside
+#      `_gguard_signals()`.
+#
+# WALKED PREDICTIONS. `tools/ems_walk.py`, miniforge, governor on, ONE PROCESS
+# PER LEG (the SDP strategies carry module state across walks and a batched run
+# gives wrong numbers - found the hard way this round), invoked as
+#     C:/Users/ricky/miniforge3/python.exe -c "import sys; sys.path.insert(
+#         0,'tools'); import ems_walk as W, hil_plant_sim as S;
+#         print(W.walk(S.SCENARIOS['<scen>']['ems'], '<scen>', governor=True,
+#                      loss_map=S.plant_loss_map(), dv0_v=0.013522,
+#                      droop_scale_fc=0.9434).h2_g)"
+# i.e. the SAME flags the aux-era table above was walked with, so the only thing
+# that changed between the two columns is the firmware. `h2_g` is the physical
+# accounting, the live `h2_cum_g` column's analogue.
+#
+#   leg                  fw v26 (aux era)   fw v27 rev 2      delta
+#   ems-mpc                 0.0067806        0.0073088       +7.79 %
+#   ems-sdp                 0.0115316        0.0120390       +4.40 %
+#   ems-soc-band            0.0110706        0.0109792       -0.83 %
+#   ems-sdp-braking         0.0176278        0.0200024      +13.47 %
+#   ems-sdp-cross           0.0189015        0.0187632       -0.73 %
+#   ems-ftp75-5050          0.0256472        0.0240084       -6.39 %
+#   ems-ftp75-sdp           0.0159257        0.0162935       +2.31 %
+#   ems-ftp75-socband       0.0348699        0.0379739       +8.90 %
+#   ems-ftp75-mpc           0.0164688        0.0195539      +18.73 %
+#   ems-ftp75c-5050         0.0046099        0.0000000        -100 %
+#   ems-ftp75c-sdp          0.0068658        0.0000000        -100 %
+#   ems-ftp75c-mpc          0.0016383        0.0000000        -100 %
+#
+# Legs with no aux-era row to compare against, walked here for the first time:
+#   ems-dp-replay 0.0111297   ems-drive-cycle 0.0030069
+#   ems-mpc-cross 0.0090403   ems-mpc-det 0.0094011   ems-mpc-single 0.0049445
+#     ⚠️ `ems-mpc-single` RE-WALKED 2026-09-03 (H2 fix): 0.0050822 -> 0.0049445,
+#     -2.71 %. `mpc_ems.ShadowGovernor` never armed the battery-only start, so
+#     the shadow rolled single-source admissibility from a state with FC_BUS
+#     HIGH while the board and `ems_walk` both start with it LOW. The arm is
+#     now taken in the shadow's constructor and `reset()`, at the same profile
+#     boundary the walk uses. The OTHER FIVE MPC legs are BIT-IDENTICAL under
+#     the fix (ems-mpc, -det, -cross, ftp75-mpc, ftp75c-mpc): the shadow's
+#     switch beliefs reach nothing but the single-source admissibility roll,
+#     and only `ems-mpc-single` arms that feature.
+#   ems-sdp-alpha-cal 0.0120390   ems-sdp-alpha-charge 0.0143819
+#   ems-sdp-alpha-greedy 0.0011157
+#   ems-ftp75-dp 0.0347557    ems-ftp75c-dp 0.0000000
+#   ems-ftp75c-socband 0.0039450
+#
+# THE SIGN IS NOT ONE SIGN, and the mechanism is the WIDER CLIP BAND. A commanded
+# share that the 0.30 A floor used to clip toward 0.50 is now delivered, so
+# hydrogen moves in whichever direction that strategy was ASKING to move: the
+# fuel-cell-leaning policies (`ems-sdp`, both `ems-*-mpc` legs, `soc-band` on
+# FTP-75) burn MORE, and the battery-leaning ones (`hold-5050` on FTP-75,
+# `ems-sdp-alpha-greedy`) burn LESS. Do NOT apply a single era percentage.
+#
+# ⚠️ TWO LIVE BANDS ARE NOW UNREACHABLE, AND NEITHER IS WIDENED HERE.
+#   `ems-ftp75c-mpc`      `mpc_h2_accounted` floor 0.001521 g; walk 0.000000 g.
+#   `ems-sdp-alpha-greedy` `alpha_h2_accounted` floor 0.003070 g; walk
+#                          0.0011157 g, 64 % under it.
+# Both carry `_FW27_ERA_PROVISIONAL` so campaign G reads the FAIL as this era's
+# consequence rather than as a board defect. They are not moved because the
+# right fix is not a number: see the ftp75c item below, and, for alpha-greedy,
+# because its band is copied from `live_picks.json`'s `walk_h2_g` - a committed
+# sweep artifact solved at the fw v26 governor, which must be re-solved rather
+# than overridden here.
+#
+# ⚠️ THE COMPRESSED CYCLE RUNS BATTERY-ONLY FROM END TO END. This is the single
+# largest consequence of the round and it is a SCENARIO finding, not a bug.
+# `ftp75c`'s peak two-source total is 0.2709 A - BELOW the 0.30 A closed-loop
+# gate for the entire 170 s cycle - so the battery-only arm never releases, the
+# fuel cell never returns to the bus, and all four charge-free legs walk to
+# h2 = 0.000000 g and dSoC = -0.0030361 IDENTICALLY. The cycle can no longer
+# discriminate one energy-management strategy from another, because the
+# governor never lets any of them act. `ems-ftp75c-socband` is the sole
+# exception at 0.0039450 g: it opens a charge window, and inside one
+# `assertFcChargeEnable()` SUPPRESSES the arm (design record section 9.5), which
+# is the one path by which the fuel cell reaches the bus on this cycle.
+# THE FIX IS A STIMULUS DECISION FOR THE OPERATOR, not a band: either raise the
+# cycle's load above the gate, or accept that ftp75c is now a regen/physics leg
+# and retire its EMS comparison. Queued, not taken.
+#
+# ⚠️ `ems-ftp75c-socband` WILL CUT AND RESTORE FC_BUS ONCE PER CHARGE WINDOW,
+# AND THAT IS PRE-CLASSIFIED HERE (M2, 2026-09-03) so campaign G does not read
+# it as a defect. The arm is SUPPRESSED inside an FC-charge window, not
+# DISARMED (design record section 9.5): `assertFcChargeEnable()` /
+# `_charge_path_claim_bt()` re-closes FC_BUS on window entry because the charge
+# path needs it, and on window EXIT the arm - still armed, since the filtered
+# total never reached the 0.30 A gate on this cycle - re-takes ownership and
+# cuts FC_BUS again. So the leg's FC_BUS trace is
+#     LOW from profile start, then one RISE per charge window and one FALL at
+#     each window's close, and LOW again to the end of the run.
+# WALKED (2026-09-03, the invocation above): FIVE windows -
+#     107.9-112.6, 120.1-130.0, 146.5-146.6, 150.0-150.5, 151.6-155.1 s
+# and the fuel cell carries current ONLY inside them (in-window peak `I_fc`
+# 0.621-0.695 A; 192 of 1800 stages non-zero). h2 0.0039450 g at dSoC
+# -0.001742, i.e. the walk's headline figure ALREADY CONTAINS the repeated
+# cycle - it is not a single window's hydrogen.
+#
+# THE `sw_ring` EVENTS THIS PRODUCES ARE ESTIMATOR ARTEFACTS OF THE KNOWN
+# CLASS. The estimator adds a fixed 1.95 V Death-5 load-dump term at every cut
+# above 50 mA, and the walk's stage grid (0.1 s) puts `I_fc` at 0.023-0.034 A on
+# the last in-window stage while the in-window peak is ~0.65 A - so whether a
+# given cut lands over the 50 mA threshold is a function of where in the demand
+# the window closes, not of the board. Read a `sw_ring` FAIL on this leg as the
+# campaign-D `regen-harvest-true` classification (a fixed load-dump term on a
+# lightly loaded node), and score the cut/restore COUNTS against the five
+# windows above rather than against zero.
+#
+# HI-FI-ONLY / DIRECTION-ONLY ANCHORS - NOT RE-WALKED, and none is widened.
+#   scp-inrush      Idle-only; it has no `pi_timeline` and no `ems`, so the
+#   bringup         board never leaves State 1, the State 1 -> 2 profile
+#   comm-loss       boundary is never crossed, and the battery-only arm never
+#                   fires. The share loop does not run outside Run at all.
+#                   DIRECTION: unmoved, and this is an argument rather than a
+#                   guess.
+#   handoff-sag     Runs at 3.0 s with no load, so the arm fires and releases
+#                   on the t = 4.0 s velocity command; the scenario's OWN
+#                   share-0.0 cut at t = 6.0 s then re-opens FC_BUS, and
+#                   `fc_bus_open`'s window is (8.0, 20.0). DIRECTION: the cut
+#                   the check scores is unmoved; ONE extra fall/rise pair
+#                   appears between 3.0 and 4.2 s, outside every window.
+#   share-staircase Phase A stops reaching a governor rail at all (see that
+#                   entry's header). Both its current checks still pass, with
+#                   MORE margin; the CLIP COVERAGE is what is lost.
+#   ⚠️ ems-y-b00-v1 THE ONE REGISTERED LEG AT RISK, and it is flagged rather
+#                   than patched. It carries no preload, and its steady
+#                   two-source total at the profile's 1.0 m/s peak is 0.2796 A
+#                   - 6.8 % BELOW the 0.30 A gate (computed from
+#                   `gen_dp_ems_table.build_demand()` at a held setpoint; 0.6 /
+#                   1.0 / 1.5 / 2.0 / 3.0 m/s give 0.1944 / 0.2796 / 0.4047 /
+#                   0.5505 / 0.9061 A). Only the profile's ACCELERATION
+#                   transients, where the drive controller rails, can carry the
+#                   filtered total over the gate and release the arm, and no
+#                   offline model in this repository covers that rail. If the
+#                   arm has NOT released by region 6 (t = 22.0 s), FC_BUS is
+#                   still low when the profile commands share 1.00, the latch's
+#                   last-source guard REFUSES the BT cut, and `bt_bus_cut`
+#                   fails - taking the leg's whole cut-and-restore objective
+#                   with it. The arm does disarm on that same out-of-band
+#                   command (design record section 9.4), but disarming does not
+#                   undo a standing cut. WATCH THIS LEG FIRST in campaign G,
+#                   and read a `bt_bus_cut` FAIL as this, not as a latch defect.
+#                   `ems-y-b30-v1` is NOT at risk: its 0.85 A preload puts the
+#                   total over the gate on the preload ramp.
+#
+# WHAT DOES NOT MOVE, stated so a reader does not go looking:
+#   * `fw26-clamp-cruise`. Re-derived at the new floor and UNCHANGED on every
+#     axis: the structural bound is min(0.85 * 2.00, 2.00 - 0.15) = 1.70 A
+#     against a 1.50 A demand, so the clip does not bind and the 1.25 A ceiling
+#     governs exactly as it did at min(1.70, 1.70) = 1.70 A. The walk still
+#     gives duty 1.0000, I_fc 1.2500 A, I_batt 0.7500 A, r 0.6125, phase B
+#     0.8000 A. 2.00 A is above both the old 1.55 A and the new 1.4706 A
+#     reachability threshold.
+#   * The five CLAMPED regions of `fw26-clamp-sweep`, and its four sub-threshold
+#     regions commanded at 0.20 / 0.40 / 0.50. Only the three SHARE-0.84
+#     sub-threshold regions (1, 3, 8) moved - the old clip was what held them
+#     back. See that entry's re-walked region table.
+#   * The `fw26-clamp-joint` SETTLED point: I_fc 1.2500 A, I_batt 0.4000 A,
+#     r 0.7524, mdac (4906, 6560). Only the TRANSIENT peak and the clamp-ABSENT
+#     arm moved.
+#   * Every k_d-derived code in this suite, because every registered fw26 window
+#     sits above the 0.9061287 A crossover.
+#   * The bleed era, the aux era, the charger era, the asymmetry era and the
+#     regen credit. fw v27 is a firmware change; the plant is untouched.
+_FW27_ERA_PROVISIONAL = (
+    "fw v27 rev 2 era (I_min 0.30 -> 0.15 A, gate 0.60 -> 0.30 A, scheduled "
+    "k_d, battery-only start; docs/fw27_governor_package.md): re-walked for "
+    "fw v27 rev 2, 2026-09-03, NOT measured on the board. Campaigns <= "
+    "hil_report_20260903_063659 ran fw v26 and their numbers are NOT "
+    "comparable. Pin on campaign G.")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Which scenarios EXPECT the board to latch a fault.
@@ -1799,6 +2020,17 @@ FAULT_EXPECTATIONS = {
         #     measured 1.4866 A drain peak, so I_fc = 1.1866 A — 15.2 % under
         #     LIMIT_I_FC_MAX 1.4 A — with the BT minority at exactly
         #     SHARE_MINORITY_I_MIN_A 0.30 A, governed rather than starved.
+        #     ⚠️ fw v27 rev 2 (2026-09-03) RE-DERIVES THIS BUDGET, and the
+        #     bound below still holds. At I_min 0.15 the clip band at the same
+        #     1.4866 A drain peak opens to [0.1009, 0.8991], so the commanded
+        #     0.85 is now INSIDE it and is delivered: I_fc = 0.85 * 1.4866 =
+        #     1.2636 A, 9.7 % under LIMIT_I_FC_MAX rather than 15.2 %, with the
+        #     BT minority at 0.2230 A. That is still 0.0364 A under the 1.30 A
+        #     `_ALPHA_FC_CEIL` / `sdpx_fc_peak_bounded` budget, so no bound
+        #     moves — but the margin HALVED and the first fw v27 campaign is
+        #     what re-pins it. The minority current is also now 0.073 A above
+        #     the floor rather than sitting exactly on it, which is the
+        #     conduction question section 8.2 of the design record raises.
         #     (⚠️ DI-LOW-3: 1.4866 / 1.1866 A / 15.2 % are the campaign
         #     20260831_191509 MEASURED peaks over the t = 20..38 plateau; the
         #     1.462 / 1.162 A / 17 % this block used to quote were the
@@ -2518,7 +2750,12 @@ _Y_FC_FLOOR = {1.0: 0.65, 3.0: 0.85}
 _Y_SHARE_CLIP_TOL = 0.005
 # Y_AUX_LOAD_A must keep the SOURCE TOTAL above the firmware's closed-loop
 # governor gate (SHARE_MINORITY_I_MIN_A 0.30 A on each side => break-even
-# I_tot 1.000 A at the 0.70/0.30 clip), or the governor re-engages and clips
+# I_tot 1.000 A at the 0.70/0.30 clip; ⚠️ at the fw v27 rev 2 floor of 0.15 A
+# the break-even HALVES to 0.500 A, so the 1.02 A floor below becomes
+# conservative by 2x rather than by 2 %. It is NOT lowered — it is a stimulus
+# guard, and a preload that fell under 1.0 A would still be a scenario defect
+# — but a fw v27 campaign that misses it is missing the LOAD, never the
+# governor), or the governor re-engages and clips
 # the delivered share BEFORE the setpoint latch does — silently turning the
 # bands above into assertions about the governor instead.
 # MEASURED, campaign 20260831_222036, over the hi window: I_tot 1.0644 A min
@@ -3199,6 +3436,13 @@ FAULT_EXPECTATIONS["ems-ftp75-socband"] = {
         #    idle governed value at 0.516 A.  The old floor was therefore
         #    UNREACHABLE in exactly the segments it claimed to cover; the check
         #    only ever passed on moving ones, which nobody had written down.
+        #    ⚠️ fw v27 rev 2 (2026-09-03) MOVES THIS DERIVATION IN THE SAFE
+        #    DIRECTION, so the floor is left alone. At I_min 0.15 the clip at
+        #    I_tot = 0.800 A is [0.1875, 0.8125], the commanded 0.75 is INSIDE
+        #    it, and the delivered current rises 0.500 -> 0.600 A. Every floor
+        #    written against the clipped value therefore gains headroom rather
+        #    than losing it. The floor is NOT raised on a walk: the first fw v27
+        #    campaign's own idle segments are what re-pin it.
         #
         #    ⚠️ RE-DERIVED AGAIN 2026-08-31 (DI-MED-1): 0.70 -> 0.95, and the
         #    discrimination claim restated in the terms the check is actually
@@ -4706,7 +4950,9 @@ FAULT_EXPECTATIONS["ems-mpc-det"] = _mpc_expectation(
 # +/-25 % band on a quantity that halves with one decision is a plumbing check
 # and nothing more, and it is labelled as one.
 FAULT_EXPECTATIONS["ems-mpc-single"] = _mpc_expectation(
-    scenario="ems-mpc-single", walk_h2=0.004770, duration_s=61.0,
+    # RE-WALKED 2026-09-03 (H2): 0.004770 -> 0.004945, the shadow governor's
+    # battery-only arm. Band is walk x [0.75, 1.25] and remains informational.
+    scenario="ems-mpc-single", walk_h2=0.004945, duration_s=61.0,
     survive_t=50.0, run_window=(5.0, 58.0),
     # The walk's commanded range is 0.675 here against `ems-mpc-det`'s 0.525:
     # the low rail is now 0.0, not 0.15.  Floor ~0.6x, the family's rule.
@@ -5540,6 +5786,46 @@ FAULT_EXPECTATIONS["ems-sdp-alpha-charge"] = _alpha_expectation(
           "guard withdraws) plus the 13.09 s cruise window."))
 
 
+# ═════════════════════════════════════════════════════════════════════════════
+# fw v27 rev 2 (2026-09-03): THE TWO H2 FLOORS THE ERA MAKES UNREACHABLE
+#
+# Applied HERE, after both entries exist, rather than inside their builders:
+# each builder serves four or three legs and only ONE of each set is affected,
+# so threading a per-leg note through them would put the era's name on legs the
+# era does not move.
+#
+# NEITHER FLOOR IS LOWERED. The walked figures and the reason each is left alone
+# are in the FW27-ERA block above; in short, `ems-ftp75c-mpc` needs a STIMULUS
+# decision (the whole compressed cycle now runs battery-only) and
+# `ems-sdp-alpha-greedy`'s band is copied from a committed sweep artifact that
+# must be re-solved at the fw v27 governor rather than overridden here. The note
+# makes a campaign-G FAIL read as this era's known consequence.
+for _leg, _spec_name, _walk_g in (("ems-ftp75c-mpc", "mpc_h2_accounted", 0.0),
+                                  ("ems-sdp-alpha-greedy", "alpha_h2_accounted",
+                                   0.0011157)):
+    for _s in FAULT_EXPECTATIONS[_leg]["signals_require"]:
+        if _s.get("name") == _spec_name:
+            _s["provisional_note"] = (
+                (_s.get("provisional_note", "") + ". ")
+                + _FW27_ERA_PROVISIONAL
+                # ASCII, deliberately: this string is BUILT AT RUNTIME and
+                # printed to the operator's console, where a non-cp1252 glyph
+                # has killed campaign runs before (the 2026-09-02 encoding
+                # trap). The comment banners in this file may carry the glyph;
+                # runtime strings may not.
+                + (" WARNING: THE fw v27 rev 2 WALK PUTS THIS LEG AT %.7f g, "
+                   "BELOW "
+                   "THIS FLOOR, so a campaign-G FAIL here is the ERA and not "
+                   "the board. The floor is deliberately NOT lowered - see the "
+                   "FW27-ERA block." % _walk_g))
+            break
+    else:                                                    # pragma: no cover
+        raise AssertionError(
+            "FAULT_EXPECTATIONS[%r] has no signal named %r: the fw v27 era note "
+            "would be silently dropped" % (_leg, _spec_name))
+del _leg, _spec_name, _walk_g, _s
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # mppt-tracking  —  the Ag105 MPPT input-voltage threshold, closed-loop
 #
@@ -6278,6 +6564,24 @@ FAULT_EXPECTATIONS["pi-silence"] = {
 #       SHARE_MINORITY_I_MIN_A/I_tot = [0.25, 0.75], and the staircase steps
 #       0.80 -> 0.20 straddles both.  The clip band campaign TP0170-0180 measured
 #       incidentally is now a DESIGNED observable, swept in both directions.
+#       ⚠️ fw v27 rev 2 (2026-09-03): PHASE A'S OBJECTIVE IS LOST, AND NO
+#       NUMBER BELOW MOVES. At I_min 0.15 the rails at this 1.20 A total open to
+#       [0.125, 0.875], which lies OUTSIDE the droop band [DROOP_R_MIN 0.15,
+#       DROOP_R_MAX 0.85] — so the band, not the minority clip, is what binds,
+#       and the staircase's 0.80 and 0.20 steps are both INSIDE it. The board
+#       will now deliver the commanded values instead of the railed ones:
+#       I_fc 0.80 x 1.20 = 0.96 A at the top (was the railed 0.75 x 1.20 =
+#       0.90 A) and 0.24 A at the bottom (was 0.30 A). BOTH `fc_high_step`
+#       (>= 0.80 A) and `fc_redistributed` (a fall of >= 0.50 A; the fall is now
+#       0.72 A, was 0.60 A) still pass, with MORE margin, and the 0.80 floor
+#       still separates the true run from a run that ignored the command and
+#       held 0.50 (0.60 A). They are therefore LEFT EXACTLY AS WRITTEN.
+#       What is lost is the CLIP OBSERVABLE: phase A no longer reaches a
+#       governor rail at all, so this leg stops being the suite's coverage of
+#       the minority clip. Recovering it needs a LOWER total — the rails bind
+#       only where I_min/I_tot > DROOP_R_MIN, i.e. below I_tot = 1.00 A — and
+#       that is a stimulus change in `hil_plant_sim.STAIRCASE_LOAD_A`, queued
+#       rather than made here.
 #   PHASE B, I_tot ~ 0.55 A — the setpoint excursions 0.95 / 0.05 are outside
 #       [DROOP_R_MIN 0.15, DROOP_R_MAX 0.85], so updateShareSetpointCutoff()
 #       (.ino:9231-9257) cuts BT_BUS then FC_BUS.  The latch needs the DOOMED
@@ -6307,6 +6611,227 @@ _SS_LATENCY_MAX_MS = 40.0     # 20 (command phase) + 1 (share tick)
 # 2 s after the stimulus — five times the tripwire.
 _SS_BT_CUT_T, _SS_BT_RESTORE_T = 33.0, 36.0
 _SS_FC_CUT_T, _SS_FC_RESTORE_T = 39.0, 42.0
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# fw v27 rev 2 — THE BATTERY-ONLY START, and the g-guard, as CAMPAIGN-G CHECKS
+#
+# THE MECHANISM (docs/fw27_governor_package.md section 9). From every profile
+# start until the share loop first closes, `updateShareSetpointCutoff()` is fed
+# an effective setpoint of 0.0, so the fuel cell is cut through the existing
+# share-zero path and the battery carries the whole load. The arm is one-shot:
+# it is dropped the instant the governor's filtered total crosses the
+# closed-loop gate `2 * SHARE_MINORITY_I_MIN_A` = 0.30 A, and nothing re-arms it
+# until the next profile boundary. In an HIL build the profile boundary is the
+# State 1 -> State 2 Run entry, so `FC_BUS_ENABLE` reads LOW at the start of
+# EVERY run that reaches Run, and rises exactly once.
+#
+# ⚠️ WHAT THE 18-BYTE OBSERVATION FRAME CAN AND CANNOT SHOW. Read this before
+# writing any fw v27 check; three of the four mechanisms are only PARTLY
+# observable and one is not observable at all. The frame (docs/HIL_MODE.md, and
+# fw v27 does NOT change it — design record section 14) carries, in full:
+#   byte 2  mainState
+#   byte 3  switch_state   SW_FC_BUS / SW_BT_BUS / SW_MOT_PWR / SW_REGEN /
+#                          SW_FC_CHARGE / SW_BT_SEQ
+#   byte 4  aux            bit0 FC_REG, bit1 BT_REG, bit2 MPPT_DISABLE,
+#                          bit3 CBAL_DISABLE, bit4 FC ceiling binding,
+#                          bit5 BT ceiling binding.  BITS 6 AND 7 ARE FREE AND
+#                          fw v27 DOES NOT USE THEM.
+#   bytes 5-8   the post-clamp motor current command
+#   bytes 9-12  the two raw AD5443 words, mdac_fc / mdac_bt
+#   bytes 13-14 fault_flags,  byte 15 mppt_thresh_cnt,  byte 16 error_code
+#
+# Consequently:
+#   OBSERVABLE   the battery-only start itself — SW_FC_BUS low, then its single
+#                rising edge — and, through that edge, the 0.30 A GATE: the
+#                re-entry tick IS the tick the filtered total first exceeded the
+#                gate, delayed only by the survivor blanking and one command
+#                period. That edge is the ONLY gate observable the wire has.
+#   OBSERVABLE   the live droop scale `k_d`, but ONLY as the code pair it maps
+#                through: `g = k_d / (RE_MAX * r)` and the two words are on the
+#                frame. A code pin is therefore a k_d pin at a KNOWN total and a
+#                known applied ratio, and nothing weaker.
+#   NOT OBSERVABLE  the closed-loop MODE. There is no closed-loop-mode bit and
+#                no submode field; hold / feedforward / closed are
+#                indistinguishable on the wire. A check that wants "the loop was
+#                closed" must infer it from the FC_BUS rise or not assert it.
+#   NOT OBSERVABLE  `k_d` as a NUMBER, and `g_clamp_count` at all. Both are
+#                BLG format-version-8 record fields (design record section 13.2,
+#                offsets 108 and 106) and `'S'`-dump lines. They are BENCH-ONLY.
+#                The g-guard's count can therefore NOT be asserted from a
+#                campaign; what CAN be asserted is the guard's own precondition
+#                — that no MDAC word ever reached full scale — because a clamped
+#                write is exactly a full-scale word, and the words are on the
+#                frame. `_gguard_signals()` below is that check.
+#
+# THE HAZARD TRIPWIRES DO NOT FIRE ON THIS. Stated because it is the first thing
+# a reader will ask. `share_cut_load_hazard` flags a bus-switch `en_low` cut
+# carrying more than SHARE_CUT_MAX_HANDOFF_A = 0.5 A. The battery-only cut is
+# taken at the Run entry, before any scenario applies its load, so it cuts
+# I_AUX_A / 2 = 0.045 A — and it could not exceed 0.5 A in any case, because the
+# fw v25 load guard the cut inherits DEFERS above exactly that figure. The
+# `sw_ring` estimator likewise ignores a cut under 50 mA, so the battery-only
+# cut emits no ring event either.
+_BATT_ONLY_GATE_A = 2.0 * gov_mod.GOV_CONST["SHARE_MINORITY_I_MIN_A"]   # 0.30 A
+# THE RE-ENTRY BUDGET, decomposed rather than chosen: the governor's ~20 ms load
+# EMA lags a ramp by one time constant (-1 ms / ln(0.95) = 19.5 ms), the
+# survivor's RT1987 turn-on is blanked for SHARE_CUT_SURVIVOR_BLANK_MS = 30 ms,
+# the Pi commands at ~50 Hz (20 ms of phase) and the observation stream costs
+# ~2 ms of round trip. That is 71.5 ms; 100 ms is 1.4x it. IT IS A REGRESSION
+# TRIPWIRE AND THE MEASURED VALUE IS THE DELIVERABLE — the latency kind prints
+# the figure into the check detail on pass and on fail, and campaign G is what
+# turns this into a measurement. Do not raise it to make a run go green.
+_BATT_ONLY_REENTRY_MAX_MS = 100.0
+# The margin the LOW window is inset by at each end: 100 ms is five Pi command
+# periods, so neither the cut's own arrival nor the re-entry can decide it.
+_BATT_ONLY_EDGE_S = 0.10
+
+
+def _batt_only_gate_cross_s(preload_a):
+    """Sim time at which a scenario's auxiliary preload ramp first carries the
+    two-source total past the closed-loop gate.
+
+    `scenario_aux_preload_a()` ramps LINEARLY from `AUX_PRELOAD_START_S` over
+    `SOC_LOAD_RAMP_S`, and the only other bus load on these three motor-free /
+    standstill legs is `I_AUX_A`, so the crossing is arithmetic:
+
+        I_AUX_A + preload_a * (t - START) / RAMP = 2 * SHARE_MINORITY_I_MIN_A
+
+    The figure is the RAW crossing. The governor gates on the FILTERED total, so
+    the real re-entry is strictly later — which is why the LOW window closes
+    before this instant and the latency check measures FROM it."""
+    need = _BATT_ONLY_GATE_A - I_AUX_A
+    if not 0.0 < need < preload_a:
+        raise ValueError(
+            "the battery-only gate crossing is not inside this preload ramp: "
+            "need %.4f A of preload against a plateau of %.4f A"
+            % (need, preload_a))
+    return AUX_PRELOAD_START_S + SOC_LOAD_RAMP_S * need / preload_a
+
+
+def _batt_only_signals(tag, preload_a, hold_end_s, note):
+    """The four battery-only-start checks for one scripted-preload leg.
+
+    Generated rather than written out three times so the three fw26 legs cannot
+    drift apart on a mechanism none of them is about — and so a scenario edit
+    that moves `AUX_PRELOAD_START_S`, `SOC_LOAD_RAMP_S` or the preload plateau
+    moves all twelve windows at once.
+
+    `hold_end_s` is the instant the leg's OWN first scored window opens; the
+    edge census runs up to it so that "exactly one rise" covers the whole span
+    between the Run entry and the first check that assumes FC_BUS is high."""
+    cross = _batt_only_gate_cross_s(preload_a)
+    lo_t0 = EMS_RUN_ENTRY_S + _BATT_ONLY_EDGE_S
+    lo_t1 = cross - _BATT_ONLY_EDGE_S
+    assert lo_t0 < lo_t1 < hold_end_s, (
+        "%s: the battery-only window (%.4f, %.4f) must be non-empty and must "
+        "close before the leg's first scored window at %.2f s"
+        % (tag, lo_t0, lo_t1, hold_end_s))
+    return [
+        {"name": "%s_battonly_fc_off" % tag, "switch_bit": SW_FC_BUS,
+         "max_ticks": 0, "t_window": (lo_t0, lo_t1),
+         "provisional_note": _FW27_ERA_PROVISIONAL,
+         "vacuity_note": ("the switch column cannot be blank across this "
+                          "window: `%s_battonly_reentry` below measures a "
+                          "RISING edge of the same bit later in the same run, "
+                          "and the leg's own bus-hold floor asserts the bit "
+                          "SET for tens of thousands of ticks after that. A "
+                          "zero count here is a read of FC_BUS, not an absent "
+                          "column." % tag),
+         "label": "FC_BUS_ENABLE was LOW for the whole battery-only window "
+                  "(%.2f-%.2f s; the arm is set at the Run entry %.1f s and "
+                  "the two-source total first reaches the %.2f A closed-loop "
+                  "gate at %.4f s on this leg's own preload ramp). %s"
+                  % (lo_t0, lo_t1, EMS_RUN_ENTRY_S, _BATT_ONLY_GATE_A,
+                     cross, note)},
+        {"name": "%s_battonly_bt_carried" % tag, "switch_bit": SW_BT_BUS,
+         "min_ticks": int(1000.0 * 0.8 * (lo_t1 - lo_t0)),
+         "t_window": (lo_t0, lo_t1),
+         "provisional_note": _FW27_ERA_PROVISIONAL,
+         "label": "... and the BATTERY carried it: BT_BUS_ENABLE high for "
+                  ">= 80 %% of the same window. The battery-only start is a "
+                  "SINGLE-SOURCE topology, not a dark bus, and this is the "
+                  "half of that claim FC_BUS cannot make"},
+        {"name": "%s_battonly_reentry" % tag, "switch_bit": SW_FC_BUS,
+         "edge": "rise", "after_t": cross,
+         "max_ms": _BATT_ONLY_REENTRY_MAX_MS,
+         "t_window": (lo_t0, hold_end_s),
+         "provisional_note": _FW27_ERA_PROVISIONAL,
+         "label": "the fuel cell re-entered within %.0f ms of the %.2f A gate "
+                  "crossing at %.4f s (budget: 19.5 ms of governor EMA lag + "
+                  "%d ms of survivor blanking + 20 ms of command phase + "
+                  "~2 ms of round trip = 71.5 ms). THIS EDGE IS THE ONLY GATE "
+                  "OBSERVABLE THE 18-BYTE FRAME CARRIES - there is no "
+                  "closed-loop-mode bit"
+                  % (_BATT_ONLY_REENTRY_MAX_MS, _BATT_ONLY_GATE_A, cross,
+                     SHARE_CUT_SURVIVOR_BLANK_MS)},
+        {"name": "%s_battonly_one_rise" % tag, "switch_bit": SW_FC_BUS,
+         "edge_count_between": (1, 1), "edge": "rise",
+         "t_window": (lo_t0, hold_end_s),
+         "provisional_note": _FW27_ERA_PROVISIONAL,
+         "label": "EXACTLY ONE FC_BUS rising edge between the Run entry and "
+                  "%.2f s - the battery-only re-entry and nothing else. Two "
+                  "edges is a cut/restore ring on the handover, zero is an arm "
+                  "that never released" % hold_end_s},
+    ]
+
+
+# ── THE g-GUARD, as far as the wire can carry it ─────────────────────────────
+# `g_clamp_count` (design record section 10.2) is a BLG v8 record field and an
+# `'S'`-dump line; it is NOT on the observation frame and a campaign cannot read
+# it. What a campaign CAN read is the guard's own precondition, because the
+# guard sits at `setDroopMdac()`'s `constrain()` and a clamped write is exactly
+# a FULL-SCALE AD5443 word. So "the guard never fired" is observable as "neither
+# code ever reached full scale", on the frame's own mdac columns.
+#
+# THE BOUND IS NON-VACUOUS. Full scale is MDAC_CMD_LOAD_UPDATE | MDAC_RES =
+# 0x1000 | 4095 = 8191, and the largest word any fw26-clamp leg can legitimately
+# command is g = K_DROOP / (RE_MAX * DROOP_R_MIN) = 0.30 / (2.013619 * 0.15) =
+# 0.9934 -> code 4068 -> word 8164, which is 27 codes clear of the bound. The
+# guard is in any case UNREACHABLE on these three legs — it needs `k_d` above
+# `K_DROOP`, i.e. a filtered total under the 0.9061287 A crossover, and the
+# lowest total any of them holds is 1.200 A — so a fire here is a schedule
+# defect, not a light-load artefact.
+# -- THE MDAC CODE BAND, shared by all three fw26 legs -----------------------
+# Declared here rather than in the `fw26-clamp-sweep` section it grew up in:
+# `fw26-clamp-cruise`'s entry is built FIRST and gained its own code pin in
+# the fw v27 round, so a definition further down the file was a NameError.
+_FW26_MDAC_NIBBLE = gov_mod.GOV_CONST["MDAC_CMD_LOAD_UPDATE"]     # 0x1000
+_FW26_SWEEP_MDAC_TOL = 0.02          # standstill regions, code-space
+
+
+def _fw26_mdac_band(word, tol):
+    """[lo, hi] raw-word bounds for a walked word at `tol` in CODE space.
+
+    The nibble is stripped, the tolerance applied to the 12-bit gain code, and
+    the result offset back into word space -- so a 2 % band is 2 % of the
+    quantity that actually moves (M1)."""
+    code = int(word) & 0x0FFF
+    lo = _FW26_MDAC_NIBBLE + int(code * (1.0 - tol))
+    hi = _FW26_MDAC_NIBBLE + int(code * (1.0 + tol)) + 1
+    return lo, hi
+
+
+_GGUARD_WORD_CEIL = (gov_mod.GOV_CONST["MDAC_CMD_LOAD_UPDATE"]
+                     + gov_mod.GOV_CONST["MDAC_RES"] - 1)          # 8190
+
+
+def _gguard_signals(tag, t_window):
+    """The two full-scale tripwires for one leg. See the block above."""
+    return [
+        {"name": "%s_no_mdac_saturation_%s" % (tag, col), "column": col,
+         "max_value": _GGUARD_WORD_CEIL, "t_window": t_window,
+         "provisional_note": _FW27_ERA_PROVISIONAL,
+         "label": "%s never reached the AD5443 full-scale word %d, so the "
+                  "fw v27 g-guard never clamped a write on this leg (the "
+                  "count itself is a BLG v8 field and is NOT on the "
+                  "observation frame). The guard is unreachable above the "
+                  "0.9061287 A droop-schedule crossover, which this leg is "
+                  "always above; the largest legitimate word here is 8164"
+                  % (col, _GGUARD_WORD_CEIL + 1)}
+        for col in ("mdac_fc", "mdac_bt")]
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # fw26-clamp-cruise — the fw v26 source current-ceiling clamp
 #
@@ -6390,6 +6915,47 @@ _CEILING_CADENCE_COVER = 0.98
 _CEILING_CADENCE_ROWS = int(1000.0 * (_CEILING_B1 - _CEILING_A0)
                             * _CEILING_CADENCE_COVER)          # 24990
 _CEILING_BUS_HOLD_TICKS = int(0.98 * _CEILING_CADENCE_ROWS)    # 24490
+# ── THE PHASE-A DROOP-CODE PIN (fw v27 rev 2, 2026-09-03) ───────────────────
+# Walked (mdac_fc, mdac_bt) over the phase-A settled window, clamp PRESENT and
+# clamp ABSENT, from `probe_fw26_clamp_walk.cruise()` at the plant's measured
+# asymmetry and the corrected split law. Derivation and the band's justification
+# are in the entry's own check 15 comment.
+_FW26_CRUISE_MDAC_TOL = _FW26_SWEEP_MDAC_TOL          # 0.02, the standstill band
+_FW26_CRUISE_MDAC_PIN = ((5092, 5670), (4914, 6491))  # (present, absent)
+
+
+def _fw26_cruise_mdac_signals():
+    """The phase-A code pins, generated so the band arithmetic and the
+    discrimination assertion cannot drift from the walked pair."""
+    out = []
+    present, absent = _FW26_CRUISE_MDAC_PIN
+    for col, want, refuse in zip(("mdac_fc", "mdac_bt"), present, absent):
+        lo, hi = _fw26_mdac_band(want, _FW26_CRUISE_MDAC_TOL)
+        assert not (lo <= refuse <= hi), (
+            "fw26-clamp-cruise %s: the +/- %.0f %% band [%d, %d] admits the "
+            "CLAMP-ABSENT value %d, so this pin cannot discriminate fw v25 "
+            "from fw v26 and cannot serve as the k_d bit-identity pin either"
+            % (col, 100.0 * _FW26_CRUISE_MDAC_TOL, lo, hi, refuse))
+        out.append(
+            {"name": "ceiling_%s_lo" % col, "column": col,
+             "floor_min_value": lo, "t_window": (_CEILING_A0, _CEILING_A1),
+             "provisional_note": _FW27_ERA_PROVISIONAL,
+             "label": "phase-A %s tracks the walk on every sample (>= %d; "
+                      "walked %d = 0x1000 | %d, +/- %.0f %% on the 12-bit "
+                      "CODE; clamp-absent %d). At a 2.00 A settled total the "
+                      "fw v27 droop schedule is above its 0.9061287 A "
+                      "crossover, so k_d IS K_DROOP and this word is the "
+                      "fw v26 closed form to the bit"
+                      % (col, lo, want, want & 0x0FFF,
+                         100.0 * _FW26_CRUISE_MDAC_TOL, refuse)})
+        out.append(
+            {"name": "ceiling_%s_hi" % col, "column": col,
+             "max_value": hi, "t_window": (_CEILING_A0, _CEILING_A1),
+             "provisional_note": _FW27_ERA_PROVISIONAL,
+             "label": "phase-A %s tracks the walk (<= %d; clamp-absent %d, "
+                      "refused by this band)" % (col, hi, refuse)})
+    return out
+
 
 FAULT_EXPECTATIONS["fw26-clamp-cruise"] = {
     "source": ("applyShareCurrentCeilings() (.ino:10273-10313) with "
@@ -6540,11 +7106,25 @@ FAULT_EXPECTATIONS["fw26-clamp-cruise"] = {
         # 12. AND NO CUT WAS EVEN ATTEMPTED. Zero rising edges on either bus
         #    switch: a cut followed by a restore would satisfy the two tick
         #    floors above and is exactly the failure they cannot see.
+        # ⚠️ fw v27 rev 2 (2026-09-03): THIS CHECK SURVIVES THE BATTERY-ONLY
+        #    START, and it survives BY ARITHMETIC rather than by luck, so the
+        #    arithmetic is written down. From fw v27 the fuel cell is cut at
+        #    every Run entry and rises ONCE when the filtered total crosses the
+        #    0.30 A gate. On this leg the preload ramps from
+        #    AUX_PRELOAD_START_S = 4.0 s to FW26_CLAMP_CRUISE_LOAD_A = 1.91 A
+        #    over SOC_LOAD_RAMP_S = 3.0 s, so the raw crossing is at
+        #    4.0 + 3.0 * (0.30 - 0.09) / 1.91 = 4.3298 s and the re-entry lands
+        #    within ~72 ms of it. This window opens at 8.5 s, 4.1 s later, so
+        #    the count of rising edges inside it is still ZERO and the check is
+        #    left EXACTLY as written. The battery-only edge is scored where it
+        #    belongs instead, by `cruise_battonly_one_rise` below, which asserts
+        #    it is the only one.
         {"name": "ceiling_no_switch_ring", "switch_bit": SW_FC_BUS,
          "edge_count_between": (0, 0), "edge": "rise",
          "t_window": (_CEILING_A0, _CEILING_B1),
          "label": "no FC_BUS rising edge in either phase - no cut, and "
-                  "therefore no sw_ring"},
+                  "therefore no sw_ring (the fw v27 battery-only re-entry is "
+                  "at ~4.40 s, 4.1 s before this window opens)"},
         # ── 13-14. THE STEP ITSELF (campaign E fix round, 2026-09-03) ────────
         # Every check above is INSET past the step, so the transient the clamp
         # actually has to survive was unscored - and the transient is where the
@@ -6571,7 +7151,39 @@ FAULT_EXPECTATIONS["fw26-clamp-cruise"] = {
                   "ENGAGING (MEASURED 35 ms in campaign E). Measured from the "
                   "aux bit's own rising edge, so the figure is the clamp's "
                   "settling and not the 3.3 - 17.7 ms Pi command cadence"},
-    ],
+        # ── 15. THE k_d SCHEDULE, as the only thing the wire can carry ───────
+        # fw v27 rev 2 adds a load-scheduled droop scale, and on the HIL rig the
+        # only observable is the code pair (see the frame inventory above). This
+        # leg is the cleanest place in the suite to pin it: the total is
+        # SETTLED at 2.00 A, motor-free, so it carries no drive-loop
+        # uncertainty, and 2.00 A is far above the 0.9061287 A crossover — so
+        # the schedule reduces to `k_d = K_DROOP` and every code must be the
+        # fw v26 closed form TO THE BIT. That is the on-board statement of
+        # `test_fw27_kd_bit_identical_above_crossover`.
+        #
+        # THE PAIR IS ALSO THE fw v25/v26 DISCRIMINATOR, so it is not a
+        # decoration. Walked clamp-PRESENT (5092, 5670) at the applied ratio
+        # 0.6125; clamp-ABSENT (4914, 6491) at 0.7454, where the fuel cell
+        # delivers the unclamped 1.5000 A. The BT code moves 34 % between the
+        # two arms and the FC code 22 %, and the 2 % band refuses the
+        # clamp-absent value on BOTH — asserted at import by
+        # `_fw26_cruise_mdac_signals()` rather than by eye.
+        #
+        # ⚠️ CAMPAIGN F'S CODE-MAPPING FINDING, and why 2 % is still the band.
+        # Campaign F adjudicated a FAIL in which `governor_model`'s mapping was
+        # exact at share 0.84 and +3.1 % at 0.50. That gap was the OLD split
+        # law and was CLOSED by the corrected one (fe92a50: rho 0.9434 plus the
+        # 0.033 ohm series floor), which reproduces the board's own region-10
+        # and region-12 pairs — both commanded at share 0.50, i.e. at the worst
+        # point of the old error — to within 1 code. This window's applied ratio
+        # 0.6125 sits between 0.50 and 0.84 and the board read 0.612185 over the
+        # same window in campaign F, 2.8e-4 away. The standstill 2 % band is
+        # therefore the right one here; it is flagged rather than widened.
+    ] + _fw26_cruise_mdac_signals()
+      + _batt_only_signals("cruise", FW26_CLAMP_CRUISE_LOAD_A, _CEILING_A0,
+                           "This is the first check in the suite that scores "
+                           "the fw v27 battery-only start.")
+      + _gguard_signals("cruise", (_CEILING_A0, _CEILING_B1)),
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -6648,21 +7260,62 @@ FAULT_EXPECTATIONS["fw26-clamp-cruise"] = {
 # Per region, over the settled window (region start + 2.5 s to region end):
 #
 #   reg   v    sp    I_tot    I_fc    I_batt   duty   mdac_fc  mdac_bt  clamp?
-#    1   0.0  0.84   1.200   0.9000   0.3000  0.000     4917     6464   no
+#    1   0.0  0.84   1.200   1.0080   0.1920  0.000     4824     7846   no
 #    2   3.0  0.84   2.016   1.2500   0.7663  1.000     5100     5648   YES
-#    3   0.5  0.84   1.284   0.9844   0.3000  0.000     4898     6641   no
-#    4   2.5  0.84   1.827   1.2500   0.5775  1.000     5000     5972   YES
-#    5   2.5  0.40   1.827   0.7310   1.0965  0.000     5723     5072   no
+#    3   0.5  0.84   1.284   1.0789   0.2055  0.000     4824     7854   no
+#    4   2.5  0.84   1.828   1.2500   0.5775  1.000     5000     5972   YES
+#    5   2.5  0.40   1.828   0.7310   1.0965  0.000     5723     5072   no
 #    6   3.0  0.84   2.016   1.2500   0.7663  1.000     5100     5648   YES
 #    7   3.0  0.20   2.016   0.4033   1.6130  0.000     7527     4838   no
-#    8   0.0  0.84   1.200   0.9000   0.3000  0.000     4917     6464   no
+#    8   0.0  0.84   1.200   1.0080   0.1920  0.000     4824     7846   no
 #    9   3.0  0.84   2.016   1.2500   0.7663  1.000     5100     5648   YES
 #   10   0.5  0.50   1.284   0.6422   0.6422  0.000     5376     5261   no
-#   11   2.5  0.84   1.827   1.2500   0.5775  1.000     5000     5972   YES
+#   11   2.5  0.84   1.828   1.2500   0.5775  1.000     5000     5972   YES
 #   12   0.0  0.50   1.200   0.6000   0.6000  0.000     5378     5259   no
 #
-# Whole run: 29996 clamped ticks of 80000, zero cut refusals, zero BT-clamp
+# Whole run: 30021 clamped ticks of 72000, zero cut refusals, zero BT-clamp
 # ticks, |I_tot - I_fc - I_batt| identically zero.
+#
+# ⚠️ RE-WALKED FOR fw v27 rev 2 (2026-09-03, THIS ROUND). THREE ROWS MOVED, and
+# the mechanism is the conduction floor, not the clamp. `SHARE_MINORITY_I_MIN_A`
+# 0.30 -> 0.15 A widens the minority clip band from
+# [I_min/I_tot, 1 - I_min/I_tot] to half its former inset, and at the three
+# SHARE-0.84 SUB-THRESHOLD regions the old band was the thing that held the
+# delivered share back:
+#
+#   region 1 / 8 (I_tot 1.200 A)  old rail 1 - 0.30/1.200 = 0.750  -> I_fc 0.9000
+#                                 new rail 1 - 0.15/1.200 = 0.875, above
+#                                 DROOP_R_MAX 0.85, so the DROOP BAND now binds
+#                                 and the commanded 0.84 is delivered
+#                                 -> I_fc 0.84 x 1.200 = 1.0080 A
+#   region 3     (I_tot 1.284 A)  old rail 0.7664 -> I_fc 0.9844
+#                                 new rail 0.8832 > 0.85 -> 0.84 delivered
+#                                 -> I_fc 1.0789 A
+#
+# Regions 5, 7, 10 and 12 command 0.40 / 0.20 / 0.50 / 0.50, which were inside
+# BOTH bands, so they are bit-identical. The five CLAMPED regions are
+# bit-identical too: the ceiling rail 1.25/I_tot is below both clip rails there,
+# so the clip never governed them. The clamp CLASSIFICATION column is unchanged
+# on all twelve rows - re-derived below at §8.5's new threshold.
+# The k_d SCHEDULE is INERT on every row: the lowest region total is 1.200 A,
+# above the 0.9061287 A crossover, so `k_d` is `K_DROOP` throughout and every
+# code above is the fw v26 closed form. That is what makes regions 10 and 12
+# the bit-identity evidence for the schedule (see `_FW26_SWEEP_MDAC_PIN`).
+#
+# THE CLAMP REACHABILITY THRESHOLD MOVED 1.55 -> 1.4706 A, AND CHANGED HANDS.
+# The largest commandable fuel-cell current is min(DROOP_R_MAX * I_tot,
+# I_tot - SHARE_MINORITY_I_MIN_A), so the 1.25 A ceiling binds only above
+#     0.85 * I_tot > 1.25  ->  I_tot > 1.4706 A   (the BAND EDGE)
+#     I_tot - I_min > 1.25 ->  I_tot > 1.40 A     (the conduction floor)
+# At I_min 0.30 the conduction floor was the tighter term and set 1.55 A; at
+# 0.15 the two SWAP and the band edge governs. Every "1.55 A" in this file is
+# now 1.4706 A. Re-checking the twelve regions against it: 1.200 and 1.284 A
+# stay sub-threshold, 1.828 and 2.016 A stay clamped, so the fourth column of
+# FW26_CLAMP_SWEEP_REGIONS is unchanged.
+#
+# THE CAMPAIGN-F BOARD PAIRS BELOW ARE fw v26 READINGS. Regions 1, 3 and 8 will
+# NOT reproduce them on a fw v27 board - that is the prediction, not a defect.
+# Regions 5, 7, 10 and 12 must reproduce them to the code.
 #
 # THE CAMPAIGN-F BOARD PAIRS, beside the walk that now predicts them (mean over
 # each region's scored window, campaign hil_report_20260903_063659):
@@ -6742,8 +7395,9 @@ _FW26_SWEEP_BUS_HOLD_TICKS = int(0.98 * _FW26_SWEEP_CADENCE_ROWS)
 #    That pin is added below. It sits on a DRIVEN region, so it carries the
 #    drive loop's own uncertainty and takes a wider band - still an order of
 #    magnitude inside the gap it has to resolve.
-_FW26_MDAC_NIBBLE = gov_mod.GOV_CONST["MDAC_CMD_LOAD_UPDATE"]     # 0x1000
-_FW26_SWEEP_MDAC_TOL = 0.02          # standstill regions, code-space
+# `_FW26_MDAC_NIBBLE`, `_FW26_SWEEP_MDAC_TOL` and `_fw26_mdac_band()` are
+# declared ABOVE, beside the fw v27 battery-only / g-guard helpers, because
+# `fw26-clamp-cruise` needs them too and its entry is built first.
 _FW26_SWEEP_MDAC_TOL_DRIVEN = 0.10   # clamped regions, code-space
 # Walked (mdac_fc, mdac_bt) raw words at each SUB-THRESHOLD region, clamp
 # ABSENT and clamp present alike - they are identical there.
@@ -6759,8 +7413,33 @@ _FW26_SWEEP_MDAC_TOL_DRIVEN = 0.10   # clamped regions, code-space
 # 3.1 % from the board on a +/- 2 % band and FAILED in campaign F. Regions 1
 # and 8 moved by 4 codes (0.17 %) because their r ~ 0.743 is close to where the
 # rho and R_f terms cancel - the same reason they passed all along.
-_FW26_SWEEP_MDAC_PIN = {1: (4917, 6464), 8: (4917, 6464),
+#
+# ⚠️ RE-WALKED AGAIN FOR fw v27 rev 2 (2026-09-03, THIS ROUND), and the two
+# halves of this table now say DIFFERENT things:
+#
+#   region 1/8   (4917, 6464) -> (4824, 7846)   MOVED. Not a law correction:
+#                the conduction floor 0.30 -> 0.15 A releases the minority clip
+#                at this 1.200 A total and the commanded 0.84 is delivered
+#                (r 0.750 -> 0.840, I_fc 0.9000 -> 1.0080 A). The board's fw v26
+#                pair 4917 / 6463 is an OLD-ERA reading and will not reproduce.
+#   region 10    (5376, 5261) UNCHANGED
+#   region 12    (5378, 5259) UNCHANGED
+#
+# THE TWO UNCHANGED ROWS ARE NOW THE k_d BIT-IDENTITY PIN. Their totals, 1.284
+# and 1.200 A, are both above the load-scheduled droop scale's crossover
+# RE_MAX * SHARE_KD_SAFETY * I_min / K_DROOP = 2.013619 * 0.9 * 0.15 / 0.30 =
+# 0.9061287 A, where `k_d` IS `K_DROOP` and the code mapping is the fw v26
+# closed form. A fw v27 board that reproduces them has demonstrated on hardware
+# what `test_fw27_kd_bit_identical_above_crossover` asserts on the host. They
+# are also commanded at share 0.50, which is where campaign F measured the old
+# split law's largest error, so they are the strongest fidelity pins in the
+# table as well.
+_FW26_SWEEP_MDAC_PIN = {1: (4824, 7846), 8: (4824, 7846),
                         10: (5376, 5261), 12: (5378, 5259)}
+# Which of the four pins MOVED at fw v27 rev 2, so `_fw26_sweep_signals()` can
+# put `_FW27_ERA_PROVISIONAL` on exactly those and leave the bit-identity pair
+# reading as the measured-era pins they still are.
+_FW26_SWEEP_MDAC_FW27_MOVED = (1, 8)
 # ── REGION 10, ADDED 2026-09-03 ─────────────────────────────────────────────
 # THE ONLY PINNED REGION THAT IS NOT AT STANDSTILL, and it is added
 # deliberately: it is the sweep's only sub-threshold region commanded at share
@@ -6784,18 +7463,6 @@ _FW26_SWEEP_MDAC_TOL_BY_REGION = {10: _FW26_SWEEP_MDAC_TOL_R10}
 # (5110, 5626), so the re-walked pair is 1.0 % / 1.4 % from it where the old
 # one was 2.2 % / 3.5 %.
 _FW26_SWEEP_MDAC_CLAMPED_PIN = {2: ((5100, 5648), (4822, 7895))}
-
-
-def _fw26_mdac_band(word, tol):
-    """[lo, hi] raw-word bounds for a walked word at `tol` in CODE space.
-
-    The nibble is stripped, the tolerance applied to the 12-bit gain code, and
-    the result offset back into word space -- so a 2 % band is 2 % of the
-    quantity that actually moves (M1)."""
-    code = int(word) & 0x0FFF
-    lo = _FW26_MDAC_NIBBLE + int(code * (1.0 - tol))
-    hi = _FW26_MDAC_NIBBLE + int(code * (1.0 + tol)) + 1
-    return lo, hi
 
 
 def _fw26_sweep_signals():
@@ -6876,12 +7543,18 @@ def _fw26_sweep_signals():
             # see _FW26_SWEEP_MDAC_TOL_BY_REGION.
             _tol = _FW26_SWEEP_MDAC_TOL_BY_REGION.get(i,
                                                       _FW26_SWEEP_MDAC_TOL)
+            # fw v27 rev 2: only the two SHARE-0.84 standstill regions moved
+            # (the conduction floor released their minority clip), so only they
+            # carry the era note. Regions 10 and 12 are UNMOVED and are the
+            # k_d bit-identity evidence — see `_FW26_SWEEP_MDAC_PIN`.
+            _era = ({"provisional_note": _FW27_ERA_PROVISIONAL}
+                    if i in _FW26_SWEEP_MDAC_FW27_MOVED else {})
             for col, want in zip(("mdac_fc", "mdac_bt"),
                                  _FW26_SWEEP_MDAC_PIN[i]):
                 lo, hi = _fw26_mdac_band(want, _tol)
                 out.append(
                     {"name": "sweep_r%02d_%s_lo" % (i, col), "column": col,
-                     "floor_min_value": lo, "t_window": w,
+                     "floor_min_value": lo, "t_window": w, **_era,
                      "label": "region %d: %s tracks the walk on every sample "
                               "(>= %d; walked %d = 0x1000 | %d, +/- %.0f %% on "
                               "the 12-bit CODE). MODEL FIDELITY, not clamp "
@@ -6891,7 +7564,7 @@ def _fw26_sweep_signals():
                                  100.0 * _tol)})
                 out.append(
                     {"name": "sweep_r%02d_%s_hi" % (i, col), "column": col,
-                     "max_value": hi, "t_window": w,
+                     "max_value": hi, "t_window": w, **_era,
                      "label": "region %d: %s tracks the walk (<= %d)"
                               % (i, col, hi)})
         if i in _FW26_SWEEP_MDAC_CLAMPED_PIN:
@@ -6941,10 +7614,19 @@ def _fw26_sweep_signals():
         # of applyShareCurrentCeilings() is structural; this asserts it on the
         # board. Zero rising edges: a cut followed by a restore would satisfy a
         # tick floor and is exactly the failure a tick floor cannot see.
+        # ⚠️ fw v27 rev 2 (2026-09-03): SURVIVES THE BATTERY-ONLY START, by
+        #    arithmetic. The preload ramps to FW26_CLAMP_SWEEP_PRELOAD_A =
+        #    1.11 A from 4.0 s over 3.0 s, so the two-source total crosses the
+        #    0.30 A closed-loop gate at 4.0 + 3.0 * (0.30 - 0.09) / 1.11 =
+        #    4.5676 s and the fuel cell re-enters within ~72 ms of it. This
+        #    window opens at 8.0 s, 3.4 s later, so the rising-edge count inside
+        #    it is still ZERO and the check is unchanged. The battery-only edge
+        #    is scored by `sweep_battonly_one_rise` below.
         {"name": "sweep_no_switch_ring", "switch_bit": SW_FC_BUS,
          "edge_count_between": (0, 0), "edge": "rise", "t_window": (8.0, 80.0),
          "label": "no FC_BUS rising edge anywhere in the table - no cut, and "
-                  "therefore no sw_ring"},
+                  "therefore no sw_ring (the fw v27 battery-only re-entry is "
+                  "at ~4.64 s, 3.4 s before this window opens)"},
         {"name": "sweep_bt_bus_held", "switch_bit": SW_BT_BUS,
          "min_ticks": _FW26_SWEEP_BUS_HOLD_TICKS, "t_window": (8.0, 80.0),
          "label": "BT_BUS_ENABLE stayed high across the whole table (>= %d "
@@ -6970,6 +7652,32 @@ def _fw26_sweep_signals():
                   "table, transitions included (walked worst case 1.6130 A in "
                   "region 7; LIMIT_I_BT_MAX is 3.0 A) - the clamp's own "
                   "liability, since what it takes off the fuel cell goes here"},
+        # -- THE FUEL-CELL PEAK OVER THE WHOLE TABLE (M1, 2026-09-03) ------
+        # THE GAP THIS CLOSES. Every other I_fc bound in this entry is a
+        # per-region SETTLED-window bound; the boundaries - where campaign E
+        # actually latched OC_FC - were covered by no I_fc check at all, so a
+        # boundary excursion could only ever be reported as "the run latched",
+        # never attributed by name. This is the whole-run ceiling that names it.
+        #
+        # THE VALUE IS THE FAULT LIMIT ITSELF, not a walked band, and the check
+        # is INFORMATIONAL. The bridged boundary walk
+        # (`probe_fw26_clamp_walk.boundary_report()`) peaks at 1.3508 A at the
+        # region 3 -> 4 boundary, t = 26.0 s - a velocity-only step with no
+        # bridge - which is 3.5 % under LIMIT_I_FC_MAX 1.40 A. That margin is
+        # narrow enough that a walked acceptance band would be asserting the
+        # rail model's fidelity rather than the firmware's behaviour, so the
+        # bound is set at the limit: it fires only where the board would latch
+        # anyway, and its job is ATTRIBUTION, not acceptance.
+        {"name": "sweep_fc_peak_bounded", "column": "I_fc",
+         "max_value": 1.40, "t_window": (8.0, 80.0),
+         "informational": True,
+         "provisional_note": _FW27_ERA_PROVISIONAL,
+         "label": "INFORMATIONAL: I_fc stayed under LIMIT_I_FC_MAX 1.40 A "
+                  "everywhere in the table, boundaries included (bridged walk "
+                  "peak 1.3508 A at the t = 26.0 s region 3 -> 4 boundary, "
+                  "3.5 %% margin; unbridged the same table walks over the "
+                  "limit). A miss here is the campaign-E latch by name rather "
+                  "than a bare OC_FC"},
         {"name": "sweep_total_bounded", "sum_of": ["I_fc", "I_batt"],
          "max_value": 3.6, "t_window": (8.0, 80.0),
          "label": "the two-source total never exceeded 3.6 A anywhere in the "
@@ -6978,6 +7686,15 @@ def _fw26_sweep_signals():
                   "steps of regions 2 and 9, and this is the bound on what "
                   "that puts on the bus"},
     ]
+    # fw v27 rev 2 (2026-09-03): the battery-only start, and the g-guard as far
+    # as the observation frame carries it. The sweep's first scored window opens
+    # at 8.0 s (region 1's own settle inset is later still), which is the bound
+    # the edge census runs to.
+    out += _batt_only_signals(
+        "sweep", FW26_CLAMP_SWEEP_PRELOAD_A, 8.0,
+        "The whole region table is above the 0.9061287 A droop-schedule "
+        "crossover, so nothing here exercises the scheduled k_d itself.")
+    out += _gguard_signals("sweep", (8.0, 80.0))
     return out
 
 
@@ -7031,21 +7748,80 @@ FAULT_EXPECTATIONS["fw26-clamp-sweep"] = {
 #
 # WHY THIS LEG IS SAFE WHERE THE SWEEP WAS NOT. The necessary condition for the
 # hazard is a two-source total above LIMIT_I_FC_MAX / DROOP_R_MAX = 1.647 A
-# (1.645 A under the corrected split law). This leg steps to 1.65 A, which is
-# 0.10 A above the 1.55 A reachability threshold and 0.003 A above the
-# condition. The sweep reached 2.99 A.
+# (1.645 A under the corrected split law). This leg steps to 1.57 A, which is
+# 0.10 A above the fw v27 rev 2 reachability threshold 1.4706 A and 0.077 A
+# BELOW the condition. The sweep reached 2.99 A.
+#
+# ═════════════════════════════════════════════════════════════════════════════
+# fw v27 rev 2 (2026-09-03): THE STIMULUS WAS RE-DERIVED, AND THIS LEG IS SAFE
+# BY CONSTRUCTION AGAIN. Orchestrator decision D-2.
+#
+# THE FINDING. The largest commandable fuel-cell current is
+# min(DROOP_R_MAX * I_tot, I_tot - SHARE_MINORITY_I_MIN_A). At the fw v26 floor
+# of 0.30 A the CONDUCTION term governed this leg's 1.65 A step total:
+#     1.65 - 0.30 = 1.35 A  <  0.85 * 1.65 = 1.4025 A
+# so the clip capped the transient 0.05 A under LIMIT_I_FC_MAX 1.40 A. At the
+# fw v27 rev 2 floor of 0.15 A the two terms SWAP:
+#     1.65 - 0.15 = 1.50 A  >  0.85 * 1.65 = 1.4025 A
+# the BAND EDGE governs, and 1.4025 A is ABOVE the fault limit. Nothing
+# structural capped the leg any more - only the reference slew racing the load
+# EMA did, at a walked worst-skew peak of 1.3860 A, 1.0 % under the limit.
+#
+# THE FIX, and it is the leg's ORIGINAL design rule re-evaluated, not a new
+# one: "the step total sits 0.10 A above the clamp's reachability threshold".
+# That threshold moved with the same constant,
+#     CEILING_REACHABLE_I_TOT_A = max(1.25 / 0.85, 1.25 + 0.15) = 1.4706 A
+# (it was 1.55 A at I_min 0.30), so the step total becomes 1.57 A and
+# `hil_plant_sim.FW26_CLAMP_JOINT_STEP_PRELOAD_A` 1.56 -> 1.48 A
+# (1.48 + I_AUX_A 0.09 = 1.57 A). At 1.57 A:
+#     structural bound  min(0.85 * 1.57, 1.57 - 0.15) = min(1.3345, 1.42)
+#                       = 1.3345 A, 4.7 % under LIMIT_I_FC_MAX
+#     reachability      1.57 > 1.4706 A, so the clamp is still exercised
+#     hazard condition  1.57 < 1.6471 A, the property the 1.65 A step lost
+#
+# THE RE-WALK, `probe_fw26_clamp_walk.joint()` at fw v27 rev 2 and 1.57 A:
+#     peak I_fc, simultaneous   1.3303 -> 1.3188 A
+#     peak I_fc, share +20 ms   1.2931 -> 1.2833 A
+#     peak I_fc, load  +20 ms   1.3303 -> 1.3188 A   (equal, not worse)
+#     first clamp engagement    +29 ms -> +29 ms (+49 ms at load +20 ms)
+#     post-step clamp duty      0.9976 -> 0.9976
+#     settled I_fc              UNCHANGED at the ceiling, 1.2500 A
+#     settled I_batt            0.4000 -> 0.3200 A   (1.57 - 1.25)
+#     settled r / mdac          0.7524 / (4906, 6560) -> 0.7928 / (4865, 7040)
+# The "the commander order cannot make the peak worse" property HOLDS again at
+# 1.57 A: the load-first skew TIES the simultaneous peak instead of exceeding
+# it, because the clamp binds before the two rails cross.
+#
+# THE ACCEPTANCE BOUND is this leg's own rule, walk + 0.4 %:
+#     1.004 * 1.3188 = 1.32408 -> FW26_CLAMP_JOINT_ACCEPT_PEAK_A = 1.3241 A,
+# which is 5.4 % under LIMIT_I_FC_MAX. The fw v26 value 1.36 carried 2.2 % over
+# its walk; the tighter rule is affordable now that the structural bound
+# (1.3345 A) sits between the walk and the fault limit.
+#
+# REVERSAL PATH: restore FW26_CLAMP_JOINT_STEP_PRELOAD_A = 1.56 (1.65 A total)
+# if the operator wants the 1.65 A step back. That re-opens the finding above
+# and needs a ruling on whether a peak 1.0 % under a fault limit is acceptable;
+# the bounds to restore are walk 1.3644 A simultaneous / 1.3860 A worst skew.
+#
+# ALSO FIXED THIS ROUND, in `tools/probes/probe_fw26_clamp_walk.py`: `joint()`
+# hard-coded `clip_rail_a = step_total - 0.30` and `crossover_total_a =
+# 1.25 + 0.30`. Both now DERIVE from `governor_model.GOV_CONST` (the crossover
+# is `CEILING_REACHABLE_I_TOT_A` by construction), so they read 1.42 A and
+# 1.4706 A and cannot describe a retired floor again.
+# ═════════════════════════════════════════════════════════════════════════════
 #
 # WHAT SETS THE PEAK, AND IT IS NOT THE CEILING. Through the transient the
 # governor's ~20 ms load EMA still reads the OLD total, so the clamp's rail
-# SHARE_GOV_I_FC_CEIL_A / filt sits ABOVE the minority clip's rail
-# 1 - SHARE_MINORITY_I_MIN_A / filt and the CLIP binds. The two cross at
-# filt = 1.25 + 0.30 = 1.55 A, and the delivered current is largest there. The
+# SHARE_GOV_I_FC_CEIL_A / filt sits ABOVE the reference the droop band admits
+# and the BAND EDGE binds. At fw v27 rev 2 the two rails cross at
+# filt = CEILING_REACHABLE_I_TOT_A = 1.4706 A (the minority clip's own rail,
+# 1 - 0.15 / filt, no longer reaches the band edge at these totals), and the
 # structural bound is
 #
-#     (I_tot - SHARE_MINORITY_I_MIN_A) - SHARE_GOV_I_FC_CEIL_A = 0.10 A
+#     DROOP_R_MAX * I_tot = 0.85 * 1.57 = 1.3345 A
 #
-# over the ceiling, i.e. 1.35 A; the acceptance bound is 1.36 A, 0.4 % above
-# the walk and 2.9 % under LIMIT_I_FC_MAX.
+# i.e. 0.0845 A over the ceiling; the acceptance bound is 1.3241 A, 0.4 % above
+# the walk and 5.4 % under LIMIT_I_FC_MAX.
 #
 # ⚠️ EVERY BOUND BELOW IS A WALK, NOT A MEASUREMENT, through
 # tools/probes/probe_fw26_clamp_walk.joint() at the plant's measured asymmetry
@@ -7054,35 +7830,46 @@ FAULT_EXPECTATIONS["fw26-clamp-sweep"] = {
 #   pre-step, share 0.40, total 1.20 A, t = 9..15.9
 #       clamp duty 0.0000 (unclamped demand 0.48 A, 62 % under the ceiling)
 #       I_fc 0.4800 A, I_batt 0.7200 A, mdac (5736, 5067)
-#   THE JOINT STEP at t = 16.0, to share 0.84 and total 1.65 A
-#       peak delivered I_fc      1.3303 A   <- the acceptance bound judges this
+#   THE JOINT STEP at t = 16.0, to share 0.84 and total 1.57 A
+#       peak delivered I_fc      1.3188 A   <- the acceptance bound judges this
 #       first clamp engagement   +29 ms
-#       I_fc into the band       +82 ms, i.e. 53 ms after engagement
+#       I_fc into the band       +20 ms, i.e. BEFORE the clamp engages: the
+#                                band edge alone carries the reference into
+#                                [1.245, 1.3345] and the ceiling then holds it
 #       clamp duty, post-step    0.9976
 #   post-step settled, t = 17..26.5
-#       clamp duty 1.0000, I_fc 1.2500 A, I_batt 0.4000 A,
-#       balance residual 5.6e-17, applied ratio 0.7524, mdac (4906, 6560)
+#       clamp duty 1.0000, I_fc 1.2500 A, I_batt 0.3200 A,
+#       balance residual < 1e-15, applied ratio 0.7928, mdac (4865, 7040)
 #
 # THE CLAMP-ABSENT ARM, walked the same way with the ceilings pinned out of
 # reach - fw v25's arithmetic. It is what makes this leg a DISCRIMINATOR rather
-# than a description: the settled current is 1.3500 A (the clip rail) against
-# 1.2500 A, I_batt 0.3000 A against 0.4000 A, and mdac (4843, 7413) against
-# (4906, 6560). The settled I_fc band below refuses 1.3500 A by 0.05 A.
+# than a description: the settled current is 1.3188 A (the droop band edge at
+# the commanded 0.84) against 1.2500 A, I_batt 0.2512 A against 0.3200 A, and
+# mdac (4823, 7875) against (4865, 7040). The settled I_fc band below refuses
+# 1.3188 A by 0.019 A, and the battery floor refuses 0.2512 A by 0.029 A.
+# THE TRANSIENT PEAK NO LONGER DISCRIMINATES: both arms peak at 1.3188 A,
+# because the band edge - not the ceiling - sets the peak. The discrimination
+# is entirely in the SETTLED window, which is where the bounds below put it.
 #
-# THE WALK IS SPLIT-LAW INVARIANT, and that is worth recording rather than
-# assuming. Re-run with rho = 1 and R_f = 0 (the pre-2026-09-03 law) the peak is
-# 1.3303 A and the codes are (4906, 6560) to the digit: the firmware pins the
+# THE WALK IS SPLIT-LAW INVARIANT IN CURRENT, and that is worth recording
+# rather than assuming. Re-run with rho = 1 and R_f = 0 (the pre-2026-09-03 law)
+# the peak is 1.3188 A and I_batt 0.3200 A to the digit: the firmware pins the
 # applied RATIO on its own rails, and the split law only re-inverts the ratio
-# that delivers it. The design record's section 8.6.5 table carries both rows.
+# that delivers it. THE CODES ARE NOT INVARIANT at fw v27 rev 2, unlike the
+# 1.65 A walk: (4865, 7040) against (4866, 7021), 0.3 % on the BT code. The
+# settled ratio is now the commanded 0.84 held by the ceiling rather than a
+# governor rail, so the two laws invert it to slightly different codes; the 8 %
+# band below covers that difference 27x over. The design record's section 8.6.5
+# table carries both rows.
 #
 # THE COMMANDER-CADENCE SKEW IS BOUNDED AND HARMLESS. The share step arrives on
 # the Pi's own ~50 Hz packet while apply_scenario() steps the load at 1 kHz, so
 # the two land up to one commander period apart in either order. Walked at
-# +/- 20 ms the peak is 1.3303 A (share first, or simultaneous) or 1.2931 A
-# (load first) - the order cannot make it worse than simultaneous, because the
-# peak is set by the rail crossing and the reference has reached 0.84 long
-# before the filtered total passes 1.55 A. The transient window below is 300 ms
-# wide, so it contains the peak under every skew.
+# +/- 20 ms the peak is 1.3188 A (simultaneous, and equally load first) or
+# 1.2833 A (share first) - the order cannot make it worse than simultaneous.
+# The transient window below is 300 ms wide, so it contains the peak under
+# every skew. (At the retired 1.65 A step total the load-first skew DID make it
+# worse, 1.3860 A; that is one of the reasons the step was re-derived.)
 _JOINT_STEP_T = 16.0                  # SCENARIOS[...]["pi_timeline"] and the
                                       # second aux_preload_step entry
 _JOINT_STEP_WIN_S = 0.30              # the transient window, > the 20 ms skew
@@ -7099,7 +7886,7 @@ _JOINT_BUS_HOLD_TICKS = int(0.98 * _JOINT_CADENCE_ROWS)        # 16807
 # a slow engagement, unreachable by a clamp that merely chattered.
 _JOINT_SETTLED_DUTY_TICKS = int(0.78 * 1000.0 * (_JOINT_B1 - _JOINT_B0))  # 7410
 # THE ACCEPTANCE BOUND on the transient peak. Named once.
-_JOINT_ACCEPT_PEAK_A = FW26_CLAMP_JOINT_ACCEPT_PEAK_A          # 1.36
+_JOINT_ACCEPT_PEAK_A = FW26_CLAMP_JOINT_ACCEPT_PEAK_A          # 1.3241
 _JOINT_PROVISIONAL = (
     "PROVISIONAL - EVERY BOUND IN THIS ENTRY IS WALKED AND NONE HAS BEEN "
     "SCORED ON THE BOARD. The scenario is registered as of 2026-09-03 "
@@ -7121,9 +7908,9 @@ _JOINT_PROVISIONAL = (
 # refuses. Both from probe_fw26_clamp_walk.joint() at the corrected split law.
 #
 # ⚠️ ONLY `mdac_bt` DISCRIMINATES, and the entry says so rather than implying
-# both do. Clamp-present (4906, 6560) against clamp-absent (4843, 7413): the BT
-# code moves 11.5 % and the FC code only 1.3 %, because the clamp and the clip
-# rails differ mainly in how much load they push onto the BATTERY. The FC pin is
+# both do. Clamp-present (4865, 7040) against clamp-absent (4823, 7875): the BT
+# code moves 10.6 % and the FC code only 0.9 %, because the clamp and the band
+# edge differ mainly in how much load they push onto the BATTERY. The FC pin is
 # therefore a MODEL-FIDELITY pin, in `fw26-clamp-sweep`'s standstill sense.
 #
 # THE BAND IS 8 %, wider than the sweep's standstill 2 %, for one stated reason:
@@ -7133,11 +7920,26 @@ _JOINT_PROVISIONAL = (
 # and this walk uses that law, so the residual model error at the settled
 # ratio 0.7524 is expected at the sweep's 2 % level. The 8 % is first-execution
 # headroom, to be tightened to the sweep's band once a campaign has scored it.
-# 8 % still refuses the clamp-absent BT code by 26.6 % of the code (band
-# (6362, 6758) against 7413; 9.7 % of the raw word), which is asserted below
+# 8 % still refuses the clamp-absent BT code by 20.4 % of the 12-bit code (band
+# (6804, 7276) against 7875; 8.2 % of the raw word), which is asserted below
 # rather than asserted by eye.
+#
+# ⚠️ RE-WALKED FOR fw v27 rev 2 (2026-09-03) AT THE RE-DERIVED 1.57 A STEP
+# TOTAL. The CLAMP-PRESENT current is unchanged - the settled point is the
+# ceiling's, 1.2500 A - but the RATIO that delivers it moved with the total,
+# 0.7524 -> 0.7928, so the codes moved (4906, 6560) -> (4865, 7040). Both this
+# leg's totals, 1.20 A and 1.57 A, are still far above the 0.9061287 A
+# droop-schedule crossover, so `k_d` is `K_DROOP` throughout and these are the
+# fw v26 closed form. The CLAMP-ABSENT arm moved (4843, 7413) -> (4823, 7875)
+# for the sweep's regions-1/8 reason: without the ceiling the minority clip
+# alone used to hold the settled ratio at 1 - 0.30/1.65 = 0.8182 and now the
+# DROOP BAND holds it at the commanded 0.84, so the absent arm settles at
+# 1.3188 A / 0.2512 A instead of 1.3500 A / 0.3000 A. The BT code pin therefore
+# stays a genuine discriminator (7875 refused by the (6804, 7276) band), while
+# the CURRENT bounds tightened: the settled-band ceiling refuses the absent
+# 1.3188 A by 0.019 A where it used to refuse 1.3500 A by 0.05 A.
 _FW26_JOINT_MDAC_TOL = 0.08
-_FW26_JOINT_MDAC_PIN = ((4906, 6560), (4843, 7413))   # (present, absent)
+_FW26_JOINT_MDAC_PIN = ((4865, 7040), (4823, 7875))   # (present, absent)
 
 
 def _fw26_joint_mdac_signals():
@@ -7181,7 +7983,8 @@ FAULT_EXPECTATIONS["fw26-clamp-joint"] = {
     "source": ("applyShareCurrentCeilings() (.ino:10273-10313) with "
                "SHARE_GOV_I_FC_CEIL_A 1.25 A and SHARE_GOV_CEIL_HYST_A 0.05 A "
                "(.ino:2406/:2430) and the minority clip SHARE_MINORITY_I_MIN_A "
-               "0.30 A (.ino:2002), against LIMIT_I_FC_MAX 1.4 A (.ino:1425). "
+               "0.15 A at fw v27 rev 2 (.ino:2392), against LIMIT_I_FC_MAX "
+               "1.4 A (.ino:1425). "
                "Stimulus derivation at hil_plant_sim.SCENARIOS"
                "['fw26-clamp-joint']; bounds from "
                "tools/probes/probe_fw26_clamp_walk.joint(), including the "
@@ -7189,8 +7992,8 @@ FAULT_EXPECTATIONS["fw26-clamp-joint"] = {
                "docs/fw26_current_ceiling_governor.md section 8.6.5."),
     "provisional_note": _JOINT_PROVISIONAL,
     # FAULT-FREE, and OC_FC in particular. This leg exists because the same
-    # coincidence latched OC_FC on the sweep at a 2.99 A total; at 1.65 A the
-    # clip bounds the peak 0.05 A under the limit. A latch here is not a failed
+    # coincidence latched OC_FC on the sweep at a 2.99 A total; at 1.57 A the
+    # droop band edge bounds the peak 0.066 A under the limit. A latch here is not a failed
     # check, it is a falsified bound.
     "allow_only": 0,
     # Past the settled window: a run that latched on the step never reached the
@@ -7217,8 +8020,9 @@ FAULT_EXPECTATIONS["fw26-clamp-joint"] = {
         {"name": "joint_share_stepped", "column": "cmd_share_sp",
          "min_value": 0.83, "t_window": (_JOINT_B0, _JOINT_B1),
          "provisional_note": _JOINT_PROVISIONAL,
-         "label": "the share step to 0.84 landed (unclamped FC demand 1.386 A "
-                  "at the stepped 1.65 A total, 0.136 A over the ceiling)"},
+         "label": "the share step to 0.84 landed (unclamped FC demand "
+                  "1.3188 A at the stepped 1.57 A total, 0.069 A over the "
+                  "ceiling)"},
         # 3. THE DEMAND STEPPED TOO, which is the other half of the stimulus
         #    and the half no share column can show. I_fc + I_batt is the
         #    two-source total; a run whose aux load did not step is a
@@ -7230,16 +8034,16 @@ FAULT_EXPECTATIONS["fw26-clamp-joint"] = {
                   "share (>= 0.62 A on every sample; walk 0.7200 A) - the "
                   "witness that the load plateau stood before the step"},
         # 4. THE ACCEPTANCE BOUND, and the headline of the whole leg. The peak
-        #    delivered fuel-cell current across the joint step. 1.36 A is
-        #    0.4 % above the 1.3303 A walk and 2.9 % under LIMIT_I_FC_MAX.
+        #    delivered fuel-cell current across the joint step. 1.3241 A is
+        #    0.4 % above the 1.3188 A walk and 5.4 % under LIMIT_I_FC_MAX.
         {"name": "joint_transient_peak", "column": "I_fc",
          "max_value": _JOINT_ACCEPT_PEAK_A,
          "t_window": (_JOINT_STEP_T, _JOINT_STEP_T + _JOINT_STEP_WIN_S),
          "provisional_note": _JOINT_PROVISIONAL,
          "label": "THE ACCEPTANCE BOUND: the joint share-and-demand step at "
                   "t = %.1f s did not drive I_fc above %.2f A in its first "
-                  "%.0f ms (walk 1.3303 A; the structural bound is the "
-                  "minority clip's (I_tot - 0.30) = 1.35 A, and "
+                  "%.0f ms (walk 1.3188 A; the structural bound is the "
+                  "droop band edge DROOP_R_MAX * I_tot = 1.3345 A, and "
                   "LIMIT_I_FC_MAX is 1.40 A). The same coincidence at a "
                   "2.99 A total delivered 1.4890 A and latched OC_FC on "
                   "`fw26-clamp-sweep` in campaign E"
@@ -7272,7 +8076,8 @@ FAULT_EXPECTATIONS["fw26-clamp-joint"] = {
          "t_window": (_JOINT_STEP_T, _JOINT_STEP_T + 0.6),
          "provisional_note": _JOINT_PROVISIONAL,
          "label": "I_fc reached the ceiling band within 120 ms of the clamp "
-                  "ENGAGING (walk 53 ms). Longer than "
+                  "ENGAGING (walk: already inside it at engagement, +20 ms "
+                  "against the clamp's +29 ms). Longer than "
                   "`fw26-clamp-cruise`'s 60 ms on purpose: there the total was "
                   "SETTLED at the step, here the load EMA has 0.45 A to walk "
                   "through first, and that lag IS the hazard"},
@@ -7316,26 +8121,27 @@ FAULT_EXPECTATIONS["fw26-clamp-joint"] = {
          "provisional_note": _JOINT_PROVISIONAL,
          "label": "and I_fc settled INSIDE the band (<= 1.30 A; walk "
                   "1.2500 A). THE fw v25/v26 DISCRIMINATOR: without the clamp "
-                  "the minority clip alone settles this stimulus at 1.3500 A, "
-                  "which this bound refuses by 0.05 A"},
+                  "the droop band edge alone settles this stimulus at "
+                  "1.3188 A, which this bound refuses by 0.019 A"},
         # 12-13. THE BALANCE CLOSED ONTO THE BATTERY. Motor-free with a
         #    constant post-step total, so this is a two-sided bound on I_batt
-        #    around 1.65 - 1.25 = 0.40 A. It confirms the amps the ceiling
+        #    around 1.57 - 1.25 = 0.32 A. It confirms the amps the ceiling
         #    refused the fuel cell WENT somewhere. The clamp-absent value is
-        #    0.3000 A and the lower bound refuses it.
+        #    0.2512 A and the lower bound refuses it.
         {"name": "joint_batt_took_the_rest", "column": "I_batt",
-         "floor_min_value": 0.34, "t_window": (_JOINT_B0, _JOINT_B1),
+         "floor_min_value": 0.28, "t_window": (_JOINT_B0, _JOINT_B1),
          "provisional_note": _JOINT_PROVISIONAL,
          "label": "the battery carried the amps the ceiling refused the fuel "
-                  "cell on every sample (>= 0.34 A; walk 0.4000 A, "
-                  "clamp-absent 0.3000 A)"},
+                  "cell on every sample (>= 0.28 A; walk 0.3200 A, "
+                  "clamp-absent 0.2512 A, which this floor refuses by "
+                  "0.029 A)"},
         {"name": "joint_batt_bounded", "column": "I_batt",
-         "max_value": 0.46, "t_window": (_JOINT_B0, _JOINT_B1),
+         "max_value": 0.38, "t_window": (_JOINT_B0, _JOINT_B1),
          "provisional_note": _JOINT_PROVISIONAL,
-         "label": "and no more than that (<= 0.46 A) - the pair is "
-                  "|I_tot - I_fc - I_batt| <= 0.06 A at a 1.65 A total"},
+         "label": "and no more than that (<= 0.38 A) - the pair is "
+                  "|I_tot - I_fc - I_batt| <= 0.06 A at a 1.57 A total"},
         # 14. THE BATTERY CEILING IS NOT EXERCISED and must not fire: it would
-        #    need 2.70 A on one channel against a 1.65 A bus.
+        #    need 2.70 A on one channel against a 1.57 A bus.
         {"name": "joint_bt_ceiling_never", "aux_bit": "bt_ceiling_active",
          "max_ticks": 0, "t_window": (_JOINT_A0, _JOINT_B1),
          "provisional_note": _JOINT_PROVISIONAL,
@@ -7344,7 +8150,7 @@ FAULT_EXPECTATIONS["fw26-clamp-joint"] = {
                           "reads the BT bit rather than an absent column."
                           % _JOINT_SETTLED_DUTY_TICKS),
          "label": "the BT ceiling never bound (it would need 2.70 A on one "
-                  "channel against a 1.65 A bus)"},
+                  "channel against a 1.57 A bus)"},
         # 15-17. THE CLAMP NEVER OPENED A BUS SWITCH. A reference outside the
         #    droop band IS the channel-cutoff signal, so the band constraint at
         #    the tail of applyShareCurrentCeilings() is structural rather than
@@ -7366,20 +8172,37 @@ FAULT_EXPECTATIONS["fw26-clamp-joint"] = {
          "label": "BT_BUS_ENABLE stayed high across both phases (>= %d ticks) "
                   "- the split is genuinely two-source, which is what makes "
                   "the clamp reachable at all" % _JOINT_BUS_HOLD_TICKS},
+        # ⚠️ fw v27 rev 2 (2026-09-03): SURVIVES THE BATTERY-ONLY START, by
+        #    arithmetic. The first preload step ramps to
+        #    FW26_CLAMP_JOINT_PRELOAD_A = 1.11 A from 4.0 s over 3.0 s, so the
+        #    total crosses the 0.30 A gate at
+        #    4.0 + 3.0 * (0.30 - 0.09) / 1.11 = 4.5676 s and the fuel cell
+        #    re-enters within ~72 ms. This window opens at 9.0 s, 4.4 s later,
+        #    so the rising-edge count inside it is still ZERO. The
+        #    battery-only edge is scored by `joint_battonly_one_rise` below.
         {"name": "joint_no_switch_ring", "switch_bit": SW_FC_BUS,
          "edge_count_between": (0, 0), "edge": "rise",
          "t_window": (_JOINT_A0, _JOINT_B1),
          "provisional_note": _JOINT_PROVISIONAL,
          "label": "no FC_BUS rising edge in either phase - no cut, and "
-                  "therefore no sw_ring"},
-    ] + _fw26_joint_mdac_signals(),
+                  "therefore no sw_ring (the fw v27 battery-only re-entry is "
+                  "at ~4.64 s, 4.4 s before this window opens)"},
+    ] + _fw26_joint_mdac_signals()
+      + _batt_only_signals(
+          "joint", FW26_CLAMP_JOINT_PRELOAD_A, _JOINT_A0,
+          "Both this leg's totals, 1.20 A and 1.57 A, are above the "
+          "0.9061287 A droop-schedule crossover, so k_d is K_DROOP throughout "
+          "and the code pins above are the fw v26 closed form.")
+      + _gguard_signals("joint", (_JOINT_A0, _JOINT_B1)),
 }
 
 
 FAULT_EXPECTATIONS["share-staircase"] = {
     "source": (".ino:9231-9257 (updateShareSetpointCutoff, DROOP_R_MIN 0.15 / "
                "DROOP_R_MAX 0.85, SHARE_CUT_MAX_HANDOFF_A 0.5 A at :9234/:9250) + "
-               ":2002 (SHARE_MINORITY_I_MIN_A 0.30 A, the governor rails) + "
+               ":2002 (SHARE_MINORITY_I_MIN_A, the governor rails - 0.30 A "
+               "through fw v26, 0.15 A from fw v27 rev 2, which puts the "
+               "phase-A rails outside the droop band; see the entry header) + "
                ":2236 (POWER_BAL_PERIOD_US 1000 us) and share_controller_coeffs.h "
                "(SHARE_CTRL_TS_US 1000 us). Load derivations at "
                "hil_plant_sim.STAIRCASE_LOAD_A / _B."),

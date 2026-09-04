@@ -7,7 +7,9 @@ commanded ``power_share_setpoint`` and the droop ratio physically written to the
 two AD5443 multiplying DACs. An offline energy-management walk that applies the
 commanded share directly is measuring a firmware that does not exist: the share
 loop is gated on source current, it holds the last converged split below
-0.55 A, it clips the reference through a minority-current governor, it
+the closed-loop exit (0.25 A at fw v27 rev 2, 0.55 A through fw v26), it
+clips the reference through a minority-current governor on BOTH the closed and
+the open-loop paths, it schedules the droop scale k_d on the load, it
 rate-limits every ratio move, and it may take a channel off the bus outright.
 Two walks in this repository have been wrong for exactly that reason
 (``tools/hil_plant_sim.py``, the "SHARE AUTHORITY DISAPPEARS BELOW 0.55 A"
@@ -31,6 +33,22 @@ PORTED FIRMWARE SITES
 ``setDroopMdac()``                .ino:10740-10748 -> ``_mdac_codes()``
 ``busSwitchBlanked()``            .ino:3406-3416   -> ``_blanked()``
 ``resetShareControllerCore()``    .ino:10577-10604 -> ``_reset_controller_core()``
+``shareFeedforwardClipTarget()``  .ino:10810-10822 -> ``feedforward_clip_target()``
+``shareDroopScaleTarget()``       .ino:10847-10855 -> ``droop_scale_target()``
+``updateShareDroopScale()``       .ino:10856-10866 -> ``_update_droop_scale()``
+``armShareBatteryOnlyStart()``    .ino:11737-11739 -> ``arm_battery_only_start()``
+
+fw v27 rev 2 (2026-09-03) IS MIRRORED IN FULL: the conduction floor at 0.15 A
+and every quantity derived from it (the 0.30 A closed-loop gate, the 0.25 A
+exit, the 0.906 A droop-scale crossover, the 1.4706 A ceiling reachability), the
+battery-only start with its frozen-path filter advance, the relaxing feedforward
+clip with its isolated-channel bypass and accumulating proposal, the
+load-scheduled droop scale with its hysteresis and fractional slew, and the
+g-guard count at the write site. See ``docs/fw27_governor_package.md``.
+⚠️ THE MEASURED-AGREEMENT TABLE BELOW IS A fw v21-v26 RECORD. It was scored
+against boards that ran the fixed 0.30 ohm scale, a 0.60 A gate and an unclipped
+feedforward walk, so it is evidence about the PORT, not about fw v27 rev 2. It
+is re-scored on the first fw v27 campaign (campaign G).
 
 FIDELITY BOUNDARIES
 -------------------
@@ -173,13 +191,17 @@ _RD1_OVER_RINJ = 215.0 / 53.6                                       # .ino:2163
 
 GOV_CONST = {
     # Droop injection chain.
-    "RE_MAX": _K_SNS * _A_V * _RD1_OVER_RINJ,   # 2.0143 ohm         .ino:2166
+    "RE_MAX": _K_SNS * _A_V * _RD1_OVER_RINJ,   # 2.013619 ohm       .ino:2166
     "K_DROOP": 0.30,                            # ohm                .ino:2167
     "DROOP_R_MIN": 0.15,                        #                    .ino:2170
     "DROOP_R_MAX": 0.85,                        #                    .ino:2171
     # Share-loop gating.
     "SHARE_I_TOT_MIN_A": 0.075,                 # A                  .ino:2182
-    "SHARE_MINORITY_I_MIN_A": 0.30,             # A                  .ino:2221
+    # fw v27 rev 2 (2026-09-03): the light-load conduction floor moved 0.30 -> 0.15 A on the
+    # operator's ruling. EVERYTHING below is derived from it and moves with it: the closed-loop
+    # gate 2*I_min = 0.30 A, the exit 0.25 A, the minority clip band, the k_d crossover 0.906 A
+    # and the fw v26 ceiling reachability. See docs/fw27_governor_package.md section 8.
+    "SHARE_MINORITY_I_MIN_A": 0.15,             # A                  .ino:2392
     "SHARE_CUT_MAX_HANDOFF_A": 0.5,             # A                  .ino:2237
     "SHARE_GOV_OL_HYST_A": 0.05,                # A                  .ino:2245
     # Slew ceilings.
@@ -193,6 +215,17 @@ GOV_CONST = {
     "SHARE_GOV_I_FC_CEIL_A": 1.25,              # A (bus-side)       .ino:2406
     "SHARE_GOV_I_BT_CEIL_A": 2.70,              # A (bus-side)       .ino:2424
     "SHARE_GOV_CEIL_HYST_A": 0.05,              # A                  .ino:2430
+    # Load-scheduled droop scale k_d (fw v27 rev 2).
+    #   k_d(tot) = max(K_DROOP, RE_MAX * clamp(I_min/tot, DROOP_R_MIN, 0.5) * SHARE_KD_SAFETY)
+    # slewed at SHARE_KD_SLEW_FRAC_PER_TICK against a hysteretic held sample of the governor's
+    # filtered total (SHARE_KD_HYST_A). The last two are DERIVED in the firmware, not literals:
+    #   SHARE_KD_HYST_A            = SHARE_GOV_OL_HYST_A                       .ino:2534
+    #   SHARE_KD_SLEW_FRAC_PER_TICK = DROOP_RATIO_SLEW_PER_TICK / DROOP_R_MAX  .ino:2546
+    "SHARE_KD_SAFETY": 0.9,                     #                    .ino:2528
+    "SHARE_KD_HYST_A": 0.05,                    # A                  .ino:2534
+    "SHARE_KD_SLEW_FRAC_PER_TICK": 0.02 / 0.85,  #                   .ino:2546
+    # Battery-only start (fw v27 rev 2): the effective setpoint the arm feeds the setpoint latch.
+    "SHARE_BATTERY_ONLY_SP": 0.0,               #                    .ino:2573
     # Actuation.
     "SHARE_CUTOFF_HYST": 0.01,                  #                    .ino:3258
     "SHARE_CUT_SURVIVOR_BLANK_MS": 30.0,        # ms                 .ino:3353
@@ -211,14 +244,24 @@ _R_MIN = GOV_CONST["DROOP_R_MIN"]
 _R_MAX = GOV_CONST["DROOP_R_MAX"]
 
 # Reachability threshold for the fw v26 fuel-cell ceiling (docs/fw26_current_
-# ceiling_governor.md section 4.1.1). The minority-current clip runs FIRST, so
-# the largest fuel-cell current the loop can command is
+# ceiling_governor.md section 4.1.1; RE-DERIVED for fw v27 rev 2, .ino:2686-2696
+# and docs/fw27_governor_package.md section 8.5). The minority-current clip runs
+# FIRST, so the largest fuel-cell current the loop can command is
 #     min(DROOP_R_MAX, 1 - SHARE_MINORITY_I_MIN_A/I_tot) * I_tot
-# whose second term is the tighter one. The fuel-cell ceiling is therefore
-# reachable only above I_FC_CEIL + I_MINORITY of TWO-SOURCE total. Below this
-# total the clamp is arithmetically inert and fw v26 equals fw v25.
-CEILING_REACHABLE_I_TOT_A = (GOV_CONST["SHARE_GOV_I_FC_CEIL_A"]
-                             + GOV_CONST["SHARE_MINORITY_I_MIN_A"])   # 1.55 A
+#           = min(DROOP_R_MAX * I_tot, I_tot - SHARE_MINORITY_I_MIN_A)
+# and the ceiling can bind only where BOTH terms exceed it:
+#     DROOP_R_MAX * I_tot > CEIL      ->  I_tot > CEIL / DROOP_R_MAX = 1.4706 A
+#     I_tot - I_min       > CEIL      ->  I_tot > CEIL + I_min       = 1.40 A
+# ⚠️ THE GOVERNING TERM SWAPPED AT fw v27 rev 2. At I_min = 0.30 A the
+# conduction-floor term was the tighter one and the threshold was 1.55 A; at
+# 0.15 A the BAND EDGE governs and the threshold is 1.4706 A. The expression
+# below is therefore the MAXIMUM of the two, written as the arithmetic rather
+# than as whichever term happened to win, so a future retune of the floor cannot
+# silently leave a wrong constant here.
+CEILING_REACHABLE_I_TOT_A = max(
+    GOV_CONST["SHARE_GOV_I_FC_CEIL_A"] / GOV_CONST["DROOP_R_MAX"],
+    GOV_CONST["SHARE_GOV_I_FC_CEIL_A"] + GOV_CONST["SHARE_MINORITY_I_MIN_A"],
+)   # 1.470588 A at the shipped constants
 
 # Hoisted out of GOV_CONST for the per-tick path. `_apply_share_current_
 # ceilings()` runs on EVERY closed-loop tick of every offline walk, and a dict
@@ -303,6 +346,29 @@ class GovernorState:
     ceil_ticks: int = 0                # ticks with either flag set after the
                                        # clamp ran; the walk's `clamped` census
 
+    # ── fw v27 rev 2 ────────────────────────────────────────────────────────
+    # Load-scheduled droop scale. ``droop_kd`` is MDAC TRUTH, exactly like
+    # ``r_prev``: it is the scale the gains currently on the AD5443s were
+    # computed with, so ``resetShareControlState()`` deliberately does NOT
+    # touch it (.ino:11720 comment). ``kd_sched_tot`` is the hysteretic HELD
+    # sample of ``filt_total`` that the schedule reads; it is a load estimate
+    # and IS zeroed with the filter.
+    droop_kd: float = GOV_CONST["K_DROOP"]      # shareDroopKd       .ino:10809
+    kd_sched_tot: float = 0.0                   # shareKdSchedTot    .ino:10361
+    g_guard_count: int = 0                      # shareGGuardCount   .ino:10365
+    # Battery-only start. ``armed`` is set at a profile boundary only
+    # (``arm_battery_only_start()``); ``active`` is the per-tick derivation that
+    # also requires an in-band commanded setpoint and no FC-charge window.
+    batt_only_armed: bool = False               # shareBatteryOnlyArmed
+    batt_only_active: bool = False              # shareBatteryOnlyActive
+    # The feedforward PROPOSAL while a controller-initiated cut is outstanding.
+    # NOT MDAC truth (an isolated tick writes nothing) — it is the accumulating
+    # walk the iso bypass needs, because ``r_prev`` is frozen for the duration of
+    # the cut. Re-anchored to ``r_prev`` on every non-isolated feedforward tick
+    # and at each site that takes a cut (.ino:10809 block, section 12 of the
+    # design record).
+    iso_prop_ratio: float = 0.5                 # shareIsoPropRatio
+
     # Controller surrogate (see fidelity boundary 1)
     ctrl_out: float = 0.5
 
@@ -340,6 +406,15 @@ class GovernorOut:
     # clamp (the clamp is cleared on all of those).
     ceil_fc: bool = False
     ceil_bt: bool = False
+    # fw v27 rev 2 observables. ``k_d`` is the LIVE load-scheduled droop scale the
+    # reported ``g_``/``code_`` fields were mapped through (bench-log v8 field
+    # class LEVEL — read it, never difference it). ``g_clamp_count`` is the
+    # saturating boot-monotonic count of MDAC writes whose commanded gain
+    # exceeded full scale, i.e. the firmware's ``shareGGuardCount``.
+    # ``batt_only`` is the arm's per-tick ACTIVE derivation.
+    k_d: float = GOV_CONST["K_DROOP"]
+    g_clamp_count: int = 0
+    batt_only: bool = False
     # True when this tick actually reached setDroopMdac(). False on every
     # non-writing return (frozen, latched, hold, F1 idle) AND on a write that
     # applyShareRatio() abandoned because a channel is isolated (.ino:10492),
@@ -413,12 +488,15 @@ def ceiling_bounded_share(sp: float, i_tot: float) -> float:
     board cannot clamp at: 250 of ``ems-dp-replay``'s 34 827 cells bound at
     I_tot 1.47137 A, where the board's own clip caps the fuel cell at 1.1714 A
     and no ceiling can bind.  The guard therefore encodes the reachability
-    threshold ``CEILING_REACHABLE_I_TOT_A`` = I_FC_CEIL + I_MINORITY = 1.55 A
-    directly, and it is conservative for the battery ceiling too, whose own
-    threshold is I_BT_CEIL + I_MINORITY = 3.00 A.
+    threshold ``CEILING_REACHABLE_I_TOT_A`` directly. fw v27 rev 2 RE-DERIVES
+    that threshold: the governing term swapped from the conduction floor to the
+    BAND EDGE when I_min moved to 0.15 A, so it is now
+    max(I_FC_CEIL/DROOP_R_MAX, I_FC_CEIL + I_MIN) = 1.4706 A, not 1.55 A. It
+    remains conservative for the battery ceiling, whose own threshold is
+    max(I_BT_CEIL/DROOP_R_MAX, I_BT_CEIL + I_MIN) = 3.176 A.
 
     RESIDUAL, stated rather than implied: between the clip's own onset and
-    1.55 A the board still delivers slightly less fuel-cell current than this
+    1.4706 A the board still delivers slightly less fuel-cell current than this
     helper reports, because the CLIP is active there while the CEILING is not.
     That gap is the minority clip's and is not this helper's to close; the
     dynamic port models it, and the demand models' own share grids
@@ -551,7 +629,15 @@ class GovernorModel:
         The firmware deliberately does NOT touch ``droopSlew_prev`` on a reset
         (the MDACs keep whatever split is physically on them), so ``seed_r``
         here is the boot seed, not a per-reset re-seed: passing ``None`` keeps
-        the ratio already applied."""
+        the ratio already applied.
+
+        fw v27 rev 2: this method is the BOOT / ``hilWarmReset()`` re-anchor,
+        not the in-run ``resetShareControlState()`` (that is
+        ``_reset_share_control_state()``). It therefore re-anchors the live
+        droop scale to ``K_DROOP`` and drops the battery-only arm, exactly as
+        ``hilWarmReset()`` does — the post-recovery bring-up re-runs
+        ``initMdacOutputs()`` and the hardware really does move to the
+        ``K_DROOP`` codes (.ino:10800 block, design record section 10.4)."""
         r = self.state.r_prev if seed_r is None else float(seed_r)
         if not 0.0 <= r <= 1.0:
             raise ValueError("seed_r must lie in [0, 1]")
@@ -559,7 +645,19 @@ class GovernorModel:
         st.r_prev = r
         self._reset_controller_core(st, GOV_CONST["SHARE_CTRL_R0"])
         st.handoff_prev_ratio = r
+        st.iso_prop_ratio = r
+        st.droop_kd = self.k_droop
         self.state = st
+
+    def arm_battery_only_start(self) -> None:
+        """``armShareBatteryOnlyStart()`` (.ino:11737).
+
+        Called at a PROFILE BOUNDARY only — the State 1 -> State 2 Run entry and
+        the five State-98 profile starts. Deliberately NOT called by
+        ``_reset_share_control_state()``: the latch's own release path calls
+        that, so arming there would re-arm the cut the release just undid, on
+        the very tick it undid it (design record section 9.2)."""
+        self.state.batt_only_armed = True
 
     @staticmethod
     def _reset_controller_core(st: GovernorState, seed_ratio: float) -> None:
@@ -643,6 +741,89 @@ class GovernorModel:
             st.ceil_ticks += 1
         return sp
 
+    # ── fw v27 rev 2: the load-scheduled droop scale ─────────────────────────
+    @property
+    def k_droop_live(self) -> float:
+        """The scale ``applyShareRatio()`` maps through THIS tick.
+
+        Through fw v26 this was the compile-time ``K_DROOP`` and the constructor
+        parameter ``k_droop`` was the whole story. From fw v27 rev 2 the
+        constructor parameter is the schedule's FLOOR (and the boot value) while
+        ``state.droop_kd`` is the live scale. Every site that used to read
+        ``self.k_droop`` for a PHYSICAL quantity — the code mapping and the two
+        halves of the split law — reads this instead; the schedule's own floor
+        comparison still reads ``self.k_droop``.
+
+        ⚠️ A STAGE MODEL THAT NEVER TICKS READS THE FLOOR, and that is the
+        honest answer rather than a gap. ``delivered_share()`` is called by
+        demand models that hold no tick history (the dynamic program's
+        vectorised image, the predictive controller's stage surrogate); on a
+        model that has never run a closed-loop tick this returns ``K_DROOP``,
+        which is the fw v26 law. The converged schedule at a given load has one
+        owner, ``hil_plant_sim.scheduled_g_par()``, and wiring it into those
+        demand models is a dynamic-program re-solve round — see the loss-map
+        block there for the bias it leaves (at most 1.110 % of bus voltage, and
+        only below 0.4694 A of filtered total)."""
+        return self.state.droop_kd
+
+    def droop_scale_target(self, tot_filt: float) -> float:
+        """``shareDroopScaleTarget()`` (.ino:10847). Pure function of a filtered
+        total: the admissible scale at that load, floored at ``K_DROOP``.
+
+            k_d = max(K_DROOP, RE_MAX * clamp(I_min/tot, DROOP_R_MIN, 0.5) * SAFETY)
+
+        The 0.5 cap mirrors the closed-loop clip's own ``if (lo > 0.5) lo = 0.5``
+        sliver rule; the ``max`` floor is what recovers fw v26 bit-for-bit at and
+        above the crossover ``RE_MAX*SAFETY*I_min/K_DROOP`` = 0.906 A. A
+        non-positive or tiny total carries no information, so the LIVE value is
+        held (the firmware's own structural divide guard)."""
+        tot = float(tot_filt)
+        if not tot > _I_TOT_MIN_A:
+            return self.state.droop_kd
+        r_lo = GOV_CONST["SHARE_MINORITY_I_MIN_A"] / tot
+        if r_lo < _R_MIN:
+            r_lo = _R_MIN
+        if r_lo > 0.5:
+            r_lo = 0.5
+        kd = _RE_MAX * r_lo * GOV_CONST["SHARE_KD_SAFETY"]
+        return self.k_droop if kd < self.k_droop else kd
+
+    def _update_droop_scale(self) -> None:
+        """``updateShareDroopScale()`` (.ino:10856). CLOSED-LOOP ONLY, once per
+        tick, above every write site. The open-loop hold writes no MDACs, so
+        publishing a new scale there would describe hardware that did not move,
+        and the feedforward submode is deliberately left on the inherited
+        value."""
+        st = self.state
+        if abs(st.filt_total - st.kd_sched_tot) > GOV_CONST["SHARE_KD_HYST_A"]:
+            st.kd_sched_tot = st.filt_total
+        target = self.droop_scale_target(st.kd_sched_tot)
+        step = st.droop_kd * GOV_CONST["SHARE_KD_SLEW_FRAC_PER_TICK"]
+        st.droop_kd = _constrain(target, st.droop_kd - step, st.droop_kd + step)
+
+    def feedforward_clip_target(self, sp: float, prev_ratio: float) -> float:
+        """``shareFeedforwardClipTarget()`` (.ino:10810), fw v27 rev 1.
+
+        The relaxing minority-current clip on the OPEN-LOOP FEEDFORWARD path.
+        An EMPTY band is a HOLD at the ratio the hardware already carries — NOT
+        a collapse to 0.5, which is the fw v4 ``TP0053`` failure this form
+        deliberately does not repeat. The band opens monotonically with the
+        filtered total, so the clipped reference relaxes toward the raw setpoint
+        as load grows and the clip introduces no movement of its own.
+
+        At the shipped fw v27 rev 2 constants the caller only runs below the
+        0.30 A gate, where the band is empty, so this is always the hold; the
+        relaxing branch is written for a future retune, exactly as the firmware
+        writes it."""
+        tot = self.state.filt_total
+        if not tot > _I_TOT_MIN_A:
+            return prev_ratio
+        lo = GOV_CONST["SHARE_MINORITY_I_MIN_A"] / tot
+        hi = 1.0 - lo
+        if not lo < hi:
+            return prev_ratio
+        return _constrain(float(sp), lo, hi)
+
     # ── plant law ────────────────────────────────────────────────────────────
     def delivered_share(self, r: float, i_tot: float,
                         fc_on: bool, bt_on: bool) -> float:
@@ -698,8 +879,22 @@ class GovernorModel:
             return 0.0
         if rr >= 1.0:
             return 1.0
-        r_fc = self.droop_scale_fc * self.k_droop / rr + self.r_series_ohm
-        r_bt = self.k_droop / (1.0 - rr) + self.r_series_ohm
+        # fw v27 rev 2: the LIVE scheduled k_d, not the fixed floor. The droop
+        # resistance a channel actually presents is k_d/r, and k_d is now a
+        # function of load below the 0.906 A crossover. Two consequences, both
+        # stated in docs/HIL_PLANT.md section 4.4a: with rho = 1 and R_f = 0 the
+        # scale CANCELS and the law is unchanged (alpha = r); with R_f > 0 the
+        # fixed series floor's RELATIVE weight shrinks as k_d grows — at
+        # DROOP_R_MAX, where it is largest in band, from 8.55 % of a channel
+        # resistance at 0.30 ohm to 3.00 % at the 0.906 ohm cap.
+        # ⚠️ THAT WEIGHT IS MONOTONE; THE SHARE'S DIRECTION IS NOT. R_f
+        # partially cancels the rho asymmetry in the upper band, so taking
+        # weight off it can move the delivered share FURTHER from the commanded
+        # ratio there (measured at r = 0.80: 0.00557 -> 0.00794 across the
+        # schedule's span). Do not restate this as "closer to the identity".
+        kd = self.k_droop_live
+        r_fc = self.droop_scale_fc * kd / rr + self.r_series_ohm
+        r_bt = kd / (1.0 - rr) + self.r_series_ohm
         alpha = (self.dv0_v / float(i_tot) + r_bt) / (r_fc + r_bt)
         return _constrain(alpha, 0.0, 1.0)
 
@@ -742,10 +937,11 @@ class GovernorModel:
         a = _constrain(float(alpha), 0.0, 1.0)
         if self.map_is_identity() or i_tot <= 0.0:
             return a
+        kd = self.k_droop_live      # fw v27 rev 2 — the live scheduled scale
         p = (2.0 * a - 1.0) * self.r_series_ohm - self.dv0_v / float(i_tot)
         qa = -p
-        qb = p + self.k_droop * (a * (1.0 - self.droop_scale_fc) - 1.0)
-        qc = a * self.droop_scale_fc * self.k_droop
+        qb = p + kd * (a * (1.0 - self.droop_scale_fc) - 1.0)
+        qc = a * self.droop_scale_fc * kd
         if abs(qa) < 1e-15:
             if abs(qb) < 1e-15:
                 return a
@@ -805,9 +1001,19 @@ class GovernorModel:
     # ── updateShareSetpointCutoff() ──────────────────────────────────────────
     def _setpoint_cutoff(self, sp: float, i_fc: float, i_batt: float,
                          t_ms: float) -> bool:
-        """Port of .ino:9781-10078. Returns True while a latch is active, i.e.
-        the caller must freeze the whole share loop this tick."""
+        """Port of .ino:10419-10620. Returns True while a latch is active, i.e.
+        the caller must freeze the whole share loop this tick.
+
+        fw v27 rev 2 BATTERY-ONLY START: while the arm owns the setpoint this
+        function sees ``SHARE_BATTERY_ONLY_SP`` (0.0) instead of the commanded
+        share, which is EXACTLY the share-zero cut this path already implements.
+        The cut therefore inherits the last-source guard, the survivor-regulator
+        guard, the fw v25 load guard, the survivor-turn-on blanking and the
+        deferral, and the re-entry is this function's own release branch. No
+        second cut mechanism exists (design record section 9.1)."""
         st = self.state
+        if st.batt_only_active:
+            sp = GOV_CONST["SHARE_BATTERY_ONLY_SP"]
         st.deferred_fc = False
         st.deferred_bt = False
         released = False
@@ -851,26 +1057,43 @@ class GovernorModel:
         # survivor-turn-on blanking. Blocked on load -> DEFERRED; blocked on
         # blanking -> no latch, no flag, retry next tick.
         cut = GOV_CONST["SHARE_CUT_MAX_HANDOFF_A"]
+        # SURVIVOR-REGULATOR GUARD (fw v27 rev 2 review H1, .ino:10570/:10604).
+        # The last-source guard tests the two BUS switches; the entry must also
+        # test that the SURVIVOR'S BOOST IS ENABLED, or a battery-only cut fired
+        # at a State-98 profile start could leave the bus fed by a DISABLED
+        # TPS61288. The model does not carry the two ``*_REG_ENABLE`` pins, so
+        # it reuses ``v_bus_ok`` — the same flag that already stands in for the
+        # charged-bus + boost-enabled guards on every re-close (see its
+        # declaration). At the default ``v_bus_ok = True`` (both boosts on, the
+        # Run-state condition every offline walk models) this guard is inert, so
+        # the port stays bit-identical to fw v26 for every existing caller;
+        # ``v_bus_ok = False`` now refuses the cut too, which is the
+        # conservative direction and matches the firmware's fall-through.
         if not st.sp_cut_fc and not st.sp_cut_bt:
             if sp < _R_MIN:
-                if st.sw_fc and st.sw_bt:
+                if st.sw_fc and st.sw_bt and self.v_bus_ok:
                     if abs(i_fc) <= cut and self._blanked("BT", t_ms):
                         st.refused_blank += 1
                     elif abs(i_fc) <= cut:
                         self._write_switch("FC", False, t_ms)
                         st.iso_fc = True
                         st.sp_cut_fc = True
+                        # fw v27 rev 2 section 12: anchor the feedforward
+                        # proposal at the ratio physically on the MDACs the
+                        # instant the cut is taken — r_prev freezes from here.
+                        st.iso_prop_ratio = st.r_prev
                     else:
                         st.deferred_fc = True
                         st.refused_load += 1
             elif sp > _R_MAX:
-                if st.sw_bt and st.sw_fc:
+                if st.sw_bt and st.sw_fc and self.v_bus_ok:
                     if abs(i_batt) <= cut and self._blanked("FC", t_ms):
                         st.refused_blank += 1
                     elif abs(i_batt) <= cut:
                         self._write_switch("BT", False, t_ms)
                         st.iso_bt = True
                         st.sp_cut_bt = True
+                        st.iso_prop_ratio = st.r_prev   # mirror (fw v27 rev 2)
                     else:
                         st.deferred_bt = True
                         st.refused_load += 1
@@ -927,6 +1150,13 @@ class GovernorModel:
         # fw v26 (.ino:11011): resetShareControlState() drops the clamp state.
         st.gov_fc_clamped = False
         st.gov_bt_clamped = False
+        # fw v27 rev 2 (.ino:11719): the k_d SCHEDULE INPUT is a load estimate
+        # and goes with the filter. ``droop_kd`` itself is MDAC truth and is
+        # deliberately NOT reset — the converters physically hold their codes
+        # across a profile boundary, and snapping the scale back to K_DROOP
+        # there would jump the codes by the full schedule span in one write.
+        # The battery-only ARM is likewise not set here (section 9.2).
+        st.kd_sched_tot = 0.0
 
     # ── updateShareSlewMode() ────────────────────────────────────────────────
     def _slew_mode(self, i_fc: float, i_batt: float) -> None:
@@ -992,6 +1222,11 @@ class GovernorModel:
                 else:
                     self._write_switch("FC", False, t_ms)
                     st.iso_fc = True
+                    # fw v27 rev 2 section 12 (.ino:11518): anchor the
+                    # feedforward proposal at the MDAC truth. This write can
+                    # come from a ONE-SHOT caller that never reaches the
+                    # feedforward branch's own anchor.
+                    st.iso_prop_ratio = st.r_prev
         elif (st.iso_fc and not st.sp_cut_fc and r >= _R_MIN + hyst
               and self.v_bus_ok):
             self._write_switch("FC", True, t_ms)
@@ -1009,6 +1244,7 @@ class GovernorModel:
                 else:
                     self._write_switch("BT", False, t_ms)
                     st.iso_bt = True
+                    st.iso_prop_ratio = st.r_prev   # mirror (fw v27 rev 2)
         elif (st.iso_bt and not st.sp_cut_bt and r <= _R_MAX - hyst
               and self.v_bus_ok):
             self._write_switch("BT", True, t_ms)
@@ -1063,6 +1299,23 @@ class GovernorModel:
         sp = float(sp)
         total = abs(i_fc) + abs(i_batt)
 
+        # 0. fw v27 rev 2 BATTERY-ONLY START — derive the arm's ownership for
+        #    this tick (.ino:10990-10996), before the setpoint latch runs.
+        #    (c) an OUT-OF-BAND commanded setpoint is a CUT owned by the latch,
+        #        so the arm DISARMS PERMANENTLY on sight of one rather than
+        #        merely deferring: one owner per setpoint, and a battery-only
+        #        rule that took the fuel cell back after the operator's own cut
+        #        released would be a second owner arriving late. A band-edge
+        #        0.15 or 0.85 is IN band and is a share, so it does not disarm.
+        #    (f) an FC-charge window SUPPRESSES the arm (not disarms it):
+        #        assertFcChargeEnable() holds BT_BUS low there, so the entry's
+        #        last-source guard would refuse the cut anyway. The model's
+        #        proxy for that window is ``charge_path_owns_bt``, which is the
+        #        same signal the caller uses for the ownership override above.
+        if st.batt_only_armed and (sp < _R_MIN or sp > _R_MAX):
+            st.batt_only_armed = False
+        st.batt_only_active = st.batt_only_armed and not charge_path_owns_bt
+
         # 1. Setpoint latch owns every out-of-band setpoint, evaluated BEFORE
         #    the minimum-load gate so the release path runs at standstill too
         #    (.ino:10087).
@@ -1070,6 +1323,22 @@ class GovernorModel:
             st.latched = True
             if st.gov_fc_clamped or st.gov_bt_clamped:
                 self._clear_ceiling_state()      # .ino:10421 (fw v26)
+            # THE ONE THING A BATTERY-ONLY FREEZE MUST NOT INHERIT
+            # (.ino:11009-11020). A latched cut returns before the governor
+            # filter is advanced, by design: a frozen loop has no governed state
+            # to advance. That is fatal for an arm whose RELEASE CONDITION is
+            # the filtered total crossing the closed-loop gate — the filter
+            # could never cross it and the profile would run single-sourced for
+            # its whole length. So while, and only while, the arm owns the cut,
+            # the frozen path keeps the load estimate alive and drops the arm
+            # the instant the gate is met. Note the firmware's ``>=`` against
+            # SHARE_I_TOT_MIN_A here, against the ``<`` gate below.
+            if st.batt_only_active:
+                if total >= _I_TOT_MIN_A:
+                    st.filt_total += GOV_CONST["SHARE_GOV_FILT_ALPHA"] * (
+                        total - st.filt_total)
+                    if st.filt_total > 2.0 * GOV_CONST["SHARE_MINORITY_I_MIN_A"]:
+                        st.batt_only_armed = False
             return self._out(MODE_LATCHED, False, False)
         st.latched = False
 
@@ -1123,21 +1392,66 @@ class GovernorModel:
             return self._out(MODE_OPEN_F1_IDLE, False, False)
 
         slew = st.slew_step
+        # ── fw v27: THE RELAXING MINORITY-CURRENT CLIP RUNS HERE TOO ─────────
+        # FIRST, exactly as on the closed-loop path (conduction feasibility owns
+        # the floor; the ceilings are applied to its result). At the shipped
+        # constants this is always the HOLD branch, so the fed-forward reference
+        # stops walking out to an infeasible extreme and the open->closed
+        # handover carries no magnitude jump.
+        #
+        # ⚠️ BYPASSED WHILE A CONTROLLER-INITIATED CUT IS OUTSTANDING (review
+        # HIGH-1, .ino:11223-11245). ``applyShareRatio()`` returns before it
+        # records ``r_prev`` while a channel is isolated, so ``r_prev`` is FROZEN
+        # at the rail the cut came from — one hysteresis width short of re-entry.
+        # Feeding the clip there would propose that frozen rail forever and
+        # strand the channel off the bus. So while isolated the RAW setpoint is
+        # fed forward, bit-identically to fw v26.
+        #
+        # ⚠️ AND THE BYPASS NEEDS ITS OWN WALK ANCHOR (fw v27 rev 2 section 12).
+        # The slew below used to walk from ``r_prev``, which is frozen for the
+        # duration of the cut, so every isolated tick proposed the same
+        # ``rail + one step`` and the proposal could never accumulate. That is
+        # harmless only while one step clears SHARE_CUTOFF_HYST on its own:
+        #   DROOP_RATIO_SLEW_PER_TICK          0.020 > 0.01  -> re-enters, 1 tick
+        #   DROOP_RATIO_SLEW_HANDOFF_PER_TICK  0.002 < 0.01  -> never re-enters
+        # and at the rev 2 gate the handoff rate is the ORDINARY sub-gate
+        # ceiling (no sub-0.30 A total can hold both channels above the 0.20 A
+        # live threshold). ``iso_prop_ratio`` accumulates the proposal across
+        # isolated ticks and is re-anchored to the MDAC truth on every tick that
+        # is not isolated. The rate bound survives end to end: the proposal
+        # advances by at most one tick's ceiling and the write the re-entry
+        # finally makes lands AT the proposal, at most one SHARE_CUTOFF_HYST off
+        # the rail.
+        prev_ratio = st.r_prev
+        iso_outstanding = st.iso_fc or st.iso_bt
+        if not iso_outstanding:
+            st.iso_prop_ratio = prev_ratio      # follow the hardware
+        ff_sp = (sp if iso_outstanding
+                 else self.feedforward_clip_target(sp, prev_ratio))
         # fw v26: FEEDFORWARD does write the MDACs, so it takes the clamp
-        # (.ino:10562). Inert at every reachable open-loop total (below 0.60 A
+        # (.ino:11250). Inert at every reachable open-loop total (below 0.25 A
         # no channel can carry 1.25 A), applied so a future ceiling retune
         # cannot leave a writing path unguarded.
         # Same inlined inert guard as the closed-loop path; see the note there.
-        ff_sp = sp
         _tot = st.filt_total
         if (st.gov_fc_clamped or st.gov_bt_clamped
-                or sp * _tot > _FC_CEIL_A
-                or (1.0 - sp) * _tot > _BT_CEIL_A):
-            ff_sp = self._apply_share_current_ceilings(sp)
-        target = _constrain(ff_sp, st.r_prev - slew, st.r_prev + slew)
+                or ff_sp * _tot > _FC_CEIL_A
+                or (1.0 - ff_sp) * _tot > _BT_CEIL_A):
+            ff_sp = self._apply_share_current_ceilings(ff_sp)
+        walk_from = st.iso_prop_ratio if iso_outstanding else prev_ratio
+        target = _constrain(ff_sp, walk_from - slew, walk_from + slew)
+        if iso_outstanding:
+            st.iso_prop_ratio = target
         wrote, rl, rb = self._apply_share_ratio(target, i_fc, i_batt, t_ms,
                                                 from_controller=False)
-        st.acted_sp = sp
+        # fw v27 review MEDIUM-1 — ``share_actedSp`` RECORDS ACTUATION, NOT
+        # ARRIVAL. On a HELD tick nothing reaches the MDACs, so recording the
+        # setpoint would answer HOLD's ``spChanged`` question with a yes the
+        # hardware cannot back. The exact float compare is deliberate: it is the
+        # same test ``applyShareRatio()`` would answer with a write, and the held
+        # path produces ``prev_ratio`` by assignment, not by arithmetic.
+        if target != prev_ratio:
+            st.acted_sp = sp
         return self._out(MODE_OPEN_FF, rl, rb, wrote)
 
     # ── closed-loop branch (.ino:10215-10377) ────────────────────────────────
@@ -1146,6 +1460,18 @@ class GovernorModel:
         st = self.state
         st.closed_loop_run = True
         st.acted_sp = sp
+        # fw v27 rev 2 (.ino:11268): the loop has closed, so the battery-only
+        # start is over for this profile — whichever way this tick was reached.
+        # Belt and braces with the gate test on the frozen path: that path is the
+        # only one that can be taken while the cut is latched, this one the only
+        # one that can be taken while it is not.
+        st.batt_only_armed = False
+        # The load-scheduled droop scale advances HERE and nowhere else — closed
+        # loop only, one call per tick, ABOVE every write site, so the reference
+        # clip, the fw v26 ceilings and the fw v25 load guard (all of which work
+        # in CURRENT space and never read k_d) run against the same scale
+        # applyShareRatio() will map through at the bottom of this tick.
+        self._update_droop_scale()
         slew = st.slew_step
 
         sp_target = sp
@@ -1246,14 +1572,50 @@ class GovernorModel:
                                                 t_ms, from_controller=True)
         return self._out(MODE_CLOSED, rl, rb, wrote)
 
+    # ── setDroopMdac() ───────────────────────────────────────────────────────
+    def set_droop_mdac(self, g_fc: float, g_bt: float):
+        """``setDroopMdac()`` (.ino:11841). Returns the two AD5443 words and
+        charges the fw v27 rev 2 g-guard.
+
+        THE CLAMP IS THE PROTECTION; THE COUNTER IS THE OBSERVABILITY. The
+        load-scheduled k_d keeps ``g <= SHARE_KD_SAFETY`` at the band edge BY
+        CONSTRUCTION, but that is a statement about the REFERENCE: the ~20 ms
+        governor filter under-reads a rising load (the fw v26 clamp-sweep
+        finding, 25.6 % against a 12 % design headroom), so a stale light-load
+        ``k_d`` can meet a ratio the controller has already slewed toward a
+        high-load value and give ``g = k_d/(RE_MAX*r) > 1``. The ``constrain()``
+        below has always silently clipped that; the count is what stops "the
+        droop network is saturated" from being invisible.
+
+        Charged ONCE per clamped WRITE — a call whose two gains BOTH exceed full
+        scale charges one event, not two — and SATURATING at 0xFFFF rather than
+        wrapping, because a wrapped-to-zero count would read as "never
+        happened"."""
+        if g_fc > 1.0 or g_bt > 1.0:
+            if self.state.g_guard_count < 0xFFFF:
+                self.state.g_guard_count += 1
+        return _mdac_code(g_fc), _mdac_code(g_bt)
+
     # ── result packing ───────────────────────────────────────────────────────
     def _out(self, mode: str, refused_load: bool,
              refused_blank: bool, wrote: bool = False) -> GovernorOut:
         st = self.state
         st.mode_counts[mode] = st.mode_counts.get(mode, 0) + 1
         r = st.r_prev
-        g_fc = self.k_droop / (_RE_MAX * r) if r > 0.0 else 1.0
-        g_bt = self.k_droop / (_RE_MAX * (1.0 - r)) if r < 1.0 else 1.0
+        # fw v27 rev 2: the LIVE scheduled scale, not the fixed floor. Above the
+        # 0.906 A crossover the schedule IS K_DROOP, so every code here is
+        # bit-identical to fw v26 there.
+        kd = st.droop_kd
+        g_fc = kd / (_RE_MAX * r) if r > 0.0 else 1.0
+        g_bt = kd / (_RE_MAX * (1.0 - r)) if r < 1.0 else 1.0
+        wrote_now = bool(wrote) and mode not in NON_WRITING_MODES
+        # Only a tick that actually reached setDroopMdac() may charge the
+        # g-guard; a non-writing return reports the STANDING split and touches
+        # no counter.
+        if wrote_now:
+            code_fc, code_bt = self.set_droop_mdac(g_fc, g_bt)
+        else:
+            code_fc, code_bt = _mdac_code(g_fc), _mdac_code(g_bt)
         g_fc = _constrain(g_fc, 0.0, 1.0)
         g_bt = _constrain(g_bt, 0.0, 1.0)
         return GovernorOut(
@@ -1265,11 +1627,14 @@ class GovernorModel:
             cut_refused_blank=refused_blank,
             g_fc=g_fc,
             g_bt=g_bt,
-            code_fc=_mdac_code(g_fc),
-            code_bt=_mdac_code(g_bt),
-            wrote=bool(wrote) and mode not in NON_WRITING_MODES,
+            code_fc=code_fc,
+            code_bt=code_bt,
+            wrote=wrote_now,
             ceil_fc=st.gov_fc_clamped,
             ceil_bt=st.gov_bt_clamped,
+            k_d=kd,
+            g_clamp_count=st.g_guard_count,
+            batt_only=st.batt_only_active,
         )
 
     # ── convenience ──────────────────────────────────────────────────────────

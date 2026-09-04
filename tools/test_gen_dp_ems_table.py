@@ -1711,38 +1711,65 @@ def test_delivered_share_matches_the_scalar_authority_elementwise():
 
 
 def test_delivered_share_is_the_identity_below_the_reachability_threshold():
-    """THE IDENTITY HOLDS ALL THE WAY TO 1.55 A, not merely to 1.47 A.
+    """THE THRESHOLD, AND THE fw v27 rev 2 RE-DERIVATION OF WHICH TERM SETS IT.
 
-    The naive onset is I_FC_CEIL / DP_SHARE_MAX = 1.47 A, but the board cannot
-    clamp there: the minority-current clip runs FIRST and caps the commanded
-    fuel-cell current at I_tot - SHARE_MINORITY_I_MIN_A, which does not reach
-    the 1.25 A ceiling until 1.55 A of total. A demand model that clamped in
-    (1.47, 1.55) would be modelling a board action that does not happen -- and
-    it did: 250 of `ems-dp-replay`'s cells bound at I_tot 1.47137 A, where the
-    board delivers 1.1714 A. The sweep therefore runs PAST the naive onset and
-    up to the real threshold."""
+    The clamp can bind only where BOTH terms of the commandable fuel-cell
+    current exceed the ceiling:
+
+        DROOP_R_MAX * I_tot   > 1.25  ->  I_tot > 1.25/0.85 = 1.4706 A
+        I_tot - I_min         > 1.25  ->  I_tot > 1.25 + I_min
+
+    At fw v26's I_min = 0.30 A the CONDUCTION-FLOOR term was the tighter one and
+    the identity held all the way to 1.55 A; a demand model that clamped in
+    (1.47, 1.55) was modelling a board action that did not happen, and one did:
+    250 of `ems-dp-replay`'s cells bound at I_tot 1.47137 A, where the board
+    delivered 1.1714 A. At fw v27 rev 2's I_min = 0.15 A the two terms SWAP: the
+    conduction-floor term lands at 1.40 A, the BAND EDGE governs, and the
+    threshold and the naive onset COINCIDE at 1.4706 A. The assertion is
+    therefore `>=`, not `>`, and it is written against the arithmetic so a
+    future retune of the floor moves it automatically.
+
+    ⚠️ WHAT THAT COSTS A COMMITTED TABLE, checked rather than assumed: lowering
+    the guard admits clamping in [1.4706, 1.55) at any share above 1.25/I_tot,
+    i.e. the top four of the 57 share rungs. The worst cell over that window
+    moves 0.0435 of share, but that needs 1.55 A of two-source total; the
+    largest any registered stimulus reaches is 1.47137 A, where only the 0.85
+    rung moves and it moves 0.000452 of share = 0.66 mA of commanded fuel-cell
+    current. The tables are NOT re-solved for that."""
     import governor_model as gm
     shares = np.linspace(gen.DP_SHARE_MIN, gen.DP_SHARE_MAX, 57)
     onset = gen.GOV_I_FC_CEIL_A / gen.DP_SHARE_MAX
-    assert gm.CEILING_REACHABLE_I_TOT_A > onset
+    floor_term = gen.GOV_I_FC_CEIL_A + gm.GOV_CONST["SHARE_MINORITY_I_MIN_A"]
+    assert gm.CEILING_REACHABLE_I_TOT_A == pytest.approx(
+        max(onset, floor_term), abs=1e-12)
+    assert gm.CEILING_REACHABLE_I_TOT_A >= onset
     for tot in np.linspace(0.0, gm.CEILING_REACHABLE_I_TOT_A - 1e-9, 120):
         out = gen.delivered_share(shares, tot)
         assert np.array_equal(out, shares), tot
-    # The naive onset specifically -- the regression this test exists for.
-    for tot in (onset, onset + 1e-6, 1.47137, 1.50, 1.5499999):
+    # Below the threshold the identity is exact, including at the fw v26-era
+    # totals this test was built around.
+    for tot in (1.40, 1.45, gm.CEILING_REACHABLE_I_TOT_A - 1e-6):
         assert np.array_equal(gen.delivered_share(shares, tot), shares), tot
-    # ...and the threshold itself IS live, so the guard is a threshold and not
-    # a disabled clamp.
+    # ...and just ABOVE the threshold the guard is live, so it is a threshold
+    # and not a disabled clamp. AT the threshold the band-edge demand is
+    # EXACTLY the ceiling (0.85 * 1.4705882 = 1.25) and the firmware's test is a
+    # strict `>`, so the first clamping total is just above it.
     at = gen.delivered_share(gen.DP_SHARE_MAX, gm.CEILING_REACHABLE_I_TOT_A)
-    assert float(at) < gen.DP_SHARE_MAX
+    assert float(at) == pytest.approx(gen.DP_SHARE_MAX)
+    just_above = gen.delivered_share(
+        gen.DP_SHARE_MAX, gm.CEILING_REACHABLE_I_TOT_A * (1.0 + 1e-9))
+    assert float(just_above) < gen.DP_SHARE_MAX
+    # THE MOVED CELLS, quantified on the stimulus range that matters.
+    at_replay = float(gen.delivered_share(gen.DP_SHARE_MAX, 1.47137))
+    assert gen.DP_SHARE_MAX - at_replay == pytest.approx(0.000452, abs=1e-5)
 
 
 def test_delivered_share_reachability_guard_matches_the_scalar_authority():
     """The vectorised guard and the scalar one must switch at the same total,
     or the DP and the SDP/MPC disagree about which stages clamp."""
     import governor_model as gm
-    for tot in (1.4, 1.47, 1.5499999, gm.CEILING_REACHABLE_I_TOT_A,
-                1.5500001, 1.6, 2.0):
+    for tot in (1.4, 1.47, 1.4705, gm.CEILING_REACHABLE_I_TOT_A,
+                1.4707, 1.5, 1.5499999, 1.5500001, 1.6, 2.0):
         for sp in (0.15, 0.5, 0.84, 0.85):
             assert float(gen.delivered_share(sp, tot)) == \
                 gm.ceiling_bounded_share(sp, tot), (tot, sp)

@@ -57,8 +57,10 @@ PREDICTION MODEL (adjudication section 2.1, the hybrid ruling)
    source total, the open/closed mode and the minority clip bound are functions
    of the preview alone and are computed once per decision, before the search
    (candidate_opus Property A; 240 of 240 stage modes matched a full roll).
-2. TRANSITION-STAGE EXACT ROLLS.  Every previewed mode transition (0.60 A
-   upward, 0.55 A downward, a charge window opening or closing) is rolled
+2. TRANSITION-STAGE EXACT ROLLS.  Every previewed mode transition (the
+   ``GOV_ENTRY_A`` gate upward, ``GOV_RELEASE_A`` downward, a charge window
+   opening or closing; 0.30 / 0.25 A at fw v27 rev 2, 0.60 / 0.55 A before it,
+   and both derived from ``SHARE_MINORITY_I_MIN_A``) is rolled
    through the real ``GovernorModel`` at 1 kHz, once per ladder point, to
    produce ``r_hold[stage][share]`` - the ratio the governor leaves standing at
    drop-out.  Open stages carry that value.  The rolls are SLICED across the
@@ -66,7 +68,8 @@ PREDICTION MODEL (adjudication section 2.1, the hybrid ruling)
    decision's table is used until the new one completes (candidate_fable
    section 2.2 item 2; adjudication section 2.2).
 3. CLOSED-STAGE ALGEBRAIC SURROGATE.  On a closed-loop stage the delivered
-   share is ``clip(s, lo, 1-lo)`` with ``lo = min(0.5, 0.30/I_tot)``
+   share is ``clip(s, lo, 1-lo)`` with ``lo = min(0.5, 0.15/I_tot)``
+   (fw v27 rev 2 re-pin, 2026-09-03: SHARE_MINORITY_I_MIN_A 0.30 -> 0.15 A)
    (candidate_opus Property B: mean error 8.2e-4, maximum 1.49e-2 over 145
    closed stages).
 4. SHADOW GOVERNOR.  One ``GovernorModel`` is ticked at 1 kHz between feedback
@@ -334,12 +337,19 @@ SS_LIMIT_A = {SS_MODE_BT: I_BT_MAX_A, SS_MODE_FC: I_FC_MAX_A}
 # was arithmetic on the mechanisms, not a measurement of the roll.  A grid over
 # I_tot in [0.60, 2.55] A (0.05 A steps) x r0 in {0.15, 0.30, 0.50, 0.70, 0.85}
 # x both modes, at the measured plant dv0 0.013522 V and through this module's
-# own `_ss_admissible()`, engages at up to **118 ticks** (I_tot 0.75 A, r0
-# 0.85, BT-only).  So the margin is **1.69x**, not six windows, and the
-# unmodelled two-source residual at the worst grid point is 11.8 % of a 1 s
+# own `_ss_admissible()`, engages at up to **95 ticks** (I_tot 0.75 A, r0
+# 0.85, BT-only).  So the margin is **2.11x**, not six windows, and the
+# unmodelled two-source residual at the worst grid point is 9.5 % of a 1 s
 # stage rather than the design record's 3.4 %.  The roll carries NO plant
 # current lag - the doomed channel's current follows the model's own delivered
-# split instantly - so 118 is a LOWER bound on what the board would take.
+# split instantly - so 95 is a LOWER bound on what the board would take.
+#
+# fw v27 rev 2 re-pin, 2026-09-03: 118 -> 95 ticks and 1.69x -> 2.11x, because
+# `SHARE_MINORITY_I_MIN_A` moved 0.30 -> 0.15 A and the deferral's clipped
+# reference therefore walks the doomed channel to half the current it could
+# reach before, clearing the 0.5 A load guard sooner.  The grid's own start at
+# 0.60 A is the fw v26 closed-loop gate; extending it down to the rev 2 gate
+# 0.30 A was measured and returns the same maximum at the same grid point.
 # `test_the_admission_roll_grid_maximum_and_its_margin` pins both figures.
 SS_ADMIT_MAX_TICKS = 200
 # ⚠️ WHAT THE ROLL ACTUALLY FINDS, measured (2026-09-03) and recorded because it
@@ -347,10 +357,13 @@ SS_ADMIT_MAX_TICKS = 200
 # permanently refuse a cut anywhere in the OVERCURRENT-admissible region: when
 # it refuses the first tick, the firmware's own DEFERRAL clips the closed-loop
 # reference back into [DROOP_R_MIN, DROOP_R_MAX], which walks the doomed
-# channel's current DOWN until the guard admits.  The deferral's floor is
-# `DROOP_R_MIN * I_tot`, which clears the 0.5 A guard only above 3.33 A of
-# total, and both survivor bounds (1.19 A fuel cell, 2.55 A battery) refuse the
-# candidate long before that.  So what the roll returns is a DELAY, not a
+# channel's current DOWN until the guard admits.  The deferral's floor is the LOOSER of
+# the band edge and the conduction floor,
+# `max(DROOP_R_MIN, min(0.5, SHARE_MINORITY_I_MIN_A/I_tot)) * I_tot`.  fw v27
+# rev 2 re-pin, 2026-09-03: with the floor at 0.15 A that reduces to
+# `DROOP_R_MIN * I_tot` for every total above 1.0 A, which clears the 0.5 A
+# guard only above 3.33 A of total, and both survivor bounds (1.19 A fuel cell,
+# 2.55 A battery) refuse the candidate long before that.  So what the roll returns is a DELAY, not a
 # verdict: 1 tick at 0.4 A on the doomed channel, 17 at 0.6 A, 34 at the largest
 # case measured.  34 ms of a 1 s stage is 3.4 % of a stage run two-source that
 # the plan modelled single-source, which is inside every band this leg carries.
@@ -359,16 +372,21 @@ SS_ADMIT_MAX_TICKS = 200
 #
 # ⚠️ CORRECTED 2026-09-03 (review LOW-1), on the grid the constant above
 # describes.  Two claims in the paragraph above are too strong.  (a) The
-# maximum delay is **118 ticks**, not 34 - the four points quoted were
-# hand-picked.  (b) `SS_REFUSE_CUT_LOAD` is NOT purely defensive: at
-# I_tot 0.60 A commanded from either rail the doomed channel parks at
-# 0.5157 A, a hair over the 0.5 A guard, the reference does NOT walk down, and
-# the roll expires - 2 of the 400 grid points refuse on load.  The sentence
+# maximum delay is **95 ticks**, not 34 - the four points quoted were
+# hand-picked.  (b) `SS_REFUSE_CUT_LOAD` was NOT purely defensive at fw v26: at
+# I_tot 0.60 A commanded from either rail the clip band was EMPTY
+# (`lo = 0.30/0.60 = 0.5`), the doomed channel parked at 0.5157 A, a hair over
+# the 0.5 A guard, the reference did NOT walk down, and the roll expired -
+# 2 of the 400 grid points refused on load.
+#
+# fw v27 rev 2 re-pin, 2026-09-03: those two points are GONE - 0 of the 400
+# refuse on load - because the band at 0.60 A is now `lo = 0.15/0.60 = 0.25`
+# and the deferral walks the doomed channel down to 0.15 A.  So the sentence
 # "the load guard does NOT permanently refuse a cut anywhere in the
-# overcurrent-admissible region" holds for most of the region and not for its
-# low-current corner.  `test_the_admission_roll_grid_maximum_and_its_margin`
-# pins both, and `test_a_cut_that_cannot_engage_inside_the_window_is_refused_
-# on_load` still exercises the path directly.
+# overcurrent-admissible region" holds across the whole grid again.  The
+# refusal path is still reachable by construction and is exercised directly by
+# `test_a_cut_that_cannot_engage_inside_the_window_is_refused_on_load`;
+# `test_the_admission_roll_grid_maximum_and_its_margin` pins the grid figures.
 #
 # Refusal reasons, reported per decision.  One string per mechanism, so a
 # campaign can tell a guard refusal from an overcurrent one.
@@ -1145,7 +1163,8 @@ def precompute_stages(prev, k0, horizon, dt_dec=DECISION_DT_S,
     charge mask's standing value at the same instant, for the same reason.
 
     ``transition[j]`` marks a stage a roll must cover.  A stage qualifies on a
-    GOVERNOR mode change (0.60 A upward, 0.55 A downward) OR on a CHARGE-MASK
+    GOVERNOR mode change (``GOV_ENTRY_A`` upward, ``GOV_RELEASE_A`` downward
+    - 0.30 / 0.25 A at fw v27 rev 2) OR on a CHARGE-MASK
     edge: a window opening or closing takes BT off or back onto the bus, which
     moves the ratio exactly as a mode change does (adjudication section 2.1
     names all four classes; the charge pair was missing until M5, review of
@@ -1178,7 +1197,9 @@ def precompute_stages(prev, k0, horizon, dt_dec=DECISION_DT_S,
                 out.beyond_preview += 1
             i_tot = prev.i_total[k]
             # Settled-filter classification with the firmware's own hysteresis
-            # (.ino:10126-10145): entry at 0.60 A, release at 0.55 A.
+            # (.ino:10126-10145): entry at GOV_ENTRY_A, release at
+            # GOV_RELEASE_A (0.30 / 0.25 A at fw v27 rev 2, both derived
+            # from SHARE_MINORITY_I_MIN_A).
             if i_tot < GOV_MIN_LOAD_A:
                 m = STAGE_FROZEN
             elif mode == STAGE_CLOSED:
@@ -2160,12 +2181,36 @@ class Planner:
                                        or (1.0 - carried) * i_tot_sub
                                        < HANDOFF_DARK_A)):
                             step_slow = SLEW_HANDOFF_PER_TICK
+                        # fw v27 rev 2: THE RELAXING MINORITY-CURRENT CLIP RUNS
+                        # ON THE FEEDFORWARD PATH TOO, and it runs FIRST
+                        # (`GovernorModel.feedforward_clip_target()`,
+                        # .ino:10810).  An EMPTY band is a HOLD at the ratio the
+                        # hardware already carries, NOT a collapse to 0.5.
+                        #
+                        # fw v27 rev 2 re-pin, 2026-09-03: the modelled
+                        # feedforward target moved `s_ff` -> `clip(s_ff, lo,
+                        # 1-lo)` with a HOLD on an empty band, because
+                        # SHARE_MINORITY_I_MIN_A moved 0.30 -> 0.15 A and the
+                        # firmware grew this clip on the open-loop path.  The
+                        # band is empty whenever `lo >= 0.5`, i.e. whenever
+                        # `I_tot <= 2*I_min = GOV_ENTRY_A`, and an OPEN
+                        # sub-sample is by definition at or below that gate - so
+                        # at the shipped constants this branch is a HOLD at
+                        # every reachable open-loop total and the modelled slew
+                        # is retired.  It is written as the arithmetic, not as
+                        # the hold it degenerates to, so a future retune of the
+                        # floor re-opens it exactly as the firmware re-opens it.
+                        lo_ff = pre.lo[j][sub]      # min(0.5, I_min/I_tot)
+                        if i_tot_sub > GOV_MIN_LOAD_A and lo_ff < 0.5:
+                            s_ff_t = min(max(s_ff, lo_ff), 1.0 - lo_ff)
+                        else:
+                            s_ff_t = carried        # empty band -> hold
                         # fw v26: the FEEDFORWARD submode DOES write the
                         # MDACs, so it takes the clamp too (.ino:10562); HOLD
                         # does not, and is left alone above.  Inert at every
                         # reachable open-loop total, applied so a ceiling
                         # retune cannot leave a writing path unguarded.
-                        s_ff_c = gov_mod.ceiling_bounded_share(s_ff, i_tot_sub)
+                        s_ff_c = gov_mod.ceiling_bounded_share(s_ff_t, i_tot_sub)
                         r_mean, carried, dwell_left = ramp_mean(
                             carried, s_ff_c, ticks_per_sub,
                             step_fast=SLEW_FULL_PER_TICK,
@@ -2585,6 +2630,16 @@ class ShadowGovernor:
         self.current_corrections = 0
         self.mode_mismatch = 0
         self.ticks = 0
+        # ── THE BATTERY-ONLY START (H2, 2026-09-03) ─────────────────────────
+        # THE BOARD AND THE WALK BOTH START WITH FC_BUS LOW, and this shadow
+        # must too. fw v27 rev 2 arms a one-shot battery-only cut at every
+        # profile start (`armShareBatteryOnlyStart()`, .ino:11737), which
+        # `ems_walk.walk()` mirrors at ems_walk.py:661. Without the same call
+        # here the shadow rolls from a state in which the fuel cell is already
+        # on the bus, `tick_to()` asserts `sw_fc = True` through the whole
+        # pre-gate window, and `_ss_admissible()` judges single-source
+        # candidates against a topology the board does not have.
+        self.model.arm_battery_only_start()
 
     def reset(self, seed_r=0.5):
         self.model.reset(seed_r)
@@ -2593,6 +2648,10 @@ class ShadowGovernor:
         self.current_corrections = 0
         self.mode_mismatch = 0
         self.ticks = 0
+        # Re-arm on every reset, exactly where the walk arms: `reset()` is the
+        # planner's profile boundary. `GovernorModel.reset()` clears the flag,
+        # so this must follow it rather than precede it.
+        self.model.arm_battery_only_start()
 
     @property
     def r(self):

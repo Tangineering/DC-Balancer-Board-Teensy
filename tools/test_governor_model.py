@@ -70,6 +70,12 @@ _FW_CONST_PATTERNS = {
     "SHARE_GOV_I_FC_CEIL_A": r"const(?:expr)?\s+float\s+SHARE_GOV_I_FC_CEIL_A\s*=\s*([0-9.]+)f",
     "SHARE_GOV_I_BT_CEIL_A": r"const(?:expr)?\s+float\s+SHARE_GOV_I_BT_CEIL_A\s*=\s*([0-9.]+)f",
     "SHARE_GOV_CEIL_HYST_A": r"const(?:expr)?\s+float\s+SHARE_GOV_CEIL_HYST_A\s*=\s*([0-9.]+)f",
+    # fw v27 rev 2 load-scheduled droop scale.  SHARE_KD_SAFETY is a literal;
+    # SHARE_KD_HYST_A and SHARE_KD_SLEW_FRAC_PER_TICK are DERIVED in the
+    # firmware from existing symbols and are pinned by
+    # test_fw27_derived_kd_constants_match_the_firmware_expressions() instead.
+    "SHARE_KD_SAFETY": r"const(?:expr)?\s+float\s+SHARE_KD_SAFETY\s*=\s*([0-9.]+)f",
+    "SHARE_BATTERY_ONLY_SP": r"const(?:expr)?\s+float\s+SHARE_BATTERY_ONLY_SP\s*=\s*([0-9.]+)f",
     "SHARE_CUTOFF_HYST": r"const(?:expr)?\s+float\s+SHARE_CUTOFF_HYST\s*=\s*([0-9.]+)f",
     "SHARE_CUT_SURVIVOR_BLANK_MS": r"const\s+uint32_t\s+SHARE_CUT_SURVIVOR_BLANK_MS\s*=\s*(\d+)u",
     "SHARE_SP_CHANGE_EPS": r"const(?:expr)?\s+float\s+SHARE_SP_CHANGE_EPS\s*=\s*([0-9.eE+-]+)f",
@@ -85,6 +91,27 @@ def test_gov_const_matches_firmware(ino_text, name):
     assert m, "could not find firmware literal for %s (pattern out of date?)" % name
     fw_val = float(m.group(1))
     assert gm.GOV_CONST[name] == pytest.approx(fw_val, rel=1e-9, abs=1e-12)
+
+
+def test_fw27_derived_kd_constants_match_the_firmware_expressions(ino_text):
+    """The two k_d constants the firmware DERIVES rather than states.
+
+    Scraping a literal would be wrong here: the firmware writes them against
+    existing symbols precisely so the pairs cannot drift, and a literal in this
+    file would re-introduce exactly that drift. So the EXPRESSIONS are pinned.
+        SHARE_KD_HYST_A             = SHARE_GOV_OL_HYST_A          .ino:2534
+        SHARE_KD_SLEW_FRAC_PER_TICK = DROOP_RATIO_SLEW_PER_TICK
+                                      / DROOP_R_MAX                .ino:2546
+    """
+    assert re.search(r"SHARE_KD_HYST_A\s*=\s*SHARE_GOV_OL_HYST_A", ino_text)
+    assert re.search(r"SHARE_KD_SLEW_FRAC_PER_TICK\s*=\s*"
+                     r"DROOP_RATIO_SLEW_PER_TICK\s*/\s*DROOP_R_MAX", ino_text)
+    C = gm.GOV_CONST
+    assert C["SHARE_KD_HYST_A"] == C["SHARE_GOV_OL_HYST_A"]
+    assert C["SHARE_KD_SLEW_FRAC_PER_TICK"] == pytest.approx(
+        C["DROOP_RATIO_SLEW_PER_TICK"] / C["DROOP_R_MAX"], rel=1e-12)
+    # The documented value, so a retune of either parent is visible here too.
+    assert C["SHARE_KD_SLEW_FRAC_PER_TICK"] == pytest.approx(0.023529, abs=1e-6)
 
 
 def test_re_max_derivation(ino_text):
@@ -841,15 +868,27 @@ def test_ceiling_constants_sit_below_their_fault_limits(ino_text):
     assert C["SHARE_GOV_CEIL_HYST_A"] < lim_fc - C["SHARE_GOV_I_FC_CEIL_A"]
 
 
-def test_reachability_threshold_is_1p55_a_through_the_whole_loop():
-    """1.55 A of TWO-SOURCE total is the governing number for this feature.
+def test_reachability_threshold_is_1p4706_a_through_the_whole_loop():
+    """1.4706 A of TWO-SOURCE total is the governing number for this feature.
 
-    Asserted through step(), not through the clamp alone, because the threshold
-    is a property of the ORDER: the minority-current clip caps the commanded
-    fuel-cell fraction at 1 - SHARE_MINORITY_I_MIN_A/I_tot, and only that cap
-    puts the first engagement at I_FC_CEIL + I_MINORITY rather than at
-    I_FC_CEIL / DROOP_R_MAX = 1.47 A."""
-    assert gm.CEILING_REACHABLE_I_TOT_A == pytest.approx(1.55, abs=1e-12)
+    RE-DERIVED FOR fw v27 rev 2 (was 1.55 A). The largest fuel-cell current the
+    loop can command is min(DROOP_R_MAX * I_tot, I_tot - SHARE_MINORITY_I_MIN_A),
+    so the ceiling binds only above max(CEIL/DROOP_R_MAX, CEIL + I_min). At
+    I_min = 0.30 A the conduction-floor term was the tighter one (1.55 A); at
+    0.15 A the two SWAP and the BAND EDGE governs at 1.25/0.85 = 1.4706 A, with
+    the conduction-floor term landing at exactly LIMIT_I_FC_MAX = 1.40 A. The
+    assertion is written as the arithmetic, not as whichever term wins today.
+    """
+    C = gm.GOV_CONST
+    assert gm.CEILING_REACHABLE_I_TOT_A == pytest.approx(
+        max(C["SHARE_GOV_I_FC_CEIL_A"] / C["DROOP_R_MAX"],
+            C["SHARE_GOV_I_FC_CEIL_A"] + C["SHARE_MINORITY_I_MIN_A"]),
+        abs=1e-12)
+    assert gm.CEILING_REACHABLE_I_TOT_A == pytest.approx(1.4705882, abs=1e-6)
+    # The property the firmware static_asserts (.ino:2693): the clamp must
+    # become reachable strictly BELOW the total at which the band edge alone
+    # already commands the fault limit, or it could never act before OC_FC.
+    assert gm.CEILING_REACHABLE_I_TOT_A < 1.4 / C["DROOP_R_MAX"]
 
     def first_engagement(sp):
         tot = 1.40
@@ -868,10 +907,12 @@ def test_reachability_threshold_is_1p55_a_through_the_whole_loop():
 
     at = first_engagement(gm.GOV_CONST["DROOP_R_MAX"])
     assert at is not None, "the clamp never engaged up to 2.20 A"
-    assert at >= 1.55 - 1e-9, ("engaged at %.4f A, below the 1.55 A "
-                               "reachability threshold" % at)
-    assert at <= 1.60 + 1e-9, ("engaged at %.4f A, more than one 0.05 A sweep "
-                               "step above 1.55 A" % at)
+    assert at >= gm.CEILING_REACHABLE_I_TOT_A - 1e-9, (
+        "engaged at %.4f A, below the %.4f A reachability threshold"
+        % (at, gm.CEILING_REACHABLE_I_TOT_A))
+    assert at <= gm.CEILING_REACHABLE_I_TOT_A + 0.05 + 1e-9, (
+        "engaged at %.4f A, more than one 0.05 A sweep step above the "
+        "threshold" % at)
 
 
 def test_clamp_is_inert_and_bit_identical_below_the_ceilings():
@@ -987,20 +1028,29 @@ def test_ceiling_bounded_share_is_the_converged_image_of_the_dynamic_clamp():
 def test_ceiling_bounded_share_is_the_identity_below_the_threshold():
     """THE REACHABILITY GUARD, on the scalar helper the demand models call.
 
-    Below 1.55 A of two-source total the board's minority-current clip has
+    Below the reachability threshold the board's minority-current clip has
     already capped the commanded fuel-cell current under the 1.25 A ceiling, so
-    no clamp occurs and the helper must return its argument. Without this the
-    demand models clamped in (1.47, 1.55) -- 250 of `ems-dp-replay`'s 34 827
-    cells did, at I_tot 1.47137 A where the board delivers 1.1714 A."""
+    no clamp occurs and the helper must return its argument. At fw v26's
+    I_min = 0.30 A the guard closed the (1.47, 1.55) window -- 250 of
+    `ems-dp-replay`'s 34 827 cells clamped inside it, at I_tot 1.47137 A where
+    the board delivered 1.1714 A. fw v27 rev 2 CLOSES THAT WINDOW STRUCTURALLY:
+    the band-edge term is now the governing one, so the naive onset and the
+    guarded threshold COINCIDE at 1.4706 A and the guard's remaining work is the
+    conduction-floor term below 1.40 A. The assertion is therefore >=, not >."""
     naive_onset = gm.GOV_CONST["SHARE_GOV_I_FC_CEIL_A"] / gm.GOV_CONST[
         "DROOP_R_MAX"]
-    assert naive_onset < gm.CEILING_REACHABLE_I_TOT_A
-    for tot in (0.5, 1.0, 1.2, naive_onset, 1.47137, 1.50,
+    assert naive_onset <= gm.CEILING_REACHABLE_I_TOT_A
+    for tot in (0.5, 1.0, 1.2, 1.40, 1.45,
                 gm.CEILING_REACHABLE_I_TOT_A - 1e-9):
         for sp in (0.15, 0.5, 0.75, 0.84, 0.85):
             assert gm.ceiling_bounded_share(sp, tot) == sp, (tot, sp)
     # The threshold itself is live: the guard is a threshold, not an off switch.
-    assert gm.ceiling_bounded_share(0.85, gm.CEILING_REACHABLE_I_TOT_A) < 0.85
+    # AT the threshold the band-edge demand is EXACTLY the ceiling (0.85 *
+    # 1.4705882 = 1.25), and the firmware's test is a strict `>`, so the first
+    # clamping total is just above it -- not at it.
+    assert gm.ceiling_bounded_share(0.85, gm.CEILING_REACHABLE_I_TOT_A) == 0.85
+    assert gm.ceiling_bounded_share(
+        0.85, gm.CEILING_REACHABLE_I_TOT_A * (1.0 + 1e-9)) < 0.85
     # The DYNAMIC port, whose caller owns the clip, still clamps below it --
     # which is why the two helpers must not be assumed interchangeable.
     g = gm.GovernorModel(dt_s=1e-3)

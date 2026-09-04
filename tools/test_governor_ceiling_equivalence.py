@@ -178,14 +178,17 @@ def test_the_sequence_actually_exercises_both_clamps(harness):
 
 
 def test_firmware_and_port_agree_on_the_reachability_threshold(harness):
-    """The governing number for this feature is 1.55 A of TWO-SOURCE total
-    (docs/fw26_current_ceiling_governor.md section 4.1.1): the minority-current
-    clip caps the commanded fuel-cell fraction at 1 - 0.30/I_tot, so the
-    ceiling is reachable only above I_FC_CEIL + I_MINORITY.
+    """The governing number for this feature is 1.4706 A of TWO-SOURCE total
+    (RE-DERIVED for fw v27 rev 2; docs/fw27_governor_package.md section 8.5).
+    The minority-current clip caps the commanded fuel-cell current at
+    min(DROOP_R_MAX * I_tot, I_tot - I_min), so the ceiling is reachable only
+    above max(CEIL/DROOP_R_MAX, CEIL + I_min). At fw v26's I_min = 0.30 A the
+    conduction-floor term governed and the threshold was 1.55 A; at 0.15 A the
+    BAND EDGE governs and it is 1.25/0.85 = 1.4706 A.
 
     Asserted against the firmware, with the minority clip applied here exactly
     as `powerBalance()` applies it before the call."""
-    assert gm.CEILING_REACHABLE_I_TOT_A == pytest.approx(1.55, abs=1e-12)
+    assert gm.CEILING_REACHABLE_I_TOT_A == pytest.approx(1.4705882, abs=1e-6)
     i_min = gm.GOV_CONST["SHARE_MINORITY_I_MIN_A"]
     seq = []
     tot = 1.40
@@ -201,11 +204,12 @@ def test_firmware_and_port_agree_on_the_reachability_threshold(harness):
     assert first is not None, "the clamp never engaged over the sweep"
     engaged_at = seq[first][0]
     assert engaged_at >= gm.CEILING_REACHABLE_I_TOT_A - 1e-9, (
-        "the clamp engaged at %.4f A, BELOW the 1.55 A reachability threshold "
-        "the design argues from" % engaged_at)
+        "the clamp engaged at %.4f A, BELOW the %.4f A reachability threshold "
+        "the design argues from"
+        % (engaged_at, gm.CEILING_REACHABLE_I_TOT_A))
     assert engaged_at <= gm.CEILING_REACHABLE_I_TOT_A + 0.02 + 1e-9, (
         "the clamp engaged at %.4f A, more than one sweep step above the "
-        "1.55 A threshold" % engaged_at)
+        "%.4f A threshold" % (engaged_at, gm.CEILING_REACHABLE_I_TOT_A))
     # And below the threshold nothing was touched.
     for i, r in enumerate(fw[:first]):
         assert r[1] == 0 and r[2] == 0, "clamped at %.4f A" % seq[i][0]

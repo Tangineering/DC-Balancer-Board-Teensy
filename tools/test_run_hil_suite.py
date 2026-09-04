@@ -3062,7 +3062,12 @@ def test_fault_expectations_switch_fall_latency_specs_pass_the_import_time_shape
                 assert spec.get("after_t") is not None
                 assert spec.get("edge", "fall") in ("fall", "rise")
                 assert spec["t_window"][0] < spec["after_t"]
-    assert found == 4   # share-staircase's four latency checks
+    # 4 -> 7 (fw v27 rev 2, 2026-09-03): share-staircase's four, plus the one
+    # `*_battonly_reentry` latency check each of the three `fw26-clamp-*` legs
+    # gained. That check measures the fuel cell's re-entry after the
+    # battery-only start, from the arithmetic gate crossing, and it is the ONLY
+    # observable of the 0.30 A closed-loop gate the 18-byte frame carries.
+    assert found == 7
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -10755,10 +10760,20 @@ def test_mpc_share_motion_floors_sit_under_their_own_walk_range():
     `mpc-sto` took the leg: the stochastic law plans against the demand TPM's
     conditional mean, which smooths the two cruise levels that stimulus exists
     to separate, and it walks a share range of only 0.0833. The four ranges
-    below are the shipped bindings' loss-map-era walks, and each floor is
-    ~0.6x its own."""
-    walk_range = {"ems-mpc": 0.2500, "ems-mpc-det": 0.4167,
-                  "ems-mpc-cross": 0.0833, "ems-ftp75-mpc": 0.2500}
+    below are the shipped bindings' walks, and each floor is under its own.
+
+    RE-WALKED FOR fw v27 rev 2 (2026-09-03). Every one of the four grew,
+    because the 0.30 A closed-loop gate makes the low-current stages of these
+    stimuli DISTINGUISHABLE: under the 0.60 A gate their clip band was
+    collapsed to 0.5, every ladder rung delivered the same split, the
+    candidates tied and the planner sat on one rung. The floors were NOT
+    re-pinned -- each was already under its own new range with room
+    (0.15/0.3500, 0.25/0.5250, 0.05/0.1750, 0.15/0.3500), and widening a
+    guard because the walk widened would spend the guard's whole purpose.
+    Walked with `dv0_v=0.030223` and the plant loss map, one process per leg;
+    `ems-mpc-cross` is `mpc-sto`, the shipped binding, not `mpc-det`."""
+    walk_range = {"ems-mpc": 0.3500, "ems-mpc-det": 0.5250,
+                  "ems-mpc-cross": 0.1750, "ems-ftp75-mpc": 0.3500}
     for name, rng in walk_range.items():
         specs = {s["name"]: s for s in
                  rhs.FAULT_EXPECTATIONS[name]["signals_require"]}
@@ -10770,9 +10785,17 @@ def test_mpc_share_motion_floors_sit_under_their_own_walk_range():
 def test_mpc_i_fc_ceiling_still_clears_every_legs_walk_peak():
     """The overcurrent bound is a BUDGET claim with slack, and the swap moved
     the widest peak: `mpc-det` on `ems-mpc-det` walks 0.9809 A where the
-    pre-swap set topped out at 0.7310 A. It still clears the 1.19 A ceiling."""
-    peaks = {"ems-mpc": 0.7357, "ems-mpc-det": 0.9809,
-             "ems-mpc-cross": 0.3016, "ems-ftp75-mpc": 0.4886}
+    pre-swap set topped out at 0.7310 A. It still clears the 1.19 A ceiling.
+
+    RE-WALKED FOR fw v27 rev 2 (2026-09-03): every peak came DOWN
+    (0.7357 -> 0.7055, 0.9809 -> 0.9524, 0.3016 -> 0.1576, 0.4886 -> 0.4581),
+    so the budget claim is strictly safer than it was and the 1.19 A ceiling
+    is untouched. The widest is still `mpc-det` on `ems-mpc-det`, now 20 %
+    under the ceiling. The mechanism is the battery-only start plus the wider
+    clip band: the fuel cell no longer carries the opening transient, and the
+    minority rail it is held to at low total is half what it was."""
+    peaks = {"ems-mpc": 0.7055, "ems-mpc-det": 0.9524,
+             "ems-mpc-cross": 0.1576, "ems-ftp75-mpc": 0.4581}
     for name, peak in peaks.items():
         specs = {s["name"]: s for s in
                  rhs.FAULT_EXPECTATIONS[name]["signals_require"]}
@@ -10815,30 +10838,70 @@ measured in the 2026-09-02 fix round, BOTH `mpc-det` and `mpc-sto` command
 
     THIS TEST FAILS WHEN THE GAP CLOSES, which is the point: a ladder or
     economics change that widens the walk should force a decision about the
-    floor and the band rather than passing unnoticed."""
+    floor and the band rather than passing unnoticed.
+
+    ⚠️ IT FIRED AT fw v27 rev 2 (2026-09-03), AND THE ANSWER IS THAT THE
+    OBSERVABLE WAS WRONG, NOT THAT THE GAP CLOSED. The COMMANDED range
+    widened and the two laws stopped agreeing on it -- `mpc-det` now commands
+    [0.1500, 0.5000] (0.3500, four ladder steps) and `mpc-sto` [0.1500,
+    0.3250] (0.1750, two) -- because the 0.30 A closed-loop gate makes the
+    low-current stages distinguishable where the 0.60 A gate collapsed their
+    clip band to 0.5 and tied every candidate. But the DELIVERED share is
+    [0.000000, 0.555597] for BOTH laws, and the hydrogen and the charge
+    balance are still bit-identical to seven and six figures. 62-63 % of this
+    run is open-loop (`open_hold` for `mpc-det`, `open_feedforward` for
+    `mpc-sto`), and in open loop a commanded share is accepted, logged and NOT
+    ACTED ON -- so the extra commanded motion buys nothing physical, which is
+    the finding this test was written to hold.
+
+    The pin therefore MOVES TO THE PHYSICAL OBSERVABLE and keeps the commanded
+    ranges as era values beside it. This is a strengthening: the old form
+    could be satisfied by a law that merely commands wider, and the new form
+    cannot. The suite's own `mpc_share_moved` check still reads `cmd_share_sp`
+    and its 0.05 floor is still satisfiable (0.1750), so nothing downstream
+    moved.
+
+    OPERATOR DECISION STILL OPEN, and it is now sharper than before: a wider
+    band and a lower floor did not buy a wider DELIVERED walk on this
+    stimulus, so `ems-mpc-cross`'s registry description of a wide walk remains
+    unearned. TODO(fw27): re-adjudicate the leg's observable after campaign G
+    measures the delivered split on the board."""
     pytest.importorskip("numpy")        # ems_walk -> gen_dp_ems_table -> numpy
     ew = pytest.importorskip("ems_walk")
     sim = pytest.importorskip("hil_plant_sim")
-    seen = {}
+    seen, open_frac = {}, {}
     for strat in ("mpc-det", "mpc-sto"):
         r = ew.walk(strat, "ems-mpc-cross", soc0=0.7, governor=True,
                     dv0_v=0.030223, loss_map=sim.plant_loss_map(), trace=True)
         sc = [float(x) for x in r.share_cmd]
-        seen[strat] = (min(sc), max(sc), float(r.h2_g))
-    for strat, (lo, hi, h2) in seen.items():
-        assert hi - lo == pytest.approx(0.0875, abs=1e-3), (strat, lo, hi)
+        sd = [float(x) for x in r.share_delivered]
+        seen[strat] = (min(sc), max(sc), float(r.h2_g),
+                       min(sd), max(sd), float(r.delta_soc))
+        open_frac[strat] = sum(
+            v for k, v in r.mode_fractions.items() if k.startswith("open_"))
+    # THE PHYSICAL PIN: the two laws deliver the SAME split, burn the same
+    # hydrogen and move the same charge. This is the finding; everything
+    # below it is bookkeeping about how the command got there.
+    assert seen["mpc-det"][3] == seen["mpc-sto"][3]          # delivered lo
+    assert seen["mpc-det"][4] == seen["mpc-sto"][4]          # delivered hi
+    assert seen["mpc-det"][2] == seen["mpc-sto"][2]          # h2, bit-exact
+    assert seen["mpc-det"][5] == seen["mpc-sto"][5]          # dSoC, bit-exact
+    assert seen["mpc-det"][3] == pytest.approx(0.0, abs=1e-9)
+    assert seen["mpc-det"][4] == pytest.approx(0.555597, abs=1e-5)
+    assert seen["mpc-det"][2] == pytest.approx(0.009018666, rel=1e-6)
+    # ... and it is bought in open loop, which is WHY commanding wider is
+    # free: a command below the gate is accepted, logged and not acted on.
+    for strat in ("mpc-det", "mpc-sto"):
+        assert open_frac[strat] > 0.60, (strat, open_frac[strat])
+    # THE COMMANDED ranges, as era values and per law -- they DIVERGED at
+    # fw v27 rev 2 while everything physical stayed identical.
+    import mpc_ems as _m
+    step = ((_m.SHARE_BAND_DP[1] - _m.SHARE_BAND_DP[0])
+            / (_m.SHARE_LEVELS - 1))
+    for strat, steps in (("mpc-det", 4), ("mpc-sto", 2)):
+        lo, hi = seen[strat][0], seen[strat][1]
         assert lo == pytest.approx(0.1500, abs=1e-4), strat
-        assert hi == pytest.approx(0.2375, abs=1e-4), strat
-        # ONE LADDER STEP, asserted against the ladder rather than as a
-        # literal, so the next band or level change re-states the finding
-        # instead of silently re-pinning it.
-        import mpc_ems as _m
-        step = ((_m.SHARE_BAND_DP[1] - _m.SHARE_BAND_DP[0])
-                / (_m.SHARE_LEVELS - 1))
-        assert hi - lo == pytest.approx(step, abs=1e-9), (strat, step)
-    # The two laws COINCIDE on this stimulus, which is why the withdrawn
-    # ablation leg would have measured nothing.
-    assert seen["mpc-det"] == seen["mpc-sto"]
+        assert hi - lo == pytest.approx(steps * step, abs=1e-9), (strat, hi)
     # ... and the shipped floor is satisfiable against that walk, unlike the
     # 0.12 it replaced.
     specs = {s["name"]: s for s in
@@ -10850,8 +10913,14 @@ def test_no_ems_mpc_det_cross_leg_is_registered():
     """The withdrawn leg stays withdrawn until the wide walk actually exists.
 
     Registering it again without first fixing the ladder would add a run whose
-    trace is bit-identical to `ems-mpc-cross`'s, under a description promising
-    an observable neither law produces. See the test above."""
+    DELIVERED trace is bit-identical to `ems-mpc-cross`'s, under a description
+    promising an observable neither law produces. See the test above.
+
+    fw v27 rev 2 (2026-09-03): the two laws' COMMANDED share ranges diverged
+    (0.3500 vs 0.1750) while the delivered split, the hydrogen and the charge
+    balance stayed bit-identical, so the leg would now measure a difference in
+    bookkeeping and none in physics. The withdrawal stands, and for a slightly
+    better reason than before."""
     sim = pytest.importorskip("hil_plant_sim")
     assert "ems-mpc-det-cross" not in sim.SCENARIOS
     assert "ems-mpc-det-cross" not in rhs.FAULT_EXPECTATIONS
@@ -11559,9 +11628,23 @@ def test_fw26_sweep_bridged_boundaries_hold_the_reconstructed_fc_current():
     # reconstruct at 1.3114 A against 1.2954 A measured on the board. The
     # reconstruction is deliberately conservative, so the bound is written
     # against what it produces and stays 3.5 % under LIMIT_I_FC_MAX 1.4 A.
-    assert run_peak <= 1.35, peaks
+    #
+    # ⚠️ RE-DERIVED FOR fw v27 rev 2 (2026-09-03): 1.35 -> 1.36 A. The whole-
+    # table bridged peak is still region 4's pure upward load step, and it moved
+    # 1.3114 -> 1.3508 A because `SHARE_MINORITY_I_MIN_A` 0.30 -> 0.15 A widens
+    # the minority clip band the reconstruction rides into. The bound follows
+    # the SAME rule it always did - just above what the reconstruction produces,
+    # and clear of the fault limit: 1.36 is 0.7 % over the 1.3508 A
+    # reconstruction and 2.9 % under LIMIT_I_FC_MAX 1.40 A, where 1.35 was
+    # 2.9 % over and 3.5 % under. Region 6's bridged 1.2771 A and region 11's
+    # 1.2634 A are unchanged, and the UNBRIDGED region-6 peak is still 1.7120 A,
+    # so the second assertion below - the one that gives this test teeth - is
+    # untouched.
+    assert run_peak <= 1.36, peaks
     for t0, pk in peaks.items():
-        assert pk is not None and pk <= 1.35, (t0, pk)
+        # 1.35 -> 1.36 for the same reason and by the same arithmetic as the
+        # whole-table bound above; region 4 (t = 26.0) IS the whole-table peak.
+        assert pk is not None and pk <= 1.36, (t0, pk)
 
     # TEETH. Without the bridge the region 5 -> 6 boundary reconstructs over
     # the 1.4 A limit - which is what the board measured (1.4890 A at latch).
@@ -11890,21 +11973,42 @@ def test_fw26_joint_walk_regenerates_the_figures_the_entry_is_cut_from():
     by = _joint_by()
 
     # THE HEADLINE: the peak delivered fuel-cell current across the joint step.
-    assert j["i_fc_peak"] == pytest.approx(1.3303, abs=5e-4)
-    # ... and the acceptance bound brackets it with margin, while still sitting
-    # under LIMIT_I_FC_MAX.
-    peak_bound = by["joint_transient_peak"]["max_value"]
-    assert peak_bound == pytest.approx(hil.FW26_CLAMP_JOINT_ACCEPT_PEAK_A)
-    assert j["i_fc_peak"] < peak_bound < 1.40
+    # RE-WALKED FOR fw v27 rev 2 (2026-09-03) at the re-derived 1.57 A step
+    # total: 1.3303 -> 1.3188 A. See the fw v27 block on the entry in
+    # run_hil_suite.py for the arithmetic.
+    assert j["i_fc_peak"] == pytest.approx(hil.FW26_CLAMP_JOINT_WALK_PEAK_A,
+                                           abs=5e-4)
+    assert hil.FW26_CLAMP_JOINT_WALK_PEAK_A == pytest.approx(1.3188, abs=1e-9)
 
-    # THE STRUCTURAL BOUND the design record states: the minority clip's rail,
-    # not the ceiling, is what caps the transient.
-    assert j["clip_rail_a"] == pytest.approx(
-        hil.I_AUX_A + hil.FW26_CLAMP_JOINT_STEP_PRELOAD_A - 0.30, abs=1e-9)
-    assert j["i_fc_peak"] <= j["clip_rail_a"] + 1e-9
-    # The two rails cross at ceiling + minority clip, which is the reachability
-    # threshold, and that is where the peak lands.
+    # THE STRUCTURAL BOUND IS THE BAND EDGE, NOT THE CLIP, and at the re-derived
+    # step total it is back UNDER the fault limit. At I_min 0.15 the conduction
+    # term is 1.57 - 0.15 = 1.42 A while the band edge is 0.85 * 1.57 =
+    # 1.3345 A, so the band edge is the smaller of the two and it caps the leg
+    # 4.7 % under LIMIT_I_FC_MAX. That is the whole point of the D-2 stimulus
+    # re-derivation: at the retired 1.65 A step the band edge was 1.4025 A,
+    # ABOVE the limit, and nothing structural bounded the leg.
     import governor_model as _gm
+    _step_total = hil.I_AUX_A + hil.FW26_CLAMP_JOINT_STEP_PRELOAD_A
+    assert _step_total == pytest.approx(1.57, abs=1e-9)
+    _band_edge = _gm.GOV_CONST["DROOP_R_MAX"] * _step_total
+    _conduction = _step_total - _gm.GOV_CONST["SHARE_MINORITY_I_MIN_A"]
+    assert _band_edge == pytest.approx(1.3345, abs=1e-9)
+    assert _band_edge < _conduction
+    assert _band_edge < rhs.LIMIT_I_FC_MAX_A         # the D-2 fix, as a pin
+    assert j["i_fc_peak"] < _band_edge
+    # ... and the clamp is still REACHABLE at this total, which is the other
+    # half of the design rule (0.10 A above the threshold).
+    assert _step_total > _gm.CEILING_REACHABLE_I_TOT_A
+    assert _step_total - _gm.CEILING_REACHABLE_I_TOT_A == pytest.approx(
+        0.0994, abs=5e-4)
+    # ... and it is BELOW the campaign-E necessary condition for the hazard,
+    # the property the 1.65 A step had lost.
+    assert _step_total < rhs.LIMIT_I_FC_MAX_A / _gm.GOV_CONST["DROOP_R_MAX"]
+
+    # `clip_rail_a` and `crossover_total_a` now DERIVE from GOV_CONST rather
+    # than hard-coding the retired 0.30 A floor, so they are asserted live.
+    assert j["clip_rail_a"] == pytest.approx(
+        _step_total - _gm.GOV_CONST["SHARE_MINORITY_I_MIN_A"], abs=1e-9)
     assert j["crossover_total_a"] == pytest.approx(
         _gm.CEILING_REACHABLE_I_TOT_A, abs=1e-9)
 
@@ -11912,7 +12016,7 @@ def test_fw26_joint_walk_regenerates_the_figures_the_entry_is_cut_from():
     assert j["settled_clamp_duty"] == pytest.approx(1.0)
     assert j["settled_i_fc_min"] == pytest.approx(1.2500, abs=1e-4)
     assert j["settled_i_fc_max"] == pytest.approx(1.2500, abs=1e-4)
-    assert j["i_batt"] == pytest.approx(0.4000, abs=1e-4)
+    assert j["i_batt"] == pytest.approx(0.3200, abs=1e-4)
     assert j["balance_residual"] == pytest.approx(0.0, abs=1e-12)
     assert by["joint_fc_at_the_ceiling"]["floor_min_value"] \
         <= j["settled_i_fc_min"]
@@ -11921,8 +12025,34 @@ def test_fw26_joint_walk_regenerates_the_figures_the_entry_is_cut_from():
     assert by["joint_batt_bounded"]["max_value"] >= j["i_batt"]
 
     # THE ENGAGEMENT lands inside the transient window the peak is judged over.
+    # fw v27 rev 2 at the 1.57 A step: +29 ms, unchanged from fw v26.
     assert j["clamp_first_s"] == pytest.approx(0.029, abs=2e-3)
     assert j["clamp_first_s"] < rhs._JOINT_STEP_WIN_S
+
+
+def test_fw26_joint_acceptance_bound_brackets_the_walked_peak():
+    """THE D-2 FIX, AS A PIN (was a strict xfail through fw v27 rev 1).
+
+    At the retired 1.65 A step total the band-edge product 0.85 * 1.65 =
+    1.4025 A sat ABOVE LIMIT_I_FC_MAX, the walked peak moved 1.3303 -> 1.3644 A
+    (1.3860 A at the worst commander skew) and no acceptance bound could be
+    both above the walk and meaningfully below the fault limit. Lowering
+    `FW26_CLAMP_JOINT_STEP_PRELOAD_A` 1.56 -> 1.48 A restored the ordering, so
+    the assertion is live again: walk < bound < LIMIT_I_FC_MAX, with the bound
+    at the leg's own rule of walk + 0.4 %."""
+    probe = _fw26_walk()
+    j = probe.joint()
+    peak_bound = _joint_by()["joint_transient_peak"]["max_value"]
+    assert peak_bound == pytest.approx(hil.FW26_CLAMP_JOINT_ACCEPT_PEAK_A)
+    assert j["i_fc_peak"] < peak_bound < rhs.LIMIT_I_FC_MAX_A
+    # THE BOUND IS THE RULE, not a hand-picked number: walk + 0.4 %, rounded up
+    # to four decimals. Stated here so a later widening has to argue with the
+    # rule rather than with a literal.
+    assert peak_bound == pytest.approx(
+        1.004 * hil.FW26_CLAMP_JOINT_WALK_PEAK_A, abs=1e-4)
+    # ... and it leaves 5.4 % of margin to the fault limit (2.9 % at fw v26).
+    assert (rhs.LIMIT_I_FC_MAX_A - peak_bound) / rhs.LIMIT_I_FC_MAX_A == \
+        pytest.approx(0.0542, abs=1e-3)
 
 
 def test_fw26_joint_walk_discriminates_fw_v25_from_fw_v26():
@@ -11944,8 +12074,16 @@ def test_fw26_joint_walk_discriminates_fw_v25_from_fw_v26():
     present = probe.joint()
     by = _joint_by()
 
-    assert absent["settled_i_fc_max"] == pytest.approx(1.3500, abs=1e-4)
-    assert absent["i_batt"] == pytest.approx(0.3000, abs=1e-4)
+    # fw v27 rev 2 (2026-09-03): the clamp-ABSENT arm MOVED. Without the
+    # ceiling the minority clip used to hold the settled ratio at
+    # 1 - 0.30/1.65 = 0.8182; at I_min 0.15 the DROOP BAND holds it at the
+    # commanded 0.84 instead, so at the re-derived 1.57 A step total the absent
+    # arm settles at 0.84 * 1.57 = 1.3188 A and 0.2512 A rather than
+    # 1.3500 / 0.3000 A. The 1.30 A ceiling refuses it by 0.019 A (it refused
+    # 1.3500 A by 0.05 A at fw v26): a smaller absolute margin, but still an
+    # outright refusal, and the BT code pin below is the primary discriminator.
+    assert absent["settled_i_fc_max"] == pytest.approx(1.3188, abs=1e-4)
+    assert absent["i_batt"] == pytest.approx(0.2512, abs=1e-4)
     # The current bands refuse the clamp-absent operating point outright.
     assert by["joint_fc_under_the_band"]["max_value"] < absent["settled_i_fc_max"]
     assert by["joint_batt_took_the_rest"]["floor_min_value"] > absent["i_batt"]
@@ -11959,31 +12097,74 @@ def test_fw26_joint_walk_is_split_law_invariant():
     """RECORDED, not assumed. The corrected split law (rho + the 0.033 ohm
     series floor) re-inverts the ratio that delivers a current; it does not
     move the current, because the firmware pins the applied RATIO on its own
-    rails. So this leg's peak and its codes are the same under both laws - which
-    is why the design record's section 8.6.5 table carries two identical rows
-    rather than a correction."""
+    rails. So this leg's CURRENTS are the same under both laws - which is why
+    the design record's section 8.6.5 table carries two rows that agree on
+    every current."""
     probe = _fw26_walk()
     new = probe.joint()
     old = probe.joint(rho=1.0, r_series=0.0)
-    assert new["i_fc_peak"] == pytest.approx(old["i_fc_peak"], abs=1e-6)
-    assert (new["mdac_fc"], new["mdac_bt"]) == (old["mdac_fc"], old["mdac_bt"])
+    # The SETTLED CURRENTS are exactly split-law invariant -- the firmware pins
+    # the applied ratio on its own rails and the law only re-inverts the ratio
+    # that delivers it.
     assert new["settled_i_fc_max"] == pytest.approx(old["settled_i_fc_max"],
                                                     abs=1e-6)
+    assert new["i_batt"] == pytest.approx(old["i_batt"], abs=1e-6)
+    # ... and so is the transient peak, at the re-derived 1.57 A step total:
+    # the peak is the band edge DROOP_R_MAX * I_tot, a pure function of the
+    # total. (At the retired 1.65 A step the two laws differed by 6.6 mA.)
+    assert new["i_fc_peak"] == pytest.approx(old["i_fc_peak"], abs=1e-6)
+    # THE CODES ARE NOT BIT-INVARIANT, and that is the split law doing its job.
+    # The settled ratio is the ceiling's, 0.7928, and the two laws invert it to
+    # (4865, 7040) against (4866, 7021) -- 0.3 % on the BT code, which the
+    # entry's 8 % band covers 27x over.
+    assert abs(new["mdac_bt"] - old["mdac_bt"]) <= 32
+    assert abs(new["mdac_fc"] - old["mdac_fc"]) <= 4
 
 
 def test_fw26_joint_commander_skew_cannot_make_the_peak_worse():
     """The share step arrives on the Pi's ~50 Hz packet while the load steps at
     1 kHz, so the two can land up to one commander period apart in EITHER
     order. The acceptance bound has to hold for both, and the transient window
-    has to contain the peak in both."""
+    has to contain the peak in both.
+
+    THE PROPERTY WAS FALSE AT THE RETIRED 1.65 A STEP TOTAL (a load-first skew
+    walked to 1.3860 A against a simultaneous 1.3644 A, 1.6 % worse) and it is
+    TRUE again at 1.57 A: the clamp binds before the two rails cross, so a
+    load-first skew ties the simultaneous peak instead of exceeding it."""
     probe = _fw26_walk()
     bound = _joint_by()["joint_transient_peak"]["max_value"]
     sim_peak = probe.joint()["i_fc_peak"]
+    worst = sim_peak
     for skew in (20.0, -20.0, 40.0, -40.0):
         j = probe.joint(skew_ms=skew)
-        assert j["i_fc_peak"] <= sim_peak + 1e-9, skew
-        assert j["i_fc_peak"] < bound, skew
+        worst = max(worst, j["i_fc_peak"])
+        assert j["i_fc_peak"] <= bound, skew
         assert j["clamp_first_s"] is not None, skew
+        assert j["clamp_first_s"] < rhs._JOINT_STEP_WIN_S, skew
+    assert worst == pytest.approx(sim_peak, abs=1e-6)   # the property, as a pin
+    assert worst == pytest.approx(hil.FW26_CLAMP_JOINT_WALK_PEAK_A, abs=5e-4)
+    assert worst < bound < rhs.LIMIT_I_FC_MAX_A
+    # 5.8 % of margin to the fault limit under EVERY skew, from 1.0 % at the
+    # retired step total. Recorded so a future stimulus change is sized against
+    # a number rather than against a feeling.
+    assert (rhs.LIMIT_I_FC_MAX_A - worst) / rhs.LIMIT_I_FC_MAX_A == \
+        pytest.approx(0.0580, abs=2e-3)
+    assert bound == pytest.approx(hil.FW26_CLAMP_JOINT_ACCEPT_PEAK_A)
+
+
+def test_fw26_probe_joint_totals_match_the_scenario():
+    """The probe keeps its totals as literals for its stdlib-only property, so
+    they are pinned against the simulator's preloads here -- a preload change
+    that leaves the probe behind walks a stimulus the rig will not deliver."""
+    probe = _fw26_walk()
+    assert probe.JOINT_PRE_TOTAL_A == pytest.approx(
+        hil.I_AUX_A + hil.FW26_CLAMP_JOINT_PRELOAD_A, abs=1e-9)
+    assert probe.JOINT_STEP_TOTAL_A == pytest.approx(
+        hil.I_AUX_A + hil.FW26_CLAMP_JOINT_STEP_PRELOAD_A, abs=1e-9)
+    assert probe.JOINT_PRE_SHARE == pytest.approx(
+        hil.FW26_CLAMP_JOINT_PRE_SHARE)
+    assert probe.JOINT_STEP_SHARE == pytest.approx(
+        hil.FW26_CLAMP_JOINT_STEP_SHARE)
 
 
 def test_fw26_joint_windows_lie_inside_the_stimulus_they_judge():

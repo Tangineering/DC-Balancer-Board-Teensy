@@ -6,8 +6,11 @@ WHAT THIS IS FOR
 An offline walk predicts what a strategy will do before a campaign runs it.
 Two walks in this repository were wrong because they applied the COMMANDED
 share directly: the firmware's share loop holds the last converged split below
-0.55 A of source total, clips the reference through a minority-current
-governor, rate-limits every move, and can take a channel off the bus. The
+its closed-loop exit (0.25 A of source total at fw v27 rev 2; 0.55 A through
+fw v26), clips the reference through a minority-current governor on BOTH the
+closed and the open-loop paths, schedules the droop scale on the load, starts
+every profile battery-only, rate-limits every move, and can take a channel off
+the bus. The
 ``ems-sdp-cross`` walk of campaign 20260901_024231 mispredicted a limit-cycle
 period by 5.7x for exactly that reason, and the suite check built on it failed
 a correct board.
@@ -164,7 +167,9 @@ class WalkResult:
     # total, and `clamped_by_segment` splits it the way `mode_fractions_by_
     # segment` splits the modes.  All three are zero on any stimulus whose
     # two-source total stays under governor_model.CEILING_REACHABLE_I_TOT_A
-    # (1.55 A), which is every registered EMS stimulus at the time of writing.
+    # (1.4706 A at fw v27 rev 2, RE-DERIVED from 1.55 A when the conduction
+    # floor moved to 0.15 A and the BAND EDGE became the governing term), which
+    # is every registered EMS stimulus at the time of writing.
     clamped_ticks: int = 0
     clamped_fraction: float = 0.0
     clamped_by_segment: dict = field(default_factory=dict)
@@ -644,6 +649,16 @@ def walk(strategy_name: str, scenario_name: str, *, soc0: float = 0.7,
                               r_series_ohm=r_series_ohm,
                               conv_tau_s=conv_tau_s,
                               seed_r=sim.SOC_BAND_SHARE_NOMINAL)
+    # fw v27 rev 2 BATTERY-ONLY START. A walk models a State 1 -> State 2 Run
+    # entry, which is one of the six profile boundaries `armShareBatteryOnly
+    # Start()` is called at, so the walk arms it too. It is NOT optional and
+    # carries no flag: a walk that skipped it would be predicting a firmware
+    # that does not exist, which is the exact defect this harness was built to
+    # stop. Consequence to expect in a result: the fuel cell is off the bus from
+    # tick 0 until the governor's filtered total first exceeds 2*I_min = 0.30 A,
+    # so an early stage's delivered share is 0.0 whatever the strategy
+    # commanded, and every leg's h2 moves.
+    g.arm_battery_only_start()
 
     res = WalkResult()
     if _ov.fired:
@@ -902,7 +917,22 @@ def walk(strategy_name: str, scenario_name: str, *, soc0: float = 0.7,
             res.notes.append(
                 "the share loop was in OPEN-LOOP HOLD for %.1f %% of ticks; the "
                 "commanded setpoint was not acted on there (the delivered split "
-                "is whatever stood when the load fell below 0.55 A)" % (100.0 * hold))
+                "is whatever stood when the load fell below the closed-loop "
+                "exit, 0.25 A at fw v27 rev 2)" % (100.0 * hold))
+        # fw v27 rev 2 BATTERY-ONLY START. It shows up as LATCHED ticks, and it
+        # is the single largest reason a fw v27 walk's h2 differs from a fw v26
+        # one -- measured 2.4 % to 12.4 % of ticks and -5.6 % to +6.8 % of h2
+        # across the 61 s legs. Reported explicitly, because a reader who saw
+        # only the h2 move would have no way to attribute it.
+        lat = res.mode_fractions.get(gov_mod.MODE_LATCHED, 0.0)
+        if lat > 0.0:
+            res.notes.append(
+                "fw v27 rev 2 BATTERY-ONLY START: the fuel cell was off the bus "
+                "for %.1f %% of ticks (LATCHED), from the profile start until "
+                "the governor's filtered total first exceeded 2*I_min = "
+                "%.2f A; the battery carried that window whatever the strategy "
+                "commanded" % (100.0 * lat,
+                               2.0 * gov_mod.GOV_CONST["SHARE_MINORITY_I_MIN_A"]))
         if g.state.refused_load or g.state.refused_blank:
             res.notes.append(
                 "cut refusals: %d tick(s) on the load guard, %d on survivor "

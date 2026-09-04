@@ -563,6 +563,28 @@ floor, `docs/modeling/governor_split_law_20260903.md`), at the shipped 1.65 A op
 |:--|--:|--:|--:|--:|--:|
 | pre-correction | 1.3303 A | +29 ms | 0.9976 | 1.2500 / 0.4000 A | (4906, 6560) |
 | corrected | 1.3303 A | +29 ms | 0.9976 | 1.2500 / 0.4000 A | (4906, 6560) |
+| **fw v27 rev 2, I_min 0.15, step 1.57 A** | **1.3188 A** | **+29 ms** | **0.9976** | **1.2500 / 0.3200 A** | **(4865, 7040)** |
+
+The third row is the shipped stimulus from fw v27 rev 2 onward, and it is a **step-total change,
+not only a governor change**. At `SHARE_MINORITY_I_MIN_A` 0.15 A the two terms of
+`min(DROOP_R_MAX * I_tot, I_tot - I_min)` swap: at the 1.65 A step the pair becomes
+`min(1.4025, 1.50)` = 1.4025 A, which is **above** `LIMIT_I_FC_MAX` 1.40 A, so the leg lost its
+structural bound and was held down only by the reference slew racing the load EMA (walked peak
+1.3644 A simultaneous, 1.3860 A at the worst commander skew -- 1.0 % under the fault limit, and a
+skew that could now make the peak *worse*). The step total was therefore re-derived by the leg's
+own original rule, "0.10 A above the clamp's reachability threshold", against the fw v27 rev 2
+threshold `max(1.25/0.85, 1.25 + 0.15)` = 1.4706 A: a **1.57 A** step total, i.e.
+`FW26_CLAMP_JOINT_STEP_PRELOAD_A` 1.56 -> 1.48 A. At 1.57 A the structural bound is
+`min(0.85 x 1.57, 1.57 - 0.15)` = 1.3345 A, 4.7 % under the fault limit; 1.57 A is 0.077 A **below**
+the campaign-E necessary condition `LIMIT_I_FC_MAX / DROOP_R_MAX` = 1.6471 A; the commander order
+can no longer make the peak worse (load-first ties the simultaneous 1.3188 A); and the acceptance
+bound follows the same walk + 0.4 % rule, 1.004 x 1.3188 = **1.3241 A**, 5.4 % under
+`LIMIT_I_FC_MAX`. The clamp-absent arm moves with the total to 1.3188 A / 0.2512 A and
+MDAC (4823, 7875), so the settled band still refuses it (by 0.019 A) and the BT code pin remains
+the primary discriminator. Currents stay split-law invariant at the new total; the **codes** are
+not, (4865, 7040) against (4866, 7021) under the pre-correction law, because the settled ratio is
+now the ceiling's rather than a governor rail's. Reversal path: restore
+`FW26_CLAMP_JOINT_STEP_PRELOAD_A` = 1.56 for the 1.65 A step, which re-opens the finding above.
 
 The two rows are identical to six digits, and that is a result rather than a coincidence: the
 firmware pins the applied **ratio** on its own rails, so the split law only re-inverts the ratio

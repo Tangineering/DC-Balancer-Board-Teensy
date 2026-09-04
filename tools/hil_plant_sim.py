@@ -551,6 +551,11 @@ from hil_electrical import (                                   # noqa: E402
     # The DP's static-loss map is written in terms of exactly these, so the
     # bound and the plant it bounds cannot carry two different bleeds; see
     # `loss_map_for_config()` below.
+    # fw v27 rev 2: the droop-injection chain's full-scale resistance, used to
+    # recover the firmware's LIVE scheduled k_d from the MDAC code pair
+    # (`live_k_droop_from_codes()`).  Imported rather than restated for the same
+    # reason every other electrical constant is.
+    RE_MAX as RE_MAX_OHM,
     R_NODE_BLEED_BUS, R_NODE_BLEED_OTHER, node_bleed_conductances,
     N_BUS as _N_BUS, N_MOT as _N_MOT,
     RT_V_FWD, RT_R_ON,
@@ -588,10 +593,36 @@ import regen_power                                             # noqa: E402
 #: sides of the plant or the two engines model different asymmetries.
 K_DROOP_FW_OHM = 0.30
 assert K_DROOP_FW_OHM == ASYM_K_DROOP_OHM
+
+
+def live_k_droop_from_codes(g_fc, g_bt, floor=K_DROOP_FW_OHM):
+    """Recover the firmware's LIVE droop scale k_d from the two MDAC fractions.
+
+    fw v27 rev 2 SCHEDULES k_d on the load, so the compile-time
+    ``K_DROOP_FW_OHM`` is now only the schedule's FLOOR and no longer describes
+    a run. Nothing on the wire carries the live value -- the 18-byte
+    observation frame is unchanged -- but nothing has to, because the code pair
+    already determines it exactly:
+
+        g_FC = k_d / (RE_MAX * r),  g_BT = k_d / (RE_MAX * (1-r))
+        =>   g_FC * g_BT / (g_FC + g_BT) = k_d / RE_MAX
+
+    with ``r`` cancelling identically. The parallel of the two commanded droop
+    resistances IS k_d, which is the same identity the dynamic-program loss map
+    calls ``g_par``. So the plant reads the schedule off the codes it is already
+    given, at no wire cost and with no era flag.
+
+    Returns ``floor`` when the pair carries no information (either code at zero
+    scale, i.e. a NOP word or a channel the firmware has not written), because
+    a zero code means "no droop commanded" and not "k_d is zero"."""
+    if g_fc <= 0.0 or g_bt <= 0.0:
+        return floor
+    return RE_MAX_OHM * (g_fc * g_bt) / (g_fc + g_bt)
 #: total bus current below which the static asymmetry correction is not applied.
 #: The r(1-r)/I_tot term diverges at zero load, and below this current the share
 #: is not a controlled quantity on the real board either (the firmware's own
-#: closed-loop entry sits at 0.60 A).  The clip to [0, 1] still bounds the
+#: closed-loop entry sits at 0.30 A from fw v27 rev 2; 0.60 A through fw v26 —
+#: this floor is BELOW both and was not retuned).  The clip to [0, 1] bounds the
 #: result; this floor keeps the model from spending its whole authority on a
 #: current that no observer cares about.
 ASYM_SIMPLE_I_MIN_A = 0.10
@@ -1133,6 +1164,23 @@ def ag105_mppt_volts(count) -> float:
     return AG105_MPPT_V_BASE + AG105_MPPT_V_PER_CNT * n
 
 
+# ── THE PRE-FIRST-FRAME DROOP SEED (M4, 2026-09-03) ─────────────────────────
+# `ElectricalSim.step()` runs before the first observation frame arrives, with
+# no MDAC words to read. It used to seed both code fractions at a bare 0.5,
+# which was harmless while the split law took `K_DROOP` as a constant. It is
+# NOT harmless now: `live_k_droop_from_codes()` reads the LIVE k_d off the code
+# pair, and a (0.5, 0.5) pair resolves to RE_MAX * 0.25 = 0.5034 ohm -- 68 %
+# above the 0.30 ohm floor, i.e. the model would open every run believing the
+# firmware had scheduled a heavy droop it has not.
+#
+# THE SEED IS THE FIRMWARE'S OWN BOOT CODE. At boot the share is 0.5 and k_d is
+# the floor `K_DROOP`, so g = k_d / (RE_MAX * r) = 0.30 / (2.013619 * 0.5) =
+# 0.298, and `live_k_droop_from_codes(0.298, 0.298)` returns 0.30 ohm exactly.
+# Pinned by `test_hil_plant_sim.py::
+# test_the_pre_first_frame_mdac_seed_is_the_firmware_boot_code`.
+SIMPLE_PRE_FRAME_MDAC_FRACTION = K_DROOP_FW_OHM / (RE_MAX_OHM * 0.5)
+
+
 def mdac_fraction(word: int) -> float:
     """Recover the 0..1 droop-gain fraction from a raw AD5443 command word."""
     if (word & 0xF000) != MDAC_CMD_LOAD_UPDATE:
@@ -1552,8 +1600,17 @@ class Plant:
         self.scp_fired_t = None    # sim time at which the pulse was withdrawn
         self.ag105_status = AG105_ST_DISCONNECT
 
-    def _apply_simple_asymmetry(self, frac_fc, i_total):
+    def _apply_simple_asymmetry(self, frac_fc, i_total,
+                                g_fc_code=0.0, g_bt_code=0.0):
         """Static split law on the simple-mode FC share.
+
+        ⚠️ THE TWO CODE ARGUMENTS DEFAULT TO ZERO, WHICH MEANS "NO CODE PAIR"
+        AND RESOLVES k_d TO THE SCHEDULE'S FLOOR, i.e. the fw v26 law
+        (`live_k_droop_from_codes()` returns `K_DROOP_FW_OHM` on an
+        uninformative pair). That default exists so the ~20 direct-call
+        fixtures that predate fw v27 rev 2 stay bit-identical, and for no other
+        reason. THE ONE PRODUCTION CALL SITE PASSES THEM, in `step()`; a new
+        caller that omits them is silently modelling the previous firmware.
 
         THE FULL LAW SINCE 2026-09-03 (review run-002, PLANT-R2-N1).  With r
         the commanded share recovered from the MDAC codes:
@@ -1562,10 +1619,29 @@ class Plant:
             R_BT =       k_d / (1-r) + R_f
             alpha = (DeltaV0 / I_tot + R_BT) / (R_FC + R_BT)
 
-        at k_d = K_DROOP_FW_OHM, rho = ASYM_DROOP_SCALE_FC (1.0 with the
-        asymmetry off) and R_f = DROOP_FIXED_SERIES_OHM.  It is the same law
+        at rho = ASYM_DROOP_SCALE_FC (1.0 with the asymmetry off) and
+        R_f = DROOP_FIXED_SERIES_OHM.  It is the same law
         `governor_model.GovernorModel.delivered_share()` applies, and a test
         pins the two together.
+
+        ⚠️ k_d IS THE LIVE SCHEDULED SCALE FROM fw v27 rev 2, NOT
+        `K_DROOP_FW_OHM` (2026-09-03).  The firmware schedules k_d on the load
+        below a 0.906 A crossover, so a law written in the compile-time constant
+        describes a firmware that no longer exists.  The live value is recovered
+        from the MDAC code pair by `live_k_droop_from_codes()` -- the parallel of
+        the two commanded droop resistances is exactly k_d, with the share
+        cancelling -- so this costs no wire bit and needs no era flag.  The
+        SPLIT itself barely moves: with rho = 1 and R_f = 0 the scale cancels out
+        of the law entirely, and its whole effect is that the FIXED series floor
+        R_f = 0.033 ohm carries LESS relative weight as k_d grows.  At
+        DROOP_R_MAX, where that weight is largest in band, the floor is 8.55 %
+        of a channel resistance at k_d = 0.30 and 3.00 % at the 0.906 ohm cap.
+        ⚠️ THE WEIGHT IS MONOTONE; THE SHARE'S DIRECTION IS NOT.  R_f partially
+        CANCELS the rho asymmetry in the upper band, so taking weight off R_f
+        can move the delivered share FURTHER from the commanded ratio there --
+        measured at r = 0.80, the deviation grows 0.00557 to 0.00794 across the
+        schedule's full span.  A first draft of this comment claimed the share
+        always moves toward the identity; a test refuted it.
 
         ⚠️ WHAT THIS REPLACED.  Until 2026-09-03 this method carried
         `alpha = r + DeltaV0*r(1-r)/(k_d*I_tot)` — described here as "the M1
@@ -1598,8 +1674,9 @@ class Plant:
             return 0.0
         if r >= 1.0:
             return 1.0
-        r_fc = rho * K_DROOP_FW_OHM / r + DROOP_FIXED_SERIES_OHM
-        r_bt = K_DROOP_FW_OHM / (1.0 - r) + DROOP_FIXED_SERIES_OHM
+        k_d = live_k_droop_from_codes(g_fc_code, g_bt_code)
+        r_fc = rho * k_d / r + DROOP_FIXED_SERIES_OHM
+        r_bt = k_d / (1.0 - r) + DROOP_FIXED_SERIES_OHM
         alpha = (self.asym_dv0_v / i_total + r_bt) / (r_fc + r_bt)
         return min(1.0, max(0.0, alpha))
 
@@ -1608,8 +1685,13 @@ class Plant:
         sw = obs["switch"] if obs else 0
         aux = obs["aux"] if obs else 0
         i_cmd = obs["current"] if obs else 0.0
-        code_fc = mdac_fraction(obs["mdac_fc"]) if obs else 0.5
-        code_bt = mdac_fraction(obs["mdac_bt"]) if obs else 0.5
+        # The pre-first-frame seed is the firmware's BOOT code, not 0.5: see
+        # SIMPLE_PRE_FRAME_MDAC_FRACTION (a 0.5 pair resolves to k_d 0.5034 ohm
+        # through live_k_droop_from_codes(), not to the 0.30 ohm floor).
+        code_fc = (mdac_fraction(obs["mdac_fc"]) if obs
+                   else SIMPLE_PRE_FRAME_MDAC_FRACTION)
+        code_bt = (mdac_fraction(obs["mdac_bt"]) if obs
+                   else SIMPLE_PRE_FRAME_MDAC_FRACTION)
 
         fc_live = bool(sw & SW_FC_BUS) and bool(aux & AUX_FC_REG)
         bt_live = bool(sw & SW_BT_BUS) and bool(aux & AUX_BT_REG)
@@ -1835,7 +1917,8 @@ class Plant:
                 if fc_live and bt_live:
                     denom = code_fc + code_bt
                     frac_fc = (code_bt / denom) if denom > 1e-9 else 0.5
-                    frac_fc = self._apply_simple_asymmetry(frac_fc, i_total)
+                    frac_fc = self._apply_simple_asymmetry(
+                        frac_fc, i_total, code_fc, code_bt)
                 elif fc_live:
                     frac_fc = 1.0
                 else:
@@ -2819,16 +2902,29 @@ class PiCommander:
 # not a real policy decision, and returning it now raises like any other
 # unknown key.
 #
-# ── ⚠️ SHARE AUTHORITY DISAPPEARS BELOW 0.55 A (2026-09-01) ──────────────────
+# ── ⚠️ SHARE AUTHORITY DISAPPEARS BELOW THE CLOSED-LOOP EXIT (2026-09-01) ────
 # READ THIS BEFORE WRITING A POLICY THAT COMMANDS AN FC-HEAVY OR BT-HEAVY SPLIT
 # AT LOW LOAD, AND BEFORE WALKING ONE OFFLINE.
 #
+# ⚠️ THE TWO THRESHOLDS HALVED AT fw v27 rev 2 (2026-09-03).  The conduction
+# floor `SHARE_MINORITY_I_MIN_A` moved 0.30 -> 0.15 A, so the entry gate is
+# 0.30 A and the exit 0.25 A.  EVERY NUMBER IN THIS BANNER BELOW IS QUOTED IN
+# ITS OWN ERA: the mechanism is unchanged and the measurements are real, but a
+# figure taken at the 0.55 A exit describes campaigns <= 20260903_063659.
+# fw v27 rev 2 also adds TWO mechanisms this banner did not have to describe:
+# the open-loop FEEDFORWARD submode now CLIPS its reference through the same
+# minority band and therefore HOLDS below the gate as well (so both open-loop
+# submodes are holds), and every profile STARTS BATTERY-ONLY until the filtered
+# total first crosses the gate.  A walk that models neither is wrong for a
+# third distinct reason; `tools/ems_walk.py` models both.
+#
 # The firmware's share loop is GATED ON SOURCE CURRENT.  It enters closed loop
-# above 2 * SHARE_MINORITY_I_MIN_A = 0.60 A of source total and drops out below
-# 0.60 - SHARE_GOV_OL_HYST_A = 0.55 A (.ino:2181/2205, gate at :9933).  In
-# OPEN-LOOP mode the firmware does not write the MDACs at all: it HOLDS the last
-# split the closed loop converged to (.ino:9937 onward, `droopSlew_prev`).  So
-# below 0.55 A of total source current:
+# above 2 * SHARE_MINORITY_I_MIN_A (0.30 A of source total at fw v27 rev 2;
+# 0.60 A through fw v26) and drops out SHARE_GOV_OL_HYST_A below that (0.25 A;
+# 0.55 A before) -- .ino:2392/2421 at fw v27 rev 2, .ino:2181/2205 at fw v26.  In OPEN-LOOP mode the firmware does not move the MDACs: the
+# HOLD submode does not write them at all, and from fw v27 the FEEDFORWARD
+# submode writes back the split it already holds (.ino, `droopSlew_prev`).  So
+# below the exit:
 #
 #     power_share_setpoint is ACCEPTED, LOGGED, and NOT ACTED ON.
 #
@@ -2858,7 +2954,7 @@ class PiCommander:
 #     share AMPLITUDE must not be read off them).
 # A walk that assumes the commanded split is the delivered one is measuring a
 # firmware that does not exist. Compute I_tot at each step, compare it against
-# the 0.55 A drop-out, and hold the split below it.
+# the drop-out (0.25 A at fw v27 rev 2), and hold the split below it.
 # ═════════════════════════════════════════════════════════════════════════════
 
 # Promoted from the comment table above to a named, importable constant (test-
@@ -3478,7 +3574,7 @@ def ems_regen_harvest_hard(t, fb):
     fields     : mode_cmd, power_share_setpoint (0.50), v_setpoint (the scenario's
                  `ems_v_profile`), charge_goal (1.0 inside a braking window).
     feedback   : `fb["t"]` and `fb["v_profile"]` ONLY (FB_TELEMETRY_EQUIV_KEYS).
-    firmware modes assumed, per segment — the sub-0.55 A open-loop-hold rule
+    firmware modes assumed, per segment — the sub-exit open-loop-hold rule
                  (a walk that skips this has been wrong twice):
                    standstill 0-3 s   Idle/MODE_SAFE; v_setpoint 0 is under
                                       V_SP_ZERO_THRESH 0.07, so the firmware
@@ -3488,7 +3584,10 @@ def ems_regen_harvest_hard(t, fb):
                                       CLOSED (I_tot at 3.0 m/s cruise is
                                       (F_c + B_EFF*v)/K_F = 4.78 A of motor current
                                       -> ~0.90 A of bus current + 0.15 A aux, over
-                                      the 0.55 A open-loop-hold gate).
+                                      the open-loop-hold gate; that gate was
+                                      0.55 A when this prose was written and is
+                                      0.25 A from fw v27 rev 2, so the margin
+                                      only grew).
                    braking windows    Run, drive controller on its NEGATIVE rail;
                                       motor bus draw is ZERO (no motoring term), so
                                       I_tot falls to ~0.15 A aux and the share loop
@@ -4355,6 +4454,110 @@ DP_BUS_V0_EFF = 15.871722    # V         no-load bus intercept of the boost pair
 DP_BUS_R_FIX = 0.017986      # ohm       share-independent series resistance
 DP_BUS_K_G = 1.95079         # ohm/unit  parallel droop code -> source resistance
 DP_DROOP_G_PAR = 0.148922    # -         the firmware-held parallel droop code
+
+#: fw v27 rev 2 governor constants this module needs for `scheduled_g_par()`.
+#: Mirrored from `governor_model.GOV_CONST`, which is itself pinned against the
+#: firmware literals by `tools/test_governor_model.py`; restated here only
+#: because `hil_plant_sim` must not import the governor model at module scope.
+SHARE_MINORITY_I_MIN_A_FW27 = 0.15   # A     .ino:2392
+SHARE_KD_SAFETY_FW27 = 0.9           # -     .ino:2528
+DROOP_R_MIN_FW = 0.15                # -     .ino:2170
+#: The filtered total at and above which the schedule IS K_DROOP, so every
+#: fw v26 code and every fw v26 loss-map figure is recovered bit-for-bit:
+#: RE_MAX*SHARE_KD_SAFETY*I_min/K_DROOP.
+DP_DROOP_SCHEDULE_CROSSOVER_A = (RE_MAX_OHM * SHARE_KD_SAFETY_FW27
+                                 * SHARE_MINORITY_I_MIN_A_FW27
+                                 / K_DROOP_FW_OHM)   # 0.9061287 A
+
+
+# -- fw v27 rev 2: g_par IS NO LONGER A CONSTANT (2026-09-03) ----------------
+# THE SEPARABILITY ARGUMENT ABOVE SURVIVES; THE CONSTANCY DOES NOT, and the two
+# are different claims. `DP_DROOP_G_PAR` is the parallel of the two commanded
+# droop codes, and the identity behind it is exact:
+#
+#     g_par = g_FC*g_BT/(g_FC+g_BT) = k_d / RE_MAX      (the share cancels)
+#
+# so the measured 0.148922 was never a fitted quantity at all -- it is
+# `K_DROOP / RE_MAX` = 0.30/2.013619 = 0.1489855, held constant because the
+# firmware held `k_d` constant. fw v27 rev 2 SCHEDULES `k_d` on the load, so
+# `g_par` is now a function of the FILTERED TOTAL.
+#
+# WHAT THIS DOES AND DOES NOT BREAK.
+#   * Separability in the CONTROL is PRESERVED, which is the load-bearing
+#     claim: the schedule reads the filtered TOTAL and never the share, so the
+#     dynamic program's stage cost still does not depend on the split it is
+#     choosing. The tripwire in `test_gen_dp_ems_table.py` is written against
+#     SHARE dependence and is still satisfied.
+#   * The map's constancy in the LOAD is lost, along an axis the map already
+#     has a term for. `K_G` is the code-to-ohm conversion and is NOT re-fitted;
+#     what must change is `g_par`.
+#
+# THE BIAS, QUANTIFIED, because the map's stated envelope is |dev| <= 0.8 %:
+#
+#     K_EFF(k_d) = R_FIX + K_G*k_d/RE_MAX = 0.017986 + 0.968769*k_d
+#
+# and below the 0.9061 A crossover the schedule holds the authority constant at
+# RE_MAX*I_min*SAFETY = 0.271839 V, i.e. k_d = 0.271839/I_tot, CAPPED at the
+# 0.5-band-edge value 0.906129 ohm below 0.30 A. A fw v26-era map therefore
+# UNDERSTATES the bus sag by dV = (K_EFF(k_d) - 0.308502)*I_tot, which is
+#     0.263349 - 0.290516*I_tot   volts   for 0.30 <= I_tot <= 0.9061 A
+#     0.587310 * I_tot            volts   for I_tot < 0.30 A  (k_d capped)
+#
+#       I_tot   k_d      K_EFF     dV        % of V0_EFF (15.871722 V)
+#       0.25    0.9061   0.8958    0.1468    0.925 %
+#       0.30    0.9061   0.8958    0.1762    1.110 %   <- the maximum
+#       0.40    0.6796   0.6764    0.1472    0.927 %
+#       0.4694  0.5791   0.5790    0.1270    0.800 %   <- the band crossing
+#       0.60    0.4531   0.4569    0.0890    0.561 %
+#       0.9061  0.3000   0.3086    0.0001    0.001 %
+#
+# so the bias CROSSES the 0.8 % band at I_tot = 0.4694 A, peaks at 1.110 % on
+# the cap corner at 0.30 A (the closed-loop gate itself), and falls back
+# linearly below it. The band does NOT cover the schedule.
+#
+# WHY THE MAP IS NEVERTHELESS UNCHANGED IN THIS ROUND. The map is a
+# FINGERPRINTED era key (`DP_LOSS_MAP_KEYS`, `loss_map_canonical()`). Moving
+# `g_par`, or adding a field for the schedule, moves the fingerprint and
+# ORPHANS every committed dynamic-program table and every stored `dp_db`
+# record. That is a DP re-solve round, not a model-mirror round. The arithmetic
+# is therefore recorded here with one owner, `scheduled_g_par()`, so the next
+# round wires in a value it does not have to re-derive.
+# TODO(fw27): make the loss map schedule-aware and re-solve the committed
+# tables. Until then a fw v27 run priced on this map is optimistic about its
+# bus losses by at most 1.110 % of bus voltage, and only below 0.4694 A of
+# filtered total.
+
+
+def scheduled_g_par(i_tot_filt, floor=K_DROOP_FW_OHM):
+    """The firmware's parallel droop code under the fw v27 rev 2 schedule.
+
+    PURE, and the one owner of the arithmetic in the block above.
+    ``g_par = k_d / RE_MAX`` with ``k_d`` the CONVERGED schedule value at that
+    filtered total:
+
+        k_d = max(K_DROOP, RE_MAX * clamp(I_min/I_tot, DROOP_R_MIN, 0.5)
+                           * SHARE_KD_SAFETY)
+
+    CONVERGED, NOT LIVE. The firmware advances the schedule in CLOSED LOOP
+    ONLY, against a hysteretic held sample, at a bounded fractional rate. A
+    static map has none of those three dynamics, so this function is the
+    schedule's steady state and its residual is exactly the hysteresis, the
+    slew and the open-loop hold. Below the 0.30 A closed-loop gate the firmware
+    holds whatever scale it inherited and this function keeps returning the
+    0.5-capped maximum, which is the value a run entering that region most
+    recently carried."""
+    tot = float(i_tot_filt)
+    if not tot > 0.0:
+        return floor / RE_MAX_OHM
+    r_lo = SHARE_MINORITY_I_MIN_A_FW27 / tot
+    if r_lo < DROOP_R_MIN_FW:
+        r_lo = DROOP_R_MIN_FW
+    if r_lo > 0.5:
+        r_lo = 0.5
+    k_d = RE_MAX_OHM * r_lo * SHARE_KD_SAFETY_FW27
+    if k_d < floor:
+        k_d = floor
+    return k_d / RE_MAX_OHM
 
 # ── THE SINGLE-SOURCE BUS LAW (2026-09-02, the MPC 0/1 round) ───────────────
 # WHAT IT IS FOR.  The MPC gains SINGLE-SOURCE candidates (share 0 and 1),
@@ -8041,7 +8244,7 @@ def mpc_supports_kwarg(name):
         return False
 
 
-# ⚠️ BEFORE ADDING ONE: read the SHARE AUTHORITY DISAPPEARS BELOW 0.55 A note in
+# ⚠️ BEFORE ADDING ONE: read the SHARE AUTHORITY DISAPPEARS BELOW THE CLOSED-LOOP EXIT note in
 # the MODE A block above.  A policy commanding an FC-heavy or BT-heavy split at a
 # source total under 0.55 A gets the LAST CONVERGED split, not its command — the
 # firmware holds in open-loop mode by design — and an offline walk that assumes
@@ -11073,27 +11276,63 @@ SCENARIOS["fw26-clamp-sweep"] = {
 # condition `LIMIT_I_FC_MAX / DROOP_R_MAX` = 1.647 A; leaving the preload
 # at 1.50 would have put the step at 1.59 A, BELOW that threshold, and
 # the leg would have exercised nothing while still passing.
+# ⚠️ SUPERSEDED AT fw v27 rev 2: sitting just ABOVE the 1.647 A necessary
+# condition is exactly what the leg must NOT do once the conduction clip stops
+# capping it. See the block on FW26_CLAMP_JOINT_STEP_PRELOAD_A below.
+# ⚠️ fw v27 rev 2 (2026-09-03, orchestrator decision D-2): THE STEP TOTAL MOVED
+# 1.65 -> 1.57 A, i.e. the preload 1.56 -> 1.48 A. `SHARE_MINORITY_I_MIN_A`
+# 0.30 -> 0.15 A swaps which term of
+#     min(DROOP_R_MAX * I_tot, I_tot - SHARE_MINORITY_I_MIN_A)
+# governs. At 1.65 A the fw v27 pair is min(1.4025, 1.50) = 1.4025 A, which is
+# ABOVE LIMIT_I_FC_MAX 1.40 A: the leg was no longer bounded by construction,
+# only by the reference slew racing the load EMA (walked worst-skew peak
+# 1.3860 A, 1.0 % under the fault limit).
+#
+# THE NEW TOTAL IS THE SAME DESIGN RULE THAT PRODUCED 1.65 A, re-evaluated:
+# "0.10 A above the clamp's reachability threshold". That threshold is
+# governor_model.CEILING_REACHABLE_I_TOT_A = max(1.25/0.85, 1.25 + 0.15) =
+# 1.4706 A at fw v27 rev 2 (it was 1.55 A at I_min 0.30), so
+#     step total = 1.4706 + 0.10 -> 1.57 A  ->  preload 1.57 - 0.09 = 1.48 A.
+# At 1.57 A the structural bound is min(0.85 * 1.57, 1.57 - 0.15) =
+# min(1.3345, 1.42) = 1.3345 A, 4.7 % under LIMIT_I_FC_MAX, and 1.57 A is
+# 0.099 A above the reachability threshold so the clamp is still exercised.
+# 1.57 A is also 0.077 A BELOW the campaign-E necessary condition
+# LIMIT_I_FC_MAX / DROOP_R_MAX = 1.6471 A, which is the property the leg lost.
+#
+# REVERSAL PATH: restore FW26_CLAMP_JOINT_STEP_PRELOAD_A = 1.56 (1.65 A total)
+# if the operator wants the 1.65 A step back; that also requires re-walking
+# FW26_CLAMP_JOINT_WALK_PEAK_A / _ACCEPT_PEAK_A (1.3644 A simultaneous,
+# 1.3860 A at the worst commander skew, against a 1.40 A fault limit) and
+# ruling on whether a peak 1.0 % under the limit is acceptable.
 FW26_CLAMP_JOINT_PRELOAD_A = 1.11        # + I_AUX_A 0.09 -> 1.20 A total
-FW26_CLAMP_JOINT_STEP_PRELOAD_A = 1.56   # + I_AUX_A 0.09 -> 1.65 A total
+FW26_CLAMP_JOINT_STEP_PRELOAD_A = 1.48   # + I_AUX_A 0.09 -> 1.57 A total
 FW26_CLAMP_JOINT_STEP_S = 16.0           # both axes move here
 FW26_CLAMP_JOINT_PRE_SHARE = 0.40
 FW26_CLAMP_JOINT_STEP_SHARE = 0.84
 # The walked peak and the acceptance bound, named here so the scenario, the
 # expectation and the probe quote ONE number each.
-FW26_CLAMP_JOINT_WALK_PEAK_A = 1.3303
-FW26_CLAMP_JOINT_ACCEPT_PEAK_A = 1.36
+# ⚠️ RE-WALKED FOR fw v27 rev 2 (2026-09-03) at the 1.57 A step total, through
+# `probe_fw26_clamp_walk.joint()`: 1.3303 -> 1.3188 A (simultaneous AND at the
+# worst commander skew, load +20 ms; share +20 ms peaks lower, 1.2833 A).
+# THE ACCEPTANCE BOUND IS THE LEG'S OWN RULE, walk + 0.4 %:
+#     1.004 * 1.3188 = 1.32408 -> 1.3241 A,
+# which is 5.4 % under LIMIT_I_FC_MAX 1.40 A. It was 1.36 against a 1.3303 A
+# walk (+2.2 %) at fw v26; the fw v27 stimulus does not need that headroom.
+FW26_CLAMP_JOINT_WALK_PEAK_A = 1.3188
+FW26_CLAMP_JOINT_ACCEPT_PEAK_A = 1.3241
 
 SCENARIOS["fw26-clamp-joint"] = {
     "description": ("30 s motor-free JOINT-TRANSIENT leg: the auxiliary "
-                    "preload steps the two-source total from 1.20 A to 1.65 A "
+                    "preload steps the two-source total from 1.20 A to 1.57 A "
                     "at the same instant a commanded share step of 0.40 -> "
                     "0.84 lands, which is the coincidence that latched OC_FC "
-                    "on `fw26-clamp-sweep` in campaign E. 1.65 A is 0.10 A "
-                    "above the clamp's reachability threshold and just above "
-                    "the 1.647 A necessary condition for the hazard, so the "
-                    "clamp is exercised while the peak stays bounded: the "
-                    "minority clip, not the ceiling, sets it at 1.3303 A "
-                    "walked against a 1.36 A acceptance bound and "
+                    "on `fw26-clamp-sweep` in campaign E. 1.57 A is 0.10 A "
+                    "above the fw v27 rev 2 reachability threshold 1.4706 A "
+                    "and 0.077 A BELOW the 1.647 A necessary condition for "
+                    "the hazard, so the clamp is exercised while the peak "
+                    "stays bounded: the droop band edge 0.85 * 1.57 = "
+                    "1.3345 A caps it structurally, the walk reports "
+                    "1.3188 A, and the acceptance bound is 1.3241 A against "
                     "LIMIT_I_FC_MAX 1.40 A."),
     # "any", for `fw26-clamp-cruise`'s reason exactly: the clamp is firmware
     # arithmetic on a filtered total and the split is the droop network's.

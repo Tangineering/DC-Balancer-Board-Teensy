@@ -1258,3 +1258,45 @@ campaign ended). The one loss was ~45 minutes to the API outage on the last revi
   by margin (total still climbing at the share step); F4 LOW the settling metric is cadence-phased;
   F5-F10 LOW. **Stop decision: three campaigns of five; F was clean and every open item is a tooling
   re-derivation, not a board question.** Final commit follows.
+
+---
+
+# SESSION 2026-09-03/04 (fw v27 rev 2 on the board; campaign G is the fw v27 + I_AUX_A 0.09 A era baseline)
+
+**Mandate (operator, 2026-09-03 evening, verbatim):** "fw v27 is flashed, begin the overnight campaign".
+Earlier the same evening: "Let me know when fw v27 is flashed. I'd like to flash it so you can begin a
+campaign on fw v27 overnight." The three protocol questions (budget, judgment calls, constraints) were
+asked and not answered before the flash; the protocol below is ASSUMED from the standing rulings and is
+stated so it can be checked in the morning.
+
+**Start commit:** `22e8cc8` (fw v27 rev 2 = `153562f`, flashed by the operator; the I_AUX_A era = `95c6512`).
+**Assumed protocol:** campaign budget up to 5, stop early when a campaign is clean and the next would only
+repeat datapoints (the 2026-09-01 precedent); decision pairs (Fable + Opus, identical prompts, orchestrator
+adjudicates, every ruling with a reversal path); fix rounds between campaigns on tools only, never firmware,
+never a flash; `PSCAD/`, `references/`, `USER_NOTES.md` untouched; the two `.ino` flag lines never committed;
+`tools/*.py` edit-frozen during a live campaign (campaigns run from a DETACHED WORKTREE at the committed
+tooling, `--out` into the main tree's `HIL Results/`); no tree-wide git operations by any subagent; console
+prints ASCII. Bench is NOT available (no hardware tests; every bench item stays queued).
+
+**Sequencing decision D-1 (2026-09-03 evening):** campaign G launches only after the fw v27 rev 2 tools
+mirror (WORK_QUEUE 0d item 7, in progress at session start) is reviewed and committed, so the suite scores
+against fw v27 walks (battery-only start, gate 0.30 A, scheduled k_d, clamp reachability 1.4706 A) rather
+than fw v26 ones. Reversal: none needed; a campaign on stale expectations would have been re-scored anyway.
+
+**What campaign G is:** the first execution of fw v27 rev 2 and of the I_AUX_A 0.09 A plant, i.e. a new
+baseline for every anchor with open-loop time or an idle segment. Read first: the joint leg's 1.36 A bound
+(a miss latches OC_FC), the battery-only-start witnesses on every leg, the share-step guard's zero-refusal
+witness, `mpc_share_pred_err`, the sdp-v6 legs, the AUX-ERA and FW27-ERA provisional blocks.
+
+**Decision D-2 (2026-09-03 evening, before campaign G): the `fw26-clamp-joint` step is re-derived to
+1.57 A of total (preload step 1.56 -> 1.48 A) instead of the operator-ruled 1.65 A.** Evidence: at
+`SHARE_MINORITY_I_MIN_A` 0.15 A the structural bound of the 1.65 A step is min(0.85*1.65, 1.65-0.15) =
+1.4025 A, above `LIMIT_I_FC_MAX` 1.40 A (walked peak 1.3644 A simultaneous / 1.3860 A load-skewed against
+a 1.36 A acceptance bound; the plant's zero-lag re-split is an upper bound only for a lagging converter);
+a latch costs the chained legs (campaign E: 13 consequential FAILs, 499 frozen ticks). The 1.65 A figure
+was the design rule "0.10 A above the clamp's reachability threshold" evaluated at I_min 0.30 A
+(threshold 1.55 A); the same rule at I_min 0.15 A (threshold 1.4706 A) gives 1.57 A, whose bound is
+min(0.85*1.57, 1.42) = 1.3345 A. Skipping the leg was the alternative (rejected: a constant restores a
+real leg). Reversal: `FW26_CLAMP_JOINT_STEP_PRELOAD_A` 1.48 -> 1.56 and re-walk, one commit. Also from
+the same review: the MPC surrogate never armed the battery-only start (its shadow governor asserted FC on
+the bus through the pre-gate window) - fixed before the campaign and the six MPC legs re-walked.

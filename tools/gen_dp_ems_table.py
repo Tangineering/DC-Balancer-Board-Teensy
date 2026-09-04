@@ -347,9 +347,26 @@ def delivered_share(share, i_tot):
     # stage-level demand model carries no conduction floor, so without this
     # guard it clamps on totals the board cannot clamp at: 250 of
     # `ems-dp-replay`'s 34 827 cells bound at I_tot 1.47137 A, where the board's
-    # clip caps the fuel cell at 1.1714 A.  `CEILING_REACHABLE_I_TOT_A` is
-    # I_FC_CEIL + SHARE_MINORITY_I_MIN_A = 1.55 A, and is conservative for the
-    # battery ceiling as well (its own threshold is 3.00 A).
+    # clip caps the fuel cell at 1.1714 A.
+    # ⚠️ THE THRESHOLD MOVED AT fw v27 rev 2 (2026-09-03), and it is read from
+    # the symbol so this helper inherited it.  With the conduction floor at
+    # 0.15 A the GOVERNING TERM SWAPPED from the floor to the band edge, and
+    # `CEILING_REACHABLE_I_TOT_A` = max(I_FC_CEIL/DROOP_R_MAX,
+    # I_FC_CEIL + I_min) = 1.4706 A, not 1.55 A.  It stays conservative for the
+    # battery ceiling (whose own threshold is 3.176 A).
+    #
+    # WHAT THAT DOES TO A SOLVED TABLE, CHECKED RATHER THAN ASSUMED.  Lowering
+    # the guard admits clamping in the window [1.4706, 1.55) at any share above
+    # 1.25/I_tot, i.e. the top FOUR of the 57 share rungs (0.8125 to 0.85).
+    # Swept over that window the worst cell moves 0.0435 of share -- but that
+    # worst case needs 1.55 A of TWO-SOURCE total, and the largest total any
+    # registered EMS stimulus reaches is 1.47137 A (`ems-dp-replay`), where only
+    # the 0.85 rung changes and it changes by 0.000452 of share = 0.66 mA of
+    # commanded fuel-cell current.  The 0.8375 rung does not move until
+    # 1.4925 A.  THE COMMITTED TABLES ARE THEREFORE NOT RE-SOLVED for this: the
+    # change is 3 orders of magnitude under the DP's own share quantum.
+    # TODO(fw27): re-check this the first time a registered stimulus exceeds
+    # 1.4925 A of two-source total, where a second rung starts to move.
     live = (tot >= gov_mod.CEILING_REACHABLE_I_TOT_A) & in_band
     safe = np.where(live, tot, 1.0)
     bt_bind = live & (((1.0 - out) * safe) > GOV_I_BT_CEIL_A)

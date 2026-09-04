@@ -8233,15 +8233,27 @@ def test_sdp_cross_walk_comment_records_the_measurement_and_the_root_cause():
     assert "WALK RESULT (PROVISIONAL" not in src
 
 
-def test_strategy_authoring_note_states_the_0_55_a_share_authority_boundary():
+def test_strategy_authoring_note_states_the_share_authority_boundary():
     """The standing lesson for policy AND walk authors: below the firmware's
-    0.55 A open-loop drop-out a commanded share is accepted, logged, and NOT
-    acted on. Two walks in this codebase have now been wrong for this one
-    reason."""
+    open-loop drop-out a commanded share is accepted, logged, and NOT acted on.
+    Two walks in this codebase have now been wrong for this one reason.
+
+    fw v27 rev 2 RE-DERIVATION 2026-09-03: the drop-out moved 0.55 -> 0.25 A
+    with the conduction floor, so the banner's TITLE can no longer carry a
+    number -- a title that names one era's threshold goes stale the next time
+    the floor is retuned, and this note's whole value is that it does not go
+    stale. The threshold is therefore named in the body, in BOTH eras, and the
+    title names the boundary instead. The mechanism assertions are unchanged,
+    because the mechanism is."""
     src = _hil_source()
-    assert "SHARE AUTHORITY DISAPPEARS BELOW 0.55 A" in src
+    assert "SHARE AUTHORITY DISAPPEARS BELOW THE CLOSED-LOOP EXIT" in src
     assert "ACCEPTED, LOGGED, and NOT ACTED ON" in src
     assert ".ino:2181/2205" in src
+    # Both eras are named, so a reader of an old campaign is not misled.
+    assert "0.30 A of source total at fw v27 rev 2" in src
+    assert "0.60 A through fw v26" in src
+    # fw v27 rev 2 adds two mechanisms a walk must also model; the note says so.
+    assert "STARTS BATTERY-ONLY" in src
     # It is reachable from the registry a strategy author edits, not only from
     # the Mode A block far above it.
     assert "BEFORE ADDING ONE: read the SHARE AUTHORITY DISAPPEARS" in src
@@ -13416,9 +13428,13 @@ def test_aux_preload_step_reaches_the_plant_through_the_generic_branch():
     assert p.i_aux == pytest.approx(hil.I_AUX_A + a0)
     hil.apply_scenario(p, n, t1)
     assert p.i_aux == pytest.approx(hil.I_AUX_A + a1)
-    # The two totals are the stimulus the design record names.
+    # The two totals are the stimulus the design record names. The step total
+    # moved 1.65 -> 1.57 A at fw v27 rev 2 (orchestrator decision D-2): at
+    # SHARE_MINORITY_I_MIN_A 0.15 A the 1.65 A step lost its structural bound,
+    # 0.85 * 1.65 = 1.4025 A being ABOVE LIMIT_I_FC_MAX. See the block on
+    # FW26_CLAMP_JOINT_STEP_PRELOAD_A.
     assert hil.I_AUX_A + a0 == pytest.approx(1.20)
-    assert hil.I_AUX_A + a1 == pytest.approx(1.65)
+    assert hil.I_AUX_A + a1 == pytest.approx(1.57)
 
 
 def test_aux_preload_step_shape_guards_refuse_the_malformed_cases():
@@ -13473,3 +13489,206 @@ def test_era_hint_empty_header_value_yields_a_hint_not_an_exception():
     meta = {"i_aux_a": ""}
     hint = hil.dp_fingerprint_era_hint(meta)
     assert isinstance(hint, str)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# fw v27 rev 2: the live droop scale recovered from the codes, and the
+# schedule-aware parallel droop code the DP's loss map will need.
+# ─────────────────────────────────────────────────────────────────────────────
+def test_live_k_droop_is_recovered_exactly_from_the_code_pair():
+    """THE IDENTITY THE SIMPLE ENGINE RIDES ON, and it is exact, not fitted.
+
+    g_FC = k_d/(RE_MAX*r) and g_BT = k_d/(RE_MAX*(1-r)), so the parallel of the
+    two commanded gains is k_d/RE_MAX with r cancelling identically. That is
+    what lets the plant follow the fw v27 rev 2 load-scheduled scale with NO
+    wire change: the 18-byte observation frame carries no k_d field and does
+    not need one."""
+    re_max = hil.RE_MAX_OHM
+    for k_d in (0.30, 0.4531, 0.6796, 0.906128):
+        for r in (0.15, 0.20, 0.35, 0.50, 0.65, 0.80, 0.85):
+            g_fc = k_d / (re_max * r)
+            g_bt = k_d / (re_max * (1.0 - r))
+            assert hil.live_k_droop_from_codes(g_fc, g_bt) == pytest.approx(
+                k_d, rel=1e-12), (k_d, r)
+
+
+def test_live_k_droop_falls_back_on_an_uninformative_code_pair():
+    """A zero code means "no droop commanded", not "k_d is zero" -- a NOP word
+    or an unwritten channel. Returning 0 there would collapse the split law's
+    channel resistances and hand the caller a divide-by-zero."""
+    assert hil.live_k_droop_from_codes(0.0, 0.5) == hil.K_DROOP_FW_OHM
+    assert hil.live_k_droop_from_codes(0.5, 0.0) == hil.K_DROOP_FW_OHM
+    assert hil.live_k_droop_from_codes(0.0, 0.0) == hil.K_DROOP_FW_OHM
+
+
+def test_the_pre_first_frame_mdac_seed_is_the_firmware_boot_code():
+    """M4 (2026-09-03). `ElectricalSim.step()` runs before the first
+    observation frame, with no MDAC words to read. The old 0.5 seed resolved
+    through `live_k_droop_from_codes()` to k_d 0.5034 ohm -- 68 % above the
+    0.30 ohm floor -- so the simple engine opened every run on a droop the
+    firmware had not scheduled. The seed is now the firmware's OWN boot code
+    (share 0.5 at k_d = K_DROOP), which resolves back to the floor exactly."""
+    seed = hil.SIMPLE_PRE_FRAME_MDAC_FRACTION
+    assert seed == pytest.approx(0.298, abs=5e-4)
+    assert hil.live_k_droop_from_codes(seed, seed) == pytest.approx(
+        hil.K_DROOP_FW_OHM, rel=1e-12)
+    # ... and the retired seed is what it is NOT.
+    assert hil.live_k_droop_from_codes(0.5, 0.5) == pytest.approx(0.5034,
+                                                                  abs=5e-4)
+    # The seed is the code the firmware writes at boot: g = k_d/(RE_MAX*r).
+    assert seed == pytest.approx(
+        hil.K_DROOP_FW_OHM / (hil.RE_MAX_OHM * 0.5), rel=1e-12)
+
+
+def test_scheduled_g_par_recovers_fw_v26_above_the_crossover():
+    """THE PROPERTY THAT PROTECTS EVERY COMMITTED DP TABLE. At and above
+    RE_MAX*SAFETY*I_min/K_DROOP the schedule IS K_DROOP, so the map's own
+    g_par is recovered and every fw v26 figure holds."""
+    cross = hil.DP_DROOP_SCHEDULE_CROSSOVER_A
+    assert cross == pytest.approx(0.9061287, abs=1e-6)
+    structural = hil.K_DROOP_FW_OHM / hil.RE_MAX_OHM
+    for tot in (cross, 1.0, 1.5, 2.0, 4.0, 10.0):
+        assert hil.scheduled_g_par(tot) == pytest.approx(structural, rel=1e-12)
+    # The shipped constant is the MEASURED mean of the same quantity, so the
+    # two agree to the measurement's own sigma and not to the bit.
+    assert hil.DP_DROOP_G_PAR == pytest.approx(structural, abs=1e-4)
+
+
+def test_scheduled_g_par_is_capped_and_monotone_below_the_crossover():
+    """The 0.5 cap mirrors the closed-loop clip's own sliver rule, so the
+    schedule cannot size k_d for a band edge the clip can never command."""
+    cap = hil.RE_MAX_OHM * 0.5 * hil.SHARE_KD_SAFETY_FW27 / hil.RE_MAX_OHM
+    assert hil.scheduled_g_par(0.30) == pytest.approx(cap, rel=1e-12)
+    assert hil.scheduled_g_par(0.10) == pytest.approx(cap, rel=1e-12)
+    assert hil.scheduled_g_par(0.0) == pytest.approx(
+        hil.K_DROOP_FW_OHM / hil.RE_MAX_OHM, rel=1e-12)
+    prev = None
+    tot = 0.30
+    while tot <= 2.0:
+        g = hil.scheduled_g_par(tot)
+        if prev is not None:
+            assert g <= prev + 1e-15, tot
+        prev = g
+        tot += 0.01
+
+
+def test_scheduled_g_par_matches_the_governor_models_schedule():
+    """M3 (2026-09-03): TWO MODULES OWN THE SAME FIRMWARE ARITHMETIC, so they
+    are pinned against each other rather than left to drift.
+
+    `hil_plant_sim.scheduled_g_par()` is the CONVERGED schedule the loss map's
+    bias is derived from; `governor_model.GovernorModel.droop_scale_target()`
+    is the per-tick port of `shareDroopScaleTarget()` (.ino:10847) the walks
+    run. They must agree at every filtered total, modulo the one documented
+    difference: `droop_scale_target()` HOLDS the live k_d for a total at or
+    below `_I_TOT_MIN_A` (the firmware's structural divide guard) where the
+    static map returns the floor.
+
+    A divergence here would put the DP bound and the walks on different droop
+    laws while both still claim to describe fw v27 rev 2."""
+    import governor_model as gm
+    g = gm.GovernorModel()
+    for tot in (0.30, 0.35, 0.4694, 0.60, 0.75, hil.DP_DROOP_SCHEDULE_CROSSOVER_A,
+                1.0, 1.20, 1.57, 2.0, 4.0):
+        want = g.droop_scale_target(tot) / hil.RE_MAX_OHM
+        assert hil.scheduled_g_par(tot) == pytest.approx(want, rel=1e-12), tot
+    # The 0.5 cap and the K_DROOP floor are the same two rails in both.
+    assert g.droop_scale_target(0.10) / hil.RE_MAX_OHM == pytest.approx(
+        hil.scheduled_g_par(0.10), rel=1e-12)
+    assert g.droop_scale_target(1e9) / hil.RE_MAX_OHM == pytest.approx(
+        hil.K_DROOP_FW_OHM / hil.RE_MAX_OHM, rel=1e-12)
+    # The constants the two read are literally the same numbers.
+    assert hil.SHARE_MINORITY_I_MIN_A_FW27 == pytest.approx(
+        gm.GOV_CONST["SHARE_MINORITY_I_MIN_A"])
+    assert hil.SHARE_KD_SAFETY_FW27 == pytest.approx(
+        gm.GOV_CONST["SHARE_KD_SAFETY"])
+    assert hil.DROOP_R_MIN_FW == pytest.approx(gm.GOV_CONST["DROOP_R_MIN"])
+    assert hil.RE_MAX_OHM == pytest.approx(gm.GOV_CONST["RE_MAX"])
+    assert hil.K_DROOP_FW_OHM == pytest.approx(gm.GOV_CONST["K_DROOP"])
+
+
+def test_the_loss_map_bias_under_the_schedule_exceeds_the_stated_band():
+    """THE DECISION THIS ROUND RECORDED, AS ARITHMETIC (2026-09-03).
+
+    The map's stated envelope is |dev| <= 0.8 % of bus voltage. Under the
+    fw v27 rev 2 schedule a fw v26-era map understates the bus sag by
+    (K_EFF(k_d) - 0.308502)*I_tot, which crosses 0.8 % at 0.4694 A and peaks at
+    1.110 % on the cap corner at the 0.30 A closed-loop gate. That is why K_G
+    is NOT re-fitted -- it is the code-to-ohm conversion and is unchanged --
+    while g_par must become schedule-aware, and why the map itself is left
+    alone in a mirror round: moving it orphans every committed DP table."""
+    k_fw26 = hil.DP_BUS_R_FIX + hil.DP_BUS_K_G * hil.DP_DROOP_G_PAR
+
+    def dev_pct(tot):
+        k_new = hil.DP_BUS_R_FIX + hil.DP_BUS_K_G * hil.scheduled_g_par(tot)
+        return 100.0 * (k_new - k_fw26) * tot / hil.DP_BUS_V0_EFF
+
+    assert dev_pct(0.30) == pytest.approx(1.110, abs=0.005)
+    assert dev_pct(0.4694) == pytest.approx(0.800, abs=0.005)
+    assert dev_pct(0.60) == pytest.approx(0.561, abs=0.005)
+    assert abs(dev_pct(hil.DP_DROOP_SCHEDULE_CROSSOVER_A)) < 0.01
+    # Above the crossover the map is exact, which is the whole point of the
+    # max(K_DROOP, .) floor in the firmware's schedule.
+    for tot in (1.0, 2.0, 4.0):
+        assert abs(dev_pct(tot)) < 0.01
+
+
+def test_the_simple_split_law_follows_the_live_scale():
+    """The simple engine's static split law used the compile-time 0.30 ohm and
+    now reads the LIVE scale off the code pair.
+
+    THREE CLAIMS, AND THE THIRD IS DELIBERATELY NOT A DIRECTION CLAIM.
+      1. At k_d = K_DROOP the law is bit-identical to its fw v26 self, so every
+         run at or above the 0.9061 A crossover is unchanged.
+      2. With the asymmetry OFF and no series floor the scale cancels out of
+         the law exactly, at every k_d.
+      3. The scale's whole effect is that the FIXED series floor R_f carries
+         less RELATIVE weight as k_d grows. A first draft of this test asserted
+         that the delivered share therefore moves toward the commanded ratio;
+         that is FALSE and the test caught it. R_f partially CANCELS the rho
+         asymmetry in the upper band, so removing weight from R_f can move the
+         share further from r there -- at r = 0.80 the deviation grows 0.00557
+         to 0.00794 across the schedule's full span. The honest claim is the
+         relative weight itself, which is monotone; the share's direction is
+         not, and is stated as band-dependent."""
+    p = hil.Plant(asymmetry_mode="measured")   # electrical=None = simple mode
+    p_off = hil.Plant(asymmetry_mode="off")
+    re_max = hil.RE_MAX_OHM
+
+    def codes(k_d, r):
+        return k_d / (re_max * r), k_d / (re_max * (1.0 - r))
+
+    # 1. Bit-identical to fw v26 at the schedule's floor.
+    for r in (0.20, 0.35, 0.50, 0.65, 0.80):
+        g_fc, g_bt = codes(hil.K_DROOP_FW_OHM, r)
+        assert hil.live_k_droop_from_codes(g_fc, g_bt) == pytest.approx(
+            hil.K_DROOP_FW_OHM, rel=1e-12)
+        rho = hil.ASYM_DROOP_SCALE_FC / hil.ASYM_DROOP_SCALE_BT
+        r_fc = rho * hil.K_DROOP_FW_OHM / r + hil.DROOP_FIXED_SERIES_OHM
+        r_bt = hil.K_DROOP_FW_OHM / (1.0 - r) + hil.DROOP_FIXED_SERIES_OHM
+        want = (p.asym_dv0_v / 1.0 + r_bt) / (r_fc + r_bt)
+        assert p._apply_simple_asymmetry(r, 1.0, g_fc, g_bt) == pytest.approx(
+            want, rel=1e-15), r
+
+    # 2. The scale cancels exactly with the asymmetry off and no series floor.
+    saved = hil.DROOP_FIXED_SERIES_OHM
+    try:
+        hil.DROOP_FIXED_SERIES_OHM = 0.0
+        for k_d in (0.30, 0.6796, 0.906128):
+            for r in (0.20, 0.50, 0.80):
+                g_fc, g_bt = codes(k_d, r)
+                assert p_off._apply_simple_asymmetry(
+                    r, 1.0, g_fc, g_bt) == pytest.approx(r, rel=1e-12)
+    finally:
+        hil.DROOP_FIXED_SERIES_OHM = saved
+
+    # 3. The relative weight of the fixed floor, which IS monotone.
+    def weight(k_d, r):
+        return hil.DROOP_FIXED_SERIES_OHM / (k_d / r
+                                             + hil.DROOP_FIXED_SERIES_OHM)
+
+    for r in (0.15, 0.20, 0.50, 0.80, 0.85):
+        assert weight(0.906128, r) < weight(0.30, r), r
+    # At DROOP_R_MAX, where the floor's weight is largest in band.
+    assert weight(0.30, 0.85) == pytest.approx(0.0855, abs=0.0005)
+    assert weight(0.906128, 0.85) == pytest.approx(0.0300, abs=0.0005)

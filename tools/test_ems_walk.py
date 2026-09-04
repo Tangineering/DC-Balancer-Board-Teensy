@@ -332,8 +332,9 @@ def test_governed_sdp_v3_walk_on_ems_sdp_completes_with_open_hold_and_h2_pin():
     assert hold > 0.1, (
         "expected a substantial open-loop-hold fraction (measured 33.8%% by "
         "the implementer); got %.3f -- either the governor gating changed or "
-        "this walk's demand no longer dwells below the 0.55 A closed-loop "
-        "exit threshold the way ems-sdp's stimulus is documented to."
+        "this walk's demand no longer dwells below the closed-loop exit "
+        "threshold (0.25 A at fw v27 rev 2; 0.55 A through fw v26) the way "
+        "ems-sdp's stimulus is documented to."
         % hold)
     # Loose provenance pin, deliberately: this number depends on the sdp-v3
     # policy artifact (tools/sdp_policies/sdp_policy_v3.json) plus the reduced
@@ -349,7 +350,26 @@ def test_governed_sdp_v3_walk_on_ems_sdp_completes_with_open_hold_and_h2_pin():
     # the record. The tolerance is UNCHANGED at 5 % - this is a re-pin, not a
     # widening. provisional_note: re-walked for the I_AUX_A 0.09 A era,
     # 2026-09-03; pin on campaign G.
-    assert got.h2_g == pytest.approx(0.011649, rel=0.05)
+    # fw v27 rev 2 RE-PIN 2026-09-03: 0.011649 -> 0.012237, that is +5.05 %.
+    # MECHANISM, and it is ONE mechanism, not a drift: the battery-only start
+    # holds the fuel cell OFF the bus until the governor's filtered total first
+    # exceeds 2*I_min = 0.30 A, which on this stimulus is 9.5 % of the walk's
+    # ticks (the LATCHED fraction, 0.0 before this round). The battery carries
+    # that window, so the pack ends lower and the strategy buys the deficit back
+    # from the fuel cell later at a worse operating point. The FEEDFORWARD
+    # submode also all but disappears - 0.12 % of ticks - because the fw v27
+    # clip HOLDS below the gate instead of walking the reference out. The
+    # tolerance is UNCHANGED at 5 %; this is a re-pin, not a widening.
+    # provisional_note: fw v27 rev 2 era (I_min 0.30 -> 0.15 A, gate 0.30 A,
+    # scheduled k_d, battery-only start), re-walked 2026-09-03, NOT measured on
+    # the board; pin on campaign G.
+    assert got.h2_g == pytest.approx(0.012237, rel=0.05)
+    # Pin the MECHANISM'S EXISTENCE, not only its consequence. A walk that
+    # stopped arming the battery-only start would pass the h2 band above on the
+    # way back down and say nothing about why.
+    assert got.mode_fractions.get(gm.MODE_LATCHED, 0.0) > 0.05, (
+        "the fw v27 rev 2 battery-only start produced no latched ticks; either "
+        "ems_walk stopped arming it or the governor stopped taking the cut")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -997,16 +1017,37 @@ def test_walk_census_counts_a_clamp_when_one_actually_binds():
 _SS_KW = {"budget_ms": 1e5, "roll_budget_ms": 1e5, "single_source": True}
 
 
-def test_single_source_demand_is_inert_on_a_walk_that_never_latches():
-    """`soc-band` commands only in-band shares, so NO latch ever stands and the
-    flag must be BIT-IDENTICAL there.  That is what makes it safe to leave the
-    demand switch permanently in the stage loop."""
+def test_single_source_demand_is_no_longer_inert_on_any_walk():
+    """THIS TEST'S PREMISE WAS RETIRED BY fw v27 rev 2, so it is re-derived
+    rather than re-pinned.
+
+    It used to assert BIT-IDENTITY: `soc-band` commands only in-band shares, so
+    no latch ever stood, the single-source demand switch was inert, and that was
+    what made it safe to leave permanently in the stage loop. From fw v27 rev 2
+    EVERY profile starts battery-only - the arm feeds updateShareSetpointCutoff()
+    an effective setpoint of 0.0, and the fuel cell is cut until the filtered
+    total first exceeds 0.30 A - so a latch stands on 9.4 % of this walk's ticks
+    and the switch is inert on NO walk any more.
+
+    That is correct behaviour, not a regression: those stages ARE single-source,
+    and pricing them on the measured battery-only bus law is the whole point of
+    the flag. What is pinned now is the SIZE and the DIRECTION of the
+    difference, which is what still makes leaving the switch in the loop safe:
+    the battery-only window is short and lightly loaded, so the two laws
+    disagree by parts per hundred thousand, and the single-source law bills
+    MORE, never less. A change that made the flag expensive, or that flipped its
+    sign, fails here."""
     lm = sim.plant_loss_map()
     a = ew.walk("soc-band", "ems-soc-band", soc0=0.7, loss_map=lm, trace=False)
     b = ew.walk("soc-band", "ems-soc-band", soc0=0.7, loss_map=lm,
                 single_source_demand=True, trace=False)
-    assert a.h2_g == b.h2_g
-    assert a.delta_soc == b.delta_soc
+    assert a.mode_fractions.get(gm.MODE_LATCHED, 0.0) > 0.05, (
+        "no latch stood at all; the battery-only start is not being armed and "
+        "this test's whole subject is gone")
+    assert b.h2_g > a.h2_g, ("the single-source law must bill a battery-only "
+                             "stage MORE, not less")
+    assert b.h2_g == pytest.approx(a.h2_g, rel=1e-4)
+    assert b.delta_soc == pytest.approx(a.delta_soc, rel=1e-3)
 
 
 def test_single_source_demand_refuses_without_a_loss_map():

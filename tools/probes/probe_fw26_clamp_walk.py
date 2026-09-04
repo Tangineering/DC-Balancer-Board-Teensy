@@ -312,8 +312,13 @@ def reconstruct_sweep(regions=None, bridge_s=None, dv0_v=DV0_MEASURED_V,
 # order.  The peak is set by the RAIL CROSSING, not by the order: whichever axis
 # moves first, the reference has reached 0.84 well before the filtered total
 # passes 1.55 A.  Both orders are walked below and reported.
+# ⚠️ fw v27 rev 2 (2026-09-03): the step total moved 1.65 -> 1.57 A with
+# `hil_plant_sim.FW26_CLAMP_JOINT_STEP_PRELOAD_A` 1.56 -> 1.48 A (see that
+# constant's block for the arithmetic). These stay LITERALS for the probe's
+# stdlib-only property and are pinned against the simulator's preloads by
+# `test_run_hil_suite.py::test_fw26_probe_joint_totals_match_the_scenario`.
 JOINT_PRE_TOTAL_A = 1.20
-JOINT_STEP_TOTAL_A = 1.65
+JOINT_STEP_TOTAL_A = 1.57
 JOINT_PRE_SHARE = 0.40
 JOINT_STEP_SHARE = 0.84
 JOINT_SETTLE_S = 1.0
@@ -383,8 +388,18 @@ def joint(dv0_v=DV0_MEASURED_V, skew_ms=0.0, pre_s=8.0, post_s=12.0,
             "i_fc": i_fc_last, "i_batt": i_bt_last,
             "balance_residual": abs(step_total - i_fc_last - i_bt_last),
             "mdac_fc": codes[0], "mdac_bt": codes[1], "r_applied": r_last,
-            "clip_rail_a": step_total - 0.30,
-            "crossover_total_a": 1.25 + 0.30}
+            # ⚠️ DERIVED FROM `GOV_CONST`, NOT HARD-CODED (fw v27 rev 2,
+            # 2026-09-03).  These two read 0.30 and 1.25 + 0.30 through fw
+            # v26, which silently described the OLD minority floor once
+            # `SHARE_MINORITY_I_MIN_A` moved 0.30 -> 0.15 A.  The clip rail is
+            # the largest fuel-cell current the conduction floor admits at
+            # this total, and the crossover is the filtered total at which the
+            # clip rail and the ceiling rail meet - which is
+            # `CEILING_REACHABLE_I_TOT_A` by construction (it is the max of the
+            # same two terms).
+            "clip_rail_a": step_total - gov_mod.GOV_CONST[
+                "SHARE_MINORITY_I_MIN_A"],
+            "crossover_total_a": gov_mod.CEILING_REACHABLE_I_TOT_A}
 
 
 def boundary_report(regions=None, bridge_s=None, dv0_v=DV0_MEASURED_V):
@@ -466,10 +481,18 @@ def main(argv=None):
                  j["settled_i_fc_min"], j["settled_i_fc_max"], j["i_batt"],
                  j["balance_residual"]))
     j0 = joint(args.dv0)
-    print("  clip rail %.4f A, rail crossover at filtered total %.2f A, "
-          "structural bound %.4f A over the 1.25 A ceiling"
-          % (j0["clip_rail_a"], j0["crossover_total_a"],
-             j0["clip_rail_a"] - 1.25))
+    # BOTH TERMS, and which one governs.  At I_min 0.30 the conduction clip was
+    # the tighter of the two; at 0.15 the droop BAND EDGE is, so printing the
+    # clip rail alone would name a bound that does not bind.
+    _band_edge = gov_mod.GOV_CONST["DROOP_R_MAX"] * JOINT_STEP_TOTAL_A
+    _struct = min(j0["clip_rail_a"], _band_edge)
+    print("  conduction clip rail %.4f A, droop band edge %.4f A -> "
+          "structural bound %.4f A (%.4f A over the %.2f A ceiling); rail "
+          "crossover at filtered total %.4f A"
+          % (j0["clip_rail_a"], _band_edge, _struct,
+             _struct - gov_mod.GOV_CONST["SHARE_GOV_I_FC_CEIL_A"],
+             gov_mod.GOV_CONST["SHARE_GOV_I_FC_CEIL_A"],
+             j0["crossover_total_a"]))
     return 0
 
 

@@ -976,12 +976,33 @@ direction*, that its cutoff/governor logic fires, and that its MDAC writes reach
 chokepoint. It is **not** adequate to tune share-loop gains, and the plant it implies is
 not the plant `controller_design/system_model.md` synthesizes against.
 
-> **⚠️ AND THE CLOSED LOOP HAS NO AUTHORITY AT ALL BELOW 0.55 A** — a firmware
+**The droop scale behind the codes is load-scheduled from fw v27 rev 2, and the plant
+recovers it without a wire change.** Through fw v26 the scale was the compile-time constant
+`K_DROOP` = 0.30 Ω. From fw v27 rev 2 the firmware runs
+`k_d = max(K_DROOP, RE_MAX·clamp(I_min/I_tot_held, DROOP_R_MIN, 0.5)·SHARE_KD_SAFETY)` in
+closed loop, with `RE_MAX` = 2.013619 Ω, `SHARE_KD_SAFETY` = 0.9 and `I_min` =
+`SHARE_MINORITY_I_MIN_A` = 0.15 A. The realized authority `k_d·I_tot` is therefore the
+**constant 0.272 V at design scale** below the crossover
+`RE_MAX·SHARE_KD_SAFETY·I_min/K_DROOP` = **0.9061 A** of filtered total; at and above the
+crossover `k_d` **is** `K_DROOP` and every fw v26 MDAC code is bit-identical. `k_d` is slewed
+at 2.353 %/tick against a hysteretic held sample of the filtered total (0.05 A deadband), and
+a saturating counter records every write the full-scale clamp caught. The design record is
+`docs/fw27_governor_package.md` §10.
+
+> The plant needs no new field for it. The parallel of the two commanded droop resistances,
+> `(k_d/r) ∥ (k_d/(1−r))`, is exactly `k_d` — the share cancels — so the live scale is
+> recoverable from the observation frame's code pair alone. That is the same identity the DP
+> loss map calls `g_par` (§9.4), read in the other direction.
+
+> **⚠️ AND THE CLOSED LOOP HAS NO AUTHORITY AT ALL BELOW 0.25 A** — a firmware
 > property, not a plant one, but it decides what a scenario or an offline walk
 > may claim. The firmware enters closed-loop share control above
-> `2·SHARE_MINORITY_I_MIN_A` = 0.60 A of filtered source total and drops out
-> below 0.55 A (`SHARE_MINORITY_I_MIN_A`, `SHARE_GOV_OL_HYST_A`, and the
+> `2·SHARE_MINORITY_I_MIN_A` = 0.30 A of filtered source total and drops out
+> below 0.25 A (`SHARE_MINORITY_I_MIN_A`, `SHARE_GOV_OL_HYST_A`, and the
 > `shareClosedLoopMode` mode gate at the head of `powerBalance()`).
+> **The gate halved at fw v27 rev 2**, with `SHARE_MINORITY_I_MIN_A` 0.30 → 0.15 A;
+> the 0.60 A entry and 0.55 A exit quoted throughout this document below belong to
+> the **fw v19 to fw v26 era** and are marked as such where they still appear.
 >
 > **Open loop is TWO submodes, and only one of them holds** (corrected
 > 2026-09-02; the claim that open loop "does not write the MDACs" was false):
@@ -995,23 +1016,44 @@ not the plant `controller_design/system_model.md` synthesizes against.
 >   the paragraph used to describe as the whole of open loop.
 > - **FEEDFORWARD.** Taken on a fresh profile with no closed-loop authority yet,
 >   on a **changed** setpoint while parked, or with an isolation recovery
->   outstanding. The raw setpoint is fed forward through the same slew limiter
->   the controller path uses — `DROOP_RATIO_SLEW_PER_TICK` **0.02**/tick, or
+>   outstanding. From fw v27 the reference is **CLIPPED through the same minority
+>   band the closed loop uses** — `shareFeedforwardClipTarget(sp, droopSlew_prev)`
+>   returns `constrain(sp, I_min/I_tot_filt, 1 − I_min/I_tot_filt)` — and the
+>   clipped reference is then fed through the same slew limiter the controller
+>   path uses (`DROOP_RATIO_SLEW_PER_TICK` **0.02**/tick, or
 >   `DROOP_RATIO_SLEW_HANDOFF_PER_TICK` **0.002**/tick when
->   `updateShareSlewMode()` has flagged a conduction handoff this tick — and
->   `applyShareRatio()` **writes the MDACs**. An out-of-band setpoint
->   (outside `[DROOP_R_MIN, DROOP_R_MAX]`) is still never actuated here: the
->   setpoint latch owns it.
+>   `updateShareSlewMode()` has flagged a conduction handoff this tick) before
+>   `applyShareRatio()` **writes the MDACs**. Below the gate the band is **EMPTY**,
+>   and an empty band is a **HOLD**: the clip returns `droopSlew_prev`, the ratio
+>   the MDACs already carry, so the tick is a no-op in actuation terms. It does
+>   **not** collapse to 0.5 — that fallback is the fw v5 `TP0053` failure and was
+>   deleted. The clip is **BYPASSED** while a controller-initiated cut is
+>   outstanding (`shareIsoFC || shareIsoBT`): the raw setpoint is fed forward
+>   there, and an accumulating proposal `shareIsoPropRatio` walks it back across
+>   the re-entry hysteresis, because an isolated tick writes no MDAC word and the
+>   held value would otherwise strand the channel off the bus. An out-of-band
+>   setpoint (outside `[DROOP_R_MIN, DROOP_R_MAX]`) is still never actuated here:
+>   the setpoint latch owns it. Design record:
+>   `docs/fw27_governor_package.md` §3 and §12.
 >
-> Measured, not inferred: on `ems-y-b00-v3` (campaign
-> `hil_report_20260902_011926`) **356 open-loop ticks wrote the MDACs, in 8
-> episodes**, the largest running 174 ticks and walking the command 0.650 →
+> Measured, not inferred, **in the fw v21 to fw v26 era**: on `ems-y-b00-v3`
+> (campaign `hil_report_20260902_011926`) **356 open-loop ticks wrote the MDACs, in
+> 8 episodes**, the largest running 174 ticks and walking the command 0.650 →
 > 0.152 with the codes moving (5354, 5279) → (8119, 4815), i.e. 0.00286
 > ratio/tick — between the two slew constants, as both being in play predicts.
 > Campaign `hil_report_20260901_191509` shows 369 on the same leg.
 > `tools/governor_model.py` reproduces both submodes.
 >
-> So under 0.55 A a `power_share_setpoint` is accepted and appears in
+> ⚠️ **THAT MEASUREMENT IS ERA-SCOPED AND WILL NOT REPRODUCE UNDER fw v27 rev 2.**
+> Both halves of the census move, in opposite directions and for different reasons.
+> The gate halved from 0.60 A to 0.30 A, which moves ticks out of open loop
+> altogether; and the feedforward clip holds the ratio on every non-isolated tick
+> below the gate, which leaves the walking episodes above measurable only on the
+> bypass path. Campaign G is the first fw v27 reading. The offline walk models the
+> clip and the schedule; the census itself is **unmeasured at these constants**, so
+> quote no open-loop occupancy figure against a fw v27 run until campaign G lands.
+>
+> So under 0.25 A a `power_share_setpoint` is accepted and appears in
 > `cmd_share_sp`, and whether it is acted on depends on which submode applies.
 > Campaign `20260901_024231` measured a delivered share of **0.1656** against a
 > commanded 0.85 at a 0.355 A cruise — a HOLD — and an offline walk that assumed
@@ -1027,7 +1069,7 @@ not the plant `controller_design/system_model.md` synthesizes against.
 >
 > ⚠️ **THE PRELOAD IS NO LONGER A DRIVE-CYCLE DEFAULT (operator ruling,
 > 2026-09-01).** `aux_preload_a` is **0.0 on every drive-cycle scenario** — the
-> four `ems-ftp75-*` legs included — because the sub-0.55 A stretches are TEST
+> four `ems-ftp75-*` legs included — because the sub-gate stretches are TEST
 > CONTENT, not a mode to be loaded away: a drive-cycle scenario that never
 > enters open-loop hold never exercises it. The mechanism is unchanged and the
 > constants are kept at zero (they are inside `collect_model_constants()` and
@@ -1035,10 +1077,18 @@ not the plant `controller_design/system_model.md` synthesizes against.
 > fingerprint). `Y_AUX_LOAD_A` is the deliberate exception and STAYS at 0.85 A:
 > on `ems-y-b30-*` the load CONSTRUCTS the stimulus — it is what makes those
 > scenarios' share bounds deliverable at all — rather than masking a mode.
-> Consequence for the FTP-75 legs: governor walk **open_hold 9.71 % /
-> open_feedforward 57.12 % / closed 33.17 %** of ticks, against open_hold
-> 0.00 % / closed 98.25 % at 0.65 A. Any check whose derivation assumed a
-> closed loop through an idle segment was re-derived with the ruling.
+> Consequence for the FTP-75 legs **in the fw v21 to fw v26 era**: governor walk
+> **open_hold 9.71 % / open_feedforward 57.12 % / closed 33.17 %** of ticks,
+> against open_hold 0.00 % / closed 98.25 % at 0.65 A. Any check whose derivation
+> assumed a closed loop through an idle segment was re-derived with the ruling.
+>
+> ⚠️ **THE CENSUS MOVES A SECOND TIME AT fw v27 rev 2.** The three figures above
+> were walked at a 0.60 A gate and a feedforward submode that fed the raw
+> setpoint forward. The gate is now 0.30 A and the feedforward submode clips,
+> which below the gate means it holds. Campaign G is the first fw v27 reading.
+> The offline walk models both the clip and the load-scheduled droop scale; the
+> census itself is **unmeasured at these constants** and the three percentages
+> stand only as the era record.
 
 > **⚠️ A THIRD BOUND SITS ON THE REFERENCE FROM fw v26: the source
 > current-ceiling clamp** (`applyShareCurrentCeilings()`,
@@ -1068,8 +1118,15 @@ not the plant `controller_design/system_model.md` synthesizes against.
 >
 > **Reachability, and why every registered stimulus is unaffected.** The
 > minority clip caps the commanded fuel-cell fraction at
-> `1 - SHARE_MINORITY_I_MIN_A/I_tot`, so the fuel-cell ceiling is reachable only
-> above **1.55 A of two-source total**. It cannot act at all in a fuel-cell
+> `min(DROOP_R_MAX·I_tot, I_tot − SHARE_MINORITY_I_MIN_A)`, so the fuel-cell
+> ceiling is reachable only above **1.4706 A of two-source total** at fw v27
+> rev 2. **The governing term swapped at that revision.** At the fw v19 to
+> fw v26 floor `SHARE_MINORITY_I_MIN_A` = 0.30 A the conduction floor was the
+> tighter term and the threshold was **1.55 A**; at 0.15 A the **band edge**
+> governs instead, `1.25/0.85` = 1.4706 A against `1.25 + 0.15` = 1.40 A. The
+> 1.55 A figure and every stimulus derived from it — the measured first
+> engagement at 1.60 A included — belong to the fw v26 era. It cannot act at all
+> in a fuel-cell
 > charge window, where `assertFcChargeEnable()` holds `BT_BUS_ENABLE` low and
 > there is no second channel to move load onto. Measured offline on the walks
 > that carry the Gate tables: the highest two-source total on `ems-soc-band` is
@@ -1173,6 +1230,41 @@ single-source estimate 0.930 [0.834, 1.079] was not.
 and omitted the 0.033 Ω common series floor.** The corrected split law is recorded in
 `docs/modeling/governor_split_law_20260903.md` (written in parallel with this fix round).
 
+**`k_d` in that law is the LIVE scheduled scale from fw v27 rev 2, not the compile-time
+`K_DROOP`.** The law's form is unchanged:
+
+```
+    R_FC  = ρ·k_d/r     + R_f
+    R_BT  =   k_d/(1−r) + R_f
+    α     = (ΔV₀/I_tot + R_BT) / (R_FC + R_BT)
+```
+
+What changes is that `k_d` now follows the load schedule of §4.4, so the offline governor
+model's `k_droop` parameter is the live `k_d` and is read per tick rather than as a constant.
+Four consequences follow.
+
+1. **With ρ = 1 and `R_f` = 0 the scale cancels out of the law entirely** and `α` = `r`
+   exactly, at every `k_d`. The schedule is invisible to the split in that limit.
+2. **With `R_f` > 0 the fixed series floor carries less relative weight as `k_d` grows, and
+   that weight is the monotone quantity.** `DROOP_FIXED_SERIES_OHM` = 0.033 Ω is
+   era-independent and is not scaled by anything, while the droop term `k_d/r` grows with the
+   schedule. At `r` = `DROOP_R_MAX` = 0.85, where the floor's weight is largest inside the
+   band, the floor is **8.55 %** of the channel resistance `k_d/r + R_f` at `k_d` = 0.30 Ω
+   and **3.00 %** at the schedule's 0.906 Ω cap.
+3. ⚠️ **The DELIVERED SHARE's direction is NOT monotone and must not be stated as such.**
+   `R_f` partially **cancels** the ρ asymmetry in the upper band, so removing weight from
+   `R_f` can move the delivered share **further** from the commanded ratio there. Measured on
+   the simple engine at `r` = 0.80 under the measured asymmetry, the deviation from the
+   commanded ratio **grows** from **0.00557** to **0.00794** across the schedule's full span
+   (`k_d` 0.30 → 0.906128 Ω). The effect is band-dependent; only the floor's relative weight
+   above is monotone.
+4. Above the 0.9061 A crossover `k_d` **is** `K_DROOP` and the law is arithmetically
+   identical to its fw v26 form.
+
+The plant needs no new observation-frame field to follow the schedule: the parallel of the
+two commanded droop resistances is exactly `k_d`, so the live scale is recoverable from the
+code pair alone (§4.4).
+
 **Sign, stated once.** ΔV₀ > 0 means the FC chain regulates high and over-delivers current
 at every load. The offsets are applied **antisymmetrically** about `V0_NOLOAD`, so the mean
 no-load voltage of the two chains is unchanged and the bus-level baselines move as little
@@ -1212,8 +1304,9 @@ is a real configuration that injects nothing, and simple and replay modes constr
 each channel's regulation target and the droop scale multiplies whatever
 `--droop {design,measured}` already realizes (BT at 1.000 keeps the measured anchor). In
 simple mode there are no converter models, so the same physics enters as the document's
-static share law with ρ = 1 — α = r + ΔV₀·r(1−r)/(k_d·I_tot), k_d = `K_DROOP` 0.30 Ω,
-clipped to [0, 1] and skipped below 0.10 A of source total where the term diverges. Simple
+static share law with ρ = 1 — α = r + ΔV₀·r(1−r)/(k_d·I_tot), k_d the live scheduled scale
+(the fixed `K_DROOP` 0.30 Ω through fw v26), clipped to [0, 1] and skipped below 0.10 A of
+source total where the term diverges. Simple
 mode is **not** droop-scaled: `--droop` has no effect under `--electrical simple`.
 
 **Light-load single-source behaviour.** A voltage mismatch starves the low channel entirely
@@ -1853,6 +1946,19 @@ the pre-lock ticks cannot bias an early trace toward either source.
 
 Selected with `--scenario`; `apply_scenario()` is re-evaluated every tick from `t`.
 
+> ⚠️ **EVERY GOVERNOR-GATE AND MINORITY-BAND FIGURE IN THE TABLE BELOW IS
+> ERA-SCOPED TO fw v19 THROUGH fw v26.** Those rows were derived at
+> `SHARE_MINORITY_I_MIN_A` = 0.30 A, hence a **0.60 A** closed-loop entry, a
+> **0.55 A** exit, a minority clip band `[0.30/I_tot, 1 − 0.30/I_tot]` and a
+> **1.55 A** fw v26 ceiling reachability. fw v27 rev 2 halves the floor to
+> 0.15 A, so the entry is **0.30 A**, the exit **0.25 A**, the band
+> `[0.15/I_tot, 1 − 0.15/I_tot]` and the ceiling reachability **1.4706 A**
+> (§4.4). The figures are retained here because they are what each scenario was
+> sized against and what each recorded campaign measured. Every derivation that
+> reads "above the gate" or quotes a clip rail is a **re-pin against campaign G**,
+> the first fw v27 reading; do not quote one against a fw v27 run until it has
+> been re-derived.
+
 | Scenario | Perturbation | Firmware path exercised | Expected observable |
 |---|---|---|---|
 | `steady` | `i_aux` held at 0.15 A | quiescent baseline: bring-up, Idle, telemetry, the link itself | `V_bus` ≈ `V_BUS_DROOP_V0` (15.95 V) − `k`·`I_total` with the F1-corrected, mode-aware `k` (§4.2: `K_DROOP_BUS_SHARED` 0.074 V/A with both sources live, `K_DROOP_BUS_SINGLE` 0.1615 V/A with one) — at `i_aux` = 0.15 A alone that is a sub-30 mV droop either way, i.e. `V_bus` stays within noise of 15.95 V; `fault_flags == 0`; observation `state` settles at 1 (Idle); simulator rx rate ≈ 1 kHz. This is H1. |
@@ -1875,12 +1981,12 @@ Selected with `--scenario`; `apply_scenario()` is re-evaluated every tick from `
 | `bringup` **(hi-fi only)** | none; plant from dark | the firmware's staged bring-up P0–P3 against the **real** RT1987 `t_D(ON)` 8 ms + soft-start ramps (~19.8 ms on the 100 nF switches, ~1.07 ms on the 5.6 nF ones) | Operator runs `'G'`; the phase timings in the USB log should sit outside the switch delays rather than racing them. |
 | `scp-inrush` **(hi-fi only)** | VESC input capacitance forced to the **top of the envelope (0.9 mF)**, and a **three-phase V-MOT load** (behind the switch, *not* `i_aux` on VBUS; 2026-08-31 deterministic redesign): the bring-up P3 ramp runs **unloaded**, a **6.5 A fold pulse** (`SCP_INRUSH_FOLD_LOAD_A`) steps in once V-MOT crosses `SCP_INRUSH_ARM_V` 1.2 V mid-soft-start (above the model's 1.0 V Norton load floor, so the full current appears in one substep and the cut fires inside that same 1 kHz tick — phase-independent of the firmware's OC teardown), a one-shot latch withdraws it, and a **5.0 A run load** at +110 ms latches `OC_FC`. The pre-redesign t = 0 flat 5.0 A load faded in through the Norton floor and its cut raced the firmware's teardown (the 2026-08-31 two-outcome episode); the older-still +6 A at t = 8 s arrived when `MOT_PWR` had been ON since t ≈ 0.62 s, and the foldback branch exists only in `SOFT`: **zero** `scp_cut`/fold events fired. | RT1987 soft-start **foldback** on `MOT_PWR` | `scp_cut` + `sw_ring` entries in the event sidecar. Verified offline: the margin holds at 2 A (soft-start completes, `V_mot` reaches 15.1 V) and breaks at ≥ 4 A into a **64 ms burst-retry cycle** — the Death-5-class ring pattern. **Not** the Death-5 stimulus itself: that was a full-bus hot-plug onto a discharged node, no longer reproducible (`MOT_PWR` carries a 100 nF CSS and the firmware pre-charges the node). This is the nearest *legitimate* case that can still bind the foldback. Ring peaks here stay under the 20 V abs-max because the cut happens at low `V_mot`; a cut at full bus on `--trace-config long` (BT, 3.480 nH) does cross it. |
 | `ems-y-b30-v1`, `ems-y-b30-v3` **(EMS-driven, 2026-08-31)** | the firmware's own `'Y'` combined table (16 regions, 40 s), copied VERBATIM from the firmware's `COMBINED_PROFILE` region table into `hil_plant_sim.COMBINED_PROFILE` and walked by `y_profile_at()` — an exact reproduction of `advanceComboRegion()`, including the clip-AFTER-interpolation rule and its intended kink. Vmax 1 and 3 m/s at the firmware's documented bound b = 0.30, plus a **+0.85 A `aux_preload_a`** (`Y_AUX_LOAD_A`, raised from 0.60 A on 2026-08-31) that holds the source total in **1.00–2.27 A**, above the 0.60 A closed-loop governor gate for the whole table. ⚠️ **Why it was raised, and why b30 results do not cross the change:** at 0.60 A the firmware's minority-current governor clipped the share to `1 − I_min/I_tot` = **0.624 / 0.672** at region 6 — *below* the table's own 0.70 clip — so the hi bound was **structurally undeliverable** and every b30 run characterised the governor instead (campaign `hil_report_20260831_191509` measured the rails at 0.632 / 0.679). At 0.85 A the bounds land at 0.714 / 0.743 and both the hi (0.70) and lo (0.30) clips are reachable at both speeds. Worst channel currents 0.999 A FC (28.7 % under `LIMIT_I_FC_MAX`) / 1.475 A BT. ⚠️ The preload **ramps in** over `SOC_LOAD_RAMP_S` from t = 4.0, so the table's first **0.59 s** (was 1.25 s) is still below the gate — inside region 0's settle, so no assertion window is affected. ⚠️ The commands are evaluated at 50 Hz, not the firmware's ~1 kHz: the share axis is unaffected (the share loop's own tick is 50 Hz), and the motor axis quantises to ≤ 12 mm/s at Vmax 3, against `e_sat` ≈ 26.4 mm/s. | **Closed-loop share tracking** under a two-axis cross-coupled excitation — the reason the firmware's table exists — reachable unattended for the first time. | `cmd_share_sp` reaches its clip **0.70** in region 6 (t = 22.0–23.5), sweeps 0.65 → 0.30 across region 10 (t = 32.0–35.0); `cmd_v_sp` reaches ≈ 0.996·Vmax at the region-7 ramp top (t → 27.0); `I_fc` ≥ **0.50 A** (Vmax 1) / **0.66 A** (Vmax 3) through **region 3 alone** (t = 13.0–16.0, where v is held constant so only the share command moves `I_fc`), against measured 0.50-split peaks of 0.4353 / 0.5850 A and measured true-run peaks of 0.5659 / 0.7606 A. ⚠️ Window and floors RE-DERIVED FROM MEASUREMENT 2026-08-31 (campaign `hil_report_20260831_191509`): the previous t = 13–20 window included region 4's ramp, where a 0.50 split alone reaches 0.4915 / 0.9217 A, and the MODELLED 0.58 / 0.80 floors sat above the true run's own region-3 peaks; the 0.45 / 0.60 pair before them belongs to the 0.60 A stimulus. **Expected fault-free.** |
-| `ems-y-b00-v1`, `ems-y-b00-v3` **(EMS-driven, 2026-08-31)** | the same table at **b = 0.00** and with **NO preload**. Regions 6 and 11 command share 1.00 and 0.00, outside `[DROOP_R_MIN 0.15, DROOP_R_MAX 0.85]`. The preload is omitted deliberately: the cut is gated on the doomed channel's own current by `SHARE_CUT_MAX_HANDOFF_A` 0.5 A, so a preload would put the load exactly where the latch is REFUSED. Source total spans 0.15–1.41 A. | The **cut-and-RESTORE topology** of `updateShareSetpointCutoff()`, both channels and both directions. The two RESTORE assertions are novel: `handoff-sag` asserts a cut and then perturbs, so nothing in this suite has ever checked that a latch is released. | `SW_BT_BUS` **clear** through region 6 (≤ 100 of ~1100 ticks) and **set** again through region 7 (≥ 2000 of 3000); `SW_FC_BUS` clear across regions 10/11 and set again from region 12. **Expected fault-free.** ⚠️ At Vmax 1 the total **never** reaches the 0.60 A governor gate, so the share loop runs **open-loop** for the whole run — and Vmax 3 is barely better: campaign `hil_report_20260831_191509` measured only **20.6 %** of that run above the gate, against **12.7 %** from the model walk over the table alone. ⚠️ **The two figures are NOT reconciled and 20.6 % does not reproduce** — three later recomputations give 16.98 %, 19.33 % and 19.13 %. They are a denominator/stimulus discrepancy, not evidence about the share loop's modes; quote the range, not either endpoint, until a `governor_model.py` replay of this leg settles it. Note also that "open loop" here is not synonymous with "inert": below the gate the firmware is in HOLD or in slew-limited FEEDFORWARD (§4.4), and this leg's own commanded setpoint changes put it in the latter. This pair is a **topology** test, not a tracking one; its cut/restore verdicts are sound and any share *amplitude* read off it is not. |
-| `ems-ftp75-5050`, `ems-ftp75-socband` **(EMS-driven, opt-in, 2026-08-31)** | the **EPA FTP-75** cycle at raw t = 0..340 s inclusive, 341 samples at 1 Hz (the segment of `references/Systemic_Scaling_of_Powertrain_Models_with_Youla_Driver_Control.pdf`; the raw EPA file is committed at `references/drive_cycles/ftpcol.txt` and `tools/gen_ftp75_profile.py` verifies its sha256 before generating `tools/ftp75_profile.py` — 341 raw samples decimated to 234 points, worst reconstruction error 4.4e-16 m/s). Scaled by ONE constant, 3.0/56.7 m/s per mph, so the 56.7 mph peak lands on 3.0 m/s; shifted to start at t = 5.0; ends at rest (the trace is 0 mph from raw t = 333, so no synthetic tail is appended). 350 s each, `aux_preload_a` **0.0 A** (`FTP75_PRELOAD_A`) since 2026-09-01. ⚠️ IT WAS **+0.65 A**, which put 100.00 % of the post-ramp run above the 0.60 A governor gate at a 0.800 A floor; every number in this row's last two columns belongs to that era. At preload 0 the idle total is `I_AUX_A` = 0.15 A, the peak source total is **0.9603 A** (model) / ~0.985 A measured-scaled, the share loop runs OPEN-LOOP HOLD through the idle segments (walk: 9.71 % hold / 57.12 % feedforward / 33.17 % closed), and `soc-band`'s charge branch is REACHABLE again. | The EMS layer as an **endurance** test rather than a transient one: 345 s of continuous 50 Hz commanding, ~30 accelerate/cruise/decelerate/idle cycles, and an H2 total over a cycle a reader outside this project recognises. | `cmd_v_sp` reaches 3.0 m/s at t = 245; peak source total 1.613 A, so `hold-5050`'s fixed 0.50 split puts **0.807 A** on a channel (42 % under `LIMIT_I_FC_MAX`) and `soc-band`'s 0.75 ceiling puts **1.210 A** (14 %); `h2_cum_g` ≈ 5.5e-2 g (`hold-5050`) / 8.2e-2 g (`soc-band` saturated). Both legs are expected **fault-free**. ⚠️ **The `ems-ftp75-socband` `OC_FC` ALLOWANCE IS RETIRED** (operator ruling, 2026-09-01): six campaigns ran the scenario and never used it, the measured peak `I_fc` held the 14 % margin its derivation predicted, and an allowance nothing exercises is a hole rather than protection — it silently excused the one fault this scenario is most likely to produce. Operator ruling (b) itself is unchanged (`charge-cruise` still REQUIRES `OC_FC` under it); what is retired is hedging on this entry. ⚠️ **RETIRED 2026-09-01:** the 0.800 A floor was ABOVE `SOC_BAND_CHARGE_ENTER_ITOT_A` 0.60 A, so the policy's charging branch could not open here. With the preload removed the floor is 0.15 A and the branch IS reachable — newly asserted by `socband_ftp_charge_opened` (existence only; the window schedule is unmodelled because `ems_walk.py` gates charge admission on the DP's `charge_mask()`, not on the strategy's own hysteresis). PROVISIONAL bands at preload 0 **and at the plant's default converter asymmetry** (§4.4a, the M2 consistent pair): `I_fc` ≥ 0.40 A (5050) / 0.56 A and ≤ 0.85 A (socband) at the peak, `h2_cum_g` [0.022, 0.037] / [0.028, 0.046] g. ⚠️ **TWO ERA BOUNDARIES, and campaign `20260901_151156` is the last campaign on the far side of BOTH** — the preload removal and the asymmetry default. Symmetric → asymmetric governor-walk hydrogen deltas at the M2 pair: 5050 **+6.40 %**, socband **+3.22 %**, sdp **+2.95 %**, dp **+4.32 %**; every SoC fall shrinks correspondingly. (These are ~two thirds of the figures first recorded here, which were walked at the retired M1 ΔV₀ 0.0444 — the M2 partition puts most of the mismatch in the droop ratio, the weaker hydrogen lever.) The walk has no ρ, so it is driven at the ΔV₀ that reproduces the plant's own α at r = 0.5, 1.0155 A (0.030223 V); the two laws agree there and diverge away from it, well inside the ±25 % band. `V_bus`-referenced pins are **mean-preserved** and do not move (§4.4a). Do not quote a pre-2026-09-01 total against these bands. |
+| `ems-y-b00-v1`, `ems-y-b00-v3` **(EMS-driven, 2026-08-31)** | the same table at **b = 0.00** and with **NO preload**. Regions 6 and 11 command share 1.00 and 0.00, outside `[DROOP_R_MIN 0.15, DROOP_R_MAX 0.85]`. The preload is omitted deliberately: the cut is gated on the doomed channel's own current by `SHARE_CUT_MAX_HANDOFF_A` 0.5 A, so a preload would put the load exactly where the latch is REFUSED. Source total spans 0.15–1.41 A. | The **cut-and-RESTORE topology** of `updateShareSetpointCutoff()`, both channels and both directions. The two RESTORE assertions are novel: `handoff-sag` asserts a cut and then perturbs, so nothing in this suite has ever checked that a latch is released. | `SW_BT_BUS` **clear** through region 6 (≤ 100 of ~1100 ticks) and **set** again through region 7 (≥ 2000 of 3000); `SW_FC_BUS` clear across regions 10/11 and set again from region 12. **Expected fault-free.** ⚠️ At Vmax 1 the total **never** reaches the 0.60 A governor gate, so the share loop runs **open-loop** for the whole run — and Vmax 3 is barely better: campaign `hil_report_20260831_191509` measured only **20.6 %** of that run above the gate, against **12.7 %** from the model walk over the table alone. ⚠️ **The two figures are NOT reconciled and 20.6 % does not reproduce** — three later recomputations give 16.98 %, 19.33 % and 19.13 %. They are a denominator/stimulus discrepancy, not evidence about the share loop's modes; quote the range, not either endpoint, until a `governor_model.py` replay of this leg settles it. Note also that "open loop" here is not synonymous with "inert": below the gate the firmware is in HOLD or in slew-limited FEEDFORWARD (§4.4), and this leg's own commanded setpoint changes put it in the latter. This pair is a **topology** test, not a tracking one; its cut/restore verdicts are sound and any share *amplitude* read off it is not. ⚠️ **fw v21 TO fw v26 ERA.** The 20.6 % / 12.7 % / 16.98–19.13 % above-gate figures, and the **356 open-loop MDAC-writing ticks in 8 episodes** this leg contributed to the §4.4 census, were all measured at the 0.60 A gate with a feedforward submode that fed the raw setpoint forward. fw v27 rev 2 halves the gate to 0.30 A and clips the feedforward reference, which below the gate is a hold, so both the occupancy and the walking episodes move. Campaign G is the first fw v27 reading; the census is **unmeasured at these constants**. |
+| `ems-ftp75-5050`, `ems-ftp75-socband` **(EMS-driven, opt-in, 2026-08-31)** | the **EPA FTP-75** cycle at raw t = 0..340 s inclusive, 341 samples at 1 Hz (the segment of `references/Systemic_Scaling_of_Powertrain_Models_with_Youla_Driver_Control.pdf`; the raw EPA file is committed at `references/drive_cycles/ftpcol.txt` and `tools/gen_ftp75_profile.py` verifies its sha256 before generating `tools/ftp75_profile.py` — 341 raw samples decimated to 234 points, worst reconstruction error 4.4e-16 m/s). Scaled by ONE constant, 3.0/56.7 m/s per mph, so the 56.7 mph peak lands on 3.0 m/s; shifted to start at t = 5.0; ends at rest (the trace is 0 mph from raw t = 333, so no synthetic tail is appended). 350 s each, `aux_preload_a` **0.0 A** (`FTP75_PRELOAD_A`) since 2026-09-01. ⚠️ IT WAS **+0.65 A**, which put 100.00 % of the post-ramp run above the 0.60 A governor gate at a 0.800 A floor; every number in this row's last two columns belongs to that era. At preload 0 the idle total is `I_AUX_A` = 0.15 A, the peak source total is **0.9603 A** (model) / ~0.985 A measured-scaled, the share loop runs OPEN-LOOP HOLD through the idle segments (walk: 9.71 % hold / 57.12 % feedforward / 33.17 % closed — **a fw v21 to fw v26 census, walked at the 0.60 A gate with an unclipped feedforward submode; it moves a second time at fw v27 rev 2 and campaign G is the first reading, so it is unmeasured at the fw v27 constants**), and `soc-band`'s charge branch is REACHABLE again. | The EMS layer as an **endurance** test rather than a transient one: 345 s of continuous 50 Hz commanding, ~30 accelerate/cruise/decelerate/idle cycles, and an H2 total over a cycle a reader outside this project recognises. | `cmd_v_sp` reaches 3.0 m/s at t = 245; peak source total 1.613 A, so `hold-5050`'s fixed 0.50 split puts **0.807 A** on a channel (42 % under `LIMIT_I_FC_MAX`) and `soc-band`'s 0.75 ceiling puts **1.210 A** (14 %); `h2_cum_g` ≈ 5.5e-2 g (`hold-5050`) / 8.2e-2 g (`soc-band` saturated). Both legs are expected **fault-free**. ⚠️ **The `ems-ftp75-socband` `OC_FC` ALLOWANCE IS RETIRED** (operator ruling, 2026-09-01): six campaigns ran the scenario and never used it, the measured peak `I_fc` held the 14 % margin its derivation predicted, and an allowance nothing exercises is a hole rather than protection — it silently excused the one fault this scenario is most likely to produce. Operator ruling (b) itself is unchanged (`charge-cruise` still REQUIRES `OC_FC` under it); what is retired is hedging on this entry. ⚠️ **RETIRED 2026-09-01:** the 0.800 A floor was ABOVE `SOC_BAND_CHARGE_ENTER_ITOT_A` 0.60 A, so the policy's charging branch could not open here. With the preload removed the floor is 0.15 A and the branch IS reachable — newly asserted by `socband_ftp_charge_opened` (existence only; the window schedule is unmodelled because `ems_walk.py` gates charge admission on the DP's `charge_mask()`, not on the strategy's own hysteresis). PROVISIONAL bands at preload 0 **and at the plant's default converter asymmetry** (§4.4a, the M2 consistent pair): `I_fc` ≥ 0.40 A (5050) / 0.56 A and ≤ 0.85 A (socband) at the peak, `h2_cum_g` [0.022, 0.037] / [0.028, 0.046] g. ⚠️ **TWO ERA BOUNDARIES, and campaign `20260901_151156` is the last campaign on the far side of BOTH** — the preload removal and the asymmetry default. Symmetric → asymmetric governor-walk hydrogen deltas at the M2 pair: 5050 **+6.40 %**, socband **+3.22 %**, sdp **+2.95 %**, dp **+4.32 %**; every SoC fall shrinks correspondingly. (These are ~two thirds of the figures first recorded here, which were walked at the retired M1 ΔV₀ 0.0444 — the M2 partition puts most of the mismatch in the droop ratio, the weaker hydrogen lever.) The walk has no ρ, so it is driven at the ΔV₀ that reproduces the plant's own α at r = 0.5, 1.0155 A (0.030223 V); the two laws agree there and diverge away from it, well inside the ±25 % band. `V_bus`-referenced pins are **mean-preserved** and do not move (§4.4a). Do not quote a pre-2026-09-01 total against these bands. |
 | `mppt-tracking` **(EMS-driven, 2026-08-31)** | the `charge-regen` speed profile (**the same list object** — a comparison across the two is only meaningful on one stimulus) driven by `mppt-harvest`: `charge_goal` on the braking windows (regen path, `MPPT_DISABLE` held LOW by the firmware's own regen branch) **and** on the 0.4 m/s low-cruise plateaus (FC path, tracking released). `mppt_emulation` **True**; `chg_i_ceiling_a` **1.0 A**. The FC path is single-source (`assertFcChargeEnable()` drops BT off the bus), so the budget is 0.15 aux + ~0.06 motor + 1.0 charge = **1.21 A**, 14 % under `LIMIT_I_FC_MAX`. `mppt-harvest` is a SEPARATE function from `regen-harvest`, deliberately: `charge-regen` has pinned measurements across five campaigns and must not move because this scenario's windows did. | The **MPPT input-voltage threshold** against the firmware's readiness-gated MPPT release — the first scenario in which `MPPT_DISABLE` does anything causal. From fw v24 it also exercises the **threshold manager**: the FC path feeds the charger from the ~15.95 V bus, and the firmware must lower reg `0x02` under it rather than hunt against the 18 V default. | ⚠️ **THE OBJECTIVE INVERTED AT fw v24 — the hunt below is now the FAILURE signature.** fw v24's manager writes reg `0x02` to (windowed-min `V_chg` − 3.0 V), clamped in counts to **[15, 27] = 12.320–13.376 V** (`AG105_MPPT_N_FLOOR` = 15 / `AG105_MPPT_N_CEIL` = 27 through `AG105_MPPT_VOLTS`), so the module stops refusing, `ag105IsReady()` holds and the pin stays released. The suite's retired 2200-tick ceiling is replaced by a phase-free **edge census** (3–8 rises across the cruise windows), the Low-Power check is inverted to an absence bound, `MPPT_EN|PWR_TRACK` — unreachable under fw v23 — becomes the steady state, and the new `mppt_thresh_cnt` column is a mirror-only byte exercise: under HIL the real `ag105ManageMpptThreshold()` is bypassed, and the count evidences the fiat mirror's formula, not the manager's execution. **THE fw v23 RECORD, kept because a regression reproduces it:** the firmware releases tracking only once the charger reports ready (`ag105IsReady()`, in `chargingControl()`), and releasing it is exactly what stopped the charging that made it ready, so the two **hunted**. Measured on hardware (campaign `20260831_191509`): full period **~40.05 ms** median — ⚠️ RECORD CORRECTED 2026-08-31, this line quoted the offline probe's 80.0 ms, which the campaign's 138 MPPT_DISABLE toggles over the cruise windows arithmetically rule out (80 ms would give about half that many). The firmware acts on the previous 50 Hz poll, so it lags by one tick in each direction. Pin HIGH 50.0 % of ticks, GENSTAT 001 on 50.0 %, `MPPT_EN`-without-`PWR_TRACK` on 50.0 %, `I_charge` equilibrium **0.465–0.525 A** — near half the ceiling, which is why the suite's `charging_occurred` floor is 0.25 A and not 0.5. The pin can only be HIGH inside the strategy's INSET cruise-charge windows, i.e. 3 × 1.5 s less 3 × `AG105_SETTLE_S` = **3.0 s**, so the hunt is ~1500 ticks and a stuck-high pin ~3000 — the retired `mppt_not_stuck_high` ceiling was **2200** between them. ⚠️ Under fw v24 the ~3000-tick outcome is the EXPECTED one, which is why that ceiling had to be replaced rather than re-tuned. **Expected fault-free**, though the realized FC-path margin narrows: the hunt used to hold the mean charge current near half the ceiling, and continuous harvest draws the full 1.0 A that the 1.21 A budget already assumes. |
 | `charge-to-full` **(2026-08-31)** | `pi_timeline`: MODE_SAFE 0.5, MODE_HYBRID 3.0, `v_setpoint` **0.0** and share 0.5 at 5.0, `charge_goal` 1.0 at 8.0. 130 s, `chg_i_ceiling_a` **1.0 A**, and the suite overrides **`--soc0 0.990`** (the second such override, mirroring `soc-depletion`'s — which starts LOW to reach a UV latch where this one starts next to FULL). 0.995 − 0.990 = 0.005 of a 5 Ah pack = 90 A·s = **90 s** at the ceiling, so FULL is expected ~t = 100. Standstill is load-bearing: `v_setpoint` 0 < `V_SP_ZERO_THRESH` means 0 A to the motor, which is what makes the single-source budget 0.15 + 1.0 = **1.15 A** (18 % margin) work for 120 s. ⚠️ `mppt_emulation` is deliberately **OFF**, and stays off under fw v24 — the 18 V gate would have blocked this very path outright, and the fw v24 clamped threshold would simply be inert on a continuously-fed standstill charge. | The Ag105 **Fully-Charged / CV** branch, never reached by any prior campaign (largest SoC rise on record ~0.0009 against the ~0.29 that `--soc0 0.7` needs), and the firmware's deliberate **no-action** response to it. | `I_charge` ≥ 0.8 A in CC (t = 10–60); GENSTAT **011** and the **CV** flag held ≥ 500 ticks after t = 60; `I_charge` ≤ 0.05 A after t = 125 (the new `max_value` ceiling kind); and `SW_FC_CHARGE` **still set** after t = 110 — the no-action baseline made visible, so a future policy change to it fails a check instead of surprising a reader. **Expected fault-free.** ⚠️ Zero drive-channel coverage. `CHARGER_STAT` (pin 6) is on neither HIL frame and `chargingControl()` does not read it, so its Fully-Charged blink signature is out of scope; carrying it would be a frame extension. |
 | `pi-silence` **(EMS-driven, 2026-08-31)** | `hold-5050` with **no `ems_v_profile`**, so it falls back to `EMS_DEFAULT_CRUISE_MPS` = 1.2 m/s — that fallback IS the setpoint here, chosen because the model's ~3.5 A hold current makes the motor cut-off unmistakable. The commander goes **permanently silent at t = 8.0** (`pi_mute_after_s`): `PiCommander.tick()` returns `None` without advancing its timeline, counter or `next_tx`, so a dead Pi neither scripts nor queues. The **injection** stream keeps running at full rate. 14 s. | The firmware's **Pi watchdog** (`checkPiWatchdog()`, `PI_TIMEOUT_MS` 500, armed in State 2/3 once `pi_ever_connected`), isolated from the HIL link. Its clock is stamped **only** by `receiveCommands()`’s 22-byte command branch; every prior stimulus gated both streams together (`apply_scenario()`’s `tx_enabled` return) and tripped the HIL staleness path instead. | **`FAULT_PI_TIMEOUT` REQUIRED**, `not_before_s` 8.0, in State 2 at t = 7.5. Plus `motor_halted`: commanded `current` falls ≥ 2.0 A across the latch — the fault's consequence, not just its flag. ⚠️ 0x0010 is shared with `FAULT_HIL_LINK`, so the entry declares **`child_tx_healthy`**. From **fw v25** that is a DIRECT READ of frame byte 16 (`ERR_PI_TIMEOUT` 0x05 vs `ERR_HIL_STALE` 0x10); on fw v21–v24 it falls back to the older inference **by elimination** (a continuous injection stream rules the alias out). Injection never stops, so no fw v23 run boundary forms and the latch persists; a mid-run warm reset would prove contamination *and* clear `pi_ever_connected`, disarming the watchdog under test — which is why `warm_resets_expected` is deliberately absent. |
-| `share-staircase` **(2026-08-31)** | **Motor-free** (`v_setpoint` 0 for the whole run — a drive transient would move I_tot and therefore move the governor rails mid-staircase). **Two loads**, a bespoke `apply_scenario()` branch because the generic `aux_preload_a` ramps a load in once and cannot bring it back down: `STAIRCASE_LOAD_A` **+1.05 A** from t = 4 (I_tot **1.20 A**, so the rails land on the round 0.25/0.75), dropped to `STAIRCASE_LOAD_B` **+0.40 A** at t = 29 (I_tot **0.55 A**), both edges ramped over `SOC_LOAD_RAMP_S`. Timeline: 0.80 → 0.20 in 0.10 steps every 3 s from t = 6, recentre 0.50 at 27, then 0.95 / 0.50 / 0.05 / 0.50 at 33 / 36 / 39 / 42. | **Phase A** — the governor's clip band `SHARE_MINORITY_I_MIN_A/I_tot` = [0.25, 0.75], measured only incidentally by campaign TP0170–0180, swept deliberately in both directions. **Phase B** — `updateShareSetpointCutoff()`'s **cut AND restore** on both channels, with the latency of each. The two loads cannot be one: at 1.20 A a 50/50 split is 0.60 A, over the cut's `SHARE_CUT_MAX_HANDOFF_A` 0.5 A guard, so the latch would **defer** rather than fire. | `cmd_share_sp` reaches 0.80 and sweeps ≥ 0.55 down; `I_fc` ≥ 0.80 A at the top step (the 0.75 rail on 1.20 A is 0.90 A; a run that ignored the command and held 0.50 would show 0.60) and falls ≥ 0.50 A across the sweep; `SW_BT_BUS` and `SW_FC_BUS` each **cut and restored**; and **four latency measurements** via `switch_fall_latency_ms` (both `fall` and `rise` edges), tripwire 40 ms. **Expected fault-free** (worst channel 0.90 A vs 1.4 A). ⚠️ The measured latency is the **deliverable**; the bound is a regression tripwire and must never be raised to make a run pass. Corrected premise: the [0, 20) ms spread is **command-arrival phase** at `PI_CMD_HZ` 50, not a firmware tick — `POWER_BAL_PERIOD_US` and `SHARE_CTRL_TS_US` are both 1000 µs. ⚠️ Phase B's 0.55 A sits ON the closed-loop exit hysteresis, so do not read share-*tracking* numbers off it; Phase A is where the loop is unambiguously closed. |
+| `share-staircase` **(2026-08-31)** | **Motor-free** (`v_setpoint` 0 for the whole run — a drive transient would move I_tot and therefore move the governor rails mid-staircase). **Two loads**, a bespoke `apply_scenario()` branch because the generic `aux_preload_a` ramps a load in once and cannot bring it back down: `STAIRCASE_LOAD_A` **+1.05 A** from t = 4 (I_tot **1.20 A**, so the rails land on the round 0.25/0.75), dropped to `STAIRCASE_LOAD_B` **+0.40 A** at t = 29 (I_tot **0.55 A**), both edges ramped over `SOC_LOAD_RAMP_S`. Timeline: 0.80 → 0.20 in 0.10 steps every 3 s from t = 6, recentre 0.50 at 27, then 0.95 / 0.50 / 0.05 / 0.50 at 33 / 36 / 39 / 42. | **Phase A** — the governor's clip band `SHARE_MINORITY_I_MIN_A/I_tot` = [0.25, 0.75], measured only incidentally by campaign TP0170–0180, swept deliberately in both directions. **Phase B** — `updateShareSetpointCutoff()`'s **cut AND restore** on both channels, with the latency of each. The two loads cannot be one: at 1.20 A a 50/50 split is 0.60 A, over the cut's `SHARE_CUT_MAX_HANDOFF_A` 0.5 A guard, so the latch would **defer** rather than fire. | `cmd_share_sp` reaches 0.80 and sweeps ≥ 0.55 down; `I_fc` ≥ 0.80 A at the top step (the 0.75 rail on 1.20 A is 0.90 A; a run that ignored the command and held 0.50 would show 0.60) and falls ≥ 0.50 A across the sweep; `SW_BT_BUS` and `SW_FC_BUS` each **cut and restored**; and **four latency measurements** via `switch_fall_latency_ms` (both `fall` and `rise` edges), tripwire 40 ms. **Expected fault-free** (worst channel 0.90 A vs 1.4 A). ⚠️ The measured latency is the **deliverable**; the bound is a regression tripwire and must never be raised to make a run pass. Corrected premise: the [0, 20) ms spread is **command-arrival phase** at `PI_CMD_HZ` 50, not a firmware tick — `POWER_BAL_PERIOD_US` and `SHARE_CTRL_TS_US` are both 1000 µs. ⚠️ Phase B's 0.55 A sits ON the closed-loop exit hysteresis **of the fw v19 to fw v26 era**, so do not read share-*tracking* numbers off it; Phase A is where the loop is unambiguously closed. ⚠️ **BOTH DESIGN PREMISES MOVE AT fw v27 rev 2** and this entry is a re-derivation, not a re-run: the clip band at 1.20 A becomes `[0.125, 0.875]` and is therefore **wider than the firmware command band**, so Phase A no longer sweeps a governor rail at all; and Phase B's 0.55 A is now 0.30 A clear of the 0.25 A exit, so it sits unambiguously inside closed loop rather than on the hysteresis. |
 
 Three scenario notes. First, `sag` injects an **offset on the bus node**, not a source
 failure — `V_fc` and `V_batt` are unaffected, so it is an isolated bus-UV stimulus rather
@@ -2846,8 +2952,10 @@ a trace. The wire protocol was untouched by that round (40 B inject / 16 B obser
 > for** — which is why it refuses to start on a fingerprint mismatch.
 >
 > ⚠️ And it is a **bound on the generator's model**, not on the board. The generator has
-> no share loop and no governor, so it cannot represent the firmware's sub-0.55 A open-loop
+> no share loop and no governor, so it cannot represent the firmware's sub-gate open-loop
 > behaviour (§4.4); the measured table-versus-run gaps below are attributed to exactly that.
+> The gate is 0.55 A in the fw v19 to fw v26 era and **0.25 A from fw v27 rev 2**, so the
+> exposure shrinks and the gaps below are era figures.
 > Read a deviation as "the run departed from the modelled optimum", never as "the run beat
 > the optimum".
 
@@ -2954,6 +3062,13 @@ the FTP-75 Run window**. The 61 s `ems-dp-replay` cycle, which is loaded above t
 most of its length, gaps by only +0.33 %. The gap grew from −2.15 % to −4.14 % across the
 preload removal, which is the direction that attribution predicts.
 
+⚠️ **The 64.5 % is a fw v21 to fw v26 figure**, measured at the 0.55 A exit. fw v27 rev 2
+halves the exit to 0.25 A and clips the feedforward reference, so the open-loop exposure
+this attribution rests on shrinks and the census moves a second time (§4.4). Campaign G is
+the first fw v27 reading; the occupancy is **unmeasured at these constants**, and the
+attribution is therefore era-scoped rather than retired — the mechanism is unchanged, only
+its size is unknown.
+
 **Regen exposure is era-dependent, and on the rig-drag legs it is exactly zero.**
 
 ⚠️ **This paragraph described the PRE-REGEN era and is now scoped to it.** Section 9.4.2
@@ -2998,6 +3113,50 @@ stage cost is not separable. The map depends on the codes only through the paral
 code `g_par`, which the firmware holds constant while it trades the split, measured to
 better than 1e-04 over four scenarios and half a million rows
 (`dp_loss_map_20260902.md` §4). A tripwire test pins that constancy.
+
+⚠️ **RE-DERIVED FOR fw v27 rev 2: `g_par` IS NO LONGER CONSTANT IN THE LOAD, AND
+SEPARABILITY SURVIVES ANYWAY.** The constancy above was a property of a fixed droop scale.
+Through fw v26 the firmware held the parallel droop code at `g_par` = `K_DROOP`/`RE_MAX` =
+0.148922 while it traded the split. From fw v27 rev 2 the scale is load-scheduled (§4.4), so
+`g_par` = `k_d`/`RE_MAX` is a **function of the load**. State the two halves apart, because
+only one of them moves.
+
+- **Separability in the CONTROL is PRESERVED.** The schedule reads the governor's filtered
+  **total**, never the share. `k_d` is therefore a function of `I_tot`, which the map already
+  solves for at each stage, and it is constant across the DP's control column at a given
+  stage. The stage cost stays separable and the solve stays valid at the same complexity.
+- **What is lost is the map's CONSTANCY IN THE LOAD**, which the map already carries a term
+  for: `I_total` is one of its fixed-point variables. `g_par` must become schedule-aware —
+  evaluated per stage from `k_d(I_tot)` rather than read from a scalar constant.
+
+The arithmetic bounds how much this matters. The map's effective series resistance is
+
+    K_EFF = R_FIX + K_G·g_par = 0.017986 + 0.968769·k_d      (ohm)
+
+so `K_EFF` runs **0.3086 Ω at the 0.9061 A crossover** to **0.8958 Ω at the schedule's
+0.906 Ω `k_d` cap**. A fw v26-era map evaluated at the fixed `K_EFF` = 0.308502 Ω therefore
+**understates the bus sag** by
+
+    ΔV_sag = 0.263349 − 0.290516·I_tot      (volts, 0.30 A ≤ I_tot ≤ 0.9061 A)
+
+that is **0.0890 V at 0.60 A** and **0.1471 V at 0.40 A** of filtered total — **0.56 %** and
+**0.93 %** of the 15.8717 V no-load intercept `V0_EFF`. The **maximum is 1.110 %**, at
+`I_tot` = **0.30 A**, the closed-loop gate: at and below that total the schedule's 0.5 cap
+takes over, `k_d` is pinned at 0.906128 Ω and the understatement falls back **linearly** with
+the total — 0.925 % at 0.25 A. The bias **exceeds the map's stated ±0.8 % deviation band
+(§9.4) for filtered totals below 0.4694 A**. Three conclusions follow.
+
+1. `K_G` is **NOT re-fitted**. It is the code-to-ohm conversion, 1.95079 Ω/unit, and the
+   schedule does not change it.
+2. `g_par` **must become schedule-aware** before a fw v27 run is priced against the map. A
+   map that keeps the scalar is valid only above the crossover. The schedule-aware arithmetic
+   now has exactly one owner, `hil_plant_sim.scheduled_g_par()`, so no consumer re-derives it.
+3. **The loss map itself is NOT moved in this round, and regenerating the committed DP tables
+   is QUEUED.** The map is a fingerprinted era key (`DP_LOSS_MAP_KEYS`,
+   `loss_map_canonical()`), so moving `g_par` inside it would orphan every committed dynamic-
+   program table in `tools/dp_tables/` and every stored `dp_db` record. Those artefacts remain
+   fw v26-era. Read a fw v27 table-versus-run deviation below 0.4694 A of filtered total as
+   carrying this bias, not as a policy result.
 
 Table 9.4.1 gives the re-priced table-versus-run deviations. The board side is campaign
 `20260902_041414` with the bleed energy the new per-node conductances no longer burn removed
@@ -3262,6 +3421,15 @@ bias stays inside the ±0.8 % DP-vs-run tolerance (§9.4) — ≤ 0.05 % on `ems
 a rail-pinned leg — but a reader quoting "±0.9 %" as a control-independence bound anywhere
 in the band should read the rail figure instead.
 
+⚠️ **A SECOND, LARGER AND SEPARATE DEPARTURE ARRIVES WITH fw v27 rev 2, and it is in the
+LOAD, not in the band.** The figures above are share dependence at a fixed `g_par`. The
+load-scheduled droop scale makes `g_par` = `k_d`/`RE_MAX` a function of the filtered total,
+which leaves control-separability intact (the schedule reads the total, not the share) but
+retires the map's constancy in the load. The bias peaks at **1.110 % of `V0_EFF` at 0.30 A**
+and exceeds the ±0.8 % band below **0.4694 A** of filtered total. The re-derivation, its
+arithmetic and the queued table regeneration are in §9.4 under "RE-DERIVED FOR fw v27
+rev 2". The two departures compose and must not be quoted as one number.
+
 The **cut and its restore are already ported.** `governor_model._setpoint_cutoff()`
 carries the firmware's own sequence in both directions: the last-source guard, the load
 guard (`abs(i) <= SHARE_CUT_MAX_HANDOFF_A` 0.5 A, with refusals counted), survivor
@@ -3381,6 +3549,25 @@ is algebraic (zero-lag), the plant's own zero-lag limit: a real converter with �
 (:1055-1072) are conditioned on this realization, and the board's peak on the campaign-E
 stimulus brackets [≈ 1.49, ≤ 1.68] A; the `OC_FC` outcome itself is plant-invariant,
 because a single raw sample above 1.40 A latches regardless of the bracket.
+
+⚠️ **THE CAMPAIGN G BOUNDARY: THE PLANT CANNOT TEST CONDUCTION AT A 0.15 A MINORITY
+CURRENT.** fw v27 rev 2 halves `SHARE_MINORITY_I_MIN_A` to 0.15 A on the hypothesis that a
+constant droop authority makes the conduction margin load-independent (§4.4;
+`docs/fw27_governor_package.md` §8). The hi-fi engine has **no pulse-frequency-modulation
+model and no light-load converter branch** (`controller_design/system_model.md` §6e item 3;
+`tools/hil_electrical.py` carries no light-load case), so a channel commanded to 0.15 A in
+the model simply carries 0.15 A. A campaign can therefore show that the commanded quantities
+are what the design says and that nothing regressed; it **cannot** show that the light-load
+dropout is gone. Only the bench can, through the two-axis dropout-boundary sweep at the
+scheduled droop scale.
+
+Two further limits bound what the schedule itself can be read for. The plant's bus law is a
+**fixed linear model**, so a larger `k_d` changes the modelled sag but not the light-load
+conduction behaviour the extra authority is meant to buy. And the plant has **no model of
+the realized-authority gap**: `docs/modeling/droop_authority_gap_20260903.md` measures the
+AD5443-to-OPA197 injection chain delivering about **one quarter** of the design droop, so
+the constant 0.272 V of design authority is about 0.068 V on the board and the plant
+represents neither figure as a conduction outcome.
 
 ⚠️ **On the CV branch specifically** (wording corrected 2026-09-02; this list previously
 read "no CV taper", which contradicts the implementation). The model **does** produce a
