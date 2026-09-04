@@ -126,9 +126,10 @@ today. Bench is NOT available; the HIL rig IS.
 - [ ] F7 The battery-only re-entry closes FC_BUS on inherited MDAC codes (r ~0.5): a ~12 ms turn-on overshoot
       (0.2355 A on ems-ftp75-sdp) - benign; consider re-seeding the codes at the clipped band edge on release.
 
-**Campaign H (2026-09-04 02:26, `hil_report_20260904_022637`, tooling `c708d71`, full plan incl. the long-cycle
-legs): validation of the post-G tools round; RUNNING at the time of writing - result appended to OVERNIGHT_LOG.md
-MORNING DIGEST when it lands. Budget 2 of 5 used; stop after H.**
+**Campaign H (2026-09-04 02:26-04:05, `hil_report_20260904_022637`, tooling `c708d71`): DONE - 63/75, the twelve FAILs
+= the pre-classified set, every tools fix validated on the board; the F1 defect LATCHED on two ftp75c legs (a
+third trigger: a charge-window handoff); the joint bound needs a third reading (1.3243 -> 1.2699 A). Budget 2 of 5;
+stopped. See OVERNIGHT_LOG.md 'Campaign H result'.**
 
 **Deferred / not tonight:** the alpha sweep re-run at the measured billing (anchor index 7 -> 8; then move the
 three `ems-sdp-alpha-*` legs); the long matched-DP re-solves after the I_AUX_A change; the `--droop measured`

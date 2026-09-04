@@ -1539,3 +1539,22 @@ firmware ruling (F1) with six design consequences behind it.
   checks), the survives_to rendering on six legs, all three fw26 clamp legs, all 27 replays. Stop after H
   (budget 2 of 5): the marginal campaign would only repeat datapoints; every open item is a firmware ruling or
   a tooling round that needs one. Tool pass running; a consolidated classification pass follows.
+
+## Campaign H result (appended 04:27) - the digest's last line
+
+`hil_report_20260904_022637`: 75/75 executed, 63 PASS / 12 FAIL, **the twelve = the pre-classified set, every
+validation held** (charge-cruise anchor "own first latch 8.899453 s"; ems-y-b30-v1 R6 1.0542 A = F; sdpx 32 901
+ticks / 5 edges; sdpb 13 edges; mppt range 12.0; ems-ftp75-sdp masked peak 0.1527 A, en_low census 62; clamp
+cruise 1.2502 A, sweep 1.3284 A, joint PASS at 1.2699 A; replays 27/27 with the topology census reading
+SY0001 100 % battery-only and ML0169's window at 67.8 %). Repeatability G -> H: scp-inrush 6.354319729617211 A
+bit-identical, soc-depletion +3.3 ppm, fifteen h2 totals at print precision, ems-mpc -136 ppm. **New on H:**
+(1) the firmware defect LATCHED (State 99) on two legs - ems-ftp75c-sdp 20.12 ms and ems-ftp75c-socband
+20.22 ms, the latter through a THIRD trigger, a charge-window handoff at 107.878 s (0x26 -> 0x35), not a regen
+edge; the other four handoff dwells 16.9-18.2 ms; charge-to-full 18.20 ms (G 19.07). (2) The joint leg's
+transient peak moved 1.3243 -> 1.2699 A (-4.11 %) with the settled point, duty and MDAC codes identical - the
+1.3296 A bound rests on the higher of two readings and needs a third. (3) comm-loss re-close 1.6622 A (G
+1.7898; the sim fix predicted 3.75 A - the model over-predicted its own residual 2.26x), still latching.
+(4) The MPC prediction residual relocated onto the FC_BUS rise tick (0.5515 at 5.7085 s; 708 of 53 000 ticks
+masked) - the mask is correct and does not close the check; the surrogate needs the release stage itself.
+(5) `ftp75` is the first frontier tuple to VERIFY in the fw v27 era (0.9703 vs reference, 1.0011 vs bound),
+because the sdpftp re-pins let the candidate pass; hydrogen unchanged from G2. Budget: 2 of 5 used; stopped.

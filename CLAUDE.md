@@ -904,5 +904,11 @@ own new mechanisms.** Ledgers, FINAL SUMMARY and HIL_SUMMARY in both folders (lo
   h2 +0.34 % vs the fw v27 walk); the MPC frontiers UNVERIFIED (surrogate-side FAILs, h2 within 0.3 % of the
   walk); the ftp75c frontier meaningless this campaign (battery-only by the defect); all 75 matched-DP
   records are provenance_drift after the I_AUX_A change (re-solve queued).
+- **Campaign H (`hil_report_20260904_022637`, tooling `c708d71` = the post-G fix round, full plan):** 63/75, the
+  twelve FAILs exactly the pre-classified set, every tools fix validated on the board; the firmware defect
+  LATCHED (State 99) on ems-ftp75c-sdp (20.12 ms) and -socband (20.22 ms, via a charge-window handoff - a
+  third trigger); the joint leg's transient peak read 1.2699 A (G 1.3243; settled point identical - the bound
+  needs a third reading); comm-loss re-close 1.6622 A (still latching; the sim fix over-predicted its residual
+  2.26x); `ftp75` the first fw v27-era frontier to VERIFY (0.9703 / 1.0011). Budget 2 of 5; stopped after H.
 - **Open operator rulings:** F1-F7 (WORK_QUEUE 0d spec seed); the ems-sdp stimulus knob; the RT1987
   constant-slew ramp A/B; the MPC delivery-table residual past the release (the stale committed plan).
