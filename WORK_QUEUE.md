@@ -96,7 +96,7 @@ today. Bench is NOT available; the HIL rig IS.
       paragraph; simple-engine bus law and the loss-map DP bound re-derived for the scheduled k_d
       (V0_EFF/R_FIX/K_G at the new g_par law); every anchor re-walked and pinned provisional for campaign G.
 - [ ] 8. Suites, commit, push; CLAUDE.md addendum 2026-09-03c; memory.
-- [ ] 9. Campaign G (HIL, after the operator's v27 flash): the new era baseline — joint leg (1.36 A bound,
+- [x] 9. (G DONE 2026-09-04 00:31: `hil_report_20260903_233736`, 63/75 suite, zero board defects, 12 FAILs all classified - 1 fw v27 sequencing defect, 2 fw v27 consequences, 1 sim artefact, 6 era scoring items, 1 MPC surrogate defect, 1 calibration reading; G2 = the ten long-cycle legs running in `hil_report_20260904_003108`) Campaign G (HIL, after the operator's v27 flash): the new era baseline — joint leg (1.36 A bound,
       watch first), v6 legs, share-step guard witness = 0, `mpc_share_pred_err` baseline, k_d schedule
       observables, battery-only start on every leg.
 

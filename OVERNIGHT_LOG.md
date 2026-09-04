@@ -1307,3 +1307,82 @@ the bus through the pre-gate window) - fixed before the campaign and the six MPC
   the log's first lines. Analysis: the tool pass first after `partial: false`, then LIVE dispatch per the
   hil-agent-analysis skill; first-campaign checks are phase-free where possible; every FW27-ERA / AUX-ERA
   number is provisional and this campaign pins it.
+- **Campaign G, first two FAILs classified live (both OC_FC-related, neither a board defect):**
+  `comm-loss` = SIM ARTEFACT (the RT1987 soft-start model's ramp rates are identical only at v_ss_start = 0;
+  the aux-era floor leaves the bus at 0.4366 V at the warm re-close, the two switches ramp 19.8 V/s apart and
+  1.79 A circulates through 21 mOhm; the board's OC_FC latch is correct; sim fix queued: one-sided SOFT stamp +
+  HWM scoping); `charge-cruise` = FALSE FAIL (the required OC_FC's teardown cut scored as a share-path hazard
+  because the carried-in 0x8011 from comm-loss shadowed the check's first-own-fault anchor; fail-open, so every
+  PASS on that check is trustworthy; suite fix queued). The aux era explains 98.4 % of charge-cruise's +24.7 ms
+  latch shift. fw v27's battery-only start measured: FC cut at State-2 entry (0.0576 A, admitted), re-entry
+  2.99 ms after the EMA crossed 0.30 A, one rise. Ledger: HIL Results/hil_report_20260903_233736/HIL_FINDINGS.md.
+- **Decision D-3 (incident + correction): the ten FTP-75 / ftp75c legs and the three alpha legs were SKIPPED in
+  campaign G** - they are opt-in behind `--with-ftp75`, `--with-ftp75c` and `--with-alpha` (the D/E/F launches
+  carried the first two; tonight's launch script did not). Correction: a supplementary pass **G2** runs the ten
+  long-cycle legs immediately after G finalizes, from the same detached worktree at `1e0abd4`, with
+  `--with-ftp75 --with-ftp75c --only 'ems-ftp75*'` into a sibling report folder; the alpha legs stay off
+  (their live-picks sweep is stale until the re-run at the measured billing). G + G2 count as ONE campaign
+  against the budget. Reversal: none needed. Recorded in the launch script for the next session.
+- **Campaign G, FAILs 3 and 4 classified (both SCORING DEFECTS of the aux era, board clean):** `ems-sdp` - the
+  0.060 A load removal moved the drain plateau from demand bin 22 to 21 (21.78 W, 0.99 % under the edge), where
+  both v4 and v6 tables ask 1.00 and the firmware clamps to 0.85; fw v27 measured: delivered share exactly
+  0.8500 (the 0.15 A floor released the clip that held F at 0.796); restoring the bin needs a ruling on the
+  stimulus knob (drive-cycle preload rule vs the shared drain constant). `ems-y-b30-v1` - the 1.02 A stimulus
+  guard is a stale literal; R6 peak 0.9941 = F 1.0542 - 0.060; fix Y_AUX_LOAD_A +0.06 (the clamp-leg precedent).
+  Anchors confirmed: scp-inrush 6.354320 A (-0.094 %), bring-up P0 0.1512 A = pin, handoff-sag designed cut
+  -8 % (shorter FC settling after the battery-only re-entry - new fw v27 consequence), soc-depletion latch
+  +12.665 s. TARGET_FW_VERSION 26 -> 27 queued.
+- **Campaign G, `ems-sdp-cross` = the first BOARD-REAL fw v27 consequence (correctly scored vs stale fw v26
+  pins):** the low cruise's 0.2817 A two-source total sits between the new exit (0.25 A) and entry (0.30 A)
+  gates, so the loop stays closed below its own entry threshold and the empty minority band pins the delivered
+  split at exactly 0.5000 (0.14 A per channel, under the 0.15 A floor) for 17 s spans; pack drain halves and
+  the SDP charge cycle stretches 17.1 -> 25.2 s (5 windows vs 9). No hazard. **Operator design item:** a
+  sustained forced-50/50 regime for any leg whose total lands in 0.25-0.30 A (the crossover argument now
+  covers a region, not an instant; bench never covered 0.14 A/channel). Re-pins queued, not widened.
+- **Campaign G, FAILs 5-9 classified:** `ems-sdp-braking` = ERA RE-PIN (the -0.93 W aux shift admitted three
+  cruise-guard drops one stage earlier; 4 windows intact; F's 9 sat 4 mW inside the 6.000 W admission edge);
+  `ems-mpc` / `ems-mpc-det` (/-cross) = SIM-MODEL finding: the MPC delivery table has no branch for the
+  firmware-initiated battery-only start, so it predicts ~0.55 of delivered share while FC is off the bus for
+  2.7 s (single-source leg = positive control, err 0.0001); h2 within 0.3 % of the fw v27 walk; `cycle61-mpc`
+  UNVERIFIED this campaign. Fix queue so far (all tools, none applied during the campaign): share_cut anchor
+  union; Y_AUX_LOAD_A +0.06; sdp plateau-bin restoration (RULING: knob); sdpx re-pins (23000 / (3, 7));
+  sdpb band (10, 14) + sustained-window count; delivery_table battery-only branch; RT1987 SOFT one-sided stamp
+  + HWM scoping; TARGET_FW_VERSION 27; launch script `--with-ftp75 --with-ftp75c`.
+- **Campaign G, second BOARD-REAL fw v27 consequence (found under `mppt-tracking`, a scoring-defect FAIL):**
+  inside a single-source FC-charge window the scheduled k_d saturates (I_tot ~0.16 A -> k_d 0.906 ohm), the FC
+  MDAC sits at full scale 4095 and the single-source droop triples (1.951 vs 0.648 ohm measured), so the
+  charge-window bus sags ~3x deeper per amp of charger draw (15.58 -> 15.14 V at 0.34 A). The share loop is
+  frozen there, so the schedule protects nothing and only costs bus voltage. **Operator design item (fw v28
+  candidate): hold k_d at K_DROOP while FC_CHARGE is open / a channel is cut.** Prime suspect for
+  `charge-to-full`'s UV_BUS latch (analysis running). mppt window re-derivation queued (scoring).
+- **Campaign G, `charge-to-full` = a BOARD-REAL fw v27 SEQUENCING DEFECT (the night's most important finding):**
+  at standstill the battery-only arm never releases (0.09 A idle < the 0.30 A gate), so the FC-charge window
+  opens with FC cut; assertFcChargeEnable() re-closes FC_BUS and drops BT_BUS in the same tick, the RT1987 8 ms
+  turn-on delay leaves the bus source-less for 8.8 ms, V_bus collapses to 4.94 V (pure C_VBUS discharge at
+  2.58 V/ms) and the UV_BUS dwell reaches 19.07 ms against the 20 ms latch - 0.93 ms from State 99; the 5 V
+  aux floor is what stopped it. fw v26 (campaign F) on the same stimulus: a 37 mV step. No damage path (boosts
+  stay enabled; MOT_PWR reverse-blocks by design); on hardware the dwell could land either side of 20 ms.
+  **Operator item, firmware (fw v27 rev 3 / v28; not flashed tonight): make-before-break in
+  assertFcChargeEnable() using the existing survivor blanking; also consider the arm's release rule at
+  standstill.** Scoring defects riding on it: survives_to_stimulus's false "latched" text, and the share-cut
+  teardown anchor keyed on a non-latching transient (must key on the first LATCH). G2's socband legs open
+  charge windows from sub-0.30 A totals: UV_BUS indications expected there; proceeding (no destructive path).
+- **Campaign G, `fw26-clamp-joint` first execution = a calibration reading:** peak I_fc 1.3243 A vs the 1.3241 A
+  bound (one sample), 5.41 % under LIMIT_I_FC_MAX, 0.79 % under the structural bound; settled 1.24997 A, duty
+  1.0000, engagement one tick from prediction. The walk's 0.42 % miss is a NAMED mechanism: the share PI
+  regulates an EMA-filtered measured share, so the reference overshoots the clamped rail by 3 % of r for ~12 ms
+  (+0.039 A) - a second filter absent from the walk and the campaign-E race arithmetic; at 1.57 A it consumes
+  half the ceiling's 0.15 A margin. Re-pin queued (1.3243 / 1.3296; 0.37 % left to the structural bound). The
+  sweep passed all 12 regions at I_min 0.15 (peak 1.3295 A); cruise 1.2502 A (third campaign).
+- **Campaign G COMPLETE (00:31): 75 planned, 75 executed (drive + 3 alpha + 10 long-cycle legs SKIPPED by
+  suite policy = 14 vacuous PASSes), suite tally 63 PASS / 12 FAIL. Corrected: 61 executed runs, every FAIL
+  classified live, ZERO board defects, 2 board-real fw v27 consequences (the forced-0.5000 regime between the
+  0.25 and 0.30 A gates on ems-sdp-cross; the k_d schedule saturating in single-source charge windows), 1
+  board-real fw v27 SEQUENCING DEFECT (charge-to-full: break-before-make at the charge-window entry from the
+  never-released battery-only cut, 0.93 ms from a UV_BUS latch), 1 sim artefact (comm-loss soft-start
+  degeneracy), 6 aux/fw27-era scoring defects or stale pins (charge-cruise, ems-sdp, ems-y-b30-v1,
+  ems-sdp-braking, mppt-tracking, the sdpx pins), 1 MPC surrogate defect (no battery-only branch; 3 legs), 1
+  calibration reading (joint 1.3243 vs 1.3241 A). Replay half 26/26 PASS - adversarial audit dispatched.
+  **G2 launched (00:31)**: the ten long-cycle legs (`--with-ftp75 --with-ftp75c --only 'ems-ftp75*'`) from the
+  same worktree; expect UV_BUS indications on the socband legs (the charge-to-full mechanism). Tool pass on G
+  deferred until G2 finishes (host load during a live campaign).
