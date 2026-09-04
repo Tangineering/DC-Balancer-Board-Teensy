@@ -859,3 +859,54 @@ merge `96800c7` (the α re-solve). fw stays v26; the wire protocol is frozen; th
 - **Tests at close:** `.venv_hil` and miniforge suites green on the merged tree (tallies in the commit);
   firmware 3961 / 175 / 4443. `test_the_committed_plan_is_insensitive_to_the_projection` joins the
   wall-clock-sensitive list (three tests; run in isolation).
+
+---
+
+## Status & session addendum (2026-09-03c, afternoon/evening: sdp v6, N8, Step 0, the 4x droop loss, I_AUX_A 0.09 A era, fw v27 rev 2 governor package flashed, tools mirror, campaign G launched)
+
+Operator-present afternoon, then an overnight mandate ("fw v27 is flashed, begin the overnight campaign").
+Commits `0848c91` (v6, aux floor, N8, Step 0, droop gap), `2d200b1` (fw v27 rev 1, superseded unflashed),
+`95c6512` (I_AUX_A era), `153562f` (**fw v27 rev 2, FLASHED**), `1e0abd4` (tools mirror). Campaign G runs
+from a detached worktree at `1e0abd4`; OVERNIGHT_LOG.md session 2026-09-03/04 carries the mandate, the
+assumed protocol and decisions D-1/D-2.
+
+- **sdp_policy_v6 is the frontier SDP** (`--eta-chg measured` = the five-reading round trip 0.801173,
+  `--alpha-mode lever-measured`, alpha 0.134110 inside both windows, 0 charge cells, certificate clean;
+  `charger.eta_chg_basis` declared and accepted at bind). v4 retired from the frontier (alpha 1.43 % below
+  the measured window), v5 kept as the record of the finding that the model's eta 0.88 admits charging on
+  558 cells at the measured alpha. `hil_electrical.ETA_CHG` stays 0.88 - the round trip is an EMS-accounting
+  number, never a plant constant.
+- **N8 settled:** the post-latch `V_bus` 0.0000 was the unconditional housekeeping sink on the 35 uF bus
+  node (4.29 V/tick), not report gating; `V_AUX_DROPOUT_V` 5.0 now drops the sink below 5 V (byte-identical
+  above; a dark bus decays on the 30 kOhm bleed, tau 1.05 s); `neg_clamp_count` / `aux_dropout_ticks` in the
+  sidecar.
+- **I_AUX_A 0.15 -> 0.09 A (ruling):** the Teensy is on the battery's 5 V regulator, the VESC draws ~1.2 W
+  from the bus, 98 logged standstill windows read 0.015 A (VESC unpowered, inside the INA offset). Walked h2
+  -6 % (ems-sdp) to -30 % (ems-ftp75c-sdp); AUX-ERA anchors provisional; all 75 matched-DP records
+  `provenance_drift` (re-solve queued); DP table headers carry the hashed constants; the simple engine's
+  standstill total is now below `ASYM_SIMPLE_I_MIN_A` 0.10 A (ruling queued).
+- **Step 0 of the low-current share exploration REFUTES the margin-referred governor:** M_minority =
+  (R_FC + R_BT) * I_minority exactly, so no margin floor separates the dropout runs (overlap 5-8x); d_hat =
+  sp - r is identically zero at every quasi-static rail failure. **The 4x droop loss is localized to the
+  AD5443 -> OPA197 block** (realized K_sns*A_v 0.113-0.133 V/A vs 0.502; the 39 single-source fits' no-load
+  intercepts confirm the FB divider to 0.12 %; INA A1/A3 refuted); one DMM measurement at 1 A settles it.
+- **fw v27 rev 2 (FLASHED 2026-09-03 evening) - the governor package:** (1) every profile starts
+  battery-only (FC cut through the existing cut path, incl. the load guard; suppressed in an FC-charge window
+  and when the survivor's regulator is off) until the filtered total first exceeds the gate; (2) closed-before
+  hold with an accumulating cut-outstanding bypass; (3) **SHARE_MINORITY_I_MIN_A 0.15 A** (operator: constant
+  low-current authority D = 0.30 V), gate 0.30 A / exit 0.25 A, **k_d = max(0.30, RE_MAX*max(0.15,
+  0.15/I_tot_held)*0.9)**, crossover 0.906 A above which fw v26 codes are bit-identical, g-guard at the MDAC
+  write, fw v26 clamp reachable above 1.4706 A; (4) **BLG v8** (112 B record: g_clamp_count u16, k_d f32;
+  K_DROOP_x1000 is the floor). Suites 4114 / 175 / 4596. Bench hypotheses the plant cannot test: conduction
+  at a 0.15 A minority; the re-entry commands ~0.045 A FC at the gate. The operator RETRACTED a proposed
+  "wait until the raw command is inside the band before closing" rule (band-edge policies would stay
+  battery-only below 2 A). The realized authority is ~1/4 of design until the op-amp block is fixed.
+- **Tools mirror (`1e0abd4`):** governor model equivalence harness 13 288 rows, max code delta 0; ems_walk
+  and the MPC shadow governor arm the battery-only start; the MPC delivery table holds (not slews) on an empty
+  band (Gate-1 mean 0.0664 -> 0.000335); `live_k_droop_from_codes()` recovers k_d from the MDAC pair; K_G not
+  re-fitted (loss map understates the sag <= 1.11 % at the 0.30 A corner, noted on the matched-DP deviation);
+  FW27-ERA block, +22 checks; 23 EMS legs re-walked (ftp75c charge-free legs 0 g: never above the gate);
+  **D-2: fw26-clamp-joint step 1.65 -> 1.57 A** (the 1.65 A bound 1.4025 A exceeded LIMIT_I_FC_MAX at I_min
+  0.15; walk 1.3188 A, accept 1.3241 A).
+- **Open rulings:** `--droop measured` split-law scaling; `ASYM_SIMPLE_I_MIN_A`; hold vs return-to-battery on
+  re-entering the open-loop region; the DP loss map under the schedule (fingerprint key).

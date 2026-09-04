@@ -1300,3 +1300,10 @@ min(0.85*1.57, 1.42) = 1.3345 A. Skipping the leg was the alternative (rejected:
 real leg). Reversal: `FW26_CLAMP_JOINT_STEP_PRELOAD_A` 1.48 -> 1.56 and re-walk, one commit. Also from
 the same review: the MPC surrogate never armed the battery-only start (its shadow governor asserted FC on
 the bus through the pre-gate window) - fixed before the campaign and the six MPC legs re-walked.
+
+- **Campaign G launched (23:37) from a detached worktree `DC-Balancer-G` at `1e0abd4`** (fw v27 rev 2 `153562f`
+  flashed by the operator; I_AUX_A 0.09 A era `95c6512`; the tools mirror `1e0abd4`). Default plan (75 runs incl.
+  the re-derived `fw26-clamp-joint` at 1.57 A). Log `scratchpad/campaign_G_<ts>.log`; report folder named in
+  the log's first lines. Analysis: the tool pass first after `partial: false`, then LIVE dispatch per the
+  hil-agent-analysis skill; first-campaign checks are phase-free where possible; every FW27-ERA / AUX-ERA
+  number is provisional and this campaign pins it.
