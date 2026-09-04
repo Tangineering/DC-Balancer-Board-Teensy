@@ -8205,11 +8205,24 @@ def test_ems_sdp_cross_description_carries_the_measured_schedule():
     promise "three minimum-dwell charge windows" at a walked ~52 s period.
     Campaign 20260901_024231 measured NINE windows at 16.13 s -- the walk was
     wrong by 5.7x -- so the retired number must not survive anywhere in the
-    string a reader is handed."""
+    string a reader is handed.
+
+    fw v27 RE-PIN (campaign G, hil_report_20260903_233736): FIVE windows at a
+    25.2 s period. The nine-window figure is now the FW v26 reading, and it is
+    KEPT in the string rather than deleted, because a reader comparing an
+    fw v26 ledger needs to see why the two disagree. Both eras must be named,
+    and the CURRENT era must be the headline."""
     desc = hil.SCENARIOS["ems-sdp-cross"]["description"]
-    assert "nine minimum-dwell charge windows" in desc
-    assert "16.13 s period" in desc
+    # The current era leads.
+    assert "FIVE minimum-dwell charge windows" in desc
+    assert "25.2 s period" in desc
+    assert "hil_report_20260903_233736" in desc
+    # The superseded era is named as superseded, not silently dropped.
+    assert "nine windows at a 16.13 s period" in desc
     assert "20260901_024231" in desc
+    # ... with the mechanism, so the disagreement is not left as a mystery.
+    assert "0.2817 A" in desc
+    assert "0.5000" in desc
     assert "42.3 s" in desc                    # the measured flip
     assert "three minimum-dwell" not in desc
     assert "t ~ 44 s" not in desc

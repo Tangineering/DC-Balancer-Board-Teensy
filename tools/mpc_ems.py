@@ -324,6 +324,33 @@ SS_CUT_CHANNEL = {SS_MODE_BT: "fc", SS_MODE_FC: "bt"}
 # table uses.  Single-source is the whole reason these differ: with one channel
 # off the bus the survivor carries `i_total`, not its share of it.
 SS_LIMIT_A = {SS_MODE_BT: I_BT_MAX_A, SS_MODE_FC: I_FC_MAX_A}
+
+
+def ss_stage_cell(d_fixed, p_dem_mean, i_tot_subs, lim, oc_scale=1.0):
+    """One delivery-table stage with ONE channel off the bus.
+
+    THE COLUMN ARITHMETIC, EXTRACTED (2026-09-04) so the two callers that need
+    it share one authority rather than two copies:
+
+      * the single-source COLUMNS of `Planner.delivery_table()`, where the
+        SEARCH commands the cut through an out-of-band setpoint; and
+      * the fw v27 rev 2 BATTERY-ONLY START, where the FIRMWARE commands the
+        same cut at every profile entry and the search cannot avoid it.
+
+    The physics is identical in both: the share loop is frozen, the delivered
+    share is exactly ``d_fixed`` (0.0 with the fuel cell off the bus, 1.0 with
+    the battery off it), and the survivor carries ``i_total`` rather than a
+    share of it - so the overcurrent bound is ``lim``, the survivor's own.
+
+    Returns ``(d, p_fc, p_bt, worst)``; ``worst`` is the largest constraint
+    violation in amperes over the stage's sub-samples, floored at 0.0, which is
+    the sign convention `ok_tab`/`viol_tab` already carry."""
+    worst = 0.0
+    for i_sub in i_tot_subs:
+        worst = max(worst, i_sub * oc_scale - lim)
+    return (d_fixed, d_fixed * p_dem_mean, (1.0 - d_fixed) * p_dem_mean, worst)
+
+
 # How far the admissibility roll runs, in 1 kHz governor ticks.  The cut is
 # evaluated at the TOP of every `powerBalance()` tick, so an admissible cut
 # fires within a few ticks of the command; the window exists to let a REFUSED
@@ -395,6 +422,13 @@ SS_ADMIT_MAX_TICKS = 200
 # `hil_plant_sim.SW_REGEN` and a test pins the two together; the simulator's own
 # header calls it offset 3, bit 3 of `switch_state`.
 SW_REGEN_BIT = 0x08
+
+# The observation frame's `FC_BUS_ENABLE` bit, restated for the same reason.  It
+# is `hil_plant_sim.SW_FC_BUS` and a test pins the two together.  Read ONLY by
+# the battery-only release DIAGNOSTIC (H-1, 2026-09-04), never by the plan: the
+# observed word is one HIL round trip late and blank before the first frame
+# decodes, so it can report on a prediction but must not be one of its inputs.
+SW_FC_BUS_BIT = 0x01
 
 SS_REFUSE_REGEN = "regen_commanded"
 SS_REFUSE_CHARGE = "charge_window"
@@ -620,10 +654,14 @@ LADDER_ENUM_SAFETY = 0.85
 LADDER_SIZES = (7, 5, 3)
 
 # Governor constants read through governor_model, never re-typed.
-GOV_ENTRY_A = 2.0 * gov_mod.GOV_CONST["SHARE_MINORITY_I_MIN_A"]        # 0.60 A
-GOV_RELEASE_A = GOV_ENTRY_A - gov_mod.GOV_CONST["SHARE_GOV_OL_HYST_A"]  # 0.55 A
+# ⚠️ THE TRAILING VALUES ARE fw v27 rev 2 (campaign G, 2026-09-03). They were
+# 0.60 / 0.30 A on fw v26 and moved when SHARE_MINORITY_I_MIN_A halved; both are
+# DERIVED from gov_mod at import, so the numbers here are documentation of the
+# current firmware, never a second copy of it.
+GOV_ENTRY_A = 2.0 * gov_mod.GOV_CONST["SHARE_MINORITY_I_MIN_A"]        # 0.30 A
+GOV_RELEASE_A = GOV_ENTRY_A - gov_mod.GOV_CONST["SHARE_GOV_OL_HYST_A"]  # 0.25 A
 GOV_MIN_LOAD_A = gov_mod.GOV_CONST["SHARE_I_TOT_MIN_A"]                # 0.075 A
-GOV_MINORITY_A = gov_mod.GOV_CONST["SHARE_MINORITY_I_MIN_A"]           # 0.30 A
+GOV_MINORITY_A = gov_mod.GOV_CONST["SHARE_MINORITY_I_MIN_A"]           # 0.15 A
 GOV_TICK_S = gov_mod.GOV_CONST["POWER_BAL_PERIOD_US"] * 1e-6           # 1 ms
 
 # ── THE OPEN-LOOP FEEDFORWARD SUBMODE (2026-09-02) ──────────────────────────
@@ -1938,9 +1976,98 @@ class Planner:
             return alpha
         return self._map._ratio_for_delivered(alpha, i_tot)
 
+    def batt_only_cut_mask(self, pre, charge_stages, filt_seed, ticks_per_sub,
+                           pre_bt=None, pre_bt_release=None):
+        """Per (stage, sub-sample): is the fw v27 rev 2 battery-only cut still on?
+
+        THE MODEL PREDICTS THE RELEASE; IT DOES NOT READ IT (2026-09-04).
+        fw v27 rev 2 arms a one-shot battery-only start at every profile entry
+        (`armShareBatteryOnlyStart()`, .ino:11737): FC_BUS is cut at State-2
+        entry and re-closes only when the governor's ~20 ms EMA of the SOURCE
+        TOTAL crosses ``2 * SHARE_MINORITY_I_MIN_A`` (0.30 A at fw v27 rev 2).
+        The frozen path keeps that one estimate alive precisely so the arm can
+        release (governor_model.py, the ``batt_only_active`` block of
+        ``step()``), and this reproduces it: the same alpha, the same
+        ``SHARE_I_TOT_MIN_A`` advance gate, the same strict ``>`` release test.
+
+        CAMPAIGN G EVIDENCE (`ems-mpc`, hil_report_20260903_233736).  SW_FC_BUS
+        falls at State-2 entry 3.026 s and rises ONCE at 5.711 s; I_fc is
+        exactly 0.0000 and the MDACs are frozen at 5316/5316 throughout.  With
+        no branch here the shadow's MDAC re-sync read r = 0.5 off those standing
+        codes and the two-source split mapped it to a predicted delivered share
+        of 0.53-0.61 against a delivered 0.0, which is 2043 of 2047 exceedances
+        of the 0.30 `mpc_share_prediction` bound, contiguous over [5.00, 7.04] s.
+
+        ``filt_seed`` is the shadow governor's committed ``share_govTotAFilt``.
+
+        ── THE RELEASE IS PREDICTED FROM THE BT-ONLY DEMAND (H-1, 2026-09-04) ──
+        The EMA the firmware filters is the MEASURED source total, and while
+        FC_BUS is cut that total is the BATTERY'S ALONE, drawn on the measured
+        single-source bus law.  ``pre_bt_release`` is that preview and it is
+        supplied on EVERY MPC leg, not only on the legs that enumerate
+        single-source candidates.
+
+        WHY IT IS NOT OPTIONAL.  A BT-only bus sags harder than a two-source one
+        (the fitted law's parallel droop code does not exist), so at the same
+        power demand the source total is HIGHER.  Predicting the release from
+        the TWO-SOURCE preview therefore under-reads the total the firmware is
+        filtering, the modelled EMA crosses the 0.30 A gate LATE, and the table
+        keeps predicting d = 0 over stages on which the board has already
+        re-closed FC_BUS and is delivering a two-source split.  Those ticks have
+        SW_FC_BUS HIGH, so the interim scoring mask in run_hil_suite.py does not
+        remove them: a late release is a NEW, UNMASKED prediction error, exactly
+        the class of defect the branch exists to remove.  Before this the
+        BT-only preview reached here only through ``pre_bt``, which
+        ``MpcStrategy`` passes only when the leg has single-source previews -
+        i.e. on `ems-mpc-single` and nowhere else.
+
+        ``pre_bt`` remains the BILLING demand and is a separate argument on
+        purpose: it feeds the cut stages' BT power in `delivery_table()`, where
+        substituting a preview changes a cost.  This one feeds the gate test and
+        nothing else.  With neither supplied the two-source preview is the
+        fallback and the mask is bit-for-bit the pre-2026-09-04 one.
+
+        The mask is share-INDEPENDENT: while the cut stands the delivered share
+        is 0.0 whatever the ladder point commands, so it is computed once per
+        table rather than per column."""
+        src = pre_bt_release if pre_bt_release is not None else pre_bt
+        if src is None:
+            src = pre
+        alpha = gov_mod.GOV_CONST["SHARE_GOV_FILT_ALPHA"]
+        decay = (1.0 - alpha) ** max(1, int(ticks_per_sub))
+        filt = float(filt_seed or 0.0)
+        armed = True
+        mask = []
+        for j in range(pre.n):
+            row = []
+            for sub in range(len(pre.i_tot[j])):
+                # RULE (f) OF THE ARM: an FC-charge window SUPPRESSES the cut
+                # without disarming it (`batt_only_active = armed and not
+                # charge_path_owns_bt`), because `assertFcChargeEnable()`
+                # already owns BT_BUS there.  So a charge stage is not cut, and
+                # the arm survives it.
+                row.append(armed and not charge_stages[j])
+                if not armed:
+                    continue
+                tot = src.i_tot[j][sub]
+                if tot >= GOV_MIN_LOAD_A:
+                    # The closed form of ``ticks_per_sub`` EMA ticks on a HELD
+                    # total.  The approach is monotone, so "crossed on any tick
+                    # of this sub-sample" and "crossed by its end" are the same
+                    # test - the per-tick loop the firmware runs is not needed
+                    # to answer it, and the closed form keeps the table's cost
+                    # off the tick count.
+                    filt = tot + (filt - tot) * decay
+                    if filt > GOV_ENTRY_A:
+                        armed = False
+            mask.append(row)
+        return mask
+
     def delivery_table(self, pre, r_hold, r_seed, charge_stages, i_tot_oc=None,
                        soc_hint=0.6, sp_acted=None, run_seed=None,
-                       handoff=None, active=None, pre_ss=None):
+                       handoff=None, active=None, pre_ss=None,
+                       batt_only_seed=None, filt_seed=None, pre_bt=None,
+                       pre_bt_release=None):
         """Per (stage, ladder point): delivered share, FC power, BT power, feasibility.
 
         This is the whole search model.  It is built ONCE per decision, so the
@@ -2009,7 +2136,39 @@ class Planner:
         either seed absent every open sub-sample is treated as a HOLD, which is
         the pre-2026-09-02 model exactly - bit-for-bit, not approximately - so a
         caller that does not supply the governor's setpoint state gets the table
-        it always got."""
+        it always got.
+
+        ── THE BATTERY-ONLY START (fw v27 rev 2, modelled 2026-09-04) ───────
+        ``batt_only_seed`` is the shadow governor's ``batt_only_armed`` (the
+        arm; its charge-window suppression is a per-STAGE property applied by
+        the mask) and ``filt_seed`` its ``share_govTotAFilt``.  With the seed
+        TRUE the table
+        predicts, per sub-sample, whether the firmware's own cut is still
+        standing (`batt_only_cut_mask()`), and every stage it is standing over
+        delivers d = 0.0 with the BATTERY carrying the whole total - the
+        `SS_MODE_BT` column arithmetic (`ss_stage_cell()`), because the topology
+        is the same one: FC off the bus, share loop frozen, survivor carrying
+        ``i_total`` against its own limit.
+
+        TWO BT-ONLY PREVIEWS, AND THEY ARE NOT THE SAME ARGUMENT (H-1,
+        2026-09-04).  ``pre_bt_release`` predicts WHEN the firmware's cut
+        releases and is supplied on every MPC leg (see `batt_only_cut_mask()`).
+        ``pre_bt`` is the demand the cut stages are BILLED on and is supplied
+        only where the leg already builds single-source previews.  They were one
+        argument until the release prediction was found to be running on the
+        two-source preview everywhere except `ems-mpc-single`.
+
+        ⚠️ WITH ``batt_only_seed`` FALSE OR ABSENT THE BRANCH IS UNREACHABLE
+        and this table is bit-for-bit the pre-2026-09-04 one.  The seed is only
+        ever true inside a profile's opening seconds, before the EMA crosses the
+        closed-loop gate.
+
+        ⚠️ THE SINGLE-SOURCE COLUMNS ARE NOT MASKED.  An out-of-band setpoint
+        DISARMS the battery-only start permanently (rule (c) of the arm: one
+        owner per setpoint), so a column that commands 0.0 or 1.0 is not
+        subject to it, and whether such a command can be executed while FC_BUS
+        is already open is `_ss_admissible()`'s question - it rolls the real
+        `GovernorModel` from the shadow state and sees the open switch."""
         ff_enabled = (sp_acted is not None and run_seed is not None)
         handoff = handoff or {}
         # ``active`` restricts the table to the ladder points this decision's
@@ -2032,6 +2191,29 @@ class Planner:
         ok_tab = [[True] * n_s for _ in range(pre.n)]
         viol_tab = [[0.0] * n_s for _ in range(pre.n)]
         v_chg = pack_charge_voltage(soc_hint, self.chg_a)
+        # The battery-only cut mask, built ONCE per table: it is a property of
+        # the firmware's own arm and of the demand, not of the ladder point.
+        cut_mask = (self.batt_only_cut_mask(pre, charge_stages, filt_seed,
+                                            ticks_per_sub, pre_bt,
+                                            pre_bt_release=pre_bt_release)
+                    if batt_only_seed else None)
+        # The demand the cut stages are BILLED on.  With FC off the bus the
+        # two-source loss map's parallel droop code does not exist, so the
+        # BT-only preview is the right source where the caller has one; where
+        # it does not (an MPC leg without the single-source feature), the
+        # two-source preview is a STATED under-statement of the bus sag - the
+        # same gap `ems_walk(single_source_demand=False)` declares.
+        # ⚠️ WHAT THAT COSTS, CORRECTED (H-1, 2026-09-04).  This comment used to
+        # claim the substitution "moves the billed BT power, never the predicted
+        # share, which is 0.0 either way".  The first half stands; the second
+        # was WRONG, and it was wrong because ONE argument was carrying two
+        # jobs.  The predicted share is 0.0 only on the stages the mask says are
+        # cut, and the mask's own gate test reads a source total - so a
+        # two-source preview moved the RELEASE INSTANT and therefore moved which
+        # stages are predicted at 0.0 at all.  That half of the coupling is now
+        # `pre_bt_release`, supplied on every leg; what remains here is the
+        # billing, and the billing genuinely does not move the predicted share.
+        cut_src = pre_bt if pre_bt is not None else pre
         for si in cols:
             # ── THE SINGLE-SOURCE COLUMNS (2026-09-03) ─────────────────────
             # A column of its own, and it shares nothing with the in-band
@@ -2070,12 +2252,16 @@ class Planner:
                     oc_scale = ((i_tot_oc[j] / pre.i_tot_mean[j])
                                 if (i_tot_oc and pre.i_tot_mean[j] > 0.0)
                                 else 1.0)
-                    worst = 0.0
-                    for sub in range(len(p.i_tot[j])):
-                        worst = max(worst, p.i_tot[j][sub] * oc_scale - lim)
-                    d_tab[j][si] = d_fixed
-                    pfc_tab[j][si] = d_fixed * p.p_dem_mean[j]
-                    pbt_tab[j][si] = (1.0 - d_fixed) * p.p_dem_mean[j]
+                    # THE COLUMN ARITHMETIC LIVES IN `ss_stage_cell()`
+                    # (2026-09-04) so the battery-only branch below runs the
+                    # SAME code rather than a second copy of it.  The call is
+                    # operation-for-operation what stood here, so the columns
+                    # are bit-identical to the pre-2026-09-04 table.
+                    d_j, pfc_j, pbt_j, worst = ss_stage_cell(
+                        d_fixed, p.p_dem_mean[j], p.i_tot[j], lim, oc_scale)
+                    d_tab[j][si] = d_j
+                    pfc_tab[j][si] = pfc_j
+                    pbt_tab[j][si] = pbt_j
                     # A CHARGE STAGE IS NEVER SINGLE-SOURCE-COMMANDABLE.
                     # `assertFcChargeEnable()` already holds BT_BUS LOW and owns
                     # the topology; a setpoint latch on top of that is a second
@@ -2126,6 +2312,25 @@ class Planner:
                     ok_tab[j][si] = worst <= 0.0
                     viol_tab[j][si] = max(0.0, worst)
                     continue
+                # ── THE BATTERY-ONLY START, FULLY-CUT STAGE (2026-09-04) ───
+                # Every sub-sample of this stage is predicted still cut, so the
+                # stage IS a single-source BT stage and is billed by the very
+                # function the `SS_MODE_BT` column above calls.  The governor
+                # state is deliberately NOT advanced: the firmware's latched
+                # path returns before the loop-mode decision (.ino:11009), so
+                # `carried`, `acted` and `run_flag` stand - which is the
+                # campaign-G observation that the MDACs sat frozen at 5316/5316
+                # for the whole 3.026-5.711 s cut.
+                if cut_mask is not None and all(cut_mask[j]):
+                    d_j, pfc_j, pbt_j, worst = ss_stage_cell(
+                        0.0, cut_src.p_dem_mean[j], cut_src.i_tot[j],
+                        I_BT_MAX_A, oc_scale)
+                    d_tab[j][si] = d_j
+                    pfc_tab[j][si] = pfc_j
+                    pbt_tab[j][si] = pbt_j
+                    ok_tab[j][si] = worst <= 0.0
+                    viol_tab[j][si] = max(0.0, worst)
+                    continue
                 acc_d = acc_fc = acc_bt = 0.0
                 worst = 0.0
                 # The conduction-handoff dwell allowance, RE-ARMED PER STAGE.
@@ -2139,6 +2344,19 @@ class Planner:
                 ho = bool(handoff.get((pre.stage_key[j], si)))
                 for sub in range(n_sub):
                     i_tot_sub = pre.i_tot[j][sub]
+                    # ── THE RELEASE LANDS INSIDE THIS STAGE (2026-09-04) ───
+                    # A MIXED stage: the sub-samples before the EMA crossing
+                    # are cut and the ones after run the normal branches below.
+                    # Same arithmetic as the fully-cut stage, accumulated per
+                    # sub-sample instead of on the stage mean; the governor
+                    # state is again left standing, so the first uncut
+                    # sub-sample resumes from the ratio the firmware froze.
+                    if cut_mask is not None and cut_mask[j][sub]:
+                        acc_bt += cut_src.p_dem[j][sub]
+                        worst = max(worst,
+                                    cut_src.i_tot[j][sub] * oc_scale
+                                    - I_BT_MAX_A)
+                        continue
                     if pre.mode[j][sub] == STAGE_CLOSED:
                         lo = pre.lo[j][sub]
                         d = min(max(s, lo), 1.0 - lo)
@@ -2327,7 +2545,8 @@ class Planner:
     def solve(self, soc0, soc_ref, pre, r_hold, r_seed, charge_options,
               i_tot_oc=None, budget_ms=None, sp_acted=None, run_seed=None,
               handoff=None, active=None, ss_modes=(), pre_ss=None,
-              share_step_guard_r=None):
+              share_step_guard_r=None, batt_only_seed=None, filt_seed=None,
+              pre_bt=None, pre_bt_release=None):
         """Search the candidate set.  Returns a ``Decision``.
 
         ``charge_options`` is a list of per-stage boolean lists, the first of
@@ -2440,7 +2659,10 @@ class Planner:
             tabs = self.delivery_table(pre, r_hold, r_seed, cs, i_tot_oc,
                                        soc_hint=soc0, sp_acted=sp_acted,
                                        run_seed=run_seed, handoff=handoff,
-                                       active=cols0, pre_ss=pre_ss)
+                                       active=cols0, pre_ss=pre_ss,
+                                       batt_only_seed=batt_only_seed,
+                                       filt_seed=filt_seed, pre_bt=pre_bt,
+                                       pre_bt_release=pre_bt_release)
             if oi == 0:
                 tabs0 = tabs
             for block_idx in order:
@@ -2685,6 +2907,39 @@ class ShadowGovernor:
         return None
 
     @property
+    def batt_only_armed(self):
+        """``shareBatteryOnlyArmed`` - the arm itself, and the SEED the delivery
+        table takes.
+
+        THE ARM, NOT ITS PER-TICK DERIVATION (2026-09-04).  The firmware derives
+        ``active = armed and not charge_path_owns_bt`` at the top of every tick,
+        and the suppression half of that is a PER-STAGE property the delivery
+        table's own charge mask already applies (rule (f)).  Seeding on the arm
+        is therefore the same predicate evaluated at the decision instant rather
+        than at the last tick - which matters at exactly one decision per
+        profile: the first, taken before the shadow has ticked at all, where
+        ``batt_only_active`` still reads False and the cut is nevertheless
+        standing.  On the 61 s Gate-1 fixture that one decision was the whole
+        residual (0.5 of error, 8.3e-03 of a 60-decision mean)."""
+        return bool(self.model.state.batt_only_armed)
+
+    @property
+    def batt_only_active(self):
+        """``shareBatteryOnlyActive`` - the fw v27 rev 2 battery-only start.
+
+        True while the firmware's own one-shot cut owns the setpoint, i.e. FC
+        is off the bus and the delivered share is 0 whatever the EMS commands.
+        It is the ARM's per-tick derivation; the delivery table seeds on
+        `batt_only_armed` instead, for the reason given there."""
+        return bool(self.model.state.batt_only_active)
+
+    @property
+    def filt_total(self):
+        """``share_govTotAFilt`` - the ~20 ms EMA the battery-only release
+        gate is tested against (`filt_seed` of the delivery table)."""
+        return float(self.model.state.filt_total)
+
+    @property
     def deferred(self):
         """True while the load guard is holding a cut off - ``shareCutDeferred*``."""
         st = self.model.state
@@ -2865,6 +3120,13 @@ class MpcStrategy:
         self.cap_as = BATT_CAPACITY_AH * 3600.0
         self.preview = None
         self.preview_ss = {}
+        # THE BT-ONLY RELEASE PREVIEW (H-1, 2026-09-04), built on EVERY leg with
+        # a demand loss map, independently of `preview_ss` and of the
+        # single-source ENUMERATION.  It is an input to one prediction - when
+        # the firmware's battery-only cut releases - and to nothing else: it
+        # never becomes a candidate, never bills a stage, and is None where
+        # there is no loss map to scale the single-source bus law from.
+        self.preview_bt_release = None
         self.planner = None
         self.reset()
 
@@ -2927,6 +3189,24 @@ class MpcStrategy:
         self.share_pred_err_run_n = 0
         self._stage_share_sum = 0.0
         self._stage_share_n = 0
+        # ── THE BATTERY-ONLY RELEASE DIAGNOSTIC (H-1, 2026-09-04) ──────────
+        # INFORMATIONAL, and it exists so a `mpc_share_prediction` FAIL is
+        # ATTRIBUTABLE. The release is the one instant the delivery table
+        # PREDICTS about the firmware's own cut, and until now a campaign could
+        # only see the consequence (a share error) and not the cause (a release
+        # modelled early or late). Two instants, both in sim time:
+        #   `release_modelled_t` - the tick the SHADOW governor's own arm
+        #       clears. It is the model's release, driven by the model's filter.
+        #   `release_observed_t` - the first rise of SW_FC_BUS in the
+        #       observation word after it has been seen LOW. It is the BOARD's
+        #       release, one HIL round trip (~1.9 ms) late by construction, and
+        #       it is read for REPORTING ONLY - never by the planner.
+        # The difference is the quantity to read: a large positive one is the
+        # late-release defect this round fixed, a large negative one its mirror.
+        self.release_modelled_t = None
+        self.release_observed_t = None
+        self._release_prev_armed = None
+        self._release_prev_sw_fc = None
         self.rolls_started = 0
         self.rolls_published = 0
         self.rolls_empty = 0
@@ -3155,6 +3435,36 @@ class MpcStrategy:
                     times=times, p_dem=_pd, v_bus=_vb, i_total=_it,
                     cruise=_cr, chg_ok=[False] * len(times),
                     i_regen=_ir, dt=dt)
+        # ── THE BT-ONLY RELEASE PREVIEW (H-1, 2026-09-04) ──────────────────
+        # THE SAME DEMAND MODEL, ON EVERY MPC LEG.  The single-source
+        # ENUMERATION is opt-in and rare; the firmware's battery-only start is
+        # neither - it fires at State-2 entry of every profile - and its release
+        # is gated on the MEASURED source total, which while FC_BUS is cut is
+        # the battery's alone on the single-source bus law.  Predicting that
+        # release from the two-source preview under-reads the total, crosses the
+        # gate LATE, and leaves the table predicting d = 0 over stages the board
+        # has already re-closed on (see `Planner.batt_only_cut_mask`).
+        # WHERE `preview_ss` EXISTS THE SAME OBJECT IS REUSED, so a
+        # single-source leg builds no second copy and the two paths cannot
+        # disagree about what the BT-only demand is.
+        # NO LOSS MAP -> None, and the mask falls back to the two-source preview
+        # exactly as before.  That is a DEGRADATION, not a refusal, and the
+        # asymmetry with the enumeration's hard failure above is deliberate: the
+        # enumeration would COMMAND a topology on a wrong bus law, this only
+        # predicts an instant the firmware chooses either way.
+        if self.preview_ss.get(SS_MODE_BT) is not None:
+            self.preview_bt_release = self.preview_ss[SS_MODE_BT]
+        elif self.loss_map is not None:
+            _v, _a, _pd, _vb, _it, _cr, _ir = build_demand(
+                scenario, meta, times, dt, loss_map=self.loss_map,
+                drag_mode=drag, eta_regen=self.eta_regen,
+                eta_chg=self.eta_chg, v_pack_ref=v_pack_ref_all,
+                regen_i_max_a=chg_a, source_mode=SS_MODE_BT)
+            self.preview_bt_release = Preview(
+                times=times, p_dem=_pd, v_bus=_vb, i_total=_it,
+                cruise=_cr, chg_ok=[False] * len(times), i_regen=_ir, dt=dt)
+        else:
+            self.preview_bt_release = None
         self.planner = Planner(horizon=self.horizon, blocks=self.blocks,
                                share_band=self.share_band,
                                share_levels=self.share_levels,
@@ -3802,6 +4112,42 @@ class MpcStrategy:
             budget_ms = max(BUDGET_MS_FLOOR,
                             budget_ms - (time.perf_counter() - _t_ss) * 1e3)
 
+        # ── THE BT-ONLY RELEASE PREVIEW, STAGED (H-1, 2026-09-04) ──────────
+        # BUILT ONLY WHILE THE ARM IS STANDING.  The mask is built only under
+        # `batt_only_seed`, so staging this preview on any other decision would
+        # be wall-clock work inside the callback for an argument nothing reads -
+        # and the arm is true for the opening seconds of a profile and never
+        # again.  Where the single-source path already staged it, that object is
+        # reused rather than staged twice.
+        # THE STOCHASTIC SCALE REACHES IT, for the reason the single-source
+        # previews take it: the bus law differs between the previews, the DEMAND
+        # FORECAST does not, and a release predicted off the deterministic
+        # profile while the table is judged on the TPM's conditional mean would
+        # put the two arms of one decision on two forecasts.
+        pre_bt_release = None
+        if self.shadow.batt_only_armed and self.preview_bt_release is not None:
+            if pre_ss is not None and SS_MODE_BT in pre_ss:
+                pre_bt_release = pre_ss[SS_MODE_BT]
+            else:
+                _t_br = time.perf_counter()
+                pre_bt_release = precompute_stages(
+                    self.preview_bt_release, k0, self.horizon,
+                    mode_seed=(STAGE_CLOSED if self.shadow.closed
+                               else STAGE_OPEN))
+                if sto_scale is not None:
+                    for j in range(pre_bt_release.n):
+                        sc = sto_scale[j]
+                        if sc == 1.0:
+                            continue
+                        for sub in range(len(pre_bt_release.i_tot[j])):
+                            pre_bt_release.i_tot[j][sub] *= sc
+                            pre_bt_release.p_dem[j][sub] *= sc
+                        pre_bt_release.i_tot_mean[j] *= sc
+                        pre_bt_release.p_dem_mean[j] *= sc
+                budget_ms = max(BUDGET_MS_FLOOR,
+                                budget_ms
+                                - (time.perf_counter() - _t_br) * 1e3)
+
         # ── THE LADDER COARSENING ──────────────────────────────────────────
         # A pure function of the ladder size, the block count, this decision's
         # charge-option count, the previewed transition count and the budget.
@@ -3857,7 +4203,32 @@ class MpcStrategy:
                                  run_seed=self.shadow.closed_loop_run,
                                  handoff=self.r_handoff, active=active,
                                  ss_modes=ss_modes, pre_ss=pre_ss,
-                                 share_step_guard_r=step_guard_r)
+                                 share_step_guard_r=step_guard_r,
+                                 # ── THE BATTERY-ONLY SEEDS (2026-09-04) ───
+                                 # The firmware's own cut, read from the
+                                 # committed shadow state exactly as
+                                 # `sp_acted`/`run_seed` are.  Both are needed:
+                                 # the flag says the cut is standing NOW, the
+                                 # filtered total is what the model rolls
+                                 # forward to predict when it releases.
+                                 # The ARM, not its per-tick derivation: the
+                                 # charge-window suppression half is a
+                                 # per-STAGE property and the table's own mask
+                                 # applies it (see `batt_only_armed`).
+                                 batt_only_seed=self.shadow.batt_only_armed,
+                                 filt_seed=self.shadow.filt_total,
+                                 # The BT-only demand where this leg has one.
+                                 # A leg without the single-source feature bills
+                                 # the cut stages on the two-source law - a
+                                 # stated bus-sag under-statement that moves the
+                                 # billed BT power only (delivery_table).
+                                 pre_bt=(pre_ss.get(SS_MODE_BT)
+                                         if pre_ss else None),
+                                 # The BT-only demand the RELEASE is predicted
+                                 # from, on every leg with a loss map. Separate
+                                 # from `pre_bt` because it feeds a gate test,
+                                 # not a cost (H-1, 2026-09-04).
+                                 pre_bt_release=pre_bt_release)
         if dec.share_step_refused:
             self.share_step_refusals[SHARE_STEP_REFUSE_UPWARD] = (
                 self.share_step_refusals.get(SHARE_STEP_REFUSE_UPWARD, 0)
@@ -3968,6 +4339,34 @@ class MpcStrategy:
         # the held feedback, then corrected from this sample.
         self.shadow.tick_to(t, self.last_share, fb, charging=charging)
         self.shadow.observe(fb)
+
+        # ── THE BATTERY-ONLY RELEASE DIAGNOSTIC (H-1, 2026-09-04) ──────────
+        # Both instants are FIRST-ONLY: the arm is a one-shot per profile, and a
+        # later FC_BUS cut is the load guard, not this mechanism.  Reading the
+        # switch word AFTER `tick_to()` keeps the modelled instant on the same
+        # tick grid the mask's own prediction is made on.
+        _armed_now = self.shadow.batt_only_armed
+        if (self.release_modelled_t is None
+                and self._release_prev_armed and not _armed_now):
+            self.release_modelled_t = float(t)
+        self._release_prev_armed = _armed_now
+        _sw_obs = fb.get("switch")
+        if _sw_obs is not None:
+            # A DIAGNOSTIC MAY NEVER FAULT THE RUN.  The observation word is
+            # blank before the first frame decodes and is whatever the feedback
+            # view carries otherwise, so an unparseable value is simply "not
+            # observed" rather than an exception inside the command callback.
+            try:
+                _fc_hi = bool(int(_sw_obs) & SW_FC_BUS_BIT)
+            except (TypeError, ValueError):
+                _fc_hi = None
+        else:
+            _fc_hi = None
+        if _fc_hi is not None:
+            if (self.release_observed_t is None
+                    and self._release_prev_sw_fc is False and _fc_hi):
+                self.release_observed_t = float(t)
+            self._release_prev_sw_fc = _fc_hi
 
         # ── THE ROLL SLICE, at 50 Hz and AHEAD of the decision gate (H1) ────
         # This is the mechanism the adjudication's section 2.2 specifies: the
@@ -4244,7 +4643,29 @@ class MpcStrategy:
                     "; demand bin clamped HIGH on %d and LOW on %d"
                     % (self.clamped_bin_high, self.clamped_bin_low)))
                 + self._ss_summary_fragment(tm)
+                + self._release_summary_fragment()
                 + self._share_step_summary_fragment(tm))
+
+    def _release_summary_fragment(self):
+        """The battery-only release pair, INFORMATIONAL (H-1, 2026-09-04).
+
+        ASCII only, like the rest of this line -- see the cp1252 note above.
+        Printed on every MPC leg, including the ones where neither instant was
+        seen, because "the arm never released" is itself the finding on a leg
+        like `ems-ftp75c-*` (max filtered total 0.2762 A against a 0.30 A
+        gate)."""
+        mod, obs = self.release_modelled_t, self.release_observed_t
+        if mod is None and obs is None:
+            return ("; battery-only release: NEITHER modelled nor observed -- "
+                    "the arm never released in this run")
+        d = ("" if mod is None or obs is None else
+             ", modelled %s the board by %.1f ms"
+             % ("AHEAD OF" if mod < obs else "BEHIND", abs(obs - mod) * 1e3))
+        return ("; battery-only release: modelled %s, first observed SW_FC_BUS "
+                "rise %s%s (informational -- the observed word is one HIL round "
+                "trip late and is never a planner input)"
+                % ("never" if mod is None else "t=%.3f s" % mod,
+                   "never" if obs is None else "t=%.3f s" % obs, d))
 
     def _ss_summary_fragment(self, tm):
         """The single-source census, appended to the summary line.

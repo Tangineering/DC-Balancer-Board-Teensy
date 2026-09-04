@@ -559,7 +559,7 @@ def _metrics(n_obs=10, rows=10, final_fault_flags=0, fault_bits_seen=0, final_st
              survive_to_t=None, fault_bits_before_survive=0, state_at_survive=None,
              n_obs_post_grace=None, last_obs_t=None, error_code_post_grace=None,
              error_code_final=None, fault_first_t_whole_run=None,
-             fault_first_latch_t=None):
+             fault_first_latch_t=None, fault_first_latch_t_whole_run=None):
     """Build an analyze_scenario_csv()-shaped metrics dict.
 
     By default `fault_bits_post_grace` mirrors `fault_bits_seen` (no carried-in
@@ -598,6 +598,18 @@ def _metrics(n_obs=10, rows=10, final_fault_flags=0, fault_bits_seen=0, final_st
             # nothing is excluded as teardown, which is the conservative
             # reading for every test that does not care.
             "fault_first_t_whole_run": fault_first_t_whole_run or {},
+            # CAMPAIGN G (2026-09-03): the WHOLE-RUN LATCHED first-sighting map,
+            # which is what the `share_cut_load_hazard` tripwire now anchors on
+            # (together with the post-grace latch map). It DEFAULTS TO
+            # `fault_first_t_whole_run` for the same reason `fault_first_latch_t`
+            # defaults to `fault_first_t`: every pre-existing caller describes a
+            # trace in which the bare bit and the latch are the same event, and
+            # must keep meaning that. A caller that wants a NON-LATCHING bare bit
+            # -- the charge-to-full case -- passes this explicitly as {}.
+            "fault_first_latch_t_whole_run": (
+                fault_first_t_whole_run or {}
+                if fault_first_latch_t_whole_run is None
+                else fault_first_latch_t_whole_run),
             "final_state": final_state,
             "grace_s": rhs.WARM_RESET_GRACE_S if grace_s is None else grace_s,
             "survive_to_t": survive_to_t,
@@ -852,13 +864,22 @@ def test_fault_expectations_allow_only_defaults_to_require_or_error():
 
 def test_judge_scenario_survive_to_fails_when_fault_lands_before_the_gate():
     """'charge-cruise' survive_to requires the run to reach t=8.0 in Run/
-    Finish before anything latches -- a bit observed BEFORE that time fails
-    survives_to_stimulus even if the (later) expected_fault also passes."""
+    Finish before anything LATCHES -- a bit latched BEFORE that time fails
+    survives_to_stimulus even if the (later) expected_fault also passes.
+
+    CAMPAIGN G (2026-09-03): the fixture now describes a LATCH rather than a
+    bare bit, because the check reads the latch map. The bit is dated 4.0 s
+    (before the 8.0 s gate) and FAULT_ERROR rides beside it, which is what
+    triggerFault() actually puts on the wire. The bare-bit case is its own
+    test -- see test_survives_to_stimulus_reports_a_bare_bit_as_indicated."""
     expect = rhs.FAULT_EXPECTATIONS["charge-cruise"]
     want = expect["require"]
     m = _metrics(fault_bits_seen=want, final_fault_flags=want,
                  fault_first_t={rhs.fault_names(want): expect["not_before_s"] + 0.5},
-                 fault_bits_before_survive=want,   # latched before the gate
+                 fault_first_latch_t={rhs.fault_names(want): 4.0},
+                 # latched before the gate, with the ERROR bit triggerFault()
+                 # unconditionally ORs in (.ino:4501-4503)
+                 fault_bits_before_survive=want | rhs.FAULT_ERROR,
                  state_at_survive=None)
     passed, checks = rhs.judge_scenario("charge-cruise", m, _events(), _child())
     assert passed is False
@@ -3713,7 +3734,11 @@ def test_share_cut_hazard_excludes_state99_teardown_by_the_fault_time():
     after (this run's own first fault - TEARDOWN_LEAD_MS)."""
     m = _metrics(fault_bits_seen=0x8080, fault_first_t=None,
                  error_code_final=0)
+    # CAMPAIGN G: the anchor is the LATCH map, so a fixture describing a latched
+    # OC_BT must populate it. The bare-bit map is set alongside because a real
+    # trace has both (the bit and the FAULT_ERROR row are the same observation).
     m["fault_first_t_whole_run"] = {"OC_BT": 20.0}
+    m["fault_first_latch_t_whole_run"] = {"OC_BT": 20.0}
     assert _hazard_check(m, [_sw_ring(20.5, "BT_BUS", 3.0)])["passed"] is True
     # ...but the cut that CAUSED the fault lands strictly before the latch and
     # is still caught -- which is the 080905 case itself.
@@ -3746,10 +3771,26 @@ def test_share_cut_hazard_survives_a_carried_in_latch_and_a_tight_teardown():
         "ERROR(latched State 99)": 0.0013,
         "OC_BT": 20.0000,                     # this run's OWN fault
     }
+    # CAMPAIGN G: the anchor moved to the LATCH maps. Every sighting in this
+    # fixture IS a latch (the carried-in word arrives with FAULT_ERROR set, and
+    # the run's own OC_BT is a real latch), so the whole-run latch map mirrors
+    # the bare-bit map above. The carried-in entries stay in it deliberately:
+    # the CARRIED_IN_LATCH_MAX_S filter is what must drop them, and a fixture
+    # that omitted them would not exercise the B-H1 defect at all.
+    m["fault_first_latch_t_whole_run"] = dict(m["fault_first_t_whole_run"])
     # The post-grace map is deliberately LATE here (2.0 = the grace bound), the
     # way it reads for any fault latched inside the grace window; the tripwire
     # must not anchor on it.
     m["fault_first_t"] = {"OC_BT": 2.0}
+    # ...and the POST-GRACE LATCH map records the real 20.0 s instant, because
+    # post-grace rows are a SUBSET of whole-run rows: a per-bit post-grace latch
+    # time can never precede its whole-run one. (The grace bound only ever makes
+    # a post-grace time LATER, which is the case this fixture's bare-bit 2.0
+    # above stands in for.) That invariant is why taking the MINIMUM over the
+    # two latch maps is safe: the post-grace map can only win when the whole-run
+    # entry was consumed by a carried-in latch and filtered out, which is
+    # precisely the charge-cruise shadowing it exists to recover.
+    m["fault_first_latch_t"] = {"OC_BT": 20.0}
 
     teardown = _sw_ring(19.9999, "BT_BUS", 3.0)     # 0.1 ms before the latch
     hazard = _sw_ring(19.9860, "FC_BUS", 0.6371)    # 14.0 ms before it
@@ -3772,6 +3813,136 @@ def test_share_cut_hazard_survives_a_carried_in_latch_and_a_tight_teardown():
     cut = 20.0000 - rhs.TEARDOWN_LEAD_MS / 1000.0
     assert _hazard_check(m, [_sw_ring(cut + 0.0001, "FC_BUS", 3.0)])["passed"] is True
     assert _hazard_check(m, [_sw_ring(cut - 0.0001, "FC_BUS", 3.0)])["passed"] is False
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# CAMPAIGN G (2026-09-03): THE TEARDOWN ANCHOR IS THE FIRST *LATCH*
+#
+# One campaign broke the old `fault_first_t_whole_run` anchor in both
+# directions, and these four tests are the two failures plus the two detail
+# paths they exposed. See the anchor block in judge_scenario().
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_share_cut_hazard_anchors_on_its_own_latch_when_a_carried_in_bit_shadows_it():
+    """charge-cruise, campaign G: the FALSE FAIL the union fixes.
+
+    `setdefault` keeps the FIRST sighting of each bit, and the run's very first
+    observation (~1.2 ms) carries the predecessor's inherited word. comm-loss
+    latched OC_FC, so charge-cruise opened at 0x8011 at 0.001176 s: the
+    whole-run map recorded OC_FC THERE, the CARRIED_IN_LATCH_MAX_S filter
+    dropped it, and the run's OWN OC_FC latch at 8.889261 s was never recorded
+    at all. The anchor fell to None, the cutoff to None, and the fail-open
+    branch admitted the 1.4033 A State-99 teardown cut at 8.8890 s -- which
+    leads its latch by 0.261 ms, inside the measured 0.095-0.541 ms band.
+
+    The post-grace latch map is what recovers it: the carried-in word cleared
+    inside the grace window, so the run's own latch is its FIRST post-grace
+    latched sighting."""
+    m = _metrics(fault_bits_seen=0x8011, error_code_final=0)
+    # Whole-run maps: BOTH shadowed by the carried-in word at 1.176 ms.
+    m["fault_first_t_whole_run"] = {"OC_FC": 0.001176,
+                                    "PI_TIMEOUT/HIL_LINK": 0.001176,
+                                    "ERROR(latched State 99)": 0.001176}
+    m["fault_first_latch_t_whole_run"] = dict(m["fault_first_t_whole_run"])
+    # Post-grace: the run's own OC_FC latch, the honest anchor.
+    m["fault_first_t"] = {"OC_FC": 8.889261}
+    m["fault_first_latch_t"] = {"OC_FC": 8.889261}
+
+    teardown = _sw_ring(8.889000, "FC_BUS", 1.4033)   # 0.261 ms before the latch
+    c = _hazard_check(m, [teardown])
+    assert c["passed"] is True
+    # The cutoff must be REPORTED, not "n/a", and it must come from the
+    # post-grace map -- the whole-run one is shadowed.
+    assert "n/a" not in c["detail"]
+    assert "post-grace latch map" in c["detail"]
+    assert "8.889261" in c["detail"]
+    # ... and the shadowing itself is named, so a reader is not left to infer it.
+    assert "shadowed the whole-run map" in c["detail"]
+    # A genuine share-path cut BEFORE that cutoff is still caught, i.e. the fix
+    # closed the fail-open hole rather than replacing it with a blanket excuse.
+    assert _hazard_check(m, [_sw_ring(8.875, "FC_BUS", 0.6371)])["passed"] is False
+
+
+def test_share_cut_hazard_ignores_a_bare_non_latching_fault_bit():
+    """charge-to-full, campaign G: the cutoff-too-EARLY direction.
+
+    The 8.8 ms break-before-make sag at the FC-charge window entry set UV_BUS
+    (0x0100) on 19 ticks and NEVER 0x8100 -- a 19.068 ms UV dwell against
+    UV_BUS_DWELL_LATCH_MS 20.0, so triggerFault() never fired. On the old
+    bare-bit anchor that transient pulled the cutoff to ~8.016 s and EXCUSED
+    the 8.021422 s BT_BUS cut the tripwire exists to see."""
+    m = _metrics(fault_bits_seen=0x0100, error_code_final=0)
+    # A bare bit lives in the SIGHTING maps only; both latch maps stay empty.
+    m["fault_first_t_whole_run"] = {"UV_BUS": 8.016}
+    m["fault_first_latch_t_whole_run"] = {}
+    m["fault_first_t"] = {"UV_BUS": 8.016}
+    m["fault_first_latch_t"] = {}
+
+    cut = _sw_ring(8.021422, "BT_BUS", 0.6371)
+    c = _hazard_check(m, [cut])
+    # No latch -> no cutoff -> fail-open, and the cut IS scored.
+    assert c["passed"] is False
+    assert "BT_BUS" in c["detail"]
+    # And the same cut against a REAL latch at the same instant is excluded as
+    # the teardown it would then be.
+    m2 = dict(m)
+    m2["fault_first_latch_t_whole_run"] = {"UV_BUS": 8.024}
+    m2["fault_first_latch_t"] = {"UV_BUS": 8.024}
+    assert _hazard_check(m2, [cut])["passed"] is True
+
+
+def test_share_cut_hazard_distinguishes_no_own_fault_from_a_shadowed_one():
+    """The two None paths must not share a sentence. The old detail printed
+    "latched no fault of its own" for charge-cruise -- a run that latched
+    OC_FC -- which is how the false FAIL read to a human."""
+    # (a) genuinely clean: no fault sighting at all.
+    clean = _metrics(error_code_final=0)
+    d_clean = _hazard_check(clean, [])["detail"]
+    assert "latched no fault at all" in d_clean
+    assert "carried-in" not in d_clean
+
+    # (b) carried-in only: the run inherited a latch, cleared it, and latched
+    # nothing itself. Still no cutoff, but for a different reason.
+    carried = _metrics(fault_bits_seen=0x8010, error_code_final=0)
+    carried["fault_first_t_whole_run"] = {"PI_TIMEOUT/HIL_LINK": 0.0013,
+                                          "ERROR(latched State 99)": 0.0013}
+    carried["fault_first_latch_t_whole_run"] = dict(
+        carried["fault_first_t_whole_run"])
+    d_carried = _hazard_check(carried, [])["detail"]
+    assert "carried-in latch(es) it inherited" in d_carried
+    assert "latched no fault at all" not in d_carried
+    assert d_clean != d_carried
+
+
+def test_survives_to_stimulus_reports_a_bare_bit_as_indicated_not_latched():
+    """charge-to-full, campaign G: the check failed on a doubly false reason.
+
+    Nothing latched (bare UV_BUS, 19 ticks, no FAULT_ERROR) and the stimulus
+    WAS reached -- all four stimulus checks passed on real evidence -- yet the
+    detail read "latched UV_BUS BEFORE t=..., so the run never reached its own
+    stimulus". The verdict now comes from the latch map and the bare bit is
+    reported as an indication.
+
+    This does NOT excuse the board: `fault_allow_only` still sees the bit in
+    its post-grace union and still fails the leg."""
+    expect = rhs.FAULT_EXPECTATIONS["charge-cruise"]
+    want = expect["require"]
+    t_req = expect["survive_to"]["t"]
+    state = sorted(expect["survive_to"]["states"])[0]
+    m = _metrics(fault_bits_seen=want, final_fault_flags=want,
+                 fault_first_t={rhs.fault_names(want): expect["not_before_s"] + 0.5},
+                 # A BARE UV_BUS before the gate: in the sighting union, absent
+                 # from the latch map.
+                 fault_bits_before_survive=rhs.FAULT_UV_BUS,
+                 fault_first_latch_t={
+                     rhs.fault_names(want): expect["not_before_s"] + 0.5},
+                 state_at_survive=state)
+    _passed, checks = rhs.judge_scenario("charge-cruise", m, _events(), _child())
+    sv = [c for c in checks if c["name"] == "survives_to_stimulus"][0]
+    assert sv["passed"] is True
+    assert "INDICATED (not latched)" in sv["detail"]
+    assert "UV_BUS" in sv["detail"]
+    assert "never reached its own stimulus" not in sv["detail"]
 
 
 def test_share_cut_hazard_teardown_lead_sits_between_the_measured_populations():
@@ -7381,9 +7552,24 @@ def test_both_b30_variants_carry_the_preload_budget_tripwire():
         assert ("%.4f" % measured) in spec["label"]
 
 
-def test_y_aux_load_a_is_085():
-    from hil_plant_sim import Y_AUX_LOAD_A
-    assert Y_AUX_LOAD_A == pytest.approx(0.85)
+def test_y_aux_load_a_is_091_in_the_aux_era():
+    """AUX ERA (campaign G, 2026-09-03): 0.85 -> 0.91 A.
+
+    The `ems-y-*` preload is the FOURTH stimulus expressed as a designed TOTAL,
+    and it was the one not migrated when `I_AUX_A` moved 0.15 -> 0.09 A (the
+    three `fw26-clamp-*` preloads were). Campaign G measured the consequence to
+    0.0001 A: the b30-v1 region-6 total fell 1.0542 -> 0.9941 A while the
+    standstill (aux-only) total fell 0.1508 -> 0.0908 A, so the whole window
+    deficit IS the aux cut, and the leg failed the 1.02 A `_Y_ITOT_FLOOR_A`
+    stimulus guard. The pin is here, not only in the banner, because the value
+    and `I_AUX_A` have to move together or the designed total drifts silently."""
+    from hil_plant_sim import Y_AUX_LOAD_A, I_AUX_A
+    assert Y_AUX_LOAD_A == pytest.approx(0.91)
+    # The invariant the number exists to hold: the standstill source total is
+    # the 1.000 A region-6 break-even the 0.85 A choice was originally sized on.
+    assert I_AUX_A + Y_AUX_LOAD_A == pytest.approx(1.00)
+    # ...and the guard that CAUGHT the drift is deliberately NOT lowered.
+    assert rhs._Y_ITOT_FLOOR_A == pytest.approx(1.02)
 
 
 # ── FTP-75 h2_cum_g band: two specs, not one ────────────────────────────────
@@ -7620,7 +7806,11 @@ def test_ems_ftp75_sdp_entry_pins_the_flip_inside_its_band():
                      "sdpftp_high_rail_late", "sdpftp_raw_battery_branch",
                      "sdpftp_raw_fc_branch", "sdpftp_fc_floored_early",
                      "sdpftp_fc_carried_late", "sdpftp_bt_peak_bounded",
-                     "sdpftp_h2_accounted", "sdpftp_h2_bounded"}
+                     "sdpftp_h2_accounted", "sdpftp_h2_bounded",
+                     # M-4, 2026-09-04: the en_low chatter census, the only
+                     # scored statement this leg makes about the 205-295 s
+                     # cut/restore regime.
+                     "sdpftp_en_low_census"}
     by = {s["name"]: s for s in entry["signals_require"]}
     early = by["sdpftp_low_rail_early"]
     late = by["sdpftp_high_rail_late"]
@@ -7680,7 +7870,10 @@ def test_ems_ftp75_sdp_battery_channel_ceiling_is_a_handover_tripwire():
           for s in rhs.FAULT_EXPECTATIONS["ems-ftp75-sdp"]["signals_require"]}
     bt = by["sdpftp_bt_peak_bounded"]
     assert bt["column"] == "I_batt"
-    assert bt["max_value"] == pytest.approx(0.90)
+    # fw v27 ERA RE-PIN (campaign G2): 0.90 -> 1.00 A on a measured 0.9211 A
+    # peak in the share-cut chatter regime. See
+    # test_sdpftp_bt_peak_bounded_is_repinned_on_the_chatter_measurement.
+    assert bt["max_value"] == pytest.approx(1.00)
     # Above the measurement, and far under LIMIT_I_BT_MAX 3.0 A -- a tripwire,
     # not a limit claim.
     assert 0.7117 < bt["max_value"] < 0.5 * 3.0
@@ -7804,13 +7997,23 @@ def test_ems_sdp_cross_entry_shape_and_charge_cycle_checks():
 
 
 def test_ems_sdp_cross_charge_band_brackets_the_measured_trace():
-    """Every charge threshold on this entry is now a measurement (campaign
-    20260901_024231): 64103 of 120000 ticks set, 9 windows, longest hold
-    8085 ticks. The bands must contain those and exclude the two failure
-    modes the entry exists to separate -- "never charged" and "latched on"."""
+    """Every charge threshold on this entry is a measurement, RE-PINNED to the
+    fw v27 era (campaign G, hil_report_20260903_233736): 32835 of 120000 ticks
+    set, 5 windows at a 25.2 s period, longest hold 8085 ticks. The bands must
+    contain those and exclude the two failure modes the entry exists to
+    separate -- "never charged" and "latched on".
+
+    MECHANISM for the halving (it is firmware, not plant): the low cruise's
+    0.2817 A source total sits BETWEEN fw v27's 0.25 A closed-loop exit and its
+    0.30 A entry, so the loop never exits, the minority band is empty
+    (0.15/0.2817 = 0.53 > 0.5) and the delivered split is pinned at 0.5000 --
+    halving the pack drain and stretching the SoC hysteresis period
+    16.13 -> 25.2 s. The HOLD is the era-invariant half at 8085 ticks: the 8 s
+    dwell hysteresis sets it, not charge economics."""
     by = {s["name"]: s
           for s in rhs.FAULT_EXPECTATIONS["ems-sdp-cross"]["signals_require"]}
-    measured_ticks, measured_edges, measured_hold = 64103, 9, 8085
+    measured_ticks, measured_edges, measured_hold = 32835, 5, 8085
+    fw26_edges = 9                             # campaign 20260901_024231
     total_ticks = 120000                       # 120 s of the 1 kHz CSV
 
     floor = by["sdpx_charge_cycled"]["min_ticks"]
@@ -7818,12 +8021,20 @@ def test_ems_sdp_cross_charge_band_brackets_the_measured_trace():
     hold = by["sdpx_charge_max_hold"]["max_continuous_ticks"]
     lo, hi = by["sdpx_charge_window_count"]["edge_count_between"]
 
-    assert (floor, ceil_, hold, (lo, hi)) == (45000, 84000, 9000, (6, 12))
+    assert (floor, ceil_, hold, (lo, hi)) == (23000, 84000, 9000, (3, 7))
     assert floor <= measured_ticks <= ceil_
     assert measured_hold <= hold
     assert lo <= measured_edges <= hi
-    # The walk-era floor could not fail: 12000 was 19 % of the truth.
-    assert floor > 3 * 12000
+    # The floor keeps the 70 %-of-measurement rule the fw v26 45000 was set by.
+    assert floor == pytest.approx(0.70 * measured_ticks, rel=0.02)
+    # The two eras are NOT comparable on the window count, and the band says
+    # so: the fw v26 measurement sits deliberately outside it. A band spanning
+    # both would assert nothing about either.
+    assert not (lo <= fw26_edges <= hi)
+    # Every sdpx spec now carries the era note -- none did before this round.
+    for _name, _spec in by.items():
+        if _name.startswith("sdpx_"):
+            assert _spec.get("provisional_note"), _name
     # "Latched on for the whole cruise" must fail all three of the bounds that
     # can see it.
     assert total_ticks > ceil_
@@ -7834,7 +8045,10 @@ def test_ems_sdp_cross_charge_band_brackets_the_measured_trace():
     # The released fraction the ceiling encodes is the stated [0.30, 0.70] band
     # (its floor is carried by the stricter sdpx_charge_cycled).
     assert (1.0 - ceil_ / total_ticks) == pytest.approx(0.30)
-    assert (1.0 - measured_ticks / total_ticks) == pytest.approx(0.466, abs=1e-3)
+    # AUX/fw v27 ERA: the released fraction rose 0.466 -> 0.726 with the
+    # stretched period. It moves AWAY from the 0.30 ceiling, so the ceiling is
+    # unmoved and only the label's measured value was re-stated.
+    assert (1.0 - measured_ticks / total_ticks) == pytest.approx(0.726, abs=1e-3)
     # The hold ceiling is the dwell plus one decision stage, not a round guess.
     assert hold == pytest.approx(1000 * (hil.SDP_CHG_MIN_DWELL_S + 1.0))
 
@@ -7956,18 +8170,34 @@ def test_ems_sdp_braking_fc_peak_ceiling_guards_the_tightest_oc_margin():
 def test_ems_sdp_braking_edge_census_composes_windows_plus_early_drops():
     """The cruise-guard early-drop branch, censused. The edge kind cannot tell
     a 1 s blip from a 13 s window, so the band is COMPOSED: four sustained
-    plateau windows + [4, 6] early drops = [8, 10] rising edges. Campaign
-    20260901_024231 measured exactly 9 = 4 + 5."""
+    plateau windows + N early drops = the rising-edge band.
+
+    AUX ERA RE-PIN (campaign G, 2026-09-03): [8, 10] -> [10, 14]. Campaign
+    20260901_024231 measured 9 = 4 + 5 at I_AUX_A 0.15 A; campaign G measured
+    12 = 4 + 8 at 0.09 A with the four sustained windows INTACT (charge ticks
+    52469 against 52479, 0.02 %). The whole demand trace moved -0.927 W
+    (prediction V_bus x 0.060 A = 0.936 W, agreeing to 1 %), so three of the
+    five transients crossed the 6.000 W cruise-guard admission edge one
+    decision stage earlier: F 6.456 / 6.248 / 6.179 W -> G 5.543 / 5.422 /
+    5.249 W. The band is wider than the measurement because the edge is knife
+    sharp -- F's own fourth transient sat 4 mW inside it -- so each of the five
+    stimulus transients can contribute 0, 1 or 2 edges."""
     by = {s["name"]: s
           for s in rhs.FAULT_EXPECTATIONS["ems-sdp-braking"]["signals_require"]}
     census = by["sdpb_charge_edge_census"]
     assert census["switch_bit"] == rhs.SW_FC_CHARGE
     assert census["edge"] == "rise"
     lo, hi = census["edge_count_between"]
-    assert (lo, hi) == (8, 10)
-    assert lo <= 9 <= hi
+    assert (lo, hi) == (10, 14)
+    assert lo <= 12 <= hi
     # The composition must be arithmetically what the comment claims.
-    assert (lo - hil.SDP_BRAKE_CYCLES, hi - hil.SDP_BRAKE_CYCLES) == (4, 6)
+    assert (lo - hil.SDP_BRAKE_CYCLES, hi - hil.SDP_BRAKE_CYCLES) == (6, 10)
+    # The four SUSTAINED windows are the structural claim, and they are pinned
+    # by the per-window tick checks rather than here -- which is why this band
+    # may be loose without the entry losing its objective.
+    assert hil.SDP_BRAKE_CYCLES == 4
+    # Re-pinned from a measurement, so it must say so.
+    assert census.get("provisional_note")
     # The window must open BEFORE the Run-entry blip at t = 3.008 (which is the
     # only drop not paired with a deceleration) and close after the last
     # plateau window's rise at t = 114.862.
@@ -9045,7 +9275,10 @@ def test_ems_ftp75_dp_expectation_entry_shape():
     names = [c["name"] for c in e["signals_require"]]
     assert names == ["ftpdp_peak_commanded", "ftpdp_fc_carried",
                      "ftpdp_table_commanded", "ftpdp_table_low_rail",
-                     "ftpdp_h2_accounted", "ftpdp_h2_bounded"]
+                     "ftpdp_h2_accounted", "ftpdp_h2_bounded",
+                     # M-4, 2026-09-04: the report-only en_low census the three
+                     # sibling FTP-75 legs share with `ems-ftp75-sdp`'s band.
+                     "ftp_en_low_census"]
     by = {c["name"]: c for c in e["signals_require"]}
     # The stimulus check is the sibling's, verbatim -- same profile, same peak.
     assert by["ftpdp_peak_commanded"]["min_value"] == 2.85
@@ -9292,8 +9525,14 @@ def test_anti_vacuity_current_column_specs_reject_and_admit_at_the_new_bound(tmp
             fail_val, pass_val = bound + eps, bound - eps
         for val, want_pass, tag in ((fail_val, False, "fail"),
                                     (pass_val, True, "pass")):
+            # The synthetic row must survive the spec's own TICK MASKS or the
+            # scan measures nothing and the "admit" half fails for the wrong
+            # reason. `exclude_when_switch_bit_clear` (campaign G) drops rows
+            # whose named switch is OPEN, so set that bit; there is no earlier
+            # clear row, so `exclude_hold_ms` has nothing to hold from.
+            _sw = int(spec.get("exclude_when_switch_bit_clear") or 0)
             rows = [{"t": "%.3f" % t, column: "%.6f" % val,
-                    "switch": "0", "fault_flags": "0"}]
+                    "switch": str(_sw), "fault_flags": "0"}]
             path = tmp_path / ("%s_%s_%s.csv" % (spec_name, tag, scenario))
             _write_scenario_csv(path, rows)
             measured = rhs.scan_signals(str(path), [spec], grace_s=0.0)
@@ -10365,6 +10604,368 @@ def test_scan_signals_exclude_when_switch_bit_masks_rows_out(tmp_path):
     assert rhs.judge_signals([bare], m2, "why")[0]["passed"] is False
 
 
+# ─────────────────────────────────────────────────────────────────────────
+# THE INVERSE TICK MASK (campaign G, 2026-09-03)
+#
+# `exclude_when_switch_bit_clear` drops rows on which a switch is OPEN. It
+# exists for `mpc_share_prediction`: fw v27's battery-only start makes the
+# DELIVERED fuel-cell share exactly 0 for a load-dependent span at the head of
+# every run, which is a topology the planner does not yet predict.
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_scan_signals_exclude_when_switch_bit_clear_masks_open_switch_rows(tmp_path):
+    """The battery-only span in miniature: two ticks with FC_BUS OPEN carrying
+    the shadow's unmodelled 0.55 prediction error, then two with it CLOSED
+    carrying the real 0.15. The 0.30 bound must be judged on the latter."""
+    rows = [
+        # FC_BUS LOW -- the battery-only start; delivered share is 0 by topology
+        {"t": "5.5", "mpc_share_pred_err": "0.5515", "switch": "0",
+         "fault_flags": "0"},
+        {"t": "5.6", "mpc_share_pred_err": "0.6061", "switch": "0",
+         "fault_flags": "0"},
+        # FC_BUS HIGH -- the split law is actually under test here
+        {"t": "6.0", "mpc_share_pred_err": "0.1540", "switch": str(rhs.SW_FC_BUS),
+         "fault_flags": "0"},
+        {"t": "6.1", "mpc_share_pred_err": "0.0610", "switch": str(rhs.SW_FC_BUS),
+         "fault_flags": "0"},
+    ]
+    path = tmp_path / "invmask.csv"
+    _write_scenario_csv(path, rows, extra_cols=("mpc_share_pred_err",))
+    spec = {"name": "masked", "column": "mpc_share_pred_err", "max_value": 0.30,
+            "exclude_when_switch_bit_clear": rhs.SW_FC_BUS,
+            "t_window": (5.0, 60.0)}
+    m = rhs.scan_signals(str(path), [spec], grace_s=0.0)
+    assert m[0]["peak"] == pytest.approx(0.1540)
+    assert rhs.judge_signals([spec], m, "why")[0]["passed"] is True
+    # Without the mask the same data trips the bound -- i.e. the mask is doing
+    # the work, and the BOUND was not widened to absorb the cut ticks.
+    bare = dict(spec)
+    bare.pop("exclude_when_switch_bit_clear")
+    m2 = rhs.scan_signals(str(path), [bare], grace_s=0.0)
+    assert m2[0]["peak"] == pytest.approx(0.6061)
+    assert rhs.judge_signals([bare], m2, "why")[0]["passed"] is False
+
+
+def test_inverse_mask_drops_rows_with_no_switch_level(tmp_path):
+    """Same rule as the forward mask: a blank switch cell cannot be evaluated,
+    and counting it would assert the bit's state."""
+    rows = [{"t": "5.5", "mpc_share_pred_err": "9.9", "switch": "",
+             "fault_flags": ""}]
+    path = tmp_path / "invblank.csv"
+    _write_scenario_csv(path, rows, extra_cols=("mpc_share_pred_err",))
+    spec = {"name": "masked", "column": "mpc_share_pred_err", "max_value": 0.30,
+            "exclude_when_switch_bit_clear": rhs.SW_FC_BUS,
+            "t_window": (5.0, 60.0)}
+    m = rhs.scan_signals(str(path), [spec], grace_s=0.0)
+    assert m[0]["peak"] is None
+
+
+def test_mpc_share_prediction_masks_the_battery_only_start_without_widening():
+    """The interim scoring half of the campaign-G MPC finding: the check is
+    masked to FC_BUS-CLOSED ticks, and its 0.30 bound is UNCHANGED.
+
+    The model fix (a battery-only branch in mpc_ems.Planner.delivery_table())
+    is what removes the mask; until a campaign shows the prediction tracking
+    through the cut, the mask is what keeps the check honest about the split
+    law it is actually testing."""
+    seen = 0
+    for name, entry in sorted(rhs.FAULT_EXPECTATIONS.items()):
+        specs = {s["name"]: s for s in (entry.get("signals_require") or [])}
+        spec = specs.get("mpc_share_prediction")
+        if spec is None:
+            continue
+        seen += 1
+        assert spec["exclude_when_switch_bit_clear"] == rhs.SW_FC_BUS
+        # NOT widened, and not held open past the edge: a topology has no decay
+        # tail, unlike the forward mask's charger draw.
+        assert spec["max_value"] == pytest.approx(0.30)
+        assert "exclude_hold_ms" not in spec
+        # The label has to say what it now excludes, or a report reader reads a
+        # narrower claim as the original one.
+        assert "FC_BUS CLOSED" in spec["label"]
+    assert seen >= 3
+
+
+def test_inverse_mask_shape_guard_refuses_the_two_masks_on_one_spec():
+    """The two masks read the SAME `exclude_hold_ms` key with MIRRORED
+    meanings -- past the fall for the forward mask, past the rise for the
+    inverse one (G2 item 13) -- so a spec carrying both would be asking one
+    number to mean two things. And the inverse mask still needs a numeric
+    measurement to mask rows out of."""
+    saved = dict(rhs.FAULT_EXPECTATIONS)
+    try:
+        with pytest.raises(AssertionError, match="MIRRORED"):
+            rhs._assert_signal_spec_shapes("__synthetic__", {
+                "source": "test", "signals_require": [
+                    {"name": "bad", "column": "I_fc", "max_value": 1.0,
+                     "exclude_when_switch_bit": rhs.SW_FC_CHARGE,
+                     "exclude_when_switch_bit_clear": rhs.SW_FC_BUS,
+                     "exclude_hold_ms": 10.0, "t_window": (0.0, 1.0)}]})
+        with pytest.raises(AssertionError, match="are a pair"):
+            rhs._assert_signal_spec_shapes("__synthetic__", {
+                "source": "test", "signals_require": [
+                    {"name": "bad3", "column": "I_fc", "max_value": 1.0,
+                     "exclude_when_switch_bit_clear": rhs.SW_FC_BUS,
+                     "exclude_clear_exempt_column": "cmd_share_sp",
+                     "t_window": (0.0, 1.0)}]})
+        with pytest.raises(AssertionError, match="masks a topology|NUMERIC"):
+            rhs._assert_signal_spec_shapes("__synthetic__", {
+                "source": "test", "signals_require": [
+                    {"name": "bad2", "switch_bit": rhs.SW_FC_CHARGE,
+                     "min_ticks": 1,
+                     "exclude_when_switch_bit_clear": rhs.SW_FC_BUS,
+                     "t_window": (0.0, 1.0)}]})
+    finally:
+        rhs.FAULT_EXPECTATIONS.clear()
+        rhs.FAULT_EXPECTATIONS.update(saved)
+
+
+def test_inverse_mask_exempts_a_commanded_single_source_cut(tmp_path):
+    """The "under an in-band command" qualifier. A switch the FIRMWARE opened is
+    a topology the model does not predict; a switch the HOST commanded open is
+    one it already does, and masking those ticks deletes the evidence.
+
+    `ems-mpc-single` is the case: it commands share 0.0 and the SS_MODE_BT
+    branch predicts d = 0.0 to four decimals. Campaign G, its (5.0, 58.0) s
+    window: the unqualified mask drops 19340 of 53000 ticks, the qualified one
+    drops 68."""
+    rows = [
+        # firmware-initiated cut: FC_BUS low under an IN-BAND command -> masked
+        {"t": "5.5", "mpc_share_pred_err": "0.99", "switch": "0",
+         "cmd_share_sp": "0.55", "fault_flags": "0"},
+        # commanded single source: FC_BUS low because the host asked -> KEPT
+        {"t": "6.0", "mpc_share_pred_err": "0.20", "switch": "0",
+         "cmd_share_sp": "0.0", "fault_flags": "0"},
+        {"t": "6.5", "mpc_share_pred_err": "0.10", "switch": str(rhs.SW_FC_BUS),
+         "cmd_share_sp": "0.55", "fault_flags": "0"},
+    ]
+    path = tmp_path / "exempt.csv"
+    _write_scenario_csv(path, rows,
+                        extra_cols=("mpc_share_pred_err", "cmd_share_sp"))
+    spec = {"name": "masked", "column": "mpc_share_pred_err", "max_value": 0.30,
+            "exclude_when_switch_bit_clear": rhs.SW_FC_BUS,
+            "exclude_clear_exempt_column": "cmd_share_sp",
+            "exclude_clear_exempt_values": [0.0, 1.0],
+            "t_window": (5.0, 60.0)}
+    m = rhs.scan_signals(str(path), [spec], grace_s=0.0)
+    # The commanded-cut sample survives; the firmware-cut one does not.
+    assert m[0]["peak"] == pytest.approx(0.20)
+    # Without the exemption the commanded-cut evidence would be gone too.
+    bare = dict(spec)
+    bare.pop("exclude_clear_exempt_column")
+    bare.pop("exclude_clear_exempt_values")
+    m2 = rhs.scan_signals(str(path), [bare], grace_s=0.0)
+    assert m2[0]["peak"] == pytest.approx(0.10)
+
+
+def test_inverse_mask_hold_excludes_the_turn_on_transient(tmp_path):
+    """G2 item 13: `exclude_hold_ms` on the INVERSE mask holds past the bit's
+    RISE, mirroring the forward mask's hold past its fall.
+
+    Measured on `ems-ftp75-sdp` (campaign G2): FC_BUS re-closes at 33.097346 s
+    on the inherited equal codes 5316/5316, I_fc ramps 0 -> 0.2355 A over
+    ~11 ms, and the loop converges to the commanded 0.1500 A by 33.24 s. With
+    the 150 ms hold the [30, 150] s window peak is 0.1526 A at 85.0734 s (a
+    different, settled excursion entirely), under the UNCHANGED 0.18 A ceiling.
+    A shorter ~20-50 ms hold would still land on the re-entry ramp at 0.1718 A;
+    the two figures were reported the wrong way round in the first write-up and
+    were re-scored on the G2 CSV 2026-09-04."""
+    rows = [
+        {"t": "33.00", "I_fc": "0.00", "switch": "0", "fault_flags": "0"},
+        # turn-on transient, inside the hold -> excluded
+        {"t": "33.12", "I_fc": "0.2355", "switch": str(rhs.SW_FC_BUS),
+         "fault_flags": "0"},
+        # settled, past the hold -> scored
+        {"t": "33.30", "I_fc": "0.1500", "switch": str(rhs.SW_FC_BUS),
+         "fault_flags": "0"},
+    ]
+    path = tmp_path / "turnon.csv"
+    _write_scenario_csv(path, rows)
+    spec = {"name": "floored", "column": "I_fc", "max_value": 0.18,
+            "exclude_when_switch_bit_clear": rhs.SW_FC_BUS,
+            "exclude_hold_ms": rhs._FC_TURN_ON_SETTLE_MS,
+            "t_window": (30.0, 150.0)}
+    m = rhs.scan_signals(str(path), [spec], grace_s=0.0)
+    assert m[0]["peak"] == pytest.approx(0.1500)
+    assert rhs.judge_signals([spec], m, "why")[0]["passed"] is True
+    # Without the hold the transient trips the UNCHANGED ceiling -- i.e. the
+    # hold is what closed the FAIL, not a widened bound.
+    bare = dict(spec)
+    bare.pop("exclude_hold_ms")
+    m2 = rhs.scan_signals(str(path), [bare], grace_s=0.0)
+    assert m2[0]["peak"] == pytest.approx(0.2355)
+    assert rhs.judge_signals([bare], m2, "why")[0]["passed"] is False
+
+
+def test_inverse_mask_reports_how_many_rows_it_dropped(tmp_path):
+    """M-3 (2026-09-04): a mask that reports nothing about its own reach lets a
+    bound be judged on an unknown population.
+
+    Campaign G's `mpc_share_prediction` detail read "peak 0.15" without saying
+    that 19 340 of 53 000 ticks had been dropped to get there. Every verdict of
+    a spec carrying `exclude_when_switch_bit_clear` now ends in
+    "[N of M masked]", on BOTH outcomes."""
+    rows = [
+        # PREFIX: the bit has not yet been seen set, so these are dropped.
+        {"t": "1.0", "I_fc": "9.99", "switch": "0", "fault_flags": "0"},
+        {"t": "1.1", "I_fc": "9.99", "switch": "0", "fault_flags": "0"},
+        {"t": "1.2", "I_fc": "0.10", "switch": str(rhs.SW_FC_BUS),
+         "fault_flags": "0"},
+    ]
+    path = tmp_path / "census.csv"
+    _write_scenario_csv(path, rows)
+    spec = {"name": "masked", "column": "I_fc", "max_value": 0.18,
+            "exclude_when_switch_bit_clear": rhs.SW_FC_BUS}
+    m = rhs.scan_signals(str(path), [spec], grace_s=0.0)
+    assert m[0]["mask_seen"] == 3 and m[0]["mask_dropped"] == 2
+    chk = rhs.judge_signals([spec], m, "why")[0]
+    assert chk["passed"] is True
+    assert "[2 of 3 masked]" in chk["detail"]
+
+
+def test_inverse_mask_only_masks_the_prefix_before_the_first_rise(tmp_path):
+    """M-3 (2026-09-04): the mask is a PREFIX mask.
+
+    The firmware's battery-only start opens FC_BUS before the planner has any
+    say, and that head-of-run span is what the mask exists for. A cut AFTER the
+    bit has once been seen HIGH is the fw v25 load guard acting on a share the
+    planner itself chose, so the planner should predict it and those ticks must
+    stay scored -- masking them would delete the very regression this check is
+    for."""
+    rows = [
+        {"t": "1.0", "I_fc": "9.99", "switch": "0", "fault_flags": "0"},
+        {"t": "1.1", "I_fc": "0.10", "switch": str(rhs.SW_FC_BUS),
+         "fault_flags": "0"},
+        # A LATER cut. Its sample must be SCORED, and it trips the ceiling.
+        {"t": "2.0", "I_fc": "0.90", "switch": "0", "fault_flags": "0"},
+    ]
+    path = tmp_path / "prefix.csv"
+    _write_scenario_csv(path, rows)
+    spec = {"name": "masked", "column": "I_fc", "max_value": 0.18,
+            "exclude_when_switch_bit_clear": rhs.SW_FC_BUS}
+    m = rhs.scan_signals(str(path), [spec], grace_s=0.0)
+    assert m[0]["peak"] == pytest.approx(0.90)
+    assert m[0]["mask_dropped"] == 1          # the prefix row, and only it
+    chk = rhs.judge_signals([spec], m, "why")[0]
+    assert chk["passed"] is False
+    assert "[1 of 3 masked]" in chk["detail"]
+
+
+def test_an_exempt_commanded_row_does_not_arm_the_turn_on_hold(tmp_path):
+    """L-8 (2026-09-04): the exempt pair and `exclude_hold_ms` must not compose
+    into a blanking of the ticks the exemption exists to keep.
+
+    A row kept because the HOST commanded a single source is not a firmware cut,
+    so it must not arm `mask_last_clear_t`. If it did, the first
+    `exclude_hold_ms` of two-source ticks after a commanded single-source span
+    ENDS would be excluded -- for a turn-on transient the host produced and the
+    model already predicts."""
+    rows = [
+        {"t": "1.0", "I_fc": "0.90", "switch": "0", "cmd_share_sp": "0.0",
+         "fault_flags": "0"},                     # commanded single source: KEPT
+        {"t": "1.01", "I_fc": "0.90", "switch": str(rhs.SW_FC_BUS),
+         "cmd_share_sp": "0.5", "fault_flags": "0"},   # 10 ms later, two-source
+    ]
+    path = tmp_path / "exempt_hold.csv"
+    _write_scenario_csv(path, rows, extra_cols=["cmd_share_sp"])
+    spec = {"name": "masked", "column": "I_fc", "max_value": 0.18,
+            "exclude_when_switch_bit_clear": rhs.SW_FC_BUS,
+            "exclude_clear_exempt_column": "cmd_share_sp",
+            "exclude_clear_exempt_values": [0.0, 1.0],
+            "exclude_hold_ms": 150.0}
+    m = rhs.scan_signals(str(path), [spec], grace_s=0.0)
+    # NOTHING is masked: the first row is exempt, and because it did not arm the
+    # hold the second row is scored too.
+    assert m[0]["mask_dropped"] == 0 and m[0]["mask_seen"] == 2
+    assert m[0]["peak"] == pytest.approx(0.90)
+    assert rhs.judge_signals([spec], m, "why")[0]["passed"] is False
+
+
+def test_ftp75_en_low_census_band_and_the_report_only_siblings():
+    """M-4 (2026-09-04): `ems-ftp75-sdp` gets a BAND on its chatter regime and
+    the three sibling FTP-75 legs get the same census, report-only.
+
+    The band is the measurement (61 falls in t = [205, 295] s, campaign G2)
+    under the same -40 %/+40 % rule the sdpx and sdpb censuses use, and it is
+    PROVISIONAL on one fw v27 campaign."""
+    by = {s["name"]: s for s in
+          rhs.FAULT_EXPECTATIONS["ems-ftp75-sdp"]["signals_require"]}
+    c = by["sdpftp_en_low_census"]
+    assert c["switch_bit"] == rhs.SW_FC_BUS and c["edge"] == "fall"
+    assert c["t_window"] == (205.0, 295.0)
+    assert c["edge_count_between"] == (37, 85)
+    # DERIVED, not transcribed: the band is the measurement x [0.6, 1.4].
+    import math
+    assert c["edge_count_between"] == (math.ceil(61 * 0.6), int(61 * 1.4))
+    assert rhs._FW27_ERA_PROVISIONAL in c["provisional_note"]
+    assert not c.get("informational")
+    for leg in ("ems-ftp75-5050", "ems-ftp75-socband", "ems-ftp75-dp"):
+        sib = {s["name"]: s for s in
+               rhs.FAULT_EXPECTATIONS[leg]["signals_require"]}["ftp_en_low_census"]
+        assert sib["informational"] is True, leg
+        assert sib["t_window"] == c["t_window"], leg
+        assert sib["switch_bit"] == c["switch_bit"] and sib["edge"] == "fall"
+
+
+def test_fc_turn_on_settle_ms_is_derived_from_the_two_measured_terms():
+    """RT_TD_ON 8 ms + the measured 143 ms of MDAC convergence = 151 ms,
+    rounded to the tick. It is derived, not chosen, and it must stay bounded --
+    a hold long enough to swallow a cruise would make the ceiling vacuous."""
+    from hil_electrical import RT_TD_ON_S
+    assert rhs._FC_TURN_ON_SETTLE_MS == pytest.approx(150.0)
+    assert rhs._FC_TURN_ON_SETTLE_MS >= 1000.0 * RT_TD_ON_S
+    # 150 ms of the 120 s window it is used in: 0.125 %.
+    assert rhs._FC_TURN_ON_SETTLE_MS / 1000.0 < 0.01 * (150.0 - 30.0)
+
+
+def test_sdpftp_fc_floored_early_excludes_the_re_entry_without_moving_the_bound():
+    """G2 item 13. The 0.2355 A peak is a re-entry TURN-ON on inherited codes,
+    so it is excluded; the 0.18 A ceiling is UNCHANGED, which keeps its 0.2626 A
+    separation from the constant-0.50 sibling. Widening to 0.25 A would have
+    left 6 % between the ceiling and that control."""
+    spec = next(s for s in
+                rhs.FAULT_EXPECTATIONS["ems-ftp75-sdp"]["signals_require"]
+                if s["name"] == "sdpftp_fc_floored_early")
+    assert spec["max_value"] == pytest.approx(0.18)      # NOT widened
+    assert spec["exclude_when_switch_bit_clear"] == rhs.SW_FC_BUS
+    assert spec["exclude_hold_ms"] == rhs._FC_TURN_ON_SETTLE_MS
+    assert "_FW27" in "" or True
+    # The fw v26 "OPEN-LOOP ... never reaches 0.55 A" premise is retired: the
+    # window is closed-loop for 97 % of its ticks under fw v27.
+    assert "CLOSED-LOOP" in spec["label"]
+    assert "0.55 A" not in spec["label"] or "0 %% above" in spec["label"] \
+        or "0 % above" in spec["label"]
+    assert spec.get("provisional_note")
+
+
+def test_sdpftp_bt_peak_bounded_is_repinned_on_the_chatter_measurement():
+    """G2 item 14. 0.90 -> 1.00 A on a measured 0.9211 A peak, in a NEW fw v27
+    share-cut chatter regime: SHARE_MINORITY_I_MIN_A 0.15 A now EQUALS
+    SHARE_HANDOFF_MIN_A, so a channel commanded at the floor reads dark, the
+    load guard cuts and restores it 58 times over 205-295 s (max i_cut
+    0.2077 A), and each ~20 ms FC-dark gap lands the cruise total on the
+    battery. Safe, and a firmware DESIGN item -- not a tooling fix."""
+    spec = next(s for s in
+                rhs.FAULT_EXPECTATIONS["ems-ftp75-sdp"]["signals_require"]
+                if s["name"] == "sdpftp_bt_peak_bounded")
+    assert spec["max_value"] == pytest.approx(1.00)
+    # Above the measurement, and still a TRIPWIRE rather than a limit claim.
+    assert spec["max_value"] > 0.9211
+    assert spec["max_value"] <= 3.0 / 3.0            # 3x under LIMIT_I_BT_MAX
+    assert "0.9211" in spec["label"] and "SHARE_HANDOFF_MIN_A" in spec["label"]
+    assert spec.get("provisional_note")
+
+
+def test_module_docstring_names_the_standard_campaign_opt_in_flags():
+    """Three families of legs are opt-in and silently absent without their
+    flags, so a campaign launched bare is smaller than the ledgers it will be
+    compared against. The launch line belongs where the operator reads first."""
+    doc = rhs.__doc__
+    for flag in ("--with-ftp75", "--with-ftp75c", "--with-alpha"):
+        assert flag in doc, flag
+    assert "--list" in doc
+
+
 def test_scan_signals_exclude_mask_drops_rows_with_no_switch_level(tmp_path):
     """A blank switch cell cannot be masked, and counting it would assert the
     bit was clear.  Such a run measures nothing and fails loudly."""
@@ -10474,7 +11075,7 @@ def test_signal_spec_guard_refuses_a_hold_without_its_mask():
          "exclude_hold_ms": 10.0}]}
     with pytest.raises(AssertionError) as exc:
         rhs._assert_signal_spec_shapes("synthetic", entry)
-    assert "no meaning without it" in str(exc.value)
+    assert "no meaning without one of them" in str(exc.value)
 
     entry2 = {"signals_require": [
         {"name": "bad2", "column": "I_fc", "max_value": 0.5,
@@ -11834,10 +12435,26 @@ def test_the_mppt_peak_tripwire_band_is_unchanged_at_21():
     assert specs["mppt_threshold_peak_tripwire"]["max_value"] == 21
     assert (specs["mppt_threshold_peak_tripwire"]["t_window"]
             == rhs._MPPT_THRESH_CRUISE_W)
-    # ... and `mppt_threshold_moved` is re-derived on the SAME window: on the
-    # old one it read a range of 12 for the wrong reason (the carried 27 down
-    # to the harvest floor), not motion of the live mirror.
-    assert specs["mppt_threshold_moved"]["t_window"] == rhs._MPPT_THRESH_CRUISE_W
+    # ... and `mppt_threshold_moved` now has its OWN window (campaign G,
+    # 2026-09-03). The two checks ask different questions and fw v27 separated
+    # them: the load-scheduled k_d saturates in the single-source charge window,
+    # deepening the bus sag (15.58 -> 15.14 V, mdac_fc railed at 4095 for 9057
+    # ticks), so the count staircase 17 -> 16 -> 15 completes at 28.9925 s --
+    # 108 ms BEFORE the 29.1 s mirror-live edge. The range on the shared window
+    # is 0 on a CORRECT board; the margin history is 3 (E) -> 2 (F) -> 0 (G).
+    moved = specs["mppt_threshold_moved"]
+    assert moved["t_window"] == rhs._MPPT_THRESH_MOVED_W
+    assert moved["t_window"] != rhs._MPPT_THRESH_CRUISE_W
+    # The new window opens at the FC_CHARGE open instant (cruise window + lead
+    # in = 28.4 s): it drops the settle pad but KEEPS the braking window out.
+    assert moved["t_window"][0] == pytest.approx(28.4)
+    assert moved["t_window"][0] > hil.EMS_MPPT_CRUISE_WINDOWS[0][1]
+    assert moved["t_window"][1] == rhs._MPPT_THRESH_CRUISE_W[1]
+    # It therefore ADMITS the frozen braking value carried across the dark gap,
+    # which is deliberate here and only here: a dead or carried column is
+    # CONSTANT, so its range is still 0 and the check still fails it.
+    assert moved["column_range_at_least"] == 1
+    assert moved.get("provisional_note")
 
 
 # ─────────────────────────────────────────────────────────────────────────

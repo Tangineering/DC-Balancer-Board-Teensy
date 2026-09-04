@@ -7702,7 +7702,41 @@ EMS_Y_DURATION_S = EMS_Y_RUN_EXIT_S + 3.0   # 49.0
 # ⚠️ These are the MODEL's currents (M_EFF/K_F/F_COULOMB/B_EFF + the droop bus,
 # constants at the top of this file), not measurements. A campaign that misses
 # the fc_current_biased check should move THIS number, never the check.
-Y_AUX_LOAD_A = 0.85
+#
+# ── AUX ERA 2026-09-03: RAISED 0.85 -> 0.91 A (campaign G) ───────────────────
+# The SAME migration the `fw26-clamp-*` legs received at the `I_AUX_A`
+# 0.15 -> 0.09 A ruling (see FW26_CLAMP_CRUISE_LOAD_A 1.85 -> 1.91 and
+# FW26_CLAMP_SWEEP_PRELOAD_A / FW26_CLAMP_JOINT_*), which the `ems-y-*` legs
+# were the only stimulus NOT to receive.  Campaign G measured the consequence
+# and it is exactly the aux cut, to 0.0001 A:
+#
+#   ems-y-b30-v1 region-6 window [22.2, 23.3] s, source total peak
+#     campaign F (I_AUX_A 0.15)  1.0542 A at t = 22.200312 s
+#     campaign G (I_AUX_A 0.09)  0.9941 A at t = 22.200250 s   delta -0.0601 A
+#   standstill total, t in [1.0, 3.5] s (aux only)
+#     campaign F  0.1508 A       campaign G  0.0908 A          delta -0.0600 A
+#
+# So the whole window deficit is the aux term (residual -0.0001 A, noise);
+# nothing in fw v27 rev 2 — not the battery-only start, not the scheduled k_d,
+# not the motor axis — contributes at this window.  `_Y_ITOT_FLOOR_A` (1.02 A,
+# run_hil_suite.py) is a fixed STIMULUS GUARD that does not track firmware
+# constants by design, so the un-migrated preload failed it on a delivered
+# 0.9941 A.  Restoring the preload restores the designed R6 totals
+# (~1.054 -> ~1.114 A at Vmax 1) rather than lowering the guard, which is what
+# the guard exists to refuse.
+#
+# ⚠️ THIS IS A STIMULUS CHANGE, like the 0.60 -> 0.85 one above: every b30
+# current and margin in this banner moves with it, and campaign G's b30 numbers
+# are the last taken at 0.85 A.  The 0.85 A derivation is left standing rather
+# than rewritten — it is the argument, and only the aux term under it moved.
+# Re-reading it at 0.91 A: the region-6 break-even is unchanged at 1.000 A of
+# total (it is set by SHARE_MINORITY_I_MIN_A/b, not by aux), and
+# I_AUX_A 0.09 + 0.91 + i_motor 0.048 = 1.048 A restores the same 4.8 % margin
+# the 0.85 A choice was sized for.  The closed-loop GATE is easier still at
+# fw v27 (2*SHARE_MINORITY_I_MIN_A halved 0.60 -> 0.30 A): the binding
+# standstill case is 0.09 + 0.91 = 1.000 A, 233 % clear.
+# PROVISIONAL until a second campaign confirms the restored R6 totals.
+Y_AUX_LOAD_A = 0.91
 
 
 def make_ems_y(vmax, b):
@@ -10372,9 +10406,16 @@ SCENARIOS["ems-sdp-cross"] = {
                     "opens on the table's battery-heavy branch (commanded "
                     "share 0.15), crosses the SHARE threshold downward to 0.85 "
                     "at t = 42.3 s, then settles into the CHARGE threshold's "
-                    "own limit cycle — nine minimum-dwell charge windows at a "
-                    "16.13 s period across the low cruise (measured, campaign "
-                    "20260901_024231). The upward share crossing is not "
+                    "own limit cycle — FIVE minimum-dwell charge windows at a "
+                    "25.2 s period across the low cruise (measured on fw v27 "
+                    "rev 2, campaign G hil_report_20260903_233736; the nine "
+                    "windows at a 16.13 s period recorded here previously are "
+                    "fw v26, campaign 20260901_024231, and are not comparable: "
+                    "the low cruise's 0.2817 A total sits between fw v27's "
+                    "0.25 A closed-loop exit and 0.30 A entry, so the loop stays "
+                    "closed, the empty minority band pins the delivered split at "
+                    "0.5000, the pack drain halves and the period stretches). "
+                    "The upward share crossing is not "
                     "attempted on "
                     "this rig (it would need a >2.25 A PACK-side charge "
                     "ceiling, whose bus-side draw leaves only ~10-15 %% under "

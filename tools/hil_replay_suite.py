@@ -311,6 +311,38 @@ def entry_preamble_s(entry):
     --replay-no-preamble to the simulator, see build_sim_argv)."""
     return 0.0 if (entry or {}).get("skip_preamble") else REPLAY_PREAMBLE_S
 
+
+# ── The SCORING window start, which is NOT the preamble bound (R6, 2026-09-04) ─
+# entry_preamble_s() answers "where does the recorded trajectory start on the sim
+# clock" — a TIME-BASE question, and it is 0.0 for a skip_preamble entry because
+# that entry's two axes coincide.  The rate-based checks and the censuses ask a
+# DIFFERENT question: "from when is an observation worth scoring".  Those two
+# coincided for 26 of 27 entries and were therefore conflated into one number.
+#
+# ML0217 is the entry where they come apart, and campaign 20260903_233736 measured
+# the consequence: with window_start = its preamble bound of 0.0, its recorded
+# window opens on 2499 ticks of the PREDECESSOR's frozen MDAC state (TP0210's
+# carried-in code 1220, held identically across [0, 0.500441 s) until the fw v23
+# warm reset, then held again by its own INIT_FAIL latch at 0.801428 s) and on 4
+# carried-in switch transitions.  Every other entry has that same carried-in
+# window excluded for free, because REPLAY_PREAMBLE_S covers it.  Scoring one
+# entry's inherited state while excluding all the others' is the asymmetry this
+# closes: the window start is REPLAY_PREAMBLE_S for EVERY entry.
+#
+# MEASURED EFFECT on ML0217 (campaign 20260903_233736): switch_transitions
+# 4 -> 0, recorded-window samples 38430 -> 35931.  No check moves — ML0217's only
+# check is `init_fail_latched`, a fault check, and fault checks are scoped by
+# WARM_RESET_GRACE_S, never by this bound.  The absolute-latch anchor it reads
+# (0.8015 s, inside the excluded window) is likewise untouched: state_entry_t()
+# and `faults_all` read the WHOLE run by construction.
+def scoring_window_start_s(entry):
+    """Sim time from which an observation is scored, for ANY entry.
+
+    Deliberately entry-independent: unlike entry_preamble_s(), a skip_preamble
+    entry gets the same bound as every other one (see the block above)."""
+    del entry                       # signature kept for a future per-entry rule
+    return REPLAY_PREAMBLE_S
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Firmware-version deltas that matter when reading a replay result.
 # ─────────────────────────────────────────────────────────────────────────────
@@ -426,7 +458,23 @@ FW_DELTA_NOTES = {
 # The clamp itself cannot reach a replay: every replay is single-source or below
 # the 1.55 A two-source reachability threshold, so no entry's conformance or
 # stability classification moves either.
-TARGET_FW_VERSION = 26
+# 26 -> 27 (2026-09-04): fw v27 (rev 2) is the target.  UNLIKE every bump above,
+# this one IS visible in the replay half — campaign 20260903_233736 measured it on
+# three axes, none of which any check read before this round:
+#   (1) BATTERY-ONLY START.  All 15 opt-in entries enter State 2 at switch 0x26
+#       (FC_BUS LOW) where every source log had it HIGH, dwelling 774 ms (ML0169)
+#       to 3043 ms (ML0203) until the reconstructed filtered total crosses the
+#       2 * SHARE_MINORITY_I_MIN_A = 0.30 A gate.  See bus_topology_census().
+#   (2) THE MDAC g>1 CLAMP (.ino:11882), dead on fw v26 at k_d = K_DROOP, now
+#       live under the load-scheduled k_d: up to 32 865 saturated FC writes
+#       (code 4095) against 0 on every fw v26 campaign.  See
+#       _mdac_saturation_stats().
+#   (3) THE SHARE-CUT CENSUS at 5.3x its fw v26 spread — the closed-loop entry
+#       gate halved (0.60 -> 0.30 A).  See share_cut_census().
+# COMPARABLE_FW_MIN still stays 18: v27 changed no encoder constant and no drive
+# coefficient, so no entry's conformance/stability classification moves.  The
+# three axes above are OBSERVABILITY, reported and tracked, not re-classification.
+TARGET_FW_VERSION = 27
 # Logs at or above this fw version share the current control law AND wheel.
 COMPARABLE_FW_MIN = 18
 
@@ -732,10 +780,15 @@ REPLAY_SUITE = [
                     # so setpoint TRACKING is deliberately not asserted.
                     },
                    {"kind": "drive_loop_stepped", "name": "drive_loop_stepped",
-                    # FU3: measured 0.696 of the recorded window over
-                    # threshold (round-1 campaign 20260831_000518);
-                    # floor set at half that.
-                    "drive_min_frac": 0.35},
+                    # FU3 read 0.696 on the DILUTED denominator (round-1
+                    # campaign 20260831_000518) and the floor was 0.35; that
+                    # denominator carried 10234 post-latch dead ticks.
+                    # R4 RE-PIN 2026-09-04: ending the window at the State-99
+                    # latch (see ReplayCsv.first_latch_t), campaign
+                    # 20260903_233736 measured 0.909 of the recorded window over
+                    # threshold (30502 / 33549); floor set at half that. The
+                    # floor RISES, so the check gets stricter, not laxer.
+                    "drive_min_frac": 0.45},
             {"kind": "bounded_current", "name": "bounded_current"},
         ],
     },
@@ -995,10 +1048,13 @@ REPLAY_SUITE = [
         "checks": [{"kind": "fault_latched", "name": "oc_fc_latched",
                     "bit": FAULT_OC_FC, "require_stimulus": True},
                    {"kind": "drive_loop_stepped", "name": "drive_loop_stepped",
-                    # FU3: measured 0.404 of the recorded window over
-                    # threshold (round-1 campaign 20260831_000518);
-                    # floor set at half that.
-                    "drive_min_frac": 0.20},
+                    # FU3 read 0.404 on the DILUTED denominator (round-1
+                    # campaign 20260831_000518) and the floor was 0.20; that
+                    # denominator carried 20616 post-latch dead ticks.
+                    # R4 RE-PIN 2026-09-04: latch-bounded, campaign
+                    # 20260903_233736 measured 0.868 of the recorded window over
+                    # threshold (15606 / 17980); floor set at half that.
+                    "drive_min_frac": 0.43},
                    {"kind": "bounded_current", "name": "bounded_current"}],
     },
     {
@@ -1024,10 +1080,17 @@ REPLAY_SUITE = [
         "checks": [{"kind": "fault_latched", "name": "oc_fc_latched",
                     "bit": FAULT_OC_FC, "require_stimulus": True},
                    {"kind": "drive_loop_stepped", "name": "drive_loop_stepped",
-                    # FU3: measured 0.084 of the recorded window over
-                    # threshold (round-1 campaign 20260831_000518);
-                    # floor set at half that.
-                    "drive_min_frac": 0.04},
+                    # FU3 read 0.084 on the DILUTED denominator (round-1
+                    # campaign 20260831_000518) and the floor was 0.04.
+                    # R4 RE-PIN 2026-09-04, and THIS is the entry the R4 change
+                    # exists for: 87.5 % of that 18714-sample window was
+                    # post-latch (the OC_FC crossing is at 4.836 s), so 0.084
+                    # was 1569 / 18714 — a number set by the dead window, not by
+                    # the command path, and the 4 % floor it produced asserted
+                    # almost nothing. Latch-bounded, campaign 20260903_233736
+                    # measured 0.672 of the recorded window over
+                    # threshold (1569 / 2336); floor set at half that.
+                    "drive_min_frac": 0.33},
                    {"kind": "bounded_current", "name": "bounded_current"}],
     },
     {
@@ -1746,7 +1809,7 @@ class ReplayCsv:
     """Parsed replay CSV: parallel lists, blanks dropped per-series."""
 
     def __init__(self, rows, columns, grace_s=REPLAY_GRACE_S,
-                 preamble_s=REPLAY_PREAMBLE_S):
+                 preamble_s=REPLAY_PREAMBLE_S, window_start_s=None):
         self.columns = columns
         self.rows = rows
         self.grace_s = grace_s
@@ -1755,13 +1818,19 @@ class ReplayCsv:
         # BOARD (the previous run's inherited latch), preamble_s is about the
         # STIMULUS (rails this module synthesized rather than recorded).
         self.preamble_s = preamble_s
+        # R6 (2026-09-04): the SCORING window start, defaulting to preamble_s so
+        # every existing construction site is bit-identical.  Distinct from
+        # preamble_s for a skip_preamble entry only — see scoring_window_start_s().
+        self.window_start_s = (preamble_s if window_start_s is None
+                               else float(window_start_s))
         # (t, value) series with blanks removed.
         self.current = _series(rows, "t", "current", float)
         # M6: the command series restricted to the RECORDED window.  Rate-based
         # checks must not dilute their denominator with preamble seconds during
         # which no recorded stimulus existed — a 2.5 s preamble on a 4 s log
         # (ML0137) would understate an alternation rate by 1.6x.
-        self.current_recorded = [(t, i) for t, i in self.current if t >= preamble_s]
+        self.current_recorded = [(t, i) for t, i in self.current
+                                 if t >= self.window_start_s]
         # `faults_all` is every observed fault sample; `faults` is the GRACE-FILTERED
         # view and is what every check below reads.  The two are separate attributes
         # rather than a flag so a check cannot silently pick the wrong one: the
@@ -1782,7 +1851,8 @@ class ReplayCsv:
         # window.  Both are observation-frame columns and are blank before the
         # first frame arrives, so _series drops those rows for us.
         self.switch = _series(rows, "t", "switch", _int_any)
-        self.switch_recorded = [(t, s) for t, s in self.switch if t >= preamble_s]
+        self.switch_recorded = [(t, s) for t, s in self.switch
+                                if t >= self.window_start_s]
         self.mdac_fc = _series(rows, "t", "mdac_fc", _int_any)
         self.mdac_bt = _series(rows, "t", "mdac_bt", _int_any)
         self.n_rows = len(rows)
@@ -1799,6 +1869,37 @@ class ReplayCsv:
         happened" would be wrong; both numbers are shown."""
         for t, f in self.faults_all:
             if (f & bit) if bit is not None else f:
+                return t
+        return None
+
+    # ── The LATCH bound for rate-based checks (R4, 2026-09-04) ───────────────
+    # THE PROBLEM IT FIXES.  `drive_loop_stepped` and `share_loop_actuated` score
+    # a FRACTION of the recorded window, and State 99 is LATCHED: once the board
+    # is there, `vesc.setCurrent(0)` holds the command at 0 A and the MDAC mirror
+    # freezes at its last written word for the whole remainder of the run, while
+    # the simulator keeps streaming.  Those dead ticks land in the DENOMINATOR.
+    # Measured, campaign 20260903_233736: ML0169 latches at t = 4.836 s of an
+    # 18.7 s window, so 87.5 % of its denominator is post-latch and its
+    # `drive_loop_stepped` fraction reads 1569/18714 = 8.4 %.  Its floor had been
+    # pinned at 4 % to accommodate exactly that — a floor set by a measurement
+    # artefact rather than by the command path's real duty, which is the wrong
+    # end of the problem to fix.  ML0165 (10234 post-latch ticks) and ML0203
+    # (16377) carry the same dilution.
+    #
+    # STATE, NOT FAULT BITS, is the marker.  `fault_flags` distinguishes a
+    # transient indication from a latch only through the fault checks' own
+    # machinery (see check_fault_latched), whereas mainState 99 IS the latched
+    # condition and is reported directly in the CSV's `state` column.
+    def first_latch_t(self):
+        """Sim time the board first reported mainState 99 inside the scoring
+        window, or None if it never latched there.
+
+        Restricted to t >= window_start_s so a predecessor's carried-in State 99
+        — every run in a campaign starts latched until the fw v23 warm reset —
+        cannot be read as this run's own latch and truncate the window to
+        nothing."""
+        for t, st in self.state:
+            if t >= self.window_start_s and st == 99:
                 return t
         return None
 
@@ -1948,7 +2049,7 @@ def _series(rows, t_key, key, conv):
     return out
 
 
-def load_replay_csv(csv_path, preamble_s=REPLAY_PREAMBLE_S):
+def load_replay_csv(csv_path, preamble_s=REPLAY_PREAMBLE_S, window_start_s=None):
     with open(csv_path, "r", newline="") as fh:
         reader = csv.DictReader(fh)
         columns = list(reader.fieldnames or [])
@@ -1959,7 +2060,8 @@ def load_replay_csv(csv_path, preamble_s=REPLAY_PREAMBLE_S):
             f"{csv_path} is missing column(s) {missing} — is it a hil_plant_sim CSV?")
     if not rows:
         raise ValueError(f"{csv_path} has no data rows")
-    return ReplayCsv(rows, columns, preamble_s=preamble_s)
+    return ReplayCsv(rows, columns, preamble_s=preamble_s,
+                     window_start_s=window_start_s)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -2681,17 +2783,36 @@ MDAC_CMD_LOAD_UPDATE = 0x1000
 MDAC_CODE_MASK = 0x0FFF
 
 
+# AD5443 full-scale code. A write AT this code is the MDAC rail, and from fw v27
+# rev 2 it is REACHED: the firmware's g > 1 clamp (.ino:11882) saturates the
+# channel code whenever the load-scheduled droop gain k_d asks for more than full
+# scale, which happens below the ~0.906 A crossover. See _mdac_saturation_stats().
+MDAC_CODE_FULL_SCALE = 0x0FFF
+
+
 def _mdac_share_ratio_series(data):
-    """(t, r) with r = BT_code / (FC_code + BT_code) over the RECORDED window.
+    """(t, r) with r = BT_code / (FC_code + BT_code) over the SCORING window.
 
     This is the DROOP-GAIN split the firmware actually wrote to the two MDACs —
     the share loop's actuator, and the only share-side observable the 16-byte
     observation frame carries. Samples are skipped when either word is blank,
-    carries a non-load-update control nibble, or the codes sum to zero."""
+    carries a non-load-update control nibble, or the codes sum to zero.
+
+    WARNING: R3 (2026-09-04) - r IS NOT THE COMMANDED SPLIT ON A SATURATED SAMPLE.
+    When either code sits at MDAC_CODE_FULL_SCALE the firmware's g > 1 clamp is
+    binding and the written code is the RAIL, not the value the share loop asked
+    for; r then reports the ratio of a clipped number to an unclipped one. On fw
+    v26 this could not happen on a replay (the clamp is dead at k_d = K_DROOP —
+    0 saturated ticks on all 27 entries in campaigns D/E/F), so the caveat did not
+    exist. On fw v27 rev 2 it is the COMMON case: campaign 20260903_233736
+    measured 68.4-92.5 % of the ratio samples saturated on the five
+    share_loop_actuated entries. Callers must report _mdac_saturation_stats()
+    alongside any conclusion drawn from this series."""
+    win = getattr(data, "window_start_s", data.preamble_s)
     fc = dict(data.mdac_fc)
     out = []
     for t, bw in data.mdac_bt:
-        if t < data.preamble_s:
+        if t < win:
             continue
         fw = fc.get(t)
         if fw is None:
@@ -2703,6 +2824,55 @@ def _mdac_share_ratio_series(data):
             continue
         out.append((t, b / float(a + b)))
     return out
+
+
+def _mdac_saturation_stats(data, until_t=None):
+    """How much of the ratio series was written at the MDAC rail.
+
+    Returns {"n", "n_sat", "n_sat_fc", "n_sat_bt", "frac"} over the same window
+    and the same word filter _mdac_share_ratio_series() uses, optionally
+    truncated at `until_t` so a caller can match a latch-bounded window.
+
+    MECHANISM (fw v27 rev 2, .ino:11882): the g > 1 clamp writes full scale
+    whenever the load-scheduled k_d asks for a gain above unity, which it does
+    below the ~0.906 A per-channel crossover. Campaign 20260903_233736 measured
+    up to 32865 saturated FC writes on ML0151 (55.6 % of its samples) and 11754
+    saturated BT writes on YP0166, against ZERO on every fw v26 campaign."""
+    win = getattr(data, "window_start_s", data.preamble_s)
+    fc = dict(data.mdac_fc)
+    n = n_sat = n_fc = n_bt = 0
+    for t, bw in data.mdac_bt:
+        if t < win or (until_t is not None and t >= until_t):
+            continue
+        fw = fc.get(t)
+        if fw is None:
+            continue
+        if (fw & 0xF000) != MDAC_CMD_LOAD_UPDATE or (bw & 0xF000) != MDAC_CMD_LOAD_UPDATE:
+            continue
+        a, b = fw & MDAC_CODE_MASK, bw & MDAC_CODE_MASK
+        if a + b == 0:
+            continue
+        n += 1
+        sat_fc, sat_bt = a == MDAC_CODE_FULL_SCALE, b == MDAC_CODE_FULL_SCALE
+        n_fc += sat_fc
+        n_bt += sat_bt
+        n_sat += bool(sat_fc or sat_bt)
+    return {"n": n, "n_sat": n_sat, "n_sat_fc": n_fc, "n_sat_bt": n_bt,
+            "frac": (n_sat / float(n)) if n else 0.0}
+
+
+def _mdac_saturation_tag(data, until_t=None):
+    """One sentence of R3 caveat, or "" when nothing saturated."""
+    st = _mdac_saturation_stats(data, until_t=until_t)
+    if not st["n_sat"]:
+        return ""
+    return (" WARNING: MDAC-SATURATED on %d of %d samples (%.1f%%; FC %d, BT %d): the "
+            "firmware's g > 1 clamp (.ino:11882) wrote full-scale code %d, so on "
+            "those samples r is the ratio of a RAILED code and is NOT the "
+            "commanded split. New on fw v27 rev 2 — 0 saturated ticks on every fw "
+            "v26 campaign."
+            % (st["n_sat"], st["n"], st["frac"] * 100.0, st["n_sat_fc"],
+               st["n_sat_bt"], MDAC_CODE_FULL_SCALE))
 
 
 def check_share_loop_actuated(data, spec):
@@ -2728,10 +2898,27 @@ def check_share_loop_actuated(data, spec):
     min_span = float(spec.get("min_span", SHARE_ACTUATED_MIN_SPAN))
     min_n = int(spec.get("min_samples", SHARE_ACTUATED_MIN_SAMPLES))
     series = _mdac_share_ratio_series(data)
+    # R4 (2026-09-04): the MDAC mirror FREEZES at its last written word for the
+    # whole post-latch remainder of the run (measured: ML0203 10234 frozen ticks
+    # at saturated code 4095, ML0165 20616, ML0169 16377), so a latched window
+    # keeps reporting a split the loop is no longer computing. End the window at
+    # the latch. Span is a max-minus-min, so this can only shrink it - the check
+    # gets STRICTER, never laxer.
+    latch_t = data.first_latch_t()
+    latch_note = ""
+    if latch_t is not None:
+        n_before = len(series)
+        series = [tv for tv in series if tv[0] < latch_t]
+        latch_note = (" Window ENDED at the State-99 latch, t=%.3fs: %d of %d "
+                      "samples dropped as frozen post-latch mirror."
+                      % (latch_t, n_before - len(series), n_before))
+    sat_note = _mdac_saturation_tag(data, until_t=latch_t)
     if len(series) < min_n:
         return False, (
-            f"only {len(series)} usable MDAC sample(s) in the recorded window "
-            f"(t >= {data.preamble_s:.1f}s, need >= {min_n}) — both mdac_fc and "
+            f"only {len(series)} usable MDAC sample(s) in the scored window "
+            f"(t >= {data.window_start_s:.1f}s"
+            + (f", t < {latch_t:.3f}s" if latch_t is not None else "")
+            + f", need >= {min_n}) — both mdac_fc and "
             f"mdac_bt must carry a 0x1nnn load-and-update word for a ratio to "
             f"exist, so this is 'not measured', not 'did not move'")
     lo_t, lo = min(series, key=lambda tv: tv[1])
@@ -2740,17 +2927,18 @@ def check_share_loop_actuated(data, spec):
     if span < min_span:
         return False, (
             f"the share actuator did not move: MDAC ratio r = BT/(FC+BT) spanned "
-            f"only {span:.4f} over {len(series)} recorded-window samples "
+            f"only {span:.4f} over {len(series)} scored-window samples "
             f"({lo:.4f} at t={lo_t:.3f}s .. {hi:.4f} at t={hi_t:.3f}s), need "
             f">= {min_span:.2f}. This entry's recorded share_sp varies, so a flat "
             f"split means the command did not reach the share loop or the MDAC "
-            f"write path is broken")
+            f"write path is broken" + latch_note + sat_note)
     return True, (
         f"share actuator moved: MDAC ratio r = BT/(FC+BT) spanned {span:.4f} "
         f"({lo:.4f} at t={lo_t:.3f}s .. {hi:.4f} at t={hi_t:.3f}s) over "
-        f"{len(series)} recorded-window samples, need >= {min_span:.2f}. "
+        f"{len(series)} scored-window samples, need >= {min_span:.2f}. "
         f"ACTUATION ONLY — open-loop replay winds the share PI regardless, so "
-        f"this is NOT evidence the split tracked the commanded setpoint")
+        f"this is NOT evidence the split tracked the commanded setpoint"
+        + latch_note + sat_note)
 
 
 def check_drive_loop_stepped(data, spec):
@@ -2782,9 +2970,39 @@ def check_drive_loop_stepped(data, spec):
     min_n = int(spec.get("min_samples", DRIVE_STEPPED_MIN_SAMPLES))
     min_frac = spec.get("drive_min_frac")
     series = data.current_recorded or data.current
+    # R4 (2026-09-04): State 99 is LATCHED and holds the motor command at 0 A
+    # (vesc.setCurrent(0)) while the simulator keeps streaming, so every
+    # post-latch tick is a guaranteed sub-threshold sample sitting in the
+    # DENOMINATOR of `frac`. Measured, campaign 20260903_233736: ML0169 latches
+    # at 4.836 s and 87.5 % of its 18714-sample window is post-latch, dragging
+    # its fraction to 1569/18714 = 8.4 % - which is why its floor had been pinned
+    # at 4 %, a number set by the dead window rather than by the command path.
+    # Ending the window at the latch measures the LIVE window instead: ML0169
+    # 1569/2336 = 67.2 %, ML0165 15606/17980 = 86.8 % (was 40.4 %), ML0203
+    # 30502/33549 = 90.9 % (was 69.7 %).
+    # THE THREE AFFECTED FLOORS ARE RE-PINNED WITH IT (M-5, 2026-09-04). Leaving
+    # them at the diluted-era values would have kept ML0169's floor at 4 % - a
+    # bound derived from the artefact this change removes, and one that asserts
+    # essentially nothing about the command path. Each is re-derived by the same
+    # measured-and-halved rule the entries always used, now applied to the
+    # LATCH-BOUNDED measurement: ML0169 0.04 -> 0.33, ML0165 0.20 -> 0.43,
+    # ML0203 0.35 -> 0.45. All three floors RISE, so no bound was widened to
+    # absorb anything; each entry still clears its floor by ~2x.
+    latch_t = data.first_latch_t()
+    latch_note = ""
+    if latch_t is not None:
+        n_before = len(series)
+        series = [tv for tv in series if tv[0] < latch_t]
+        latch_note = (" Window ENDED at the State-99 latch, t=%.3fs: %d of %d "
+                      "samples dropped as post-latch dead ticks (the command is "
+                      "held at 0 A there and would only dilute the fraction)."
+                      % (latch_t, n_before - len(series), n_before))
     if not series:
-        return False, ("no observation frames in the recorded window "
-                       "(t >= %.1fs) — the board never answered" % data.preamble_s)
+        return False, (
+            "no observation frames in the scored window (t >= %.1fs%s) - the "
+            "board never answered, or it latched before any command landed"
+            % (data.window_start_s,
+               "" if latch_t is None else ", t < %.3fs" % latch_t))
     n = sum(1 for _t, i in series if abs(i) >= min_a)
     frac = n / float(len(series))
     peak_t, peak = max(series, key=lambda tv: abs(tv[1]))
@@ -2793,24 +3011,24 @@ def check_drive_loop_stepped(data, spec):
         need += f" AND >= {float(min_frac) * 100:.0f}% of the window"
     if n < min_n:
         return False, (
-            f"the drive loop never stepped: only {n} of {len(series)} recorded-window "
+            f"the drive loop never stepped: only {n} of {len(series)} scored-window "
             f"samples have |I_cmd| >= {min_a:.2f} A ({need}); peak "
             f"{peak:+.4f} A at t={peak_t:.3f}s. Commands WERE replayed for this "
             f"entry, so a flat command means they did not reach the board, the "
             f"board never left Idle, or the recorded v_sp/share_sp are themselves "
-            f"identically zero")
+            f"identically zero" + latch_note)
     if min_frac is not None and frac < float(min_frac):
         return False, (
             f"the drive loop stepped but the command path looks DEGRADED: "
-            f"{n} of {len(series)} recorded-window samples ({frac * 100:.1f}%) have "
+            f"{n} of {len(series)} scored-window samples ({frac * 100:.1f}%) have "
             f"|I_cmd| >= {min_a:.2f} A, below this entry's own measured-and-halved "
             f"floor of {float(min_frac) * 100:.0f}%; peak {peak:+.4f} A at "
             f"t={peak_t:.3f}s. The absolute {min_n}-sample floor PASSED — that "
             f"floor sits orders of magnitude under normal activity and only "
-            f"catches a dead path, not a dying one")
-    return True, (f"drive loop stepped: {n} of {len(series)} recorded-window samples "
+            f"catches a dead path, not a dying one" + latch_note)
+    return True, (f"drive loop stepped: {n} of {len(series)} scored-window samples "
                   f"({frac * 100:.1f}%) have |I_cmd| >= {min_a:.2f} A ({need}); peak "
-                  f"{peak:+.4f} A at t={peak_t:.3f}s")
+                  f"{peak:+.4f} A at t={peak_t:.3f}s" + latch_note)
 
 
 def check_bounded_current(data, spec):
@@ -3115,9 +3333,30 @@ def check_latch_precedes_uv(data, spec):
 # is neither a scorer change (this function is byte-identical) nor the fw v26
 # clamp (the aux ceiling bits are zero on all 27 replays, every tick).
 # So: report the numbers, compare them across campaigns as a spread, and do NOT
-# open a finding on a count inside 118-157 or on a CSV-bounded current inside
+# open a finding on a count inside 118-786 or on a CSV-bounded current inside
 # ~0.57-0.76 A. A real verdict still needs a refused-cut counter on the
 # observation frame, which does not exist yet.
+#
+# WARNING: THE SPREAD IS RE-PINNED FOR THE fw v27 ERA (R2, 2026-09-04). The four
+# campaigns scored by this byte-identical function now read:
+#     20260902_041414 (fw v26)  118 cuts /  6 own-row > 0.5 A /  2 prev-row / peak 0.5722 A
+#     20260902_220604 (fw v26)  157 cuts / 10 own-row         /  9 prev-row / peak 0.7575 A
+#     20260903_063659 (fw v26)  149 cuts /  6 own-row         /  4 prev-row / peak 0.7333 A
+#     20260903_233736 (fw v27)  786 cuts / 45 own-row         / 21 prev-row / peak 0.7092 A
+# so the era-spanning spread is 118-786 and the fw v27 reading is 5.3x the fw v26
+# band. MECHANISM, and it is a FIRMWARE change, not scorer drift or noise: fw v27
+# rev 2 HALVED the closed-loop entry gate (0.60 -> 0.30 A =
+# 2 * SHARE_MINORITY_I_MIN_A), so injected totals that previously sat in
+# open-loop HOLD now sit inside the closed loop, where the open-loop share PI
+# winds against an error it cannot null and rails - and the cut count follows the
+# rail. Per entry: YP0166 0 -> 340 (336 of them BT_BUS), YP0214 9 -> 169, YP0196
+# 10 -> 107, YP0152 0 -> 31. The current bound did NOT move with the count (peak
+# own-row 0.7092 A, inside the established 0.57-0.76 A band), which is what
+# distinguishes "more decisions were taken" from "the decisions got worse".
+# WARNING: PROVISIONAL: 786 is ONE fw v27 campaign. It is the upper end of the spread
+# above, not a centre and not a pin. Re-read this comment after the next fw v27
+# campaign; if the second reading is far from 786 the spread widens again rather
+# than 786 being treated as the era's value.
 # ⚠️ The 163 / 8 / 4 / 0.6608 A figures quoted for campaign 20260902_011926 are
 # NOT this tool's numbers — they were derived by hand before the in-Run/state
 # gating and the teardown exclusion this function applies, so they do not belong
@@ -3194,6 +3433,107 @@ def check_share_cut_census(data, spec):
     return True, share_cut_census(data)["detail"]
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# THE REPLAY HALF'S BUS-TOPOLOGY CENSUS (R1, 2026-09-04, campaign 20260903_233736)
+#
+# THE HOLE IT CLOSES.  Before this, NO replay check read the `switch` column at
+# all: CHECK_KINDS had no switch kind, so the board could have run the entire
+# half on ONE SOURCE and all 138 rows would still have passed.  That was not
+# hypothetical - SY0001 already does it.  Its injected total is capped at 0.100 A,
+# structurally under the 2 * SHARE_MINORITY_I_MIN_A = 0.30 A closed-loop entry
+# gate, so FC_BUS never re-closes and it ran 2479 of 2479 Run ticks battery-only
+# with nothing reporting the fact.
+#
+# WHAT fw v27 rev 2 DID, measured across the 15 opt-in entries: every one of them
+# now ENTERS State 2 at switch 0x26 (FC_BUS LOW) where every source log had it
+# HIGH, and holds there 774 ms (ML0169) to 3043 ms (ML0203) until the
+# reconstructed filtered total crosses the 0.30 A gate.  Campaign F measured
+# fc_low_in_run = 0 on 11 of those 15.  A whole topology behaviour appeared
+# between two campaigns and the half was blind to it.
+#
+# WHY IT REPORTS AND NEVER FAILS.  There is no pinned expectation to assert yet:
+# one campaign is one reading, the dwell is a function of the injected current
+# trajectory (which differs per entry by design), and SY0001's 100 % is a KNOWN
+# and EXPLAINED coverage loss rather than a defect.  Pinning a band off a single
+# campaign is exactly the re-pin this project forbids.  So the census reports the
+# numbers on every entry, they become comparable across campaigns, and a
+# threshold can be pinned once a second campaign says what the spread is.
+#
+# PROVISIONAL, campaign 20260903_233736 - the FIRST reading, in-Run fc_low
+# fraction per opt-in entry:
+#   SY0001 2479/2479 = 1.000 (never re-closes; explained above)
+#   ML0137 0.458  ML0169 0.335  ML0140 0.306  ML0153 0.285  ML0203 0.199
+#   ML0146 0.182  ML0149 0.137  ML0165 0.132  ML0164 0.087  YP0152 0.061
+#   YP0214 0.060  YP0196 0.059  YP0166 0.059  ML0151 0.034
+# The 12 entries that do not replay commands never reach State 2, so their Run
+# denominator is 0 and the census reports "no Run ticks" rather than a fraction.
+def bus_topology_census(data):
+    """In-Run FC_BUS / BT_BUS occupancy over the scored window.
+
+    Returns a dict (never raises on a CSV missing a column - an absent series
+    simply yields zero Run ticks).  Pure over `data`."""
+    def _sampler(series):
+        times = [t for t, _ in series]
+        vals = [v for _, v in series]
+
+        def _at(t):
+            i = bisect.bisect_right(times, t)
+            return vals[i - 1] if i else None
+        return _at
+
+    state_at = _sampler(data.state)
+    run = fc_low = bt_low = both_low = 0
+    fc_low_first = fc_low_last = None
+    for t, s in data.switch_recorded:
+        # IN RUN only.  Init/Idle hold every bus switch LOW by design
+        # (safe defaults in setup(), CLAUDE.md section 2), so counting those
+        # would report "battery-only" for every entry and mean nothing.
+        if state_at(t) != 2:
+            continue
+        run += 1
+        lo_fc = not (s & SW_FC_BUS)
+        lo_bt = not (s & SW_BT_BUS)
+        if lo_fc:
+            fc_low += 1
+            if fc_low_first is None:
+                fc_low_first = t
+            fc_low_last = t
+        bt_low += lo_bt
+        both_low += bool(lo_fc and lo_bt)
+    frac = (fc_low / float(run)) if run else None
+    if not run:
+        detail = ("%s bus topology: NO Run ticks in the scored window, so the "
+                  "source log's FC_BUS/BT_BUS topology is not observable here. "
+                  "Expected on an entry without `replay_commands` - with no "
+                  "commander the board never leaves Idle and every bus switch is "
+                  "LOW by design." % INFORMATIONAL_PREFIX)
+    else:
+        detail = (
+            "%s bus topology over %d Run tick(s): FC_BUS LOW on %d (%.1f%%, "
+            "first t=%s, last t=%s), BT_BUS LOW on %d (%.1f%%), both LOW on %d. "
+            "NEW ON fw v27 rev 2: every opt-in entry now ENTERS Run at switch "
+            "0x26 (FC_BUS LOW) where its source log had FC_BUS HIGH, releasing "
+            "once the filtered total crosses the 2 * SHARE_MINORITY_I_MIN_A = "
+            "0.30 A closed-loop entry gate. A fraction of 1.000 means the entry "
+            "ran SINGLE-SOURCE end to end - SY0001 does, its injected total "
+            "being capped at 0.100 A, structurally under the gate. Reported, not "
+            "asserted: PROVISIONAL first reading, campaign 20260903_233736; a "
+            "band needs a second campaign."
+            % (INFORMATIONAL_PREFIX, run, fc_low, 100.0 * frac,
+               "-" if fc_low_first is None else "%.3f" % fc_low_first,
+               "-" if fc_low_last is None else "%.3f" % fc_low_last,
+               bt_low, 100.0 * bt_low / run, both_low))
+    return {"run_ticks": run, "fc_low_in_run": fc_low, "fc_low_frac": frac,
+            "bt_low_in_run": bt_low, "both_low_in_run": both_low,
+            "fc_low_first_t": fc_low_first, "fc_low_last_t": fc_low_last,
+            "detail": detail}
+
+
+def check_bus_topology_census(data, spec):
+    """CHECK_KINDS entry point.  Always passes; see bus_topology_census()."""
+    return True, bus_topology_census(data)["detail"]
+
+
 CHECK_KINDS = {
     "no_fault": check_no_fault,
     "latch_precedes_uv": check_latch_precedes_uv,
@@ -3210,6 +3550,10 @@ CHECK_KINDS = {
     "v_bus_min_in_band": check_v_bus_min_in_band,
     "i_fc_max_in_band": check_i_fc_max_in_band,
     "share_cut_census": check_share_cut_census,
+    # R1 (2026-09-04): the half's FIRST switch-column observable. Registered so
+    # an entry can carry it explicitly; like share_cut_census it is also appended
+    # to every entry as a note, and it never fails.
+    "bus_topology_census": check_bus_topology_census,
 }
 
 # Deferred from the guard block above: this one needs CHECK_KINDS, which only
@@ -3282,6 +3626,16 @@ def evaluate_replay_csv(entry, csv_path):
             "--replay-no-preamble), so sim time == log time and the board boots "
             "into the recording's own first samples. A bring-up failure is an "
             "expected outcome for such an entry, not an artefact.")
+        result["notes"].append(
+            f"R6 (2026-09-04): its SCORING WINDOW nevertheless starts at "
+            f"t >= {scoring_window_start_s(entry):.1f}s, the same bound every "
+            f"other entry gets for free from its preamble. Without it the "
+            f"rate-based checks and the censuses would score the PREDECESSOR's "
+            f"carried-in frozen state - measured on ML0217, campaign "
+            f"20260903_233736: 2499 ticks of TP0210's frozen MDAC code 1220 and "
+            f"4 carried-in switch transitions. Fault checks are unaffected: they "
+            f"are scoped by the grace bound and read the whole run for their "
+            f"absolute anchors.")
     result["notes"].append(
         f"Fault checks judge observations at t >= {REPLAY_GRACE_S:.1f}s only — "
         f"earlier bits are the previous run's inherited settle latch. A fault that "
@@ -3339,7 +3693,11 @@ def evaluate_replay_csv(entry, csv_path):
             "on an uncommanded stimulus, and are tagged NOT EXERCISED.")
 
     try:
-        data = load_replay_csv(csv_path, preamble_s=entry_preamble_s(entry))
+        # R6: the TIME BASE is per-entry (entry_preamble_s), the SCORING WINDOW
+        # is not (scoring_window_start_s).  They differ for a skip_preamble entry
+        # only; passing both explicitly is what stops them being conflated again.
+        data = load_replay_csv(csv_path, preamble_s=entry_preamble_s(entry),
+                               window_start_s=scoring_window_start_s(entry))
     except (OSError, ValueError) as exc:
         result["checks"].append({"name": "csv", "passed": False, "detail": str(exc)})
         # A5: `error` is the one metrics field the scenario analyzer sets on a
@@ -3436,6 +3794,20 @@ def evaluate_replay_csv(entry, csv_path):
     # entry can carry it explicitly the day one wants it per-entry; until then
     # the note and the structured `share_cut_census` field are where it lives.
     result["notes"].append(census["detail"])
+
+    # THE BUS-TOPOLOGY CENSUS, on EVERY entry (R1, 2026-09-04).  Same shape and
+    # the same reasoning as the share-cut census above: it asserts nothing, so it
+    # is a NOTE plus a structured field rather than a check row, and it must be
+    # on every entry because the finding it answers ("could this half have run
+    # single-source without anyone noticing?") is campaign-wide.
+    try:
+        topo = bus_topology_census(data)
+    except Exception as exc:                       # never let it kill a run
+        topo = {"detail": "%s bus-topology census unavailable: %s: %s"
+                          % (INFORMATIONAL_PREFIX, type(exc).__name__, exc)}
+    result["bus_topology_census"] = {k: v for k, v in topo.items()
+                                     if k != "detail"}
+    result["notes"].append(topo["detail"])
 
     # Item 5: substantive-vs-total counts, so a reader can see how much of a green
     # entry is actually evidence.  A check is "vacuous"/"not exercised" here only

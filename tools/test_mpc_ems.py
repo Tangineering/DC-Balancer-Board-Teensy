@@ -1998,16 +1998,26 @@ def test_the_feedforward_branch_is_numerically_inert_and_gate_1_still_holds():
             def patched(self, pre, r_hold, r_seed, charge_stages,
                         i_tot_oc=None, soc_hint=0.6, sp_acted=None,
                         run_seed=None, handoff=None, active=None,
-                        pre_ss=None):
+                        pre_ss=None, **kw):
                 # `pre_ss` (2026-09-03) is FORWARDED rather than dropped: this
                 # mutation disables the FEEDFORWARD seeds only, and a patch
                 # that also dropped the single-source demand would measure two
-                # mutations at once.
+                # mutations at once.  `**kw` carries the battery-only seeds
+                # (2026-09-04) for the same reason.
                 return orig(self, pre, r_hold, r_seed, charge_stages, i_tot_oc,
-                            soc_hint, None, None, None, active, pre_ss)
+                            soc_hint, None, None, None, active, pre_ss, **kw)
             s.planner.delivery_table = patched.__get__(s.planner, M.Planner)
         g = gm.GovernorModel(dt_s=M.GOV_TICK_S,
                              seed_r=sim.SOC_BAND_SHARE_NOMINAL)
+        # fw v27 rev 2 BATTERY-ONLY START (2026-09-04). The fixture claims to
+        # drive the model "the way the walk drives it", and `ems_walk.walk()`
+        # arms this at every profile entry (ems_walk.py:661) because the
+        # firmware does. Without the arm the FIXTURE's plant delivers a
+        # two-source split from tick 0 while the board delivers zero, so the
+        # Gate-1 number would be measured against a firmware that does not
+        # exist - and the delivery table's own battery-only branch would be
+        # scored as an error for predicting the board correctly.
+        g.arm_battery_only_start()
         prev = s.preview
         delivered = sim.SOC_BAND_SHARE_NOMINAL
         t = 0.0
@@ -2022,9 +2032,16 @@ def test_the_feedforward_branch_is_numerically_inert_and_gate_1_still_holds():
             share = float(out["power_share_setpoint"])
             for i in range(n_sub):
                 i_fc = delivered * i_tot
-                o = g.step(share, i_fc, i_tot - i_fc, True, True,
+                # THE SWITCH BELIEFS ARE FED BACK WHILE A CUT STANDS, exactly
+                # as the walk feeds them back (ems_walk.py:757): asserting both
+                # switches HIGH every tick trips the S1 self-heal and erases
+                # the very latch the battery-only start creates.
+                sw_fc = True if not g.state.sp_cut_fc else g.state.sw_fc
+                sw_bt = True if not g.state.sp_cut_bt else g.state.sw_bt
+                o = g.step(share, i_fc, i_tot - i_fc, sw_fc, sw_bt,
                            t + i * M.GOV_TICK_S)
-                delivered = g.delivered_share(o.r_applied, i_tot, True, True)
+                delivered = g.delivered_share(o.r_applied, i_tot,
+                                              o.fc_bus_req, o.bt_bus_req)
             t += 0.02
         return s.timing()["share_pred_err_mean"], s.share_pred_err_max
 
@@ -2033,8 +2050,17 @@ def test_the_feedforward_branch_is_numerically_inert_and_gate_1_still_holds():
     assert on_mean is not None and off_mean is not None
     # GATE 1, which is what this test is now for.
     assert on_mean < 5e-3, "the shipped model missed the Gate 1 band"
-    assert on_mean == pytest.approx(3.351401e-04, rel=1e-4)
-    assert on_max == pytest.approx(4.796814e-03, rel=1e-4)
+    # RE-PINNED 2026-09-04, and the fixture moved with it: the plant now arms
+    # the fw v27 rev 2 battery-only start (above), so the first ~5 s of the run
+    # delivers ZERO fuel-cell current the way the board does. On that corrected
+    # fixture the delivery table WITHOUT its battery-only branch scores a mean
+    # of 4.836e-02 - ten times outside the Gate-1 band - because it predicts the
+    # two-source split of the standing MDAC codes against a delivered 0.0, which
+    # is precisely the campaign-G defect. With the branch the mean is 1.424e-03
+    # and the residual is ONE stage: the release lands mid-stage at t = 6.04 s
+    # and the modelled crossing instant is not the plant's to the millisecond.
+    assert on_mean == pytest.approx(1.424147e-03, rel=1e-4)
+    assert on_max == pytest.approx(6.634062e-02, rel=1e-4)
     # THE RETIRED MUTATION, INVERTED RATHER THAN DELETED.  Dropping the two
     # feedforward seeds must now change NOTHING, because the branch they select
     # holds at the same ratio the hold arm holds at.  A retune of
@@ -3744,3 +3770,318 @@ def test_the_guard_census_reaches_the_sidecar_blocks():
     src = open(M.__file__, encoding="utf-8").read()
     # ... and the constant is named ONCE, in its own definition.
     assert src.count("SHARE_STEP_GUARD_I_TOT_A = ") == 1
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# 20. The fw v27 rev 2 BATTERY-ONLY START in the delivery table (2026-09-04).
+#
+#     The firmware cuts FC_BUS at every profile entry and re-closes it only when
+#     the governor's ~20 ms EMA of the source total crosses
+#     `2 * SHARE_MINORITY_I_MIN_A`.  Campaign G (`ems-mpc`,
+#     hil_report_20260903_233736) measured the consequence of not modelling it:
+#     the shadow's MDAC re-sync read r = 0.5 off the codes the firmware left
+#     standing (5316/5316) and the two-source split mapped that to a predicted
+#     delivered share of 0.53-0.61 against a delivered 0.0 - 2043 of 2047
+#     exceedances of the 0.30 `mpc_share_prediction` bound over [5.00, 7.04] s,
+#     while `ems-mpc-single` made the same error only where it did NOT command
+#     share 0.0, because the `SS_MODE_BT` column already predicts this topology
+#     to four decimals.  That column's arithmetic is now what this branch runs.
+# ═════════════════════════════════════════════════════════════════════════════
+def _cut_pre(strategy, tot_a, n=None):
+    """A preview pinned at ``tot_a`` of source total on every sub-sample."""
+    n = n or strategy.horizon
+    pre = M.precompute_stages(strategy.preview, 0, n)
+    for j in range(pre.n):
+        for k in range(len(pre.i_tot[j])):
+            pre.i_tot[j][k] = tot_a
+        pre.i_tot_mean[j] = tot_a
+    return pre
+
+
+def test_a_predicted_still_cut_stage_delivers_zero_with_bt_carrying_it():
+    """(a) THE BRANCH ITSELF.  Under a total far below the release gate the arm
+    never releases, so every stage of the horizon is still cut: the delivered
+    share is exactly 0.0 on EVERY ladder point, the fuel cell is billed nothing
+    and the battery is billed the whole stage demand."""
+    s = _bound(loss_map=sim.plant_loss_map())
+    tot = 0.5 * M.GOV_ENTRY_A                    # never crosses the gate
+    pre = _cut_pre(s, tot)
+    d, pfc, pbt, ok, _v = s.planner.delivery_table(
+        pre, {}, 0.5, [False] * pre.n, batt_only_seed=True, filt_seed=0.0)
+    for j in range(pre.n):
+        for si in range(s.planner.n_band):
+            assert d[j][si] == 0.0
+            assert pfc[j][si] == 0.0
+            assert pbt[j][si] == pytest.approx(pre.p_dem_mean[j])
+            assert ok[j][si]                     # no BT overcurrent down here
+
+
+def test_the_cut_stage_is_the_ss_mode_bt_column_arithmetic_exactly():
+    """RE-USE, MEASURED.  A firmware-initiated cut and a search-commanded one
+    are the same topology, so the branch calls `ss_stage_cell()` - the very
+    function the `SS_MODE_BT` column calls - and a fully-cut stage must come out
+    BIT-IDENTICAL to that column, not merely close to it."""
+    s = _ss_bound()
+    tot = 0.5 * M.GOV_ENTRY_A
+    pre = M.precompute_stages(s.preview, 0, s.horizon)
+    pre_ss = {m: M.precompute_stages(s.preview_ss[m], 0, s.horizon)
+              for m in s.preview_ss}
+    for j in range(pre.n):
+        for k in range(len(pre.i_tot[j])):
+            pre.i_tot[j][k] = tot
+            for m in pre_ss:
+                pre_ss[m].i_tot[j][k] = tot
+        pre.i_tot_mean[j] = tot
+        for m in pre_ss:
+            pre_ss[m].i_tot_mean[j] = tot
+    si_bt = s.planner.ss_index[M.SS_MODE_BT]
+    d, pfc, pbt, ok, viol = s.planner.delivery_table(
+        pre, {}, 0.5, [False] * pre.n, active=(0, 1, si_bt), pre_ss=pre_ss,
+        batt_only_seed=True, filt_seed=0.0, pre_bt=pre_ss[M.SS_MODE_BT])
+    for j in range(pre.n):
+        for si in (0, 1):
+            assert d[j][si] == d[j][si_bt]
+            assert pfc[j][si] == pfc[j][si_bt]
+            assert pbt[j][si] == pbt[j][si_bt]
+            assert ok[j][si] == ok[j][si_bt]
+            assert viol[j][si] == viol[j][si_bt]
+
+
+def test_the_cut_releases_when_the_predicted_ema_crosses_the_gate():
+    """THE GATE IS PREDICTED, NOT READ.  Above the release threshold the modelled
+    EMA crosses `2 * SHARE_MINORITY_I_MIN_A` inside the horizon, and the stages
+    after the crossing return to the two-source split - so the cut is a finite
+    prefix, which is what the board does (SW_FC_BUS falls once at 3.026 s and
+    rises once at 5.711 s)."""
+    s = _bound(loss_map=sim.plant_loss_map())
+    # A STEP, not a constant: the EMA is 20 ms against a 100 ms sub-sample, so
+    # a total already above the gate crosses inside the first sub-sample and
+    # there is nothing to predict.  What takes the board 2.685 s is the total
+    # itself rising, and that is what this fixture reproduces - four stages
+    # under the gate, then a step over it.
+    pre = _cut_pre(s, 0.5 * M.GOV_ENTRY_A)
+    for j in range(4, pre.n):
+        for k in range(len(pre.i_tot[j])):
+            pre.i_tot[j][k] = 4.0 * M.GOV_ENTRY_A
+        pre.i_tot_mean[j] = 4.0 * M.GOV_ENTRY_A
+    mask = s.planner.batt_only_cut_mask(pre, [False] * pre.n, 0.0, 100)
+    flat = [c for row in mask for c in row]
+    assert flat[0] is True
+    assert flat[-1] is False
+    # ...and the cut is CONTIGUOUS: it releases once and never re-arms.
+    assert flat == sorted(flat, key=lambda c: not c)
+    d = s.planner.delivery_table(pre, {}, 0.5, [False] * pre.n,
+                                 batt_only_seed=True, filt_seed=0.0)[0]
+    assert d[0][0] == 0.0                       # stage 0 is still cut
+    assert d[pre.n - 1][0] > 0.0                # the last stage is not
+
+
+def test_the_release_is_predicted_from_the_bt_only_demand(monkeypatch):
+    """H-1 (2026-09-04): the RELEASE GATE reads the BT-ONLY source total.
+
+    While the firmware's cut stands the bus is single-source, so the total its
+    ~20 ms EMA filters is the battery's alone on the measured single-source bus
+    law. A two-source preview UNDER-READS that total, the modelled EMA crosses
+    the 0.30 A gate LATE, and the table keeps predicting d = 0 over stages the
+    board has already re-closed on -- ticks with SW_FC_BUS HIGH, which the
+    interim scoring mask in run_hil_suite.py does NOT remove.
+
+    The fixture separates the two previews at the gate: two-source held just
+    UNDER it, BT-only just OVER. With the release preview the cut releases; with
+    only the two-source preview it never does."""
+    s = _bound(loss_map=sim.plant_loss_map())
+    under = 0.99 * M.GOV_ENTRY_A
+    over = 1.30 * M.GOV_ENTRY_A
+    pre = _cut_pre(s, under)
+    pre_bt = _cut_pre(s, over)
+    cs = [False] * pre.n
+    two_source = s.planner.batt_only_cut_mask(pre, cs, 0.0, 100)
+    bt_only = s.planner.batt_only_cut_mask(pre, cs, 0.0, 100,
+                                           pre_bt_release=pre_bt)
+    assert all(c for row in two_source for c in row)      # never releases
+    assert not all(c for row in bt_only for c in row)     # releases
+    # ...and the release is in the FIRST sub-sample, since `over` is already
+    # above the gate: the EMA needs no time to get there.
+    assert bt_only[0][0] is True and bt_only[0][1] is False
+
+
+def test_the_release_preview_is_the_gate_source_and_pre_bt_is_the_billing():
+    """H-1 (2026-09-04): the two BT-only arguments do DIFFERENT jobs.
+
+    `pre_bt_release` moves the gate and therefore which stages are predicted
+    cut; `pre_bt` moves only the BT power billed on the stages that ARE cut. The
+    `delivery_table` docstring used to claim a missing `pre_bt` "moves the billed
+    BT power, never the predicted share" -- true of the billing, and false of
+    the release, which was riding the same argument."""
+    s = _bound(loss_map=sim.plant_loss_map())
+    tot = 0.5 * M.GOV_ENTRY_A                    # never crosses the gate
+    pre = _cut_pre(s, tot)
+    pre_bt = _cut_pre(s, tot * 1.5)
+    # The BILLED quantity is the stage DEMAND, so the fixture has to move it
+    # too:  pins the source total only.
+    for j in range(pre_bt.n):
+        for k in range(len(pre_bt.p_dem[j])):
+            pre_bt.p_dem[j][k] *= 1.5
+        pre_bt.p_dem_mean[j] *= 1.5
+    cs = [False] * pre.n
+    base = s.planner.delivery_table(pre, {}, 0.5, cs, batt_only_seed=True,
+                                    filt_seed=0.0)
+    billed = s.planner.delivery_table(pre, {}, 0.5, cs, batt_only_seed=True,
+                                      filt_seed=0.0, pre_bt=pre_bt)
+    # BILLING moves the BT power and NOTHING else on a cut stage.
+    for j in range(pre.n):
+        assert base[0][j][0] == billed[0][j][0] == 0.0     # delivered share
+        assert base[1][j][0] == billed[1][j][0] == 0.0     # FC power
+    assert any(base[2][j][0] != billed[2][j][0] for j in range(pre.n))
+    # And `pre_bt_release` alone leaves the BILLING bit-identical.
+    gated = s.planner.delivery_table(pre, {}, 0.5, cs, batt_only_seed=True,
+                                     filt_seed=0.0, pre_bt_release=pre_bt)
+    for j in range(pre.n):
+        assert gated[2][j][0] == base[2][j][0]
+
+
+def test_every_loss_mapped_mpc_leg_stages_a_bt_only_release_preview():
+    """H-1 (2026-09-04): the preview is built on EVERY MPC leg, not only the
+    one that enumerates single-source candidates.
+
+    Before this round `pre_bt` reached the mask only through `preview_ss`, which
+    `MpcStrategy` builds only under `mpc_single_source` -- true of
+    `ems-mpc-single` and of nothing else, so every other leg predicted the
+    release from the two-source preview. Where `preview_ss` DOES exist the same
+    object is reused, so the two paths cannot disagree about the BT-only
+    demand."""
+    for name in ("ems-mpc", "ems-mpc-det", "ems-mpc-cross", "ems-ftp75-mpc",
+                 "ems-mpc-single"):
+        meta = sim.SCENARIOS[name]
+        st = M.MpcStrategy(meta["ems"])
+        st.bind_scenario(name, meta)
+        assert st.loss_map is not None, name
+        assert st.preview_bt_release is not None, name
+        assert st.preview_bt_release is not st.preview, name
+        if st.preview_ss:
+            assert st.preview_bt_release is st.preview_ss[M.SS_MODE_BT], name
+    # NO LOSS MAP -> None, and the mask falls back to the two-source preview.
+    # A DEGRADATION, deliberately, where the enumeration would REFUSE: this only
+    # predicts an instant the firmware chooses either way.
+    bare = M.MpcStrategy("mpc-det")
+    bare.bind_scenario("ems-soc-band", sim.SCENARIOS["ems-soc-band"])
+    assert bare.loss_map is None and bare.preview_bt_release is None
+
+
+def test_the_release_diagnostic_reports_both_instants():
+    """H-1 (2026-09-04): the informational pair that makes a campaign FAIL
+    attributable -- the modelled release against the board's own SW_FC_BUS rise.
+
+    The observed word is read for REPORTING only: it is one HIL round trip late
+    and must never be a planner input."""
+    s = _bound(loss_map=sim.plant_loss_map())
+    assert s.release_modelled_t is None and s.release_observed_t is None
+    assert "NEITHER modelled nor observed" in s._release_summary_fragment()
+    # The board's rise: LOW, then HIGH.
+    s._release_prev_sw_fc = False
+    s(0.02, {"soc": 0.7, "I_fc": 0.2, "I_batt": 0.2, "V_bus": 15.5,
+             "I_charge": 0.0, "v_profile": 1.5, "switch": M.SW_FC_BUS_BIT})
+    assert s.release_observed_t == pytest.approx(0.02)
+    # A SECOND rise does not overwrite it -- the arm is a one-shot, and a later
+    # FC_BUS cut is the load guard, not this mechanism.
+    s._release_prev_sw_fc = False
+    s(0.04, {"soc": 0.7, "I_fc": 0.2, "I_batt": 0.2, "V_bus": 15.5,
+             "I_charge": 0.0, "v_profile": 1.5, "switch": M.SW_FC_BUS_BIT})
+    assert s.release_observed_t == pytest.approx(0.02)
+    frag = s._release_summary_fragment()
+    assert "battery-only release" in frag and "informational" in frag
+    assert frag == frag.encode("ascii", "strict").decode()   # cp1252-safe
+
+
+def test_sw_fc_bus_bit_matches_the_simulator():
+    """The restated mask must be the simulator's own bit, not a second copy that
+    can drift -- the same pin `SW_REGEN_BIT` carries."""
+    assert M.SW_FC_BUS_BIT == sim.SW_FC_BUS
+
+
+def test_a_charge_window_suppresses_the_cut_without_disarming_it():
+    """RULE (f) OF THE ARM.  `assertFcChargeEnable()` already owns BT_BUS, so
+    `batt_only_active` is false inside a window; the arm survives it and resumes
+    on the far side, exactly as `governor_model.step()` derives it."""
+    s = _bound(loss_map=sim.plant_loss_map())
+    pre = _cut_pre(s, 0.5 * M.GOV_ENTRY_A)
+    cs = [j in (2, 3) for j in range(pre.n)]
+    mask = s.planner.batt_only_cut_mask(pre, cs, 0.0, 100)
+    assert all(mask[1]) and not any(mask[2]) and not any(mask[3])
+    assert all(mask[4])
+
+
+def test_with_the_arm_inactive_the_delivery_table_is_bit_identical():
+    """(b) THE INERTNESS CLAIM.  Every cell of the table - including the
+    single-source columns - is bit-for-bit what it was before the branch existed
+    whenever `batt_only_seed` is false or absent, which is every tick after the
+    start-up cut releases."""
+    s = _ss_bound()
+    pre, pre_ss = _admit_fixture(s, 0.4, 0.6)
+    si_bt = s.planner.ss_index[M.SS_MODE_BT]
+    si_fc = s.planner.ss_index[M.SS_MODE_FC]
+    cols = (0, 1, 2, si_bt, si_fc)
+    kw = dict(active=cols, pre_ss=pre_ss, sp_acted=0.5, run_seed=True)
+    base = s.planner.delivery_table(pre, {}, 0.5, [False] * pre.n, **kw)
+    for seed in (None, False):
+        other = s.planner.delivery_table(pre, {}, 0.5, [False] * pre.n,
+                                         batt_only_seed=seed, filt_seed=1.0,
+                                         pre_bt=pre_ss[M.SS_MODE_BT], **kw)
+        for tab_a, tab_b in zip(base, other):
+            assert tab_a == tab_b
+
+
+def test_the_single_source_columns_are_not_masked_by_the_arm():
+    """AN OUT-OF-BAND SETPOINT DISARMS THE ARM PERMANENTLY (rule (c): one owner
+    per setpoint), so the two single-source columns keep their own arithmetic
+    even while the seed is true - `SS_MODE_FC` still delivers 1.0."""
+    s = _ss_bound()
+    # Pinned UNDER the release gate so the in-band columns are genuinely
+    # masked; the fixture's own 1.0 A total would release the arm in the first
+    # sub-sample and the contrast would not be visible.
+    pre, pre_ss = _admit_fixture(s, 0.0, 0.5 * M.GOV_ENTRY_A)
+    si_fc = s.planner.ss_index[M.SS_MODE_FC]
+    d, pfc, _pbt, _ok, _v = s.planner.delivery_table(
+        pre, {}, 0.5, [False] * pre.n, active=(0, si_fc), pre_ss=pre_ss,
+        batt_only_seed=True, filt_seed=0.0, pre_bt=pre_ss[M.SS_MODE_BT])
+    assert d[0][si_fc] == 1.0
+    assert pfc[0][si_fc] == pytest.approx(pre_ss[M.SS_MODE_FC].p_dem_mean[0])
+    assert d[0][0] == 0.0                       # the in-band column IS masked
+
+
+def test_the_shadow_exposes_the_arm_and_its_filtered_total():
+    """THE SEEDS ARE THE SHADOW'S OWN STATE, not a second estimate: the strategy
+    reads `batt_only_active` and `share_govTotAFilt` off the committed model the
+    way it already reads `acted_sp` and `closed_loop_run`."""
+    sh = M.ShadowGovernor()
+    # THE ARM IS TRUE BEFORE THE FIRST TICK AND ITS DERIVATION IS NOT, which is
+    # why the delivery table seeds on the ARM: the first decision of a profile
+    # is taken before the shadow has ticked once, and on the Gate-1 fixture that
+    # single decision was the whole 8.3e-03 residual.
+    assert sh.batt_only_armed is True
+    assert sh.batt_only_active is False
+    sh.model.step(0.5, 0.05, 0.05, True, True, 0.001)
+    assert sh.batt_only_active is True
+    assert sh.batt_only_armed is True
+    assert sh.filt_total == pytest.approx(sh.model.state.filt_total)
+
+
+def test_the_first_decisions_of_a_run_predict_a_zero_delivered_share():
+    """THE CAMPAIGN-G REGRESSION, END TO END.  Driven at a total below the
+    release gate, the strategy's own stage-0 prediction is 0.0 while the arm
+    stands - where before the branch it was the two-source split of the standing
+    MDAC codes (0.53-0.61 on the board, 0.45-0.50 on the offline walk)."""
+    s = _bound(loss_map=sim.plant_loss_map(), budget_ms=1e5, roll_budget_ms=1e5)
+    prev = s.preview
+    t = 0.0
+    preds = []
+    while t < 4.0:
+        k = min(len(prev.times) - 1, int(round(t / prev.dt)))
+        i_tot = 0.5 * M.GOV_ENTRY_A
+        s(t, {"soc": 0.7, "I_fc": 0.0, "I_batt": i_tot,
+              "V_bus": prev.v_bus[k], "I_charge": 0.0, "v_profile": 1.5})
+        if s.share_pred is not None:
+            preds.append(s.share_pred)
+        t += 0.02
+    assert preds
+    assert max(preds) == 0.0

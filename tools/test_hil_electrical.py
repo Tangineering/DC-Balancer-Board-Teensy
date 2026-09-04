@@ -1256,11 +1256,18 @@ def test_soft_start_cold_start_bringup_peaks_preserved():
     assert full_peak_bt == pytest.approx(0.4367, abs=2e-3)
     assert full_peak_fc == pytest.approx(full_peak_bt, abs=1e-6)
 
-    # Cold-start invariant this fix must not disturb: v_ss_start stays ~0 at
-    # every SOFT entry in this scenario (nothing here is pre-charged), so the
+    # Cold-start invariant this fix must not disturb: v_ss_start is EXACTLY 0.0
+    # at every SOFT entry in this scenario (nothing here is pre-charged), so the
     # per-episode high-water-mark branch never engages.
+    # TIGHTENED 2026-09-04 (M-6): the branch predicate is now
+    # `precharged = self.v_ss_start > 0.0` (hil_electrical.py:1406), not
+    # `> RT_SS_PRECHARGED_V`, so asserting `<= RT_SS_PRECHARGED_V` (1.0 V) no
+    # longer states the cold-start invariant — anything in (0, 1.0] V would
+    # satisfy it while taking the PRE-CHARGED branch. `== 0.0` is the predicate's
+    # own complement, and it is what these hardware-corroborated peaks were
+    # measured on.
     for name in ("FC_BUS", "BT_BUS", "MOT_PWR"):
-        assert e.switches[name].v_ss_start <= he.RT_SS_PRECHARGED_V, (
+        assert e.switches[name].v_ss_start == 0.0, (
             f"{name}: this scenario is supposed to be all-cold-start "
             f"(v_ss_start={e.switches[name].v_ss_start:.3f} V)")
     # Re-verification (short follow-up round, item 4): the min(target, v_in)
@@ -1272,6 +1279,156 @@ def test_soft_start_cold_start_bringup_peaks_preserved():
     # merely re-run): neither test references the cap, both still pass, and
     # both were re-verified against the actual post-removal simulator output
     # rather than trusted from before the round.
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SOFT-start one-sided stamp + zero-scoped high water mark (2026-09-04),
+# from campaign G (`hil_report_20260903_233736`, comm-loss). Two changes in
+# Rt1987, both proved here:
+#   (a) the SOFT stamp is ONE-SIDED — `i = max(0, (target - v_out)/r)` — so a
+#       pass device in soft-start can source into its output node but never
+#       sink out of it. That is the RT1987's reverse comparator (DS 17.6,
+#       t_FRC ~0.5 us, active whenever the power path is enabled, soft-start
+#       included).
+#   (b) the per-episode VIN high-water-mark scoping runs from
+#       `v_ss_start > 0`, not `> RT_SS_PRECHARGED_V` (1.0 V). The window
+#       0 < v_ss_start <= 1.0 V was unreachable when 1.0 V was chosen (the aux
+#       sink pinned an unpowered bus at 0.0000 V exactly) and V_AUX_DROPOUT_V
+#       opened it: campaign G measured a warm re-close at 0.4366 V, inside it.
+# The cold-start path is untouched by both — see
+# test_soft_start_cold_start_bringup_peaks_preserved, whose P0 0.151185 A and
+# full 0.436707 A pins are byte-identical across this change (verified to nine
+# decimals: 0.151185196 / 0.436706804 / 0.436706872 before and after).
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_soft_start_stamp_is_one_sided_a_pass_device_cannot_sink():
+    """Part (a), unit level: with the output node ABOVE its own ramp target
+    and the input still forward (v_in > v_out, so the TRCB branch in update()
+    is NOT what is being exercised), the SOFT stamp must contribute NOTHING —
+    no servo conductance on n_out, no explicit debit on n_in.
+
+    Before this change the same call stamped a conductance to a target BELOW
+    v_out, i.e. a SINK of g*(v_out - target) out of n_out, with the matching
+    J[n_in] debit pinned at 0 by i_phys = 0 (M6, module docstring: the SOFT
+    stamp debits the input node explicitly). That is charge annihilation in
+    the sink direction, and it is what campaign G's comm-loss warm re-close
+    turned into a circulating current between FC_BUS and BT_BUS
+    (p_fc_w = -p_bal_w to six digits).
+
+    Bare Rt1987, no network solve, matching this file's other unit-level SOFT
+    tests."""
+    sw = he.Rt1987("T", 0, 1, css_nf=100.0, c_load_f=35e-6)
+    sw._goto("SOFT", 0.0, 16.0)         # cold entry, VIN high water mark 16 V
+    sw._h = 125e-6
+    sw.t_state = 5e-3                   # mid-ramp
+    v = [16.0, 12.0]                    # node driven above its own ramp by
+                                        # something else on the same net
+    assert (v[0] - v[1]) >= he.RT_V_REV, "sanity: the TRCB has NOT tripped"
+    assert v[0] > he.RT_UVLO_V and v[1] > he.RT_UVLO_V, "sanity: not a UVLO case"
+
+    _i_fold, i_phys, target = sw._soft_operating_point(v[0], v[1])
+    assert target < v[1], (
+        f"sanity: this test needs the node above the ramp "
+        f"(target={target:.3f} V, v_out={v[1]:.3f} V)")
+    assert i_phys == 0.0                # the gate-limited device sources nothing
+
+    G = [[0.0, 0.0], [0.0, 0.0]]
+    J = [0.0, 0.0]
+    sw.stamp(G, J, v, True)
+    assert G == [[0.0, 0.0], [0.0, 0.0]], (
+        f"a SOFT-state pass device stamped a servo conductance while its node "
+        f"was above its own ramp: G={G} -- that conductance SINKS "
+        f"g*(v_out - target) = {(v[1] - target) / (he.RT_R_ON):.1f} A")
+    assert J == [0.0, 0.0], f"non-zero source vector on a non-conducting switch: {J}"
+
+    # The sourcing side is unchanged: below its target the same switch stamps
+    # the servo exactly as before (this is the half the cold pins live on).
+    G2 = [[0.0, 0.0], [0.0, 0.0]]
+    J2 = [0.0, 0.0]
+    sw.stamp(G2, J2, [16.0, 0.5], True)      # deep below the ramp: foldback
+    assert G2[1][1] > 0.0                    # binds, so g is the folded-back
+    assert J2[1] > 0.0                       # equivalent conductance, not 1/r
+    assert -he.RT_I_FOLD_HIGH - 1e-6 <= J2[0] < 0.0
+
+
+def test_comm_loss_warm_reclose_from_0p44v_does_not_circulate():
+    """Part (a)+(b), end to end: the campaign-G comm-loss warm re-close.
+
+    CAMPAIGN G EVIDENCE (`hil_report_20260903_233736`, comm-loss; verdict SIM
+    ARTEFACT, no board defect): link-loss latch 0x8010 at 5.252631 s, warm
+    reset at 7.501118 s with V_bus bled to 0.4366 V, FC_BUS + BT_BUS closing
+    TOGETHER at 7.502117 s (switch_state 0x23) with BOTH regulators still
+    disabled, conduction at 7.510054 s (RT_TD_ON 8 ms), then I_fc 0.3684 ->
+    0.7617 -> 1.1296 -> 1.4732 -> 1.7898 A over 4 ms (350 A/s) and a spurious
+    OC_FC (0x8001) at 7.515249 s. No profile, no share command.
+
+    MECHANISM: at v_ss_start = 0 the model's ramp rate (v_in - 0)/(k*v_in) is
+    806.9 V/s for every switch regardless of its input rail — a DEGENERACY that
+    protected every dark bring-up on record. At 0.4366 V it is 778.5 V/s for FC
+    (VIN ~12.4 V) against 758.6 V/s for BT (VIN ~7.3 V); the node follows the
+    mean and the 19.8 V/s divergence across RT_R_ON 21 mOhm becomes current.
+    Under the two-sided stamp the trailing switch SANK it (the unipolar INA
+    pins its reported current at the displacement floor, which is why the board
+    trace shows it on I_fc alone).
+
+    WHAT THIS TEST PINS, and what it does NOT: the sink is gone (the trailing
+    BT_BUS side is within 2x of the 0.0282 A displacement current) and the
+    leading FC_BUS side falls from 34.329117 A to 3.747594 A — an order of
+    magnitude. It is NOT down to the displacement current, and it would still
+    latch OC_FC. The residual is a different defect: the model's ramp conflates
+    the SLOPE with the ENDPOINT (see _soft_operating_point()'s "RAMP SHAPE"
+    block), so two switches on one node ramp toward different endpoints at
+    different rates and the leading switch's tracking lag accumulates at the
+    divergence rate. The fix for THAT is the constant-slew ramp, which is
+    deliberately deferred because it moves the hardware-corroborated cold pins:
+    measured on a scratch monkeypatch of exactly that ramp, this scenario's
+    peak falls to 0.139067 A while the cold pins move 0.151185 -> 0.139077 and
+    0.436707 -> 0.358445. Ablation of the two parts shipped here (same
+    scenario): neither 34.329117 A, (a) alone 2.041597 A, (b) alone 3.747594 A,
+    both 3.747594 A.
+
+    provisional_note: the 3.747594 A pin is a REGRESSION RECORD of a known
+    residual, not a physical result; it is expected to move when the
+    constant-slew ramp lands."""
+    e = he.ElectricalSim(trace_config="short")
+    e.v[he.N_BUS] = 0.4366        # the bled bus at the warm reset (5.0 *
+                                  # exp(-2.23/1.05) predicts 0.60 V)
+    sw = SW_FC_BUS | SW_BT_BUS | SW_BT_SEQ
+    aux = 0                       # BOTH regulators still disabled, as measured
+
+    peak_fc = peak_bt = 0.0
+    for _ in range(60):           # t_D(ON) 8 ms + both ramps
+        rails = _pin_and_step(e, 1e-3, _actuators(sw=sw, aux=aux))
+        peak_fc = max(peak_fc, abs(rails["I_fc"]))
+        peak_bt = max(peak_bt, abs(rails["I_batt"]))
+
+    fc, bt = e.switches["FC_BUS"], e.switches["BT_BUS"]
+    # Part (b) is what this scenario exercises: both episodes start INSIDE the
+    # window that used to be treated as cold, and that used to be unreachable.
+    for name, s in (("FC_BUS", fc), ("BT_BUS", bt)):
+        assert 0.0 < s.v_ss_start <= he.RT_SS_PRECHARGED_V, (
+            f"{name}: this test must enter SOFT inside the 0 < v_ss_start <= "
+            f"{he.RT_SS_PRECHARGED_V} V window (got {s.v_ss_start:.4f} V)")
+    assert fc.v_ss_start == pytest.approx(0.4332, abs=5e-3)
+
+    # The displacement current the ledger names: c_load * the FC ramp rate.
+    i_disp = 0.0282
+    assert peak_bt <= 2.0 * i_disp, (
+        f"trailing switch reports {peak_bt:.4f} A, above 2x the {i_disp} A "
+        f"displacement current -- the sink/circulation is back")
+    assert peak_fc == pytest.approx(3.7476, abs=5e-3), (
+        f"leading-switch peak moved: {peak_fc:.6f} A (regression record; the "
+        f"two-sided stamp gave 34.329117 A)")
+    assert peak_fc < 10.0        # the load-bearing half of that pin
+
+    # No switch ever reported a negative (sinking) current, at any tick.
+    for name, s in e.switches.items():
+        assert s.i >= 0.0, f"{name} reported a sinking current {s.i:.4f} A"
+
+    # Both switches finish the bring-up ON, and the bus reaches the FC rail:
+    # the one-sided stamp must not strand a ramp.
+    assert fc.state == "ON" and bt.state == "ON"
+    assert e.node_voltage("BUS") > 10.0
 
 
 # ─────────────────────────────────────────────────────────────────────────────

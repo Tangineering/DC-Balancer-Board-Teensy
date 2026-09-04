@@ -5,6 +5,21 @@ flashed board, then package the results into one report directory.
 
     python3 tools/run_hil_suite.py --teensy-ip 192.168.1.50
 
+THE STANDARD OVERNIGHT CAMPAIGN INVOCATION IS NOT THE BARE ONE. Three families
+of legs are OPT-IN and are silently absent without their flags, so a campaign
+launched without them is smaller than the ledgers it will be compared against:
+
+    python3 tools/run_hil_suite.py --teensy-ip 192.168.1.50 \
+        --with-ftp75 --with-ftp75c --with-alpha
+
+  --with-ftp75   the five FTP-75 EMS legs (5050 / socband / mpc / sdp / dp)
+  --with-ftp75c  the five compressed-cycle (ftp75c) regen legs
+  --with-alpha   the three ems-sdp-alpha legs (greedy / cal / charge)
+
+Confirm the plan before starting a long run:
+
+    python3 tools/run_hil_suite.py --list --with-ftp75 --with-ftp75c --with-alpha
+
 This is the wrapper the bench operator runs once; everything under it is already
 built:
 
@@ -324,6 +339,29 @@ TEARDOWN_LEAD_MS = 5.0
 # four teardowns, and 0.044-0.086 ms across campaign 20260902_041414's) where
 # the post-grace anchor does not.
 CARRIED_IN_LATCH_MAX_S = 0.10
+
+# THE BUS-SWITCH TURN-ON SETTLING WINDOW (campaign G2, 2026-09-04), used as the
+# `exclude_hold_ms` of an `exclude_when_switch_bit_clear` mask: how long after a
+# bus switch CLOSES its channel current is still a turn-on transient rather than
+# the delivered split.
+#
+# DERIVED, not chosen. Two terms, both measured on `ems-ftp75-sdp` in campaign
+# G2 (hil_report_20260904_003108):
+#   * RT_TD_ON 8 ms — the RT1987's turn-on delay (hil_electrical.RT_TD_ON_S).
+#   * ~143 ms of MDAC convergence. fw v27's battery-only start leaves the codes
+#     standing at whatever the firmware last wrote while the channel was dark —
+#     the INHERITED equal pair 5316/5316, i.e. r ~ 0.5 — so the channel comes
+#     back at the wrong split and the share loop has to walk it. Measured:
+#     FC_BUS re-closes at 33.097346 s, I_fc ramps 0 -> 0.2355 A over ~11 ms, the
+#     loop steps the codes from ~33.18 s, and I_fc reaches the commanded
+#     0.1500 A at 33.24 s.
+# 8 + 143 = 151 ms; 150 ms is that, rounded to the tick.
+#
+# ⚠️ THIS IS NOT A LICENCE TO IGNORE THE TRANSIENT. It is 150 ms of a 120 s
+# window on a leg with exactly ONE re-close, and it exists so a CEILING on the
+# delivered split is not judged on a topology change. A check that is ABOUT the
+# turn-on (a ring, an inrush, a hot-plug) must not use it.
+_FC_TURN_ON_SETTLE_MS = 150.0
 
 # ═════════════════════════════════════════════════════════════════════════════
 # fw v25 EXPECTATION-IMPACT REVIEW — WHICH MEASURED PINS SURVIVE
@@ -683,10 +721,41 @@ _BLEED_ERA_PROVISIONAL = (
 #   design-mode solved     V_bus 15.633912867500921 -> 15.652904138318075,
 #                          +18.99 mV of droop no longer drawn.
 #
+# ── RE-DERIVED DEMAND BINS (campaign G, 2026-09-03) ─────────────────────────
+# The era's fixed -0.060 A moves P_dem = V_bus * I_tot by about -0.93 W on every
+# scenario, and TWO registered entries score a DEMAND-BIN-derived quantity. Both
+# crossed a bin edge on campaign G and both are recorded here rather than in the
+# entry alone, because the next bin re-derivation belongs beside this arithmetic.
+#
+#   ems-sdp DRAIN PLATEAU   bin 22 (22.6882 W) -> BIN 21 (21.7823 W).
+#     Edge: bin 22 opens at 22.0 W = 1.42499 A of source total; the run sits at
+#     1.41089 A, 0.99 % under. Deficit 0.90634 W = 0.060 A x 15.44 V, with
+#     p_mot_w unchanged to five digits. The table row is 1.00 in bin 21 under
+#     BOTH sdp_policy_v4 and v6 (nodes 47-50, bins 18-24 identical), so the
+#     policy is exonerated and the observed raw request of 1.0000 is correct for
+#     the demand the board saw. CONSEQUENCE: `sdp_table_interior_at_high_demand`
+#     fails and its two siblings pass vacuously - the entry has no demand-axis
+#     span this era. RULING PENDING on the stimulus knob; see those specs.
+#   ems-sdp-braking CRUISE-GUARD DROPS   9 FC_CHARGE rise edges -> 12.
+#     Same -0.927 W shift (prediction V_bus x 0.06 A = 0.936 W, 1 %) admitted
+#     three of the five transients one decision stage earlier, across the 6.000 W
+#     admission edge (bin 5 upper edge at node 45): F 6.456 / 6.248 / 6.179 W ->
+#     G 5.543 / 5.422 / 5.249 W. F's own fourth transient sat at 5.996 W, 4 mW
+#     inside the boundary - the 9 was a knife edge, not a stable count. The four
+#     PLATEAU windows are intact (13.13 / 11.09 / 11.11 / 12.13 s; charge ticks
+#     52 469 vs F 52 479). See `sdpb_charge_edge_census`.
+#
 # WHAT DOES NOT MOVE, stated so a reader does not go looking: the regen credit
 # column (regen is a braking-side term and carries no bus load), the SoC grid
 # CLIMB in the DP (a stage count times a grid step), and the charger's
 # efficiency era.
+#
+# ⚠️ A FOURTH PRELOAD WAS MISSED AND CAMPAIGN G FOUND IT (2026-09-03).
+# `Y_AUX_LOAD_A` (the `ems-y-b30-*` preload) was NOT migrated with the three
+# below, so `ems-y-b30-v1`'s region-6 total fell 1.0542 -> 0.9941 A - the aux cut
+# to 0.0001 A - and failed the 1.02 A `_Y_ITOT_FLOOR_A` stimulus guard. The guard
+# is what CAUGHT it and is deliberately not lowered; the preload is now
+# 0.85 -> 0.91 A. Read the list below as FOUR.
 #
 # THREE SCENARIO PRELOADS WERE RAISED BY 0.06 A rather than left alone, because
 # they are STIMULI expressed as a designed TOTAL and not expectations:
@@ -2174,9 +2243,39 @@ FAULT_EXPECTATIONS = {
             #    TWO SPECS, not one: _judge_signal_leaf() tests min_value FIRST
             #    and returns, so a single spec carrying both keys drops the
             #    ceiling silently (the import-time guard refuses the shape).
+            #
+            #    ── AUX ERA 2026-09-03 (campaign G): THE PLATEAU LEFT BIN 22 ──
+            #    MEASURED: `cmd_share_sp_raw` is 1.0000 on all 61 000 rows (F:
+            #    0.95), and this check FAILED on it. The drain plateau's
+            #    P_dem = V_bus * I_tot fell 22.6882 -> 21.7823 W, i.e. under the
+            #    22.0 W lower edge of bin 22 (= 1.42499 A of source total; the
+            #    run sits at 1.41089 A, 0.99 % under). The whole deficit is the
+            #    aux term: 0.060 A x 15.44 V = 0.90634 W, with p_mot_w unchanged
+            #    to five digits. The plateau is now DEMAND BIN 21 at 21.7823 W.
+            #    THE POLICY IS EXONERATED, not merely unblamed: bin 21's table
+            #    row is 1.00 in BOTH v4 and v6 (nodes 47-50, bins 18-24 are
+            #    identical between the two; the v4/v6 diff is rows 4-5 only), so
+            #    the observed 1.0000 is the correct action for the demand the
+            #    board actually saw. The firmware received the clamped 0.8500 on
+            #    61 of 61 decisions and delivered it exactly.
+            #    ⚠️ CONSEQUENCE FOR THIS CHECK AND FOR 3b AND 4: with the raw
+            #    request pinned at 1.0000 for the whole run, the demand axis has
+            #    ZERO SPAN this era. Check 3 fails, and checks 3b (floor 0.940)
+            #    and 4 (rail floor 0.999) pass VACUOUSLY - they are satisfied by
+            #    a constant 1.0000 that asserts nothing about the table. The
+            #    entry's discrimination is gone until the stimulus is restored.
+            #    ⚠️ NOT WIDENED, AND THE BOUND IS NOT MOVED. Restoring
+            #    discrimination is a STIMULUS decision the operator owns: +0.06 A
+            #    of bus load puts the plateau back in bin 22 (22.69 W, 0.69 W of
+            #    margin), but `ems-sdp` carries a drive profile (the standing
+            #    rule is "preload only off drive cycles") and
+            #    `SOC_BAND_DRAIN_LOAD_A` is shared with `ems-soc-band`. A
+            #    per-scenario `aux_preload_a` avoids the second conflict, not the
+            #    first. RULING PENDING; do not re-solve the policy.
             {"name": "sdp_table_interior_at_high_demand",
              "column": "cmd_share_sp_raw", "max_value": 0.960,
              "t_window": (20.0, 36.0),
+             "provisional_note": _AUX_ERA_PROVISIONAL,
              "label": "the v2 demand axis moved the table off its rail on the "
                       "drain plateau — the pre-clamp request is the interior "
                       "0.95, which a v1 (ideal-scaling map) artifact cannot "
@@ -2186,9 +2285,14 @@ FAULT_EXPECTATIONS = {
             #    the in-window MAXIMUM reached 0.940: a run whose raw request
             #    fell to a lower ladder step for the whole window fails here,
             #    which is the one-sided gap the ceiling could not see.
+            #    ⚠️ VACUOUS IN THE AUX ERA - see the block on check 3. A raw
+            #    request pinned at 1.0000 satisfies this floor while asserting
+            #    nothing; it discriminates again only when the plateau returns
+            #    to bin 22.
             {"name": "sdp_table_interior_floor",
              "column": "cmd_share_sp_raw", "min_value": 0.940,
              "t_window": (20.0, 36.0),
+             "provisional_note": _AUX_ERA_PROVISIONAL,
              "label": "... and did not collapse BELOW the interior 0.95 either "
                       "— the floor half of the measured two-sided band"},
             # 4. THE POLICY INTERIOR ACTUATED, HALF TWO — and the request comes
@@ -2213,9 +2317,14 @@ FAULT_EXPECTATIONS = {
             #    float32 UDP round trip of 1.0 is exact, so no round-trip
             #    allowance is needed here (unlike the ems-y `share_hi_clip`
             #    band, whose value is not representable).
+            #    ⚠️ VACUOUS IN THE AUX ERA - see the block on check 3. The run's
+            #    raw request never leaves 1.0000, so "returns to the rail" is
+            #    true trivially and the paired span claim with check 3 is not
+            #    made this era.
             {"name": "sdp_table_rail_at_low_demand",
              "column": "cmd_share_sp_raw", "min_value": 0.999,
              "t_window": (44.0, 54.0),
+             "provisional_note": _AUX_ERA_PROVISIONAL,
              "label": "the table's request returns to the 1.00 rail at low "
                       "demand — with check 3, a measured span across the "
                       "demand axis"},
@@ -2783,6 +2892,29 @@ _Y_ITOT_FLOOR_A = 1.02
 # and 20260901_000816 (bit-stable across both).  Carried as data so the margin
 # each variant actually has is in the check's own detail line rather than only
 # in a ledger.
+#
+# ── AUX ERA 2026-09-03 (campaign G): WHY THESE ARE NOT RE-PINNED ────────────
+# Campaign G failed this check on a measured 0.9941 A (b30-v1, R6 window peak
+# at t = 22.200250 s) against the 1.02 A floor.  The cause is neither the
+# governor nor the check arithmetic (both independently recomputed bit-exact):
+# `I_AUX_A` moved 0.15 -> 0.09 A and `Y_AUX_LOAD_A` was the one stimulus not
+# migrated with it.  The decomposition closes to noise —
+#   R6 peak      F 1.0542 A  ->  G 0.9941 A   (-0.0601)
+#   standstill   F 0.1508 A  ->  G 0.0908 A   (-0.0600)
+# — so the whole deficit is the aux term.  `Y_AUX_LOAD_A` is now 0.91 A
+# (hil_plant_sim.py), restoring the designed totals; the preload is a plain
+# bus-current sink, so the restoration is linear and PREDICTS ~1.0541 A at the
+# same point, i.e. campaign F's own value.
+#
+# The two numbers below are LEFT AS MEASURED rather than moved to that
+# prediction: a predicted value is not a measurement, and re-pinning to one
+# would put an unverified number where the detail line claims a measured
+# margin.  The FIRST campaign at Y_AUX_LOAD_A 0.91 A re-pins both from its own
+# CSVs.  Until then treat the printed margins as era-stale by ~+0.06 A.
+#
+# ⚠️ `_Y_ITOT_FLOOR_A` is deliberately NOT lowered to accommodate campaign G
+# (see its banner): the floor is the stimulus guard that CAUGHT this, and
+# lowering it would have hidden the un-migrated preload instead of naming it.
 _Y_ITOT_MEASURED_MIN_A = {1.0: 1.0644, 3.0: 1.1836}
 
 for _vmax, _b in ((1.0, 0.30), (3.0, 0.30), (1.0, 0.00), (3.0, 0.00)):
@@ -3927,13 +4059,58 @@ FAULT_EXPECTATIONS["ems-ftp75-sdp"] = {
         #    branch from a run that ignored the command — but it is now a
         #    statement about the OPEN-LOOP delivered ratio, not about the
         #    0.300 A floor. PROVISIONAL: re-derive from the first campaign.
+        #    ═══ fw v27 ERA: THE PREMISE IS WRONG AND THE PEAK IS A TURN-ON ═══
+        #    (campaign G2, hil_report_20260904_003108. Measured peak 0.2355 A at
+        #    33.116 s against the 0.18 A ceiling.)
+        #    (1) THE "OPEN-LOOP window" PREMISE ABOVE IS fw v26 AND IS RETIRED.
+        #    fw v27 halved the closed-loop entry gate to 0.30 A (exit 0.25 A),
+        #    and this window is now CLOSED-LOOP for 97 % of its ticks. Measured
+        #    source-total distribution over [30, 150] s: 28.9 % below 0.25 A,
+        #    10.0 % in 0.25-0.30, 61.1 % in 0.30-0.55, and 0 % above 0.55 A. The
+        #    0.55 A open-loop exit the paragraph above reasons from is no longer
+        #    the threshold that decides anything here. What the check asserts is
+        #    unchanged - the DELIVERED split is battery-heavy - but it is now a
+        #    statement about the CLOSED loop tracking the commanded 0.15.
+        #    (2) THE PEAK IS THE BATTERY-ONLY RE-ENTRY TURN-ON TRANSIENT, and it
+        #    is excluded rather than absorbed into the bound. FC_BUS re-closes
+        #    once, at 33.097346 s, when I_batt reaches the 0.3058 A gate; after
+        #    the RT1987's 8 ms turn-on delay I_fc ramps 0 -> 0.2355 A over
+        #    ~11 ms on the INHERITED equal MDAC codes 5316/5316 (r ~ 0.5, left
+        #    standing while the channel was dark), and the share loop then steps
+        #    the codes from ~33.18 s and converges to the commanded 0.1500 A by
+        #    33.24 s. It is a re-entry transient, not a delivered split, and it
+        #    is NOT the forced-0.5000 low-cruise regime (see ems-sdp-cross).
+        #    THE BOUND IS NOT MOVED. Re-scored offline on the G2 CSV with the
+        #    turn-on hold applied, the window peak is 0.1526 A at 85.0734 s —
+        #    15.2 % under the 0.18 A ceiling, and NOT on the re-close at all.
+        #    (CORRECTED 2026-09-04: the two numbers below were reported the wrong
+        #    way round in the first write-up of this block. Re-scored, the hold
+        #    sweep reads 0.2355 A at 33.1160 s with NO hold, 0.1718 A at
+        #    33.1542 s for a ~20-50 ms hold — still on the re-entry ramp — and
+        #    0.1526 A at 85.0734 s for every hold of 100 ms or more. The shipped
+        #    150 ms therefore passes at 0.1526 A, not at 0.1718 A.) So the
+        #    existing 0.18 A ceiling stands and keeps its separation from the
+        #    constant-0.50 sibling's 0.2626 A. Widening to 0.25 A would have left 6 % between
+        #    the ceiling and that control - the check would barely discriminate.
+        #    THE HOLD, DERIVED: RT_TD_ON 8 ms + the measured code convergence
+        #    33.097 -> 33.24 s = 143 ms, rounded up to 150 ms. The window
+        #    contains exactly ONE FC_BUS rise, so the hold costs 150 of 120 000
+        #    ticks. (The 58-cut chatter regime is at 205-295 s, outside it.)
+        #    PROVISIONAL: one fw v27 campaign.
         {"name": "sdpftp_fc_floored_early", "column": "I_fc",
          "max_value": 0.18, "t_window": (30.0, 150.0),
-         "provisional_note": _SDPFTP_PROVISIONAL,
+         "exclude_when_switch_bit_clear": SW_FC_BUS,
+         "exclude_hold_ms": _FC_TURN_ON_SETTLE_MS,
+         "provisional_note": _SDPFTP_PROVISIONAL + " " + _FW27_ERA_PROVISIONAL,
          "label": "the board delivered the battery-heavy split — I_fc under "
-                  "0.18 A through an OPEN-LOOP window whose source total never "
-                  "reaches 0.55 A (walk peak 0.0788 A; the constant-0.50 "
-                  "sibling reaches 0.2626 A there)"},
+                  "0.18 A through a window the fw v27 gate keeps CLOSED-LOOP "
+                  "for 97 %% of its ticks (source total 61.1 %% in 0.30-0.55 A, "
+                  "0 %% above; walk peak 0.0788 A; the constant-0.50 sibling "
+                  "reaches 0.2626 A there). FC_BUS-open ticks and the %.0f ms "
+                  "after each re-close are excluded: the battery-only re-entry "
+                  "ramps to 0.2355 A on inherited codes before the loop steps "
+                  "them (measured peak with the hold 0.1526 A, campaign G2)"
+                  % _FC_TURN_ON_SETTLE_MS},
         # 7. ... AND ON THE FUEL-CELL BRANCH.
         #    ⚠️ THE WINDOW MOVED, AND IT HAD TO. This check used to sit on the
         #    cycle peak, t = (235, 260) — which at preload 0 is BEFORE the
@@ -3974,12 +4151,44 @@ FAULT_EXPECTATIONS["ems-ftp75-sdp"] = {
         #    that and 3.3x under LIMIT_I_BT_MAX 3.0 A, so the ceiling is KEPT
         #    at its value — it was already a regression tripwire rather than a
         #    limit claim, and it retains that role with more margin.
+        #    ═══ fw v27 ERA RE-PIN: 0.90 -> 1.00 A (campaign G2) ═══════════════
+        #    MEASURED whole-run peak I_batt 0.9211 A at 244.020 s, against walk
+        #    0.6602 and campaign F 0.6783. The board is SAFE and the cause is a
+        #    NEW fw v27 regime, not a share-loop or governor error.
+        #    MECHANISM - SHARE-CUT CHATTER, because the floor now EQUALS the
+        #    handoff minimum. fw v27 halved SHARE_MINORITY_I_MIN_A to 0.15 A,
+        #    which is exactly SHARE_HANDOFF_MIN_A. A channel commanded AT the
+        #    floor therefore reads DARK to the handoff test: on the high cruise
+        #    the command is share 0.15 and I_fc sits at 0.1602 A, the load guard
+        #    cuts FC_BUS and immediately restores it, and each ~20 ms FC-dark
+        #    gap lands the whole rising cruise total on the battery
+        #    (0.7546 -> 0.9211 A). MEASURED: 58 en_low FC_BUS cuts between
+        #    205.23 and 295.16 s - one every 1.3-1.7 s - with max i_cut
+        #    0.2077 A, over_absmax 0, load_dump 0, both-dark 0, nothing latched
+        #    and final fault flags 0. The switching also costs h2: 0.01639 g
+        #    against the walk's 0.0159257 (+2.94 %), which the walk cannot see.
+        #    ⚠️ DESIGN ITEM FOR THE OPERATOR, not a tooling fix: re-derive
+        #    SHARE_HANDOFF_MIN_A against the new floor. This leg is the direct
+        #    evidence (58 cuts in 90 s). NOT changed here - firmware constants
+        #    are the operator's.
+        #    THE BOUND: 1.00 A is 8.6 % above the measurement and still 3x under
+        #    LIMIT_I_BT_MAX 3.0 A, so it keeps its role as a regression tripwire
+        #    on the handover transient rather than becoming a limit claim. The
+        #    margin is deliberately wider than a normal re-pin because the
+        #    chatter is a NEWLY OBSERVED regime whose cut count and phasing have
+        #    one campaign behind them; it is not slack for an unexplained number
+        #    - the mechanism is identified and the arithmetic closes.
+        #    PROVISIONAL: one fw v27 campaign.
         {"name": "sdpftp_bt_peak_bounded", "column": "I_batt",
-         "max_value": 0.90, "t_window": (5.0, 340.0),
-         "provisional_note": _SDPFTP_PROVISIONAL,
+         "max_value": 1.00, "t_window": (5.0, 340.0),
+         "provisional_note": _SDPFTP_PROVISIONAL + " " + _FW27_ERA_PROVISIONAL,
          "label": "the battery channel stayed bounded through the branch "
-                  "handover (governor walk whole-run peak 0.6602 A at "
-                  "preload 0, vs LIMIT_I_BT_MAX 3.0 A)"},
+                  "handover and the fw v27 share-cut chatter (measured peak "
+                  "0.9211 A at 244.020 s, campaign G2 "
+                  "hil_report_20260904_003108, in a 58-cut chatter regime "
+                  "caused by SHARE_MINORITY_I_MIN_A 0.15 A now equalling "
+                  "SHARE_HANDOFF_MIN_A; governor walk whole-run peak 0.6602 A "
+                  "at preload 0, campaign F 0.6783 A, vs LIMIT_I_BT_MAX 3.0 A)"},
         # 8-9. THE H2 ACCOUNTING RAN, AND STAYED BOUNDED. Budget from the walk:
         #    ~0.30 A on FC for the ~190 s pre-flip phase (4.7 W bus, 5.5 W
         #    stack) and ~0.8 A for the ~150 s after it (12.5 W bus, 14.7 W
@@ -4011,6 +4220,35 @@ FAULT_EXPECTATIONS["ems-ftp75-sdp"] = {
          "label": "... and stayed under 0.0249 g, so a scale or accumulation "
                   "error in the metric fails here instead of reading as a "
                   "result"},
+        # 11. THE en_low CHATTER CENSUS (M-4, 2026-09-04).
+        #     THE GAP IT CLOSES. `sdpftp_bt_peak_bounded` reads 1.00 on this leg
+        #     and every current bound above is a CEILING, so the regime that
+        #     dominates the second half of this run — FC_BUS cutting and
+        #     re-closing at ~1.5 Hz — was scored by nothing at all. A board that
+        #     doubled its cut rate, or one that stopped cutting entirely, would
+        #     read identically on every other check here.
+        #     MEASURED (campaign G2, hil_report_20260904_003108, fw v27 rev 2):
+        #     61 FC_BUS FALLS in t = [205, 295] s, against 62 in the whole 350 s
+        #     run — i.e. essentially all of this leg's chatter lives in this one
+        #     window, and the other four FTP-75 legs record ONE fall each (the
+        #     battery-only start) with ZERO in the window.
+        #     MECHANISM: the SDP table walks the commanded share while the source
+        #     total sits in the 0.30-0.55 A band, so the minority channel
+        #     repeatedly crosses SHARE_MINORITY_I_MIN_A and the firmware's own
+        #     share cut fires and restores. It is expected behaviour, and the
+        #     census is what makes its RATE a tracked quantity.
+        #     BAND: 61 x [0.6, 1.4] -> (37, 85), the same -40 %/+40 % rule the
+        #     sdpx and sdpb censuses use. PROVISIONAL on one fw v27 campaign;
+        #     a second reading either pins it or widens it, and the band is
+        #     never widened to absorb an unexplained number.
+        {"name": "sdpftp_en_low_census", "switch_bit": SW_FC_BUS,
+         "edge_count_between": (37, 85), "edge": "fall",
+         "t_window": (205.0, 295.0),
+         "provisional_note": _SDPFTP_PROVISIONAL + " " + _FW27_ERA_PROVISIONAL,
+         "label": "FC_BUS cut 37-85 times in the share-cut chatter regime "
+                  "(measured 61 falls in t = [205, 295] s of a whole-run 62, "
+                  "campaign G2 hil_report_20260904_003108; the four sibling "
+                  "FTP-75 legs record 1 whole-run fall and 0 in this window)"},
     ],
 }
 
@@ -4176,6 +4414,31 @@ FAULT_EXPECTATIONS["ems-ftp75-dp"] = {
     ],
 }
 
+
+# ── THE en_low CENSUS ON THE SIBLING FTP-75 LEGS (M-4, 2026-09-04) ───────────
+# REPORT-ONLY, and the asymmetry with `ems-ftp75-sdp` is the point. That leg
+# gets a BAND because its chatter regime is a measured, mechanism-explained 61
+# cuts; these four record ONE whole-run fall each (the fw v27 battery-only
+# start) and ZERO in the same window, so there is no distribution to bound and
+# a (0, 0) band would be pinning the absence of a phenomenon off one campaign.
+# What the census buys is comparability: the same number, scored the same way,
+# on every long leg, so the next campaign can say whether the chatter is
+# specific to the SDP command trajectory or is a property of the cycle.
+# ONE BUILDER, appended after the four dicts exist, so the four legs cannot
+# drift apart in how they count the same thing.
+for _leg in ("ems-ftp75-5050", "ems-ftp75-socband", "ems-ftp75-dp"):
+    FAULT_EXPECTATIONS[_leg]["signals_require"].append(
+        {"name": "ftp_en_low_census", "switch_bit": SW_FC_BUS,
+         "edge_count_between": (0, 1000), "edge": "fall",
+         "t_window": (205.0, 295.0), "informational": True,
+         "provisional_note": _FW27_ERA_PROVISIONAL,
+         "label": "INFORMATIONAL: FC_BUS cut count in the window where the "
+                  "`ems-ftp75-sdp` sibling chatters (measured 0 on this leg in "
+                  "campaign G2 hil_report_20260904_003108, against 61 there). "
+                  "Reported for cross-leg comparability; the bound is "
+                  "deliberately unbounded and asserts nothing"})
+del _leg
+
 FAULT_EXPECTATIONS["ems-sdp-cross"] = {
     "source": ("hil_plant_sim.py SCENARIOS['ems-sdp-cross'] and the SDP_CROSS_* "
                "constants (the two cruise levels and why each one is where it "
@@ -4203,11 +4466,13 @@ FAULT_EXPECTATIONS["ems-sdp-cross"] = {
         #    from the walk's +/-50 % (25, 65) to (35, 50) — 17 % of slack below
         #    the measurement and 18 % above it, which covers the walk-vs-board
         #    disagreement itself with margin to spare.
-        {"name": "sdpx_low_rail_early", "column": "cmd_share_sp",
+        {"provisional_note": _FW27_ERA_PROVISIONAL,
+         "name": "sdpx_low_rail_early", "column": "cmd_share_sp",
          "max_value": _SDP_LOW_RAIL_CEIL, "t_window": (5.0, 35.0),
          "label": "the run opened on the SDP table's battery-heavy branch "
                   "(commanded share at the 0.15 clamp)"},
-        {"name": "sdpx_high_rail_late", "column": "cmd_share_sp",
+        {"provisional_note": _FW27_ERA_PROVISIONAL,
+         "name": "sdpx_high_rail_late", "column": "cmd_share_sp",
          "min_value": _SDP_HIGH_RAIL_FLOOR, "t_window": (50.0, 190.0),
          "label": "... and crossed the SHARE threshold to the fuel-cell branch "
                   "(0.85) — with the check above, a crossing inside "
@@ -4215,7 +4480,8 @@ FAULT_EXPECTATIONS["ems-sdp-cross"] = {
         # 3. The pre-clamp column on the opening branch, for ems-ftp75-sdp's
         #    reason: 0.00 identifies the ARTIFACT's branch, which the clamped
         #    column cannot.
-        {"name": "sdpx_raw_battery_branch", "column": "cmd_share_sp_raw",
+        {"provisional_note": _FW27_ERA_PROVISIONAL,
+         "name": "sdpx_raw_battery_branch", "column": "cmd_share_sp_raw",
          "max_value": _SDP_RAW_LOW_CEIL, "t_window": (5.0, 35.0),
          "label": "the table's PRE-CLAMP request was its 0.00 battery rail"},
         # 4. THE CHARGE LIMIT CYCLE REACHED THE BOARD.
@@ -4225,11 +4491,49 @@ FAULT_EXPECTATIONS["ems-sdp-cross"] = {
         #    ~25200 ticks; its 12000-tick floor was therefore 19 % of the truth
         #    and COULD NOT FAIL. Raised to 45000 = 70 % of the measurement,
         #    which still survives losing three whole windows to timing.
-        {"name": "sdpx_charge_cycled", "switch_bit": SW_FC_CHARGE,
-         "min_ticks": 45000, "t_window": (70.0, 190.0),
+        #
+        #    ═══ fw v27 ERA RE-PIN (campaign G, 2026-09-03) ═══════════════════
+        #    THE PERIOD DOUBLED AND THE BOARD IS CORRECT. Measured on campaign G
+        #    (hil_report_20260903_233736): 32 835 set ticks, FIVE windows at
+        #    88.6 / 113.8 / 139.0 / 164.2 / 189.4 s, longest hold 8085 ticks,
+        #    period 25.2 s - against 64 103 ticks / nine windows / 16.13 s under
+        #    fw v26. Every sdpx number below that depends on the cycle moves with
+        #    it; the HOLD does not (fourth era-invariant reading).
+        #    MECHANISM, and it is a firmware property, not a plant one. The low
+        #    cruise (t 75-196) runs at a source total of 0.2817 A (F 0.3401),
+        #    which under fw v27 lands BETWEEN the closed-loop exit 0.25 A and the
+        #    entry 0.30 A. The loop entered at the first charge window (0.80 A)
+        #    and therefore NEVER EXITS. With the loop closed, the minority-clip
+        #    band is EMPTY (SHARE_MINORITY_I_MIN_A / I_tot = 0.15/0.2817 = 0.53 >
+        #    0.5) and the closed-loop rule "lo > 0.5 -> 0.5" pins the delivered
+        #    split at EXACTLY 0.5000 (I_fc = I_batt = 0.1408 A; MDAC (3905, 3489)
+        #    frozen between windows). fw v26 held 0.1858 open-loop below its
+        #    0.55 A drop-out. The pack therefore drains at HALF the rate
+        #    (I_batt 0.2769 -> 0.1408 A; -38.6 % from the split, -17.2 % from the
+        #    aux era), the SoC hysteresis band is unchanged (open 0.69699 / close
+        #    0.69730), the 8.085 s dwell is unchanged - so the charge PERIOD is
+        #    what absorbs the change, and it stretches to 25.2 s.
+        #    ⚠️ DESIGN CONSEQUENCE FOR THE OPERATOR, recorded here because no
+        #    check expresses it: fw v27 holds the board at a forced 50/50 with
+        #    0.14 A per channel - BELOW the 0.15 A conduction floor - for 17 s
+        #    spans in any leg whose two-source total lands in 0.25-0.30 A. The
+        #    bench has never covered that regime, and the standing "0.5 is the
+        #    only valid share at crossover" argument now applies to a SUSTAINED
+        #    region rather than to a crossing.
+        #    PROVISIONAL on every sdpx spec until a second fw v27 campaign
+        #    confirms; none of them carried a provisional note before this round.
+        #
+        #    RE-PIN: min_ticks 45000 -> 23000 = 70 % of the measured 32 835, the
+        #    same 70 %-of-measurement rule the 45000 was set by. It still
+        #    survives losing one whole window plus a decision stage.
+        {"provisional_note": _FW27_ERA_PROVISIONAL,
+         "name": "sdpx_charge_cycled", "switch_bit": SW_FC_CHARGE,
+         "min_ticks": 23000, "t_window": (70.0, 190.0),
          "label": "the policy's SoC-driven charge action reached the board — "
-                  "FC_CHARGE_ENABLE open for >= 45 s across the low cruise "
-                  "(measured 64.103 s, campaign 024231)"},
+                  "FC_CHARGE_ENABLE open for >= 23 s across the low cruise "
+                  "(measured 32.835 s over five windows, campaign G "
+                  "hil_report_20260903_233736; was 64.103 s over nine windows "
+                  "under fw v26, campaign 024231)"},
         # 5. ... AND IT IS A CYCLE, NOT ONE LONG WINDOW — asserted PHASE-FREE.
         #    ⚠️ THIS REPLACES `sdpx_charge_released_between`, THE ONE FAIL OF
         #    CAMPAIGN 20260901_024231. That check asserted the ABSENCE of a
@@ -4253,7 +4557,8 @@ FAULT_EXPECTATIONS["ems-sdp-cross"] = {
         #    invariant to under 0.3 %, because the 8 s dwell hysteresis sets
         #    it and not charge economics. THE PERIOD IS NOT INVARIANT: see
         #    `sdpx_charge_window_count` below.
-        {"name": "sdpx_charge_max_hold", "switch_bit": SW_FC_CHARGE,
+        {"provisional_note": _FW27_ERA_PROVISIONAL,
+         "name": "sdpx_charge_max_hold", "switch_bit": SW_FC_CHARGE,
          "max_continuous_ticks": 9000, "t_window": (70.0, 190.0),
          "label": "... and no single charge window outlasted the 8.0 s "
                   "minimum dwell by more than one decision stage — the latch "
@@ -4267,11 +4572,18 @@ FAULT_EXPECTATIONS["ems-sdp-cross"] = {
         #    <= 0.625), so this spec is the CEILING half: a run that charged
         #    for more than 70 % of the low cruise has stopped cycling, which no
         #    total-tick floor can see.
-        {"name": "sdpx_charge_released_fraction", "switch_bit": SW_FC_CHARGE,
+        #    ⚠️ fw v27 (campaign G): the released fraction rose 0.466 -> 0.726
+        #    (32 835 of 120 000 ticks set — see the era banner on check 4). The
+        #    CEILING 84000 is UNMOVED: it bounds "stopped cycling, charging
+        #    continuously", and the era moved the measurement AWAY from it, not
+        #    toward it. Only the label's measured value is re-stated.
+        {"provisional_note": _FW27_ERA_PROVISIONAL,
+         "name": "sdpx_charge_released_fraction", "switch_bit": SW_FC_CHARGE,
          "max_ticks": 84000, "t_window": (70.0, 190.0),
          "label": "... and the charger was RELEASED for at least 30 % of the "
-                  "low cruise (measured released fraction 0.466 — 64103 of "
-                  "120000 ticks set, campaign 024231)"},
+                  "low cruise (measured released fraction 0.726 — 32835 of "
+                  "120000 ticks set, campaign G hil_report_20260903_233736; was "
+                  "0.466 under fw v26, campaign 024231)"},
         # 7. (c) THE WINDOW COUNT, straight off the switch trace. 9 rising
         #    edges measured over t = 70..190 s; [6, 12] is -33 %/+33 % of that,
         #    which brackets a period anywhere in 10..20 s. This is the check
@@ -4284,11 +4596,21 @@ FAULT_EXPECTATIONS["ems-sdp-cross"] = {
         #    20260902_041414 measured 16.084-16.122 s. The [6, 12] edge band
         #    brackets both and does not move; what moves is the claim in the
         #    prose. MEDIUM confidence on the alternation — one campaign.
-        {"name": "sdpx_charge_window_count", "switch_bit": SW_FC_CHARGE,
-         "edge_count_between": (6, 12), "edge": "rise",
+        #    ⚠️ fw v27 RE-PIN (campaign G): FIVE windows, period 25.2 s — the
+        #    forced-0.5000 split halves the pack drain and stretches the SoC
+        #    hysteresis cycle (mechanism in full on check 4). [6, 12] would now
+        #    FAIL a correct board, so the band is re-pinned to [3, 7] = -40 % /
+        #    +40 % of the measured 5, bracketing a period anywhere in
+        #    ~17..40 s. The three fw v26 campaigns' 9 is OUT of this band by
+        #    construction: the two eras are not comparable on this axis, and a
+        #    band spanning both would assert nothing.
+        {"provisional_note": _FW27_ERA_PROVISIONAL,
+         "name": "sdpx_charge_window_count", "switch_bit": SW_FC_CHARGE,
+         "edge_count_between": (3, 7), "edge": "rise",
          "t_window": (70.0, 190.0),
-         "label": "... across 6-12 distinct charge windows (measured 9 in "
-                  "each of three campaigns, at a period of 16.13 s in "
+         "label": "... across 3-7 distinct charge windows (measured 5 at a "
+                  "25.2 s period, campaign G hil_report_20260903_233736; was 9 "
+                  "in each of three fw v26 campaigns, at a period of 16.13 s in "
                   "campaign 024231 and 16.10-17.12 s in the bleed-era "
                   "campaign 20260902_220604)"},
         # 8. THE CHARGER ACTUALLY CHARGED. Peak-over-window, so any one window
@@ -4300,7 +4622,8 @@ FAULT_EXPECTATIONS["ems-sdp-cross"] = {
         #    of the ceiling: it still cannot be met by an unpowered charger or
         #    by a window too short to settle, and it now also fails a run whose
         #    charger only reached a fraction of its programmed ceiling.
-        {"name": "sdpx_charging_established", "column": "I_charge",
+        {"provisional_note": _FW27_ERA_PROVISIONAL,
+         "name": "sdpx_charging_established", "column": "I_charge",
          "min_value": 0.75, "t_window": (78.0, 190.0),
          "label": "the Ag105 delivered its full 0.8 A ceiling inside the dwell "
                   "windows (measured 0.8000 A, campaign 024231)"},
@@ -4323,7 +4646,8 @@ FAULT_EXPECTATIONS["ems-sdp-cross"] = {
         # wrong in the safe direction. The cost is honest and stated — until
         # the first eta-era campaign re-pins it, this check has ~0.44 A of
         # slack and is a budget bound rather than a tripwire.
-        {"name": "sdpx_fc_peak_bounded", "column": "I_fc",
+        {"provisional_note": _FW27_ERA_PROVISIONAL,
+         "name": "sdpx_fc_peak_bounded", "column": "I_fc",
          "max_value": 1.28, "t_window": (5.0, 190.0),
          "label": "the single-source FC channel stayed inside its charge-window "
                   "budget (measured peak 1.1920 A vs LIMIT_I_FC_MAX 1.4 A, "
@@ -4504,12 +4828,48 @@ FAULT_EXPECTATIONS["ems-sdp-braking"] = {
         #    Read it WITH check 3: if the tick total and the two cruise windows
         #    are right, the four sustained windows are accounted for and the
         #    remainder of this count IS the drop count.
+        #
+        #    ── AUX ERA RE-PIN 2026-09-03 (campaign G): [8, 10] -> [10, 14] ──
+        #    MEASURED 12 rising edges, and the board is CLEAN. The four
+        #    sustained windows are intact (13.13 / 11.09 / 11.11 / 12.13 s;
+        #    charge ticks 52 469 against F's 52 479, i.e. 0.02 %), so the count
+        #    moved entirely in the EARLY-DROP term: 5 -> 8, with the three new
+        #    edges at 5.034 / 49.382 / 80.642 s.
+        #    MECHANISM. `I_AUX_A` 0.15 -> 0.09 A moved the whole demand trace by
+        #    -0.927 W (prediction V_bus x 0.060 A = 0.936 W, agreeing to 1 %),
+        #    so three of the five transients crossed the 6.000 W cruise-guard
+        #    admission edge (bin 5's upper edge at node 45) ONE DECISION STAGE
+        #    EARLIER, each producing an extra admit-then-drop blip:
+        #        F 6.456 / 6.248 / 6.179 W  ->  G 5.543 / 5.422 / 5.249 W
+        #    ⚠️ THE mW SENSITIVITY IS THE REASON THE BAND IS WIDER THAN THE
+        #    MEASUREMENT. F's own fourth transient sat at 5.996 W - 4 mW inside
+        #    the boundary - so the 9 was a knife edge, not a stable count: a
+        #    sub-percent demand move flips an edge either way. The band is set
+        #    to 4 sustained windows + [6, 10] early drops = [10, 14], which
+        #    spans the 5 stimulus transients each contributing 0, 1 or 2 edges
+        #    around the boundary. This is NOT a widening to absorb an unexplained
+        #    number: the mechanism is identified, predicted to 1 %, and the
+        #    boundary sensitivity is the measured property being tolerated.
+        #    PROVISIONAL until a second aux-era campaign confirms 12.
+        #    ⚠️ THE DURABLE FORM IS NOT ADDED HERE. The structural claim is
+        #    "four SUSTAINED windows (spans >= 2 s)", which is edge-count-free
+        #    and immune to the mW sensitivity - but no spec kind in this suite
+        #    counts runs by duration (the kinds are min/max_ticks,
+        #    max_continuous_ticks, edge_count_between, max_ms, reach_within_ms),
+        #    so it would need a new kind plus its import-time shape guard. It is
+        #    ALREADY PINNED, indirectly and adequately, by checks 3-5: the
+        #    per-window tick totals and the two cruise exclusions together
+        #    account for exactly the four sustained windows, which is why the
+        #    remainder of THIS count is the drop count. A dedicated kind is a
+        #    hygiene item, not a gap.
         {"name": "sdpb_charge_edge_census", "switch_bit": SW_FC_CHARGE,
-         "edge_count_between": (8, 10), "edge": "rise",
+         "edge_count_between": (10, 14), "edge": "rise",
          "t_window": (2.5, 130.0),
-         "label": "FC_CHARGE opened 8-10 times — the four plateau windows plus "
-                  "4-6 cruise-guard early drops (measured 9 = 4 + 5, campaign "
-                  "024231)"},
+         "provisional_note": _AUX_ERA_PROVISIONAL,
+         "label": "FC_CHARGE opened 10-14 times — the four plateau windows plus "
+                  "6-10 cruise-guard early drops (measured 12 = 4 + 8, campaign "
+                  "G hil_report_20260903_233736; was 9 = 4 + 5 at I_AUX_A "
+                  "0.15 A, campaign 024231)"},
     ],
 }
 
@@ -4828,12 +5188,51 @@ def _mpc_expectation(*, scenario, walk_h2, duration_s, survive_t,
                   "fails, which is also the check that the MPC drove this run"},
         # 9. THE SHADOW GOVERNOR'S OWN SCORE.  The strategy plans DELIVERED
         #    splits, so this column is the claim it makes; see the qualifier.
+        #     ⚠️ INTERIM MASK (campaign G, 2026-09-03): rows with SW_FC_BUS LOW
+        #     are excluded. fw v27's battery-only start puts the delivered share
+        #     at exactly 0 for a load-dependent span at the head of every run,
+        #     and `Planner.delivery_table()` has no branch for it, so the shadow
+        #     re-syncs r = 0.5 from the MDAC codes the firmware left standing
+        #     and predicts d ~ 0.53-0.61 against a delivered 0. That is a
+        #     TOPOLOGY error, not a split-law error, and this check is about the
+        #     split law. MEASURED on campaign G: peak 0.5515 (ems-mpc) / 0.6061
+        #     (ems-mpc-det) on 2043 / 2047 of 53 000 ticks, contiguous over
+        #     [5.00, 7.04] s, with post-cut maxima 0.154 / 0.061 against the
+        #     0.30 bound — so the bound is met comfortably once the cut ticks
+        #     are out, and it is NOT widened.
+        #     `ems-mpc-single` is the POSITIVE CONTROL and the mask is qualified
+        #     so as not to destroy it: it COMMANDS share 0.0 through its own cut
+        #     and the existing SS_MODE_BT branch predicts d = 0.0 there to four
+        #     decimals (err 0.00010). An unqualified mask would drop 19 340 of
+        #     its 53 000 in-window ticks — the evidence, not the noise. With the
+        #     `exclude_clear_exempt_*` pair it drops 68 (the firmware's own
+        #     battery-only start at the head of the run) and the other three
+        #     legs are bit-identical either way (712 / 715 / 5 ticks).
+        #     ⚠️ THE MASK DOES NOT CLOSE THESE FAILS, and that is reported
+        #     rather than papered over. On campaign G it removes 712 / 715 / 5
+        #     ticks and the exceedance falls 2043 -> 1334 (ems-mpc) and
+        #     2047 -> 1332 (det), but the masked peak is 0.5515 at t = 5.711 s
+        #     — the very tick FC_BUS RISES — and the error persists ~1.33 s past
+        #     the release, because the shadow's committed stage plan is stale
+        #     for the rest of its horizon. Only the model fix closes it.
+        #     ⚠️ `ems-mpc-cross` IS NOT THIS DEFECT. Its arm released at 4.661 s,
+        #     BEFORE the 5.0 s window opens, so the mask removes 5 ticks and its
+        #     0.5253 peak at t = 5.000 s is untouched. Its low cruise sits in the
+        #     0.25-0.30 A forced-0.5000 regime (see ems-sdp-cross), which the
+        #     shadow does not model either — a SEPARATE finding, not yet queued.
+        #     REMOVE THIS MASK once the battery-only branch lands in mpc_ems.py
+        #     and a campaign shows the prediction tracking through the cut.
         {"name": "mpc_share_prediction", "column": "mpc_share_pred_err",
          "max_value": pred_err_max, "t_window": run_window,
+         "exclude_when_switch_bit_clear": SW_FC_BUS,
+         "exclude_clear_exempt_column": "cmd_share_sp",
+         "exclude_clear_exempt_values": list(_MPC_SINGLE_SOURCE_VALUES),
          "provisional_note": _MPC_PRED_PROVISIONAL,
          "label": "the governor-aware model predicted the DELIVERED stage "
-                  "share to within %.2f (walk peak, MDAC-blind)"
-                  % pred_err_max},
+                  "share to within %.2f (walk peak, MDAC-blind) — scored only "
+                  "on ticks with FC_BUS CLOSED; fw v27's battery-only start "
+                  "makes the delivered share 0 by topology, which the planner "
+                  "does not yet predict" % pred_err_max},
         # 10. THE SEARCH DEPTH.  A ceiling on the ticks spent holding a
         #    budget-expired decision, i.e. on the fraction of the run commanded
         #    by a shifted incumbent rather than by a fresh plan.
@@ -5105,6 +5504,44 @@ _FTP75C_PROVISIONAL = (
     "of 1.0-1.6 s against the ~0.9 s dead time), not either TODO(verify) "
     "constant. A second campaign settles whether these are pins or a spread.")
 
+# ── THE ftp75c WALK FIGURES ARE fw <= 26 (campaign G2, 2026-09-04) ───────────
+# Every `note` on this family quotes a walk `h2` and a coulomb count, and all
+# five of them were walked BEFORE fw v27. They are kept - a reader comparing an
+# older ledger needs them - but each note now carries this sentence beside them
+# so the fw v26 figure is never read as this era's prediction.
+#
+# WHY THE TWO ERAS DISAGREE SO VIOLENTLY. fw v27's battery-only arm never
+# releases on this cycle: the peak two-source source total is 0.2778 A raw /
+# 0.2762 A filtered, against the 0.30 A release gate, with ZERO crossings in
+# 170 s (control: `ems-ftp75-5050` crosses 27 times, peak 0.917 A). The fuel
+# cell is therefore off the bus for the whole cycle and the pack carries all of
+# it, so the fw v27 walk predicts h2 = 0.0000000 g on the four charge-free legs
+# (`ems-ftp75c-socband` 0.0039450 g - it opens charge windows, and
+# `assertFcChargeEnable()` SUPPRESSES the arm inside one).
+#
+# THE BOARD IS NOT AT ZERO EITHER, and the residual is what the walk cannot
+# represent. MEASURED on `ems-ftp75c-5050` (campaign G2): h2 5.2444e-05 g -
+# 95.6 % of it the PRE-CUT bring-up window before the arm engages at State-2
+# entry, and 2.2 % per regen-window handoff. None of it is drive-cycle
+# hydrogen. Against campaign F's fw v26 6.408e-03 g that is -99.2 %, and the
+# pack carries the difference (dSoC -0.00303 against -0.00189).
+# REGEN IS UNCHANGED across the two eras: 6 windows / 19.240 s (F 19.2),
+# 0.7365 C to the pack (F 0.73), chopper 5.4675 J (D-F band 5.24-5.49).
+# RE-WALKING this family against the arm is a SEPARATE round, not this one.
+_FTP75C_WALK_ERA_NOTE = (
+    " WARNING: THE WALK FIGURES ABOVE ARE fw <= 26. Under fw v27 rev 2 the "
+    "battery-only arm NEVER RELEASES on this cycle (peak filtered source total "
+    "0.2762 A against the 0.30 A gate, zero crossings in 170 s), so the fw v27 "
+    "walk predicts h2 0.0000000 g on the four charge-free legs and 0.0039450 g "
+    "on -socband. The BOARD measured 5.2444e-05 g on -5050 in campaign G2 "
+    "(hil_report_20260904_003108): 95.6 % pre-cut bring-up plus 2.2 % per "
+    "regen-window handoff, none of it drive-cycle hydrogen, against campaign "
+    "F's fw v26 6.408e-03 g (-99.2 %). The walk carries neither the pre-cut "
+    "bring-up window nor the handoff events, which is why it reads 0 where the "
+    "board reads 5.24e-05; re-walking this family is a separate round. Regen "
+    "is era-invariant: 6 windows / 19.240 s, 0.7365 C to the pack, chopper "
+    "5.4675 J.")
+
 
 def _ftp75c_regen_signals():
     """The four checks that make the REGEN PATH observable.  PURE.
@@ -5290,29 +5727,76 @@ def _ftp75c_expectation(*, scenario, ems, i_fc_peak_walk, extra=(), note=""):
         # as `socband_fc_peak_charging` is: a mask keeping ONLY charge ticks
         # would make the arm vacuous on a leg whose charge branch never opened.
         # A FIXED 0.60 A rather than a multiple of the walk peak, because the
-        # quantity it bounds has nothing to do with the leg's commanded split -
-        # it is aux plus the charger's own referred bus draw carried
-        # single-source, and it is therefore the SAME on all five legs
-        # (measured maximum 0.3818 A across them). 0.60 A is +57 % on that
-        # measurement and 43 % under LIMIT_I_FC_MAX 1.4 A, so an FC channel
-        # running away in a handoff still fails here.
+        # quantity it bounds has nothing to do with the leg's commanded split.
+        # 0.60 A is +57 % on the fw v26 measured maximum of 0.3818 A across the
+        # five legs and 43 % under LIMIT_I_FC_MAX 1.4 A, so an FC channel
+        # running away in a handoff fails here.
+        #
+        # ═══ RATIONALE CORRECTED, AND THE CHECK IS LEFT FAILING (campaign G2,
+        # hil_report_20260904_003108, 2026-09-04) ═════════════════════════════
+        # ⚠️ THE MECHANISM SENTENCE THIS CHECK CARRIED WAS WRONG. It read "aux
+        # plus the charger's own referred bus draw carried single-source", i.e.
+        # a LOAD. That describes the fw v26 transients it was calibrated on, and
+        # it does NOT describe what fw v27 produces. MEASURED on campaign G2:
+        # peak I_fc 1.1761 A (and 1.0519 A at the second event) with I_batt
+        # EXACTLY 0, I_charge EXACTLY 0, and V_chg 7.46 V - BELOW AG105_V_IN_MIN,
+        # so the charger is not drawing anything at all. There is no load to
+        # carry. The current is the BUS-RECHARGE INRUSH through a cold ideal
+        # diode: V_bus has collapsed to 7.67 V and the FC branch is re-charging
+        # C_VBUS through the RT1987 as it turns on.
+        #
+        # WHY THE BUS IS DARK - a fw v27 SEQUENCING DEFECT, board-real. The
+        # compressed cycle never reaches the 0.30 A release gate (max raw total
+        # 0.2778 A, max EMA 0.2762 A, ZERO crossings; control ems-ftp75-5050
+        # crosses 27 times), so the battery-only arm stands for the whole
+        # 170 s. At a regen window's early release the manager hands off in ONE
+        # tick, 0x2e -> 0x35: REGEN and BT_BUS drop while FC_BUS is commanded
+        # from COLD (the arm is SUPPRESSED, not disarmed, when FC_CHARGE opens).
+        # With RT_TD_ON_S 8 ms of turn-on delay the bus is source-less: V_bus
+        # 15.8075 -> 4.9483 V at 2.59 V/ms (= I_AUX_A/C_VBUS 2.571, 0.7 %),
+        # conduction-dark 6.84 / 6.64 ms, bare UV_BUS 17.91 / 17.97 ms against
+        # the 20 ms latch - about 2 ms of margin, and nothing latched. fw v26
+        # made the same transition (0x2f -> 0x35) with FC ALREADY CONDUCTING and
+        # showed 0 UV ticks. It is the charge-to-full break-before-make defect
+        # at cycle scale.
+        #
+        # ⚠️ THE BOUND IS NOT WIDENED AND THE CHECK IS EXPECTED TO FAIL. 1.1761 A
+        # is 84 % of LIMIT_I_FC_MAX; raising 0.60 A to admit it would convert a
+        # tripwire into a record of a defect. The FAIL is the SIGNATURE of the
+        # unfixed firmware defect and must stay visible until the operator's F1
+        # fix lands (preferred form: chargingControl() clears the arm one
+        # commander period BEFORE raising FC_CHARGE_ENABLE, so the setpoint
+        # latch's guarded release re-closes FC_BUS onto a still-energised bus).
+        # RE-DERIVE THE BOUND AFTER THAT FIX, not before - the post-fix
+        # transient is a different quantity from either of these two.
         {"name": "ftp75c_fc_bounded_charging", "column": "I_fc",
          "max_value": 0.60, "t_window": _FTP75C_RUN_W,
          "provisional_note": (
-             "TWO CAMPAIGNS (20260902_220604 and E, 20260903_031220). The "
-             "bound is a fixed 0.60 A against a measured maximum of 0.3818 A "
-             "over five legs, and the "
-             "quantity is aux plus the charger's referred bus draw carried "
-             "single-source after assertFcChargeEnable() drops BT - so it "
-             "moves with ETA_CHG, with the Ag105 charge ceiling and with the "
-             "bus voltage at the handoff, none of which this bound tracks. "
-             "Re-derive it if any of the three moves."),
+             _FW27_ERA_PROVISIONAL + " WARNING: ON fw v27 A FAIL HERE IS EXPECTED and "
+             "is the signature of the un-fixed battery-only-arm handoff defect "
+             "(campaign G2 hil_report_20260904_003108): the arm never releases "
+             "on the compressed cycle (max EMA 0.2762 A against the 0.30 A "
+             "gate), so a regen window's early release hands off 0x2e -> 0x35 "
+             "in one tick with FC_BUS commanded from cold, the bus goes "
+             "source-less for RT_TD_ON 8 ms and collapses to 4.95 V, and the "
+             "1.1761 A peak is the RECHARGE INRUSH through the cold ideal diode "
+             "(I_batt 0, I_charge 0, V_chg 7.46 V < AG105_V_IN_MIN). Do NOT "
+             "widen this bound to make the leg green - the FAIL is the finding. "
+             "The 0.60 A value itself is a fw <= 26 calibration against a "
+             "measured 0.3818 A over five legs, where the quantity WAS aux plus "
+             "the charger's referred bus draw and moved with ETA_CHG, the Ag105 "
+             "ceiling and the handoff bus voltage. Re-derive it after the "
+             "operator's F1 firmware fix, not before."),
          "label": "the FC channel stayed under 0.60 A across the whole cycle, "
                   "INCLUDING the charge-handoff transients that arm 1 masks "
-                  "out (measured maximum 0.3818 A over the five legs; 43 %% "
-                  "under LIMIT_I_FC_MAX 1.4 A). The transient is aux plus the "
-                  "charger's referred bus draw carried single-source, not the "
-                  "share loop"},
+                  "out (fw v26 measured maximum 0.3818 A over the five legs; "
+                  "43 %% under LIMIT_I_FC_MAX 1.4 A). On fw v26 the transient "
+                  "was aux plus the charger's referred bus draw carried "
+                  "single-source; on fw v27 it is the bus-RECHARGE INRUSH "
+                  "through a cold ideal diode after a break-before-make "
+                  "handoff (measured 1.1761 A, campaign G2) - a firmware "
+                  "sequencing defect, and this check FAILING is how it stays "
+                  "visible"},
     ]
     sigs.extend(_ftp75c_regen_signals())
     sigs.extend(extra)
@@ -5357,7 +5841,8 @@ FAULT_EXPECTATIONS["ems-ftp75c-5050"] = _ftp75c_expectation(
           "family it is also the cleanest read of the regen path, because "
           "`hold-5050` commands no charge_goal of its own at all - every "
           "assertion of it comes from the COMMON regen manager. Walk: h2 "
-          "0.006288839 g, dSoC -0.001926, 1.1729 C to the pack."))
+          "0.006288839 g, dSoC -0.001926, 1.1729 C to the pack."
+          + _FTP75C_WALK_ERA_NOTE))
 
 FAULT_EXPECTATIONS["ems-ftp75c-socband"] = _ftp75c_expectation(
     scenario="ems-ftp75c-socband", ems="soc-band", i_fc_peak_walk=0.1856,
@@ -5414,7 +5899,8 @@ FAULT_EXPECTATIONS["ems-ftp75c-socband"] = _ftp75c_expectation(
           "nothing, so the reference is charge-free in energy terms. That is "
           "accepted as-is - no minimum charge dwell and no widened exit "
           "threshold will be added, because constraining how a policy pulls "
-          "OUT of charge mode would change the reference's decision law."))
+          "OUT of charge mode would change the reference's decision law."
+          + _FTP75C_WALK_ERA_NOTE))
 
 FAULT_EXPECTATIONS["ems-ftp75c-sdp"] = _ftp75c_expectation(
     scenario="ems-ftp75c-sdp", ems="sdp-v6", i_fc_peak_walk=0.2872,
@@ -5446,7 +5932,8 @@ FAULT_EXPECTATIONS["ems-ftp75c-sdp"] = _ftp75c_expectation(
           "ARM: the CANDIDATE commands 0.85 while the bound it is divided by "
           "was solved over [0.25, 0.75], so a vs_bound at or just above 1.0 "
           "on an SDP candidate is EXPECTED and is not evidence about the "
-          "policy. See the finding and the operator TODO at DP_SHARE_MIN."))
+          "policy. See the finding and the operator TODO at DP_SHARE_MIN."
+          + _FTP75C_WALK_ERA_NOTE))
 
 FAULT_EXPECTATIONS["ems-ftp75c-dp"] = _ftp75c_expectation(
     scenario="ems-ftp75c-dp", ems="dp-replay", i_fc_peak_walk=0.2490,
@@ -5463,7 +5950,8 @@ FAULT_EXPECTATIONS["ems-ftp75c-dp"] = _ftp75c_expectation(
           "against 0.00597881 g, residual +1.82e-06 SoC). That is the "
           "discrete control grid - LAMBDA_TERM to terminal SoC is monotone "
           "but not continuous - and it is why the tuple's vs-bound arm reads "
-          "~1.01. Walk: h2 0.006619509 g, dSoC -0.001793."))
+          "~1.01. Walk: h2 0.006619509 g, dSoC -0.001793."
+          + _FTP75C_WALK_ERA_NOTE))
 
 # ── ems-ftp75c-mpc: the compressed-cycle MPC candidate, behind --with-ftp75c
 FAULT_EXPECTATIONS["ems-ftp75c-mpc"] = _mpc_expectation(
@@ -5499,7 +5987,7 @@ FAULT_EXPECTATIONS["ems-ftp75c-mpc"] = _mpc_expectation(
                 "`mpc_share_pred_err` on this leg before reading its ratios. "
                 "Walk: h2 0.003311646 g, dSoC -0.003127, zero charge windows, "
                 "peak I_fc 0.0912 A - the lowest FC current of any registered "
-                "drive-cycle leg."))
+                "drive-cycle leg." + _FTP75C_WALK_ERA_NOTE))
 # THE FOUR REGEN OBSERVABLES, appended rather than built in: the regen path is
 # driven by the COMMON manager and is strategy-independent by construction, so
 # this leg must assert exactly what its four siblings do.  `_mpc_expectation()`
@@ -5935,6 +6423,40 @@ _MPPT_THRESH_W = (EMS_MPPT_CRUISE_WINDOWS[1][0], _MPPT_ALL_CRUISE_W[1])   # 28.1
 _MPPT_THRESH_CRUISE_W = (EMS_MPPT_CRUISE_WINDOWS[1][0]
                          + EMS_MPPT_CRUISE_LEAD_IN_S + AG105_SETTLE_S + 0.2,
                          37.0)                                    # 29.1-37.0
+# ── `mppt_threshold_moved` GETS ITS OWN WINDOW (campaign G, 2026-09-03) ──────
+# The two checks that share `_MPPT_THRESH_CRUISE_W` ask DIFFERENT questions and
+# campaign G separated them:
+#   the PEAK tripwire asks "what LEVEL did the live mirror reach", and must not
+#     see the frozen braking value — the 0.2 s settle pad exists for that;
+#   `mppt_threshold_moved` asks "is the column LIVE in THIS run", and only needs
+#     motion.
+# On fw v27 rev 2 the settle pad stopped containing the motion. MEASURED: the
+# count staircase after the FC_CHARGE open (28.4274 s; E 28.4322, F 28.4334 —
+# the schedule itself is unmoved) runs 17 -> 16 -> 15 in 41 ms
+# (28.9515-28.9925 s) and FINISHES 108 ms BEFORE the 29.1 s left edge, so the
+# range on `_MPPT_THRESH_CRUISE_W` is 0 and a correct board fails. The margin
+# history is 3 -> 2 -> 0 across E, F and G: the pad was always going to run out.
+#
+# DRIVER (fw v27, adjacent design finding — see the entry's own note): the
+# load-scheduled k_d saturates inside the single-source FC-charge window. At
+# I_tot ~ 0.158 A the schedule clamps r_lo at 0.5, giving
+# k_d = 2.014 * 0.5 * 0.9 = 0.9063 ohm against fw v26's fixed 0.30 (x3.02);
+# the measured single-source source impedance moves 0.648 -> 1.951 ohm (x3.01),
+# `mdac_fc` sits at FULL SCALE 4095 for 9057 ticks (F: 0), and the charge-window
+# bus sags 15.58 -> 15.14 V. The deeper sag settles V_chg faster and lower, so
+# the staircase is shorter and earlier.
+#
+# THE WINDOW OPENS AT THE FC_CHARGE OPEN INSTANT (28.4 s = cruise window + lead
+# in), i.e. it drops the settle pad and the AG105_SETTLE_S term but keeps the
+# braking window excluded. It therefore ADMITS the frozen braking value carried
+# across the dark gap, and that is deliberate here and only here: a dead or
+# carried column is CONSTANT, so its range is still 0 and it still fails. Range
+# on this window is 12 on E, F and G alike — the one bound that reads the same
+# on both firmware versions.
+# PROVISIONAL: one fw v27 campaign.
+_MPPT_THRESH_MOVED_W = (EMS_MPPT_CRUISE_WINDOWS[1][0]
+                        + EMS_MPPT_CRUISE_LEAD_IN_S,
+                        37.0)                                     # 28.4-37.0
 # TRIMMED TO THE MEASURED PLATEAU (2026-09-02, campaign C item 3): the old
 # right edge 38.529 overhung the clamp by ~62 ms, which is what made a per-tick
 # floor unsatisfiable in the first place. Measured plateaus: 37.719-38.432
@@ -5951,6 +6473,18 @@ _MPPT_THRESH_CRUISE_W = (EMS_MPPT_CRUISE_WINDOWS[1][0]
 # of ticks at 27 is 6635 against 2164 (the intermediate ratchet bins 21-26
 # vanish because the mirror never leaves the clamp mid-braking). The harvest
 # operating point is UNMOVED at [15, 19].
+#
+# ⚠️ fw v27 ERA (campaign G, 2026-09-03): THE HARVEST OPERATING POINT NARROWS TO
+# [15, 17], from [15, 19]. Measured on `_MPPT_THRESH_CRUISE_W`: histogram
+# {15: 7900}, i.e. the count has already ratcheted to AG105_MPPT_N_FLOOR before
+# the mirror-live edge (the staircase 17 -> 16 -> 15 completes at 28.9925 s).
+# 15 is a legitimately reachable value, not an artefact. CONSEQUENCE: the peak
+# tripwire (<= 21) is now NON-DISCRIMINATING on this window — it cannot fail a
+# run whose count never leaves the floor. It is NOT re-pinned onto 15: a ceiling
+# tightened onto a floor asserts nothing either, and the right fix is a stimulus
+# that makes the mirror ratchet inside the observation window. PROVISIONAL, one
+# fw v27 campaign. The DRIVER is the scheduled k_d saturating in the
+# single-source charge window — see the `_MPPT_THRESH_MOVED_W` banner.
 _MPPT_THRESH_BRAKE_W = (37.75, 38.44)
 # ~12.9 s of rows at the CSV's 1 kHz rate; 9000 is 70 % of them, leaving room for
 # dropped observation frames while still FAILING LOUDLY on a run whose column is
@@ -6258,8 +6792,20 @@ FAULT_EXPECTATIONS["mppt-tracking"] = {
         #     check's CLAIM is "the column is LIVE", and one count of motion
         #     establishes that; the harvest operating point is asserted by the
         #     min/max pins below, not here.
+        #     ⚠️ WINDOW MOVED AGAIN 2026-09-03 (campaign G) onto
+        #     `_MPPT_THRESH_MOVED_W` (28.4-37.0), this check's OWN window — the
+        #     peak tripwire keeps the 29.1 s mirror-live edge. Derivation and
+        #     the fw v27 driver are in that constant's banner; in short, the
+        #     scheduled k_d deepens the charge-window sag, the staircase
+        #     (17 -> 16 -> 15 over 41 ms) now completes 108 ms BEFORE 29.1 s,
+        #     and the range on the shared window is 0 on a CORRECT board. The
+        #     margin history on the shared window is 3 (E) -> 2 (F) -> 0 (G).
+        #     Range on the new window is 12 in all three campaigns. The bound
+        #     stays at 1: the claim is still "the column is LIVE", and a frozen
+        #     or carried column has range 0 on this window too. PROVISIONAL.
         {"name": "mppt_threshold_moved", "column": "mppt_thresh_cnt",
-         "column_range_at_least": 1, "t_window": _MPPT_THRESH_CRUISE_W,
+         "column_range_at_least": 1, "t_window": _MPPT_THRESH_MOVED_W,
+         "provisional_note": _FW27_ERA_PROVISIONAL,
          # RELABELLED 2026-09-02 (review PLANT-R1-F1), same reason as the pin
          # above: a moving count proves the column is LIVE in this run, not that
          # the threshold manager ran — under HIL_SIM it never does.
@@ -8936,12 +9482,66 @@ def _assert_signal_spec_shapes(_n, _e):
                 assert float(_sub.get("exclude_hold_ms", 0.0)) >= 0.0, (
                     "FAULT_EXPECTATIONS[%r].signals_require[%r]: a negative "
                     "`exclude_hold_ms` would UN-exclude rows." % (_n, _tag))
+            # `exclude_when_switch_bit_clear` (campaign G, 2026-09-03) — the
+            # INVERSE mask, same shape rules, plus one of its own: it has no
+            # settling hold. The mask above holds open past a bit's FALL because
+            # the current it gates decays physically; this one masks a TOPOLOGY
+            # (a switch that is open carries nothing), and topology has no decay
+            # tail. A hold written beside it would be silently ignored.
+            if "exclude_when_switch_bit_clear" in _sub:
+                assert _sub.get("column") or "sum_of" in _sub or "ratio_of" in _sub, (
+                    "FAULT_EXPECTATIONS[%r].signals_require[%r]: "
+                    "`exclude_when_switch_bit_clear` masks rows out of a "
+                    "NUMERIC measurement, so the spec needs a `column` or a "
+                    "derived value source." % (_n, _tag))
+                assert not ({"switch_bit", "aux_bit"} & set(_sub)), (
+                    "FAULT_EXPECTATIONS[%r].signals_require[%r]: "
+                    "`exclude_when_switch_bit_clear` cannot be combined with a "
+                    "bit spec — the mask and the watched bit would be two "
+                    "predicates on one row." % (_n, _tag))
+                assert int(_sub["exclude_when_switch_bit_clear"]) > 0, (
+                    "FAULT_EXPECTATIONS[%r].signals_require[%r]: an empty "
+                    "`exclude_when_switch_bit_clear` mask excludes every row, "
+                    "which makes the check vacuous." % (_n, _tag))
+                # `exclude_hold_ms` on the INVERSE mask holds past the bit's
+                # RISE, not its fall — the turn-on transient of a switch that
+                # has just closed (campaign G2). The two masks read the same key
+                # with mirrored meanings, so a spec carrying BOTH would be
+                # asking one number to mean two things.
+                assert "exclude_when_switch_bit" not in _sub, (
+                    "FAULT_EXPECTATIONS[%r].signals_require[%r]: a spec cannot "
+                    "carry both `exclude_when_switch_bit` and "
+                    "`exclude_when_switch_bit_clear` — they share "
+                    "`exclude_hold_ms` with MIRRORED meanings (past the fall / "
+                    "past the rise). Split it into two specs." % (_n, _tag))
+                assert float(_sub.get("exclude_hold_ms", 0.0)) >= 0.0, (
+                    "FAULT_EXPECTATIONS[%r].signals_require[%r]: a negative "
+                    "`exclude_hold_ms` would UN-exclude rows." % (_n, _tag))
+                # The exemption is a PAIR. One key alone is a mask that silently
+                # exempts nothing (values without a column) or exempts every
+                # open-switch row (a column with no values) — both read as the
+                # qualified mask and are neither.
+                assert (("exclude_clear_exempt_column" in _sub)
+                        == ("exclude_clear_exempt_values" in _sub)), (
+                    "FAULT_EXPECTATIONS[%r].signals_require[%r]: "
+                    "`exclude_clear_exempt_column` and "
+                    "`exclude_clear_exempt_values` are a pair — one without the "
+                    "other is a mask that looks qualified and is not."
+                    % (_n, _tag))
+                if "exclude_clear_exempt_values" in _sub:
+                    assert _sub["exclude_clear_exempt_values"], (
+                        "FAULT_EXPECTATIONS[%r].signals_require[%r]: an empty "
+                        "`exclude_clear_exempt_values` exempts nothing."
+                        % (_n, _tag))
             # A settling hold is meaningless without the mask it holds open —
             # written alone it would be read as an exclusion and enforce none.
-            assert "exclude_hold_ms" not in _sub or "exclude_when_switch_bit" in _sub, (
+            assert ("exclude_hold_ms" not in _sub
+                    or "exclude_when_switch_bit" in _sub
+                    or "exclude_when_switch_bit_clear" in _sub), (
                 "FAULT_EXPECTATIONS[%r].signals_require[%r]: `exclude_hold_ms` "
-                "extends `exclude_when_switch_bit` past the bit's fall and has "
-                "no meaning without it." % (_n, _tag))
+                "extends `exclude_when_switch_bit` past the bit's fall (or "
+                "`exclude_when_switch_bit_clear` past its rise) and has "
+                "no meaning without one of them." % (_n, _tag))
             assert_derived_source_shape(_n, _tag, _sub)
             if "reach_within_ms" in _sub:
                 # THE SETTLING KIND (2026-09-03). It reads TWO columns on one
@@ -9695,6 +10295,23 @@ def analyze_scenario_csv(csv_path, grace_s=WARM_RESET_GRACE_S, survive_to_t=None
          # the same one the `fault_latch_bit` signal uses (`bits & FAULT_ERROR`
          # on the same row), so the two cannot drift.
          "fault_first_latch_t": {},
+         # ── WHOLE-RUN LATCH MAP (campaign G, 2026-09-03) ────────────────────
+         # The same LATCHED first sighting as `fault_first_latch_t`, but scoped
+         # to the WHOLE run rather than post-grace — the latch analogue of
+         # `fault_first_t_whole_run`.  It exists because the
+         # `share_cut_load_hazard` teardown anchor needs BOTH properties at
+         # once and neither existing map has them:
+         #   * whole-run scope, so a genuine IN-GRACE latch (scp-inrush's
+         #     designed OC_FC) anchors at its own instant and not at the grace
+         #     bound (see CARRIED_IN_LATCH_MAX_S);
+         #   * latch-only, so a NON-LATCHING bare indication cannot move the
+         #     anchor.  Measured on charge-to-full in campaign G: a 19-tick
+         #     bare UV_BUS (0x0100, never 0x8100) during the 8.8 ms
+         #     break-before-make sag pulled the cutoff earlier and excused the
+         #     8.021 s BT_BUS cut that the tripwire exists to see.
+         # Populated with the same predicate as `fault_first_latch_t` (the row
+         # also carries FAULT_ERROR) so the two cannot drift.
+         "fault_first_latch_t_whole_run": {},
          "n_obs_post_grace": 0, "last_obs_t": None,
          "grace_s": grace_s, "survive_to_t": survive_to_t,
          "fault_bits_before_survive": 0, "state_at_survive": None,
@@ -9822,6 +10439,16 @@ def analyze_scenario_csv(csv_path, grace_s=WARM_RESET_GRACE_S, survive_to_t=None
                         for b in _split_bits(bits & ~_seen_for_first):
                             m["fault_first_t_whole_run"].setdefault(fault_names(b), t)
                         _seen_for_first |= bits
+                        # Whole-run LATCH map (campaign G).  Same predicate as
+                        # the post-grace `fault_first_latch_t` below — the row
+                        # must also carry FAULT_ERROR — but unscoped by the
+                        # grace bound, and iterated over `bits` rather than a
+                        # new-bits mask so a bit whose first BARE sighting was a
+                        # transient still records its later latch.
+                        if bits & FAULT_ERROR:
+                            for b in _split_bits(bits & ~FAULT_ERROR):
+                                m["fault_first_latch_t_whole_run"].setdefault(
+                                    fault_names(b), t)
                     post = t is not None and t >= grace_s
                     if post:
                         m["n_obs_post_grace"] += 1
@@ -10129,6 +10756,22 @@ def scan_signals(csv_path, specs, grace_s=WARM_RESET_GRACE_S):
                 # clears.  None until the bit has been seen set at all — a run
                 # whose masked branch never opened gets no exclusion.
                 "mask_last_set_t": None,
+                # The MIRROR of the above for `exclude_when_switch_bit_clear`
+                # (campaign G2, 2026-09-04): the sim time of the LAST row on
+                # which that mask's bit was CLEAR, i.e. the switch's turn-on
+                # instant is the first row after it.  `exclude_hold_ms` on the
+                # inverse mask is measured from here, so the mask keeps
+                # excluding for that long AFTER the switch closes.
+                "mask_last_clear_t": None,
+                # `exclude_when_switch_bit_clear` CENSUS (M-3, 2026-09-04):
+                # `mask_seen` is every row that reached the mask with a
+                # decidable switch word, `mask_dropped` the subset the mask
+                # excluded, and `mask_bit_seen_set` whether the bit has yet been
+                # observed HIGH in this window (the mask drops rows only in the
+                # PREFIX before that).  Reported on every verdict of a spec that
+                # declares the mask, so the population a bound was judged on can
+                # never be silent.
+                "mask_seen": 0, "mask_dropped": 0, "mask_bit_seen_set": False,
                 # `reach_within_ms` state (2026-09-03): the sim time of the
                 # first sample at or above the spec's `min_value` at or after
                 # the watched bit's rising edge (`edge_t`).  None until that
@@ -10342,6 +10985,153 @@ def scan_signals(csv_path, specs, grace_s=WARM_RESET_GRACE_S):
                     # the 0.85 A tripwire on a correct board.  The hold is
                     # measured from the LAST row the bit was set on, so a
                     # chattering branch never leaks a partially-decayed sample.
+                    # ── INVERSE TICK MASK (campaign G, 2026-09-03) ───────────
+                    # `exclude_when_switch_bit_clear` drops rows on which a
+                    # named switch bit is CLEAR — the complement of the mask
+                    # above, and it exists for a different reason.
+                    #
+                    # fw v27's BATTERY-ONLY START cuts FC_BUS at Run entry and
+                    # re-closes it on the one tick the ~20 ms filtered total
+                    # first crosses the 0.30 A gate, so there is a span at the
+                    # head of every run in which the DELIVERED fuel-cell share
+                    # is exactly 0 no matter what was commanded. A model that
+                    # predicts a two-source split there is wrong about the
+                    # TOPOLOGY, not about the split law, and scoring the error
+                    # against a share bound conflates the two: campaign G's
+                    # `mpc_share_pred_err` peaked at 0.5515 (ems-mpc) / 0.6061
+                    # (ems-mpc-det) on 2043 / 2047 of 53 000 ticks, all
+                    # contiguous in [5.00, 7.04] s with SW_FC_BUS LOW and I_fc
+                    # exactly 0.0000, against a post-cut max of 0.154 / 0.061.
+                    #
+                    # ⚠️ THIS IS AN INTERIM SCORING MASK, NOT THE FIX. The model
+                    # fix is a battery-only branch in `Planner.delivery_table()`
+                    # (mpc_ems.py) so the planner PREDICTS its own cut; the mask
+                    # keeps the check honest about what it can still assert
+                    # meanwhile. The bound itself is NOT widened.
+                    # STATUS 2026-09-04: that branch has SHIPPED, and its
+                    # release gate now reads the BT-only demand on every MPC leg
+                    # (H-1). The mask stays because a model can be right about
+                    # the mechanism and still be a tick out on the instant, and
+                    # because the head-of-run cut is not what the check is about
+                    # -- but it is now bounded to that head-of-run PREFIX (see
+                    # below), so a cut the planner SHOULD have predicted is
+                    # scored rather than hidden.
+                    # Masking by the SWITCH WORD rather than by moving the
+                    # window is deliberate: the release instant is
+                    # LOAD-dependent (5.711 s on ems-mpc, 5.720 s on ems-sdp,
+                    # never on charge-to-full), so any fixed window is either
+                    # too short on one leg or blind on another.
+                    # A blank or unparseable switch cell is dropped, for the
+                    # same reason as the mask above: the mask cannot be
+                    # evaluated there, and counting the row would assert the
+                    # bit's state.
+                    if "exclude_when_switch_bit_clear" in spec:
+                        _sw_cell = (row.get("switch") or "").strip()
+                        if not _sw_cell:
+                            continue
+                        try:
+                            _sw = int(_sw_cell, 0)
+                        except ValueError:
+                            continue
+                        # ── THE MASK CENSUS (M-3, 2026-09-04) ────────────────
+                        # A mask that reports nothing about its own reach is a
+                        # bound whose population is unknown: campaign G's
+                        # `mpc_share_prediction` detail said "peak 0.15" without
+                        # saying that 19 340 of 53 000 ticks had been dropped to
+                        # get it.  Every row that reaches a decidable mask is
+                        # counted, and every row the mask drops is counted, so
+                        # `_judge_signal_leaf()` can print "[N of M masked]" on
+                        # BOTH outcomes.
+                        m["mask_seen"] += 1
+                        if _sw & int(spec["exclude_when_switch_bit_clear"]):
+                            # The bit is SET.  Record it: after the FIRST rise
+                            # the clear-mask stops dropping rows (see below).
+                            m["mask_bit_seen_set"] = True
+                        if not (_sw & int(spec["exclude_when_switch_bit_clear"])):
+                            # ── THE "UNDER AN IN-BAND COMMAND" QUALIFIER ─────
+                            # An open switch is only unpredictable when the
+                            # FIRMWARE opened it. A switch opened because the
+                            # HOST commanded a single source is a topology the
+                            # model already predicts, and masking those ticks
+                            # would delete the evidence rather than the noise.
+                            # `ems-mpc-single` is exactly that case: it commands
+                            # share 0.0, the existing SS_MODE_BT branch predicts
+                            # d = 0.0 to four decimals (err 0.00010), and it is
+                            # the POSITIVE CONTROL for this whole finding.
+                            # MEASURED on campaign G over its (5.0, 58.0) s
+                            # window: the plain mask drops 19 340 of 53 000
+                            # ticks, the qualified one drops 68 — the firmware's
+                            # own battery-only start at the head of the run, and
+                            # nothing else. The other three legs are unaffected
+                            # (712 / 715 / 5 ticks either way), because they
+                            # never command a single source.
+                            _ex_col = spec.get("exclude_clear_exempt_column")
+                            _exempt = False
+                            if _ex_col:
+                                _ex_cell = (row.get(_ex_col) or "").strip()
+                                try:
+                                    _ex_v = float(_ex_cell)
+                                except (TypeError, ValueError):
+                                    _ex_v = None
+                                _exempt = bool(_ex_v is not None and any(
+                                    abs(_ex_v - float(_v)) <= 1e-6
+                                    for _v in (spec.get(
+                                        "exclude_clear_exempt_values") or ())))
+                            if _exempt:
+                                # COMMANDED single source: the row is KEPT, and
+                                # `mask_last_clear_t` is deliberately NOT armed
+                                # (L-8, 2026-09-04). Arming it here would let a
+                                # spec carrying BOTH the exempt pair and
+                                # `exclude_hold_ms` blank the first
+                                # `exclude_hold_ms` after a commanded
+                                # single-source span ENDS — excluding exactly
+                                # the two-source ticks the exemption exists to
+                                # keep scoring, for a turn-on transient the
+                                # host, not the firmware, produced.
+                                pass
+                            else:
+                                m["mask_last_clear_t"] = t
+                                # ── THE MASK IS A PREFIX MASK (M-3, 2026-09-04)
+                                # It drops open-switch rows only BEFORE the
+                                # bit's first rise in the window. That prefix is
+                                # the firmware's own battery-only start, which
+                                # the planner could not predict and which this
+                                # mask exists for. A LATER cut is a different
+                                # animal: it is the fw v25 load guard acting on
+                                # a commanded share the planner DID choose, so
+                                # the planner should predict it and those ticks
+                                # must stay scored. Masking them too would hide
+                                # the regression this check is for — measured on
+                                # `ems-ftp75-sdp` (campaign G2), the chatter
+                                # regime at 205-295 s is 61 further cuts, none
+                                # of them a battery-only start.
+                                if not m["mask_bit_seen_set"]:
+                                    m["mask_dropped"] += 1
+                                    continue
+                        else:
+                            # ── TURN-ON SETTLING HOLD (campaign G2, 2026-09-04)
+                            # The MIRROR of the forward mask's `exclude_hold_ms`
+                            # and, unlike it, held past the bit's RISE. A switch
+                            # that has just CLOSED is a topology in transition,
+                            # not yet the topology the check is about: the
+                            # RT1987 has an 8 ms turn-on delay, and the channel
+                            # then ramps up on whatever MDAC codes the firmware
+                            # left standing while it was dark.
+                            # MEASURED on `ems-ftp75-sdp` (campaign G2
+                            # hil_report_20260904_003108): FC_BUS re-closes at
+                            # 33.097346 s on the INHERITED equal codes
+                            # 5316/5316 (r ~ 0.5), I_fc ramps 0 -> 0.2355 A over
+                            # ~11 ms, and the share loop then steps the codes
+                            # from ~33.18 s and converges to the commanded
+                            # 0.1500 A by 33.24 s. The transient is the
+                            # re-entry, not the delivered split.
+                            _hold_c = float(spec.get("exclude_hold_ms", 0.0))
+                            if (_hold_c > 0.0
+                                    and m["mask_last_clear_t"] is not None
+                                    and (t - m["mask_last_clear_t"])
+                                    <= _hold_c / 1000.0):
+                                m["mask_dropped"] += 1
+                                continue
                     if "exclude_when_switch_bit" in spec:
                         _sw_cell = (row.get("switch") or "").strip()
                         if not _sw_cell:
@@ -10448,6 +11238,21 @@ def scan_signals(csv_path, specs, grace_s=WARM_RESET_GRACE_S):
 
 
 def _judge_signal_leaf(spec, m):
+    """(passed, measurement_text) for ONE leaf spec, plus the mask census.  Pure.
+
+    The census (M-3, 2026-09-04) is appended HERE rather than inside each of the
+    fifteen assertion kinds below, so a kind added later cannot forget it: any
+    spec declaring `exclude_when_switch_bit_clear` reports how many rows the mask
+    dropped, on BOTH outcomes.  A bound whose population is unstated is a bound
+    that can be quietly emptied."""
+    ok, text = _judge_signal_leaf_measurement(spec, m)
+    if "exclude_when_switch_bit_clear" in spec:
+        text += (" [%d of %d masked]"
+                 % (m.get("mask_dropped", 0), m.get("mask_seen", 0)))
+    return ok, text
+
+
+def _judge_signal_leaf_measurement(spec, m):
     """(passed, measurement_text) for ONE leaf spec.  Pure.
 
     The text is the measurement without the surrounding label/`why`, so a
@@ -11353,21 +12158,59 @@ def judge_scenario(name, metrics, events, child, pi_live=False, duration_s=None,
             states = set(survive.get("states") or ())
             before = metrics.get("fault_bits_before_survive") or 0
             st = metrics.get("state_at_survive")
-            ok = before == 0 and (st in states if states else st is not None)
+            # ── LATCH vs INDICATION (campaign G, 2026-09-03) ────────────────
+            # `fault_bits_before_survive` is a union of BARE bits, so a
+            # single-tick indication that triggerFault() never latched used to
+            # fail this check under a doubly false reason.  Measured on
+            # charge-to-full: the 8.8 ms break-before-make sag at the
+            # FC-charge window entry set UV_BUS (0x0100) on 19 ticks and NEVER
+            # 0x8100 — UV dwell 19.068 ms against UV_BUS_DWELL_LATCH_MS 20.0,
+            # 0.93 ms short of State 99 — yet the detail read "latched UV_BUS
+            # BEFORE t=..., so the run never reached its own stimulus" while
+            # all four stimulus checks passed on real evidence (GENSTAT 011 on
+            # 29 829 ticks, CV flag, I_charge 0, FC_CHARGE open).
+            #
+            # The claim this check exists to make is "nothing LATCHED before
+            # the stimulus", so the verdict is now taken from the LATCH map and
+            # a bare bit is reported as an indication.  FAULT_ERROR itself is
+            # only ever set by triggerFault() (.ino:4501-4503), so its presence
+            # in `before` is itself latch evidence and is carried across.
+            #
+            # ⚠️ This NARROWS the check (fewer FAILs), and it does NOT excuse
+            # the underlying board behaviour: `fault_allow_only` still sees the
+            # bare UV_BUS in its post-grace union and still fails the leg.  The
+            # firmware sequencing defect stays visible; only the false reason
+            # goes away.
+            _latched_before = 0
+            for _b in _split_bits(before & ~FAULT_ERROR):
+                _lt = first_latch_t.get(fault_names(_b))
+                if _lt is not None and _lt < t_req:
+                    _latched_before |= _b
+            if before & FAULT_ERROR:
+                _latched_before |= FAULT_ERROR
+            _indicated_only = before & ~_latched_before
+            ok = _latched_before == 0 and (st in states if states else st is not None)
             reasons = []
-            if before:
+            if _latched_before:
                 reasons.append("latched %s BEFORE t=%.1fs, so the run never "
                                "reached its own stimulus"
-                               % (fault_names(before), t_req))
+                               % (fault_names(_latched_before), t_req))
             if states and st not in states:
                 reasons.append("mainState at t=%.1fs was %s, not one of %s"
                                % (t_req, st, sorted(states)))
+            _ind_note = ("" if not _indicated_only else
+                         "; %s INDICATED (not latched) before t=%.1fs — a bare "
+                         "bit with no FAULT_ERROR on its row, so the run did "
+                         "reach its stimulus (see fault_allow_only, which still "
+                         "scores the indication)"
+                         % (fault_names(_indicated_only), t_req))
             checks.append({
                 "name": "survives_to_stimulus", "passed": ok,
-                "detail": ("un-latched and in mainState %s at t=%.1fs"
-                           % (st, t_req)) if ok
-                          else ("; ".join(reasons) or
-                                "no observation frame at or after t=%.1fs" % t_req)})
+                "detail": (("un-latched and in mainState %s at t=%.1fs"
+                            % (st, t_req)) if ok
+                           else ("; ".join(reasons) or
+                                 "no observation frame at or after t=%.1fs"
+                                 % t_req)) + _ind_note})
 
         # `provisional_note` (2026-08-31 review M3): a threshold in this entry has
         # not yet been derived from a live campaign. The note rides the check
@@ -11686,13 +12529,99 @@ def judge_scenario(name, metrics, events, child, pi_live=False, duration_s=None,
     # ⚠️ Residual: a share cut arriving AFTER an unrelated fault is still
     # missed.  Adding a state field to the sw_ring event is the clean fix and
     # belongs to a future round.
+    #
+    # ── ANCHOR REWRITTEN (campaign G, 2026-09-03) ─────────────────────────
+    # The anchor was `min(fault_first_t_whole_run, t > CARRIED_IN_LATCH_MAX_S)`.
+    # Campaign G broke it in BOTH directions on one campaign, so both are fixed
+    # here from the measurements:
+    #
+    #   (A) SHADOWED, cutoff too LATE (charge-cruise).  `setdefault` keeps the
+    #       FIRST sighting of each bit, and every run's first observation
+    #       (~1.2 ms) carries the predecessor's inherited word.  comm-loss
+    #       latched OC_FC, so charge-cruise opened at 0x8011 at 0.001176 s: the
+    #       whole-run map recorded OC_FC at 0.001176 s, the
+    #       t > CARRIED_IN_LATCH_MAX_S filter dropped it, and the run's OWN
+    #       OC_FC latch at 8.889261 s was never recorded at all.  The anchor
+    #       fell to None, the cutoff to None, and the fail-open branch admitted
+    #       the 1.4033 A State-99 teardown cut at 8.8890 s as a share hazard.
+    #       (Direction is one-way — None admits MORE events — so no PASS in
+    #       that campaign was wrong, only this FAIL.)
+    #   (B) BARE-BIT, cutoff too EARLY (charge-to-full).  A 19-tick,
+    #       NON-LATCHING UV_BUS indication (0x0100, never 0x8100) during the
+    #       8.8 ms break-before-make sag at the FC-charge window entry set the
+    #       whole-run map at ~8.02 s.  The cutoff moved to 8.016 s and excused
+    #       the 8.021422 s BT_BUS cut.  A transient that triggerFault() never
+    #       latched must not be able to excuse a share-path cut.
+    #
+    # THE ANCHOR IS NOW THE EARLIEST LATCH THIS RUN CAUSED: the minimum over
+    # the UNION of
+    #   * `fault_first_latch_t_whole_run` filtered to t > CARRIED_IN_LATCH_MAX_S
+    #     — keeps the in-grace case working (scp-inrush's designed OC_FC
+    #     latches inside the grace window and the whole-run value wins), and
+    #   * `fault_first_latch_t` (post-grace, unfiltered) — recovers a bit whose
+    #     whole-run entry was consumed by a carried-in latch, i.e. case (A).
+    # Both maps are latch-only, which closes case (B): a bare bit is in
+    # neither, so it cannot move the cutoff.
+    #
+    # WHY THE MINIMUM OVER THE UNION IS SAFE. Post-grace rows are a SUBSET of
+    # whole-run rows, so for any given bit its post-grace latch time can never
+    # PRECEDE its whole-run one — the grace bound can only push a time LATER.
+    # The post-grace map can therefore win the minimum ONLY when the whole-run
+    # entry was consumed by a carried-in latch and dropped by the
+    # CARRIED_IN_LATCH_MAX_S filter, which is exactly case (A). It cannot pull
+    # the cutoff earlier than the truth.
+    #
+    # TWO DISTINCT None PATHS.  When no own latch exists the tripwire still
+    # fails open (cutoff None admits every event), but the detail must not say
+    # the same thing in both cases: "latched no fault of its own" was printed
+    # for charge-cruise, a run that latched OC_FC.  `_shadowed` names the bits
+    # whose only whole-run sighting is inside the carried-in window, so a
+    # shadowed anchor is reported as shadowed and a genuinely clean run is
+    # reported as clean.
     _fw_readback_ok = metrics.get("error_code_final") is not None
     if TARGET_FW_VERSION >= 25 and _fw_readback_ok:
-        _first_fault_t = min(
-            (t for t in (metrics.get("fault_first_t_whole_run") or {}).values()
+        _latch_whole = metrics.get("fault_first_latch_t_whole_run") or {}
+        _latch_post = metrics.get("fault_first_latch_t") or {}
+        _anchor_src = None
+        _own_latch_whole = min(
+            (t for t in _latch_whole.values()
              if t is not None and t > CARRIED_IN_LATCH_MAX_S), default=None)
+        _own_latch_post = min((t for t in _latch_post.values()
+                               if t is not None), default=None)
+        _cands = [(t, s) for t, s in ((_own_latch_whole, "whole-run latch map"),
+                                      (_own_latch_post, "post-grace latch map"))
+                  if t is not None]
+        if _cands:
+            _first_fault_t, _anchor_src = min(_cands)
+        else:
+            _first_fault_t = None
+        # Bits sighted ONLY inside the carried-in window on the whole-run map:
+        # the signature of case (A).  Reported whether or not the post-grace
+        # map recovered the anchor, so a reader can see the shadowing happened.
+        _shadowed = sorted(n for n, t in _latch_whole.items()
+                           if t is not None and t <= CARRIED_IN_LATCH_MAX_S)
+        _shadow_note = ("" if not _shadowed else
+                        " [carried-in latch(es) %s at t <= %.2f s shadowed the "
+                        "whole-run map]"
+                        % (", ".join(_shadowed), CARRIED_IN_LATCH_MAX_S))
         _cutoff_t = (None if _first_fault_t is None
                      else _first_fault_t - TEARDOWN_LEAD_MS / 1000.0)
+        # TWO DISTINCT "no cutoff" PATHS, deliberately not sharing a sentence.
+        # `_shadowed` alone cannot produce None any more (the post-grace map
+        # recovers the anchor), so a None WITH shadowed bits means the run
+        # inherited a latch and then cleared it without ever latching again —
+        # which is the normal carried-in case and must not read as "clean".
+        if _cutoff_t is not None:
+            _anchor_detail = ("%.4f s (own first latch %.6f s, from the %s)"
+                              % (_cutoff_t, _first_fault_t, _anchor_src))
+        elif _shadowed:
+            _anchor_detail = ("n/a — no cutoff: this run's only fault sightings "
+                              "are the carried-in latch(es) it inherited; it "
+                              "latched nothing of its own after clearing them")
+        else:
+            _anchor_detail = ("n/a — no cutoff: this run latched no fault at "
+                              "all (a bare, non-latching fault bit does not "
+                              "anchor the cutoff)")
         _hazard = [
             e for e in (events.get("events_by_kind") or {}).get("sw_ring", [])
             if e.get("reason") == "en_low"
@@ -11705,12 +12634,10 @@ def judge_scenario(name, metrics, events, child, pi_live=False, duration_s=None,
             "detail": (("no loaded bus-switch cut outside teardown "
                         "(fw v25 guards: load <= %.1f A + %d ms survivor "
                         "blanking; teardown excluded at t >= %s, i.e. this "
-                        "run's own first fault less TEARDOWN_LEAD_MS %.1f ms)"
+                        "run's own first LATCH less TEARDOWN_LEAD_MS %.1f ms)%s"
                         % (SHARE_CUT_MAX_HANDOFF_A,
                            SHARE_CUT_SURVIVOR_BLANK_MS,
-                           "%.4f s" % _cutoff_t if _cutoff_t is not None
-                           else "n/a — this run latched no fault of its own",
-                           TEARDOWN_LEAD_MS))
+                           _anchor_detail, TEARDOWN_LEAD_MS, _shadow_note))
                        if not _hazard else
                        ("%d loaded bus-switch cut(s) on a share path — the fw v25 "
                         "guards should make this UNREACHABLE: %s. Worst i_cut "

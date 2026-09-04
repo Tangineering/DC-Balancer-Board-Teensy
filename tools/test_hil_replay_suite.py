@@ -1920,8 +1920,13 @@ def test_replay_suite_false_entries_never_carry_a_drive_loop_stepped_check():
 # table so a future edit that silently loosens (or accidentally drops) one
 # entry's floor fails here, not three log-analysis rounds later.
 EXPECTED_DRIVE_MIN_FRAC = {
-    "ML0203": 0.35, "YP0196": 0.44, "YP0214": 0.44, "ML0146": 0.34,
-    "ML0149": 0.34, "ML0165": 0.20, "ML0169": 0.04, "YP0152": 0.44,
+    # R4 RE-PIN 2026-09-04 (M-5): the three entries whose runs LATCH had their
+    # floors derived from a denominator diluted by post-latch dead ticks. With
+    # the scoring window ended at the State-99 latch the same measured-and-halved
+    # rule gives ML0203 0.35 -> 0.45, ML0165 0.20 -> 0.43, ML0169 0.04 -> 0.33.
+    # All three RISE; no floor here has ever been lowered.
+    "ML0203": 0.45, "YP0196": 0.44, "YP0214": 0.44, "ML0146": 0.34,
+    "ML0149": 0.34, "ML0165": 0.43, "ML0169": 0.33, "YP0152": 0.44,
     "ML0151": 0.45, "ML0137": 0.27, "ML0140": 0.35, "ML0153": 0.32,
     "ML0164": 0.35, "YP0166": 0.44,
     # DE-PROVISIONALIZED 2026-08-31 (ledger fix queue, FU4): SY0001 has now
@@ -2992,13 +2997,15 @@ def test_vacuous_tag_absent_when_current_is_not_all_zero(tmp_path):
 # TARGET_FW_VERSION / LIMIT_V_BUS_MAX_V (item 2)
 # ─────────────────────────────────────────────────────────────────────────
 
-def test_target_fw_version_is_26():
-    """21 -> 23 -> 24 -> 25 -> 26. The target must say what it actually runs
-    against: fw v26 (the source current-ceiling share governor).
-    COMPARABLE_FW_MIN is a SEPARATE constant and stays at 18 -- none of v24,
-    v25 or v26 changed an encoder constant or a drive coefficient, so no
-    entry's conformance/stability classification moves."""
-    assert rs.TARGET_FW_VERSION == 26
+def test_target_fw_version_is_27():
+    """21 -> 23 -> 24 -> 25 -> 26 -> 27. The target must say what it actually
+    runs against: fw v27 rev 2.  COMPARABLE_FW_MIN is a SEPARATE constant and
+    stays at 18 -- none of v24, v25, v26 or v27 changed an encoder constant or a
+    drive coefficient, so no entry's conformance/stability classification moves.
+
+    FW_DELTA_NOTES is keyed by the RECORDED log's firmware, not by the target, so
+    it gains no v27 row: no log in the suite was recorded on v27."""
+    assert rs.TARGET_FW_VERSION == 27
     assert rs.COMPARABLE_FW_MIN == 18
     for v in (22, 23, 24, 25, 26):
         assert v in rs.FW_DELTA_NOTES
@@ -3328,3 +3335,260 @@ def test_the_three_non_evidence_tags_are_disjoint():
         for j, b in enumerate(tags):
             if i != j:
                 assert a not in b, (i, j)
+
+
+# ---------------------------------------------------------------------------
+# 15. The 2026-09-04 fw v27 round: R1 bus-topology census, R3 MDAC saturation
+#     tagging, R4 latch-bounded windows, R6 the scoring window on a
+#     skip_preamble entry.
+# ---------------------------------------------------------------------------
+
+def _mdac_word(code):
+    """An AD5443 load-and-update word carrying `code`."""
+    return rs.MDAC_CMD_LOAD_UPDATE | (code & rs.MDAC_CODE_MASK)
+
+
+def _topology_rows(seq):
+    """`seq`: list of (switch, state) at 1 ms spacing."""
+    return [{"t": i * 0.001, "switch": sw, "state": st, "fault_flags": 0}
+            for i, (sw, st) in enumerate(seq)]
+
+
+def _topology(tmp_path, seq, name="topo.csv"):
+    rows = _with_bringup(_shift_rows(_topology_rows(seq), rs.REPLAY_PREAMBLE_S))
+    path = tmp_path / name
+    write_replay_csv(path, rows)
+    return rs.bus_topology_census(rs.load_replay_csv(str(path)))
+
+
+# ---- R1: the switch/topology observable -----------------------------------
+
+def test_bus_topology_census_counts_only_in_run_ticks(tmp_path):
+    """Init/Idle hold every bus switch LOW by design, so counting them would
+    report 'battery-only' for every entry.  Only State 2 ticks are scored."""
+    both = rs.SW_FC_BUS | rs.SW_BT_BUS
+    out = _topology(tmp_path, [
+        (0, 1), (0, 1),                        # Idle, both LOW -- not counted
+        (rs.SW_BT_BUS, 2), (rs.SW_BT_BUS, 2),  # Run, FC_BUS LOW
+        (both, 2),                             # Run, both HIGH
+    ])
+    assert out["run_ticks"] == 3
+    assert out["fc_low_in_run"] == 2
+    assert out["bt_low_in_run"] == 0
+    assert out["fc_low_frac"] == pytest.approx(2 / 3.0)
+
+
+def test_bus_topology_census_flags_a_single_source_run(tmp_path):
+    """THE HOLE THIS CLOSES: SY0001 ran 2479 of 2479 Run ticks battery-only in
+    campaign 20260903_233736 and no check read the `switch` column at all."""
+    out = _topology(tmp_path, [(rs.SW_BT_BUS, 2)] * 10)
+    assert out["fc_low_frac"] == pytest.approx(1.0)
+    assert "SINGLE-SOURCE end to end" in out["detail"]
+    assert out["fc_low_first_t"] is not None
+    assert out["fc_low_last_t"] >= out["fc_low_first_t"]
+
+
+def test_bus_topology_census_reports_no_run_ticks_without_a_commander(tmp_path):
+    """The 12 entries that do not replay commands never reach State 2."""
+    out = _topology(tmp_path, [(0, 1)] * 10)
+    assert out["run_ticks"] == 0
+    assert out["fc_low_frac"] is None
+    assert "NO Run ticks" in out["detail"]
+
+
+def test_bus_topology_census_is_reported_on_every_entry_and_never_fails(tmp_path):
+    """Same contract as the share-cut census: a NOTE plus a structured field on
+    EVERY entry, never a check row (a row that asserts nothing would inflate the
+    substantive count)."""
+    rows = _with_bringup_and_grace(_topology_rows([(rs.SW_BT_BUS, 2)] * 5))
+    path = tmp_path / "a.csv"
+    write_replay_csv(path, rows)
+    spec = {"kind": "no_fault", "name": "no_fault"}
+    res = rs.evaluate_replay_csv(_entry([spec]), str(path))
+    assert res["bus_topology_census"]["fc_low_in_run"] == 5
+    assert any("bus topology over" in n for n in res["notes"])
+    assert all(c["name"] != "bus_topology_census" for c in res["checks"])
+    assert res["passed"] is True
+
+
+def test_bus_topology_census_is_a_registered_check_kind_that_passes():
+    assert rs.CHECK_KINDS["bus_topology_census"] is rs.check_bus_topology_census
+
+
+# ---- R3: the MDAC g>1 clamp makes r not the commanded split ---------------
+
+def _sat_rows(codes):
+    """`codes`: list of (fc_code, bt_code) at 1 ms spacing, in State 2."""
+    return [{"t": i * 0.001, "state": 2, "fault_flags": 0,
+             "mdac_fc": _mdac_word(a), "mdac_bt": _mdac_word(b)}
+            for i, (a, b) in enumerate(codes)]
+
+
+def _sat(tmp_path, codes, name="sat.csv"):
+    rows = _with_bringup(_shift_rows(_sat_rows(codes), rs.REPLAY_PREAMBLE_S))
+    path = tmp_path / name
+    write_replay_csv(path, rows)
+    return rs.load_replay_csv(str(path))
+
+
+def test_mdac_saturation_stats_counts_each_channel_at_full_scale(tmp_path):
+    data = _sat(tmp_path, [(4095, 1000), (1000, 4095), (4095, 4095),
+                           (1000, 2000)])
+    st = rs._mdac_saturation_stats(data)
+    assert st["n"] == 4
+    assert st["n_sat"] == 3            # the both-railed row counts ONCE
+    assert st["n_sat_fc"] == 2
+    assert st["n_sat_bt"] == 2
+    assert st["frac"] == pytest.approx(0.75)
+
+
+def test_mdac_saturation_tag_is_empty_when_nothing_rails(tmp_path):
+    """fw v26 behaviour: the g>1 clamp is dead at k_d = K_DROOP, 0 saturated
+    ticks on all 27 entries in campaigns D/E/F -- the tag must not appear."""
+    data = _sat(tmp_path, [(1000, 2000)] * 4)
+    assert rs._mdac_saturation_tag(data) == ""
+
+
+def test_share_loop_actuated_tags_a_saturated_ratio_series(tmp_path):
+    """R3: r is the ratio of a RAILED code to an unrailed one wherever the
+    clamp binds, so the check must say so rather than report a clean split."""
+    codes = [(4095, 500)] * 60 + [(4095, 4000)] * 60
+    rows = _with_bringup(_shift_rows(_sat_rows(codes), rs.REPLAY_PREAMBLE_S))
+    path = tmp_path / "a.csv"
+    write_replay_csv(path, rows)
+    spec = {"kind": "share_loop_actuated", "name": "share_loop_actuated"}
+    res = rs.evaluate_replay_csv(_entry([spec]), str(path))
+    detail = next(c["detail"] for c in res["checks"]
+                  if c["name"] == "share_loop_actuated")
+    assert "MDAC-SATURATED on 120 of 120" in detail
+    assert "is NOT the commanded split" in detail
+    assert res["passed"] is True
+
+
+# ---- R4: the rate-based windows end at the latch --------------------------
+
+def test_first_latch_t_finds_the_state_99_entry(tmp_path):
+    rows = _with_bringup(_shift_rows(
+        [{"t": i * 0.001, "state": 2 if i < 5 else 99, "fault_flags": 0}
+         for i in range(10)], rs.REPLAY_PREAMBLE_S))
+    path = tmp_path / "a.csv"
+    write_replay_csv(path, rows)
+    data = rs.load_replay_csv(str(path))
+    assert data.first_latch_t() == pytest.approx(rs.REPLAY_PREAMBLE_S + 0.005)
+
+
+def test_first_latch_t_ignores_a_carried_in_latch_before_the_window(tmp_path):
+    """Every run in a campaign starts latched from its predecessor until the fw
+    v23 warm reset.  Reading THAT as this run's latch would truncate the window
+    to nothing and fail every rate-based check for the wrong reason."""
+    rows = [{"t": 0.001, "state": 99, "fault_flags": 0},
+            {"t": 0.002, "state": 0, "fault_flags": 0}]
+    rows += [{"t": rs.REPLAY_PREAMBLE_S + i * 0.001, "state": 2,
+              "fault_flags": 0} for i in range(5)]
+    path = tmp_path / "a.csv"
+    write_replay_csv(path, _with_bringup(rows))
+    assert rs.load_replay_csv(str(path)).first_latch_t() is None
+
+
+def test_drive_loop_stepped_window_ends_at_the_latch(tmp_path):
+    """ML0169, campaign 20260903_233736: 87.5 % of its denominator was
+    post-latch dead ticks and its fraction read 8.4 %.  Ending the window at
+    the latch measures the LIVE window: 1569/2336 = 67.2 %.  Here: 100 live
+    samples over threshold, then 400 post-latch zeros -- 100 % vs 20 %."""
+    live = [{"t": i * 0.001, "state": 2, "current": 1.0, "fault_flags": 0}
+            for i in range(100)]
+    dead = [{"t": (100 + i) * 0.001, "state": 99, "current": 0.0,
+             "fault_flags": 0} for i in range(400)]
+    rows = _with_bringup(_shift_rows(live + dead, rs.REPLAY_PREAMBLE_S))
+    path = tmp_path / "a.csv"
+    write_replay_csv(path, rows)
+    spec = {"kind": "drive_loop_stepped", "name": "drive_loop_stepped",
+            "drive_min_frac": 0.90}
+    res = rs.evaluate_replay_csv(_entry([spec]), str(path))
+    detail = next(c["detail"] for c in res["checks"]
+                  if c["name"] == "drive_loop_stepped")
+    # Without the truncation this is 100/500 = 20 % and FAILS the 90 % floor.
+    assert "100 of 100 scored-window samples (100.0%)" in detail
+    assert "Window ENDED at the State-99 latch" in detail
+    assert "400 of 500 samples dropped" in detail
+    assert res["passed"] is True
+
+
+def test_share_loop_actuated_window_ends_at_the_latch(tmp_path):
+    """The MDAC mirror FREEZES post-latch (ML0203 10235 frozen ticks at
+    saturated code 4095).  Span is a max-minus-min, so truncation can only
+    shrink it: the frozen tail here would otherwise widen the span."""
+    live = [{"t": i * 0.001, "state": 2, "fault_flags": 0,
+             "mdac_fc": _mdac_word(1000), "mdac_bt": _mdac_word(1000)}
+            for i in range(100)]
+    dead = [{"t": (100 + i) * 0.001, "state": 99, "fault_flags": 0,
+             "mdac_fc": _mdac_word(1), "mdac_bt": _mdac_word(4095)}
+            for i in range(100)]
+    rows = _with_bringup(_shift_rows(live + dead, rs.REPLAY_PREAMBLE_S))
+    path = tmp_path / "a.csv"
+    write_replay_csv(path, rows)
+    spec = {"kind": "share_loop_actuated", "name": "share_loop_actuated"}
+    res = rs.evaluate_replay_csv(_entry([spec]), str(path))
+    detail = next(c["detail"] for c in res["checks"]
+                  if c["name"] == "share_loop_actuated")
+    # The live window is a FLAT 0.5 split, so the check correctly FAILS once the
+    # frozen tail (which alone spans 0.4999 -> 0.9998) is excluded.
+    assert res["passed"] is False
+    assert "did not move" in detail
+    assert "Window ENDED at the State-99 latch" in detail
+    # And the frozen tail must not be counted as saturation evidence either.
+    assert "MDAC-SATURATED" not in detail
+
+
+# ---- R6: the scoring window is entry-independent --------------------------
+
+def test_scoring_window_start_is_the_preamble_bound_for_every_entry():
+    """entry_preamble_s() is a TIME-BASE answer and is 0.0 for a skip_preamble
+    entry; scoring_window_start_s() is a SCORING answer and is not."""
+    ml0217 = rs.suite_index()["ML0217"]
+    assert rs.entry_preamble_s(ml0217) == pytest.approx(0.0)
+    assert rs.scoring_window_start_s(ml0217) == pytest.approx(
+        rs.REPLAY_PREAMBLE_S)
+    assert rs.scoring_window_start_s(None) == pytest.approx(
+        rs.REPLAY_PREAMBLE_S)
+
+
+def test_skip_preamble_entry_does_not_score_its_carried_in_window(tmp_path):
+    """ML0217, campaign 20260903_233736: with window_start = 0.0 its recorded
+    window opened on 2499 ticks of TP0210's frozen MDAC code and 4 carried-in
+    switch transitions.  The fault check must be untouched -- fault checks are
+    scoped by the grace bound, not by this one."""
+    latched = rs.FAULT_INIT_FAIL | rs.FAULT_ERROR
+    carried = [{"t": i * 0.001, "state": 99, "switch": i % 2,
+                "current": 5.0, "fault_flags": latched}
+               for i in range(int(rs.REPLAY_PREAMBLE_S * 1000))]
+    own = [{"t": rs.REPLAY_PREAMBLE_S + i * 0.001, "state": 99, "switch": 0,
+            "current": 0.0, "fault_flags": latched}
+           for i in range(100)]
+    path = tmp_path / "a.csv"
+    write_replay_csv(path, carried + own)
+    entry = {"log": "X", "mode": "deviation", "skip_preamble": True,
+             "skip_bringup_gate": True,
+             "checks": [{"kind": "fault_latched", "name": "init_fail_latched",
+                         "bit": rs.FAULT_INIT_FAIL,
+                         # INIT_FAIL has no stimulus model, same as ML0217's
+                         # own spec -- the guard demands this be deliberate.
+                         "require_stimulus": False}]}
+    res = rs.evaluate_replay_csv(entry, str(path))
+    assert res["passed"] is True                      # the fault check still bites
+    assert res["metrics"]["switch_transitions"] == 0  # was 2499 before R6
+    assert any("R6 (2026-09-04)" in n for n in res["notes"])
+
+
+def test_window_start_defaults_to_preamble_s_for_every_other_construction(tmp_path):
+    """Backwards compatibility: load_replay_csv() without window_start_s must be
+    bit-identical to the pre-R6 behaviour."""
+    rows = _with_bringup_and_grace(
+        [{"t": i * 0.001, "state": 2, "current": 1.0, "fault_flags": 0}
+         for i in range(10)])
+    path = tmp_path / "a.csv"
+    write_replay_csv(path, rows)
+    data = rs.load_replay_csv(str(path), preamble_s=1.0)
+    assert data.window_start_s == pytest.approx(1.0)
+    assert rs.load_replay_csv(str(path)).window_start_s == pytest.approx(
+        rs.REPLAY_PREAMBLE_S)

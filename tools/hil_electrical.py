@@ -1158,9 +1158,44 @@ class Rt1987:
                 # inherited the one-substep ramp skew described below.
                 r = max(r, r * i_phys / max(i_fold, 1e-6))
             g = 1.0 / r
-            G[self.n_out][self.n_out] += g
-            J[self.n_out] += g * target
-            J[self.n_in] -= min(i_fold, max(0.0, i_phys))
+            # ── ONE-SIDED SOFT STAMP (2026-09-04, campaign G comm-loss) ──────
+            # The stamped pass current is `i = max(0, (target - v_out)/r)`: a
+            # pass device in soft-start can SOURCE into its output node and can
+            # never SINK out of it.  That is the RT1987's REVERSE COMPARATOR
+            # (DS 17.6, t_FRC ~0.5 us, "when the power path is enabled" — it runs
+            # during soft-start, not only after it): the instant VOUT rises above
+            # the gate-limited operating point the comparator opens the FET, so
+            # the model's servo conductance must be one-sided about `target`.
+            # The two-sided form was CHARGE-ANNIHILATING in the sink direction —
+            # the conductance drew g*(v_out - target) out of n_out with the
+            # matching J[n_in] debit pinned at 0 by i_phys = 0 (M6, module
+            # docstring) — and campaign G (`hil_report_20260903_233736`,
+            # comm-loss) measured what that costs: the fw v23 warm reset closed
+            # FC_BUS + BT_BUS together at 7.502117 s onto V_bus bled to 0.4366 V
+            # with both regulators still disabled, the two switches ramped at
+            # 778.5 V/s (FC, VIN ~12.4 V) and 758.6 V/s (BT, VIN ~7.3 V), the
+            # node followed the mean (measured 755.7 V/s) and the 19.8 V/s
+            # divergence across RT_R_ON 21 mOhm became a CIRCULATING current —
+            # p_fc_w = -p_bal_w to six digits — that ran I_fc 0.3684 -> 1.7898 A
+            # over 4 ms (350 A/s) and latched a spurious OC_FC (0x8001) at
+            # 7.515249 s.  With the stamp one-sided the trailing switch simply
+            # stops conducting (the comparator's own behaviour) and only the
+            # 0.0282 A displacement current remains.
+            #
+            # This is NOT the 2026-08-30c "if v_out >= target: return" that was
+            # tried and rejected below the entry above: that one removed the
+            # servo to suppress an overshoot driven by a MOVING target, and the
+            # target motion has since been fixed at the source
+            # (_soft_operating_point(): the per-episode VIN high water mark) and
+            # the v_out > v_in regime given to the TRCB branch in update().  What
+            # remains here is the sign of a settled servo, not its stiffness: on
+            # the sourcing side the stamp is BIT-FOR-BIT the previous one, and
+            # the cold bring-up pins (P0 0.151185 A, full 0.436707 A) are
+            # unchanged.
+            if target > v_out:
+                G[self.n_out][self.n_out] += g
+                J[self.n_out] += g * target
+                J[self.n_in] -= min(i_fold, max(0.0, i_phys))
             return
         # ON: forward branch with the 35 mV regulation offset, i = (dv - V_FWD)/R.
         #
@@ -1334,8 +1369,10 @@ class Rt1987:
         begins at v_ss_start ~ 0 with the target rising smoothly from zero, and its
         behaviour is triple-corroborated on hardware — so it keeps the original
         instantaneous-VIN path, BIT-FOR-BIT.  Only an episode that starts on a
-        pre-charged node (v_ss_start > RT_SS_PRECHARGED_V) derives tON from the
-        per-episode VIN high water mark instead.  That is physical in its own right:
+        pre-charged node (v_ss_start > 0 — the threshold was RT_SS_PRECHARGED_V
+        1.0 V until campaign G found a 0.4366 V re-close inside that window; see
+        the scoping comment in the body) derives tON from the per-episode VIN
+        high water mark instead.  That is physical in its own right:
         a CSS capacitor charging at a fixed current cannot make an in-progress ramp
         finish SOONER because the input momentarily sagged.  With tON held, a sagging
         v_in SHRINKS `rate` (numerator falls, denominator held) instead of growing
@@ -1344,7 +1381,29 @@ class Rt1987:
         r = RT_R_ON + self.r_series
         if v_in > self._ss_v_in_max:
             self._ss_v_in_max = v_in
-        precharged = self.v_ss_start > RT_SS_PRECHARGED_V
+        # SCOPING THRESHOLD LOWERED TO ZERO (2026-09-04, campaign G comm-loss).
+        # This test used to be `> RT_SS_PRECHARGED_V` (1.0 V).  The window
+        # 0 < v_ss_start <= 1.0 V was UNREACHABLE when that threshold was chosen —
+        # the aux sink held an unpowered bus at 0.0000 V exactly — and
+        # V_AUX_DROPOUT_V opened it: campaign G (`hil_report_20260903_233736`,
+        # comm-loss) measured the fw v23 warm reset closing FC_BUS + BT_BUS onto a
+        # bus that had bled to 0.4366 V (5.0*exp(-2.23/1.05) predicts 0.60 V),
+        # squarely inside that window, so both switches took the COLD path.  The
+        # cold path's protection is a DEGENERACY, not a mechanism: at
+        # v_ss_start = 0 the rate (v_in - 0)/t_on with t_on = k*v_in is exactly
+        # 806.9 V/s for every switch regardless of its input rail, so two switches
+        # closing together cannot diverge.  At 0.4366 V the same expression gives
+        # 778.5 V/s (FC, VIN ~12.4 V) against 758.6 V/s (BT, VIN ~7.3 V), and that
+        # 19.8 V/s divergence across RT_R_ON 21 mOhm is what circulated ~1.79 A
+        # between the two boost-OR links and latched a spurious OC_FC.  Any
+        # nonzero start therefore needs the per-episode high water mark for BOTH
+        # the duration and the endpoint.  The cold path is untouched: the
+        # hardware-corroborated episodes enter SOFT at v_ss_start == 0.0 exactly
+        # (verified: FC_BUS/BT_BUS/MOT_PWR all 0.0 through a staged bring-up), so
+        # the P0 0.151185 A / full 0.436707 A pins are bit-identical.
+        # RT_SS_PRECHARGED_V is retained as the documented historic threshold and
+        # as the cold-start assertion bound in test_hil_electrical.py.
+        precharged = self.v_ss_start > 0.0
         # RAMP REFERENCE.  Cold start (the hardware-corroborated path) keeps the
         # original instantaneous VIN, bit-for-bit.  A pre-charged episode uses the
         # per-episode high water mark for BOTH the duration and the endpoint: with
@@ -1547,8 +1606,13 @@ class Rt1987:
             # a tON that shrinks with a sagging VIN would declare the ramp finished
             # early, which is the same artifact wearing a different hat.  Note this
             # is the per-episode VIN high water mark, not the instantaneous VIN.
+            # The scoping test here MUST match _soft_operating_point()'s — the two
+            # describe one ramp, and a completion test on a different tON than the
+            # ramp itself uses would truncate or extend it.  Lowered to `> 0.0`
+            # with it (2026-09-04, campaign G comm-loss: the 0.4366 V warm
+            # re-close sits inside the old 0 < v_ss_start <= 1.0 V window).
             t_on = rt1987_t_on_s(
-                max(self._ss_v_in_max if self.v_ss_start > RT_SS_PRECHARGED_V
+                max(self._ss_v_in_max if self.v_ss_start > 0.0
                     else v_in, 1.0), self.css_nf)
             if self.t_state >= t_on and (v_in - v_out) <= RT_V_FWD * 2.0:
                 self._goto("ON")
