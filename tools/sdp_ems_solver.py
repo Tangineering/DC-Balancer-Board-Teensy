@@ -400,6 +400,51 @@ D14. THE MEASURED LEVERS ARE NOW A FIRST-CLASS ALPHA SOURCE
     NON-frontier artifact and `sdp_policy_v4.json` remains the frontier leg;
     see docs/modeling/sdp_alpha_resolve_20260903.md.
 
+D15. THE RULING: RESOLUTION (i).  SOLVE AT THE MEASURED ROUND TRIP
+    (2026-09-03 afternoon, operator, verbatim: "Use an SDP v6 that solves at
+    the observed 80.1%").  D14's choice is closed in favour of its first
+    resolution, and `sdp_policy_v6.json` is the artifact:
+
+        --eta-chg measured --alpha-mode lever-measured
+
+    `measured` is the literal ETA_CHG_MEASURED_ROUND_TRIP, which is DERIVED
+    from EMS_LEVER_ETA_READINGS as mean(L_chg)/mean(L_share) =
+    0.801172836631146.  It is a keyword and not a number on the command line
+    for one reason: a hand-typed 0.801173 would not move when a sixth reading
+    is added to the table, and the whole point of the mode is that the artifact
+    is priced by what the board measured.
+
+    WHAT IT DOES.  The stage cost now bills a charge stage at the SAME round
+    trip the alpha is priced on, so the modelled charge lever becomes
+    0.801173 * 0.450450 = 0.360883 SoC/g, the MODEL window opens to
+    (0.111000, 0.138547), and alpha 0.134110280093 lies INSIDE BOTH it and the
+    measured window (0.120040, 0.149830).  `in_window_model` and
+    `in_window_measured` are both true, the pre-solve tripwire is SILENT, no
+    --allow-out-of-window is passed, and the charge map is EMPTY again - 0
+    cells of 2525, declined ENDOGENOUSLY with `forbid_charge_all` false.  That
+    is the certificate v4 carried, now carried by an artifact whose measured
+    window is a real interval rather than a null.
+
+    ⚠️ THE COST, DECLARED RATHER THAN BANNERED.  `charger.eta_chg` on this
+    artifact is 0.801173 and the plant's `hil_electrical.ETA_CHG` is 0.88, so
+    the artifact and the plant DO disagree about the charger - deliberately.
+    The plant models the converter; the round trip additionally carries the bus
+    sag billed to the charge leg, which is plant physics the solver's eta
+    cannot see.  The artifact therefore DECLARES the basis in a new field,
+    `charger.eta_chg_basis = "measured-round-trip"`, written ONLY under
+    `--eta-chg measured`.  hil_plant_sim.SdpStrategy reads that field and
+    prints a ONE-LINE informational note in place of its CHARGER-ERA MISMATCH
+    warning; an artifact that does NOT declare the basis still gets the
+    warning, unchanged.  A declaration is not a waiver of the difference, it is
+    a statement that the difference is the design.
+
+    WHAT IS NOT CLAIMED.  The round trip is an EMS-accounting efficiency, not a
+    converter efficiency, and it must never be written back into
+    hil_electrical.ETA_CHG or into a DP table's `# eta_chg:` header - those
+    price the PLANT, and the plant's converter is still 0.88.  TODO(calibrate):
+    decompose the 9.0 % gap into converter loss and bus-sag accounting on the
+    bench; a sixth lever reading moves this constant.
+
 ============================================================================
 WHAT THIS MODEL DOES NOT CONTAIN
 ============================================================================
@@ -447,6 +492,12 @@ Usage:
     C:/Users/ricky/miniforge3/python.exe tools/sdp_ems_solver.py \
         --eta-chg 0.88 --alpha-mode lever-measured --allow-out-of-window \
         --out tools/sdp_policies/sdp_policy_v5.json --force
+    # THE SHIPPED FRONTIER ARTIFACT since 2026-09-03, sdp_policy_v6.json (D15).
+    # Same measured alpha, solved at the MEASURED round trip: both windows
+    # contain it, the tripwire is silent, 0 charge cells.
+    C:/Users/ricky/miniforge3/python.exe tools/sdp_ems_solver.py \
+        --eta-chg measured --alpha-mode lever-measured \
+        --out tools/sdp_policies/sdp_policy_v6.json --force
     # reproduce v2's economics (the shipped-and-corrected alpha, D12); the
     # window assert refuses it without the explicit override:
     C:/Users/ricky/miniforge3/python.exe tools/sdp_ems_solver.py \
@@ -718,6 +769,58 @@ EMS_LEVERS_ETA_MEAN_SOURCE = (
     "alpha-sweep legs greedy/cal/charge at ETA_CHG 0.88, zero preload"
     % (len(EMS_LEVER_ETA_READINGS),
        ", ".join(r[0].replace("hil_report_", "") for r in EMS_LEVER_ETA_READINGS)))
+
+# ── D15.  THE MEASURED END-TO-END CHARGE ROUND TRIP ─────────────────────────
+# The ratio of the two means, and therefore the board's own answer to the
+# question `eta_chg` asks: how much of a bus watt spent on charging comes back
+# as SoC.  DERIVED from the table above rather than written as a literal, for
+# the reason the means themselves are derived - a sixth reading is one row, and
+# a hand-typed 0.801173 would silently outlive it.  Selected by
+# `--eta-chg measured`; read D15.
+ETA_CHG_MEASURED_ROUND_TRIP = (EMS_LEVER_CHARGE_ETA_MEAN_SOC_PER_G
+                               / EMS_LEVER_SHARE_ETA_MEAN_SOC_PER_G)
+# The literal the CLI accepts for it, and the string the artifact records as
+# `charger.eta_chg_basis`.
+ETA_CHG_MEASURED_KEYWORD = "measured"
+ETA_CHG_BASIS_MEASURED = "measured-round-trip"
+
+
+class MeasuredEtaChg(float):
+    """`--eta-chg measured`, carrying its own provenance.
+
+    A float SUBCLASS rather than a parallel flag: every arithmetic consumer of
+    `args.eta_chg` (charger_billing_voltage_v, build_stage, the JSON emit)
+    keeps working unchanged, and the ONE consumer that cares - the
+    `charger.eta_chg_basis` declaration - asks with isinstance().  A caller who
+    hand-types the same number gets a plain float and NO declaration, which is
+    the intent: the declaration says the value came from the measurement table,
+    not that it happens to equal today's mean of it.
+    """
+    __slots__ = ()
+
+
+def _eta_chg_arg(text):
+    """argparse type for --eta-chg: a float, or the literal `measured` (D15)."""
+    if str(text).strip().lower() == ETA_CHG_MEASURED_KEYWORD:
+        return MeasuredEtaChg(ETA_CHG_MEASURED_ROUND_TRIP)
+    try:
+        return float(text)
+    except (TypeError, ValueError):
+        raise argparse.ArgumentTypeError(
+            "expected a charge efficiency in (0, 1] or the literal %r "
+            "(the measured end-to-end round trip %.12g), got %r"
+            % (ETA_CHG_MEASURED_KEYWORD, ETA_CHG_MEASURED_ROUND_TRIP, text))
+
+
+def eta_chg_basis(eta_chg):
+    """The artifact's `charger.eta_chg_basis`, or None when it declares none.
+
+    None is the shape every artifact before sdp_policy_v6.json has, and an
+    absent field is what hil_plant_sim's charger-era check treats as "this
+    artifact makes no claim about why its eta differs from the plant's".
+    """
+    return (ETA_CHG_BASIS_MEASURED if isinstance(eta_chg, MeasuredEtaChg)
+            else None)
 
 # Full-size reference numbers, used ONLY by the alpha derivation below.
 # SDP_EnergyManagement2.m:8-10, :16.
@@ -1286,6 +1389,37 @@ def greedy_policy(J, stage, soc_next, soc_grid, tpm, gamma):
 # ---------------------------------------------------------------------------
 def render_policy_json(args, meta):
     """The artifact, as an ordered dict matching the schema contract."""
+    # D15.  `charger.eta_chg_basis` is written ONLY when the solve DECLARED one
+    # (`--eta-chg measured`).  Conditional, for the reason D14's alpha extras
+    # are conditional: every artifact solved without the declaration keeps the
+    # charger-block SHAPE it shipped with, so a v1..v5 regeneration still
+    # differs from its shipped file in nothing this round added.
+    charger = {
+        "eta_chg": (None if args.eta_chg is None else float(args.eta_chg)),
+        "era": era_label(args.eta_chg),
+        "billing_rule": ("bus power = V_bus * i_chg (1:1 current transfer)"
+                         if args.eta_chg is None else
+                         "bus power = V_pack * i_chg / eta_chg"),
+        "v_bus_nominal_v": V_BUS_NOMINAL_V,
+        "note": "D13. An artifact with eta_chg null was solved against "
+                "the pre-2026-09-01 charger model, which prices the "
+                "Ag105 ~1.9x too dearly against the current plant.",
+    }
+    basis = getattr(args, "eta_chg_basis", None)
+    if basis is not None:
+        charger["eta_chg_basis"] = basis
+        charger["eta_chg_basis_note"] = (
+            "D15. This eta is the board's MEASURED end-to-end charge round "
+            "trip (mean L_chg / mean L_share over the campaign lever readings "
+            "recorded in alpha.levers_soc_per_g.measured_readings), NOT a "
+            "converter efficiency. It is DELIBERATELY not equal to the "
+            "plant's hil_electrical.ETA_CHG: the round trip additionally "
+            "carries the bus sag billed to the charge leg, which the plant "
+            "models as physics and the solver cannot see. A consumer that "
+            "compares this artifact's era against the plant's must read this "
+            "field and report the difference as DECLARED, not as a mismatch. "
+            "Never write this value back into a plant constant or a DP "
+            "table's era header.")
     return {
         "schema": SCHEMA,
         "generated_utc": meta["generated_utc"],
@@ -1310,17 +1444,7 @@ def render_policy_json(args, meta):
                       "measured value; v_pack_nominal is a flat 2S nominal, "
                       "not the OCV(SoC) curve",
         },
-        "charger": {
-            "eta_chg": (None if args.eta_chg is None else float(args.eta_chg)),
-            "era": era_label(args.eta_chg),
-            "billing_rule": ("bus power = V_bus * i_chg (1:1 current transfer)"
-                             if args.eta_chg is None else
-                             "bus power = V_pack * i_chg / eta_chg"),
-            "v_bus_nominal_v": V_BUS_NOMINAL_V,
-            "note": "D13. An artifact with eta_chg null was solved against "
-                    "the pre-2026-09-01 charger model, which prices the "
-                    "Ag105 ~1.9x too dearly against the current plant.",
-        },
+        "charger": charger,
         "h2": {
             "eta_fc": ETA_FC,
             "q_lhv_j_per_g": Q_LHV_J_PER_G,
@@ -1388,13 +1512,20 @@ def main(argv=None):
     ap.add_argument("--alpha", type=float, default=None,
                     help="explicit SoC-deviation weight, overriding "
                          "--alpha-mode (see the ALPHA_DERIVATION note)")
-    ap.add_argument("--eta-chg", type=float, default=ETA_CHG_MODEL,
+    ap.add_argument("--eta-chg", type=_eta_chg_arg, default=ETA_CHG_MODEL,
+                    metavar="ETA|measured",
                     help="Ag105 charge efficiency, selecting the CHARGER ERA "
                          "(D13). Default %g = the plant's energy-conserving "
                          "converter, in which a delivered amp costs "
-                         "V_pack/eta watts. --eta-chg-none selects the OLD "
-                         "1:1 current-transfer charger and is what reproduces "
-                         "sdp_policy_v1/v2/v3." % ETA_CHG_MODEL)
+                         "V_pack/eta watts. The literal 'measured' (D15) "
+                         "selects the board's MEASURED end-to-end charge round "
+                         "trip %.12g, derived from EMS_LEVER_ETA_READINGS, and "
+                         "is the only form that records "
+                         "charger.eta_chg_basis = %r. --eta-chg-none selects "
+                         "the OLD 1:1 current-transfer charger and is what "
+                         "reproduces sdp_policy_v1/v2/v3."
+                         % (ETA_CHG_MODEL, ETA_CHG_MEASURED_ROUND_TRIP,
+                            ETA_CHG_BASIS_MEASURED))
     ap.add_argument("--eta-chg-none", action="store_true",
                     help="solve against the OLD 1:1 current-transfer charger "
                          "(a delivered amp costs a BUS amp). Required to "
@@ -1504,6 +1635,9 @@ def main(argv=None):
             ap.error("--eta-chg and --eta-chg-none are mutually exclusive - "
                      "they are two ways of answering the same question")
         args.eta_chg = None
+    # D15.  The basis is read BEFORE check_eta_chg(), which returns a plain
+    # float and would strip the MeasuredEtaChg marker.
+    args.eta_chg_basis = eta_chg_basis(args.eta_chg)
     try:
         args.eta_chg = check_eta_chg(args.eta_chg)
     except ValueError as exc:
@@ -1804,6 +1938,12 @@ def main(argv=None):
     print("[sdp] gamma_base %g @ dt %g s -> gamma_eff %.12g"
           % (args.gamma_base, args.dt, gamma))
     print("[sdp] charger era: %s" % era_label(args.eta_chg))
+    if args.eta_chg_basis is not None:
+        print("[sdp]   eta_chg_basis: %s (D15) - the MEASURED end-to-end "
+              "charge round trip derived from the %d lever readings, NOT a "
+              "converter efficiency; it is deliberately unequal to the plant's "
+              "ETA_CHG and the artifact DECLARES that."
+              % (args.eta_chg_basis, len(EMS_LEVER_ETA_READINGS)))
     print("[sdp] alpha = %.12g  (mode %s; lever %.12g, charge-edge %.12g, "
           "marginal %.12g, level %.12g)"
           % (alpha, alpha_mode_used, alpha_two_sided, alpha_edge,

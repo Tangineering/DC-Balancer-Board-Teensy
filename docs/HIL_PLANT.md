@@ -863,13 +863,26 @@ steady operating point), **ML0165** and **ML0169**, all fw v16.
 > `mppt_emulation` pattern); **no shipped scenario sets it**, so the hook costs
 > nothing until a measured-vs-design comparison scenario is wanted.
 
-With **no** live source the node is not forced to zero — it decays as an RC through the
-bulk capacitance:
+With **no** live source the node is not forced to zero — in the **simple engine** it decays as an
+RC through the bulk capacitance:
 
 ```
     tau = R_BUS_BLEED · C_BUS_F = 30 kΩ · 470 µF = 14.1 s
     V_bus += (−V_bus / tau) · dt
 ```
+
+**The hi-fi engine's dark bus collapses in about 3.7 ms, not 14.1 s** (physics review run 002,
+N8, settled 2026-09-03 on the campaign D/E/F `comm-loss` traces). N_BUS carries `C_VBUS` = 35 µF
+(the 470 µF sits on N_MOT, behind the MOT_PWR switch, together with the 0.5 mF VESC input) and the
+0.15 A `I_AUX_A` housekeeping sink is stamped on it unconditionally, so after a State-99 latch the
+node falls 0.15 A × 1 ms / 35 µF = 4.29 V per plant tick (measured 4.2947 and 4.2906 V; the 30 kΩ
+bleed adds 0.53 mA, a factor 285 smaller than the sink) and reads 0.0000 V four ticks after the
+latch, while N_MOT holds 15.78 V because the MOT_PWR ideal diode reverse-blocks. The reported
+`V_bus` is the solved node in both engines; the section 4.1 liveness gate is simple-engine only.
+The energy closes (½·35 µF·15.83² = 4.38 mJ against the integrated sink). No pinned anchor reads
+the post-latch value; the comm-loss re-close inrush is an N_MOT retention effect. Consequence not
+pinned by anything: a hi-fi warm re-close re-ramps the bus from 0 V, where the simple engine's RC
+would re-arm from about 13.5 V.
 
 `C_BUS_F` = 470 µF matches the board's bulk capacitance as referenced throughout the
 bring-up record. `R_BUS_BLEED` = 30 kΩ is an *effective* bleed and is
@@ -895,7 +908,25 @@ names it as a converter efficiency, and no source in the repo measures either. T
 `V_bus > 1.0 V` guard is a division safeguard, distinct from the 5 V `bus_up` torque gate.
 
 `i_aux` = `I_AUX_A` = 0.15 A is a fixed housekeeping load, raised by the `step-load`
-scenario. **`TODO(verify)`** — no measurement cited.
+scenario. **`TODO(verify)`** — no measurement cited. **`ElectricalSim` (the hi-fi engine, §8)
+applies `V_AUX_DROPOUT_V` = 5.0 V as a dropout floor on this stamp (operator ruling, 2026-09-03,
+physics review run 002, item N8): the sink is withheld on any substep whose PREVIOUS substep's
+`N_BUS` node voltage is below 5 V.** The value matches the firmware's own `bus_up` 5 V torque
+gate in spirit, on the reasoning that everything downstream of VBUS has already shut down by
+that point, so the housekeeping load has nothing left to represent. Before this floor existed the
+stamp was unconditional: below about 1 V it was unphysical (a real housekeeping rail either stops
+or, if bucked, draws more current), and after a State-99 latch the node solve's `new_v < 0 → 0`
+clamp pinned the dark bus at exactly 0.0000 V while `neg_clamp_count` incremented on every
+subsequent tick (about 2255 per `comm-loss` run). With the floor in place, a latched dark bus
+instead decays on the `R_NODE_BLEED_BUS` bleed alone once it crosses 5 V, settling toward a
+nonzero residual rather than being driven to exactly zero; the time constant is
+`tau = R_NODE_BLEED_BUS · C_VBUS ≈ 1.05 s`. The gate re-evaluates every substep from the
+previous solved voltage with no added state and no hysteresis, so it reacts identically on
+either side of the crossing. The floor changes no result on any tick where `V_bus` stays at or
+above 5 V — every non-latched scenario and every loaded anchor is unaffected — and it does not
+alter how the scenario-side preload combines into `i_aux` before it reaches `ElectricalSim`;
+that composition is unchanged. `neg_clamp_count` and the new `aux_dropout_ticks` counter are
+both in `ElectricalSim.summary()`; neither is yet copied into the run sidecar.
 
 ### 4.4 The FC/BT split
 

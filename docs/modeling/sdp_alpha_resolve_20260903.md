@@ -6,6 +6,10 @@ readings, alpha ~ 0.134); supersedes 'alpha stays v4'". Decision D14 of
 `tools/sdp_ems_solver.py` carries the same argument at the source; this document carries the
 numbers.
 
+Sections 1 to 9 record the v5 round, which ended at an operator decision. That decision landed
+the same day. **Section 10 records the ruling and `sdp_policy_v6.json`, and supersedes sections
+5, 7 and 9 wherever they state that nothing was rebound.**
+
 ## 1. Scope
 
 This document covers the derivation of the stochastic-DP EMS objective's SoC-deviation weight
@@ -222,3 +226,161 @@ regeneration across this round's edits differs in `generated_utc` and `argv` alo
   sweep re-run.
 - The charge lever's 2.1 % spread over campaigns C to F is itself unexplained and was carried as
   finding F10 of campaign F. A sixth reading is one row of Table 1, and it moves this alpha.
+
+## 10. The ruling, and `sdp_policy_v6.json`
+
+The operator closed section 5 on 2026-09-03 in favour of its first resolution, verbatim:
+"Use an SDP v6 that solves at the observed 80.1%". This section records the artifact that
+ruling produced. Sections 1 to 9 above describe the v5 round and are kept as its record;
+where they state that no leg is rebound and that `sdp_policy_v4.json` remains the frontier
+artifact, this section supersedes them.
+
+### 10.1 The command and the artifact
+
+The solve is
+
+    C:/Users/ricky/miniforge3/python.exe tools/sdp_ems_solver.py \
+        --eta-chg measured --alpha-mode lever-measured \
+        --out tools/sdp_policies/sdp_policy_v6.json --force
+
+and that string is the artifact's own `meta.argv`. Note the two absences. There is no
+`--allow-out-of-window`: the pre-solve tripwire is silent on this solve, which is the whole
+difference between the two resolutions. There is no numeric efficiency either. `measured` is
+a literal that the solver resolves to `ETA_CHG_MEASURED_ROUND_TRIP`, which is derived from
+`EMS_LEVER_ETA_READINGS` as the ratio of the two means,
+
+    mean(L_chg) / mean(L_share) = 0.3337114 / 0.4165286 = 0.801172836631146
+
+A keyword is used rather than a number for one reason. A hand-typed 0.801173 does not move
+when a sixth reading joins Table 1, and the mode exists to price the artifact by what the
+board measured. Decision D15 of `tools/sdp_ems_solver.py` carries the same argument at the
+source.
+
+### 10.2 What the measured billing does to the windows
+
+The stage cost now bills a charge stage at the same round trip the weight is priced on, so
+the modelled charge lever becomes `0.801173 * 0.450450` = 0.360883 SoC/g and the modelled
+admission window opens from (0.111000, 0.126136) to
+
+    ( 0.05/0.450450 , 0.05/0.360883 ) = ( 0.111000 , 0.138547 )
+
+The measured window is unchanged at (0.120040, 0.149830), because it is a property of the
+measurement and not of the billing. The weight is unchanged at 0.134110280093, and it now
+lies inside both. Table 3 states the result.
+
+Table 3 — `sdp_policy_v4.json`, `sdp_policy_v5.json` and `sdp_policy_v6.json`.
+
+| Quantity | v4 | v5 | v6 |
+|---|---|---|---|
+| `alpha.mode` | `lever` | `lever-measured` | `lever-measured` |
+| `alpha.value` | 0.11832639757736393 | 0.13411028009327516 | 0.13411028009327516 |
+| `charger.eta_chg` | 0.88 | 0.88 | 0.801172836631146 |
+| `charger.eta_chg_basis` | absent | absent | `measured-round-trip` |
+| `window_model` | (0.111000, 0.126136) | (0.111000, 0.126136) | (0.111000, 0.138547) |
+| `in_window_model` | true | false | **true** |
+| `in_window_measured` | null | true | **true** |
+| `allow_out_of_window` | false | **true** | false |
+| Charge cells | 0 | 558 | **0** |
+| Policy-block sha256 | `8ca7dcee…` | `1644f6e4…` | `a7fd8893…` |
+
+The charge map is empty again, and it is empty endogenously: `actions.forbid_charge_all` is
+false, so nothing masked the action and the optimizer declined it. That is the property the
+frontier certificate demands, now carried by an artifact whose measured window is a real
+interval rather than a null.
+
+### 10.3 The era mismatch is declared, not warned about
+
+`charger.eta_chg` on this artifact is 0.801173 while the plant's `hil_electrical.ETA_CHG` is
+0.88. The difference is deliberate, and the two numbers measure different quantities. The
+plant models the converter. The round trip additionally carries the bus sag billed to the
+charge leg (section 4), which is plant physics the solver's efficiency cannot represent.
+
+The artifact therefore declares its basis. `charger.eta_chg_basis` is written only under
+`--eta-chg measured`, and `hil_plant_sim.SdpStrategy` reads it at bind time and prints a
+single informational line in place of its charger-era mismatch warning. An artifact that
+declares no basis is unaffected: `sdp-v3`, the old-era calibration, still raises the warning.
+An unrecognised basis string is treated as no declaration, so a typo cannot silence a real
+mismatch. Three tests pin the three cases.
+
+The round trip is an accounting efficiency for the energy-management objective. It must not
+be written back into `hil_electrical.ETA_CHG` or into a DP table's `# eta_chg:` header line,
+both of which price the plant.
+
+### 10.4 v4 against v6, and v5 against v6
+
+Table 4 states the map differences, measured cell by cell rather than assumed.
+
+Table 4 — map differences against `sdp_policy_v6.json`.
+
+| Pair | Share rows differing | Share cells | Charge rows differing | Charge cells | Inside the reachable band |
+|---|---|---|---|---|---|
+| v4 vs v6 | 4, 5 | 50 | none | 0 | none |
+| v5 vs v6 | 3 | 6 | 3 to 49 | 558 | 40 rows |
+
+The v4 comparison is the one the rebinding rests on. The charge maps are identical — both
+all-zero — so `charge_path_never_opens` stands unchanged on every leg. The share maps differ
+on two SoC rows at 0.554 to 0.555, which sit 45 to 46 grid nodes below the target node 0.600.
+The widest trajectory in the suite spans the target plus 0.013 down to the target minus
+0.019, and a plus-or-minus 0.040 band around the target is asserted clean. No shipped
+trajectory reaches the differing rows.
+
+The v5 comparison is the ruling itself. v5 and v6 carry the same weight and the same mode and
+differ only in the charge billing, so the 558 charge cells v5 asserts and v6 declines are
+exactly what the operator chose between. Both tables are pinned by
+`test_sdp_v4_v6_share_maps_agree_on_traversed_rows()` and
+`test_sdp_v5_v6_differ_exactly_where_the_ruling_says()` in `tools/test_hil_plant_sim.py`.
+
+### 10.5 What moved
+
+`sdp_policy_v6.json` is registered as `sdp-v6` in `tools/hil_plant_sim.py` with
+`frontier_eligible: True`, and it demands the calibrated-benchmark certificate. The
+certificate's clause set was extended to admit `alpha.mode` `lever-measured` alongside
+`lever`. The extension is not a relaxation, because a `lever-measured` artifact certifies
+only when both windows contain its weight, which is a stronger statement than an eta-era
+`lever` artifact can make. `sdp_policy_v5.json` is the pinned counter-example: same mode,
+`in_window_model` false, refused.
+
+`sdp-v4` becomes `frontier_eligible: False` with a role note, for the reason `sdp-v3` was
+demoted before it. It is a correct calibration against a charge billing the board's own
+measurement does not support: its weight 0.118326 sits 1.43 % below the measured admission
+window, so the measured share lever does not clear its bound. It stays registered for
+comparability with the campaigns whose SDP legs played it, up to and including
+`hil_report_20260903_063659`. It no longer demands the certificate, which it still carries;
+the certificate is the frontier's admission ticket, not a mark a retained artifact keeps
+claiming. `sdp-v5` stays registered, non-frontier, as the record of the finding.
+
+Three scenarios move from `sdp-v4` to `sdp-v6`: `ems-sdp`, `ems-ftp75-sdp` and
+`ems-ftp75c-sdp`. Section 10.4 shows no traversed-row difference on either map, so every
+walk-derived expectation transfers verbatim. No expectation was re-walked, no number moved,
+and none carries a `provisional_note`.
+
+`ems-sdp-cross` and `ems-sdp-braking` were never candidates and do not move. They are bound
+to `sdp-v2`, the byte-frozen dynamics demonstration, precisely because they exist to actuate
+a charge threshold, and v6 has no charge cell to command.
+
+`ems-sdp-alpha-cal` and its two siblings do not move either. They play a sweep pick resolved
+from `sweep_20260902_eta088/live_picks.json`, whose `cal` point reproduces
+`sdp_policy_v4.json`'s policy block. Re-anchoring them on v6 is a sweep re-run at the
+measured billing, into a new folder, not a registration edit. `--anchor-artifact` already
+rebinds both `ANCHOR_ARTIFACT` and `ANCHOR_ALPHA`, so the sweep needs no code change. The one
+structural consequence is that the anchor enters the 21-point grid at index 8 rather than
+index 7, because 0.134110 sorts one rung higher than 0.118326. The 20 log-spaced points are
+untouched, the anchor being an additional point rather than a replacement. Pinned by
+`test_the_v6_alpha_enters_the_grid_one_rung_above_the_v4_alpha()`.
+
+No matched-DP record went stale, and the reason is the one section 7 gives: no key field in
+`KEY_FIELDS` (`tools/dp_results_db.py`) or `DP_FINGERPRINT_META_KEYS`
+(`tools/hil_plant_sim.py`) names a policy file, a weight or a strategy. The `eta_chg` key
+field is the plant's era, resolved from the run metadata, and is never the artifact's
+declared basis, so the 0.801173 billing does not enter a DP key. The `ems-sdp-alpha-cal`
+record is keyed by its scenario name, not by a weight, so it too is unaffected. Pinned by
+`test_the_dp_record_key_carries_no_sdp_policy()`.
+
+### 10.6 Deferred
+
+- The sweep re-run at the measured billing, and moving `live_picks.json` and the three
+  `ems-sdp-alpha-*` legs onto it. This is campaign-time work.
+- No campaign has yet run any leg on `sdp-v6`. Every expectation on the three rebound legs is
+  a v4-era walk that transfers by the identity of section 10.4, not a v6 measurement.
+- The charge lever's 2.1 % spread over campaigns C to F remains unexplained. A sixth reading
+  is one row of Table 1, and it now moves both the weight and the billing.

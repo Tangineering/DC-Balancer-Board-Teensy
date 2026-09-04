@@ -728,7 +728,9 @@ def test_the_three_demand_models_agree_stage_for_stage_in_both_eras():
 _FTP75C_LEGS = (
     ("ems-ftp75c-5050", "hold-5050"),
     ("ems-ftp75c-socband", "soc-band"),
-    ("ems-ftp75c-sdp", "sdp-v4"),
+    # `sdp-v6` since 2026-09-03; it agrees with `sdp-v4` on every row this
+    # leg traverses, so the walked figures below are unmoved.
+    ("ems-ftp75c-sdp", "sdp-v6"),
     ("ems-ftp75c-dp", "dp-replay"),
     ("ems-ftp75c-mpc", "mpc-sto"),
 )
@@ -910,7 +912,7 @@ def test_walk_reports_a_clamped_census_and_it_is_zero_on_every_registered_leg():
     finding about the stimulus, not a pass."""
 
     for scenario, strategy in (("ems-soc-band", "soc-band"),
-                               ("ems-sdp", "sdp-v4")):
+                               ("ems-sdp", "sdp-v6")):
         r = ew.walk(strategy, scenario, soc0=0.7, trace=True)
         assert r.clamped_ticks == 0, (scenario, r.clamped_ticks)
         assert r.clamped_fraction == 0.0

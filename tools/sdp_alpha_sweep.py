@@ -55,6 +55,23 @@ SWEEP_ETA_CHG_DEFAULT = None
 # eta-era sweep anchors on the era's own shipped artifact instead, through
 # `--anchor-artifact`, which rebinds this and ANCHOR_ALPHA together in main().
 ANCHOR_ARTIFACT = os.path.join(_HERE, "sdp_policies", "sdp_policy_v3.json")
+# ── THE ETA-ERA ANCHORS, AS A RECORD OF WHICH SWEEP USED WHICH ─────────────
+# NOT a default and deliberately not one: the module default above belongs to
+# sweep_20260901/, which a bare `solve` must keep reproducing.  These name the
+# artifact an eta-era sweep passes to `--anchor-artifact`.
+#   sweep_20260902_eta088/  --eta-chg 0.88     --anchor-artifact <v4>
+#                           (anchor idx 7, alpha 0.118326; its `cal` live pick
+#                            reproduces sdp_policy_v4.json's policy block)
+#   A v6-anchored sweep     --eta-chg measured --anchor-artifact <v6>
+#                           --sweep-dir tools/sdp_policies/sweep_<stamp>_meas
+#                           (anchor idx 8, alpha 0.134110; NOT YET RUN - see
+#                            docs/modeling/sdp_alpha_resolve_20260903.md s10)
+# ⚠️ A NEW ERA MUST GO TO A NEW FOLDER: the two eras share the artifact
+# filename convention and would otherwise overwrite each other.
+ANCHOR_ARTIFACT_ETA088 = os.path.join(_HERE, "sdp_policies",
+                                      "sdp_policy_v4.json")
+ANCHOR_ARTIFACT_MEASURED = os.path.join(_HERE, "sdp_policies",
+                                        "sdp_policy_v6.json")
 
 # The full-scale study's alpha range (SDP_EnergyManagement2.m).
 FULL_SCALE_ALPHA_RANGE = (100.0, 1000.0)

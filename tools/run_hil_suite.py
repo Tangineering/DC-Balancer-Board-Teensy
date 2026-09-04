@@ -4687,7 +4687,7 @@ FAULT_EXPECTATIONS["ems-mpc-cross"] = _mpc_expectation(
 # so the `ems-ftp75-*` floors are unreachable here by construction.  Carrying
 # `ftp_fc_carried`'s 0.40 A floor across, for instance, would fail a correct
 # board on every tick of every leg.  LIMIT_I_FC_MAX 1.4 A is never approached -
-# the worst case is 21 % of it, on the `sdp-v4` leg's 0.85 share rail.
+# the worst case is 21 % of it, on the `sdp-v6` leg's 0.85 share rail.
 #
 # ⚠️ DO NOT ASSERT SoC DIRECTION ON THESE LEGS.  docs/HIL_SCENARIOS.md already
 # states this for `regen-harvest-true`, and it applies with more force here: the
@@ -4830,8 +4830,9 @@ def _ftp75c_expectation(*, scenario, ems, i_fc_peak_walk, extra=(), note=""):
     `i_fc_peak_walk` is the leg's OWN modelled peak FC current - the four legs
     command four different splits of one 0.3311 A source total, so a single
     shared ceiling would be either vacuous on the `mpc-sto` leg (walk 0.0912 A)
-    or a tripwire on the `sdp-v4` one (0.2872 A). The ceiling is set at 2x the
-    leg's walk peak, which is a BUDGET bound with wide slack rather than a
+    or a tripwire on the `sdp-v6` one (0.2872 A; walked on `sdp-v4`, which
+    agrees with `sdp-v6` on every row this leg traverses). The ceiling is set
+    at 2x the leg's walk peak, which is a BUDGET bound with wide slack rather than a
     tracking assertion; the tracking statement on this family is the frontier's,
     not a current floor's."""
     ceil = round(2.0 * i_fc_peak_walk, 4)
@@ -5036,20 +5037,20 @@ FAULT_EXPECTATIONS["ems-ftp75c-socband"] = _ftp75c_expectation(
           "OUT of charge mode would change the reference's decision law."))
 
 FAULT_EXPECTATIONS["ems-ftp75c-sdp"] = _ftp75c_expectation(
-    scenario="ems-ftp75c-sdp", ems="sdp-v4", i_fc_peak_walk=0.2872,
-    note=("The `sdp-v4` policy on the compressed cycle, and the frontier's "
+    scenario="ems-ftp75c-sdp", ems="sdp-v6", i_fc_peak_walk=0.2872,
+    note=("The `sdp-v6` policy on the compressed cycle, and the frontier's "
           "CANDIDATE leg. ⚠️ NO NEW SDP ARTIFACT WAS SOLVED FOR THIS "
           "STIMULUS, deliberately: the regen credit enters through the PLANT "
           "and the pack, not through the policy's decision law, and the "
           "artifact's own axes (relative SoC and a demand bin) are stimulus- "
           "independent by construction. Re-solving it would have produced a "
-          "second artifact that differs from `sdp_policy_v4` only in the "
+          "second artifact that differs from the shipped one only in the "
           "demand map it was fitted on, with no campaign able to tell the two "
           "apart. Walk: h2 0.009897751 g, dSoC -0.000476 - the policy holds "
           "its 0.85 share rail through the cycle, which is why it burns more "
           "hydrogen AND drains far less pack than the reference. "
           "⚠️ THE MATCHED-DP BASELINE IS NOT A BOUND ON THIS LEG, and the "
-          "reason is structural rather than numerical: `sdp-v4` commands a "
+          "reason is structural rather than numerical: `sdp-v6` commands a "
           "CONSTANT 0.8500, which is 0.10 OUTSIDE the DP's own control grid "
           "[0.25, 0.75] (`gen_dp_ems_table.DP_SHARE_MIN/MAX`), so the solve "
           "cannot reproduce the policy's operating point and must hold the "
@@ -11159,7 +11160,9 @@ EMS_FRONTIERS = [
     # verbatim; only the CANDIDATE differs.  That is deliberate and is the whole
     # value of the comparison: `cycle61-mpc` and `cycle61` share one stimulus
     # object, one reference leg and one bound, so the difference between the two
-    # records is the difference between `sdp-v4` and `mpc-sto` and nothing else.
+    # records is the difference between the SDP leg and `mpc-sto` and nothing
+    # else (`sdp-v4` when the figures below were taken; `sdp-v6` since
+    # 2026-09-03, and the two agree on every traversed row).
     #
     # ⚠️ THE CANDIDATE STRATEGY CHANGED 2026-09-02 (operator ruling): both MPC
     # tuples' candidate legs now bind `mpc-sto`, the stochastic law, and
@@ -11284,7 +11287,7 @@ EMS_FRONTIERS = [
             "1.0090-1.0162 across the whole lambda band [0.409, 0.415] - "
             "ABOVE 1.0 on BOTH arms at EVERY lambda. That is not a defect "
             "and it is not a surprise: the compensated cycle's demand is "
-            "small enough that `sdp-v4` holds its 0.85 share rail "
+            "small enough that the SDP leg holds its 0.85 share rail "
             "throughout, spending hydrogen to hold SoC, and the eq-H2 "
             "correction prices that back to near parity rather than to a "
             "win. READ A PASS ACCORDINGLY. The 1.02 band is the `ftp75` "
@@ -11327,8 +11330,8 @@ EMS_FRONTIERS = [
         },
         # The `ftp75c` tuple's thresholds verbatim, on the reasoning the two
         # MPC tuples above use: reference and bound are the sibling's, so the
-        # difference between the two records is the difference between `sdp-v4`
-        # and `mpc-sto` and nothing else.
+        # difference between the two records is the difference between the SDP
+        # leg (`sdp-v6` since 2026-09-03) and `mpc-sto` and nothing else.
         "vs_reference_max": 1.02,
         "vs_bound_max": 1.06,
         "provisional_note": (
@@ -11344,7 +11347,7 @@ EMS_FRONTIERS = [
             "bound, i.e. vs_reference 0.9860-0.9930 and vs_bound "
             "0.9854-0.9927 across the lambda band — both cleared with room, "
             "and BOTH BELOW 1.0, which is the opposite side of the bound from "
-            "the `sdp-v4` candidate. ⚠️ Read that under the inverse-crime "
+            "the SDP candidate. ⚠️ Read that under the inverse-crime "
             "caveat the other two MPC tuples carry: the walk's plant IS the "
             "MPC's own prediction model, so the clearance is evidence about "
             "the plumbing and not about the live plant. ⚠️ ONE THING IS "

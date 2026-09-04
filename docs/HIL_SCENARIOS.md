@@ -678,7 +678,17 @@ every frontier number is a RANKING on one rig and not an absolute mass.
   (−14.33 % offline, −9.4 % live) is the thesis-level EMS result; the startup
   fingerprint refusals guarantee the table and the stimulus cannot drift apart.
 
-### ems-sdp (61 s, any engine, EMS `sdp-v4` — THE BENCHMARK LEG)
+### ems-sdp (61 s, any engine, EMS `sdp-v6` — THE BENCHMARK LEG)
+
+**Rebound to `sdp-v6` (the measured charge round trip) 2026-09-03.**
+`sdp_policy_v6.json` carries the measured-lever alpha 0.134110 billed at the
+board's own end-to-end charge round trip 0.801173, which places it inside BOTH
+admission windows and returns the charge map to empty. Nothing this scenario
+observes moves: the v4 and v6 charge maps are identical (both all-zero) and
+their share maps differ on SoC rows 4-5 only, 45-46 grid nodes below the target
+node. Every walk-derived expectation below transferred VERBATIM; see
+`docs/modeling/sdp_alpha_resolve_20260903.md` section 10. `sdp-v4` stays
+registered, `frontier_eligible: False`, as the eta_chg 0.88 calibration.
 
 **Rebound to `sdp-v4` (η era) 2026-09-02.** `sdp_policy_v4.json` is the same
 two-sided lever calibration re-solved against the energy-conserving charger the
@@ -768,7 +778,11 @@ EXPECTATIONS half, written by WP-1C, 2026-09-02.)*
   same skip-record mechanism as `--with-ftp75` and a different reason: an
   experiment, not run time.
 
-### ems-ftp75-sdp (350 s, any engine, EMS `sdp-v4`, gated behind `--with-ftp75`)
+### ems-ftp75-sdp (350 s, any engine, EMS `sdp-v6`, gated behind `--with-ftp75`)
+
+**Rebound to `sdp-v6` 2026-09-03**, with `ems-sdp` and for the same reason; v4
+and v6 differ in `policy.share` on rows 4-5 only and carry an identical
+all-zero charge map, so the argument below extends again unchanged.
 
 **Rebound to `sdp-v4` (η era) 2026-09-02**, with `ems-sdp` and for the same
 reason. The v2→v3 walk-transfer argument below extends unchanged: v3 and v4
@@ -1564,7 +1578,10 @@ window derivation is then the first thing to re-derive.
   arrive, and the tuple's ratios then mean nothing. Walk: h2 0.006448769 g,
   ΔSoC −0.001850.
 
-#### ems-ftp75c-sdp (180 s, any engine, EMS `sdp-v4`, FRONTIER CANDIDATE)
+#### ems-ftp75c-sdp (180 s, any engine, EMS `sdp-v6`, FRONTIER CANDIDATE)
+
+**Rebound `sdp-v4` -> `sdp-v6` 2026-09-03**; the two artifacts agree on every
+row this leg traverses, so the figures below are unmoved.
 
 - **Tests:** the causal SDP policy on the compressed cycle, earning the braking
   credit through the plant rather than through a re-solved artifact.

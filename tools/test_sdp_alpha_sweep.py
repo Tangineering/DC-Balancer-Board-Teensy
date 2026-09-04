@@ -1314,3 +1314,31 @@ def test_shipped_sweep_manifest_is_old_era():
         pytest.skip("sweep folder not present in this checkout")
     m = json.load(open(sweep.MANIFEST_PATH, encoding="utf-8"))
     assert m.get("eta_chg") is None
+
+
+def test_the_eta_era_anchor_records_point_at_real_artifacts():
+    """The two eta-era anchors are RECORDS, not defaults: a bare `solve` must
+    still reproduce sweep_20260901/, which is anchored on v3."""
+    assert sweep.ANCHOR_ARTIFACT.endswith("sdp_policy_v3.json")
+    assert os.path.isfile(sweep.ANCHOR_ARTIFACT_ETA088)
+    assert os.path.isfile(sweep.ANCHOR_ARTIFACT_MEASURED)
+    assert sweep.ANCHOR_ARTIFACT_MEASURED.endswith("sdp_policy_v6.json")
+
+
+def test_the_v6_alpha_enters_the_grid_one_rung_above_the_v4_alpha():
+    """WHAT A v6-ANCHORED SWEEP CHANGES, measured: the anchor point moves from
+    index 7 to index 8 of the 21-point grid. The 20 log-spaced points are
+    untouched -- the anchor is an ADDITIONAL point, never a replacement -- so
+    the only structural change is where the anchor sorts in."""
+    import json
+    with open(sweep.ANCHOR_ARTIFACT_MEASURED, encoding="utf-8") as fh:
+        alpha_v6 = float(json.load(fh)["alpha"]["value"])
+    with open(sweep.ANCHOR_ARTIFACT_ETA088, encoding="utf-8") as fh:
+        alpha_v4 = float(json.load(fh)["alpha"]["value"])
+    g4 = sweep.build_grid(anchor=alpha_v4)
+    g6 = sweep.build_grid(anchor=alpha_v6)
+    assert len(g4) == len(g6) == sweep.N_LOG_POINTS + 1
+    assert [p for p in g4 if p["is_anchor"]][0]["idx"] == 7
+    assert [p for p in g6 if p["is_anchor"]][0]["idx"] == 8
+    assert [round(p["alpha"], 12) for p in g4 if not p["is_anchor"]] == \
+        [round(p["alpha"], 12) for p in g6 if not p["is_anchor"]]

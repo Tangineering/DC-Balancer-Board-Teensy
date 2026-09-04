@@ -667,3 +667,62 @@ from this queue.
     latches OC_FC); the guard's `share_step_guard_decisions` must read 0; `mpc_share_pred_err` is a new
     baseline. Follow-ups: tighten the joint leg's 8 % MDAC band to the sweep's 2 % after its first
     campaign; Gate 1 single-source-aware; the F2/F3/F4 campaign-F items still open in §7b.
+11. **N8 settled (2026-09-03):** the post-latch `V_bus` 0.0000 is engine behaviour — the unconditional
+    0.15 A `I_AUX_A` sink on the hi-fi bus node's 35 uF (4.29 V per tick), not report-side gating.
+    Doc-only fix shipped. Opened: (a) ruling — give `I_AUX_A` a dropout floor below ~1 V (ends the
+    `neg_clamp` churn; cannot move a loaded anchor); (b) plumb `neg_clamp_count` into the sidecar.
+12. **RULING NEEDED — `I_AUX_A` 0.15 A is unsupported by the bench record (2026-09-03):** 98 standstill
+    windows across 213 bench logs (fw v3–v19, 167 905 samples, I_cmd 0, V_bus 15.90–15.94 V = the
+    documented no-load point) give I_fc + I_batt = 0.0150 ± 0.0065 A raw, which is inside the INA zero
+    offset (0.0199 A median) and under two LSB (8.06 mA); the INA shunts sit on the boost OUTPUT side, so
+    the sum IS the bus housekeeping draw (no ETA_BOOST conversion). Best estimate <= 0.03 A, likely near
+    zero; caveats: no window had the Ag105 path open or a hold longer than 3.65 s, and the BLG carries no
+    MOT_PWR bit (VESC state inferred). Consequences of a change: the idle source total on the drive cycles
+    (0.15 A puts FTP-75's idle third under the 0.60 A gate), the DP fingerprint (`I_AUX_A` is a key), every
+    h2 anchor (~0.15 A x 16 V over the idle segments), the N8 dark-bus collapse rate, and the walks' HOLD
+    fractions. A new plant era; do not change it inside a campaign. Options: (a) keep 0.15 A as a
+    conservative placeholder and state it; (b) set it from the bench evidence (0.02–0.03 A) and re-pin;
+    (c) bench-measure a multi-second standstill with the charger path open when the bench is back.
+    **RULED (2026-09-03, operator): `I_AUX_A` -> 0.09 A at the next era boundary.** Basis: the Teensy runs
+    from the battery's 5 V regulator (not on the bus); the VESC draws ~1.2 W from the bus (0.075 A at
+    15.9 V); the INA253s, RT1987s and MDAC op-amps ride the bus chain; the logged 0.015 A windows had the
+    VESC unpowered. Scheduling: the boundary is the fw v27 flash / campaign G — apply the constant in the
+    same tools round as the v27 mirror, re-walk every anchor BEFORE the campaign (walk-predicted deltas
+    attribute the move, as in the bleed era), mark the matched-DP records stale (`I_AUX_A` is a fingerprint
+    key; re-solve the long ones off-campaign), and never change it inside a campaign.
+13. **Section 7c Step 0 DONE — the margin-referred governor (4.2) is REFUTED on the bench record**
+    (`docs/modeling/low_current_share_stability_step0_20260903.md`, `tools/probes/probe_share_margin_step0.py`).
+    No single M_floor separates the six recorded first passages from their clean neighbours under design,
+    measured (x0.2117) or split-law droop (overlap factors 2.3 FC / 5.2 BT / 5.2–5.4 pooled vs 1.75 / 5.40 /
+    7.59 for the raw minority current). Reason: M_minority = (R_FC + R_BT)·I_minority exactly (residual
+    < 1e-15 V over 88 781 records), a <= 1.96x rescaling; realization (ii) is a pure scalar of (i), so the 4x
+    droop gap cannot change the verdict. The online estimator d_hat = sp − r is identically zero at every
+    quasi-static rail failure (r pinned on the rail the setpoint sits on) — it returns nothing in the regime
+    it was proposed for. Restated figures: TP0016 lost the FC at 1.354 A total (commanded minority 0.203 A,
+    delivered 0.169 A), not 0.245 A at 1.63 A; WP0100's boundary BT current is 0.733 A, not 0.69 A. Only two
+    quasi-static passages exist (both FC); the BT-direction asymmetry rests entirely on slew-driven events
+    (11–16 /s of ratio slew, 66–94 % of the limiter ceiling) on the soft bench source. Bench: the two-axis
+    sweep must hold |dr/dt| < 1 /s for the static boundary and repeat at the ceiling for the dynamic one; a
+    quasi-static BT-minority passage on the pack does not exist yet; the discriminating variable is outside
+    the (I_minority, M) pair (RT1987 per-channel conduction state, TPS61288 light-load mode — not in the BLG).
+    Items 4.1 (scheduled k_d) and 4.4 (feedforward clip) stand; 4.2 is closed unless a new variable is logged.
+14. **The 4x droop loss is LOCALIZED (2026-09-03, desk analysis, `docs/modeling/droop_authority_gap_20260903.md`):**
+    the 39 per-channel single-source slope fits in `asymmetry_fit_20260901/fit_summary.json` (g 0.184–0.441)
+    give R/g = 0.455 ± 0.006 (median 0.448) against the designed 2.0136 g, a 4.0–4.7x deficit that is
+    near-proportional in g and identical on both channels; their no-load intercepts 15.912–15.934 V match
+    the designed V_0 15.907 V to 0.12 %, which confirms R_D1 215k, R_D2, R_inj and the 4.011 injection
+    ratio. The deficit therefore sits in the **AD5443 -> OPA197 block: realized K_sns·A_v 0.113–0.133 V/A
+    against 0.502 designed** (the op-amp stage delivers 1.1–1.3 V/V where 5.02 was designed). The
+    INA253 A1/A3 hypothesis is REFUTED twice (every 0.633 derivation already uses 0.1 V/A; the bus droop
+    referred to the reported current is invariant to the sense gain). The AD5443 is wired in
+    voltage-switching mode, for which the datasheet prints no transfer equation and characterizes nothing
+    below V_REF 2 V (this ladder runs at 3–62 mV): `g = D/4096` is an assumption. Two mechanisms remain:
+    M-A the op-amp gain is not 5.02 (unity buffer -> 0.401 ohm; a 4.02k-for-40.2k slip on ROP2 -> 0.562 ohm;
+    the fits sit between) or M-B the ladder tap is short by ~3.8. **Bench (when available):** one source
+    live, 1.000 A, g 0.500; DMM `FC-CURR` (INA out), net N$7 (MDAC.VREF / OP.+IN) and `VDROOP` (OP.OUT):
+    design 0.1000 / 0.0500 / 0.2510 V; A_v = 1 -> 0.0500 at VDROOP; ROP2 slip -> 0.0701; tap short ->
+    0.0132 / 0.0663; also ohm ROP1/ROP2 unpowered on both channels. Implication: `K_sns` 0.1 is right;
+    `RE_MAX` 2.014 and `K_DROOP` 0.30 are design intent that the board realizes at 0.45–0.54 / 0.068–0.080;
+    the loop's integral action absorbs it (cost: authority, not share accuracy) — the §7c scheduled-k_d
+    lever is therefore ~4x smaller than the note's Table 4 until the block is fixed, and fixing the block
+    (a resistor) is the cheaper route to the same authority.

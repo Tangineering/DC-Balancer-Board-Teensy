@@ -592,6 +592,17 @@ R_FC_INT = 0.45             # ohm   effective bench IR sag  TODO(calibrate)
 V_BT_OPEN = 8.0             # V     2S LiPo mid-charge (SOC ~0.7 on the OCV curve)
 R_BT_INT = 0.05             # ohm   TODO(verify)
 I_AUX_A = 0.15              # A     housekeeping load on VBUS
+# Operator ruling 2026-09-03 (physics review run 002, item N8): below 5 V
+# everything downstream of VBUS shuts down anyway, so the housekeeping sink
+# must drop out rather than keep pulling a dark node down to exactly 0.000 V
+# tick after tick.  Matches the firmware's own `bus_up` 5 V torque gate in
+# spirit (a different signal, same operating boundary).  See the stamp site
+# at `J[N_BUS] -= self.i_aux` in ElectricalSim._substep() and
+# docs/HIL_PLANT.md section 4.3.
+V_AUX_DROPOUT_V = 5.0       # V     I_AUX_A (and anything riding on self.i_aux,
+                            #       e.g. a scenario preload the plant adds
+                            #       before calling step()) stops sinking below
+                            #       this bus voltage
 ETA_BOOST = 0.85            # boost efficiency, used to refer output current to the
                             # source side (SOC bookkeeping and IR sag are INPUT-side)
 
@@ -1916,6 +1927,8 @@ class ElectricalSim:
         self._chop_end_t = None         # time the last episode stopped conducting
         self.numeric_fault = False      # M2: sticky -- set once, never cleared
         self.neg_clamp_count = 0        # M2: diagnostic counter of negative-node clamps
+        self.aux_dropout_ticks = 0      # count of substeps the V_AUX_DROPOUT_V floor
+                                         # withheld the i_aux stamp (dark/collapsed bus)
 
         self.t = 0.0
         self.achieved_substep_hz = 0.0
@@ -2075,7 +2088,22 @@ class ElectricalSim:
             self.switches[name].stamp(G, J, v, None)
 
         # Loads.
-        J[N_BUS] -= self.i_aux
+        # V_AUX_DROPOUT_V floor (2026-09-03, physics review N8): below 5 V
+        # everything on the bus shuts down anyway, so the housekeeping sink
+        # (and any scenario preload riding on self.i_aux — see I_AUX_A) must
+        # NOT keep draining a dark node.  Gated on `v[N_BUS]`, which at this
+        # point in _substep() is still the PREVIOUS substep's solved value
+        # (self.v has not been overwritten yet — new_v is assigned later, at
+        # the `_solve(G, J)` call below) — the same "stamp from the previous
+        # substep's node voltage" convention every other load/source element
+        # in this method already follows (g_mot, the regen Norton pair, the
+        # charger chord, the chopper clamp), so this adds no new algebraic
+        # loop.  At v[N_BUS] >= V_AUX_DROPOUT_V the stamp is bit-identical to
+        # the pre-floor form.
+        if v[N_BUS] >= V_AUX_DROPOUT_V:
+            J[N_BUS] -= self.i_aux
+        else:
+            self.aux_dropout_ticks += 1
         # Motor draw/regen sits on the V-MOT node, behind MOT_PWR, through the 470 uF
         # ESR.  H1 FIX: this was previously stamped as an IDEAL current source
         # (J[N_MOT] -= i_motor) -- fine for a positive (motoring) draw, but for a
@@ -2375,6 +2403,7 @@ class ElectricalSim:
             "asymmetry_droop_scale_bt": self.asym_droop_scale_bt,
             "numeric_fault": self.numeric_fault,          # M2: sticky
             "neg_clamp_count": self.neg_clamp_count,      # M2: diagnostic
+            "aux_dropout_ticks": self.aux_dropout_ticks,  # V_AUX_DROPOUT_V floor engagements
             "chopper_peak_w": self.chopper_peak_w,        # worst V_rgn*i_dump while clamping
             # WP-C energy accounting (see docs/HIL_PLANT.md "Regen model").
             "regen_energy_j": self.regen_energy_j,

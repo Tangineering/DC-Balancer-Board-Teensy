@@ -645,13 +645,22 @@ def test_m2_nan_actuator_sets_sticky_numeric_fault_and_restores_finite():
 
 
 def test_m2_neg_clamp_count_increments_on_negative_node_clamp():
-    """A dark network (everything OFF, nothing driving any node up) decays
-    toward/through 0 and gets clamped there — neg_clamp_count must count
-    those clamps as a diagnostic."""
+    """PRE-N8 this scenario (a fully dark network, everything OFF, all nodes
+    at 0 V) tripped neg_clamp_count on the very first substep: the
+    unconditional `J[N_BUS] -= I_AUX_A` housekeeping stamp pulled the
+    already-zero BUS node negative and the M2 clamp caught it every substep
+    thereafter (physics review run 002, item N8 — this was in fact the exact
+    "dark bus collapses to 0.0000 V and free-runs the clamp" defect the
+    V_AUX_DROPOUT_V floor exists to fix, see test_n8_*() below). With the
+    floor in place the housekeeping sink is withheld below 5 V, so a fully
+    dark network no longer manufactures a negative BUS node and the M2
+    clamp — a real diagnostic for a genuine negative-node solve elsewhere in
+    the network — must stay quiet on this scenario. Kept as the regression
+    pin for that: neg_clamp_count must NOT fire here any more."""
     e = he.ElectricalSim(trace_config="short")
     assert e.neg_clamp_count == 0
     e.step(1e-3, _actuators(sw=0, aux=0))
-    assert e.neg_clamp_count > 0
+    assert e.neg_clamp_count == 0
     assert e.summary()["neg_clamp_count"] == e.neg_clamp_count
 
 
@@ -2542,3 +2551,137 @@ def test_split_law_matches_this_engines_dc_solve_with_the_asymmetry_off():
         # ...and the identity map it replaced is measurably outside that band.
         assert abs(old.delivered_share(r, total, True, True)
                    - alpha_engine) > 5e-3
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# N8: V_AUX_DROPOUT_V housekeeping-sink floor (physics review run 002,
+# operator ruling 2026-09-03: "add a dropout floor on I_AUX_A at Vbus < 5 V,
+# since below 5 V everything will shut down anyway")
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_n8_floor_is_inert_when_bus_stays_above_it(monkeypatch):
+    """Requirement (1): for every tick where V_bus never drops below the
+    floor, the floor must not change a single bit of the trace.
+
+    A cold bring-up necessarily spends its first several ms below 5 V (t_D
+    (ON) + soft-start), where the floor and dropout=0.0 legitimately diverge
+    -- comparing full cold-start traces would not isolate the "above the
+    floor" claim. Instead this bring-up FIRST with the real 5.0 V floor
+    until the two-source bus is well clear of it, deep-copies the settled
+    engine state, then continues two forks from that IDENTICAL state with
+    the floor at 5.0 and at 0.0 (the old unconditional-sink behaviour) for a
+    steady-run tail that never revisits below 5 V. The continuation traces
+    must come out IDENTICAL, not merely close."""
+    import copy
+
+    monkeypatch.setattr(he, "V_AUX_DROPOUT_V", 5.0)
+    e0 = he.ElectricalSim(trace_config="short", substep_pin=8)
+    sw = SW_FC_BUS | SW_BT_BUS | SW_BT_SEQ | SW_MOT_PWR
+    aux = AUX_FC_REG | AUX_BT_REG
+    act = _actuators(sw=sw, aux=aux, i_motor_a=0.5, code_fc=0.5, code_bt=0.5)
+    for _ in range(400):
+        rails = e0.step(1e-3, act)
+    assert rails["V_bus"] > 10.0, (
+        "bring-up must be well clear of the floor before forking; got "
+        "%.3f V" % rails["V_bus"])
+    seed_dropout_ticks = e0.aux_dropout_ticks   # cold-start ramp legitimately
+                                                 # dips under 5 V a few times
+
+    def continue_from(seed, dropout_v):
+        monkeypatch.setattr(he, "V_AUX_DROPOUT_V", dropout_v)
+        e = copy.deepcopy(seed)
+        trace = []
+        for _ in range(600):
+            rails = e.step(1e-3, act)
+            trace.append(rails["V_bus"])
+        return trace, e
+
+    trace_real, e_real = continue_from(e0, 5.0)
+    trace_zero, e_zero = continue_from(e0, 0.0)
+    assert min(trace_real) >= 5.0, (
+        "continuation must stay above the floor for the identity check to "
+        "be meaningful; min was %.3f V" % min(trace_real))
+    assert trace_real == trace_zero, "the floor must be a no-op above itself"
+    # Neither fork's continuation adds any further dropout ticks beyond
+    # whatever the shared cold-start ramp already accumulated before the
+    # fork point -- above the floor the two dropout_v settings are
+    # indistinguishable, exactly the property under test.
+    assert e_real.aux_dropout_ticks == seed_dropout_ticks
+    assert e_zero.aux_dropout_ticks == seed_dropout_ticks
+
+
+def test_n8_latched_dark_bus_settles_on_the_bleed_not_zero():
+    """Requirement (2): below the floor the housekeeping sink is withheld,
+    so a latched (State-99-style) dark bus decays on R_NODE_BLEED_BUS alone
+    (tau = R_NODE_BLEED_BUS * C_VBUS ~= 1.05 s) instead of being driven to
+    exactly 0.0000 V every tick by an aux sink that has nothing left to
+    drain. Starts just under the floor (4.99 V) so the whole run is pure
+    bleed decay with no aux-draw transient to model, and pins the result
+    against the EXACT backward-Euler recurrence the engine's own
+    (g_bleed + C/h) v' = (C/h) v_prev solve reduces to on an isolated node:
+    v_next = v_prev / (1 + h/tau) every substep."""
+    tau = he.R_NODE_BLEED_BUS * he.C_VBUS
+    assert tau == pytest.approx(1.05, rel=0.05)
+
+    e = he.ElectricalSim(trace_config="short", substep_pin=20)
+    v0 = 4.99
+    e.v[he.N_BUS] = v0
+    dt = 1e-3
+    n_sub = e._n_sub
+    h = dt / n_sub
+    n_ticks = 3000          # ~3 tau of wall time at dt=1e-3
+
+    for _ in range(n_ticks):
+        e.step(dt, _actuators(sw=0, aux=0))
+
+    n_substeps_total = n_ticks * n_sub
+    analytic = v0 / (1.0 + h / tau) ** n_substeps_total
+    v_final = e.node_voltage("BUS")
+
+    assert v_final == pytest.approx(analytic, rel=1e-6)
+    assert v_final > 0.0, "must settle on a nonzero residual, not clamp to 0"
+    assert v_final < v0, "must still be decaying (not held up by anything)"
+    assert e.neg_clamp_count == 0, (
+        "a monotone decay toward (never through) zero must never trip the "
+        "M2 negative-node clamp")
+    assert e.aux_dropout_ticks == n_substeps_total
+    assert e.summary()["aux_dropout_ticks"] == n_substeps_total
+    assert e.summary()["neg_clamp_count"] == 0
+
+
+def test_n8_floor_gates_symmetrically_on_both_sides():
+    """The gate re-evaluates every substep from the previous solved node
+    voltage with no stored state, so it must react identically whether the
+    node is freshly below or freshly above 5 V — no hysteresis band, per the
+    operator ruling ('unless the solver oscillates -- test it', covered by
+    the no-chatter test below)."""
+    e_below = he.ElectricalSim(trace_config="short", substep_pin=1)
+    e_below.v[he.N_BUS] = 4.0
+    e_below.step(1e-3, _actuators(sw=0, aux=0))
+    assert e_below.aux_dropout_ticks == 1
+
+    e_above = he.ElectricalSim(trace_config="short", substep_pin=1)
+    e_above.v[he.N_BUS] = 6.0
+    e_above.step(1e-3, _actuators(sw=0, aux=0))
+    assert e_above.aux_dropout_ticks == 0
+
+
+def test_n8_no_chatter_crossing_the_floor():
+    """A node that starts just above the floor and is left to decay (no
+    switches, no sources) must cross V_AUX_DROPOUT_V and keep decaying
+    monotonically -- removing the aux sink at the crossing can only slow the
+    decay, never reverse it, so any tick-over-tick INCREASE would indicate
+    hysteresis-free gating is chattering the solve. Confirms no such
+    oscillation and no numeric fault."""
+    e = he.ElectricalSim(trace_config="short", substep_pin=1)
+    e.v[he.N_BUS] = 5.05
+    prev = None
+    for _ in range(200):
+        rails = e.step(1e-3, _actuators(sw=0, aux=0))
+        v = rails["V_bus"]
+        if prev is not None:
+            assert v <= prev + 1e-9, (
+                "V_bus increased tick-over-tick while dark -- possible "
+                "chatter at the V_AUX_DROPOUT_V crossing")
+        prev = v
+    assert not e.numeric_fault

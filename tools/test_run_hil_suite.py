@@ -8427,7 +8427,12 @@ def test_demonstration_banner_prefers_the_runs_recorded_strategy():
     # WP-1C (2026-09-02): the ELIGIBLE artifact is now `sdp-v4` -- `sdp-v3` was
     # re-classified as a demonstration when the eta-era alpha recalibration
     # shipped, so it is no longer the right name for this half of the test.
-    assert rhs.ems_demonstration_banner("ems-sdp-cross", "sdp-v4") is None
+    # RE-PINNED 2026-09-03: `sdp-v4` was demoted in turn by the
+    # measured-round-trip ruling, so the eligible artifact is now `sdp-v6`.
+    assert rhs.ems_demonstration_banner("ems-sdp-cross", "sdp-v6") is None
+    # And the demoted v4 now DOES carry a banner, naming its comparability role.
+    demoted = rhs.ems_demonstration_banner("ems-sdp-cross", "sdp-v4")
+    assert demoted and "COMPARABILITY" in demoted
     # No recorded strategy -> the registry default, unchanged behaviour.
     assert "sdp-v2" in rhs.ems_demonstration_banner("ems-sdp-cross")
 

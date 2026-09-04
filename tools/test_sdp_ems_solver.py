@@ -20,6 +20,7 @@ generated with (see tools/sdp_policies/sdp_policy_v1.json's own `solver` and
 against the SHIPPED artifact (item 1); everything else uses the reduced grid
 to keep the suite fast, per a session-scoped fixture that solves it ONCE.
 """
+import argparse
 import hashlib
 import json
 import os
@@ -1417,3 +1418,138 @@ def test_shipped_v5_artifact_is_the_measured_lever_resolve():
     digest = hashlib.sha256(
         json.dumps(doc["policy"], sort_keys=True).encode("utf-8")).hexdigest()
     assert digest == V5_POLICY_SHA256, digest
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# 13. D15 -- `--eta-chg measured`, the declared basis, and the shipped
+#     sdp_policy_v6.json the 2026-09-03 ruling produced.
+# ─────────────────────────────────────────────────────────────────────────
+
+ETA_CHG_MEASURED = 0.801172836631146
+SHIPPED_V6_PATH = os.path.join(HERE, "sdp_policies", "sdp_policy_v6.json")
+
+
+def test_the_measured_round_trip_is_derived_from_the_readings_table():
+    """The constant is a RATIO OF THE TWO MEANS, not a literal.  Pinned so a
+    sixth reading moves it: a hand-typed 0.801173 would silently outlive the
+    table it claims to summarise, which is the whole reason the CLI takes a
+    keyword rather than a number."""
+    assert solver.ETA_CHG_MEASURED_ROUND_TRIP == pytest.approx(
+        solver.EMS_LEVER_CHARGE_ETA_MEAN_SOC_PER_G
+        / solver.EMS_LEVER_SHARE_ETA_MEAN_SOC_PER_G, rel=1e-15)
+    assert solver.ETA_CHG_MEASURED_ROUND_TRIP == pytest.approx(
+        ETA_CHG_MEASURED, rel=1e-15)
+    # It is an EMS-accounting number and is BELOW the plant's converter model.
+    assert solver.ETA_CHG_MEASURED_ROUND_TRIP < solver.ETA_CHG_MODEL
+
+
+def test_eta_chg_keyword_resolves_to_the_derived_constant():
+    assert solver._eta_chg_arg("measured") == pytest.approx(
+        solver.ETA_CHG_MEASURED_ROUND_TRIP, rel=1e-15)
+    assert isinstance(solver._eta_chg_arg("MEASURED"), solver.MeasuredEtaChg)
+    assert solver._eta_chg_arg("0.88") == pytest.approx(0.88)
+    assert not isinstance(solver._eta_chg_arg("0.88"), solver.MeasuredEtaChg)
+    with pytest.raises(argparse.ArgumentTypeError):
+        solver._eta_chg_arg("nonsense")
+
+
+def test_only_the_keyword_declares_the_basis(tmp_path):
+    """A HAND-TYPED number that happens to equal today's mean does NOT declare
+    the basis, and that asymmetry is the point: the declaration says the value
+    came from the measurement table, not that it matches it this week."""
+    assert solver.eta_chg_basis(
+        solver.MeasuredEtaChg(0.5)) == solver.ETA_CHG_BASIS_MEASURED
+    assert solver.eta_chg_basis(0.801172836631146) is None
+    assert solver.eta_chg_basis(None) is None
+    typed = tmp_path / "typed.json"
+    rc = solver.main(["--soc-n", "11", "--share-n", "5",
+                      "--eta-chg", repr(ETA_CHG_MEASURED),
+                      "--alpha-mode", "lever-measured", "--out", str(typed)])
+    assert rc == 0
+    with open(typed, encoding="utf-8") as fh:
+        doc = json.load(fh)
+    assert doc["charger"]["eta_chg"] == pytest.approx(ETA_CHG_MEASURED,
+                                                      rel=1e-15)
+    assert "eta_chg_basis" not in doc["charger"]
+
+
+def test_eta_chg_measured_declares_the_basis_and_needs_no_override(tmp_path):
+    """THE SHIPPED v6 RECIPE at a small grid: both windows contain the alpha,
+    the tripwire stays silent, the charge map is empty, and the artifact
+    DECLARES why its eta is not the plant's."""
+    out = tmp_path / "v6_small.json"
+    rc = solver.main(["--soc-n", "11", "--share-n", "5",
+                      "--eta-chg", "measured",
+                      "--alpha-mode", "lever-measured", "--out", str(out)])
+    assert rc == 0
+    with open(out, encoding="utf-8") as fh:
+        doc = json.load(fh)
+    assert doc["charger"]["eta_chg"] == pytest.approx(ETA_CHG_MEASURED,
+                                                      rel=1e-15)
+    assert doc["charger"]["eta_chg_basis"] == solver.ETA_CHG_BASIS_MEASURED
+    assert "NOT a converter efficiency" in doc["charger"]["eta_chg_basis_note"]
+    assert doc["alpha"]["value"] == pytest.approx(ALPHA_LEVER_MEASURED,
+                                                  rel=1e-12)
+    assert doc["alpha"]["admission"]["in_window_model"] is True
+    assert doc["alpha"]["admission"]["in_window_measured"] is True
+    assert doc["alpha"]["admission"]["allow_out_of_window"] is False
+    assert doc["alpha"]["admission"]["model_window_disagrees"] is False
+    assert not any(v > 0.0 for row in doc["policy"]["charge_goal"]
+                   for v in row)
+
+
+def test_eta_chg_measured_is_mutually_exclusive_with_the_old_era(capsys):
+    with pytest.raises(SystemExit):
+        solver.main(["--eta-chg", "measured", "--eta-chg-none",
+                     "--alpha-mode", "lever-measured", "--dry-run"])
+    assert "mutually exclusive" in capsys.readouterr().err
+
+
+def test_the_default_solve_still_declares_no_basis(tmp_path):
+    """EVERY OTHER MODE KEEPS ITS CHARGER-BLOCK SHAPE.  The field is
+    conditional so a v1..v5 regeneration differs from its shipped file in
+    nothing this round added."""
+    out = tmp_path / "plain.json"
+    rc = solver.main(["--soc-n", "11", "--share-n", "5",
+                      "--alpha-mode", "lever", "--out", str(out)])
+    assert rc == 0
+    with open(out, encoding="utf-8") as fh:
+        doc = json.load(fh)
+    assert doc["charger"]["eta_chg"] == pytest.approx(solver.ETA_CHG_MODEL)
+    assert "eta_chg_basis" not in doc["charger"]
+    assert "eta_chg_basis_note" not in doc["charger"]
+
+
+def test_shipped_v6_artifact_is_the_measured_round_trip_resolve():
+    """The shipped frontier artifact, pinned: the measured alpha, the declared
+    basis, both windows true, and ZERO charge cells -- declined endogenously,
+    which is what makes it a benchmark rather than a mask."""
+    assert os.path.isfile(SHIPPED_V6_PATH)
+    with open(SHIPPED_V6_PATH, encoding="utf-8") as fh:
+        doc = json.load(fh)
+    assert doc["schema"] == solver.SCHEMA
+    assert doc["charger"]["eta_chg"] == pytest.approx(ETA_CHG_MEASURED,
+                                                      rel=1e-15)
+    assert doc["charger"]["eta_chg_basis"] == solver.ETA_CHG_BASIS_MEASURED
+    assert doc["alpha"]["mode"] == "lever-measured"
+    assert doc["alpha"]["value"] == pytest.approx(ALPHA_LEVER_MEASURED,
+                                                  rel=1e-12)
+    assert doc["alpha"]["admission"]["in_window_model"] is True
+    assert doc["alpha"]["admission"]["in_window_measured"] is True
+    assert doc["alpha"]["admission"]["allow_out_of_window"] is False
+    assert doc["actions"]["forbid_charge_all"] is False
+    assert doc["alpha"]["levers_soc_per_g"]["measured_round_trip"] == \
+        pytest.approx(ETA_CHG_MEASURED, rel=1e-15)
+    assert len(doc["alpha"]["levers_soc_per_g"]["measured_readings"]) == 5
+    assert not any(v > 0.0 for row in doc["policy"]["charge_goal"]
+                   for v in row)
+    # The recorded argv IS the command that baked it - no --allow-out-of-window.
+    assert doc["argv"] == ["--eta-chg", "measured",
+                           "--alpha-mode", "lever-measured",
+                           "--out", "tools/sdp_policies/sdp_policy_v6.json",
+                           "--force"]
+    # v6 differs from v5 ONLY in the charge billing: same alpha, same mode.
+    with open(SHIPPED_V5_PATH, encoding="utf-8") as fh:
+        v5 = json.load(fh)
+    assert v5["alpha"]["value"] == doc["alpha"]["value"]
+    assert v5["charger"]["eta_chg"] == pytest.approx(0.88)

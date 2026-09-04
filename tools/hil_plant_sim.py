@@ -5557,6 +5557,10 @@ SDP_POLICY_DIR = os.path.join(REPO_ROOT, "tools", "sdp_policies")
 #                  Every `ems-sdp` family trajectory descends below its
 #                  captured soc0 on the first decision, so v5 would command
 #                  FC_CHARGE for essentially the whole run.
+#     ⚠️ SUPERSEDED 2026-09-03 (afternoon) by the block below: the operator
+#     ruled resolution (i), so `sdp_policy_v6.json` carries this same alpha at
+#     the measured billing and IS the frontier leg. The paragraph that follows
+#     records what the v5 round decided and is kept as that record.
 #     THEREFORE: no scenario is rebound this round. `sdp-v4` remains the
 #     frontier leg, every walk-derived expectation stands verbatim, and v5 is
 #     registered as a NON-frontier artifact so the measured economics can be
@@ -5566,10 +5570,65 @@ SDP_POLICY_DIR = os.path.join(REPO_ROOT, "tools", "sdp_policies")
 #     inside BOTH windows, at the cost of a permanent CHARGER-ERA MISMATCH
 #     banner), or accept the charge admission — are the operator's, and D14 of
 #     tools/sdp_ems_solver.py states both with their numbers.
+#   sdp_policy_v6.json  THE SHIPPED CALIBRATED BENCHMARK since 2026-09-03,
+#     `sdp-v6`, frontier_eligible — and the reason `sdp-v4` is no longer it.
+#     Design note: docs/modeling/sdp_alpha_resolve_20260903.md section 10.
+#     Operator ruling (2026-09-03 afternoon), verbatim: "Use an SDP v6 that
+#     solves at the observed 80.1%". That closes the v5 finding in favour of
+#     the FIRST of D14's two resolutions: keep the measured alpha, and bill the
+#     charge stage at the round trip the board actually measures.
+#         C:/Users/ricky/miniforge3/python.exe tools/sdp_ems_solver.py \
+#             --eta-chg measured --alpha-mode lever-measured \
+#             --out tools/sdp_policies/sdp_policy_v6.json --force
+#     `measured` is the literal 0.801172836631146 = mean(L_chg)/mean(L_share)
+#     over the five eta-era campaign readings, DERIVED in the solver from
+#     EMS_LEVER_ETA_READINGS so a sixth reading moves it. The alpha is v5's
+#     unchanged 0.134110280093, and at this billing it lies INSIDE BOTH
+#     windows — model (0.111000, 0.138547), measured (0.120040, 0.149830).
+#     `in_window_model` AND `in_window_measured` are both TRUE (the first SDP
+#     artifact for which that is so), the solver's pre-solve tripwire is
+#     SILENT, no --allow-out-of-window was passed, and the charge map is EMPTY
+#     again: 0 of 2525 cells with `forbid_charge_all` False, i.e. declined
+#     ENDOGENOUSLY exactly as v4 declined it.
+#     ⚠️ THE ERA MISMATCH IS DELIBERATE AND IS DECLARED, NOT WARNED ABOUT.
+#     This artifact's `charger.eta_chg` is 0.801173 while the plant's
+#     `hil_electrical.ETA_CHG` is 0.88, and the two are measuring different
+#     things: the plant models the CONVERTER, the round trip additionally
+#     carries the bus sag billed to the charge leg (15.76 -> 14.15 V during a
+#     window), which is plant physics the solver's eta cannot see. The artifact
+#     therefore carries `charger.eta_chg_basis: "measured-round-trip"`, written
+#     only by `--eta-chg measured`, and SdpStrategy prints a ONE-LINE
+#     DECLARED-BASIS note in place of its CHARGER-ERA MISMATCH warning. An
+#     artifact that does NOT declare a basis still gets the warning, unchanged.
+#     ⚠️ v4 vs v6, MEASURED (not assumed):
+#       SHARE MAP  differs on exactly TWO SoC rows — 4 and 5 (SoC 0.554-0.555),
+#                  50 cells of 2525 — 45-46 grid nodes BELOW the target node
+#                  and outside the +-0.040 reachable band, exactly as the
+#                  v3-vs-v4 and v4-vs-v5 share diffs were.
+#       CHARGE MAP IDENTICAL — both all-zero, 0 differing cells.
+#     THEREFORE every walk-derived expectation on the rebound legs transfers
+#     VERBATIM; none was re-walked and none carries a `provisional_note`.
+#     ⚠️ v5 vs v6, MEASURED: the share maps differ on ONE row (3, 6 cells) and
+#     the charge maps on 47 rows / 558 cells, 40 of them INSIDE the reachable
+#     band — v5 charges there and v6 does not. That difference is the ruling.
+#     Both diffs are pinned by
+#     test_sdp_v4_v6_share_maps_agree_on_traversed_rows().
+#
+#   sdp_policy_v4.json is KEPT REGISTERED but is now `frontier_eligible: False`
+#     for the reason v3 was demoted before it: it is a correct calibration
+#     against a charge billing this rig's measurement does not support. Its
+#     alpha 0.118326 sits 1.43 % BELOW the measured admission window, so the
+#     measured share lever does not clear its bound and the SoC axis is
+#     under-priced. It stays registered for comparability with campaigns whose
+#     SDP legs played it (<= hil_report_20260903_063659) and it still carries
+#     its own certificate; it is simply no longer the leg a frontier score is
+#     read from. `sdp-v5` stays registered, non-frontier, as the record of the
+#     finding that produced v6.
 SDP_POLICY_FILE_V2 = "sdp_policy_v2.json"
 SDP_POLICY_FILE_V3 = "sdp_policy_v3.json"
 SDP_POLICY_FILE_V4 = "sdp_policy_v4.json"
 SDP_POLICY_FILE_V5 = "sdp_policy_v5.json"
+SDP_POLICY_FILE_V6 = "sdp_policy_v6.json"
 SDP_POLICY_SCHEMA = "sdp-policy-v1"
 
 # ── THE SCENARIO-SUPPLIED ARTIFACT (2026-09-02) ─────────────────────────────
@@ -6060,6 +6119,32 @@ def _sdp_doc_eta_chg(pol):
     return None if val is None else float(val)
 
 
+# The one string an artifact may use to DECLARE that its charger era differs
+# from the plant's on purpose (2026-09-03, sdp_ems_solver D15).  Mirrored here
+# rather than imported: hil_plant_sim.py deliberately imports nothing from the
+# solver, and the solver deliberately imports nothing from its consumer.
+SDP_ETA_CHG_BASIS_MEASURED = "measured-round-trip"
+
+
+def _sdp_doc_eta_chg_basis(pol):
+    """The artifact's DECLARED basis for its `charger.eta_chg`, or None.
+
+    None is what every artifact before sdp_policy_v6.json carries, and it means
+    "this artifact makes no claim about why its eta differs from the plant's" —
+    so a difference is a MISMATCH and is warned about.  The one recognised
+    declaration is `measured-round-trip`: the eta is the board's measured
+    end-to-end charge round trip (mean L_chg / mean L_share), which is an
+    EMS-accounting number and is not the same quantity as the plant's converter
+    efficiency.  A run of such an artifact reports the difference as DECLARED
+    instead, in one line.  Any other string is treated as no declaration: an
+    unrecognised basis must not silence the warning."""
+    chg = (pol.get("raw") or {}).get("charger")
+    if not isinstance(chg, dict):
+        return None
+    basis = chg.get("eta_chg_basis")
+    return basis if basis == SDP_ETA_CHG_BASIS_MEASURED else None
+
+
 def resolve_sdp_policy_file(value, scenario=None, picks_path=None):
     """Resolve a scenario's `sdp_policy_file` to (repo-relative path, source).
 
@@ -6168,8 +6253,26 @@ def sdp_assert_calibrated_benchmark(pol, name):
     # swallowed) so the caller can print them: an allowance that nobody sees is
     # indistinguishable from a clause that passed.
     allowances = []
-    if alpha.get("mode") != "lever":
-        problems.append("alpha.mode is %r, not 'lever'" % (alpha.get("mode"),))
+    # ── THE ADMISSIBLE DERIVATIONS (2026-09-03) ─────────────────────────────
+    # TWO modes may certify, not one, and the second is not a relaxation.
+    #   `lever`           D12's geometric-mean placement on the solver's own
+    #                     MODEL levers — v3 and v4.
+    #   `lever-measured`  D12's SAME placement on the board's MEASURED lever
+    #                     pair — v5 and v6.  It certifies only when BOTH
+    #                     windows contain the alpha, which is a STRICTLY
+    #                     stronger claim than `lever` can make in this era:
+    #                     `lever` reaches the frontier with the measured window
+    #                     null under the era-scoped allowance below, whereas a
+    #                     `lever-measured` artifact has a real measured window
+    #                     and the clause on `in_window_measured` is checked
+    #                     outright.  v5 is the pinned counter-example: same
+    #                     mode, `in_window_model` False, REFUSED.
+    # Every other mode (`marginal`, `level`, `charge-edge`, `explicit`) is a
+    # derivation the charge action was never two-sidedly checked against and is
+    # refused here as it always was.
+    if alpha.get("mode") not in ("lever", "lever-measured"):
+        problems.append("alpha.mode is %r, not 'lever' or 'lever-measured'"
+                        % (alpha.get("mode"),))
     if admission.get("in_window_model") is not True:
         problems.append("alpha.admission.in_window_model is %r, not True"
                         % (admission.get("in_window_model"),))
@@ -6255,9 +6358,16 @@ def sdp_assert_calibrated_benchmark(pol, name):
             "scores on the EMS FRONTIER and therefore requires THE CALIBRATED "
             "BENCHMARK certificate — and this artifact does not carry it:\n"
             "    %s\n"
-            "Regenerate with the calibrated alpha — and, in the eta era, with "
-            "the era the plant runs in (an artifact solved without --eta-chg "
-            "is priced against the retired 1:1 charger):\n"
+            "Regenerate with a calibrated alpha. THE SHIPPED RECIPE since "
+            "2026-09-03 is the MEASURED lever pair billed at the MEASURED "
+            "round trip, which certifies with BOTH windows real and true "
+            "(sdp_ems_solver D15):\n"
+            "    C:/Users/ricky/miniforge3/python.exe tools/sdp_ems_solver.py "
+            "--alpha-mode lever-measured --eta-chg measured --out %s --force\n"
+            "The older recipe — the MODEL lever pair billed at the plant's "
+            "converter efficiency — also certifies, under the era-scoped "
+            "allowance below (an artifact solved without --eta-chg at all is "
+            "priced against the retired 1:1 charger and does not):\n"
             "    C:/Users/ricky/miniforge3/python.exe tools/sdp_ems_solver.py "
             "--alpha-mode lever --eta-chg 0.88 --out %s --force\n"
             "NOTE an eta-era `lever` artifact carries "
@@ -6272,7 +6382,7 @@ def sdp_assert_calibrated_benchmark(pol, name):
             "or bind this strategy to a NON-frontier role in "
             "EMS_STRATEGY_META (see `sdp-v2`, the dynamics demonstration)."
             % (pol.get("path"), name, "\n    ".join(problems),
-               pol.get("path")))
+               pol.get("path"), pol.get("path")))
     return allowances
 
 
@@ -6519,7 +6629,7 @@ class SdpStrategy:
                 "named one for this run.\n"
                 "  Either run it under a scenario that declares "
                 "`sdp_policy_file` (see SCENARIOS['ems-sdp-alpha-cal']), or "
-                "use a strategy with a registered artifact (`sdp-v4` is the "
+                "use a strategy with a registered artifact (`sdp-v6` is the "
                 "shipped calibrated benchmark)." % self.name)
         if self.policy is None:
             pol = load_sdp_policy(self.path, self.name)
@@ -6672,6 +6782,17 @@ class SdpStrategy:
         plant_eta = plant_eta_chg()
         self.provenance["plant_eta_chg"] = plant_eta
         self.provenance["era_match"] = (art_eta == plant_eta)
+        # ── A DECLARED DIFFERENCE IS NOT A MISMATCH (2026-09-03) ────────────
+        # `sdp_policy_v6.json` is billed at the board's MEASURED end-to-end
+        # charge round trip, which is deliberately unequal to the plant's
+        # converter efficiency — the round trip carries the bus sag billed to
+        # the charge leg, and the plant models that sag as physics rather than
+        # as an efficiency. The artifact says so in `charger.eta_chg_basis`, so
+        # the run prints ONE informational line instead of the mismatch
+        # warning. An artifact that does not declare a basis is unaffected: the
+        # warning is what an UNEXPLAINED era difference deserves, and this
+        # field is the only thing that turns it into a statement.
+        self.provenance["eta_chg_basis"] = _sdp_doc_eta_chg_basis(pol)
         print("[hil] SDP policy: %s (%d SoC nodes x %d demand bins, target "
               "SoC %.3f on [%.3f, %.3f], demand %.3f..%.3f W, decisions every "
               "%.3g s)"
@@ -6718,7 +6839,18 @@ class SdpStrategy:
             else:
                 print("[hil]   artifact SUPPLIED BY THE SCENARIO: %s"
                       % src.get("declared"))
-        if not self.provenance["era_match"]:
+        if (not self.provenance["era_match"]
+                and self.provenance["eta_chg_basis"]):
+            print("[hil]   charger era DECLARED, not mismatched: this "
+                  "artifact bills charging at eta_chg = %s (basis %r, the "
+                  "board's measured end-to-end round trip) where the plant's "
+                  "converter is %s - the difference is the artifact's design "
+                  "and is recorded in charger.eta_chg_basis."
+                  % ("None" if self.provenance["eta_chg"] is None
+                     else "%.9g" % self.provenance["eta_chg"],
+                     self.provenance["eta_chg_basis"],
+                     "None" if plant_eta is None else "%.9g" % plant_eta))
+        elif not self.provenance["era_match"]:
             # ASCII "(!)" deliberately (2026-09-02): this exact string, with a
             # U+26A0 U+FE0F pair in it, raised UnicodeEncodeError on the cp1252
             # console and — because UnicodeEncodeError subclasses ValueError —
@@ -7070,9 +7202,16 @@ ems_sdp_v2 = SdpStrategy("sdp-v2", SDP_POLICY_FILE_V2)
 # demanding it of a comparability leg would claim a role the leg does not have.
 # v3 does still carry the certificate; nothing about the artifact changed.
 ems_sdp_v3 = SdpStrategy("sdp-v3", SDP_POLICY_FILE_V3)
-# THE SHIPPED CALIBRATED BENCHMARK from 2026-09-02 — see SDP_POLICY_FILE_V4.
-ems_sdp_v4 = SdpStrategy("sdp-v4", SDP_POLICY_FILE_V4,
-                         require_calibrated_benchmark=True)
+# DEMOTED 2026-09-03 (the measured round trip): `sdp-v4` keeps its artifact and
+# its code path but is no longer the frontier leg, exactly as `sdp-v3` was
+# demoted before it, and for the same class of reason — it is a correct
+# calibration against a charge billing the board's own measurement does not
+# support.  It NO LONGER DEMANDS the certificate, because the certificate is
+# the frontier's admission ticket and demanding it of a comparability leg would
+# claim a role the leg does not have.  v4 does still carry the certificate
+# (nothing about the artifact changed); the pin is
+# test_shipped_v4_artifact_carries_the_certificate_under_the_era_allowance().
+ems_sdp_v4 = SdpStrategy("sdp-v4", SDP_POLICY_FILE_V4)
 # THE MEASURED-LEVER RE-SOLVE, 2026-09-03 — see SDP_POLICY_FILE_V5.  NO
 # certificate is demanded, and that is not an oversight: this artifact FAILS
 # two of the certificate's clauses (alpha.mode is "lever-measured", not
@@ -7083,6 +7222,13 @@ ems_sdp_v4 = SdpStrategy("sdp-v4", SDP_POLICY_FILE_V4,
 # registration with a role note — is the one `sdp-v2` and `sdp-v3` already
 # established for artifacts that are real results but not competitive scores.
 ems_sdp_v5 = SdpStrategy("sdp-v5", SDP_POLICY_FILE_V5)
+# THE SHIPPED CALIBRATED BENCHMARK since 2026-09-03 — see SDP_POLICY_FILE_V6.
+# Same measured alpha as v5, solved at the MEASURED charge round trip, so both
+# admission windows contain it and the charge map is empty again.  It DEMANDS
+# the certificate, which it now passes on the `lever-measured` clause with a
+# REAL measured window rather than under the era-scoped null allowance.
+ems_sdp_v6 = SdpStrategy("sdp-v6", SDP_POLICY_FILE_V6,
+                         require_calibrated_benchmark=True)
 # THE SCENARIO-SUPPLIED ROLE: one strategy, no artifact of its own, playing
 # whatever its scenario names in `sdp_policy_file`. It exists so an artifact
 # that is deliberately OUTSIDE the lever windows (an alpha-sweep point) has a
@@ -7862,10 +8008,12 @@ EMS_STRATEGIES = {
     # by ENDOGENOUS rejection) and `sdp-v2` is the byte-frozen DYNAMICS
     # DEMONSTRATION whose charge cells the `ems-sdp-cross`/`ems-sdp-braking`
     # scenarios exist to actuate.  EMS_STRATEGY_META below carries the roles.
-    # ⚠️ FOUR SDP NAMES since 2026-09-02, and they are not interchangeable:
-    # `sdp-v4` is THE CALIBRATED BENCHMARK for the eta_chg = 0.88 charger
-    # (frontier-scored), `sdp-v3` the SAME calibration for the retired 1:1
-    # charger (kept for comparability, off the frontier), `sdp-v2` the
+    # ⚠️ SIX SDP NAMES since 2026-09-03, and they are not interchangeable:
+    # `sdp-v6` is THE CALIBRATED BENCHMARK, billed at the board's MEASURED
+    # charge round trip (frontier-scored), `sdp-v4` the SAME placement on the
+    # MODEL levers at eta_chg 0.88 (kept for comparability, off the frontier),
+    # `sdp-v3` that calibration for the retired 1:1 charger (comparability
+    # too), `sdp-v5` the record of the measured-lever finding, `sdp-v2` the
     # byte-frozen DYNAMICS DEMONSTRATION whose charge cells the
     # `ems-sdp-cross`/`ems-sdp-braking` scenarios exist to actuate, and
     # `sdp-sweep` the artifact-less role that plays whatever its scenario
@@ -7878,6 +8026,12 @@ EMS_STRATEGIES = {
     # it ADMITS the charge action in 558 cells. Off the frontier by that fact,
     # not by convention. See SDP_POLICY_FILE_V5.
     "sdp-v5": ems_sdp_v5,
+    # 2026-09-03 (afternoon): `sdp-v6` is THE CALIBRATED BENCHMARK — v5's
+    # measured alpha solved at the measured charge round trip, inside BOTH
+    # windows, 0 charge cells. It replaces `sdp-v4` on every frontier-scored
+    # SDP leg; v4 and v5 stay registered as comparability and as the record of
+    # the finding. See SDP_POLICY_FILE_V6.
+    "sdp-v6": ems_sdp_v6,
     "sdp-sweep": ems_sdp_sweep,
     # The firmware's own 'Y' combined drive-cycle + power-share table (16
     # regions, 40 s), commanded from the EMS layer instead of the USB console.
@@ -8000,8 +8154,29 @@ EMS_STRATEGY_META = {
                           "not beside an eta_chg = 0.88 run. `sdp-v4` is "
                           "the same calibration re-solved for the current "
                           "charger and is the frontier leg."},
-    # THE CALIBRATED BENCHMARK for the eta_chg = 0.88 charger.
+    # THE eta_chg = 0.88 CALIBRATION, demoted 2026-09-03 — see
+    # SDP_POLICY_FILE_V6.
     "sdp-v4":        {"policy_file": SDP_POLICY_FILE_V4,
+                      "frontier_eligible": False,
+                      "role_note":
+                          "ROLE: a MODEL-BILLED CALIBRATION retained for "
+                          "COMPARABILITY — this artifact's alpha (0.118326) "
+                          "is D12's two-sided placement on the SOLVER'S MODEL "
+                          "levers at eta_chg = 0.88, and five campaign "
+                          "readings since have placed the measured admission "
+                          "window at (0.120040, 0.149830), 1.43 %% above it. "
+                          "The measured share lever therefore does not clear "
+                          "this alpha's bound and the SoC axis is "
+                          "under-priced. It is a real, correctly calibrated "
+                          "policy for a charge billing the board does not "
+                          "measure, so its h2/delta_soc pair belongs beside "
+                          "the campaigns whose SDP legs played it "
+                          "(<= 20260903_063659), not beside a `sdp-v6` run. "
+                          "`sdp-v6` is the same placement on the MEASURED "
+                          "pair, billed at the MEASURED round trip, and is "
+                          "the frontier leg."},
+    # THE SHIPPED CALIBRATED BENCHMARK since 2026-09-03.
+    "sdp-v6":        {"policy_file": SDP_POLICY_FILE_V6,
                       "frontier_eligible": True},
     # THE MEASURED-LEVER RE-SOLVE, 2026-09-03 — see SDP_POLICY_FILE_V5.
     "sdp-v5":        {"policy_file": SDP_POLICY_FILE_V5,
@@ -8023,9 +8198,14 @@ EMS_STRATEGY_META = {
                           "charge leg 3.4-4.1 %% worse in equivalent hydrogen "
                           "than the charge-free calibration, so this leg's "
                           "h2/delta_soc pair is a real measurement OF THE "
-                          "MEASURED ECONOMICS and must not be ranked against "
-                          "`sdp-v4` until the operator rules on the charger "
-                          "disagreement (D14, tools/sdp_ems_solver.py)."},
+                          "MEASURED ECONOMICS and is not a competitive score. "
+                          "THE RULING LANDED 2026-09-03: the operator chose "
+                          "D14's first resolution, so `sdp-v6` carries this "
+                          "same alpha billed at the measured round trip and "
+                          "is the frontier leg. v5 stays registered as the "
+                          "RECORD OF THE FINDING — it is what the measured "
+                          "alpha does when the stage cost still bills the "
+                          "model's charger."},
     # THE SCENARIO-SUPPLIED ROLE — the alpha-sweep legs' home.
     "sdp-sweep":     {"policy_file": SDP_POLICY_FROM_SCENARIO,
                       "frontier_eligible": False,
@@ -8859,7 +9039,7 @@ SCENARIOS["ems-dp-replay"] = {
 # ⚠️ SIM-ONLY strategy (plant-truth SoC) and its demand axis clamps to the end
 # bins for much of this cycle — both are the SdpStrategy banner's business, and
 # the exit summary's clamp counters are how a run reports it.
-# ── REBOUND TO `sdp-v4` 2026-09-02 (the eta era) ────────────────────────────
+# ── REBOUND TO `sdp-v4` 2026-09-02, THEN `sdp-v6` 2026-09-03 ────────────────────────────
 # The block below records the 2026-09-01 move from v2 to v3, which is still the
 # reason every expectation on this leg reads the way it does.  What the eta era
 # changed is WHICH calibrated artifact plays it: `sdp_policy_v4.json` is the
@@ -8895,7 +9075,7 @@ SCENARIOS["ems-dp-replay"] = {
 #     come near.  Every share threshold in the suite entry is unmoved.
 SCENARIOS["ems-sdp"] = {
     "description": "The `ems-soc-band` drive cycle and drain load, driven by "
-                   "the CAUSAL `sdp-v4` policy: a state-indexed setpoint table "
+                   "the CAUSAL `sdp-v6` policy: a state-indexed setpoint table "
                    "computed offline by stochastic dynamic programming and "
                    "looked up at run time on (SoC, demand bin). The causal "
                    "optimal-by-construction leg between the `soc-band` "
@@ -8905,9 +9085,16 @@ SCENARIOS["ems-sdp"] = {
     "chg_i_ceiling_a": SCENARIOS["ems-soc-band"]["chg_i_ceiling_a"],
     # THE SAME LIST OBJECT — see the note above.
     "ems_v_profile": SCENARIOS["ems-soc-band"]["ems_v_profile"],
-    # THE CALIBRATED BENCHMARK artifact for the eta_chg = 0.88 charger — see
-    # the two blocks above this entry.  Rebound from `sdp-v3` 2026-09-02.
-    "ems": "sdp-v4",
+    # THE CALIBRATED BENCHMARK artifact — see the blocks above this entry.
+    # Rebound `sdp-v3` -> `sdp-v4` 2026-09-02, `sdp-v4` -> `sdp-v6` 2026-09-03
+    # (the measured round trip).  The v4-era offline walk and EVERY
+    # walk-derived expectation on this leg transfer VERBATIM: v4 and v6 have
+    # IDENTICAL charge maps (both all-zero, so `charge_path_never_opens`
+    # stands unchanged) and their share maps differ only on SoC rows 4-5,
+    # 45-46 grid nodes below the target node and outside every trajectory —
+    # measured, and pinned by
+    # test_sdp_v4_v6_share_maps_agree_on_traversed_rows().
+    "ems": "sdp-v6",
 }
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -8942,7 +9129,7 @@ SCENARIOS["ems-sdp"] = {
 # h2/delta_soc pairs is a competitive score.  They run under `sdp-sweep`, whose
 # EMS_STRATEGY_META entry is `frontier_eligible: False` with a role note, so a
 # report renders them under the demonstration banner rather than ranking them.
-# The alternative — binding them to `sdp-v4` and overriding its artifact —
+# The alternative — binding them to the frontier leg and overriding its artifact —
 # would make the ROLE a property of the scenario while the registry still said
 # "frontier leg", which is exactly the confusion EMS_STRATEGY_META exists to
 # prevent.  The import guard below refuses that arrangement outright.
@@ -9443,7 +9630,7 @@ FTP75_SDP_PRELOAD_A = 0.0
 SCENARIOS["ems-ftp75-sdp"] = {
     "description": ("%.0f s EPA FTP-75 study segment (the SAME profile object "
                     "as the other two FTP-75 scenarios) driven by the causal "
-                    "`sdp-v4` policy started %+.3f SoC ABOVE its target node: "
+                    "`sdp-v6` policy started %+.3f SoC ABOVE its target node: "
                     "the table begins on its battery-heavy branch (commanded "
                     "share 0.15), the cycle's own drain walks the state across "
                     "the switching boundary, and `cmd_share_sp` steps ONCE to "
@@ -9456,11 +9643,13 @@ SCENARIOS["ems-ftp75-sdp"] = {
     # under either engine is a free cross-check, as on `ems-sdp`.
     "electrical": "any",
     "duration_s": FTP75_DURATION_S,
-    # THE CALIBRATED BENCHMARK artifact for the eta_chg = 0.88 charger
-    # (rebound from `sdp-v3` 2026-09-02).  The v2-derived offline walk above
-    # transfers VERBATIM — see the row-diff verification at
-    # FTP75_SDP_SOC_REF_OFFSET, extended to v4 there.
-    "ems": "sdp-v4",
+    # THE CALIBRATED BENCHMARK artifact (rebound `sdp-v3` -> `sdp-v4`
+    # 2026-09-02, `sdp-v4` -> `sdp-v6` 2026-09-03).  The v2-derived offline
+    # walk above transfers VERBATIM — see the row-diff verification at
+    # FTP75_SDP_SOC_REF_OFFSET, extended to v4 there and to v6 by
+    # test_sdp_v4_v6_share_maps_agree_on_traversed_rows() (identical charge
+    # maps; share differs only on rows 4-5, outside this leg's trajectory).
+    "ems": "sdp-v6",
     # THE SAME LIST OBJECT as the other two FTP-75 scenarios: the three differ
     # only in the strategy driving them, and a comparison between them is
     # meaningless on different stimuli.
@@ -9679,7 +9868,9 @@ for _name, _ems, _what in (
      "the causal charge-sustaining policy, on charge thresholds re-derived for "
      "the compensated demand (%.4f A enter / %.4f A exit)"
      % (FTP75C_SOCBAND_CHARGE_ENTER_A, FTP75C_SOCBAND_CHARGE_EXIT_A)),
-    ("ems-ftp75c-sdp", "sdp-v4",
+    # Rebound `sdp-v4` -> `sdp-v6` 2026-09-03 (the measured round trip); the
+    # two artifacts agree on every row this leg traverses.
+    ("ems-ftp75c-sdp", "sdp-v6",
      "the causal SDP policy, which earns the braking credit through the PLANT "
      "rather than through a re-solved artifact"),
     ("ems-ftp75c-dp", "dp-replay",
@@ -11049,8 +11240,8 @@ del _sn, _sm, _mk
 # calibrated-benchmark certificate, which is checked against the artifact a
 # strategy PLAYS; a scenario that swapped that artifact would be scored as the
 # calibrated leg while running a policy nobody calibrated, and the run's own
-# summary line would still say `sdp-v4`.  Non-frontier strategies (`sdp-sweep`,
-# `sdp-v2`, `sdp-v3`) may be overridden freely — that is the mechanism's point.
+# summary line would still say `sdp-v6`.  Non-frontier strategies (`sdp-sweep`,
+# `sdp-v2`, `sdp-v3`, `sdp-v4`, `sdp-v5`) may be overridden freely — that is the mechanism's point.
 for _pn, _pm in SCENARIOS.items():
     if "sdp_policy_file" not in _pm:
         continue
@@ -13195,6 +13386,14 @@ def main(argv=None):
                                       if electrical is not None else None),
             "electrical_numeric_fault": (bool(electrical.summary().get("numeric_fault"))
                                          if electrical is not None else None),
+            # N8 (2026-09-03): the node solve's negative-clamp count and the
+            # housekeeping-sink dropout ticks (V_AUX_DROPOUT_V) were summary-only
+            # and invisible to every sidecar consumer; ~2255 clamps per comm-loss
+            # run went unreported before the floor.
+            "electrical_neg_clamp_count": (int(electrical.summary().get("neg_clamp_count", 0))
+                                           if electrical is not None else None),
+            "electrical_aux_dropout_ticks": (int(electrical.summary().get("aux_dropout_ticks", 0))
+                                             if electrical is not None else None),
             "soc_final": None if replay else round(plant.battery.soc, 6),
             "replay_last_record": replay.i if replay else None,
         }

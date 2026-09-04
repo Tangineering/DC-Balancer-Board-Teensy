@@ -1937,9 +1937,12 @@ def test_ems_strategy_role_reads_the_sim_registry():
     """The role is LOOKED UP, never copied -- a second table here could let a
     demonstration run be labelled a frontier one after somebody moved the role
     in hil_plant_sim and not here."""
-    # sdp-v4 is the eta-era frontier law (2026-09-02); sdp-v3 was demoted to
-    # the old-era demonstration role and is retained for comparability.
-    assert hra.ems_strategy_role("sdp-v4") == "frontier"
+    # sdp-v6 is the frontier law (2026-09-03, the measured charge round trip);
+    # sdp-v4 and sdp-v3 were demoted in turn and are retained for
+    # comparability, and sdp-v5 is the record of the measured-lever finding.
+    assert hra.ems_strategy_role("sdp-v6") == "frontier"
+    assert hra.ems_strategy_role("sdp-v4") == "demonstration"
+    assert hra.ems_strategy_role("sdp-v5") == "demonstration"
     assert hra.ems_strategy_role("sdp-v3") == "demonstration"
     # SWAPPED 2026-09-02 (operator ruling): `mpc-sto` is the frontier MPC
     # and `mpc-det` is its ablation, which this reader must follow.

@@ -803,7 +803,9 @@ C:/Users/ricky/miniforge3/python.exe tools/dp_results_db.py prefill \
 derived from it, so neither has to be passed for these five.
 ⚠️ `ems-ftp75c-sdp`'s record is stored with `converged: false` (residual
 2.49e-06 against a 2.0e-06 tolerance), and its matched-DP figure is **not a
-bound** on that leg at all: `sdp-v4` commands a constant 0.8500, outside the
+bound** on that leg at all: `sdp-v6` (`sdp-v4` before 2026-09-03; the two
+command the same thing on every row this leg reaches) commands a constant
+0.8500, outside the
 DP's own control grid `[0.25, 0.75]`. Read `docs/HIL_SCENARIOS.md` §6.2 before
 quoting it.
 
