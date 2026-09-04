@@ -1,6 +1,57 @@
 /*
  * teensy_controller.ino — Scale Car DC Balancer Board, Rev 20260622
  *
+ * fw v27 (2026-09-03) — THE GOVERNOR'S MINORITY-CURRENT CLIP IS APPLIED ON THE OPEN-LOOP
+ *   FEEDFORWARD PATH, IN A RELAXING FORM. Purpose: make the open→closed handover continuous in
+ *   the reference MAGNITUDE, which is the exposure the fw v6 ladder dropouts measured (TP0105 at
+ *   r_min and TP0115 at r_max, both AT the handover, 5.9 ms of total source dropout and a
+ *   12.19 V bus: a 0.42 swing in commanded share applied at 0.6 A of total, however slowly).
+ *     (a) MECHANISM. The feedforward submode used to hand applyShareRatio() the RAW setpoint. It
+ *         now clips that reference to the SAME relaxing band the closed-loop path uses,
+ *         [SHARE_MINORITY_I_MIN_A / I_tot, 1 − SHARE_MINORITY_I_MIN_A / I_tot], evaluated on the
+ *         SAME filtered total (share_govTotAFilt) under the SAME mode hysteresis. See
+ *         shareFeedforwardClipTarget().
+ *     (b) EMPTY BAND → HOLD, NEVER A COLLAPSE TO 0.5. Below 2·SHARE_MINORITY_I_MIN_A the band is
+ *         empty (lo > hi): no split is feasible, so the reference is HELD at the ratio physically
+ *         on the MDACs (droopSlew_prev) and nothing moves. This is the point on which fw v27
+ *         differs from the fw v2–v4 fallback that ignited TP0053: that one COMMANDED a move to a
+ *         balanced 0.5 split at ~0.2 A of total, and the MOVE — the source commutation it forces —
+ *         was the ignition. A hold commands no motion at all.
+ *     (c) AT THE SHIPPED CONSTANTS THE FEEDFORWARD CLIP IS ALWAYS THE HOLD. SHARE_MINORITY_I_MIN_A
+ *         is 0.30 A and the closed-loop entry gate is 2·SHARE_MINORITY_I_MIN_A = 0.60 A, so every
+ *         tick that reaches the feedforward branch has share_govTotAFilt ≤ 0.60 A and the band is
+ *         empty (degenerate to the single point 0.5 exactly AT 0.60 A, which the strict-'>' entry
+ *         test does not enter). The relaxing branch is therefore structurally unreachable today
+ *         and exists so a future retune of either constant cannot leave a writing path unguarded —
+ *         the same discipline as fw v26's inert feedforward ceiling call. CONSEQUENCE, STATED
+ *         PLAINLY: below the gate the two open-loop submodes now ACTUATE IDENTICALLY (both hold)
+ *         WHENEVER BOTH CHANNELS ARE ON THE BUS; they still differ in bookkeeping and in that
+ *         FEEDFORWARD keeps calling applyShareRatio() so the guarded channel re-entry stays live
+ *         (fw v5 exception (a)).
+ *     (c2) THE CLIP IS BYPASSED WHILE A CONTROLLER-INITIATED CUT IS OUTSTANDING (review HIGH-1).
+ *         An isolated channel freezes droopSlew_prev (applyShareRatio() returns before recording
+ *         it), and the clip's held output IS droopSlew_prev — so clipping during an shareIso*
+ *         window pins the proposed ratio at the rail the cut came from, one SHARE_CUTOFF_HYST
+ *         short of re-entry, and the channel would never come back on the bus below the gate.
+ *         While shareIsoFC || shareIsoBT the RAW setpoint is fed forward exactly as in fw v26, so
+ *         the re-entry fires as it always did; the clip resumes on the first tick after it.
+ *     (d) A SETPOINT CHANGE AT LOW LOAD IS DEFERRED, NOT SWALLOWED. fw v5 exception (b) — a
+ *         changed setpoint re-arms feedforward out of HOLD — still fires (shareClosedLoopRun is
+ *         still cleared; share_actedSp is now updated only on a tick that actually moves the
+ *         MDACs, review MEDIUM-1), but the clip then holds the ratio until the
+ *         load can support the commanded split, at which point the closed loop tracks it. The
+ *         command is honoured late instead of being honoured infeasibly.
+ *     (e) CUTS ARE UNAFFECTED. 0.0 / 1.0 and every other out-of-band setpoint are owned by
+ *         updateShareSetpointCutoff() and by the F1 early return, both of which run BEFORE the
+ *         clip: the cut path never sees it. Closed-loop behaviour above the gate is untouched and
+ *         bit-identical to fw v26.
+ *     (f) NO WIRE CHANGE, NO NEW STATE. The clip is a pure function of share_govTotAFilt and the
+ *         setpoint, so there is nothing to reset and nothing to go stale. The State-98 'S' dump
+ *         prints the band; in a .BLG the clip is RECONSTRUCTIBLE offline (flags bit2=0/bit3=0
+ *         identifies the submode, and share_sp against gFC/gBT gives raw setpoint versus applied
+ *         ratio) — unlike the fw v26 ceiling clamp, which needed a log bit.
+ *   See docs/fw27_feedforward_clip.md.
+ *
  * fw v26 (2026-09-02) — SOURCE CURRENT-CEILING GOVERNOR IN THE SHARE LOOP. Purpose: fewer
  *   FAULT_OC_FC latches while allowing higher-power actions. FAULT_OC_FC ITSELF IS UNCHANGED
  *   (detectFaults() still latches on a single raw sample above LIMIT_I_FC_MAX = 1.4 A); the new
@@ -2952,7 +3003,7 @@ bool wheelSpeedResetPending = false;
 // header (format v2 and later, offset 18) so logged data is attributable to the
 // firmware that produced it, printed at boot and in the State-98 'S' status.
 // 0 is reserved for "pre-versioning" (logs PS0001–TP0005 and earlier).
-#define FW_VERSION 26
+#define FW_VERSION 27
 
 #ifndef BENCH_TEST
 #define BENCH_TEST 1
@@ -3995,6 +4046,11 @@ const char *shareSlewModeName();
 void updateShareSlewMode();
 float applyShareCurrentCeilings(float sp);
 void  clearShareCeilingState();
+// fw v27 open-loop feedforward clip. Stateless (a pure function of share_govTotAFilt and the
+// setpoint), so unlike the fw v26 clamp it needs no extern flags — only these two entry points,
+// used by powerBalance() and by printTestStatus()'s 'S' dump.
+float shareFeedforwardClipTarget(float sp, float prevRatio);
+bool  shareFeedforwardClipHolding();
 void assertFcChargeEnable(bool enable);
 bool motPwrConnectBlocked();
 bool assertMotPwrEnable(bool enable);
@@ -9360,6 +9416,22 @@ void printTestStatus() {
     Serial.print("  I_tot_filt="); Serial.print(share_govTotAFilt, 3);
     Serial.print(" A, enter>"); Serial.print(2.0f * SHARE_MINORITY_I_MIN_A, 2);
     Serial.println(" A");
+    // fw v27: the open-loop FEEDFORWARD clip. Printed unconditionally (it is a pure function of
+    // the filtered total, so it reads as the band the feedforward submode WOULD use right now,
+    // whatever mode is running). EMPTY means no split is feasible at this total and the
+    // feedforward submode holds the ratio physically on the MDACs instead of walking toward the
+    // setpoint. In a .BLG this is reconstructible offline — flags bit2=0/bit3=0 marks the
+    // submode, and share_sp against gFC/gBT gives the raw setpoint against the applied ratio.
+    Serial.print("share ff clip:      ");
+    if (shareFeedforwardClipHolding()) {
+        Serial.print("EMPTY (hold at r="); Serial.print(droopSlew_prev, 3); Serial.print(")");
+    } else {
+        const float ffLo = SHARE_MINORITY_I_MIN_A / share_govTotAFilt;
+        Serial.print("band ["); Serial.print(ffLo, 3);
+        Serial.print(", ");     Serial.print(1.0f - ffLo, 3); Serial.print("]");
+    }
+    Serial.print("  I_min="); Serial.print(SHARE_MINORITY_I_MIN_A, 2);
+    Serial.println(" A");
     // fw v19 (review S6): the conduction-aware slew mode. This is the ONLY observable for it — the
     // decision runs on FILTERED per-channel magnitudes with hysteresis and a dwell counter, none of
     // which are in the BLG record, so it cannot be reconstructed from the logged raw currents.
@@ -9956,6 +10028,10 @@ float PI_Controller_Motor(float error) {
 //   share_actedSp     — the setpoint the loop last ACTED on (S3 review fix): a
 //                       commanded setpoint change must not be swallowed by the
 //                       HOLD branch, so it re-arms the feedforward path.
+//                       fw v27 (review MEDIUM-1): "ACTED" means the MDACs moved.
+//                       The feedforward branch records it only on a tick whose
+//                       target differs from droopSlew_prev; a clipped HOLD tick
+//                       writes the same ratio back and claims nothing.
 //   share_spEffPrev   — the EFFECTIVE setpoint the closed-loop controller was
 //                       last given as its REFERENCE (fw v6). Slew-limited toward
 //                       the governor-clipped target so the OL→CL handover cannot
@@ -10058,11 +10134,19 @@ static bool updateShareSetpointCutoff() {
             // throughout) still holds the ratio physically on the MDACs, so the
             // first post-release write walks from the true hardware state.
             // fw v5 (S9): this also zeroes share_govTotAFilt, so under load the
-            // loop runs OPEN-LOOP FEEDFORWARD at the released setpoint for the
-            // ~20-40 ms the EMA needs to climb back past 2*SHARE_MINORITY_I_MIN_A
-            // - slew-limited, no controller step. Intended: the alternative is
-            // stepping a just-reset controller against a topology that changed
-            // this very tick.
+            // loop runs OPEN-LOOP FEEDFORWARD for the ~20-40 ms the EMA needs to
+            // climb back past 2*SHARE_MINORITY_I_MIN_A - no controller step.
+            // Intended: the alternative is stepping a just-reset controller
+            // against a topology that changed this very tick.
+            // fw v27 AMENDS what happens in that window: the feedforward
+            // reference is clipped to the governor's relaxing band, which is
+            // empty while the zeroed EMA is below 2*SHARE_MINORITY_I_MIN_A, so
+            // the split is HELD at droopSlew_prev instead of walking to the
+            // released setpoint. The release therefore takes effect when the
+            // filter recovers and the closed loop picks it up, not during the
+            // recovery. That is the safer order: the ~20-40 ms window is exactly
+            // a light-load window, and it is the window the fw v6 ladder's two
+            // dropouts live in.
             resetShareControlState();
         }
     } else if (shareSpCutBT && sp <= DROOP_R_MAX) {
@@ -10312,6 +10396,82 @@ float applyShareCurrentCeilings(float sp) {
     return sp;
 }
 
+// ── The fw v27 open-loop feedforward clip (relaxing form) ────────────────────
+// Clip the FED-FORWARD share reference to the same minority-current band the closed-loop path
+// clips its reference to, so the open→closed handover is continuous in MAGNITUDE and not only in
+// rate. Returns the reference the feedforward branch should aim at THIS tick; the caller still
+// puts it through the tick's slew ceiling, so this function can never step the reference.
+//
+// WHY (fw v6 ladder, whitepaper §"A residual at the band edge"). Both dropouts observed anywhere
+// in that campaign — TP0115 at r_max = 0.85 and the smaller fuel-cell-only TP0105 at
+// r_min = 0.15 — occurred AT the open→closed handover, at an exact band edge. Every run crosses
+// into closed loop at the same 0.6 A of total, where the 0.30 A floor demands half the total from
+// a channel the open-loop feedforward had been running at 61 mA. fw v6 slewed the reference RATE;
+// the exposure is the reference MAGNITUDE — a 0.42 swing in commanded share at 0.6 A of total
+// opens both channels at once however slowly it is applied. The clip removes the swing by never
+// letting the feedforward walk out to the extreme in the first place.
+//
+// THE BAND, AND WHY AN EMPTY BAND IS A HOLD (the fw v5 counter-argument, answered).
+// fw v5 deleted the old collapse-to-0.5 fallback because it IGNITED the failure it existed to
+// prevent (TP0053): below 2·SHARE_MINORITY_I_MIN_A it forced sp_eff = 0.5, which at 0.075–0.60 A
+// of filtered total commands 0.038–0.30 A per channel — at or below the very conduction floor it
+// was enforcing — and the resulting source commutation relayed the bus down to 7–9 V. The whitepaper
+// re-states that argument as still sound. It is: what fw v5 refuted is COMMANDING A MOVE to a
+// balanced split at a total that cannot carry one. This function never commands a move. When the
+// band is empty (lo > hi, i.e. tot < 2·I_min) no split is feasible, so there is no least-bad
+// TARGET to walk to — every direction of motion is a commutation the load cannot support — and the
+// clip returns prevRatio, the ratio physically on the MDACs. The MDAC codes do not change, no
+// gains move, and the tick is a no-op in actuation terms. "Hold what the hardware already has" and
+// "drive the hardware to 0.5" are different actions, and only the second is TP0053.
+//
+// AT THE SHIPPED CONSTANTS THIS IS ALWAYS THE HOLD. The caller runs only in open-loop mode, which
+// exists only for share_govTotAFilt ≤ 2·SHARE_MINORITY_I_MIN_A (entry is strictly '>'), and the
+// band is empty for every total strictly below that — degenerating to the single point 0.5 exactly
+// AT it. So the relaxing branch below is unreachable today. It is written anyway for the same
+// reason fw v26 calls its ceiling clamp on this path: a future retune of SHARE_MINORITY_I_MIN_A or
+// of the gate must not silently leave the only writing open-loop path unguarded. HONEST NOTE ON
+// TESTABILITY (the fw v26 MED-4 discipline): because the relaxing branch cannot be reached through
+// powerBalance() at the shipped constants, only a direct-call test can cover it, and a host test
+// that drives the loop can prove the HOLD half alone.
+//
+// HYSTERESIS. The brief's "same hysteresis as the closed-loop gate" is satisfied structurally
+// rather than by a second threshold: the empty-band test is tot < 2·SHARE_MINORITY_I_MIN_A, the
+// mode gate is the same quantity with SHARE_GOV_OL_HYST_A of hysteresis on the mode, and the two
+// can never disagree because the only ticks that reach here are already below the gate. Adding an
+// independent hysteresis here would introduce a second, unsynchronised boundary — the opposite of
+// the continuity this change buys.
+//
+// NOT CALLED WHILE A CHANNEL IS ISOLATED (review HIGH-1). The caller skips this function entirely
+// while shareIsoFC || shareIsoBT. prevRatio is droopSlew_prev, which an isolated channel FREEZES
+// (applyShareRatio() returns before recording it), so holding at it during a cut would pin the
+// proposed ratio at the band rail the cut came from and strand the channel off the bus. The clip
+// has nothing to protect there either: an isolated tick writes no MDACs.
+//
+// THE fw v26 CEILINGS ARE NOT PART OF THIS. They remain a separate, later call on this path
+// (see the caller): they are reference-side bounds against 1.25 / 2.70 A and are arithmetically
+// unreachable out of a ≤ 0.60 A total, so they neither help nor interfere here.
+float shareFeedforwardClipTarget(float sp, float prevRatio) {
+    const float tot = share_govTotAFilt;
+    // Structural divide guard, mirroring applyShareCurrentCeilings(): the caller has already
+    // passed the raw minimum-load gate, but share_govTotAFilt is a filter and may lag below it.
+    // A non-positive or tiny total is the deepest possible empty band — hold.
+    if (!(tot > SHARE_I_TOT_MIN_A)) return prevRatio;
+
+    const float lo = SHARE_MINORITY_I_MIN_A / tot;
+    const float hi = 1.0f - lo;
+    if (!(lo < hi)) return prevRatio;          // empty (or degenerate) band → HOLD, see above
+    return constrain(sp, lo, hi);              // relaxing: the band opens as the total rises
+}
+
+// True when the feedforward clip has no feasible band and is therefore holding. Pure function of
+// the governor's filtered total — the clip stores no state, so nothing here can go stale. Used by
+// the State-98 'S' dump only.
+bool shareFeedforwardClipHolding() {
+    const float tot = share_govTotAFilt;
+    if (!(tot > SHARE_I_TOT_MIN_A)) return true;
+    return !(SHARE_MINORITY_I_MIN_A / tot < 1.0f - SHARE_MINORITY_I_MIN_A / tot);
+}
+
 // Compute THIS tick's droop-ratio slew ceiling, once per powerBalance() tick (fw v19, TP0201).
 //
 // WHY A REDUCED RATE AT ALL. While a channel is not meaningfully conducting its ideal diode is
@@ -10524,9 +10684,14 @@ void powerBalance() {
         // the setpoint within ~0.01–0.02 across the band (whitepaper §6), so the
         // setpoint IS the correct open-loop map; what ignited the TP0053 relay
         // cycle was commanding an infeasible balanced 0.5 split at ~0.2 A total,
-        // not the setpoint itself. The governor's minority-current clip does not
-        // apply: with no controller running there is no loop to limit-cycle, and
-        // the operator's setpoint is honoured as typed.
+        // not the setpoint itself.
+        // fw v27 SUPERSEDES the rest of this paragraph. It used to read: "the governor's
+        // minority-current clip does not apply: with no controller running there is no loop to
+        // limit-cycle, and the operator's setpoint is honoured as typed." The fw v6 ladder
+        // falsified the premise — the exposure is not a limit cycle but the CONDUCTION state the
+        // feedforward leaves behind at the handover (TP0105/TP0115: a channel run down to 61 mA,
+        // then a 0.42 swing in commanded share at 0.6 A of total). The clip is applied below, in
+        // the relaxing form, which honours the setpoint as soon as the load can carry it.
         // F1 (2026-08-12 fw v5 review): an OUT-OF-BAND setpoint is NEVER actuated here — the
         // setpoint latch owns it ("one owner per setpoint"), and this path must not act as a
         // second owner. The reachable case is the RELEASE tick: updateShareSetpointCutoff()
@@ -10561,12 +10726,61 @@ void powerBalance() {
         // below 0.60 A, and neither ceiling (1.25 / 2.70 A) can be reached out of that total. It
         // is applied anyway so a future ceiling retune cannot silently leave a writing path
         // unguarded — the cost is one multiply on a branch that is already off the fast path.
-        float ffSp = applyShareCurrentCeilings(power_share_setpoint);
+        // fw v27: the governor's MINORITY-CURRENT CLIP now runs here too, in the relaxing form —
+        // FIRST, exactly as on the closed-loop path (conduction feasibility owns the floor; the
+        // ceilings are applied to its result). At the shipped constants this is always the HOLD
+        // branch (except while an shareIso* cut is outstanding, where the clip is BYPASSED — see
+        // HIGH-1 below), so the fed-forward reference stops walking out to an infeasible extreme and the
+        // open→closed handover carries no magnitude jump: the closed loop reseeds from
+        // droopSlew_prev, which IS this branch's output. See shareFeedforwardClipTarget() for the
+        // TP0053 distinction (a hold is not a collapse) and for why the band is empty below
+        // 2·SHARE_MINORITY_I_MIN_A.
+        //
+        // fw v27 review HIGH-1 — THE CLIP IS BYPASSED WHILE A CONTROLLER CUT IS OUTSTANDING.
+        // Exception (a) above falls through to this branch for ONE reason: applyShareRatio() is
+        // where the guarded re-entry that re-closes an shareIso* channel lives, and that re-entry
+        // is driven by the RATIO handed to it (r >= DROOP_R_MIN + SHARE_CUTOFF_HYST for FC,
+        // r <= DROOP_R_MAX - SHARE_CUTOFF_HYST for BT). While a channel is isolated
+        // applyShareRatio() returns BEFORE it records droopSlew_prev, so droopSlew_prev is FROZEN
+        // at the last in-band ratio actually written — and in the converge-to-a-rail case that is
+        // exactly DROOP_R_MIN (or DROOP_R_MAX), one hysteresis width short of re-entry. Feeding
+        // the clip there returns prevRatio unchanged (the band is empty below 0.60 A), so the
+        // proposed ratio would be pinned at the rail forever and the cut channel would never come
+        // back on the bus for the whole sub-0.60 A window — the exact stranding exception (a)
+        // exists to prevent. fw v26 fed the RAW setpoint here, which walks the proposed ratio off
+        // the rail and re-enters. So does this: while shareIso* is outstanding the clip is skipped
+        // and the raw setpoint is fed forward, bit-identically to fw v26. Nothing is lost by the
+        // bypass, because no split is being HELD in that case — an isolated channel means
+        // applyShareRatio() writes no MDACs at all, so there is no reference for the clip to
+        // protect. The moment the re-entry fires, applyShareRatio() records the new droopSlew_prev
+        // and the very next tick sees shareIso* clear, so the clip resumes from the ratio that was
+        // actually written.
+        const float prevRatio     = droopSlew_prev;
+        const bool  isoOutstanding = shareIsoFC || shareIsoBT;
+        float ffSp = isoOutstanding
+                         ? power_share_setpoint                                    // fw v26 behaviour
+                         : shareFeedforwardClipTarget(power_share_setpoint, prevRatio);
+        ffSp = applyShareCurrentCeilings(ffSp);
         float target = constrain(ffSp,
-                                 droopSlew_prev - slewStep,
-                                 droopSlew_prev + slewStep);
+                                 prevRatio - slewStep,
+                                 prevRatio + slewStep);
+        // On a CLIPPED held tick target == prevRatio exactly, so this call moves no gains; it is
+        // made anyway because it is the site of the guarded channel re-entry (fw v5 exception (a))
+        // — that is the ONLY thing that still separates FEEDFORWARD from HOLD below the gate. On
+        // an ISO tick the clip is bypassed (above), so target is the slewed RAW setpoint and this
+        // call is what actually walks the proposed ratio back across the re-entry hysteresis.
         applyShareRatio(target);
-        share_actedSp = power_share_setpoint;   // this tick acted on this setpoint (S3)
+        // fw v27 review MEDIUM-1 — RECORD THE SETPOINT AS ACTED ONLY WHEN SOMETHING MOVED.
+        // share_actedSp is read by exactly one test, HOLD's spChanged (above), whose meaning is
+        // "has this setpoint already been actuated?". On a HELD tick nothing reaches the MDACs, so
+        // recording it would answer that question with a yes the hardware cannot back. It is
+        // harmless today only because a spChanged tick clears shareClosedLoopRun and therefore
+        // stops the HOLD branch from running at all; a future change that re-armed HOLD without
+        // clearing that flag would silently swallow the setpoint change. Recording on motion only
+        // is the reading that stays correct under that change. `target != prevRatio` is an exact
+        // float compare on purpose: it is the same test applyShareRatio() would answer with a
+        // write, and the held path produces prevRatio by assignment, not by arithmetic.
+        if (target != prevRatio) share_actedSp = power_share_setpoint;   // acted on it (S3)
         return;
     }
 
@@ -10642,9 +10856,10 @@ void powerBalance() {
 
     // ── Effective-setpoint slew (fw v6, 2026-08-12) ──────────────────────────
     // The OPEN→CLOSED handover used to STEP the controller's reference: open loop feeds the RAW
-    // setpoint forward (the governor's clip is inert there — below 0.60 A the bound is
-    // lo = I_min/tot ≥ 0.5, so clipping the feedforward would either do nothing or command the
-    // very 0.5 split fw v5 deliberately deleted), while the first closed-loop tick hands the
+    // setpoint forward (through fw v26 the governor's clip was not applied there — below 0.60 A
+    // the bound is lo = I_min/tot ≥ 0.5, so a clip could only do nothing or command the very 0.5
+    // split fw v5 deliberately deleted; fw v27 resolves that dilemma with a third option, HOLD,
+    // and does apply the clip on the feedforward path), while the first closed-loop tick hands the
     // controller the FLOOR-CLIPPED value. At the 0.60 A crossing that is a discontinuity of up to
     // 0.35 share (e.g. raw 0.15 → clipped 0.50) applied to the reference in one tick, right at the
     // load level where the sweep's failures live.

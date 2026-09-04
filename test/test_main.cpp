@@ -445,6 +445,23 @@ static void primeShareHandoffLiveFor(float I_fc_val, float I_batt_val) {
           "pre-warm: handoff EMAs reached LIVE within budget at the fixture's own I_fc/I_batt");
 }
 
+// fw v27: the open-loop FEEDFORWARD path no longer walks the applied ratio. Its reference is
+// clipped to the governor's relaxing band, and that band is EMPTY for every total below
+// 2*SHARE_MINORITY_I_MIN_A -- which is every total the open-loop mode can see -- so the branch
+// holds instead (shareFeedforwardClipTarget()). Several fw v19 fixtures below used that walk
+// purely as a DETERMINISTIC, CONTROLLER-FREE SOURCE OF RATIO MOTION at low load, in order to test
+// updateShareSlewMode()'s motion-gated dwell logic. That logic is unchanged by fw v27, so those
+// fixtures keep their subject and drive the same motion through applyShareRatio() directly, at the
+// tick's stored ceiling. This is legitimate, not a workaround: updateShareSlewMode() reads motion
+// from droopSlew_prev -- the MDAC truth -- and the firmware states explicitly that motion from the
+// one-shot paths ('O', the completion restore) counts as motion.
+// Call it AFTER powerBalance() in the tick, so the motion is detected on the next tick exactly as
+// the pre-fw-v27 in-branch walk was (the documented one-tick lag).
+static void openLoopWalkTick(float target) {
+    float step = shareSlewStepThisTick;
+    applyShareRatio(constrain(target, droopSlew_prev - step, droopSlew_prev + step));
+}
+
 // ── Bring-up machine helpers ─────────────────────────────────────────────────
 // One State-98 tick with an EMPTY serial queue (the machine must advance on its own).
 static void state98_tick() { doState98(); }
@@ -3522,20 +3539,30 @@ static void test_powerbalance_min_load_hold() {
     // setpoint OFF the droopSlew_prev default (0.5) so the feedforward walk is non-degenerate --
     // the old probe (sp=0.5, relying on the measured-share error) tested a mechanism (reacting
     // to measured error) that open-loop mode deliberately does not have.
+    // fw v27 RE-POINTED. The feedforward reference is now clipped to the governor's relaxing band,
+    // which is EMPTY at 76 mA of total, so the walk this probe used as its "something moved"
+    // evidence is deliberately a HOLD. The property under test is unchanged -- the min-load gate
+    // must not freeze the loop at 76 mA -- so the evidence moves to the first thing past the gate:
+    // updateShareSlewMode() runs only on ticks that clear it, so its per-channel EMA advancing is
+    // proof the tick was not frozen. The gains must NOT move (that is the fw v27 clip).
     reset_test_state();
     I_fc   = 0.076f;               // 76 mA total, all FC
     I_batt = 0.0f;
-    power_share_setpoint = 0.30f;  // off the 0.5 seed -> the feedforward walk must move
+    power_share_setpoint = 0.30f;  // off the 0.5 seed: pre-fw-v27 this walked, now it holds
     g_mock_micros = 2000;
     powerBalance();
-    float g_before = droop_gain_FC_actual;
+    float g_before    = droop_gain_FC_actual;
+    float filt_before = shareHandoffIFcFilt;
     g_mock_micros = 4000;
     powerBalance();
     g_mock_micros = 6000;
     powerBalance();
-    check(fabsf(droop_gain_FC_actual - g_before) > 1e-6f,
-          "min-load hold: 76 mA is above the SHARE_I_TOT_MIN_A gate -- the open-loop feedforward "
-          "walk steps normally (not frozen by the min-load gate)");
+    check(fabsf(shareHandoffIFcFilt - filt_before) > 1e-9f,
+          "min-load hold: 76 mA is above the SHARE_I_TOT_MIN_A gate -- the tick runs past it "
+          "(the fw v19 conduction filters advance, which only happens past the gate)");
+    check(fabsf(droop_gain_FC_actual - g_before) < 1e-9f,
+          "min-load hold (fw v27): the feedforward reference is HELD at 76 mA -- the relaxing "
+          "band is empty, so no split is feasible and the gains do not move");
     check(!shareClosedLoopMode,
           "min-load hold: 76mA can never cross the 0.60A closed-loop entry threshold -- this "
           "boundary is permanently open-loop territory under fw v5");
@@ -3686,10 +3713,17 @@ static void test_share_setpoint_governor() {
     I_fc = 0.15f; I_batt = 0.15f;          // I_tot=0.3 < 2*0.30=0.6 -> fw v5 open-loop territory
     power_share_setpoint = 0.30f;          // asymmetric raw setpoint
     t = 0;
+    // fw v27: the ratio no longer converges to the RAW setpoint here -- the feedforward reference
+    // is clipped to the governor's relaxing band, which is EMPTY at 0.30 A of total, so the split
+    // is HELD on the MDACs (0.5, the fresh-reset value). The NEGATIVE this probe exists to pin is
+    // unchanged and is what is asserted below: the deleted collapse-to-0.5 COMMANDED a move to the
+    // balanced split, so it must still be provable that nothing here drives the ratio anywhere.
+    float slew_c0 = droopSlew_prev;
     for (int i = 0; i < 300; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
-    check(fabsf(droopSlew_prev - 0.30f) < 0.01f,
-          "governor C (fw v5): below the entry threshold the ratio converges to the RAW "
-          "setpoint 0.30 via open-loop feedforward -- NOT the deleted 0.5 collapse");
+    check(fabsf(droopSlew_prev - slew_c0) < 1e-9f,
+          "governor C (fw v27): below the entry threshold with an empty relaxing band the ratio "
+          "is HELD exactly where the MDACs already are -- it neither walks to the RAW setpoint "
+          "(fw v5-v26) nor is driven to the deleted 0.5 collapse (fw v2-v4)");
     check(!shareClosedLoopMode,
           "governor C (fw v5): stays open-loop throughout -- I_tot=0.3A never crosses the 0.60A "
           "entry threshold");
@@ -3749,17 +3783,24 @@ static void test_governor_openloop_feedforward_walk() {
     check(shareCtrl_integ == 0.0f && fabsf(shareCtrl_heldOut - 0.5f) < 1e-9f,
           "G1: the Youla controller state never advances — powerBalance() never calls "
           "youlaController_Power() in open-loop mode");
-    check(droopSlew_prev < start,
-          "G1: the applied ratio is already walking DOWN toward the 0.30 setpoint (feedforward "
-          "through applyShareRatio(), not held)");
+    // fw v27 SUPERSEDES G1/G2's original assertions. The feedforward reference is now clipped to
+    // the governor's relaxing band [I_min/I_tot, 1-I_min/I_tot], which at 0.55 A of total is
+    // EMPTY (lo = 0.545 > hi = 0.455): no split is feasible, so the reference is held at the ratio
+    // physically on the MDACs and the walk does not happen. The submode is still FEEDFORWARD (it
+    // still calls applyShareRatio(), which is where the guarded channel re-entry lives) -- the
+    // difference from HOLD below the gate is bookkeeping and re-entry, not actuation.
+    check(fabsf(droopSlew_prev - start) < 1e-9f,
+          "G1 (fw v27): the applied ratio does NOT walk toward the 0.30 setpoint -- the relaxing "
+          "band is empty at 0.55 A of total, so the feedforward reference is held");
 
-    // G2: given enough ticks, the walk converges exactly to the RAW setpoint — not a clipped
-    // value (the governor's minority-current clip is closed-loop-only) and not the deleted 0.5
-    // collapse.
+    // G2: and it stays held for as long as the load stays below the gate -- the setpoint is
+    // deferred until the load can carry it, not walked to infeasibly and not collapsed to 0.5.
     for (int i = 0; i < 200; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
-    check(fabsf(droopSlew_prev - 0.30f) < 1e-6f,
-          "G2: the feedforward walk converges to the RAW setpoint 0.30 (not the deleted 0.5 "
-          "collapse, and not a clipped value)");
+    check(fabsf(droopSlew_prev - start) < 1e-9f,
+          "G2 (fw v27): still held after 200 more ticks -- neither the RAW setpoint 0.30 "
+          "(fw v5-v26) nor the deleted 0.5 collapse (fw v2-v4) is commanded");
+    check(shareFeedforwardClipHolding(),
+          "G2 (fw v27): the clip reports an EMPTY band at this total, which is the reason");
     check(!shareClosedLoopMode,
           "G2: still open-loop throughout — I_tot=0.30A never crosses the 0.60A entry threshold");
 }
@@ -3887,18 +3928,20 @@ static void test_governor_hold_exit_on_setpoint_change() {
     check(!shareClosedLoopRun,
           "T4: the very next tick clears shareClosedLoopRun -- the changed setpoint re-arms "
           "feedforward instead of staying in HOLD");
-    check(droopSlew_prev < 0.65f,
-          "T4: the ratio already stepped DOWN toward the new setpoint (target 0.20 < the held "
-          "0.65) on that same tick -- not still frozen at the old held value");
-    check(droopSlew_prev >= 0.65f - DROOP_RATIO_SLEW_PER_TICK - 1e-6f,
-          "T4: that first step is slew-limited (open-loop feedforward always constrains its "
-          "target to droopSlew_prev +/- DROOP_RATIO_SLEW_PER_TICK), not a slam to 0.20");
+    // fw v27: the HOLD EXIT still fires (shareClosedLoopRun cleared, above) -- what changed is
+    // what the re-armed feedforward path then does. At 0.55 A of total the relaxing band is empty,
+    // so the clip holds the ratio: the commanded change is DEFERRED until the load can carry it,
+    // not swallowed. The mechanism this test names (share_actedSp re-arming the path) is proven by
+    // the shareClosedLoopRun assertion above, which is unchanged.
+    check(fabsf(droopSlew_prev - 0.65f) < 1e-9f,
+          "T4 (fw v27): the ratio does not move toward the new setpoint at 0.55 A -- the relaxing "
+          "band is empty, so the re-armed feedforward path holds");
 
-    // Run it out: must converge to the NEW setpoint via feedforward, not stay parked.
+    // Run it out: still held, and still open-loop.
     for (int i = 0; i < 300; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
-    check(fabsf(droopSlew_prev - 0.20f) < 1e-6f,
-          "T4: feedforward converges to the NEW setpoint 0.20 -- HOLD did not swallow the "
-          "commanded change");
+    check(fabsf(droopSlew_prev - 0.65f) < 1e-9f,
+          "T4 (fw v27): 300 further ticks do not move it either -- the setpoint is honoured late "
+          "(when the load supports it), never infeasibly");
     check(!shareClosedLoopMode,
           "T4: still open-loop throughout -- I_tot=0.55A never re-crosses the 0.60A entry "
           "threshold from this low-current change");
@@ -4006,8 +4049,12 @@ static void test_governor_open_to_closed_continuity() {
     for (int i = 0; i < 30; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
     check(!shareClosedLoopMode, "G6: (setup) still open-loop at I_tot=0.55A");
     float heldBeforeEntry = droopSlew_prev;
-    check(fabsf(heldBeforeEntry - 0.20f) < 0.05f,
-          "G6: (setup) the feedforward walk has moved the ratio well off the 0.5 seed");
+    // fw v27: the pre-entry ratio is the HELD 0.5, not a walk to 0.20 -- the relaxing band is
+    // empty at 0.55 A. That makes this test's real assertion (a continuous handover) STRONGER,
+    // because the pre-entry ratio is now the feasible split rather than an extreme one.
+    check(fabsf(heldBeforeEntry - 0.5f) < 1e-9f,
+          "G6 (fw v27): (setup) the pre-entry ratio is the HELD 0.5 -- the feedforward clip's "
+          "band is empty at 0.55 A, so no walk toward 0.20 happens");
 
     // Jump the load up — filt crosses 0.60A over the next several ticks. Track the exact tick
     // where the mode flips and capture the ratio immediately before/after it.
@@ -4059,8 +4106,12 @@ static void test_share_eff_setpoint_slew_from_seed_at_transition() {
     uint32_t t = 0;
     for (int i = 0; i < 30; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
     check(!shareClosedLoopMode, "eff-slew: (setup) still open-loop at I_tot=0.55A");
-    check(fabsf(droopSlew_prev - 0.15f) < 0.01f,
-          "eff-slew: (setup) the feedforward walk converged near the 0.15 setpoint");
+    // fw v27: held at the 0.5 seed instead of walking to 0.15 (empty relaxing band at 0.55 A).
+    // The seed/slew property this test targets is unchanged -- it is asserted against whatever
+    // droopSlew_prev holds at the transition, which is captured below.
+    check(fabsf(droopSlew_prev - 0.5f) < 1e-9f,
+          "eff-slew (fw v27): (setup) the feedforward reference is HELD at 0.5, not walked to "
+          "the 0.15 setpoint");
 
     // Jump the load up -- filt crosses 0.60A over the next several ticks. Capture droopSlew_prev
     // immediately BEFORE the transition tick (the seed resetShareControllerCore() will use) and
@@ -4175,10 +4226,20 @@ static void test_governor_reset_clears_closedloop_run() {
     I_fc = 0.09f; I_batt = 0.21f;
     power_share_setpoint = 0.25f;
     t = 0;
+    // fw v27: both open-loop submodes now HOLD the ratio at low load, so the ratio can no longer
+    // be the discriminator. What still separates them is that FEEDFORWARD runs to the bottom of
+    // the branch -- it calls applyShareRatio(), the guarded re-entry site, which re-writes the
+    // MDACs with the held ratio -- while HOLD returns before it and writes nothing at all. The
+    // SPI traffic is therefore the probe. (fw v27 review MEDIUM-1: share_actedSp is NO LONGER a
+    // valid probe here -- it is now recorded only on a tick that actually MOVES the split, and a
+    // held feedforward tick does not.)
     for (int i = 0; i < 30; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
-    check(fabsf(droopSlew_prev - 0.5f) > 0.01f,
-          "G7: after a fresh reset, open-loop mode WALKS toward the setpoint (shareClosedLoopRun "
-          "false selects the feedforward branch, not the hold branch)");
+    check(!SPI.transfer_log.empty(),
+          "G7 (fw v27): after a fresh reset, open-loop mode takes the FEEDFORWARD branch "
+          "(shareClosedLoopRun false), which re-writes the MDACs through applyShareRatio() -- "
+          "the HOLD branch returns before that and writes nothing");
+    check(fabsf(droopSlew_prev - 0.5f) < 1e-9f,
+          "G7 (fw v27): and the clip holds the ratio there, because the band is empty at 0.30 A");
 }
 
 static void test_governor_lo_clamp_sliver() {
@@ -4328,7 +4389,7 @@ static void test_share_handoff_mode_constants() {
           "constants: (setup) SHARE_GOV_FILT_ALPHA is the EMA weight the handoff filters share "
           "with the governor's load filter");
     // fw v23 (any-fault run-boundary-gated HIL recovery): stale pin updated.
-    check(FW_VERSION == 26, "pin: FW_VERSION == 26");
+    check(FW_VERSION == 27, "pin: FW_VERSION == 27");
 }
 
 // DARK seed (item B3): resetShareControlState() (and reset_test_state()'s mirror of it) seeds
@@ -4464,14 +4525,18 @@ static void test_share_handoff_tp0201_static_hold_regression() {
     check(strcmp(shareSlewModeName(), "HANDOFF") == 0,
           "static hold: mode still reads HANDOFF, not CAPPED -- the allowance was never touched");
 
-    // Now start the hazardous walk: command a setpoint the feedforward must actually traverse.
-    // The allowance must still be fully intact (175 fresh moving ticks available), so the walk
-    // runs at the slow HANDOFF ceiling, exactly the mitigation TP0201 needed.
+    // Now start the hazardous walk. The allowance must still be fully intact (175 fresh moving
+    // ticks available), so the walk runs at the slow HANDOFF ceiling, exactly the mitigation
+    // TP0201 needed. fw v27: the walk is driven by openLoopWalkTick() rather than by the
+    // feedforward branch, which now holds -- see that helper. The ceiling under test
+    // (shareSlewStepThisTick, chosen by updateShareSlewMode() inside powerBalance()) and the
+    // motion gating are the firmware's, not the fixture's.
     power_share_setpoint = 0.15f;              // DROOP_R_MIN -- a real, sustained move
     float prev = droopSlew_prev;
     for (int i = 0; i < 20; i++) {
         t += 1000; g_mock_micros = t;
         powerBalance();
+        openLoopWalkTick(0.15f);
         float step = fabsf(droopSlew_prev - prev);
         // The very first walking tick may still show 0 (motion detection has a documented
         // one-tick lag), but every tick from the second one on must show real, HANDOFF-bounded
@@ -4512,22 +4577,22 @@ static void test_share_handoff_dwell_burns_only_on_motion() {
     int  cappedAtTick      = -1;
     int  holdTicksInjected = 0;
     for (int i = 1; i <= 400 && cappedAtTick < 0; i++) {
-        // Every 10th tick is an explicit HOLD: park the setpoint exactly on the current ratio for
-        // this one tick only, so the feedforward target is a no-op and nothing moves.
-        bool  isHoldTick = (i % 10 == 0);
-        float savedSp    = power_share_setpoint;
-        if (isHoldTick) { power_share_setpoint = droopSlew_prev; holdTicksInjected++; }
+        // Every 10th tick is an explicit HOLD: no walk on that tick, so nothing moves.
+        // fw v27: the walk is fixture-driven (openLoopWalkTick()) because the feedforward branch
+        // now holds; the dwell rule under test is entirely the firmware's.
+        bool isHoldTick = (i % 10 == 0);
+        if (isHoldTick) holdTicksInjected++;
 
         float before = droopSlew_prev;
         t += 1000; g_mock_micros = t;
         powerBalance();
+        if (!isHoldTick) openLoopWalkTick(DROOP_R_MIN);
         float after = droopSlew_prev;
         bool movedThisTick = fabsf(after - before) > 1e-6f;
 
         if (isHoldTick) {
             check(!movedThisTick, "burn: (setup) the injected hold tick really is a no-op");
         }
-        power_share_setpoint = savedSp;   // restore the walking target for the next tick
 
         // Mirror the firmware's own rule EXACTLY (updateShareSlewMode()): this tick's dwell
         // reflects whether the PREVIOUS tick moved the ratio, not whether this one did.
@@ -4599,6 +4664,7 @@ static void test_share_handoff_live_stretch_no_stale_motion() {
     for (int i = 0; i < 60 && !converged; i++) {
         t += 1000; g_mock_micros = t;
         powerBalance();
+        openLoopWalkTick(0.15f);   // fw v27: fixture-driven motion, see openLoopWalkTick()
         if (fabsf(droopSlew_prev - prev) < 1e-9f && fabsf(droopSlew_prev - 0.15f) < 1e-6f) {
             converged = true;
         }
@@ -4804,13 +4870,21 @@ static void test_share_handoff_slew_openloop_dark_channel() {
           "openloop dark: (setup) the filters DID advance on this open-loop tick -- at least one "
           "channel still reads dark (BT, permanently)");
     float firstStep = fabsf(droopSlew_prev - prev);
-    check(firstStep > 1e-4f, "openloop dark: the ratio actually moved on the first tick");
-    check(firstStep <= DROOP_RATIO_SLEW_HANDOFF_PER_TICK + 1e-5f,
-          "openloop dark: the first step is bounded by the handoff ceiling (0.002), not the full "
-          "rate (0.02)");
-    check(firstStep > DROOP_RATIO_SLEW_HANDOFF_PER_TICK - 1e-5f,
-          "openloop dark: the first step actually reaches the handoff ceiling (proves the slow "
-          "rate fired, not merely that it didn't exceed the fast one)");
+    // fw v27 SUPERSEDES this fixture's original subject. The open-loop feedforward path no longer
+    // walks at ALL below 2*SHARE_MINORITY_I_MIN_A: its reference is clipped to the governor's
+    // relaxing band, which is empty at 0.55 A, so the branch holds and its slew constrain() is
+    // structurally inert. There is therefore no feedforward step left to bound. What this fixture
+    // still proves, and what matters, is that the conduction-aware machinery RUNS on open-loop
+    // ticks (the filters advance, the mode is selected) even though nothing moves -- the property
+    // updateShareSlewMode()'s placement above the branch exists for. The handoff CEILING itself is
+    // covered at the two live sites by test_share_handoff_slew_tp0201_regression (actuation) and
+    // test_share_handoff_slew_reference_actuation_agreement (reference vs actuation).
+    check(firstStep < 1e-9f,
+          "openloop dark (fw v27): the ratio does NOT move on the first tick -- the feedforward "
+          "reference is held, so the feedforward slew site is inert at the shipped constants");
+    check(fabsf(shareSlewStepThisTick - DROOP_RATIO_SLEW_HANDOFF_PER_TICK) < 1e-9f,
+          "openloop dark: the tick still SELECTED the handoff ceiling with BT dark -- "
+          "updateShareSlewMode() runs above the open/closed branch, on every governed tick");
 
     // Run the rest of the walk to convergence and confirm no single step ever exceeds the handoff
     // ceiling. fw v19 (review, O1): the dwell allowance is now MOTION-GATED and burns one tick per
@@ -4829,14 +4903,15 @@ static void test_share_handoff_slew_openloop_dark_channel() {
         if (step > maxStep) maxStep = step;
         prev = droopSlew_prev;
     }
-    check(maxStep <= DROOP_RATIO_SLEW_HANDOFF_PER_TICK + 1e-5f,
-          "openloop dark: no step over the whole walk exceeds the handoff ceiling -- the 0.30 "
-          "distance never exhausts the 175-tick moving allowance");
-    check(fabsf(droopSlew_prev - 0.20f) < 1e-6f,
-          "openloop dark: converges exactly to the raw setpoint");
-    check(strcmp(shareSlewModeName(), "HANDOFF") == 0,
-          "openloop dark: mode is still HANDOFF at the end, never CAPPED -- this walk's distance "
-          "stays within the 175-moving-tick allowance");
+    check(maxStep < 1e-9f,
+          "openloop dark (fw v27): no step anywhere over 300 open-loop ticks -- the clip holds the "
+          "reference for as long as the load stays under the gate");
+    check(fabsf(droopSlew_prev - 0.5f) < 1e-9f,
+          "openloop dark (fw v27): the ratio is still the MDACs' own value, not the raw setpoint "
+          "0.20 (fw v5-v26) and not 0.5 by collapse -- it never moved");
+    check(shareHandoffDwell == 0 && strcmp(shareSlewModeName(), "HANDOFF") == 0,
+          "openloop dark: a held ratio burns no dwell, so the mode reads HANDOFF, never CAPPED -- "
+          "the O1 motion gate, on a path that now never moves");
 }
 
 // shareSlewModeName() (item B): all three strings reachable, in the sequence a real run produces
@@ -4883,9 +4958,12 @@ static void test_share_slew_mode_name_all_three_reachable() {
     power_share_setpoint = DROOP_R_MIN;        // 0.15 -- far from the current ratio, sustained walk
     uint32_t t = 0;
     bool reachedCapped = false;
+    // fw v27: the sustained walk is fixture-driven (openLoopWalkTick()) because the open-loop
+    // feedforward branch now holds; the allowance being burned is still the firmware's.
     for (int i = 0; i < 300 && !reachedCapped; i++) {
         t += 1000; g_mock_micros = t;
         powerBalance();
+        openLoopWalkTick(DROOP_R_MIN);
         if (strcmp(shareSlewModeName(), "CAPPED") == 0) reachedCapped = true;
     }
     check(reachedCapped,
@@ -5966,8 +6044,13 @@ static void test_share_current_ceiling_open_loop(void) {
     check(!shareGovFcClamped && !shareGovBtClamped,
           "open loop (FEEDFORWARD): the clamp is structurally inert — the largest open-loop "
           "total (0.60 A) is under both ceilings");
-    check(fabsf(droopSlew_prev - 0.70f) < 1e-4f,
-          "open loop (FEEDFORWARD): the commanded setpoint is actuated unchanged");
+    // fw v27: the setpoint is no longer actuated unchanged here — the minority clip now runs on
+    // this path too and its relaxing band is empty at 0.40 A, so the reference is HELD. The fw v26
+    // property under test is unaffected and is the assertion above (the ceilings stay inert); what
+    // is asserted here is only that the fw v27 clip, not the ceiling clamp, is what stopped it.
+    check(fabsf(droopSlew_prev - 0.5f) < 1e-9f,
+          "open loop (FEEDFORWARD, fw v27): the setpoint is HELD, not actuated — the minority "
+          "clip's band is empty at 0.40 A of total, and no ceiling was involved");
 }
 
 // The fault is UNCHANGED: the clamp bounds the SHARE, so a single-source overload still latches.
@@ -6157,6 +6240,353 @@ static void test_share_current_ceiling_sustained_refusal_regime(void) {
           "documented cost of this regime, not a defect");
     check(mainState != 99,
           "sustained: the board does not fault — the regime is benign, just noisy");
+}
+
+// ═══ fw v27: the minority clip on the open-loop FEEDFORWARD path (relaxing form) ═════════════
+// The fw v6 ladder's only two dropouts (TP0115 at r_max = 0.85, 5.9 ms of total source dropout
+// and a 12.19 V bus; TP0105 at r_min = 0.15) both occurred AT the open->closed handover, where a
+// 0.42 swing in commanded share is applied at 0.6 A of total. fw v6 bounded the reference RATE;
+// the exposure is its MAGNITUDE. fw v27 clips the fed-forward reference to the same relaxing band
+// the closed-loop path uses, and HOLDS when that band is empty — which, at the shipped constants,
+// is every total the open-loop mode can see.
+
+// (1) Handover continuity, the TP0105/TP0115 mechanism as a test. A rising total crosses the gate
+// with a band-edge raw setpoint; the applied ratio must never jump by more than one slew step
+// anywhere, and the codes on the MDACs the instant the loop engages must be the ones the
+// feedforward left there.
+static void test_fw27_feedforward_handover_continuity(void) {
+    test_group("fw v27: the open->closed handover is continuous in MAGNITUDE at both band edges");
+
+    const float edges[2] = { 0.15f, 0.85f };
+    for (int e = 0; e < 2; e++) {
+        gov_fixture();
+        uint32_t t = 0;
+        // 0.5-0.7 A of total, straddling the 0.60 A gate. Both channels are kept LIVE so the full
+        // slew ceiling applies and the budget below is spent on the handover, not on the EMAs.
+        I_fc = 0.30f; I_batt = 0.25f;             // 0.55 A: open loop
+        primeShareHandoffLiveFor(I_fc, I_batt);
+        power_share_setpoint = edges[e];
+
+        for (int i = 0; i < 60; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
+        check(!shareClosedLoopMode,
+              "handover: (setup) still open loop at 0.55 A of total");
+        check(fabsf(droopSlew_prev - 0.5f) < 1e-9f,
+              "handover: the feedforward never walked out to the band edge — that walk (to 0.061 A "
+              "of minority current in TP0115) is exactly what the clip removes");
+
+        // Raise the load through the gate.
+        I_fc = 0.35f; I_batt = 0.35f;             // 0.70 A: above the gate once the EMA follows
+        float prev = droopSlew_prev, maxStep = 0.0f;
+        uint16_t codeBefore = mdacLastCodeFC, codeAtEntry = mdacLastCodeFC;
+        bool wasClosed = false, transitioned = false, isoAtEntry = false;
+        for (int i = 0; i < 200; i++) {
+            uint16_t codePre = mdacLastCodeFC;
+            t += 1000; g_mock_micros = t; powerBalance();
+            if (!wasClosed && shareClosedLoopMode && !transitioned) {
+                codeBefore  = codePre;            // the last feedforward write
+                codeAtEntry = mdacLastCodeFC;     // the first closed-loop write
+                isoAtEntry  = shareIsoFC || shareIsoBT;
+                transitioned = true;
+            }
+            wasClosed = shareClosedLoopMode;
+            float step = fabsf(droopSlew_prev - prev);
+            if (step > maxStep) maxStep = step;
+            prev = droopSlew_prev;
+        }
+        check(transitioned, "handover: (setup) the load rise crossed the gate within budget");
+        check(maxStep <= DROOP_RATIO_SLEW_PER_TICK + 1e-5f,
+              "handover: no tick anywhere across the crossing moves the applied ratio by more "
+              "than one slew step");
+        // The first closed-loop write continues from the held split: the controller is reseeded
+        // from droopSlew_prev, which IS the clip's output, and its reference walks from there.
+        check(fabsf((float)codeAtEntry - (float)codeBefore) <= 1.0f + 4095.0f * DROOP_RATIO_SLEW_PER_TICK,
+              "handover: the MDAC code the loop writes on its first closed-loop tick is within one "
+              "slew step of the code the feedforward left — no magnitude jump at the handover");
+        // Scoped to the crossing itself. Later in this synthetic fixture the measured share is a
+        // fixed 0.5 against a band-edge setpoint, so the controller eventually winds r out of band
+        // and takes a channel off the bus — an artefact of having no plant feedback, documented on
+        // the sibling fixtures, and not the handover this test is about.
+        check(!isoAtEntry,
+              "handover: no channel is off the bus at the crossing tick — TP0105/TP0115 lost one "
+              "(TP0115 lost both) right here, walking in from an extreme feedforward split");
+    }
+}
+
+// (2) The relaxing property, and the two things it must never be: a collapse to 0.5, or a jump.
+static void test_fw27_feedforward_clip_relaxes(void) {
+    test_group("fw v27: an empty band holds; the band opens as the total rises; never a collapse");
+
+    // Direct-call coverage FIRST. The relaxing branch cannot be reached through powerBalance() at
+    // the shipped constants (open-loop mode exists only at or below 2*SHARE_MINORITY_I_MIN_A,
+    // where the band is empty), so it is tested at its own entry point — the fw v26 MED-4
+    // discipline: state which coverage is direct-call only rather than implying loop coverage.
+    share_govTotAFilt = 0.30f;                 // band empty (lo = 1.0 > hi = 0.0)
+    check(shareFeedforwardClipHolding(),
+          "relax: at 0.30 A the band is empty — the clip reports HOLD");
+    check(fabsf(shareFeedforwardClipTarget(0.85f, 0.62f) - 0.62f) < 1e-9f,
+          "relax: an empty band returns the ratio ALREADY ON THE MDACs, not 0.5 — a hold is not "
+          "the fw v2-v4 collapse, which COMMANDED a move to the balanced split (TP0053)");
+    check(fabsf(shareFeedforwardClipTarget(0.15f, 0.62f) - 0.62f) < 1e-9f,
+          "relax: the same in the other direction — the clip never moves the split at all when no "
+          "split is feasible");
+
+    share_govTotAFilt = 1.0f;                  // band [0.30, 0.70]
+    check(!shareFeedforwardClipHolding(), "relax: at 1.00 A the band is open");
+    check(fabsf(shareFeedforwardClipTarget(0.85f, 0.62f) - 0.70f) < 1e-6f,
+          "relax: an out-of-band setpoint is clipped to the band edge, not to 0.5");
+    check(fabsf(shareFeedforwardClipTarget(0.15f, 0.62f) - 0.30f) < 1e-6f,
+          "relax: and symmetrically on the low side");
+    check(fabsf(shareFeedforwardClipTarget(0.55f, 0.62f) - 0.55f) < 1e-9f,
+          "relax: a setpoint INSIDE the band passes through byte-identically");
+
+    share_govTotAFilt = 2.0f;                  // band [0.15, 0.85] — the full droop band
+    check(fabsf(shareFeedforwardClipTarget(0.85f, 0.50f) - 0.85f) < 1e-6f,
+          "relax: the band RELAXES as the total rises — at 2.0 A the raw setpoint is honoured "
+          "unchanged");
+
+    // The band opens monotonically with the total, so the clipped reference walks OUTWARD toward
+    // the raw setpoint rather than being released in one step. Combined with the caller's slew
+    // limiter, that is what makes "relaxing" a rate-bounded release rather than a jump.
+    float prevTarget = 0.5f;
+    bool monotone = true;
+    for (int k = 0; k <= 40; k++) {
+        share_govTotAFilt = 0.60f + 0.05f * (float)k;
+        float target = shareFeedforwardClipTarget(0.85f, 0.5f);
+        if (target < prevTarget - 1e-9f) monotone = false;
+        prevTarget = target;
+    }
+    check(monotone,
+          "relax: the clipped reference is monotone non-decreasing in the total for a raw "
+          "setpoint of 0.85 — the band opens outward, it never snaps back");
+    check(fabsf(prevTarget - 0.85f) < 1e-6f,
+          "relax: and it reaches the raw setpoint once the load can carry it");
+
+    // Loop-level: a real run at 0.30 A of total holds indefinitely, and holds at the MDACs'
+    // value, not at 0.5 — seed the ratio off-centre so "held" and "collapsed to 0.5" differ.
+    gov_fixture();
+    uint32_t t = 0;
+    applyShareRatio(0.62f);                    // a one-shot operator-style write
+    check(fabsf(droopSlew_prev - 0.62f) < 1e-9f, "relax: (setup) the MDACs are at 0.62");
+    I_fc = 0.15f; I_batt = 0.15f;
+    power_share_setpoint = 0.85f;
+    for (int i = 0; i < 400; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
+    check(!shareClosedLoopMode, "relax: (setup) 0.30 A of total stays open loop");
+    check(fabsf(droopSlew_prev - 0.62f) < 1e-9f,
+          "relax: 400 open-loop ticks at an empty band leave the split exactly where it was — "
+          "neither walked to 0.85 nor collapsed to 0.5");
+}
+
+// (3) Cuts are NOT clipped. 0.0 and 1.0 are cut commands, owned by updateShareSetpointCutoff()
+// and by the F1 out-of-band early return, both of which run BEFORE the clip.
+static void test_fw27_feedforward_clip_does_not_touch_cuts(void) {
+    test_group("fw v27: 0.0 / 1.0 single-source commands below the gate still take the cut path");
+
+    // sp = 1.0 (FC only): BT must come off the bus, exactly as in fw v26.
+    gov_fixture();
+    uint32_t t = 0;
+    I_fc = 0.15f; I_batt = 0.15f;              // 0.30 A: open loop, band empty
+    power_share_setpoint = 1.0f;
+    for (int i = 0; i < 3000; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
+    check(digitalRead(BT_BUS_ENABLE) == LOW && shareSpCutBT,
+          "cuts: sp = 1.0 below the gate still cuts BT — the clip cannot swallow a cut, because "
+          "the setpoint latch owns every out-of-band setpoint and returns first");
+
+    // sp = 0.0 (BT only): the mirror.
+    gov_fixture();
+    t = 0;
+    I_fc = 0.15f; I_batt = 0.15f;
+    power_share_setpoint = 0.0f;
+    for (int i = 0; i < 3000; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
+    check(digitalRead(FC_BUS_ENABLE) == LOW && shareSpCutFC,
+          "cuts: sp = 0.0 below the gate still cuts FC");
+
+    // And the clip is not even consulted: the F1 early return fires first for an out-of-band
+    // setpoint on the RELEASE tick, before any clip or actuation.
+    gov_fixture();
+    t = 0;
+    I_fc = 0.15f; I_batt = 0.15f;
+    applyShareRatio(0.62f);
+    power_share_setpoint = 0.95f;              // out of band, but NOT a full cut command
+    for (int i = 0; i < 50; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
+    check(fabsf(droopSlew_prev - 0.62f) < 1e-9f,
+          "cuts: an out-of-band setpoint is never actuated by the feedforward path — the latch "
+          "owns it, and the clip never sees it");
+}
+
+// (4) Nothing above the gate changed. The clip's only call site is inside the open-loop branch,
+// so no closed-loop tick can reach it; this pins a closed-loop trajectory numerically so a future
+// edit that leaks the clip into the controller path is caught.
+static void test_fw27_closed_loop_unchanged_above_the_gate(void) {
+    test_group("fw v27: closed-loop behaviour above the gate is untouched");
+
+    uint32_t t = 0;
+    gov_fixture();
+    // Entered DIRECTLY into closed loop (share_govTotAFilt seeded above the gate), so no
+    // feedforward tick runs at all in this fixture — the clip is not on this path.
+    gov_run_closed_loop(0.4f, 1.6f, 2.0f, 0.50f, 400, t);
+    check(shareClosedLoopMode && shareClosedLoopRun,
+          "unchanged: (setup) the run is closed loop throughout");
+    check(fabsf(share_spEffPrev - 0.50f) < 1e-6f,
+          "unchanged: the effective reference converges on the raw setpoint — the minority clip's "
+          "band at 2.0 A is [0.15, 0.85] and does not bind, exactly as in fw v26");
+    check(droopSlew_prev > 0.55f,
+          "unchanged: the controller still drives the ratio up against the +0.30 share error");
+    check(!shareGovFcClamped && !shareGovBtClamped,
+          "unchanged: no current ceiling binds at 2.0 A of total");
+
+    // A clamped closed-loop point, to pin the fw v26 arithmetic as well.
+    t = 0;
+    gov_fixture();
+    gov_run_closed_loop(1.8f, 1.2f, 3.0f, 0.60f, 300, t);
+    check(shareGovFcClamped,
+          "unchanged: the fw v26 FC ceiling still binds at 3.0 A of total and sp 0.60");
+    check(fabsf(share_spEffPrev - (SHARE_GOV_I_FC_CEIL_A / 3.0f)) < 1e-3f,
+          "unchanged: and it still bounds the reference at exactly I_FC_CEIL / I_tot");
+}
+
+// ── fw v27 review HIGH-1: the clip is bypassed while a controller cut is outstanding ──────────
+// Put a channel off the bus through applyShareRatio()'s own r-based cutoff, leaving droopSlew_prev
+// FROZEN at the band rail the cut came from (an isolated channel returns before droopSlew_prev is
+// recorded). That rail is DROOP_R_MIN / DROOP_R_MAX exactly — one SHARE_CUTOFF_HYST short of
+// re-entry. If the feedforward clip were consulted there it would return that same frozen rail
+// forever and the channel would stay off the bus for the whole sub-0.60 A window, defeating fw v5
+// exception (a). The bypass feeds the raw setpoint instead, exactly as fw v26 did.
+static void fw27_iso_bypass_case(bool cutFC) {
+    gov_fixture();
+    digitalWrite(FC_REG_ENABLE, HIGH);       // S5 back-feed guard on the re-entry
+    digitalWrite(BT_REG_ENABLE, HIGH);
+    I_fc = 0.25f; I_batt = 0.25f;            // 0.50 A total: open loop, band empty, and BOTH
+    primeShareHandoffLiveFor(I_fc, I_batt);  // channels LIVE so the full slew step applies
+    power_share_setpoint = 0.50f;            // in band — the latch never owns this setpoint
+
+    // Seed the MDACs at the rail, then propose the out-of-band ratio that takes the channel off.
+    const float rail = cutFC ? DROOP_R_MIN : DROOP_R_MAX;
+    applyShareRatio(rail);
+    check(fabsf(droopSlew_prev - rail) < 1e-9f,
+          "iso bypass: (setup) the MDACs are at the band rail the cut is about to come from");
+    applyShareRatio(cutFC ? DROOP_R_MIN - 0.05f : DROOP_R_MAX + 0.05f);
+    check(cutFC ? (shareIsoFC && digitalRead(FC_BUS_ENABLE) == LOW)
+                : (shareIsoBT && digitalRead(BT_BUS_ENABLE) == LOW),
+          "iso bypass: (setup) the r-based cutoff took the channel off the bus");
+    check(fabsf(droopSlew_prev - rail) < 1e-9f,
+          "iso bypass: (setup) droopSlew_prev is FROZEN at the rail — an isolated tick returns "
+          "before it is recorded, which is what makes a clip-and-hold here permanent");
+    shareClosedLoopRun = true;               // exception (a): HOLD armed, cut outstanding
+    share_actedSp      = power_share_setpoint;
+
+    uint32_t t = 0;
+    int reentryTick = -1;
+    for (int i = 0; i < 8 && reentryTick < 0; i++) {
+        t += 1000; g_mock_micros = t; powerBalance();
+        bool back = cutFC ? (!shareIsoFC && digitalRead(FC_BUS_ENABLE) == HIGH)
+                          : (!shareIsoBT && digitalRead(BT_BUS_ENABLE) == HIGH);
+        if (back) reentryTick = i + 1;
+    }
+    check(!shareClosedLoopMode,
+          "iso bypass: (setup) 0.50 A of total keeps the whole run in open-loop mode");
+    check(reentryTick > 0 && reentryTick <= 2,
+          cutFC ? "iso bypass (FC): the guarded re-entry fires within a couple of open-loop ticks "
+                  "— the clip is bypassed while shareIsoFC is outstanding, so the raw setpoint "
+                  "walks the proposed ratio back over DROOP_R_MIN + SHARE_CUTOFF_HYST"
+                : "iso bypass (BT): the guarded re-entry fires within a couple of open-loop ticks "
+                  "— the mirror of the FC case, back under DROOP_R_MAX - SHARE_CUTOFF_HYST");
+    // After re-entry the clip owns the branch again: the band is still empty at 0.50 A, so the
+    // hold resumes from the ratio the re-entry tick actually WROTE, not from the old rail.
+    const float afterReentry = droopSlew_prev;
+    check(fabsf(afterReentry - rail) > 1e-6f,
+          "iso bypass: the re-entry tick recorded a NEW droopSlew_prev — the MDACs moved off the "
+          "rail, which is the frozen-state exit the bypass exists for");
+    for (int i = 0; i < 200; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
+    check(fabsf(droopSlew_prev - afterReentry) < 1e-9f,
+          "iso bypass: and the clip's HOLD resumes immediately from that newly written value — "
+          "200 further open-loop ticks move nothing, so the bypass is scoped to the cut window");
+}
+
+static void test_fw27_iso_bypass_preserves_reentry(void) {
+    test_group("fw v27 (HIGH-1): an outstanding controller cut bypasses the feedforward clip");
+    fw27_iso_bypass_case(true);
+    fw27_iso_bypass_case(false);
+}
+
+// ── fw v27 review MEDIUM-1: share_actedSp records ACTUATION, not arrival ──────────────────────
+static void test_fw27_acted_setpoint_records_motion_only(void) {
+    test_group("fw v27 (MEDIUM-1): a held feedforward tick does not claim to have acted");
+
+    gov_fixture();
+    uint32_t t = 0;
+    applyShareRatio(0.62f);
+    I_fc = 0.15f; I_batt = 0.15f;            // 0.30 A: open loop, band empty → every tick HOLDs
+    power_share_setpoint = 0.40f;
+    share_actedSp = 0.99f;                   // a value no held tick may overwrite
+    for (int i = 0; i < 50; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
+    check(fabsf(droopSlew_prev - 0.62f) < 1e-9f,
+          "acted: (setup) every tick held — nothing reached the MDACs");
+    check(fabsf(share_actedSp - 0.99f) < 1e-9f,
+          "acted: share_actedSp is UNCHANGED after 50 held ticks — its only reader is HOLD's "
+          "spChanged test, whose question is 'has this setpoint been actuated?', and a held tick "
+          "cannot answer yes");
+
+    // The same branch, with the clip bypassed by an outstanding cut: now the tick DOES move the
+    // MDACs, and the setpoint is recorded.
+    gov_fixture();
+    digitalWrite(FC_REG_ENABLE, HIGH);
+    I_fc = 0.25f; I_batt = 0.25f;
+    primeShareHandoffLiveFor(I_fc, I_batt);
+    power_share_setpoint = 0.50f;
+    applyShareRatio(DROOP_R_MIN);
+    applyShareRatio(DROOP_R_MIN - 0.05f);    // cut FC
+    check(shareIsoFC, "acted: (setup) FC is off the bus");
+    share_actedSp = 0.99f;
+    t = 0;
+    for (int i = 0; i < 3; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
+    check(fabsf(share_actedSp - 0.50f) < 1e-9f,
+          "acted: a tick that actually moved the split DOES record the setpoint — the bookkeeping "
+          "follows the MDAC write, which is the reading that survives a future re-arm of HOLD");
+}
+
+// ── fw v27 review MEDIUM-2: the open-loop handoff slew ceiling, at a site that can move ───────
+// The feedforward slew site is inert whenever the clip holds (every tick with both channels on
+// the bus, at the shipped constants). It becomes LIVE again on the HIGH-1 bypass path, where the
+// raw setpoint is fed forward during a cut — and a cut channel is, within ~30 ticks, a DARK
+// channel, so that site selects DROOP_RATIO_SLEW_HANDOFF_PER_TICK. This drives it there and pins
+// the ceiling. It is the only remaining FIRMWARE-driven motion on the open-loop path.
+static void test_fw27_openloop_handoff_slew_via_iso_bypass(void) {
+    test_group("fw v27 (MEDIUM-2): the open-loop slew site is reachable, at the handoff ceiling");
+
+    gov_fixture();
+    digitalWrite(FC_REG_ENABLE, HIGH);
+    // Seed just under the re-entry threshold, so ONE handoff-sized step (0.002) is enough to
+    // cross it — the re-entry then happens while the cut channel is DARK and the write is made at
+    // the reduced ceiling, not the full one.
+    I_fc = 0.02f; I_batt = 0.48f;            // 0.50 A total, FC dark from the start
+    power_share_setpoint = 0.50f;
+    applyShareRatio(DROOP_R_MIN + SHARE_CUTOFF_HYST - DROOP_RATIO_SLEW_HANDOFF_PER_TICK);
+    const float seed = droopSlew_prev;
+    applyShareRatio(DROOP_R_MIN - 0.05f);    // cut FC (I_fc is far under SHARE_CUT_MAX_HANDOFF_A)
+    check(shareIsoFC && fabsf(droopSlew_prev - seed) < 1e-9f,
+          "openloop handoff: (setup) FC is cut and droopSlew_prev is frozen just under re-entry");
+
+    uint32_t t = 0;
+    float prev = droopSlew_prev, maxStep = 0.0f;
+    bool sawHandoffCeiling = false, reentered = false;
+    for (int i = 0; i < 60; i++) {
+        t += 1000; g_mock_micros = t; powerBalance();
+        if (fabsf(shareSlewStepThisTick - DROOP_RATIO_SLEW_HANDOFF_PER_TICK) < 1e-9f)
+            sawHandoffCeiling = true;
+        float step = fabsf(droopSlew_prev - prev);
+        if (step > maxStep) maxStep = step;
+        prev = droopSlew_prev;
+        if (!shareIsoFC && digitalRead(FC_BUS_ENABLE) == HIGH) reentered = true;
+    }
+    check(!shareClosedLoopMode, "openloop handoff: (setup) the run stays open loop at 0.50 A");
+    check(sawHandoffCeiling,
+          "openloop handoff: the tick selected DROOP_RATIO_SLEW_HANDOFF_PER_TICK with FC dark");
+    check(reentered,
+          "openloop handoff: the re-entry fired from a seed one handoff step under the threshold "
+          "— so the feedforward slew site DID drive an MDAC write at the reduced ceiling");
+    check(maxStep > 1e-9f && maxStep <= DROOP_RATIO_SLEW_HANDOFF_PER_TICK + 1e-6f,
+          "openloop handoff: the motion it produced is bounded by the HANDOFF ceiling, not the "
+          "full one — the fw v19 conduction-aware bound still governs this site");
 }
 
 static void test_refused_cut_band_edge_clip_is_slewed(void) {
@@ -21024,6 +21454,13 @@ int main() {
     test_share_current_ceiling_reachability_threshold();
     test_share_current_ceiling_cleared_on_idle_exits();
     test_share_current_ceiling_sustained_refusal_regime();
+    test_fw27_feedforward_handover_continuity();
+    test_fw27_feedforward_clip_relaxes();
+    test_fw27_feedforward_clip_does_not_touch_cuts();
+    test_fw27_closed_loop_unchanged_above_the_gate();
+    test_fw27_iso_bypass_preserves_reentry();
+    test_fw27_acted_setpoint_records_motion_only();
+    test_fw27_openloop_handoff_slew_via_iso_bypass();
     test_bus_switch_chokepoint_coverage();
     test_share_cut_deferred_suppresses_r_cutoff_sustained();
     test_share_cut_deferred_clips_reference_to_band_edge();
