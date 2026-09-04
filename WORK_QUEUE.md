@@ -91,11 +91,11 @@ today. Bench is NOT available; the HIL rig IS.
       Queue: re-solve the 75 matched-DP records (`dp_results_db.py prefill`, long spans need
       `--matched-dp-allow-long`); alpha-sweep re-run at the measured billing; bench standstill capture
       with the VESC powered to replace the 0.075 A term.
-- [ ] 7. (IN PROGRESS, agent) governor_model / ems_walk / MPC surrogate mirror of fw v27 rev 2 (battery-only start, hold, k_d
+- [x] 7. (DONE `1e0abd4`; the post-G fix round `c708d71` on top) governor_model / ems_walk / MPC surrogate mirror of fw v27 rev 2 (battery-only start, hold, k_d
       schedule), equivalence harness against the firmware (the fw v26 discipline), HIL_PLANT.md FEEDFORWARD
       paragraph; simple-engine bus law and the loss-map DP bound re-derived for the scheduled k_d
       (V0_EFF/R_FIX/K_G at the new g_par law); every anchor re-walked and pinned provisional for campaign G.
-- [ ] 8. Suites, commit, push; CLAUDE.md addendum 2026-09-03c; memory.
+- [x] 8. (DONE: addenda 2026-09-03c and 2026-09-04; memory) Suites, commit, push; CLAUDE.md addendum 2026-09-03c; memory.
 - [x] 9. (G DONE 2026-09-04 00:31: `hil_report_20260903_233736`, 63/75 suite, zero board defects, 12 FAILs all classified - 1 fw v27 sequencing defect, 2 fw v27 consequences, 1 sim artefact, 6 era scoring items, 1 MPC surrogate defect, 1 calibration reading; G2 = the ten long-cycle legs running in `hil_report_20260904_003108`) Campaign G (HIL, after the operator's v27 flash): the new era baseline — joint leg (1.36 A bound,
       watch first), v6 legs, share-step guard witness = 0, `mpc_share_pred_err` baseline, k_d schedule
       observables, battery-only start on every leg.
@@ -125,6 +125,10 @@ today. Bench is NOT available; the HIL rig IS.
       must model it.
 - [ ] F7 The battery-only re-entry closes FC_BUS on inherited MDAC codes (r ~0.5): a ~12 ms turn-on overshoot
       (0.2355 A on ems-ftp75-sdp) - benign; consider re-seeding the codes at the clipped band edge on release.
+
+**Campaign H (2026-09-04 02:26, `hil_report_20260904_022637`, tooling `c708d71`, full plan incl. the long-cycle
+legs): validation of the post-G tools round; RUNNING at the time of writing - result appended to OVERNIGHT_LOG.md
+MORNING DIGEST when it lands. Budget 2 of 5 used; stop after H.**
 
 **Deferred / not tonight:** the alpha sweep re-run at the measured billing (anchor index 7 -> 8; then move the
 three `ems-sdp-alpha-*` legs); the long matched-DP re-solves after the I_AUX_A change; the `--droop measured`
