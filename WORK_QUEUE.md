@@ -108,6 +108,30 @@ firmware round lands).
       <= 4 writes per boot; read at setup(); a State-98 key clears it; a stale stored sign is corrected and
       re-stored by the growth-gated detector). DONE `7482395` (4367 / 175 / 4704, harness 51; State-98 Z key; residual: the flash write duration at the flip tick is TODO(verify: PJRC)).
 
+- [ ] 14. **RT1987 constant-slew ramp A/B (operator ruling 2026-09-08 evening: run it now, before the campaign).**
+      Selectable `--rt1987-ramp {legacy,constant-slew}` (datasheet 10-90 % tON -> 645.5 V/s at 100 nF, VIN- and
+      start-independent; the model's start-scaled ramp is +25 % cold / -9.8 % warm); A/B every switch-turn-on
+      anchor (bring-up P0/P3, scp-inrush, handoff-sag, comm-loss warm re-close = the target, F7 re-entry
+      overshoot, the F1 window entry, ftp75c handoffs, replay first turn-ons, fw26-clamp legs); default decided
+      by whether the cold pins move toward the board; legacy stays as the one-campaign reversal path.
+      IN PROGRESS (Opus).
+
+- [ ] 15. **fw v28 rev 5 - re-entry rule (operator ruling 2026-09-08 evening):** after the loop has closed and the
+      total falls back under the gate the HOLD stays; a commanded share <= 0.15 or >= 0.85 RE-ARMS the selector with
+      that source (holds through in-band commands, releases at the gate, same machinery as the never-closed
+      selector); in-band commands never trigger single-source on re-entry. After rev 4.
+- [ ] 16. **BLG v9 (operator ruling: implement):** record appends selector armed/FC bits, encoder dirSign (i8),
+      flip count (u8), EEPROM-commit-pending flag; firmware side with rev 5, decoder + benchlog_analysis +
+      make_test_blg in the tools round; v1-v8 byte-identical.
+- [ ] 17. **`ASYM_SIMPLE_I_MIN_A` 0.10 -> 0.08 A (operator: my pick)** so the simple engine's split law applies at the
+      0.09 A idle; conditioning check at that total. Tools round after the A/B.
+- [ ] 18. **`--droop measured` scaling (operator: use the scalings that best match the bench record):** fit k_d-only /
+      k_d+dV0 / k_d+dV0+R_f / realised-k_d against the 39 single-source fits and CAL-1; ship the lowest residual.
+- [ ] 19. **ems-sdp stimulus re-tuned (operator ruling):** drain plateau one demand bin below the clamp where the
+      v6 and DP tables differ; re-walk, re-pin provisional.
+- [ ] 20. **Alpha sweep re-run at the measured billing (operator: yes)** after the ramp decision; the 75 matched-DP
+      re-solves HELD until the overnight campaign (operator).
+
 **Open-item review (2026-09-08, everything else in this file, triaged):**
 - Runs THIS session in parallel with the firmware: **§7d encoder-defect harness** (operator brief, disjoint files).
 - Tools round after fw v28 (items 8–11 above) absorbs: §7b Gate-1 single-source-aware; `ems-y-b00-*`
