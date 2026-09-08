@@ -1,20 +1,37 @@
 #!/usr/bin/env python3
-"""FIRMWARE-EQUIVALENCE test for the fw v27 rev 2 governor package.
+"""FIRMWARE-EQUIVALENCE test for the fw v28 governor package.
 
 WHAT THIS FILE ASSERTS, AND WHY IT IS DIFFERENT FROM THE REST OF THE SUITE.
 Every other test of ``governor_model`` asserts the port against an expectation a
 person wrote down. This one asserts it against THE FIRMWARE. It compiles
-``test/gov_fw27_harness.cpp``, which includes
+``test/gov_fw28_harness.cpp``, which includes
 ``teensy_controller/teensy_controller.ino`` against the same mock layer the
 host-native firmware suite uses, drives the real functions through a scripted
 command stream, and compares the resulting trace with the Python port driven
 through the identical stream.
 
 It is the sibling of ``test_governor_ceiling_equivalence.py``, which covers the
-fw v26 current-ceiling clamp alone. This one covers the four fw v27 rev 2
-mechanisms: the battery-only start, the relaxing feedforward clip with its
-isolated-channel bypass and accumulating proposal, the load-scheduled droop
-scale ``k_d``, and the g-guard count.
+fw v26 current-ceiling clamp alone. This one covers the fw v27 rev 2 mechanisms
+it inherits - the relaxing feedforward clip with its isolated-channel bypass and
+accumulating proposal, the load-scheduled droop scale ``k_d``, the g-guard count
+- and the five fw v28 mechanisms on top of them:
+
+  * the SOURCE SELECTOR (F2): the commanded share picks the source at either
+    rail INCLUSIVELY and holds in between; a selection change runs through the
+    latch's own release-then-entry, and the gate release works from either
+    selection;
+  * the raw-current escape from a fuel-cell selection (review S2);
+  * the HYSTERESIS SLIVER HOLD (F3) and its dark-threshold bound (review S3);
+  * the k_d HOLD at K_DROOP in a charge window and the FREEZE under any cut
+    (F4 / review S4);
+  * the retuned conduction floor (0.125 A) and handoff thresholds
+    (0.10 / 0.12 A), and review S7's sub-gate slew ceiling (F5).
+
+⚠️ F1 IS NOT COMPARED HERE, and that is stated rather than implied. The
+disarm-before-open and the conduction gate live inline in ``chargingControl()``,
+which cannot be driven through this harness (see its header). The firmware's own
+host-native fixtures cover them; what IS compared here is the k_d hold the
+window implies, through the ``CHGWIN`` command.
 
 ⚠️ THE ONE THING THIS CANNOT COMPARE, STATED RATHER THAN IMPLIED. The Youla
 share controller is on the do-not-change list and is NOT ported (``governor_
@@ -54,8 +71,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 REPO_ROOT = os.path.dirname(HERE)
 TEST_DIR = os.path.join(REPO_ROOT, "test")
-HARNESS_SRC = os.path.join(TEST_DIR, "gov_fw27_harness.cpp")
-HARNESS_EXE = os.path.join(TEST_DIR, "gov_fw27_harness.exe")
+HARNESS_SRC = os.path.join(TEST_DIR, "gov_fw28_harness.cpp")
+HARNESS_EXE = os.path.join(TEST_DIR, "gov_fw28_harness.exe")
 INO_PATH = os.path.join(REPO_ROOT, "teensy_controller", "teensy_controller.ino")
 MSYS2_BIN = r"C:\msys64\ucrt64\bin"
 
@@ -74,23 +91,31 @@ V_BUS_CHARGED_THRESH = 13.5      # .ino — the re-close guard the port models
 # ─────────────────────────────────────────────────────────────────────────────
 def _case_pure_schedule():
     """``shareDroopScaleTarget()`` across the whole reachable range, including
-    the 0.906 A crossover above which it must return K_DROOP exactly."""
+    the fw v28 crossover 0.755 A above which it must return K_DROOP exactly.
+    RE-POINTED at fw v28: the fw v27 rev 2 grid straddled 0.906 A and the
+    0.30 A gate; the interesting points now are the 0.25 A gate, the 0.20 A
+    exit and 0.755 A. The old points are KEPT as well, so the schedule's shape
+    is compared over the union of both eras' interesting loads."""
     cmds = []
-    for tot in (0.0, 0.05, 0.075, 0.0751, 0.10, 0.20, 0.25, 0.2999, 0.30,
-                0.3001, 0.35, 0.40, 0.45, 0.50, 0.60, 0.70, 0.80, 0.90,
-                0.9061287313432836, 0.9062, 0.95, 1.00, 1.20, 1.4706, 1.50,
-                2.00, 2.50, 3.00, 4.00, 8.00):
+    for tot in (0.0, 0.05, 0.075, 0.0751, 0.10, 0.1999, 0.20, 0.2001, 0.2499,
+                0.25, 0.2501, 0.2999, 0.30, 0.3001, 0.35, 0.40, 0.45, 0.50,
+                0.60, 0.70, 0.7550, 0.7551072758573968, 0.7552, 0.80, 0.90,
+                0.9061287313432836, 0.9062, 0.95, 1.00, 1.20, 1.375, 1.4706,
+                1.50, 2.00, 2.50, 3.00, 4.00, 8.00):
         cmds.append(("KDT", tot))
     return cmds
 
 
 def _case_pure_clip():
     """``shareFeedforwardClipTarget()``: the empty band (hold), the degenerate
-    point at exactly 2*I_min, the relaxing branch above it, and the structural
-    divide guard below SHARE_I_TOT_MIN_A."""
+    point at exactly 2*I_min = 0.25 A (fw v28), the relaxing branch above it,
+    and the structural divide guard below SHARE_I_TOT_MIN_A. UNCHANGED IN LAW
+    at fw v28 - only the constant moved - so this case is the control that
+    proves the law did not move with it."""
     cmds = []
-    for tot in (0.0, 0.05, 0.075, 0.0751, 0.10, 0.20, 0.25, 0.2999, 0.30,
-                0.3001, 0.35, 0.40, 0.50, 0.75, 1.00, 1.50, 2.00, 3.00):
+    for tot in (0.0, 0.05, 0.075, 0.0751, 0.10, 0.20, 0.2499, 0.25, 0.2501,
+                0.2999, 0.30, 0.3001, 0.35, 0.40, 0.50, 0.75, 1.00, 1.50,
+                2.00, 3.00):
         for sp, prev in ((0.15, 0.62), (0.50, 0.62), (0.85, 0.62),
                          (0.85, 0.15), (0.15, 0.85), (0.35, 0.35)):
             cmds.append(("CLIP", tot, sp, prev))
@@ -121,7 +146,7 @@ def _case_kd_schedule_walk():
         tot -= 0.0037
     # Then park on the crossover and confirm both sides settle exactly.
     for _ in range(200):
-        cmds.append(("KDS", 0.9061287313432836))
+        cmds.append(("KDS", 0.7551072758573968))   # the fw v28 crossover
     for _ in range(200):
         cmds.append(("KDS", 2.0))
     return cmds
@@ -132,7 +157,8 @@ def _case_apply_under_the_schedule():
     sides of the crossover. This is the path on which the schedule reaches the
     hardware, so it is the one that must be bit-exact."""
     cmds = []
-    for sched in (0.30, 0.40, 0.50, 0.70, 0.906, 1.00, 1.50, 2.00):
+    for sched in (0.20, 0.25, 0.30, 0.40, 0.50, 0.70, 0.755, 0.906, 1.00,
+                  1.50, 2.00):
         cmds.append(("SETFILT", sched))
         # Settle the scale on this load before actuating, so the codes are the
         # schedule's own converged value and not a slew transient.
@@ -162,7 +188,7 @@ def _case_g_guard_stale_schedule():
 def _case_battery_only_start_below_the_gate():
     """PROFILE START BELOW THE GATE. The arm cuts the fuel cell on tick 1, the
     frozen path keeps the governor filter alive, the arm drops the instant the
-    filtered total passes 2*I_min = 0.30 A, and the latch's own guarded release
+    filtered total passes 2*I_min = 0.25 A (fw v28), and the latch's own guarded release
     puts FC back on the bus. The load is 0.45 A of total, above the gate, so
     the release happens; the currents are scripted single-source while the cut
     stands, which is what the plant would deliver."""
@@ -184,22 +210,141 @@ def _case_battery_only_start_above_the_gate():
     return cmds
 
 
-def _case_battery_only_disarm_on_out_of_band():
-    """ONE OWNER PER SETPOINT. An out-of-band commanded setpoint DISARMS the arm
-    permanently; a band-edge 0.15 or 0.85 is in band and does NOT."""
+def _case_selector_thresholds():
+    """fw v28 F2 - THE SELECTION THRESHOLDS, INCLUSIVE, AND THE HOLD BETWEEN
+    THEM. This case REPLACES the fw v27 rev 2 ``battery_only_disarm`` case,
+    whose whole premise is gone: an out-of-band command no longer disarms the
+    arm, it SELECTS a source.
+
+    The sequence walks the commanded share across both rails and back, staying
+    under the 0.25 A gate throughout so the arm survives the whole trace, and
+    parks on each interesting value long enough for the topology to settle:
+
+        0.50   default (battery)          0.8499  HOLD - still battery
+        0.85   INCLUSIVE  -> fuel cell    0.1501  HOLD - still fuel cell
+        0.15   INCLUSIVE  -> battery      1.00    out of band -> fuel cell
+        0.00   out of band -> battery
+
+    The two HOLD values are the load-bearing half: a strict ``>`` / ``<`` in
+    either implementation flips a selection here and nowhere else."""
     cmds = [("ARM",)]
-    cmds += [("LOAD", 0.85, 0.20, 16.0)] * 20     # in band: still armed
-    cmds += [("LOAD", 0.15, 0.20, 16.0)] * 20     # in band: still armed
-    cmds += [("LOAD", 1.00, 0.20, 16.0)] * 20     # out of band: DISARMS
-    cmds += [("LOAD", 0.50, 0.20, 16.0)] * 60     # stays disarmed
+    for sp in (0.50, 0.8499, 0.85, 0.8499, 0.15, 0.1501, 0.15, 0.50,
+               1.00, 0.50, 0.00, 0.50):
+        cmds += [("LOAD", sp, 0.16, 16.0)] * 60
+    return cmds
+
+
+def _case_selector_change_bt_to_fc():
+    """fw v28 F2 - A SELECTION CHANGE, TICK BY TICK, BATTERY -> FUEL CELL.
+
+    Start armed and battery-selected under the gate, let the cut latch, then
+    command 0.90. On the change tick the latch's RELEASE branch fires first
+    (``sp_cut_fc`` with an effective setpoint of 1.0 satisfies
+    ``sp >= DROOP_R_MIN``), FC_BUS re-closes and the function returns for one
+    live tick; the ENTRY then cuts the battery on a later tick under the
+    last-source, survivor-regulator, blanking and load guards. The comparison
+    is on the SWITCH COLUMNS row by row, which is what proves no tick moves two
+    bus switches."""
+    cmds = [("ARM",)]
+    cmds += [("LOAD", 0.50, 0.16, 16.0)] * 300    # battery selected, cut latched
+    cmds += [("LOAD", 0.90, 0.16, 16.0)] * 300    # -> fuel cell
+    return cmds
+
+
+def _case_selector_change_fc_to_bt():
+    """fw v28 F2 - THE MIRROR: FUEL CELL -> BATTERY. The release branch
+    ``sp_cut_bt && sp <= DROOP_R_MAX`` fires at an effective setpoint of 0.0,
+    and the entry then cuts the fuel cell."""
+    cmds = [("ARM",)]
+    cmds += [("LOAD", 0.90, 0.16, 16.0)] * 300    # fuel cell selected
+    cmds += [("LOAD", 0.10, 0.16, 16.0)] * 300    # -> battery
+    cmds += [("LOAD", 0.90, 0.16, 16.0)] * 300    # -> fuel cell again
+    return cmds
+
+
+def _case_gate_release_from_fc_selection():
+    """fw v28 F2 - THE GATE RELEASE WORKS FROM A FUEL-CELL SELECTION. The
+    frozen-path filter advance reads ``|I_fc| + |I_batt|``, which is
+    selection-agnostic, so a rising load drops the arm and the latch's own
+    BATTERY release branch puts the battery back. The load rises past
+    2*I_min = 0.25 A, so the release must happen; without the selection-agnostic
+    filter the profile would run fuel-cell-only for its whole length."""
+    cmds = [("ARM",)]
+    cmds += [("LOAD", 0.90, 0.16, 16.0)] * 200    # fuel cell selected, cut held
+    cmds += [("LOAD", 0.90, 0.45, 16.0)] * 400    # over the gate -> release
+    return cmds
+
+
+def _case_selector_raw_current_escape():
+    """fw v28 review S2 - THE RAW-CURRENT ESCAPE. With the fuel cell selected
+    and the arm alive, a RAW ``|I_fc|`` above SHARE_GOV_I_FC_CEIL_A (1.25 A)
+    drops the arm on that tick even though the FILTERED total has not reached
+    the gate, and the battery re-closes on the next tick. Driven with explicit
+    TICK rows rather than LOAD rows, because the point is a single-source
+    current the resolver's split law would never script."""
+    cmds = [("ARM",)]
+    cmds += [("TICK", 0.90, 0.08, 0.08, 16.0)] * 200   # fuel cell selected
+    cmds += [("TICK", 0.90, 1.24, 0.0, 16.0)] * 3      # under the ceiling
+    cmds += [("TICK", 0.90, 1.26, 0.0, 16.0)] * 3      # OVER -> arm drops
+    cmds += [("TICK", 0.90, 0.10, 0.10, 16.0)] * 200   # battery back
+    return cmds
+
+
+def _case_sliver_hold_after_converging():
+    """fw v28 F3 - THE HYSTERESIS SLIVER HOLDS, AND ITS BOUND.
+
+    Converge the closed loop at a commanded 0.80 well above the gate, then park
+    the total in [0.20, 0.25) A. Closed-loop mode is HELD down to the 0.20 A
+    exit, so the minority band inverts and the fw v5-to-v27 pin at exactly
+    0.5000 would fire. fw v28 HOLDS ``sp_eff_prev`` instead, bounded by
+    ``loD = min(0.5, SHARE_HANDOFF_MIN_A / filt)`` - 0.400 at 0.250 A and 0.500
+    at 0.200 A - so a reference that converged at a rail is WALKED, at the tick
+    ceiling and never as a step, to ``1 - loD``. ``sp_eff`` is in the compared
+    column set, so the walk itself is the comparison.
+
+    The second leg drops through the exit so the coast-down still leaves closed
+    loop on the tick the filtered total crosses it."""
+    # ⚠️ THE TOTALS ARE DELIBERATELY NOT ROUND, for the reason
+    # ``_case_kd_schedule_walk`` states at length: the k_d schedule input is a
+    # hysteretic sample tested with a strict ``>`` against a 0.05 A deadband,
+    # and a round total makes the rising filter land EXACTLY on that deadband,
+    # where float32 and float64 round the same subtraction to opposite sides
+    # and the two traces disagree about a boundary neither is wrong about.
+    # 0.8873 / 0.2437 / 0.2063 / 0.1237 are coprime with the deadband well
+    # beyond single precision, so every comparison here is about the SLIVER.
+    cmds = []
+    cmds += [("LOAD", 0.65, 0.8873, 16.0)] * 800   # converge, closed loop
+    cmds += [("LOAD", 0.65, 0.2437, 16.0)] * 1200  # the sliver, near its top
+    cmds += [("LOAD", 0.65, 0.2063, 16.0)] * 800   # the sliver, near its bottom
+    cmds += [("LOAD", 0.65, 0.1237, 16.0)] * 400   # out of closed loop entirely
+    return cmds
+
+
+def _case_kd_hold_in_a_charge_window():
+    """fw v28 F4 - k_d HOLDS AT K_DROOP IN A CHARGE WINDOW, AND THE SCHEDULE
+    INPUT IS FROZEN.
+
+    Settle the schedule on a light single-source load (0.16 A, where the bare
+    schedule would ask for the 0.5-capped 0.906 ohm), then open the window. The
+    target becomes K_DROOP and is reached through the ordinary fractional slew,
+    ``sched_tot`` does not move for the duration, and the FC converter word must
+    therefore stay short of full scale with ``g_clamp`` unmoved. Closing the
+    window resumes the schedule FROM K_DROOP at the normal rate."""
+    cmds = [("SETFILT", 0.16)]
+    cmds += [("KDS", 0.16)] * 600            # settle the light-load scale
+    cmds += [("CHGWIN", 1)]
+    cmds += [("KDS", 0.16)] * 600            # window: walk down to K_DROOP
+    cmds += [("APPLY", 0.85), ("APPLY", 0.50), ("APPLY", 0.15)]
+    cmds += [("CHGWIN", 0)]
+    cmds += [("KDS", 0.16)] * 600            # resume from K_DROOP
     return cmds
 
 
 def _case_hold_and_reentry():
     """THE HOLD, AND THE OPEN->CLOSED->OPEN ROUND TRIP. Drive the total up
-    through the 0.30 A gate, converge, then let it fall below the 0.25 A exit
-    so the HOLD branch owns the split, then bring it back. Below the gate the
-    applied ratio must not move at all."""
+    through the 0.25 A gate (fw v28), converge, then let it fall below the
+    0.20 A exit so the HOLD branch owns the split, then bring it back. Below the
+    gate the applied ratio must not move at all."""
     # sp = 0.50 deliberately. The point of this case is the MODE trajectory --
     # feedforward hold, gate crossing, closed loop, exit, hold, re-entry -- and
     # a band-edge setpoint would additionally park the ratio one hysteresis
@@ -214,17 +359,20 @@ def _case_hold_and_reentry():
     for _ in range(600):
         cmds.append(("LOAD", 0.50, 0.80, 16.0))   # closed
     for _ in range(600):
-        cmds.append(("LOAD", 0.50, 0.12, 16.0))   # HOLD (below the 0.25 exit)
+        cmds.append(("LOAD", 0.50, 0.12, 16.0))   # HOLD (below the 0.20 exit)
     for _ in range(300):
         cmds.append(("LOAD", 0.50, 0.80, 16.0))   # closed again
     return cmds
 
 
 def _case_rising_total_through_the_hysteresis():
-    """A RISING TOTAL THROUGH 0.25-0.30 A, the mode-gate hysteresis sliver where
-    the closed-loop clip degenerates to the balanced split. Ramped slowly enough
-    that the ~20 ms filter tracks it, so the crossing is a real crossing and not
-    a step."""
+    """A RISING TOTAL THROUGH THE fw v28 SLIVER, 0.20-0.25 A, where the
+    closed-loop clip's band inverts and F3's bounded HOLD replaces the fw v5-to-
+    v27 pin at the balanced split. Ramped slowly enough that the ~20 ms filter
+    tracks it, so the crossing is a real crossing and not a step. The ramp also
+    crosses 0.24 A, the total at which two near-balanced channels first read
+    LIVE at SHARE_HANDOFF_LIVE_A = 0.12 A - review S7's sub-gate rule is what
+    keeps the handoff ceiling selected there, and ``slew`` is compared."""
     cmds = []
     tot = 0.10
     while tot <= 0.60 + 1e-9:
@@ -282,7 +430,7 @@ def _case_open_loop_only():
     """A PROFILE THAT NEVER CLOSES THE LOOP, so every tick is the port's to
     own and the MDAC codes are comparable end to end.
 
-    This is the case the fw v27 rev 1 change exists for. Below the 0.30 A gate
+    This is the case the fw v27 rev 1 change exists for. Below the 0.25 A gate
     the minority band is empty, so each commanded setpoint step must produce a
     HOLD -- the applied ratio must not move at all -- where fw v26 would have
     walked the fed-forward reference out to the commanded extreme. The second
@@ -313,7 +461,13 @@ CASES = [
     ("g_guard_stale_schedule", _case_g_guard_stale_schedule),
     ("battery_only_below_gate", _case_battery_only_start_below_the_gate),
     ("battery_only_above_gate", _case_battery_only_start_above_the_gate),
-    ("battery_only_disarm", _case_battery_only_disarm_on_out_of_band),
+    ("selector_thresholds", _case_selector_thresholds),
+    ("selector_bt_to_fc", _case_selector_change_bt_to_fc),
+    ("selector_fc_to_bt", _case_selector_change_fc_to_bt),
+    ("selector_gate_release_from_fc", _case_gate_release_from_fc_selection),
+    ("selector_raw_escape", _case_selector_raw_current_escape),
+    ("sliver_hold", _case_sliver_hold_after_converging),
+    ("kd_hold_in_charge_window", _case_kd_hold_in_a_charge_window),
     ("hold_and_reentry", _case_hold_and_reentry),
     ("rising_total_hysteresis", _case_rising_total_through_the_hysteresis),
     ("iso_bypass_proposal", _case_iso_bypass_and_proposal),
@@ -333,7 +487,7 @@ _CODE_COMPARABLE_OPS = frozenset({"APPLY", "MDAC"})
 def harness():
     """Build the firmware harness, or skip with the reason."""
     if not os.path.exists(HARNESS_SRC):
-        pytest.skip("test/gov_fw27_harness.cpp is missing")
+        pytest.skip("test/gov_fw28_harness.cpp is missing")
     env = dict(os.environ)
     if os.path.isdir(MSYS2_BIN):
         env["PATH"] = MSYS2_BIN + os.pathsep + env.get("PATH", "")
@@ -348,7 +502,7 @@ def harness():
                "-I../controller_design", "-I../controller_design_MIMO",
                "-DBENCH_TEST=0", "-DHIL_SIM=0", "-DNO_ETH_WARNING",
                "-Wno-unused-function",
-               "gov_fw27_harness.cpp", "-o", "gov_fw27_harness.exe"]
+               "gov_fw28_harness.cpp", "-o", "gov_fw28_harness.exe"]
         proc = subprocess.run(cmd, cwd=TEST_DIR, env=env,
                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         if proc.returncode != 0:
@@ -360,10 +514,10 @@ def harness():
 _COLS = ("op", "r", "g_fc", "g_bt", "k_d", "code_fc", "code_bt", "filt",
          "sched_tot", "sw_fc", "sw_bt", "iso_fc", "iso_bt", "cut_fc", "cut_bt",
          "def_fc", "def_bt", "armed", "active", "ref_load", "ref_blank",
-         "g_clamp")
+         "g_clamp", "sel_fc", "slew", "sp_eff")
 _INT_COLS = ("code_fc", "code_bt", "sw_fc", "sw_bt", "iso_fc", "iso_bt",
              "cut_fc", "cut_bt", "def_fc", "def_bt", "armed", "active",
-             "ref_load", "ref_blank", "g_clamp")
+             "ref_load", "ref_blank", "g_clamp", "sel_fc")
 
 
 def _stdin(cmds):
@@ -396,7 +550,8 @@ def _firmware_trace(exe, cmds):
         row = dict(zip(_COLS, parts))
         for k in _INT_COLS:
             row[k] = int(row[k])
-        for k in ("r", "g_fc", "g_bt", "k_d", "filt", "sched_tot"):
+        for k in ("r", "g_fc", "g_bt", "k_d", "filt", "sched_tot",
+                  "slew", "sp_eff"):
             row[k] = float(row[k])
         row["ret"] = ret
         rows.append(row)
@@ -532,12 +687,19 @@ def _port_trace(cmds):
             "armed": int(s.batt_only_armed), "active": int(s.batt_only_active),
             "ref_load": s.refused_load, "ref_blank": s.refused_blank,
             "g_clamp": s.g_guard_count,
+            # fw v28 observables.
+            "sel_fc": int(s.selector_fc),
+            "slew": s.slew_step,
+            "sp_eff": s.sp_eff_prev,
             "ret": ret,
         }
 
     # The two MDAC mirrors are WRITE-ONLY in the firmware, so the port tracks
     # them the same way: they keep the last word actually written.
     last_codes = [0, 0]
+    # The FC_CHARGE_ENABLE pin the harness drives with CHGWIN. A one-element
+    # list so the ops below can rebind it without a nonlocal.
+    fc_charge_open = [False]
 
     for c in cmds:
         op = c[0]
@@ -546,7 +708,8 @@ def _port_trace(cmds):
             g.v_bus_ok = vb >= V_BUS_CHARGED_THRESH
             t_ms += 1.0
             out = g.step(sp, i_fc, i_bt, g.state.sw_fc, g.state.sw_bt,
-                         t_ms / 1000.0)
+                         t_ms / 1000.0,
+                         charge_path_owns_bt=fc_charge_open[0])
             if out.wrote:
                 last_codes = [out.code_fc, out.code_bt]
             row = snap()
@@ -563,7 +726,7 @@ def _port_trace(cmds):
             row = snap(ret=g.droop_scale_target(float(c[1])))
         elif op == "KDS":
             g.state.filt_total = float(c[1])
-            g._update_droop_scale()
+            g._update_droop_scale(fc_charge_open[0])
             row = snap()
         elif op == "MDAC":
             last_codes = list(g.set_droop_mdac(float(c[1]), float(c[2])))
@@ -594,6 +757,18 @@ def _port_trace(cmds):
         elif op == "SETPREV":
             g.state.r_prev = float(c[1])
             row = snap()
+        elif op == "SETSPEFF":
+            g.state.sp_eff_prev = float(c[1])
+            row = snap()
+        elif op == "CHGWIN":
+            # The port has no pin; the window is an ARGUMENT to the schedule
+            # (and to step()), so the harness's pin state is tracked here and
+            # fed to both.
+            fc_charge_open[0] = bool(int(c[1]))
+            row = snap()
+        elif op == "SETSEL":
+            g.state.selector_fc = bool(int(c[1]))
+            row = snap()
         else:
             raise AssertionError("unknown op %r" % (op,))
         row["op"] = op
@@ -621,7 +796,10 @@ def _port_trace(cmds):
 # whose ownership rules read the commanded setpoint and the charge window and
 # never the ratio. Those four are exactly what fw v27 rev 2 adds to the closed
 # loop, so the closed-loop half of this test is not vacuous.
-_FLAG_COLS_ALWAYS = ("armed", "active")
+# fw v28: the SELECTION is a function of the commanded setpoint and the arm
+# alone - never of the ratio - so it is comparable on EVERY row, closed loop
+# included, exactly like the arm itself.
+_FLAG_COLS_ALWAYS = ("armed", "active", "sel_fc")
 _FLAG_COLS_PORTED = ("sw_fc", "sw_bt", "iso_fc", "iso_bt", "cut_fc", "cut_bt",
                      "def_fc", "def_bt", "ref_load", "ref_blank", "g_clamp")
 # ``filt`` and ``sched_tot`` are functions of the SCRIPTED currents alone, so
@@ -629,7 +807,16 @@ _FLAG_COLS_PORTED = ("sw_fc", "sw_bt", "iso_fc", "iso_bt", "cut_fc", "cut_bt",
 # from ``sched_tot`` by the ported schedule and is comparable for the same
 # reason. ``r`` is the controller's output and is therefore comparable only
 # where the controller is not running.
+# fw v28: ``slew`` is review S7's tick ceiling. It is a function of the
+# scripted currents, the filtered total and the dwell counter - the dwell burns
+# on RATIO motion, which is the unported controller's on a closed-loop tick, so
+# it is compared only where the port owns the ratio (``_PORTED_SCALAR_COLS``).
+# ``sp_eff`` is the reference the F3 sliver hold assigns; on a closed-loop tick
+# it is downstream of the controller only through the ratio-independent clip
+# chain, but the CONTROLLER's own reference history feeds it, so it too is
+# compared on ported rows.
 _SCALAR_COLS = ("filt",)
+_PORTED_SCALAR_COLS = ("slew", "sp_eff")
 # ⚠️ THE SCHEDULE PAIR CARRIES A ONE-TICK LAG TOLERANCE, AND IT IS NOT A FUDGE.
 # The schedule input is re-sampled when |filt - sched_tot| EXCEEDS a 0.05 A
 # deadband, tested strictly. On a ramped load that test is a TIE at exactly one
@@ -653,6 +840,7 @@ def _compare(cmds, fw, py, open_loop):
     bad = []
     code_deltas = []
     n_code_rows = 0
+    topology_ever_diverged = [False]   # see the schedule-pair note below
     for i, (f, p) in enumerate(zip(fw, py)):
         assert f["op"] in (cmds[i][0], "v"), (i, f["op"], cmds[i][0])
         ported = cmds[i][0] != "TICK" or open_loop[i]
@@ -669,7 +857,32 @@ def _compare(cmds, fw, py, open_loop):
             if abs(f[k] - p[k]) > _REL * max(1.0, abs(f[k])):
                 bad.append("row %d %r: %s fw=%.9g port=%.9g"
                            % (i, cmds[i], k, f[k], p[k]))
-        for k in _LAG_COLS:
+        # ⚠️ fw v28 MOVED THE SCHEDULE PAIR OUT OF THE UNCONDITIONAL SET, AND
+        # THAT IS A REAL FIDELITY BOUNDARY, NOT A RELAXATION. Through fw v27
+        # rev 2 ``sched_tot`` and ``k_d`` were functions of the SCRIPTED
+        # currents alone, so they were comparable on every row. F4 gates the
+        # schedule on the four cut flags (a cut FREEZES it outright) and on the
+        # charge window, and a cut is an r-based decision taken by the unported
+        # Youla controller. So on a closed-loop tick where the two sides'
+        # TOPOLOGY has diverged, the schedule pair is a consequence of the
+        # unported controller and says nothing about this port. It is therefore
+        # compared whenever the port owns the row (every open-loop tick, every
+        # direct actuation) AND on any closed-loop tick where the topology and
+        # the cut flags agree - which is the overwhelming majority of them, so
+        # the closed-loop half of this test stays far from vacuous.
+        # AND THE CONTAMINATION IS STICKY, which is the honest reading rather
+        # than the convenient one. ``k_d`` and ``sched_tot`` are STATE: once a
+        # closed-loop tick has frozen the firmware's schedule under a cut the
+        # port's surrogate did not take, the two carry different histories for
+        # the rest of the trace even after the topologies agree again. So the
+        # first divergence retires the pair for the remainder of the case,
+        # instead of the comparison resuming on values that were decided by the
+        # unported controller several hundred ticks earlier.
+        if not all(f[k] == p[k] for k in ("sw_fc", "sw_bt", "iso_fc", "iso_bt",
+                                          "cut_fc", "cut_bt")):
+            topology_ever_diverged[0] = True
+        for k in (_LAG_COLS if (ported or not topology_ever_diverged[0])
+                  else ()):
             lim = (_SCHED_LAG_A if k == "sched_tot"
                    else 2.0 * _KD_SLEW_FRAC * max(abs(f[k]), abs(p[k])))
             lim = max(lim, _REL * max(1.0, abs(f[k])))
@@ -690,6 +903,10 @@ def _compare(cmds, fw, py, open_loop):
                        "within %d rows)"
                        % (i, cmds[i], k, f[k], p[k], lim, _LAG_TICKS))
         if ported:
+            for k in _PORTED_SCALAR_COLS:
+                if abs(f[k] - p[k]) > _REL * max(1.0, abs(f[k])):
+                    bad.append("row %d %r: %s fw=%.9g port=%.9g"
+                               % (i, cmds[i], k, f[k], p[k]))
             for k in _RATIO_COLS:
                 if abs(f[k] - p[k]) > _REL * max(1.0, abs(f[k])):
                     bad.append("row %d %r: %s fw=%.9g port=%.9g"
@@ -759,8 +976,9 @@ def test_the_open_loop_codes_are_bit_exact(harness):
 
 def test_the_stimulus_actually_exercises_every_mechanism(harness):
     """A trace on which nothing happens would pass the comparisons above while
-    proving nothing. Pin the coverage of all four fw v27 rev 2 mechanisms, on
-    the FIRMWARE's trace, so the evidence is the firmware's and not the port's.
+    proving nothing. Pin the coverage of the inherited fw v27 rev 2 mechanisms
+    AND of every fw v28 one, on the FIRMWARE's trace, so the evidence is the
+    firmware's and not the port's.
     """
     fw_bo = _firmware_trace(harness, _resolve_loads(
         harness, _case_battery_only_start_below_the_gate()))
@@ -790,18 +1008,114 @@ def test_the_stimulus_actually_exercises_every_mechanism(harness):
     assert any(r["iso_fc"] for r in fw_iso), "no isolation ever occurred"
     assert fw_iso[-1]["iso_fc"] == 0, "the channel never re-entered"
 
+    # ── fw v28 ──────────────────────────────────────────────────────────────
+    fw_sel = _firmware_trace(harness, _resolve_loads(
+        harness, _case_selector_thresholds()))
+    assert any(r["sel_fc"] for r in fw_sel), "the fuel cell was never selected"
+    assert any(not r["sel_fc"] for r in fw_sel), "the battery was never selected"
+    assert all(r["armed"] for r in fw_sel[1:]), (
+        "the arm was dropped during the threshold walk; an out-of-band command "
+        "must SELECT at fw v28, not disarm")
+
+    fw_chg = _firmware_trace(harness, _resolve_loads(
+        harness, _case_selector_change_bt_to_fc()))
+    assert any(r["cut_fc"] for r in fw_chg), "the battery selection never cut FC"
+    assert any(r["cut_bt"] for r in fw_chg), (
+        "the fuel-cell selection never cut BT; the change did not happen")
+    for a, b in zip(fw_chg, fw_chg[1:]):
+        assert not (a["sw_fc"] != b["sw_fc"] and a["sw_bt"] != b["sw_bt"]), (
+            "two bus switches moved in one tick")
+
+    fw_esc = _firmware_trace(harness, _case_selector_raw_current_escape())
+    assert any(r["armed"] for r in fw_esc), "the escape case never armed"
+    assert fw_esc[-1]["armed"] == 0, "the raw-current escape never fired"
+
+    fw_slv = _firmware_trace(harness, _resolve_loads(
+        harness, _case_sliver_hold_after_converging()))
+    sliver = [r for r in fw_slv if 0.20 <= r["filt"] < 0.25]
+    assert len(sliver) > 500, (
+        "only %d ticks inside the fw v28 sliver; the F3 comparison would be "
+        "near-vacuous" % len(sliver))
+    # The rows that matter are the ones the loop reached AFTER converging: the
+    # initial ramp also passes through the sliver, in OPEN loop, where
+    # share_spEffPrev is still at its 0.5 boot default and says nothing about
+    # F3. Restrict to closed-loop sliver ticks, which is where the pin lived.
+    held = [r for r in sliver if r["k_d"] > 0.0 and r["sp_eff"] != 0.5]
+    assert len(held) > 500, (
+        "only %d closed-loop sliver ticks moved the reference off the 0.5 boot "
+        "default; F3 would be untested" % len(held))
+    # TWO PROPERTIES, WHICH TOGETHER ARE F3.
+    # (a) THE BOUND: every held reference lies inside [loD, 1 - loD] with
+    #     loD = min(0.5, SHARE_HANDOFF_MIN_A / filt), so no rail is ever held.
+    # Checked on STATIONARY rows only. The bound moves ``share_spEffPrev``,
+    # which the effective-setpoint slew then walks from at the tick ceiling
+    # (that is exactly why it never STEPS the reference), so on a falling total
+    # the reference legitimately lags a tightening bound by a few 0.002 steps.
+    # A settled row carries no such lag, and the settled value is the property.
+    dark = gm.GOV_CONST["SHARE_HANDOFF_MIN_A"]
+    settled = [b for a, b in zip(held, held[1:]) if a["sp_eff"] == b["sp_eff"]]
+    assert len(settled) > 400, "no settled sliver ticks to check the bound on"
+    for r in settled:
+        lo_d = min(0.5, dark / r["filt"])
+        assert lo_d - 1e-6 <= r["sp_eff"] <= 1.0 - lo_d + 1e-6, (
+            "sliver reference %.6f is outside the dark bound [%.4f, %.4f] at "
+            "filt %.4f" % (r["sp_eff"], lo_d, 1.0 - lo_d, r["filt"]))
+    # (b) THE HOLD, and that it is NOT the fw v27 rev 2 pin. The reference must
+    #     be stationary over a long span inside the sliver, at a value that is
+    #     NOT the balanced split.
+    runs, cur = [], 1
+    for a, b in zip(held, held[1:]):
+        cur = cur + 1 if a["sp_eff"] == b["sp_eff"] else 1
+        runs.append((cur, a["sp_eff"]))
+    longest, value = max(runs)
+    assert longest > 400, (
+        "the longest stationary span inside the sliver is %d ticks; F3 holds "
+        "the reference, it does not walk it" % longest)
+    assert abs(value - 0.5) > 1e-3, (
+        "the sliver held EXACTLY the balanced split (%.6f) for %d ticks; that "
+        "is the fw v27 rev 2 defect F3 removes" % (value, longest))
+
+    fw_win = _firmware_trace(harness, _case_kd_hold_in_a_charge_window())
+    kds_win = [r["k_d"] for r in fw_win]
+    ops_win = [r["op"] for r in fw_win]
+    assert max(kds_win) > 0.5, "the light-load scale never engaged before the window"
+    # The window drove the scale DOWN to K_DROOP, and it was reached by the
+    # ordinary fractional slew rather than by a step.
+    close_i = len(ops_win) - 1 - ops_win[::-1].index("CHGWIN")
+    assert kds_win[close_i] == pytest.approx(0.30, abs=1e-6), (
+        "k_d did not reach K_DROOP inside the charge window")
+    # ...and the schedule then RESUMES from K_DROOP at the normal rate.
+    assert kds_win[-1] > 0.5, "the schedule never resumed after the window"
+    ratios = [kds_win[i + 1] / kds_win[i]
+              for i in range(close_i, len(kds_win) - 1) if kds_win[i] > 0]
+    assert max(ratios) <= 1.0 + gm.GOV_CONST["SHARE_KD_SLEW_FRAC_PER_TICK"] + 1e-6, (
+        "the schedule STEPPED on window close; the fractional slew exists to "
+        "stop exactly that")
+    # The converter word carries the AD5443 load-and-update command nibble, so
+    # full scale is MDAC_CMD_LOAD_UPDATE | MDAC_RES, not MDAC_RES.
+    full = gm.GOV_CONST["MDAC_CMD_LOAD_UPDATE"] | gm.GOV_CONST["MDAC_RES"]
+    applies = [r for r in fw_win if r["op"] == "APPLY"]
+    assert applies, "the window case never actuated"
+    assert all(r["code_fc"] < full and r["code_bt"] < full for r in applies), (
+        "a converter word saturated inside a charge window; campaign G's "
+        "mppt-tracking sat at full scale for 9057 ticks and F4 exists to stop "
+        "exactly that")
+    assert fw_win[-1]["g_clamp"] == 0, (
+        "the g-guard fired inside a charge window; F4's whole claim is that it "
+        "should not")
+
 
 def test_the_schedule_is_bit_identical_to_fw_v26_above_the_crossover(harness):
     """THE PROPERTY THAT PROTECTS EVERY fw v26 ANCHOR. At and above
-    RE_MAX*SAFETY*I_min/K_DROOP = 0.906 A of filtered total the live scale IS
+    RE_MAX*SAFETY*I_min/K_DROOP = 0.755 A of filtered total (fw v28) the live scale IS
     K_DROOP, so every fixture that runs above it holds bit-exact. Asserted on
     the firmware's own trace and on the port's, at the same totals the design
     record's Table 2 lists."""
     cross = (gm.GOV_CONST["RE_MAX"] * gm.GOV_CONST["SHARE_KD_SAFETY"]
              * gm.GOV_CONST["SHARE_MINORITY_I_MIN_A"]
              / gm.GOV_CONST["K_DROOP"])
-    assert cross == pytest.approx(0.9061287, abs=1e-6)
-    cmds = [("KDT", t) for t in (cross, 1.0, 1.5, 2.0, 3.0, 4.0)]
+    assert cross == pytest.approx(0.7551073, abs=1e-6)
+    cmds = [("KDT", t) for t in (cross, 0.80, 0.906, 1.0, 1.5, 2.0, 3.0, 4.0)]
     fw = _firmware_trace(harness, cmds)
     py = _port_trace(cmds)
     for i, (f, p) in enumerate(zip(fw, py)):

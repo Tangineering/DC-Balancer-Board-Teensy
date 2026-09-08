@@ -1214,6 +1214,8 @@ HIL_CSV_COLUMNS = [
     # both columns are written BLANK rather than 0, which would be a positive
     # claim ("no channel was clamped") the walk did not make.
     "fc_ceil", "bt_ceil",
+    # fw v28 observation-frame aux bits 6/7 (source selector arm + selection).
+    "sel_armed", "sel_fc",
 ]
 
 # Documented constants for the columns the reduced model does not produce.
@@ -1301,6 +1303,7 @@ def synthesize_hil_csv(path, result, sim, scenario_meta, dt_s):
                 "",                                           # p_chg_loss_w
                 "", "", "",                                   # mpc diagnostics
                 "", "",                                       # fc_ceil, bt_ceil
+                "", "",                                       # sel_armed, sel_fc
             ])
     return len(result.t)
 

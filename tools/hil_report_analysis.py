@@ -183,7 +183,12 @@ def aux_bits():
             (m.AUX_MPPT_DISABLE, "MPPT_DISABLE"),
             (m.AUX_CBAL_DISABLE, "CBAL_DISABLE"),
             (m.AUX_FC_CEILING, "fc_ceiling_active"),
-            (m.AUX_BT_CEILING, "bt_ceiling_active")]
+            (m.AUX_BT_CEILING, "bt_ceiling_active"),
+            # fw v28 bits 6/7: the source selector. Same class again - these are
+            # CONTROLLER state, not pin levels, which is why the names read as
+            # states. Appended, so every established lane keeps its row.
+            (m.AUX_SEL_ARMED, "selector_armed"),
+            (m.AUX_SEL_FC, "selector_fc")]
 
 
 def fault_names():

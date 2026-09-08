@@ -164,6 +164,8 @@ from hil_plant_sim import (                                        # noqa: E402
     # ceiling bits are spare bits in the same byte, so HIL_OUTPUT_SIZE stays 18
     # and the checksum span is unchanged.
     AUX_MPPT_DISABLE, AUX_FC_CEILING, AUX_BT_CEILING,
+    # fw v28 appends bits 6/7: the source selector's ARM and its SELECTION.
+    AUX_SEL_ARMED, AUX_SEL_FC,
     # The `ems-y-*` profile geometry, so the signal windows below are DERIVED
     # from the same constants the stimulus is (EMS_Y_START_S and the region
     # table), not re-typed. A table edit that moves a region boundary must move
@@ -1009,6 +1011,40 @@ _FW27_ERA_PROVISIONAL = (
     "fw v27 rev 2, 2026-09-03, NOT measured on the board. Campaigns <= "
     "hil_report_20260903_063659 ran fw v26 and their numbers are NOT "
     "comparable. Pin on campaign G.")
+
+# fw v28 (2026-09-08, docs/fw28_source_selector.md). The SECOND governor-era
+# boundary in six days, so an anchor can now carry both notes: the fw v27 rev 2
+# one says a number was never measured on fw v26, and this one says the same of
+# fw v28. Neither is a widening - every moved pin is re-WALKED at the new
+# constants with the old value recorded beside it.
+# WHAT MOVES AT fw v28:
+#   1. `SHARE_MINORITY_I_MIN_A` 0.15 -> 0.125 A, so the closed-loop gate is
+#      0.25 A, the exit 0.20 A, the sliver [0.20, 0.25) A and the k_d crossover
+#      0.755 A. Every anchor with open-loop time is a re-pin, a THIRD time.
+#   2. The SOURCE SELECTOR: a commanded share at or past either rail now picks
+#      the source, so an FC-ONLY start is legal and the compressed-cycle legs
+#      that ran battery-only for their whole length on campaigns G/H are
+#      fuel-cell-selectable under the lower gate. Early-window switch-word pins
+#      must admit an FC-only topology.
+#   3. F1: the charge window opens ONE COMMANDER PERIOD LATER than fw v27 rev 2
+#      (disarm, then a conduction-gated open), and the UV_BUS dwell the defect
+#      produced is gone.
+#   4. F3: totals in [0.20, 0.25) A HOLD the reference instead of pinning it at
+#      0.5000, so `ems-sdp-cross`'s forced-0.5 spans disappear.
+#   5. F5: `SHARE_HANDOFF_MIN_A` 0.10 A and `SHARE_HANDOFF_LIVE_A` 0.12 A, so
+#      the en_low load-guard chatter campaign G measured (58 events in 90 s) is
+#      gone; the census expectation comes from the walk, never widened.
+# WHAT DOES NOT MOVE: the fw v26 ceiling reachability (1.4706 A - the band-edge
+# term still governs), the maximum scheduled k_d (0.906 ohm - the 0.5 cap sets
+# it, not I_min), the wire protocol, and every plant era (bleed, aux, charger,
+# asymmetry, regen credit). fw v28 is a firmware change; the plant is untouched.
+_FW28_ERA_PROVISIONAL = (
+    "fw v28 era (I_min 0.15 -> 0.125 A, gate 0.30 -> 0.25 A, source selector, "
+    "sliver hold, k_d single-source hold, handoff 0.10/0.12 A; "
+    "docs/fw28_source_selector.md): re-walked for fw v28, 2026-09-08, NOT "
+    "measured on the board. Campaigns <= hil_report_20260904_022637 ran fw v26 "
+    "or fw v27 rev 2 and their numbers are NOT comparable. Pin on the first "
+    "fw v28 campaign.")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Which scenarios EXPECT the board to latch a fault.
@@ -7218,7 +7254,10 @@ _SS_FC_CUT_T, _SS_FC_RESTORE_T = 39.0, 42.0
 # fw v25 load guard the cut inherits DEFERS above exactly that figure. The
 # `sw_ring` estimator likewise ignores a cut under 50 mA, so the battery-only
 # cut emits no ring event either.
-_BATT_ONLY_GATE_A = 2.0 * gov_mod.GOV_CONST["SHARE_MINORITY_I_MIN_A"]   # 0.30 A
+_BATT_ONLY_GATE_A = 2.0 * gov_mod.GOV_CONST["SHARE_MINORITY_I_MIN_A"]
+# 0.25 A at fw v28 (0.30 A at fw v27 rev 2). DERIVED, never typed: the floor
+# moved twice in six days and every window written against this constant moved
+# with it because it is read from GOV_CONST here.
 # THE RE-ENTRY BUDGET, decomposed rather than chosen: the governor's ~20 ms load
 # EMA lags a ramp by one time constant (-1 ms / ln(0.95) = 19.5 ms), the
 # survivor's RT1987 turn-on is blanked for SHARE_CUT_SURVIVOR_BLANK_MS = 30 ms,

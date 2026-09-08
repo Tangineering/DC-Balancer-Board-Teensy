@@ -649,15 +649,29 @@ def walk(strategy_name: str, scenario_name: str, *, soc0: float = 0.7,
                               r_series_ohm=r_series_ohm,
                               conv_tau_s=conv_tau_s,
                               seed_r=sim.SOC_BAND_SHARE_NOMINAL)
-    # fw v27 rev 2 BATTERY-ONLY START. A walk models a State 1 -> State 2 Run
-    # entry, which is one of the six profile boundaries `armShareBatteryOnly
-    # Start()` is called at, so the walk arms it too. It is NOT optional and
-    # carries no flag: a walk that skipped it would be predicting a firmware
-    # that does not exist, which is the exact defect this harness was built to
-    # stop. Consequence to expect in a result: the fuel cell is off the bus from
-    # tick 0 until the governor's filtered total first exceeds 2*I_min = 0.30 A,
-    # so an early stage's delivered share is 0.0 whatever the strategy
-    # commanded, and every leg's h2 moves.
+    # fw v28 SOURCE SELECTOR (the fw v27 rev 2 battery-only start, generalised).
+    # A walk models a State 1 -> State 2 Run entry, which is one of the six
+    # profile boundaries `armShareBatteryOnlyStart()` is called at, so the walk
+    # arms it too. It is NOT optional and carries no flag: a walk that skipped
+    # it would be predicting a firmware that does not exist, which is the exact
+    # defect this harness was built to stop.
+    # WHAT CHANGES AT fw v28, and it is not cosmetic. The arm no longer means
+    # "battery-only": while it is up, the SELECTED SOURCE is chosen from the
+    # commanded share on every tick, inclusively at both rails
+    # (sp >= 0.85 -> fuel cell, sp <= 0.15 -> battery, hold in between). The
+    # selection is derived inside `GovernorModel.step()` from the same `share`
+    # this walk already passes, so this loop needs no branch of its own - but
+    # the CONSEQUENCE for a low-demand strategy is large and must be read
+    # correctly. `sdp_policy_v6` commands exactly 1.00 below its state-of-charge
+    # target at every low-demand bin (`policy.share` in
+    # tools/sdp_policies/sdp_policy_v6.json), so an `ems-ftp75c-*` leg below
+    # target now runs FUEL-CELL-ONLY under the gate rather than battery-only.
+    # Those legs are therefore NOT 0 g of hydrogen at fw v28, which is exactly
+    # the reverse of the fw v27 rev 2 finding (campaign G: the arm never
+    # released on a cycle whose total stayed under the 0.30 A gate, and the
+    # compressed cycle ran battery-only for its whole length at h2 -99 %).
+    # The arm still drops on the first tick the governor's filtered total
+    # exceeds 2*I_min, which is 0.25 A at fw v28 rather than 0.30 A.
     g.arm_battery_only_start()
 
     res = WalkResult()
@@ -755,13 +769,25 @@ def walk(strategy_name: str, scenario_name: str, *, soc0: float = 0.7,
                 ts = t + j * gov_dt_s
                 i_fc = delivered * float(s_i_total[k])
                 sw_fc = True if not g.state.sp_cut_fc else g.state.sw_fc
-                if charge_now:
+                if charge_now and g.charge_window_admits(ts):
                     sw_bt = False
                 else:
                     sw_bt = True if not g.state.sp_cut_bt else g.state.sw_bt
+                # fw v28 F1: `charge_intent` is the CRUISE BRANCH'S CONDITION
+                # (the strategy asked to charge in a window this model's mask
+                # admits), which is what disarms the selector. `charge_path_
+                # owns_bt` is the window actually being OPEN, which at fw v28
+                # additionally requires the fuel cell to be conducting - the
+                # conduction gate - and therefore lands ONE COMMANDER PERIOD
+                # LATER than the intent whenever the selector was holding the
+                # fuel cell off the bus. Gating the ownership on the intent
+                # alone would model fw v27 rev 2, whose break-before-make at
+                # exactly this call site is the defect F1 removes.
+                charge_open = charge_now and g.charge_window_admits(ts)
                 o = last_out = g.step(share, i_fc, float(s_i_total[k]) - i_fc,
                            sw_fc, sw_bt, ts,
-                           charge_path_owns_bt=charge_now)
+                           charge_path_owns_bt=charge_open,
+                           charge_intent=charge_now)
                 delivered = g.delivered_share(o.r_applied, float(s_i_total[k]),
                                               o.fc_bus_req, o.bt_bus_req)
                 acc += delivered
@@ -918,21 +944,30 @@ def walk(strategy_name: str, scenario_name: str, *, soc0: float = 0.7,
                 "the share loop was in OPEN-LOOP HOLD for %.1f %% of ticks; the "
                 "commanded setpoint was not acted on there (the delivered split "
                 "is whatever stood when the load fell below the closed-loop "
-                "exit, 0.25 A at fw v27 rev 2)" % (100.0 * hold))
-        # fw v27 rev 2 BATTERY-ONLY START. It shows up as LATCHED ticks, and it
-        # is the single largest reason a fw v27 walk's h2 differs from a fw v26
+                "exit, 0.20 A at fw v28)" % (100.0 * hold))
+        # fw v28 SOURCE SELECTOR. It shows up as LATCHED ticks, and it is the
+        # single largest reason a fw v27/v28 walk's h2 differs from a fw v26
         # one -- measured 2.4 % to 12.4 % of ticks and -5.6 % to +6.8 % of h2
-        # across the 61 s legs. Reported explicitly, because a reader who saw
-        # only the h2 move would have no way to attribute it.
+        # across the 61 s legs at fw v27 rev 2. Reported explicitly, because a
+        # reader who saw only the h2 move would have no way to attribute it.
+        # THE SELECTION IS NAMED, not assumed: at fw v28 a latched window can be
+        # fuel-cell-only as easily as battery-only, and "the battery carried
+        # that window" would be a false statement about an `ems-ftp75c-*` leg
+        # below its state-of-charge target.
         lat = res.mode_fractions.get(gov_mod.MODE_LATCHED, 0.0)
         if lat > 0.0:
+            sel = "fuel cell" if g.state.selector_fc else "battery"
             res.notes.append(
-                "fw v27 rev 2 BATTERY-ONLY START: the fuel cell was off the bus "
-                "for %.1f %% of ticks (LATCHED), from the profile start until "
-                "the governor's filtered total first exceeded 2*I_min = "
-                "%.2f A; the battery carried that window whatever the strategy "
-                "commanded" % (100.0 * lat,
-                               2.0 * gov_mod.GOV_CONST["SHARE_MINORITY_I_MIN_A"]))
+                "fw v28 SOURCE SELECTOR: one source was off the bus for %.1f %% "
+                "of ticks (LATCHED), from the profile start until the "
+                "governor's filtered total first exceeded 2*I_min = %.2f A; the "
+                "selection at the end of the walk was the %s, chosen from the "
+                "commanded share at the band rails (>= %.2f selects the fuel "
+                "cell, <= %.2f the battery, hold in between)"
+                % (100.0 * lat,
+                   2.0 * gov_mod.GOV_CONST["SHARE_MINORITY_I_MIN_A"], sel,
+                   gov_mod.GOV_CONST["DROOP_R_MAX"],
+                   gov_mod.GOV_CONST["DROOP_R_MIN"]))
         if g.state.refused_load or g.state.refused_blank:
             res.notes.append(
                 "cut refusals: %d tick(s) on the load guard, %d on survivor "

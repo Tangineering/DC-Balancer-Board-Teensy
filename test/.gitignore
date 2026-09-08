@@ -5,9 +5,13 @@ run_tests_hil
 # built on demand by tools/test_governor_ceiling_equivalence.py.
 gov_ceiling_harness
 gov_ceiling_harness.exe
-# fw v27 rev 2: the sibling harness for the governor package (battery-only
-# start, the scheduled droop scale, the re-derived reachability threshold),
-# built on demand by tools/test_governor_fw27_equivalence.py.
+# fw v28: the sibling harness for the governor package (the source selector,
+# the sliver hold, the scheduled droop scale and its single-source hold/freeze,
+# the re-derived conduction floor), built on demand by
+# tools/test_governor_fw28_equivalence.py. Renamed from gov_fw27_harness at
+# fw v28; the old names are kept below so a stale local build is still ignored.
+gov_fw28_harness
+gov_fw28_harness.exe
 gov_fw27_harness
 gov_fw27_harness.exe
 run_tests_encoder

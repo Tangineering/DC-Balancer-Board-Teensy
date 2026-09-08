@@ -474,7 +474,24 @@ FW_DELTA_NOTES = {
 # COMPARABLE_FW_MIN still stays 18: v27 changed no encoder constant and no drive
 # coefficient, so no entry's conformance/stability classification moves.  The
 # three axes above are OBSERVABILITY, reported and tracked, not re-classification.
-TARGET_FW_VERSION = 27
+TARGET_FW_VERSION = 28
+# fw v28 (2026-09-08, docs/fw28_source_selector.md) moves the same three
+# OBSERVABILITY axes again and adds a fourth; none of them re-classifies a log:
+#   (1) THE TOPOLOGY CENSUS. The source selector makes an FC-ONLY start LEGAL,
+#       so an early single-source window is no longer evidence of a defect
+#       whichever channel is off the bus. See topology_census().
+#   (2) MDAC SATURATION. F4 holds k_d at K_DROOP in a charge window, so the
+#       full-scale words campaign G measured (9057 ticks on mppt-tracking) must
+#       be ABSENT from a fw v28 log; their presence is now a finding.
+#   (3) THE SHARE-CUT CENSUS moves again with the gate (0.30 -> 0.25 A), and
+#       the selector adds a pair of bus-switch transitions per selection change,
+#       which is exactly the census the design record asks the first campaign
+#       for (section 8, "Switch-cycle count").
+#   (4) THE en_low CENSUS falls: F5 retunes the handoff thresholds to
+#       0.10/0.12 A, which removes the load-guard chatter the fw v27 rev 2
+#       equality created (58 events in 90 s on ems-ftp75-sdp).
+# COMPARABLE_FW_MIN still stays 18: v28 changed no encoder constant and no
+# drive coefficient, so no entry's conformance/stability classification moves.
 # Logs at or above this fw version share the current control law AND wheel.
 COMPARABLE_FW_MIN = 18
 

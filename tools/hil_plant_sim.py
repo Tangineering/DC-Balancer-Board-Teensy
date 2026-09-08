@@ -43,7 +43,9 @@ Wire protocol (mirrored from teensy_controller.ino, fw v21 — keep in lockstep)
     4  u8    aux: bit0 FC_REG_ENABLE, bit1 BT_REG_ENABLE,
                   bit2 MPPT_DISABLE,  bit3 CBAL_DISABLE,
                   bit4 FC ceiling clamp active  APPENDED fw v26,
-                  bit5 BT ceiling clamp active  APPENDED fw v26 — the source
+                  bit5 BT ceiling clamp active  APPENDED fw v26,
+                  bit6 source selector ARMED    APPENDED fw v28,
+                  bit7 fuel cell SELECTED       APPENDED fw v28 — the source
                   current-ceiling governor's per-channel clamp state, NOT pin
                   levels.  Spare bits in an existing byte, so HIL_OUTPUT_SIZE
                   stays 18 and the checksum span is unchanged.  A frame from
@@ -185,6 +187,17 @@ AUX_MPPT_DISABLE, AUX_CBAL_DISABLE = 0x04, 0x08
 # is unchanged, so no protocol version moves and a host that does not know them
 # masks them off exactly as before.
 AUX_FC_CEILING, AUX_BT_CEILING = 0x10, 0x20
+# fw v28 (.ino:3725-3726) - bits 6/7, the SOURCE SELECTOR. Bit 6 is
+# `shareBatteryOnlyArmed` (the selector is armed and owns the setpoint) and bit
+# 7 is `shareSelectorFC` (the fuel cell is the selected source; clear means the
+# battery). Same class and same rationale as bits 4/5: they are CONTROLLER
+# state, not pin levels, so they stay out of `switch_state`, which is the
+# topology word this simulator solves the network from. The aux byte is now
+# FULL - a fw v29 observable needs a protocol bump, not another spare bit.
+# A frame from fw v21-v27 never sets them and the CSV columns `sel_armed` /
+# `sel_fc` then read 0, which is a real observation ("not armed"), exactly as
+# for bits 4/5.
+AUX_SEL_ARMED, AUX_SEL_FC = 0x40, 0x80
 
 # ── Mid-run warm-reset tripwire ─────────────────────────────────────────────
 # From fw v23 the board can leave its latched State 99 on its own: after a RUN
@@ -4455,19 +4468,39 @@ DP_BUS_R_FIX = 0.017986      # ohm       share-independent series resistance
 DP_BUS_K_G = 1.95079         # ohm/unit  parallel droop code -> source resistance
 DP_DROOP_G_PAR = 0.148922    # -         the firmware-held parallel droop code
 
-#: fw v27 rev 2 governor constants this module needs for `scheduled_g_par()`.
-#: Mirrored from `governor_model.GOV_CONST`, which is itself pinned against the
-#: firmware literals by `tools/test_governor_model.py`; restated here only
-#: because `hil_plant_sim` must not import the governor model at module scope.
-SHARE_MINORITY_I_MIN_A_FW27 = 0.15   # A     .ino:2392
-SHARE_KD_SAFETY_FW27 = 0.9           # -     .ino:2528
-DROOP_R_MIN_FW = 0.15                # -     .ino:2170
+#: Governor constants this module needs for `scheduled_g_par()`.
+#: ⚠️ IMPORTED, NOT RE-TYPED (fw v28). Through fw v27 rev 2 these three were
+#: hand-copied literals with a comment saying they mirrored
+#: `governor_model.GOV_CONST`. That is the exact shape of the 2026-09-01 and
+#: 2026-09-03 hand-mirror defects: a floor retune moves the firmware and the
+#: governor model together and leaves the copy behind, and nothing fails. The
+#: module-scope import objection that produced the copy does not survive
+#: inspection either - `governor_model` is pure stdlib with no import-time work
+#: - so the values now come from the one place that owns them.
+#: `_FW27` suffixes are kept as ALIASES so no caller moves in this round.
+from governor_model import GOV_CONST as _GOV_CONST      # noqa: E402
+
+#: The firmware era these governor constants describe. It is a module constant
+#: ON PURPOSE: `collect_model_constants()` sweeps module scope, so the era is
+#: part of `constants_hash`, and a matched-DP record solved against a different
+#: governor era is refused with the era NAMED in the message rather than with a
+#: bare hash mismatch.
+GOVERNOR_FW_ERA = "fw28"
+
+SHARE_MINORITY_I_MIN_A_FW = _GOV_CONST["SHARE_MINORITY_I_MIN_A"]   # 0.125 A
+SHARE_KD_SAFETY_FW = _GOV_CONST["SHARE_KD_SAFETY"]                 # 0.9
+DROOP_R_MIN_FW = _GOV_CONST["DROOP_R_MIN"]                         # 0.15
+#: fw v27 rev 2 spellings, kept so no call site moves. They are the SAME
+#: objects; there is no second declaration to drift.
+SHARE_MINORITY_I_MIN_A_FW27 = SHARE_MINORITY_I_MIN_A_FW
+SHARE_KD_SAFETY_FW27 = SHARE_KD_SAFETY_FW
 #: The filtered total at and above which the schedule IS K_DROOP, so every
 #: fw v26 code and every fw v26 loss-map figure is recovered bit-for-bit:
 #: RE_MAX*SHARE_KD_SAFETY*I_min/K_DROOP.
-DP_DROOP_SCHEDULE_CROSSOVER_A = (RE_MAX_OHM * SHARE_KD_SAFETY_FW27
-                                 * SHARE_MINORITY_I_MIN_A_FW27
-                                 / K_DROOP_FW_OHM)   # 0.9061287 A
+DP_DROOP_SCHEDULE_CROSSOVER_A = (RE_MAX_OHM * SHARE_KD_SAFETY_FW
+                                 * SHARE_MINORITY_I_MIN_A_FW
+                                 / K_DROOP_FW_OHM)   # 0.7551073 A at fw v28
+                                                     # (0.9061287 A at fw v27)
 
 
 # -- fw v27 rev 2: g_par IS NO LONGER A CONSTANT (2026-09-03) ----------------
@@ -13424,7 +13457,10 @@ def main(argv=None):
         # frame.  BLANK only when there is no observation frame for the tick at
         # all — the same rule every other observed column follows, and the
         # honest value for "the board said nothing".
-        header_row += ["fc_ceil", "bt_ceil"]
+        # fw v28 appends the two SELECTOR columns by the same rule: observed
+        # board fields, declared in both schemas, appended after every
+        # established column so no index moves.
+        header_row += ["fc_ceil", "bt_ceil", "sel_armed", "sel_fc"]
         writer.writerow(header_row)
 
     # M3: open the electrical-events sidecar UP FRONT and stream into it as events
@@ -14262,11 +14298,14 @@ def main(argv=None):
                 # the header comment.  Decoded from the aux byte already in
                 # hand, so this costs two mask tests per written row.
                 if obs is None:
-                    row += ["", ""]
+                    row += ["", "", "", ""]
                 else:
                     _aux = obs["aux"]
                     row.append(1 if _aux & AUX_FC_CEILING else 0)
                     row.append(1 if _aux & AUX_BT_CEILING else 0)
+                    # fw v28 selector, aux bits 6/7.
+                    row.append(1 if _aux & AUX_SEL_ARMED else 0)
+                    row.append(1 if _aux & AUX_SEL_FC else 0)
                 writer.writerow(row)
 
             ticks += 1

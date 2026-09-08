@@ -981,28 +981,89 @@ recovers it without a wire change.** Through fw v26 the scale was the compile-ti
 `K_DROOP` = 0.30 Ω. From fw v27 rev 2 the firmware runs
 `k_d = max(K_DROOP, RE_MAX·clamp(I_min/I_tot_held, DROOP_R_MIN, 0.5)·SHARE_KD_SAFETY)` in
 closed loop, with `RE_MAX` = 2.013619 Ω, `SHARE_KD_SAFETY` = 0.9 and `I_min` =
-`SHARE_MINORITY_I_MIN_A` = 0.15 A. The realized authority `k_d·I_tot` is therefore the
-**constant 0.272 V at design scale** below the crossover
-`RE_MAX·SHARE_KD_SAFETY·I_min/K_DROOP` = **0.9061 A** of filtered total; at and above the
-crossover `k_d` **is** `K_DROOP` and every fw v26 MDAC code is bit-identical. `k_d` is slewed
-at 2.353 %/tick against a hysteretic held sample of the filtered total (0.05 A deadband), and
-a saturating counter records every write the full-scale clamp caught. The design record is
-`docs/fw27_governor_package.md` §10.
+`SHARE_MINORITY_I_MIN_A` = **0.125 A from fw v28** (0.15 A at fw v27 rev 2). The realized
+authority `k_d·I_tot` is therefore the **constant 0.227 V at design scale** (0.272 V at
+fw v27 rev 2) below the crossover `RE_MAX·SHARE_KD_SAFETY·I_min/K_DROOP` = **0.7551 A** of
+filtered total (0.9061 A at fw v27 rev 2); at and above the crossover `k_d` **is** `K_DROOP`
+and every fw v26 MDAC code is bit-identical. The schedule's **maximum does not move** with
+the floor: the 0.5 cap sets it, so it is `RE_MAX·0.5·SHARE_KD_SAFETY` = **0.906 Ω** in both
+eras. `k_d` is slewed at 2.353 %/tick against a hysteretic held sample of the filtered total
+(0.05 A deadband), and a saturating counter records every write the full-scale clamp caught.
+The design records are `docs/fw27_governor_package.md` §10 and
+`docs/fw28_source_selector.md` §6.
+
+**fw v28 adds two conditions under which the schedule does not run at all** (F4). While
+`FC_CHARGE_ENABLE` reads HIGH the target is `K_DROOP` and the held schedule input is
+**frozen**, because a single-source window has no minority channel for the band edge to
+describe; and under any of the four cut flags (`shareIsoFC`/`shareIsoBT`/`shareSpCutFC`/
+`shareSpCutBT`) the schedule is **frozen outright**, because no converter word is written
+there and an accumulated walk would land as a step (up to 3×) on the first post-release
+write. Campaign G measured the consequence of the fw v27 rev 2 behaviour on `mppt-tracking`:
+the schedule saturated at its 0.906 Ω cap, the fuel-cell converter word sat at full scale for
+9057 ticks, and the charge-window sag tripled.
 
 > The plant needs no new field for it. The parallel of the two commanded droop resistances,
 > `(k_d/r) ∥ (k_d/(1−r))`, is exactly `k_d` — the share cancels — so the live scale is
 > recoverable from the observation frame's code pair alone. That is the same identity the DP
 > loss map calls `g_par` (§9.4), read in the other direction.
 
-> **⚠️ AND THE CLOSED LOOP HAS NO AUTHORITY AT ALL BELOW 0.25 A** — a firmware
+> **⚠️ AND THE CLOSED LOOP HAS NO AUTHORITY AT ALL BELOW 0.20 A** — a firmware
 > property, not a plant one, but it decides what a scenario or an offline walk
 > may claim. The firmware enters closed-loop share control above
-> `2·SHARE_MINORITY_I_MIN_A` = 0.30 A of filtered source total and drops out
-> below 0.25 A (`SHARE_MINORITY_I_MIN_A`, `SHARE_GOV_OL_HYST_A`, and the
+> `2·SHARE_MINORITY_I_MIN_A` = **0.25 A** of filtered source total and drops out
+> below **0.20 A** (`SHARE_MINORITY_I_MIN_A`, `SHARE_GOV_OL_HYST_A`, and the
 > `shareClosedLoopMode` mode gate at the head of `powerBalance()`).
-> **The gate halved at fw v27 rev 2**, with `SHARE_MINORITY_I_MIN_A` 0.30 → 0.15 A;
-> the 0.60 A entry and 0.55 A exit quoted throughout this document below belong to
-> the **fw v19 to fw v26 era** and are marked as such where they still appear.
+> **The gate has moved twice.** It halved at fw v27 rev 2 (`SHARE_MINORITY_I_MIN_A`
+> 0.30 → 0.15 A, entry 0.60 → 0.30 A) and moved again at fw v28 (0.15 → 0.125 A,
+> entry 0.30 → 0.25 A, exit 0.25 → 0.20 A). The 0.60 A entry and 0.55 A exit quoted
+> throughout this document below belong to the **fw v19 to fw v26 era**, and a
+> 0.30 A entry or 0.25 A exit to the **fw v27 rev 2 era**; both are marked as such
+> where they still appear.
+>
+> **The hysteresis sliver HOLDS the reference from fw v28** (F3). Closed-loop mode
+> is held down to the exit, so inside **[0.20, 0.25) A** the minority clip's band
+> inverts (`lo > hi`) and no split is feasible. fw v5 through fw v27 rev 2 answered
+> that by pinning the reference at the balanced split; campaign G measured a
+> 0.2817 A cruise on `ems-sdp-cross` sitting there for 17 s spans at exactly
+> 0.5000, i.e. 0.14 A per channel — *below* the conduction floor the clip exists to
+> enforce. fw v28 holds `share_spEffPrev` instead, bounded by the **dark**
+> threshold rather than by the conduction floor:
+> `loD = min(0.5, SHARE_HANDOFF_MIN_A / I_tot_filt)`, which is 0.400 at 0.250 A and
+> 0.500 at 0.200 A and is therefore a no-op for any held reference already inside
+> [0.4, 0.6] across the whole sliver. The bound never steps the reference: it moves
+> `share_spEffPrev`, which the effective-setpoint slew then walks from at the tick
+> ceiling.
+>
+> **The battery-only start is a SOURCE SELECTOR from fw v28** (F2). While the arm
+> is up, the selected source is chosen from the commanded share on every tick —
+> `sp >= DROOP_R_MAX` (0.85) selects the fuel cell, `sp <= DROOP_R_MIN` (0.15)
+> selects the battery, anything between holds the current selection, and **both
+> thresholds are inclusive**. The effective setpoint the selector feeds the setpoint
+> latch is 0.0 or 1.0, both out of band, so the latch owns the setpoint on every
+> active tick and the selector never competes with it. A selection change is
+> make-before-break through the existing machinery only: the latch's release
+> re-closes the cut channel and returns the loop for one live tick, and the entry
+> cuts the other channel on a later tick under the last-source, survivor-regulator,
+> blanking and load guards — **two bus switches never move in the same tick**.
+> The gate release is selection-agnostic (the frozen-path filter reads
+> `|I_fc| + |I_batt|`), and a raw `|I_fc|` above `SHARE_GOV_I_FC_CEIL_A` (1.25 A)
+> drops the arm immediately while the fuel cell is selected — the one place a raw
+> sample gates the selector, because it is a race against `FAULT_OC_FC`, which is
+> itself raw and single-sample.
+> **Consequence for a walk or a scenario: an FC-ONLY start is now legal.**
+> `sdp_policy_v6` commands exactly 1.00 below its state-of-charge target at every
+> low-demand bin, so the compressed-cycle legs that ran battery-only for their whole
+> length on campaigns G and H are fuel-cell-selectable under the lower gate. An
+> early single-source window is no longer evidence about which channel failed.
+>
+> **The sub-gate slew ceiling is now selected on the GATE** (F5, review S7).
+> `SHARE_HANDOFF_MIN_A` moved 0.15 → 0.10 A and `SHARE_HANDOFF_LIVE_A` 0.20 →
+> 0.12 A, restoring the fw v19 ordering `dark < live < I_min` that the fw v27 rev 2
+> retune had broken (campaign G: 58 load-guard cut/restore events in 90 s on
+> `ems-ftp75-sdp`). Two live channels then need only 0.24 A, which is inside the
+> sub-gate window, so `updateShareSlewMode()` selects the handoff ceiling whenever
+> the filtered total is below the gate, independent of the per-channel dark test.
+> The spent-dwell branch is deliberately not covered by that test.
 >
 > **Open loop is TWO submodes, and only one of them holds** (corrected
 > 2026-09-02; the claim that open loop "does not write the MDACs" was false):
@@ -1948,6 +2009,12 @@ Selected with `--scenario`; `apply_scenario()` is re-evaluated every tick from `
 
 > ⚠️ **EVERY GOVERNOR-GATE AND MINORITY-BAND FIGURE IN THE TABLE BELOW IS
 > ERA-SCOPED TO fw v19 THROUGH fw v26.** Those rows were derived at
+> ⚠️ **AND fw v28 MOVES IT A THIRD TIME:** `SHARE_MINORITY_I_MIN_A` 0.15 → 0.125 A,
+> hence a **0.25 A** entry, a **0.20 A** exit, a minority band `[0.125/I, 1−0.125/I]`
+> and a **0.7551 A** droop-scale crossover. The fw v26 ceiling reachability does
+> **not** move again: the floor term falls to 1.375 A and the band-edge term
+> 1.4706 A still governs.
+>
 > `SHARE_MINORITY_I_MIN_A` = 0.30 A, hence a **0.60 A** closed-loop entry, a
 > **0.55 A** exit, a minority clip band `[0.30/I_tot, 1 − 0.30/I_tot]` and a
 > **1.55 A** fw v26 ceiling reachability. fw v27 rev 2 halves the floor to
@@ -3425,7 +3492,13 @@ in the band should read the rail figure instead.
 LOAD, not in the band.** The figures above are share dependence at a fixed `g_par`. The
 load-scheduled droop scale makes `g_par` = `k_d`/`RE_MAX` a function of the filtered total,
 which leaves control-separability intact (the schedule reads the total, not the share) but
-retires the map's constancy in the load. The bias peaks at **1.110 % of `V0_EFF` at 0.30 A**
+retires the map's constancy in the load. ⚠️ **RE-DERIVED AT fw v28:** the cap VALUE does not
+move but the corner it engages at does, from 0.30 A to `2·I_min` = **0.25 A**, and the bias
+is a fixed cap excess times `I_tot`, so a lower corner is a *smaller* peak — **0.925 % of
+`V0_EFF` at 0.25 A**, over the map's 0.8 % envelope on **[0.216, 0.318] A** rather than on
+[0.30, 0.4694] A. That is **under the 1 % ceiling** for re-opening the loss map, so `K_G` is
+**not** re-fitted this round. The fw v27 rev 2 figures follow. The bias peaked at
+**1.110 % of `V0_EFF` at 0.30 A**
 and exceeds the ±0.8 % band below **0.4694 A** of filtered total. The re-derivation, its
 arithmetic and the queued table regeneration are in §9.4 under "RE-DERIVED FOR fw v27
 rev 2". The two departures compose and must not be quoted as one number.
@@ -3549,6 +3622,12 @@ is algebraic (zero-lag), the plant's own zero-lag limit: a real converter with �
 (:1055-1072) are conditioned on this realization, and the board's peak on the campaign-E
 stimulus brackets [≈ 1.49, ≤ 1.68] A; the `OC_FC` outcome itself is plant-invariant,
 because a single raw sample above 1.40 A latches regardless of the bracket.
+
+⚠️ **AND fw v28 LOWERS THE FLOOR AGAIN, TO 0.125 A** (operator ruling 2026-09-08: the
+constant low-current droop authority is retargeted `D = 0.30 V → 0.25 V` at design scale, so
+`I_min = D/RE_MAX` = 0.124 → 0.125 A). **The paragraph below applies unchanged, one step
+further out**: the hypothesis status is unchanged, the plant still cannot test it, and
+lowering the floor makes the bench CAL-6 measurement *more* load-bearing, not less.
 
 ⚠️ **THE CAMPAIGN G BOUNDARY: THE PLANT CANNOT TEST CONDUCTION AT A 0.15 A MINORITY
 CURRENT.** fw v27 rev 2 halves `SHARE_MINORITY_I_MIN_A` to 0.15 A on the hypothesis that a

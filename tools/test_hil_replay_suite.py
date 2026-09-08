@@ -2997,15 +2997,16 @@ def test_vacuous_tag_absent_when_current_is_not_all_zero(tmp_path):
 # TARGET_FW_VERSION / LIMIT_V_BUS_MAX_V (item 2)
 # ─────────────────────────────────────────────────────────────────────────
 
-def test_target_fw_version_is_27():
-    """21 -> 23 -> 24 -> 25 -> 26 -> 27. The target must say what it actually
-    runs against: fw v27 rev 2.  COMPARABLE_FW_MIN is a SEPARATE constant and
-    stays at 18 -- none of v24, v25, v26 or v27 changed an encoder constant or a
-    drive coefficient, so no entry's conformance/stability classification moves.
+def test_target_fw_version_is_28():
+    """21 -> 23 -> 24 -> 25 -> 26 -> 27 -> 28. The target must say what it
+    actually runs against: fw v28.  COMPARABLE_FW_MIN is a SEPARATE constant and
+    stays at 18 -- none of v24, v25, v26, v27 or v28 changed an encoder constant
+    or a drive coefficient, so no entry's conformance/stability classification
+    moves.
 
     FW_DELTA_NOTES is keyed by the RECORDED log's firmware, not by the target, so
-    it gains no v27 row: no log in the suite was recorded on v27."""
-    assert rs.TARGET_FW_VERSION == 27
+    it gains no v27 or v28 row: no log in the suite was recorded on either."""
+    assert rs.TARGET_FW_VERSION == 28
     assert rs.COMPARABLE_FW_MIN == 18
     for v in (22, 23, 24, 25, 26):
         assert v in rs.FW_DELTA_NOTES

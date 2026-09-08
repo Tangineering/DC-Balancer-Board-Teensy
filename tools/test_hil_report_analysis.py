@@ -748,11 +748,20 @@ def test_aux_bits_names_and_masks_match_the_simulator():
     """aux_bits() is the analysis-side vocabulary for observation-frame byte
     4. Pinned by NAME here because the run_hil_suite expectation layer refers
     to the two fw v26 entries by name, and by MASK against hil_plant_sim so
-    the two modules can never drift."""
+    the two modules can never drift.
+
+    fw v28 appends two more, the source selector's arm and its selection. The
+    byte is now FULL, which is asserted below: a fw v29 observable needs a
+    protocol bump rather than another spare bit."""
     bits = hra.aux_bits()
     assert [n for _m, n in bits] == ["FC_REG", "BT_REG", "MPPT_DISABLE",
                                      "CBAL_DISABLE", "fc_ceiling_active",
-                                     "bt_ceiling_active"]
+                                     "bt_ceiling_active",
+                                     "selector_armed", "selector_fc"]
+    assert dict((n, m) for m, n in bits)["selector_armed"] == \
+        _sim.AUX_SEL_ARMED == 0x40
+    assert dict((n, m) for m, n in bits)["selector_fc"] == \
+        _sim.AUX_SEL_FC == 0x80
     assert dict((n, m) for m, n in bits)["fc_ceiling_active"] ==         _sim.AUX_FC_CEILING == 0x10
     assert dict((n, m) for m, n in bits)["bt_ceiling_active"] ==         _sim.AUX_BT_CEILING == 0x20
 
@@ -765,14 +774,20 @@ def test_aux_bits_appends_the_ceiling_entries_without_moving_the_pin_levels():
                         (_sim.AUX_BT_REG, "BT_REG"),
                         (_sim.AUX_MPPT_DISABLE, "MPPT_DISABLE"),
                         (_sim.AUX_CBAL_DISABLE, "CBAL_DISABLE")]
-    assert len(bits) == 6
+    assert len(bits) == 8
     masks = [m for m, _n in bits]
     assert len(set(masks)) == len(masks), "aux masks must not collide"
+    # THE BYTE IS FULL at fw v28: all eight bits are claimed, exactly once.
+    acc = 0
+    for m in masks:
+        acc |= m
+    assert acc == 0xFF
 
 
 def test_hil_state_and_switches_aux_lane_includes_the_two_clamp_rows():
     """The clamp lanes come for free from aux_bits(): the aux panel must now
-    carry six labelled rows, the last two being the fw v26 clamp states."""
+    carry EIGHT labelled rows - the fw v26 clamp states and, from fw v28, the
+    source selector's arm and selection."""
     n = 5
     data = {"t_s": np.arange(n, dtype=np.float64),
             "state": np.full(n, 2.0), "switch": np.full(n, 0x3F),
@@ -782,7 +797,8 @@ def test_hil_state_and_switches_aux_lane_includes_the_two_clamp_rows():
     aux_ax = fig.axes[2]
     labels = [t.get_text() for t in aux_ax.get_yticklabels()]
     assert labels == ["FC_REG", "BT_REG", "MPPT_DISABLE", "CBAL_DISABLE",
-                      "fc_ceiling_active", "bt_ceiling_active"]
+                      "fc_ceiling_active", "bt_ceiling_active",
+                      "selector_armed", "selector_fc"]
     # _bit_lane emits a step line then a baseline axhline per bit, so the
     # step for row i is lines[2*i]. The FC clamp lane must be high while the
     # BT one stays low -- the two masks are read independently, not shared.

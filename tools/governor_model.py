@@ -7,7 +7,8 @@ commanded ``power_share_setpoint`` and the droop ratio physically written to the
 two AD5443 multiplying DACs. An offline energy-management walk that applies the
 commanded share directly is measuring a firmware that does not exist: the share
 loop is gated on source current, it holds the last converged split below
-the closed-loop exit (0.25 A at fw v27 rev 2, 0.55 A through fw v26), it
+the closed-loop exit (0.20 A at fw v28, 0.25 A at fw v27 rev 2, 0.55 A
+through fw v26), it
 clips the reference through a minority-current governor on BOTH the closed and
 the open-loop paths, it schedules the droop scale k_d on the load, it
 rate-limits every ratio move, and it may take a channel off the bus outright.
@@ -36,19 +37,37 @@ PORTED FIRMWARE SITES
 ``shareFeedforwardClipTarget()``  .ino:10810-10822 -> ``feedforward_clip_target()``
 ``shareDroopScaleTarget()``       .ino:10847-10855 -> ``droop_scale_target()``
 ``updateShareDroopScale()``       .ino:10856-10866 -> ``_update_droop_scale()``
-``armShareBatteryOnlyStart()``    .ino:11737-11739 -> ``arm_battery_only_start()``
+``armShareBatteryOnlyStart()``    .ino:12159-12168 -> ``arm_battery_only_start()``
+``shareSelectorEffectiveSp()``    .ino:10633-10635 -> ``selector_effective_sp()``
+``chargingControl()`` F1 gate     .ino:12462-12473 -> ``charge_window_admits()``
+                                                      + ``step(charge_intent=)``
 
-fw v27 rev 2 (2026-09-03) IS MIRRORED IN FULL: the conduction floor at 0.15 A
-and every quantity derived from it (the 0.30 A closed-loop gate, the 0.25 A
-exit, the 0.906 A droop-scale crossover, the 1.4706 A ceiling reachability), the
-battery-only start with its frozen-path filter advance, the relaxing feedforward
-clip with its isolated-channel bypass and accumulating proposal, the
-load-scheduled droop scale with its hysteresis and fractional slew, and the
-g-guard count at the write site. See ``docs/fw27_governor_package.md``.
+fw v28 (2026-09-08) IS MIRRORED IN FULL, on top of the fw v27 rev 2 package
+(the frozen-path filter advance, the relaxing feedforward clip with its
+isolated-channel bypass and accumulating proposal, the load-scheduled droop
+scale with its hysteresis and fractional slew, the g-guard count at the write
+site). What fw v28 adds:
+
+  * the conduction floor at 0.125 A and every quantity derived from it (the
+    0.25 A closed-loop gate, the 0.20 A exit, the 0.755 A droop-scale
+    crossover; the 1.4706 A ceiling reachability does NOT move);
+  * the SOURCE SELECTOR - the battery-only start generalised, so the commanded
+    share picks the source at either rail INCLUSIVELY and holds in between,
+    through the same latch, guards and release;
+  * F1, the charge path's DISARM-BEFORE-OPEN plus the conduction gate
+    (``charge_intent`` / ``charge_window_admits()``);
+  * F3, the hysteresis sliver HOLDS the reference, bounded by the dark
+    threshold, instead of pinning it at the balanced split;
+  * F4, k_d holds at K_DROOP in a charge window and FREEZES under any cut;
+  * F5, the two handoff thresholds at 0.10 / 0.12 A, and review S7's sub-gate
+    handoff ceiling.
+
+See ``docs/fw28_source_selector.md``; the package it builds on is
+``docs/fw27_governor_package.md``.
 ⚠️ THE MEASURED-AGREEMENT TABLE BELOW IS A fw v21-v26 RECORD. It was scored
 against boards that ran the fixed 0.30 ohm scale, a 0.60 A gate and an unclipped
-feedforward walk, so it is evidence about the PORT, not about fw v27 rev 2. It
-is re-scored on the first fw v27 campaign (campaign G).
+feedforward walk, so it is evidence about the PORT, not about fw v27 rev 2 or
+fw v28. It is re-scored on the first fw v28 campaign.
 
 FIDELITY BOUNDARIES
 -------------------
@@ -197,18 +216,30 @@ GOV_CONST = {
     "DROOP_R_MAX": 0.85,                        #                    .ino:2171
     # Share-loop gating.
     "SHARE_I_TOT_MIN_A": 0.075,                 # A                  .ino:2182
-    # fw v27 rev 2 (2026-09-03): the light-load conduction floor moved 0.30 -> 0.15 A on the
-    # operator's ruling. EVERYTHING below is derived from it and moves with it: the closed-loop
-    # gate 2*I_min = 0.30 A, the exit 0.25 A, the minority clip band, the k_d crossover 0.906 A
-    # and the fw v26 ceiling reachability. See docs/fw27_governor_package.md section 8.
-    "SHARE_MINORITY_I_MIN_A": 0.15,             # A                  .ino:2392
+    # fw v28 (2026-09-08): the light-load conduction floor moved 0.15 -> 0.125 A on the operator's
+    # ruling that the constant low-current droop authority is D = 0.25 V at design scale
+    # (I_min = D/RE_MAX = 0.25/2.0136 = 0.124 -> 0.125 A). EVERYTHING below is derived from it and
+    # moves with it: the closed-loop gate 2*I_min = 0.25 A, the exit 0.20 A, the minority clip
+    # band, the k_d crossover 0.755 A and the fw v26 ceiling reachability (which does NOT move —
+    # the band-edge term still governs). See docs/fw28_source_selector.md section 6.
+    # THE HYPOTHESIS STATUS IS UNCHANGED: nothing has demonstrated that conduction margin becomes
+    # load-independent once the authority is held constant, and the HIL plant CANNOT demonstrate
+    # it (no PFM model, no light-load converter branch — a channel commanded to 0.125 A in the
+    # model simply carries 0.125 A). Only the bench CAL-6 sweep settles it.
+    "SHARE_MINORITY_I_MIN_A": 0.125,            # A                  .ino:2515
     "SHARE_CUT_MAX_HANDOFF_A": 0.5,             # A                  .ino:2237
     "SHARE_GOV_OL_HYST_A": 0.05,                # A                  .ino:2245
     # Slew ceilings.
     "DROOP_RATIO_SLEW_PER_TICK": 0.02,          #                    .ino:2254
-    "SHARE_HANDOFF_MIN_A": 0.15,                # A                  .ino:2274
+    # fw v28 (F5): both handoff thresholds retuned so that the fw v19 property "a channel the
+    # governor considers healthy is never called dark" holds again with margin:
+    #   SHARE_HANDOFF_MIN_A (0.10) < SHARE_HANDOFF_LIVE_A (0.12) < SHARE_MINORITY_I_MIN_A (0.125)
+    # (three static_asserts pin this in the firmware, .ino:2619/:2627). Campaign G measured the
+    # cost of the fw v27 rev 2 equality: 58 load-guard cut/restore events in 90 s on
+    # `ems-ftp75-sdp` at a maximum of 0.21 A.
+    "SHARE_HANDOFF_MIN_A": 0.10,                # A                  .ino:2598
     "DROOP_RATIO_SLEW_HANDOFF_PER_TICK": 0.002,  #                   .ino:2281
-    "SHARE_HANDOFF_LIVE_A": 0.20,               # A                  .ino:2288
+    "SHARE_HANDOFF_LIVE_A": 0.12,               # A                  .ino:2612
     "SHARE_HANDOFF_DWELL_MAX_TICKS": 175,       # ticks              .ino:2298
     "SHARE_GOV_FILT_ALPHA": 0.05,               # per tick           .ino:2303
     # Source current-ceiling governor (fw v26).
@@ -224,8 +255,15 @@ GOV_CONST = {
     "SHARE_KD_SAFETY": 0.9,                     #                    .ino:2528
     "SHARE_KD_HYST_A": 0.05,                    # A                  .ino:2534
     "SHARE_KD_SLEW_FRAC_PER_TICK": 0.02 / 0.85,  #                   .ino:2546
-    # Battery-only start (fw v27 rev 2): the effective setpoint the arm feeds the setpoint latch.
-    "SHARE_BATTERY_ONLY_SP": 0.0,               #                    .ino:2573
+    # Source selector (fw v27 rev 2's battery-only start, generalised at fw v28): the effective
+    # setpoint the arm feeds the setpoint latch. BOTH are out of band, so the setpoint latch owns
+    # the setpoint on every active tick and the selector can never compete with it.
+    "SHARE_BATTERY_ONLY_SP": 0.0,               #                    .ino:2734
+    "SHARE_SELECTOR_FC_SP": 1.0,                #                    .ino:2748
+    # RT1987 ideal-diode turn-on delay, the physical quantity the survivor blanking window covers
+    # (DS 17.4/17.6 Table 1). Pinned against SHARE_CUT_SURVIVOR_BLANK_MS by a firmware
+    # static_assert (.ino:3973) so a future shortening cannot silently re-open F1 in miniature.
+    "RT1987_T_D_ON_MS": 8.0,                    # ms                 .ino:3967
     # Actuation.
     "SHARE_CUTOFF_HYST": 0.01,                  #                    .ino:3258
     "SHARE_CUT_SURVIVOR_BLANK_MS": 30.0,        # ms                 .ino:3353
@@ -251,10 +289,13 @@ _R_MAX = GOV_CONST["DROOP_R_MAX"]
 #           = min(DROOP_R_MAX * I_tot, I_tot - SHARE_MINORITY_I_MIN_A)
 # and the ceiling can bind only where BOTH terms exceed it:
 #     DROOP_R_MAX * I_tot > CEIL      ->  I_tot > CEIL / DROOP_R_MAX = 1.4706 A
-#     I_tot - I_min       > CEIL      ->  I_tot > CEIL + I_min       = 1.40 A
-# ⚠️ THE GOVERNING TERM SWAPPED AT fw v27 rev 2. At I_min = 0.30 A the
-# conduction-floor term was the tighter one and the threshold was 1.55 A; at
-# 0.15 A the BAND EDGE governs and the threshold is 1.4706 A. The expression
+#     I_tot - I_min       > CEIL      ->  I_tot > CEIL + I_min       = 1.375 A (fw v28)
+# ⚠️ THE GOVERNING TERM SWAPPED AT fw v27 rev 2 AND DID NOT MOVE AGAIN AT
+# fw v28. At I_min = 0.30 A the conduction-floor term was the tighter one and
+# the threshold was 1.55 A; from 0.15 A the BAND EDGE governs and the threshold
+# is 1.4706 A. At fw v28's 0.125 A the floor term falls to 1.375 A, so the band
+# edge governs by 0.0956 A rather than 0.071 A and the reachability is
+# UNCHANGED. No ceiling was loosened. The expression
 # below is therefore the MAXIMUM of the two, written as the arithmetic rather
 # than as whichever term happened to win, so a future retune of the floor cannot
 # silently leave a wrong constant here.
@@ -356,11 +397,16 @@ class GovernorState:
     droop_kd: float = GOV_CONST["K_DROOP"]      # shareDroopKd       .ino:10809
     kd_sched_tot: float = 0.0                   # shareKdSchedTot    .ino:10361
     g_guard_count: int = 0                      # shareGGuardCount   .ino:10365
-    # Battery-only start. ``armed`` is set at a profile boundary only
-    # (``arm_battery_only_start()``); ``active`` is the per-tick derivation that
-    # also requires an in-band commanded setpoint and no FC-charge window.
-    batt_only_armed: bool = False               # shareBatteryOnlyArmed
-    batt_only_active: bool = False              # shareBatteryOnlyActive
+    # Source selector (fw v27 rev 2's battery-only start, generalised at fw v28).
+    # ``armed`` is set at a profile boundary only (``arm_battery_only_start()``).
+    # ``active`` is the per-tick derivation; at fw v28 it is simply ``armed``,
+    # because the two fw v27 rev 2 conditions (in-band command, no charge
+    # window) are both GONE — see ``step()``.
+    # ``selector_fc`` is the SELECTION: False = battery, True = fuel cell. It is
+    # evaluated only while armed, and every arm site re-defaults it to battery.
+    batt_only_armed: bool = False               # shareBatteryOnlyArmed  .ino:10620
+    batt_only_active: bool = False              # shareBatteryOnlyActive .ino:10621
+    selector_fc: bool = False                   # shareSelectorFC        .ino:10628
     # The feedforward PROPOSAL while a controller-initiated cut is outstanding.
     # NOT MDAC truth (an isolated tick writes nothing) — it is the accumulating
     # walk the iso bypass needs, because ``r_prev`` is frozen for the duration of
@@ -412,9 +458,12 @@ class GovernorOut:
     # saturating boot-monotonic count of MDAC writes whose commanded gain
     # exceeded full scale, i.e. the firmware's ``shareGGuardCount``.
     # ``batt_only`` is the arm's per-tick ACTIVE derivation.
+    # fw v28: ``batt_only`` mirrors HIL observation-frame aux bit 6 (selector
+    # armed) and ``selector_fc`` mirrors aux bit 7 (fuel cell selected).
     k_d: float = GOV_CONST["K_DROOP"]
     g_clamp_count: int = 0
     batt_only: bool = False
+    selector_fc: bool = False
     # True when this tick actually reached setDroopMdac(). False on every
     # non-writing return (frozen, latched, hold, F1 idle) AND on a write that
     # applyShareRatio() abandoned because a channel is isolated (.ino:10492),
@@ -488,10 +537,12 @@ def ceiling_bounded_share(sp: float, i_tot: float) -> float:
     board cannot clamp at: 250 of ``ems-dp-replay``'s 34 827 cells bound at
     I_tot 1.47137 A, where the board's own clip caps the fuel cell at 1.1714 A
     and no ceiling can bind.  The guard therefore encodes the reachability
-    threshold ``CEILING_REACHABLE_I_TOT_A`` directly. fw v27 rev 2 RE-DERIVES
+    threshold ``CEILING_REACHABLE_I_TOT_A`` directly. fw v27 rev 2 RE-DERIVED
     that threshold: the governing term swapped from the conduction floor to the
-    BAND EDGE when I_min moved to 0.15 A, so it is now
-    max(I_FC_CEIL/DROOP_R_MAX, I_FC_CEIL + I_MIN) = 1.4706 A, not 1.55 A. It
+    BAND EDGE when I_min moved to 0.15 A, so it became
+    max(I_FC_CEIL/DROOP_R_MAX, I_FC_CEIL + I_MIN) = 1.4706 A, not 1.55 A.
+    fw v28's move to 0.125 A does NOT move it again - the floor term falls to
+    1.375 A and the band edge governs by a wider margin. It
     remains conservative for the battery ceiling, whose own threshold is
     max(I_BT_CEIL/DROOP_R_MAX, I_BT_CEIL + I_MIN) = 3.176 A.
 
@@ -656,8 +707,35 @@ class GovernorModel:
         the five State-98 profile starts. Deliberately NOT called by
         ``_reset_share_control_state()``: the latch's own release path calls
         that, so arming there would re-arm the cut the release just undid, on
-        the very tick it undid it (design record section 9.2)."""
+        the very tick it undid it (design record section 9.2).
+
+        fw v28 (F2): every arm site DEFAULTS THE SELECTION TO BATTERY, so a
+        profile that never commands a rail behaves exactly as fw v27 rev 2 did.
+        Resetting it here rather than leaving it is the firmware's own choice
+        (.ino:12167): the flag is memory within ONE profile, and carrying a
+        previous profile's selection across a boundary would start a run on the
+        fuel cell alone because of a command given before that boundary."""
         self.state.batt_only_armed = True
+        self.state.selector_fc = False
+
+    def selector_effective_sp(self) -> float:
+        """``shareSelectorEffectiveSp()`` (.ino:10633). The out-of-band setpoint
+        the armed selector feeds the setpoint latch."""
+        return (GOV_CONST["SHARE_SELECTOR_FC_SP"] if self.state.selector_fc
+                else GOV_CONST["SHARE_BATTERY_ONLY_SP"])
+
+    def charge_window_admits(self, t_s: float) -> bool:
+        """fw v28 F1 test (2), ``chargingControl()`` (.ino:12471).
+
+        The FC-charge window opens only when ``FC_BUS_ENABLE`` actually READS
+        HIGH and is out of its turn-on blanking window. This is a test of the
+        SWITCH, not a count of commander periods, so it is independent of the
+        commander cadence and it covers every way the fuel cell can be off the
+        bus — the selector's cut, an r-based ``shareIsoFC``, an operator key, a
+        Pi-commanded share of 0.0. Callers that model ``chargingControl()``
+        (``ems_walk``, ``mpc_ems``, ``hil_plant_sim``) gate the window on this."""
+        st = self.state
+        return bool(st.sw_fc) and not self._blanked("FC", float(t_s) * 1000.0)
 
     @staticmethod
     def _reset_controller_core(st: GovernorState, seed_ratio: float) -> None:
@@ -772,9 +850,16 @@ class GovernorModel:
 
             k_d = max(K_DROOP, RE_MAX * clamp(I_min/tot, DROOP_R_MIN, 0.5) * SAFETY)
 
-        The 0.5 cap mirrors the closed-loop clip's own ``if (lo > 0.5) lo = 0.5``
-        sliver rule; the ``max`` floor is what recovers fw v26 bit-for-bit at and
-        above the crossover ``RE_MAX*SAFETY*I_min/K_DROOP`` = 0.906 A. A
+        THE 0.5 CAP IS UNCHANGED AT fw v28 AND ITS RATIONALE MOVED. It used to
+        be derived by mirroring the closed-loop clip's own
+        ``if (lo > 0.5) lo = 0.5`` pin, and F3 deleted that pin, so the cap now
+        stands on its own argument: the band edge ``r_lo`` is meaningful only
+        as a MINORITY fraction, i.e. below 0.5, and sizing k_d above 0.5 would
+        ask for up to 1.133 ohm at the sliver's deepest point. Capping at 0.5
+        bounds the scale at RE_MAX*0.5*SAFETY = 0.906 ohm - unchanged from
+        fw v27 rev 2, because the CAP, not I_min, sets it.
+        The ``max`` floor is what recovers fw v26 bit-for-bit at and above the
+        crossover ``RE_MAX*SAFETY*I_min/K_DROOP`` = 0.755 A (fw v28). A
         non-positive or tiny total carries no information, so the LIVE value is
         held (the firmware's own structural divide guard)."""
         tot = float(tot_filt)
@@ -788,16 +873,46 @@ class GovernorModel:
         kd = _RE_MAX * r_lo * GOV_CONST["SHARE_KD_SAFETY"]
         return self.k_droop if kd < self.k_droop else kd
 
-    def _update_droop_scale(self) -> None:
-        """``updateShareDroopScale()`` (.ino:10856). CLOSED-LOOP ONLY, once per
+    def _update_droop_scale(self, fc_charge_open: bool = False) -> None:
+        """``updateShareDroopScale()`` (.ino:11119). CLOSED-LOOP ONLY, once per
         tick, above every write site. The open-loop hold writes no MDACs, so
         publishing a new scale there would describe hardware that did not move,
         and the feedforward submode is deliberately left on the inherited
-        value."""
+        value.
+
+        fw v28 F4 — SINGLE-SOURCE WINDOWS DO NOT RUN THE SCHEDULE. The
+        schedule's premise is a MINORITY channel to protect: k_d is sized from
+        the band edge I_min/I_tot, the fraction the minority must carry. In a
+        single-source window there is no minority, so the band edge describes
+        nothing. Campaign G measured the consequence on `mppt-tracking`: the
+        schedule saturated at its 0.906 ohm cap and the FC MDAC word sat at
+        full scale for 9057 ticks. fw v28 splits the two kinds of window:
+
+          * A CUT FREEZES THE SCHEDULE OUTRIGHT (review S4). Under any of
+            ``iso_fc``/``iso_bt``/``sp_cut_fc``/``sp_cut_bt`` the function
+            returns immediately — no target, no slew, ``kd_sched_tot``
+            untouched — because ``applyShareRatio()`` writes no MDAC word at
+            all there, so a walk toward K_DROOP would land as a STEP (up to 3x)
+            on the first post-release write, at the re-entry, which is already
+            the most hazardous tick in the design (F7).
+          * A CHARGE WINDOW HOLDS AT K_DROOP, slewed. ``applyShareRatio()``
+            still writes there, so entering and leaving a window can never step
+            the codes, and on window close the schedule resumes FROM K_DROOP at
+            the normal rate. The SCHEDULE INPUT is FROZEN for the duration
+            (decision): sampling a single-source total would leave
+            ``kd_sched_tot`` holding a load the schedule's law does not
+            describe. It re-samples on the first post-window tick differing by
+            more than SHARE_KD_HYST_A, so the freeze costs at most one tick of
+            staleness."""
         st = self.state
-        if abs(st.filt_total - st.kd_sched_tot) > GOV_CONST["SHARE_KD_HYST_A"]:
-            st.kd_sched_tot = st.filt_total
-        target = self.droop_scale_target(st.kd_sched_tot)
+        if st.iso_fc or st.iso_bt or st.sp_cut_fc or st.sp_cut_bt:
+            return
+        if fc_charge_open:
+            target = self.k_droop            # K_DROOP; kd_sched_tot FROZEN
+        else:
+            if abs(st.filt_total - st.kd_sched_tot) > GOV_CONST["SHARE_KD_HYST_A"]:
+                st.kd_sched_tot = st.filt_total
+            target = self.droop_scale_target(st.kd_sched_tot)
         step = st.droop_kd * GOV_CONST["SHARE_KD_SLEW_FRAC_PER_TICK"]
         st.droop_kd = _constrain(target, st.droop_kd - step, st.droop_kd + step)
 
@@ -811,10 +926,11 @@ class GovernorModel:
         filtered total, so the clipped reference relaxes toward the raw setpoint
         as load grows and the clip introduces no movement of its own.
 
-        At the shipped fw v27 rev 2 constants the caller only runs below the
-        0.30 A gate, where the band is empty, so this is always the hold; the
-        relaxing branch is written for a future retune, exactly as the firmware
-        writes it."""
+        At the shipped fw v28 constants the caller only runs below the 0.25 A
+        gate, where the band is empty, so this is always the hold; the relaxing
+        branch is written for a future retune, exactly as the firmware writes
+        it. UNCHANGED IN LAW at fw v28 - F3 changed the CLOSED-loop clip's
+        empty-band answer to match THIS one, not the other way round."""
         tot = self.state.filt_total
         if not tot > _I_TOT_MIN_A:
             return prev_ratio
@@ -881,7 +997,8 @@ class GovernorModel:
             return 1.0
         # fw v27 rev 2: the LIVE scheduled k_d, not the fixed floor. The droop
         # resistance a channel actually presents is k_d/r, and k_d is now a
-        # function of load below the 0.906 A crossover. Two consequences, both
+        # function of load below the 0.755 A crossover (fw v28). Two
+        # consequences, both
         # stated in docs/HIL_PLANT.md section 4.4a: with rho = 1 and R_f = 0 the
         # scale CANCELS and the law is unchanged (alpha = r); with R_f > 0 the
         # fixed series floor's RELATIVE weight shrinks as k_d grows — at
@@ -1004,16 +1121,20 @@ class GovernorModel:
         """Port of .ino:10419-10620. Returns True while a latch is active, i.e.
         the caller must freeze the whole share loop this tick.
 
-        fw v27 rev 2 BATTERY-ONLY START: while the arm owns the setpoint this
-        function sees ``SHARE_BATTERY_ONLY_SP`` (0.0) instead of the commanded
-        share, which is EXACTLY the share-zero cut this path already implements.
+        fw v28 SOURCE SELECTOR: while the arm owns the setpoint this function
+        sees the SELECTOR'S effective setpoint instead of the commanded share —
+        ``SHARE_BATTERY_ONLY_SP`` (0.0) for a battery selection, which is the
+        share-zero cut this path already implements, or ``SHARE_SELECTOR_FC_SP``
+        (1.0) for a fuel-cell selection, which is the mirrored share-one cut.
+        Both are OUT OF BAND, so the latch owns the setpoint on every active
+        tick and the selector cannot compete with it (.ino:10679).
         The cut therefore inherits the last-source guard, the survivor-regulator
         guard, the fw v25 load guard, the survivor-turn-on blanking and the
         deferral, and the re-entry is this function's own release branch. No
         second cut mechanism exists (design record section 9.1)."""
         st = self.state
         if st.batt_only_active:
-            sp = GOV_CONST["SHARE_BATTERY_ONLY_SP"]
+            sp = self.selector_effective_sp()
         st.deferred_fc = False
         st.deferred_bt = False
         released = False
@@ -1187,9 +1308,24 @@ class GovernorModel:
             st.dark_bt = True
 
         full = GOV_CONST["DROOP_RATIO_SLEW_PER_TICK"]
+        # fw v28 review S7 (.ino:11276) — THE SUB-GATE WINDOW SELECTS THE
+        # HANDOFF RATE ON THE TOTAL, NOT ON THE PER-CHANNEL DARK TEST. With
+        # SHARE_HANDOFF_LIVE_A at 0.12 A a near-balanced split reads BOTH
+        # channels live from 0.24 A of total, which is INSIDE the sub-gate
+        # window [0.24, 0.25) A — so the both-live branch would hand the full
+        # 0.02/tick rate to a region where no closed loop is authorised and
+        # every movement is an open-loop feedforward walk near the conduction
+        # floor. This restores the fw v27 rev 2 property (below the gate the
+        # ceiling was ALWAYS the handoff one) on its proper predicate, the GATE.
+        # The SPENT-DWELL branch below is deliberately NOT covered: the dwell
+        # cap is a bounded safety valve against an unbounded slow walk, and
+        # retiring it below the gate would be a behaviour change beyond the
+        # defect (design record section 6.3).
+        sub_gate = st.filt_total < 2.0 * GOV_CONST["SHARE_MINORITY_I_MIN_A"]
         if not (st.dark_fc or st.dark_bt):
             st.handoff_dwell = 0
-            st.slew_step = full
+            st.slew_step = (GOV_CONST["DROOP_RATIO_SLEW_HANDOFF_PER_TICK"]
+                            if sub_gate else full)
             return
         if st.handoff_dwell >= GOV_CONST["SHARE_HANDOFF_DWELL_MAX_TICKS"]:
             st.slew_step = full
@@ -1271,7 +1407,8 @@ class GovernorModel:
     # ── one tick of powerBalance() ───────────────────────────────────────────
     def step(self, sp: float, i_fc: float, i_batt: float,
              sw_fc: bool, sw_bt: bool, t_s: float,
-             charge_path_owns_bt: bool = False) -> GovernorOut:
+             charge_path_owns_bt: bool = False,
+             charge_intent: bool = False) -> GovernorOut:
         """Advance one ``powerBalance()`` tick.
 
         ``sp``      the commanded ``power_share_setpoint``.
@@ -1288,6 +1425,15 @@ class GovernorModel:
                     (``chargingControl()`` runs before ``powerBalance()`` in
                     every caller — .ino:9853 note). Default False keeps every
                     existing caller unchanged.
+        ``charge_intent``
+                    fw v28 F1. True on a commander period where
+                    ``chargingControl()``'s cruise branch WANTS the window open
+                    (``charge_goal`` positive, not braking, not in the UV
+                    backoff) — whether or not the conduction gate then admits
+                    it. This is what disarms the selector one period before the
+                    window opens. A caller that passes only
+                    ``charge_path_owns_bt`` models fw v27 rev 2's suppression,
+                    not fw v28's disarm.
         """
         st = self.state
         st.ticks += 1
@@ -1299,22 +1445,41 @@ class GovernorModel:
         sp = float(sp)
         total = abs(i_fc) + abs(i_batt)
 
-        # 0. fw v27 rev 2 BATTERY-ONLY START — derive the arm's ownership for
-        #    this tick (.ino:10990-10996), before the setpoint latch runs.
-        #    (c) an OUT-OF-BAND commanded setpoint is a CUT owned by the latch,
-        #        so the arm DISARMS PERMANENTLY on sight of one rather than
-        #        merely deferring: one owner per setpoint, and a battery-only
-        #        rule that took the fuel cell back after the operator's own cut
-        #        released would be a second owner arriving late. A band-edge
-        #        0.15 or 0.85 is IN band and is a share, so it does not disarm.
-        #    (f) an FC-charge window SUPPRESSES the arm (not disarms it):
-        #        assertFcChargeEnable() holds BT_BUS low there, so the entry's
-        #        last-source guard would refuse the cut anyway. The model's
-        #        proxy for that window is ``charge_path_owns_bt``, which is the
-        #        same signal the caller uses for the ownership override above.
-        if st.batt_only_armed and (sp < _R_MIN or sp > _R_MAX):
+        # 0a. fw v28 F1 part (1) — DISARM BEFORE THE CHARGE PATH OPENS
+        #     (.ino:12462). ``chargingControl()`` runs BEFORE ``powerBalance()``
+        #     in every firmware caller, so the disarm lands on this tick and the
+        #     latch's own guarded release re-closes the cut channel on the next
+        #     one. THE TEST IS ON EITHER CUT, not the fuel-cell one alone
+        #     (review S5): with the fuel cell selected the arm holds the BATTERY
+        #     off the bus, and an arm that survived into a window produced
+        #     ownership churn on BT_BUS. ``charge_intent`` is the branch's
+        #     CONDITION (charge_goal > 0, not braking, not in the UV backoff),
+        #     NOT the window state — the disarm fires even on the period the
+        #     conduction gate then refuses the open, which is the whole point.
+        if charge_intent and st.batt_only_armed and (st.sp_cut_fc or st.sp_cut_bt):
             st.batt_only_armed = False
-        st.batt_only_active = st.batt_only_armed and not charge_path_owns_bt
+            st.batt_only_active = False
+
+        # 0b. fw v28 SOURCE SELECTOR — derive the SELECTION and the arm's
+        #     ownership for this tick (.ino:11322-11327), before the latch runs.
+        #     Two fw v27 rev 2 conditions on ACTIVE are GONE:
+        #       (c) "the commanded setpoint is IN BAND, and the arm disarms
+        #           permanently on an out-of-band command". REMOVED: the
+        #           selector's own effective setpoint is ALWAYS out of band, so
+        #           the latch owns the setpoint on every active tick and there
+        #           is nothing to compete with. An out-of-band COMMAND is now an
+        #           INPUT that selects a source, not a competing owner.
+        #       (f) "no FC-charge window is open", a SUPPRESSION. REMOVED and
+        #           replaced by the disarm-before-open above.
+        #     The selection itself is INCLUSIVE at both rails and HOLDS between
+        #     them, and is evaluated only while armed.
+        if st.batt_only_armed:
+            if sp >= _R_MAX:
+                st.selector_fc = True
+            elif sp <= _R_MIN:
+                st.selector_fc = False
+            # in between: HOLD the current selection (no else)
+        st.batt_only_active = st.batt_only_armed
 
         # 1. Setpoint latch owns every out-of-band setpoint, evaluated BEFORE
         #    the minimum-load gate so the release path runs at standstill too
@@ -1334,6 +1499,28 @@ class GovernorModel:
             # the instant the gate is met. Note the firmware's ``>=`` against
             # SHARE_I_TOT_MIN_A here, against the ``<`` gate below.
             if st.batt_only_active:
+                # fw v28 review S2 — THE RAW-CURRENT ESCAPE FROM AN FC
+                # SELECTION (.ino:11373). A fuel-cell selection puts the fuel
+                # cell ALONE on the bus, and single-source is exactly the regime
+                # in which the fw v26 clamp is structurally inert (it acts on a
+                # split, and there is none). The only protection left is
+                # FAULT_OC_FC, which latches on a SINGLE RAW sample above
+                # LIMIT_I_FC_MAX with no filter and no persistence. So the arm
+                # is dropped the instant the RAW |I_fc| exceeds
+                # SHARE_GOV_I_FC_CEIL_A, and the latch's guarded battery release
+                # runs on the next tick. THIS IS THE ONE PLACE A RAW SAMPLE
+                # GATES THE SELECTOR: it is a race against a detector that is
+                # itself raw and single-sample, so filtering it would guarantee
+                # the escape loses that race by construction. Evaluated ABOVE
+                # the SHARE_I_TOT_MIN_A load gate, so it runs at any load.
+                if st.selector_fc and abs(i_fc) > _FC_CEIL_A:
+                    st.batt_only_armed = False
+                # The gate release is SELECTION-AGNOSTIC: the measured total is
+                # |I_fc| + |I_batt| whichever channel is off the bus (the cut
+                # one contributes ~0), so from a fuel-cell selection the release
+                # re-closes the BATTERY through the latch's own battery release
+                # branch, exactly as it re-closes the fuel cell from a battery
+                # selection. No branch on ``selector_fc`` (.ino:11376).
                 if total >= _I_TOT_MIN_A:
                     st.filt_total += GOV_CONST["SHARE_GOV_FILT_ALPHA"] * (
                         total - st.filt_total)
@@ -1366,7 +1553,8 @@ class GovernorModel:
 
         if not st.closed_loop_mode:
             return self._open_loop(sp, i_fc, i_batt, t_ms)
-        return self._closed_loop(sp, i_fc, i_batt, total, t_ms)
+        return self._closed_loop(sp, i_fc, i_batt, total, t_ms,
+                                 charge_path_owns_bt)
 
     # ── open-loop branch (.ino:10147-10213) ──────────────────────────────────
     def _open_loop(self, sp: float, i_fc: float, i_batt: float,
@@ -1414,9 +1602,14 @@ class GovernorModel:
         # harmless only while one step clears SHARE_CUTOFF_HYST on its own:
         #   DROOP_RATIO_SLEW_PER_TICK          0.020 > 0.01  -> re-enters, 1 tick
         #   DROOP_RATIO_SLEW_HANDOFF_PER_TICK  0.002 < 0.01  -> never re-enters
-        # and at the rev 2 gate the handoff rate is the ORDINARY sub-gate
-        # ceiling (no sub-0.30 A total can hold both channels above the 0.20 A
-        # live threshold). ``iso_prop_ratio`` accumulates the proposal across
+        # and below the gate the handoff rate is the ORDINARY sub-gate ceiling.
+        # AT fw v27 rev 2 that held by accident of the threshold values (no
+        # sub-0.30 A total could hold both channels above the 0.20 A live
+        # threshold); at fw v28 two live channels need only 0.24 A against a
+        # 0.25 A gate, so review S7 moved the property onto its proper
+        # predicate - ``_slew_mode()`` selects the handoff ceiling on the
+        # FILTERED TOTAL being sub-gate. The anchor below is still what makes
+        # the re-entry possible. ``iso_prop_ratio`` accumulates the proposal across
         # isolated ticks and is re-anchored to the MDAC truth on every tick that
         # is not isolated. The rate bound survives end to end: the proposal
         # advances by at most one tick's ceiling and the write the re-entry
@@ -1456,7 +1649,8 @@ class GovernorModel:
 
     # ── closed-loop branch (.ino:10215-10377) ────────────────────────────────
     def _closed_loop(self, sp: float, i_fc: float, i_batt: float,
-                     total: float, t_ms: float) -> GovernorOut:
+                     total: float, t_ms: float,
+                     fc_charge_open: bool = False) -> GovernorOut:
         st = self.state
         st.closed_loop_run = True
         st.acted_sp = sp
@@ -1471,7 +1665,10 @@ class GovernorModel:
         # clip, the fw v26 ceilings and the fw v25 load guard (all of which work
         # in CURRENT space and never read k_d) run against the same scale
         # applyShareRatio() will map through at the bottom of this tick.
-        self._update_droop_scale()
+        # fw v28 F4: the FC-charge window is the ONE single-source condition in
+        # which MDAC writes continue, so it holds k_d at K_DROOP; the four cut
+        # flags freeze the schedule outright (inside the method).
+        self._update_droop_scale(fc_charge_open)
         slew = st.slew_step
 
         sp_target = sp
@@ -1479,15 +1676,45 @@ class GovernorModel:
         if st.deferred_fc or st.deferred_bt:
             sp_target = _constrain(sp_target, _R_MIN, _R_MAX)
 
-        # Minority-current governor clip, in-band setpoints only (.ino:10254).
+        # Minority-current governor clip, in-band setpoints only (.ino:11688).
         if _R_MIN <= sp_target <= _R_MAX:
             lo = GOV_CONST["SHARE_MINORITY_I_MIN_A"] / st.filt_total
-            # Hysteresis-sliver ceiling: with lo > hi the Arduino constrain()
-            # would return lo, i.e. the minority split on the WRONG side.
-            if lo > 0.5:
-                lo = 0.5
             hi = 1.0 - lo
-            sp_target = _constrain(sp_target, lo, hi)
+            if lo < hi:
+                sp_target = _constrain(sp_target, lo, hi)
+            else:
+                # ── THE HYSTERESIS SLIVER HOLDS (fw v28, F3, .ino:11730) ──────
+                # Closed-loop mode is held down to 2*I_min - SHARE_GOV_OL_HYST_A
+                # (0.20 A), so inside [0.20, 0.25) A the band INVERTS and no
+                # split is feasible. fw v5 through fw v27 rev 2 answered that
+                # with `if (lo > 0.5) lo = 0.5`, degenerating the bound to the
+                # balanced split. CAMPAIGN G MEASURED THE COST: on
+                # `ems-sdp-cross` a 0.2817 A cruise total sat in the sliver for
+                # 17 s spans and the reference was walked to and pinned at
+                # EXACTLY 0.5000 — 0.14 A per channel, BELOW the very conduction
+                # floor `lo` exists to enforce, and against whatever the EMS had
+                # commanded.
+                # fw v28 answers it the way feedforward_clip_target() already
+                # answers an empty band: HOLD. ``sp_eff_prev`` is the variable
+                # the effective-setpoint slew immediately below integrates, so
+                # assigning it here makes that slew a no-op and the controller
+                # sees ZERO reference motion for as long as the total stays in
+                # the sliver — not a walk to a different value at a slower rate.
+                # THE HOLD IS BOUNDED (review S3), by the DARK threshold rather
+                # than by the conduction floor, or a loop that closed at a rail
+                # reference and then fell into the sliver would hold 0.85 at
+                # 0.20-0.25 A of total, i.e. a ~0.03 A minority that reads dark:
+                #     loD = min(0.5, SHARE_HANDOFF_MIN_A / filt_total)
+                # 0.400 at 0.250 A and 0.500 at 0.200 A, so the bound is a
+                # NO-OP for any held reference already inside [0.4, 0.6] across
+                # the whole sliver. SHARE_HANDOFF_LIVE_A was rejected for it:
+                # 0.12/0.24 = 0.5 would reproduce campaign G's exact pin.
+                # The bound never STEPS the reference — it moves sp_eff_prev,
+                # which the slew below then walks from at the tick ceiling.
+                lo_d = GOV_CONST["SHARE_HANDOFF_MIN_A"] / st.filt_total
+                if lo_d > 0.5:
+                    lo_d = 0.5
+                sp_target = _constrain(st.sp_eff_prev, lo_d, 1.0 - lo_d)
 
         # Source current-ceiling clamp (fw v26, .ino:10635-10640). AFTER the
         # minority-current clip (conduction feasibility owns the floor) and
@@ -1603,7 +1830,7 @@ class GovernorModel:
         st.mode_counts[mode] = st.mode_counts.get(mode, 0) + 1
         r = st.r_prev
         # fw v27 rev 2: the LIVE scheduled scale, not the fixed floor. Above the
-        # 0.906 A crossover the schedule IS K_DROOP, so every code here is
+        # 0.755 A crossover (fw v28) the schedule IS K_DROOP, so every code here is
         # bit-identical to fw v26 there.
         kd = st.droop_kd
         g_fc = kd / (_RE_MAX * r) if r > 0.0 else 1.0
@@ -1635,6 +1862,7 @@ class GovernorModel:
             k_d=kd,
             g_clamp_count=st.g_guard_count,
             batt_only=st.batt_only_active,
+            selector_fc=st.selector_fc,
         )
 
     # ── convenience ──────────────────────────────────────────────────────────

@@ -1210,14 +1210,17 @@ def test_r_hold_is_consumed_by_the_delivery_table():
 def test_delivery_table_applies_the_minority_clip():
     """H4 mutation 1: at I_tot 0.7 A the minority-current floor binds.
 
-    fw v27 rev 2 re-pin, 2026-09-03: the clip bound at this stimulus moved
-    0.428571 -> 0.214286, because `SHARE_MINORITY_I_MIN_A` moved 0.30 -> 0.15 A
-    and the bound is `I_min / I_tot` = 0.15 / 0.7.  The STIMULUS is unchanged
-    and so is the subject: 0.7 A is still a total at which the floor binds on
-    both rails of the ladder, which is the only thing 0.7 A was chosen for
-    (0.15 < 0.214286 at the bottom, 0.85 > 0.785714 at the top).  The literal is
-    now written as the arithmetic against `gov_mod.GOV_CONST` so it cannot go
-    stale a second time."""
+    fw v28 re-pin, 2026-09-08: the clip bound at this stimulus moved
+    0.214286 -> 0.178571, because `SHARE_MINORITY_I_MIN_A` moved 0.15 ->
+    0.125 A and the bound is `I_min / I_tot` = 0.125 / 0.7.  (fw v27 rev 2 had
+    moved it 0.428571 -> 0.214286 from 0.30 A.)  The STIMULUS is unchanged and
+    so is the subject: 0.7 A is still a total at which the floor binds on both
+    rails of the ladder, which is the only thing 0.7 A was chosen for
+    (0.15 < 0.178571 at the bottom, 0.85 > 0.821429 at the top) - and the
+    margin is now 0.0286 rather than 0.0643, which the precondition below
+    asserts rather than assumes.  The literal is written as the arithmetic
+    against `gov_mod.GOV_CONST` so it cannot go stale; only the RECORDED value
+    beside it moves, which is the point of keeping both."""
     prof = lambda t: 0.7
     prev = _synthetic_preview(prof, n_stages=4)
     pre = M.precompute_stages(prev, 0, 4, mode_seed=M.STAGE_CLOSED)
@@ -1225,7 +1228,7 @@ def test_delivery_table_applies_the_minority_clip():
     d = p.delivery_table(pre, {}, 0.5, [False] * 4)[0]
     lo = M.GOV_MINORITY_A / 0.7
     assert lo == pytest.approx(gm.GOV_CONST["SHARE_MINORITY_I_MIN_A"] / 0.7)
-    assert lo == pytest.approx(0.21428571428571427)
+    assert lo == pytest.approx(0.17857142857142858)   # fw v28 (was 0.214286)
     # THE PRECONDITION THE STIMULUS EXISTS FOR, asserted rather than assumed:
     # the floor must actually bind on both rails at this total.
     assert p.ladder[0] < lo < 1.0 - lo < p.ladder[-1]
@@ -2056,11 +2059,19 @@ def test_the_feedforward_branch_is_numerically_inert_and_gate_1_still_holds():
     # fixture the delivery table WITHOUT its battery-only branch scores a mean
     # of 4.836e-02 - ten times outside the Gate-1 band - because it predicts the
     # two-source split of the standing MDAC codes against a delivered 0.0, which
-    # is precisely the campaign-G defect. With the branch the mean is 1.424e-03
-    # and the residual is ONE stage: the release lands mid-stage at t = 6.04 s
-    # and the modelled crossing instant is not the plant's to the millisecond.
-    assert on_mean == pytest.approx(1.424147e-03, rel=1e-4)
-    assert on_max == pytest.approx(6.634062e-02, rel=1e-4)
+    # is precisely the campaign-G defect. With the branch the mean was
+    # 1.424e-03 at fw v27 rev 2 and the residual was ONE stage: the release
+    # lands mid-stage and the modelled crossing instant is not the plant's to
+    # the millisecond.
+    # fw v28 re-pin, 2026-09-08: 1.424147e-03 -> 1.278127e-03 (-10.3 %). The
+    # gate moved 0.30 -> 0.25 A, so the arm releases EARLIER and the single
+    # residual stage is a shorter one. The mechanism is unchanged and the
+    # figure IMPROVED, so this is a re-pin and not a widening; Gate 1 (5e-3)
+    # holds with more margin than before.
+    assert on_mean == pytest.approx(1.278127e-03, rel=1e-4)
+    # The MAX moves with the mean and for the same reason (an earlier release
+    # shortens the one residual stage): 6.634062e-02 -> 5.917253e-02, -10.8 %.
+    assert on_max == pytest.approx(5.917253e-02, rel=1e-4)
     # THE RETIRED MUTATION, INVERTED RATHER THAN DELETED.  Dropping the two
     # feedforward seeds must now change NOTHING, because the branch they select
     # holds at the same ratio the hold arm holds at.  A retune of
@@ -2271,11 +2282,17 @@ def test_the_coarsening_does_not_move_the_walk_totals():
         r = ems_walk.walk("mpc-det", SCEN, soc0=0.7, governor=True,
                           strategy_kwargs=dict(kw))
         out[label] = (round(r.h2_g, 9), round(float(r.delta_soc), 9))
-    assert out["full"] == (0.009602542, -0.002382921), out
-    assert out["coarse"] == (0.009618534, -0.002376413), out
+    # fw v28 re-pin, 2026-09-08. Both legs move because the governor's
+    # constants move (gate 0.30 -> 0.25 A, minority floor 0.15 -> 0.125 A), not
+    # because the coarsening changed: the SUBJECT of this test is the RATIO
+    # below, and it is re-derived at the new constants like the two totals.
+    #   fw v27 rev 2: full (0.009602542, -0.002382921)
+    #                 coarse (0.009618534, -0.002376413), ratio 0.0016654
+    assert out["full"] == (0.009497171, -0.002425679), out
+    assert out["coarse"] == (0.009520136, -0.00241624), out
     # The retired equality, restated as the measured deviation it became.
     assert out["coarse"][0] / out["full"][0] - 1.0 == pytest.approx(
-        0.0016654, abs=5e-7)
+        0.0024181, abs=5e-7)
 
 
 def test_a_frozen_sub_sample_holds_whatever_the_setpoint_did():
@@ -3255,6 +3272,15 @@ def test_the_seed_snap_is_index_distance_for_an_out_of_range_incumbent():
 # d941170. The LENGTH is unchanged at 3050, which is the part of the claim this
 # round could have broken.
 #
+# fw v28 re-pin, 2026-09-08: b1c2425d... -> c03786e9..., because
+# `SHARE_MINORITY_I_MIN_A` moved 0.15 -> 0.125 A (gate 0.30 -> 0.25 A, minority
+# clip band wider at every total). PLAN INVARIANCE IS NOT CLAIMED ACROSS A
+# FIRMWARE CHANGE, for the same reason it was not at fw v27 rev 2. The LENGTH
+# is unchanged at 3050 again, which is the part of the claim this round could
+# have broken. The selector itself is INERT on this stimulus: the 61 s drive
+# commands no share at or past either band rail, so the arm never selects the
+# fuel cell and the plan differs only through the constants.
+#
 # fw v27 rev 2 re-pin, 2026-09-03: e7616064... -> b1c2425d..., because
 # `SHARE_MINORITY_I_MIN_A` moved 0.30 -> 0.15 A. PLAN INVARIANCE IS NOT CLAIMED
 # ACROSS A FIRMWARE CHANGE and this digest is not evidence of a regression: the
@@ -3271,10 +3297,10 @@ def test_the_seed_snap_is_index_distance_for_an_out_of_range_incumbent():
 # Both re-walks reproduced bit-for-bit over consecutive runs. The LENGTH is
 # unchanged at 3050, which is the part of the claim this round could have
 # broken.
-# provisional_note: re-walked for the fw v27 rev 2 governor, 2026-09-03;
-# pin on campaign G.
-_FEATURE_OFF_SEQ_SHA256 = (
-    "b1c2425db4543b866dc8f9acc4712d26f2f4d088e1b3e7bd6c59133eb4868037")
+# provisional_note: re-walked for the fw v28 governor, 2026-09-08; pin on the
+# first fw v28 campaign.
+_FEATURE_OFF_SEQ_SHA256 = (   # fw v28; b1c2425d... at fw v27 rev 2
+    "c03786e934a7e396a7bbf340e669f4bd1b485da6eddeb12ce56bb61939784c4e")
 _FEATURE_OFF_SEQ_LEN = 3050
 
 
@@ -3365,6 +3391,12 @@ def test_the_quantile_tightening_reaches_the_admissibility_test():
 # r0 in {0.15, 0.30, 0.50, 0.70, 0.85} x both modes.  The two figures below are
 # the whole point of the window's size and are pinned so a governor change that
 # lengthens the handoff fails here rather than silently in a campaign.
+# fw v28 re-pin, 2026-09-08: 95 -> 55 ticks (margin 2.11x -> 3.64x against
+# SS_ADMIT_MAX_TICKS), timeouts still 0. MECHANISM: the minority band widened
+# again (`lo = I_min/I_tot` at 0.125 A instead of 0.15 A), so the deferral's
+# reference clip walks the doomed channel further per tick and the guard admits
+# sooner. The figure IMPROVED, which is why this is a re-pin and not a
+# widening; the reachability premise below is unchanged.
 # fw v27 rev 2 re-pin, 2026-09-03: 118 -> 95 ticks and 2 -> 0 timeouts.
 # MECHANISM, and the two halves have different causes:
 #  * THE TIMEOUTS.  The load guard refuses a cut while the doomed channel
@@ -3379,7 +3411,7 @@ def test_the_quantile_tightening_reaches_the_admissibility_test():
 #    scratch run with the floor forced back to 0.30 returns 114, not 118, so
 #    114 -> 95 is the floor's own contribution and 118 -> 114 belongs to the
 #    `delivery_table` feedforward-clip mirror made in the same round.
-_SS_GRID_MAX_TICKS = 95           # at I_tot 0.75 A, r0 0.85, BT-only
+_SS_GRID_MAX_TICKS = 55           # fw v28 (95 at fw v27 rev 2)
 _SS_GRID_TIMEOUTS = 0             # the load-guard refusal is off the grid
 _SS_GRID_DV0_V = 0.013522
 

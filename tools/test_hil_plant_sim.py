@@ -2087,14 +2087,15 @@ def test_csv_schema_sim_mode_appends_soc(tmp_path):
     # seventh-from-last.
     # mppt_thresh_cnt (fw v24) is appended AFTER the per-mode blocks, in BOTH
     # schemas — it is an observed BOARD field, not a plant quantity.
-    # fc_ceil/bt_ceil (fw v26, aux bits 4/5) are appended after the MPC
+    # fc_ceil/bt_ceil (fw v26, aux bits 4/5) and sel_armed/sel_fc
+    # (fw v28, aux bits 6/7) are appended after the MPC
     # block in BOTH schemas -- observed BOARD fields, like mppt_thresh_cnt.
-    assert header[-2:] == ["fc_ceil", "bt_ceil"]
-    assert header[-14:-2] == ["mppt_thresh_cnt", "error_code",
+    assert header[-4:] == ["fc_ceil", "bt_ceil", "sel_armed", "sel_fc"]
+    assert header[-16:-4] == ["mppt_thresh_cnt", "error_code",
                            "p_mot_w", "p_fc_w", "p_batt_w",
                            "p_chop_w", "p_aux_w", "p_bal_w", "p_chg_loss_w",
                            "mpc_solve_ms", "mpc_share_pred_err", "mpc_budget_hit"]
-    assert header[-21:-14] == ["soc", "cmd_v_sp", "cmd_share_sp",
+    assert header[-23:-16] == ["soc", "cmd_v_sp", "cmd_share_sp",
                               "h2_rate_gps", "h2_cum_g", "h2_sdp_cum_g",
                               "cmd_share_sp_raw"]
     assert "elec_substep_hz" not in header
@@ -2105,16 +2106,17 @@ def test_csv_schema_sim_mode_appends_soc(tmp_path):
 def test_csv_schema_hifi_mode_appends_elec_columns(tmp_path):
     header, _rows = _run_main_csv(
         tmp_path, ["--scenario", "steady", "--electrical", "hifi", "--duration", "0.02"])
-    # fc_ceil/bt_ceil (fw v26, aux bits 4/5) are appended after the MPC
+    # fc_ceil/bt_ceil (fw v26, aux bits 4/5) and sel_armed/sel_fc
+    # (fw v28, aux bits 6/7) are appended after the MPC
     # block in BOTH schemas -- observed BOARD fields, like mppt_thresh_cnt.
-    assert header[-2:] == ["fc_ceil", "bt_ceil"]
-    assert header[-14:-2] == ["mppt_thresh_cnt", "error_code",
+    assert header[-4:] == ["fc_ceil", "bt_ceil", "sel_armed", "sel_fc"]
+    assert header[-16:-4] == ["mppt_thresh_cnt", "error_code",
                            "p_mot_w", "p_fc_w", "p_batt_w",
                            "p_chop_w", "p_aux_w", "p_bal_w", "p_chg_loss_w",
                            "mpc_solve_ms", "mpc_share_pred_err", "mpc_budget_hit"]  # fw v24/v25 tail
     # `elec_substep_n` (2026-09-02, review PLANT-R1-F6) is appended AFTER the
     # two established elec columns, so nothing downstream of them moves.
-    assert header[-24:-14] == ["soc", "elec_substep_hz", "elec_events",
+    assert header[-26:-16] == ["soc", "elec_substep_hz", "elec_events",
                               "elec_substep_n",
                               "cmd_v_sp", "cmd_share_sp",
                               "h2_rate_gps", "h2_cum_g", "h2_sdp_cum_g",
@@ -2153,12 +2155,13 @@ def test_csv_schema_replay_mode_appends_cmd_columns_after_replay_rec(tmp_path):
     POWER_TAIL = ["p_mot_w", "p_fc_w", "p_batt_w",
                   "p_chop_w", "p_aux_w", "p_bal_w", "p_chg_loss_w",
                   "mpc_solve_ms", "mpc_share_pred_err",
-                  "mpc_budget_hit", "fc_ceil", "bt_ceil"]
+                  "mpc_budget_hit", "fc_ceil", "bt_ceil",
+                  "sel_armed", "sel_fc"]
     assert header == (REPLAY_CSV_HEADER_PIN
                       + ["cmd_v_sp", "cmd_share_sp", "mppt_thresh_cnt",
                          "error_code"] + POWER_TAIL)
     assert header.index("replay_rec") == REPLAY_CSV_HEADER_PIN.index("replay_rec")
-    assert header[-16:] == ["cmd_v_sp", "cmd_share_sp", "mppt_thresh_cnt",
+    assert header[-18:] == ["cmd_v_sp", "cmd_share_sp", "mppt_thresh_cnt",
                             "error_code"] + POWER_TAIL
 
 
@@ -2420,7 +2423,7 @@ def test_replay_commands_csv_header_cmd_columns_after_replay_rec(tmp_path):
                          "p_chop_w", "p_aux_w", "p_bal_w",
                          "p_chg_loss_w", "mpc_solve_ms",
                          "mpc_share_pred_err", "mpc_budget_hit",
-                         "fc_ceil", "bt_ceil"])
+                         "fc_ceil", "bt_ceil", "sel_armed", "sel_fc"])
     assert header.index("replay_rec") == REPLAY_CSV_HEADER_PIN.index("replay_rec")
 
 
@@ -2438,7 +2441,7 @@ def test_replay_plain_csv_header_unchanged_cmd_columns_blank(tmp_path):
                          "p_chop_w", "p_aux_w", "p_bal_w",
                          "p_chg_loss_w", "mpc_solve_ms",
                          "mpc_share_pred_err", "mpc_budget_hit",
-                         "fc_ceil", "bt_ceil"])
+                         "fc_ceil", "bt_ceil", "sel_armed", "sel_fc"])
     v_sp_idx = header.index("cmd_v_sp")
     share_sp_idx = header.index("cmd_share_sp")
     assert rows, "sanity"
@@ -2747,14 +2750,15 @@ def test_m3_hifi_with_csv_creates_events_sidecar(tmp_path):
     # SDP round) is appended after THAT, and cmd_share_sp_raw (2026-08-31
     # ledger fix queue) is appended after THAT -- so elec_events is now
     # seventh-from-last, not third-from-last.
-    # fc_ceil/bt_ceil (fw v26, aux bits 4/5) are appended after the MPC
+    # fc_ceil/bt_ceil (fw v26, aux bits 4/5) and sel_armed/sel_fc
+    # (fw v28, aux bits 6/7) are appended after the MPC
     # block in BOTH schemas -- observed BOARD fields, like mppt_thresh_cnt.
-    assert header[-2:] == ["fc_ceil", "bt_ceil"]
-    assert header[-14:-2] == ["mppt_thresh_cnt", "error_code",
+    assert header[-4:] == ["fc_ceil", "bt_ceil", "sel_armed", "sel_fc"]
+    assert header[-16:-4] == ["mppt_thresh_cnt", "error_code",
                            "p_mot_w", "p_fc_w", "p_batt_w",
                            "p_chop_w", "p_aux_w", "p_bal_w", "p_chg_loss_w",
                            "mpc_solve_ms", "mpc_share_pred_err", "mpc_budget_hit"]  # fw v24/v25 tail
-    assert header[-20:-14] == ["cmd_v_sp", "cmd_share_sp", "h2_rate_gps",
+    assert header[-22:-16] == ["cmd_v_sp", "cmd_share_sp", "h2_rate_gps",
                              "h2_cum_g", "h2_sdp_cum_g", "cmd_share_sp_raw"]
     # Resolved BY NAME rather than by a negative index: the fw v24 column
     # shifted every from-the-end offset by one, which is exactly the breakage
@@ -3327,14 +3331,15 @@ def test_pi_live_csv_cmd_columns_blank(tmp_path):
     # cmd_share_sp, and cmd_share_sp_raw (2026-08-31 ledger fix queue) is now
     # the last column in simulated-plant mode -- blank here too, since no SDP
     # policy drives a --pi-live run (no commander is even constructed).
-    # fc_ceil/bt_ceil (fw v26, aux bits 4/5) are appended after the MPC
+    # fc_ceil/bt_ceil (fw v26, aux bits 4/5) and sel_armed/sel_fc
+    # (fw v28, aux bits 6/7) are appended after the MPC
     # block in BOTH schemas -- observed BOARD fields, like mppt_thresh_cnt.
-    assert header[-2:] == ["fc_ceil", "bt_ceil"]
-    assert header[-14:-2] == ["mppt_thresh_cnt", "error_code",
+    assert header[-4:] == ["fc_ceil", "bt_ceil", "sel_armed", "sel_fc"]
+    assert header[-16:-4] == ["mppt_thresh_cnt", "error_code",
                            "p_mot_w", "p_fc_w", "p_batt_w",
                            "p_chop_w", "p_aux_w", "p_bal_w", "p_chg_loss_w",
                            "mpc_solve_ms", "mpc_share_pred_err", "mpc_budget_hit"]  # fw v24/v25 tail
-    assert header[-20:-14] == ["cmd_v_sp", "cmd_share_sp", "h2_rate_gps",
+    assert header[-22:-16] == ["cmd_v_sp", "cmd_share_sp", "h2_rate_gps",
                              "h2_cum_g", "h2_sdp_cum_g", "cmd_share_sp_raw"]
     v_idx, share_idx = header.index("cmd_v_sp"), header.index("cmd_share_sp")
     raw_idx = header.index("cmd_share_sp_raw")
@@ -8500,15 +8505,16 @@ def test_csv_header_carries_h2_sdp_cum_g_at_expected_position(tmp_path):
         tmp_path, ["--scenario", "steady", "--electrical", "simple", "--duration", "0.02"])
     # cmd_share_sp_raw (2026-08-31 ledger fix queue) is now appended after
     # h2_sdp_cum_g, so h2_sdp_cum_g is no longer the last column.
-    # fc_ceil/bt_ceil (fw v26, aux bits 4/5) are appended after the MPC
+    # fc_ceil/bt_ceil (fw v26, aux bits 4/5) and sel_armed/sel_fc
+    # (fw v28, aux bits 6/7) are appended after the MPC
     # block in BOTH schemas -- observed BOARD fields, like mppt_thresh_cnt.
-    assert header[-2:] == ["fc_ceil", "bt_ceil"]
-    assert header[-14:-2] == ["mppt_thresh_cnt", "error_code",
+    assert header[-4:] == ["fc_ceil", "bt_ceil", "sel_armed", "sel_fc"]
+    assert header[-16:-4] == ["mppt_thresh_cnt", "error_code",
                            "p_mot_w", "p_fc_w", "p_batt_w",
                            "p_chop_w", "p_aux_w", "p_bal_w", "p_chg_loss_w",
                            "mpc_solve_ms", "mpc_share_pred_err", "mpc_budget_hit"]  # fw v24/v25 tail
-    assert header[-15] == "cmd_share_sp_raw"
-    assert header[-18:-14] == ["h2_rate_gps", "h2_cum_g", "h2_sdp_cum_g",
+    assert header[-17] == "cmd_share_sp_raw"
+    assert header[-20:-16] == ["h2_rate_gps", "h2_cum_g", "h2_sdp_cum_g",
                               "cmd_share_sp_raw"]
 
 
@@ -8796,7 +8802,8 @@ def test_csv_mppt_thresh_cnt_blank_before_the_first_frame_then_populated(
     header, rows = _run_scripted_csv(tmp_path, monkeypatch, frames,
                                      duration=0.1, port=58961)
     idx = header.index("mppt_thresh_cnt")
-    assert idx == len(header) - 14     # error_code + 7 power + 3 mpc + 2 ceil after
+    assert idx == len(header) - 16     # error_code + 7 power + 3 mpc + 2 ceil
+                                       # + 2 selector (fw v28) after
     assert rows[0][idx] == ""                          # no frame yet
     assert rows[-1][idx] == "19"
     # 255 is written as 255, not blanked: "external-resistor mode / never
@@ -8878,7 +8885,7 @@ def test_csv_ceiling_columns_blank_before_the_first_frame_then_zero_or_one(
                                      duration=0.1, port=58981)
     fc = header.index("fc_ceil")
     bt = header.index("bt_ceil")
-    assert (fc, bt) == (len(header) - 2, len(header) - 1)
+    assert (fc, bt) == (len(header) - 4, len(header) - 3)
     assert rows[0][fc] == "" and rows[0][bt] == ""      # no frame yet
     assert rows[-1][fc] == "1"
     assert rows[-1][bt] == "0"                          # observed clear, not blank
@@ -8918,7 +8925,8 @@ def test_csv_error_code_blank_before_the_first_frame_then_populated(
     header, rows = _run_scripted_csv(tmp_path, monkeypatch, frames,
                                      duration=0.1, port=58971)
     idx = header.index("error_code")
-    assert idx == len(header) - 13     # 7 power + 3 mpc + 2 ceil columns after
+    assert idx == len(header) - 15     # 7 power + 3 mpc + 2 ceil + 2 selector
+                                       # (fw v28) columns after
     assert rows[0][idx] == ""                           # no frame yet
     assert rows[-1][idx] == "16"                        # 0x10 ERR_HIL_STALE
 
@@ -10094,21 +10102,21 @@ def test_power_balance_csv_header_tail_both_schemas(tmp_path):
     sim_header, _ = _run_main_csv(
         tmp_path, ["--scenario", "steady", "--electrical", "simple",
                    "--duration", "0.02"], name="sim.csv")
-    assert sim_header[-2:] == ["fc_ceil", "bt_ceil"]
-    assert sim_header[-12:-2] == ["p_mot_w", "p_fc_w", "p_batt_w",
+    assert sim_header[-4:] == ["fc_ceil", "bt_ceil", "sel_armed", "sel_fc"]
+    assert sim_header[-14:-4] == ["p_mot_w", "p_fc_w", "p_batt_w",
                                "p_chop_w", "p_aux_w", "p_bal_w",
                                "p_chg_loss_w", "mpc_solve_ms", "mpc_share_pred_err", "mpc_budget_hit"]
-    assert sim_header[-14:-12] == ["mppt_thresh_cnt", "error_code"]
+    assert sim_header[-16:-14] == ["mppt_thresh_cnt", "error_code"]
 
     blg_path = _write_synthetic_blg(tmp_path, fw_version=14, v3=True)
     replay_header, _ = _run_main_csv(
         tmp_path, ["--replay", blg_path, "--duration", "0.02"],
         name="replay.csv")
-    assert replay_header[-2:] == ["fc_ceil", "bt_ceil"]
-    assert replay_header[-12:-2] == ["p_mot_w", "p_fc_w", "p_batt_w",
+    assert replay_header[-4:] == ["fc_ceil", "bt_ceil", "sel_armed", "sel_fc"]
+    assert replay_header[-14:-4] == ["p_mot_w", "p_fc_w", "p_batt_w",
                                   "p_chop_w", "p_aux_w", "p_bal_w",
                                   "p_chg_loss_w", "mpc_solve_ms", "mpc_share_pred_err", "mpc_budget_hit"]
-    assert replay_header[-14:-12] == ["mppt_thresh_cnt", "error_code"]
+    assert replay_header[-16:-14] == ["mppt_thresh_cnt", "error_code"]
     # Every established replay-schema index is unchanged: replay_rec keeps
     # its documented position, and the pinned prefix matches byte-for-byte.
     assert replay_header[:len(REPLAY_CSV_HEADER_PIN)] == REPLAY_CSV_HEADER_PIN
@@ -10815,7 +10823,7 @@ def test_mpc_csv_columns_follow_p_chg_loss_w():
                    "existing tail offset moves")
     # ...and nothing sits between the two blocks: the only append AFTER the
     # MPC one is the fw v26 fc_ceil/bt_ceil pair, which is itself the last.
-    k = src.index('header_row += ["fc_ceil", "bt_ceil"]')
+    k = src.index('header_row += ["fc_ceil", "bt_ceil", "sel_armed", "sel_fc"]')
     assert j < k
     assert src.rindex("header_row += [") == k
     # The row site mirrors the header: three values, blank when no MPC ran.
@@ -13558,7 +13566,7 @@ def test_scheduled_g_par_recovers_fw_v26_above_the_crossover():
     RE_MAX*SAFETY*I_min/K_DROOP the schedule IS K_DROOP, so the map's own
     g_par is recovered and every fw v26 figure holds."""
     cross = hil.DP_DROOP_SCHEDULE_CROSSOVER_A
-    assert cross == pytest.approx(0.9061287, abs=1e-6)
+    assert cross == pytest.approx(0.7551073, abs=1e-6)   # fw v28 (was 0.9061287)
     structural = hil.K_DROOP_FW_OHM / hil.RE_MAX_OHM
     for tot in (cross, 1.0, 1.5, 2.0, 4.0, 10.0):
         assert hil.scheduled_g_par(tot) == pytest.approx(structural, rel=1e-12)
@@ -13568,15 +13576,27 @@ def test_scheduled_g_par_recovers_fw_v26_above_the_crossover():
 
 
 def test_scheduled_g_par_is_capped_and_monotone_below_the_crossover():
-    """The 0.5 cap mirrors the closed-loop clip's own sliver rule, so the
-    schedule cannot size k_d for a band edge the clip can never command."""
-    cap = hil.RE_MAX_OHM * 0.5 * hil.SHARE_KD_SAFETY_FW27 / hil.RE_MAX_OHM
-    assert hil.scheduled_g_par(0.30) == pytest.approx(cap, rel=1e-12)
+    """The 0.5 cap bounds the actuator gain g, so the schedule cannot size k_d
+    for a band edge that is not a MINORITY fraction.
+
+    fw v28 restated the rationale: the cap used to be justified by mirroring the
+    closed-loop clip's own `if (lo > 0.5) lo = 0.5` pin, and F3 deleted that
+    pin. The cap value is unchanged either way."""
+    # RE-POINTED AT fw v28. The cap value is UNCHANGED (the 0.5 cap sets it,
+    # not I_min), but the corner at which it engages moves with the floor: the
+    # schedule is capped at and below 2*I_min, i.e. 0.25 A rather than 0.30 A.
+    # 0.30 A is now BELOW the cap and is asserted so, which is what makes this
+    # a re-point rather than a widening.
+    cap = hil.RE_MAX_OHM * 0.5 * hil.SHARE_KD_SAFETY_FW / hil.RE_MAX_OHM
+    corner = 2.0 * hil.SHARE_MINORITY_I_MIN_A_FW
+    assert corner == pytest.approx(0.25, abs=1e-12)
+    assert hil.scheduled_g_par(corner) == pytest.approx(cap, rel=1e-12)
     assert hil.scheduled_g_par(0.10) == pytest.approx(cap, rel=1e-12)
+    assert hil.scheduled_g_par(0.30) < cap
     assert hil.scheduled_g_par(0.0) == pytest.approx(
         hil.K_DROOP_FW_OHM / hil.RE_MAX_OHM, rel=1e-12)
     prev = None
-    tot = 0.30
+    tot = 0.25
     while tot <= 2.0:
         g = hil.scheduled_g_par(tot)
         if prev is not None:
@@ -13601,7 +13621,8 @@ def test_scheduled_g_par_matches_the_governor_models_schedule():
     laws while both still claim to describe fw v27 rev 2."""
     import governor_model as gm
     g = gm.GovernorModel()
-    for tot in (0.30, 0.35, 0.4694, 0.60, 0.75, hil.DP_DROOP_SCHEDULE_CROSSOVER_A,
+    for tot in (0.20, 0.25, 0.30, 0.35, 0.4694, 0.60, 0.75,
+                hil.DP_DROOP_SCHEDULE_CROSSOVER_A,
                 1.0, 1.20, 1.57, 2.0, 4.0):
         want = g.droop_scale_target(tot) / hil.RE_MAX_OHM
         assert hil.scheduled_g_par(tot) == pytest.approx(want, rel=1e-12), tot
@@ -13611,6 +13632,13 @@ def test_scheduled_g_par_matches_the_governor_models_schedule():
     assert g.droop_scale_target(1e9) / hil.RE_MAX_OHM == pytest.approx(
         hil.K_DROOP_FW_OHM / hil.RE_MAX_OHM, rel=1e-12)
     # The constants the two read are literally the same numbers.
+    # fw v28: they are not merely equal, they are the SAME OBJECTS - the
+    # module imports them from GOV_CONST rather than re-typing them, which is
+    # the defect class this assertion used to be the only defence against.
+    assert hil.SHARE_MINORITY_I_MIN_A_FW is gm.GOV_CONST[
+        "SHARE_MINORITY_I_MIN_A"]
+    assert hil.SHARE_KD_SAFETY_FW is gm.GOV_CONST["SHARE_KD_SAFETY"]
+    assert hil.DROOP_R_MIN_FW is gm.GOV_CONST["DROOP_R_MIN"]
     assert hil.SHARE_MINORITY_I_MIN_A_FW27 == pytest.approx(
         gm.GOV_CONST["SHARE_MINORITY_I_MIN_A"])
     assert hil.SHARE_KD_SAFETY_FW27 == pytest.approx(
@@ -13623,22 +13651,40 @@ def test_scheduled_g_par_matches_the_governor_models_schedule():
 def test_the_loss_map_bias_under_the_schedule_exceeds_the_stated_band():
     """THE DECISION THIS ROUND RECORDED, AS ARITHMETIC (2026-09-03).
 
-    The map's stated envelope is |dev| <= 0.8 % of bus voltage. Under the
-    fw v27 rev 2 schedule a fw v26-era map understates the bus sag by
-    (K_EFF(k_d) - 0.308502)*I_tot, which crosses 0.8 % at 0.4694 A and peaks at
-    1.110 % on the cap corner at the 0.30 A closed-loop gate. That is why K_G
-    is NOT re-fitted -- it is the code-to-ohm conversion and is unchanged --
-    while g_par must become schedule-aware, and why the map itself is left
-    alone in a mirror round: moving it orphans every committed DP table."""
+    The map's stated envelope is |dev| <= 0.8 % of bus voltage. A fw v26-era
+    map understates the bus sag by (K_EFF(k_d) - 0.308502)*I_tot.
+
+    RE-DERIVED FOR fw v28 (the conduction floor 0.15 -> 0.125 A). The cap VALUE
+    does not move, but the corner it engages at does, from 0.30 A to
+    2*I_min = 0.25 A, and the bias is the product of a fixed cap excess with
+    I_tot - so a lower corner is a SMALLER peak:
+
+        fw v27 rev 2   peak 1.110 % at 0.30 A, over 0.8 % on [0.30, 0.4694] A
+        fw v28         peak 0.925 % at 0.25 A, over 0.8 % on [0.216, 0.318] A
+
+    THE DECISION: K_G is NOT re-fitted. It is the code-to-ohm conversion and is
+    unchanged in either era; and the peak bias 0.925 % is UNDER the 1 % ceiling
+    the tools round set for re-opening the loss map. The map's own 0.8 %
+    envelope is still exceeded, on a narrower interval than before, and that
+    remains a DP re-solve round rather than a mirror round: moving the map
+    orphans every committed DP table."""
     k_fw26 = hil.DP_BUS_R_FIX + hil.DP_BUS_K_G * hil.DP_DROOP_G_PAR
 
     def dev_pct(tot):
         k_new = hil.DP_BUS_R_FIX + hil.DP_BUS_K_G * hil.scheduled_g_par(tot)
         return 100.0 * (k_new - k_fw26) * tot / hil.DP_BUS_V0_EFF
 
-    assert dev_pct(0.30) == pytest.approx(1.110, abs=0.005)
-    assert dev_pct(0.4694) == pytest.approx(0.800, abs=0.005)
-    assert dev_pct(0.60) == pytest.approx(0.561, abs=0.005)
+    corner = 2.0 * hil.SHARE_MINORITY_I_MIN_A_FW
+    assert dev_pct(corner) == pytest.approx(0.925, abs=0.005)
+    # The peak IS the corner: below it the cap holds k_d constant and the bias
+    # falls with I_tot; above it k_d falls faster than I_tot rises.
+    peak = max(dev_pct(0.001 * i) for i in range(1, 900))
+    assert peak == pytest.approx(dev_pct(corner), abs=1e-6)
+    # UNDER the 1 % ceiling for re-opening the loss map: K_G stays as fitted.
+    assert peak < 1.0
+    assert dev_pct(0.30) == pytest.approx(0.834, abs=0.005)
+    assert dev_pct(0.4694) == pytest.approx(0.524, abs=0.005)
+    assert dev_pct(0.60) == pytest.approx(0.285, abs=0.005)
     assert abs(dev_pct(hil.DP_DROOP_SCHEDULE_CROSSOVER_A)) < 0.01
     # Above the crossover the map is exact, which is the whole point of the
     # max(K_DROOP, .) floor in the firmware's schedule.
