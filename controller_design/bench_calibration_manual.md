@@ -173,6 +173,186 @@ are near the same voltage; the hot-plug guard only fires on a *discharged* bus.)
   ripple aliasing → consider lowering the prefilter corner (raise `TAUF`) and
   resynthesize.
 
+## CAL-6 — Two-axis minority-dropout boundary (per channel direction)
+
+**Purpose.** Locate the commanded operating point at which the minority channel loses
+conduction, as a function of total current and commanded share, for each minority direction.
+The result decides which law the share governor should enforce. Three candidate laws predict
+different boundaries; the grid below separates them through the dependence on $I_{tot}$.
+
+| Law | Boundary in commanded share $r_{edge}$ | Signature across totals |
+|---|---|---|
+| Constant minority current (today: `SHARE_MINORITY_I_MIN_A`) | $I_{min}/I_{tot}$ | $r_{edge}$ falls as $1/I_{tot}$ |
+| Constant MDAC gain (minority source too soft) | constant $r$ ($g = K_{DROOP}/(R_{e,max}\,r)$ constant) | $r_{edge}$ flat in $I_{tot}$ |
+| Conduction margin $D = k_d I_{tot}$ | no boundary in $r$; a threshold in $I_{tot}$ alone | dropout below one total at every $r$ |
+
+Background and evidence: `docs/modeling/low_current_share_stability_20260903.md`; the fw v3–v6
+sweeps in `docs/share_sweep_whitepaper` (conclusions 11 and 15). The existing brackets are
+(0.245, 0.29] A for the FC-minority direction at 1.63 A total, and (0.381, 0.399) A for the
+BT-minority direction at 1.6–1.7 A, with BT dropouts at 0.55–1.04 A in the `W` cluster.
+
+### CAL-6.1 Prerequisites
+
+1. **Lowered floor build.** The production floor clips every setpoint below $0.30/I_{tot}$, so
+   the sweep cannot reach the boundary on the production constant. Build the bench firmware with
+   `SHARE_MINORITY_I_MIN_A` = **0.10 A** (a `BENCH_TEST` override; the constant is `constexpr`
+   and its `static_assert`s against the fw v26 ceilings still hold at 0.10 A). Record the commit.
+   Note: at 0.10 A the fw v19 handoff thresholds (`SHARE_HANDOFF_MIN_A` 0.15 A,
+   `SHARE_HANDOFF_LIVE_A` 0.20 A) sit above the floor, so the reduced handoff slew rate engages on
+   channels the governor considers healthy. This slows the reference walk to 0.002 per tick for at
+   most 175 ticks per dark event. It does not change the boundary; record it in the run notes.
+2. **Bus undervoltage fault armed.** `FAULT_UV_BUS` is armed under `BENCH_TEST` from fw v4. Confirm
+   on the first collapse that the board latches State 99; the fw v3 sweep ran 64 collapses with no
+   fault.
+3. **Sources.** For the FC-minority half, use PSU-A and PSU-B per §3. For the BT-minority half,
+   run the ladder twice: once with PSU-B, once with the **2S pack** on J-BT. The bench supply's
+   1.0–1.35 Ω source impedance is the leading suspect for that direction's failures (whitepaper
+   conclusion 18). Keep the USB serial link connected throughout; a log that truncates with no
+   trailer record is the MCU-brownout signature (`WP0072`/`WP0073`).
+4. **Logger idle.** Send `K`. When the status shows no open file, continue. The sweep refuses to
+   start under plot mode; send `L` if the plotter stream is on.
+5. Safety rules §2 apply unchanged. Each reconnect after a dropout is a load-dump-class event on
+   the boost; **do not repeat a point that collapsed the bus.**
+
+### CAL-6.2 Total-current calibration (once per session)
+
+The trapezoid commands motor phase current, and the bus draw that results is bench-specific.
+Measure the mapping before you choose setpoints; do not use the CAL-1 table (2/3/4/5 A →
+0.145/0.452/0.935/1.346 A) except as a starting guess.
+
+1. Complete §3 steps 1–4 (`T` → State 98, `G` bring-up, `S` shows both bus switches ON).
+2. Send `P` and enter `0.5`.
+3. For each command in the list, send it, wait for `[TP] Trapezoid complete`, and wait 10 s:
+
+```
+T 3 5 0.5
+T 3.5 5 0.5
+T 4 5 0.5
+T 4.5 5 0.5
+T 5 5 0.5
+T 6 5 0.5
+T 6.7 5 0.5
+```
+
+4. Decode each `TPnnnn.BLG` (`tools/decode_benchlog.py`). Record the plateau mean of
+   `I_fc + I_batt` as $I_{tot}$ against its $I_{cmd}$ in the record sheet. Targets are
+   0.45, 0.7, 0.94, 1.15, 1.35, 1.63 and 2.0 A. If a plateau misses its target by more than
+   0.1 A, adjust $I_{cmd}$ and repeat that line.
+
+Note: `T` accepts any peak up to 25 A, a hold of 0 s or more, and a rate above 0 A/s. The
+0.5 A/s rate matches the fw v3–v6 sweeps, so the new brackets are comparable to the old ones.
+
+### CAL-6.3 Closed-loop ladder
+
+Each `T` line runs one trapezoid per listed setpoint, each to its own `TPnnnn.BLG`, with the
+share loop closed and a 10 s motor cool-off between runs. The list syntax is
+`[dwell_s,r1,r2,...]` with the square brackets typed literally; at most 16 setpoints per line;
+setpoints must be within 0.0–1.0. The sweep returns the share to 0.5 on completion.
+
+Setpoint arithmetic. For a minority-current target $I_m$ at the measured total $I_{tot}$:
+
+- FC minority: $r = I_m / I_{tot}$
+- BT minority: $r = 1 - I_m / I_{tot}$
+
+Keep every $r$ inside $[0.15, 0.85]$. A setpoint outside the band is a switch cut through the
+setpoint latch, not a droop point, and must not be listed. The minority targets are 0.40, 0.30,
+0.25, 0.20, 0.15 and 0.10 A; drop any target whose $r$ leaves the band at that total. Order each
+list from the safest setpoint to the most aggressive.
+
+Worked lines for the CAL-1 mapping (recompute from CAL-6.2 before use):
+
+```
+FC minority, I_tot ~ 0.45 A (I_cmd 3):   T 3 5 0.5 [10,0.44,0.33,0.22]
+FC minority, I_tot ~ 0.94 A (I_cmd 4):   T 4 5 0.5 [10,0.43,0.32,0.27,0.21,0.16]
+FC minority, I_tot ~ 1.35 A (I_cmd 5):   T 5 5 0.5 [10,0.30,0.22,0.19,0.15]
+FC minority, I_tot ~ 1.63 A (I_cmd 6):   T 6 5 0.5 [10,0.25,0.18,0.15]
+BT minority, I_tot ~ 0.94 A (I_cmd 4):   T 4 5 0.5 [10,0.57,0.68,0.73,0.79,0.84]
+BT minority, I_tot ~ 1.35 A (I_cmd 5):   T 5 5 0.5 [10,0.70,0.78,0.81,0.85]
+BT minority, I_tot ~ 1.63 A (I_cmd 6):   T 6 5 0.5 [10,0.75,0.82,0.85]
+```
+
+Check of the lines against the goals: at 0.45 A the 0.10, 0.15 and 0.20 A targets give
+$r$ = 0.22, 0.33 and 0.44, and the 0.25 A target gives 0.56, which makes the battery the minority
+and is excluded; at 1.35 A the 0.20 A target gives $r = 0.148$, below the band, so the list ends
+at the 0.15 band edge (0.20 A); at 1.63 A the 0.25 A target lands at
+$r = 0.153$, on the band edge, and reproduces `TP0016`; the BT lines are the mirror images, and
+0.85 at 1.63 A commands a 0.245 A battery minority, the mirror of that same point.
+
+Procedure per line:
+
+1. Send `S`. When both bus switches read ON and `V_bus` is 15.8–15.9 V, send the `T` line.
+2. Watch the `[PS]` and `[TSWEEP]` status prints. When a run collapses the bus and the board
+   has not latched, send `X`. Record the failing setpoint. Do not re-run it.
+3. `X` during a trapezoid or a sweep cancels the sweep, zeroes the motor and returns the share to
+   0.5; it does **not** park the switches (the `T` design choice). Send `S`; when both bus
+   switches still read ON and `V_bus` has recovered, continue with the next line.
+4. When the board latches State 99 (`FAULT_UV_BUS`), it stays latched until a power cycle.
+   Power-cycle PSU-B and PSU-A per §3 step 2, send `T`, `S`, then `G`, and continue from the next
+   line. Record the latch and the setpoint that caused it.
+5. When a line completes naturally, the switches stay as they are; continue with the next line.
+6. After the coarse ladder, bisect once at each total between the last clean and the first
+   failing setpoint (one extra `T` line with a single-entry list). This closes the bracket from
+   about 50 mA to about 20 mA of minority current.
+
+Note: the ramp-down of every run is a continuous scan of $I_{tot}$ at fixed $r$. `TP0016`
+ignited on its ramp-down, not on its plateau. For a run that drops out on the ramp, the total
+current at the first dropout is a boundary point at that $r$; record it with the plateau result.
+
+### CAL-6.4 Open-loop control block
+
+This block separates a loop failure from a plant failure. Run it at two totals (about 0.45 A
+and 1.35 A) in the FC-minority direction, and at 1.35 A in the BT-minority direction.
+
+1. Send `A` and enter the $I_{cmd}$ for the total. The motor runs at fixed current.
+2. Send `O` and enter the same $r$ as the closed-loop point under test. The MDACs take the ratio
+   directly; the share controller is off (`powerBalanceLive` is cleared).
+3. Send `K 1`. Hold for 10 s. Send `K 0`.
+4. Repeat steps 2–3 for the next $r$ in the ladder. When a point collapses the bus and the board
+   has not latched, send `X` (this zeroes the motor and leaves the switches as they are). When
+   the board latches State 99, recover as in CAL-6.3 step 4.
+5. To leave the block, send `A` and enter `0`, then send `P` and enter `0.5`.
+
+Note: `O` accepts 0.0–1.0, and a ratio outside $[0.15, 0.85]$ opens the starved channel's bus
+switch exactly as the closed loop would. Stay inside the band. `A` clamps at ±12 A.
+
+A point that conducts in this block and cycles in CAL-6.3 fails in the loop, not in the plant;
+the fw v3 `TP0016` result is confounded in exactly this way (the ratio parked on the
+`DROOP_R_MIN` rail inside the cutoff hysteresis).
+
+### CAL-6.5 Scoring and the discriminating columns
+
+Decode every log. Score each run over its plateau with the hysteretic minority-dropout counter
+(`tools/benchlog_analysis`): a channel below 20 mA while the other channel carries the total is
+one dropout. A point is **clean** when it has zero dropouts, a bus minimum above 15.5 V, and a
+`share_act` standard deviation below 0.03. Record for every point:
+
+| Column | Source |
+|---|---|
+| achieved $I_{tot}$ | plateau mean of `I_fc + I_batt` |
+| achieved minority current | plateau mean of the minority channel |
+| commanded $r$ | `share_sp`, or $g_{BT}/(g_{FC}+g_{BT})$ from the log |
+| MDAC gain $g$ | $0.149 / r$ (FC minority) or $0.149/(1-r)$ (BT minority) |
+| depression $D$ | $0.30\,\Omega \times I_{tot}$ (design scale) |
+| effective offset $\Delta V_0 / k_d$ | `tools/probes/lowcurrent_blg_offset.py` |
+| verdict | clean / dropout on plateau / dropout on ramp at $I_{tot}$ = … |
+
+Plot the failing and clean points in the ($I_{tot}$, minority current) plane per direction and
+read the law from the table at the top of this section. Also compute the two-source bus droop
+slope from the plateau `V_bus` against $I_{tot}$ across the ladder; this is a fourth reading of
+the design-versus-measured droop gap (`docs/HIL_PLANT.md` §4.2), which sets the realized $D$.
+
+### CAL-6.6 Second pass with the scheduled droop scale
+
+Run this pass only when CAL-6.5 supports the margin law. Flash the bench build with the
+load-scheduled $k_d$ (`WORK_QUEUE.md` §7c) and `SHARE_MINORITY_I_MIN_A` = 0.15 A. Repeat the
+FC-minority lines at 0.45, 0.7 and 0.94 A with the target list reduced to 0.20, 0.15 and 0.12 A.
+The question per point is whether a channel commanded at $D / R_{e,max}$ = 0.15 A holds
+conduction with $D$ held at 0.30 V. Record the plateau `V_bus` on every run: the scheduled
+build must show a constant 0.30 V (design scale) depression below 1 A instead of a slope.
+
+**Scale.** Seven totals, three to six points each, two directions plus the pack repeat, the
+open-loop block and the bisections: about 90 runs of 30 s plus cool-off, roughly 90 minutes.
+
 ---
 
 ## 8. Where every number goes + regeneration
@@ -219,4 +399,16 @@ CAL-3  hw latency: __/__/__/__/__ µs (worst ____)   tau_r: __/__/__/__/__ µs (
 
 CAL-4  V_bus @ 0.5 A: ______   @ ____ A: ______   sag slope: ______ Ω (pred. ~0.30)
        k_d decision: ______ Ω   r span: [____, ____]
+
+CAL-6  build: SHARE_MINORITY_I_MIN_A = ____ A, commit ____   BT source: PSU-B / pack
+       I_cmd -> I_tot (A): 3:____ 3.5:____ 4:____ 4.5:____ 5:____ 6:____ 6.7:____
+       FC minority — last clean / first dropout (minority A, r, g, D) per total:
+         0.45: ____/____   0.70: ____/____   0.94: ____/____   1.15: ____/____
+         1.35: ____/____   1.63: ____/____   2.00: ____/____
+       BT minority — same columns:
+         0.45: ____/____   0.70: ____/____   0.94: ____/____   1.15: ____/____
+         1.35: ____/____   1.63: ____/____   2.00: ____/____
+       open-loop block (conducts / cycles): 0.45 FC ____  1.35 FC ____  1.35 BT ____
+       bus droop slope across the ladder: ______ V/A (design 0.30; measured 0.074/0.16)
+       law supported: constant-current / constant-g / margin      D at boundary: ______ V
 ```

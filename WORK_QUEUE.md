@@ -1,5 +1,117 @@
 # Work queue — updated post round 2026-09-02 (Ag105 η = 0.88, η-era DP/SDP, MPC live, campaigns B and C analysed, physics review closed, session closed out)
 
+## 0e. fw v28 round (operator rulings 2026-09-08) — the source selector, the sliver hold, I_min 0.125 A, the charge-window k_d hold, and the F1 sequencing fix
+
+Rulings (2026-09-08, after the campaign G/G2/H digest): (1) F1 fixed the preferred way; (2) the never-closed
+region selects battery-only OR fuel-cell-only from the commanded share with INCLUSIVE 0.85 / 0.15 thresholds;
+(3) the forced-0.5 sliver becomes a HOLD, and `SHARE_MINORITY_I_MIN_A` 0.15 -> **0.125 A** (D = 0.25 V);
+(4) F4 fixed as proposed; F5 handoff constants **0.10 A dark / 0.12 A live**. F6 is a tools item; F7 is
+RECORDED, not built. Every item below is a behaviour change at profile start, so the package ships as
+**fw v28** (`FW_VERSION` 28; BLG stays v8; the 18 B / 40 B HIL frames and the v4 / 58 B telemetry are
+untouched). Process: `orchestrated-feature` (direct); the encoder harness (§7d) runs in PARALLEL on disjoint
+files (it must not edit `test/test_main.cpp` — its `run_tests` hook is added by the orchestrator after the
+firmware round lands).
+
+**Firmware brief (one Opus implementer, `teensy_controller.ino` + `test/test_main.cpp` via the test-writer):**
+- [ ] 1. **F1 — clear the arm before the charge path opens, and open only onto a conducting fuel cell.**
+      Site: `chargingControl()` cruise branch, the `assertFcChargeEnable(true)` call (~line 12005). If the
+      never-closed selector currently holds FC off the bus (`shareSpCutFC` owned by the selector), disarm
+      the selector this commander period and do NOT call `assertFcChargeEnable(true)`; the latch's own
+      release branch (`updateShareSetpointCutoff()`, `V_BUS_CHARGED_THRESH`-gated) re-closes FC_BUS on the
+      battery-fed bus at the next 1 kHz tick. Open FC_CHARGE only when `FC_BUS_ENABLE` reads HIGH and
+      `busSwitchBlanked(FC_BUS_ENABLE)` is false (conduction-gated, not period-counted, so the cadence is
+      irrelevant and the charge-window HANDOFF trigger seen on campaign H is covered by the same test). The
+      S2 restore inside `assertFcChargeEnable()` stays (unreachable from the selector afterwards). Test: window
+      entry from a battery-only state asserts FC_BUS HIGH for >= the RT1987 turn-on before BT_BUS goes LOW,
+      and that no tick has both bus switches LOW with MOT_PWR HIGH.
+- [ ] 2. **F2 — the never-closed SOURCE SELECTOR (replaces "battery-only arm" + "disarm permanently on an
+      out-of-band command").** State: the arm plus a selected source in {BT, FC}, default BT at every
+      `armShareBatteryOnlyStart()` site (rename to `armShareStartSelector()` or keep the name and document).
+      Per-tick rule while armed: commanded `power_share_setpoint >= DROOP_R_MAX` (0.85, INCLUSIVE — the Pi
+      clamps to 0.85 and the latch's own test is strict) selects FC; `<= DROOP_R_MIN` (0.15, inclusive)
+      selects BT; in between, HOLD the selection. The effective setpoint fed to `updateShareSetpointCutoff()`
+      is 0.0 (BT) or 1.0 (FC) — always out of band, so the latch always owns it (one owner per setpoint is
+      preserved by construction). A selection CHANGE is make-before-break through the existing machinery and
+      nothing else: the latch releases the cut channel (guarded re-close on a live bus — the F7 inherited-code
+      overshoot, benign), `releasedThisTick` returns the loop for one tick, the entry then cuts the other
+      channel under the last-source guard, the survivor-turn-on blanking (`busSwitchBlanked`) and the fw v25
+      load guard (`SHARE_CUT_MAX_HANDOFF_A` 0.5 A — always admits under the 2·I_min gate). Two switches never
+      move in the same tick. The gate release (the frozen-path filter advance at ~line 11015 and the
+      closed-loop disarm at ~11270) must work from EITHER selection; the FC-charge-window SUPPRESSION of the
+      arm is replaced by item 1's disarm-before-open. The hold vs return-to-battery question on RE-ENTERING the
+      open-loop region after the loop has closed is unchanged (closed-before hold stays; recorded to-do).
+      Tests: BT->FC and FC->BT transitions tick by tick (never both LOW); inclusive thresholds (0.85 exactly
+      selects FC, 0.8499 holds); hold between; gate release from FC-only re-closes BT then closes the loop;
+      the load guard admits at every total under the gate; a selection change during a deferred cut.
+- [ ] 3. **F3 — the hysteresis sliver HOLDS instead of pinning 0.5.** Site: the closed-loop clip at ~line
+      11325 (`if (lo > 0.5f) lo = 0.5f;`). When `lo > hi` (total inside [2·I_min − SHARE_GOV_OL_HYST_A,
+      2·I_min)), hold the reference at the current effective (slewed) setpoint — no motion, the same doctrine
+      as `shareFeedforwardClipTarget()`'s empty-band hold. The k_d schedule's own 0.5 cap in
+      `shareDroopScaleTarget()` is UNCHANGED (it bounds g, not the reference). Test: a total parked in the
+      sliver for 1000 ticks after converging at share 0.80 keeps r within one slew step of 0.80 (was walked to
+      0.5000); a genuine coast-down through the sliver still exits to open loop at the exit threshold.
+- [ ] 4. **`SHARE_MINORITY_I_MIN_A` 0.15 -> 0.125 A** (`constexpr`, ~line 2392; operator: D = 0.25 V).
+      Derived and MOVING: gate 0.30 -> 0.25 A, exit 0.25 -> 0.20 A, crossover 0.906 -> 0.755 A (the `'S'`
+      line and every prose site derive from the symbols — grep for 0.906, 0.30 A gate, 0.25 A exit, 1.4706,
+      0.272 V and re-derive each), authority `RE_MAX·0.125·0.9` = 0.227 V (0.252 V at unity), fw v26
+      reachability: floor term 1.375 A, `DROOP_R_MAX` term 1.471 A still governs (the `static_assert`s at
+      ~2680–2700 re-derive; NO ceiling is loosened). **F5 with it:** `SHARE_HANDOFF_MIN_A` 0.15 -> **0.10 A**,
+      `SHARE_HANDOFF_LIVE_A` 0.20 -> **0.12 A**, so a minority AT the floor reads live (the 0.15 == floor
+      equality that produced 58 cuts / 90 s is gone); re-state the fw v19 rationale at the constants and the
+      `static_assert` that the floor sits above the dark threshold. Sub-gate fixtures were HALVED for rev 2;
+      re-point them proportionally (0.15/0.125) with the justification at the site, as rev 2 did.
+- [ ] 5. **F4 — hold k_d at `K_DROOP` in single-source windows.** `shareDroopScaleTarget()` /
+      `updateShareDroopScale()` (~10840–10875): the target is `K_DROOP` whenever `FC_CHARGE_ENABLE` reads HIGH
+      or any of `shareIsoFC/BT`, `shareSpCutFC/BT` is set; slewed under the existing
+      `SHARE_KD_SLEW_FRAC_PER_TICK` so the codes never step; on window close the schedule resumes from
+      `K_DROOP` at the normal rate. Test: open a charge window at 0.16 A single-source and assert the FC code
+      never reaches 4095 and `shareGGuardCount` stays 0 (was 9057 ticks on mppt-tracking); the schedule
+      resumes after the window.
+- [ ] 6. **F7 RECORDED, not built:** the re-entry closes a channel on inherited MDAC codes (0.2355 A / 12 ms on
+      ems-ftp75-sdp). With the selector, re-entries happen at every selection change; re-seeding the codes at
+      the clipped band edge on release is a separate ruling (a second writer outside the rate limiter was
+      REJECTED in rev 2).
+- [ ] 7. Changelog block at the top of the `.ino`, `FW_VERSION` 28, `docs/firmware-versions.md` row 28
+      (PENDING FLASH), design record `docs/fw28_source_selector.md` (mechanism, the make-before-break
+      argument, the derived-constant table at 0.125 A, validation), CLAUDE.md addendum 2026-09-08, then the
+      Opus safety review + Sonnet correctness review, fix round, `self-review`, three builds (baseline
+      4114 / 175 / 4596), commit with the flag flip, push. Operator flashes.
+
+**Tools mirror round (after the firmware lands; one boundary = fw v28):**
+- [ ] 8. `governor_model.py` (selector, sliver hold, k_d charge-window hold, the three constants),
+      `test/gov_fw27_harness.cpp` -> fw v28 harness + `test_governor_fw27_equivalence.py` (new cases: both
+      transitions, the sliver, the window hold; max code delta 0), `ems_walk.py` + the MPC delivery table /
+      shadow governor / `batt_only_cut_mask()` (selector-aware: the policies' commanded share now picks the
+      source under the gate), `hil_plant_sim.py` FW28-ERA block, `run_hil_suite.py` `_BATT_ONLY_GATE_A`
+      and every early-window switch-word pin (FC-only starts are now reachable), `TARGET_FW_VERSION` 28.
+- [ ] 9. Re-derive every stimulus expressed as a designed total at I_min 0.125 (the retrospective rule):
+      `fw26-clamp-joint` step (1.57 A: bound min(0.85·1.57, 1.57−0.125) = 1.3345 A, `DROOP_R_MAX` term
+      governs — confirm and re-walk), the sweep/cruise legs, the sdpx/sdpb/sdpftp pins, the ftp75c legs (now
+      FC-selectable under the gate — check what v6 / the DP tables command below 0.25 A), the ems-sdp bin-21
+      plateau (ruling still open). Re-walk every anchor; provisional pins for the first fw v28 campaign.
+- [ ] 10. **F6:** the walk models the share-loop feedback-EMA overshoot on the fw v26 clamp (+3 % of r for
+      ~12 ms; the joint leg's bound needs a third reading on the board).
+- [ ] 11. Suites, commit, push; first fw v28 campaign after the operator's flash (full plan incl. the opt-in
+      legs; the F1 legs `charge-to-full`, the five `ems-ftp75c-*`, `ems-sdp-cross` are the witnesses).
+
+**Open-item review (2026-09-08, everything else in this file, triaged):**
+- Runs THIS session in parallel with the firmware: **§7d encoder-defect harness** (operator brief, disjoint files).
+- Tools round after fw v28 (items 8–11 above) absorbs: §7b Gate-1 single-source-aware; `ems-y-b00-*`
+  two-source-law gap; `CANDIDATE_COST_MS_NOMINAL` rule (read the next campaign first); ftp75c realizable
+  regen fraction doc (0.63); §7b hygiene batch; §0a mpc-cross / mpc-sto cap-lifted re-walk; the per-stage DP
+  residual check; F2 (deferral in the single-source surrogate).
+- Rulings still OPEN for the operator: the `--droop measured` split-law scaling (§0c 9a); `ASYM_SIMPLE_I_MIN_A`
+  at the 0.09 A idle (§0d 6); the ems-sdp stimulus knob (bin-21 plateau); the RT1987 constant-slew ramp A/B;
+  the MPC delivery-table residual past the release; hold vs return-to-battery on re-entry (§0d item 2).
+- Off-campaign long jobs, unscheduled: the 75 matched-DP re-solves (`provenance_drift`, now a fw v28 era
+  too — re-solve ONCE after the mirror); the alpha-sweep re-run at the measured billing.
+- Housekeeping: CLAUDE.md is 70.7 KB — rotate the 2026-09-02b (fw v26) addendum into the archive with the
+  2026-09-08 addendum (its facts live in `docs/fw26_current_ceiling_governor.md` and firmware-versions row 26);
+  the 56 un-audited line citations (§0a); the benchlog exe rebuild; the sub-5 ms replay chatter (§0a).
+- Bench (blocked, no access): everything in §3 plus the fw v28 gates — the fw v6 ladder at 0.125/0.875 and
+  the two-axis dropout sweep at the scheduled scale (CAL-6), the AD5443/OPA197 DMM measurement, the VESC
+  below 5 V, the standstill capture with the VESC powered, the joint bound's third reading (campaign).
+
 ## 0. NEXT — operator review (2026-09-03 morning), in this order
 
 The overnight session 2026-09-02/03 ran two full campaigns on fw v26 (D `hil_report_20260902_220604`,
@@ -391,7 +503,9 @@ sim-only strategies.
   Sizes `M_floor` for the margin-referred governor and how far the floor moves under a scheduled
   `k_d`. The share-sweep whitepaper's standing recommendation (conclusions 11 and 15), absent from
   this queue until now. Existing brackets: FC-minority (0.245, 0.29] A at 1.6 A total; BT-minority
-  (0.381, 0.399) A at 1.6–1.7 A and dropouts at 0.55–1.04 A in the W cluster.
+  (0.381, 0.399) A at 1.6–1.7 A and dropouts at 0.55–1.04 A in the W cluster. **Procedure:
+  `controller_design/bench_calibration_manual.md` CAL-6** (2026-09-04) — lowered-floor bench
+  build (`SHARE_MINORITY_I_MIN_A` 0.10 A) is its one firmware prerequisite.
 
 ## 4. Protocol flags
 
@@ -657,6 +771,109 @@ Added to §3 (bench): the two-axis per-channel dropout-boundary sweep (setpoint 
 at fixed setpoint, both minority directions, and a repeat of WP0073/WP0100 on the pack instead of
 the 1.0–1.35 Ω bench battery supply) — the whitepaper's standing recommendation, previously absent
 from this queue.
+
+## 7d. Opened 2026-09-08 (host-native encoder-defect harness — implementation brief)
+
+Source: operator question 2026-09-08 ("is it feasible to add a simulation of the encoder wheel to
+the hi-fi HIL engine, with phase offset, +1/−1/+1 teeth, and missing teeth"). **Feasibility
+verdict:** yes, but NOT as a plant extension. Under `HIL_SIM` the 40 B injection frame carries
+`v_actual` in m/s at offset 30 and `updateSensors()` SKIPS `updateWheelSpeed()`, so `doEncoderA()`,
+`doEncoderB()`, the A-rising period estimator, the reject gates (`ENC_PERIOD_MIN_US` 200 µs,
+`ENC_PERIOD_LO_FRAC` 0.625) and the halving / doubling basins never execute on a HIL board. A
+plant-side wheel model would produce a number the firmware copies. Edges must reach the ISRs, and
+the cheapest substrate that already does this is the host-native mock (`g_pin_value[ENC_A/ENC_B]`,
+`g_mock_micros`; ~20 existing tests drive the real ISRs through it). **Ruling recorded 2026-09-08:**
+the harness is a SEPARATE `test/` target, never a `run_hil_suite.py` scenario (every HIL leg is a
+board reading; this one touches no board). It runs faster than real time (event-driven; estimate
+~500×; the 3961-check production suite takes 0.3 s), so run speed is not a constraint.
+
+**Deliverables (in order):**
+
+1. **`tools/encoder_edge_script.py` — edge-list generator.** Input: a TRUE surface-velocity
+   trajectory `v(t)` produced by stepping the plant's mechanical law
+   `m_eff·dv/dt = K_F·I_cmd − sign(v)·F_c − b_eff·v` at 1 kHz from an `I_cmd` stream (constants
+   IMPORTED from `tools/hil_plant_sim.py`: `M_EFF` 3.5, `K_F` 0.7538, `F_COULOMB` 2.00, `B_EFF`
+   0.534 — never re-typed; the `SOC_BAND_DRAIN_SCENARIOS` hand-mirror defect of 2026-09-01 is the
+   precedent). Geometry from the firmware: `ENCODER_SLOTS_PER_REV` 90, `FLYWHEEL_RADIUS_M` 0.0762,
+   pitch 2π·0.0762/90 = 5.3198 mm; the generator asserts these against the `.ino` `#define`s at
+   run time (grep-and-compare, same pattern as the pinmap audit). Output: a sorted list of
+   `(t_us, channel, level)` CHANGE events for A and B, plus a JSON defect manifest. Nominal wheel:
+   B lags A by exactly 90° electrical (one quarter pitch), 50 % duty on both.
+   **Defect scripts** (each parameterised, composable, applied to the IDEAL edge list before
+   emission so the manifest names every altered edge by slot index and time):
+   - `phase_offset_deg` — B channel shifted from 90° (sweep 0–180; the A-rising estimator is
+     blind to it, the quadrature direction decode is not: near 0°/180° direction flips clear
+     `encPhaseEwma` — safety review MED-1 — and force holds / zeros on `v_actual`).
+   - `bounce_slots` — a `+1/−1/+1` tooth: at slot k the A channel produces an extra
+     rising/falling/rising triple inside one pitch, with a settable sub-pitch spacing (sweep
+     50 µs – 0.6 T so the 200 µs floor and the 0.625×ref gate are both crossed). Documented escape:
+     the T/2 doubling basin.
+   - `missing_slots` — slot k (or a run k..k+n) deleted from BOTH channels; produces a 2T A-rising
+     period. Documented failure: the absorbing halving basin (`v_actual` reads exactly half).
+   - `edge_jitter_us` — zero-mean uniform jitter on every edge (the 2.2 kΩ front end's threshold
+     noise; ML0140–145 measured missed AND spurious A-edges with this pull-up fitted).
+   - `dropout_window` — a span with no edges at all (the reading-age bound, `ENC_PERIOD_REF_MAX_US`
+     200 ms path).
+   Defects are positioned by slot index, not time, so a sweep over "where in the cycle" is a sweep
+   over k; the generator also accepts a seed for the jitter and records it in the manifest.
+
+2. **`test/encoder_defect_harness.cpp` — fourth `test/` target `run_tests_encoder`.** Built with
+   the production flags (`-DBENCH_TEST=0 -DHIL_SIM=0` — the ONLY build whose ISR / estimator path
+   runs on the bench board) and `-I../controller_design_MIMO` (Youla drive-controller vectors), same
+   MSYS2 UCRT64 g++ invocation and Makefile pattern as the three existing targets. Loop per run:
+   walk the edge list; for each 1 ms control tick, apply every edge whose `t_us` falls inside the
+   tick (set `g_mock_micros` to the edge's own time, set `g_pin_value[...]`, call `doEncoderA()` /
+   `doEncoderB()`, in order), then set `g_mock_micros` to the tick boundary and run
+   `updateWheelSpeed()`, `motorControl()` and the plant step UNMODIFIED — the harness only supplies
+   edges and reads `I_cmd` back into the mechanical law, so the drive loop is CLOSED on the
+   firmware's own speed estimate (this is what the HIL rig cannot do). `powerBalance()` /
+   `chargingControl()` are out of scope (motor axis only; no share stimulus).
+   Two modes: (a) **regression** — the nominal wheel plus one canonical instance of each defect at a
+   fixed (k, speed), pass/fail with `check()` counts, ADDED TO `run_tests` so an estimator change
+   cannot pass unnoticed; (b) **sweep** — defect × slot-index × cruise-speed grid (e.g. 4 defects ×
+   30 k × 6 speeds, 60 s each: ~70 s of host time at the 500× estimate), report-only, writes one
+   row per run to a CSV (`v_true`, `v_actual` error RMS / max / final basin ratio, hold count,
+   reset count, `encPhaseEwma` clears, direction flips, drive-PI saturation ticks, max `I_cmd`) and
+   dumps the full per-tick trace ONLY for runs whose basin ratio ends outside [0.95, 1.05] (printing
+   per tick for every run is the only thing that would make it slow).
+
+3. **Signatures to pin (from the firmware's own documentation, so a test names what it expects):**
+   - nominal wheel: `v_actual` tracks `v_true` within the fw v18 estimator delay model
+     (`ENC_PERIOD_AVG_N` 2) — the harness re-measures the delay and pins it;
+   - single missing slot at cruise: the low-side gate rejects the 2T period and the reading HOLDS
+     (fw v17 hold-until-corroborated); a RUN of n missing slots crosses the re-seed count
+     (`ENC_PERIOD_REF_SEED_N` 2) and the harness reports the n at which the halving basin becomes
+     absorbing — that n is the deliverable, unknown today;
+   - bounce spacing < 200 µs: rejected by the floor, no effect; spacing between 200 µs and 0.625 T:
+     the gate's reference tracks it and the harness reports whether the T/2 basin is entered and
+     whether the direction-change clear ever un-sticks it;
+   - phase offset: the offset at which direction flips begin, and the resulting hold duty.
+   Where the firmware's documented behaviour and the measured harness behaviour DISAGREE, the
+   harness result is a FINDING against the firmware, logged under `docs/` (encoder analysis lineage:
+   fw v12 ML0140–145, fw v15 period estimator, fw v17 holds, fw v18 90-slot) — not a widened band.
+
+4. **Not-to-change / standalone-ness:** ISRs, `updateWheelSpeed()`, `encoderVelReset()` and the
+   drive controller are NOT edited (the "What NOT to change" list; a tap of the fw v15/v17 class
+   needs a separate ruling). If the harness needs a reset seam, use the existing `enc_reset()`
+   pattern in `test/test_main.cpp`. No wire-protocol change (the 40 B injection frame, the 18 B
+   observation frame and the v4 / 58 B telemetry are untouched). Results folder:
+   `logs/encoder_harness/` (own folder; NOT `HIL Results/`), gitignored like the campaign ledgers,
+   with the CSV + manifests committed only when a finding is written up.
+
+5. **Follow-on (separate item, not this round):** the physical pulse generator on pins 14/15 (a
+   spare Teensy/Arduino replaying an edge script, or streaming edges from the plant's `v` at 1 kHz;
+   ≤ ~564 Hz A-channel at 3 m/s) plus a `#if HIL_SIM` switch that stops overriding `v_actual` from
+   the frame. THAT run is a board reading and belongs in `run_hil_suite.py`; the harness names
+   which edge scripts are worth replaying there. Interrupt latency and GPIO jitter are covered only
+   by the physical route — the harness models neither.
+
+**Process:** `orchestrated-feature` (direct) — the Python tool and the C++ target are separable
+implementer tasks; the test-writer covers the generator (edge-list invariants: monotone `t_us`,
+exact quarter-pitch lag on the nominal wheel, manifest names every altered edge) and the regression
+mode; the review pair is correctness / test-fidelity (does the harness call the ISRs in the same
+order and at the same micros a real CHANGE interrupt would) and data-integrity (constants imported,
+geometry asserted against the `.ino`). Then `self-review`, then all FOUR targets green
+(3961 / 175 / 4443 + the new one). Estimated one session.
 
 ## Shipped 2026-09-02 (overnight)
 
