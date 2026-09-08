@@ -10,3 +10,5 @@ gov_ceiling_harness.exe
 # built on demand by tools/test_governor_fw27_equivalence.py.
 gov_fw27_harness
 gov_fw27_harness.exe
+run_tests_encoder
+run_tests_encoder.exe

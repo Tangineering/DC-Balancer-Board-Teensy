@@ -39,10 +39,11 @@ DEPS = mock_arduino.h mock_wire.h mock_spi.h mock_vesc.h mock_ethernet.h mock_sd
 
 .PHONY: all clean
 
-all: run_tests run_tests_bench run_tests_hil
+all: run_tests run_tests_bench run_tests_hil run_tests_encoder
 	PATH="$(MSYS2_UCRT64):$(PATH)" ./run_tests
 	PATH="$(MSYS2_UCRT64):$(PATH)" ./run_tests_bench
 	PATH="$(MSYS2_UCRT64):$(PATH)" ./run_tests_hil
+	PATH="$(MSYS2_UCRT64):$(PATH)" ./run_tests_encoder
 
 run_tests: test_main.cpp $(DEPS)
 	PATH="$(MSYS2_UCRT64):$(PATH)" $(CXX) $(CXXFLAGS) test_main.cpp -o run_tests
@@ -53,5 +54,15 @@ run_tests_bench: test_main.cpp $(DEPS)
 run_tests_hil: test_main.cpp $(DEPS)
 	PATH="$(MSYS2_UCRT64):$(PATH)" $(CXX) $(CXXFLAGS_HIL) test_main.cpp -o run_tests_hil
 
+# Fourth target (WORK_QUEUE 7d, 2026-09-08): the encoder-defect harness. Built with the SAME
+# production flags as run_tests, because the ISR / period-estimator path it exercises is compiled
+# out of the HIL build entirely (updateSensors() returns before updateWheelSpeed() once an
+# injection frame is accepted), so the production build is the only one whose estimator matches
+# the bench board. Default invocation runs the regression cases; the report-only sweep is
+# `./run_tests_encoder --sweep` and is deliberately NOT part of `all`.
+run_tests_encoder: encoder_defect_harness.cpp $(DEPS)
+	PATH="$(MSYS2_UCRT64):$(PATH)" $(CXX) $(CXXFLAGS) encoder_defect_harness.cpp -o run_tests_encoder
+
 clean:
-	rm -f run_tests run_tests.exe run_tests_bench run_tests_bench.exe run_tests_hil run_tests_hil.exe
+	rm -f run_tests run_tests.exe run_tests_bench run_tests_bench.exe run_tests_hil run_tests_hil.exe \
+	      run_tests_encoder run_tests_encoder.exe
