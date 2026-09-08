@@ -3830,22 +3830,87 @@ def _cut_pre(strategy, tot_a, n=None):
     return pre
 
 
-def test_a_predicted_still_cut_stage_delivers_zero_with_bt_carrying_it():
-    """(a) THE BRANCH ITSELF.  Under a total far below the release gate the arm
-    never releases, so every stage of the horizon is still cut: the delivered
-    share is exactly 0.0 on EVERY ladder point, the fuel cell is billed nothing
-    and the battery is billed the whole stage demand."""
+def test_a_predicted_still_cut_stage_delivers_the_selected_source():
+    """(a) THE BRANCH ITSELF, fw v28 (2026-09-08).
+
+    PREMISE MOVED, and the move is the whole point of the era.  This test was
+    `test_a_predicted_still_cut_stage_delivers_zero_with_bt_carrying_it` and
+    asserted `d == 0.0` on EVERY ladder point, because fw v27 rev 2's cut had a
+    fixed source.  At fw v28 the SOURCE SELECTOR reads the column's own command
+    (`M.selector_choice()`), and the ladder's endpoints ARE the rails
+    (`share_band` is `(DROOP_R_MIN, DROOP_R_MAX)`), so under a total far below
+    the release gate:
+      * the TOP in-band rung (0.85 >= DROOP_R_MAX) selects FUEL-CELL-ONLY -
+        delivered share exactly 1.0, the battery billed nothing;
+      * every other in-band rung selects the BATTERY, because the selection
+        HOLDS at the shadow's committed value and every arm site defaults it to
+        the battery.
+    The arm still never releases, so every stage of the horizon is still cut."""
     s = _bound(loss_map=sim.plant_loss_map())
     tot = 0.5 * M.GOV_ENTRY_A                    # never crosses the gate
     pre = _cut_pre(s, tot)
     d, pfc, pbt, ok, _v = s.planner.delivery_table(
         pre, {}, 0.5, [False] * pre.n, batt_only_seed=True, filt_seed=0.0)
+    top = s.planner.n_band - 1
+    assert s.planner.ladder[top] == pytest.approx(M.DROOP_R_MAX)
+    assert s.planner.ladder[0] == pytest.approx(M.DROOP_R_MIN)
     for j in range(pre.n):
         for si in range(s.planner.n_band):
-            assert d[j][si] == 0.0
-            assert pfc[j][si] == 0.0
-            assert pbt[j][si] == pytest.approx(pre.p_dem_mean[j])
-            assert ok[j][si]                     # no BT overcurrent down here
+            if si == top:
+                assert d[j][si] == 1.0
+                assert pbt[j][si] == 0.0
+                assert pfc[j][si] > 0.0
+            else:
+                assert d[j][si] == 0.0
+                assert pfc[j][si] == 0.0
+                assert pbt[j][si] == pytest.approx(pre.p_dem_mean[j])
+            assert ok[j][si]                     # no overcurrent down here
+
+
+def test_the_selection_holds_between_the_rails_and_is_inclusive_at_them():
+    """`selector_choice()` is the firmware's own three-way test (.ino:11322)."""
+    assert M.selector_choice(M.DROOP_R_MAX, False) is True     # inclusive
+    assert M.selector_choice(M.DROOP_R_MIN, True) is False     # inclusive
+    assert M.selector_choice(0.5, False) is False              # holds
+    assert M.selector_choice(0.5, True) is True                # holds
+    assert M.selector_choice(1.0, False) is True
+    assert M.selector_choice(0.0, True) is False
+
+
+def test_an_fc_selected_cut_stage_is_billed_on_the_fc_only_preview():
+    """The survivor names the demand.  With the fuel cell selected the stage is
+    billed on the FC-ONLY bus law, which sags harder than the two-source one, so
+    the billed power is NOT the two-source preview's."""
+    s = _bound(loss_map=sim.plant_loss_map())
+    tot = 0.5 * M.GOV_ENTRY_A
+    pre = _cut_pre(s, tot)
+    pre_fc = _cut_pre(s, tot)
+    for j in range(pre_fc.n):                    # a distinguishable demand
+        pre_fc.p_dem_mean[j] = pre.p_dem_mean[j] * 1.10
+        for k in range(len(pre_fc.p_dem[j])):
+            pre_fc.p_dem[j][k] = pre.p_dem[j][k] * 1.10
+    d, pfc, pbt, ok, _v = s.planner.delivery_table(
+        pre, {}, 0.5, [False] * pre.n, batt_only_seed=True, filt_seed=0.0,
+        pre_fc_release=pre_fc)
+    top = s.planner.n_band - 1
+    for j in range(pre.n):
+        assert d[j][top] == 1.0
+        assert pfc[j][top] == pytest.approx(pre_fc.p_dem_mean[j])
+
+
+def test_a_held_fc_selection_makes_every_in_band_rung_fc_only():
+    """`selector_fc_seed` is the shadow's committed selection, and an IN-BAND
+    column commands no rail - so with the fuel cell already selected every
+    in-band rung runs FC-only, which is the reverse of the default."""
+    s = _bound(loss_map=sim.plant_loss_map())
+    pre = _cut_pre(s, 0.5 * M.GOV_ENTRY_A)
+    d, _pfc, _pbt, _ok, _v = s.planner.delivery_table(
+        pre, {}, 0.5, [False] * pre.n, batt_only_seed=True, filt_seed=0.0,
+        selector_fc_seed=True)
+    for j in range(pre.n):
+        for si in range(1, s.planner.n_band):    # rung 0 is the BT rail
+            assert d[j][si] == 1.0
+        assert d[j][0] == 0.0
 
 
 def test_the_cut_stage_is_the_ss_mode_bt_column_arithmetic_exactly():
@@ -4031,16 +4096,40 @@ def test_sw_fc_bus_bit_matches_the_simulator():
     assert M.SW_FC_BUS_BIT == sim.SW_FC_BUS
 
 
-def test_a_charge_window_suppresses_the_cut_without_disarming_it():
-    """RULE (f) OF THE ARM.  `assertFcChargeEnable()` already owns BT_BUS, so
-    `batt_only_active` is false inside a window; the arm survives it and resumes
-    on the far side, exactly as `governor_model.step()` derives it."""
+def test_a_charge_window_disarms_the_selector_for_the_rest_of_the_profile():
+    """fw v28 F1 (2026-09-08).  PREMISE INVERTED, deliberately.
+
+    This test was `test_a_charge_window_suppresses_the_cut_without_disarming_it`
+    and asserted `all(mask[4])` - that the arm survived a window and resumed on
+    the far side.  fw v27 rev 2's suppression is exactly the break-before-make
+    that collapsed V_bus for up to 20.12 ms and LATCHED UV_BUS on two campaign-H
+    legs, and F1 replaces it with a DISARM one commander period before the
+    window opens (`chargingControl()`, .ino:12462).  So the stages after a
+    charge window are two-source for the rest of the profile: the closed-before
+    hold."""
     s = _bound(loss_map=sim.plant_loss_map())
     pre = _cut_pre(s, 0.5 * M.GOV_ENTRY_A)
     cs = [j in (2, 3) for j in range(pre.n)]
     mask = s.planner.batt_only_cut_mask(pre, cs, 0.0, 100)
     assert all(mask[1]) and not any(mask[2]) and not any(mask[3])
-    assert all(mask[4])
+    for j in range(4, pre.n):
+        assert not any(mask[j]), "the arm survived a charge window (fw v27)"
+
+
+def test_an_fc_selection_escapes_on_the_raw_survivor_current():
+    """fw v28 review S2.  With the fuel cell ALONE on the bus the fw v26 clamp
+    is structurally inert, so the arm drops the instant the RAW survivor current
+    exceeds `SHARE_GOV_I_FC_CEIL_A` - a race against FAULT_OC_FC, which is
+    itself raw and single-sample.  A BATTERY selection has no such escape at the
+    same current (its survivor bound is 2.70 A)."""
+    s = _bound(loss_map=sim.plant_loss_map())
+    ceil = gm.GOV_CONST["SHARE_GOV_I_FC_CEIL_A"]
+    pre = _cut_pre(s, ceil + 0.10)
+    m_fc = s.planner.batt_only_cut_mask(pre, [False] * pre.n, 0.0, 100,
+                                        selector_fc=True)
+    assert not any(m_fc[0][1:]), "the FC escape did not fire"
+    m_bt = s.planner.batt_only_cut_mask(pre, [False] * pre.n, 0.0, 100)
+    assert m_bt[0][0], "the battery selection escaped on a current it survives"
 
 
 def test_with_the_arm_inactive_the_delivery_table_is_bit_identical():

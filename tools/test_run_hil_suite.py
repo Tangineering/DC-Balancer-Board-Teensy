@@ -10885,19 +10885,28 @@ def test_ftp75_en_low_census_band_and_the_report_only_siblings():
     """M-4 (2026-09-04): `ems-ftp75-sdp` gets a BAND on its chatter regime and
     the three sibling FTP-75 legs get the same census, report-only.
 
-    The band is the measurement (61 falls in t = [205, 295] s, campaign G2)
-    under the same -40 %/+40 % rule the sdpx and sdpb censuses use, and it is
-    PROVISIONAL on one fw v27 campaign."""
+    fw v28 RE-PIN, 2026-09-08: the band is (0, 6), not the campaign-G2
+    measurement's -40 %/+40 % range. The chatter's mechanism was the fw v27
+    rev 2 equality `SHARE_HANDOFF_MIN_A == SHARE_MINORITY_I_MIN_A`; F5 splits
+    them (0.10 / 0.12 A against a 0.125 A floor, three firmware static_asserts)
+    and the fw v28 walk gives ONE fall in the window against the board's 61.
+    THIS IS A TIGHTENING, not a widening, and the fw v27 measurement is
+    deliberately OUT of the new band - a band spanning both eras would assert
+    nothing."""
     by = {s["name"]: s for s in
           rhs.FAULT_EXPECTATIONS["ems-ftp75-sdp"]["signals_require"]}
     c = by["sdpftp_en_low_census"]
     assert c["switch_bit"] == rhs.SW_FC_BUS and c["edge"] == "fall"
     assert c["t_window"] == (205.0, 295.0)
-    assert c["edge_count_between"] == (37, 85)
-    # DERIVED, not transcribed: the band is the measurement x [0.6, 1.4].
+    assert c["edge_count_between"] == (0, 6)
+    # The fw v27 rev 2 band, and the property that makes the move a tightening
+    # rather than a widening: the old measurement cannot satisfy the new band.
     import math
-    assert c["edge_count_between"] == (math.ceil(61 * 0.6), int(61 * 1.4))
+    _fw27 = (math.ceil(61 * 0.6), int(61 * 1.4))
+    assert _fw27 == (37, 85)
+    assert c["edge_count_between"][1] < _fw27[0]
     assert rhs._FW27_ERA_PROVISIONAL in c["provisional_note"]
+    assert rhs._FW28_ERA_PROVISIONAL in c["provisional_note"]
     assert not c.get("informational")
     for leg in ("ems-ftp75-5050", "ems-ftp75-socband", "ems-ftp75-dp"):
         sib = {s["name"]: s for s in
@@ -12824,3 +12833,50 @@ def test_fw26_joint_entry_is_fault_free_and_carries_a_provisional_note():
     # ... and the names are unique, which a generated block can silently break.
     names = [s["name"] for s in e["signals_require"]]
     assert len(names) == len(set(names))
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# fw v28: the battery-only checks are SELECTOR checks.
+# ═════════════════════════════════════════════════════════════════════════════
+def test_the_batt_only_checks_refuse_a_leg_that_selects_the_fuel_cell():
+    """`_selector_commands_a_rail()` is a GENERATION-TIME guard, not a runtime
+    one: at fw v28 a leg whose timeline commands `DROOP_R_MAX` inside its own
+    battery-only window puts the FUEL CELL alone on the bus there, and the
+    generated `*_battonly_fc_off` / `*_battonly_bt_carried` pair would assert
+    the opposite of the truth.  The guard raises instead."""
+    import governor_model as _gm
+    # All three registered callers PASS it, which is why they keep the fw v27
+    # polarity - the fw26 legs command 0.50 in that window and nothing above.
+    for tag in ("cruise", "sweep", "joint"):
+        rhs._selector_commands_a_rail(tag, 8.0)
+    # A leg that commands the fuel-cell rail before the window closes is
+    # refused by name.
+    scen = "fw26-clamp-sweep"
+    saved = rhs.SCENARIOS[scen]["pi_timeline"]
+    try:
+        rhs.SCENARIOS[scen]["pi_timeline"] = [
+            (5.0, {"power_share_setpoint": _gm.GOV_CONST["DROOP_R_MAX"]})]
+        with pytest.raises(ValueError, match="FUEL-CELL-ONLY"):
+            rhs._selector_commands_a_rail("sweep", 8.0)
+    finally:
+        rhs.SCENARIOS[scen]["pi_timeline"] = saved
+
+
+def test_the_batt_only_gate_is_the_fw28_constant_and_the_window_shortened():
+    """The gate is DERIVED from `SHARE_MINORITY_I_MIN_A` and moved 0.30 ->
+    0.25 A, so every generated window's crossing instant moved EARLIER with it.
+    A hard-coded 0.30 here would have left twelve windows describing a retired
+    constant, which is the defect the derivation exists to prevent."""
+    import governor_model as _gm
+    assert rhs._BATT_ONLY_GATE_A == pytest.approx(
+        2.0 * _gm.GOV_CONST["SHARE_MINORITY_I_MIN_A"])
+    assert rhs._BATT_ONLY_GATE_A == pytest.approx(0.25)
+    # Monotone in the gate: a lower gate is crossed earlier on the same ramp.
+    load = rhs.FW26_CLAMP_CRUISE_LOAD_A
+    cross_now = rhs._batt_only_gate_cross_s(load)
+    saved = rhs._BATT_ONLY_GATE_A
+    try:
+        rhs._BATT_ONLY_GATE_A = 0.30
+        assert rhs._batt_only_gate_cross_s(load) > cross_now
+    finally:
+        rhs._BATT_ONLY_GATE_A = saved

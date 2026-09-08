@@ -36,6 +36,7 @@ if _TOOLS not in sys.path:
     sys.path.insert(0, _TOOLS)
 
 import governor_model as gov_mod                                # noqa: E402
+import ems_walk as _walk                                        # noqa: E402
 
 # The plant's measured converter asymmetry. The entries are walked at BOTH this
 # and 0.0; the two agree on every current to four decimals, because the clamp
@@ -344,6 +345,18 @@ def joint(dv0_v=DV0_MEASURED_V, skew_ms=0.0, pre_s=8.0, post_s=12.0,
     n = int(round((pre_s + post_s) / DT_S))
     i_fc_peak = 0.0
     i_fc_peak_post = 0.0
+    # ── F6, THE SHARE LOOP'S OWN FEEDBACK EMA (2026-09-08) ──────────────────
+    # The clamp's rail is referred to `share_govTotAFilt`, a ~20 ms EMA, so for
+    # a short window after engagement the reference sits above the true rail
+    # and the delivered fuel-cell current overshoots the ceiling.  The two
+    # constants are MEASURED (campaign G) and live in `ems_walk`, imported here
+    # so the walk and the probe cannot describe two different overshoots.
+    # `i_fc_peak_f6` is the same maximum over the inflated trace; the walk's own
+    # `i_fc_peak` is untouched, so the acceptance bound this leg carries is
+    # judged on exactly the number it was judged on before.
+    i_fc_peak_f6 = 0.0
+    f6_t0 = None
+    ceil_fc_prev = False
     clamp_first_s = None
     clamped_post = 0
     n_post = 0
@@ -364,6 +377,14 @@ def joint(dv0_v=DV0_MEASURED_V, skew_ms=0.0, pre_s=8.0, post_s=12.0,
         d = g.delivered_share(o.r_applied, tot, o.fc_bus_req, o.bt_bus_req)
         i_fc_last, i_bt_last = d * tot, (1.0 - d) * tot
         i_fc_peak = max(i_fc_peak, i_fc_last)
+        if o.ceil_fc and not ceil_fc_prev:
+            f6_t0 = t
+        ceil_fc_prev = bool(o.ceil_fc)
+        _i_f6 = i_fc_last
+        if (f6_t0 is not None
+                and t - f6_t0 < _walk.F6_CEIL_OVERSHOOT_MS * 1e-3):
+            _i_f6 *= (1.0 + _walk.F6_CEIL_OVERSHOOT_FRAC)
+        i_fc_peak_f6 = max(i_fc_peak_f6, _i_f6)
         codes = (o.code_fc, o.code_bt)
         r_last = o.r_applied
         ceil = bool(o.ceil_fc or o.ceil_bt)
@@ -379,6 +400,7 @@ def joint(dv0_v=DV0_MEASURED_V, skew_ms=0.0, pre_s=8.0, post_s=12.0,
             s_min = min(s_min, i_fc_last)
             s_max = max(s_max, i_fc_last)
     return {"i_fc_peak": i_fc_peak, "i_fc_peak_post": i_fc_peak_post,
+            "i_fc_peak_f6": i_fc_peak_f6,
             "clamp_first_s": clamp_first_s,
             "clamp_ticks_post": clamped_post,
             "clamp_duty_post": clamped_post / float(n_post) if n_post else 0.0,
@@ -466,15 +488,20 @@ def main(argv=None):
     print("fw26-clamp-joint, dv0 %.6f V, %.2f -> %.2f A total, share %.2f -> "
           "%.2f" % (args.dv0, JOINT_PRE_TOTAL_A, JOINT_STEP_TOTAL_A,
                     JOINT_PRE_SHARE, JOINT_STEP_SHARE))
-    print("  skew          peak I_fc  post-step peak  clamp @ +ms  clamp "
-          "ticks  post duty  settled I_fc      I_batt   residual")
+    print("  (F6 column: the same peak with the measured post-engagement "
+          "EMA overshoot, +%.0f %% for %.0f ms - REPORTED, the acceptance "
+          "bound still judges `peak I_fc`)"
+          % (100.0 * _walk.F6_CEIL_OVERSHOOT_FRAC,
+             _walk.F6_CEIL_OVERSHOOT_MS))
+    print("  skew          peak I_fc   peak+F6  post-step peak  clamp @ +ms  "
+          "clamp ticks  post duty  settled I_fc      I_batt   residual")
     for label, skew in (("simultaneous", 0.0),
                         ("share +20 ms", 20.0),
                         ("load  +20 ms", -20.0)):
         j = joint(args.dv0, skew_ms=skew)
-        print("  %-13s %8.4f  %14.4f  %11s  %11d  %9.4f  [%.4f, %.4f]  "
-              "%7.4f  %.1e"
-              % (label, j["i_fc_peak"], j["i_fc_peak_post"],
+        print("  %-13s %8.4f  %8.4f  %14.4f  %11s  %11d  %9.4f  "
+              "[%.4f, %.4f]  %7.4f  %.1e"
+              % (label, j["i_fc_peak"], j["i_fc_peak_f6"], j["i_fc_peak_post"],
                  ("n/a" if j["clamp_first_s"] is None
                   else "%.1f" % (j["clamp_first_s"] * 1e3)),
                  j["clamp_ticks_post"], j["clamp_duty_post"],

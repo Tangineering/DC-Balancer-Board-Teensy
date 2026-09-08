@@ -173,6 +173,27 @@ class WalkResult:
     clamped_ticks: int = 0
     clamped_fraction: float = 0.0
     clamped_by_segment: dict = field(default_factory=dict)
+
+    # -- F6: the fuel-cell current peak, with and without the EMA overshoot ---
+    # `i_fc_peak_a` is the largest modelled fuel-cell current over the whole
+    # walk; `i_fc_peak_f6_a` is the same maximum taken over a trace inflated by
+    # `F6_CEIL_OVERSHOOT_FRAC` inside `F6_CEIL_OVERSHOOT_MS` of every rising
+    # edge of the fw v26 clamp.  On a stimulus that never engages the clamp the
+    # two are equal, which is every registered EMS stimulus.
+    i_fc_peak_a: float = 0.0
+    i_fc_peak_f6_a: float = 0.0
+    ceil_engagements: int = 0
+
+    # -- THE en_low SWITCH CENSUS (ADDITIVE, 2026-09-08) ---------------------
+    # The FALLING edges of each bus-switch REQUEST, with their sim times: the
+    # walk-side analogue of the campaign's `edge_count_between` censuses
+    # (`sdpftp_en_low_census`, `ftp_en_low_census`). It exists so an era change
+    # in `SHARE_HANDOFF_MIN_A` / `SHARE_HANDOFF_LIVE_A` can be re-pinned from a
+    # walk instead of being widened after a campaign disagrees. The first fall
+    # on nearly every leg is the selector's own start-up cut.
+    fc_bus_falls: list = field(default_factory=list)
+    bt_bus_falls: list = field(default_factory=list)
+
     share_cmd: list = field(default_factory=list)
     share_delivered: list = field(default_factory=list)
     r_applied: list = field(default_factory=list)
@@ -443,6 +464,38 @@ def _instantiate(sim, strategy_name: str, scenario: str, meta,
     return policy
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# F6: THE SHARE LOOP'S OWN FEEDBACK EMA, ON TOP OF THE fw v26 CLAMP
+# ─────────────────────────────────────────────────────────────────────────────
+# WHAT THIS MODELS, and what it deliberately does not.  `governor_model` is a
+# BIT-EXACT mirror of the firmware and must stay one - the equivalence harness
+# compares MDAC codes against a compiled copy of `powerBalance()`.  The effect
+# below is NOT in the firmware's arithmetic: it is in the PLANT the firmware
+# closes around.  `applyShareCurrentCeilings()` bounds the setpoint using
+# `share_govTotAFilt`, the governor's own ~20 ms EMA of the measured total, so
+# on the tick the clamp first engages the filter is still reading a total from
+# before the step and the clamped rail it computes is referred to a stale
+# denominator.  The reference therefore sits ABOVE the true rail until the EMA
+# catches up, and the delivered fuel-cell current overshoots the ceiling.
+#
+# THE NUMBERS ARE MEASURED, not derived (CLAUDE.md 2026-09-04, campaign G, the
+# `fw26-clamp-joint` leg): the overshoot is ~3 % of the applied ratio and lasts
+# ~12 ms after engagement, worth +0.039 A at a 1.57 A two-source total - half
+# the ceiling's own 0.075 A margin.  The named walk gap it closes is campaign
+# G's joint peak 1.3243 A against a walk that predicted 1.3188 A (+0.0055 A);
+# campaign H read 1.2699 A on the same leg, so the peak is a ONE-SAMPLE
+# quantity with a spread wider than the correction, and this model is an UPPER
+# BOUND on it rather than a prediction of the sample.
+#
+# ⚠️ IT IS REPORTED, NEVER APPLIED.  The walk's own currents, hydrogen and
+# state-of-charge are untouched; `WalkResult.i_fc_peak_a` is the model's peak
+# and `i_fc_peak_f6_a` is the same peak with the overshoot window applied, so a
+# consumer that wants the fw v27-era figure still has it.  Applying it to the
+# fed-back current would make the walk a different controller.
+F6_CEIL_OVERSHOOT_FRAC = 0.03      # of the applied ratio, campaign G
+F6_CEIL_OVERSHOOT_MS = 12.0        # after the clamp's rising edge
+
+
 def walk(strategy_name: str, scenario_name: str, *, soc0: float = 0.7,
          capacity_ah: Optional[float] = None, accounting: str = "physical",
          governor: bool = True, dv0_v: float = 0.0,
@@ -685,6 +738,13 @@ def walk(strategy_name: str, scenario_name: str, *, soc0: float = 0.7,
     seg_counts = {"discharge": {}, "charge": {}}
     seg_ceil = {"discharge": 0, "charge": 0}
     seg_ticks = {"discharge": 0, "charge": 0}
+    # F6 window state (see F6_CEIL_OVERSHOOT_FRAC).
+    _ceil_fc_prev = False
+    _ceil_t0 = None
+    # en_low census state: both switches start CLOSED, which is what the
+    # firmware's own State-2 entry writes before the selector's cut lands.
+    _sw_fc_prev = True
+    _sw_bt_prev = True
     soc = float(soc0)
     share = sim.SOC_BAND_SHARE_NOMINAL
     delivered = share
@@ -796,6 +856,28 @@ def walk(strategy_name: str, scenario_name: str, *, soc0: float = 0.7,
                 if o.ceil_fc or o.ceil_bt:
                     seg_ceil[seg] += 1
                     stage_clamped = True
+                # ── F6, MEASURED HERE AND APPLIED NOWHERE ─────────────────
+                # The rising edge of the FUEL-CELL ceiling starts the window;
+                # the battery ceiling is a different rail with no measurement
+                # behind it, so it does not.  A re-engagement re-starts the
+                # window, because the EMA is stale again after every step.
+                _i_fc_now = delivered * float(s_i_total[k])
+                if o.ceil_fc and not _ceil_fc_prev:
+                    _ceil_t0 = ts
+                    res.ceil_engagements += 1
+                _ceil_fc_prev = bool(o.ceil_fc)
+                res.i_fc_peak_a = max(res.i_fc_peak_a, _i_fc_now)
+                if (_ceil_t0 is not None
+                        and ts - _ceil_t0 < F6_CEIL_OVERSHOOT_MS * 1e-3):
+                    _i_fc_now *= (1.0 + F6_CEIL_OVERSHOOT_FRAC)
+                res.i_fc_peak_f6_a = max(res.i_fc_peak_f6_a, _i_fc_now)
+                # The en_low census: a FALL of either bus-switch request.
+                if _sw_fc_prev and not o.fc_bus_req:
+                    res.fc_bus_falls.append(ts)
+                if _sw_bt_prev and not o.bt_bus_req:
+                    res.bt_bus_falls.append(ts)
+                _sw_fc_prev = bool(o.fc_bus_req)
+                _sw_bt_prev = bool(o.bt_bus_req)
             stage_share = acc / n_sub
             r_now = g.state.r_prev
         else:
@@ -926,6 +1008,15 @@ def walk(strategy_name: str, scenario_name: str, *, soc0: float = 0.7,
         seg: seg_ceil[seg] / float(seg_ticks[seg])
         for seg in seg_ticks if seg_ticks[seg]}
     if res.clamped_ticks:
+        res.notes.append(
+            "F6 (share-loop feedback EMA on the fw v26 clamp): the modelled "
+            "fuel-cell peak is %.4f A; with the measured +%.0f %% / %.0f ms "
+            "post-engagement overshoot applied it is %.4f A (+%.4f A over %d "
+            "clamp engagement(s)). REPORTED, NOT APPLIED - the walk's own "
+            "currents are the unmodified figures."
+            % (res.i_fc_peak_a, 100.0 * F6_CEIL_OVERSHOOT_FRAC,
+               F6_CEIL_OVERSHOOT_MS, res.i_fc_peak_f6_a,
+               res.i_fc_peak_f6_a - res.i_fc_peak_a, res.ceil_engagements))
         res.notes.append(
             "fw v26 CURRENT CEILING BOUND the commanded share on %d %s "
             "(%.2f %% of them); the delivered fuel-cell current was held at "

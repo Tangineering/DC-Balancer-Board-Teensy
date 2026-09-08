@@ -1163,3 +1163,78 @@ def test_the_walk_cli_exposes_all_three_split_parameters():
     for flag in ("--dv0", "--droop-scale-fc", "--r-series"):
         assert flag in text, flag
     assert argparse is not None
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# F6: the share-loop feedback EMA on top of the fw v26 current ceiling.
+# ═════════════════════════════════════════════════════════════════════════════
+def test_f6_constants_are_the_measured_pair():
+    """The overshoot is MEASURED (campaign G, `fw26-clamp-joint`), not chosen.
+    Pinned so a change to either number is a deliberate re-measurement."""
+    assert ew.F6_CEIL_OVERSHOOT_FRAC == 0.03
+    assert ew.F6_CEIL_OVERSHOOT_MS == 12.0
+
+
+def test_f6_is_inert_on_a_stimulus_that_never_engages_the_ceiling():
+    """No clamp engagement means no window, so the two peaks are EQUAL and the
+    walk's own figure is untouched.  This is every registered EMS stimulus:
+    the largest two-source total on record is 1.4714 A against a reachability
+    threshold of 1.4706 A, and the clamp binds on one leg only."""
+    res = ew.walk("hold-5050", "ems-sdp", soc0=0.7)
+    assert res.ceil_engagements == 0
+    assert res.i_fc_peak_a > 0.0
+    assert res.i_fc_peak_f6_a == res.i_fc_peak_a
+    assert not any("F6 (" in n for n in res.notes)
+
+
+def test_f6_inflates_the_peak_only_inside_the_window_after_engagement():
+    """The window model itself, on a direct governor walk rather than a
+    scenario: a total above `CEILING_REACHABLE_I_TOT_A` commanded at the top of
+    the band engages the ceiling, and the F6 trace exceeds the raw one by at
+    most the measured fraction."""
+    g = gm.GovernorModel(dt_s=1e-3, seed_r=0.5)
+    tot = 2.0                                   # well over 1.4706 A
+    d = 0.5
+    raw = f6 = 0.0
+    t0 = None
+    prev = False
+    engagements = 0
+    for k in range(3000):
+        t = k * 1e-3
+        i_fc = d * tot
+        o = g.step(0.85, i_fc, tot - i_fc, True, True, t)
+        d = g.delivered_share(o.r_applied, tot, o.fc_bus_req, o.bt_bus_req)
+        cur = d * tot
+        if o.ceil_fc and not prev:
+            t0 = t
+            engagements += 1
+        prev = bool(o.ceil_fc)
+        raw = max(raw, cur)
+        if t0 is not None and t - t0 < ew.F6_CEIL_OVERSHOOT_MS * 1e-3:
+            cur *= (1.0 + ew.F6_CEIL_OVERSHOOT_FRAC)
+        f6 = max(f6, cur)
+    assert engagements >= 1, "the fixture never engaged the ceiling"
+    assert f6 > raw
+    assert f6 <= raw * (1.0 + ew.F6_CEIL_OVERSHOOT_FRAC) + 1e-12
+
+
+def test_f6_reaches_the_joint_probe_from_one_place():
+    """The probe must not carry a second copy of the two constants: a walk and
+    the leg's own bound derivation that describe different overshoots is the
+    hand-mirror defect this repository has had twice."""
+    sys.path.insert(0, os.path.join(HERE, "probes"))
+    import probe_fw26_clamp_walk as probe
+    assert probe._walk is ew
+    j = probe.joint()
+    # The raw peak is the acceptance bound's own quantity and must be
+    # UNCHANGED by the F6 addition (walk 1.3188 A at the 1.57 A step total).
+    assert j["i_fc_peak"] == pytest.approx(1.3188, abs=5e-4)
+    # ⚠️ THE F6 FIGURE EXCEEDS THE LEG'S ACCEPTANCE BOUND (1.3241 A) and its
+    # structural bound (DROOP_R_MAX * 1.57 = 1.3345 A). That is not a defect in
+    # either bound: F6 is an UPPER bound taken at the full measured fraction on
+    # every tick of the window, while campaign G's board peak was 1.3243 A -
+    # 0.42 % over the walk, i.e. about a seventh of the 3 % the reference
+    # overshoot carries. It stays at the measured constant rather than being
+    # tuned to the one sample; the peak is still 3.1 % under LIMIT_I_FC_MAX.
+    assert j["i_fc_peak_f6"] > j["i_fc_peak"]
+    assert j["i_fc_peak_f6"] < 1.40

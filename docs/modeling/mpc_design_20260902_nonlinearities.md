@@ -756,3 +756,115 @@ decision (admitted) and outside block 0 (admitted); the column filter at block
 never-emptied set; the single-source columns; the inertness gate; and a
 mutation test that lowers the constant onto the 61 s stimulus and requires both
 censuses to move.
+
+## 2026-09-08: the fw v28 source selector reaches the delivery table
+
+fw v28 replaces fw v27 rev 2's battery-only start with a never-closed **source
+selector** (`docs/fw28_source_selector.md`). While the arm stands, the commanded
+share picks which single source is on the bus: `>= DROOP_R_MAX` selects the fuel
+cell, `<= DROOP_R_MIN` selects the battery, and a command between them holds the
+current selection. Every arm site defaults the selection to the battery.
+
+**Why the delivery table had to change.** `batt_only_cut_mask()` was a property
+of the demand alone, because the cut's source was fixed, and one mask served the
+whole table. Under the selector the source is the **column's**, and it decides
+three things: the delivered share of every masked stage (0.0 or 1.0), the
+preview the stage is billed on (the two single-source bus laws differ by ~0.45 V
+of sag at the 61 s cycle's peak), and the survivor's own overcurrent bound
+(2.55 A against 1.19 A). The mask is therefore memoized per selection --
+at most two per table -- and `selector_choice()` is the firmware's own three-way
+test, imported by every consumer rather than re-typed.
+
+**The finding that is not a detail: two ladder rungs are rails.** `share_band`
+is `(DROOP_R_MIN, DROOP_R_MAX)` and the ladder's endpoints are exactly those two
+numbers, so the top in-band rung (0.85) selects fuel-cell-only and the bottom
+(0.15) selects battery-only on every sub-gate stage -- without any single-source
+column being enumerated. An FC-only release preview (`preview_fc_release`) is
+therefore staged on **every** MPC leg, not only the ones that opt into the
+single-source enumeration, for the same reason `preview_bt_release` was
+(H-1, 2026-09-04): predicting the release from the wrong survivor's demand moves
+the release instant and therefore moves which stages are predicted at 0.0 at
+all.
+
+**F1 is a disarm, not a suppression.** A charge stage used to be a hole the arm
+survived; it now ends the never-closed regime for the rest of the profile. The
+mask sets `armed = False` at the first sub-sample of a charge stage, so the
+stages after a window are two-source. This is the closed-before hold, and it is
+what removes the break-before-make that latched UV_BUS on two campaign-H legs.
+
+**The raw-current escape** (review S2) is modelled too: with the fuel cell alone
+on the bus the fw v26 clamp is structurally inert and only `FAULT_OC_FC` is
+left, so the arm drops the instant the raw survivor current exceeds
+`SHARE_GOV_I_FC_CEIL_A`.
+
+**Admissibility needed no change.** `_ss_admissible()` rolls the real
+`GovernorModel` from the shadow's committed state, and that model is the fw v28
+mirror, so a candidate of 1.0 at a sub-gate stage now *selects* the fuel cell
+inside the roll rather than being refused by it. The shadow exposes the
+selection as `ShadowGovernor.selector_fc`, which is the `held_fc` argument an
+in-band column is evaluated under.
+
+### Gate 1, re-measured on all six registered MPC scenarios
+
+Measured through the real walk (`ems_walk.walk(..., governor=True,
+loss_map=plant_loss_map(), dv0_v=0.013522, droop_scale_fc=0.9434)`,
+one process per leg), reading the strategy's own `share_pred_err`.
+
+Two populations are reported, and the second is the one Gate 1 is about. At
+fw v28 a decision that commits a **rail** is scored against a delivered share of
+exactly 0.0 or 1.0: that is a topology prediction, not a share prediction, and
+its error is either ~0 or ~1 with nothing in between. Mixing those into the mean
+turns Gate 1 into a census of how often the strategy commanded a rail. The
+in-band population is the decisions whose committed command was strictly inside
+`[DROOP_R_MIN, DROOP_R_MAX]`, accumulated by `share_pred_err_band_*`.
+
+| scenario | strategy | all: mean / max (n) | **in-band: mean / max (n)** |
+|:--|:--|--:|--:|
+| `ems-mpc` | mpc-sto | 0.062181 / 0.396153 (60) | **0.032750 / 0.099459 (47)** |
+| `ems-mpc-det` | mpc-det | 0.001332 / 0.022868 (60) | **0.000013 / 0.000359 (39)** |
+| `ems-mpc-cross` | mpc-sto | 0.070342 / 0.396153 (199) | **0.004689 / 0.046110 (27)** |
+| `ems-mpc-single` | mpc-det | 0.001645 / 0.042868 (60) | **0.000019 / 0.000359 (21)** |
+| `ems-ftp75-mpc` | mpc-sto | 0.078630 / 0.396153 (349) | **0.028783 / 0.125789 (189)** |
+| `ems-ftp75c-mpc` | mpc-sto | 0.260725 / 0.428294 (179) | **0.099122 / 0.166971 (30)** |
+
+Three readings of the survey:
+
+1. **The split is by strategy, not by stimulus.** The two `mpc-det` legs clear
+   the 5e-03 acceptance by two to three orders of magnitude (1.3e-05 and
+   1.9e-05 in-band); all four `mpc-sto` legs fail it. That is the documented
+   `mpc-sto` limit -- the shipped role note already records a failing Gate 1 on
+   `ems-soc-band` at mean 0.00971 -- extended from one stimulus to four. The
+   mechanism is unchanged: a 1 Hz re-command landing in an `open_feedforward`
+   stage drops the governor into a slew the stage model does not represent.
+2. **The in-band filter is worth 1.5x to 15x**, largest on `ems-mpc-cross`
+   (0.070342 to 0.004689, a factor 15, which brings that leg *inside* the
+   acceptance). The rails dominate the unfiltered figure on exactly the legs
+   whose policies command them, which is the reason for reporting the two
+   populations separately rather than replacing one with the other.
+3. **`ems-ftp75c-mpc` is the worst leg and the reason is the era.** Its arm
+   releases late on a cycle that only just crosses the 0.25 A gate, so 56.8 %
+   of its governor ticks are single-source and only 30 of 179 decisions are
+   in-band at all. It is the leg to watch on the first fw v28 campaign.
+
+These six figures are **first measurements**, not re-pins: before this round
+Gate 1 was quoted only on the 61 s `ems-soc-band` fixture. They are deliberately
+**not** asserted in a test -- the MPC search is wall-clock budgeted and a walk is
+not bit-reproducible across machines at the shipped budget (section 4.4).
+
+### Plan invariance, sha-checked
+
+`test_the_feature_off_plan_matches_the_pre_round_fixture` pins the committed
+command stream on the 61 s stimulus. Its digest was already re-pinned for the
+fw v28 *constants* by the part-1 mirror, and the selector work of this round
+leaves it **unchanged** -- the top rung's FC selection reaches the table but does
+not change which candidate wins on that stimulus. The selector is inert there in
+the sense that matters: same plan, same bytes.
+
+### Tests
+
+`tools/test_mpc_ems.py`: `selector_choice()` inclusive at both rails and
+holding between them; a fully-cut stage delivering the *selected* source, with
+the top rung at 1.0 and every other in-band rung at 0.0; a held FC selection
+inverting that; an FC-selected stage billed on the FC-only preview; the charge
+window disarming for the rest of the profile; and the raw-current escape from an
+FC selection with the battery selection surviving the same current.

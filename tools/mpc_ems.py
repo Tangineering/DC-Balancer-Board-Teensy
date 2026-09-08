@@ -326,6 +326,35 @@ SS_CUT_CHANNEL = {SS_MODE_BT: "fc", SS_MODE_FC: "bt"}
 SS_LIMIT_A = {SS_MODE_BT: I_BT_MAX_A, SS_MODE_FC: I_FC_MAX_A}
 
 
+# ── THE fw v28 SOURCE SELECTOR, MIRRORED (2026-09-08) ────────────────────────
+# fw v27 rev 2's battery-only start was a one-shot cut whose SOURCE was fixed:
+# while it stood, the fuel cell was off the bus whatever the commander asked
+# for.  fw v28 generalises it into a NEVER-CLOSED SOURCE SELECTOR
+# (`docs/fw28_source_selector.md`; `governor_model.GovernorModel.step()` step
+# 0b): while the arm stands, the COMMANDED share picks which single source is
+# on the bus, INCLUSIVELY at both rails, and HOLDS between them.
+#
+# WHAT THAT COSTS THIS MODULE, and it is not a detail: the battery-only cut
+# mask stops being a property of the demand alone and becomes a property of the
+# COLUMN.  Two ladder rungs are rails by construction - `share_band` is
+# `(DROOP_R_MIN, DROOP_R_MAX)` and the ladder's endpoints are exactly those two
+# numbers - so THE TOP IN-BAND RUNG (0.85) SELECTS FUEL-CELL-ONLY and THE
+# BOTTOM (0.15) SELECTS BATTERY-ONLY on every sub-gate stage, without any
+# single-source column being enumerated at all.  The single-source columns
+# (0.0 / 1.0) select the same source their own branch already bills.
+#
+# The selection is evaluated only while the arm stands; `held_fc` is the
+# selection the shadow governor committed (False = battery, the profile-start
+# default set by every arm site).
+def selector_choice(sp, held_fc):
+    """The fw v28 selection for a commanded share (`.ino:11322-11327`)."""
+    if sp >= DROOP_R_MAX:
+        return True
+    if sp <= DROOP_R_MIN:
+        return False
+    return bool(held_fc)
+
+
 def ss_stage_cell(d_fixed, p_dem_mean, i_tot_subs, lim, oc_scale=1.0):
     """One delivery-table stage with ONE channel off the bus.
 
@@ -1977,8 +2006,9 @@ class Planner:
         return self._map._ratio_for_delivered(alpha, i_tot)
 
     def batt_only_cut_mask(self, pre, charge_stages, filt_seed, ticks_per_sub,
-                           pre_bt=None, pre_bt_release=None):
-        """Per (stage, sub-sample): is the fw v27 rev 2 battery-only cut still on?
+                           pre_bt=None, pre_bt_release=None,
+                           pre_fc_release=None, selector_fc=False):
+        """Per (stage, sub-sample): is the fw v28 selector's cut still on?
 
         THE MODEL PREDICTS THE RELEASE; IT DOES NOT READ IT (2026-09-04).
         fw v27 rev 2 arms a one-shot battery-only start at every profile entry
@@ -2027,29 +2057,62 @@ class Planner:
         nothing else.  With neither supplied the two-source preview is the
         fallback and the mask is bit-for-bit the pre-2026-09-04 one.
 
-        The mask is share-INDEPENDENT: while the cut stands the delivered share
-        is 0.0 whatever the ladder point commands, so it is computed once per
-        table rather than per column."""
-        src = pre_bt_release if pre_bt_release is not None else pre_bt
+        ── THE MASK IS NO LONGER SHARE-INDEPENDENT (fw v28, 2026-09-08) ──────
+        It used to be: while the cut stood the delivered share was 0.0 whatever
+        the ladder point commanded, so one mask served the whole table.  Under
+        the source selector the COLUMN'S OWN COMMAND picks the source
+        (`selector_choice()`), and the source picks (a) which preview the
+        release is predicted from - the survivor's, and the two single-source
+        bus laws differ - and (b) which channel the escape hatch watches.  So
+        the caller passes ``selector_fc`` and `delivery_table()` memoizes at
+        most two masks per table, one per selection.
+
+        THREE fw v28 CHANGES ARE IN THE LOOP BELOW, all from
+        `governor_model.GovernorModel.step()`:
+          * F1 DISARM, not suppression.  `chargingControl()` clears the arm one
+            commander period before the window opens (.ino:12462), so a charge
+            stage ENDS the never-closed regime for the rest of the profile
+            rather than being a hole the arm survives.
+          * THE RAW-CURRENT ESCAPE from a fuel-cell selection (review S2,
+            .ino:11373): with the fuel cell alone on the bus the fw v26 clamp
+            is structurally inert and only FAULT_OC_FC is left, so the arm drops
+            the instant the RAW survivor current exceeds
+            `SHARE_GOV_I_FC_CEIL_A`.  Modelled on the sub-sample current, which
+            is the finest the preview has.
+          * THE GATE moved with `SHARE_MINORITY_I_MIN_A`: `GOV_ENTRY_A` is
+            0.25 A at fw v28, 0.30 A at fw v27 rev 2.  Read, never typed.
+
+        THE RELEASE PREVIEW IS THE SURVIVOR'S.  `pre_fc_release` is the
+        fuel-cell-only demand and is the mirror of `pre_bt_release`; where the
+        caller has neither (an MPC leg with no loss map) the two-source preview
+        is the same STATED under-statement of the bus sag it was before."""
+        src = pre_fc_release if selector_fc else pre_bt_release
+        if src is None:
+            src = pre_bt_release if pre_bt_release is not None else pre_bt
         if src is None:
             src = pre
         alpha = gov_mod.GOV_CONST["SHARE_GOV_FILT_ALPHA"]
         decay = (1.0 - alpha) ** max(1, int(ticks_per_sub))
+        fc_ceil = gov_mod.GOV_CONST["SHARE_GOV_I_FC_CEIL_A"]
         filt = float(filt_seed or 0.0)
         armed = True
         mask = []
         for j in range(pre.n):
             row = []
             for sub in range(len(pre.i_tot[j])):
-                # RULE (f) OF THE ARM: an FC-charge window SUPPRESSES the cut
-                # without disarming it (`batt_only_active = armed and not
-                # charge_path_owns_bt`), because `assertFcChargeEnable()`
-                # already owns BT_BUS there.  So a charge stage is not cut, and
-                # the arm survives it.
+                # fw v28 F1: the charge window DISARMS.  The stage itself is
+                # still not cut - `assertFcChargeEnable()` owns the topology
+                # there - but the arm does not come back out the other side,
+                # which is the closed-before hold the design record names.
                 row.append(armed and not charge_stages[j])
+                if armed and charge_stages[j]:
+                    armed = False
                 if not armed:
                     continue
                 tot = src.i_tot[j][sub]
+                if selector_fc and tot > fc_ceil:
+                    armed = False
+                    continue
                 if tot >= GOV_MIN_LOAD_A:
                     # The closed form of ``ticks_per_sub`` EMA ticks on a HELD
                     # total.  The approach is monotone, so "crossed on any tick
@@ -2067,7 +2130,8 @@ class Planner:
                        soc_hint=0.6, sp_acted=None, run_seed=None,
                        handoff=None, active=None, pre_ss=None,
                        batt_only_seed=None, filt_seed=None, pre_bt=None,
-                       pre_bt_release=None):
+                       pre_bt_release=None, pre_fc_release=None,
+                       selector_fc_seed=False):
         """Per (stage, ladder point): delivered share, FC power, BT power, feasibility.
 
         This is the whole search model.  It is built ONCE per decision, so the
@@ -2191,12 +2255,25 @@ class Planner:
         ok_tab = [[True] * n_s for _ in range(pre.n)]
         viol_tab = [[0.0] * n_s for _ in range(pre.n)]
         v_chg = pack_charge_voltage(soc_hint, self.chg_a)
-        # The battery-only cut mask, built ONCE per table: it is a property of
-        # the firmware's own arm and of the demand, not of the ladder point.
-        cut_mask = (self.batt_only_cut_mask(pre, charge_stages, filt_seed,
-                                            ticks_per_sub, pre_bt,
-                                            pre_bt_release=pre_bt_release)
-                    if batt_only_seed else None)
+        # ── THE SELECTOR CUT MASK, MEMOIZED PER SELECTION (fw v28) ─────────
+        # It used to be built ONCE per table, because the cut's source was
+        # fixed.  Under the source selector the source is the COLUMN's, so at
+        # most TWO masks exist per table - one per selection - and each column
+        # takes the one its own command selects.  Built lazily: a table whose
+        # columns all select the same source builds one mask, exactly as
+        # before.
+        _mask_cache = {}
+
+        def _cut_mask_for(sel_fc):
+            if not batt_only_seed:
+                return None
+            key = bool(sel_fc)
+            if key not in _mask_cache:
+                _mask_cache[key] = self.batt_only_cut_mask(
+                    pre, charge_stages, filt_seed, ticks_per_sub, pre_bt,
+                    pre_bt_release=pre_bt_release,
+                    pre_fc_release=pre_fc_release, selector_fc=key)
+            return _mask_cache[key]
         # The demand the cut stages are BILLED on.  With FC off the bus the
         # two-source loss map's parallel droop code does not exist, so the
         # BT-only preview is the right source where the caller has one; where
@@ -2213,7 +2290,11 @@ class Planner:
         # stages are predicted at 0.0 at all.  That half of the coupling is now
         # `pre_bt_release`, supplied on every leg; what remains here is the
         # billing, and the billing genuinely does not move the predicted share.
-        cut_src = pre_bt if pre_bt is not None else pre
+        cut_src_bt = pre_bt if pre_bt is not None else pre
+        # The fuel-cell-only billing demand, the mirror of `cut_src_bt`.  Where
+        # the leg has no FC-only preview the two-source one is the same stated
+        # under-statement of the bus sag.
+        cut_src_fc = pre_fc_release if pre_fc_release is not None else pre
         for si in cols:
             # ── THE SINGLE-SOURCE COLUMNS (2026-09-03) ─────────────────────
             # A column of its own, and it shares nothing with the in-band
@@ -2273,6 +2354,15 @@ class Planner:
                     viol_tab[j][si] = max(0.0, worst)
                 continue
             s = self.ladder[si]
+            # fw v28: this column's own selection, and the mask/billing/limit
+            # triple that goes with it.  The ladder's endpoints ARE the rails,
+            # so `si == 0` selects the battery and the top rung selects the
+            # fuel cell whether or not a single-source column was enumerated.
+            sel_fc = selector_choice(s, selector_fc_seed)
+            cut_mask = _cut_mask_for(sel_fc)
+            cut_src = cut_src_fc if sel_fc else cut_src_bt
+            cut_d = 1.0 if sel_fc else 0.0
+            cut_lim = I_FC_MAX_A if sel_fc else I_BT_MAX_A
             carried = r_seed
             acted = sp_acted
             run_flag = bool(run_seed)
@@ -2323,8 +2413,8 @@ class Planner:
                 # for the whole 3.026-5.711 s cut.
                 if cut_mask is not None and all(cut_mask[j]):
                     d_j, pfc_j, pbt_j, worst = ss_stage_cell(
-                        0.0, cut_src.p_dem_mean[j], cut_src.i_tot[j],
-                        I_BT_MAX_A, oc_scale)
+                        cut_d, cut_src.p_dem_mean[j], cut_src.i_tot[j],
+                        cut_lim, oc_scale)
                     d_tab[j][si] = d_j
                     pfc_tab[j][si] = pfc_j
                     pbt_tab[j][si] = pbt_j
@@ -2352,10 +2442,13 @@ class Planner:
                     # state is again left standing, so the first uncut
                     # sub-sample resumes from the ratio the firmware froze.
                     if cut_mask is not None and cut_mask[j][sub]:
-                        acc_bt += cut_src.p_dem[j][sub]
+                        # fw v28: the SELECTED source carries the sub-sample.
+                        acc_d += cut_d
+                        acc_fc += cut_d * cut_src.p_dem[j][sub]
+                        acc_bt += (1.0 - cut_d) * cut_src.p_dem[j][sub]
                         worst = max(worst,
                                     cut_src.i_tot[j][sub] * oc_scale
-                                    - I_BT_MAX_A)
+                                    - cut_lim)
                         continue
                     if pre.mode[j][sub] == STAGE_CLOSED:
                         lo = pre.lo[j][sub]
@@ -2546,7 +2639,8 @@ class Planner:
               i_tot_oc=None, budget_ms=None, sp_acted=None, run_seed=None,
               handoff=None, active=None, ss_modes=(), pre_ss=None,
               share_step_guard_r=None, batt_only_seed=None, filt_seed=None,
-              pre_bt=None, pre_bt_release=None):
+              pre_bt=None, pre_bt_release=None, pre_fc_release=None,
+              selector_fc_seed=False):
         """Search the candidate set.  Returns a ``Decision``.
 
         ``charge_options`` is a list of per-stage boolean lists, the first of
@@ -2662,7 +2756,9 @@ class Planner:
                                        active=cols0, pre_ss=pre_ss,
                                        batt_only_seed=batt_only_seed,
                                        filt_seed=filt_seed, pre_bt=pre_bt,
-                                       pre_bt_release=pre_bt_release)
+                                       pre_bt_release=pre_bt_release,
+                                       pre_fc_release=pre_fc_release,
+                                       selector_fc_seed=selector_fc_seed)
             if oi == 0:
                 tabs0 = tabs
             for block_idx in order:
@@ -2878,6 +2974,17 @@ class ShadowGovernor:
     @property
     def r(self):
         return self.model.state.r_prev
+
+    @property
+    def selector_fc(self):
+        """``shareSelectorFC`` - the fw v28 SELECTION the arm is holding.
+
+        False is the battery, which is what every arm site defaults to
+        (`GovernorModel.arm_battery_only_start()`, .ino:11314).  It is the
+        `held_fc` argument of `selector_choice()`: an IN-BAND ladder column
+        commands no rail, so the selection it would run under is whatever the
+        board is holding right now."""
+        return bool(self.model.state.selector_fc)
 
     @property
     def closed(self):
@@ -3127,6 +3234,8 @@ class MpcStrategy:
         # never becomes a candidate, never bills a stage, and is None where
         # there is no loss map to scale the single-source bus law from.
         self.preview_bt_release = None
+        # Its fw v28 mirror: the FC-only release preview (see `bind_scenario`).
+        self.preview_fc_release = None
         self.planner = None
         self.reset()
 
@@ -3187,6 +3296,22 @@ class MpcStrategy:
         self.share_pred_err_run_max = 0.0
         self.share_pred_err_run_sum = 0.0
         self.share_pred_err_run_n = 0
+        # ── GATE 1, IN-BAND STAGES ONLY (fw v28, 2026-09-08) ───────────────
+        # At fw v28 the ladder's own rails select a single source under the
+        # gate, so a decision that COMMITS a rail is scored against a delivered
+        # share of exactly 0.0 or 1.0 - a topology prediction, not a share
+        # prediction, and one whose error is either 0 or 1 with nothing in
+        # between.  Mixing those into the Gate-1 mean makes the gate a census
+        # of how often the strategy commanded a rail.  These three accumulate
+        # the SAME `share_pred_err` over the decisions whose committed command
+        # was strictly inside `[DROOP_R_MIN, DROOP_R_MAX]`; the unfiltered
+        # figures above are kept unchanged beside them.
+        self.share_pred_err_band_max = 0.0
+        self.share_pred_err_band_sum = 0.0
+        self.share_pred_err_band_n = 0
+        # The command committed at the PREVIOUS decision, i.e. the one the
+        # stage now being scored actually ran under.
+        self._scored_share = None
         self._stage_share_sum = 0.0
         self._stage_share_n = 0
         # ── THE BATTERY-ONLY RELEASE DIAGNOSTIC (H-1, 2026-09-04) ──────────
@@ -3465,6 +3590,28 @@ class MpcStrategy:
                 cruise=_cr, chg_ok=[False] * len(times), i_regen=_ir, dt=dt)
         else:
             self.preview_bt_release = None
+        # ── THE FC-ONLY RELEASE PREVIEW (fw v28, 2026-09-08) ───────────────
+        # The mirror of the block above, and it exists for the same reason: at
+        # fw v28 the arm can hold the BATTERY off the bus instead, and then the
+        # total the firmware filters is the FUEL CELL'S alone.  Predicting that
+        # release from the BT-only preview would be the H-1 defect with the
+        # sources exchanged.  It is staged unconditionally on every MPC leg
+        # because the TOP IN-BAND LADDER RUNG is a rail (0.85 >= DROOP_R_MAX),
+        # so an FC selection is reachable on every leg, not only the ones that
+        # enumerate single-source columns.
+        if self.preview_ss.get(SS_MODE_FC) is not None:
+            self.preview_fc_release = self.preview_ss[SS_MODE_FC]
+        elif self.loss_map is not None:
+            _v, _a, _pd, _vb, _it, _cr, _ir = build_demand(
+                scenario, meta, times, dt, loss_map=self.loss_map,
+                drag_mode=drag, eta_regen=self.eta_regen,
+                eta_chg=self.eta_chg, v_pack_ref=v_pack_ref_all,
+                regen_i_max_a=chg_a, source_mode=SS_MODE_FC)
+            self.preview_fc_release = Preview(
+                times=times, p_dem=_pd, v_bus=_vb, i_total=_it,
+                cruise=_cr, chg_ok=[False] * len(times), i_regen=_ir, dt=dt)
+        else:
+            self.preview_fc_release = None
         self.planner = Planner(horizon=self.horizon, blocks=self.blocks,
                                share_band=self.share_band,
                                share_levels=self.share_levels,
@@ -4124,29 +4271,37 @@ class MpcStrategy:
         # FORECAST does not, and a release predicted off the deterministic
         # profile while the table is judged on the TPM's conditional mean would
         # put the two arms of one decision on two forecasts.
-        pre_bt_release = None
-        if self.shadow.batt_only_armed and self.preview_bt_release is not None:
-            if pre_ss is not None and SS_MODE_BT in pre_ss:
-                pre_bt_release = pre_ss[SS_MODE_BT]
-            else:
-                _t_br = time.perf_counter()
-                pre_bt_release = precompute_stages(
-                    self.preview_bt_release, k0, self.horizon,
-                    mode_seed=(STAGE_CLOSED if self.shadow.closed
-                               else STAGE_OPEN))
-                if sto_scale is not None:
-                    for j in range(pre_bt_release.n):
-                        sc = sto_scale[j]
-                        if sc == 1.0:
-                            continue
-                        for sub in range(len(pre_bt_release.i_tot[j])):
-                            pre_bt_release.i_tot[j][sub] *= sc
-                            pre_bt_release.p_dem[j][sub] *= sc
-                        pre_bt_release.i_tot_mean[j] *= sc
-                        pre_bt_release.p_dem_mean[j] *= sc
-                budget_ms = max(BUDGET_MS_FLOOR,
-                                budget_ms
-                                - (time.perf_counter() - _t_br) * 1e3)
+        # fw v28: BOTH survivors are staged, because both selections are
+        # reachable from the ladder's own rails.  Factored into one helper so
+        # the two cannot drift apart.
+        def _stage_release(src_preview, ss_mode):
+            if not self.shadow.batt_only_armed or src_preview is None:
+                return None, 0.0
+            if pre_ss is not None and ss_mode in pre_ss:
+                return pre_ss[ss_mode], 0.0
+            _t_br = time.perf_counter()
+            _p = precompute_stages(
+                src_preview, k0, self.horizon,
+                mode_seed=(STAGE_CLOSED if self.shadow.closed
+                           else STAGE_OPEN))
+            if sto_scale is not None:
+                for j in range(_p.n):
+                    sc = sto_scale[j]
+                    if sc == 1.0:
+                        continue
+                    for sub in range(len(_p.i_tot[j])):
+                        _p.i_tot[j][sub] *= sc
+                        _p.p_dem[j][sub] *= sc
+                    _p.i_tot_mean[j] *= sc
+                    _p.p_dem_mean[j] *= sc
+            return _p, (time.perf_counter() - _t_br) * 1e3
+
+        pre_bt_release, _spent = _stage_release(self.preview_bt_release,
+                                                SS_MODE_BT)
+        budget_ms = max(BUDGET_MS_FLOOR, budget_ms - _spent)
+        pre_fc_release, _spent = _stage_release(self.preview_fc_release,
+                                                SS_MODE_FC)
+        budget_ms = max(BUDGET_MS_FLOOR, budget_ms - _spent)
 
         # ── THE LADDER COARSENING ──────────────────────────────────────────
         # A pure function of the ladder size, the block count, this decision's
@@ -4216,6 +4371,8 @@ class MpcStrategy:
                                  # per-STAGE property and the table's own mask
                                  # applies it (see `batt_only_armed`).
                                  batt_only_seed=self.shadow.batt_only_armed,
+                                 selector_fc_seed=self.shadow.selector_fc,
+                                 pre_fc_release=pre_fc_release,
                                  filt_seed=self.shadow.filt_total,
                                  # The BT-only demand where this leg has one.
                                  # A leg without the single-source feature bills
@@ -4282,6 +4439,12 @@ class MpcStrategy:
             self.share_pred_err_max = max(self.share_pred_err_max, err)
             self.share_pred_err_sum += err
             self.share_pred_err_n += 1
+            if (self._scored_share is not None
+                    and DROOP_R_MIN < self._scored_share < DROOP_R_MAX):
+                self.share_pred_err_band_max = max(
+                    self.share_pred_err_band_max, err)
+                self.share_pred_err_band_sum += err
+                self.share_pred_err_band_n += 1
             # ... and again over the SCORED window alone. The stage just
             # scored ENDS at this decision, so `t` is the right instant to
             # ask the question at.
@@ -4296,6 +4459,7 @@ class MpcStrategy:
         # Predicted delivered share of the stage about to run, scored at the
         # NEXT decision by the block above.
         self.share_pred = dec.share_pred
+        self._scored_share = dec.share
 
         share = dec.share
         goal = sim.SOC_BAND_CHARGE_GOAL if dec.charge else 0.0
@@ -4457,6 +4621,9 @@ class MpcStrategy:
                     "share_pred_err_run_mean": None,
                     "share_pred_err_run_max": 0.0,
                     "share_pred_err_run_n": 0,
+                    "share_pred_err_band_mean": None,
+                    "share_pred_err_band_max": 0.0,
+                    "share_pred_err_band_n": 0,
                     "single_source": self.single_source,
                     "ss_offered": 0, "ss_admissible": 0,
                     "ss_searched": 0,
@@ -4535,6 +4702,11 @@ class MpcStrategy:
                     if self.share_pred_err_run_n else None),
                 "share_pred_err_run_max": self.share_pred_err_run_max,
                 "share_pred_err_run_n": self.share_pred_err_run_n,
+                "share_pred_err_band_mean": (
+                    self.share_pred_err_band_sum / self.share_pred_err_band_n
+                    if self.share_pred_err_band_n else None),
+                "share_pred_err_band_max": self.share_pred_err_band_max,
+                "share_pred_err_band_n": self.share_pred_err_band_n,
                 # ── THE SINGLE-SOURCE CENSUS (2026-09-03) ──────────────────
                 # Per DECISION.  `offered` is 2 per decision the feature was
                 # armed for, `admissible` the rollout-time test's acceptances,

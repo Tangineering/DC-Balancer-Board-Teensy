@@ -1046,6 +1046,127 @@ _FW28_ERA_PROVISIONAL = (
     "or fw v27 rev 2 and their numbers are NOT comparable. Pin on the first "
     "fw v28 campaign.")
 
+# ═════════════════════════════════════════════════════════════════════════════
+# THE fw v28 RE-WALK, PER ANCHOR (2026-09-08)
+#
+# THE RETROSPECTIVE RULE, applied a third time: every stimulus expressed as a
+# DESIGNED TOTAL, and every anchor whose value depends on a governor constant,
+# is re-derived at each governor-constant change. Same invocation as the fw v27
+# rev 2 table above - `tools/ems_walk.py`, miniforge, governor on, ONE PROCESS
+# PER LEG, `loss_map=S.plant_loss_map(), dv0_v=0.013522,
+# droop_scale_fc=0.9434` - so the only thing that differs between the two
+# columns is the firmware.
+#
+#   leg                    fw v27 rev 2      fw v28          delta
+#   ems-mpc                   0.0073088     0.0072174       -1.25 %
+#   ems-mpc-det               0.0094011     0.0093398       -0.65 %
+#   ems-mpc-cross             0.0090403     0.0080676      -10.76 %
+#   ems-mpc-single            0.0049445     0.0048826       -1.25 %
+#   ems-sdp                   0.0120390     0.0124000       +3.00 %
+#   ems-sdp-alpha-cal         0.0120390     0.0124000       +3.00 %
+#   ems-sdp-alpha-charge      0.0143819     0.0146843       +2.10 %
+#   ems-sdp-alpha-greedy      0.0011157     0.0009750      -12.61 %
+#   ems-sdp-braking           0.0200024     0.0207233       +3.60 %
+#   ems-sdp-cross             0.0187632     0.0194708       +3.77 %
+#   ems-soc-band              0.0109792     0.0109991       +0.18 %
+#   ems-dp-replay             0.0111297     0.0110634       -0.60 %
+#   ems-drive-cycle           0.0030069     0.0030423       +1.18 %
+#   ems-ftp75-5050            0.0240084     0.0241414       +0.55 %
+#   ems-ftp75-sdp             0.0162935     0.0158491       -2.73 %
+#   ems-ftp75-socband         0.0379739     0.0382987       +0.86 %
+#   ems-ftp75-mpc             0.0195539     0.0187671       -4.02 %
+#   ems-ftp75-dp              0.0347557     0.0352004       +1.28 %
+#   ems-ftp75c-5050           0.0000000     0.0020697       from 0
+#   ems-ftp75c-sdp            0.0000000     0.0056829       from 0
+#   ems-ftp75c-mpc            0.0000000     0.0020638       from 0
+#   ems-ftp75c-dp             0.0000000     0.0020756       from 0
+#   ems-ftp75c-socband        0.0039450     0.0046556      +18.01 %
+#
+# ⚠️ THE COMPRESSED CYCLE IS AN EMS DISCRIMINATOR AGAIN, and this is the single
+# largest consequence of the era. At fw v27 rev 2 all four charge-free ftp75c
+# legs walked to h2 = 0.000000 g IDENTICALLY, because the cycle's peak
+# two-source total 0.2709 A sat below the 0.30 A gate for the whole 170 s and
+# the battery-only arm never released. THE GATE IS 0.25 A AT fw v28, which the
+# cycle now crosses, so the arm releases and the four legs SEPARATE: 0.0020638
+# (mpc) / 0.0020697 (5050) / 0.0020756 (dp) / 0.0056829 (sdp). The SDP leg is
+# 2.7x the others because `sdp_policy_v6` commands 1.00 below its
+# state-of-charge target at every low-demand bin, which the SOURCE SELECTOR
+# reads as FUEL-CELL-ONLY rather than refusing.
+#   * `ems-ftp75c-mpc`'s `mpc_h2_accounted` floor 0.001521 g is REACHABLE
+#     again (walk 0.0020638 g, 36 % over it). The fw v27-era unreachability
+#     note on that band is retired by this walk, not by a widening.
+#   * The legs are still LATCHED for 56.8 % of their governor ticks - one
+#     source off the bus - so the cycle remains a light-load stimulus. What
+#     changed is that the arm now releases at all.
+#
+# ⚠️ `ems-sdp-alpha-greedy` IS STILL BELOW ITS `alpha_h2_accounted` FLOOR AND
+# MOVED FURTHER AWAY: 0.0011157 -> 0.0009750 g against a floor of 0.003070 g
+# (68 % under it, was 64 %). NOT WIDENED. The band is copied from
+# `live_picks.json`'s `walk_h2_g`, a committed sweep artifact solved at the
+# fw v26 governor; the fix is to re-solve the sweep at the fw v28 governor, not
+# to move the floor here. It carries `_FW28_ERA_PROVISIONAL` so a campaign
+# reads the FAIL as the era.
+#
+# THE SIGN IS AGAIN NOT ONE SIGN, and the mechanism is again the CLIP BAND -
+# one step wider a second time. `SHARE_MINORITY_I_MIN_A` 0.15 -> 0.125 A moves
+# the minority clip's floor down by another 0.025 A, so a commanded share the
+# 0.15 A floor still clipped toward 0.50 is now delivered: the fuel-cell-leaning
+# policies burn MORE (`ems-sdp` +3.00 %, `ems-sdp-cross` +3.77 %) and the
+# battery-leaning ones burn LESS (`ems-sdp-alpha-greedy` -12.61 %,
+# `ems-mpc-cross` -10.76 %). DO NOT apply a single era percentage.
+#
+# THE fw v26 CEILING IS NOT ENGAGED ANYWHERE ON THIS SET, measured rather than
+# assumed: `WalkResult.ceil_engagements` is 0 on all 23 legs and the largest
+# modelled fuel-cell current is `ems-sdp`'s 1.1993 A, 4.1 % under the 1.25 A
+# ceiling and 14.3 % under LIMIT_I_FC_MAX. So the F6 overshoot model
+# (`ems_walk.F6_CEIL_OVERSHOOT_FRAC`) is INERT on every registered EMS
+# stimulus, and `i_fc_peak_f6_a == i_fc_peak_a` on all 23. The clamp legs
+# (`fw26-clamp-*`) are the only place F6 has anything to say.
+#
+# WHAT DOES NOT MOVE AT fw v28, stated so a reader does not go looking:
+#   * `fw26-clamp-joint`, ON EVERY AXIS. The structural bound is
+#     min(DROOP_R_MAX * 1.57, 1.57 - I_min) = min(1.3345, 1.4450) = 1.3345 A:
+#     the BAND-EDGE term governs, so lowering I_min 0.15 -> 0.125 A moves the
+#     conduction term (1.42 -> 1.4450 A) and nothing else. Re-walked through
+#     `probe_fw26_clamp_walk.joint()`: peak 1.3188 A simultaneous and load-first,
+#     1.2833 A share-first, first engagement +29 ms, post-step duty 0.9976,
+#     settled I_fc 1.2500 A / I_batt 0.3200 A - IDENTICAL to the fw v27 rev 2
+#     row to four decimals. `FW26_CLAMP_JOINT_ACCEPT_PEAK_A` 1.3241 A therefore
+#     stands unchanged.
+#   * `fw26-clamp-cruise`. Its structural bound is
+#     min(0.85 * 2.00, 2.00 - 0.125) = 1.70 A against a 1.50 A demand, so the
+#     clip still does not bind and the 1.25 A ceiling still governs. Duty
+#     1.0000, I_fc 1.2500 A, I_batt 0.7500 A, r 0.6125.
+#   * `fw26-clamp-sweep`, re-walked region by region: bridged region peaks
+#     1.0080 / 1.2724 / 1.0789 / 1.3508 / 1.2157 / 1.2771 / 1.2122 / 1.0080 /
+#     1.2724 / 0.7760 / 1.2634 / 0.8017 A, whole-table bridged peak 1.3508 A,
+#     unbridged 1.7120 A at region 6 - every figure identical to the fw v27
+#     rev 2 walk. The three share-0.84 sub-threshold regions moved at fw v27
+#     rev 2 because the 0.30 A clip was what held them back; at 0.125 A the
+#     band edge is already the binding term everywhere and nothing moves again.
+#   * The fw v26 ceiling REACHABILITY, 1.4706 A: it is
+#     max(CEIL / DROOP_R_MAX, CEIL + I_min) = max(1.4706, 1.375) and the band
+#     edge still wins, by 0.0956 A rather than 0.071 A.
+#   * The maximum scheduled k_d, 0.906 ohm: the 0.5 cap sets it, not I_min.
+#   * Every plant era (bleed, aux, charger, asymmetry, regen credit) and the
+#     wire protocol.
+#
+# HI-FI-ONLY / IDLE-ONLY ANCHORS - NOT RE-WALKED, and none is widened. Same
+# four as the fw v27 rev 2 list and for the same reason: `scp-inrush`,
+# `bringup` and `comm-loss` never leave State 1, so the share loop does not run
+# and the selector never arms; `handoff-sag`'s scored cut is unmoved.
+#
+# ⚠️ `ems-y-b00-v1`, THE LEG fw v27 rev 2 FLAGGED AS AT RISK, IS BETTER OFF AND
+# STILL NOT SAFE. Its steady two-source total at the profile's 1.0 m/s peak is
+# 0.2796 A, which is now 11.8 % ABOVE the 0.25 A gate rather than 6.8 % below
+# the 0.30 A one, so the arm releases on the cruise rather than needing an
+# acceleration transient. It also gains a second escape it did not have: the
+# profile's region-6 command of share 1.00 SELECTS the fuel cell instead of
+# being refused, so an arm still standing there takes FC-only rather than
+# leaving `bt_bus_cut` unsatisfiable. WATCH IT ANYWAY - both mechanisms are
+# walk-side arguments, and neither has a campaign behind it.
+# ═════════════════════════════════════════════════════════════════════════════
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Which scenarios EXPECT the board to latch a fault.
 #
@@ -4277,14 +4398,35 @@ FAULT_EXPECTATIONS["ems-ftp75-sdp"] = {
         #     sdpx and sdpb censuses use. PROVISIONAL on one fw v27 campaign;
         #     a second reading either pins it or widens it, and the band is
         #     never widened to absorb an unexplained number.
+        #     ⚠️ fw v28 RE-PIN (2026-09-08): (37, 85) -> (0, 6), and this is a
+        #     TIGHTENING, not a widening. The chatter's mechanism was the
+        #     fw v27 rev 2 EQUALITY `SHARE_HANDOFF_MIN_A == SHARE_MINORITY_
+        #     I_MIN_A` (0.15 A): a channel the governor was holding AT its
+        #     conduction floor read DARK to the load guard, so the guard cut and
+        #     restored it on the same current. F5 separates the two -
+        #     0.10 / 0.12 A against a 0.125 A floor, with three firmware
+        #     static_asserts pinning the ordering - so a channel at the floor is
+        #     0.025 A clear of the dark threshold and the crossings cannot
+        #     recur. RE-WALKED (`ems_walk.walk(...).fc_bus_falls`, the plant
+        #     loss map, dv0 0.013522, rho 0.9434): TWO falls in the whole 350 s
+        #     run and ONE in t = [205, 295] s, against 62 / 61 measured on the
+        #     board at fw v27 rev 2.
+        #     THE BAND IS NOT THE -40/+40 RULE, because that rule is degenerate
+        #     on 1. It is "the walk's 1, plus five". A FAIL means the chatter
+        #     survived F5, which is precisely what this check is now for; the
+        #     fw v27 reading of 61 is OUT of the band by construction, and a
+        #     band spanning both eras would assert nothing.
         {"name": "sdpftp_en_low_census", "switch_bit": SW_FC_BUS,
-         "edge_count_between": (37, 85), "edge": "fall",
+         "edge_count_between": (0, 6), "edge": "fall",
          "t_window": (205.0, 295.0),
-         "provisional_note": _SDPFTP_PROVISIONAL + " " + _FW27_ERA_PROVISIONAL,
-         "label": "FC_BUS cut 37-85 times in the share-cut chatter regime "
-                  "(measured 61 falls in t = [205, 295] s of a whole-run 62, "
-                  "campaign G2 hil_report_20260904_003108; the four sibling "
-                  "FTP-75 legs record 1 whole-run fall and 0 in this window)"},
+         "provisional_note": (_SDPFTP_PROVISIONAL + " " + _FW27_ERA_PROVISIONAL
+                              + " " + _FW28_ERA_PROVISIONAL),
+         "label": "FC_BUS cut at most 6 times in what WAS the share-cut "
+                  "chatter regime (fw v28 walk: 1 fall in t = [205, 295] s and "
+                  "2 whole-run; the fw v27 rev 2 board measured 61 and 62 in "
+                  "campaign G2 hil_report_20260904_003108, and F5's 0.10/0.12 A "
+                  "handoff split against a 0.125 A conduction floor is what "
+                  "removes the mechanism)"},
     ],
 }
 
@@ -4467,12 +4609,15 @@ for _leg in ("ems-ftp75-5050", "ems-ftp75-socband", "ems-ftp75-dp"):
         {"name": "ftp_en_low_census", "switch_bit": SW_FC_BUS,
          "edge_count_between": (0, 1000), "edge": "fall",
          "t_window": (205.0, 295.0), "informational": True,
-         "provisional_note": _FW27_ERA_PROVISIONAL,
+         "provisional_note": _FW27_ERA_PROVISIONAL + " " + _FW28_ERA_PROVISIONAL,
          "label": "INFORMATIONAL: FC_BUS cut count in the window where the "
-                  "`ems-ftp75-sdp` sibling chatters (measured 0 on this leg in "
-                  "campaign G2 hil_report_20260904_003108, against 61 there). "
-                  "Reported for cross-leg comparability; the bound is "
-                  "deliberately unbounded and asserts nothing"})
+                  "`ems-ftp75-sdp` sibling USED TO chatter (measured 0 on this "
+                  "leg in campaign G2 hil_report_20260904_003108, against 61 "
+                  "there; the fw v28 walk gives 0 here and 1 there, so the two "
+                  "populations have converged and this census's discriminating "
+                  "power is gone with the chatter). Reported for cross-leg "
+                  "comparability; the bound is deliberately unbounded and "
+                  "asserts nothing"})
 del _leg
 
 FAULT_EXPECTATIONS["ems-sdp-cross"] = {
@@ -4640,15 +4785,32 @@ FAULT_EXPECTATIONS["ems-sdp-cross"] = {
         #    ~17..40 s. The three fw v26 campaigns' 9 is OUT of this band by
         #    construction: the two eras are not comparable on this axis, and a
         #    band spanning both would assert nothing.
-        {"provisional_note": _FW27_ERA_PROVISIONAL,
+        #    ⚠️ fw v28 RE-WALK (2026-09-08): the BAND DOES NOT MOVE, and the
+        #    expected direction was wrong. F3 removes the forced-0.5000 split
+        #    (totals in [0.20, 0.25) A now HOLD the reference instead of pinning
+        #    it), and the era brief expected the period to return toward the
+        #    fw v26 figure of 12-17 s. It does not: the walk gives FOUR rises in
+        #    t = [70, 190] s at 95.0 / 125.0 / 154.0 / 184.0 s, i.e. a period of
+        #    29.0-30.0 s, LONGER than fw v27 rev 2's 25.2 s. The mechanism is
+        #    that this leg's 0.2817 A cruise total is now ABOVE the 0.25 A gate,
+        #    so the loop runs CLOSED and delivers the SDP's own fuel-cell-leaning
+        #    share instead of a 0.5 split - which drains the pack more slowly
+        #    than the forced 0.5 did and stretches the SoC hysteresis cycle
+        #    further. fw v26's 9 windows were an OPEN-LOOP HOLD regime (the gate
+        #    was 0.55 A there), which is a third mechanism again.
+        #    The measured 4 sits inside [3, 7], so the band stands as written;
+        #    only the prose and the era note move.
+        {"provisional_note": _FW27_ERA_PROVISIONAL + " " + _FW28_ERA_PROVISIONAL,
          "name": "sdpx_charge_window_count", "switch_bit": SW_FC_CHARGE,
          "edge_count_between": (3, 7), "edge": "rise",
          "t_window": (70.0, 190.0),
-         "label": "... across 3-7 distinct charge windows (measured 5 at a "
-                  "25.2 s period, campaign G hil_report_20260903_233736; was 9 "
+         "label": "... across 3-7 distinct charge windows (fw v28 walk: 4 at a "
+                  "29.0-30.0 s period; the fw v27 rev 2 board measured 5 at "
+                  "25.2 s, campaign G hil_report_20260903_233736; it was 9 "
                   "in each of three fw v26 campaigns, at a period of 16.13 s in "
                   "campaign 024231 and 16.10-17.12 s in the bleed-era "
-                  "campaign 20260902_220604)"},
+                  "campaign 20260902_220604 - three eras, three mechanisms, "
+                  "one band that brackets the last two)"},
         # 8. THE CHARGER ACTUALLY CHARGED. Peak-over-window, so any one window
         #    satisfies it. Each is SDP_CHG_MIN_DWELL_S = 8 s long against
         #    AG105_SETTLE_S 0.5 s + AG105_TAU_S 0.4 s, so I_charge reaches the
@@ -5576,7 +5738,19 @@ _FTP75C_WALK_ERA_NOTE = (
     "bring-up window nor the handoff events, which is why it reads 0 where the "
     "board reads 5.24e-05; re-walking this family is a separate round. Regen "
     "is era-invariant: 6 windows / 19.240 s, 0.7365 C to the pack, chopper "
-    "5.4675 J.")
+    "5.4675 J."
+    " fw v28 RE-WALK (2026-09-08), AND IT REVERSES THE fw v27 FINDING: the "
+    "closed-loop gate is 2*SHARE_MINORITY_I_MIN_A = 0.25 A, which this cycle's "
+    "peak source total DOES cross, so the selector's arm releases and the four "
+    "charge-free legs SEPARATE again - h2 0.0020697 (-5050) / 0.0020756 (-dp) / "
+    "0.0020638 (-mpc) / 0.0056829 (-sdp) g, and -socband 0.0046556 g. The SDP "
+    "leg is 2.7x the others because sdp_policy_v6 commands 1.00 below its SoC "
+    "target at every low-demand bin and the fw v28 SOURCE SELECTOR reads that "
+    "as fuel-cell-only rather than refusing it. The legs are still LATCHED for "
+    "56.8 % of their governor ticks, so this stays a light-load stimulus; what "
+    "changed is that the arm releases at all. THESE ARE WALK FIGURES and the "
+    "walk still carries neither the pre-cut bring-up window nor the handoff "
+    "events, so the board should read slightly above them.")
 
 
 def _ftp75c_regen_signals():
@@ -5822,7 +5996,22 @@ def _ftp75c_expectation(*, scenario, ems, i_fc_peak_walk, extra=(), note=""):
              "measured 0.3818 A over five legs, where the quantity WAS aux plus "
              "the charger's referred bus draw and moved with ETA_CHG, the Ag105 "
              "ceiling and the handoff bus voltage. Re-derive it after the "
-             "operator's F1 firmware fix, not before."),
+             "operator's F1 firmware fix, not before."
+             + " " + _FW28_ERA_PROVISIONAL
+             + " fw v28: THE F1 FIX HAS LANDED AND THIS CHECK IS NO LONGER "
+               "EXPECTED TO FAIL. chargingControl() now DISARMS the selector "
+               "one commander period before FC_CHARGE_ENABLE rises, so the "
+               "setpoint latch's guarded release re-closes FC_BUS onto a "
+               "still-energised bus and there is no source-less window to "
+               "recharge C_VBUS through a cold ideal diode. The compressed "
+               "cycle also crosses the new 0.25 A gate, so the arm releases on "
+               "its own and the never-closed regime does not span the run. "
+               "RE-WALKED (fw v28, plant loss map, dv0 0.013522, rho 0.9434): "
+               "peak I_fc 0.1425 A (-5050 and -mpc), 0.1459 A (-dp), 0.2506 A "
+               "(-sdp), 0.2207 A (-socband) - the largest is 58 % under this "
+               "0.60 A bound. THE BOUND IS NOT MOVED in either direction: "
+               "tightening it onto a walk with no campaign behind it would be "
+               "the same error as widening it onto a defect."),
          "label": "the FC channel stayed under 0.60 A across the whole cycle, "
                   "INCLUDING the charge-handoff transients that arm 1 masks "
                   "out (fw v26 measured maximum 0.3818 A over the five legs; "
@@ -5831,8 +6020,11 @@ def _ftp75c_expectation(*, scenario, ems, i_fc_peak_walk, extra=(), note=""):
                   "single-source; on fw v27 it is the bus-RECHARGE INRUSH "
                   "through a cold ideal diode after a break-before-make "
                   "handoff (measured 1.1761 A, campaign G2) - a firmware "
-                  "sequencing defect, and this check FAILING is how it stays "
-                  "visible"},
+                  "sequencing defect, and this check FAILING is how it stayed "
+                  "visible. On fw v28 the F1 disarm removes that handoff and "
+                  "the walk puts the whole family at 0.1425-0.2506 A, so a "
+                  "FAIL here is once again a finding about the board rather "
+                  "than a known era signature"},
     ]
     sigs.extend(_ftp75c_regen_signals())
     sigs.extend(extra)
@@ -6324,6 +6516,28 @@ FAULT_EXPECTATIONS["ems-sdp-alpha-charge"] = _alpha_expectation(
 # `ems-sdp-alpha-greedy`'s band is copied from a committed sweep artifact that
 # must be re-solved at the fw v27 governor rather than overridden here. The note
 # makes a campaign-G FAIL read as this era's known consequence.
+# ⚠️ fw v28 (2026-09-08): THE TWO LEGS PART COMPANY, and the loop below now
+# carries a per-leg fw v28 verdict as well as the shared fw v27 one.
+#   * `ems-ftp75c-mpc` is REACHABLE AGAIN. The 0.25 A gate is crossed by the
+#     compressed cycle, the arm releases, and the walk gives 0.0020638 g
+#     against a floor of 0.001521 g - 36 % over it. The fw v27 unreachability
+#     warning is retired BY A RE-WALK, not by a widening.
+#   * `ems-sdp-alpha-greedy` moved FURTHER BELOW its floor: 0.0011157 ->
+#     0.0009750 g against 0.003070 g (68 % under, was 64 %). Still not
+#     lowered: the band is copied from `live_picks.json`'s `walk_h2_g`, a
+#     committed sweep artifact solved at the fw v26 governor, and the fix is to
+#     re-solve that sweep at the fw v28 governor.
+_FW28_FLOOR_VERDICT = {
+    "ems-ftp75c-mpc":
+        (" fw v28: REACHABLE AGAIN - the walk gives 0.0020638 g against this "
+         "0.001521 g floor (+36 %), because the 0.25 A gate lets the "
+         "compressed cycle release the selector's arm. A FAIL here is no "
+         "longer explained by the era."),
+    "ems-sdp-alpha-greedy":
+        (" fw v28: STILL UNREACHABLE AND FURTHER AWAY - the walk gives "
+         "0.0009750 g against this 0.003070 g floor (68 % under, was 64 %). "
+         "NOT lowered: re-solve the alpha sweep at the fw v28 governor."),
+}
 for _leg, _spec_name, _walk_g in (("ems-ftp75c-mpc", "mpc_h2_accounted", 0.0),
                                   ("ems-sdp-alpha-greedy", "alpha_h2_accounted",
                                    0.0011157)):
@@ -6341,7 +6555,8 @@ for _leg, _spec_name, _walk_g in (("ems-ftp75c-mpc", "mpc_h2_accounted", 0.0),
                    "BELOW "
                    "THIS FLOOR, so a campaign-G FAIL here is the ERA and not "
                    "the board. The floor is deliberately NOT lowered - see the "
-                   "FW27-ERA block." % _walk_g))
+                   "FW27-ERA block." % _walk_g)
+                + _FW28_ERA_PROVISIONAL + _FW28_FLOOR_VERDICT[_leg])
             break
     else:                                                    # pragma: no cover
         raise AssertionError(
@@ -6643,7 +6858,33 @@ FAULT_EXPECTATIONS["mppt-tracking"] = {
                          "eta-era cruise V_chg rose +0.487 V mean / +0.774 V "
                          "min and the count band did not move, because the "
                          "AG105_MPPT_N_FLOOR clamp binds (target ~11.27 V vs "
-                         "the 12.320 V floor) — peak 19 in both eras"),
+                         "the 12.320 V floor) — peak 19 in both eras"
+                         + " " + _FW28_ERA_PROVISIONAL
+                         + " fw v28 DIRECTION, STATED RATHER THAN RE-PINNED: "
+                           "two of the era's changes reach this entry and "
+                           "NEITHER can be re-walked, because `ems_walk` "
+                           "prices demand and does not model the charge "
+                           "window's bus sag. (1) F1 opens FC_CHARGE_ENABLE "
+                           "ONE COMMANDER PERIOD LATER than fw v27 rev 2 - the "
+                           "selector is disarmed first and the open is then "
+                           "conduction-gated - so every window edge in this "
+                           "entry moves right by up to 20 ms. Every window "
+                           "here carries at least 20 ms of lead-in margin, so "
+                           "no bound is expected to move on that account. "
+                           "(2) F4 holds k_d at K_DROOP while FC_CHARGE is "
+                           "HIGH, instead of letting the load schedule "
+                           "saturate it at 0.906 ohm as campaign G measured. "
+                           "That is a 3x reduction in single-source charge-"
+                           "window droop, so the plateau bus voltage RISES and "
+                           "V_chg rises with it. DIRECTION ONLY: the five "
+                           "mppt_thresh_cnt pins are clamped by "
+                           "AG105_MPPT_N_FLOOR (target ~11.27 V against a "
+                           "12.320 V floor) and a V_chg rise moves them only "
+                           "if it lifts the target past that floor, which "
+                           "would take ~1.05 V. Re-pin the plateau bus, the "
+                           "sag and the harvest operating point from the FIRST "
+                           "fw v28 campaign or from a simulator run - not from "
+                           "a walk, which does not carry the quantity."),
     "signals_require": [
         # 1. MPPT_DISABLE ASSERTED (pin LOW) throughout a braking window.  Two
         #    firmware paths hold it low there and they agree: charge_goal is 0 at
@@ -7294,8 +7535,59 @@ def _batt_only_gate_cross_s(preload_a):
     return AUX_PRELOAD_START_S + SOC_LOAD_RAMP_S * need / preload_a
 
 
+def _selector_commands_a_rail(tag, hold_end_s):
+    """Refuse to generate battery-polarity checks for a leg that selects the
+    FUEL CELL in its own battery-only window (fw v28).
+
+    The check is on the SCENARIO's commanded share, which is the selector's only
+    input.  A leg whose timeline reaches `DROOP_R_MAX` before `hold_end_s` puts
+    the FUEL CELL alone on the bus there, and `*_battonly_fc_off` would then
+    assert the opposite of the truth - the failure mode this guard exists to
+    make impossible rather than to catch in a campaign.
+    Raises rather than warning: a suite that silently generated an inverted
+    check is worse than one that will not import."""
+    sc = SCENARIOS.get({"cruise": "fw26-clamp-cruise",
+                        "sweep": "fw26-clamp-sweep",
+                        "joint": "fw26-clamp-joint"}.get(tag, tag))
+    if not sc:
+        return
+    for t, cmd in (sc.get("pi_timeline") or ()):
+        if t >= hold_end_s:
+            break
+        sp = cmd.get("power_share_setpoint")
+        if sp is None:
+            continue
+        if sp >= gov_mod.GOV_CONST["DROOP_R_MAX"]:
+            raise ValueError(
+                "%s: the timeline commands share %.4f at t = %.2f s, which the "
+                "fw v28 source selector reads as FUEL-CELL-ONLY. The generated "
+                "`_battonly_fc_off` / `_battonly_bt_carried` pair asserts the "
+                "BATTERY polarity and would be inverted; generate the mirror "
+                "pair for this leg instead." % (tag, sp, t))
+
+
 def _batt_only_signals(tag, preload_a, hold_end_s, note):
-    """The four battery-only-start checks for one scripted-preload leg.
+    """The four SOURCE-SELECTOR checks for one scripted-preload leg.
+
+    ── fw v28 (2026-09-08): THESE ARE SELECTOR CHECKS NOW ──────────────────
+    At fw v27 rev 2 the start-up cut had a fixed source and these four could
+    assert FC_BUS LOW unconditionally.  At fw v28 the SELECTION is read from the
+    commanded share (`>= DROOP_R_MAX` selects the fuel cell, `<= DROOP_R_MIN`
+    the battery, hold in between), so the polarity of `*_battonly_fc_off` and
+    `*_battonly_bt_carried` is a property of what the leg COMMANDS in the
+    window, and a leg that commands a rail there would need the mirror pair.
+    CHECKED, NOT ASSUMED: all three callers are `fw26-clamp-*` legs whose
+    `pi_timeline` commands 0.50 from t = 5.0 s (and nothing before it), which is
+    strictly inside the band, so the selection HOLDS at the arm's own default -
+    the battery - and the four checks keep their fw v27 polarity.  The
+    `_selector_commands_a_rail` guard below refuses to generate them for a leg
+    that does not have that property, rather than silently asserting the wrong
+    switch.
+
+    WHAT DID MOVE: the WINDOW.  `_BATT_ONLY_GATE_A` is derived from
+    `SHARE_MINORITY_I_MIN_A` and fell 0.30 -> 0.25 A, so `cross` lands EARLIER
+    on every preload ramp and all twelve windows shortened with it.  That is
+    automatic here and is exactly why the constant is read rather than typed.
 
     Generated rather than written out three times so the three fw26 legs cannot
     drift apart on a mechanism none of them is about — and so a scenario edit
@@ -7306,6 +7598,7 @@ def _batt_only_signals(tag, preload_a, hold_end_s, note):
     edge census runs up to it so that "exactly one rise" covers the whole span
     between the Run entry and the first check that assumes FC_BUS is high."""
     cross = _batt_only_gate_cross_s(preload_a)
+    _selector_commands_a_rail(tag, hold_end_s)
     lo_t0 = EMS_RUN_ENTRY_S + _BATT_ONLY_EDGE_S
     lo_t1 = cross - _BATT_ONLY_EDGE_S
     assert lo_t0 < lo_t1 < hold_end_s, (
@@ -7315,7 +7608,7 @@ def _batt_only_signals(tag, preload_a, hold_end_s, note):
     return [
         {"name": "%s_battonly_fc_off" % tag, "switch_bit": SW_FC_BUS,
          "max_ticks": 0, "t_window": (lo_t0, lo_t1),
-         "provisional_note": _FW27_ERA_PROVISIONAL,
+         "provisional_note": _FW27_ERA_PROVISIONAL + " " + _FW28_ERA_PROVISIONAL,
          "vacuity_note": ("the switch column cannot be blank across this "
                           "window: `%s_battonly_reentry` below measures a "
                           "RISING edge of the same bit later in the same run, "
@@ -7332,7 +7625,7 @@ def _batt_only_signals(tag, preload_a, hold_end_s, note):
         {"name": "%s_battonly_bt_carried" % tag, "switch_bit": SW_BT_BUS,
          "min_ticks": int(1000.0 * 0.8 * (lo_t1 - lo_t0)),
          "t_window": (lo_t0, lo_t1),
-         "provisional_note": _FW27_ERA_PROVISIONAL,
+         "provisional_note": _FW27_ERA_PROVISIONAL + " " + _FW28_ERA_PROVISIONAL,
          "label": "... and the BATTERY carried it: BT_BUS_ENABLE high for "
                   ">= 80 %% of the same window. The battery-only start is a "
                   "SINGLE-SOURCE topology, not a dark bus, and this is the "
@@ -7341,7 +7634,7 @@ def _batt_only_signals(tag, preload_a, hold_end_s, note):
          "edge": "rise", "after_t": cross,
          "max_ms": _BATT_ONLY_REENTRY_MAX_MS,
          "t_window": (lo_t0, hold_end_s),
-         "provisional_note": _FW27_ERA_PROVISIONAL,
+         "provisional_note": _FW27_ERA_PROVISIONAL + " " + _FW28_ERA_PROVISIONAL,
          "label": "the fuel cell re-entered within %.0f ms of the %.2f A gate "
                   "crossing at %.4f s (budget: 19.5 ms of governor EMA lag + "
                   "%d ms of survivor blanking + 20 ms of command phase + "
@@ -7353,7 +7646,7 @@ def _batt_only_signals(tag, preload_a, hold_end_s, note):
         {"name": "%s_battonly_one_rise" % tag, "switch_bit": SW_FC_BUS,
          "edge_count_between": (1, 1), "edge": "rise",
          "t_window": (lo_t0, hold_end_s),
-         "provisional_note": _FW27_ERA_PROVISIONAL,
+         "provisional_note": _FW27_ERA_PROVISIONAL + " " + _FW28_ERA_PROVISIONAL,
          "label": "EXACTLY ONE FC_BUS rising edge between the Run entry and "
                   "%.2f s - the battery-only re-entry and nothing else. Two "
                   "edges is a cut/restore ring on the handover, zero is an arm "
