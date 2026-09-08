@@ -83,6 +83,18 @@ static void reset_test_state() {
     // reads them without first re-arming.
     encEdgeCountA = 0;
     encEdgeCountB = 0;
+    // fw v28 rev 2: the encoder direction-sense auto-flip. All five fields are returned to their
+    // BOOT values here. On the board the sign and the flip count deliberately survive every run
+    // boundary (they are a wiring fact — see the .ino's lifetime note), so nothing in the firmware
+    // ever clears them; a test that took a flip would otherwise hand every later test an inverted
+    // publish boundary inside updateWheelSpeed() and a spent flip budget. "Boot value" is the only
+    // fixture baseline that keeps the suite order-independent.
+    encDirSign           = 1;
+    encDirFlipCount      = 0;
+    encDirRunawayTicks   = 0;
+    encDirRunawayMagRef  = 0.0f;
+    encDirRunawayMagOpen = 0.0f;
+    encDirLockoutMs      = 0;
 
     ag105_status_raw     = 0;
     ag105DataValid       = false;
@@ -18807,6 +18819,501 @@ static void test_encoder_status_dump_phase_duty() {
     check(Serial.tx_contains("dutyB=0.750"), "'S' dump: dutyB= reports encDutyBEwma/256.0 (0.750)");
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+// fw v28 rev 2: ENCODER DIRECTION-SENSE AUTO-FLIP
+//
+// The feature answers docs/encoder_defect_harness.md section 5.4: with the A/B phase inverted (a
+// connector plugged in the wrong way round) the decode is exactly backwards, the drive controller
+// rails at MOTOR_I_CMD_MAX for the whole run, and no fault is raised. updateEncoderDirectionSense()
+// detects the POSITIVE-FEEDBACK RUNAWAY (not "sign(I) opposes sign(v)", which braking also has) and
+// inverts encDirSign, the factor applied where updateWheelSpeed() publishes v_actual.
+//
+// Two fixtures are used, deliberately:
+//   - The CLOSED-LOOP fixture (test 1) drives the real quadrature ISRs with REVERSED cycles, runs
+//     the real updateWheelSpeed() and the real motorControlGated(), and lets the firmware decide.
+//     It is the honest reproduction of a reversed harness and it is what proves the seam.
+//   - The SEAM fixture (tests 2-4) writes v_actual/current directly and calls only the detector.
+//     A magnitude envelope, a 499-tick push and a five-window lockout/cap sequence are not
+//     reachable through a plant in a bounded test, and the detector's contract is stated in terms
+//     of the published pair, not of how it was published.
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+#if !HIL_SIM
+
+// One detector tick at the publish seam. encVelHaveValid is set because the detector requires a
+// valid reading (a boot/standstill publication must contribute no ticks); millis() is NOT advanced
+// here, so the lockout tests can place a whole window at one instant and control the clock
+// explicitly.
+static void fw28r2_seam_tick(float v_pub, float i_cmd) {
+    encVelHaveValid = true;
+    v_actual = v_pub;
+    current  = i_cmd;
+    updateEncoderDirectionSense();
+}
+
+// n ticks of a runaway whose published magnitude starts at |v0| and GROWS by dv per tick against
+// an opposing command i_cmd. Growth is required by the detector's condition 6 (review F3): a
+// magnitude that merely holds is a correctly wired vehicle on an incline or a dyno, not an
+// inversion. Returns the flip count taken during the n ticks. The sign of v0 is the published
+// sign; dv is applied to the MAGNITUDE, so a negative v0 grows more negative.
+static int fw28r2_seam_window(int n, float v0, float dv, float i_cmd) {
+    const uint16_t before = encDirFlipCount;
+    const float    sgn    = (v0 < 0.0f) ? -1.0f : 1.0f;
+    float          mag    = fabsf(v0);
+    for (int k = 0; k < n; k++) {
+        fw28r2_seam_tick(sgn * mag, i_cmd);
+        mag += dv;
+    }
+    return (int)(encDirFlipCount - before);
+}
+
+// ─── (1) The inverted harness, closed loop through the real ISRs and the real drive loop ────
+static void test_fw28r2_inverted_wiring_flip_and_recovery() {
+    test_group("fw v28 rev 2: inverted encoder wiring flips once and the drive recovers "
+               "(real ISRs, real updateWheelSpeed(), real motorControlGated())");
+    enc_reset();                     // includes reset_test_state()
+    g_mock_micros = 0;
+    g_mock_millis = 0;
+    encoderVelReset();
+    updateWheelSpeed();
+    velocityChainCalibratedFlag = true;
+
+    // The wheel really turns FORWARD and ACCELERATES, because the railed drive is accelerating it
+    // — that acceleration is the runaway. The harness is wired backwards, so the ISRs see REVERSE
+    // quadrature cycles and the decoder publishes -|v|. The commanded cruise is forward, so the
+    // velocity error is (setpoint + |v|) at all times and the loop rails, which is the measured
+    // signature. The mechanical law is PRESCRIBED here rather than closed on `current` (the
+    // embedded encoder-defect harness owns the fully closed-loop version of this case); what is
+    // real is the whole firmware path — the ISRs, updateWheelSpeed(), the detector and the drive
+    // controller.
+    const float A_ACCEL = 2.0f;      // m/s^2 while the drive is on the rail
+    float v_true = 0.60f;            // m/s, already above ENC_DIR_RUNAWAY_V_MIN
+    float x_m    = 0.0f;             // m travelled, in slot pitches below
+    long  slots_emitted = 0;
+    v_setpoint = 1.0f;
+
+    const int N = 2000;
+    long  flip_tick = -1;
+    int   window_before_flip = -1;
+    bool  drive_state_cleared_at_flip = false;
+    float v_pub_at_flip = 0.0f, i_at_flip = 0.0f, v_true_at_flip = 0.0f;
+    long  rail_ticks_before_flip = 0;
+    float i_first_after_flip = 0.0f;
+    bool  i_stayed_braking_after_flip = true;
+    bool  v_pub_positive_after_flip = true;
+
+    for (int k = 1; k <= N; k++) {
+        const uint32_t t = (uint32_t)k * 1000u;
+        // Advance the true wheel. Past the flip the drive is off the rail, so stop accelerating —
+        // the post-flip transient is the drive recovering, not a continuing runaway.
+        if (flip_tick < 0) v_true += A_ACCEL * 1e-3f;
+        const float x_prev = x_m;
+        x_m += v_true * 1e-3f;
+        // Each pitch crossing is timestamped at its OWN interpolated instant inside the tick, not
+        // at the tick boundary. That is not cosmetic: the estimator measures the interval between
+        // A-rising edges, so quantising the edges to the 1 ms loop tick injects a +-1 ms period
+        // error, which at these speeds is a +-0.3 m/s magnitude jitter — an order of magnitude
+        // over ENC_DIR_RUNAWAY_MAG_TOL, and it would break the detector's window every few ticks
+        // as a pure fixture artefact. The encoder-defect harness interpolates for the same reason.
+        while ((double)x_m >= (double)(slots_emitted + 1) * (double)ENC_SLOT_PITCH_M) {
+            const double x_target = (double)(slots_emitted + 1) * (double)ENC_SLOT_PITCH_M;
+            const double frac     = (x_target - (double)x_prev) / ((double)x_m - (double)x_prev);
+            const uint32_t t_edge = (uint32_t)((k - 1) * 1000) + (uint32_t)(frac * 1000.0);
+            slots_emitted++;
+            enc_cycle_rev(t_edge);   // REVERSED harness: forward motion decodes as reverse
+        }
+        g_mock_micros = t;
+        g_mock_millis = t / 1000u;
+
+        updateWheelSpeed();
+
+        const uint16_t flips_before = encDirFlipCount;
+        const uint16_t window_prev  = encDirRunawayTicks;
+        const float    v_pub_prev   = v_actual;
+        const float    i_prev       = current;
+        updateEncoderDirectionSense();
+        if (encDirFlipCount > flips_before && flip_tick < 0) {
+            flip_tick           = k;
+            window_before_flip  = (int)window_prev;
+            v_pub_at_flip       = v_pub_prev;
+            i_at_flip           = i_prev;
+            v_true_at_flip      = v_true;
+            drive_state_cleared_at_flip = true;
+            for (int i = 0; i < DRIVE_CTRL_NSTATES; i++)
+                if (driveCtrl_x[i] != 0.0) drive_state_cleared_at_flip = false;
+        }
+
+        motorControlGated();
+
+        if (flip_tick < 0) {
+            if (current >= MOTOR_I_CMD_MAX * 0.999f) rail_ticks_before_flip++;
+        } else {
+            if (k == flip_tick) i_first_after_flip = current;
+            if (current > 0.0f) i_stayed_braking_after_flip = false;
+            if (v_actual <= 0.0f) v_pub_positive_after_flip = false;
+            // The post-flip observation is BOUNDED at 20 ticks (10 controller steps), and the
+            // bound is honest rather than convenient: the plant here is prescribed, so the wheel
+            // cannot answer the braking command, and a loop left running would wind the
+            // integrator down to the NEGATIVE rail against a vehicle that never slows. That is
+            // correct controller behaviour and a fixture artefact at once. What is being measured
+            // is the flip transient: the command leaving the +rail and reversing.
+            if (k >= flip_tick + 20) break;
+        }
+    }
+
+    printf("  inverted wiring: flip@%ld  window-before %d  v_true@flip %.4f  v_pub@flip %+.4f  "
+           "I@flip %+.2f A  rail ticks before %ld  I on the flip tick %+.3f A  sign %d  "
+           "flips %u  slots %ld\n",
+           flip_tick, window_before_flip, (double)v_true_at_flip, (double)v_pub_at_flip,
+           (double)i_at_flip, rail_ticks_before_flip, (double)i_first_after_flip,
+           (int)encDirSign, (unsigned)encDirFlipCount, slots_emitted);
+
+    check(v_pub_at_flip < 0.0f &&
+          fabsf(fabsf(v_pub_at_flip) - v_true_at_flip) < 0.10f * v_true_at_flip,
+          "(1) the reversed harness publishes -|v|: the magnitude is right to within 10 % of the "
+          "true speed (the estimator's own lag) and the sign is inverted — the measured defect");
+    check(i_at_flip >= MOTOR_I_CMD_MAX * 0.999f,
+          "(1) the drive is on the +MOTOR_I_CMD_MAX rail when the window completes");
+    check(rail_ticks_before_flip >= (long)ENC_DIR_RUNAWAY_TICKS,
+          "(1) the runaway railed for at least the whole detection window before the flip");
+    check(flip_tick > 0, "(1) a direction-sense flip fired inside the run");
+    check(window_before_flip == (int)ENC_DIR_RUNAWAY_TICKS - 1,
+          "(1) the flip fires on the 500th consecutive qualifying tick (the counter read 499 on "
+          "the tick before)");
+    check(encDirFlipCount == 1 && encDirSign == -1,
+          "(1) EXACTLY ONE flip is taken and the publish boundary is inverted");
+    check(drive_state_cleared_at_flip,
+          "(1) resetDriveControlState() ran at the flip: the Hanus state vector is zero on the "
+          "flip tick, so the railed state is not carried across the 2|v| error step");
+    check(v_pub_positive_after_flip,
+          "(1) after the flip the published velocity is in the TRUE frame (positive for a "
+          "forward-turning wheel behind a reversed harness)");
+    check(fabsf(i_first_after_flip) < MOTOR_I_CMD_MAX * 0.999f,
+          "(1) the drive RECOVERS on the flip tick itself: the command leaves the "
+          "+MOTOR_I_CMD_MAX rail immediately, because the flip corrects this tick's already-"
+          "published v_actual and the controller steps from a cleared state");
+    check(i_first_after_flip < 0.0f && i_stayed_braking_after_flip,
+          "(1) and it recovers in the RIGHT DIRECTION: the command reverses to braking (the "
+          "vehicle is above the commanded cruise once the sense is correct) and stays there — "
+          "before the flip the same loop was accelerating the runaway at +12 A");
+    // After the flip the loop brakes, so the command opposes the (now correctly signed) velocity
+    // again and the fixture's frozen wheel keeps the magnitude constant -- conditions 1 to 4 hold
+    // and a window re-accumulates. It cannot complete into a second flip: the magnitude does not
+    // grow (condition 6) and the 5 s lockout is armed. This is the braking case of test (2)
+    // arriving by a different route, and it is asserted rather than left as a surprise.
+    check(encDirRunawayTicks < ENC_DIR_RUNAWAY_TICKS && encDirFlipCount == 1,
+          "(1) the braking that follows the correction re-opens a window but cannot complete one "
+          "-- the magnitude does not grow and the lockout is armed, so no second flip is taken");
+    check(Serial.tx_contains("ENC DIR FLIP #1"),
+          "(1) the flip prints its one ASCII line on USB Serial");
+    check(Serial.tx_contains("sign now -1"),
+          "(1) the Serial line reports the new sign");
+}
+
+// ─── (2) Braking is never mistaken for an inversion ─────────────────────────────────────────
+// Braking satisfies conditions 1-3 by construction: the command opposes the velocity and can sit
+// at the rail. Condition 4 is the discriminator — a commanded deceleration collapses |v|, so the
+// window breaks as soon as the magnitude falls ENC_DIR_RUNAWAY_MAG_TOL below its ratcheted peak.
+static void test_fw28r2_braking_never_flips() {
+    test_group("fw v28 rev 2: braking never flips (|v| shrinking against the command, at any "
+               "current)");
+    static const float I_SCAN[]   = { 6.0f, 8.0f, 12.0f };          // at and above the 6.0 A gate
+    static const float DECEL[]    = { 0.010f, 0.003f, 0.001f };     // m/s per tick
+    int   flips_total = 0;
+    int   window_worst = 0;
+    for (int a = 0; a < 3; a++) {
+        for (int b = 0; b < 3; b++) {
+            reset_test_state();
+            float v = 3.0f;
+            for (int k = 0; k < 2000 && v > 0.35f; k++) {
+                v -= DECEL[b];
+                fw28r2_seam_tick(v, -I_SCAN[a]);      // braking: command opposes the velocity
+                if ((int)encDirRunawayTicks > window_worst) window_worst = (int)encDirRunawayTicks;
+            }
+            flips_total += (int)encDirFlipCount;
+        }
+    }
+    printf("  braking: flips %d, worst window %d of %u ticks (9 decel x current combinations)\n",
+           flips_total, window_worst, (unsigned)ENC_DIR_RUNAWAY_TICKS);
+    check(flips_total == 0,
+          "(2) braking takes NO flip at any of the scanned currents and deceleration rates");
+    check(window_worst < (int)ENC_DIR_RUNAWAY_TICKS,
+          "(2) the window never completes under braking — the magnitude tolerance is spent and "
+          "the counter is zeroed long before 500 ticks");
+    // The same fixture with the magnitude GROWING (an inversion, not a brake) does flip, so the
+    // negatives above are conditions 4 and 6 and not an inert fixture.
+    reset_test_state();
+    check(fw28r2_seam_window((int)ENC_DIR_RUNAWAY_TICKS, 3.0f, 0.001f, -12.0f) == 1,
+          "(2) control: the identical current and starting speed with a GROWING magnitude DOES "
+          "flip, so the braking negatives are the magnitude envelope and not an inert fixture");
+}
+
+// ─── (2b) A held magnitude is not an inversion either (condition 6, review F3) ───────────────
+// "Not decreasing" alone admits a CONSTANT magnitude — a correctly wired vehicle held at a steady
+// speed against the current rail (an incline, a dyno, an externally driven bench flywheel) would
+// satisfy conditions 1 to 4 forever. Condition 6 requires the window to close on a magnitude that
+// grew by at least ENC_DIR_RUNAWAY_GROWTH_MIN, and a window that completes without the growth
+// simply restarts: no flip, no print, one restarted window per 0.5 s.
+static void test_fw28r2_held_magnitude_never_flips() {
+    test_group("fw v28 rev 2: a HELD magnitude against the rail never flips (the growth condition)");
+    reset_test_state();
+    check(fw28r2_seam_window(10 * (int)ENC_DIR_RUNAWAY_TICKS, 2.0f, 0.0f, -12.0f) == 0,
+          "(2b) ten full windows at a constant 2.0 m/s against the 12 A rail take no flip");
+    check(encDirSign == 1 && !Serial.tx_contains("ENC DIR"),
+          "(2b) the sign is untouched and nothing is printed — a stall costs a restarted window "
+          "and nothing else");
+    check(encDirRunawayTicks < ENC_DIR_RUNAWAY_TICKS,
+          "(2b) the window is restarted rather than left armed at its completion value");
+
+    // Growth just under the threshold is still refused; growth just over it flips. The boundary
+    // is the constant itself, not a fitted value.
+    reset_test_state();
+    const float dv_under = (ENC_DIR_RUNAWAY_GROWTH_MIN - 0.01f) / (float)ENC_DIR_RUNAWAY_TICKS;
+    check(fw28r2_seam_window((int)ENC_DIR_RUNAWAY_TICKS, 2.0f, dv_under, -12.0f) == 0,
+          "(2b) a window that grows 0.09 m/s (under ENC_DIR_RUNAWAY_GROWTH_MIN) takes no flip");
+    reset_test_state();
+    const float dv_over = (ENC_DIR_RUNAWAY_GROWTH_MIN + 0.01f) / (float)ENC_DIR_RUNAWAY_TICKS;
+    check(fw28r2_seam_window((int)ENC_DIR_RUNAWAY_TICKS, 2.0f, dv_over, -12.0f) == 1,
+          "(2b) a window that grows 0.11 m/s (over ENC_DIR_RUNAWAY_GROWTH_MIN) flips");
+}
+
+// ─── (2c) The manual-current mode is excluded (review F4) ────────────────────────────────────
+// The detector's premise is a CLOSED velocity loop: the command it compares against must have been
+// produced from the reading. In the State-98 'A' manual-current mode the operator sets `current`
+// by hand and the encoder reading does not influence it, so driving the wheel backwards at a
+// hand-set 12 A is a false positive by construction.
+static void test_fw28r2_manual_current_mode_excluded() {
+    test_group("fw v28 rev 2: MOTOR_TEST_CURRENT (open-loop manual current) cannot flip");
+    reset_test_state();
+    manualMotorMode = MOTOR_TEST_CURRENT;
+    check(fw28r2_seam_window(4 * (int)ENC_DIR_RUNAWAY_TICKS, 2.0f, 0.001f, -12.0f) == 0,
+          "(2c) four full growing windows in MOTOR_TEST_CURRENT take no flip");
+    check(encDirRunawayTicks == 0,
+          "(2c) no tick even qualifies while the mode is open-loop");
+
+    // The two closed-loop modes stay in scope: the identical stimulus flips in either.
+    manualMotorMode = MOTOR_TEST_VELOCITY;
+    check(fw28r2_seam_window((int)ENC_DIR_RUNAWAY_TICKS, 2.0f, 0.001f, -12.0f) == 1,
+          "(2c) MOTOR_TEST_VELOCITY is closed-loop and remains in scope");
+    reset_test_state();
+    manualMotorMode = MOTOR_TEST_OFF;
+    check(fw28r2_seam_window((int)ENC_DIR_RUNAWAY_TICKS, 2.0f, 0.001f, -12.0f) == 1,
+          "(2c) MOTOR_TEST_OFF (production State 2 and the 'D'/'Y' profiles) remains in scope");
+}
+
+// ─── (3) A push shorter than the window never flips, and any miss zeroes the counter ────────
+static void test_fw28r2_short_push_never_flips() {
+    test_group("fw v28 rev 2: a 499-tick external push never flips; the counter zeroes on the "
+               "first non-qualifying tick");
+    reset_test_state();
+
+    // 499 qualifying ticks: the vehicle is pushed backwards while the drive commands forward, so
+    // the magnitude even GROWS against the command — every condition but the window is met.
+    float v = -0.40f;
+    for (int k = 0; k < (int)ENC_DIR_RUNAWAY_TICKS - 1; k++) {
+        v -= 0.001f;                                  // |v| growing against the drive
+        fw28r2_seam_tick(v, +12.0f);
+    }
+    check(encDirRunawayTicks == ENC_DIR_RUNAWAY_TICKS - 1,
+          "(3) 499 consecutive qualifying ticks are counted");
+    check(encDirFlipCount == 0 && encDirSign == 1,
+          "(3) 499 ticks take no flip — one tick short of the window is no window");
+
+    // The push ends: the drive is no longer at the rail (condition 3 fails). One tick is enough.
+    fw28r2_seam_tick(v, +2.0f);
+    check(encDirRunawayTicks == 0,
+          "(3) a single non-qualifying tick zeroes the counter (the window is unbroken by "
+          "construction, not leaky)");
+    check(encDirRunawayMagRef == 0.0f,
+          "(3) the ratcheted magnitude reference is dropped with the counter, so the next window "
+          "re-seeds from its own first tick");
+
+    // A second push of the same length still cannot flip: the counter restarted from zero.
+    for (int k = 0; k < (int)ENC_DIR_RUNAWAY_TICKS - 1; k++) {
+        v -= 0.001f;
+        fw28r2_seam_tick(v, +12.0f);
+    }
+    check(encDirFlipCount == 0 && encDirSign == 1,
+          "(3) two 499-tick pushes separated by one miss still take no flip — the detector does "
+          "not integrate an intermittent signature");
+    // One more qualifying tick completes THIS window, which is the proof the fixture qualifies.
+    v -= 0.001f;
+    fw28r2_seam_tick(v, +12.0f);
+    check(encDirFlipCount == 1,
+          "(3) control: the 500th tick of the second push does flip, so the negatives above are "
+          "the window count and not a non-qualifying fixture");
+}
+
+// ─── (4) The lockout and the per-boot cap ───────────────────────────────────────────────────
+static void test_fw28r2_lockout_and_flip_cap() {
+    test_group("fw v28 rev 2: the 5 s lockout blocks a second flip, and the per-boot cap freezes "
+               "the sign at ENC_DIR_FLIP_MAX");
+    reset_test_state();
+    g_mock_millis = 10000;
+
+    check(fw28r2_seam_window((int)ENC_DIR_RUNAWAY_TICKS, 2.0f, 0.001f, -12.0f) == 1,
+          "(4) the first completed window flips");
+    check(encDirSign == -1 && encDirFlipCount == 1, "(4) sign inverted, count 1");
+
+    // Inside the lockout: a completed window takes no flip, and the window is still consumed
+    // (the counter is reset whatever happens), so a lockout cannot leave a full counter armed.
+    check(fw28r2_seam_window((int)ENC_DIR_RUNAWAY_TICKS, 2.0f, 0.001f, -12.0f) == 0,
+          "(4) a second completed window at the same instant takes NO flip (lockout)");
+    g_mock_millis = 10000 + ENC_DIR_FLIP_LOCKOUT_MS - 1;
+    check(fw28r2_seam_window((int)ENC_DIR_RUNAWAY_TICKS, 2.0f, 0.001f, -12.0f) == 0,
+          "(4) one millisecond before the lockout expires, still no flip");
+    check(encDirRunawayTicks == 0,
+          "(4) a lockout-blocked completion leaves the window cleared, not armed to re-fire on "
+          "the first tick after expiry");
+    check(encDirSign == -1 && encDirFlipCount == 1,
+          "(4) the sign and the count are untouched by the blocked windows");
+
+    // At the deadline the next completed window flips again.
+    g_mock_millis = 10000 + ENC_DIR_FLIP_LOCKOUT_MS;
+    check(fw28r2_seam_window((int)ENC_DIR_RUNAWAY_TICKS, 2.0f, 0.001f, -12.0f) == 1,
+          "(4) at the lockout deadline the next window flips");
+    check(encDirSign == 1 && encDirFlipCount == 2,
+          "(4) the second flip returns the sign to +1 and counts 2");
+
+    // Walk to the cap, each window separated by a full lockout.
+    for (unsigned f = 3; f <= ENC_DIR_FLIP_MAX; f++) {
+        g_mock_millis += ENC_DIR_FLIP_LOCKOUT_MS;
+        fw28r2_seam_window((int)ENC_DIR_RUNAWAY_TICKS, 2.0f, 0.001f, -12.0f);
+    }
+    check(encDirFlipCount == ENC_DIR_FLIP_MAX,
+          "(4) the flip count reaches ENC_DIR_FLIP_MAX (4)");
+    const int8_t sign_at_cap = encDirSign;
+
+    // Past the cap: the sign is frozen and only a line prints.
+    Serial.tx_clear();
+    g_mock_millis += ENC_DIR_FLIP_LOCKOUT_MS;
+    check(fw28r2_seam_window((int)ENC_DIR_RUNAWAY_TICKS, 2.0f, 0.001f, -12.0f) == 0,
+          "(4) past the cap a completed window takes no flip");
+    check(encDirSign == sign_at_cap && encDirFlipCount == ENC_DIR_FLIP_MAX,
+          "(4) the sign is FROZEN where the cap found it and the count does not grow past 4");
+    check(Serial.tx_contains("cap of 4 flips reached"),
+          "(4) the cap prints its own ASCII line instead of flipping");
+    // The cap path arms the lockout too, so the print rate is bounded however hard the detector
+    // is fooled: a second completed window at the same instant prints nothing.
+    Serial.tx_clear();
+    fw28r2_seam_window((int)ENC_DIR_RUNAWAY_TICKS, 2.0f, 0.001f, -12.0f);
+    check(!Serial.tx_contains("cap of"),
+          "(4) the capped path is itself rate-bounded by the lockout (no second line inside 5 s)");
+}
+
+// ─── (6) The State-98 'S' dump reports the sense, the flip count and the live window ────────
+static void test_fw28r2_status_dump_direction_sense() {
+    test_group("fw v28 rev 2: the 'S' dump prints dirSign / flips / window");
+    reset_test_state();
+
+    encDirSign         = -1;
+    encDirFlipCount    = 3;
+    encDirRunawayTicks = 123;
+
+    printTestStatus();
+
+    check(Serial.tx_contains("dirSign=-1"),
+          "(6) 'S' dump: dirSign= reports the publish-boundary factor (the published sign is "
+          "dir x dirSign)");
+    check(Serial.tx_contains("flips=3"),
+          "(6) 'S' dump: flips= reports encDirFlipCount");
+    check(Serial.tx_contains("window=123/500"),
+          "(6) 'S' dump: window= reports the live qualifying-tick count out of "
+          "ENC_DIR_RUNAWAY_TICKS");
+}
+
+// ─── Constants, pinned against the design record (docs/fw28_source_selector.md section 12.4) ─
+static void test_fw28r2_constants() {
+    test_group("fw v28 rev 2: direction-sense constants match the design record");
+    check(fabsf(ENC_DIR_RUNAWAY_V_MIN - 0.30f) < 1e-6f,
+          "constants: ENC_DIR_RUNAWAY_V_MIN == 0.30 m/s");
+    check(fabsf(ENC_DIR_RUNAWAY_I_FRAC - 0.5f) < 1e-6f,
+          "constants: ENC_DIR_RUNAWAY_I_FRAC == 0.5 (6.0 A at MOTOR_I_CMD_MAX 12 A)");
+    check(fabsf(ENC_DIR_RUNAWAY_I_FRAC * MOTOR_I_CMD_MAX - 6.0f) < 1e-6f,
+          "constants: the current gate evaluates to 6.0 A");
+    check(ENC_DIR_RUNAWAY_TICKS == 500u, "constants: ENC_DIR_RUNAWAY_TICKS == 500 (0.5 s at 1 kHz)");
+    check(fabsf(ENC_DIR_RUNAWAY_MAG_TOL - 0.02f) < 1e-6f,
+          "constants: ENC_DIR_RUNAWAY_MAG_TOL == 0.02 m/s");
+    check(fabsf(ENC_DIR_RUNAWAY_GROWTH_MIN - 0.10f) < 1e-6f,
+          "constants: ENC_DIR_RUNAWAY_GROWTH_MIN == 0.10 m/s of growth per window");
+    check(ENC_DIR_RUNAWAY_GROWTH_MIN > ENC_DIR_RUNAWAY_MAG_TOL,
+          "constants: the required growth exceeds the non-decreasing tolerance, so the two "
+          "magnitude conditions cannot be satisfied by estimator variance alone");
+    check(ENC_DIR_FLIP_LOCKOUT_MS == 5000u, "constants: ENC_DIR_FLIP_LOCKOUT_MS == 5000 ms");
+    check(ENC_DIR_FLIP_MAX == 4u, "constants: ENC_DIR_FLIP_MAX == 4 flips per boot");
+    // The thresholds are the anti-chatter argument's first two bounds: a tick just under either
+    // one must not qualify.
+    reset_test_state();
+    fw28r2_seam_window(600, ENC_DIR_RUNAWAY_V_MIN - 0.001f, 0.0f, -12.0f);
+    check(encDirFlipCount == 0 && encDirRunawayTicks == 0,
+          "constants: a speed one millimetre per second under the threshold never qualifies");
+    reset_test_state();
+    fw28r2_seam_window(600, 2.0f, 0.001f, -(ENC_DIR_RUNAWAY_I_FRAC * MOTOR_I_CMD_MAX - 0.01f));
+    check(encDirFlipCount == 0 && encDirRunawayTicks == 0,
+          "constants: a command 10 mA under the current gate never qualifies");
+    // And a run whose FIRST tick sits exactly ON each threshold does qualify (both comparisons
+    // are >=); it then grows, because condition 6 requires growth.
+    reset_test_state();
+    check(fw28r2_seam_window((int)ENC_DIR_RUNAWAY_TICKS, ENC_DIR_RUNAWAY_V_MIN, 0.001f,
+                             -(ENC_DIR_RUNAWAY_I_FRAC * MOTOR_I_CMD_MAX)) == 1,
+          "constants: a run opening exactly ON both thresholds qualifies (both comparisons "
+          "are >=)");
+    // encVelHaveValid is required: a boot/standstill publication contributes no ticks.
+    reset_test_state();
+    for (int k = 0; k < 600; k++) {
+        encVelHaveValid = false;
+        v_actual = 2.0f;
+        current  = -12.0f;
+        updateEncoderDirectionSense();
+    }
+    check(encDirFlipCount == 0 && encDirRunawayTicks == 0,
+          "constants: without a valid encoder reading (encVelHaveValid false) no tick qualifies");
+}
+
+#endif  // !HIL_SIM
+
+#if HIL_SIM
+// ─── (5) The HIL build: no sign factor on injected values, and the detector is a no-op ──────
+// Under HIL_SIM v_actual comes from offset 30 of the 40-byte injection frame and updateSensors()
+// returns before updateWheelSpeed(), so encDirApply() never runs and the plant's sign is
+// authoritative. The detector is compiled to a body that only clears its window.
+static void test_fw28r2_hil_gating() {
+    test_group("fw v28 rev 2: under HIL_SIM the sign factor cannot reach an injected value and "
+               "the detector takes no flip");
+    reset_test_state();
+    networkUp = true;
+    g_mock_millis = 1000;
+
+    // Force the publish-boundary factor to the flipped state, then inject. If any sign factor
+    // reached the HIL path, the injected -2.2 would arrive as +2.2.
+    encDirSign = -1;
+    injectHilFrame(1, 11.1f, 7.7f, 15.5f, 4.4f, 12.2f, 0.9f, 1.1f, -2.2f);
+    updateSensors();
+    check(fabsf(v_actual - (-2.2f)) < 1e-4f,
+          "(5) HIL: the injected v_actual reaches the global with its own sign, unmodified by "
+          "encDirSign");
+
+    // The detector is a no-op: a fully qualifying runaway, held for four windows, takes no flip
+    // and leaves the counter at zero.
+    encDirSign = 1;
+    for (int k = 0; k < 4 * (int)ENC_DIR_RUNAWAY_TICKS; k++) {
+        encVelHaveValid = true;
+        v_actual = 2.0f;
+        current  = -12.0f;
+        updateEncoderDirectionSense();
+    }
+    check(encDirFlipCount == 0,
+          "(5) HIL: no flip is taken on a signature that would flip four times in the production "
+          "build");
+    check(encDirSign == 1, "(5) HIL: the publish-boundary factor is left at +1");
+    check(encDirRunawayTicks == 0,
+          "(5) HIL: the window counter stays at zero (the compiled-out body clears it and "
+          "returns)");
+    check(!Serial.tx_contains("ENC DIR FLIP"),
+          "(5) HIL: nothing is printed — a flip there could change no number but would still "
+          "move the operator-facing output");
+}
+#endif  // HIL_SIM
+
 // ─── 6i. encSpuriousDropCount semantics, driven through the REAL ISR ────────────────────────
 // Uses the fw v15 estimator-test idioms (enc_cycle_fwd / enc_tap_ambiguous / enc_fire_tap_raw,
 // enc_v15_arm_at) rather than poking the counter directly, so this exercises doEncoderA()'s actual
@@ -23102,6 +23609,19 @@ int main() {
     test_enc_fold_pitch_fraction_unit();
     test_encoder_phase_duty_isr();
     test_encoder_status_dump_phase_duty();
+    // fw v28 rev 2: encoder direction-sense auto-flip.
+#if !HIL_SIM
+    test_fw28r2_constants();
+    test_fw28r2_inverted_wiring_flip_and_recovery();
+    test_fw28r2_braking_never_flips();
+    test_fw28r2_held_magnitude_never_flips();
+    test_fw28r2_manual_current_mode_excluded();
+    test_fw28r2_short_push_never_flips();
+    test_fw28r2_lockout_and_flip_cap();
+    test_fw28r2_status_dump_direction_sense();
+#else
+    test_fw28r2_hil_gating();
+#endif
     test_encoder_spurious_drop_count();
     test_sdlog_write_error_midrun();
     test_sdlog_name_collision();

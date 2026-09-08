@@ -185,6 +185,19 @@ static void harness_reset() {
     resetDriveControlState();
     pi_motor_accum = 0; pi_motor_lastMicros = 0;
     driveZeroCutActive = false;
+
+    // fw v28 rev 2: the encoder direction-sense auto-flip state.  The SIGN is deliberately
+    // boot-scoped in the firmware (it survives every run boundary — see the .ino's lifetime note),
+    // so nothing in the firmware clears it between runs; a harness case that flipped it would
+    // otherwise hand the next case an inverted publish boundary and every subsequent phase-scan
+    // row would be scored in the wrong frame.  The harness therefore returns all five fields to
+    // their BOOT values, which is what "a fresh board per case" means here.
+    encDirSign           = 1;
+    encDirFlipCount      = 0;
+    encDirRunawayTicks   = 0;
+    encDirRunawayMagRef  = 0.0f;
+    encDirRunawayMagOpen = 0.0f;
+    encDirLockoutMs      = 0;
     resetControlRateLimiters();
     velocityChainCalibratedFlag = true;
 
@@ -255,6 +268,11 @@ struct RunResult {
     long   drop_raw_floor = 0, drop_low_gate = 0, drop_pitch_floor = 0;
     long   ticks_scored = 0;
     double ref_us_final = 0;
+    // fw v28 rev 2: the direction-sense auto-flip, observed from outside the firmware.
+    long   enc_dir_flips  = 0;    // encDirFlipCount at the end of the run
+    long   flip_tick      = -1;   // loop tick at which the FIRST flip fired (-1 = never)
+    double ratio_at_flip  = 0.0;  // v_actual / v_true on the tick the first flip fired
+    long   sat_after_flip = 0;    // rail ticks from the flip onward (the post-flip transient)
 };
 
 // Accumulate a counter that encoderVelReset() may have zeroed mid-run.
@@ -419,6 +437,22 @@ static RunResult run_case(const DefectSpec& d, double v_cruise, double duration_
 
         updateWheelSpeed();
 
+        // fw v28 rev 2: the direction-sense detector, in the firmware's own loop() position —
+        // after the sensor update and BEFORE the control call, so a flip takes effect on the same
+        // tick's motor command.  It reads this tick's published v_actual against the PREVIOUS
+        // tick's post-clamp `current`, exactly as it does on the board (motorControlGated() below
+        // has not run yet).  Nothing else in the harness drives it: the flip, when it happens, is
+        // the firmware's own decision taken on the firmware's own numbers.
+        {
+            const uint16_t flips_before = encDirFlipCount;
+            const double   v_pub_pre    = (double)v_actual;
+            updateEncoderDirectionSense();
+            if (encDirFlipCount > flips_before && r.flip_tick < 0) {
+                r.flip_tick     = k;
+                r.ratio_at_flip = (fabs(v_next) > 1e-9) ? (v_pub_pre / v_next) : 0.0;
+            }
+        }
+
         const double t = (double)(k + 1) * P_DT;
         v_setpoint = (float)(v_cruise * std::min(1.0, t / ramp_s));
         // motorControlGated(), NOT motorControl(): the shipped drive loop runs at
@@ -442,7 +476,10 @@ static RunResult run_case(const DefectSpec& d, double v_cruise, double duration_
         accum(r.drop_pitch_floor, prev_pitchf, encDropPitchFloor);
 
         if (fabsf(current) > r.i_cmd_max) r.i_cmd_max = fabsf(current);
-        if (fabsf(current) >= MOTOR_I_CMD_MAX * 0.999f) r.sat_ticks++;
+        if (fabsf(current) >= MOTOR_I_CMD_MAX * 0.999f) {
+            r.sat_ticks++;
+            if (r.flip_tick >= 0 && k >= r.flip_tick) r.sat_after_flip++;
+        }
 
         if (t >= score_from_s) {
             const double e_v = (double)v_actual - v_next;
@@ -485,6 +522,7 @@ static RunResult run_case(const DefectSpec& d, double v_cruise, double duration_
     r.err_rms = (r.ticks_scored > 0) ? sqrt(sum_sq / (double)r.ticks_scored) : 0.0;
     r.basin_ratio = (fabs(sum_true_tail) > 1e-9) ? (sum_act_tail / sum_true_tail) : 1.0;
     r.ref_us_final = (double)encPeriodRefUs;
+    r.enc_dir_flips = (long)encDirFlipCount;
     return r;
 }
 #ifndef ENCODER_HARNESS_EMBEDDED   // standalone-only: --verify mode
@@ -590,6 +628,9 @@ void run_encoder_defect_regression() {
           "nominal: the closed loop actually reaches the commanded cruise");
     check(n.drop_low_gate == 0 && n.drop_raw_floor == 0 && n.drop_pitch_floor == 0,
           "nominal: no interval is rejected by any of the three drop paths");
+    check(n.enc_dir_flips == 0 && encDirSign == 1,
+          "nominal: fw v28 rev 2 takes no direction-sense flip on a correctly wired encoder, and "
+          "the publish boundary is left at +1");
     printf("  nominal: v_true %.4f  v_actual %.4f  ratio %.5f  rms %.5f  holds %ld  ref %.0f us\n",
            n.v_true_final, n.v_actual_final, n.basin_ratio, n.err_rms, n.hold_ticks,
            n.ref_us_final);
@@ -730,6 +771,9 @@ void run_encoder_defect_regression() {
         DefectSpec p; p.phase_offset_deg = 90.0;
         RunResult r90 = run_case(p, REG_V, REG_T);
         check(r90.dir_flips == 0, "phase 90 deg: no direction flip (the nominal mount)");
+        check(r90.enc_dir_flips == 0,
+              "phase 90 deg: the fw v28 rev 2 direction-sense detector does NOT fire on the "
+              "correct mount (condition 1 fails on every tick of normal driving)");
         printf("  phase  90 deg: ratio %.5f  flips %ld  phase-clears %ld  holds %ld\n",
                r90.basin_ratio, r90.dir_flips, r90.phase_clears, r90.hold_ticks);
     }
@@ -739,38 +783,85 @@ void run_encoder_defect_regression() {
         // everywhere; what changes is the sign the quadrature handshake resolves.
         static const double SCAN[] = { 0, 2, 5, 20, 45, 90, 135, 170, 178, 180,
                                        182, 190, 225, 270, 315, 355, 358 };
+        // fw v28 rev 2 CHANGED WHAT THIS SCAN MEASURES, and the change is the point of the
+        // feature.  Before it, an offset at or beyond 180 deg produced an ABSORBING inverted
+        // reading: basin_ratio settled at -1.00000 and the drive sat on the current rail for the
+        // rest of the run.  The detector now finds that runaway and inverts the publish boundary,
+        // so the SETTLED reading of every scanned offset is +1 and the rail occupancy collapses to
+        // the pre-flip window plus the post-flip transient.  The inversion is therefore no longer
+        // visible in the tail; it is visible in (a) whether a flip was taken at all, and (b) the
+        // sign the estimator was publishing AT the flip, which is the pre-correction decode.  Both
+        // are recorded per run, so the onset is still located to the same 180 deg step.
         double flip_onset = -1.0;
         int    n_below_flipped = 0, n_above_unflipped = 0;
-        double mag_worst = 0.0;   // worst |ratio| deviation from unity, either sign
+        int    n_multi_flip = 0, n_wrong_flip_sign = 0, n_tail_bad = 0;
+        double mag_worst = 0.0;        // worst |ratio| deviation from unity, either sign
+        double sat_worst_above = 0.0;  // worst rail occupancy among the inverted offsets
+        long   flip_tick_worst = -1;
         for (int i = 0; i < (int)(sizeof SCAN / sizeof SCAN[0]); i++) {
             DefectSpec p; p.phase_offset_deg = SCAN[i];
             RunResult rp = run_case(p, REG_V, REG_T);
             printf("  phase %5.1f deg: ratio %+9.5f  flips %ld  phase-clears %ld  holds %ld"
-                   "  sat %ld  i_max %.2f A\n",
+                   "  sat %ld  i_max %.2f A  dirflips %ld  flip@%ld  ratio@flip %+9.5f"
+                   "  sat-after %ld\n",
                    SCAN[i], rp.basin_ratio, rp.dir_flips, rp.phase_clears, rp.hold_ticks,
-                   rp.sat_ticks, rp.i_cmd_max);
-            if (flip_onset < 0.0 && rp.basin_ratio < 0.0) flip_onset = SCAN[i];
-            if (SCAN[i] < 180.0 && rp.basin_ratio < 0.0) n_below_flipped++;
-            if (SCAN[i] >= 180.0 && rp.basin_ratio > 0.0) n_above_unflipped++;
+                   rp.sat_ticks, rp.i_cmd_max, rp.enc_dir_flips, rp.flip_tick, rp.ratio_at_flip,
+                   rp.sat_after_flip);
+            if (flip_onset < 0.0 && rp.enc_dir_flips > 0) flip_onset = SCAN[i];
+            if (SCAN[i] <  180.0 && rp.enc_dir_flips != 0) n_below_flipped++;
+            if (SCAN[i] >= 180.0 && rp.enc_dir_flips == 0) n_above_unflipped++;
+            if (rp.enc_dir_flips > 1) n_multi_flip++;
+            // The decode the detector ACTED on must have been the inverted one.
+            if (rp.enc_dir_flips > 0 && rp.ratio_at_flip > 0.0) n_wrong_flip_sign++;
+            if (rp.basin_ratio < 0.99 || rp.basin_ratio > 1.01) n_tail_bad++;
+            if (SCAN[i] >= 180.0) {
+                if ((double)rp.sat_ticks > sat_worst_above) sat_worst_above = (double)rp.sat_ticks;
+                if (rp.flip_tick > flip_tick_worst) flip_tick_worst = rp.flip_tick;
+            }
             if (fabs(fabs(rp.basin_ratio) - 1.0) > mag_worst)
                 mag_worst = fabs(fabs(rp.basin_ratio) - 1.0);
         }
-        if (flip_onset < 0.0) printf("  RESULT: no sign inversion anywhere in the scan\n");
-        else printf("  RESULT: the reported sign first inverts at a %.1f deg B-channel offset\n",
-                    flip_onset);
+        if (flip_onset < 0.0) printf("  RESULT: no direction-sense flip anywhere in the scan\n");
+        else printf("  RESULT: the direction-sense flip first fires at a %.1f deg B-channel "
+                    "offset; worst flip tick among the inverted offsets %ld, worst rail "
+                    "occupancy %.0f of %d ticks\n",
+                    flip_onset, flip_tick_worst, sat_worst_above, (int)(REG_T / P_DT + 0.5));
 
         // ── The invariants this scan measures ────────────────────────────────
         // The quadrature handshake resolves direction from the ORDER of the two channels'
-        // edges, so the decoded sign must be positive for every B-lag under half a pitch
-        // and negative at and beyond it: the onset is a sharp step at exactly 180 deg,
-        // not a gradual degradation.  A regression that made the decode order-insensitive
-        // (or shifted the tap) moves the onset off 180 and trips these.
+        // edges, so the decoded sign is positive for every B-lag under half a pitch and
+        // negative at and beyond it: the onset is a sharp step at exactly 180 deg, not a
+        // gradual degradation.  A regression that made the decode order-insensitive (or
+        // shifted the tap) moves the onset off 180 and trips these.  With fw v28 rev 2 the
+        // onset is read from the DETECTOR rather than from the settled reading, because the
+        // firmware now corrects the settled reading.
         check(flip_onset == 180.0,
-              "phase offset: the reported sign inverts at exactly a 180 deg B offset");
+              "phase offset: the direction-sense flip fires at exactly a 180 deg B offset");
         check(n_below_flipped == 0,
-              "phase offset: no sign inversion at any offset below 180 deg");
+              "phase offset: no direction-sense flip at any offset below 180 deg");
         check(n_above_unflipped == 0,
-              "phase offset: every offset at or above 180 deg reports the inverted sign");
+              "phase offset: every offset at or above 180 deg takes a direction-sense flip");
+        check(n_multi_flip == 0,
+              "phase offset: EXACTLY ONE flip per inverted run (the correction is not chattering "
+              "-- lockout, cap and the unbroken window all hold)");
+        check(n_wrong_flip_sign == 0,
+              "phase offset: at the flip the estimator was publishing the INVERTED sign "
+              "(v_actual / v_true < 0), i.e. the detector acted on the runaway it exists for");
+        // The recovery: after the flip the published stream is back in the true frame, so the
+        // SETTLED reading of every scanned offset -- inverted mount or not -- is +1.
+        check(n_tail_bad == 0,
+              "phase offset: every scanned offset settles at a +1.00 ratio within 1 % (an "
+              "inverted mount RECOVERS instead of latching at -1.00)");
+        // The rail occupancy that fw v28 rev 2 exists to end.  Before the feature an inverted
+        // mount railed for 19900 of 20000 ticks (99.5 %); the bound here is the pre-flip window
+        // plus the post-flip transient, asserted as a fraction of the run rather than a fitted
+        // tick count.
+        check(sat_worst_above < 0.50 * (REG_T / P_DT),
+              "phase offset: an inverted mount no longer rails for the run -- the rail occupancy "
+              "collapses to the detection window plus the post-flip transient (< 50 % of ticks)");
+        check(flip_tick_worst > 0 && (double)flip_tick_worst < 0.50 * (REG_T / P_DT),
+              "phase offset: the flip fires in the first half of the run (the 500-tick window is "
+              "satisfied as soon as the runaway is above the speed and current thresholds)");
         // The A-rising period estimator timestamps ONE channel, so it is blind to the
         // offset: the MAGNITUDE must hold everywhere in the scan, flipped or not.
         check(mag_worst < 0.01,
@@ -808,14 +899,16 @@ void run_encoder_defect_regression() {
         double collapse_tail_best = 1.0;    // the LEAST collapsed of the near-aligned set
         double collapse_rms_worst_low = 1e9;
         long   collapse_flips_min = -1;
+        long   near_dir_flips_total = 0;      // fw v28 rev 2: must stay 0 across the whole set
         for (int i = 0; i < (int)(sizeof NEAR / sizeof NEAR[0]); i++) {
             DefectSpec c; c.phase_offset_deg = NEAR[i];
             c.jitter_us = 100.0; c.jitter_seed = 4242;
             RunResult rc = run_case(c, REG_V, REG_T);
+            near_dir_flips_total += rc.enc_dir_flips;
             printf("  phase %5.1f deg + 100 us jitter: tail %+.5f  window [%+.4f, %+.4f]"
-                   "  rms %.5f  low-gate %ld  flips %ld  sat %ld\n",
+                   "  rms %.5f  low-gate %ld  flips %ld  sat %ld  dirflips %ld\n",
                    NEAR[i], rc.basin_ratio, rc.ratio_win_min, rc.ratio_win_max, rc.err_rms,
-                   rc.drop_low_gate, rc.dir_flips, rc.sat_ticks);
+                   rc.drop_low_gate, rc.dir_flips, rc.sat_ticks, rc.enc_dir_flips);
             const bool near_aligned = (NEAR[i] <= 5.0) || (NEAR[i] >= 175.0);
             if (near_aligned) {
                 // The LEAST collapsed member bounds the whole set.
@@ -848,6 +941,16 @@ void run_encoder_defect_regression() {
               && collapse_rms_worst_low > 1.0,
               "near-aligned + jitter: every offset within 5 deg of alignment or "
               "anti-alignment DOES collapse (tail under 0.50, > 100 flips, rms > 1.0)");
+        // fw v28 rev 2 SCOPE BOUNDARY, asserted rather than asserted-in-prose.  A partial
+        // inversion is explicitly out of the feature's scope (design record section 14, residual
+        // 4): the near-aligned pair does not present the runaway signature, it alternates sign at
+        // the dither rate, so the 500-tick unbroken window can never complete and the detector
+        // must take no flip.  The standing answer to this defect class remains the Schmitt buffer.
+        // The clean members of the set must not flip either -- their decode is correct.
+        check(near_dir_flips_total == 0,
+              "near-aligned + jitter: the direction-sense detector takes NO flip anywhere in the "
+              "set -- an alternating sign breaks the window, so a front-end defect is never "
+              "mistaken for a reversed harness");
     }
 
     // ── (8) DROPOUT WINDOW ───────────────────────────────────────────────────

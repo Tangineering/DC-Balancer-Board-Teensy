@@ -1,6 +1,61 @@
 /*
  * teensy_controller.ino — Scale Car DC Balancer Board, Rev 20260622
  *
+ * fw v28 REV 2 (2026-09-08) — ENCODER DIRECTION-SENSE AUTO-FLIP. Rev 2 SUPERSEDES rev 1 BEFORE
+ *   ANY FLASH: no board has run fw v28, so FW_VERSION stays 28 and there is no rev-1 era in the
+ *   ledger (the fw v27 rev 2 precedent). Rev 1 — the source-selector package described immediately
+ *   below — is unchanged in every respect; rev 2 ADDS one mechanism on the encoder path and
+ *   touches nothing else. No wire change: telemetry stays v4/58 B, the command packet 22 B, the
+ *   HIL frames 40 B/18 B and the bench log v8.
+ *     THE DEFECT (measured, docs/encoder_defect_harness.md section 5.4). With the A/B phase
+ *     inverted — a connector plugged in the wrong way round, which the harness can be on any
+ *     rebuild — the decode is EXACTLY backwards: the magnitude is correct to five decimals and
+ *     the sign is negated. The velocity error is then twice the setpoint at all times, the drive
+ *     controller sits on the MOTOR_I_CMD_MAX rail for 19900 of 20000 control ticks, and NO fault
+ *     is raised: detectFaults() has no encoder-sign check and the fw v20 phase diagnostic reads
+ *     encPhaseEwma = 0 under a full inversion, which is indistinguishable from "no data".
+ *     THE MECHANISM. A single sign factor encDirSign (+-1, +1 at boot) is applied where
+ *     updateWheelSpeed() PUBLISHES v_actual, through encDirApply(). The ISRs, the ring,
+ *     encPeriodDir, encVelLastValid, the corroboration hold and encoderVelReset() keep the
+ *     decoder's own frame and are BYTE-IDENTICAL — the sign lives on the interface, so the held
+ *     values re-sign with the live ones and there is no mixed-frame tick. Under HIL_SIM nothing
+ *     applies: updateSensors() writes v_actual from the injection frame and returns before
+ *     updateWheelSpeed(), the plant's sign is authoritative, and the detector is compiled out.
+ *     THE DETECTOR is the positive-feedback RUNAWAY signature, not "sign(I) opposes sign(v)"
+ *     (braking has that too). Six conditions; the first six are per-tick and any single miss
+ *     zeroes the counter: (0) the velocity loop is CLOSED — manualMotorMode != MOTOR_TEST_CURRENT,
+ *     since in State-98 'A' manual-current mode the encoder does not influence `current` and the
+ *     comparison is a false positive by construction; (1) sign(current) == -sign(v_actual) on the
+ *     post-clamp mirrored command; (2) |v_actual| >= 0.30 m/s, 5.6x the estimator's reportable
+ *     floor; (3) |current| >= 0.5 x MOTOR_I_CMD_MAX = 6.0 A; (4) |v_actual| NOT decreasing —
+ *     within 0.02 m/s of the window's ratcheted maximum, which is what separates an inversion from
+ *     braking, where the magnitude collapses; (5) 500 consecutive 1 kHz ticks = 0.5 s. One further
+ *     condition is tested when the window CLOSES: (6) GROWTH — |v_actual| must have risen by
+ *     >= 0.10 m/s across the window, because 1-5 also admit a CONSTANT magnitude, i.e. a correctly
+ *     wired vehicle held at speed against the rail on an incline or a dyno; a window that
+ *     completes without the growth resets and takes no flip. On detection the sign flips, the
+ *     already-published v_actual is negated in place so the correction reaches THIS tick's motor
+ *     command, resetDriveControlState() clears the railed Hanus state (the flip steps the error by
+ *     2|v|, and carrying a saturated state across it would answer a correct measurement with a
+ *     wrong command; on a PI-fallback build pi_motor_accum and pi_motor_lastMicros are cleared
+ *     alongside), one ASCII line prints, and a 5 s lockout arms. NOT A FAULT by ruling: no
+ *     fault_flags bit, no State 99.
+ *     FALSE POSITIVES AND ANTI-CHATTER. A WRONG flip is SILENT AND PERMANENT for the boot:
+ *     afterwards condition 1 fails on every tick, so the detector never re-arms and cannot undo
+ *     itself; recovery is a power cycle. The entry test (conditions 0, 4 and 6 plus the two
+ *     thresholds) is therefore the real defence, and the 5 s lockout plus the per-boot cap of 4
+ *     flips bound something else — REPEATED GENUINE detections, e.g. an intermittently reversed
+ *     connector — past which the sign freezes and only a line prints.
+ *     LIFETIME: the sign is a WIRING fact and survives hilWarmReset(), the State-98 'Q' exit,
+ *     resetControlRateLimiters() and State 3; only a power cycle returns it to +1. It is NOT
+ *     persisted to EEPROM (a stale stored sign on a re-wired board would be worse than 0.5 s of
+ *     runaway; a persistent option is a follow-up ruling). The transient window counter IS dropped
+ *     at the 'Q' profile boundary.
+ *     OBSERVABILITY GAP, stated rather than worked around: the HIL aux byte's bits 0-7 are all
+ *     allocated (rev 1 took 6/7) and the BLG flags byte is full at v8, so the flip has NO
+ *     wire-level observable this round — only the Serial line at the flip and the 'S' dump's
+ *     Encoder block, which gains dirSign, flips and the live window count next to dir=.
+ *
  * fw v28 (2026-09-08) — THE SOURCE SELECTOR PACKAGE. Five changes, all in the never-closed
  *   (sub-gate) region that fw v27 rev 2 created, and every one of them a board-measured
  *   consequence of it. Campaigns G, G2 and H are the evidence; docs/fw28_source_selector.md is
@@ -2379,6 +2434,68 @@ constexpr float ENC_SLOT_PITCH_M = (TWO_PI_F * FLYWHEEL_RADIUS_M) / ENCODER_SLOT
 // value paired with the 120-slot 0.307 m/s arming point.)
 #define ENC_VEL_CORROB_MIN_MPS   0.35f
 
+// ── fw v28 rev 2: ENCODER DIRECTION-SENSE AUTO-FLIP (operator ruling 2026-09-08) ─────────────
+// WHAT IT ANSWERS. docs/encoder_defect_harness.md section 5.4: with the A/B phase inverted (a
+// connector plugged in the wrong way round, or a B sensor mounted half a pitch out) the decode is
+// EXACTLY backwards — the magnitude is correct to five decimals and the sign is negated. The
+// harness measured the consequence: the velocity error is twice the setpoint at all times, the
+// drive controller sits on the +MOTOR_I_CMD_MAX rail for 19900 of 20000 control ticks, and NO
+// fault is raised. encPhaseEwma reads 0 throughout (it folds forward-direction samples only), so
+// a full inversion is indistinguishable from "no data" on the 'S' dump. The wiring hazard is
+// permanent: the encoder harness can be reversed on any rebuild.
+// WHAT IT DETECTS. Not "sign(I) opposes sign(v)" — legitimate braking has exactly that signature.
+// The discriminator is the POSITIVE-FEEDBACK RUNAWAY: the loop pushes hard, the reported velocity
+// opposes the push, and its MAGNITUDE GROWS anyway. Under braking |v| shrinks; an external push
+// against the drive can grow |v| but not at the current rail and not for half a second.
+// ANTI-CHATTER (the operator's explicit requirement) is four independent bounds: a significant
+// speed threshold, a significant current fraction, a long unbroken window (any single failing tick
+// resets the counter to zero), and — after a flip — a lockout plus a per-boot flip cap.
+// NOT A FAULT (ruling): the flip is a correction, it takes no fault_flags bit and never enters
+// State 99. Detection and the flip are reported on USB Serial and on the 'S' dump.
+//
+// Speed threshold. 0.30 m/s is 5.6x the estimator's reportable floor (0.0532 m/s) and 4.3x the
+// v_setpoint zero cutoff (0.07 m/s), so the whole deadband-relay regime — where the sign of a
+// single-pitch reading means little — is excluded. It is also below every cruise speed the
+// harness sweep and the drive-cycle profiles use (0.3 to 3.0 m/s), so a real inversion still
+// trips at the slowest speed the vehicle is driven at.
+#define ENC_DIR_RUNAWAY_V_MIN     0.30f    // m/s of published |v_actual|
+// Current fraction of the post-clamp command. 0.5 x MOTOR_I_CMD_MAX = 6.0 A. An inverted encoder
+// rails the loop (12.00 A measured), so this is a 2x margin under the observed signature while
+// excluding every gentle manoeuvre, the trapezoid's low steps and all coast/regen phases.
+#define ENC_DIR_RUNAWAY_I_FRAC    0.5f
+// Window. 500 consecutive 1 kHz loop ticks = 0.5 s. The harness railed for 99.5 % of a 20 s run,
+// so a real inversion satisfies this within the first half second of motion above the threshold.
+// An external push that briefly grows |v| against the drive would have to hold the drive at >= 6 A
+// AND keep the magnitude non-decreasing for the whole 0.5 s to be mistaken for one.
+#define ENC_DIR_RUNAWAY_TICKS     500u
+// "Not decreasing" tolerance. The window ratchets a running maximum of |v_actual| and requires
+// every subsequent tick to stay within this of it, so a decaying magnitude (braking, coast-down)
+// breaks the window while estimator quantisation and single-pitch variance do not. 0.02 m/s is
+// under half the estimator's zero floor and 6.7 % of the speed threshold.
+#define ENC_DIR_RUNAWAY_MAG_TOL   0.02f
+// Required GROWTH over the window (fw v28 rev 2 review F3). "Not decreasing" alone admits a
+// CONSTANT magnitude, so a correctly wired vehicle held at a steady >= 0.30 m/s against the
+// current rail — an incline, a dyno, an externally driven bench flywheel — would satisfy
+// conditions 1-4 forever and flip falsely, permanently and silently. The window must therefore
+// close on a magnitude that GREW: |v| at completion must exceed |v| when the window opened by at
+// least this much. A real inversion is at the rail, where the drivetrain accelerates the vehicle
+// at ~4.8 m/s^2, i.e. ~2.4 m/s of growth over the 500-tick window; 0.10 m/s is 24x under that and
+// far above the estimator's single-pitch variance (the 0.02 m/s tolerance above).
+// TRADE-OFF, accepted: an inversion first noticed only after the vehicle has already reached its
+// drag-limited terminal speed produces no further growth and is NOT caught. That is acceptable
+// because an inversion accelerates through 0.30 m/s from standstill on every run start, so the
+// growth window exists on every normal start of every run.
+#define ENC_DIR_RUNAWAY_GROWTH_MIN 0.10f  // m/s
+// Post-flip lockout. 5 s with no second flip possible: long against the drive loop's settling
+// (the 16 rad/s crossover settles in ~0.3 s) and against the 0.5 s detection window, so the
+// corrected loop is fully settled before the detector can arm again.
+#define ENC_DIR_FLIP_LOCKOUT_MS   5000u
+// Per-boot flip cap. An inverted harness needs EXACTLY ONE flip. A second, third or fourth is
+// tolerated (a bench operator may re-plug the connector mid-session), but past the cap the sign is
+// frozen where it is and the detector only prints: repeated flipping means the detector is being
+// fooled, and a bounded count is the last anti-chatter backstop.
+#define ENC_DIR_FLIP_MAX          4u
+
 // Guard: with either scale input above at a placeholder value, closing the velocity loop
 // OVER-DRIVES. v_actual under-reads true speed, so the PI keeps adding current to reach a setpoint
 // the vehicle has already blown past; the commandMotorCurrent() ceiling bounds AMPS, not SPEED.
@@ -3356,6 +3473,37 @@ uint32_t encVelResetHoldUs   = 0;
 // velocity samples are not computed against stale timestamps from the prior run. Consumed (and
 // cleared) by updateWheelSpeed(), which calls encoderVelReset().
 bool wheelSpeedResetPending = false;
+
+// ── fw v28 rev 2: direction-sense state (READER-side only, never touched by an ISR) ──────────
+// encDirSign is the ONLY thing the flip changes: a +-1 factor applied where updateWheelSpeed()
+// PUBLISHES v_actual. The decoder, the ISRs, the ring, encPeriodDir, encVelLastValid and the
+// corroboration hold all keep their own sign convention and are untouched — the sign lives on the
+// interface, not in the estimator, so nothing inside updateWheelSpeed() has to be re-reasoned and
+// "What NOT to change" is respected (the velocity math and encoderVelReset() are byte-identical).
+// A consequence worth stating: because encVelLastValid is in the DECODER frame, a flip re-signs
+// the held values too, so the published stream is self-consistent from the very first tick after
+// the flip — there is no mixed-frame window.
+// LIFETIME: the sign is a WIRING FACT, so it survives every run boundary — hilWarmReset(), the
+// State-98 'Q' exit, resetControlRateLimiters() and State 3 all leave it alone. Only a power cycle
+// returns it to +1. It is deliberately NOT persisted to EEPROM: the wiring is fixed per build, a
+// stale stored sign on a re-wired board would be worse than a half-second of runaway, and the
+// detector re-derives it within 0.5 s of motion anyway. A persistent option is a follow-up ruling.
+// The DETECTOR's window counter is transient state and IS cleared at those boundaries.
+int8_t   encDirSign          = 1;     // +1 = decoder sense trusted as wired; -1 = flipped
+uint16_t encDirFlipCount     = 0;     // flips taken since boot ('S' dump; capped at ENC_DIR_FLIP_MAX)
+uint16_t encDirRunawayTicks  = 0;     // consecutive qualifying ticks in the current window
+float    encDirRunawayMagRef = 0.0f;  // ratcheted max |v_actual| within the window
+float    encDirRunawayMagOpen= 0.0f;  // |v_actual| when the window opened (growth test, F3)
+uint32_t encDirLockoutMs     = 0;     // millis() deadline of the post-flip lockout (0 = none)
+
+// Apply the direction sense at the PUBLISH boundary. Every non-zero write to v_actual inside
+// updateWheelSpeed() goes through this; the two hard zeros (the stale paths) are sign-invariant
+// and are left as plain 0.0f. Any future publish site must use this helper.
+// HIL GATING IS STRUCTURAL, NOT A TEST: under HIL_SIM updateSensors() returns before it reaches
+// updateWheelSpeed() once a frame has been accepted, and writes v_actual from the injection frame
+// itself. The plant's sign is authoritative there, so no sign factor can reach an injected value.
+// The detector is compiled out under HIL_SIM for the same reason (see updateEncoderDirectionSense).
+static inline float encDirApply(float v) { return encDirSign >= 0 ? v : -v; }
 
 // ── Bench/debug config ──────────────────────────────────────────────────────────
 // BENCH_TEST relaxes the firmware so the board can reach Idle on the bench without
@@ -4390,6 +4538,7 @@ void    parseMpptLine(const char *line);
 void updateSensors();
 void updateWheelSpeed();
 void encoderVelReset();
+void updateEncoderDirectionSense();      // fw v28 rev 2: encoder direction-sense auto-flip
 void computeDerivedSignals();
 void detectFaults();
 void checkPiWatchdog();
@@ -5516,6 +5665,12 @@ void loop() {
     updateSensors();
     computeDerivedSignals();
     detectFaults();
+    // fw v28 rev 2: encoder direction-sense auto-flip. AFTER detectFaults() so a real fault still
+    // latches first, BEFORE the state machine so a flip corrects this tick's motor command: the
+    // flip site negates the already-published v_actual in place, so the state machine's
+    // motorControlGated() below sees the corrected sign on this very tick. Not a fault path: it
+    // never latches, never moves a switch and never writes a motor current.
+    updateEncoderDirectionSense();
     checkPiWatchdog();
     receiveCommands();
 
@@ -7765,6 +7920,15 @@ void doState98() {
                 // so without an explicit clear a State-98 profile that exited while clamped would
                 // publish a stale clamp on the BLG bit7 / HIL aux bits / 'S' dump through Idle.
                 clearShareCeilingState();
+                // fw v28 rev 2: drop a partially accumulated direction-runaway window at the
+                // profile boundary, so ticks earned under one profile can never complete a window
+                // under the next. The SIGN and the flip count deliberately survive — they are a
+                // WIRING fact, not profile state, and re-deriving them would cost another 0.5 s of
+                // runaway on the next run. (Everywhere else the window self-clears within one
+                // tick: any non-qualifying tick zeroes it, and Idle commands 0 A.)
+                encDirRunawayTicks      = 0;
+                encDirRunawayMagRef     = 0.0f;
+                encDirRunawayMagOpen    = 0.0f;
                 vescWatchActive         = false;   // stop the blocking poll from running outside State 98
                 pendingInput            = PEND_NONE;   // also drops a half-typed trapezoid line
                 inputBufIdx             = 0;
@@ -9742,7 +9906,18 @@ void printTestStatus() {
     Serial.print("  last=");      Serial.print(perLast);
     Serial.print("us  dir=");     Serial.print(perDir);
     Serial.print("  pitch=");     Serial.print(ENC_SLOT_PITCH_M * 1000.0f, 3);
-    Serial.println("mm");
+    Serial.print("mm");
+    // fw v28 rev 2: the PUBLISHED sense and the auto-flip history. dir= above is the DECODER's
+    // sense (the ring's own frame); dirSign is the factor applied at the publish boundary, so the
+    // sign of v_actual is dir x dirSign. dirSign = -1 means the detector found the positive-
+    // feedback runaway of an inverted A/B wiring and corrected it — the encoder harness is
+    // physically reversed and should be re-plugged; flips is the count taken this boot (cap
+    // ENC_DIR_FLIP_MAX), and window is the current unbroken qualifying-tick count out of
+    // ENC_DIR_RUNAWAY_TICKS.
+    Serial.print("  dirSign=");   Serial.print((int)encDirSign);
+    Serial.print("  flips=");     Serial.print(encDirFlipCount);
+    Serial.print("  window=");    Serial.print(encDirRunawayTicks);
+    Serial.print("/");            Serial.println((unsigned)ENC_DIR_RUNAWAY_TICKS);
     // fw v15 pitch-count diagnostics. lastPitches > 1 or a rising multiPitch count means edges are
     // being lost or rejected; ref is the EWMA the low-side gate is built from. Diagnostic only.
     Serial.print("ref=");         Serial.print(perRef);
@@ -13421,7 +13596,7 @@ void updateWheelSpeed() {
         // is bit-for-bit the old behaviour. After a mid-motion reset it is armed, and holding the
         // captured value across the one-to-three ticks before the first post-reset edge arrives is
         // what removes the naked zero entirely — (0) above bounds it at 100 ms.
-        v_actual        = encVelCorrobPending ? encVelResetHold : 0.0f;
+        v_actual        = encDirApply(encVelCorrobPending ? encVelResetHold : 0.0f);
         encVelHaveValid = false;
         return;
     }
@@ -13502,8 +13677,8 @@ void updateWheelSpeed() {
     // full-scale error step into a 454.4 A/(m/s) controller (see the encVelLastValid block). The
     // hold is now bounded by (2b) in wall-clock terms, not merely by (2).
     if (cnt == 0 || dir == 0) {
-        v_actual = encVelHaveValid ? encVelLastValid
-                                   : (encVelCorrobPending ? encVelResetHold : 0.0f);
+        v_actual = encDirApply(encVelHaveValid ? encVelLastValid
+                                   : (encVelCorrobPending ? encVelResetHold : 0.0f));
         return;
     }
 
@@ -13522,8 +13697,8 @@ void updateWheelSpeed() {
         sumUs += periods[(idx + ENC_PERIOD_AVG_N - 1 - i) % ENC_PERIOD_AVG_N];
     }
     if (sumUs == 0) {           // cannot happen with the ENC_PERIOD_MIN_US floor; divide guard
-        v_actual = encVelHaveValid ? encVelLastValid
-                                   : (encVelCorrobPending ? encVelResetHold : 0.0f);
+        v_actual = encDirApply(encVelHaveValid ? encVelLastValid
+                                   : (encVelCorrobPending ? encVelResetHold : 0.0f));
         return;
     }
 
@@ -13544,7 +13719,7 @@ void updateWheelSpeed() {
     // 100 ms bound. Cost: a real reversal is published one pitch later than it could have been,
     // which at the speeds where dither occurs is a fraction of the bound it protects.
     if (cnt < 2 && encVelHaveValid && (vNew < 0.0f) != (encVelLastValid < 0.0f)) {
-        v_actual = encVelLastValid;
+        v_actual = encDirApply(encVelLastValid);
         return;
     }
 
@@ -13568,18 +13743,197 @@ void updateWheelSpeed() {
     if (encVelCorrobPending) {
         bool corroborated = (cnt >= ENC_PERIOD_AVG_N);
         if (!corroborated) {
-            v_actual = encVelResetHold;
+            v_actual = encDirApply(encVelResetHold);
             return;             // deliberately does NOT refresh encVelLastReadingUs — (0) bounds it
         }
         encVelCorrobPending = false;
         encVelResetHold     = 0.0f;
     }
 
-    v_actual            = vNew;
-    encVelLastValid     = vNew;
+    v_actual            = encDirApply(vNew);
+    encVelLastValid     = vNew;      // DECODER frame - the sign lives on the publish boundary only
     encVelHaveValid     = true;
     encVelLastReadingUs = now;      // fw v13: (2b)'s reference — a READING, not an edge
     encVelLastSumUs     = sumUs;
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ENCODER DIRECTION-SENSE AUTO-FLIP (fw v28 rev 2, operator ruling 2026-09-08)
+//
+// Called once per loop() tick (~1 kHz) from loop(), immediately after detectFaults() and BEFORE
+// the state machine. That position is deliberate and load-bearing in two ways:
+//   - detectFaults() has already run, so a genuine fault still latches State 99 first and this
+//     function can never pre-empt the fault path;
+//   - the state machine (and therefore motorControlGated()) has NOT yet run this tick, so a flip
+//     takes effect on the SAME tick's motor command. That is only true because the flip site also
+//     NEGATES the live v_actual (review F2): updateSensors() published it through encDirApply()
+//     with the pre-flip sign earlier in this same tick, and nothing re-publishes it before
+//     motorControlGated() runs. Nothing here writes a motor current, so the "one writer per tick"
+//     discipline at commandMotorCurrent() is untouched.
+// It reads THIS tick's published v_actual (updateSensors() ran at the top of loop()) against the
+// PREVIOUS tick's post-clamp mirrored `current`. That one-tick skew is immaterial against a
+// 500-tick window and it is the honest pairing: `current` is what the loop actually commanded in
+// response to the reading that produced this one.
+//
+// THE PER-TICK CONDITIONS, all required on the same tick (any miss zeroes the counter):
+//   0. the velocity loop is CLOSED: manualMotorMode != MOTOR_TEST_CURRENT (review F4 — see the
+//      qualification below; in 'A' manual-current mode the encoder does not influence `current`
+//      at all, so the comparison carries no information about the decoder's sense);
+//   1. the published velocity opposes the commanded current  (sign(current) == -sign(v_actual));
+//   2. |v_actual| >= ENC_DIR_RUNAWAY_V_MIN                    (0.30 m/s — out of the deadband);
+//   3. |current|  >= ENC_DIR_RUNAWAY_I_FRAC * MOTOR_I_CMD_MAX (6.0 A — the loop is pushing hard);
+//   4. |v_actual| is NOT decreasing: it stays within ENC_DIR_RUNAWAY_MAG_TOL of the ratcheted
+//      maximum seen since the window opened. This is the condition that separates an inverted
+//      encoder from legitimate braking, where 1-3 also hold but the magnitude COLLAPSES;
+//   5. sustained for ENC_DIR_RUNAWAY_TICKS (500) consecutive ticks.
+// And ONE WINDOW-CLOSING condition, tested once when the counter completes:
+//   6. GROWTH (review F3): |v_actual| at completion must exceed |v_actual| when the window opened
+//      by at least ENC_DIR_RUNAWAY_GROWTH_MIN (0.10 m/s). Conditions 1-5 also admit a CONSTANT
+//      magnitude, which is a correctly wired vehicle held at speed against the rail (an incline, a
+//      dyno, an externally driven flywheel) — that case would otherwise flip falsely, permanently
+//      and silently. A window that completes without the growth RESETS and takes no flip.
+// Condition 4 alone rejects every braking and regen phase of the State-98 'D'/'Y' profiles and the
+// RegenManager windows: those are commanded decelerations, so |v| falls monotonically and the
+// window breaks within a few ticks of the tolerance being spent. An EXTERNAL PUSH is the residual
+// false-positive class and its bound is stated in the design record: it must hold the drive above
+// 6 A and grow the magnitude by 0.10 m/s over a continuous 0.5 s.
+// encVelHaveValid is required too, so a boot/standstill publication (which is 0 anyway) and the
+// pre-first-reading corroboration hold cannot contribute ticks.
+//
+// ON DETECTION: flip encDirSign, count the flip, print one ASCII line, reset the window and arm
+// ENC_DIR_FLIP_LOCKOUT_MS during which no second flip is possible. resetDriveControlState() is
+// called at the flip and that is NOT optional: the harness shows the controller pinned at the
+// +MOTOR_I_CMD_MAX rail when the flip fires, and the flip instantaneously negates its measurement,
+// so the error steps by 2*|v|. Carrying the railed Hanus state across that step would answer a
+// correct measurement with a saturated command for as long as it takes to unwind. The reset is the
+// same doctrine (and the same call) as the fw v13 v_setpoint zero-cutoff entry edge, and it is a
+// controller-state reset only — it commands no current and moves no switch. On a
+// USE_YOULA_DRIVE_CONTROLLER=0 build the PI fallback's integrator is not owned by that call, so it
+// is cleared alongside (review F5), exactly as the zero cutoff does.
+// A WRONG FLIP IS PERMANENT AND SILENT for the boot: after it, condition 1 fails on every tick (the
+// sign now agrees with the drive), so the detector never re-arms and cannot undo itself. The
+// lockout and the per-boot cap do NOT bound that case; they bound REPEATED GENUINE detections (an
+// intermittently reversed connector). The real defence against a wrong flip is the entry test —
+// conditions 0, 4 and 6 plus the two thresholds. Recovery from a wrong flip is a power cycle.
+// PAST THE CAP the sign is frozen and only the line prints; the lockout still applies, so the
+// print rate is bounded at one per ENC_DIR_FLIP_LOCKOUT_MS however hard the detector is fooled.
+//
+// NOT COMPILED UNDER HIL_SIM. There v_actual comes from the 40-byte injection frame, the plant's
+// sign is authoritative, and updateWheelSpeed() (hence encDirApply()) never runs — a flip could
+// change nothing but would still print and move the 'S' dump. The function keeps its symbol in
+// every build so callers and tests link identically; under HIL_SIM it clears the window and
+// returns.
+// ─────────────────────────────────────────────────────────────────────────────
+void updateEncoderDirectionSense() {
+#if HIL_SIM
+    encDirRunawayTicks   = 0;
+    encDirRunawayMagRef  = 0.0f;
+    encDirRunawayMagOpen = 0.0f;
+    return;
+#else
+    float vMag = fabsf(v_actual);
+    float iMag = fabsf(current);
+
+    bool qualifies = encVelHaveValid &&
+                     // fw v28 rev 2 review F4: the detector's PREMISE is a closed velocity loop
+                     // whose measurement feeds the command it is being compared against. In the
+                     // State-98 'A' manual-current mode there is no velocity loop at all: the
+                     // operator sets `current` by hand and the encoder reading does not influence
+                     // it, so "the command opposes the velocity" carries no information about the
+                     // decoder's sense. Driving the wheel backwards at a hand-set 12 A is a
+                     // FALSE POSITIVE BY CONSTRUCTION and is excluded here. MOTOR_TEST_VELOCITY
+                     // and MOTOR_TEST_OFF (production State 2 and the 'D'/'Y' profiles, which run
+                     // motorControlGated()) are all closed-loop and remain in scope.
+                     manualMotorMode != MOTOR_TEST_CURRENT &&
+                     vMag >= ENC_DIR_RUNAWAY_V_MIN &&
+                     iMag >= ENC_DIR_RUNAWAY_I_FRAC * MOTOR_I_CMD_MAX &&
+                     ((current > 0.0f && v_actual < 0.0f) ||
+                      (current < 0.0f && v_actual > 0.0f));
+
+    if (qualifies && encDirRunawayTicks > 0) {
+        // Condition 4, evaluated against the window's ratcheted maximum rather than against the
+        // previous tick: a per-tick comparison would be broken by the estimator's single-pitch
+        // variance, while a running maximum plus a tolerance tracks the ENVELOPE of the magnitude.
+        if (vMag < encDirRunawayMagRef - ENC_DIR_RUNAWAY_MAG_TOL) qualifies = false;
+    }
+
+    if (!qualifies) {
+        encDirRunawayTicks   = 0;
+        encDirRunawayMagRef  = 0.0f;
+        encDirRunawayMagOpen = 0.0f;
+        return;
+    }
+
+    if (encDirRunawayTicks == 0) {
+        encDirRunawayMagRef  = vMag;
+        encDirRunawayMagOpen = vMag;       // growth reference (F3), frozen for the window
+    } else if (vMag > encDirRunawayMagRef) {
+        encDirRunawayMagRef = vMag;
+    }
+    if (encDirRunawayTicks < 0xFFFFu) encDirRunawayTicks++;
+
+    if (encDirRunawayTicks < ENC_DIR_RUNAWAY_TICKS) return;
+
+    // Window complete. Reset it whatever happens next, so a lockout, the cap or a failed growth
+    // test cannot leave a full counter armed to re-fire on the first tick afterwards.
+    float magOpen = encDirRunawayMagOpen;
+    float magRef  = encDirRunawayMagRef;
+    encDirRunawayTicks   = 0;
+    encDirRunawayMagRef  = 0.0f;
+    encDirRunawayMagOpen = 0.0f;
+
+    // Condition 6 (fw v28 rev 2 review F3): the magnitude must have GROWN across the window, not
+    // merely held. A constant |v| against the rail is what a correctly wired vehicle on an incline
+    // or a dyno looks like; an inverted encoder at the rail grows |v| by ~2.4 m/s over these
+    // 500 ticks. A window that completes without the growth simply RESETS - no flip, silently, so
+    // a sustained stall costs one restarted window per 0.5 s and nothing else.
+    if (magRef < magOpen + ENC_DIR_RUNAWAY_GROWTH_MIN) return;
+
+    if (encDirLockoutMs != 0 && (int32_t)(millis() - encDirLockoutMs) < 0) return;   // locked out
+    encDirLockoutMs = millis() + ENC_DIR_FLIP_LOCKOUT_MS;
+    if (encDirLockoutMs == 0) encDirLockoutMs = 1;   // 0 is the "no lockout" sentinel
+
+    if (encDirFlipCount >= ENC_DIR_FLIP_MAX) {
+        Serial.print("ENC DIR RUNAWAY: cap of ");
+        Serial.print((unsigned)ENC_DIR_FLIP_MAX);
+        Serial.println(" flips reached this boot - sign held, check the encoder wiring and mount");
+        return;
+    }
+
+    encDirSign = (int8_t)-encDirSign;
+    encDirFlipCount++;
+    // fw v28 rev 2 review F2: correct THIS TICK's already-published v_actual. updateSensors() ran
+    // at the top of loop() and published v_actual through encDirApply() with the OLD sign; nothing
+    // re-publishes it before the state machine runs motorControlGated() later in the same tick.
+    // Without this negation the "the corrected sign reaches this tick's motor command" claim above
+    // is false: the flipped sign would only take effect on the NEXT tick, and this tick's command
+    // would still be computed from the wrong-signed error. It also matters for the reset below,
+    // which back-dates driveCtrl_lastMicros so the controller's first step after the reset runs
+    // immediately - on this tick, on this error. Negating the live value is exactly what the next
+    // updateWheelSpeed() will produce from the same reading under the new sign.
+    v_actual = -v_actual;
+    resetDriveControlState();
+#if !USE_YOULA_DRIVE_CONTROLLER
+    // fw v28 rev 2 review F5: on a PI-fallback build resetDriveControlState() does not own the PI
+    // integrator, so a railed integrator would survive the sign reversal and answer the corrected
+    // measurement with a saturated command until it unwound. Same doctrine and same pair of clears
+    // as the fw v13 v_setpoint zero-cutoff entry edge: zero the accumulator and refresh the dt
+    // reference so the first post-flip step does not integrate the whole runaway in one go.
+    pi_motor_accum      = 0.0f;
+    pi_motor_lastMicros = micros();
+#endif
+    Serial.print("ENC DIR FLIP #");
+    Serial.print(encDirFlipCount);
+    Serial.print(": runaway ");
+    Serial.print((unsigned)ENC_DIR_RUNAWAY_TICKS);
+    Serial.print(" ticks, |v|=");
+    Serial.print(vMag, 3);
+    Serial.print(" m/s vs I=");
+    Serial.print(current, 2);
+    Serial.print(" A - sign now ");
+    Serial.println((int)encDirSign);
+#endif
 }
 
 
