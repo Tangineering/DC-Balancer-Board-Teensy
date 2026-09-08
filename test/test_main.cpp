@@ -103,6 +103,11 @@ static void reset_test_state() {
     mock_eeprom_reset();
     encDirStoredSign     = 0;
     encDirStoredGen      = 0;
+    // fw v28 rev 4: the deferred-commit request and its counter. An outstanding request left by
+    // one test would otherwise be executed by the next test's first encDirCommitTick() and write
+    // a record that fixture never asked for.
+    encDirStorePending   = false;
+    encDirCommitCount    = 0;
 
     ag105_status_raw     = 0;
     ag105DataValid       = false;
@@ -11382,6 +11387,131 @@ static void test_fw28_f4_kd_hold_in_charge_window(void) {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
+// fw v28 REV 4 (item 2) — the single-source k_d hold is keyed on TOPOLOGY, not on
+// FC_CHARGE_ENABLE alone. Rev 1-3 recorded, as a bench-only residual, that a BT_BUS opened
+// WITHOUT a charge window (the State-98 '2' key, safeAllSwitches(), or the fw v24 backoff's
+// refused re-close) sets none of the four cut flags, so the schedule kept running on a
+// single-source total — campaign G's saturation class through a second door. applyShareRatio()
+// keeps writing the MDACs on that topology, which is exactly why it takes the K_DROOP TARGET
+// (slewed) rather than the cut flags' freeze.
+// ═════════════════════════════════════════════════════════════════════════════
+static void test_fw28r4_kd_hold_on_single_source_topology(void) {
+    test_group("fw v28 rev 4: k_d holds at K_DROOP whenever exactly one bus switch is closed, "
+               "with no charge window and no cut flag");
+
+    // ── (a) The '2'-key topology: BT off the bus, FC alone, FC_CHARGE LOW, no flag set. ──────
+    gov_fixture();
+    uint32_t t = 0;
+    shareGGuardCount = 0;
+    digitalWrite(BT_BUS_ENABLE, LOW);          // what the State-98 '2' key does
+    check(digitalRead(FC_CHARGE_ENABLE) == LOW && !shareIsoFC && !shareIsoBT &&
+          !shareSpCutFC && !shareSpCutBT,
+          "(a, setup) no charge window and no cut flag — this is the topology rev 3 missed");
+    // The same light single-source total campaign G measured driving the schedule to its
+    // 0.5-capped maximum (0.906 ohm at the rev 3 floor) and saturating the FC MDAC word.
+    gov_run_closed_loop(0.40f, 0.0f, 0.40f, 0.85f, 300, t);
+    check(fabsf(shareDroopKd - K_DROOP) < 1e-6f,
+          "(a) k_d slews to K_DROOP exactly — the single-source topology is now detected from the "
+          "bus switches themselves");
+    check(mdacLastCodeFC != (uint16_t)(MDAC_CMD_LOAD_UPDATE | (uint16_t)MDAC_res),
+          "(a) the FC MDAC word never reaches full scale — campaign G's saturation cannot recur "
+          "through this door either");
+    check(shareGGuardCount == 0,
+          "(a) and the hard g-guard never fires: k_d tracked down rather than being clamped at "
+          "the write site");
+    // Non-vacuous: with BOTH switches closed at the same load the schedule genuinely climbs.
+    const float kdSingle = shareDroopKd;
+    digitalWrite(BT_BUS_ENABLE, HIGH);
+    I_fc = 0.20f; I_batt = 0.20f;              // the same 0.40 A total, now two-source
+    for (int i = 0; i < 600; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
+    check(shareDroopKd > kdSingle + 0.05f,
+          "(a) the SAME total with both switches closed walks k_d well above K_DROOP — so the "
+          "hold above is a real interception, not a load that never asked for a larger scale");
+
+    // ── (b) Resumption: re-closing BT hands the schedule straight back, slewed. ──────────────
+    // (Asserted by the walk immediately above, which starts from the held K_DROOP; here we pin
+    // the RATE, so that leaving the hold can never step the MDAC codes.)
+    gov_fixture();
+    t = 0;
+    digitalWrite(BT_BUS_ENABLE, LOW);
+    gov_run_closed_loop(0.40f, 0.0f, 0.40f, 0.85f, 300, t);
+    check(fabsf(shareDroopKd - K_DROOP) < 1e-6f, "(b, setup) held at K_DROOP");
+    digitalWrite(BT_BUS_ENABLE, HIGH);
+    I_fc = 0.20f; I_batt = 0.20f;
+    float prevKd = shareDroopKd, maxFrac = 0.0f;
+    for (int i = 0; i < 400; i++) {
+        t += 1000; g_mock_micros = t; powerBalance();
+        const float frac = fabsf(shareDroopKd - prevKd) / prevKd;
+        if (frac > maxFrac) maxFrac = frac;
+        prevKd = shareDroopKd;
+    }
+    check(maxFrac <= SHARE_KD_SLEW_FRAC_PER_TICK + 1e-6f,
+          "(b) leaving the hold is SLEWED under the existing fractional bound — no tick steps the "
+          "MDAC codes");
+    check(shareDroopKd > K_DROOP + 0.05f,
+          "(b) and the schedule does resume: the hold is a hold, not a permanent floor");
+
+    // ── (c) The mirror topology: FC off the bus, BT alone. ───────────────────────────────────
+    gov_fixture();
+    t = 0;
+    digitalWrite(FC_BUS_ENABLE, LOW);
+    gov_run_closed_loop(0.0f, 0.40f, 0.40f, 0.15f, 300, t);
+    check(fabsf(shareDroopKd - K_DROOP) < 1e-6f,
+          "(c) the rule is symmetric — FC alone on the bus holds k_d at K_DROOP too");
+
+    // ── (d) A DARK BUS holds: both switches LOW is not a load to schedule from. ──────────────
+    // applyShareRatio() still writes the MDACs here (no flag is set), but it writes them for a
+    // bus with no source; moving k_d on that reading would publish a scale derived from a load
+    // that does not exist. Same doctrine as shareDroopScaleTarget()'s non-positive-total guard.
+    gov_fixture();
+    t = 0;
+    gov_run_closed_loop(0.50f, 0.50f, 1.00f, 0.50f, 300, t);   // settle two-source, above crossover
+    digitalWrite(FC_BUS_ENABLE, LOW);
+    digitalWrite(BT_BUS_ENABLE, LOW);
+    shareDroopKd    = 0.7768f;                 // a light-load scale, as a collapse would leave it
+    shareKdSchedTot = 0.30f;
+    const float kdDark    = shareDroopKd;
+    const float schedDark = shareKdSchedTot;
+    I_fc = 0.08f; I_batt = 0.08f;
+    bool moved = false;
+    for (int i = 0; i < 400; i++) {
+        digitalWrite(FC_BUS_ENABLE, LOW);
+        digitalWrite(BT_BUS_ENABLE, LOW);
+        t += 1000; g_mock_micros = t; powerBalance();
+        if (shareDroopKd != kdDark || shareKdSchedTot != schedDark) moved = true;
+    }
+    check(!moved,
+          "(d) with BOTH bus switches open, neither k_d nor the schedule input moves on any of "
+          "400 ticks — a dark bus carries no load to schedule from");
+
+    // ── (e) The cut flags keep their FREEZE, not the K_DROOP target. ─────────────────────────
+    // The distinction is load-bearing: applyShareRatio() writes NO MDAC word while shareIso* is
+    // outstanding, so a slew toward K_DROOP would accumulate against codes that cannot follow it
+    // and land as a step on the release (review S4). Drive a topology that is single-source by
+    // the new switch rule AND flagged, and confirm the freeze wins.
+    gov_fixture();
+    t = 0;
+    gov_run_closed_loop(0.5f, 0.5f, 1.0f, 0.5f, 200, t);
+    const float kdFrozen    = shareDroopKd;
+    const float schedFrozen = shareKdSchedTot;
+    I_fc = 0.0f; I_batt = 0.30f;
+    share_govTotAFilt    = 0.30f;
+    power_share_setpoint = 0.50f;
+    shareClosedLoopMode = true; shareClosedLoopRun = true;
+    bool flagMoved = false;
+    for (int i = 0; i < 400; i++) {
+        shareIsoFC = true;
+        digitalWrite(FC_BUS_ENABLE, LOW);      // single-source by the switch rule AND flagged
+        t += 1000; g_mock_micros = t; powerBalance();
+        if (shareDroopKd != kdFrozen || shareKdSchedTot != schedFrozen) flagMoved = true;
+    }
+    check(!flagMoved,
+          "(e) a flagged cut still FREEZES both k_d and the schedule input bit-for-bit — the "
+          "switch-keyed target must not override the S4 freeze on a path that writes no MDAC");
+    shareIsoFC = false;
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
 // fw v24 — Ag105 MPPT input-voltage threshold manager
 // ═════════════════════════════════════════════════════════════════════════════
 
@@ -19394,6 +19524,12 @@ static void test_fw28r3_flip_writes_record_once() {
     // A real detection through the real detector: 500 qualifying, growing ticks.
     const int flips = fw28r2_seam_window(600, -0.60f, 0.004f, 12.0f);
     check(flips == 1 && encDirSign == -1, "(9) the runaway takes exactly one flip");
+    // fw v28 rev 4: the flip only REQUESTS the commit; loop()'s encDirCommitTick() performs it.
+    // The seam fixture calls the detector directly, so the deferred half is driven explicitly
+    // here. Everything asserted below about the record is unchanged from rev 3.
+    check(encDirStorePending, "(9) rev 4: the flip leaves the commit PENDING, not written");
+    check(g_mock_eeprom_writes == 0, "(9) rev 4: the flip tick itself writes no EEPROM cell");
+    encDirCommitTick();
     check(g_mock_eeprom[ENC_DIR_EE_BASE + 0] == (uint8_t)ENC_DIR_EE_MAGIC &&
           g_mock_eeprom[ENC_DIR_EE_BASE + 1] == (uint8_t)ENC_DIR_EE_SIGN_NEG &&
           g_mock_eeprom[ENC_DIR_EE_BASE + 2] == 1 &&
@@ -19455,6 +19591,7 @@ static void test_fw28r3_stale_record_self_corrects() {
     // PUBLISHED velocity oppose the drive again — the same runaway signature as the original
     // inversion, which is exactly why persistence cannot strand a board.
     const int flips = fw28r2_seam_window(600, 0.60f, 0.004f, -12.0f);
+    encDirCommitTick();                      // fw v28 rev 4: the commit is loop()'s, not the flip's
     check(flips == 1 && encDirSign == 1,
           "(10) one window corrects the sign back to +1 (the cost is 0.5 s, once per re-wiring)");
     check(g_mock_eeprom[ENC_DIR_EE_BASE + 1] == (uint8_t)ENC_DIR_EE_SIGN_POS &&
@@ -19546,6 +19683,154 @@ static void test_fw28r3_record_layout() {
     check(ENC_DIR_FLIP_MAX == 4u && (100000u / ENC_DIR_FLIP_MAX) == 25000u,
           "layout: the flip cap bounds the wear at 4 commits per boot = 25 000 worst-case boots "
           "per cell");
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+// fw v28 REV 4 (item 1) — the EEPROM commit is DEFERRED off the flip tick.
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+// Rev 3 wrote the record inline inside updateEncoderDirectionSense(). Rev 4 raises
+// encDirStorePending there and performs the write in encDirCommitTick(), which loop() calls once
+// per iteration immediately after logDrainTick(). These tests drive encDirCommitTick() directly
+// (the deferred executor) and, in test (17), the real loop() — the honest proof that the commit
+// actually happens on a LATER iteration and not on the flip tick.
+
+// ─── (15) The flip tick writes nothing; the next executor pass writes the record ────────────
+static void test_fw28r4_commit_deferred_off_the_flip_tick() {
+    test_group("fw v28 rev 4: a flip requests the EEPROM commit; the write happens on a later "
+               "loop pass, never on the flip tick");
+    reset_test_state();
+
+    const int flips = fw28r2_seam_window(600, -0.60f, 0.004f, 12.0f);
+    check(flips == 1 && encDirSign == -1, "(15) (setup) the runaway takes exactly one flip");
+    // THE PROPERTY: the tick that flipped the sign performed no EEPROM I/O at all. Not "few
+    // writes" — zero cells and zero update() calls, so no compare and no programming time can
+    // have been spent inside the 1 kHz tick.
+    check(g_mock_eeprom_writes == 0 && g_mock_eeprom_update_calls == 0,
+          "(15) the flip tick issues no EEPROM write and no update() call");
+    check(encDirStorePending, "(15) it raises the deferred-commit request instead");
+    check(encDirStoredSign == 0 && encDirStoredGen == 0,
+          "(15) and the record mirror is untouched until the write actually runs");
+    // The corrective action of the flip tick is unchanged by the deferral — that is the whole
+    // point of moving only the write.
+    check(encDirSign == -1, "(15) the live sign is corrected on the flip tick, as before");
+
+    // The deferred executor performs it.
+    encDirCommitTick();
+    check(!encDirStorePending, "(15) the executor consumes the request");
+    check(encDirCommitCount == 1, "(15) and counts the commit");
+    check(g_mock_eeprom[ENC_DIR_EE_BASE + 0] == (uint8_t)ENC_DIR_EE_MAGIC &&
+          g_mock_eeprom[ENC_DIR_EE_BASE + 1] == (uint8_t)ENC_DIR_EE_SIGN_NEG &&
+          g_mock_eeprom[ENC_DIR_EE_BASE + 2] == 1 &&
+          g_mock_eeprom[ENC_DIR_EE_BASE + 3] ==
+              fw28r3_cksum((uint8_t)ENC_DIR_EE_MAGIC, (uint8_t)ENC_DIR_EE_SIGN_NEG, 1),
+          "(15) the deferred write lays down exactly the rev 3 record");
+    check(g_mock_eeprom_update_calls == 4,
+          "(15) four update() calls, all of them on the deferred pass");
+
+    // ONE COMMIT PER ITERATION, and only a new flip re-arms it: every later pass is a no-op.
+    const uint32_t writesAfter = g_mock_eeprom_writes;
+    const uint32_t callsAfter  = g_mock_eeprom_update_calls;
+    for (int i = 0; i < 50; i++) encDirCommitTick();
+    check(g_mock_eeprom_writes == writesAfter && g_mock_eeprom_update_calls == callsAfter,
+          "(15) fifty further executor passes write nothing — the request is one-shot, so a loop "
+          "iteration can never carry more than one commit");
+    check(encDirCommitCount == 1, "(15) and the commit count does not advance on the no-op passes");
+}
+
+// ─── (16) A flip followed by a State-99 latch still commits, during the latched phase ───────
+static void test_fw28r4_commit_survives_a_fault_latch() {
+    test_group("fw v28 rev 4: a flip on the tick before a fault latch is still committed — held "
+               "through the timed teardown phases, written once State 99 is latched");
+    reset_test_state();
+
+    const int flips = fw28r2_seam_window(600, -0.60f, 0.004f, 12.0f);
+    check(flips == 1 && encDirStorePending,
+          "(16) (setup) the flip is taken and its commit is pending");
+
+    // The fault latches on the very next tick and the teardown begins. While the teardown is
+    // between its timed phases the commit MUST be held off — its duration is unspecified and the
+    // teardown's dwells are millis() deadlines (the same argument, and the same gate, as
+    // logDrainTick()'s card I/O).
+    mainState = 99;
+    for (uint8_t ph = 0; ph < 3; ph++) {
+        state99Phase = ph;
+        for (int i = 0; i < 20; i++) encDirCommitTick();
+        check(g_mock_eeprom_writes == 0 && encDirStorePending,
+              "(16) the commit is HELD, not dropped, while the teardown is in a timed phase");
+    }
+
+    // Phase 3 = latched. The write lands there, so the record survives the fault — the case that
+    // matters, since an inverted encoder is exactly the defect that ends a run in State 99.
+    state99Phase = 3;
+    encDirCommitTick();
+    check(!encDirStorePending && encDirCommitCount == 1,
+          "(16) the held request is executed once the teardown has reached its latched phase");
+    check(g_mock_eeprom[ENC_DIR_EE_BASE + 1] == (uint8_t)ENC_DIR_EE_SIGN_NEG &&
+          encDirStoredSign == -1 && encDirStoredGen == 1,
+          "(16) the record is on the board despite the latch — the flip is not lost");
+}
+
+// ─── (17) The real loop() performs the commit, on an iteration after the flip ───────────────
+static void test_fw28r4_loop_executes_the_deferred_commit() {
+    test_group("fw v28 rev 4: the real loop() executes the deferred commit on a later iteration");
+    reset_test_state();
+    mainState = 1;                       // Idle: no profile, no bring-up sequencing
+    g_mock_millis = 5000;
+
+    const int flips = fw28r2_seam_window(600, -0.60f, 0.004f, 12.0f);
+    check(flips == 1 && encDirStorePending && g_mock_eeprom_writes == 0,
+          "(17) (setup) the flip is pending and nothing has been written");
+
+    // One full loop() pass. loop() calls encDirCommitTick() after the state machine and after
+    // logDrainTick(), so this is the first opportunity the firmware itself gives the write.
+    mainState = 1;
+    loop();
+    check(!encDirStorePending && encDirCommitCount == 1,
+          "(17) one loop() iteration consumes the request");
+    check(g_mock_eeprom[ENC_DIR_EE_BASE + 0] == (uint8_t)ENC_DIR_EE_MAGIC &&
+          encDirStoredSign == -1,
+          "(17) and the record is on the board after that iteration");
+
+    const uint32_t writesAfter = g_mock_eeprom_writes;
+    for (int i = 0; i < 5; i++) { mainState = 1; loop(); }
+    check(g_mock_eeprom_writes == writesAfter,
+          "(17) five further iterations write nothing — the ordinary 1 kHz path is EEPROM-free");
+}
+
+// ─── (18) 'Z' cancels an outstanding commit, and the 'S' dump shows the pending state ───────
+static void test_fw28r4_clear_cancels_pending_and_status_shows_it() {
+    test_group("fw v28 rev 4: the 'Z' clear cancels an outstanding deferred commit, and the 'S' "
+               "dump reports the pending state");
+    reset_test_state();
+
+    const int flips = fw28r2_seam_window(600, -0.60f, 0.004f, 12.0f);
+    check(flips == 1 && encDirStorePending, "(18) (setup) a commit is pending");
+
+    // The 'S' dump must show it — otherwise a request held through a State-99 teardown would be
+    // invisible to the operator standing at the board.
+    Serial.tx_clear();
+    printTestStatus();
+    check(Serial.tx_contains("commit-pending=YES"),
+          "(18) the 'S' dump reports an outstanding commit");
+    check(Serial.tx_contains("commits=0"),
+          "(18) and the commits counter, which is what makes 'held' distinguishable from 'done'");
+
+    // The operator re-wires the harness and presses 'Z'. The clear is synchronous AND it cancels
+    // the pending commit: without the cancel, the deferred write would land afterwards and
+    // silently re-store the very sign that was just erased.
+    encDirClearStoredRecord();
+    check(!encDirStorePending, "(18) 'Z' cancels the outstanding commit");
+    check(encDirSign == 1 && encDirStoredSign == 0,
+          "(18) (setup) and it does what rev 3 said it does — sign +1, record gone");
+    const uint32_t writesAfterClear = g_mock_eeprom_writes;
+    for (int i = 0; i < 20; i++) encDirCommitTick();
+    check(g_mock_eeprom_writes == writesAfterClear,
+          "(18) no later executor pass resurrects the erased sign");
+
+    Serial.tx_clear();
+    printTestStatus();
+    check(Serial.tx_contains("commit-pending=no"),
+          "(18) and the dump then reports no outstanding commit");
 }
 
 #endif  // !HIL_SIM
@@ -23693,6 +23978,7 @@ int main() {
     test_fw28_f1_disarm_before_open();
     test_fw28_f1_symmetric_cases();
     test_fw28_f4_kd_hold_in_charge_window();
+    test_fw28r4_kd_hold_on_single_source_topology();
     test_mppt_quantization();
     test_mppt_write_rules();
     test_mppt_0xff_discriminator();
@@ -23942,6 +24228,11 @@ int main() {
     test_fw28r3_stale_record_self_corrects();
     test_fw28r3_clear_key();
     test_fw28r3_status_dump_stored();
+    // fw v28 rev 4: the commit is deferred off the flip tick.
+    test_fw28r4_commit_deferred_off_the_flip_tick();
+    test_fw28r4_commit_survives_a_fault_latch();
+    test_fw28r4_loop_executes_the_deferred_commit();
+    test_fw28r4_clear_cancels_pending_and_status_shows_it();
 #else
     test_fw28r2_hil_gating();
     test_fw28r3_hil_record_read_not_applied();

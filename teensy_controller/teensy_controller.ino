@@ -1,6 +1,43 @@
 /*
  * teensy_controller.ino — Scale Car DC Balancer Board, Rev 20260622
  *
+ * fw v28 REV 4 (2026-09-08) — TWO RESIDUAL CLOSURES: THE EEPROM COMMIT LEAVES THE FLIP TICK, AND
+ *   THE k_d SINGLE-SOURCE HOLD IS KEYED ON TOPOLOGY. Rev 4 SUPERSEDES rev 3 BEFORE ANY FLASH:
+ *   no board has run fw v28 in any revision, so FW_VERSION stays 28 and there is no rev-3 era in
+ *   the ledger. No wire change: telemetry stays v4/58 B, the command packet 22 B, the HIL frames
+ *   40 B/18 B, the bench log v8. Neither change touches a control law.
+ *     ITEM 1 — THE DEFERRED EEPROM COMMIT (closes rev 3's own stated residual). Rev 3 called
+ *     encDirStoreSign() inline on the flip tick, after the sign flip, the same-tick v_actual
+ *     correction, resetDriveControlState() and the print. Ordering it last kept it behind that
+ *     tick's corrective action but did not take a SYNCHRONOUS flash write of unspecified duration
+ *     (TODO(verify: PJRC) stands) off a 1 kHz tick — the one tick on which detectFaults() must not
+ *     be delayed. Rev 4 raises encDirStorePending at the flip and performs the write in
+ *     encDirCommitTick(), called from loop() immediately after logDrainTick(). The pattern and
+ *     its rationale are the SD logger's, deliberately: producer raises a flag, loop() does the
+ *     I/O after the state machine, at most one operation per iteration, and never while State
+ *     99's teardown is between its timed phases (mainState == 99 && state99Phase < 3, the same
+ *     gate, because the teardown's millis() dwells must not be stretched by an unbounded write).
+ *     THE REQUEST IS HELD, NOT DROPPED: a flip followed by a fault latch on the next tick still
+ *     commits, during the latched phase 3, so the record survives the latch — the case that
+ *     matters, since an inverted encoder is exactly the defect that ends a run in State 99. The
+ *     State-98 'Z' clear stays SYNCHRONOUS (operator-invoked, no control loop at stake, and a
+ *     deferred clear would make the 'S' dump's stored= field lie until it ran) and it CANCELS an
+ *     outstanding commit, so a flip taken just before the keypress cannot silently re-store the
+ *     sign the operator erased. The 'S' dump gains commit-pending= and commits=.
+ *     ITEM 2 — THE k_d SINGLE-SOURCE HOLD IS KEYED ON TOPOLOGY (closes rev 1's recorded F4
+ *     residual). Rev 1-3 targeted K_DROOP only while FC_CHARGE_ENABLE read HIGH, and froze the
+ *     schedule under the four cut flags. A BT_BUS opened WITHOUT a charge window — the State-98
+ *     '2' key, safeAllSwitches(), or the fw v24 backoff branch's refused re-close — leaves FC
+ *     alone on the bus with none of those flags set and the schedule live on a single-source
+ *     total: campaign G's saturation class (FC MDAC at full scale for 9057 ticks, charge-window
+ *     sag tripled) reached by a second door. Rev 4 defines single-source as exactly one of
+ *     FC_BUS_ENABLE / BT_BUS_ENABLE reading HIGH, OR FC_CHARGE_ENABLE HIGH; the four cut flags
+ *     keep their FREEZE (applyShareRatio() writes no MDAC word there, so a slew would land as a
+ *     step on the release); a dark bus — both switches LOW — HOLDS, since there is no load to
+ *     schedule from. Every other single-source topology, in all of which applyShareRatio() keeps
+ *     writing the MDACs, now takes the K_DROOP target under the existing slew. The static plant
+ *     gain is k_d-independent, so no controller coefficient changes.
+ *
  * fw v28 REV 3 (2026-09-08) — THE ENCODER DIRECTION SENSE PERSISTS ACROSS POWER CYCLES. Rev 3
  *   SUPERSEDES rev 2 BEFORE ANY FLASH: no board has run fw v28 in any revision, so FW_VERSION
  *   stays 28 and there is no rev-2 era in the ledger (the fw v27 rev 2 precedent). Rev 3 changes
@@ -43,6 +80,9 @@
  *     path, and it lands on a tick that has already decided to reset the drive controller — but
  *     it does briefly lengthen that one tick, and the write duration of the Teensy 4.1 emulation
  *     is TODO(verify: PJRC EEPROM documentation) rather than measured here.
+ *     [CLOSED IN REV 4, above: the commit is deferred to loop() and no longer runs on the flip
+ *     tick. The unmeasured write duration remains a TODO(verify: PJRC), but it is now spent on a
+ *     loop iteration outside the control tick's critical path.]
  *
  * fw v28 REV 2 (2026-09-08) — ENCODER DIRECTION-SENSE AUTO-FLIP. Rev 2 SUPERSEDES rev 1 BEFORE
  *   ANY FLASH: no board has run fw v28, so FW_VERSION stays 28 and there is no rev-1 era in the
@@ -3575,6 +3615,12 @@ float    encDirRunawayMagRef = 0.0f;  // ratcheted max |v_actual| within the win
 float    encDirRunawayMagOpen= 0.0f;  // |v_actual| when the window opened (growth test, F3)
 uint32_t encDirLockoutMs     = 0;     // millis() deadline of the post-flip lockout (0 = none)
 
+// fw v28 rev 4: the DEFERRED-COMMIT request. The flip site no longer writes the EEPROM itself; it
+// raises this flag and encDirCommitTick() performs the write from loop(), on a LATER iteration,
+// outside the 1 kHz control tick's critical path. See encDirCommitTick() for the full rationale.
+bool     encDirStorePending  = false; // a flip is waiting to be committed to EEPROM
+uint16_t encDirCommitCount   = 0;     // commits performed this boot ('S' dump; diagnostic only)
+
 // fw v28 rev 3: the mirror of the EEPROM record, refreshed by every load/store/clear. These are
 // DIAGNOSTIC ONLY — nothing in the control path reads them; encDirSign remains the single value
 // that changes behaviour. encDirStoredSign is 0 when the board carries no valid record.
@@ -3679,6 +3725,47 @@ void encDirClearStoredRecord() {
     encDirRunawayTicks   = 0;
     encDirRunawayMagRef  = 0.0f;
     encDirRunawayMagOpen = 0.0f;
+    // fw v28 rev 4: a deliberate operator clear also CANCELS an outstanding deferred commit.
+    // Without this, a flip taken a few ticks before the 'Z' key would still land on the card
+    // afterwards and silently re-store the sign the operator just erased — the clear would appear
+    // to work on the 'S' dump and then undo itself. The clear is the newer intent; it wins.
+    encDirStorePending   = false;
+}
+
+// ── fw v28 rev 4: the DEFERRED EEPROM COMMIT ─────────────────────────────────────────────────
+// Rev 3 called encDirStoreSign() inline at the flip site. EEPROM.update() on the Teensy 4.1 is a
+// SYNCHRONOUS write into the flash-backed emulation and its duration is not specified by PJRC
+// (TODO(verify: PJRC) stands from rev 3), so the flip tick — one tick of the 1 kHz loop, and the
+// one tick on which detectFaults() must not be delayed — carried an unbounded blocking write.
+// Rev 4 moves the write off that tick using the SAME deferred-I/O pattern as the SD logger's
+// logDrainTick(): the producer only raises a flag, and loop() performs the I/O at a point after
+// the state machine has run, at most one operation per iteration, and never while State 99's
+// teardown is inside its timed phases.
+//   - CALL SITE: loop(), immediately after logDrainTick(), so the commit lands on the same side
+//     of the state machine as the other deferred I/O and cannot precede this tick's control work.
+//   - ONE PER ITERATION: the flag is cleared before the write, and only a new flip can set it
+//     again, so the loop can never perform two commits in one pass. With ENC_DIR_FLIP_MAX = 4
+//     flips per boot and a 5 s lockout between them, coalescing is not a concern; if a second
+//     flip did somehow land before the first commit ran, the flag simply stays raised and the one
+//     commit writes the LIVE sign, which is the correct value in any case.
+//   - STATE 99: `mainState == 99 && state99Phase < 3` holds the commit off exactly as
+//     logDrainTick()'s gate does, and for the same reason: the teardown's millis()-deadline dwells
+//     must not be stretched by a write of unknown duration. The request is HELD, not dropped — a
+//     flip followed by a fault latch on the very next tick still commits, once the teardown has
+//     reached its latched phase (phase 3), which State 99 reaches within ~30 ms and then holds
+//     indefinitely. The record therefore survives the latch, which is the case that matters: an
+//     inverted encoder is exactly the kind of defect that ends a run in State 99.
+//   - The 'Z' clear key stays SYNCHRONOUS. It is operator-invoked from State 98 with no motor
+//     command and no switch motion at stake, it is not on a flip tick, and deferring it would
+//     make the 'S' dump's `stored=` field lie between the keypress and the write. It cancels any
+//     outstanding deferred commit instead (see encDirClearStoredRecord()).
+// A commit is never lost silently: encDirStorePending is visible on the 'S' dump.
+void encDirCommitTick() {
+    if (!encDirStorePending) return;                       // idle cost: one branch
+    if (mainState == 99 && state99Phase < 3) return;       // same gate as logDrainTick()
+    encDirStorePending = false;                            // cleared BEFORE the write: one per pass
+    encDirStoreSign();
+    if (encDirCommitCount < 0xFFFFu) encDirCommitCount++;
 }
 
 // ── Bench/debug config ──────────────────────────────────────────────────────────
@@ -4715,6 +4802,7 @@ void updateSensors();
 void updateWheelSpeed();
 void encoderVelReset();
 void updateEncoderDirectionSense();      // fw v28 rev 2: encoder direction-sense auto-flip
+void encDirCommitTick();                 // fw v28 rev 4: deferred EEPROM commit, called from loop()
 void computeDerivedSignals();
 void detectFaults();
 void checkPiWatchdog();
@@ -5868,6 +5956,13 @@ void loop() {
     // mid-profile must still be able to flush and close the file, and 'Q' must not lose it either.
     // No-ops in one branch when nothing is logging. Never blocks (see the logger module header).
     logDrainTick();
+
+    // fw v28 rev 4: the deferred encoder direction-sense EEPROM commit. Beside logDrainTick() and
+    // for the same reason — a blocking write of unspecified duration belongs after the state
+    // machine, not on the flip tick inside updateEncoderDirectionSense(). At most one commit per
+    // iteration; held off while State 99's teardown is between its timed phases; a no-op branch
+    // whenever nothing is pending, which is every tick of every ordinary run.
+    encDirCommitTick();
 
 #if HIL_SIM
     // HIL observation stream at 1 kHz (fw v21). Placed after the state machine so the frame
@@ -10119,7 +10214,15 @@ void printTestStatus() {
     Serial.print("  stored=");
     if (encDirStoredSign == 0) Serial.print("none");
     else                       Serial.print((int)encDirStoredSign);
-    Serial.print("  gen=");       Serial.println((unsigned)encDirStoredGen);
+    Serial.print("  gen=");       Serial.print((unsigned)encDirStoredGen);
+    // fw v28 rev 4: the deferred-commit state. commit-pending=YES means a flip has been taken but
+    // its EEPROM write has not run yet — normally true for less than one loop iteration, but it
+    // persists while State 99's teardown is between its timed phases, which is exactly the window
+    // in which an operator would ask. commits counts the writes actually performed this boot, so
+    // "flips" ahead of "commits" by more than one means a request is still outstanding.
+    Serial.print("  commit-pending=");
+    Serial.print(encDirStorePending ? "YES" : "no");
+    Serial.print("  commits=");   Serial.println(encDirCommitCount);
     // fw v15 pitch-count diagnostics. lastPitches > 1 or a rising multiPitch count means edges are
     // being lost or rejected; ref is the EWMA the low-side gate is built from. Diagnostic only.
     Serial.print("ref=");         Serial.print(perRef);
@@ -11506,13 +11609,15 @@ static void updateShareDroopScale() {
     // ticks, and the charge-window bus sag tripled against the fw v26 era. Nothing was unsafe
     // (the g-guard at setDroopMdac() clamps the write), but the droop the board applied bore no
     // relation to what the schedule meant.
-    // The five claims below are the complete set of "one channel owns the bus" conditions the
-    // share loop can see. FC_CHARGE_ENABLE HIGH is the reachable one on the WRITING path;
-    // shareIsoFC/shareIsoBT are reachable too (an r-based cut does not freeze powerBalance());
+    // The conditions below are the complete set of "one channel owns the bus" states the share
+    // loop can see. fw v28 rev 4 keys the WRITING half of them on the bus switches themselves —
+    // exactly one of FC_BUS_ENABLE / BT_BUS_ENABLE HIGH — rather than on FC_CHARGE_ENABLE alone,
+    // so every topology in which applyShareRatio() keeps writing the MDACs is covered by the same
+    // rule. shareIsoFC/shareIsoBT are reachable (an r-based cut does not freeze powerBalance());
     // shareSpCutFC/shareSpCutBT are defensive — a latched setpoint cut returns from
     // powerBalance() before this function is called — and are included so the test states the
     // property rather than the reachable subset of it. fw v28 (review S4) splits them: the four
-    // CUT conditions freeze the schedule, the charge window holds it at K_DROOP.
+    // CUT conditions freeze the schedule, every writing single-source topology holds it at K_DROOP.
     // fw v28 review S4 - A CUT DOES NOT SLEW k_d, IT FREEZES IT.
     // The slew is only honest where the MDACs are actually WRITTEN. applyShareRatio() writes no
     // MDAC word at all while shareIsoFC/shareIsoBT is outstanding, and a latched shareSpCutFC/
@@ -11525,14 +11630,43 @@ static void updateShareDroopScale() {
     // the FC-charge window; under any cut the schedule state is FROZEN outright (early return: no
     // target, no slew, and shareKdSchedTot untouched), so the release re-writes at exactly the k_d
     // the codes already carry.
-    // RESIDUAL, recorded not fixed (reviewer observation): a BT_BUS opened WITHOUT an FC-charge
-    // window - the State-98 '2' key, or the backoff branch's refused re-close - is single-source
-    // and sets none of these flags, so the schedule still runs on a single-source total there.
-    // That is bench-only and is documented in docs/fw28_source_selector.md.
+    // fw v28 rev 4 CLOSES THAT RESIDUAL. Rev 3 keyed the hold on FC_CHARGE_ENABLE alone and
+    // recorded, as a bench-only residual, that a BT_BUS opened WITHOUT a charge window - the
+    // State-98 '2' key, safeAllSwitches(), or the fw v24 backoff branch's refused re-close
+    // (!busHotPlugUnsafe false) - leaves FC alone on the bus with the schedule live and none of
+    // the four flags set. That is campaign G's saturation class reached by a second door. The
+    // single-source test is now keyed on the TOPOLOGY the switches actually report, not on the
+    // one condition that happened to be reachable in production.
+    //
+    // THE MAPPING, against what applyShareRatio() does on each topology:
+    //   flags: any shareIso*/shareSpCut*      -> FREEZE  (no target, no slew, input untouched)
+    //          applyShareRatio() returns before any MDAC write while shareIso* stands, and
+    //          powerBalance() returns before this function while shareSpCut* is latched, so a
+    //          slew here would land as a step on the release. Unchanged from rev 3 (review S4).
+    //   FC_BUS HIGH, BT_BUS HIGH, FC_CHARGE LOW -> SCHEDULE (the two-source case; unchanged)
+    //   FC_BUS HIGH, BT_BUS HIGH, FC_CHARGE HIGH-> K_DROOP, slewed. The charge window routes the
+    //          bus into the charger and BT is held off it by assertFcChargeEnable(); the switch
+    //          reads can lag that by a tick, so the charge line stays in the test in its own
+    //          right rather than being inferred from the pins.
+    //   exactly one of FC_BUS / BT_BUS HIGH     -> K_DROOP, slewed. applyShareRatio() KEEPS
+    //          WRITING the MDACs here (no flag is set, so neither early return is taken), which
+    //          is precisely why this topology needs the target and not the freeze: the codes can
+    //          follow the slew, so the slew is honest.
+    //   both LOW                                -> HOLD (early return). Nothing is on the bus, so
+    //          there is no load to schedule from and no split to describe. applyShareRatio() does
+    //          still write the MDACs, but it writes them for a bus with no source; moving k_d on
+    //          that reading would publish a scale derived from a load that does not exist. The
+    //          hold is the same doctrine as shareDroopScaleTarget()'s non-positive-total guard.
     if (shareIsoFC || shareIsoBT || shareSpCutFC || shareSpCutBT) {
         return;
     }
-    const bool singleSource = (digitalRead(FC_CHARGE_ENABLE) == HIGH);
+    const bool fcOnBus = (digitalRead(FC_BUS_ENABLE) == HIGH);
+    const bool btOnBus = (digitalRead(BT_BUS_ENABLE) == HIGH);
+    if (!fcOnBus && !btOnBus) {
+        return;   // dark bus: hold k_d and the schedule input where they are
+    }
+    const bool singleSource = (fcOnBus != btOnBus) ||
+                              (digitalRead(FC_CHARGE_ENABLE) == HIGH);
     float target;
     if (singleSource) {
         // The SCHEDULE INPUT IS FROZEN for the duration of the window (decision, fw v28): the
@@ -14136,15 +14270,14 @@ void updateEncoderDirectionSense() {
     Serial.print(" A - sign now ");
     Serial.println((int)encDirSign);
     // fw v28 rev 3 (operator ruling 2026-09-08): persist the corrected sign so that the NEXT power
-    // cycle starts from it. This is the ONLY write site, and the existing per-boot flip cap bounds
-    // it at ENC_DIR_FLIP_MAX commits per boot. EEPROM.update() writes only the cells that change.
-    // ORDER MATTERS and is deliberate: the commit is LAST, after the live sign has been applied to
-    // v_actual and after resetDriveControlState() has unwound the railed controller state, so the
-    // corrective control action of this tick is never delayed by a flash write. The write is a
-    // handful of cell compares plus, on a cell that genuinely changes, the emulation's programming
-    // time — a once-per-inversion cost on a tick that was already exceptional, and never on the
-    // ordinary 1 kHz path. See docs/fw28_source_selector.md section 21 residual 1.
-    encDirStoreSign();
+    // cycle starts from it. The per-boot flip cap bounds this at ENC_DIR_FLIP_MAX requests.
+    // fw v28 rev 4 (operator ruling 2026-09-08 evening): the write is REQUESTED here and PERFORMED
+    // by encDirCommitTick() from loop(), on a later iteration. Rev 3 called encDirStoreSign()
+    // inline; ordering it last kept it behind this tick's corrective action but did not take the
+    // blocking flash write off the 1 kHz tick itself, and its duration is unspecified
+    // (TODO(verify: PJRC)). Raising a flag costs one store; the deferred-I/O discipline is the SD
+    // logger's. See encDirCommitTick() and docs/fw28_source_selector.md Revision 4.
+    encDirStorePending = true;
 #endif
 }
 

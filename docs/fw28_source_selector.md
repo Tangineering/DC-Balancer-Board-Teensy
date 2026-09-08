@@ -1094,3 +1094,194 @@ confirm the flip and the `ENC DIR FLIP` line, power-cycle, and confirm the `ENC 
 restored from EEPROM` line and that the run starts without a runaway. Then re-plug the harness the
 right way round WITHOUT pressing `Z`, and confirm that the board takes exactly one corrective flip
 and starts clean on the following power cycle — that is section 18 on hardware.
+
+# Revision 4
+
+Revision 4 supersedes revision 3 before any flash. No board has run firmware version 28 in any
+revision, so `FW_VERSION` stays 28 and there is no revision 3 era in the ledger; the precedent is
+firmware version 27 revision 2. Revisions 1 to 3, sections 1 to 22 above, are unchanged in every
+respect except residual 1 of section 21 and the last paragraph of section 7, both of which this
+part supersedes. No wire change: the telemetry stays version 4 at 58 bytes, the command packet
+stays 22 bytes, the hardware-in-the-loop frames stay 40 and 18 bytes, and the bench-log format
+stays version 8. Neither change in this revision touches a control law.
+
+## 23. Purpose and scope of revision 4
+
+Revision 4 closes two residuals that earlier revisions recorded rather than fixed.
+
+The first is residual 1 of section 21: the EEPROM commit introduced by revision 3 is a blocking
+write on the flip tick. Revision 4 defers it to a later iteration of `loop()`.
+
+The second is the last paragraph of section 7: the single-source hold on the droop scale was keyed
+on `FC_CHARGE_ENABLE`, which does not cover every topology in which one channel owns the bus.
+Revision 4 keys it on the bus switches themselves.
+
+Out of scope: the detector and its constants; the record layout and its wear budget; the selector,
+the sliver hold and the conduction floor of revisions 1 and 2; and the observability gap of
+section 13, which revision 4 does not close.
+
+## 24. The deferred EEPROM commit
+
+### 24.1 The defect
+
+Revision 3 called `encDirStoreSign()` inline at the end of the flip branch of
+`updateEncoderDirectionSense()`, after the sign flip, the same-tick `v_actual` correction,
+`resetDriveControlState()` and the operator print. That ordering kept the write behind the tick's
+corrective control action, but it did not take the write off the tick. `EEPROM.update()` on the
+Teensy 4.1 is a synchronous write into the flash-backed emulation, and its duration is not
+specified by PJRC. The flip tick is one tick of the 1 kHz loop, and it is the tick on which
+`detectFaults()` must not be delayed.
+
+### 24.2 The mechanism
+
+The flip site now sets `encDirStorePending`. The write is performed by `encDirCommitTick()`, which
+`loop()` calls once per iteration, immediately after `logDrainTick()`.
+
+The pattern is the SD logger's, and it is reused deliberately rather than invented: the producer
+raises a flag, `loop()` performs the input and output after the state machine has run, at most one
+operation per iteration, and never while the State-99 teardown is inside its timed phases. The
+gate is the same expression the logger uses, `mainState == 99 && state99Phase < 3`, and it is
+there for the same reason: the teardown's dwells are `millis()` deadlines, and a write of
+unspecified duration must not be able to stretch them.
+
+Three properties follow.
+
+1. **One commit per iteration.** The flag is cleared before the write and only a new flip sets it
+   again, so a single pass can never perform two commits. The per-boot cap of four flips and the
+   five-second lockout between them make coalescing unreachable in any case; were a second flip to
+   land before the first commit ran, the flag would stay raised and the one commit would write the
+   live sign, which is the correct value either way.
+2. **The request is held, not dropped.** A flip followed by a fault latch on the next tick still
+   commits. The teardown reaches phase 3 within approximately 30 ms and then holds indefinitely, so
+   the write lands during the latched phase. This is the case that matters: an inverted encoder is
+   exactly the class of defect that ends a run in State 99, and a record lost to the latch would
+   cost the next boot another half-second of runaway.
+3. **The ordinary path is unchanged.** `encDirCommitTick()` returns on one branch whenever nothing
+   is pending, which is every tick of every run in which no flip occurs.
+
+### 24.3 The clear key stays synchronous
+
+The State-98 `Z` clear is operator-invoked from a state in which no motor command and no switch
+motion are at stake, it is not on a flip tick, and deferring it would make the status dump's
+`stored=` field disagree with the operator's own keypress until the next iteration ran. It
+therefore keeps its inline `EEPROM.update()` sequence.
+
+It gains one behaviour: `encDirClearStoredRecord()` clears `encDirStorePending`. Without that
+cancel, a flip taken a few ticks before the keypress would still be committed afterwards and would
+silently re-store the sign the operator had just erased — the clear would appear to work on the
+status dump and then undo itself. The clear is the newer intent, so the clear wins.
+
+### 24.4 Observability
+
+The Encoder block of the State-98 status dump gains `commit-pending=` (`YES` or `no`) and
+`commits=`, the count of writes actually performed this boot. The pair is what distinguishes a
+request that is still held from one that has been executed: `flips` ahead of `commits` by more
+than one means a request is outstanding. Normally `commit-pending=YES` is true for less than one
+loop iteration, but it persists through the timed teardown phases, which is exactly the window in
+which an operator would ask.
+
+## 25. The single-source hold, keyed on topology
+
+### 25.1 The defect
+
+Section 7 recorded that a single-source window setting none of the four cut flags is not detected,
+and named the paths: a battery bus switch opened by the State-98 `2` key, by `safeAllSwitches()`,
+or by the firmware version 24 backoff branch's refused re-close, where `busHotPlugUnsafe` is false.
+Each leaves the fuel cell alone on the bus with the schedule live, which is campaign G's saturation
+class — the fuel-cell converter word at full scale for 9057 ticks, the charge-window sag tripled —
+reached through a second door. The paragraph called the path bench-only. That is true of the `2`
+key alone; `safeAllSwitches()` and the backoff branch are not bench-only, and the residual is
+therefore closed rather than carried.
+
+### 25.2 The rule
+
+`updateShareDroopScale()` now resolves five cases. The mapping is stated against what
+`applyShareRatio()` does on each, because the whole distinction is whether the converter words are
+written.
+
+| Topology | `applyShareRatio()` | `k_d` |
+|---|---|---|
+| Any of `shareIsoFC`, `shareIsoBT`, `shareSpCutFC`, `shareSpCutBT` | writes no word (early return, or `powerBalance()` returns first) | **freeze** — no target, no slew, `shareKdSchedTot` untouched |
+| Both bus switches high, `FC_CHARGE_ENABLE` low | writes | **schedule** (unchanged) |
+| Both bus switches high, `FC_CHARGE_ENABLE` high | writes | **`K_DROOP`**, slewed |
+| Exactly one bus switch high | writes | **`K_DROOP`**, slewed |
+| Both bus switches low | writes | **hold** — early return |
+
+Single-source is therefore defined as exactly one of `FC_BUS_ENABLE` and `BT_BUS_ENABLE` reading
+high, or `FC_CHARGE_ENABLE` reading high. The charge line stays in the test in its own right rather
+than being inferred from the pins: `assertFcChargeEnable()` holds the battery bus switch low inside
+a window, but the switch reads can lag that by a tick.
+
+The freeze is preserved for the cut flags for the reason section 7 gives, and revision 4 does not
+revisit it: `applyShareRatio()` writes no converter word while a cut stands, so a slew there
+accumulates against codes that cannot follow it and lands as a step on the release. The target is
+applied only where writes continue, which is what makes the slew honest.
+
+A dark bus — both switches low — **holds**. `applyShareRatio()` does still write the converter
+words there, but it writes them for a bus with no source; moving `k_d` on that reading would
+publish a scale derived from a load that does not exist. The doctrine is the guard on a
+non-positive total inside `shareDroopScaleTarget()`.
+
+The decision on the schedule input from section 7 is unchanged and now applies to every
+single-source topology: `shareKdSchedTot` is frozen for the duration, and re-samples on the first
+tick after it whose filtered total differs by more than `SHARE_KD_HYST_A`.
+
+### 25.3 What does not change
+
+The static plant gain is independent of `k_d`, so no controller coefficient moves and
+`share_controller_coeffs.h` is untouched. Above the crossover of 0.755 A the schedule already
+returns `K_DROOP`, so a single-source window at a real load is bit-identical before and after this
+change; the difference is confined to the light-load region the schedule exists for. The 0.5 cap
+inside `shareDroopScaleTarget()` is unchanged — it bounds `g`, not the reference.
+
+## 26. Residuals of revision 4
+
+1. **The write duration is still unmeasured.** `TODO(verify: PJRC)` from revision 3 stands. What
+   revision 4 changes is where the time is spent: on a `loop()` iteration outside the control
+   tick's critical path, rather than inside the flip tick. If a bench measurement puts the write in
+   the tens of milliseconds, the State-99 gate is what keeps it clear of the teardown dwells, and
+   nothing else in `loop()` has a deadline it could breach.
+2. **`encDirLockoutMs` is still not cleared by the `Z` key.** Carried from revision 3 unchanged.
+3. **`PLAN.md` section 9b still does not list the `Z` key.** Carried from revision 3; outside this
+   round's edit fence.
+4. **F7 stands.** A re-entry closes a channel on inherited converter codes. Revision 4 does not
+   touch it, and the pre-release re-seed remains rejected as a second writer outside the rate
+   limiter.
+5. **No wire-level observable.** The deferred-commit state and the topology-keyed hold are visible
+   on the status dump only. The hardware-in-the-loop auxiliary byte is fully allocated and the
+   bench-log flags byte is full at version 8, as sections 13 and 14 record.
+
+## 27. Validation of revision 4
+
+Host-native, in `test/test_main.cpp`, group prefix `test_fw28r4_`:
+
+1. The flip tick issues no EEPROM write and no `update()` call, raises the pending request, leaves
+   the record mirror untouched, and still corrects the live sign; the deferred executor then lays
+   down exactly the revision 3 record in four `update()` calls; fifty further passes write nothing.
+2. A flip followed by a State-99 latch is **held** through phases 0, 1 and 2 — twenty executor
+   passes in each write nothing and the request stays raised — and is **executed** in phase 3, so
+   the record survives the latch.
+3. The real `loop()` executes the commit on an iteration after the flip, and five further
+   iterations write nothing.
+4. The `Z` key cancels an outstanding commit, and twenty later executor passes do not resurrect the
+   erased sign; the status dump reports `commit-pending=YES` before the clear and `no` after it.
+5. The `2`-key topology — battery bus switch low, no charge window, no cut flag — holds `k_d` at
+   `K_DROOP` exactly, never reaches a full-scale converter word, and never charges the `g` guard;
+   the same total with both switches closed walks `k_d` well above `K_DROOP`, so the hold is a real
+   interception.
+6. Re-closing the battery bus switch resumes the schedule under the existing fractional slew bound,
+   with no tick exceeding it.
+7. The mirror topology — fuel-cell bus switch low, battery alone — holds too.
+8. A dark bus holds both `k_d` and `shareKdSchedTot` bit-for-bit across 400 ticks.
+9. A flagged cut still freezes both, on a topology that is single-source by the new switch rule, so
+   the switch-keyed target cannot override the freeze on a path that writes no converter word.
+
+The revision 3 record tests are unchanged except that they now drive `encDirCommitTick()`
+explicitly, since the seam fixture calls the detector directly and no longer performs the write.
+
+Suite totals at close: 4408 production, 175 bench, 4715 hardware-in-the-loop, 51 encoder harness;
+zero warnings on all four builds.
+
+Bench gate, on top of revision 3's: with the harness deliberately reversed, confirm on the status
+dump that `commits=1` follows the `ENC DIR FLIP` line within the same second, and confirm that a
+run which flips and then faults still shows `stored=-1` after the latch.
