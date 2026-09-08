@@ -207,6 +207,7 @@ static void reset_test_state() {
     shareGGuardCount       = 0;
     shareBatteryOnlyArmed  = false;
     shareBatteryOnlyActive = false;
+    shareSelectorFC        = false;  // fw v28 (F2): default BT, matching every arm site
     shareIsoPropRatio      = 0.5f;   // fw v27 rev 2: matches droopSlew_prev's own reset value
     // fw v5 governor loop-mode state: a fresh run starts open-loop (feedforward), not held.
     shareClosedLoopMode = false;
@@ -736,6 +737,11 @@ static void test_charging_control_mppt_polarity() {
     g_pin_value[REGEN_ENABLE]     = LOW;
     g_pin_value[FC_CHARGE_ENABLE] = LOW;
     g_pin_value[BT_BUS_ENABLE]    = LOW;
+    // fw v28 (F1): the charge window now opens only when FC_BUS_ENABLE already reads HIGH and is
+    // out of its turn-on blanking — a conduction test, not a period count. This fixture's FC is on
+    // the bus (driven with raw digitalWrite(), so busSwitchBlanked() sees the never-risen/boot
+    // state and does not blank it — see reset_test_state()'s busSwitchRiseSeen* comment).
+    digitalWrite(FC_BUS_ENABLE, HIGH);
     chargingControl();
     check(g_pin_value[MPPT_DISABLE]    == HIGH,
           "chargingControl: MPPT_DISABLE HIGH (released) during cruise with charger ready");
@@ -753,6 +759,10 @@ static void test_charging_control_mppt_polarity() {
     g_pin_value[REGEN_ENABLE]     = LOW;
     g_pin_value[FC_CHARGE_ENABLE] = LOW;
     g_pin_value[BT_BUS_ENABLE]    = LOW;
+    // fw v28 (F1): FC must already be conducting onto the bus for the window to open at all — the
+    // bootstrap intent this sub-test is about is the CHARGER's readiness, not FC's presence on the
+    // bus, so FC_BUS_ENABLE is driven HIGH here exactly as cruise operation would leave it.
+    digitalWrite(FC_BUS_ENABLE, HIGH);
     chargingControl();
     check(g_pin_value[MPPT_DISABLE]    == LOW,
           "chargingControl: MPPT_DISABLE LOW when charger not ready");
@@ -3647,10 +3657,10 @@ static void test_share_setpoint_governor() {
     for (int i = 0; i < 300; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
     check(fabsf(droopSlew_prev - slew_settled) < 5e-3f,
           "governor A2: in-band sp=0.20 clipped to lo=0.30 is zero-error at that bound — no winding");
-    check(fabsf(SHARE_MINORITY_I_MIN_A - 0.15f) < 1e-6f,
-          "governor: SHARE_MINORITY_I_MIN_A is the fw v27 rev 2 floor, 0.15 A -- the operator's "
-          "constant-authority ruling (D = RE_MAX*I_min = 0.302 V), which supersedes the fw v4 "
-          "0.30 A value the TP0016/TP0017 bracket set at a FIXED droop scale");
+    check(fabsf(SHARE_MINORITY_I_MIN_A - 0.125f) < 1e-6f,
+          "governor: SHARE_MINORITY_I_MIN_A is the fw v28 floor, 0.125 A -- the operator's "
+          "2026-09-08 ruling (D = RE_MAX*I_min = 0.252 V at unity safety), which supersedes the "
+          "fw v27 rev 2 0.302 V value");
 
     // B) Same setpoint/share at HIGH load: bound relaxes
     // (lo = SHARE_MINORITY_I_MIN_A/2.0 = 0.15), the raw setpoint applies, the
@@ -3705,24 +3715,26 @@ static void test_share_setpoint_governor() {
           "so it is not clipped and the ratio FALLS toward it (a 0.30 A floor would give lo=0.40 "
           "> sp -> clipped -> the ratio would rise instead)");
 
-    // E2) Zero-error confirmation at the exact shipped bound: a measured share of 0.20 is
-    // zero-error against the shipped clip of an sp below it, and must not wind -- under a 0.30 A
-    // floor the same measurement would face spEff = 0.40, a real +0.20 error, and would keep
+    // E2) Zero-error confirmation at the exact shipped bound. RE-POINTED for fw v28
+    // (SHARE_MINORITY_I_MIN_A 0.15 -> 0.125 A): at I_tot=0.75A the shipped lo is now
+    // 0.125/0.75 = 0.16667, not 0.20. A measured share of 0.16667 is zero-error against the
+    // shipped clip of an in-band sp below it, and must not wind -- under the fw v27 rev 2 floor
+    // (0.15 A) the same measurement would face spEff = 0.20, a real +0.03333 error, and would keep
     // moving.
     reset_test_state();
     digitalWrite(FC_BUS_ENABLE, HIGH);
     digitalWrite(BT_BUS_ENABLE, HIGH);
     V_bus = 16.0f;
-    I_fc = 0.15f; I_batt = 0.60f;          // I_tot=0.75, measured share = 0.20 == lo
+    I_fc = 0.125f; I_batt = 0.625f;        // I_tot=0.75, measured share = 0.16667 == lo
     share_govTotAFilt = 0.75f;
-    power_share_setpoint = 0.18f;
+    power_share_setpoint = 0.15f;          // in-band (== DROOP_R_MIN), below lo -> clipped
     t = 0;
     for (int i = 0; i < 200; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
     float slew_e = droopSlew_prev;
     for (int i = 0; i < 300; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
     check(fabsf(droopSlew_prev - slew_e) < 5e-3f,
-          "governor E2: effective lo bound at I_tot=0.75A is 0.15/0.75=0.20 (fw v27 rev 2), not "
-          "the 0.40 a 0.30 A floor would give");
+          "governor E2: effective lo bound at I_tot=0.75A is 0.125/0.75=0.16667 (fw v28), not "
+          "the 0.20 A a 0.15 A floor would give");
 
     // C) fw v5: the old "collapse sp_eff to 0.5 below 2x the minority floor" mechanism is
     // GONE — DELETED, not relocated. Below the 0.60A entry threshold, open-loop mode
@@ -3736,11 +3748,13 @@ static void test_share_setpoint_governor() {
     digitalWrite(FC_BUS_ENABLE, HIGH);
     digitalWrite(BT_BUS_ENABLE, HIGH);
     V_bus = 16.0f;
-    I_fc = 0.15f; I_batt = 0.15f;          // I_tot=0.3 < 2*0.30=0.6 -> fw v5 open-loop territory
+    // RE-POINTED for fw v28: the gate is now 2*0.125=0.25 A, so 0.30 A of total (the fw v27 rev 2
+    // fixture) would be ABOVE the gate. 0.10/0.10 keeps the fixture in open-loop territory.
+    I_fc = 0.10f; I_batt = 0.10f;          // I_tot=0.2 < 2*0.125=0.25 -> fw v5 open-loop territory
     power_share_setpoint = 0.30f;          // asymmetric raw setpoint
     t = 0;
     // fw v27: the ratio no longer converges to the RAW setpoint here -- the feedforward reference
-    // is clipped to the governor's relaxing band, which is EMPTY at 0.30 A of total, so the split
+    // is clipped to the governor's relaxing band, which is EMPTY at 0.20 A of total, so the split
     // is HELD on the MDACs (0.5, the fresh-reset value). The NEGATIVE this probe exists to pin is
     // unchanged and is what is asserted below: the deleted collapse-to-0.5 COMMANDED a move to the
     // balanced split, so it must still be provable that nothing here drives the ratio anywhere.
@@ -3751,7 +3765,7 @@ static void test_share_setpoint_governor() {
           "is HELD exactly where the MDACs already are -- it neither walks to the RAW setpoint "
           "(fw v5-v26) nor is driven to the deleted 0.5 collapse (fw v2-v4)");
     check(!shareClosedLoopMode,
-          "governor C (fw v5): stays open-loop throughout -- I_tot=0.3A never crosses the 0.60A "
+          "governor C (fw v5): stays open-loop throughout -- I_tot=0.2A never crosses the 0.25A "
           "entry threshold");
 
     // D) Out-of-band setpoints BYPASS the governor entirely: full-span semantics are the
@@ -3787,35 +3801,31 @@ static void test_governor_openloop_feedforward_walk() {
     digitalWrite(FC_BUS_ENABLE, HIGH);
     digitalWrite(BT_BUS_ENABLE, HIGH);
     V_bus = 16.0f;
-    // fw v27 rev 2 fixture note: the closed-loop gate is now 2*SHARE_MINORITY_I_MIN_A =
-    // 0.30 A, so a sub-gate total CANNOT hold both channels above SHARE_HANDOFF_LIVE_A
-    // (0.20 A each would be 0.40 A of total, above the gate). The fw v19 pre-warm is
-    // therefore dropped here, and it is no longer needed: since fw v27 this branch HOLDS
-    // the ratio, so no slew site fires and the ceiling the pre-warm selected is not the
-    // subject. The currents below are the old ones halved, which keeps the fixture in the
-    // SAME position relative to the gate and reproduces the identical clip band.
-    I_fc = 0.15f; I_batt = 0.125f;          // I_tot = 0.275A, under the 0.30A entry threshold
+    // RE-POINTED for fw v28 (SHARE_MINORITY_I_MIN_A 0.15 -> 0.125 A, gate 2*I_min 0.30 -> 0.25 A):
+    // 0.275 A (the fw v27 rev 2 fixture) would now be ABOVE the gate. 0.13/0.10 = 0.23 A keeps the
+    // fixture under the new gate with the band still empty (lo = 0.125/0.23 = 0.543 > hi = 0.457).
+    I_fc = 0.13f; I_batt = 0.10f;           // I_tot = 0.23A, under the 0.25A entry threshold
     power_share_setpoint = 0.30f;           // in-band
 
     uint32_t t = 0;
     float start = droopSlew_prev;           // 0.5, the fresh-reset default
     for (int i = 0; i < 5; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
     check(!shareClosedLoopMode,
-          "G1: still open-loop after a few ticks at 0.275A (under the 0.30A entry threshold, "
-          "which the filter can never cross since it asymptotes to totalA=0.275A)");
+          "G1: still open-loop after a few ticks at 0.23A (under the 0.25A entry threshold, "
+          "which the filter can never cross since it asymptotes to totalA=0.23A)");
     check(shareCtrl_integ == 0.0f && fabsf(shareCtrl_heldOut - 0.5f) < 1e-9f,
           "G1: the Youla controller state never advances — powerBalance() never calls "
           "youlaController_Power() in open-loop mode");
     // fw v27 SUPERSEDES G1/G2's original assertions. The feedforward reference is now clipped to
-    // the governor's relaxing band [I_min/I_tot, 1-I_min/I_tot], which at 0.275 A of total is
-    // EMPTY (lo = 0.15/0.275 = 0.545 > hi = 0.455): no split is feasible, so the reference is
+    // the governor's relaxing band [I_min/I_tot, 1-I_min/I_tot], which at 0.23 A of total is
+    // EMPTY (lo = 0.125/0.23 = 0.543 > hi = 0.457): no split is feasible, so the reference is
     // held at the ratio
     // physically on the MDACs and the walk does not happen. The submode is still FEEDFORWARD (it
     // still calls applyShareRatio(), which is where the guarded channel re-entry lives) -- the
     // difference from HOLD below the gate is bookkeeping and re-entry, not actuation.
     check(fabsf(droopSlew_prev - start) < 1e-9f,
           "G1 (fw v27): the applied ratio does NOT walk toward the 0.30 setpoint -- the relaxing "
-          "band is empty at 0.275 A of total, so the feedforward reference is held");
+          "band is empty at 0.23 A of total, so the feedforward reference is held");
 
     // G2: and it stays held for as long as the load stays below the gate -- the setpoint is
     // deferred until the load can carry it, not walked to infeasibly and not collapsed to 0.5.
@@ -3826,7 +3836,7 @@ static void test_governor_openloop_feedforward_walk() {
     check(shareFeedforwardClipHolding(),
           "G2 (fw v27): the clip reports an EMPTY band at this total, which is the reason");
     check(!shareClosedLoopMode,
-          "G2: still open-loop throughout — I_tot=0.275A never crosses the 0.30A entry threshold");
+          "G2: still open-loop throughout — I_tot=0.23A never crosses the 0.25A entry threshold");
 }
 
 static void test_governor_closedloop_entry_and_response() {
@@ -3843,10 +3853,11 @@ static void test_governor_closedloop_entry_and_response() {
     power_share_setpoint = 0.50f;
 
     uint32_t t = 0;
-    // fw v27 rev 2: 3 ticks, not 6. The EMA reaches 2.0*(1-0.95^n); against the old 0.60 A gate
-    // that needed n > 8, against the 0.30 A gate it needs only n > 3.17, so a 6-tick setup would
-    // already BE closed-loop and this assertion would be false rather than merely re-pointed.
-    for (int i = 0; i < 3; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
+    // fw v28: 2 ticks, not 3. The EMA reaches 2.0*(1-0.95^n); against the fw v27 rev 2 0.30 A
+    // gate n=3 gave 0.28525 A (still under); against the fw v28 0.25 A gate that same n=3 already
+    // gives 0.28525 A > 0.25 A, i.e. ALREADY closed-loop, so this assertion would be false rather
+    // than merely re-pointed. n=2 gives 0.195 A, still under the new gate.
+    for (int i = 0; i < 2; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
     check(!shareClosedLoopMode,
           "G3: (setup) still open-loop a few ticks in — the filter hasn't crossed the gate yet");
     check(fabsf(droopSlew_prev - 0.5f) < 1e-6f,
@@ -3882,13 +3893,14 @@ static void test_governor_closedloop_to_open_hold() {
     float heldRatio = droopSlew_prev;
     check(fabsf(heldRatio - 0.5f) > 0.02f, "G4: (setup) the ratio actually moved off the seed");
 
-    // Drop the load: I_tot ~0.15A, well under the exit hysteresis (0.25A at fw v27 rev 2).
+    // Drop the load: I_tot ~0.15A, well under the exit hysteresis (0.20A at fw v28; was 0.25A at
+    // fw v27 rev 2).
     I_fc = 0.045f; I_batt = 0.105f;
-    for (int i = 0; i < 400; i++) {          // enough ticks for the filter to fall below 0.25A
+    for (int i = 0; i < 400; i++) {          // enough ticks for the filter to fall below 0.20A
         t += 1000; g_mock_micros = t; powerBalance();
     }
     check(!shareClosedLoopMode,
-          "G4: filtered total fell below the 0.25A exit hysteresis — back to open-loop");
+          "G4: filtered total fell below the 0.20A exit hysteresis — back to open-loop");
     check(shareClosedLoopRun,
           "G4: shareClosedLoopRun stays set — this profile HAS run closed loop, so open-loop "
           "means HOLD, not feedforward");
@@ -3928,23 +3940,19 @@ static void test_governor_hold_exit_on_setpoint_change() {
     shareClosedLoopMode = false;
     shareClosedLoopRun  = true;
     droopSlew_prev       = 0.65f;             // the "converged, then parked" ratio
-    share_govTotAFilt    = 0.15f;             // low, well under the 0.30A entry threshold
+    share_govTotAFilt    = 0.15f;             // low, well under the 0.25A entry threshold
     power_share_setpoint = 0.70f;
     share_actedSp         = 0.70f;            // last acted setpoint == current: no changed-edge yet
-    // fw v27 rev 2 fixture note: the closed-loop gate is now 2*SHARE_MINORITY_I_MIN_A =
-    // 0.30 A, so a sub-gate total CANNOT hold both channels above SHARE_HANDOFF_LIVE_A
-    // (0.20 A each would be 0.40 A of total, above the gate). The fw v19 pre-warm is
-    // therefore dropped here, and it is no longer needed: since fw v27 this branch HOLDS
-    // the ratio, so no slew site fires and the ceiling the pre-warm selected is not the
-    // subject. The currents below are the old ones halved, which keeps the fixture in the
-    // SAME position relative to the gate and reproduces the identical clip band.
-    I_fc = 0.15f; I_batt = 0.125f;            // I_tot=0.275A -- stays open-loop throughout
+    // RE-POINTED for fw v28 (gate 2*I_min 0.30 -> 0.25 A): 0.275 A (the fw v27 rev 2 fixture) is
+    // now ABOVE the gate. 0.13/0.10 = 0.23 A keeps the fixture under the new gate with the same
+    // ratio class as the G1/G2 fixture above.
+    I_fc = 0.13f; I_batt = 0.10f;             // I_tot=0.23A -- stays open-loop throughout
 
     // Confirm the hold itself first: a few ticks at the SAME (unchanged) setpoint must not move
     // the ratio -- isolates the "changed setpoint" trigger from ordinary HOLD behaviour.
     uint32_t t = 0;
     for (int i = 0; i < 20; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
-    check(!shareClosedLoopMode, "T4: (setup) still open-loop -- I_tot=0.275A never crosses 0.30A");
+    check(!shareClosedLoopMode, "T4: (setup) still open-loop -- I_tot=0.23A never crosses 0.25A");
     check(shareClosedLoopRun, "T4: (setup) shareClosedLoopRun is still true -- HOLD, not fresh feedforward");
     check(fabsf(droopSlew_prev - 0.65f) < 1e-9f,
           "T4: (setup) confirmed HOLD -- unchanged setpoint, ratio frozen at the seeded 0.65");
@@ -3957,12 +3965,12 @@ static void test_governor_hold_exit_on_setpoint_change() {
           "T4: the very next tick clears shareClosedLoopRun -- the changed setpoint re-arms "
           "feedforward instead of staying in HOLD");
     // fw v27: the HOLD EXIT still fires (shareClosedLoopRun cleared, above) -- what changed is
-    // what the re-armed feedforward path then does. At 0.275 A of total the relaxing band is empty,
+    // what the re-armed feedforward path then does. At 0.23 A of total the relaxing band is empty,
     // so the clip holds the ratio: the commanded change is DEFERRED until the load can carry it,
     // not swallowed. The mechanism this test names (share_actedSp re-arming the path) is proven by
     // the shareClosedLoopRun assertion above, which is unchanged.
     check(fabsf(droopSlew_prev - 0.65f) < 1e-9f,
-          "T4 (fw v27): the ratio does not move toward the new setpoint at 0.55 A -- the relaxing "
+          "T4 (fw v27): the ratio does not move toward the new setpoint at 0.23 A -- the relaxing "
           "band is empty, so the re-armed feedforward path holds");
 
     // Run it out: still held, and still open-loop.
@@ -3971,7 +3979,7 @@ static void test_governor_hold_exit_on_setpoint_change() {
           "T4 (fw v27): 300 further ticks do not move it either -- the setpoint is honoured late "
           "(when the load supports it), never infeasibly");
     check(!shareClosedLoopMode,
-          "T4: still open-loop throughout -- I_tot=0.55A never re-crosses the 0.60A entry "
+          "T4: still open-loop throughout -- I_tot=0.23A never re-crosses the 0.25A entry "
           "threshold from this low-current change");
 }
 
@@ -4000,18 +4008,19 @@ static void test_governor_hysteresis_band() {
           "the seed), not frozen, while parked in the band");
 
     // From OPEN: fresh reset (open-loop default), park the filter (and load) just under the
-    // gate, at 0.285A — must stay open, since entry needs STRICTLY > 2*I_min = 0.30A.
+    // gate. RE-POINTED for fw v28 (gate 2*I_min 0.30 -> 0.25 A): 0.235A — must stay open, since
+    // entry needs STRICTLY > 2*I_min = 0.25A.
     reset_test_state();
     digitalWrite(FC_BUS_ENABLE, HIGH);
     digitalWrite(BT_BUS_ENABLE, HIGH);
     V_bus = 16.0f;
-    share_govTotAFilt = 0.285f;
-    I_fc = 0.0855f; I_batt = 0.1995f;
+    share_govTotAFilt = 0.235f;
+    I_fc = 0.0705f; I_batt = 0.1645f;
     power_share_setpoint = 0.70f;
     t = 0;
     for (int i = 0; i < 30; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
     check(!shareClosedLoopMode,
-          "G5/open: filt=0.285A (inside the band, but not > the 0.30A entry bound) stays OPEN "
+          "G5/open: filt=0.235A (inside the band, but not > the 0.25A entry bound) stays OPEN "
           "when already open");
 }
 
@@ -4275,35 +4284,99 @@ static void test_governor_reset_clears_closedloop_run() {
           "G7 (fw v27): and the clip holds the ratio there, because the band is empty at 0.30 A");
 }
 
-static void test_governor_lo_clamp_sliver() {
-    test_group("fw v5 governor: lo-clamp sliver keeps the closed-loop bound at <=0.5 (G9)");
+// fw v28 (F3) REWRITE, updated for review round S3. Through fw v27 rev 2 the inverted-band
+// sliver degenerated to the balanced split via `if (lo > 0.5f) lo = 0.5f;`. fw v28's F3 replaces
+// that pin with a HOLD at share_spEffPrev; the safety-review round then BOUNDED that hold (S3,
+// see the .ino changelog and powerBalance()): a held reference outside
+// [loD, 1-loD] with loD = min(0.5, SHARE_HANDOFF_MIN_A/I_tot) is itself infeasible (it would leave
+// a channel dark), so it is constrained into that range -- a no-op for any reference already
+// inside [0.4, 0.6] across the whole sliver, and only at the sliver's deepest point (I_tot at the
+// 0.20A exit threshold, where loD = 0.5) does it name the balanced split, as the ONLY commandable
+// point rather than as a fallback. This test covers both regimes.
+static void test_governor_sliver_hold() {
+    test_group("fw v28 (F3/S3): the closed-loop clip HOLDS at share_spEffPrev inside the sliver, bounded by loD");
 
+    // ── Regime 1: a held reference INSIDE [0.4, 0.6] is a true no-op ──────────────────────────
     reset_test_state();
     digitalWrite(FC_BUS_ENABLE, HIGH);
     digitalWrite(BT_BUS_ENABLE, HIGH);
     V_bus = 16.0f;
     shareClosedLoopMode = true;
     shareClosedLoopRun  = true;
-    share_govTotAFilt   = 0.29f;             // inside the hysteresis sliver (0.25, 0.30)
-    // Unclamped: lo = 0.15/0.29 = 0.517 > hi = 1-0.517 = 0.483 -- an INVERTED pair. The
-    // `if (lo > 0.5f) lo = 0.5f;` clamp must degenerate this to the balanced split (0.5)
-    // instead of Arduino constrain()'s lo>hi behaviour (which returns the raw lo, 0.517).
-    //
-    // Zero-error confirmation, not a convergence probe: this synthetic test drives I_fc/I_batt
-    // directly (no plant feedback closes the loop), so a controller fed a sustained NONZERO
-    // error only winds toward the output rail over many ticks -- it never settles. Pin the
-    // measured share EXACTLY at the correct clamped target (0.5): a correct clamp sees zero
-    // error and the ratio (already seeded at 0.5 by the fresh reset) must never move at all;
-    // a buggy unclamped implementation would see a standing +0.017 error (target 0.517) and
-    // wind visibly away from 0.5 over the run.
-    I_fc = 0.145f; I_batt = 0.145f;          // I_tot=0.29A (matches filt, no drift), measured=0.50
+    // BOUNDARY NOTE (fix round, F-8): at a total of exactly 2*SHARE_MINORITY_I_MIN_A = 0.25 A,
+    // lo = hi = 0.5, so the strict `lo < hi` test is false and the HOLD branch -- not the clip --
+    // takes that tick too. The sliver is therefore closed at its top edge, [0.20, 0.25].
+    share_govTotAFilt   = 0.235f;            // inside the fw v28 sliver [0.20, 0.25)
+    // Unclamped: lo = 0.125/0.235 = 0.5319 > hi = 1-0.5319 = 0.4681 -- an INVERTED pair.
+    // loD = min(0.5, SHARE_HANDOFF_MIN_A/0.235) = min(0.5, 0.4255) = 0.4255, so the bound
+    // [0.4255, 0.5745] does NOT clip a reference of 0.55 -- this regime isolates the HOLD from
+    // the S3 bound, distinguishing "held at 0.55" from both the balanced split and the raw sp.
+    resetShareControllerCore(0.55f);
+    droopSlew_prev = 0.55f;                  // MDACs already at the pre-sliver split
+    // Zero-error confirmation, not a convergence probe (as G9 was): this synthetic test drives
+    // I_fc/I_batt directly (no plant feedback closes the loop), so pin the measured share EXACTLY
+    // at the held value (0.55) -- a correct hold sees zero error and the ratio must never move;
+    // a regression to the 0.5 pin would see a standing error and wind toward it instead.
+    I_fc = 0.12925f; I_batt = 0.10575f;      // I_tot=0.235A (matches filt), measured=0.55
     power_share_setpoint = 0.20f;            // in-band; irrelevant once clipped into the sliver
     uint32_t t = 0;
     for (int i = 0; i < 800; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
-    check(fabsf(droopSlew_prev - 0.5f) < 1e-4f,
-          "G9: the closed-loop clip degenerates to the balanced split 0.5 across the sliver "
-          "(zero error at the clamped bound, so the ratio never moves) -- an unclamped "
-          "implementation would see a standing error and wind away from 0.5");
+    // Tolerance widened from the arithmetic-only 1e-3 used elsewhere in this file: droopSlew_prev
+    // is the CONTROLLER's actuated output, one step downstream of the held REFERENCE
+    // (share_spEffPrev, checked exactly below) -- the Youla controller's own prefilter/biquad
+    // states were zeroed by resetShareControllerCore() and settle against the measured signal over
+    // a handful of ticks even at zero steady-state error, so a few mA-equivalent of residual
+    // motion is the controller's own dynamics, not a HOLD failure. What must not happen -- and
+    // does not -- is convergence toward 0.5 (the deleted collapse) or 0.20 (the raw setpoint).
+    check(fabsf(droopSlew_prev - 0.55f) < 0.01f,
+          "sliver hold: the ratio stays at the pre-sliver split (0.55), not the balanced split "
+          "(0.5) and not the raw setpoint (0.20) -- zero reference motion for as long as the total "
+          "stays in the sliver and the held value is inside the S3 [0.4255, 0.5745] bound");
+    check(fabsf(share_spEffPrev - 0.55f) < 1e-3f,
+          "sliver hold: share_spEffPrev itself is unchanged -- the HOLD assigns it to itself, so "
+          "the downstream slew integrates a no-op");
+
+    // A genuine coast-down still exits to open loop at the exit threshold -- the hold does not
+    // trap the loop in the sliver forever.
+    share_govTotAFilt = 0.19f;               // below the 0.20A exit threshold
+    I_fc = 0.10450f; I_batt = 0.08550f;      // matches filt, measured=0.55 (no spurious motion)
+    for (int i = 0; i < 30; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
+    check(!shareClosedLoopMode,
+          "sliver hold: a coast-down through the sliver still exits to open loop at the 0.20A "
+          "exit threshold -- the hold only changes what happens INSIDE the sliver");
+
+    // ── Regime 2 (review S3): a held RAIL reference at the sliver's deepest point is BOUNDED ──
+    // A loop that closed at r ~ 0.85 and then falls into the sliver would otherwise hold an
+    // infeasible ~0.03A-minority reference (dark) at the very total the sliver exists to protect
+    // -- "holding an infeasible reference is the same defect as pinning an infeasible 0.5, one
+    // rail further out" (S3). At I_tot = 0.20A (the exit threshold itself, still inside closed
+    // loop since exit is strict '<'), loD = min(0.5, 0.10/0.20) = 0.5 exactly, so the bound
+    // [0.5, 0.5] forces the ONLY commandable point -- the balanced split -- but as a DERIVED
+    // consequence of the dark-channel bound, not the fw v5-v27 fallback pin.
+    reset_test_state();
+    digitalWrite(FC_BUS_ENABLE, HIGH);
+    digitalWrite(BT_BUS_ENABLE, HIGH);
+    V_bus = 16.0f;
+    shareClosedLoopMode = true;
+    shareClosedLoopRun  = true;
+    share_govTotAFilt   = 0.20f;              // the sliver's deepest reachable point (exit == 0.20)
+    resetShareControllerCore(0.85f);          // a loop that had closed at the DROOP_R_MAX rail
+    droopSlew_prev = 0.85f;
+    I_fc = 0.10f; I_batt = 0.10f;             // I_tot=0.20A (matches filt); measured share is
+                                               // irrelevant to the S3 BOUND itself, only to how
+                                               // fast the controller's own output tracks it
+    power_share_setpoint = 0.20f;             // in-band; irrelevant once bounded into the sliver
+    t = 0;
+    for (int i = 0; i < 2000; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
+    check(shareClosedLoopMode,                 // 0.20A is not STRICTLY below the exit threshold
+          "sliver hold (S3): (setup) the run stays closed loop at exactly the 0.20A exit boundary");
+    check(fabsf(share_spEffPrev - 0.5f) < 1e-3f,
+          "sliver hold (S3): a rail reference (0.85) falling into the sliver's deepest point is "
+          "BOUNDED to the balanced split (loD = 1-loD = 0.5), not left at the infeasible rail -- "
+          "the S3 fix");
+    check(share_spEffPrev >= 0.5f - 1e-6f && share_spEffPrev <= 0.5f + 1e-6f,
+          "sliver hold (S3): the bound [loD, 1-loD] degenerates to a single point (0.5) at this "
+          "total, exactly as the design note derives");
 }
 
 static void test_governor_setpoint_latch_precedence_at_low_current() {
@@ -4412,10 +4485,17 @@ static void test_droop_ratio_slew_limit() {
 
 static void test_share_handoff_mode_constants() {
     test_group("fw v19 (review): SHARE_HANDOFF_* constants");
-    check(fabsf(SHARE_HANDOFF_MIN_A - 0.15f) < 1e-6f,
-          "constants: SHARE_HANDOFF_MIN_A pins the 0.15A dark floor");
-    check(fabsf(SHARE_HANDOFF_LIVE_A - 0.20f) < 1e-6f,
-          "constants: SHARE_HANDOFF_LIVE_A pins the 0.20A live-hysteresis ceiling");
+    // RE-POINTED for fw v28 (F5): SHARE_HANDOFF_MIN_A 0.15 -> 0.10 A and SHARE_HANDOFF_LIVE_A
+    // 0.20 -> 0.12 A, retuned to restore the fw v19 ordering property (both under the halved
+    // conduction floor 0.125 A) that the fw v27 rev 2 retune broke.
+    check(fabsf(SHARE_HANDOFF_MIN_A - 0.10f) < 1e-6f,
+          "constants: SHARE_HANDOFF_MIN_A pins the fw v28 0.10A dark floor");
+    check(fabsf(SHARE_HANDOFF_LIVE_A - 0.12f) < 1e-6f,
+          "constants: SHARE_HANDOFF_LIVE_A pins the fw v28 0.12A live-hysteresis ceiling");
+    check(SHARE_HANDOFF_MIN_A < SHARE_HANDOFF_LIVE_A &&
+          SHARE_HANDOFF_LIVE_A < SHARE_MINORITY_I_MIN_A,
+          "constants: the fw v19 ordering holds again at fw v28 -- dark < live < the conduction "
+          "floor, so a channel commanded AT the floor reads LIVE");
     check(fabsf(DROOP_RATIO_SLEW_HANDOFF_PER_TICK - 0.002f) < 1e-9f,
           "constants: DROOP_RATIO_SLEW_HANDOFF_PER_TICK pins the 10x-slower 0.002/tick ceiling");
     check(SHARE_HANDOFF_DWELL_MAX_TICKS == 175,
@@ -4424,7 +4504,7 @@ static void test_share_handoff_mode_constants() {
           "constants: (setup) SHARE_GOV_FILT_ALPHA is the EMA weight the handoff filters share "
           "with the governor's load filter");
     // fw v23 (any-fault run-boundary-gated HIL recovery): stale pin updated.
-    check(FW_VERSION == 27, "pin: FW_VERSION == 27");
+    check(FW_VERSION == 28, "pin: FW_VERSION == 28");
 }
 
 // DARK seed (item B3): resetShareControlState() (and reset_test_state()'s mirror of it) seeds
@@ -4441,33 +4521,40 @@ static void test_share_handoff_dark_seed_warmup() {
     check(fabsf(shareHandoffIFcFilt) < 1e-9f && fabsf(shareHandoffIBtFilt) < 1e-9f,
           "warmup: (setup) fresh reset seeds both filters at exactly 0.0");
 
-    // Both channels held at a strong, constant 1.0A -- well above SHARE_HANDOFF_LIVE_A (0.20A) --
-    // from the very first tick. Despite that, the EMA (alpha=SHARE_GOV_FILT_ALPHA=0.05) climbing
-    // from 0 needs ceil(ln(1 - 0.20/1.0) / ln(1 - 0.05)) = 5 ticks to first read >= 0.20A
-    // (filt_4 = 1*(1-0.95^4) = 0.1855 < 0.20; filt_5 = 1*(1-0.95^5) = 0.2262 >= 0.20) -- measured
-    // and pinned exactly, not just bounded, so a future filter/threshold change that silently
-    // shifts this latency is caught here rather than only in a bench log.
+    // Both channels held at a strong, constant 1.0A -- well above SHARE_HANDOFF_LIVE_A (0.12A at
+    // fw v28; was 0.20A) -- from the very first tick. RE-POINTED: the EMA
+    // (alpha=SHARE_GOV_FILT_ALPHA=0.05) climbing from 0 needs
+    // ceil(ln(1 - 0.12/1.0) / ln(1 - 0.05)) = 3 ticks to first read >= 0.12A
+    // (filt_2 = 1*(1-0.95^2) = 0.0975 < 0.12; filt_3 = 1*(1-0.95^3) = 0.142625 >= 0.12) --
+    // measured and pinned exactly, not just bounded, so a future filter/threshold change that
+    // silently shifts this latency is caught here rather than only in a bench log.
     int ticksToLive = tickShareHandoffUntilLive(1.0f, 1.0f, 50);
-    check(ticksToLive == 5,
-          "warmup: exactly 5 ticks from the DARK seed to FULL at a constant 1.0A on both channels "
-          "(alpha=0.05, live threshold 0.20A)");
+    check(ticksToLive == 3,
+          "warmup: exactly 3 ticks from the DARK seed to FULL at a constant 1.0A on both channels "
+          "(alpha=0.05, live threshold 0.12A at fw v28)");
 
     // Every tick strictly before that one must still be reading HANDOFF (the slow ceiling), even
     // though the instantaneous current (1.0A) would by itself look like full conduction -- proving
     // the warm-up gate is real, not merely "eventually converges".
     reset_test_state();
     I_fc = 1.0f; I_batt = 1.0f;
-    for (int i = 1; i <= 4; i++) {
+    // fw v28 review S7: the FULL rate additionally requires share_govTotAFilt to be at or above
+    // the closed-loop gate (2*SHARE_MINORITY_I_MIN_A) -- a sub-gate total selects HANDOFF
+    // regardless of the per-channel dark test, so two live channels in the narrow [0.24, 0.25) A
+    // sub-gate band still get the slow ceiling. This test's subject is the PER-CHANNEL warm-up
+    // latency, not the total gate, so the total is seeded well above it here.
+    share_govTotAFilt = 1.0f;
+    for (int i = 1; i <= 2; i++) {
         updateShareSlewMode();
         char msg[128];
-        snprintf(msg, sizeof(msg), "warmup: tick %d of 4 still reads the HANDOFF ceiling despite 1.0A flowing", i);
+        snprintf(msg, sizeof(msg), "warmup: tick %d of 2 still reads the HANDOFF ceiling despite 1.0A flowing", i);
         check(fabsf(shareSlewStepThisTick - DROOP_RATIO_SLEW_HANDOFF_PER_TICK) < 1e-9f, msg);
-        check(shareHandoffDarkFC && shareHandoffDarkBT, "warmup: still DARK before tick 5");
+        check(shareHandoffDarkFC && shareHandoffDarkBT, "warmup: still DARK before tick 3");
     }
-    updateShareSlewMode();   // tick 5: crosses the threshold
-    check(!shareHandoffDarkFC && !shareHandoffDarkBT, "warmup: LIVE on tick 5, as measured above");
+    updateShareSlewMode();   // tick 3: crosses the threshold
+    check(!shareHandoffDarkFC && !shareHandoffDarkBT, "warmup: LIVE on tick 3, as measured above");
     check(fabsf(shareSlewStepThisTick - DROOP_RATIO_SLEW_PER_TICK) < 1e-9f,
-          "warmup: tick 5 itself already reads the FULL ceiling");
+          "warmup: tick 3 itself already reads the FULL ceiling");
 }
 
 // Hysteresis (item B): an EMA settled strictly between SHARE_HANDOFF_MIN_A (0.15) and
@@ -4476,14 +4563,16 @@ static void test_share_handoff_dark_seed_warmup() {
 // fixture current is set equal to the settled filt value so the EMA update this tick is
 // (numerically) a no-op, isolating the probe to the hysteresis decision alone.
 static void test_share_handoff_hysteresis_band() {
-    test_group("fw v19 (review): hysteresis band (0.15-0.20A) holds the previous mode both ways");
+    test_group("fw v19 (review): hysteresis band (0.10-0.12A at fw v28) holds the previous mode both ways");
     reset_test_state();
 
-    const float midBand = 0.17f;   // strictly between SHARE_HANDOFF_MIN_A and SHARE_HANDOFF_LIVE_A
+    // RE-POINTED for fw v28 (F5): SHARE_HANDOFF_MIN_A 0.15 -> 0.10 A, SHARE_HANDOFF_LIVE_A
+    // 0.20 -> 0.12 A. 0.11 A sits strictly inside the new dead band.
+    const float midBand = 0.11f;   // strictly between SHARE_HANDOFF_MIN_A and SHARE_HANDOFF_LIVE_A
     check(midBand > SHARE_HANDOFF_MIN_A && midBand < SHARE_HANDOFF_LIVE_A,
-          "hysteresis: (setup) 0.17A is strictly inside the dead band");
+          "hysteresis: (setup) 0.11A is strictly inside the dead band");
 
-    // Was-DARK, EMA settles in the dead band -> stays DARK (does NOT need to reach 0.20A).
+    // Was-DARK, EMA settles in the dead band -> stays DARK (does NOT need to reach 0.12A).
     shareHandoffDarkFC    = true;
     shareHandoffIFcFilt   = midBand;
     shareHandoffDarkBT    = true;
@@ -4491,11 +4580,11 @@ static void test_share_handoff_hysteresis_band() {
     I_fc = midBand; I_batt = midBand;
     updateShareSlewMode();
     check(shareHandoffDarkFC && shareHandoffDarkBT,
-          "hysteresis: was-DARK at 0.17A stays DARK -- 0.17 < SHARE_HANDOFF_LIVE_A (0.20) so it "
+          "hysteresis: was-DARK at 0.11A stays DARK -- 0.11 < SHARE_HANDOFF_LIVE_A (0.12) so it "
           "does not earn LIVE");
 
-    // Was-LIVE, EMA settles in the SAME dead band -> stays LIVE (does NOT fall to dark at 0.17A;
-    // that only happens strictly below SHARE_HANDOFF_MIN_A=0.15).
+    // Was-LIVE, EMA settles in the SAME dead band -> stays LIVE (does NOT fall to dark at 0.11A;
+    // that only happens strictly below SHARE_HANDOFF_MIN_A=0.10).
     shareHandoffDarkFC    = false;
     shareHandoffIFcFilt   = midBand;
     shareHandoffDarkBT    = false;
@@ -4503,7 +4592,7 @@ static void test_share_handoff_hysteresis_band() {
     I_fc = midBand; I_batt = midBand;
     updateShareSlewMode();
     check(!shareHandoffDarkFC && !shareHandoffDarkBT,
-          "hysteresis: was-LIVE at 0.17A stays LIVE -- 0.17 >= SHARE_HANDOFF_MIN_A (0.15) so it "
+          "hysteresis: was-LIVE at 0.11A stays LIVE -- 0.11 >= SHARE_HANDOFF_MIN_A (0.10) so it "
           "does not fall back to dark");
 
     // Confirmed against the true boundaries too: a was-DARK channel at exactly the live threshold
@@ -4514,8 +4603,8 @@ static void test_share_handoff_hysteresis_band() {
     updateShareSlewMode();
     check(!shareHandoffDarkFC, "hysteresis: was-DARK at exactly SHARE_HANDOFF_LIVE_A flips to LIVE");
 
-    shareHandoffDarkBT = false; shareHandoffIBtFilt = 0.1499f;
-    I_batt = 0.1499f;
+    shareHandoffDarkBT = false; shareHandoffIBtFilt = 0.0999f;
+    I_batt = 0.0999f;
     updateShareSlewMode();
     check(shareHandoffDarkBT, "hysteresis: was-LIVE just under SHARE_HANDOFF_MIN_A flips to DARK");
 }
@@ -4895,15 +4984,17 @@ static void test_share_handoff_slew_openloop_dark_channel() {
     digitalWrite(BT_BUS_ENABLE, HIGH);
     V_bus = 16.0f;
 
-    I_fc = 0.25f; I_batt = 0.025f;           // totalA = 0.275A -- stays open-loop; BT dark
-                                             // (fw v27 rev 2: halved with the 0.30A gate)
+    // RE-POINTED for fw v28 (gate 2*I_min 0.30 -> 0.25 A): 0.275 A (the fw v27 rev 2 fixture) is
+    // now ABOVE the gate. 0.21/0.02 = 0.23 A keeps the fixture under the new gate with FC live
+    // (0.21 > SHARE_HANDOFF_LIVE_A 0.12) and BT dark (0.02 < SHARE_HANDOFF_MIN_A 0.10).
+    I_fc = 0.21f; I_batt = 0.02f;            // totalA = 0.23A -- stays open-loop; BT dark
     power_share_setpoint = 0.20f;            // in-band, well off the 0.5 seed
 
     uint32_t t = 0;
     float prev = droopSlew_prev;
     t += 1000; g_mock_micros = t; powerBalance();
     check(!shareClosedLoopMode,
-          "openloop dark: (setup) stays open-loop -- totalA=0.275A never crosses 0.30A");
+          "openloop dark: (setup) stays open-loop -- totalA=0.23A never crosses 0.25A");
     check(shareHandoffDarkFC || shareHandoffDarkBT,
           "openloop dark: (setup) the filters DID advance on this open-loop tick -- at least one "
           "channel still reads dark (BT, permanently)");
@@ -6028,12 +6119,14 @@ static void test_share_current_ceiling_band_and_minority_clip(void) {
     check(digitalRead(FC_BUS_ENABLE) == HIGH && !shareIsoFC,
           "band: FC stays on the bus — the ceiling produced no cutoff");
 
-    // Minority clip: at 0.70 A of total the clip's floor is 0.30/0.70 = 0.4286 and the FC
-    // ceiling's bound is 1.25/0.70 = 1.79 — far above the band. The ceiling is inert and the
-    // minority clip owns the answer.
+    // Minority clip: at 0.70 A of total the clip's floor is SHARE_MINORITY_I_MIN_A/0.70 = 0.1786
+    // (fw v28; was 0.15/0.70 = 0.2143 at fw v27 rev 2) and the FC ceiling's bound is
+    // 1.25/0.70 = 1.79 — far above the band. The ceiling is inert and the minority clip owns the
+    // answer. sp is re-pointed to 0.15 (was 0.20): at the new floor 0.20 is ABOVE lo=0.1786 and
+    // would pass through unclipped, which is not the case this fixture is about.
     t = 0;
     gov_fixture();
-    gov_run_closed_loop(0.1f, 0.6f, 0.70f, 0.20f, 300, t);
+    gov_run_closed_loop(0.1f, 0.6f, 0.70f, 0.15f, 300, t);
     check(!shareGovFcClamped && !shareGovBtClamped,
           "minority clip: at light load neither ceiling engages — the conduction floor is the "
           "only active bound");
@@ -6081,7 +6174,9 @@ static void test_share_current_ceiling_open_loop(void) {
     uint16_t codeBeforeHold = mdacLastCodeFC;
 
     // Collapse to a total below the open-loop exit threshold and let the filter follow.
-    I_fc = 0.10f; I_batt = 0.10f;
+    // RE-POINTED for fw v28 (exit 2*I_min - hyst 0.25 -> 0.20 A): 0.10/0.10 = 0.20 A (the fw v27
+    // rev 2 fixture) is no longer STRICTLY under the new exit -- 0.09/0.09 = 0.18 A is.
+    I_fc = 0.09f; I_batt = 0.09f;
     for (int i = 0; i < 400; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
     check(!shareClosedLoopMode, "open loop: (setup) the loop left closed-loop mode");
     check(!shareGovFcClamped && !shareGovBtClamped,
@@ -6100,7 +6195,7 @@ static void test_share_current_ceiling_open_loop(void) {
     // must be inert: no open-loop total can reach 1.25 A.
     t = 0;
     gov_fixture();
-    I_fc = 0.10f; I_batt = 0.10f;            // fw v27 rev 2: halved with the 0.30 A gate
+    I_fc = 0.10f; I_batt = 0.10f;            // under the fw v28 0.25 A gate
     share_govTotAFilt   = 0.20f;
     power_share_setpoint = 0.70f;
     for (int i = 0; i < 100; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
@@ -6108,7 +6203,7 @@ static void test_share_current_ceiling_open_loop(void) {
           "open loop (FEEDFORWARD): (setup) the loop is in the feedforward submode");
     check(!shareGovFcClamped && !shareGovBtClamped,
           "open loop (FEEDFORWARD): the clamp is structurally inert — the largest open-loop "
-          "total (0.30 A at fw v27 rev 2) is under both ceilings");
+          "total (0.25 A at fw v28) is under both ceilings");
     // fw v27: the setpoint is no longer actuated unchanged here — the minority clip now runs on
     // this path too and its relaxing band is empty at 0.20 A, so the reference is HELD. The fw v26
     // property under test is unaffected and is the assertion above (the ceilings stay inert); what
@@ -6181,6 +6276,77 @@ static void test_share_current_ceiling_observability(void) {
     // down this file.
 }
 
+// fw v28 (F2): the source selector mirrored into the same 18 B HIL aux byte at bits 6/7 -- bit6 =
+// armed (the share loop has not closed since this profile began), bit7 = the selection is the
+// fuel cell (clear = battery; meaningless while bit6 is clear). Same spare-bit discipline as bits
+// 4/5 above: neither is a pin level, the frame stays 18 bytes, and switch_state is untouched.
+static void test_fw28_selector_hil_aux_bits(void) {
+    test_group("fw v28 (F2): HIL aux bits 6/7 mirror the source selector's armed/selection state");
+
+    reset_test_state();
+    check((readHilAuxState() & 0xC0) == 0,
+          "selector aux: with the arm down, bits 6/7 are both clear");
+
+    shareBatteryOnlyArmed = true;
+    shareSelectorFC       = false;                   // BT selected
+    check((readHilAuxState() & 0x40) != 0 && (readHilAuxState() & 0x80) == 0,
+          "selector aux: armed + BT selected -> bit6 set, bit7 clear");
+
+    shareSelectorFC = true;                          // FC selected, still armed
+    check((readHilAuxState() & 0x40) != 0 && (readHilAuxState() & 0x80) != 0,
+          "selector aux: armed + FC selected -> BOTH bit6 and bit7 set");
+
+    shareBatteryOnlyArmed = false;                   // disarmed; the stale selection is not read
+    check((readHilAuxState() & 0x40) == 0,
+          "selector aux: bit6 clears the instant the arm drops");
+    check((readHilAuxState() & 0x80) != 0,
+          "selector aux: bit7 still mirrors the last shareSelectorFC value verbatim (the byte "
+          "does not itself gate bit7 on bit6 -- a host masks bit7 off when bit6 is clear, per "
+          "the frame table's documented convention, exactly as it already does for bits 4/5)");
+
+    // The four pin bits (0..3) and the fw v26 clamp bits (4/5) are unchanged by the selector bits.
+    digitalWrite(FC_REG_ENABLE, HIGH); digitalWrite(BT_REG_ENABLE, LOW);
+    digitalWrite(MPPT_DISABLE, HIGH);  digitalWrite(CBAL_DISABLE, LOW);
+    shareGovFcClamped = true; shareGovBtClamped = false;
+    shareBatteryOnlyArmed = true; shareSelectorFC = false;
+    check(readHilAuxState() == 0x55,
+          "selector aux: bits 0..5 (0x05 pins | 0x10 FC clamp) plus bit6 (armed) compose to "
+          "0x55, with bit7 clear (BT selected) -- every bit family is independent");
+
+    // switch_state is DELIBERATELY untouched: the selection is already visible there as which
+    // bus switch is open, and this word is the topology the plant simulator solves from.
+    uint8_t swBefore = readSwitchState();
+    shareBatteryOnlyArmed = false; shareSelectorFC = false; shareGovFcClamped = false;
+    check(readSwitchState() == swBefore,
+          "selector aux: switch_state is unaffected by any of the selector/clamp flags");
+}
+
+// fw v28 (F2): hilWarmReset() clears the selector's arm AND its selection back to the BT default,
+// matching every armShareBatteryOnlyStart() site — a stale FC selection carried across a run
+// boundary would start the next profile on the fuel cell alone because of a command the operator
+// gave before the boundary (armShareBatteryOnlyStart()'s own doc comment makes the same point).
+// hilWarmReset() itself, and the hilLatchDeadLinkAtPhase3()/hilAccrueDeadMs()/
+// hilPumpFreshLinkForMs() helpers this test drives it through, are all HIL_SIM-only.
+#if HIL_SIM
+static void test_fw28_hilwarmreset_clears_selector(void) {
+    test_group("fw v28 (F2): hilWarmReset() clears the selector's arm and selection");
+
+    hilLatchDeadLinkAtPhase3();
+    shareBatteryOnlyArmed = true;
+    shareBatteryOnlyActive = true;
+    shareSelectorFC = true;                          // dirty: an FC selection outstanding
+
+    hilAccrueDeadMs(HIL_RUN_BOUNDARY_MS + 50);
+    hilPumpFreshLinkForMs(HIL_RECOVER_DEBOUNCE_MS + 20);
+    check(hilWarmResetCount >= 1, "selector clear: (setup) the warm reset actually fired");
+    check(!shareBatteryOnlyArmed && !shareBatteryOnlyActive,
+          "selector clear: the arm is cleared by the warm reset, as fw v27 rev 2 already did");
+    check(!shareSelectorFC,
+          "selector clear: the selection is reset to the BT default -- a run boundary must not "
+          "carry a stale FC selection into the next profile");
+}
+#endif  // HIL_SIM
+
 // HIGH-1: the REACHABILITY threshold. The minority clip runs first, so the largest FC current the
 // loop can command is min(DROOP_R_MAX·I_tot, I_tot − SHARE_MINORITY_I_MIN_A), and the clamp can
 // bind only where BOTH terms exceed the ceiling:
@@ -6196,14 +6362,18 @@ static void test_share_current_ceiling_reachability_threshold(void) {
     const float floorTerm = SHARE_GOV_I_FC_CEIL_A + SHARE_MINORITY_I_MIN_A;
     const float bandTerm  = SHARE_GOV_I_FC_CEIL_A / DROOP_R_MAX;
     const float analytic  = (bandTerm > floorTerm) ? bandTerm : floorTerm;
-    check(fabsf(floorTerm - 1.40f) < 1e-6f,
-          "reachability: the conduction-floor term is I_FC_CEIL + I_MIN = 1.40 A at fw v27 rev 2");
+    // RE-POINTED for fw v28 (SHARE_MINORITY_I_MIN_A 0.15 -> 0.125 A): the floor term falls
+    // 1.40 -> 1.375 A. The band-edge term is unchanged (it does not depend on I_min), so it keeps
+    // governing, now by a WIDER margin (0.0956 A vs 0.071 A at fw v27 rev 2).
+    check(fabsf(floorTerm - 1.375f) < 1e-6f,
+          "reachability: the conduction-floor term is I_FC_CEIL + I_MIN = 1.375 A at fw v28");
     check(fabsf(bandTerm - 1.4705882f) < 1e-5f,
-          "reachability: the DROOP_R_MAX term is I_FC_CEIL / 0.85 = 1.4706 A");
+          "reachability: the DROOP_R_MAX term is I_FC_CEIL / 0.85 = 1.4706 A (unchanged — it does "
+          "not depend on I_min)");
     check(bandTerm > floorTerm,
-          "reachability: at fw v27 rev 2 the DROOP_R_MAX branch is the TIGHTER bound — the band "
-          "edge, not the conduction floor, is what sets the threshold (the opposite of fw v26, "
-          "where I_min = 0.30 A made the floor term 1.55 A and therefore governing)");
+          "reachability: the DROOP_R_MAX branch is STILL the tighter bound at fw v28 — the band "
+          "edge, not the conduction floor, sets the threshold, and by a wider margin than at "
+          "fw v27 rev 2 (no ceiling was loosened)");
 
     // Sweep the total upward at the most FC-biased in-band setpoint and find the first engagement.
     float firstEngage = -1.0f;
@@ -6335,25 +6505,27 @@ static void test_fw27_feedforward_handover_continuity(void) {
     for (int e = 0; e < 2; e++) {
         gov_fixture();
         uint32_t t = 0;
-        // 0.275-0.35 A of total, straddling the fw v27 rev 2 gate (2*I_min = 0.30 A) -- the old
-        // 0.55/0.70 A pair halved, so the fixture keeps its position relative to the gate.
+        // RE-POINTED for fw v28 (gate 2*I_min 0.30 -> 0.25 A): 0.23/0.30 A straddles the new gate,
+        // in the same relative position the fw v27 rev 2 fixture (0.275/0.35 A) held to its gate.
         // The fw v19 pre-warm is dropped: no sub-gate total can hold BOTH channels above
-        // SHARE_HANDOFF_LIVE_A (0.20 A each is 0.40 A), and it is not needed either, because the
-        // assertion below is that the ratio does NOT move -- the slew ceiling is not the subject.
-        // The post-crossing bound is still asserted against the FULL ceiling, which is the
-        // conservative direction: a handoff-rate tick moves less, never more.
-        I_fc = 0.15f; I_batt = 0.125f;            // 0.275 A: open loop
+        // SHARE_HANDOFF_LIVE_A (0.12 A each is 0.24 A, just inside the sub-gate range at fw v28 --
+        // see the F5 coverage note -- but the fixture below uses an asymmetric split that keeps at
+        // least one channel dark), and it is not needed either, because the assertion below is
+        // that the ratio does NOT move -- the slew ceiling is not the subject. The post-crossing
+        // bound is still asserted against the FULL ceiling, which is the conservative direction: a
+        // handoff-rate tick moves less, never more.
+        I_fc = 0.13f; I_batt = 0.10f;             // 0.23 A: open loop
         power_share_setpoint = edges[e];
 
         for (int i = 0; i < 60; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
         check(!shareClosedLoopMode,
-              "handover: (setup) still open loop at 0.275 A of total");
+              "handover: (setup) still open loop at 0.23 A of total");
         check(fabsf(droopSlew_prev - 0.5f) < 1e-9f,
               "handover: the feedforward never walked out to the band edge — that walk (to 0.061 A "
               "of minority current in TP0115) is exactly what the clip removes");
 
         // Raise the load through the gate.
-        I_fc = 0.175f; I_batt = 0.175f;           // 0.35 A: above the gate once the EMA follows
+        I_fc = 0.15f; I_batt = 0.15f;             // 0.30 A: above the gate once the EMA follows
         float prev = droopSlew_prev, maxStep = 0.0f;
         uint16_t codeBefore = mdacLastCodeFC, codeAtEntry = mdacLastCodeFC;
         bool wasClosed = false, transitioned = false, isoAtEntry = false;
@@ -6398,7 +6570,7 @@ static void test_fw27_feedforward_clip_relaxes(void) {
     // the shipped constants (open-loop mode exists only at or below 2*SHARE_MINORITY_I_MIN_A,
     // where the band is empty), so it is tested at its own entry point — the fw v26 MED-4
     // discipline: state which coverage is direct-call only rather than implying loop coverage.
-    share_govTotAFilt = 0.20f;                 // band empty (lo = 0.15/0.20 = 0.75 > hi = 0.25)
+    share_govTotAFilt = 0.20f;                 // band empty (lo = 0.125/0.20 = 0.625 > hi = 0.375)
     check(shareFeedforwardClipHolding(),
           "relax: at 0.20 A the band is empty — the clip reports HOLD");
     check(fabsf(shareFeedforwardClipTarget(0.85f, 0.62f) - 0.62f) < 1e-9f,
@@ -6408,11 +6580,11 @@ static void test_fw27_feedforward_clip_relaxes(void) {
           "relax: the same in the other direction — the clip never moves the split at all when no "
           "split is feasible");
 
-    share_govTotAFilt = 0.5f;                  // band [0.30, 0.70] at I_min = 0.15 A
+    share_govTotAFilt = 0.5f;                  // band [0.25, 0.75] at I_min = 0.125 A (fw v28)
     check(!shareFeedforwardClipHolding(), "relax: at 0.50 A the band is open");
-    check(fabsf(shareFeedforwardClipTarget(0.85f, 0.62f) - 0.70f) < 1e-6f,
+    check(fabsf(shareFeedforwardClipTarget(0.85f, 0.62f) - 0.75f) < 1e-6f,
           "relax: an out-of-band setpoint is clipped to the band edge, not to 0.5");
-    check(fabsf(shareFeedforwardClipTarget(0.15f, 0.62f) - 0.30f) < 1e-6f,
+    check(fabsf(shareFeedforwardClipTarget(0.15f, 0.62f) - 0.25f) < 1e-6f,
           "relax: and symmetrically on the low side");
     check(fabsf(shareFeedforwardClipTarget(0.55f, 0.62f) - 0.55f) < 1e-9f,
           "relax: a setpoint INSIDE the band passes through byte-identically");
@@ -6445,10 +6617,12 @@ static void test_fw27_feedforward_clip_relaxes(void) {
     uint32_t t = 0;
     applyShareRatio(0.62f);                    // a one-shot operator-style write
     check(fabsf(droopSlew_prev - 0.62f) < 1e-9f, "relax: (setup) the MDACs are at 0.62");
-    I_fc = 0.15f; I_batt = 0.15f;
+    // RE-POINTED for fw v28 (gate 2*I_min 0.30 -> 0.25 A): 0.30 A (the fw v27 rev 2 fixture) is
+    // now ABOVE the gate. 0.13/0.10 = 0.23 A stays under it.
+    I_fc = 0.13f; I_batt = 0.10f;
     power_share_setpoint = 0.85f;
     for (int i = 0; i < 400; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
-    check(!shareClosedLoopMode, "relax: (setup) 0.30 A of total stays open loop");
+    check(!shareClosedLoopMode, "relax: (setup) 0.23 A of total stays open loop");
     check(fabsf(droopSlew_prev - 0.62f) < 1e-9f,
           "relax: 400 open-loop ticks at an empty band leave the split exactly where it was — "
           "neither walked to 0.85 nor collapsed to 0.5");
@@ -6600,7 +6774,9 @@ static void test_fw27_acted_setpoint_records_motion_only(void) {
     gov_fixture();
     uint32_t t = 0;
     applyShareRatio(0.62f);
-    I_fc = 0.15f; I_batt = 0.15f;            // 0.30 A: open loop, band empty → every tick HOLDs
+    // RE-POINTED for fw v28 (gate 2*I_min 0.30 -> 0.25 A): 0.30 A (the fw v27 rev 2 fixture) is
+    // now ABOVE the gate. 0.13/0.10 = 0.23 A stays open loop with the band still empty.
+    I_fc = 0.13f; I_batt = 0.10f;            // 0.23 A: open loop, band empty → every tick HOLDs
     power_share_setpoint = 0.40f;
     share_actedSp = 0.99f;                   // a value no held tick may overwrite
     for (int i = 0; i < 50; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
@@ -6687,12 +6863,14 @@ static void test_fw27_openloop_handoff_slew_via_iso_bypass(void) {
 static void test_fw27_kd_schedule_table(void) {
     test_group("fw v27 rev 2: the load-scheduled droop scale, as a table");
 
+    // RE-POINTED for fw v28 (SHARE_MINORITY_I_MIN_A 0.15 -> 0.125 A): the 0.5-cap total moves
+    // 2*0.15=0.30 -> 2*0.125=0.25, and every I_min/tot ratio below the crossover moves with it.
     const float reMax = RE_MAX;
     struct { float tot; float expect; } tbl[] = {
-        { 0.30f, reMax * 0.5f       * SHARE_KD_SAFETY },   // 0.5 cap (I_min/tot = 0.5)
-        { 0.40f, reMax * 0.375f     * SHARE_KD_SAFETY },
-        { 0.50f, reMax * 0.30f      * SHARE_KD_SAFETY },
-        { 0.70f, reMax * (0.15f / 0.70f) * SHARE_KD_SAFETY },
+        { 0.25f, reMax * 0.5f       * SHARE_KD_SAFETY },   // 0.5 cap (I_min/tot = 0.125/0.25 = 0.5)
+        { 0.40f, reMax * 0.3125f    * SHARE_KD_SAFETY },   // 0.125/0.40
+        { 0.50f, reMax * 0.25f      * SHARE_KD_SAFETY },   // 0.125/0.50
+        { 0.70f, reMax * (0.125f / 0.70f) * SHARE_KD_SAFETY },
         { 1.00f, K_DROOP },                                 // past the crossover -> the floor
         { 1.50f, K_DROOP },
         { 2.00f, K_DROOP },
@@ -6710,8 +6888,9 @@ static void test_fw27_kd_schedule_table(void) {
     // The crossover itself, both sides. Below it the schedule is above the floor; at and above it
     // the schedule IS the floor, which is what makes fw v26 recoverable bit-for-bit.
     const float crossover = RE_MAX * SHARE_KD_SAFETY * SHARE_MINORITY_I_MIN_A / K_DROOP;
-    check(fabsf(crossover - 0.90613f) < 1e-4f,
-          "kd crossover: RE_MAX*SAFETY*I_min/K_DROOP = 0.906 A at the shipped constants");
+    check(fabsf(crossover - 0.75510f) < 1e-4f,
+          "kd crossover: RE_MAX*SAFETY*I_min/K_DROOP = 0.755 A at the fw v28 shipped constants "
+          "(was 0.906 A at fw v27 rev 2's I_min = 0.15 A)");
     check(shareDroopScaleTarget(crossover - 0.05f) > K_DROOP + 1e-6f,
           "kd crossover: just BELOW it the schedule is strictly above the floor");
     check(fabsf(shareDroopScaleTarget(crossover + 0.05f) - K_DROOP) < 1e-9f,
@@ -6939,65 +7118,97 @@ static void fw27_battery_only_run(float sp, float ifc, float ibatt, int nTicks,
     }
 }
 
-static void test_fw27_battery_only_start(void) {
-    test_group("fw v27 rev 2: a profile starts battery-only and re-enters FC at the gate");
+// fw v28 (F2) REWRITE. Through fw v27 rev 2 the arm always cut FC, regardless of the commanded
+// share -- it was a "battery-only start". fw v28 generalises it to a SOURCE SELECTOR: the
+// commanded share picks which source is cut, inclusively at both rails (>= DROOP_R_MAX selects
+// FC, cutting BT; <= DROOP_R_MIN selects BT, cutting FC; default BT at every arm site). The two
+// fw v6 ladder band edges now exercise the TWO DIFFERENT selections, not the same cut twice.
+static void test_fw28_selector_start(void) {
+    test_group("fw v28 (F2): a profile starts on the selected source and re-enters at the gate");
 
-    // Both band edges, because the fw v6 ladder's two dropouts were AT the band edges and the
-    // battery-only start is the mechanism that replaces the two-source sub-gate window.
-    const float edges[2] = { 0.15f, 0.85f };
-    for (int e = 0; e < 2; e++) {
+    struct { float sp; bool expectFC; } cases[2] = { { 0.15f, false }, { 0.85f, true } };
+    for (int c = 0; c < 2; c++) {
         gov_fixture();
         digitalWrite(FC_REG_ENABLE, HIGH);
         digitalWrite(BT_REG_ENABLE, HIGH);
         uint32_t t = 0;
         bool cutSeen = false, backOnBus = false;
 
-        // Start at a light load, under the 0.30 A gate: the FC channel is cut and stays cut.
-        fw27_battery_only_run(edges[e], 0.05f, 0.05f, 200, cutSeen, backOnBus, t);
-        check(cutSeen && digitalRead(FC_BUS_ENABLE) == LOW,
-              "batt-only: the profile start took FC off the bus through the setpoint-latch cut "
-              "path -- the battery is the only source below the gate");
-        check(shareSpCutFC && shareIsoFC,
-              "batt-only: the cut is the EXISTING latch, claimed by shareSpCutFC/shareIsoFC -- "
-              "no second cut mechanism was introduced");
-        check(!backOnBus, "batt-only: and it stays cut while the load stays under the gate");
+        // Start at a light load, under the 0.25 A gate: the SELECTED channel's mirror is cut and
+        // stays cut. fw27_battery_only_run() only watches FC_BUS_ENABLE, so it is used only for the
+        // BT-selected case (edge 0.15); the FC-selected case (edge 0.85) is driven inline below.
+        if (!cases[c].expectFC) {
+            fw27_battery_only_run(cases[c].sp, 0.05f, 0.05f, 200, cutSeen, backOnBus, t);
+            check(cutSeen && digitalRead(FC_BUS_ENABLE) == LOW,
+                  "selector (BT): the profile start took FC off the bus through the setpoint-latch "
+                  "cut path -- the battery is the selected source below the gate");
+            check(shareSpCutFC && shareIsoFC,
+                  "selector (BT): the cut is the EXISTING latch, claimed by shareSpCutFC/shareIsoFC "
+                  "-- no second cut mechanism was introduced");
+            check(!backOnBus, "selector (BT): and it stays cut while the load stays under the gate");
+        } else {
+            armShareBatteryOnlyStart();
+            I_fc = 0.05f; I_batt = 0.05f;
+            power_share_setpoint = cases[c].sp;
+            for (int i = 0; i < 200; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
+            check(digitalRead(BT_BUS_ENABLE) == LOW && shareSpCutBT && shareIsoBT,
+                  "selector (FC): sp=0.85 selects the fuel cell -- BT is the one cut, through the "
+                  "SAME setpoint-latch path");
+            check(digitalRead(FC_BUS_ENABLE) == HIGH,
+                  "selector (FC): FC stays on the bus -- it is the selected source");
+        }
+        check(shareSelectorFC == cases[c].expectFC,
+              "selector: the selection flag matches the commanded rail");
         check(shareBatteryOnlyArmed && shareBatteryOnlyActive,
-              "batt-only: the arm is still up and still owns the setpoint");
+              "selector: the arm is still up and still owns the setpoint");
 
-        // Raise the load over the gate: the arm drops, the latch releases, FC comes back.
-        I_fc = 0.0f; I_batt = 0.5f;                 // single-sourced: 0.5 A > the 0.30 A gate
+        // Raise the load over the gate, single-sourced from whichever channel the selector left
+        // conducting: the arm drops, the latch releases, the cut channel comes back.
+        if (cases[c].expectFC) { I_fc = 0.5f; I_batt = 0.0f; }
+        else                   { I_fc = 0.0f; I_batt = 0.5f; }
         for (int i = 0; i < 400; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
         check(!shareBatteryOnlyArmed,
-              "batt-only: the arm is DROPPED once the governor's filtered total crosses the gate "
-              "-- the filter keeps advancing on the frozen path precisely so it can");
-        check(digitalRead(FC_BUS_ENABLE) == HIGH && !shareSpCutFC && !shareIsoFC,
-              "batt-only: FC is re-closed through the latch's OWN guarded release, not by a new "
-              "path -- both claims are dropped with it");
+              "selector: the arm is DROPPED once the governor's filtered total crosses the gate "
+              "-- the filter keeps advancing on the frozen path precisely so it can (selection-"
+              "agnostic: it reads |I_fc|+|I_batt|)");
+        check(digitalRead(FC_BUS_ENABLE) == HIGH && !shareSpCutFC && !shareIsoFC &&
+              digitalRead(BT_BUS_ENABLE) == HIGH && !shareSpCutBT && !shareIsoBT,
+              "selector: both channels are back on the bus through the latch's OWN guarded release "
+              "-- no new path, and no claim survives the gate crossing");
     }
 }
 
-static void test_fw27_battery_only_ownership_and_charge_window(void) {
-    test_group("fw v27 rev 2: the battery-only arm never fights another owner");
+// fw v28 (F2) REWRITE. Two fw v27 rev 2 rules named by this test's OLD body are REMOVED at
+// fw v28: the permanent disarm on an out-of-band command (that command is now the selector's
+// INPUT, not a competing owner -- section 4.2) and the FC-charge-window suppression (replaced by
+// F1's disarm-before-open in chargingControl(), which this test does not call -- see section 4.2's
+// note that the entry's last-source guard is a structural refusal independent of the suppression).
+static void test_fw28_selector_ownership_and_charge_window(void) {
+    test_group("fw v28: the source selector no longer disarms on an out-of-band command or a charge window");
 
-    // (c) An out-of-band commanded setpoint is a CUT owned by the setpoint latch. The arm must
-    // disarm on sight of one, permanently -- one owner per setpoint.
+    // (c) An out-of-band commanded setpoint is now the selector's INPUT, not a competing owner.
+    // sp=1.0 selects the fuel cell (>= DROOP_R_MAX), so the setpoint latch cuts BT -- the SAME
+    // numeric outcome fw v27 rev 2 produced from this command, but the arm stays UP rather than
+    // disarming permanently.
     gov_fixture();
     digitalWrite(FC_REG_ENABLE, HIGH);
     digitalWrite(BT_REG_ENABLE, HIGH);
     uint32_t t = 0;
     armShareBatteryOnlyStart();
     I_fc = 0.05f; I_batt = 0.05f;
-    power_share_setpoint = 1.0f;                    // BT cut, commanded by the Pi/EMS
+    power_share_setpoint = 1.0f;                    // out-of-band; selects FC, cuts BT
     for (int i = 0; i < 50; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
-    check(!shareBatteryOnlyArmed && !shareBatteryOnlyActive,
-          "batt-only ownership: an out-of-band setpoint DISARMS the start -- the latch owns that "
-          "setpoint and the arm must not take the topology back when it releases");
+    check(shareBatteryOnlyArmed && shareBatteryOnlyActive,
+          "selector ownership: an out-of-band command no longer disarms the selector -- it is the "
+          "selector's INPUT (fw v27 rev 2's permanent disarm is gone)");
+    check(shareSelectorFC,
+          "selector ownership: sp=1.0 selects the fuel cell");
     check(digitalRead(BT_BUS_ENABLE) == LOW && shareSpCutBT,
-          "batt-only ownership: and the commanded BT cut is the one that actually happened");
+          "selector ownership: and the commanded BT cut is the one that actually happened");
     check(digitalRead(FC_BUS_ENABLE) == HIGH,
-          "batt-only ownership: FC was never cut -- the two cuts can never both be outstanding");
+          "selector ownership: FC was never cut -- the two cuts can never both be outstanding");
 
-    // The band edge 0.15 is IN band and must NOT disarm (it is a share, not a cut).
+    // The band edge 0.15 is IN band and must NOT change the (default BT) selection -- it holds.
     gov_fixture();
     digitalWrite(FC_REG_ENABLE, HIGH);
     t = 0;
@@ -7006,29 +7217,34 @@ static void test_fw27_battery_only_ownership_and_charge_window(void) {
     power_share_setpoint = DROOP_R_MIN;
     for (int i = 0; i < 20; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
     check(shareBatteryOnlyArmed && shareBatteryOnlyActive,
-          "batt-only ownership: DROOP_R_MIN is in band -- a band-edge share is not a cut, so the "
-          "arm keeps it");
+          "selector ownership: DROOP_R_MIN is in band -- a band-edge share is not a rail command, "
+          "so the arm keeps it");
+    check(!shareSelectorFC,
+          "selector ownership: DROOP_R_MIN <= DROOP_R_MIN selects (holds) the battery, the default");
 
     // (f) An FC-charge window: assertFcChargeEnable() holds BT_BUS LOW, so FC is the ONLY source.
-    // The arm must be suppressed there, and must not be disarmed by it either (the window is
-    // transient; the loop still closes and disarms it through the normal path).
+    // fw v28 REMOVES the suppression: powerBalance() no longer tests FC_CHARGE_ENABLE at all
+    // (that call site is not exercised by this test, which drives powerBalance() directly), so the
+    // arm stays ACTIVE. What refuses the cut is the SAME structural defence fw v27 rev 2 also
+    // relied on: the entry's last-source guard requires BOTH bus switches HIGH.
     gov_fixture();
     t = 0;
     armShareBatteryOnlyStart();
     digitalWrite(FC_CHARGE_ENABLE, HIGH);
     digitalWrite(BT_BUS_ENABLE, LOW);               // as assertFcChargeEnable() leaves it
     I_fc = 0.10f; I_batt = 0.0f;
-    power_share_setpoint = 0.50f;
+    power_share_setpoint = 0.50f;                   // in-band: holds the default BT selection
     for (int i = 0; i < 100; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
-    check(!shareBatteryOnlyActive,
-          "batt-only charge window: the arm is SUPPRESSED while FC_CHARGE_ENABLE is high -- the "
-          "charge window owns the topology");
+    check(shareBatteryOnlyActive,
+          "selector charge window (fw v28): the suppression is GONE -- the arm stays ACTIVE even "
+          "with FC_CHARGE_ENABLE high, and retries the (refused) cut every tick");
     check(shareBatteryOnlyArmed,
-          "batt-only charge window: but not DISARMED -- the window is transient, and the arm is "
-          "dropped by a closed loop, not by a charge path");
+          "selector charge window: still armed -- the window does not disarm it either, matching "
+          "fw v27 rev 2's own guarantee");
     check(digitalRead(FC_BUS_ENABLE) == HIGH && !shareSpCutFC,
-          "batt-only charge window: FC is NOT cut -- cutting the only live source would darken "
-          "the bus, and both the suppression and the entry's last-source guard refuse it");
+          "selector charge window: FC is NOT cut -- cutting the only live source would darken "
+          "the bus, and the entry's last-source guard refuses it structurally (both switches must "
+          "be HIGH), independent of the removed suppression");
 
     // Belt and braces: even with the suppression removed, the last-source guard alone refuses the
     // cut. Prove it by driving the latch entry directly with BT off the bus.
@@ -7041,6 +7257,450 @@ static void test_fw27_battery_only_ownership_and_charge_window(void) {
     check(digitalRead(FC_BUS_ENABLE) == HIGH && !shareSpCutFC,
           "batt-only charge window: the last-source guard refuses a share-0 cut whenever BT is "
           "already off the bus -- the suppression is defence in depth, not the only defence");
+}
+
+// fw v28 (F2): the selection thresholds are INCLUSIVE at both rails (0.85 exactly selects FC,
+// 0.15 exactly selects BT -- see the commit note's justification: the Pi clamps its commanded
+// share to [0.15, 0.85], and the setpoint latch's own out-of-band tests are STRICT, so a strict
+// selector test here could never fire on a real command). One tick either side of each rail must
+// land on the opposite side of the boundary: EXACTLY at the rail selects, one ULP-scale step
+// inside the band holds the prior selection.
+static void test_fw28_selector_inclusive_thresholds(void) {
+    test_group("fw v28 (F2): the selection rails are INCLUSIVE -- exact vs. one step inside");
+
+    // 0.85 exactly selects FC; 0.8499 (just inside the band) HOLDS the prior selection.
+    gov_fixture();
+    digitalWrite(FC_REG_ENABLE, HIGH); digitalWrite(BT_REG_ENABLE, HIGH);
+    armShareBatteryOnlyStart();
+    check(!shareSelectorFC, "inclusive: (setup) a fresh arm defaults to BT");
+    power_share_setpoint = DROOP_R_MAX;              // 0.85 exactly
+    powerBalance();
+    check(shareSelectorFC,
+          "inclusive: power_share_setpoint == DROOP_R_MAX (0.85) selects FC -- the rail is "
+          "INCLUSIVE");
+
+    gov_fixture();
+    digitalWrite(FC_REG_ENABLE, HIGH); digitalWrite(BT_REG_ENABLE, HIGH);
+    armShareBatteryOnlyStart();
+    power_share_setpoint = DROOP_R_MAX - 0.0001f;    // 0.8499: strictly inside the band
+    powerBalance();
+    check(!shareSelectorFC,
+          "inclusive: one step INSIDE DROOP_R_MAX (0.8499) does NOT select FC -- it holds the "
+          "default BT selection, not a near-miss of the rail");
+
+    // 0.15 exactly selects BT; 0.1501 (just inside the band) HOLDS the prior selection.
+    gov_fixture();
+    digitalWrite(FC_REG_ENABLE, HIGH); digitalWrite(BT_REG_ENABLE, HIGH);
+    armShareBatteryOnlyStart();
+    shareSelectorFC = true;                          // start from FC selected, so BT is a change
+    power_share_setpoint = DROOP_R_MIN;              // 0.15 exactly
+    powerBalance();
+    check(!shareSelectorFC,
+          "inclusive: power_share_setpoint == DROOP_R_MIN (0.15) selects BT -- the rail is "
+          "INCLUSIVE from an FC-selected start too");
+
+    gov_fixture();
+    digitalWrite(FC_REG_ENABLE, HIGH); digitalWrite(BT_REG_ENABLE, HIGH);
+    armShareBatteryOnlyStart();
+    shareSelectorFC = true;
+    power_share_setpoint = DROOP_R_MIN + 0.0001f;    // 0.1501: strictly inside the band
+    powerBalance();
+    check(shareSelectorFC,
+          "inclusive: one step INSIDE DROOP_R_MIN (0.1501) does NOT select BT -- the prior FC "
+          "selection HOLDS");
+}
+
+// fw v28 (F2): a selection CHANGE is make-before-break through the existing setpoint-latch
+// machinery and nothing else. Drive a BT->FC and an FC->BT transition tick by tick and assert the
+// invariant every tick: the two bus switches are never BOTH low (the bus would be source-less).
+// The release fires first (guarded on V_BUS_CHARGED_THRESH and the survivor's *_REG_ENABLE), one
+// tick returns the loop live, and only then does the entry cut the OTHER channel -- itself gated
+// by the survivor-turn-on blanking on the channel that was just released.
+static void test_fw28_selector_transition_never_both_low(void) {
+    test_group("fw v28 (F2): a selection change never leaves both bus switches LOW");
+
+    struct { bool startFC; float newSp; } dirs[2] = {
+        { false, DROOP_R_MAX },   // BT selected -> FC selected
+        { true,  DROOP_R_MIN },   // FC selected -> BT selected
+    };
+    for (int d = 0; d < 2; d++) {
+        gov_fixture();
+        digitalWrite(FC_REG_ENABLE, HIGH);
+        digitalWrite(BT_REG_ENABLE, HIGH);
+        digitalWrite(MOT_PWR_ENABLE, HIGH);
+        V_bus = 16.0f;                                // above V_BUS_CHARGED_THRESH throughout
+        uint32_t t = 0;
+
+        // Arm and converge on the starting selection, under the gate so the arm survives.
+        armShareBatteryOnlyStart();
+        shareSelectorFC = dirs[d].startFC;
+        I_fc = dirs[d].startFC ? 0.10f : 0.05f;
+        I_batt = dirs[d].startFC ? 0.0f : 0.05f;
+        power_share_setpoint = dirs[d].startFC ? DROOP_R_MAX : DROOP_R_MIN;
+        for (int i = 0; i < 100; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
+        check(shareBatteryOnlyArmed && shareSelectorFC == dirs[d].startFC,
+              "transition: (setup) the arm converged on the starting selection");
+        bool startCutFC = digitalRead(FC_BUS_ENABLE) == LOW;
+        check(startCutFC == !dirs[d].startFC,
+              "transition: (setup) the non-selected channel is the one off the bus");
+
+        // Command the opposite rail and tick through the whole handover, asserting the invariant
+        // on EVERY tick: the bus is never left with both switches low.
+        power_share_setpoint = dirs[d].newSp;
+        bool everBothLow = false, sawRelease = false, sawEntry = false;
+        bool prevFcCut = digitalRead(FC_BUS_ENABLE) == LOW;
+        bool prevBtCut = digitalRead(BT_BUS_ENABLE) == LOW;
+        for (int i = 0; i < 200; i++) {
+            t += 1000; g_mock_micros = t; powerBalance();
+            bool fcLow = digitalRead(FC_BUS_ENABLE) == LOW;
+            bool btLow = digitalRead(BT_BUS_ENABLE) == LOW;
+            if (fcLow && btLow) everBothLow = true;
+            if (prevFcCut && !fcLow) sawRelease = true;   // FC came back (BT->FC direction)
+            if (prevBtCut && !btLow) sawRelease = true;   // BT came back (FC->BT direction)
+            if (!prevFcCut && fcLow) sawEntry = true;      // FC newly cut (FC->BT direction)
+            if (!prevBtCut && btLow) sawEntry = true;      // BT newly cut (BT->FC direction)
+            prevFcCut = fcLow; prevBtCut = btLow;
+            g_mock_millis += 1;                            // let the survivor blanking clear
+        }
+        check(!everBothLow,
+              "transition: no tick during the whole handover has BOTH bus switches LOW -- "
+              "make-before-break holds under real ticking, not just at the two endpoints");
+        check(sawRelease,
+              "transition: (setup) the release actually happened -- the previously-cut channel "
+              "came back on the bus");
+        check(sawEntry,
+              "transition: (setup) the entry actually happened -- the other channel was cut "
+              "under the last-source guard once the release's blanking cleared");
+        check(shareSelectorFC == !dirs[d].startFC,
+              "transition: the selection flag ended on the commanded rail");
+    }
+}
+
+// fw v28 (review S2): the raw-current escape from an FC selection. With FC selected the fuel
+// cell is alone on the bus, where the fw v26 current-ceiling clamp is structurally inert (no
+// split to move), so the only remaining protection short of FAULT_OC_FC latching State 99 is
+// this escape: a single RAW sample of |I_fc| above SHARE_GOV_I_FC_CEIL_A (1.25 A, 0.15 A under
+// the 1.4 A fault limit) drops the arm on the frozen path, so the latch's own guarded BT release
+// runs on the very next tick.
+static void test_fw28_selector_raw_current_escape(void) {
+    test_group("fw v28 (review S2): a raw FC overcurrent drops an FC-selected arm immediately");
+
+    gov_fixture();
+    digitalWrite(FC_REG_ENABLE, HIGH);
+    digitalWrite(BT_REG_ENABLE, HIGH);
+    V_bus = 16.0f;
+    shareBatteryOnlyArmed  = true;
+    shareBatteryOnlyActive = true;
+    shareSelectorFC        = true;                   // FC selected -- BT is the cut channel
+    shareSpCutBT = true; shareIsoBT = true;
+    digitalWrite(FC_BUS_ENABLE, HIGH);
+    digitalWrite(BT_BUS_ENABLE, LOW);
+    power_share_setpoint = 0.50f;                    // in-band: irrelevant while the arm owns it
+    I_fc = SHARE_GOV_I_FC_CEIL_A + 0.10f;             // a raw sample ABOVE the ceiling
+    I_batt = 0.0f;
+
+    uint32_t t = 0;
+    t += 1000; g_mock_micros = t; powerBalance();
+    check(!shareBatteryOnlyArmed,
+          "S2 escape: the arm drops on the SAME tick the raw FC sample exceeds the ceiling -- no "
+          "filtering, since filtering here would lose the race against a detector that is itself "
+          "raw and single-sample");
+    check(digitalRead(FC_BUS_ENABLE) == HIGH && digitalRead(BT_BUS_ENABLE) == LOW,
+          "S2 escape: no bus switch moves on the drop tick itself -- dropping the arm only hands "
+          "the setpoint back to the latch, it does not act directly");
+
+    // The very next tick: the latch's own guarded release brings BT back, gated on V_bus and
+    // BT_REG_ENABLE exactly as every other release is.
+    t += 1000; g_mock_micros = t; powerBalance();
+    check(digitalRead(BT_BUS_ENABLE) == HIGH && !shareSpCutBT && !shareIsoBT,
+          "S2 escape: BT is released on the NEXT tick through the latch's ordinary guarded path "
+          "-- no new release mechanism, and FC was never itself touched");
+    check(digitalRead(FC_BUS_ENABLE) == HIGH,
+          "S2 escape: FC stays on the bus throughout -- the escape is about handing the load off "
+          "to BT, not about disturbing the fuel cell");
+
+    // Below the ceiling, an FC-selected arm is unaffected by this mechanism at all.
+    gov_fixture();
+    digitalWrite(FC_REG_ENABLE, HIGH); digitalWrite(BT_REG_ENABLE, HIGH);
+    armShareBatteryOnlyStart();
+    shareSelectorFC = true;
+    I_fc = SHARE_GOV_I_FC_CEIL_A - 0.10f;             // under the ceiling
+    I_batt = 0.0f;
+    power_share_setpoint = DROOP_R_MAX;
+    t = 0;
+    // ONE tick, deliberately (fix round): the raw escape is a SAME-TICK test, and it is the only
+    // thing this sub-case is about. Running longer proves nothing about it, because the frozen
+    // path's EMA also climbs on 1.15 A and crosses 2*SHARE_MINORITY_I_MIN_A = 0.25 A on tick 5
+    // (0.05/tick from zero), so a 50-tick loop watches the ORDINARY GATE drop the arm and reads
+    // as a failure of a mechanism it never exercised. The gate crossing is asserted below, so
+    // both halves are covered without conflating them.
+    t += 1000; g_mock_micros = t; powerBalance();
+    check(shareBatteryOnlyArmed,
+          "S2 escape: under the ceiling the arm survives the tick -- a raw sample BELOW the "
+          "ceiling never touches it");
+    check(share_govTotAFilt < 2.0f * SHARE_MINORITY_I_MIN_A,
+          "S2 escape: (setup) and the gate has not been crossed yet on that tick, so the arm's "
+          "survival is attributable to the raw test alone");
+    for (int i = 0; i < 20; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
+    check(!shareBatteryOnlyArmed && share_govTotAFilt >= 2.0f * SHARE_MINORITY_I_MIN_A,
+          "S2 escape: the same sub-ceiling current does eventually drop the arm -- through the "
+          "ORDINARY gate crossing, which is the only other way out");
+}
+
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+// fw v28 fix round, finding F-2 — the ORDERING of a selection change, tick by tick.
+// Complements test_fw28_selector_transition_never_both_low(), which asserts the make-before-break
+// INVARIANT over a free-running handover. This group asserts the SEQUENCE and its guards: the
+// release is first and is gated on V_BUS_CHARGED_THRESH and on the survivor's regulator; exactly
+// one release edge occurs; and the entry that cuts the other channel waits out the survivor's
+// turn-on blanking, retrying (shareCutRefusedBlank) rather than abandoning the change.
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+static void test_fw28_f2_selection_change_ordering_and_blanking(void) {
+    test_group("fw v28 (F2): a selection change releases first (guarded), then cuts after blanking");
+
+    gov_fixture();
+    digitalWrite(FC_REG_ENABLE, HIGH);
+    digitalWrite(BT_REG_ENABLE, HIGH);
+    digitalWrite(MOT_PWR_ENABLE, HIGH);
+    V_bus = 16.0f;
+    uint32_t t = 0;
+
+    // Converge on the BT selection (FC off the bus), under the gate so the arm survives.
+    armShareBatteryOnlyStart();
+    I_fc = 0.05f; I_batt = 0.05f;
+    power_share_setpoint = 0.10f;                     // <= DROOP_R_MIN: selects the battery
+    for (int i = 0; i < 100; i++) { t += 1000; g_mock_micros = t; powerBalance(); g_mock_millis += 1; }
+    check(shareBatteryOnlyArmed && !shareSelectorFC &&
+          digitalRead(FC_BUS_ENABLE) == LOW && digitalRead(BT_BUS_ENABLE) == HIGH,
+          "F2 ordering: (setup) armed, battery selected, FC off the bus");
+
+    // ── The release is GUARDED. Command the FC rail with the bus BELOW V_BUS_CHARGED_THRESH:
+    // the selection flips immediately (it is derived from the command), but the topology must not.
+    power_share_setpoint = 0.90f;                     // >= DROOP_R_MAX: selects the fuel cell
+    V_bus = 12.0f;                                    // below V_BUS_CHARGED_THRESH (13.5 V)
+    for (int i = 0; i < 30; i++) { t += 1000; g_mock_micros = t; powerBalance(); g_mock_millis += 1; }
+    check(shareSelectorFC,
+          "F2 ordering: the SELECTION follows the command on sight -- it is derived per tick from "
+          "power_share_setpoint, not from the topology");
+    check(digitalRead(FC_BUS_ENABLE) == LOW && shareSpCutFC,
+          "F2 ordering: but the RELEASE is held while the bus is below V_BUS_CHARGED_THRESH -- "
+          "re-closing a switch onto an unregulated bus is the hot-plug direction");
+    check(digitalRead(BT_BUS_ENABLE) == HIGH,
+          "F2 ordering: and the battery is NOT cut while the release is held -- the entry is "
+          "unreachable from a still-latched state, so the bus keeps its source");
+
+    // Bus regulated again, but the SURVIVOR-side boost of the release (FC's own) is off: the S5
+    // back-feed guard holds the release too.
+    V_bus = 16.0f;
+    digitalWrite(FC_REG_ENABLE, LOW);
+    for (int i = 0; i < 30; i++) { t += 1000; g_mock_micros = t; powerBalance(); g_mock_millis += 1; }
+    check(digitalRead(FC_BUS_ENABLE) == LOW && shareSpCutFC,
+          "F2 ordering: the release is held again with FC_REG_ENABLE LOW -- never close a bus "
+          "switch onto a DISABLED TPS61288 (CLAUDE.md section 2 back-feed rule)");
+
+    // ── Both guards satisfied: the release fires, and it fires ONCE. ──────────────────────────
+    digitalWrite(FC_REG_ENABLE, HIGH);
+    const uint32_t blankRefusalsBefore = shareCutRefusedBlank;
+    int  releaseTick = -1, entryTick = -1, releaseEdges = 0, entryEdges = 0, bothHighTicks = 0;
+    bool everBothLow = false;
+    bool prevFcLow = true, prevBtLow = false;
+
+    for (int i = 0; i < 200; i++) {
+        t += 1000; g_mock_micros = t; powerBalance();
+        const bool fcLow = digitalRead(FC_BUS_ENABLE) == LOW;
+        const bool btLow = digitalRead(BT_BUS_ENABLE) == LOW;
+        if (fcLow && btLow) everBothLow = true;
+        if (!fcLow && !btLow) bothHighTicks++;
+        if (prevFcLow && !fcLow) { releaseEdges++; if (releaseTick < 0) releaseTick = i; }
+        if (!prevBtLow && btLow) { entryEdges++;   if (entryTick   < 0)   entryTick   = i; }
+        prevFcLow = fcLow; prevBtLow = btLow;
+        g_mock_millis += 1;                            // 1 ms per tick, as the 1 kHz loop runs
+    }
+    check(!everBothLow,
+          "F2 ordering: no tick of the whole change has both bus switches LOW");
+    check(releaseEdges == 1 && releaseTick == 0,
+          "F2 ordering: EXACTLY ONE release edge, on the first tick after the guards clear -- the "
+          "latch's own release branch runs before any entry can, and it runs once");
+    check(entryEdges == 1 && entryTick > releaseTick,
+          "F2 ordering: EXACTLY ONE entry edge, strictly after the release -- the make-before-"
+          "break order is the sequence, not just the invariant");
+    check(bothHighTicks >= 1,
+          "F2 ordering: the loop is RETURNED to live two-source control for at least the tick "
+          "between the release and the entry (updateShareSetpointCutoff() returns false on a "
+          "release tick precisely so the reset controller sees one live sample of the topology)");
+    // Pin the delay: the entry waits out the survivor's turn-on blanking on FC_BUS, which is what
+    // "a change issued while the entry is blanked simply retries" means in ticks.
+    check(entryTick - releaseTick >= (int)SHARE_CUT_SURVIVOR_BLANK_MS,
+          "F2 ordering: the entry waits at least SHARE_CUT_SURVIVOR_BLANK_MS (30 ms) after the "
+          "release -- a survivor inside the RT1987 t_D_ON is not a current source, so cutting the "
+          "other channel onto it is the hil_report_20260901_080905 collapse");
+    check(shareCutRefusedBlank > blankRefusalsBefore,
+          "F2 ordering: and the blanked ticks are RETRIES, counted as blank refusals -- the "
+          "selection change is not abandoned, it fires the moment the blanking clears");
+    check(digitalRead(BT_BUS_ENABLE) == LOW && shareSpCutBT && shareSelectorFC &&
+          digitalRead(FC_BUS_ENABLE) == HIGH && shareBatteryOnlyArmed,
+          "F2 ordering: the change completes -- FC on the bus, BT cut, arm still up");
+
+    // ── The reverse direction, same sequence. ────────────────────────────────────────────────
+    power_share_setpoint = 0.10f;                     // back to the battery selection
+    releaseEdges = entryEdges = 0; releaseTick = entryTick = -1; everBothLow = false;
+    prevFcLow = digitalRead(FC_BUS_ENABLE) == LOW;
+    prevBtLow = digitalRead(BT_BUS_ENABLE) == LOW;
+    for (int i = 0; i < 200; i++) {
+        t += 1000; g_mock_micros = t; powerBalance();
+        const bool fcLow = digitalRead(FC_BUS_ENABLE) == LOW;
+        const bool btLow = digitalRead(BT_BUS_ENABLE) == LOW;
+        if (fcLow && btLow) everBothLow = true;
+        if (prevBtLow && !btLow) { releaseEdges++; if (releaseTick < 0) releaseTick = i; }
+        if (!prevFcLow && fcLow) { entryEdges++;   if (entryTick   < 0) entryTick   = i; }
+        prevFcLow = fcLow; prevBtLow = btLow;
+        g_mock_millis += 1;
+    }
+    check(!everBothLow && releaseEdges == 1 && entryEdges == 1 && entryTick > releaseTick,
+          "F2 ordering (FC->BT): the mirror sequence -- BT released first, exactly once, then FC "
+          "cut strictly later, and never both low");
+    check(entryTick - releaseTick >= (int)SHARE_CUT_SURVIVOR_BLANK_MS,
+          "F2 ordering (FC->BT): the entry again waits out the survivor's (BT_BUS) blanking");
+    check(!shareSelectorFC && digitalRead(FC_BUS_ENABLE) == LOW &&
+          digitalRead(BT_BUS_ENABLE) == HIGH && shareBatteryOnlyArmed,
+          "F2 ordering (FC->BT): the change completes back to the battery selection, arm intact");
+}
+
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+// fw v28 fix round, finding F-6 — updateShareSlewMode()'s S7 sub-gate rule.
+// With SHARE_HANDOFF_LIVE_A at 0.12 A a near-balanced split reads BOTH channels LIVE from 0.24 A
+// of total, which is INSIDE the sub-gate window [0.24, 0.25). Before S7 the both-live branch
+// handed that region the full 0.02/tick ratio rate, where no closed loop is authorised. S7
+// selects the HANDOFF ceiling whenever share_govTotAFilt < 2*SHARE_MINORITY_I_MIN_A in the
+// both-live branch; the spent-dwell escape is deliberately NOT touched.
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+static void test_fw28_f6_subgate_slew_ceiling(void) {
+    test_group("fw v28 (S7): below the gate the both-live slew ceiling is the HANDOFF rate");
+
+    // BRANCH EXERCISED: the BOTH-CHANNELS-LIVE branch (neither shareHandoffDark* set), which is
+    // the one S7 changed. 0.1225 A per channel is above SHARE_HANDOFF_MIN_A (0.10) so neither
+    // channel goes dark, and 0.245 A of total is inside the sub-gate window.
+    reset_test_state();
+    shareHandoffDarkFC  = false; shareHandoffDarkBT  = false;
+    shareHandoffIFcFilt = 0.1225f; shareHandoffIBtFilt = 0.1225f;
+    I_fc = 0.1225f; I_batt = 0.1225f;             // filters are already at the measurement: no drift
+    droopSlew_prev = 0.5f; shareHandoffPrevRatio = 0.5f;
+    shareHandoffDwell   = 0;
+    share_govTotAFilt   = 0.245f;
+    updateShareSlewMode();
+    check(!shareHandoffDarkFC && !shareHandoffDarkBT,
+          "S7: (setup) both channels read LIVE at 0.1225 A each -- this is the both-live branch, "
+          "not the dark one");
+    check(fabsf(shareSlewStepThisTick - DROOP_RATIO_SLEW_HANDOFF_PER_TICK) < 1e-9f,
+          "S7: at 0.245 A of filtered total (both live, under the 0.25 A gate) the ceiling is the "
+          "HANDOFF rate -- the sub-gate region is not a place for the full ratio rate");
+    check(shareHandoffDwell == 0,
+          "S7: and the both-live branch still re-arms the dark-event dwell allowance, unchanged");
+
+    // The same branch at and above the gate takes the FULL rate.
+    share_govTotAFilt = 2.0f * SHARE_MINORITY_I_MIN_A;   // 0.25 A exactly: the predicate is strict '<'
+    updateShareSlewMode();
+    check(fabsf(shareSlewStepThisTick - DROOP_RATIO_SLEW_PER_TICK) < 1e-9f,
+          "S7: at exactly 2*SHARE_MINORITY_I_MIN_A the predicate is false (strict '<') and the "
+          "both-live branch takes the FULL rate");
+    share_govTotAFilt = 0.30f;
+    updateShareSlewMode();
+    check(fabsf(shareSlewStepThisTick - DROOP_RATIO_SLEW_PER_TICK) < 1e-9f,
+          "S7: at 0.30 A both live, the ceiling is the FULL rate -- S7 changed nothing above the "
+          "gate, so every converged two-source hold stays bit-identical to fw v18");
+
+    // BRANCH NOT EXERCISED BY S7: the SPENT-DWELL escape. A dark channel whose allowance is spent
+    // takes the full rate regardless of the total, sub-gate included -- S7 is scoped to the
+    // both-live branch and must not have leaked into this one.
+    reset_test_state();
+    shareHandoffDarkFC  = true;  shareHandoffDarkBT = false;
+    shareHandoffIFcFilt = 0.0f;  shareHandoffIBtFilt = 0.20f;
+    I_fc = 0.0f; I_batt = 0.20f;
+    droopSlew_prev = 0.5f; shareHandoffPrevRatio = 0.5f;
+    shareHandoffDwell = SHARE_HANDOFF_DWELL_MAX_TICKS;
+    share_govTotAFilt = 0.20f;                    // sub-gate
+    updateShareSlewMode();
+    check(fabsf(shareSlewStepThisTick - DROOP_RATIO_SLEW_PER_TICK) < 1e-9f,
+          "S7: the SPENT-DWELL escape is unchanged -- a dark channel with its allowance spent "
+          "still takes the full rate, sub-gate or not (S7 is scoped to the both-live branch)");
+}
+
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+// fw v28 fix round, finding F-5 — the State-98 '5' key refuses to OPEN the charge window while a
+// share cut holds the fuel cell off the bus (review S6). chargingControl() is conduction-gated
+// (F1), but this key reaches assertFcChargeEnable() directly, whose S2 restore would re-close
+// FC_BUS and drop BT_BUS in the SAME tick -- RT1987_T_D_ON_MS of source-less bus.
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+static void test_fw28_f5_state98_key5_refuses_open_under_a_cut(void) {
+    test_group("fw v28 (S6): State-98 '5' refuses to open the charge window from a share cut");
+
+    // The constants the refusal exists to respect, pinned at run time (the .ino's static_assert
+    // cannot be observed from here).
+    check(RT1987_T_D_ON_MS == 8u,
+          "S6: RT1987_T_D_ON_MS pins the 8 ms ideal-diode turn-on delay (DS 17.4/17.6 Table 1)");
+    check(SHARE_CUT_SURVIVOR_BLANK_MS >= RT1987_T_D_ON_MS,
+          "S6: the survivor blanking window covers at least one full RT1987 turn-on delay");
+
+    // ── Refused: FC cut and off the bus. ─────────────────────────────────────────────────────
+    reset_test_state();
+    mainState = 98;
+    digitalWrite(FC_BUS_ENABLE, LOW);
+    digitalWrite(BT_BUS_ENABLE, HIGH);
+    shareSpCutFC = true; shareIsoFC = true;
+    Serial.tx_clear();
+    Serial.rx_queue.push('5');
+    doState98();
+    check(Serial.tx_contains("REFUSED: FC is off the bus under a share cut."),
+          "S6: the key prints the refusal, naming the reason");
+    check(digitalRead(FC_CHARGE_ENABLE) == LOW,
+          "S6: FC_CHARGE_ENABLE stays LOW -- the guard's S2 restore is never reached");
+    check(digitalRead(BT_BUS_ENABLE) == HIGH && digitalRead(FC_BUS_ENABLE) == LOW,
+          "S6: and no bus switch moves, so the bus is never left source-less for t_D_ON");
+    check(shareSpCutFC && shareIsoFC,
+          "S6: the cut itself is untouched -- the key refuses, it does not release");
+
+    // The shareIsoFC-only form (an r-based cut with no setpoint latch) is refused identically:
+    // the guard tests (shareSpCutFC || shareIsoFC), not just the latch.
+    reset_test_state();
+    mainState = 98;
+    digitalWrite(FC_BUS_ENABLE, LOW);
+    digitalWrite(BT_BUS_ENABLE, HIGH);
+    shareIsoFC = true;
+    Serial.tx_clear();
+    Serial.rx_queue.push('5');
+    doState98();
+    check(Serial.tx_contains("REFUSED: FC is off the bus under a share cut.") &&
+          digitalRead(FC_CHARGE_ENABLE) == LOW,
+          "S6: a bare r-based shareIsoFC cut is refused the same way -- the guard is on either "
+          "claim, since either one means the fuel cell is not on the bus");
+
+    // ── Admitted once the cut clears and FC is back on the bus. ──────────────────────────────
+    reset_test_state();
+    mainState = 98;
+    digitalWrite(FC_BUS_ENABLE, HIGH);
+    digitalWrite(BT_BUS_ENABLE, HIGH);
+    Serial.tx_clear();
+    Serial.rx_queue.push('5');
+    doState98();
+    check(!Serial.tx_contains("REFUSED: FC is off the bus under a share cut."),
+          "S6: with no cut outstanding and FC on the bus, the key is not refused");
+    check(digitalRead(FC_CHARGE_ENABLE) == HIGH,
+          "S6: the window opens through assertFcChargeEnable() exactly as before fw v28");
+    check(digitalRead(BT_BUS_ENABLE) == LOW,
+          "S6: (setup) and the guard took ownership of BT_BUS, as an FC-charge window must");
+
+    // ── CLOSING is never refused, whatever the share state. ──────────────────────────────────
+    shareSpCutFC = true; shareIsoFC = true;
+    digitalWrite(FC_BUS_ENABLE, LOW);            // the worst case the refusal is written for
+    Serial.tx_clear();
+    Serial.rx_queue.push('5');
+    doState98();
+    check(!Serial.tx_contains("REFUSED: FC is off the bus under a share cut."),
+          "S6: the refusal is scoped to the OPEN direction -- it tests "
+          "digitalRead(FC_CHARGE_ENABLE) == LOW first");
+    check(digitalRead(FC_CHARGE_ENABLE) == LOW,
+          "S6: closing an open window is always allowed, and must be: refusing it would strand "
+          "the board in the one topology the operator is trying to leave");
 }
 
 // ── (H1) The survivor-regulator guard on the cut ENTRY ───────────────────────────────────────
@@ -10431,6 +11091,9 @@ static void test_charging_control_fc_bootstrap() {
     charge_goal = 1.0f;
     current     = 0.5f;          // cruise
     ag105_status_raw = 0x00;     // not ready
+    // fw v28 (F1): the window opens only when FC_BUS_ENABLE already reads HIGH — the bootstrap
+    // this test is about is the charger's readiness, not FC's presence on the bus.
+    digitalWrite(FC_BUS_ENABLE, HIGH);
     chargingControl();
     check(g_pin_value[FC_CHARGE_ENABLE] == HIGH,
           "chargingControl: FC_CHARGE_ENABLE HIGH to power charger (bootstrap)");
@@ -10445,6 +11108,241 @@ static void test_charging_control_fc_bootstrap() {
           "chargingControl: FC_CHARGE_ENABLE stays HIGH when ready");
     check(g_pin_value[MPPT_DISABLE] == HIGH,
           "chargingControl: MPPT released once charger ready");
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// fw v28 (F1) — disarm the selector before opening the charge window, and open only onto a
+// conducting fuel cell. See chargingControl()'s cruise branch and docs/fw28_source_selector.md §3.
+// ═════════════════════════════════════════════════════════════════════════════
+
+// (1) From a selector BT-only state: chargingControl() must disarm the selector THIS commander
+// period and NOT open the window; the next powerBalance() tick re-closes FC_BUS through the
+// latch's own release; the window then opens on a LATER commander period once the survivor
+// blanking clears. The property is asserted directly: no tick has both bus switches LOW while
+// MOT_PWR_ENABLE is high.
+static void test_fw28_f1_disarm_before_open(void) {
+    test_group("fw v28 (F1): the charge window disarms an FC selector cut and opens only later");
+
+    reset_test_state();
+    digitalWrite(FC_REG_ENABLE, HIGH);
+    digitalWrite(BT_REG_ENABLE, HIGH);
+    digitalWrite(MOT_PWR_ENABLE, HIGH);
+    // Selector holds the fuel cell off the bus (a BT-only start, as Idle->Run arms it).
+    shareBatteryOnlyArmed  = true;
+    shareBatteryOnlyActive = true;
+    shareSelectorFC        = false;          // BT selected
+    shareSpCutFC = true; shareIsoFC = true;
+    digitalWrite(FC_BUS_ENABLE, LOW);
+    digitalWrite(BT_BUS_ENABLE, HIGH);
+    V_bus = 16.0f;                           // above V_BUS_CHARGED_THRESH, for the release below
+    power_share_setpoint = 0.50f;            // in-band: once released, the latch owns nothing
+    charge_goal = 1.0f;
+    current     = 0.5f;                      // cruise, not regen
+    ag105_status_raw = AG105_GENSTAT_CHARGING;
+    ag105DataValid   = true;
+
+    chargingControl();
+    check(!shareBatteryOnlyArmed && !shareBatteryOnlyActive,
+          "F1: chargingControl() disarms the selector THIS commander period, on sight of the FC "
+          "cut it owns");
+    check(digitalRead(FC_CHARGE_ENABLE) == LOW,
+          "F1: the window does NOT open on this tick -- FC_BUS_ENABLE is still LOW");
+    check(digitalRead(BT_BUS_ENABLE) == HIGH && digitalRead(FC_BUS_ENABLE) == LOW,
+          "F1: no source-less tick -- BT stays HIGH throughout, FC stays LOW (the bus is never "
+          "left with both switches low while MOT_PWR_ENABLE is high)");
+
+    // The very next powerBalance() tick re-closes FC_BUS through the latch's OWN release (the
+    // selector no longer feeds it 0.0, so the in-band commanded setpoint owns the tick).
+    uint32_t t = 0;
+    t += 1000; g_mock_micros = t; powerBalance();
+    check(digitalRead(FC_BUS_ENABLE) == HIGH && !shareSpCutFC && !shareIsoFC,
+          "F1: the next powerBalance() tick re-closes FC_BUS through the latch's guarded release");
+    check(digitalRead(BT_BUS_ENABLE) == HIGH,
+          "F1: BT_BUS stays HIGH across the release -- make before break, never both low");
+
+    // A later commander period: FC_BUS now reads HIGH, but the survivor blanking (30 ms) has not
+    // cleared yet, so the conduction gate still refuses.
+    chargingControl();
+    check(digitalRead(FC_CHARGE_ENABLE) == LOW,
+          "F1: still refused immediately after the release -- FC_BUS is HIGH but inside its "
+          "turn-on blanking window");
+
+    // Once the blanking window clears, the conduction-gated open fires.
+    g_mock_millis += SHARE_CUT_SURVIVOR_BLANK_MS;
+    chargingControl();
+    check(digitalRead(FC_CHARGE_ENABLE) == HIGH,
+          "F1: the window opens once FC_BUS_ENABLE reads HIGH and is out of its blanking window -- "
+          "a conduction test, not a period count");
+}
+
+// (2) Symmetric cases named in the design record: a deferred (unlatched) FC cut opens normally
+// (F1's test is only for a LATCHED selector cut); a Pi-commanded share of 0.0 (not the selector)
+// keeps the window closed for as long as it stands, which fw v28 accepts as the cost of the fix
+// (fw v27's S2-style restore is no longer reached from the chargingControl() call site); and the
+// FC-selected case (selector holds BT off the bus) opens with no bus movement at all.
+static void test_fw28_f1_symmetric_cases(void) {
+    test_group("fw v28 (F1): symmetric cases -- non-selector cut, Pi-commanded 0.0, FC-selected");
+
+    // A Pi-commanded share of 0.0 (NOT the selector) cuts FC through the ordinary setpoint latch.
+    // The window stays closed for as long as that command stands -- the accepted consequence.
+    reset_test_state();
+    digitalWrite(FC_REG_ENABLE, HIGH);
+    digitalWrite(BT_REG_ENABLE, HIGH);
+    digitalWrite(MOT_PWR_ENABLE, HIGH);
+    digitalWrite(FC_BUS_ENABLE, HIGH);       // both switches HIGH -- the entry's last-source guard
+    digitalWrite(BT_BUS_ENABLE, HIGH);
+    V_bus = 16.0f;
+    power_share_setpoint = 0.0f;             // Pi-commanded FC cut, selector not involved
+    I_fc = 0.0f; I_batt = 0.5f;
+    uint32_t t = 0;
+    for (int i = 0; i < 50; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
+    check(shareSpCutFC && digitalRead(FC_BUS_ENABLE) == LOW && !shareBatteryOnlyArmed,
+          "F1 symmetric: (setup) FC is cut by a bare Pi command, with no selector involved at all");
+    charge_goal = 1.0f;
+    current     = 0.5f;
+    chargingControl();
+    check(digitalRead(FC_CHARGE_ENABLE) == LOW,
+          "F1 symmetric: the window stays CLOSED while the non-selector cut stands -- "
+          "chargingControl() cannot disarm a command it does not own, and the conduction gate "
+          "correctly refuses a fuel cell that is not on the bus");
+
+    // The selector holds the FUEL CELL selected (BT is the cut channel): the window opens with
+    // no bus movement at all, because neither of F1's two tests refuses.
+    reset_test_state();
+    digitalWrite(FC_REG_ENABLE, HIGH);
+    digitalWrite(BT_REG_ENABLE, HIGH);
+    digitalWrite(MOT_PWR_ENABLE, HIGH);
+    shareBatteryOnlyArmed  = true;
+    shareBatteryOnlyActive = true;
+    shareSelectorFC        = true;           // FC selected -- BT is the one cut
+    shareSpCutBT = true; shareIsoBT = true;
+    digitalWrite(FC_BUS_ENABLE, HIGH);
+    digitalWrite(BT_BUS_ENABLE, LOW);
+    charge_goal = 1.0f;
+    current     = 0.5f;
+    chargingControl();
+    check(digitalRead(FC_CHARGE_ENABLE) == HIGH,
+          "F1 symmetric (FC selected): the window opens immediately -- FC_BUS_ENABLE already reads "
+          "HIGH and is not blanked (driven with raw digitalWrite(), never risen)");
+    check(digitalRead(FC_BUS_ENABLE) == HIGH && digitalRead(BT_BUS_ENABLE) == LOW,
+          "F1 symmetric (FC selected): no bus switch moved to open the window -- the topology was "
+          "already exactly what the charge path wants");
+    // Review S5: the disarm test fires on EITHER selector cut, not just shareSpCutFC -- with FC
+    // selected the arm holds BT off, and testing only shareSpCutFC let the window open with the
+    // selector still armed, producing one guarded BT cut/re-close per window transition (S5). So
+    // the arm DOES drop here too, but the cost is zero: FC_BUS is already HIGH and unblanked, so
+    // test (2) admits the window on the SAME commander period.
+    check(!shareBatteryOnlyArmed,
+          "F1 symmetric (FC selected): the arm DOES disarm here too (review S5 -- either selector "
+          "cut disarms), but at zero cost, since the window opens on this same tick regardless");
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// fw v28 (F4) — k_d holds at K_DROOP in single-source windows (updateShareDroopScale()).
+// ═════════════════════════════════════════════════════════════════════════════
+static void test_fw28_f4_kd_hold_in_charge_window(void) {
+    test_group("fw v28 (F4): k_d holds at K_DROOP, frozen input, while a charge window is open");
+
+    gov_fixture();
+    uint32_t t = 0;
+    // Open the charge window FIRST, then run the light, single-source total that campaign G
+    // measured driving the schedule toward its 0.5-capped maximum (0.906 ohm) and saturating the
+    // FC MDAC word at full scale for 9057 ticks. F4 must intercept this from the very first tick.
+    digitalWrite(FC_CHARGE_ENABLE, HIGH);
+    const float schedInBefore = shareKdSchedTot;
+    gov_run_closed_loop(0.16f, 0.0f, 0.16f, 0.85f, 300, t);
+    check(fabsf(shareDroopKd - K_DROOP) < 1e-6f,
+          "F4: k_d slews to K_DROOP exactly while FC_CHARGE_ENABLE is high -- there is no "
+          "minority to protect in a single-source window");
+    // The raw 16-bit SPI word ORs in MDAC_CMD_LOAD_UPDATE, so the full-scale WORD (not MDAC_res
+    // itself) is the fw v26/v27 saturation signature -- see the golden-record fixtures elsewhere
+    // in this file for the same idiom.
+    check(mdacLastCodeFC != (uint16_t)(MDAC_CMD_LOAD_UPDATE | (uint16_t)MDAC_res),
+          "F4: the FC MDAC word never reaches full scale -- the fw v26/v27 saturation this fixes "
+          "does not recur");
+    check(shareGGuardCount == 0,
+          "F4: the hard g-guard never fires -- k_d tracked to K_DROOP rather than being clamped "
+          "at the write site");
+    check(fabsf(shareKdSchedTot - schedInBefore) < 1e-6f,
+          "F4: the schedule's hysteretic INPUT is frozen for the duration of the window -- it does "
+          "not follow the single-source filtered total");
+
+    // Close the window: the schedule resumes from K_DROOP at the normal (slewed) rate, and the
+    // frozen input re-samples on the first post-window tick that differs by more than the hysteresis.
+    digitalWrite(FC_CHARGE_ENABLE, LOW);
+    I_fc = 0.6f; I_batt = 0.6f;               // a real two-source load, well above the crossover
+    for (int i = 0; i < 5; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
+    check(fabsf(shareKdSchedTot - schedInBefore) > SHARE_KD_HYST_A,
+          "F4: the schedule input re-samples on the first post-window tick whose filtered total "
+          "differs from the frozen value by more than the hysteresis");
+
+    // ── The ISOLATION half (fix-round finding F-3: REWRITTEN, the old body was vacuous) ────────
+    // The old body set shareIsoFC with FC_BUS_ENABLE still HIGH, which updateShareSetpointCutoff()
+    // orphan-self-heals on the very same tick, and it ran at 1.0 A of total, where the LIVE
+    // schedule's target already IS K_DROOP -- so both halves of the assertion were satisfied by a
+    // loop that never entered the hold at all. The rewrite (a) drives FC_BUS LOW with the claim so
+    // the cut actually stands, (b) runs BELOW the 0.755 A crossover, where the live schedule would
+    // demand a strictly larger k_d, and (c) asserts the S4 FREEZE proper: k_d AND shareKdSchedTot
+    // bit-identical on every tick of the cut, then both resuming after the release.
+    gov_fixture();
+    t = 0;
+    gov_run_closed_loop(0.5f, 0.5f, 1.0f, 0.5f, 200, t);   // above the crossover: k_d settles at K_DROOP
+    const float kdFrozen    = shareDroopKd;
+    const float schedFrozen = shareKdSchedTot;
+    check(fabsf(kdFrozen - K_DROOP) < 1e-6f,
+          "F4 (iso, setup): 1.0 A of two-source total leaves k_d on the K_DROOP floor");
+
+    // WHY THE CLAIM IS RE-ASSERTED EACH TICK (measured while writing this test, recorded here
+    // because it is a real structural coupling and not a defect): a BARE shareIsoFC -- the
+    // r-based cut, with no setpoint latch behind it -- cannot STAND below the crossover. Its
+    // re-entry in applyShareRatio() fires at r >= DROOP_R_MIN + SHARE_CUTOFF_HYST = 0.16, while
+    // the governor's minority clip pins the reference at lo = SHARE_MINORITY_I_MIN_A/I_tot, which
+    // is > 0.1656 for every total below the 0.755 A crossover. So the claim is re-entered on the
+    // first tick (observed: tick 0). The reachable STANDING single-source cut below the crossover
+    // is therefore the setpoint latch, which sets shareIsoFC and shareSpCutFC together and
+    // freezes powerBalance() before updateShareDroopScale() is ever called. S4's early return is
+    // the belt-and-braces layer under that freeze, and this loop exercises it directly by holding
+    // the claim across the call, exactly as a latched cut would.
+    const float liveTarget = shareDroopScaleTarget(0.30f);
+    check(liveTarget > kdFrozen + 0.05f,
+          "F4 (iso, setup): at 0.30 A the live schedule's target is strictly ABOVE the frozen k_d "
+          "-- the freeze is therefore observable, which is exactly what the old 1.0 A body lacked");
+    I_fc = 0.0f; I_batt = 0.30f;                // single-sourced from the battery, below crossover
+    share_govTotAFilt    = 0.30f;
+    power_share_setpoint = 0.50f;               // in-band: the only freeze in play is S4's
+    shareClosedLoopMode = true; shareClosedLoopRun = true;
+    bool kdMoved = false, schedMoved = false, closedEveryTick = true;
+    for (int i = 0; i < 400; i++) {
+        shareIsoFC = true;                      // a standing r-based cut...
+        digitalWrite(FC_BUS_ENABLE, LOW);       // ...with FC genuinely off the bus
+        t += 1000; g_mock_micros = t; powerBalance();
+        if (!shareClosedLoopMode)               closedEveryTick = false;
+        if (shareDroopKd    != kdFrozen)        kdMoved    = true;
+        if (shareKdSchedTot != schedFrozen)     schedMoved = true;
+    }
+    check(closedEveryTick,
+          "F4 (iso, setup): the run really was CLOSED-LOOP for all 400 ticks, so "
+          "updateShareDroopScale() was reached on every one of them -- the freeze below is the "
+          "function's own early return, not a loop that never called it");
+    check(!kdMoved,
+          "F4 (iso): k_d is bit-identical on EVERY tick of the cut -- updateShareDroopScale() "
+          "returns before both the target and the slew while any shareIso*/shareSpCut* is set (S4)");
+    check(!schedMoved,
+          "F4 (iso): the hysteretic schedule INPUT is frozen with it, so the release re-writes at "
+          "exactly the k_d the inherited MDAC codes already carry (S4)");
+
+    // Release the claim: the schedule resumes, re-samples the (unchanged, 0.30 A) load and walks
+    // k_d up toward the live target it was frozen away from. This is also what makes the two
+    // assertions above non-vacuous -- the SAME load moves k_d the moment the claim is gone.
+    shareIsoFC = false;
+    digitalWrite(FC_BUS_ENABLE, HIGH);
+    I_fc = 0.15f; I_batt = 0.15f;               // same total, now genuinely two-source
+    for (int i = 0; i < 600; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
+    check(fabsf(shareKdSchedTot - 0.30f) < 1e-2f,
+          "F4 (iso): the schedule input re-samples to the live 0.30 A total once the cut clears");
+    check(fabsf(shareDroopKd - liveTarget) < 1e-3f,
+          "F4 (iso): and k_d resumes, reaching the live schedule target it was held away from -- "
+          "the freeze is a hold, not a permanent floor");
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -10958,6 +11856,9 @@ static void test_mppt_uv_backoff() {
     V_bus       = 12.79f; // sustained sag, below AG105_CHG_BACKOFF_V (12.8)
     g_pin_value[BT_BUS_ENABLE] = LOW;
     g_pin_value[REGEN_ENABLE]  = LOW;
+    // fw v28 (F1): the window opens only when FC_BUS_ENABLE already reads HIGH — this fixture's
+    // subject is the UV backoff, not F1's conduction gate, so FC is left on the bus.
+    digitalWrite(FC_BUS_ENABLE, HIGH);
 
     g_mock_millis = 0;
     chargingControl();
@@ -20447,6 +21348,8 @@ static void test_y_no_charging_manager() {
     g_pin_value[MOT_PWR_ENABLE]   = HIGH;
     g_pin_value[BT_BUS_ENABLE]    = HIGH;
     g_pin_value[FC_CHARGE_ENABLE] = LOW;
+    // fw v28 (F1): the charge window now opens only onto a conducting fuel cell.
+    digitalWrite(FC_BUS_ENABLE, HIGH);
     g_mock_millis = 1000;
     g_mock_micros = 1000000;
     charge_goal = 0.5f;
@@ -21880,6 +22783,7 @@ int main() {
     test_hil_recovery_gated_on_phase3_only();
     test_hil_recovery_blocked_by_open_log();
     test_hil_warmreset_state_audit();
+    test_fw28_hilwarmreset_clears_selector();
     test_hil_recovery_boundary_cleared_by_warmreset();
     test_hil_sequential_run_regression();
     test_hil_mode_cmd_gated_outside_idle();
@@ -21948,6 +22852,9 @@ int main() {
     test_icharge_cleared_on_invalid();
     test_ag105_config_read_verify();
     test_charging_control_fc_bootstrap();
+    test_fw28_f1_disarm_before_open();
+    test_fw28_f1_symmetric_cases();
+    test_fw28_f4_kd_hold_in_charge_window();
     test_mppt_quantization();
     test_mppt_write_rules();
     test_mppt_0xff_discriminator();
@@ -22053,7 +22960,7 @@ int main() {
     test_share_eff_setpoint_slew_converges_to_clipped_target();
     test_share_eff_setpoint_slew_reset_reseeds();
     test_governor_reset_clears_closedloop_run();
-    test_governor_lo_clamp_sliver();
+    test_governor_sliver_hold();
     test_governor_setpoint_latch_precedence_at_low_current();
     test_governor_min_load_gate_precedes_governor();
     test_droop_ratio_slew_limit();
@@ -22098,6 +23005,7 @@ int main() {
     test_share_current_ceiling_open_loop();
     test_share_current_ceiling_oc_fc_still_latches();
     test_share_current_ceiling_observability();
+    test_fw28_selector_hil_aux_bits();
     test_share_current_ceiling_reachability_threshold();
     test_share_current_ceiling_cleared_on_idle_exits();
     test_share_current_ceiling_sustained_refusal_regime();
@@ -22114,8 +23022,14 @@ int main() {
     test_fw27_kd_bit_identical_above_crossover();
     test_fw27_g_guard_clamps_and_counts();
     test_fw27_g_guard_fires_on_a_stale_schedule();
-    test_fw27_battery_only_start();
-    test_fw27_battery_only_ownership_and_charge_window();
+    test_fw28_selector_start();
+    test_fw28_selector_ownership_and_charge_window();
+    test_fw28_selector_inclusive_thresholds();
+    test_fw28_selector_transition_never_both_low();
+    test_fw28_selector_raw_current_escape();
+    test_fw28_f2_selection_change_ordering_and_blanking();
+    test_fw28_f6_subgate_slew_ceiling();
+    test_fw28_f5_state98_key5_refuses_open_under_a_cut();
     test_fw27_battery_only_survivor_regulator_guard();
     test_fw27_battery_only_deferral_and_high_start();
     test_fw27_iso_bypass_proposal_accumulates();
