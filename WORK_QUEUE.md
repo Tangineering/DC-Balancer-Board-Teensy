@@ -78,20 +78,20 @@ firmware round lands).
       4114 / 175 / 4596), commit with the flag flip, push. Operator flashes.
 
 **Tools mirror round (after the firmware lands; one boundary = fw v28):**
-- [ ] 8. (IN PROGRESS 2026-09-08 afternoon, Opus mirror agent) `governor_model.py` (selector, sliver hold, k_d charge-window hold, the three constants),
+- [x] 8. (DONE `1549067` part 1 + `e7ab118` part 2) `governor_model.py` (selector, sliver hold, k_d charge-window hold, the three constants),
       `test/gov_fw27_harness.cpp` -> fw v28 harness + `test_governor_fw27_equivalence.py` (new cases: both
       transitions, the sliver, the window hold; max code delta 0), `ems_walk.py` + the MPC delivery table /
       shadow governor / `batt_only_cut_mask()` (selector-aware: the policies' commanded share now picks the
       source under the gate), `hil_plant_sim.py` FW28-ERA block, `run_hil_suite.py` `_BATT_ONLY_GATE_A`
       and every early-window switch-word pin (FC-only starts are now reachable), `TARGET_FW_VERSION` 28.
-- [ ] 9. Re-derive every stimulus expressed as a designed total at I_min 0.125 (the retrospective rule):
+- [x] 9. (DONE `e7ab118`: re-walk table in run_hil_suite.py :1049-1177; mppt-tracking sag/plateau needs the campaign) Re-derive every stimulus expressed as a designed total at I_min 0.125 (the retrospective rule):
       `fw26-clamp-joint` step (1.57 A: bound min(0.85·1.57, 1.57−0.125) = 1.3345 A, `DROOP_R_MAX` term
       governs — confirm and re-walk), the sweep/cruise legs, the sdpx/sdpb/sdpftp pins, the ftp75c legs (now
       FC-selectable under the gate — check what v6 / the DP tables command below 0.25 A), the ems-sdp bin-21
       plateau (ruling still open). Re-walk every anchor; provisional pins for the first fw v28 campaign.
-- [ ] 10. **F6:** the walk models the share-loop feedback-EMA overshoot on the fw v26 clamp (+3 % of r for
+- [x] 10. (DONE `e7ab118`: reported, not applied; joint 1.3561 A with F6 vs board 1.3243 A) **F6:** the walk models the share-loop feedback-EMA overshoot on the fw v26 clamp (+3 % of r for
       ~12 ms; the joint leg's bound needs a third reading on the board).
-- [ ] 11. Suites, commit, push; first fw v28 campaign after the operator's flash (full plan incl. the opt-in
+- [ ] 11. (suites green, committed, pushed; WAITING on the operator flash of fw v28 rev 2 `ded47f3`) Suites, commit, push; first fw v28 campaign after the operator's flash (full plan incl. the opt-in
       legs; the F1 legs `charge-to-full`, the five `ems-ftp75c-*`, `ems-sdp-cross` are the witnesses).
 
 - [x] 12. (DONE `ded47f3`: growth requirement 0.10 m/s over the window and manual-current exclusion added by review; same-tick sign correction; 4318 / 175 / 4699, harness 51; a wrong flip is silent and permanent for the boot - recorded) **fw v28 rev 2 (operator ruling 2026-09-08 afternoon, from the harness finding): encoder direction-sense
