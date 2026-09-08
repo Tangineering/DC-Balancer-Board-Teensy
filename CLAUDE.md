@@ -910,6 +910,19 @@ single-source windows; F7 recorded only. Commits `4e20b76` (queue), `a683e25` (e
   every selection change), a BT_BUS opened WITHOUT FC_CHARGE (`'2'`, the backoff's refused re-close) is single-
   source the schedule does not detect, the sliver's strict `lo < hi` at the exact gate, the spent-dwell escape.
   BENCH GATES unchanged in kind: the fw v6 ladder at 0.125/0.875 and the two-axis dropout sweep (CAL-6).
+- **fw v28 REV 2 (`ded47f3`, PENDING FLASH; operator ruling from the harness finding): encoder direction-sense
+  AUTO-FLIP on positive-feedback runaway, NO fault.** `encDirSign` applied at the six non-zero `v_actual` publish sites
+  of `updateWheelSpeed()` (ISRs and velocity math byte-identical; inert under HIL_SIM). A tick qualifies when not in
+  State-98 manual-current mode, sign(current) == -sign(v_actual), |v| >= 0.30 m/s, |current| >= 0.5*MOTOR_I_CMD_MAX,
+  the magnitude is ratchet-non-decreasing (0.02 m/s tolerance) and `encVelHaveValid`; 500 consecutive ticks AND the
+  window must have GROWN by 0.10 m/s (review: a constant-speed drag stall against the rail - incline, dyno - would
+  otherwise flip a correctly wired encoder). On a flip: sign inverted, the live `v_actual` negated so the same tick's
+  motor command is corrected, `resetDriveControlState()`, one ASCII line, 5 s lockout, cap 4 per boot; the sign
+  survives 'Q'/warm reset (a wiring fact; power cycle resets it; no EEPROM). **A wrong flip is SILENT and PERMANENT for
+  the boot** (condition 1 fails every tick afterwards), so the entry test is the only real lever; the lockout and cap
+  bound repeated genuine detections. No wire-level observable (aux byte and BLG flags full). Harness: the 180 deg
+  case now flips exactly once and recovers to +1.00 (rail occupancy 19 900/20 000 -> 804/8000); near-aligned jitter
+  never flips. Tests 4318 / 175 / 4699, harness 51, 0 warnings.
 - **Host-native encoder-defect harness (WORK_QUEUE 7d, `a683e25`):** `tools/encoder_edge_script.py` (mechanical
   law transcribed from `hil_plant_sim.PlantState.step`, equivalence pytest bit-identical; geometry asserted
   against the `.ino`; five defect scripts; manifest; 41 checks) + `test/encoder_defect_harness.cpp` as the

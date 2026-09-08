@@ -94,6 +94,15 @@ firmware round lands).
 - [ ] 11. Suites, commit, push; first fw v28 campaign after the operator's flash (full plan incl. the opt-in
       legs; the F1 legs `charge-to-full`, the five `ems-ftp75c-*`, `ems-sdp-cross` are the witnesses).
 
+- [x] 12. (DONE `ded47f3`: growth requirement 0.10 m/s over the window and manual-current exclusion added by review; same-tick sign correction; 4318 / 175 / 4699, harness 51; a wrong flip is silent and permanent for the boot - recorded) **fw v28 rev 2 (operator ruling 2026-09-08 afternoon, from the harness finding): encoder direction-sense
+      AUTO-FLIP on positive-feedback runaway, NO fault.** Signature: sign(current) == -sign(v_actual), |v_actual| >=
+      0.30 m/s, |current| >= 0.5*MOTOR_I_CMD_MAX, |v_actual| not decreasing, sustained 500 ticks; on detection flip a
+      runtime sign factor at the velocity publish seam (not the ISRs / updateWheelSpeed math), print an ASCII line,
+      5 s lockout, <= 4 flips per boot (anti-chatter: a significant threshold, per the operator). Not applied to the
+      HIL-injected v_actual. Rationale: the encoder connector can be plugged in reversed; the harness measured the
+      inverted case railing the drive with no fault. Test-writer: host-native + the harness 180 deg case now asserts
+      the flip and recovery. IN PROGRESS (Opus implementer, brief scratchpad/brief_fw28r2_encdir.md).
+
 **Open-item review (2026-09-08, everything else in this file, triaged):**
 - Runs THIS session in parallel with the firmware: **§7d encoder-defect harness** (operator brief, disjoint files).
 - Tools round after fw v28 (items 8–11 above) absorbs: §7b Gate-1 single-source-aware; `ems-y-b00-*`
@@ -772,7 +781,7 @@ at fixed setpoint, both minority directions, and a repeat of WP0073/WP0100 on th
 the 1.0–1.35 Ω bench battery supply) — the whitepaper's standing recommendation, previously absent
 from this queue.
 
-## 7d. Opened 2026-09-08 (host-native encoder-defect harness — implementation brief) — DONE `a683e25` (41 pytest + 43 harness checks, first 2676-run sweep, docs/encoder_defect_harness.md); the run_tests hook DONE (43 checks inside run_tests, 4250 total); FINDING for the operator: a 180 deg phase error = sign-inverted reading, drive railed, NO fault (no encoder-sign plausibility check in detectFaults())
+## 7d. Opened 2026-09-08 (host-native encoder-defect harness — implementation brief) — DONE `a683e25` (41 pytest + 43 harness checks, first 2676-run sweep, docs/encoder_defect_harness.md); the run_tests hook DONE; the 180 deg case now asserts the fw v28 rev 2 auto-flip (`ded47f3`); FINDING for the operator: a 180 deg phase error = sign-inverted reading, drive railed, NO fault (no encoder-sign plausibility check in detectFaults())
 
 Source: operator question 2026-09-08 ("is it feasible to add a simulation of the encoder wheel to
 the hi-fi HIL engine, with phase offset, +1/−1/+1 teeth, and missing teeth"). **Feasibility
