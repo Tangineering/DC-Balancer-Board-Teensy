@@ -923,6 +923,13 @@ single-source windows; F7 recorded only. Commits `4e20b76` (queue), `a683e25` (e
   bound repeated genuine detections. No wire-level observable (aux byte and BLG flags full). Harness: the 180 deg
   case now flips exactly once and recovers to +1.00 (rail occupancy 19 900/20 000 -> 804/8000); near-aligned jitter
   never flips. Tests 4318 / 175 / 4699, harness 51, 0 warnings.
+- **fw v28 REV 3 (`7482395`, PENDING FLASH; operator ruling): the encoder direction sense PERSISTS across power
+  cycles** - a 4-byte EEPROM record at 4276 (magic / sign / generation / checksum) read in `setup()`, written only
+  at a runaway flip via `EEPROM.update()` (<= 4 per boot against ~100 000 cycles), a blank or corrupt record leaves
+  +1 and writes nothing; a stale stored sign on a re-wired board is corrected and re-stored by the detector within
+  the same window; not applied under HIL_SIM (read and mirrored only); State-98 `'Z'` clears it (PLAN.md 9b).
+  Residual for the operator: the write is a blocking flash operation on the flip tick, duration TODO(verify: PJRC).
+  Tests 4367 / 175 / 4704, harness 51.
 - **Host-native encoder-defect harness (WORK_QUEUE 7d, `a683e25`):** `tools/encoder_edge_script.py` (mechanical
   law transcribed from `hil_plant_sim.PlantState.step`, equivalence pytest bit-identical; geometry asserted
   against the `.ino`; five defect scripts; manifest; 41 checks) + `test/encoder_defect_harness.cpp` as the

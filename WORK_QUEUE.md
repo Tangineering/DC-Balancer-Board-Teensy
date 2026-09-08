@@ -91,7 +91,7 @@ firmware round lands).
       plateau (ruling still open). Re-walk every anchor; provisional pins for the first fw v28 campaign.
 - [x] 10. (DONE `e7ab118`: reported, not applied; joint 1.3561 A with F6 vs board 1.3243 A) **F6:** the walk models the share-loop feedback-EMA overshoot on the fw v26 clamp (+3 % of r for
       ~12 ms; the joint leg's bound needs a third reading on the board).
-- [ ] 11. (suites green, committed, pushed; WAITING on the operator flash of fw v28 rev 2 `ded47f3`) Suites, commit, push; first fw v28 campaign after the operator's flash (full plan incl. the opt-in
+- [ ] 11. (suites green, committed, pushed; WAITING on the operator flash of fw v28 rev 3 `7482395`) Suites, commit, push; first fw v28 campaign after the operator's flash (full plan incl. the opt-in
       legs; the F1 legs `charge-to-full`, the five `ems-ftp75c-*`, `ems-sdp-cross` are the witnesses).
 
 - [x] 12. (DONE `ded47f3`: growth requirement 0.10 m/s over the window and manual-current exclusion added by review; same-tick sign correction; 4318 / 175 / 4699, harness 51; a wrong flip is silent and permanent for the boot - recorded) **fw v28 rev 2 (operator ruling 2026-09-08 afternoon, from the harness finding): encoder direction-sense
@@ -102,6 +102,11 @@ firmware round lands).
       HIL-injected v_actual. Rationale: the encoder connector can be plugged in reversed; the harness measured the
       inverted case railing the drive with no fault. Test-writer: host-native + the harness 180 deg case now asserts
       the flip and recovery. IN PROGRESS (Opus implementer, brief scratchpad/brief_fw28r2_encdir.md).
+
+- [ ] 13. **fw v28 rev 3 (operator ruling 2026-09-08 evening): the encoder direction sign PERSISTS across power
+      cycles** (Teensy 4.1 EEPROM emulation; magic + sign + generation + checksum; EEPROM.update() only at a flip,
+      <= 4 writes per boot; read at setup(); a State-98 key clears it; a stale stored sign is corrected and
+      re-stored by the growth-gated detector). DONE `7482395` (4367 / 175 / 4704, harness 51; State-98 Z key; residual: the flash write duration at the flip tick is TODO(verify: PJRC)).
 
 **Open-item review (2026-09-08, everything else in this file, triaged):**
 - Runs THIS session in parallel with the firmware: **§7d encoder-defect harness** (operator brief, disjoint files).
