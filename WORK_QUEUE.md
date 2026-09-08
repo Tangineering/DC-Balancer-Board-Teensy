@@ -13,7 +13,7 @@ files (it must not edit `test/test_main.cpp` — its `run_tests` hook is added b
 firmware round lands).
 
 **Firmware brief (one Opus implementer, `teensy_controller.ino` + `test/test_main.cpp` via the test-writer):**
-- [ ] 1. **F1 — clear the arm before the charge path opens, and open only onto a conducting fuel cell.**
+- [x] 1. (DONE `9318e16`, either-cut disarm per review S5; the '5' key refusal S6) **F1 — clear the arm before the charge path opens, and open only onto a conducting fuel cell.**
       Site: `chargingControl()` cruise branch, the `assertFcChargeEnable(true)` call (~line 12005). If the
       never-closed selector currently holds FC off the bus (`shareSpCutFC` owned by the selector), disarm
       the selector this commander period and do NOT call `assertFcChargeEnable(true)`; the latch's own
@@ -24,7 +24,7 @@ firmware round lands).
       S2 restore inside `assertFcChargeEnable()` stays (unreachable from the selector afterwards). Test: window
       entry from a battery-only state asserts FC_BUS HIGH for >= the RT1987 turn-on before BT_BUS goes LOW,
       and that no tick has both bus switches LOW with MOT_PWR HIGH.
-- [ ] 2. **F2 — the never-closed SOURCE SELECTOR (replaces "battery-only arm" + "disarm permanently on an
+- [x] 2. (DONE `9318e16`; + review S2 raw-current escape while FC is selected) **F2 — the never-closed SOURCE SELECTOR (replaces "battery-only arm" + "disarm permanently on an
       out-of-band command").** State: the arm plus a selected source in {BT, FC}, default BT at every
       `armShareBatteryOnlyStart()` site (rename to `armShareStartSelector()` or keep the name and document).
       Per-tick rule while armed: commanded `power_share_setpoint >= DROOP_R_MAX` (0.85, INCLUSIVE — the Pi
@@ -43,14 +43,14 @@ firmware round lands).
       Tests: BT->FC and FC->BT transitions tick by tick (never both LOW); inclusive thresholds (0.85 exactly
       selects FC, 0.8499 holds); hold between; gate release from FC-only re-closes BT then closes the loop;
       the load guard admits at every total under the gate; a selection change during a deferred cut.
-- [ ] 3. **F3 — the hysteresis sliver HOLDS instead of pinning 0.5.** Site: the closed-loop clip at ~line
+- [x] 3. (DONE `9318e16`; the hold is BOUNDED to [loD, 1-loD], loD = min(0.5, SHARE_HANDOFF_MIN_A/I_tot) per review S3) **F3 — the hysteresis sliver HOLDS instead of pinning 0.5.** Site: the closed-loop clip at ~line
       11325 (`if (lo > 0.5f) lo = 0.5f;`). When `lo > hi` (total inside [2·I_min − SHARE_GOV_OL_HYST_A,
       2·I_min)), hold the reference at the current effective (slewed) setpoint — no motion, the same doctrine
       as `shareFeedforwardClipTarget()`'s empty-band hold. The k_d schedule's own 0.5 cap in
       `shareDroopScaleTarget()` is UNCHANGED (it bounds g, not the reference). Test: a total parked in the
       sliver for 1000 ticks after converging at share 0.80 keeps r within one slew step of 0.80 (was walked to
       0.5000); a genuine coast-down through the sliver still exits to open loop at the exit threshold.
-- [ ] 4. **`SHARE_MINORITY_I_MIN_A` 0.15 -> 0.125 A** (`constexpr`, ~line 2392; operator: D = 0.25 V).
+- [x] 4. (DONE `9318e16`; + review S7: HANDOFF slew ceiling whenever the filtered total is under the gate) **`SHARE_MINORITY_I_MIN_A` 0.15 -> 0.125 A** (`constexpr`, ~line 2392; operator: D = 0.25 V).
       Derived and MOVING: gate 0.30 -> 0.25 A, exit 0.25 -> 0.20 A, crossover 0.906 -> 0.755 A (the `'S'`
       line and every prose site derive from the symbols — grep for 0.906, 0.30 A gate, 0.25 A exit, 1.4706,
       0.272 V and re-derive each), authority `RE_MAX·0.125·0.9` = 0.227 V (0.252 V at unity), fw v26
@@ -60,25 +60,25 @@ firmware round lands).
       equality that produced 58 cuts / 90 s is gone); re-state the fw v19 rationale at the constants and the
       `static_assert` that the floor sits above the dark threshold. Sub-gate fixtures were HALVED for rev 2;
       re-point them proportionally (0.15/0.125) with the justification at the site, as rev 2 did.
-- [ ] 5. **F4 — hold k_d at `K_DROOP` in single-source windows.** `shareDroopScaleTarget()` /
+- [x] 5. (DONE `9318e16`; K_DROOP target only with FC_CHARGE HIGH, k_d FROZEN under any cut per review S4) **F4 — hold k_d at `K_DROOP` in single-source windows.** `shareDroopScaleTarget()` /
       `updateShareDroopScale()` (~10840–10875): the target is `K_DROOP` whenever `FC_CHARGE_ENABLE` reads HIGH
       or any of `shareIsoFC/BT`, `shareSpCutFC/BT` is set; slewed under the existing
       `SHARE_KD_SLEW_FRAC_PER_TICK` so the codes never step; on window close the schedule resumes from
       `K_DROOP` at the normal rate. Test: open a charge window at 0.16 A single-source and assert the FC code
       never reaches 4095 and `shareGGuardCount` stays 0 (was 9057 ticks on mppt-tracking); the schedule
       resumes after the window.
-- [ ] 6. **F7 RECORDED, not built:** the re-entry closes a channel on inherited MDAC codes (0.2355 A / 12 ms on
+- [x] 6. (recorded in the design record) **F7 RECORDED, not built:** the re-entry closes a channel on inherited MDAC codes (0.2355 A / 12 ms on
       ems-ftp75-sdp). With the selector, re-entries happen at every selection change; re-seeding the codes at
       the clipped band edge on release is a separate ruling (a second writer outside the rate limiter was
       REJECTED in rev 2).
-- [ ] 7. Changelog block at the top of the `.ino`, `FW_VERSION` 28, `docs/firmware-versions.md` row 28
+- [x] 7. (DONE `9318e16`: 4207 / 175 / 4694, 0 warnings; CLAUDE.md addendum 2026-09-08; PENDING FLASH - operator flashes) Changelog block at the top of the `.ino`, `FW_VERSION` 28, `docs/firmware-versions.md` row 28
       (PENDING FLASH), design record `docs/fw28_source_selector.md` (mechanism, the make-before-break
       argument, the derived-constant table at 0.125 A, validation), CLAUDE.md addendum 2026-09-08, then the
       Opus safety review + Sonnet correctness review, fix round, `self-review`, three builds (baseline
       4114 / 175 / 4596), commit with the flag flip, push. Operator flashes.
 
 **Tools mirror round (after the firmware lands; one boundary = fw v28):**
-- [ ] 8. `governor_model.py` (selector, sliver hold, k_d charge-window hold, the three constants),
+- [ ] 8. (IN PROGRESS 2026-09-08 afternoon, Opus mirror agent) `governor_model.py` (selector, sliver hold, k_d charge-window hold, the three constants),
       `test/gov_fw27_harness.cpp` -> fw v28 harness + `test_governor_fw27_equivalence.py` (new cases: both
       transitions, the sliver, the window hold; max code delta 0), `ems_walk.py` + the MPC delivery table /
       shadow governor / `batt_only_cut_mask()` (selector-aware: the policies' commanded share now picks the
@@ -772,7 +772,7 @@ at fixed setpoint, both minority directions, and a repeat of WP0073/WP0100 on th
 the 1.0–1.35 Ω bench battery supply) — the whitepaper's standing recommendation, previously absent
 from this queue.
 
-## 7d. Opened 2026-09-08 (host-native encoder-defect harness — implementation brief)
+## 7d. Opened 2026-09-08 (host-native encoder-defect harness — implementation brief) — DONE `a683e25` (41 pytest + 43 harness checks, first 2676-run sweep, docs/encoder_defect_harness.md); OPEN: the run_tests hook in test_main.cpp; FINDING for the operator: a 180 deg phase error = sign-inverted reading, drive railed, NO fault (no encoder-sign plausibility check in detectFaults())
 
 Source: operator question 2026-09-08 ("is it feasible to add a simulation of the encoder wheel to
 the hi-fi HIL engine, with phase offset, +1/−1/+1 teeth, and missing teeth"). **Feasibility

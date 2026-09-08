@@ -451,8 +451,8 @@ of which the happy-path tests flagged. The review is cheap and catches exactly t
 ## Archived session history (2026-06-23 through 2026-09-01, fw v2–v25 bring-up and flash era)
 
 The superseded status addenda from that period were moved verbatim to
-`docs/claude-md-archive.md` to keep this file under the memory-size limit. Eight ranges are
-archived. The eighth (rotated 2026-09-04) holds the 2026-09-02c DP-bound addendum (per-node bleed, loss map, droop-mode bus law, ftp75c + regen term, grid widening, mpc-sto default), superseded by the 2026-09-03 addenda; its load-bearing facts survive in `docs/HIL_PLANT.md`, `docs/modeling/` and WORK_QUEUE.md. The seventh (rotated 2026-09-03) holds the 2026-09-02 overnight addendum (Ag105 eta 0.88 in
+`docs/claude-md-archive.md` to keep this file under the memory-size limit. Nine ranges are
+archived. The ninth (rotated 2026-09-08) holds the 2026-09-02b fw v26 current-ceiling governor addendum, superseded by the 2026-09-03 addendum's board calibration; its load-bearing facts survive in `docs/fw26_current_ceiling_governor.md` and `docs/firmware-versions.md` row 26. The eighth (rotated 2026-09-04) holds the 2026-09-02c DP-bound addendum (per-node bleed, loss map, droop-mode bus law, ftp75c + regen term, grid widening, mpc-sto default), superseded by the 2026-09-03 addenda; its load-bearing facts survive in `docs/HIL_PLANT.md`, `docs/modeling/` and WORK_QUEUE.md. The seventh (rotated 2026-09-03) holds the 2026-09-02 overnight addendum (Ag105 eta 0.88 in
 both engines, the eta-era DP/SDP and sdp_policy_v4, the governor-aware MPC, campaigns B and C, the
 HIL_PLANT.md adversarial review run 001), superseded by the 2026-09-03 addendum; its load-bearing
 facts survive in `docs/HIL_PLANT.md` section 4.6, `docs/reviews/hil-plant/`, `docs/modeling/`,
@@ -542,55 +542,6 @@ threshold-region noise rather than the RC rise.
 report folders) live under the gitignored `HIL Results/` directory and are local-only. The
 campaign addenda below are therefore the **only committed record** of what each campaign
 found — do not delete one on the assumption that the report folder still holds it.
-
----
-
-## Status & session addendum (2026-09-02b, fw v26: FC/BT current-ceiling share clamp — flashed 2026-09-02 evening; calibrated on the board in campaign E, see the 2026-09-03 addendum)
-
-Operator directive (2026-09-02): keep `OC_FC` unchanged, but extend the share governor so that
-when the fuel-cell current approaches its limit the delivered FC share is clamped and the
-battery supplies the excess; a battery-side ceiling of the same form was ruled in (much
-higher, not expected to bind). Shipped as **fw v26** (Opus implementer, Opus safety review,
-fix round, orchestrator rebuild 3926 / 175 / 4408 checks, 0 warnings on the production and
-HIL builds). `docs/fw26_current_ceiling_governor.md` is the design record; ledger row 26.
-
-- `applyShareCurrentCeilings(sp)`: `sp <= SHARE_GOV_I_FC_CEIL_A / share_govTotAFilt` (**1.25 A**,
-  0.15 A under `LIMIT_I_FC_MAX`, which has NO persistence filter — a single raw sample latches)
-  and `sp >= 1 - SHARE_GOV_I_BT_CEIL_A / share_govTotAFilt` (**2.70 A**), hysteresis
-  `SHARE_GOV_CEIL_HYST_A` 0.05 A on engagement only, against the governor's ~20 ms EMA. Minority
-  clip runs FIRST; result constrained into `[DROOP_R_MIN, DROOP_R_MAX]` (can never command a
-  cut); applied downstream of the `share_actedSp` bookkeeping (cannot toggle HOLD/FEEDFORWARD);
-  HOLD: no clamp, FEEDFORWARD: clamped; suppressed while a deferred cut owns the setpoint;
-  bit-identical to fw v25 below the ceilings (fixture MDAC-code comparison). Flags cleared on
-  every frozen-loop return, `resetShareControlState()`, `doState3()` and the State-98 `'Q'`
-  exit; State 99 freezes them like `fault_flags`. `SHARE_MINORITY_I_MIN_A` is now `constexpr`
-  and the ceilings are `static_assert`ed against it.
-- ⚠️ **REACHABILITY (the governing number):** the minority clip bounds the commandable FC
-  current to `min(0.85·I_tot, I_tot − 0.30)`, so the clamp can act only above **1.55 A of
-  TWO-SOURCE total** (first engagement measured 1.60 A). In an FC-charge window
-  `assertFcChargeEnable()` holds `BT_BUS` LOW, `I_tot == I_fc`, `r` is pinned at `DROOP_R_MIN`,
-  and the clamp is structurally inert — every `OC_FC` latch on record (`charge-cruise` 1.40 A
-  single-source) is in that regime. **fw v26 is inert on the entire registered stimulus set**;
-  the largest two-source totals in campaigns B and C were ~1.4 A and the largest legitimate FC
-  peak is 1.1920 A (`ems-sdp-cross`, campaign B; headroom 0.058 A). Bench validation is the
-  State-98 `W 4.0 0.15` profile (design note §8.2.1); a two-source high-total HIL scenario is
-  queued for the tools round. A charge-window guard (reduce Ag105 charge current / close the
-  path when single-sourced `I_fc` nears the limit) is the mechanism that would address the
-  recorded latches — separate design, not in v26.
-- Infeasible pair above 3.95 A total (INSIDE the 4.2–5.4 A platform budget): FC bound wins;
-  above 4.25 A the governor commands `I_batt > LIMIT_I_BT_MAX` and `ERR_OC_BT` is the intended
-  latch. Sustained regime found (4.0 A, sp 0.60): `droopSlew_prev` pins at `DROOP_R_MIN` and the
-  load guard refuses the FC cut on every tick — no cut, both switches HIGH, tested.
-- Observability, no wire change: HIL observation-frame aux byte **bits 4/5** (FC/BT clamp),
-  BLG `flags` **bit7** (either clamp), State-98 `'S'` line (`share I-ceiling:` with both
-  commanded channel currents). `switch_state` deliberately untouched (the HIL plant solves the
-  network from it); Pi exposure is a protocol-bump follow-up. Neither bit has a suite mask or a
-  benchlog decoder helper yet (manual observables this round).
-- Tools follow-ups (queued, WORK_QUEUE §7): `governor_model.py` port of the clamp in the
-  firmware's order + equivalence test; `ems_walk.py` walks the CLAMPED share; the DP/SDP
-  `charge_mask()` delivered-share semantics; the MPC surrogate/rolls; suite `aux_bit` masks
-  for bits 4/5; `_ALPHA_FC_CEIL` 1.28 A now exceeds what the board can command;
-  `FAULT_EXPECTATIONS["charge-cruise"]` (requires `OC_FC`) needs operator re-adjudication.
 
 ---
 
@@ -912,3 +863,67 @@ own new mechanisms.** Ledgers, FINAL SUMMARY and HIL_SUMMARY in both folders (lo
   2.26x); `ftp75` the first fw v27-era frontier to VERIFY (0.9703 / 1.0011). Budget 2 of 5; stopped after H.
 - **Open operator rulings:** F1-F7 (WORK_QUEUE 0d spec seed); the ems-sdp stimulus knob; the RT1987
   constant-slew ramp A/B; the MPC delivery-table residual past the release (the stale committed plan).
+
+## Status & session addendum (2026-09-08, daytime round: fw v28 source-selector package built and reviewed - PENDING FLASH; the encoder-defect harness; the fw v28 tools mirror queued)
+
+Operator-present round after the campaign G/G2/H digest. Rulings (WORK_QUEUE section 0e, memory
+`operator-rulings-2026-09-08-fw28`): F1 fixed the preferred way; the never-closed region SELECTS battery-only or
+fuel-cell-only from the commanded share (inclusive 0.85 / 0.15); the forced-0.5 sliver becomes a hold;
+`SHARE_MINORITY_I_MIN_A` 0.15 -> **0.125 A** (D = 0.25 V); handoff thresholds 0.10 / 0.12 A; k_d held in
+single-source windows; F7 recorded only. Commits `4e20b76` (queue), `a683e25` (encoder harness), `9318e16`
+(**fw v28, PENDING FLASH**). fw v27 rev 2 stays on the board until the operator flashes.
+
+- **fw v28 = the source-selector package** (`docs/fw28_source_selector.md`; ledger row 28). (1) **F1:**
+  `chargingControl()` DISARMS the selector (on EITHER cut, review S5) instead of calling
+  `assertFcChargeEnable(true)` while it holds a channel off the bus, and opens FC_CHARGE only when FC_BUS reads
+  HIGH and is out of its turn-on blanking (conduction-gated, not period-counted); the latch's own guarded release
+  re-closes FC_BUS onto the battery-fed bus in the same loop iteration (`chargingControl()` precedes
+  `powerBalance()`), so the window opens one commander period later. CONSEQUENCES: a non-selector FC cut
+  (Pi-commanded 0.0, `shareIsoFC`) keeps the window closed for as long as it stands; the disarm ends the
+  never-closed regime for the rest of the profile. The State-98 `'5'` key now REFUSES to open with FC cut and
+  FC_BUS LOW (review S6; the S2 restore inside `assertFcChargeEnable()` is unchanged and otherwise unreachable
+  from the charge path); `RT1987_T_D_ON_MS` 8 with `static_assert(SHARE_CUT_SURVIVOR_BLANK_MS >= ...)`.
+  (2) **The SELECTOR** replaces the battery-only arm's "disarm permanently on an out-of-band command" and its
+  FC-charge suppression: commanded share >= `DROOP_R_MAX` selects FC, <= `DROOP_R_MIN` selects BT, in between the
+  selection HOLDS (the Pi clamps to 0.85, so the thresholds are inclusive); the effective setpoint is 0.0 or 1.0,
+  always latch-owned; a selection change is release -> one returned tick -> entry through the existing guards
+  (make-before-break by construction; the 0.5 A load guard always admits under the 0.25 A gate); the gate release
+  works from either source. **Review S2 (HIGH, accepted):** FC-only under the gate has no current bound (the fw
+  v26 ceiling is inert single-source; OC_FC latches on one raw sample) - a raw `|I_fc| > SHARE_GOV_I_FC_CEIL_A`
+  drops the arm immediately while FC is selected (the one deliberate raw-sample gate in the governor). The SDP v6
+  policy commands exactly 0.0 above its SoC target and 1.0 below at every low-demand bin, so the selector is
+  policy-driven on the ftp75c legs (FC-only below target). (3) **The sliver holds** `share_spEffPrev` bounded to
+  `[loD, 1 - loD]`, `loD = min(0.5, SHARE_HANDOFF_MIN_A / I_tot_filt)` (review S3: an unbounded hold could park a
+  rail reference at 0.03 A of minority; the live threshold would reproduce the 0.5 pin). (4) **Constants:** gate
+  0.25 A, exit 0.20 A, crossover 0.755 A, authority 0.227 V (0.252 V at unity), max scheduled k_d still 0.906 ohm,
+  fw v26 reachability still 1.4706 A (floor term 1.375 A); `SHARE_HANDOFF_MIN_A` 0.10 / `SHARE_HANDOFF_LIVE_A`
+  0.12 (a minority at the floor reads live; two live channels need 0.24 A, so the HANDOFF slew ceiling is now
+  selected whenever the filtered total is under the gate - review S7, spent-dwell escape retained). (5) **k_d**
+  targets `K_DROOP` only while FC_CHARGE is HIGH (writes continue, the slew is real); k_d AND its schedule input
+  are FROZEN while any `shareIso*`/`shareSpCut*` is set (review S4: a scale slewed with no MDAC writes would be
+  applied as a 3x step on release). HIL aux byte bits 6 / 7 = armed / FC selected (frame 18 B unchanged); BLG stays
+  v8 (the selection has no bench-log field - inferred from the currents); no wire change; `FW_VERSION` 28.
+  Tests **4207 / 175 / 4694**, 0 warnings (fw v27 rev 2: 4114 / 175 / 4596): both selection directions tick by tick,
+  the raw-current escape, the `'5'` refusal, the sub-gate handoff rate, the k_d freeze under a real isolation cut
+  (the first version was vacuous - self-healed the same tick), F1 from every start state; four `chargingControl()`
+  fixtures had passed with FC_BUS never driven HIGH and were repaired. Residuals recorded: F7 (inherited codes on
+  every selection change), a BT_BUS opened WITHOUT FC_CHARGE (`'2'`, the backoff's refused re-close) is single-
+  source the schedule does not detect, the sliver's strict `lo < hi` at the exact gate, the spent-dwell escape.
+  BENCH GATES unchanged in kind: the fw v6 ladder at 0.125/0.875 and the two-axis dropout sweep (CAL-6).
+- **Host-native encoder-defect harness (WORK_QUEUE 7d, `a683e25`):** `tools/encoder_edge_script.py` (mechanical
+  law transcribed from `hil_plant_sim.PlantState.step`, equivalence pytest bit-identical; geometry asserted
+  against the `.ino`; five defect scripts; manifest; 41 checks) + `test/encoder_defect_harness.cpp` as the
+  fourth target `run_tests_encoder` (43 checks; edges through the real ISRs at their own micros, the drive loop
+  closed on the firmware's own estimate). First sweep (2676 runs): **the missing-slot halving basin no longer
+  exists** (0 of 1080 absorbing to n = 80 - the fw v15/v17 ledger removed it; the spec's named unknown answers
+  "never"); staleness onset = ceil(100 ms / T - 1) pitches; the T/2 basin is unreachable from an isolated bounce;
+  **a 180 deg phase error gives a sign-inverted reading with the drive railed for 19 900 of 20 000 ticks and NO
+  fault** (no encoder-sign plausibility check exists in `detectFaults()`; `encPhaseEwma` reads 0 under inversion,
+  indistinguishable from no data) - an open firmware item for the operator; jitter collapse at ~0.6 of the quarter
+  pitch; near-aligned + jitter reproduces the ML0140 signature. `docs/encoder_defect_harness.md`. The `run_tests`
+  hook for its regression mode is still to be added to `test/test_main.cpp`.
+- **Queued (WORK_QUEUE 0e items 8-11):** the fw v28 tools mirror (governor model + fw v28 equivalence harness,
+  ems_walk, the MPC delivery table selector-aware, FW28-ERA anchors, every designed-total stimulus re-derived at
+  0.125 A, F6 in the walk), then the first fw v28 campaign after the operator's flash. Open rulings unchanged
+  (`--droop measured` scaling, `ASYM_SIMPLE_I_MIN_A`, the ems-sdp bin-21 knob, the RT1987 ramp A/B, the MPC
+  residual past the release, hold vs return-to-battery on re-entry).
