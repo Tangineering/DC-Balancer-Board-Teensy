@@ -116,7 +116,8 @@ firmware round lands).
       by whether the cold pins move toward the board; legacy stays as the one-campaign reversal path.
       IN PROGRESS (Opus).
 
-- [ ] 15. **fw v28 rev 5 - re-entry rule (operator ruling 2026-09-08 evening):** after the loop has closed and the
+- [ ] 14b. (DONE `5d281d8` fw v28 rev 4: EEPROM commit deferred off the flip tick; k_d single-source hold keyed on bus topology; 4408 / 175 / 4715 / 51. Tools follow-up: governor_model.py must carry the topology re-key.)
+- [ ] 15. (IN PROGRESS, Opus, with BLG v9 firmware side) **fw v28 rev 5 - re-entry rule (operator ruling 2026-09-08 evening):** after the loop has closed and the
       total falls back under the gate the HOLD stays; a commanded share <= 0.15 or >= 0.85 RE-ARMS the selector with
       that source (holds through in-band commands, releases at the gate, same machinery as the never-closed
       selector); in-band commands never trigger single-source on re-entry. After rev 4.
