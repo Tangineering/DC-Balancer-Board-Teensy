@@ -1,6 +1,49 @@
 /*
  * teensy_controller.ino — Scale Car DC Balancer Board, Rev 20260622
  *
+ * fw v28 REV 3 (2026-09-08) — THE ENCODER DIRECTION SENSE PERSISTS ACROSS POWER CYCLES. Rev 3
+ *   SUPERSEDES rev 2 BEFORE ANY FLASH: no board has run fw v28 in any revision, so FW_VERSION
+ *   stays 28 and there is no rev-2 era in the ledger (the fw v27 rev 2 precedent). Rev 3 changes
+ *   ONE thing — the LIFETIME of encDirSign — and touches no other mechanism. No wire change:
+ *   telemetry stays v4/58 B, the command packet 22 B, the HIL frames 40 B/18 B, the bench log v8.
+ *     THE RULING (operator, 2026-09-08): "The encoder sign should persist across power cycles."
+ *     Rev 2 stored the sign in RAM only, so a reversed harness cost a fresh 0.5 s runaway on
+ *     EVERY boot until the connector was physically re-plugged. Rev 3 commits the corrected sign
+ *     to the Teensy 4.1 emulated EEPROM at the flip and adopts it in setup(), so the cost is paid
+ *     ONCE PER RE-WIRING EVENT instead of once per boot.
+ *     THE RECORD: four bytes at ENC_DIR_EE_BASE = 4276, the top of the 4284-byte emulated EEPROM
+ *     (E2END 4283), leaving 4280-4283 spare and every low address free for future calibration
+ *     tables. magic 0xE7 / sign 0x01 or 0xFF / gen (u8, saturating) / additive-plus-XOR checksum.
+ *     A blank or corrupt record leaves encDirSign at +1 and WRITES NOTHING — a correctly wired
+ *     board never consumes an EEPROM cycle in its life. The only write site is the flip, which
+ *     the existing per-boot cap bounds at ENC_DIR_FLIP_MAX = 4, so the worst case is 4 record
+ *     writes per boot against the ~100 000 cycles per cell that PJRC rates the part at.
+ *     EEPROM.update() is used, so a re-store of an unchanged sign touches the gen and checksum
+ *     cells only.
+ *     WHY A STALE SIGN CANNOT STRAND A BOARD — the safety argument for reversing rev 2's
+ *     no-persistence decision: on a board that has been RE-WIRED since its record was written,
+ *     the stored sign is applied, the decode is then inverted again, and the resulting
+ *     positive-feedback runaway is indistinguishable from the original one. The growth-gated
+ *     detector therefore corrects it AND re-stores the correction inside the same 0.5 s window,
+ *     with the flip cap untouched (one flip). Persistence changes WHICH sign the board starts
+ *     from, never whether it can reach the right one. The residual is exactly one 0.5 s runaway
+ *     per re-wiring event, strictly less than rev 2's one per boot.
+ *     HIL_SIM: the record is READ (so the 'S' dump and the boot line describe the board in hand)
+ *     but deliberately NOT APPLIED. There v_actual comes from the injection frame,
+ *     updateWheelSpeed() and hence encDirApply() never run, and the plant's sign is authoritative;
+ *     applying a stored sign could change no behaviour but would make an HIL run's reported state
+ *     depend on which physical board it was flashed onto. The detector is compiled out there too,
+ *     so no HIL run can write the record either.
+ *     OPERATOR CONTROL: State-98 key 'Z' erases the record, returns the live sign to +1 and
+ *     resets the per-boot flip count. The 'S' dump's Encoder block gains stored= and gen= beside
+ *     the live dirSign. The boot line "ENC DIR SIGN: -1 restored from EEPROM (gen N)" prints only
+ *     when a stored -1 is actually applied.
+ *     RESIDUAL, stated rather than worked around: the EEPROM commit is a blocking call on the
+ *     flip tick. It is bounded to four occurrences per boot, it never runs on the ordinary 1 kHz
+ *     path, and it lands on a tick that has already decided to reset the drive controller — but
+ *     it does briefly lengthen that one tick, and the write duration of the Teensy 4.1 emulation
+ *     is TODO(verify: PJRC EEPROM documentation) rather than measured here.
+ *
  * fw v28 REV 2 (2026-09-08) — ENCODER DIRECTION-SENSE AUTO-FLIP. Rev 2 SUPERSEDES rev 1 BEFORE
  *   ANY FLASH: no board has run fw v28, so FW_VERSION stays 28 and there is no rev-1 era in the
  *   ledger (the fw v27 rev 2 precedent). Rev 1 — the source-selector package described immediately
@@ -47,10 +90,9 @@
  *     flips bound something else — REPEATED GENUINE detections, e.g. an intermittently reversed
  *     connector — past which the sign freezes and only a line prints.
  *     LIFETIME: the sign is a WIRING fact and survives hilWarmReset(), the State-98 'Q' exit,
- *     resetControlRateLimiters() and State 3; only a power cycle returns it to +1. It is NOT
- *     persisted to EEPROM (a stale stored sign on a re-wired board would be worse than 0.5 s of
- *     runaway; a persistent option is a follow-up ruling). The transient window counter IS dropped
- *     at the 'Q' profile boundary.
+ *     resetControlRateLimiters() and State 3; only a power cycle returned it to +1 in rev 2, and
+ *     as of rev 3 not even that (see the rev 3 block above). The transient window counter IS
+ *     dropped at the 'Q' profile boundary.
  *     OBSERVABILITY GAP, stated rather than worked around: the HIL aux byte's bits 0-7 are all
  *     allocated (rev 1 took 6/7) and the BLG flags byte is full at v8, so the flip has NO
  *     wire-level observable this round — only the Serial line at the flip and the 'S' dump's
@@ -1531,6 +1573,7 @@
 #include <NativeEthernet.h>
 #include <NativeEthernetUdp.h>
 #include <SdFat.h>              // built-in micro-SD (SDIO) — State-98 bench logger, see logSampleTick()
+#include <EEPROM.h>             // Teensy 4.1 emulated EEPROM — encoder direction-sense record (fw v28 rev 3)
 #include "share_controller.h"   // Youla-H power-share controller (generated coeffs)
 #include "drive_controller.h"   // Youla-H drive/velocity controller (generated coeffs, fw v10)
 
@@ -2495,6 +2538,39 @@ constexpr float ENC_SLOT_PITCH_M = (TWO_PI_F * FLYWHEEL_RADIUS_M) / ENCODER_SLOT
 // frozen where it is and the detector only prints: repeated flipping means the detector is being
 // fooled, and a bounded count is the last anti-chatter backstop.
 #define ENC_DIR_FLIP_MAX          4u
+
+// ── fw v28 rev 3: the EEPROM direction-sense record (operator ruling 2026-09-08) ──────────────
+// "The encoder sign should persist across power cycles." Rev 2 deliberately did not persist it;
+// the ruling reverses that, and the safety argument for the reversal is in
+// docs/fw28_source_selector.md Revision 3: a STALE stored sign on a re-wired board presents to the
+// detector exactly as a fresh inversion does, so the growth-gated detector corrects it AND
+// re-stores the correction within one 0.5 s window. Persistence therefore cannot strand a board;
+// the residual cost is one 0.5 s runaway per RE-WIRING EVENT, which is strictly less than rev 2's
+// cost of one 0.5 s runaway per BOOT on a reversed harness.
+//
+// STORAGE. Teensy 4.1: 4284 bytes of emulated EEPROM (E2END = 4283), rated ~100 000 erase cycles
+// per cell (Teensy 4.1 EEPROM documentation, PJRC). The record is placed at the TOP of the space,
+// out of the way of any future low-address allocation (calibration tables conventionally start at
+// 0): four bytes at ENC_DIR_EE_BASE = 4276, leaving 4280-4283 spare.
+//   +0  magic     ENC_DIR_EE_MAGIC (0xE7) — a virgin/erased cell reads 0xFF, so a blank board
+//                 fails the magic test and is treated as "no record";
+//   +1  sign      ENC_DIR_EE_SIGN_POS (0x01) or ENC_DIR_EE_SIGN_NEG (0xFF); any other value is
+//                 rejected, so a half-written record cannot select a sign;
+//   +2  gen       flip-generation counter, u8, saturating at 255 — diagnostic only ("how many
+//                 times has this board been corrected"), never a control input;
+//   +3  checksum  (uint8_t)(magic + sign + gen) ^ ENC_DIR_EE_CKSUM_XOR. Additive plus an XOR mask
+//                 so that the all-0xFF erased pattern and the all-0x00 pattern both FAIL: 0xFF is
+//                 already rejected by the magic test, and 0x00 fails the magic test as well, but
+//                 the mask also rejects a single flipped cell inside an otherwise valid record.
+// WEAR. A write happens ONLY at a flip, and flips are capped at ENC_DIR_FLIP_MAX (4) per boot, so
+// the worst case is 4 record writes per boot; EEPROM.update() is used, so a boot with no flip
+// writes nothing at all and a re-store of an identical sign touches only the gen and checksum
+// cells. At 4 writes per boot the structural bound is 25 000 boots per cell.
+#define ENC_DIR_EE_BASE           4276
+#define ENC_DIR_EE_MAGIC          0xE7
+#define ENC_DIR_EE_SIGN_POS       0x01
+#define ENC_DIR_EE_SIGN_NEG       0xFF
+#define ENC_DIR_EE_CKSUM_XOR      0x5A
 
 // Guard: with either scale input above at a placeholder value, closing the velocity loop
 // OVER-DRIVES. v_actual under-reads true speed, so the PI keeps adding current to reach a setpoint
@@ -3485,9 +3561,12 @@ bool wheelSpeedResetPending = false;
 // the flip — there is no mixed-frame window.
 // LIFETIME: the sign is a WIRING FACT, so it survives every run boundary — hilWarmReset(), the
 // State-98 'Q' exit, resetControlRateLimiters() and State 3 all leave it alone. Only a power cycle
-// returns it to +1. It is deliberately NOT persisted to EEPROM: the wiring is fixed per build, a
-// stale stored sign on a re-wired board would be worse than a half-second of runaway, and the
-// detector re-derives it within 0.5 s of motion anyway. A persistent option is a follow-up ruling.
+// returns it to +1 — and as of fw v28 rev 3 (operator ruling 2026-09-08) not even that: the sign
+// is PERSISTED to the Teensy 4.1 emulated EEPROM at every flip and adopted in setup(). Rev 2's
+// argument against persistence (a stale stored sign on a re-wired board) does not survive
+// examination: a stale sign presents to the detector exactly as a fresh inversion does, so the
+// growth-gated detector corrects it and re-stores the correction inside one 0.5 s window. See
+// encDirLoadStoredSign() below and docs/fw28_source_selector.md Revision 3.
 // The DETECTOR's window counter is transient state and IS cleared at those boundaries.
 int8_t   encDirSign          = 1;     // +1 = decoder sense trusted as wired; -1 = flipped
 uint16_t encDirFlipCount     = 0;     // flips taken since boot ('S' dump; capped at ENC_DIR_FLIP_MAX)
@@ -3495,6 +3574,12 @@ uint16_t encDirRunawayTicks  = 0;     // consecutive qualifying ticks in the cur
 float    encDirRunawayMagRef = 0.0f;  // ratcheted max |v_actual| within the window
 float    encDirRunawayMagOpen= 0.0f;  // |v_actual| when the window opened (growth test, F3)
 uint32_t encDirLockoutMs     = 0;     // millis() deadline of the post-flip lockout (0 = none)
+
+// fw v28 rev 3: the mirror of the EEPROM record, refreshed by every load/store/clear. These are
+// DIAGNOSTIC ONLY — nothing in the control path reads them; encDirSign remains the single value
+// that changes behaviour. encDirStoredSign is 0 when the board carries no valid record.
+int8_t   encDirStoredSign    = 0;     // 0 = no valid record, else +1 / -1 as stored
+uint8_t  encDirStoredGen     = 0;     // generation counter of the stored record (0 when none)
 
 // Apply the direction sense at the PUBLISH boundary. Every non-zero write to v_actual inside
 // updateWheelSpeed() goes through this; the two hard zeros (the stale paths) are sign-invariant
@@ -3504,6 +3589,97 @@ uint32_t encDirLockoutMs     = 0;     // millis() deadline of the post-flip lock
 // itself. The plant's sign is authoritative there, so no sign factor can reach an injected value.
 // The detector is compiled out under HIL_SIM for the same reason (see updateEncoderDirectionSense).
 static inline float encDirApply(float v) { return encDirSign >= 0 ? v : -v; }
+
+// ── fw v28 rev 3: EEPROM persistence of the direction sense ───────────────────────────────────
+// Three entry points, all of them cheap and none of them on the 1 kHz path:
+//   encDirLoadStoredSign()  — setup() only, BEFORE any tick can call updateWheelSpeed();
+//   encDirStoreSign()       — the flip site only, so at most ENC_DIR_FLIP_MAX writes per boot;
+//   encDirClearStoredRecord() — the State-98 'Z' key only.
+// The record's layout and the wear budget are documented at ENC_DIR_EE_BASE above.
+static inline uint8_t encDirRecordChecksum(uint8_t magic, uint8_t sign, uint8_t gen) {
+    return (uint8_t)((uint8_t)(magic + sign + gen) ^ (uint8_t)ENC_DIR_EE_CKSUM_XOR);
+}
+
+// Read the record and, when it is valid, ADOPT the stored sign. A blank or corrupt record leaves
+// encDirSign at +1 and WRITES NOTHING: a virgin board stays virgin until its first real flip, so
+// a board that is wired correctly never consumes an EEPROM cycle in its life.
+// HIL_SIM: the record is still READ (so the 'S' dump and the boot line tell the truth about the
+// board in hand) but is NOT APPLIED. Under HIL_SIM v_actual comes from the 40-byte injection
+// frame, updateWheelSpeed() — hence encDirApply() — never runs, and the plant's sign is
+// authoritative; applying a stored sign there could change nothing but would make an HIL run's
+// reported state depend on which physical board it happened to be flashed onto, which is exactly
+// the determinism the HIL build exists to provide. The detector is compiled out there too, so no
+// HIL run can ever write the record either.
+void encDirLoadStoredSign() {
+    uint8_t magic = EEPROM.read(ENC_DIR_EE_BASE + 0);
+    uint8_t sign  = EEPROM.read(ENC_DIR_EE_BASE + 1);
+    uint8_t gen   = EEPROM.read(ENC_DIR_EE_BASE + 2);
+    uint8_t cksum = EEPROM.read(ENC_DIR_EE_BASE + 3);
+
+    encDirStoredSign = 0;
+    encDirStoredGen  = 0;
+
+    if (magic != (uint8_t)ENC_DIR_EE_MAGIC) return;                       // blank or never written
+    if (sign != (uint8_t)ENC_DIR_EE_SIGN_POS &&
+        sign != (uint8_t)ENC_DIR_EE_SIGN_NEG) return;                     // half-written sign cell
+    if (cksum != encDirRecordChecksum(magic, sign, gen)) {
+        Serial.println("ENC DIR SIGN: stored record REJECTED (checksum) - defaulting to +1");
+        return;
+    }
+
+    encDirStoredSign = (sign == (uint8_t)ENC_DIR_EE_SIGN_NEG) ? (int8_t)-1 : (int8_t)1;
+    encDirStoredGen  = gen;
+
+#if HIL_SIM
+    if (encDirStoredSign < 0) {
+        Serial.print("ENC DIR SIGN: -1 stored on this board (gen ");
+        Serial.print((unsigned)encDirStoredGen);
+        Serial.println(") but NOT applied - HIL_SIM injects v_actual, the plant's sign governs");
+    }
+#else
+    encDirSign = encDirStoredSign;
+    if (encDirSign < 0) {
+        Serial.print("ENC DIR SIGN: -1 restored from EEPROM (gen ");
+        Serial.print((unsigned)encDirStoredGen);
+        Serial.println(")");
+    }
+#endif
+}
+
+// Commit the LIVE sign. Called once per flip. EEPROM.update() writes a cell only when its content
+// changes, so re-storing a sign that is already on the board costs the gen and checksum cells
+// only, and the magic cell is written exactly once in a board's life.
+void encDirStoreSign() {
+    uint8_t sign = (encDirSign < 0) ? (uint8_t)ENC_DIR_EE_SIGN_NEG : (uint8_t)ENC_DIR_EE_SIGN_POS;
+    uint8_t gen  = (encDirStoredGen < 255) ? (uint8_t)(encDirStoredGen + 1) : (uint8_t)255;
+    uint8_t ck   = encDirRecordChecksum((uint8_t)ENC_DIR_EE_MAGIC, sign, gen);
+
+    EEPROM.update(ENC_DIR_EE_BASE + 0, (uint8_t)ENC_DIR_EE_MAGIC);
+    EEPROM.update(ENC_DIR_EE_BASE + 1, sign);
+    EEPROM.update(ENC_DIR_EE_BASE + 2, gen);
+    EEPROM.update(ENC_DIR_EE_BASE + 3, ck);
+
+    encDirStoredSign = (sign == (uint8_t)ENC_DIR_EE_SIGN_NEG) ? (int8_t)-1 : (int8_t)1;
+    encDirStoredGen  = gen;
+}
+
+// Erase the record and return the live sign to +1 (State-98 'Z'). The erased pattern is 0xFF on
+// every cell, which is what an untouched Teensy reads, so a cleared board is indistinguishable
+// from a virgin one. The per-boot flip cap and the runaway window are reset with it: a deliberate
+// operator clear is the one place where re-arming the detector is the intent.
+void encDirClearStoredRecord() {
+    EEPROM.update(ENC_DIR_EE_BASE + 0, 0xFF);
+    EEPROM.update(ENC_DIR_EE_BASE + 1, 0xFF);
+    EEPROM.update(ENC_DIR_EE_BASE + 2, 0xFF);
+    EEPROM.update(ENC_DIR_EE_BASE + 3, 0xFF);
+    encDirStoredSign     = 0;
+    encDirStoredGen      = 0;
+    encDirSign           = 1;
+    encDirFlipCount      = 0;
+    encDirRunawayTicks   = 0;
+    encDirRunawayMagRef  = 0.0f;
+    encDirRunawayMagOpen = 0.0f;
+}
 
 // ── Bench/debug config ──────────────────────────────────────────────────────────
 // BENCH_TEST relaxes the firmware so the board can reach Idle on the bench without
@@ -5590,6 +5766,10 @@ void setup() {
     // pad to GPIO, which silently disconnects the UART and kills all VESC communication.
     pinMode(ENC_A,   INPUT);
     pinMode(ENC_B,   INPUT);
+    // fw v28 rev 3: adopt the stored direction sense BEFORE anything can publish a velocity. This
+    // is the earliest point at which it is meaningful and it is far ahead of the first
+    // updateWheelSpeed(), which cannot run until loop() starts. A blank board writes nothing.
+    encDirLoadStoredSign();
     // No encoder-enable pin. The optical sensors are hardwired to power by the 2026-08-16 bodge,
     // so pin 7 has no net and is deliberately left undriven (see the pin-definition block).
     // Boost regulators default OFF. doState0() decides when to enable them: in production after the
@@ -7286,6 +7466,8 @@ void printTestHelp() {
     Serial.println("  K [1|0] - SD logger: empty=status, 1=start manual log (ML####.BLG), 0=stop");
     Serial.println("      (R/T/D/Y/W runs are auto-logged @1kHz to PS/TP/DC/YP/WP####.BLG;");
     Serial.println("       a manual log is for hand-driven runs and is refused while a profile owns it)");
+    Serial.println("  Z - clear the stored encoder direction sense (EEPROM) and reset it to +1");
+    Serial.println("      (use after re-wiring the encoder harness; 'S' shows stored= and gen=)");
     Serial.println("  H - show this command list");
     Serial.println("  * 1/2 refuse ON if the matching boost is ON and VBUS is low (use G);");
     Serial.println("    2 also refuses while FC_CHARGE_ENABLE is HIGH (illegal combination)");
@@ -7897,6 +8079,18 @@ void doState98() {
                     cancelPlotArm("plot mode turned off");
                     Serial.println("[PLOT] Serial-Plotter stream OFF");
                 }
+                break;
+            // fw v28 rev 3: clear the persisted encoder direction-sense record. 'Z' was chosen
+            // because it is one of only two unused letter keys ('J' the other) and it reads as
+            // "zero the stored sense". Use it after RE-WIRING the encoder harness so the board
+            // does not spend its first half-second of the next run correcting a sign it no longer
+            // needs; the detector would reach the same state on its own, this is the shortcut.
+            // Read-only with respect to the power path: it moves no switch and commands no
+            // current, so it is safe at any point in State 98.
+            case 'Z':
+            case 'z':
+                encDirClearStoredRecord();
+                Serial.println("ENC DIR SIGN: stored record cleared - sign +1, flip count 0");
                 break;
             case 'H':
             case 'h':
@@ -9917,7 +10111,15 @@ void printTestStatus() {
     Serial.print("  dirSign=");   Serial.print((int)encDirSign);
     Serial.print("  flips=");     Serial.print(encDirFlipCount);
     Serial.print("  window=");    Serial.print(encDirRunawayTicks);
-    Serial.print("/");            Serial.println((unsigned)ENC_DIR_RUNAWAY_TICKS);
+    Serial.print("/");            Serial.print((unsigned)ENC_DIR_RUNAWAY_TICKS);
+    // fw v28 rev 3: the STORED sign beside the live one. stored=none is a virgin or cleared
+    // board; a stored value that disagrees with dirSign means the sign was cleared ('Z') or
+    // flipped since boot, or — under HIL_SIM — that the record was read but deliberately not
+    // applied. gen counts the corrections this board has ever committed.
+    Serial.print("  stored=");
+    if (encDirStoredSign == 0) Serial.print("none");
+    else                       Serial.print((int)encDirStoredSign);
+    Serial.print("  gen=");       Serial.println((unsigned)encDirStoredGen);
     // fw v15 pitch-count diagnostics. lastPitches > 1 or a rising multiPitch count means edges are
     // being lost or rejected; ref is the EWMA the low-side gate is built from. Diagnostic only.
     Serial.print("ref=");         Serial.print(perRef);
@@ -13933,6 +14135,16 @@ void updateEncoderDirectionSense() {
     Serial.print(current, 2);
     Serial.print(" A - sign now ");
     Serial.println((int)encDirSign);
+    // fw v28 rev 3 (operator ruling 2026-09-08): persist the corrected sign so that the NEXT power
+    // cycle starts from it. This is the ONLY write site, and the existing per-boot flip cap bounds
+    // it at ENC_DIR_FLIP_MAX commits per boot. EEPROM.update() writes only the cells that change.
+    // ORDER MATTERS and is deliberate: the commit is LAST, after the live sign has been applied to
+    // v_actual and after resetDriveControlState() has unwound the railed controller state, so the
+    // corrective control action of this tick is never delayed by a flash write. The write is a
+    // handful of cell compares plus, on a cell that genuinely changes, the emulation's programming
+    // time — a once-per-inversion cost on a tick that was already exceptional, and never on the
+    // ordinary 1 kHz path. See docs/fw28_source_selector.md section 21 residual 1.
+    encDirStoreSign();
 #endif
 }
 

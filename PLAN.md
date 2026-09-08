@@ -689,6 +689,7 @@ All commands are single uppercase characters, processed in `doState98()`:
 | `C` | Toggle `CBAL_DISABLE` (HIGH = OVP bypassed; use with caution) |
 | `M` | Toggle `MPPT_DISABLE` (HIGH = MPPT enabled; LOW = inhibited) |
 | `N` | Dynamic Ag105 MPPT reg-`0x02` threshold status/verify (fw v24) |
+| `Z` | Clear the persisted encoder direction sense (fw v28 rev 3): erases the EEPROM record at 4276, returns `encDirSign` to +1, resets the flip count and the runaway window; moves no switch, commands no current |
 | `D` | Start/stop simulated drive cycle (§9c) |
 | `S` | Print status (all pin states, all ADC readings, `I_charge`, bench-tool state) |
 | `I` | Scan the I2C bus |

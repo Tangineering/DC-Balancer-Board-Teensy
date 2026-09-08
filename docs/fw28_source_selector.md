@@ -930,3 +930,167 @@ The test writer owns these. All are host-native; none touches a board.
 11. The 180 degree phase case already in `test/encoder_defect_harness.cpp` now asserts the flip and
    the recovery instead of the runaway, and the regression band for that case moves from -1.00000
    to +1.00000 after the flip.
+
+---
+
+# Revision 3
+
+Revision 3 supersedes revision 2 before any flash. No board has run firmware version 28 in any
+revision, so `FW_VERSION` stays 28 and there is no revision 2 era in the ledger; the precedent is
+firmware version 27 revision 2. Revisions 1 and 2, sections 1 to 15 above, are unchanged in every
+respect except the lifetime statement in section 12.8 and residual 7 of section 14, both of which
+this part supersedes. Revision 3 changes exactly one property — the lifetime of `encDirSign` — and
+touches no other mechanism. No wire change: the telemetry stays version 4 at 58 bytes, the command
+packet stays 22 bytes, the hardware-in-the-loop frames stay 40 and 18 bytes, and the bench-log
+format stays version 8.
+
+## 16. Purpose and scope of revision 3
+
+The operator ruled on 2026-09-08 that the encoder sign shall persist across power cycles. Revision
+2 held the corrected sense in RAM only, so a reversed harness cost a fresh half-second of runaway
+on every boot until the connector was physically re-plugged. Revision 3 commits the corrected sign
+to the emulated EEPROM of the Teensy 4.1 at the flip, and adopts it in `setup()`.
+
+Out of scope: the detector itself, its six conditions and every constant in section 12.3; the
+encoder interrupt service routines; the velocity math in `updateWheelSpeed()`; and any wire-level
+observable for the flip, which section 13 records as a gap and revision 3 does not close.
+
+## 17. The record
+
+The Teensy 4.1 provides 4284 bytes of emulated EEPROM, with `E2END` at 4283, rated at approximately
+100 000 erase cycles per cell (source: the Teensy 4.1 EEPROM documentation, PJRC; the exact write
+duration of the emulation is `TODO(verify: PJRC)` and is not relied on by any bound below). The
+record occupies four bytes at the TOP of that space, at `ENC_DIR_EE_BASE` = 4276, so that every low
+address stays free for the calibration tables that conventionally start at 0. Addresses 4280 to
+4283 are left spare.
+
+| Offset | Name | Values | Purpose |
+|---|---|---|---|
+| +0 | magic | `ENC_DIR_EE_MAGIC` 0xE7 | An erased cell reads 0xFF, so a virgin board fails this test and is treated as carrying no record. |
+| +1 | sign | `ENC_DIR_EE_SIGN_POS` 0x01, `ENC_DIR_EE_SIGN_NEG` 0xFF | Any other value is rejected, so a half-written record cannot select a sense. |
+| +2 | gen | 0 to 255, saturating | The count of corrections this board has committed. Diagnostic only; no control path reads it. |
+| +3 | checksum | `(magic + sign + gen) XOR 0x5A` | Rejects a single flipped cell inside an otherwise plausible record. |
+
+Three entry points exist, none of them on the 1 kHz path.
+
+1. `encDirLoadStoredSign()` runs in `setup()`, immediately after the encoder pin modes and long
+   before `loop()` can call `updateWheelSpeed()`. A valid record sets `encDirSign`. A blank or
+   rejected record leaves `encDirSign` at +1 and **writes nothing**, so a correctly wired board
+   never consumes an EEPROM cycle in its life. A checksum rejection prints a line; a blank record
+   prints nothing, because printing on every boot of every virgin board would be noise.
+2. `encDirStoreSign()` runs at the flip site in `updateEncoderDirectionSense()`, and only there.
+3. `encDirClearStoredRecord()` runs from the State-98 `Z` key, and only there.
+
+Two diagnostic mirrors, `encDirStoredSign` and `encDirStoredGen`, follow every load, store and
+clear. `encDirSign` remains the single value that changes behaviour.
+
+### 17.1 The wear budget
+
+A write happens only at a flip, and flips are capped at `ENC_DIR_FLIP_MAX` = 4 per boot. The worst
+case is therefore 4 commits per boot, which against the rated 100 000 cycles per cell is a
+structural bound of 25 000 worst-case boots. All four cells are written through `EEPROM.update()`,
+which commits a cell only when its content changes, so a boot with no flip writes nothing and a
+re-store of an unchanged sign touches the generation and checksum cells only. One asymmetry is
+worth stating: the -1 encoding IS the erased value 0xFF, so the first commit of a -1 on a virgin
+board writes three cells, not four.
+
+## 18. Why a stale sign cannot strand a board
+
+This is the safety argument for reversing revision 2's decision, which rejected persistence on the
+ground that a stale stored sign on a re-wired board would be worse than half a second of runaway.
+That ground does not survive examination.
+
+Consider a board whose record holds -1 and whose harness has since been re-plugged the right way
+round. At boot the stored -1 is applied, the decode is inverted a second time, and the published
+velocity opposes the drive exactly as the original inversion did. The signature the detector looks
+for is therefore present, unchanged, and the growth-gated detector corrects the sign AND commits
+the correction inside the same 0.5 s window, spending one flip out of a budget of four.
+
+Persistence changes WHICH sign the board starts from. It never changes whether the board can reach
+the right one. The residual cost is one 0.5 s runaway per RE-WIRING event, which is strictly less
+than revision 2's cost of one 0.5 s runaway per BOOT on a reversed harness. Revision 2's residual 7
+is superseded on the same reasoning: a wrong flip remains recoverable only by intervention, but the
+intervention is now the `Z` key rather than a power cycle, and the persistence does not deepen the
+case — a wrong flip that is committed and a wrong flip that is not are equally wrong until an
+operator or the detector corrects them.
+
+## 19. The `HIL_SIM` decision
+
+Under `HIL_SIM` the record is READ but deliberately NOT APPLIED, and it can never be written.
+
+The read is kept so that the boot line and the `S` dump describe the board in hand; a build that
+silently ignored a record would make a stored sense invisible on exactly the bench where an
+operator is most likely to look for it. The application is withheld because `v_actual` there comes
+from offset 30 of the 40-byte injection frame, `updateSensors()` returns before
+`updateWheelSpeed()`, and `encDirApply()` therefore never runs: the plant's sign is authoritative.
+Applying a stored sign could change no behaviour, but it would make a hardware-in-the-loop run's
+reported state depend on which physical board the build happened to be flashed onto, which is
+precisely the determinism that build exists to provide. The detector is compiled out in that build
+for the same reason, so no such run can write the record either.
+
+## 20. Observability and the `Z` key
+
+The State-98 key `Z` erases the record, returns the live sign to +1 and resets the per-boot flip
+count and the partial detection window. `Z` and `J` were the only unused letter keys; `Z` was
+chosen because it reads as "zero the stored sense". The key moves no switch and commands no
+current, so it is safe at any point in State 98, including during the staged bring-up, whose
+topology lockout it therefore does not join.
+
+The `S` dump's Encoder block gains `stored=` and `gen=` beside the live `dirSign=`. A `stored=none`
+is a virgin or cleared board. A `stored=` that disagrees with `dirSign=` is legitimate and
+informative: it means the sign was cleared or flipped since boot, or that the record was read and
+not applied under `HIL_SIM`.
+
+The boot line `ENC DIR SIGN: -1 restored from EEPROM (gen N)` prints only when a stored -1 is
+actually applied. The revision 2 observability gap is unchanged: the hardware-in-the-loop auxiliary
+byte's bits 0 to 7 are all allocated and the bench-log flags byte is full at version 8, so neither
+the flip nor the stored sense has a wire-level observable this round.
+
+## 21. Residuals of revision 3
+
+1. **The commit is a blocking call on the flip tick.** It is bounded to four occurrences per boot,
+   it never runs on the ordinary 1 kHz path, and it lands on a tick that has already decided to
+   reset the drive controller. However, it does lengthen that one tick, and the write duration of
+   the Teensy 4.1 EEPROM emulation is `TODO(verify: PJRC)` rather than measured here. If a bench
+   measurement shows the commit approaching the 20 ms undervoltage dwell, deferring it to the next
+   `loop()` iteration is the mitigation; it is not built.
+2. **`encDirLockoutMs` is not cleared by the `Z` key.** The clear re-arms the flip budget but
+   leaves any running 5 s lockout in place, so a `Z` pressed within 5 s of a flip does not allow an
+   immediate re-flip. This is deliberate — the lockout is an anti-chatter bound, not a budget — but
+   it is a behaviour an operator could be surprised by.
+3. **The record has no version field.** A future layout change must move the magic value rather
+   than extend the record in place.
+4. **The generation counter saturates at 255** and is never reset except by `Z`. It is a diagnostic
+   and nothing reads it, but a board past 255 corrections no longer reports its true history.
+5. **`PLAN.md` section 9b lists the State-98 command set and does not yet carry `Z`.** That file
+   was outside this round's edit fence; the addition is a follow-up.
+
+## 22. Validation of revision 3
+
+Host-native, in `test/test_main.cpp`, groups `test_fw28r3_*`. The EEPROM mock lives in
+`test/EEPROM.h` and counts committed cells separately from `update()` calls, so the wear property
+of section 17.1 is asserted rather than assumed; `reset_test_state()` erases it to 0xFF between
+tests.
+
+1. A valid stored -1 is applied at boot, mirrored, printed with its generation, and costs no write.
+   A stored +1 is applied and prints nothing.
+2. A virgin board, a wrong magic byte, a sign byte that is neither 0x01 nor 0xFF, a stale checksum
+   and the all-zero pattern are each rejected, each leave the sign at +1, and none writes.
+3. A real runaway through the real detector commits the record; the next boot starts from the
+   stored -1 and writes nothing; a re-store of an unchanged sign writes two cells out of four
+   `update()` calls; the generation counter saturates at 255 with a consistent checksum.
+4. A stale record on a re-wired board is corrected and re-stored within one window, at a cost of
+   one flip — section 18 executed rather than asserted.
+5. The `Z` key erases the record to 0xFF on every cell, returns the sign to +1, resets the flip
+   count and the window, acknowledges itself, does not leave State 98, and appears in the help.
+6. The `S` dump prints `stored=` and `gen=`, reports `stored=none` on a virgin board, and reports a
+   live/stored disagreement rather than hiding it.
+7. Under `HIL_SIM` the record is read and mirrored but not applied, the boot line says so, and a
+   full runaway signature held for four windows writes nothing.
+8. The layout constants are pinned, including that the record fits below `E2END`.
+
+Bench gate, on top of revision 2's: with the harness deliberately reversed, run the vehicle once,
+confirm the flip and the `ENC DIR FLIP` line, power-cycle, and confirm the `ENC DIR SIGN: -1
+restored from EEPROM` line and that the run starts without a runaway. Then re-plug the harness the
+right way round WITHOUT pressing `Z`, and confirm that the board takes exactly one corrective flip
+and starts clean on the following power cycle — that is section 18 on hardware.

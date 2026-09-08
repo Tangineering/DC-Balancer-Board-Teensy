@@ -32,7 +32,7 @@ CXXFLAGS_BENCH = -std=c++17 -Wall -Wextra -Wno-unused-function -I. -I../teensy_c
 CXXFLAGS_HIL = -std=c++17 -Wall -Wextra -I. -I../teensy_controller -I../controller_design -I../controller_design_MIMO -DBENCH_TEST=0 -DHIL_SIM=1 -DUSE_ETHERNET=1 -DNO_ETH_WARNING
 
 DEPS = mock_arduino.h mock_wire.h mock_spi.h mock_vesc.h mock_ethernet.h mock_sd.h \
-       VescUart.h SPI.h Wire.h NativeEthernet.h NativeEthernetUdp.h SdFat.h \
+       VescUart.h SPI.h Wire.h NativeEthernet.h NativeEthernetUdp.h SdFat.h EEPROM.h \
        ../teensy_controller/teensy_controller.ino \
        ../teensy_controller/drive_controller.h ../teensy_controller/drive_controller_coeffs.h \
        ../controller_design_MIMO/drive_replay_vectors.h

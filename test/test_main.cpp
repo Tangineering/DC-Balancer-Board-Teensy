@@ -95,6 +95,14 @@ static void reset_test_state() {
     encDirRunawayMagRef  = 0.0f;
     encDirRunawayMagOpen = 0.0f;
     encDirLockoutMs      = 0;
+    // fw v28 rev 3: the EEPROM direction-sense record. The backing store is erased to 0xFF (a
+    // virgin Teensy) and both write counters are zeroed, so every fixture starts from "this board
+    // has never been corrected" and a write-count assertion in one test cannot inherit another
+    // test's writes. The two mirror globals are returned to their boot values for the same
+    // order-independence reason as the five fields above.
+    mock_eeprom_reset();
+    encDirStoredSign     = 0;
+    encDirStoredGen      = 0;
 
     ag105_status_raw     = 0;
     ag105DataValid       = false;
@@ -19269,6 +19277,277 @@ static void test_fw28r2_constants() {
           "constants: without a valid encoder reading (encVelHaveValid false) no tick qualifies");
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+// fw v28 REV 3 — the direction sense PERSISTS across power cycles (operator ruling 2026-09-08)
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+// The record is four bytes at ENC_DIR_EE_BASE: magic / sign / gen / checksum. These groups
+// exercise the three entry points (encDirLoadStoredSign(), encDirStoreSign(),
+// encDirClearStoredRecord()) against the EEPROM mock, whose g_mock_eeprom_writes counter only
+// advances on a cell that actually CHANGES — which is the property the wear argument rests on.
+
+// Lay a record down by hand, exactly as the firmware's own writer would, so a load test never
+// depends on the writer being correct.
+static void fw28r3_write_record(uint8_t magic, uint8_t sign, uint8_t gen, uint8_t cksum) {
+    g_mock_eeprom[ENC_DIR_EE_BASE + 0] = magic;
+    g_mock_eeprom[ENC_DIR_EE_BASE + 1] = sign;
+    g_mock_eeprom[ENC_DIR_EE_BASE + 2] = gen;
+    g_mock_eeprom[ENC_DIR_EE_BASE + 3] = cksum;
+    g_mock_eeprom_writes       = 0;      // the fixture's own writes are not the firmware's
+    g_mock_eeprom_update_calls = 0;
+}
+static uint8_t fw28r3_cksum(uint8_t magic, uint8_t sign, uint8_t gen) {
+    return (uint8_t)((uint8_t)(magic + sign + gen) ^ (uint8_t)ENC_DIR_EE_CKSUM_XOR);
+}
+static void fw28r3_write_valid(int8_t sign, uint8_t gen) {
+    const uint8_t s = (sign < 0) ? (uint8_t)ENC_DIR_EE_SIGN_NEG : (uint8_t)ENC_DIR_EE_SIGN_POS;
+    fw28r3_write_record((uint8_t)ENC_DIR_EE_MAGIC, s, gen,
+                        fw28r3_cksum((uint8_t)ENC_DIR_EE_MAGIC, s, gen));
+}
+
+// ─── (7) The stored sign is adopted at boot ─────────────────────────────────────────────────
+static void test_fw28r3_stored_sign_applied_at_boot() {
+    test_group("fw v28 rev 3: a valid stored -1 is applied at boot, printed, and costs no write");
+    reset_test_state();
+    fw28r3_write_valid(-1, 7);
+
+    encDirLoadStoredSign();
+
+    check(encDirSign == -1,
+          "(7) a valid stored -1 becomes the live publish-boundary factor before any tick runs");
+    check(encDirStoredSign == -1 && encDirStoredGen == 7,
+          "(7) the diagnostic mirror reports the stored sign and its generation");
+    check(Serial.tx_contains("ENC DIR SIGN: -1 restored from EEPROM (gen 7)"),
+          "(7) the boot line names the restored sign and the generation");
+    check(g_mock_eeprom_writes == 0,
+          "(7) adopting a record writes nothing — a load is read-only");
+
+    // A stored +1 is adopted just as faithfully, and prints nothing: +1 is the default, so a line
+    // there would be noise on every boot of every correctly wired board.
+    reset_test_state();
+    fw28r3_write_valid(+1, 2);
+    encDirLoadStoredSign();
+    check(encDirSign == 1 && encDirStoredSign == 1 && encDirStoredGen == 2,
+          "(7) a stored +1 is adopted and mirrored");
+    check(!Serial.tx_contains("ENC DIR SIGN: -1 restored"),
+          "(7) a stored +1 prints no restore line");
+}
+
+// ─── (8) A virgin or corrupt record leaves +1 and writes nothing ────────────────────────────
+static void test_fw28r3_blank_and_corrupt_records_rejected() {
+    test_group("fw v28 rev 3: a blank, corrupt or half-written record leaves the sign at +1 and "
+               "never writes");
+
+    // Virgin board: every cell reads 0xFF.
+    reset_test_state();
+    encDirLoadStoredSign();
+    check(encDirSign == 1 && encDirStoredSign == 0 && encDirStoredGen == 0,
+          "(8) a virgin board (all cells 0xFF) leaves the sign at +1 and reports stored=none");
+    check(g_mock_eeprom_writes == 0,
+          "(8) a virgin board stays virgin: the load consumes no EEPROM cycle");
+    check(!Serial.tx_contains("ENC DIR SIGN"),
+          "(8) a virgin board prints no direction-sense line at all");
+
+    // Wrong magic: the record belongs to something else (or to nothing).
+    reset_test_state();
+    fw28r3_write_record(0x00, ENC_DIR_EE_SIGN_NEG, 3,
+                        fw28r3_cksum(0x00, ENC_DIR_EE_SIGN_NEG, 3));
+    encDirLoadStoredSign();
+    check(encDirSign == 1 && encDirStoredSign == 0,
+          "(8) a wrong magic byte is rejected even when the checksum is self-consistent");
+    check(g_mock_eeprom_writes == 0, "(8) a rejected magic writes nothing");
+
+    // Half-written sign cell: magic and checksum consistent, sign neither 0x01 nor 0xFF.
+    reset_test_state();
+    fw28r3_write_record(ENC_DIR_EE_MAGIC, 0x42, 1,
+                        fw28r3_cksum(ENC_DIR_EE_MAGIC, 0x42, 1));
+    encDirLoadStoredSign();
+    check(encDirSign == 1 && encDirStoredSign == 0,
+          "(8) a sign byte that is neither 0x01 nor 0xFF cannot select a sign");
+
+    // Checksum corruption: one flipped bit anywhere in the record is rejected, loudly.
+    reset_test_state();
+    fw28r3_write_valid(-1, 5);
+    g_mock_eeprom[ENC_DIR_EE_BASE + 2] = 6;      // gen corrupted, checksum now stale
+    encDirLoadStoredSign();
+    check(encDirSign == 1 && encDirStoredSign == 0,
+          "(8) checksum corruption is rejected and the sign defaults to +1");
+    check(Serial.tx_contains("stored record REJECTED (checksum)"),
+          "(8) a checksum rejection is reported — silent corruption would be indistinguishable "
+          "from a virgin board");
+    check(g_mock_eeprom_writes == 0,
+          "(8) a rejected record is NOT repaired or overwritten at load time");
+
+    // And the all-zero pattern, the other degenerate flash state, is rejected too.
+    reset_test_state();
+    fw28r3_write_record(0x00, 0x00, 0x00, 0x00);
+    encDirLoadStoredSign();
+    check(encDirSign == 1 && encDirStoredSign == 0,
+          "(8) an all-zero record is rejected");
+}
+
+// ─── (9) A flip commits the record, and update() semantics bound the wear ───────────────────
+static void test_fw28r3_flip_writes_record_once() {
+    test_group("fw v28 rev 3: a runaway flip commits the sign, and a re-store of an unchanged "
+               "sign writes only the cells that changed");
+    reset_test_state();
+
+    // A real detection through the real detector: 500 qualifying, growing ticks.
+    const int flips = fw28r2_seam_window(600, -0.60f, 0.004f, 12.0f);
+    check(flips == 1 && encDirSign == -1, "(9) the runaway takes exactly one flip");
+    check(g_mock_eeprom[ENC_DIR_EE_BASE + 0] == (uint8_t)ENC_DIR_EE_MAGIC &&
+          g_mock_eeprom[ENC_DIR_EE_BASE + 1] == (uint8_t)ENC_DIR_EE_SIGN_NEG &&
+          g_mock_eeprom[ENC_DIR_EE_BASE + 2] == 1 &&
+          g_mock_eeprom[ENC_DIR_EE_BASE + 3] ==
+              fw28r3_cksum((uint8_t)ENC_DIR_EE_MAGIC, (uint8_t)ENC_DIR_EE_SIGN_NEG, 1),
+          "(9) the committed record is magic / 0xFF / gen 1 / checksum");
+    check(encDirStoredSign == -1 && encDirStoredGen == 1,
+          "(9) the mirror follows the commit without a re-read");
+    // Three cells, not four: the -1 encoding IS the erased value 0xFF, so on a virgin board the
+    // sign cell already holds the value being written and update() leaves it alone. The record is
+    // still complete — the magic and checksum cells are what make the pattern valid — and the
+    // asymmetry is free wear saving on exactly the case the ruling exists for.
+    check(g_mock_eeprom_writes == 3,
+          "(9) the first commit of a -1 on a virgin board writes 3 cells (the 0xFF sign cell is "
+          "already at its target value)");
+
+    // A NEW boot on the same board adopts -1 and writes nothing.
+    const uint32_t writes_after_flip = g_mock_eeprom_writes;
+    encDirSign = 1;                       // model the power cycle: RAM is back at the default
+    encDirLoadStoredSign();
+    check(encDirSign == -1, "(9) the next boot starts from the stored -1 — the ruling's purpose");
+    check(g_mock_eeprom_writes == writes_after_flip, "(9) that boot consumes no EEPROM cycle");
+
+    // Re-storing the SAME sign is not a full re-write: magic and sign are unchanged, so only the
+    // generation and checksum cells move. This is the update() property the wear budget rests on.
+    g_mock_eeprom_writes       = 0;
+    g_mock_eeprom_update_calls = 0;
+    encDirStoreSign();
+    check(g_mock_eeprom_update_calls == 4,
+          "(9) a commit always issues four update() calls (the wear saving is in update(), not "
+          "in a firmware-side compare)");
+    check(g_mock_eeprom_writes == 2,
+          "(9) re-storing an unchanged sign touches only the gen and checksum cells");
+    check(encDirStoredGen == 2, "(9) the generation counter advances on every commit");
+
+    // The generation counter saturates rather than wrapping to 0 (a wrap would make an old record
+    // look new on the 'S' dump).
+    encDirStoredGen = 255;
+    encDirStoreSign();
+    check(encDirStoredGen == 255, "(9) the generation counter saturates at 255");
+    check(g_mock_eeprom[ENC_DIR_EE_BASE + 3] ==
+              fw28r3_cksum((uint8_t)ENC_DIR_EE_MAGIC, (uint8_t)ENC_DIR_EE_SIGN_NEG, 255),
+          "(9) the checksum stays consistent with the saturated generation");
+}
+
+// ─── (10) A stale record cannot strand a board ──────────────────────────────────────────────
+// The safety argument for reversing rev 2's no-persistence decision, executed rather than
+// asserted: boot a RE-WIRED board from a stale stored -1 and confirm the detector reaches the
+// correct sign within one window and re-stores it.
+static void test_fw28r3_stale_record_self_corrects() {
+    test_group("fw v28 rev 3: a stale stored sign on a re-wired board is corrected and re-stored "
+               "within one detection window");
+    reset_test_state();
+    fw28r3_write_valid(-1, 4);
+    encDirLoadStoredSign();
+    check(encDirSign == -1, "(10) the board boots from the stale -1");
+
+    // Re-wired: the decode is now correct in the harness's own frame, so the stale -1 makes the
+    // PUBLISHED velocity oppose the drive again — the same runaway signature as the original
+    // inversion, which is exactly why persistence cannot strand a board.
+    const int flips = fw28r2_seam_window(600, 0.60f, 0.004f, -12.0f);
+    check(flips == 1 && encDirSign == 1,
+          "(10) one window corrects the sign back to +1 (the cost is 0.5 s, once per re-wiring)");
+    check(g_mock_eeprom[ENC_DIR_EE_BASE + 1] == (uint8_t)ENC_DIR_EE_SIGN_POS &&
+          encDirStoredSign == 1 && encDirStoredGen == 5,
+          "(10) the correction is re-stored, so the NEXT boot starts correct");
+    check(encDirFlipCount == 1,
+          "(10) the correction costs one flip out of the per-boot budget, not the whole budget");
+}
+
+// ─── (11) The State-98 'Z' key clears the record ────────────────────────────────────────────
+static void test_fw28r3_clear_key() {
+    test_group("fw v28 rev 3: State-98 'Z' erases the stored record and returns the sign to +1");
+    reset_test_state();
+    fw28r3_write_valid(-1, 9);
+    encDirLoadStoredSign();
+    encDirFlipCount    = 2;
+    encDirRunawayTicks = 300;
+    check(encDirSign == -1, "(11) precondition: the board is running on a stored -1");
+
+    mainState = 98;
+    Serial.rx_queue.push('Z');
+    doState98();
+
+    check(encDirSign == 1, "(11) 'Z' returns the live publish-boundary factor to +1");
+    check(encDirStoredSign == 0 && encDirStoredGen == 0,
+          "(11) 'Z' leaves the board reporting stored=none");
+    check(g_mock_eeprom[ENC_DIR_EE_BASE + 0] == 0xFF &&
+          g_mock_eeprom[ENC_DIR_EE_BASE + 1] == 0xFF &&
+          g_mock_eeprom[ENC_DIR_EE_BASE + 2] == 0xFF &&
+          g_mock_eeprom[ENC_DIR_EE_BASE + 3] == 0xFF,
+          "(11) the erased pattern is 0xFF on every cell — indistinguishable from a virgin board");
+    check(encDirFlipCount == 0 && encDirRunawayTicks == 0,
+          "(11) 'Z' also re-arms the per-boot flip budget and drops the partial window");
+    check(Serial.tx_contains("stored record cleared"), "(11) the clear is acknowledged");
+    check(mainState == 98, "(11) 'Z' does not leave State 98");
+
+    // The cleared board then loads as virgin.
+    encDirLoadStoredSign();
+    check(encDirSign == 1 && encDirStoredSign == 0,
+          "(11) a cleared board loads exactly as a virgin one does");
+
+    // And the key is advertised.
+    Serial.tx_clear();
+    printTestHelp();
+    check(Serial.tx_contains("Z - clear the stored encoder direction sense"),
+          "(11) the 'Z' key appears in the State-98 help");
+}
+
+// ─── (12) The 'S' dump shows the stored value beside the live one ───────────────────────────
+static void test_fw28r3_status_dump_stored() {
+    test_group("fw v28 rev 3: the 'S' dump prints stored= and gen= beside dirSign=");
+    reset_test_state();
+    fw28r3_write_valid(-1, 12);
+    encDirLoadStoredSign();
+    printTestStatus();
+    check(Serial.tx_contains("dirSign=-1") && Serial.tx_contains("stored=-1") &&
+          Serial.tx_contains("gen=12"),
+          "(12) a board running on its stored sign prints dirSign=-1 stored=-1 gen=12");
+
+    // A board with no record says so rather than printing a misleading 0.
+    reset_test_state();
+    encDirLoadStoredSign();
+    printTestStatus();
+    check(Serial.tx_contains("stored=none") && Serial.tx_contains("gen=0"),
+          "(12) a virgin board prints stored=none");
+
+    // Live and stored can legitimately disagree — after a 'Z', or before the first commit.
+    reset_test_state();
+    encDirSign = -1;
+    printTestStatus();
+    check(Serial.tx_contains("dirSign=-1") && Serial.tx_contains("stored=none"),
+          "(12) the live sign and the stored record are reported independently, so a "
+          "disagreement is visible");
+}
+
+// ─── (13) The record layout is pinned ───────────────────────────────────────────────────────
+static void test_fw28r3_record_layout() {
+    test_group("fw v28 rev 3: the EEPROM record layout matches the design record");
+    check(ENC_DIR_EE_BASE == 4276,
+          "layout: the record sits at 4276, the top of the Teensy 4.1's 4284-byte emulated "
+          "EEPROM (E2END 4283), leaving 4280-4283 spare");
+    check(ENC_DIR_EE_BASE + 3 <= 4283, "layout: the record fits below E2END");
+    check(ENC_DIR_EE_MAGIC == 0xE7, "layout: magic 0xE7 (an erased cell reads 0xFF)");
+    check(ENC_DIR_EE_SIGN_POS == 0x01 && ENC_DIR_EE_SIGN_NEG == 0xFF,
+          "layout: the sign byte encodes +1 as 0x01 and -1 as 0xFF");
+    check(ENC_DIR_EE_CKSUM_XOR == 0x5A, "layout: the checksum mask is 0x5A");
+    // The wear budget quoted in the design record: at most ENC_DIR_FLIP_MAX commits per boot
+    // against the ~100 000 cycles per cell PJRC rates the part at.
+    check(ENC_DIR_FLIP_MAX == 4u && (100000u / ENC_DIR_FLIP_MAX) == 25000u,
+          "layout: the flip cap bounds the wear at 4 commits per boot = 25 000 worst-case boots "
+          "per cell");
+}
+
 #endif  // !HIL_SIM
 
 #if HIL_SIM
@@ -19311,6 +19590,42 @@ static void test_fw28r2_hil_gating() {
     check(!Serial.tx_contains("ENC DIR FLIP"),
           "(5) HIL: nothing is printed — a flip there could change no number but would still "
           "move the operator-facing output");
+}
+
+// ─── (14) fw v28 rev 3 under HIL_SIM: the record is READ but never APPLIED, and never written ─
+static void test_fw28r3_hil_record_read_not_applied() {
+    test_group("fw v28 rev 3: under HIL_SIM a stored sign is reported but not applied, and no "
+               "HIL run can write the record");
+    reset_test_state();
+
+    g_mock_eeprom[ENC_DIR_EE_BASE + 0] = (uint8_t)ENC_DIR_EE_MAGIC;
+    g_mock_eeprom[ENC_DIR_EE_BASE + 1] = (uint8_t)ENC_DIR_EE_SIGN_NEG;
+    g_mock_eeprom[ENC_DIR_EE_BASE + 2] = 3;
+    g_mock_eeprom[ENC_DIR_EE_BASE + 3] =
+        (uint8_t)((uint8_t)((uint8_t)ENC_DIR_EE_MAGIC + (uint8_t)ENC_DIR_EE_SIGN_NEG + 3)
+                  ^ (uint8_t)ENC_DIR_EE_CKSUM_XOR);
+    g_mock_eeprom_writes = 0;
+
+    encDirLoadStoredSign();
+
+    check(encDirSign == 1,
+          "(14) HIL: the stored -1 is NOT applied — the plant's sign is authoritative and an HIL "
+          "run must not depend on which board it was flashed onto");
+    check(encDirStoredSign == -1 && encDirStoredGen == 3,
+          "(14) HIL: the record is still read, so the 'S' dump describes the board in hand");
+    check(Serial.tx_contains("NOT applied"),
+          "(14) HIL: the boot line says the stored sign was read and deliberately not applied");
+    check(g_mock_eeprom_writes == 0, "(14) HIL: the load writes nothing");
+
+    // The detector is compiled out there, so a full runaway signature writes no record either.
+    for (int k = 0; k < 4 * (int)ENC_DIR_RUNAWAY_TICKS; k++) {
+        encVelHaveValid = true;
+        v_actual = 2.0f;
+        current  = -12.0f;
+        updateEncoderDirectionSense();
+    }
+    check(g_mock_eeprom_writes == 0 && encDirFlipCount == 0,
+          "(14) HIL: no flip, therefore no commit — the record cannot change in an HIL build");
 }
 #endif  // HIL_SIM
 
@@ -23619,8 +23934,17 @@ int main() {
     test_fw28r2_short_push_never_flips();
     test_fw28r2_lockout_and_flip_cap();
     test_fw28r2_status_dump_direction_sense();
+    // fw v28 rev 3: the EEPROM persistence of that sign.
+    test_fw28r3_record_layout();
+    test_fw28r3_stored_sign_applied_at_boot();
+    test_fw28r3_blank_and_corrupt_records_rejected();
+    test_fw28r3_flip_writes_record_once();
+    test_fw28r3_stale_record_self_corrects();
+    test_fw28r3_clear_key();
+    test_fw28r3_status_dump_stored();
 #else
     test_fw28r2_hil_gating();
+    test_fw28r3_hil_record_read_not_applied();
 #endif
     test_encoder_spurious_drop_count();
     test_sdlog_write_error_midrun();
