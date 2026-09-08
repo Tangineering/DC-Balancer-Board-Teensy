@@ -419,6 +419,22 @@ static void reset_test_state() {
     resetControlRateLimiters();
 }
 
+// ── Encoder-defect harness, REGRESSION mode (WORK_QUEUE 7d item 2a) ──────────────────────────
+// The harness closes the drive loop on the firmware's OWN speed estimate by feeding edges to
+// doEncoderA()/doEncoderB() — the one path a HIL board cannot exercise, because under HIL_SIM
+// updateSensors() takes v_actual from the injection frame and skips updateWheelSpeed()
+// entirely.  It is #included (not linked) so it sees the same single translation unit's .ino
+// globals, and it reuses check()/test_group()/reset_test_state() defined above — hence the
+// include must sit AFTER them.  ENCODER_HARNESS_EMBEDDED compiles out the harness's duplicate
+// mock/.ino includes, its own check()/counters, and its standalone --verify/--sweep/main()
+// sections; its 43 checks therefore land in this suite's total exactly once.
+// Production build only (BENCH_TEST=0, HIL_SIM=0): under HIL_SIM the estimator path the harness
+// scores is compiled out, and the bench build replaces the bring-up/motor paths it drives.
+#if !HIL_SIM && !BENCH_TEST
+#define ENCODER_HARNESS_EMBEDDED 1
+#include "encoder_defect_harness.cpp"
+#endif
+
 // ── fw v19 (safety-review round): conduction-aware handoff-slew test helpers ─────────────────
 // updateShareSlewMode() replaced the old stateless shareSlewStepPerTick(): it maintains per-
 // channel EMAs of |I_fc|/|I_batt| (dark below SHARE_HANDOFF_MIN_A=0.15A, live only at
@@ -22898,6 +22914,12 @@ int main() {
     test_encoder_v15_dpos_pitch_count();
     test_encoder_v17_integrity();
     test_velocity_chain_interlock();
+#if !HIL_SIM
+    // WORK_QUEUE 7d item 2(a): the encoder-defect harness's REGRESSION mode runs INSIDE the
+    // production suite, so an estimator change (reject gates, adaptive reference, halving/
+    // doubling basins) cannot pass unnoticed. Same 43 checks as ./run_tests_encoder.
+    run_encoder_defect_regression();
+#endif
     test_control_rate_limiting();
     test_open_loop_droop();
     test_droop_mapping_bounds();

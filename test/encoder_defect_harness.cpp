@@ -48,6 +48,22 @@
 // controller.  The reset seam below REPLICATES test_main.cpp's enc_reset() pattern rather than
 // adding one to the firmware.
 
+// ── 0. Embedding mode (WORK_QUEUE 7d item 2a) ────────────────────────────────
+//   test_main.cpp #includes this file with ENCODER_HARNESS_EMBEDDED defined, AFTER it has
+//   already pulled in the mocks and the .ino and defined its own check()/test_group()/
+//   g_tests_passed/g_tests_failed/reset_test_state().  In that mode this file contributes ONLY
+//   the harness body (sections 4-6, 8) — the mock/.ino includes, the duplicate test
+//   infrastructure, --verify (7), --sweep (9) and main() (10) are all compiled out, so nothing
+//   is double-defined, the check() counts flow straight into the production suite total, and no
+//   static function is left unused (which -Wall -Wextra would flag in the production build).
+//   The standalone `run_tests_encoder` build (ENCODER_HARNESS_EMBEDDED undefined) is unchanged.
+#ifdef ENCODER_HARNESS_EMBEDDED
+#ifndef ENCODER_HARNESS_NO_MAIN
+#define ENCODER_HARNESS_NO_MAIN
+#endif
+#endif
+
+#ifndef ENCODER_HARNESS_EMBEDDED
 // ── 1. Mock headers (must come before the .ino include) ──────────────────────
 #include "mock_arduino.h"
 #include "mock_wire.h"
@@ -58,6 +74,7 @@
 
 // ── 2. Include the firmware under test ───────────────────────────────────────
 #include "../teensy_controller/teensy_controller.ino"
+#endif  // !ENCODER_HARNESS_EMBEDDED
 
 // ── 3. Test infrastructure ───────────────────────────────────────────────────
 #include <cstdio>
@@ -68,6 +85,10 @@
 #include <vector>
 #include <algorithm>
 
+#ifndef ENCODER_HARNESS_EMBEDDED
+// Standalone build only.  Embedded, test_main.cpp's identically-shaped check()/test_group()
+// and its g_tests_passed/g_tests_failed counters are used instead, so the 43 harness checks
+// are counted once, in the main suite's total.
 static int g_tests_passed = 0;
 static int g_tests_failed = 0;
 
@@ -84,6 +105,7 @@ static void check(bool condition, const char* description) {
 static void test_group(const char* name) {
     printf("\n[%s]\n", name);
 }
+#endif
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 4. Plant constants — MIRRORED from tools/hil_plant_sim.py.
@@ -165,6 +187,18 @@ static void harness_reset() {
     driveZeroCutActive = false;
     resetControlRateLimiters();
     velocityChainCalibratedFlag = true;
+
+#ifdef ENCODER_HARNESS_EMBEDDED
+    // Embedded in run_tests: the harness clears only the encoder/motor half, so hand the rest of
+    // the .ino globals back to the main suite's own baseline before returning.  Every field
+    // reset_test_state() touches that this seam also sets is set to the SAME value (v_actual 0,
+    // V_fc 10 / V_batt 7 / V_bus 16, the encVel* "never published" baseline, encEdgeCountA/B 0,
+    // velocityChainCalibratedFlag true), and it touches none of the encoder-only state above
+    // (encoderPos, Afirst*/Bfirst*, encoderVelReset()'s period reference, the drive-control
+    // state), so calling it last is idempotent for this harness and leaves no share/charger/
+    // fault global carrying over into the next main-suite test.
+    reset_test_state();
+#endif
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -453,6 +487,7 @@ static RunResult run_case(const DefectSpec& d, double v_cruise, double duration_
     r.ref_us_final = (double)encPeriodRefUs;
     return r;
 }
+#ifndef ENCODER_HARNESS_EMBEDDED   // standalone-only: --verify mode
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 7. --verify: generator/harness geometry equivalence
@@ -501,6 +536,7 @@ static int verify_against_csv(const char* path) {
     return mismatches == 0 ? 0 : 1;
 }
 
+#endif  // !ENCODER_HARNESS_EMBEDDED
 // ─────────────────────────────────────────────────────────────────────────────
 // 8. Regression mode — the nominal wheel plus one canonical instance of each defect.
 //    Entry point is a single function so test_main.cpp can call it later without a main()
@@ -833,6 +869,7 @@ void run_encoder_defect_regression() {
           "dropout 300 ms: the motor command never exceeds MOTOR_I_CMD_MAX");
 }
 
+#ifndef ENCODER_HARNESS_EMBEDDED   // standalone-only: --sweep mode
 // ─────────────────────────────────────────────────────────────────────────────
 // 9. Sweep mode — report-only grid, one CSV row per run.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -989,6 +1026,7 @@ static int run_sweep(const char* out_dir, double duration_s) {
     return 0;
 }
 
+#endif  // !ENCODER_HARNESS_EMBEDDED
 // ─────────────────────────────────────────────────────────────────────────────
 // 10. Entry point.  Guarded so test_main.cpp can link run_encoder_defect_regression()
 //     into run_tests later without a main() collision (the brief's staging note).

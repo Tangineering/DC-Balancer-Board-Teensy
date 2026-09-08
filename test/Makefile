@@ -45,13 +45,13 @@ all: run_tests run_tests_bench run_tests_hil run_tests_encoder
 	PATH="$(MSYS2_UCRT64):$(PATH)" ./run_tests_hil
 	PATH="$(MSYS2_UCRT64):$(PATH)" ./run_tests_encoder
 
-run_tests: test_main.cpp $(DEPS)
+run_tests: test_main.cpp encoder_defect_harness.cpp $(DEPS)
 	PATH="$(MSYS2_UCRT64):$(PATH)" $(CXX) $(CXXFLAGS) test_main.cpp -o run_tests
 
-run_tests_bench: test_main.cpp $(DEPS)
+run_tests_bench: test_main.cpp encoder_defect_harness.cpp $(DEPS)
 	PATH="$(MSYS2_UCRT64):$(PATH)" $(CXX) $(CXXFLAGS_BENCH) test_main.cpp -o run_tests_bench
 
-run_tests_hil: test_main.cpp $(DEPS)
+run_tests_hil: test_main.cpp encoder_defect_harness.cpp $(DEPS)
 	PATH="$(MSYS2_UCRT64):$(PATH)" $(CXX) $(CXXFLAGS_HIL) test_main.cpp -o run_tests_hil
 
 # Fourth target (WORK_QUEUE 7d, 2026-09-08): the encoder-defect harness. Built with the SAME

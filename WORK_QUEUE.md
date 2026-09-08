@@ -772,7 +772,7 @@ at fixed setpoint, both minority directions, and a repeat of WP0073/WP0100 on th
 the 1.0–1.35 Ω bench battery supply) — the whitepaper's standing recommendation, previously absent
 from this queue.
 
-## 7d. Opened 2026-09-08 (host-native encoder-defect harness — implementation brief) — DONE `a683e25` (41 pytest + 43 harness checks, first 2676-run sweep, docs/encoder_defect_harness.md); OPEN: the run_tests hook in test_main.cpp; FINDING for the operator: a 180 deg phase error = sign-inverted reading, drive railed, NO fault (no encoder-sign plausibility check in detectFaults())
+## 7d. Opened 2026-09-08 (host-native encoder-defect harness — implementation brief) — DONE `a683e25` (41 pytest + 43 harness checks, first 2676-run sweep, docs/encoder_defect_harness.md); the run_tests hook DONE (43 checks inside run_tests, 4250 total); FINDING for the operator: a 180 deg phase error = sign-inverted reading, drive railed, NO fault (no encoder-sign plausibility check in detectFaults())
 
 Source: operator question 2026-09-08 ("is it feasible to add a simulation of the encoder wheel to
 the hi-fi HIL engine, with phase offset, +1/−1/+1 teeth, and missing teeth"). **Feasibility
