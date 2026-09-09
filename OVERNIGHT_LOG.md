@@ -2042,3 +2042,13 @@ with reversal paths, the primary worktree's branch is the operator's - commit fr
   legs run at 3.4-4.5 W; ems-sdp at 14.6 W) - a per-leg reference is the design question. FTP-75 5050 / socband:
   the first two FTP-75 bands calibrated (board 1.3-1.5 % under the corrected walk); the Gfc bridge exact / 277 ppm.
   27 analyzed, zero board defects.
+- **Campaign II interim (31 of 75, ~13:50): THE DP BOUND MOVED THE SAME WAY AS THE MPC.** ems-ftp75-dp's regenerated
+  H-20 table solves to share_min 0.5375 / share_max 0.85 (2358 of 3501 stage rows at 0.85, never 0.15; campaign I's table
+  visited 0.15 on 87 608 ticks) with zero charge stages - the polarity inversion is the DP's answer too, so it is the
+  convex map's economics, not an MPC defect (the A/B item stands, its expected answer narrowed). Consequence: the
+  chatter control case (a 100-tick 0.15 visit does not wind the PI through the rail) has no stimulus this campaign.
+  ems-ftp75-sdp: the r-based chatter confirmed a SECOND campaign - 78 whole-run FC_BUS falls IDENTICAL to campaign I
+  (69 in-window = window phase), same class on every axis (cmd 0.1500, sel_armed 0, mdac_fc railed, i_cut max
+  0.2329 A, dwell <= 11 ms), no new class, FC_CHARGE never HIGH; the firmware ruling item is unchanged. A0 is 66 %
+  of ftp75-sdp's Run-window hydrogen and 50 % of ftp75-dp's: on the FTP-75 family the bands discriminate on one
+  third to one half of the measured mass. 29 analyzed, zero board defects.
