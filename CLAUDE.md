@@ -957,6 +957,26 @@ single-source windows; F7 recorded only. Commits `4e20b76` (queue), `a683e25` (e
   indistinguishable from no data) - an open firmware item for the operator; jitter collapse at ~0.6 of the quarter
   pitch; near-aligned + jitter reproduces the ML0140 signature. `docs/encoder_defect_harness.md`. The `run_tests`
   hook for its regression mode is still to be added to `test/test_main.cpp`.
+- **Tools rounds (evening):** the fw v28 mirror parts 1 + 2 (`1549067`, `e7ab118`: governor port + equivalence harness,
+  MPC delivery table selector-aware, the 23-leg re-walk table, F6 reported not applied; Gate 1 in-band: mpc-det passes
+  5e-3 by 2-3 orders, all four mpc-sto legs fail - first six-leg measurement); the **RT1987 constant-slew ramp A/B**
+  (`66dea4b`): LEGACY STAYS THE DEFAULT - constant-slew (datasheet 645.5 V/s, VIN- and start-independent) moves the
+  hardware-corroborated cold bring-up pins AWAY from the board (P0 -8 %, P3 -18 %) and neither shape brackets the
+  comm-loss re-close (legacy 3.75 A, constant-slew 0.139 A, board 1.66-1.79 A latching OC_FC) - the residual is
+  elsewhere (boost output impedance, RT_R_ON, C_VBUS; each a measurement round); both shapes selectable and
+  era-fingerprinted. `c11a464`: BLG v9 decoder (v7/v8 unchanged, 464 B drain chunk), `ASYM_SIMPLE_I_MIN_A` 0.08 A
+  (better conditioned at the floor than at full load; idle split 0.25 -> 0.365), `--droop measured` = k_d + dV0 +
+  R_f scaled together (CAL-1 RMS 0.0090 vs 0.0457 k_d-only; the 39 slope fits prefer a NEGATIVE intercept - the
+  +0.033 ohm floor is not bench-supported at 0.2117, awaiting the DMM measurement), governor_model mirror of rev
+  4-6 (27 cases / 31 413 rows / max code delta 0). `70e4543` + `0063f8e`: the alpha sweep at the measured billing
+  (charge boundary 0.126 -> 0.1385 = x0.88/0.801 exactly; alpha 0.13411 sits 3.2 % BELOW it - v6 rejects charging
+  endogenously; the drive cycle lost its charge discrimination) and the three alpha legs rebound (greedy 3 / cal 8 =
+  v6 byte-identical / charge 15) under the SUITE walk configuration - the sweep's walk omits the asymmetry triple
+  and on a share-0 map that decides the FC floor's delivery (3.3x on the greedy leg). Rulings: ems-sdp accepted as
+  a CLAMP WITNESS (the v6 ask flips on the SoC target row, every above-target ask clamps to 0.85); matched-DP
+  re-solves HELD until the overnight campaign. Open: WORK_QUEUE 0e item 21 (the mpc-det/mpc-sto bit-identity test
+  now fails by 3e-5 - re-adjudicate, not bump).
+- **CAMPAIGN READY:** flash fw v28 rev 6 `f0d82e4`; tooling `0063f8e`; detached worktree, opt-in legs on.
 - **Queued (WORK_QUEUE 0e items 8-11):** the fw v28 tools mirror (governor model + fw v28 equivalence harness,
   ems_walk, the MPC delivery table selector-aware, FW28-ERA anchors, every designed-total stimulus re-derived at
   0.125 A, F6 in the walk), then the first fw v28 campaign after the operator's flash. Open rulings unchanged

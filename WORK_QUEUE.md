@@ -91,7 +91,7 @@ firmware round lands).
       plateau (ruling still open). Re-walk every anchor; provisional pins for the first fw v28 campaign.
 - [x] 10. (DONE `e7ab118`: reported, not applied; joint 1.3561 A with F6 vs board 1.3243 A) **F6:** the walk models the share-loop feedback-EMA overshoot on the fw v26 clamp (+3 % of r for
       ~12 ms; the joint leg's bound needs a third reading on the board).
-- [ ] 11. (suites green, committed, pushed; WAITING on the operator flash of fw v28 rev 3 `7482395`) Suites, commit, push; first fw v28 campaign after the operator's flash (full plan incl. the opt-in
+- [ ] 11. (READY: flash fw v28 REV 6 `f0d82e4`; campaign tooling `0063f8e`; launch from a detached worktree with `--with-ftp75 --with-ftp75c --with-alpha`) Suites, commit, push; first fw v28 campaign after the operator's flash (full plan incl. the opt-in
       legs; the F1 legs `charge-to-full`, the five `ems-ftp75c-*`, `ems-sdp-cross` are the witnesses).
 
 - [x] 12. (DONE `ded47f3`: growth requirement 0.10 m/s over the window and manual-current exclusion added by review; same-tick sign correction; 4318 / 175 / 4699, harness 51; a wrong flip is silent and permanent for the boot - recorded) **fw v28 rev 2 (operator ruling 2026-09-08 afternoon, from the harness finding): encoder direction-sense
@@ -133,8 +133,17 @@ firmware round lands).
       k_d+dV0 / k_d+dV0+R_f / realised-k_d against the 39 single-source fits and CAL-1; ship the lowest residual.
 - [x] 19. (RULED 2026-09-08: ACCEPT the leg as a CLAMP WITNESS - stimulus unchanged, the sdp_table checks stay tagged as clamp-side; premise failed: plateau is bin 22 and no demand bin discriminates; v6 flips on the SoC target row and every above-target ask clamps to 0.85; needs a start below the SoC target or a drain crossing it - RULING) **ems-sdp stimulus re-tuned (operator ruling):** drain plateau one demand bin below the clamp where the
       v6 and DP tables differ; re-walk, re-pin provisional.
-- [ ] 20. (IN PROGRESS, Opus) **Alpha sweep re-run at the measured billing (operator: yes)** after the ramp decision; the 75 matched-DP
+- [x] 20. (DONE `70e4543` + rebind `0063f8e`: charge boundary 0.1385, alpha 0.13411 3.2 % below it; legs rebound greedy 3 / cal 8 = v6 / charge 15 under the SUITE walk configuration - the sweep walks without the asymmetry triple) **Alpha sweep re-run at the measured billing (operator: yes)** after the ramp decision; the 75 matched-DP
       re-solves HELD until the overnight campaign (operator).
+
+- [ ] 21. **RULING NEEDED: `test_the_cross_stimulus_wide_share_walk_is_not_available_from_either_law`** now fails - mpc-det vs
+      mpc-sto h2 differ by 3e-5 (deterministic, not the wall-clock class; most plausibly the rev 4-6 governor mirror)
+      and its mpc-det pin 0.009018666 is stale (0.0079825 now). Re-adjudicate the claim (bit-identical hydrogen across
+      the two laws) rather than bump the numbers. Left failing in the miniforge suite.
+- [ ] 22. Review nits carried: en_low margin as a rule not a literal; the raw-escape fidelity note in governor_model's
+      boundaries list; `_selector_commands_a_rail()` raise on an unknown tag; FW28-ERA block lacks
+      SHARE_SELECTOR_DWELL_MS; the port's refused_blank one-tick lead after ~460 blank refusals; `--droop measured`
+      bench intercept (negative) awaits the AD5443/OPA197 DMM measurement.
 
 **Open-item review (2026-09-08, everything else in this file, triaged):**
 - Runs THIS session in parallel with the firmware: **§7d encoder-defect harness** (operator brief, disjoint files).
