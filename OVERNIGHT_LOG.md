@@ -1951,3 +1951,31 @@ with reversal paths, the primary worktree's branch is the operator's - commit fr
   61 s **Gate-1 band is missed by 5.6 %** (share_pred_err_mean 0.005281 against 5e-3) because the lower
   terminal price drops the committed cruise command onto the ladder's bottom rung 0.15 - a strict xfail, the
   gate NOT widened.
+- **Agent A' landed 8aeafb4 (~09:30, 52 min after the resume; not pushed).** The previous A' had done F1
+  (14.6440 W), the levers, alpha and the v7 re-solve; the resume finished the census, F3, F4/F5, the axis
+  restatement, the saturation refusal, the banner line, tests. CORRECTED LEVERS (controller loop, shipped):
+  L_share 0.5671522 (surrogate 0.5916735), L_chg 0.3744189 at the measured round trip (0.3810417 at eta 0.88),
+  model levers at 14.6440 W 0.392073 / 0.314118, Gfc cross-check -1.09 % / +0.75 % vs the board's 0.4165286.
+  lambda 0.423 -> 0.4673 (band [0.39, 0.59]); RHO 2.364 -> 2.140; terminal price 2.792 -> 2.528; alpha 0.134041
+  -> 0.142475 (+6.29 %; model window [0.1275, 0.1592]). Live picks unchanged (2 / 6 / 14; log-alpha midpoints).
+  Saturation census on campaign I: 61 ticks of 4.68 M (fw26-clamp-sweep 60, peak 24.08 W; scp-inrush 1, 38.28 W)
+  - neither hydrogen-scored; the knee IS inside the firmware's reach. Bands restated on Run-window deltas
+  (delta_min/max + sample_state_in (2,)): ftp75 5050 (0.0218, 0.0363) -> (0.0304, 0.0506), socband (0.0326,
+  0.0489) -> (0.0426, 0.0638), sdpftp (1.49e-2, 2.49e-2) -> (2.61e-2, 4.36e-2), the dp band the union; the
+  ftp75c family deliberately NOT restated (no disarm-release / inhibit model; provisional). xfail 1 retired (the
+  ftp75-dp rail windows re-derived: the H-20 table opens at 0.85), xfail 2 (the mpc cross-stimulus envelope)
+  stays. Suites: run_hil_suite 733 / 1 xfail, sdp_ems_solver 102, sdp_alpha_sweep 77, ems_walk 76, hil_plant_sim
+  803 / 3 xfail, mpc_ems 175 / 1 xfail; nine new tests. Stdlib subset not run by A' (the venv is in the primary
+  repo) - the orchestrator runs it.
+  **BLOCKER:** the re-solved v7 at alpha 0.142475 does NOT certify (alpha 6.7 % above the walked admission
+  window [0.0882, 0.1335]: F1 raised alpha while F2 raised the walked share lever) and hil_plant_sim REFUSES to
+  bind sdp-v7 to the frontier role; `lever-measured` certifies (0.134110, 46 cells) but prices alpha in Gfc grams.
+  Both artifacts defective in one direction each; three strict xfails record it. Also pinned-not-smoothed: v7's
+  charge cells 46 -> 140 (47 SoC rows, bins 0-2, all below target); the MPC 61 s Gate-1 band missed by 5.6 %
+  (0.005281 vs 5e-3: the lower terminal price drops the cruise command onto the 0.15 rung) - xfail, gate not
+  widened. The v7-vs-v6 frontier re-check at the new band not run (v7 unbound).
+- **D-9 (~09:35): the frontier SDP REVERTS TO v6 for campaign II** (A's reversal path: certified, binds, 0 charge
+  cells as shipped; its alpha is in the retired unit - the campaign measures the board's H-20 levers, which is
+  what the alpha ruling needs). v7 stays in the tree as the record. Operator rulings queued (WORK_QUEUE 0g): the
+  certificate / alpha basis under a convex map, the 140-cell census, the Gate-1 terminal price. The D-8 fix pass
+  carries the revert plus the seven lens-2 items.
