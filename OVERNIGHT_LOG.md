@@ -1617,3 +1617,15 @@ during a live campaign, ASCII prints, decision pairs for judgment calls with rev
   invalidate them); the tooling fix queue (ems_walk floor defect, re-walk table, b00-v1 check re-spec, ems-sdp
   interior check, edge-scoped charge-window check) is QUEUED in WORK_QUEUE for after the model update, not run
   tonight. Budget used: 1 of 5.
+- **Campaign I interim (34 of 75, ~22:50): F1 IS VALIDATED ON THE BOARD.** Four compressed-cycle legs clean with
+  ZERO UV_BUS ticks where H dwelled 16.9-20.2 ms and latched twice. The disarm path fired on -5050 (67.223 s, arm
+  standing 64 s, FC_BUS re-closed +1.0 ms onto the live bus, V_bus flat at 15.807 V), -socband (67.225 s, same
+  tick, 17 windows all 0x27 -> 0x35, H's 0x26 -> 0x35 latch trigger structurally gone) and -sdp FC-SELECTED
+  (67.219 s, the window opened on the disarm tick because the selected FC_BUS had conducted 64 s, 16 mV
+  excursion vs fw v27's collapse to 4.95 V). FC inrush peaks 0.115 A vs H 0.75-1.34 A; regen era-invariant.
+  Two walk-premise defects: the 0.25 A gate never releases the arm on this cycle (filtered peak 0.157-0.179 A;
+  the release is the disarm), and the rev 6 inhibit keeps a permanent-rail policy two-source after it (-sdp
+  walk -9.5 %). Other REAL findings so far: ems-ftp75-sdp's FC chatter survived F5 (71 r-based cuts / 90 s, the
+  PI winding through DROOP_R_MIN at a sustained 0.15 command - a firmware ruling item, benign), ems-ftp75-mpc's
+  0.15 rung re-arms the selector at stops (60.75 s battery-only, -9.9 % FC coulombs; delivery table has no
+  HOLD), ems-ftp75c-socband now charges 447 mC (no longer charge-free). Zero board defects.
