@@ -878,7 +878,7 @@ separate worktree (`DC-Balancer-main`).
   split law's delivered 0.17 (R_FC 1.92 vs R_BT 0.39 ohm at the rail), the fw v25 load-guarded r-path cut in
   `applyShareRatio()` fires at light load, re-entry follows at the hysteresis, ~0.8 Hz - fw v6's accepted "rail-
   saturated dropout cycle" (rate +16 % vs fw v27; dwell <= 12.4 ms, i_cut <= 0.2236 A, benign). A 100-tick DP visit
-  to 0.15 does not wind through (ems-ftp75-dp 0 cuts); ems-sdp-cross adds a zero-current dark-cut class (28 pairs).
+  to 0.15 does not wind through (ems-ftp75-dp 0 cuts); ems-sdp-cross adds 41 bus-switch cuts (28 FC_BUS / 13 BT_BUS; 5 dark / 36 loaded at 0.10 A on the preceding row, 3 at exactly 0 A).
   Candidate closure: clamp the PI reference at DROOP_R_MIN with anti-windup for in-band commands.
 - **The MPC ladder's 0.15 / 0.85 endpoints ARE the selector rails:** at stops the 0.15 rung re-arms battery-only and
   the hold costs unbilled FC time (ems-ftp75-mpc 60.75 s, -9.9 % FC coulombs; ftp75c-mpc 70.6 % armed; ems-mpc's 54 s

@@ -1979,3 +1979,15 @@ with reversal paths, the primary worktree's branch is the operator's - commit fr
   what the alpha ruling needs). v7 stays in the tree as the record. Operator rulings queued (WORK_QUEUE 0g): the
   certificate / alpha basis under a convex map, the 140-cell census, the Gate-1 terminal price. The D-8 fix pass
   carries the revert plus the seven lens-2 items.
+- **D-8 landed d753237 (~10:15, 30 min; not pushed):** D-9 applied - the frontier SDP is sdp-v6 (the three bindings,
+  frontier_eligible swapped, banners, the ems-sdp h2 label re-cited to v6's walk 1.61093e-2 g; v7 registered,
+  frontier-ineligible, its certificate failure in the role note; the three xfails now live tests + a D-9 pin;
+  dry-run builds the sdp legs on v6; 0 hydrogen bands off the Run-window delta kind; picks 2 / 6 / 14 stand).
+  HIGH closed: joint_peak_held_down opens at 16.3 s with a disjointness test; the sdpx widening restated; 0f-2
+  re-pointed at pre_bt_release / pre_fc_release; the R_f identity restated as "blind to cuts by construction";
+  1.3237 A prose (and G's 1.3243 A EXCEEDS the acceptance by 0.045 % - the old "cleared by 0.015 %" read
+  backwards); both census lines labelled preceding-row / own-row; the "28 dark pairs" claim corrected in
+  CLAUDE.md by the orchestrator. Suites: run_hil_suite 734 / 1 xfail, ems_walk 76, mpc_ems 175 / 1 xfail,
+  hil_plant_sim 807; stdlib 2476 / 96 / 1 xfail. New wall-clock-sensitive test:
+  test_the_roll_slice_overshoot_is_one_chunk_not_one_item (fails under two concurrent pytest processes).
+  Orchestrator suites running on the final tree; push + campaign II next.
