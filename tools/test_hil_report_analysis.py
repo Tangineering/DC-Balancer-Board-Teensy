@@ -1959,8 +1959,11 @@ def test_ems_strategy_role_reads_the_sim_registry():
     # marginal rate at the rig measured operating point). sdp-v6, sdp-v4 and
     # sdp-v3 were demoted in turn and are retained for comparability, and
     # sdp-v5 is the record of the measured-lever finding.
-    assert hra.ems_strategy_role("sdp-v7") == "frontier"
-    assert hra.ems_strategy_role("sdp-v6") == "demonstration"
+    # D-9 (2026-09-09): the re-solved v7 at alpha 0.142475 does NOT certify, so the
+    # frontier SDP REVERTED to v6 for campaign II (v7 registered, frontier-
+    # ineligible, the record); WORK_QUEUE 0g-1 carries the alpha-basis ruling.
+    assert hra.ems_strategy_role("sdp-v6") == "frontier"
+    assert hra.ems_strategy_role("sdp-v7") == "demonstration"
     assert hra.ems_strategy_role("sdp-v4") == "demonstration"
     assert hra.ems_strategy_role("sdp-v5") == "demonstration"
     assert hra.ems_strategy_role("sdp-v3") == "demonstration"

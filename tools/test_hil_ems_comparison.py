@@ -358,7 +358,10 @@ def test_end_to_end_totals_come_from_the_csv_and_match_the_document(
     # UNIT onto the H-20 hydrogen axis, not a re-measurement. The fixture h2
     # and delta_soc above are untouched, which is the check that only the
     # scorer rate moved.
-    assert by["ems-sdp"]["eq_h2_g"] == pytest.approx(0.0116496180, abs=1e-9)
+    # Re-pinned 2026-09-09 (phase B, A-prime F3): the eq-H2 lever term scales as
+    # 1/lambda and EMS_EQ_H2_LAMBDA_SOC_PER_G moved 0.423 -> 0.4673 (provisional,
+    # band [0.39, 0.59]); 0.0116496180 x (the dSoC term) -> 0.0117415044 exactly.
+    assert by["ems-sdp"]["eq_h2_g"] == pytest.approx(0.0117415044, abs=1e-9)
     md = (tiny_campaign / ec.MARKDOWN_NAME).read_text(encoding="utf-8")
     assert "0.0126189" in md and ec.COMMENTARY_PLACEHOLDER in md
 
