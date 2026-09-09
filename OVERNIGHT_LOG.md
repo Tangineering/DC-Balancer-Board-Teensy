@@ -2084,3 +2084,11 @@ with reversal paths, the primary worktree's branch is the operator's - commit fr
   drafts written in the scratchpad (FINAL SUMMARY, HIL_SUMMARY, the addendum paragraph) with placeholders for the replay
   audit and the tool pass; WORK_QUEUE 0h (8 rulings + 10 fix items) committed; memory `h20-plan-polarity-inversion`; the
   transition-list rule folded into hil-conventions. Zero board defects.
+- **Campaign II COMPLETE (11:39:44; wall 1:42:29): 69/75, 1012 checks; 27/27 replays; 6 FAILs = comm-loss (the standing
+  artefact, ramp bit-identical) + the five classified. INCIDENT: the first tool pass ran from the PRIMARY worktree, which is
+  on the operator's branch at phase A (cecfc20) - its EMS comparison priced eq-H2 at the phase-A lambda 0.410 and lacked the
+  phase-B report changes. Correction: rerun from DC-Balancer-main (phase-B tools = db9b146); rule: the tool pass and the
+  matched-DP solve run from the worktree whose tools scored the campaign, never from the primary. The pass also found NO
+  cached matched-DP solve for any of the 26 EMS rows (the re-solves were held through campaign I; the H-20 solve is a
+  multi-hour background job to run after the audit, from main so the dp_db records commit) and a stale Gfc-integrator note
+  in the matched-DP section. Replay audit dispatched against the reorganized subfolders.
