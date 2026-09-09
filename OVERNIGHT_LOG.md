@@ -1899,3 +1899,21 @@ with reversal paths, the primary worktree's branch is the operator's - commit fr
   Board reachable after the reboot; the primary worktree intact on the operator's branch (6 standing files).
   A' RESUMED (08:25) with an audit-the-diff-then-finish instruction; lens 2 relaunched on committed content.
   Five hours lost; campaign II now lands in the operator's morning rather than overnight.
+- **Lens-2 review of e42577b + b77d4b9 / f6c52a6 / 9ff4a9e (~08:35): ACCEPT, one HIGH, six lesser.** HIGH: the
+  joint re-key is INERT - `joint_peak_held_down` runs on (16.0, 26.5) s which ENCLOSES `joint_transient_peak`'s
+  (16.0, 16.3) s, and the run peak IS the transient on all three campaigns (G 1.3243, H 1.2699, I 1.2835 A on both
+  windows), so 1.3237 A still governs and a G-like reading fails - open held_down at 16.3 s. MEDIUM: sdpx_high_
+  rail_late's floor window (50, 190) -> (34, 190) IS a widening (a reachability assertion; the ceiling carries the
+  discrimination) and the comment denies it - restate; 0f-2's re-diagnosis is a TOOLING gap, not plant fidelity
+  (at stage 0 the filtered seed decays to 0.0769 of itself, so the release is driven by the preview's forecast
+  total - re-point 0f-2 at the single-source demand preview); the R_f "hydrogen identical to seven decimals"
+  claim is a granularity artefact (the walk bills stage-mean share; cuts are tick events and cannot enter it) -
+  state "the walk's hydrogen is blind to cuts"; stale 1.3241 A prose at run_hil_suite.py 9107 / 9226 / 9250 /
+  9418 and two I_min floors (0.15 at 9089, 0.125 at 9244). LOW: the scenario cut census prints "|I| max" from the
+  PRECEDING row without saying so (the replay line says own-row); "28 FC dark pairs at 0 A" on ems-sdp-cross does
+  not reproduce (41 cuts: 28 FC_BUS / 13 BT_BUS, 5 dark / 36 loaded at 0.10 A, 3 at exactly 0 A - 28 is the FC cut
+  count). VERIFIED: the discriminating case (campaign H ftp75c-socband: 3 rises, bad_pre 2, bad_fault 3 - exact),
+  b00-v1 0.986 ms / b00-v3 1.052 ms, the 314.484 ms tripwire to 6 dp with 19x headroom on clean runs, the flip
+  37.266656 / 35.296263 s, exclude_hold_ms drops 1646 rows and keeps 93.718 s scored (0.189), the bound
+  arithmetic, the ACCEPT tightening, the cadence scoping. No check passes both eras.
+- **D-8: the seven lens-2 items are a short fix pass AFTER A' lands** (same file); 0f-2 stays open as tooling.
