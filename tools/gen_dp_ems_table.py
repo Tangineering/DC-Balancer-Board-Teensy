@@ -52,22 +52,49 @@ D3. INFEASIBILITY RAISES.
     propagates as +inf.  The window is sized from a reachability walk with
     margin — see D8 — so the optimal path never runs against it.)
 
-D4. STAGE COST uses the Gfc DC GAIN, not the MATLAB's static proxy.
-        W_H2 = GFC_DC_GAIN * P_fc_stack * dt        [g]
-    GFC_DC_GAIN = H2_GFC_DC_GAIN_GPS_PER_W = 1.7637602179836514e-05 g/s/W is
-    IMPORTED from hil_plant_sim.py, so this objective and the simulator's
-    logged `h2_cum_g` column are the same model and compare directly at steady
-    state.  DPtrial.m:43 instead uses `P_fc/(0.55*120000)` = 1.5152e-05 g/s/W;
-    the two disagree by +16.4 % (the Gfc DC gain implies eta = 47.25 % where
-    the same script assumes 55 %).  ⚠️ EVERY hydrogen number this script
-    prints or writes inherits the H2Consumption banner in hil_plant_sim.py.
-    Per the operator ruling of 2026-08-31 that model is SCALE-PORTABLE — its
-    input (P_fc, W) and output (g/s) both ride the system's energy scaling
-    factor, per references/Systemic_Scaling_of_Powertrain_Models_with_Youla_
-    Driver_Control.pdf — so these grams are the MODEL'S ESTIMATE of hydrogen
-    mass, not merely a relative index.  The surviving caveat is that the
-    coefficients are NOT identified against this rig's stack, TODO(calibrate);
-    strategy RANKINGS on the same rig are robust regardless.
+D4. STAGE COST uses the H-20 CONVEX MAP (2026-09-08).
+        W_H2 = h2_map.rate_gps(P_fc_bus / ETA_BOOST) * dt        [g]
+    `h2_map` is the H-20 stack's own consumption map: Faraday's law on 13
+    cells, a constant purge/blower offset, and the brochure's polarization
+    curve inverted to turn a power request into the current Faraday needs.  It
+    is IMPORTED from tools/h2_map.py, the same module `hil_plant_sim.py` scores
+    a run's `h2_cum_g` column with, so this objective and that column are one
+    model by construction.
+
+    ⚠️ THE ARGUMENT IS STACK-SIDE POWER.  The share control's `P_fc` is a BUS
+    power (the boost's output), so it is divided by `sim.ETA_BOOST` before the
+    map sees it — exactly as the pre-2026-09-08 linear form did.  Under a
+    LINEAR gain that division was a uniform scale factor and could not move the
+    argmin; under a CONVEX map it moves the OPERATING POINT on the curve, so it
+    is now load-bearing rather than cosmetic.
+
+    WHAT CHANGED, AND WHY IT CHANGES THE POLICY.  The old cost was
+        W_H2 = GFC_DC_GAIN * P_fc_stack * dt,
+        GFC_DC_GAIN = H2_GFC_DC_GAIN_GPS_PER_W = 1.7637602179836514e-05 g/s/W,
+    a full-size (106 kW) stack's DC gain, LINEAR in power.  A linear stage cost
+    makes the split decision degenerate: every watt costs the same hydrogen
+    wherever the stack is running, so the DP's only lever is the SoC term.  The
+    H-20 map's LHV efficiency peaks at 0.433 near 14.75 W and falls to 0.244 at
+    3 W, which is where this rig's median stack power sits — so under the new
+    cost the DP has a genuine reason to prefer some operating points over
+    others, and it also pays a CONSTANT 6.63e-5 g/s whenever the stack runs at
+    all.  ⚠️ Pre-2026-09-08 tables are the optimum of a DIFFERENT problem and
+    must be regenerated; `hil_plant_sim.load_dp_table()`'s drift guard refuses
+    them by their missing `h2_map` header line rather than replaying them.
+
+    THE CONSTANT OFFSET IS BILLED, and deliberately.  It is the same number on
+    every non-charge control of a stage, so it cannot move that stage's argmin;
+    it DOES belong in the totals, because a run that leaves the stack running
+    for 340 s really does vent that hydrogen.  Omitting it would make the DP's
+    reported gram total disagree with the plant's `h2_cum_g` by a fixed
+    per-second amount and every "DP vs strategy" percentage would inherit the
+    gap.
+
+    ⚠️ The stack TYPE is now the fitted one; the individual SAMPLE is still not
+    measured — TODO(calibrate), see the h2_map module docstring.  DPtrial.m:43's
+    own `P_fc/(0.55*120000)` = 1.5152e-05 g/s/W and the Gfc DC gain are both
+    kept as DOCUMENTED comparison axes (`h2_gfc_cum_g`, `h2_sdp_cum_g` in a
+    run's CSV) and neither is minimised here any more.
 
     Only the DC gain is used, not the 4-state discretization: the DP stage is
     dt = 0.1 s against a dominant Gfc time constant of 0.2212 s, so the
@@ -275,9 +302,146 @@ from hil_electrical import (                                       # noqa: E402
     LIPO_OCV_SOC, LIPO_OCV_V, BATT_CELLS, BATT_RS_NOM, BATT_CAPACITY_AH)
 import governor_model as gov_mod                                   # noqa: E402
 import regen_power                                                 # noqa: E402
+# The H-20 hydrogen map (2026-09-08).  It IS the stage cost's law — see D4.
+# Imported as a module, from the one authority the plant also uses, so the
+# objective this generator minimises and the column a run is scored on cannot
+# be different models.
+import h2_map                                                      # noqa: E402
 from charger_power import (                                        # noqa: E402
     ETA_CHG_DEFAULT, charger_bus_current_a, charger_bus_power_w,
     check_eta_chg, era_label, resolve_eta_chg)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# THE HYDROGEN LAW SELECTOR (2026-09-08, review item A4)
+# ─────────────────────────────────────────────────────────────────────────────
+# The same era-switch pattern `--eta-chg` and `--drag` already use in this file:
+# the CURRENT law is the default and the RETIRED one stays reachable by name, so
+# an archived artifact can be regenerated byte-for-byte instead of being
+# reproduced from memory.
+#
+#   `h20`         the H-20 convex brochure map (`h2_map`).  THE DEFAULT.  D4.
+#   `gfc-linear`  the PRE-2026-09-08 linear stage cost,
+#                     `H2_GFC_DC_GAIN_GPS_PER_W * (P_bus / ETA_BOOST) * dt`,
+#                 reproduced EXPRESSION FOR EXPRESSION (same operand order, so
+#                 the floating-point result is bit-identical) and with NO
+#                 saturation ceiling, because a linear map has none.
+#
+# ⚠️ THE LEGACY LAW IS FOR REGENERATING HISTORY, NOT FOR SOLVING NEW PROBLEMS.
+# It is linear, so the split decision it produces is degenerate (D4), and the
+# `P_MAX_W` feasibility term the H-20 law carries is absent from it by
+# construction rather than by oversight.
+H2_LAW_H20 = "h20"
+H2_LAW_GFC_LINEAR = "gfc-linear"
+H2_LAWS = (H2_LAW_H20, H2_LAW_GFC_LINEAR)
+H2_LAW_DEFAULT = H2_LAW_H20
+
+# The token the table header's `# h2_map:` line carries under the legacy law.
+# It is deliberately NOT the string "gfc-linear": a reader (and
+# `hil_plant_sim.load_dp_table()`'s drift guard) must be able to tell a legacy
+# table from a table solved on some future third law, and the DC gain is the
+# only number the legacy law has.  It carries no ':' so the header parser's
+# `partition(":")` reads the whole token as the value, exactly as the H-20
+# fingerprint does.
+H2_LAW_LEGACY_TOKEN = "gfc-linear-legacy|%r" % sim.H2_GFC_DC_GAIN_GPS_PER_W
+
+
+def resolve_h2_law(h2_law):
+    """Validate a law name; `None` means the current default."""
+    if h2_law is None:
+        return H2_LAW_DEFAULT
+    law = str(h2_law)
+    if law not in H2_LAWS:
+        raise ValueError("h2_law must be one of %s, got %r"
+                         % (", ".join(H2_LAWS), h2_law))
+    return law
+
+
+def h2_law_token(h2_law=None):
+    """The `# h2_map:` header token for a law.
+
+    The H-20 law's token is `h2_map.fingerprint_str()`; the legacy law's is
+    `H2_LAW_LEGACY_TOKEN`.  One function so the header, the DP results database
+    key and the drift guard cannot name the same solve two different ways."""
+    law = resolve_h2_law(h2_law)
+    if law == H2_LAW_GFC_LINEAR:
+        return H2_LAW_LEGACY_TOKEN
+    return h2_map.fingerprint_str()
+
+
+def h2_saturation_ceiling_w(h2_law=None):
+    """The stack power above which a control is INFEASIBLE, under this law.
+
+    `h2_map.P_MAX_W` for the H-20 law, `inf` for the legacy linear one.
+
+    ⚠️ THIS IS A FEASIBILITY CEILING, NOT A CENSUS THRESHOLD (2026-09-08,
+    review item A1).  Above `P_MAX_W` the H-20 map returns the rate at the
+    brochure curve's LAST POINT and stops rising, so the marginal hydrogen cost
+    of extra fuel-cell power is exactly ZERO there while the SoC term keeps
+    paying for it: the argmin then has a hole, and the DP would happily plan
+    through a control the stack cannot deliver because that control looks free.
+    Refusing the control closes the hole.  A linear map has no such region."""
+    if resolve_h2_law(h2_law) == H2_LAW_GFC_LINEAR:
+        return float("inf")
+    return h2_map.P_MAX_W
+
+
+def h2_stage_rate_gps(p_stack_w, h2_law=None):
+    """Hydrogen rate [g/s] at a STACK-side power, scalar path.
+
+    The legacy branch is written as `GAIN * p_stack_w`, which is the same
+    operand order the pre-2026-09-08 expression
+    `H2_GFC_DC_GAIN_GPS_PER_W * (p_bus / ETA_BOOST)` evaluated in, so an
+    archived table regenerates bit-for-bit rather than merely closely."""
+    if resolve_h2_law(h2_law) == H2_LAW_GFC_LINEAR:
+        return sim.H2_GFC_DC_GAIN_GPS_PER_W * p_stack_w
+    return h2_map.rate_gps(p_stack_w)
+
+
+def h2_stage_rate_gps_array(p_stack_w, h2_law=None):
+    """Hydrogen rate [g/s] at a STACK-side power, vectorized path.
+
+    Same operand order as the scalar path, and the H-20 branch interpolates the
+    SAME table the scalar path bisects, so the backward build and the forward
+    walk cannot price a stage differently under either law."""
+    if resolve_h2_law(h2_law) == H2_LAW_GFC_LINEAR:
+        return sim.H2_GFC_DC_GAIN_GPS_PER_W * p_stack_w
+    return h2_map.rate_gps_array(p_stack_w)
+
+
+# ── THE SCALAR SATURATION CENSUS (2026-09-08, review item A1) ────────────────
+# `solve_dp()` counts saturated CELLS on its own arrays.  The scalar stage
+# functions cannot: they are called one stage at a time by the forward pass, by
+# `reachable_soc_window()`, by `heuristic_walk()` and by `ems_walk`, none of
+# which returns a place to put a count.  A MODULE COUNTER is used instead of
+# widening those return tuples, because the tuples are a public shape that four
+# callers unpack positionally.
+#
+# It is a DIAGNOSTIC, never a control input: nothing reads it to make a
+# decision, and a caller that ignores it gets exactly the behaviour it got
+# before.  A walk that wants to surface it brackets its own loop with
+# `reset_scalar_saturation()` / `scalar_saturation_count()`.
+_SCALAR_SAT_COUNT = 0
+
+
+def reset_scalar_saturation():
+    """Zero the scalar-path saturation counter.  Returns the previous value."""
+    global _SCALAR_SAT_COUNT
+    prev = _SCALAR_SAT_COUNT
+    _SCALAR_SAT_COUNT = 0
+    return prev
+
+
+def scalar_saturation_count():
+    """Stage evaluations since the last reset whose stack power exceeded the
+    law's ceiling.  Non-zero means the totals above it are FLOORS."""
+    return _SCALAR_SAT_COUNT
+
+
+def _count_scalar_saturation(p_stack_w, h2_law):
+    global _SCALAR_SAT_COUNT
+    if p_stack_w > h2_saturation_ceiling_w(h2_law):
+        _SCALAR_SAT_COUNT += 1
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -973,7 +1137,8 @@ def charge_mask(times, p_dem, v_bus, cruise, chg_ceiling_a, run_exit_s,
 # Forward dynamics shared by the DP, the reachability walk and the heuristic
 # reference walk — ONE implementation, so the three cannot disagree.
 # ─────────────────────────────────────────────────────────────────────────────
-def step_discharge(soc, share, p_dem, v_bus, dt, cap_as, i_regen=0.0):
+def step_discharge(soc, share, p_dem, v_bus, dt, cap_as, i_regen=0.0,
+                   h2_law=None):
     """One stage on the split control.  Returns (soc_next, h2_g, h2_plant_g).
 
     `i_regen` (2026-09-02) is the braking credit in AMPS INTO THE PACK, and it
@@ -986,12 +1151,19 @@ def step_discharge(soc, share, p_dem, v_bus, dt, cap_as, i_regen=0.0):
     p_bt_bus = p_dem - p_fc_bus
     i_pack = pack_current_from_bus_power(p_bt_bus, soc)
     soc_next = soc - i_pack * dt / cap_as + i_regen * dt / cap_as
-    h2 = sim.H2_GFC_DC_GAIN_GPS_PER_W * (p_fc_bus / sim.ETA_BOOST) * dt
+    # D4 (2026-09-08): the hydrogen law on the STACK-side power.  The division
+    # by ETA_BOOST is the same one the linear form did; under a convex map it
+    # selects the operating point rather than merely scaling the answer.
+    # `h2_law=None` is the H-20 map; `"gfc-linear"` regenerates a pre-2026-09-08
+    # total bit-for-bit (see the H2 LAW SELECTOR block).
+    p_fc_stack = p_fc_bus / sim.ETA_BOOST
+    _count_scalar_saturation(p_fc_stack, h2_law)
+    h2 = h2_stage_rate_gps(p_fc_stack, h2_law) * dt
     return soc_next, h2, h2
 
 
 def step_charge(soc, p_dem, v_bus, chg_a, dt, cap_as, eta_chg=None,
-                i_regen=0.0):
+                i_regen=0.0, h2_law=None):
     """One stage on the charge control.  Returns (soc_next, h2_g, h2_plant_g).
 
     D11: `h2_g` charges the fuel cell for the charger energy (the physical
@@ -1012,8 +1184,22 @@ def step_charge(soc, p_dem, v_bus, chg_a, dt, cap_as, eta_chg=None,
     soc_next = soc + chg_a * dt / cap_as + i_regen * dt / cap_as
     p_fc_bus_phys = p_dem + charger_bus_power_w(
         chg_a, v_bus, pack_charge_voltage(soc, chg_a), eta_chg)
-    h2 = sim.H2_GFC_DC_GAIN_GPS_PER_W * (p_fc_bus_phys / sim.ETA_BOOST) * dt
-    h2_plant = sim.H2_GFC_DC_GAIN_GPS_PER_W * (p_dem / sim.ETA_BOOST) * dt
+    # D4 (2026-09-08): the H-20 convex map, both columns.  ⚠️ THE TWO ARE NO
+    # LONGER PROPORTIONAL: under the old linear gain `h2` and `h2_plant`
+    # differed by a factor (p_fc_bus_phys / p_dem); under a convex map they are
+    # two DIFFERENT POINTS on the curve, so the charger's draw costs more per
+    # watt than the traction demand it sits on top of.  That is the physically
+    # right answer and it is the reason the charge action gets more expensive
+    # exactly when the stack is already loaded.
+    # BOTH columns are censused: `h2` is the one the objective minimises, and
+    # `h2_plant` is what a simple-mode run's own column will show, so either
+    # sitting on the map's floor is worth knowing about.
+    p_phys_stack = p_fc_bus_phys / sim.ETA_BOOST
+    p_dem_stack = p_dem / sim.ETA_BOOST
+    _count_scalar_saturation(p_phys_stack, h2_law)
+    _count_scalar_saturation(p_dem_stack, h2_law)
+    h2 = h2_stage_rate_gps(p_phys_stack, h2_law) * dt
+    h2_plant = h2_stage_rate_gps(p_dem_stack, h2_law) * dt
     return soc_next, h2, h2_plant
 
 
@@ -1021,7 +1207,8 @@ def step_charge(soc, p_dem, v_bus, chg_a, dt, cap_as, eta_chg=None,
 # Reachability walk (D8)
 # ─────────────────────────────────────────────────────────────────────────────
 def reachable_soc_window(soc0, p_dem, v_bus, chg_ok, dt, cap_as, chg_a,
-                         share_lo, share_hi, eta_chg=None, i_regen=None):
+                         share_lo, share_hi, eta_chg=None, i_regen=None,
+                         h2_law=None):
     """[lo, hi] SoC bounds over the two extreme admissible policies.
 
     THE DEMAND-MODEL ERA is likewise transparent here: it enters only through
@@ -1052,16 +1239,16 @@ def reachable_soc_window(soc0, p_dem, v_bus, chg_ok, dt, cap_as, chg_a,
     s = soc0
     for k in range(len(p_dem)):        # all-battery: the deepest discharge
         s, _, _ = step_discharge(s, share_lo, p_dem[k], v_bus[k], dt, cap_as,
-                                 _reg(k))
+                                 _reg(k), h2_law)
         lo = min(lo, s)
     s = soc0
     for k in range(len(p_dem)):        # all-FC + charge whenever admitted
         if chg_ok[k]:
             s, _, _ = step_charge(s, p_dem[k], v_bus[k], chg_a, dt, cap_as,
-                                  eta_chg, _reg(k))
+                                  eta_chg, _reg(k), h2_law)
         else:
             s, _, _ = step_discharge(s, share_hi, p_dem[k], v_bus[k], dt,
-                                     cap_as, _reg(k))
+                                     cap_as, _reg(k), h2_law)
         hi = max(hi, s)
         lo = min(lo, s)
     return lo, hi
@@ -1072,11 +1259,16 @@ def reachable_soc_window(soc0, p_dem, v_bus, chg_ok, dt, cap_as, chg_a,
 # ─────────────────────────────────────────────────────────────────────────────
 def solve_dp(soc0, times, p_dem, v_bus, chg_ok, dt, cap_as, chg_a,
              shares, soc_grid, lam_dev, lam_term, charger_accounting,
-             eta_chg=None, i_regen=None):
+             eta_chg=None, i_regen=None, h2_law=None):
     """Backward Bellman induction (D1-D3, D5).
 
     Controls are indexed 0..m-1 = the share grid, and index m = CHARGE (present
     as a column at every stage, masked infeasible where `chg_ok` is False).
+
+    `h2_law` selects the hydrogen law (see the H2 LAW SELECTOR block).  It is
+    not merely a cost switch: under the H-20 law a control whose STACK power
+    exceeds `h2_map.P_MAX_W` is INFEASIBLE (2026-09-08, review item A1), so the
+    two laws differ in the admissible set as well as in the price.
 
     Returns (J0, Uopt) with Uopt.shape == (n_soc, N), dtype int16.
     """
@@ -1096,6 +1288,20 @@ def solve_dp(soc0, times, p_dem, v_bus, chg_ok, dt, cap_as, chg_a,
 
     soc_col = soc_grid[:, None]
     lo, hi = soc_grid[0], soc_grid[-1]
+    # ── THE HYDROGEN LAW AND ITS SATURATION CEILING (2026-09-08) ────────────
+    law = resolve_h2_law(h2_law)
+    p_max_stack_w = h2_saturation_ceiling_w(law)     # inf under the legacy law
+    # SATURATION CENSUS.  It is now a CEILING-DISAGREEMENT TRIPWIRE, not a
+    # "should be zero" check: from review item A1 the same ceiling makes the
+    # cell INFEASIBLE, so a non-zero count says the FEASIBILITY ceiling that
+    # binds first is the map's `P_MAX_W`, not the firmware's
+    # LIMIT_I_FC_MAX_A/LIMIT_I_BT_MAX_A - i.e. the demand model is asking for
+    # power this stack's own brochure curve does not reach.  Both arms are
+    # counted (the split arm and the charge arm), because the charge arm stacks
+    # the charger's draw on top of the traction demand and is the arm most
+    # likely to cross first.
+    sat_cells = 0
+    sat_stages = 0
 
     for k in range(n_stages - 1, -1, -1):
         P = p_dem[k]
@@ -1123,7 +1329,17 @@ def solve_dp(soc0, times, p_dem, v_bus, chg_ok, dt, cap_as, chg_a,
         soc_next = np.empty((n, ctrl_n))
         stage = np.empty((n, ctrl_n))
         soc_next[:, :m] = soc_col - i_pack * dt / cap_as + R * dt / cap_as
-        stage[:, :m] = sim.H2_GFC_DC_GAIN_GPS_PER_W * (p_fc / sim.ETA_BOOST) * dt
+        # D4 (2026-09-08): the hydrogen law, VECTORIZED.  The H-20 branch
+        # interpolates the SAME monotone table `step_discharge()`'s scalar path
+        # bisects, so the vectorized build and the forward walk cannot price a
+        # stage differently.  `p_fc` is bus-side; ETA_BOOST puts it on the
+        # stack.  Broadcast note: `p_fc` is (m,) and `stage[:, :m]` is (n, m) —
+        # the map is state-independent, so one row of rates fills every SoC
+        # row, which is why the constant offset cannot move an argmin taken
+        # over `m`.
+        p_fc_stack = p_fc / sim.ETA_BOOST
+        stage[:, :m] = h2_stage_rate_gps_array(p_fc_stack, law) * dt
+        _sat = 0
 
         feas = np.empty((n, ctrl_n), dtype=bool)
         # ── FEASIBILITY IS JUDGED ON THE COMMANDED CURRENT (operator ruling
@@ -1153,6 +1369,30 @@ def solve_dp(soc0, times, p_dem, v_bus, chg_ok, dt, cap_as, chg_a,
         # predicate is restored unchanged.
         i_fc_cmd = shares * P / V                  # (m,) COMMANDED
         feas[:, :m] = (i_fc_cmd <= LIMIT_I_FC_MAX_A)[None, :]
+        # ── ...AND THE MAP'S OWN CEILING (2026-09-08, review item A1) ───────
+        # ABOVE `h2_map.P_MAX_W` THE STAGE COST IS FLAT.  The map clamps to the
+        # brochure curve's last point, so the MARGINAL hydrogen cost of extra
+        # fuel-cell power is exactly ZERO up there while the SoC term keeps
+        # paying for it: an argmin over a flat cost with a strictly improving
+        # side-effect walks straight to the ceiling, which is a hole in the
+        # objective, not a policy.  It is a REAL hole on this rig and not a
+        # hypothetical one: LIMIT_I_FC_MAX_A = 1.4 A of BUS current at ~15.95 V
+        # is 26.27 W stack-side, 12 % ABOVE `P_MAX_W` = 23.416 W, so the
+        # firmware's own current ceiling does NOT keep the DP inside the
+        # brochure curve - the fw v26 clamp legs alone reach 1.25 A = 23.46 W.
+        # Refusing the control is the honest answer: the stack cannot deliver
+        # that power, so no policy may plan on it.
+        # ⚠️ ABSENT UNDER THE LEGACY LINEAR LAW, by construction rather than by
+        # oversight: `p_max_stack_w` is +inf there, a linear map has no
+        # saturation region, and an archived table must regenerate unchanged.
+        #
+        # THE CENSUS COUNTS ONLY THE CELLS THIS TERM ACTUALLY REFUSES, i.e.
+        # cells the current limits would have ADMITTED.  A cell already refused
+        # for overcurrent says nothing about which ceiling binds, and counting
+        # it would make the tripwire fire on every solve.
+        _over = (p_fc_stack > p_max_stack_w)[None, :]
+        _sat += int(np.count_nonzero(_over & feas[:, :m]))
+        feas[:, :m] &= ~_over
         # ...and the BATTERY arm, new this round and the clamp's own liability.
         # Moving load off the fuel cell puts it on the pack, so a control the FC
         # arm now admits can overdraw the BATTERY -- which the DP had no test
@@ -1178,9 +1418,26 @@ def solve_dp(soc0, times, p_dem, v_bus, chg_ok, dt, cap_as, chg_a,
         # pre-2026-09-01 tables stay byte-identical.
         p_fc_charge = (P + charger_bus_power_w(chg_a, V, v_pack_chg, eta_chg)) \
             if charger_accounting == "physical" else P
-        stage[:, m] = sim.H2_GFC_DC_GAIN_GPS_PER_W * \
-            (p_fc_charge / sim.ETA_BOOST) * dt
-        feas[:, m] = bool(chg_ok[k])
+        # D4 (2026-09-08): the hydrogen law on the charge control.
+        # `p_fc_charge` is (n,) here — `charger_bus_power_w` broadcasts over the
+        # SoC rows through `v_pack_chg` — so unlike the split arm above this
+        # column IS state-dependent, and the law is evaluated per row.
+        p_chg_stack = p_fc_charge / sim.ETA_BOOST
+        stage[:, m] = h2_stage_rate_gps_array(p_chg_stack, law) * dt
+        # The same P_MAX ceiling as the split arm, and the charge arm is the
+        # one that crosses it FIRST: the charger's bus draw sits on TOP of the
+        # traction demand, so this column's stack power is the largest the
+        # solve ever evaluates.  Counted into the same census, and on the same
+        # rule - only where the charge mask would otherwise have ADMITTED the
+        # control, so a stage whose charge column is masked off anyway does not
+        # trip the wire.
+        _chg_over = p_chg_stack > p_max_stack_w
+        if chg_ok[k]:
+            _sat += int(np.count_nonzero(_chg_over))
+        if _sat:
+            sat_cells += _sat
+            sat_stages += 1
+        feas[:, m] = bool(chg_ok[k]) & (~_chg_over)
 
         # Transitions off the grid are INFEASIBLE, not clamped (D1).
         feas &= (soc_next >= lo) & (soc_next <= hi)
@@ -1194,11 +1451,28 @@ def solve_dp(soc0, times, p_dem, v_bus, chg_ok, dt, cap_as, chg_a,
         Uopt[:, k] = idx.astype(np.int16)
         J_next = cost[np.arange(n), idx]
 
+    if sat_cells:
+        # ONE line, once, to stdout — the generator already prints its progress
+        # there.  These cells were REFUSED (they are infeasible from
+        # 2026-09-08), so the solve is sound; what the line reports is that the
+        # binding ceiling was the MAP's, not the firmware's, which is a
+        # statement about the demand model rather than about the optimum.
+        print("[dp] NOTE: %d control cells across %d of %d stages asked for "
+              "more than %.3f W of STACK power (the brochure curve's last "
+              "point) and were refused as INFEASIBLE. The map's ceiling bound "
+              "before the firmware's %.2f A fuel-cell limit (%.2f W stack-side "
+              "at %.2f V bus), so the demand model is asking for power this "
+              "stack cannot deliver. Check it before quoting this table."
+              % (sat_cells, sat_stages, n_stages, p_max_stack_w,
+                 LIMIT_I_FC_MAX_A,
+                 LIMIT_I_FC_MAX_A * float(np.max(v_bus)) / sim.ETA_BOOST,
+                 float(np.max(v_bus))))
     return J_next, Uopt
 
 
 def forward_pass(soc0, times, p_dem, v_bus, chg_ok, dt, cap_as, chg_a,
-                 shares, soc_grid, Uopt, eta_chg=None, i_regen=None):
+                 shares, soc_grid, Uopt, eta_chg=None, i_regen=None,
+                 h2_law=None):
     """Table-lookup rollout at the CONTINUOUS SoC (D2), raising on D3.
 
     The POLICY lookup is nearest-neighbour on the SoC grid — the control index
@@ -1235,7 +1509,7 @@ def forward_pass(soc0, times, p_dem, v_bus, chg_ok, dt, cap_as, chg_a,
             soc, dh2, dh2p = step_charge(soc, p_dem[k], v_bus[k], chg_a, dt,
                                          cap_as, eta_chg,
                                          0.0 if i_regen is None
-                                         else float(i_regen[k]))
+                                         else float(i_regen[k]), h2_law)
             share_out[k] = DP_CHARGE_SHARE
             charge_out[k] = 1.0
         else:
@@ -1271,7 +1545,7 @@ def forward_pass(soc0, times, p_dem, v_bus, chg_ok, dt, cap_as, chg_a,
             soc, dh2, dh2p = step_discharge(soc, share, p_dem[k], v_bus[k],
                                             dt, cap_as,
                                             0.0 if i_regen is None
-                                            else float(i_regen[k]))
+                                            else float(i_regen[k]), h2_law)
             # THE BOARD IS COMMANDED WITH THE GRID POINT, not with the clamped
             # value: the ceiling is the FIRMWARE's to apply, and emitting the
             # clamped share would command a split the board would then clamp a
@@ -1290,7 +1564,7 @@ def forward_pass(soc0, times, p_dem, v_bus, chg_ok, dt, cap_as, chg_a,
 # ─────────────────────────────────────────────────────────────────────────────
 def heuristic_walk(scenario, meta, soc0, times, p_dem, v_bus, i_total, dt,
                    cap_as, chg_a, run_exit_s, eta_chg=None, i_regen=None,
-                   socband_kwargs=None):
+                   socband_kwargs=None, h2_law=None):
     """Walk hil_plant_sim's SocBandStrategy through this script's model.
 
     The point is a MATCHED-MODEL comparison: the causal policy's hydrogen and
@@ -1347,14 +1621,14 @@ def heuristic_walk(scenario, meta, soc0, times, p_dem, v_bus, i_total, dt,
         reg = 0.0 if i_regen is None else float(i_regen[k])
         if charging and sim.EMS_RUN_ENTRY_S <= t < run_exit_s:
             soc, dh2, dh2p = step_charge(soc, p_dem[k], v_bus[k], chg_a, dt,
-                                         cap_as, eta_chg, reg)
+                                         cap_as, eta_chg, reg, h2_law)
         else:
             # fw v26: the policy COMMANDS a share; the board's current-ceiling
             # governor DELIVERS the bounded one.  Same helper the DP uses, so
             # the matched-model comparison stays matched.
             soc, dh2, dh2p = step_discharge(
                 soc, float(delivered_share(share, i_total[k])), p_dem[k],
-                v_bus[k], dt, cap_as, reg)
+                v_bus[k], dt, cap_as, reg, h2_law)
         h2 += dh2
         h2_plant += dh2p
     return {"h2_g": h2, "h2_plant_g": h2_plant, "soc_final": soc,
@@ -1389,6 +1663,7 @@ class Problem:
     loss_map: object               # None = the loss-map-free demand model
     drag_mode: object              # None = the measured rig road load
     eta_regen: object              # None = the pre-regen demand model
+    h2_law: str                    # the HYDROGEN LAW (H2_LAWS); "h20" today
     fingerprint: str
     chg_a: float
     cap_as: float
@@ -1432,7 +1707,7 @@ def prepare_problem(scenario, meta, *, soc0, capacity_ah, stage_dt, n_share,
                     soc_step, run_exit, charger_accounting,
                     lambda_dev=DP_LAMBDA_DEV_G_PER_SOC_S,
                     aux_preload_a=None, eta_chg=None, loss_map=None,
-                    drag_mode=None, eta_regen=None):
+                    drag_mode=None, eta_regen=None, h2_law=None):
     """Resolve the demand, the control grid and the SoC grid for one scenario.
 
     Raises ValueError on an argument the solve cannot honour, so a library
@@ -1508,10 +1783,16 @@ def prepare_problem(scenario, meta, *, soc0, capacity_ah, stage_dt, n_share,
             % (shares[0], shares[-1], sim.SOC_BAND_SHARE_MIN,
                sim.SOC_BAND_SHARE_MAX))
 
+    # THE HYDROGEN LAW is resolved ONCE, here, and carried on the Problem, so
+    # the reachability walk that SIZES the grid, the backward solve and the
+    # forward pass are provably one law.  (The window is in fact law-invariant
+    # - the law reaches the hydrogen totals and never the SoC transition - but
+    # threading it is what makes that a checkable property rather than a claim.)
+    h2_law = resolve_h2_law(h2_law)
     lo, hi = reachable_soc_window(soc0, p_dem[:n_stages], v_bus[:n_stages],
                                   chg_ok[:n_stages], dt, cap_as, chg_a,
                                   shares[0], shares[-1], eta_chg,
-                                  i_regen[:n_stages])
+                                  i_regen[:n_stages], h2_law)
     span = max(hi - lo, DP_SOC_WINDOW_MIN_PAD)
     pad = max(DP_SOC_WINDOW_PAD_FRAC * span, DP_SOC_WINDOW_MIN_PAD)
     # ── THE GRID-EDGE INFEASIBILITY POISON (found 2026-09-02) ───────────────
@@ -1576,7 +1857,7 @@ def prepare_problem(scenario, meta, *, soc0, capacity_ah, stage_dt, n_share,
         soc_step=float(soc_step), run_exit=float(run_exit),
         charger_accounting=charger_accounting, lambda_dev=float(lambda_dev),
         aux_preload_a=aux_preload_a, eta_chg=eta_chg, loss_map=loss_map,
-        drag_mode=drag_mode, eta_regen=eta_regen,
+        drag_mode=drag_mode, eta_regen=eta_regen, h2_law=h2_law,
         fingerprint=sim.dp_profile_fingerprint(scenario, meta),
         chg_a=float(chg_a), cap_as=float(cap_as), n_stages=n_stages,
         times=times, v=v, a=a, p_dem=p_dem, v_bus=v_bus, i_total=i_total,
@@ -1595,7 +1876,8 @@ def _roll(problem, lam_term):
     J0, Uopt = solve_dp(p.soc0, p.times[:n], p.p_dem[:n], p.v_bus[:n],
                         p.chg_ok[:n], p.stage_dt, p.cap_as, p.chg_a, p.shares,
                         p.soc_grid, p.lambda_dev, lam_term,
-                        p.charger_accounting, p.eta_chg, p.i_regen[:n])
+                        p.charger_accounting, p.eta_chg, p.i_regen[:n],
+                        p.h2_law)
     if not np.isfinite(J0[p.i0]):
         raise DpInfeasible(
             "the initial state (SoC %.6f) has infinite cost-to-go: no "
@@ -1604,7 +1886,7 @@ def _roll(problem, lam_term):
             "(%.3f A)." % (p.soc0, LIMIT_I_FC_MAX_A, p.i_total.max()))
     out = forward_pass(p.soc0, p.times[:n], p.p_dem[:n], p.v_bus[:n],
                        p.chg_ok[:n], p.stage_dt, p.cap_as, p.chg_a, p.shares,
-                       p.soc_grid, Uopt, p.eta_chg, p.i_regen[:n])
+                       p.soc_grid, Uopt, p.eta_chg, p.i_regen[:n], p.h2_law)
     return (J0[p.i0],) + out
 
 
@@ -1675,7 +1957,7 @@ def heuristic_reference(problem):
     return heuristic_walk(p.scenario, p.meta, p.soc0, p.times[:n],
                           p.p_dem[:n], p.v_bus[:n], p.i_total[:n],
                           p.stage_dt, p.cap_as, p.chg_a, p.run_exit,
-                          p.eta_chg, p.i_regen[:n], sb or None)
+                          p.eta_chg, p.i_regen[:n], sb or None, p.h2_law)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1750,13 +2032,38 @@ def render_table(scenario, meta, args, fingerprint, times, share, charge,
     A("# The `dp-replay` strategy REFUSES to run when the active scenario's")
     A("# profile_fingerprint does not match the one recorded here.")
     A("#")
-    A("# ⚠️ Every hydrogen figure below inherits the H2Consumption banner in")
-    A("# tools/hil_plant_sim.py. The Gfc map is SCALE-PORTABLE (operator ruling")
-    A("# 2026-08-31: P_fc in W and the g/s output both ride the system's energy")
-    A("# scaling factor), so these grams are the MODEL'S ESTIMATE of hydrogen")
-    A("# mass. What they are NOT is identified against this rig's stack —")
-    A("# TODO(calibrate). Strategy RANKINGS on the same rig are robust either")
-    A("# way; quote an absolute gram figure with the calibration caveat.")
+    # THE BANNER NAMES THE LAW THAT WAS ACTUALLY USED (2026-09-08).  A
+    # legacy-law table gets the legacy-law banner: a reader must not be told
+    # this table minimised the H-20 map when it minimised the Gfc DC gain.
+    if h2_law_token(getattr(args, "h2_map", None)) == H2_LAW_LEGACY_TOKEN:
+        # ⚠️ THE PRE-2026-09-08 BANNER, VERBATIM AND DELIBERATELY UNCHANGED.
+        # `--h2-map gfc-linear` exists to regenerate an archived table BYTE FOR
+        # BYTE, so this branch may not add, drop or reword a line: the banner
+        # below describes the Gfc DC gain, which is exactly the law this branch
+        # solved.  The ONE unavoidable difference from a genuinely pre-round
+        # file is the `# h2_map:` line further down, which carries the legacy
+        # token and is what a reader (and the drift guard) uses to tell a
+        # deliberate old-era artifact from a table that predates the guard.
+        A("# ⚠️ Every hydrogen figure below inherits the H2Consumption banner in")
+        A("# tools/hil_plant_sim.py. The Gfc map is SCALE-PORTABLE (operator ruling")
+        A("# 2026-08-31: P_fc in W and the g/s output both ride the system's energy")
+        A("# scaling factor), so these grams are the MODEL'S ESTIMATE of hydrogen")
+        A("# mass. What they are NOT is identified against this rig's stack —")
+        A("# TODO(calibrate). Strategy RANKINGS on the same rig are robust either")
+        A("# way; quote an absolute gram figure with the calibration caveat.")
+    else:
+        A("# ⚠️ Every hydrogen figure below is on the H-20 BROCHURE MAP")
+        A("# (tools/h2_map.py), the same law hil_plant_sim scores a run's")
+        A("# h2_cum_g column on: Faraday's law on the H-20's 13 cells, a")
+        A("# constant purge/blower offset, and the brochure's polarization")
+        A("# curve inverted to turn a power request into a current. The stack")
+        A("# TYPE is the fitted one; the individual SAMPLE is still not")
+        A("# measured — TODO(calibrate). A control above h2_map.P_MAX_W is")
+        A("# INFEASIBLE here, not merely expensive. ⚠️ These grams are NOT")
+        A("# comparable with a pre-2026-09-08 table's: that was a LINEAR map")
+        A("# and this is a convex one. ⚠️ The DP bills the RUN WINDOW; a run's")
+        A("# whole-run h2_cum_g additionally carries the idle offset from")
+        A("# State 0, so compare Run-window figures.")
     A("# ══════════════════════════════════════════════════════════════════════")
     A("# command: %s" % cmd)
     A("# generator: tools/gen_dp_ems_table.py")
@@ -1828,6 +2135,22 @@ def render_table(scenario, meta, args, fingerprint, times, share, charge,
         A("#   BOTH constants are recorded here and checked by")
         A("#   DpReplayStrategy.bind_scenario()'s drift guard - the")
         A("#   pre-committed obligation the NOT RECORDED note below carried.")
+    # ── THE HYDROGEN MAP (2026-09-08) — the line that names the objective ────
+    # One opaque token from `h2_map.fingerprint_str()`: the map id, the four
+    # polarization coefficients, the saturation current, the Faraday gain, the
+    # purge/blower offset and the shutdown policy.  `hil_plant_sim`'s drift
+    # guard compares it for EXACT equality — a hydrogen law has no "close
+    # enough", since any change to it makes this table the optimum of a
+    # different problem.  It carries no ':' by construction, so the header
+    # parser's `partition(":")` reads the whole token as the value.
+    # ⚠️ IT NAMES THE LAW THAT WAS ACTUALLY USED, not the current default:
+    # under `--h2-map gfc-linear` the token is `H2_LAW_LEGACY_TOKEN`, which
+    # `load_dp_table()` recognises as a DELIBERATE old-era artifact rather than
+    # as a missing line.
+    A("# h2_map: %s" % h2_law_token(getattr(args, "h2_map", None)))
+    # RECORDED, NO LONGER MINIMISED.  Kept in the header (and in the guard) so
+    # a table cannot be silently read as either era: the pre-2026-09-08 tables
+    # have this line and NOT `h2_map`, and this one has both.
     A("# gfc_dc_gain_gps_per_w: %r" % sim.H2_GFC_DC_GAIN_GPS_PER_W)
     A("# eta_boost: %r" % sim.ETA_BOOST)
     A("# limit_i_fc_max_a: %r" % LIMIT_I_FC_MAX_A)
@@ -2019,6 +2342,17 @@ def main(argv=None):
                          "V_pack*i_chg/eta instead. A scenario meta key "
                          "`eta_chg` supplies it when this is omitted."
                          % ETA_CHG_DEFAULT)
+    ap.add_argument("--h2-map", choices=H2_LAWS, default=H2_LAW_DEFAULT,
+                    dest="h2_map",
+                    help="the HYDROGEN LAW the stage cost minimises. 'h20' "
+                         "(default) is the H-20 convex brochure map in "
+                         "tools/h2_map.py, the same law the plant scores a run "
+                         "on; 'gfc-linear' is the RETIRED pre-2026-09-08 "
+                         "linear Gfc DC gain, reproduced bit-for-bit (and with "
+                         "no P_MAX feasibility ceiling, which a linear map does "
+                         "not have) so an archived table regenerates "
+                         "byte-identically. Recorded in the table header's "
+                         "`# h2_map:` line")
     ap.add_argument("--loss-map", choices=("none", "plant"), default="none",
                     help="DEMAND-MODEL ERA (2026-09-02). 'none' (the default) "
                          "is the loss-map-free model - motor draw plus "
@@ -2147,7 +2481,8 @@ def main(argv=None):
             charger_accounting=args.charger_accounting,
             lambda_dev=args.lambda_dev, eta_chg=args.eta_chg,
             loss_map=resolve_loss_map_arg(args.loss_map),
-            drag_mode=args.drag, eta_regen=args.eta_regen)
+            drag_mode=args.drag, eta_regen=args.eta_regen,
+            h2_law=args.h2_map)
     except ValueError as exc:
         # GUARD ORDER, deliberately changed (LOW-4, 2026-09-01): the scalar
         # argument checks and the share-cut-band check moved INTO
@@ -2292,12 +2627,21 @@ def main(argv=None):
     # with it.  L6 (review, 2026-08-31) swept the file for the em dashes that
     # had accumulated; keep new console strings ASCII.  The generated FILE is
     # written UTF-8 and keeps its full banner.
-    print("[dp] NOTE: hydrogen figures are the Gfc MODEL'S ESTIMATE. The map is "
-          "scale-portable; the")
-    print("[dp]       stack is NOT identified against this rig - TODO(calibrate). "
-          "Rankings on this")
-    print("[dp]       rig are robust regardless. See the H2Consumption banner in "
-          "hil_plant_sim.py.")
+    if h2_law_token(getattr(args, "h2_map", None)) == H2_LAW_LEGACY_TOKEN:
+        print("[dp] NOTE: --h2-map gfc-linear: this table was solved on the "
+              "RETIRED LINEAR")
+        print("[dp]       hydrogen law, to regenerate a pre-2026-09-08 "
+              "artifact. It is NOT the")
+        print("[dp]       law any current run is scored on.")
+    else:
+        print("[dp] NOTE: hydrogen figures are the H-20 BROCHURE MAP's "
+              "estimate (tools/h2_map.py),")
+        print("[dp]       the same law a run's h2_cum_g is scored on. Stack "
+              "TYPE fitted, individual")
+        print("[dp]       SAMPLE not measured - TODO(calibrate). The DP bills "
+              "the RUN WINDOW; a")
+        print("[dp]       run's whole-run h2_cum_g also carries the idle "
+              "offset from State 0.")
 
     if args.compare_heuristic and href is not None:
         h = href

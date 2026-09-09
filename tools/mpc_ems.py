@@ -167,11 +167,19 @@ HONEST LIMITS
   stands, and on the MEASURED RIG PROFILE it is 0.001 J of a 30.8 J braking
   kinetic energy, because the rig road load exceeds the inertial force at every
   deceleration in every registered cycle.
-* The stage cost is the ``eta_fc = 0.4`` proxy and the scored quantity is the
-  plant's Gfc map, a constant 1.1812 apart.  The constant cancels in a ranking
-  at matched terminal state of charge; it does not cancel against the terminal
-  price, so the chosen operating point depends on a coefficient that is
-  ``TODO(calibrate)`` at rig scale.
+* THE STAGE COST IS THE SCORED MAP (2026-09-08).  ``h2_map="h20"`` is the
+  default: the planner minimises ``tools/h2_map.py``, the same H-20 brochure
+  map the plant scores the run on, so there is no basis mismatch to cancel and
+  the terminal price needs no conversion factor.  ⚠️ THE PREVIOUS PARAGRAPH,
+  which stood here until 2026-09-08 and applies to ``h2_map="proxy"``: the
+  stage cost was the ``eta_fc = 0.4`` proxy against a Gfc-scored plant, a
+  constant 1.1812 apart — the constant cancelled in a ranking at matched
+  terminal state of charge but not against the terminal price.  Under ``h20``
+  the surviving caveat is different in kind: the map's MARGINAL rate is
+  operating-point dependent (1.19e-05 g/s/W at 1 W to 2.88e-05 at 20.28 W), so
+  a terminal price that is one number is exact only against a stage cost in
+  the same map — which is now the case — and the ``sdp-shadow`` mode's
+  conversion is still referred to ``H2_BASIS_REF_P_STACK_W``.
 * ``ems-sdp-braking``-class profiles are OUTSIDE ``governor_model``'s licensed
   fidelity, so no braking stimulus is registered for this strategy in the first
   round (candidate_fable section 2.3).
@@ -199,6 +207,11 @@ if _TOOLS not in sys.path:
 import charger_power as chg_mod          # stdlib only
 import regen_power as regen_mod          # stdlib only
 import governor_model as gov_mod         # stdlib only
+# The H-20 hydrogen map (2026-09-08).  STDLIB on its scalar path, so it joins
+# the three modules above rather than the deferred numpy imports below: the
+# planner's stage cost calls it inside the search loop, under a millisecond
+# budget.  Same authority as the plant's scored column and the DP's objective.
+import h2_map                            # stdlib only
 # The pack constants live in hil_electrical (stdlib, math + time only); the DP
 # generator imports the SAME names from the SAME module, so the two models
 # cannot be pointed at different batteries.
@@ -511,14 +524,51 @@ ETA_FC_PROXY = 0.4
 Q_LHV_J_PER_G = 120000.0
 PROXY_GPS_PER_W = 1.0 / (ETA_FC_PROXY * Q_LHV_J_PER_G)   # 2.0833333e-05 g/s/W
 
-# The plant-side metric this run is SCORED on (hil_plant_sim.py:1047).  Used
-# only to price the terminal cost in the proxy's own basis; the controller never
-# minimises it.
+# The plant-side metric runs WERE scored on until 2026-09-08.  ⚠️ IT IS NO
+# LONGER THE SCORED METRIC — `hil_plant_sim`'s `h2_cum_g` carries the H-20
+# convex map now, and Gfc survives there as the documented `h2_gfc_cum_g`
+# column.  This constant is retained for exactly one purpose: reproducing the
+# PRE-2026-09-08 proxy-basis terminal price, so an archived MPC run's numbers
+# can still be regenerated.  Nothing plans against it.
 H2_GFC_DC_GAIN_GPS_PER_W = 1.7637602179836514e-05
 
-# The proxy over-reads the plant metric by this factor at every operating point
-# (both candidates measured 1.181).
+# LEGACY: the proxy over-reads the OLD (Gfc) plant metric by this factor at
+# every operating point, because both were linear (both candidates measured
+# 1.181).  Used only by the `proxy` basis of `terminal_price()`.
 PROXY_OVER_READ = PROXY_GPS_PER_W / H2_GFC_DC_GAIN_GPS_PER_W   # 1.1811885
+
+# ── THE BASIS PROBLEM THE CONVEX MAP CREATES (2026-09-08) ────────────────────
+# A terminal price converts SoC into GRAMS OF THE CONTROLLER'S OWN STAGE COST,
+# because it is added to a sum of stage costs.  Under two LINEAR maps that
+# conversion was one constant ratio, valid everywhere — which is what
+# `PROXY_OVER_READ` is.  The H-20 map is not linear, so "grams of stage cost per
+# gram of metric" is no longer a single number, and a basis conversion has to
+# name an OPERATING POINT.
+#
+# TWO CONSEQUENCES, and the first is why this is short:
+#   * WITH `h2_map="h20"` (the default) the STAGE COST and the SCORED METRIC
+#     are the same map, so no stage-cost-to-metric conversion is needed.  ⚠️ A
+#     CONVERSION IS STILL NEEDED ANYWAY, and the first draft of this block
+#     missed it: `EQ_H2_LAMBDA_SOC_PER_G` was MEASURED in Gfc grams (campaign
+#     191509), so 1/lambda is a price in the RETIRED unit and has to be moved
+#     into H-20 grams at a named operating point.  See
+#     RHO_METRIC_G_PER_SOC_H20 below.
+#   * WITH `h2_map="proxy"` a conversion is still needed, and it is now
+#     operating-point dependent.  The reference point below is the rig's
+#     MEASURED median stack power.
+H2_BASIS_REF_P_STACK_W = 3.2
+# WHY 3.2 W: it is the rig's median STACK-side fuel-cell power across the
+# campaign record (roughly 1.5 A of bus current at 15.95 V shared near 0.5,
+# referred through ETA_BOOST) — i.e. where this vehicle actually spends its
+# time, not where the stack is most efficient (14.75 W).  The gap between those
+# two numbers is the finding the convex map exists to expose.
+# TODO(calibrate): re-derive this from a campaign's own `p_fc_w` column median
+# rather than from the design estimate.
+H2_METRIC_GPS_PER_W_REF = h2_map.marginal_gps_per_w(H2_BASIS_REF_P_STACK_W)
+# The proxy's over-read against the NEW metric at that reference point (~1.63,
+# against 1.18 in the Gfc era): the linear proxy is a much worse fit to a convex
+# map at low power than it was to a linear one.
+PROXY_OVER_READ_H20 = PROXY_GPS_PER_W / H2_METRIC_GPS_PER_W_REF
 
 # The suite's own equivalent-hydrogen exchange rate
 # (run_hil_suite.EMS_EQ_H2_LAMBDA_SOC_PER_G = 0.41, band 0.409-0.415).  Restated
@@ -530,6 +580,44 @@ EQ_H2_LAMBDA_SOC_PER_G = 0.41
 # price, converted to the proxy basis).
 TERMINAL_DELTA_SOC = 0.0015          # hil_plant_sim.SOC_BAND_HALF, restated
 RHO_METRIC_G_PER_SOC = PROXY_OVER_READ / EQ_H2_LAMBDA_SOC_PER_G      # 2.880948
+# ── THE SAME PRICE IN H-20 GRAMS — AND IT IS *NOT* 1/lambda ─────────────────
+#    (corrected 2026-09-08, review item A2; the first draft claimed
+#     "no conversion, EXACT" and that claim was wrong)
+#
+# THE ERROR THE FIRST DRAFT MADE.  It reasoned: the stage cost and the scored
+# metric are now one map, so a gram of stage cost is a gram of metric and
+# rho = 1/EQ_H2_LAMBDA_SOC_PER_G exactly.  The first half is true.  The second
+# does not follow, because `EQ_H2_LAMBDA_SOC_PER_G` IS NOT A UNIT CONVERSION —
+# it is a MEASURED EXCHANGE RATE, and what it was measured in is Gfc grams.
+#
+#   lambda = 0.41 SoC/g comes from campaign 191509's eq-H2 lever (re-measured
+#   0.4163 across campaigns C-F).  Those campaigns' `h2_cum_g` column was the
+#   LINEAR Gfc DC gain: every gram in that measurement is a Gfc gram.  So
+#   1/lambda = 2.439024 is 2.439024 GFC GRAMS per unit SoC, and using it
+#   unconverted as a price in H-20 grams silently asserts that a Gfc gram and
+#   an H-20 gram are the same thing.  They are not: at the rig's operating
+#   point the two maps' MARGINAL rates differ by ~27 %.
+#
+# THE CONVERSION, at the SAME reference point the shadow price uses:
+#
+#     rho_h20 = (1 / lambda) * marginal_h20(H2_BASIS_REF_P_STACK_W)
+#                            / H2_GFC_DC_GAIN_GPS_PER_W
+#             = 2.439024 * 1.2797e-05 / 1.7638e-05
+#             ~= 1.77 g(H-20) / SoC
+#
+# i.e. the terminal price in H-20 grams is about 27 % BELOW the number the
+# first draft would have used, so the draft would have over-priced terminal SoC
+# by that much and biased the planner toward hoarding charge.
+#
+# ⚠️ PROVISIONAL, and referred to an operating point — the same status and the
+# same TODO the shadow price carries.  A convex map has no single "grams per
+# SoC"; this one is quoted at H2_BASIS_REF_P_STACK_W.
+# TODO(calibrate): re-measure the eq-H2 lever on a campaign scored with the
+# H-20 map, at which point lambda is already in H-20 grams and this conversion
+# retires (phase B).
+RHO_METRIC_G_PER_SOC_H20 = ((1.0 / EQ_H2_LAMBDA_SOC_PER_G)
+                            * H2_METRIC_GPS_PER_W_REF
+                            / H2_GFC_DC_GAIN_GPS_PER_W)
 # The SDP's own shadow price in the proxy basis: kappa * alpha/(1-gamma) with
 # kappa = (1/(0.85*0.4))/(1/0.5) converting the solver's bus-side eta 0.5 basis
 # to the stack-side eta 0.4 proxy (candidate_fable section 3.4).
@@ -537,6 +625,13 @@ SDP_KAPPA = (1.0 / (0.85 * ETA_FC_PROXY)) / (1.0 / 0.5)              # 1.4705882
 SDP_ALPHA_V3 = 0.1629624189805737     # sdp_policies/sdp_policy_v3.json
 SDP_ONE_MINUS_GAMMA = 0.05            # gamma 0.95 per 1 s stage
 RHO_SDP_SHADOW_G_PER_SOC = SDP_KAPPA * SDP_ALPHA_V3 / SDP_ONE_MINUS_GAMMA  # 4.793012
+# The SDP shadow price expressed in H-20 grams: the proxy-basis number above,
+# divided by the proxy's over-read against the H-20 map at the reference point
+# (~2.94).  ⚠️ THIS ONE IS REFERRED TO AN OPERATING POINT and inherits every
+# caveat H2_BASIS_REF_P_STACK_W carries — and SDP_ALPHA_V3 is itself a
+# pre-convex-map alpha (see sdp_ems_solver.ALPHA_DERIVATION's 2026-09-08
+# banner).  `metric` remains the default terminal mode for that reason.
+RHO_SDP_SHADOW_G_PER_SOC_H20 = RHO_SDP_SHADOW_G_PER_SOC / PROXY_OVER_READ_H20
 
 # Model levers, recomputed from sdp_ems_solver.model_levers()'s own algebra
 # with k = 1/(0.5*Q_LHV), V_pack 7.4 V, V_bus 15.95 V, C_As 18000 A s.  Both
@@ -793,7 +888,10 @@ def _dp_step_discharge(soc, share, p_dem, v_bus, dt, cap_as):
     p_bt_bus = p_dem - p_fc_bus
     i_pack = pack_current_from_bus_power(p_bt_bus, soc)
     soc_next = soc - i_pack * dt / cap_as
-    h2 = H2_GFC_DC_GAIN_GPS_PER_W * (p_fc_bus / sim.ETA_BOOST) * dt
+    # 2026-09-08: the H-20 convex map, mirroring gen_dp_ems_table.step_discharge
+    # line for line.  These two functions are ports of each other and must be
+    # changed together.
+    h2 = h2_map.rate_gps(p_fc_bus / sim.ETA_BOOST) * dt
     return soc_next, h2, h2
 
 
@@ -807,8 +905,11 @@ def _dp_step_charge(soc, p_dem, v_bus, chg_a, dt, cap_as, eta_chg=None):
     soc_next = soc + chg_a * dt / cap_as
     p_fc_bus_phys = p_dem + chg_mod.charger_bus_power_w(
         chg_a, v_bus, pack_charge_voltage(soc, chg_a), eta_chg)
-    h2 = H2_GFC_DC_GAIN_GPS_PER_W * (p_fc_bus_phys / sim.ETA_BOOST) * dt
-    h2_plant = H2_GFC_DC_GAIN_GPS_PER_W * (p_dem / sim.ETA_BOOST) * dt
+    # 2026-09-08: the H-20 convex map, mirroring gen_dp_ems_table.step_charge.
+    # ⚠️ The two returns are NO LONGER PROPORTIONAL — two points on a curve, not
+    # one gain applied twice; see the D4 note in the generator.
+    h2 = h2_map.rate_gps(p_fc_bus_phys / sim.ETA_BOOST) * dt
+    h2_plant = h2_map.rate_gps(p_dem / sim.ETA_BOOST) * dt
     return soc_next, h2, h2_plant
 
 
@@ -1582,12 +1683,32 @@ class ChargeLatch:
 # ─────────────────────────────────────────────────────────────────────────────
 # Terminal cost (adjudication section 2.4: Huber shape at the metric price).
 # ─────────────────────────────────────────────────────────────────────────────
-def terminal_price(mode):
-    """The terminal state-of-charge price in PROXY grams per unit SoC."""
+def terminal_price(mode, h2_basis="proxy"):
+    """The terminal state-of-charge price, in GRAMS OF THE STAGE COST'S MAP.
+
+    `h2_basis` names the map the caller's stage cost is written in, and it must
+    match the planner's `h2_map` — the terminal cost is ADDED to a sum of stage
+    costs, so a price in the wrong basis silently reweights the whole objective.
+
+    THE DEFAULT IS `proxy`, NOT the planner's own `h20` default, and that is
+    deliberate: an unqualified call returns the PRE-2026-09-08 number, so every
+    archived run and every existing caller keeps its meaning.  The planner
+    passes its own basis explicitly.
+
+    An EXPLICIT NUMERIC price is basis-free by definition — the operator named
+    a number — and is returned unchanged under either basis."""
+    if h2_basis not in ("h20", "proxy", "convex"):
+        raise ValueError("h2_basis must be 'h20', 'proxy' or 'convex', got %r"
+                         % (h2_basis,))
     if mode == "metric":
-        return RHO_METRIC_G_PER_SOC
+        # `convex` is a student-form parabola fitted to no fixed metric, so it
+        # gets the proxy conversion: it is the honest "not the scored map"
+        # answer, and `convex` is an inspection mode that ships no campaign.
+        return (RHO_METRIC_G_PER_SOC_H20 if h2_basis == "h20"
+                else RHO_METRIC_G_PER_SOC)
     if mode == "sdp-shadow":
-        return RHO_SDP_SHADOW_G_PER_SOC
+        return (RHO_SDP_SHADOW_G_PER_SOC_H20 if h2_basis == "h20"
+                else RHO_SDP_SHADOW_G_PER_SOC)
     try:
         rho = float(mode)
     except (TypeError, ValueError):
@@ -1867,7 +1988,11 @@ class Planner:
                  terminal_mode="metric", budget_ms=BUDGET_MS_DEFAULT,
                  max_candidates=None,
                  eta_chg=chg_mod.ETA_CHG_DEFAULT, chg_a=0.8,
-                 cap_as=5.0 * 3600.0, h2_map="proxy", h2_convex=None,
+                 # h2_map DEFAULT CHANGED 2026-09-08: "proxy" -> "h20".  The
+                 # planner now minimises the same hydrogen law the plant scores
+                 # it on.  Pass "proxy" explicitly to reproduce a pre-2026-09-08
+                 # run.
+                 cap_as=5.0 * 3600.0, h2_map="h20", h2_convex=None,
                  dt_dec=DECISION_DT_S, dv0_v=0.0, ff_dark_model=False,
                  single_source=False, droop_scale_fc=1.0, r_series_ohm=0.0):
         if sum(blocks) != horizon:
@@ -1898,7 +2023,9 @@ class Planner:
                                          SS_SHARE[SS_MODE_FC]]
         self.ss_mode_of = {v: k for k, v in self.ss_index.items()}
         self.terminal_mode = terminal_mode
-        self.rho = terminal_price(terminal_mode)
+        # `self.rho` is resolved AFTER the h2_map validation below — the
+        # terminal price is basis-dependent from 2026-09-08 and must be quoted
+        # in the same grams the stage cost is written in.
         self.budget_ms = float(budget_ms)
         # M6 (review of 2026-09-02).  A wall-clock budget makes the trajectory
         # HOST-DEPENDENT: the same command line on a slower machine cuts the
@@ -1914,8 +2041,8 @@ class Planner:
         self.chg_a = float(chg_a)
         self.cap_as = float(cap_as)
         self.dt_dec = float(dt_dec)
-        if h2_map not in ("proxy", "convex"):
-            raise ValueError("h2_map must be 'proxy' or 'convex'")
+        if h2_map not in ("h20", "proxy", "convex"):
+            raise ValueError("h2_map must be 'h20', 'proxy' or 'convex'")
         if h2_map == "convex" and not h2_convex:
             # REFUSED UNLESS SUPPLIED (adjudication section 1).  a0, P_peak and
             # eta_peak are stack quantities this rig has not measured, and
@@ -1927,6 +2054,11 @@ class Planner:
                 "no defaults are invented")
         self.h2_map = h2_map
         self.h2_convex = dict(h2_convex or {})
+        # THE TERMINAL PRICE, IN THE STAGE COST'S OWN BASIS (2026-09-08).  Under
+        # the `h20` default this is `1 / EQ_H2_LAMBDA_SOC_PER_G` exactly, with
+        # no conversion factor, because the stage cost and the scored metric are
+        # the same map.  Under `proxy` it is the pre-2026-09-08 number.
+        self.rho = terminal_price(terminal_mode, h2_basis=self.h2_map)
         self.incumbent = None      # the previous decision's block share indices
         self.incumbent_charge = 0
         self._order_cache = {}
@@ -1975,7 +2107,32 @@ class Planner:
 
     # -- stage cost ---------------------------------------------------------
     def h2_rate_gps(self, p_fc_stack_w):
-        """Hydrogen rate [g/s] for a STACK power, under the selected map."""
+        """Hydrogen rate [g/s] for a STACK power, under the selected map.
+
+        Three maps, and `h20` is the DEFAULT since 2026-09-08:
+
+          `h20`     the shared H-20 brochure map, `h2_map.rate_gps()` — the
+                    SAME law the plant scores this run on and the DP/SDP
+                    minimise.  The planner therefore plans against the fuel
+                    cost it will actually be charged, which is the operator's
+                    stated intent for the governor-aware controller.
+                    ⚠️ NOTE ON THE OFFSET: unlike the two maps below, this one
+                    returns a NON-ZERO rate at zero power (the purge/blower
+                    offset, 6.63e-5 g/s) whenever the stack is running.  The
+                    zero-power early return is therefore SKIPPED for `h20`:
+                    zeroing it would hand the planner a free idle and make
+                    "run the stack at zero" look costless, which is exactly the
+                    decision the offset exists to price.  A stack that is OFF
+                    is a different statement, and this planner does not command
+                    one (`h2_map.SHUTDOWN_ENABLED` is False).
+          `proxy`   the eta_fc 0.40 linear online proxy (the pre-2026-09-08
+                    default), kept selectable so a pre-convex-map run can be
+                    reproduced exactly.
+          `convex`  the student-form parabola from three supplied stack
+                    coefficients; `h2_map.student_form()` now serves a set.
+        """
+        if self.h2_map == "h20":
+            return h2_map.rate_gps(p_fc_stack_w)
         if p_fc_stack_w <= 0.0:
             return 0.0
         if self.h2_map == "proxy":
@@ -3186,7 +3343,8 @@ class MpcStrategy:
                  roll_budget_ms=ROLL_BUDGET_MS_DEFAULT, max_candidates=None,
                  adaptive_budget=True, coarsen_ladder_enabled=True,
                  candidate_cost_ms=None,
-                 h2_map="proxy", h2_convex=None, dv0_v=0.0,
+                 # DEFAULT "h20" since 2026-09-08 — see Planner.__init__.
+                 h2_map="h20", h2_convex=None, dv0_v=0.0,
                  soc_ref_offset=0.0, eta_chg=chg_mod.ETA_CHG_DEFAULT,
                  tpm_path=None, preview_dt_s=PREVIEW_DT_S,
                  ff_dark_model=False, loss_map=None, single_source=False,
@@ -3765,10 +3923,22 @@ class MpcStrategy:
             "terminal": {
                 "shape": "huber",
                 "mode": self.terminal_price_mode,
-                "rho_g_per_soc": terminal_price(self.terminal_price_mode),
+                # In the STAGE COST'S basis (2026-09-08) — the same number the
+                # planner actually added, not a proxy-basis restatement of it.
+                "rho_g_per_soc": terminal_price(self.terminal_price_mode,
+                                                h2_basis=self.h2_map),
+                "rho_basis": self.h2_map,
                 "delta_soc": TERMINAL_DELTA_SOC,
                 "kappa": SDP_KAPPA,
+                # The LEGACY (proxy vs Gfc) ratio, kept so an archived sidecar
+                # and a new one carry the same key.
                 "proxy_over_read": PROXY_OVER_READ,
+                # The proxy's over-read against the H-20 map at
+                # H2_BASIS_REF_P_STACK_W (2026-09-08).  Recorded whichever map
+                # is selected: it is the number that says how far the retired
+                # proxy basis sits from the scored one.
+                "proxy_over_read_h20": PROXY_OVER_READ_H20,
+                "basis_ref_p_stack_w": H2_BASIS_REF_P_STACK_W,
             },
             "terminal_price_mode": self.terminal_price_mode,
             "h2_model": self.h2_map,
@@ -3847,6 +4017,11 @@ class MpcStrategy:
         }
         if self.h2_map == "convex":
             prov["h2_convex"] = dict(self.h2_convex or {})
+        if self.h2_map == "h20":
+            # The map's own fingerprint, so a trace names the hydrogen law it
+            # planned against — the same token the DP table header and the SDP
+            # artifact carry.
+            prov["h2_map_fingerprint"] = h2_map.fingerprint()
         if self.variant == "sto":
             prov["tpm_path"] = self.tpm_path
             prov["tpm_n_bins"] = len(self.tpm) if self.tpm else None
@@ -4821,8 +4996,8 @@ class MpcStrategy:
                 "shadow governor %d ticks, %d MDAC "
                 "corrections, %d current-derived corrections, %d mode "
                 "mismatches; charge dwell latches %d, early drops %d%s; "
-                "terminal price %s = %.6f g/SoC in the eta_fc %.2f proxy basis; "
-                "preview %s%s"
+                "terminal price %s = %.6f g/SoC in the %s basis (eta_fc %.2f "
+                "names the proxy basis only); preview %s%s"
                 % (self.decisions, tm["solve_ms_median"], tm["solve_ms_max"],
                    tm["candidates_last"], tm["candidates_min"],
                    tm["candidates_max"],
@@ -4856,7 +5031,9 @@ class MpcStrategy:
                    ("" if self.latch.drop_reason is None
                     else " (last: %s)" % self.latch.drop_reason),
                    self.terminal_price_mode,
-                   terminal_price(self.terminal_price_mode), ETA_FC_PROXY,
+                   terminal_price(self.terminal_price_mode,
+                                  h2_basis=self.h2_map),
+                   self.h2_map, ETA_FC_PROXY,
                    # ASCII "(!)" deliberately (2026-09-02): the U+26A0 U+FE0F
                    # pair that used to sit here could not be encoded to the
                    # cp1252 console, so printing THIS LINE raised

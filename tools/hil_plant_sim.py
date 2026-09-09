@@ -602,6 +602,14 @@ from hil_electrical import (                                   # noqa: E402
 # shared rather than written four times.
 import regen_power                                             # noqa: E402
 
+# The H-20 hydrogen map (2026-09-08).  STDLIB ONLY on its scalar path — the
+# same contract regen_power holds — and it is imported as a MODULE so the DP
+# generator, the SDP solver, the walk and the MPC reach one authority rather
+# than four copies of a fitted curve.  It REPLACES the Gfc DC gain as the
+# SCORED hydrogen estimator; see the banner above `class H2Consumption` and
+# docs/modeling/h20_hydrogen_map_20260908.md.
+import h2_map                                                  # noqa: E402
+
 # ── PART A: simple-mode share-law constants ─────────────────────────────────
 #: the firmware's droop design constant k_d, ohm (`K_DROOP`, .ino:2166-2167).
 #: Simple mode needs it because the static asymmetry law is written in terms of
@@ -925,7 +933,19 @@ def collect_model_constants() -> dict:
     # hil_electrical FIRST so its names are canonical: this module's `from
     # hil_electrical import ...` re-exports (BATT_CAPACITY_AH, C_VESC_DEFAULT,
     # ...) are then skipped as duplicates below rather than recorded twice.
-    mods = [("hil_electrical", elec), ("hil_plant_sim", sys.modules.get(__name__))]
+    # `h2_map` (2026-09-08) joins the sweep because it IS a plant model now —
+    # it produces the scored `h2_cum_g` column — and a change to a polarization
+    # coefficient or to the purge/blower offset must move `constants_hash`
+    # exactly as loudly as a K_DROOP_BUS retune does.  It is listed FIRST for
+    # the same reason hil_electrical is: its names are canonical, so if this
+    # module ever re-exports one it is recorded once, under `h2_map.`.
+    # ⚠️ ITS BOOLEAN POLICY `SHUTDOWN_ENABLED` IS NOT SWEPT — the loop skips
+    # bools — so `fingerprint()` remains the complete record of the map and
+    # this is the constants half of it.  A future shutdown-enabled run must
+    # record the fingerprint, not rely on this hash.
+    mods = [("h2_map", sys.modules.get("h2_map")),
+            ("hil_electrical", elec),
+            ("hil_plant_sim", sys.modules.get(__name__))]
     out = {}
     seen = set()
     for mod_name, mod in mods:
@@ -1236,7 +1256,37 @@ def mdac_fraction(word: int) -> float:
 # ═════════════════════════════════════════════════════════════════════════════
 # HYDROGEN-CONSUMPTION METRIC — the Gfc transfer function, discretized
 #
-# ⚠️ MANDATORY BANNER — READ BEFORE QUOTING ANY NUMBER THIS PRODUCES ⚠️
+# ⚠️⚠️ SUPERSEDED AS THE SCORED ESTIMATOR (2026-09-08) — READ THIS FIRST ⚠️⚠️
+#
+#   Gfc IS NO LONGER THE HYDROGEN AXIS THIS REPOSITORY RANKS STRATEGIES ON.
+#   It is DOCUMENTED, NOT SCORED.  `h2_rate_gps` / `h2_cum_g` — the columns the
+#   suite, the DP, the SDP, the walk and the MPC all read — now carry the
+#   H-20 BROCHURE MAP in `tools/h2_map.py`.  The Gfc recursion still runs on
+#   the same input every tick and is logged as `h2_gfc_cum_g`, so every
+#   pre-2026-09-08 campaign stays cross-readable against a new one.
+#
+#   WHY IT WAS DEMOTED.  Two reasons, and the second is the decisive one:
+#     1. IT WAS NEVER IDENTIFIED AGAINST THIS STACK.  Caveat 1 below has stood
+#        as an open TODO(calibrate) since the model was ported.  The H-20 map
+#        is derived from the brochure of the stack that is ACTUALLY FITTED —
+#        the right part, if not the right individual sample.
+#     2. IT IS LINEAR, AND THE DECISION IS NOT.  A single DC gain says a watt
+#        costs the same hydrogen at 3 W as at 20 W.  The real stack's LHV
+#        efficiency PEAKS (0.433 at 14.75 W on the H-20 map) and collapses at
+#        low power (0.244 at 3 W, which is where the rig's median operating
+#        point sits), so the whole question an energy-management strategy
+#        exists to answer — WHERE on the curve to run the stack — is invisible
+#        to a linear map.  Every ranking this repository produced before
+#        2026-09-08 was, in that respect, scoring a degenerate problem.
+#
+#   WHAT IS STILL TRUE OF GFC, AND WHY THE CODE STAYS.  It is the PhD study's
+#   own consumption model and the only DYNAMIC one available (dominant time
+#   constant 0.2212 s; the H-20 map is static).  Keeping the column costs four
+#   multiplies a tick and preserves the cross-era comparison; deleting it would
+#   orphan every archived campaign's headline number.  Do not delete it, and do
+#   not re-promote it without identifying it against this stack.
+#
+# ⚠️ THE ORIGINAL BANNER FOLLOWS, VERBATIM.  It still governs `h2_gfc_cum_g`.
 #
 #   Gfc is a FULL-SCALE (106 kW) fuel-cell hydrogen-consumption model taken
 #   VERBATIM from the PhD student's FCHEV dynamic-programming study.  It is the
@@ -1379,40 +1429,103 @@ H2_SDP_PROXY_GPS_PER_W = 1.0 / (H2_SDP_PROXY_ETA_FC * H2_SDP_PROXY_Q_LHV_J_PER_G
 
 
 class H2Consumption:
-    """Discretized Gfc: P_fc [W] in, hydrogen rate [g/s] and cumulative [g] out.
+    """P_fc [W] in; THREE hydrogen models out, on one clamped input.
 
-    ⚠️ Read the BANNER above this class before using any value it returns.  The
-    map is SCALE-PORTABLE (operator ruling 2026-08-31: input P_fc in W and
-    output in g/s both ride the system's energy scaling factor), so what it
-    returns is THE MODEL'S ESTIMATE of hydrogen mass — not merely a relative
-    figure.  What it is NOT is identified against THIS stack: quote it with
-    that TODO(calibrate) caveat.  Strategy RANKINGS on the same rig are robust
-    regardless.
+    ⚠️ WHICH ATTRIBUTE IS WHICH (changed 2026-09-08 — read this):
 
-    Four independent scalar recursions, summed.  No numpy: this runs inside the
-    1 kHz tick and must stay stdlib and allocation-free.
+      `rate_gps` / `cum_g`         THE SCORED AXIS.  The H-20 brochure map
+                                   (`tools/h2_map.py`), static and CONVEX in
+                                   power.  This is what the CSV's
+                                   `h2_rate_gps`/`h2_cum_g`, the suite's bands
+                                   and every EMS comparison read.
+      `gfc_rate_gps` / `gfc_cum_g` THE OLD SCORED AXIS, now DOCUMENTED ONLY.
+                                   The discretized full-size Gfc transfer
+                                   function, coefficients UNCHANGED, still the
+                                   four-mode recursion the validation vectors
+                                   in the banner pin.  Logged as
+                                   `h2_gfc_cum_g` so a pre-2026-09-08 campaign
+                                   and a new one can be read against each
+                                   other.
+      `proxy_rate_gps`/`proxy_cum_g`  The student's eta = 0.5 static proxy,
+                                   UNCHANGED, logged as `h2_sdp_cum_g`.
+
+    THREE MODELS, ONE INPUT, ONE step().  They are carried in this one object
+    for the reason the proxy always was: it is then structurally impossible for
+    them to be fed different powers, which is the confound that would make any
+    difference between the columns unreadable.  They are NOT interchangeable
+    and a difference between two of them is a modelling difference, never a
+    physical result.
+
+    No numpy: this runs inside the 1 kHz tick and must stay stdlib and
+    allocation-free.  `h2_map.rate_gps()` honours the same contract.
     """
 
     def __init__(self):
         self.x = [0.0, 0.0, 0.0, 0.0]
+        # ── the SCORED axis: the H-20 map ───────────────────────────────────
         self.rate_gps = 0.0       # g/s   this tick's output
         self.cum_g = 0.0          # g     rectangular integral of rate_gps
+        # ── the DOCUMENTED axis: Gfc, demoted 2026-09-08 ────────────────────
+        self.gfc_rate_gps = 0.0   # g/s
+        self.gfc_cum_g = 0.0      # g
         # The student's static proxy, carried HERE rather than in a second
         # object so it is structurally impossible for the two models to be fed
         # different inputs: one step(), one clamped `u`, two accumulators.  See
         # the H2_SDP_PROXY_* banner above.
         self.proxy_rate_gps = 0.0   # g/s
         self.proxy_cum_g = 0.0      # g
+        # Diagnostics for the H-20 map: how many ticks asked for more power
+        # than the brochure's curve reaches (P > h2_map.P_MAX_W = 23.416 W).
+        # NOT a fault and NOT read back by anything — it is the flag that says
+        # the map returned a FLOOR rather than an estimate.
+        #
+        # ⚠️ IT IS *NOT* EXPECTED TO STAY 0 (corrected 2026-09-08, review item
+        # A1).  An earlier draft of this comment said it should.  It should
+        # not, and two ceilings say why:
+        #   * the fw v26 clamp holds the fuel cell at 1.25 A of BUS current,
+        #     which at ~15.95 V is 19.94 W on the bus and 23.46 W on the stack
+        #     through ETA_BOOST — 0.04 W ABOVE the curve's last point.  The
+        #     `fw26-clamp-*` legs therefore sit ON the boundary by design and
+        #     can tick over it.
+        #   * `LIMIT_I_FC_MAX_A` = 1.4 A is 22.33 W bus / 26.27 W stack, 12 %
+        #     above the ceiling, so the FIRMWARE's own limit does not keep a
+        #     run inside the brochure curve either.
+        # THE MAP'S CEILING BINDS BEFORE BOTH.  A non-zero count is therefore
+        # an ordinary reading on a clamp leg and a real warning elsewhere; read
+        # it before quoting the run's total, and read it as "which ceiling
+        # bound", not as "something went wrong".
+        self.saturated_ticks = 0
+        # Ticks on which the caller reported the stack OFF (FC_REG_ENABLE low).
+        # Those ticks cost zero hydrogen on the H-20 axis but still advance the
+        # Gfc recursion, which has no such input — another reason the two
+        # columns are not differenced.
+        self.stack_off_ticks = 0
 
     def reset(self):
         self.x = [0.0, 0.0, 0.0, 0.0]
         self.rate_gps = 0.0
         self.cum_g = 0.0
+        self.gfc_rate_gps = 0.0
+        self.gfc_cum_g = 0.0
         self.proxy_rate_gps = 0.0
         self.proxy_cum_g = 0.0
+        self.saturated_ticks = 0
+        self.stack_off_ticks = 0
 
-    def step(self, p_fc_w, dt=H2_GFC_TS_S):
+    def step(self, p_fc_w, dt=H2_GFC_TS_S, stack_on=True):
         """Advance one tick on P_fc [W]; return this tick's rate in g/s.
+
+        THE RETURN VALUE IS THE H-20 MAP'S RATE (the scored one), not Gfc's.
+
+        `stack_on` mirrors the board's FC_REG_ENABLE (observation-frame aux bit
+        0).  It gates the H-20 map only: a stack whose boost regulator the
+        firmware has not enabled is not being fed, so it consumes nothing —
+        including the purge/blower offset, which is the one term a linear map
+        never had and which would otherwise accrue through an entire Idle
+        state.  It does NOT gate the Gfc recursion: Gfc has no such input,
+        gating it would silently redefine the archived column, and its own
+        input is ~0 W in that condition anyway.  Callers with no observation
+        frame yet pass the default True (the honest "unknown, assume running").
 
         `p_fc_w` is CLAMPED AT ZERO.  Reverse power into the fuel cell is not a
         physical operating point for this rig (the FC feeds the bus through an
@@ -1429,12 +1542,31 @@ class H2Consumption:
         a directly-injected P_fc, a test — cannot introduce the credit by
         accident.  Do not remove it on the strength of the current caller.
 
-        `dt` scales the CUMULATIVE integral only.  The recursion coefficients
-        are pinned to H2_GFC_TS_S = 1 ms; running the sim at another --rate
-        does not re-discretize them, so the rate output would be wrong in the
-        transient (the DC gain is unaffected).  1 kHz is the sim's tick.
+        `dt` scales the CUMULATIVE integral only.  The Gfc recursion
+        coefficients are pinned to H2_GFC_TS_S = 1 ms; running the sim at
+        another --rate does not re-discretize them, so the Gfc rate output
+        would be wrong in the transient (the DC gain is unaffected).  1 kHz is
+        the sim's tick.  The H-20 map is STATIC and has no such sensitivity —
+        `dt` only scales its integral.
         """
         u = p_fc_w if p_fc_w > 0.0 else 0.0
+        # ── THE SCORED AXIS: the H-20 brochure map ──────────────────────────
+        # Fed the SAME clamped `u` as the other two models, for the same
+        # reason: three models, one input, so any difference between the
+        # columns is a difference of MODEL and nothing else.
+        if not stack_on:
+            self.stack_off_ticks += 1
+        elif h2_map.is_saturated(u):
+            # Counted BEFORE the rate call so the count and the value it
+            # qualifies belong to the same tick.  See `saturated_ticks`.
+            self.saturated_ticks += 1
+        self.rate_gps = h2_map.rate_gps(u, stack_on=stack_on)
+        self.cum_g += self.rate_gps * dt
+        # ── THE DOCUMENTED AXIS: Gfc, unchanged coefficients ────────────────
+        # NOT gated by `stack_on` (see the step() docstring).  The four
+        # recursions and their validation vectors are exactly as they were
+        # before 2026-09-08; only the attribute names moved, from
+        # `rate_gps`/`cum_g` to `gfc_rate_gps`/`gfc_cum_g`.
         x = self.x
         x[0] = H2_GFC_LAMBDA[0] * x[0] + H2_GFC_GAIN[0] * u
         x[1] = H2_GFC_LAMBDA[1] * x[1] + H2_GFC_GAIN[1] * u
@@ -1443,8 +1575,8 @@ class H2Consumption:
         # fastest ZOH pole.  Written out rather than folded into a feedthrough
         # so the four-mode structure stays visible against the coefficients.
         x[3] = H2_GFC_LAMBDA[3] * x[3] + H2_GFC_GAIN[3] * u
-        self.rate_gps = x[0] + x[1] + x[2] + x[3]
-        self.cum_g += self.rate_gps * dt
+        self.gfc_rate_gps = x[0] + x[1] + x[2] + x[3]
+        self.gfc_cum_g += self.gfc_rate_gps * dt
         # The student's static proxy on the SAME clamped `u` (two multiplies).
         # Deliberately fed from `u`, not from p_fc_w: the zero-clamp is part of
         # the input definition, and letting the two models see different inputs
@@ -2251,7 +2383,60 @@ class Plant:
         # something: this metric is NOT reconstructible from the CSV's V_fc and
         # I_fc columns alone — h2_rate_gps/h2_cum_g are logged for exactly that
         # reason.
-        self.h2.step(self.fuel_cell.v_terminal * self.fuel_cell.i, dt)
+        #
+        # `stack_on` (2026-09-08) is the board's OWN FC_REG_ENABLE mirror, aux
+        # bit 0 of the observation frame — `aux` is already in hand at the top
+        # of this method.  It matters because the H-20 map, unlike Gfc, has a
+        # CONSTANT OFFSET (purge valve + blower + controller): a stack that is
+        # on but idling burns 6.63e-5 g/s, so a run that sat 60 s in Idle with
+        # the offset accruing would report ~4 mg of hydrogen the rig never
+        # used.  Gating on the regulator enable is the honest reading of "the
+        # stack is not being fed".
+        #
+        # `obs is None` (no frame yet) defaults to TRUE, not False: before the
+        # first observation the actuator state is UNKNOWN, and assuming the
+        # stack is running is the conservative direction for a consumption
+        # metric.  The window is a handful of ticks.
+        #
+        # ⚠️ FC_REG_ENABLE IS A *PROXY* FOR "THE STACK IS IN SERVICE", NOT A
+        # MEASUREMENT OF IT (2026-09-08, review item A7b).  Physically the H-20
+        # module's blower and purge valve keep running whenever the module is
+        # powered; disabling the BOOST REGULATOR stops the stack DELIVERING,
+        # not the stack BREATHING.  The firmware has no stack-shutdown line at
+        # all (h2_map's SHUTDOWN HOOK block), so the honest reading of this
+        # gate is "the EMS is not drawing from the stack", and billing A0
+        # through such a span would be the other kind of wrong.  The choice
+        # touches only ticks OUTSIDE Run: FC_REG_ENABLE is raised in State 0
+        # and lowered in State 99 phase 2, so Init, Idle and Run all bill A0
+        # and only a latched-error tail does not.
+        #
+        # ⚠️ AND THE WINDOW MATTERS FOR COMPARISONS (2026-09-08, review item
+        # A7a).  This call runs from State 0 onward, so `h2_cum_g` is a
+        # WHOLE-RUN total that includes A0 * t_run_entry of Init/Idle idling —
+        # about 1.7 mg of a 16.5 mg `ems-sdp` run, i.e. ~10 %.  The DP
+        # generator and the offline walk bill the RUN WINDOW ONLY.  A
+        # comparison between a run's `h2_cum_g` and a DP bound, and every suite
+        # expectation band, must therefore use the RUN-WINDOW figure
+        # (`h2_cum_g` at the run exit minus `h2_cum_g` at run entry), not the
+        # final value.  Re-deriving the suite's bands on that basis is a
+        # phase-B item; nothing in this round changed a band.
+        #
+        # ⚠️ TWO CURVES, ONE STACK (2026-09-08, the rejected "bill Faraday on
+        # fuel_cell.i" review item).  The argument feeding this call is
+        # `FuelCellSource`'s own ELECTRICAL curve (12 cells, ~0.45 ohm), while
+        # `h2_map` inverts the BROCHURE's polarization curve to recover the
+        # current Faraday's law needs.  Billing Faraday directly on
+        # `self.fuel_cell.i` was considered and REJECTED: the electrical source
+        # is the less accurate of the two curves (it would UNDER-read the real
+        # H-20 by ~20 % at 1 A), and it would break the property every
+        # matched-DP bound rests on — that the plant, the DP, the walk and the
+        # MPC all bill ONE function of stack POWER.  The P -> I inversion is
+        # therefore deliberate, not an oversight.  Refitting `FuelCellSource`
+        # against the brochure closes the gap and is a SEPARATE round: it moves
+        # plant behaviour (currents, bus voltages, every anchor), whereas this
+        # change moves only an observer column and the offline objectives.
+        self.h2.step(self.fuel_cell.v_terminal * self.fuel_cell.i, dt,
+                     stack_on=(bool(aux & AUX_FC_REG) if obs else True))
 
         # ── Per-tick power balance (2026-09-01f, both electrical modes) ──────
         # Pure OBSERVERS.  Nothing in the plant, the electrical engine, the
@@ -2401,8 +2586,13 @@ class Plant:
             "soc": self.battery.soc,
             # Appended (never reordered), 2026-08-31 — the H2 metric.  These are
             # NOT injected: pack_inject() takes its fields by name and never
-            # sees them, so the wire protocol (40 B) is untouched.  Read the
-            # H2Consumption banner before quoting either value.
+            # sees them, so the wire protocol (40 B) is untouched.
+            # ⚠️ THE MODEL BEHIND THEM CHANGED ON 2026-09-08: they now carry the
+            # H-20 brochure map (tools/h2_map.py), not the Gfc DC gain.  The
+            # names and positions are deliberately unchanged — this IS the
+            # scored hydrogen axis, and renaming it would orphan every consumer
+            # — so a CSV's ERA is read off `h2_gfc_cum_g`'s presence, not off
+            # these two.  Read the H2Consumption banner before quoting either.
             "h2_rate_gps": self.h2.rate_gps,
             "h2_cum_g": self.h2.cum_g,
             # Appended (never reordered), 2026-08-31 — the STUDENT'S STATIC
@@ -2423,6 +2613,13 @@ class Plant:
             # Appended (never reordered), 2026-09-01 — the Ag105's own
             # dissipation, the term the eta model took OUT of `p_bal_w`.
             "p_chg_loss_w": self.p_chg_loss_w,
+            # Appended LAST (never reordered), 2026-09-08 — the DEMOTED Gfc
+            # cumulative.  `h2_cum_g` above now carries the H-20 map; this is
+            # the model every pre-2026-09-08 campaign's headline number was on,
+            # kept so the two eras stay cross-readable.  Also NOT injected.
+            # ⚠️ NEVER DIFFERENCE THE TWO COLUMNS AND CALL IT A RESULT: they are
+            # two MODELS of one quantity (see the H2Consumption docstring).
+            "h2_gfc_cum_g": self.h2.gfc_cum_g,
         }
 
 
@@ -5121,11 +5318,30 @@ class DpReplayStrategy:
     feedback   : `t` and `v_profile` only.  NOTHING else — see the banner.
     """
 
-    def __init__(self, table_dir=None):
+    # ── THE HYDROGEN-LAW OPT-IN (2026-09-08, review item A4) ────────────────
+    # A table solved under the RETIRED linear law carries the legacy token
+    # `gfc-linear-legacy|<gain>` in its `# h2_map:` header line instead of the
+    # H-20 fingerprint.  Such a table is a DELIBERATE ARTIFACT, not a corrupt
+    # or a pre-guard one, so the drift check must be able to tell the two apart
+    # and say so.
+    #
+    # It is still REFUSED BY DEFAULT.  Replaying a linear-era policy while the
+    # plant scores the run on the convex map ranks nothing: the table is the
+    # argmin of a different objective.  A caller that WANTS the old era says so
+    # by name, and then gets it with a loud line rather than silently.
+    H2_LAW_LEGACY_PREFIX = "gfc-linear-legacy|"
+
+    def __init__(self, table_dir=None, h2_law=None):
         # NO I/O here: EMS_STRATEGIES is built at import time and constructing
         # the registry must not touch the disk (or fail because a table has not
         # been generated yet).  Loading happens in bind_scenario().
         self.table_dir = table_dir or DP_TABLE_DIR
+        # `h2_law=None` -> the current law (the H-20 map) and nothing else.
+        # `"gfc-linear"` -> ACCEPT a legacy-token table, and only such a table.
+        if h2_law not in (None, "h20", "gfc-linear"):
+            raise ValueError("h2_law must be None, 'h20' or 'gfc-linear', "
+                             "got %r" % (h2_law,))
+        self.h2_law = h2_law or "h20"
         self.reset()
 
     def reset(self):
@@ -5412,8 +5628,16 @@ class DpReplayStrategy:
                 ("chg_ceiling_a", dp_chg_ceiling_a(meta),
                  "scenario constant chg_i_ceiling_a"),
                 ("eta_boost", float(ETA_BOOST), "model constant ETA_BOOST"),
+                # ⚠️ NO LONGER THE STAGE COST (2026-09-08).  The DP's hydrogen
+                # law is `h2_map` now; this line stays in the header and in the
+                # guard because Gfc's DC gain still SHAPES nothing but is still
+                # RECORDED, and dropping the check would let a table solved
+                # under the old law pass on the strength of its other lines.
+                # The line that actually guards the stage cost is `h2_map`,
+                # checked as a string below.
                 ("gfc_dc_gain_gps_per_w", float(H2_GFC_DC_GAIN_GPS_PER_W),
-                 "model constant H2_GFC_DC_GAIN_GPS_PER_W"),
+                 "model constant H2_GFC_DC_GAIN_GPS_PER_W (recorded, no "
+                 "longer the stage cost)"),
                 # NOT CHECKED: `limit_i_fc_max_a`.  The review asked for it,
                 # and there is nothing here to check it against — 1.4 A is a
                 # FIRMWARE limit that gen_dp_ems_table.py mirrors as its own
@@ -5473,6 +5697,57 @@ class DpReplayStrategy:
                     ("drag_k_air", float(drag_k_air(want_drag)),
                      "resolved road-load coefficient (--drag %s)" % want_drag))
             drift = []
+            # ── THE HYDROGEN MAP — a STRING check, not a float one ──────────
+            #    (2026-09-08, the H-20 map round)
+            # `h2_map.fingerprint_str()` is one opaque token carrying the map
+            # id, the four polarization coefficients, the saturation current,
+            # Faraday's constant-per-amp, the purge/blower offset and the
+            # shutdown policy.  It is compared for EXACT EQUALITY: unlike a
+            # retuned scalar, a hydrogen law does not have a "close enough" —
+            # any difference at all means the table is the optimum of a
+            # different objective.
+            # ⚠️ EVERY TABLE COMMITTED BEFORE 2026-09-08 FAILS THIS, BY DESIGN.
+            # Those tables minimise `GFC_DC_GAIN * P_fc`, a LINEAR cost whose
+            # argmin is a different policy from the convex map's.  They must be
+            # regenerated, not grandfathered — a linear-era table replayed
+            # against a convex-era score ranks nothing.
+            _want_map = h2_map.fingerprint_str()
+            _got_map = table_meta.get("h2_map")
+            _got_txt = None if _got_map is None else str(_got_map).strip()
+            _is_legacy = (_got_txt is not None
+                          and _got_txt.startswith(self.H2_LAW_LEGACY_PREFIX))
+            if _is_legacy and self.h2_law == "gfc-linear":
+                # THE CALLER ASKED FOR THE OLD ERA.  Accepted, and announced:
+                # the run's own h2_cum_g will still be scored on the H-20 map,
+                # so the policy and the score are in different laws by the
+                # caller's explicit choice.
+                print("[dp-replay] %s: table solved under the RETIRED LINEAR "
+                      "hydrogen law (%s), accepted because this strategy was "
+                      "constructed with h2_law='gfc-linear'. The run's own "
+                      "h2_cum_g is still scored on the H-20 map, so the "
+                      "policy and the score are in DIFFERENT LAWS."
+                      % (scenario, _got_txt))
+            elif _is_legacy:
+                drift.append("  %-22s table: %s   live: %s   [hydrogen map: "
+                             "this is a DELIBERATE OLD-ERA ARTIFACT, solved "
+                             "with `gen_dp_ems_table.py --h2-map gfc-linear` "
+                             "on the retired LINEAR Gfc stage cost. It is not "
+                             "corrupt and it is not missing a field - it is "
+                             "the optimum of a different objective. Regenerate "
+                             "it without --h2-map, or construct "
+                             "DpReplayStrategy(h2_law='gfc-linear') if "
+                             "replaying the old era is what you want]"
+                             % ("h2_map", _got_txt, _want_map))
+            elif _got_map is None:
+                drift.append("  %-22s table: (absent - solved BEFORE the "
+                             "2026-09-08 guard existed, on the LINEAR Gfc "
+                             "stage cost)  live: %s   [hydrogen map "
+                             "h2_map.fingerprint_str(); regenerate the table]"
+                             % ("h2_map", _want_map))
+            elif _got_txt != _want_map:
+                drift.append("  %-22s table: %s   live: %s   [hydrogen map "
+                             "h2_map.fingerprint_str()]"
+                             % ("h2_map", _got_txt, _want_map))
             for key, live, what in checks:
                 raw = table_meta.get(key)
                 if raw is None:
@@ -12663,10 +12938,15 @@ def main(argv=None):
                          "registered leg that arms it through its own "
                          "`mpc_single_source` key. Needs a demand loss map")
     ap.add_argument("--mpc-h2-map", default=None,
-                    help="MPC: stage hydrogen map, 'proxy' (default, the "
-                         "operator-ruled eta_fc 0.40 online proxy) or 'convex' "
-                         "(REFUSED unless its three stack coefficients are "
-                         "supplied)")
+                    help="MPC: stage hydrogen map. 'h20' (DEFAULT since "
+                         "2026-09-08) is the H-20 brochure map in "
+                         "tools/h2_map.py — the SAME law the plant scores the "
+                         "run on, so the planner minimises the fuel cost it "
+                         "will be charged. 'proxy' is the eta_fc 0.40 linear "
+                         "online proxy (the pre-2026-09-08 default). 'convex' "
+                         "is the student-form parabola and is still REFUSED "
+                         "unless its three stack coefficients are supplied — "
+                         "h2_map.student_form() now serves them")
     ap.add_argument("--replay", default=None, metavar="PATH.BLG",
                     help="replay a recorded bench log as injection frames "
                          "(bypasses the plant integrator; open-loop stimulus)")
@@ -13499,10 +13779,15 @@ def main(argv=None):
             # always populated.  They are NOT added in replay mode — the plant
             # integrator is bypassed there, so there is no P_fc to consume and a
             # column of zeros would read as "this run burned no hydrogen".
-            # ⚠️ These are the Gfc MODEL'S ESTIMATE of hydrogen mass. The map
-            # is scale-portable; the stack is NOT identified against this rig
-            # (TODO(calibrate)). Read the H2Consumption banner before quoting
-            # either column, and read h2_cum_g WITH delta_soc.
+            # ⚠️ FROM 2026-09-08 THESE CARRY THE H-20 BROCHURE MAP
+            # (tools/h2_map.py), not the Gfc DC gain: Faraday's law on the
+            # H-20's 13 cells, a constant purge/blower offset, and the
+            # brochure's polarization curve as the P -> I inverse.  The names
+            # and the positions are UNCHANGED on purpose — this is still THE
+            # scored hydrogen axis — so a file's era is told by whether
+            # `h2_gfc_cum_g` is present, not by these two.  The stack TYPE is
+            # now right; the individual sample is still not measured
+            # (TODO(calibrate)).  Read h2_cum_g WITH delta_soc.
             header_row += ["h2_rate_gps", "h2_cum_g"]
             # APPEND-only, unconditional in simulated mode, same rule again:
             # the STUDENT'S STATIC PROXY (P_fc/(0.5*120000)) on the SAME P_fc
@@ -13629,6 +13914,30 @@ def main(argv=None):
         # board fields, declared in both schemas, appended after every
         # established column so no index moves.
         header_row += ["fc_ceil", "bt_ceil", "sel_armed", "sel_fc"]
+        # ── h2_gfc_cum_g — APPENDED LAST OF ALL, SIMULATED MODE ONLY ─────────
+        #    (2026-09-08, the H-20 map round)
+        # The DEMOTED Gfc cumulative.  It is appended after EVERY established
+        # column, including the observed-board tail, so no consumer's index
+        # moves: `run_hil_suite`, `hil_report_analysis`, `hil_dashboard` and
+        # `hil_ems_comparison` all read this CSV BY HEADER NAME (csv.DictReader
+        # or an explicit name->index map), and each was checked against this
+        # column before it was added.
+        # SIMULATED MODE ONLY, the same rule as the h2 pair it accompanies: the
+        # plant integrator is bypassed in replay, so there is no P_fc and a
+        # column of zeros would read as "this run burned no hydrogen".
+        # ⚠️ IT IS NOT A SECOND MEASUREMENT.  `h2_cum_g` (the H-20 map) and this
+        # column are two MODELS of one quantity; the difference between them is
+        # a modelling difference and is never a physical result.  It exists so
+        # a campaign run before 2026-09-08, whose headline hydrogen number WAS
+        # Gfc, can be read against one run after.
+        # ⚠️ ONE VARIABLE, `replay`, for BOTH this guard and the row guard
+        # below (2026-09-08, review item A8), and it is the SAME variable the
+        # `if replay:` / `else:` branches above use to decide the schema.
+        # `args.replay` (the path string) and `replay` (the ReplaySource) are
+        # equivalent by construction today; writing the schema decision two
+        # ways invites them to stop being.
+        if not replay:
+            header_row += ["h2_gfc_cum_g"]
         writer.writerow(header_row)
 
     # M3: open the electrical-events sidecar UP FRONT and stream into it as events
@@ -14492,6 +14801,11 @@ def main(argv=None):
                     # fw v28 selector, aux bits 6/7.
                     row.append(1 if _aux & AUX_SEL_ARMED else 0)
                     row.append(1 if _aux & AUX_SEL_FC else 0)
+                # h2_gfc_cum_g (2026-09-08) — LAST column, simulated mode
+                # only, on the SAME `replay` variable the header guard uses.
+                # Same 9 significant digits as the h2 pair (O(1e-3) g).
+                if not replay:
+                    row.append(f"{sensors.get('h2_gfc_cum_g', 0.0):.9g}")
                 writer.writerow(row)
 
             ticks += 1
@@ -14744,12 +15058,24 @@ def main(argv=None):
               f"({args.capacity_ah:g} Ah), V_batt {plant.battery.v_terminal:.3f} V; "
               f"fuel cell {plant.fuel_cell.v_terminal:.3f} V at "
               f"{plant.fuel_cell.i:.3f} A")
-        # H2 metric.  The qualifier is not decoration: Gfc is scale-portable by
-        # design (H2Consumption banner) but not identified against THIS stack,
-        # so the number is the model's estimate pending TODO(calibrate).
-        print(f"[hil] H2 (Gfc model estimate — stack uncalibrated): "
+        # H2 metric.  The qualifier is not decoration: the map is built from
+        # the H-20 BROCHURE, i.e. the right stack TYPE but not this individual
+        # sample, so the number is the model's estimate pending
+        # TODO(calibrate).  The saturation and stack-off counts are printed
+        # with it because they say whether the total is an estimate or a floor.
+        print(f"[hil] H2 ({h2_map.MAP_ID} map — stack sample uncalibrated): "
               f"{plant.h2.cum_g:.6g} g cumulative, "
-              f"final rate {plant.h2.rate_gps:.6g} g/s")
+              f"final rate {plant.h2.rate_gps:.6g} g/s"
+              + (f"; {plant.h2.saturated_ticks} ticks ABOVE the curve "
+                 f"({h2_map.P_MAX_W:.2f} W) — those are FLOORS"
+                 if plant.h2.saturated_ticks else "")
+              + (f"; {plant.h2.stack_off_ticks} ticks with FC_REG_ENABLE low "
+                 f"(no consumption billed)"
+                 if plant.h2.stack_off_ticks else ""))
+        # The retired axis, on the SAME P_fc input, so a pre-2026-09-08
+        # campaign's headline number stays quotable next to this run's.
+        print(f"[hil] H2 (Gfc full-size model — DOCUMENTED, NOT SCORED since "
+              f"2026-09-08): {plant.h2.gfc_cum_g:.6g} g cumulative")
         # The student's axis, on the SAME P_fc input. Printed on its own line
         # with its own model named, so the two totals cannot be read as a
         # measurement and its disagreement.

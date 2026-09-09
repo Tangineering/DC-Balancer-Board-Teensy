@@ -2204,17 +2204,31 @@ One row per tick. The base schema is **19 columns and is frozen**; everything si
 **appended, never reordered**:
 
 - `soc` (col 20) — battery state of charge, 5 dp. **Simulated runs only.**
-- `h2_rate_gps`, `h2_cum_g` (appended last) — **simulated runs only, and
+- `h2_rate_gps`, `h2_cum_g` (appended after `soc`) — **simulated runs only, and
   unconditional there**: this tick's hydrogen rate (g/s) and the run's cumulative
-  total (g) from the `Gfc` metric, 9 significant digits (the values are O(1e-4) and
+  total (g), 9 significant digits (the values are O(1e-4) and
   O(1e-3), so a 4-dp format would round both to zero). Deliberately **absent** in replay
   mode, where the plant integrator is bypassed and a column of zeros would read as "this
-  run burned no hydrogen". ⚠️ **The Gfc model's estimate** — scale-portable map, stack
-  not identified against this rig (`TODO(calibrate)`); §9.3.
-  ⚠️ **Do not reconstruct these columns from `V_fc·I_fc`.** `Gfc` takes the fuel cell's
-  **stack** power, not the bus-side product of the two logged rails; reconstructing
-  `h2_cum_g` from `V_fc·I_fc` reads **31 % low**. If a consumer needs hydrogen, it reads
-  these columns; there is no supported way to re-derive them from the rail columns.
+  run burned no hydrogen".
+  ⚠️ **THE MODEL BEHIND THESE TWO COLUMNS CHANGED ON 2026-09-08.** They carried the
+  `Gfc` DC-gain map before that date and carry the **H-20 brochure map** after it
+  (§9.3a). The names and positions are unchanged **on purpose** — this is still *the*
+  scored hydrogen axis, and renaming it would orphan every consumer — so a file's era
+  is told by whether **`h2_gfc_cum_g`** is present, not by these two. No `h2_cum_g`
+  figure from before that date is comparable to one after it. Stack **type** now fitted,
+  individual **sample** still not measured (`TODO(calibrate)`).
+  ⚠️ **Do not reconstruct these columns from `V_fc·I_fc`.** The map takes the fuel
+  cell's **stack** power, not the bus-side product of the two logged rails.
+  ⚠️ **The "reads 31 % low" figure this note used to quote is a LINEAR-ERA number and
+  does not transfer** (2026-09-08). Under the retired `Gfc` DC gain a reconstruction
+  error was one constant percentage wherever the stack ran, because the map was linear.
+  The H-20 map is convex, so **the error of any reconstruction is operating-point
+  dependent**: the marginal rate spans 1.19e-05 to 2.88e-05 g/s/W over 1 to 20.28 W, and
+  a constant purge/blower offset (6.633e-05 g/s) sits under all of it. At the same power
+  the old 31 % figure corresponds to roughly **27 %**, but a single percentage is no
+  longer a property of the map and must not be quoted as one. If a consumer needs
+  hydrogen, it reads these columns; there is no supported way to re-derive them from the
+  rail columns.
 - `h2_sdp_cum_g` (appended after them, 2026-08-31) — **simulated runs only, and
   unconditional there**: the run's cumulative hydrogen on the **student's static
   proxy** `P_fc/(eta_fc·Q_LHV)` at `eta_fc = 0.5`, `Q_LHV = 120000 J/g`
@@ -2228,7 +2242,17 @@ One row per tick. The base schema is **19 columns and is frozen**; everything si
   *by construction*: the gap between the columns is arithmetic and is never a
   finding. Rank runs on one axis. It exists so a figure from this rig can sit
   next to the student's SDP/DP work without either side re-deriving the other's
-  model.
+  model. ⚠️ Its 5.5 % under-read is stated against the **retired** `Gfc` axis; against
+  the H-20 map the gap is much larger and operating-point dependent (the proxy assumes
+  50 % where the map says 24 % at the rig's 3.2 W median).
+- `h2_gfc_cum_g` (**appended last of all columns**, 2026-09-08) — **simulated runs
+  only**: the run's cumulative hydrogen on the **retired `Gfc` full-size map**
+  (§9.3b), on the same clamped `P_fc` input, 9 significant digits. It exists so a
+  campaign run before 2026-09-08 — whose headline hydrogen number *was* `Gfc` — can be
+  read against one run after. It is appended after **every** established column,
+  including the observed-board tail (`fc_ceil` … `sel_fc`), so no consumer's index
+  moves. ⚠️ **A SECOND MODEL, NOT A CROSS-CHECK**, exactly as `h2_sdp_cum_g` is:
+  differencing it against `h2_cum_g` is arithmetic, never a finding.
 - `cmd_share_sp_raw` (appended after `h2_sdp_cum_g`, 2026-08-31, ledger MED-1) —
   **simulated runs only, and unconditional there**: the SDP policy's **pre-clamp**
   `power_share_setpoint` request, i.e. the table value before
@@ -3060,10 +3084,108 @@ charger reach `AG105_ST_FULL` (GENSTAT 011), which the old SoC-free model never 
 
 Initial SOC is `--soc0` (default 0.7).
 
-### 9.3 Hydrogen consumption — the `Gfc` metric
+### 9.3 Hydrogen consumption — the H-20 map (scored) and `Gfc` (documented)
 
-> ### ⚠️ READ THIS BEFORE QUOTING ANY H2 NUMBER FROM A HIL RUN
+> ### ⚠️ THE SCORED HYDROGEN MODEL CHANGED ON 2026-09-08
 >
+> `h2_rate_gps` / `h2_cum_g` — the columns the suite, the DP, the SDP, the offline walk
+> and the MPC all read — now carry the **H-20 brochure map**, `tools/h2_map.py`. The
+> full-size `Gfc` transfer function still runs on the same input every tick and is logged
+> as the new **`h2_gfc_cum_g`** column, but it is **documented, not scored**. The design
+> record is `docs/modeling/h20_hydrogen_map_20260908.md`; §9.3a below is the summary and
+> §9.3b is the retained `Gfc` description.
+>
+> **Why it was demoted — two reasons, the second decisive.** (1) `Gfc` was **never
+> identified against this stack**; that `TODO(calibrate)` had stood since the model was
+> ported. (2) **`Gfc` is linear and the decision is not.** A single DC gain prices a watt
+> at 3 W exactly as it prices a watt at 20 W. The real stack's LHV efficiency **peaks**
+> — 0.433 at 14.75 W on the H-20 map — and collapses at low power (**0.244 at 3 W**,
+> which is where this rig's median operating point sits), so the whole question an energy
+> manager exists to answer, *where on the curve to run the stack*, was invisible to the
+> scored objective. Every ranking produced before 2026-09-08 was, in that respect,
+> scoring a degenerate problem.
+>
+> **What it does NOT license.** The two columns are two **models** of one quantity.
+> Differencing them is not a result, and no `h2_cum_g` figure recorded before 2026-09-08
+> is comparable to one recorded after — compare `h2_gfc_cum_g` across that boundary, or
+> re-run.
+
+#### 9.3a The H-20 map — the scored estimator
+
+**Source.** `references/H20-Small-Stacks-Brochure.pdf`, the H-20 block: 13 cells, rated
+20 W, **7.8 V @ 2.6 A**, hydrogen flow **0.28 L/min at maximum output**, *"efficiency of
+system 40 % at full power"*, blower 5 V, purge valve 6 V, and a printed U-I polarization
+curve.
+
+**Three pieces, and only the third is fitted.**
+
+| Piece | Law | Value |
+|---|---|---|
+| Faraday | `K = N_cells * M_H2 / (2F)`, 13 cells, 2.016 g/mol, 96485.33 C/mol | **1.35813e-04 g/s per A** |
+| Constant offset | `A0 = flow_rated - K * I_rated` | **6.6325e-05 g/s** |
+| Polarization | `V(I) = V0 - b*ln(1 + I/i0) - R*I` | `V0` 12.200 V, `b` 0.258 V, `i0` 0.023 A, `R` 1.183 ohm |
+
+`rate(P) = A0 + K*I(P)`, with `I(P)` the inverse of `P(I) = V(I)*I`, evaluated on a
+2049-point monotone table (`bisect` + linear interpolation on the stdlib 1 kHz path,
+`np.interp` on the same table for the DP/SDP/MPC — one table, so the two paths cannot
+drift). `P` above **23.416 W** (the curve's last point, 3.40 A) is **clamped and flagged**
+`saturated`; the returned rate is then a **floor**, not an estimate.
+
+**STP, not NTP — and the brochure settles it.** The flow is quoted without a reference
+state and the two candidates differ by 7 %. The brochure's own 40 % figure picks one:
+`20.28 W / (0.28 L/min * 0.08988 g/L / 60 * 120000 J/g) = 0.403` reproduces the printed
+40 %, while NTP's 0.08375 g/L gives 0.432 and does not. **rho_H2 = 0.08988 g/L (STP,
+0 C, 1 atm)**. This is the single most leveraged assumption in the map — it scales
+`A0` directly — and `h2_map.check_rated_efficiency()` recomputes it on demand.
+
+**The offset is a residual, and that is a modelling decision.** It carries the periodic
+purge valve, the stack-fed blower and the module controller together, because the
+brochure gives the total flow at rated output and nothing that splits it. Operator
+decision (2026-09-08): a **constant** offset, not a purge duty cycle and not a
+load-dependent parasitic. `TODO(bench)`: time the purge interval and duration, measure
+the blower + controller draw, and re-derive the offset as a sum of measured terms.
+
+**Concentration losses are not modelled.** The brochure's curve ends at 3.4 A and shows
+the mass-transport knee only in its last point, so a fourth parameter would be fitted to
+one datum. The consequence, stated rather than hidden: the map **under-reads consumption
+near 3.4 A**, which is the optimistic direction there. It does not matter on this rig —
+3.4 A is 2.7x the fw v26 fuel-cell ceiling.
+
+**Operating points, for reading a run.**
+
+| P_stack [W] | I [A] | rate [g/s] | eta_LHV | d(rate)/dP [g/s/W] |
+|---|---|---|---|---|
+| 0 | 0.0000 | 6.6325e-05 | — (idle offset) | 1.115e-05 |
+| 3 (rig median) | 0.2671 | 1.0261e-04 | **0.244** | 1.272e-05 |
+| 10 | 0.9956 | 2.0154e-04 | 0.414 | 1.577e-05 |
+| 14.75 (eta peak) | 1.6022 | 2.8393e-04 | **0.433** | 1.925e-05 |
+| 20.28 (rated) | 2.5428 | 4.1167e-04 | 0.411 | 2.882e-05 |
+| 25 | 3.4000 (clamped) | 5.2809e-04 | — **SATURATED** | — |
+
+The **2.4x spread in the marginal rate** across that range is the number every
+downstream constant that used to be a ratio against a constant `k = 1/(eta*Q_LHV)` now
+has to answer for — see the phase-B list in the design note.
+
+**The shutdown hook.** A stopped stack consumes nothing, but the firmware has no
+stack-shutdown state and none is planned this round (operator, 2026-09-08). The hook is
+carried in two forms, both defaulting to *running*: a per-call `stack_on`, wired to the
+board's **`FC_REG_ENABLE` mirror (observation aux bit 0)** so an unenabled regulator bills
+zero; and a module policy `h2_map.SHUTDOWN_ENABLED` (**False**, set nowhere) for a future
+"command the stack off at zero demand" action. While it is False a running, idling stack
+still burns `A0`, which is the honest cost of leaving it on and the reason an idle-heavy
+cycle is not free.
+
+**Calibration status.** The stack **type** is now the fitted one; the **individual
+sample** is not measured, and neither is its ageing. `TODO(calibrate)`: a load sweep
+(terminal V against I at 8-10 points) replaces the digitized curve outright, and a
+flow-meter reading at two currents separates the offset from Faraday directly.
+
+⚠️ **The electrical `FuelCellSource` (§9.1) was NOT refitted in this round.** It keeps
+its own polarization constants, so the plant's *electrical* fuel cell and its *hydrogen*
+map are presently two curves for one stack. That is a separate, flagged follow-up.
+
+#### 9.3b `Gfc` — retained, documented, not scored
+
 > `Gfc` is a **full-scale (106 kW) fuel-cell hydrogen-consumption model taken verbatim
 > from the PhD student's FCHEV dynamic-programming study**. It is the commented-out
 > `H2_tf` at `references/EMS/DPtrial.m:51-52`, with its two scalar prefactors folded in:
@@ -3121,8 +3243,10 @@ voltage and current columns, which is why `h2_rate_gps` and `h2_cum_g` are logge
 physical operating point here, and a negative rate would be an unphysical hydrogen
 *credit* that would silently flatter any strategy that provoked it.
 
-**Scope.** Simulated mode only, by construction: it is stepped from `Plant.step()`, and
-`--replay` bypasses the plant integrator. It is a pure **observer** — no plant state, no
+**Scope.** Both maps are simulated mode only, by construction: they are stepped from
+`Plant.step()`, and `--replay` bypasses the plant integrator. `h2_gfc_cum_g` is appended
+**after every established CSV column**, including the observed-board tail, so no
+consumer's index moves (every consumer reads this CSV by header name). It is a pure **observer** — no plant state, no
 injected frame, no policy and no firmware path reads it back, so enabling it cannot change
 a trace. The wire protocol was untouched by that round (40 B inject / 16 B observe / 22 B command); **fw v24 grew the observation frame to 17 B and fw v25 to 18 B** (error_code at offset 16) — see §5.
 
@@ -3162,7 +3286,7 @@ change what the answer *means* are:
 | D1 | **Linear** interpolation of `J(:,k+1)` at `SOC_next`; off-grid transitions are **infeasible**, not clamped | the MATLAB snaps to the nearest grid index (`DP_EnergyManagement2.m:39`), which on its own grid quantizes ~99 % of realistic steps to "no change at all" |
 | D2 | the argmin **policy is stored**; the forward pass is a table lookup | the MATLAB re-solves the whole minimisation forward (`:61-95` duplicates `:23-53`) |
 | D3 | an infeasible state the forward pass **reaches** raises | the MATLAB silently commands `P_fc = 0` (`:96`), handing the demand to the battery — the limit the feasibility test was protecting |
-| D4 | stage cost uses the **`Gfc` DC gain** (§9.3), imported from `hil_plant_sim.py` | puts the objective and the logged `h2_cum_g` on the **same `Gfc` map**; `DPtrial.m:43`'s static proxy disagrees by +16.4 %. ⚠️ Same map, not the same evaluation: the run integrates `Gfc`'s **dynamics** (0.2212 s, ZOH) and the DP takes its **DC gain**. Measured on this campaign's own inputs, that difference is **−0.0116 %** of the integrated total on `ems-ftp75-dp` and **−0.0316 %** on `ems-dp-replay` — two orders below the observed table-versus-run gaps below, so it does **not** explain them |
+| D4 | **(REWRITTEN 2026-09-08)** stage cost is the **H-20 convex map** (§9.3a), `h2_map.rate_gps(P_fc_bus / ETA_BOOST) * dt`, imported from `tools/h2_map.py` | puts the objective and the logged `h2_cum_g` on **one map, by construction** — the DP and the plant now call the *same module*, and there is no DC-gain-versus-dynamics gap left to account for (the H-20 map is static). ⚠️ **THE ETA_BOOST DIVISION IS NOW LOAD-BEARING:** under the old linear gain it was a uniform scale factor that could not move the argmin; under a convex map it selects the **operating point** on the curve. ⚠️ **Every pre-2026-09-08 table is the optimum of a different problem** — a linear cost has a different argmin — and `load_dp_table()`'s drift guard now **refuses** one by its missing `h2_map` header line rather than replaying it. The header records `h2_map.fingerprint_str()`; `gfc_dc_gain_gps_per_w` is still emitted and still checked, but nothing minimises it. The **constant offset is billed**: it cannot move a stage's argmin (identical on every control) but it belongs in the totals, and omitting it would put the DP's grams and the plant's `h2_cum_g` a fixed amount apart. The map is **flagged when it saturates** above 23.416 W and the generator prints a census after the solve |
 | D6 | SoC dynamics are the **simulator's `BatterySource`** (OCV table, `Rs(SOC)`, coulomb count) | **operator ruling: match the plant.** The MATLAB's constant `Em = 720 V` lossless pack is retired; the problem becomes nonlinear in the state |
 | D7 | the demand is **derived from the scenario, imported at generation time** | no hand-copied profile — retuning the scenario changes the fingerprint and invalidates the table |
 | D10 | charging is a **discrete second control**, masked to cruise regions and an FC-current budget | on this board a negative pack current can only come from the Ag105, and `assertFcChargeEnable()` drops BT off the bus. Never during acceleration (operator ruling (b)). Precedent: `ems_regen_harvest` windows `charge_goal` off the same profile |

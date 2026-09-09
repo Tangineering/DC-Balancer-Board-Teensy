@@ -392,14 +392,18 @@ def test_without_dash_behavior_unchanged_csv_header_and_scenario_list(tmp_path, 
     # schemas, so the nine of them are the tail in that order.
     # ... and the three MPC diagnostics after p_chg_loss_w (2026-09-02 MPC
     # registration; blank on every non-MPC row), so the tail is twelve.
-    assert header[-4:] == ["fc_ceil", "bt_ceil",        # fw v26 aux bits 4/5
-                           "sel_armed", "sel_fc"]      # fw v28 aux bits 6/7
-    assert header[-16:-4] == ["mppt_thresh_cnt", "error_code",
+    # h2_gfc_cum_g appended after sel_fc by the 2026-09-08 H-20 hydrogen-map
+    # round (the retained, unscored Gfc integral; simulated schema only, which
+    # this run is), so the tail is now five.
+    assert header[-5:] == ["fc_ceil", "bt_ceil",        # fw v26 aux bits 4/5
+                           "sel_armed", "sel_fc",       # fw v28 aux bits 6/7
+                           "h2_gfc_cum_g"]              # 2026-09-08 H-20 round
+    assert header[-17:-5] == ["mppt_thresh_cnt", "error_code",
                             "p_mot_w", "p_fc_w", "p_batt_w",
                             "p_chop_w", "p_aux_w", "p_bal_w", "p_chg_loss_w",
                             "mpc_solve_ms", "mpc_share_pred_err",
                             "mpc_budget_hit"]
-    assert header[-23:-16] == ["soc", "cmd_v_sp", "cmd_share_sp",
+    assert header[-24:-17] == ["soc", "cmd_v_sp", "cmd_share_sp",
                                "h2_rate_gps", "h2_cum_g", "h2_sdp_cum_g",
                                "cmd_share_sp_raw"]
 

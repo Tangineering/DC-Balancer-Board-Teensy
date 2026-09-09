@@ -1236,6 +1236,16 @@ HIL_CSV_COLUMNS = [
     "fc_ceil", "bt_ceil",
     # fw v28 observation-frame aux bits 6/7 (source selector arm + selection).
     "sel_armed", "sel_fc",
+    # The DEMOTED Gfc cumulative, appended LAST OF ALL by the 2026-09-08 H-20
+    # map round (hil_plant_sim.py's header block, after the observed-board
+    # tail, simulated mode only).  This module's job is to write a file with
+    # the HIL schema, so the fence tracks that schema whether or not the walk
+    # can fill the column - and it cannot: the reduced walk integrates one
+    # hydrogen law (the H-20 map, through gen_dp_ems_table's stage functions)
+    # and has no Gfc recursion at all.  Written BLANK, which load_hil_csv reads
+    # as NaN, rather than 0 - a zero would be the positive claim "this walk
+    # burned no Gfc hydrogen".
+    "h2_gfc_cum_g",
 ]
 
 # Documented constants for the columns the reduced model does not produce.
@@ -1324,6 +1334,7 @@ def synthesize_hil_csv(path, result, sim, scenario_meta, dt_s):
                 "", "", "",                                   # mpc diagnostics
                 "", "",                                       # fc_ceil, bt_ceil
                 "", "",                                       # sel_armed, sel_fc
+                "",                                           # h2_gfc_cum_g
             ])
     return len(result.t)
 

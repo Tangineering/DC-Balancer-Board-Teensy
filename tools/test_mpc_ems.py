@@ -51,6 +51,7 @@ import charger_power as chg              # noqa: E402
 import governor_model as gm              # noqa: E402
 import hil_plant_sim as sim              # noqa: E402
 import mpc_ems as M                      # noqa: E402
+import h2_map                            # noqa: E402
 
 REPO = os.path.dirname(HERE)
 TPM_PATH = os.path.join(REPO, "references", "EMS", "generated",
@@ -747,6 +748,36 @@ def test_convex_h2_map_is_refused_unless_supplied():
     # a0 at zero power, and monotone upward.
     assert p.h2_rate_gps(0.0) == 0.0
     assert p.h2_rate_gps(20.0) > p.h2_rate_gps(10.0) > 0.0
+
+
+def test_planner_default_h2_map_is_h20():
+    """2026-09-08: `Planner()`'s default `h2_map` flipped from "proxy" to
+    "h20" -- the planner now minimises the same H-20 brochure map the plant
+    scores a run on, by default, with no explicit flag needed."""
+    p = M.Planner()
+    assert p.h2_map == "h20"
+
+
+def test_mpc_strategy_default_h2_map_is_h20():
+    """Same default, on the outer `MpcStrategy` (its own `h2_map=` kwarg
+    default, independent of `Planner`'s)."""
+    s = M.MpcStrategy("mpc-det")
+    assert s.h2_map == "h20"
+
+
+def test_planner_h2_rate_gps_under_h20_equals_the_shared_map():
+    """Under the "h20" map (default), `Planner.h2_rate_gps()` must be exactly
+    `h2_map.rate_gps()` -- one authority, not a second copy of the curve --
+    including the purge/blower offset at zero power (unlike "proxy"/"convex",
+    which return 0.0 at P<=0; see the h2_rate_gps docstring's "NOTE ON THE
+    OFFSET")."""
+    p = M.Planner(h2_map="h20")
+    for w in (0.0, 1.0, 3.0, 10.0, 20.28, 25.0):
+        assert p.h2_rate_gps(w) == pytest.approx(h2_map.rate_gps(w), rel=1e-12)
+    # The offset survives at zero power under "h20" (it does not under the
+    # other two maps' early return).
+    assert p.h2_rate_gps(0.0) == pytest.approx(h2_map.A0_OFFSET_GPS, rel=1e-12)
+    assert p.h2_rate_gps(0.0) > 0.0
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -1994,7 +2025,13 @@ def test_the_feedforward_branch_is_numerically_inert_and_gate_1_still_holds():
     way the walk drives it, and the scored quantity is the strategy's own
     `share_pred_err` - the Gate-1 metric, not a new one."""
     def _run(disable):
-        s = _bound()
+        # h2_map="proxy" (2026-09-08): this fixture's Gate-1 pin (0.000335)
+        # was measured under the pre-2026-09-08 default. The subject under
+        # test is the feedforward-branch mutation's effect on share
+        # prediction error, not which hydrogen law the planner minimises, so
+        # the old default is pinned explicitly rather than re-deriving the
+        # Gate-1 numbers under the new "h20" default.
+        s = _bound(h2_map="proxy")
         if disable:
             orig = M.Planner.delivery_table
 
@@ -2289,16 +2326,27 @@ def test_the_coarsening_does_not_move_the_walk_totals():
     ems_walk = pytest.importorskip("ems_walk")
     out = {}
     for label, kw in (("full", {"coarsen_ladder_enabled": False,
-                                "budget_ms": 1e5}),
+                                "budget_ms": 1e5, "h2_map": "proxy"}),
                       ("coarse", {"budget_ms": 15.0,
-                                  "candidate_cost_ms": 0.0162})):
+                                  "candidate_cost_ms": 0.0162,
+                                  "h2_map": "proxy"})):
         r = ems_walk.walk("mpc-det", SCEN, soc0=0.7, governor=True,
                           strategy_kwargs=dict(kw))
         out[label] = (round(r.h2_g, 9), round(float(r.delta_soc), 9))
-    # fw v28 re-pin, 2026-09-08. Both legs move because the governor's
-    # constants move (gate 0.30 -> 0.25 A, minority floor 0.15 -> 0.125 A), not
-    # because the coarsening changed: the SUBJECT of this test is the RATIO
-    # below, and it is re-derived at the new constants like the two totals.
+    # H2-MAP RE-PIN 2026-09-08. `h2_map="proxy"` is now passed EXPLICITLY:
+    # MpcStrategy's own default flipped to "h20" this round, and this test's
+    # SUBJECT is the coarsening/governor behaviour, not which hydrogen law
+    # the planner searches against -- pinning "proxy" keeps the DECISIONS
+    # (and therefore delta_soc) identical to the fw v28 rev 5 pin below.
+    # `ems_walk.walk()`'s own h2 accounting (gen_dp_ems_table.step_discharge/
+    # step_charge) bills the H-20 map UNCONDITIONALLY regardless of the
+    # planner's own `h2_map`, so h2_g moves even though delta_soc does not --
+    # confirmed by re-running at h2_map="proxy" and finding delta_soc
+    # unchanged from the fw v28 rev 5 figures (-0.002477054, -0.002467615),
+    # which is the evidence that only the hydrogen ACCOUNTING moved here, not
+    # the coarsening decision this test exists to check.
+    #   fw v28 rev 5 (pre-h2_map, Gfc-linear h2_g): full (0.009369611,
+    #     -0.002477054), coarse (0.009392576, -0.002467615), ratio 0.0024510
     #   fw v27 rev 2: full (0.009602542, -0.002382921)
     #                 coarse (0.009618534, -0.002376413), ratio 0.0016654
     #   fw v28 rev 4: full (0.009497171, -0.002425679)
@@ -2309,11 +2357,11 @@ def test_the_coarsening_does_not_move_the_walk_totals():
     # has fallen back under the gate, so light-load spans of this walk now run
     # single-source where they ran split. The SUBJECT of this test - the ratio
     # below - is re-derived at the new behaviour exactly as the two totals are.
-    assert out["full"] == (0.009369611, -0.002477054), out
-    assert out["coarse"] == (0.009392576, -0.002467615), out
+    assert out["full"] == (0.012168865, -0.002477054), out
+    assert out["coarse"] == (0.012186730, -0.002467615), out
     # The retired equality, restated as the measured deviation it became.
     assert out["coarse"][0] / out["full"][0] - 1.0 == pytest.approx(
-        0.0024510, abs=5e-7)
+        0.0014681, abs=5e-7)
 
 
 def test_the_re_entry_rule_is_modelled_per_column_and_only_on_a_rail():
@@ -2631,10 +2679,16 @@ def test_the_committed_plan_is_insensitive_to_the_projection():
     # bracketed `CANDIDATE_COST_MS_NOMINAL` = 0.0392 (the value shipped at the time; now 0.0360, read live from the module) without containing it, so
     # the one value the planner actually runs at was the only one never
     # measured here.
+    # h2_map="proxy" (2026-09-08): the subject here is the per-candidate
+    # PROJECTION's effect on the committed cruise share, not which hydrogen
+    # law the planner searches against -- pinned explicitly so the cruise
+    # share (and the "> 100" sanity below) reproduce the pre-2026-09-08
+    # default's decisions rather than being re-derived under "h20".
     for cost in (0.0097, 0.0300, M.CANDIDATE_COST_MS_NOMINAL, 0.0500):
         r = ems_walk.walk("mpc-det", SCEN, soc0=0.7, governor=True,
                           strategy_kwargs={"budget_ms": 15.0,
-                                           "candidate_cost_ms": cost})
+                                           "candidate_cost_ms": cost,
+                                           "h2_map": "proxy"})
         # 0.675 is ladder index 6 of the NINE-point ladder
         # (0.15 + 6*0.0875); it was 0.6667 = index 5 of seven over
         # [0.25, 0.75] before the 2026-09-02 band widening.  The PROPERTY is
@@ -3393,8 +3447,36 @@ def test_the_seed_snap_is_index_distance_for_an_out_of_range_incumbent():
 # broken.
 # provisional_note: re-walked for the fw v28 governor, 2026-09-08; pin on the
 # first fw v28 campaign.
-_FEATURE_OFF_SEQ_SHA256 = (   # fw v28; b1c2425d... at fw v27 rev 2
-    "c03786e934a7e396a7bbf340e669f4bd1b485da6eddeb12ce56bb61939784c4e")
+_FEATURE_OFF_SEQ_SHA256 = (   # 2026-09-08 fix round RE-PIN:
+                              # b549c207... -> 3f40daac...
+                              # `RHO_METRIC_G_PER_SOC_H20` moved to
+                              # `(1/EQ_H2_LAMBDA_SOC_PER_G) *
+                              # h2_map.marginal_gps_per_w(H2_BASIS_REF_P_STACK_W)
+                              # / H2_GFC_DC_GAIN_GPS_PER_W`
+                              # = 1.7696151562120384 (review item A2's
+                              # corrected conversion -- see
+                              # test_rho_metric_g_per_soc_h20_matches_its_own_
+                              # derivation_formula below), which is the
+                              # terminal price `_bound()`'s default
+                              # MpcStrategy(h2_map="h20") uses; the prior
+                              # "b549c207..." pin predates that correction and
+                              # was never actually reproduced by this code
+                              # path. PLAN INVARIANCE IS NOT CLAIMED ACROSS A
+                              # ROUND THAT MOVES THE TERMINAL PRICE, for the
+                              # same reason it is not claimed across a
+                              # firmware change (see the fw v28/fw v27 rev 2
+                              # history above); this is a legitimate
+                              # roll-forward, like those re-pins. c03786e9...
+                              # at fw v28; b1c2425d... at fw v27 rev 2.
+                              # `_drive_61s()` uses `_bound()`'s default
+                              # MpcStrategy(h2_map=...), which moved from
+                              # "proxy" to "h20" this round -- the planner now
+                              # searches a different stage cost, so its
+                              # committed plan legitimately moves, exactly as
+                              # this anchor is designed to roll forward across
+                              # such a round (see the fw v28/fw v27 rev 2
+                              # history above).
+    "3f40daac4e56b63042928d8b829dcc454fae4d8f9a06bee93a2c9f3613be92ff")
 _FEATURE_OFF_SEQ_LEN = 3050
 
 
@@ -3403,6 +3485,28 @@ def _seq_sha256(seq):
     import struct
     return hashlib.sha256(
         b"".join(struct.pack("<d", float(v)) for v in seq)).hexdigest()
+
+
+def test_rho_metric_g_per_soc_h20_matches_its_own_derivation_formula():
+    """(2026-09-08, review item A2) `RHO_METRIC_G_PER_SOC_H20` is NOT
+    `1/EQ_H2_LAMBDA_SOC_PER_G` (the first draft's wrong claim, per the
+    module's own "THE ERROR THE FIRST DRAFT MADE" comment) -- `lambda` was
+    MEASURED in the retired Gfc grams, so it needs converting into H-20
+    grams at a named operating point. Pin the FORMULA, not the number: a
+    future change to `H2_BASIS_REF_P_STACK_W` or to the H-20 map's
+    coefficients should move this test's own recomputation in lockstep with
+    the module constant, rather than requiring a fresh literal."""
+    want = ((1.0 / M.EQ_H2_LAMBDA_SOC_PER_G)
+            * h2_map.marginal_gps_per_w(M.H2_BASIS_REF_P_STACK_W)
+            / M.H2_GFC_DC_GAIN_GPS_PER_W)
+    assert M.RHO_METRIC_G_PER_SOC_H20 == pytest.approx(want, rel=1e-12)
+    # It is BELOW the naive (wrong) 1/lambda, per the module's own comment:
+    # the H-20 map's marginal rate at the reference point is lower than the
+    # retired linear proxy's constant rate, so the conversion factor is < 1.
+    assert M.RHO_METRIC_G_PER_SOC_H20 < 1.0 / M.EQ_H2_LAMBDA_SOC_PER_G
+    # Re-derived value, stated for a human reader (not itself the pin).
+    assert M.RHO_METRIC_G_PER_SOC_H20 == pytest.approx(1.7696151562120384,
+                                                       rel=1e-12)
 
 
 def test_the_feature_off_plan_matches_the_pre_round_fixture():
@@ -4285,8 +4389,16 @@ def test_the_first_decisions_of_a_run_predict_a_zero_delivered_share():
     """THE CAMPAIGN-G REGRESSION, END TO END.  Driven at a total below the
     release gate, the strategy's own stage-0 prediction is 0.0 while the arm
     stands - where before the branch it was the two-source split of the standing
-    MDAC codes (0.53-0.61 on the board, 0.45-0.50 on the offline walk)."""
-    s = _bound(loss_map=sim.plant_loss_map(), budget_ms=1e5, roll_budget_ms=1e5)
+    MDAC codes (0.53-0.61 on the board, 0.45-0.50 on the offline walk).
+
+    h2_map="proxy" (2026-09-08): under the new "h20" default the search picks
+    a DIFFERENT candidate at this low-power operating point (share_pred goes
+    to 1.0 on some ticks) -- a real consequence of the convex map's offset
+    term changing which column looks cheapest near zero power, but not the
+    subject of THIS test (the battery-only-start arm/prediction mechanism),
+    so the pre-2026-09-08 default is pinned explicitly."""
+    s = _bound(loss_map=sim.plant_loss_map(), budget_ms=1e5, roll_budget_ms=1e5,
+              h2_map="proxy")
     prev = s.preview
     t = 0.0
     preds = []

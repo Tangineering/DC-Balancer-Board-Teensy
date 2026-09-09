@@ -24,6 +24,7 @@ sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.join(HERE, "benchlog_analysis"))
 
 import hil_plant_sim as hil  # noqa: E402
+import h2_map  # noqa: E402
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -2111,12 +2112,16 @@ def test_csv_schema_sim_mode_appends_soc(tmp_path):
     # fc_ceil/bt_ceil (fw v26, aux bits 4/5) and sel_armed/sel_fc
     # (fw v28, aux bits 6/7) are appended after the MPC
     # block in BOTH schemas -- observed BOARD fields, like mppt_thresh_cnt.
-    assert header[-4:] == ["fc_ceil", "bt_ceil", "sel_armed", "sel_fc"]
-    assert header[-16:-4] == ["mppt_thresh_cnt", "error_code",
+    # h2_gfc_cum_g (2026-09-08, the H-20 map round) is appended LAST OF ALL,
+    # after the board-field tail, in simulated mode only -- see the
+    # `header_row += ["h2_gfc_cum_g"]` guard in hil_plant_sim.main().
+    assert header[-1] == "h2_gfc_cum_g"
+    assert header[-5:-1] == ["fc_ceil", "bt_ceil", "sel_armed", "sel_fc"]
+    assert header[-17:-5] == ["mppt_thresh_cnt", "error_code",
                            "p_mot_w", "p_fc_w", "p_batt_w",
                            "p_chop_w", "p_aux_w", "p_bal_w", "p_chg_loss_w",
                            "mpc_solve_ms", "mpc_share_pred_err", "mpc_budget_hit"]
-    assert header[-23:-16] == ["soc", "cmd_v_sp", "cmd_share_sp",
+    assert header[-24:-17] == ["soc", "cmd_v_sp", "cmd_share_sp",
                               "h2_rate_gps", "h2_cum_g", "h2_sdp_cum_g",
                               "cmd_share_sp_raw"]
     assert "elec_substep_hz" not in header
@@ -2130,14 +2135,16 @@ def test_csv_schema_hifi_mode_appends_elec_columns(tmp_path):
     # fc_ceil/bt_ceil (fw v26, aux bits 4/5) and sel_armed/sel_fc
     # (fw v28, aux bits 6/7) are appended after the MPC
     # block in BOTH schemas -- observed BOARD fields, like mppt_thresh_cnt.
-    assert header[-4:] == ["fc_ceil", "bt_ceil", "sel_armed", "sel_fc"]
-    assert header[-16:-4] == ["mppt_thresh_cnt", "error_code",
+    # h2_gfc_cum_g (2026-09-08) is appended LAST OF ALL, simulated mode only.
+    assert header[-1] == "h2_gfc_cum_g"
+    assert header[-5:-1] == ["fc_ceil", "bt_ceil", "sel_armed", "sel_fc"]
+    assert header[-17:-5] == ["mppt_thresh_cnt", "error_code",
                            "p_mot_w", "p_fc_w", "p_batt_w",
                            "p_chop_w", "p_aux_w", "p_bal_w", "p_chg_loss_w",
                            "mpc_solve_ms", "mpc_share_pred_err", "mpc_budget_hit"]  # fw v24/v25 tail
     # `elec_substep_n` (2026-09-02, review PLANT-R1-F6) is appended AFTER the
     # two established elec columns, so nothing downstream of them moves.
-    assert header[-26:-16] == ["soc", "elec_substep_hz", "elec_events",
+    assert header[-27:-17] == ["soc", "elec_substep_hz", "elec_events",
                               "elec_substep_n",
                               "cmd_v_sp", "cmd_share_sp",
                               "h2_rate_gps", "h2_cum_g", "h2_sdp_cum_g",
@@ -2774,12 +2781,14 @@ def test_m3_hifi_with_csv_creates_events_sidecar(tmp_path):
     # fc_ceil/bt_ceil (fw v26, aux bits 4/5) and sel_armed/sel_fc
     # (fw v28, aux bits 6/7) are appended after the MPC
     # block in BOTH schemas -- observed BOARD fields, like mppt_thresh_cnt.
-    assert header[-4:] == ["fc_ceil", "bt_ceil", "sel_armed", "sel_fc"]
-    assert header[-16:-4] == ["mppt_thresh_cnt", "error_code",
+    # h2_gfc_cum_g (2026-09-08) is appended LAST OF ALL, simulated mode only.
+    assert header[-1] == "h2_gfc_cum_g"
+    assert header[-5:-1] == ["fc_ceil", "bt_ceil", "sel_armed", "sel_fc"]
+    assert header[-17:-5] == ["mppt_thresh_cnt", "error_code",
                            "p_mot_w", "p_fc_w", "p_batt_w",
                            "p_chop_w", "p_aux_w", "p_bal_w", "p_chg_loss_w",
                            "mpc_solve_ms", "mpc_share_pred_err", "mpc_budget_hit"]  # fw v24/v25 tail
-    assert header[-22:-16] == ["cmd_v_sp", "cmd_share_sp", "h2_rate_gps",
+    assert header[-23:-17] == ["cmd_v_sp", "cmd_share_sp", "h2_rate_gps",
                              "h2_cum_g", "h2_sdp_cum_g", "cmd_share_sp_raw"]
     # Resolved BY NAME rather than by a negative index: the fw v24 column
     # shifted every from-the-end offset by one, which is exactly the breakage
@@ -3355,12 +3364,14 @@ def test_pi_live_csv_cmd_columns_blank(tmp_path):
     # fc_ceil/bt_ceil (fw v26, aux bits 4/5) and sel_armed/sel_fc
     # (fw v28, aux bits 6/7) are appended after the MPC
     # block in BOTH schemas -- observed BOARD fields, like mppt_thresh_cnt.
-    assert header[-4:] == ["fc_ceil", "bt_ceil", "sel_armed", "sel_fc"]
-    assert header[-16:-4] == ["mppt_thresh_cnt", "error_code",
+    # h2_gfc_cum_g (2026-09-08) is appended LAST OF ALL, simulated mode only.
+    assert header[-1] == "h2_gfc_cum_g"
+    assert header[-5:-1] == ["fc_ceil", "bt_ceil", "sel_armed", "sel_fc"]
+    assert header[-17:-5] == ["mppt_thresh_cnt", "error_code",
                            "p_mot_w", "p_fc_w", "p_batt_w",
                            "p_chop_w", "p_aux_w", "p_bal_w", "p_chg_loss_w",
                            "mpc_solve_ms", "mpc_share_pred_err", "mpc_budget_hit"]  # fw v24/v25 tail
-    assert header[-22:-16] == ["cmd_v_sp", "cmd_share_sp", "h2_rate_gps",
+    assert header[-23:-17] == ["cmd_v_sp", "cmd_share_sp", "h2_rate_gps",
                              "h2_cum_g", "h2_sdp_cum_g", "cmd_share_sp_raw"]
     v_idx, share_idx = header.index("cmd_v_sp"), header.index("cmd_share_sp")
     raw_idx = header.index("cmd_share_sp_raw")
@@ -4311,14 +4322,20 @@ def test_warm_reset_times_capped_but_count_is_not(tmp_path, monkeypatch):
 
 
 # ─────────────────────────────────────────────────────────────────────────
-# 13. H2Consumption (Gfc hydrogen-consumption metric, 2026-08-31)
+# 13. H2Consumption (Gfc hydrogen-consumption metric, 2026-08-31;
+#     re-pointed 2026-09-08 -- the H-20 map now owns `rate_gps`/`cum_g` and
+#     `step()`'s return value; Gfc's UNCHANGED recursion moved to
+#     `gfc_rate_gps`/`gfc_cum_g`)
 # ─────────────────────────────────────────────────────────────────────────
 
 # The ten pinned validation vectors from the H2Consumption banner comment: a
 # 10.0 W step applied from the FIRST tick, zero initial state, Ts = 1e-3.
-# rtol 1e-9 per the banner.
+# rtol 1e-9 per the banner.  2026-09-08: these are Gfc vectors -- the
+# recursion and its coefficients are UNCHANGED by the H-20 map round, only the
+# attribute they land in moved (`rate_gps`/`cum_g` -> `gfc_rate_gps`/
+# `gfc_cum_g`), so the numbers themselves still hold verbatim.
 H2_STEP_10W_VECTORS = [
-    # (n, rate_gps, cum_g)
+    # (n, gfc_rate_gps, gfc_cum_g)
     (1, 1.451648924521401e-06, 1.451648924521401e-09),
     (10, 8.825724871566303e-06, 5.300056759372415e-08),
     (100, 6.483139460046860e-05, 3.565983712066193e-06),
@@ -4329,23 +4346,45 @@ H2_STEP_10W_VECTORS = [
 
 def test_h2_consumption_10w_step_pinned_validation_vectors():
     """Drive H2Consumption with the exact banner stimulus (10 W step from the
-    first tick, zero initial state, Ts = H2_GFC_TS_S) and check the rate/
-    cumulative pair at every pinned n against the banner's own vectors."""
+    first tick, zero initial state, Ts = H2_GFC_TS_S) and check the Gfc rate/
+    cumulative pair at every pinned n against the banner's own vectors.
+
+    2026-09-08: re-pointed to `gfc_rate_gps`/`gfc_cum_g` -- the H-20 map now
+    owns `rate_gps`/`cum_g` (and `step()`'s return value), so this test no
+    longer reads either of those for the Gfc check."""
     h2 = hil.H2Consumption()
     want = dict((n, (rate, cum)) for n, rate, cum in H2_STEP_10W_VECTORS)
     last_n = max(want)
     for n in range(1, last_n + 1):
-        rate = h2.step(10.0)
+        h2.step(10.0)
         if n in want:
             want_rate, want_cum = want[n]
-            assert rate == pytest.approx(want_rate, rel=1e-9)
-            assert h2.rate_gps == pytest.approx(want_rate, rel=1e-9)
-            assert h2.cum_g == pytest.approx(want_cum, rel=1e-9)
+            assert h2.gfc_rate_gps == pytest.approx(want_rate, rel=1e-9)
+            assert h2.gfc_cum_g == pytest.approx(want_cum, rel=1e-9)
+
+
+def test_h2_consumption_step_return_value_is_the_h20_map_not_gfc():
+    """2026-09-08: `step()`'s return value is documented as `self.rate_gps`,
+    the SCORED (H-20 map) axis, not Gfc's -- confirm the return equals the
+    live `h2_map.rate_gps()` call on the same clamped input, exactly (the
+    H-20 map is static, so there is no transient to account for)."""
+    h2 = hil.H2Consumption()
+    r1 = h2.step(10.0)
+    assert r1 == pytest.approx(h2_map.rate_gps(10.0), rel=1e-12)
+    assert r1 == h2.rate_gps
+    r2 = h2.step(10.0)
+    assert r2 == pytest.approx(h2_map.rate_gps(10.0), rel=1e-12)
+    # And cum_g integrates the H-20 rate, not Gfc's.
+    assert h2.cum_g == pytest.approx(2 * h2_map.rate_gps(10.0) * hil.H2_GFC_TS_S,
+                                     rel=1e-12)
 
 
 def test_h2_consumption_dc_gain_matches_sum_of_modal_gains():
     """DC check from the banner: sum(g_i / (1 - lam_i)) must equal
-    H2_GFC_DC_GAIN_GPS_PER_W (the banner claims 4 ulp; use a tight rel tol)."""
+    H2_GFC_DC_GAIN_GPS_PER_W (the banner claims 4 ulp; use a tight rel tol).
+
+    This checks the Gfc COEFFICIENTS directly, not an H2Consumption
+    attribute, so it is unaffected by the 2026-09-08 rename."""
     dc = sum(g / (1.0 - lam) for g, lam in zip(hil.H2_GFC_GAIN, hil.H2_GFC_LAMBDA))
     assert dc == pytest.approx(hil.H2_GFC_DC_GAIN_GPS_PER_W, rel=1e-12)
 
@@ -4387,13 +4426,17 @@ def test_h2_dc_gain_import_assert_bound_would_catch_a_perturbed_coefficient():
 
 def test_h2_consumption_converges_to_dc_gain_at_steady_state():
     """Run a 10 W step far past the dominant time constant (0.2212 s) and
-    confirm the rate has converged to 10x the DC gain -- an end-to-end
+    confirm the Gfc rate has converged to 10x the DC gain -- an end-to-end
     functional check of the recursion's steady-state behaviour, not just the
-    early-transient pinned vectors above."""
+    early-transient pinned vectors above.
+
+    2026-09-08: re-pointed to `gfc_rate_gps` -- the recursion this test drives
+    is unchanged, only the attribute moved."""
     h2 = hil.H2Consumption()
     for _ in range(20000):          # 20 s, ~90x the 0.2212 s dominant tau
         h2.step(10.0)
-    assert h2.rate_gps == pytest.approx(10.0 * hil.H2_GFC_DC_GAIN_GPS_PER_W, rel=1e-6)
+    assert h2.gfc_rate_gps == pytest.approx(10.0 * hil.H2_GFC_DC_GAIN_GPS_PER_W,
+                                            rel=1e-6)
 
 
 def test_h2_consumption_negative_p_fc_clamps_identically_to_zero():
@@ -4401,7 +4444,7 @@ def test_h2_consumption_negative_p_fc_clamps_identically_to_zero():
     physical operating point on this rig and must not produce a negative,
     unphysical hydrogen 'credit').  A negative input must therefore behave
     EXACTLY like a zero input at every subsequent tick, not merely stay
-    non-negative."""
+    non-negative -- on ALL THREE accumulators, not just the return value."""
     h2_neg = hil.H2Consumption()
     h2_zero = hil.H2Consumption()
     for _ in range(50):
@@ -4409,6 +4452,10 @@ def test_h2_consumption_negative_p_fc_clamps_identically_to_zero():
         r_zero = h2_zero.step(0.0)
         assert r_neg == r_zero
         assert h2_neg.cum_g == h2_zero.cum_g
+        assert h2_neg.gfc_rate_gps == h2_zero.gfc_rate_gps
+        assert h2_neg.gfc_cum_g == h2_zero.gfc_cum_g
+        assert h2_neg.proxy_rate_gps == h2_zero.proxy_rate_gps
+        assert h2_neg.proxy_cum_g == h2_zero.proxy_cum_g
     assert h2_neg.x == h2_zero.x
 
 
@@ -4441,6 +4488,58 @@ def test_h2_consumption_reset_returns_to_zero_state():
     # And the recursion behaves like a fresh instance afterward.
     fresh = hil.H2Consumption()
     assert h2.step(10.0) == pytest.approx(fresh.step(10.0), rel=1e-12)
+
+
+def test_h2_consumption_reset_clears_gfc_and_diagnostic_counters_too():
+    """reset() must clear `gfc_rate_gps`/`gfc_cum_g` and the two 2026-09-08
+    diagnostic counters (`saturated_ticks`, `stack_off_ticks`), not just the
+    H-20 axis and `x`."""
+    h2 = hil.H2Consumption()
+    for _ in range(10):
+        h2.step(30.0)                    # above P_MAX_W -> saturates
+    for _ in range(10):
+        h2.step(1.0, stack_on=False)     # -> stack_off_ticks
+    assert h2.gfc_rate_gps > 0.0
+    assert h2.gfc_cum_g > 0.0
+    assert h2.saturated_ticks == 10
+    assert h2.stack_off_ticks == 10
+    h2.reset()
+    assert h2.gfc_rate_gps == 0.0
+    assert h2.gfc_cum_g == 0.0
+    assert h2.saturated_ticks == 0
+    assert h2.stack_off_ticks == 0
+
+
+def test_h2_consumption_stack_on_false_bills_zero_and_counts_stack_off_ticks():
+    """`stack_on=False` (the FC_REG_ENABLE mirror) must gate the H-20 map to
+    exactly zero -- including the purge/blower offset, which is nonzero at
+    P=0 with the stack on -- while leaving Gfc's recursion running (it has no
+    such input; see the step() docstring)."""
+    h2 = hil.H2Consumption()
+    r = h2.step(10.0, stack_on=False)
+    assert r == 0.0
+    assert h2.rate_gps == 0.0
+    assert h2.cum_g == 0.0
+    assert h2.stack_off_ticks == 1
+    assert h2.saturated_ticks == 0
+    # Gfc is NOT gated by stack_on: with u=10 W clamped-positive, its first
+    # tick must match the pinned Gfc vector regardless of stack_on.
+    assert h2.gfc_rate_gps == pytest.approx(H2_STEP_10W_VECTORS[0][1], rel=1e-9)
+
+
+def test_h2_consumption_saturated_ticks_increments_above_p_max():
+    """A stack-side power above `h2_map.P_MAX_W` must increment
+    `saturated_ticks` on the H-20 axis; a power at or below it must not."""
+    h2 = hil.H2Consumption()
+    h2.step(h2_map.P_MAX_W - 1.0)
+    assert h2.saturated_ticks == 0
+    h2.step(h2_map.P_MAX_W + 1.0)
+    assert h2.saturated_ticks == 1
+    h2.step(1e6)
+    assert h2.saturated_ticks == 2
+    # And a saturated call is a FLOOR: rate_gps at any P above P_MAX_W must
+    # equal the rate at P_MAX_W exactly (h2_map.rate_gps's own saturation).
+    assert h2.rate_gps == pytest.approx(h2_map.rate_gps(h2_map.P_MAX_W), rel=1e-12)
 
 
 # ── CSV plumbing (Plant-level, faster than driving the full CLI) ───────────
@@ -4974,6 +5073,12 @@ def _live_table_meta_lines(scenario, fp, charger_accounting="physical",
         "capacity_ah: %r" % float(capacity_ah),
         "chg_ceiling_a: %r" % float(chg_ceiling_a),
         "eta_boost: %r" % float(hil.ETA_BOOST),
+        # h2_map (2026-09-08): the hydrogen-law fingerprint bind_scenario()'s
+        # drift guard now compares for EXACT STRING equality.  Included in the
+        # "everything agrees" baseline so a test that binds successfully
+        # keeps doing so, and a test that perturbs one OTHER field still names
+        # only that field in its drift message.
+        "h2_map: %s" % h2_map.fingerprint_str(),
         "gfc_dc_gain_gps_per_w: %r" % float(hil.H2_GFC_DC_GAIN_GPS_PER_W),
         # The DP's charge-stage share is its GRID'S TOP, which is the band's
         # top, not the soc-band span (2026-09-02, the band widening).
@@ -5090,6 +5195,130 @@ def test_dp_replay_bind_scenario_absent_header_line_refuses_rather_than_skips(tm
     assert "absent" in msg
 
 
+# ── h2_map drift guard (2026-09-08, the H-20 map round) ─────────────────────
+
+def test_dp_replay_bind_scenario_h2_map_absent_refuses_as_pre_convex_map_table(tmp_path):
+    """A table with NO `h2_map` header line (every table committed before
+    2026-09-08) must be refused as drift, not silently accepted: it was
+    solved against the LINEAR Gfc DC-gain stage cost, a different objective
+    from the H-20 convex map this run would score it against."""
+    import types
+    scenario = "myscen"
+    meta = {"ems_v_profile": [(0.0, 0.0), (10.0, 1.0)], "duration_s": 10.0,
+            "chg_i_ceiling_a": 0.8}
+    fp = hil.dp_profile_fingerprint(scenario, meta)
+    lines = [l for l in _live_table_meta_lines(scenario, fp)
+            if not l.startswith("h2_map:")]     # the pre-2026-09-08 table
+    path = os.path.join(str(tmp_path), hil.DP_TABLE_NAME % scenario)
+    _write_dp_table(path, lines, [(0.0, 0.5, 0.0), (5.0, 0.6, 1.0)])
+    s = hil.DpReplayStrategy(table_dir=str(tmp_path))
+    args = types.SimpleNamespace(soc0=0.7, capacity_ah=5.0)
+    with pytest.raises(ValueError) as exc_info:
+        s.bind_scenario(scenario, meta, electrical_mode="hifi", args=args)
+    msg = str(exc_info.value)
+    assert "h2_map" in msg
+    assert "absent" in msg
+    # (2026-09-08 fix round) the message must NAME the pre-2026-09-08 era,
+    # not merely say the field is missing -- an absent line and a stale
+    # value are two different failure modes and the message must not
+    # conflate them.
+    assert "2026-09-08" in msg
+    assert "LINEAR" in msg
+
+
+def test_dp_replay_bind_scenario_h2_map_mismatch_refuses_and_names_both_tokens(tmp_path):
+    """A table recording a DIFFERENT `h2_map` fingerprint (a stale or
+    hand-edited polarization coefficient) must be refused, and the message
+    must carry BOTH the table's stale token and the live one -- a hydrogen
+    law has no "close enough", so the comparison is exact-string, not a
+    tolerance."""
+    s, meta, args = _bindable(tmp_path)
+    path = os.path.join(str(tmp_path), hil.DP_TABLE_NAME % "myscen")
+    # Rewrite the table's h2_map line to a bogus token, leaving every other
+    # line at its live-agreeing value.
+    with open(path, encoding="utf-8") as fh:
+        text = fh.read()
+    stale_token = "h20-brochure-v1|99.0|0.258|0.023|1.183|3.4|1.358e-04|" \
+                 "6.63e-05|False"
+    text = text.replace("h2_map: %s" % h2_map.fingerprint_str(),
+                        "h2_map: %s" % stale_token)
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(text)
+    with pytest.raises(ValueError) as exc_info:
+        s.bind_scenario("myscen", meta, electrical_mode="hifi", args=args)
+    msg = str(exc_info.value)
+    assert "h2_map" in msg
+    assert stale_token in msg
+    assert h2_map.fingerprint_str() in msg
+
+
+def test_dp_replay_current_token_table_binds_under_none_and_h20(tmp_path):
+    """(2026-09-08 fix round) A table recording the CURRENT `h2_map`
+    fingerprint binds cleanly whether `DpReplayStrategy` is constructed
+    with the default (`h2_law=None`) or the explicit `h2_law="h20"` --
+    both resolve to the same live law, per `DpReplayStrategy.__init__`'s
+    own `self.h2_law = h2_law or "h20"`."""
+    s_default, meta, args = _bindable(tmp_path)
+    s_default.bind_scenario("myscen", meta, electrical_mode="hifi", args=args)
+    assert s_default.path is not None
+
+    s_h20 = hil.DpReplayStrategy(table_dir=str(tmp_path), h2_law="h20")
+    s_h20.bind_scenario("myscen", meta, electrical_mode="hifi", args=args)
+    assert s_h20.path is not None
+
+
+_LEGACY_H2_MAP_TOKEN = "gfc-linear-legacy|%r" % hil.H2_GFC_DC_GAIN_GPS_PER_W
+
+
+def _write_legacy_h2_map_table(tmp_path, scenario="myscen"):
+    """A table whose `h2_map:` line carries the LEGACY token (what
+    `gen_dp_ems_table.py --h2-map gfc-linear` writes), everything else
+    agreeing with the live constants -- so only the hydrogen-law field is
+    under test."""
+    import types
+    meta = {"ems_v_profile": [(0.0, 0.0), (10.0, 1.0)], "duration_s": 10.0,
+            "chg_i_ceiling_a": 0.8}
+    fp = hil.dp_profile_fingerprint(scenario, meta)
+    lines = [("h2_map: %s" % _LEGACY_H2_MAP_TOKEN) if l.startswith("h2_map:")
+            else l for l in _live_table_meta_lines(scenario, fp)]
+    path = os.path.join(str(tmp_path), hil.DP_TABLE_NAME % scenario)
+    _write_dp_table(path, lines, [(0.0, 0.5, 0.0), (5.0, 0.6, 1.0)])
+    args = types.SimpleNamespace(soc0=0.7, capacity_ah=5.0)
+    return meta, args
+
+
+def test_dp_replay_legacy_token_table_binds_only_under_gfc_linear(tmp_path):
+    """(2026-09-08 fix round) A table recording the LEGACY `h2_map` token
+    binds cleanly when the strategy is constructed with
+    `h2_law="gfc-linear"` (the caller explicitly asked for the old era),
+    and is refused as drift -- naming it a DELIBERATE OLD-ERA ARTIFACT, not
+    a corrupt or missing field -- under both the default (`h2_law=None`)
+    and the explicit `h2_law="h20"`."""
+    meta, args = _write_legacy_h2_map_table(tmp_path)
+    s_legacy = hil.DpReplayStrategy(table_dir=str(tmp_path),
+                                    h2_law="gfc-linear")
+    s_legacy.bind_scenario("myscen", meta, electrical_mode="hifi", args=args)
+    assert s_legacy.path is not None
+
+    for law in (None, "h20"):
+        s = hil.DpReplayStrategy(table_dir=str(tmp_path), h2_law=law)
+        with pytest.raises(ValueError) as exc_info:
+            s.bind_scenario("myscen", meta, electrical_mode="hifi", args=args)
+        msg = str(exc_info.value)
+        assert "h2_map" in msg
+        assert "DELIBERATE OLD-ERA ARTIFACT" in msg
+        assert _LEGACY_H2_MAP_TOKEN in msg
+
+
+def test_dp_replay_strategy_rejects_an_invalid_h2_law():
+    """`DpReplayStrategy.__init__`'s own guard: only `None`, `"h20"` and
+    `"gfc-linear"` are recognized hydrogen laws."""
+    with pytest.raises(ValueError):
+        hil.DpReplayStrategy(h2_law="bogus")
+    with pytest.raises(ValueError):
+        hil.DpReplayStrategy(h2_law="eta-proxy")   # the SDP's law name, not this module's
+
+
 # ── fingerprint sensitivity ─────────────────────────────────────────────────
 
 def test_dp_profile_fingerprint_changes_when_a_covered_field_changes():
@@ -5165,8 +5394,15 @@ def test_shipped_dp_table_share_stays_within_the_authority_band():
     # optimum actually uses the reach it gained.  (It does not reach the high
     # rail on this stimulus -- the shipped table tops out at 0.8125 -- and that
     # is a property of the OPTIMUM, not of the grid, so it is not asserted.)
-    assert min(shares) == pytest.approx(lo)
-    assert max(shares) <= hi + 1e-9
+    # RE-STATED 2026-09-09 (H-20 convex hydrogen map): the regenerated table
+    # no longer reaches the LOW rail -- its minimum is 0.625 and it sits on the
+    # HIGH rail 56 % of the time. Under the convex map the fuel cell is
+    # cheapest near its efficiency peak (~15 W stack), so the optimum leans on
+    # the fuel cell rather than the pack. The band claim (nothing outside
+    # [DROOP_R_MIN, DROOP_R_MAX]) is unchanged; the rail the optimum touches
+    # is a property of the map, pinned here so a silent regeneration is caught.
+    assert min(shares) == pytest.approx(0.625)
+    assert max(shares) == pytest.approx(hi)
     # ... and NOTHING outside it, which is the property the cut depends on:
     # a setpoint strictly outside opens the minority channel's bus switch.
     import governor_model as _gm
@@ -5181,9 +5417,22 @@ def test_shipped_dp_table_charge_goal_is_zero_on_every_row():
     finding against the checked-in table itself, so a regeneration that
     silently starts charging is caught here rather than only in a HIL
     campaign."""
-    _meta, _times, _shares, goals = hil.load_dp_table(
+    _meta, times, _shares, goals = hil.load_dp_table(
         os.path.join(hil.DP_TABLE_DIR, "dp_ems_table_ems-dp-replay.csv"))
-    assert all(g == 0.0 for g in goals)
+    # RE-STATED 2026-09-09 (H-20 convex hydrogen map): the regenerated table
+    # OPENS the charger on its last 25 stages (t >= 51.5 s of the 58 s run).
+    # With the fuel cell cheapest near its efficiency peak and the terminal SoC
+    # matched to the heuristic walk (lambda_term 2.855 g/SoC), charging at the
+    # low-demand tail is the cheaper lever. The finding this test used to pin
+    # ("zero charge stages") was a property of the linear map. The claim kept
+    # here: no charging before the tail, and exactly the committed count, so a
+    # silent regeneration that starts charging EARLY is still caught.
+    # Phase B (docs/HANDOFF_H2_MAP_20260909.md item 3) re-examines charge
+    # admission against the 23.4 W stack ceiling.
+    charged = [t for t, g in zip(times, goals) if g != 0.0]
+    assert len(charged) == 25
+    assert min(charged) == pytest.approx(51.5)
+    assert all(g == 0.0 for t, g in zip(times, goals) if t < 51.5)
 
 
 def test_shipped_dp_table_fingerprint_matches_the_live_ems_dp_replay_scenario():
@@ -5331,7 +5580,11 @@ def test_shipped_dp_table_sha_is_unchanged_by_the_header_exclusion_refactor():
     # provisional_note: re-walked for the I_AUX_A 0.09 A era,
     # 2026-09-03; pin on campaign G.
     assert table_sha == (
-        "725c3996b4b0f0c0e983b346d87760f4623045d733e336ed13badc689912d31b")
+        # RE-PINNED 2026-09-09: the table was REGENERATED under the H-20
+        # convex hydrogen map (tools/h2_map.py, `# h2_map:` header line); the
+        # pre-round digest was
+        # 725c3996b4b0f0c0e983b346d87760f4623045d733e336ed13badc689912d31b.
+        "3dac912f1d529331e6ad2dc3a86eb967311f6383c30519a42a9c63affce66562")
 
 
 def test_dp_table_digests_raises_oserror_on_missing_file(tmp_path):
@@ -8537,7 +8790,10 @@ def test_h2_gfc_and_sdp_proxy_diverge_by_roughly_the_dc_gain_ratio_at_steady_sta
     p_fc_w = 3.0
     for _ in range(20000):                 # 20 s @ 1 kHz -- well past the
         h2.step(p_fc_w, dt=hil.H2_GFC_TS_S)  # slowest mode's time constant
-    gfc_rate = h2.rate_gps
+    # 2026-09-08: Gfc moved from `rate_gps` to `gfc_rate_gps` (the H-20 map
+    # now owns `rate_gps`); the recursion and its DC gain are unchanged, so
+    # this comparison is re-pointed to the demoted attribute, not re-derived.
+    gfc_rate = h2.gfc_rate_gps
     proxy_rate = h2.proxy_rate_gps
     assert gfc_rate == pytest.approx(p_fc_w * hil.H2_GFC_DC_GAIN_GPS_PER_W, rel=1e-6)
     ratio = proxy_rate / gfc_rate
@@ -8559,11 +8815,19 @@ def test_h2_reset_clears_both_accumulators():
 
 
 def test_h2_sdp_proxy_negative_p_fc_clamps_to_zero_same_as_gfc():
-    """The shared clamp-at-zero applies to BOTH models from the SAME `u` --
-    a negative p_fc_w must not produce a negative proxy rate either."""
+    """The shared clamp-at-zero applies to all three models from the SAME
+    `u` -- a negative p_fc_w must not produce a negative proxy or Gfc rate.
+
+    ⚠️ 2026-09-08: `rate_gps` (the H-20 map, `stack_on` defaults True) is NOT
+    zero at a clamped-to-zero input -- the map bills the constant
+    purge/blower offset (A0_OFFSET_GPS) whenever the stack is running, which
+    is the whole point of §3's offset term (an idling stack still vents and
+    blows). Re-pointed to `h2_map.A0_OFFSET_GPS` rather than 0.0; the Gfc and
+    proxy attributes still clamp to exactly zero, as before."""
     h2 = hil.H2Consumption()
     h2.step(-5.0, dt=hil.H2_GFC_TS_S)
-    assert h2.rate_gps == pytest.approx(0.0)
+    assert h2.rate_gps == pytest.approx(h2_map.A0_OFFSET_GPS, rel=1e-12)
+    assert h2.gfc_rate_gps == pytest.approx(0.0)
     assert h2.proxy_rate_gps == pytest.approx(0.0)
     assert h2.proxy_cum_g == pytest.approx(0.0)
 
@@ -8578,13 +8842,17 @@ def test_csv_header_carries_h2_sdp_cum_g_at_expected_position(tmp_path):
     # fc_ceil/bt_ceil (fw v26, aux bits 4/5) and sel_armed/sel_fc
     # (fw v28, aux bits 6/7) are appended after the MPC
     # block in BOTH schemas -- observed BOARD fields, like mppt_thresh_cnt.
-    assert header[-4:] == ["fc_ceil", "bt_ceil", "sel_armed", "sel_fc"]
-    assert header[-16:-4] == ["mppt_thresh_cnt", "error_code",
+    # h2_gfc_cum_g (2026-09-08) is appended LAST OF ALL, simulated mode only,
+    # so it moves every negative offset below it by one -- asserted by NAME
+    # here rather than re-deriving another negative-offset pin.
+    assert header[-1] == "h2_gfc_cum_g"
+    assert header[-5:-1] == ["fc_ceil", "bt_ceil", "sel_armed", "sel_fc"]
+    assert header[-17:-5] == ["mppt_thresh_cnt", "error_code",
                            "p_mot_w", "p_fc_w", "p_batt_w",
                            "p_chop_w", "p_aux_w", "p_bal_w", "p_chg_loss_w",
                            "mpc_solve_ms", "mpc_share_pred_err", "mpc_budget_hit"]  # fw v24/v25 tail
-    assert header[-17] == "cmd_share_sp_raw"
-    assert header[-20:-16] == ["h2_rate_gps", "h2_cum_g", "h2_sdp_cum_g",
+    assert header[-18] == "cmd_share_sp_raw"
+    assert header[-21:-17] == ["h2_rate_gps", "h2_cum_g", "h2_sdp_cum_g",
                               "cmd_share_sp_raw"]
 
 
@@ -8872,8 +9140,9 @@ def test_csv_mppt_thresh_cnt_blank_before_the_first_frame_then_populated(
     header, rows = _run_scripted_csv(tmp_path, monkeypatch, frames,
                                      duration=0.1, port=58961)
     idx = header.index("mppt_thresh_cnt")
-    assert idx == len(header) - 16     # error_code + 7 power + 3 mpc + 2 ceil
-                                       # + 2 selector (fw v28) after
+    assert idx == len(header) - 17     # error_code + 7 power + 3 mpc + 2 ceil
+                                       # + 2 selector (fw v28) + h2_gfc_cum_g
+                                       # (2026-09-08) after
     assert rows[0][idx] == ""                          # no frame yet
     assert rows[-1][idx] == "19"
     # 255 is written as 255, not blanked: "external-resistor mode / never
@@ -8955,7 +9224,9 @@ def test_csv_ceiling_columns_blank_before_the_first_frame_then_zero_or_one(
                                      duration=0.1, port=58981)
     fc = header.index("fc_ceil")
     bt = header.index("bt_ceil")
-    assert (fc, bt) == (len(header) - 4, len(header) - 3)
+    # h2_gfc_cum_g (2026-09-08) is now the LAST column, pushing fc_ceil/
+    # bt_ceil back one from the tail.
+    assert (fc, bt) == (len(header) - 5, len(header) - 4)
     assert rows[0][fc] == "" and rows[0][bt] == ""      # no frame yet
     assert rows[-1][fc] == "1"
     assert rows[-1][bt] == "0"                          # observed clear, not blank
@@ -8995,8 +9266,9 @@ def test_csv_error_code_blank_before_the_first_frame_then_populated(
     header, rows = _run_scripted_csv(tmp_path, monkeypatch, frames,
                                      duration=0.1, port=58971)
     idx = header.index("error_code")
-    assert idx == len(header) - 15     # 7 power + 3 mpc + 2 ceil + 2 selector
-                                       # (fw v28) columns after
+    assert idx == len(header) - 16     # 7 power + 3 mpc + 2 ceil + 2 selector
+                                       # (fw v28) + h2_gfc_cum_g (2026-09-08)
+                                       # columns after
     assert rows[0][idx] == ""                           # no frame yet
     assert rows[-1][idx] == "16"                        # 0x10 ERR_HIL_STALE
 
@@ -10180,11 +10452,13 @@ def test_power_balance_csv_header_tail_both_schemas(tmp_path):
     sim_header, _ = _run_main_csv(
         tmp_path, ["--scenario", "steady", "--electrical", "simple",
                    "--duration", "0.02"], name="sim.csv")
-    assert sim_header[-4:] == ["fc_ceil", "bt_ceil", "sel_armed", "sel_fc"]
-    assert sim_header[-14:-4] == ["p_mot_w", "p_fc_w", "p_batt_w",
+    # h2_gfc_cum_g (2026-09-08) is appended LAST OF ALL, simulated mode only.
+    assert sim_header[-1] == "h2_gfc_cum_g"
+    assert sim_header[-5:-1] == ["fc_ceil", "bt_ceil", "sel_armed", "sel_fc"]
+    assert sim_header[-15:-5] == ["p_mot_w", "p_fc_w", "p_batt_w",
                                "p_chop_w", "p_aux_w", "p_bal_w",
                                "p_chg_loss_w", "mpc_solve_ms", "mpc_share_pred_err", "mpc_budget_hit"]
-    assert sim_header[-16:-14] == ["mppt_thresh_cnt", "error_code"]
+    assert sim_header[-17:-15] == ["mppt_thresh_cnt", "error_code"]
 
     blg_path = _write_synthetic_blg(tmp_path, fw_version=14, v3=True)
     replay_header, _ = _run_main_csv(
@@ -10899,11 +11173,14 @@ def test_mpc_csv_columns_follow_p_chg_loss_w():
     j = src.index('"mpc_solve_ms", "mpc_share_pred_err", "mpc_budget_hit"')
     assert i < j, ("the MPC columns must be appended AFTER p_chg_loss_w, or an "
                    "existing tail offset moves")
-    # ...and nothing sits between the two blocks: the only append AFTER the
-    # MPC one is the fw v26 fc_ceil/bt_ceil pair, which is itself the last.
+    # ...and nothing sits between the two blocks: the fw v26 fc_ceil/bt_ceil
+    # pair is the next append after the MPC block, and the LAST append of all
+    # (2026-09-08) is the simulated-mode-only `h2_gfc_cum_g` column.
     k = src.index('header_row += ["fc_ceil", "bt_ceil", "sel_armed", "sel_fc"]')
     assert j < k
-    assert src.rindex("header_row += [") == k
+    m = src.index('header_row += ["h2_gfc_cum_g"]')
+    assert k < m
+    assert src.rindex("header_row += [") == m
     # The row site mirrors the header: three values, blank when no MPC ran.
     assert 'if mpc_src is None:\n                    row += ["", "", ""]' in src
 

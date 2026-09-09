@@ -1693,6 +1693,25 @@ MATCHED_DP_GFC_NOTE = (
     "one-directional bias between the two totals -- causal runs land 0.09-0.80 % "
     "BELOW their matched bound; |dev| <= ~0.8 % is this bias, not a policy result")
 
+# ── THE SAME BOUNDARY, RESTATED FOR THE H-20 ERA (2026-09-08) ──────────────
+# The note above is a LINEAR-ERA statement in two ways at once: it names the
+# Gfc DC gain as the stage cost, and its 0.09-0.80 % envelope was measured with
+# a dynamic integrator against a static DC gain.  From 2026-09-08 BOTH SIDES OF
+# THE COMPARISON ARE THE SAME STATIC MAP -- `h2_map` -- so the ZOH-versus-DC-
+# gain bias the old note describes is GONE, and the envelope it quotes does not
+# transfer.  Which note a run gets is decided by its OWN key's `h2_map` field,
+# never by today's date: an archived linear-era record still gets the linear
+# statement.
+MATCHED_DP_H20_NOTE = (
+    "run hydrogen and the DP stage cost are now the SAME STATIC map "
+    "(tools/h2_map.py, the H-20 brochure map), so the ZOH-integrator-versus-"
+    "DC-gain bias of the Gfc era does NOT apply and its 0.09-0.80 % envelope "
+    "is not a bound here. The surviving model gaps are the plant's dynamic "
+    "bus/current trajectory against the DP's 0.1 s stage average, and the "
+    "plant's A0 idle offset billed from State 0 while the DP bills the Run "
+    "window only. A NEW envelope must be MEASURED on the first H-20-era "
+    "campaign before any |dev| threshold is quoted (phase B)")
+
 # ── THE fw v27 rev 2 PROVISIONAL, ON EVERY MATCHED-DP DEVIATION ────────────
 # WHY IT IS ON EVERY RUN AND NOT ONLY ON THE LOW-CURRENT ONES. The DP bound is
 # priced on a loss map whose parallel droop code `g_par` is the fw v26 CONSTANT
@@ -1853,10 +1872,49 @@ def _matched_dp_regen_bound(hil, fields, h2_run):
     regen_j = float(_trapezoid(np.minimum(p, 0.0), t))
     if not np.isfinite(regen_j) or regen_j >= 0.0:
         return None
+    # ── PRICING THE RETURNED ENERGY, IN THE RUN'S OWN HYDROGEN LAW ─────────
+    #    (2026-09-08, review item A6)
+    # The bound is "energy the DP had to buy with hydrogen", so it must be
+    # priced at the MARGINAL hydrogen rate of the law the DP actually
+    # minimised.  In the linear era that was one constant, `gfc_dc_gain`.  In
+    # the H-20 era the marginal rate is operating-point dependent, so it is
+    # evaluated at THIS RUN's own mean STACK-side fuel-cell power -- the mean of
+    # `p_fc_w` (which is bus-side, `v_bus * i_fc`) divided by ETA_BOOST.  The
+    # law is read off the record's own `h2_map` key field, so an archived
+    # linear-era record keeps its constant and its wording.
+    _h2_law = fields.get("h2_map")
+    _legacy = (_h2_law is None
+               or str(_h2_law).startswith("gfc-linear-legacy"))
     gain = fields.get("gfc_dc_gain")
+    p_ref_w = None
+    if not _legacy:
+        try:
+            import h2_map as _h2map
+            import hil_plant_sim as _sim
+            _pfc = hil.get("p_fc_w")
+            if _pfc is not None:
+                _pfc = np.asarray(_pfc, dtype=float)
+                _pfc = _pfc[np.isfinite(_pfc)]
+                if _pfc.size:
+                    p_ref_w = float(_pfc.mean()) / float(_sim.ETA_BOOST)
+                    gain = _h2map.marginal_gps_per_w(max(p_ref_w, 0.0))
+        except Exception:
+            # An unreadable column must not fail a run's analysis: fall back to
+            # the recorded constant and say so through `p_ref_w is None`.
+            p_ref_w = None
     grams = None if not gain else abs(regen_j) * float(gain)
     pct = (None if (grams is None or not h2_run)
            else 100.0 * grams / float(h2_run))
+    _price_note = ("" if _legacy else
+                   (" PRICED AT THE H-20 MAP'S MARGINAL RATE (%.4e g/s/W) at "
+                    "this run's own mean stack power %.3f W, not at a "
+                    "constant gain: the marginal rate spans 2.4x over the "
+                    "operating range, so this bound is REFERRED TO AN "
+                    "OPERATING POINT."
+                    % (float(gain), p_ref_w) if p_ref_w is not None else
+                    " H-20-era record with no readable `p_fc_w` column: priced "
+                    "at the recorded Gfc DC gain as a fallback, which is the "
+                    "RETIRED law -- read the gram figure as indicative only."))
     note = ("regen-bearing: bound optimistic by <= %s (%.3f J returned at the "
             "motor node). PRE-REGEN-ERA STATEMENT, and it is CORRECT ONLY "
             "WHEN THE BASELINE WAS SOLVED WITHOUT THE CREDIT: from 2026-09-02 "
@@ -1866,15 +1924,23 @@ def _matched_dp_regen_bound(hil, fields, h2_run):
             "alongside it. The DP's demand omits regen, so at a matched "
             "terminal SoC it buys with hydrogen what this run got back from "
             "braking — its total is inflated by at most that energy priced at "
-            "the Gfc DC gain, and the deviation below is biased in the run's "
+            "%s, and the deviation below is biased in the run's "
             "favour by the same amount. An UPPER bound: the motor-node-to-pack "
             "path is lossy and the plant floors regen at VESC_REGEN_I_MAX_A"
             % ("an unpriced amount" if grams is None
                else "%.6g g%s" % (grams, "" if pct is None
                                   else " (%.2f %% of the run's total)" % pct),
-               abs(regen_j)))
+               abs(regen_j),
+               "the Gfc DC gain" if _legacy else "the run's own hydrogen law")
+            + _price_note)
     return {"regen_j": regen_j, "bound_optimistic_g": grams,
-            "bound_optimistic_pct_of_run": pct, "note": note}
+            "bound_optimistic_pct_of_run": pct,
+            # The price actually used, and where on the curve it was taken.
+            # None/None on a legacy-law record (the constant gain is in
+            # `key_fields.gfc_dc_gain` there).
+            "price_gps_per_w": None if gain is None else float(gain),
+            "price_ref_p_stack_w": p_ref_w,
+            "note": note}
 
 
 def matched_dp_for_run(analysis, meta, hil, mode="lookup",
@@ -2072,7 +2138,15 @@ def matched_dp_for_run(analysis, meta, hil, mode="lookup",
     key = dpdb.make_key(fields)
 
     h2_run = _last_finite(hil["h2_cum_g"]) if "h2_cum_g" in hil else None
-    notes.append(MATCHED_DP_GFC_NOTE)
+    # THE HYDROGEN-LAW BOUNDARY, chosen by the record's OWN law (2026-09-08).
+    # `fields["h2_map"]` is present from the H-20 round on; absent (or carrying
+    # the `gfc-linear-legacy` token) means the linear era, whose ZOH-vs-DC-gain
+    # bias statement still applies verbatim.
+    _run_h2_law = fields.get("h2_map")
+    if _run_h2_law is None or str(_run_h2_law).startswith("gfc-linear-legacy"):
+        notes.append(MATCHED_DP_GFC_NOTE)
+    else:
+        notes.append(MATCHED_DP_H20_NOTE)
     # The fw v27 rev 2 schedule bias, on EVERY matched-DP deviation. See the
     # constant's block for why it is unconditional.
     notes.append(MATCHED_DP_FW27_SCHEDULE_NOTE)

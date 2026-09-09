@@ -1106,6 +1106,15 @@ def test_synthesize_hil_csv_switch_word_and_ag105_status(tmp_path):
         rows = list(reader)
     assert header == sweep.HIL_CSV_COLUMNS
     assert len(rows) == n
+    # (2026-09-08 fix round, item 10) EVERY row must carry as many fields as
+    # the header, INCLUDING the blank `h2_gfc_cum_g` tail column this walk
+    # cannot fill -- a row short one trailing comma would parse silently
+    # (csv.reader does not pad), so this is checked explicitly rather than
+    # only through named-column lookups below, which would not notice a
+    # missing LAST column.
+    for row in rows:
+        assert len(row) == len(header)
+    assert rows[0][header.index("h2_gfc_cum_g")] == ""
 
     idx = {name: i for i, name in enumerate(header)}
     F = _FakeSimModule

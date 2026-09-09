@@ -35,6 +35,7 @@ sys.path.insert(0, HERE)
 
 import gen_dp_ems_table as gen  # noqa: E402
 import hil_plant_sim as hil     # noqa: E402
+import h2_map                   # noqa: E402
 
 
 # Shared coarse argv fragment (fast, deterministic, no --match-terminal-soc
@@ -127,12 +128,16 @@ def test_render_table_records_real_match_fields_under_heuristic_matching(tmp_pat
     # converge within the default --match-tol 2e-6 at residual +1.19e-7 and now
     # lands at +3.1e-6, because the lighter bus load moved the reachable SoC
     # grid and the bisection step no longer straddles the target as finely.
-    # n-share 31 converges (residual +5.6e-8) and is used instead. The subject
-    # of this test - that the three match fields are REAL numbers under the
-    # heuristic - is unchanged; a coarser grid would have made it assert
-    # nothing at all.
+    # n-share 31 converges (residual +5.6e-8) and is used instead.
+    # H2-MAP RE-PIN 2026-09-08: the H-20 convex map (D4) changed the stage
+    # cost's dependence on lambda_term, which moves the bisection's step
+    # sequence -- n-share 31 no longer converges (residual -2.19e-6, just
+    # outside --match-tol 2e-6) and n-share 41 does (measured -2.24e-7). The
+    # subject of this test - that the three match fields are REAL numbers
+    # under the heuristic - is unchanged; a coarser grid would have made it
+    # assert nothing at all.
     argv = ["--scenario", "ems-soc-band", "--stage-dt", "1.0",
-            "--soc-step", "5e-5", "--n-share", "31", "--out", out]
+            "--soc-step", "5e-5", "--n-share", "41", "--out", out]
     assert gen.main(argv) == 0
     with open(out, encoding="utf-8") as fh:
         text = fh.read()
@@ -495,11 +500,14 @@ def test_solve_matched_converges_and_reports_true_within_tolerance():
     # AUX-ERA RE-PIN 2026-09-03: n_share 11 -> 31, for the reason recorded on
     # test_render_table_records_real_match_fields_under_heuristic_matching. At
     # 0.09 A of housekeeping load the 11-point grid bisection lands at +3.1e-6,
-    # outside the 2e-6 tolerance this test asserts; 31 lands at +5.6e-8. The
+    # outside the 2e-6 tolerance this test asserts; 31 lands at +5.6e-8.
+    # H2-MAP RE-PIN 2026-09-08: same reason as the sibling test above -- the
+    # H-20 convex map moved the bisection's step sequence and n_share 31 no
+    # longer converges (residual -2.19e-6); n_share 41 does (-2.24e-7). The
     # positive case still has to be a genuinely converging solve.
     problem = gen.prepare_problem(
         "ems-soc-band", meta, soc0=0.7, capacity_ah=gen.BATT_CAPACITY_AH,
-        stage_dt=1.0, n_share=31, soc_step=5e-5,
+        stage_dt=1.0, n_share=41, soc_step=5e-5,
         run_exit=float(hil.SOC_BAND_RUN_EXIT_S), charger_accounting="physical")
     href = gen.heuristic_reference(problem)
     solved = gen.solve_matched(problem, target_soc=href["soc_final"],
@@ -796,16 +804,30 @@ def test_charger_power_resolve_and_validate():
 
 def test_step_charge_soc_is_era_invariant_but_hydrogen_is_not():
     """The efficiency sits on the charger's INPUT side, so the pack receives
-    the same current in both eras and only the fuel cell's bill moves."""
-    args = (0.7, 20.0, 15.9, 0.8, 0.1, 5.0 * 3600.0)
+    the same current in both eras and only the fuel cell's bill moves.
+
+    2026-09-08: `p_dem` re-pointed from 20.0 W to 2.0 W.  At 20.0 W both
+    eras' stack-side power (32.72/38.49 W and 27.20/32.00 W bus/stack) sit
+    ABOVE `h2_map.P_MAX_W` (23.416 W) -- the H-20 map SATURATES both to the
+    same floor, so `h_new == h_old` under the new map even though the two
+    eras still price different bus powers (verified below: at 2.0 W neither
+    stack power saturates, so the era difference is visible again)."""
+    args = (0.7, 2.0, 15.9, 0.8, 0.1, 5.0 * 3600.0)
     s_old, h_old, hp_old = gen.step_charge(*args)
     s_new, h_new, hp_new = gen.step_charge(*args, eta_chg=0.88)
     assert s_new == s_old
     assert hp_new == hp_old              # the plant-equivalent omits the charger
-    assert h_new < h_old                 # ~7.9 V/0.88 vs 15.9 V per amp
     v_pack = float(gen.pack_charge_voltage(0.7, 0.8))
-    want = hil.H2_GFC_DC_GAIN_GPS_PER_W * (
-        (20.0 + v_pack * 0.8 / 0.88) / hil.ETA_BOOST) * 0.1
+    p_old_stack = (2.0 + 15.9 * 0.8) / hil.ETA_BOOST
+    p_new_stack = (2.0 + v_pack * 0.8 / 0.88) / hil.ETA_BOOST
+    assert not h2_map.is_saturated(p_old_stack)      # sanity: the comparison
+    assert not h2_map.is_saturated(p_new_stack)      # below is meaningful
+    assert h_new < h_old                 # ~7.9 V/0.88 vs 15.9 V per amp
+    # 2026-09-08: the stage cost is the H-20 convex map (D4), not the Gfc DC
+    # gain -- re-pointed to `h2_map.rate_gps()` on the same stack-side power
+    # `gen.step_charge()`'s `h2` return computes (D4's `h`, physical
+    # accounting): p_fc_bus_phys / ETA_BOOST.
+    want = h2_map.rate_gps(p_new_stack) * 0.1
     assert h_new == pytest.approx(want, rel=1e-12)
 
 
@@ -911,6 +933,13 @@ def test_old_era_regeneration_reproduces_the_pre_change_table_byte_for_byte(
     old_aux_sim, old_aux_he = _sim.I_AUX_A, _he.I_AUX_A
     _sim.I_AUX_A = _he.I_AUX_A = 0.15
     try:
+        # --h2-map gfc-linear (2026-09-08 fix round): this fixture predates
+        # the H-20 map entirely, so its hydrogen figures -- and the banner
+        # naming the law -- are the RETIRED linear law's.  Without this flag
+        # the solve runs under the new h20 DEFAULT, which reshuffles the
+        # backward pass's own argmin (a convex map, not just a header
+        # comment) and byte-for-byte comparison fails on data rows, not just
+        # the masked header lines.
         assert gen.main([
             "--scenario", "ems-dp-replay", "--soc0", "0.7",
             "--capacity-ah", "5.0",
@@ -918,6 +947,7 @@ def test_old_era_regeneration_reproduces_the_pre_change_table_byte_for_byte(
             "--n-share", "41", "--soc-step", "5e-06",
             "--charger-accounting", "physical", "--run-exit", "58.0",
             "--match-terminal-soc", "heuristic", "--match-tol", "2e-06",
+            "--h2-map", "gfc-linear",
             "--out", out, "--force"]) == 0
     finally:
         gen.DP_SHARE_MIN, gen.DP_SHARE_MAX = old_min, old_max
@@ -933,7 +963,16 @@ def test_old_era_regeneration_reproduces_the_pre_change_table_byte_for_byte(
     _added = tuple("# %s:" % k for k, _l, _n in _sim.DP_FINGERPRINT_ERAS) + (
         "#   Hashed into profile_fingerprint",
         "#   WHICH constant moved.",
-        "#   2026-09-03.")
+        "#   2026-09-03.",
+        # 2026-09-08: the H-20 hydrogen-map round unconditionally adds this
+        # header line (D4, render_table()) directly before the retained
+        # `gfc_dc_gain_gps_per_w:` line. It records the NEW stage-cost law's
+        # fingerprint, which the old-era fixture predates and cannot carry,
+        # and it does not change the solve the fixture is pinning (the solve
+        # itself now runs under the H-20 map either way -- this test's
+        # invariant is about `eta_chg`/the share grid/I_AUX_A, not the
+        # hydrogen law).
+        "# h2_map:")
 
     def _mask(text):
         return [ln for ln in text.split("\n")
@@ -984,11 +1023,12 @@ def test_plant_eta_chg_equals_the_shared_charger_default():
 # 1.764x over-billing and then scored it under the new one.
 # ─────────────────────────────────────────────────────────────────────────
 
-def _dp_replay_problem(eta_chg):
+def _dp_replay_problem(eta_chg, h2_law=None):
     return gen.prepare_problem(
         "ems-dp-replay", hil.SCENARIOS["ems-dp-replay"], soc0=0.7,
         capacity_ah=5.0, stage_dt=0.1, n_share=41, soc_step=5e-6,
-        run_exit=58.0, charger_accounting="physical", eta_chg=eta_chg)
+        run_exit=58.0, charger_accounting="physical", eta_chg=eta_chg,
+        h2_law=h2_law)
 
 
 def test_backward_pass_prices_the_charger_in_the_solved_era_at_lambda_3_5():
@@ -1006,7 +1046,22 @@ def test_backward_pass_prices_the_charger_in_the_solved_era_at_lambda_3_5():
     every stage its mask allows -- and burns 0.016823470 g while ending
     0.000889 SoC higher.  Before the fix the eta-era solve returned the OLD
     era's 0 charge stages, i.e. exactly the old-era policy under a new-era
-    score, so `charge_eta > 0` is the assertion that would have failed."""
+    score, so `charge_eta > 0` is the assertion that would have failed.
+
+    ⚠️ RE-PINNED AGAIN 2026-09-08 (H-20 convex map fix round): `prepare_problem()`
+    now defaults to `h2_law="h20"` (was the only, unlabelled linear law), which
+    changes both the priced hydrogen and, because the map is convex, the
+    backward pass's OWN argmin -- the eta-era admitted-charge-stage count moved
+    159 -> 154.  The implementer verified this is the convex stage cost itself,
+    not the P_MAX_W feasibility ceiling (disabling the ceiling on this same
+    scenario still gives 154): the fuel term's operating-point-dependent
+    marginal rate reshuffles which stages the backward pass prefers to charge
+    on, independent of any cell being ruled out. h2_g values were re-measured
+    against the live h20 map (they are a different quantity under a different
+    hydrogen law, not a re-derivation of the old numbers). The retired-law
+    numbers (159 stages, the two h2_g figures below) still hold exactly under
+    `h2_law="gfc-linear"` -- see
+    test_backward_pass_prices_the_charger_in_the_legacy_era_at_lambda_3_5."""
     import numpy as np
     old = gen.solve_unmatched(_dp_replay_problem(None), lambda_term=3.5)
     new = gen.solve_unmatched(_dp_replay_problem(0.88), lambda_term=3.5)
@@ -1015,18 +1070,45 @@ def test_backward_pass_prices_the_charger_in_the_solved_era_at_lambda_3_5():
     assert charge_old == 0
     assert charge_new > 0, \
         "the eta-era backward pass is still billing the charger at V_bus"
-    # It charges on EVERY admitted stage: at eta 0.88 the charger's bus draw
-    # is small enough that the terminal-SoC weight dominates.
-    assert charge_new == int(np.sum(_dp_replay_problem(0.88).chg_ok))
+    # 2026-09-08: it NO LONGER charges on every admitted (chg_ok) stage under
+    # the H-20 convex map -- that was a property of the retired linear law
+    # (see the legacy variant below, where charge_new DOES equal chg_ok's
+    # count). Under h20 the fuel term's operating-point-dependent marginal
+    # rate makes charging not worth it on some chg_ok-admissible stages, so
+    # the count is only bounded above by chg_ok, not equal to it.
+    chg_ok_count = int(np.sum(_dp_replay_problem(0.88).chg_ok))
+    assert charge_new <= chg_ok_count
     assert new.soc_final > old.soc_final
     assert new.h2_g > old.h2_g
-    # Pinned to 9 dp: these two numbers are the whole finding.
-    # AUX-ERA RE-PIN 2026-09-03 (`I_AUX_A` 0.15 -> 0.09 A): 0.014191394 ->
-    # 0.013168363 (-7.2 %) and 0.016823470 -> 0.015790789 (-6.1 %); the admitted
-    # charge-stage count moved 157 -> 159 with the lighter demand. The FINDING
-    # is unchanged - the two eras still choose different policies, and the eta
-    # era still charges on every admitted stage. provisional_note: re-walked for
-    # the I_AUX_A 0.09 A era, 2026-09-03; pin on campaign G.
+    # Pinned to 9 dp under the DEFAULT h2_law ("h20", the convex map),
+    # 2026-09-08. The admitted charge-stage count under this law is 154, not
+    # the legacy law's 159 (see the legacy variant below) -- the implementer
+    # verified this is the convex stage cost itself, not the P_MAX_W
+    # feasibility ceiling (disabling the ceiling on this same scenario still
+    # gives 154).
+    assert charge_new == 154, charge_new
+    assert round(old.h2_g, 9) == 0.014372178
+    assert round(new.h2_g, 9) == 0.016623197
+
+
+def test_backward_pass_prices_the_charger_in_the_legacy_era_at_lambda_3_5():
+    """The pre-2026-09-08 pin, reproduced exactly under `h2_law="gfc-linear"`
+    (the AUX-ERA `I_AUX_A` 0.09 A re-pin from 2026-09-03, campaign G): old era
+    0 charge stages / 0.013168363 g; eta era 159 charge stages / 0.015790789 g.
+    Kept alongside the h20-default variant above so the retired law's own
+    behaviour stays covered by a live test rather than only by memory of the
+    number it used to produce."""
+    import numpy as np
+    old = gen.solve_unmatched(_dp_replay_problem(None, h2_law="gfc-linear"),
+                              lambda_term=3.5)
+    new = gen.solve_unmatched(_dp_replay_problem(0.88, h2_law="gfc-linear"),
+                              lambda_term=3.5)
+    charge_old = int(np.sum(old.charge))
+    charge_new = int(np.sum(new.charge))
+    assert charge_old == 0
+    assert charge_new == 159, charge_new
+    assert new.soc_final > old.soc_final
+    assert new.h2_g > old.h2_g
     assert round(old.h2_g, 9) == 0.013168363
     assert round(new.h2_g, 9) == 0.015790789
 
@@ -2058,3 +2140,82 @@ def test_the_cross_legs_are_deliberately_absent_from_the_drain_list():
     for name in ("ems-sdp-cross", "ems-mpc-cross"):
         assert name not in gen.SOC_BAND_DRAIN_SCENARIOS, name
         assert gen.scenario_drain_a(name, 30.0) == pytest.approx(hil.I_AUX_A)
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# H-20 saturation is INFEASIBLE, not merely expensive (2026-09-08, review
+# item A1): solve_dp() refuses a control whose stack power exceeds
+# h2_map.P_MAX_W, on both arms; a legacy-law solve has no such ceiling.
+# ═════════════════════════════════════════════════════════════════════════
+
+def test_solve_dp_refuses_a_control_above_p_max_w_as_infeasible():
+    """Minimal problem: ONE demand bin, ONE share (1.0, chosen so its STACK
+    power -- 20.0 W bus / ETA_BOOST = 23.53 W -- exceeds h2_map.P_MAX_W,
+    23.416 W), no charge control (chg_ok False). With every control on the
+    only stage infeasible, J_next must be +inf at EVERY SoC row: there is
+    nothing left for the argmin to choose, which is exactly the "hole in
+    the objective" review item A1 describes and closes by refusal rather
+    than by pricing the cell as merely expensive."""
+    soc_grid = np.linspace(0.5, 0.7, 5)
+    shares = np.array([1.0])
+    p_dem = np.array([20.0])
+    v_bus = np.array([15.9])
+    chg_ok = np.array([False])
+    J, _U = gen.solve_dp(0.60, [0.0], p_dem, v_bus, chg_ok, dt=1.0,
+                         cap_as=5.0 * 3600.0, chg_a=0.8, shares=shares,
+                         soc_grid=soc_grid, lam_dev=0.0, lam_term=0.0,
+                         charger_accounting="physical")
+    assert np.isinf(J).all(), J
+
+
+def test_solve_dp_under_the_legacy_law_keeps_the_same_control_feasible():
+    """The IDENTICAL problem above, solved under `h2_law="gfc-linear"`: the
+    retired linear law has no saturation ceiling (`h2_saturation_ceiling_w`
+    returns +inf for it), so the same share=1.0 control that was refused
+    under h20 stays feasible and J_next is a real, finite number -- an
+    archived (pre-2026-09-08) table's solve is unaffected by this change."""
+    soc_grid = np.linspace(0.5, 0.7, 5)
+    shares = np.array([1.0])
+    p_dem = np.array([20.0])
+    v_bus = np.array([15.9])
+    chg_ok = np.array([False])
+    J, U = gen.solve_dp(0.60, [0.0], p_dem, v_bus, chg_ok, dt=1.0,
+                        cap_as=5.0 * 3600.0, chg_a=0.8, shares=shares,
+                        soc_grid=soc_grid, lam_dev=0.0, lam_term=0.0,
+                        charger_accounting="physical", h2_law="gfc-linear")
+    assert not np.isinf(J).any(), J
+    # The only control (index 0, share=1.0) is the one selected everywhere.
+    assert (U == 0).all()
+
+
+def test_step_discharge_scalar_saturation_census_increments_and_resets():
+    """The scalar-path mirror of the vectorized census above
+    (`gen_dp_ems_table.py`'s own "THE SCALAR SATURATION CENSUS" block):
+    `step_discharge()` at share=1.0 on the same 20.0 W bus demand bills the
+    same 23.53 W stack power, above `h2_map.P_MAX_W`, and must increment
+    the module counter exactly once. `reset_scalar_saturation()` both zeros
+    it and reports the pre-reset value, per its own docstring."""
+    gen.reset_scalar_saturation()
+    assert gen.scalar_saturation_count() == 0
+    gen.step_discharge(soc=0.6, share=1.0, p_dem=20.0, v_bus=15.9, dt=1.0,
+                       cap_as=5.0 * 3600.0)
+    assert gen.scalar_saturation_count() == 1
+    # A feasible (non-saturating) stage must NOT move the counter.
+    gen.step_discharge(soc=0.6, share=0.2, p_dem=20.0, v_bus=15.9, dt=1.0,
+                       cap_as=5.0 * 3600.0)
+    assert gen.scalar_saturation_count() == 1
+    prev = gen.reset_scalar_saturation()
+    assert prev == 1
+    assert gen.scalar_saturation_count() == 0
+
+
+def test_step_discharge_under_the_legacy_law_never_increments_the_census():
+    """`h2_saturation_ceiling_w()` returns +inf for the legacy law, so the
+    SAME saturating stage above never trips the counter under
+    `h2_law="gfc-linear"` -- an archived (pre-2026-09-08) forward-pass walk
+    reads a permanently-zero census, as it always did."""
+    gen.reset_scalar_saturation()
+    gen.step_discharge(soc=0.6, share=1.0, p_dem=20.0, v_bus=15.9, dt=1.0,
+                       cap_as=5.0 * 3600.0, h2_law="gfc-linear")
+    assert gen.scalar_saturation_count() == 0
+    gen.reset_scalar_saturation()

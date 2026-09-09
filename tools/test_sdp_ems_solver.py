@@ -36,6 +36,7 @@ sys.path.insert(0, HERE)
 
 import sdp_ems_solver as solver         # noqa: E402
 import tpm_generator                    # noqa: E402
+import h2_map                           # noqa: E402
 
 SHIPPED_POLICY_PATH = os.path.join(HERE, "sdp_policies", "sdp_policy_v1.json")
 
@@ -574,6 +575,107 @@ def test_build_stage_soc_transition_is_sub_grid_spacing_and_not_grid_aligned():
     assert soc_grid[idx_below] < moved < soc_grid[idx_below + 1]
 
 
+def test_build_stage_split_arm_h2_equals_h2_map_rate_gps_stack_side():
+    """D4 (2026-09-08), RE-BASED THE SAME DAY (review item A3):
+    `build_stage()`'s split-arm stage cost is
+    `h2_map.rate_gps_array(p_fc / ETA_BOOST) * dt` -- STACK-SIDE, matching
+    `gen_dp_ems_table.step_discharge()`, the plant and the MPC.  The bus-side
+    basis this test used to pin survived one draft only; build_stage()'s own
+    comment now reads "THE BASIS is now the STACK, `p_fc / ETA_BOOST`,
+    matching the DP, the plant and the MPC" -- the uniform-1/ETA_BOOST
+    argmin-neutrality argument holds only for a linear map, and is void here.
+    Verified directly against build_stage()'s own `stage` array, at one
+    control column, so a future re-basing off the stack is caught here
+    rather than silently drifting from the documented basis.
+
+    ARRAY AXES (build_stage()'s own docstring): `(n_bin, n_soc, n_ctrl)` --
+    `n_bin` indexes `p_centers` (the OUTER loop), `n_ctrl`'s first `len(shares)`
+    columns index `shares`. `p_fc` per column is `d_share * p_pos`, where
+    `d_share = governor_model.ceiling_bounded_share(share, i_tot_bin)` -- the
+    fw v26 delivered-share clamp, reproduced here rather than assumed equal to
+    the raw `share` value, so this test does not silently depend on the clamp
+    being inert at the chosen demand."""
+    import governor_model as gov_mod
+    soc_grid = np.linspace(0.55, 0.65, 21)
+    shares = np.linspace(0.0, 1.0, 5)
+    p_centers = np.array([2.0, 8.0])     # two positive-demand bins
+    cap_as = 5.0 * 3600.0
+    chg_allowed = np.array([True, True])
+
+    # alpha=0.0: build_stage() adds `alpha * |soc_next - soc_target| * dt`
+    # to `stage` AFTER the hydrogen assignment (its own final lines, right
+    # before returning), so a nonzero alpha would fold a SoC-deviation
+    # penalty into every cell and this test would not isolate the hydrogen
+    # term at all -- confirmed by reading build_stage()'s tail.
+    stage, _soc_next, _feas = solver.build_stage(
+        p_centers, shares, soc_grid, alpha=0.0, dt=1.0, cap_as=cap_as,
+        chg_a=0.8, chg_allowed=chg_allowed, soc_target=0.6,
+        soc_lo=soc_grid[0], soc_hi=soc_grid[-1])
+
+    # Split arm: demand bin j, share column i. Billed STACK-SIDE (divided by
+    # ETA_BOOST) -- confirmed against the live map for every (j, i) pair, at
+    # one representative SoC row (the split arm's stage cost does not vary
+    # with SoC, so any row would do).
+    i_soc = 10
+    for j, p in enumerate(p_centers):
+        p_pos = max(float(p), 0.0)
+        i_tot_bin = p_pos / solver.V_BUS_NOMINAL_V
+        for i, share in enumerate(shares):
+            d_share = gov_mod.ceiling_bounded_share(float(share), i_tot_bin)
+            p_fc = d_share * p_pos
+            want = h2_map.rate_gps(float(p_fc) / solver.ETA_BOOST) * 1.0     # dt=1.0
+            got = stage[j, i_soc, i]
+            assert got == pytest.approx(want, rel=1e-9), (
+                "demand=%.1f share=%.3f: got %.6e want %.6e"
+                % (p, share, got, want))
+
+
+def test_build_stage_charge_arm_h2_equals_h2_map_rate_gps_on_p_fc_chg():
+    """D4 (2026-09-08), RE-BASED THE SAME DAY (review item A3): the
+    charge-arm stage cost is `h2_map.rate_gps(float(p_fc_chg) / ETA_BOOST)`,
+    where `p_fc_chg = p_pos + charger_bus_power_w(...)` -- the traction
+    demand plus the charger's own bus draw, both bus-side, then divided by
+    `ETA_BOOST` to reach the stack, same basis note as the split arm.
+
+    The charge control is column index `m = len(shares)` (build_stage()'s own
+    docstring); `p_fc_chg` does not depend on SoC in this solver (no OCV
+    curve -- `V_PACK_NOMINAL_V` is a flat nominal), so any SoC row works.
+
+    p_centers is [2.0, 5.0], NOT the split-arm test's [2.0, 8.0]: the charge
+    arm additionally bills the charger's own bus draw on top of the traction
+    demand (~12.76 W here at chg_a=0.8), and 8.0 W of traction demand pushes
+    the charge arm's STACK power to 24.42 W, above h2_map.P_MAX_W (23.416 W)
+    -- INFEASIBLE (review item A1, see test_charge_arm_becomes_infeasible_
+    above_p_max_w below), which would make `stage` read +inf and this test
+    would not be isolating the h2_map.rate_gps() formula at all. 5.0 W stays
+    at 20.89 W stack, comfortably feasible."""
+    import charger_power as cp
+    soc_grid = np.linspace(0.55, 0.65, 21)
+    shares = np.linspace(0.0, 1.0, 5)
+    p_centers = np.array([2.0, 5.0])
+    cap_as = 5.0 * 3600.0
+    chg_allowed = np.array([True, True])
+    chg_a = 0.8
+
+    # alpha=0.0: same isolation reason as the split-arm test above.
+    stage, _soc_next, feas = solver.build_stage(
+        p_centers, shares, soc_grid, alpha=0.0, dt=1.0, cap_as=cap_as,
+        chg_a=chg_a, chg_allowed=chg_allowed, soc_target=0.6,
+        soc_lo=soc_grid[0], soc_hi=soc_grid[-1])
+
+    m = len(shares)                    # the charge control's column index
+    assert bool(feas[0, 0, m])         # chg_allowed[0] is True
+    i_soc = 10
+    for j, p in enumerate(p_centers):
+        p_pos = max(float(p), 0.0)
+        p_fc_chg = p_pos + cp.charger_bus_power_w(
+            chg_a, solver.V_BUS_NOMINAL_V, solver.V_PACK_NOMINAL_V, None)
+        want = h2_map.rate_gps(float(p_fc_chg) / solver.ETA_BOOST) * 1.0
+        got = stage[j, i_soc, m]
+        assert got == pytest.approx(want, rel=1e-9), (
+            "demand=%.1f: got %.6e want %.6e" % (p, got, want))
+
+
 def test_interpolation_splits_weight_across_two_grid_nodes_for_a_sub_spacing_step():
     """The SAME np.interp() call value_iterate()/greedy_policy() use against
     build_stage()'s soc_next, exercised directly against a KNOWN (non-flat)
@@ -788,11 +890,20 @@ def test_knife_edge_flip_bracket_at_the_full_default_grid(tmp_path):
     alpha = 0.2569444 (v1/v2) admits the Ag105 in 294 cells; alpha = 0.239,
     just below the (1-gamma)/L_chg = 0.23925 flip point, admits it in none.
     A change that silently moved the flip bracket -- a different V_bus, pack
-    capacity, gamma, or charge accounting -- would break exactly here."""
+    capacity, gamma, or charge accounting -- would break exactly here.
+
+    --h2-map eta-proxy is REQUIRED (2026-09-08 fix round): this pin was
+    established under the retired bus-side linear law, and the H-20 convex
+    map is now the default -- under it, the SAME two alphas give 48 and 0
+    charge-enabled cells, a different (and not yet re-derived, see
+    docs/modeling/h20_hydrogen_map_20260908.md section 7 item 1) flip
+    bracket. This test pins the retired law's own knife edge, not the
+    live default's."""
     def _charge_cells(alpha):
         out = tmp_path / ("flip_%s.json" % alpha)
         rc = solver.main(["--alpha", repr(alpha), "--allow-out-of-window",
-                          "--eta-chg-none", "--out", str(out)])
+                          "--eta-chg-none", "--h2-map", "eta-proxy",
+                          "--out", str(out)])
         assert rc == 0
         with open(out, encoding="utf-8") as fh:
             goal = json.load(fh)["policy"]["charge_goal"]
@@ -1038,9 +1149,16 @@ def test_charge_forbidden_bins_new_era_forbids_no_more_than_the_old():
 
 def test_solver_reproduces_the_shipped_v3_policy_in_the_old_era(tmp_path):
     """--eta-chg-none is now REQUIRED to reproduce v3, and it must reproduce
-    it EXACTLY: the shipped artifact was solved against the 1:1 charger."""
+    it EXACTLY: the shipped artifact was solved against the 1:1 charger.
+
+    --h2-map eta-proxy is ALSO required (2026-09-08 fix round): v3 was solved
+    against the retired bus-side linear law, and the H-20 convex map is now
+    the solver's default, so reproducing v3 byte-for-byte requires opting
+    back into the retired law explicitly (verified exact by the
+    implementer)."""
     out = str(tmp_path / "v3.json")
     rc = solver.main(["--eta-chg-none", "--alpha-mode", "lever",
+                      "--h2-map", "eta-proxy",
                       "--out", out, "--force"])
     assert rc == 0
     got = json.load(open(out, encoding="utf-8"))
@@ -1320,10 +1438,18 @@ def test_lever_measured_at_the_measured_round_trip_lands_in_both_windows(
     """D14 resolution (i), MEASURED not asserted: solving at the board's own
     end-to-end round trip puts the SAME alpha inside BOTH windows and the
     charge map goes back to empty.  No tripwire override is needed, which is
-    the whole difference between the two resolutions."""
+    the whole difference between the two resolutions.
+
+    --h2-map eta-proxy is REQUIRED (2026-09-08 fix round): the "charge map
+    goes back to empty" invariant was established under the retired
+    bus-side linear law. Under the H-20 map's new default (stack-side),
+    this same recipe admits charge cells (alpha is still calibrated at the
+    constant k, ~31 % over-weighting the SoC term -- see the solver's own
+    NOTE line and docs/modeling/h20_hydrogen_map_20260908.md section 7 item
+    1, phase B). This test pins the retired law's own resolution."""
     out = tmp_path / "lm_eta.json"
     rc = solver.main(["--soc-n", "11", "--share-n", "5",
-                      "--eta-chg", "0.801173",
+                      "--eta-chg", "0.801173", "--h2-map", "eta-proxy",
                       "--alpha-mode", "lever-measured", "--out", str(out)])
     assert rc == 0
     with open(out, encoding="utf-8") as fh:
@@ -1476,10 +1602,20 @@ def test_only_the_keyword_declares_the_basis(tmp_path):
 def test_eta_chg_measured_declares_the_basis_and_needs_no_override(tmp_path):
     """THE SHIPPED v6 RECIPE at a small grid: both windows contain the alpha,
     the tripwire stays silent, the charge map is empty, and the artifact
-    DECLARES why its eta is not the plant's."""
+    DECLARES why its eta is not the plant's.
+
+    --h2-map eta-proxy is REQUIRED here (2026-09-08 fix round): the shipped
+    v6 "0 charge cells" invariant is a property of the RETIRED bus-side
+    linear law -- under the H-20 map's new default (stack-side), the same
+    recipe admits charge cells (46 of 2525 on the default grid, per the
+    implementer's measurement; alpha is not yet re-derived against the
+    convex map, see docs/modeling/h20_hydrogen_map_20260908.md section 7
+    item 1). This test pins the retired-law reproduction, not the new
+    default's behaviour -- see
+    test_h20_default_law_admits_charge_cells_under_the_v6_recipe below."""
     out = tmp_path / "v6_small.json"
     rc = solver.main(["--soc-n", "11", "--share-n", "5",
-                      "--eta-chg", "measured",
+                      "--eta-chg", "measured", "--h2-map", "eta-proxy",
                       "--alpha-mode", "lever-measured", "--out", str(out)])
     assert rc == 0
     with open(out, encoding="utf-8") as fh:
@@ -1553,3 +1689,108 @@ def test_shipped_v6_artifact_is_the_measured_round_trip_resolve():
         v5 = json.load(fh)
     assert v5["alpha"]["value"] == doc["alpha"]["value"]
     assert v5["charger"]["eta_chg"] == pytest.approx(0.88)
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# 14. H-20 hydrogen-law selector (2026-09-08 fix round): the default law,
+#     the legacy-flag token, and the v6 recipe's charge admission under it.
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_h2_map_default_law_is_h20_and_legacy_flag_changes_the_artifact_token(
+        tmp_path):
+    """`--h2-map` defaults to `h20` (the new convex map); `--h2-map eta-proxy`
+    opts back into the retired bus-side linear law and the artifact's
+    `h2.law`/`h2.law_token` fields record which one actually ran, per
+    docs/modeling/h20_hydrogen_map_20260908.md section 8's fingerprint table."""
+    assert solver.H2_LAW_DEFAULT == solver.H2_LAW_H20 == "h20"
+
+    out_default = tmp_path / "default.json"
+    assert solver.main(["--soc-n", "11", "--share-n", "5",
+                        "--alpha-mode", "lever",
+                        "--out", str(out_default), "--force"]) == 0
+    with open(out_default, encoding="utf-8") as fh:
+        doc_default = json.load(fh)
+    assert doc_default["h2"]["law"] == "h20"
+    assert doc_default["h2"]["law_token"] == h2_map.fingerprint_str()
+
+    out_legacy = tmp_path / "legacy.json"
+    assert solver.main(["--soc-n", "11", "--share-n", "5",
+                        "--alpha-mode", "lever", "--h2-map", "eta-proxy",
+                        "--out", str(out_legacy), "--force"]) == 0
+    with open(out_legacy, encoding="utf-8") as fh:
+        doc_legacy = json.load(fh)
+    assert doc_legacy["h2"]["law"] == "eta-proxy"
+    assert doc_legacy["h2"]["law_token"] == solver.H2_LAW_LEGACY_TOKEN
+    assert doc_legacy["h2"]["law_token"] == \
+        "eta-proxy-legacy|1.6666666666666667e-05"
+    # The two tokens never collide.
+    assert doc_default["h2"]["law_token"] != doc_legacy["h2"]["law_token"]
+
+
+def test_h20_default_law_admits_charge_cells_under_the_v6_recipe(tmp_path):
+    """Under the H-20 map's new default (stack-side, review item A3), the
+    shipped v6 recipe (`--eta-chg measured --alpha-mode lever-measured`) no
+    longer produces the "0 charge cells" invariant that law reproduces (see
+    test_eta_chg_measured_declares_the_basis_and_needs_no_override above,
+    which pins the retired-law reproduction).  The implementer measured 46
+    of 2525 cells admitted on the solver's DEFAULT grid; this test uses that
+    same default grid (no --soc-n/--share-n override) and pins the count
+    LOOSELY, because alpha is still calibrated at the constant
+    k = 1/(eta_fc*Q_LHV) and has not been re-derived against the convex
+    map's operating-point-dependent marginal rate -- that re-derivation is
+    docs/modeling/h20_hydrogen_map_20260908.md section 7 item 1, phase B,
+    and would move this count without any code defect."""
+    out = tmp_path / "v6_h20.json"
+    rc = solver.main(["--eta-chg", "measured",
+                      "--alpha-mode", "lever-measured",
+                      "--out", str(out), "--force"])
+    assert rc == 0
+    with open(out, encoding="utf-8") as fh:
+        doc = json.load(fh)
+    assert doc["h2"]["law"] == "h20"
+    n_chg = sum(1 for row in doc["policy"]["charge_goal"] for v in row
+                if v > 0.0)
+    assert 20 <= n_chg <= 80, n_chg
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# 15. H-20 saturation is INFEASIBLE, not merely expensive (2026-09-08,
+#     review item A1), on build_stage()'s side of the same contract
+#     gen_dp_ems_table.solve_dp() enforces.
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_build_stage_refuses_a_control_above_p_max_w_as_infeasible():
+    """Minimal problem: ONE demand bin (20.0 W), ONE share (1.0, so its
+    STACK power -- 20.0 / ETA_BOOST = 23.53 W -- exceeds h2_map.P_MAX_W,
+    23.416 W), charge disallowed entirely (chg_allowed False, so that
+    column cannot mask this test's finding). `feas` must be False and
+    `stage` must be +inf on every SoC row for that one share column."""
+    soc_grid = np.linspace(0.55, 0.65, 5)
+    shares = np.array([1.0])
+    p_centers = np.array([20.0])
+    cap_as = 5.0 * 3600.0
+    chg_allowed = np.array([False])
+    stage, _soc_next, feas = solver.build_stage(
+        p_centers, shares, soc_grid, alpha=0.0, dt=1.0, cap_as=cap_as,
+        chg_a=0.8, chg_allowed=chg_allowed, soc_target=0.6,
+        soc_lo=soc_grid[0], soc_hi=soc_grid[-1])
+    assert not feas[0, :, 0].any()
+    assert np.isinf(stage[0, :, 0]).all()
+
+
+def test_build_stage_under_the_legacy_law_keeps_the_same_control_feasible():
+    """The IDENTICAL problem above, under `h2_law="eta-proxy"`: the retired
+    bus-side linear law has no saturation ceiling, so the same share=1.0
+    control that was refused under h20 stays feasible with a finite,
+    real stage cost."""
+    soc_grid = np.linspace(0.55, 0.65, 5)
+    shares = np.array([1.0])
+    p_centers = np.array([20.0])
+    cap_as = 5.0 * 3600.0
+    chg_allowed = np.array([False])
+    stage, _soc_next, feas = solver.build_stage(
+        p_centers, shares, soc_grid, alpha=0.0, dt=1.0, cap_as=cap_as,
+        chg_a=0.8, chg_allowed=chg_allowed, soc_target=0.6,
+        soc_lo=soc_grid[0], soc_hi=soc_grid[-1], h2_law="eta-proxy")
+    assert feas[0, :, 0].all()
+    assert not np.isinf(stage[0, :, 0]).any()

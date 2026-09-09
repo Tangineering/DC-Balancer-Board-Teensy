@@ -26,8 +26,8 @@ MODEL COMPOSITION
 ``gen_dp_ems_table.build_demand()``      demand, bus voltage, source total
 ``gen_dp_ems_table.scenario_drain_a()``  the scenario's auxiliary load
 ``gen_dp_ems_table.charge_mask()``       where a charge window is admissible
-``gen_dp_ems_table.step_discharge()``    pack and Gfc hydrogen on the split
-``gen_dp_ems_table.step_charge()``       pack and Gfc hydrogen on the charger
+``gen_dp_ems_table.step_discharge()``    pack and H-20-map hydrogen, split
+``gen_dp_ems_table.step_charge()``       pack and H-20-map hydrogen, charger
 ``hil_plant_sim.EMS_STRATEGIES``         the strategy, called at PI_CMD_HZ
 ``governor_model.GovernorModel``         the delivery path, at 1 kHz
 
@@ -131,8 +131,17 @@ def _load():
 # estimate (references/EMS/SDP_EnergyManagement2.m:53) uses 0.5;
 # hil_plant_sim.H2_STATIC_PROXY_GPS_PER_W (.py:1020) encodes 0.55. Neither is
 # this rig's H20 stack, whose rating puts it at 0.4 — the default here, and the
-# operator's choice. The Gfc figure remains the plant-side metric; this is the
-# online estimate a Pi could compute.
+# operator's choice.
+#
+# ⚠️ WHAT THIS PROXY IS NOW A PROXY FOR (2026-09-08).  The plant-side metric is
+# no longer the Gfc DC gain: it is the H-20 brochure map in ``tools/h2_map.py``,
+# which `h2_g`/`h2_plant_g` below inherit through ``gen_dp_ems_table``'s stage
+# functions.  This constant-efficiency line survives as what an ONLINE
+# estimator on the Pi could compute with two multiplies, and as the axis the
+# student's own work is stated on — not as a second opinion about the stack.
+# Its 0.4 happens to be the brochure's full-power system efficiency, which the
+# H-20 map reaches only near 20 W; at the rig's 3.2 W median the map says 0.24,
+# so THE PROXY UNDER-READS BY ROUGHLY 40 % THERE.  Never difference the two.
 H2_PROXY_ETA_FC = 0.4
 H2_LHV_J_PER_G = 120000.0
 
@@ -153,9 +162,18 @@ def h2_proxy_gps(p_fc_w: float, eta_fc: float = H2_PROXY_ETA_FC,
 
 @dataclass
 class WalkResult:
-    h2_g: float = 0.0                 # Gfc DC-gain stage cost, physical accounting
+    h2_g: float = 0.0                 # H-20-map stage cost, physical accounting
     h2_plant_g: float = 0.0           # the same, omitting the charger's own draw
     h2_proxy_g: float = 0.0           # the abbreviated P_fc/(eta*Q_LHV) estimate
+    # ── H-20 MAP SATURATION (2026-09-08, review item A1) ────────────────────
+    # Stage evaluations whose STACK-side power exceeded `h2_map.P_MAX_W`, the
+    # brochure curve's last point, counted by `gen_dp_ems_table`'s scalar
+    # census.  Above it the map returns a FLOOR rather than an estimate, so a
+    # non-zero count means `h2_g` below is a LOWER BOUND and the demand model
+    # is asking for power this stack cannot deliver.  It is an observation, not
+    # a refusal: unlike the DP's backward pass, a walk has no alternative
+    # control to fall back to - it is executing a strategy's own decision.
+    h2_saturated_stages: int = 0
     soc_final: float = 0.0
     delta_soc: float = 0.0
     mode_fractions: dict = field(default_factory=dict)
@@ -232,7 +250,7 @@ class WalkResult:
     v_bus: list = field(default_factory=list)        # V, shared-droop bus
     i_charge: list = field(default_factory=list)     # A, charger draw (0 outside)
     p_fc_bus_w: list = field(default_factory=list)   # W, FC bus-side power billed
-    h2_cum_g: list = field(default_factory=list)     # g, cumulative Gfc hydrogen
+    h2_cum_g: list = field(default_factory=list)     # g, cumulative H-20-map h2
     sw_fc_charge: list = field(default_factory=list) # 1 inside a charge window
     mdac_fc: list = field(default_factory=list)      # governor MDAC word, FC
     mdac_bt: list = field(default_factory=list)      # governor MDAC word, BT
@@ -242,9 +260,13 @@ class WalkResult:
 
     def summary(self) -> str:
         lines = [
-            "h2 (Gfc, physical) : %.9f g" % self.h2_g,
-            "h2 (Gfc, plant)    : %.9f g" % self.h2_plant_g,
+            "h2 (H-20, physical): %.9f g" % self.h2_g,
+            "h2 (H-20, plant)   : %.9f g" % self.h2_plant_g,
             "h2 (proxy, eta=%.2f): %.9f g" % (H2_PROXY_ETA_FC, self.h2_proxy_g),
+            "h2 map saturation  : %s" % (
+                "none" if not self.h2_saturated_stages
+                else "%d stage(s) ABOVE the brochure curve - h2 above is a "
+                     "FLOOR" % self.h2_saturated_stages),
             "SoC final          : %.6f  (delta %+.6f)" % (self.soc_final,
                                                           self.delta_soc),
             "charge windows     : %d" % len(self.charge_windows),
@@ -529,7 +551,7 @@ def walk(strategy_name: str, scenario_name: str, *, soc0: float = 0.7,
                     converter, the default); ``None`` bills it at
                     ``V_bus*i``, the 1:1 current-transfer model every plant
                     before 2026-09-01 stamped. It reaches BOTH hydrogen
-                    figures — the Gfc totals through
+                    figures — the H-20-map totals through
                     ``gen_dp_ems_table.step_charge()`` and the abbreviated
                     proxy through the same bus power — and neither SoC nor the
                     governor. Resolve it from a run sidecar with
@@ -763,6 +785,12 @@ def walk(strategy_name: str, scenario_name: str, *, soc0: float = 0.7,
     # one.  With `single_source_demand` off these three names are the module's
     # own arrays on every stage and nothing below can tell the difference.
     s_p_dem, s_v_bus, s_i_total = p_dem, v_bus, i_total
+    # H-20 map saturation census (2026-09-08, review item A1).  The stage
+    # functions cannot return a flag - four callers unpack their tuple
+    # positionally - so `gen_dp_ems_table` keeps a module counter and a caller
+    # that wants the number brackets its own loop.  Reset here rather than at
+    # entry so a caller's own bracket around `walk()` is not clobbered mid-run.
+    gen.reset_scalar_saturation()
     for k in range(n_stages):
         t = float(times[k])
         if ss_dem:
@@ -935,7 +963,7 @@ def walk(strategy_name: str, scenario_name: str, *, soc0: float = 0.7,
                                              float(s_v_bus[k]), chg_a, dt,
                                              cap_as, eta_chg, reg_k)
             # The proxy is billed for the SAME bus power step_charge() charges
-            # the Gfc total for - one era switch, one expression, so the two
+            # the H-20-map total for - one era switch, one expression, so the two
             # hydrogen figures cannot end up on different charger models.
             p_fc_bus = (float(s_p_dem[k]) + chg_mod.charger_bus_power_w(
                             chg_a, float(s_v_bus[k]),
@@ -997,6 +1025,18 @@ def walk(strategy_name: str, scenario_name: str, *, soc0: float = 0.7,
 
     res.soc_final = soc
     res.delta_soc = soc - float(soc0)
+    # Read (and zero) the scalar saturation census the stage loop just filled.
+    res.h2_saturated_stages = gen.reset_scalar_saturation()
+    if res.h2_saturated_stages:
+        res.notes.append(
+            "H-20 MAP SATURATED on %d stage evaluation(s): the stack-side "
+            "power exceeded h2_map.P_MAX_W = %.3f W, the brochure curve's "
+            "last point, so those stages were priced at the curve's ENDPOINT. "
+            "`h2_g` is a LOWER BOUND on this walk, not an estimate. The DP "
+            "refuses such controls outright (gen_dp_ems_table.solve_dp); a "
+            "walk cannot, because it is executing a strategy's own decision. "
+            "Check the demand model before quoting this total."
+            % (res.h2_saturated_stages, gen.h2_saturation_ceiling_w()))
     # ── fw v26 current-ceiling census, BOTH ARMS ────────────────────────────
     # Outside the `if governor:` block deliberately: the delivered share is
     # bounded in either arm, so a census that only reported the governor arm

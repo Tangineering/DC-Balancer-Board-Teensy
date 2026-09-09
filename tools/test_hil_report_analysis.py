@@ -26,6 +26,7 @@ pytest.importorskip("matplotlib")
 import hil_report_analysis as hra  # noqa: E402
 from hil_plant_sim import mdac_fraction as sim_mdac_fraction  # noqa: E402
 import hil_plant_sim as _sim  # noqa: E402
+import h2_map as _h2_map  # noqa: E402
 
 import matplotlib
 matplotlib.use("Agg")
@@ -2387,22 +2388,76 @@ def test_analyze_run_matched_dp_lookup_records_no_cached_solve_end_to_end(
 # wiring, and the duration-gated solve refusal.
 # ─────────────────────────────────────────────────────────────────────────
 
-def test_matched_dp_gfc_note_present_in_notes_for_every_status(monkeypatch):
-    """MATCHED_DP_GFC_NOTE must be appended unconditionally -- it documents a
-    systematic bias between the run's dynamic Gfc integral and the DP's DC-
-    gain stage cost, which applies whether or not a cached solve was found."""
+def test_matched_dp_h20_note_present_in_notes_for_every_status(monkeypatch):
+    """(2026-09-08 fix round) RESTATED from
+    "MATCHED_DP_GFC_NOTE must be appended unconditionally": `matched_dp_for_run()`
+    never passes an `h2_law` override to `dpdb.problem_fields()`, so `fields`
+    (and therefore `fields["h2_map"]`) always reflects the CURRENT default law
+    -- `h20` since this round -- regardless of whether a cached solve was
+    found. One of the two boundary notes is still appended unconditionally;
+    it is now MATCHED_DP_H20_NOTE, not MATCHED_DP_GFC_NOTE, because that is
+    what the record's OWN `h2_map` field (section "THE HYDROGEN-LAW BOUNDARY")
+    now resolves to by default. The GFC_NOTE branch is exercised separately
+    below by forcing a legacy/absent `h2_map` field, which is how it can
+    still occur (an archived record, or an explicit `h2_law='gfc-linear'`
+    override elsewhere)."""
     analysis = {"kind": "scenario", "name": "ems-soc-band"}
     meta = {"config": {"soc0": 0.7, "electrical": "hifi"}}
     hil = _mdp_hil([0.70, 0.699, 0.698])
 
     monkeypatch.setattr(_dpdb, "lookup", lambda *a, **kw: None)
     out_miss = hra.matched_dp_for_run(analysis, meta, hil, mode="lookup")
-    assert hra.MATCHED_DP_GFC_NOTE in out_miss["notes"]
+    assert hra.MATCHED_DP_H20_NOTE in out_miss["notes"]
+    assert hra.MATCHED_DP_GFC_NOTE not in out_miss["notes"]
 
     monkeypatch.setattr(_dpdb, "lookup", lambda *a, **kw: _fake_dp_record())
     out_ok = hra.matched_dp_for_run(analysis, meta, hil, mode="lookup")
     assert out_ok["status"] == "ok"
-    assert hra.MATCHED_DP_GFC_NOTE in out_ok["notes"]
+    assert hra.MATCHED_DP_H20_NOTE in out_ok["notes"]
+    assert hra.MATCHED_DP_GFC_NOTE not in out_ok["notes"]
+
+
+def _patch_problem_fields_h2_map(monkeypatch, h2_map_value):
+    """Wrap the REAL `dp_results_db.problem_fields()` so every field but
+    `h2_map` still reflects this checkout -- only the hydrogen-law boundary
+    is under test, not the rest of the key."""
+    orig = _dpdb.problem_fields
+
+    def _patched(*a, **kw):
+        fields = dict(orig(*a, **kw))
+        fields["h2_map"] = h2_map_value
+        return fields
+    monkeypatch.setattr(_dpdb, "problem_fields", _patched)
+
+
+def test_matched_dp_gfc_note_selected_for_an_absent_h2_map_field(monkeypatch):
+    """An absent `h2_map` key (every record's key before 2026-09-08) selects
+    the LINEAR-era note, per `matched_dp_for_run()`'s own "THE HYDROGEN-LAW
+    BOUNDARY" comment."""
+    analysis = {"kind": "scenario", "name": "ems-soc-band"}
+    meta = {"config": {"soc0": 0.7, "electrical": "hifi"}}
+    hil = _mdp_hil([0.70, 0.699, 0.698])
+    _patch_problem_fields_h2_map(monkeypatch, None)
+    monkeypatch.setattr(_dpdb, "lookup", lambda *a, **kw: None)
+    out = hra.matched_dp_for_run(analysis, meta, hil, mode="lookup")
+    assert hra.MATCHED_DP_GFC_NOTE in out["notes"]
+    assert hra.MATCHED_DP_H20_NOTE not in out["notes"]
+
+
+def test_matched_dp_gfc_note_selected_for_a_legacy_h2_map_token(monkeypatch):
+    """A `gfc-linear-legacy` token (an explicit `--h2-map gfc-linear` solve,
+    or `dp_results_db.model_fields(h2_law="gfc-linear")`) selects the SAME
+    linear-era note as an absent field -- both are "the linear era" from this
+    boundary's point of view."""
+    analysis = {"kind": "scenario", "name": "ems-soc-band"}
+    meta = {"config": {"soc0": 0.7, "electrical": "hifi"}}
+    hil = _mdp_hil([0.70, 0.699, 0.698])
+    _patch_problem_fields_h2_map(
+        monkeypatch, "gfc-linear-legacy|1.7637602179836514e-05")
+    monkeypatch.setattr(_dpdb, "lookup", lambda *a, **kw: None)
+    out = hra.matched_dp_for_run(analysis, meta, hil, mode="lookup")
+    assert hra.MATCHED_DP_GFC_NOTE in out["notes"]
+    assert hra.MATCHED_DP_H20_NOTE not in out["notes"]
 
 
 def test_render_matched_dp_block_and_summary_include_the_gfc_note():
@@ -3023,6 +3078,94 @@ def test_matched_dp_regen_bound_is_none_without_the_power_column(monkeypatch):
                                  _mdp_hil([0.70, 0.699, 0.698]),
                                  mode="lookup")
     assert out["regen_bound"] is None
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# _matched_dp_regen_bound() pricing basis, per hydrogen-law branch
+# (2026-09-08, review item A6): price_gps_per_w / price_ref_p_stack_w, and
+# which branch (legacy Gfc gain vs the H-20 map's marginal rate) prices the
+# bound and words its note.
+# ─────────────────────────────────────────────────────────────────────────
+
+_GFC_GAIN = 1.7637602179836514e-05
+
+
+def test_matched_dp_regen_bound_legacy_h2_map_absent_keeps_the_old_gfc_pricing():
+    """An ABSENT `h2_map` key (`fields.get("h2_map")` is None) is the linear
+    era, per `_matched_dp_regen_bound()`'s own `_legacy` predicate: the bound
+    is priced at the constant `gfc_dc_gain`, `price_gps_per_w`/
+    `price_ref_p_stack_w` stay None (the fields the H-20 branch alone
+    populates), and the note carries the Gfc wording, not the H-20 one."""
+    hil = _mdp_hil_with_motor([0.70, 0.6995, 0.699], [-10.0, -10.0, 10.0])
+    hil["p_fc_w"] = np.array([2.55, 2.55, 2.55])   # present, but MUST be
+                                                    # ignored on the legacy
+                                                    # branch
+    fields = {"h2_map": None, "gfc_dc_gain": _GFC_GAIN}
+    rb = hra._matched_dp_regen_bound(hil, fields, h2_run=0.010)
+    assert rb is not None
+    assert rb["price_gps_per_w"] == pytest.approx(_GFC_GAIN)
+    assert rb["price_ref_p_stack_w"] is None
+    assert rb["bound_optimistic_g"] == pytest.approx(15.0 * _GFC_GAIN)
+    assert "the Gfc DC gain" in rb["note"]
+    assert "H-20 MAP'S MARGINAL RATE" not in rb["note"]
+
+
+def test_matched_dp_regen_bound_legacy_h2_map_token_keeps_the_old_gfc_pricing():
+    """A `gfc-linear-legacy` TOKEN (an explicit old-era solve, not merely a
+    missing key) is the SAME branch as an absent key -- `_legacy` matches on
+    the token PREFIX."""
+    hil = _mdp_hil_with_motor([0.70, 0.6995, 0.699], [-10.0, -10.0, 10.0])
+    hil["p_fc_w"] = np.array([2.55, 2.55, 2.55])
+    fields = {"h2_map": "gfc-linear-legacy|%r" % _GFC_GAIN,
+             "gfc_dc_gain": _GFC_GAIN}
+    rb = hra._matched_dp_regen_bound(hil, fields, h2_run=0.010)
+    assert rb is not None
+    assert rb["price_gps_per_w"] == pytest.approx(_GFC_GAIN)
+    assert rb["price_ref_p_stack_w"] is None
+    assert rb["bound_optimistic_g"] == pytest.approx(15.0 * _GFC_GAIN)
+    assert "the Gfc DC gain" in rb["note"]
+
+
+def test_matched_dp_regen_bound_h20_era_prices_at_the_maps_marginal_rate():
+    """(2026-09-08, review item A6) A NON-LEGACY (H-20-era) `h2_map` field
+    with a readable `p_fc_w` column prices the bound at
+    `h2_map.marginal_gps_per_w()`, evaluated at THIS run's own mean STACK-side
+    power (`mean(p_fc_w) / ETA_BOOST`) -- not at the constant Gfc gain.
+    `p_fc_w` is set to a mean of 2.55 W (bus-side) so the reference point
+    lands on exactly 3.0 W stack-side (2.55 / ETA_BOOST=0.85), matching the
+    implementer's own worked example (0.0017461 g Gfc-priced vs 0.0012789 g
+    H-20-priced, at a 3.0 W mean stack power)."""
+    hil = _mdp_hil_with_motor([0.70, 0.6995, 0.699], [-10.0, -10.0, 10.0])
+    hil["p_fc_w"] = np.array([2.55, 2.55, 2.55])
+    fields = {"h2_map": _h2_map.fingerprint_str(), "gfc_dc_gain": _GFC_GAIN}
+    rb = hra._matched_dp_regen_bound(hil, fields, h2_run=0.010)
+    assert rb is not None
+    assert rb["regen_j"] == pytest.approx(-15.0)
+    assert rb["price_ref_p_stack_w"] == pytest.approx(3.0, rel=1e-9)
+    want_gain = _h2_map.marginal_gps_per_w(3.0)
+    assert rb["price_gps_per_w"] == pytest.approx(want_gain, rel=1e-9)
+    # It is a DIFFERENT (lower, per the module's own comment) price than the
+    # legacy branch would have used on the identical regen energy.
+    assert want_gain < _GFC_GAIN
+    assert rb["bound_optimistic_g"] == pytest.approx(15.0 * want_gain, rel=1e-9)
+    assert "H-20 MAP'S MARGINAL RATE" in rb["note"]
+    assert "REFERRED TO AN OPERATING POINT" in rb["note"]
+
+
+def test_matched_dp_regen_bound_h20_era_without_p_fc_w_falls_back_to_gfc_gain():
+    """A non-legacy record with NO readable `p_fc_w` column (an H-20-era
+    record that still lacks the column, or one where every sample is
+    non-finite) cannot locate an operating point, so it falls back to the
+    recorded constant gain and says so explicitly -- `price_ref_p_stack_w`
+    stays None even though the record is not the legacy era."""
+    hil = _mdp_hil_with_motor([0.70, 0.6995, 0.699], [-10.0, -10.0, 10.0])
+    fields = {"h2_map": _h2_map.fingerprint_str(), "gfc_dc_gain": _GFC_GAIN}
+    rb = hra._matched_dp_regen_bound(hil, fields, h2_run=0.010)
+    assert rb is not None
+    assert rb["price_ref_p_stack_w"] is None
+    assert rb["price_gps_per_w"] == pytest.approx(_GFC_GAIN)
+    assert "no readable `p_fc_w` column" in rb["note"]
+    assert "RETIRED law" in rb["note"]
 
 
 # ─────────────────────────────────────────────────────────────────────────

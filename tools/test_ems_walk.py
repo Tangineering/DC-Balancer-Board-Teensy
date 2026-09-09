@@ -386,7 +386,18 @@ def test_governed_sdp_v3_walk_on_ems_sdp_completes_with_open_hold_and_h2_pin():
     # (33.8 % -> 0.002 %). The tolerance is UNCHANGED at 5 %; this is a re-pin,
     # not a widening. provisional_note: fw v28 rev 5 era, re-walked 2026-09-08,
     # NOT measured on the board; pin on the first fw v28 campaign.
-    assert got.h2_g == pytest.approx(0.012726, rel=0.05)
+    # H2-MAP RE-PIN 2026-09-08: 0.012726 -> 0.016526, that is +29.9 %. UNLIKE
+    # every re-pin above, this is a MODEL change, not a governor/mechanism
+    # one: `ems_walk.walk()`'s h2 accounting (through
+    # `gen_dp_ems_table.step_discharge()`/`step_charge()`) now bills the H-20
+    # convex map unconditionally instead of the linear Gfc DC gain, on the
+    # SAME decisions -- confirmed by `mode_fractions` being bit-identical to
+    # the fw v28 rev 5 figures above (latched 0.19349, open_feedforward
+    # 0.001197, closed 0.80530), so nothing about WHERE this walk spends its
+    # time moved, only the price of each watt did. The tolerance is UNCHANGED
+    # at 5 % -- the walk is deterministic and this is still a loose
+    # provenance pin, not a tightened one.
+    assert got.h2_g == pytest.approx(0.016526, rel=0.05)
     # Pin the MECHANISM'S EXISTENCE, not only its consequence. A walk that
     # stopped arming the battery-only start would pass the h2 band above on the
     # way back down and say nothing about why.
@@ -970,6 +981,22 @@ def test_walk_reports_a_clamped_census_and_it_is_zero_on_every_registered_leg():
         assert max(r.i_fc) < gm.CEILING_REACHABLE_I_TOT_A
 
 
+def test_walk_reports_h2_saturated_stages_and_it_is_zero_on_ems_sdp():
+    """H-20 saturation is INFEASIBLE in the offline solvers (review item A1)
+    but the PLANT and the WALK do not refuse -- they report and keep
+    running (h2_map.py's own module docstring, section 3.5).
+    `WalkResult.h2_saturated_stages` is the walk's counter, sourced from
+    `gen_dp_ems_table.reset_scalar_saturation()` at the end of the stage
+    loop (ems_walk.py). Every registered EMS stimulus stays well under
+    h2_map.P_MAX_W's stack power (the fw26-clamp legs are the closest at
+    ~23.46 W, barely above it, but ems-sdp/ems-soc-band do not reach that
+    regime), so the count must read zero on a short scenario -- a non-zero
+    reading here would be a finding about the demand model, per the design
+    note's ceiling-disagreement framing."""
+    r = ew.walk("sdp-v6", "ems-sdp", soc0=0.7, trace=False)
+    assert r.h2_saturated_stages == 0
+
+
 def test_walk_without_the_governor_applies_the_same_bound_as_heuristic_walk():
     """The governor-disabled arm is the regression anchor against
     `gen_dp_ems_table.heuristic_walk()`. Both had to learn the delivered-share
@@ -1037,7 +1064,15 @@ def test_walk_census_counts_a_clamp_when_one_actually_binds():
 # REFUSES without a loss map, and where it fires it agrees term for term with
 # `mpc_ems.build_demand(source_mode=...)`.
 # ─────────────────────────────────────────────────────────────────────────────
-_SS_KW = {"budget_ms": 1e5, "roll_budget_ms": 1e5, "single_source": True}
+# h2_map="proxy" (2026-09-08): `MpcStrategy`'s own default flipped to "h20"
+# this round, and under it the search no longer commands share 0.0 anywhere
+# on `ems-mpc-single` (the H-20 offset changes which column looks cheapest),
+# which erases the premise `test_single_source_demand_moves_a_cut_bearing_
+# walk()` exists to check (a latch standing on a committed share-0.0 leg).
+# The subject here is the single-source BUS LAW, not the hydrogen map, so the
+# pre-2026-09-08 default is pinned to keep that premise true.
+_SS_KW = {"budget_ms": 1e5, "roll_budget_ms": 1e5, "single_source": True,
+          "h2_map": "proxy"}
 
 
 def test_single_source_demand_is_no_longer_inert_on_any_walk():
@@ -1055,22 +1090,46 @@ def test_single_source_demand_is_no_longer_inert_on_any_walk():
     That is correct behaviour, not a regression: those stages ARE single-source,
     and pricing them on the measured battery-only bus law is the whole point of
     the flag. What is pinned now is the SIZE and the DIRECTION of the
-    difference, which is what still makes leaving the switch in the loop safe:
-    the battery-only window is short and lightly loaded, so the two laws
-    disagree by parts per hundred thousand, and the single-source law bills
-    MORE, never less. A change that made the flag expensive, or that flipped its
-    sign, fails here."""
+    difference, which is what still makes leaving the switch in the loop safe.
+
+    RESTATED 2026-09-08 (H-20 convex map fix round, docs/modeling/
+    h20_hydrogen_map_20260908.md section 9.2): the old invariant "the
+    single-source law bills MORE hydrogen, never less" is a property of a
+    LINEAR hydrogen cost, not of the bus law itself. Under the H-20 convex
+    map, the single-source law raises bus power at LOW operating points and
+    lowers it at HIGH ones; the measured net over this walk is +0.376
+    W-stage of bus energy (still net MORE bus energy), but the reductions
+    are priced ~16 % higher on the convex curve than the increases, so the
+    NET HYDROGEN comes out very slightly LOWER (-1.3e-07 g on 1.3e-02 g,
+    1e-05 relative) rather than higher. It is not saturation (zero
+    saturated stages on either walk, confirmed by h2_saturated_stages
+    below) and not the inverse table's resolution (the design note reports
+    a 32x finer grid reproduces the deficit to five figures) -- it is
+    convexity. The invariant that actually holds is on BUS ENERGY (the sum
+    of `p_fc_bus_w`, trace=True needed to read it), and h2_g is now only
+    bounded in MAGNITUDE, not in sign."""
     lm = sim.plant_loss_map()
-    a = ew.walk("soc-band", "ems-soc-band", soc0=0.7, loss_map=lm, trace=False)
+    a = ew.walk("soc-band", "ems-soc-band", soc0=0.7, loss_map=lm, trace=True)
     b = ew.walk("soc-band", "ems-soc-band", soc0=0.7, loss_map=lm,
-                single_source_demand=True, trace=False)
+                single_source_demand=True, trace=True)
     assert a.mode_fractions.get(gm.MODE_LATCHED, 0.0) > 0.05, (
         "no latch stood at all; the battery-only start is not being armed and "
         "this test's whole subject is gone")
-    assert b.h2_g > a.h2_g, ("the single-source law must bill a battery-only "
-                             "stage MORE, not less")
+    # THE INVARIANT THAT STILL HOLDS: total bus energy, never hydrogen sign.
+    bus_energy_a = sum(a.p_fc_bus_w)
+    bus_energy_b = sum(b.p_fc_bus_w)
+    assert bus_energy_b > bus_energy_a, (
+        "the single-source law must bill MORE bus energy, not less -- this "
+        "is the property a linear hydrogen cost used to make true of h2_g "
+        "directly; under the convex map it only holds on bus energy")
+    # h2_g is a MAGNITUDE bound only: convexity can flip its sign (see the
+    # docstring's 16 %-higher-marginal-rate decomposition).
     assert b.h2_g == pytest.approx(a.h2_g, rel=1e-4)
     assert b.delta_soc == pytest.approx(a.delta_soc, rel=1e-3)
+    # Confirms the deficit is convexity, not saturation: neither walk asked
+    # the map for more than h2_map.P_MAX_W anywhere.
+    assert a.h2_saturated_stages == 0
+    assert b.h2_saturated_stages == 0
 
 
 def test_single_source_demand_refuses_without_a_loss_map():

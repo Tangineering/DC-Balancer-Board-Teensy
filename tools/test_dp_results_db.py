@@ -27,6 +27,10 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
 import dp_results_db as db  # noqa: E402
+# h2_map (2026-09-08) is STDLIB ONLY on its import path (module docstring:
+# "numpy is imported LAZILY"), so it is safe to import unconditionally here,
+# the same way this file imports dp_results_db itself.
+import h2_map  # noqa: E402
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -68,6 +72,13 @@ def _fields(**over):
         # records keep their pre-change keys. `drag` is carried as its MODE
         # STRING, never as a k_air value.
         drag=None, eta_regen=None,
+        # h2_map (2026-09-08): the hydrogen-law fingerprint, a REQUIRED (not
+        # optional) key field -- unlike eta_chg/loss_map/drag/eta_regen there
+        # is no "None means the old era" reading, because every record ever
+        # written (old and new) minimised SOME hydrogen law and the string
+        # names it. Defaults to the LIVE map here so this fixture agrees with
+        # model_fields() by construction.
+        h2_map=h2_map.fingerprint_str(),
         gfc_dc_gain=1.7637602179836514e-05, eta_boost=0.85,
         limit_i_fc_max_a=1.4, charge_share_value=0.75, share_span=0.25,
         cruise_slope_max=0.05, cruise_min_mps=0.5, run_entry_s=3.0,
@@ -263,6 +274,78 @@ def test_problem_fields_none_aux_preload_still_collides_with_zero_when_scenario_
     assert none_fields["aux_preload_a"] == 0.0
     assert zero_fields["aux_preload_a"] == 0.0
     assert db.make_key(none_fields) == db.make_key(zero_fields)
+
+
+def test_model_fields_carries_h2_map_fingerprint():
+    """`model_fields()` (2026-09-08) must carry `h2_map` as
+    `h2_map.fingerprint_str()`, matching the same token
+    `gen_dp_ems_table.render_table()` writes into a table header and
+    `hil_plant_sim.DpReplayStrategy.bind_scenario()` compares."""
+    pytest.importorskip("numpy")
+    fields = db.model_fields()
+    assert fields["h2_map"] == h2_map.fingerprint_str()
+
+
+def test_a_h2_map_fingerprint_change_moves_the_key(monkeypatch):
+    """THE POINT OF MAKING IT A KEY FIELD: a coefficient change in the
+    hydrogen law must produce a DIFFERENT key for an otherwise-identical
+    problem, exactly like a retuned model constant would for any other key
+    field -- a table solved under one hydrogen law is not a baseline for a
+    run under another."""
+    a = _fields()
+    monkeypatch.setattr(h2_map, "POLARIZATION_R_OHM",
+                        h2_map.POLARIZATION_R_OHM + 0.01)
+    b = _fields(h2_map=h2_map.fingerprint_str())
+    assert a["h2_map"] != b["h2_map"]
+    assert db.make_key(a) != db.make_key(b)
+    assert db.non_target_hash(a) != db.non_target_hash(b)
+
+
+def test_model_fields_h2_law_gfc_linear_yields_the_legacy_token():
+    """(2026-09-08 fix round, item A4) `model_fields(h2_law="gfc-linear")`
+    must key against the RETIRED law's token, `gen_dp_ems_table.
+    h2_law_token("gfc-linear")` -- the same string an archived
+    `--h2-map gfc-linear` table's `# h2_map:` header line carries -- not
+    against the live `h2_map.fingerprint_str()` the default (`h2_law=None`,
+    i.e. h20) resolves to."""
+    pytest.importorskip("numpy")
+    import gen_dp_ems_table as gen
+    default_fields = db.model_fields()
+    legacy_fields = db.model_fields(h2_law="gfc-linear")
+    assert default_fields["h2_map"] == h2_map.fingerprint_str()
+    assert legacy_fields["h2_map"] == gen.h2_law_token("gfc-linear")
+    assert legacy_fields["h2_map"] == \
+        "gfc-linear-legacy|1.7637602179836514e-05"
+
+
+def test_problem_fields_h2_law_gfc_linear_yields_the_legacy_token():
+    """The SAME selector, threaded through `problem_fields()` (the caller
+    `hil_report_analysis.py` and the prefill tooling actually use)."""
+    pytest.importorskip("numpy")
+    import gen_dp_ems_table as gen
+    common = dict(profile_fingerprint="fp-aaaa", soc0=0.7, capacity_ah=5.0,
+                 charger_accounting="physical", stage_dt=0.1, n_share=41,
+                 soc_step=5e-6, chg_a=0.8, lambda_dev=0.0, run_exit_s=58.0,
+                 target_soc=0.698, aux_preload_a=None)
+    default_fields = db.problem_fields("ems-soc-band", **common)
+    legacy_fields = db.problem_fields("ems-soc-band", h2_law="gfc-linear",
+                                      **common)
+    assert legacy_fields["h2_map"] == gen.h2_law_token("gfc-linear")
+    assert default_fields["h2_map"] != legacy_fields["h2_map"]
+
+
+def test_the_two_hydrogen_laws_never_collide_in_the_key():
+    """The h20 and gfc-linear tokens must key DIFFERENTLY on an otherwise
+    IDENTICAL problem -- make_key() and non_target_hash() both move, so a
+    linear-era record and an h20-era record of the same problem can never
+    be mistaken for one another in the store or the index."""
+    pytest.importorskip("numpy")
+    import gen_dp_ems_table as gen
+    a = _fields(h2_map=h2_map.fingerprint_str())
+    b = _fields(h2_map=gen.h2_law_token("gfc-linear"))
+    assert a["h2_map"] != b["h2_map"]
+    assert db.make_key(a) != db.make_key(b)
+    assert db.non_target_hash(a) != db.non_target_hash(b)
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -1263,13 +1346,30 @@ def test_old_era_lookup_still_finds_a_stored_old_era_record(tmp_path):
 
 
 def test_committed_store_records_key_unchanged_under_the_new_field():
-    """Every record actually in tools/dp_db/ must still hash to its own key."""
+    """Every record actually in tools/dp_db/ must still hash to its own key
+    -- true for every OPTIONAL key field this store has ever gained
+    (eta_chg, loss_map, drag, eta_regen: a missing one is read as "the old
+    era" and omitted from the canonical form, so an old record's key does
+    not move).
+
+    ⚠️ 2026-09-08: `h2_map` is NOT one of those. It is a REQUIRED key field
+    (`db.OPTIONAL_KEY_FIELDS` does not carry it) precisely because there is
+    no "None means the old linear Gfc law" reading to fall back on -- see
+    `dp_results_db.model_fields()`'s own banner: "THE 2026-09-08
+    HYDROGEN-MAP CHANGE MOVES EVERY KEY IN THE STORE, AND IT IS SUPPOSED
+    TO." Every record committed before that date lacks the field entirely,
+    so `make_key()` cannot even canonicalize it -- it raises `KeyError`,
+    which IS the designed-unreachable behaviour, not a regression."""
     recs = list(db.iter_records())
     if not recs:
         pytest.skip("empty store in this checkout")
     for rec in recs:
         f = dict(rec["key_fields"])
         f["target_soc"] = rec["target_soc"]
+        if "h2_map" not in f:
+            with pytest.raises(KeyError, match="h2_map"):
+                db.make_key(f)
+            continue
         assert db.make_key(f) == rec["key"], rec["key"]
 
 
@@ -1537,13 +1637,24 @@ def test_apply_era_overrides_carries_a_map_and_deletes_it_on_none():
 
 
 def test_every_stored_record_is_still_reachable_by_its_own_key():
-    """THE REGRESSION THE OMISSION EXISTS FOR.  Adding a key field must not
-    orphan a single archived solve."""
+    """THE REGRESSION THE OMISSION EXISTS FOR, for every OPTIONAL key field
+    this store has gained.  Adding one of those must not orphan a single
+    archived solve, because a missing OPTIONAL field is read as "the old
+    era" and omitted from the canonical form.
+
+    ⚠️ 2026-09-08: `h2_map` is intentionally NOT covered by that guarantee
+    -- it is a REQUIRED key field (see the sibling test's docstring and
+    `dp_results_db.model_fields()`'s own banner), so every record committed
+    before this date IS orphaned by design: `db.make_key()` cannot even
+    canonicalize a `key_fields` dict missing it and raises `KeyError`. That
+    is the intended reading of "unreachable", not a regression this test
+    should catch."""
     import glob
     root = os.path.join(HERE, "dp_db")
     if not os.path.isdir(root):
         pytest.skip("dp_db store not present in this checkout")
     seen = 0
+    orphaned_by_h2_map = 0
     for path in glob.glob(os.path.join(root, "**", "*.json"), recursive=True):
         if os.path.basename(path) == "index.json":
             continue
@@ -1552,8 +1663,17 @@ def test_every_stored_record_is_still_reachable_by_its_own_key():
         if not kf:
             continue
         seen += 1
+        if "h2_map" not in kf:
+            orphaned_by_h2_map += 1
+            with pytest.raises(KeyError, match="h2_map"):
+                db.make_key(kf)
+            continue
         assert db.make_key(kf) == rec["key"], path
     assert seen >= 16, "expected the archived solves to be present"
+    # Every record in this checkout predates 2026-09-08 -- if this drops to
+    # 0 it means the store has been re-solved under the H-20 map and this
+    # test's h2_map branch is dead code that should be revisited.
+    assert orphaned_by_h2_map == seen
 
 
 def test_solve_and_store_recovers_the_map_from_a_stored_records_own_fields():

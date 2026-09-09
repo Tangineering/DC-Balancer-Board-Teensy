@@ -115,6 +115,12 @@ KEY_FIELDS = (
     "charger_accounting", "stage_dt", "n_share", "soc_step", "chg_a",
     "lambda_dev", "aux_preload_a", "eta_chg", "loss_map",
     "drag", "eta_regen",
+    # `h2_map` (2026-09-08) is the HYDROGEN LAW the solve minimised, as
+    # `h2_map.fingerprint_str()`.  It is inserted BEFORE `gfc_dc_gain` — key
+    # field order is fixed but not otherwise meaningful, and this keeps the two
+    # hydrogen entries adjacent.  ⚠️ ADDING IT MOVES EVERY EXISTING RECORD'S
+    # KEY, which is the intended behaviour: see model_fields().
+    "h2_map",
     "gfc_dc_gain", "eta_boost", "limit_i_fc_max_a", "charge_share_value",
     "share_span", "cruise_slope_max", "cruise_min_mps", "run_entry_s",
     "run_exit_s",
@@ -323,20 +329,52 @@ def fingerprint_diff(scenario, meta_a, meta_b):
             if pa.get(k) != pb.get(k)}
 
 
-def model_fields():
-    """The eight drift-guard model quantities the DP table header records.
+def model_fields(h2_law=None):
+    """The NINE drift-guard model quantities the DP table header records.
 
-    Eight, not ten: `run_entry_s` and `run_exit_s` complete the header's set,
-    and `run_exit_s` is per-scenario, so it is supplied by the caller rather
-    than read off a module here.
+    Nine since 2026-09-08 (`h2_map` joined them); `run_entry_s` and
+    `run_exit_s` complete the header's set, and `run_exit_s` is per-scenario,
+    so it is supplied by the caller rather than read off a module here.
 
     Imported from the live modules, never restated, so a retune of any of them
     moves every key and makes the pre-retune records unreachable — which is
     the intended behaviour: a baseline solved against a different plant is not
-    a baseline for this one."""
+    a baseline for this one.
+
+    ⚠️ THE 2026-09-08 HYDROGEN-MAP CHANGE MOVES EVERY KEY IN THE STORE, AND IT
+    IS SUPPOSED TO.  `h2_map` names the law the solve minimised.  Before that
+    date the DP's stage cost was `H2_GFC_DC_GAIN_GPS_PER_W * P_fc`, LINEAR;
+    from it, the H-20 convex map.  Those are different objectives with
+    different argmins, so every archived record is the answer to a question
+    nobody is asking any more — a lookup that returned one would be a wrong
+    baseline presented as a right one.  The records are not deleted (they are
+    the history of the linear era) but they are UNREACHABLE by a current
+    lookup, and re-solving is the only way to get a current baseline.
+
+    `gfc_dc_gain` STAYS IN THE KEY even though nothing minimises it: dropping
+    it would move the key a second time for no gain, and it is the field that
+    tells the two eras apart in an archived record.
+
+    `h2_law` (2026-09-08, review item A4) names WHICH law the solve used, and
+    defaults to the live one.  Nothing in the tree solves a stored record under
+    the retired law today - `gen_dp_ems_table.prepare_problem()` defaults to
+    `h20` and only the CLI can select otherwise, and the CLI writes tables
+    rather than database records - but the argument exists so that a
+    legacy-law solve CANNOT be keyed as if it were a current one.  The token is
+    produced by `gen_dp_ems_table.h2_law_token()`, the same function the table
+    header and the drift guard use."""
     import hil_plant_sim as sim
     import gen_dp_ems_table as gen
     return {
+        # The HYDROGEN LAW, as one opaque token: under the default `h20` law
+        # it is `h2_map.fingerprint_str()` (map id, the four polarization
+        # coefficients, the saturation current, the inverse table's grid size,
+        # the Faraday gain, the purge/blower offset, the shutdown policy); under
+        # the retired law it is the legacy token.  The same token
+        # `gen_dp_ems_table` writes into the table header and `hil_plant_sim`'s
+        # drift guard compares for exact equality.
+        "h2_map": gen.h2_law_token(h2_law),
+        # RECORDED, NO LONGER MINIMISED (2026-09-08).
         "gfc_dc_gain": float(sim.H2_GFC_DC_GAIN_GPS_PER_W),
         "eta_boost": float(sim.ETA_BOOST),
         "limit_i_fc_max_a": float(gen.LIMIT_I_FC_MAX_A),
@@ -352,7 +390,7 @@ def problem_fields(scenario, *, profile_fingerprint, soc0, capacity_ah,
                    charger_accounting, stage_dt, n_share, soc_step, chg_a,
                    lambda_dev, aux_preload_a, run_exit_s, target_soc,
                    era_overrides=None, eta_chg=None, loss_map=None,
-                   drag=None, eta_regen=None):
+                   drag=None, eta_regen=None, h2_law=None):
     """A complete key-field dict.
 
     `aux_preload_a=None` means "whatever the scenario declares", which is what
@@ -380,7 +418,7 @@ def problem_fields(scenario, *, profile_fingerprint, soc0, capacity_ah,
     if aux_preload_a is None:
         aux_preload_a = ((sim.SCENARIOS.get(scenario) or {})
                          .get("aux_preload_a") or 0.0)
-    fields = dict(model_fields())
+    fields = dict(model_fields(h2_law))
     fields.update({
         "scenario": str(scenario),
         "profile_fingerprint": str(profile_fingerprint),

@@ -982,3 +982,32 @@ single-source windows; F7 recorded only. Commits `4e20b76` (queue), `a683e25` (e
   0.125 A, F6 in the walk), then the first fw v28 campaign after the operator's flash. Open rulings unchanged
   (`--droop measured` scaling, `ASYM_SIMPLE_I_MIN_A`, the ems-sdp bin-21 knob, the RT1987 ramp A/B, the MPC
   residual past the release, hold vs return-to-battery on re-entry).
+
+---
+
+## Status & session addendum (2026-09-09, H-20 convex hydrogen map - phase A merged; PHASE B REQUIRED BEFORE ANY CAMPAIGN)
+
+Branch `h20-convex-h2-map`, orchestrated tooling round (Opus implementer, Sonnet tests, two-lens review,
+fix round). **The scored hydrogen model is no longer the linear Gfc DC gain.** `tools/h2_map.py` is the
+Horizon H-20 brochure map: rate = A0 (6.633e-5 g/s, purge + blower + controller, constant while the
+stack is in service) + 1.358e-4 g/s/A * I(P_stack) through the brochure U-I curve (13 cells); P_MAX
+23.416 W stack = 1.247 A bus, controls above it INFEASIBLE in the DP/SDP (census as tripwire). Design
+note `docs/modeling/h20_hydrogen_map_20260908.md`; plant doc HIL_PLANT.md §9.3a/9.3b. Operator rulings
+2026-09-08: constant-offset loss model; no shutdown state (hook `SHUTDOWN_ENABLED`, default off); Gfc
+DOCUMENTED, NOT SCORED (`h2_gfc_cum_g`, `gfc_*`); the electrical `FuelCellSource` refit is a SEPARATE
+round (the plant's 12-cell flat curve and the map's brochure curve are two curves for one stack; the
+map's I(P) inversion is deliberate until then). Wired into the plant `h2_cum_g` (gated on the
+FC_REG_ENABLE mirror; A0 accrues from State 0, so whole-run and Run-window figures differ by A0*t),
+DP + table header fingerprint, SDP (stack-side, `--h2-map {h20, eta-proxy}`), walk, MPC
+(`h2_map="h20"` default; terminal price re-based at a 3.2 W reference, PROVISIONAL), dp_results_db
+key (`h2_map`), report regen pricing. Era switch `gen_dp_ems_table.py --h2-map gfc-linear` regenerates
+archived tables byte-for-byte. The three `tools/dp_tables/` tables were REGENERATED under h20
+(lambda_term 2.855 / 2.108 / 1.695). Measured this round: A0 is 63 % of the rate at the rig median
+3.2 W and ~56 % of an FTP-75 total; the SDP SoC term is ~31 % over-weighted until alpha is re-derived
+(v6 config admits 46 charge cells under h20); the H-20 ceiling makes FC-charge + traction infeasible
+on 1010 of 2525 SDP cells; a linear-map invariant in the walk (single-source bills more) flips sign
+by 1e-5 relative under convexity - restated on bus energy.
+**Every h2 band, lambda 0.41, the levers, sdp_policy_v4-v6 and all 75 dp_db records are on the retired
+axis. Do not launch a campaign until phase B is done: `docs/HANDOFF_H2_MAP_20260909.md` §3.**
+Motivation: the PhD student's full-scale governor penalty (3-16 %) is a convex-map operating-point
+effect that is identically zero under a linear map (`docs/modeling/fullscale_governor_penalty_20260908.md`).

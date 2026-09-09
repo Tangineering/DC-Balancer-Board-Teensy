@@ -539,10 +539,20 @@ if _HERE not in sys.path:
 REPO_ROOT = os.path.dirname(_HERE)
 
 import governor_model as gov_mod                                      # noqa: E402
+# ETA_BOOST, from the SAME module `gen_dp_ems_table` and the plant read it from
+# (hil_electrical.py:669; `hil_plant_sim.ETA_BOOST` is the identical 0.85).
+# Imported rather than restated because `build_stage()` now refers its stage
+# cost to the STACK through it (2026-09-08, review item A3) and a restated
+# efficiency would let this solver and the DP price one watt two ways.
+from hil_electrical import ETA_BOOST                                 # noqa: E402
 from charger_power import (                                          # noqa: E402
     ETA_CHG_DEFAULT, charger_billing_voltage_v, charger_bus_current_a,
     charger_bus_power_w, check_eta_chg, era_label)
 from tpm_generator import rescale_gamma                              # noqa: E402
+# The H-20 hydrogen map (2026-09-08).  It replaces the ETA_FC = 0.5 linear
+# proxy as this solver's stage cost; see `build_stage` and the H2 BASIS block
+# below.  One authority, shared with the plant and the DP generator.
+import h2_map                                                        # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -639,11 +649,73 @@ CHARGE_FC_MARGIN = 0.85
 # own `chg_i_ceiling_a` (CLAUDE.md 2026-08-31d).
 CHARGE_I_CEILING_A = 0.8
 
-# Student's static hydrogen proxy, SDP_EnergyManagement2.m:12-13.  Kept
-# VERBATIM so the ported objective is the student's; see the `h2.note` field
-# for the discrepancy against the simulator's own Gfc map.
+# Student's static hydrogen proxy, SDP_EnergyManagement2.m:12-13.
+#
+# ⚠️ NO LONGER THE STAGE COST (2026-09-08).  `build_stage()` now bills the
+# H-20 convex map (`h2_map`), the same law the plant scores a run on and the DP
+# generator minimises.  These two constants survive because they are still the
+# BASIS of the alpha derivation and of `model_levers()` — both are ratios
+# against a marginal hydrogen rate `k = 1/(eta_fc*Q_LHV)`, and re-deriving
+# alpha against an operating-point-dependent marginal rate is a SEPARATE round
+# (see the note in ALPHA_DERIVATION).  Q_LHV_J_PER_G is the SAME number
+# `h2_map.Q_LHV_J_PER_G` uses, so the two are on one heating-value basis;
+# ETA_FC is now a REFERENCE efficiency for the lever algebra only and is not a
+# claim about the stack.
 ETA_FC = 0.5
 Q_LHV_J_PER_G = 120000.0
+
+# ─────────────────────────────────────────────────────────────────────────────
+# THE HYDROGEN LAW SELECTOR (2026-09-08, review item A4)
+# ─────────────────────────────────────────────────────────────────────────────
+# The same era-switch pattern `--eta-chg` uses, and the same purpose: the
+# retired law stays reachable BY NAME so an archived policy regenerates
+# byte-for-byte instead of being reproduced from memory.
+#
+#   `h20`        the H-20 convex brochure map on STACK-side power
+#                (`h2_map.rate_gps(p_bus / ETA_BOOST)`).  THE DEFAULT.
+#   `eta-proxy`  the RETIRED pre-2026-09-08 stage cost: the student's
+#                constant-efficiency line `p_bus / (ETA_FC * Q_LHV)`, on the
+#                OLD BUS-SIDE basis, with NO saturation ceiling.  Reproduced
+#                expression for expression, so `sdp_policy_v3` and every other
+#                archived policy regenerates bit-identically.
+H2_LAW_H20 = "h20"
+H2_LAW_ETA_PROXY = "eta-proxy"
+H2_LAWS = (H2_LAW_H20, H2_LAW_ETA_PROXY)
+H2_LAW_DEFAULT = H2_LAW_H20
+
+# The token the policy artifact records under the retired law.  Distinguishable
+# from a future third law by construction: the only number the proxy law has is
+# its own marginal rate.
+H2_LAW_LEGACY_TOKEN = "eta-proxy-legacy|%r" % (1.0 / (ETA_FC * Q_LHV_J_PER_G))
+
+# The STACK power at which the alpha mismatch is quoted.  The TPM's bin centres
+# are a few watts of BUS power and `build_stage()` divides by ETA_BOOST, so a
+# few watts is where this solver's stage cost is evaluated; 3.0 W is the rig's
+# own median stack power rounded to the map's own tabulated row
+# (docs/modeling/h20_hydrogen_map_20260908.md section 4).  It is a REPORTING
+# reference only — nothing is solved against it.
+# TODO(calibrate): re-derive from a campaign's own `p_fc_w` column median, the
+# same TODO `mpc_ems.H2_BASIS_REF_P_STACK_W` carries.
+ALPHA_MISMATCH_REF_P_STACK_W = 3.0
+
+
+def resolve_h2_law(h2_law):
+    """Validate a law name; `None` means the current default."""
+    if h2_law is None:
+        return H2_LAW_DEFAULT
+    law = str(h2_law)
+    if law not in H2_LAWS:
+        raise ValueError("h2_law must be one of %s, got %r"
+                         % (", ".join(H2_LAWS), h2_law))
+    return law
+
+
+def h2_law_token(h2_law=None):
+    """The artifact's `h2.map_str` token for a law."""
+    law = resolve_h2_law(h2_law)
+    if law == H2_LAW_ETA_PROXY:
+        return H2_LAW_LEGACY_TOKEN
+    return h2_map.fingerprint_str()
 
 # SoC grid and target, SDP_EnergyManagement2.m:4 and :56.  The window transfers
 # unchanged (it is a dimensionless charge-sustaining band, not a vehicle
@@ -873,6 +945,61 @@ it preserves a SHARE-AXIS invariant carried over from SDP_EnergyManagement2.m,
 a source that HAS NO CHARGE CONTROL, and the charge action this port adds
 (D5) was never checked against it.  The result priced SoC at 5.139 g/SoC and
 admitted the Ag105 at 294 cells.  See D12.
+
+⚠️⚠️ THE PREMISE OF THIS WHOLE DERIVATION MOVED ON 2026-09-08 ⚠️⚠️
+
+    Everything below rests on ONE assumption: that the marginal hydrogen rate
+    d(W_H2)/d(P_fc) is the CONSTANT k = 1/(eta_fc * Q_LHV).  The stage cost is
+    no longer linear — `build_stage()` bills the H-20 convex map — so the
+    marginal rate now depends on WHERE the stack is running:
+
+        h2_map.marginal_gps_per_w(1 W)      = 1.19e-05 g/s/W
+        h2_map.marginal_gps_per_w(10 W)     = 1.58e-05 g/s/W
+        h2_map.marginal_gps_per_w(20.28 W)  = 2.88e-05 g/s/W
+
+    a 2.4x spread across the operating range, against a derivation that treats
+    it as one number.  ALPHA WAS NOT RE-DERIVED IN THE 2026-09-08 ROUND, by
+    decision: the map change and an alpha change made in one commit would leave
+    any policy shift unattributable.  So every shipped `sdp_policy_*.json`
+    alpha, and every lever price in `model_levers()`, is a PRE-CONVEX-MAP
+    number being used against a convex objective.
+
+    ⚠️ THE MISMATCH HAS A SIZE AND A DIRECTION, AND BOTH ARE NOW KNOWN.  The
+    SoC term is calibrated at
+
+        k = 1/(ETA_FC * Q_LHV) = 1/(0.5 * 120000) = 1.6667e-05 g/s/W
+
+    while the H-20 map's MARGINAL rate at this solver's own operating point —
+    the TPM bin centres are a few watts of BUS power, i.e. a few watts on the
+    stack after `build_stage()`'s ETA_BOOST division — is about
+
+        h2_map.marginal_gps_per_w(3.0 W) = 1.272e-05 g/s/W.
+
+    k is therefore ~31 % HIGH, so the SoC term is ~30 % OVER-WEIGHTED relative
+    to the fuel term: the shipped policies value state of charge more dearly,
+    relative to hydrogen, than the objective they are now solved against does.
+    The direction is toward LESS discharge and MORE charging admission than a
+    re-derived alpha would give.
+
+    ⚠️ AND THE D12 ADMISSION-WINDOW TRIPWIRE IS IN THE RETIRED BASIS.  Its
+    bounds `(1 - gamma)/L_share` and `(1 - gamma)/L_chg` are lever prices in
+    GRAMS OF THE OLD LINEAR LAW (`model_levers()`'s own k), while the stage
+    cost is now the H-20 map on STACK-side power.  The tripwire therefore
+    checks a real, useful, but OBSOLETE condition: it still catches the v2
+    failure it was written for, and it no longer proves anything about charge
+    admission under the current objective.  Do not read a "window: INSIDE" line
+    on a post-2026-09-08 artifact as a statement about this solver's charging.
+
+    TODO(phase-b): re-derive alpha against a marginal rate evaluated at the
+    policy's own mean operating point (or a demand-bin-weighted mean), and
+    re-derive the lever prices and the D12 window on the same commit.  The
+    STAGE-COST BASIS is already done — `build_stage()` refers the map to the
+    stack from 2026-09-08 (review item A3) — so alpha is the only half of the
+    phase-B pair still outstanding.  The runtime warning `solve()` prints on
+    every k-dependent --alpha-mode says the same thing.
+
+    The rest of this note is the ORIGINAL derivation, unchanged, and it is
+    still the record of how the shipped numbers were obtained.
 
 alpha does not transfer verbatim.  The stage cost is
 
@@ -1256,13 +1383,23 @@ def _snap_ladder_to_band(shares):
 
 
 def build_stage(p_centers, shares, soc_grid, alpha, dt, cap_as, chg_a,
-                chg_allowed, soc_target, soc_lo, soc_hi, eta_chg=None):
+                chg_allowed, soc_target, soc_lo, soc_hi, eta_chg=None,
+                h2_law=None):
     """Per-bin (stage_cost, soc_next, feasible) arrays.
 
     Returned shapes are (n_bin, n_soc, n_ctrl) with n_ctrl = len(shares) + 1;
     control index len(shares) is the CHARGE action.  Everything here is
     stationary, so it is built once and reused by every value-iteration sweep.
+
+    `h2_law` selects the hydrogen law (see the H2 LAW SELECTOR block).  Under
+    `h20` the cost is STACK-SIDE and a control above `h2_map.P_MAX_W` is
+    INFEASIBLE; under `eta-proxy` it is the retired bus-side linear line with
+    no such ceiling.
     """
+    law = resolve_h2_law(h2_law)
+    p_max_stack_w = (float("inf") if law == H2_LAW_ETA_PROXY
+                     else h2_map.P_MAX_W)
+    sat_cells = 0
     n_bin = len(p_centers)
     n_soc = len(soc_grid)
     m = len(shares)
@@ -1303,7 +1440,39 @@ def build_stage(p_centers, shares, soc_grid, alpha, dt, cap_as, chg_a,
         i_batt = p_bt / V_PACK_NOMINAL_V                         # + = discharge
         d_soc = -i_batt * dt / cap_as                            # (m,)
         soc_next[j, :, :m] = soc_grid[:, None] + d_soc[None, :]
-        h2 = p_fc / (ETA_FC * Q_LHV_J_PER_G) * dt                # (m,) grams
+        # ── THE STAGE COST: THE H-20 CONVEX MAP, ON THE STACK ───────────────
+        #    (2026-09-08; re-based to the stack the same day, review item A3)
+        # Was `p_fc / (ETA_FC * Q_LHV_J_PER_G)`, a constant-efficiency line on
+        # BUS-side power.  BOTH halves of that changed:
+        #
+        #   THE MAP is now the H-20 brochure map, the one law the plant scores
+        #   a run on and the DP generator minimises.
+        #
+        #   THE BASIS is now the STACK, `p_fc / ETA_BOOST`, matching the DP,
+        #   the plant and the MPC.  The bus-side basis survived one draft on
+        #   the recorded argument that a uniform 1/ETA_BOOST factor cannot move
+        #   the argmin — TRUE FOR A LINEAR MAP ONLY.  Under a convex map the
+        #   division SELECTS THE OPERATING POINT on the efficiency curve, so a
+        #   bus-side watt is priced ~15 % low in power and the two bases give
+        #   different policies.  The argument being void, the basis is now the
+        #   same one every other consumer uses; and since phase B re-solves the
+        #   SDP against a re-derived alpha regardless, keeping a knowingly
+        #   wrong basis for one round bought nothing.
+        #
+        # ⚠️ WHAT DID NOT MOVE, AND THE MISMATCH IT LEAVES: `alpha`.  See the
+        # 2026-09-08 banner in ALPHA_DERIVATION and the `alpha_note` field of
+        # the artifact — the SoC term is still calibrated at the constant
+        # k = 1/(ETA_FC*Q_LHV) = 1.667e-05 g/s/W while the H-20 marginal rate
+        # at this solver's own operating point is ~1.28e-05, so the SoC term is
+        # roughly 30 % OVER-WEIGHTED relative to the fuel term until alpha is
+        # re-derived.
+        p_fc_stack = p_fc / ETA_BOOST                            # (m,)
+        if law == H2_LAW_ETA_PROXY:
+            # RETIRED LAW, reproduced expression for expression on the OLD
+            # BUS-SIDE power, so an archived policy regenerates bit-identically.
+            h2 = p_fc / (ETA_FC * Q_LHV_J_PER_G) * dt            # (m,) grams
+        else:
+            h2 = h2_map.rate_gps_array(p_fc_stack) * dt          # (m,) grams
         stage[j, :, :m] = h2[None, :]
 
         # Charge control.  `physical` accounting (D11 of gen_dp_ems_table.py):
@@ -1317,12 +1486,49 @@ def build_stage(p_centers, shares, soc_grid, alpha, dt, cap_as, chg_a,
         soc_next[j, :, m] = soc_grid + chg_a * dt / cap_as
         p_fc_chg = p_pos + charger_bus_power_w(chg_a, V_BUS_NOMINAL_V,
                                                V_PACK_NOMINAL_V, eta_chg)
-        stage[j, :, m] = p_fc_chg / (ETA_FC * Q_LHV_J_PER_G) * dt
-        feas[j, :, m] = bool(chg_allowed[j])
+        # The same law and the same STACK-side basis on the charge arm.
+        # ⚠️ THE CHARGE ARM IS WHERE CONVEXITY BITES HARDEST: the charger's bus
+        # draw sits ON TOP OF the traction demand, so it is priced at a HIGHER
+        # point on the curve than the traction watts underneath it.  Under the
+        # old linear proxy the charge action's marginal price was identical to
+        # the split action's; it no longer is, and the admission bound alpha
+        # was calibrated when it was.
+        # Scalar path: `p_fc_chg` is a scalar here (this solver has no OCV
+        # curve, so the charger's bus draw does not vary with the SoC row).
+        p_chg_stack = float(p_fc_chg) / ETA_BOOST
+        if law == H2_LAW_ETA_PROXY:
+            stage[j, :, m] = p_fc_chg / (ETA_FC * Q_LHV_J_PER_G) * dt
+        else:
+            stage[j, :, m] = h2_map.rate_gps(p_chg_stack) * dt
+        # THE MAP'S CEILING IS A FEASIBILITY TERM, NOT A PRICE (review item A1).
+        # Above `P_MAX_W` the map is FLAT, so extra fuel-cell power is free
+        # while it still moves the SoC: the argmin would walk to a control the
+        # stack cannot deliver.  The charge arm crosses first, its stack power
+        # being the largest this solver ever evaluates.  +inf under the retired
+        # linear law, which has no saturation region.
+        _chg_over = p_chg_stack > p_max_stack_w
+        if chg_allowed[j] and _chg_over:
+            sat_cells += n_soc
+        feas[j, :, m] = bool(chg_allowed[j]) and not _chg_over
 
         # FC channel overcurrent, control-wise.  Cannot bind at this demand
         # scale; present so a rescaled TPM cannot produce an illegal policy.
         feas[j, :, :m] &= ((p_fc / V_BUS_NOMINAL_V) <= LIMIT_I_FC_MAX_A)[None, :]
+        # ...and the map's own ceiling on the split arm, same reasoning as the
+        # charge arm above.  The census counts only cells the overcurrent test
+        # would have ADMITTED, so it reports which ceiling BINDS rather than
+        # firing on every solve.
+        _over = (p_fc_stack > p_max_stack_w)[None, :]
+        sat_cells += int(np.count_nonzero(_over & feas[j, :, :m]))
+        feas[j, :, :m] &= ~_over
+
+    if sat_cells:
+        print("[sdp] NOTE: %d control cells asked for more than %.3f W of "
+              "STACK power (the H-20 brochure curve's last point) and were "
+              "refused as INFEASIBLE. The map's ceiling bound before the "
+              "%.2f A fuel-cell limit, so the DEMAND MODEL (the TPM's bin "
+              "centres) is asking for power this stack cannot deliver."
+              % (sat_cells, p_max_stack_w, LIMIT_I_FC_MAX_A))
 
     # D3: clamp rather than forbid.
     np.clip(soc_next, soc_lo, soc_hi, out=soc_next)
@@ -1388,6 +1594,8 @@ def greedy_policy(J, stage, soc_next, soc_grid, tpm, gamma):
 
 # ---------------------------------------------------------------------------
 def render_policy_json(args, meta):
+    # THE LAW THAT WAS ACTUALLY SOLVED, not the current default (2026-09-08).
+    _law = resolve_h2_law(getattr(args, "h2_map", None))
     """The artifact, as an ordered dict matching the schema contract."""
     # D15.  `charger.eta_chg_basis` is written ONLY when the solve DECLARED one
     # (`--eta-chg measured`).  Conditional, for the reason D14's alpha extras
@@ -1446,13 +1654,60 @@ def render_policy_json(args, meta):
         },
         "charger": charger,
         "h2": {
+            # THE STAGE COST, 2026-09-08 onward: the H-20 convex map.  Recorded
+            # in full so a policy file names its own hydrogen law and a reader
+            # can tell two eras apart without diffing the solver.
+            "law": _law,
+            "law_token": h2_law_token(_law),
+            "basis": ("stack (P_bus/ETA_BOOST=%r)" % ETA_BOOST
+                      if _law == H2_LAW_H20 else "bus (retired basis)"),
+            # The H-20 map's own identity is recorded WHICHEVER law was solved,
+            # because it is the law a reader will want to compare against.
+            "map": h2_map.fingerprint(),
+            "map_str": h2_map.fingerprint_str(),
+            # RETAINED, NOT MINIMISED.  These two are still the basis of alpha
+            # and of model_levers(); see `alpha_note`.
             "eta_fc": ETA_FC,
             "q_lhv_j_per_g": Q_LHV_J_PER_G,
-            "note": "student's static proxy (SDP_EnergyManagement2.m:12-13), "
-                    "ported verbatim; the sim's Gfc DC gain implies eta 47.25% "
-                    "(+16.4% on the same power), so J values here are NOT "
-                    "comparable to a run's h2_cum_g - this artifact ships a "
-                    "policy, not a hydrogen prediction. TODO(calibrate)",
+            "note": ("STAGE COST = h2_map (H-20 brochure map: Faraday on 13 "
+                     "cells + a constant purge/blower offset + the brochure "
+                     "polarization curve), on STACK-SIDE power P_fc/ETA_BOOST "
+                     "- the SAME law and the SAME basis the plant, the DP "
+                     "generator and the MPC use (re-based 2026-09-08, review "
+                     "item A3; the bus-side argmin-neutrality argument is "
+                     "void under a convex map). A control above h2_map.P_MAX_W "
+                     "is INFEASIBLE, not merely expensive. It replaced the "
+                     "student's eta_fc=0.5 static proxy on 2026-09-08; eta_fc "
+                     "survives only as the basis of alpha and the lever "
+                     "algebra. J values are STILL not a hydrogen prediction - "
+                     "the SoC term is in them - so this artifact ships a "
+                     "policy. TODO(calibrate) the stack sample"
+                     if _law == H2_LAW_H20 else
+                     "STAGE COST = the RETIRED eta_fc=%.2f linear proxy on "
+                     "BUS-SIDE P_fc (--h2-map eta-proxy), reproduced "
+                     "bit-for-bit to regenerate a pre-2026-09-08 policy. It "
+                     "is NOT the law any current run is scored on" % ETA_FC),
+            "alpha_note": "alpha and model_levers() are ratios against a "
+                          "CONSTANT marginal rate k = 1/(eta_fc*Q_LHV) = "
+                          "1.6667e-05 g/s/W. The stage cost's marginal rate is "
+                          "OPERATING-POINT DEPENDENT (h2_map."
+                          "marginal_gps_per_w: 1.19e-05 g/s/W at 1 W, "
+                          "1.27e-05 at 3 W - the rig's median stack power and "
+                          "this solver's own operating point - 1.58e-05 at "
+                          "10 W, 2.88e-05 at 20.28 W). k is ~31 % HIGH there, "
+                          "so THE SoC TERM IS ~30 % OVER-WEIGHTED relative to "
+                          "the fuel term, biasing the policy toward less "
+                          "discharge and more charge admission than a "
+                          "re-derived alpha would give. The D12 "
+                          "admission-window tripwire is likewise in the "
+                          "RETIRED basis (its lever prices are grams of the "
+                          "old linear law), so a 'window: INSIDE' line on a "
+                          "post-2026-09-08 artifact says nothing about "
+                          "charging under this objective. alpha is a "
+                          "PRE-CONVEX-MAP number; re-derivation is the "
+                          "outstanding phase-B item - the stage-cost BASIS "
+                          "was already moved to the stack on 2026-09-08 - see "
+                          "ALPHA_DERIVATION",
         },
         "solver": meta["solver"],
         "policy": meta["policy"],
@@ -1530,6 +1785,17 @@ def main(argv=None):
                     help="solve against the OLD 1:1 current-transfer charger "
                          "(a delivered amp costs a BUS amp). Required to "
                          "reproduce any artifact baked before 2026-09-01.")
+    ap.add_argument("--h2-map", choices=H2_LAWS, default=H2_LAW_DEFAULT,
+                    dest="h2_map",
+                    help="the HYDROGEN LAW the stage cost minimises. 'h20' "
+                         "(default) is the H-20 convex brochure map in "
+                         "tools/h2_map.py, evaluated on STACK-side power "
+                         "(P_bus/ETA_BOOST) like the DP, the plant and the "
+                         "MPC; 'eta-proxy' is the RETIRED pre-2026-09-08 "
+                         "stage cost, the student's eta_fc=0.5 line on the "
+                         "OLD BUS-SIDE basis with no saturation ceiling, "
+                         "reproduced bit-for-bit so sdp_policy_v3 and every "
+                         "other archived policy regenerates byte-identically")
     ap.add_argument("--alpha-mode", default="lever",
                     choices=["lever", "lever-measured", "charge-edge",
                              "marginal", "level"],
@@ -1841,6 +2107,47 @@ def main(argv=None):
                   file=sys.stderr)
             return 2
 
+    # ── THE HYDROGEN LAW (2026-09-08, review item A4) ───────────────────────
+    # Resolved once, here, and threaded to `build_stage()` and the artifact so
+    # the objective that was solved and the law the artifact NAMES cannot
+    # differ.
+    h2_law_used = resolve_h2_law(getattr(args, "h2_map", None))
+    if h2_law_used == H2_LAW_ETA_PROXY:
+        print("[sdp] NOTE: --h2-map eta-proxy selects the RETIRED "
+              "pre-2026-09-08 stage cost (the eta_fc=%.2f linear line on "
+              "BUS-side power, no saturation ceiling). Use it to REGENERATE "
+              "an archived policy, not to solve a new problem: the split "
+              "decision it produces is degenerate in the hydrogen term."
+              % ETA_FC, file=sys.stderr)
+
+    # ── THE CONVEX-MAP WARNING (2026-09-08) ─────────────────────────────────
+    # Every alpha mode except an explicit --alpha is a ratio against the
+    # CONSTANT marginal rate k = 1/(ETA_FC*Q_LHV).  The stage cost is now the
+    # H-20 convex map, whose marginal rate varies 2.4x over the operating
+    # range, so those modes are deriving alpha against a premise the objective
+    # no longer satisfies.  ONE LINE, to stderr, on every affected run: this is
+    # not an error and does not refuse the solve — the shipped policies are
+    # still reproducible — but a solve that prints nothing about it would let
+    # a reader assume the derivation still holds.
+    if alpha_mode_used != "explicit" and h2_law_used == H2_LAW_H20:
+        _k = 1.0 / (ETA_FC * Q_LHV_J_PER_G)
+        _m = h2_map.marginal_gps_per_w(ALPHA_MISMATCH_REF_P_STACK_W)
+        print("[sdp] NOTE: --alpha-mode %s derives alpha from the CONSTANT "
+              "marginal rate k = 1/(%.2f*%.0f) = %.6g g/s/W, but the stage "
+              "cost is the H-20 CONVEX map (h2_map %s) on STACK-side power, "
+              "whose marginal rate is %.6g g/s/W at the reference point "
+              "%.1f W (and runs %.3g..%.3g over 1..20.28 W). k is %+.0f %% "
+              "off there, so THE SoC TERM IS ~%.0f %% OVER-WEIGHTED relative "
+              "to the fuel term. alpha is a PRE-CONVEX-MAP number and the D12 "
+              "admission window below is in the RETIRED basis; re-derivation "
+              "is the outstanding phase-B item (see ALPHA_DERIVATION)."
+              % (alpha_mode_used, ETA_FC, Q_LHV_J_PER_G, _k, h2_map.MAP_ID,
+                 _m, ALPHA_MISMATCH_REF_P_STACK_W,
+                 h2_map.marginal_gps_per_w(1.0),
+                 h2_map.marginal_gps_per_w(20.28),
+                 100.0 * (_k / _m - 1.0), 100.0 * (_k / _m - 1.0)),
+              file=sys.stderr)
+
     # ── the D12 tripwire, BEFORE any solve ──────────────────────────────────
     # The shipped alpha must lie STRICTLY inside both admission windows: the
     # modelled one (this script's own constants) and the measured one (the
@@ -2020,7 +2327,7 @@ def main(argv=None):
     stage, soc_next, _feas = build_stage(
         p_centers, shares, soc_grid, alpha, args.dt, cap_as, chg_a,
         chg_allowed, args.soc_target, soc_grid[0], soc_grid[-1],
-        args.eta_chg)
+        args.eta_chg, h2_law_used)
     J, iters, delta = value_iterate(stage, soc_next, soc_grid, tpm, gamma,
                                     args.tol, args.max_iter)
     converged = delta < args.tol
