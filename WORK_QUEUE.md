@@ -124,16 +124,16 @@ firmware round lands).
       total falls back under the gate the HOLD stays; a commanded share <= 0.15 or >= 0.85 RE-ARMS the selector with
       that source (holds through in-band commands, releases at the gate, same machinery as the never-closed
       selector); in-band commands never trigger single-source on re-entry. After rev 4.
-- [ ] 16. (firmware side DONE `a09d1ca`; decoder IN PROGRESS in the tools round with items 17-19 and the rev 4/5 governor_model re-key) **BLG v9 (operator ruling: implement):** record appends selector armed/FC bits, encoder dirSign (i8),
+- [x] 16. (DONE: firmware `a09d1ca`/`f0d82e4`, decoder `c11a464`) **BLG v9 (operator ruling: implement):** record appends selector armed/FC bits, encoder dirSign (i8),
       flip count (u8), EEPROM-commit-pending flag; firmware side with rev 5, decoder + benchlog_analysis +
       make_test_blg in the tools round; v1-v8 byte-identical.
-- [ ] 17. **`ASYM_SIMPLE_I_MIN_A` 0.10 -> 0.08 A (operator: my pick)** so the simple engine's split law applies at the
+- [x] 17. (DONE `c11a464`; better conditioned at the floor than at full load; idle split 0.25 -> 0.3650) **`ASYM_SIMPLE_I_MIN_A` 0.10 -> 0.08 A (operator: my pick)** so the simple engine's split law applies at the
       0.09 A idle; conditioning check at that total. Tools round after the A/B.
-- [ ] 18. **`--droop measured` scaling (operator: use the scalings that best match the bench record):** fit k_d-only /
+- [x] 18. (DONE `c11a464`: k_d + dV0 + R_f wins, CAL-1 RMS 0.0090 vs 0.0457 for k_d-only; the 39 slope fits prefer a NEGATIVE intercept - the +0.033 ohm floor is not bench-supported at 0.2117, recorded for the DMM measurement) **`--droop measured` scaling (operator: use the scalings that best match the bench record):** fit k_d-only /
       k_d+dV0 / k_d+dV0+R_f / realised-k_d against the 39 single-source fits and CAL-1; ship the lowest residual.
-- [ ] 19. **ems-sdp stimulus re-tuned (operator ruling):** drain plateau one demand bin below the clamp where the
+- [ ] 19. (BLOCKED - premise fails: plateau is bin 22 and no demand bin discriminates; v6 flips on the SoC target row and every above-target ask clamps to 0.85; needs a start below the SoC target or a drain crossing it - RULING) **ems-sdp stimulus re-tuned (operator ruling):** drain plateau one demand bin below the clamp where the
       v6 and DP tables differ; re-walk, re-pin provisional.
-- [ ] 20. **Alpha sweep re-run at the measured billing (operator: yes)** after the ramp decision; the 75 matched-DP
+- [ ] 20. (IN PROGRESS, Opus) **Alpha sweep re-run at the measured billing (operator: yes)** after the ramp decision; the 75 matched-DP
       re-solves HELD until the overnight campaign (operator).
 
 **Open-item review (2026-09-08, everything else in this file, triaged):**
