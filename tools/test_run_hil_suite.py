@@ -11427,101 +11427,174 @@ def test_the_cross_stimulus_wide_share_walk_is_not_available_from_either_law():
     The `ems-sdp-cross` two-level cruise was built so a share-shifting law
     would walk WIDE across the switching region, and `ems-mpc-cross`'s registry
     entry still describes that walk as its observable. It is not available:
-measured in the 2026-09-02 fix round, BOTH `mpc-det` and `mpc-sto` command
-    a share range of exactly ONE LADDER STEP on that stimulus, in BOTH demand
-    eras, with bit-identical hydrogen. It reproduces on the PRE-ROUND tree at
-    commit 8dc180d, so it is neither a consequence of the `mpc-sto` promotion
-    nor of the static-loss map.
-
-    ⚠️ RE-PINNED FOR THE BAND WIDENING (2026-09-02), AND THE GAP DID NOT
-    CLOSE. Before the widening the walk was 0.0833 over [0.2500, 0.3333], one
-    step of a seven-point ladder over [0.25, 0.75]. It is now 0.0875 over
-    [0.1500, 0.2375], one step of a NINE-point ladder over the firmware band.
-    The finding is therefore UNCHANGED IN KIND -- the walk is still a single
-    ladder step and the two laws still coincide bit for bit -- and what moved
-    is the OPERATING POINT, which has dropped onto the low rail the old band
-    could not express. A wider band did not buy a wider walk, which sharpens
-    the original reading: the limit is the terminal economics on a two-level
-    cruise, not the reach of the ladder.
-
-    Two shipped numbers were already wrong at 8dc180d because of it: the
-    `share_range_min` 0.12 was UNSATISFIABLE against a 0.0833 walk, and the
-    `walk_h2` 0.014134 was stale by +29 % against a true 0.010942.
-
-    An `ems-mpc-det-cross` leg was built to keep the wide walk and WITHDRAWN:
-    `mpc-det` reproduces `ems-mpc-cross`'s trace bit for bit, so the leg would
-    have spent campaign time restating a known-null comparison. The wide walk
-    is a question about the MPC's candidate ladder and its terminal economics
-    on a two-level cruise, not about scenario registration.
+    measured in the 2026-09-02 fix round, BOTH `mpc-det` and `mpc-sto` command
+    a share range of a few ladder steps on that stimulus and deliver the same
+    envelope. It reproduced on the PRE-ROUND tree at commit 8dc180d, so it is
+    neither a consequence of the `mpc-sto` promotion nor of the static-loss
+    map, and it has survived the band widening (2026-09-02), fw v27 rev 2
+    (2026-09-03) and the fw v28 source selector (2026-09-08).
 
     THIS TEST FAILS WHEN THE GAP CLOSES, which is the point: a ladder or
-    economics change that widens the walk should force a decision about the
-    floor and the band rather than passing unnoticed.
+    economics change that widens the DELIVERED walk should force a decision
+    about the floor and the band rather than passing unnoticed.
 
-    ⚠️ IT FIRED AT fw v27 rev 2 (2026-09-03), AND THE ANSWER IS THAT THE
-    OBSERVABLE WAS WRONG, NOT THAT THE GAP CLOSED. The COMMANDED range
-    widened and the two laws stopped agreeing on it -- `mpc-det` now commands
-    [0.1500, 0.5000] (0.3500, four ladder steps) and `mpc-sto` [0.1500,
-    0.3250] (0.1750, two) -- because the 0.30 A closed-loop gate makes the
-    low-current stages distinguishable where the 0.60 A gate collapsed their
-    clip band to 0.5 and tied every candidate. But the DELIVERED share is
-    [0.000000, 0.555597] for BOTH laws, and the hydrogen and the charge
-    balance are still bit-identical to seven and six figures. 62-63 % of this
-    run is open-loop (`open_hold` for `mpc-det`, `open_feedforward` for
-    `mpc-sto`), and in open loop a commanded share is accepted, logged and NOT
-    ACTED ON -- so the extra commanded motion buys nothing physical, which is
-    the finding this test was written to hold.
+    An `ems-mpc-det-cross` leg was built to keep the wide walk and WITHDRAWN;
+    see `test_no_ems_mpc_det_cross_leg_is_registered` below.
 
-    The pin therefore MOVES TO THE PHYSICAL OBSERVABLE and keeps the commanded
-    ranges as era values beside it. This is a strengthening: the old form
-    could be satisfied by a law that merely commands wider, and the new form
-    cannot. The suite's own `mpc_share_moved` check still reads `cmd_share_sp`
-    and its 0.05 floor is still satisfiable (0.1750), so nothing downstream
-    moved.
+    ---- WHAT CHANGED AT fw v28 (2026-09-08 re-statement) ----
 
-    OPERATOR DECISION STILL OPEN, and it is now sharper than before: a wider
-    band and a lower floor did not buy a wider DELIVERED walk on this
-    stimulus, so `ems-mpc-cross`'s registry description of a wide walk remains
-    unearned. TODO(fw27): re-adjudicate the leg's observable after campaign G
-    measures the delivered split on the board."""
+    The claim this test carried through fw v27 rev 2 was that the two laws'
+    hydrogen is BIT-IDENTICAL because 62-63 % of the run is open loop, where a
+    commanded share is accepted, logged and not acted on. Both halves of that
+    are now false. Under the fw v28 governor mirror
+    (`docs/fw28_source_selector.md` revisions 4-6: topology-keyed `k_d` hold,
+    the re-entry rule, the selector inhibit, the 250 ms selection dwell, the
+    widened frozen-path filter advance) this run is 96.0 % CLOSED loop and
+    0.04 % open, and the two laws' hydrogen differs in the seventh digit.
+
+    The mechanism that replaced the open-loop rationale is the NEVER-CLOSED
+    SOURCE SELECTOR. While the arm stands, a command strictly inside
+    `(DROOP_R_MIN, DROOP_R_MAX)` only HOLDS the current selection, so the two
+    laws' commanded difference is absorbed with no physical consequence: of
+    the 110 ticks on which the commands differ, 73 sit on the battery-only
+    rail (`share_delivered == 0.0`, `I_fc == 0`) where mpc-det's 0.5000 and
+    mpc-sto's 0.2375 are the same instruction, and a further 15 coincide
+    inside a slew. Only 23 ticks -- 1.15 % of the run, two windows at
+    45.0-47.0 s and 70.0-70.1 s -- deliver differently, and there the two laws
+    commit the SAME PAIR OF RUNGS IN THE OPPOSITE ORDER: `mpc-det` holds
+    0.1500 then 0.2375 while `mpc-sto` holds 0.2375 then 0.1500. That is a
+    PHASE difference produced by where a 1 Hz re-command lands relative to the
+    selection dwell, not a level difference, and it is why the hydrogen still
+    very nearly coincides.
+
+    ---- THE INVARIANTS THAT STILL HOLD EXACTLY ----
+
+    Both ends of the delivered envelope are set by the governor and are
+    command-independent, so they are bit-identical across the two laws:
+
+      * `min(share_delivered) == 0.0` on the same 83 ticks in both laws -- the
+        source selector's battery-only rail.
+      * `max(share_delivered) == 0.4999996` -- the fw v27 forced-0.5 regime
+        (CLAUDE.md F3): a two-source total inside 0.25-0.30 A keeps the loop
+        closed below its own entry gate with an empty minority band, so the
+        split pins at exactly 0.5000 and the command cannot move it. Both
+        laws command 0.1500 on every one of those 13 ticks.
+
+    The wide walk is therefore STILL NOT REACHED: nothing above 0.5 is ever
+    delivered, and the 0.5 that is delivered is a degenerate regime, not a
+    share-shifting excursion.
+
+    ---- THE MECHANISM-DERIVED BOUND ON THE HYDROGEN DIFFERENCE ----
+
+    Hydrogen is billed on `stage_share * p_dem` and the two laws see the SAME
+    demand sequence, so their hydrogen can differ only by their delivered FC
+    bus energy. The dwell/re-entry timing can reorder at most one ladder step
+    of delivered share on the ticks where the laws disagree, which bounds the
+    difference by the UNSIGNED energy envelope
+
+        E_env = sum |s_a - s_b| * p_dem * dt / sum s_a * p_dem * dt
+
+    measured at 1.74e-03 here, and reproduced a priori by
+    (max |delta s| / the local share) * (divergent ticks / total ticks)
+    = (0.0342 / 0.2033) * (23 / 2000) = 1.9e-03. The observed difference is
+    +2.96e-05, that is 1.7 % of the envelope: the antiphase cancels 98.3 % of
+    it. This test asserts BOTH -- that the difference stays inside the
+    envelope (the timing bound), and that the difference equals the SIGNED
+    energy ratio to eleven decimal places (the billing identity, which is what
+    makes the envelope a bound at all rather than a coincidence).
+
+    OPERATOR DECISION STILL OPEN: a wider band, a lower floor and a source
+    selector did not buy a wider DELIVERED walk on this stimulus, so
+    `ems-mpc-cross`'s registry description of a wide walk remains unearned.
+    TODO(fw28): re-adjudicate the leg's observable from a board campaign."""
     pytest.importorskip("numpy")        # ems_walk -> gen_dp_ems_table -> numpy
     ew = pytest.importorskip("ems_walk")
     sim = pytest.importorskip("hil_plant_sim")
-    seen, open_frac = {}, {}
+    res, mode_frac = {}, {}
     for strat in ("mpc-det", "mpc-sto"):
-        r = ew.walk(strat, "ems-mpc-cross", soc0=0.7, governor=True,
-                    dv0_v=0.030223, loss_map=sim.plant_loss_map(), trace=True)
-        sc = [float(x) for x in r.share_cmd]
-        sd = [float(x) for x in r.share_delivered]
-        seen[strat] = (min(sc), max(sc), float(r.h2_g),
-                       min(sd), max(sd), float(r.delta_soc))
-        open_frac[strat] = sum(
-            v for k, v in r.mode_fractions.items() if k.startswith("open_"))
-    # THE PHYSICAL PIN: the two laws deliver the SAME split, burn the same
-    # hydrogen and move the same charge. This is the finding; everything
-    # below it is bookkeeping about how the command got there.
-    assert seen["mpc-det"][3] == seen["mpc-sto"][3]          # delivered lo
-    assert seen["mpc-det"][4] == seen["mpc-sto"][4]          # delivered hi
-    assert seen["mpc-det"][2] == seen["mpc-sto"][2]          # h2, bit-exact
-    assert seen["mpc-det"][5] == seen["mpc-sto"][5]          # dSoC, bit-exact
-    assert seen["mpc-det"][3] == pytest.approx(0.0, abs=1e-9)
-    assert seen["mpc-det"][4] == pytest.approx(0.555597, abs=1e-5)
-    assert seen["mpc-det"][2] == pytest.approx(0.009018666, rel=1e-6)
-    # ... and it is bought in open loop, which is WHY commanding wider is
-    # free: a command below the gate is accepted, logged and not acted on.
+        res[strat] = ew.walk(strat, "ems-mpc-cross", soc0=0.7, governor=True,
+                             dv0_v=0.030223, loss_map=sim.plant_loss_map(),
+                             trace=True)
+        mode_frac[strat] = res[strat].mode_fractions
+    a, b = res["mpc-det"], res["mpc-sto"]
+    sd_a = [float(x) for x in a.share_delivered]
+    sd_b = [float(x) for x in b.share_delivered]
+    sc_a = [float(x) for x in a.share_cmd]
+    sc_b = [float(x) for x in b.share_cmd]
+    n = len(sd_a)
+    assert n == len(sd_b) == 2000
+
+    # ---- INVARIANT 1: both ends of the delivered envelope are governor-set
+    # and command-independent, so they are bit-identical across the two laws.
+    assert min(sd_a) == min(sd_b) == 0.0
+    assert max(sd_a) == max(sd_b)
+    assert max(sd_a) == pytest.approx(0.5, abs=1e-6)     # forced-0.5 regime
+    # ... and the rail ticks are the SAME ticks, not merely the same value.
+    assert ({i for i, x in enumerate(sd_a) if x == 0.0}
+            == {i for i, x in enumerate(sd_b) if x == 0.0})
+    assert sum(1 for x in sd_a if x == 0.0) == 83
+    # The wide walk is still not reached: nothing above the degenerate 0.5.
+    assert max(sd_a) < 0.5000001
+
+    # ---- INVARIANT 2: the selector absorbs almost every commanded
+    # difference. 110 ticks command differently; 23 deliver differently.
+    cmd_differ = [i for i in range(n) if sc_a[i] != sc_b[i]]
+    del_differ = [i for i in range(n)
+                  if round(sd_a[i], 9) != round(sd_b[i], 9)]
+    assert len(cmd_differ) == 110
+    assert len(del_differ) == 23
+    assert sum(1 for i in cmd_differ if sd_a[i] == 0.0) == 73  # selector hold
+    # ... and the delivered difference never exceeds one ladder step's image
+    # through the droop map (commanded step 0.0875 -> delivered 0.0342).
+    assert max(abs(sd_a[i] - sd_b[i]) for i in del_differ) < 0.035
+
+    # ---- THE RUN IS CLOSED LOOP NOW. The pre-fw-v28 form of this test
+    # rested on >0.60 of the run being open loop; it is 0.000395.
     for strat in ("mpc-det", "mpc-sto"):
-        assert open_frac[strat] > 0.60, (strat, open_frac[strat])
-    # THE COMMANDED ranges, as era values and per law -- they DIVERGED at
-    # fw v27 rev 2 while everything physical stayed identical.
+        opened = sum(v for k, v in mode_frac[strat].items()
+                     if k.startswith("open_"))
+        assert opened < 0.01, (strat, opened)
+        assert mode_frac[strat]["closed"] > 0.95, strat
+
+    # ---- THE HYDROGEN. Pinned, then bounded by the mechanism.
+    # 2026-09-08: 0.009018666 -> 0.007982535732 (fw v28 source selector;
+    # 0.0080680 at the intermediate fw v27 rev 2 tree e7ab118).
+    assert float(a.h2_g) == pytest.approx(0.007982535732, rel=1e-6)
+    rel_h2 = (float(b.h2_g) - float(a.h2_g)) / float(a.h2_g)
+    # Billing identity + timing envelope, both computed from the traces so
+    # neither can go stale silently. p_dem is recovered from the traced FC bus
+    # power, which is stage_share * p_dem on a discharge stage.
+    dt, signed, unsigned, total = 0.1, 0.0, 0.0, 0.0
+    for i in range(n):
+        if sd_a[i] > 1e-12:
+            p_dem = float(a.p_fc_bus_w[i]) / sd_a[i]
+        elif sd_b[i] > 1e-12:
+            p_dem = float(b.p_fc_bus_w[i]) / sd_b[i]
+        else:
+            continue
+        signed += (sd_b[i] - sd_a[i]) * p_dem * dt
+        unsigned += abs(sd_b[i] - sd_a[i]) * p_dem * dt
+        total += sd_a[i] * p_dem * dt
+    envelope = unsigned / total
+    assert envelope == pytest.approx(1.74e-3, rel=0.02)
+    assert 0.0 < rel_h2 < envelope                    # the timing bound
+    assert rel_h2 == pytest.approx(signed / total, abs=1e-11)   # the identity
+    assert rel_h2 == pytest.approx(2.9628e-05, rel=1e-3)
+    # dSoC moves with it, in the same seventh digit and no further.
+    assert abs(float(b.delta_soc) - float(a.delta_soc)) \
+        < 1e-4 * abs(float(a.delta_soc))
+
+    # ---- THE COMMANDED ranges, as era values and per law. They diverged at
+    # fw v27 rev 2 and the fw v28 selector narrowed mpc-sto's to one step.
     import mpc_ems as _m
     step = ((_m.SHARE_BAND_DP[1] - _m.SHARE_BAND_DP[0])
             / (_m.SHARE_LEVELS - 1))
-    for strat, steps in (("mpc-det", 4), ("mpc-sto", 2)):
-        lo, hi = seen[strat][0], seen[strat][1]
+    for strat, sc, steps in (("mpc-det", sc_a, 4), ("mpc-sto", sc_b, 1)):
+        lo, hi = min(sc), max(sc)
         assert lo == pytest.approx(0.1500, abs=1e-4), strat
         assert hi - lo == pytest.approx(steps * step, abs=1e-9), (strat, hi)
-    # ... and the shipped floor is satisfiable against that walk, unlike the
-    # 0.12 it replaced.
+    # ... and the shipped floor is satisfiable against the narrower of the
+    # two commanded walks (0.0875), unlike the 0.12 it replaced.
     specs = {s["name"]: s for s in
              rhs.FAULT_EXPECTATIONS["ems-mpc-cross"]["signals_require"]}
     assert specs["mpc_share_moved"]["column_range_at_least"] < 0.0875
