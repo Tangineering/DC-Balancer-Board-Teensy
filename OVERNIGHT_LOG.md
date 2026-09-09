@@ -2031,7 +2031,7 @@ with reversal paths, the primary worktree's branch is the operator's - commit fr
   +43 ppm, codes byte-identical, board -3.2 % vs the walk (calibration). ems-dp-replay's FAIL is a stale floor:
   the H-20 table commands a 0.625 drain rail (board tracks it to 1.4e-4) and now opens a 2.5 s charge window;
   four suite items queued. 24 runs analyzed, zero board defects, F1's gate scored clean on every window so far.
-- **Campaign II second headline (28 of 75, ~13:05): THE MPC's PLAN INVERTED POLARITY UNDER H-20.** ems-ftp75-mpc:
+- **Campaign II second headline (28 of 75): THE MPC's PLAN INVERTED POLARITY UNDER H-20.** ems-ftp75-mpc:
   the modal command moved from 0.15 (campaign I: 149 246 ticks) to 0.85 (112 964; nothing above 0.50 in campaign I,
   nothing below 0.325 now), FC coulombs 54.3 -> 100.9 C (+86 %), pack drain -0.0128 -> -0.0065 SoC; the same two
   stops (125.10 / 332.19 s, to ~15 ms) re-arm FUEL-CELL-ONLY on the 0.85 rung where campaign I re-armed battery-
@@ -2042,7 +2042,7 @@ with reversal paths, the primary worktree's branch is the operator's - commit fr
   legs run at 3.4-4.5 W; ems-sdp at 14.6 W) - a per-leg reference is the design question. FTP-75 5050 / socband:
   the first two FTP-75 bands calibrated (board 1.3-1.5 % under the corrected walk); the Gfc bridge exact / 277 ppm.
   27 analyzed, zero board defects.
-- **Campaign II interim (31 of 75, ~13:50): THE DP BOUND MOVED THE SAME WAY AS THE MPC.** ems-ftp75-dp's regenerated
+- **Campaign II interim (31 of 75): THE DP BOUND MOVED THE SAME WAY AS THE MPC.** ems-ftp75-dp's regenerated
   H-20 table solves to share_min 0.5375 / share_max 0.85 (2358 of 3501 stage rows at 0.85, never 0.15; campaign I's table
   visited 0.15 on 87 608 ticks) with zero charge stages - the polarity inversion is the DP's answer too, so it is the
   convex map's economics, not an MPC defect (the A/B item stands, its expected answer narrowed). Consequence: the
@@ -2052,7 +2052,7 @@ with reversal paths, the primary worktree's branch is the operator's - commit fr
   0.2329 A, dwell <= 11 ms), no new class, FC_CHARGE never HIGH; the firmware ruling item is unchanged. A0 is 66 %
   of ftp75-sdp's Run-window hydrogen and 50 % of ftp75-dp's: on the FTP-75 family the bands discriminate on one
   third to one half of the measured mass. 29 analyzed, zero board defects.
-- **Campaign II interim (36 of 75, ~14:40): F1 CLEAN ON ALL FIVE COMPRESSED-CYCLE LEGS A SECOND CAMPAIGN, zero UV_BUS.**
+- **Campaign II interim (36 of 75): F1 CLEAN ON ALL FIVE COMPRESSED-CYCLE LEGS A SECOND CAMPAIGN, zero UV_BUS.**
   Disarms at 67.205-67.228 s from both arm states (battery-only: FC_BUS re-closed 0.95-1.0 ms later, V_bus flat; FC-
   selected on ftp75c-sdp and twice on ftp75c-mpc: REGEN drops and FC_CHARGE opens on the SAME tick with FC_BUS already
   HIGH, 0 source-less ticks, <= 78 mV); every 171 s window one commander period (19.1-20.0 ms). socband still charges
@@ -2065,7 +2065,7 @@ with reversal paths, the primary worktree's branch is the operator's - commit fr
   selector, so the bound arm is not a bound on this cycle (tool-pass item, not a board finding). One agent's F1 mechanism
   (selection persisting to 171 s) was refuted from the transition list and corrected in the ledger. 34 analyzed, zero
   board defects.
-- **Campaign II third headline (42 of 75, ~15:40): THE 61 s CYCLE INVERTED TOO, AND THE eq-H2 TIE IS BROKEN.** ems-mpc /
+- **Campaign II third headline (42 of 75): THE 61 s CYCLE INVERTED TOO, AND THE eq-H2 TIE IS BROKEN.** ems-mpc /
   -det / -single: the plans' floors moved 0.15 -> 0.325 / 0.4125 / 0.4125 with 0.85 rungs on every leg; -det and -single
   ARM FC-ONLY AT RUN ENTRY (the first entry-arm FC selections on this cycle) and all three RE-ARM FC-only at the 54 s
   coast-down where campaign I re-armed battery-only (instants repeat to <= 12 ms, the SOURCE inverted). -single committed
@@ -2078,7 +2078,7 @@ with reversal paths, the primary worktree's branch is the operator's - commit fr
   braking's 20.6 s re-arm absent) while dwells and periods repeat - point-pinned checks on those legs need windows.
   ems-mpc-cross RE-RUN SURVIVED (196 s, worst gap 13.7 ms vs the 314 ms blackout) - under analysis. 40 analyzed, zero
   board defects.
-- **Campaign II interim (48 of 48 scenario legs analyzed, ~16:40; replays running):** the tail confirmed (joint bound's
+- **Campaign II interim (48 of 48 scenario legs analyzed; replays running):** the tail confirmed (joint bound's
   fourth reading 1.2772 A; clamp-sweep the first leg above the H-20 knee, 63 ticks unscored; charge-to-full's F1 window
   +39.6 ms = two periods with V_bus min 15.7342 V bit-identical; staircase FC cut latency 11.2 ms host jitter). Close-out
   drafts written in the scratchpad (FINAL SUMMARY, HIL_SUMMARY, the addendum paragraph) with placeholders for the replay
