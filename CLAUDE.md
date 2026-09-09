@@ -930,6 +930,21 @@ single-source windows; F7 recorded only. Commits `4e20b76` (queue), `a683e25` (e
   the same window; not applied under HIL_SIM (read and mirrored only); State-98 `'Z'` clears it (PLAN.md 9b).
   Residual for the operator: the write is a blocking flash operation on the flip tick, duration TODO(verify: PJRC).
   Tests 4367 / 175 / 4704, harness 51.
+- **fw v28 REV 4-6 (`5d281d8`, `a09d1ca`, `f0d82e4`, PENDING FLASH - the flash target is REV 6):** rev 4 defers
+  the EEPROM commit off the flip tick (loop-level, `logDrainTick()` discipline, survives a State-99 latch, `'Z'`
+  cancels) and keys the k_d single-source hold on bus TOPOLOGY (exactly one bus switch HIGH -> K_DROOP slewed; both
+  LOW -> hold; flagged cuts freeze). Rev 5 (operator ruling): THE RE-ENTRY RULE - in the closed-before open-loop
+  region an out-of-band command (inclusive 0.15 / 0.85) RE-ARMS the selector with that source and it then behaves
+  as the never-closed selector; in-band commands keep the hold; a safety disarm (raw escape, F1) sets an INHIBIT
+  that only a strictly in-band command clears; **BLG v9** (116 B: selector_bits @112 - bit0 armed, bit1 FC, bit2
+  re-armed, bit3 EEPROM commit pending, bit4 re-arm inhibit; enc_dir_sign i8 @113; enc_dir_flips u8 @114; spare
+  @115; drain chunk 4 records = 464 B). Rev 6 (safety review of rev 5): the inhibit survives a full iteration and
+  any latched cut (the review's path re-armed before a window opened - the campaign-H UV_BUS class); a 250 ms
+  SELECTION-CHANGE dwell (<= 4 commutations/s; an un-dwelled 50 Hz dither would commutate ~32/s and starve the
+  gate release by re-zeroing the filter); the frozen path advances the filter for ANY latched cut so the rule is
+  reachable when the rail command precedes the fall; Idle clears the selector observables. Tests 4503 / 175 /
+  4810, harness 51. Tools follow-ups queued: the governor_model mirror of the topology re-key, the re-entry rule,
+  the dwell and the inhibit; the BLG v9 decoder.
 - **Host-native encoder-defect harness (WORK_QUEUE 7d, `a683e25`):** `tools/encoder_edge_script.py` (mechanical
   law transcribed from `hil_plant_sim.PlantState.step`, equivalence pytest bit-identical; geometry asserted
   against the `.ino`; five defect scripts; manifest; 41 checks) + `test/encoder_defect_harness.cpp` as the

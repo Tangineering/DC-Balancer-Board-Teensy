@@ -120,7 +120,7 @@ firmware round lands).
       9 vs 22 ms) is the one to re-open on. No pin moved; both shapes selectable and era-fingerprinted.
 
 - [ ] 14b. (DONE `5d281d8` fw v28 rev 4: EEPROM commit deferred off the flip tick; k_d single-source hold keyed on bus topology; 4408 / 175 / 4715 / 51. Tools follow-up: governor_model.py must carry the topology re-key.)
-- [x] 15. (DONE `a09d1ca` fw v28 rev 5, with the BLG v9 firmware side; 4474 / 175 / 4781 / 51; safety review running) **fw v28 rev 5 - re-entry rule (operator ruling 2026-09-08 evening):** after the loop has closed and the
+- [x] 15. (DONE `a09d1ca` rev 5 + `f0d82e4` rev 6 after the safety review: inhibit freshness S1, 250 ms selection-change dwell S2, re-arm reachable when the rail command precedes the fall S3, Idle clears S5, BLG bit4 = inhibit S6; 4503 / 175 / 4810 / 51) **fw v28 rev 5 - re-entry rule (operator ruling 2026-09-08 evening):** after the loop has closed and the
       total falls back under the gate the HOLD stays; a commanded share <= 0.15 or >= 0.85 RE-ARMS the selector with
       that source (holds through in-band commands, releases at the gate, same machinery as the never-closed
       selector); in-band commands never trigger single-source on re-entry. After rev 4.
