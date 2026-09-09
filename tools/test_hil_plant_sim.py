@@ -521,25 +521,45 @@ def test_mdac_split_both_live_unequal_codes():
             / (hil.K_DROOP_FW_OHM / 0.25 + hil.K_DROOP_FW_OHM / 0.75
                + 2.0 * hil.DROOP_FIXED_SERIES_OHM))
     assert want == pytest.approx(0.2599039, abs=1e-7)
-    # AUX-ERA CONSEQUENCE 2026-09-03 (`I_AUX_A` 0.15 -> 0.09 A), and it is a
-    # REGIME CHANGE, not a re-pin. The standstill total is now 0.090 A, BELOW
-    # `ASYM_SIMPLE_I_MIN_A` = 0.10 A, so `_apply_simple_asymmetry()` returns
-    # early and the simple engine delivers the commanded code ratio exactly.
-    # The law itself is unchanged and is asserted directly below, at a total
-    # above the floor. Flagged rather than papered over: at 0.15 A the idle
-    # segments of every simple-mode drive cycle were split by the law and they
-    # are now split by the code ratio, a difference of 0.0099 of share at this
-    # code pair.
-    assert total < hil.ASYM_SIMPLE_I_MIN_A
-    assert out["I_fc"] == pytest.approx(total * 0.25, rel=1e-6)
-    assert out["I_batt"] == pytest.approx(total * 0.75, rel=1e-6)
-    # THE LAW, at a total above the floor. Driven through the method rather
-    # than through `step()` because the standstill stimulus above can no longer
-    # reach that regime on its own.
+    # THE FLOOR MOVED BACK UNDER THE IDLE, 2026-09-08 (operator ruling):
+    # `ASYM_SIMPLE_I_MIN_A` 0.10 -> 0.08 A. The 2026-09-03 aux-era note that
+    # stood here recorded the opposite regime - `I_AUX_A` 0.15 -> 0.09 A had put
+    # the standstill total BELOW the old floor, so the split law was skipped at
+    # idle and the engine delivered the bare code ratio 0.25. That was a
+    # discontinuity the aux era created rather than a modelling choice, and the
+    # new floor removes it: 0.090 A is above 0.08 A, so the law applies at idle
+    # again, in whichever asymmetry mode the plant is running.
+    assert total > hil.ASYM_SIMPLE_I_MIN_A
+    # THIS PLANT IS IN THE `off` MODE, where the law has no current-dependent
+    # term (dV0 = 0, rho = 1), so `want` is what it delivers at ANY total - and
+    # the idle now goes through the law rather than round it.
+    # `want` above is the identity at the SCHEDULE FLOOR k_d = K_DROOP_FW_OHM.
+    # This code pair does not carry that scale - the plant reads the LIVE k_d
+    # off the codes (`live_k_droop_from_codes`), and 3000/1000 resolve to a
+    # different one - so the delivered split is the same expression evaluated
+    # at the live scale. The two agree to 0.7 % here; asserting the live one
+    # keeps this an integration check rather than a check on the floor.
+    kd_live = hil.live_k_droop_from_codes(hil.mdac_fraction(mdac_fc),
+                                          hil.mdac_fraction(mdac_bt))
+    want_live = ((kd_live / 0.75 + hil.DROOP_FIXED_SERIES_OHM)
+                 / (kd_live / 0.25 + kd_live / 0.75
+                    + 2.0 * hil.DROOP_FIXED_SERIES_OHM))
+    assert out["I_fc"] == pytest.approx(total * want_live, rel=1e-6)
+    assert out["I_batt"] == pytest.approx(total * (1.0 - want_live), rel=1e-6)
     assert plant._apply_simple_asymmetry(0.25, 0.40) == pytest.approx(
         want, rel=1e-6)
-    assert plant._apply_simple_asymmetry(0.25, hil.ASYM_SIMPLE_I_MIN_A) == (
+    assert plant._apply_simple_asymmetry(0.25, hil.I_AUX_A) == (
         pytest.approx(want, rel=1e-6))
+    assert plant._apply_simple_asymmetry(
+        0.25, hil.ASYM_SIMPLE_I_MIN_A) == pytest.approx(want, rel=1e-6)
+    # ...and in the DEFAULT `measured` mode the same idle now splits by the
+    # FULL law: at 0.090 A the dV0 term is 0.150 V of equivalent offset against
+    # a 0.033 ohm series floor, which moves the share by 0.105. That is the
+    # magnitude the floor change exposes at idle, stated here rather than left
+    # to be discovered in a trace.
+    plant_meas = hil.Plant(asymmetry_mode="measured")
+    assert plant_meas._apply_simple_asymmetry(
+        0.25, hil.I_AUX_A) == pytest.approx(0.3649657, abs=1e-7)
 
 
 def test_mdac_split_only_fc_live():
@@ -10059,18 +10079,26 @@ def test_apply_simple_asymmetry_off_is_the_symmetric_network_in_step():
     plant_on = hil.Plant(asymmetry_mode="measured")
     out_on = plant_on.step(1e-3, obs)
 
-    # AUX-ERA 2026-09-03 (`I_AUX_A` 0.15 -> 0.09 A). This stimulus is a
-    # standstill, so its total is now 0.090 A, BELOW ASYM_SIMPLE_I_MIN_A =
-    # 0.10 A, and BOTH modes return early with the bare code ratio. The
-    # integration claim the test carries - that step() routes the codes through
-    # _apply_simple_asymmetry() and that the two modes differ - is therefore
-    # asserted at a total ABOVE the floor, through the method that step() calls,
-    # while the floor behaviour itself is pinned here.
+    # THE FLOOR MOVED BACK UNDER THE IDLE, 2026-09-08: `ASYM_SIMPLE_I_MIN_A`
+    # 0.10 -> 0.08 A, so the 0.090 A standstill total is ABOVE it again and the
+    # law applies at idle in both modes. The 2026-09-03 aux-era note that stood
+    # here recorded the opposite: both modes returned early with the bare code
+    # ratio, and the test had to assert the integration claim at a synthetic
+    # total instead. It can now be asserted on the stimulus itself, which is
+    # what the test was for.
     assert total == pytest.approx(hil.I_AUX_A, abs=1e-6)
-    assert total < hil.ASYM_SIMPLE_I_MIN_A
-    assert out_off["I_fc"] == pytest.approx(total * 0.25, rel=1e-6)
-    assert out_on["I_fc"] == pytest.approx(out_off["I_fc"], rel=1e-9), (
-        "below the floor the two asymmetry modes must be identical")
+    assert total > hil.ASYM_SIMPLE_I_MIN_A
+    # `_static_law`'s default scale is the schedule FLOOR; `step()` reads the
+    # LIVE k_d off the code pair, so the expectation is the same law evaluated
+    # at that scale.
+    kd_live = hil.live_k_droop_from_codes(hil.mdac_fraction(mdac_fc),
+                                          hil.mdac_fraction(mdac_bt))
+    assert out_off["I_fc"] == pytest.approx(
+        total * _static_law(0.25, total, dv0=0.0, rho=1.0, k_d=kd_live),
+        rel=1e-6)
+    assert out_on["I_fc"] != pytest.approx(out_off["I_fc"], rel=1e-6), (
+        "above the floor the two asymmetry modes must differ at idle; that "
+        "difference is the whole point of moving the floor under it")
 
     # RE-PINNED 2026-09-03: 0.25 -> the symmetric two-branch divider at the
     # code-ratio share 0.25 (see test_mdac_split_both_live_unequal_codes).
@@ -11044,8 +11072,11 @@ def test_mpc_main_resolves_dv0_off_the_engines_not_off_the_constant():
     ASYM_DV0_V on a `--noise` run would model an asymmetry the plant nets out,
     so main() must resolve it through the engines it just built."""
     src = open(os.path.join(HERE, "hil_plant_sim.py"), encoding="utf-8").read()
-    assert ("dv0_v=resolve_asymmetry_dv0_v(asymmetry_mode, electrical,\n"
-            "                                                  plant)") in src
+    # 2026-09-08: the planner takes the LAW's dV0, not the injected one, and it
+    # is resolved off the engines exactly as before -- plus the droop mode, so
+    # `--droop measured` is resolved rather than warned about.
+    assert ("dv0_v=resolve_governor_dv0_v(asymmetry_mode, electrical,\n"
+            "                                                 plant, droop_mode)") in src
 
 
 def test_mpc_sidecar_records_the_dv0_it_was_built_with():
@@ -13218,27 +13249,86 @@ def test_the_split_law_is_resolved_off_the_engines_like_dv0_is(monkeypatch):
     #    engines. Asserted on the source, as the sibling dv0 test does, because
     #    the branch itself needs a full run to reach.
     src = open(os.path.join(HERE, "hil_plant_sim.py"), encoding="utf-8").read()
-    assert ("dv0_v=resolve_asymmetry_dv0_v(asymmetry_mode, electrical,\n"
-            "                                                  plant),\n"
+    assert ("dv0_v=resolve_governor_dv0_v(asymmetry_mode, electrical,\n"
+            "                                                 plant, droop_mode),\n"
             "                    split=resolve_asymmetry_split(asymmetry_mode, "
             "electrical,\n"
-            "                                                  plant)") in src
+            "                                                  plant, droop_mode)") in src
+    # 4. THE DROOP MODE IS PART OF THE LAW (2026-09-08 operator ruling). The
+    #    pairing is `R_f/s` with `dV0_injected/s`, so the two resolvers must
+    #    move together and must be inert under `design`.
+    assert hil.resolve_asymmetry_split("measured", droop_mode="design")[1] == (
+        hil.DROOP_FIXED_SERIES_OHM)
+    assert hil.resolve_governor_dv0_v("measured", droop_mode="design") == (
+        hil.resolve_asymmetry_dv0_v("measured"))
+    s_meas = hil.DROOP_SCALE["measured"]
+    assert hil.resolve_asymmetry_split(
+        "measured", droop_mode="measured")[1] == pytest.approx(
+            hil.DROOP_FIXED_SERIES_OHM / s_meas)
+    #    ...and the dV0 divisor is the SOURCE's, not the run's: only a hi-fi
+    #    engine carries an already-scaled ΔV₀, so the mode-only fallback
+    #    returns the raw fitted constant, which IS the law's value.
+    assert hil.resolve_governor_dv0_v(
+        "measured", droop_mode="measured") == pytest.approx(hil.ASYM_DV0_V)
+
+    class _Elec:
+        droop_scale = s_meas
+        asym_dv0_v = s_meas * hil.ASYM_DV0_V
+        asym_droop_scale_fc = hil.ASYM_DROOP_SCALE_FC
+        asym_droop_scale_bt = hil.ASYM_DROOP_SCALE_BT
+
+    assert hil.resolve_governor_dv0_v(
+        "measured", _Elec(), droop_mode="measured") == pytest.approx(
+            hil.ASYM_DV0_V)
+    #    ...and the scaled pair reproduces the ENGINE's own law, which is the
+    #    property the ruling turns on. The engine builds s*rho*k_d/r + R_f and
+    #    injects s*dV0; the model carries the design k_d.
+    import governor_model as _gm
+    rho = hil.ASYM_DROOP_SCALE_FC / hil.ASYM_DROOP_SCALE_BT
+    kd = _gm.GOV_CONST["K_DROOP"]
+
+    def _alpha(r, i_tot, kd_, rf_, dv0_):
+        r_fc = rho * kd_ / r + rf_
+        r_bt = kd_ / (1.0 - r) + rf_
+        return (dv0_ / i_tot + r_bt) / (r_fc + r_bt)
+
+    worst = 0.0
+    for i10 in range(3, 41):
+        i_tot = 0.1 * i10
+        for r100 in range(5, 96):
+            r = r100 / 100.0
+            engine = _alpha(r, i_tot, s_meas * kd, hil.DROOP_FIXED_SERIES_OHM,
+                            s_meas * hil.ASYM_DV0_V)
+            model = _alpha(r, i_tot, kd,
+                           hil.resolve_asymmetry_split(
+                               "measured", droop_mode="measured")[1],
+                           hil.resolve_governor_dv0_v(
+                               "measured", droop_mode="measured"))
+            worst = max(worst, abs(engine - model))
+    assert worst < 1e-12, (
+        "the shipped --droop measured pairing does not reproduce the engine's "
+        "split law: max |d_alpha| = %.3e" % worst)
 
 
+# RETIRED 2026-09-08 (operator ruling): the offline split law is resolved for
+# `--droop measured` rather than warned about, so what the run must print is a
+# NOTE naming the resolution, and the old WARNING must be gone.
 _SPLIT_DROOP_WARN = ("WARNING: the OFFLINE governor split law")
+_SPLIT_DROOP_NOTE = ("NOTE: the offline governor split law is resolved for")
 
 
 def test_droop_measured_warns_that_the_offline_split_law_is_a_design_model(
         tmp_path, monkeypatch, capsys):
-    """M3 (2026-09-03 fix round). Under `--droop measured` the engine realizes
-    DROOP_SCALE*k_d and scales the injected dV0 by the same factor, while the
-    0.033 ohm series floor stays unscaled and the offline `GovernorModel`
-    carries the FIRMWARE's design k_d. The engine then reads alpha 0.2571 at
-    r 0.20, 1.5 A where the model reads 0.2208 -- 16 percent relative.
+    """M3, INVERTED 2026-09-08 rather than deleted.
 
-    The scaling is NOT shipped (it would give `dv0_v` two meanings; see the
-    design note section 6), so the run must SAY SO. Nothing else in this round
-    protects a `--droop measured` walk or MPC comparison."""
+    The 2026-09-03 round could not resolve `--droop measured` for the offline
+    law (it would have given `dv0_v` two meanings), so the run WARNED: the
+    engine read alpha 0.2571 at r 0.20, 1.5 A where the model read 0.2208, 16
+    percent relative. The operator ruling ships the resolution as a second
+    quantity with its own owner, so the warning has no subject any more. What
+    the run must print instead is a NOTE naming the two scaled law parameters,
+    and the old warning must be GONE -- a run that still warned would be
+    telling an operator to distrust a number that is now exact."""
     fake_dir = tmp_path / "HIL Results"
     monkeypatch.setattr(hil, "HIL_RESULTS_DIR", str(fake_dir))
     rc = hil.main(["--teensy-ip", "127.0.0.1", "--port", "58971",
@@ -13247,11 +13337,13 @@ def test_droop_measured_warns_that_the_offline_split_law_is_a_design_model(
                    "--duration", "0.02", "--no-csv"])
     assert rc == 0
     out = capsys.readouterr().out
-    assert _SPLIT_DROOP_WARN in out
+    assert _SPLIT_DROOP_WARN not in out, (
+        "the retired --droop measured split-law warning is still printed")
+    assert _SPLIT_DROOP_NOTE in out
     assert "governor_split_law_20260903.md" in out
     # ASCII only -- this stream is cp1252 on the bench PC's console.
     for line in out.splitlines():
-        if _SPLIT_DROOP_WARN in line:
+        if _SPLIT_DROOP_NOTE in line:
             line.encode("ascii")
 
 

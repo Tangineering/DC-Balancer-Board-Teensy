@@ -2131,7 +2131,7 @@ class Planner:
                        handoff=None, active=None, pre_ss=None,
                        batt_only_seed=None, filt_seed=None, pre_bt=None,
                        pre_bt_release=None, pre_fc_release=None,
-                       selector_fc_seed=False):
+                       selector_fc_seed=False, re_arm_ok=False):
         """Per (stage, ladder point): delivered share, FC power, BT power, feasibility.
 
         This is the whole search model.  It is built ONCE per decision, so the
@@ -2227,12 +2227,29 @@ class Planner:
         ever true inside a profile's opening seconds, before the EMA crosses the
         closed-loop gate.
 
-        ⚠️ THE SINGLE-SOURCE COLUMNS ARE NOT MASKED.  An out-of-band setpoint
-        DISARMS the battery-only start permanently (rule (c) of the arm: one
-        owner per setpoint), so a column that commands 0.0 or 1.0 is not
-        subject to it, and whether such a command can be executed while FC_BUS
-        is already open is `_ss_admissible()`'s question - it rolls the real
-        `GovernorModel` from the shadow state and sees the open switch."""
+        ``re_arm_ok`` is the fw v28 REV 5 re-entry rule, per column.  It is
+        true when the shadow governor is in the CLOSED-BEFORE region and under
+        the gate with no refusal standing - `closed_loop_run`, not
+        `closed_loop_mode`, filtered total at or under `2*I_min`, no re-arm
+        inhibit and no charge window - which is exactly the state in which a
+        commanded share ON OR OUTSIDE A RAIL RE-ARMS the selector with that
+        source.  A column commanding such a share is then single-source for as
+        long as the mask says, and takes its selection from its own command;
+        an IN-BAND column is unaffected, because an in-band command in that
+        region never triggers single-source.  ⚠️ WITH ``re_arm_ok`` FALSE THIS
+        TABLE IS BIT-FOR-BIT THE PRE-REV-5 ONE, which is why every caller that
+        has no shadow state to read it from keeps the old default.
+
+        ⚠️ THE SINGLE-SOURCE COLUMNS' MASKING CHANGED AT fw v28.  Through
+        fw v27 rev 2 an out-of-band setpoint DISARMED the battery-only start
+        permanently (rule (c): one owner per setpoint), so a column commanding
+        0.0 or 1.0 was never subject to it.  At fw v28 rule (c) is GONE - an
+        out-of-band command is an INPUT that selects a source - and at rev 5
+        such a command in the closed-before region re-arms the selector
+        outright, which is what ``re_arm_ok`` models.  Whether the command can
+        be EXECUTED while FC_BUS is already open remains `_ss_admissible()`'s
+        question: it rolls the real `GovernorModel` from the shadow state and
+        sees the open switch."""
         ff_enabled = (sp_acted is not None and run_seed is not None)
         handoff = handoff or {}
         # ``active`` restricts the table to the ladder points this decision's
@@ -2265,7 +2282,7 @@ class Planner:
         _mask_cache = {}
 
         def _cut_mask_for(sel_fc):
-            if not batt_only_seed:
+            if not (batt_only_seed or re_arm_ok):
                 return None
             key = bool(sel_fc)
             if key not in _mask_cache:
@@ -2359,7 +2376,15 @@ class Planner:
             # so `si == 0` selects the battery and the top rung selects the
             # fuel cell whether or not a single-source column was enumerated.
             sel_fc = selector_choice(s, selector_fc_seed)
-            cut_mask = _cut_mask_for(sel_fc)
+            # fw v28 rev 5: the arm is PER COLUMN once the re-entry rule is
+            # live.  A standing arm (``batt_only_seed``) covers every column,
+            # exactly as before; a re-entry arms only the columns whose own
+            # command sits on or outside a rail, because an in-band command in
+            # the closed-before region leaves the hold untouched.  The rails
+            # are INCLUSIVE, matching the firmware and `selector_choice()`.
+            col_armed = bool(batt_only_seed) or (
+                re_arm_ok and (s <= DROOP_R_MIN or s >= DROOP_R_MAX))
+            cut_mask = _cut_mask_for(sel_fc) if col_armed else None
             cut_src = cut_src_fc if sel_fc else cut_src_bt
             cut_d = 1.0 if sel_fc else 0.0
             cut_lim = I_FC_MAX_A if sel_fc else I_BT_MAX_A
@@ -2640,7 +2665,7 @@ class Planner:
               handoff=None, active=None, ss_modes=(), pre_ss=None,
               share_step_guard_r=None, batt_only_seed=None, filt_seed=None,
               pre_bt=None, pre_bt_release=None, pre_fc_release=None,
-              selector_fc_seed=False):
+              selector_fc_seed=False, re_arm_ok=False):
         """Search the candidate set.  Returns a ``Decision``.
 
         ``charge_options`` is a list of per-stage boolean lists, the first of
@@ -2758,7 +2783,8 @@ class Planner:
                                        filt_seed=filt_seed, pre_bt=pre_bt,
                                        pre_bt_release=pre_bt_release,
                                        pre_fc_release=pre_fc_release,
-                                       selector_fc_seed=selector_fc_seed)
+                                       selector_fc_seed=selector_fc_seed,
+                                       re_arm_ok=re_arm_ok)
             if oi == 0:
                 tabs0 = tabs
             for block_idx in order:
@@ -3029,6 +3055,30 @@ class ShadowGovernor:
         standing.  On the 61 s Gate-1 fixture that one decision was the whole
         residual (0.5 of error, 8.3e-03 of a 60-decision mean)."""
         return bool(self.model.state.batt_only_armed)
+
+    @property
+    def re_arm_ok(self):
+        """fw v28 rev 5 - is the shadow in the CLOSED-BEFORE region, so that a
+        commanded rail would RE-ARM the selector?
+
+        The five conditions of the firmware's re-entry block (.ino:12065),
+        minus the fifth, which is the COLUMN's command and therefore belongs to
+        the delivery table rather than to the shadow: not already armed, the
+        loop has closed this profile, it is currently in the open-loop region,
+        no re-arm inhibit stands, and the filtered total is AT OR UNDER the
+        gate.  The charge-window term is omitted here for the same reason
+        `batt_only_armed` omits the suppression: it is a per-STAGE property and
+        the table's own charge mask applies it.
+
+        Read from the committed shadow state at the decision instant, exactly
+        as `batt_only_armed`, `sp_acted` and `filt_seed` are."""
+        st = self.model.state
+        return bool(not st.batt_only_armed
+                    and st.closed_loop_run
+                    and not st.closed_loop_mode
+                    and not st.selector_re_arm_inhibit
+                    and st.filt_total <= 2.0 * gov_mod.GOV_CONST[
+                        "SHARE_MINORITY_I_MIN_A"])
 
     @property
     def batt_only_active(self):
@@ -4372,6 +4422,12 @@ class MpcStrategy:
                                  # applies it (see `batt_only_armed`).
                                  batt_only_seed=self.shadow.batt_only_armed,
                                  selector_fc_seed=self.shadow.selector_fc,
+                                 # fw v28 rev 5: the closed-before region, read
+                                 # from the same committed shadow state. A rail
+                                 # command here RE-ARMS the selector, so the
+                                 # rail columns are single-source and the
+                                 # in-band ones are not.
+                                 re_arm_ok=self.shadow.re_arm_ok,
                                  pre_fc_release=pre_fc_release,
                                  filt_seed=self.shadow.filt_total,
                                  # The BT-only demand where this leg has one.

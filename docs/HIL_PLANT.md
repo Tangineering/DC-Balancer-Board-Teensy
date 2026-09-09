@@ -1326,6 +1326,38 @@ The plant needs no new observation-frame field to follow the schedule: the paral
 two commanded droop resistances is exactly `k_d`, so the live scale is recoverable from the
 code pair alone (§4.4).
 
+**The simple engine's current floor, `ASYM_SIMPLE_I_MIN_A`: 0.10 → 0.08 A (2026-09-08,
+operator ruling).** The ΔV₀ term diverges as `I_tot` → 0, so the simple engine skips the
+whole law below this floor and delivers the commanded code ratio. `I_AUX_A` moved 0.15 →
+0.09 A on 2026-09-03, which put the engine's **standstill total at 0.090 A, below the old
+0.10 A floor** — so every simple-mode idle segment was split by the bare code ratio (0.25 at
+the reference code pair) where the law gives 0.2599 with the asymmetry off. That was a
+discontinuity the aux era created, not a modelling choice, and the new floor removes it.
+
+Two facts about the change, both measured rather than asserted:
+
+1. **The scope is the SIMPLE engine only.** The floor guards
+   `Plant._apply_simple_asymmetry()`. The hi-fi engine solves the network directly and has
+   no such floor, so no hi-fi anchor, DP loss map or replay record moves.
+2. **The solve is well conditioned at the new floor — better than at a full load, not
+   worse.** The closed-form inverse in `governor_model._ratio_for_delivered()` takes its
+   physical root as `C/q` with `q = −(B + sign(B)·√D)/2`, a pairing chosen because the
+   textbook form cancels catastrophically as the leading coefficient `A` → 0. `A` = −P
+   with `P = (2α−1)·R_f − ΔV₀/I_tot`, so **`A` grows as the total falls**: over
+   `r` ∈ [0.05, 0.95] at the shipped parameters, |A| is 0.138–0.196 at 0.08 A and
+   0.119–0.178 at 0.09 A, against 0.004–0.043 at 1.0 A. The discriminant stays far from
+   zero (min **0.0254** at 0.08 A, **0.0311** at 0.09 A, against 0.0835 at 1.0 A), the
+   round trip α(r) → r is exact to machine precision (residual ≤ 3.3 × 10⁻¹⁶), and the
+   forward slope dα/dr stays bounded in **[0.53, 1.66]**. The near-degenerate case the
+   `C/q` pairing exists to survive is a HIGH-current case.
+
+⚠️ **What it changes at idle, stated because it is large.** In the default `measured` mode
+the ΔV₀ term at 0.090 A is 0.150 V of equivalent offset against a 0.033 Ω series floor, so
+the reference code pair's idle split moves **0.25 → 0.3650**, and in `off` mode **0.25 →
+0.2581** at the live `k_d` those codes carry. `ASYM_SIMPLE_I_MIN_A` is a module-level
+constant, so `constants_hash` moves with this change and a pre-2026-09-08 simple-engine
+sidecar is **not comparable** with a later one even at an otherwise identical configuration.
+
 **Sign, stated once.** ΔV₀ > 0 means the FC chain regulates high and over-delivers current
 at every load. The offsets are applied **antisymmetrically** about `V0_NOLOAD`, so the mean
 no-load voltage of the two chains is unchanged and the bus-level baselines move as little

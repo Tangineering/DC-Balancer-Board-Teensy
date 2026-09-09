@@ -137,6 +137,8 @@ CSV_HEADER_V7 = ("t_us,share_sp,share_act,v_sp,v_act,I_fc,I_batt,gFC,gBT,"
                   "share_gov_ceiling")
 RECORD_FMT_V8 = "<I14fHBBBB2xffiIIIIIHHHHf"
 RECORD_SIZE_V8 = 112
+RECORD_FMT_V9 = "<I14fHBBBB2xffiIIIIIHHHHfBbBB"
+RECORD_SIZE_V9 = 116
 CSV_HEADER_V8 = ("t_us,share_sp,share_act,v_sp,v_act,I_fc,I_batt,gFC,gBT,"
                  "V_bus,I_cmd,V_fc,V_batt,V_chg,V_rgn,u_unsat,drive_x0,"
                  "encoder_pos,enc_period_ref_us,enc_multi_pitch_count,"
@@ -338,6 +340,42 @@ def pack_record_v7(t_us, share_sp=0.5, share_act=0.5, v_sp=0.0, v_act=0.0,
                        enc_duty_a_ewma & 0xFFFF,
                        enc_duty_b_ewma & 0xFFFF)
     assert len(rec) == RECORD_SIZE_V7
+    return rec
+
+
+CSV_HEADER_V9 = ("t_us,share_sp,share_act,v_sp,v_act,I_fc,I_batt,gFC,gBT,"
+                 "V_bus,I_cmd,V_fc,V_batt,V_chg,V_rgn,u_unsat,drive_x0,"
+                 "encoder_pos,enc_period_ref_us,enc_multi_pitch_count,"
+                 "enc_spurious_drop_count,enc_edge_count_a,enc_edge_count_b,"
+                 "enc_phase_ewma,enc_duty_a_ewma,enc_duty_b_ewma,"
+                 "g_clamp_count,k_d,selector_bits,enc_dir_sign,enc_dir_flips,"
+                 "fault_flags,ps_phase,dc_phase,trap_phase,flags,"
+                 "share_gov_ceiling")
+
+
+def pack_header_v9(profile_type=1, start_millis=0, start_micros=0,
+                   k_droop_x1000=300, fw_version=28, param_flags=0x03,
+                   profile_amp=6.0, profile_b=0.15):
+    """v9 header: byte-identical to v4 through v8 except record_size=116."""
+    hdr = struct.pack(HEADER_FMT, MAGIC, 9, RECORD_SIZE_V9, profile_type,
+                      param_flags, start_millis, start_micros, k_droop_x1000)
+    hdr += struct.pack("<H", fw_version)
+    hdr += b"\x00" * (HEADER_SIZE - len(hdr))
+    hdr = bytearray(hdr)
+    struct.pack_into("<ff", hdr, 20, profile_amp, profile_b)
+    assert len(hdr) == HEADER_SIZE
+    return bytes(hdr)
+
+
+def pack_record_v9(t_us, selector_bits=0, enc_dir_sign=1, enc_dir_flips=0,
+                   spare=0, **kw):
+    """The v8 record with the four fw v28 rev 5 bytes appended. Built by
+    re-packing the v8 body so a divergence between the two layouts in this
+    test file is impossible by construction."""
+    body = pack_record_v8(t_us, **kw)
+    rec = body + struct.pack("<BbBB", selector_bits & 0xFF, enc_dir_sign,
+                             enc_dir_flips & 0xFF, spare & 0xFF)
+    assert len(rec) == RECORD_SIZE_V9
     return rec
 
 
@@ -1206,6 +1244,233 @@ def test_v7_unchanged_by_the_v8_bump(tmpdir):
           repr(res.header))
 
 
+def test_v9_header_and_record(tmpdir):
+    """fw v28 rev 5 v9 header + record decode: record_size=116, version=9,
+    the v4 header path carried through unmodified, the three new fields at
+    their documented CSV positions (indices 28/29/30, right after k_d and
+    still BEFORE fault_flags), every established v8 column index unchanged,
+    and the derived `share_gov_ceiling` helper still last -- 37 columns.
+
+    The `spare` byte at record offset 115 is reserved and is deliberately
+    NOT a column, so a 37-column row is the whole record."""
+    sys.path.insert(0, str(HERE))
+    import decode_benchlog as db
+
+    n = 30
+    data = pack_header_v9(profile_type=8, fw_version=28, param_flags=0x03,
+                          profile_amp=2.0, profile_b=0.30)
+    for i in range(n):
+        data += pack_record_v9(t_us=i * 1000, encoder_pos=1000 + i * 2,
+                               enc_period_ref_us=4200,
+                               enc_multi_pitch_count=7,
+                               enc_spurious_drop_count=12,
+                               enc_edge_count_a=100_000 + i * 4,
+                               enc_edge_count_b=100_150 + i * 4,
+                               enc_phase_ewma=64, enc_duty_a_ewma=128,
+                               enc_duty_b_ewma=131,
+                               g_clamp_count=i, k_d=0.5,
+                               selector_bits=0x05, enc_dir_sign=1,
+                               enc_dir_flips=i)
+    data += pack_trailer(records_written=n, dropped=0, close_reason=1,
+                         record_size=RECORD_SIZE_V9)
+
+    res = db.decode_blg(data)
+    check("v9: header version=9", res.header["version"] == 9,
+          repr(res.header))
+    check("v9: header record_size=116", res.header["record_size"] == 116,
+          repr(res.header))
+    check("v9: fw_version=28 carried through the v4 header path",
+          res.header["fw_version"] == 28, repr(res.header))
+    check("v9: profile_amp/profile_b decoded (v4 header path unmodified)",
+          abs(res.header["profile_amp"] - 2.0) < 1e-5
+          and abs(res.header["profile_b"] - 0.30) < 1e-5, repr(res.header))
+    check("v9: csv_header is the 37-column v9 header",
+          res.csv_header == CSV_HEADER_V9, res.csv_header)
+    check("v9: emits all records", len(res.csv_rows) == n,
+          f"csv data rows={len(res.csv_rows)}, expected {n}")
+
+    f = res.csv_rows[0].split(",")
+    check("v9: row has 37 fields", len(f) == 37, repr(f))
+    check("v9: v6/v7 fields keep their positions (encoder_pos at 17, "
+          "enc_duty_b_ewma at 25)",
+          f[17] == "1000" and f[25] == "0.51171875", repr(f[17:26]))
+    check("v9: the v8 pair keeps its positions (g_clamp_count 26, k_d 27)",
+          f[26] == "0" and f[27] == "0.5", repr(f[26:28]))
+    check("v9: selector_bits at index 28", f[28] == "5", f[28])
+    check("v9: enc_dir_sign at index 29", f[29] == "1", f[29])
+    check("v9: enc_dir_flips at index 30", f[30] == "0", f[30])
+    check("v9: fault_flags follows the three new fields, at index 31",
+          f[31] == "0", f[31])
+    check("v9: share_gov_ceiling is still the LAST column",
+          f[36] == "0", f[36])
+
+    last = res.csv_rows[-1].split(",")
+    check("v9: enc_dir_flips advances across records (boot-monotonic)",
+          last[30] == str(n - 1), last[30])
+
+    path = write_blg(tmpdir, "v9.BLG", data)
+    rc, out, err = run_decoder(path)
+    check("v9 CLI: exits 0", rc == 0, f"rc={rc} stderr={err}")
+    check("v9 CLI: version=9 reported", "version=9" in err, err)
+    check("v9 CLI: records read == n", f"records read: {n}" in err, err)
+    check("v9 CLI: trailer found (close_reason=complete)",
+          "close_reason=complete" in err, err)
+
+
+def test_v9_field_contract(tmpdir):
+    """The v9 field contract, one check per class.
+
+    enc_dir_sign is SIGNED on the wire: a run whose sense the fw v28 rev 2
+    runaway detector flipped must decode as -1, NOT 255. That is the single
+    most consequential byte in the append -- a decoder that reads it
+    unsigned would silently mis-explain every velocity trace in the run.
+    selector_bits is a LEVEL bit field, and all four defined bits must
+    survive verbatim. enc_dir_flips is a SATURATING counter, so 255 decodes
+    verbatim with no unwrap transform."""
+    sys.path.insert(0, str(HERE))
+    import decode_benchlog as db
+
+    data = pack_header_v9(fw_version=28)
+    data += pack_record_v9(t_us=0, selector_bits=0x0F, enc_dir_sign=-1,
+                           enc_dir_flips=255, spare=0, flags=0x80)
+    data += pack_record_v9(t_us=1000, selector_bits=0x00, enc_dir_sign=1,
+                           enc_dir_flips=255, spare=0, flags=0x00)
+    data += pack_trailer(records_written=2, dropped=0, close_reason=1,
+                         record_size=RECORD_SIZE_V9)
+
+    res = db.decode_blg(data)
+    f0 = res.csv_rows[0].split(",")
+    f1 = res.csv_rows[1].split(",")
+    check("v9: a flipped encoder sense decodes as -1, not 255",
+          f0[29] == "-1", f0[29])
+    check("v9: an unflipped sense decodes as +1", f1[29] == "1", f1[29])
+    check("v9: all four defined selector bits survive verbatim",
+          f0[28] == "15" and f1[28] == "0", repr([f0[28], f1[28]]))
+    # fw v28 rev 6 took bit 4 out of the reserved range. It must survive too,
+    # and taking it must NOT have moved the record size or any offset.
+    assert db.SELECTOR_RE_ARM_INHIBIT == 0x10
+    data_i = pack_header_v9(fw_version=28)
+    data_i += pack_record_v9(t_us=0, selector_bits=0x1F, enc_dir_sign=1,
+                             enc_dir_flips=0)
+    data_i += pack_trailer(records_written=1, dropped=0, close_reason=1,
+                           record_size=RECORD_SIZE_V9)
+    res_i = db.decode_blg(data_i)
+    fi = res_i.csv_rows[0].split(",")
+    check("v9: the rev 6 re-arm-inhibit bit decodes with the other four",
+          fi[28] == "31", fi[28])
+    check("v9: taking bit 4 did not move the record size",
+          res_i.header["record_size"] == 116, repr(res_i.header))
+    check("v9: taking bit 4 did not move any column",
+          len(fi) == 37 and fi[31] == "0", repr(fi))
+    check("v9: saturated enc_dir_flips decodes as 255 verbatim",
+          f0[30] == "255" and f1[30] == "255", repr([f0[30], f1[30]]))
+    check("v9: flags bit7 still sets share_gov_ceiling on a v9 row",
+          f0[36] == "1" and f1[36] == "0", repr([f0[36], f1[36]]))
+
+
+def test_v9_record_size_mismatch(tmpdir):
+    """A v9 header claiming the v8 record_size (112, self-inconsistent with
+    version=9) is a hard error, mirroring test_v8_record_size_mismatch. This
+    is the property section 30.4 of the design record relies on: a v9 log
+    read by a v8-only decoder fails LOUDLY as a stride mismatch, because
+    every decoder reads the stride from the header rather than assuming
+    it."""
+    data = bytearray(pack_header_v9())
+    data[5] = RECORD_SIZE_V8  # corrupt record_size byte: 116 -> 112
+    data = bytes(data) + pack_trailer(records_written=0, dropped=0,
+                                      close_reason=1,
+                                      record_size=RECORD_SIZE_V9)
+
+    path = write_blg(tmpdir, "v9_badsize.BLG", data)
+    rc, out, err = run_decoder(path)
+    check("v9 bad record_size: decoder exits nonzero", rc != 0, f"rc={rc}")
+    check("v9 bad record_size: error names both values",
+          "unexpected record_size 112" in err and "expected 116" in err, err)
+
+
+def test_v9_is_not_block_aligned(tmpdir):
+    """116 DOES NOT DIVIDE 512. Format v8's record size happened to, and a
+    decoder written against that coincidence would walk a v9 file wrong.
+    Decode a record count whose byte total is not a multiple of 512, from a
+    file whose length is likewise not one, and check every record is
+    recovered -- the decoder must walk the stream by the header's stride and
+    never by a card block."""
+    sys.path.insert(0, str(HERE))
+    import decode_benchlog as db
+
+    check("v9: 116 is not a divisor of 512 (the premise of this test)",
+          512 % RECORD_SIZE_V9 != 0, RECORD_SIZE_V9)
+
+    n = 37  # 37 * 116 = 4292 bytes, not a multiple of 512
+    data = pack_header_v9(fw_version=28)
+    for i in range(n):
+        data += pack_record_v9(t_us=i * 1000, enc_dir_flips=i)
+    data += pack_trailer(records_written=n, dropped=0, close_reason=1,
+                         record_size=RECORD_SIZE_V9)
+    check("v9: the fixture length is not a multiple of 512 either",
+          len(data) % 512 != 0, len(data))
+
+    res = db.decode_blg(data)
+    check("v9: every record recovered from an unaligned stream",
+          len(res.csv_rows) == n, len(res.csv_rows))
+    check("v9: the last record is intact (stride never drifted)",
+          res.csv_rows[-1].split(",")[30] == str(n - 1),
+          res.csv_rows[-1])
+
+
+def test_v8_unchanged_by_the_v9_bump(tmpdir):
+    """A v8 file must decode EXACTLY as it did before format v9 existed:
+    same 34-column header, same row width, same trailing
+    `share_gov_ceiling` helper, fault_flags still at index 28. Pinned
+    separately for the same reason test_v7_unchanged_by_the_v8_bump is: the
+    v9 branch touches the shared row builder, where an over-broad
+    `version in (...)` edit would silently widen every older layout."""
+    sys.path.insert(0, str(HERE))
+    import decode_benchlog as db
+
+    data = pack_header_v8(fw_version=27)
+    data += pack_record_v8(t_us=0, g_clamp_count=3, k_d=0.5, flags=0x80)
+    data += pack_trailer(records_written=1, dropped=0, close_reason=1,
+                         record_size=RECORD_SIZE_V8)
+
+    res = db.decode_blg(data)
+    f = res.csv_rows[0].split(",")
+    check("v8 after the v9 bump: csv_header is still the 34-column v8 header",
+          res.csv_header == CSV_HEADER_V8, res.csv_header)
+    check("v8 after the v9 bump: the row is still 34 fields wide",
+          len(f) == 34, repr(f))
+    check("v8 after the v9 bump: no selector/encoder-sense columns leaked in "
+          "(g_clamp_count 26, k_d 27, fault_flags 28)",
+          f[26] == "3" and f[27] == "0.5" and f[28] == "0", repr(f[26:29]))
+    check("v8 after the v9 bump: share_gov_ceiling is still the last column",
+          f[33] == "1", f[33])
+    check("v8 record size is still 112", res.header["record_size"] == 112,
+          repr(res.header))
+
+
+def test_v7_unchanged_by_the_v9_bump(tmpdir):
+    """And the same for v7, two bumps back -- the layout with the narrowest
+    row that still carries the derived helper column."""
+    sys.path.insert(0, str(HERE))
+    import decode_benchlog as db
+
+    data = pack_header_v7(fw_version=26)
+    data += pack_record_v7(t_us=0, flags=0x80)
+    data += pack_trailer(records_written=1, dropped=0, close_reason=1,
+                         record_size=RECORD_SIZE_V7)
+
+    res = db.decode_blg(data)
+    f = res.csv_rows[0].split(",")
+    check("v7 after the v9 bump: csv_header is still the 32-column v7 header",
+          res.csv_header == CSV_HEADER_V7, res.csv_header)
+    check("v7 after the v9 bump: the row is still 32 fields wide",
+          len(f) == 32, repr(f))
+    check("v7 after the v9 bump: fault_flags is still at index 26",
+          f[26] == "0", repr(f[24:28]))
+    check("v7 record size is still 106", res.header["record_size"] == 106,
+          repr(res.header))
+
+
 def test_hil_build_flag(tmpdir):
     """(z) flags bit6 (0x40, fw v21 HIL_SIM build) is surfaced as
     header["hil_build"] -- true if ANY record has the bit set, false if
@@ -1512,6 +1777,12 @@ def main():
         test_v8_saturating_count_kd_level_and_ceiling_bit(tmpdir)
         test_v8_record_size_mismatch(tmpdir)
         test_v7_unchanged_by_the_v8_bump(tmpdir)
+        test_v9_header_and_record(tmpdir)
+        test_v9_field_contract(tmpdir)
+        test_v9_record_size_mismatch(tmpdir)
+        test_v9_is_not_block_aligned(tmpdir)
+        test_v8_unchanged_by_the_v9_bump(tmpdir)
+        test_v7_unchanged_by_the_v9_bump(tmpdir)
         test_hil_build_flag(tmpdir)
         test_share_ceiling_column(tmpdir)
         test_v6_regression(tmpdir)

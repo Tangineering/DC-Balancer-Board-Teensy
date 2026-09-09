@@ -133,7 +133,14 @@ Against a bisection of the forward law at 49 points spanning the droop band and
 0.3-4.0 A: maximum |dr| **3.3e-16**. Round-tripping the forward law over the
 same grid: maximum |dr| **2.2e-16**.
 
-## 6. The open question: `--droop measured`
+## 6. The open question: `--droop measured` — CLOSED, see section 9
+
+> **SUPERSEDED 2026-09-08 (operator ruling).** The resolution described below as
+> "not shipped" **is now shipped**, after the four candidate scalings were
+> scored against the bench record. Section 9 is the fit, the decision and what
+> moved; this section is kept as the record of why it was held. The runtime
+> warning the last paragraph describes is **retired**.
+
 
 The hi-fi engine realizes each channel's droop resistance as
 `DROOP_SCALE[mode] * k_d`, while `R_f` is deliberately NOT scaled by the mode
@@ -242,3 +249,102 @@ Gate 1 as harnessed compares the strategy's map against a walk whose plant IS
 `GovernorModel`, so it cannot by itself detect an error in the law they share.
 The board comparison of section 5.1 is what detects that, and it is why the
 campaign-F MDAC pins are the discriminating evidence for this round.
+
+---
+
+## 9. `--droop measured` resolved (2026-09-08, operator ruling)
+
+Section 6 recorded the `--droop measured` divergence as an open question with an
+algebraic resolution that was not shipped. The operator's instruction was to
+**use the scaling that most closely matches the recorded data from the
+testbench**, so the candidates were scored against the bench record rather than
+settled by the algebra alone. This section is the fit and the decision.
+
+### 9.1 The four candidates
+
+The offline `GovernorModel` carries the firmware's design `k_d` = 0.30 Ω,
+because the same attribute maps the MDAC gain codes and cannot move. The hi-fi
+engine realizes `s·ρ·k_d/r + R_f` per channel and injects `s·ΔV₀`, with
+`s` = `DROOP_SCALE["measured"]` = **0.211713**. Each candidate is one way to
+give the model a law that describes that plant.
+
+| id | `k_d` given to the law | `R_f` | `ΔV₀` |
+|---|---|---|---|
+| (a) | `s·K_DROOP` | `R_f` | `ΔV₀` |
+| (b) | `s·K_DROOP` | `R_f` | `s·ΔV₀` |
+| (c) | `K_DROOP` | `R_f/s` | `ΔV₀` |
+| (d) | `s·K_DROOP` (realized) | `R_f` | `ΔV₀` |
+
+Candidates (a) and (d) are the same law: (d) names the realized scale
+explicitly, but the delivered share it predicts is identical, so they score as
+one. Candidates (b) and (c) are also the same law, in two parameterizations —
+dividing (b)'s numerator and denominator by `s` gives (c) — and only (c) is
+usable, because the model's `k_d` is not free.
+
+### 9.2 The residuals
+
+**CAL-1, the decisive metric.** The bench sweep gives the delivered share at a
+commanded ratio of 0.5 at three totals: α = 0.5354 / 0.5262 / 0.5327 at
+`I_tot` = 0.452 / 0.935 / 1.346 A. Root-mean-square share error of each
+candidate's prediction:
+
+| candidate | RMS share error | per point |
+|---|---|---|
+| (a) = (d), `k_d` only | **0.045659** | +0.07171 / +0.03151 / +0.01090 |
+| (b) = (c), `k_d` + `ΔV₀` | **0.009044** | −0.00367 / −0.00492 / −0.01441 |
+| the `design`-mode law, for scale | 0.006414 | +0.00266 / −0.00068 / −0.01076 |
+
+Scaling `k_d` alone is a **factor of 5** worse, and its error is strongly
+`1/I_tot`-shaped — the signature of a `ΔV₀` term left at the wrong magnitude,
+which is exactly what (a) and (d) do.
+
+**The engine it is meant to mirror.** Over `r` in [0.05, 0.95] at
+`I_tot` in [0.3, 4.0] A, candidate (c) reproduces the engine's own law to
+**2.2e-16** of share, while (a) and (d) diverge by up to **0.341**.
+
+**The 39 per-channel slope fits** (`docs/modeling/asymmetry_fit_20260901/fit_summary.json`,
+`per_channel_droop`) **cannot separate the candidates**, and that is stated
+rather than hidden: all four imply the same realized channel resistance
+`s·R_cmd + R_f`, so they share one residual. They do, however, bound it — see
+section 9.4.
+
+### 9.3 What ships
+
+Candidate **(c)**. `resolve_asymmetry_split()` gains a `droop_mode` argument and
+returns `R_f/s`; a new sibling `resolve_governor_dv0_v()` returns the law's
+`ΔV₀`. The second function exists rather than a flag on
+`resolve_asymmetry_dv0_v()` for the reason section 6 gave for not shipping this
+in the first place: that resolver's contract is "the ΔV₀ the run actually
+injects", which the banner and the sidecar both read, and one number must not
+carry two meanings.
+
+⚠️ **The ΔV₀ divisor is the source's, not the run's.** Only a hi-fi engine
+carries an already-scaled ΔV₀, so only that branch divides by `s`. The simple
+engine does not scale its droop at all, and the mode-only fallback returns the
+raw fitted constant — both are already the law's value. `s` = 1.0 under
+`--droop design`, so every campaign on record is byte-identical and no anchor,
+pin or matched-DP record moves.
+
+The section 6 runtime **warning is retired** and replaced by a one-line note
+naming the two resolved parameters. A test that asserted the warning's presence
+is inverted rather than deleted: it now asserts the warning is **gone** and the
+note is present, because a run that still warned would be telling an operator to
+distrust a number that is now exact.
+
+### 9.4 One finding this fit turned up, not acted on
+
+Regressing the 39 bench groups' measured slope on their commanded droop
+resistance with a free intercept gives **slope 0.27224, intercept −0.02422 Ω**,
+at RMS **0.007544 Ω**. The shipped realization `s·R_cmd + R_f` scores RMS
+**0.029766 Ω** on the same groups. The bench's own best-fit intercept is
+**negative**, so the record does not support an additive +0.033 Ω floor on top
+of a 0.2117 scale, and the shipped pair sits about four times worse than a free
+fit.
+
+That is a statement about `DROOP_SCALE` and `DROOP_FIXED_SERIES_OHM`
+themselves, not about which candidate parameterizes them — every candidate
+inherits it identically — so it is recorded here and **not** acted on. It sits
+beside the unexplained ~4x design-versus-bench droop gap
+(`docs/modeling/droop_authority_gap_20260903.md`) and the AD5443/OPA197 block
+localization, and the one bench measurement at 1 A that settles that gap is
+also the measurement that would settle this intercept.

@@ -228,6 +228,7 @@ GOV_CONST = {
     # model simply carries 0.125 A). Only the bench CAL-6 sweep settles it.
     "SHARE_MINORITY_I_MIN_A": 0.125,            # A                  .ino:2515
     "SHARE_CUT_MAX_HANDOFF_A": 0.5,             # A                  .ino:2237
+    "SHARE_SELECTOR_DWELL_MS": 250.0,   # .ino:3154 (fw v28 rev 6, review S2)
     "SHARE_GOV_OL_HYST_A": 0.05,                # A                  .ino:2245
     # Slew ceilings.
     "DROOP_RATIO_SLEW_PER_TICK": 0.02,          #                    .ino:2254
@@ -407,6 +408,38 @@ class GovernorState:
     batt_only_armed: bool = False               # shareBatteryOnlyArmed  .ino:10620
     batt_only_active: bool = False              # shareBatteryOnlyActive .ino:10621
     selector_fc: bool = False                   # shareSelectorFC        .ino:10628
+    # fw v28 rev 5 — the RE-ENTRY rule (.ino:11283, .ino:11295).
+    # ``selector_re_armed`` is PROVENANCE only: this arm came from the re-entry
+    # rule in the closed-before region, not from a profile start. Nothing reads
+    # it to decide behaviour; it is bench-log ``selector_bits`` bit 2 and the
+    # State-98 ``(re-armed)`` marker.
+    # ``selector_re_arm_inhibit`` is load-bearing: the two SAFETY disarms (the
+    # F1 charge-window disarm and the raw-current escape) fire while the command
+    # is still sitting on a rail, so a level-only rule would undo each on the
+    # next tick. Only a STRICTLY in-band command clears it.
+    selector_re_armed: bool = False             # shareSelectorReArmed
+    selector_re_arm_inhibit: bool = False       # shareSelectorReArmInhibit
+    # fw v28 rev 6 (review S1). ``chargingControl()`` runs BEFORE
+    # ``powerBalance()`` in every caller, and an energy manager holds an IN-BAND
+    # share across a charge window as a matter of course -- so through rev 5 the
+    # in-band clear spent the inhibit in the SAME loop iteration that raised it.
+    # That is harmless only while the latch's guarded release succeeds on that
+    # tick; when it refuses (V_BUS_CHARGED_THRESH, or the survivor's regulator)
+    # the cut survives with no inhibit standing, the next rail command re-cuts,
+    # and the charge window never opens -- the campaign H undervoltage class
+    # restored. Two terms, both on the CLEAR side so the inhibit's meaning is
+    # unchanged: a FRESHNESS token the first observer consumes instead of
+    # clearing, and no clear while a setpoint cut is still outstanding.
+    selector_re_arm_inhibit_fresh: bool = False  # shareSelectorReArmInhibitFresh
+    # fw v28 rev 6 (review S2). The SELECTION-CHANGE dwell deadline, in
+    # milliseconds. A change is a release, one live tick and an entry on the
+    # other channel; through rev 5 only the 30 ms survivor blanking limited how
+    # often that could happen, so a 50 Hz rail dither commutated the source ~32
+    # times a second AND re-zeroed the governor filter often enough that the
+    # gate release could never fire. Applies to a CHANGE only: every arm site
+    # expires the deadline, so a first selection is never dwelled, and no
+    # disarm or gate release is touched.
+    selector_dwell_until_ms: float = 0.0        # shareSelectorDwellUntilMs
     # The feedforward PROPOSAL while a controller-initiated cut is outstanding.
     # NOT MDAC truth (an isolated tick writes nothing) — it is the accumulating
     # walk the iso bypass needs, because ``r_prev`` is frozen for the duration of
@@ -464,6 +497,12 @@ class GovernorOut:
     g_clamp_count: int = 0
     batt_only: bool = False
     selector_fc: bool = False
+    # fw v28 rev 5. Provenance and the safety refusal. Neither has a wire-level
+    # observable: the HIL aux bits 6/7 cannot say WHERE an arm came from, so the
+    # provenance is carried on the bench log (``selector_bits`` bit 2) and the
+    # State-98 dump only.
+    selector_re_armed: bool = False
+    selector_re_arm_inhibit: bool = False
     # True when this tick actually reached setDroopMdac(). False on every
     # non-writing return (frozen, latched, hold, F1 idle) AND on a write that
     # applyShareRatio() abandoned because a channel is isolated (.ino:10492),
@@ -717,6 +756,17 @@ class GovernorModel:
         fuel cell alone because of a command given before that boundary."""
         self.state.batt_only_armed = True
         self.state.selector_fc = False
+        # fw v28 rev 5 (.ino:12947): a profile start is the OTHER provenance,
+        # and it clears any inhibit left by the previous profile's F1 disarm or
+        # raw escape — a new run must not inherit a refusal.
+        self.state.selector_re_armed = False
+        self.state.selector_re_arm_inhibit = False
+        # fw v28 rev 6: a profile start owns neither a stale freshness token nor
+        # a stale dwell (.ino:12451).
+        self.state.selector_re_arm_inhibit_fresh = False
+        # No clock here: an EXPIRED deadline is the property (a first selection
+        # is never dwelled), and -inf expresses it without inventing a time.
+        self.state.selector_dwell_until_ms = float("-inf")
 
     def selector_effective_sp(self) -> float:
         """``shareSelectorEffectiveSp()`` (.ino:10633). The out-of-band setpoint
@@ -903,11 +953,45 @@ class GovernorModel:
             ``kd_sched_tot`` holding a load the schedule's law does not
             describe. It re-samples on the first post-window tick differing by
             more than SHARE_KD_HYST_A, so the freeze costs at most one tick of
-            staleness."""
+            staleness.
+
+        fw v28 REV 4 — THE HOLD IS KEYED ON BUS TOPOLOGY, NOT ON THE CHARGE
+        LINE ALONE (.ino:11855-11872, design record section 25). Revision 3
+        keyed the K_DROOP target on ``FC_CHARGE_ENABLE`` only, and recorded as a
+        residual that a battery bus switch opened WITHOUT a window — the
+        State-98 ``2`` key, ``safeAllSwitches()``, or the fw v24 backoff
+        branch's refused re-close — leaves the fuel cell alone on the bus with
+        the schedule live and none of the four cut flags set. That is campaign
+        G's saturation class reached through a second door, and two of those
+        three doors are not bench-only. The five cases, stated against what
+        ``applyShareRatio()`` does on each:
+
+          ============================================  ==========  ==========
+          topology                                      writes?     k_d
+          ============================================  ==========  ==========
+          any iso_*/sp_cut_*                            no          FREEZE
+          both bus switches high, FC_CHARGE low         yes         schedule
+          both bus switches high, FC_CHARGE high        yes         K_DROOP
+          exactly one bus switch high                   yes         K_DROOP
+          both bus switches low                         yes         HOLD
+          ============================================  ==========  ==========
+
+        The charge line stays in the test in its OWN right rather than being
+        inferred from the pins: ``assertFcChargeEnable()`` holds the battery
+        switch low inside a window, but the switch reads can lag that by a tick.
+        A dark bus HOLDS (early return) — the words are still written there, but
+        for a bus with no source, so moving ``k_d`` on that reading would publish
+        a scale derived from a load that does not exist; the doctrine is
+        ``droop_scale_target()``'s own non-positive-total guard."""
         st = self.state
         if st.iso_fc or st.iso_bt or st.sp_cut_fc or st.sp_cut_bt:
             return
-        if fc_charge_open:
+        fc_on_bus = bool(st.sw_fc)
+        bt_on_bus = bool(st.sw_bt)
+        if not fc_on_bus and not bt_on_bus:
+            return          # dark bus: hold k_d and the schedule input as they are
+        single_source = (fc_on_bus != bt_on_bus) or bool(fc_charge_open)
+        if single_source:
             target = self.k_droop            # K_DROOP; kd_sched_tot FROZEN
         else:
             if abs(st.filt_total - st.kd_sched_tot) > GOV_CONST["SHARE_KD_HYST_A"]:
@@ -1459,6 +1543,82 @@ class GovernorModel:
         if charge_intent and st.batt_only_armed and (st.sp_cut_fc or st.sp_cut_bt):
             st.batt_only_armed = False
             st.batt_only_active = False
+            st.selector_re_armed = False
+            # fw v28 rev 5 (.ino:13254): F1 NEEDS THE INHIBIT, or the re-entry
+            # rule below undoes it in one tick. ``chargingControl()`` runs
+            # BEFORE ``powerBalance()`` in every caller, and the EMS commands
+            # 0.0/1.0 across a charge window as a matter of course, so a
+            # level-only re-arm would re-cut the same channel on this very tick
+            # and the window would never open — F1 defeated and the campaign-H
+            # undervoltage latch restored.
+            st.selector_re_arm_inhibit = True
+            # fw v28 rev 6 (S1): and the freshness token with it, so the inhibit
+            # outlives THIS loop iteration whatever the command is.
+            st.selector_re_arm_inhibit_fresh = True
+
+        # 0a2. fw v28 REV 5 — THE RE-ENTRY RULE (.ino:12062-12077, design record
+        #      section 29). Through revision 4 the selector was ONE-SHOT: the
+        #      closed-loop entry dropped it for the profile, and a total that
+        #      later fell back under the gate entered the CLOSED-BEFORE HOLD,
+        #      where an out-of-band command went straight to the setpoint latch
+        #      and was released again the moment the command returned in band.
+        #      Revision 5 makes that region RE-ARM the selector from the
+        #      triggering command. The semantic delta is one sentence:
+        #
+        #        rev 4: an out-of-band command there cuts, and releases WITH the
+        #               command.
+        #        rev 5: it cuts, and HOLDS until the opposite rail is commanded
+        #               or the load returns above the gate.
+        #
+        #      From the re-arm onward the selector is INDISTINGUISHABLE from a
+        #      never-closed one — same effective setpoint (0.0/1.0, always out
+        #      of band), same latch, same guards, same gate release, same F1
+        #      disarm and same raw escape. No new topology code, no second owner
+        #      of the setpoint.
+        #      THE FIVE CONDITIONS: (1) not already armed — a re-arm is an EDGE,
+        #      not a per-tick refresh; (2) ``closed_loop_run`` — the loop HAS
+        #      closed this profile, which is also why
+        #      ``_reset_share_control_state()`` structurally cannot re-arm (it
+        #      clears that flag); (3) ``not closed_loop_mode`` — with (2) this is
+        #      exactly the closed-before region, and it inherits the loop's own
+        #      hysteresis for free; (4) the filtered total is AT OR UNDER the
+        #      gate — required, because the mode flag is updated LATER in this
+        #      same tick, so on the tick the filter first crosses the gate the
+        #      mode still reads open-loop while the load has already earned two
+        #      sources; this test makes the ownership boundary the GATE and not
+        #      the tick ordering; (5) the command is ON or outside a rail,
+        #      INCLUSIVE at both, for the reason the selection test is. An
+        #      IN-BAND command in this region NEVER triggers single-source.
+        #      Plus the inhibit, and a refusal while a charge window is open —
+        #      a window is already a single-source state whose sole owner is the
+        #      charge path.
+        if _R_MIN < sp < _R_MAX:
+            # fw v28 rev 6 (S1, .ino:12360): the inhibit must survive at least
+            # one FULL loop iteration, and must not be cleared while the disarm
+            # it represents is still un-realised on the bus.
+            if st.selector_re_arm_inhibit_fresh:
+                # Raised earlier in THIS iteration. Consume the freshness, KEEP
+                # the inhibit; the next iteration's in-band command spends it.
+                st.selector_re_arm_inhibit_fresh = False
+            elif not st.sp_cut_fc and not st.sp_cut_bt:
+                # In band AND no cut outstanding: the guarded release has
+                # landed, so the refusal is complete and the inhibit is spent.
+                st.selector_re_arm_inhibit = False
+        if (not st.batt_only_armed and st.closed_loop_run
+                and not st.closed_loop_mode
+                and not st.selector_re_arm_inhibit
+                and not charge_path_owns_bt
+                and st.filt_total <= 2.0 * GOV_CONST["SHARE_MINORITY_I_MIN_A"]
+                and (sp <= _R_MIN or sp >= _R_MAX)):
+            st.batt_only_armed = True
+            # The selection comes from the COMMAND THAT TRIGGERED THE RE-ARM,
+            # not from the battery default of a profile start. The two rails
+            # cannot both be met (_R_MIN < _R_MAX).
+            st.selector_fc = (sp >= _R_MAX)
+            st.selector_re_armed = True
+            # fw v28 rev 6 (S2, .ino:12261): the FIRST selection of an arm is
+            # never dwelled -- the dwell rate-limits CHANGES, not the arm.
+            st.selector_dwell_until_ms = t_ms
 
         # 0b. fw v28 SOURCE SELECTOR — derive the SELECTION and the arm's
         #     ownership for this tick (.ino:11322-11327), before the latch runs.
@@ -1474,11 +1634,22 @@ class GovernorModel:
         #     The selection itself is INCLUSIVE at both rails and HOLDS between
         #     them, and is evaluated only while armed.
         if st.batt_only_armed:
+            want_fc = st.selector_fc
             if sp >= _R_MAX:
-                st.selector_fc = True
+                want_fc = True
             elif sp <= _R_MIN:
-                st.selector_fc = False
+                want_fc = False
             # in between: HOLD the current selection (no else)
+            if want_fc != st.selector_fc:
+                # fw v28 rev 6 (S2, .ino:12277) — THE SELECTION-CHANGE DWELL.
+                # The command is NOT lost and NOT queued while the dwell holds:
+                # this test is re-evaluated every tick against the THEN-CURRENT
+                # command, so what lands when the dwell expires is what the
+                # commander is asking for at that moment, not a stale edge.
+                if t_ms - st.selector_dwell_until_ms >= 0.0:
+                    st.selector_fc = want_fc
+                    st.selector_dwell_until_ms = (
+                        t_ms + GOV_CONST["SHARE_SELECTOR_DWELL_MS"])
         st.batt_only_active = st.batt_only_armed
 
         # 1. Setpoint latch owns every out-of-band setpoint, evaluated BEFORE
@@ -1498,7 +1669,25 @@ class GovernorModel:
             # the frozen path keeps the load estimate alive and drops the arm
             # the instant the gate is met. Note the firmware's ``>=`` against
             # SHARE_I_TOT_MIN_A here, against the ``<`` gate below.
-            if st.batt_only_active:
+            # ── fw v28 REV 6 (S3) — ADVANCE THE LOAD ESTIMATE ON ANY
+            #    LATCHED CUT (.ino:12424) ──────────────────────────────────
+            # THE DEFECT: the rev 5 re-entry rule was UNREACHABLE whenever the
+            # rail command PRECEDED the fall under the gate -- the ordering an
+            # energy manager produces most often (command the rail, then coast).
+            # A latched cut returns here before the loop-mode decision and the
+            # filter advance, and rev 2 scoped that advance to the ARM, so with
+            # the cut owned by the LATCH alone both the mode flag and the filter
+            # froze at their pre-cut values for the whole latched window.
+            # Conditions 3 and 4 of the rule therefore never became true.
+            # WHY WIDENING IS SAFE: this branch returns before every write, so
+            # the advance moves no reference, commands no switch and releases no
+            # cut, and the GATE-RELEASE DISARM stays scoped to the arm below --
+            # a latch-owned cut still releases only on its own in-band command.
+            # THE MODE UPDATE IS ONE-SIDED, deliberately: only closed -> open
+            # runs here. The opposite transition carries the open-to-closed
+            # controller seed, and taking that from a frozen path would put a
+            # second writer on the controller outside the live rate limiter.
+            if st.batt_only_active or st.sp_cut_fc or st.sp_cut_bt:
                 # fw v28 review S2 — THE RAW-CURRENT ESCAPE FROM AN FC
                 # SELECTION (.ino:11373). A fuel-cell selection puts the fuel
                 # cell ALONE on the bus, and single-source is exactly the regime
@@ -1513,8 +1702,18 @@ class GovernorModel:
                 # itself raw and single-sample, so filtering it would guarantee
                 # the escape loses that race by construction. Evaluated ABOVE
                 # the SHARE_I_TOT_MIN_A load gate, so it runs at any load.
-                if st.selector_fc and abs(i_fc) > _FC_CEIL_A:
+                if (st.batt_only_active and st.selector_fc
+                        and abs(i_fc) > _FC_CEIL_A):
                     st.batt_only_armed = False
+                    # fw v28 rev 5 (.ino:12135): this is a SAFETY disarm, so it
+                    # also raises the inhibit. The command that selected the
+                    # fuel cell is by construction still on the upper rail this
+                    # tick, so without the inhibit the re-entry rule would
+                    # re-arm on the very next one and hand the fuel cell
+                    # straight back the load the escape just took off it.
+                    st.selector_re_armed = False
+                    st.selector_re_arm_inhibit = True
+                    st.selector_re_arm_inhibit_fresh = True   # rev 6 (S1)
                 # The gate release is SELECTION-AGNOSTIC: the measured total is
                 # |I_fc| + |I_batt| whichever channel is off the bus (the cut
                 # one contributes ~0), so from a fuel-cell selection the release
@@ -1524,8 +1723,22 @@ class GovernorModel:
                 if total >= _I_TOT_MIN_A:
                     st.filt_total += GOV_CONST["SHARE_GOV_FILT_ALPHA"] * (
                         total - st.filt_total)
-                    if st.filt_total > 2.0 * GOV_CONST["SHARE_MINORITY_I_MIN_A"]:
+                    if (st.batt_only_active and st.filt_total
+                            > 2.0 * GOV_CONST["SHARE_MINORITY_I_MIN_A"]):
                         st.batt_only_armed = False
+                        # fw v28 rev 5 (.ino:12385): an ORDINARY disarm — NO
+                        # inhibit. The load earned two sources, which is exactly
+                        # the ending the re-entry rule is allowed to reverse if
+                        # it later falls away again with a rail still commanded.
+                        st.selector_re_armed = False
+                    # fw v28 rev 6 (S3, .ino:12387): the ONE-SIDED mode update.
+                    # Only closed -> open runs on the frozen path; the falling
+                    # edge is the one the re-entry rule reads and it needs no
+                    # controller seed.
+                    if (st.closed_loop_mode and st.filt_total
+                            < 2.0 * GOV_CONST["SHARE_MINORITY_I_MIN_A"]
+                            - GOV_CONST["SHARE_GOV_OL_HYST_A"]):
+                        st.closed_loop_mode = False
             return self._out(MODE_LATCHED, False, False)
         st.latched = False
 
@@ -1660,6 +1873,9 @@ class GovernorModel:
         # only one that can be taken while the cut is latched, this one the only
         # one that can be taken while it is not.
         st.batt_only_armed = False
+        # fw v28 rev 5 (.ino:12412): an ORDINARY disarm, like the gate release —
+        # no inhibit. The provenance flag goes with the arm it describes.
+        st.selector_re_armed = False
         # The load-scheduled droop scale advances HERE and nowhere else — closed
         # loop only, one call per tick, ABOVE every write site, so the reference
         # clip, the fw v26 ceilings and the fw v25 load guard (all of which work
@@ -1863,6 +2079,8 @@ class GovernorModel:
             g_clamp_count=st.g_guard_count,
             batt_only=st.batt_only_active,
             selector_fc=st.selector_fc,
+            selector_re_armed=st.selector_re_armed,
+            selector_re_arm_inhibit=st.selector_re_arm_inhibit,
         )
 
     # ── convenience ──────────────────────────────────────────────────────────

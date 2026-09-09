@@ -372,13 +372,26 @@ def _case_rising_total_through_the_hysteresis():
     tracks it, so the crossing is a real crossing and not a step. The ramp also
     crosses 0.24 A, the total at which two near-balanced channels first read
     LIVE at SHARE_HANDOFF_LIVE_A = 0.12 A - review S7's sub-gate rule is what
-    keeps the handoff ceiling selected there, and ``slew`` is compared."""
+    keeps the handoff ceiling selected there, and ``slew`` is compared.
+
+    THE 0.3 mA RAMP OFFSET IS DELIBERATE, and it is not a widened band. At a
+    ramp of 0.5 mA per tick the ~20 ms governor filter settles to a fixed lag
+    behind the commanded total, so a ramp starting on a round 0.10 A parks the
+    FILTER on 0.200000 A exactly at one tick of the descent - the closed-loop
+    mode exit threshold, ``2*I_min - SHARE_GOV_OL_HYST_A``, to the last digit.
+    The firmware carries that filter in ``float`` and the port in ``float64``,
+    so the two land either side of the threshold (0.200000018 against
+    0.199999999...) and the mode flag - which fw v28 rev 5's re-entry rule now
+    READS - flips one tick apart. That is a property of the stimulus, not of
+    either implementation, so the ramp is offset off the knife edge rather than
+    the comparison being relaxed: every threshold in the case is still crossed,
+    in both directions, and every flag is still compared exactly."""
     cmds = []
-    tot = 0.10
-    while tot <= 0.60 + 1e-9:
+    tot = 0.1003
+    while tot <= 0.6003 + 1e-9:
         cmds.append(("LOAD", 0.85, round(tot, 6), 16.0))
         tot += 0.0005
-    while tot >= 0.10 - 1e-9:
+    while tot >= 0.1003 - 1e-9:
         cmds.append(("LOAD", 0.85, round(tot, 6), 16.0))
         tot -= 0.0005
     return cmds
@@ -452,6 +465,150 @@ def _case_open_loop_only():
     return cmds
 
 
+def _case_kd_hold_on_a_single_source_topology():
+    """fw v28 REV 4 - THE k_d HOLD IS KEYED ON BUS TOPOLOGY, NOT ON THE CHARGE
+    LINE (design record section 25).
+
+    Revision 3 keyed the K_DROOP target on ``FC_CHARGE_ENABLE`` alone, and a
+    battery bus switch opened WITHOUT a window - the State-98 ``2`` key,
+    ``safeAllSwitches()``, or the fw v24 backoff branch's refused re-close -
+    left the fuel cell alone on the bus with the schedule live and none of the
+    four cut flags set. That is campaign G's saturation class (the fuel-cell
+    word at full scale for 9057 ticks) reached through a second door.
+
+    The stimulus stages the topology directly with ``BUS`` and drives the
+    schedule with ``KDS``, so what is compared is the mapping itself, on all
+    five cases: two sources (schedule), one source each way (K_DROOP), a dark
+    bus (hold, including the schedule INPUT, which must not re-sample), and a
+    charge window on top of a two-source topology (K_DROOP). ``SETKD`` stages a
+    STALE scale before each leg so a target that is silently not applied is
+    visible as a value, not only as an absence of motion."""
+    cmds = []
+    # Two sources, well below the crossover: the schedule is live and k_d walks
+    # up toward the light-load target.
+    cmds.append(("BUS", 1, 1))
+    cmds.append(("SETKD", 0.30))
+    cmds += [("KDS", 0.20)] * 200
+    # FC alone on the bus, no window: K_DROOP, slewed, schedule input FROZEN.
+    cmds.append(("BUS", 1, 0))
+    cmds += [("KDS", 0.20)] * 200
+    # Back to two sources: the schedule resumes FROM K_DROOP at the normal rate.
+    cmds.append(("BUS", 1, 1))
+    cmds += [("KDS", 0.20)] * 120
+    # BT alone on the bus: the mirror case, the one the '2' key produces.
+    cmds.append(("BUS", 0, 1))
+    cmds += [("KDS", 0.20)] * 200
+    # A DARK bus holds - k_d and the schedule input both stand still, even
+    # though the filtered total is moved under them.
+    cmds.append(("BUS", 0, 0))
+    cmds.append(("SETKD", 0.62))
+    cmds += [("KDS", 0.20)] * 60
+    cmds += [("KDS", 0.55)] * 60
+    # Two sources plus a window: the charge line is in the test in its own
+    # right, because the switch reads can lag it by a tick.
+    cmds.append(("BUS", 1, 1))
+    cmds.append(("CHGWIN", 1))
+    cmds += [("KDS", 0.20)] * 200
+    cmds.append(("CHGWIN", 0))
+    cmds += [("KDS", 0.20)] * 200
+    return cmds
+
+
+def _case_reentry_rearms_on_a_rail():
+    """fw v28 REV 5 - THE RE-ENTRY RULE (design record section 29).
+
+    Close the loop well above the gate at an in-band command, then let the load
+    fall back under it. Through revision 4 that region was the CLOSED-BEFORE
+    HOLD and an out-of-band command reached the setpoint latch with no memory:
+    it cut, and released again the moment the command returned in band.
+    Revision 5 RE-ARMS the selector from the triggering command, so the cut
+    HOLDS through the in-band commands that follow and only the opposite rail
+    changes the selection.
+
+    The legs, in order: an in-band command under the gate must NOT arm (the
+    hold stands); 0.85 re-arms with the fuel cell; an in-band command does not
+    disarm; 0.15 re-selects the battery; the load returns over the gate and the
+    ORDINARY disarm drops both the arm and the provenance flag with no
+    inhibit."""
+    cmds = []
+    cmds += [("LOAD", 0.50, 0.90, 16.0)] * 500    # close the loop
+    cmds += [("LOAD", 0.50, 0.16, 16.0)] * 400    # closed-before hold, in band
+    cmds += [("LOAD", 0.85, 0.16, 16.0)] * 400    # -> re-arm, fuel cell
+    cmds += [("LOAD", 0.50, 0.16, 16.0)] * 400    # in band: the arm HOLDS
+    cmds += [("LOAD", 0.15, 0.16, 16.0)] * 400    # -> re-select the battery
+    cmds += [("LOAD", 0.50, 0.90, 16.0)] * 500    # over the gate: ordinary disarm
+    return cmds
+
+
+def _case_reentry_refused_above_the_gate():
+    """fw v28 REV 5, CONDITION 4 - A RAIL COMMAND ABOVE THE GATE DOES NOT
+    RE-ARM. The closed-loop mode flag is updated LATER in the same tick, so on
+    the tick the filter first crosses the gate the mode still reads open-loop
+    while the load has already earned two sources; without the filtered-total
+    test the selector would cut a channel the closed loop is about to be given.
+    Here the loop closes, the total NEVER falls under the gate, and 0.85 is
+    commanded throughout - the arm must stay down for the whole run, which is
+    also the fw v27 rev 2 behaviour this rule must not disturb above the
+    gate."""
+    cmds = []
+    cmds += [("LOAD", 0.50, 0.90, 16.0)] * 400    # close the loop
+    cmds += [("LOAD", 0.85, 0.90, 16.0)] * 400    # rail, but well above the gate
+    cmds += [("LOAD", 0.85, 0.30, 16.0)] * 400    # still above 2*I_min = 0.25 A
+    return cmds
+
+
+def _case_reentry_inhibit_after_the_raw_escape():
+    """fw v28 REV 5 - THE INHIBIT (design record section 29.4).
+
+    The raw-current escape is a SAFETY disarm that fires while the command is
+    still sitting on the upper rail, so a level-only re-entry rule would re-arm
+    on the very next tick and hand the fuel cell straight back the load the
+    escape just took off it. The escape therefore raises
+    ``shareSelectorReArmInhibit``, and ONLY a strictly in-band command clears
+    it. This case drives the escape from a RE-ARMED selector - the provenance
+    the flag exists to distinguish - and then holds 0.90 for 300 ticks to prove
+    the refusal persists, before an in-band command spends the inhibit.
+
+    Explicit TICK rows throughout: the point is a single-source current the
+    resolver's split law would never script."""
+    cmds = []
+    cmds += [("TICK", 0.50, 0.45, 0.45, 16.0)] * 400   # close the loop
+    cmds += [("TICK", 0.50, 0.08, 0.08, 16.0)] * 300   # closed-before hold
+    cmds += [("TICK", 0.90, 0.08, 0.08, 16.0)] * 200   # re-arm, fuel cell
+    cmds += [("TICK", 0.90, 1.26, 0.0, 16.0)] * 3      # OVER the ceiling
+    cmds += [("TICK", 0.90, 0.10, 0.10, 16.0)] * 300   # rail held: still refused
+    cmds += [("TICK", 0.50, 0.10, 0.10, 16.0)] * 5     # in band: inhibit spent
+    cmds += [("TICK", 0.90, 0.10, 0.10, 16.0)] * 200   # rail again: re-arms
+    return cmds
+
+
+def _case_selection_change_dwell():
+    """fw v28 REV 6 (review S2) - THE SELECTION-CHANGE DWELL.
+
+    A selection change is a latch release, one live tick and a latch entry on
+    the other channel. Through revision 5 only the 30 ms survivor blanking
+    limited how often that could happen, so a commander dithering its share
+    across both rails at 50 Hz commutated the source about 32 times a second -
+    and every release zeroes the governor filter, so at sub-gate totals the
+    filter could never climb back to the gate and the board ran permanently
+    single-sourced, alternating.
+
+    `SHARE_SELECTOR_DWELL_MS` is 250 ms and applies to a CHANGE only. The
+    stimulus dithers the command between the two rails every 20 ms for 4 s at a
+    sub-gate total, which is 200 commanded reversals; the selection must follow
+    at most one per 250 ms. It then settles on one rail long enough to prove
+    the command is not LOST by the dwell - the test is re-evaluated every tick
+    against the then-current command, so what lands when the dwell expires is
+    what is being asked for at that moment."""
+    cmds = [("ARM",)]
+    cmds += [("LOAD", 0.50, 0.16, 16.0)] * 100     # settle, battery selected
+    for _ in range(40):                            # 80 reversals over 1.6 s
+        cmds += [("LOAD", 0.85, 0.16, 16.0)] * 20
+        cmds += [("LOAD", 0.15, 0.16, 16.0)] * 20
+    cmds += [("LOAD", 0.85, 0.16, 16.0)] * 600     # settle on the upper rail
+    return cmds
+
+
 CASES = [
     ("pure_schedule", _case_pure_schedule),
     ("open_loop_only", _case_open_loop_only),
@@ -469,6 +626,11 @@ CASES = [
     ("sliver_hold", _case_sliver_hold_after_converging),
     ("kd_hold_in_charge_window", _case_kd_hold_in_a_charge_window),
     ("hold_and_reentry", _case_hold_and_reentry),
+    ("kd_hold_single_source_topology", _case_kd_hold_on_a_single_source_topology),
+    ("selection_change_dwell", _case_selection_change_dwell),
+    ("reentry_rearm_on_rail", _case_reentry_rearms_on_a_rail),
+    ("reentry_refused_above_gate", _case_reentry_refused_above_the_gate),
+    ("reentry_inhibit_raw_escape", _case_reentry_inhibit_after_the_raw_escape),
     ("rising_total_hysteresis", _case_rising_total_through_the_hysteresis),
     ("iso_bypass_proposal", _case_iso_bypass_and_proposal),
     ("fw26_clamp_new_threshold", _case_fw26_clamp_at_the_new_threshold),
@@ -514,10 +676,11 @@ def harness():
 _COLS = ("op", "r", "g_fc", "g_bt", "k_d", "code_fc", "code_bt", "filt",
          "sched_tot", "sw_fc", "sw_bt", "iso_fc", "iso_bt", "cut_fc", "cut_bt",
          "def_fc", "def_bt", "armed", "active", "ref_load", "ref_blank",
-         "g_clamp", "sel_fc", "slew", "sp_eff")
+         "g_clamp", "sel_fc", "slew", "sp_eff", "re_armed", "re_inhibit")
 _INT_COLS = ("code_fc", "code_bt", "sw_fc", "sw_bt", "iso_fc", "iso_bt",
              "cut_fc", "cut_bt", "def_fc", "def_bt", "armed", "active",
-             "ref_load", "ref_blank", "g_clamp", "sel_fc")
+             "ref_load", "ref_blank", "g_clamp", "sel_fc",
+             "re_armed", "re_inhibit")
 
 
 def _stdin(cmds):
@@ -689,6 +852,12 @@ def _port_trace(cmds):
             "g_clamp": s.g_guard_count,
             # fw v28 observables.
             "sel_fc": int(s.selector_fc),
+            # fw v28 rev 5: provenance and the safety refusal. Both are
+            # functions of the commanded setpoint, the arm and the charge
+            # window alone -- never of the unported ratio -- so both are
+            # comparable on EVERY row, closed loop included.
+            "re_armed": int(s.selector_re_armed),
+            "re_inhibit": int(s.selector_re_arm_inhibit),
             "slew": s.slew_step,
             "sp_eff": s.sp_eff_prev,
             "ret": ret,
@@ -766,6 +935,15 @@ def _port_trace(cmds):
             # fed to both.
             fc_charge_open[0] = bool(int(c[1]))
             row = snap()
+        elif op == "BUS":
+            # fw v28 rev 4: the k_d hold reads the bus TOPOLOGY. The port has no
+            # pins, so the harness's direct pin write is mirrored onto the
+            # switch beliefs -- and, like the harness's digitalWrite, it must
+            # not stamp a rising edge, so _write_switch() is deliberately not
+            # used here.
+            g.state.sw_fc = bool(int(c[1]))
+            g.state.sw_bt = bool(int(c[2]))
+            row = snap()
         elif op == "SETSEL":
             g.state.selector_fc = bool(int(c[1]))
             row = snap()
@@ -799,7 +977,7 @@ def _port_trace(cmds):
 # fw v28: the SELECTION is a function of the commanded setpoint and the arm
 # alone - never of the ratio - so it is comparable on EVERY row, closed loop
 # included, exactly like the arm itself.
-_FLAG_COLS_ALWAYS = ("armed", "active", "sel_fc")
+_FLAG_COLS_ALWAYS = ("armed", "active", "sel_fc", "re_armed", "re_inhibit")
 _FLAG_COLS_PORTED = ("sw_fc", "sw_bt", "iso_fc", "iso_bt", "cut_fc", "cut_bt",
                      "def_fc", "def_bt", "ref_load", "ref_blank", "g_clamp")
 # ``filt`` and ``sched_tot`` are functions of the SCRIPTED currents alone, so
@@ -1103,6 +1281,119 @@ def test_the_stimulus_actually_exercises_every_mechanism(harness):
     assert fw_win[-1]["g_clamp"] == 0, (
         "the g-guard fired inside a charge window; F4's whole claim is that it "
         "should not")
+
+    # ── fw v28 rev 4: the topology-keyed hold ───────────────────────────────
+    fw_top = _firmware_trace(harness,
+                             _case_kd_hold_on_a_single_source_topology())
+    ops_top = [r["op"] for r in fw_top]
+    bus_i = [i for i, o in enumerate(ops_top) if o == "BUS"]
+    assert len(bus_i) == 6, "the topology case lost a leg"
+    # Leg 1 (two sources) must LEAVE K_DROOP, or nothing that follows is a hold.
+    assert fw_top[bus_i[1] - 1]["k_d"] > 0.5, (
+        "the schedule never engaged on the two-source leg")
+    # Legs 2 and 4 are the single-source topologies with NO charge window: each
+    # must drive the scale back to K_DROOP, which is the rev-3 residual closed.
+    for leg, name in ((1, "FC alone on the bus"), (3, "BT alone on the bus")):
+        end = fw_top[bus_i[leg + 1] - 1]
+        assert end["k_d"] == pytest.approx(0.30, abs=1e-6), (
+            "k_d did not return to K_DROOP with %s; the rev 4 topology key is "
+            "not acting (k_d = %.6g)" % (name, end["k_d"]))
+    # ...and the schedule INPUT is frozen for the duration of each of them.
+    for leg in (1, 3):
+        span = fw_top[bus_i[leg] + 1:bus_i[leg + 1]]
+        assert len({r["sched_tot"] for r in span}) == 1, (
+            "the schedule input re-sampled inside a single-source window")
+    # Leg 5, the DARK bus: neither k_d nor the schedule input moves, even though
+    # the filtered total is driven under them.
+    dark_span = fw_top[bus_i[4] + 1:bus_i[5]]
+    assert len(dark_span) > 100, "the dark-bus leg is too short to prove a hold"
+    assert len({r["k_d"] for r in dark_span}) == 1, (
+        "k_d moved on a bus with no source")
+    assert len({r["sched_tot"] for r in dark_span}) == 1, (
+        "the schedule input re-sampled on a bus with no source")
+    assert dark_span[0]["k_d"] == pytest.approx(0.62, abs=1e-6), (
+        "the dark-bus leg did not hold the STAGED stale scale, so the hold "
+        "would be indistinguishable from a target that happened to agree")
+
+    # ── fw v28 rev 5: the re-entry rule ─────────────────────────────────────
+    fw_re = _firmware_trace(harness, _resolve_loads(
+        harness, _case_reentry_rearms_on_a_rail()))
+    assert any(r["re_armed"] for r in fw_re), "the re-entry rule never fired"
+    assert any(r["re_armed"] and r["sel_fc"] for r in fw_re), (
+        "the fuel cell was never selected by a re-arm")
+    assert any(r["re_armed"] and not r["sel_fc"] for r in fw_re), (
+        "the battery was never re-selected")
+    assert any(r["cut_fc"] for r in fw_re) and any(r["cut_bt"] for r in fw_re), (
+        "a re-armed selector never took a cut on either channel")
+    assert fw_re[-1]["armed"] == 0 and fw_re[-1]["re_armed"] == 0, (
+        "the ordinary gate disarm never dropped the re-armed selector")
+    assert fw_re[-1]["re_inhibit"] == 0, (
+        "the ORDINARY disarm raised the inhibit; only the two safety disarms "
+        "may do that")
+    # The hold is the ruling: an in-band command after a re-arm must not drop it.
+    first = next(i for i, r in enumerate(fw_re) if r["re_armed"])
+    inband = [r for r in fw_re[first:] if r["armed"] and r["filt"] < 0.25]
+    assert len(inband) > 500, "too few re-armed ticks to prove the hold"
+
+    fw_hi = _firmware_trace(harness, _resolve_loads(
+        harness, _case_reentry_refused_above_the_gate()))
+    assert any(r["filt"] > 0.25 for r in fw_hi), "the case never passed the gate"
+    assert not any(r["armed"] for r in fw_hi), (
+        "the selector re-armed ABOVE the gate; condition 4 exists because the "
+        "mode flag is updated later in the same tick")
+
+    # ── fw v28 rev 6: the selection-change dwell ────────────────────────────
+    fw_dw = _firmware_trace(harness, _resolve_loads(
+        harness, _case_selection_change_dwell()))
+    sels = [r["sel_fc"] for r in fw_dw]
+    flips = sum(1 for a, b in zip(sels, sels[1:]) if a != b)
+    # 80 commanded reversals over 1.6 s. At one tick per ms and a 250 ms dwell
+    # the selection can follow at most 4 per second, so 1.6 s admits at most 7
+    # plus the settle - asserted with slack on the count and exactly on the
+    # SPACING below, which is the property.
+    assert flips > 1, (
+        "the selection never changed; the dither case is vacuous")
+    assert flips <= 12, (
+        "%d selection changes over a 1.6 s dither; the 250 ms dwell is not "
+        "acting (undwelled would be ~80)" % flips)
+    idx = [i for i, (a, b) in enumerate(zip(sels, sels[1:])) if a != b]
+    gaps = [b - a for a, b in zip(idx, idx[1:])]
+    assert all(g >= 250 for g in gaps), (
+        "two selection changes landed %d ticks apart, inside the 250 ms dwell"
+        % min(gaps))
+    # ...and the command is not LOST by the dwell: the run settles on the rail
+    # it is finally asked for.
+    assert fw_dw[-1]["sel_fc"] == 1, (
+        "the dwell swallowed a settled rail command")
+
+    fw_inh = _firmware_trace(harness,
+                             _case_reentry_inhibit_after_the_raw_escape())
+    assert any(r["re_armed"] for r in fw_inh), (
+        "the inhibit case never re-armed, so the escape it drives is not the "
+        "one the rule adds")
+    assert any(r["re_inhibit"] for r in fw_inh), "the inhibit was never raised"
+    # While the inhibit stands and the rail is still commanded, the arm stays
+    # down: that is the whole point of the flag.
+    raised = next(i for i, r in enumerate(fw_inh) if r["re_inhibit"])
+    refused = [r for r in fw_inh[raised:] if r["re_inhibit"]]
+    assert len(refused) > 250, "the inhibit was cleared too soon to prove it"
+    assert not any(r["armed"] for r in refused), (
+        "the selector re-armed while the inhibit stood")
+    assert fw_inh[-1]["re_inhibit"] == 0, (
+        "a strictly in-band command did not spend the inhibit")
+    # AND THE DOCUMENTED CORNER, PINNED HERE (design record section 29.5,
+    # revision 5 residual 4): the in-band command that spends the inhibit is
+    # ALSO a changed setpoint, which the fw v5 closed-before HOLD answers by
+    # clearing ``shareClosedLoopRun``. That is re-entry condition 2, so the
+    # region ENDS with it and the next rail command reaches the setpoint latch
+    # with revision 4 semantics until the loop closes once more. The arm is
+    # therefore still down at the end of this case. It is a real corner of the
+    # rule, left as it stands because changing it would alter fw v5 hold
+    # semantics, and it is pinned rather than described.
+    assert fw_inh[-1]["armed"] == 0, (
+        "the selector re-armed after an in-band command had ended the "
+        "closed-before region; condition 2 (shareClosedLoopRun) must have "
+        "been cleared with the setpoint change")
 
 
 def test_the_schedule_is_bit_identical_to_fw_v26_above_the_crossover(harness):

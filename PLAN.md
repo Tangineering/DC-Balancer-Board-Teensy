@@ -689,7 +689,7 @@ All commands are single uppercase characters, processed in `doState98()`:
 | `C` | Toggle `CBAL_DISABLE` (HIGH = OVP bypassed; use with caution) |
 | `M` | Toggle `MPPT_DISABLE` (HIGH = MPPT enabled; LOW = inhibited) |
 | `N` | Dynamic Ag105 MPPT reg-`0x02` threshold status/verify (fw v24) |
-| `Z` | Clear the persisted encoder direction sense (fw v28 rev 3): erases the EEPROM record at 4276, returns `encDirSign` to +1, resets the flip count and the runaway window; moves no switch, commands no current |
+| `Z` | Clear the persisted encoder direction sense (fw v28 rev 3): erases the EEPROM record at 4276, returns `encDirSign` to +1, resets the flip count and the runaway window; also CANCELS an outstanding deferred commit (fw v28 rev 4), so a flip taken moments earlier cannot land after the clear; moves no switch, commands no current |
 | `D` | Start/stop simulated drive cycle (§9c) |
 | `S` | Print status (all pin states, all ADC readings, `I_charge`, bench-tool state) |
 | `I` | Scan the I2C bus |
@@ -991,16 +991,44 @@ appear as `t_us` gaps (the decoder reports max interval / missed periods). A sam
 
 **Record layout (52 bytes, little-endian, packed):**
 
-> **Format note (current: v7, 106 B, fw v20).** The table below is the ORIGINAL v1 record and is
+> **Format note (current: v9, 116 B, fw v28 rev 5).** The table below is the ORIGINAL v1 record and is
 > kept because every field in it still holds its v1 byte offset — the format has only ever been
 > APPENDED to. Subsequent versions: v3 (68 B) added `V_fc`/`V_batt`/`V_chg`/`V_rgn`; v4 (68 B,
 > header-only) added the committed per-run profile parameters; v5 (76 B, fw v11) added `u_unsat`
 > and `drive_x0`; v6 (92 B, fw v16) added `encoder_pos`, `enc_period_ref_us`,
 > `enc_multi_pitch_count`, `enc_spurious_drop_count`; **v7 (106 B, fw v20) added
 > `enc_edge_count_a` (offset 92), `enc_edge_count_b` (96), `enc_phase_ewma` (100),
-> `enc_duty_a_ewma` (102) and `enc_duty_b_ewma` (104)**. The header layout is unchanged from v4;
-> only `hdr[4]` (the format version, now 7) and `hdr[5]` (the record size, now 106) differ.
+> `enc_duty_a_ewma` (102) and `enc_duty_b_ewma` (104)**; v8 (112 B, fw v27 rev 2) added
+> `g_clamp_count` (offset 106) and the live load-scheduled droop scale `k_d` (108); **v9 (116 B,
+> fw v28 rev 5) added `selector_bits` (112), `enc_dir_sign` (113), `enc_dir_flips` (114) and one
+> reserved `spare` byte (115)**. The header layout is unchanged from v4;
+> only `hdr[4]` (the format version, now 9) and `hdr[5]` (the record size, now 116) differ.
 > Decoders read the record stride from `hdr[5]`, never assume it.
+>
+> The v8 pair are the share governor's ACTUATOR PARAMETERS. `k_d` is a LEVEL in ohms — the live
+> scale this record's `gFC`/`gBT` were computed with, so `r = k_d / (RE_MAX * gFC)` recovers the
+> applied ratio. From v8 the header's `K_DROOP_x1000` is the schedule's FLOOR, not the value in
+> use, and a v7-era ratio recovery from the header constant is wrong on any v8 or v9 run.
+> `g_clamp_count` is a boot-monotonic SATURATING counter of converter writes clamped at full scale.
+>
+> The three v9 fields are the SOURCE SELECTOR and the ENCODER DIRECTION SENSE. `selector_bits` is
+> a LEVEL bit field: bit0 the selector is armed, bit1 the fuel cell is selected (0 = battery),
+> bit2 this arm came from the fw v28 rev 5 RE-ENTRY rule rather than a profile start, bit3 an
+> encoder-sense EEPROM commit is queued, **bit4 (fw v28 rev 6) a safety disarm is refusing a
+> re-arm** — without it a decoded run cannot separate "no rail was commanded" from "a rail was
+> commanded and was refused"; bits 5-7 reserved, written 0. Taking bit 4 moved no offset and no
+> format version. `enc_dir_sign` is a LEVEL
+> and is **signed** — a sense the fw v28 rev 2 runaway detector flipped decodes as -1, never 255 —
+> and `v_act` in the same record already carries the factor, so the field explains a velocity
+> trace rather than correcting one. `enc_dir_flips` is a boot-monotonic SATURATING counter clamped
+> to 255. Both subjects are run-defining state a decoded run cannot reconstruct, which is why v9 is
+> a format bump and not two more `flags` bits: that byte has been fully allocated since fw v26.
+>
+> **116 does not divide 512.** The ring is still a whole multiple of the card block
+> (116 x 1024 = 512 x 232, `static_assert`ed), but a drain chunk is now FOUR records = 464 B rather
+> than a block. The drain is byte-based and then floored to a whole record, so no drain logic
+> changed; a decoder, likewise, must not assume records are 512 B aligned. Format v8's exact
+> division was a coincidence, not a requirement.
 >
 > The two v7 **counters** are the raw per-channel ISR edge counts — the direct before/after metric
 > for the Schmitt front-end fix, and the only signal that separates a dead channel from a dead

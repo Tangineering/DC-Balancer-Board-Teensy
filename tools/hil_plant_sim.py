@@ -644,7 +644,33 @@ def live_k_droop_from_codes(g_fc, g_bt, floor=K_DROOP_FW_OHM):
 #: this floor is BELOW both and was not retuned).  The clip to [0, 1] bounds the
 #: result; this floor keeps the model from spending its whole authority on a
 #: current that no observer cares about.
-ASYM_SIMPLE_I_MIN_A = 0.10
+#:
+#: 0.10 -> 0.08 A, 2026-09-08 (operator ruling).  WHY IT MOVED: `I_AUX_A` was
+#: retuned 0.15 -> 0.09 A on 2026-09-03, so the SIMPLE engine's standstill total
+#: is now 0.090 A -- BELOW the old 0.10 A floor.  The split law was therefore
+#: skipped at idle and the engine reported the commanded code ratio (0.25) where
+#: the law gives 0.2599, which is a discontinuity at exactly the operating point
+#: the aux era created and not a modelling choice anyone made.  0.08 A sits under
+#: the new idle with margin and still under both firmware entry gates.
+#: CONDITIONING AT THE NEW FLOOR, measured rather than asserted (2026-09-08).
+#: The closed-form inverse in `governor_model._ratio_for_delivered()` takes its
+#: physical root as `C/q` with `q = -(B + sign(B)*sqrt(D))/2`, so what matters
+#: is that the discriminant stays away from zero and that the leading
+#: coefficient does not vanish.  Over r in [0.05, 0.95] at the shipped
+#: parameters (dV0 0.013522 V, rho 0.9434, R_f 0.033 ohm, k_d 0.30 ohm):
+#:
+#:   I_tot [A]   min D     |A| range      round-trip residual   dalpha/dr
+#:   0.08        0.0254    0.138-0.196    <= 2.2e-16            0.53-1.66
+#:   0.09        0.0311    0.119-0.178    <= 3.3e-16            0.58-1.60
+#:   1.00        0.0835    0.004-0.043    <= 2.2e-16            0.94-1.18
+#:
+#: The solve is BETTER conditioned at the new floor than at a full load, not
+#: worse: |A| GROWS as the total falls (the dV0/I_tot term dominates P), so the
+#: near-degenerate `A -> 0` case the C/q pairing exists to survive is a
+#: HIGH-current case, and the round trip alpha(r) -> r is exact to machine
+#: precision at 0.08 and 0.09 A.  The forward map's slope stays bounded in
+#: [0.53, 1.66], so no ratio is flattened onto an ill-posed inverse.
+ASYM_SIMPLE_I_MIN_A = 0.08
 # GENERATED module — tools/gen_ftp75_profile.py, from the committed EPA raw
 # file references/drive_cycles/ftpcol.txt (sha256 verified at generation).
 # Never hand-edited; regenerate instead.  See the `ems-ftp75-*` scenarios.
@@ -8087,7 +8113,8 @@ def resolve_asymmetry_dv0_v(asymmetry_mode, electrical=None, plant=None):
     return float(asymmetry_dv0_v(0.0, 0.0))
 
 
-def resolve_asymmetry_split(asymmetry_mode, electrical=None, plant=None):
+def resolve_asymmetry_split(asymmetry_mode, electrical=None, plant=None,
+                            droop_mode=None):
     """The other two parameters of the static split law: (rho, R_f).
 
     ONE OWNER FOR ONE QUANTITY, the sibling of `resolve_asymmetry_dv0_v()`
@@ -8113,25 +8140,107 @@ def resolve_asymmetry_split(asymmetry_mode, electrical=None, plant=None):
     at the band rails EVEN WITH THE ASYMMETRY OFF (review run-002, PLANT-R2-N2).
     Returning it unconditionally is the point of this helper.
 
-    ⚠️ `--droop measured` IS NOT RESOLVED HERE.  The hi-fi engine realizes
-    `DROOP_SCALE[mode] * k_d` per channel while `R_f` stays unscaled, and the
-    caller's `GovernorModel` carries the FIRMWARE's design `k_d` (it also maps
-    the MDAC codes with it).  Under `--droop design` — every campaign on record
-    — the two agree exactly.  See `docs/modeling/governor_split_law_20260903.md`
-    section 6 for the arithmetic and the TODO(verify).
+    ✔ `--droop measured` IS NOW RESOLVED HERE (2026-09-08, operator ruling).
+    The returned `R_f` is `DROOP_FIXED_SERIES_OHM / s`, with `s` the run's
+    droop-mode scale.  The physical floor has NOT changed and is not scalable;
+    what is returned is the LAW PARAMETER an offline `GovernorModel` needs,
+    and the division is the exact algebra rather than a fit.  The hi-fi engine
+    realizes `s*rho*k_d/r + R_f` per channel and injects `s*dV0`, while the
+    model carries the FIRMWARE's design `k_d` (the same attribute maps the MDAC
+    codes, so it cannot move).  Dividing the engine's numerator and denominator
+    by `s` gives
+
+        R_FC = rho*k_d/r + R_f/s,   R_BT = k_d/(1-r) + R_f/s,   dV0_model = dV0
+
+    which is identical share for share -- measured max |Δα| 2.2e-16 over the
+    whole band at 0.3-4.0 A.  `resolve_governor_dv0_v()` below is the other
+    half; the two must be used together.  `s` = 1.0 under `--droop design`, so
+    every campaign on record is byte-identical.
+
+    WHY THIS PAIRING AND NOT ANOTHER (the fit, 2026-09-08).  Four candidates
+    were scored against the bench record.  Against CAL-1's delivered share at a
+    commanded 0.5 (α = 0.5354 / 0.5262 / 0.5327 at I_tot = 0.452 / 0.935 /
+    1.346 A), scaling `k_d` ALONE -- equivalently handing the model a realized
+    `k_d = s*K_DROOP` with `R_f` and `dV0` left alone -- gives RMS **0.045659**
+    of share, while scaling `k_d` and `dV0` together (this pairing, and its
+    algebraic restatement above) gives **0.009044**, a factor of 5.  The
+    `k_d`-only forms also diverge from the engine they are supposed to mirror
+    by up to **0.341** of share.  The 39 per-channel slope fits cannot separate
+    the candidates -- all four imply the same realized resistance
+    `s*R_cmd + R_f` -- but they do bound it: that realization sits at RMS
+    0.0298 Ω against the bench groups, against 0.0075 Ω for a free two-parameter
+    regression whose intercept comes out NEGATIVE (-0.0242 Ω, slope 0.272).
+    That gap is a statement about `DROOP_SCALE` and `R_f` themselves, not about
+    this ruling, and it is recorded in
+    `docs/modeling/governor_split_law_20260903.md` section 9 rather than acted
+    on here.
 
     PURE."""
+    scale = _droop_law_scale(electrical, droop_mode, plant)
     if electrical is not None:
         return (float(electrical.asym_droop_scale_fc)
                 / float(electrical.asym_droop_scale_bt),
-                DROOP_FIXED_SERIES_OHM)
+                DROOP_FIXED_SERIES_OHM / scale)
     _rho = ASYM_DROOP_SCALE_FC / ASYM_DROOP_SCALE_BT
     if plant is not None:
         return (1.0 if plant.asymmetry_mode == "off" else _rho,
-                DROOP_FIXED_SERIES_OHM)
+                DROOP_FIXED_SERIES_OHM / scale)
     if asymmetry_mode == "off":
-        return (1.0, DROOP_FIXED_SERIES_OHM)
-    return (_rho, DROOP_FIXED_SERIES_OHM)
+        return (1.0, DROOP_FIXED_SERIES_OHM / scale)
+    return (_rho, DROOP_FIXED_SERIES_OHM / scale)
+
+
+def resolve_governor_dv0_v(asymmetry_mode, electrical=None, plant=None,
+                           droop_mode=None):
+    """The ΔV₀ the OFFLINE GOVERNOR LAW takes, in volts.
+
+    A DIFFERENT QUANTITY FROM `resolve_asymmetry_dv0_v()`, deliberately, and
+    that is why it is a second function rather than a flag on the first.  That
+    resolver's contract is "the ΔV₀ the run actually INJECTS" -- the number the
+    banner prints and the sidecar records -- and giving one number two meanings
+    was the stated reason the 2026-09-03 round declined to ship this.
+
+    This one is the law parameter that goes with
+    `resolve_asymmetry_split(..., droop_mode)`'s scaled `R_f`: the injected
+    value divided by the droop-mode scale.  The engine injects `s*dV0`, so
+    under `--droop measured` this returns the unscaled fit value 0.013522 V and
+    under `--droop design` it returns exactly what the injected resolver does.
+    Use the two together or neither; mixing a scaled `R_f` with an injected
+    `dV0` is one of the candidates the 2026-09-08 fit rejected.
+
+    ⚠️ THE DIVISOR IS THE SOURCE'S, NOT THE RUN'S.  Only a hi-fi engine
+    carries an ALREADY-SCALED ΔV₀ (`asymmetry_params(..., droop_scale=s)`
+    multiplies it, F2), so only that branch divides.  The simple engine does
+    not scale its droop at all, and the mode-only fallback returns the raw
+    fitted constant -- both are already the law's value, and dividing them
+    would introduce the very error this function exists to remove.  A test
+    pins the round trip against the engine's own law.
+
+    PURE."""
+    if electrical is not None:
+        return (float(electrical.asym_dv0_v)
+                / _droop_law_scale(electrical, droop_mode))
+    return resolve_asymmetry_dv0_v(asymmetry_mode, None, plant)
+
+
+def _droop_law_scale(electrical=None, droop_mode=None, plant=None):
+    """The droop-mode scale `s` the two governor-law resolvers divide by.
+
+    A hi-fi engine is the authority (it holds the scale it actually built the
+    boosts with).  Failing that, the named mode; failing that, 1.0, which is
+    both `--droop design` and the SIMPLE engine, whose split law is written
+    directly in the bench-measured constants and has no mode scale at all.
+
+    PURE."""
+    if electrical is not None:
+        return float(getattr(electrical, "droop_scale", 1.0)) or 1.0
+    # A `plant` means the SIMPLE engine, whose droop is written directly in the
+    # bench-measured constants and carries no mode scale -- `--droop measured`
+    # is recorded there as `applied: false`. Scaling its law would be a second
+    # application of a correction it never received.
+    if plant is not None or droop_mode is None:
+        return 1.0
+    return float(DROOP_SCALE[droop_mode])
 
 
 def parse_share_band(text):
@@ -8253,8 +8362,9 @@ def mpc_configure_kwargs(args, meta, dv0_v=None, split=None):
     # live asymmetry it is refused loudly: running a plant-unaware planner
     # against an asymmetric plant is the defect this key exists to close.
     if dv0_v is None:
-        dv0_v = resolve_asymmetry_dv0_v(
-            getattr(args, "asymmetry", ASYMMETRY_MODE_DEFAULT))
+        dv0_v = resolve_governor_dv0_v(
+            getattr(args, "asymmetry", ASYMMETRY_MODE_DEFAULT),
+            droop_mode=getattr(args, "droop", None))
     dv0_v = float(dv0_v)
     if mpc_supports_kwarg("dv0_v"):
         out["dv0_v"] = dv0_v
@@ -8280,7 +8390,8 @@ def mpc_configure_kwargs(args, meta, dv0_v=None, split=None):
     # unconditionally would give one law two authorities.
     if split is None:
         split = resolve_asymmetry_split(
-            getattr(args, "asymmetry", ASYMMETRY_MODE_DEFAULT))
+            getattr(args, "asymmetry", ASYMMETRY_MODE_DEFAULT),
+            droop_mode=getattr(args, "droop", None))
     rho, r_series = float(split[0]), float(split[1])
     if mpc_supports_kwarg("droop_scale_fc"):
         out["droop_scale_fc"] = rho
@@ -12930,7 +13041,8 @@ def main(argv=None):
         # split law rather than three. The floor is printed in BOTH modes
         # because it is present in both.
         _asym_rho, _asym_rf = resolve_asymmetry_split(asymmetry_mode,
-                                                      electrical)
+                                                      electrical, None,
+                                                      droop_mode)
         print("[hil] asymmetry=%s (injected dV0 %+.6f V, droop_scale_fc %.4f, "
               "r_series %.4f ohm, noise=%s)"
               % (asymmetry_mode, _asym_dv0, _asym_rho, _asym_rf,
@@ -12947,24 +13059,29 @@ def main(argv=None):
                   "parameters are the M2 CONSISTENT PAIR (dV0 0.013522 V at "
                   "s_B=1, rho 0.9434) and must not be mixed with a value from "
                   "another fit - see the constants banner in hil_electrical.py.")
-        # ── THE SPLIT LAW IS A `--droop design` MODEL (2026-09-03 fix round,
-        #    M3) ──────────────────────────────────────────────────────────────
+        # ── THE SPLIT LAW IS NOW EXACT IN BOTH DROOP MODES (2026-09-08
+        #    operator ruling; the 2026-09-03 M3 WARNING IS RETIRED) ───────────
         # The hi-fi engine realizes DROOP_SCALE[mode]*k_d per channel and scales
         # the injected dV0 by the same factor, while the 0.033 ohm series floor
         # is deliberately NOT scaled. The offline GovernorModel carries the
-        # FIRMWARE's design k_d (it also maps the MDAC codes with it), so under
-        # `--droop measured` the walk's and the planner's predicted share is
-        # off by a known amount (alpha 0.2571 engine vs 0.2208 model at r 0.20,
-        # 1.5 A). The resolution is algebraic and is NOT shipped pending an
-        # operator ruling. ASCII only: this stream is cp1252 on the bench PC.
+        # FIRMWARE's design k_d, which cannot move because the same attribute
+        # maps the MDAC codes -- so the law is handed R_f/s and dV0_injected/s
+        # instead, which is the same law term for term (max |d_alpha| 2.2e-16
+        # over the band at 0.3-4.0 A). The pairing was chosen against the bench
+        # record, not by algebra alone: see resolve_asymmetry_split()'s
+        # docstring and docs/modeling/governor_split_law_20260903.md section 9.
+        # The banner states the mode in one line rather than warning, because
+        # there is no longer an error to warn about. ASCII only: cp1252 console.
         if droop_mode != "design":
-            print("[hil] WARNING: the OFFLINE governor split law (ems_walk, "
-                  "the MPC planner) is exact only under --droop design. Under "
-                  "--droop %s the engine scales k_d and dV0 but not the "
-                  "0.033 ohm series floor, so a walked or planned delivered "
-                  "share carries a known error (16 percent relative at r 0.20, "
-                  "1.5 A). See docs/modeling/governor_split_law_20260903.md "
-                  "section 6." % droop_mode)
+            print("[hil] NOTE: the offline governor split law is resolved for "
+                  "--droop %s (r_series %.4f ohm = R_f/%.5f, dV0_law %+.6f V "
+                  "= injected/%.5f); it is exact in both droop modes from "
+                  "2026-09-08. See "
+                  "docs/modeling/governor_split_law_20260903.md section 9."
+                  % (droop_mode, _asym_rf, DROOP_SCALE[droop_mode],
+                     resolve_governor_dv0_v(asymmetry_mode, electrical, None,
+                                            droop_mode),
+                     DROOP_SCALE[droop_mode]))
     # Scenario-level Ag105 charge-current ceiling (SCENARIOS[...]["chg_i_ceiling_a"],
     # same class of knob as vesc_cap_f).  Absent -> the firmware's configured
     # AG105_I_MAX.  Replay mode has no scenario and no charger model at all.
@@ -13051,12 +13168,17 @@ def main(argv=None):
                 # All THREE split-law parameters are resolved HERE, off the
                 # same engines and in one place (2026-09-03 fix round, M2):
                 # they are one law, so one authority.
+                # 2026-09-08: the LAW parameters, not the injected ones.
+                # `resolve_governor_dv0_v()` and the scaled `R_f` from
+                # `resolve_asymmetry_split(..., droop_mode)` are one pairing and
+                # are resolved together; under `--droop design` (every campaign
+                # on record) both are byte-identical to the injected values.
                 _mk = mpc_configure_kwargs(
                     args, meta,
-                    dv0_v=resolve_asymmetry_dv0_v(asymmetry_mode, electrical,
-                                                  plant),
+                    dv0_v=resolve_governor_dv0_v(asymmetry_mode, electrical,
+                                                 plant, droop_mode),
                     split=resolve_asymmetry_split(asymmetry_mode, electrical,
-                                                  plant))
+                                                  plant, droop_mode))
                 ems_policy.configure(**_mk)
                 if _mk:
                     print("[hil] MPC overrides: "

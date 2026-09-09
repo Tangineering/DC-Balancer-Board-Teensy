@@ -328,14 +328,27 @@ def test_mode_fractions_by_segment_keys_only_occurring_segments():
 # ─────────────────────────────────────────────────────────────────────────────
 def test_governed_sdp_v3_walk_on_ems_sdp_completes_with_open_hold_and_h2_pin():
     got = ew.walk("sdp-v3", "ems-sdp", governor=True, soc0=0.7)
-    hold = got.mode_fractions.get(gm.MODE_OPEN_HOLD, 0.0)
-    assert hold > 0.1, (
-        "expected a substantial open-loop-hold fraction (measured 33.8%% by "
-        "the implementer); got %.3f -- either the governor gating changed or "
-        "this walk's demand no longer dwells below the closed-loop exit "
-        "threshold (0.25 A at fw v27 rev 2; 0.55 A through fw v26) the way "
-        "ems-sdp's stimulus is documented to."
-        % hold)
+    # THE SUB-GATE DWELL, WHICH IS THE PROPERTY. It used to be measurable as an
+    # OPEN-LOOP HOLD fraction (33.8 % when this test was written). fw v28 rev 5
+    # moved WHERE that dwell is spent without removing it: the re-entry rule
+    # re-arms the selector on a commanded share at or outside a rail once the
+    # loop has closed and the load has fallen back under the gate, and
+    # sdp_policy_v3 commands 1.00 - clamped to the 0.85 rail - through most of
+    # this stimulus's light-load spans. The dwell is therefore LATCHED now
+    # (19.3 %) rather than held (0.002 %), so the check is on the dwell and not
+    # on the submode it used to land in. What it still catches is the same
+    # failure: a walk whose demand no longer falls below the closed-loop exit
+    # threshold (0.20 A at fw v28; 0.25 A at fw v27 rev 2; 0.55 A through
+    # fw v26) the way ems-sdp's stimulus is documented to.
+    sub_gate = (got.mode_fractions.get(gm.MODE_OPEN_HOLD, 0.0)
+                + got.mode_fractions.get(gm.MODE_OPEN_FF, 0.0)
+                + got.mode_fractions.get(gm.MODE_LATCHED, 0.0))
+    assert sub_gate > 0.1, (
+        "expected a substantial sub-gate dwell (33.8%% open-loop hold when "
+        "this test was written; 19.4%% latched at fw v28 rev 5); got %.3f -- "
+        "either the governor gating changed or this walk's demand no longer "
+        "dwells below the closed-loop exit threshold the way ems-sdp's "
+        "stimulus is documented to." % sub_gate)
     # Loose provenance pin, deliberately: this number depends on the sdp-v3
     # policy artifact (tools/sdp_policies/sdp_policy_v3.json) plus the reduced
     # demand/governor model composition, none of which this test file owns or
@@ -363,7 +376,17 @@ def test_governed_sdp_v3_walk_on_ems_sdp_completes_with_open_hold_and_h2_pin():
     # provisional_note: fw v27 rev 2 era (I_min 0.30 -> 0.15 A, gate 0.30 A,
     # scheduled k_d, battery-only start), re-walked 2026-09-03, NOT measured on
     # the board; pin on campaign G.
-    assert got.h2_g == pytest.approx(0.012237, rel=0.05)
+    # fw v28 REV 5 RE-PIN 2026-09-08: 0.012237 -> 0.012726, that is +4.0 %, and
+    # again ONE mechanism. The re-entry rule re-arms the selector whenever the
+    # loop has closed, the load has fallen back under the gate and the command
+    # sits on a rail; sdp_policy_v3 asks for 1.00 across this stimulus's
+    # light-load spans, so those spans now run FUEL-CELL-ONLY where fw v28
+    # rev 4 ran them as a converged two-source hold. The latched fraction
+    # doubles (9.5 % -> 19.3 %) and the open-loop HOLD all but vanishes
+    # (33.8 % -> 0.002 %). The tolerance is UNCHANGED at 5 %; this is a re-pin,
+    # not a widening. provisional_note: fw v28 rev 5 era, re-walked 2026-09-08,
+    # NOT measured on the board; pin on the first fw v28 campaign.
+    assert got.h2_g == pytest.approx(0.012726, rel=0.05)
     # Pin the MECHANISM'S EXISTENCE, not only its consequence. A walk that
     # stopped arming the battery-only start would pass the h2 band above on the
     # way back down and say nothing about why.

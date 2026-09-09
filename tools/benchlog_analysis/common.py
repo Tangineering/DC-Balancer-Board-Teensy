@@ -130,6 +130,29 @@ CSV_COLUMNS_V8 = (CSV_COLUMNS_V7[:CSV_COLUMNS_V7.index("fault_flags")]
                   + CSV_COLUMNS_V7[CSV_COLUMNS_V7.index("fault_flags"):]
                   + ["share_gov_ceiling"])
 
+# v9 decode_benchlog CSVs (tools/decode_benchlog.py CSV_HEADER_V9, fw v28
+# rev 5) add selector_bits, enc_dir_sign and enc_dir_flips after k_d, i.e.
+# still before fault_flags, and keep the derived `share_gov_ceiling` helper at
+# the end of the row -- 37 columns. Every v8 column index is unchanged.
+# FIELD CONTRACT (the v6/v7 three-class contract, extended):
+#   selector_bits  LEVEL, a bit field -- bit0 selector armed, bit1 fuel cell
+#                  selected (0 = battery), bit2 this arm came from the fw v28
+#                  rev 5 RE-ENTRY rule rather than a profile start, bit3 an
+#                  encoder-sense EEPROM commit is queued, bit4 (fw v28 rev 6) a
+#                  SAFETY disarm is refusing a re-arm. Read per row, never
+#                  differenced.
+#   enc_dir_sign   LEVEL, +1 as wired or -1 after the runaway detector flipped
+#                  the sense. SIGNED on the wire: a flipped run reads -1, not
+#                  255. v_act in the SAME row already carries the factor, so
+#                  this column explains a velocity trace, it does not correct
+#                  one.
+#   enc_dir_flips  BOOT-MONOTONIC SATURATING counter, clamped at 255.
+# Pre-v9 dicts simply lack the three keys -- the same contract as every bump
+# before it.
+CSV_COLUMNS_V9 = (CSV_COLUMNS_V8[:CSV_COLUMNS_V8.index("fault_flags")]
+                  + ["selector_bits", "enc_dir_sign", "enc_dir_flips"]
+                  + CSV_COLUMNS_V8[CSV_COLUMNS_V8.index("fault_flags"):])
+
 _decoder = None
 
 
@@ -220,7 +243,9 @@ def load_csv(csv_path):
     fw v26 helper column (32-column, CSV_COLUMNS_V7_SHARE_CEILING -- appends
     the derived `share_gov_ceiling` after `flags`), or v8 (34-column,
     CSV_COLUMNS_V8 -- further adds g_clamp_count, k_d after
-    enc_duty_b_ewma, plus the same trailing share_gov_ceiling helper)
+    enc_duty_b_ewma, plus the same trailing share_gov_ceiling helper), or
+    v9 (37-column, CSV_COLUMNS_V9 -- further adds selector_bits,
+    enc_dir_sign, enc_dir_flips after k_d)
     header; the matching column list is used to parse the rest of
     the file, so a v1/v2 CSV's returned dict has exactly the same 16 keys
     it always has, a v3/v4 CSV's dict additionally has the four voltage
@@ -251,6 +276,8 @@ def load_csv(csv_path):
         columns = CSV_COLUMNS_V7_SHARE_CEILING
     elif header == CSV_COLUMNS_V8:
         columns = CSV_COLUMNS_V8
+    elif header == CSV_COLUMNS_V9:
+        columns = CSV_COLUMNS_V9
     else:
         raise ValueError(
             f"unexpected CSV header in {csv_path}: {header!r}, "
@@ -258,7 +285,8 @@ def load_csv(csv_path):
             f"{CSV_COLUMNS_V5!r} (v5), {CSV_COLUMNS_V6!r} (v6), "
             f"{CSV_COLUMNS_V7!r} (v7), "
             f"{CSV_COLUMNS_V7_SHARE_CEILING!r} (v7 + fw v26 share_gov_ceiling), "
-            f"or {CSV_COLUMNS_V8!r} (v8)")
+            f"{CSV_COLUMNS_V8!r} (v8), "
+            f"or {CSV_COLUMNS_V9!r} (v9)")
 
     n = len(rows)
     data = {col: np.full(n, np.nan, dtype=np.float64) for col in columns}

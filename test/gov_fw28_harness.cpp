@@ -59,6 +59,10 @@
 //   SETSPEFF r                   force share_spEffPrev (to stage a sliver hold)
 //   CHGWIN 0|1                   drive FC_CHARGE_ENABLE (the fw v28 F4 window)
 //   SETSEL 0|1                   force shareSelectorFC (0 = BT, 1 = FC)
+//   BUS   0|1 0|1                drive FC_BUS_ENABLE / BT_BUS_ENABLE directly
+//                                (fw v28 rev 4: the k_d hold is keyed on the
+//                                bus TOPOLOGY, so a single-source or dark bus
+//                                must be reachable from the stimulus)
 //
 // Every command prints exactly one CSV row, so the trace is index-aligned with
 // the stimulus and a divergence names its own row.
@@ -85,7 +89,7 @@
 // a value comparison and not a formatting comparison.
 static void emit(const char* op) {
     std::printf("%s,%.9g,%.9g,%.9g,%.9g,%u,%u,%.9g,%.9g,%d,%d,%d,%d,%d,%d,%d,%d,"
-                "%d,%d,%lu,%lu,%u,%d,%.9g,%.9g\n",
+                "%d,%d,%lu,%lu,%u,%d,%.9g,%.9g,%d,%d\n",
                 op,
                 (double)droopSlew_prev,
                 (double)droop_gain_FC_actual,
@@ -113,7 +117,12 @@ static void emit(const char* op) {
                 // visible here) and the reference the sliver hold assigns.
                 shareSelectorFC ? 1 : 0,
                 (double)shareSlewStepThisTick,
-                (double)share_spEffPrev);
+                (double)share_spEffPrev,
+                // fw v28 rev 5: the re-entry rule's provenance and its safety
+                // refusal. Neither reaches a wire frame, so the harness is the
+                // only place the port can be compared on them.
+                shareSelectorReArmed ? 1 : 0,
+                shareSelectorReArmInhibit ? 1 : 0);
 }
 
 // The scalar-returning commands print their return value in an extra column so
@@ -138,7 +147,8 @@ int main() {
 
     std::printf("op,r,g_fc,g_bt,k_d,code_fc,code_bt,filt,sched_tot,"
                 "sw_fc,sw_bt,iso_fc,iso_bt,cut_fc,cut_bt,def_fc,def_bt,"
-                "armed,active,ref_load,ref_blank,g_clamp,sel_fc,slew,sp_eff\n");
+                "armed,active,ref_load,ref_blank,g_clamp,sel_fc,slew,sp_eff,"
+                "re_armed,re_inhibit\n");
 
     char op[32];
     while (std::scanf("%31s", op) == 1) {
@@ -215,6 +225,15 @@ int main() {
             // path's own mutual-exclusion guard (which would move BT_BUS).
             digitalWrite(FC_CHARGE_ENABLE, on ? HIGH : LOW);
             emit("CHGWIN");
+        } else if (std::strcmp(op, "BUS") == 0) {
+            int f = 0, b = 0;
+            if (std::scanf("%d %d", &f, &b) != 2) break;
+            // digitalWrite, not writeBusSwitch(): the harness stages the PINS
+            // the fw v28 rev 4 topology test reads, and must not stamp a
+            // rising-edge blanking time the stimulus did not ask for.
+            digitalWrite(FC_BUS_ENABLE, f ? HIGH : LOW);
+            digitalWrite(BT_BUS_ENABLE, b ? HIGH : LOW);
+            emit("BUS");
         } else if (std::strcmp(op, "SETSEL") == 0) {
             int fc = 0;
             if (std::scanf("%d", &fc) != 1) break;

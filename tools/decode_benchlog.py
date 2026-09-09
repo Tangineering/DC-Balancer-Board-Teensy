@@ -288,6 +288,40 @@ float channel columns only, exactly as it excludes fault_flags/flags).
 The raw `flags` byte is still emitted unchanged beside it, so a consumer
 that prefers its own mask is unaffected.
 
+Record, format v9 (116 B, LE): the v8 112 B record (offsets 0-111
+    unchanged) with four more bytes APPENDED at the end. The record's
+    `flags` byte has been fully allocated since fw v26, and both subjects
+    below are run-defining state a decoded run cannot reconstruct, which is
+    why this is a format bump and not two more flag bits.
+      offset 112: u8 selector_bits -- the fw v28 source selector's state, a
+                     LEVEL bit field. bit0 the selector is ARMED; bit1 the
+                     FUEL CELL is selected (0 = battery); bit2 this arm came
+                     from the fw v28 rev 5 RE-ENTRY rule rather than from a
+                     profile start, which is the only way to tell a
+                     mid-profile re-arm from a boundary one; bit3 an
+                     encoder-sense EEPROM commit is queued for
+                     encDirCommitTick(). Bits 4-7 are reserved and written
+                     0. Read per record, never differenced.
+      offset 113: i8 enc_dir_sign -- +1 if the quadrature decoder's sense is
+                     trusted as wired, -1 if the fw v28 rev 2 runaway
+                     detector flipped it. SIGNED: a flipped run must decode
+                     as -1, not 255. `v_act` in the SAME record ALREADY
+                     carries the factor, so this field EXPLAINS a velocity
+                     trace, it does not correct one. A LEVEL.
+      offset 114: u8 enc_dir_flips -- encDirFlipCount, a BOOT-MONOTONIC
+                     SATURATING counter CLAMPED to 255 (the firmware's own
+                     counter is 16-bit; the clamp is what keeps the field's
+                     class true). A run of 255s means "saturated", not
+                     "quiet".
+      offset 115: u8 spare -- reserved, always 0. Not a CSV column.
+    SIZING NOTE, because it changed: 116 does not divide 512, so a firmware
+    drain chunk is FOUR records = 464 B and a record boundary no longer
+    coincides with a card block. Format v8's exact division was a
+    coincidence, not a requirement, and nothing here assumes it: this
+    decoder walks the stream by the stride the HEADER declares. That is also
+    what makes a v9 log fail LOUDLY under a v8-only decoder, as a
+    record_size mismatch, rather than decoding as garbage.
+
 Format v8 adds two more CSV columns -- g_clamp_count and k_d -- APPENDED
 after enc_duty_b_ewma (i.e. still before fault_flags), giving a 34-column
 CSV_HEADER_V8. The derived `share_gov_ceiling` helper column described above
@@ -297,6 +331,15 @@ at the very end of the row. The header itself is unchanged from v4-v7
 v4's header decode path unmodified). v1-v7 decoding is byte-identical to
 before this version existed: every pre-v8 format has its own RECORD_INFO
 entry and its own CSV header constant, none of which this bump touches.
+
+Format v9 adds three more CSV columns -- selector_bits, enc_dir_sign and
+enc_dir_flips -- APPENDED after k_d (i.e. still before fault_flags), giving
+a 37-column CSV_HEADER_V9. The record's reserved `spare` byte is
+deliberately NOT a column: it is always 0, and a column for it would invite
+a reader to treat it as data. The derived `share_gov_ceiling` helper is
+emitted for v9 exactly as for v7 and v8, still at the very end of the row,
+and the header itself is unchanged from v4-v8. v1-v8 decoding is
+byte-identical to before this version existed.
 
 Gap statistics (printed to stderr): max_interval_us is the largest modular
 step between consecutive records; missed_periods sums, over every step,
@@ -314,8 +357,9 @@ result's csv_header (not the module-level CSV_HEADER constant) is the
 correct CSV header line for the decoded file's version -- v1/v2 files get
 the 16-column CSV_HEADER, v3/v4 files get the 20-column CSV_HEADER_V3, v5
 files get the 22-column CSV_HEADER_V5, v6 files get the 26-column
-CSV_HEADER_V6, v7 files get the 31-column CSV_HEADER_V7, and v8 files get
-the 34-column CSV_HEADER_V8.
+CSV_HEADER_V6, v7 files get the 31-column CSV_HEADER_V7, v8 files get
+the 34-column CSV_HEADER_V8, and v9 files get the 37-column
+CSV_HEADER_V9.
 DecodeResult.header also carries "profile_amp" and "profile_b" (float or
 None -- None for v1-v3 files and for a v4 file whose corresponding valid
 bit is clear).
@@ -368,11 +412,39 @@ RECORD_SIZE_V7 = 106
 RECORD_FMT_V8 = "<I14fHBBBB2xffiIIIIIHHHHf"
 RECORD_SIZE_V8 = 112
 
+# v9 record layout: v8's 112 B record with selector_bits (u8), enc_dir_sign
+# (i8), enc_dir_flips (u8) and one spare byte APPENDED at the end (offsets
+# 0-111 unchanged), and the 32 B header layout unchanged.
+#   112  u8  selector_bits   bit0 shareBatteryOnlyArmed, bit1 shareSelectorFC
+#                            (0 = battery selected), bit2 shareSelectorReArmed
+#                            (this arm came from the fw v28 rev 5 RE-ENTRY rule
+#                            rather than from a profile start), bit3
+#                            encDirStorePending (an encoder-sense EEPROM commit
+#                            is queued), bit4 shareSelectorReArmInhibit (fw v28
+#                            rev 6 -- a SAFETY disarm is refusing a re-arm);
+#                            bits 5-7 reserved, written 0
+#   113  i8  enc_dir_sign    +1 as wired, -1 flipped by the runaway detector.
+#                            SIGNED: a flipped sense must decode as -1, not 255.
+#                            v_act in the same record ALREADY carries the factor
+#   114  u8  enc_dir_flips   encDirFlipCount, CLAMPED to 255
+#   115  u8  spare           reserved, always 0
+# FIELD CLASSES (the v6/v7 three-class contract, extended): selector_bits and
+# enc_dir_sign are LEVELS -- read per record, never differenced; enc_dir_flips
+# is a BOOT-MONOTONIC SATURATING counter, so a run of 255s means "saturated",
+# not "quiet".
+# ALIGNMENT, STATED BECAUSE IT CHANGED: 116 does not divide 512, so a v9 drain
+# chunk is FOUR records = 464 B and a record boundary no longer coincides with a
+# card block. Nothing in this decoder may assume 512 B alignment of records; it
+# walks the stream by the stride the HEADER declares, which is what makes the
+# change a non-event here.
+RECORD_FMT_V9 = "<I14fHBBBB2xffiIIIIIHHHHfBbBB"
+RECORD_SIZE_V9 = 116
+
 TRAILER_FMT = "<IIIBBI"
 CLOSE_REASONS = {1: "complete", 2: "stop", 3: "X", 4: "Q", 5: "fault",
                   6: "io_error"}
 
-SUPPORTED_VERSIONS = (1, 2, 3, 4, 5, 6, 7, 8)
+SUPPORTED_VERSIONS = (1, 2, 3, 4, 5, 6, 7, 8, 9)
 
 # Per-version record format/size and CSV header/field list. v1 and v2 share
 # a record layout; v3 appends the four new voltage channels after I_cmd.
@@ -435,6 +507,32 @@ CSV_HEADER_V8 = ("t_us,share_sp,share_act,v_sp,v_act,I_fc,I_batt,gFC,gBT,"
                  "fault_flags,ps_phase,dc_phase,trap_phase,flags,"
                  "share_gov_ceiling")
 
+CSV_FIELDS_V9 = CSV_FIELDS_V8 + ["selector_bits", "enc_dir_sign",
+                                 "enc_dir_flips"]
+CSV_HEADER_V9 = ("t_us,share_sp,share_act,v_sp,v_act,I_fc,I_batt,gFC,gBT,"
+                 "V_bus,I_cmd,V_fc,V_batt,V_chg,V_rgn,u_unsat,drive_x0,"
+                 "encoder_pos,enc_period_ref_us,enc_multi_pitch_count,"
+                 "enc_spurious_drop_count,enc_edge_count_a,enc_edge_count_b,"
+                 "enc_phase_ewma,enc_duty_a_ewma,enc_duty_b_ewma,"
+                 "g_clamp_count,k_d,selector_bits,enc_dir_sign,enc_dir_flips,"
+                 "fault_flags,ps_phase,dc_phase,trap_phase,flags,"
+                 "share_gov_ceiling")
+
+# fw v28 rev 5 selector_bits, named here rather than inlined so the decoder and
+# the firmware share one vocabulary. The `spare` byte is deliberately NOT a CSV
+# column: it is reserved and always 0, and a column for it would invite a reader
+# to treat it as data.
+SELECTOR_ARMED = 0x01
+SELECTOR_FC = 0x02
+SELECTOR_RE_ARMED = 0x04
+SELECTOR_ENC_DIR_STORE_PENDING = 0x08
+# fw v28 rev 6: bit 4 comes out of the reserved range, so the record size, every
+# field offset and the format version are UNCHANGED. Without it a decoded run
+# cannot separate "no rail was commanded in this window" from "a rail was
+# commanded and was REFUSED", which is the only observable the F1 charge-window
+# disarm and the raw-current escape produce.
+SELECTOR_RE_ARM_INHIBIT = 0x10
+
 # fw v26 share-governor current-ceiling bit in the record's `flags` byte.
 # Named here rather than inlined so the decoder and its tests share one
 # vocabulary, the way the firmware and the IO CSV do.
@@ -457,6 +555,8 @@ RECORD_INFO = {
         "csv_fields": CSV_FIELDS_V7, "csv_header": CSV_HEADER_V7},
     8: {"fmt": RECORD_FMT_V8, "size": RECORD_SIZE_V8,
         "csv_fields": CSV_FIELDS_V8, "csv_header": CSV_HEADER_V8},
+    9: {"fmt": RECORD_FMT_V9, "size": RECORD_SIZE_V9,
+        "csv_fields": CSV_FIELDS_V9, "csv_header": CSV_HEADER_V9},
 }
 
 # 30 s: longer than any profile's worst card-stall gap (ring = 1024 rec ~=
@@ -605,7 +705,19 @@ def decode_blg(data):
         fields = struct.unpack_from(record_fmt, chunk, 0)
         g_clamp_count = None
         k_d = None
-        if version == 8:
+        selector_bits = None
+        enc_dir_sign = None
+        enc_dir_flips = None
+        if version == 9:
+            (_t, share_sp, share_act, v_sp, v_act, i_fc, i_batt, gfc, gbt,
+             v_bus, i_cmd, v_fc, v_batt, v_chg, v_rgn, fault_flags, ps_phase,
+             dc_phase, trap_phase, flags, u_unsat, drive_x0, encoder_pos,
+             enc_period_ref_us, enc_multi_pitch_count,
+             enc_spurious_drop_count, enc_edge_count_a,
+             enc_edge_count_b, enc_phase_ewma, enc_duty_a_ewma,
+             enc_duty_b_ewma, g_clamp_count, k_d, selector_bits,
+             enc_dir_sign, enc_dir_flips, _spare) = fields
+        elif version == 8:
             (_t, share_sp, share_act, v_sp, v_act, i_fc, i_batt, gfc, gbt,
              v_bus, i_cmd, v_fc, v_batt, v_chg, v_rgn, fault_flags, ps_phase,
              dc_phase, trap_phase, flags, u_unsat, drive_x0, encoder_pos,
@@ -650,28 +762,33 @@ def decode_blg(data):
         row = [t_us, "%.9g" % share_sp, "%.9g" % share_act, v_sp_cell,
                v_act_cell, "%.9g" % i_fc, "%.9g" % i_batt, "%.9g" % gfc,
                "%.9g" % gbt, "%.9g" % v_bus, "%.9g" % i_cmd]
-        if version in (3, 4, 5, 6, 7, 8):
+        if version in (3, 4, 5, 6, 7, 8, 9):
             row += ["%.9g" % v_fc, "%.9g" % v_batt, "%.9g" % v_chg,
                     "%.9g" % v_rgn]
-        if version in (5, 6, 7, 8):
+        if version in (5, 6, 7, 8, 9):
             row += ["%.9g" % u_unsat, "%.9g" % drive_x0]
-        if version in (6, 7, 8):
+        if version in (6, 7, 8, 9):
             row += [encoder_pos, enc_period_ref_us, enc_multi_pitch_count,
                     enc_spurious_drop_count]
-        if version in (7, 8):
+        if version in (7, 8, 9):
             # The three EWMA levels are 1/256 fixed point on the wire; the
             # CSV carries the direct fractions (raw/256.0) -- see docstring.
             row += [enc_edge_count_a, enc_edge_count_b,
                     "%.9g" % (enc_phase_ewma / 256.0),
                     "%.9g" % (enc_duty_a_ewma / 256.0),
                     "%.9g" % (enc_duty_b_ewma / 256.0)]
-        if version == 8:
+        if version in (8, 9):
             # g_clamp_count is a plain saturating count (int style, like
             # fault_flags); k_d is a float channel and takes the same
             # "%.9g" form as every other float column.
             row += [g_clamp_count, "%.9g" % k_d]
+        if version == 9:
+            # All three are plain integers. enc_dir_sign is SIGNED and is
+            # unpacked as such, so a flipped sense reads -1 here and not 255;
+            # the `spare` byte is reserved and is deliberately not a column.
+            row += [selector_bits, enc_dir_sign, enc_dir_flips]
         row += [fault_flags, ps_cell, dc_cell, tp_cell, flags]
-        if version in (7, 8):
+        if version in (7, 8, 9):
             # DERIVED, not a record field, so it is appended after the raw
             # `flags` byte rather than inserted with the record fields
             # before fault_flags -- every established v7 index is unchanged.

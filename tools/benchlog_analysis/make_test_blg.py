@@ -16,6 +16,7 @@ Usage:
   python make_test_blg.py --v6 [-o logs/TEST0005.BLG] [--seed 0]
   python make_test_blg.py --v7 [-o logs/TEST0006.BLG] [--seed 0]
   python make_test_blg.py --v8 [-o logs/TEST0007.BLG] [--seed 0]
+  python make_test_blg.py --v9 [-o logs/TEST0008.BLG] [--seed 0]
 
 --v3 writes the format-v3 header/record layout (adds V_fc, V_batt, V_chg,
 V_rgn); default is the v1/v2 layout, selected as usual via --header-v1 /
@@ -111,6 +112,8 @@ RECORD_FMT_V7 = "<I14fHBBBB2xffiIIIIIHHH"
 RECORD_SIZE_V7 = 106
 RECORD_FMT_V8 = "<I14fHBBBB2xffiIIIIIHHHHf"
 RECORD_SIZE_V8 = 112
+RECORD_FMT_V9 = "<I14fHBBBB2xffiIIIIIHHHHfBbBB"
+RECORD_SIZE_V9 = 116
 TRAILER_FMT = "<IIIBBI"
 
 DURATION_S = 40.0
@@ -317,6 +320,33 @@ def build_signals(seed, wrap=False, fw_version=1):
     g_clamp_count[N_SAMPLES // 2:] = 1
     g_clamp_count[(3 * N_SAMPLES) // 4:] = 2
 
+    # Format v9 (fw v28 rev 5) fields. selector_bits and enc_dir_sign are
+    # LEVELS; enc_dir_flips is a SATURATING boot-monotonic counter. The trace
+    # walks the states a real run visits rather than a constant, so a consumer
+    # that reads any of the three sees more than one value:
+    #   * the selector is ARMED on the battery for the first tenth of the run
+    #     (the fw v28 profile start), then disarmed at the gate;
+    #   * it RE-ARMS on the fuel cell for one window in the last third, with
+    #     the rev 5 provenance bit set, which is the only way a decoder can
+    #     tell a re-entry from a profile start;
+    #   * an encoder-sense EEPROM commit is pending for a few records after
+    #     the single sign flip, which is where bit 3 comes from;
+    #   * the sense flips from +1 to -1 once, and the flip count follows it.
+    selector_bits = np.zeros(N_SAMPLES, dtype=np.uint8)
+    selector_bits[:N_SAMPLES // 10] = 0x01                  # armed, battery
+    re_arm = slice((7 * N_SAMPLES) // 10, (8 * N_SAMPLES) // 10)
+    selector_bits[re_arm] = 0x01 | 0x02 | 0x04              # armed, FC, re-armed
+    flip_i = N_SAMPLES // 2
+    selector_bits[flip_i:flip_i + 5] |= 0x08                # commit pending
+    #   * and a window in which a rail command was REFUSED by a safety disarm
+    #     (fw v28 rev 6, bit 4), which is the only way a decoded run can tell
+    #     "no rail commanded" from "rail commanded and refused".
+    selector_bits[(N_SAMPLES // 4):(N_SAMPLES // 4) + 400] |= 0x10
+    enc_dir_sign = np.ones(N_SAMPLES, dtype=np.int8)
+    enc_dir_sign[flip_i:] = -1
+    enc_dir_flips = np.zeros(N_SAMPLES, dtype=np.uint8)
+    enc_dir_flips[flip_i:] = 1
+
     # t_us: nominal +1000/sample with a few microseconds of jitter, always
     # strictly increasing (jitter magnitude << the 1000 us nominal step).
     # With wrap=True the run starts just short of the 2^32 us micros()
@@ -346,12 +376,15 @@ def build_signals(seed, wrap=False, fw_version=1):
                 enc_duty_a_ewma=enc_duty_a_ewma,
                 enc_duty_b_ewma=enc_duty_b_ewma,
                 g_clamp_count=g_clamp_count, k_d=k_d,
+                selector_bits=selector_bits, enc_dir_sign=enc_dir_sign,
+                enc_dir_flips=enc_dir_flips,
                 fault_flags=fault_flags, ps_phase=ps_phase,
                 dc_phase=dc_phase, trap_phase=trap_phase, flags=flags)
 
 
 def pack_header(fw_version=1, header_v1=False, v3=False, v4=False, v5=False,
-                 v6=False, v7=False, v8=False, profile_amp=6.0, profile_b=0.15,
+                 v6=False, v7=False, v8=False, v9=False,
+                 profile_amp=6.0, profile_b=0.15,
                  profile_amp_valid=True, profile_b_valid=True):
     """Format-v2 header (u16 fw_version at offset 18) by default; header_v1
     writes the legacy v1 layout (no fw_version) for decoder back-compat
@@ -372,18 +405,19 @@ def pack_header(fw_version=1, header_v1=False, v3=False, v4=False, v5=False,
     their valid bits (set False to exercise the decoder's None-when-invalid
     path with non-zero float bytes still present, mirroring
     test_decode_benchlog.py's amp-only/neither-valid cases)."""
-    if sum([header_v1, v3, v4, v5, v6, v7, v8]) > 1:
+    if sum([header_v1, v3, v4, v5, v6, v7, v8, v9]) > 1:
         raise ValueError(
-            "header_v1, v3, v4, v5, v6, v7 and v8 are mutually exclusive")
+            "header_v1, v3, v4, v5, v6, v7, v8 and v9 are mutually exclusive")
     version = 1 if header_v1 else (
-        3 if v3 else (8 if v8 else (7 if v7 else (
-            6 if v6 else (5 if v5 else (4 if v4 else 2))))))
-    record_size = RECORD_SIZE_V8 if v8 else (RECORD_SIZE_V7 if v7 else (
+        3 if v3 else (9 if v9 else (8 if v8 else (7 if v7 else (
+            6 if v6 else (5 if v5 else (4 if v4 else 2)))))))
+    record_size = RECORD_SIZE_V9 if v9 else (
+        RECORD_SIZE_V8 if v8 else (RECORD_SIZE_V7 if v7 else (
         RECORD_SIZE_V6 if v6 else (
             RECORD_SIZE_V5 if v5 else (
-                RECORD_SIZE_V3 if (v3 or v4) else RECORD_SIZE))))
+                RECORD_SIZE_V3 if (v3 or v4) else RECORD_SIZE)))))
     param_flags = 0
-    if v4 or v5 or v6 or v7 or v8:
+    if v4 or v5 or v6 or v7 or v8 or v9:
         if profile_amp_valid:
             param_flags |= 0x01
         if profile_b_valid:
@@ -394,14 +428,14 @@ def pack_header(fw_version=1, header_v1=False, v3=False, v4=False, v5=False,
         hdr += struct.pack("<H", fw_version)
     hdr += b"\x00" * (HEADER_SIZE - len(hdr))
     hdr = bytearray(hdr)
-    if v4 or v5 or v6 or v7 or v8:
+    if v4 or v5 or v6 or v7 or v8 or v9:
         struct.pack_into("<ff", hdr, 20, profile_amp, profile_b)
     assert len(hdr) == HEADER_SIZE
     return bytes(hdr)
 
 
 def pack_record(sig, i, v3=False, v4=False, v5=False, v6=False, v7=False,
-                v8=False):
+                v8=False, v9=False):
     """Record layout is identical for v3 and v4 -- v4 only changes the
     header (see pack_header) -- so v4 is accepted here purely for call-site
     symmetry with build_blg() and packs the same RECORD_FMT_V3 as v3. v5
@@ -410,8 +444,11 @@ def pack_record(sig, i, v3=False, v4=False, v5=False, v6=False, v7=False,
     enc_multi_pitch_count, enc_spurious_drop_count appended. v7 packs
     RECORD_FMT_V7: the v6 fields plus enc_edge_count_a, enc_edge_count_b,
     enc_phase_ewma, enc_duty_a_ewma, enc_duty_b_ewma appended."""
-    if v8:
-        rec = struct.pack(RECORD_FMT_V8, int(sig["t_us"][i]),
+    if v8 or v9:
+        fmt = RECORD_FMT_V9 if v9 else RECORD_FMT_V8
+        tail = ((int(sig["selector_bits"][i]), int(sig["enc_dir_sign"][i]),
+                 int(sig["enc_dir_flips"][i]), 0) if v9 else ())
+        rec = struct.pack(fmt, int(sig["t_us"][i]),
                           float(sig["share_sp"][i]), float(sig["share_act"][i]),
                           float(sig["v_sp"][i]), float(sig["v_act"][i]),
                           float(sig["i_fc"][i]), float(sig["i_batt"][i]),
@@ -431,8 +468,9 @@ def pack_record(sig, i, v3=False, v4=False, v5=False, v6=False, v7=False,
                           int(sig["enc_phase_ewma"][i]),
                           int(sig["enc_duty_a_ewma"][i]),
                           int(sig["enc_duty_b_ewma"][i]),
-                          int(sig["g_clamp_count"][i]), float(sig["k_d"][i]))
-        assert len(rec) == RECORD_SIZE_V8
+                          int(sig["g_clamp_count"][i]), float(sig["k_d"][i]),
+                          *tail)
+        assert len(rec) == (RECORD_SIZE_V9 if v9 else RECORD_SIZE_V8)
         return rec
     if v7:
         rec = struct.pack(RECORD_FMT_V7, int(sig["t_us"][i]),
@@ -519,11 +557,12 @@ def pack_record(sig, i, v3=False, v4=False, v5=False, v6=False, v7=False,
 
 def pack_trailer(records_written, dropped=0, close_reason=1, error_code=0,
                   abandoned=0, v3=False, v4=False, v5=False, v6=False,
-                  v7=False, v8=False):
-    record_size = RECORD_SIZE_V8 if v8 else (RECORD_SIZE_V7 if v7 else (
-        RECORD_SIZE_V6 if v6 else (
-            RECORD_SIZE_V5 if v5 else (
-                RECORD_SIZE_V3 if (v3 or v4) else RECORD_SIZE))))
+                  v7=False, v8=False, v9=False):
+    record_size = RECORD_SIZE_V9 if v9 else (
+        RECORD_SIZE_V8 if v8 else (RECORD_SIZE_V7 if v7 else (
+            RECORD_SIZE_V6 if v6 else (
+                RECORD_SIZE_V5 if v5 else (
+                    RECORD_SIZE_V3 if (v3 or v4) else RECORD_SIZE)))))
     body = struct.pack(TRAILER_FMT, 0xFFFFFFFF, records_written, dropped,
                         close_reason, error_code, abandoned)
     body += b"\x00" * (record_size - len(body))
@@ -533,7 +572,8 @@ def pack_trailer(records_written, dropped=0, close_reason=1, error_code=0,
 
 def build_blg(seed, truncate, wrap=False, dropped=0, fw_version=1,
               header_v1=False, v3=False, v4=False, v5=False, v6=False,
-              v7=False, v8=False, profile_amp=6.0, profile_b=0.15,
+              v7=False, v8=False, v9=False,
+              profile_amp=6.0, profile_b=0.15,
               profile_amp_valid=True, profile_b_valid=True,
               flags_bit4=None, flags_bit5=None, flags_bit6=None):
     """flags_bit4/flags_bit5 (v5/v6/v7 only): True/False forces that flags
@@ -551,12 +591,13 @@ def build_blg(seed, truncate, wrap=False, dropped=0, fw_version=1,
     n = N_SAMPLES
     if truncate:
         n = int(N_SAMPLES * 0.70)
-    record_size = RECORD_SIZE_V8 if v8 else (RECORD_SIZE_V7 if v7 else (
-        RECORD_SIZE_V6 if v6 else (
-            RECORD_SIZE_V5 if v5 else (
-                RECORD_SIZE_V3 if (v3 or v4) else RECORD_SIZE))))
+    record_size = RECORD_SIZE_V9 if v9 else (
+        RECORD_SIZE_V8 if v8 else (RECORD_SIZE_V7 if v7 else (
+            RECORD_SIZE_V6 if v6 else (
+                RECORD_SIZE_V5 if v5 else (
+                    RECORD_SIZE_V3 if (v3 or v4) else RECORD_SIZE)))))
 
-    if v5 or v6 or v7 or v8:
+    if v5 or v6 or v7 or v8 or v9:
         # None defaults to ON for --v5/--v6/--v7/--v8 (bit4/bit5); bit6 defaults
         # to OFF -- see the flags_bit6 docstring above.
         bit4 = True if flags_bit4 is None else flags_bit4
@@ -580,12 +621,14 @@ def build_blg(seed, truncate, wrap=False, dropped=0, fw_version=1,
 
     out = bytearray()
     out += pack_header(fw_version=fw_version, header_v1=header_v1, v3=v3,
-                        v4=v4, v5=v5, v6=v6, v7=v7, v8=v8, profile_amp=profile_amp,
+                        v4=v4, v5=v5, v6=v6, v7=v7, v8=v8, v9=v9,
+                        profile_amp=profile_amp,
                         profile_b=profile_b,
                         profile_amp_valid=profile_amp_valid,
                         profile_b_valid=profile_b_valid)
     for i in range(n):
-        out += pack_record(sig, i, v3=v3, v4=v4, v5=v5, v6=v6, v7=v7, v8=v8)
+        out += pack_record(sig, i, v3=v3, v4=v4, v5=v5, v6=v6, v7=v7, v8=v8,
+                           v9=v9)
 
     if truncate:
         # Cut off mid-record: a partial trailing record's worth of garbage
@@ -593,7 +636,7 @@ def build_blg(seed, truncate, wrap=False, dropped=0, fw_version=1,
         out += b"\xA5" * (record_size // 2)
     else:
         out += pack_trailer(records_written=n, dropped=dropped, v3=v3, v4=v4,
-                             v5=v5, v6=v6, v7=v7, v8=v8)
+                             v5=v5, v6=v6, v7=v7, v8=v8, v9=v9)
 
     return bytes(out)
 
@@ -655,6 +698,14 @@ def main():
                           "g_clamp_count and the live load-scheduled droop "
                           "scale k_d to the v7 record -- 112 B total); "
                           "mutually exclusive with the other layout flags")
+    ap.add_argument("--v9", action="store_true",
+                     help="write the format-v9 header/record layout "
+                          "(header identical to v4/v5/v6/v7/v8; record "
+                          "appends selector_bits, enc_dir_sign, "
+                          "enc_dir_flips and one spare byte to the v8 "
+                          "record -- 116 B total, which is NOT a divisor of "
+                          "512); mutually exclusive with the other layout "
+                          "flags")
     ap.add_argument("--profile-amp", type=float, default=6.0,
                      help="v4/v5/v6 only: profileAmp value to write "
                           "(default 6.0)")
@@ -696,10 +747,10 @@ def main():
     args = ap.parse_args()
 
     if sum([args.header_v1, args.v3, args.v4, args.v5, args.v6,
-            args.v7, args.v8]) > 1:
+            args.v7, args.v8, args.v9]) > 1:
         raise SystemExit(
-            "--header-v1, --v3, --v4, --v5, --v6, --v7 and --v8 are mutually "
-            "exclusive")
+            "--header-v1, --v3, --v4, --v5, --v6, --v7, --v8 and --v9 are "
+            "mutually exclusive")
     if args.flags_bit4_off and args.flags_bit4_on:
         raise SystemExit(
             "--flags-bit4-off and --flags-bit4-on are mutually exclusive")
@@ -721,6 +772,7 @@ def main():
                      dropped=args.dropped, fw_version=args.fw_version,
                      header_v1=args.header_v1, v3=args.v3, v4=args.v4,
                      v5=args.v5, v6=args.v6, v7=args.v7, v8=args.v8,
+                     v9=args.v9,
                      profile_amp=args.profile_amp, profile_b=args.profile_b,
                      profile_amp_valid=not args.profile_amp_invalid,
                      profile_b_valid=not args.profile_b_invalid,
@@ -735,7 +787,7 @@ def main():
     print(f"[make_test_blg] wrote {out_path} ({len(data)} bytes, "
           f"truncate={args.truncate}, wrap={args.wrap}, v3={args.v3}, "
           f"v4={args.v4}, v5={args.v5}, v6={args.v6}, v7={args.v7}, "
-          f"v8={args.v8}, "
+          f"v8={args.v8}, v9={args.v9}, "
           f"seed={args.seed})")
 
 

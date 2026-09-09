@@ -2068,10 +2068,23 @@ def test_the_feedforward_branch_is_numerically_inert_and_gate_1_still_holds():
     # residual stage is a shorter one. The mechanism is unchanged and the
     # figure IMPROVED, so this is a re-pin and not a widening; Gate 1 (5e-3)
     # holds with more margin than before.
-    assert on_mean == pytest.approx(1.278127e-03, rel=1e-4)
-    # The MAX moves with the mean and for the same reason (an earlier release
-    # shortens the one residual stage): 6.634062e-02 -> 5.917253e-02, -10.8 %.
-    assert on_max == pytest.approx(5.917253e-02, rel=1e-4)
+    # fw v28 REV 5 re-pin, 2026-09-08: 1.278127e-03 -> 2.392629e-03 (+87 %),
+    # with the mechanism named rather than absorbed. The re-entry rule makes a
+    # commanded share ON OR OUTSIDE A RAIL re-arm the selector whenever the loop
+    # has closed and the load has fallen back under the gate, and the rails are
+    # INCLUSIVE - so the ladder's own endpoints 0.15 and 0.85 are rails. On this
+    # light-load 61 s preview the strategy commands them often: the fixture's
+    # plant now takes 68 re-arms and stands armed for 53 312 of the run's 61 000
+    # governor ticks, against one armed span before. The residual is therefore
+    # many release/re-arm crossings landing mid-stage rather than one, each
+    # contributing the same millisecond-scale crossing-instant error the fw v27
+    # rev 2 note describes. This is a re-pin of a figure THE FIRMWARE moved, not
+    # a widened band: Gate 1 is still 5e-3, still asserted above, with 2.1x of
+    # margin.
+    assert on_mean == pytest.approx(2.392629e-03, rel=1e-4)
+    # The MAX is the single worst crossing stage and moves with the mean for
+    # the same reason: 5.917253e-02 -> 6.843024e-02 (+15.6 %) at fw v28 rev 5.
+    assert on_max == pytest.approx(6.843024e-02, rel=1e-4)
     # THE RETIRED MUTATION, INVERTED RATHER THAN DELETED.  Dropping the two
     # feedforward seeds must now change NOTHING, because the branch they select
     # holds at the same ratio the hold arm holds at.  A retune of
@@ -2288,24 +2301,105 @@ def test_the_coarsening_does_not_move_the_walk_totals():
     # below, and it is re-derived at the new constants like the two totals.
     #   fw v27 rev 2: full (0.009602542, -0.002382921)
     #                 coarse (0.009618534, -0.002376413), ratio 0.0016654
-    assert out["full"] == (0.009497171, -0.002425679), out
-    assert out["coarse"] == (0.009520136, -0.00241624), out
+    #   fw v28 rev 4: full (0.009497171, -0.002425679)
+    #                 coarse (0.009520136, -0.00241624), ratio 0.0024181
+    # fw v28 REV 5 re-pin, 2026-09-08. Both legs move again, and again for a
+    # governor reason rather than a coarsening one: the re-entry rule re-arms
+    # the selector on a commanded rail once the loop has closed and the load
+    # has fallen back under the gate, so light-load spans of this walk now run
+    # single-source where they ran split. The SUBJECT of this test - the ratio
+    # below - is re-derived at the new behaviour exactly as the two totals are.
+    assert out["full"] == (0.009369611, -0.002477054), out
+    assert out["coarse"] == (0.009392576, -0.002467615), out
     # The retired equality, restated as the measured deviation it became.
     assert out["coarse"][0] / out["full"][0] - 1.0 == pytest.approx(
-        0.0024181, abs=5e-7)
+        0.0024510, abs=5e-7)
+
+
+def test_the_re_entry_rule_is_modelled_per_column_and_only_on_a_rail():
+    """fw v28 rev 5 - `delivery_table(re_arm_ok=True)`.
+
+    In the CLOSED-BEFORE region a commanded share on or outside a rail re-arms
+    the selector with that source, and an in-band command leaves the hold
+    alone. The table must therefore treat the RAIL columns as single-source and
+    the in-band ones exactly as it did before, and with ``re_arm_ok`` false it
+    must be bit-for-bit the pre-rev-5 table. All three are asserted here,
+    because a branch that changed every column - or none - would be equally
+    invisible in the aggregate Gate-1 number.
+
+    The shadow-side half of the rule (`ShadowGovernor.re_arm_ok`) is checked
+    against the governor's own state at the end, so the two halves cannot
+    drift: the property is that the flag is true exactly when a rail command
+    WOULD re-arm the real model."""
+    i_tot = 0.18                                   # under the 0.25 A gate
+    prev = _open_preview(i_tot)
+    pre = M.precompute_stages(prev, 0, 6, mode_seed=M.STAGE_OPEN)
+    p = M.Planner()
+    r0 = 0.50
+    kw = dict(soc_hint=0.7, sp_acted=0.50, run_seed=True,
+              active=tuple(range(len(p.ladder))))
+    off = p.delivery_table(pre, {}, r0, [False] * pre.n, **kw)[0]
+    on = p.delivery_table(pre, {}, r0, [False] * pre.n, re_arm_ok=True, **kw)[0]
+
+    rails = [i for i, v in enumerate(p.ladder)
+             if v <= gm.GOV_CONST["DROOP_R_MIN"] or v >= gm.GOV_CONST["DROOP_R_MAX"]]
+    in_band = [i for i, v in enumerate(p.ladder)
+               if gm.GOV_CONST["DROOP_R_MIN"] < v < gm.GOV_CONST["DROOP_R_MAX"]]
+    assert rails and in_band, "the ladder has no rail or no in-band rung"
+
+    for si in in_band:
+        for j in range(pre.n):
+            assert on[j][si] == off[j][si], (
+                "an IN-BAND column moved under the re-entry rule (rung %.4f, "
+                "stage %d): an in-band command in the closed-before region "
+                "never triggers single-source" % (p.ladder[si], si))
+    moved = [si for si in rails
+             if any(on[j][si] != off[j][si] for j in range(pre.n))]
+    assert moved, ("no RAIL column moved; the re-entry branch is inert and the "
+                   "table is not modelling fw v28 rev 5 at all")
+    for si in moved:
+        want = 1.0 if p.ladder[si] >= gm.GOV_CONST["DROOP_R_MAX"] else 0.0
+        assert on[0][si] == pytest.approx(want), (
+            "rail rung %.4f re-armed onto the wrong source: delivered %.4f, "
+            "expected %.1f" % (p.ladder[si], on[0][si], want))
+
+    # ...and the shadow's half of the rule agrees with the model it reads.
+    sh = M.ShadowGovernor(seed_r=r0)
+    sh.model.state.batt_only_armed = False
+    sh.model.state.closed_loop_run = True
+    sh.model.state.closed_loop_mode = False
+    sh.model.state.filt_total = i_tot
+    assert sh.re_arm_ok, "the shadow refuses a re-arm in the closed-before region"
+    sh.model.state.filt_total = 0.40          # above the gate: condition 4
+    assert not sh.re_arm_ok
+    sh.model.state.filt_total = i_tot
+    sh.model.state.selector_re_arm_inhibit = True
+    assert not sh.re_arm_ok, "the shadow ignored a standing re-arm inhibit"
 
 
 def test_a_frozen_sub_sample_holds_whatever_the_setpoint_did():
     """The minimum-load gate returns BEFORE the loop-mode decision (.ino:10099).
 
     A sub-sample under `SHARE_I_TOT_MIN_A` writes nothing, so a changed setpoint
-    must NOT be modelled as a feedforward slew there."""
+    must NOT be modelled as a feedforward slew there.
+
+    THE COMMANDED RUNG IS IN BAND, DELIBERATELY (fw v28 rev 5). The roll below
+    stands in the CLOSED-BEFORE region - `closed_loop_run` true, the loop open,
+    the filtered total under the gate - which is exactly where the re-entry rule
+    re-arms the selector on a RAIL command, and the ladder's endpoints ARE rails
+    (0.15 and 0.85, inclusive). A rail rung would therefore cut a channel and
+    return LATCHED, which is correct firmware behaviour and has nothing to do
+    with the property under test. An in-band rung isolates the minimum-load
+    gate, which is what this test is for; the re-entry rule has its own coverage
+    in `tools/test_governor_fw28_equivalence.py`."""
     i_tot = 0.5 * gm.GOV_CONST["SHARE_I_TOT_MIN_A"]      # 0.0375 A, frozen
     prev = _open_preview(i_tot)
     pre = M.precompute_stages(prev, 0, 6, mode_seed=M.STAGE_OPEN)
     assert all(m == M.STAGE_FROZEN for m in pre.mode[0]), "fixture is not frozen"
     p = M.Planner()
-    si, r0 = 0, 0.50
+    si = next(i for i, v in enumerate(p.ladder)
+              if gm.GOV_CONST["DROOP_R_MIN"] < v < gm.GOV_CONST["DROOP_R_MAX"])
+    r0 = 0.50
     tab = p.delivery_table(pre, {}, r0, [False] * 6, sp_acted=0.70,
                            run_seed=True)[0]
     assert tab[0][si] == pytest.approx(r0), (

@@ -384,14 +384,35 @@ def test_setpoint_latch_releases_only_in_band_with_hysteresis():
 
 
 def test_setpoint_latch_freezes_loop_while_latched():
+    """PREMISE INVERTED AT fw v28 rev 6 (review S3), not deleted.
+
+    This asserted that the governor load filter must NOT advance while a cut is
+    latched. That was true through rev 5 for a LATCH-OWNED cut, and it is
+    exactly the defect rev 6 closes: the re-entry rule was unreachable whenever
+    the rail command PRECEDED the fall under the gate - the ordering an energy
+    manager produces most often - because both the mode flag and the filter
+    froze at their pre-cut values for the whole latched window, so conditions 3
+    and 4 of the rule never became true.
+
+    Rev 6 advances the filter whenever ANY setpoint cut is outstanding, whoever
+    owns it. What must still be frozen is everything that WRITES: the reference,
+    the switches and the cut itself. Both halves are asserted here."""
     g = gm.GovernorModel(seed_r=0.5)
     g.step(0.05, 0.1, 0.1, True, True, 0.0)
     assert g.state.sp_cut_fc is True
     filt_before = g.state.filt_total
+    r_before = g.state.r_prev
     out = g.step(0.05, 5.0, 5.0, False, True, 1e-3)  # large current, still latched
     assert out.mode == gm.MODE_LATCHED
-    assert g.state.filt_total == pytest.approx(filt_before), \
-        "the governor load filter must not advance while latched"
+    assert g.state.filt_total > filt_before, (
+        "fw v28 rev 6: the load filter must advance on ANY latched cut, or the "
+        "re-entry rule is unreachable when the rail command precedes the fall")
+    # ...and the frozen half is still frozen: no reference motion, no write,
+    # and the latch-owned cut is NOT released by the advance (the gate-release
+    # disarm stays scoped to the selector's own arm).
+    assert g.state.r_prev == pytest.approx(r_before)
+    assert out.wrote is False
+    assert g.state.sp_cut_fc is True
 
 
 # ─────────────────────────────────────────────────────────────────────────────

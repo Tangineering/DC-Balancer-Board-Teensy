@@ -696,7 +696,10 @@ def walk(strategy_name: str, scenario_name: str, *, soc0: float = 0.7,
     # asymmetry OFF as well.  All three default to the identity map, so a walk
     # that passes none is bit-identical to a pre-2026-09-03 walk; a walk that is
     # to predict THIS plant takes all three from
-    # `hil_plant_sim.resolve_asymmetry_dv0_v()` / `resolve_asymmetry_split()`.
+    # `hil_plant_sim.resolve_governor_dv0_v()` / `resolve_asymmetry_split()`,
+    # BOTH given the plant's droop mode (2026-09-08): under `--droop measured`
+    # the law's parameters are R_f/s and the unscaled dV0, which reproduces the
+    # engine exactly. The two resolvers are one pairing and must not be mixed.
     g = gov_mod.GovernorModel(dt_s=gov_dt_s, dv0_v=dv0_v,
                               droop_scale_fc=droop_scale_fc,
                               r_series_ohm=r_series_ohm,
@@ -1106,12 +1109,16 @@ def main(argv=None):      # pragma: no cover - operator convenience
     ap.add_argument("--r-series", type=float, default=0.0,
                     help="split law: R_f, the series resistance common to both "
                          "channels [ohm] (the plant's value is 0.033 in BOTH "
-                         "asymmetry modes). NOTE: this walk has no droop mode "
-                         "- the split law it applies is exact only against a "
-                         "plant run at `--droop design` (every campaign on "
-                         "record); see "
-                         "docs/modeling/governor_split_law_20260903.md "
-                         "section 6.")
+                         "asymmetry modes, and the LAW's value is R_f/s "
+                         "under a plant run at `--droop measured`, s = "
+                         "0.21171). NOTE: this walk has no droop mode of its "
+                         "own - pass the value "
+                         "`hil_plant_sim.resolve_asymmetry_split(..., "
+                         "droop_mode)` returns for the plant you are "
+                         "predicting, together with the matching "
+                         "`resolve_governor_dv0_v()`; the two are one pairing. "
+                         "See docs/modeling/governor_split_law_20260903.md "
+                         "section 9.")
     ap.add_argument("--accounting", choices=("physical", "simple"),
                     default="physical")
     ap.add_argument("--dt", type=float, default=None,
