@@ -3354,3 +3354,148 @@ HIL builds). `docs/fw26_current_ceiling_governor.md` is the design record; ledge
   `FAULT_EXPECTATIONS["charge-cruise"]` (requires `OC_FC`) needs operator re-adjudication.
 
 ---
+
+---
+
+## Rotated 2026-09-09 (range 10: the 2026-09-03 overnight addendum - campaigns D/E/F on fw v26, the bleed era, the loss-map bound, the MPC 0/1 enumeration, the clamp step-transient limit) - superseded by the 2026-09-03b/c and 2026-09-04 addenda
+
+## Status & session addendum (2026-09-03, overnight round: fw v26 on the board, campaigns D and E, bleed-era baseline, loss-map bound validated, MPC 0/1 enumeration, the clamp's step-transient limit)
+
+Overnight autonomous session from `201de7b` (operator brief 2026-09-02 evening: "fw v26 is flashed, begin
+the overnight campaign(s)"; decisions D-1 to D-4 and their reversal paths in OVERNIGHT_LOG.md
+§2026-09-02/03). **FW stays v26 (flashed by the operator); the wire protocol is frozen.** Commits `c8b50ff`
+(fw v26 tools mirror + review fixes), `d941170` (post-campaign-D fix round), `5e2e3fd` (conventions
+leftovers), `7de3f11` / `4887bd3` (MPC single-source round, merged from an isolated worktree), and the
+campaign-E fix round (last commit of the session; hash in the log).
+
+- **Campaign D (`hil_report_20260902_220604`, tooling 201de7b run from a DETACHED WORKTREE so the concurrent
+  tools-mirror round could not leak into the children; 71 planned, 70 executed + `drive` SKIP; suite tally
+  63/71; wall 1:38:10). Corrected: 70 of 70 correct, zero board defects.** The eight FAILs were four tooling
+  artefacts, all classified during the run: (1) `regen-harvest-true` — the `sw_ring` estimator adds a FIXED
+  1.95 V Death-5 load-dump term to the node at every cut > 50 mA; with the 60 kΩ bleed the charger node
+  sits ON the chopper clamp (18.064 V) when the 65 mA commanded REGEN open lands, and 18.064 + 1.95 =
+  20.014 V > the 20 V abs-max — structurally, the estimator's ceiling (18.050 V) is 50 mV below the clamp
+  state the scenario REQUIRES; physical ring 0.8 mV. (2) Five `ems-ftp75c-*` legs — the chopper-energy
+  aggregator was written into `signals_require` (an `events_require` spec): unnameable ("signal_the") and
+  unmeasurable; physics clears the 2.5 J floor 2.2× (5.46–5.49 J). (3) `ems-ftp75c-mpc` / `ems-mpc-cross`
+  — the MPC share floor/ceiling constants were left at the pre-widening band (0.15 and 0.2375 are ladder
+  rungs 1 and 2). (4) `mppt-tracking` — the fiat mirror freezes across unpowered spans and carried the
+  braking-window count 27 into the cruise window's first 849 ticks (the bleed keeps the node clamped to
+  the end of the window; C only passed because the 2 kΩ bleed released it early); the harvest operating
+  point is unchanged at [15, 19] and the value cannot occur on hardware (the real manager excludes regen).
+  A fifth item was a scenario-design gap: the RegenManager's wall-clock trailing edge opened a single-source
+  FC_CHARGE handoff (0.37–0.38 A at 171.3 s) when the vehicle stopped before the window ended.
+- **Bleed-era predictions confirmed on the board:** loaded 61 s legs h2 −1.2 to −2.0 % (walk −1.7 %),
+  `ems-ftp75-5050` −2.88 % (walk −2.9 %), low-current runs −8 % (the removed static bleed is a larger
+  fraction of their draw). Every lightly loaded node now parks on its clamp or rail: the regen node at
+  18.10 V between windows (out-of-window chopper 1.6 J vs modelled 0.5), the chopper never releases
+  mid-window (clamp events 6 → 3, dwell 1962/2100), the 970 µF V-MOT node retains 95.15 % over a teardown
+  (comm-loss warm re-close **0.1088 / 0.0816 A**, −72 %; τ 1.94 → 58.20 s; the cold bring-up peak moved
+  −1.5 %), the soc-depletion latch moved **+2.62 s** (predicted +1.5). Anchors re-pinned (scp-inrush
+  6.360327 A, handoff-sag 0.370456 A, soc-depletion 273.5935 s, ems-sdp 0.0123898 ± 50 ppm, the FTP-75
+  h2 bands, sdp-cross period 16.10–17.12 s with an era-invariant 8.06 s hold, the ems-y quartet). The
+  bit-exact asymmetry-era records are retired by the plant boundary as predicted.
+- **The loss-map DP bound is validated on the board:** dp-replay legs −0.18 % (61 s) and +0.06 % (FTP-75)
+  against walk −0.30 / +0.03 (the sign is the dynamic-Gfc-vs-DC-gain bias; |dev| ≤ ~0.8 % is not a policy
+  result); sdp-v4 −0.09 / +0.44 after the widening (was +0.35 % rail deficit); soc-band +3.79 / +3.37;
+  MPC legs +0.01 / +0.03 / +0.39. ⚠️ The three α legs first resolved to a WRONG bound (+258 %): the
+  `SOC_BAND_DRAIN_SCENARIOS` mirror was hand-typed and omitted them — the 2026-09-01 B2 defect again at
+  the identical 0.0034 g. Now derived from `hil_plant_sim.SOC_BAND_DRAIN_SCENARIO_NAMES` in all three
+  offline mirrors; records re-solved (alpha-cal bit-identical to ems-sdp's bound); a drain-membership
+  witness is stored on new records and compared at read time (the fingerprint does not cover
+  membership, so a stale mirror yields a wrong record under a correct key; hashing it would orphan all
+  71 records — rejected).
+- **First ftp75c physics:** 6 regen windows / 19.2 s (design 6 / 19.6), REGEN never high with FC_CHARGE,
+  8 s dwell respected, chopper 5.24–5.49 J per leg, **0.73 C per cycle to the pack = 63 % of the walk's
+  1.17 C** (window-length distribution against the ~0.9 s Ag105 dead time, not η_regen), SoC credit
+  unresolvable ("model validation, not an EMS discriminator" confirmed). h2 tracks the walk within 2 % on
+  the three charge-free legs; the MPC leg is a constant-0.15 hold (h2 −31 % vs walk, drain +14 %).
+  **Ruling D-4:** the manager releases `charge_goal` on the observed motor current — arm −0.2 A, release
+  −0.1 A (the firmware's own regenActive exit; the first single-level version chattered on measured
+  braking grazes and was caught by review) — so the FC_CHARGE handoff windows collapsed on the board
+  from 80–280 ms to one 50 Hz commander period (18–20 ms, 0.38–0.47 mC; suppressed entirely on the sdp
+  leg); they can still occur at both edges inside one commander period and the new 0.60 A charging arm
+  bounds them. The walk keeps the wall-clock end (its feedback view lacks the current), so walk regen
+  duty is an upper bound on the live one.
+- **fw v26 on the board.** Reachability corrected before the campaign: the clamp binds on
+  `ems-y-b30-v3` (12 ticks D / 13 ticks E at t ≈ 27.01 s; the clamp explains 0.05 % of that leg's h2
+  delta; the first live engagement fired on a STALE filtered total after a load collapse) and nowhere
+  else on the registered set; the replay half gives ZERO coverage (max commanded FC demand 1.165 A;
+  open-loop injection cannot drive a reference-side clamp). **Campaign E (`hil_report_20260903_031220`,
+  tooling d941170, 73 planned, 72 executed; suite 72/73; wall 1:40:26): 72 of 72 correct, zero board
+  defects; all eight D FAILs closed by their fixes acting (not by widening).** `fw26-clamp-cruise` 13/13
+  on its first execution — **the clamp's calibration: engagement +3.32 ms after the command (Pi cadence +
+  round-trip), duty 1.0000, I_fc 1.2499–1.2502 A at the 1.25 A ceiling (0.016 % overshoot), I_batt
+  0.7507, closure ≤ 0.8 mA, hysteresis engagement-only, 0 switch events; it fired on the DEMAND
+  (0.75 × 2.00 A) while the delivered current was 1.0005 A — reference-side, proven.**
+  `fw26-clamp-sweep` FAILED and it is REAL: at t = 38.000 s the table stepped the velocity setpoint AND
+  the share (0.40 → 0.84) upward in one packet; the drive railed to 12 A (I_tot 1.84 → 2.99 A), the clamp
+  engaged on the first tick it saw the setpoint, the slew limiter bounded the reference for 9 of 12
+  ticks, the 20 ms EMA under-read the rising total by **25.6 % against the 12 % design headroom**
+  (decomposition +0.4298 A filter / −0.1910 A plant lag = +0.2388 A; closure 0.2 mA), and OC_FC latched
+  at 38.029 s (I_fc 1.489 A). Neither axis alone latches (load step at the converged ratio 1.196 A; share
+  step at the settled total 1.2500 A). **The race:** the slew-limited reference crosses the safe delivered
+  share in (1.40/I_new − s_prev)/0.02 ticks (4.3) while the EMA needs ln(1 − (I_new − 1.25·I_new/1.40)/
+  (I_new − I_old))/ln(0.95) ticks to make the clamp bind (25) — a factor 5.8; **necessary condition
+  I_tot > LIMIT_I_FC_MAX / DROOP_R_MAX = 1.647 A; no registered EMS stimulus exceeds 1.4714 A.**
+  Firmware closure (α ≥ ~0.25 or slew ≤ 0.0027/tick) was NOT proposed under the design-intent ruling; the
+  sweep is bridged (velocity first, share 1.5 s later — the drive rail lasts up to 1.08 s at region 11;
+  walked peaks 1.311 A bridged vs 1.712 A unbridged, corrected split law) and the EMS rule "no upward share step in the same
+  decision as an upward demand step above 1.65 A two-source" is queued for the MPC stage model (a
+  0.0875 rung at 2.0 A is 0.175 A of demand against 0.15 A of headroom). After a State-99 latch every
+  aux-bit and MDAC-mirror check reads the frozen value (13 consequential FAILs, ten non-evidence
+  PASSes, 499 inherited FC-ceiling ticks on the successor) — aux checks are windowed post-grace.
+- **Frontiers:** cycle61 0.9638 / 1.0018 (D) → 0.9635 / 1.0018 (E); **ftp75 0.9656 / 0.9992 → 0.9657 /
+  0.9994 (first CERTIFIED ftp75 reading in D)**; cycle61-mpc 0.9638 / 1.0017; ftp75-mpc 0.9653 / 0.9988;
+  **ftp75c 1.0091 / 1.0076 and ftp75c-mpc 0.9931 / 0.9916 (first certified in E; D's hand figures
+  1.0088 / 1.0107 and 0.9903 / 0.9920)**. sdp-v4 and mpc-sto TIED on both cycles (98 / 341 ppm); the
+  four charge-free FTP-75 strategies within 0.15 %; soc-band 3.3–3.8 % worse. Levers third and fourth
+  readings L_chg 0.332947 / 0.333298, L_share 0.416279 / 0.416317 SoC/g; v4's α 1.49 / 1.48 % below
+  the measured window; eq-H2 ordering greedy +1.11 % / charge +4.08–4.10 % — v4 the eq-H2 winner a
+  fourth time. **Same-config floor: ~65 ppm within a campaign, ~250 ppm typical / 800 ppm worst across
+  campaigns** (E vs D: scp-inrush bit-exact to 7 digits, five anchors bit-exact, 30 of 43 within
+  ±250 ppm). Campaign C's MPC expiry finding is CLOSED (ems-mpc-cross median 10.0 → 5.2 ms, 57.4 → 0 %);
+  `CANDIDATE_COST_MS_NOMINAL` 0.0300 → 0.0392 → 0.0360 (two-campaign mean; the ladder still coarsens
+  on 100 % of decisions, points searched 4–8 of 9).
+- **MPC single-source (0/1) enumeration shipped (ruling: rollout-time cut-guard test).** The board
+  executes exact 0/1 through the existing packet (`.ino:5663` constrains to [0, 1], not the band; the
+  ems-y-b00 profiles already use it — no protocol change). Two candidate columns at block 0, admissibility
+  by a bounded roll of the real governor model from the committed shadow state (seven refusal reasons;
+  regen guard on the host key OR the observed REGEN bit; FC-charge, deferred cut, latch), billed on the
+  measured single-source bus law with a survivor-referred OC bound; `ems-mpc-single` in the default plan
+  (15 ms budget, h2 informational for its first campaign). **Findings:** the load guard never refuses
+  permanently above 0.6 A total — the deferral clips the reference into band and walks the doomed channel
+  down until the guard admits (a delay, not a verdict; grid worst 118 ticks at 0.75 A / r0 0.85, 1.69×
+  under the 200-tick window; 2 of 400 grid points refuse at 0.60 A), contrary to the design record's
+  resolution 1; FC-only is admissible and never selected; **the gain is 0.01–0.43 % of equivalent
+  hydrogen** while raw hydrogen moves up to 49 % — a control-set completeness change. Plan invariance
+  with the feature off verified against d941170 itself (3050 commands identical, sha-pinned). Gate 1 is
+  not yet single-source-aware (queued).
+- **Tooling data-integrity items found:** `regen_early_releases` was frozen at 0 in every sidecar ever
+  written (evaluated before the run loop; fixed in `finalize_meta()`); the sdp-sweep drain mirror
+  (above); `share_cut_census` is a SPREAD across campaigns (118 → 157 → 132 under a byte-identical
+  scorer; open-loop share-PI branch selection), not a pin; a stray uncommitted duplicate `--eta-chg`
+  argparse registration in `tools/dp_results_db.py` killed its CLI and was restored; `steady`'s h2 is
+  not comparable between a post-flash campaign and a chained one (499 ticks in State 99).
+- **Tests at close:** `.venv_hil` **2178 passed / 80 skipped**; miniforge **2877 passed / 1 skipped**
+  (one known wall-clock flake under load). Firmware suites untouched — fw v26's 3926 / 175 / 4408 stand.
+- **Campaign F (`hil_report_20260903_063659`, tooling 885b436, 74 planned, 73 executed; suite 73/74;
+  wall 1:41:35): 73 of 73 correct, zero board defects.** The bridged sweep scored all 12 regions with no
+  OC_FC: five clamping regions at **1.2500 ± 0.0004 A, duty 1.0000**, seven inert regions at zero aux,
+  whole-run peak 1.2978 A (7.3 % under the limit) at the region the walk named; the 38 s bridge is a
+  clean clamp event (1.2646 A on the velocity step, 1.2503 A on the deferred share step); the 68 s bridge
+  clears by margin (total still climbing at the share step; 1.2586 A). One FAIL: two region-12 MDAC
+  model-fidelity pins — `governor_model`'s code mapping is exact only at share 0.84 (+3.1 % at 0.50,
+  +10.4 % at 0.20) while delivered currents match to 0.07 % (re-derivation queued). **`ems-mpc-single`
+  first execution: the board executed 22 battery-only (share 0.0) commands through the fw v25 guard —
+  loaded cuts deferred 24–45 ms and fired at 0.44–0.50 A, 21 clean restores, no fault, no ring — the
+  "delay, not verdict" finding measured; eq-H2 +0.18 % WORSE than `ems-mpc` on the identical stimulus
+  (walk −0.04 %): the surrogate does not model the deferral; a wash, not a win.** `regen_early_releases`
+  reads 2 on all ftp75c legs; cruise step pins 1.2502 A on two campaigns; cost 0.0360 moved MPC medians
+  +40–60 % with 0 cap hits and moved the mpc-sto plan +0.2 % eq-H2 inside the tie band. Third bleed-era
+  reading: scp-inrush cut bit-exact to 16 digits (three campaigns), 33 of 45 shared runs within ±500 ppm,
+  levers L_share 0.416271 / L_chg 0.338414 (the noisier lever, 2.1 % spread over C–F), sdp_policy_v4 the
+  eq-H2 winner a fifth time; TP0053's ERROR latch is bimodal (quote the UV_BUS instant).
+- **Campaign budget: 3 of 5 used; stopped after F** (clean; every open item is a tooling re-derivation).
+  The physics review of `docs/HIL_PLANT.md` (run 002: bleed, loss map, regen model, the estimator's
+  physical option) was deliberately not run overnight (host load during campaigns) and is queued.

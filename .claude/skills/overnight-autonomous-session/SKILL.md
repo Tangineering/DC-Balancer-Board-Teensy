@@ -196,3 +196,27 @@ the next session inherits it.
 - **Pre-classify the next pass from the current one:** when a mechanism is found on one leg, name the legs
   it must also hit before they run; the analysis then needs one agent per mechanism, not per run.
 - **A sim fix is closed only by a re-executed PASS**, never by the model's own before/after numbers.
+
+## Additions from the 2026-09-08/09 session (campaign I, the first fw v28 campaign)
+
+- **Host load is a campaign hazard.** Five concurrent LIVE analysis agents stalled the simulator child 314 ms
+  and voided a leg (ERR_HIL_STALE). Cap LIVE dispatch at two agents; every brief says "one streaming pass, no
+  numpy"; nothing heavy (tool pass, re-solves, sweeps) while a child is live. A suite tripwire on the largest
+  tick gap is queued; until it lands, read a mid-run link latch as host-side first.
+- **Completion signal = `results.json` meta.partial == false, never a log line.** A launcher with `set -e`
+  dies on the suite's nonzero return (any FAIL) before writing its own "exit" line, and a Monitor filtered to
+  non-PASS lines exited silently twice on this shell. Poll the JSON.
+- **Check the branch before every commit in a shared tree.** The operator switched the primary worktree to a
+  feature branch mid-session; four commits landed there unnoticed and had to be cherry-picked. Commit all
+  close-out docs from a dedicated `main` worktree; never touch the primary tree's git or its uncommitted edits.
+- **Briefs cite a prior campaign's files by the tool pass's subfolder layout** (`scenario_<name>_<mode>/`,
+  `replay_<LOG>/`); the top-level CSVs move.
+- **Brief premises are hypotheses.** "The arm should stand on a light-load run" was wrong (the selector is
+  Run-only); the first agent caught it and the preamble was corrected before the next dispatch - keep one
+  common preamble file so a correction propagates.
+- **Cross-run reconciliation is where mechanisms are named.** The three-leg alpha trio, the two b00 profiles
+  and the dp-vs-sdp cut counts each turned a single-run puzzle into a mechanism; when a finding rests on one run,
+  find its control run in the same campaign before adjudicating.
+- **Name the firmware branch from source when the CSV cannot.** The chatter cut's owner (the r-based path in
+  `applyShareRatio()`, not the setpoint latch) was decided by reading the three FC_BUS LOW writers; the ruling
+  item is precise because of it.

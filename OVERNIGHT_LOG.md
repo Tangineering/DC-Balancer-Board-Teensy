@@ -1643,3 +1643,98 @@ during a live campaign, ASCII prints, decision pairs for judgment calls with rev
   F1 closed on all three recorded triggers (charge-to-full standstill, the ftp75c regen early releases x4 legs,
   the ftp75c charge-window entry) with zero UV_BUS ticks campaign-wide; the joint clamp bound's third reading
   1.2835 A makes the population 4.2 % wide (1.3241 A not calibrated); the mppt F4 null result. Replays running.
+- **Git note (~00:45):** the primary worktree was switched to branch `h20-convex-h2-map` (the operator's H2-model
+  work, cut from `d2f5ab6`) while this session was appending to OVERNIGHT_LOG, so four log commits
+  (000cdae, 685feed, 25c64e1, faffffa) landed on that branch. They are cherry-picked onto main here
+  (b67951f..cbe554b) so the campaign record is on main; the branch keeps its identical copies (they merge
+  clean). Every close-out commit from here on is made from the separate worktree `DC-Balancer-main` on
+  main; the primary tree and its uncommitted tools/ + HIL_PLANT.md edits are NOT touched.
+- **Campaign I COMPLETE (21:50:52, wall 1:42:15):** 74 executed + `drive` SKIP; 38 + 27 substantive PASS, 9
+  FAIL, suite 66/75; 944 checks. All 27 replays PASS (adversarial audit running). **`ftp75c` frontier VERIFIED
+  for the first time ever: eq-H2 1.0105 vs reference, 1.0216 vs bound.** Tool pass done (74 analyzed, 0 errors).
+  Worktree `DC-Balancer-I` removed.
+
+## MORNING DIGEST 2026-09-09
+
+**Asked:** the approved schedule (campaign I, fix round, re-solves, campaign II, conditional III). **Delivered:** campaign
+I complete and fully analyzed; everything after it HELD by your mid-campaign ruling ("stop the campaign; H2
+consumption model update next"). Budget 1 of 5. No flash, no tools edit, no PSCAD, no wire change.
+
+**Headline findings** (ledger `HIL Results/hil_report_20260908_200836/HIL_FINDINGS.md`, digest `HIL_SUMMARY.md`):
+1. Zero board defects; 66/75 (65 substantive PASS, 9 FAIL all classified, drive SKIP); 27/27 replays substantive.
+2. **F1 is closed on all three triggers with zero UV_BUS ticks campaign-wide** (charge-to-full, the four ftp75c
+   regen early releases incl. from a re-armed state, the ftp75c charge-window entry; FC-selected variant too).
+3. Every fw v28 mechanism measured: the 0.25 A gate (0.2502-0.2888 A), the first FC-only selection on the board,
+   0.15-rail re-arms, the in-band hold, the re-entry condition both ways, the sliver hold at exactly 0.125 A, the
+   k_d hold (4067/717), the joint clamp's third reading 1.2835 A (population 4.2 %, F6 proven from the codes).
+4. `ftp75c` frontier VERIFIED for the first time ever (1.0105 / 1.0216) - but the socband reference now charges.
+5. REAL fw v28 consequence for a ruling: the FC chatter on a sustained 0.15 command survived F5 (71 r-based cuts /
+   90 s, the PI winding below DROOP_R_MIN; benign).
+6. The MPC ladder's 0.15 rung is the selector rail: 60.75 s of unbilled battery-only; the delivery table has no
+   HOLD state (100 % of the MPC prediction residual).
+7. Two tooling defects: ems_walk delivers 0 at a 0.15 floor under the asymmetry triple (the greedy FAIL is FALSE,
+   the rebind conclusion inverted); the re-walk table predates the re-entry rule and the disarm-driven release.
+8. Incident: ems-mpc-cross void (a 314.5 ms host blackout under five analysis agents -> ERR_HIL_STALE); rule
+   adopted: two concurrent agents max.
+
+**Reversible decisions:** D-1 worktree (removed); D-2 the two-agent cap (a process rule, no code).
+**Git:** your branch `h20-convex-h2-map` (cut from d2f5ab6) received four of my OVERNIGHT_LOG commits before I
+noticed the switch; they are cherry-picked onto main (b67951f..cbe554b) and the close-out is on main from the
+worktree `DC-Balancer-main`. Your primary tree's uncommitted tools/ + HIL_PLANT.md edits were never touched.
+Merge note: the branch's copies of those four commits are identical hunks and merge clean.
+
+**Your list for today:** WORK_QUEUE 0f items 9-11 (the chatter ruling; the MPC ladder endpoints; the socband
+charge-free re-adjudication; the FC-only re-arm to Run exit); the H2-model update; then 0f items 1-8 as a tools
+round before the next campaign (re-run ems-mpc-cross in it). Bench: the AD5443/OPA197 DMM measurement; encoder
+revs 2-4 are HIL-invisible.
+
+## RETROSPECTIVE - the 2026-09-08/09 session (feeds .claude/skills/overnight-autonomous-session and hil-agent-analysis)
+
+**What worked, with evidence.** (1) Pre-classification: the four pre-classified FAILs (comm-loss, ems-sdp, the MPC
+residual class, comm-loss's mechanism) landed exactly as classified, so analysis effort went to the five new ones.
+(2) The "right reason" standard on every PASS: it found the F4 null result on mppt-tracking, the socband reference
+charging, and that the gate never releases the arm on the compressed cycle - none of which a verdict table shows.
+(3) Cross-run reconciliation by the orchestrator: alpha-cal/charge vs greedy (the walk defect fires only at a
+0.15 floor), ems-ftp75-dp vs -sdp (100-tick visits do not wind through), b00-v1 vs b00-v3 (the re-entry condition
+from both sides) - each pair turned a single-run puzzle into a mechanism. (4) Naming the firmware branch from
+source when the CSV could not (the three FC_BUS LOW writers) - the chatter ruling item is precise because of it.
+(5) The common brief preamble + per-family brief files: 27 agents, one rewrite (the reorganized H folder paths).
+
+**What failed, and the correction adopted.** (1) HOST LOAD: five concurrent agents streaming CSVs stalled the
+simulator child 314 ms and voided a leg -> the two-agent cap and the one-pass/no-numpy brief line (memory
+`hil-live-analysis-concurrency`); suite tripwire queued. (2) The brief premise "the arm should stand on light-load
+runs" was wrong (the selector is Run-only) -> preamble corrected after the first agent caught it. (3) The
+watcher: a Monitor filtered to non-PASS lines exited silently twice on this shell; the single-notification
+`until grep` wait then never fired because the launcher's `set -e` skipped its "exit" line -> read results.json
+partial:false as the completion signal, always. (4) Git: the primary worktree was switched to the operator's
+branch mid-session and four commits landed there -> check `git branch --show-current` before every commit in a
+shared tree; commit close-out docs from a dedicated main worktree. (5) The campaign H baseline paths in briefs
+assumed top-level CSVs; H had been reorganized by the tool pass -> the preamble now states the subfolder layout.
+
+**Economics.** One campaign (1:42:15), 27 analysis agents (Opus x18, Sonnet x9), ~3.9 M subagent tokens, eight
+commits, zero destructive actions, zero tools edits; the operator's morning list is four rulings and one tools round.
+
+## SESSION 2026-09-09 (continued) - waiting on the H2-consumption session, then the adjusted overnight plan
+
+**Mandate (verbatim, ~01:15):** "The H2 consumption implementation session is currently working. Once it completes,
+continue with an adjusted overnight plan incorporating testing and utilizing the new H2 consumption estimates. The
+session, 'H2 efficiency impact of governor in EMS strategies', will message you directly to continue your overnight
+campaigns." Budget: 4 campaigns remain of 5.
+
+**Adjusted plan (to execute on that session's message; re-checked against whatever it delivers):**
+0. Read the message; pull main; confirm the merge commit, which files moved (tools/, docs/HIL_PLANT.md, the
+   solver / walk / plant), what the new H2 estimate is (stack-side vs bus-side, its constants, the eq-H2 lambda),
+   and whether any ruling on WORK_QUEUE 0f items 9-11 came with it. `git branch --show-current` before every commit.
+1. TESTING: both interpreter suites serially on the merged tree (`.venv_hil` stdlib; miniforge numpy), the fw v28
+   equivalence harness, the firmware suites untouched (no flash). Any failure -> a fix round before anything else.
+2. TOOLS FIX ROUND on the merged tree (streamlined orchestration, disjoint files sequenced): 0f-1 the ems_walk
+   0.15-floor defect; 0f-2 the delivery-table armed-HOLD state; 0f-3 the 23-leg re-walk + the ftp75c disarm-driven
+   release + the inhibit; 0f-4 to 0f-8 the suite items - EVERY walk-derived band RE-DERIVED UNDER THE NEW H2
+   ESTIMATE (the old g figures are not comparable); the era key for the new H2 model on every record.
+3. The 75 matched-DP re-solves under the new H2 model, SEQUENCED before the campaign (host load).
+4. CAMPAIGN II: full plan + opt-in legs from a detached worktree at the committed hash; validates the fix round and
+   gives the first board readings billed by the new estimate; LIVE analysis with the TWO-AGENT CAP; ems-mpc-cross's
+   re-run inside it. Frontier tuples re-read under the new billing.
+5. CAMPAIGN III conditional (II not clean, or a first-of-kind reading); stop otherwise.
+Standing: no flash, no PSCAD, no wire change, tools/ frozen during a live campaign, ASCII prints, decision pairs
+with reversal paths, the primary worktree's branch is the operator's - commit from `DC-Balancer-main`.

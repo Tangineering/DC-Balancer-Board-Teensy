@@ -576,3 +576,35 @@ for f in *.meta.json; do grep -q '"results"' "$f" && ! grep -q '"results": *null
 - Files named `walk_*.png` (docs/modeling/sdp_alpha_sweep_20260901/plots/) are OFFLINE GOVERNOR
   WALKS synthesized through the report figure builders, never board runs; a campaign glob must
   match the unprefixed names only.
+
+## Host load during a LIVE campaign (campaign I, 2026-09-08)
+
+⚠️ **The simulator child shares the host with the analysis agents, and a single blackout kills a run.**
+Five concurrent agents streaming 350 000-row CSVs halved the child's `elec_substep_hz` (48 → 22-26 kHz)
+and produced one 314.5 ms gap between injection frames; the board's `HIL_ZERO_MS` (250 ms) stale
+timeout latched `ERR_HIL_STALE` (error_code 0x10, State 99) and the leg (`ems-mpc-cross`) was VOID.
+The suite's `achieved_rate` gate is a MEAN and passed at 998.4 Hz. Rules:
+- Cap LIVE dispatch at **two concurrent analysis agents**; queue the rest behind finalizations.
+- Every brief carries "ONE streaming pass per CSV, no numpy, no second pass".
+- Never run `hil_report_analysis.py`, the matched-DP solves, or a walk sweep while a child is live.
+- Read a link-class latch (bit 0x0010) mid-run as HOST-SIDE first: sidecar tx vs rx frame counts (rx > tx
+  by the blackout's frames), seq gaps 0, the CSV's largest t-delta, `error_code` 0x10 vs 0x05.
+- Signature of the class in the ledger: "sim artefact, HOST STALL"; the frontier entry for the leg is void.
+
+## fw v28 selector observables (campaign I)
+
+- Aux bits 6/7 = `sel_armed` / `sel_fc` CSV columns. THE SELECTOR IS INERT OUTSIDE RUN: it arms only at
+  State-2 entry or a State-98 profile start, so a run that stays in State 0/1 reads 0/0 on every tick
+  regardless of current. On the replay half every recorded log commands a flat 0.500 inside the arm, so
+  `sel_fc` is 0 on all 27 entries and no re-arm ever occurs: the replay half gives the selector ZERO coverage.
+- Release totals on ramps 0.2502-0.2888 A (the 0.25 A gate on the ~20 ms EMA); on a load step 0.49 A.
+- A RE-ARM (sel_armed rising after the first release) needs a rail command (<= 0.15 or >= 0.85, inclusive)
+  with the filtered total under the gate; it then HOLDS through in-band commands until the gate re-crosses or
+  an F1 disarm. The MPC ladder's 0.15 / 0.85 endpoints and the SDP rails are those commands.
+- In-window MDAC codes: read POST-SETTLE (4067 / 717 = k_d 0.30 at r 0.15), not min/max over the window -
+  the 21-43 ms entry slew spans 1148-4095 and reads as a live schedule if summarized naively.
+- Campaign H's files are REORGANIZED by the tool pass: `scenario_<name>_<mode>/` and `replay_<LOG>/`
+  subfolders, not top-level CSVs. State the layout in every brief that cites a prior campaign.
+- The r-based cut chatter (fw v25+ `applyShareRatio()` `r < DROOP_R_MIN` with the 0.5 A guard) fires at
+  ~0.8 Hz on a SUSTAINED command at the inclusive 0.15 rail (ems-ftp75-sdp: 71 cuts / 90 s, I_fc 0.13-0.17 A,
+  dwell <= 12 ms); a 100-tick DP visit to 0.15 does not wind through. Benign; a firmware ruling item.
