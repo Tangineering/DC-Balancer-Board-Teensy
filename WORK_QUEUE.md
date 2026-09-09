@@ -91,7 +91,7 @@ firmware round lands).
       plateau (ruling still open). Re-walk every anchor; provisional pins for the first fw v28 campaign.
 - [x] 10. (DONE `e7ab118`: reported, not applied; joint 1.3561 A with F6 vs board 1.3243 A) **F6:** the walk models the share-loop feedback-EMA overshoot on the fw v26 clamp (+3 % of r for
       ~12 ms; the joint leg's bound needs a third reading on the board).
-- [ ] 11. (fw v28 rev 6 FLASHED 2026-09-08 evening; campaign tooling `07add95`; launch from a detached worktree with `--with-ftp75 --with-ftp75c --with-alpha`) Suites, commit, push; first fw v28 campaign after the operator's flash (full plan incl. the opt-in
+- [x] 11. (DONE: campaign I `hil_report_20260908_200836`, 66/75, zero board defects, F1 closed on all three triggers, ftp75c frontier verified; tooling `60abb34`; the operator stopped after one campaign for the H2-model update) launch from a detached worktree with `--with-ftp75 --with-ftp75c --with-alpha`) Suites, commit, push; first fw v28 campaign after the operator's flash (full plan incl. the opt-in
       legs; the F1 legs `charge-to-full`, the five `ems-ftp75c-*`, `ems-sdp-cross` are the witnesses).
 
 - [x] 12. (DONE `ded47f3`: growth requirement 0.10 m/s over the window and manual-current exclusion added by review; same-tick sign correction; 4318 / 175 / 4699, harness 51; a wrong flip is silent and permanent for the boot - recorded) **fw v28 rev 2 (operator ruling 2026-09-08 afternoon, from the harness finding): encoder direction-sense
@@ -144,6 +144,57 @@ firmware round lands).
       boundaries list; `_selector_commands_a_rail()` raise on an unknown tag; FW28-ERA block lacks
       SHARE_SELECTOR_DWELL_MS; the port's refused_blank one-tick lead after ~460 blank refusals; `--droop measured`
       bench intercept (negative) awaits the AD5443/OPA197 DMM measurement.
+
+## 0f. Campaign I fix queue (2026-09-09) - HELD by the operator's ruling until after the H2-consumption-model update
+
+Every item below is adjudicated in `HIL Results/hil_report_20260908_200836/HIL_FINDINGS.md` (FINAL SUMMARY). None
+was applied overnight. Bands are never widened; they are re-derived from the mechanism named.
+
+- [ ] 1. **TOOLS, HIGH** - `tools/ems_walk.py` delivers share EXACTLY 0 on a 0.15 floor reference whenever the
+      asymmetry triple (loss_map / dv0_v / droop_scale_fc) is on (401 of 610 cruise stages on the greedy alpha policy;
+      the board delivers 0.1714 = the split law to 0.1 %). Root-cause the delivery/split solve (a failed inverse falling
+      back to 0?); add `--r-series 0.033` to the suite anchor invocation; RE-DERIVE every walk-derived band with a
+      0.15-class command (the three alpha legs, ems-sdp's early branch, dp-replay's tail, MPC 0.15 rungs) and the
+      23-leg re-walk table; reopen `_FW28_FLOOR_VERDICT["ems-sdp-alpha-greedy"]` (wrong mechanism). Board reading
+      0.0030376 g / dSoC -0.00503 is the first measurement.
+- [ ] 2. **TOOLS, HIGH** - `Planner.delivery_table()` needs a persistent armed-HOLD selector state (source + armed
+      flag seeded by `re_arm_ok`, held across in-band stages, released on the modelled gate crossing): 100 % of the
+      MPC prediction residual on ems-ftp75-mpc / ems-ftp75c-mpc / ems-mpc and 60.75 s of unbilled battery-only on
+      ems-ftp75-mpc. Then `exclude_hold_ms` (~330 ms) on the post-disarm re-close transient. Never widen pred_err_max.
+- [ ] 3. **TOOLS** - re-walk the 23-leg fw v28 table at the rev 4-6 governor mirror (the shipped rows predate the
+      re-entry rule: no re-arm tail, 69 % of dp-replay's residual) AND model the ftp75c family's F1-disarm-driven
+      release (the gate never releases the arm there: filtered peak 0.157-0.179 A; rows ~39 % low) and the rev 6
+      inhibit (ftp75c-sdp -9.5 %). Fix the entry prose asserting the gate release.
+- [ ] 4. **SUITE** - ems-y-b00-v1 `signal_bt_bus_restored`: an event-shaped check on the mechanism (BT_BUS HIGH
+      within 50 ms of the filtered total first exceeding the gate after the region-7 command edge), not a 2000-tick
+      floor; correct the line-1178 risk note (third mechanism: the in-band hold after region 6 drops v_sp).
+- [ ] 5. **SUITE** - a per-run `max_tick_overrun_ms` tripwire at HIL_ZERO_MS (250 ms) beside `achieved_rate` (a 314 ms
+      blackout passed the 998 Hz mean gate); print max overrun in key_metrics; `mpc_cadence` counts Run-state rows.
+      Re-run ems-mpc-cross on an unloaded host (void this campaign).
+- [ ] 6. **SUITE** - `_JOINT_ACCEPT_PEAK_A` 1.3241 A is not calibrated (three readings 1.3243 / 1.2699 / 1.2835 A, a
+      4.2 % population with no outlier): re-key to the fw v28 structural bound 1.3345 A with the population recorded;
+      keep `joint_peak_held_down`.
+- [ ] 7. **SUITE** - ems-sdp-cross low/high-rail windows (the flip walked 42.29 -> 37.27 -> 35.30 s, 296 ms inside the
+      35.0 s edge); retire or re-point `signal_sdp_table_interior_at_high_demand` at the delivered 0.85 (the clamp
+      witness); an edge-scoped charge-window check on ems-soc-band (F1 acts outside [44, 54]); a per-leg bus-switch
+      cut census on the report axis (fw v28 raised it 6x on ems-sdp-cross, all at 0 A); a share-cut census metric on
+      replays; `mpc_share_prediction`'s label vs its prefix mask.
+- [ ] 8. **DOC** - the charge window opens TWO commander periods (39.9 ms) after the F1 re-close (charge-to-full), not
+      one (docs/fw28_source_selector.md + the walk); convert the ems-ftp75-dp / mppt-tracking / charge-cruise
+      provisional notes to measured citations of hil_report_20260908_200836 (mppt: the F4 plateau-rise null result);
+      ems-mpc-single is registered mpc-det; the replay half gives the selector zero coverage (state it, or re-spec
+      an entry with a b = 0 W/Y log).
+- [ ] 9. **FIRMWARE ruling** - the FC minority chatter at a sustained command AT the inclusive rail (ems-ftp75-sdp:
+      71 r-based `applyShareRatio()` cuts / 90 s at I_fc 0.134-0.168 A; the PI winds below DROOP_R_MIN chasing the
+      split law's 0.17; fw v6's accepted residual, benign). Candidate: clamp the share PI reference at DROOP_R_MIN
+      with anti-windup for in-band commands so only a strictly out-of-band command reaches the r-based cut path.
+- [ ] 10. **EMS design ruling** - the MPC ladder's 0.15 / 0.85 endpoints are the selector rails (60.75 s battery-only,
+      -9.9 % FC coulombs unbilled on ems-ftp75-mpc): move the endpoints strictly inside the band, or teach the stage
+      model the hold and let the planner choose it.
+- [ ] 11. **Rulings** - ems-ftp75c-socband is no longer charge-free (17 windows, 447 mC): re-adjudicate the 2026-09-03
+      "charge-free by design" before the verified ftp75c frontier is quoted; the FC-only re-arm persisting to Run exit
+      (intended?); scp-inrush h2 dropped as an anchor (i_cut stays).
+- [ ] 12. The 75 matched-DP re-solves (provenance_drift since I_AUX_A) - after the H2-model update.
 
 **Open-item review (2026-09-08, everything else in this file, triaged):**
 - Runs THIS session in parallel with the firmware: **§7d encoder-defect harness** (operator brief, disjoint files).
