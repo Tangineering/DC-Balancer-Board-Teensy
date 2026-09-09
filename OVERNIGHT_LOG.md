@@ -1713,3 +1713,28 @@ assumed top-level CSVs; H had been reorganized by the tool pass -> the preamble 
 
 **Economics.** One campaign (1:42:15), 27 analysis agents (Opus x18, Sonnet x9), ~3.9 M subagent tokens, eight
 commits, zero destructive actions, zero tools edits; the operator's morning list is four rulings and one tools round.
+
+## SESSION 2026-09-09 (continued) - waiting on the H2-consumption session, then the adjusted overnight plan
+
+**Mandate (verbatim, ~01:15):** "The H2 consumption implementation session is currently working. Once it completes,
+continue with an adjusted overnight plan incorporating testing and utilizing the new H2 consumption estimates. The
+session, 'H2 efficiency impact of governor in EMS strategies', will message you directly to continue your overnight
+campaigns." Budget: 4 campaigns remain of 5.
+
+**Adjusted plan (to execute on that session's message; re-checked against whatever it delivers):**
+0. Read the message; pull main; confirm the merge commit, which files moved (tools/, docs/HIL_PLANT.md, the
+   solver / walk / plant), what the new H2 estimate is (stack-side vs bus-side, its constants, the eq-H2 lambda),
+   and whether any ruling on WORK_QUEUE 0f items 9-11 came with it. `git branch --show-current` before every commit.
+1. TESTING: both interpreter suites serially on the merged tree (`.venv_hil` stdlib; miniforge numpy), the fw v28
+   equivalence harness, the firmware suites untouched (no flash). Any failure -> a fix round before anything else.
+2. TOOLS FIX ROUND on the merged tree (streamlined orchestration, disjoint files sequenced): 0f-1 the ems_walk
+   0.15-floor defect; 0f-2 the delivery-table armed-HOLD state; 0f-3 the 23-leg re-walk + the ftp75c disarm-driven
+   release + the inhibit; 0f-4 to 0f-8 the suite items - EVERY walk-derived band RE-DERIVED UNDER THE NEW H2
+   ESTIMATE (the old g figures are not comparable); the era key for the new H2 model on every record.
+3. The 75 matched-DP re-solves under the new H2 model, SEQUENCED before the campaign (host load).
+4. CAMPAIGN II: full plan + opt-in legs from a detached worktree at the committed hash; validates the fix round and
+   gives the first board readings billed by the new estimate; LIVE analysis with the TWO-AGENT CAP; ems-mpc-cross's
+   re-run inside it. Frontier tuples re-read under the new billing.
+5. CAMPAIGN III conditional (II not clean, or a first-of-kind reading); stop otherwise.
+Standing: no flash, no PSCAD, no wire change, tools/ frozen during a live campaign, ASCII prints, decision pairs
+with reversal paths, the primary worktree's branch is the operator's - commit from `DC-Balancer-main`.
