@@ -1643,3 +1643,13 @@ during a live campaign, ASCII prints, decision pairs for judgment calls with rev
   F1 closed on all three recorded triggers (charge-to-full standstill, the ftp75c regen early releases x4 legs,
   the ftp75c charge-window entry) with zero UV_BUS ticks campaign-wide; the joint clamp bound's third reading
   1.2835 A makes the population 4.2 % wide (1.3241 A not calibrated); the mppt F4 null result. Replays running.
+- **Git note (~00:45):** the primary worktree was switched to branch `h20-convex-h2-map` (the operator's H2-model
+  work, cut from `d2f5ab6`) while this session was appending to OVERNIGHT_LOG, so four log commits
+  (000cdae, 685feed, 25c64e1, faffffa) landed on that branch. They are cherry-picked onto main here
+  (b67951f..cbe554b) so the campaign record is on main; the branch keeps its identical copies (they merge
+  clean). Every close-out commit from here on is made from the separate worktree `DC-Balancer-main` on
+  main; the primary tree and its uncommitted tools/ + HIL_PLANT.md edits are NOT touched.
+- **Campaign I COMPLETE (21:50:52, wall 1:42:15):** 74 executed + `drive` SKIP; 38 + 27 substantive PASS, 9
+  FAIL, suite 66/75; 944 checks. All 27 replays PASS (adversarial audit running). **`ftp75c` frontier VERIFIED
+  for the first time ever: eq-H2 1.0105 vs reference, 1.0216 vs bound.** Tool pass done (74 analyzed, 0 errors).
+  Worktree `DC-Balancer-I` removed.
