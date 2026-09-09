@@ -580,7 +580,19 @@ def test_transition_roll_slices_and_completes():
     # 28 (7 ladder points x 4 transitions), so this is per-tick cost and not a
     # bigger job. 85 clears the measurement by 21 %, the same margin 70 gave
     # the measurement it was derived from.
-    assert work_ms / M.ROLL_BUDGET_MS_DEFAULT < 85.0, work_ms
+    #
+    # CONTROLLER-PORT re-pin, 2026-09-09: 85 -> 100, because the roll now runs
+    # the REAL Youla recursion per closed-loop tick (three DF2T biquads, the
+    # trapezoidal integrator, the anti-windup and the measurement prefilter)
+    # instead of the one-line surrogate it replaced. MEASURED on this machine,
+    # 200 000 governor ticks: 6.4 us/tick surrogate against 7.4 us/tick
+    # controller, +16 %. On the fixture, best of three, idle: 170.2 to 174.0 ms
+    # = 85.1 to 87.0 callbacks at the 2.0 ms budget, against the 140.7 ms the
+    # 85 was derived from. 100 clears the worst of the three by 15 %. The
+    # recursion was hoisted first (module-level coefficient tuples, no dict
+    # lookups, no per-tick arithmetic that can be done once) - this bound is
+    # what is left after that, not instead of it.
+    assert work_ms / M.ROLL_BUDGET_MS_DEFAULT < 100.0, work_ms
 
 
 def test_zero_budget_roll_makes_progress_but_does_not_raise():
@@ -2130,10 +2142,19 @@ def test_the_feedforward_branch_is_numerically_inert_and_gate_1_still_holds():
     # same 3.1 % and the planner's committed shares moved with it. Gate 1 is
     # still 5e-3, still asserted above, and the margin is still 2.1x - a re-pin
     # of a figure a CONSTANT moved, not a widened band.
-    assert on_mean == pytest.approx(2.435889e-03, rel=1e-4)
+    # CONTROLLER-PORT re-pin, 2026-09-09: 2.435889e-03 -> 2.690166e-03, +10.4 %.
+    # The shadow governor now carries the REAL Youla recursion, so the delivered
+    # share it predicts settles at the controller's own bandwidth instead of
+    # instantly - a larger prediction residual on every stage transition, and
+    # the RIGHT one. Gate 1 is still 5e-3, still asserted above; the margin
+    # moved 2.1x -> 1.86x. A re-pin of a figure a MODEL FIDELITY FIX moved.
+    assert on_mean == pytest.approx(2.690166e-03, rel=1e-4)
     # The MAX is the single worst crossing stage and moves with the mean for
     # the same reason: 5.917253e-02 -> 6.843024e-02 (+15.6 %) at fw v28 rev 5.
-    assert on_max == pytest.approx(6.843024e-02, rel=1e-4)
+    # CONTROLLER-PORT re-pin, 2026-09-09: 6.843024e-02 -> 6.870388e-02 (+0.4 %),
+    # same cause as `on_mean` above - the real Youla recursion in place of the
+    # surrogate. The stage this maximum lands on is unchanged.
+    assert on_max == pytest.approx(6.870388e-02, rel=1e-4)
     # THE RETIRED MUTATION, INVERTED RATHER THAN DELETED.  Dropping the two
     # feedforward seeds must now change NOTHING, because the branch they select
     # holds at the same ratio the hold arm holds at.  A retune of
@@ -2383,8 +2404,14 @@ def test_the_coarsening_does_not_move_the_walk_totals():
     # same plan"), not a loss of coverage - the equality it originally asserted
     # and later had to retire has come back.  It is re-pinned as an EQUALITY
     # rather than as a deviation, and a future deviation therefore fails here.
-    assert out["full"] == (0.006695174, -0.004821805), out
-    assert out["coarse"] == (0.006695174, -0.004821805), out
+    # CONTROLLER-PORT re-pin, 2026-09-09: (0.006695174, -0.004821805) ->
+    # (0.006695182, -0.004821792), +1.2 ppm on the hydrogen and -2.7 ppm on the
+    # SoC. `governor_model` now runs the real Youla recursion in place of the
+    # one-tick surrogate, so the delivered share the preview bills differs by
+    # the controller's own settling on every stage transition. The SUBJECT of
+    # this test is untouched: `coarse` is still BIT-IDENTICAL to `full`.
+    assert out["full"] == (0.006695182, -0.004821792), out
+    assert out["coarse"] == (0.006695182, -0.004821792), out
     assert out["coarse"][0] / out["full"][0] - 1.0 == pytest.approx(
         0.0, abs=5e-7)
 
@@ -3674,7 +3701,17 @@ def test_the_quantile_tightening_reaches_the_admissibility_test():
 #    scratch run with the floor forced back to 0.30 returns 114, not 118, so
 #    114 -> 95 is the floor's own contribution and 118 -> 114 belongs to the
 #    `delivery_table` feedforward-clip mirror made in the same round.
-_SS_GRID_MAX_TICKS = 55           # fw v28 (95 at fw v27 rev 2)
+_SS_GRID_MAX_TICKS = 97           # controller port 2026-09-09
+                                  # (55 under the surrogate at fw v28,
+                                  #  95 at fw v27 rev 2). The worst-case
+                                  # deferral is longer because the real
+                                  # controller walks the reference into
+                                  # band over tens of ticks where the
+                                  # surrogate stepped it there at once;
+                                  # the finding is unchanged - the load
+                                  # guard is a DELAY, not a verdict - and
+                                  # 97 still clears the 200-tick window
+                                  # by 2.06x.
 _SS_GRID_TIMEOUTS = 0             # the load-guard refusal is off the grid
 _SS_GRID_DV0_V = 0.013522
 

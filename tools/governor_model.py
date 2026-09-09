@@ -71,17 +71,30 @@ fw v28. It is re-scored on the first fw v28 campaign.
 
 FIDELITY BOUNDARIES
 -------------------
-1. THE YOULA SHARE CONTROLLER IS NOT PORTED. ``share_controller.h`` is on the
-   do-not-change list and its difference equations are not reproduced here.
-   The closed loop is modelled as: the applied ratio walks toward the governed
-   reference at this tick's slew ceiling, and once it has arrived the loop holds
-   the delivered share at the governed reference. The bench measurement that
-   licenses this is the share-sweep whitepaper's hold-window mean error of less
-   than 1e-3 (``docs/share_sweep_whitepaper/main.tex:150-158``). Closed-loop
-   TRANSIENTS other than the slew limit are therefore not modelled. The optional
-   ``conv_tau_s`` parameter inserts a first-order lag between the governed
-   reference and the controller's demanded ratio so a later round can fit one;
-   it defaults to 0 (arrival is instantaneous once the slew limiter allows it).
+1. THE YOULA SHARE CONTROLLER IS PORTED (boundary CLOSED 2026-09-09). Its
+   difference equations - the DF2T biquad cascade, the trapezoidal integrator,
+   the back-calculation anti-windup and the 200 Hz measurement prefilter - are
+   reproduced in ``_youla_step()`` from ``share_controller.h``, with the
+   coefficients READ AT IMPORT from the generated
+   ``share_controller_coeffs.h``. ``share_controller.h`` remains on the
+   do-not-change list; this is a READ of it, not a change to it. The wrapper
+   semantics (the ``SHARE_CTRL_TS_US`` gate with its held output, the [0, 1]
+   authority span, the seeded integrator on ``resetShareControllerCore()``) are
+   ported with it, and the trajectory is compared against the FIRMWARE by
+   ``tools/test_governor_fw28_equivalence.py``.
+   WHAT THE OLD BOUNDARY COST, recorded because it was invisible until campaign
+   I: the surrogate demanded the split law's exact inverse in ONE tick, so at
+   an operating point where that inverse is out of the droop band it cut a
+   channel on the first tick and on every tick thereafter, delivering an exact
+   0.0 share where the board delivers 0.174. See the block comment above
+   ``_load_share_controller_coeffs()``.
+   The surrogate is KEPT and selectable (``closed_loop="surrogate"``) so an
+   archived walk regenerates bit-identically, and the optional ``conv_tau_s``
+   parameter still lags it; both are surrogate-only.
+   WHAT REMAINS UNMODELLED, and it is boundary 2's, not this one's: the walk's
+   plant is algebraic, so the loop closes through a delivered share that
+   responds within one tick. The board's does not, and the residual is visible
+   as a cut-repetition rate the walk over-predicts (see WORK_QUEUE 0f).
 2. THE PLANT IS THE STATIC DROOP LAW. Delivered share follows the two-branch
    divider of the droop network,
    ``alpha = (dV0/I_tot + R_BT) / (R_FC + R_BT)`` with
@@ -198,8 +211,108 @@ acquire dependencies.
 from __future__ import annotations
 
 import math
+import os
+import re as _re
 from dataclasses import dataclass, field
 from typing import Optional
+
+# ─────────────────────────────────────────────────────────────────────────────
+# THE YOULA SHARE CONTROLLER (fidelity boundary 1, CLOSED 2026-09-09)
+# ─────────────────────────────────────────────────────────────────────────────
+# Through 2026-09-08 this module modelled ``youlaController_Power()`` with a
+# one-tick surrogate: ``u_next = u + beta*(sp_eff - alpha_measured)`` at
+# ``beta = 1``, i.e. the demanded ratio stepping straight to the split-law
+# inverse of the governed setpoint. That is an INFINITE-BANDWIDTH controller
+# with no tracking error, and campaign I proved what it costs. At the greedy
+# alpha leg's operating point (commanded share 0.15 at I_tot = 1.4114 A) the
+# law's minimum deliverable share with both channels live is 0.171538, so the
+# inverse ``_ratio_for_delivered(0.15, 1.4114) = 0.130273`` is BELOW
+# ``DROOP_R_MIN`` by 0.0197. The surrogate therefore sat out of band on 100 % of
+# ticks, the out-of-band ratio bypassed the slew limiter (.ino:10339), the
+# r-based FC cut fired every tick, the walk's per-tick external switch
+# re-assertion orphaned the claim, the S1 self-heal dropped it, and it re-cut at
+# 1 kHz: delivered share EXACTLY 0 on 401 of 610 cruise stages.
+#
+# THE BOARD does not do that, because the real controller has finite bandwidth
+# and an integrator working against a standing error: campaign I's
+# ``ems-sdp-alpha-greedy`` hi-fi run parks r at the band floor with a standing
+# +0.024 tracking error and dips below ``DROOP_R_MIN`` on 79 of 20 000 ticks
+# (0.40 %, 19 cut spans), delivering 0.1739 where the law at r = 0.1523 gives
+# 0.174031.
+#
+# So the recursion itself is ported here, from
+# ``teensy_controller/share_controller.h`` — the DF2T biquad cascade, the
+# trapezoidal integrator, the back-calculation anti-windup and the 200 Hz
+# measurement prefilter — with the coefficients READ AT IMPORT from
+# ``teensy_controller/share_controller_coeffs.h``. That file is GENERATED by
+# ``controller_design/synthesize_controller.py`` and is never transcribed here,
+# or a regeneration would silently leave this port stale. The .ino wrapper
+# semantics around it (the ``SHARE_CTRL_TS_US`` gate with its held output, the
+# [0, 1] authority span, the integrator seed on
+# ``resetShareControllerCore()``) are ported in ``_youla_step()`` and
+# ``_reset_controller_core()``.
+#
+# The surrogate is KEPT and selectable (``closed_loop="surrogate"``) so every
+# archived walk regenerates bit-identically; the controller is the default.
+_COEFF_HEADER = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "teensy_controller", "share_controller_coeffs.h")
+
+
+def _load_share_controller_coeffs(path: str = _COEFF_HEADER) -> dict:
+    """Parse the GENERATED coefficient header. Never transcribe these."""
+    with open(path, "r", encoding="utf-8", errors="replace") as fh:
+        src = fh.read()
+    # Strip comments first, so a number quoted in prose cannot be picked up.
+    src = _re.sub(r"/\*.*?\*/", " ", src, flags=_re.S)
+    src = _re.sub(r"//[^\n]*", " ", src)
+    num = r"-?[0-9]+(?:\.[0-9]*)?(?:[eE][+-]?[0-9]+)?"
+
+    def _define(name):
+        m = _re.search(r"#define\s+" + name + r"\s+(" + num + r")", src)
+        if m is None:
+            raise RuntimeError("%s not found in %s" % (name, path))
+        return m.group(1)
+
+    def _scalar(name):
+        m = _re.search(name + r"\s*=\s*(" + num + r")f?\s*;", src)
+        if m is None:
+            raise RuntimeError("%s not found in %s" % (name, path))
+        return float(m.group(1))
+
+    ts_us = int(_define("SHARE_CTRL_TS_US"))
+    nsos = int(_define("SHARE_CTRL_NSOS"))
+    ki = _scalar("SHARE_CTRL_KI")
+    filt_a = _scalar("SHARE_CTRL_MEAS_FILT_A")
+    body = _re.search(
+        r"SHARE_CTRL_SOS\s*\[[^\]]*\]\s*\[\s*5\s*\]\s*=\s*\{(.*?)\}\s*;",
+        src, flags=_re.S)
+    if body is None:
+        raise RuntimeError("SHARE_CTRL_SOS not found in %s" % path)
+    sos = []
+    for row in _re.findall(r"\{([^{}]*)\}", body.group(1)):
+        vals = [float(v) for v in _re.findall(num, row)]
+        if len(vals) != 5:
+            raise RuntimeError("malformed SOS row in %s: %r" % (path, row))
+        sos.append(tuple(vals))
+    if len(sos) != nsos:
+        raise RuntimeError("SHARE_CTRL_NSOS=%d but %d rows in %s"
+                           % (nsos, len(sos), path))
+    return {"TS_US": ts_us, "NSOS": nsos, "KI": ki, "MEAS_FILT_A": filt_a,
+            "SOS": tuple(sos)}
+
+
+SHARE_CTRL = _load_share_controller_coeffs()
+_CTRL_TS_MS = SHARE_CTRL["TS_US"] / 1000.0
+_CTRL_TS_S = SHARE_CTRL["TS_US"] * 1e-6
+# Hoisted forms. ``_youla_step()`` runs at 1 kHz inside the MPC's transition
+# rolls, which are billed against a per-callback budget, so the recursion does
+# no dict lookups and no per-tick arithmetic that can be done once here. The
+# biquad rows are unpacked into flat tuples for the same reason.
+_CTRL_SOS = tuple(tuple(row) for row in SHARE_CTRL["SOS"])
+_CTRL_KI_TS_HALF = SHARE_CTRL["KI"] * _CTRL_TS_S * 0.5
+_CTRL_FILT_1MA = 1.0 - SHARE_CTRL["MEAS_FILT_A"]
+_CTRL_GATE_MS = _CTRL_TS_MS - 1e-9
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Firmware constants. Names are the firmware's, verbatim.
@@ -311,6 +424,7 @@ CEILING_REACHABLE_I_TOT_A = max(
 # jobs reach. The values are the dictionary's, read once at import, so there is
 # no second declaration to drift.
 _FC_CEIL_A = GOV_CONST["SHARE_GOV_I_FC_CEIL_A"]
+_CTRL_R0 = GOV_CONST["SHARE_CTRL_R0"]
 _BT_CEIL_A = GOV_CONST["SHARE_GOV_I_BT_CEIL_A"]
 _CEIL_HYST_A = GOV_CONST["SHARE_GOV_CEIL_HYST_A"]
 _I_TOT_MIN_A = GOV_CONST["SHARE_I_TOT_MIN_A"]
@@ -448,8 +562,25 @@ class GovernorState:
     # design record).
     iso_prop_ratio: float = 0.5                 # shareIsoPropRatio
 
-    # Controller surrogate (see fidelity boundary 1)
+    # Controller surrogate (see fidelity boundary 1). Retained because
+    # ``closed_loop="surrogate"`` still regenerates every archived walk; under
+    # the default ``"controller"`` mode it mirrors the Youla output.
     ctrl_out: float = 0.5
+
+    # ── The REAL Youla share controller (share_controller.h) ────────────────
+    # ``sos_state`` is the DF2T delay pair per section; ``integ`` the
+    # trapezoidal integrator; ``eprev`` the previous error; ``alpha_filt`` the
+    # 200 Hz measurement prefilter (seeded 0.5, as ``shareControllerReset()``
+    # does); ``ctrl_held`` the wrapper's held output; ``ctrl_last_ms`` the
+    # ``SHARE_CTRL_TS_US`` gate, back-dated to -inf by a reset exactly as the
+    # firmware back-dates ``shareCtrl_lastMicros``.
+    sos_state: list = field(
+        default_factory=lambda: [[0.0, 0.0] for _ in range(SHARE_CTRL["NSOS"])])
+    integ: float = 0.0
+    eprev: float = 0.0
+    alpha_filt: float = 0.5
+    ctrl_held: float = 0.5
+    ctrl_last_ms: float = float("-inf")
 
     # Switch beliefs and turn-on blanking (writeBusSwitch/busSwitchBlanked)
     sw_fc: bool = False
@@ -679,7 +810,8 @@ class GovernorModel:
                  k_droop: float = GOV_CONST["K_DROOP"],
                  conv_tau_s: float = 0.0, seed_r: float = 0.5,
                  v_bus_ok: bool = True, droop_scale_fc: float = 1.0,
-                 r_series_ohm: float = 0.0):
+                 r_series_ohm: float = 0.0,
+                 closed_loop: str = "controller"):
         if dt_s <= 0.0:
             raise ValueError("dt_s must be positive")
         if not 0.0 <= seed_r <= 1.0:
@@ -692,6 +824,12 @@ class GovernorModel:
             raise ValueError("droop_scale_fc must be positive")
         if r_series_ohm < 0.0:
             raise ValueError("r_series_ohm must not be negative")
+        if closed_loop not in ("controller", "surrogate"):
+            raise ValueError("closed_loop must be 'controller' or 'surrogate'")
+        # "controller" ports the real Youla recursion (share_controller.h);
+        # "surrogate" keeps the pre-2026-09-09 infinite-bandwidth model so an
+        # archived walk regenerates bit-identically. See the module header.
+        self.closed_loop = closed_loop
         self.dt_s = float(dt_s)
         self.dv0_v = float(dv0_v)
         self.k_droop = float(k_droop)
@@ -795,10 +933,70 @@ class GovernorModel:
         output continues from ``seed_ratio``, and seeds the effective-setpoint
         reference from the same value clipped into the droop band. The
         surrogate controller here carries only the output, so the integrator
-        seed collapses onto it."""
+        seed collapses onto it; the REAL controller (default) takes the
+        firmware's own seed, ``shareCtrl_integ = seed - SHARE_CTRL_R0``, after
+        ``shareControllerReset()`` has zeroed the biquads and re-seeded the
+        measurement prefilter at 0.5 (share_controller.h)."""
         seed = _constrain(float(seed_ratio), 0.0, 1.0)
         st.ctrl_out = seed
         st.sp_eff_prev = _constrain(seed, _R_MIN, _R_MAX)
+        # shareControllerReset()
+        st.sos_state = [[0.0, 0.0] for _ in range(SHARE_CTRL["NSOS"])]
+        st.eprev = 0.0
+        st.alpha_filt = GOV_CONST["SHARE_CTRL_R0"]
+        # resetShareControllerCore()'s S5 integrator seed + back-dated gate.
+        st.integ = seed - GOV_CONST["SHARE_CTRL_R0"]
+        st.ctrl_held = seed
+        st.ctrl_last_ms = float("-inf")
+
+    # ── youlaController_Power() + shareControllerStep() ──────────────────────
+    def _youla_step(self, setpoint: float, alpha_raw: float,
+                    t_ms: float) -> float:
+        """``youlaController_Power()`` (.ino:13199) around
+        ``shareControllerFilterMeas()`` / ``shareControllerStep()``
+        (share_controller.h), coefficients from the generated header.
+
+        The wrapper's Ts gate is real: it advances the difference equations at
+        most once per ``SHARE_CTRL_TS_US`` and HOLDS the output in between, so
+        a caller ticking faster than 1 kHz does not run the recursion faster
+        than the design cadence. The authority span handed to the anti-windup
+        is [0, 1], not the droop band — an out-of-band output is realised by
+        ``applyShareRatio()`` as a channel cutoff, not as a clip, so the
+        integrator is allowed to settle on a rail (.ino:13205 comment)."""
+        st = self.state
+        if (t_ms - st.ctrl_last_ms) < _CTRL_GATE_MS:
+            return st.ctrl_held
+        st.ctrl_last_ms = t_ms
+        # shareControllerFilterMeas(): the MEASUREMENT is filtered, never the
+        # setpoint, so an EMS step is not smoothed by the sensor lag.
+        af = st.alpha_filt + _CTRL_FILT_1MA * (alpha_raw - st.alpha_filt)
+        st.alpha_filt = af
+        e = setpoint - af
+        # R(z): cascade of DF2T biquads.
+        x = e
+        sos = st.sos_state
+        for i, c in enumerate(_CTRL_SOS):
+            s = sos[i]
+            y = c[0] * x + s[0]
+            s[0] = c[1] * x - c[3] * y + s[1]
+            s[1] = c[2] * x - c[4] * y
+            x = y
+        # I(z): trapezoidal (Tustin) integrator.
+        integ_new = st.integ + _CTRL_KI_TS_HALF * (e + st.eprev)
+        u = _CTRL_R0 + x + integ_new
+        # Back-calculation anti-windup on the [0, 1] authority span: the
+        # integrator absorbs exactly the clamp excess, so the output sits on
+        # the rail and resumes the instant the error reverses.
+        if u > 1.0:
+            integ_new -= (u - 1.0)
+            u = 1.0
+        elif u < 0.0:
+            integ_new += (0.0 - u)
+            u = 0.0
+        st.integ = integ_new
+        st.eprev = e
+        st.ctrl_held = u
+        return u
 
     # ── applyShareCurrentCeilings() (fw v26) ─────────────────────────────────
     def _clear_ceiling_state(self) -> None:
@@ -1963,6 +2161,46 @@ class GovernorModel:
                                     st.sp_eff_prev + slew)
         sp_eff = st.sp_eff_prev
 
+        if self.closed_loop == "controller":
+            # ── THE REAL CONTROLLER (default since 2026-09-09) ───────────────
+            # The firmware forms its error against the RAW measured share
+            # |I_fc|/I_tot (.ino:12586) and hands it to
+            # ``youlaController_Power()``, which prefilters the measurement,
+            # steps the recursion and clamps to [0, 1] with anti-windup. The
+            # loop therefore closes through the CALLER's plant: ``i_fc`` and
+            # ``i_batt`` are what the previous tick's ratio actually delivered,
+            # so a reference the split law cannot deliver in band produces a
+            # STANDING ERROR and a reference parked on the band floor, not a
+            # per-tick out-of-band cut. Topology pinning needs no special case:
+            # with one channel off the bus the caller's currents already pin
+            # ``alpha_raw`` at 0.0 or 1.0, the error never closes, and the
+            # integrator winds to its authority limit — the DROOP_R_MIN wind-up
+            # recorded during every FC-charge window.
+            alpha_raw = abs(i_fc) / total if total > 0.0 else 0.5
+            droop_ratio = self._youla_step(sp_eff, alpha_raw, t_ms)
+            st.ctrl_out = droop_ratio
+        else:
+            droop_ratio = self._closed_loop_surrogate(sp_eff, total)
+
+        # Ratio slew limit — IN-BAND RATIOS ONLY. An out-of-band command passes
+        # through unlimited so applyShareRatio() sees the controller's true
+        # intent (.ino:10339).
+        if _R_MIN <= droop_ratio <= _R_MAX:
+            droop_ratio = _constrain(droop_ratio, st.r_prev - slew,
+                                     st.r_prev + slew)
+
+        wrote, rl, rb = self._apply_share_ratio(droop_ratio, i_fc, i_batt,
+                                                t_ms, from_controller=True)
+        return self._out(MODE_CLOSED, rl, rb, wrote)
+
+    def _closed_loop_surrogate(self, sp_eff: float, total: float) -> float:
+        """THE PRE-2026-09-09 CONTROLLER SURROGATE, kept selectable.
+
+        Retained verbatim so every archived walk regenerates bit-identically
+        under ``closed_loop="surrogate"``. It is a MODELLING DEFECT, not an
+        option to prefer: see the module header for what campaign I measured.
+        """
+        st = self.state
         # CONTROLLER SURROGATE — fidelity boundary 1. The firmware forms its
         # error against the MEASURED share |I_fc|/I_tot (.ino:10314), so the
         # surrogate does the same and integrates it:
@@ -2002,18 +2240,7 @@ class GovernorModel:
             st.ctrl_out = demand
         # Output clamp = the Youla wrapper's own [0, 1] authority span with
         # anti-windup (.ino:10318 comment).
-        droop_ratio = _constrain(st.ctrl_out, 0.0, 1.0)
-
-        # Ratio slew limit — IN-BAND RATIOS ONLY. An out-of-band command passes
-        # through unlimited so applyShareRatio() sees the controller's true
-        # intent (.ino:10339).
-        if _R_MIN <= droop_ratio <= _R_MAX:
-            droop_ratio = _constrain(droop_ratio, st.r_prev - slew,
-                                     st.r_prev + slew)
-
-        wrote, rl, rb = self._apply_share_ratio(droop_ratio, i_fc, i_batt,
-                                                t_ms, from_controller=True)
-        return self._out(MODE_CLOSED, rl, rb, wrote)
+        return _constrain(st.ctrl_out, 0.0, 1.0)
 
     # ── setDroopMdac() ───────────────────────────────────────────────────────
     def set_droop_mdac(self, g_fc: float, g_bt: float):

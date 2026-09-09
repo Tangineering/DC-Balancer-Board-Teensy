@@ -1309,8 +1309,21 @@ def test_f6_reaches_the_joint_probe_from_one_place():
     assert probe._walk is ew
     j = probe.joint()
     # The raw peak is the acceptance bound's own quantity and must be
-    # UNCHANGED by the F6 addition (walk 1.3188 A at the 1.57 A step total).
-    assert j["i_fc_peak"] == pytest.approx(1.3188, abs=5e-4)
+    # UNCHANGED by the F6 addition.
+    # RE-PINNED 2026-09-09, 1.3188 -> 1.2877 A (-2.4 %), by the CONTROLLER PORT
+    # (0f-1) and by nothing else. The old surrogate stepped the demanded ratio
+    # to the split-law inverse in ONE tick, so the joint step's whole share
+    # move landed at the actuation slew ceiling immediately; the real Youla
+    # recursion has finite bandwidth and reaches the same reference over tens
+    # of ticks, so the fuel-cell peak during the step is lower.
+    # THE CONSEQUENCE FOR THE LEG, stated rather than left implicit: the raw
+    # walk is now 2.8 % BELOW campaign G's board peak (1.3243 A) instead of
+    # 0.4 %, so it has less margin as a predictor than it had. The ORDERING the
+    # leg's acceptance rests on is unchanged - the F6 figure (1.3261 A) still
+    # bounds the board reading from above and both stay under LIMIT_I_FC_MAX -
+    # but the acceptance bound 1.3241 A was derived from the 1.3188 A walk and
+    # now sits above it. Re-deriving that bound is a suite question.
+    assert j["i_fc_peak"] == pytest.approx(1.2877, abs=5e-4)
     # ⚠️ THE F6 FIGURE EXCEEDS THE LEG'S ACCEPTANCE BOUND (1.3241 A) and its
     # structural bound (DROOP_R_MAX * 1.57 = 1.3345 A). That is not a defect in
     # either bound: F6 is an UPPER bound taken at the full measured fraction on
@@ -1336,6 +1349,19 @@ def test_f6_reaches_the_joint_probe_from_one_place():
 # The board is the reference for both numbers: campaign I's greedy hi-fi run
 # sits at r = 0.1523 (MDAC fraction pair 0.9770 / 0.1756) and delivers
 # 0.1739 at I_tot = 1.4114 A - the law to 0.08 %.
+#
+# ── AMENDED 2026-09-09 (0f-1, the controller port) ──────────────────────────
+# The infeasibility above is a property of the SPLIT LAW and is unchanged. What
+# HAS changed is the second half of the diagnosis, which is why these two tests
+# are amended rather than left standing: the "100 % of ticks below DROOP_R_MIN,
+# re-cutting at 1 kHz" behaviour was NOT the law's doing but the walk's
+# one-tick controller surrogate, which demanded the out-of-band inverse
+# OUTRIGHT on the first tick it was asked for. `governor_model` now runs the
+# real Youla recursion (share_controller.h), so the walk reaches the same
+# infeasible region the way the firmware does - by integrating down against a
+# standing error over hundreds of ticks. The third test below pins that
+# distinction, and `test_governor_fw28_equivalence` proves the trajectory
+# against the firmware itself.
 def test_low_rail_reference_is_infeasible_in_band_under_the_triple():
     g = gm.GovernorModel(dt_s=1e-3, dv0_v=0.013522,
                          droop_scale_fc=0.9434, r_series_ohm=0.033)
@@ -1368,3 +1394,53 @@ def test_high_rail_reference_stays_in_band_under_the_triple():
     assert r_inv == pytest.approx(0.848504, abs=5e-6)
     assert gm.GOV_CONST["DROOP_R_MIN"] <= r_inv <= gm.GOV_CONST["DROOP_R_MAX"]
     assert r_inv == pytest.approx(0.8484, abs=2e-4)      # the board's ratio
+
+
+def test_the_walk_reaches_the_infeasible_region_the_way_the_firmware_does():
+    """THE SURROGATE'S HALF OF THE 0f-1 DIAGNOSIS, CLOSED (2026-09-09).
+
+    The law makes the 0.15 reference infeasible in band (above). What made the
+    WALK deliver an exact 0.0 on 401 of 610 cruise stages was the controller
+    surrogate on top of it: at ``beta = 1`` the demanded ratio WAS the
+    split-law inverse, so it was out of band from the first tick the reference
+    arrived and the r-based cut fired immediately and then on every tick.
+
+    With the real recursion the same operating point is reached the way the
+    firmware reaches it - by integrating down against the standing error. The
+    two are compared against the FIRMWARE in
+    ``test_governor_fw28_equivalence.py``; what is pinned here is the
+    DIFFERENCE BETWEEN THE TWO MODES, so the surrogate cannot quietly become
+    the default again."""
+    i_tot = 1.4114
+    i_fc = 0.1739 * i_tot
+
+    def _run(mode, n):
+        g = gm.GovernorModel(dt_s=1e-3, dv0_v=0.013522, droop_scale_fc=0.9434,
+                             r_series_ohm=0.033, closed_loop=mode)
+        st = g.state
+        st.sw_fc = st.sw_bt = True
+        st.sw_init = True
+        cuts = 0
+        first = None
+        for k in range(n):
+            sw_fc = True if not st.sp_cut_fc else st.sw_fc
+            o = g.step(0.15, i_fc, i_tot - i_fc, sw_fc, True, (k + 1) * 1e-3)
+            if not o.fc_bus_req:
+                cuts += 1
+                if first is None:
+                    first = k
+        return cuts, first
+
+    sur_cuts, sur_first = _run("surrogate", 400)
+    ctl_cuts, ctl_first = _run("controller", 400)
+    # The surrogate cuts almost at once and then holds the channel off.
+    assert sur_first is not None and sur_first < 40
+    assert sur_cuts > 300
+    # The real controller reaches the same region an ORDER OF MAGNITUDE later:
+    # it has to integrate down against the standing error first. 348 ticks is
+    # what the FIRMWARE's own harness measures on this stimulus
+    # (`test_governor_fw28_equivalence.py`), which is why it is the number
+    # pinned here rather than a walk-derived one.
+    assert ctl_first is not None
+    assert ctl_first == pytest.approx(348, abs=8), ctl_first
+    assert ctl_first > 8 * sur_first

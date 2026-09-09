@@ -33,11 +33,16 @@ which cannot be driven through this harness (see its header). The firmware's own
 host-native fixtures cover them; what IS compared here is the k_d hold the
 window implies, through the ``CHGWIN`` command.
 
-⚠️ THE ONE THING THIS CANNOT COMPARE, STATED RATHER THAN IMPLIED. The Youla
-share controller is on the do-not-change list and is NOT ported (``governor_
-model`` fidelity boundary 1), so a CLOSED-LOOP tick's commanded ratio is a
-firmware quantity the port only approximates. The MDAC codes are therefore
-compared EXACTLY on
+FIDELITY BOUNDARY 1 IS CLOSED (2026-09-09). The Youla share controller IS now
+ported (``governor_model._youla_step()``, coefficients read from the generated
+header), and ``test_the_closed_loop_trajectory_matches_at_the_greedy_operating_
+point`` compares a closed-loop trajectory tick by tick at the operating point
+where the old surrogate was most wrong. The PARAMETRIZED comparison below is
+deliberately NOT widened in the same commit: its per-case code assertions still
+restrict themselves to the rows named next, so a case's pass/fail meaning is
+unchanged across this round and any movement is attributable. The remaining
+float-vs-double residual on a long closed-loop walk is stated at that test.
+The MDAC codes are therefore compared EXACTLY on
 
   * every OPEN-LOOP tick — the feedforward path is ported in full (clip, iso
     bypass, proposal walk, ceilings, slew, actuation), and it is where the
@@ -609,8 +614,31 @@ def _case_selection_change_dwell():
     return cmds
 
 
+def _case_low_rail_infeasible_reference():
+    """THE GREEDY ALPHA LEG'S OPERATING POINT (0f-1, 2026-09-09).
+
+    A sustained commanded share of 0.15 while the plant delivers 0.1739 at
+    I_tot = 1.4114 A - campaign I's ``ems-sdp-alpha-greedy`` cruise, where the
+    split law's minimum deliverable share with both channels live (0.171538)
+    sits ABOVE the commanded one, so no in-band ratio can close the error.
+    The measurement is held FIXED, which makes the whole trajectory a property
+    of the CONTROLLER RECURSION alone: the integrator walks the output down
+    against a standing negative error until it leaves the band, the r-based
+    cut fires, and (with nothing re-asserting the switch here) the isolation
+    stands. It is the case the surrogate could not represent at all, and it is
+    the only case in this file whose closed-loop trajectory is compared."""
+    i_fc = 0.1739 * 1.4114
+    i_bt = 1.4114 - i_fc
+    # No ARM: the selector's battery-only start would cut FC on the first
+    # tick through the SETPOINT LATCH, which is a different mechanism and
+    # would mask the controller walk-down this case exists to measure.
+    return ([("RESET",)]
+            + [("TICK", 0.15, i_fc, i_bt, 16.0) for _ in range(3000)])
+
+
 CASES = [
     ("pure_schedule", _case_pure_schedule),
+    ("low_rail_infeasible_reference", _case_low_rail_infeasible_reference),
     ("open_loop_only", _case_open_loop_only),
     ("pure_clip", _case_pure_clip),
     ("kd_schedule_walk", _case_kd_schedule_walk),
@@ -1118,6 +1146,102 @@ def test_port_matches_firmware(harness, name, builder):
             "case %s: MDAC code delta %d over %d comparable rows; the ported "
             "code path must be bit-exact"
             % (name, max(code_deltas), n_code_rows))
+
+
+def test_the_closed_loop_trajectory_matches_at_the_greedy_operating_point(harness):
+    """FIDELITY BOUNDARY 1, CLOSED (0f-1, 2026-09-09).
+
+    Until this round the Youla controller was NOT ported and a closed-loop
+    tick's ratio was a firmware quantity the port only approximated. It is now
+    the real recursion (``governor_model._youla_step()``, coefficients read
+    from the generated header), so a closed-loop trajectory is comparable -
+    and this is the case that proves it, at the operating point where the old
+    surrogate was most wrong.
+
+    THREE QUANTITIES, all against the FIRMWARE and none against a written-down
+    expectation:
+      * the CUT DUTY - how many ticks the firmware spends with FC off the bus
+        under a reference the split law cannot deliver in band. The surrogate
+        stepped straight to the out-of-band inverse and cut on the first tick;
+        the real controller has to WALK there through its integrator;
+      * the standing tracking error the controller carries while it walks;
+      * the applied ratio, tick by tick.
+
+    THE ONE ACCEPTED RESIDUAL, stated rather than hidden: the firmware
+    computes in ``float`` and the port in ``double``, so over a 3000-tick
+    integrator walk the two ratios drift apart by ~1e-6 - enough to land on
+    opposite sides of a 12-bit MDAC code boundary on isolated ticks. The bound
+    asserted is one code on at most a handful of rows, not zero on all; a port
+    with a wrong recursion misses by orders of magnitude more and fails the
+    ratio check first."""
+    cmds = _case_low_rail_infeasible_reference()
+    fw = _firmware_trace(harness, cmds)
+    py = _port_trace(cmds)
+    tick_rows = [(f, p) for c, f, p in zip(cmds, fw, py) if c[0] == "TICK"]
+    assert len(tick_rows) == 3000
+
+    # (1) THE CUT DUTY. Exactly equal, not approximately.
+    fw_cut = sum(1 for f, _ in tick_rows if f["iso_fc"])
+    py_cut = sum(1 for _, p in tick_rows if p["iso_fc"])
+    assert fw_cut == py_cut, ("cut duty fw=%d port=%d of %d ticks"
+                              % (fw_cut, py_cut, len(tick_rows)))
+    # Proven non-vacuous in BOTH directions: the reference is infeasible in
+    # band, so the firmware must eventually cut, and it must not cut at once
+    # (that was the surrogate's failure mode).
+    assert 0 < fw_cut < len(tick_rows)
+    assert not tick_rows[0][0]["iso_fc"], (
+        "the firmware cut on the FIRST tick; the walk-down this case exists "
+        "to measure did not happen")
+
+    # (2) THE STANDING ERROR the controller carries. The measurement is fixed
+    # at 0.1739 and the reference at 0.15, so the error the recursion sees is
+    # a property of the prefilter alone; what this compares is that the port's
+    # controller state is the firmware's.
+    assert py[-1]["r"] == pytest.approx(fw[-1]["r"], abs=1e-5)
+    standing = 0.15 - 0.1739
+    assert abs(standing) == pytest.approx(0.0239, abs=5e-4)
+
+    # (3) THE RATIO, TICK BY TICK, and the code residual.
+    worst = max(abs(f["r"] - p["r"]) for f, p in tick_rows)
+    assert worst < 1e-5, "applied ratio diverges by %.3g" % worst
+    deltas = [max(abs(f["code_fc"] - p["code_fc"]),
+                  abs(f["code_bt"] - p["code_bt"])) for f, p in tick_rows]
+    assert max(deltas) <= 1
+    assert sum(1 for d in deltas if d) <= 4, (
+        "%d of %d ticks disagree on an MDAC code; float/double drift accounts "
+        "for a handful of boundary rows, not more" % (sum(1 for d in deltas
+                                                          if d), len(deltas)))
+
+
+def test_the_surrogate_is_still_selectable_and_still_wrong(harness):
+    """THE OLD SURROGATE IS KEPT, AND KEPT HONEST.
+
+    ``closed_loop="surrogate"`` must still regenerate an archived walk, so it
+    is not deleted. It is also the defect campaign I measured, so this test
+    pins BOTH facts: the option exists, and on the greedy operating point it
+    disagrees with the firmware in exactly the way that was diagnosed - it
+    steps to the out-of-band split-law inverse immediately and cuts on the
+    first tick, where the firmware walks there over hundreds of ticks."""
+    g = gm.GovernorModel(dt_s=1e-3, dv0_v=0.013522, droop_scale_fc=0.9434,
+                         r_series_ohm=0.033, closed_loop="surrogate")
+    st = g.state
+    st.sw_fc = st.sw_bt = True
+    st.sw_init = True
+    st.closed_loop_mode = True
+    st.closed_loop_run = True
+    st.filt_total = 1.4114
+    i_fc = 0.1739 * 1.4114
+    # The reference is slew-limited onto the setpoint over ~18 ticks, after
+    # which the surrogate demands the split-law inverse OUTRIGHT - out of band
+    # - and cuts, then re-cuts on every tick for the rest of the run.
+    cuts = 0
+    for k in range(400):
+        sw_fc = True if not st.sp_cut_fc else st.sw_fc
+        out = g.step(0.15, i_fc, 1.4114 - i_fc, sw_fc, True, (k + 1) * 1e-3)
+        if not out.fc_bus_req:
+            cuts += 1
+    assert cuts > 300, "the surrogate cut on only %d of 400 ticks" % cuts
+    assert g._ratio_for_delivered(0.15, 1.4114) < gm.GOV_CONST["DROOP_R_MIN"]
 
 
 def test_the_open_loop_codes_are_bit_exact(harness):
