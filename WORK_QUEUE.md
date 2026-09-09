@@ -238,6 +238,40 @@ was applied overnight. Bands are never widened; they are re-derived from the mec
   the two-axis dropout sweep at the scheduled scale (CAL-6), the AD5443/OPA197 DMM measurement, the VESC
   below 5 V, the standstill capture with the VESC powered, the joint bound's third reading (campaign).
 
+
+## 0g. D-7 blocker and open rulings (2026-09-09, phase-B fix round A-prime)
+
+- [ ] 1. **OPERATOR RULING, BLOCKING - `sdp_policy_v7` does not certify, so no `ems-sdp` campaign can run.**
+      The shipped artifact is solved `--alpha-mode lever-h20 --eta-chg measured` at the corrected 14.6440 W
+      operating point (alpha 0.142475472567). Lens-1 F2 independently raised the walked share lever
+      0.4223 -> 0.5672, which lowers the walked admission window to [0.0882, 0.1335], so the alpha sits 6.7 %
+      above its top, `alpha.admission.in_window_measured` is false and `hil_plant_sim` REFUSES the
+      EMS-frontier binding. The refusal is correct and was not worked around. Both options are defective:
+      `lever-h20` prices alpha in the right unit and fails the certificate; `lever-measured` certifies
+      (alpha 0.134110280093, both windows IN, 46 charge cells) but prices alpha on the five eta-era BOARD
+      readings, which are GFC-GRAM levers - the unit error solver D16 exists to remove. Campaign II's three
+      `ems-sdp-alpha-*` legs measure H-20-era levers on the board and settle it. Certifying artifact, one
+      command: `python tools/sdp_ems_solver.py --alpha-mode lever-measured --eta-chg measured --out
+      tools/sdp_policies/sdp_policy_v7.json --force`. Carried as a strict xfail on three
+      `test_hil_plant_sim.py` tests.
+- [ ] 2. **RULING - the v7 charge census spread.** 46 cells / demand bin 0 -> 140 cells / bins {0, 1, 2} over
+      47 SoC rows, all still below the SoC target. The mechanism is the alpha rise (a dearer terminal SoC
+      admits charging at more demands). Pinned exactly in `test_sdp_ems_solver.py`. Whether an artifact that
+      commands charging on 140 cells is the one to ship is the same question as item 1.
+- [ ] 3. **RULING - the MPC 61 s Gate-1 band is missed by 5.6 %** (share_pred_err_mean 0.005281 against 5e-3):
+      lambda 0.423 -> 0.4673 lowers `terminal_price("metric")` 9.5 %, the planner spends the pack harder and
+      the committed cruise command drops onto the ladder's bottom rung 0.15, where the delivered/predicted
+      disagreement is largest. THE GATE WAS NOT WIDENED - strict xfail in `test_mpc_ems.py`. Closing it needs
+      either the lambda ruling (item 1's family) or a planner fix, not a band edit.
+- [ ] 4. **TOOLS** - the `ems-ftp75c-*` hydrogen bands were NOT restated on the H-20 axis. The corrected-loop
+      walk models neither fw v28's F1 disarm-driven gate release nor the rev-6 inhibit, and on the compressed
+      cycle that mechanism decides whether the leg runs two-source at all (campaign I: the filtered total
+      never reaches the 0.25 A gate, so the release IS the disarm). Model it, then restate those bands and
+      the ftp75c frontier; until then both stay provisional with the gap named.
+- [ ] 5. **TOOLS** - the second strict xfail stands: the MPC cross-stimulus wide-share envelope
+      (`test_the_cross_stimulus_wide_share_walk_is_not_available_from_either_law`). It needs a floor/band
+      ruling on the two MPC laws under the H-20 map, not a band re-pin, so it was not touched this round.
+
 ## 0. NEXT — operator review (2026-09-03 morning), in this order
 
 The overnight session 2026-09-02/03 ran two full campaigns on fw v26 (D `hil_report_20260902_220604`,

@@ -111,7 +111,12 @@ def test_eq_h2_hand_computed():
     # (docs/modeling/sdp_alpha_resolve_h20_20260909.md section 3.5).  It must
     # equal run_hil_suite.EMS_EQ_H2_LAMBDA_SOC_PER_G, which this file
     # deliberately does not import - see the constant's own comment.
-    assert sweep.EQ_H2_LAMBDA_SOC_PER_G == pytest.approx(0.423, abs=1e-12)
+    # ⚠️ RE-PINNED AGAIN 2026-09-09 (D-7, lens-1 finding F3): 0.423 -> 0.4673.
+    # The 0.423 era ratio rested on a walk whose `cal` row was an `sdp-v2` /
+    # `ems-sdp` run rather than `sdp-sweep` / `ems-sdp-alpha-cal`; 0.4673 is
+    # the cal-charge construction L_chg/eta_chg, which avoids the low share
+    # rail where the modelled loop over-cuts the fuel cell ~75x.
+    assert sweep.EQ_H2_LAMBDA_SOC_PER_G == pytest.approx(0.4673, abs=1e-12)
     expected_default = h2 - (dsoc - dsoc_ref) / sweep.EQ_H2_LAMBDA_SOC_PER_G
     got_default = sweep.eq_h2(h2, dsoc, dsoc_ref)
     assert got_default == pytest.approx(expected_default, abs=1e-15)

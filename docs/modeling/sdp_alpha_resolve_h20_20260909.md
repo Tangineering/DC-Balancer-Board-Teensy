@@ -16,6 +16,108 @@ retired hydrogen law).
 
 ---
 
+## 0. Correction round (D-7, lens-1 review of 354da3d, 2026-09-09)
+
+This note is CORRECTED IN PLACE rather than superseded. Every figure below is left where it
+stands, because the figures ARE the record of the defect; each correction is stated beside the
+figure it replaces, and this section lists them so a reader meets them before the body.
+
+**C1 - the operating point (finding F1).** Sections 2.1 and 2.2 recover a Run-window median
+stack power of **13.3654 W** by INVERTING the H-20 map on campaign
+`hil_report_20260908_200836`'s `h2_rate_gps` column. That inversion is invalid. The campaign was
+recorded under the RETIRED gfc-linear hydrogen law, and the column proves it three ways over the
+same 54 982 Run-window ticks of `scenario_ems-sdp_hifi`: 35.96 % of them carry a rate BELOW the
+H-20 map's own constant offset `A0` = 6.632518e-05 g/s, which the map cannot emit at any current;
+`h2_rate_gps / (H2_GFC_DC_GAIN_GPS_PER_W * p_fc_w / ETA_BOOST)` has median 0.9999958, i.e. the
+column IS the linear law; and the run carries neither an `h2_gfc_cum_g` column nor an `h2_map`
+fingerprint. The shipped reference is therefore the SOURCE-SIDE electrical proxy
+`p_fc_w / ETA_BOOST` over the same window, **14.6440 W** (14.644018 W; the bus-side median is
+12.4474 W), which transfers across the hydrogen-law change because `p_fc_w` is an electrical
+quantity and the electrical model is unchanged by the map swap. Consequences: the marginal rate
+there is 1.914825e-05 g/s/W (not 1.801474e-05), the LHV efficiency is 0.43291 - the map's peak -
+and the constant `k = 1/(eta_fc*Q_LHV)` is 12.96 % BELOW the map's marginal rate, not 7.5 %.
+Campaign II is the first campaign whose `h2_rate_gps` column is genuinely H-20 and therefore the
+first on which the map inversion may be run at all; re-derive from it.
+
+**C2 - the `cal` lever leg (finding F2).** The `cal` row of the lever table in section 3.2
+(0.0161093 g, -0.0010954 SoC) is bit-identical to an `sdp-v2` / `ems-sdp` / `sdp_policy_v6` walk.
+It is NOT `sdp-sweep` / `ems-sdp-alpha-cal`, which walks 0.0071107 g and -0.0044717 SoC. Every
+figure that row produced is withdrawn. Re-walked correctly, and with the loop mode NAMED because
+it moves the share lever by 4.3 %:
+
+| quantity | withdrawn | E's real share controller (SHIPPED) | one-tick surrogate |
+|---|---|---|---|
+| `L_share` (H-20) | 0.4222722 | **0.5671522** | 0.5916735 |
+| `L_chg` at eta 0.88 | 0.3743980 | **0.3810417** | - |
+| `L_chg` at the measured round trip | 0.3417529 | **0.3744189** | 0.3744185 |
+| Gfc-law cross-check share lever | 0.4153531 | 0.4119966 (**-1.09 %**) | 0.4196505 (**+0.75 %**) |
+
+The Gfc-law cross-check is against the board's five-reading mean 0.4165286, so the "agreement to
+0.28 %" that section 3.4 uses to license the walk to carry an era RATIO is withdrawn with the
+row. The two loops disagree on the SHARE lever only, and only through the `greedy` leg, which
+sits on the low share rail where the surrogate re-cuts the fuel cell at 1 kHz - the ~75x over-cut
+against the board. The CHARGE lever agrees between the two loops to 1e-6.
+
+**C3 - lambda (finding F3).** Section 3.5's shipped lambda 0.423 - a board level times the walked
+era ratio - rested on C2's substituted row on BOTH sides of that ratio, and is withdrawn. The
+shipped construction is the CAL-CHARGE pair, which never visits the low rail:
+`lambda = L_chg / eta_chg = 0.3744189 / 0.801172837 =` **0.4673** SoC/g. The band is now the
+spread of the THREE independent constructions of an H-20 share lever - the closed-form model
+lever at 14.6440 W (0.3921), the shipped cal-charge one (0.4673) and the walked cal-greedy pair
+(0.5672, or 0.5917 under the surrogate) - quoted as **[0.39, 0.59]**. It is much wider than the
+Gfc era's 1.5 %, which makes MORE verdicts KNIFE-EDGE rather than fewer, and it is the honest
+statement that these are three models rather than three measurements. The 2026-09-08 handoff's
+"roughly 0.57 SoC/g at the rig median" is therefore RIGHT and its refutation in section 3.5 is
+void. `RHO_METRIC_G_PER_SOC_H20` = 1/lambda follows: 2.364066 -> **2.139953** g(H-20)/SoC, still
++20.9 % on the pre-2026-09-09 value 1.7697, so the direction of the original finding (the planner
+UNDER-priced terminal SoC) is unchanged.
+
+**C4 - alpha, and the certificate that now FAILS (sections 4.1 and 4.2).** Re-derived at the C1
+operating point, `alpha = (1 - gamma) / sqrt(L_share * L_chg)` on the MODEL levers gives
+**0.142475472567** (model levers 0.392073 / 0.314118), up 6.24 % on v6's 0.134110280093 and up
+6.29 % on this note's withdrawn 0.134041467771. `sdp_policy_v7.json` is re-solved at it
+(`--alpha-mode lever-h20 --eta-chg measured`).
+
+WARNING: **the certificate this note reports as clean in section 4.2 is now FAILED, and the
+failure blocks an `ems-sdp` campaign.** C1 raises the alpha while C2 raises the walked share
+lever, which LOWERS the walked admission window to [0.0882, 0.1335]; the shipped alpha sits 6.7 %
+above its top, so `alpha.admission.in_window_measured` is `false` and `hil_plant_sim` REFUSES to
+bind `sdp-v7` to its EMS-frontier role. The refusal is correct and has not been worked around.
+Both available artifacts are defective and the choice is an **OPERATOR RULING**:
+
+- `--alpha-mode lever-h20` (SHIPPED): alpha priced in the right unit, certificate FAILS.
+- `--alpha-mode lever-measured`: certifies (alpha 0.134110280093, both windows IN, 46 charge
+  cells) but prices alpha on the five eta-era BOARD readings, which are GFC-GRAM levers - the
+  very unit error D16 exists to remove.
+
+Campaign II's three `ems-sdp-alpha-*` legs measure H-20-era levers on the board and settle it.
+The certifying artifact is one command away:
+`python tools/sdp_ems_solver.py --alpha-mode lever-measured --eta-chg measured --out tools/sdp_policies/sdp_policy_v7.json --force`
+
+**C5 - the charge cells (section 4.3).** At the corrected alpha the solve admits **140** charge
+cells over 47 SoC rows and THREE demand bins (0, 1, 2), where this note pins 46 cells all in
+demand bin 0. The mechanism is the alpha rise itself - a dearer terminal SoC makes charging
+admissible at demands where it was not - and every admitted cell is still BELOW the SoC target,
+which is what says the policy is buying SoC back rather than mispricing it. The spread across
+bins is exactly what section 4.3's pin was built to detect, and it is now pinned at 140 /
+{0, 1, 2} in `test_sdp_ems_solver.py` so a further spread cannot pass unnoticed either.
+
+**C6 - the live picks (section 6.3) DID NOT MOVE.** The picks are the geometric midpoints of the
+three behaviour legs in log-alpha over the sweep grid, and neither the grid, the bisected
+boundaries (degeneracy 0.087452, charge 0.131942) nor the midpoint rule depends on the shipped
+alpha or on lambda. Indices 2 / 6 / 14 (alphas 0.065498 / 0.106354 / 0.248413) are unchanged, and
+the anchor stays in the charge-admitting leg (0.142475 is above the 0.131942 charge boundary, as
+0.134041 was). `live_picks.json` was therefore NOT regenerated; its
+`eq_h2_lambda_soc_per_g: 0.423` field records the lambda in force when the sweep ran and is read
+by no code path.
+
+**C7 - what else moved outside this note.** The suite's hydrogen bands were restated on the H-20
+axis and onto a RUN-WINDOW basis, and the EMS frontier now scores `h2_run_g` rather than
+`final_h2_cum_g`; a saturation refusal was added against the map's 23.4161 W knee. Those are
+recorded at their own sites in `tools/run_hil_suite.py` and in the D-7 entry of OVERNIGHT_LOG.md.
+
+---
+
 ## 1. What this round found, in four sentences
 
 The 2026-09-08 handoff's central quantitative premise is refuted by the campaign record: the

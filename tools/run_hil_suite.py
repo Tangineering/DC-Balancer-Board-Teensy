@@ -139,9 +139,19 @@ import governor_model as gov_mod                                   # noqa: E402
 # from the ladder rather than typed beside it (campaign 20260902_220604,
 # `signal_mpc_share_floor`). Stdlib-only, like every other import in this file.
 import mpc_ems                                                     # noqa: E402
+# The H-20 hydrogen map (phase A, 2026-09-08), for ONE purpose in this file:
+# THE SATURATION REFUSAL needs `P_MAX_W`, the stack power above which the map
+# is FLAT. Imported, never re-typed - a brochure refit that moves the knee must
+# move the refusal with it. Stdlib-only, like every other import here.
+import h2_map                                                      # noqa: E402
 
 from hil_plant_sim import (                                        # noqa: E402
     SCENARIOS, TEENSY_PORT_DEFAULT, WARM_RESET_GRACE_S, REPLAY_PREAMBLE_S,
+    # The boost-stage efficiency the plant refers bus power through to reach
+    # STACK power, and the aux bit that mirrors FC_REG_ENABLE. Both are read by
+    # the SATURATION REFUSAL only, and both are imported rather than typed for
+    # the same reason as the switch masks below.
+    ETA_BOOST, AUX_FC_REG,
     # switch_state bit masks, for FAULT_EXPECTATIONS' signals_require specs.
     # Imported, never re-declared: they mirror the firmware's switch_state packing
     # and a second copy here would be a silent divergence waiting to happen.
@@ -1260,7 +1270,46 @@ _FW28_ERA_PROVISIONAL = (
 # dv0_v=0.013522, droop_scale_fc=0.9434` - PLUS `r_series_ohm=0.033`, the split
 # law's common series floor, which the earlier columns omitted.
 #
-# ⚠️ THE AXIS CHANGED TOO, AND THAT IS WHY NO BAND CONSTANT MOVED IN THIS ROUND.
+# ⚠️ THE AXIS PARAGRAPH BELOW IS WRONG, AND THE BANDS HAVE SINCE BEEN RESTATED
+# ON THIS COLUMN (D-7, lens-1 "THE AXIS", 2026-09-09).  It reasoned that
+# `WalkResult.h2_g` is the H-20 map while the suite's `*_h2_accounted` bands are
+# keyed to `h2_cum_g`, "the simulator's Gfc DYNAMIC map", so restating one
+# against the other would be a silent scale error.  THE PREMISE IS FALSE.
+# `hil_plant_sim.Plant.step()` sets `rate_gps = h2_map.rate_gps(...)` and the
+# sidecar note beside `h2_cum_g` says "`h2_cum_g` above now carries the H-20
+# map"; the "h2_cum_g (Gfc) is the DYNAMIC map" sentence that was read sits
+# inside a banner preserved VERBATIM whose own header says "It still governs
+# `h2_gfc_cum_g`" - a stale sentence about the UNSCORED column.  BOTH axes are
+# H-20, the two figures are directly comparable, and the caution cost a round.
+# The stale sentence has been corrected at its source.
+#
+# WHAT WAS THEN DONE WITH THIS COLUMN, leg by leg (each band carries its own
+# old value, new value and mechanism at its own site):
+#   * the six `walk_h2` figures behind `_mpc_expectation` and the three
+#     `walk_h2_g` figures behind `_alpha_expectation` were re-pointed at it, so
+#     their +/- 25 % bands re-derive automatically;
+#   * `_FTP_H2_BAND_5050` (0.0218, 0.0363) -> (0.0304, 0.0506),
+#     `_FTP_H2_FLOOR_SOCBAND`/`_CEILING` (0.0326, 0.0489) -> (0.0426, 0.0638),
+#     `sdpftp_h2_*` (1.49e-2, 2.49e-2) -> (2.61e-2, 4.36e-2), each on its OWN
+#     existing relative convention (+/- 25 %, +/- 20 %, +/- 25 %), so no band's
+#     WIDTH changed - only its basis and its centre.  `_FTP75_DP_H2_BAND` is the
+#     union of two of those and moved with them;
+#   * the three loose PLUMBING floors (`ems-soc-band`, `ems-dp-replay`,
+#     `ems-sdp`) kept their VALUES, which sit 6-13x under the walk and were
+#     always "the accounting ran" rather than a band claim;
+#   * EVERY hydrogen band is now judged as a RUN-WINDOW DELTA
+#     (`delta_min_value`/`delta_max_value` with `sample_state_in: (2,)`) rather
+#     than as a whole-run peak, because the H-20 map's constant A0 term accrues
+#     from State 0 while the walk bills the Run window only (lens-1 F4/F5).
+# NOT restated: the `ems-ftp75c-*` legs' hydrogen. The corrected loop does not
+# model fw v28's F1 disarm-driven gate release or the rev-6 inhibit, and on the
+# compressed cycle that mechanism is what decides whether the leg runs
+# two-source at all (campaign I: the filtered total never reaches the 0.25 A
+# gate, so the release there IS the disarm). A walked band for those legs would
+# be a band on an unmodelled mechanism. Their gram bands stay where they are,
+# their frontier stays provisional, and the gap is NAMED rather than modelled.
+#
+# ⚠️ THE SUPERSEDED PARAGRAPH FOLLOWS, for the record of what was believed.
 # `WalkResult.h2_g` is now the H-20 brochure map (agent A, 354da3d). The suite's
 # `*_h2_accounted` bands are keyed to `h2_cum_g`, the simulator's Gfc DYNAMIC
 # map, and the two are NOT interchangeable (see the H2Consumption banner in
@@ -2232,8 +2281,20 @@ FAULT_EXPECTATIONS = {
             #    rig (TODO(calibrate) — H2Consumption banner in
             #    hil_plant_sim.py). This check asserts that the accounting RAN,
             #    not that the absolute mass is calibrated.
-            {"name": "h2_accounted", "column": "h2_cum_g", "min_value": 1.0e-3,
-             "label": "the H2 consumption metric accumulated over the run"},
+            {"name": "h2_accounted", "column": "h2_cum_g", "sample_state_in": (2,),
+             "delta_min_value": 1.0e-3,
+             # ⚠️ D-7 (2026-09-09): the BASIS moved, the VALUE did not, and
+             # both are deliberate. This is a PLUMBING floor ("the accounting
+             # ran"), not a band claim, so it keeps its 1e-3 g against the
+             # corrected-loop re-walk 1.31579e-2 g - a 13x margin, the same
+             # loose character it was written with. What changed is that it is
+             # now the RUN-WINDOW DELTA, so the H-20 map constant A0 offset
+             # (accrued from State 0) can no longer satisfy it on its own: a
+             # 61 s run idles ~1.7 mg before Run entry, which is ABOVE this
+             # floor, so on the whole-run basis a board that burned nothing in
+             # Run would have passed.
+             "label": "the H2 consumption metric accumulated over the RUN "
+                      "WINDOW (corrected-loop re-walk 1.31579e-2 g)"},
         ],
     },
     "ems-dp-replay": {
@@ -2317,8 +2378,13 @@ FAULT_EXPECTATIONS = {
             #    H2Consumption banner in hil_plant_sim.py). This asserts that
             #    the accounting RAN, not that the absolute mass is calibrated;
             #    the DP-vs-soc-band RANKING is robust either way.
-            {"name": "dp_h2_accounted", "column": "h2_cum_g", "min_value": 2.0e-3,
-             "label": "the H2 consumption metric accumulated over the run"},
+            {"name": "dp_h2_accounted", "column": "h2_cum_g",
+             "sample_state_in": (2,), "delta_min_value": 2.0e-3,
+             # D-7: plumbing floor, value held, basis moved to the RUN-WINDOW
+             # delta - see ems-soc-band h2_accounted for the argument.
+             # Corrected-loop re-walk on this leg: 1.26317e-2 g (6.3x margin).
+             "label": "the H2 consumption metric accumulated over the RUN "
+                      "WINDOW (corrected-loop re-walk 1.26317e-2 g)"},
         ],
     },
     "ems-sdp": {
@@ -2793,9 +2859,13 @@ FAULT_EXPECTATIONS = {
             #    stack not identified against this rig — H2Consumption banner).
             #    This asserts that the accounting RAN, not that the mass is
             #    calibrated.
-            {"name": "sdp_h2_accounted", "column": "h2_cum_g",
-             "min_value": 1.0e-3,
-             "label": "the H2 consumption metric accumulated over the run"},
+            {"name": "sdp_h2_accounted", "column": "h2_cum_g", "sample_state_in": (2,),
+             "delta_min_value": 1.0e-3,
+             # D-7: plumbing floor, value held, basis moved to the RUN-WINDOW
+             # delta - see ems-soc-band h2_accounted. Corrected-loop re-walk
+             # on this leg: 1.05412e-2 g (10x margin).
+             "label": "the H2 consumption metric accumulated over the RUN "
+                      "WINDOW (corrected-loop re-walk 1.05412e-2 g)"},
             # 8. THE STUDENT'S AXIS WAS PLUMBED. `min_value: 0.0` is a DELIBERATE
             #    plumbing assertion, not a magnitude one: an absent or unparseable
             #    column measures "peak unmeasured" and FAILS (_judge_signal_leaf),
@@ -3663,7 +3733,20 @@ _FTP_SURVIVE_T = 300.0
 # than the walk-derived pair on the ceiling side because the walk's own
 # hydrogen sat 2.7 % above the board's; the shape (+-25 %, a scale and
 # accumulation tripwire rather than a model tolerance) is unchanged.
-_FTP_H2_BAND_5050 = (0.0218, 0.0363)
+# ⚠️ RESTATED ON THE H-20 AXIS AND THE RUN WINDOW (D-7, lens-1 "THE AXIS",
+# 2026-09-09): (0.0218, 0.0363) -> (0.0304, 0.0506). EVERY board re-pin
+# recorded above is on the RETIRED gfc-linear hydrogen law and none of them
+# describes the axis this band now judges (lens-1 F1: campaign I and every
+# campaign before it carry that law in `h2_rate_gps`). The band therefore
+# returns to a WALK basis - +/- 25 % of the corrected-loop re-walk column's
+# 0.0405125 g - which is the same shape it has always had, restated on the
+# only figure that exists on this axis. It is also now judged as a RUN-WINDOW
+# DELTA rather than a whole-run peak, so the H-20 map's constant A0 offset
+# (accrued from State 0) is out of both the band and the measurement.
+# ⚠️ D-6 PROVISIONAL: campaign II is the first campaign on this axis and is the
+# calibration source. Re-pin from its own `h2_run_g`; do not widen this band
+# toward a board reading in the meantime.
+_FTP_H2_BAND_5050 = (0.0304, 0.0506)
 # soc-band: a TWO-SIDED band, [0.070, 0.115] around the measured 9.159e-2
 # (-24 % / +26 %, the same shape as the 5050 band above).
 #
@@ -3784,8 +3867,16 @@ _FTP_H2_FLOOR = 5.0e-3          # the 5050 variant's own conservative floor
 #    +-20 % of a MEASUREMENT, which is what item 5 above was waiting for:
 #    [0.0326, 0.0489]. The "lower half of the band is expected" caveat is
 #    RETIRED with it -- the band is centred again.
-_FTP_H2_FLOOR_SOCBAND = 0.0326
-_FTP_H2_CEILING_SOCBAND = 0.0489
+# ⚠️ RESTATED ON THE H-20 AXIS AND THE RUN WINDOW (D-7, 2026-09-09):
+# (0.0326, 0.0489) -> (0.0426, 0.0638), +/- 20 % of the corrected-loop re-walk
+# column's 0.0532039 g. Same argument as `_FTP_H2_BAND_5050` above, and the
+# same D-6 provisional note: item 6's board re-pin (0.0407628763 g, campaign
+# 20260902_220604) is a gfc-linear-era measurement and does not calibrate this
+# axis. The band's SHAPE (+/- 20 %, a scale-and-accumulation tripwire) is
+# unchanged; only its basis and its centre move, and it is judged as a
+# Run-window delta.
+_FTP_H2_FLOOR_SOCBAND = 0.0426
+_FTP_H2_CEILING_SOCBAND = 0.0638
 
 FAULT_EXPECTATIONS["ems-ftp75-5050"] = {
     "source": ("hil_plant_sim.py SCENARIOS['ems-ftp75-5050'] + the generated "
@@ -3848,19 +3939,22 @@ FAULT_EXPECTATIONS["ems-ftp75-5050"] = {
         #    accounting run in the suite, and the reason these scenarios exist —
         #    AND landed in its measured band. Two specs, because one spec cannot
         #    carry both bounds (see _FTP_H2_BAND_5050).
-        {"name": "ftp_h2_accounted", "column": "h2_cum_g",
-         "min_value": _FTP_H2_BAND_5050[0],
+        {"name": "ftp_h2_accounted", "column": "h2_cum_g", "sample_state_in": (2,),
+         "delta_min_value": _FTP_H2_BAND_5050[0],
          "provisional_note": _FTP_H2_PROVISIONAL,
          "label": "the H2 consumption metric accumulated over the cycle "
-                  "(>= %.3f g; governor walk 2.809e-2 at preload 0, against "
-                  "6.47e-2 in the retired 0.65 A era)" % _FTP_H2_BAND_5050[0]},
-        {"name": "ftp_h2_bounded", "column": "h2_cum_g",
-         "max_value": _FTP_H2_BAND_5050[1],
+                  "(RUN-WINDOW delta >= %.4f g; corrected-loop re-walk 4.05125e-2 g on "
+                  "the H-20 axis, D-7 2026-09-09. The 2.809e-2 governor walk and "
+                  "the 0.0290697451 g board re-pin this band used to carry are "
+                  "gfc-linear-era figures and do not describe this axis)"
+                  % _FTP_H2_BAND_5050[0]},
+        {"name": "ftp_h2_bounded", "column": "h2_cum_g", "sample_state_in": (2,),
+         "delta_max_value": _FTP_H2_BAND_5050[1],
          "provisional_note": _FTP_H2_PROVISIONAL,
-         "label": "... and stayed under %.3f g — a ceiling the walk's 2.809e-2 "
-                  "clears by 25 %%, so a scale or accumulation error in the "
-                  "metric fails here instead of being read as a result"
-                  % _FTP_H2_BAND_5050[1]},
+         "label": "... and stayed under %.4f g (RUN-WINDOW delta) — 25 %% above "
+                  "the corrected-loop re-walk 4.05125e-2 g, so a scale or "
+                  "accumulation error in the metric fails here instead of "
+                  "being read as a result" % _FTP_H2_BAND_5050[1]},
     ],
 }
 
@@ -4192,19 +4286,21 @@ FAULT_EXPECTATIONS["ems-ftp75-socband"] = {
         # than walk-derived) — a FAIL in that margin should be read against
         # this comment, not against a runtime note, until the first post-aux
         # campaign re-pins the floor from its own measurement.
-        {"name": "ftp_h2_accounted", "column": "h2_cum_g",
-         "min_value": _FTP_H2_FLOOR_SOCBAND,
+        {"name": "ftp_h2_accounted", "column": "h2_cum_g", "sample_state_in": (2,),
+         "delta_min_value": _FTP_H2_FLOOR_SOCBAND,
          "label": "the H2 consumption metric accumulated over the cycle "
-                  "(>= %.3f g; MEASURED 0.042427 g in campaign 20260902_011926, "
-                  "walk 0.041873). A SCALE/ACCUMULATION tripwire — it does not "
+                  "(RUN-WINDOW delta >= %.4f g; corrected-loop re-walk 5.32039e-2 g on "
+                  "the H-20 axis, D-7 2026-09-09. The 0.042427 g campaign "
+                  "measurement this band used to carry is a gfc-linear-era "
+                  "figure). A SCALE/ACCUMULATION tripwire — it does not "
                   "discriminate a degraded share loop" % _FTP_H2_FLOOR_SOCBAND},
-        {"name": "ftp_h2_bounded", "column": "h2_cum_g",
-         "max_value": _FTP_H2_CEILING_SOCBAND,
-         "label": "... and stayed under %.3f g — 20 %% above the measured "
-                  "0.042427 g, so a scale or accumulation error in the metric "
-                  "fails here instead of being read as a result (a "
-                  "constant-0.50 board passes this band: see "
-                  "`socband_fc_carried`)"
+        {"name": "ftp_h2_bounded", "column": "h2_cum_g", "sample_state_in": (2,),
+         "delta_max_value": _FTP_H2_CEILING_SOCBAND,
+         "label": "... and stayed under %.4f g (RUN-WINDOW delta) — 20 %% above "
+                  "the corrected-loop re-walk 5.32039e-2 g, so a scale or "
+                  "accumulation error in the metric fails here instead of "
+                  "being read as a result (a constant-0.50 board passes this "
+                  "band: see `socband_fc_carried`)"
                   % _FTP_H2_CEILING_SOCBAND},
     ],
 }
@@ -4601,15 +4697,20 @@ FAULT_EXPECTATIONS["ems-ftp75-sdp"] = {
         #    measured in the 0.45 A era (campaign 024231). Band = walk +/-25 %,
         #    the same shape as the two sibling entries' — [0.0149, 0.0249].
         {"name": "sdpftp_h2_accounted", "column": "h2_cum_g",
-         "min_value": 1.49e-2, "provisional_note": _FTP_H2_PROVISIONAL,
+         "delta_min_value": 2.61e-2, "sample_state_in": (2,),
+         "provisional_note": _FTP_H2_PROVISIONAL,
          "label": "the H2 consumption metric accumulated over the cycle "
-                  "(M2-equivalent governor walk 0.019918 g at preload 0; "
-                  "0.0621749 g in the retired 0.45 A era)"},
+                  "(RUN-WINDOW delta; corrected-loop re-walk 3.48439e-2 g on the H-20 "
+                  "axis, band +/- 25 % of it, D-7 2026-09-09. The 0.019918 g "
+                  "M2-equivalent walk this band used to carry is a "
+                  "gfc-linear-era figure)"},
         {"name": "sdpftp_h2_bounded", "column": "h2_cum_g",
-         "max_value": 2.49e-2, "provisional_note": _FTP_H2_PROVISIONAL,
-         "label": "... and stayed under 0.0249 g, so a scale or accumulation "
-                  "error in the metric fails here instead of reading as a "
-                  "result"},
+         "delta_max_value": 4.36e-2, "sample_state_in": (2,),
+         "provisional_note": _FTP_H2_PROVISIONAL,
+         "label": "... and stayed under 0.0436 g (RUN-WINDOW delta), 25 % above "
+                  "the corrected-loop re-walk 3.48439e-2 g, so a scale or "
+                  "accumulation error in the metric fails here instead of "
+                  "reading as a result"},
         # 11. THE en_low CHATTER CENSUS (M-4, 2026-09-04).
         #     THE GAP IT CLOSES. `sdpftp_bt_peak_bounded` reads 1.00 on this leg
         #     and every current bound above is a CEILING, so the regime that
@@ -4809,29 +4910,56 @@ FAULT_EXPECTATIONS["ems-ftp75-dp"] = {
         #    spread to justify a knife edge. 0.32 is 11 % above the table
         #    value and still far below the 0.70 the upper-rail check requires,
         #    so the two remain mutually exclusive by a wide margin.
-        {"name": "ftpdp_table_low_rail", "column": "cmd_share_sp",
-         "max_value": 0.32, "t_window": (0.0, 5.0),
-         "provisional_note": "first zero-preload campaign; the ceiling is the "
-                             "re-solved table's own 0.2875 minimum plus 11 %, "
-                             "not a measurement — re-derive it from the first "
-                             "campaign that runs it",
-         "label": "... and the table's OPENING low rail reached the wire "
-                  "(<= 0.32 against the table's own 0.2875 minimum; t <= 5 s, "
-                  "where every one of its 51 low-rail stages lives), so the "
-                  "run replayed the table from its start and not just its "
-                  "upper half"},
+        # ⚠️ RE-DERIVED FROM THE H-20 TABLE (D-7, "THE AXIS" item 3,
+        #    2026-09-09), AND ITS SENSE IS INVERTED. This check was a CEILING
+        #    (<= 0.32 over t <= 5 s) on the LINEAR-era table's opening low
+        #    rail. That table is gone: `dp_ems_table_ems-ftp75-dp.csv` was
+        #    regenerated under the H-20 convex map (phase A) and its share
+        #    column now runs [0.5375, 0.85] with NO low-rail stage anywhere -
+        #    it OPENS at 0.85 and holds it on 2358 of 3501 stages. A ceiling of
+        #    0.32 is therefore unsatisfiable on any correct replay, which is
+        #    exactly what the strict xfail in test_run_hil_suite.py recorded.
+        #    THE OBJECTIVE IS UNCHANGED and is what the re-derivation preserves:
+        #    "the run replayed the table FROM ITS START, not just its upper
+        #    half", and "a constant-0.50 fallback cannot produce this". Under
+        #    the H-20 table the opening stages are the 0.85 rail, so the same
+        #    objective is a FLOOR over the same window. 0.80 is the table's own
+        #    0.85 less 6 %, the same style of margin the retired ceiling
+        #    carried (11 % over 0.2875), and it is far above 0.50.
+        #    WINDOW UNCHANGED at (0.0, 5.0) for the reason recorded above:
+        #    `cmd_share_sp` is the sim-side wire quantity, emitted on every
+        #    commander tick regardless of mode, and scan_signals() already
+        #    floors the window at WARM_RESET_GRACE_S = 2.0 s.
+        #    WHY THE OPENING IS PHYSICS AND NOT AN ARTEFACT: the H-20 map is
+        #    convex with a constant offset, so a stack in service is cheapest
+        #    per gram near its efficiency peak and the DP has no reason to idle
+        #    it at a low rail the way the linear law did. The two checks stay
+        #    MUTUALLY INFORMATIVE rather than mutually exclusive - check 3
+        #    reads the whole cycle, this one reads the opening.
+        {"name": "ftpdp_table_opening_rail", "column": "cmd_share_sp",
+         "floor_min_value": 0.80, "t_window": (0.0, 5.0),
+         "provisional_note": "the floor is the H-20 table's own 0.85 opening "
+                             "rail less 6 %, not a measurement — no campaign "
+                             "has run this leg on the H-20 axis; re-derive it "
+                             "from the first that does (campaign II)",
+         "label": "... and the table's OPENING rail reached the wire "
+                  "(minimum >= 0.80 against the table's own 0.85 opening; "
+                  "t <= 5 s), so the run replayed the table from its start "
+                  "and not just its upper half"},
         # 5-6. The H2 metric ran end to end and landed in the siblings' union
         #    band. Two specs, because one spec cannot carry both bounds (the
         #    import guard refuses min_value+max_value on a single leaf —
         #    `_judge_signal_leaf` tests min before max and drops the ceiling).
-        {"name": "ftpdp_h2_accounted", "column": "h2_cum_g",
-         "min_value": _FTP75_DP_H2_BAND[0],
+        {"name": "ftpdp_h2_accounted", "column": "h2_cum_g", "sample_state_in": (2,),
+         "delta_min_value": _FTP75_DP_H2_BAND[0],
          "provisional_note": _FTP_H2_PROVISIONAL,
          "label": "the H2 consumption metric accumulated over the cycle "
-                  "(>= %.3f g, the `ems-ftp75-5050` floor at preload 0)"
-                  % _FTP75_DP_H2_BAND[0]},
-        {"name": "ftpdp_h2_bounded", "column": "h2_cum_g",
-         "max_value": _FTP75_DP_H2_BAND[1],
+                  "(RUN-WINDOW delta >= %.4f g, the `ems-ftp75-5050` floor - both "
+                  "siblings restated on the H-20 axis, D-7 2026-09-09; the "
+                  "corrected-loop re-walk of this leg is 4.63096e-2 g and sits "
+                  "inside the union band)" % _FTP75_DP_H2_BAND[0]},
+        {"name": "ftpdp_h2_bounded", "column": "h2_cum_g", "sample_state_in": (2,),
+         "delta_max_value": _FTP75_DP_H2_BAND[1],
          "provisional_note": _FTP_H2_PROVISIONAL,
          "label": "... and stayed under %.3f g (the `ems-ftp75-socband` "
                   "ceiling at preload 0), so a scale or accumulation error "
@@ -5637,17 +5765,18 @@ def _mpc_expectation(*, scenario, walk_h2, duration_s, survive_t,
         # EVALUATED and REPORTED but never fails the run on a leg where the
         # band edge has been shown to sit inside the quantity's own
         # run-to-run spread. See the leg's own note for the two readings.
-        {"name": "mpc_h2_accounted", "column": "h2_cum_g",
-         "min_value": lo, "t_window": run_window,
+        {"name": "mpc_h2_accounted", "column": "h2_cum_g", "sample_state_in": (2,),
+         "delta_min_value": lo, "t_window": run_window,
          "provisional_note": _MPC_PROVISIONAL,
          "informational": bool(h2_floor_informational),
          "label": "the H2 consumption metric accumulated over the cycle "
-                  "(>= %.6f g = governor walk %.6f g -25 %%)%s"
+                  "(RUN-WINDOW delta >= %.6f g = corrected-loop re-walk "
+                  "%.6f g -25 %%, restated on the H-20 axis, D-7 2026-09-09)%s"
                   % (lo, walk_h2,
                      "" if not h2_floor_informational else
                      (h2_informational_note or _MPC_H2_INFORMATIONAL_SPREAD))},
-        {"name": "mpc_h2_bounded", "column": "h2_cum_g",
-         "max_value": hi, "t_window": run_window,
+        {"name": "mpc_h2_bounded", "column": "h2_cum_g", "sample_state_in": (2,),
+         "delta_max_value": hi, "t_window": run_window,
          "provisional_note": _MPC_PROVISIONAL,
          "label": "... and stayed under %.6f g (walk +25 %%), so a scale or "
                   "accumulation error fails here instead of reading as a "
@@ -5778,7 +5907,7 @@ def _mpc_expectation(*, scenario, walk_h2, duration_s, survive_t,
 
 # ── ems-mpc: the frontier candidate ─────────────────────────────────────────
 FAULT_EXPECTATIONS["ems-mpc"] = _mpc_expectation(
-    scenario="ems-mpc", walk_h2=0.007162, duration_s=61.0, survive_t=50.0,
+    scenario="ems-mpc", walk_h2=0.0118067, duration_s=61.0, survive_t=50.0,
     # RE-DERIVED 2026-09-02: the leg binds `mpc-sto`, whose walk commands a
     # 0.2500 share range on this stimulus (the pre-swap `mpc-det` walk was
     # wider). The floor is ~0.6x that, which is a degenerate-constant guard
@@ -5803,7 +5932,7 @@ FAULT_EXPECTATIONS["ems-mpc"] = _mpc_expectation(
 
 # ── ems-mpc-det: the stochastic variant, NOT a frontier leg ─────────────────
 FAULT_EXPECTATIONS["ems-mpc-det"] = _mpc_expectation(
-    scenario="ems-mpc-det", walk_h2=0.009427, duration_s=61.0, survive_t=50.0,
+    scenario="ems-mpc-det", walk_h2=0.0104827, duration_s=61.0, survive_t=50.0,
     # RE-DERIVED 2026-09-02: the leg binds `mpc-det`, whose walk commands a
     # 0.4167 share range here — the widest of the four legs, because the
     # deterministic law reads the stimulus it is driving. Floor ~0.6x.
@@ -5854,7 +5983,7 @@ FAULT_EXPECTATIONS["ems-mpc-det"] = _mpc_expectation(
 FAULT_EXPECTATIONS["ems-mpc-single"] = _mpc_expectation(
     # RE-WALKED 2026-09-03 (H2): 0.004770 -> 0.004945, the shadow governor's
     # battery-only arm. Band is walk x [0.75, 1.25] and remains informational.
-    scenario="ems-mpc-single", walk_h2=0.004945, duration_s=61.0,
+    scenario="ems-mpc-single", walk_h2=0.0106317, duration_s=61.0,
     survive_t=50.0, run_window=(5.0, 58.0),
     # The walk's commanded range is 0.675 here against `ems-mpc-det`'s 0.525:
     # the low rail is now 0.0, not 0.15.  Floor ~0.6x, the family's rule.
@@ -5906,7 +6035,7 @@ FAULT_EXPECTATIONS["ems-mpc-single"] = _mpc_expectation(
 
 # ── ems-mpc-cross: the switching-surface stimulus ───────────────────────────
 FAULT_EXPECTATIONS["ems-mpc-cross"] = _mpc_expectation(
-    scenario="ems-mpc-cross", walk_h2=0.008782, duration_s=200.0,
+    scenario="ems-mpc-cross", walk_h2=0.0212995, duration_s=200.0,
     # ⚠️ RE-DERIVED 2026-09-02 AND LOWERED, 0.12 -> 0.05. The leg binds
     # `mpc-sto` now, and the stochastic law walks a share range of only
     # 0.0875 on this two-level cruise — BELOW the pre-swap 0.12 floor, which
@@ -6510,7 +6639,7 @@ FAULT_EXPECTATIONS["ems-ftp75c-dp"] = _ftp75c_expectation(
 
 # ── ems-ftp75c-mpc: the compressed-cycle MPC candidate, behind --with-ftp75c
 FAULT_EXPECTATIONS["ems-ftp75c-mpc"] = _mpc_expectation(
-    scenario="ems-ftp75c-mpc", walk_h2=0.002028, duration_s=180.0,
+    scenario="ems-ftp75c-mpc", walk_h2=0.0160218, duration_s=180.0,
     survive_t=150.0, run_window=(5.0, 175.0),
     # NO DEGENERATE-CONSTANT GUARD, and the absence is deliberate rather than
     # an omission.  The walk commands a CONSTANT 0.1500 for the whole cycle -
@@ -6591,7 +6720,7 @@ FAULT_EXPECTATIONS["ems-ftp75c-mpc"].setdefault("events_require", []).extend(
 
 # ── ems-ftp75-mpc: the drive-cycle candidate, behind --with-ftp75 ───────────
 FAULT_EXPECTATIONS["ems-ftp75-mpc"] = _mpc_expectation(
-    scenario="ems-ftp75-mpc", walk_h2=0.018762, duration_s=350.0,
+    scenario="ems-ftp75-mpc", walk_h2=0.0522491, duration_s=350.0,
     # RE-DERIVED 2026-09-02 for the `mpc-sto` binding: walk range 0.2500,
     # floor ~0.6x.
     survive_t=330.0, run_window=(10.0, 340.0), share_range_min=0.15,
@@ -6760,12 +6889,14 @@ def _alpha_expectation(walk_h2_g, share_spec, charge_edges, note):
             #    cannot carry both bounds (`_judge_signal_leaf` returns on the
             #    first it matches and the import guard refuses the pairing).
             #    h2_cum_g is monotone, so the peak IS the final value.
-            {"name": "alpha_h2_accounted", "column": "h2_cum_g",
-             "min_value": lo,
+            {"name": "alpha_h2_accounted", "column": "h2_cum_g", "sample_state_in": (2,),
+             "delta_min_value": lo,
              "label": "the H2 total accumulated to the walk's band "
-                      "(>= %.5f g; governor walk %.5f g)" % (lo, walk_h2_g)},
-            {"name": "alpha_h2_bounded", "column": "h2_cum_g",
-             "max_value": hi,
+                      "(RUN-WINDOW delta >= %.5f g; corrected-loop re-walk "
+                      "%.5f g on the H-20 axis, D-7 2026-09-09)"
+                      % (lo, walk_h2_g)},
+            {"name": "alpha_h2_bounded", "column": "h2_cum_g", "sample_state_in": (2,),
+             "delta_max_value": hi,
              "label": "... and stayed under %.5f g, so a scale or accumulation "
                       "error fails here instead of reading as an alpha result"
                       % hi},
@@ -6817,7 +6948,21 @@ FAULT_EXPECTATIONS["ems-sdp-alpha-greedy"] = _alpha_expectation(
     # PROVISIONAL. Was 0.004093022760826734 (sweep_20260902_eta088 idx 3, the
     # sweep's own asymmetry-free walk). SAME policy digest 2ababa98...: the
     # number moved on the walk configuration and the governor era, not the law.
-    walk_h2_g=0.0008442878762,
+    # ⚠️ RESTATED ON THE H-20 AXIS AND THE CORRECTED LOOP (D-7, lens-1 "THE
+    # AXIS", 2026-09-09): 0.0008442878762 -> 0.0059219, the corrected-loop
+    # re-walk column above (f6c52a6). THREE things moved at once and all three
+    # are the walk's, not the board's: the hydrogen model (Gfc proxy -> H-20
+    # map, which is why the figure rises 7x - the H-20 map's constant A0 offset
+    # dominates a leg this small), the share loop (one-tick surrogate -> the
+    # real Youla recursion) and R_f (0 -> 0.033 ohm, inert on hydrogen).
+    # THE BAND IS STILL walk +/- 25 %, so this is a re-derivation of the same
+    # construction on the corrected column and NOT a widening: the interval's
+    # relative width is unchanged.
+    # ⚠️ D-6 PROVISIONAL, and this leg is the WORST case of it. It runs on the
+    # low share rail, where the modelled loop cuts the fuel cell ~75x more
+    # often than the board (0f-15), so its hydrogen is the least trustworthy
+    # figure in the table. A campaign-II FAIL here reads as CALIBRATION.
+    walk_h2_g=0.0059219,
     # THE DEGENERACY, asserted as a CEILING over the whole post-command span.
     # At alpha 0.073936 the sweep's share map is 0 in every cell, so the policy
     # requests the battery rail everywhere and `cmd_share_sp` must never reach
@@ -6845,7 +6990,14 @@ FAULT_EXPECTATIONS["ems-sdp-alpha-cal"] = _alpha_expectation(
     # policy block IS sdp_policy_v6's, and the suite-configuration walk of it
     # is BIT-IDENTICAL to `ems-sdp`'s own (0.0125240293 g, dSoC -0.00109539) -
     # which is exactly the in-family control this leg exists to be.
-    walk_h2_g=0.0125240293,
+    # ⚠️ RESTATED ON THE H-20 AXIS AND THE CORRECTED LOOP (D-7, 2026-09-09):
+    # 0.0125240293 -> 0.0071107, the corrected-loop re-walk column. It FALLS,
+    # where the greedy leg's rises, and the fall is the whole point of lens-1
+    # finding F2: the old figure was BIT-IDENTICAL to `ems-sdp`'s because the
+    # walk that produced it substituted an `sdp-v2` / `ems-sdp` run for this
+    # leg. The corrected column walks the real `sdp-sweep` / `ems-sdp-alpha-cal`
+    # leg. Band still walk +/- 25 %; not a widening.
+    walk_h2_g=0.0071107,
     # The FC rail IS reached: same 0.84 floor and same window as `ems-sdp`'s
     # `sdp_clamped_rail_commanded`, because this leg's policy block IS
     # sdp_policy_v4's. A disagreement between this check and `ems-sdp`'s is
@@ -6868,7 +7020,14 @@ FAULT_EXPECTATIONS["ems-sdp-alpha-charge"] = _alpha_expectation(
     # alpha 0.248413). The rebind moves the pick to idx 15 / alpha 0.280418:
     # the charge boundary rose with the billing (0.126136 -> 0.138547), so the
     # charge leg's lower end - and its geometric midpoint - rose with it.
-    walk_h2_g=0.0148082323,
+    # ⚠️ RESTATED ON THE H-20 AXIS AND THE CORRECTED LOOP (D-7, 2026-09-09):
+    # 0.0148082323 -> 0.0176486, the corrected-loop re-walk column. This is the
+    # ONE leg of the 23 whose corrected-loop figure does not reproduce agent E's
+    # bit-identically: E walked 0.0179672, a 1.8 % disagreement that is NOT R_f
+    # (the leg walks to 0.0176486 at both R_f values) and is UNRESOLVED. The
+    # +/- 25 % band swallows it 14x over, so the disagreement does not reach
+    # the verdict; it is named here rather than averaged away.
+    walk_h2_g=0.0176486,
     # A HIGHER alpha prices SoC more dearly, so this leg asks for at least as
     # much fuel cell as the calibrated one: the same rail floor holds.
     share_spec={"name": "alpha_share_high_rail", "column": "cmd_share_sp",
@@ -10152,6 +10311,32 @@ def _assert_signal_spec_shapes(_n, _e):
                 "the first bound it matches and tests min_value first, so the "
                 "ceiling would be silently ignored. Split the band into two "
                 "specs (a floor and a ceiling) on the same column." % (_n, _tag))
+            # ── THE RUN-WINDOW DELTA KIND (D-7, F4/F5, 2026-09-09) ───────────
+            # Same two traps as the peak kinds, and it is tested BEFORE them in
+            # `_judge_signal_leaf()`, so the pairing guards have to be stated in
+            # both directions: a delta bound beside a peak bound would silently
+            # drop the peak bound, and the two delta bounds in one spec would
+            # silently drop the ceiling.
+            assert not ("delta_min_value" in _sub
+                        and "delta_max_value" in _sub), (
+                "FAULT_EXPECTATIONS[%r].signals_require[%r] carries BOTH "
+                "`delta_min_value` and `delta_max_value`. _judge_signal_leaf() "
+                "returns on the floor, so the ceiling would be silently "
+                "ignored. Split the band into two specs." % (_n, _tag))
+            if ("delta_min_value" in _sub) or ("delta_max_value" in _sub):
+                for _pk in ("min_value", "max_value", "floor_min_value",
+                            "column_range_at_least"):
+                    assert _pk not in _sub, (
+                        "FAULT_EXPECTATIONS[%r].signals_require[%r] pairs a "
+                        "run-window delta bound with `%s`. The delta kind is "
+                        "tested FIRST and _judge_signal_leaf() returns on it, "
+                        "so `%s` would never be evaluated. Split them."
+                        % (_n, _tag, _pk, _pk))
+                assert "column" in _sub or _sub.get("sum_of") or \
+                    _sub.get("ratio_of"), (
+                    "FAULT_EXPECTATIONS[%r].signals_require[%r] declares a "
+                    "run-window delta bound with no numeric column to take it "
+                    "over." % (_n, _tag))
             # ── L4: a max_ticks-only bit/value spec is vacuity-prone ──────────
             # "the signal was LOW/absent for at most N ticks" is satisfied by a
             # column that is BLANK or missing entirely (zero matching ticks), so
@@ -11349,6 +11534,48 @@ def analyze_scenario_csv(csv_path, grace_s=WARM_RESET_GRACE_S, survive_to_t=None
          # pack harder, so a hydrogen ranking is only valid at matched
          # delta_soc.
          "final_h2_cum_g": None, "final_h2_sdp_cum_g": None,
+         # ── THE RUN-WINDOW HYDROGEN FIGURE (D-7, lens-1 findings F4/F5) ────
+         #   h2_run_g  `h2_cum_g` at the last Run tick minus `h2_cum_g` at the
+         #             first Run tick (state == 2). None on any CSV without
+         #             both columns, and on a run that never reaches Run.
+         # WHY IT EXISTS.  `h2_cum_g` is billed from State 0 onward, because
+         # the H-20 map's constant offset A0 (purge + blower + controller,
+         # 6.6325e-05 g/s) accrues whenever the stack is in service and the
+         # firmware raises FC_REG_ENABLE in State 0 (hil_plant_sim.py, review
+         # item A7a).  So `final_h2_cum_g` carries A0 * t_run_entry of Init and
+         # Idle idling - about 1.7 mg of a 16.5 mg `ems-sdp` run, ~10 % - which
+         # is a COMMON OFFSET that depends on how long a scenario dwells before
+         # Run and not on what its strategy did.  The DP generator and the
+         # offline walk both bill the RUN WINDOW ONLY, so a comparison of a run
+         # against either is off by that offset unless this figure is used.
+         # ⚠️ THE OFFSET IS NOT NEGLIGIBLE AND IT IS NOT EQUAL ACROSS LEGS: it
+         # scales with the pre-Run dwell, which differs between the 61 s
+         # `ems-*` stimuli and the long-cycle ones, so it does not cancel even
+         # in a RATIO of two legs.  Every band and every frontier that scores
+         # hydrogen reads this, not the final value.
+         "h2_run_g": None, "h2_run_first_g": None, "h2_run_last_g": None,
+         # ── THE SATURATION REFUSAL (D-7, lens-1 "the saturation refusal") ──
+         # The H-20 map is FLAT above `h2_map.P_MAX_W` (23.4161 W of stack
+         # power = 1.2477 A of bus current at 15.95 V through ETA_BOOST): the
+         # brochure polarization curve turns over at I_PMAX_A and the inversion
+         # `current_a()` saturates there, so a tick commanded ABOVE the knee is
+         # billed the SAME hydrogen as a tick at the knee.  A leg that spends
+         # time there BURNS FREE HYDROGEN, and every hydrogen figure taken off
+         # it - a band, a frontier ratio, a lever - is optimistic by an amount
+         # nothing in the run reports.
+         #   h2_saturated_ticks  count of rows with p_fc_w / ETA_BOOST >
+         #                       h2_map.P_MAX_W while the aux mirror says
+         #                       FC_REG_ENABLE is HIGH (the stack in service;
+         #                       a tick with the stack off bills nothing at
+         #                       all, so it cannot burn free hydrogen).
+         #   h2_saturated_peak_w  the largest such stack power, so a report can
+         #                       say HOW FAR over the knee the leg went.
+         #   h2_stack_rows       rows on which the test could be applied at
+         #                       all, so "0 saturated" and "no p_fc_w column"
+         #                       can never read alike.
+         # `_judge_signal_leaf`'s `h2_saturation_refused` kind reads these.
+         "h2_saturated_ticks": 0, "h2_saturated_peak_w": None,
+         "h2_stack_rows": 0,
          # Hi-fi substep resolution (2026-09-02). None on a simple-engine run
          # and on every CSV that predates the `elec_substep_n` column.
          "substep_n_min": None, "substep_n_mean": None,
@@ -11621,6 +11848,45 @@ def analyze_scenario_csv(csv_path, grace_s=WARM_RESET_GRACE_S, survive_to_t=None
                         m["final_h2_cum_g"] = float(h2)
                     except ValueError:
                         pass
+                    else:
+                        # THE RUN WINDOW (F4/F5). Scoped by the CSV's own
+                        # `state` column rather than by a declared instant, so
+                        # a scenario whose Run entry moves carries its window
+                        # with it. Parsed locally: the `state` parse further up
+                        # lives inside the `fault_flags` branch and a row
+                        # without fault_flags still carries hydrogen.
+                        _stc = (row.get("state") or "").strip()
+                        try:
+                            _st_h2 = int(_stc, 0) if _stc else None
+                        except ValueError:
+                            _st_h2 = None
+                        if _st_h2 == 2:
+                            _v = float(h2)
+                            if m["h2_run_first_g"] is None:
+                                m["h2_run_first_g"] = _v
+                            m["h2_run_last_g"] = _v
+                # THE SATURATION CENSUS. Same blank-tolerance as the EMS
+                # surface above and for the same reason - a malformed cell is
+                # skipped, never fatal - but UNLIKE that surface this one IS
+                # read by a check, so its zero is meaningful and `h2_stack_rows`
+                # exists to separate "measured, none over the knee" from
+                # "never measurable on this CSV".
+                _pfc = (row.get("p_fc_w") or "").strip()
+                _aux = (row.get("aux") or "").strip()
+                if _pfc and _aux:
+                    try:
+                        _p_stack = float(_pfc) / ETA_BOOST
+                        _stack_on = bool(int(_aux, 0) & AUX_FC_REG)
+                    except ValueError:
+                        pass
+                    else:
+                        if _stack_on:
+                            m["h2_stack_rows"] += 1
+                            if _p_stack > h2_map.P_MAX_W:
+                                m["h2_saturated_ticks"] += 1
+                                if (m["h2_saturated_peak_w"] is None
+                                        or _p_stack > m["h2_saturated_peak_w"]):
+                                    m["h2_saturated_peak_w"] = _p_stack
                 # Same treatment for the student's-axis total: blank-tolerant,
                 # absent on any CSV that predates the column (and on every
                 # replay CSV), and read by NO check — a malformed cell must
@@ -11670,6 +11936,13 @@ def analyze_scenario_csv(csv_path, grace_s=WARM_RESET_GRACE_S, survive_to_t=None
         m["duration_s"] = t_last - t_first
     if m["soc_first"] is not None and m["soc_last"] is not None:
         m["delta_soc"] = m["soc_last"] - m["soc_first"]
+    # THE RUN-WINDOW HYDROGEN FIGURE (F4/F5). `h2_cum_g` is a monotone
+    # cumulative integral, so the difference of its two Run endpoints IS the
+    # Run-window mass; no integration is repeated here. Left None - never 0.0 -
+    # when the run never reached Run, so a leg that latched in Init cannot be
+    # scored as having burned nothing.
+    if m["h2_run_first_g"] is not None and m["h2_run_last_g"] is not None:
+        m["h2_run_g"] = m["h2_run_last_g"] - m["h2_run_first_g"]
     if subs:
         m["substep_hz_min"] = min(subs)
         m["substep_hz_mean"] = sum(subs) / len(subs)
@@ -12498,6 +12771,28 @@ def scan_signals(csv_path, specs, grace_s=WARM_RESET_GRACE_S):
                         if any(abs(v - float(x)) <= _tol for x in _ex):
                             m["exempt"] += 1
                             continue
+                    # ── `sample_state_in` (D-7, lens-1 F4/F5, 2026-09-09) ────
+                    # Restricts which ROWS the numeric sample is taken from, by
+                    # the CSV's own mainState.  Distinct from `rows_state_in`,
+                    # which scopes the CADENCE CENSUS and leaves the samples
+                    # alone: this one scopes the MEASUREMENT.  It exists for the
+                    # RUN-WINDOW hydrogen bands - `h2_cum_g` accrues the H-20
+                    # map's constant A0 offset from State 0 onward, so its value
+                    # at any instant carries an Init/Idle charge that no
+                    # strategy controls, and only the DIFFERENCE across the Run
+                    # window is comparable with a walk or a DP bound.  A blank
+                    # or unparseable `state` cell DROPS the sample rather than
+                    # admitting it: admitting it would be asserting a state.
+                    _ss = spec.get("sample_state_in")
+                    if _ss is not None:
+                        _st_cell = (row.get("state") or "").strip()
+                        if not _st_cell:
+                            continue
+                        try:
+                            if int(float(_st_cell)) not in _ss:
+                                continue
+                        except ValueError:
+                            continue
                     _record_value(spec, m, v)
     except OSError as exc:
         for m in leaf_m:
@@ -12771,6 +13066,33 @@ def _judge_signal_leaf_measurement(spec, m):
                 "minimum %s%s, need >= %g%s"
                 % ("unmeasured" if lo is None else "%.4f" % lo, win,
                    float(spec["floor_min_value"]), _extx))
+    if "delta_min_value" in spec or "delta_max_value" in spec:
+        # THE RUN-WINDOW DELTA KIND (D-7, lens-1 F4/F5, 2026-09-09).  `last`
+        # minus `first` over the sampled rows, for a MONOTONE CUMULATIVE column
+        # whose absolute value carries an offset the run did not choose.  The
+        # hydrogen bands are its only users: under the H-20 map `h2_cum_g`
+        # accrues the constant A0 term from State 0, so the value at Run exit
+        # contains A0 * t_run_entry of Init/Idle idling - ~10 % of a 61 s
+        # `ems-sdp` run - and that offset differs between scenarios because
+        # their pre-Run dwells differ.  The offline walk and the DP table both
+        # bill the RUN WINDOW ONLY, so a band copied from either is only
+        # comparable against this difference.  Pair it with
+        # `sample_state_in: (2,)` and the difference IS the Run window.
+        # UNMEASURED FAILS, the same rule every other numeric kind follows: a
+        # window with fewer than two parseable samples has proved nothing.
+        d = (None if m["first"] is None or m["last"] is None
+             else m["last"] - m["first"])
+        if "delta_min_value" in spec:
+            need = float(spec["delta_min_value"])
+            return (d is not None and d >= need,
+                    "run-window delta %s%s, need >= %g%s"
+                    % ("unmeasured" if d is None else "%.6f" % d, win,
+                       need, _extx))
+        need = float(spec["delta_max_value"])
+        return (d is not None and d <= need,
+                "run-window delta %s%s, need <= %g%s"
+                % ("unmeasured" if d is None else "%.6f" % d, win,
+                   need, _extx))
     if "min_value" in spec:
         peak = m["peak"]
         return (peak is not None and peak >= float(spec["min_value"]),
@@ -14222,38 +14544,41 @@ def _row(cells):
 # two units.  THE ARITHMETIC, in three steps, each one measured rather than
 # assumed:
 #
-#   1. THE BOARD SUPPLIES THE LEVEL.  The five eta-era campaign readings
-#      (sdp_ems_solver.EMS_LEVER_ETA_READINGS, campaigns B-F) mean
-#      L_share = 0.4165286 SoC/g of Gfc hydrogen.
-#   2. THE WALK SUPPLIES THE ERA RATIO, and it is validated against the board
-#      before it is used.  `tools/ems_walk.py` on the same 61 s `ems-sdp`
-#      stimulus through the same three alpha legs, by the same construction
-#      (`cal` minus `greedy` is purely the share lever), walks
-#          L_share = 0.4153531 SoC/g under `--h2-map gfc-linear`
-#          L_share = 0.4222722 SoC/g under the H-20 map
-#      The Gfc-law walk agrees with the board's own five-reading mean to
-#      0.28 %, which is what licenses the walk to carry the RATIO,
-#      0.4222722/0.4153531 = 1.016658.
-#   3. THE PRODUCT.  0.4165286 * 1.016658 = 0.4234674 SoC/g, quoted as 0.423
-#      on the same three-figure convention 0.41 used.
+# ⚠️ AND THE FIRST ATTEMPT AT THAT ARITHMETIC (0.423, shipped and withdrawn on
+# 2026-09-09) WAS WRONG TWICE OVER; the lens-1 review of 354da3d found both.
+# It read
+#   "board level 0.4165286 x a walked era ratio 0.4222722/0.4153531 = 0.423",
+# and BOTH walked levers in that ratio came from the WRONG LEG PAIR: the row
+# labelled `cal` was in fact an `sdp-v2` / `ems-sdp` / `sdp_policy_v6` walk,
+# not `sdp-sweep` / `ems-sdp-alpha-cal`.  The real `cal` leg walks 0.0071107 g
+# and -0.0044717 SoC where the substituted row carried 0.0161093 g and
+# -0.0010954 SoC.  With the correct leg the H-20 share lever is 0.5672 SoC/g
+# (E's real share-controller loop) or 0.5917 (the retired one-tick surrogate),
+# and the Gfc-law validation that "licensed" the ratio moves from "0.28 %
+# agreement" to +0.75 % (surrogate) / -1.09 % (controller) against the board's
+# 0.4165286.  The 2026-09-08 handoff's "roughly 0.57 SoC/g at the rig median"
+# was therefore RIGHT, and its refutation is void.
+#
+# ⚠️ THE SHIPPED CONSTRUCTION, 2026-09-09 (D-7, lens-1 finding F3).  The greedy
+# leg is NOT a robust lever: it runs on the low share rail, where the modelled
+# loop over-cuts the fuel cell roughly 75x against the board (6873 fc_bus falls
+# against 71 on `ems-ftp75-sdp`), which under-reads greedy hydrogen ONE-SIDEDLY
+# - porting the real controller alone moved `L_share` by -4.15 %.  So lambda is
+# taken from the CAL-CHARGE pair, which never visits that rail:
+#
+#     lambda = L_chg / eta_chg = 0.3744189 / 0.801172837 = 0.4673 SoC/g
+#
+# `L_chg` is the walked H-20 charge lever at the MEASURED round trip
+# (`ems-sdp-alpha-charge` minus `ems-sdp-alpha-cal`, E's controller loop,
+# 2026-09-09), and dividing by `eta_chg` removes the charger's own round trip
+# to recover the SHARE-equivalent price - the D13 identity L_chg = eta_chg *
+# L_share read backwards.  Both legs sit inside the band, so neither carries
+# the low-rail defect.
 #
 # ⚠️ PROVISIONAL, and the reason is named: the H-20 lever has never been
 # measured ON THE BOARD.  Campaign II's three `ems-sdp-alpha-*` legs measure it
-# directly and replace this constant; until then it is a board LEVEL carried
-# across eras by a MODEL RATIO.  Two independent cross-checks bracket it: the
-# H-20 walk alone gives 0.4223, and the closed-form model lever re-priced at
-# the H-20 marginal rate (sdp_ems_solver D16, 13.3654 W of stack power) gives
-# 0.4325 - a 2.4 % spread, with 0.423 near its low end.
-#
-# ⚠️ AND THE 2026-09-08 HANDOFF'S "roughly 0.57 SoC/g at the rig median" IS
-# REFUTED.  That estimate re-priced the model lever at a 3.2 W design estimate
-# of the rig's median stack power.  The rig's Run-window median stack power,
-# measured on campaign hil_report_20260908_200836's own `ems-sdp` hi-fi run, is
-# 13.3654 W - 4.2x higher, near the map's efficiency peak rather than far below
-# it - so the marginal rate there is 1.80e-05 g/s/W and not 1.28e-05, and the
-# lever barely moves between the two hydrogen eras (+1.7 %) instead of rising
-# 39 %.
-EMS_EQ_H2_LAMBDA_SOC_PER_G = 0.423
+# directly and replace this constant.
+EMS_EQ_H2_LAMBDA_SOC_PER_G = 0.4673
 # The measured band the verdict must be STABLE across.  A verdict that flips
 # inside it is not a result — it is a coin flip on a constant we know only to
 # ~1.5 % — so such a run renders KNIFE-EDGE: neither PASS nor FAIL, and NOT
@@ -14265,21 +14590,25 @@ EMS_EQ_H2_LAMBDA_SOC_PER_G = 0.423
 # have silently swept every verdict across a 3.4 % interval spanning two units.
 # THIS IS THE LAMBDA CONSTANT'S OWN UNCERTAINTY, not an expectation band.
 #
-# THE ENDS ARE THE TWO INDEPENDENT CROSS-CHECKS on the shipped 0.423, not a
-# chosen width:
-#   0.4223  the H-20 walk's share lever alone (no board level, no era ratio) -
-#           `ems_walk` through ems-sdp-alpha-{greedy,cal}, 2026-09-09.
-#   0.4325  the closed-form model lever re-priced at the H-20 marginal rate,
-#           1/(m * V_pack * C_As) with m = 1.736e-05 g/s/W at 13.3654 W of
-#           stack power (sdp_ems_solver D16).
-# The spread is 2.4 %, wider in relative terms than the Gfc era's 1.5 %, and
-# the reason is stated rather than hidden: the LEVEL is board-measured but the
-# transfer into H-20 grams is MODELLED, and no campaign has yet measured a
-# lever on this axis.  Campaign II's three `ems-sdp-alpha-*` legs measure it
-# directly, at which point this band collapses onto the reading spread of those
-# legs the way the Gfc-era band did.  Until then a wider band is the honest
-# statement and it makes MORE verdicts KNIFE-EDGE, not fewer.
-EMS_EQ_H2_LAMBDA_BAND = (0.4223, 0.4325)
+# THE ENDS ARE THE THREE INDEPENDENT CONSTRUCTIONS of an H-20 share lever, and
+# the band is their spread rather than a chosen width:
+#   0.3921  THE CLOSED-FORM MODEL LEVER, 1/(m * V_pack * C_As), at the map's
+#           marginal rate m = 1.914825e-05 g/s/W at the 14.6440 W operating
+#           point (sdp_ems_solver D16 / F1).  The low end.
+#   0.4673  THE SHIPPED CAL-CHARGE CONSTRUCTION, L_chg/eta_chg above.
+#   0.5672  THE WALKED CAL-GREEDY PAIR under E's real share controller
+#           (0.5917 under the retired surrogate).  The high end, and the one
+#           the low-rail over-cut biases - it is kept as a bound BECAUSE the
+#           direction of that bias is known.
+# The band is quoted (0.39, 0.59) to cover all three at two figures.  It is
+# 43 % wide against the Gfc era's 1.5 %, and that is the honest statement of
+# what is known: three constructions of the SAME quantity that disagree by
+# that much are three models, not three measurements.  A wider band makes MORE
+# verdicts KNIFE-EDGE, not fewer, so it is not a widening toward any board
+# reading.  Campaign II's three `ems-sdp-alpha-*` legs measure the lever on the
+# board and collapse this band onto their reading spread, the way the Gfc-era
+# band did.
+EMS_EQ_H2_LAMBDA_BAND = (0.39, 0.59)
 
 # The three legs, by role.  Keyed by role rather than listed, because each one
 # means something different in the arithmetic and a bare list would let a
@@ -14668,6 +14997,140 @@ EMS_FRONTIERS = [
         "stimulus_mismatch_exit_affecting": False,
     },
 ]
+# ═════════════════════════════════════════════════════════════════════════════
+# THE H-20 AXIS AND THE RUN-WINDOW BASIS (D-7, lens-1 findings F4/F5,
+# 2026-09-09).  Stamped onto EVERY frontier's `provisional_note` by the loop
+# below rather than typed into six notes, so no entry can be added without it.
+#
+# BOTH THRESHOLDS ARE HELD AT THEIR VALUES, and that is a decision with a
+# reason, not an omission:
+#   * `vs_reference_max` (0.98 on the two calibrated tuples, 1.02 on the four
+#     uncalibrated ones) and `vs_bound_max` (1.06 everywhere) are RATIOS of two
+#     legs' eq-H2 figures.  A change of hydrogen MODEL rescales numerator and
+#     denominator together, so it does not move a ratio's meaning the way it
+#     moves a gram band's.  Restating them would be inventing a number.
+#   * What DID move is the BASIS: the ratio is now taken on `h2_run_g`, the
+#     Run-window figure, because the H-20 map's constant offset A0 accrues from
+#     State 0 and the whole-run total therefore carried a per-leg Init/Idle
+#     charge that no strategy controls (see `_ems_frontier`).  On the 61 s
+#     tuple that offset is ~10 % of the total and it is NOT common to the three
+#     legs, so the old basis was a real bias of unknown sign, not a constant.
+#
+# ⚠️ D-6 PROVISIONAL, AND THE CALIBRATION SOURCE IS NAMED.  No campaign has
+# ever evaluated a frontier on this axis: campaign I and every campaign before
+# it were recorded under the retired gfc-linear law (its `h2_rate_gps` column
+# is that law - lens-1 F1), so not one measured `vs_reference` or `vs_bound`
+# figure in any note below is on the axis these thresholds now judge.  Campaign
+# II is the first that will be.  A campaign-II frontier reading just outside a
+# threshold is to be read as CALIBRATION of that threshold, not as a policy
+# result, and the thresholds are to be re-derived from it - NEVER widened
+# toward a board reading in the meantime.
+_FRONTIER_H20_AXIS_NOTE = (
+    "H-20 AXIS + RUN-WINDOW BASIS (D-7, 2026-09-09): this tuple's ratios are "
+    "now taken on `h2_run_g` (the Run-window figure) under the H-20 brochure "
+    "map. Both thresholds are HELD - they are ratios, and a model swap "
+    "rescales both sides - but every MEASURED figure quoted in this note "
+    "predates the map swap and is on the retired gfc-linear axis, so none of "
+    "them calibrates the thresholds any more. PROVISIONAL under D-6: campaign "
+    "II is the first campaign on this axis and is the calibration source; a "
+    "reading just outside a threshold there is a calibration event, not a "
+    "policy failure, and no threshold is to be widened toward it. ")
+for _f in EMS_FRONTIERS:
+    _f["provisional_note"] = _FRONTIER_H20_AXIS_NOTE + (
+        _f.get("provisional_note") or "")
+
+# ═════════════════════════════════════════════════════════════════════════════
+# THE SATURATION REFUSAL (D-7, lens-1 "the saturation refusal", 2026-09-09)
+#
+# THE MECHANISM.  `h2_map` inverts the H-20 brochure polarization curve to
+# recover the current Faraday's law needs, and that curve TURNS OVER at
+# `I_PMAX_A` = 3.40 A.  Above `P_MAX_W` = 23.4161 W of STACK power the
+# inversion saturates: `current_a()` returns the same current for 24 W as for
+# 40 W, so `rate_gps()` returns the same hydrogen rate.  A tick spent above the
+# knee is therefore billed NOTHING for the power it drew beyond it - it burns
+# FREE HYDROGEN - and every hydrogen figure taken off a run containing such
+# ticks is optimistic by an amount the run does not report.
+#
+# THE CEILING, in the units a reader has to hand:
+#     P_MAX_W  23.4161 W of stack power
+#     x ETA_BOOST 0.85         = 19.9037 W of BUS power  (the CSV's `p_fc_w`)
+#     / V_BUS_NOMINAL 15.95 V  =  1.2478 A of FC bus current
+# so the refusal bites at roughly 1.25 A on the FC channel, which is INSIDE the
+# firmware's own reach: `LIMIT_I_FC_MAX` is well above it, and the fw v26
+# clamp's settled cruise reading is 1.2502 A - three thousandths of an amp over
+# the knee.  This is not a hypothetical bound.
+#
+# WHY IT REFUSES RATHER THAN WARNS, AND ONLY ON SOME LEGS.  A leg whose
+# hydrogen is SCORED - it carries an `*_h2_*` band, or it fills a role in an
+# EMS frontier - reports a number that the saturation silently improves, so the
+# honest verdict is FAIL: the reading is not wrong by a knowable amount, it is
+# uninterpretable.  A leg whose hydrogen is NOT scored (an inrush, a latch, a
+# sequencing leg) is EXEMPT: it may legitimately drive the FC channel over the
+# knee, and refusing it would fail a run for a quantity nobody reads.
+#
+# ⚠️ `charge-cruise` IS THE NAMED EXEMPT CASE.  Its OC_FC anchor is 1.4033 A of
+# FC bus current = 26.34 W of stack power, 12.5 % ABOVE the ceiling, so this
+# leg saturates BY DESIGN and would fail the refusal on every run.  Its
+# hydrogen is not a scored band - what it anchors is the LATCH (the OC_FC
+# instant and the window-to-latch interval), which is an electrical
+# measurement the hydrogen map cannot touch - so it is exempt and its anchor is
+# unaffected.  If a hydrogen band is ever added to that leg, this exemption
+# must be revisited, not the ceiling.
+#
+# ⚠️ WHAT IT SAYS ABOUT CAMPAIGN I: NOTHING, and the reason is F1's.  That
+# campaign was recorded under the retired gfc-linear law, which is unbounded
+# and has no knee at all, so no reading in it is saturated in the sense this
+# check means.  The count over its folder is reported as N/A rather than 0.
+# Campaign II is the first run on which the number means anything.
+H2_SATURATION_P_STACK_MAX_W = h2_map.P_MAX_W
+H2_SATURATION_P_BUS_MAX_W = h2_map.P_MAX_W * ETA_BOOST
+
+# The legs whose hydrogen is scored, derived rather than listed: a scenario
+# qualifies if any of its signal specs is a hydrogen band (a spec on the
+# `h2_cum_g` column) or if it fills a role in any EMS frontier. Derived so a
+# band added later cannot escape the refusal by not being on a list.
+_H2_SCORED_SCENARIOS = set()
+for _fr in EMS_FRONTIERS:
+    _H2_SCORED_SCENARIOS.update(_fr["roles"].values())
+for _n, _e in FAULT_EXPECTATIONS.items():
+    for _s in (_e.get("signals_require") or []):
+        for _leaf in ([_s] + list(_s.get("any_of") or [])):
+            if _leaf.get("column") == "h2_cum_g":
+                _H2_SCORED_SCENARIOS.add(_n)
+del _fr, _n, _e, _s, _leaf
+
+# `charge-cruise` is exempt for the reason stated above. Written as a set so a
+# second exemption cannot be added without a name and a reason beside it.
+_H2_SATURATION_EXEMPT = {"charge-cruise"}
+for _n in sorted(_H2_SCORED_SCENARIOS - _H2_SATURATION_EXEMPT):
+    if _n not in FAULT_EXPECTATIONS:
+        continue
+    FAULT_EXPECTATIONS[_n].setdefault("signals_require", []).append(
+        {"name": "h2_saturation_refused", "column": "p_fc_w",
+         "max_value": H2_SATURATION_P_BUS_MAX_W,
+         "provisional_note": (
+             "D-6 PROVISIONAL in ONE respect only. The KNEE is a property of "
+             "the H-20 brochure map and is not provisional; what is unmeasured "
+             "is how often a leg approaches it, because no campaign has yet "
+             "run on the H-20 axis. The fw v26 clamp's settled cruise reading "
+             "of 1.2502 A sits 0.2 % over the 1.2478 A equivalent, so a "
+             "campaign-II FAIL here on a clamp-reaching leg is a REAL finding "
+             "about that leg's hydrogen and not a calibration event - the fix "
+             "is to stop scoring that leg's hydrogen, never to raise the knee."),
+         "label": "no tick drove the stack past the H-20 map's flat region "
+                  "(FC bus power <= %.4f W = P_MAX_W %.4f W x ETA_BOOST, "
+                  "~%.4f A at 15.95 V). Above the knee the map bills the same "
+                  "hydrogen for any power, so a scored hydrogen figure taken "
+                  "over such a tick is optimistic by an unreported amount and "
+                  "this leg's hydrogen band would be uninterpretable. The "
+                  "per-run census `h2_saturated_ticks` / `h2_saturated_peak_w` "
+                  "carries the count and the peak in STACK watts"
+                  % (H2_SATURATION_P_BUS_MAX_W,
+                     H2_SATURATION_P_STACK_MAX_W,
+                     H2_SATURATION_P_BUS_MAX_W / 15.95)})
+    _assert_signal_spec_shapes(_n, FAULT_EXPECTATIONS[_n])
+del _n
+
 assert len({f["id"] for f in EMS_FRONTIERS}) == len(EMS_FRONTIERS), \
     "duplicate frontier id"
 assert all(set(f["roles"]) == {"reference", "candidate", "bound"}
@@ -14915,12 +15378,31 @@ def evaluate_ems_frontier(results, planned_names=None, spec=None):
                            % (name, role))
             exit_affecting = True
             continue
-        if m.get("final_h2_cum_g") is None or m.get("delta_soc") is None:
-            missing.append("%s (%s): no h2_cum_g / delta_soc in the CSV"
-                           % (name, role))
+        # ⚠️ THE FRONTIER SCORES THE RUN WINDOW, NOT THE WHOLE RUN (D-7,
+        # lens-1 findings F4/F5, 2026-09-09). It scored `final_h2_cum_g` until
+        # this change. Under the H-20 map every leg's whole-run total carries
+        # A0 * t_run_entry of Init/Idle idling - the map's constant purge/
+        # blower/controller offset accrues from State 0 - and that offset is
+        # (a) not zero (~1.7 mg of a 16.5 mg `ems-sdp` run, ~10 %), (b) not
+        # equal across legs, because it scales with each scenario's pre-Run
+        # dwell, and (c) not cancelled by the eq-H2 ratio, which divides two
+        # legs' totals. Scoring it charged every strategy for time it had no
+        # control over and biased the ratio toward whichever leg entered Run
+        # sooner. `h2_run_g` drops it on both sides. The reference and bound
+        # this ratio is taken against - the offline walk and the DP table -
+        # bill the Run window only, so this also removes a basis mismatch that
+        # was never intended and predates the H-20 map (under the linear Gfc
+        # law the pre-Run rate was zero, which is why it never showed).
+        if m.get("h2_run_g") is None or m.get("delta_soc") is None:
+            missing.append("%s (%s): no Run-window h2_run_g / delta_soc in "
+                           "the CSV (no h2_cum_g column, or the run never "
+                           "reached Run)" % (name, role))
             exit_affecting = True
             continue
-        legs[role] = {"name": name, "h2": float(m["final_h2_cum_g"]),
+        legs[role] = {"name": name, "h2": float(m["h2_run_g"]),
+                      "h2_basis": "run_window",
+                      "h2_whole_run": (None if m.get("final_h2_cum_g") is None
+                                       else float(m["final_h2_cum_g"])),
                       "dsoc": float(m["delta_soc"])}
     if not any_planned:
         return None

@@ -1917,3 +1917,37 @@ with reversal paths, the primary worktree's branch is the operator's - commit fr
   37.266656 / 35.296263 s, exclude_hold_ms drops 1646 rows and keeps 93.718 s scored (0.189), the bound
   arithmetic, the ACCEPT tightening, the cadence scoping. No check passes both eras.
 - **D-8: the seven lens-2 items are a short fix pass AFTER A' lands** (same file); 0f-2 stays open as tooling.
+- **A-prime LANDED (D-7 fix round, 2026-09-09).** F1: `H2_BASIS_REF_P_STACK_W` /
+  `ALPHA_MISMATCH_REF_P_STACK_W` 13.3654 -> **14.6440 W**, the source-side `p_fc_w`/ETA_BOOST Run-window
+  median; the map inversion that produced 13.3654 was run on campaign I's gfc-linear column (three proofs
+  recorded at the constant). F2/F6: the `cal` walk leg re-walked correctly under E's real share controller -
+  `L_share` 0.4223 -> **0.5672**, `L_chg(measured)` 0.3418 -> **0.3744**, Gfc cross-check +0.28 % ->
+  **-1.09 %**; alpha 0.134041 -> **0.142475472567**, `sdp_policy_v7` re-solved at it. F3: lambda **0.4673**
+  (cal-charge, `L_chg/eta_chg`), band **[0.39, 0.59]** = the three constructions' spread;
+  `RHO_METRIC_G_PER_SOC_H20` 2.364066 -> **2.139953**. F4/F5: the frontier scores the new Run-window metric
+  **`h2_run_g`**; thresholds HELD (they are ratios) with an H-20/D-6 provisional note stamped on every tuple.
+  THE AXIS: the stale "`h2_cum_g` (Gfc) is the DYNAMIC map" sentence corrected at source in
+  `hil_plant_sim.py` - both axes are H-20 - and EVERY hydrogen band restated on agent C-prime's
+  corrected-loop re-walk column and moved onto the run-window delta kind
+  (`delta_min_value`/`delta_max_value` + `sample_state_in: (2,)`), each on its OWN relative convention so no
+  band's width changed. The `ems-ftp75c-*` legs are NOT restated: the walk models neither the F1
+  disarm-driven release nor the rev-6 inhibit, and the gap is named instead. Saturation refusal added:
+  `h2_saturated_ticks` / `h2_saturated_peak_w` per run, and an `h2_saturation_refused` ceiling at
+  `h2_map.P_MAX_W * ETA_BOOST` = 19.9037 W (1.2478 A) on every leg whose hydrogen is scored, `charge-cruise`
+  exempt by name. xfail 1 of 2 RETIRED (the ftp75-dp rail windows re-derived from the H-20 table: the
+  `<= 0.32` opening low rail became a `>= 0.80` opening-rail FLOOR, since that table opens at 0.85); xfail 2
+  (the MPC cross-stimulus envelope) STAYS - it needs a floor/band ruling on the two MPC laws, not a band
+  re-pin.
+- **D-7 LEFT ONE BLOCKER FOR THE OPERATOR: the shipped `sdp_policy_v7` DOES NOT CERTIFY.** F1 raises the
+  alpha and F2 raises the walked share lever, which LOWERS the walked admission window to [0.0882, 0.1335];
+  the shipped alpha sits 6.7 % above its top, `alpha.admission.in_window_measured` is false, and
+  `hil_plant_sim` correctly REFUSES to bind `sdp-v7` to its EMS-frontier role. **No `ems-sdp` campaign can
+  run until this is ruled on.** Both artifacts are defective: `lever-h20` (shipped) prices alpha in the right
+  unit and fails the certificate; `lever-measured` certifies (alpha 0.134110280093, both windows IN, 46
+  charge cells) but prices alpha on the five eta-era BOARD readings, which are GFC-GRAM levers - the unit
+  error D16 exists to remove. Three `test_hil_plant_sim.py` tests carry this as a strict xfail naming the
+  ruling and the one-command reversal. Two more consequences pinned rather than smoothed: the v7 charge
+  census 46 cells / bin 0 -> **140 cells / bins {0, 1, 2}** (all still below the SoC target), and the MPC's
+  61 s **Gate-1 band is missed by 5.6 %** (share_pred_err_mean 0.005281 against 5e-3) because the lower
+  terminal price drops the committed cruise command onto the ladder's bottom rung 0.15 - a strict xfail, the
+  gate NOT widened.

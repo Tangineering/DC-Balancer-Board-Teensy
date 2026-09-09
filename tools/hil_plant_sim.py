@@ -1405,9 +1405,21 @@ del _H2_DC_CHECK
 #
 # WHY IT IS LOGGED ALONGSIDE Gfc RATHER THAN INSTEAD OF IT.  The two answer
 # different questions and neither supersedes the other:
-#   * `h2_cum_g` (Gfc) is the DYNAMIC map this simulator integrates and the one
-#     `tools/gen_dp_ems_table.py` solves its stage cost against, so it is the
-#     axis on which THIS repository's strategies are ranked.
+#   * `h2_cum_g` is the SCORED column - the axis on which THIS repository's
+#     strategies are ranked - and `tools/gen_dp_ems_table.py` solves its stage
+#     cost against the SAME model.
+#     ⚠️ CORRECTED 2026-09-09 (D-7, lens-1 "THE AXIS").  This line read
+#     "`h2_cum_g` (Gfc) is the DYNAMIC map this simulator integrates", which
+#     was true when written and became FALSE at the phase-A map swap: `step()`
+#     now sets `rate_gps = h2_map.rate_gps(...)`, and the sidecar note further
+#     down says "`h2_cum_g` above now carries the H-20 map".  BOTH the scored
+#     plant column and the DP objective are H-20; Gfc governs the UNSCORED
+#     `h2_gfc_cum_g` column ONLY, which is what the banner above this block
+#     means when it says "It still governs `h2_gfc_cum_g`".  The stale wording
+#     survived because it sits inside a banner preserved VERBATIM, and it cost
+#     a round: a reader who took it for a live statement about the scored
+#     column would refuse to restate a suite band from an H-20 walk on the
+#     (correct) ground that the two axes differ.  They do not.
 #   * `h2_sdp_cum_g` (this proxy) is the axis the STUDENT's SDP/DP work is
 #     stated on, so a number from a run here can be read next to a number from
 #     that work without either side re-deriving the other's model.

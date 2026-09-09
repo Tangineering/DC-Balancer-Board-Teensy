@@ -102,13 +102,17 @@ EVAL_STRATEGY = "sdp-v2"
 # tools/run_hil_suite.py's EMS_EQ_H2_LAMBDA_SOC_PER_G.  Reimplemented, not
 # imported: importing the suite runner pulls its whole scenario registry into
 # an offline tool.
-# ⚠️ 0.41 -> 0.423 on 2026-09-09, and it is a UNIT CHANGE, not a re-measurement
-# of the same quantity: 0.41 was the share lever in GFC grams and this is the
-# share lever in H-20 grams.  An eq-H2 column computed here is therefore NOT
-# comparable to one in `sdp_alpha_sweep_20260901.md`,
-# `..._eta088_20260902.md` or `..._measured_20260908.md`.  Keep the two
+# ⚠️ 0.41 -> 0.423 -> 0.4673 on 2026-09-09, and it is a UNIT CHANGE, not a
+# re-measurement of the same quantity: 0.41 was the share lever in GFC grams
+# and this is the share lever in H-20 grams.  An eq-H2 column computed here is
+# therefore NOT comparable to one in `sdp_alpha_sweep_20260901.md`,
+# `..._eta088_20260902.md` or `..._measured_20260908.md`.  The intermediate
+# 0.423 stood for a few hours and was withdrawn by the lens-1 review of
+# 354da3d (its walk substituted an `sdp-v2` run for the `ems-sdp-alpha-cal`
+# leg); 0.4673 is the cal-charge construction L_chg/eta_chg.  Keep the two
 # constants in step; the suite's own comment carries the derivation.
-EQ_H2_LAMBDA_SOC_PER_G = 0.423
+# PROVISIONAL: campaign II's three alpha legs re-measure it on the board.
+EQ_H2_LAMBDA_SOC_PER_G = 0.4673
 
 # ---------------------------------------------------------------------------
 # Refinement (second sweep, 2026-09-01)

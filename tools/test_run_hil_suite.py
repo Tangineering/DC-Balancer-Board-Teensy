@@ -4305,16 +4305,25 @@ def test_alpha_h2_bands_are_the_walk_plus_minus_25_percent():
     `run_hil_suite.py` is walked WITH them, and on the greedy leg the two
     configurations differ by 3.3x on one policy digest. The band contract is
     unchanged - only the walk the band is centred on."""
-    walks = {"ems-sdp-alpha-greedy": 0.0008442878762,      # was 0.0040930228
-             "ems-sdp-alpha-cal": 0.0125240293,            # was 0.0126027355
-             "ems-sdp-alpha-charge": 0.0148082323}         # was 0.0150647315
+    # RE-PINNED 2026-09-09 (D-7, lens-1 "THE AXIS"): the bands are now centred
+    # on the CORRECTED-LOOP re-walk column under the H-20 map, and are judged
+    # as RUN-WINDOW DELTAS (`delta_min_value`/`delta_max_value` with
+    # `sample_state_in: (2,)`) rather than as whole-run peaks. The +/- 25 %
+    # CONTRACT - the thing this test exists to protect - is unchanged, which is
+    # why the assertions below are unchanged in form.
+    walks = {"ems-sdp-alpha-greedy": 0.0059219,            # was 0.0008442878762
+             "ems-sdp-alpha-cal": 0.0071107,               # was 0.0125240293
+             "ems-sdp-alpha-charge": 0.0176486}            # was 0.0148082323
     for name, walk in walks.items():
         by = {c["name"]: c for c in
               rhs.FAULT_EXPECTATIONS[name]["signals_require"]}
-        assert by["alpha_h2_accounted"]["min_value"] == pytest.approx(0.75 * walk)
-        assert by["alpha_h2_bounded"]["max_value"] == pytest.approx(1.25 * walk)
-        assert (by["alpha_h2_accounted"]["min_value"] < walk
-                < by["alpha_h2_bounded"]["max_value"])
+        acc, bnd = by["alpha_h2_accounted"], by["alpha_h2_bounded"]
+        assert acc["delta_min_value"] == pytest.approx(0.75 * walk)
+        assert bnd["delta_max_value"] == pytest.approx(1.25 * walk)
+        assert (acc["delta_min_value"] < walk < bnd["delta_max_value"])
+        # The Run-window scoping is part of the contract now: a whole-run peak
+        # would carry the H-20 map's A0 offset into the band on one side only.
+        assert acc["sample_state_in"] == bnd["sample_state_in"] == (2,)
 
 
 def test_alpha_charge_census_matches_each_artifacts_charge_map():
@@ -6979,7 +6988,13 @@ def test_fault_expectations_ems_soc_band_entry_shape():
     # `charge_edges_safe` joined at 0f-6: the EDGE-shaped half of the charge
     # window, which the level check in [44, 54] s structurally cannot see.
     assert names == {"share_biased_to_fc", "fc_current_biased",
-                     "charge_window", "h2_accounted", "charge_edges_safe"}
+                     "charge_window", "h2_accounted", "charge_edges_safe",
+                     # D-7 (2026-09-09): every leg whose hydrogen is
+                     # SCORED carries the saturation refusal, appended
+                     # at import from a DERIVED set (a band on the
+                     # `h2_cum_g` column, or a frontier role), so a
+                     # hydrogen band added later cannot escape it.
+                     "h2_saturation_refused"}
     for spec in entry["signals_require"]:
         assert spec.get("label")
         if spec["name"] == "charge_edges_safe":
@@ -6989,7 +7004,16 @@ def test_fault_expectations_ems_soc_band_entry_shape():
             assert spec["rise_forbid_within_ms"] == pytest.approx(30.0)
             assert spec["min_rises"] >= 1
             continue
-        assert "column" in spec and "min_value" in spec
+        # D-7 (2026-09-09): the hydrogen band is a RUN-WINDOW DELTA
+        # (`delta_min_value`) and the saturation refusal is a CEILING
+        # (`max_value`), so "a column and a floor" no longer describes every
+        # spec on this entry. What must hold of all of them is that each names
+        # a column and carries exactly one numeric bound.
+        assert "column" in spec
+        bounds = [k for k in ("min_value", "max_value", "delta_min_value",
+                              "delta_max_value", "floor_min_value")
+                  if k in spec]
+        assert len(bounds) == 1, (spec["name"], bounds)
 
 
 def test_fault_expectations_ems_dp_replay_entry_shape():
@@ -7000,7 +7024,14 @@ def test_fault_expectations_ems_dp_replay_entry_shape():
     assert entry["survive_to"]["t"] == pytest.approx(50.0)
     assert entry["survive_to"]["states"] == {2, 3}
     names = {s["name"] for s in entry["signals_require"]}
-    assert names == {"dp_early_fc_rail", "dp_fc_current_railed", "dp_h2_accounted"}
+    assert names == {"dp_early_fc_rail", "dp_fc_current_railed",
+                     "dp_h2_accounted",
+                     # D-7 (2026-09-09): every leg whose hydrogen is
+                     # SCORED carries the saturation refusal, appended
+                     # at import from a DERIVED set (a band on the
+                     # `h2_cum_g` column, or a frontier role), so a
+                     # hydrogen band added later cannot escape it.
+                     "h2_saturation_refused"}
     # Unlike ems-soc-band, this entry deliberately carries NO charge-window
     # assertion (the DP-table finding: it never opens the charger path here).
     assert "charge_window" not in names
@@ -7084,14 +7115,28 @@ def test_signals_ems_soc_band_charge_window_pass_and_fail():
 
 
 def test_signals_ems_soc_band_h2_accounted_pass_and_fail():
-    """No t_window on this spec -- the check must judge over the whole run."""
+    """No t_window on this spec -- the check must judge over the whole run.
+
+    D-7 (2026-09-09): the spec is now a RUN-WINDOW DELTA, so the fixture needs
+    TWO rows in State 2 and the judged quantity is their difference. The pair
+    below also pins what the change was FOR: the failing case is a run whose
+    `h2_cum_g` is LARGE (it idled in Init/Idle accruing the H-20 map's constant
+    A0 offset) but which burned nothing across the Run window. On the old
+    whole-run peak basis that run PASSED."""
     spec = _spec_by_name(rhs.FAULT_EXPECTATIONS["ems-soc-band"]["signals_require"],
                          "h2_accounted")
     assert "t_window" not in spec
-    passing = [{"t": "3.0", "fault_flags": "0", "h2_cum_g": "%.6f" % (spec["min_value"] * 5.0)}]
-    failing = [{"t": "3.0", "fault_flags": "0", "h2_cum_g": "%.6f" % (spec["min_value"] * 0.1)}]
-    assert _judge_one(spec, passing, ("h2_cum_g",))["passed"] is True
-    assert _judge_one(spec, failing, ("h2_cum_g",))["passed"] is False
+    assert spec["sample_state_in"] == (2,)
+    lo = spec["delta_min_value"]
+    passing = [{"t": "3.0", "state": "2", "fault_flags": "0", "h2_cum_g": "0.001000"},
+               {"t": "4.0", "state": "2", "fault_flags": "0",
+                "h2_cum_g": "%.6f" % (0.001 + lo * 5.0)}]
+    failing = [{"t": "3.0", "state": "2", "fault_flags": "0", "h2_cum_g": "0.050000"},
+               {"t": "4.0", "state": "2", "fault_flags": "0",
+                "h2_cum_g": "%.6f" % (0.050 + lo * 0.1)}]
+    cols = ("h2_cum_g", "state")
+    assert _judge_one(spec, passing, cols)["passed"] is True
+    assert _judge_one(spec, failing, cols)["passed"] is False
 
 
 def test_signals_ems_soc_band_full_spec_set_passes_together_on_one_realistic_csv():
@@ -7144,10 +7189,21 @@ def test_signals_ems_dp_replay_dp_h2_accounted_pass_and_fail():
     spec = _spec_by_name(rhs.FAULT_EXPECTATIONS["ems-dp-replay"]["signals_require"],
                          "dp_h2_accounted")
     assert "t_window" not in spec
-    passing = [{"t": "5.0", "fault_flags": "0", "h2_cum_g": "%.6f" % (spec["min_value"] * 5.0)}]
-    failing = [{"t": "5.0", "fault_flags": "0", "h2_cum_g": "0.0"}]
-    assert _judge_one(spec, passing, ("h2_cum_g",))["passed"] is True
-    assert _judge_one(spec, failing, ("h2_cum_g",))["passed"] is False
+    # D-7 (2026-09-09): a RUN-WINDOW DELTA, so the fixture needs two Run rows
+    # and the judged quantity is their difference. The failing case is the one
+    # the change was made for - a run carrying a large `h2_cum_g` accrued
+    # before Run entry (the H-20 map's constant A0 term) that burned nothing
+    # across the Run window itself.
+    assert spec["sample_state_in"] == (2,)
+    lo = spec["delta_min_value"]
+    cols = ("h2_cum_g", "state")
+    passing = [{"t": "5.0", "state": "2", "fault_flags": "0", "h2_cum_g": "0.001000"},
+               {"t": "6.0", "state": "2", "fault_flags": "0",
+                "h2_cum_g": "%.6f" % (0.001 + lo * 5.0)}]
+    failing = [{"t": "5.0", "state": "2", "fault_flags": "0", "h2_cum_g": "0.050000"},
+               {"t": "6.0", "state": "2", "fault_flags": "0", "h2_cum_g": "0.050000"}]
+    assert _judge_one(spec, passing, cols)["passed"] is True
+    assert _judge_one(spec, failing, cols)["passed"] is False
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -7190,7 +7246,13 @@ def test_fault_expectations_ems_sdp_entry_shape():
                      "sdp_table_rail_at_low_demand",
                      "charge_path_never_opens",
                      "sdp_fc_current_biased", "sdp_h2_accounted",
-                     "sdp_student_h2_axis"}
+                     "sdp_student_h2_axis",
+                     # D-7 (2026-09-09): every leg whose hydrogen is
+                     # SCORED carries the saturation refusal, appended
+                     # at import from a DERIVED set (a band on the
+                     # `h2_cum_g` column, or a frontier role), so a
+                     # hydrogen band added later cannot escape it.
+                     "h2_saturation_refused"}
     by_name = {s["name"]: s for s in entry["signals_require"]}
     assert by_name["sdp_table_interior_floor"]["column"] == "cmd_share_sp_raw"
     assert by_name["sdp_table_interior_floor"]["min_value"] == pytest.approx(0.940)
@@ -7249,10 +7311,21 @@ def test_signals_ems_sdp_h2_accounted_pass_and_fail():
     spec = _spec_by_name(rhs.FAULT_EXPECTATIONS["ems-sdp"]["signals_require"],
                          "sdp_h2_accounted")
     assert "t_window" not in spec
-    passing = [{"t": "5.0", "fault_flags": "0", "h2_cum_g": "%.6f" % (spec["min_value"] * 5.0)}]
-    failing = [{"t": "5.0", "fault_flags": "0", "h2_cum_g": "0.0"}]
-    assert _judge_one(spec, passing, ("h2_cum_g",))["passed"] is True
-    assert _judge_one(spec, failing, ("h2_cum_g",))["passed"] is False
+    # D-7 (2026-09-09): a RUN-WINDOW DELTA, so the fixture needs two Run rows
+    # and the judged quantity is their difference. The failing case is the one
+    # the change was made for - a run carrying a large `h2_cum_g` accrued
+    # before Run entry (the H-20 map's constant A0 term) that burned nothing
+    # across the Run window itself.
+    assert spec["sample_state_in"] == (2,)
+    lo = spec["delta_min_value"]
+    cols = ("h2_cum_g", "state")
+    passing = [{"t": "5.0", "state": "2", "fault_flags": "0", "h2_cum_g": "0.001000"},
+               {"t": "6.0", "state": "2", "fault_flags": "0",
+                "h2_cum_g": "%.6f" % (0.001 + lo * 5.0)}]
+    failing = [{"t": "5.0", "state": "2", "fault_flags": "0", "h2_cum_g": "0.050000"},
+               {"t": "6.0", "state": "2", "fault_flags": "0", "h2_cum_g": "0.050000"}]
+    assert _judge_one(spec, passing, cols)["passed"] is True
+    assert _judge_one(spec, failing, cols)["passed"] is False
 
 
 def test_signals_ems_sdp_student_h2_axis_is_a_plumbing_check_not_a_magnitude_one():
@@ -7642,8 +7715,8 @@ def test_ftp75_5050_h2_band_is_two_specs_045_to_085():
     assert len(h2_specs) == 2
     for s in h2_specs:
         assert not ("min_value" in s and "max_value" in s), s["name"]
-    floor = next(s for s in h2_specs if "min_value" in s)
-    ceiling = next(s for s in h2_specs if "max_value" in s)
+    floor = next(s for s in h2_specs if "delta_min_value" in s)
+    ceiling = next(s for s in h2_specs if "delta_max_value" in s)
     # RE-DERIVED at aux_preload_a 0.0 AND at the plant's default converter
     # asymmetry, then RE-WALKED at the M2 CONSISTENT PAIR (fix round F1,
     # 2026-09-01): the plant no longer injects M1's dv0 0.0444, and the walk is
@@ -7655,14 +7728,30 @@ def test_ftp75_5050_h2_band_is_two_specs_045_to_085():
     # 0.0299327016 (-2.88 %, against a predicted -2.9 %). The band is +/-25 %
     # of the MEASUREMENT rather than of the walk.
     _MEASURED_5050 = 0.0290697451
-    assert floor["min_value"] == pytest.approx(0.0218)
-    assert ceiling["max_value"] == pytest.approx(0.0363)
-    assert floor["min_value"] < _MEASURED_5050 < ceiling["max_value"]
-    assert floor["min_value"] == pytest.approx(0.75 * _MEASURED_5050, rel=0.01)
-    assert ceiling["max_value"] == pytest.approx(1.25 * _MEASURED_5050, rel=0.01)
-    # The M2-equivalent walk (2.9888e-2) must still sit inside it, or the band
-    # has moved off the model as well as onto the board.
-    assert floor["min_value"] < 2.9888e-2 < ceiling["max_value"]
+    # ⚠️ RE-PINNED 2026-09-09 (D-7, lens-1 "THE AXIS"): the band is
+    # restated on the H-20 axis, centred on the CORRECTED-LOOP re-walk
+    # column, and judged as a RUN-WINDOW DELTA. The gfc-linear-era board
+    # measurements this pin used to carry do not describe this axis.
+    _WALK_H20_5050 = 0.0405125     # the corrected-loop re-walk column
+    assert floor["delta_min_value"] == pytest.approx(0.0304)
+    assert ceiling["delta_max_value"] == pytest.approx(0.0506)
+    assert (floor["delta_min_value"] < _WALK_H20_5050
+            < ceiling["delta_max_value"])
+    # The +/- 25 % CONTRACT is what this test protects, and it is unchanged;
+    # only the centre moved, from the gfc-era board reading _MEASURED_5050 to
+    # the H-20 walk, which the gfc-era reading now sits OUTSIDE.
+    assert not (floor["delta_min_value"] < _MEASURED_5050
+                < ceiling["delta_max_value"])
+    assert floor["delta_min_value"] == pytest.approx(0.75 * _WALK_H20_5050,
+                                                     rel=0.01)
+    assert ceiling["delta_max_value"] == pytest.approx(1.25 * _WALK_H20_5050,
+                                                       rel=0.01)
+    assert floor["sample_state_in"] == ceiling["sample_state_in"] == (2,)
+    # D-7: the M2-equivalent 2.9888e-2 was a GFC-ERA walk of this leg and is
+    # not on this axis either; the H-20 corrected-loop walk is the model
+    # figure the band must contain, asserted above.
+    assert not (floor["delta_min_value"] < 2.9888e-2
+                < ceiling["delta_max_value"])
     for s in h2_specs:
         assert s.get("provisional_note")
 
@@ -7678,8 +7767,8 @@ def test_ftp75_socband_h2_band_is_now_two_sided():
     assert len(h2_specs) == 2
     for s in h2_specs:
         assert not ("min_value" in s and "max_value" in s), s["name"]
-    floor = next(s for s in h2_specs if "min_value" in s)
-    ceiling = next(s for s in h2_specs if "max_value" in s)
+    floor = next(s for s in h2_specs if "delta_min_value" in s)
+    ceiling = next(s for s in h2_specs if "delta_max_value" in s)
     # RE-DERIVED TWICE (PART C, C1 round, 2026-09-01). The 3.546e-2 figure
     # that stood here predated the scenario's own chg_i_ceiling_a 0.8 key, and
     # the walk was symmetric. Against the SHIPPED registry with the plant's
@@ -7709,24 +7798,34 @@ def test_ftp75_socband_h2_band_is_now_two_sided():
     #     of the measurement and simply follows it.
     _WALK = 4.1873e-2
     _MEASURED = 0.0407628763
-    assert floor["min_value"] == pytest.approx(rhs._FTP_H2_FLOOR_SOCBAND) == pytest.approx(0.0326)
-    assert ceiling["max_value"] == pytest.approx(0.0489)
-    # The band must BRACKET both the prediction and the measurement with real
-    # margin on both sides -- a floor above either, or a ceiling below either,
-    # would fail a correct board.
-    assert floor["min_value"] < _WALK < ceiling["max_value"]
-    assert floor["min_value"] < _MEASURED < ceiling["max_value"]
-    # +/-20 % on the measurement is [0.032610, 0.048915]; the shipped bounds are
-    # those rounded to four decimals ([0.0326, 0.0489]), so allow 1 % of rounding
-    # slack rather than pinning the unrounded edges.
-    assert floor["min_value"] == pytest.approx(0.80 * _MEASURED, rel=0.01)
-    assert ceiling["max_value"] == pytest.approx(1.20 * _MEASURED, rel=0.01)
+    # ⚠️ RE-PINNED 2026-09-09 (D-7, lens-1 "THE AXIS"): the band is
+    # restated on the H-20 axis, centred on the CORRECTED-LOOP re-walk
+    # column, and judged as a RUN-WINDOW DELTA. The gfc-linear-era board
+    # measurements this pin used to carry do not describe this axis.
+    _WALK_H20_SOCBAND = 0.0532039  # the corrected-loop re-walk column
+    assert floor["delta_min_value"] == pytest.approx(
+        rhs._FTP_H2_FLOOR_SOCBAND) == pytest.approx(0.0426)
+    assert ceiling["delta_max_value"] == pytest.approx(0.0638)
+    # +/- 20 %, this leg's own convention, unchanged.
+    assert floor["delta_min_value"] == pytest.approx(0.80 * _WALK_H20_SOCBAND,
+                                                     rel=0.01)
+    assert ceiling["delta_max_value"] == pytest.approx(
+        1.20 * _WALK_H20_SOCBAND, rel=0.01)
+    assert floor["sample_state_in"] == ceiling["sample_state_in"] == (2,)
+    # D-7 (2026-09-09): `_WALK` (4.1873e-2) and `_MEASURED` (0.0407628763) are
+    # both GFC-LINEAR-ERA figures - one a walk, one a board reading - and the
+    # band no longer contains either, because it no longer describes that axis.
+    # Asserted in the NEGATIVE rather than deleted, so the era change stays
+    # visible at the pin instead of only in the module comment.
+    assert not (floor["delta_min_value"] < _WALK < ceiling["delta_max_value"])
+    assert not (floor["delta_min_value"] < _MEASURED
+                < ceiling["delta_max_value"])
     for s in h2_specs:
         assert not s.get("provisional_note"), (
             "the band is measured now, not a walk prediction: " + s["name"])
     # The vacuous floor must be GONE from this entry (it stays as the 5050
     # variant's own constant, which is a different question).
-    assert floor["min_value"] != pytest.approx(rhs._FTP_H2_FLOOR)
+    assert floor["delta_min_value"] != pytest.approx(rhs._FTP_H2_FLOOR)
 
 
 def _min_value_max_value_shape_is_refused(spec):
@@ -7866,7 +7965,13 @@ def test_ems_ftp75_sdp_entry_pins_the_flip_inside_its_band():
                      # M-4, 2026-09-04: the en_low chatter census, the only
                      # scored statement this leg makes about the 205-295 s
                      # cut/restore regime.
-                     "sdpftp_en_low_census"}
+                     "sdpftp_en_low_census",
+                     # D-7 (2026-09-09): every leg whose hydrogen is
+                     # SCORED carries the saturation refusal, appended
+                     # at import from a DERIVED set (a band on the
+                     # `h2_cum_g` column, or a frontier role), so a
+                     # hydrogen band added later cannot escape it.
+                     "h2_saturation_refused"}
     by = {s["name"]: s for s in entry["signals_require"]}
     early = by["sdpftp_low_rail_early"]
     late = by["sdpftp_high_rail_late"]
@@ -7903,13 +8008,17 @@ def test_ems_ftp75_sdp_h2_band_tracks_the_zero_preload_walk():
     2x scale error fails."""
     by = {s["name"]: s
           for s in rhs.FAULT_EXPECTATIONS["ems-ftp75-sdp"]["signals_require"]}
-    lo = by["sdpftp_h2_accounted"]["min_value"]
-    hi = by["sdpftp_h2_bounded"]["max_value"]
+    lo = by["sdpftp_h2_accounted"]["delta_min_value"]
+    hi = by["sdpftp_h2_bounded"]["delta_max_value"]
     # RE-WALKED at the M2 consistent pair (fix round F1, 2026-09-01): the plant
     # injects dv0 0.013522 with rho 0.9434, and the walk (which has no rho) is
     # driven at the equivalent 0.030223 V. The retired M1-era walk gave 0.019347.
-    measured = 0.019918            # the WALK's prediction, not a measurement
-    assert (lo, hi) == (pytest.approx(0.0149), pytest.approx(0.0249))
+    # ⚠️ RE-PINNED 2026-09-09 (D-7, lens-1 "THE AXIS"): the band is
+    # restated on the H-20 axis, centred on the CORRECTED-LOOP re-walk
+    # column, and judged as a RUN-WINDOW DELTA. The gfc-linear-era board
+    # measurements this pin used to carry do not describe this axis.
+    measured = 0.0348439           # the corrected-loop re-walk, not a reading
+    assert (lo, hi) == (pytest.approx(0.0261), pytest.approx(0.0436))
     assert lo < measured < hi
     for n in ("sdpftp_h2_accounted", "sdpftp_h2_bounded"):
         assert by[n].get("provisional_note")
@@ -8346,7 +8455,7 @@ def _frontier_results(legs, **overrides):
         if over is None:
             continue
         rec = {"kind": "scenario", "name": name, "passed": True,
-               "metrics": {"final_h2_cum_g": h2, "delta_soc": dsoc}}
+               "metrics": {"h2_run_g": h2, "delta_soc": dsoc}}
         rec.update(over)
         out.append(rec)
     return out
@@ -8384,15 +8493,21 @@ def test_frontier_FAILS_on_the_campaign_2_regression_numbers():
     assert "OFF the frontier" in rec["reason"]
     # The measured ratios, so a threshold edit that quietly rescued this case
     # would show up here.
-    # RE-PIN 2026-09-09: 1.0154 -> 1.02293.  MECHANISM: the eq-H2 SoC
-    # correction is `dSoC_diff / lambda`, and lambda moved 0.41 -> 0.423 (a
-    # change of unit onto the H-20 hydrogen axis), so a smaller credit is given
-    # for the same SoC surplus and this leg's ratio rises.  The fixture's leg
+    # RE-PIN 2026-09-09: 1.0154 -> 1.02293 -> 1.04543.  MECHANISM, unchanged
+    # in kind across both steps: the eq-H2 SoC correction is
+    # `dSoC_diff / lambda`, so a LARGER lambda gives a smaller credit for the
+    # same SoC surplus and this leg's ratio rises.  Lambda moved 0.41 -> 0.423
+    # (the unit change onto the H-20 hydrogen axis) and then 0.423 -> 0.4673
+    # (D-7, lens-1 finding F3: the 0.423 construction rested on a walk that
+    # substituted an `sdp-v2` / `ems-sdp` run for the `ems-sdp-alpha-cal` leg;
+    # 0.4673 is the cal-charge construction L_chg/eta_chg).  The fixture's leg
     # totals are UNTOUCHED archived campaign numbers; only the scorer's rate
     # moved.  The verdict is unmoved and unanimous across the band, which is
     # what this test is for.
-    assert rec["vs_reference"] == pytest.approx(1.02293, abs=5e-4)
-    assert rec["vs_bound"] == pytest.approx(1.13590, abs=5e-4)
+    assert rec["vs_reference"] == pytest.approx(1.04543, abs=5e-4)
+    # RE-PIN 2026-09-09 (D-7, lambda 0.423 -> 0.4673): 1.13590 -> 1.16021,
+    # the same eq-H2 mechanism as the vs_reference pin above.
+    assert rec["vs_bound"] == pytest.approx(1.16021, abs=5e-4)
 
 
 def test_frontier_reports_the_implied_lever_between_candidate_and_bound():
@@ -8407,22 +8522,31 @@ def test_frontier_reports_the_implied_lever_between_candidate_and_bound():
     CHANGE. `_C3_LEGS` is archived campaign data whose hydrogen was scored on
     the retired linear Gfc map, so its IMPLIED lever is a Gfc-gram lever and
     does not move. The scorer's lambda is now an H-20-gram lever, 0.423. The
-    two therefore no longer coincide, and `vs_bound` is 1.00236 rather than
-    1.0 - a 3.1 % lambda gap producing a 0.24 % ratio gap, which is the
+    two therefore no longer coincide, and `vs_bound` is 1.00952 rather than
+    1.0 - a 13.9 % lambda gap producing a 0.95 % ratio gap, which is the
     degeneracy's own sensitivity measured rather than assumed. The PROPERTY
     this test exists for survives: the implied lever is still reported, and it
-    still lands within 3.2 % of the scorer's rate on two charge-free legs."""
+    still lands within 15 % of the scorer's rate on two charge-free legs.
+
+    ⚠️ THE GAP WIDENED AGAIN ON 2026-09-09 (D-7, finding F3): lambda moved
+    0.423 -> 0.4673 when the substituted `cal` walk leg was corrected, so the
+    Gfc-gram implied lever (0.41021, a property of the archived fixture and
+    therefore FIXED) now sits 13.9 % below the scorer's H-20-gram rate rather
+    than 3.1 %. The tolerance below moves with it, and it is stated as what it
+    is: the size of the era gap, not a measurement tolerance. Campaign II
+    measures an H-20-era lever and collapses it."""
     rec = rhs.evaluate_ems_frontier(_frontier_results(_C3_LEGS))
     assert rec["verdict"] == "PASS"
     # UNMOVED: this is a property of the fixture's leg totals, not of lambda.
     assert rec["implied_lever_soc_per_g"] == pytest.approx(0.41021, abs=1e-5)
-    assert rec["vs_bound"] == pytest.approx(1.00236, abs=1e-4)
+    assert rec["vs_bound"] == pytest.approx(1.00952, abs=1e-4)
     assert abs(rec["implied_lever_soc_per_g"]
-               - rhs.EMS_EQ_H2_LAMBDA_SOC_PER_G) < 0.014
+               - rhs.EMS_EQ_H2_LAMBDA_SOC_PER_G) < 0.06
     # ... and the DISCRIMINATING arm is vs-reference, which is not degenerate.
-    # RE-PIN 2026-09-09: 0.9003 -> 0.90265, by the same lambda unit change the
-    # docstring describes; the fixture's leg totals are untouched.
-    assert rec["vs_reference"] == pytest.approx(0.90265, abs=5e-4)
+    # RE-PIN 2026-09-09: 0.9003 -> 0.90265 -> 0.90963, by the same lambda
+    # changes the docstring describes (0.41 -> 0.423 -> 0.4673); the fixture's
+    # leg totals are untouched throughout.
+    assert rec["vs_reference"] == pytest.approx(0.90963, abs=5e-4)
 
 
 def test_frontier_implied_lever_departs_from_lambda_on_the_regression_case():
@@ -8471,13 +8595,16 @@ def test_frontier_PASSES_on_the_campaign_1_numbers():
     assert rec["passed"] is True
     assert all(p["passed"] for p in rec["per_lambda"])
     # L4: re-pinned against the campaign's ACTUAL totals (see _C1_LEGS).
-    # RE-PIN 2026-09-09: 0.91607 -> 0.91946.  MECHANISM: lambda moved
-    # 0.41 -> 0.423 (a change of unit onto the H-20 hydrogen axis), so the
-    # eq-H2 SoC correction `dSoC_diff / lambda` shrinks and this leg's credit
-    # with it.  The fixture's leg totals are untouched; the verdict and its
-    # unanimity across the band are unmoved, which is what this test is for.
-    assert rec["vs_reference"] == pytest.approx(0.91946, abs=5e-5)
-    assert rec["vs_bound"] == pytest.approx(1.02143, abs=5e-5)
+    # RE-PIN 2026-09-09: 0.91607 -> 0.91946 -> 0.92957.  MECHANISM: lambda
+    # moved 0.41 -> 0.423 (the unit change onto the H-20 hydrogen axis) and
+    # then 0.423 -> 0.4673 (D-7 finding F3, the corrected `cal` walk leg), so
+    # the eq-H2 SoC correction `dSoC_diff / lambda` shrinks and this leg's
+    # credit with it.  The fixture's leg totals are untouched; the verdict and
+    # its unanimity across the band are unmoved, which is what this test is
+    # for.
+    assert rec["vs_reference"] == pytest.approx(0.92957, abs=5e-5)
+    # RE-PIN 2026-09-09 (D-7, lambda 0.423 -> 0.4673): 1.02143 -> 1.03207.
+    assert rec["vs_bound"] == pytest.approx(1.03207, abs=5e-5)
     # A PASS is not exit-affecting, and neither is the flag load-bearing here --
     # pinned so the H1 split cannot silently start marking passes.
     assert rec["exit_affecting"] is False
@@ -8488,7 +8615,9 @@ def test_frontier_PASSES_on_the_campaign_1_numbers():
     ({"ems-soc-band": {"skipped": True, "skip_reason": "--pi-live"}},
      "SKIPPED"),
     ({"ems-dp-replay": {"passed": False}}, "did NOT pass its own checks"),
-    ({"ems-sdp": {"metrics": {}}}, "no h2_cum_g / delta_soc"),
+    # D-7 (2026-09-09): the frontier scores the RUN-WINDOW figure, so the
+    # missing-leg message names it.
+    ({"ems-sdp": {"metrics": {}}}, "no Run-window h2_run_g / delta_soc"),
 ])
 def test_frontier_UNVERIFIED_when_a_leg_is_missing_or_unusable(override,
                                                                fragment):
@@ -8587,7 +8716,7 @@ def test_frontier_returns_None_when_no_leg_was_planned_at_all():
     assert rhs.evaluate_ems_frontier(
         [{"kind": "replay", "name": "ML0146", "passed": True, "metrics": {}},
          {"kind": "scenario", "name": "steady", "passed": True,
-          "metrics": {"final_h2_cum_g": 0.01, "delta_soc": -0.001}}]) is None
+          "metrics": {"h2_run_g": 0.01, "delta_soc": -0.001}}]) is None
 
 
 def test_frontier_UNVERIFIED_when_the_legs_are_not_at_matched_soc():
@@ -8691,9 +8820,9 @@ def test_frontier_scores_only_frontier_eligible_scenarios():
     with_demo = rhs.evaluate_ems_frontier(
         _frontier_results(_C1_LEGS) + [
             {"kind": "scenario", "name": "ems-sdp-cross", "passed": True,
-             "metrics": {"final_h2_cum_g": 99.0, "delta_soc": +0.5}},
+             "metrics": {"h2_run_g": 99.0, "delta_soc": +0.5}},
             {"kind": "scenario", "name": "ems-sdp-braking", "passed": True,
-             "metrics": {"final_h2_cum_g": 99.0, "delta_soc": +0.5}}])
+             "metrics": {"h2_run_g": 99.0, "delta_soc": +0.5}}])
     assert with_demo["verdict"] == base["verdict"] == "PASS"
     assert with_demo["eq_h2"] == base["eq_h2"]
 
@@ -8715,17 +8844,23 @@ def test_frontier_constants_are_the_measured_ones():
     # RE-PIN 2026-09-09, and it is a change of UNIT rather than a
     # re-measurement: lambda is the eq-H2 SHARE lever, the campaigns that
     # measured 0.409-0.415 scored `h2_cum_g` on the retired linear Gfc map, and
-    # the scored axis has been the H-20 convex map since 2026-09-08.  0.423 is
-    # the same board-measured level (the five-reading mean 0.4165286) carried
-    # onto that axis by the walked era ratio 0.4222722/0.4153531 = 1.016658.
-    # The BAND's ends are the two independent cross-checks on it - the H-20
-    # walk alone (0.4223) and the closed-form model lever at the measured
-    # marginal rate (0.4325).  It is relatively WIDER than the Gfc-era band
-    # because the level is board-measured while the era transfer is modelled,
-    # which makes more verdicts KNIFE-EDGE rather than fewer.  See
-    # docs/modeling/sdp_alpha_resolve_h20_20260909.md section 3.5.
-    assert rhs.EMS_EQ_H2_LAMBDA_SOC_PER_G == pytest.approx(0.423)
-    assert rhs.EMS_EQ_H2_LAMBDA_BAND == (0.4223, 0.4325)
+    # the scored axis has been the H-20 convex map since 2026-09-08.    # ⚠️ RE-PINNED AGAIN 2026-09-09 (D-7, lens-1 finding F3): 0.423 -> 0.4673.
+    # The 0.423 construction - a board level times a walked era ratio - rested
+    # on a walk whose `cal` row was an `sdp-v2` / `ems-sdp` run rather than
+    # `sdp-sweep` / `ems-sdp-alpha-cal`, so both levers in its ratio were the
+    # wrong leg pair.  0.4673 is the CAL-CHARGE construction L_chg/eta_chg =
+    # 0.3744189 / 0.801172837, chosen because the cal-greedy pair sits on the
+    # low share rail where the modelled loop over-cuts the fuel cell ~75x
+    # against the board, biasing the greedy leg's hydrogen one way only.
+    # The BAND's ends are now the THREE independent constructions of an H-20
+    # share lever - the closed-form model lever at the 14.6440 W operating
+    # point (0.3921), the shipped cal-charge one (0.4673) and the walked
+    # cal-greedy pair (0.5672) - quoted at two figures.  It is much wider than
+    # the Gfc-era band, which makes MORE verdicts KNIFE-EDGE, not fewer, and is
+    # the honest statement that these are three models rather than three
+    # measurements.  See docs/modeling/sdp_alpha_resolve_h20_20260909.md.
+    assert rhs.EMS_EQ_H2_LAMBDA_SOC_PER_G == pytest.approx(0.4673)
+    assert rhs.EMS_EQ_H2_LAMBDA_BAND == (0.39, 0.59)
     lo, hi = rhs.EMS_EQ_H2_LAMBDA_BAND
     assert lo < rhs.EMS_EQ_H2_LAMBDA_SOC_PER_G < hi
     assert rhs.EMS_FRONTIER_VS_REFERENCE_MAX == pytest.approx(0.98)
@@ -8818,7 +8953,7 @@ def test_report_renders_the_frontier_table_and_the_demonstration_banner():
         "kind": "scenario", "name": "ems-sdp-cross", "passed": True,
         "mode": "hifi", "electrical_required": "any", "description": "",
         "duration_s": 200.0, "checks": [], "notes": [], "events": {},
-        "metrics": {"final_h2_cum_g": 0.02, "delta_soc": -0.001},
+        "metrics": {"h2_run_g": 0.02, "delta_soc": -0.001},
         "child": {"status": "ok", "summary": {}, "returncode": 0,
                   "wall_s": 1.0, "log": "x.log"}, "key_metrics": ""})
     md = rhs.render_report({"date": "x"}, results)
@@ -8893,7 +9028,7 @@ def _ftp_results(legs, **over):
     for role, name in FTP75_SPEC["roles"].items():
         h2, dsoc = legs[role]
         r = {"kind": "scenario", "name": name, "passed": True,
-             "metrics": {"final_h2_cum_g": h2, "delta_soc": dsoc}}
+             "metrics": {"h2_run_g": h2, "delta_soc": dsoc}}
         r.update(over.get(name, {}))
         out.append(r)
     return out
@@ -8991,7 +9126,7 @@ def test_frontier_stimulus_split_is_still_refused_on_a_synthetic_tuple():
         SCENARIOS["_split_a"].pop("chg_i_ceiling_a")
         rec = rhs.evaluate_ems_frontier(
             [{"kind": "scenario", "name": n, "passed": True,
-              "metrics": {"final_h2_cum_g": h, "delta_soc": -0.002}}
+              "metrics": {"h2_run_g": h, "delta_soc": -0.002}}
              for n, h in (("_split_a", 0.09), ("_split_b", 0.08),
                           ("_split_c", 0.089))], spec=spec)
         assert rec["verdict"] == "UNVERIFIED"
@@ -9096,7 +9231,7 @@ def _coherent_results(legs):
         SCENARIOS[n] = dict(stim)
     spec = dict(FTP75_SPEC, roles=names)
     out = [{"kind": "scenario", "name": names[role], "passed": True,
-            "metrics": {"final_h2_cum_g": h, "delta_soc": d}}
+            "metrics": {"h2_run_g": h, "delta_soc": d}}
            for role, (h, d) in legs.items()]
     return out, spec, list(names.values())
 
@@ -9183,7 +9318,7 @@ def test_frontier_ftp75_absent_from_a_plan_contributes_no_record():
             "candidate": ("ems-sdp", 0.0125, -0.0017),
             "bound": ("ems-dp-replay", 0.0116, -0.0020)}
     results = [{"kind": "scenario", "name": n, "passed": True,
-                "metrics": {"final_h2_cum_g": h, "delta_soc": d}}
+                "metrics": {"h2_run_g": h, "delta_soc": d}}
                for n, h, d in legs.values()]
     recs = rhs.evaluate_ems_frontiers(results)
     assert [r["id"] for r in recs] == ["cycle61", "cycle61-mpc"]
@@ -9193,7 +9328,7 @@ def test_frontier_both_tuples_render_when_both_are_present():
     """With the FTP-75 half planned, BOTH records exist -- and both reach the
     report, each with its own verdict and its own label."""
     results = [{"kind": "scenario", "name": n, "passed": True,
-                "metrics": {"final_h2_cum_g": h, "delta_soc": d}}
+                "metrics": {"h2_run_g": h, "delta_soc": d}}
                for n, h, d in (("ems-soc-band", 0.0128, -0.0020),
                                ("ems-sdp", 0.0125, -0.0017),
                                ("ems-dp-replay", 0.0116, -0.0020))]
@@ -9231,7 +9366,7 @@ def test_frontier_results_json_keeps_the_singular_key_pointing_at_cycle61():
     `ems_frontier`, and it must keep meaning the 61 s tuple now that a list
     exists alongside it."""
     results = [{"kind": "scenario", "name": n, "passed": True,
-                "metrics": {"final_h2_cum_g": h, "delta_soc": d}}
+                "metrics": {"h2_run_g": h, "delta_soc": d}}
                for n, h, d in (("ems-soc-band", 0.0128, -0.0020),
                                ("ems-sdp", 0.0125, -0.0017),
                                ("ems-dp-replay", 0.0116, -0.0020))]
@@ -9318,7 +9453,7 @@ def test_frontier_stimulus_split_does_not_mask_a_genuinely_failed_leg():
             SCENARIOS[n] = dict(base)
         SCENARIOS["_mask_b"] = dict(base, aux_preload_a=0.45)
         rows = [{"kind": "scenario", "name": n, "passed": p,
-                 "metrics": {"final_h2_cum_g": h, "delta_soc": -0.002}}
+                 "metrics": {"h2_run_g": h, "delta_soc": -0.002}}
                 for n, h, p in (("_mask_a", 0.09, True), ("_mask_b", 0.08, True),
                                 ("_mask_c", 0.089, False))]
         rec = rhs.evaluate_ems_frontier(rows, spec=spec)
@@ -9359,7 +9494,7 @@ def test_frontier_cycle61_stimulus_split_would_be_exit_affecting():
     try:
         SCENARIOS["ems-sdp"] = dict(saved, aux_preload_a=0.9)
         results = [{"kind": "scenario", "name": n, "passed": True,
-                    "metrics": {"final_h2_cum_g": 0.012, "delta_soc": -0.002}}
+                    "metrics": {"h2_run_g": 0.012, "delta_soc": -0.002}}
                    for n in CYCLE61_SPEC["roles"].values()]
         rec = rhs.evaluate_ems_frontier(results, spec=CYCLE61_SPEC)
         assert rec["verdict"] == "UNVERIFIED"
@@ -9380,11 +9515,20 @@ def test_ems_ftp75_dp_expectation_entry_shape():
     assert e["source"]
     names = [c["name"] for c in e["signals_require"]]
     assert names == ["ftpdp_peak_commanded", "ftpdp_fc_carried",
-                     "ftpdp_table_commanded", "ftpdp_table_low_rail",
+                     # D-7 (2026-09-09): `ftpdp_table_low_rail` became
+                     # `ftpdp_table_opening_rail` when the H-20 table lost its
+                     # low rail. The name changed with the SENSE (ceiling ->
+                     # floor), deliberately: a re-used name would have let a
+                     # reader take the new check for the old one.
+                     "ftpdp_table_commanded", "ftpdp_table_opening_rail",
                      "ftpdp_h2_accounted", "ftpdp_h2_bounded",
                      # M-4, 2026-09-04: the report-only en_low census the three
                      # sibling FTP-75 legs share with `ems-ftp75-sdp`'s band.
-                     "ftp_en_low_census"]
+                     "ftp_en_low_census",
+                     # D-7 (2026-09-09): the saturation refusal, appended at
+                     # import to every leg whose hydrogen is scored. It is
+                     # LAST because it is appended after the entry is built.
+                     "h2_saturation_refused"]
     by = {c["name"]: c for c in e["signals_require"]}
     # The stimulus check is the sibling's, verbatim -- same profile, same peak.
     assert by["ftpdp_peak_commanded"]["min_value"] == 2.85
@@ -9410,29 +9554,35 @@ def test_ems_ftp75_dp_expectation_asserts_the_table_actually_drove_the_run():
     by = {c["name"]: c
           for c in rhs.FAULT_EXPECTATIONS["ems-ftp75-dp"]["signals_require"]}
     hi = by["ftpdp_table_commanded"]
-    lo = by["ftpdp_table_low_rail"]
+    lo = by["ftpdp_table_opening_rail"]
     assert hi["column"] == lo["column"] == "cmd_share_sp"
-    # A constant-0.50 fallback satisfies NEITHER rail -- that is the point.
-    assert hi["min_value"] > 0.50 and lo["max_value"] < 0.50
-    # ... and both rails are inside the table's own [0.25, 0.75] control span,
+    # A constant-0.50 fallback satisfies NEITHER check -- that is the point,
+    # and it survives the H-20 re-derivation: the opening check is now a FLOOR
+    # above 0.50 rather than a ceiling below it, because the H-20 table opens
+    # at its 0.85 rail instead of the linear-era 0.2875 one.
+    assert hi["min_value"] > 0.50 and lo["floor_min_value"] > 0.50
+    # ... and both are inside the H-20 table's own [0.5375, 0.85] control span,
     # so a correctly replayed table satisfies both.
-    assert 0.25 <= lo["max_value"] and hi["min_value"] <= 0.75
-    # E-H1: THE WINDOWS MUST NOT OVERLAP. `max_value` judges the window's PEAK,
-    # so a low-rail ceiling sharing the high-rail window asserts "the peak over
-    # a window whose peak is 0.75 is <= 0.30" -- unsatisfiable, and the two
-    # checks become mutually exclusive. The low rail is the table's OPENING, so
-    # its window must close where the high-rail window opens.
+    assert lo["floor_min_value"] <= 0.85 and hi["min_value"] <= 0.85
+    # E-H1, RESTATED: the two checks may no longer be mutually exclusive, and
+    # under the H-20 table they are not - `floor_min_value` judges the window's
+    # MINIMUM while `min_value` judges its PEAK, so the pair is satisfiable on
+    # one trajectory by construction. The window separation is kept anyway:
+    # the opening check is a claim about the table's START, and widening its
+    # window would let a mid-cycle stage satisfy it.
     assert lo["t_window"][1] <= hi["t_window"][0]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="run_hil_suite's ems-ftp75-dp rail windows (ftpdp_table_commanded / "
-           "ftpdp_table_low_rail) were derived from the LINEAR-era table; the "
-           "table was regenerated under the H-20 convex map on 2026-09-09 and "
-           "no longer visits the low rail (min share 0.5375). Phase B item 5 "
-           "(docs/HANDOFF_H2_MAP_20260909.md) re-derives the suite bands; this "
-           "flips to a hard failure -- meaning re-pin the windows -- then.")
+# XFAIL RETIRED (D-7, "THE AXIS" item 3, 2026-09-09). The marker read: the
+# rail windows were derived from the LINEAR-era table, the table was
+# regenerated under the H-20 convex map, and it no longer visits the low rail
+# (min share 0.5375) -- "this flips to a hard failure, meaning re-pin the
+# windows, then". The windows HAVE now been re-pinned from the H-20 table:
+# `ftpdp_table_low_rail` (a <= 0.32 ceiling on an opening low rail that no
+# longer exists) became `ftpdp_table_opening_rail`, a >= 0.80 FLOOR on the
+# 0.85 rail the H-20 table actually opens at. The objective is unchanged --
+# "the run replayed the table from its start, and a constant-0.50 fallback
+# satisfies neither check" -- so this is a hard test again.
 def test_ems_ftp75_dp_rail_checks_pass_together_on_the_tables_own_trajectory():
     """E-H1 REGRESSION. Checks 3 and 4 are judged against the DP table's OWN
     share column -- the exact trajectory a correct replay puts on the wire --
@@ -9467,13 +9617,18 @@ def test_ems_ftp75_dp_rail_checks_pass_together_on_the_tables_own_trajectory():
                 if window[0] <= t <= window[1] and t >= rhs.WARM_RESET_GRACE_S]
         return (max(vals) if vals else None), len(vals)
 
-    hi, lo = by["ftpdp_table_commanded"], by["ftpdp_table_low_rail"]
+    hi, lo = by["ftpdp_table_commanded"], by["ftpdp_table_opening_rail"]
     hi_peak, hi_n = _peak(hi["t_window"])
-    lo_peak, lo_n = _peak(lo["t_window"])
+    # D-7: the opening check judges the window's MINIMUM, so the fixture has to
+    # take a minimum. Same window flooring as `_peak`.
+    lo_vals = [s for t, s in tr
+               if lo["t_window"][0] <= t <= lo["t_window"][1]
+               and t >= rhs.WARM_RESET_GRACE_S]
+    lo_min, lo_n = (min(lo_vals) if lo_vals else None), len(lo_vals)
     assert hi_n and lo_n, "a rail window sees no table stages at all"
     assert hi_peak >= hi["min_value"], (hi_peak, hi["min_value"])
-    assert lo_peak <= lo["max_value"], (lo_peak, lo["max_value"])
-    # The low-rail window must carry real evidence, not one boundary sample.
+    assert lo_min >= lo["floor_min_value"], (lo_min, lo["floor_min_value"])
+    # The opening window must carry real evidence, not one boundary sample.
     assert lo_n >= 20
 
 
@@ -9491,8 +9646,8 @@ def test_ems_ftp75_dp_h2_band_is_the_union_of_its_siblings_bands():
     both M2-equivalent governor-walk +/-25 % bands."""
     by = {c["name"]: c
           for c in rhs.FAULT_EXPECTATIONS["ems-ftp75-dp"]["signals_require"]}
-    lo = by["ftpdp_h2_accounted"]["min_value"]
-    hi = by["ftpdp_h2_bounded"]["max_value"]
+    lo = by["ftpdp_h2_accounted"]["delta_min_value"]
+    hi = by["ftpdp_h2_bounded"]["delta_max_value"]
     # WP-1C (2026-09-02): the socband ceiling moved 0.046 -> 0.052 for the
     # ETA_CHG 0.88 charger, so the union moves with it. The 5050 floor does
     # not: that leg walks zero charge windows and is eta-invariant.
@@ -9501,16 +9656,23 @@ def test_ems_ftp75_dp_h2_band_is_the_union_of_its_siblings_bands():
     # 0.052 -> 0.051; the union follows.
     # RE-PINNED ON THE BOARD (2026-09-03): both siblings' bands moved onto
     # their first bleed-era measurements, and the union follows them.
-    assert (lo, hi) == (0.0218, 0.0489)
+    # ⚠️ RE-PINNED 2026-09-09 (D-7, lens-1 "THE AXIS"): the band is
+    # restated on the H-20 axis, centred on the CORRECTED-LOOP re-walk
+    # column, and judged as a RUN-WINDOW DELTA. The gfc-linear-era board
+    # measurements this pin used to carry do not describe this axis.
+    assert (lo, hi) == (0.0304, 0.0638)
     # The solver's own matched-SoC optimum must land inside the live band, or
     # the two accountings have diverged by more than the band admits.
-    assert lo < 0.0396922 < hi
+    # D-7: the union band must contain this leg's own corrected-loop H-20
+    # re-walk. The solver's 0.0396922 g matched-SoC optimum was a
+    # gfc-linear-era figure and is not the quantity to bracket on this axis.
+    assert lo < 0.0463096 < hi
     assert lo == rhs._FTP_H2_BAND_5050[0]
     assert hi == rhs._FTP_H2_CEILING_SOCBAND
     # Two SPECS, never one leaf carrying both bounds: `_judge_signal_leaf`
     # tests min before max and would silently drop the ceiling.
-    assert "max_value" not in by["ftpdp_h2_accounted"]
-    assert "min_value" not in by["ftpdp_h2_bounded"]
+    assert "delta_max_value" not in by["ftpdp_h2_accounted"]
+    assert "delta_min_value" not in by["ftpdp_h2_bounded"]
     # PROVISIONAL, and it says so through the `provisional_note` mechanism
     # (which renders a [PROVISIONAL: ...] qualifier into the report) rather
     # than by an inline literal in the label, as of 2026-09-01.
@@ -9671,8 +9833,9 @@ def test_anti_vacuity_h2_bands_reject_just_outside_and_admit_just_inside(tmp_pat
         specs = rhs.FAULT_EXPECTATIONS[scenario]["signals_require"]
         min_spec = _spec_by_name(specs, min_name)
         max_spec = _spec_by_name(specs, max_name)
-        lo = min_spec["min_value"]
-        hi = max_spec["max_value"]
+        # D-7: the hydrogen bands are RUN-WINDOW DELTAS now.
+        lo = min_spec["delta_min_value"]
+        hi = max_spec["delta_max_value"]
         assert lo < hi, (scenario, lo, hi)
         eps = 1e-6
         cases = [
@@ -9683,10 +9846,18 @@ def test_anti_vacuity_h2_bands_reject_just_outside_and_admit_just_inside(tmp_pat
             (hi + eps, True, False),      # just over the ceiling
         ]
         for val, want_min_pass, want_max_pass in cases:
-            rows = [{"t": "50.000", "h2_cum_g": "%.9f" % val,
-                    "switch": "0", "fault_flags": "0"}]
+            # D-7: the bands judge the RUN-WINDOW DELTA, so the fixture writes
+            # two State-2 rows whose difference is the value under test. The
+            # non-zero baseline is deliberate - it is the pre-Run A0 charge the
+            # delta basis exists to remove, and a band that still read the peak
+            # would see `0.007 + val` here and mis-judge every case.
+            rows = [{"t": "50.000", "h2_cum_g": "0.007000",
+                     "state": "2", "switch": "0", "fault_flags": "0"},
+                    {"t": "51.000", "h2_cum_g": "%.9f" % (0.007 + val),
+                     "state": "2", "switch": "0", "fault_flags": "0"}]
             path = tmp_path / ("%s_%s_%.9f.csv" % (scenario, min_name, val))
-            _write_scenario_csv(path, rows, extra_cols=("h2_cum_g",))
+            _write_scenario_csv(path, rows,
+                                extra_cols=("h2_cum_g", "state"))
             measured = rhs.scan_signals(str(path), [min_spec, max_spec],
                                         grace_s=0.0)
             checks = rhs.judge_signals([min_spec, max_spec], measured, "why")
@@ -10402,13 +10573,15 @@ def test_mpc_h2_bands_bracket_the_gate2_walk():
     # low rail and every total moved.  The pre-widening set was ems-mpc
     # 0.007588, ems-mpc-det 0.009728, ems-mpc-cross 0.010835, ems-ftp75-mpc
     # 0.021983.
-    walks = {"ems-mpc": 0.007162, "ems-mpc-det": 0.009427,
-             "ems-mpc-cross": 0.008782, "ems-ftp75-mpc": 0.018762}
+    # D-7 (2026-09-09): re-pinned on the corrected-loop re-walk column under
+    # the H-20 map. The +/- 25 % contract is unchanged.
+    walks = {"ems-mpc": 0.0118067, "ems-mpc-det": 0.0104827,
+             "ems-mpc-cross": 0.0212995, "ems-ftp75-mpc": 0.0522491}
     for name, walk in walks.items():
         specs = {s["name"]: s for s in
                  rhs.FAULT_EXPECTATIONS[name]["signals_require"]}
-        lo = specs["mpc_h2_accounted"]["min_value"]
-        hi = specs["mpc_h2_bounded"]["max_value"]
+        lo = specs["mpc_h2_accounted"]["delta_min_value"]
+        hi = specs["mpc_h2_bounded"]["delta_max_value"]
         assert lo < walk < hi, name
         assert lo == pytest.approx(walk * 0.75, rel=1e-3)
         assert hi == pytest.approx(walk * 1.25, rel=1e-3)
@@ -11317,13 +11490,20 @@ def test_socband_arms_carry_the_settling_hold():
 
 
 def test_socband_h2_band_is_the_measured_one():
+    # RE-PINNED 2026-09-09 (D-7): +/- 20 % of the corrected-loop H-20 re-walk
+    # 0.0532039 g, replacing +/- 20 % of the gfc-linear-era board reading.
     assert (rhs._FTP_H2_FLOOR_SOCBAND, rhs._FTP_H2_CEILING_SOCBAND) == (
-        0.0326, 0.0489)
+        0.0426, 0.0638)
     # The BLEED-ERA measurement the band is now centred on, and the
     # asymmetry-era one it superseded: both must sit inside, or the band has
     # been moved further than the era shift justifies.
-    assert rhs._FTP_H2_FLOOR_SOCBAND < 0.0407628763 < rhs._FTP_H2_CEILING_SOCBAND
-    assert rhs._FTP_H2_FLOOR_SOCBAND < 0.042427323 < rhs._FTP_H2_CEILING_SOCBAND
+    # D-7 (2026-09-09): both figures below are gfc-linear-era BOARD readings
+    # and no longer sit inside the band, which is the point of the
+    # restatement - they are not on this axis. What the band must contain is
+    # the corrected-loop H-20 re-walk.
+    assert rhs._FTP_H2_FLOOR_SOCBAND < 0.0532039 < rhs._FTP_H2_CEILING_SOCBAND
+    assert not (rhs._FTP_H2_FLOOR_SOCBAND < 0.0407628763
+                < rhs._FTP_H2_CEILING_SOCBAND)
 
 
 def test_signal_spec_guard_refuses_a_mask_on_a_bit_spec():
@@ -13472,3 +13652,183 @@ def test_switch_names_renders_the_bus_masks():
     assert rhs.switch_names(rhs.SW_FC_BUS | rhs.SW_BT_BUS) in (
         "FC_BUS|BT_BUS", "BT_BUS|FC_BUS")
     assert rhs.switch_names(0) == "none"
+
+
+# =============================================================================
+# D-7 (lens-1 findings F4/F5 and "the saturation refusal"), 2026-09-09.
+#
+# THE RUN-WINDOW HYDROGEN BASIS and THE SATURATION REFUSAL, tested as
+# mechanisms rather than only through the bands that consume them. Every test
+# below fails on the code as it stood before this round, which is what makes it
+# a regression test rather than a description.
+# =============================================================================
+
+def test_analyze_scenario_csv_h2_run_g_is_the_run_window_delta(tmp_path):
+    """`h2_run_g` drops the pre-Run A0 charge; `final_h2_cum_g` does not.
+
+    The two figures are asserted TOGETHER on one CSV, because the point of the
+    new metric is the difference between them: the run below burns 2 mg before
+    Run entry (the H-20 map's constant purge/blower offset, billed from
+    State 0) and 3 mg inside it, and a band written against a walk that bills
+    the Run window only must see 3 mg, not 5 mg."""
+    rows = [
+        {"t": "0.500", "state": "0", "fault_flags": "0", "h2_cum_g": "0.001000"},
+        {"t": "1.500", "state": "1", "fault_flags": "0", "h2_cum_g": "0.002000"},
+        {"t": "3.000", "state": "2", "fault_flags": "0", "h2_cum_g": "0.002000"},
+        {"t": "9.000", "state": "2", "fault_flags": "0", "h2_cum_g": "0.005000"},
+        {"t": "9.500", "state": "3", "fault_flags": "0", "h2_cum_g": "0.005100"},
+    ]
+    path = tmp_path / "runwin.csv"
+    _write_scenario_csv(path, rows, extra_cols=("h2_cum_g",))
+    m = rhs.analyze_scenario_csv(str(path))
+    assert m["final_h2_cum_g"] == pytest.approx(0.0051)
+    assert m["h2_run_first_g"] == pytest.approx(0.002)
+    assert m["h2_run_last_g"] == pytest.approx(0.005)
+    assert m["h2_run_g"] == pytest.approx(0.003)
+
+
+def test_analyze_scenario_csv_h2_run_g_is_none_when_run_is_never_reached(tmp_path):
+    """None, never 0.0. A leg that latched in Init burned SOMETHING (A0 runs
+    from State 0), and scoring it as zero would read as a strategy result."""
+    rows = [
+        {"t": "0.500", "state": "0", "fault_flags": "0", "h2_cum_g": "0.001000"},
+        {"t": "1.500", "state": "99", "fault_flags": "0x8100",
+         "h2_cum_g": "0.002000"},
+    ]
+    path = tmp_path / "norun.csv"
+    _write_scenario_csv(path, rows, extra_cols=("h2_cum_g",))
+    m = rhs.analyze_scenario_csv(str(path))
+    assert m["final_h2_cum_g"] == pytest.approx(0.002)
+    assert m["h2_run_g"] is None
+
+
+def test_frontier_scores_the_run_window_and_not_the_whole_run():
+    """THE BIAS THE CHANGE REMOVES, measured on one fixture.
+
+    All three legs burn the same 10 mg inside Run, so their eq-H2 ratios are
+    exactly 1.0 on the Run-window basis. The candidate happens to dwell longer
+    before Run entry and carries 4 mg of A0 where the others carry 1 mg -- an
+    Init/Idle difference no strategy controls. On the whole-run basis that
+    alone would have made the candidate read 27 % worse."""
+    legs = {"ems-soc-band": (0.010, 0.001, -0.002),
+            "ems-sdp": (0.010, 0.004, -0.002),
+            "ems-dp-replay": (0.010, 0.001, -0.002)}
+    results = []
+    for name, (run_g, pre_g, dsoc) in legs.items():
+        results.append({"kind": "scenario", "name": name, "passed": True,
+                        "metrics": {"h2_run_g": run_g,
+                                    "final_h2_cum_g": run_g + pre_g,
+                                    "delta_soc": dsoc}})
+    rec = rhs.evaluate_ems_frontier(results)
+    assert rec["vs_reference"] == pytest.approx(1.0)
+    assert rec["legs"]["candidate"]["h2"] == pytest.approx(0.010)
+    assert rec["legs"]["candidate"]["h2_basis"] == "run_window"
+    # The whole-run figure is REPORTED beside it, so the offset stays visible.
+    assert rec["legs"]["candidate"]["h2_whole_run"] == pytest.approx(0.014)
+    # ... and it is the figure that would have carried the bias.
+    assert (rec["legs"]["candidate"]["h2_whole_run"]
+            / rec["legs"]["reference"]["h2_whole_run"]) == pytest.approx(
+                14.0 / 11.0)
+
+
+def test_h2_saturation_refusal_is_on_every_scored_leg_and_off_the_exempt_one():
+    """The refusal is DERIVED, not listed: a leg qualifies by carrying a
+    hydrogen band or by filling a frontier role. `charge-cruise` is the one
+    named exemption -- its OC_FC anchor drives the stack 12.5 % past the knee
+    BY DESIGN and its hydrogen is not scored."""
+    for name in ("ems-sdp", "ems-soc-band", "ems-ftp75-dp", "ems-mpc",
+                 "ems-sdp-alpha-greedy", "ems-ftp75c-sdp"):
+        names = {s["name"]
+                 for s in rhs.FAULT_EXPECTATIONS[name]["signals_require"]}
+        assert "h2_saturation_refused" in names, name
+    for name in ("charge-cruise", "bringup", "scp-inrush"):
+        if name not in rhs.FAULT_EXPECTATIONS:
+            continue
+        names = {s["name"]
+                 for s in (rhs.FAULT_EXPECTATIONS[name].get("signals_require")
+                           or [])}
+        assert "h2_saturation_refused" not in names, name
+
+
+def test_h2_saturation_ceiling_is_the_maps_knee_referred_to_the_bus():
+    """DERIVED from `h2_map`, never typed: a brochure refit that moves the knee
+    must move the refusal with it."""
+    import h2_map as _h2m
+    assert rhs.H2_SATURATION_P_STACK_MAX_W == pytest.approx(_h2m.P_MAX_W)
+    assert rhs.H2_SATURATION_P_BUS_MAX_W == pytest.approx(
+        _h2m.P_MAX_W * rhs.ETA_BOOST)
+    # ~1.25 A of FC bus current at the 15.95 V nominal bus -- inside the
+    # firmware's own reach, which is why the refusal is not hypothetical (the
+    # fw v26 clamp settles at 1.2502 A).
+    assert rhs.H2_SATURATION_P_BUS_MAX_W / 15.95 == pytest.approx(1.2478,
+                                                                  abs=1e-3)
+
+
+def test_h2_saturation_refusal_fails_a_leg_over_the_knee():
+    spec = _spec_by_name(rhs.FAULT_EXPECTATIONS["ems-sdp"]["signals_require"],
+                         "h2_saturation_refused")
+    under = rhs.H2_SATURATION_P_BUS_MAX_W - 1.0
+    over = rhs.H2_SATURATION_P_BUS_MAX_W + 1.0
+    cols = ("p_fc_w",)
+    ok = [{"t": "5.0", "fault_flags": "0", "p_fc_w": "%.6f" % under}]
+    bad = [{"t": "5.0", "fault_flags": "0", "p_fc_w": "%.6f" % under},
+           {"t": "6.0", "fault_flags": "0", "p_fc_w": "%.6f" % over}]
+    assert _judge_one(spec, ok, cols)["passed"] is True
+    assert _judge_one(spec, bad, cols)["passed"] is False
+
+
+def test_analyze_scenario_csv_counts_saturated_ticks_only_with_the_stack_on(tmp_path):
+    """A tick above the knee with FC_REG_ENABLE LOW bills no hydrogen at all,
+    so it cannot burn free hydrogen and is not counted."""
+    over = rhs.H2_SATURATION_P_BUS_MAX_W + 2.0
+    rows = [
+        {"t": "1.0", "state": "2", "fault_flags": "0", "aux": "0x01",
+         "p_fc_w": "5.0"},
+        {"t": "2.0", "state": "2", "fault_flags": "0", "aux": "0x01",
+         "p_fc_w": "%.6f" % over},
+        {"t": "3.0", "state": "2", "fault_flags": "0", "aux": "0x00",
+         "p_fc_w": "%.6f" % (over + 10.0)},
+    ]
+    path = tmp_path / "sat.csv"
+    _write_scenario_csv(path, rows, extra_cols=("p_fc_w",))
+    m = rhs.analyze_scenario_csv(str(path))
+    assert m["h2_stack_rows"] == 2
+    assert m["h2_saturated_ticks"] == 1
+    assert m["h2_saturated_peak_w"] == pytest.approx(over / rhs.ETA_BOOST)
+
+
+def test_delta_bound_kinds_refuse_to_be_paired_with_a_peak_bound():
+    """The import guard, in both directions: `_judge_signal_leaf` tests the
+    delta kind FIRST and returns on it, so a peak bound beside one would never
+    be evaluated."""
+    entry = {"signals_require": [
+        {"name": "x", "column": "h2_cum_g", "delta_min_value": 1.0,
+         "min_value": 2.0, "label": "l"}]}
+    with pytest.raises(AssertionError) as exc:
+        rhs._assert_signal_spec_shapes("synthetic", entry)
+    assert "run-window delta bound" in str(exc.value)
+    entry2 = {"signals_require": [
+        {"name": "x", "column": "h2_cum_g", "delta_min_value": 1.0,
+         "delta_max_value": 2.0, "label": "l"}]}
+    with pytest.raises(AssertionError) as exc2:
+        rhs._assert_signal_spec_shapes("synthetic", entry2)
+    assert "delta_max_value" in str(exc2.value)
+
+
+def test_sample_state_in_scopes_the_measurement_not_only_the_census():
+    """A blank or out-of-set `state` cell DROPS the sample. Pinned because the
+    alternative (admitting it) would let an Init row set `first` and turn the
+    Run-window delta into a whole-run figure again."""
+    spec = {"name": "x", "column": "h2_cum_g", "delta_min_value": 0.001,
+            "sample_state_in": (2,), "label": "l"}
+    cols = ("h2_cum_g", "state")
+    # The Init row would give a delta of 0.004 if it were admitted; scoped to
+    # State 2 the delta is 0.0005 and the floor of 0.001 fails.
+    rows = [{"t": "1.0", "state": "0", "fault_flags": "0", "h2_cum_g": "0.001"},
+            {"t": "2.0", "state": "2", "fault_flags": "0", "h2_cum_g": "0.0045"},
+            {"t": "3.0", "state": "2", "fault_flags": "0", "h2_cum_g": "0.005"}]
+    assert _judge_one(spec, rows, cols)["passed"] is False
+    blank = [{"t": "1.0", "state": "", "fault_flags": "0", "h2_cum_g": "0.001"},
+             {"t": "2.0", "state": "2", "fault_flags": "0", "h2_cum_g": "0.002"},
+             {"t": "3.0", "state": "2", "fault_flags": "0", "h2_cum_g": "0.005"}]
+    assert _judge_one(spec, blank, cols)["passed"] is True

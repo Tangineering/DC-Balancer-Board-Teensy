@@ -5671,6 +5671,32 @@ def test_main_non_dp_run_has_no_dp_table_block_in_meta_config(tmp_path):
     assert "dp_table" not in meta["config"]
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="D-7 (2026-09-09) - THE SHIPPED sdp_policy_v7 DOES NOT CERTIFY, AND "
+           "THAT BLOCKS AN ems-sdp RUN. The artifact is re-solved at "
+           "`--alpha-mode lever-h20` (D16: the lever algebra's marginal rate "
+           "taken from the H-20 map at the corrected 14.6440 W operating point, "
+           "lens-1 finding F1), giving alpha 0.142475472567. Independently, "
+           "lens-1 finding F2 corrected the substituted `ems-sdp-alpha-cal` walk "
+           "leg, which RAISES the walked share lever 0.4223 -> 0.5672 and "
+           "therefore LOWERS the walked admission window to [0.0882, 0.1335]. "
+           "The two corrections move the alpha and its window APART: the shipped "
+           "alpha now sits 6.7 %% above the window's top, so "
+           "`alpha.admission.in_window_measured` is False and hil_plant_sim "
+           "REFUSES to bind `sdp-v7` to its EMS-frontier role. THE REFUSAL IS "
+           "CORRECT and is not worked around here. The two available artifacts "
+           "are BOTH defective and the choice is an OPERATOR RULING: "
+           "`--alpha-mode lever-h20` prices alpha in the right unit but fails "
+           "this certificate, while `--alpha-mode lever-measured` certifies "
+           "(alpha 0.134110280093, both windows IN, 46 charge cells) by pricing "
+           "alpha on the five eta-era BOARD readings, which are GFC-GRAM levers "
+           "and therefore the very unit error D16 exists to remove. Campaign "
+           "II's three `ems-sdp-alpha-*` legs measure H-20-era levers on the "
+           "board and settle it. Until then no ems-sdp campaign can run. To "
+           "take the certifying option: python tools/sdp_ems_solver.py "
+           "--alpha-mode lever-measured --eta-chg measured --out "
+           "tools/sdp_policies/sdp_policy_v7.json --force")
 def test_main_ems_sdp_run_has_no_dp_table_block_but_has_sdp_policy(tmp_path):
     """The two provenance blocks are keyed by STRATEGY TYPE, not by "any EMS
     ran" -- an sdp-v2 run must not grow a dp_table block, and a dp-replay run
@@ -5703,6 +5729,32 @@ def test_ems_sdp_v2_is_a_valid_ems_name():
 
 # ── cmd_share_sp_raw column: value formatting and blank-on-non-SDP ─────────
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="D-7 (2026-09-09) - THE SHIPPED sdp_policy_v7 DOES NOT CERTIFY, AND "
+           "THAT BLOCKS AN ems-sdp RUN. The artifact is re-solved at "
+           "`--alpha-mode lever-h20` (D16: the lever algebra's marginal rate "
+           "taken from the H-20 map at the corrected 14.6440 W operating point, "
+           "lens-1 finding F1), giving alpha 0.142475472567. Independently, "
+           "lens-1 finding F2 corrected the substituted `ems-sdp-alpha-cal` walk "
+           "leg, which RAISES the walked share lever 0.4223 -> 0.5672 and "
+           "therefore LOWERS the walked admission window to [0.0882, 0.1335]. "
+           "The two corrections move the alpha and its window APART: the shipped "
+           "alpha now sits 6.7 %% above the window's top, so "
+           "`alpha.admission.in_window_measured` is False and hil_plant_sim "
+           "REFUSES to bind `sdp-v7` to its EMS-frontier role. THE REFUSAL IS "
+           "CORRECT and is not worked around here. The two available artifacts "
+           "are BOTH defective and the choice is an OPERATOR RULING: "
+           "`--alpha-mode lever-h20` prices alpha in the right unit but fails "
+           "this certificate, while `--alpha-mode lever-measured` certifies "
+           "(alpha 0.134110280093, both windows IN, 46 charge cells) by pricing "
+           "alpha on the five eta-era BOARD readings, which are GFC-GRAM levers "
+           "and therefore the very unit error D16 exists to remove. Campaign "
+           "II's three `ems-sdp-alpha-*` legs measure H-20-era levers on the "
+           "board and settle it. Until then no ems-sdp campaign can run. To "
+           "take the certifying option: python tools/sdp_ems_solver.py "
+           "--alpha-mode lever-measured --eta-chg measured --out "
+           "tools/sdp_policies/sdp_policy_v7.json --force")
 def test_cmd_share_sp_raw_is_4dp_on_an_sdp_run(tmp_path):
     header, rows = _run_main_csv(
         tmp_path, ["--scenario", "ems-sdp", "--electrical", "simple", "--duration", "0.05"])
@@ -6864,6 +6916,32 @@ def test_shipped_sdp_policy_carries_a_demand_map_source():
 
 # ── meta sidecar config.sdp_policy block (round 2, item 2) ─────────────────
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="D-7 (2026-09-09) - THE SHIPPED sdp_policy_v7 DOES NOT CERTIFY, AND "
+           "THAT BLOCKS AN ems-sdp RUN. The artifact is re-solved at "
+           "`--alpha-mode lever-h20` (D16: the lever algebra's marginal rate "
+           "taken from the H-20 map at the corrected 14.6440 W operating point, "
+           "lens-1 finding F1), giving alpha 0.142475472567. Independently, "
+           "lens-1 finding F2 corrected the substituted `ems-sdp-alpha-cal` walk "
+           "leg, which RAISES the walked share lever 0.4223 -> 0.5672 and "
+           "therefore LOWERS the walked admission window to [0.0882, 0.1335]. "
+           "The two corrections move the alpha and its window APART: the shipped "
+           "alpha now sits 6.7 %% above the window's top, so "
+           "`alpha.admission.in_window_measured` is False and hil_plant_sim "
+           "REFUSES to bind `sdp-v7` to its EMS-frontier role. THE REFUSAL IS "
+           "CORRECT and is not worked around here. The two available artifacts "
+           "are BOTH defective and the choice is an OPERATOR RULING: "
+           "`--alpha-mode lever-h20` prices alpha in the right unit but fails "
+           "this certificate, while `--alpha-mode lever-measured` certifies "
+           "(alpha 0.134110280093, both windows IN, 46 charge cells) by pricing "
+           "alpha on the five eta-era BOARD readings, which are GFC-GRAM levers "
+           "and therefore the very unit error D16 exists to remove. Campaign "
+           "II's three `ems-sdp-alpha-*` legs measure H-20-era levers on the "
+           "board and settle it. Until then no ems-sdp campaign can run. To "
+           "take the certifying option: python tools/sdp_ems_solver.py "
+           "--alpha-mode lever-measured --eta-chg measured --out "
+           "tools/sdp_policies/sdp_policy_v7.json --force")
 def test_main_ems_sdp_run_records_sdp_policy_block_in_meta_config(tmp_path):
     """End-to-end (real shipped policy, real main()): the .meta.json sidecar's
     config.sdp_policy block must be present for an sdp-v1 run and must carry

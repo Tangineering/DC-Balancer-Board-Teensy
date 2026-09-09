@@ -1829,17 +1829,26 @@ def test_the_alpha_reference_point_is_the_measured_operating_point():
     The two matter in OPPOSITE directions, which is why this is pinned rather
     than left to the constant's comment: at 3.0 W the constant `k` is ~31 %
     ABOVE the map's marginal rate (the "SoC term over-weighted" reading the
-    2026-09-08 handoff carried), and at the measured point it is ~7.5 % BELOW
-    it, so a re-derived alpha RISES where the handoff predicted a fall."""
+    2026-09-08 handoff carried), and at the measured point it is ~13 % BELOW
+    it, so a re-derived alpha RISES where the handoff predicted a fall.
+
+    ⚠️ RE-PINNED 2026-09-09 (D-7, lens-1 finding F1): 13.3654 -> 14.6440 W.
+    The 13.3654 W figure came from INVERTING the H-20 map on campaign
+    hil_report_20260908_200836's `h2_rate_gps` column, and that campaign was
+    recorded under the RETIRED gfc-linear law - 35.96 % of its Run-window
+    ticks carry a rate BELOW the H-20 map's own A0 offset, which the map
+    cannot emit at any current. The shipped reference is the SOURCE-SIDE
+    electrical proxy `p_fc_w`/ETA_BOOST over the same window, which transfers
+    across the hydrogen-law change because it is an electrical quantity."""
     ref = solver.ALPHA_MISMATCH_REF_P_STACK_W
-    assert ref == pytest.approx(13.3654, abs=1e-4)
+    assert ref == pytest.approx(14.6440, abs=1e-4)
     assert solver.H2_MARGINAL_ALPHA_REF_GPS_PER_W == pytest.approx(
         h2_map.marginal_gps_per_w(ref), rel=1e-15)
     k_classic = 1.0 / (solver.ETA_FC * solver.Q_LHV_J_PER_G)
     # BELOW at the measured point ...
     assert solver.H2_MARGINAL_ALPHA_REF_GPS_PER_W > k_classic
     assert k_classic / solver.H2_MARGINAL_ALPHA_REF_GPS_PER_W - 1.0 == \
-        pytest.approx(-0.0748, abs=5e-4)
+        pytest.approx(-0.1296, abs=5e-4)
     # ... and ABOVE at the retired 3.0 W estimate.  Both signs pinned, so a
     # reference-point edit cannot silently restore the retired reading.
     assert k_classic / h2_map.marginal_gps_per_w(3.0) - 1.0 == pytest.approx(
@@ -1877,17 +1886,30 @@ def test_lever_h20_mode_reproduces_the_shipped_v7_alpha_and_certificate():
         eta_chg=eta, k_gps_per_w=solver.H2_MARGINAL_ALPHA_REF_GPS_PER_W)
     omg = 0.05
     alpha = solver.alpha_lever(omg, l_share, l_chg)
-    assert alpha == pytest.approx(0.134041467771, rel=1e-11)
+    # RE-PINNED 2026-09-09 (D-7, F1): the reference point moved
+    # 13.3654 -> 14.6440 W, so the map's marginal rate there moved with it and
+    # so did every lever priced on it. alpha 0.134041467771 -> 0.142475472567.
+    assert alpha == pytest.approx(0.142475472567, rel=1e-11)
     # Inside the MODEL window ...
     lo, hi = solver.admission_window(omg, l_share, l_chg)
     assert lo < alpha < hi
-    assert lo == pytest.approx(0.119978, abs=1e-6)
-    assert hi == pytest.approx(0.149753, abs=1e-6)
-    # ... and inside the WALKED window at the era being solved, which is what
-    # the tripwire checks as the artifact's `measured` pair.
+    assert lo == pytest.approx(0.127527, abs=1e-6)
+    assert hi == pytest.approx(0.159176, abs=1e-6)
+    # ... and ⚠️ NO LONGER inside the WALKED window at the era being solved
+    # (D-7, 2026-09-09). The two corrections of this round moved the two
+    # windows APART: F1 raised the reference operating point 13.3654 ->
+    # 14.6440 W, which raises this MODEL-lever alpha, while F2 corrected the
+    # substituted `cal` walk leg, which raises the walked SHARE lever
+    # 0.4223 -> 0.5672 and therefore LOWERS the walked window. The shipped
+    # alpha sits 6.7 % above the walked window's top. Asserted in the NEGATIVE
+    # rather than deleted: the disagreement is a RESULT of this round and an
+    # operator ruling is open on it (keep the model-lever alpha, or re-solve at
+    # the measured pair); campaign II's three alpha legs measure the levers on
+    # the board and settle it. The artifact carries `--allow-out-of-window`.
     ws, wc = solver.h20_walk_levers(eta)
     wlo, whi = solver.admission_window(omg, ws, wc)
-    assert wlo < alpha < whi
+    assert alpha > whi
+    assert whi == pytest.approx(0.13354, abs=1e-5)
     # D13's identity survives the k override: the margin is convention-free.
     assert l_chg / (omg / alpha) == pytest.approx(eta ** 0.5, rel=1e-12)
 
@@ -1918,7 +1940,7 @@ def test_the_shipped_v7_artifact_is_what_the_mode_produces():
     with open(path, encoding="utf-8") as fh:
         doc = json.load(fh)
     assert doc["alpha"]["mode"] == "lever-h20"
-    assert doc["alpha"]["value"] == pytest.approx(0.134041467771, rel=1e-11)
+    assert doc["alpha"]["value"] == pytest.approx(0.142475472567, rel=1e-11)
     assert doc["h2"]["law"] == solver.H2_LAW_H20
     assert doc["h2"]["law_token"] == h2_map.fingerprint_str()
     assert doc["charger"]["eta_chg"] == pytest.approx(
@@ -1928,22 +1950,47 @@ def test_the_shipped_v7_artifact_is_what_the_mode_produces():
     # carried, now carried on the H-20 axis.
     adm = doc["alpha"]["admission"]
     assert adm["in_window_model"] is True
-    assert adm["in_window_measured"] is True
-    assert adm["allow_out_of_window"] is not True
+    # ⚠️ THE MEASURED WINDOW NO LONGER CONTAINS THE ALPHA, AND THAT IS A
+    # FINDING RATHER THAN A TOLERANCE (D-7, 2026-09-09). Two corrections moved
+    # the two sides in OPPOSITE directions: F1 raised the reference operating
+    # point 13.3654 -> 14.6440 W, which raises the MODEL-lever alpha to
+    # 0.142475; F2 corrected the substituted `cal` walk leg, which raises the
+    # walked share lever 0.4223 -> 0.5672 and therefore LOWERS the measured
+    # window to [0.0882, 0.1335]. The shipped alpha sits 6.7 % above its top.
+    # The artifact is solved with `--allow-out-of-window` and says so. It is
+    # PINNED here, not tolerated silently: an operator ruling is open on
+    # whether to keep the model-lever alpha or re-solve at the measured pair,
+    # and campaign II's three alpha legs measure the levers on the board and
+    # settle it. Flipping this back to True without that measurement would be
+    # asserting an agreement nobody has.
+    assert adm["in_window_measured"] is False
+    assert adm["allow_out_of_window"] is True
+    assert adm["window_measured"][1] == pytest.approx(0.13354, abs=1e-5)
     # The k basis is published, because it is the one thing a reader cannot
     # reconstruct from the artifact alone.
     kb = doc["alpha"]["levers_soc_per_g"]["k_basis"]
-    assert kb["ref_p_stack_w"] == pytest.approx(13.3654, abs=1e-4)
+    assert kb["ref_p_stack_w"] == pytest.approx(14.6440, abs=1e-4)
     assert kb["k_gps_per_w"] == pytest.approx(
         solver.H2_MARGINAL_ALPHA_REF_GPS_PER_W, rel=1e-15)
-    # 46 charge cells, ALL in demand bin 0 at SoC rows below the target.  See
-    # docs/modeling/sdp_alpha_resolve_h20_20260909.md section 4.3: this is
-    # convexity, not a mispriced alpha, and it is pinned so a future solve
-    # that spreads charging across bins cannot pass unnoticed.
+    # ⚠️ THE CHARGE CENSUS MOVED, AND IT MOVED THE WAY THE OLD PIN WAS BUILT
+    # TO DETECT (D-7, 2026-09-09). It read "46 charge cells, ALL in demand
+    # bin 0 ... pinned so a future solve that spreads charging across bins
+    # cannot pass unnoticed". At the corrected reference point the solve
+    # admits 140 cells over 47 SoC rows and THREE demand bins (0, 1, 2). The
+    # mechanism is the alpha rise itself: raising alpha 0.134041 -> 0.142475
+    # prices terminal SoC more dearly, and charging becomes admissible at
+    # demands where it previously was not. Every admitted cell is still BELOW
+    # the SoC target, which is the property that says this is the policy
+    # buying SoC back rather than a mispricing.
+    # OPERATOR RULING OPEN: whether an artifact that commands charging on 140
+    # cells is the one to ship is the same question the measured-window miss
+    # above raises, and campaign II's alpha legs are the measurement. Pinned
+    # exactly, so a further spread cannot pass unnoticed either.
     cg = doc["policy"]["charge_goal"]
     soc = doc["soc"]["grid"]
     cells = [(i, j) for i, row in enumerate(cg)
              for j, v in enumerate(row) if float(v) > 0.0]
-    assert len(cells) == 46
-    assert {j for _i, j in cells} == {0}
+    assert len(cells) == 140
+    assert {j for _i, j in cells} == {0, 1, 2}
+    assert len({i for i, _j in cells}) == 47
     assert max(soc[i] for i, _j in cells) < doc["soc"]["target"]

@@ -474,14 +474,19 @@ D16. ALPHA IS PRICED ON THE H-20 MAP'S OWN MARGINAL RATE
     `ALPHA_MISMATCH_REF_P_STACK_W` was a 3.0 W design estimate whose stated
     justification - "the TPM's bin centres are a few watts of BUS power" - is
     contradicted by the shipped TPM: the centres run 0.5 .. 24.5 W and 75.6 %
-    of the observed dwell is in the 10.5 W bin.  Re-derived from the policy's
-    own commanded share on the SoC-target row it is 12.5078 W, and campaign
-    hil_report_20260908_200836's `ems-sdp` run has a Run-window MEDIAN stack
-    power of 13.3654 W.  CONSEQUENCE: k is 4.0 % above the map's marginal rate
-    there, not the 31 % the 2026-09-08 handoff recorded at 3.0 W.  alpha moves
-    from v6's 0.134110280093 to 0.129169807169, by -3.68 %, and the "SoC term
-    ~31 % over-weighted" line in every artifact and document solved before this
-    decision is an artefact of the retired reference point, not of the alpha.
+    of the observed dwell is in the 10.5 W bin.  Campaign
+    hil_report_20260908_200836's `ems-sdp` run has a Run-window MEDIAN
+    SOURCE-SIDE stack power (`p_fc_w`/ETA_BOOST) of 14.6440 W.  CONSEQUENCE:
+    k is 13.0 % BELOW the map's marginal rate there, not 31 % above it as the
+    2026-09-08 handoff recorded at 3.0 W, so the "SoC term ~31 % over-weighted"
+    line in every artifact and document solved before this decision is an
+    artefact of the retired reference point, not of the alpha - and re-deriving
+    alpha RAISES it, to 0.142475472567 against v6's 0.134110280093 (+6.24 %).
+
+    ⚠️ THE 13.3654 W THIS PARAGRAPH FIRST CARRIED IS WITHDRAWN (D-7, lens-1
+    finding F1): it came from inverting the H-20 map on campaign I's
+    `h2_rate_gps` column, which the RETIRED gfc-linear law produced.  See
+    `ALPHA_MISMATCH_REF_P_STACK_W` for the three proofs.
 
     WHICH LEVER PAIR PRICES IT, and why it is the MODEL pair.  The five board
     readings of `EMS_LEVER_ETA_READINGS` are GFC-gram levers and cannot price
@@ -778,13 +783,11 @@ H2_LAW_LEGACY_TOKEN = "eta-proxy-legacy|%r" % (1.0 / (ETA_FC * Q_LHV_J_PER_G))
 #
 # THE MEASUREMENT.  Campaign I's `ems-sdp` hi-fi run
 # (HIL Results/hil_report_20260908_200836/scenario_ems-sdp_hifi, 54 982
-# Run-window ticks) has a Run-window MEDIAN stack power of 13.3654 W, recovered
-# by inverting the map on that run's own `h2_rate_gps` column - the exact
-# argument `h2_map` was evaluated at, rather than the `p_fc_w`/ETA_BOOST proxy,
-# which reads 14.6440 W because the plant bills `v_terminal*i` on the SOURCE
-# side (the two-curve gap of the design note, section 6).  This closes the
-# `TODO(calibrate)` both this constant and `mpc_ems.H2_BASIS_REF_P_STACK_W`
-# carried, and the two now hold the SAME number for the same reason.
+# Run-window ticks) has a Run-window MEDIAN SOURCE-SIDE stack power
+# (`p_fc_w`/ETA_BOOST, the proxy this constant's `TODO(calibrate)` named) of
+# 14.6440 W.  This closes the `TODO(calibrate)` both this constant and
+# `mpc_ems.H2_BASIS_REF_P_STACK_W` carried, and the two now hold the SAME
+# number for the same reason.
 #
 # ⚠️ IT IS EXOGENOUS ON PURPOSE.  The tempting alternative - the occupancy-
 # weighted stack power this SOLVER'S OWN policy commands on the SoC-target row
@@ -800,10 +803,33 @@ H2_LAW_LEGACY_TOKEN = "eta-proxy-legacy|%r" % (1.0 / (ETA_FC * Q_LHV_J_PER_G))
 #
 # WHAT IT COST TO HAVE BEEN WRONG: at 3.0 W the constant k = 1/(ETA_FC*Q_LHV)
 # is 31 % ABOVE the map's marginal rate, which is where the 2026-09-08 handoff's
-# "SoC term ~31 % over-weighted" came from.  At 13.3654 W it is 7.5 % BELOW it,
+# "SoC term ~31 % over-weighted" came from.  At 14.6440 W it is 13.0 % BELOW it,
 # so the sign of the mismatch reverses: the SoC term was UNDER-weighted, not
 # over-weighted, and re-deriving alpha RAISES it.
-ALPHA_MISMATCH_REF_P_STACK_W = 13.3654
+#
+# ⚠️ CORRECTED 2026-09-09 (D-7, lens-1 finding F1): 13.3654 -> 14.6440 W.  THE
+# MAP INVERSION DESCRIBED ABOVE WAS RUN ON A COLUMN THE H-20 MAP DID NOT
+# PRODUCE.  Campaign I predates the map swap in the scored column: 35.96 % of
+# the same 54 982 Run-window ticks carry `h2_rate_gps` BELOW
+# `h2_map.A0_OFFSET_GPS` = 6.632518e-05 g/s (impossible under H-20 at any
+# current), `h2_rate_gps / (H2_GFC_DC_GAIN_GPS_PER_W * p_fc_w / ETA_BOOST)` has
+# median 0.9999958 over that window (the column IS the retired gfc-linear law),
+# and the run carries neither an `h2_gfc_cum_g` column nor an `h2_map`
+# fingerprint.  So 13.3654 W, and the marginal 1.801474e-05 and LHV 0.4314 read
+# off it, are discarded.
+#
+# THE SHIPPED REFERENCE is the SOURCE-SIDE electrical proxy `p_fc_w /
+# ETA_BOOST`, Run-window median 14.6440 W (14.644018 W; bus-side median
+# 12.4474 W).  It survives the hydrogen-law change because `p_fc_w` is an
+# electrical quantity and the electrical model is UNCHANGED by the map swap -
+# the point transfers until the `FuelCellSource` refit moves the source curve.
+# The H-20 marginal rate there is 1.914825e-05 g/s/W, and the LHV efficiency
+# 0.43291 is the map's peak (0.43291 at 14.752 W).
+#
+# ⚠️ CAMPAIGN II RE-MEASURES IT.  The post-phase-A campaign is the first whose
+# `h2_rate_gps` column is genuinely H-20 and therefore the first on which the
+# map inversion is legitimate at all.  Re-derive from it; do not carry this.
+ALPHA_MISMATCH_REF_P_STACK_W = 14.6440
 # The H-20 marginal hydrogen rate at that point: the number that REPLACES the
 # constant k = 1/(ETA_FC*Q_LHV) in the lever algebra under --alpha-mode
 # lever-h20 (D16).  Derived, never typed.
@@ -972,13 +998,31 @@ EMS_LEVERS_ETA_MEAN_SOURCE = (
 # invocation omits.  The omission is inert here: dropping it moves L_share by
 # 0.03 % and L_chg by 3e-4 %.
 #
-# ⚠️ THESE ARE MODEL LEVERS, NOT BOARD LEVERS, and the artifact says so.  The
-# same construction run under `--h2-map gfc-linear` walks to L_share 0.4153531
-# against the board's five-reading mean 0.4165286 - agreement to 0.28 %, which
-# is why the H-20 pair is trusted for its RATIO - and to L_chg 0.3198422
-# against the board's 0.3337114, which the walk under-reads by 4.2 %.  Campaign
-# II's three alpha legs replace both numbers; until then every consumer treats
-# them as PROVISIONAL.
+# ⚠️ RE-WALKED 2026-09-09 (D-7, lens-1 finding F2), AND THE FIRST WALK WAS ON
+# THE WRONG LEG.  The row that shipped as `cal` on 2026-09-09 morning
+# (0.0161093 g / -0.0010954 SoC) is bit-identical to an `sdp-v2` / `ems-sdp` /
+# `sdp_policy_v6` walk - not `sdp-sweep` / `ems-sdp-alpha-cal`, which walks
+# 0.0071107 g / -0.0044717 SoC.  Every figure the substitution produced is
+# withdrawn: L_share 0.4222722 -> **0.5671522**, L_chg(0.88) 0.3743980 ->
+# **0.3810417**, L_chg(measured) 0.3417529 -> **0.3744189**, and the Gfc-law
+# cross-check "0.28 % agreement" -> **-1.09 %** against the board's 0.4165286
+# (the walked Gfc share lever is 0.4119966, not 0.4153531).
+#
+# THE LOOP MODE IS NOW NAMED, because it moves the share lever by 4.3 %.  The
+# shipped pair is E's REAL share-controller recursion
+# (`governor_model.GovernorModel(closed_loop="controller")`, the default since
+# 849ff13).  The retired one-tick surrogate walks L_share 0.5916735 /
+# L_chg(measured) 0.3744185 / Gfc share 0.4196505 (+0.75 % against the board).
+# The two disagree on the SHARE lever only, and only through the `greedy` leg:
+# that leg sits on the low share rail, where the surrogate re-cuts the fuel
+# cell at 1 kHz - the ~75x over-cut against the board.  The CHARGE lever agrees
+# between the two loops to 1e-6, which is why lambda is built from the
+# cal-charge pair (run_hil_suite.EMS_EQ_H2_LAMBDA_SOC_PER_G) and not from this
+# share lever.
+#
+# ⚠️ THESE ARE MODEL LEVERS, NOT BOARD LEVERS, and the artifact says so.
+# Campaign II's three alpha legs replace both numbers; until then every
+# consumer treats them as PROVISIONAL.
 #
 # THE CHARGE LEVER IS ERA-DEPENDENT, so the pair is recorded at the era it was
 # walked at.  The walk prices a charge window at the PLANT's converter
@@ -987,18 +1031,20 @@ EMS_LEVERS_ETA_MEAN_SOURCE = (
 # compare its alpha against the pair walked at that same round trip, exactly as
 # D15 requires of the model pair.  The share lever is era-invariant and is
 # identical in both walks, which is the internal check on the pair.
-EMS_LEVER_H20_WALK_SHARE_SOC_PER_G = 0.4222722
-EMS_LEVER_H20_WALK_CHARGE_ETA088_SOC_PER_G = 0.3743980
-EMS_LEVER_H20_WALK_CHARGE_MEASURED_SOC_PER_G = 0.3417529
+EMS_LEVER_H20_WALK_SHARE_SOC_PER_G = 0.5671522
+EMS_LEVER_H20_WALK_CHARGE_ETA088_SOC_PER_G = 0.3810417
+EMS_LEVER_H20_WALK_CHARGE_MEASURED_SOC_PER_G = 0.3744189
 EMS_LEVER_H20_WALK_SOURCE = (
     "WALKED, not measured on the board: tools/ems_walk.py, miniforge, "
-    "governor on, loss_map=plant_loss_map(), dv0_v=0.013522, "
-    "droop_scale_fc=0.9434, r_series_ohm=0.033, scenarios "
-    "ems-sdp-alpha-{greedy,cal,charge} under --h2-map h20 (2026-09-09). "
-    "PROVISIONAL until campaign II re-measures the three alpha legs on the "
-    "board; the same construction under the retired Gfc law walks the share "
-    "lever to within 0.28 % of the board's five-reading mean and the charge "
-    "lever 4.2 % under it.")
+    "governor on, closed_loop='controller', loss_map=plant_loss_map(), "
+    "dv0_v=0.013522, droop_scale_fc=0.9434, r_series_ohm=0.033, strategy "
+    "sdp-sweep, scenarios ems-sdp-alpha-{greedy,cal,charge} under --h2-map "
+    "h20 (RE-WALKED 2026-09-09 after the first walk substituted an sdp-v2 / "
+    "ems-sdp run for the cal leg). PROVISIONAL until campaign II re-measures "
+    "the three alpha legs on the board; the same construction under the "
+    "retired Gfc law walks the share lever to 0.4119966, 1.09 % under the "
+    "board's five-reading mean 0.4165286 (0.4196505, +0.75 %, under the "
+    "retired one-tick surrogate loop).")
 
 
 def h20_walk_levers(eta_chg=None):
@@ -2817,10 +2863,14 @@ def main(argv=None):
         meta["alpha"]["levers_soc_per_g"]["k_basis"] = {
             "k_gps_per_w": float(H2_MARGINAL_ALPHA_REF_GPS_PER_W),
             "ref_p_stack_w": float(ALPHA_MISMATCH_REF_P_STACK_W),
-            "ref_source": ("the occupancy-weighted stack power this policy "
-                           "commands on the SoC-target row; corroborated by "
-                           "the 13.3654 W Run-window median of campaign "
-                           "hil_report_20260908_200836's ems-sdp hi-fi run"),
+            "ref_source": ("the Run-window MEDIAN SOURCE-SIDE stack power "
+                           "(p_fc_w/ETA_BOOST) of campaign "
+                           "hil_report_20260908_200836's ems-sdp hi-fi run, "
+                           "14.6440 W over 54982 Run ticks; an ELECTRICAL "
+                           "quantity, so it transfers across the hydrogen-law "
+                           "change. PROVISIONAL - campaign II is the first "
+                           "whose h2_rate_gps column is genuinely H-20 and "
+                           "the first the map inversion may be run on"),
             "k_classic_gps_per_w": float(1.0 / (ETA_FC * Q_LHV_J_PER_G)),
             "k_classic_error_pct": float(
                 100.0 * ((1.0 / (ETA_FC * Q_LHV_J_PER_G))
