@@ -2000,3 +2000,14 @@ with reversal paths, the primary worktree's branch is the operator's - commit fr
   every hydrogen band provisional and calibrated by this campaign (D-6); the frontier SDP v6 (D-9); fresh
   matched-DP records at the tool pass. tools/ edit-frozen. LIVE analysis with the TWO-AGENT CAP; completion is
   read from results.json meta.partial. Budget after II: 3 of 5 remain; campaign III conditional.
+- **Campaign II interim (10 of 75, ~10:45): 7 analyzed, all PASS correct; the H-20 era reads as the handoff
+  predicted.** A0 accrues from State 0 (66.7 % of charge-cruise's whole-run figure, 84 % on Idle-only runs);
+  h2_run_g reproduces the Run-window delta bit-identically; the unscored Gfc bridge column reproduces campaign I
+  to -0.05 % on sag / vbso (the plant is otherwise unchanged); every non-hydrogen anchor repeats (arm cut
+  0.057631293 A to 16 digits; k_d 4067/717; window-to-latch -578 ppm; UV dwells 18.4 / 19.7 ms); the board
+  carried campaign I's last replay latch across the host reboot (never power-cycled; cleared at 0.502 s).
+  charge_edges_safe scored F1's gate on charge-cruise; max_tick_overrun_ms 2.6-4.8 ms. h2_saturated_ticks = 0
+  on charge-cruise for a measured reason: saturation is on STACK power and the charge ramp sags the bus, so
+  the 1.40 A latch sits at 92.8 % of P_MAX (doc item: restate the saturation expectation on stack power).
+  comm-loss the standing artefact; drive SKIP. Two-agent cap holding (opening four + regen trio Sonnet,
+  charge-cruise Opus).
