@@ -1636,3 +1636,10 @@ during a live campaign, ASCII prints, decision pairs for judgment calls with rev
   of campaign I**; the leg is a re-run candidate for the next campaign (none tonight by the operator's ruling).
   Correction adopted for the skill: LIVE dispatch must bound concurrency on a shared host. Opus adjudication
   running to confirm the gap class (ERR_HIL_STALE vs ERR_PI_TIMEOUT).
+- **Campaign I scenario half complete and ANALYZED (48/48, ~00:25):** 38 PASS confirmed correct, 1 vacuous SKIP,
+  9 FAILs all classified (2 pre-classified artefacts, 1 FALSE FAIL = the ems_walk floor defect, 1 scenario-
+  design gap (b00-v1), 3 the MPC delivery-table HOLD gap (ftp75-mpc, ftp75c-mpc x2 checks, mpc), 1 REAL fw v28
+  design consequence (ems-ftp75-sdp's r-based cut chatter), 1 host stall (mpc-cross, void)). ZERO board defects.
+  F1 closed on all three recorded triggers (charge-to-full standstill, the ftp75c regen early releases x4 legs,
+  the ftp75c charge-window entry) with zero UV_BUS ticks campaign-wide; the joint clamp bound's third reading
+  1.2835 A makes the population 4.2 % wide (1.3241 A not calibrated); the mppt F4 null result. Replays running.
