@@ -1830,3 +1830,14 @@ with reversal paths, the primary worktree's branch is the operator's - commit fr
   never widened; the morning round re-pins from the board. The MPC HOLD state, the frontier arithmetic on
   lambda 0.423 and the three xfails proceed as planned. Reversal: the provisional notes are removed by the re-pin.
   C' dispatches when agent D releases run_hil_suite.py.
+- **Agent D landed e42577b (~05:20, 40 min; not pushed):** bt_bus_restored as an event-shaped kind
+  (follow_within_ms; both b00 shapes validated on campaign I's CSVs); max_tick_overrun_ms + the HIL_ZERO_MS
+  tripwire (reproduces the 314.484 ms stall, names it a SIM ARTEFACT); mpc_cadence on Run-state rows; the joint
+  bound re-keyed to 1.3345 A with the three readings; sdp-cross windows (5, 33) / (34, 190); the interior check
+  retired; charge_edges_safe (rise_require_switch_bit) on soc-band / charge-cruise / alpha-charge - FAILS campaign
+  H's fw v27 socband (2 rises without FC_BUS HIGH) and PASSES all three fw v28 legs; the per-scenario cut census
+  and the replay share-cut census; docs. Corrections to my brief: the two-period window delay is the conduction
+  test re-blanking; the replay half is not zero-coverage but "no selection CHANGE is covered" (ML0203 commands
+  0/1 for 3636 Run ticks). Tests 938 / 4 failed (E's moved walk pins in test_run_hil_suite.py -> C') / 2 xfail;
+  stdlib 2460 / 96 / 4. **Agent C' dispatched (~05:25)**: the four re-pins, the MPC HOLD state, the re-walk and
+  the provisional bands (D-6), the frontier arithmetic on lambda 0.423, the xfails.
