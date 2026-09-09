@@ -1892,3 +1892,10 @@ with reversal paths, the primary worktree's branch is the operator's - commit fr
   the frontier on h2_run_g, the saturation refusal, the stale banner line). Incident: the first A' / lens-2 launch
   read placeholder briefs (a heredoc quoting failure) and was stopped within a minute of starting; relaunched on
   the filled briefs (~06:50). Correction: brief edits go through a script file, never an inline heredoc.
+- **INCIDENT: HOST REBOOT at 03:18** (Windows LastBootUpTime), 16 min after A' and the lens-2 reviewer relaunched
+  at 03:02; both transcripts empty, nothing landed; the Claude Code process ended with them. Discovered at 08:20
+  on session resume. A' had left an UNCOMMITTED partial diff in DC-Balancer-main (mpc_ems / run_hil_suite /
+  sdp_alpha_sweep / sdp_ems_solver / sdp_policy_v7.json; F1 14.6440 W and a v7 re-solve visible; untested).
+  Board reachable after the reboot; the primary worktree intact on the operator's branch (6 standing files).
+  A' RESUMED (08:25) with an audit-the-diff-then-finish instruction; lens 2 relaunched on committed content.
+  Five hours lost; campaign II now lands in the operator's morning rather than overnight.
