@@ -2020,3 +2020,14 @@ with reversal paths, the primary worktree's branch is the operator's - commit fr
   29-84 % of a run's hydrogen depending on load; the scp-inrush cut bit-identical a fifth campaign; F1's gate
   scored on charge-cruise and soc-band. Suite items queued: plumbing-only hydrogen floors (no discrimination),
   the saturation label (bus watts under a stack label), the 0.498 A FC_CHARGE cut outside the census.
+- **CAMPAIGN II HEADLINE (25 of 75, ~12:10): THE H-20 LEVERS ARE MEASURED ON THE BOARD.** Run-window L_share
+  0.5656 / L_chg 0.3845 SoC/g (walk 0.5672 / 0.3744: +0.3 % / +2.7 %); ratio 0.680, NOT the charger round trip
+  0.801 - the eta identity is retired for every alpha construction under the convex map (WORK_QUEUE 0g-1's basis
+  question is answered by measurement); lambda from the cal-charge lever 0.4799 SoC/g, inside the shipped band
+  [0.39, 0.59] and +2.7 % above the provisional 0.4673 (the share construction 0.7059 is outside the band: the
+  board favours the cal-charge lever). A0 cancels exactly (stack-on equal to 0.4 ms across the three legs).
+  L_share carries +/-2 % from the SoC column's 1e-5 quantization. The charge leg's Run-median stack power
+  14.635 W = the H2_BASIS_REF point 14.644 W to -0.06 % (measured). ems-sdp: v6 played (sidecar sha), Gfc bridge
+  +43 ppm, codes byte-identical, board -3.2 % vs the walk (calibration). ems-dp-replay's FAIL is a stale floor:
+  the H-20 table commands a 0.625 drain rail (board tracks it to 1.4e-4) and now opens a 2.5 s charge window;
+  four suite items queued. 24 runs analyzed, zero board defects, F1's gate scored clean on every window so far.
