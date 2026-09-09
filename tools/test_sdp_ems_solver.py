@@ -1794,3 +1794,156 @@ def test_build_stage_under_the_legacy_law_keeps_the_same_control_feasible():
         soc_lo=soc_grid[0], soc_hi=soc_grid[-1], h2_law="eta-proxy")
     assert feas[0, :, 0].all()
     assert not np.isinf(stage[0, :, 0]).any()
+
+
+# ---------------------------------------------------------------------------
+# D16 -- alpha on the H-20 marginal rate (2026-09-09, the H-20 phase-B round)
+# ---------------------------------------------------------------------------
+
+def test_model_levers_k_override_scales_both_levers_and_not_their_ratio():
+    """D16.  `k` is the marginal hydrogen rate the lever algebra is a ratio
+    against.  Overriding it must move the LEVEL of both levers together and
+    leave the ratio -- which is `eta_chg` exactly, D13's identity -- untouched,
+    because that ratio is what the admission margin is made of."""
+    eta = solver.ETA_CHG_MEASURED_ROUND_TRIP
+    base_s, base_c = solver.model_levers(eta_chg=eta)
+    k_classic = 1.0 / (solver.ETA_FC * solver.Q_LHV_J_PER_G)
+    k_h20 = solver.H2_MARGINAL_ALPHA_REF_GPS_PER_W
+    over_s, over_c = solver.model_levers(eta_chg=eta, k_gps_per_w=k_h20)
+    # Both levers scale by exactly k_classic / k_h20.
+    scale = k_classic / k_h20
+    assert over_s == pytest.approx(base_s * scale, rel=1e-14)
+    assert over_c == pytest.approx(base_c * scale, rel=1e-14)
+    # ... so the ratio is untouched, and it is eta_chg.
+    assert over_c / over_s == pytest.approx(base_c / base_s, rel=1e-14)
+    assert over_c / over_s == pytest.approx(eta, rel=1e-14)
+    # An explicit `None` is the documented default and must not move anything.
+    assert solver.model_levers(eta_chg=eta, k_gps_per_w=None) == (base_s,
+                                                                 base_c)
+
+
+def test_the_alpha_reference_point_is_the_measured_operating_point():
+    """D16.  `ALPHA_MISMATCH_REF_P_STACK_W` was a 3.0 W DESIGN ESTIMATE and is
+    now campaign hil_report_20260908_200836's Run-window median stack power.
+
+    The two matter in OPPOSITE directions, which is why this is pinned rather
+    than left to the constant's comment: at 3.0 W the constant `k` is ~31 %
+    ABOVE the map's marginal rate (the "SoC term over-weighted" reading the
+    2026-09-08 handoff carried), and at the measured point it is ~7.5 % BELOW
+    it, so a re-derived alpha RISES where the handoff predicted a fall."""
+    ref = solver.ALPHA_MISMATCH_REF_P_STACK_W
+    assert ref == pytest.approx(13.3654, abs=1e-4)
+    assert solver.H2_MARGINAL_ALPHA_REF_GPS_PER_W == pytest.approx(
+        h2_map.marginal_gps_per_w(ref), rel=1e-15)
+    k_classic = 1.0 / (solver.ETA_FC * solver.Q_LHV_J_PER_G)
+    # BELOW at the measured point ...
+    assert solver.H2_MARGINAL_ALPHA_REF_GPS_PER_W > k_classic
+    assert k_classic / solver.H2_MARGINAL_ALPHA_REF_GPS_PER_W - 1.0 == \
+        pytest.approx(-0.0748, abs=5e-4)
+    # ... and ABOVE at the retired 3.0 W estimate.  Both signs pinned, so a
+    # reference-point edit cannot silently restore the retired reading.
+    assert k_classic / h2_map.marginal_gps_per_w(3.0) - 1.0 == pytest.approx(
+        0.3106, abs=5e-4)
+
+
+def test_h20_walk_levers_return_the_era_they_were_walked_at():
+    """D16.  The walked pair is era-dependent on the charge side, so the era
+    being SOLVED must select the walk taken at that era rather than a
+    projection of another one."""
+    share = solver.EMS_LEVER_H20_WALK_SHARE_SOC_PER_G
+    s88, c88 = solver.h20_walk_levers(solver.ETA_CHG_DEFAULT)
+    sm, cm = solver.h20_walk_levers(solver.ETA_CHG_MEASURED_ROUND_TRIP)
+    # The share lever is era-INVARIANT: it never touches the charger.  That is
+    # the internal check on the pair, and it is asserted rather than assumed.
+    assert s88 == share and sm == share
+    assert c88 == solver.EMS_LEVER_H20_WALK_CHARGE_ETA088_SOC_PER_G
+    assert cm == solver.EMS_LEVER_H20_WALK_CHARGE_MEASURED_SOC_PER_G
+    # The charge lever is WORSE at the measured round trip, which is the whole
+    # reason the era has to be selected rather than assumed.
+    assert cm < c88 < share
+    # The 1:1 current-transfer era has no walk at all and must refuse rather
+    # than fabricate one.
+    with pytest.raises(ValueError):
+        solver.h20_walk_levers(None)
+
+
+def test_lever_h20_mode_reproduces_the_shipped_v7_alpha_and_certificate():
+    """D16.  The shipped `sdp_policy_v7.json` weight, its windows, and the
+    property that makes the mode legitimate: it is D12's placement with one
+    constant replaced, so the charge lever still clears its bound by exactly
+    sqrt(eta_chg)."""
+    eta = solver.ETA_CHG_MEASURED_ROUND_TRIP
+    l_share, l_chg = solver.model_levers(
+        eta_chg=eta, k_gps_per_w=solver.H2_MARGINAL_ALPHA_REF_GPS_PER_W)
+    omg = 0.05
+    alpha = solver.alpha_lever(omg, l_share, l_chg)
+    assert alpha == pytest.approx(0.134041467771, rel=1e-11)
+    # Inside the MODEL window ...
+    lo, hi = solver.admission_window(omg, l_share, l_chg)
+    assert lo < alpha < hi
+    assert lo == pytest.approx(0.119978, abs=1e-6)
+    assert hi == pytest.approx(0.149753, abs=1e-6)
+    # ... and inside the WALKED window at the era being solved, which is what
+    # the tripwire checks as the artifact's `measured` pair.
+    ws, wc = solver.h20_walk_levers(eta)
+    wlo, whi = solver.admission_window(omg, ws, wc)
+    assert wlo < alpha < whi
+    # D13's identity survives the k override: the margin is convention-free.
+    assert l_chg / (omg / alpha) == pytest.approx(eta ** 0.5, rel=1e-12)
+
+
+def test_lever_h20_alpha_is_above_the_classic_one_by_the_marginal_rate_ratio():
+    """Adding the mode must not have moved any other mode's arithmetic, which
+    is also why `candidates.lever` is reported at the CLASSIC constant `k` in
+    every mode: the two eras stay differenceable."""
+    eta = solver.ETA_CHG_MEASURED_ROUND_TRIP
+    classic = solver.alpha_lever(0.05, *solver.model_levers(eta_chg=eta))
+    assert classic == pytest.approx(0.124010903213, rel=1e-11)
+    h20 = solver.alpha_lever(
+        0.05, *solver.model_levers(
+            eta_chg=eta, k_gps_per_w=solver.H2_MARGINAL_ALPHA_REF_GPS_PER_W))
+    k_classic = 1.0 / (solver.ETA_FC * solver.Q_LHV_J_PER_G)
+    # alpha scales as m/k, so the ratio is the marginal-rate ratio exactly.
+    assert h20 / classic == pytest.approx(
+        solver.H2_MARGINAL_ALPHA_REF_GPS_PER_W / k_classic, rel=1e-12)
+    assert h20 > classic
+
+
+def test_the_shipped_v7_artifact_is_what_the_mode_produces():
+    """The artifact on disk, against the derivation in this file.  A
+    regenerated v7 whose alpha, mode, billing or hydrogen law moved fails
+    here rather than at the next campaign."""
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                        "sdp_policies", "sdp_policy_v7.json")
+    with open(path, encoding="utf-8") as fh:
+        doc = json.load(fh)
+    assert doc["alpha"]["mode"] == "lever-h20"
+    assert doc["alpha"]["value"] == pytest.approx(0.134041467771, rel=1e-11)
+    assert doc["h2"]["law"] == solver.H2_LAW_H20
+    assert doc["h2"]["law_token"] == h2_map.fingerprint_str()
+    assert doc["charger"]["eta_chg"] == pytest.approx(
+        solver.ETA_CHG_MEASURED_ROUND_TRIP, rel=1e-12)
+    assert doc["charger"]["eta_chg_basis"] == solver.ETA_CHG_BASIS_MEASURED
+    # BOTH windows real and BOTH containing the alpha: the certificate v6
+    # carried, now carried on the H-20 axis.
+    adm = doc["alpha"]["admission"]
+    assert adm["in_window_model"] is True
+    assert adm["in_window_measured"] is True
+    assert adm["allow_out_of_window"] is not True
+    # The k basis is published, because it is the one thing a reader cannot
+    # reconstruct from the artifact alone.
+    kb = doc["alpha"]["levers_soc_per_g"]["k_basis"]
+    assert kb["ref_p_stack_w"] == pytest.approx(13.3654, abs=1e-4)
+    assert kb["k_gps_per_w"] == pytest.approx(
+        solver.H2_MARGINAL_ALPHA_REF_GPS_PER_W, rel=1e-15)
+    # 46 charge cells, ALL in demand bin 0 at SoC rows below the target.  See
+    # docs/modeling/sdp_alpha_resolve_h20_20260909.md section 4.3: this is
+    # convexity, not a mispriced alpha, and it is pinned so a future solve
+    # that spreads charging across bins cannot pass unnoticed.
+    cg = doc["policy"]["charge_goal"]
+    soc = doc["soc"]["grid"]
+    cells = [(i, j) for i, row in enumerate(cg)
+             for j, v in enumerate(row) if float(v) > 0.0]
+    assert len(cells) == 46
+    assert {j for _i, j in cells} == {0}
+    assert max(soc[i] for i, _j in cells) < doc["soc"]["target"]

@@ -353,7 +353,12 @@ def test_end_to_end_totals_come_from_the_csv_and_match_the_document(
     by = {s["run"]: s for s in payload["groups"][0]["strategies"]}
     assert by["ems-sdp"]["h2_run_g"] == pytest.approx(0.0126188851, abs=1e-10)
     assert by["ems-sdp"]["delta_soc_run"] == pytest.approx(-0.00164, abs=1e-9)
-    assert by["ems-sdp"]["eq_h2_g"] == pytest.approx(0.0116188851, abs=1e-9)
+    # RE-PIN 2026-09-09: 0.0116188851 -> 0.0116496180. MECHANISM: eq-H2 is
+    # h2 minus dSoC_diff/lambda, and lambda moved 0.41 -> 0.423 - a change of
+    # UNIT onto the H-20 hydrogen axis, not a re-measurement. The fixture h2
+    # and delta_soc above are untouched, which is the check that only the
+    # scorer rate moved.
+    assert by["ems-sdp"]["eq_h2_g"] == pytest.approx(0.0116496180, abs=1e-9)
     md = (tiny_campaign / ec.MARKDOWN_NAME).read_text(encoding="utf-8")
     assert "0.0126189" in md and ec.COMMENTARY_PLACEHOLDER in md
 

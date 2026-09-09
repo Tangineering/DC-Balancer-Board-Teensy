@@ -1954,10 +1954,13 @@ def test_ems_strategy_role_reads_the_sim_registry():
     """The role is LOOKED UP, never copied -- a second table here could let a
     demonstration run be labelled a frontier one after somebody moved the role
     in hil_plant_sim and not here."""
-    # sdp-v6 is the frontier law (2026-09-03, the measured charge round trip);
-    # sdp-v4 and sdp-v3 were demoted in turn and are retained for
-    # comparability, and sdp-v5 is the record of the measured-lever finding.
-    assert hra.ems_strategy_role("sdp-v6") == "frontier"
+    # sdp-v7 is the frontier law (2026-09-09, the H-20 re-derivation:
+    # sdp_ems_solver D16 re-prices the lever algebra on the H-20 map own
+    # marginal rate at the rig measured operating point). sdp-v6, sdp-v4 and
+    # sdp-v3 were demoted in turn and are retained for comparability, and
+    # sdp-v5 is the record of the measured-lever finding.
+    assert hra.ems_strategy_role("sdp-v7") == "frontier"
+    assert hra.ems_strategy_role("sdp-v6") == "demonstration"
     assert hra.ems_strategy_role("sdp-v4") == "demonstration"
     assert hra.ems_strategy_role("sdp-v5") == "demonstration"
     assert hra.ems_strategy_role("sdp-v3") == "demonstration"

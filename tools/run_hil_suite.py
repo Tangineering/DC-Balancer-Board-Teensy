@@ -13302,12 +13302,74 @@ def _row(cells):
 # specifically because share-shifting is the exchange every leg on this
 # frontier can actually make; the Ag105 charge lever (0.2364 SoC/g) is a
 # DIFFERENT and worse rate, which is the whole finding the v3 artifact encodes.
-EMS_EQ_H2_LAMBDA_SOC_PER_G = 0.41
+#
+# ⚠️ 0.41 -> 0.423 ON 2026-09-09, AND IT IS A CHANGE OF UNIT, NOT A BETTER
+# MEASUREMENT OF THE SAME NUMBER.  Every campaign that produced 0.409-0.415
+# scored `h2_cum_g` on the retired linear Gfc map, so 0.41 is a share lever in
+# GFC GRAMS.  The scored axis is the H-20 convex map from 2026-09-08
+# (`tools/h2_map.py`), and a lever is grams-denominated: an eq-H2 figure
+# computed with a Gfc-gram lambda against H-20-gram hydrogen is a mixture of
+# two units.  THE ARITHMETIC, in three steps, each one measured rather than
+# assumed:
+#
+#   1. THE BOARD SUPPLIES THE LEVEL.  The five eta-era campaign readings
+#      (sdp_ems_solver.EMS_LEVER_ETA_READINGS, campaigns B-F) mean
+#      L_share = 0.4165286 SoC/g of Gfc hydrogen.
+#   2. THE WALK SUPPLIES THE ERA RATIO, and it is validated against the board
+#      before it is used.  `tools/ems_walk.py` on the same 61 s `ems-sdp`
+#      stimulus through the same three alpha legs, by the same construction
+#      (`cal` minus `greedy` is purely the share lever), walks
+#          L_share = 0.4153531 SoC/g under `--h2-map gfc-linear`
+#          L_share = 0.4222722 SoC/g under the H-20 map
+#      The Gfc-law walk agrees with the board's own five-reading mean to
+#      0.28 %, which is what licenses the walk to carry the RATIO,
+#      0.4222722/0.4153531 = 1.016658.
+#   3. THE PRODUCT.  0.4165286 * 1.016658 = 0.4234674 SoC/g, quoted as 0.423
+#      on the same three-figure convention 0.41 used.
+#
+# ⚠️ PROVISIONAL, and the reason is named: the H-20 lever has never been
+# measured ON THE BOARD.  Campaign II's three `ems-sdp-alpha-*` legs measure it
+# directly and replace this constant; until then it is a board LEVEL carried
+# across eras by a MODEL RATIO.  Two independent cross-checks bracket it: the
+# H-20 walk alone gives 0.4223, and the closed-form model lever re-priced at
+# the H-20 marginal rate (sdp_ems_solver D16, 13.3654 W of stack power) gives
+# 0.4325 - a 2.4 % spread, with 0.423 near its low end.
+#
+# ⚠️ AND THE 2026-09-08 HANDOFF'S "roughly 0.57 SoC/g at the rig median" IS
+# REFUTED.  That estimate re-priced the model lever at a 3.2 W design estimate
+# of the rig's median stack power.  The rig's Run-window median stack power,
+# measured on campaign hil_report_20260908_200836's own `ems-sdp` hi-fi run, is
+# 13.3654 W - 4.2x higher, near the map's efficiency peak rather than far below
+# it - so the marginal rate there is 1.80e-05 g/s/W and not 1.28e-05, and the
+# lever barely moves between the two hydrogen eras (+1.7 %) instead of rising
+# 39 %.
+EMS_EQ_H2_LAMBDA_SOC_PER_G = 0.423
 # The measured band the verdict must be STABLE across.  A verdict that flips
 # inside it is not a result — it is a coin flip on a constant we know only to
 # ~1.5 % — so such a run renders KNIFE-EDGE: neither PASS nor FAIL, and NOT
 # counted as passing.  Deliberately not a "pass if any lambda passes" rule.
-EMS_EQ_H2_LAMBDA_BAND = (0.409, 0.415)
+#
+# ⚠️ RE-STATED 2026-09-09 WITH THE CONSTANT ABOVE, because a band in Gfc grams
+# around a lambda in H-20 grams is not a band at all - `lam_lo`/`lam_hi` below
+# take the min and max over `[lambda] + band`, so leaving (0.409, 0.415) would
+# have silently swept every verdict across a 3.4 % interval spanning two units.
+# THIS IS THE LAMBDA CONSTANT'S OWN UNCERTAINTY, not an expectation band.
+#
+# THE ENDS ARE THE TWO INDEPENDENT CROSS-CHECKS on the shipped 0.423, not a
+# chosen width:
+#   0.4223  the H-20 walk's share lever alone (no board level, no era ratio) -
+#           `ems_walk` through ems-sdp-alpha-{greedy,cal}, 2026-09-09.
+#   0.4325  the closed-form model lever re-priced at the H-20 marginal rate,
+#           1/(m * V_pack * C_As) with m = 1.736e-05 g/s/W at 13.3654 W of
+#           stack power (sdp_ems_solver D16).
+# The spread is 2.4 %, wider in relative terms than the Gfc era's 1.5 %, and
+# the reason is stated rather than hidden: the LEVEL is board-measured but the
+# transfer into H-20 grams is MODELLED, and no campaign has yet measured a
+# lever on this axis.  Campaign II's three `ems-sdp-alpha-*` legs measure it
+# directly, at which point this band collapses onto the reading spread of those
+# legs the way the Gfc-era band did.  Until then a wider band is the honest
+# statement and it makes MORE verdicts KNIFE-EDGE, not fewer.
+EMS_EQ_H2_LAMBDA_BAND = (0.4223, 0.4325)
 
 # The three legs, by role.  Keyed by role rather than listed, because each one
 # means something different in the arithmetic and a bare list would let a

@@ -95,7 +95,7 @@ def test_in_window_count_matches_investigator_prediction():
 # ---------------------------------------------------------------------------
 
 def test_eq_h2_hand_computed():
-    # eq_h2 = h2 - (dsoc - dsoc_ref) / lambda, lambda = 0.41.
+    # eq_h2 = h2 - (dsoc - dsoc_ref) / lambda.
     h2 = 0.0125
     dsoc = -0.002
     dsoc_ref = -0.0015
@@ -103,10 +103,18 @@ def test_eq_h2_hand_computed():
     expected = h2 - (dsoc - dsoc_ref) / lam
     got = sweep.eq_h2(h2, dsoc, dsoc_ref, lam=lam)
     assert got == pytest.approx(expected, abs=1e-15)
-    # Default lambda matches the module constant of 0.41.
-    assert sweep.EQ_H2_LAMBDA_SOC_PER_G == pytest.approx(0.41, abs=1e-12)
+    # The module constant, 0.41 -> 0.423 on 2026-09-09.  MECHANISM: a change of
+    # UNIT, not a re-measurement.  0.41 was the eq-H2 share lever in GFC grams;
+    # the scored hydrogen axis has been the H-20 convex map since 2026-09-08,
+    # and 0.423 is the same board-measured level carried onto that axis by the
+    # walked era ratio 0.4222722 / 0.4153531 = 1.016658
+    # (docs/modeling/sdp_alpha_resolve_h20_20260909.md section 3.5).  It must
+    # equal run_hil_suite.EMS_EQ_H2_LAMBDA_SOC_PER_G, which this file
+    # deliberately does not import - see the constant's own comment.
+    assert sweep.EQ_H2_LAMBDA_SOC_PER_G == pytest.approx(0.423, abs=1e-12)
+    expected_default = h2 - (dsoc - dsoc_ref) / sweep.EQ_H2_LAMBDA_SOC_PER_G
     got_default = sweep.eq_h2(h2, dsoc, dsoc_ref)
-    assert got_default == pytest.approx(expected, abs=1e-15)
+    assert got_default == pytest.approx(expected_default, abs=1e-15)
 
 
 def test_eq_h2_zero_when_dsoc_matches_ref():

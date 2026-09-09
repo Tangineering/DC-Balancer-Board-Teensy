@@ -6884,15 +6884,24 @@ def test_main_ems_sdp_run_records_sdp_policy_block_in_meta_config(tmp_path):
     # rebound to v4 on 2026-09-02, then to the MEASURED-ROUND-TRIP v6 on
     # 2026-09-03; the sidecar must name THAT file, not the frozen v2
     # demonstration artifact, not the old-era v3 and not the demoted v4.
-    assert block["path"] == os.path.join(hil.SDP_POLICY_DIR, hil.SDP_POLICY_FILE_V6)
+    # RE-PIN 2026-09-09: the scenario is bound to  (the H-20
+    # re-derivation, sdp_ems_solver D16).
+    assert block["path"] == os.path.join(hil.SDP_POLICY_DIR,
+                                         hil.SDP_POLICY_FILE_V7)
     assert len(block["file_sha256"]) == 64
     assert len(block["policy_sha256"]) == 64
     assert block["n_soc"] > 0 and block["n_bins"] > 0
     assert block["decision_dt_s"] == pytest.approx(1.0)
     # WP-1B2b: the artifact's own ECONOMICS and ERA, recorded so a report
     # reader can compare two SDP legs without opening either artifact.
-    assert block["alpha"] == pytest.approx(0.13411028009327516)
-    assert block["alpha_mode"] == "lever-measured"
+    # RE-PIN 2026-09-09: alpha 0.134110280093 -> 0.134041467771 (-0.05 %) and
+    # the mode lever-measured -> lever-h20, the H-20 re-derivation
+    # (sdp_ems_solver D16). The placement rule and the billing are both
+    # unchanged; what moved is the marginal hydrogen rate the lever algebra
+    # is a ratio against, from the constant 1/(ETA_FC*Q_LHV) to the H-20
+    # map own rate at the rig measured 13.3654 W operating point.
+    assert block["alpha"] == pytest.approx(0.1340414677709026)
+    assert block["alpha_mode"] == "lever-h20"
     # THE ERA DIFFERENCE IS DECLARED, not accidental (2026-09-03): the
     # artifact bills the MEASURED end-to-end round trip and says so in
     # `eta_chg_basis`, so `era_match` is False BY DESIGN and the sidecar
@@ -6901,8 +6910,17 @@ def test_main_ems_sdp_run_records_sdp_policy_block_in_meta_config(tmp_path):
     assert block["eta_chg"] != pytest.approx(hil.plant_eta_chg())
     assert block["era_match"] is False
     assert block["eta_chg_basis"] == hil.SDP_ETA_CHG_BASIS_MEASURED
-    assert block["charge_cells"] == 0
-    assert block["policy_file"] == hil.SDP_POLICY_FILE_V6
+    # RE-PIN 2026-09-09: 0 -> 46. The H-20 stage cost admits charging in 46 of
+    # 2525 cells, ALL in demand bin 0 (0.5 W of bus traction) at SoC rows
+    # 0.554-0.599. That is CONVEXITY and not a mispriced alpha: at 0.5 W of
+    # traction the stack sits at 0.6 W and 8 % LHV efficiency, and the
+    # charger own 7.389 W bus draw lifts it to 9.28 W and 40 %, so the charge
+    # action buys SoC at a better AVERAGE price than the lever algebra single
+    # point marginal comparison can express. Bin 0 carries 0.035 % of the TPM
+    # observed dwell and no offline walk opens a charge window under it. See
+    # docs/modeling/sdp_alpha_resolve_h20_20260909.md section 4.3.
+    assert block["charge_cells"] == 46
+    assert block["policy_file"] == hil.SDP_POLICY_FILE_V7
     # No scenario override on this leg -- `sdp_policy_file` is refused on a
     # frontier-eligible strategy at import.
     assert block["policy_file_source"] is None
@@ -7572,8 +7590,13 @@ def test_frontier_roles_are_the_ruled_ones():
     eligible = {n for n in hil.EMS_STRATEGIES if hil.ems_frontier_eligible(n)}
     # `mpc-sto` replaced `mpc-det` here 2026-09-02 (operator ruling): the
     # stochastic law is THE MPC and `mpc-det` is its ablation.
-    assert eligible == {"soc-band", "dp-replay", "sdp-v6", "mpc-sto"}
-    for demoted in ("sdp-v2", "sdp-v3", "sdp-sweep"):
+    # RE-PIN 2026-09-09: `sdp-v7` replaced `sdp-v6` on the frontier (the H-20
+    # re-derivation, sdp_ems_solver D16 - v6's alpha is a ratio against a
+    # CONSTANT marginal hydrogen rate while the stage cost is the H-20 convex
+    # map). v6 joins the comparability set below, which is why it is added to
+    # the demoted loop: a demoted role must still SAY WHICH KIND it is.
+    assert eligible == {"soc-band", "dp-replay", "sdp-v7", "mpc-sto"}
+    for demoted in ("sdp-v2", "sdp-v3", "sdp-v6", "sdp-sweep"):
         assert hil.ems_frontier_eligible(demoted) is False, demoted
         # A non-frontier role must SAY WHICH KIND it is -- the three are
         # different claims and a reader who cannot tell them apart mis-reads
@@ -7588,11 +7611,13 @@ def test_sdp_instances_bind_their_own_artifacts_and_certificate_flags():
     v2, v3 = hil.EMS_STRATEGIES["sdp-v2"], hil.EMS_STRATEGIES["sdp-v3"]
     v4, sweep = hil.EMS_STRATEGIES["sdp-v4"], hil.EMS_STRATEGIES["sdp-sweep"]
     v5, v6 = hil.EMS_STRATEGIES["sdp-v5"], hil.EMS_STRATEGIES["sdp-v6"]
+    v7 = hil.EMS_STRATEGIES["sdp-v7"]
     assert (v2.name, v2.policy_file) == ("sdp-v2", hil.SDP_POLICY_FILE_V2)
     assert (v3.name, v3.policy_file) == ("sdp-v3", hil.SDP_POLICY_FILE_V3)
     assert (v4.name, v4.policy_file) == ("sdp-v4", hil.SDP_POLICY_FILE_V4)
     assert (v5.name, v5.policy_file) == ("sdp-v5", hil.SDP_POLICY_FILE_V5)
     assert (v6.name, v6.policy_file) == ("sdp-v6", hil.SDP_POLICY_FILE_V6)
+    assert (v7.name, v7.policy_file) == ("sdp-v7", hil.SDP_POLICY_FILE_V7)
     # The scenario-supplied role has NO artifact of its own -- a sentinel, not
     # a path, so it can never silently load a default.
     assert (sweep.name, sweep.policy_file) == ("sdp-sweep",
@@ -7600,17 +7625,23 @@ def test_sdp_instances_bind_their_own_artifacts_and_certificate_flags():
     # The frontier-scored leg demands the certificate; every demonstration or
     # comparability leg must not claim it (the import assert ties the flag to
     # `frontier_eligible`, and this is the same property re-derived).
-    assert v6.require_calibrated_benchmark is True
+    # RE-PIN 2026-09-09: `sdp-v7` is the frontier leg, so it is the one that
+    # demands the certificate; v6 joins the demoted list below and drops the
+    # flag with its eligibility.  v6 still PASSES the certificate - what it
+    # lost is the frontier binding, not its calibration.
+    assert v7.require_calibrated_benchmark is True
     # `sdp-v5` (2026-09-03) is in this list on PURPOSE: the measured-lever
     # artifact FAILS two certificate clauses, so demanding the certificate of
     # it would make the strategy unloadable rather than merely unranked.
     # `sdp-v4` JOINED IT 2026-09-03 (afternoon) for `sdp-v3`'s reason: it is a
     # demoted comparability leg, and the certificate is the frontier's
     # admission ticket, not a quality mark a retained artifact keeps claiming.
-    for demoted in (v2, v3, v4, v5, sweep):
+    # `sdp-v6` JOINED IT 2026-09-09, for `sdp-v4`'s reason one round on: the
+    # H-20 re-derivation demoted it to a comparability leg.
+    for demoted in (v2, v3, v4, v5, v6, sweep):
         assert demoted.require_calibrated_benchmark is False, demoted.name
     assert hil.SDP_STRATEGY_NAMES == frozenset({"sdp-v2", "sdp-v3", "sdp-v4",
-                                                "sdp-v5", "sdp-v6",
+                                                "sdp-v5", "sdp-v6", "sdp-v7",
                                                 "sdp-sweep"})
 
 
@@ -8013,30 +8044,44 @@ def test_sdp_v5_v6_differ_exactly_where_the_ruling_says():
     assert len(chg_rows) == 47 and chg_rows[0] == 3 and chg_rows[-1] == 49
 
 
-def test_sdp_v6_is_the_frontier_leg_and_v4_is_demoted():
+def test_sdp_v7_is_the_frontier_leg_and_v6_is_demoted():
     """The role swap, pinned in both directions because both halves are silent
     failure modes: a False on v6 would take the calibrated benchmark off the
     frontier, and a True left on v4 would rank two SDP legs against each
     other."""
-    assert "sdp-v6" in hil.EMS_STRATEGIES
-    assert hil.EMS_STRATEGY_META["sdp-v6"]["policy_file"] \
-        == hil.SDP_POLICY_FILE_V6
-    assert hil.EMS_STRATEGY_META["sdp-v6"]["frontier_eligible"] is True
+    # RE-PIN 2026-09-09: the H-20 re-derivation (sdp_ems_solver D16) demoted
+    # v6 in turn. The MECHANISM is not a defect in v6: every lever in its
+    # derivation is a ratio against the CONSTANT marginal hydrogen rate
+    # 1/(ETA_FC*Q_LHV), and the stage cost has been the H-20 CONVEX map since
+    # 2026-09-08. v7 is the same two-sided placement re-priced on the map's
+    # own marginal rate at the rig's measured 13.3654 W operating point.
+    assert "sdp-v7" in hil.EMS_STRATEGIES
+    assert hil.EMS_STRATEGY_META["sdp-v7"]["policy_file"] \
+        == hil.SDP_POLICY_FILE_V7
+    assert hil.EMS_STRATEGY_META["sdp-v7"]["frontier_eligible"] is True
+    assert hil.EMS_STRATEGY_META["sdp-v6"]["frontier_eligible"] is False
+    assert "COMPARABILITY" in \
+        hil.EMS_STRATEGY_META["sdp-v6"]["role_note"].upper()
     assert hil.EMS_STRATEGY_META["sdp-v4"]["frontier_eligible"] is False
     assert "COMPARABILITY" in hil.EMS_STRATEGY_META["sdp-v4"]["role_note"]
     assert hil.EMS_STRATEGY_META["sdp-v5"]["frontier_eligible"] is False
     # Exactly ONE frontier-eligible SDP name; more than one is a ranking bug.
     frontier = [n for n, m in hil.EMS_STRATEGY_META.items()
                 if n.startswith("sdp-") and m["frontier_eligible"]]
-    assert frontier == ["sdp-v6"], frontier
+    assert frontier == ["sdp-v7"], frontier
 
 
-def test_the_sdp_legs_are_bound_to_v6():
+def test_the_sdp_legs_are_bound_to_v7():
     """The three frontier-scored SDP legs move together or not at all.  The
     two `sdp-v2` legs deliberately do NOT move: they exist to actuate a CHARGE
     threshold and v6, like v4, has no charge cell to command."""
     for name in ("ems-sdp", "ems-ftp75-sdp", "ems-ftp75c-sdp"):
-        assert hil.SCENARIOS[name]["ems"] == "sdp-v6", name
+        # RE-PIN 2026-09-09: v6 -> v7, the H-20 re-derivation. Unlike every
+        # previous SDP rebind this one does NOT transfer the walk-derived
+        # expectations: v7 solves a different objective and `ems-sdp`'s walk
+        # moves -34.6 % in raw hydrogen. See
+        # docs/modeling/sdp_alpha_resolve_h20_20260909.md section 6.
+        assert hil.SCENARIOS[name]["ems"] == "sdp-v7", name
     for name in ("ems-sdp-cross", "ems-sdp-braking"):
         assert hil.SCENARIOS[name]["ems"] == "sdp-v2", name
     # And every alpha-sweep leg still plays its scenario-supplied artifact.
@@ -8334,20 +8379,27 @@ def test_alpha_scenarios_resolve_their_artifact_from_the_live_picks_manifest():
     assert picks["ems-sdp-alpha-greedy"]["charge_cells"] == 0
 
 
-def test_the_alpha_legs_bind_to_the_measured_billing_sweep():
-    """THE REBIND, PINNED (2026-09-08). The three legs resolve through
-    `sweep_20260908_meas/`, the sweep solved at the board's measured charger
-    round trip, and NOT through the eta-0.88 folder they used to name.
+def test_the_alpha_legs_bind_to_the_h20_sweep():
+    """THE REBIND, PINNED (2026-09-09). The three legs resolve through
+    `sweep_20260909_h20/`, the sweep solved on the H-20 convex hydrogen map,
+    and NOT through `sweep_20260908_meas/`, whose artifacts were solved on the
+    retired law. A sweep is a sweep of the OBJECTIVE, so a pre-2026-09-08
+    folder's legs are legs of a policy family the solver no longer produces.
 
-    The load-bearing half is the CALIBRATED leg. Its declared role is the
-    in-family control -- a same-stimulus repeat of `ems-sdp`, which plays the
-    shipped `sdp_policy_v6.json`. Under the old folder its pick carried
-    `sdp_policy_v4`'s policy block, so the control played a DIFFERENT law than
-    the leg it controls for, and the two runs' h2 totals were not comparable.
-    This test is the check that says so in one assertion: the bound artifact's
-    policy block must be byte-identical to v6's."""
+    WHAT MOVED, and why the CALIBRATED leg's own rule had to move with it.
+    Under the retired law the sweep ANCHOR was in the calibrated leg, and that
+    leg took the anchor rather than its midpoint so the leg's declared
+    in-family-control role was satisfied -- a same-stimulus repeat of `ems-sdp`
+    playing the shipped artifact's own policy block. Under the H-20 law the
+    anchor (index 8, the `sdp_policy_v7` weight 0.134041467771) sits 1.59 %
+    ABOVE the bisected charge boundary 0.131941692 and is therefore in the
+    CHARGE-ADMITTING leg. It cannot play the calibrated role at all, the
+    deviation is void, and all three legs take their leg midpoint. This test
+    pins that inversion, because it is the one thing about the rebind a reader
+    would otherwise assume had carried over. See
+    docs/modeling/sdp_alpha_resolve_h20_20260909.md section 6.3."""
     assert os.path.basename(os.path.dirname(hil.SDP_LIVE_PICKS_PATH)) == \
-        "sweep_20260908_meas"
+        "sweep_20260909_h20"
 
     def policy_sha(path):
         with open(path, encoding="utf-8") as fh:
@@ -8359,22 +8411,41 @@ def test_the_alpha_legs_bind_to_the_measured_billing_sweep():
     sweep = hil.EMS_STRATEGIES["sdp-sweep"]
     sweep.bind_scenario("ems-sdp-alpha-cal",
                         hil.SCENARIOS["ems-sdp-alpha-cal"])
-    bound = sweep.policy_file
-    assert "sweep_20260908_meas" in bound.replace("\\", "/")
-    v6 = os.path.join(hil.SDP_POLICY_DIR, hil.SDP_POLICY_FILE_V6)
-    assert policy_sha(bound) == policy_sha(v6)
+    # `policy_file` is the manifest's REPO-RELATIVE string, and
+    # `provenance["path"]` is the resolved absolute one - the only one safe to
+    # open from an arbitrary working directory.
+    bound = sweep.provenance["path"]
+    assert "sweep_20260909_h20" in sweep.policy_file.replace("\\", "/")
+    # ⚠️ AND IT IS NO LONGER v7's OWN BLOCK, deliberately: the calibrated leg
+    # now takes its midpoint because the anchor left the leg (see the
+    # docstring), so the in-family-control identity the 2026-09-08 assertion
+    # pinned does NOT hold and asserting it would be asserting a property this
+    # sweep does not have.
+    v7 = os.path.join(hil.SDP_POLICY_DIR, hil.SDP_POLICY_FILE_V7)
+    assert policy_sha(bound) != policy_sha(v7)
     # ... and the manifest's own recorded digest agrees, so a regenerated
     # artifact whose law moved is refused at bind rather than played.
     with open(hil.SDP_LIVE_PICKS_PATH, encoding="utf-8") as fh:
-        pick = json.load(fh)["picks"]["ems-sdp-alpha-cal"]
-    assert pick["index"] == 8            # was index 7 in the eta-0.88 folder
+        picks_doc = json.load(fh)
+    pick = picks_doc["picks"]["ems-sdp-alpha-cal"]
+    assert pick["index"] == 6            # was index 8 in the eta-proxy folder
+    assert pick["leg"] == "calibrated"
+    assert pick["charge_cells"] == 0
     assert sweep.provenance["policy_sha256"] == pick["policy_sha"]
-    # The other two legs move with it: the greedy pick keeps its index and its
-    # digest (a share-0 map is billing-invariant), the charge pick does not.
-    assert json.load(open(hil.SDP_LIVE_PICKS_PATH, encoding="utf-8"))[
-        "picks"]["ems-sdp-alpha-greedy"]["index"] == 3
-    assert json.load(open(hil.SDP_LIVE_PICKS_PATH, encoding="utf-8"))[
-        "picks"]["ems-sdp-alpha-charge"]["index"] == 15
+    # The other two legs moved as well. The greedy pick's index moved 3 -> 2
+    # even though a share-0 map is billing-invariant, because the LEG's own
+    # alpha range moved: the degeneracy boundary is 0.087452 under the H-20 law
+    # against the closed form's 0.119978, so the leg is shorter and its
+    # midpoint lands on a different grid point.
+    assert picks_doc["picks"]["ems-sdp-alpha-greedy"]["index"] == 2
+    assert picks_doc["picks"]["ems-sdp-alpha-charge"]["index"] == 14
+    # The sweep is on the CURRENT hydrogen law, which is what makes its legs
+    # legs of the policy family the solver produces today.  Compared against
+    #  rather than against : the two
+    # are the same string under the default law, and h2_map is stdlib while
+    # the solver needs numpy, which the repo .venv_hil deliberately lacks.
+    import h2_map as h2_map_mod
+    assert picks_doc["h2_map"] == h2_map_mod.fingerprint_str()
 
 
 def test_sdp_policy_file_override_is_undone_on_the_next_bind():
@@ -8466,7 +8537,7 @@ def test_ems_ftp75_sdp_registry_shape():
     # three: v2/v3 differ only on SoC rows 1-2, v3/v4 only on rows 2-5 and
     # v4/v6 only on rows 4-5, while this scenario spans rows ~44-63 (see the
     # row-diff tests below).
-    assert meta["ems"] == "sdp-v6"
+    assert meta["ems"] == "sdp-v7"
     assert meta["sdp_soc_ref_offset"] == pytest.approx(0.013)
     assert hil.FTP75_SDP_SOC_REF_OFFSET == pytest.approx(0.013)
     # SHARED STIMULUS: the same profile LIST OBJECT as the other two FTP-75
@@ -8716,7 +8787,7 @@ def test_sdp_interior_scenarios_are_sdp_driven_and_ems_gated():
         assert meta["ems"] in hil.SDP_STRATEGY_NAMES
         assert meta["electrical"] == "any"
         assert "pi_timeline" not in meta
-    assert hil.SCENARIOS["ems-ftp75-sdp"]["ems"] == "sdp-v6"
+    assert hil.SCENARIOS["ems-ftp75-sdp"]["ems"] == "sdp-v7"
     assert hil.SCENARIOS["ems-sdp-cross"]["ems"] == "sdp-v2"
     assert hil.SCENARIOS["ems-sdp-braking"]["ems"] == "sdp-v2"
 
@@ -8878,7 +8949,7 @@ def test_ems_sdp_scenario_shares_ems_soc_band_stimulus_by_reference():
     assert sdp["chg_i_ceiling_a"] == pytest.approx(soc_band["chg_i_ceiling_a"])
     # THE BENCHMARK LEG -> the CALIBRATED artifact for the CURRENT charger
     # (rebound v3 -> v4 2026-09-02, v4 -> v6 2026-09-03).
-    assert sdp["ems"] == "sdp-v6"
+    assert sdp["ems"] == "sdp-v7"
     assert sdp["electrical"] == "any"
 
 

@@ -6240,6 +6240,33 @@ SDP_POLICY_FILE_V3 = "sdp_policy_v3.json"
 SDP_POLICY_FILE_V4 = "sdp_policy_v4.json"
 SDP_POLICY_FILE_V5 = "sdp_policy_v5.json"
 SDP_POLICY_FILE_V6 = "sdp_policy_v6.json"
+# ── sdp_policy_v7.json: THE SHIPPED CALIBRATED BENCHMARK since 2026-09-09 ────
+# The H-20 phase-B re-derivation (sdp_ems_solver D16).  Same billing as v6
+# (`--eta-chg measured`, 0.801173) and the SAME two-sided geometric-mean
+# placement; what moved is the marginal hydrogen rate the lever algebra is a
+# ratio against - the H-20 map's own at 13.3654 W of stack power (campaign
+# hil_report_20260908_200836's Run-window median) instead of the constant
+# 1/(ETA_FC*Q_LHV).  alpha 0.134041467771, both admission windows contain it,
+# the tripwire is silent, `--allow-out-of-window` is NOT passed.
+#
+#     C:/Users/ricky/miniforge3/python.exe tools/sdp_ems_solver.py \
+#         --eta-chg measured --alpha-mode lever-h20 \
+#         --out tools/sdp_policies/sdp_policy_v7.json --force
+#
+# ⚠️ IT IS THE FIRST ARTIFACT SOLVED ON THE H-20 STAGE COST, so its policy
+# differs from v6 by the OBJECTIVE and not only by the weight.  46 of its 2525
+# cells select charge - all in demand bin 0 (0.5 W of bus traction) at SoC rows
+# 0.554..0.599, i.e. "charge when nearly idle and below target".  That is
+# CONVEXITY, not a mispriced alpha: at 0.5 W of traction the stack sits at
+# 0.6 W and 8 % LHV efficiency, and the charger's own bus draw lifts it to
+# 9.28 W and 40 %, so the charge action buys SoC at a better AVERAGE price than
+# the lever algebra's single-point marginal comparison can express.  Bin 0
+# carries 0.035 % of the TPM's observed dwell, and no offline walk of
+# `ems-sdp`, `ems-ftp75-sdp` or `ems-ftp75c-sdp` opens a single charge window
+# under it.
+# v6 stays REGISTERED and frontier-INELIGIBLE from this date, as the record of
+# the eta-proxy-era calibration.
+SDP_POLICY_FILE_V7 = "sdp_policy_v7.json"
 SDP_POLICY_SCHEMA = "sdp-policy-v1"
 
 # ── THE SCENARIO-SUPPLIED ARTIFACT (2026-09-02) ─────────────────────────────
@@ -6274,8 +6301,30 @@ SDP_POLICY_FROM_SCENARIO = "<supplied by the scenario's sdp_policy_file>"
 # shipped one.  The three `ems-sdp-alpha-*` legs move with this constant, and
 # their `run_hil_suite.py` h2 bands were re-derived in the same edit - see the
 # 2026-09-08 appendix of the design note.  Both halves always move together.
+# REBOUND AGAIN 2026-09-09 to the H-20 sweep
+# (docs/modeling/sdp_alpha_resolve_h20_20260909.md section 5).  Was
+# "sweep_20260908_meas", whose artifacts were solved on the RETIRED hydrogen
+# law - a sweep is a sweep of the OBJECTIVE, so a pre-2026-09-08 folder's legs
+# are legs of a policy family the solver no longer produces.
+#
+# ⚠️ ALL THREE PICKS MOVED, AND SO DID THE MEANING OF ONE LEG.  Under the H-20
+# law the sweep ANCHOR (index 8, the `sdp_policy_v7` weight 0.134041467771) is
+# 1.59 % ABOVE the bisected charge boundary and therefore sits in the
+# CHARGE-ADMITTING leg, not the calibrated one.  The 2026-09-08 sweep's
+# deviation - "the calibrated leg takes the anchor, because only the anchor
+# satisfies its in-family-control role" - is therefore VOID, and all three legs
+# take their midpoint.  Picks: greedy idx 3 -> 2, cal idx 8 -> 6, charge idx
+# 15 -> 14.
+#
+# ⚠️ THE `run_hil_suite.py` h2 BANDS ON THE THREE `ems-sdp-alpha-*` LEGS WERE
+# **NOT** RE-DERIVED IN THIS EDIT, and the two halves have always moved
+# together before.  They are phase-B checklist item 5 and belong to the band
+# round; until that lands the three alpha legs will FAIL their `*_h2_accounted`
+# expectations for a KNOWN reason - a new pick on a new hydrogen law - and not
+# for a board defect.  Do not run a campaign on these legs before the bands
+# are re-stated.
 SDP_LIVE_PICKS_PATH = os.path.join(
-    SDP_POLICY_DIR, "sweep_20260908_meas", "live_picks.json")
+    SDP_POLICY_DIR, "sweep_20260909_h20", "live_picks.json")
 SDP_LIVE_PICK_PREFIX = "live-picks:"
 # Hand the firmware back MODE_SAFE at the same time `soc-band` does.  DERIVED,
 # not a literal: `ems-sdp` shares `ems-soc-band`'s profile object, so its
@@ -6890,9 +6939,19 @@ def sdp_assert_calibrated_benchmark(pol, name):
     # Every other mode (`marginal`, `level`, `charge-edge`, `explicit`) is a
     # derivation the charge action was never two-sidedly checked against and is
     # refused here as it always was.
-    if alpha.get("mode") not in ("lever", "lever-measured"):
-        problems.append("alpha.mode is %r, not 'lever' or 'lever-measured'"
-                        % (alpha.get("mode"),))
+    # THIRD MODE, 2026-09-09 (sdp_ems_solver D16): `lever-h20`.  It is NOT a
+    # relaxation either - it is D12's SAME two-sided geometric-mean placement,
+    # with the ONE constant the placement is a ratio against (the marginal
+    # hydrogen rate) taken from the H-20 map at a named stack operating point
+    # instead of from `1/(ETA_FC*Q_LHV)`.  The rate scales BOTH levers, so it
+    # moves the alpha level and leaves the admission margin at sqrt(eta_chg)
+    # exactly as `lever` does, and the mode certifies only when BOTH windows
+    # are real and contain the alpha - the same bar `lever-measured` clears.
+    # An artifact solved in this mode against the RETIRED hydrogen law would be
+    # incoherent, but it cannot exist: the mode's k comes from `h2_map`.
+    if alpha.get("mode") not in ("lever", "lever-measured", "lever-h20"):
+        problems.append("alpha.mode is %r, not 'lever', 'lever-measured' or "
+                        "'lever-h20'" % (alpha.get("mode"),))
     if admission.get("in_window_model") is not True:
         problems.append("alpha.admission.in_window_model is %r, not True"
                         % (admission.get("in_window_model"),))
@@ -7847,7 +7906,19 @@ ems_sdp_v5 = SdpStrategy("sdp-v5", SDP_POLICY_FILE_V5)
 # admission windows contain it and the charge map is empty again.  It DEMANDS
 # the certificate, which it now passes on the `lever-measured` clause with a
 # REAL measured window rather than under the era-scoped null allowance.
-ems_sdp_v6 = SdpStrategy("sdp-v6", SDP_POLICY_FILE_V6,
+# ⚠️ NO LONGER FRONTIER-SCORED from 2026-09-09: `sdp-v7` replaced it on every
+# frontier-scored SDP leg, and `require_calibrated_benchmark` drops with it -
+# the registry asserts the two agree, and a comparability leg must not claim a
+# certificate the frontier's scoring reads.  v6 still PASSES that certificate;
+# it simply no longer demands it, exactly as `sdp-v3` and `sdp-v4` do not.
+ems_sdp_v6 = SdpStrategy("sdp-v6", SDP_POLICY_FILE_V6)
+# THE SHIPPED CALIBRATED BENCHMARK since 2026-09-09 — see SDP_POLICY_FILE_V7.
+# Same billing and the same placement as v6, with the lever algebra's marginal
+# hydrogen rate taken from the H-20 map at the rig's measured operating point;
+# the first artifact solved on the H-20 stage cost.  It DEMANDS the
+# certificate, which it passes on the `lever-h20` clause with BOTH windows real
+# and both containing the alpha.
+ems_sdp_v7 = SdpStrategy("sdp-v7", SDP_POLICY_FILE_V7,
                          require_calibrated_benchmark=True)
 # THE SCENARIO-SUPPLIED ROLE: one strategy, no artifact of its own, playing
 # whatever its scenario names in `sdp_policy_file`. It exists so an artifact
@@ -8773,6 +8844,11 @@ EMS_STRATEGIES = {
     # SDP leg; v4 and v5 stay registered as comparability and as the record of
     # the finding. See SDP_POLICY_FILE_V6.
     "sdp-v6": ems_sdp_v6,
+    # 2026-09-09: `sdp-v7` is THE CALIBRATED BENCHMARK — the H-20 phase-B
+    # re-derivation (sdp_ems_solver D16). It replaces `sdp-v6` on every
+    # frontier-scored SDP leg; v6 stays registered as the record of the
+    # eta-proxy-era calibration. See SDP_POLICY_FILE_V7.
+    "sdp-v7": ems_sdp_v7,
     "sdp-sweep": ems_sdp_sweep,
     # The firmware's own 'Y' combined drive-cycle + power-share table (16
     # regions, 40 s), commanded from the EMS layer instead of the USB console.
@@ -8917,7 +8993,33 @@ EMS_STRATEGY_META = {
                           "pair, billed at the MEASURED round trip, and is "
                           "the frontier leg."},
     # THE SHIPPED CALIBRATED BENCHMARK since 2026-09-03.
+    # ⚠️ frontier_eligible went True -> False on 2026-09-09.  v6 is a valid,
+    # certified artifact and stays registered; what it is not any more is the
+    # CURRENT calibration, because its alpha is a ratio against a constant
+    # marginal hydrogen rate and the stage cost has been the H-20 convex map
+    # since 2026-09-08.  `sdp-v7` is that calibration.
     "sdp-v6":        {"policy_file": SDP_POLICY_FILE_V6,
+                      "frontier_eligible": False,
+                      "role_note":
+                          "ROLE: THE ETA-PROXY-ERA CALIBRATION — alpha "
+                          "0.134110280093, D12's two-sided placement on the "
+                          "five measured eta-era lever readings, billed at "
+                          "the measured charge round trip 0.801173. It was "
+                          "the frontier leg from 2026-09-03 to 2026-09-09. "
+                          "It is off the frontier now for ONE reason, and it "
+                          "is not a defect in the artifact: every lever in "
+                          "its derivation is a ratio against the CONSTANT "
+                          "marginal rate 1/(ETA_FC*Q_LHV), and the stage cost "
+                          "has been the H-20 CONVEX map since 2026-09-08, "
+                          "whose marginal rate varies 2.4x over the operating "
+                          "range. `sdp-v7` is the same placement re-priced on "
+                          "the map's own marginal rate at the rig's measured "
+                          "operating point. v6's h2/delta_soc pair remains a "
+                          "real measurement of a real objective and is the "
+                          "comparability leg against every campaign from "
+                          "2026-09-03 onward."},
+    # THE H-20 RE-DERIVATION, 2026-09-09 — see SDP_POLICY_FILE_V7.
+    "sdp-v7":        {"policy_file": SDP_POLICY_FILE_V7,
                       "frontier_eligible": True},
     # THE MEASURED-LEVER RE-SOLVE, 2026-09-03 — see SDP_POLICY_FILE_V5.
     "sdp-v5":        {"policy_file": SDP_POLICY_FILE_V5,
@@ -9836,7 +9938,19 @@ SCENARIOS["ems-sdp"] = {
     # 45-46 grid nodes below the target node and outside every trajectory —
     # measured, and pinned by
     # test_sdp_v4_v6_share_maps_agree_on_traversed_rows().
-    "ems": "sdp-v6",
+    #
+    # ⚠️ REBOUND `sdp-v6` -> `sdp-v7` 2026-09-09, AND THIS ONE DOES *NOT*
+    # TRANSFER.  Every rebind above was accompanied by "the walk-derived
+    # expectations transfer verbatim", because v3/v4/v6 differ only in weight
+    # and agree on every traversed row.  v7 is solved on a DIFFERENT
+    # OBJECTIVE - the H-20 convex stage cost - and the offline walk of this leg
+    # moves from h2 0.016109292 g / dSoC -0.0010954 (v6) to h2 0.010540835 g /
+    # dSoC -0.0028217 (v7): -34.6 % of raw hydrogen and -9.23 % of equivalent
+    # hydrogen at matched SoC. EVERY WALK-DERIVED EXPECTATION ON THIS LEG MUST
+    # BE RE-STATED (phase-B checklist item 5); nothing in this change moved a
+    # band.  The eq-H2 verdict is stable: the sign flips only below
+    # lambda = 0.310 SoC/g, far under the H-20 share lever.
+    "ems": "sdp-v7",
 }
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -10393,7 +10507,14 @@ SCENARIOS["ems-ftp75-sdp"] = {
     # FTP75_SDP_SOC_REF_OFFSET, extended to v4 there and to v6 by
     # test_sdp_v4_v6_share_maps_agree_on_traversed_rows() (identical charge
     # maps; share differs only on rows 4-5, outside this leg's trajectory).
-    "ems": "sdp-v6",
+    # ⚠️ REBOUND `sdp-v6` -> `sdp-v7` 2026-09-09 and the verbatim transfer ENDS
+    # HERE too: v7 solves a different objective.  This leg's offline walk moves
+    # from h2 0.035033940 g / dSoC -0.0135317 to 0.034709058 g / -0.0136636,
+    # which is only -0.037 % of equivalent hydrogen - far smaller than
+    # `ems-sdp`'s -9.23 %, because the FTP-75 trajectory spends its time in
+    # demand bins where the two share maps agree - but it is not zero and the
+    # band must still be re-stated (phase-B checklist item 5).
+    "ems": "sdp-v7",
     # THE SAME LIST OBJECT as the other two FTP-75 scenarios: the three differ
     # only in the strategy driving them, and a comparison between them is
     # meaningless on different stimuli.
@@ -10614,7 +10735,12 @@ for _name, _ems, _what in (
      % (FTP75C_SOCBAND_CHARGE_ENTER_A, FTP75C_SOCBAND_CHARGE_EXIT_A)),
     # Rebound `sdp-v4` -> `sdp-v6` 2026-09-03 (the measured round trip); the
     # two artifacts agree on every row this leg traverses.
-    ("ems-ftp75c-sdp", "sdp-v6",
+    # Rebound `sdp-v6` -> `sdp-v7` 2026-09-09 (the H-20 re-derivation).  This
+    # is the ONE leg of the three where the transfer really is verbatim: the
+    # offline walk is BIT-IDENTICAL under v6 and v7 (h2 0.016990486 g, dSoC
+    # -0.0000498 under both), because the compensated cycle's trajectory never
+    # leaves the rows and bins on which the two share maps agree.
+    ("ems-ftp75c-sdp", "sdp-v7",
      "the causal SDP policy, which earns the braking credit through the PLANT "
      "rather than through a re-solved artifact"),
     ("ems-ftp75c-dp", "dp-replay",

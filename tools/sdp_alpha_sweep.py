@@ -99,9 +99,16 @@ DEMAND_MAP_W = (0.0, 25.0)
 # names as the correct destination for an uncertified artifact.
 EVAL_STRATEGY = "sdp-v2"
 
-# tools/run_hil_suite.py:6497.  Reimplemented, not imported: importing the
-# suite runner pulls its whole scenario registry into an offline tool.
-EQ_H2_LAMBDA_SOC_PER_G = 0.41
+# tools/run_hil_suite.py's EMS_EQ_H2_LAMBDA_SOC_PER_G.  Reimplemented, not
+# imported: importing the suite runner pulls its whole scenario registry into
+# an offline tool.
+# ⚠️ 0.41 -> 0.423 on 2026-09-09, and it is a UNIT CHANGE, not a re-measurement
+# of the same quantity: 0.41 was the share lever in GFC grams and this is the
+# share lever in H-20 grams.  An eq-H2 column computed here is therefore NOT
+# comparable to one in `sdp_alpha_sweep_20260901.md`,
+# `..._eta088_20260902.md` or `..._measured_20260908.md`.  Keep the two
+# constants in step; the suite's own comment carries the derivation.
+EQ_H2_LAMBDA_SOC_PER_G = 0.423
 
 # ---------------------------------------------------------------------------
 # Refinement (second sweep, 2026-09-01)
@@ -149,7 +156,7 @@ BISECT_REL_TOL = 1e-6
 BRACKET_REL_HALF_WIDTH = 0.10
 
 
-def analytic_boundaries(eta_chg, solver=None):
+def analytic_boundaries(eta_chg, solver=None, h2_law=None):
     """The two behaviour thresholds in closed form, for a charger era.
 
     degeneracy = (1-gamma)/L_share  (the share lever's admission bound; below
@@ -158,16 +165,25 @@ def analytic_boundaries(eta_chg, solver=None):
 
     Both are the solver's own algebra, so the bisection MEASURES a quantity
     this function PREDICTS and the two are compared in the doc.
+
+    `h2_law` picks the marginal hydrogen rate the levers are a ratio against
+    (solver D16, 2026-09-09).  `None` follows the solver's own default, which
+    is the H-20 map, so a prediction cannot silently belong to a different
+    hydrogen law than the solve it brackets.  Pass the retired law by name to
+    reproduce a pre-2026-09-08 sweep's brackets.
     """
     solver = solver or _import_solver()
     omg = 1.0 - solver.rescale_gamma(solver.GAMMA_BASE, solver.DECISION_DT_S,
                                      1.0)
-    l_share, l_chg = solver.model_levers(eta_chg=eta_chg)
+    law = solver.resolve_h2_law(h2_law)
+    k = (solver.H2_MARGINAL_ALPHA_REF_GPS_PER_W
+         if law == solver.H2_LAW_H20 else None)
+    l_share, l_chg = solver.model_levers(eta_chg=eta_chg, k_gps_per_w=k)
     return {"degeneracy": omg / l_share, "charge": omg / l_chg}
 
 
 def refine_brackets_for_era(eta_chg, solver=None,
-                            half_width=BRACKET_REL_HALF_WIDTH):
+                            half_width=BRACKET_REL_HALF_WIDTH, h2_law=None):
     """The bisection brackets for a charger era.
 
     The OLD era returns REFINE_BRACKETS verbatim, so `refine` without
@@ -176,7 +192,8 @@ def refine_brackets_for_era(eta_chg, solver=None,
     if eta_chg is None:
         return dict(REFINE_BRACKETS)
     return {name: (b * (1.0 - half_width), b * (1.0 + half_width))
-            for name, b in analytic_boundaries(eta_chg, solver).items()}
+            for name, b in analytic_boundaries(eta_chg, solver,
+                                               h2_law).items()}
 
 
 # ---------------------------------------------------------------------------
@@ -710,12 +727,30 @@ def cmd_refine(args):
     tmp_path = os.path.join(SWEEP_DIR, "_bisect_probe.json")
     win_model, win_meas = windows_for_era(eta_chg, solver)
 
+    # `--bracket NAME LO HI`, repeatable.  Validated here rather than in
+    # bisect_boundary() so a typo is an argument error and not a solve.
+    overrides = {}
+    for _b in (getattr(args, "bracket", None) or ()):
+        _name, _lo, _hi = _b[0], float(_b[1]), float(_b[2])
+        if _name not in REFINE_ORDER:
+            raise SystemExit("--bracket: unknown boundary %r (expected %s)"
+                             % (_name, " or ".join(REFINE_ORDER)))
+        if not (0.0 < _lo < _hi):
+            raise SystemExit("--bracket %s: need 0 < LO < HI, got %r %r"
+                             % (_name, _lo, _hi))
+        overrides[_name] = (_lo, _hi)
+
     boundaries = {}
     try:
         for name in REFINE_ORDER:
             t0 = time.time()
-            b = bisect_boundary(solver, name, tmp_path, rel_tol=args.rel_tol,
+            b = bisect_boundary(solver, name, tmp_path,
+                                bracket=overrides.get(name),
+                                rel_tol=args.rel_tol,
                                 eta_chg=eta_chg)
+            b["bracket_source"] = ("explicit --bracket" if name in overrides
+                                   else "closed-form admission bound "
+                                        "+/- %g" % BRACKET_REL_HALF_WIDTH)
             b["analytic_alpha"] = analytic_boundaries(eta_chg, solver)[name]
             b["analytic_rel_error"] = (b["alpha"] - b["analytic_alpha"]) \
                 / b["analytic_alpha"]
@@ -1624,6 +1659,21 @@ def main(argv=None):
     pr.add_argument("--no-solve", action="store_true",
                     help="re-summarize already-solved refinement artifacts "
                          "instead of re-solving them")
+    pr.add_argument("--bracket", nargs=3, action="append", default=None,
+                    metavar=("NAME", "LO", "HI"),
+                    help="override one boundary's SEARCH interval, e.g. "
+                         "`--bracket degeneracy 0.0739 0.0943`. REQUIRED UNDER "
+                         "A CONVEX HYDROGEN LAW: the default bracket is the "
+                         "closed-form admission bound widened by %d %%, and "
+                         "that closed form assumes a CONSTANT marginal "
+                         "hydrogen rate. Under the H-20 map it over-predicts "
+                         "both boundaries by 11-38 %%, so the default bracket "
+                         "does not straddle either of them and the bisection "
+                         "refuses (loudly, by design). Take the bracket from "
+                         "the two adjacent grid points instead. A bracket is a "
+                         "SEARCH INTERVAL, not a result: both ends are "
+                         "verified by a solve before the bisection starts."
+                         % int(100 * BRACKET_REL_HALF_WIDTH))
     _add_era_args(pr)
 
     pp = sub.add_parser("plots",

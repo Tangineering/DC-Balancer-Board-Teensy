@@ -1,0 +1,120 @@
+{
+ "schema": "sdp-alpha-live-picks-v1",
+ "generated_utc": "2026-09-09T07:30:23.835724Z",
+ "source": "docs/modeling/sdp_alpha_resolve_h20_20260909.md (phase-B item 2, the H-20 axis)",
+ "sweep_dir": "tools/sdp_policies/sweep_20260909_h20",
+ "h2_map": "h20-brochure-v1|12.2|0.258|0.023|1.183|3.4|2049|0.00013581339256444477|6.632517933244359e-05|False",
+ "eta_chg": 0.801172836631146,
+ "eta_chg_basis": "measured-round-trip",
+ "plant": {
+  "i_aux_a": 0.09,
+  "asym_simple_i_min_a": 0.08
+ },
+ "walk_eta_chg": 0.88,
+ "eq_h2_lambda_soc_per_g": 0.423,
+ "eq_h2_reference": "the ANCHOR point (index 8, the sdp_policy_v7 weight) SoC change on the same scenario",
+ "selection_rule": "the geometric midpoint of each behaviour leg's alpha range over the sweep points that exist, resolved to the nearest existing point in log-alpha. Applied to ALL THREE legs this round - the 2026-09-08 sweep's calibrated-leg deviation does not carry, because the anchor is no longer in the calibrated leg (see that pick's note).",
+ "boundaries_bisected": {
+  "degeneracy": 0.08745165841940916,
+  "charge": 0.13194169215501017
+ },
+ "walk_strategy": "sdp-v2",
+ "picks": {
+  "ems-sdp-alpha-greedy": {
+   "index": 2,
+   "alpha": 0.06549773426514108,
+   "leg": "greedy",
+   "policy_file": "tools/sdp_policies/sweep_20260909_h20/alpha_02_0.065498.json",
+   "policy_sha": "2ababa984f4a158a225cbd8113b57ff0ef639aca302506a66c2122043822c834",
+   "file_sha256": "bb0281f08b67c331f8772afec1284a9ed039f2954138b6909a95562b7e18a9b5",
+   "charge_cells": 0,
+   "leg_alpha_range": [
+    0.0514,
+    0.08701440012731211
+   ],
+   "leg_points": 10,
+   "leg_midpoint_alpha": 0.06687705261555597,
+   "walk_h2_g": {
+    "ems-sdp": 0.00595414651188457,
+    "ems-ftp75-sdp": 0.030368544955380734
+   },
+   "walk_dsoc": {
+    "ems-sdp": -0.005232149408494813,
+    "ems-ftp75-sdp": -0.01571718744429751
+   },
+   "walk_eq_h2_g": {
+    "ems-sdp": 0.010961714176596107,
+    "ems-ftp75-sdp": 0.03589192102481183
+   },
+   "walk_charge_windows": {
+    "ems-sdp": 0,
+    "ems-ftp75-sdp": 0
+   },
+   "note": "The midpoint rule, unmodified. A share-0 map has no remaining degree of freedom, so every point in this leg is the same decision law."
+  },
+  "ems-sdp-alpha-cal": {
+   "index": 6,
+   "alpha": 0.10635369736930016,
+   "leg": "calibrated",
+   "policy_file": "tools/sdp_policies/sweep_20260909_h20/alpha_06_0.106354.json",
+   "policy_sha": "ddd20c03ee1d3ea71d6f46222c364fc401f38f8de708f94f91202317426103e3",
+   "file_sha256": "90ff31fc2c6a283e0f3d39d533940d236f8a1d1ee0620f6fa1b8efcf612add79",
+   "charge_cells": 0,
+   "leg_alpha_range": [
+    0.0878889167115062,
+    0.13128198369423513
+   ],
+   "leg_points": 13,
+   "leg_midpoint_alpha": 0.10741615954140209,
+   "walk_h2_g": {
+    "ems-sdp": 0.007145380445155498,
+    "ems-ftp75-sdp": 0.03231872774328649
+   },
+   "walk_dsoc": {
+    "ems-sdp": -0.004557034812853411,
+    "ems-ftp75-sdp": -0.014615380397729916
+   },
+   "walk_eq_h2_g": {
+    "ems-sdp": 0.01055693251733417,
+    "ems-ftp75-sdp": 0.03523735902177766
+   },
+   "walk_charge_windows": {
+    "ems-sdp": 0,
+    "ems-ftp75-sdp": 0
+   },
+   "note": "THE LEG-MIDPOINT RULE APPLIES HERE, REVERSING THE 2026-09-08 SWEEP'S DEVIATION. That sweep gave this leg the ANCHOR, because the anchor was in the calibrated leg and the leg's declared role is the in-family control. Under the H-20 law the anchor (index 8, alpha 0.134041467771, the sdp_policy_v7 weight) sits 1.59 % ABOVE the bisected charge boundary 0.131941692 and is therefore in the CHARGE-ADMITTING leg, so it cannot play the calibrated role at all. The midpoint rule is applied unmodified."
+  },
+  "ems-sdp-alpha-charge": {
+   "index": 14,
+   "alpha": 0.248412614262588,
+   "leg": "charge_admitting",
+   "policy_file": "tools/sdp_policies/sweep_20260909_h20/alpha_14_0.248413.json",
+   "policy_sha": "9b14522153e5c84c2d2fc800090041a948d8c8ce4396778427ef24bb361b805e",
+   "file_sha256": "27a5272abb7d63bf01cbb3cc3f5082eac6e0cec474b15e0ba1b666336059522d",
+   "charge_cells": 587,
+   "leg_alpha_range": [
+    0.1326014006157852,
+    0.514
+   ],
+   "leg_points": 18,
+   "leg_midpoint_alpha": 0.2610691860724157,
+   "walk_h2_g": {
+    "ems-sdp": 0.017361445286492395,
+    "ems-ftp75-sdp": 0.03500620632361194
+   },
+   "walk_dsoc": {
+    "ems-sdp": -0.0006148330836069915,
+    "ems-ftp75-sdp": -0.013330039233798385
+   },
+   "walk_eq_h2_g": {
+    "ems-sdp": 0.011453371521209083,
+    "ems-ftp75-sdp": 0.034886206008884355
+   },
+   "walk_charge_windows": {
+    "ems-sdp": 1,
+    "ems-ftp75-sdp": 0
+   },
+   "note": "THE ANCHOR IS IN THIS LEG under the H-20 law (index 8, 46 charge cells), which is new. It is NOT the pick: a charge leg that plays the shipped artifact is a same-artifact repeat of `ems-sdp` and carries no contrast against the calibrated leg. The midpoint rule is applied unmodified, as on the other two legs."
+  }
+ }
+}

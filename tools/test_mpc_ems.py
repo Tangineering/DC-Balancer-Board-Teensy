@@ -83,10 +83,16 @@ def test_proxy_and_over_read_literals():
 
 
 def test_terminal_price_modes():
-    # metric = proxy_over_read / lambda, i.e. 1.181 x 2.439 (adjudication 2.4).
-    assert M.terminal_price("metric") == pytest.approx(2.8809476, rel=1e-6)
+    # metric = proxy_over_read / lambda (adjudication 2.4).
+    # RE-PIN 2026-09-09: 2.8809476 -> 2.7924079, exactly the ratio 0.41/0.423.
+    # MECHANISM: `EQ_H2_LAMBDA_SOC_PER_G` moved 0.41 -> 0.423, which is a
+    # change of UNIT and not of the price - the eq-H2 share lever is now stated
+    # in H-20 grams, the axis every campaign has been scored on since
+    # 2026-09-08 (docs/modeling/sdp_alpha_resolve_h20_20260909.md section 3.5).
+    # `PROXY_OVER_READ` is untouched, which the line below pins.
+    assert M.terminal_price("metric") == pytest.approx(2.7924079, rel=1e-6)
     assert M.terminal_price("metric") == pytest.approx(
-        M.PROXY_OVER_READ * (1.0 / 0.41), rel=1e-15)
+        M.PROXY_OVER_READ * (1.0 / 0.423), rel=1e-15)
     assert M.terminal_price("sdp-shadow") == pytest.approx(4.793012, rel=1e-6)
     assert M.terminal_price(3.0) == 3.0
     assert M.terminal_price("2.5") == 2.5
@@ -2118,7 +2124,13 @@ def test_the_feedforward_branch_is_numerically_inert_and_gate_1_still_holds():
     # rev 2 note describes. This is a re-pin of a figure THE FIRMWARE moved, not
     # a widened band: Gate 1 is still 5e-3, still asserted above, with 2.1x of
     # margin.
-    assert on_mean == pytest.approx(2.392629e-03, rel=1e-4)
+    # H-20 lambda re-pin, 2026-09-09: 2.392629e-03 -> 2.435889e-03 (+1.8 %).
+    # MECHANISM: `EQ_H2_LAMBDA_SOC_PER_G` moved 0.41 -> 0.423 (a change of unit
+    # onto the H-20 hydrogen axis), so `terminal_price("metric")` fell by the
+    # same 3.1 % and the planner's committed shares moved with it. Gate 1 is
+    # still 5e-3, still asserted above, and the margin is still 2.1x - a re-pin
+    # of a figure a CONSTANT moved, not a widened band.
+    assert on_mean == pytest.approx(2.435889e-03, rel=1e-4)
     # The MAX is the single worst crossing stage and moves with the mean for
     # the same reason: 5.917253e-02 -> 6.843024e-02 (+15.6 %) at fw v28 rev 5.
     assert on_max == pytest.approx(6.843024e-02, rel=1e-4)
@@ -2357,11 +2369,24 @@ def test_the_coarsening_does_not_move_the_walk_totals():
     # has fallen back under the gate, so light-load spans of this walk now run
     # single-source where they ran split. The SUBJECT of this test - the ratio
     # below - is re-derived at the new behaviour exactly as the two totals are.
-    assert out["full"] == (0.012168865, -0.002477054), out
-    assert out["coarse"] == (0.012186730, -0.002467615), out
-    # The retired equality, restated as the measured deviation it became.
+    # H-20 lambda re-pin, 2026-09-09: full (0.012168865, -0.002477054) ->
+    # (0.006695174, -0.004821805), coarse likewise.  MECHANISM:
+    # `EQ_H2_LAMBDA_SOC_PER_G` moved 0.41 -> 0.423 (a change of unit onto the
+    # H-20 hydrogen axis), so `terminal_price("metric")` fell 3.1 %, SoC is
+    # priced lower, and this light-load preview commits a battery-heavier plan -
+    # hence less hydrogen and a deeper discharge.  The planner still searches
+    # `h2_map="proxy"` here; only its TERMINAL price moved.
+    #
+    # ⚠️ AND THE SUBJECT OF THIS TEST WENT TO ZERO: `coarse` is now BIT-IDENTICAL
+    # to `full`, where it deviated by 0.0014681 before.  That is the strongest
+    # form of the property this test asserts ("the coarser search commits the
+    # same plan"), not a loss of coverage - the equality it originally asserted
+    # and later had to retire has come back.  It is re-pinned as an EQUALITY
+    # rather than as a deviation, and a future deviation therefore fails here.
+    assert out["full"] == (0.006695174, -0.004821805), out
+    assert out["coarse"] == (0.006695174, -0.004821805), out
     assert out["coarse"][0] / out["full"][0] - 1.0 == pytest.approx(
-        0.0014681, abs=5e-7)
+        0.0, abs=5e-7)
 
 
 def test_the_re_entry_rule_is_modelled_per_column_and_only_on_a_rail():
@@ -2689,11 +2714,19 @@ def test_the_committed_plan_is_insensitive_to_the_projection():
                           strategy_kwargs={"budget_ms": 15.0,
                                            "candidate_cost_ms": cost,
                                            "h2_map": "proxy"})
-        # 0.675 is ladder index 6 of the NINE-point ladder
-        # (0.15 + 6*0.0875); it was 0.6667 = index 5 of seven over
-        # [0.25, 0.75] before the 2026-09-02 band widening.  The PROPERTY is
-        # unchanged: the cruise command must not move with the projection.
-        cruise = sum(1 for x in r.share_cmd if abs(x - 0.675) < 1e-9)
+        # RE-PIN 2026-09-09: 0.675 -> 0.2375.  MECHANISM:
+        # `EQ_H2_LAMBDA_SOC_PER_G` moved 0.41 -> 0.423 (a change of unit onto
+        # the H-20 hydrogen axis), so `terminal_price("metric")` fell 3.1 %,
+        # SoC is priced lower, and the committed cruise command drops from
+        # ladder index 6 to index 1 (0.15 + 1*0.0875).  The five-rung move on a
+        # 3.1 % price change is a real sensitivity of this light-load fixture
+        # and is recorded in the design note rather than smoothed over.
+        # 0.675 was ladder index 6 of the NINE-point ladder (0.15 + 6*0.0875);
+        # it was 0.6667 = index 5 of seven over [0.25, 0.75] before the
+        # 2026-09-02 band widening.  THE PROPERTY IS UNCHANGED and is what this
+        # test asserts: the cruise command must not move with the PROJECTION,
+        # whatever rung it settles on.
+        cruise = sum(1 for x in r.share_cmd if abs(x - 0.2375) < 1e-9)
         out.append((cost, r.h2_g, cruise))
     base = out[0][1]
     for cost, h2, cruise in out:
@@ -3476,7 +3509,14 @@ _FEATURE_OFF_SEQ_SHA256 = (   # 2026-09-08 fix round RE-PIN:
                               # this anchor is designed to roll forward across
                               # such a round (see the fw v28/fw v27 rev 2
                               # history above).
-    "3f40daac4e56b63042928d8b829dcc454fae4d8f9a06bee93a2c9f3613be92ff")
+                              # ROLLED FORWARD AGAIN 2026-09-09, and this is
+                              # exactly the class of round the note above
+                              # licenses: `EQ_H2_LAMBDA_SOC_PER_G` moved
+                              # 0.41 -> 0.423 (a change of unit onto the H-20
+                              # hydrogen axis), so `terminal_price("metric")`
+                              # fell 3.1 % and the committed plan moved.
+                              # 3f40daac... at the 2026-09-08 fix round.
+    "35ac016a27df158997aba80d5f2136cb5d01290d692f40586eea21cb215d43d4")
 _FEATURE_OFF_SEQ_LEN = 3050
 
 
@@ -3488,24 +3528,49 @@ def _seq_sha256(seq):
 
 
 def test_rho_metric_g_per_soc_h20_matches_its_own_derivation_formula():
-    """(2026-09-08, review item A2) `RHO_METRIC_G_PER_SOC_H20` is NOT
-    `1/EQ_H2_LAMBDA_SOC_PER_G` (the first draft's wrong claim, per the
-    module's own "THE ERROR THE FIRST DRAFT MADE" comment) -- `lambda` was
-    MEASURED in the retired Gfc grams, so it needs converting into H-20
-    grams at a named operating point. Pin the FORMULA, not the number: a
-    future change to `H2_BASIS_REF_P_STACK_W` or to the H-20 map's
-    coefficients should move this test's own recomputation in lockstep with
-    the module constant, rather than requiring a fresh literal."""
-    want = ((1.0 / M.EQ_H2_LAMBDA_SOC_PER_G)
-            * h2_map.marginal_gps_per_w(M.H2_BASIS_REF_P_STACK_W)
-            / M.H2_GFC_DC_GAIN_GPS_PER_W)
-    assert M.RHO_METRIC_G_PER_SOC_H20 == pytest.approx(want, rel=1e-12)
-    # It is BELOW the naive (wrong) 1/lambda, per the module's own comment:
-    # the H-20 map's marginal rate at the reference point is lower than the
-    # retired linear proxy's constant rate, so the conversion factor is < 1.
-    assert M.RHO_METRIC_G_PER_SOC_H20 < 1.0 / M.EQ_H2_LAMBDA_SOC_PER_G
+    """`RHO_METRIC_G_PER_SOC_H20` is `1/EQ_H2_LAMBDA_SOC_PER_G` again.
+
+    (2026-09-08, review item A2) The conversion this test used to pin existed
+    because `lambda` was MEASURED in the retired Gfc grams, so a price in H-20
+    grams needed the two maps' marginal rates at a named operating point:
+
+        rho = (1/lambda) * marginal_h20(H2_BASIS_REF_P_STACK_W) / GFC_DC_GAIN
+
+    (2026-09-09) THE CONVERSION IS RETIRED, exactly as the module's own
+    `TODO(calibrate)` said it would be: `EQ_H2_LAMBDA_SOC_PER_G` is 0.423 SoC/g
+    and it is stated in H-20 GRAMS. A lever already in the metric's own unit
+    needs no conversion, so the price is `1/lambda` and this test pins that.
+
+    ⚠️ THIS IS NOT A RETURN TO THE FIRST DRAFT'S ERROR. That draft asserted
+    `rho = 1/lambda` while lambda was a Gfc-gram exchange rate, which was wrong
+    about the UNIT. The unit has since moved; the argument has not. The
+    assertion below therefore also pins that the retired conversion is NOT
+    being applied on top - applying it now would convert an H-20 lever a second
+    time.
+    """
+    assert M.RHO_METRIC_G_PER_SOC_H20 == pytest.approx(
+        1.0 / M.EQ_H2_LAMBDA_SOC_PER_G, rel=1e-12)
+    # The retired formula, asserted to be DIFFERENT, so a silent
+    # reintroduction of the double conversion fails here.
+    retired = ((1.0 / M.EQ_H2_LAMBDA_SOC_PER_G)
+               * h2_map.marginal_gps_per_w(M.H2_BASIS_REF_P_STACK_W)
+               / M.H2_GFC_DC_GAIN_GPS_PER_W)
+    assert abs(M.RHO_METRIC_G_PER_SOC_H20 / retired - 1.0) > 0.01
+    # RETIRED 2026-09-09, with the reason recorded rather than the line
+    # deleted.  It used to assert `rho < 1/lambda`, on the grounds that the
+    # H-20 map's marginal rate at the reference point is BELOW the retired
+    # linear proxy's constant rate so the conversion factor is < 1.  Both
+    # halves of that stopped being true in the same round: there is no
+    # conversion any more, and the reference point moved 3.2 -> 13.3654 W,
+    # where the H-20 marginal rate 1.8015e-05 is ABOVE the Gfc gain 1.7638e-05
+    # rather than below it.  The direction is now asserted on the retired
+    # formula itself, which is where it belonged.
+    assert retired > 1.0 / M.EQ_H2_LAMBDA_SOC_PER_G
     # Re-derived value, stated for a human reader (not itself the pin).
-    assert M.RHO_METRIC_G_PER_SOC_H20 == pytest.approx(1.7696151562120384,
+    # 1.7696151562120384 -> 2.3640661938534278: the conversion retired (+3.2 %,
+    # the lambda's own move) and the reference point was calibrated from
+    # campaign hil_report_20260908_200836 (the rest).
+    assert M.RHO_METRIC_G_PER_SOC_H20 == pytest.approx(2.3640661938534278,
                                                        rel=1e-12)
 
 

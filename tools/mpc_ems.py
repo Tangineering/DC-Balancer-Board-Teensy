@@ -556,25 +556,55 @@ PROXY_OVER_READ = PROXY_GPS_PER_W / H2_GFC_DC_GAIN_GPS_PER_W   # 1.1811885
 #   * WITH `h2_map="proxy"` a conversion is still needed, and it is now
 #     operating-point dependent.  The reference point below is the rig's
 #     MEASURED median stack power.
-H2_BASIS_REF_P_STACK_W = 3.2
-# WHY 3.2 W: it is the rig's median STACK-side fuel-cell power across the
-# campaign record (roughly 1.5 A of bus current at 15.95 V shared near 0.5,
-# referred through ETA_BOOST) — i.e. where this vehicle actually spends its
-# time, not where the stack is most efficient (14.75 W).  The gap between those
-# two numbers is the finding the convex map exists to expose.
-# TODO(calibrate): re-derive this from a campaign's own `p_fc_w` column median
-# rather than from the design estimate.
+H2_BASIS_REF_P_STACK_W = 13.3654
+# ⚠️ CALIBRATED 2026-09-09, AND IT MOVED 3.2 -> 13.3654 W.  The 3.2 W it
+# replaces was a DESIGN ESTIMATE whose stated basis was "roughly 1.5 A of bus
+# current at 15.95 V shared near 0.5, referred through ETA_BOOST", and it
+# carried the conclusion that the rig runs far below the map's efficiency peak
+# (14.75 W).  A campaign's own column refutes it.
+#
+# THE MEASUREMENT, which closes this constant's `TODO(calibrate)`:
+# `HIL Results/hil_report_20260908_200836/scenario_ems-sdp_hifi`, 54 982
+# Run-window ticks (state == 2), one streaming pass.  The stack power is
+# recovered by INVERTING the map on the run's own `h2_rate_gps` column -
+# `I = (rate - A0)/K_FARADAY`, then `h2_map.stack_power_w(I)` - because that is
+# the exact argument `H2Consumption.step()` was called with.  Run-window
+# median: 13.3654 W.  The `p_fc_w`/ETA_BOOST proxy the TODO named reads
+# 14.6440 W instead, and the 9.6 % gap is the two-curve gap of the design
+# note's section 6: `Plant.step()` bills `FuelCellSource.v_terminal * i` on the
+# SOURCE side, not the bus power divided by the boost efficiency.  The
+# map-inverted figure is the one that prices what the map actually charged.
+#
+# WHAT IT OVERTURNS.  At 13.3654 W the map's LHV efficiency is 0.4314 against
+# its 0.4329 peak: THE RIG RUNS ESSENTIALLY AT THE EFFICIENCY PEAK, not far
+# below it, and the constant offset A0 is ~30 % of the rate there rather than
+# the 63 % quoted at 3.2 W.  Every conclusion drawn at 3.2 W - the marginal
+# rate, the proxy over-read, the terminal price below, the "SoC term ~31 %
+# over-weighted" line of the 2026-09-08 handoff - is re-derived here.
+# CAVEAT, stated because the number is one campaign and one scenario: the
+# distribution is BIMODAL (q25 0.0 W, q75 19.28 W - the governor's battery-only
+# spans against its full-share spans), so the MEDIAN is a summary of a
+# two-lobed sample and moves with duty.  The mean of the same column is
+# 10.1364 W.  Re-derive from the next campaign; `sdp_ems_solver`'s
+# ALPHA_MISMATCH_REF_P_STACK_W carries the same figure and the same caveat.
 H2_METRIC_GPS_PER_W_REF = h2_map.marginal_gps_per_w(H2_BASIS_REF_P_STACK_W)
-# The proxy's over-read against the NEW metric at that reference point (~1.63,
-# against 1.18 in the Gfc era): the linear proxy is a much worse fit to a convex
-# map at low power than it was to a linear one.
+# The proxy's over-read against the NEW metric at that reference point.  It was
+# quoted as ~1.63 at the 3.2 W design estimate, against 1.18 in the Gfc era,
+# with the reading "the linear proxy is a much worse fit to a convex map at low
+# power".  At the MEASURED 13.3654 W it is ~1.16 - the rig does not live at low
+# power, so the proxy is about as good a fit as it was in the Gfc era, and that
+# reading is retired with the reference point that produced it.
 PROXY_OVER_READ_H20 = PROXY_GPS_PER_W / H2_METRIC_GPS_PER_W_REF
 
 # The suite's own equivalent-hydrogen exchange rate
-# (run_hil_suite.EMS_EQ_H2_LAMBDA_SOC_PER_G = 0.41, band 0.409-0.415).  Restated
-# rather than imported: run_hil_suite is the CONSUMER of a campaign, and a
-# strategy that imported its scorer would couple the two in the wrong direction.
-EQ_H2_LAMBDA_SOC_PER_G = 0.41
+# (run_hil_suite.EMS_EQ_H2_LAMBDA_SOC_PER_G).  Restated rather than imported:
+# run_hil_suite is the CONSUMER of a campaign, and a strategy that imported its
+# scorer would couple the two in the wrong direction.
+# ⚠️ 0.41 -> 0.423 on 2026-09-09: the suite's lambda is now the share lever in
+# H-20 GRAMS (band 0.4223-0.4325).  Keep this line in step with that one - the
+# two are the same constant, and a stale copy here would price the MPC's
+# terminal SoC in a unit the campaign does not score.
+EQ_H2_LAMBDA_SOC_PER_G = 0.423
 
 # Terminal price modes (adjudication section 2.4: Huber shape at the metric
 # price, converted to the proxy basis).
@@ -609,15 +639,33 @@ RHO_METRIC_G_PER_SOC = PROXY_OVER_READ / EQ_H2_LAMBDA_SOC_PER_G      # 2.880948
 # first draft would have used, so the draft would have over-priced terminal SoC
 # by that much and biased the planner toward hoarding charge.
 #
-# ⚠️ PROVISIONAL, and referred to an operating point — the same status and the
-# same TODO the shadow price carries.  A convex map has no single "grams per
-# SoC"; this one is quoted at H2_BASIS_REF_P_STACK_W.
-# TODO(calibrate): re-measure the eq-H2 lever on a campaign scored with the
-# H-20 map, at which point lambda is already in H-20 grams and this conversion
-# retires (phase B).
-RHO_METRIC_G_PER_SOC_H20 = ((1.0 / EQ_H2_LAMBDA_SOC_PER_G)
-                            * H2_METRIC_GPS_PER_W_REF
-                            / H2_GFC_DC_GAIN_GPS_PER_W)
+# ── THE CONVERSION IS RETIRED, 2026-09-09.  rho IS 1/lambda AGAIN ───────────
+# The block above is kept verbatim because its ARGUMENT is what makes the
+# retirement legitimate rather than a reversal to the discarded first draft.
+# The first draft's error was to treat a Gfc-gram exchange rate as a unit
+# conversion.  The fix was to convert it.  The fix is no longer needed for the
+# reason the TODO named: `EQ_H2_LAMBDA_SOC_PER_G` is 0.423 SoC/g and it is
+# stated in H-20 GRAMS (run_hil_suite, 2026-09-09 - the board's five-reading
+# Gfc-gram level carried onto the H-20 axis by a walked, board-validated era
+# ratio).  A lever already in the metric's own unit needs no conversion:
+#
+#     rho_h20 = 1 / lambda = 1 / 0.423 = 2.364066 g(H-20) / SoC
+#
+# ⚠️ AND IT IS +33.6 % ON THE NUMBER THIS LINE HELD YESTERDAY (1.7697), which
+# is a real change of the planner's terminal price, not a bookkeeping tidy.
+# TWO independent movements point the same way and both were errors in the same
+# direction: the lambda was in the wrong unit (worth +3.2 %), and the reference
+# operating point the conversion was evaluated at was 3.2 W instead of the
+# measured 13.3654 W (worth the rest, because the map's marginal rate there is
+# 1.80e-05 rather than 1.28e-05).  The old value UNDER-priced terminal SoC and
+# biased the planner toward spending the pack.
+#
+# ⚠️ STILL PROVISIONAL, on ONE remaining ground and no longer on two: lambda's
+# H-20 level has never been measured on the board.
+# TODO(calibrate): campaign II's three `ems-sdp-alpha-*` legs measure the H-20
+# share lever directly; re-derive lambda from them, and this line follows with
+# no edit.
+RHO_METRIC_G_PER_SOC_H20 = 1.0 / EQ_H2_LAMBDA_SOC_PER_G
 # The SDP's own shadow price in the proxy basis: kappa * alpha/(1-gamma) with
 # kappa = (1/(0.85*0.4))/(1/0.5) converting the solver's bus-side eta 0.5 basis
 # to the stack-side eta 0.4 proxy (candidate_fable section 3.4).

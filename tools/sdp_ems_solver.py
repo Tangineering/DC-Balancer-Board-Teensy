@@ -445,6 +445,77 @@ D15. THE RULING: RESOLUTION (i).  SOLVE AT THE MEASURED ROUND TRIP
     decompose the 9.0 % gap into converter loss and bus-sag accounting on the
     bench; a sixth lever reading moves this constant.
 
+D16. ALPHA IS PRICED ON THE H-20 MAP'S OWN MARGINAL RATE
+    (2026-09-09, the H-20 phase-B round; artifact `sdp_policy_v7.json`).
+    D12's placement rule is unchanged and D15's billing is unchanged.  What
+    changes is the ONE constant both of them rest on.
+
+    THE PREMISE THAT BROKE.  Every lever in D12-D15 is a ratio against a
+    marginal hydrogen rate `k = 1/(ETA_FC*Q_LHV)` = 1.6667e-05 g/s/W, a
+    CONSTANT.  On 2026-09-08 `build_stage()` moved to the H-20 convex map on
+    stack-side power, whose marginal rate runs 1.19e-05 to 2.88e-05 g/s/W over
+    the operating range.  A constant-k alpha against a convex objective is the
+    same class of incoherence D12 and D14 each recorded from a different side:
+    a shadow price calibrated on a premise the stage cost does not satisfy.
+
+    THE FIX.  `--alpha-mode lever-h20` computes the SAME geometric mean of the
+    SAME two admission thresholds, with `model_levers(k_gps_per_w=...)` fed the
+    map's marginal rate at `ALPHA_MISMATCH_REF_P_STACK_W`:
+
+        alpha = (1 - gamma) / sqrt(L_share * L_chg),
+        L_share = 1/(m * V_pack * C_As),  L_chg = eta_chg * L_share,
+        m = h2_map.marginal_gps_per_w(12.5078 W) = 1.736001e-05 g/s/W
+
+    k scales BOTH levers together, so this moves the alpha LEVEL and cannot
+    move the admission MARGIN: the charge lever still clears its bound by
+    exactly sqrt(eta_chg), the D13 identity, in which every voltage cancels.
+
+    ⚠️ AND THE OPERATING POINT WAS WRONG BY 4.2x, WHICH IS THE REAL FINDING.
+    `ALPHA_MISMATCH_REF_P_STACK_W` was a 3.0 W design estimate whose stated
+    justification - "the TPM's bin centres are a few watts of BUS power" - is
+    contradicted by the shipped TPM: the centres run 0.5 .. 24.5 W and 75.6 %
+    of the observed dwell is in the 10.5 W bin.  Re-derived from the policy's
+    own commanded share on the SoC-target row it is 12.5078 W, and campaign
+    hil_report_20260908_200836's `ems-sdp` run has a Run-window MEDIAN stack
+    power of 13.3654 W.  CONSEQUENCE: k is 4.0 % above the map's marginal rate
+    there, not the 31 % the 2026-09-08 handoff recorded at 3.0 W.  alpha moves
+    from v6's 0.134110280093 to 0.129169807169, by -3.68 %, and the "SoC term
+    ~31 % over-weighted" line in every artifact and document solved before this
+    decision is an artefact of the retired reference point, not of the alpha.
+
+    WHICH LEVER PAIR PRICES IT, and why it is the MODEL pair.  The five board
+    readings of `EMS_LEVER_ETA_READINGS` are GFC-gram levers and cannot price
+    an H-20 alpha; campaign II's three alpha legs will replace them.  The
+    empirical pair available today is a WALKED one (`EMS_LEVER_H20_WALK_*`,
+    D16's block below), and a walk is a model.  The alpha is therefore taken
+    from the MODEL pair, for D15's own reason: `build_stage()` bills the model
+    constants, and an alpha priced on a pair the SOLVE does not use is exactly
+    the incoherence D14 measured.  The walked pair is carried as the artifact's
+    `share_measured`/`charge_measured` and enforced by the tripwire, so a
+    disagreement between the two is a refusal rather than a footnote.  At the
+    shipped numbers there is none: alpha 0.129170 lies inside the model window
+    (0.115618, 0.144310) AND inside the walked window (0.118407, 0.146305),
+    both windows are decidable, and `--allow-out-of-window` is not passed.
+
+    THE WALKED PAIR IS COMPARED AT THE SOLVE'S OWN ERA.  `ems_walk` prices a
+    charge window at the plant's 0.88 unless told otherwise, so the pair is
+    walked twice and `h20_walk_levers()` returns the one belonging to the era
+    being solved.  Compared at 0.88 the walked window is (0.118407, 0.133548)
+    and this alpha still lies inside it, so the choice of era does not carry
+    the certificate - it merely keeps the comparison honest.
+
+    THE REVISIT CONDITION IS UNCHANGED IN KIND AND NARROWER IN FACT.  Charging
+    returns endogenously when a measured charge lever exceeds
+    (1 - gamma)/alpha = 0.387086 SoC/g.  It also returns if the rig's operating
+    point moves: `ALPHA_MISMATCH_REF_P_STACK_W` is now a MEASURED quantity, and
+    a campaign whose median stack power falls back toward the efficiency
+    curve's low end re-prices every lever in this decision.  Re-derive it from
+    the campaign, do not carry it.
+
+    REVERSAL PATH: `sdp_policy_v6.json` regenerates unchanged under
+    `--h2-map eta-proxy --eta-chg measured --alpha-mode lever-measured`, and
+    every other mode's arithmetic is byte-identical to what it was.
+
 ============================================================================
 WHAT THIS MODEL DOES NOT CONTAIN
 ============================================================================
@@ -498,6 +569,14 @@ Usage:
     C:/Users/ricky/miniforge3/python.exe tools/sdp_ems_solver.py \
         --eta-chg measured --alpha-mode lever-measured \
         --out tools/sdp_policies/sdp_policy_v6.json --force
+    # THE SHIPPED FRONTIER ARTIFACT since 2026-09-09, sdp_policy_v7.json (D16).
+    # Same billing as v6; alpha re-priced on the H-20 map's own marginal rate
+    # at the solver's operating point.  Both windows contain it, the tripwire
+    # is silent, the convex-map warning is retired for this mode, 0 charge
+    # cells.  v6 stays regenerable under `--h2-map eta-proxy`.
+    C:/Users/ricky/miniforge3/python.exe tools/sdp_ems_solver.py \
+        --eta-chg measured --alpha-mode lever-h20 \
+        --out tools/sdp_policies/sdp_policy_v7.json --force
     # reproduce v2's economics (the shipped-and-corrected alpha, D12); the
     # window assert refuses it without the explicit override:
     C:/Users/ricky/miniforge3/python.exe tools/sdp_ems_solver.py \
@@ -688,15 +767,48 @@ H2_LAW_DEFAULT = H2_LAW_H20
 # its own marginal rate.
 H2_LAW_LEGACY_TOKEN = "eta-proxy-legacy|%r" % (1.0 / (ETA_FC * Q_LHV_J_PER_G))
 
-# The STACK power at which the alpha mismatch is quoted.  The TPM's bin centres
-# are a few watts of BUS power and `build_stage()` divides by ETA_BOOST, so a
-# few watts is where this solver's stage cost is evaluated; 3.0 W is the rig's
-# own median stack power rounded to the map's own tabulated row
-# (docs/modeling/h20_hydrogen_map_20260908.md section 4).  It is a REPORTING
-# reference only — nothing is solved against it.
-# TODO(calibrate): re-derive from a campaign's own `p_fc_w` column median, the
-# same TODO `mpc_ems.H2_BASIS_REF_P_STACK_W` carries.
-ALPHA_MISMATCH_REF_P_STACK_W = 3.0
+# The STACK power at which this solver's stage cost is evaluated, and therefore
+# the point the H-20 marginal rate is read at (D16).
+#
+# ⚠️ RE-DERIVED 2026-09-09 FROM A CAMPAIGN, AND THE 3.0 W IT REPLACES WAS WRONG
+# BY 4.5x.  The retired comment justified 3.0 W with "the TPM's bin centres are
+# a few watts of BUS power".  They are not: the shipped TPM's centres run
+# 0.5 .. 24.5 W of bus power and its own `results.row_occupancy` puts 75.6 % of
+# the observed dwell in the bin centred at 10.5 W and 93.4 % in 8.5 .. 14.5 W.
+#
+# THE MEASUREMENT.  Campaign I's `ems-sdp` hi-fi run
+# (HIL Results/hil_report_20260908_200836/scenario_ems-sdp_hifi, 54 982
+# Run-window ticks) has a Run-window MEDIAN stack power of 13.3654 W, recovered
+# by inverting the map on that run's own `h2_rate_gps` column - the exact
+# argument `h2_map` was evaluated at, rather than the `p_fc_w`/ETA_BOOST proxy,
+# which reads 14.6440 W because the plant bills `v_terminal*i` on the SOURCE
+# side (the two-curve gap of the design note, section 6).  This closes the
+# `TODO(calibrate)` both this constant and `mpc_ems.H2_BASIS_REF_P_STACK_W`
+# carried, and the two now hold the SAME number for the same reason.
+#
+# ⚠️ IT IS EXOGENOUS ON PURPOSE.  The tempting alternative - the occupancy-
+# weighted stack power this SOLVER'S OWN policy commands on the SoC-target row
+# - is circular, and it does not merely fail to be a fixed point, it DIVERGES.
+# Measured by iterating solve -> re-derive -> solve: 12.5078 -> 10.9825 ->
+# 10.3394 -> 9.7116 -> 8.6352 W, with alpha walking 0.129170 -> 0.115309, at
+# which point the tripwire refuses the solve outright.  The mechanism is a
+# positive feedback: a lower reference lowers the marginal rate, which lowers
+# alpha, which prices SoC lower, which commands a smaller fuel-cell share,
+# which lowers the reference again.  A reference point taken from the policy it
+# prices has no defensible resting place; a reference point taken from a
+# campaign has one.  RE-DERIVE IT FROM THE NEXT CAMPAIGN, DO NOT CARRY IT.
+#
+# WHAT IT COST TO HAVE BEEN WRONG: at 3.0 W the constant k = 1/(ETA_FC*Q_LHV)
+# is 31 % ABOVE the map's marginal rate, which is where the 2026-09-08 handoff's
+# "SoC term ~31 % over-weighted" came from.  At 13.3654 W it is 7.5 % BELOW it,
+# so the sign of the mismatch reverses: the SoC term was UNDER-weighted, not
+# over-weighted, and re-deriving alpha RAISES it.
+ALPHA_MISMATCH_REF_P_STACK_W = 13.3654
+# The H-20 marginal hydrogen rate at that point: the number that REPLACES the
+# constant k = 1/(ETA_FC*Q_LHV) in the lever algebra under --alpha-mode
+# lever-h20 (D16).  Derived, never typed.
+H2_MARGINAL_ALPHA_REF_GPS_PER_W = h2_map.marginal_gps_per_w(
+    ALPHA_MISMATCH_REF_P_STACK_W)
 
 
 def resolve_h2_law(h2_law):
@@ -841,6 +953,79 @@ EMS_LEVERS_ETA_MEAN_SOURCE = (
     "alpha-sweep legs greedy/cal/charge at ETA_CHG 0.88, zero preload"
     % (len(EMS_LEVER_ETA_READINGS),
        ", ".join(r[0].replace("hil_report_", "") for r in EMS_LEVER_ETA_READINGS)))
+
+# ── D16.  THE WALKED H-20 LEVER PAIR (2026-09-09, the H-20 phase-B round) ───
+# The five readings above are in GFC grams: every campaign that produced them
+# scored `h2_cum_g` on the retired linear map.  On the H-20 axis the levers are
+# different numbers, and until campaign II re-measures them on the board the
+# best available pair is a WALKED one - `tools/ems_walk.py` on the same 61 s
+# `ems-sdp` stimulus, through the same three alpha legs, by the SAME
+# construction (`cal` minus `greedy` is purely the share lever, `charge` minus
+# `cal` purely the charge windows).
+#
+#     L_share = (dSoC_cal - dSoC_greedy) / (h2_cal - h2_greedy)
+#     L_chg   = (dSoC_charge - dSoC_cal) / (h2_charge - h2_cal)
+#
+# Walk configuration: `governor=True`, `loss_map=hil_plant_sim.plant_loss_map()`,
+# `dv0_v=0.013522`, `droop_scale_fc=0.9434`, `r_series_ohm=0.033` - the suite's
+# anchor configuration WITH the series-resistance term the suite's own
+# invocation omits.  The omission is inert here: dropping it moves L_share by
+# 0.03 % and L_chg by 3e-4 %.
+#
+# ⚠️ THESE ARE MODEL LEVERS, NOT BOARD LEVERS, and the artifact says so.  The
+# same construction run under `--h2-map gfc-linear` walks to L_share 0.4153531
+# against the board's five-reading mean 0.4165286 - agreement to 0.28 %, which
+# is why the H-20 pair is trusted for its RATIO - and to L_chg 0.3198422
+# against the board's 0.3337114, which the walk under-reads by 4.2 %.  Campaign
+# II's three alpha legs replace both numbers; until then every consumer treats
+# them as PROVISIONAL.
+#
+# THE CHARGE LEVER IS ERA-DEPENDENT, so the pair is recorded at the era it was
+# walked at.  The walk prices a charge window at the PLANT's converter
+# efficiency (`charger_power.ETA_CHG_DEFAULT` = 0.88) unless told otherwise, so
+# both eras are walked and stored: a solve billing the measured round trip must
+# compare its alpha against the pair walked at that same round trip, exactly as
+# D15 requires of the model pair.  The share lever is era-invariant and is
+# identical in both walks, which is the internal check on the pair.
+EMS_LEVER_H20_WALK_SHARE_SOC_PER_G = 0.4222722
+EMS_LEVER_H20_WALK_CHARGE_ETA088_SOC_PER_G = 0.3743980
+EMS_LEVER_H20_WALK_CHARGE_MEASURED_SOC_PER_G = 0.3417529
+EMS_LEVER_H20_WALK_SOURCE = (
+    "WALKED, not measured on the board: tools/ems_walk.py, miniforge, "
+    "governor on, loss_map=plant_loss_map(), dv0_v=0.013522, "
+    "droop_scale_fc=0.9434, r_series_ohm=0.033, scenarios "
+    "ems-sdp-alpha-{greedy,cal,charge} under --h2-map h20 (2026-09-09). "
+    "PROVISIONAL until campaign II re-measures the three alpha legs on the "
+    "board; the same construction under the retired Gfc law walks the share "
+    "lever to within 0.28 % of the board's five-reading mean and the charge "
+    "lever 4.2 % under it.")
+
+
+def h20_walk_levers(eta_chg=None):
+    """(L_share, L_chg) from the walked H-20 pair, at a charger era (D16).
+
+    The charge lever is stored at two eras because the walk bills a charge
+    window at whatever `eta_chg` it is given, and a comparison against an
+    alpha is only meaningful at the era the SOLVE bills.  An era within
+    1e-9 of either stored one returns that walk; anything else is PROJECTED
+    from the 0.88 walk by the billing-voltage ratio, and a projection is the
+    thing D13 recorded as an assumption rather than a measurement - so the
+    two shipped eras are the two a solve is expected to use.
+    """
+    eta = check_eta_chg(eta_chg)
+    share = EMS_LEVER_H20_WALK_SHARE_SOC_PER_G
+    if eta is None:
+        # The 1:1 current-transfer era has no walked reading at all.
+        raise ValueError(
+            "the walked H-20 lever pair was taken on the energy-conserving "
+            "charger only; there is no 1:1 current-transfer walk of it")
+    if abs(eta - ETA_CHG_DEFAULT) <= 1e-9:
+        return (share, EMS_LEVER_H20_WALK_CHARGE_ETA088_SOC_PER_G)
+    if abs(eta - ETA_CHG_MEASURED_ROUND_TRIP) <= 1e-9:
+        return (share, EMS_LEVER_H20_WALK_CHARGE_MEASURED_SOC_PER_G)
+    return (share,
+            EMS_LEVER_H20_WALK_CHARGE_ETA088_SOC_PER_G
+            * eta / ETA_CHG_DEFAULT)
 
 # ── D15.  THE MEASURED END-TO-END CHARGE ROUND TRIP ─────────────────────────
 # The ratio of the two means, and therefore the board's own answer to the
@@ -1088,7 +1273,7 @@ ships a policy, not a gram figure."""
 # ---------------------------------------------------------------------------
 def model_levers(v_pack=V_PACK_NOMINAL_V, v_bus=V_BUS_NOMINAL_V,
                  capacity_ah=BATT_CAPACITY_AH, eta_fc=ETA_FC,
-                 q_lhv=Q_LHV_J_PER_G, eta_chg=None):
+                 q_lhv=Q_LHV_J_PER_G, eta_chg=None, k_gps_per_w=None):
     """(L_share, L_chg) in SoC per gram of hydrogen, from MODEL constants.
 
     A lever is `SoC gained (or not spent) per gram of hydrogen burnt`:
@@ -1123,8 +1308,19 @@ def model_levers(v_pack=V_PACK_NOMINAL_V, v_bus=V_BUS_NOMINAL_V,
     or accounting convention on the HYDROGEN side can explain the v2
     over-charging - see D12.  The CHARGER-side convention is a different
     matter and does move the ratio: that is D13.
+
+    `k_gps_per_w` OVERRIDES the marginal hydrogen rate (D16, 2026-09-09).  The
+    default `None` keeps `k = 1/(eta_fc*q_lhv)`, so every historical mode and
+    every shipped artifact is untouched.  Passing
+    `h2_map.marginal_gps_per_w(P_ref)` instead re-prices BOTH levers on the
+    H-20 map's own marginal rate at a named stack operating point, which is
+    what `--alpha-mode lever-h20` does.  k scales both levers TOGETHER, so it
+    moves the alpha LEVEL and cannot move the admission MARGIN - the charge
+    lever still clears its bound by exactly sqrt(eta_chg) - and it cannot
+    change which lever is the better one.
     """
-    k = 1.0 / (eta_fc * q_lhv)
+    k = (1.0 / (eta_fc * q_lhv) if k_gps_per_w is None
+         else float(k_gps_per_w))
     cap_as = capacity_ah * 3600.0
     v_chg_bill = charger_billing_voltage_v(v_bus, v_pack, eta_chg)
     return (1.0 / (k * v_pack * cap_as), 1.0 / (k * v_chg_bill * cap_as))
@@ -1797,8 +1993,8 @@ def main(argv=None):
                          "reproduced bit-for-bit so sdp_policy_v3 and every "
                          "other archived policy regenerates byte-identically")
     ap.add_argument("--alpha-mode", default="lever",
-                    choices=["lever", "lever-measured", "charge-edge",
-                             "marginal", "level"],
+                    choices=["lever", "lever-measured", "lever-h20",
+                             "charge-edge", "marginal", "level"],
                     help="how alpha is derived (default lever - D12's "
                          "two-sided lever calibration, the SHIPPED value). "
                          "'charge-edge' (D13) places alpha just inside the "
@@ -1812,7 +2008,13 @@ def main(argv=None):
                          "for inspection only. 'lever-measured' (D14) is "
                          "'lever' applied to the MEASURED lever pair "
                          "(--lever-share / --lever-chg) instead of the "
-                         "modelled one.")
+                         "modelled one. 'lever-h20' (D16) is 'lever' with the "
+                         "lever algebra's marginal hydrogen rate taken from "
+                         "the H-20 map at %.4f W of stack power instead of "
+                         "from the constant 1/(eta_fc*Q_LHV); it is the only "
+                         "mode coherent with the H-20 stage cost and the only "
+                         "one that does not print the convex-map warning."
+                         % ALPHA_MISMATCH_REF_P_STACK_W)
     ap.add_argument("--lever-share", type=float, default=None,
                     help="MEASURED share lever in SoC per gram, for "
                          "--alpha-mode lever-measured (default %.9g, the mean "
@@ -1885,9 +2087,13 @@ def main(argv=None):
     for _flag, _val in (("--lever-share", args.lever_share),
                         ("--lever-chg", args.lever_chg),
                         ("--lever-source", args.lever_source)):
-        if _val is not None and args.alpha_mode != "lever-measured":
-            ap.error("%s applies only to --alpha-mode lever-measured (got %r)"
-                     % (_flag, args.alpha_mode))
+        # D16 admits `lever-h20` as well: that mode also carries an empirical
+        # pair (the walked H-20 levers), and overriding it with a sixth reading
+        # must not need a code change either.
+        if _val is not None and args.alpha_mode not in ("lever-measured",
+                                                        "lever-h20"):
+            ap.error("%s applies only to --alpha-mode lever-measured or "
+                     "lever-h20 (got %r)" % (_flag, args.alpha_mode))
     for _flag, _val in (("--lever-share", args.lever_share),
                         ("--lever-chg", args.lever_chg)):
         if _val is not None and _val <= 0.0:
@@ -1968,8 +2174,15 @@ def main(argv=None):
 
     # ── alpha (D2) ───────────────────────────────────────────────────────────
     one_minus_gamma = 1.0 - gamma
+    # D16.  `lever-h20` is the ONLY mode that re-prices the lever algebra on
+    # the H-20 map's own marginal rate.  Every other mode keeps the constant
+    # k = 1/(ETA_FC*Q_LHV), so every artifact shipped before 2026-09-09
+    # regenerates with its policy block unmoved.
+    alpha_k_override = (H2_MARGINAL_ALPHA_REF_GPS_PER_W
+                        if args.alpha_mode == "lever-h20" else None)
     l_share, l_chg = model_levers(capacity_ah=args.capacity_ah,
-                                  eta_chg=args.eta_chg)
+                                  eta_chg=args.eta_chg,
+                                  k_gps_per_w=alpha_k_override)
     # ── WHICH MEASURED PAIR (D14) ───────────────────────────────────────────
     # Every historical mode reads the OLD-ERA pair, PROJECTED onto the era
     # being solved (measured_levers()'s default) - unchanged, so every shipped
@@ -1990,6 +2203,21 @@ def main(argv=None):
         meas_is_projection = False
         meas_source = (args.lever_source if args.lever_source
                        else EMS_LEVERS_ETA_MEAN_SOURCE)
+    elif args.alpha_mode == "lever-h20":
+        # D16.  The empirical pair for an H-20 solve is the WALKED one, at the
+        # era being solved.  The five board readings are Gfc-gram levers and
+        # would price this alpha against a retired axis.
+        try:
+            _ws, _wc = h20_walk_levers(args.eta_chg)
+        except ValueError as exc:
+            ap.error(str(exc))
+        l_share_meas = (_ws if args.lever_share is None
+                        else float(args.lever_share))
+        l_chg_meas = (_wc if args.lever_chg is None
+                      else float(args.lever_chg))
+        meas_is_projection = False
+        meas_source = (args.lever_source if args.lever_source
+                       else EMS_LEVER_H20_WALK_SOURCE)
     else:
         l_share_meas, l_chg_meas = measured_levers(args.eta_chg)
         meas_is_projection = args.eta_chg is not None
@@ -2016,6 +2244,15 @@ def main(argv=None):
     alpha_level = FULL_SIZE_ALPHA * p_max / FULL_SIZE_P_DEM_MAX_W
     alpha_two_sided = (alpha_lever(one_minus_gamma, l_share, l_chg)
                        if l_share > l_chg else float("nan"))
+    # D16.  The SAME placement at the CLASSIC constant k, whatever the mode.
+    # It is what `candidates.lever` reports, so that field means one thing in
+    # both hydrogen eras and a lever-h20 artifact can be differenced against a
+    # pre-2026-09-09 one without re-deriving anything.
+    _ls_classic, _lc_classic = model_levers(capacity_ah=args.capacity_ah,
+                                            eta_chg=args.eta_chg)
+    alpha_two_sided_classic = (
+        alpha_lever(one_minus_gamma, _ls_classic, _lc_classic)
+        if _ls_classic > _lc_classic else float("nan"))
     alpha_edge = alpha_charge_edge(one_minus_gamma, l_share, l_chg)
     # D14.  The same geometric-mean placement, on the MEASURED pair.  NaN when
     # the measured pair does not order (the projected old-era pair does not, in
@@ -2074,6 +2311,42 @@ def main(argv=None):
                   "--lever-share / --lever-chg, or use --alpha-mode lever."
                   % (l_share_meas, l_chg_meas), file=sys.stderr)
             return 2
+    elif args.alpha_mode == "lever-h20":
+        # D16.  D12's geometric-mean placement, unchanged, on a lever pair
+        # priced at the H-20 map's OWN marginal rate instead of at the constant
+        # k = 1/(ETA_FC*Q_LHV).  `alpha_two_sided` already carries it: the k
+        # override went into `model_levers()` above, so `l_share`/`l_chg` are
+        # the H-20 pair and this branch differs from `lever` only in what it
+        # records and in the warning it does NOT print.
+        alpha = alpha_two_sided
+        alpha_mode_used = "lever-h20"
+        alpha_rationale = (
+            "--alpha-mode lever-h20 (D16, 2026-09-09): D12's two-sided "
+            "geometric-mean placement, with the lever algebra's marginal "
+            "hydrogen rate taken from the H-20 map at this solver's own "
+            "operating point (%.4f W of STACK power, %.6g g/s/W) instead of "
+            "from the constant k = 1/(%.2f*%.0f) = %.6g g/s/W. Levers: share "
+            "%.6f, charge %.6f, admission bound %.6f SoC/g (era: %s). The "
+            "constant k is %+.1f %% off the map there, so this alpha is that "
+            "much below the pre-convex-map one; the ADMISSION MARGIN is "
+            "unchanged, the charge lever clearing its bound by exactly "
+            "sqrt(eta_chg) as under --alpha-mode lever. Empirical pair: %s"
+            "\n\n%s"
+            % (ALPHA_MISMATCH_REF_P_STACK_W,
+               H2_MARGINAL_ALPHA_REF_GPS_PER_W, ETA_FC, Q_LHV_J_PER_G,
+               1.0 / (ETA_FC * Q_LHV_J_PER_G), l_share, l_chg,
+               one_minus_gamma / alpha if alpha == alpha else float("nan"),
+               era_label(args.eta_chg),
+               100.0 * ((1.0 / (ETA_FC * Q_LHV_J_PER_G))
+                        / H2_MARGINAL_ALPHA_REF_GPS_PER_W - 1.0),
+               meas_source, ALPHA_DERIVATION))
+        if not (alpha == alpha):        # NaN: the levers do not order
+            print("[sdp] REFUSING to solve: --alpha-mode lever-h20 needs the "
+                  "share lever to BEAT the charge lever, and at this era "
+                  "(%s) it does not (share %.6f, charge %.6f)."
+                  % (era_label(args.eta_chg), l_share, l_chg),
+                  file=sys.stderr)
+            return 2
     elif args.alpha_mode == "charge-edge":
         alpha = alpha_edge
         alpha_mode_used = "charge-edge"
@@ -2129,7 +2402,11 @@ def main(argv=None):
     # not an error and does not refuse the solve — the shipped policies are
     # still reproducible — but a solve that prints nothing about it would let
     # a reader assume the derivation still holds.
-    if alpha_mode_used != "explicit" and h2_law_used == H2_LAW_H20:
+    # D16 RETIRES IT FOR `lever-h20` AND FOR THAT MODE ONLY: that mode derives
+    # alpha from the map's own marginal rate at a named operating point, so the
+    # premise the warning names is satisfied and printing it would be false.
+    if (alpha_mode_used not in ("explicit", "lever-h20")
+            and h2_law_used == H2_LAW_H20):
         _k = 1.0 / (ETA_FC * Q_LHV_J_PER_G)
         _m = h2_map.marginal_gps_per_w(ALPHA_MISMATCH_REF_P_STACK_W)
         print("[sdp] NOTE: --alpha-mode %s derives alpha from the CONSTANT "
@@ -2426,8 +2703,13 @@ def main(argv=None):
             "value": float(alpha),
             "mode": alpha_mode_used,
             "candidates": {
-                "lever": (None if alpha_two_sided != alpha_two_sided
-                          else float(alpha_two_sided)),
+                # D16: reported at the CLASSIC constant k in EVERY mode, so
+                # `candidates.lever` keeps one meaning across the two hydrogen
+                # eras.  Identical to `alpha_two_sided` outside lever-h20, so
+                # no artifact shipped before 2026-09-09 moves.
+                "lever": (None if alpha_two_sided_classic
+                          != alpha_two_sided_classic
+                          else float(alpha_two_sided_classic)),
                 "charge_edge": float(alpha_edge),
                 "marginal": float(alpha_marginal),
                 "level": float(alpha_level),
@@ -2520,6 +2802,39 @@ def main(argv=None):
         else:
             meta["alpha"]["levers_soc_per_g"]["measured_estimator"] = (
                 "explicit --lever-share / --lever-chg; see measured_source")
+        meta["alpha"]["levers_soc_per_g"]["measured_round_trip"] = float(
+            l_chg_meas / l_share_meas)
+        meta["alpha"]["admission"]["model_window_disagrees"] = bool(
+            win_model is not None and not in_model)
+
+    # ── D16 EXTRAS, ADDED ONLY IN `lever-h20` MODE ─────────────────────────
+    # Same discipline as the D14 block above: conditional, so no artifact
+    # solved in another mode changes shape.  What a reader of an H-20 artifact
+    # cannot reconstruct without this file is the OPERATING POINT the lever
+    # algebra was priced at, so that is what is published.
+    if alpha_mode_used == "lever-h20":
+        meta["alpha"]["candidates"]["lever_h20"] = float(alpha)
+        meta["alpha"]["levers_soc_per_g"]["k_basis"] = {
+            "k_gps_per_w": float(H2_MARGINAL_ALPHA_REF_GPS_PER_W),
+            "ref_p_stack_w": float(ALPHA_MISMATCH_REF_P_STACK_W),
+            "ref_source": ("the occupancy-weighted stack power this policy "
+                           "commands on the SoC-target row; corroborated by "
+                           "the 13.3654 W Run-window median of campaign "
+                           "hil_report_20260908_200836's ems-sdp hi-fi run"),
+            "k_classic_gps_per_w": float(1.0 / (ETA_FC * Q_LHV_J_PER_G)),
+            "k_classic_error_pct": float(
+                100.0 * ((1.0 / (ETA_FC * Q_LHV_J_PER_G))
+                         / H2_MARGINAL_ALPHA_REF_GPS_PER_W - 1.0)),
+            "note": ("D16. The lever algebra's marginal hydrogen rate is the "
+                     "H-20 map's own at ref_p_stack_w, not the constant "
+                     "1/(eta_fc*Q_LHV). k scales both levers together, so it "
+                     "moves the alpha LEVEL and leaves the admission MARGIN "
+                     "at sqrt(eta_chg) exactly as --alpha-mode lever does."),
+        }
+        meta["alpha"]["levers_soc_per_g"]["measured_estimator"] = (
+            "WALKED, not measured on the board - see measured_source"
+            if args.lever_share is None and args.lever_chg is None
+            else "explicit --lever-share / --lever-chg; see measured_source")
         meta["alpha"]["levers_soc_per_g"]["measured_round_trip"] = float(
             l_chg_meas / l_share_meas)
         meta["alpha"]["admission"]["model_window_disagrees"] = bool(

@@ -56,6 +56,20 @@ see the commit message for the counts.
 
 ## 3. Phase-B checklist (orchestrated tooling round, in this order)
 
+> **Items 1 to 3 are DONE (2026-09-09).** Record:
+> `docs/modeling/sdp_alpha_resolve_h20_20260909.md`. Headline corrections to THIS document:
+> the rig's Run-window median stack power is **13.3654 W**, not the 3.2 W estimate that section 2
+> and the design note's section 6 rest on, so the rig runs essentially AT the map's efficiency
+> peak and A0 is ~26 % of the rate there rather than 63 %; the eq-H2 share lever is
+> **0.423 SoC/g**, not the "roughly 0.57" projected in section 2; the constant `k` is 7.5 %
+> **below** the map's marginal rate at that point rather than 31 % above, so the SoC term was
+> UNDER-weighted and the re-derived alpha RISES (to 0.134041467771, 0.05 % from v6's); and item 3
+> below is mis-stated - the 1010-cell census is the SPLIT arm, and on the CHARGE arm the ceiling
+> refuses ZERO cells that `charge_forbidden_bins()` had not already forbidden.
+> `sdp_policy_v7.json` ships and is the frontier SDP. Items 4 to 7 are unaffected in scope, and
+> item 5 gains one question: which walk configuration the H-20 bands are stated against (the
+> suite's anchor configuration and the sweep's bracket the board from opposite sides).
+
 1. **Lever prices.** Re-measure `L_share` and `L_chg` on the H-20 axis from the regenerated DP
    tables and walks (the 2026-09-01e procedure), then set `EMS_EQ_H2_LAMBDA_SOC_PER_G` and its band.
 2. **SDP v7.** Re-derive alpha on the H-20 marginal (stack-side basis, `--h2-map h20`), solve

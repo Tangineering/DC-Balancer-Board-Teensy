@@ -8330,8 +8330,15 @@ def test_frontier_FAILS_on_the_campaign_2_regression_numbers():
     assert "OFF the frontier" in rec["reason"]
     # The measured ratios, so a threshold edit that quietly rescued this case
     # would show up here.
-    assert rec["vs_reference"] == pytest.approx(1.0154, abs=5e-4)
-    assert rec["vs_bound"] == pytest.approx(1.1278, abs=5e-4)
+    # RE-PIN 2026-09-09: 1.0154 -> 1.02293.  MECHANISM: the eq-H2 SoC
+    # correction is `dSoC_diff / lambda`, and lambda moved 0.41 -> 0.423 (a
+    # change of unit onto the H-20 hydrogen axis), so a smaller credit is given
+    # for the same SoC surplus and this leg's ratio rises.  The fixture's leg
+    # totals are UNTOUCHED archived campaign numbers; only the scorer's rate
+    # moved.  The verdict is unmoved and unanimous across the band, which is
+    # what this test is for.
+    assert rec["vs_reference"] == pytest.approx(1.02293, abs=5e-4)
+    assert rec["vs_bound"] == pytest.approx(1.13590, abs=5e-4)
 
 
 def test_frontier_reports_the_implied_lever_between_candidate_and_bound():
@@ -8339,16 +8346,29 @@ def test_frontier_reports_the_implied_lever_between_candidate_and_bound():
     the vs-bound ratio is structurally ~1.0: both points differ only along the
     SHARE lever, and lambda IS that lever's rate, so eq-H2 subtracts exactly
     the difference they have. The implied lever is what makes that visible --
-    0.41021 SoC/g against lambda 0.410, agreement to 0.05 %."""
+    0.41021 SoC/g against the lambda 0.410 THOSE CAMPAIGNS WERE SCORED AT,
+    agreement to 0.05 %.
+
+    ⚠️ THE DEGENERACY IS BROKEN AS OF 2026-09-09, AND BY EXACTLY THE UNIT
+    CHANGE. `_C3_LEGS` is archived campaign data whose hydrogen was scored on
+    the retired linear Gfc map, so its IMPLIED lever is a Gfc-gram lever and
+    does not move. The scorer's lambda is now an H-20-gram lever, 0.423. The
+    two therefore no longer coincide, and `vs_bound` is 1.00236 rather than
+    1.0 - a 3.1 % lambda gap producing a 0.24 % ratio gap, which is the
+    degeneracy's own sensitivity measured rather than assumed. The PROPERTY
+    this test exists for survives: the implied lever is still reported, and it
+    still lands within 3.2 % of the scorer's rate on two charge-free legs."""
     rec = rhs.evaluate_ems_frontier(_frontier_results(_C3_LEGS))
     assert rec["verdict"] == "PASS"
+    # UNMOVED: this is a property of the fixture's leg totals, not of lambda.
     assert rec["implied_lever_soc_per_g"] == pytest.approx(0.41021, abs=1e-5)
-    # The degeneracy itself: implied lever == lambda  =>  vs_bound == 1.
-    assert rec["vs_bound"] == pytest.approx(1.0, abs=1e-3)
+    assert rec["vs_bound"] == pytest.approx(1.00236, abs=1e-4)
     assert abs(rec["implied_lever_soc_per_g"]
-               - rhs.EMS_EQ_H2_LAMBDA_SOC_PER_G) < 0.001
+               - rhs.EMS_EQ_H2_LAMBDA_SOC_PER_G) < 0.014
     # ... and the DISCRIMINATING arm is vs-reference, which is not degenerate.
-    assert rec["vs_reference"] == pytest.approx(0.9003, abs=5e-4)
+    # RE-PIN 2026-09-09: 0.9003 -> 0.90265, by the same lambda unit change the
+    # docstring describes; the fixture's leg totals are untouched.
+    assert rec["vs_reference"] == pytest.approx(0.90265, abs=5e-4)
 
 
 def test_frontier_implied_lever_departs_from_lambda_on_the_regression_case():
@@ -8397,8 +8417,13 @@ def test_frontier_PASSES_on_the_campaign_1_numbers():
     assert rec["passed"] is True
     assert all(p["passed"] for p in rec["per_lambda"])
     # L4: re-pinned against the campaign's ACTUAL totals (see _C1_LEGS).
-    assert rec["vs_reference"] == pytest.approx(0.91607, abs=5e-5)
-    assert rec["vs_bound"] == pytest.approx(1.01787, abs=5e-5)
+    # RE-PIN 2026-09-09: 0.91607 -> 0.91946.  MECHANISM: lambda moved
+    # 0.41 -> 0.423 (a change of unit onto the H-20 hydrogen axis), so the
+    # eq-H2 SoC correction `dSoC_diff / lambda` shrinks and this leg's credit
+    # with it.  The fixture's leg totals are untouched; the verdict and its
+    # unanimity across the band are unmoved, which is what this test is for.
+    assert rec["vs_reference"] == pytest.approx(0.91946, abs=5e-5)
+    assert rec["vs_bound"] == pytest.approx(1.02143, abs=5e-5)
     # A PASS is not exit-affecting, and neither is the flag load-bearing here --
     # pinned so the H1 split cannot silently start marking passes.
     assert rec["exit_affecting"] is False
@@ -8633,8 +8658,20 @@ def test_frontier_roles_name_the_three_ruled_scenarios():
 
 
 def test_frontier_constants_are_the_measured_ones():
-    assert rhs.EMS_EQ_H2_LAMBDA_SOC_PER_G == pytest.approx(0.41)
-    assert rhs.EMS_EQ_H2_LAMBDA_BAND == (0.409, 0.415)
+    # RE-PIN 2026-09-09, and it is a change of UNIT rather than a
+    # re-measurement: lambda is the eq-H2 SHARE lever, the campaigns that
+    # measured 0.409-0.415 scored `h2_cum_g` on the retired linear Gfc map, and
+    # the scored axis has been the H-20 convex map since 2026-09-08.  0.423 is
+    # the same board-measured level (the five-reading mean 0.4165286) carried
+    # onto that axis by the walked era ratio 0.4222722/0.4153531 = 1.016658.
+    # The BAND's ends are the two independent cross-checks on it - the H-20
+    # walk alone (0.4223) and the closed-form model lever at the measured
+    # marginal rate (0.4325).  It is relatively WIDER than the Gfc-era band
+    # because the level is board-measured while the era transfer is modelled,
+    # which makes more verdicts KNIFE-EDGE rather than fewer.  See
+    # docs/modeling/sdp_alpha_resolve_h20_20260909.md section 3.5.
+    assert rhs.EMS_EQ_H2_LAMBDA_SOC_PER_G == pytest.approx(0.423)
+    assert rhs.EMS_EQ_H2_LAMBDA_BAND == (0.4223, 0.4325)
     lo, hi = rhs.EMS_EQ_H2_LAMBDA_BAND
     assert lo < rhs.EMS_EQ_H2_LAMBDA_SOC_PER_G < hi
     assert rhs.EMS_FRONTIER_VS_REFERENCE_MAX == pytest.approx(0.98)
@@ -8671,8 +8708,15 @@ def test_demonstration_banner_prefers_the_runs_recorded_strategy():
     # re-classified as a demonstration when the eta-era alpha recalibration
     # shipped, so it is no longer the right name for this half of the test.
     # RE-PINNED 2026-09-03: `sdp-v4` was demoted in turn by the
-    # measured-round-trip ruling, so the eligible artifact is now `sdp-v6`.
-    assert rhs.ems_demonstration_banner("ems-sdp-cross", "sdp-v6") is None
+    # measured-round-trip ruling, so the eligible artifact was then `sdp-v6`.
+    # RE-PINNED 2026-09-09: `sdp-v6` was demoted in turn by the H-20
+    # re-derivation (sdp_ems_solver D16) - its alpha is a ratio against a
+    # CONSTANT marginal hydrogen rate while the stage cost is the H-20 convex
+    # map - so the eligible artifact is now `sdp-v7`.
+    assert rhs.ems_demonstration_banner("ems-sdp-cross", "sdp-v7") is None
+    # And the demoted v6 now DOES carry a banner, naming its comparability role.
+    demoted_v6 = rhs.ems_demonstration_banner("ems-sdp-cross", "sdp-v6")
+    assert demoted_v6 and "sdp-v6" in demoted_v6
     # And the demoted v4 now DOES carry a banner, naming its comparability role.
     demoted = rhs.ems_demonstration_banner("ems-sdp-cross", "sdp-v4")
     assert demoted and "COMPARABILITY" in demoted
