@@ -449,6 +449,14 @@ def build_manifest(entries, tpm_path, tpm_sha, gamma, anchor_check,
         # sweep_20260901/ holds; that manifest predates the field, and its
         # ABSENCE reads the same way.
         "eta_chg": (None if eta_chg is None else float(eta_chg)),
+        # Written ONLY when the era came from the `measured` literal, exactly as
+        # the solver writes it on an artifact: it says the number came from the
+        # lever table, not that it happens to equal today's mean of it.
+        "eta_chg_basis": _era_basis(eta_chg),
+        # The PLANT era the offline walks in this folder belong to. Not a solver
+        # input; recorded because a sweep's walk numbers are only comparable
+        # against another campaign that carries the same hash.
+        "plant": plant_constants_identity(),
         "gamma": gamma,
         "anchor_check": anchor_check,
         "points": entries,
@@ -481,8 +489,15 @@ def solver_argv(point, out_path, force, in_model, in_meas, eta_chg=None):
     # The CHARGER ERA is passed explicitly in both directions: the solver's own
     # default is the plant's efficiency, and a sweep that inherited it would
     # silently change era with a solver edit.
-    argv += (["--eta-chg-none"] if eta_chg is None
-             else ["--eta-chg", repr(float(eta_chg))])
+    if eta_chg is None:
+        argv += ["--eta-chg-none"]
+    elif _era_is_measured(eta_chg):
+        # The LITERAL, not the number: a hand-typed float gets no
+        # `charger.eta_chg_basis` declaration (solver D15), and the sweep's
+        # artifacts must declare the same basis the shipped v6 anchor does.
+        argv += ["--eta-chg", _import_solver().ETA_CHG_MEASURED_KEYWORD]
+    else:
+        argv += ["--eta-chg", repr(float(eta_chg))]
     if not (in_model and in_meas):
         argv.append("--allow-out-of-window")
     if force:
@@ -613,8 +628,12 @@ def _probe_solve(solver, alpha, tmp_path, eta_chg=None):
     argv = ["--alpha", repr(float(alpha)),
             "--demand-map", repr(DEMAND_MAP_W[0]), repr(DEMAND_MAP_W[1]),
             "--out", tmp_path, "--allow-out-of-window", "--force"]
-    argv += (["--eta-chg-none"] if eta_chg is None
-             else ["--eta-chg", repr(float(eta_chg))])
+    if eta_chg is None:
+        argv += ["--eta-chg-none"]
+    elif _era_is_measured(eta_chg):
+        argv += ["--eta-chg", _import_solver().ETA_CHG_MEASURED_KEYWORD]
+    else:
+        argv += ["--eta-chg", repr(float(eta_chg))]
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
         rc = solver.main(argv)
@@ -755,6 +774,7 @@ def cmd_refine(args):
         # The era the boundaries were bisected in.  Absent/null = the 1:1
         # current-transfer charger, which is what sweep_20260901/ holds.
         "eta_chg": (None if eta_chg is None else float(eta_chg)),
+        "eta_chg_basis": _era_basis(eta_chg),
         "idx_start": REFINE_IDX_START,
         "spacing": {
             "rule": "alpha = boundary * (1 -/+ d)",
@@ -1435,11 +1455,14 @@ def _self_test(out_dir):
 # ---------------------------------------------------------------------------
 def _add_era_args(sp):
     """The charger-era and output-folder arguments a solving subcommand takes."""
-    sp.add_argument("--eta-chg", type=float, default=None,
+    sp.add_argument("--eta-chg", default=None, metavar="ETA|measured",
                     help="Ag105 charge efficiency for every point in the "
                          "sweep. Omitted = the 1:1 current-transfer era, "
                          "which is what sweep_20260901/ holds and what a "
-                         "bare `solve` reproduces.")
+                         "bare `solve` reproduces. The literal `measured` is "
+                         "the solver's ETA_CHG_MEASURED_ROUND_TRIP (D15), and "
+                         "is passed THROUGH to the solver as the literal so "
+                         "every artifact declares `charger.eta_chg_basis`.")
     sp.add_argument("--sweep-dir", default=None,
                     help="output folder (default %s). A NEW-ERA sweep must "
                          "name a new one: the filename convention carries the "
@@ -1473,9 +1496,11 @@ def _add_walk_args(sp):
                     help="the shipped policy artifact this sweep anchors on "
                          "(default %s)"
                          % os.path.relpath(ANCHOR_ARTIFACT, REPO_ROOT))
-    sp.add_argument("--walk-eta-chg", type=float, default=None,
+    sp.add_argument("--walk-eta-chg", default=None, metavar="ETA|measured",
                     help="charger efficiency the WALK prices charge windows "
-                         "at; omitted = tools/ems_walk.py's own default")
+                         "at; omitted = tools/ems_walk.py's own default. The "
+                         "literal `measured` resolves to the solver's "
+                         "ETA_CHG_MEASURED_ROUND_TRIP (D15).")
     sp.add_argument("--walk-eta-chg-none", action="store_true",
                     help="walk in the 1:1 current-transfer era instead")
 
@@ -1488,7 +1513,11 @@ def _walk_kwargs(args):
                              "mutually exclusive")
         return {"eta_chg": None}
     if getattr(args, "walk_eta_chg", None) is not None:
-        return {"eta_chg": float(args.walk_eta_chg)}
+        # `measured` accepted here too, for the same reason the solve era
+        # accepts it: the walk must be able to price a charge window at the
+        # SAME round trip the artifact was solved at, without a hand-typed copy.
+        return {"eta_chg": float(_import_solver()
+                                 ._eta_chg_arg(args.walk_eta_chg))}
     return {}
 
 
@@ -1505,10 +1534,61 @@ def _era_from_args(args):
     eta = getattr(args, "eta_chg", None)
     if eta is None:
         return SWEEP_ETA_CHG_DEFAULT
+    # `measured` (solver D15) resolves through the SOLVER's own argparse type,
+    # so the sweep can never carry a stale copy of the round trip: the value is
+    # derived from EMS_LEVER_ETA_READINGS, and a sixth reading moves it there.
+    # The returned MeasuredEtaChg is a float SUBCLASS - check_eta_chg() would
+    # strip it back to a plain float and with it the provenance, so it is range
+    # checked and then returned unchanged.
+    solver = _import_solver()
     try:
-        return check_eta_chg(eta)
+        eta = solver._eta_chg_arg(eta)
+    except Exception as exc:
+        raise SystemExit("--eta-chg: %s" % exc)
+    try:
+        check_eta_chg(float(eta))
     except (TypeError, ValueError) as exc:
         raise SystemExit("--eta-chg: %s" % exc)
+    return eta
+
+
+def _era_is_measured(eta_chg):
+    """True when the era came from the `measured` literal, not a number."""
+    if eta_chg is None:
+        return False
+    try:
+        solver = _import_solver()
+    except Exception:                            # pragma: no cover - defensive
+        return False
+    return isinstance(eta_chg, getattr(solver, "MeasuredEtaChg", ()))
+
+
+def _era_basis(eta_chg):
+    """`charger.eta_chg_basis` for the era, or None for a plain number."""
+    if not _era_is_measured(eta_chg):
+        return None
+    return _import_solver().ETA_CHG_BASIS_MEASURED
+
+
+def plant_constants_identity():
+    """The PLANT-era fingerprint a sweep manifest is stamped with.
+
+    hil_plant_sim's own `constants_hash`, recorded so a reader can tell which
+    plant era (I_AUX_A, the governor floors, the bleed) the offline walks in
+    this folder were run against.  It does NOT enter the solve - the solver
+    reads none of those constants - which is exactly why it has to be written
+    down rather than inferred from the artifacts.
+    """
+    if _HERE not in sys.path:
+        sys.path.insert(0, _HERE)
+    try:
+        import hil_plant_sim as sim
+        return {"hil_plant_sim_constants_hash":
+                sim.constants_hash(sim.collect_model_constants()),
+                "i_aux_a": float(sim.I_AUX_A),
+                "asym_simple_i_min_a": float(sim.ASYM_SIMPLE_I_MIN_A)}
+    except Exception as exc:                     # pragma: no cover - defensive
+        return {"hil_plant_sim_constants_hash": None, "error": str(exc)}
 
 
 def main(argv=None):

@@ -1,0 +1,96 @@
+{
+  "schema": "sdp-alpha-live-picks-v1",
+  "generated_utc": "2026-09-09T01:54:43.893779Z",
+  "source": "WORK_QUEUE 0e item 20; docs/modeling/sdp_alpha_sweep_measured_20260908.md",
+  "sweep_dir": "tools/sdp_policies/sweep_20260908_meas",
+  "eta_chg": 0.801172836631146,
+  "eta_chg_basis": "measured-round-trip",
+  "plant": {
+    "hil_plant_sim_constants_hash": "e7c5f452ce694ef90f18da3d97f92e6dfffce52b0cba303efe5b52a9a1e7de1a",
+    "i_aux_a": 0.09,
+    "asym_simple_i_min_a": 0.08
+  },
+  "walk_eta_chg": 0.88,
+  "eq_h2_lambda_soc_per_g": 0.41,
+  "eq_h2_reference": "the v6 anchor point (idx 8) SoC change on the same scenario",
+  "selection_rule": "the geometric midpoint of each behaviour leg alpha range over the sweep points that exist, resolved to the nearest existing point in log-alpha; the calibrated leg takes the ANCHOR instead (see that pick note)",
+  "walk_strategy": "sdp-v2",
+  "picks": {
+    "ems-sdp-alpha-greedy": {
+      "index": 3,
+      "alpha": 0.07393632425798587,
+      "leg": "greedy",
+      "policy_file": "tools/sdp_policies/sweep_20260908_meas/alpha_03_0.073936.json",
+      "policy_sha": "2ababa984f4a158a225cbd8113b57ff0ef639aca302506a66c2122043822c834",
+      "file_sha256": "c21a11801ae42525ce8dd683e8d6a6fbfe33a0b0335c97b99a1830abe7a9ac56",
+      "charge_cells": 0,
+      "walk_h2_g": {
+        "ems-sdp": 0.002766191431902415,
+        "ems-ftp75-sdp": 0.010557030811906428
+      },
+      "walk_dsoc": {
+        "ems-sdp": -0.005232149408494813,
+        "ems-ftp75-sdp": -0.01571718744429751
+      },
+      "walk_eq_h2_g": {
+        "ems-sdp": 0.012811694667029416,
+        "ems-ftp75-sdp": 0.016379343520440875
+      },
+      "walk_charge_windows": {
+        "ems-sdp": 0,
+        "ems-ftp75-sdp": 0
+      }
+    },
+    "ems-sdp-alpha-cal": {
+      "index": 8,
+      "alpha": 0.13411028009327516,
+      "leg": "calibrated",
+      "policy_file": "tools/sdp_policies/sweep_20260908_meas/alpha_08_0.134110.json",
+      "policy_sha": "a7fd8893915c8b4577e5eb08425cf672aa8f4290140df506e15a3f6e888682f9",
+      "file_sha256": "a416138ee1d5c8da7fdf82d56588adf006d16713007cc45308f4989ac5f1ebc2",
+      "charge_cells": 0,
+      "walk_h2_g": {
+        "ems-sdp": 0.012726000707218764,
+        "ems-ftp75-sdp": 0.01640807322937156
+      },
+      "walk_dsoc": {
+        "ems-sdp": -0.0011134930820927424,
+        "ems-ftp75-sdp": -0.013330039233798385
+      },
+      "walk_eq_h2_g": {
+        "ems-sdp": 0.012726000707218764,
+        "ems-ftp75-sdp": 0.01640807322937156
+      },
+      "walk_charge_windows": {
+        "ems-sdp": 0,
+        "ems-ftp75-sdp": 0
+      },
+      "note": "the SWEEP ANCHOR: this artifact reproduces tools/sdp_policies/sdp_policy_v6.json policy block (anchor check MATCH), so the leg keeps its declared role as the in-family control - a same-stimulus repeat of ems-sdp, which plays sdp-v6. The leg-midpoint rule of the 2026-09-02 sweep resolves to index 31 (alpha 0.127463) here because the calibrated leg is no longer symmetric about the anchor; within a leg every walk total is identical to nine decimals, so the two choices are indistinguishable offline and the role decides."
+    },
+    "ems-sdp-alpha-charge": {
+      "index": 15,
+      "alpha": 0.2804175717520618,
+      "leg": "charge_admitting",
+      "policy_file": "tools/sdp_policies/sweep_20260908_meas/alpha_15_0.280418.json",
+      "policy_sha": "38d4ef27f9b1d4a97743e8d26ebc1f942c8b35700ce26ba5d778123c930a2a24",
+      "file_sha256": "bf8b1daee5e185c321397cf775022149a7fc69cfe6c87051b08e3403c6a96d51",
+      "charge_cells": 593,
+      "walk_h2_g": {
+        "ems-sdp": 0.015014630352348703,
+        "ems-ftp75-sdp": 0.01640807322937156
+      },
+      "walk_dsoc": {
+        "ems-sdp": -0.00038112248124666515,
+        "ems-ftp75-sdp": -0.013330039233798385
+      },
+      "walk_eq_h2_g": {
+        "ems-sdp": 0.01322836059418754,
+        "ems-ftp75-sdp": 0.01640807322937156
+      },
+      "walk_charge_windows": {
+        "ems-sdp": 1,
+        "ems-ftp75-sdp": 0
+      }
+    }
+  }
+}
