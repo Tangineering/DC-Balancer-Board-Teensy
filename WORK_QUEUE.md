@@ -3,7 +3,7 @@
 ## 0h. Campaign II (2026-09-09, the first H-20 campaign) - operator rulings and the fix queue
 
 Source: `HIL Results/hil_report_20260909_095715/HIL_FINDINGS.md` (FINAL SUMMARY) and OVERNIGHT_LOG.md session 2026-09-09
-(the headlines at 28 / 31 / 36 / 42 of 75). Zero board defects; every FAIL classified. Items 1-8 need a ruling; 9-18 are
+(the headlines at 28 / 31 / 36 / 42 of 75). Zero board defects; every FAIL classified. Items 1-8 need a ruling; 10-21 are
 tooling / suite items for the fix round (the 0f queue stays held behind the H2-model rulings where it overlaps).
 
 ### Rulings
@@ -21,34 +21,43 @@ tooling / suite items for the fix round (the 0f queue stays held behind the H2-m
 7. **The ftp75c frontier's bound arm** reads 0.9693: the in-band DP never leaves the battery-only arm while the SDP rides FC-only;
    the DP solve has no selector. Rule whether the matched DP is re-solved under the selector (the 0f matched-DP item) or the
    bound arm is declared structurally uninformative on cycles whose total never clears the gate.
-8. **Bench**: the share-staircase FC cut latency reads 2.5 / 8.4 / 11.2 ms across H / I / II (host jitter) - a bench log pins the
+8. **The convex map separates the strategies** (tool pass, lambda 0.4673): on the 61 s cycle the v6 frontier SDP reads 1.0949 vs
+   the soc-band reference and 1.1204 vs the dp-replay bound while the MPC family sits 3 % under the bound (campaign I: six
+   strategies within 0.47 %). The v6 frontier role (D-9) is now a MEASURED question: rule whether the H-20 re-solve (v7, or a
+   re-derived alpha) replaces v6 once the matched-DP records exist, and whether the in-band DP table can serve as a bound
+   against selector-aware live strategies at all.
+9. **Bench**: the share-staircase FC cut latency reads 2.5 / 8.4 / 11.2 ms across H / I / II (host jitter) - a bench log pins the
    board's own figure; the AD5443/OPA197 DMM measurement still open.
 
 ### Fix queue
-9. [TOOLS] `Planner.delivery_table()` HOLD state SOURCE-aware (FC-only holds are the whole residual on ems-ftp75-mpc / ftp75c-mpc /
+10. [TOOLS] the H-20 matched-DP re-solves: no cached solve on any of the 26 EMS rows of campaign II (`--matched-dp solve
+    --matched-dp-allow-long` from main, multi-hour; commit tools/dp_db); until then every deviation / residual column is empty.
+11. [TOOLS, report] the report stage prices whole-run h2_cum_g while the suite scores h2_run_g (A0 x t_entry); record the pricing
+    lambda beside the suite's; restate the matched-DP note on H-20 (it still says "dynamic Gfc integrator vs Gfc DC gain").
+12. [TOOLS] `Planner.delivery_table()` HOLD state SOURCE-aware (FC-only holds are the whole residual on ems-ftp75-mpc / ftp75c-mpc /
    ems-mpc; the queued BT-only preview does not cover them); the 171.4 s post-window residual (347 ms, 17 ms outside
    `exclude_hold_ms`) on ftp75c-mpc.
-10. [SUITE] ems-dp-replay: `signal_dp_fc_current_railed` floor 0.95 A -> ~0.85 A from the H-20 table's 0.625 rail x the window
+13. [SUITE] ems-dp-replay: `signal_dp_fc_current_railed` floor 0.95 A -> ~0.85 A from the H-20 table's 0.625 rail x the window
     total; `signal_dp_early_fc_rail` window [12, 20] -> [5, 11] s floor 0.80; the citation's retired trajectory and "charge_goal
     is 0 for the ENTIRE run" (a 2.5 s window opens at 51.53 s); the one-sided h2 floor.
-11. [SUITE] ems-ftp75-dp / ftp75c family citations converted from the retired trajectories (fc_carried 0.7677 / table max 0.8375;
+14. [SUITE] ems-ftp75-dp / ftp75c family citations converted from the retired trajectories (fc_carried 0.7677 / table max 0.8375;
     the ftp75c walk figures are Gfc-era: 5050 cites 0.0020697 g); state the A0 share in every provisional note (66-88 % on the
     low-demand legs); register `charge_edges_safe` on ems-ftp75c-socband; REPORT.md's "ftp75-dp bound PENDING a table
     regeneration" note is stale.
-12. [TOOLS] the matched DP re-solved under the selector before any ftp75c vs_bound reading (see ruling 7); the fresh matched-DP
+15. [TOOLS] the matched DP re-solved under the selector before any ftp75c vs_bound reading (see ruling 7); the fresh matched-DP
     records for campaign II from the tool pass.
-13. [SUITE] plumbing-only hydrogen floors (ems-soc-band 1e-3 g etc.) score nothing - re-derive as bands or drop; `h2_saturated_peak_w`
+16. [SUITE] plumbing-only hydrogen floors (ems-soc-band 1e-3 g etc.) score nothing - re-derive as bands or drop; `h2_saturated_peak_w`
     prints bus watts under a stack label; a stack-referred saturation margin metric (ems-sdp 93.0 % of P_MAX; clamp-sweep crossed
     the knee at 24.08 W, 63 ticks, on an unscored leg).
-14. [SUITE, text] the ems-sdp policy citation names v3 (played v6); `signal_alpha_share_degenerate` quotes alpha 0.073936 (played idx 2,
+17. [SUITE, text] the ems-sdp policy citation names v3 (played v6); `signal_alpha_share_degenerate` quotes alpha 0.073936 (played idx 2,
     0.065498); `mpc_share_prediction`'s label misdescribes the prefix mask.
-15. [SUITE] `bt_bus_restored`: record the trigger class (live gate release vs region-edge fallback) and score the two b00 shapes
+18. [SUITE] `bt_bus_restored`: record the trigger class (live gate release vs region-edge fallback) and score the two b00 shapes
     separately (b00-v3's restore took 7.99 ms through the turn-on path vs 1.0 ms).
-16. [SUITE] window-pinned checks on the sdp-v6 legs: SoC-threshold events carry 1-3 s of cross-campaign phase (the sdp-cross flip
+19. [SUITE] window-pinned checks on the sdp-v6 legs: SoC-threshold events carry 1-3 s of cross-campaign phase (the sdp-cross flip
     42.3 / 37.3 / 35.3 / 36.3 s; its windows 2-3 s earlier; braking's 20.6 s re-arm absent) while dwells and periods repeat.
-17. [LEDGER] retire campaign I's ems-mpc-cross "frontier entry VOID" line (the leg is in no tuple) and the b30-v3 fc_ceil "trend";
+20. [LEDGER] retire campaign I's ems-mpc-cross "frontier entry VOID" line (the leg is in no tuple) and the b30-v3 fc_ceil "trend";
     campaign I's exact-0.0 commit census baseline is retired (the single leg now commits 1.0).
-18. [DOC] the F1 window-open delay is TWO commander periods from the standstill trigger (charge-to-full, 39.6 ms) and ZERO from an
+21. [DOC] the F1 window-open delay is TWO commander periods from the standstill trigger (charge-to-full, 39.6 ms) and ZERO from an
     FC-selected arm (REGEN drop and FC_CHARGE open on the same tick) - the design record says one.
 
 ## 0e. fw v28 round (operator rulings 2026-09-08) — the source selector, the sliver hold, I_min 0.125 A, the charge-window k_d hold, and the F1 sequencing fix
