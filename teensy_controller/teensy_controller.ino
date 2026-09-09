@@ -1,6 +1,70 @@
 /*
  * teensy_controller.ino — Scale Car DC Balancer Board, Rev 20260622
  *
+ * fw v28 REV 6 (2026-09-08) - THE SELECTOR FIX ROUND. Rev 6 SUPERSEDES rev 5 BEFORE ANY FLASH:
+ *   no board has run fw v28 in any revision, so FW_VERSION stays 28. Seven review findings, all
+ *   inside the rev 5 re-entry rule and the rev 1 selector. NO packet, frame or record layout
+ *   changes: UDP telemetry stays v4/58 B, the command packet 22 B, the HIL frames 40 B/18 B, and
+ *   the bench log stays v9/116 B (one previously RESERVED bit of selector_bits is now written).
+ *     S1 - THE INHIBIT COULD BE SPENT IN THE SAME LOOP ITERATION IT WAS SET. chargingControl()
+ *     runs BEFORE powerBalance() in every caller, so F1's disarm raised shareSelectorReArmInhibit
+ *     and the next statement of the SAME iteration cleared it again on any strictly in-band
+ *     command - the ordinary case, since an EMS holds an in-band share across a charge window. If
+ *     the latch's release was then REFUSED that tick (V_bus under V_BUS_CHARGED_THRESH, or the
+ *     survivor's regulator LOW) the cut survived with no inhibit standing, and the next rail
+ *     command re-armed and re-cut before the window could open (FC_CHARGE waits for FC_BUS HIGH
+ *     plus its blanking) - the campaign-H UV_BUS class, restored. FIX, both terms on the CLEAR
+ *     side so the inhibit's meaning is untouched: (1) a FRESHNESS token, raised by both safety
+ *     disarms (F1 and the S2 raw escape) and CONSUMED by the first powerBalance() that sees it, so
+ *     the inhibit always outlives one full loop iteration; (2) no clear while shareSpCutFC or
+ *     shareSpCutBT is latched - an un-realised disarm is still a live refusal.
+ *     S2 - NO SELECTION-CHANGE DWELL. A rail flip while armed is release -> one live tick ->
+ *     entry, rate-limited only by the 30 ms survivor blanking, so an EMS dithering 0.85/0.50/0.15
+ *     at the 50 Hz commander cadence commutated the source ~32 times a second (the campaign-G
+ *     chatter class was 0.64/s). Worse, every release calls resetShareControlState(), which ZEROES
+ *     share_govTotAFilt: for totals in roughly [0.25, 0.35] A the ~20 ms EMA never reaches the gate
+ *     between commutations, so the gate release NEVER fires and the board runs permanently
+ *     single-sourced, alternating. FIX: SHARE_SELECTOR_DWELL_MS = 250 ms, applied to a SELECTION
+ *     CHANGE ONLY - never the first arm, never the gate release, never any disarm. Derivation at
+ *     the constant: > the 35 ms full-band droop walk, > the EMA's 43.5 ms worst sub-gate crossing
+ *     (0.28 A), > the 30 ms blanking plus RT1987 turn-on, and <= 4 commutations/s. A rail command
+ *     inside the dwell is NOT lost: the selection is re-evaluated every tick against the
+ *     THEN-CURRENT command and lands when the dwell expires.
+ *     S3 - THE RE-ENTRY RULE WAS UNREACHABLE WHEN THE RAIL COMMAND PRECEDED THE FALL UNDER THE
+ *     GATE. A latched setpoint cut returns from powerBalance() before the loop-mode decision and
+ *     before the filter advance, and rev 2 scoped the frozen-path advance to
+ *     shareBatteryOnlyActive - so with the cut owned by the LATCH alone, shareClosedLoopMode and
+ *     share_govTotAFilt froze at their pre-cut values for the whole latched window, conditions (3)
+ *     and (4) of the rule never became true, and the command returning in band released to TWO
+ *     sources. FIX: advance share_govTotAFilt whenever ANY setpoint cut is outstanding, whoever
+ *     owns it. The reference is frozen either way, the gate-release DISARM stays scoped to the arm,
+ *     and a filter tracking the actual single-source total is the more truthful value at both of
+ *     its readers. DEVIATION, documented: only the CLOSED -> OPEN loop-mode transition runs on the
+ *     frozen path. The opposite transition carries the OPEN->CLOSED seed
+ *     resetShareControllerCore(droopSlew_prev), a controller-state WRITE, and writing controller
+ *     state from a frozen path would put a second writer on it outside the live path's rate
+ *     limiter; it is also unnecessary, because the live path re-derives the mode from the same
+ *     filter on its first tick after the release. The falling edge is the one the rule reads.
+ *     S4 - STATEMENT CORRECTED (no code): the fw v25 load guard bounds a handoff by comparing the
+ *     RAW current on the doomed channel against SHARE_CUT_MAX_HANDOFF_A. The "at most 0.25 A"
+ *     figure quoted through rev 5 is the FILTERED total, which does not bound the raw current on
+ *     the re-arm tick - ~20 ms of filter lag admits raw totals well above the gate. The sub-gate
+ *     condition places a re-arm in the LOW-LOAD REGIME; it does not prove the guard cannot refuse,
+ *     and a refusal was never a hazard (the existing deferral resolves it).
+ *     S5 - doState3() and the State-98 'Q' exit now clear the selector flags beside
+ *     clearShareCeilingState(), the same gap fw v26's review LOW-1 found for the ceiling flags:
+ *     the exit to Idle stops calling powerBalance() rather than freezing it, so an Idle board was
+ *     publishing the PREVIOUS run's selector state on the BLG selector_bits, the HIL aux bits 6/7
+ *     and the 'S' dump. State 99 is still deliberately not a clear site.
+ *     S6 - OBSERVABILITY: BLG v9 selector_bits BIT 4 = shareSelectorReArmInhibit (a previously
+ *     reserved bit; record size, field offsets and format version UNCHANGED; bits 5-7 stay
+ *     reserved). Without it a decoded run cannot separate "no rail was commanded" from "a rail was
+ *     commanded and REFUSED". The 'S' dump also gains the remaining selection dwell.
+ *     S7 - stale comments corrected: the LOG_REC_SIZE figure in the logging-safety note (106 ->
+ *     116) and the "the arm is ONE-SHOT" clause on the frozen-path advance, which rev 5's
+ *     re-entry rule repealed (the operative half - resetShareControlState() clears
+ *     shareClosedLoopRun, so the release cannot cycle - is unchanged and is stated there).
+ *
  * fw v28 REV 5 (2026-09-08) — THE RE-ENTRY RULE, AND BENCH-LOG FORMAT v9. Rev 5 SUPERSEDES rev 4
  *   BEFORE ANY FLASH: no board has run fw v28 in any revision, so FW_VERSION stays 28 and there is
  *   no rev-4 era in the ledger. UDP telemetry stays v4/58 B, the command packet 22 B and the HIL
@@ -41,9 +105,15 @@
  *     resetShareControlState() STILL DOES NOT RE-ARM, structurally: it clears shareClosedLoopRun,
  *     which is condition 2, so the latch's own release path can never re-cut what it just released.
  *     Profile boundaries (armShareBatteryOnlyStart(), hilWarmReset()) clear the provenance AND the
- *     inhibit, so no run inherits a refusal. The DEFERRED-CUT path is unreachable from a re-arm at
- *     the shipped constants: the doomed channel carries at most the whole sub-gate total (0.25 A)
- *     against SHARE_CUT_MAX_HANDOFF_A 0.5 A, so the fw v25 load guard always admits. OBSERVABILITY:
+ *     inhibit, so no run inherits a refusal. THE DEFERRED-CUT PATH IS BOUNDED BY THE fw v25 LOAD
+ *     GUARD ITSELF (statement corrected, rev 6): the guard compares the RAW current on the doomed
+ *     channel against SHARE_CUT_MAX_HANDOFF_A (0.5 A) on the tick of the cut, and that raw test is
+ *     what makes a handoff safe. The "at most 0.25 A" figure quoted here through rev 5 is the
+ *     FILTERED total 2*SHARE_MINORITY_I_MIN_A, and a ~20 ms EMA sitting under the gate does NOT
+ *     bound the raw current on the re-arm tick - filter lag admits raw totals well above it. The
+ *     sub-gate condition therefore says the re-arm happens in the LOW-LOAD REGIME, not that the
+ *     guard cannot refuse; when it does refuse, the existing deferral resolves it with no new
+ *     code, exactly as a never-closed selector's entry does. OBSERVABILITY:
  *     the HIL aux bits 6/7 now also show a re-armed selector (frame, offsets and XOR span
  *     UNCHANGED; the bits keep their meanings verbatim, so no host changes) — the PROVENANCE is
  *     carried on the bench log and the 'S' dump instead, which gain "(re-armed)" and
@@ -54,8 +124,9 @@
  *     header). The four appended fields, which the `flags` byte could not carry because it has
  *     been fully allocated since fw v26:
  *         112  u8   selector_bits  bit0 shareBatteryOnlyArmed, bit1 shareSelectorFC,
- *                                  bit2 shareSelectorReArmed (item 1), bit3 encDirStorePending;
- *                                  bits 4-7 reserved, written 0
+ *                                  bit2 shareSelectorReArmed (item 1), bit3 encDirStorePending,
+ *                                  bit4 shareSelectorReArmInhibit (added rev 6);
+ *                                  bits 5-7 reserved, written 0
  *         113  i8   enc_dir_sign   encDirSign (+1 / -1); v_act in the SAME record already carries it
  *         114  u8   enc_dir_flips  encDirFlipCount, CLAMPED at 255 (boot-monotonic, saturating)
  *         115  u8   spare          reserved, always 0
@@ -3051,6 +3122,39 @@ constexpr float SHARE_BATTERY_ONLY_SP = 0.0f;   // the effective setpoint for a 
 // out-of-band command is no longer a competing owner, it is this selector's INPUT.
 constexpr float SHARE_SELECTOR_FC_SP = 1.0f;    // the effective setpoint for a FUEL-CELL selection
 
+// fw v28 rev 6 (review S2) — THE SELECTION-CHANGE DWELL.
+// A selection change is make-before-break, but it is NOT free: it is a latch RELEASE, one live
+// two-source tick, then a latch ENTRY on the other channel, and the only thing rate-limiting it
+// through rev 5 was the 30 ms survivor turn-on blanking. An energy manager that dithers its
+// commanded share across both rails at the 50 Hz commander cadence (0.85 / 0.50 / 0.15 / ...)
+// would therefore COMMUTATE THE SOURCE about 32 times a second. The campaign-G chatter class was
+// 0.64 commutations/s, so that is a factor ~50 more switch cycles on the two ideal-diode
+// controllers than anything measured. Worse, every release calls resetShareControlState(), which
+// ZEROES share_govTotAFilt: at totals in roughly [0.25, 0.35] A the ~20 ms EMA cannot climb back
+// to the 2*SHARE_MINORITY_I_MIN_A gate before the next commutation re-zeroes it, so the gate
+// release never fires and the board runs PERMANENTLY single-sourced, alternating sources — the
+// exact failure the gate release exists to end.
+// THE DERIVATION of 250 ms. Three lower bounds and one upper bound:
+//   (a) > the full-band droop walk. The slew limiter moves the ratio at
+//       DROOP_RATIO_SLEW_PER_TICK (0.02/tick) and needs 0.70/0.02 = 35 ticks, i.e. ~35 ms at the
+//       1 kHz control rate, to walk the whole [0.15, 0.85] band, so a dwell
+//       under that would let a change be commanded before the previous one had physically landed;
+//   (b) > the EMA's worst crossing time. At the worst sub-gate total the filter must climb from 0
+//       to the gate through SHARE_GOV_FILT_ALPHA = 0.05: at 0.28 A that is
+//       ln(1 - 0.25/0.28)/ln(0.95) = 43.5 ms. The dwell must exceed it or the release can never
+//       win the race described above;
+//   (c) > the survivor turn-on blanking (30 ms) plus the RT1987 turn-on (~8 ms), so a change is
+//       never merely deferred by the entry guard and then retried;
+//   (d) <= 4 commutations per second, which is the switch-cycle budget this bounds it to — about
+//       6x the measured campaign-G chatter rate and ~8x below the un-dwelled 50 Hz dither.
+// 250 ms satisfies all four with >= 5x margin on the binding bound (b). It applies to a SELECTION
+// CHANGE ONLY — never to the first arm, never to the gate release, never to any disarm — and a
+// rail command inside the dwell is NOT LOST: the selection is re-evaluated against the
+// then-current command on the first tick the dwell expires.
+constexpr uint32_t SHARE_SELECTOR_DWELL_MS = 250;
+static_assert(SHARE_SELECTOR_DWELL_MS >= 50,
+              "selector dwell must exceed the EMA's worst sub-gate crossing time (43.5 ms)");
+
 // ── Source current-ceiling governor (fw v26, 2026-09-02) ─────────────────────
 // PURPOSE: fewer FAULT_OC_FC latches at high power, WITHOUT weakening the fault. The OC_FC
 // check in detectFaults() is UNCHANGED (single-sample, raw I_fc, LIMIT_I_FC_MAX = 1.4 A) — this
@@ -4958,6 +5062,9 @@ extern bool     shareSelectorFC;          // fw v28: selected source (false = BT
 extern bool     shareSelectorReArmed;     // fw v28 rev 5: this arm came from the RE-ENTRY rule
 extern bool     shareSelectorReArmInhibit;// fw v28 rev 5: a SAFETY disarm blocks the re-entry
                                           //   re-arm until an in-band command clears it
+extern bool     shareSelectorReArmInhibitFresh;  // fw v28 rev 6: the inhibit was raised THIS loop
+                                          //   iteration and may not be cleared yet (review S1)
+extern uint32_t shareSelectorDwellUntilMs;// fw v28 rev 6: selection-change dwell deadline (S2)
 float shareSelectorEffectiveSp();
 float shareDroopScaleTarget(float totFilt);
 void  armShareBatteryOnlyStart();
@@ -5023,7 +5130,7 @@ void parseKLogLine(const char *line);
 // Ag105 I2C), for the duration of a State-98 profile run.
 //
 // NON-BLOCKING DISCIPLINE (five dead boosts say the main loop may never stall):
-//   - The control path only ever memcpy()s LOG_REC_SIZE (106) bytes into a static ring (logSampleTick()). No I/O,
+//   - The control path only ever memcpy()s LOG_REC_SIZE (116) bytes into a static ring (logSampleTick()). No I/O,
 //     no formatting, no allocation, no blocking, ever.
 //   - All card I/O happens in logDrainTick(), called from loop(): it bails immediately when the
 //     card is busy and writes at most ONE <=512 B chunk per loop tick. This is the SD analogue of
@@ -5288,7 +5395,9 @@ struct __attribute__((packed)) BenchLogRecord {
                                        //          from the RE-ENTRY rule, not from a profile start)
                                        //   bit3 = encDirStorePending     (an encoder-sense EEPROM
                                        //          commit is queued for encDirCommitTick())
-                                       //   bits 4-7 reserved, written 0
+                                       //   bit4 = shareSelectorReArmInhibit (rev 6: a SAFETY
+                                       //          disarm is refusing the re-entry re-arm)
+                                       //   bits 5-7 reserved, written 0
     int8_t   enc_dir_sign;             // encDirSign — +1 = decoder sense trusted as wired,
                                        //   -1 = flipped by the rev 2 runaway detector. v_actual in
                                        //   this record ALREADY carries the factor
@@ -5824,6 +5933,11 @@ void logSampleTick() {
     if (shareSelectorFC)       r.selector_bits |= 0x02;
     if (shareSelectorReArmed)  r.selector_bits |= 0x04;
     if (encDirStorePending)    r.selector_bits |= 0x08;
+    // fw v28 rev 6 (review S6): bit 4 is the RE-ARM INHIBIT. It fits a previously reserved bit, so
+    // the record size, every field offset and the format version are UNCHANGED. Without it a
+    // decoded run cannot tell "no rail was commanded" from "a rail was commanded and REFUSED",
+    // which is the whole observable of the F1 disarm and the S2 raw escape.
+    if (shareSelectorReArmInhibit) r.selector_bits |= 0x10;
     r.enc_dir_sign            = encDirSign;
     r.enc_dir_flips           = (encDirFlipCount > 255u) ? (uint8_t)255u
                                                         : (uint8_t)encDirFlipCount;
@@ -7237,6 +7351,20 @@ void doState3() {
     // clear site (see clearShareCeilingState()): a latched board should show what was binding when
     // it faulted, whereas a clean Finish should not.
     clearShareCeilingState();
+    // fw v28 rev 6 (review S5): the SELECTOR flags are the same gap, one revision later. The four
+    // of them (arm, selection, provenance, inhibit) are per-tick state of a RUN, and the
+    // Run -> Finish -> Idle exit stops calling powerBalance() rather than freezing it, so without
+    // this an Idle board published the previous run's selector state on the BLG selector_bits, the
+    // HIL aux bits 6/7 and the 'S' dump for as long as it sat there. Cleared, not frozen, for
+    // exactly the reason above: State 99 keeps its evidence, a clean Finish does not. The arm is
+    // re-established by armShareBatteryOnlyStart() at the next Idle -> Run boundary, so clearing
+    // here cannot strand a profile.
+    shareBatteryOnlyArmed          = false;
+    shareBatteryOnlyActive         = false;
+    shareSelectorFC                = false;   // back to the battery default
+    shareSelectorReArmed           = false;
+    shareSelectorReArmInhibit      = false;
+    shareSelectorReArmInhibitFresh = false;
 
     Serial.println("State 3 -> State 1 (IDLE)");
     mainState = 1;
@@ -7351,6 +7479,8 @@ void hilWarmReset() {
     shareSelectorFC        = false;   // fw v28: back to the battery default with the arm
     shareSelectorReArmed      = false;   // fw v28 rev 5: provenance and inhibit go with the arm
     shareSelectorReArmInhibit = false;
+    shareSelectorReArmInhibitFresh = false;   // fw v28 rev 6: and the freshness token with it
+    shareSelectorDwellUntilMs      = millis();// ...and no run inherits a selection-change dwell
 
     // ── Control rate limiters ────────────────────────────────────────────────
     // Back-dated so the first tick of the new run is a control tick (and its first logged sample).
@@ -8370,6 +8500,17 @@ void doState98() {
                 // so without an explicit clear a State-98 profile that exited while clamped would
                 // publish a stale clamp on the BLG bit7 / HIL aux bits / 'S' dump through Idle.
                 clearShareCeilingState();
+                // fw v28 rev 6 (review S5): the SELECTOR flags, for the same reason and by the
+                // same argument as in doState3() — a State-98 profile that exited while armed (or
+                // while a rail command stood refused) would otherwise publish that state through
+                // Idle on the BLG selector_bits, the HIL aux bits and the 'S' dump. The next
+                // profile start arms it afresh.
+                shareBatteryOnlyArmed          = false;
+                shareBatteryOnlyActive         = false;
+                shareSelectorFC                = false;
+                shareSelectorReArmed           = false;
+                shareSelectorReArmInhibit      = false;
+                shareSelectorReArmInhibitFresh = false;
                 // fw v28 rev 2: drop a partially accumulated direction-runaway window at the
                 // profile boundary, so ticks earned under one profile can never complete a window
                 // under the next. The SIGN and the flip count deliberately survive — they are a
@@ -10609,6 +10750,13 @@ void printTestStatus() {
     // until a strictly in-band command arrives.
     if (shareSelectorReArmed)      Serial.print(" (re-armed)");
     if (shareSelectorReArmInhibit) Serial.print(" (re-arm inhibited)");
+    // fw v28 rev 6 (review S2): the selection-change dwell, so an operator watching a source that
+    // will not follow a commanded rail can see WHY, and for how much longer.
+    if ((int32_t)(millis() - shareSelectorDwellUntilMs) < 0) {
+        Serial.print(" (sel dwell ");
+        Serial.print((uint32_t)(shareSelectorDwellUntilMs - millis()));
+        Serial.print(" ms)");
+    }
     Serial.print("  cut=");
     if (shareSpCutFC)      Serial.print("FC off bus");
     else if (shareSpCutBT) Serial.print("BT off bus");
@@ -11293,6 +11441,27 @@ bool     shareSelectorReArmed = false;
 // the operator's rule is that a later fall back into the open-loop region with a rail command
 // SHALL re-arm, and those two disarms are exactly that path's normal ending.
 bool     shareSelectorReArmInhibit = false;
+// fw v28 rev 6 (review S1) — THE INHIBIT'S FRESHNESS FLAG.
+// The inhibit could be SPENT IN THE SAME LOOP ITERATION IT WAS SET. chargingControl() runs before
+// powerBalance() in every caller, so F1's disarm set the inhibit and the very next powerBalance()
+// cleared it again on any strictly in-band command — which is the ordinary case, because the EMS
+// holds an in-band share across a charge window. If the latch's release was then REFUSED that
+// tick (V_bus under V_BUS_CHARGED_THRESH, or the survivor's regulator LOW) the cut survived, and
+// the next rail command re-armed and re-cut before the window could open (FC_CHARGE waits for
+// FC_BUS HIGH plus its blanking) — the campaign-H UV_BUS class, restored.
+// The fix is two terms, both on the CLEAR side, so the inhibit's meaning is unchanged:
+//   (1) FRESHNESS. Every site that RAISES the inhibit also raises this flag; the first
+//       powerBalance() that observes it CONSUMES it instead of clearing the inhibit. The inhibit
+//       therefore always survives at least one full loop iteration, whatever the command is;
+//   (2) NO CLEAR WHILE A CUT IS LATCHED. shareSpCutFC/shareSpCutBT outstanding means the disarm
+//       has not yet been realised on the bus, so the refusal it represents is still live. The
+//       clear waits for the latch's own guarded release to land.
+bool     shareSelectorReArmInhibitFresh = false;
+// fw v28 rev 6 (review S2) — the SELECTION-CHANGE dwell deadline (millis()). A change is admitted
+// only when (int32_t)(millis() - this) >= 0. Set to millis() at every arm site, so the FIRST
+// selection of a profile is never dwelled; set to millis() + SHARE_SELECTOR_DWELL_MS whenever a
+// change is actually taken.
+uint32_t shareSelectorDwellUntilMs = 0;
 
 // The effective setpoint the selector feeds the setpoint latch this tick: 0.0 for a battery
 // selection, 1.0 for a fuel-cell selection. Both are OUT of the droop band, which is what makes
@@ -12059,8 +12228,20 @@ void powerBalance() {
     // Plus the inhibit and the charge-window refusal (see shareSelectorReArmInhibit's declaration
     // and F1 in chargingControl()): a window that is already open is itself a single-source state
     // whose sole owner is the charge path, so the selector must not claim one on top of it.
+    // fw v28 rev 6 (review S1): the inhibit must survive at least one FULL loop iteration, and it
+    // must not be cleared while the disarm it represents is still un-realised on the bus. See
+    // shareSelectorReArmInhibitFresh's declaration for the defect this closes.
     if (power_share_setpoint > DROOP_R_MIN && power_share_setpoint < DROOP_R_MAX) {
-        shareSelectorReArmInhibit = false;   // strictly in band: the safety inhibit is spent
+        if (shareSelectorReArmInhibitFresh) {
+            // Raised earlier in THIS loop iteration (chargingControl() precedes powerBalance()).
+            // Consume the freshness, keep the inhibit: it is spent by the NEXT iteration's in-band
+            // command at the earliest.
+            shareSelectorReArmInhibitFresh = false;
+        } else if (!shareSpCutFC && !shareSpCutBT) {
+            // Strictly in band AND no cut outstanding: the latch's guarded release has landed, so
+            // the refusal is complete and the inhibit is spent.
+            shareSelectorReArmInhibit = false;
+        }
     }
     if (!shareBatteryOnlyArmed && shareClosedLoopRun && !shareClosedLoopMode &&
         !shareSelectorReArmInhibit &&
@@ -12074,11 +12255,30 @@ void powerBalance() {
         // two rails cannot both be met (DROOP_R_MIN < DROOP_R_MAX).
         shareSelectorFC      = (power_share_setpoint >= DROOP_R_MAX);
         shareSelectorReArmed = true;
+        // fw v28 rev 6 (review S2): the FIRST selection of an arm is never dwelled — the dwell
+        // rate-limits CHANGES of selection, not the arm itself. Expire the deadline here so the
+        // arm lands immediately; the next change then pays the full dwell.
+        shareSelectorDwellUntilMs = millis();
     }
     if (shareBatteryOnlyArmed) {
-        if (power_share_setpoint >= DROOP_R_MAX)      shareSelectorFC = true;
-        else if (power_share_setpoint <= DROOP_R_MIN) shareSelectorFC = false;
+        bool wantFC = shareSelectorFC;
+        if (power_share_setpoint >= DROOP_R_MAX)      wantFC = true;
+        else if (power_share_setpoint <= DROOP_R_MIN) wantFC = false;
         // in between: HOLD the current selection (no else)
+        if (wantFC != shareSelectorFC) {
+            // fw v28 rev 6 (review S2) — SELECTION-CHANGE DWELL. A change is a latch release, one
+            // live tick, and a latch entry on the other channel; through rev 5 nothing but the
+            // 30 ms survivor blanking limited how often that could happen, so a 50 Hz rail dither
+            // commutated the source ~32 times a second AND re-zeroed share_govTotAFilt often
+            // enough that the gate release could never fire (see SHARE_SELECTOR_DWELL_MS).
+            // The command is NOT lost while the dwell holds: this test is re-evaluated every tick
+            // against the THEN-CURRENT command, so what lands when the dwell expires is what the
+            // Pi is asking for at that moment, not a stale edge.
+            if ((int32_t)(millis() - shareSelectorDwellUntilMs) >= 0) {
+                shareSelectorFC = wantFC;
+                shareSelectorDwellUntilMs = millis() + SHARE_SELECTOR_DWELL_MS;
+            }
+        }
     }
     shareBatteryOnlyActive = shareBatteryOnlyArmed;
 
@@ -12088,13 +12288,18 @@ void powerBalance() {
         // A latched cut returns here BEFORE share_govTotAFilt is updated, by design: a frozen
         // loop has no governed state to advance. That is fatal for the battery-only arm, whose
         // release condition IS the filtered total crossing the closed-loop gate — a frozen filter
-        // can never cross it and the profile would run single-sourced forever. So while the arm
-        // owns the cut, and ONLY then, keep the governor's load estimate alive and drop the arm
-        // the instant the gate is met. The very next tick then sees ACTIVE false, the commanded
-        // in-band setpoint reaches the release branch, FC re-closes on a charged bus through the
-        // latch's own guarded release, and resetShareControlState() hands the loop back to
-        // open-loop feedforward (fw v5 S9) for the ~20-40 ms the re-zeroed EMA needs. The arm is
-        // ONE-SHOT: it is not re-armed by that reset, so the release cannot cycle.
+        // can never cross it and the profile would run single-sourced forever. So while a cut is
+        // outstanding, keep the governor's load estimate alive, and drop the ARM the instant the
+        // gate is met (that disarm stays scoped to the arm — see the rev 6 block below). The very
+        // next tick then sees ACTIVE false, the commanded in-band setpoint reaches the release
+        // branch, FC re-closes on a charged bus through the latch's own guarded release, and
+        // resetShareControlState() hands the loop back to open-loop feedforward (fw v5 S9) for the
+        // ~20-40 ms the re-zeroed EMA needs.
+        // fw v28 rev 6 (review S7): the old line here read "the arm is ONE-SHOT: it is not
+        // re-armed by that reset". The first clause was REPEALED by rev 5's re-entry rule — the
+        // arm is no longer one-shot. The operative half is unchanged and is what the release
+        // depends on: resetShareControlState() clears shareClosedLoopRun, which is the re-entry
+        // rule's condition (2), so the release still cannot cycle.
         // fw v28: this runs whenever the SELECTOR owns the cut, from EITHER selection. The
         // measured total is |I_fc| + |I_batt| regardless of which channel is off the bus (the cut
         // channel simply contributes ~0), so the gate release is symmetric and needs no branch on
@@ -12134,16 +12339,54 @@ void powerBalance() {
                 shareBatteryOnlyArmed     = false;
                 shareSelectorReArmed      = false;
                 shareSelectorReArmInhibit = true;
+                // fw v28 rev 6 (review S1): the inhibit must outlive this loop iteration.
+                shareSelectorReArmInhibitFresh = true;
             }
+        }
+        // ── fw v28 rev 6 (review S3) — ADVANCE THE LOAD ESTIMATE ON ANY LATCHED CUT ───────────
+        // THE DEFECT the widening closes: the re-entry rule of rev 5 was UNREACHABLE whenever the
+        // rail command PRECEDED the fall under the gate. A latched setpoint cut returns from here
+        // before the loop-mode decision and before the filter advance, and rev 5 scoped the
+        // frozen-path advance to shareBatteryOnlyActive, so with the cut owned by the LATCH (a
+        // plain out-of-band command, no arm) both shareClosedLoopMode and share_govTotAFilt froze
+        // at their pre-cut values for the whole latched window. The rule's conditions (3) and (4)
+        // therefore never became true, and when the command finally returned in band the latch
+        // released to TWO SOURCES — the opposite of the ruling, on the one ordering an EMS
+        // produces most often (command the rail, then coast).
+        // THE WIDENING: advance the filter whenever ANY setpoint cut is outstanding, whoever owns
+        // it. The reference is frozen either way (this branch returns before every write), so the
+        // filter is read only at the release and by the re-entry rule, and a filter that tracks
+        // the ACTUAL single-source total is the more truthful of the two values at both readers.
+        // WHY rev 2 SCOPED IT TO THE ARM, and why widening is safe: the fw v27 rev 2 advance was
+        // written for one purpose — a battery-only arm whose ONLY release condition is the filter
+        // crossing the gate, which a frozen filter can never do. That was a liveness fix for the
+        // arm, so it was scoped to the arm; nothing about the scope was a safety argument. The
+        // widened advance moves no reference, commands no switch and cannot release a cut: the
+        // gate-release disarm below stays scoped to the arm (`shareBatteryOnlyActive`), so a
+        // latch-owned cut still releases only on its own in-band command, exactly as before.
+        // THE MODE UPDATE IS DELIBERATELY ONE-SIDED — a documented deviation from the review's
+        // "advance the loop-mode decision". Only the CLOSED -> OPEN transition runs here. The
+        // opposite transition carries the OPEN->CLOSED seed resetShareControllerCore(droopSlew_prev),
+        // which is a controller-state WRITE, and writing controller state from a frozen path
+        // would put a second writer on it outside the live path's rate limiter. It is also not
+        // needed: a rise while a cut is latched is followed by the release, after which the live
+        // path re-derives the mode from the same filter on its first tick. The falling edge is the
+        // one the re-entry rule reads, and it needs no seed.
+        if (shareBatteryOnlyActive || shareSpCutFC || shareSpCutBT) {
             const float totBoArm = fabsf(I_fc) + fabsf(I_batt);
             if (totBoArm >= SHARE_I_TOT_MIN_A) {
                 share_govTotAFilt += SHARE_GOV_FILT_ALPHA * (totBoArm - share_govTotAFilt);
-                if (share_govTotAFilt > 2.0f * SHARE_MINORITY_I_MIN_A) {
+                if (shareBatteryOnlyActive &&
+                    share_govTotAFilt > 2.0f * SHARE_MINORITY_I_MIN_A) {
                     shareBatteryOnlyArmed = false;
                     // fw v28 rev 5: an ORDINARY disarm — no inhibit. The load earned two sources,
                     // which is exactly the ending the re-entry rule is allowed to reverse if the
                     // load later falls away again with a rail still commanded.
                     shareSelectorReArmed  = false;
+                }
+                if (shareClosedLoopMode &&
+                    share_govTotAFilt < 2.0f * SHARE_MINORITY_I_MIN_A - SHARE_GOV_OL_HYST_A) {
+                    shareClosedLoopMode = false;   // one-sided, see above
                 }
             }
         }
@@ -12946,6 +13189,11 @@ void armShareBatteryOnlyStart() {
     // by the previous profile's F1 disarm or raw escape — a new run must not inherit a refusal.
     shareSelectorReArmed      = false;
     shareSelectorReArmInhibit = false;
+    // fw v28 rev 6: a profile start owns neither a stale freshness token nor a stale dwell.
+    // Expiring the deadline (rather than arming one) keeps the rule "the dwell limits CHANGES,
+    // never the first selection of a profile".
+    shareSelectorReArmInhibitFresh = false;
+    shareSelectorDwellUntilMs      = millis();
 }
 
 float youlaController_Power(float setpoint, float alphaRaw) {
@@ -13252,6 +13500,15 @@ void chargingControl() {
             // Cleared by the first strictly in-band command, which is also when the selector's
             // claim on a source stops competing with the charge path's.
             shareSelectorReArmInhibit = true;
+            // fw v28 rev 6 (review S1): "cleared by the first strictly in-band command" was NOT
+            // enough — chargingControl() runs BEFORE powerBalance() in the SAME loop iteration, so
+            // an in-band command (the ordinary case across a charge window) spent the inhibit on
+            // the very next statement of the same iteration. If the latch's release was then
+            // refused that tick (bus under V_BUS_CHARGED_THRESH, or the survivor's regulator LOW)
+            // the cut survived with no inhibit, and the next rail command re-cut before the window
+            // could open. The freshness token makes the inhibit outlive this iteration unconditionally;
+            // powerBalance() additionally refuses to clear it while any shareSpCut* is latched.
+            shareSelectorReArmInhibitFresh = true;
         }
         // The two tests are now SEQUENTIAL, not exclusive (review S5). From a BT selection the
         // disarm above leaves FC_BUS LOW, so test (2) refuses on this period exactly as the

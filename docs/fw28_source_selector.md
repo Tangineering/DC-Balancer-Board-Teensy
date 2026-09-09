@@ -216,10 +216,19 @@ Two properties follow and are the whole safety argument for this change.
 **Two bus switches never move in the same tick.** The release returns before the entry can run, by
 the `releasedThisTick` early return that has been in this function since firmware version 4.
 
-**The load guard always admits below the gate.** A selection change under the closed-loop gate
-carries at most `2 * SHARE_MINORITY_I_MIN_A` = 0.25 A of total, so the doomed channel carries at
-most 0.25 A against a `SHARE_CUT_MAX_HANDOFF_A` of 0.5 A. A selection change above the gate is
-possible only on the same tick the loop closes, which drops the arm.
+**The load guard bounds the handoff.** The firmware version 25 load guard compares the **raw**
+current on the doomed channel against `SHARE_CUT_MAX_HANDOFF_A` (0.5 A) on the tick of the cut, and
+that raw comparison is what makes a handoff safe. *(Statement corrected in revision 6. Revisions 1
+to 5 argued the guard "always admits", because a selection change under the closed-loop gate
+carries at most `2 * SHARE_MINORITY_I_MIN_A` = 0.25 A of total. That quantity is the **filtered**
+total. A filtered total under the gate does not bound the raw current on the tick of the change:
+the governor filter has about 20 milliseconds of lag, so a rising load presents raw totals well
+above the gate before the filter reports them.)* The correct statement is weaker and sufficient.
+The sub-gate condition places a selection change in the low-load regime, where a refusal is
+unlikely; a refusal is not a hazard in any case, because the existing deferral holds the cut and
+re-tests it on the following ticks, exactly as it does for a never-closed selector's entry. A
+selection change above the gate is possible only on the same tick the loop closes, which drops the
+arm.
 
 ### 4.4 The gate release works from either selection
 
@@ -1409,10 +1418,10 @@ profile inherits a refusal from the previous one.
   reaches the setpoint latch with revision 4 semantics until the loop closes once more. This is a
   real corner of the rule rather than an accident, it is left as it stands because changing it
   would alter firmware version 5 hold semantics, and it is pinned by a fixture.
-- **The deferred-cut path is unreachable from a re-arm at the shipped constants.** A re-arm
-  happens only under the gate, so the doomed channel carries at most `2 * SHARE_MINORITY_I_MIN_A`
-  = 0.25 A against a `SHARE_CUT_MAX_HANDOFF_A` of 0.5 A, and the firmware version 25 load guard
-  always admits. If the guard ever did refuse, the existing deferral resolves it with no new code,
+- **The deferred-cut path is bounded by the load guard, not by the gate.** *(Corrected in
+  revision 6; see section 4.3.)* A re-arm happens only under the gate, which places it in the
+  low-load regime, but the filtered total is not a bound on the raw current the firmware version 25
+  load guard tests. When the guard refuses, the existing deferral resolves it with no new code,
   exactly as section 4.3 describes for a never-closed selector.
 - **A charge window opening while re-armed** is covered twice over: the section 3.2 disarm fires on
   either cut and now also raises the inhibit, and the re-arm itself refuses outright while
@@ -1566,3 +1575,203 @@ zero warnings on all four builds.
 Bench gate, on top of revision 4's: pull a card after a run that re-armed at least once and
 confirm the decoder round (when it lands) recovers `selector_bits` bit 2 on exactly the ticks the
 status dump reported `(re-armed)`.
+
+## 33. Purpose and scope of revision 6
+
+Revision 6 is a fix round. A review of revision 5 returned seven findings, all of them inside the
+re-entry rule of section 29 or the selector of section 4, and all seven are closed here. Three are
+behavioural (S1, S2, S3); one is a corrected statement with no code (S4, already applied to
+sections 4.3 and 29.5 above); three are hygiene (S5, S6, S7).
+
+No layout changes. The user datagram protocol telemetry stays version 4 at 58 bytes, the command
+packet 22 bytes, the two hardware-in-the-loop frames 40 and 18 bytes, and the bench log version 9
+at 116 bytes — one previously **reserved** bit of `selector_bits` is now written. `FW_VERSION`
+stays 28: no board has run firmware version 28 in any revision, so there is no revision 5 era in
+the ledger.
+
+Out of scope: the selector's own rule and thresholds, the charge-window disarm and the conduction
+gate, the sliver hold, the conduction floor, the droop-scale hold, the encoder detector and its
+record, and the decoder in `tools/`, which remains a separate round.
+
+## 34. The three behavioural findings
+
+### 34.1 S1 — the inhibit could be spent in the iteration that raised it
+
+`chargingControl()` runs before `powerBalance()` in every caller. Section 29.4 raises
+`shareSelectorReArmInhibit` at both safety disarms and clears it on a strictly in-band command, and
+those two statements execute in that order **inside one loop iteration**. An energy manager holds
+an in-band share across a charge window as a matter of course, so the ordinary case cleared the
+inhibit immediately.
+
+That is harmless only while the latch's release succeeds on the same tick. The release is guarded
+on `V_BUS_CHARGED_THRESH` and on the survivor's regulator, and when either refuses, the cut
+survives with no inhibit standing. The next rail command then re-arms and re-cuts, and because
+`FC_CHARGE_ENABLE` waits for `FC_BUS_ENABLE` to read high and to clear its blanking, the window
+never opens. That is the campaign H undervoltage class restored by exactly the path section 3.2
+exists to close.
+
+The fix adds two terms, both on the **clear** side, so the inhibit's meaning is unchanged:
+
+1. **A freshness token.** Every site that raises the inhibit also raises
+   `shareSelectorReArmInhibitFresh`. The first `powerBalance()` that observes the token consumes it
+   instead of clearing the inhibit, so the inhibit outlives one full loop iteration whatever the
+   command is.
+2. **No clear while a cut is latched.** `shareSpCutFC` or `shareSpCutBT` outstanding means the
+   disarm has not been realised on the bus, so the refusal it represents is still live. The clear
+   waits for the latch's own guarded release to land.
+
+Both flags are cleared at every arm site, at `hilWarmReset()`, and at the two exits to idle of
+section 34.4.
+
+### 34.2 S2 — the selection-change dwell
+
+A selection change is a release, one live tick, and an entry on the other channel. Through revision
+5 the only thing rate-limiting it was the 30 millisecond survivor blanking. A commander dithering
+its share across both rails at 50 hertz therefore commutated the source about **32 times a
+second**, against the 0.64 per second of the campaign G chatter class.
+
+The second consequence is worse than the switch cycles. Every release calls
+`resetShareControlState()`, which zeroes `share_govTotAFilt`. For totals in roughly 0.25 to 0.35
+amperes the governor filter cannot climb back to the gate before the next commutation re-zeroes it,
+so the gate release never fires and the board runs permanently single-sourced, alternating between
+sources — the failure the gate release exists to end.
+
+`SHARE_SELECTOR_DWELL_MS` is 250 milliseconds. Four bounds size it.
+
+Table 4. The dwell derivation.
+
+| Bound | Quantity | Value | Why it binds |
+|---|---|---|---|
+| Lower | Full-band droop walk | 0.70 / `DROOP_RATIO_SLEW_PER_TICK` (0.02) = 35 ticks = 35 ms | A change must not be commandable before the previous one has physically landed |
+| Lower | Worst sub-gate filter crossing | `ln(1 - 0.25/0.28) / ln(0.95)` = 43.5 ms at 0.28 A | The binding bound. Below it the gate release can never win the race above |
+| Lower | Survivor blanking plus turn-on | 30 ms + about 8 ms = 38 ms | A change must not be merely deferred by the entry guard and retried |
+| Upper | Switch-cycle budget | 4 commutations per second | About 6 times the measured chatter rate, about 8 times below the un-dwelled dither |
+
+250 milliseconds clears the binding bound by a factor 5.7 and satisfies the budget exactly.
+
+The dwell applies to a **selection change only**. The first selection of an arm is never dwelled:
+both arm sites, `hilWarmReset()` and `armShareBatteryOnlyStart()` set the deadline to the current
+`millis()`, that is expired. The gate release and every disarm are untouched, so the dwell can
+never hold a source on the bus that the selector has decided to give up.
+
+A rail command that arrives inside the dwell is **not lost and not queued**. The selection test
+runs every tick against the then-current command, so what lands when the dwell expires is what the
+commander is asking for at that moment.
+
+### 34.3 S3 — the frozen path advances on any latched cut
+
+The re-entry rule of section 29 was unreachable whenever the rail command **preceded** the fall
+under the gate, which is the ordering an energy manager produces most often: command the rail, then
+coast.
+
+A latched setpoint cut returns from `powerBalance()` before the loop-mode decision and before the
+filter advance. Revision 2 scoped the frozen-path advance to `shareBatteryOnlyActive`, so with the
+cut owned by the setpoint latch alone — a plain out-of-band command, no arm — both
+`shareClosedLoopMode` and `share_govTotAFilt` froze at their pre-cut values for the whole latched
+window. Conditions 3 and 4 of section 29.3 therefore never became true, and when the command
+finally returned in band the latch released to two sources: the opposite of the ruling.
+
+The fix advances `share_govTotAFilt` whenever **any** setpoint cut is outstanding, whoever owns it.
+
+Why revision 2 scoped it to the arm, and why widening it is safe. The revision 2 advance was
+written for one purpose: a battery-only arm whose only release condition is the filtered total
+crossing the gate, which a frozen filter can never reach. That was a liveness fix for the arm, and
+nothing in its scope was a safety argument. The widened advance moves no reference, commands no
+switch and releases no cut — this branch returns before every write, and the gate-release **disarm**
+remains scoped to `shareBatteryOnlyActive`, so a latch-owned cut still releases only on its own
+in-band command. The filter is read at the release and by the re-entry rule, and at both readers a
+filter tracking the actual single-source total is the more truthful of the two values.
+
+**The mode update is deliberately one-sided**, which is a documented deviation from the review's
+wording. Only the closed-to-open transition runs on the frozen path. The opposite transition
+carries the open-to-closed seed `resetShareControllerCore(droopSlew_prev)`, which is a
+controller-state write; taking it from a frozen path would place a second writer on the controller
+outside the live path's rate limiter. It is also unnecessary: after the release, the live path
+re-derives the mode from the same filter on its first tick. The falling edge is the one the
+re-entry rule reads, and it needs no seed.
+
+### 34.4 S5 — the selector flags are cleared on both exits to idle
+
+`doState3()` and the State-98 `Q` exit now clear the arm, the selection, the provenance, the
+inhibit and the freshness token, beside the existing `clearShareCeilingState()` call. This is the
+gap firmware version 26's review found for the ceiling flags, one revision later and for the same
+reason: neither exit is a share-loop freeze, it stops calling `powerBalance()`, so without an
+explicit clear an idle board published the previous run's selector state on the bench log's
+`selector_bits`, the hardware-in-the-loop auxiliary bits 6 and 7, and the status dump, for as long
+as it sat there. State 99 remains deliberately **not** a clear site: a latched board must still
+show what was true when it faulted.
+
+Clearing cannot strand a profile — the next Run entry or State-98 profile start calls
+`armShareBatteryOnlyStart()`, which establishes the arm afresh.
+
+## 35. Observability, revision 6
+
+`selector_bits` **bit 4** is `shareSelectorReArmInhibit`. It comes out of the bits section 30.1
+reserved, so the record size, every field offset and the format version are unchanged; bits 5 to 7
+remain reserved and are written zero.
+
+Without it a decoded run cannot separate "no rail was commanded in this window" from "a rail was
+commanded and was **refused**", which is the only observable the F1 disarm of section 3.2 and the
+raw-current escape of section 4.6 produce. The tools round that teaches
+`tools/decode_benchlog.py` the four version 9 fields must add bit 4 to its `selector_bits` decode.
+
+The State-98 status dump gains the remaining selection dwell in milliseconds, printed beside the
+existing `(re-armed)` and `(re-arm inhibited)` markers, so an operator watching a source that will
+not follow a commanded rail can see why and for how much longer.
+
+Table 5. `selector_bits` at revision 6.
+
+| Bit | Flag | Added |
+|---|---|---|
+| 0 | `shareBatteryOnlyArmed` | revision 5 |
+| 1 | `shareSelectorFC` (0 = battery) | revision 5 |
+| 2 | `shareSelectorReArmed` | revision 5 |
+| 3 | `encDirStorePending` | revision 5 |
+| 4 | `shareSelectorReArmInhibit` | **revision 6** |
+| 5 to 7 | reserved, written 0 | — |
+
+## 36. Residuals and validation of revision 6
+
+### 36.1 Residuals
+
+1. **The decoder lag widens by one bit.** Section 30.4 stands, and bit 4 joins the list the tools
+   round must implement.
+2. **The dwell is a design constant, not a measured one.** Its lower bounds are computed from
+   firmware constants and its upper bound is a stated switch-cycle budget. No campaign has yet
+   produced a commanded-share dither at the 50 hertz cadence, so the 32 per second figure is
+   derived rather than observed; the campaign G chatter class is the nearest measurement.
+3. **The one-sided mode edge**, section 34.3. A rise while a cut is latched is not reflected until
+   the live path resumes. This is a deliberate deviation and is pinned by a fixture.
+4. **Everything carried from revision 5**, including F7 of section 8, which the dwell makes
+   strictly less frequent but does not remove.
+
+### 36.2 Validation
+
+Host-native, in `test/test_main.cpp`, group prefixes `test_fw28r6_*`.
+
+1. The S1 path exactly: the charge window's intent disarms and raises the inhibit and its freshness
+   token; an in-band command on the same iteration consumes the token without clearing the inhibit;
+   the release is refused on an uncharged bus; the rail command on the next tick does **not**
+   re-arm; a further in-band tick still does not clear the inhibit while the cut is latched; and
+   only after the guarded release lands does an in-band command spend it.
+2. The dwell constant, and a 2 second 50 hertz rail dither, which produces at most
+   `2000 / SHARE_SELECTOR_DWELL_MS + 1` selection changes and at least two, so the dwell
+   rate-limits rather than freezes.
+3. A rail held across the dwell lands when the dwell expires, and the gate release still drops the
+   arm when the load earns two sources.
+4. The S3 ordering: the rail command arrives above the gate, the latch alone owns the cut, the load
+   falls away, the filtered total tracks it through the latched window, the mode reaches its
+   falling edge, the re-entry rule fires with the commanded selection, and an in-band command then
+   **holds** the single-source state instead of releasing to two sources.
+5. The one-sided mode edge, pinned: a large load during a latched cut drives the advanced filter
+   above the gate without taking the open-to-closed transition.
+6. Both exits to idle clear all of the selector state, and the auxiliary mirrors follow.
+7. Bench log bit 4 independently, the spare byte still zero, and the record size and format version
+   unchanged — the proof that bit 4 came out of the reserved bits rather than out of a new byte.
+
+Suite totals at close: 4503 production, 175 bench, 4810 hardware-in-the-loop, 51 encoder harness;
+zero warnings on all four builds.
+
+Bench gate, on top of revision 5's: on a run that commands both rails under the gate, confirm from
+the status dump that no more than four source commutations occur per second, and that a rail
+command refused by the inhibit is visible as `(re-arm inhibited)`.
