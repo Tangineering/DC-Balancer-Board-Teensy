@@ -241,7 +241,7 @@ was applied overnight. Bands are never widened; they are re-derived from the mec
 
 ## 0g. D-7 blocker and open rulings (2026-09-09, phase-B fix round A-prime)
 
-- [ ] 1. **OPERATOR RULING, BLOCKING - `sdp_policy_v7` does not certify, so no `ems-sdp` campaign can run.**
+- [ ] 1. (D-9, 2026-09-09 ~09:35: UNBLOCKED for campaign II by reverting the frontier SDP to `sdp_policy_v6` - A's reversal path; v7 stays in the tree as the record; the ruling below stands for the alpha basis) **OPERATOR RULING - `sdp_policy_v7` does not certify at the corrected alpha.**
       The shipped artifact is solved `--alpha-mode lever-h20 --eta-chg measured` at the corrected 14.6440 W
       operating point (alpha 0.142475472567). Lens-1 F2 independently raised the walked share lever
       0.4223 -> 0.5672, which lowers the walked admission window to [0.0882, 0.1335], so the alpha sits 6.7 %
