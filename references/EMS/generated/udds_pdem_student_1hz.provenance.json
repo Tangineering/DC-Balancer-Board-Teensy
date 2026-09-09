@@ -1,0 +1,11 @@
+{
+ "source": "references/EMS/simulink_pdem_output_UDDS.mat",
+ "source_sha256": "10ff827873ff9e69f501f9e13b637a57cd313d7eaf87886cfb03f8b0e0a3e91e",
+ "decoder": "tools/fullscale_governor/sweep_governor_scale.py load_pdem() via tools/tpm_generator MCOS reader; out.simout resampled with linear interpolation onto whole seconds 0..1369 (as sweep_governor_scale.m section 1)",
+ "check": "MATLAB's own loader on the same file reports the identical range [-38.3, 47.9] kW, N = 1370",
+ "files": [
+  "udds_pdem_student_1hz.npy",
+  "udds_pdem_student_1hz.mat"
+ ],
+ "generated": "2026-09-08"
+}

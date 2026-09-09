@@ -1,0 +1,32 @@
+
+##### default
+  alpha 200 baseline: eq 63.49 g  FC energy 1.021 kWh  61.5 g/kWh  eta_mean 0.488  stack-off 93.6% of samples  commands in band 29.3%  starts 29
+    S_I    1.0: eq 73.38 g (+15.58%)  FC energy 0.994 kWh (-2.6%)  71.4 g/kWh (+16.2%)  eta_mean 0.420  closed 76.1%  FC-off 45.1%  BT-off 27.9%  P_fc on-mean 11.9 kW
+    S_I  127.8: eq 69.67 g (+9.73%)  FC energy 0.931 kWh (-8.8%)  68.2 g/kWh (+11.0%)  eta_mean 0.440  closed 12.3%  FC-off 52.0%  BT-off 0.0%  P_fc on-mean 17.0 kW
+  alpha 500 baseline: eq 64.46 g  FC energy 1.020 kWh  62.4 g/kWh  eta_mean 0.481  stack-off 95.7% of samples  commands in band 27.7%  starts 43
+    S_I    1.0: eq 72.51 g (+12.48%)  FC energy 1.031 kWh (+1.1%)  70.2 g/kWh (+12.5%)  eta_mean 0.427  closed 62.8%  FC-off 53.9%  BT-off 8.5%  P_fc on-mean 13.3 kW
+    S_I  127.8: eq 67.50 g (+4.71%)  FC energy 1.030 kWh (+1.1%)  65.3 g/kWh (+4.7%)  eta_mean 0.459  closed 47.7%  FC-off 69.3%  BT-off 0.0%  P_fc on-mean 34.7 kW
+
+##### no-slew
+  alpha 200 baseline: eq 63.49 g  FC energy 1.021 kWh  61.5 g/kWh  eta_mean 0.488  stack-off 93.6% of samples  commands in band 29.3%  starts 29
+    S_I    1.0: eq 70.24 g (+10.63%)  FC energy 1.027 kWh (+0.6%)  68.0 g/kWh (+10.7%)  eta_mean 0.441  closed 72.6%  FC-off 59.2%  BT-off 2.0%  P_fc on-mean 16.0 kW
+    S_I  127.8: eq 64.01 g (+0.81%)  FC energy 1.021 kWh (+0.0%)  62.0 g/kWh (+0.8%)  eta_mean 0.484  closed 42.8%  FC-off 69.8%  BT-off 0.0%  P_fc on-mean 36.4 kW
+  alpha 500 baseline: eq 64.46 g  FC energy 1.020 kWh  62.4 g/kWh  eta_mean 0.481  stack-off 95.7% of samples  commands in band 27.7%  starts 43
+    S_I    1.0: eq 72.50 g (+12.46%)  FC energy 1.029 kWh (+0.9%)  70.2 g/kWh (+12.5%)  eta_mean 0.427  closed 59.0%  FC-off 60.6%  BT-off 0.4%  P_fc on-mean 15.8 kW
+    S_I  127.8: eq 66.38 g (+2.97%)  FC energy 1.019 kWh (-0.1%)  64.3 g/kWh (+3.0%)  eta_mean 0.467  closed 49.6%  FC-off 71.0%  BT-off 0.0%  P_fc on-mean 37.1 kW
+
+##### linear-map
+  alpha 200 baseline: eq 62.01 g  FC energy 1.021 kWh  60.0 g/kWh  eta_mean 0.500  stack-off 94.5% of samples  commands in band 29.1%  starts 45
+    S_I    1.0: eq 62.01 g (+0.00%)  FC energy 0.968 kWh (-5.2%)  60.0 g/kWh (-0.0%)  eta_mean 0.500  closed 89.8%  FC-off 30.6%  BT-off 38.4%  P_fc on-mean 7.9 kW
+    S_I  127.8: eq 62.01 g (-0.00%)  FC energy 0.994 kWh (-2.6%)  60.0 g/kWh (-0.0%)  eta_mean 0.500  closed 25.6%  FC-off 48.3%  BT-off 0.0%  P_fc on-mean 15.6 kW
+  alpha 500 baseline: eq 62.01 g  FC energy 1.021 kWh  60.0 g/kWh  eta_mean 0.500  stack-off 95.9% of samples  commands in band 27.7%  starts 54
+    S_I    1.0: eq 62.01 g (-0.00%)  FC energy 1.018 kWh (-0.3%)  60.0 g/kWh (+0.0%)  eta_mean 0.500  closed 65.3%  FC-off 53.6%  BT-off 10.6%  P_fc on-mean 12.7 kW
+    S_I  127.8: eq 62.01 g (+0.00%)  FC energy 1.027 kWh (+0.6%)  60.0 g/kWh (-0.0%)  eta_mean 0.500  closed 52.2%  FC-off 70.1%  BT-off 0.0%  P_fc on-mean 32.7 kW
+
+##### no-start-cost
+  alpha 200 baseline: eq 62.76 g  FC energy 1.019 kWh  60.7 g/kWh  eta_mean 0.494  stack-off 94.5% of samples  commands in band 29.1%  starts 46
+    S_I    1.0: eq 79.27 g (+26.31%)  FC energy 0.962 kWh (-5.6%)  77.9 g/kWh (+28.3%)  eta_mean 0.385  closed 82.5%  FC-off 31.8%  BT-off 38.0%  P_fc on-mean 8.0 kW
+    S_I  127.8: eq 71.74 g (+14.30%)  FC energy 0.924 kWh (-9.4%)  70.5 g/kWh (+16.1%)  eta_mean 0.425  closed 31.5%  FC-off 46.6%  BT-off 0.0%  P_fc on-mean 14.0 kW
+  alpha 500 baseline: eq 64.18 g  FC energy 1.020 kWh  62.1 g/kWh  eta_mean 0.483  stack-off 95.8% of samples  commands in band 27.7%  starts 52
+    S_I    1.0: eq 71.78 g (+11.85%)  FC energy 1.018 kWh (-0.3%)  69.6 g/kWh (+12.0%)  eta_mean 0.431  closed 61.2%  FC-off 55.8%  BT-off 6.9%  P_fc on-mean 13.7 kW
+    S_I  127.8: eq 67.52 g (+5.22%)  FC energy 1.033 kWh (+1.2%)  65.3 g/kWh (+5.2%)  eta_mean 0.459  closed 51.2%  FC-off 71.2%  BT-off 0.0%  P_fc on-mean 35.4 kW

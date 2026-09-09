@@ -1,0 +1,33 @@
+{
+ "tool": "tools/fullscale_governor/udds_demand.py",
+ "generated": "2026-09-08",
+ "purpose": "Stand-in for the PhD student's simulink_pdem_output_UDDS.mat (not in the repo). Replace with the original when available.",
+ "speed_trace": "references/drive_cycles/ftpcol.txt, t <= 1369 s (UDDS = FTP-75 bags 1+2), mph -> m/s, 10 Hz linear interpolation",
+ "road_load_model": "P = F*v/eta_trac (F*v>0) or F*v*eta_regen (F*v<0), F = m_eff*a + k_drag*v^2 + f_roll",
+ "fit_source": "references/EMS/Pdem_cycles/simulink_pdem_output_stochastic_V{1,3,5,8,9}.mat (VehicleSpeed vs P_req, 10 Hz), alternating least squares",
+ "coefficients": {
+  "m_eff_kg": 2102.8330557214877,
+  "k_drag_kg_per_m": 0.6607735148612218,
+  "f_roll_N": 88.51269420874395,
+  "eta_trac": 0.938974962653261,
+  "eta_regen": 0.9996036179907297
+ },
+ "fit_quality": {
+  "rms_W": 2488,
+  "R2": 0.9812,
+  "n_samples": 46000
+ },
+ "excluded_cycles": {
+  "V2": "byte-duplicate of V1",
+  "V4": "no clean VehicleSpeed log",
+  "V6,V7,V10": "never exceed 65 km/h, drag ill-conditioned"
+ },
+ "result": {
+  "N": 1370,
+  "min_kW": -35.933478225854394,
+  "max_kW": 46.50532340752218,
+  "mean_kW": 2.337001800025157,
+  "traction_kWh": 1.8254553788059817
+ },
+ "sha256_npy": "07dcb07063c94119d440a554d856e72396a47cf064e8c21d8984cdbd87f80ad3"
+}
