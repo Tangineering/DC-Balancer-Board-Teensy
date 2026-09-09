@@ -1991,3 +1991,12 @@ with reversal paths, the primary worktree's branch is the operator's - commit fr
   hil_plant_sim 807; stdlib 2476 / 96 / 1 xfail. New wall-clock-sensitive test:
   test_the_roll_slice_overshoot_is_one_chunk_not_one_item (fails under two concurrent pytest processes).
   Orchestrator suites running on the final tree; push + campaign II next.
+- **Phase B CLOSED at db9b146 (~10:50):** the orchestrator's serial suites on the final tree - stdlib 2476 / 96 /
+  1 xfail; numpy 3245 / 18 / 2 xfail with two stale pins re-derived (the report-analysis registry test expected
+  v7 as frontier - D-9 makes it v6; the ems-sdp eq-H2 pin scales with lambda 0.423 -> 0.4673 exactly); pushed.
+- **CAMPAIGN II LAUNCHED 09:57:15** from `DC-Balancer-II` at db9b146, `--with-ftp75 --with-ftp75c --with-alpha`,
+  report `HIL Results/hil_report_20260909_095715`, log `scratchpad/campaign_II_20260909_095715.log`. The first
+  campaign scored on the H-20 map; the first board measurement of the H-20 levers (the three alpha legs);
+  every hydrogen band provisional and calibrated by this campaign (D-6); the frontier SDP v6 (D-9); fresh
+  matched-DP records at the tool pass. tools/ edit-frozen. LIVE analysis with the TWO-AGENT CAP; completion is
+  read from results.json meta.partial. Budget after II: 3 of 5 remain; campaign III conditional.
