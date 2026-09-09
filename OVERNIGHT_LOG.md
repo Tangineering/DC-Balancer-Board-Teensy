@@ -2100,3 +2100,51 @@ with reversal paths, the primary worktree's branch is the operator's - commit fr
   table is not a bound against a selector-aware live strategy (the ftp75c structure again). This is the thesis motivation
   measured on the board: a strategy ranking that is degenerate under a linear map and not under the convex one. Caveat:
   whole-run h2 (A0 x t_entry, ~0.2 mg per leg), no matched-DP solve yet, every band provisional (D-6).
+
+### MORNING DIGEST - 2026-09-09 (phase B of the H-20 map + campaign II, the first H-20 campaign)
+
+**Asked vs delivered.** Asked: continue the overnight campaigns with an adjusted plan using the new H2 estimates, on the H2
+session's trigger (phase B before any campaign). Delivered: phase B (levers, alpha, the walk's real share controller, the suite
+on Run-window hydrogen, two reviews, D-3..D-9), then campaign II `hil_report_20260909_095715` (69/75, 1012 checks, 27/27
+replays, wall 1:42:29, zero board defects), fully analyzed (23 ledger sections, 13 scenario agents + 1 replay audit under the
+two-agent cap, no host stall), tool pass from the phase-B worktree, FINAL SUMMARY + HIL_SUMMARY, CLAUDE.md addendum (with a
+rotation to archive range 11), WORK_QUEUE 0h (9 rulings + 12 fix items), memory, conventions and skill additions, all pushed.
+Budget 2 of 5 used; campaign III NOT run (the fix queue and the operator rulings gate it - see below).
+
+**Headline findings** (ledger sections in parentheses):
+1. The board's H-20 levers L_share 0.5656 / L_chg 0.3845 SoC/g, ratio 0.680, lambda 0.4799 (sec 7).
+2. Every plan inverted polarity under the convex map - the MPC on all three cycles AND the regenerated DP tables; FC-only arms
+   and re-arms, the first exact-1.0 commits; the eq-H2 tie broken (secs 11, 13, 16, 18, 19).
+3. The convex map separates the strategies: 61 s eq-H2 spread 15 % (v6 SDP the expensive one at 1.0949; MPC family 3 % under the
+   in-band DP bound) where campaign I tied them within 0.47 % (FINAL SUMMARY, tool pass).
+4. F1 clean a second campaign on every trigger, zero UV_BUS (secs 14, 15, 16, 17, 20).
+5. The FC minority chatter confirmed, 78 falls identical (sec 12); its DP control case lost its stimulus (sec 13).
+6. Campaign I's replay headline (the five MDAC-saturated entries fell) was a metric mismatch - corrected in both records (sec 23).
+7. A0 is 33-88 % of Run-window hydrogen on the low-demand legs; stack medians 14.6 / 8-10 / 2-5 / 1-2 W by family (FINAL SUMMARY).
+
+**Reversible decisions (one-commit undo each):** D-3..D-9 of the phase-B round (in this log above) stand; this campaign added
+none. The two 2026-09-03 addenda were rotated to the archive (range 11) to keep CLAUDE.md under the size limit - revert the
+CLAUDE.md commit to restore them inline.
+
+**Rulings needed (WORK_QUEUE 0h items 1-9):** the polarity inversion (terminal-price A/B, ladder endpoints); the chatter
+firmware fix; lambda 0.4799; a per-leg H2 basis; the socband reference charging; the v7 alpha basis with board levers; the ftp75c
+bound arm; the v6 frontier role now that v6 measures as the expensive strategy; bench items.
+
+**Bench list for today:** the staircase FC cut latency (a bench log); the AD5443/OPA197 DMM measurement; encoder revs 2-4 remain
+HIL-invisible.
+
+**Running in the background after this digest:** the H-20 matched-DP solve for campaign II's 26 EMS rows (`--matched-dp solve
+--matched-dp-allow-long` from DC-Balancer-main; hours; the dp_db records to be committed when it ends - if this session is
+gone, `git status tools/dp_db` in DC-Balancer-main shows them).
+
+### Retrospective - 2026-09-09
+
+**Worked:** the two-agent cap (48 scenario legs, 13 agents, worst tick gap 20.5 ms, no stall); holding clean legs for their
+pair; pre-writing every brief and every close-out skeleton during the replay half (the post-completion path was tool pass ->
+audit -> fill placeholders, ~40 min); the orchestrator spot-check on the transition list (caught a wrong F1 mechanism before it
+entered the ledger); adversarial audits that re-read the previous campaign's arithmetic (the MDAC metric mismatch).
+**Failed, with the correction:** guessed clock labels in the interims (rule: mtimes only); the first tool pass from the wrong
+worktree (rule: run from the worktree whose tools scored the campaign); an agent's lever comparison across constructions
+(rule: name the construction in the brief); the bash heredoc trap three more times (rule: Write tool or a script file).
+**Economics:** ~14 agent dispatches for 75 runs; phase B ~11 h wall including the 5 h reboot loss; campaign II 1:42 wall + ~2 h
+analysis + ~1 h close-out.
