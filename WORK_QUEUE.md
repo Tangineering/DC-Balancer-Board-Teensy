@@ -131,7 +131,7 @@ firmware round lands).
       0.09 A idle; conditioning check at that total. Tools round after the A/B.
 - [x] 18. (DONE `c11a464`: k_d + dV0 + R_f wins, CAL-1 RMS 0.0090 vs 0.0457 for k_d-only; the 39 slope fits prefer a NEGATIVE intercept - the +0.033 ohm floor is not bench-supported at 0.2117, recorded for the DMM measurement) **`--droop measured` scaling (operator: use the scalings that best match the bench record):** fit k_d-only /
       k_d+dV0 / k_d+dV0+R_f / realised-k_d against the 39 single-source fits and CAL-1; ship the lowest residual.
-- [ ] 19. (BLOCKED - premise fails: plateau is bin 22 and no demand bin discriminates; v6 flips on the SoC target row and every above-target ask clamps to 0.85; needs a start below the SoC target or a drain crossing it - RULING) **ems-sdp stimulus re-tuned (operator ruling):** drain plateau one demand bin below the clamp where the
+- [x] 19. (RULED 2026-09-08: ACCEPT the leg as a CLAMP WITNESS - stimulus unchanged, the sdp_table checks stay tagged as clamp-side; premise failed: plateau is bin 22 and no demand bin discriminates; v6 flips on the SoC target row and every above-target ask clamps to 0.85; needs a start below the SoC target or a drain crossing it - RULING) **ems-sdp stimulus re-tuned (operator ruling):** drain plateau one demand bin below the clamp where the
       v6 and DP tables differ; re-walk, re-pin provisional.
 - [ ] 20. (IN PROGRESS, Opus) **Alpha sweep re-run at the measured billing (operator: yes)** after the ramp decision; the 75 matched-DP
       re-solves HELD until the overnight campaign (operator).
