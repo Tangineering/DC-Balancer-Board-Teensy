@@ -150,7 +150,7 @@ firmware round lands).
 Every item below is adjudicated in `HIL Results/hil_report_20260908_200836/HIL_FINDINGS.md` (FINAL SUMMARY). None
 was applied overnight. Bands are never widened; they are re-derived from the mechanism named.
 
-- [ ] 1. **TOOLS, HIGH** - `tools/ems_walk.py` delivers share EXACTLY 0 on a 0.15 floor reference whenever the
+- [ ] 1. (MECHANISM CORRECTED 2026-09-09, agent C 65978bf: the 0.15 reference is INFEASIBLE under the asymmetric law - minimum deliverable 0.1715 at 1.41 A, the board delivers it to 0.08 % - and the walk's one-tick closed-loop surrogate cuts on 100 % of ticks where the real Youla share controller cuts on 0.40 %; FIX = port the real share_controller.h recursion into governor_model's closed loop, agent E in progress, D-5) **TOOLS, HIGH** - `tools/ems_walk.py` delivers share EXACTLY 0 on a 0.15 floor reference whenever the
       asymmetry triple (loss_map / dv0_v / droop_scale_fc) is on (401 of 610 cruise stages on the greedy alpha policy;
       the board delivers 0.1714 = the split law to 0.1 %). Root-cause the delivery/split solve (a failed inverse falling
       back to 0?); add `--r-series 0.033` to the suite anchor invocation; RE-DERIVE every walk-derived band with a
