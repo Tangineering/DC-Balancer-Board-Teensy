@@ -1070,6 +1070,15 @@ _FW28_ERA_PROVISIONAL = (
 #   ems-sdp-alpha-cal         0.0120390     0.0124000       +3.00 %
 #   ems-sdp-alpha-charge      0.0143819     0.0146843       +2.10 %
 #   ems-sdp-alpha-greedy      0.0011157     0.0009750      -12.61 %
+#      ⚠️ THE THREE ALPHA ROWS ARE SUPERSEDED (2026-09-08). They were walked
+#      against the eta-0.88 sweep's artifacts at commit e7ab118. The legs were
+#      REBOUND to tools/sdp_policies/sweep_20260908_meas/ and re-walked on the
+#      current tree: greedy 0.0008443, cal 0.0125240, charge 0.0148082. Two
+#      causes, separated by measurement and both recorded at the anchors: the
+#      cal/charge picks changed artifact (idx 7 -> 8, 14 -> 15), and the
+#      governor_model port of fw v28 rev 4-6 (commit c11a464) moves every one
+#      of the three by ~13 %. The rest of this table has NOT been re-walked
+#      against c11a464.
 #   ems-sdp-braking           0.0200024     0.0207233       +3.60 %
 #   ems-sdp-cross             0.0187632     0.0194708       +3.77 %
 #   ems-soc-band              0.0109792     0.0109991       +0.18 %
@@ -1110,6 +1119,12 @@ _FW28_ERA_PROVISIONAL = (
 # fw v26 governor; the fix is to re-solve the sweep at the fw v28 governor, not
 # to move the floor here. It carries `_FW28_ERA_PROVISIONAL` so a campaign
 # reads the FAIL as the era.
+#   ⚠️ SETTLED 2026-09-08, AND THE DIAGNOSIS ABOVE WAS WRONG IN ONE PART. The
+#   two numbers were never comparable: the floor came from the sweep's
+#   asymmetry-FREE walk and the 0.0009750 from this file's asymmetry-ON walk,
+#   a 3.3x configuration difference on ONE policy digest. Both sides now come
+#   from the suite configuration, the floor is 0.000633 g, and the leg is
+#   reachable. See the anchor block beside `_alpha_expectation()`.
 #
 # THE SIGN IS AGAIN NOT ONE SIGN, and the mechanism is again the CLIP BAND -
 # one step wider a second time. `SHARE_MINORITY_I_MIN_A` 0.15 -> 0.125 A moves
@@ -6324,10 +6339,20 @@ FAULT_EXPECTATIONS["ems-ftp75-mpc"] = _mpc_expectation(
 # firmware's 0.55 A drop-out the delivered split is whatever stood, so nothing
 # below asserts a DELIVERED share.
 _ALPHA_PROVISIONAL = (
-    "no campaign has run this scenario. The h2 band is the alpha sweep's own "
-    "governor-walk total +/- 25 % (tools/sdp_policies/sweep_20260902_eta088/"
-    "live_picks.json, eta 0.88 era); every other bound is inherited from "
-    "`ems-sdp`, which shares this stimulus and its 0.8 A charge ceiling. "
+    "no campaign has run this scenario. REBOUND 2026-09-08 to the "
+    "measured-billing sweep tools/sdp_policies/sweep_20260908_meas/ "
+    "(hil_plant_sim.SDP_LIVE_PICKS_PATH; was sweep_20260902_eta088), so all "
+    "three legs play a DIFFERENT artifact than a campaign <= "
+    "hil_report_20260904_022637 would have run: greedy idx 3 (same policy "
+    "digest - a share-0 map is billing-invariant), cal idx 7 -> 8 (its policy "
+    "block is now sdp_policy_v6's, where the old pick carried v4's), charge "
+    "idx 14 -> 15. The h2 band is +/- 25 % about the SUITE-CONFIGURATION "
+    "governor walk - tools/ems_walk.py with loss_map=plant_loss_map(), "
+    "dv0_v=0.013522, droop_scale_fc=0.9434, the same flags every other anchor "
+    "in this file is walked with - and NOT the sweep document's own table, "
+    "which omits that asymmetry triple and reads 3.3x higher on the greedy "
+    "leg (design-note appendix, 2026-09-08). Every other bound is inherited "
+    "from `ems-sdp`, which shares this stimulus and its 0.8 A charge ceiling. "
     "Re-derive all of them from the first campaign that runs the alpha legs")
 
 # The shared OC budget. `ems-sdp-cross` MEASURED 1.1920 A at this stimulus's
@@ -6375,9 +6400,11 @@ def _alpha_expectation(walk_h2_g, share_spec, charge_edges, note):
         "source": ("hil_plant_sim.py SCENARIOS[...] (the `ems-sdp` stimulus "
                    "object, drain and 0.8 A charge ceiling) + the `sdp-sweep` "
                    "strategy playing one alpha point of "
-                   "tools/sdp_policies/sweep_20260902_eta088/; bands from that "
-                   "sweep's governor walk (docs/modeling/"
-                   "sdp_alpha_sweep_eta088_20260902.md). " + note),
+                   "tools/sdp_policies/sweep_20260908_meas/ (the sweep at the "
+                   "measured charger billing, docs/modeling/"
+                   "sdp_alpha_sweep_measured_20260908.md); bands from the "
+                   "SUITE-CONFIGURATION fw v28 governor walk of that pick, "
+                   "not from that document's own walk table. " + note),
         "provisional_note": _ALPHA_PROVISIONAL,
         "allow_only": 0,              # expected completely fault-free
         # Same gate as `ems-sdp`: the run must still be in Run/Finish at t = 50,
@@ -6438,8 +6465,51 @@ def _alpha_expectation(walk_h2_g, share_spec, charge_edges, note):
     }
 
 
+# -- THE THREE ANCHORS, RE-DERIVED 2026-09-08 (rebind + suite walk) ---------
+# PROVISIONAL, and each carries the value and the sweep index it replaces. The
+# walks are `tools/ems_walk.py`, miniforge, ONE PROCESS PER LEG, governor on,
+# `loss_map=S.plant_loss_map(), dv0_v=0.013522, droop_scale_fc=0.9434` - this
+# file's standard anchor configuration - against the artifacts the rebound
+# `hil_plant_sim.SDP_LIVE_PICKS_PATH` now resolves.
+#
+#   leg      old walk_h2_g   old idx   new walk_h2_g   new idx   delta
+#   greedy   0.0040930276      3       0.0008442879      3       -79.4 %
+#   cal      0.0126027355      7       0.0125240293      8        -0.62 %
+#   charge   0.0150647315     14       0.0148082323     15        -1.70 %
+#
+# THE GREEDY LEG'S -79.4 % IS TWO MECHANISMS, BOTH NAMED, AND NEITHER IS A
+# WIDENING - the band is +/- 25 % about the walk in every era, unchanged.
+#   1. THE WALK CONFIGURATION (3.3x of it). The old 0.0040930 was copied out of
+#      `live_picks.json`'s `walk_h2_g`, which the sweep produces WITHOUT the
+#      asymmetry triple above (`ems_walk.walk()` defaults dv0_v=0.0,
+#      droop_scale_fc=1.0, loss_map=None). Measured on the 2026-09-08 sweep's
+#      own greedy artifact: 0.0027661914 g without the triple, 0.0008442879 g
+#      with it. Nothing else differs - the scenario name (`ems-sdp` vs
+#      `ems-sdp-alpha-greedy`) and the strategy name (`sdp-v2` vs `sdp-sweep`)
+#      are both inert, all four combinations reproducing their configuration's
+#      number to ten digits. The mechanism is the fuel cell's own minority
+#      sliver: a share-0 map leaves the FC channel at the conduction floor, and
+#      the asymmetry moves what that floor DELIVERS. Either asymmetry term
+#      alone carries the whole effect (dv0 only 0.0008617, droop_scale only
+#      0.0008611); the loss map alone moves it 1.6 % (0.0027218). The suite's
+#      children run the LIVE scenario against the campaign's plant, so the
+#      triple is the campaign's configuration and it is the sweep document's
+#      table that does not describe a live run.
+#   2. THE fw v28 rev 4-6 GOVERNOR MIRROR (13.4 % of it). The 0.0009750 g this
+#      file quoted was correct for the tree it was walked on (`e7ab118`) and
+#      re-walks to 0.0009750 there; `c11a464` (the governor_model port of fw
+#      v28 rev 4-6) moves it to 0.0008443 with everything else held. Confirmed
+#      by running the current tree against e7ab118's `governor_model.py`.
+# CONSEQUENCE FOR THE FLOOR: `alpha_h2_accounted` moves 0.003070 -> 0.000633 g
+# and the leg is REACHABLE again (the walk is exactly 4/3 of the floor, by
+# construction). That is the RE-DERIVATION of a band that was always the walk
+# +/- 25 %, under the walk configuration the campaign actually runs - it is not
+# a lowering to accommodate a FAIL.
 FAULT_EXPECTATIONS["ems-sdp-alpha-greedy"] = _alpha_expectation(
-    walk_h2_g=0.004093022760826734,
+    # PROVISIONAL. Was 0.004093022760826734 (sweep_20260902_eta088 idx 3, the
+    # sweep's own asymmetry-free walk). SAME policy digest 2ababa98...: the
+    # number moved on the walk configuration and the governor era, not the law.
+    walk_h2_g=0.0008442878762,
     # THE DEGENERACY, asserted as a CEILING over the whole post-command span.
     # At alpha 0.073936 the sweep's share map is 0 in every cell, so the policy
     # requests the battery rail everywhere and `cmd_share_sp` must never reach
@@ -6455,10 +6525,19 @@ FAULT_EXPECTATIONS["ems-sdp-alpha-greedy"] = _alpha_expectation(
                          "the 0.111000013 admission threshold), which is what "
                          "this leg exists to show"},
     charge_edges=(0, 0),
-    note=("GREEDY leg, sweep index 3, alpha 0.073936, 0 charge cells."))
+    note=("GREEDY leg, sweep index 3, alpha 0.073936, 0 charge cells "
+          "(sweep_20260908_meas; the measured-billing sweep selects the SAME "
+          "index and the SAME policy digest 2ababa98... as the eta-0.88 one - "
+          "a share-0 map has no remaining degree of freedom, so the greedy leg "
+          "is billing-invariant as well as era-invariant)."))
 
 FAULT_EXPECTATIONS["ems-sdp-alpha-cal"] = _alpha_expectation(
-    walk_h2_g=0.012602735460289607,
+    # PROVISIONAL. Was 0.012602735460289607 (sweep_20260902_eta088 idx 7,
+    # sdp_policy_v4's policy block). The rebind moves the pick to idx 8, whose
+    # policy block IS sdp_policy_v6's, and the suite-configuration walk of it
+    # is BIT-IDENTICAL to `ems-sdp`'s own (0.0125240293 g, dSoC -0.00109539) -
+    # which is exactly the in-family control this leg exists to be.
+    walk_h2_g=0.0125240293,
     # The FC rail IS reached: same 0.84 floor and same window as `ems-sdp`'s
     # `sdp_clamped_rail_commanded`, because this leg's policy block IS
     # sdp_policy_v4's. A disagreement between this check and `ems-sdp`'s is
@@ -6468,13 +6547,20 @@ FAULT_EXPECTATIONS["ems-sdp-alpha-cal"] = _alpha_expectation(
                 "label": "the commanded share reached the fuel-cell rail — the "
                          "calibrated point's law, identical to `ems-sdp`'s"},
     charge_edges=(0, 0),
-    note=("CALIBRATED leg, sweep index 7, alpha 0.118326, 0 charge cells; its "
-          "policy block is byte-identical to tools/sdp_policies/"
-          "sdp_policy_v4.json's, so this is a same-stimulus repeat of "
-          "`ems-sdp` and the two runs' h2 totals should agree."))
+    note=("CALIBRATED leg, sweep index 8, alpha 0.134110, 0 charge cells "
+          "(sweep_20260908_meas; was index 7 / alpha 0.118326 in the eta-0.88 "
+          "folder). Its policy block is byte-identical to tools/sdp_policies/"
+          "sdp_policy_v6.json's - the SHIPPED artifact, where the old pick "
+          "carried v4's - so this is a same-stimulus repeat of `ems-sdp` and "
+          "the two runs' h2 totals should agree to the same-config floor. The "
+          "two offline walks agree bit for bit."))
 
 FAULT_EXPECTATIONS["ems-sdp-alpha-charge"] = _alpha_expectation(
-    walk_h2_g=0.015064731516112779,
+    # PROVISIONAL. Was 0.015064731516112779 (sweep_20260902_eta088 idx 14,
+    # alpha 0.248413). The rebind moves the pick to idx 15 / alpha 0.280418:
+    # the charge boundary rose with the billing (0.126136 -> 0.138547), so the
+    # charge leg's lower end - and its geometric midpoint - rose with it.
+    walk_h2_g=0.0148082323,
     # A HIGHER alpha prices SoC more dearly, so this leg asks for at least as
     # much fuel cell as the calibrated one: the same rail floor holds.
     share_spec={"name": "alpha_share_high_rail", "column": "cmd_share_sp",
@@ -6490,8 +6576,9 @@ FAULT_EXPECTATIONS["ems-sdp-alpha-charge"] = _alpha_expectation(
     # them on a four-window run — so the FLOOR is the assertion ("the charge
     # action reached the board at all") and the ceiling is a sanity bound.
     charge_edges=(1, 4),
-    note=("CHARGE-ADMITTING leg, sweep index 14, alpha 0.248413, 591 charge "
-          "cells; the only leg of the three whose artifact admits charging, "
+    note=("CHARGE-ADMITTING leg, sweep index 15, alpha 0.280418, 593 charge "
+          "cells (sweep_20260908_meas; was index 14 / alpha 0.248413 / 591 "
+          "cells); the only leg of the three whose artifact admits charging, "
           "and the governor walk opens one window on this stimulus. "
           "LEDGER (campaign hil_report_20260902_011926, first live run): the "
           "FC_CHARGE window-CLOSE at t = 55.348 s cut at i_cut 0.5093 A — the "
@@ -6537,14 +6624,30 @@ _FW28_FLOOR_VERDICT = {
          "0.001521 g floor (+36 %), because the 0.25 A gate lets the "
          "compressed cycle release the selector's arm. A FAIL here is no "
          "longer explained by the era."),
+    # SETTLED 2026-09-08. The sweep WAS re-solved (at the measured billing),
+    # the legs were REBOUND to it, and the discrepancy this verdict rested on
+    # turned out to be the walk configuration rather than the sweep's era: the
+    # 0.0009750 g figure and the 0.003070 g floor were walked under DIFFERENT
+    # flag sets, so they were never comparable. Both sides now come from the
+    # suite configuration and the floor is 0.000633 g.
     "ems-sdp-alpha-greedy":
-        (" fw v28: STILL UNREACHABLE AND FURTHER AWAY - the walk gives "
-         "0.0009750 g against this 0.003070 g floor (68 % under, was 64 %). "
-         "NOT lowered: re-solve the alpha sweep at the fw v28 governor."),
+        (" fw v28 + REBIND (2026-09-08): REACHABLE, and the old verdict is "
+         "RETIRED BY A RE-DERIVATION rather than by a widening. The floor was "
+         "0.003070 g, taken from live_picks.json's `walk_h2_g`, which the "
+         "sweep walks WITHOUT loss_map/dv0_v/droop_scale_fc; the suite walks "
+         "every other anchor WITH them. Walked both ways on the same policy "
+         "digest: 0.0027661914 g without the triple, 0.0008442879 g with it "
+         "(3.3x), and the fw v28 rev 4-6 governor mirror carries a further "
+         "13.4 % (0.0009750 -> 0.0008443). The floor is now 0.000633 g = "
+         "0.75 x the suite-configuration walk, the same +/- 25 % band the "
+         "other two legs carry."),
 }
 for _leg, _spec_name, _walk_g in (("ems-ftp75c-mpc", "mpc_h2_accounted", 0.0),
                                   ("ems-sdp-alpha-greedy", "alpha_h2_accounted",
                                    0.0011157)):
+    # NOTE for the alpha leg: `_walk_g` is the fw v27 rev 2 figure the WARNING
+    # text below quotes, kept verbatim as the historical record. It is NOT the
+    # current band - see the fw v28 + rebind verdict above.
     for _s in FAULT_EXPECTATIONS[_leg]["signals_require"]:
         if _s.get("name") == _spec_name:
             _s["provisional_note"] = (

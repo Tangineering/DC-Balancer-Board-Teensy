@@ -4258,11 +4258,19 @@ def test_alpha_expectations_are_provisional_and_two_sided():
 
 
 def test_alpha_h2_bands_are_the_walk_plus_minus_25_percent():
-    """The bands come from the sweep's own live_picks walk totals. Pinned so a
-    band cannot be quietly widened to absorb a run: +/-25 % is the contract."""
-    walks = {"ems-sdp-alpha-greedy": 0.004093022760826734,
-             "ems-sdp-alpha-cal": 0.012602735460289607,
-             "ems-sdp-alpha-charge": 0.015064731516112779}
+    """The bands come from the SUITE-CONFIGURATION governor walk of each pick.
+    Pinned so a band cannot be quietly widened to absorb a run: +/-25 % is the
+    contract.
+
+    RE-PINNED 2026-09-08 with the rebind to `sweep_20260908_meas`. The old
+    values were `live_picks.json`'s own `walk_h2_g`, which the sweep produces
+    WITHOUT `loss_map`/`dv0_v`/`droop_scale_fc`; every other anchor in
+    `run_hil_suite.py` is walked WITH them, and on the greedy leg the two
+    configurations differ by 3.3x on one policy digest. The band contract is
+    unchanged - only the walk the band is centred on."""
+    walks = {"ems-sdp-alpha-greedy": 0.0008442878762,      # was 0.0040930228
+             "ems-sdp-alpha-cal": 0.0125240293,            # was 0.0126027355
+             "ems-sdp-alpha-charge": 0.0148082323}         # was 0.0150647315
     for name, walk in walks.items():
         by = {c["name"]: c for c in
               rhs.FAULT_EXPECTATIONS[name]["signals_require"]}

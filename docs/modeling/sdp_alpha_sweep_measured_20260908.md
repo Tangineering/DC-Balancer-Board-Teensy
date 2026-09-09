@@ -318,3 +318,116 @@ fw v28 firmware was not flashed when it was solved.
 
 Wall time: 5 s to solve the 21 grid points, 11 s to bisect both boundaries and
 solve the 20 refinement points, 124 s to evaluate all 41 points on both stimuli.
+
+---
+
+## Appendix A (2026-09-08): the greedy-leg walk discrepancy, settled, and the rebind
+
+This appendix closes item 2 of section 8 and takes the rebind that section 9
+deferred. Both halves of the deferral moved in one edit, as section 9 requires.
+
+### A.1 The two numbers, reproduced
+
+Section 8 item 2 records two figures for one policy digest (`2ababa98...`, the
+greedy pick at index 3): the sweep-native walk at 0.002766191 g and
+`run_hil_suite.py`'s `_FW28_FLOOR_VERDICT` figure at 0.0009750 g. Both are
+reproduced from their own commands.
+
+    P=C:/Users/ricky/miniforge3/python.exe
+
+    # the sweep's configuration (section 10's `evaluate`, one point)
+    $P -c "import sys; sys.path.insert(0,'tools'); import ems_walk as W;
+           print(W.walk('sdp-v2','ems-sdp',
+                 policy_file='tools/sdp_policies/sweep_20260908_meas/'
+                             'alpha_03_0.073936.json', eta_chg=0.88).h2_g)"
+    # -> 0.002766191432
+
+    # the suite's configuration (the file's standard anchor invocation)
+    $P -c "import sys; sys.path.insert(0,'tools');
+           import ems_walk as W, hil_plant_sim as S;
+           print(W.walk('sdp-sweep','ems-sdp-alpha-greedy', governor=True,
+                 loss_map=S.plant_loss_map(), dv0_v=0.013522,
+                 droop_scale_fc=0.9434).h2_g)"
+    # -> 0.000844287876
+
+### A.2 The difference that accounts for the ratio
+
+The difference is the **asymmetry triple** `loss_map` / `dv0_v` /
+`droop_scale_fc`, and nothing else. `ems_walk.walk()` defaults them to `None`,
+0.0 and 1.0; the sweep's `evaluate` subcommand passes only `eta_chg`, so every
+figure in section 6 is walked without them, while every anchor in
+`run_hil_suite.py` is walked with them.
+
+Five walks of the one artifact separate the axes.
+
+| Configuration | h2 (g) | dSoC |
+|:--|--:|--:|
+| bare (the sweep's) | 0.002766191432 | -0.00523215 |
+| `loss_map` only | 0.002721822944 | -0.00514612 |
+| `dv0_v` only | 0.000861721488 | -0.00604525 |
+| `droop_scale_fc` only | 0.000861136062 | -0.00604549 |
+| all three (the suite's) | 0.000844287876 | -0.00594662 |
+
+Either asymmetry term alone carries the whole effect; the loss map alone moves
+the total by 1.6 %. The mechanism is the fuel cell's minority sliver: a share-0
+map leaves the FC channel at the governor's conduction floor for the whole run,
+and the droop asymmetry sets what that floor delivers. The greedy leg is the
+only one of the three where the sliver is the entire fuel-cell contribution,
+which is why it is the leg that moved 3.3x.
+
+Four control walks establish that nothing else differs: the scenario name
+(`ems-sdp` against `ems-sdp-alpha-greedy`) and the strategy name (`sdp-v2`
+against `sdp-sweep`) are both inert, and all four combinations reproduce their
+configuration's number to ten digits.
+
+### A.3 The residual, and the campaign's configuration
+
+The suite's quoted 0.0009750 g does not reproduce on the current tree; the
+suite configuration gives 0.0008443 g. The figure is correct for the tree it
+was walked on: at commit `e7ab118` the same invocation returns
+0.0009749977374, and commit `c11a464` - the `governor_model` port of fw v28
+rev 4-6 - moves it to 0.0008442878762 with everything else held. This was
+confirmed by running the current tree against `e7ab118`'s `governor_model.py`,
+which restores 0.0009750 exactly. The governor era is therefore 13.4 % of the
+gap and the walk configuration is the remaining 3.3x.
+
+**The suite configuration is the campaign's.** A suite child runs the live
+scenario against the campaign's plant, which carries the loss map and the
+converter asymmetry; a band centred on an asymmetry-free walk describes no run
+the rig can produce. The sweep document's section 6 tables are internally
+consistent and remain the correct basis for **comparing points within the
+sweep**, where the omitted terms are common to every row; they are not a live
+prediction, and section 8 item 2 should be read with that distinction.
+
+### A.4 The rebind, and the re-derived anchors
+
+`hil_plant_sim.SDP_LIVE_PICKS_PATH` now names
+`tools/sdp_policies/sweep_20260908_meas/live_picks.json`. The three
+`run_hil_suite.py` anchors were re-derived in the same edit under the
+configuration of A.2, one process per leg.
+
+| Leg | Old walk (g) | Old idx | New walk (g) | New idx | `alpha_h2_accounted` |
+|:--|--:|--:|--:|--:|--:|
+| greedy | 0.0040930228 | 3 | 0.0008442879 | 3 | 0.000633 (was 0.003070) |
+| cal | 0.0126027355 | 7 | 0.0125240293 | 8 | 0.009393 |
+| charge | 0.0150647315 | 14 | 0.0148082323 | 15 | 0.011106 |
+
+The band contract is unchanged at +/- 25 % about the walk. The greedy floor
+falls because the walk it is derived from was measured under the wrong
+configuration, not because a band was widened to absorb a result; the
+`_FW28_FLOOR_VERDICT` entry that called the leg unreachable is retired by this
+re-derivation and says so at the anchor.
+
+The calibrated leg is the check on the rebind. Its pick's policy block is now
+byte-identical to `tools/sdp_policies/sdp_policy_v6.json`'s - the shipped
+artifact - where the eta-0.88 folder's index-7 pick carried `sdp_policy_v4`'s.
+Its suite-configuration walk is consequently **bit-identical to `ems-sdp`'s
+own**, 0.0125240293 g at dSoC -0.00109539, which is exactly the in-family
+control the leg is declared to be. The pinning test is
+`test_the_alpha_legs_bind_to_the_measured_billing_sweep()`.
+
+One provenance consequence is recorded rather than fixed: the bound artifacts
+declare `charger.eta_chg_basis` = `measured-round-trip` and bill at 0.801173
+where the plant's converter is 0.88, so `provenance["era_match"]` reads `False`
+with the difference declared - the same arrangement `ems-sdp` has run under
+since `sdp_policy_v6` shipped.

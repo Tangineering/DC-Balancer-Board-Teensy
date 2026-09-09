@@ -11,6 +11,7 @@ CLI-diffing approach decode_benchlog's test needed.
 Run: cd tools && python -m pytest test_hil_plant_sim.py -v
 """
 import csv
+import hashlib
 import json
 import os
 import struct
@@ -8062,8 +8063,14 @@ def test_alpha_scenarios_resolve_their_artifact_from_the_live_picks_manifest():
         assert prov["charge_cells"] == picks[name]["charge_cells"], name
         assert prov["policy_file_source"]["kind"] == "live_picks"
         assert prov["policy_file_source"]["pick"] == name
-        assert prov["eta_chg"] == pytest.approx(0.88), name
-        assert prov["era_match"] is True, name
+        # THE MEASURED-BILLING SWEEP (rebind, 2026-09-08). The artifacts of
+        # `sweep_20260908_meas` are solved at the board's measured round trip,
+        # exactly as the shipped `sdp_policy_v6.json` is, so the plant's 0.88
+        # converter is a DECLARED difference rather than an era mismatch --
+        # the same arrangement `ems-sdp` itself runs under.
+        assert prov["eta_chg"] == pytest.approx(0.801172836631146), name
+        assert prov["eta_chg_basis"] == "measured-round-trip", name
+        assert prov["era_match"] is False, name
         seen[name] = prov["policy_sha256"]
     # THREE DIFFERENT LAWS -- if two legs resolved to one artifact the sweep
     # would be measuring one point three times.
@@ -8072,6 +8079,49 @@ def test_alpha_scenarios_resolve_their_artifact_from_the_live_picks_manifest():
     # decline (that is what makes them different legs).
     assert picks["ems-sdp-alpha-charge"]["charge_cells"] > 0
     assert picks["ems-sdp-alpha-greedy"]["charge_cells"] == 0
+
+
+def test_the_alpha_legs_bind_to_the_measured_billing_sweep():
+    """THE REBIND, PINNED (2026-09-08). The three legs resolve through
+    `sweep_20260908_meas/`, the sweep solved at the board's measured charger
+    round trip, and NOT through the eta-0.88 folder they used to name.
+
+    The load-bearing half is the CALIBRATED leg. Its declared role is the
+    in-family control -- a same-stimulus repeat of `ems-sdp`, which plays the
+    shipped `sdp_policy_v6.json`. Under the old folder its pick carried
+    `sdp_policy_v4`'s policy block, so the control played a DIFFERENT law than
+    the leg it controls for, and the two runs' h2 totals were not comparable.
+    This test is the check that says so in one assertion: the bound artifact's
+    policy block must be byte-identical to v6's."""
+    assert os.path.basename(os.path.dirname(hil.SDP_LIVE_PICKS_PATH)) == \
+        "sweep_20260908_meas"
+
+    def policy_sha(path):
+        with open(path, encoding="utf-8") as fh:
+            block = json.load(fh)["policy"]
+        return hashlib.sha256(json.dumps(block, sort_keys=True,
+                                         separators=(",", ":"))
+                              .encode("utf-8")).hexdigest()
+
+    sweep = hil.EMS_STRATEGIES["sdp-sweep"]
+    sweep.bind_scenario("ems-sdp-alpha-cal",
+                        hil.SCENARIOS["ems-sdp-alpha-cal"])
+    bound = sweep.policy_file
+    assert "sweep_20260908_meas" in bound.replace("\\", "/")
+    v6 = os.path.join(hil.SDP_POLICY_DIR, hil.SDP_POLICY_FILE_V6)
+    assert policy_sha(bound) == policy_sha(v6)
+    # ... and the manifest's own recorded digest agrees, so a regenerated
+    # artifact whose law moved is refused at bind rather than played.
+    with open(hil.SDP_LIVE_PICKS_PATH, encoding="utf-8") as fh:
+        pick = json.load(fh)["picks"]["ems-sdp-alpha-cal"]
+    assert pick["index"] == 8            # was index 7 in the eta-0.88 folder
+    assert sweep.provenance["policy_sha256"] == pick["policy_sha"]
+    # The other two legs move with it: the greedy pick keeps its index and its
+    # digest (a share-0 map is billing-invariant), the charge pick does not.
+    assert json.load(open(hil.SDP_LIVE_PICKS_PATH, encoding="utf-8"))[
+        "picks"]["ems-sdp-alpha-greedy"]["index"] == 3
+    assert json.load(open(hil.SDP_LIVE_PICKS_PATH, encoding="utf-8"))[
+        "picks"]["ems-sdp-alpha-charge"]["index"] == 15
 
 
 def test_sdp_policy_file_override_is_undone_on_the_next_bind():

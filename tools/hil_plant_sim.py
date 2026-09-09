@@ -5990,8 +5990,17 @@ SDP_POLICY_FROM_SCENARIO = "<supplied by the scenario's sdp_policy_file>"
 #     was run against.  A path alone cannot be checked against anything.
 # Absent at run time = a startup refusal naming the generator, exactly as a
 # missing policy artifact is.
+# REBOUND 2026-09-08 to the MEASURED-billing sweep
+# (docs/modeling/sdp_alpha_sweep_measured_20260908.md).  Was
+# "sweep_20260902_eta088"; that folder's artifacts remain valid policies and
+# are not retracted, but they bill charging at the model's eta 0.88 while the
+# shipped sdp_policy_v6 bills at the measured round trip 0.801173, so the old
+# folder's CALIBRATED pick carries sdp_policy_v4's policy block and not the
+# shipped one.  The three `ems-sdp-alpha-*` legs move with this constant, and
+# their `run_hil_suite.py` h2 bands were re-derived in the same edit - see the
+# 2026-09-08 appendix of the design note.  Both halves always move together.
 SDP_LIVE_PICKS_PATH = os.path.join(
-    SDP_POLICY_DIR, "sweep_20260902_eta088", "live_picks.json")
+    SDP_POLICY_DIR, "sweep_20260908_meas", "live_picks.json")
 SDP_LIVE_PICK_PREFIX = "live-picks:"
 # Hand the firmware back MODE_SAFE at the same time `soc-band` does.  DERIVED,
 # not a literal: `ems-sdp` shares `ems-soc-band`'s profile object, so its
