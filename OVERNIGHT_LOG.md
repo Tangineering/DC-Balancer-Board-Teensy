@@ -1558,3 +1558,34 @@ transient peak moved 1.3243 -> 1.2699 A (-4.11 %) with the settled point, duty a
 masked) - the mask is correct and does not close the check; the surrogate needs the release stage itself.
 (5) `ftp75` is the first frontier tuple to VERIFY in the fw v27 era (0.9703 vs reference, 1.0011 vs bound),
 because the sdpftp re-pins let the candidate pass; hydrogen unchanged from G2. Budget: 2 of 5 used; stopped.
+
+# SESSION 2026-09-08/09 - the first fw v28 campaigns (source selector, F1, I_min 0.125 A)
+
+Start commit `60abb34` (tooling `07add95` + queue tick). Board: fw v28 rev 6 `f0d82e4` FLASHED by the
+operator this evening; reachable at 192.168.1.50 (<1 ms).
+
+## Mandate (verbatim)
+"fw v28 rev 6 is flashed. Propose a schedule for the overnight campaign and justify each item" ->
+schedule proposed (below) -> "Approved, begin the overnight campaign".
+
+## Approved schedule
+0. Pre-launch gate: item 21 landed (`07add95`), suites serial at baseline, detached worktree, board check.
+1. Campaign I: full plan + `--with-ftp75 --with-ftp75c --with-alpha`, first fw v28 readings. Load-bearing
+   legs: ems-ftp75c-sdp / -socband (F1 - H latched 20.12 / 20.22 ms; pass = no latch), the standstill
+   charge legs (FC-selected never-closed selector; S2 raw escape), ems-sdp-cross (sliver hold vs G's
+   0.5000 pin), ems-ftp75-sdp (G's 58 en_low cuts should vanish at 0.10 / 0.12 A), fw26-clamp-joint
+   third reading, sweep at the 0.755 A crossover, four MPC legs (mpc-sto Gate-1 FAILs pre-classified),
+   three alpha legs (rebound picks, provisional bands), ems-sdp = clamp witness, comm-loss = sim artefact
+   (pre-classified), mppt pins calibrate here. `drive` vacuous SKIP; encoder revs 2-4 untestable under
+   HIL_SIM (bench item). Analysis LIVE, Opus on fw v28 legs, adversarial replay audit.
+2. Tools-only fix round (nothing flashed; firmware findings -> morning design items); then the 75
+   matched-DP re-solves SEQUENCED before campaign II.
+3. Campaign II: validates the fix round; second readings on every new pin; joint leg fourth sample.
+4. Campaign III conditional (II not clean, or a first-of-kind reading needing a third datapoint).
+   Budget 5; plan 2 + conditional 1.
+Standing: no flash, no PSCAD, no wire change, no tree-wide git by subagents, tools/ edit-frozen
+during a live campaign, ASCII prints, decision pairs for judgment calls with reversal paths.
+
+## Decisions (with reversal paths)
+- **D-1 Campaign I runs from a detached worktree `DC-Balancer-I` at `60abb34`**, `--out` into the
+  main tree's `HIL Results/` (the D-1 pattern). Reversal: `git worktree remove` after the campaign.
