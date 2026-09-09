@@ -1753,3 +1753,12 @@ with reversal paths, the primary worktree's branch is the operator's - commit fr
   reverted by re-pointing the registry. Campaign II follows phase B; budget 4 of 5 remain.
 - Gate first: both interpreter suites on the merged tree (expected from the handoff: stdlib 2441 / 95 / 1 xfail;
   numpy 3202 / 1 / 2 xfail + the known wall-clock flake).
+- **D-4 (matched-DP records, handoff item 4):** the 75 `tools/dp_db/` records were solved against runs whose
+  h2_cum_g was scored on the RETIRED map; re-solving them under h20 would compare old-billed runs to new-billed
+  bounds. They stay unreachable by design. Campaign II's own tool pass solves fresh records under the h2_map key,
+  which discharges items 4 AND 7 together. Reversal: none needed (nothing deleted; the old records remain
+  regenerable under the legacy flags).
+- **Phase-B orchestration:** A (Opus, items 1-3: levers, alpha/v7, charge admission) -> C (Opus, items 5-6 folded
+  with WORK_QUEUE 0f-1/2/3: the ems_walk floor defect, the MPC HOLD state, the re-walk on Run-window h20 hydrogen,
+  the bands) -> D (suite items 0f-4..8) -> review -> orchestrator suites -> push -> campaign II. Sequenced through
+  `run_hil_suite.py`; the suites gate A.
