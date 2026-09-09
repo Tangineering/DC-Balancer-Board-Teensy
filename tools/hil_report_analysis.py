@@ -2032,6 +2032,10 @@ def matched_dp_for_run(analysis, meta, hil, mode="lookup",
             "electrical": cfg.get("electrical"),
             "droop_mode": cfg.get("droop_mode"),
             "asymmetry": cfg.get("asymmetry"),
+            # THE RT1987 RAMP-SHAPE ERA (2026-09-08).  Read from the run's own
+            # config; an ABSENT key is a sidecar written before the A/B round
+            # and is the era sentinel, not a default.
+            "rt1987_ramp": cfg.get("rt1987_ramp"),
             "eta_chg": cfg.get("eta_chg"),
             "loss_map": (None if run_loss_map is None
                          else sim.loss_map_canonical(run_loss_map)),

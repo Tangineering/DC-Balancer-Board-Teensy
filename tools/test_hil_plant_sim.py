@@ -13751,3 +13751,60 @@ def test_the_simple_split_law_follows_the_live_scale():
     # At DROOP_R_MAX, where the floor's weight is largest in band.
     assert weight(0.30, 0.85) == pytest.approx(0.0855, abs=0.0005)
     assert weight(0.906128, 0.85) == pytest.approx(0.0300, abs=0.0005)
+
+
+# -----------------------------------------------------------------------------
+# RT1987 SOFT-START RAMP SHAPE (2026-09-08 A/B round): the CLI, the sidecar and
+# the constants-fingerprint era entry.  The shape decides the soft-start slope
+# by 25 %, so two runs under different shapes must never be mistaken for two
+# runs of the same plant.  Decision and A/B table: docs/HIL_PLANT.md section 8.4.
+# -----------------------------------------------------------------------------
+
+def test_rt1987_ramp_cli_rejects_an_unknown_shape():
+    """argparse `choices` come from hil_electrical.RT_RAMP_SHAPES, so the CLI
+    cannot drift from the engine's registry."""
+    assert hil.RT_RAMP_SHAPES == he_mod.RT_RAMP_SHAPES
+    assert hil.RT_RAMP_SHAPE_DEFAULT == he_mod.RT_RAMP_SHAPE_DEFAULT == "legacy"
+    with pytest.raises(SystemExit):
+        hil.main(["--scenario", "steady", "--rt1987-ramp", "datasheet"])
+
+
+def test_rt1987_ramp_sidecar_records_the_shape_unconditionally(tmp_path):
+    """PROVENANCE, on `droop_mode`'s terms: written even on the DEFAULT, where
+    an absent key must read as "the tool predates the A/B round", not as
+    "legacy was chosen".  Board-free run (`--teensy-ip 127.0.0.1` at an unused
+    port: nothing answers, so no observation frame ever arrives)."""
+    import json
+    hashes = {}
+    for shape in ("legacy", "constant-slew"):
+        csv = str(tmp_path / ("r_%s.csv" % shape.replace("-", "_")))
+        rc = hil.main(["--scenario", "steady", "--duration", "0.3",
+                       "--csv", csv, "--teensy-ip", "127.0.0.1",
+                       "--port", "59999", "--electrical", "hifi",
+                       "--rt1987-ramp", shape])
+        assert rc == 0
+        doc = json.load(open(csv + ".meta.json", encoding="utf-8"))
+        assert doc["config"]["rt1987_ramp"] == shape
+        hashes[shape] = doc["constants_hash"]
+        assert doc["constants"]["hil_electrical.RT_RAMP_SHAPE"] == repr(shape)
+    # THE POINT OF THE ERA ENTRY: the fingerprint SEPARATES the two shapes.
+    assert hashes["legacy"] != hashes["constant-slew"]
+
+
+def test_rt1987_ramp_is_invisible_to_the_constant_sweep_without_the_era_entry():
+    """WHY the era entry is injected by hand in main() rather than left to
+    collect_model_constants(): the shape is a MODE (a string), and the sweep
+    collects only numeric module constants -- so without the injection two runs
+    whose soft-start slopes differ by 25 % would fingerprint IDENTICALLY."""
+    base = hil.collect_model_constants()
+    assert not any(k.endswith("RT_RAMP_SHAPE") for k in base)
+    # ... while the slew NUMERATOR, being numeric, is swept normally.
+    assert "hil_electrical.RT_SLEW_NUMERATOR_V" in base
+    a, b = dict(base), dict(base)
+    a["hil_electrical.RT_RAMP_SHAPE"] = repr("legacy")
+    b["hil_electrical.RT_RAMP_SHAPE"] = repr("constant-slew")
+    ha, hb, hbase = (hil.constants_hash(a), hil.constants_hash(b),
+                     hil.constants_hash(base))
+    assert len({ha, hb, hbase}) == 3, (
+        "absent / legacy / constant-slew are THREE distinct eras: an absent "
+        "key is a pre-round sidecar, not a legacy one")

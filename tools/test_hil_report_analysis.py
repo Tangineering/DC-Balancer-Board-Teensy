@@ -3190,6 +3190,21 @@ def test_matched_dp_records_the_plant_era_fields_for_the_analyst():
     assert other["plant_era"]["loss_map"] is None
 
 
+def test_matched_dp_records_the_rt1987_ramp_shape_era(tmp_path=None):
+    """THE RT1987 RAMP-SHAPE ERA (2026-09-08 A/B round), on `droop_mode`'s
+    terms: read off the RUN's own config, with an ABSENT key meaning "sidecar
+    written before the round" rather than "legacy".  The shape moves the
+    soft-start slope by 25 %, so an analyst comparing two campaigns' inrush and
+    bring-up figures must be able to see it without opening the sidecar."""
+    era = _mdp_call(_mdp_cfg())["stimulus_era"]["plant_era"]
+    assert era["rt1987_ramp"] is None, (
+        "a config without the key is a PRE-ROUND sidecar and must not default "
+        "to legacy")
+    for shape in ("legacy", "constant-slew"):
+        out = _mdp_call(_mdp_cfg(rt1987_ramp=shape))
+        assert out["stimulus_era"]["plant_era"]["rt1987_ramp"] == shape
+
+
 # ── the road-load and regen eras in the matched-DP baseline (2026-09-02) ────
 #
 # Both are resolved from the RUN's own config, on the identical argument

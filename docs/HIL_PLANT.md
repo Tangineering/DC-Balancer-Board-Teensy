@@ -2490,7 +2490,7 @@ SCP behaviours fall out rather than being scripted:
 |---|---|
 | `OFF` | **Full isolation** — back-to-back FETs, **no body-diode path**. Entered on EN low or `VIN < UVLO` (3.175 V). |
 | `TD_ON` | 8 ms typ EN-rise delay. |
-| `SOFT` | VOUT follows a linear ramp over `tON = (VIN/35)·(CSS_nF/0.0023 − 100) µs` — ~19.8 ms at 16 V on the 100 nF switches (`FC_BUS`, `BT_BUS`, `MOT_PWR`), ~1.07 ms on the 5.6 nF ones (`REGEN`, `FC_CHARGE`, `BT_SEQ`). The pass current is the **physical** one — `i ≈ c_load·d(target)/dt + i_load` (see the fourth modelling note) — and both the reported link current and the foldback decision derive from it. Foldback SCP is active **only here**: 8.5 A at ΔV ≤ 5 V falling toward ~5.3 A at ΔV = 16 V, floored at 2.5 A. Held continuously at the clamp for **250 µs** → **CUT**, auto-retry after **64 ms**. **2026-08-30c:** on an episode that starts on a **pre-charged** node (`v_ss_start > RT_SS_PRECHARGED_V` 1.0 V) the ramp's duration *and* endpoint come from the per-episode VIN **high water mark**, not the instantaneous VIN, and the target is capped at VIN. A cold start keeps the original instantaneous-VIN path bit-for-bit. See the note below. |
+| `SOFT` | VOUT follows a linear ramp over `tON = (VIN/35)·(CSS_nF/0.0023 − 100) µs` **under the default `--rt1987-ramp legacy`; under `constant-slew` it rises at the datasheet slew instead and the duration follows from the distance — see "Ramp shape: the A/B record" below** — ~19.8 ms at 16 V on the 100 nF switches (`FC_BUS`, `BT_BUS`, `MOT_PWR`), ~1.07 ms on the 5.6 nF ones (`REGEN`, `FC_CHARGE`, `BT_SEQ`). The pass current is the **physical** one — `i ≈ c_load·d(target)/dt + i_load` (see the fourth modelling note) — and both the reported link current and the foldback decision derive from it. Foldback SCP is active **only here**: 8.5 A at ΔV ≤ 5 V falling toward ~5.3 A at ΔV = 16 V, floored at 2.5 A. Held continuously at the clamp for **250 µs** → **CUT**, auto-retry after **64 ms**. **2026-08-30c:** on an episode that starts on a **pre-charged** node (`v_ss_start > RT_SS_PRECHARGED_V` 1.0 V) the ramp's duration *and* endpoint come from the per-episode VIN **high water mark**, not the instantaneous VIN, and the target is capped at VIN. A cold start keeps the original instantaneous-VIN path bit-for-bit. See the note below. |
 | `ON` | Forward regulation at `V_FWD` = 35 mV, `R_ON` = 21 mΩ. Fast reverse comparator at **−50 mV** → off, then re-arm **without** a new soft-start once forward again. |
 
 Four modelling notes. First, the soft-start is a **controlled source on the output node**,
@@ -2837,26 +2837,113 @@ apparent overdrive on a *sagging* rail (standalone `scp-inrush`-shaped driver: r
 peak 6.30 -> 8.39 A), because the cap had been quietly shrinking the demand exactly when
 the bus browned out. That makes a genuine overload *more* likely to fold, not less.
 
-### Known bias in the ramp shape (not fixed — future work)
+### Ramp shape: the A/B record (2026-09-08)
 
-Quote a soft-start current from this engine as *physical* only with this in mind.
-**17.1/17.3** define `tON` as the **10 % to 90 % rise time**, so the part's true slew is
-`0.8 x VIN / tON = 0.8 x 35 / (CSS_nF/0.0023 - 100)` — **independent of VIN**,
-645.5 V/s at CSS = 100 nF. This model instead ramps `v_ss_start -> v_ref` *over* `tON`,
-conflating slope with endpoint, and inherits a start-dependent error of **opposite
-sign** at the two ends:
+Two shapes ship, selected by `--rt1987-ramp {legacy,constant-slew}` on both
+`hil_plant_sim.py` and `run_hil_suite.py` and recorded on every run. **`legacy`
+is the default and stays the default**; the reasoning is below.
 
-| episode | model slew | true slew | bias |
-|---|---|---|---|
-| cold (`v_ss_start` ~ 0) | 806.9 V/s | 645.5 V/s | **+25.0 %** |
-| warm (4.4 V -> 15.78 V) | 581.9 V/s | 645.5 V/s | **-9.8 %** |
+**The formula.** DS **17.1/17.3** define `tON` as the **10 % to 90 % rise time**,
+so the part's true output slew is
 
-No single scale factor fixes both. Note also that a test bounding the reported current
-by `c_load x rate` computed from `rt1987_t_on_s()` is **self-referential** — it
-re-derives the same wrong slope, so it validates internal consistency, not physicality.
-The right shape is a constant-slew ramp, and it is deliberately **not** implemented
-here: the +25 % cold bias is baked into the hardware-corroborated 0.2226 A / 0.4740 A
-bring-up pins, so changing it needs its own A/B round against hardware.
+```
+dVOUT/dt = 0.8 x VIN / tON ,   tON = (VIN/35) x (CSS_nF/0.0023 - 100) us
+         = 0.8 x 35 / ((CSS_nF/0.0023 - 100) x 1e-6)
+```
+
+in which **VIN cancels**: the slew depends on `CSS` alone, not on the rail and not
+on the start voltage. Per fitted switch (`rt1987_slew_v_s()`):
+
+| CSS | switches | true slew |
+|---|---|---|
+| 100 nF | `FC_BUS`, `BT_BUS`, `MOT_PWR` | **645.4846 V/s** |
+| 5.6 nF | `REGEN`, `FC_CHARGE`, `BT_SEQ` | **11992.5512 V/s** |
+
+The `legacy` shape ramps `v_ss_start -> v_ref` *over* `tON`, conflating the slope
+with the endpoint, so its slope scales with the gap still to travel: **806.9 V/s**
+cold (+25.0 %) and **581.9 V/s** on the 4.4 V warm re-close (-9.8 %). The two
+biases have opposite sign, which is why no single scale factor fixes both.
+
+**The implementation is one fork and no more.** Both shapes are expressed through
+the ramp **duration** (`Rt1987._ramp_t_on()`): legacy asks `rt1987_t_on_s()`,
+constant-slew returns `(v_ref - v_ss_start)/slew`, and `rate` then reduces to the
+datasheet slew by construction. The `TD_ON` gate, the one-sided SOFT stamp, the
+TRCB reverse branch, the per-episode VIN high water mark, the pre-charged
+scoping and the foldback SCP are shared and untouched. Under `legacy` the engine
+is byte-identical to every campaign through H
+(`test_rt1987_legacy_shape_is_byte_identical_on_the_hardware_pins`).
+
+**The A/B.** `tools/probes/probe_rt1987_ramp_ab.py`, substep count pinned at 8.
+Each driver reproduces one anchor's soft-start **episode** against the real
+`ElectricalSim`; a driver carries no firmware, no commander and no fault logic,
+so it bounds the move rather than predicting the campaign value.
+
+| anchor | legacy | constant-slew | delta | board | verdict |
+|---|---|---|---|---|---|
+| `bringup` P0 peak `I_fc` | 0.151185 A | 0.139077 A | **-8.0 %** | 0.1512 A (campaign G) | **away** |
+| `bringup` P3 peak `I_fc` / `I_bt` | 0.436707 A | 0.358445 A | **-17.9 %** | AUX-ERA pin 0.4367 A | **away** |
+| `bringup` P3, asymmetry era | 0.455703 A | 0.375237 A | -17.7 % | — | away |
+| `scp-inrush` `i_cut` | 6.467063 A | 6.556191 A | +1.4 % | 6.354320 A (G) / 6.290 A | ~neutral, both high |
+| `scp-inrush` arming `v_step` | 1.4896 V | 1.8372 V | +23.3 % | — | inside the [1.2, 2.01] V design band in both |
+| `handoff-sag` `FC_BUS` cut *(control)* | 0.053232 A | 0.053232 A | **0** | 0.370456-class | unreachable by the ramp, as required |
+| `comm-loss` warm re-close peak `I_fc` | 3.747594 A | 0.139067 A | **-96.3 %** | **1.66 A (H) / 1.79 A (G)** | **overshoots past the board** |
+| `comm-loss` trailing `I_bt` | 0.034032 A | 0.056417 A | +65.8 % | — | both at the displacement current |
+| re-entry (F7) peak `I_fc` | 0.094097 A | 0.053232 A | -43.4 % | 0.2355 A on `ems-ftp75-sdp` | driver load differs; see below |
+| re-entry ticks to `ON` | 22 ms | **9 ms** | -59.1 % | ~12 ms overshoot window | **toward** |
+| `FC_CHARGE` entry (F1) peak `I_fc` | 0.323337 A | 0.269419 A | -16.7 % | — | unmeasured |
+| `FC_CHARGE` ticks to `ON` | 9 ms | 9 ms | 0 | — | 5.6 nF: the ramp is inside one tick either way |
+| `REGEN` entry (ftp75c) | 0.053232 A / 10 ms | 0.053232 A / 10 ms | **0** | — | 5.6 nF onto a live node: nothing to ramp |
+| fw26-clamp cruise `I_fc` / `I_bt` *(control)* | 0.569057 / 1.521694 A | identical | **0** | — | no turn-on in the leg, as required |
+
+The **replay half** (`TP0053` and every replay leg) is structurally unmoved: a
+replay run drives its rails from a log and constructs no `Rt1987` at all, so it
+is never passed the flag.
+
+**Decision: `legacy` stays the default.** Constant-slew is the physically right
+shape and it moves the hardware-corroborated cold anchors **away** from the
+board by 8-18 %, which is two to three orders of magnitude outside the ~250 ppm
+across-campaign repeatability floor. The decisive row is `comm-loss`: the board
+**latched `OC_FC`** on campaigns G and H, and 0.139 A is a factor 10 under
+`LIMIT_I_FC_MAX` 1.4 A — so the constant-slew engine cannot reproduce a
+board-real latch at all. Legacy over-predicts that current by 2.1-2.3x;
+constant-slew under-predicts it by 12-13x. **Neither shape brackets the board,
+so the ramp shape is not the whole residual**, and correcting it alone would
+trade a known-calibrated error for an uncalibrated one.
+
+**What the +25 % cold bias is plausibly compensating** (named, none measured):
+
+- the **boost's own output impedance** — section 8.3 keeps only the first-order
+  `tau_r` = 100 us voltage-loop lag, with no RHPZ lead and no compensator
+  recovery shape, so the source is stiffer during a fast inrush than the part is;
+- the **21 mOhm `RT_R_ON`** pass element, which is the gain that turns a ramp
+  divergence into a current (the comm-loss mechanism) and is a datasheet typical,
+  not a measured value;
+- **`C_VBUS`** at 35 uF, the midpoint of a declared 30-40 uF band: the
+  displacement current is `c_load x rate` exactly, so a +/-14 % capacitance error
+  is a +/-14 % inrush error on its own.
+
+Settling any of those is a separate measurement round; until one lands, the
+default keeps the shape the pins were calibrated on.
+
+**The one place constant-slew is unambiguously better** is the F7 re-entry: a
+switch closing onto a node already at its own input has nothing to ramp, and
+constant-slew completes in 9 ms where legacy sits in `SOFT` for 22 ms carrying a
+flat target. That is a structural artefact of the legacy shape, not a
+calibration, and it is the row to re-open the decision on.
+
+**Reversal path.** Whichever value the default takes, **both shapes stay
+selectable for at least one campaign**. `--rt1987-ramp` is recorded in the CSV
+meta sidecar as `config.rt1987_ramp`, in the campaign REPORT header, in the
+matched-DP `plant_era` block, and — because a mode is invisible to the numeric
+constant sweep — injected into the fingerprint as
+`hil_electrical.RT_RAMP_SHAPE`, so `constants_hash` separates the two eras.
+Absent / `legacy` / `constant-slew` are **three** distinct fingerprints: an
+absent key is a sidecar written before this round, not a legacy one.
+
+**Still true of both shapes.** A test that bounds the reported current by
+`c_load x rate` computed from the engine's own duration helper is
+**self-referential** — it re-derives whatever slope that shape implies, so it
+validates internal consistency, not physicality.
 
 ## 9. Source models
 

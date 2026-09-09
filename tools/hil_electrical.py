@@ -384,6 +384,53 @@ def rt1987_t_on_s(v_in, css_nf):
     return (v_in / 35.0) * (css_nf / 0.0023 - 100.0) * 1e-6
 
 
+# -- RT1987 SOFT-START RAMP SHAPE (A/B round, 2026-09-08) --------------------
+# TWO SHAPES, one selectable mode, because the two disagree by +25 % on a cold
+# start and -9.8 % on a warm re-close, and the cold figure is baked into three
+# campaigns of hardware-corroborated bring-up pins.
+#
+#   "legacy"         the shape every campaign through H ran: the output ramps
+#                    v_ss_start -> v_ref OVER tON, so the SLOPE scales with the
+#                    distance still to travel (start-dependent, VIN-dependent).
+#   "constant-slew"  the datasheet shape: the output rises from v_ss_start at a
+#                    FIXED slew (rt1987_slew_v_s(), independent of VIN and of
+#                    the start voltage) until it meets v_ref.
+#
+# Both shapes are expressed through ONE quantity, the ramp DURATION, so nothing
+# else in the state machine forks: legacy asks rt1987_t_on_s() for it,
+# constant-slew derives it as span/slew.  `rate` then comes out at exactly the
+# datasheet slew under constant-slew, by construction.  Everything else --
+# the TD_ON gate, the one-sided SOFT stamp, the TRCB reverse branch, the
+# per-episode VIN high water mark, the pre-charged scoping, the foldback SCP --
+# is untouched and shared.
+RT_RAMP_SHAPES = ("legacy", "constant-slew")
+#: DEFAULT: see the A/B record in docs/HIL_PLANT.md section 8.4.  The legacy
+#: shape stays the default (and stays selectable for at least one campaign
+#: after any change of this value) because the cold pins move AWAY from the
+#: board under constant-slew.
+RT_RAMP_SHAPE_DEFAULT = "legacy"
+#: 0.8 * VIN_REF.  DS 17.1/17.3 define tON as the 10 %-90 % RISE TIME, so the
+#: true slew is 0.8*VIN/tON with tON = (VIN/35)*(CSS_nF/0.0023 - 100) us --
+#: VIN cancels and only this numerator survives.  See rt1987_slew_v_s().
+RT_SLEW_NUMERATOR_V = 0.8 * 35.0
+
+
+def rt1987_slew_v_s(css_nf):
+    """RT1987 TRUE soft-start output slew [V/s], from DS 17.1/17.3.
+
+    dVOUT/dt = 0.8 * VIN / tON = RT_SLEW_NUMERATOR_V / ((CSS_nF/0.0023 - 100)*1e-6)
+
+    INDEPENDENT OF VIN and of the start voltage: 645.5 V/s at CSS = 100 nF
+    (FC_BUS / BT_BUS / MOT_PWR), 11992.6 V/s at CSS = 5.6 nF (REGEN /
+    FC_CHARGE / BT_SEQ).  Returns 0.0 for a CSS at or below the 100 us floor
+    of the datasheet expression, where no ramp is defined.
+    """
+    den = (css_nf / 0.0023 - 100.0) * 1e-6
+    if den <= 0.0:
+        return 0.0
+    return RT_SLEW_NUMERATOR_V / den
+
+
 def rt1987_fold_limit(dv):
     """Foldback current limit vs the switch's VIN-VOUT differential [A].
 
@@ -1053,8 +1100,14 @@ class Rt1987:
     """
 
     def __init__(self, name, n_in, n_out, css_nf, c_load_f, r_series=0.0,
-                 strict_forward=False):
+                 strict_forward=False, ramp_shape=RT_RAMP_SHAPE_DEFAULT):
         self.name = name
+        #: Soft-start ramp SHAPE, "legacy" or "constant-slew" (see the
+        #: RT_RAMP_SHAPES banner and _ramp_t_on()).  It selects the ramp
+        #: DURATION and nothing else, so every other behaviour is shared.
+        if ramp_shape not in RT_RAMP_SHAPES:
+            raise ValueError("ramp_shape must be one of %s" % (RT_RAMP_SHAPES,))
+        self.ramp_shape = ramp_shape
         #: WP-C: block conduction below the forward-regulation point instead of
         #: letting the linear branch deliver reverse current.  See stamp().
         self.strict_forward = bool(strict_forward)
@@ -1095,6 +1148,34 @@ class Rt1987:
         #: its own timestamp, so nothing that reads event times moves.
         self._rev_last_ev = None
         self._rev_last_t = None
+
+    def _ramp_t_on(self, v_ref):
+        """Duration of the CURRENT soft-start ramp toward `v_ref` [s].
+
+        THE ONE PLACE THE TWO RAMP SHAPES DIFFER.  Both the operating point
+        (_soft_operating_point) and the completion test (update()'s SOFT
+        branch) call this, and they MUST: a completion test on a different
+        duration than the ramp itself uses would truncate or extend it.
+
+        legacy         tON straight from rt1987_t_on_s(), with the historic
+                       max(v_ref, 1.0) VIN floor.  The endpoint is v_ref and
+                       the duration is tON, so the SLOPE is whatever the two
+                       imply -- 806.9 V/s cold, 581.9 V/s on a 4.4 V warm
+                       re-close, against a true 645.5 V/s.
+        constant-slew  the duration the DATASHEET slew needs to cover the
+                       remaining span: (v_ref - v_ss_start)/rt1987_slew_v_s().
+                       The endpoint is still v_ref; only the time to reach it
+                       changes, so `rate` in _soft_operating_point() reduces to
+                       the slew exactly.  A span of zero or less gives 0.0,
+                       i.e. an already-complete ramp -- there is nothing to
+                       traverse, and the legacy VIN floor has no meaning here.
+        """
+        if self.ramp_shape == "constant-slew":
+            slew = rt1987_slew_v_s(self.css_nf)
+            if slew <= 0.0:
+                return 0.0
+            return max(0.0, v_ref - self.v_ss_start) / slew
+        return rt1987_t_on_s(max(v_ref, 1.0), self.css_nf)
 
     def _reverse_event(self, events, t_now, dv, during=None):
         """Emit (or coalesce into) a reverse_block event.  See _rev_last_ev."""
@@ -1312,7 +1393,20 @@ class Rt1987:
         rail.  (Verified against the constants: tON = VIN * 1.23938e-3 s, so VIN
         cancels.)
 
-        THIS MODEL RAMPS `v_ss_start -> v_ref` OVER tON, i.e. it conflates the SLOPE
+        THE SHAPE IS NOW SELECTABLE (2026-09-08 A/B round): `ramp_shape`
+        "constant-slew" uses exactly that slew, and everything below describes
+        the "legacy" DEFAULT.  The A/B table, the decision and the reversal
+        path are in docs/HIL_PLANT.md section 8.4, "Ramp shape: the A/B
+        record"; the harness is tools/probes/probe_rt1987_ramp_ab.py.  The
+        default did NOT move: constant-slew shifts the hardware-corroborated
+        cold pins 8-18 % AWAY from the board (0.151185 -> 0.139077 A on P0,
+        0.436707 -> 0.358445 A on P3) and drops the comm-loss warm re-close to
+        0.139067 A against a board reading of 1.66 A (campaign H) / 1.79 A (G)
+        that LATCHED OC_FC -- legacy over-predicts it 2.1-2.3x, constant-slew
+        under-predicts it 12-13x, so neither shape brackets the board and the
+        ramp is not the whole residual.
+
+        THE LEGACY MODEL RAMPS `v_ss_start -> v_ref` OVER tON, i.e. it conflates the SLOPE
         with the ENDPOINT and inherits a VIN- and start-dependent error:
             cold (v_ss_start ~ 0):   rate = VIN/tON        = 806.9 V/s  -> +25.0 %
             warm (v_ss_start 4.4 V,
@@ -1324,12 +1418,16 @@ class Rt1987:
         rt1987_t_on_s(): that bound is SELF-REFERENTIAL — it re-derives the same
         wrong slope, so it validates internal consistency, not physicality.
 
-        FUTURE WORK, deliberately NOT done here: a constant-slew ramp
+        SHIPPED, not future work: the constant-slew ramp
         (dVOUT/dt = 0.8*35/(CSS_nF/0.0023 - 100), endpoint v_ref, duration whatever
-        the distance requires).  It is the physically right shape, and it MOVES THE
-        COLD PINS — the +25 % bias is baked into the hardware-corroborated 0.2226 A /
-        0.4740 A bring-up numbers, which have been reproduced in three campaigns.
-        Changing it needs its own A/B round against hardware, not a drive-by.
+        the distance requires) is `ramp_shape="constant-slew"` and lives entirely
+        in _ramp_t_on().  It stays OPT-IN for the reason the A/B round measured:
+        the +25 % cold bias is baked into the hardware-corroborated bring-up pins
+        (0.151185 / 0.436707 A in the current bleed+aux era; 0.2226 / 0.4740 A in
+        the era those numbers were first taken in), reproduced in three campaigns.
+        Candidates for what that bias is compensating -- none measured -- are the
+        boost's own output impedance (this engine keeps only the tau_r = 100 us
+        lag), the 21 mOhm RT_R_ON typical, and C_VBUS at the 30-40 uF midpoint.
 
         ── 2026-08-30c fix: tON IS MONOTONICALLY NON-DECREASING PER EPISODE ────
         tON used to be recomputed from the INSTANTANEOUS v_in on every substep while
@@ -1412,7 +1510,7 @@ class Rt1987:
         # exactly that — the target oscillating with v_in (15.78 -> 14.76 -> 15.35)
         # and i_phys chattering 0.0 <-> 3.0 A around a true 0.562 A displacement.
         v_ref = self._ss_v_in_max if precharged else v_in
-        t_on = rt1987_t_on_s(max(v_ref, 1.0), self.css_nf)
+        t_on = self._ramp_t_on(v_ref)
         frac = 1.0 if t_on <= 0 else min(1.0, self.t_state / t_on)
         target = self.v_ss_start + (v_ref - self.v_ss_start) * frac
         # Ramp target at the instant `v_out` was solved (one substep back).
@@ -1611,9 +1709,8 @@ class Rt1987:
             # ramp itself uses would truncate or extend it.  Lowered to `> 0.0`
             # with it (2026-09-04, campaign G comm-loss: the 0.4366 V warm
             # re-close sits inside the old 0 < v_ss_start <= 1.0 V window).
-            t_on = rt1987_t_on_s(
-                max(self._ss_v_in_max if self.v_ss_start > 0.0
-                    else v_in, 1.0), self.css_nf)
+            t_on = self._ramp_t_on(self._ss_v_in_max if self.v_ss_start > 0.0
+                                   else v_in)
             if self.t_state >= t_on and (v_in - v_out) <= RT_V_FWD * 2.0:
                 self._goto("ON")
         elif self.state == "ON":
@@ -1876,9 +1973,17 @@ class ElectricalSim:
 
     def __init__(self, trace_config="short", noise=None, c_vesc_f=C_VESC_DEFAULT,
                  fuel_cell=None, battery=None, droop_mode="design",
-                 asymmetry_mode=ASYMMETRY_MODE_DEFAULT, substep_pin=None):
+                 asymmetry_mode=ASYMMETRY_MODE_DEFAULT, substep_pin=None,
+                 ramp_shape=RT_RAMP_SHAPE_DEFAULT):
         if trace_config not in TRACE_L_NH:
             raise ValueError(f"trace_config must be one of {sorted(TRACE_L_NH)}")
+        if ramp_shape not in RT_RAMP_SHAPES:
+            raise ValueError("ramp_shape must be one of %s" % (RT_RAMP_SHAPES,))
+        # DEFAULT "legacy": every baseline recorded before this switch existed
+        # is reproduced BIT-FOR-BIT, on the same terms as `droop_mode` above
+        # (a regression test pins the two cold bring-up pins and scp-inrush).
+        # See the RT_RAMP_SHAPES banner and docs/HIL_PLANT.md section 8.4.
+        self.ramp_shape = ramp_shape
         if droop_mode not in DROOP_SCALE:
             raise ValueError("droop_mode must be one of %s" % (DROOP_MODES,))
         if asymmetry_mode not in ASYMMETRY_MODES:
@@ -1938,11 +2043,12 @@ class ElectricalSim:
 
         self.switches = {
             "FC_BUS": Rt1987("FC_BUS", N_OFC, N_BUS, CSS_NF["FC_BUS"], C_VBUS,
-                             r_series=R_SHUNT),
+                             r_series=R_SHUNT, ramp_shape=ramp_shape),
             "BT_BUS": Rt1987("BT_BUS", N_OBT, N_BUS, CSS_NF["BT_BUS"], C_VBUS,
-                             r_series=R_SHUNT),
+                             r_series=R_SHUNT, ramp_shape=ramp_shape),
             "MOT_PWR": Rt1987("MOT_PWR", N_BUS, N_MOT, CSS_NF["MOT_PWR"],
-                              C_MOT_LOCAL + c_vesc_f, strict_forward=True),
+                              C_MOT_LOCAL + c_vesc_f, strict_forward=True,
+                              ramp_shape=ramp_shape),
             # TOPOLOGY FIX (2026-08-30, schematic sheet 4 + operator): D-BC-RG's
             # OUTPUT joins D-BC-FC's output at the shared VCHG-IN node into the
             # Ag105 (CHG-V divider senses that node), so REGEN links MOT -> CHG.
@@ -1956,12 +2062,14 @@ class ElectricalSim:
             # capacitor); only the per-switch ramp timing is optimistic.  Bounded
             # inaccuracy: the 5.6 nF CSS gives a ~1 ms ramp either way.  Accepted.
             "REGEN": Rt1987("REGEN", N_MOT, N_CHG, CSS_NF["REGEN"], C_CHG_NODE,
-                            strict_forward=True),
+                            strict_forward=True, ramp_shape=ramp_shape),
             "FC_CHARGE": Rt1987("FC_CHARGE", N_BUS, N_CHG, CSS_NF["FC_CHARGE"],
-                                C_CHG_NODE, strict_forward=True),
+                                C_CHG_NODE, strict_forward=True,
+                                ramp_shape=ramp_shape),
             # BT_SEQ gates the pack into the BT boost INPUT; it is not a node link in
             # this six-node network, so it is tracked only for its enable state.
-            "BT_SEQ": Rt1987("BT_SEQ", N_OBT, N_OBT, CSS_NF["BT_SEQ"], 1e-6),
+            "BT_SEQ": Rt1987("BT_SEQ", N_OBT, N_OBT, CSS_NF["BT_SEQ"], 1e-6,
+                             ramp_shape=ramp_shape),
         }
         self._sw_map = [
             (SW_FC_BUS, "FC_BUS"), (SW_BT_BUS, "BT_BUS"), (SW_MOT_PWR, "MOT_PWR"),

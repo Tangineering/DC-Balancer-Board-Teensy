@@ -216,6 +216,10 @@ from hil_plant_sim import (                                        # noqa: E402
     # as the droop modes -- `--asymmetry`'s choices cannot drift from the
     # engine's.
     ASYMMETRY_MODES, ASYMMETRY_MODE_DEFAULT,
+    # RT1987 SOFT-START RAMP SHAPE (2026-09-08 A/B round), imported for the
+    # same reason as the two above -- `--rt1987-ramp`'s choices and default
+    # cannot drift from the engine that realizes them.
+    RT_RAMP_SHAPES, RT_RAMP_SHAPE_DEFAULT,
 )
 # One emulated-Pi command period.
 #
@@ -10328,6 +10332,16 @@ def build_plan(args):
                        ASYMMETRY_MODE_DEFAULT) != ASYMMETRY_MODE_DEFAULT:
                 argv += ["--asymmetry", getattr(args, "asymmetry",
                                                 ASYMMETRY_MODE_DEFAULT)]
+            # -- RT1987 SOFT-START RAMP SHAPE (2026-09-08) --------------------
+            # Appended on `--asymmetry`'s terms, term for term: passed only
+            # when NON-DEFAULT (the child's own default is the same constant
+            # and provenance rides `config.rt1987_ramp` in every CSV meta
+            # sidecar), and NOT passed to the replay half, which drives its
+            # rails from a log and constructs no RT1987 state machine.
+            if getattr(args, "rt1987_ramp",
+                       RT_RAMP_SHAPE_DEFAULT) != RT_RAMP_SHAPE_DEFAULT:
+                argv += ["--rt1987-ramp", getattr(args, "rt1987_ramp",
+                                                  RT_RAMP_SHAPE_DEFAULT)]
             plan.append({
                 "kind": "scenario", "name": name, "mode": mode,
                 "electrical_required": need,
@@ -14217,6 +14231,18 @@ def render_report(meta, results):
                            "with a pre-2026-09-01 campaign"
                            if _asym == "measured" else
                            "  — symmetric plant (the pre-C1 baseline)")]))
+    # RT1987 RAMP SHAPE (2026-09-08), in the header table beside the two above
+    # because it qualifies every soft-start inrush and bring-up current in the
+    # report the way droop_mode qualifies every V_bus figure.
+    _ramp = meta.get("rt1987_ramp")
+    A(_row(["RT1987 soft-start ramp (scenario half)",
+            "not recorded (campaign predates the 2026-09-08 A/B round)"
+            if _ramp is None
+            else "%s%s" % (_ramp,
+                           "" if _ramp == RT_RAMP_SHAPE_DEFAULT else
+                           "  - datasheet constant slew; bring-up and inrush "
+                           "currents NOT comparable with a legacy-shape "
+                           "campaign")]))
     # WP-1C: the CHARGER ERA, beside the electrical mode and for the same
     # reason — it qualifies every hydrogen and charge-window number in the
     # report. Read from the FIRST scenario run that recorded one, because it is
@@ -14895,6 +14921,17 @@ def main(argv=None):
                          "fitted FC/BT mismatch; 'off' restores the symmetric "
                          "plant every campaign before this flag ran. The replay "
                          "half realizes no asymmetry in either mode.")
+    ap.add_argument("--rt1987-ramp", default=RT_RAMP_SHAPE_DEFAULT,
+                    choices=list(RT_RAMP_SHAPES), dest="rt1987_ramp",
+                    help="RT1987 soft-start ramp shape for the SCENARIO half: "
+                         "'legacy' (default, and what every campaign on record "
+                         "ran) ramps v_ss_start -> v_ref over tON; "
+                         "'constant-slew' uses the datasheet slew (645.5 V/s "
+                         "at CSS 100 nF, independent of VIN). The cold "
+                         "bring-up pins and scp-inrush are LEGACY-calibrated "
+                         "and MOVE under the other shape. The replay half is "
+                         "never passed this flag - it drives its rails from a "
+                         "log and builds no RT1987 state machine.")
     ap.add_argument("--droop", default=DROOP_MODE_DEFAULT, choices=list(DROOP_MODES),
                     help="hi-fi droop realization for the SCENARIO half "
                          "(default 'design' — the chain as designed, and what "
@@ -15057,6 +15094,11 @@ def main(argv=None):
             # unconditionally so a report reader can place every share figure
             # on one side of the 2026-09-01 baseline boundary.
             "asymmetry": getattr(args, "asymmetry", ASYMMETRY_MODE_DEFAULT),
+             "rt1987_ramp": getattr(args, "rt1987_ramp",
+                                    RT_RAMP_SHAPE_DEFAULT),
+                 "rt1987_ramp": getattr(args, "rt1987_ramp",
+                                        RT_RAMP_SHAPE_DEFAULT),
+            "rt1987_ramp": getattr(args, "rt1987_ramp", RT_RAMP_SHAPE_DEFAULT),
             "settle_s": args.settle_s,
             "out": args.out,
             "aborted": aborted_now,

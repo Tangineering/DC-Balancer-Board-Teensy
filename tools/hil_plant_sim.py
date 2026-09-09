@@ -588,6 +588,12 @@ from hil_electrical import (                                   # noqa: E402
     # PLANT-R2-F3/N2).  It is NOT part of the asymmetry: it is present in both
     # asymmetry modes, and the static share law needs it in either.
     DROOP_FIXED_SERIES_OHM,
+    # RT1987 SOFT-START RAMP SHAPE (2026-09-08 A/B round).  Imported for the
+    # same reason as the droop and asymmetry modes: `--rt1987-ramp`'s choices
+    # and its default cannot be allowed to drift from the engine that realizes
+    # them.  Only the HI-FI engine has RT1987 state machines, so the mode is
+    # recorded on every run and realized on the hi-fi half only.
+    RT_RAMP_SHAPES, RT_RAMP_SHAPE_DEFAULT, rt1987_slew_v_s,
 )
 
 # The shared regen chain (2026-09-02).  STDLIB ONLY, imported as a module so the
@@ -12439,6 +12445,22 @@ def main(argv=None):
                          "identical chains and is byte-identical to every "
                          "campaign recorded before this flag existed. Applies "
                          "to BOTH electrical engines")
+    # ── RT1987 SOFT-START RAMP SHAPE (2026-09-08, the A/B round) ────────────
+    # Shaped like --asymmetry: a mode choice whose DEFAULT is byte-identical to
+    # every campaign recorded before the flag existed.  No scenario key: the
+    # shape is a plant-model property, not a stimulus, and an operator wanting
+    # the comparison asks for it on the command line.
+    ap.add_argument("--rt1987-ramp", default=RT_RAMP_SHAPE_DEFAULT,
+                    choices=list(RT_RAMP_SHAPES), dest="rt1987_ramp",
+                    help="RT1987 soft-start ramp shape (HI-FI ENGINE ONLY): "
+                         "'legacy' (DEFAULT) ramps v_ss_start -> v_ref over "
+                         "tON, so the slope scales with the distance still to "
+                         "travel (806.9 V/s cold, 581.9 V/s on a 4.4 V warm "
+                         "re-close); 'constant-slew' uses the datasheet slew "
+                         "0.8*35/(CSS_nF/0.0023-100) = 645.5 V/s at 100 nF, "
+                         "independent of VIN and of the start voltage. The "
+                         "cold bring-up pins are LEGACY-calibrated - see the "
+                         "A/B record in docs/HIL_PLANT.md section 8.4")
     # ── ROAD-LOAD PROFILE (2026-09-02, the ftp75c round) ────────────────────
     # Shaped like --asymmetry: a mode choice with a stated default that is
     # BYTE-IDENTICAL to every campaign recorded before the flag existed.  A
@@ -12821,6 +12843,13 @@ def main(argv=None):
     # used on EVERY run (see `config.asymmetry` below).
     asymmetry_mode = args.asymmetry
 
+    # ── RT1987 RAMP SHAPE (2026-09-08) ───────────────────────────────────────
+    # Resolved on `--asymmetry`'s terms exactly: the CLI value is used as
+    # parsed, there is no scenario key, and `config.rt1987_ramp` records it on
+    # EVERY run so a trace can be placed on one side of the A/B boundary
+    # without anybody remembering which flag was passed.
+    rt1987_ramp = getattr(args, "rt1987_ramp", RT_RAMP_SHAPE_DEFAULT)
+
     # ── ROAD-LOAD PROFILE (2026-09-02) ───────────────────────────────────────
     # Resolution order is `--droop`'s, term for term, and for its reason: a
     # scenario may declare `drag` and it WINS over the CLI DEFAULT, but an
@@ -12859,7 +12888,15 @@ def main(argv=None):
             noise=NoiseConfig() if args.noise else None,
             c_vesc_f=c_vesc,
             droop_mode=droop_mode,
-            asymmetry_mode=asymmetry_mode)
+            asymmetry_mode=asymmetry_mode,
+            ramp_shape=rt1987_ramp)
+        if rt1987_ramp != RT_RAMP_SHAPE_DEFAULT:
+            # ASCII only: this stream is cp1252 on the bench PC's console.
+            print("[hil] rt1987_ramp=%s (datasheet slew %.1f V/s at 100 nF, "
+                  "%.1f V/s at 5.6 nF). WARNING: the cold bring-up pins "
+                  "(P0/P3) and scp-inrush were calibrated under 'legacy'; "
+                  "they MOVE under this shape - see docs/HIL_PLANT.md 8.4."
+                  % (rt1987_ramp, rt1987_slew_v_s(100.0), rt1987_slew_v_s(5.6)))
         print(f"[hil] electrical=hifi trace={args.trace_config} "
               f"C_vesc={c_vesc * 1e6:.0f} uF noise={'on' if args.noise else 'off'} "
               f"droop={droop_mode} (x{DROOP_SCALE[droop_mode]:.5f}, "
@@ -13544,6 +13581,17 @@ def main(argv=None):
     meta_const = None
     if args.csv:
         meta_const = collect_model_constants()
+        # THE RT1987 RAMP-SHAPE ERA (2026-09-08).  The shape is a MODE, not a
+        # numeric module constant, so collect_model_constants() cannot see it
+        # and `constants_hash` would read IDENTICAL for two runs whose
+        # soft-start slopes differ by 25 %.  Injected here, under
+        # hil_electrical's canonical prefix, so the fingerprint separates the
+        # two shapes the way it separates a K_DROOP retune.  Written for BOTH
+        # values rather than only the non-default one: an ABSENT key stays the
+        # sentinel for a sidecar produced before this round, which is a third
+        # state and not the same as "legacy was chosen".
+        meta_const = dict(meta_const)
+        meta_const["hil_electrical.RT_RAMP_SHAPE"] = repr(rt1987_ramp)
         meta_started = datetime.datetime.now().astimezone().isoformat(timespec="seconds")
         scenario_meta = None if args.replay else {
             "name": scenario,
@@ -13690,6 +13738,13 @@ def main(argv=None):
                 "vesc_cap_f": (getattr(electrical, "c_vesc", None)
                                if electrical is not None else None),
                 "noise": bool(args.noise),
+                # THE RT1987 RAMP SHAPE (2026-09-08), recorded unconditionally
+                # beside `droop_mode`/`asymmetry` and for the same reason: it
+                # qualifies every soft-start inrush and bring-up current in the
+                # run.  Realized on the HI-FI engine only; a simple-mode or
+                # replay run records the mode it was asked for and realizes no
+                # RT1987 ramp at all, exactly as it records `asymmetry`.
+                "rt1987_ramp": rt1987_ramp,
                 "soc0": args.soc0,
                 "capacity_ah": args.capacity_ah,
                 "chg_i_ceiling_a": chg_ceiling,

@@ -2862,3 +2862,184 @@ def test_n8_no_chatter_crossing_the_floor():
                 "chatter at the V_AUX_DROPOUT_V crossing")
         prev = v
     assert not e.numeric_fault
+
+
+# -----------------------------------------------------------------------------
+# RT1987 SOFT-START RAMP SHAPE A/B (2026-09-08).  DS 17.1/17.3 define tON as the
+# 10 %-90 % RISE TIME, so the part's true slew is 0.8*VIN/tON = 645.5 V/s at CSS
+# 100 nF, INDEPENDENT of VIN.  The `legacy` model ramps v_ss_start -> v_ref OVER
+# tON and therefore carries a start-dependent slope error of opposite sign at
+# the two ends (+25.0 % cold, -9.8 % on a 4.4 V warm re-close).  Both shapes now
+# ship behind `--rt1987-ramp`; `legacy` stays the DEFAULT because the A/B moved
+# the hardware-corroborated cold pins AWAY from the board by 8-18 %.
+# Full record: docs/HIL_PLANT.md section 8.4, "Ramp shape: the A/B record".
+# The A/B harness is tools/probes/probe_rt1987_ramp_ab.py.
+# -----------------------------------------------------------------------------
+
+def test_rt1987_slew_is_independent_of_vin_and_matches_the_datasheet():
+    """The derivation, not a transcribed number: slew = 0.8*VIN/tON with
+    tON = (VIN/35)*(CSS_nF/0.0023 - 100) us, so VIN CANCELS.  Re-derived here
+    from rt1987_t_on_s() at three widely separated rails."""
+    for css, want in ((100.0, 645.4846146136114), (5.6, 11992.551210428308)):
+        assert he.rt1987_slew_v_s(css) == pytest.approx(want, rel=1e-12)
+        for v_in in (3.5, 16.0, 35.0):
+            derived = 0.8 * v_in / he.rt1987_t_on_s(v_in, css)
+            assert derived == pytest.approx(he.rt1987_slew_v_s(css), rel=1e-12), (
+                f"CSS {css} nF: slew must not depend on VIN (got {derived} at "
+                f"{v_in} V)")
+    # The legacy shape's own slopes, for the record this test exists to keep:
+    # cold (v_ss_start 0, VIN 16) and the 4.4 V -> 15.78 V warm re-close.
+    t_on = he.rt1987_t_on_s(16.0, 100.0)
+    assert (16.0 - 0.0) / t_on == pytest.approx(806.9, abs=0.1)
+    t_on_w = he.rt1987_t_on_s(15.78, 100.0)
+    assert (15.78 - 4.4) / t_on_w == pytest.approx(581.9, abs=0.1)
+    # Degenerate CSS: at or under the 100 us floor the datasheet expression has
+    # no ramp to describe, and the helper says 0.0 rather than dividing by it.
+    assert he.rt1987_slew_v_s(0.23) == 0.0
+
+
+def test_rt1987_ramp_shape_default_is_legacy_and_validated():
+    """The default is the byte-identity arm, on `droop_mode`'s terms: every
+    baseline recorded before this switch existed must reproduce untouched."""
+    assert he.RT_RAMP_SHAPE_DEFAULT == "legacy"
+    assert he.RT_RAMP_SHAPES == ("legacy", "constant-slew")
+    e = he.ElectricalSim(trace_config="short")
+    assert e.ramp_shape == "legacy"
+    for name in ("FC_BUS", "BT_BUS", "MOT_PWR", "REGEN", "FC_CHARGE", "BT_SEQ"):
+        assert e.switches[name].ramp_shape == "legacy", name
+    e2 = he.ElectricalSim(trace_config="short", ramp_shape="constant-slew")
+    for name in e2.switches:
+        assert e2.switches[name].ramp_shape == "constant-slew", name
+    with pytest.raises(ValueError):
+        he.ElectricalSim(trace_config="short", ramp_shape="datasheet")
+    with pytest.raises(ValueError):
+        he.Rt1987("T", 0, 1, css_nf=100.0, c_load_f=35e-6, ramp_shape="nope")
+
+
+def test_rt1987_ramp_t_on_is_the_only_fork_between_the_two_shapes():
+    """Unit level.  Legacy asks rt1987_t_on_s() for the duration (with its
+    historic max(v_ref, 1.0) floor); constant-slew derives it as span/slew, so
+    the resulting `rate` in _soft_operating_point() IS the datasheet slew."""
+    for shape in he.RT_RAMP_SHAPES:
+        sw = he.Rt1987("T", 0, 1, css_nf=100.0, c_load_f=35e-6, ramp_shape=shape)
+        sw._goto("SOFT", 4.4, 15.78)
+        t_on = sw._ramp_t_on(15.78)
+        rate = (15.78 - 4.4) / t_on
+        if shape == "legacy":
+            assert t_on == pytest.approx(he.rt1987_t_on_s(15.78, 100.0))
+            assert rate == pytest.approx(581.9, abs=0.1)
+        else:
+            assert rate == pytest.approx(he.rt1987_slew_v_s(100.0), rel=1e-12)
+            assert t_on == pytest.approx((15.78 - 4.4)
+                                         / he.rt1987_slew_v_s(100.0), rel=1e-12)
+    # A span of zero or less: constant-slew has nothing to traverse and says so
+    # (0.0 = already complete), where legacy still books a full tON.
+    sw = he.Rt1987("T", 0, 1, css_nf=100.0, c_load_f=35e-6,
+                   ramp_shape="constant-slew")
+    sw._goto("SOFT", 15.8, 15.8)
+    assert sw._ramp_t_on(15.8) == 0.0
+
+
+def test_rt1987_legacy_shape_is_byte_identical_on_the_hardware_pins():
+    """BYTE-IDENTITY ARM.  The three anchors the A/B round was required not to
+    disturb, asserted against an EXPLICIT `ramp_shape="legacy"` engine so a
+    future change of the default cannot silently retire them:
+
+      bringup P0 / P3   0.151185 / 0.436707 A (symmetric era; the same numbers
+                        test_soft_start_cold_start_bringup_peaks_preserved pins)
+      comm-loss         3.7476 A, the campaign-G regression record
+
+    scp-inrush's cut is exercised by the probe harness rather than here (it
+    needs the scenario's three-phase arming stimulus, which is plant-side)."""
+    for shape in ("legacy", None):
+        kw = {} if shape is None else {"ramp_shape": shape}
+        e = he.ElectricalSim(trace_config="short", asymmetry_mode="off", **kw)
+        sw = SW_FC_BUS | SW_BT_BUS | SW_BT_SEQ
+        p0 = 0.0
+        for _ in range(50):
+            p0 = max(p0, abs(_pin_and_step(e, 1e-3, _actuators(sw=sw))["I_fc"]))
+        aux = AUX_FC_REG | AUX_BT_REG
+        for _ in range(400):
+            _pin_and_step(e, 1e-3, _actuators(sw=sw, aux=aux))
+        sw |= SW_MOT_PWR
+        p3 = 0.0
+        for _ in range(400):
+            p3 = max(p3, abs(_pin_and_step(
+                e, 1e-3, _actuators(sw=sw, aux=aux))["I_fc"]))
+        assert p0 == pytest.approx(0.151185, abs=1e-6), shape
+        assert p3 == pytest.approx(0.436707, abs=1e-6), shape
+
+        e2 = he.ElectricalSim(trace_config="short", **kw)
+        e2.v[he.N_BUS] = 0.4366
+        pk = 0.0
+        for _ in range(60):
+            pk = max(pk, abs(_pin_and_step(
+                e2, 1e-3, _actuators(sw=SW_FC_BUS | SW_BT_BUS | SW_BT_SEQ))["I_fc"]))
+        assert pk == pytest.approx(3.7476, abs=5e-3), shape
+
+
+def test_rt1987_constant_slew_moves_the_cold_pins_away_from_the_board():
+    """THE A/B RESULT, pinned so it cannot drift unrecorded.
+
+    Constant-slew is the physically right SHAPE and it moves the three
+    hardware-corroborated cold anchors AWAY from the board:
+
+      bringup P0   0.151185 -> 0.139077 A   (-8.0 %, board 0.1512 A, campaign G)
+      bringup P3   0.436707 -> 0.358445 A   (-17.9 %)
+      comm-loss    3.7476   -> 0.139067 A   (board 1.66 A campaign H / 1.79 A G)
+
+    The comm-loss row is the decisive one: the board LATCHED OC_FC on both
+    campaigns, and 0.139 A is a factor 10 under LIMIT_I_FC_MAX 1.4 A, so the
+    constant-slew engine cannot reproduce a board-real latch at all.  Legacy
+    over-predicts that current by 2.1-2.3x; constant-slew under-predicts it by
+    12-13x.  Neither shape explains the residual, which is why the default did
+    NOT move.  See docs/HIL_PLANT.md section 8.4."""
+    e = he.ElectricalSim(trace_config="short", asymmetry_mode="off",
+                         ramp_shape="constant-slew")
+    sw = SW_FC_BUS | SW_BT_BUS | SW_BT_SEQ
+    p0 = 0.0
+    for _ in range(50):
+        p0 = max(p0, abs(_pin_and_step(e, 1e-3, _actuators(sw=sw))["I_fc"]))
+    aux = AUX_FC_REG | AUX_BT_REG
+    for _ in range(400):
+        _pin_and_step(e, 1e-3, _actuators(sw=sw, aux=aux))
+    sw |= SW_MOT_PWR
+    p3 = 0.0
+    for _ in range(400):
+        p3 = max(p3, abs(_pin_and_step(
+            e, 1e-3, _actuators(sw=sw, aux=aux))["I_fc"]))
+    assert p0 == pytest.approx(0.139077, abs=1e-5)
+    assert p3 == pytest.approx(0.358445, abs=1e-5)
+    assert abs(p0 - 0.151185) / 0.151185 > 0.05, (
+        "the move must stay far outside the ~250 ppm campaign repeatability "
+        "floor -- if it ever falls inside it, re-open the default decision")
+
+    e2 = he.ElectricalSim(trace_config="short", ramp_shape="constant-slew")
+    e2.v[he.N_BUS] = 0.4366
+    pk = 0.0
+    for _ in range(60):
+        pk = max(pk, abs(_pin_and_step(
+            e2, 1e-3, _actuators(sw=SW_FC_BUS | SW_BT_BUS | SW_BT_SEQ))["I_fc"]))
+    assert pk == pytest.approx(0.139067, abs=1e-5)
+    assert pk < 1.4, "sanity: this is the 'no OC_FC latch' half of the finding"
+
+
+def test_rt1987_ramp_shape_cannot_reach_an_already_on_switch():
+    """CONTROL.  A cut from state ON (the `handoff-sag` class) and a settled
+    two-source cruise (the fw26-clamp class) contain no soft-start, so both
+    shapes must agree BIT-FOR-BIT.  A delta here means the change leaked out of
+    the ramp."""
+    out = {}
+    for shape in he.RT_RAMP_SHAPES:
+        e = he.ElectricalSim(trace_config="short", ramp_shape=shape)
+        sw = SW_FC_BUS | SW_BT_BUS | SW_BT_SEQ | SW_MOT_PWR
+        aux = AUX_FC_REG | AUX_BT_REG
+        for _ in range(50):
+            _pin_and_step(e, 1e-3, _actuators(sw=sw & ~SW_MOT_PWR))
+        rails = None
+        for _ in range(2500):
+            rails = _pin_and_step(e, 1e-3, _actuators(
+                sw=sw, aux=aux, i_motor_a=2.0, code_fc=0.75, code_bt=0.25))
+        assert e.switches["FC_BUS"].state == "ON"
+        out[shape] = (rails["I_fc"], rails["I_batt"])
+    assert out["legacy"] == out["constant-slew"]
