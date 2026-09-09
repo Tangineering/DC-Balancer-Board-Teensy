@@ -2065,3 +2065,16 @@ with reversal paths, the primary worktree's branch is the operator's - commit fr
   selector, so the bound arm is not a bound on this cycle (tool-pass item, not a board finding). One agent's F1 mechanism
   (selection persisting to 171 s) was refuted from the transition list and corrected in the ledger. 34 analyzed, zero
   board defects.
+- **Campaign II third headline (42 of 75, ~15:40): THE 61 s CYCLE INVERTED TOO, AND THE eq-H2 TIE IS BROKEN.** ems-mpc /
+  -det / -single: the plans' floors moved 0.15 -> 0.325 / 0.4125 / 0.4125 with 0.85 rungs on every leg; -det and -single
+  ARM FC-ONLY AT RUN ENTRY (the first entry-arm FC selections on this cycle) and all three RE-ARM FC-only at the 54 s
+  coast-down where campaign I re-armed battery-only (instants repeat to <= 12 ms, the SOURCE inverted). -single committed
+  the FIRST EXACT-1.0 stages on the board (4 FC-only, 0 BT-only; campaign I 18 BT-only), executed as fw v25 latch cuts at
+  0.115-0.428 A with clean restores. ems-mpc's FAIL is the HOLD gap on an FC-only hold (the fix must cover both
+  polarities). All three h2 bands pass as CALIBRATION with the board 17-21 % UNDER the corrected walk (the -25 % lower arm
+  is what admits them). eq-H2 (L_share 0.5656): det 0.014790 < single 0.014807 < mpc 0.014962, a 1.16 % spread against
+  campaign I's 0.13 % tie, in the reverse order. sdp-cross / sdp-braking: PASS with the re-pinned windows (flip 36.25 s,
+  2.25 s inside); SoC-threshold events on the sdp-v6 legs carry 1-3 s of cross-campaign phase (windows 2-3 s earlier,
+  braking's 20.6 s re-arm absent) while dwells and periods repeat - point-pinned checks on those legs need windows.
+  ems-mpc-cross RE-RUN SURVIVED (196 s, worst gap 13.7 ms vs the 314 ms blackout) - under analysis. 40 analyzed, zero
+  board defects.
