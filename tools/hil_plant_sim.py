@@ -11919,8 +11919,36 @@ FW26_CLAMP_JOINT_STEP_SHARE = 0.84
 #     1.004 * 1.3188 = 1.32408 -> 1.3241 A,
 # which is 5.4 % under LIMIT_I_FC_MAX 1.40 A. It was 1.36 against a 1.3303 A
 # walk (+2.2 %) at fw v26; the fw v27 stimulus does not need that headroom.
-FW26_CLAMP_JOINT_WALK_PEAK_A = 1.3188
-FW26_CLAMP_JOINT_ACCEPT_PEAK_A = 1.3241
+#
+# ⚠️ RE-WALKED AGAIN ON THE CORRECTED LOOP (2026-09-09, WORK_QUEUE 0f-2 /
+# agent E, 849ff13). Until then the walk drove the governor through a ONE-TICK
+# SURROGATE for the share controller; it now runs the real Youla recursion. The
+# SIMULTANEOUS peak falls 1.3188 -> 1.2877 A, because the surrogate slammed the
+# reference to the band edge in a single tick while the real controller's
+# reference is slew- AND dynamics-limited.
+#
+# THE SKEW PROPERTY DID NOT SURVIVE, AND THAT IS THE HEADLINE. The simultaneous
+# peak is no longer the worst: a SHARE-FIRST skew (negative ``skew_ms``) lets
+# the reference advance before the load steps, so the peak now ORDERS by skew,
+#     skew  -40 ms   1.3185 A   <- the new worst
+#     skew  -20 ms   1.3149 A
+#     simultaneous   1.2877 A
+#     skew  +20 ms   1.2596 A
+#     skew  +40 ms   1.2521 A
+# where the retired surrogate walk put the worst at load-first +20 ms. The
+# WALK PEAK named here is therefore the WORST-SKEW peak, 1.3185 A: the
+# acceptance figure has to bound every skew one commander period can produce.
+# It is 1.2 % under the STRUCTURAL bound 1.3345 A (the droop band edge at the
+# 1.57 A step total), and `joint_transient_peak` has been keyed to THAT bound
+# since 0f-3, so no expectation in the entry moves with this re-walk.
+# THE SETTLED ACCEPTANCE BOUND KEEPS THE LEG'S OWN RULE, walk + 0.4 %:
+#     1.004 * 1.3185 = 1.32377 -> 1.3237 A,
+# a 4-tenths-of-a-milliamp TIGHTENING of the retired 1.3241 A, 5.4 % under
+# LIMIT_I_FC_MAX 1.40 A. It was 1.36 against a 1.3303 A walk (+2.2 %) at
+# fw v26; the fw v27 stimulus does not need that headroom.
+FW26_CLAMP_JOINT_WALK_PEAK_A = 1.3185
+FW26_CLAMP_JOINT_WALK_PEAK_SIMULTANEOUS_A = 1.2877
+FW26_CLAMP_JOINT_ACCEPT_PEAK_A = 1.3237
 
 SCENARIOS["fw26-clamp-joint"] = {
     "description": ("30 s motor-free JOINT-TRANSIENT leg: the auxiliary "

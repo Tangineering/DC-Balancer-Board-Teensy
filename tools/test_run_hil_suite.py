@@ -12330,6 +12330,12 @@ def test_fw26_cruise_walk_regenerates_the_figures_the_entry_is_cut_from():
     assert by["ceiling_control_fc"]["max_value"] >= b["settled_i_fc_peak"]
 
 
+# The three regions that take a transient BT isolation cut on the corrected
+# loop, and how many ticks each holds it. See the mechanism note in the loop
+# below; the probe's per-region d = 0.5 reseed is the cause.
+_SWEEP_SWITCH_LOW_TICKS = {2: 3, 4: 3, 9: 3}
+
+
 def test_fw26_sweep_walk_regenerates_the_region_table():
     """L11, the sweep half. The twelve-region table in the entry's comment and
     the two mdac pin dictionaries all come from this walk; regenerate them."""
@@ -12346,8 +12352,28 @@ def test_fw26_sweep_walk_regenerates_the_region_table():
             assert r["settled_clamped_ticks"] == 0, i
         # The balance closes onto the battery in every region.
         assert r["balance_residual"] == pytest.approx(0.0, abs=1e-12), i
-        # No cut anywhere in the table.
-        assert r["switch_low_ticks"] == 0, i
+        # THE CUT CENSUS, RE-PINNED ON THE CORRECTED LOOP (0f-2 / agent E,
+        # 849ff13). It read "no cut anywhere in the table" while the walk drove
+        # the governor through a ONE-TICK SURROGATE that could not produce an
+        # out-of-band reference. With the real Youla share controller in the
+        # loop three regions take a transient BT isolation cut, and the
+        # mechanism is the PROBE's, not the board's:
+        #   * `walk_phase()` re-seeds the delivered split at d = 0.5 at every
+        #     region entry while the governor's controller state carries over.
+        #   * Regions 2, 4 and 9 are the only ones entered from a region that
+        #     already sits near the upper rail (1, 3 and 8 settle at r =
+        #     0.8373-0.8377), so the 0.5 seed is a ~0.34 step of share error
+        #     against a 0.84 command and the reference crosses DROOP_R_MAX.
+        #   * Tick 0 REFUSES the cut on load (minority 1.008 A >
+        #     SHARE_CUT_MAX_HANDOFF_A 0.5 A); tick 1 takes it at 0.313 A; BT
+        #     re-closes on tick 4 when the reference falls back below
+        #     _R_MAX - SHARE_CUTOFF_HYST. Three ticks, in all three regions.
+        # Regions 6 and 11 command the same 0.84 from a LOW predecessor
+        # (r = 0.375 / 0.476) and the slew limiter keeps the reference inside
+        # the band, so they stay at zero. This is the reseed artefact of
+        # WORK_QUEUE 0f-15's class; it is pinned EXACTLY rather than tolerated,
+        # so a real cut appearing in any other region still fails here.
+        assert r["switch_low_ticks"] == _SWEEP_SWITCH_LOW_TICKS.get(i, 0), i
         # THE INERTNESS CLAIM, as an equality: below the ceiling fw v26 IS
         # fw v25, so the codes must be identical to the clamp-absent walk.
         if not r["expected_clamp"]:
@@ -12805,12 +12831,19 @@ def test_fw26_joint_walk_regenerates_the_figures_the_entry_is_cut_from():
     by = _joint_by()
 
     # THE HEADLINE: the peak delivered fuel-cell current across the joint step.
-    # RE-WALKED FOR fw v27 rev 2 (2026-09-03) at the re-derived 1.57 A step
-    # total: 1.3303 -> 1.3188 A. See the fw v27 block on the entry in
-    # run_hil_suite.py for the arithmetic.
-    assert j["i_fc_peak"] == pytest.approx(hil.FW26_CLAMP_JOINT_WALK_PEAK_A,
-                                           abs=5e-4)
-    assert hil.FW26_CLAMP_JOINT_WALK_PEAK_A == pytest.approx(1.3188, abs=1e-9)
+    # RE-WALKED ON THE CORRECTED LOOP (2026-09-09, 0f-2): the real Youla share
+    # controller replaced the one-tick surrogate, the SIMULTANEOUS peak fell
+    # 1.3188 -> 1.2877 A, and the worst skew is no longer the simultaneous
+    # case - see `test_fw26_joint_commander_skew_orders_by_skew_direction` and
+    # the constant's own block in hil_plant_sim.py. `..._WALK_PEAK_A` is now
+    # the WORST-SKEW peak, so this half pins the simultaneous one by name.
+    assert j["i_fc_peak"] == pytest.approx(
+        hil.FW26_CLAMP_JOINT_WALK_PEAK_SIMULTANEOUS_A, abs=5e-4)
+    assert hil.FW26_CLAMP_JOINT_WALK_PEAK_SIMULTANEOUS_A == \
+        pytest.approx(1.2877, abs=1e-9)
+    assert hil.FW26_CLAMP_JOINT_WALK_PEAK_A == pytest.approx(1.3185, abs=1e-9)
+    assert (hil.FW26_CLAMP_JOINT_WALK_PEAK_A >
+            hil.FW26_CLAMP_JOINT_WALK_PEAK_SIMULTANEOUS_A)
 
     # THE STRUCTURAL BOUND IS THE BAND EDGE, NOT THE CLIP, and at the re-derived
     # step total it is back UNDER the fault limit. At I_min 0.15 the conduction
@@ -12940,10 +12973,14 @@ def test_fw26_joint_walk_discriminates_fw_v25_from_fw_v26():
 def test_fw26_joint_walk_is_split_law_invariant():
     """RECORDED, not assumed. The corrected split law (rho + the 0.033 ohm
     series floor) re-inverts the ratio that delivers a current; it does not
-    move the current, because the firmware pins the applied RATIO on its own
-    rails. So this leg's CURRENTS are the same under both laws - which is why
-    the design record's section 8.6.5 table carries two rows that agree on
-    every current."""
+    move the current WHEREVER THE FIRMWARE PINS THE APPLIED RATIO ON ITS OWN
+    RAILS. So this leg's SETTLED currents are the same under both laws - which
+    is why the design record's section 8.6.5 table carries two rows that agree
+    on every settled current.
+
+    THE TRANSIENT IS THE EXCEPTION, and it appeared with the corrected loop
+    (0f-2): a reference climbing THROUGH the band is not on a rail, and there
+    the law sets the current. 0.18 % on the peak, recorded below."""
     probe = _fw26_walk()
     new = probe.joint()
     old = probe.joint(rho=1.0, r_series=0.0)
@@ -12953,10 +12990,23 @@ def test_fw26_joint_walk_is_split_law_invariant():
     assert new["settled_i_fc_max"] == pytest.approx(old["settled_i_fc_max"],
                                                     abs=1e-6)
     assert new["i_batt"] == pytest.approx(old["i_batt"], abs=1e-6)
-    # ... and so is the transient peak, at the re-derived 1.57 A step total:
-    # the peak is the band edge DROOP_R_MAX * I_tot, a pure function of the
-    # total. (At the retired 1.65 A step the two laws differed by 6.6 mA.)
-    assert new["i_fc_peak"] == pytest.approx(old["i_fc_peak"], abs=1e-6)
+    # THE TRANSIENT PEAK IS NO LONGER INVARIANT, AND THE CORRECTED LOOP IS WHY
+    # (2026-09-09, 0f-2). Under the one-tick surrogate the peak was pinned at
+    # the band edge DROOP_R_MAX * I_tot - a pure function of the total, hence
+    # invariant. The real share controller does not reach the rail in one tick:
+    # its reference climbs through the band, and inside the band the split law
+    # DOES set the current a ratio delivers. So the two laws now separate by
+    # 2.4 mA (1.2877 vs 1.2900 A), 0.18 % - which is the law doing its job, in
+    # the same direction and the same order of magnitude as the 0.3 % it moves
+    # the BT code below. The SETTLED figures above stay exactly invariant
+    # because the firmware pins the applied ratio on its own rails there.
+    assert new["i_fc_peak"] != pytest.approx(old["i_fc_peak"], abs=1e-6)
+    assert new["i_fc_peak"] == pytest.approx(1.2877, abs=5e-4)
+    assert old["i_fc_peak"] == pytest.approx(1.2900, abs=5e-4)
+    assert abs(new["i_fc_peak"] / old["i_fc_peak"] - 1.0) < 0.003
+    # Both stay under the structural bound the entry is keyed to, so the
+    # separation cannot reach an expectation.
+    assert max(new["i_fc_peak"], old["i_fc_peak"]) < rhs._JOINT_STRUCTURAL_PEAK_A
     # THE CODES ARE NOT BIT-INVARIANT, and that is the split law doing its job.
     # The settled ratio is the ceiling's, 0.7928, and the two laws invert it to
     # (4865, 7040) against (4866, 7021) -- 0.3 % on the BT code, which the
@@ -12965,32 +13015,49 @@ def test_fw26_joint_walk_is_split_law_invariant():
     assert abs(new["mdac_fc"] - old["mdac_fc"]) <= 4
 
 
-def test_fw26_joint_commander_skew_cannot_make_the_peak_worse():
+def test_fw26_joint_commander_skew_orders_by_skew_direction():
     """The share step arrives on the Pi's ~50 Hz packet while the load steps at
     1 kHz, so the two can land up to one commander period apart in EITHER
     order. The acceptance bound has to hold for both, and the transient window
     has to contain the peak in both.
 
-    THE PROPERTY WAS FALSE AT THE RETIRED 1.65 A STEP TOTAL (a load-first skew
-    walked to 1.3860 A against a simultaneous 1.3644 A, 1.6 % worse) and it is
-    TRUE again at 1.57 A: the clamp binds before the two rails cross, so a
-    load-first skew ties the simultaneous peak instead of exceeding it."""
+    THE PROPERTY UNDER TEST CHANGED TWICE, AND BOTH CHANGES ARE RECORDED.
+    At the retired 1.65 A step total a LOAD-first skew was worst (1.3860 A
+    against a simultaneous 1.3644 A). At 1.57 A under the one-tick surrogate
+    every skew TIED the simultaneous peak, and the test asserted that tie. On
+    the corrected loop (0f-2) the tie is gone and the ordering is monotone in
+    the skew direction: a SHARE-first skew (negative) is worst, because the
+    real controller's reference gets a head start of up to one commander period
+    before the load steps, while a load-first skew makes the load EMA lead the
+    reference and lowers the peak. The walked worst is 1.3185 A at -40 ms,
+    1.2 % under the structural bound the entry is keyed to.
+
+    The old name asserted a property that is now false; the test keeps its
+    coverage (every skew under the bound, the clamp inside the window) and pins
+    the ordering instead."""
     probe = _fw26_walk()
     bound = _joint_by()["joint_transient_peak"]["max_value"]
     sim_peak = probe.joint()["i_fc_peak"]
-    worst = sim_peak
+    peaks = {0.0: sim_peak}
     for skew in (20.0, -20.0, 40.0, -40.0):
         j = probe.joint(skew_ms=skew)
-        worst = max(worst, j["i_fc_peak"])
+        peaks[skew] = j["i_fc_peak"]
         assert j["i_fc_peak"] <= bound, skew
         assert j["clamp_first_s"] is not None, skew
         assert j["clamp_first_s"] < rhs._JOINT_STEP_WIN_S, skew
-    assert worst == pytest.approx(sim_peak, abs=1e-6)   # the property, as a pin
+    # THE ORDERING, as a pin: monotone decreasing in the skew (share-first
+    # worst, load-first best), and the simultaneous case sits between them.
+    ordered = [peaks[s] for s in (-40.0, -20.0, 0.0, 20.0, 40.0)]
+    assert ordered == sorted(ordered, reverse=True), peaks
+    assert peaks[-40.0] > sim_peak                       # the tie is gone
+    worst = max(peaks.values())
+    assert worst == pytest.approx(peaks[-40.0], abs=1e-9)
     assert worst == pytest.approx(hil.FW26_CLAMP_JOINT_WALK_PEAK_A, abs=5e-4)
     assert worst < bound < rhs.LIMIT_I_FC_MAX_A
     # 5.8 % of margin to the fault limit under EVERY skew, from 1.0 % at the
     # retired step total. Recorded so a future stimulus change is sized against
-    # a number rather than against a feeling.
+    # a number rather than against a feeling. (Unmoved by the re-walk: the
+    # worst skew is within 0.3 mA of the retired surrogate's tied figure.)
     assert (rhs.LIMIT_I_FC_MAX_A - worst) / rhs.LIMIT_I_FC_MAX_A == \
         pytest.approx(0.0580, abs=2e-3)
     assert bound == pytest.approx(rhs._JOINT_STRUCTURAL_PEAK_A)   # 0f-3

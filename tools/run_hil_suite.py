@@ -8996,6 +8996,32 @@ FAULT_EXPECTATIONS["fw26-clamp-sweep"] = {
 # its walk; the tighter rule is affordable now that the structural bound
 # (1.3345 A) sits between the walk and the fault limit.
 #
+# ⚠️ SUPERSEDED BY THE CORRECTED-LOOP RE-WALK (2026-09-09, WORK_QUEUE 0f-2):
+# the walk drove the governor through a one-tick surrogate for the share
+# controller and now runs the real Youla recursion. Three figures above are
+# retired, and NO expectation in the entry moves, because `joint_transient_peak`
+# has been keyed to the STRUCTURAL bound 1.3345 A since 0f-3:
+#     peak I_fc, simultaneous   1.3188 -> 1.2877 A
+#     peak I_fc, worst skew     1.3188 -> 1.3185 A, and the worst skew is now
+#                               SHARE-first (-40 ms), not load-first
+#     the "commander order cannot make the peak worse" property is FALSE
+#                               again: the peaks order monotonically in the
+#                               skew direction (1.3185 / 1.3149 / 1.2877 /
+#                               1.2596 / 1.2521 A at -40 / -20 / 0 / +20 /
+#                               +40 ms). A share-first skew gives the real
+#                               controller's reference a head start; the
+#                               surrogate reached the rail in ONE tick and so
+#                               could not express the ordering at all.
+#     the transient peak is no longer SPLIT-LAW invariant (1.2877 vs 1.2900 A,
+#                               0.18 %) - a reference climbing THROUGH the band
+#                               is not on a rail, and inside the band the law
+#                               does set the current. The SETTLED figures stay
+#                               exactly invariant.
+#     FW26_CLAMP_JOINT_ACCEPT_PEAK_A  1.3241 -> 1.3237 A, the same walk + 0.4 %
+#                               rule applied to the new worst-skew walk. A
+#                               0.4 mA TIGHTENING; nothing widened.
+# Full arithmetic in the constant's own block in hil_plant_sim.py.
+#
 # REVERSAL PATH: restore FW26_CLAMP_JOINT_STEP_PRELOAD_A = 1.56 (1.65 A total)
 # if the operator wants the 1.65 A step back. That re-opens the finding above
 # and needs a ruling on whether a peak 1.0 % under a fault limit is acceptable;
