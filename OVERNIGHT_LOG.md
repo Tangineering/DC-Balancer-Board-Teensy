@@ -1589,3 +1589,6 @@ during a live campaign, ASCII prints, decision pairs for judgment calls with rev
 ## Decisions (with reversal paths)
 - **D-1 Campaign I runs from a detached worktree `DC-Balancer-I` at `60abb34`**, `--out` into the
   main tree's `HIL Results/` (the D-1 pattern). Reversal: `git worktree remove` after the campaign.
+- **Campaign I launched 20:08:36** from `DC-Balancer-I` at `60abb34`, `--with-ftp75 --with-ftp75c --with-alpha`,
+  report `HIL Results/hil_report_20260908_200836`, log `scratchpad/campaign_I_20260908_200836.log`.
+  tools/ edit-frozen. Analysis LIVE (hil-agent-analysis), ledger in the report folder.
