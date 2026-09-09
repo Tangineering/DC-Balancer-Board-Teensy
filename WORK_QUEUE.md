@@ -91,7 +91,7 @@ firmware round lands).
       plateau (ruling still open). Re-walk every anchor; provisional pins for the first fw v28 campaign.
 - [x] 10. (DONE `e7ab118`: reported, not applied; joint 1.3561 A with F6 vs board 1.3243 A) **F6:** the walk models the share-loop feedback-EMA overshoot on the fw v26 clamp (+3 % of r for
       ~12 ms; the joint leg's bound needs a third reading on the board).
-- [ ] 11. (READY: flash fw v28 REV 6 `f0d82e4`; campaign tooling `0063f8e`; launch from a detached worktree with `--with-ftp75 --with-ftp75c --with-alpha`) Suites, commit, push; first fw v28 campaign after the operator's flash (full plan incl. the opt-in
+- [ ] 11. (fw v28 rev 6 FLASHED 2026-09-08 evening; campaign tooling `07add95`; launch from a detached worktree with `--with-ftp75 --with-ftp75c --with-alpha`) Suites, commit, push; first fw v28 campaign after the operator's flash (full plan incl. the opt-in
       legs; the F1 legs `charge-to-full`, the five `ems-ftp75c-*`, `ems-sdp-cross` are the witnesses).
 
 - [x] 12. (DONE `ded47f3`: growth requirement 0.10 m/s over the window and manual-current exclusion added by review; same-tick sign correction; 4318 / 175 / 4699, harness 51; a wrong flip is silent and permanent for the boot - recorded) **fw v28 rev 2 (operator ruling 2026-09-08 afternoon, from the harness finding): encoder direction-sense
@@ -136,7 +136,7 @@ firmware round lands).
 - [x] 20. (DONE `70e4543` + rebind `0063f8e`: charge boundary 0.1385, alpha 0.13411 3.2 % below it; legs rebound greedy 3 / cal 8 = v6 / charge 15 under the SUITE walk configuration - the sweep walks without the asymmetry triple) **Alpha sweep re-run at the measured billing (operator: yes)** after the ramp decision; the 75 matched-DP
       re-solves HELD until the overnight campaign (operator).
 
-- [ ] 21. **RULING NEEDED: `test_the_cross_stimulus_wide_share_walk_is_not_available_from_either_law`** now fails - mpc-det vs
+- [x] 21. (DONE `07add95`: the selector HOLD makes in-band det/sto commands the same instruction; 23 ticks differ in phase; claim restated as rail-set identity + billing identity + a trace-derived 1.74e-3 envelope; mpc-det pin 0.007982535732) **`test_the_cross_stimulus_wide_share_walk_is_not_available_from_either_law`** failed - mpc-det vs
       mpc-sto h2 differ by 3e-5 (deterministic, not the wall-clock class; most plausibly the rev 4-6 governor mirror)
       and its mpc-det pin 0.009018666 is stale (0.0079825 now). Re-adjudicate the claim (bit-identical hydrogen across
       the two laws) rather than bump the numbers. Left failing in the miniforge suite.
