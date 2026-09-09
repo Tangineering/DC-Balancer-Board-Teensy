@@ -2092,3 +2092,11 @@ with reversal paths, the primary worktree's branch is the operator's - commit fr
   cached matched-DP solve for any of the 26 EMS rows (the re-solves were held through campaign I; the H-20 solve is a
   multi-hour background job to run after the audit, from main so the dp_db records commit) and a stale Gfc-integrator note
   in the matched-DP section. Replay audit dispatched against the reorganized subfolders.
+- **Campaign II fourth headline (tool pass, lambda 0.4673): THE CONVEX MAP SEPARATES THE STRATEGIES.** On the 61 s cycle the
+  report-stage eq-H2 vs the soc-band reference spreads 15 % - mpc-single 0.9466, mpc-det 0.9472, mpc 0.9538, alpha-cal
+  0.9618, dp-replay 0.9772, sdp-v6 1.0949, alpha-charge 1.1058 - where campaign I (linear law, lambda 0.41) had six
+  strategies within 0.47 %. The v6 frontier SDP reads 1.1204 vs the dp-replay bound while the MPC family sits 3 % UNDER
+  it: the SDP's FC-only 0.85 clamp costs more hydrogen than its smaller drain credits at this lambda, and an in-band DP
+  table is not a bound against a selector-aware live strategy (the ftp75c structure again). This is the thesis motivation
+  measured on the board: a strategy ranking that is degenerate under a linear map and not under the convex one. Caveat:
+  whole-run h2 (A0 x t_entry, ~0.2 mg per leg), no matched-DP solve yet, every band provisional (D-6).
