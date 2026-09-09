@@ -220,3 +220,29 @@ the next session inherits it.
 - **Name the firmware branch from source when the CSV cannot.** The chatter cut's owner (the r-based path in
   `applyShareRatio()`, not the setpoint latch) was decided by reading the three FC_BUS LOW writers; the ruling
   item is precise because of it.
+
+## Additions from the 2026-09-09 session (phase B of the H-20 map, campaign II)
+
+- **Never write a clock time you did not read.** The campaign II interims carried guessed labels (~13:05 .. ~16:40) for a
+  campaign that ran 09:57-11:39; file mtimes (`plan.json`, the last sidecar, `results.json`) are the only wall clock. Log
+  interims by run count ("28 of 75") and take the wall from mtimes at close-out.
+- **Selector / F1 claims are derived from the transition list, never from a window's presence.** One agent read the 171 s
+  charge window as the disarm and reported the selection persisting; the orchestrator spot-check on the (state, switch,
+  sel_armed, sel_fc) transition list refuted it. Every brief now demands the list pasted; the orchestrator checks it before
+  a mechanism enters the ledger (folded into hil-conventions).
+- **Hold a clean leg for its pair.** Under the two-agent cap, a PASS leg whose sibling finalizes within ~3 min waits and
+  goes to ONE agent (5050+socband, sdp+dp, cross+braking, the MPC trio, the five-leg tail); a FAIL that needs adjudication
+  goes out alone at once. Campaign II analyzed 48 scenario legs with 13 agents and no host stall (worst tick gap 20.5 ms).
+- **Pre-write every brief and every close-out draft while the rig runs.** All family briefs, the replay brief, the FINAL
+  SUMMARY / HIL_SUMMARY / addendum skeletons (with placeholders), WORK_QUEUE 0h, the memory file and the conventions
+  fold-in were written during the replay half, so the post-completion path is tool pass -> audit -> fill placeholders.
+- **A regenerated table is a command change, not a plant change.** Under a new cost law the DP tables and the MPC plans
+  moved together (FC-heavy); every campaign-I anchor on those legs is table-era, the Gfc bridge measures the plan there,
+  and a "control case" whose stimulus vanished stays the control case by construction only. Separate the two explicitly
+  in every brief on a re-solved leg.
+- **A lever quoted without its construction is a trap.** An agent compared an absolute standstill ratio (|dSoC|/h2 on
+  charge-to-full, 0.194) to the marginal cal-charge lever (0.3845) and attributed the gap to the retired law. Briefs must
+  name the construction (marginal cal-minus-charge on the cruise legs, Run-window) whenever a lever is to be recomputed.
+- **The bash heredoc trap persists** (it bit this very paragraph): any text with an apostrophe goes through the Write tool
+  or a script file, never a quoted heredoc; the miniforge interpreter is `/c/Users/ricky/miniforge3/python.exe`, and bare
+  `python` is not on PATH.
