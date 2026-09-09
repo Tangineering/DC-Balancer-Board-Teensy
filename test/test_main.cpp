@@ -233,6 +233,11 @@ static void reset_test_state() {
     shareBatteryOnlyArmed  = false;
     shareBatteryOnlyActive = false;
     shareSelectorFC        = false;  // fw v28 (F2): default BT, matching every arm site
+    // fw v28 rev 5: the re-entry rule's provenance flag and its safety inhibit. Both are cleared
+    // at every arm site and by hilWarmReset(), so a fixture that never arms would otherwise
+    // inherit a previous case's inhibit and see a silently refused re-arm.
+    shareSelectorReArmed      = false;
+    shareSelectorReArmInhibit = false;
     shareIsoPropRatio      = 0.5f;   // fw v27 rev 2: matches droopSlew_prev's own reset value
     // fw v5 governor loop-mode state: a fresh run starts open-loop (feedforward), not held.
     shareClosedLoopMode = false;
@@ -11512,6 +11517,338 @@ static void test_fw28r4_kd_hold_on_single_source_topology(void) {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
+// fw v28 rev 5 — THE RE-ENTRY RULE
+// ═════════════════════════════════════════════════════════════════════════════
+// Operator ruling (2026-09-08 evening): "In returning to the open-loop region, hold until the
+// commanded share setpoint asks for outside of (0.15, 0.85) to trigger the single-source mode."
+// The region these fixtures live in is the CLOSED-BEFORE one: shareClosedLoopRun true (the loop
+// has closed at least once this profile) AND shareClosedLoopMode false (the filtered total has
+// since fallen back under the exit threshold). Through rev 4 that region was a pure HOLD and an
+// out-of-band command there went straight to the setpoint latch, which cut a channel and RELEASED
+// it again the moment the command came back in band. Rev 5 re-arms the SELECTOR there instead, so
+// the cut HOLDS until the opposite rail is commanded or the load returns.
+
+// Put the share loop in the closed-before open-loop region: close it well above the gate, then let
+// the load fall away until the mode exits at 2*I_min - SHARE_GOV_OL_HYST_A (0.20 A). The parked
+// total (0.08 A) stays above SHARE_I_TOT_MIN_A so the governor's filter keeps advancing, which is
+// what the re-arm's gate condition is read against.
+static void fw28r5_enter_closed_before_region(uint32_t &t) {
+    gov_run_closed_loop(0.30f, 0.30f, 0.60f, 0.50f, 200, t);
+    I_fc = 0.04f; I_batt = 0.04f;
+    for (int i = 0; i < 600; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
+}
+
+static void test_fw28r5_reentry_rearm_at_the_rails(void) {
+    test_group("fw v28 rev 5: a rail command in the closed-before region RE-ARMS the selector");
+
+    // FC rail: exactly DROOP_R_MAX (0.85). Inclusive, for the same reason the never-closed
+    // selector's own test is: the Pi clamps its commanded share to [0.15, 0.85] and the latch's
+    // out-of-band tests are STRICT, so a strict test here could never fire on a real command.
+    uint32_t t = 0;
+    gov_fixture();
+    fw28r5_enter_closed_before_region(t);
+    check(shareClosedLoopRun && !shareClosedLoopMode,
+          "re-entry: (setup) the loop has closed once and is now back in the open-loop region");
+    check(!shareBatteryOnlyArmed,
+          "re-entry: (setup) the profile-start arm is long gone -- rev 4's selector was one-shot");
+    check(share_govTotAFilt <= 2.0f * SHARE_MINORITY_I_MIN_A,
+          "re-entry: (setup) the filtered total is parked under the 2*I_min gate");
+
+    power_share_setpoint = DROOP_R_MAX;              // 0.85 exactly
+    t += 1000; g_mock_micros = t; powerBalance();
+    check(shareBatteryOnlyArmed && shareBatteryOnlyActive,
+          "re-entry: sp == DROOP_R_MAX re-arms the selector and it owns the setpoint that tick");
+    check(shareSelectorFC,
+          "re-entry: the selection comes from the COMMAND that triggered the re-arm -- 0.85 asks "
+          "for the fuel cell alone, not the BT default of a profile start");
+    check(shareSelectorReArmed,
+          "re-entry: the provenance flag marks this arm as a RE-ARM, not a profile start");
+
+    // BT rail: exactly DROOP_R_MIN (0.15), from a fresh region entry.
+    t = 0;
+    gov_fixture();
+    fw28r5_enter_closed_before_region(t);
+    power_share_setpoint = DROOP_R_MIN;              // 0.15 exactly
+    t += 1000; g_mock_micros = t; powerBalance();
+    check(shareBatteryOnlyArmed && !shareSelectorFC && shareSelectorReArmed,
+          "re-entry: sp == DROOP_R_MIN re-arms with the BATTERY selected -- the rails are "
+          "inclusive on both sides");
+}
+
+static void test_fw28r5_reentry_holds_just_inside_the_rails(void) {
+    test_group("fw v28 rev 5: 0.8499 / 0.1501 do NOT re-arm -- the rule needs a rail");
+
+    uint32_t t = 0;
+    gov_fixture();
+    fw28r5_enter_closed_before_region(t);
+    power_share_setpoint = DROOP_R_MAX - 0.0001f;    // 0.8499: strictly inside the band
+    for (int i = 0; i < 50; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
+    check(!shareBatteryOnlyArmed && !shareSelectorReArmed,
+          "re-entry: one step inside DROOP_R_MAX is a near miss, not a rail -- no re-arm");
+
+    t = 0;
+    gov_fixture();
+    fw28r5_enter_closed_before_region(t);
+    power_share_setpoint = DROOP_R_MIN + 0.0001f;    // 0.1501: strictly inside the band
+    for (int i = 0; i < 50; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
+    check(!shareBatteryOnlyArmed && !shareSelectorReArmed,
+          "re-entry: one step inside DROOP_R_MIN is a near miss either -- no re-arm");
+}
+
+static void test_fw28r5_inband_in_the_region_never_cuts(void) {
+    test_group("fw v28 rev 5: an IN-BAND command in the closed-before region never single-sources");
+
+    uint32_t t = 0;
+    gov_fixture();
+    fw28r5_enter_closed_before_region(t);
+    power_share_setpoint = 0.50f;
+    bool everArmed = false, everCut = false, everBothLow = false;
+    for (int i = 0; i < 500; i++) {
+        t += 1000; g_mock_micros = t; powerBalance();
+        if (shareBatteryOnlyArmed) everArmed = true;
+        if (shareSpCutFC || shareSpCutBT || shareIsoFC || shareIsoBT) everCut = true;
+        if (digitalRead(FC_BUS_ENABLE) == LOW && digitalRead(BT_BUS_ENABLE) == LOW)
+            everBothLow = true;
+    }
+    check(!everArmed,
+          "re-entry: 500 in-band ticks in the region arm nothing -- the rev 4 closed-before HOLD "
+          "is unchanged for every command the ruling does not name");
+    check(!everCut && !everBothLow,
+          "re-entry: and nothing is cut, so the bus is never left with both switches low");
+}
+
+static void test_fw28r5_rearmed_selector_holds_then_releases_at_the_gate(void) {
+    test_group("fw v28 rev 5: a re-armed selector HOLDS through in-band commands, releases at the gate");
+
+    uint32_t t = 0;
+    gov_fixture();
+    fw28r5_enter_closed_before_region(t);
+    power_share_setpoint = DROOP_R_MIN;              // re-arm, BT selected -> FC is the cut channel
+    I_fc = 0.0f; I_batt = 0.08f;
+    for (int i = 0; i < 60; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
+    check(shareBatteryOnlyArmed && !shareSelectorFC,
+          "re-entry hold: (setup) the selector is re-armed on the battery");
+    check(digitalRead(FC_BUS_ENABLE) == LOW && shareSpCutFC,
+          "re-entry hold: the cut is the EXISTING setpoint latch, claimed by shareSpCutFC -- the "
+          "rule introduced no second cut mechanism");
+    check(digitalRead(BT_BUS_ENABLE) == HIGH,
+          "re-entry hold: the survivor stays on the bus -- never both switches low");
+
+    // THE RULING, executed: an in-band command no longer releases the cut. Under rev 4 the latch's
+    // own release branch would have fired on the first tick sp came back into the band.
+    power_share_setpoint = 0.50f;
+    for (int i = 0; i < 300; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
+    check(shareBatteryOnlyArmed && shareSpCutFC && digitalRead(FC_BUS_ENABLE) == LOW,
+          "re-entry hold: an IN-BAND command HOLDS the selection and therefore the cut -- rev 4 "
+          "would have released it on the first such tick");
+
+    // The load returns: the frozen-path filter advance drops the arm at the gate and the latch's
+    // own guarded release puts the fuel cell back. Exactly the never-closed selector's ending.
+    I_fc = 0.0f; I_batt = 0.60f;
+    for (int i = 0; i < 500; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
+    check(!shareBatteryOnlyArmed && !shareSelectorReArmed,
+          "re-entry hold: the arm (and its provenance) drop once the filtered total crosses the "
+          "gate -- the release is selection-agnostic, as for a never-closed arm");
+    check(digitalRead(FC_BUS_ENABLE) == HIGH && !shareSpCutFC && !shareIsoFC,
+          "re-entry hold: and the cut channel is back on the bus through the latch's own release");
+}
+
+static void test_fw28r5_rearm_refused_above_the_gate(void) {
+    test_group("fw v28 rev 5: the re-arm requires the total to be UNDER the gate at the command");
+
+    // The decision this pins: shareClosedLoopMode is updated LATER in the same powerBalance()
+    // tick, so on the tick the filter first crosses the gate the mode still reads open-loop while
+    // the load has already earned two sources. Without the explicit gate test the selector would
+    // take that tick and cut a channel the closed loop is about to be given.
+    uint32_t t = 0;
+    gov_fixture();
+    shareClosedLoopRun   = true;
+    shareClosedLoopMode  = false;
+    share_govTotAFilt    = 2.0f * SHARE_MINORITY_I_MIN_A + 0.05f;   // 0.30 A: ABOVE the gate
+    I_fc = 0.15f; I_batt = 0.15f;
+    power_share_setpoint = DROOP_R_MAX;
+    t += 1000; g_mock_micros = t; powerBalance();
+    check(!shareSelectorReArmed,
+          "re-entry gate: a rail command with the filtered total ABOVE 2*I_min does NOT re-arm -- "
+          "above the gate the closed loop owns the command");
+
+    // The same tick shape one step under the gate DOES re-arm, so the refusal above is the gate
+    // test and not some other condition of the fixture.
+    t = 0;
+    gov_fixture();
+    shareClosedLoopRun   = true;
+    shareClosedLoopMode  = false;
+    share_govTotAFilt    = 2.0f * SHARE_MINORITY_I_MIN_A - 0.05f;   // 0.20 A: under the gate
+    I_fc = 0.04f; I_batt = 0.04f;
+    power_share_setpoint = DROOP_R_MAX;
+    t += 1000; g_mock_micros = t; powerBalance();
+    check(shareBatteryOnlyArmed && shareSelectorReArmed && shareSelectorFC,
+          "re-entry gate: the identical tick UNDER the gate re-arms -- the discriminator is the "
+          "filtered total, not the fixture");
+}
+
+static void test_fw28r5_reset_share_control_state_does_not_rearm(void) {
+    test_group("fw v28 rev 5: resetShareControlState() cannot re-arm the selector");
+
+    // Structural, not incidental: the function clears shareClosedLoopRun, which is condition 2 of
+    // the re-arm. It is called from the setpoint latch's OWN release path, so a re-arm from there
+    // would re-cut the channel the release just put back, on the tick it put it back.
+    uint32_t t = 0;
+    gov_fixture();
+    fw28r5_enter_closed_before_region(t);
+    power_share_setpoint = DROOP_R_MIN;              // a rail command is standing
+    resetShareControlState();
+    check(!shareClosedLoopRun,
+          "re-entry reset: (setup) the reset cleared shareClosedLoopRun, the re-arm's precondition");
+    for (int i = 0; i < 200; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
+    check(!shareBatteryOnlyArmed && !shareSelectorReArmed,
+          "re-entry reset: 200 ticks with the rail command still standing arm nothing -- the reset "
+          "hands the loop to open-loop FEEDFORWARD, not to the closed-before region");
+}
+
+static void test_fw28r5_f1_disarm_inhibits_the_rearm(void) {
+    test_group("fw v28 rev 5: F1's disarm-before-open survives the re-entry rule");
+
+    // Without the inhibit this is the campaign-H UV_BUS latch coming back: chargingControl() runs
+    // BEFORE powerBalance() in every caller, so a level-only rule would re-arm on the very next
+    // tick, re-cut the fuel cell, and the window would never open.
+    reset_test_state();
+    digitalWrite(FC_REG_ENABLE, HIGH);
+    digitalWrite(BT_REG_ENABLE, HIGH);
+    digitalWrite(MOT_PWR_ENABLE, HIGH);
+    shareBatteryOnlyArmed  = true;
+    shareBatteryOnlyActive = true;
+    shareSelectorFC        = false;                  // BT selected: the fuel cell is the cut one
+    shareSpCutFC = true; shareIsoFC = true;
+    digitalWrite(FC_BUS_ENABLE, LOW);
+    digitalWrite(BT_BUS_ENABLE, HIGH);
+    V_bus = 16.0f;
+    // The closed-before region, with a BT-RAIL command standing: the exact combination that would
+    // re-arm if F1's disarm did not inhibit it.
+    shareClosedLoopRun   = true;
+    shareClosedLoopMode  = false;
+    share_govTotAFilt    = 0.10f;
+    I_fc = 0.0f; I_batt = 0.08f;
+    power_share_setpoint = DROOP_R_MIN;
+    charge_goal = 1.0f;
+    current     = 0.5f;
+    ag105_status_raw = AG105_GENSTAT_CHARGING;
+    ag105DataValid   = true;
+
+    chargingControl();
+    check(!shareBatteryOnlyArmed && shareSelectorReArmInhibit,
+          "F1 + re-entry: the disarm-before-open also raises the re-arm inhibit");
+    check(digitalRead(FC_CHARGE_ENABLE) == LOW,
+          "F1 + re-entry: the window still does not open on the disarm period");
+
+    uint32_t t = 0;
+    t += 1000; g_mock_micros = t; powerBalance();
+    check(!shareBatteryOnlyArmed,
+          "F1 + re-entry: the standing rail command does NOT re-arm -- the inhibit holds the rule "
+          "off, which is the whole reason the inhibit exists");
+    check(digitalRead(FC_BUS_ENABLE) == HIGH && !shareSpCutFC && !shareIsoFC,
+          "F1 + re-entry: so the latch's guarded release re-closes FC_BUS, as at rev 4");
+
+    g_mock_millis += SHARE_CUT_SURVIVOR_BLANK_MS;
+    chargingControl();
+    check(digitalRead(FC_CHARGE_ENABLE) == HIGH,
+          "F1 + re-entry: and the conduction-gated window opens once the blanking clears -- F1 is "
+          "intact under the new rule");
+}
+
+static void test_fw28r5_inhibit_clears_on_an_inband_command(void) {
+    test_group("fw v28 rev 5: only a STRICTLY in-band command clears the re-arm inhibit");
+
+    uint32_t t = 0;
+    gov_fixture();
+    fw28r5_enter_closed_before_region(t);
+    shareSelectorReArmInhibit = true;                // as a safety disarm would have left it
+    power_share_setpoint = DROOP_R_MIN;              // a rail command: refused while inhibited
+    for (int i = 0; i < 50; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
+    check(!shareBatteryOnlyArmed && shareSelectorReArmInhibit,
+          "inhibit: a rail command neither re-arms nor clears the inhibit -- a rail is the very "
+          "thing being refused, so it cannot be its own release");
+
+    power_share_setpoint = 0.50f;                    // strictly in band
+    t += 1000; g_mock_micros = t; powerBalance();
+    check(!shareSelectorReArmInhibit,
+          "inhibit: a strictly in-band command spends the inhibit");
+
+    // TRACED AND PINNED, because it is a real corner of the rule rather than an accident of this
+    // fixture: the in-band command that spends the inhibit is a CHANGED setpoint, and the fw v5
+    // closed-before HOLD answers a changed setpoint by clearing shareClosedLoopRun and re-arming
+    // the feedforward path. That is condition 2 of the re-arm, so the very next rail command finds
+    // the loop in plain OPEN-LOOP FEEDFORWARD rather than in the closed-before region, and it
+    // reaches the setpoint latch directly with rev 4's semantics. The re-entry rule applies again
+    // once the loop has closed once more, which is what the rest of this fixture drives.
+    power_share_setpoint = DROOP_R_MAX;
+    t += 1000; g_mock_micros = t; powerBalance();
+    check(!shareBatteryOnlyArmed && !shareClosedLoopRun,
+          "inhibit: an in-band setpoint CHANGE also clears shareClosedLoopRun (fw v5 HOLD "
+          "semantics, untouched), so the region itself is gone and no re-arm follows");
+
+    // Close the loop again, let the load fall away again, and the rule is available once more --
+    // proving the refusal above is the missing region and not a surviving inhibit.
+    gov_fixture();
+    t = 0;
+    fw28r5_enter_closed_before_region(t);
+    check(!shareSelectorReArmInhibit,
+          "inhibit: (setup) no inhibit is outstanding after a clean region entry");
+    power_share_setpoint = DROOP_R_MAX;
+    t += 1000; g_mock_micros = t; powerBalance();
+    check(shareBatteryOnlyArmed && shareSelectorFC && shareSelectorReArmed,
+          "inhibit: with the region restored, a rail command re-arms normally");
+}
+
+static void test_fw28r5_raw_escape_inhibits_the_rearm(void) {
+    test_group("fw v28 rev 5: the S2 raw-current escape also inhibits the re-arm");
+
+    // The escape drops the arm because the fuel cell is carrying a rising load ALONE. The command
+    // that selected it is still on the rail on that tick, so without the inhibit the rule would
+    // hand the load straight back on the next one.
+    uint32_t t = 0;
+    gov_fixture();
+    shareBatteryOnlyArmed  = true;
+    shareBatteryOnlyActive = true;
+    shareSelectorFC        = true;
+    shareSpCutBT = true; shareIsoBT = true;
+    digitalWrite(BT_BUS_ENABLE, LOW);
+    shareClosedLoopRun  = true;                      // the closed-before region, so a re-arm is
+    shareClosedLoopMode = false;                     // otherwise available
+    share_govTotAFilt   = 0.10f;
+    power_share_setpoint = 1.0f;                     // the rail command that selected FC
+    I_fc = SHARE_GOV_I_FC_CEIL_A + 0.05f;            // a single RAW sample over the ceiling
+    I_batt = 0.0f;
+    t += 1000; g_mock_micros = t; powerBalance();
+    check(!shareBatteryOnlyArmed && shareSelectorReArmInhibit,
+          "raw escape: the arm drops on the raw sample AND the re-arm inhibit is raised");
+
+    I_fc = 0.05f;                                    // the load falls away again
+    for (int i = 0; i < 100; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
+    check(!shareBatteryOnlyArmed,
+          "raw escape: the standing rail command cannot re-arm the selector the escape just "
+          "disarmed -- otherwise the escape would buy exactly one tick");
+}
+
+static void test_fw28r5_aux_bits_show_a_rearmed_selector(void) {
+    test_group("fw v28 rev 5: HIL aux bits 6/7 report a re-armed selector like any other");
+
+    uint32_t t = 0;
+    gov_fixture();
+    fw28r5_enter_closed_before_region(t);
+    check((readHilAuxState() & 0xC0) == 0,
+          "re-entry aux: (setup) the region itself sets neither bit");
+    power_share_setpoint = DROOP_R_MAX;
+    t += 1000; g_mock_micros = t; powerBalance();
+    check((readHilAuxState() & 0x40) != 0 && (readHilAuxState() & 0x80) != 0,
+          "re-entry aux: a re-arm with FC selected raises bit6 AND bit7 -- the frame is unchanged "
+          "and the bits keep their meanings verbatim, so no host needs updating");
+    check(shareSelectorReArmed,
+          "re-entry aux: the PROVENANCE is not on this frame (the aux byte is fully allocated) -- "
+          "it lives on the bench log's selector_bits bit2 and on the 'S' dump");
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
 // fw v24 — Ag105 MPPT input-voltage threshold manager
 // ═════════════════════════════════════════════════════════════════════════════
 
@@ -17409,6 +17746,14 @@ static void test_trap_vescwatch_suppressed() {
 // unchanged. The u16 count sits first so the f32 lands 4-byte aligned with no implicit padding.
 #define REC_OFF_G_CLAMP_COUNT       106
 #define REC_OFF_K_D                 108
+// Format v9 (fw v28 rev 5, BLG record 116 B): the source-selector bit field, the encoder direction
+// sign and its saturating flip count, plus one reserved byte, appended after k_d — so every offset
+// above (including 106/108) is unchanged. The four are byte-sized, so the append needs no padding
+// and the 4-byte-aligned fields above keep their alignment.
+#define REC_OFF_SELECTOR_BITS       112
+#define REC_OFF_ENC_DIR_SIGN        113
+#define REC_OFF_ENC_DIR_FLIPS       114
+#define REC_OFF_SPARE               115
 
 #define LOG_HDR_SIZE 32u
 
@@ -17533,12 +17878,12 @@ static void test_sdlog_lifecycle_natural_completion() {
     if (f != nullptr && f->size() >= LOG_HDR_SIZE + LOG_REC_SIZE) {
         check(f->compare(0, 4, "BLG1") == 0,
               "SD lifecycle: the header opens with the 'BLG1' magic");
-        check((uint8_t)(*f)[4] == 8,
-              "SD lifecycle: the header declares format version 8 (fw v27 rev 2; record grew to 112B "
+        check((uint8_t)(*f)[4] == 9,
+              "SD lifecycle: the header declares format version 9 (fw v28 rev 5; record grew to 116B "
               "with the appended g-clamp count and live droop scale k_d — the profile-parameter block is "
               "unchanged from v4)");
         check((uint8_t)(*f)[5] == (uint8_t)LOG_REC_SIZE,
-              "SD lifecycle: the header declares a 112-byte record size");
+              "SD lifecycle: the header declares a 116-byte record size (format v9)");
         check((uint8_t)(*f)[6] == LOG_TYPE_TP,
               "SD lifecycle: the header profile bitmask is LOG_TYPE_TP for a 'T' run");
         check(sd_le<uint16_t>(*f, 18) == (uint16_t)FW_VERSION,
@@ -17832,7 +18177,7 @@ static void test_sdlog_ceiling_clamp_flag_bit() {
 }
 
 static void test_sdlog_record_schema() {
-    test_group("SD log: one record's 112 bytes match the documented v8 field layout exactly");
+    test_group("SD log: one record's 116 bytes match the documented v9 field layout exactly");
     reset_test_state();
 
     // Open directly (not via a profile key) so the sample below is taken from values this test
@@ -17883,6 +18228,16 @@ static void test_sdlog_record_schema() {
     // are NOT the defaults (0 and K_DROOP), so a field left unwritten by the logger would fail.
     shareGGuardCount        = 4242u;
     shareDroopKd            = 0.7768f;   // the schedule's value at 0.70 A of filtered total
+    // Format v9 (fw v28 rev 5): the selector bit field and the encoder direction sense. Again
+    // distinctive values, and deliberately NOT the reset defaults (0x00 / +1 / 0): all four bits
+    // set, a FLIPPED sign, and a flip count ABOVE the u8 field's 255 saturation point so the
+    // clamp is exercised by the golden comparison rather than only by its own fixture.
+    shareBatteryOnlyArmed   = true;      // bit0
+    shareSelectorFC         = true;      // bit1
+    shareSelectorReArmed    = true;      // bit2
+    encDirStorePending      = true;      // bit3
+    encDirSign              = -1;
+    encDirFlipCount         = 300u;      // clamps to 255 in the u8 field
 
     g_mock_micros = 123456;
     logSampleTick();
@@ -17892,13 +18247,13 @@ static void test_sdlog_record_schema() {
 
     const std::string* f = sd_file("PS0001.BLG");
     check(f != nullptr && f->size() == LOG_HDR_SIZE + LOG_REC_SIZE,
-          "SD schema: the card holds the 32-byte header followed by one 112-byte record");
+          "SD schema: the card holds the 32-byte header followed by one 116-byte record");
     if (f == nullptr || f->size() < LOG_HDR_SIZE + LOG_REC_SIZE) return;
 
     // ── Header ──────────────────────────────────────────────────────────────
-    check(f->compare(0, 4, "BLG1") == 0 && (uint8_t)(*f)[4] == 8 &&
+    check(f->compare(0, 4, "BLG1") == 0 && (uint8_t)(*f)[4] == 9 &&
           (uint8_t)(*f)[5] == (uint8_t)LOG_REC_SIZE && (uint8_t)(*f)[6] == LOG_TYPE_PS,
-          "SD schema: the header carries magic, version 8, record size 112 and the PS type bit");
+          "SD schema: the header carries magic, version 9, record size 116 and the PS type bit");
     check(sd_le<uint32_t>(*f, 8) == 5000u && sd_le<uint32_t>(*f, 12) == 50000u,
           "SD schema: the header timebase is the millis()/micros() pair at open");
     check(sd_le<uint16_t>(*f, 16) == (uint16_t)(K_DROOP * 1000.0f + 0.5f),
@@ -17915,7 +18270,7 @@ static void test_sdlog_record_schema() {
     check((uint8_t)(*f)[7] == 0x00,
           "SD schema: v4 header paramFlags is 0x00 for a PS run (no amp/b parameter)");
 
-    // ── Record: build the expected LOG_REC_SIZE (112, v8) bytes independently, then memcmp ──
+    // ── Record: build the expected LOG_REC_SIZE (116, v9) bytes independently, then memcmp ──
     uint8_t exp[LOG_REC_SIZE];
     memset(exp, 0, sizeof(exp));
     uint32_t t_us = 123456u;    memcpy(exp + REC_OFF_T_US,      &t_us, 4);
@@ -17968,10 +18323,16 @@ static void test_sdlog_record_schema() {
     uint16_t dbw = 61000u; memcpy(exp + REC_OFF_ENC_DUTY_B_EWMA, &dbw, 2);
     // Format v8 tail (fw v27 rev 2): the g-clamp count and the live droop scale.
     uint16_t gcc = 4242u;  memcpy(exp + REC_OFF_G_CLAMP_COUNT, &gcc, 2);
+    // Format v9 tail (fw v28 rev 5): selector bits 0-3 all set (0x0F, bits 4-7 reserved and
+    // written 0), a flipped direction sign, the saturated flip count and the reserved spare byte.
+    exp[REC_OFF_SELECTOR_BITS] = 0x0F;
+    exp[REC_OFF_ENC_DIR_SIGN]  = (uint8_t)(int8_t)-1;
+    exp[REC_OFF_ENC_DIR_FLIPS] = 255u;
+    exp[REC_OFF_SPARE]         = 0u;
     fv = 0.7768f;          memcpy(exp + REC_OFF_K_D,           &fv,  4);
 
     check(memcmp(f->data() + LOG_HDR_SIZE, exp, LOG_REC_SIZE) == 0,
-          "SD schema: the written record is byte-identical to the expected 112-byte v8 layout");
+          "SD schema: the written record is byte-identical to the expected 116-byte v9 layout");
 
     // Field-level checks so a failure above localises instead of just saying "bytes differ".
     check(sd_le<uint32_t>(*f, LOG_HDR_SIZE + REC_OFF_T_US) == 123456u,
@@ -18036,7 +18397,7 @@ static void test_sdlog_header_v4_profile_params() {
         const std::string* f = sd_file("WP0001.BLG");
         check(f != nullptr && f->size() >= LOG_HDR_SIZE, "v4 hdr/W: the header was written");
         if (f) {
-            check((uint8_t)(*f)[4] == 8, "v4 hdr/W: format version 8 (fw v27 rev 2 BLG bump)");
+            check((uint8_t)(*f)[4] == 9, "v4 hdr/W: format version 9 (fw v28 rev 5 BLG bump)");
             check((uint8_t)(*f)[7] == 0x03, "v4 hdr/W: paramFlags == 0x03 (amp AND b valid)");
             check(fabsf(sd_le<float>(*f, 20) - 7.5f) < 1e-6f,
                   "v4 hdr/W: amp field == the committed wProfileImax (7.5 A)");
@@ -18054,7 +18415,7 @@ static void test_sdlog_header_v4_profile_params() {
         const std::string* f = sd_file("YP0001.BLG");
         check(f != nullptr && f->size() >= LOG_HDR_SIZE, "v4 hdr/Y: the header was written");
         if (f) {
-            check((uint8_t)(*f)[4] == 8, "v4 hdr/Y: format version 8 (fw v27 rev 2 BLG bump)");
+            check((uint8_t)(*f)[4] == 9, "v4 hdr/Y: format version 9 (fw v28 rev 5 BLG bump)");
             check((uint8_t)(*f)[7] == 0x03, "v4 hdr/Y: paramFlags == 0x03 (amp AND b valid)");
             check(fabsf(sd_le<float>(*f, 20) - 3.25f) < 1e-6f,
                   "v4 hdr/Y: amp field == the committed yProfileVmax (3.25 m/s)");
@@ -18071,7 +18432,7 @@ static void test_sdlog_header_v4_profile_params() {
         const std::string* f = sd_file("TP0001.BLG");
         check(f != nullptr && f->size() >= LOG_HDR_SIZE, "v4 hdr/T: the header was written");
         if (f) {
-            check((uint8_t)(*f)[4] == 8, "v4 hdr/T: format version 8 (fw v27 rev 2 BLG bump)");
+            check((uint8_t)(*f)[4] == 9, "v4 hdr/T: format version 9 (fw v28 rev 5 BLG bump)");
             check((uint8_t)(*f)[7] == 0x01, "v4 hdr/T: paramFlags == 0x01 (amp only)");
             check(fabsf(sd_le<float>(*f, 20) - 4.4f) < 1e-6f,
                   "v4 hdr/T: amp field == the committed trapImax (4.4 A)");
@@ -18086,7 +18447,7 @@ static void test_sdlog_header_v4_profile_params() {
         const std::string* f = sd_file("PS0001.BLG");
         check(f != nullptr && f->size() >= LOG_HDR_SIZE, "v4 hdr/R: the header was written");
         if (f) {
-            check((uint8_t)(*f)[4] == 8, "v4 hdr/R: format version 8 (fw v27 rev 2 BLG bump)");
+            check((uint8_t)(*f)[4] == 9, "v4 hdr/R: format version 9 (fw v28 rev 5 BLG bump)");
             check((uint8_t)(*f)[7] == 0x00, "v4 hdr/R: paramFlags == 0x00 (no profile parameter)");
             check(sd_le<float>(*f, 20) == 0.0f && sd_le<float>(*f, 24) == 0.0f,
                   "v4 hdr/R: both amp and b fields stay 0.0");
@@ -18100,7 +18461,7 @@ static void test_sdlog_header_v4_profile_params() {
         const std::string* f = sd_file("DC0001.BLG");
         check(f != nullptr && f->size() >= LOG_HDR_SIZE, "v4 hdr/D: the header was written");
         if (f) {
-            check((uint8_t)(*f)[4] == 8, "v4 hdr/D: format version 8 (fw v27 rev 2 BLG bump)");
+            check((uint8_t)(*f)[4] == 9, "v4 hdr/D: format version 9 (fw v28 rev 5 BLG bump)");
             check((uint8_t)(*f)[7] == 0x00, "v4 hdr/D: paramFlags == 0x00 (no profile parameter)");
             check(sd_le<float>(*f, 20) == 0.0f && sd_le<float>(*f, 24) == 0.0f,
                   "v4 hdr/D: both amp and b fields stay 0.0");
@@ -18118,16 +18479,16 @@ static void test_sdlog_header_v4_profile_params() {
         }
     }
 
-    // ── Record size byte reflects the current v8 record (112B), regardless of run type. The v4
+    // ── Record size byte reflects the current v9 record (116B), regardless of run type. The v4
     // header PARAMETER BLOCK (byte 7, bytes 20-27) is unchanged by the fw v27 rev 2 bump -- only
     // hdr[4] (version) and hdr[5] (record size) moved when the record grew.
     reset_test_state();
     logOpenForProfile(LOG_TYPE_PS);
     {
         const std::string* f = sd_file("PS0001.BLG");
-        check(f != nullptr && (uint8_t)(*f)[5] == (uint8_t)LOG_REC_SIZE && LOG_REC_SIZE == 112u,
-              "v4/v8 hdr: the record-size byte is 112 -- the v4 parameter block is unchanged, "
-              "only hdr[4]/hdr[5] moved with the fw v27 rev 2 record-size bump");
+        check(f != nullptr && (uint8_t)(*f)[5] == (uint8_t)LOG_REC_SIZE && LOG_REC_SIZE == 116u,
+              "v4/v9 hdr: the record-size byte is 116 -- the v4 parameter block is unchanged, "
+              "only hdr[4]/hdr[5] moved with the fw v28 rev 5 record-size bump");
     }
 }
 
@@ -18138,8 +18499,8 @@ static void test_sdlog_header_v4_profile_params() {
 static void test_benchlogrecord_v3_layout() {
     test_group("BenchLogRecord (format v8, fw v27 rev 2): sizeof and field offsets");
 
-    check(sizeof(BenchLogRecord) == 112, "BenchLogRecord: sizeof == 112 bytes (format v8)");
-    check(LOG_REC_SIZE == 112u, "LOG_REC_SIZE == 112 (format v8)");
+    check(sizeof(BenchLogRecord) == 116, "BenchLogRecord: sizeof == 116 bytes (format v9)");
+    check(LOG_REC_SIZE == 116u, "LOG_REC_SIZE == 116 (format v9)");
 
     check(offsetof(BenchLogRecord, V_fc)        == 44, "offsetof(V_fc) == 44");
     check(offsetof(BenchLogRecord, V_batt)      == 48, "offsetof(V_batt) == 48");
@@ -18181,6 +18542,21 @@ static void test_benchlogrecord_v3_layout() {
     check(offsetof(BenchLogRecord, g_clamp_count) == REC_OFF_G_CLAMP_COUNT, "offsetof(g_clamp_count) == REC_OFF_G_CLAMP_COUNT");
     check(offsetof(BenchLogRecord, k_d)           == REC_OFF_K_D,           "offsetof(k_d) == REC_OFF_K_D");
 
+    // Format v9 (fw v28 rev 5): APPENDED after k_d, so every v1-v8 offset above -- including the
+    // v8 pair on the two lines immediately above -- is unchanged. All four fields are byte-sized,
+    // so the append needs no padding and the 4-byte-aligned fields keep their alignment.
+    check(offsetof(BenchLogRecord, selector_bits) == 112, "offsetof(selector_bits) == 112 (format v9, appended)");
+    check(offsetof(BenchLogRecord, enc_dir_sign)  == 113, "offsetof(enc_dir_sign) == 113 (format v9, appended)");
+    check(offsetof(BenchLogRecord, enc_dir_flips) == 114, "offsetof(enc_dir_flips) == 114 (format v9, appended)");
+    check(offsetof(BenchLogRecord, spare)         == 115, "offsetof(spare) == 115 (format v9, appended)");
+    check(offsetof(BenchLogRecord, selector_bits) == REC_OFF_SELECTOR_BITS, "offsetof(selector_bits) == REC_OFF_SELECTOR_BITS");
+    check(offsetof(BenchLogRecord, enc_dir_sign)  == REC_OFF_ENC_DIR_SIGN,  "offsetof(enc_dir_sign) == REC_OFF_ENC_DIR_SIGN");
+    check(offsetof(BenchLogRecord, enc_dir_flips) == REC_OFF_ENC_DIR_FLIPS, "offsetof(enc_dir_flips) == REC_OFF_ENC_DIR_FLIPS");
+    check(offsetof(BenchLogRecord, spare)         == REC_OFF_SPARE,         "offsetof(spare) == REC_OFF_SPARE");
+    check(sizeof(((BenchLogRecord*)nullptr)->enc_dir_sign) == 1 &&
+          (int8_t)-1 == (int8_t)(-1),
+          "v9: enc_dir_sign is one SIGNED byte -- a -1 sign must decode as -1, not as 255");
+
     // These offsets must also match the byte-stream constants used by the on-card tests above --
     // a mismatch here would mean the two test families are silently checking different layouts.
     check(offsetof(BenchLogRecord, V_fc)        == REC_OFF_V_FC,   "offsetof(V_fc) == REC_OFF_V_FC");
@@ -18208,6 +18584,121 @@ static void test_benchlogrecord_v3_layout() {
           "offsetof(enc_duty_a_ewma) == REC_OFF_ENC_DUTY_A_EWMA");
     check(offsetof(BenchLogRecord, enc_duty_b_ewma) == REC_OFF_ENC_DUTY_B_EWMA,
           "offsetof(enc_duty_b_ewma) == REC_OFF_ENC_DUTY_B_EWMA");
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// fw v28 rev 5 — BENCH-LOG FORMAT v9: the sizing consequences of a 116-byte record
+// ═════════════════════════════════════════════════════════════════════════════
+// The record grew 112 -> 116, and 116 does NOT divide 512. Every sizing property the v8 bump
+// derived is re-derived here from the SYMBOLS, so the design record's arithmetic and the firmware
+// cannot drift apart: the ring stays block-aligned, the drain stays byte-based and record-aligned,
+// and the drain-to-fill ratio is unchanged at 4.0x.
+static void test_fw28r5_blg_v9_sizing_and_chunk_packing() {
+    test_group("fw v28 rev 5 (BLG v9): record size, ring alignment, chunk packing, prealloc");
+
+    check(LOG_FORMAT_VERSION == 9u,
+          "BLG v9: LOG_FORMAT_VERSION is 9 -- one symbol, so the header writer, the 'K' line and "
+          "these tests cannot disagree about the version");
+    check(LOG_REC_SIZE == 116u && sizeof(BenchLogRecord) == LOG_REC_SIZE,
+          "BLG v9: the record is 116 bytes and the struct matches it exactly (packed, no padding)");
+    check(LOG_REC_SIZE <= 255u,
+          "BLG v9: the record size still fits the one-byte hdr[5] field a decoder reads it from");
+
+    // The RING must stay a whole multiple of the 512 B SD block: 116 * 1024 = 118784 = 512 * 232.
+    check(LOG_RING_BYTES == 118784u,
+          "BLG v9: the ring is 116 * 1024 = 118784 B (up from v8's 114688)");
+    check(LOG_RING_BYTES % 512u == 0u && LOG_RING_BYTES / 512u == 232u,
+          "BLG v9: the ring is a whole multiple of the 512 B SD block (232 blocks), so the wrap "
+          "never splits a block -- the property v8 had and this bump had to re-derive");
+
+    // CHUNK PACKING: 512 / 116 = 4 remainder 48, so logDrainTick()'s record-alignment line trims
+    // each chunk to 4 records = 464 B. The drain write is therefore NO LONGER SD-block-sized --
+    // which costs nothing, because the file is a byte stream and the drain is byte-based.
+    check(512u / LOG_REC_SIZE == 4u && 512u % LOG_REC_SIZE == 48u,
+          "BLG v9: 116 does NOT divide 512 -- four records fit a chunk with 48 bytes over");
+    const uint32_t drainPerTick = (LOG_CHUNK_MAX / LOG_REC_SIZE) * LOG_REC_SIZE;
+    check(drainPerTick == 464u,
+          "BLG v9: a drain tick therefore writes 464 B, not 512 -- the chunk is floored to whole "
+          "records by the existing alignment line, which is unchanged");
+    check(drainPerTick >= 4u * LOG_REC_SIZE,
+          "BLG v9: the drain-to-fill ratio is 464/116 = 4.0x, the same margin as v8's 448/112 -- "
+          "a full ring still drains in about a third of a second");
+
+    // Preallocation: unchanged at 32 MB, which is now ~289 s of 1 kHz logging.
+    check(LOG_PREALLOC_BYTES == 32u * 1024u * 1024u,
+          "BLG v9: LOG_PREALLOC_BYTES is unchanged -- it is a contiguity reservation, and no "
+          "profile approaches the ~4.8 min it now covers at 116 KB/s");
+    check(LOG_PREALLOC_BYTES / (LOG_REC_SIZE * 1000u) == 289u,
+          "BLG v9: 33554432 / 116000 = 289 s of coverage (was 300 s at v8's 112 B)");
+}
+
+// The four appended fields, end to end: the firmware sources are copied verbatim (except the flip
+// count, which SATURATES into its u8 field), and the v8 tail immediately below them is untouched.
+static void test_fw28r5_blg_v9_selector_and_encoder_fields() {
+    test_group("fw v28 rev 5 (BLG v9): selector_bits, enc_dir_sign, enc_dir_flips, spare");
+
+    auto sample_tail = [](bool armed, bool selFC, bool reArmed, bool pending,
+                          int8_t sign, uint16_t flips, uint8_t out[4]) {
+        reset_test_state();
+        g_mock_millis = 1000;
+        g_mock_micros = 1000;
+        logOpenForProfile(LOG_TYPE_PS);
+        shareBatteryOnlyArmed = armed;
+        shareSelectorFC       = selFC;
+        shareSelectorReArmed  = reArmed;
+        encDirStorePending    = pending;
+        encDirSign            = sign;
+        encDirFlipCount       = flips;
+        logSampleTick();
+        logDrainTick();
+        logRequestClose(LOG_CLOSE_COMPLETE);
+        for (int i = 0; i < 8; i++) logDrainTick();
+        const std::string* f = sd_file("PS0001.BLG");
+        for (int i = 0; i < 4; i++) out[i] = 0xAAu;
+        if (f != nullptr && f->size() >= LOG_HDR_SIZE + LOG_REC_SIZE) {
+            for (int i = 0; i < 4; i++)
+                out[i] = (uint8_t)(*f)[LOG_HDR_SIZE + REC_OFF_SELECTOR_BITS + i];
+        }
+    };
+
+    uint8_t tail[4];
+    sample_tail(false, false, false, false, 1, 0u, tail);
+    check(tail[0] == 0x00 && (int8_t)tail[1] == 1 && tail[2] == 0u && tail[3] == 0u,
+          "BLG v9: a quiet board writes selector_bits 0x00, sign +1, flips 0, spare 0");
+
+    sample_tail(true, false, false, false, 1, 0u, tail);
+    check(tail[0] == 0x01,
+          "BLG v9: bit0 is shareBatteryOnlyArmed");
+    sample_tail(true, true, false, false, 1, 0u, tail);
+    check(tail[0] == 0x03,
+          "BLG v9: bit1 is shareSelectorFC (with bit0, an armed FC selection reads 0x03)");
+    sample_tail(true, false, true, false, 1, 0u, tail);
+    check(tail[0] == 0x05,
+          "BLG v9: bit2 is shareSelectorReArmed -- the re-entry rule's provenance, which the HIL "
+          "aux byte has no room for");
+    sample_tail(false, false, false, true, 1, 0u, tail);
+    check(tail[0] == 0x08,
+          "BLG v9: bit3 is encDirStorePending -- an EEPROM commit queued for encDirCommitTick()");
+    sample_tail(true, true, true, true, 1, 0u, tail);
+    check(tail[0] == 0x0F,
+          "BLG v9: the four bits are independent and compose; bits 4-7 stay reserved and 0");
+
+    sample_tail(false, false, false, false, -1, 3u, tail);
+    check((int8_t)tail[1] == -1,
+          "BLG v9: enc_dir_sign is SIGNED -- a flipped sense decodes as -1, not 255. This is the "
+          "field that closes rev 2's stated bench-log observability gap for the flip");
+    check(tail[2] == 3u,
+          "BLG v9: enc_dir_flips carries the flip count verbatim below the saturation point");
+
+    sample_tail(false, false, false, false, 1, 255u, tail);
+    check(tail[2] == 255u, "BLG v9: the flip count reaches 255 exactly");
+    sample_tail(false, false, false, false, 1, 256u, tail);
+    check(tail[2] == 255u,
+          "BLG v9: and SATURATES rather than wrapping to 0 -- the field's documented class is "
+          "boot-monotonic saturating, so a run of 255s means saturated, not quiet");
+    sample_tail(false, false, false, false, 1, 60000u, tail);
+    check(tail[2] == 255u && tail[3] == 0u,
+          "BLG v9: a far-past-saturation count still clamps, and never bleeds into the spare byte");
 }
 
 // ─── T2: log record flags bit2 (shareClosedLoopMode) / bit3 (shareClosedLoopRun) ─────────────
@@ -23979,6 +24470,17 @@ int main() {
     test_fw28_f1_symmetric_cases();
     test_fw28_f4_kd_hold_in_charge_window();
     test_fw28r4_kd_hold_on_single_source_topology();
+    // fw v28 rev 5 -- the re-entry rule
+    test_fw28r5_reentry_rearm_at_the_rails();
+    test_fw28r5_reentry_holds_just_inside_the_rails();
+    test_fw28r5_inband_in_the_region_never_cuts();
+    test_fw28r5_rearmed_selector_holds_then_releases_at_the_gate();
+    test_fw28r5_rearm_refused_above_the_gate();
+    test_fw28r5_reset_share_control_state_does_not_rearm();
+    test_fw28r5_f1_disarm_inhibits_the_rearm();
+    test_fw28r5_inhibit_clears_on_an_inband_command();
+    test_fw28r5_raw_escape_inhibits_the_rearm();
+    test_fw28r5_aux_bits_show_a_rearmed_selector();
     test_mppt_quantization();
     test_mppt_write_rules();
     test_mppt_0xff_discriminator();
@@ -24194,6 +24696,9 @@ int main() {
     test_sdlog_ceiling_clamp_flag_bit();
     test_sdlog_header_v4_profile_params();
     test_benchlogrecord_v3_layout();
+    // fw v28 rev 5 -- bench-log format v9
+    test_fw28r5_blg_v9_sizing_and_chunk_packing();
+    test_fw28r5_blg_v9_selector_and_encoder_fields();
     test_sdlog_flags_share_loop_mode_bits();
     test_sdlog_flags_youla_build_bits();
     test_sdlog_flags_hil_provenance_bit();

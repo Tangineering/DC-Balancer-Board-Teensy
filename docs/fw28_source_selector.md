@@ -1285,3 +1285,284 @@ zero warnings on all four builds.
 Bench gate, on top of revision 3's: with the harness deliberately reversed, confirm on the status
 dump that `commits=1` follows the `ENC DIR FLIP` line within the same second, and confirm that a
 run which flips and then faults still shows `stored=-1` after the latch.
+
+# Revision 5
+
+Revision 5 supersedes revision 4 before any flash. No board has run firmware version 28 in any
+revision, so `FW_VERSION` stays 28 and there is no revision 4 era in the ledger; the precedent is
+firmware version 27 revision 2. Revisions 1 to 4, sections 1 to 27 above, are unchanged in every
+respect except section 4.5, which recorded the hold-versus-return question as an open operator
+to-do, and the observability gaps of sections 13, 14 and 20, all of which this part supersedes.
+The user datagram protocol telemetry stays version 4 at 58 bytes, the command packet stays 22
+bytes and the two hardware-in-the-loop frames stay 40 and 18 bytes. The **bench-log format moves
+version 8 to version 9**, and the record grows 112 bytes to 116 bytes. Neither item touches a
+control law, a controller coefficient or a sequencing rule.
+
+## 28. Purpose and scope of revision 5
+
+The operator issued two rulings on the evening of 2026-09-08.
+
+1. **The re-entry rule.** "In returning to the open-loop region, hold until the commanded share
+   setpoint asks for outside of (0.15, 0.85) to trigger the single-source mode." This settles the
+   question section 4.5 recorded as open.
+2. **Bench-log format version 9.** The record shall carry the selector state and the encoder
+   direction sense, which closes the observability gap sections 13, 14 and 20 recorded.
+
+Out of scope: the selector's own rule and thresholds (section 4.1); the charge-window disarm and
+the conduction gate (section 3); the sliver hold (section 5); the conduction floor and the two
+handoff thresholds (section 6); the droop-scale hold and its topology key (sections 7 and 25); the
+encoder detector and its constants (section 12); the emulated-EEPROM record and its wear budget
+(section 17); and the decoder in `tools/`, which is a separate round.
+
+## 29. The re-entry rule
+
+### 29.1 What the region did through revision 4
+
+The selector of section 4 is **one-shot**. It is armed at a profile boundary, and the closed-loop
+entry drops it the moment the filtered total earns two sources. After that the arm is gone for the
+profile. A total that later falls back under the gate therefore enters the **closed-before hold**:
+`shareClosedLoopRun` is true and `shareClosedLoopMode` is false, and `powerBalance()` writes no
+converter word at all, because the split the loop converged to is the correct thing to keep while
+a load falls away.
+
+An out-of-band command arriving in that region went straight to the setpoint latch. The latch cut
+one channel, and released it again on the first tick the command returned into the band. The
+single-source state therefore tracked the command exactly, with no memory.
+
+### 29.2 The rule
+
+While the loop is in the closed-before region, a commanded share on or outside a band rail
+**re-arms the selector**, with the selection taken from that command:
+
+    power_share_setpoint >= DROOP_R_MAX (0.85)  ->  re-arm with the fuel cell selected
+    power_share_setpoint <= DROOP_R_MIN (0.15)  ->  re-arm with the battery selected
+
+Both thresholds are inclusive, for the reason section 4.1 gives. An **in-band** command in this
+region never triggers single-source: the closed-before hold stays exactly as revision 4 left it.
+
+The behavioural delta is one sentence, and it is the ruling:
+
+    revision 4: an out-of-band command in this region cuts, and releases WITH the command.
+    revision 5: it cuts, and HOLDS until the opposite rail is commanded or the load returns.
+
+From the re-arm onward the selector is **indistinguishable from a never-closed one**. It feeds the
+same effective setpoint (0.0 or 1.0, always out of band, so section 4.2's "one owner per setpoint
+by construction" is unchanged), it is realised by the same setpoint latch under the same
+last-source, survivor-regulator, survivor-blanking and load guards, a selection change is the same
+make-before-break release-then-entry sequence of section 4.3, the gate release is the same
+frozen-path filter advance of section 4.4, and it is dropped by the same charge-window disarm of
+section 3.2 and the same raw-current escape of section 4.6. No topology code was added, and no
+second owner of the setpoint exists.
+
+### 29.3 The five conditions, and why each is required
+
+1. **Not already armed.** A re-arm is an edge into the armed state, not a per-tick refresh.
+2. **`shareClosedLoopRun`.** The loop has closed at least once this profile. Without this
+   condition the branch would simply duplicate the never-closed arm sites.
+3. **`!shareClosedLoopMode`.** The loop is in the open-loop region. With condition 2 this is
+   exactly the closed-before region, and it inherits the loop's own hysteresis for free: the mode
+   goes false only below `2 * I_min - SHARE_GOV_OL_HYST_A` (0.20 A) and true only above
+   `2 * I_min` (0.25 A), so a re-arm and a gate release cannot chatter against each other.
+4. **The filtered total is at or under the gate.** This was the operator's open question, and the
+   answer is yes, it is required. `shareClosedLoopMode` is updated **later in the same tick**, so
+   on the tick the filtered total first crosses the gate the mode still reads open-loop while the
+   load has already earned two sources. Handing that tick to the selector would cut a channel the
+   closed loop is about to be given. The condition makes the ownership boundary the **gate** and
+   not the tick ordering.
+5. **The command is on or outside a rail.** The operator's trigger.
+
+### 29.4 The inhibit, and why two disarms need it
+
+The rule is a **level** test on the commanded share, and two of the selector's disarms fire while
+the command is still sitting on a rail. Without a further term each would be undone on the next
+tick.
+
+- **The charge-window disarm (section 3.2).** `chargingControl()` runs **before** `powerBalance()`
+  in every caller. A level-only rule would re-arm on the same loop iteration, re-cut the fuel cell
+  and the window would never open — which is the campaign H undervoltage latch, restored.
+- **The raw-current escape (section 4.6).** The escape exists because the fuel cell is carrying a
+  rising load alone. The command that selected it is by construction still on the rail, so a
+  level-only rule would hand that load straight back and the escape would buy exactly one tick.
+
+Both therefore raise `shareSelectorReArmInhibit`, and **only a strictly in-band command clears
+it**. A rail command cannot clear its own refusal.
+
+The two **ordinary** disarms — the gate release and the closed-loop entry — deliberately do not
+inhibit. They are the normal ending of exactly the path the ruling is allowed to reverse: a load
+that earned two sources and later fell away again, with a rail still commanded, is the case the
+operator asked to re-arm.
+
+`armShareBatteryOnlyStart()` and `hilWarmReset()` clear the inhibit along with the arm, so no
+profile inherits a refusal from the previous one.
+
+### 29.5 Interactions traced
+
+- **`resetShareControlState()` must not re-arm, and structurally cannot.** That function is the
+  setpoint latch's own release path, so a re-arm from it would re-cut the channel the release just
+  put back, on the tick it put it back. The guarantee is not a comment: the function clears
+  `shareClosedLoopRun`, which is condition 2, so a reset always hands the loop to open-loop
+  **feedforward** rather than to the closed-before region, and the earliest possible re-arm is
+  after the loop has closed again.
+- **A changed in-band setpoint ends the region.** The firmware version 5 closed-before hold answers
+  a changed setpoint by clearing `shareClosedLoopRun` and re-arming the feedforward path. So the
+  in-band command that spends the inhibit also removes condition 2, and the next rail command
+  reaches the setpoint latch with revision 4 semantics until the loop closes once more. This is a
+  real corner of the rule rather than an accident, it is left as it stands because changing it
+  would alter firmware version 5 hold semantics, and it is pinned by a fixture.
+- **The deferred-cut path is unreachable from a re-arm at the shipped constants.** A re-arm
+  happens only under the gate, so the doomed channel carries at most `2 * SHARE_MINORITY_I_MIN_A`
+  = 0.25 A against a `SHARE_CUT_MAX_HANDOFF_A` of 0.5 A, and the firmware version 25 load guard
+  always admits. If the guard ever did refuse, the existing deferral resolves it with no new code,
+  exactly as section 4.3 describes for a never-closed selector.
+- **A charge window opening while re-armed** is covered twice over: the section 3.2 disarm fires on
+  either cut and now also raises the inhibit, and the re-arm itself refuses outright while
+  `FC_CHARGE_ENABLE` reads high, because a window is already a single-source state whose sole owner
+  is the charge path.
+- **The ratio-based re-entry in `applyShareRatio()`** is untouched. A re-armed selector's cut is a
+  `shareSpCut*` latch, not a `shareIso*` one, so the ratio-based path neither claims it nor
+  re-closes it, exactly as for a never-closed arm.
+- **Profile boundaries.** The State-98 `Q` exit, State 3 and State 99 are unchanged: the selector's
+  arm was never cleared there and is not now, because the next Run entry or profile start arms it
+  afresh and clears both new flags.
+- **The hardware-in-the-loop auxiliary bits 6 and 7** now also report a re-armed selector, because
+  the re-entry rule sets the same flags. The frame is unchanged at 18 bytes with the same offsets
+  and the same checksum span, and the bits keep their meanings verbatim, so no host needs updating.
+  What the frame cannot say is the arm's **provenance**; a rise of bit 6 mid-profile after the loop
+  has closed is the only reading available there. The provenance is carried on the bench log
+  instead, as bit 2 of the new `selector_bits` field, and on the State-98 status dump, which gains
+  a `(re-armed)` marker and a `(re-arm inhibited)` marker.
+
+### 29.6 What revision 5 does not change
+
+The **sliver hold** of section 5, the conduction floor of section 6 and the droop-scale rules of
+sections 7 and 25 are untouched. The re-entry rule is evaluated above the setpoint latch and the
+governor, and it moves no reference of its own: it selects which effective setpoint the latch is
+handed, and the latch does the rest.
+
+## 30. Bench-log format version 9
+
+### 30.1 The record
+
+The append is four bytes at the end of the 112-byte version 8 record. **Every version 1 to version
+8 field keeps its byte offset**, and the 32-byte header layout is unchanged — only `hdr[4]`, now
+written from a new `LOG_FORMAT_VERSION` symbol, and `hdr[5]`, the record size a decoder already
+reads from the header rather than assuming.
+
+Table 3. The four appended fields. This is the layout the tools round must mirror byte for byte.
+
+| Offset | Type | Name | Meaning |
+|---|---|---|---|
+| 112 | `uint8_t` | `selector_bits` | bit 0 `shareBatteryOnlyArmed`; bit 1 `shareSelectorFC` (0 = battery selected); bit 2 `shareSelectorReArmed` (this arm came from the re-entry rule of section 29, not from a profile start); bit 3 `encDirStorePending` (an encoder-sense commit is queued for `encDirCommitTick()`); bits 4 to 7 reserved, written 0 |
+| 113 | `int8_t` | `enc_dir_sign` | `encDirSign`: +1 if the decoder sense is trusted as wired, -1 if the runaway detector flipped it. **Signed** — a flipped sense must decode as -1, not 255. `v_act` in the same record already carries the factor |
+| 114 | `uint8_t` | `enc_dir_flips` | `encDirFlipCount`, clamped to 255. Boot-monotonic and **saturating**: a run of 255s means saturated, not quiet. The firmware's own counter is 16-bit; the clamp is what keeps the field's class true |
+| 115 | `uint8_t` | `spare` | Reserved, always 0 |
+
+Why a format bump rather than flag bits: the record's `flags` byte has been fully allocated since
+firmware version 26, bits 0 to 7, and both subjects are run-defining state a decoder cannot
+reconstruct — which source was on the bus under the gate, and whether the published velocity was
+sign-flipped. Sections 13, 14 and 20 recorded the second as a gap this round closes.
+
+Field classes, extending the version 6 and version 7 three-class contract: `selector_bits` and
+`enc_dir_sign` are **levels**, read per record and never differenced; `enc_dir_flips` is a
+**boot-monotonic saturating counter**.
+
+### 30.2 The sizing consequences, re-derived
+
+Every quantity below is asserted from the symbols in the test suite rather than restated.
+
+| Quantity | Expression | v8 (112 B) | v9 (116 B) |
+|---|---|---|---|
+| Ring bytes | `LOG_REC_SIZE * LOG_RING_RECORDS` | 114688 | **118784** |
+| Ring in 512 B blocks | `LOG_RING_BYTES / 512` | 224 | **232** (exact) |
+| Fill rate at 1 kHz | `LOG_REC_SIZE` per ms | 112 B/ms | **116 B/ms** |
+| Records per 512 B chunk | `LOG_CHUNK_MAX / LOG_REC_SIZE` | 4, exactly | **4, remainder 48** |
+| Drained per tick | that, times the record size | 448 B | **464 B** |
+| Drain-to-fill ratio | | 4.0x | 4.0x (unchanged) |
+| Preallocated coverage | `LOG_PREALLOC_BYTES / (116 * 1000)` | 300 s | **289 s** |
+
+Two of those need a sentence.
+
+The **ring is still a whole multiple of the 512-byte block**, because 116 x 1024 = 118784 = 512 x
+232. That is the property that mattered — it keeps the wrap from splitting a block — and it is now
+pinned by a `static_assert` rather than left to arithmetic luck, so a future append that breaks it
+fails the build.
+
+**116 does not divide 512.** The existing record-alignment line in `logDrainTick()` therefore
+trims each chunk to four records, 464 bytes, and a drain write is no longer block-sized. That
+costs nothing. The file is a byte stream; the drain is **byte-based**, not record-based — it writes
+`min(pending, toEnd, LOG_CHUNK_MAX)` and then floors to a whole record — so no drain logic changed
+at all; and the drain-to-fill ratio is unchanged at 4.0x, so a full ring still drains in about a
+third of a second. Version 8's exact division was a coincidence, not a requirement.
+
+`LOG_PREALLOC_BYTES` stays at 32 megabytes. It is a contiguity reservation, and no profile
+approaches the 4.8 minutes it now covers.
+
+### 30.3 The 'K' status line
+
+`printSdStatus()` gains one line, printed from the symbols so it cannot drift from what the header
+declares: the format version, the record size, the ring size in bytes and the bytes a drain tick
+writes.
+
+### 30.4 The decoder is a separate round
+
+`tools/decode_benchlog.py` is outside this round's edit fence and still reads version 8. It must be
+taught the four fields of Table 3, at those offsets, before a version 9 log can be decoded. Until
+then a version 9 log decodes as a stride mismatch, loudly, because every decoder reads the record
+size from `hdr[5]` rather than assuming it — which is the property the one-byte-field
+`static_assert` exists to protect.
+
+## 31. Residuals of revision 5
+
+1. **The decoder lag.** As section 30.4 states. Until the tools round lands, a version 9 bench log
+   is unreadable by the existing pipeline.
+2. **`PLAN.md` section 9g, if it describes the record**, is outside this round's edit fence and may
+   still name the 112-byte version 8 layout. A follow-up.
+3. **The re-entry rule adds switch cycles.** Section 8's switch-cycle census was already the
+   evidence the hold-versus-return ruling needed; that ruling is now made, and the census becomes
+   the evidence for how often a strategy that oscillates its commanded share across a rail under
+   the gate re-arms. F7 of section 8 stands and is made more frequent again by the same argument.
+4. **A changed in-band setpoint ends the region**, section 29.5. The rule is then unavailable until
+   the loop closes once more. Recorded rather than fixed, because the alternative touches firmware
+   version 5 hold semantics.
+5. **The auxiliary byte still cannot carry provenance**, section 29.5. Only the bench log and the
+   status dump can.
+6. **Everything carried from revision 4**: the unmeasured EEPROM write duration, the lockout the
+   `Z` key does not clear, and `PLAN.md` section 9b's missing `Z`.
+
+## 32. Validation of revision 5
+
+Host-native, in `test/test_main.cpp`, group prefixes `test_fw28r5_*`.
+
+1. A commanded share of exactly 0.85 in the closed-before region re-arms with the fuel cell
+   selected; exactly 0.15 re-arms with the battery; both set the provenance flag.
+2. 0.8499 and 0.1501 do not re-arm — the rule needs a rail, not a near miss.
+3. Five hundred in-band ticks in the region arm nothing, cut nothing, and never leave both bus
+   switches low.
+4. A re-armed selector holds its cut through an in-band command — the ruling, executed, since
+   revision 4 would have released it on the first such tick — and then drops the arm and re-closes
+   the cut channel through the latch's own guarded release when the load crosses the gate.
+5. A rail command with the filtered total above the gate does not re-arm; the identical tick under
+   the gate does, so the discriminator is the gate and not the fixture.
+6. `resetShareControlState()` cannot re-arm, with the rail command still standing, for 200 ticks.
+7. The charge-window disarm raises the inhibit, the standing rail command does not re-arm, the
+   latch's release re-closes the fuel-cell bus switch, and the conduction-gated window opens once
+   the blanking clears — F1 intact under the new rule.
+8. Only a strictly in-band command clears the inhibit; a rail command cannot clear its own
+   refusal; and the corner of section 29.5 is pinned explicitly.
+9. The raw-current escape raises the inhibit, and the standing rail command cannot re-arm the
+   selector the escape just disarmed.
+10. The auxiliary bits 6 and 7 report a re-armed selector like any other.
+11. Bench-log version 9: the format version, the record size, the ring's block alignment, the
+    chunk packing and its consequence, and the preallocated coverage, all from the symbols.
+12. Bench-log version 9 fields: each of the four `selector_bits` bits independently and composed,
+    the signed direction sign, the flip count below, at and far past its saturation point, and the
+    spare byte never written non-zero. The existing byte-exact golden-record fixture is re-pointed
+    from 112 to 116 bytes with distinctive values in all four new fields, and every version 1 to
+    version 8 offset in it is unchanged, which is the append-only proof.
+
+Suite totals at close: 4474 production, 175 bench, 4781 hardware-in-the-loop, 51 encoder harness;
+zero warnings on all four builds.
+
+Bench gate, on top of revision 4's: pull a card after a run that re-armed at least once and
+confirm the decoder round (when it lands) recovers `selector_bits` bit 2 on exactly the ticks the
+status dump reported `(re-armed)`.

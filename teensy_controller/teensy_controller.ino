@@ -1,6 +1,77 @@
 /*
  * teensy_controller.ino — Scale Car DC Balancer Board, Rev 20260622
  *
+ * fw v28 REV 5 (2026-09-08) — THE RE-ENTRY RULE, AND BENCH-LOG FORMAT v9. Rev 5 SUPERSEDES rev 4
+ *   BEFORE ANY FLASH: no board has run fw v28 in any revision, so FW_VERSION stays 28 and there is
+ *   no rev-4 era in the ledger. UDP telemetry stays v4/58 B, the command packet 22 B and the HIL
+ *   frames 40 B/18 B; the BENCH LOG moves v8 -> v9 (112 -> 116 B/record). Neither item touches a
+ *   control law, a controller coefficient or the sequencing rules.
+ *     ITEM 1 — THE RE-ENTRY RULE (operator ruling, 2026-09-08 evening). Through rev 4 the source
+ *     selector was ONE-SHOT: once the share loop had closed, the arm was gone for the profile, and
+ *     a total that later fell back under the 2*I_min gate (0.25 A) entered the closed-before HOLD
+ *     — no MDAC motion — while an OUT-OF-BAND command there went straight to the setpoint latch,
+ *     which cut one channel and RELEASED it again as soon as the command returned in band. Rev 5
+ *     makes that region RE-ARM THE SELECTOR, with the selection taken from the command that
+ *     triggered it: sp >= DROOP_R_MAX (0.85, INCLUSIVE) re-arms with FC selected, sp <=
+ *     DROOP_R_MIN (0.15, INCLUSIVE) with BT. THE SEMANTIC DELTA, stated plainly, is the ruling:
+ *     an out-of-band command in this region used to cut AND release with the command; it now cuts
+ *     and HOLDS until the OPPOSITE rail is commanded or the load returns above the gate. IN-BAND
+ *     commands in this region NEVER trigger single-source — the closed-before HOLD stays exactly
+ *     as it was. From the re-arm onward the selector is INDISTINGUISHABLE from a never-closed one:
+ *     the same effective setpoint (0.0/1.0, always out of band, so "one owner per setpoint" still
+ *     holds by construction), the same latch, the same last-source / survivor-regulator /
+ *     survivor-blanking / fw v25 load guards, the same make-before-break selection change through
+ *     the release-then-entry path, the same frozen-path filter advance and gate release, the same
+ *     F1 disarm and the same S2 raw-current escape. NO new topology code and no new setpoint owner.
+ *     FIVE CONDITIONS: not already armed; shareClosedLoopRun (the loop HAS closed this profile);
+ *     !shareClosedLoopMode (we are in the open-loop region — with the previous condition this is
+ *     exactly the closed-before region, and it inherits the loop's own 0.20/0.25 A hysteresis, so
+ *     a re-arm/gate-release pair cannot chatter); share_govTotAFilt <= 2*I_min; and the command on
+ *     or outside a rail. THE GATE TEST IS REQUIRED AND WAS A DECISION: the mode flag is updated
+ *     LATER in the same tick, so on the tick the filter first crosses the gate the mode still
+ *     reads open-loop while the load has already earned two sources — handing that tick to the
+ *     selector would cut a channel the loop is about to be given. The ownership boundary is
+ *     therefore the GATE, not the tick ordering. TWO SAFETY DISARMS GET AN INHIBIT, because the
+ *     rule is a LEVEL test and both fire while the command is still on a rail: the S2 raw-current
+ *     escape and F1's disarm-before-open in chargingControl() (which runs BEFORE powerBalance() in
+ *     every caller, so without the inhibit the very next tick would re-arm, re-cut and the charge
+ *     window would never open — campaign H's UV_BUS latch back). Only a STRICTLY in-band command
+ *     clears the inhibit. The ORDINARY disarms — the gate release and the closed-loop entry — do
+ *     NOT inhibit: they are the normal ending of the very path the ruling is allowed to reverse.
+ *     resetShareControlState() STILL DOES NOT RE-ARM, structurally: it clears shareClosedLoopRun,
+ *     which is condition 2, so the latch's own release path can never re-cut what it just released.
+ *     Profile boundaries (armShareBatteryOnlyStart(), hilWarmReset()) clear the provenance AND the
+ *     inhibit, so no run inherits a refusal. The DEFERRED-CUT path is unreachable from a re-arm at
+ *     the shipped constants: the doomed channel carries at most the whole sub-gate total (0.25 A)
+ *     against SHARE_CUT_MAX_HANDOFF_A 0.5 A, so the fw v25 load guard always admits. OBSERVABILITY:
+ *     the HIL aux bits 6/7 now also show a re-armed selector (frame, offsets and XOR span
+ *     UNCHANGED; the bits keep their meanings verbatim, so no host changes) — the PROVENANCE is
+ *     carried on the bench log and the 'S' dump instead, which gain "(re-armed)" and
+ *     "(re-arm inhibited)".
+ *     ITEM 2 — BENCH-LOG FORMAT v9 (112 -> 116 B). APPEND-ONLY: every v1-v8 field keeps its byte
+ *     offset and the 32-byte HEADER LAYOUT IS UNCHANGED (only hdr[4], now written from the new
+ *     LOG_FORMAT_VERSION symbol, and hdr[5], the record size a decoder already reads from the
+ *     header). The four appended fields, which the `flags` byte could not carry because it has
+ *     been fully allocated since fw v26:
+ *         112  u8   selector_bits  bit0 shareBatteryOnlyArmed, bit1 shareSelectorFC,
+ *                                  bit2 shareSelectorReArmed (item 1), bit3 encDirStorePending;
+ *                                  bits 4-7 reserved, written 0
+ *         113  i8   enc_dir_sign   encDirSign (+1 / -1); v_act in the SAME record already carries it
+ *         114  u8   enc_dir_flips  encDirFlipCount, CLAMPED at 255 (boot-monotonic, saturating)
+ *         115  u8   spare          reserved, always 0
+ *     This closes rev 2's stated bench-log observability gap for the encoder sign flip (sections
+ *     13/14 of the design record). RE-DERIVED SIZING: the ring stays a whole multiple of the 512 B
+ *     SD block — 116 * 1024 = 118784 = 512 * 232 — and a static_assert now PINS that property
+ *     rather than leaving it to arithmetic luck; fill rises to 116 B/ms; 116 does NOT divide 512
+ *     (512/116 = 4 rem 48), so the existing record-alignment line trims each drain chunk to 4
+ *     records = 464 B and a drain write is no longer SD-block-sized — which costs nothing, because
+ *     the file is a byte stream, logDrainTick()'s drain is BYTE-based (min(pending, toEnd, 512),
+ *     then floored to a whole record) and unaffected, and the drain-to-fill ratio is 464/116 =
+ *     4.0x, the same as v8's 448/112. LOG_PREALLOC_BYTES stays 32 MB, now ~4.8 min at 116 KB/s
+ *     (was ~5.0). The 'K' status line gains a format line printed from the symbols. THE DECODER IS
+ *     A SEPARATE ROUND: tools/decode_benchlog.py still reads v8 and must be taught the four fields
+ *     at the offsets above before a v9 log can be decoded.
+ *
  * fw v28 REV 4 (2026-09-08) — TWO RESIDUAL CLOSURES: THE EEPROM COMMIT LEAVES THE FLIP TICK, AND
  *   THE k_d SINGLE-SOURCE HOLD IS KEYED ON TOPOLOGY. Rev 4 SUPERSEDES rev 3 BEFORE ANY FLASH:
  *   no board has run fw v28 in any revision, so FW_VERSION stays 28 and there is no rev-3 era in
@@ -4133,6 +4204,13 @@ uint8_t readHilAuxState() {
     if (shareGovBtClamped) a |= 0x20;
     // fw v28 — bits 6/7 mirror the source selector: armed, and which source it selected. Same
     // rationale and the same spare-bit discipline as bits 4/5 above; see the frame table.
+    // fw v28 rev 5: these two bits now also report a RE-ARMED selector, because the re-entry rule
+    // arms the same flags. The frame is UNCHANGED (18 B, same offsets, same XOR span) and the bits
+    // keep their meanings verbatim — "the selector is armed" and "it selected FC" — so no host
+    // needs updating. What a host CANNOT tell from the frame is the arm's PROVENANCE: a bit-6 rise
+    // mid-profile after the loop has closed is a re-arm, and that is the only reading available
+    // here. The provenance itself is carried on the bench log (BLG v9 selector_bits bit2) and on
+    // the 'S' dump, not on this frame, because the aux byte's eight bits are fully allocated.
     if (shareBatteryOnlyArmed) a |= 0x40;
     if (shareSelectorFC)       a |= 0x80;
     return a;
@@ -4877,6 +4955,9 @@ extern float    shareIsoPropRatio;        // feedforward proposal while a cut is
 extern bool     shareBatteryOnlyArmed;    // profile has not closed the loop yet
 extern bool     shareBatteryOnlyActive;   // ...and the arm actually owns the setpoint this tick
 extern bool     shareSelectorFC;          // fw v28: selected source (false = BT, true = FC)
+extern bool     shareSelectorReArmed;     // fw v28 rev 5: this arm came from the RE-ENTRY rule
+extern bool     shareSelectorReArmInhibit;// fw v28 rev 5: a SAFETY disarm blocks the re-entry
+                                          //   re-arm until an in-band command clears it
 float shareSelectorEffectiveSp();
 float shareDroopScaleTarget(float totFilt);
 void  armShareBatteryOnlyStart();
@@ -4958,26 +5039,44 @@ void parseKLogLine(const char *line);
 //     tearing down (state99Phase == 3) — never between its sequencing phases.
 //
 // Retrieval is by card pull; tools/decode_benchlog.py turns a .BLG into CSV.
-#define LOG_REC_SIZE        112u                // bytes per record (format v8) — static_assert'ed
+#define LOG_FORMAT_VERSION  9u                  // BLG format version written to hdr[4] (fw v28
+                                                // rev 5: the selector/encoder-sense tail, below).
+                                                // ONE symbol so the header writer, the 'K' status
+                                                // line and the tests cannot disagree about it.
+#define LOG_REC_SIZE        116u                // bytes per record (format v9) — static_assert'ed
 #define LOG_RING_RECORDS    1024u               // ~1.0 s of 1 kHz coverage; covers a ~250 ms card
                                                 // stall with 4x margin — the STALL rationale is in
                                                 // RECORDS (1024 samples = 1.024 s at 1 kHz) and is
-                                                // therefore unchanged by the record growing (112 KB
-                                                // of the Teensy's 1 MB — 114688 B, up from 92 KB at
-                                                // record format v6; still DMAMEM/RAM2, which has
-                                                // room). 114688 is a whole multiple of the 512 B SD
-                                                // block (224 blocks), so the ring wrap never splits
-                                                // a block boundary awkwardly
+                                                // therefore unchanged by the record growing (116 KB
+                                                // of the Teensy's 1 MB — 118784 B, up from 112 KB at
+                                                // record format v8; still DMAMEM/RAM2, which has
+                                                // room). 118784 is a whole multiple of the 512 B SD
+                                                // block (232 blocks), so the ring wrap never splits
+                                                // a block boundary awkwardly — re-derived at v9:
+                                                // 116 * 1024 = 118784 = 512 * 232 exactly
 #define LOG_RING_BYTES      (LOG_REC_SIZE * LOG_RING_RECORDS)
-#define LOG_CHUNK_MAX       512u                // one SD block per loop tick: >=448 B/ms drained
-                                                // against a 112 B/ms fill (4.0x, down from 5.0x at
-                                                // v6's 92 B — 5 x 92 = 460 B — and 6.0x at v5's
-                                                // 76 B), so catch-up is slower but
+#define LOG_CHUNK_MAX       512u                // one SD block per loop tick: >=464 B/ms drained
+                                                // against a 116 B/ms fill (4.0x, the same ratio as
+                                                // v8's 448/112, down from 5.0x at v6's 92 B and
+                                                // 6.0x at v5's 76 B), so catch-up is
                                                 // still four times the fill — a full ring drains in
-                                                // ~0.34 s (4 x 112 = 448 B; 512/112 = 4). The drain
-                                                // itself is BYTE-based, not record-based:
-                                                // logDrainTick() writes min(pending, toEnd, 512)
-#define LOG_PREALLOC_BYTES  (32u * 1024u * 1024u)  // ~5.0 min at 112 KB/s (33554432 / 112000 = 300 s);
+                                                // ~0.32 s. NOTE (v9): 116 does NOT divide 512
+                                                // (512/116 = 4 rem 48), so the record-alignment
+                                                // line below trims each chunk to 4 records = 464 B
+                                                // and a drain write is no longer SD-block-sized.
+                                                // That costs nothing: the file is a BYTE stream,
+                                                // the drain itself is BYTE-based, not record-based
+                                                // (logDrainTick() writes min(pending, toEnd, 512)
+                                                // then floors to a whole record), and SdFat
+                                                // buffers to its own block boundaries. The RING is
+                                                // still block-aligned, which is the property that
+                                                // mattered — v8's 112 divided 512 exactly (4 x 112
+                                                // = 448) and that was a coincidence, not a
+                                                // requirement
+#define LOG_PREALLOC_BYTES  (32u * 1024u * 1024u)  // ~4.8 min at 116 KB/s (33554432 / 116000 = 289 s;
+                                                // was ~5.0 min at v8's 112 KB/s). Left at 32 MB:
+                                                // the allocation is a contiguity reservation, and
+                                                // no profile approaches 4.8 minutes;
                                                 // truncate()d at close.
                                                 // Contiguous allocation keeps per-chunk latency in
                                                 // the tens of us (no FAT-chain seeks mid-run)
@@ -5171,8 +5270,34 @@ struct __attribute__((packed)) BenchLogRecord {
                                        //   above RE_MAX*SHARE_KD_SAFETY*SHARE_MINORITY_I_MIN_A
                                        //   /K_DROOP = 0.755 A (fw v28) of filtered
                                        //   total, where fw v26 behaviour is recovered bit-for-bit
+    // Format v9 (fw v28 rev 5, 2026-09-08): the SOURCE SELECTOR and the ENCODER DIRECTION SENSE,
+    // APPENDED at the end so every v1–v8 field keeps its byte offset. WHY a format bump and not
+    // flag bits: the record's `flags` byte has been fully allocated since fw v26 (bits 0–7), and
+    // both of these are run-defining state that a decoded run cannot reconstruct — which SOURCE
+    // was on the bus under the gate (fw v28 rev 1's selector) and whether the published velocity
+    // was SIGN-FLIPPED (fw v28 rev 2's detector, whose observability gap sections 13/14 of
+    // docs/fw28_source_selector.md recorded and this bump closes).
+    // FIELD CLASSES (the v6/v7 three-class contract, extended): selector_bits and enc_dir_sign are
+    // LEVELS — read them per record, never difference them. enc_dir_flips is a BOOT-MONOTONIC
+    // SATURATING counter (the firmware's own counter is u16; this field CLAMPS at 255 rather than
+    // wrapping, so a run of 255s means "saturated", not "quiet").
+    uint8_t  selector_bits;            // fw v28 selector/EEPROM state, one bit each:
+                                       //   bit0 = shareBatteryOnlyArmed  (the selector is armed)
+                                       //   bit1 = shareSelectorFC        (FC selected; 0 = BT)
+                                       //   bit2 = shareSelectorReArmed   (rev 5: this arm came
+                                       //          from the RE-ENTRY rule, not from a profile start)
+                                       //   bit3 = encDirStorePending     (an encoder-sense EEPROM
+                                       //          commit is queued for encDirCommitTick())
+                                       //   bits 4-7 reserved, written 0
+    int8_t   enc_dir_sign;             // encDirSign — +1 = decoder sense trusted as wired,
+                                       //   -1 = flipped by the rev 2 runaway detector. v_actual in
+                                       //   this record ALREADY carries the factor
+    uint8_t  enc_dir_flips;            // encDirFlipCount, CLAMPED to 255 (see field classes above)
+    uint8_t  spare;                    // reserved, always 0 — pads the record to 116 B, which
+                                       //   keeps the 4-byte-aligned fields above at their offsets
+                                       //   and leaves a byte for the next single-value append
 };
-static_assert(sizeof(BenchLogRecord) == LOG_REC_SIZE, "BenchLogRecord must stay 112 bytes (format v8)");
+static_assert(sizeof(BenchLogRecord) == LOG_REC_SIZE, "BenchLogRecord must stay 116 bytes (format v9)");
 // The header's record-size field is ONE byte (hdr[5] = (uint8_t)LOG_REC_SIZE). Past 255 that cast
 // truncates SILENTLY and every decoder — which reads the record stride from the header rather than
 // assuming it — would misparse the whole file instead of failing loudly. Caught at compile time.
@@ -5192,11 +5317,21 @@ static_assert(offsetof(BenchLogRecord, enc_duty_a_ewma)         == 102, "v7 layo
 static_assert(offsetof(BenchLogRecord, enc_duty_b_ewma)         == 104, "v7 layout");
 static_assert(offsetof(BenchLogRecord, g_clamp_count)            == 106, "v8 layout");
 static_assert(offsetof(BenchLogRecord, k_d)                      == 108, "v8 layout");
+static_assert(offsetof(BenchLogRecord, selector_bits)            == 112, "v9 layout");
+static_assert(offsetof(BenchLogRecord, enc_dir_sign)             == 113, "v9 layout");
+static_assert(offsetof(BenchLogRecord, enc_dir_flips)            == 114, "v9 layout");
+static_assert(offsetof(BenchLogRecord, spare)                    == 115, "v9 layout");
+// The RING must stay a whole multiple of the 512 B SD block (the wrap-splitting rationale at
+// LOG_RING_RECORDS). 116 * 1024 = 118784 = 512 * 232. Pinned so a future record append that breaks
+// it fails the build instead of silently splitting blocks at the wrap.
+static_assert((LOG_REC_SIZE * LOG_RING_RECORDS) % 512u == 0u,
+              "LOG_RING_BYTES must stay a whole multiple of the 512 B SD block");
 
 #define LOG_PHASE_NONE 0xFFu   // "this profile was not running for this sample"
 
 // ── Logger module state ───────────────────────────────────────────────────────
-// DMAMEM puts the 106 KB ring in RAM2/OCRAM instead of RAM1/DTCM, which is the tight, fast memory
+// DMAMEM puts the 116 KB ring (118784 B at BLG format v9; the figure was stale at 106 KB from
+// format v7) in RAM2/OCRAM instead of RAM1/DTCM, which is the tight, fast memory
 // the control code and stack want. The ring is touched once per ms by a memcpy and once per loop
 // tick by the drain — it does not need DTCM latency. (Host g++ has no such attribute.)
 #ifndef DMAMEM
@@ -5459,7 +5594,7 @@ void logOpenForProfile(uint8_t typeMask) {
     uint8_t hdr[32];
     memset(hdr, 0, sizeof(hdr));
     hdr[0] = 'B'; hdr[1] = 'L'; hdr[2] = 'G'; hdr[3] = '1';
-    hdr[4] = 8;                       // format version (v2 added fw_version at offset 18; v3 added
+    hdr[4] = (uint8_t)LOG_FORMAT_VERSION;   // format version (v2 added fw_version at offset 18; v3 added
                                       // V_fc/V_batt/V_chg/V_rgn to the record → 68 B; v4 added the
                                       // committed per-run profile parameters below, with the RECORD
                                       // unchanged from v3; v5 (fw v11) APPENDS u_unsat and
@@ -5469,11 +5604,13 @@ void logOpenForProfile(uint8_t typeMask) {
                                       // edge counters AND the three phase/duty geometry levels
                                       // → 106 B; v8 (fw v27 rev 2) APPENDS the share governor's
                                       // g-clamp count and the LIVE load-scheduled droop scale
-                                      // k_d → 112 B. HEADER LAYOUT IS UNCHANGED from
+                                      // k_d → 112 B; v9 (fw v28 rev 5) APPENDS the selector bit
+                                      // field, the encoder direction sign and its flip count, plus
+                                      // one reserved byte → 116 B. HEADER LAYOUT IS UNCHANGED from
                                       // v4 — only hdr[4] and hdr[5] (the record size, which is
-                                      // already read from the header) differ, and every v1–v6
-                                      // record field keeps its offset, so a v6 decoder needs only
-                                      // the two new tail fields.)
+                                      // already read from the header) differ, and every v1–v8
+                                      // record field keeps its offset, so a v8 decoder needs only
+                                      // the four new tail fields.)
     hdr[5] = (uint8_t)LOG_REC_SIZE;
     hdr[6] = typeMask;
 
@@ -5677,6 +5814,20 @@ void logSampleTick() {
     // K_DROOP field alone no longer does.
     r.g_clamp_count           = shareGGuardCount;
     r.k_d                     = shareDroopKd;
+    // Format v9 (fw v28 rev 5): the source selector and the encoder direction sense. Plain copies,
+    // like every other field here — the logger never recomputes and never derives. The flip count
+    // is the ONE value that is transformed, and only by a SATURATING clamp: the firmware's counter
+    // is u16 and the wire field is u8, so a clamp is what keeps the field's documented class
+    // (boot-monotonic, saturating) true rather than letting it wrap at 256.
+    r.selector_bits = 0;
+    if (shareBatteryOnlyArmed) r.selector_bits |= 0x01;
+    if (shareSelectorFC)       r.selector_bits |= 0x02;
+    if (shareSelectorReArmed)  r.selector_bits |= 0x04;
+    if (encDirStorePending)    r.selector_bits |= 0x08;
+    r.enc_dir_sign            = encDirSign;
+    r.enc_dir_flips           = (encDirFlipCount > 255u) ? (uint8_t)255u
+                                                        : (uint8_t)encDirFlipCount;
+    r.spare                   = 0;
 
     memcpy(&logRing[logRingHead], &r, LOG_REC_SIZE);
     logRingHead = (logRingHead + LOG_REC_SIZE) % LOG_RING_BYTES;
@@ -5801,6 +5952,14 @@ void printSdStatus() {
     }
     Serial.print("ring pend: "); Serial.print(logRingCount);
     Serial.print(" / ");         Serial.println(LOG_RING_RECORDS);
+    // fw v28 rev 5: the wire format, printed from the SYMBOLS so this line cannot drift from what
+    // the header actually declares. The drain figure is the record-aligned chunk the tick writes,
+    // which at v9 is 4 records = 464 B (116 does not divide 512), against a 116 B/ms fill.
+    Serial.print("format:    v");   Serial.print(LOG_FORMAT_VERSION);
+    Serial.print(", ");             Serial.print(LOG_REC_SIZE);
+    Serial.print(" B/record, ring "); Serial.print(LOG_RING_BYTES);
+    Serial.print(" B, drain ");     Serial.print((LOG_CHUNK_MAX / LOG_REC_SIZE) * LOG_REC_SIZE);
+    Serial.println(" B/tick");
     Serial.println("=================");
 }
 
@@ -7190,6 +7349,8 @@ void hilWarmReset() {
     shareBatteryOnlyArmed  = false;
     shareBatteryOnlyActive = false;
     shareSelectorFC        = false;   // fw v28: back to the battery default with the arm
+    shareSelectorReArmed      = false;   // fw v28 rev 5: provenance and inhibit go with the arm
+    shareSelectorReArmInhibit = false;
 
     // ── Control rate limiters ────────────────────────────────────────────────
     // Back-dated so the first tick of the new run is a control tick (and its first logged sample).
@@ -10442,6 +10603,12 @@ void printTestStatus() {
     Serial.print("  sel="); Serial.print(shareSelectorFC ? "FC" : "BT");
     Serial.print(" (sp_eff="); Serial.print(shareSelectorEffectiveSp(), 1); Serial.print(")");
     Serial.print(shareBatteryOnlyActive ? " (active)" : " (inactive)");
+    // fw v28 rev 5: WHERE this arm came from, and whether a safety disarm is currently refusing a
+    // re-arm. "re-armed" means the re-entry rule armed it mid-profile after the loop had already
+    // closed; "inhibit" means the S2 raw escape or F1's disarm-before-open is holding the rule off
+    // until a strictly in-band command arrives.
+    if (shareSelectorReArmed)      Serial.print(" (re-armed)");
+    if (shareSelectorReArmInhibit) Serial.print(" (re-arm inhibited)");
     Serial.print("  cut=");
     if (shareSpCutFC)      Serial.print("FC off bus");
     else if (shareSpCutBT) Serial.print("BT off bus");
@@ -11106,6 +11273,26 @@ bool     shareBatteryOnlyActive = false;
 // power_share_setpoint: the selection HOLDS through in-band commands, so it is memory, not a
 // per-tick function of the command.
 bool     shareSelectorFC = false;
+// fw v28 rev 5 (THE RE-ENTRY RULE) — provenance of the CURRENT arm. false = the arm came from a
+// profile boundary (armShareBatteryOnlyStart(), the fw v27 rev 2 one-shot start); true = it was
+// RE-ARMED by the re-entry rule below, i.e. the loop had already closed once this profile and an
+// out-of-band command arrived while the total had fallen back into the open-loop region.
+// OBSERVABILITY ONLY — no control path branches on it. It is BLG v9 selector_bits bit2 and the
+// 'S' dump's "(re-armed)" marker, so a decoded run can tell a start-of-profile single-source
+// window from a mid-profile one. Cleared at every arm site and at every disarm.
+bool     shareSelectorReArmed = false;
+// fw v28 rev 5 — the RE-ARM INHIBIT. The re-entry rule is a LEVEL test on the commanded share, so
+// on its own it would immediately undo the two SAFETY disarms, both of which can fire while the
+// command is still sitting on a rail:
+//   - the S2 raw-current escape (an FC selection carrying a rising load alone on the bus), and
+//   - F1's disarm-before-open in chargingControl() (which exists precisely so the latch's guarded
+//     release can put FC back on the bus before the charge window opens).
+// Either would be re-armed on the very next tick and the disarm would buy nothing. So both set
+// this inhibit, and ONLY a commanded share that returns STRICTLY inside the droop band clears it.
+// The ORDINARY disarms — the gate release and the closed-loop entry — deliberately do NOT set it:
+// the operator's rule is that a later fall back into the open-loop region with a rail command
+// SHALL re-arm, and those two disarms are exactly that path's normal ending.
+bool     shareSelectorReArmInhibit = false;
 
 // The effective setpoint the selector feeds the setpoint latch this tick: 0.0 for a battery
 // selection, 1.0 for a fuel-cell selection. Both are OUT of the droop band, which is what makes
@@ -11830,6 +12017,64 @@ void powerBalance() {
     // fw v28 (F2) SELECTION. The commanded share picks the source, INCLUSIVELY at both rails,
     // and HOLDS in between. Evaluated only while armed, so a disarmed selector cannot latch a
     // selection it will never act on.
+    // ── fw v28 rev 5: THE RE-ENTRY RULE (operator ruling, 2026-09-08 evening) ────────────────
+    // "In returning to the open-loop region, hold until the commanded share setpoint asks for
+    //  outside of (0.15, 0.85) to trigger the single-source mode."
+    // Through rev 4 the selector was ONE-SHOT: once the loop closed, the arm was gone for the
+    // profile, and a total that later fell back under the gate entered the closed-before HOLD
+    // (no MDAC motion at all). An out-of-band command in that region went to the setpoint latch
+    // directly, which cut one channel and RELEASED it again the moment the command came back into
+    // band. Rev 5 makes that region re-arm the SELECTOR instead, with the selection taken from the
+    // command that triggered it, so the cut HOLDS until the OPPOSITE rail is commanded or the load
+    // returns — which is the whole behavioural delta of this revision, and it is stated here
+    // because it changes the latch's semantics in this one region:
+    //     rev 4: out-of-band command -> cut, and release WITH the command.
+    //     rev 5: out-of-band command -> cut, and HOLD until the opposite rail or the gate.
+    // From the re-arm onward the selector is INDISTINGUISHABLE from a never-closed one: the same
+    // effective setpoint (0.0 / 1.0), the same latch, the same last-source / survivor-regulator /
+    // survivor-blanking / fw v25 load guards, the same make-before-break selection change, the
+    // same frozen-path filter advance and gate release, the same F1 disarm and the same S2 raw
+    // escape. No new topology code and no second setpoint owner.
+    // THE FIVE CONDITIONS, and why each is required:
+    //   (1) not already armed — a re-arm is an EDGE into the armed state, not a per-tick refresh;
+    //   (2) shareClosedLoopRun — the loop HAS closed this profile. Without it this branch would
+    //       double the never-closed arm sites, and resetShareControlState() clears this flag,
+    //       which is what makes "resetShareControlState() must not re-arm" structural rather than
+    //       a comment (that function is called from the latch's own release path);
+    //   (3) !shareClosedLoopMode — we are IN the open-loop region. Combined with (2) this is
+    //       exactly the closed-before region, and it carries the loop's own hysteresis for free:
+    //       the mode only goes false below 2*I_min - SHARE_GOV_OL_HYST_A (0.20 A) and only goes
+    //       true above 2*I_min (0.25 A), so a re-arm/gate-release pair cannot chatter;
+    //   (4) the filtered total is AT OR UNDER the gate. DECIDED (operator question): the re-arm
+    //       DOES require the total to actually be under the gate at the moment of the command.
+    //       Above it the closed loop owns the command and must keep it — the mode flag in (3) is
+    //       updated LATER in this same tick, so on the tick the filter first crosses the gate (3)
+    //       still reads open-loop while the load has already earned two sources. Handing that tick
+    //       to the selector would cut a channel the loop is about to be given. This test is what
+    //       makes the ownership boundary the GATE and not the tick ordering;
+    //   (5) the commanded share is on or outside a band rail — the operator's trigger, INCLUSIVE
+    //       at both rails for the same reason the selection test below is (the Pi clamps to
+    //       [0.15, 0.85] and the latch's own tests are strict). An IN-BAND command in this region
+    //       NEVER triggers single-source: the closed-before HOLD stays, exactly as at rev 4.
+    // Plus the inhibit and the charge-window refusal (see shareSelectorReArmInhibit's declaration
+    // and F1 in chargingControl()): a window that is already open is itself a single-source state
+    // whose sole owner is the charge path, so the selector must not claim one on top of it.
+    if (power_share_setpoint > DROOP_R_MIN && power_share_setpoint < DROOP_R_MAX) {
+        shareSelectorReArmInhibit = false;   // strictly in band: the safety inhibit is spent
+    }
+    if (!shareBatteryOnlyArmed && shareClosedLoopRun && !shareClosedLoopMode &&
+        !shareSelectorReArmInhibit &&
+        digitalRead(FC_CHARGE_ENABLE) == LOW &&
+        share_govTotAFilt <= 2.0f * SHARE_MINORITY_I_MIN_A &&
+        (power_share_setpoint <= DROOP_R_MIN || power_share_setpoint >= DROOP_R_MAX)) {
+        shareBatteryOnlyArmed = true;
+        // The selection comes from the COMMAND THAT TRIGGERED THE RE-ARM, not from the default:
+        // >= DROOP_R_MAX asks for the fuel cell alone, <= DROOP_R_MIN for the battery alone. The
+        // >= test is evaluated first for the same reason as in the selection block below, and the
+        // two rails cannot both be met (DROOP_R_MIN < DROOP_R_MAX).
+        shareSelectorFC      = (power_share_setpoint >= DROOP_R_MAX);
+        shareSelectorReArmed = true;
+    }
     if (shareBatteryOnlyArmed) {
         if (power_share_setpoint >= DROOP_R_MAX)      shareSelectorFC = true;
         else if (power_share_setpoint <= DROOP_R_MIN) shareSelectorFC = false;
@@ -11881,14 +12126,24 @@ void powerBalance() {
             // while it is alive the filtered total is < 2*SHARE_MINORITY_I_MIN_A = 0.25 A; a
             // BT->FC change at that instant hands FC at most ~0.25 A, a factor 5 under the ceiling.
             // The hazard is the RISE after the change, which is what the escape above covers.
+            // fw v28 rev 5: this is a SAFETY disarm, so it also sets the re-arm inhibit. The
+            // command that selected FC is by construction still >= DROOP_R_MAX on this tick, so
+            // without the inhibit the re-entry rule above would re-arm on the very next tick and
+            // hand the fuel cell straight back the load the escape just took off it.
             if (shareSelectorFC && fabsf(I_fc) > SHARE_GOV_I_FC_CEIL_A) {
-                shareBatteryOnlyArmed = false;
+                shareBatteryOnlyArmed     = false;
+                shareSelectorReArmed      = false;
+                shareSelectorReArmInhibit = true;
             }
             const float totBoArm = fabsf(I_fc) + fabsf(I_batt);
             if (totBoArm >= SHARE_I_TOT_MIN_A) {
                 share_govTotAFilt += SHARE_GOV_FILT_ALPHA * (totBoArm - share_govTotAFilt);
                 if (share_govTotAFilt > 2.0f * SHARE_MINORITY_I_MIN_A) {
                     shareBatteryOnlyArmed = false;
+                    // fw v28 rev 5: an ORDINARY disarm — no inhibit. The load earned two sources,
+                    // which is exactly the ending the re-entry rule is allowed to reverse if the
+                    // load later falls away again with a rail still commanded.
+                    shareSelectorReArmed  = false;
                 }
             }
         }
@@ -12152,6 +12407,9 @@ void powerBalance() {
     // closed loop. The SELECTION flag is deliberately left as it stands — it is only read while
     // armed, and every arm site re-defaults it to BT.
     shareBatteryOnlyArmed = false;
+    // fw v28 rev 5: an ORDINARY disarm, like the gate release — no inhibit. The provenance flag
+    // goes with the arm it describes.
+    shareSelectorReArmed  = false;
     // The load-scheduled droop scale advances HERE and nowhere else — closed loop only, one call
     // per tick, above every write site so the reference clip, the fw v26 ceilings and the fw v25
     // load guard (all of which work in CURRENT space and never see k_d) run against the same
@@ -12654,6 +12912,14 @@ void resetShareControlState() {
     // own release path (updateShareSetpointCutoff()), so arming here would re-arm the cut the
     // release just undid, on the very tick it undid it — a permanent cut/release cycle. Arming is
     // an explicit PROFILE-BOUNDARY action; see armShareBatteryOnlyStart() and its call sites.
+    // fw v28 rev 5: the RE-ENTRY rule does not change that, and it must not. This function IS the
+    // latch's release path, so re-arming from here would re-cut the channel the release just put
+    // back, on the tick it put it back. The guarantee is STRUCTURAL rather than a comment: the
+    // re-entry test requires shareClosedLoopRun, and the line above clears it, so a reset always
+    // hands the loop to open-loop FEEDFORWARD (not the closed-before region the rule lives in) and
+    // the earliest possible re-arm is after the loop has closed again. shareSelectorReArmed and
+    // shareSelectorReArmInhibit are deliberately left alone here for the same reason
+    // shareBatteryOnlyArmed is: they belong to the arm, and this function does not own it.
 }
 
 // Arm the fw v27 rev 2 battery-only start. Called at the profile boundaries ONLY, which are, in
@@ -12676,6 +12942,10 @@ void armShareBatteryOnlyStart() {
     // previous profile's selection into a new one would start a run on the fuel cell alone
     // because of a command the operator gave before the boundary.
     shareSelectorFC       = false;
+    // fw v28 rev 5: a profile start is the OTHER provenance, and it also clears any inhibit left
+    // by the previous profile's F1 disarm or raw escape — a new run must not inherit a refusal.
+    shareSelectorReArmed      = false;
+    shareSelectorReArmInhibit = false;
 }
 
 float youlaController_Power(float setpoint, float alphaRaw) {
@@ -12973,6 +13243,15 @@ void chargingControl() {
         if (shareBatteryOnlyArmed && (shareSpCutFC || shareSpCutBT)) {
             shareBatteryOnlyArmed  = false;   // (1) hand FC_BUS back to the latch's own release
             shareBatteryOnlyActive = false;   //     ...and stop feeding it 0.0 in the meantime
+            shareSelectorReArmed   = false;
+            // fw v28 rev 5 — F1 NEEDS THE INHIBIT, or the re-entry rule undoes it in one tick.
+            // chargingControl() runs BEFORE powerBalance() in every caller, so without this the
+            // very next powerBalance() would re-arm from the same rail command (the EMS commands
+            // 0.0/1.0 across a charge window as a matter of course), re-cut the same channel, and
+            // the window would never open — F1 defeated, and the campaign-H UV_BUS latch back.
+            // Cleared by the first strictly in-band command, which is also when the selector's
+            // claim on a source stops competing with the charge path's.
+            shareSelectorReArmInhibit = true;
         }
         // The two tests are now SEQUENTIAL, not exclusive (review S5). From a BT selection the
         // disarm above leaves FC_BUS LOW, so test (2) refuses on this period exactly as the
