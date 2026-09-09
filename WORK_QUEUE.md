@@ -1,5 +1,56 @@
 # Work queue — updated post round 2026-09-02 (Ag105 η = 0.88, η-era DP/SDP, MPC live, campaigns B and C analysed, physics review closed, session closed out)
 
+## 0h. Campaign II (2026-09-09, the first H-20 campaign) - operator rulings and the fix queue
+
+Source: `HIL Results/hil_report_20260909_095715/HIL_FINDINGS.md` (FINAL SUMMARY) and OVERNIGHT_LOG.md session 2026-09-09
+(the headlines at 28 / 31 / 36 / 42 of 75). Zero board defects; every FAIL classified. Items 1-8 need a ruling; 9-18 are
+tooling / suite items for the fix round (the 0f queue stays held behind the H2-model rulings where it overlaps).
+
+### Rulings
+1. **The plans inverted polarity under the convex map** - the MPC on all three cycles AND the regenerated DP tables (ems-ftp75-dp
+   floor 0.5375 / modal 0.85 / zero charge stages; ems-mpc-cross walks 0.15 -> 0.85 with no arm standing). The DP moving with the
+   MPC makes this the map's economics. Decide the offline A/B (terminal price 2.140 g/SoC re-based at 14.644 W vs the convex
+   stage cost with A0) and whether the ladder endpoints stay on the selector rails (0f-10).
+2. **The FC minority chatter, second campaign** (ems-ftp75-sdp: 78 FC_BUS falls identical to campaign I). Firmware: clamp the share
+   PI reference at DROOP_R_MIN with anti-windup for in-band commands (0f-9). The DP control case has no stimulus under H-20.
+3. **Lambda re-pin** `EMS_EQ_H2_LAMBDA_SOC_PER_G` 0.4673 (walked) -> 0.4799 (board cal-charge lever, in band).
+4. **A per-leg H2 basis reference**: the 14.644 W point holds only on the cruise charge legs; the 61 s MPC legs run 8-10 W, FTP-75
+   2-5 W, the compressed cycle 1-2 W. The MPC terminal price and ALPHA_MISMATCH_REF are re-based at the cruise point.
+5. **The socband reference charges** 449.6 mC (campaign I 447.0) on ftp75c - "charge-free by design" (0c-4) is stale; re-adjudicate.
+6. **The v7 alpha basis** (0g-1) with the levers now board-measured (ratio 0.680, not eta).
+7. **The ftp75c frontier's bound arm** reads 0.9693: the in-band DP never leaves the battery-only arm while the SDP rides FC-only;
+   the DP solve has no selector. Rule whether the matched DP is re-solved under the selector (the 0f matched-DP item) or the
+   bound arm is declared structurally uninformative on cycles whose total never clears the gate.
+8. **Bench**: the share-staircase FC cut latency reads 2.5 / 8.4 / 11.2 ms across H / I / II (host jitter) - a bench log pins the
+   board's own figure; the AD5443/OPA197 DMM measurement still open.
+
+### Fix queue
+9. [TOOLS] `Planner.delivery_table()` HOLD state SOURCE-aware (FC-only holds are the whole residual on ems-ftp75-mpc / ftp75c-mpc /
+   ems-mpc; the queued BT-only preview does not cover them); the 171.4 s post-window residual (347 ms, 17 ms outside
+   `exclude_hold_ms`) on ftp75c-mpc.
+10. [SUITE] ems-dp-replay: `signal_dp_fc_current_railed` floor 0.95 A -> ~0.85 A from the H-20 table's 0.625 rail x the window
+    total; `signal_dp_early_fc_rail` window [12, 20] -> [5, 11] s floor 0.80; the citation's retired trajectory and "charge_goal
+    is 0 for the ENTIRE run" (a 2.5 s window opens at 51.53 s); the one-sided h2 floor.
+11. [SUITE] ems-ftp75-dp / ftp75c family citations converted from the retired trajectories (fc_carried 0.7677 / table max 0.8375;
+    the ftp75c walk figures are Gfc-era: 5050 cites 0.0020697 g); state the A0 share in every provisional note (66-88 % on the
+    low-demand legs); register `charge_edges_safe` on ems-ftp75c-socband; REPORT.md's "ftp75-dp bound PENDING a table
+    regeneration" note is stale.
+12. [TOOLS] the matched DP re-solved under the selector before any ftp75c vs_bound reading (see ruling 7); the fresh matched-DP
+    records for campaign II from the tool pass.
+13. [SUITE] plumbing-only hydrogen floors (ems-soc-band 1e-3 g etc.) score nothing - re-derive as bands or drop; `h2_saturated_peak_w`
+    prints bus watts under a stack label; a stack-referred saturation margin metric (ems-sdp 93.0 % of P_MAX; clamp-sweep crossed
+    the knee at 24.08 W, 63 ticks, on an unscored leg).
+14. [SUITE, text] the ems-sdp policy citation names v3 (played v6); `signal_alpha_share_degenerate` quotes alpha 0.073936 (played idx 2,
+    0.065498); `mpc_share_prediction`'s label misdescribes the prefix mask.
+15. [SUITE] `bt_bus_restored`: record the trigger class (live gate release vs region-edge fallback) and score the two b00 shapes
+    separately (b00-v3's restore took 7.99 ms through the turn-on path vs 1.0 ms).
+16. [SUITE] window-pinned checks on the sdp-v6 legs: SoC-threshold events carry 1-3 s of cross-campaign phase (the sdp-cross flip
+    42.3 / 37.3 / 35.3 / 36.3 s; its windows 2-3 s earlier; braking's 20.6 s re-arm absent) while dwells and periods repeat.
+17. [LEDGER] retire campaign I's ems-mpc-cross "frontier entry VOID" line (the leg is in no tuple) and the b30-v3 fc_ceil "trend";
+    campaign I's exact-0.0 commit census baseline is retired (the single leg now commits 1.0).
+18. [DOC] the F1 window-open delay is TWO commander periods from the standstill trigger (charge-to-full, 39.6 ms) and ZERO from an
+    FC-selected arm (REGEN drop and FC_CHARGE open on the same tick) - the design record says one.
+
 ## 0e. fw v28 round (operator rulings 2026-09-08) — the source selector, the sliver hold, I_min 0.125 A, the charge-window k_d hold, and the F1 sequencing fix
 
 Rulings (2026-09-08, after the campaign G/G2/H digest): (1) F1 fixed the preferred way; (2) the never-closed

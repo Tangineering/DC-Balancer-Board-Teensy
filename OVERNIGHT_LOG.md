@@ -2078,3 +2078,9 @@ with reversal paths, the primary worktree's branch is the operator's - commit fr
   braking's 20.6 s re-arm absent) while dwells and periods repeat - point-pinned checks on those legs need windows.
   ems-mpc-cross RE-RUN SURVIVED (196 s, worst gap 13.7 ms vs the 314 ms blackout) - under analysis. 40 analyzed, zero
   board defects.
+- **Campaign II interim (48 of 48 scenario legs analyzed, ~16:40; replays running):** the tail confirmed (joint bound's
+  fourth reading 1.2772 A; clamp-sweep the first leg above the H-20 knee, 63 ticks unscored; charge-to-full's F1 window
+  +39.6 ms = two periods with V_bus min 15.7342 V bit-identical; staircase FC cut latency 11.2 ms host jitter). Close-out
+  drafts written in the scratchpad (FINAL SUMMARY, HIL_SUMMARY, the addendum paragraph) with placeholders for the replay
+  audit and the tool pass; WORK_QUEUE 0h (8 rulings + 10 fix items) committed; memory `h20-plan-polarity-inversion`; the
+  transition-list rule folded into hil-conventions. Zero board defects.
