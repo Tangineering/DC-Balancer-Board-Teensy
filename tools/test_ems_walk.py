@@ -1320,3 +1320,51 @@ def test_f6_reaches_the_joint_probe_from_one_place():
     # tuned to the one sample; the peak is still 3.1 % under LIMIT_I_FC_MAX.
     assert j["i_fc_peak_f6"] > j["i_fc_peak"]
     assert j["i_fc_peak_f6"] < 1.40
+
+
+# ── THE LOW-RAIL INFEASIBILITY (0f-1, 2026-09-09) ───────────────────────────
+# Campaign I adjudicated `ems-sdp-alpha-greedy` as "ems_walk delivers 0 at a
+# 0.15 reference under the asymmetry triple; suspect an unsolvable split-law
+# inverse falling back to 0". That mechanism is REFUTED by the two checks
+# below and the diagnosis is recorded here so it cannot be re-suspected:
+# `_ratio_for_delivered()` solves cleanly at the low rail and returns a
+# perfectly ordinary number - it is simply OUT OF THE DROOP BAND, because
+# under the split law no in-band ratio can deliver a 0.15 share at this rig's
+# operating point. `delivered_share()`'s 0.0 is then its documented topology
+# branch after the r-based cut, not a solver failure.
+#
+# The board is the reference for both numbers: campaign I's greedy hi-fi run
+# sits at r = 0.1523 (MDAC fraction pair 0.9770 / 0.1756) and delivers
+# 0.1739 at I_tot = 1.4114 A - the law to 0.08 %.
+def test_low_rail_reference_is_infeasible_in_band_under_the_triple():
+    g = gm.GovernorModel(dt_s=1e-3, dv0_v=0.013522,
+                         droop_scale_fc=0.9434, r_series_ohm=0.033)
+    i_tot = 1.4114                      # campaign I, ems-sdp-alpha-greedy
+    r_inv = g._ratio_for_delivered(0.15, i_tot)
+    # It SOLVES. No exception, no fallback, no clip to a rail.
+    assert 0.0 < r_inv < 1.0
+    assert r_inv == pytest.approx(0.130273, abs=5e-6)
+    # And it is out of band by 0.0197 - which is the whole mechanism.
+    assert r_inv < gm.GOV_CONST["DROOP_R_MIN"]
+    # The minimum share the law can deliver with both channels live is
+    # therefore alpha(DROOP_R_MIN), not the commanded 0.15.
+    a_floor = g.delivered_share(gm.GOV_CONST["DROOP_R_MIN"], i_tot, True, True)
+    assert a_floor == pytest.approx(0.171538, abs=5e-6)
+    assert a_floor > 0.15
+    # The board's own operating point reproduces to 0.08 %.
+    assert g.delivered_share(0.1523, i_tot, True, True) == pytest.approx(
+        0.1739, abs=2e-4)
+
+
+def test_high_rail_reference_stays_in_band_under_the_triple():
+    """Why only the greedy leg is affected: the asymmetry moves the delivered
+    share UP relative to the ratio, so it breaks the band at the LOW rail
+    only. The 0.85-rail legs (`ems-sdp`, `-alpha-cal`, `-alpha-charge`) invert
+    to 0.8485, comfortably inside the band - and campaign I measured exactly
+    that ratio on the board (MDAC pair 0.1756 / 0.9824 -> r = 0.8484)."""
+    g = gm.GovernorModel(dt_s=1e-3, dv0_v=0.013522,
+                         droop_scale_fc=0.9434, r_series_ohm=0.033)
+    r_inv = g._ratio_for_delivered(0.85, 1.4109)
+    assert r_inv == pytest.approx(0.848504, abs=5e-6)
+    assert gm.GOV_CONST["DROOP_R_MIN"] <= r_inv <= gm.GOV_CONST["DROOP_R_MAX"]
+    assert r_inv == pytest.approx(0.8484, abs=2e-4)      # the board's ratio
