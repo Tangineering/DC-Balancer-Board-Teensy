@@ -161,10 +161,31 @@ was applied overnight. Bands are never widened; they are re-derived from the mec
       flag seeded by `re_arm_ok`, held across in-band stages, released on the modelled gate crossing): 100 % of the
       MPC prediction residual on ems-ftp75-mpc / ems-ftp75c-mpc / ems-mpc and 60.75 s of unbilled battery-only on
       ems-ftp75-mpc. Then `exclude_hold_ms` (~330 ms) on the post-disarm re-close transient. Never widen pred_err_max.
+      - (MECHANISM REFUTED 2026-09-09, agent C' `f6c52a6`.) `re_arm_ok` is true at ZERO decisions on five of the six
+        registered MPC legs, so a per-column re-arm fix cannot move them; extending the arm to in-band columns was
+        implemented and measured (streams bit-identical on five legs; ems-ftp75c-mpc's in-band Gate-1 mean got WORSE,
+        2.972e-01 -> 3.107e-01) and NOT shipped. The arm is instead released at STAGE 0 of every mask ever built,
+        because the RELEASE PREVIEW's own stage-0 total already exceeds `GOV_ENTRY_A` - ems-ftp75-mpc 188 of 188
+        masks, preview 0.2426-0.3157 A (median 0.2840) against a 0.2500 A gate, while the shadow's measured filtered
+        total is 0.0908 A (3.1x). A preview-vs-plant disagreement about the source total during a cut, i.e. item 15's
+        class; it cannot be closed inside `delivery_table()` without substituting a plant number for a demand
+        forecast. Pinned by `test_the_armed_hold_is_unreachable_because_the_release_preview_leads_it`.
+        `exclude_hold_ms` 330 ms IS shipped (derivation in run_hil_suite.py); `pred_err_max` 0.30 unchanged.
+        STAYS OPEN as a preview-fidelity item, re-pointed at the release preview.
 - [ ] 3. **TOOLS** - re-walk the 23-leg fw v28 table at the rev 4-6 governor mirror (the shipped rows predate the
       re-entry rule: no re-arm tail, 69 % of dp-replay's residual) AND model the ftp75c family's F1-disarm-driven
       release (the gate never releases the arm there: filtered peak 0.157-0.179 A; rows ~39 % low) and the rev 6
       inhibit (ftp75c-sdp -9.5 %). Fix the entry prose asserting the gate release.
+      - (RE-WALK DONE 2026-09-09, agent C' `f6c52a6`; the rest STAYS OPEN.) All 23 legs re-walked on the corrected
+        loop (849ff13) at the suite configuration plus `r_series_ohm=0.033`, recorded as a THIRD column in
+        run_hil_suite.py beside fw v27 rev 2 and fw v28 e7ab118, with the FC/BT bus-fall census per leg. R_f
+        separated and measured on seven legs: hydrogen IDENTICAL to seven decimals at 0 and 0.033 ohm; the cut
+        census moves 11-16 % (ems-ftp75-sdp 5945 -> 6873 FC_BUS falls). NO BAND CONSTANT MOVED: `WalkResult.h2_g`
+        is now the H-20 map while the suite's bands are keyed to `h2_cum_g` (the Gfc dynamic map), and restating
+        one against the other is a silent scale error - the AXIS RECONCILIATION is the prerequisite and is the
+        first thing the next round owes. `sdpftp_en_low_census` stays (0, 6) on load-guard cuts: the r-based cut is
+        modelled now but at 6873 against the board's 71. Still to do: the ftp75c F1-disarm-driven release and the
+        rev 6 inhibit in the walk, and the entry prose asserting the gate release.
 - [ ] 4. **SUITE** - ems-y-b00-v1 `signal_bt_bus_restored`: an event-shaped check on the mechanism (BT_BUS HIGH
       within 50 ms of the filtered total first exceeding the gate after the region-7 command edge), not a 2000-tick
       floor; correct the line-1178 risk note (third mechanism: the in-band hold after region 6 drops v_sp).
