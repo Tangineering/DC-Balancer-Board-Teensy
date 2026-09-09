@@ -372,6 +372,14 @@ CARRIED_IN_LATCH_MAX_S = 0.10
 # turn-on (a ring, an inrush, a hot-plug) must not use it.
 _FC_TURN_ON_SETTLE_MS = 150.0
 
+# THE POST-DISARM RE-CLOSE HOLD (0f-2, 2026-09-09), used as the
+# `exclude_hold_ms` of `mpc_share_prediction`'s FC_BUS mask. An F1 charge-window
+# disarm re-close is a LONGER transient than a plain bus-switch turn-on, because
+# the planner's committed stage plan is stale across it as well as the MDAC
+# codes: 267 ms measured on campaign I (`ems-ftp75c-mpc`, 67.226 s), + 8 ms
+# RT_TD_ON, + 50 ms of decision cadence = 325 ms, rounded up to 330 ms.
+_MPC_DISARM_RECLOSE_HOLD_MS = 330.0
+
 # ═════════════════════════════════════════════════════════════════════════════
 # fw v25 EXPECTATION-IMPACT REVIEW — WHICH MEASURED PINS SURVIVE
 #
@@ -1239,6 +1247,94 @@ _FW28_ERA_PROVISIONAL = (
 # gate, and runs the plain isolation-cut shape (release one tick after the
 # region-7 edge); the one spec judges both, each for its own mechanism.
 # ═════════════════════════════════════════════════════════════════════════════
+
+# =============================================================================
+# THE CORRECTED-LOOP RE-WALK, ALL 23 LEGS (WORK_QUEUE 0f-3, 2026-09-09)
+#
+# A THIRD COLUMN, not a replacement. The fw v28 table above was walked at commit
+# e7ab118, through a ONE-TICK SURROGATE for the share controller inside
+# `governor_model`'s closed loop. Agent E ported the real Youla share-controller
+# recursion (849ff13, `closed_loop="controller"`), and every walked figure moves
+# with it. Same invocation as both columns above - `tools/ems_walk.py`,
+# miniforge, governor on, ONE PROCESS PER LEG, `loss_map=S.plant_loss_map(),
+# dv0_v=0.013522, droop_scale_fc=0.9434` - PLUS `r_series_ohm=0.033`, the split
+# law's common series floor, which the earlier columns omitted.
+#
+# ⚠️ THE AXIS CHANGED TOO, AND THAT IS WHY NO BAND CONSTANT MOVED IN THIS ROUND.
+# `WalkResult.h2_g` is now the H-20 brochure map (agent A, 354da3d). The suite's
+# `*_h2_accounted` bands are keyed to `h2_cum_g`, the simulator's Gfc DYNAMIC
+# map, and the two are NOT interchangeable (see the H2Consumption banner in
+# hil_plant_sim.py). Restating a band from a walk on one axis against a board
+# column on the other would be a silent scale error, so this table is RECORDED
+# and the band constants are left where campaign I put them. The axis
+# reconciliation is the prerequisite for moving them.
+#
+# ⚠️ D-6: EVERY HYDROGEN FIGURE BELOW IS PROVISIONAL AND CAMPAIGN II IS THE
+# CALIBRATION SOURCE. The corrected loop is still known to be off on two axes
+# (WORK_QUEUE 0f-15): on the low-rail legs it cuts far more often than the board
+# (`ems-ftp75-sdp` 6873 walked FC_BUS falls against 71 measured, 97x), and the
+# in-band 0.85-rail leg `ems-sdp` reads -14.6 % against the board where the
+# retired walk read +30 %. A campaign-II FAIL on a hydrogen band on
+# `ems-sdp-alpha-greedy`, `ems-ftp75-sdp` or `ems-sdp` is to be read as
+# CALIBRATION, not as a board finding. Bands that do not depend on hydrogen
+# (share, current, switch, regen) are unaffected and are pinned normally.
+#
+#   leg                    fw v28 e7ab118   corrected loop   FC/BT bus falls
+#   ems-mpc                     0.0072174      0.0118067           1 / 1
+#   ems-mpc-det                 0.0093398      0.0104827           0 / 2
+#   ems-mpc-cross               0.0080676      0.0212995          84 / 1
+#   ems-mpc-single              0.0048826      0.0106317           0 / 6
+#   ems-sdp                     0.0124000      0.0105412           0 / 2
+#   ems-sdp-alpha-cal           0.0125240      0.0071107           0 / 2
+#   ems-sdp-alpha-charge        0.0148082      0.0176486           7 / 4
+#   ems-sdp-alpha-greedy        0.0008443      0.0059219        2661 / 0
+#   ems-sdp-braking             0.0207233      0.0250743           7 / 10
+#   ems-sdp-cross               0.0194708      0.0280846          84 / 9
+#   ems-soc-band                0.0109991      0.0131579           8 / 2
+#   ems-dp-replay               0.0110634      0.0126317           7 / 4
+#   ems-drive-cycle             0.0030423      0.0059635           1 / 0
+#   ems-ftp75-5050              0.0241414      0.0405125           1 / 0
+#   ems-ftp75-sdp               0.0158491      0.0348439        6873 / 1
+#   ems-ftp75-socband           0.0382987      0.0532039           1 / 8
+#   ems-ftp75-mpc               0.0187671      0.0522491           1 / 3
+#   ems-ftp75-dp                0.0352004      0.0463096           0 / 3
+#   ems-ftp75c-5050             0.0020697      0.0133227           1 / 0
+#   ems-ftp75c-sdp              0.0056829      0.0169905           0 / 5
+#   ems-ftp75c-mpc              0.0020638      0.0160218           1 / 2
+#   ems-ftp75c-dp               0.0020756      0.0133167           1 / 0
+#   ems-ftp75c-socband          0.0046556      0.0154171           1 / 3
+#
+# DO NOT READ A COLUMN RATIO AS A CONTROLLER EFFECT. The two columns differ in
+# THREE things at once - the loop (surrogate -> controller), the hydrogen axis
+# (proxy -> H-20 map) and R_f (0 -> 0.033 ohm) - so a per-leg delta is not
+# attributable without the separation below.
+#
+# R_f, SEPARATED AND MEASURED. Walking seven legs at `r_series_ohm=0.0` against
+# the same legs at 0.033 ohm: the hydrogen figure is IDENTICAL to seven decimal
+# places on every one of them (`ems-sdp`, `ems-sdp-alpha-greedy`,
+# `ems-sdp-alpha-charge`, `ems-ftp75-sdp`, `ems-dp-replay`, `ems-ftp75c-sdp`,
+# `ems-mpc`). What R_f DOES move is the cut census, by 11-16 %:
+# `ems-sdp-alpha-greedy` 2990 -> 2661 FC_BUS falls, `ems-ftp75-sdp`
+# 5945 -> 6873, `ems-dp-replay` 10 -> 7. So the third difference between the
+# columns is inert on hydrogen and load-bearing on the switch counts, and the
+# corrected column is the one to cite for either.
+#
+# CROSS-CHECK AGAINST AGENT E's OWN SIX FIGURES (849ff13): five of six are
+# BIT-IDENTICAL to this table - greedy 0.0059219, cal 0.0071107, ems-sdp
+# 0.0105412, ems-ftp75-sdp 0.0348439, ems-dp-replay 0.0126317. The sixth,
+# `ems-sdp-alpha-charge`, differs by 1.8 % (E 0.0179672, here 0.0176486) and it
+# is NOT R_f (the leg walks to 0.0176486 at both R_f values). The likely cause
+# is a different bound sweep artifact for the charge pick; UNRESOLVED, and named
+# here rather than averaged away.
+#
+# `fc_bus_falls` ON `ems-ftp75-sdp`, RE-WALKED AND STILL NOT USABLE. 0f-3 asked
+# whether the r-based cut is now modelled well enough to re-point
+# `sdpftp_en_low_census` at it. It is modelled - the corrected loop takes the
+# cut, where the surrogate predicted 1 - but it takes it 6873 times against the
+# board's 71, a factor 97 in the WRONG direction. The census band stays (0, 6)
+# and stays pointed at load-guard cuts. Re-pointing it at the r-based cut would
+# be pointing a check at a quantity the walk over-predicts by two orders.
+# =============================================================================
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Which scenarios EXPECT the board to latch a fault.
@@ -5605,6 +5701,23 @@ def _mpc_expectation(*, scenario, walk_h2, duration_s, survive_t,
         {"name": "mpc_share_prediction", "column": "mpc_share_pred_err",
          "max_value": pred_err_max, "t_window": run_window,
          "exclude_when_switch_bit_clear": SW_FC_BUS,
+         # THE POST-DISARM RE-CLOSE TRANSIENT (0f-2, 2026-09-09).
+         # `_FC_TURN_ON_SETTLE_MS` 150 covers a re-close onto INHERITED MDAC
+         # codes; an F1 disarm re-close is a longer transient, because the
+         # planner's committed stage plan is stale across it as well as the
+         # codes. MEASURED on campaign I, `ems-ftp75c-mpc` at 67.226 s: 267 ms.
+         # DERIVED, not chosen:
+         #     267 ms  the measured transient
+         #    +  8 ms  RT_TD_ON, the RT1987 turn-on delay
+         #    + 50 ms  the decision cadence - the stale committed plan is not
+         #             refreshed until the next decision, and 20 Hz is one
+         #             decision every 50 ms
+         #    = 325 ms, rounded up to the tick -> 330 ms.
+         # It is a HOLD after an FC_BUS RISE, so it costs 330 ticks per
+         # re-close and nothing on a leg that never disarms. It does NOT
+         # widen `pred_err_max` (0.30, unchanged): a residual that outlives
+         # 330 ms is the model's, and must still fail here.
+         "exclude_hold_ms": _MPC_DISARM_RECLOSE_HOLD_MS,
          "exclude_clear_exempt_column": "cmd_share_sp",
          "exclude_clear_exempt_values": list(_MPC_SINGLE_SOURCE_VALUES),
          "provisional_note": _MPC_PRED_PROVISIONAL,

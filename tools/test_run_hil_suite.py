@@ -10794,10 +10794,23 @@ def test_mpc_share_prediction_masks_the_battery_only_start_without_widening():
             continue
         seen += 1
         assert spec["exclude_when_switch_bit_clear"] == rhs.SW_FC_BUS
-        # NOT widened, and not held open past the edge: a topology has no decay
-        # tail, unlike the forward mask's charger draw.
+        # NOT widened. THE BOUND is what a widening would move, and it is the
+        # thing this test exists to hold: 0.30, unchanged across every era.
         assert spec["max_value"] == pytest.approx(0.30)
-        assert "exclude_hold_ms" not in spec
+        # THE HOLD, ADDED AT 0f-2 (2026-09-09). This read
+        # `"exclude_hold_ms" not in spec`, on the reasoning that "a topology has
+        # no decay tail, unlike the forward mask's charger draw". True of a
+        # plain bus-switch turn-on; FALSE of an F1 DISARM re-close, which is a
+        # 267 ms transient measured on campaign I (`ems-ftp75c-mpc`, 67.226 s)
+        # because the planner's committed stage plan is stale across it as well
+        # as the MDAC codes. The hold is DERIVED (267 + 8 ms RT_TD_ON + 50 ms of
+        # decision cadence = 325, rounded to 330) and pinned to that derivation
+        # here, so a future round cannot quietly grow it into a bound widening.
+        assert spec["exclude_hold_ms"] == pytest.approx(330.0)
+        assert spec["exclude_hold_ms"] == rhs._MPC_DISARM_RECLOSE_HOLD_MS
+        # It is more than twice the plain turn-on settle, and that difference is
+        # the stale-plan term - stated as an ordering rather than a feeling.
+        assert spec["exclude_hold_ms"] > 2.0 * rhs._FC_TURN_ON_SETTLE_MS
         # The label has to say what it now excludes, or a report reader reads a
         # narrower claim as the original one.
         # LABEL CORRECTED 0f-7: the mask is a PREFIX mask, and the retired

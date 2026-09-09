@@ -4514,3 +4514,79 @@ def test_the_first_decisions_of_a_run_predict_a_zero_delivered_share():
         t += 0.02
     assert preds
     assert max(preds) == 0.0
+
+
+# =============================================================================
+# WORK_QUEUE 0f-2: WHERE THE MPC PREDICTION RESIDUAL ACTUALLY LIVES
+# =============================================================================
+def test_the_armed_hold_is_unreachable_because_the_release_preview_leads_it():
+    """0f-2 (2026-09-09), and the QUEUED MECHANISM IS REFUTED BY THIS FIXTURE.
+
+    The queue item read: `Planner.delivery_table()` needs a persistent armed-HOLD
+    selector state because it "flags a column armed only while THAT column's own
+    share is on a rail", so a plan stepping 0.15 -> 0.2375 is predicted
+    two-source while the board holds battery-only. That per-column test is real
+    - the `re_arm_ok` branch does exactly that - but it is NOT what carries the
+    residual, and the measurement says so twice over.
+
+    MEASURED, on the six registered MPC legs walked through `ems_walk.walk()` at
+    the suite configuration (loss_map, dv0 0.013522, rho 0.9434, R_f 0.033):
+
+      * `re_arm_ok` is true at ZERO decisions on `ems-mpc`, `ems-mpc-det`,
+        `ems-mpc-cross`, `ems-mpc-single` and `ems-ftp75-mpc`, and at 11 of 222
+        table builds on `ems-ftp75c-mpc`. A per-column re-arm fix therefore
+        cannot move five of the six legs at all. Extending the arm to in-band
+        columns was tried and measured: bit-identical committed streams on five
+        legs, and on `ems-ftp75c-mpc` the in-band Gate-1 mean got WORSE
+        (2.972e-01 -> 3.107e-01). It was not shipped.
+
+      * THE ARM IS INSTEAD RELEASED AT STAGE 0 OF EVERY MASK EVER BUILT. The
+        release preview's own stage-0 total already exceeds `GOV_ENTRY_A`, so
+        `batt_only_cut_mask()` drops the arm inside the first sub-sample and the
+        delivery table never predicts a held stage on ANY column, armed or not.
+        On `ems-ftp75-mpc` that is 188 of 188 masks, with the release preview's
+        stage-0 total ranging 0.2426-0.3157 A (median 0.2840) against a gate of
+        0.2500 A - while the shadow governor's OWN filtered total, the quantity
+        the firmware releases on, sits at 0.0908 A. A factor 3.1.
+
+    So the residual is a PREVIEW-versus-PLANT disagreement about the source
+    total during a cut, not a hold the table refuses to carry. It cannot be
+    closed inside `delivery_table()` without substituting a plant number for a
+    demand forecast, and it belongs with the walk-fidelity item (WORK_QUEUE
+    0f-15) that owns the same class of gap on the low-rail legs.
+
+    This fixture pins the RELEASE half, which is the load-bearing half: a
+    preview whose stage-0 total is over the gate releases immediately even with
+    the arm standing and the shadow's measured total far under it."""
+    s = _bound(loss_map=sim.plant_loss_map())
+    # The shadow's measured total, well under the gate - the arm is standing and
+    # the firmware would hold.
+    filt_seed = 0.0908
+    assert filt_seed < M.GOV_ENTRY_A
+    # ... and the release preview, over it. Both figures are the campaign-I
+    # medians quoted above.
+    over = _cut_pre(s, 0.2840)
+    assert over.i_tot[0][0] > M.GOV_ENTRY_A
+    cs = [False] * over.n
+    mask = s.planner.batt_only_cut_mask(over, cs, filt_seed, 100,
+                                        pre_bt_release=over)
+    # THE FINDING: released inside stage 0, on the FIRST sub-sample past the
+    # seed, so no stage of the table is predicted held.
+    assert mask[0][0] is True                       # the seed tick only
+    assert not any(mask[0][1:]), "stage 0 survived a preview over the gate"
+    assert not any(c for row in mask for c in row[1:])
+    # The delivery table therefore predicts a two-source split on every in-band
+    # column even with `batt_only_seed` TRUE - which is the residual, verbatim.
+    d = s.planner.delivery_table(over, {}, 0.5, cs, batt_only_seed=True,
+                                 filt_seed=filt_seed, pre_bt_release=over)[0]
+    mid = len(s.planner.ladder) // 2
+    assert d[0][mid] > 0.0 and d[over.n - 1][mid] > 0.0
+    # THE NEGATIVE CONTROL, and the proof the hold itself is modelled: hand the
+    # same table a release preview UNDER the gate and every stage is held.
+    under = _cut_pre(s, 0.90 * M.GOV_ENTRY_A)
+    held = s.planner.batt_only_cut_mask(under, cs, filt_seed, 100,
+                                        pre_bt_release=under)
+    assert all(c for row in held for c in row)
+    d2 = s.planner.delivery_table(under, {}, 0.5, cs, batt_only_seed=True,
+                                  filt_seed=filt_seed, pre_bt_release=under)[0]
+    assert all(d2[j][mid] == 0.0 for j in range(under.n))
