@@ -2011,3 +2011,12 @@ with reversal paths, the primary worktree's branch is the operator's - commit fr
   the 1.40 A latch sits at 92.8 % of P_MAX (doc item: restate the saturation expectation on stack power).
   comm-loss the standing artefact; drive SKIP. Two-agent cap holding (opening four + regen trio Sonnet,
   charge-cruise Opus).
+- **Campaign II interim (21 of 75, ~11:30): 16 analyzed, all PASS correct; one FAIL (ems-dp-replay's 0.95 A FC
+  rail floor, from the retired table's 0.75 rail - under adjudication); the three alpha legs PASSED including
+  their provisional Run-window bands** (greedy 0.006123 g / dSoC -0.00503 vs the corrected walk 0.0059; cal
+  0.007066 / -0.00449 vs 0.007111 / -0.004472 - within 1 %; charge 0.01763 / -0.00043) - the FIRST BOARD MEASUREMENT
+  OF THE H-20 LEVERS is being computed. ems-sdp PASSED every check for the first time since the aux era (v6
+  bound; the provisional band passed). The Gfc bridge reproduces campaign I to < 10-600 ppm on every leg; A0 is
+  29-84 % of a run's hydrogen depending on load; the scp-inrush cut bit-identical a fifth campaign; F1's gate
+  scored on charge-cruise and soc-band. Suite items queued: plumbing-only hydrogen floors (no discrimination),
+  the saturation label (bus watts under a stack label), the 0.498 A FC_CHARGE cut outside the census.
