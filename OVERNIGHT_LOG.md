@@ -1762,3 +1762,7 @@ with reversal paths, the primary worktree's branch is the operator's - commit fr
   with WORK_QUEUE 0f-1/2/3: the ems_walk floor defect, the MPC HOLD state, the re-walk on Run-window h20 hydrogen,
   the bands) -> D (suite items 0f-4..8) -> review -> orchestrator suites -> push -> campaign II. Sequenced through
   `run_hil_suite.py`; the suites gate A.
+- **Testing gate on the merged tree (cecfc20 + logs): GREEN.** stdlib 2440 passed / 96 skipped / 1 xfailed
+  (2:51); numpy 3201 passed / 18 skipped / 2 xfailed / 1 failed = the known wall-clock flake
+  `test_transition_roll_slices_and_completes` (re-run in isolation below). Matches the handoff's counts.
+  **Agent A dispatched (~02:05)**: levers on the H-20 axis, alpha and SDP v7, the charge-admission review.
