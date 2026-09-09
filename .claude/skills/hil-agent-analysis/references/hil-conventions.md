@@ -608,3 +608,23 @@ The suite's `achieved_rate` gate is a MEAN and passed at 998.4 Hz. Rules:
 - The r-based cut chatter (fw v25+ `applyShareRatio()` `r < DROOP_R_MIN` with the 0.5 A guard) fires at
   ~0.8 Hz on a SUSTAINED command at the inclusive 0.15 rail (ems-ftp75-sdp: 71 cuts / 90 s, I_fc 0.13-0.17 A,
   dwell <= 12 ms); a 100-tick DP visit to 0.15 does not wind through. Benign; a firmware ruling item.
+
+## Selector and F1 claims come from the transition list (campaign II, 2026-09-09)
+
+An agent reported the selection "persisting to 171 s" on two compressed-cycle legs, reading the ordinary 171 s charge
+window as the F1 disarm; the (state, switch, sel_armed, sel_fc) transition list showed the real disarm at 67.2 s on both.
+Rule: every arm / release / re-arm / disarm / window claim is derived from the transition list (one streaming pass,
+print every row where the tuple changes, with t, cmd_share_sp, V_bus, I_fc) and the Run-state rows are pasted into the
+report. The orchestrator spot-checks the list before recording any F1 mechanism. Corollary from the same campaign:
+SoC-threshold events on the sdp-v6 legs (the sdp-cross flip, its windows, coast-down re-arms) carry 1-3 s of cross-campaign
+phase while dwells and periods repeat - pin them with windows, not instants.
+
+## H-20 era: what a hydrogen number means (campaign II)
+
+`h2_cum_g` accrues A0 from State 0; every band is a Run-window delta (`h2_run_g`). Always report the A0 share of the window
+(33-88 % on the low-demand legs) beside a band verdict - the band discriminates on the remainder only. Stack power is
+`p_fc_w / ETA_BOOST` (0.85); the 14.644 W reference is the cruise charge point, and the MPC / FTP-75 / ftp75c legs run at
+8-10 / 2-5 / 1-2 W. The unscored `h2_gfc_cum_g` bridge reproduces the previous campaign's h2 to 10-600 ppm ONLY on legs whose
+command reproduces; a regenerated DP table or an inverted MPC plan changes the command, and the bridge then measures the plan,
+not the plant - say which before quoting a delta. Under the convex map every plan went FC-heavy (the MPC and the DP tables
+alike): read the command census before any anchor from the linear era.
