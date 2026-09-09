@@ -1738,3 +1738,18 @@ campaigns." Budget: 4 campaigns remain of 5.
 5. CAMPAIGN III conditional (II not clean, or a first-of-kind reading); stop otherwise.
 Standing: no flash, no PSCAD, no wire change, tools/ frozen during a live campaign, ASCII prints, decision pairs
 with reversal paths, the primary worktree's branch is the operator's - commit from `DC-Balancer-main`.
+- **TRIGGER received (~01:40) from the session "H2 efficiency impact of governor in EMS strategies":** the H-20 convex
+  hydrogen map is READY on branch `h20-convex-h2-map` (head cecfc20, carrying main 3c15b57). Fast-forwarded main to
+  cecfc20 from `DC-Balancer-main` and pushed. Read `docs/HANDOFF_H2_MAP_20260909.md`: A0 6.633e-5 g/s + Faraday
+  1.358e-4 g/s/A through the brochure U-I curve, P_MAX 23.416 W stack (1.247 A bus, infeasible above); wired into
+  plant h2_cum_g, DP, SDP, walk, MPC, dp_db key, report pricing; era flags regenerate the archives. Every hydrogen
+  band, lever, lambda and matched-DP record is on a retired axis until phase B.
+- **D-3: phase B (handoff section 3, items 1-7 in order) IS the adjusted plan's fix round and runs BEFORE any
+  campaign**, as the operator's own H2 session specifies and the operator's mandate ("testing and utilizing the
+  new H2 consumption estimates") implies. It subsumes WORK_QUEUE 0f items 1-3 and 5 (the ems_walk floor defect, the
+  MPC HOLD state and the re-walk are folded into phase-B items 5 and 6; the bands are re-stated on Run-window
+  hydrogen). Item 8 (the FuelCellSource refit) stays for after the campaign. SDP v7 REVERSAL PATH: v6 remains
+  regenerable under `--h2-map eta-proxy`; the frontier SDP choice is logged with its certificate and can be
+  reverted by re-pointing the registry. Campaign II follows phase B; budget 4 of 5 remain.
+- Gate first: both interpreter suites on the merged tree (expected from the handoff: stdlib 2441 / 95 / 1 xfail;
+  numpy 3202 / 1 / 2 xfail + the known wall-clock flake).
