@@ -1841,3 +1841,28 @@ with reversal paths, the primary worktree's branch is the operator's - commit fr
   0/1 for 3636 Run ticks). Tests 938 / 4 failed (E's moved walk pins in test_run_hil_suite.py -> C') / 2 xfail;
   stdlib 2460 / 96 / 4. **Agent C' dispatched (~05:25)**: the four re-pins, the MPC HOLD state, the re-walk and
   the provisional bands (D-6), the frontier arithmetic on lambda 0.423, the xfails.
+- **Lens-1 review of 354da3d (~05:50): REJECT the quantitative core; the frontier decision survives.**
+  F1 CRITICAL: campaign I was recorded under the retired gfc-linear law (36.0 % of the ems-sdp Run ticks carry
+  h2_rate_gps below A0, impossible under H-20; rate / (GFC_GAIN x p_fc_w/ETA_BOOST) has median 1.00000; no
+  h2_gfc_cum_g column, no h2_map fingerprint), so the 13.3654 W map inversion is meaningless; the defensible
+  reference is the source-side median 14.6440 W (the electrical model is unchanged until the refit) -> marginal
+  1.914825e-05, model L_share 0.3920729, alpha 0.142475 (F6: v7 inherits the wrong alpha). F2 CRITICAL: A's
+  "cal" lever row (0.0161093 g / -0.0010954) is bit-identical to the sdp-v2 / ems-sdp / v6 walk; the real cal leg
+  walks 0.0071103 / -0.0044719 - with the correct leg L_share 0.5917 (surrogate) / 0.5672 (E's controller),
+  L_chg 0.3744, lambda 0.5873 / 0.5734: THE HANDOFF'S ~0.57 WAS RIGHT and A's refutation is void; the "0.28 %"
+  gfc-linear cross-check was itself a product of the substitution (real: +0.75 % / -1.09 %). F3 HIGH: the greedy
+  pair is not a robust lever (E's 75x over-cut under-reads greedy hydrogen one-sidedly; the port alone moved
+  L_share -4.15 %); robust estimates avoiding the low rail: the cal-charge lever L_chg/eta 0.4673, the model
+  lever at 14.644 W 0.3921 - an honest band ~0.40-0.59, not the shipped 2.4 %-wide (0.4223, 0.4325). F4 MEDIUM:
+  `_ems_frontier` scores whole-run final_h2_cum_g (+10 % common offset on every leg from A0 x t_entry) - score
+  h2_run_g. F5 MEDIUM: EMS_FRONTIERS thresholds derived in Gfc grams at lambda 0.41 while lam_lo/lam_hi sweep the
+  H-20 lambda - mixed-axis verdicts. Verified: v7 vs v6 -9.23 % at 0.423 (loop-mode insensitive to 4e-4 %), the
+  win GROWS to -15.9 / -16.3 % at lambda 0.57-0.59; the 46 cells confirmed (bin 0, SoC 0.554-0.599, ceiling
+  inert). Open: "flat above P_MAX" - charge-cruise's 1.4033 A anchor is 12.5 % above the 1.247 A ceiling where
+  the marginal is zero; a scored leg there burns free hydrogen; should be a suite refusal.
+- **D-7 (~05:55):** fix round A' after C' lands: H2_BASIS_REF 14.6440 W; alpha 0.142475 and sdp_policy_v7 RE-
+  SOLVED at it (certificate, charge census, frontier re-check); lambda PROVISIONAL at the cal-charge lever 0.467
+  with the frontier's lam band [0.39, 0.59] (campaign II's three alpha legs, run post-phase-A, re-measure it);
+  the frontier on h2_run_g (F4) and its thresholds restated on the H-20 axis (F5, provisional per D-6); a
+  saturation refusal (any scored tick above P_MAX bus-equivalent 1.247 A flagged in key_metrics; the
+  charge-cruise anchor named). Reversal: A's values are one commit back.
