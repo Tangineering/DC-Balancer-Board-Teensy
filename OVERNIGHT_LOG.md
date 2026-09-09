@@ -1766,3 +1766,26 @@ with reversal paths, the primary worktree's branch is the operator's - commit fr
   (2:51); numpy 3201 passed / 18 skipped / 2 xfailed / 1 failed = the known wall-clock flake
   `test_transition_roll_slices_and_completes` (re-run in isolation below). Matches the handoff's counts.
   **Agent A dispatched (~02:05)**: levers on the H-20 axis, alpha and SDP v7, the charge-admission review.
+- **Agent A landed 354da3d (~03:36, 91 min; not pushed - review first).** THE REFRAMING: campaign I's ems-sdp Run
+  window has a median stack power of 13.3654 W (map-inverted from the run's own h2_rate_gps column; the p_fc_w /
+  ETA_BOOST proxy reads 14.6440 W, the documented two-curve gap), not the 3.2 W design estimate - the rig runs at
+  0.4314 LHV efficiency against the map's 0.4329 peak and A0 is 26 % of the rate, not 63 %. Levers: L_share
+  walked H-20 0.4222722 / model 0.4167424 (shipped Gfc 0.4165286), L_chg 0.3417529 / 0.3338827; the gfc-linear
+  walk reproduces the board's five-reading mean to 0.28 %, licensing the walk's era RATIO. **lambda 0.423**
+  (band 0.4223-0.4325; the handoff's ~0.57 refuted - it rested on the 3.2 W point); H2_BASIS_REF 3.2 -> 13.3654;
+  RHO's conversion retired (rho = 1/lambda 2.364, +33.6 %; the MPC plan moved five rungs on the light-load
+  fixture, Gate 1 holds at 2.436e-3). Alpha 0.134110 -> 0.134041 (-0.05 %, `--alpha-mode lever-h20`, D16);
+  **sdp_policy_v7 is the frontier** (eq-H2 -9.23 % / -0.037 % / 0.000 % vs v6 on ems-sdp / ftp75-sdp /
+  ftp75c-sdp; sign flips only below lambda 0.310); sweep sweep_20260909_h20, picks 2 / 6 / 14. The "1010 cells
+  refuse charge" premise was the SPLIT arm (bins 20-24, 0.14 % dwell); on the charge arm P_MAX adds ZERO refusals;
+  the refusal is physical (single-source windows); charge-cruise / charge-to-full / mppt-tracking bill 13.6 / 11.6 /
+  10.2 W stack with zero saturated ticks (reverses with the FuelCellSource refit). Suites 3206 / 2 load flakes
+  (isolated pass); stdlib 2439 / 96.
+  **RULING ITEM (A could not settle):** v7 admits 46 charge cells (demand bin 0, 0.5 W, 0.035 % dwell, below
+  target; no walk opens a window); alpha sits 1.59 % above the bisected charge boundary 0.131942 while the
+  closed-form tripwire says charge rejected - the D12 window is NECESSARY BUT NO LONGER SUFFICIENT under a convex
+  map (bisected vs predicted: degeneracy -27 %, charge -12 %). A did not move alpha to zero the count. Recorded
+  for the operator; v7 ships as is (reversal: v6 regenerable under --h2-map eta-proxy).
+  **Agent C dispatched (~03:40)**: the ems_walk floor defect, the MPC HOLD state, the re-walk and every band on
+  Run-window H-20 hydrogen; A's bracketing finding (suite anchor config 0.016109 vs sweep 0.012726 vs board
+  0.012346 g) to reconcile first.
