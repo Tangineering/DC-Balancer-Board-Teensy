@@ -2052,3 +2052,16 @@ with reversal paths, the primary worktree's branch is the operator's - commit fr
   0.2329 A, dwell <= 11 ms), no new class, FC_CHARGE never HIGH; the firmware ruling item is unchanged. A0 is 66 %
   of ftp75-sdp's Run-window hydrogen and 50 % of ftp75-dp's: on the FTP-75 family the bands discriminate on one
   third to one half of the measured mass. 29 analyzed, zero board defects.
+- **Campaign II interim (36 of 75, ~14:40): F1 CLEAN ON ALL FIVE COMPRESSED-CYCLE LEGS A SECOND CAMPAIGN, zero UV_BUS.**
+  Disarms at 67.205-67.228 s from both arm states (battery-only: FC_BUS re-closed 0.95-1.0 ms later, V_bus flat; FC-
+  selected on ftp75c-sdp and twice on ftp75c-mpc: REGEN drops and FC_CHARGE opens on the SAME tick with FC_BUS already
+  HIGH, 0 source-less ticks, <= 78 mV); every 171 s window one commander period (19.1-20.0 ms). socband still charges
+  449.6 mC (I 447.0). ftp75c-mpc inverted its plan like ftp75-mpc (0.85 modal, no 0.15 rung; FC-selected 91.7 % of
+  the run; 70.5 % armed = campaign I to 0.1 pp with the SOURCE flipped); its FAIL is the HOLD gap on FC-selected arms
+  (the delivery-table HOLD branch must be source-aware) and its h2 band now passes on real FC current. A0 is 74-88 %
+  of the compressed cycle's Run-window hydrogen: the ftp75c bands discriminate on ~15 % of the mass, and their walk
+  citations are still Gfc-era (suite item). The ftp75c frontier reads 0.9671 vs reference / 0.9693 vs BOUND - the
+  regenerated in-band DP never leaves the battery-only arm while the SDP rides FC-only for 64 s; the DP solve has no
+  selector, so the bound arm is not a bound on this cycle (tool-pass item, not a board finding). One agent's F1 mechanism
+  (selection persisting to 171 s) was refuted from the transition list and corrected in the ledger. 34 analyzed, zero
+  board defects.
