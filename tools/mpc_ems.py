@@ -2300,7 +2300,19 @@ class Planner:
         THE RELEASE PREVIEW IS THE SURVIVOR'S.  `pre_fc_release` is the
         fuel-cell-only demand and is the mirror of `pre_bt_release`; where the
         caller has neither (an MPC leg with no loss map) the two-source preview
-        is the same STATED under-statement of the bus sag it was before."""
+        is the same STATED under-statement of the bus sag it was before.
+
+        ── THE PREVIEW, NOT THE PLANT, DECIDES THE RELEASE (D-8, 2026-09-09) ──
+        `filt_seed` is nearly inert at stage 0: the EMA runs `ticks_per_sub`
+        (50) ticks per sub-sample, so the seed decays by
+        (1 - SHARE_GOV_FILT_ALPHA)^50 = 0.0769 before the first crossing test,
+        and a 0.0908 A measured total contributes ~7 mA of it.  What crosses
+        `GOV_ENTRY_A` is therefore the PREVIEW's own forecast total.  That is
+        why the standing MPC residual (WORK_QUEUE 0f-2 - the arm released at
+        stage 0 of 188 of 188 `ems-ftp75-mpc` masks) is a TOOLING gap in the
+        single-source demand preview and NOT a preview-versus-plant fidelity
+        gap: it is closable here, with no plant number substituted for a
+        forecast."""
         src = pre_fc_release if selector_fc else pre_bt_release
         if src is None:
             src = pre_bt_release if pre_bt_release is not None else pre_bt

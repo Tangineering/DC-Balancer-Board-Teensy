@@ -1201,14 +1201,17 @@ _FW28_ERA_PROVISIONAL = (
 #     `probe_fw26_clamp_walk.joint()`: peak 1.3188 A simultaneous and load-first,
 #     1.2833 A share-first, first engagement +29 ms, post-step duty 0.9976,
 #     settled I_fc 1.2500 A / I_batt 0.3200 A - IDENTICAL to the fw v27 rev 2
-#     row to four decimals. `FW26_CLAMP_JOINT_ACCEPT_PEAK_A` 1.3241 A therefore
-#     stands unchanged.
+#     row to four decimals. `FW26_CLAMP_JOINT_ACCEPT_PEAK_A` therefore stands
+#     unchanged at that round's value, 1.3241 A. (It has been 1.3237 A since
+#     the corrected-loop re-walk, b77d4b9 - the same walk + 0.4 % rule on the
+#     new worst skew, a 0.4 mA tightening.)
 #     ⚠️ SUPERSEDED FOR THE TRANSIENT CHECK (0f-3, 2026-09-09). Three campaign
 #     readings (1.3243 / 1.2699 / 1.2835 A, G / H / I) show the peak straddling
 #     that acceptance - campaign G cleared it by 0.015 % - because the peak is
 #     F6, a filter property the walk does not model. `joint_transient_peak` is
 #     re-keyed to the STRUCTURAL bound 1.3345 A; `joint_peak_held_down` keeps
-#     1.3241 A on the settled span, where F6 has decayed.
+#     1.3237 A on the SETTLED span, which since D-8 opens where the transient
+#     window closes (16.3 s) so the two bounds judge disjoint spans.
 #   * `fw26-clamp-cruise`. Its structural bound is
 #     min(0.85 * 2.00, 2.00 - 0.125) = 1.70 A against a 1.50 A demand, so the
 #     clip still does not bind and the 1.25 A ceiling still governs. Duty
@@ -1328,6 +1331,12 @@ _FW28_ERA_PROVISIONAL = (
 # CALIBRATION, not as a board finding. Bands that do not depend on hydrogen
 # (share, current, switch, regen) are unaffected and are pinned normally.
 #
+# ⚠️ CAVEAT ON THE TWO HYDROGEN COLUMNS (D-8, lens-2): the walk's hydrogen is
+# BLIND TO CUTS by construction - `res.h2_g` bills the stage-mean delivered
+# share, and a cut is a tick event inside a stage - so neither column responds
+# to the "FC/BT bus falls" column beside it, and a hydrogen figure here can be
+# unmoved by a change that moves the census by any amount.
+#
 #   leg                    fw v28 e7ab118   corrected loop   FC/BT bus falls
 #   ems-mpc                     0.0072174      0.0118067           1 / 1
 #   ems-mpc-det                 0.0093398      0.0104827           0 / 2
@@ -1362,7 +1371,14 @@ _FW28_ERA_PROVISIONAL = (
 # the same legs at 0.033 ohm: the hydrogen figure is IDENTICAL to seven decimal
 # places on every one of them (`ems-sdp`, `ems-sdp-alpha-greedy`,
 # `ems-sdp-alpha-charge`, `ems-ftp75-sdp`, `ems-dp-replay`, `ems-ftp75c-sdp`,
-# `ems-mpc`). What R_f DOES move is the cut census, by 11-16 %:
+# `ems-mpc`).
+# ⚠️ THAT IDENTITY IS A GRANULARITY ARTEFACT, NOT A PHYSICAL INVARIANCE (D-8,
+# lens-2, 2026-09-09): THE WALK'S HYDROGEN IS BLIND TO CUTS BY CONSTRUCTION.
+# `res.h2_g` bills the STAGE-MEAN delivered share, while a cut is a tick event
+# inside a stage, so no cut census - R_f's or any other's - can enter the
+# hydrogen figure at all. Read the identity as "R_f moves nothing the walk's
+# hydrogen can see", never as "R_f does not move hydrogen".
+# What R_f DOES move is the cut census, by 11-16 %:
 # `ems-sdp-alpha-greedy` 2990 -> 2661 FC_BUS falls, `ems-ftp75-sdp`
 # 5945 -> 6873, `ems-dp-replay` 10 -> 7. So the third difference between the
 # columns is inert on hydrogen and load-bearing on the switch counts, and the
@@ -2862,10 +2878,14 @@ FAULT_EXPECTATIONS = {
             {"name": "sdp_h2_accounted", "column": "h2_cum_g", "sample_state_in": (2,),
              "delta_min_value": 1.0e-3,
              # D-7: plumbing floor, value held, basis moved to the RUN-WINDOW
-             # delta - see ems-soc-band h2_accounted. Corrected-loop re-walk
-             # on this leg: 1.05412e-2 g (10x margin).
+             # delta - see ems-soc-band h2_accounted.
+             # D-9: the citation returns to the `sdp-v6` walk, 1.61093e-2 g
+             # (16x margin), because the leg is back on v6 - the 1.05412e-2 g
+             # figure cited here was the `sdp-v7` walk, and v7 does not
+             # certify. The FLOOR is unchanged: it is a plumbing assertion and
+             # both walks clear it by more than an order of magnitude.
              "label": "the H2 consumption metric accumulated over the RUN "
-                      "WINDOW (corrected-loop re-walk 1.05412e-2 g)"},
+                      "WINDOW (corrected-loop re-walk 1.61093e-2 g)"},
             # 8. THE STUDENT'S AXIS WAS PLUMBED. `min_value: 0.0` is a DELIBERATE
             #    plumbing assertion, not a magnitude one: an absent or unparseable
             #    column measures "peak unmeasured" and FAILS (_judge_signal_leaf),
@@ -5029,9 +5049,20 @@ FAULT_EXPECTATIONS["ems-sdp-cross"] = {
         #    INSIDE the old ceiling's 35.0 s edge. The pair moves to (5, 33) /
         #    (34, 190), which brackets the measured crossing cleanly: the
         #    ceiling window closes 2.30 s before it and the floor window opens
-        #    1.30 s before it. NOT a widening - both windows
-        #    are SHORTER than the pair they replace, and the assertion (a
-        #    ceiling before the crossing, a floor after it) is unchanged.
+        #    1.30 s before it.
+        #    ⚠️ D-8 (lens-2) CORRECTS THIS ENTRY'S OWN CLAIM. It used to say
+        #    "NOT a widening - both windows are SHORTER". That is true of the
+        #    CEILING, which NARROWS to 33.0 s (2.30 s ahead of the 35.296 s
+        #    measurement) and carries all of the discrimination: it is the
+        #    check that fails if the crossing arrives early. The FLOOR window
+        #    starts 16 s EARLIER than the (50, 190) it replaces, which IS a
+        #    widening, and it is a deliberate one: a `min_value` over a window
+        #    judges the window's PEAK, so the floor asserts only that the high
+        #    rail is REACHED somewhere after the ceiling closes - a
+        #    reachability assertion, not a timing one. Opening it at 34.0 s
+        #    keeps it adjacent to the ceiling so the pair leaves no unjudged
+        #    gap. The assertion the pair makes (a ceiling before the crossing,
+        #    a floor after it) is unchanged.
         #    PROVISIONAL: the 35.296 s reading is the FIRST on fw v28, and the
         #    trend has moved ~2 s per firmware era. Re-derive from the second
         #    fw v28 reading; if the crossing keeps walking earlier the fix is to
@@ -9243,9 +9274,14 @@ FAULT_EXPECTATIONS["fw26-clamp-sweep"] = {
 #     CEILING_REACHABLE_I_TOT_A = max(1.25 / 0.85, 1.25 + 0.15) = 1.4706 A
 # (it was 1.55 A at I_min 0.30), so the step total becomes 1.57 A and
 # `hil_plant_sim.FW26_CLAMP_JOINT_STEP_PRELOAD_A` 1.56 -> 1.48 A
-# (1.48 + I_AUX_A 0.09 = 1.57 A). At 1.57 A:
-#     structural bound  min(0.85 * 1.57, 1.57 - 0.15) = min(1.3345, 1.42)
-#                       = 1.3345 A, 4.7 % under LIMIT_I_FC_MAX
+# (1.48 + I_AUX_A 0.09 = 1.57 A). At 1.57 A, ON THE CURRENT fw v28 FLOOR
+# SHARE_MINORITY_I_MIN_A = 0.125 A (this paragraph is the fw v27 rev 2 record,
+# so the two lines above are at that era's 0.15 A; every LIVE derivation in
+# this file uses 0.125 - D-8, lens-2. Neither term above moves: the ceiling's
+# reachability threshold stays max(1.4706, 1.375) = 1.4706 A):
+#     structural bound  min(0.85 * 1.57, 1.57 - 0.125) = min(1.3345, 1.4450)
+#                       = 1.3345 A, 4.7 % under LIMIT_I_FC_MAX - the BAND-EDGE
+#                       term governs on either floor
 #     reachability      1.57 > 1.4706 A, so the clamp is still exercised
 #     hazard condition  1.57 < 1.6471 A, the property the 1.65 A step lost
 #
@@ -9316,8 +9352,8 @@ FAULT_EXPECTATIONS["fw26-clamp-sweep"] = {
 #
 #     DROOP_R_MAX * I_tot = 0.85 * 1.57 = 1.3345 A
 #
-# i.e. 0.0845 A over the ceiling; the acceptance bound is 1.3241 A, 0.4 % above
-# the walk and 5.4 % under LIMIT_I_FC_MAX.
+# i.e. 0.0845 A over the ceiling; the acceptance bound is 1.3237 A, 0.4 % above
+# the corrected-loop walk and 5.4 % under LIMIT_I_FC_MAX.
 #
 # ⚠️ EVERY BOUND BELOW IS A WALK, NOT A MEASUREMENT, through
 # tools/probes/probe_fw26_clamp_walk.joint() at the plant's measured asymmetry
@@ -9382,13 +9418,14 @@ _JOINT_BUS_HOLD_TICKS = int(0.98 * _JOINT_CADENCE_ROWS)        # 16807
 # a slow engagement, unreachable by a clamp that merely chattered.
 _JOINT_SETTLED_DUTY_TICKS = int(0.78 * 1000.0 * (_JOINT_B1 - _JOINT_B0))  # 7410
 # THE ACCEPTANCE BOUND on the transient peak. Named once.
-_JOINT_ACCEPT_PEAK_A = FW26_CLAMP_JOINT_ACCEPT_PEAK_A          # 1.3241
+_JOINT_ACCEPT_PEAK_A = FW26_CLAMP_JOINT_ACCEPT_PEAK_A          # 1.3237
 # ── THE TRANSIENT PEAK'S BOUND, RE-KEYED (0f-3, 2026-09-09) ─────────────────
 # THREE READINGS, no outlier: 1.3243 A (campaign G, hil_report_20260903_233736),
 # 1.2699 A (H, 20260904_022637), 1.2835 A (I, 20260908_200836). Mean 1.2926 A,
-# spread 4.2 % of the mean. G cleared the walk-derived acceptance 1.3241 A by
-# 0.015 % — one sample of margin on a bound whose population had not been
-# measured when it was written.
+# spread 4.2 % of the mean. G sits 0.045 % ABOVE the walk-derived acceptance
+# 1.3237 A (and 0.015 % above the pre-b77d4b9 1.3241 A): a G-like reading FAILS
+# that bound, on a bound whose population had not been measured when it was
+# written.
 #
 # THE PEAK IS F6, not a clamp defect: the share loop's own ~20 ms feedback EMA
 # lets the MDAC-implied reference climb 2.96 % past the settled rail for ~14 ms
@@ -9406,9 +9443,13 @@ _JOINT_ACCEPT_PEAK_A = FW26_CLAMP_JOINT_ACCEPT_PEAK_A          # 1.3241
 # in either place moves this bound with it. It sits 3.2 % above the measured
 # mean and 0.8 % above the highest of the three readings — margin for the F6
 # overshoot without admitting a run that left the band.
-# `joint_peak_held_down` KEEPS the 1.3241 A acceptance: it judges the SETTLED
+# `joint_peak_held_down` KEEPS the 1.3237 A acceptance: it judges the SETTLED
 # span, where F6 has decayed and the measured population (1.2835 A worst) is
-# 3.1 % clear of it, so it is still doing real work.
+# 3.0 % clear of it, so it is still doing real work.
+# ⚠️ D-8 (lens-2 HIGH): that division only exists because the settled check's
+# window now OPENS at _JOINT_STEP_T + _JOINT_STEP_WIN_S = 16.3 s. While it
+# opened at 16.0 s it ENCLOSED the transient window, the tighter bound governed
+# both spans, and this re-key was INERT.
 _JOINT_STEP_TOTAL_A = FW26_CLAMP_JOINT_STEP_PRELOAD_A + I_AUX_A          # 1.57
 _JOINT_STRUCTURAL_PEAK_A = round(
     min(gov_mod.GOV_CONST["DROOP_R_MAX"] * _JOINT_STEP_TOTAL_A,
@@ -9562,8 +9603,9 @@ FAULT_EXPECTATIONS["fw26-clamp-joint"] = {
                   "share (>= 0.62 A on every sample; walk 0.7200 A) - the "
                   "witness that the load plateau stood before the step"},
         # 4. THE ACCEPTANCE BOUND, and the headline of the whole leg. The peak
-        #    delivered fuel-cell current across the joint step. 1.3241 A is
-        #    0.4 % above the 1.3188 A walk and 5.4 % under LIMIT_I_FC_MAX.
+        #    delivered fuel-cell current across the joint step, judged against
+        #    the STRUCTURAL bound; the walk-derived 1.3237 A acceptance judges
+        #    the disjoint settled span in check 5.
         {"name": "joint_transient_peak", "column": "I_fc",
          "max_value": _JOINT_STRUCTURAL_PEAK_A,
          "t_window": (_JOINT_STEP_T, _JOINT_STEP_T + _JOINT_STEP_WIN_S),
@@ -9575,8 +9617,9 @@ FAULT_EXPECTATIONS["fw26-clamp-joint"] = {
                   "climbs 2.96 %% past the settled rail for ~14 ms after the "
                   "clamp binds, so the overshoot is a filter property and not a "
                   "threshold. Population: %s (mean 1.2926 A, spread 4.2 %%, no "
-                  "outlier); the retired walk-derived acceptance 1.3241 A was "
-                  "cleared by campaign G by 0.015 %%. LIMIT_I_FC_MAX is 1.40 A; "
+                  "outlier); campaign G sits 0.045 %% ABOVE the walk-derived "
+                  "acceptance 1.3237 A, which now judges the settled span "
+                  "only. LIMIT_I_FC_MAX is 1.40 A; "
                   "the same coincidence at a 2.99 A total delivered 1.4890 A "
                   "and latched OC_FC on `fw26-clamp-sweep` in campaign E"
                   % (_JOINT_STEP_T, _JOINT_STRUCTURAL_PEAK_A,
@@ -9585,17 +9628,27 @@ FAULT_EXPECTATIONS["fw26-clamp-joint"] = {
         # 5. ... and it never came back up. The same bound over the whole
         #    post-step span, which a late excursion would fail and check 4
         #    could not see.
+        #    ⚠️ D-8 (2026-09-09, lens-2 HIGH): this window used to OPEN at
+        #    `_JOINT_STEP_T`, i.e. it ENCLOSED check 4's transient window, so
+        #    the tighter 1.3237 A acceptance still governed the transient and
+        #    the structural re-key above was INERT — a G-like 1.3243 A reading
+        #    would have failed here. It now opens where the transient window
+        #    CLOSES, so the two are disjoint and each judges the span its
+        #    bound was derived from. The label's "F6 has decayed by here" is
+        #    true of this window only under that opening.
         {"name": "joint_peak_held_down", "column": "I_fc",
          "max_value": _JOINT_ACCEPT_PEAK_A,
-         "t_window": (_JOINT_STEP_T, _JOINT_B1),
+         "t_window": (_JOINT_STEP_T + _JOINT_STEP_WIN_S, _JOINT_B1),
          "provisional_note": _JOINT_PROVISIONAL,
-         "label": "I_fc stayed under %.4f A for the whole post-step span, not "
-                  "only across the transient. KEPT at the walk-derived "
-                  "acceptance while the transient bound moves to the "
-                  "structural one (0f-3): F6 has decayed by here, and the "
-                  "worst of the three measured settled spans (1.2835 A, "
-                  "campaign I) is 3.1 %% clear of it, so this bound is still "
-                  "doing real work" % _JOINT_ACCEPT_PEAK_A},
+         "label": "I_fc stayed under %.4f A across the SETTLED span (from "
+                  "%.1f s, where the transient window closes, to %.1f s) - "
+                  "not only across the transient, which check 4 judges "
+                  "against the structural bound. KEPT at the walk-derived "
+                  "acceptance (0f-3): F6 has decayed by here, and the worst "
+                  "of the three measured settled spans (1.2835 A, campaign I) "
+                  "is 3.1 %% clear of it, so this bound is still doing real "
+                  "work" % (_JOINT_ACCEPT_PEAK_A,
+                            _JOINT_STEP_T + _JOINT_STEP_WIN_S, _JOINT_B1)},
         # 6. THE CLAMP ENGAGED INSIDE THE TRANSIENT. The walk engages at
         #    +29 ms of the 300 ms window, i.e. 271 ticks; 150 is a floor with
         #    an 81 % margin that a run engaging as late as +150 ms still meets.
@@ -16809,7 +16862,10 @@ def _replay_census_summary(census):
     if not census or not census.get("n_cuts"):
         return ""
     peak = census.get("i_own_row_peak_a")
-    return (", share cuts %d (%d over %.1f A own-row / %d preceding, peak %s)"
+    # D-8 (lens-2 LOW): "peak" here is the OWN-ROW peak, which the scenario
+    # census's "|I| max preceding-row" is not - both lines now say which.
+    return (", share cuts %d (%d over %.1f A own-row / %d preceding, "
+            "own-row peak %s)"
             % (census["n_cuts"], census.get("n_over_own_row", 0),
                float(census.get("limit_a") or 0.0),
                census.get("n_over_prev_row", 0),
@@ -16915,8 +16971,13 @@ def _run_plan(plan, args, problems, results, write_outputs):
                 key += ", worst tick gap %.1f ms" % metrics["max_tick_overrun_ms"]
             _bcc = metrics.get("bus_cut_census") or {}
             if _bcc.get("n"):
+                # D-8 (lens-2 LOW): the convention is NAMED. This maximum is
+                # the PRECEDING row's current - the load the firmware decided
+                # against - because the cut row already reads ~0 A. The replay
+                # half's line says "own-row" for its own peak; the two are
+                # different quantities and each now says which.
                 key += (", bus cuts %d (%d dark / %d loaded, %d on a selector arm"
-                        ", |I| max %s)"
+                        ", |I| max preceding-row %s)"
                         % (_bcc["n"], _bcc["n_dark"], _bcc["n_loaded"],
                            _bcc["n_sel_armed_rising"],
                            "n/a" if _bcc.get("i_cut_max_a") is None

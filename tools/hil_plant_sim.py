@@ -6252,14 +6252,22 @@ SDP_POLICY_FILE_V3 = "sdp_policy_v3.json"
 SDP_POLICY_FILE_V4 = "sdp_policy_v4.json"
 SDP_POLICY_FILE_V5 = "sdp_policy_v5.json"
 SDP_POLICY_FILE_V6 = "sdp_policy_v6.json"
-# ── sdp_policy_v7.json: THE SHIPPED CALIBRATED BENCHMARK since 2026-09-09 ────
+# ── sdp_policy_v7.json: THE H-20 RE-DERIVATION, NOT CERTIFIED (2026-09-09) ───
 # The H-20 phase-B re-derivation (sdp_ems_solver D16).  Same billing as v6
 # (`--eta-chg measured`, 0.801173) and the SAME two-sided geometric-mean
 # placement; what moved is the marginal hydrogen rate the lever algebra is a
-# ratio against - the H-20 map's own at 13.3654 W of stack power (campaign
-# hil_report_20260908_200836's Run-window median) instead of the constant
-# 1/(ETA_FC*Q_LHV).  alpha 0.134041467771, both admission windows contain it,
-# the tripwire is silent, `--allow-out-of-window` is NOT passed.
+# ratio against - the H-20 map's own at the rig's Run-window operating point
+# instead of the constant 1/(ETA_FC*Q_LHV).
+# ⚠️ IT WAS THE FRONTIER ARTIFACT FOR PART OF 2026-09-09 AND WAS REVERTED THE
+# SAME DAY (D-9).  Re-solved at the corrected 14.6440 W operating point (lens-1
+# F1) it carries alpha 0.142475472567, while the corrected `ems-sdp-alpha-cal`
+# walk leg (lens-1 F2) lowers the walked admission window to [0.0882, 0.1335];
+# the alpha sits 6.7 % above its top, `alpha.admission.in_window_measured` is
+# False, and `sdp_assert_calibrated_benchmark()` REFUSES it.  The three
+# frontier-scored SDP legs are back on `sdp_policy_v6`, which certifies.  This
+# artifact stays in the tree as the record of the re-solve and of the failure;
+# campaign II's `ems-sdp-alpha-*` legs measure H-20-era levers on the board and
+# settle which artifact is the calibration.
 #
 #     C:/Users/ricky/miniforge3/python.exe tools/sdp_ems_solver.py \
 #         --eta-chg measured --alpha-mode lever-h20 \
@@ -6276,8 +6284,11 @@ SDP_POLICY_FILE_V6 = "sdp_policy_v6.json"
 # carries 0.035 % of the TPM's observed dwell, and no offline walk of
 # `ems-sdp`, `ems-ftp75-sdp` or `ems-ftp75c-sdp` opens a single charge window
 # under it.
-# v6 stays REGISTERED and frontier-INELIGIBLE from this date, as the record of
-# the eta-proxy-era calibration.
+# The 46-cell charge census above is the census of the SHIPPED (13.3654 W)
+# solve; the re-solve at 14.6440 W raises it to 140 cells over bins {0, 1, 2},
+# all still below the SoC target.
+# v6 is the FRONTIER artifact again from this date (D-9), as the only certified
+# one; v7 stays registered and frontier-INELIGIBLE.
 SDP_POLICY_FILE_V7 = "sdp_policy_v7.json"
 SDP_POLICY_SCHEMA = "sdp-policy-v1"
 
@@ -7918,20 +7929,29 @@ ems_sdp_v5 = SdpStrategy("sdp-v5", SDP_POLICY_FILE_V5)
 # admission windows contain it and the charge map is empty again.  It DEMANDS
 # the certificate, which it now passes on the `lever-measured` clause with a
 # REAL measured window rather than under the era-scoped null allowance.
-# ⚠️ NO LONGER FRONTIER-SCORED from 2026-09-09: `sdp-v7` replaced it on every
-# frontier-scored SDP leg, and `require_calibrated_benchmark` drops with it -
-# the registry asserts the two agree, and a comparability leg must not claim a
-# certificate the frontier's scoring reads.  v6 still PASSES that certificate;
-# it simply no longer demands it, exactly as `sdp-v3` and `sdp-v4` do not.
-ems_sdp_v6 = SdpStrategy("sdp-v6", SDP_POLICY_FILE_V6)
-# THE SHIPPED CALIBRATED BENCHMARK since 2026-09-09 — see SDP_POLICY_FILE_V7.
-# Same billing and the same placement as v6, with the lever algebra's marginal
-# hydrogen rate taken from the H-20 map at the rig's measured operating point;
-# the first artifact solved on the H-20 stage cost.  It DEMANDS the
-# certificate, which it passes on the `lever-h20` clause with BOTH windows real
-# and both containing the alpha.
-ems_sdp_v7 = SdpStrategy("sdp-v7", SDP_POLICY_FILE_V7,
+# ⚠️ FRONTIER-SCORED AGAIN from 2026-09-09 (D-9, the one-command reversal of
+# the D-7 rebind): `sdp-v7` was re-solved at `--alpha-mode lever-h20` and its
+# alpha 0.142475472567 sits 6.7 % ABOVE the walked admission window
+# [0.0882, 0.1335], so `sdp_assert_calibrated_benchmark()` REFUSES it and no
+# `ems-sdp` leg could bind.  v6 is the only certified artifact available, so
+# the three frontier-scored SDP legs point back at it and it DEMANDS the
+# certificate again (the registry asserts frontier_eligible and
+# require_calibrated_benchmark agree).
+ems_sdp_v6 = SdpStrategy("sdp-v6", SDP_POLICY_FILE_V6,
                          require_calibrated_benchmark=True)
+# THE H-20 RE-DERIVATION, 2026-09-09 — see SDP_POLICY_FILE_V7.  Same billing
+# and the same placement as v6, with the lever algebra's marginal hydrogen rate
+# taken from the H-20 map at the rig's measured operating point; the first
+# artifact solved on the H-20 stage cost.
+# ⚠️ IT DOES NOT CERTIFY, and that is why it is NOT frontier-scored (D-9): the
+# corrected 14.6440 W operating point raises the alpha while the corrected
+# `cal` walk leg lowers the walked admission window, and the two move apart.
+# It therefore does NOT demand the certificate — demanding it would make the
+# artifact unloadable rather than merely uncertified, and the record of the
+# failure belongs in the role note (the `sdp-v5` precedent), not in a load
+# error.  Campaign II's three `ems-sdp-alpha-*` legs measure H-20-era levers on
+# the board and settle which artifact is the calibration.
+ems_sdp_v7 = SdpStrategy("sdp-v7", SDP_POLICY_FILE_V7)
 # THE SCENARIO-SUPPLIED ROLE: one strategy, no artifact of its own, playing
 # whatever its scenario names in `sdp_policy_file`. It exists so an artifact
 # that is deliberately OUTSIDE the lever windows (an alpha-sweep point) has a
@@ -8856,10 +8876,13 @@ EMS_STRATEGIES = {
     # SDP leg; v4 and v5 stay registered as comparability and as the record of
     # the finding. See SDP_POLICY_FILE_V6.
     "sdp-v6": ems_sdp_v6,
-    # 2026-09-09: `sdp-v7` is THE CALIBRATED BENCHMARK — the H-20 phase-B
-    # re-derivation (sdp_ems_solver D16). It replaces `sdp-v6` on every
-    # frontier-scored SDP leg; v6 stays registered as the record of the
-    # eta-proxy-era calibration. See SDP_POLICY_FILE_V7.
+    # ⚠️ 2026-09-09 (D-9, later the same day): `sdp-v6` is THE CALIBRATED
+    # BENCHMARK AGAIN. `sdp-v7` (the H-20 phase-B re-derivation,
+    # sdp_ems_solver D16) held the three frontier-scored SDP legs for part of
+    # the day and was REVERTED: its alpha does not sit inside the walked
+    # admission window, so it does not certify and no `ems-sdp` leg could
+    # bind. v7 stays registered as the record of the H-20 re-solve and of its
+    # certificate failure. See SDP_POLICY_FILE_V7.
     "sdp-v7": ems_sdp_v7,
     "sdp-sweep": ems_sdp_sweep,
     # The firmware's own 'Y' combined drive-cycle + power-share table (16
@@ -9005,34 +9028,55 @@ EMS_STRATEGY_META = {
                           "pair, billed at the MEASURED round trip, and is "
                           "the frontier leg."},
     # THE SHIPPED CALIBRATED BENCHMARK since 2026-09-03.
-    # ⚠️ frontier_eligible went True -> False on 2026-09-09.  v6 is a valid,
-    # certified artifact and stays registered; what it is not any more is the
-    # CURRENT calibration, because its alpha is a ratio against a constant
-    # marginal hydrogen rate and the stage cost has been the H-20 convex map
-    # since 2026-09-08.  `sdp-v7` is that calibration.
+    # ⚠️ frontier_eligible went True -> False -> True again on 2026-09-09:
+    # `sdp-v7` took the role in the D-7 round and D-9 reverted it the same day,
+    # because the H-20 re-solve does not certify (see the `sdp-v7` note below)
+    # and an uncertified artifact cannot bind to a frontier-scored leg. v6 is
+    # the only certified artifact available for campaign II, so it carries the
+    # frontier again — with the KNOWN caveat that its alpha is a ratio against
+    # a CONSTANT marginal hydrogen rate while the stage cost has been the H-20
+    # convex map since 2026-09-08.  That caveat is an era mismatch to report,
+    # not a certificate failure.
     "sdp-v6":        {"policy_file": SDP_POLICY_FILE_V6,
-                      "frontier_eligible": False,
+                      "frontier_eligible": True,
                       "role_note":
-                          "ROLE: THE ETA-PROXY-ERA CALIBRATION — alpha "
-                          "0.134110280093, D12's two-sided placement on the "
-                          "five measured eta-era lever readings, billed at "
-                          "the measured charge round trip 0.801173. It was "
-                          "the frontier leg from 2026-09-03 to 2026-09-09. "
-                          "It is off the frontier now for ONE reason, and it "
-                          "is not a defect in the artifact: every lever in "
-                          "its derivation is a ratio against the CONSTANT "
+                          "ROLE: THE FRONTIER LEG (2026-09-03 onward, less "
+                          "the part of 2026-09-09 when `sdp-v7` held it) — "
+                          "alpha 0.134110280093, D12's two-sided placement on "
+                          "the five measured eta-era lever readings, billed "
+                          "at the measured charge round trip 0.801173, both "
+                          "admission windows containing it and 0 charge "
+                          "cells. KNOWN ERA CAVEAT: every lever in its "
+                          "derivation is a ratio against the CONSTANT "
                           "marginal rate 1/(ETA_FC*Q_LHV), and the stage cost "
                           "has been the H-20 CONVEX map since 2026-09-08, "
                           "whose marginal rate varies 2.4x over the operating "
                           "range. `sdp-v7` is the same placement re-priced on "
-                          "the map's own marginal rate at the rig's measured "
-                          "operating point. v6's h2/delta_soc pair remains a "
-                          "real measurement of a real objective and is the "
-                          "comparability leg against every campaign from "
-                          "2026-09-03 onward."},
+                          "the map's own marginal rate, and it does not "
+                          "certify; campaign II's `ems-sdp-alpha-*` legs "
+                          "measure H-20-era levers on the board and settle "
+                          "which artifact is the calibration."},
     # THE H-20 RE-DERIVATION, 2026-09-09 — see SDP_POLICY_FILE_V7.
+    # ⚠️ NOT frontier_eligible: it does not certify (D-9).
     "sdp-v7":        {"policy_file": SDP_POLICY_FILE_V7,
-                      "frontier_eligible": True},
+                      "frontier_eligible": False,
+                      "role_note":
+                          "ROLE: THE RECORD OF THE H-20 RE-SOLVE AND OF ITS "
+                          "CERTIFICATE FAILURE — alpha 0.142475472567 from "
+                          "`--alpha-mode lever-h20` (the lever algebra's "
+                          "marginal rate taken from the H-20 map at the "
+                          "corrected 14.6440 W operating point). It is off "
+                          "the frontier because the corrected `ems-sdp-alpha-"
+                          "cal` walk leg LOWERS the walked admission window "
+                          "to [0.0882, 0.1335] and the shipped alpha sits "
+                          "6.7 % above its top, so "
+                          "`alpha.admission.in_window_measured` is False. The "
+                          "refusal is CORRECT and is recorded rather than "
+                          "worked around: the artifact prices alpha in the "
+                          "right unit and fails the placement, while `sdp-v6` "
+                          "certifies on eta-era levers. Campaign II settles "
+                          "it. Charge census 140 cells / bins {0, 1, 2}, all "
+                          "below the SoC target."},
     # THE MEASURED-LEVER RE-SOLVE, 2026-09-03 — see SDP_POLICY_FILE_V5.
     "sdp-v5":        {"policy_file": SDP_POLICY_FILE_V5,
                       "frontier_eligible": False,
@@ -9951,18 +9995,20 @@ SCENARIOS["ems-sdp"] = {
     # measured, and pinned by
     # test_sdp_v4_v6_share_maps_agree_on_traversed_rows().
     #
-    # ⚠️ REBOUND `sdp-v6` -> `sdp-v7` 2026-09-09, AND THIS ONE DOES *NOT*
-    # TRANSFER.  Every rebind above was accompanied by "the walk-derived
-    # expectations transfer verbatim", because v3/v4/v6 differ only in weight
-    # and agree on every traversed row.  v7 is solved on a DIFFERENT
-    # OBJECTIVE - the H-20 convex stage cost - and the offline walk of this leg
+    # ⚠️ REBOUND `sdp-v6` -> `sdp-v7` 2026-09-09 AND REVERTED THE SAME DAY
+    # (D-9): the H-20 re-solve does not certify, so `sdp-v7` cannot bind to a
+    # frontier-scored leg and this leg is BACK ON `sdp-v6`.  The v6-era
+    # walk-derived expectations therefore stand exactly as they did before the
+    # rebind; no band on this leg needs re-stating.  Recorded because it is the
+    # measurement that would have forced the re-statement: the offline walk
     # moves from h2 0.016109292 g / dSoC -0.0010954 (v6) to h2 0.010540835 g /
-    # dSoC -0.0028217 (v7): -34.6 % of raw hydrogen and -9.23 % of equivalent
-    # hydrogen at matched SoC. EVERY WALK-DERIVED EXPECTATION ON THIS LEG MUST
-    # BE RE-STATED (phase-B checklist item 5); nothing in this change moved a
-    # band.  The eq-H2 verdict is stable: the sign flips only below
+    # dSoC -0.0028217 (v7), -34.6 % of raw hydrogen and -9.23 % of equivalent
+    # hydrogen at matched SoC, because v7 is solved on a DIFFERENT OBJECTIVE
+    # (the H-20 convex stage cost).  If campaign II certifies an H-20-era
+    # artifact, EVERY WALK-DERIVED EXPECTATION ON THIS LEG MUST BE RE-STATED
+    # then.  The eq-H2 verdict is stable either way: the sign flips only below
     # lambda = 0.310 SoC/g, far under the H-20 share lever.
-    "ems": "sdp-v7",
+    "ems": "sdp-v6",
 }
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -10519,14 +10565,15 @@ SCENARIOS["ems-ftp75-sdp"] = {
     # FTP75_SDP_SOC_REF_OFFSET, extended to v4 there and to v6 by
     # test_sdp_v4_v6_share_maps_agree_on_traversed_rows() (identical charge
     # maps; share differs only on rows 4-5, outside this leg's trajectory).
-    # ⚠️ REBOUND `sdp-v6` -> `sdp-v7` 2026-09-09 and the verbatim transfer ENDS
-    # HERE too: v7 solves a different objective.  This leg's offline walk moves
+    # ⚠️ REBOUND `sdp-v6` -> `sdp-v7` 2026-09-09 AND REVERTED THE SAME DAY
+    # (D-9, the uncertified H-20 re-solve): this leg is BACK ON `sdp-v6` and
+    # the v6-era expectations stand.  The measurement is kept because it is
+    # what a future certified H-20 artifact would move: the offline walk goes
     # from h2 0.035033940 g / dSoC -0.0135317 to 0.034709058 g / -0.0136636,
-    # which is only -0.037 % of equivalent hydrogen - far smaller than
-    # `ems-sdp`'s -9.23 %, because the FTP-75 trajectory spends its time in
-    # demand bins where the two share maps agree - but it is not zero and the
-    # band must still be re-stated (phase-B checklist item 5).
-    "ems": "sdp-v7",
+    # only -0.037 % of equivalent hydrogen - far smaller than `ems-sdp`'s
+    # -9.23 %, because the FTP-75 trajectory spends its time in demand bins
+    # where the two share maps agree - but it is not zero.
+    "ems": "sdp-v6",
     # THE SAME LIST OBJECT as the other two FTP-75 scenarios: the three differ
     # only in the strategy driving them, and a comparison between them is
     # meaningless on different stimuli.
@@ -10747,12 +10794,14 @@ for _name, _ems, _what in (
      % (FTP75C_SOCBAND_CHARGE_ENTER_A, FTP75C_SOCBAND_CHARGE_EXIT_A)),
     # Rebound `sdp-v4` -> `sdp-v6` 2026-09-03 (the measured round trip); the
     # two artifacts agree on every row this leg traverses.
-    # Rebound `sdp-v6` -> `sdp-v7` 2026-09-09 (the H-20 re-derivation).  This
-    # is the ONE leg of the three where the transfer really is verbatim: the
-    # offline walk is BIT-IDENTICAL under v6 and v7 (h2 0.016990486 g, dSoC
-    # -0.0000498 under both), because the compensated cycle's trajectory never
-    # leaves the rows and bins on which the two share maps agree.
-    ("ems-ftp75c-sdp", "sdp-v7",
+    # Rebound `sdp-v6` -> `sdp-v7` 2026-09-09 (the H-20 re-derivation) and
+    # REVERTED the same day (D-9: v7 does not certify).  This was in any case
+    # the ONE leg of the three where the transfer is verbatim in both
+    # directions: the offline walk is BIT-IDENTICAL under v6 and v7 (h2
+    # 0.016990486 g, dSoC -0.0000498 under both), because the compensated
+    # cycle's trajectory never leaves the rows and bins on which the two share
+    # maps agree.
+    ("ems-ftp75c-sdp", "sdp-v6",
      "the causal SDP policy, which earns the braking credit through the PLANT "
      "rather than through a re-solved artifact"),
     ("ems-ftp75c-dp", "dp-replay",

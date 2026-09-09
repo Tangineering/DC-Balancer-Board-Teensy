@@ -167,11 +167,17 @@ was applied overnight. Bands are never widened; they are re-derived from the mec
         2.972e-01 -> 3.107e-01) and NOT shipped. The arm is instead released at STAGE 0 of every mask ever built,
         because the RELEASE PREVIEW's own stage-0 total already exceeds `GOV_ENTRY_A` - ems-ftp75-mpc 188 of 188
         masks, preview 0.2426-0.3157 A (median 0.2840) against a 0.2500 A gate, while the shadow's measured filtered
-        total is 0.0908 A (3.1x). A preview-vs-plant disagreement about the source total during a cut, i.e. item 15's
-        class; it cannot be closed inside `delivery_table()` without substituting a plant number for a demand
-        forecast. Pinned by `test_the_armed_hold_is_unreachable_because_the_release_preview_leads_it`.
+        total is 0.0908 A (3.1x).
+      - (RE-DIAGNOSED 2026-09-09, D-8 lens-2.) This is NOT a plant-fidelity gap and NOT item 15's class. The
+        filtered seed carries almost no weight at stage 0: the EMA runs 50 ticks per sub-sample, so the seed decays
+        to `(1 - 0.05)^50` = 0.0769 of itself before the crossing is tested, and the shadow's 0.0908 A measured
+        total contributes ~7 mA of the crossing. The release is therefore driven by the PREVIEW's own forecast
+        total, so the defect is in the single-source demand preview (`pre_bt_release` / `pre_fc_release`), which
+        forecasts a two-source-class total for a cut channel - a TOOLING gap that CAN be closed inside
+        `delivery_table()` with no plant number substituted for a forecast. Pinned by
+        `test_the_armed_hold_is_unreachable_because_the_release_preview_leads_it`.
         `exclude_hold_ms` 330 ms IS shipped (derivation in run_hil_suite.py); `pred_err_max` 0.30 unchanged.
-        STAYS OPEN as a preview-fidelity item, re-pointed at the release preview.
+        STAYS OPEN, re-pointed at the single-source demand preview; NOT implemented in the D-8 pass.
 - [ ] 3. **TOOLS** - re-walk the 23-leg fw v28 table at the rev 4-6 governor mirror (the shipped rows predate the
       re-entry rule: no re-arm tail, 69 % of dp-replay's residual) AND model the ftp75c family's F1-disarm-driven
       release (the gate never releases the arm there: filtered peak 0.157-0.179 A; rows ~39 % low) and the rev 6

@@ -980,6 +980,13 @@ def walk(strategy_name: str, scenario_name: str, *, soc0: float = 0.7,
                                                 reg_k)
             p_fc_bus = stage_share * float(s_p_dem[k])
 
+        # ⚠️ THE WALK'S HYDROGEN IS BLIND TO CUTS BY CONSTRUCTION (D-8, lens-2,
+        # 2026-09-09). `dh2` is billed from `stage_share`, the STAGE-MEAN
+        # delivered share, while a share cut is a TICK event inside a stage, so
+        # no cut - and no parameter that only moves the cut census, `R_f`
+        # included - can enter `res.h2_g` at all. A hydrogen figure unchanged
+        # across such a parameter is a granularity result, never evidence that
+        # the parameter does not move hydrogen.
         res.h2_g += dh2
         res.h2_plant_g += dh2p
         res.h2_proxy_g += h2_proxy_gps(p_fc_bus / sim.ETA_BOOST,

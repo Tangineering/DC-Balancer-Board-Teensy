@@ -568,17 +568,22 @@ Usage:
     C:/Users/ricky/miniforge3/python.exe tools/sdp_ems_solver.py \
         --eta-chg 0.88 --alpha-mode lever-measured --allow-out-of-window \
         --out tools/sdp_policies/sdp_policy_v5.json --force
-    # THE SHIPPED FRONTIER ARTIFACT since 2026-09-03, sdp_policy_v6.json (D15).
+    # THE SHIPPED FRONTIER ARTIFACT, sdp_policy_v6.json (D15): since
+    # 2026-09-03, less the part of 2026-09-09 when v7 held the role.
     # Same measured alpha, solved at the MEASURED round trip: both windows
     # contain it, the tripwire is silent, 0 charge cells.
     C:/Users/ricky/miniforge3/python.exe tools/sdp_ems_solver.py \
         --eta-chg measured --alpha-mode lever-measured \
         --out tools/sdp_policies/sdp_policy_v6.json --force
-    # THE SHIPPED FRONTIER ARTIFACT since 2026-09-09, sdp_policy_v7.json (D16).
-    # Same billing as v6; alpha re-priced on the H-20 map's own marginal rate
-    # at the solver's operating point.  Both windows contain it, the tripwire
-    # is silent, the convex-map warning is retired for this mode, 0 charge
-    # cells.  v6 stays regenerable under `--h2-map eta-proxy`.
+    # THE H-20 RE-DERIVATION, sdp_policy_v7.json (D16) — NOT the frontier
+    # artifact.  Same billing as v6; alpha re-priced on the H-20 map's own
+    # marginal rate at the solver's operating point.  ⚠️ At the CORRECTED
+    # 14.6440 W operating point it solves to alpha 0.142475472567, which sits
+    # 6.7 % above the corrected walked admission window [0.0882, 0.1335], so it
+    # DOES NOT CERTIFY and hil_plant_sim refuses to bind it to a frontier leg
+    # (D-9, 2026-09-09).  Kept as the record; campaign II's `ems-sdp-alpha-*`
+    # legs measure H-20-era levers on the board and settle it.  v6 stays
+    # regenerable under `--h2-map eta-proxy`.
     C:/Users/ricky/miniforge3/python.exe tools/sdp_ems_solver.py \
         --eta-chg measured --alpha-mode lever-h20 \
         --out tools/sdp_policies/sdp_policy_v7.json --force

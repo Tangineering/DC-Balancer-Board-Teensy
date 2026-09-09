@@ -8898,14 +8898,14 @@ def test_demonstration_banner_prefers_the_runs_recorded_strategy():
     # shipped, so it is no longer the right name for this half of the test.
     # RE-PINNED 2026-09-03: `sdp-v4` was demoted in turn by the
     # measured-round-trip ruling, so the eligible artifact was then `sdp-v6`.
-    # RE-PINNED 2026-09-09: `sdp-v6` was demoted in turn by the H-20
-    # re-derivation (sdp_ems_solver D16) - its alpha is a ratio against a
-    # CONSTANT marginal hydrogen rate while the stage cost is the H-20 convex
-    # map - so the eligible artifact is now `sdp-v7`.
-    assert rhs.ems_demonstration_banner("ems-sdp-cross", "sdp-v7") is None
-    # And the demoted v6 now DOES carry a banner, naming its comparability role.
-    demoted_v6 = rhs.ems_demonstration_banner("ems-sdp-cross", "sdp-v6")
-    assert demoted_v6 and "sdp-v6" in demoted_v6
+    # RE-PINNED 2026-09-09: `sdp-v6` was demoted by the H-20 re-derivation
+    # (sdp_ems_solver D16) and RE-INSTATED the same day (D-9), because the
+    # re-solve at the corrected 14.6440 W operating point does not certify.
+    # The eligible artifact is `sdp-v6` again.
+    assert rhs.ems_demonstration_banner("ems-sdp-cross", "sdp-v6") is None
+    # And the uncertified v7 DOES carry a banner, naming its record role.
+    demoted_v7 = rhs.ems_demonstration_banner("ems-sdp-cross", "sdp-v7")
+    assert demoted_v7 and "sdp-v7" in demoted_v7
     # And the demoted v4 now DOES carry a banner, naming its comparability role.
     demoted = rhs.ems_demonstration_banner("ems-sdp-cross", "sdp-v4")
     assert demoted and "COMPARABILITY" in demoted
@@ -13011,6 +13011,50 @@ def test_the_single_source_leg_declares_a_15_ms_solve_budget():
 def _joint_by():
     return {x["name"]: x for x in
             rhs.FAULT_EXPECTATIONS["fw26-clamp-joint"]["signals_require"]}
+
+
+def test_joint_transient_and_settled_windows_are_disjoint(tmp_path):
+    """D-8 (lens-2 HIGH): the structural re-key must not be INERT.
+
+    `joint_peak_held_down` used to open at `_JOINT_STEP_T`, so its window
+    ENCLOSED `joint_transient_peak`'s and the tighter 1.3237 A acceptance
+    governed the transient as well - a G-like 1.3243 A reading would have
+    failed the pair even though the transient bound admits it. Two halves,
+    because either alone is passable by a mistake: the windows are disjoint,
+    AND a synthetic 1.3243 A sample inside the transient window passes the pair
+    when the settled span is clean."""
+    tr = _joint_by()["joint_transient_peak"]
+    held = _joint_by()["joint_peak_held_down"]
+    t0, t1 = tr["t_window"]
+    h0, h1 = held["t_window"]
+    assert t1 == pytest.approx(rhs._JOINT_STEP_T + rhs._JOINT_STEP_WIN_S)
+    assert h0 == pytest.approx(t1), "the settled window must open where the " \
+                                    "transient one closes"
+    assert h0 >= t1 and h1 > h0
+    # ... and the bound that governs the transient is the LOOSER one, which is
+    # the whole point of the re-key.
+    assert held["max_value"] < tr["max_value"]
+
+    # THE MUTATION-CATCHING HALF. A campaign-G-like transient peak with a clean
+    # settled span passes both checks; the same sample would have failed the
+    # settled check under the enclosing window.
+    g_peak = 1.3243
+    assert held["max_value"] < g_peak < tr["max_value"]
+    rows = []
+    t = t0
+    while t < h1:
+        # 1.3243 A only inside the transient window; 1.2500 A (the measured
+        # settled point) everywhere after it.
+        i_fc = g_peak if t < t1 else 1.2500
+        rows.append({"t": "%.3f" % t, "fault_flags": "0", "state": "2",
+                     "I_fc": "%.4f" % i_fc})
+        t += 0.05
+    path = tmp_path / "joint.csv"
+    _write_scenario_csv(path, rows)
+    specs = [dict(tr), dict(held)]
+    checks = rhs.judge_signals(specs, rhs.scan_signals(str(path), specs,
+                                                       grace_s=0.0), "why")
+    assert [c["passed"] for c in checks] == [True, True], checks
 
 
 def test_fw26_joint_walk_regenerates_the_figures_the_entry_is_cut_from():

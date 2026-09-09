@@ -4596,11 +4596,17 @@ def test_the_armed_hold_is_unreachable_because_the_release_preview_leads_it():
         0.2500 A - while the shadow governor's OWN filtered total, the quantity
         the firmware releases on, sits at 0.0908 A. A factor 3.1.
 
-    So the residual is a PREVIEW-versus-PLANT disagreement about the source
-    total during a cut, not a hold the table refuses to carry. It cannot be
-    closed inside `delivery_table()` without substituting a plant number for a
-    demand forecast, and it belongs with the walk-fidelity item (WORK_QUEUE
-    0f-15) that owns the same class of gap on the low-rail legs.
+    So the residual is a RELEASE-PREVIEW defect, not a hold the table refuses
+    to carry, and not the walk-fidelity class (WORK_QUEUE 0f-15).
+    RE-DIAGNOSED 2026-09-09 (D-8, lens-2): the filtered seed is nearly inert at
+    stage 0 - the EMA runs 50 ticks per sub-sample, so the seed decays to
+    (1 - 0.05)^50 = 0.0769 of itself before the crossing is tested and the
+    0.0908 A shadow total contributes ~7 mA of it. What crosses the gate is the
+    PREVIEW's own forecast total, so the gap is inside the single-source demand
+    preview (`pre_bt_release` / `pre_fc_release`), which forecasts a
+    two-source-class total for a cut channel. That IS closable inside
+    `delivery_table()`, with no plant number substituted for a forecast
+    (WORK_QUEUE 0f-2, open).
 
     This fixture pins the RELEASE half, which is the load-bearing half: a
     preview whose stage-0 total is over the gate releases immediately even with

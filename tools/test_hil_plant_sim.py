@@ -5671,32 +5671,24 @@ def test_main_non_dp_run_has_no_dp_table_block_in_meta_config(tmp_path):
     assert "dp_table" not in meta["config"]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="D-7 (2026-09-09) - THE SHIPPED sdp_policy_v7 DOES NOT CERTIFY, AND "
-           "THAT BLOCKS AN ems-sdp RUN. The artifact is re-solved at "
-           "`--alpha-mode lever-h20` (D16: the lever algebra's marginal rate "
-           "taken from the H-20 map at the corrected 14.6440 W operating point, "
-           "lens-1 finding F1), giving alpha 0.142475472567. Independently, "
-           "lens-1 finding F2 corrected the substituted `ems-sdp-alpha-cal` walk "
-           "leg, which RAISES the walked share lever 0.4223 -> 0.5672 and "
-           "therefore LOWERS the walked admission window to [0.0882, 0.1335]. "
-           "The two corrections move the alpha and its window APART: the shipped "
-           "alpha now sits 6.7 %% above the window's top, so "
-           "`alpha.admission.in_window_measured` is False and hil_plant_sim "
-           "REFUSES to bind `sdp-v7` to its EMS-frontier role. THE REFUSAL IS "
-           "CORRECT and is not worked around here. The two available artifacts "
-           "are BOTH defective and the choice is an OPERATOR RULING: "
-           "`--alpha-mode lever-h20` prices alpha in the right unit but fails "
-           "this certificate, while `--alpha-mode lever-measured` certifies "
-           "(alpha 0.134110280093, both windows IN, 46 charge cells) by pricing "
-           "alpha on the five eta-era BOARD readings, which are GFC-GRAM levers "
-           "and therefore the very unit error D16 exists to remove. Campaign "
-           "II's three `ems-sdp-alpha-*` legs measure H-20-era levers on the "
-           "board and settle it. Until then no ems-sdp campaign can run. To "
-           "take the certifying option: python tools/sdp_ems_solver.py "
-           "--alpha-mode lever-measured --eta-chg measured --out "
-           "tools/sdp_policies/sdp_policy_v7.json --force")
+# D-9 (2026-09-09) - THIS TEST RUNS AGAIN, AND THE REASON IT WAS AN XFAIL IS
+# THE REASON `ems-sdp` IS BACK ON `sdp-v6`.  D-7 re-solved the shipped
+# `sdp_policy_v7` at `--alpha-mode lever-h20` (D16: the lever algebra's
+# marginal rate taken from the H-20 map at the corrected 14.6440 W operating
+# point, lens-1 F1), giving alpha 0.142475472567, while lens-1 F2's correction
+# of the substituted `ems-sdp-alpha-cal` walk leg RAISED the walked share lever
+# 0.4223 -> 0.5672 and so LOWERED the walked admission window to
+# [0.0882, 0.1335].  The alpha sits 6.7 % above that window's top,
+# `alpha.admission.in_window_measured` is False, and hil_plant_sim REFUSES to
+# bind `sdp-v7` to its EMS-frontier role - which blocked every `ems-sdp` run,
+# this test included.  THE REFUSAL IS CORRECT and is still not worked around:
+# the frontier legs point back at `sdp_policy_v6`, the only certified artifact
+# (alpha 0.134110280093, both windows IN, 0 charge cells), and v7 stays in the
+# tree as the record of the H-20 re-solve and of its certificate failure.  The
+# open question is which artifact is the calibration, not whether a campaign
+# can run: campaign II's three `ems-sdp-alpha-*` legs measure H-20-era levers
+# on the board and settle it.  The state asserted here is pinned by
+# test_d9_frontier_sdp_is_v6_and_v7_is_the_uncertified_record().
 def test_main_ems_sdp_run_has_no_dp_table_block_but_has_sdp_policy(tmp_path):
     """The two provenance blocks are keyed by STRATEGY TYPE, not by "any EMS
     ran" -- an sdp-v2 run must not grow a dp_table block, and a dp-replay run
@@ -5729,32 +5721,24 @@ def test_ems_sdp_v2_is_a_valid_ems_name():
 
 # ── cmd_share_sp_raw column: value formatting and blank-on-non-SDP ─────────
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="D-7 (2026-09-09) - THE SHIPPED sdp_policy_v7 DOES NOT CERTIFY, AND "
-           "THAT BLOCKS AN ems-sdp RUN. The artifact is re-solved at "
-           "`--alpha-mode lever-h20` (D16: the lever algebra's marginal rate "
-           "taken from the H-20 map at the corrected 14.6440 W operating point, "
-           "lens-1 finding F1), giving alpha 0.142475472567. Independently, "
-           "lens-1 finding F2 corrected the substituted `ems-sdp-alpha-cal` walk "
-           "leg, which RAISES the walked share lever 0.4223 -> 0.5672 and "
-           "therefore LOWERS the walked admission window to [0.0882, 0.1335]. "
-           "The two corrections move the alpha and its window APART: the shipped "
-           "alpha now sits 6.7 %% above the window's top, so "
-           "`alpha.admission.in_window_measured` is False and hil_plant_sim "
-           "REFUSES to bind `sdp-v7` to its EMS-frontier role. THE REFUSAL IS "
-           "CORRECT and is not worked around here. The two available artifacts "
-           "are BOTH defective and the choice is an OPERATOR RULING: "
-           "`--alpha-mode lever-h20` prices alpha in the right unit but fails "
-           "this certificate, while `--alpha-mode lever-measured` certifies "
-           "(alpha 0.134110280093, both windows IN, 46 charge cells) by pricing "
-           "alpha on the five eta-era BOARD readings, which are GFC-GRAM levers "
-           "and therefore the very unit error D16 exists to remove. Campaign "
-           "II's three `ems-sdp-alpha-*` legs measure H-20-era levers on the "
-           "board and settle it. Until then no ems-sdp campaign can run. To "
-           "take the certifying option: python tools/sdp_ems_solver.py "
-           "--alpha-mode lever-measured --eta-chg measured --out "
-           "tools/sdp_policies/sdp_policy_v7.json --force")
+# D-9 (2026-09-09) - THIS TEST RUNS AGAIN, AND THE REASON IT WAS AN XFAIL IS
+# THE REASON `ems-sdp` IS BACK ON `sdp-v6`.  D-7 re-solved the shipped
+# `sdp_policy_v7` at `--alpha-mode lever-h20` (D16: the lever algebra's
+# marginal rate taken from the H-20 map at the corrected 14.6440 W operating
+# point, lens-1 F1), giving alpha 0.142475472567, while lens-1 F2's correction
+# of the substituted `ems-sdp-alpha-cal` walk leg RAISED the walked share lever
+# 0.4223 -> 0.5672 and so LOWERED the walked admission window to
+# [0.0882, 0.1335].  The alpha sits 6.7 % above that window's top,
+# `alpha.admission.in_window_measured` is False, and hil_plant_sim REFUSES to
+# bind `sdp-v7` to its EMS-frontier role - which blocked every `ems-sdp` run,
+# this test included.  THE REFUSAL IS CORRECT and is still not worked around:
+# the frontier legs point back at `sdp_policy_v6`, the only certified artifact
+# (alpha 0.134110280093, both windows IN, 0 charge cells), and v7 stays in the
+# tree as the record of the H-20 re-solve and of its certificate failure.  The
+# open question is which artifact is the calibration, not whether a campaign
+# can run: campaign II's three `ems-sdp-alpha-*` legs measure H-20-era levers
+# on the board and settle it.  The state asserted here is pinned by
+# test_d9_frontier_sdp_is_v6_and_v7_is_the_uncertified_record().
 def test_cmd_share_sp_raw_is_4dp_on_an_sdp_run(tmp_path):
     header, rows = _run_main_csv(
         tmp_path, ["--scenario", "ems-sdp", "--electrical", "simple", "--duration", "0.05"])
@@ -6916,32 +6900,24 @@ def test_shipped_sdp_policy_carries_a_demand_map_source():
 
 # ── meta sidecar config.sdp_policy block (round 2, item 2) ─────────────────
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="D-7 (2026-09-09) - THE SHIPPED sdp_policy_v7 DOES NOT CERTIFY, AND "
-           "THAT BLOCKS AN ems-sdp RUN. The artifact is re-solved at "
-           "`--alpha-mode lever-h20` (D16: the lever algebra's marginal rate "
-           "taken from the H-20 map at the corrected 14.6440 W operating point, "
-           "lens-1 finding F1), giving alpha 0.142475472567. Independently, "
-           "lens-1 finding F2 corrected the substituted `ems-sdp-alpha-cal` walk "
-           "leg, which RAISES the walked share lever 0.4223 -> 0.5672 and "
-           "therefore LOWERS the walked admission window to [0.0882, 0.1335]. "
-           "The two corrections move the alpha and its window APART: the shipped "
-           "alpha now sits 6.7 %% above the window's top, so "
-           "`alpha.admission.in_window_measured` is False and hil_plant_sim "
-           "REFUSES to bind `sdp-v7` to its EMS-frontier role. THE REFUSAL IS "
-           "CORRECT and is not worked around here. The two available artifacts "
-           "are BOTH defective and the choice is an OPERATOR RULING: "
-           "`--alpha-mode lever-h20` prices alpha in the right unit but fails "
-           "this certificate, while `--alpha-mode lever-measured` certifies "
-           "(alpha 0.134110280093, both windows IN, 46 charge cells) by pricing "
-           "alpha on the five eta-era BOARD readings, which are GFC-GRAM levers "
-           "and therefore the very unit error D16 exists to remove. Campaign "
-           "II's three `ems-sdp-alpha-*` legs measure H-20-era levers on the "
-           "board and settle it. Until then no ems-sdp campaign can run. To "
-           "take the certifying option: python tools/sdp_ems_solver.py "
-           "--alpha-mode lever-measured --eta-chg measured --out "
-           "tools/sdp_policies/sdp_policy_v7.json --force")
+# D-9 (2026-09-09) - THIS TEST RUNS AGAIN, AND THE REASON IT WAS AN XFAIL IS
+# THE REASON `ems-sdp` IS BACK ON `sdp-v6`.  D-7 re-solved the shipped
+# `sdp_policy_v7` at `--alpha-mode lever-h20` (D16: the lever algebra's
+# marginal rate taken from the H-20 map at the corrected 14.6440 W operating
+# point, lens-1 F1), giving alpha 0.142475472567, while lens-1 F2's correction
+# of the substituted `ems-sdp-alpha-cal` walk leg RAISED the walked share lever
+# 0.4223 -> 0.5672 and so LOWERED the walked admission window to
+# [0.0882, 0.1335].  The alpha sits 6.7 % above that window's top,
+# `alpha.admission.in_window_measured` is False, and hil_plant_sim REFUSES to
+# bind `sdp-v7` to its EMS-frontier role - which blocked every `ems-sdp` run,
+# this test included.  THE REFUSAL IS CORRECT and is still not worked around:
+# the frontier legs point back at `sdp_policy_v6`, the only certified artifact
+# (alpha 0.134110280093, both windows IN, 0 charge cells), and v7 stays in the
+# tree as the record of the H-20 re-solve and of its certificate failure.  The
+# open question is which artifact is the calibration, not whether a campaign
+# can run: campaign II's three `ems-sdp-alpha-*` legs measure H-20-era levers
+# on the board and settle it.  The state asserted here is pinned by
+# test_d9_frontier_sdp_is_v6_and_v7_is_the_uncertified_record().
 def test_main_ems_sdp_run_records_sdp_policy_block_in_meta_config(tmp_path):
     """End-to-end (real shipped policy, real main()): the .meta.json sidecar's
     config.sdp_policy block must be present for an sdp-v1 run and must carry
@@ -6962,24 +6938,24 @@ def test_main_ems_sdp_run_records_sdp_policy_block_in_meta_config(tmp_path):
     # rebound to v4 on 2026-09-02, then to the MEASURED-ROUND-TRIP v6 on
     # 2026-09-03; the sidecar must name THAT file, not the frozen v2
     # demonstration artifact, not the old-era v3 and not the demoted v4.
-    # RE-PIN 2026-09-09: the scenario is bound to  (the H-20
-    # re-derivation, sdp_ems_solver D16).
+    # RE-PIN 2026-09-09 (D-7): the scenario was bound to `sdp-v7`, the H-20
+    # re-derivation (sdp_ems_solver D16).  REVERTED the same day (D-9): v7
+    # does not certify at the corrected 14.6440 W operating point, so the leg
+    # is back on the certified `sdp-v6` and so is every pin below.
     assert block["path"] == os.path.join(hil.SDP_POLICY_DIR,
-                                         hil.SDP_POLICY_FILE_V7)
+                                         hil.SDP_POLICY_FILE_V6)
     assert len(block["file_sha256"]) == 64
     assert len(block["policy_sha256"]) == 64
     assert block["n_soc"] > 0 and block["n_bins"] > 0
     assert block["decision_dt_s"] == pytest.approx(1.0)
     # WP-1B2b: the artifact's own ECONOMICS and ERA, recorded so a report
     # reader can compare two SDP legs without opening either artifact.
-    # RE-PIN 2026-09-09: alpha 0.134110280093 -> 0.134041467771 (-0.05 %) and
-    # the mode lever-measured -> lever-h20, the H-20 re-derivation
-    # (sdp_ems_solver D16). The placement rule and the billing are both
-    # unchanged; what moved is the marginal hydrogen rate the lever algebra
-    # is a ratio against, from the constant 1/(ETA_FC*Q_LHV) to the H-20
-    # map own rate at the rig measured 13.3654 W operating point.
-    assert block["alpha"] == pytest.approx(0.1340414677709026)
-    assert block["alpha_mode"] == "lever-h20"
+    # RE-PIN 2026-09-09 (D-9): back to v6's alpha 0.134110280093 and mode
+    # `lever-measured`. D-7 had pinned 0.134041467771 / `lever-h20`; that
+    # artifact was re-solved at the corrected operating point to
+    # 0.142475472567 and does not certify, so it does not drive this leg.
+    assert block["alpha"] == pytest.approx(0.13411028009327516)
+    assert block["alpha_mode"] == "lever-measured"
     # THE ERA DIFFERENCE IS DECLARED, not accidental (2026-09-03): the
     # artifact bills the MEASURED end-to-end round trip and says so in
     # `eta_chg_basis`, so `era_match` is False BY DESIGN and the sidecar
@@ -6988,17 +6964,16 @@ def test_main_ems_sdp_run_records_sdp_policy_block_in_meta_config(tmp_path):
     assert block["eta_chg"] != pytest.approx(hil.plant_eta_chg())
     assert block["era_match"] is False
     assert block["eta_chg_basis"] == hil.SDP_ETA_CHG_BASIS_MEASURED
-    # RE-PIN 2026-09-09: 0 -> 46. The H-20 stage cost admits charging in 46 of
-    # 2525 cells, ALL in demand bin 0 (0.5 W of bus traction) at SoC rows
-    # 0.554-0.599. That is CONVEXITY and not a mispriced alpha: at 0.5 W of
-    # traction the stack sits at 0.6 W and 8 % LHV efficiency, and the
-    # charger own 7.389 W bus draw lifts it to 9.28 W and 40 %, so the charge
-    # action buys SoC at a better AVERAGE price than the lever algebra single
-    # point marginal comparison can express. Bin 0 carries 0.035 % of the TPM
-    # observed dwell and no offline walk opens a charge window under it. See
-    # docs/modeling/sdp_alpha_resolve_h20_20260909.md section 4.3.
-    assert block["charge_cells"] == 46
-    assert block["policy_file"] == hil.SDP_POLICY_FILE_V7
+    # RE-PIN 2026-09-09 (D-9): back to 0 charge cells, v6's census. D-7 had
+    # pinned 46 (the H-20 stage cost's convexity admitting charge in demand
+    # bin 0); the re-solve at the corrected operating point raises that to 140
+    # cells over bins {0, 1, 2}, and the artifact does not certify. The
+    # convexity finding stands as a finding - it is recorded at
+    # SDP_POLICY_FILE_V7 and in
+    # docs/modeling/sdp_alpha_resolve_h20_20260909.md section 4.3 - but it is
+    # not what this leg plays.
+    assert block["charge_cells"] == 0
+    assert block["policy_file"] == hil.SDP_POLICY_FILE_V6
     # No scenario override on this leg -- `sdp_policy_file` is refused on a
     # frontier-eligible strategy at import.
     assert block["policy_file_source"] is None
@@ -7668,13 +7643,14 @@ def test_frontier_roles_are_the_ruled_ones():
     eligible = {n for n in hil.EMS_STRATEGIES if hil.ems_frontier_eligible(n)}
     # `mpc-sto` replaced `mpc-det` here 2026-09-02 (operator ruling): the
     # stochastic law is THE MPC and `mpc-det` is its ablation.
-    # RE-PIN 2026-09-09: `sdp-v7` replaced `sdp-v6` on the frontier (the H-20
-    # re-derivation, sdp_ems_solver D16 - v6's alpha is a ratio against a
-    # CONSTANT marginal hydrogen rate while the stage cost is the H-20 convex
-    # map). v6 joins the comparability set below, which is why it is added to
-    # the demoted loop: a demoted role must still SAY WHICH KIND it is.
-    assert eligible == {"soc-band", "dp-replay", "sdp-v7", "mpc-sto"}
-    for demoted in ("sdp-v2", "sdp-v3", "sdp-v6", "sdp-sweep"):
+    # RE-PIN 2026-09-09 (D-7, then D-9 the same day): `sdp-v7` replaced
+    # `sdp-v6` on the frontier and was REVERTED, because the H-20
+    # re-derivation does not certify at the corrected 14.6440 W operating
+    # point. v6 carries the frontier again as the only certified artifact, and
+    # v7 joins the comparability set below with a role note that records its
+    # certificate failure.
+    assert eligible == {"soc-band", "dp-replay", "sdp-v6", "mpc-sto"}
+    for demoted in ("sdp-v2", "sdp-v3", "sdp-v7", "sdp-sweep"):
         assert hil.ems_frontier_eligible(demoted) is False, demoted
         # A non-frontier role must SAY WHICH KIND it is -- the three are
         # different claims and a reader who cannot tell them apart mis-reads
@@ -7703,20 +7679,23 @@ def test_sdp_instances_bind_their_own_artifacts_and_certificate_flags():
     # The frontier-scored leg demands the certificate; every demonstration or
     # comparability leg must not claim it (the import assert ties the flag to
     # `frontier_eligible`, and this is the same property re-derived).
-    # RE-PIN 2026-09-09: `sdp-v7` is the frontier leg, so it is the one that
-    # demands the certificate; v6 joins the demoted list below and drops the
-    # flag with its eligibility.  v6 still PASSES the certificate - what it
-    # lost is the frontier binding, not its calibration.
-    assert v7.require_calibrated_benchmark is True
+    # RE-PIN 2026-09-09 (D-9, reverting D-7): `sdp-v6` is the frontier leg
+    # again, so it is the one that demands the certificate; `sdp-v7` joins the
+    # demoted list below and drops the flag with its eligibility.  Unlike
+    # every other demoted leg, v7 is demoted BECAUSE it fails the certificate,
+    # so dropping the flag is also what keeps it loadable as a record.
+    assert v6.require_calibrated_benchmark is True
     # `sdp-v5` (2026-09-03) is in this list on PURPOSE: the measured-lever
     # artifact FAILS two certificate clauses, so demanding the certificate of
     # it would make the strategy unloadable rather than merely unranked.
     # `sdp-v4` JOINED IT 2026-09-03 (afternoon) for `sdp-v3`'s reason: it is a
     # demoted comparability leg, and the certificate is the frontier's
     # admission ticket, not a quality mark a retained artifact keeps claiming.
-    # `sdp-v6` JOINED IT 2026-09-09, for `sdp-v4`'s reason one round on: the
-    # H-20 re-derivation demoted it to a comparability leg.
-    for demoted in (v2, v3, v4, v5, v6, sweep):
+    # `sdp-v7` JOINED IT 2026-09-09 (D-9) for `sdp-v5`'s reason rather than
+    # `sdp-v4`'s: the H-20 re-solve FAILS the certificate at the corrected
+    # operating point, so demanding it would make the artifact unloadable
+    # instead of merely unranked, and the record would be lost.
+    for demoted in (v2, v3, v4, v5, v7, sweep):
         assert demoted.require_calibrated_benchmark is False, demoted.name
     assert hil.SDP_STRATEGY_NAMES == frozenset({"sdp-v2", "sdp-v3", "sdp-v4",
                                                 "sdp-v5", "sdp-v6", "sdp-v7",
@@ -8048,6 +8027,34 @@ def test_certificate_refusal_names_the_eta_era_regeneration_recipe():
     assert "--alpha-mode lever-measured --eta-chg measured" in str(exc.value)
 
 
+# -- D-9: the frontier reverts to sdp_policy_v6, v7 stays as the record ------
+
+def test_d9_frontier_sdp_is_v6_and_v7_is_the_uncertified_record():
+    """The D-9 state, pinned so a silent re-rebind cannot happen.
+
+    `sdp_policy_v7` was re-solved at the corrected 14.6440 W operating point
+    and its alpha 0.142475472567 sits 6.7 % ABOVE the corrected walked
+    admission window [0.0882, 0.1335]; it therefore does not certify, and an
+    uncertified artifact must not carry a frontier-scored leg.  So the three
+    frontier-scored SDP scenarios bind `sdp-v6` (which certifies), `sdp-v7`
+    stays REGISTERED and frontier-INELIGIBLE as the record of the H-20
+    re-solve, and -- the part that has teeth -- v6 DEMANDS the certificate
+    while v7 does not, because the registry asserts `frontier_eligible` and
+    `require_calibrated_benchmark` agree."""
+    for scen in ("ems-sdp", "ems-ftp75-sdp", "ems-ftp75c-sdp"):
+        assert hil.SCENARIOS[scen]["ems"] == "sdp-v6", scen
+    assert hil.ems_frontier_eligible("sdp-v6") is True
+    assert hil.ems_frontier_eligible("sdp-v7") is False
+    assert hil.EMS_STRATEGIES["sdp-v6"].require_calibrated_benchmark is True
+    assert hil.EMS_STRATEGIES["sdp-v7"].require_calibrated_benchmark is False
+    # v7 is KEPT, not deleted: the artifact and its role note are the record.
+    assert hil.EMS_STRATEGY_META["sdp-v7"]["policy_file"] == \
+        hil.SDP_POLICY_FILE_V7
+    assert "CERTIFICATE FAILURE" in hil.EMS_STRATEGY_META["sdp-v7"]["role_note"]
+    # And the certified artifact really does load THROUGH the certificate.
+    assert hil.EMS_STRATEGIES["sdp-v6"].load() is not None
+
+
 # -- The 2026-09-03 measured-round-trip re-solve, sdp_policy_v6.json ---------
 
 def test_sdp_v4_v6_share_maps_agree_on_traversed_rows():
@@ -8122,44 +8129,48 @@ def test_sdp_v5_v6_differ_exactly_where_the_ruling_says():
     assert len(chg_rows) == 47 and chg_rows[0] == 3 and chg_rows[-1] == 49
 
 
-def test_sdp_v7_is_the_frontier_leg_and_v6_is_demoted():
+def test_sdp_v6_is_the_frontier_leg_and_v7_is_demoted():
     """The role swap, pinned in both directions because both halves are silent
-    failure modes: a False on v6 would take the calibrated benchmark off the
-    frontier, and a True left on v4 would rank two SDP legs against each
-    other."""
-    # RE-PIN 2026-09-09: the H-20 re-derivation (sdp_ems_solver D16) demoted
-    # v6 in turn. The MECHANISM is not a defect in v6: every lever in its
-    # derivation is a ratio against the CONSTANT marginal hydrogen rate
-    # 1/(ETA_FC*Q_LHV), and the stage cost has been the H-20 CONVEX map since
-    # 2026-09-08. v7 is the same two-sided placement re-priced on the map's
-    # own marginal rate at the rig's measured 13.3654 W operating point.
+    failure modes: a False on the frontier artifact would take the calibrated
+    benchmark off the frontier, and a True left on a demoted one would rank two
+    SDP legs against each other."""
+    # RE-PIN 2026-09-09 (D-7, reverted by D-9 the same day): the H-20
+    # re-derivation (sdp_ems_solver D16) took the frontier from v6 and gave it
+    # back. v7 is the same two-sided placement re-priced on the H-20 map's own
+    # marginal rate, but at the CORRECTED 14.6440 W operating point its alpha
+    # 0.142475472567 sits 6.7 % above the corrected walked admission window
+    # [0.0882, 0.1335], so it does not certify and cannot carry a
+    # frontier-scored leg. v6's known weakness - its levers are ratios against
+    # a CONSTANT marginal rate while the stage cost is convex - is an era
+    # caveat to report, not a certificate failure.
     assert "sdp-v7" in hil.EMS_STRATEGIES
     assert hil.EMS_STRATEGY_META["sdp-v7"]["policy_file"] \
         == hil.SDP_POLICY_FILE_V7
-    assert hil.EMS_STRATEGY_META["sdp-v7"]["frontier_eligible"] is True
-    assert hil.EMS_STRATEGY_META["sdp-v6"]["frontier_eligible"] is False
-    assert "COMPARABILITY" in \
-        hil.EMS_STRATEGY_META["sdp-v6"]["role_note"].upper()
+    assert hil.EMS_STRATEGY_META["sdp-v7"]["frontier_eligible"] is False
+    assert "CERTIFICATE FAILURE" in \
+        hil.EMS_STRATEGY_META["sdp-v7"]["role_note"].upper()
+    assert hil.EMS_STRATEGY_META["sdp-v6"]["frontier_eligible"] is True
     assert hil.EMS_STRATEGY_META["sdp-v4"]["frontier_eligible"] is False
     assert "COMPARABILITY" in hil.EMS_STRATEGY_META["sdp-v4"]["role_note"]
     assert hil.EMS_STRATEGY_META["sdp-v5"]["frontier_eligible"] is False
     # Exactly ONE frontier-eligible SDP name; more than one is a ranking bug.
     frontier = [n for n, m in hil.EMS_STRATEGY_META.items()
                 if n.startswith("sdp-") and m["frontier_eligible"]]
-    assert frontier == ["sdp-v7"], frontier
+    assert frontier == ["sdp-v6"], frontier
 
 
-def test_the_sdp_legs_are_bound_to_v7():
+def test_the_sdp_legs_are_bound_to_v6():
     """The three frontier-scored SDP legs move together or not at all.  The
     two `sdp-v2` legs deliberately do NOT move: they exist to actuate a CHARGE
     threshold and v6, like v4, has no charge cell to command."""
     for name in ("ems-sdp", "ems-ftp75-sdp", "ems-ftp75c-sdp"):
-        # RE-PIN 2026-09-09: v6 -> v7, the H-20 re-derivation. Unlike every
-        # previous SDP rebind this one does NOT transfer the walk-derived
-        # expectations: v7 solves a different objective and `ems-sdp`'s walk
-        # moves -34.6 % in raw hydrogen. See
+        # RE-PIN 2026-09-09: v6 -> v7 (D-7, the H-20 re-derivation) and back
+        # to v6 the same day (D-9), because v7 does not certify. The v6-era
+        # walk-derived expectations therefore stand unchanged; had v7 held the
+        # binding they would NOT have transferred (`ems-sdp`'s walk moves
+        # -34.6 % in raw hydrogen under it). See
         # docs/modeling/sdp_alpha_resolve_h20_20260909.md section 6.
-        assert hil.SCENARIOS[name]["ems"] == "sdp-v7", name
+        assert hil.SCENARIOS[name]["ems"] == "sdp-v6", name
     for name in ("ems-sdp-cross", "ems-sdp-braking"):
         assert hil.SCENARIOS[name]["ems"] == "sdp-v2", name
     # And every alpha-sweep leg still plays its scenario-supplied artifact.
@@ -8615,7 +8626,8 @@ def test_ems_ftp75_sdp_registry_shape():
     # three: v2/v3 differ only on SoC rows 1-2, v3/v4 only on rows 2-5 and
     # v4/v6 only on rows 4-5, while this scenario spans rows ~44-63 (see the
     # row-diff tests below).
-    assert meta["ems"] == "sdp-v7"
+    # D-9: v7 held this for part of 2026-09-09 and does not certify.
+    assert meta["ems"] == "sdp-v6"
     assert meta["sdp_soc_ref_offset"] == pytest.approx(0.013)
     assert hil.FTP75_SDP_SOC_REF_OFFSET == pytest.approx(0.013)
     # SHARED STIMULUS: the same profile LIST OBJECT as the other two FTP-75
@@ -8865,7 +8877,7 @@ def test_sdp_interior_scenarios_are_sdp_driven_and_ems_gated():
         assert meta["ems"] in hil.SDP_STRATEGY_NAMES
         assert meta["electrical"] == "any"
         assert "pi_timeline" not in meta
-    assert hil.SCENARIOS["ems-ftp75-sdp"]["ems"] == "sdp-v7"
+    assert hil.SCENARIOS["ems-ftp75-sdp"]["ems"] == "sdp-v6"
     assert hil.SCENARIOS["ems-sdp-cross"]["ems"] == "sdp-v2"
     assert hil.SCENARIOS["ems-sdp-braking"]["ems"] == "sdp-v2"
 
@@ -9027,7 +9039,8 @@ def test_ems_sdp_scenario_shares_ems_soc_band_stimulus_by_reference():
     assert sdp["chg_i_ceiling_a"] == pytest.approx(soc_band["chg_i_ceiling_a"])
     # THE BENCHMARK LEG -> the CALIBRATED artifact for the CURRENT charger
     # (rebound v3 -> v4 2026-09-02, v4 -> v6 2026-09-03).
-    assert sdp["ems"] == "sdp-v7"
+    # D-9: reverted from , which does not certify.
+    assert sdp["ems"] == "sdp-v6"
     assert sdp["electrical"] == "any"
 
 
