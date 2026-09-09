@@ -2031,3 +2031,14 @@ with reversal paths, the primary worktree's branch is the operator's - commit fr
   +43 ppm, codes byte-identical, board -3.2 % vs the walk (calibration). ems-dp-replay's FAIL is a stale floor:
   the H-20 table commands a 0.625 drain rail (board tracks it to 1.4e-4) and now opens a 2.5 s charge window;
   four suite items queued. 24 runs analyzed, zero board defects, F1's gate scored clean on every window so far.
+- **Campaign II second headline (28 of 75, ~13:05): THE MPC's PLAN INVERTED POLARITY UNDER H-20.** ems-ftp75-mpc:
+  the modal command moved from 0.15 (campaign I: 149 246 ticks) to 0.85 (112 964; nothing above 0.50 in campaign I,
+  nothing below 0.325 now), FC coulombs 54.3 -> 100.9 C (+86 %), pack drain -0.0128 -> -0.0065 SoC; the same two
+  stops (125.10 / 332.19 s, to ~15 ms) re-arm FUEL-CELL-ONLY on the 0.85 rung where campaign I re-armed battery-
+  only on 0.15. The prediction FAIL is the pre-classified HOLD gap, now on FC-selected arms (largest unarmed
+  error 0.299 under the 0.30 bound). Cause not separable from the board: the terminal price 2.140 g/SoC vs the
+  convex stage cost with A0 at 47.5 % of the window's hydrogen (an offline A/B decides it - operator item). The
+  MPC's terminal price is re-based at 14.644 W while this leg's Run-median stack power is 4.54 W (the FTP-75
+  legs run at 3.4-4.5 W; ems-sdp at 14.6 W) - a per-leg reference is the design question. FTP-75 5050 / socband:
+  the first two FTP-75 bands calibrated (board 1.3-1.5 % under the corrected walk); the Gfc bridge exact / 277 ppm.
+  27 analyzed, zero board defects.
