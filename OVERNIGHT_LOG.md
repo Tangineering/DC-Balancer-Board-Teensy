@@ -1805,3 +1805,28 @@ with reversal paths, the primary worktree's branch is the operator's - commit fr
   phase-B item 5 and the campaign; reversal: the surrogate flag regenerates every archived walk. Agent E dispatched
   (governor_model / ems_walk / mpc_ems); agent D dispatched in parallel on the disjoint suite items 0f-4..8
   (run_hil_suite / hil_replay_suite; hydrogen bands excluded). Bands + HOLD state follow E (agent C').
+- **Agent E landed 849ff13 (~04:45, 34 min; not pushed).** `governor_model._youla_step()` = share_controller.h (three
+  DF2T biquads, trapezoidal integrator, back-calculation anti-windup on [0, 1], the 200 Hz prefilter) + the .ino
+  wrapper semantics (SHARE_CTRL_TS_US gate, the reseed integ = seed - R0), coefficients read from the generated
+  header; `closed_loop="controller"` default, surrogate kept. 27 harness cases max code delta 0; a 28th closed-
+  loop case matches the C++ cut duty (2652/3000) and first-cut tick (348). BOARD TARGETS: ftp75-dp 0 cuts MET;
+  ftp75-sdp 6871 falls vs 71; greedy 2661 falls / 43 s (~61 Hz) vs the board's ~0.8 Hz, delivered cycling
+  0.15-0.19 instead of parking at 0.174; the -0.024 standing error reproduced but it integrates to a cut. E reads
+  the board's codes pinned at 8148/4814 for 26 s with FC off 0.41 % of ticks as an effective reference near the
+  delivered share - a board question. ORCHESTRATOR'S READING (WORK_QUEUE 0f-15): the firmware RESEEDS the
+  controller on the re-close edge (the CLOSED->OPEN mode edge carries a reseed), so after each re-close the
+  integrator restarts near the delivered ratio and takes ~1 s to wind down again = the board's 0.8 Hz; a walk
+  whose delivered share responds within one tick and whose re-assertion bypasses the reseed cycles at the cut
+  rate. Re-walked (Run-window h20; old billing in brackets): greedy 0.0059219 [0.0030376], cal 0.0071107
+  [0.0124819], charge 0.0179672 [0.0146770], ems-sdp 0.0105412 [0.0124812], ftp75-sdp 0.0348439, dp-replay
+  0.0126317. The ems-sdp gap is NOT closed: +30 % -> -14.6 % vs the board's h20 0.012346 on an in-band rail -
+  the walk's fidelity on the flagship leg is off by more than any band's width. Re-pins with mechanism: joint-
+  clamp walk peak 1.3188 -> 1.2877 A; Gate-1 mpc-det 2.436e-3 -> 2.690e-3; SS grid 55 -> 97 ticks; transition-
+  roll bound 85 -> 100. Suites: ems_walk 76, equivalence 30, mpc_ems 175, plant 806.
+- **D-6 (~04:50): the hydrogen bands are NOT pinned on this walk tonight; CAMPAIGN II IS THE CALIBRATION SOURCE**
+  (the skill's first-campaign rule). Agent C' restates every hydrogen band on the corrected-loop h20 walk WITH a
+  provisional note naming the walk's known fidelity gaps (the 75x cut rate on low-rail legs, the -14.6 % ems-sdp
+  gap), so nothing stays silently on the retired axis; a FAIL on those bands in campaign II reads as calibration,
+  never widened; the morning round re-pins from the board. The MPC HOLD state, the frontier arithmetic on
+  lambda 0.423 and the three xfails proceed as planned. Reversal: the provisional notes are removed by the re-pin.
+  C' dispatches when agent D releases run_hil_suite.py.
