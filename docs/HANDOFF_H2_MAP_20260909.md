@@ -1,4 +1,8 @@
-# Handoff: H-20 convex hydrogen map (branch `h20-convex-h2-map`, merged to main 2026-09-09)
+# Handoff: H-20 convex hydrogen map (branch `h20-convex-h2-map`, ready 2026-09-09)
+
+**State of the branch:** it contains `main` at 3c15b57 (campaign I close-out) merged in, so from the
+`DC-Balancer-main` worktree `git merge --ff-only h20-convex-h2-map` fast-forwards main with no conflict.
+`main` could not be advanced from the H2 session because that worktree holds it checked out.
 
 For the overnight orchestration session. This document is the trigger and the checklist for
 the phase-B tooling round that must precede the next HIL campaign. Read it before launching any

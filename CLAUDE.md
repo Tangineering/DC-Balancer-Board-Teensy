@@ -918,7 +918,7 @@ separate worktree (`DC-Balancer-main`).
 
 ---
 
-## Status & session addendum (2026-09-09, H-20 convex hydrogen map - phase A merged; PHASE B REQUIRED BEFORE ANY CAMPAIGN)
+## Status & session addendum (2026-09-09, H-20 convex hydrogen map - phase A on branch `h20-convex-h2-map`, main fast-forwards to it; PHASE B REQUIRED BEFORE ANY CAMPAIGN)
 
 Branch `h20-convex-h2-map`, orchestrated tooling round (Opus implementer, Sonnet tests, two-lens review,
 fix round). **The scored hydrogen model is no longer the linear Gfc DC gain.** `tools/h2_map.py` is the
