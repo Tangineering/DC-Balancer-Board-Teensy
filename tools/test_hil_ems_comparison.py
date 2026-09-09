@@ -735,3 +735,25 @@ def test_match_frontier_resolves_the_ftp75c_tuple_on_its_three_legs():
     assert spec_mpc["roles"]["bound"] == spec["roles"]["bound"]
     # A group missing the candidate resolves nothing rather than the wrong one.
     assert ec.match_frontier({"ems-ftp75c-socband", "ems-ftp75c-dp"}) is None
+
+
+def test_regret_figure_is_rendered_and_referenced_as_figure_three(tmp_path):
+    """The lambda-free deviation figure: one bar per solved leg, the bound
+    leg's own deviation as the floor, the table beneath; Figure N.3 in the
+    section text, with the within-group comparability caveat."""
+    g = _group_with_one_missing_bound()
+    fig = ec.figure_regret(g)
+    assert fig is not None
+    ec._hra().plt.close(fig)
+    g["figures"]["regret"] = "ems_comparison/ems_regret_x.png"
+    text = "\n".join(ec.render_group_markdown(g, 2))
+    assert "Figure 2.3" in text
+    assert "![Figure 2.3](ems_comparison/ems_regret_x.png)" in text
+    assert "lambda-free" in text
+    assert "within this stimulus group only" in text
+    # No solved leg at all: no figure, and no Figure N.3 line.
+    for s in g["strategies"]:
+        s["pct_deviation"] = None
+    assert ec.figure_regret(g) is None
+    g["figures"].pop("regret")
+    assert "Figure 2.3" not in "\n".join(ec.render_group_markdown(g, 2))
