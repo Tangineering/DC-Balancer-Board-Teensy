@@ -129,6 +129,23 @@ Replay is **open loop** (see `HIL_MODE.md` §"Fidelity caveat"). Concretely:
   recorded `v_sp`/`share_sp` are replayed as Pi command packets, the board reaches
   Run, and those checks become real — but the **plant** stays open loop either
   way, so it is still a reaction test, never a tracking test.
+- **The fw v28 source SELECTOR is barely exercised here, and its selection
+  logic not at all.** MEASURED over campaign I (`hil_report_20260908_200836`):
+  all 15 command-replaying entries arm the selector **exactly once** — the
+  battery-only start at Run entry, 753–3536 ticks — and **none of them ever
+  selects the fuel cell** (`sel_fc` is 0 on every armed tick of every entry), so
+  no entry produces a selection CHANGE. The reason is the commanded share: 13 of
+  the 15 replay a constant 0.50 and the `YP` pair sweeps 0.30–0.70, all strictly
+  inside the selector's band [`DROOP_R_MIN`, `DROOP_R_MAX`] = [0.15, 0.85], where
+  the selection HOLDS by construction. Only `ML0203` commands the rails at all
+  (3636 Run ticks at 0.0/1.0), and it too never leaves the battery selection.
+  Consequently the FC selection, a selection change with its
+  release/return/entry sequence, the 250 ms selection dwell, and the re-entry
+  rule with its inhibit are **not covered by replay**; they are covered by the
+  scenario half (`ems-y-b00-*`, `ems-mpc-single`) and by the host-native
+  firmware suite. A green replay half says nothing about any of them. Closing
+  the gap needs a log recorded under a sustained rail command, or a synthetic
+  `SY` entry (§3f) that emits one.
 - **Pre-v18 logs are a different wheel and a different law** (§2).
 - **OC faults latch on the INJECTED current regardless of switch topology.** The
   injected rail currents do not depend on the board's own switch state, so an OC

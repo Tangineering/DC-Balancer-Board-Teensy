@@ -651,8 +651,25 @@ def _leaf_measurement_pass(spec):
     m = {"rows": 10, "ticks": 0, "peak": None, "first": None, "last": None,
          "latch_t": None, "prev_bit": None, "edge_t": None,
          # 2026-09-01 kinds: max_continuous_ticks / edge_count_between.
-         "run": 0, "max_run": 0, "edges": 0}
-    if "max_ms" in spec:
+         "run": 0, "max_run": 0, "edges": 0,
+         # 0f-1 / 0f-2 / 0f-6 kinds: follow_within_ms, rows_state_in and
+         # rise_require_switch_bit.  Present on every measurement so a spec that
+         # does NOT declare them reads them as "nothing measured", exactly as
+         # scan_signals() leaves them.
+         "trig_t": None, "resp_t": None, "first_bit": None,
+         "n_rises": 0, "bad_pre": 0, "bad_fault": 0, "bad_t": None,
+         "prev_sw": None, "pend_rise_t": None, "pend_flagged": False,
+         "rows_state": 10}
+    if "follow_within_ms" in spec:
+        # LOW at the window edge (the cut happened), released at t = 1.0 and
+        # back half the tripwire later.
+        m["first_bit"] = 0
+        m["trig_t"] = 1.0
+        m["resp_t"] = 1.0 + (float(spec["follow_within_ms"]) / 2.0) / 1000.0
+    elif "rise_require_switch_bit" in spec:
+        # The minimum number of rises, every one of them clean.
+        m["n_rises"] = int(spec.get("min_rises", 1))
+    elif "max_ms" in spec:
         after = float(spec.get("after_t", 0.0))
         lim = float(spec["max_ms"])
         m["edge_t"] = after + (lim / 2.0) / 1000.0   # comfortably inside the bound
@@ -685,7 +702,11 @@ def _leaf_measurement_fail(spec):
     'never reached' for every leaf-spec kind, including fault_latch_bit."""
     return {"rows": 0, "ticks": 0, "peak": None, "first": None, "last": None,
             "latch_t": None, "prev_bit": None, "edge_t": None,
-            "run": 0, "max_run": 0, "edges": 0}
+            "run": 0, "max_run": 0, "edges": 0,
+            "trig_t": None, "resp_t": None, "first_bit": None,
+            "n_rises": 0, "bad_pre": 0, "bad_fault": 0, "bad_t": None,
+            "prev_sw": None, "pend_rise_t": None, "pend_flagged": False,
+            "rows_state": 0}
 
 
 def _signals_from(scenario_name, leaf_builder):
@@ -809,7 +830,11 @@ def test_judge_scenario_charge_cruise_not_before_accepts_on_time_oc_fc():
     m = _metrics(fault_bits_seen=want, final_fault_flags=want,
                  fault_first_t={rhs.fault_names(want): not_before + 0.5},
                  fault_bits_before_survive=0, state_at_survive=2)
-    passed, checks = rhs.judge_scenario("charge-cruise", m, _events(), _child())
+    # signals= is supplied because `charge-cruise` carries a signal assertion
+    # since 0f-6 (`charge_edges_safe`), and a scenario that declares one and is
+    # judged without measurements fails by design.
+    passed, checks = rhs.judge_scenario("charge-cruise", m, _events(), _child(),
+                                        signals=_passing_signals("charge-cruise"))
     ef = [c for c in checks if c["name"] == "expected_fault"][0]
     assert ef["passed"] is True
     assert passed is True
@@ -1174,7 +1199,13 @@ def test_ems_sdp_provisional_note_is_gone_now_the_bands_are_measured():
     expect = rhs.FAULT_EXPECTATIONS["ems-sdp"]
     assert expect.get("provisional_note") is None
     names = {s.get("name") for s in expect["signals_require"]}
-    for name in ("sdp_table_interior_at_high_demand",
+    # `sdp_table_interior_at_high_demand` was RETIRED at 0f-5 (operator
+    # clamp-witness ruling): since the I_AUX_A change the drain plateau sits in
+    # demand bin 21, whose row is 1.00 in both v4 and v6, so the raw request is
+    # pinned at 1.0000 and the check had no discriminating power left. What the
+    # leg still asserts is the DELIVERED 0.8500, which
+    # `sdp_clamped_rail_commanded` pins.
+    for name in ("sdp_clamped_rail_commanded",
                  "sdp_table_rail_at_low_demand",
                  # `sdp_charge_window_opened` was REPLACED by its inverse when
                  # the entry was rebound to the calibrated v3 artifact
@@ -1183,6 +1214,7 @@ def test_ems_sdp_provisional_note_is_gone_now_the_bands_are_measured():
                  "charge_path_never_opens"):
         assert name in names
     assert "sdp_charge_window_opened" not in names
+    assert "sdp_table_interior_at_high_demand" not in names   # 0f-5
 
 
 def test_ems_sdp_calibrated_bands_match_the_campaign_measurements():
@@ -1193,16 +1225,15 @@ def test_ems_sdp_calibrated_bands_match_the_campaign_measurements():
     by = {s["name"]: s for s in rhs.FAULT_EXPECTATIONS["ems-sdp"]["signals_require"]}
     # 3 + 3b: a TWO-SIDED band, written as two specs because
     # _judge_signal_leaf() would silently drop a ceiling written beside a floor.
-    assert by["sdp_table_interior_at_high_demand"]["max_value"] == pytest.approx(0.960)
+    # The CEILING half was retired at 0f-5; the floor half stays, and with it
+    # the record that the pair was two-sided when the demand axis had span.
+    assert "sdp_table_interior_at_high_demand" not in by
     assert by["sdp_table_interior_floor"]["min_value"] == pytest.approx(0.940)
-    assert (by["sdp_table_interior_floor"]["t_window"]
-            == by["sdp_table_interior_at_high_demand"]["t_window"])
-    for spec in (by["sdp_table_interior_at_high_demand"],
-                 by["sdp_table_interior_floor"]):
+    assert by["sdp_table_interior_floor"]["t_window"] == (20.0, 36.0)
+    for spec in (by["sdp_table_interior_floor"],):
         assert spec["column"] == "cmd_share_sp_raw"
         assert not ({"min_value", "max_value"} <= set(spec))
     assert by["sdp_table_interior_floor"]["min_value"] <= 0.950000
-    assert by["sdp_table_interior_at_high_demand"]["max_value"] >= 0.950000
     # 4: the rail, tightened onto the measured exact 1.0 and still clear of the
     # 0.95 ladder step it must exclude.
     rail = by["sdp_table_rail_at_low_demand"]["min_value"]
@@ -3213,8 +3244,14 @@ def test_max_ms_spec_with_tick_bounds_would_be_rejected():
 #    with a positive bound, or an explicit vacuity_note
 #    (run_hil_suite.py ~:1776-1807). ────────────────────────────────────────
 
+# Mirrors `_assert_signal_spec_shapes()`'s own `_bound_keys`.  The last two
+# joined it at 0f-1 / 0f-6: `follow_within_ms` and `rise_require_switch_bit`
+# both FAIL on an absent or blank column, so either is a valid companion for a
+# `max_ticks`-only sibling on the same signal (`ems-y-b00-*`'s `bt_bus_cut` is
+# companioned by the re-shaped `bt_bus_restored`).
 _BOUND_KEYS = ("min_ticks", "min_value", "strictly_decreases_by",
-              "max_ms", "fault_latch_bit", "any_of")
+              "max_ms", "fault_latch_bit", "any_of",
+              "follow_within_ms", "rise_require_switch_bit")
 
 
 def _signal_identity(sub):
@@ -6939,11 +6976,20 @@ def test_fault_expectations_ems_soc_band_entry_shape():
     assert entry["survive_to"]["t"] == pytest.approx(41.0)
     assert entry["survive_to"]["states"] == {2, 3}
     names = {s["name"] for s in entry["signals_require"]}
+    # `charge_edges_safe` joined at 0f-6: the EDGE-shaped half of the charge
+    # window, which the level check in [44, 54] s structurally cannot see.
     assert names == {"share_biased_to_fc", "fc_current_biased",
-                     "charge_window", "h2_accounted"}
+                     "charge_window", "h2_accounted", "charge_edges_safe"}
     for spec in entry["signals_require"]:
-        assert "column" in spec and "min_value" in spec
         assert spec.get("label")
+        if spec["name"] == "charge_edges_safe":
+            assert spec["switch_bit"] == rhs.SW_FC_CHARGE
+            assert spec["rise_require_switch_bit"] == rhs.SW_FC_BUS
+            assert spec["rise_forbid_fault_bits"] == rhs.FAULT_UV_BUS
+            assert spec["rise_forbid_within_ms"] == pytest.approx(30.0)
+            assert spec["min_rises"] >= 1
+            continue
+        assert "column" in spec and "min_value" in spec
 
 
 def test_fault_expectations_ems_dp_replay_entry_shape():
@@ -7052,7 +7098,11 @@ def test_signals_ems_soc_band_full_spec_set_passes_together_on_one_realistic_csv
     """A single CSV whose rows satisfy all four ems-soc-band specs at once --
     the shape a real campaign run's CSV would have to have to pass -- judged
     with scan_signals()/judge_signals() exactly as the suite would."""
-    specs = rhs.FAULT_EXPECTATIONS["ems-soc-band"]["signals_require"]
+    # The value specs only: `charge_edges_safe` is an EDGE kind over the switch
+    # and fault words and has its own tests (0f-6); a synthetic row carrying one
+    # value per spec cannot express it.
+    specs = [s for s in rhs.FAULT_EXPECTATIONS["ems-soc-band"]["signals_require"]
+             if "min_value" in s]
     rows = []
     for spec in specs:
         t = _mid_t(spec) if "t_window" in spec else 30.0
@@ -7133,17 +7183,15 @@ def test_fault_expectations_ems_sdp_entry_shape():
     # 2026-09-01 when the leg was rebound to the calibrated `sdp-v3` artifact
     # (zero charge cells, declined endogenously) — the inverse assertion, and
     # a guaranteed FAIL under v2 rather than a vacuous pass.
+    # `sdp_table_interior_at_high_demand` RETIRED 0f-5 (the ceiling half); see
+    # the derivation kept in the entry.
     assert names == {"sdp_drive_commanded", "sdp_clamped_rail_commanded",
-                     "sdp_table_interior_at_high_demand",
                      "sdp_table_interior_floor",
                      "sdp_table_rail_at_low_demand",
                      "charge_path_never_opens",
                      "sdp_fc_current_biased", "sdp_h2_accounted",
                      "sdp_student_h2_axis"}
     by_name = {s["name"]: s for s in entry["signals_require"]}
-    assert by_name["sdp_table_interior_at_high_demand"]["column"] == "cmd_share_sp_raw"
-    assert by_name["sdp_table_interior_at_high_demand"]["max_value"] == pytest.approx(0.960)
-    assert by_name["sdp_table_interior_at_high_demand"]["t_window"] == (20.0, 36.0)
     assert by_name["sdp_table_interior_floor"]["column"] == "cmd_share_sp_raw"
     assert by_name["sdp_table_interior_floor"]["min_value"] == pytest.approx(0.940)
     assert by_name["sdp_table_interior_floor"]["t_window"] == (20.0, 36.0)
@@ -7984,13 +8032,19 @@ def test_ems_sdp_cross_entry_shape_and_charge_cycle_checks():
                      "sdpx_charge_window_count", "sdpx_charging_established",
                      "sdpx_fc_peak_bounded"}
     by = {s["name"]: s for s in entry["signals_require"]}
-    # The crossing construction, as on ems-ftp75-sdp -- re-banded on the
-    # MEASURED 42.292 s flip (campaign 20260901_024231).
-    assert by["sdpx_low_rail_early"]["t_window"][1] <= \
-        by["sdpx_high_rail_late"]["t_window"][0]
+    # The crossing construction, as on ems-ftp75-sdp -- RE-PINNED at 0f-4 on
+    # the fw v28 flip, which has walked earlier every era: 42.292 s (campaign
+    # 024231) -> 37.267 s (H) -> 35.296 s (I), the last of them 296 ms INSIDE
+    # the retired 35.0 s ceiling edge.
+    assert by["sdpx_low_rail_early"]["t_window"][1] <=         by["sdpx_high_rail_late"]["t_window"][0]
     assert (by["sdpx_low_rail_early"]["t_window"][1],
-            by["sdpx_high_rail_late"]["t_window"][0]) == (35.0, 50.0)
-    assert 35.0 < 42.292 < 50.0
+            by["sdpx_high_rail_late"]["t_window"][0]) == (33.0, 34.0)
+    # The measured fw v28 crossing is after the ceiling window and inside the
+    # floor window -- the property the pair asserts, on the number it was cut
+    # from -- and so is every earlier reading, so the pin is not tuned to one
+    # campaign.
+    assert 33.0 < 35.296 < by["sdpx_high_rail_late"]["t_window"][1]
+    assert all(33.0 < t < 190.0 for t in (35.296, 37.267, 42.292))
     assert by["sdpx_raw_battery_branch"]["t_window"] == \
         by["sdpx_low_rail_early"]["t_window"]
     # The charge LIMIT CYCLE, asserted PHASE-FREE. All four charge specs share
@@ -9927,7 +9981,11 @@ def test_not_before_s_passes_on_the_transient_then_latch_trace():
                  fault_first_t={name: not_before - 5.0},          # bare, early
                  fault_first_latch_t={name: not_before + 1.0},    # latch, on time
                  fault_bits_before_survive=0, state_at_survive=2)
-    passed, checks = rhs.judge_scenario("charge-cruise", m, _events(), _child())
+    # signals= is supplied because `charge-cruise` carries a signal assertion
+    # since 0f-6 (`charge_edges_safe`), and a scenario that declares one and is
+    # judged without measurements fails by design.
+    passed, checks = rhs.judge_scenario("charge-cruise", m, _events(), _child(),
+                                        signals=_passing_signals("charge-cruise"))
     ef = [c for c in checks if c["name"] == "expected_fault"][0]
     assert ef["passed"] is True
     assert passed is True
@@ -10742,7 +10800,11 @@ def test_mpc_share_prediction_masks_the_battery_only_start_without_widening():
         assert "exclude_hold_ms" not in spec
         # The label has to say what it now excludes, or a report reader reads a
         # narrower claim as the original one.
-        assert "FC_BUS CLOSED" in spec["label"]
+        # LABEL CORRECTED 0f-7: the mask is a PREFIX mask, and the retired
+        # wording described one twice as wide.
+        assert "FC_BUS CLOSED" not in spec["label"]
+        assert "prefix" in spec["label"]
+        assert "first closes" in spec["label"]
     assert seen >= 3
 
 
@@ -12813,16 +12875,28 @@ def test_fw26_joint_acceptance_bound_brackets_the_walked_peak():
     probe = _fw26_walk()
     j = probe.joint()
     peak_bound = _joint_by()["joint_transient_peak"]["max_value"]
-    assert peak_bound == pytest.approx(hil.FW26_CLAMP_JOINT_ACCEPT_PEAK_A)
+    # RE-KEYED AT 0f-3 (three campaign readings): the TRANSIENT bound is the
+    # STRUCTURAL one, the droop band edge, because the peak is F6 - a filter
+    # property the walk does not model - and the three readings straddle the
+    # retired walk-derived acceptance (campaign G cleared it by 0.015 %).
+    assert peak_bound == pytest.approx(rhs._JOINT_STRUCTURAL_PEAK_A)
+    assert peak_bound == pytest.approx(1.3345, abs=5e-5)
     assert j["i_fc_peak"] < peak_bound < rhs.LIMIT_I_FC_MAX_A
-    # THE BOUND IS THE RULE, not a hand-picked number: walk + 0.4 %, rounded up
-    # to four decimals. Stated here so a later widening has to argue with the
-    # rule rather than with a literal.
-    assert peak_bound == pytest.approx(
+    # The whole measured population sits under it: the highest of the three
+    # readings by 0.8 %, the mean by 3.2 %.
+    for reading in (1.3243, 1.2699, 1.2835):
+        assert reading < peak_bound
+    assert peak_bound / 1.3243 - 1.0 == pytest.approx(0.0077, abs=2e-3)
+    # The SETTLED bound KEEPS the walk-derived acceptance, and it is still
+    # doing real work: the worst settled reading is 3.1 % under it.
+    held = _joint_by()["joint_peak_held_down"]["max_value"]
+    assert held == pytest.approx(hil.FW26_CLAMP_JOINT_ACCEPT_PEAK_A)
+    assert held == pytest.approx(
         1.004 * hil.FW26_CLAMP_JOINT_WALK_PEAK_A, abs=1e-4)
-    # ... and it leaves 5.4 % of margin to the fault limit (2.9 % at fw v26).
+    assert held < peak_bound
+    # ... and the transient bound leaves 4.7 % of margin to the fault limit.
     assert (rhs.LIMIT_I_FC_MAX_A - peak_bound) / rhs.LIMIT_I_FC_MAX_A == \
-        pytest.approx(0.0542, abs=1e-3)
+        pytest.approx(0.0468, abs=1e-3)
 
 
 def test_fw26_joint_walk_discriminates_fw_v25_from_fw_v26():
@@ -12919,7 +12993,7 @@ def test_fw26_joint_commander_skew_cannot_make_the_peak_worse():
     # a number rather than against a feeling.
     assert (rhs.LIMIT_I_FC_MAX_A - worst) / rhs.LIMIT_I_FC_MAX_A == \
         pytest.approx(0.0580, abs=2e-3)
-    assert bound == pytest.approx(hil.FW26_CLAMP_JOINT_ACCEPT_PEAK_A)
+    assert bound == pytest.approx(rhs._JOINT_STRUCTURAL_PEAK_A)   # 0f-3
 
 
 def test_fw26_probe_joint_totals_match_the_scenario():
@@ -12972,8 +13046,14 @@ def test_fw26_joint_entry_is_fault_free_and_carries_a_provisional_note():
     assert e["allow_only"] == 0
     assert "PROVISIONAL" in e["provisional_note"]
     for s in e["signals_require"]:
-        assert s.get("provisional_note"), s["name"]
+        # `joint_transient_peak` is the ONE bound in this entry re-derived from
+        # campaign readings (0f-3), so it does not carry the note; every other
+        # bound here is still the walk's and must say so.
+        if s["name"] != "joint_transient_peak":
+            assert s.get("provisional_note"), s["name"]
         assert s["name"].startswith("joint_"), s["name"]
+    assert "provisional_note" not in _joint_by()["joint_transient_peak"]
+    assert "campaign" in _joint_by()["joint_transient_peak"]["label"].lower()
     # ... and the names are unique, which a generated block can silently break.
     names = [s["name"] for s in e["signals_require"]]
     assert len(names) == len(set(names))
@@ -13024,3 +13104,291 @@ def test_the_batt_only_gate_is_the_fw28_constant_and_the_window_shortened():
         assert rhs._batt_only_gate_cross_s(load) > cross_now
     finally:
         rhs._BATT_ONLY_GATE_A = saved
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# WORK_QUEUE 0f items 1-7: the event-shaped signal kinds, the host-stall
+# tripwire, the state-scoped cadence census and the bus-switch cut census.
+# ═════════════════════════════════════════════════════════════════════════════
+_FOLLOW_SPEC = {"name": "follow", "switch_bit": rhs.SW_BT_BUS,
+                "follow_within_ms": 50.0,
+                "trigger_column": "sel_armed", "trigger_at_most": 0.5,
+                "t_window": (0.0, 10.0), "label": "x"}
+
+
+def _follow_rows(levels):
+    """`levels` is a list of (t, sel_armed, bt_bus_high) tuples."""
+    return [{"t": "%.4f" % t, "fault_flags": "0", "state": "2",
+             "sel_armed": "%d" % armed,
+             "switch": "0x%02X" % (rhs.SW_BT_BUS if hi else 0)}
+            for t, armed, hi in levels]
+
+
+def test_follow_within_ms_passes_when_the_bit_returns_inside_the_bound():
+    """0f-1. The ARMED shape: the window opens with the bit LOW and the
+    selector still armed, the arm releases mid-window, and the bit follows."""
+    rows = _follow_rows([(1.0, 1, 0), (2.0, 1, 0), (3.0, 0, 0), (3.01, 0, 1),
+                         (4.0, 0, 1)])
+    c = _judge_one(_FOLLOW_SPEC, rows, ("sel_armed",))
+    assert c["passed"] is True
+    assert "MEASURED restore 10.00 ms" in c["detail"]
+
+
+def test_follow_within_ms_passes_on_the_unarmed_shape_too():
+    """0f-1. The other shape the ONE spec must judge: the selector was never
+    armed, so the trigger resolves to the window's first row and the release
+    is the command edge itself (`ems-y-b00-v3`, 1.05 ms measured)."""
+    rows = _follow_rows([(1.0, 0, 0), (1.001, 0, 1), (2.0, 0, 1)])
+    c = _judge_one(_FOLLOW_SPEC, rows, ("sel_armed",))
+    assert c["passed"] is True
+    assert "MEASURED restore 1.00 ms" in c["detail"]
+
+
+def test_follow_within_ms_fails_when_the_restore_is_late():
+    rows = _follow_rows([(1.0, 1, 0), (3.0, 0, 0), (3.2, 0, 1)])   # 200 ms
+    c = _judge_one(_FOLLOW_SPEC, rows, ("sel_armed",))
+    assert c["passed"] is False
+    assert "200.00 ms" in c["detail"]
+
+
+def test_follow_within_ms_fails_when_the_restore_never_happens():
+    rows = _follow_rows([(1.0, 1, 0), (3.0, 0, 0), (4.0, 0, 0)])
+    c = _judge_one(_FOLLOW_SPEC, rows, ("sel_armed",))
+    assert c["passed"] is False
+    assert "never read HIGH" in c["detail"]
+
+
+def test_follow_within_ms_fails_when_the_cut_never_happened():
+    """THE SECOND HALF OF THE ASSERTION. A bit that was already HIGH when the
+    window opened proves nothing about a hold that never occurred, and must not
+    read as a 0 ms restore."""
+    rows = _follow_rows([(1.0, 0, 1), (2.0, 0, 1)])
+    c = _judge_one(_FOLLOW_SPEC, rows, ("sel_armed",))
+    assert c["passed"] is False
+    assert "already HIGH" in c["detail"]
+
+
+def test_follow_within_ms_fails_when_the_trigger_never_fires():
+    rows = _follow_rows([(1.0, 1, 0), (2.0, 1, 0), (3.0, 1, 1)])
+    c = _judge_one(_FOLLOW_SPEC, rows, ("sel_armed",))
+    assert c["passed"] is False
+    assert "release instant" in c["detail"]
+
+
+def test_ems_y_b00_bt_bus_restored_is_the_event_shaped_kind_on_both_variants():
+    """0f-1. Both b00 legs judge the restore by the MECHANISM, over the whole of
+    region 7, and neither carries the retired tick floor."""
+    for leg in ("ems-y-b00-v1", "ems-y-b00-v3"):
+        spec = _spec_by_name(rhs.FAULT_EXPECTATIONS[leg]["signals_require"],
+                             "bt_bus_restored")
+        assert spec["switch_bit"] == rhs.SW_BT_BUS
+        assert spec["follow_within_ms"] == pytest.approx(50.0)
+        assert spec["trigger_column"] == "sel_armed"
+        assert "min_ticks" not in spec
+        # The window is region 7 whole, not the inset restore window.
+        assert spec["t_window"] == (rhs._YR[7][0], rhs._YR[7][1])
+        assert spec["t_window"][1] - spec["t_window"][0] > 3.0
+
+
+_EDGE_SPEC = {"name": "edges", "switch_bit": rhs.SW_FC_CHARGE,
+              "rise_require_switch_bit": rhs.SW_FC_BUS,
+              "rise_forbid_fault_bits": rhs.FAULT_UV_BUS,
+              "rise_forbid_within_ms": 30.0, "min_rises": 1, "label": "x"}
+
+
+def _edge_rows(rows):
+    """`rows` is a list of (t, switch_word, fault_word)."""
+    return [{"t": "%.4f" % t, "state": "2", "switch": "0x%02X" % sw,
+             "fault_flags": "0x%04X" % ff} for t, sw, ff in rows]
+
+
+def test_rise_require_switch_bit_passes_on_a_live_bus_open():
+    rows = _edge_rows([(1.0, rhs.SW_FC_BUS | rhs.SW_BT_BUS, 0),
+                       (1.001, rhs.SW_FC_BUS | rhs.SW_FC_CHARGE, 0),
+                       (1.100, rhs.SW_FC_BUS | rhs.SW_FC_CHARGE, 0)])
+    c = _judge_one(_EDGE_SPEC, rows, ())
+    assert c["passed"] is True
+    assert "1 rise(s)" in c["detail"]
+
+
+def test_rise_require_switch_bit_fails_the_fw_v27_f1_signature():
+    """0f-6. THE DEFECT THIS CHECK EXISTS FOR: FC_BUS drops in the SAME tick
+    the window opens, so the bus is source-less through the RT1987 turn-on
+    delay. Measured on campaign H's two latched ftp75c legs."""
+    rows = _edge_rows([(1.0, rhs.SW_FC_BUS | rhs.SW_BT_BUS, 0),
+                       (1.001, rhs.SW_BT_BUS, 0),              # FC_BUS gone
+                       (1.002, rhs.SW_FC_CHARGE, 0),           # ... then open
+                       (1.100, rhs.SW_FC_CHARGE, 0)])
+    c = _judge_one(_EDGE_SPEC, rows, ())
+    assert c["passed"] is False
+    assert "without FC_BUS HIGH on the preceding row" in c["detail"]
+
+
+def test_rise_require_switch_bit_fails_on_a_uv_bus_bit_inside_the_window():
+    rows = _edge_rows([(1.0, rhs.SW_FC_BUS, 0),
+                       (1.001, rhs.SW_FC_BUS | rhs.SW_FC_CHARGE, 0),
+                       (1.020, rhs.SW_FC_BUS | rhs.SW_FC_CHARGE,
+                        rhs.FAULT_UV_BUS),
+                       (1.100, rhs.SW_FC_BUS | rhs.SW_FC_CHARGE, 0)])
+    c = _judge_one(_EDGE_SPEC, rows, ())
+    assert c["passed"] is False
+    assert "followed by UV_BUS" in c["detail"]
+    assert "first offender at t=1.020" in c["detail"]
+
+
+def test_rise_require_switch_bit_ignores_a_uv_bus_bit_past_the_window():
+    """The window is 30 ms wide and bounded: a UV_BUS bit 200 ms after the open
+    is not this check's evidence, and charging it here would make the check a
+    general fault detector."""
+    rows = _edge_rows([(1.0, rhs.SW_FC_BUS, 0),
+                       (1.001, rhs.SW_FC_BUS | rhs.SW_FC_CHARGE, 0),
+                       (1.200, rhs.SW_FC_BUS | rhs.SW_FC_CHARGE,
+                        rhs.FAULT_UV_BUS)])
+    assert _judge_one(_EDGE_SPEC, rows, ())["passed"] is True
+
+
+def test_rise_require_switch_bit_fails_when_no_window_ever_opens():
+    """min_rises is what keeps the check from passing vacuously on a run whose
+    charger path never opened at all."""
+    rows = _edge_rows([(1.0, rhs.SW_FC_BUS, 0), (2.0, rhs.SW_FC_BUS, 0)])
+    c = _judge_one(_EDGE_SPEC, rows, ())
+    assert c["passed"] is False
+    assert "0 rise(s)" in c["detail"]
+
+
+def test_the_charge_edge_check_is_registered_on_the_three_charging_legs():
+    for leg in ("ems-soc-band", "charge-cruise", "ems-sdp-alpha-charge"):
+        spec = _spec_by_name(rhs.FAULT_EXPECTATIONS[leg]["signals_require"],
+                             "charge_edges_safe")
+        assert spec["rise_require_switch_bit"] == rhs.SW_FC_BUS
+        assert spec["rise_forbid_fault_bits"] == rhs.FAULT_UV_BUS
+        assert spec["rise_forbid_within_ms"] == pytest.approx(30.0)
+
+
+def test_rows_state_in_scopes_the_cadence_census_to_run_and_finish():
+    """0f-2. A run that latches into State 99 keeps writing rows, so a bare row
+    floor is satisfiable with no stimulus delivered. The state-scoped census
+    separates the two."""
+    spec = {"name": "cad", "min_rows": 3, "rows_state_in": (2, 3),
+            "t_window": (0.0, 10.0), "label": "x"}
+    good = [{"t": "%.3f" % (1.0 + 0.001 * i), "fault_flags": "0", "state": "2"}
+            for i in range(4)]
+    latched = [{"t": "%.3f" % (1.0 + 0.001 * i), "fault_flags": "0x8100",
+                "state": "99"} for i in range(40)]
+    assert _judge_one(spec, good, ())["passed"] is True
+    c = _judge_one(spec, latched, ())
+    assert c["passed"] is False
+    assert "in state 2/3 of 40 in-window row(s)" in c["detail"]
+
+
+def test_mpc_cadence_is_state_scoped_on_every_mpc_leg():
+    for leg in ("ems-mpc", "ems-mpc-det", "ems-mpc-single", "ems-mpc-cross",
+                "ems-ftp75-mpc", "ems-ftp75c-mpc"):
+        if leg not in rhs.FAULT_EXPECTATIONS:
+            continue
+        spec = _spec_by_name(rhs.FAULT_EXPECTATIONS[leg]["signals_require"],
+                             "mpc_cadence")
+        assert tuple(spec["rows_state_in"]) == (2, 3)
+
+
+def test_max_tick_overrun_metric_and_check(tmp_path):
+    """0f-2. The MEAN rate gate cannot see a transient stall: campaign I's
+    `ems-mpc-cross` averaged 998.4 Hz with a 314.484 ms hole in it."""
+    rows = [{"t": "3.000", "fault_flags": "0", "state": "2"},
+            {"t": "3.001", "fault_flags": "0", "state": "2"},
+            {"t": "3.315", "fault_flags": "0", "state": "2"},   # 314 ms gap
+            {"t": "3.316", "fault_flags": "0", "state": "2"}]
+    path = str(tmp_path / "a.csv")
+    _write_scenario_csv(path, rows)
+    m = rhs.analyze_scenario_csv(path, grace_s=0.0)
+    assert m["max_tick_overrun_ms"] == pytest.approx(314.0, abs=0.5)
+    assert m["max_tick_overrun_t0"] == pytest.approx(3.001)
+    assert m["max_tick_overrun_t1"] == pytest.approx(3.315)
+    assert m["max_tick_overrun_ms"] > rhs.HIL_ZERO_MS
+    _passed, checks = rhs.judge_scenario("steady", m, _events(), _child())
+    c = [x for x in checks if x["name"] == "max_tick_overrun"][0]
+    assert c["passed"] is False
+    assert "SIM ARTEFACT" in c["detail"]
+
+
+def test_max_tick_overrun_passes_a_healthy_run(tmp_path):
+    rows = [{"t": "%.3f" % (3.0 + 0.001 * i), "fault_flags": "0", "state": "2"}
+            for i in range(50)]
+    path = str(tmp_path / "a.csv")
+    _write_scenario_csv(path, rows)
+    m = rhs.analyze_scenario_csv(path, grace_s=0.0)
+    assert m["max_tick_overrun_ms"] == pytest.approx(1.0, abs=0.01)
+    _passed, checks = rhs.judge_scenario("steady", m, _events(), _child())
+    c = [x for x in checks if x["name"] == "max_tick_overrun"][0]
+    assert c["passed"] is True
+    assert "SIM ARTEFACT" not in c["detail"]
+    assert rhs.HIL_ZERO_MS == pytest.approx(250.0)     # .ino:4159
+
+
+def _census_rows(rows):
+    return [{"t": "%.4f" % t, "fault_flags": "0", "state": st,
+             "switch": "0x%02X" % sw, "I_fc": "%.4f" % ifc,
+             "I_batt": "%.4f" % ibt, "sel_armed": "%d" % sel}
+            for t, st, sw, ifc, ibt, sel in rows]
+
+
+def test_bus_cut_census_reads_the_preceding_row_and_splits_dark_from_loaded(tmp_path):
+    """0f-7. The switch word and the currents come from the SAME firmware tick,
+    so on the row that first shows a switch open the channel already reads ~0 A
+    (measured 0.0000 on all 31 cuts of campaign I's `ems-mpc-cross`). The cut's
+    LOAD is the preceding row's current."""
+    both = rhs.SW_FC_BUS | rhs.SW_BT_BUS
+    rows = _census_rows([
+        (3.000, "2", both, 0.4000, 0.3000, 0),
+        (3.001, "2", rhs.SW_BT_BUS, 0.0000, 0.7000, 0),   # FC cut, loaded
+        (3.002, "2", both, 0.6500, 0.0500, 0),
+        (3.003, "2", rhs.SW_FC_BUS, 0.7000, 0.0000, 1),   # BT cut, dark + arm
+    ])
+    path = str(tmp_path / "a.csv")
+    _write_scenario_csv(path, rows, extra_cols=("sel_armed",))
+    cen = rhs.analyze_scenario_csv(path, grace_s=0.0)["bus_cut_census"]
+    assert cen["n"] == 2
+    assert (cen["n_fc_bus"], cen["n_bt_bus"]) == (1, 1)
+    assert cen["i_cut_max_a"] == pytest.approx(0.4000)    # the PRECEDING row
+    assert cen["i_cut_min_a"] == pytest.approx(0.0500)
+    assert (cen["n_loaded"], cen["n_dark"]) == (1, 1)
+    assert cen["dark_limit_a"] == pytest.approx(
+        rhs.gov_mod.GOV_CONST["SHARE_HANDOFF_MIN_A"])
+    assert cen["n_sel_armed_rising"] == 1
+    assert [c["switch"] for c in cen["cuts"]] == ["FC_BUS", "BT_BUS"]
+
+
+def test_bus_cut_census_excludes_the_state_99_teardown(tmp_path):
+    """A latched teardown opens every loaded bus switch by design
+    (safeAllSwitches()), and counting those would drown the census in the one
+    case that is not a share decision -- the replay half's own rule."""
+    both = rhs.SW_FC_BUS | rhs.SW_BT_BUS
+    rows = _census_rows([(3.000, "2", both, 0.4000, 0.3000, 0),
+                         (3.001, "99", 0, 0.0000, 0.0000, 0)])
+    path = str(tmp_path / "a.csv")
+    _write_scenario_csv(path, rows, extra_cols=("sel_armed",))
+    cen = rhs.analyze_scenario_csv(path, grace_s=0.0)["bus_cut_census"]
+    assert cen["n"] == 0
+    assert cen["i_cut_max_a"] is None
+
+
+def test_replay_census_summary_renders_the_scorer_derived_pin():
+    """0f-7. The share-cut census reaches the SUMMARY ROW, so the
+    campaign-to-campaign figure is read off the report instead of out of the
+    JSON by hand."""
+    assert rhs._replay_census_summary(None) == ""
+    assert rhs._replay_census_summary({"n_cuts": 0}) == ""
+    txt = rhs._replay_census_summary(
+        {"n_cuts": 132, "n_over_own_row": 2, "n_over_prev_row": 3,
+         "i_own_row_peak_a": 0.6123, "limit_a": 0.5})
+    assert "share cuts 132" in txt
+    assert "2 over 0.5 A own-row" in txt
+    assert "3 preceding" in txt
+    assert "0.6123 A" in txt
+
+
+def test_switch_names_renders_the_bus_masks():
+    assert rhs.switch_names(rhs.SW_FC_BUS) == "FC_BUS"
+    assert rhs.switch_names(rhs.SW_FC_BUS | rhs.SW_BT_BUS) in (
+        "FC_BUS|BT_BUS", "BT_BUS|FC_BUS")
+    assert rhs.switch_names(0) == "none"

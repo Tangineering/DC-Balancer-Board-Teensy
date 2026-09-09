@@ -85,7 +85,13 @@ third trigger on campaign H. Refusing to route a fuel cell that is not on the bu
 is correct on its own terms as well: there is nothing to harvest from a source whose ideal diode is
 held open.
 
-The cost is one commander period of delayed harvest at the start of each window.
+The cost is delayed harvest at the start of each window. The design estimate was one commander
+period; the board runs two. Campaign I (`hil_report_20260908_200836`, `charge-to-full`) measures
+**39.910 ms** from the F1 re-close of `FC_BUS_ENABLE` to the `FC_CHARGE_ENABLE` rise. The second
+period is the conduction test itself: the tick that re-closes `FC_BUS_ENABLE` opens the RT1987
+turn-on blanking window, so `busSwitchBlanked(FC_BUS_ENABLE)` is still true when
+`chargingControl()` next runs, and the window opens on the period after that. The delay is bounded
+by the blanking constant and the commander cadence. It is not load-dependent.
 
 The S2 restore inside `assertFcChargeEnable()` is **kept**, unchanged. It is unreachable from this
 call site, because the conduction test proves `FC_BUS_ENABLE` is already high before the call is
