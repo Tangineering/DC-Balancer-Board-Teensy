@@ -1592,3 +1592,21 @@ during a live campaign, ASCII prints, decision pairs for judgment calls with rev
 - **Campaign I launched 20:08:36** from `DC-Balancer-I` at `60abb34`, `--with-ftp75 --with-ftp75c --with-alpha`,
   report `HIL Results/hil_report_20260908_200836`, log `scratchpad/campaign_I_20260908_200836.log`.
   tools/ edit-frozen. Analysis LIVE (hil-agent-analysis), ledger in the report folder.
+- **Campaign I interim (25 of 75 finalized, ~21:40):** 22 analyzed, zero board defects. fw v28 measured: the
+  0.25 A gate releases at 0.2511-0.2888 A on ramps (fw v27 0.2549-0.3386); every h2 move vs H on the regression
+  legs is the earlier release (+0.1 to +1.3 %, within 0.11 pp of the walk where the walk exists); the k_d
+  single-source hold reads codes 4067 / 717 in every charge window (fw v27 railed 4095); FOUR charge-window
+  openings (charge-cruise, soc-band, alpha-charge x2) all make-before-break with FC_BUS conducting, bus dips
+  59-300 mV, ZERO UV_BUS bits (fw v27: 17.7-20.2 ms dwells, two latches in H); the FIRST FUEL-CELL-ONLY
+  selection on the board (ems-sdp, alpha-cal, alpha-charge arm FC-selected under 0.85 and RE-ARM FC-only on the
+  coast-down at ~54.2 s); the sliver hold is direction-correct with the minority at exactly 0.125 A (dp 0.4442
+  / sdp 0.5562 where fw v27 pinned 0.498). F1's DISARM path is still unexercised (every window so far opened
+  from a released selector) - the ftp75c legs remain the test. Anchors: scp-inrush i_cut bit-identical a 4th
+  campaign (its h2 is a +/-8 % telemetry-phase quantity, dropped as an anchor); bringup identical; same-policy
+  same-campaign floor 56 ppm h2 / 0 ppm SoC (alpha-cal vs ems-sdp). FAILs so far: comm-loss (artefact, identical
+  to H), ems-sdp (clamp witness), ems-sdp-alpha-greedy (FALSE FAIL: `ems_walk` delivers share exactly 0 at a
+  0.15 floor reference under the asymmetry triple - a HIGH tooling item; the board delivers the split law to
+  0.1 %), ems-y-b00-v1 (`bt_bus_restored` 1550/2000 in region 7 - adjudication running). Tooling items queued:
+  the ems_walk floor defect + band re-derivation; re-walk the 23-leg table at the rev 4-6 mirror (the shipped
+  rows predate the re-entry rule and miss the re-arm tail, 69 % of dp-replay's residual); retire/re-point the
+  ems-sdp interior check; an edge-scoped charge-window check.
