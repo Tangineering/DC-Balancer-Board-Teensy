@@ -1610,3 +1610,10 @@ during a live campaign, ASCII prints, decision pairs for judgment calls with rev
   the ems_walk floor defect + band re-derivation; re-walk the 23-leg table at the rev 4-6 mirror (the shipped
   rows predate the re-entry rule and miss the re-arm tail, 69 % of dp-replay's residual); retire/re-point the
   ems-sdp interior check; an edge-scoped charge-window check.
+- **OPERATOR RULING (~21:55): "Once the current HIL suite completes, stop the campaign. We're going to work on a
+  significant update to the H2 consumption model before running a new campaign."** Consequences: campaign I runs
+  to completion with the live analysis; close-out (tool pass, FINAL SUMMARY, HIL_SUMMARY, CLAUDE.md addendum,
+  WORK_QUEUE refresh); NO campaign II / III; the 75 matched-DP re-solves stay HELD (the H2 model change would
+  invalidate them); the tooling fix queue (ems_walk floor defect, re-walk table, b00-v1 check re-spec, ems-sdp
+  interior check, edge-scoped charge-window check) is QUEUED in WORK_QUEUE for after the model update, not run
+  tonight. Budget used: 1 of 5.
