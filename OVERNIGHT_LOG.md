@@ -1883,3 +1883,12 @@ with reversal paths, the primary worktree's branch is the operator's - commit fr
   dynamic map (hil_plant_sim's banner) vs the walk's H-20 - an axis mismatch that would make any restatement a
   silent scale error; contradicts the handoff ("the plant's scored h2_cum_g" is H-20) - CHECKED FROM SOURCE next.
   Suites: stdlib 2465 / 96 / 1 xfail; miniforge five modules 1882 / 2 xfail.
+- **The hydrogen axis, settled from source (~06:45):** hil_plant_sim.py ~1559-1563 sets rate_gps = h2_map.rate_gps()
+  and the sidecar note (~2617) says h2_cum_g carries the H-20 map; the "h2_cum_g (Gfc) is the DYNAMIC map" sentence
+  C-prime quoted (~1408) is inside "THE ORIGINAL BANNER FOLLOWS, VERBATIM. It still governs h2_gfc_cum_g" (~1289) -
+  a stale sentence about the unscored column. Both axes are H-20; C-prime's objection is void and the band
+  restatement (provisional per D-6) is folded into fix agent A' with the lens-1 items (F1 14.6440 W reference, F2/F6
+  the cal leg and alpha 0.142475 + v7 re-solve, F3 lambda provisional 0.467 with the lam band [0.39, 0.59], F4/F5
+  the frontier on h2_run_g, the saturation refusal, the stale banner line). Incident: the first A' / lens-2 launch
+  read placeholder briefs (a heredoc quoting failure) and was stopped within a minute of starting; relaunched on
+  the filled briefs (~06:50). Correction: brief edits go through a script file, never an inline heredoc.
