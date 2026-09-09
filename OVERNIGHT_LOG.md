@@ -1866,3 +1866,20 @@ with reversal paths, the primary worktree's branch is the operator's - commit fr
   the frontier on h2_run_g (F4) and its thresholds restated on the H-20 axis (F5, provisional per D-6); a
   saturation refusal (any scored tick above P_MAX bus-equivalent 1.247 A flagged in key_metrics; the
   charge-cruise anchor named). Reversal: A's values are one commit back.
+- **Agent C' landed b77d4b9 / f6c52a6 / 9ff4a9e (~06:25, 35 min; not pushed).** Part 0: the joint walk peak
+  1.3188 -> 1.2877 A simultaneous and MONOTONE in skew (1.3185 / 1.3149 / 1.2877 / 1.2596 / 1.2521 A at -40..+40
+  ms - the surrogate could not express the ordering), WALK_PEAK re-keyed to the worst-skew 1.3185, ACCEPT 1.3241 ->
+  1.3237 (a tightening), the transient's split-law invariance holds to 0.18 % only (a reference climbing through
+  the band is not on a rail); sweep probe artefact: three regions take a 3-tick BT cut from the controller state
+  carried across walk_phase's d = 0.5 reseed. Part 1: THE MPC HOLD FIX IS REFUTED - re_arm_ok is true at zero
+  decisions on five of six legs; an in-band hold behind a flag left five plans sha-identical and made ftp75c-mpc
+  WORSE (0.2972 -> 0.3107) - reverted; the real mechanism: the release preview's own stage-0 total (0.243-0.316 A,
+  median 0.284) exceeds the 0.25 A gate on 188 of 188 masks while the shadow governor's measured filtered total
+  is 0.0908 A - a 3.1x preview-vs-plant disagreement during a cut (0f-15's class), pinned by a test; shipped
+  exclude_hold_ms 330 ms (267 measured + 8 + 50), pred_err_max unchanged. Part 2: the 23-leg re-walk recorded as
+  a third column with the cut census (R_f: hydrogen identical to seven decimals, cut counts +/-11-16 %); five of
+  E's six figures bit-identical, alpha-charge 1.8 % off (unresolved); fc_bus_falls on ftp75-sdp 6873 vs 71 so the
+  census stays (0, 6) on load-guard cuts. NO HYDROGEN BAND MOVED: C' reads the plant's scored h2_cum_g as the Gfc
+  dynamic map (hil_plant_sim's banner) vs the walk's H-20 - an axis mismatch that would make any restatement a
+  silent scale error; contradicts the handoff ("the plant's scored h2_cum_g" is H-20) - CHECKED FROM SOURCE next.
+  Suites: stdlib 2465 / 96 / 1 xfail; miniforge five modules 1882 / 2 xfail.
