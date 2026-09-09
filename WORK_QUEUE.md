@@ -114,7 +114,10 @@ firmware round lands).
       anchor (bring-up P0/P3, scp-inrush, handoff-sag, comm-loss warm re-close = the target, F7 re-entry
       overshoot, the F1 window entry, ftp75c handoffs, replay first turn-ons, fw26-clamp legs); default decided
       by whether the cold pins move toward the board; legacy stays as the one-campaign reversal path.
-      IN PROGRESS (Opus).
+      DONE `66dea4b`: LEGACY STAYS THE DEFAULT - constant-slew moves the cold pins away from the board (P0 -8 %, P3
+      -18 %); neither shape brackets comm-loss (3.75 / 0.139 A vs board 1.66-1.79 A latching) - the residual is
+      elsewhere (boost output impedance, RT_R_ON, C_VBUS: each a measurement round); the F7 re-entry row (ON in
+      9 vs 22 ms) is the one to re-open on. No pin moved; both shapes selectable and era-fingerprinted.
 
 - [ ] 14b. (DONE `5d281d8` fw v28 rev 4: EEPROM commit deferred off the flip tick; k_d single-source hold keyed on bus topology; 4408 / 175 / 4715 / 51. Tools follow-up: governor_model.py must carry the topology re-key.)
 - [ ] 15. (IN PROGRESS, Opus, with BLG v9 firmware side) **fw v28 rev 5 - re-entry rule (operator ruling 2026-09-08 evening):** after the loop has closed and the
