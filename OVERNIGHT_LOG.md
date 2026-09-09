@@ -1789,3 +1789,19 @@ with reversal paths, the primary worktree's branch is the operator's - commit fr
   **Agent C dispatched (~03:40)**: the ems_walk floor defect, the MPC HOLD state, the re-walk and every band on
   Run-window H-20 hydrogen; A's bracketing finding (suite anchor config 0.016109 vs sweep 0.012726 vs board
   0.012346 g) to reconcile first.
+- **Agent C stopped at part 1 (65978bf, ~04:00; two pinning tests, no band moved) - THE 0f-1 MECHANISM WAS WRONG.**
+  `_ratio_for_delivered(0.15, 1.4114)` = 0.130273 solves cleanly and is OUT OF BAND: the asymmetric law's minimum
+  deliverable share at that total is 0.171538 (the board delivered 0.1739 at r 0.1523 = the law to 0.08 %). The
+  reference is INFEASIBLE; the firmware's real controller parks r at the floor (+0.024 standing error) and dips
+  under DROOP_R_MIN on 0.40 % of ticks (79/20 000, 19 spans), while `GovernorModel._closed_loop()`'s one-tick
+  surrogate (beta = 1) sits under the floor on 100 % of ticks and re-cuts at 1 kHz - the whole -72 %. The
+  asymmetry-free walk matched the board only by deleting the term that makes the low rail infeasible; neither
+  configuration can be chosen for its outcome. Parts 2-3 (the HOLD state, the re-walk, every band) are blocked
+  behind the loop model. The campaign-I ledger's greedy verdict is corrected in place.
+- **D-5 (~04:05): port the REAL share-controller recursion (share_controller.h: prefilter, SOS, integrator,
+  back-calculation anti-windup, the fw v5+ hold/feedforward semantics) into governor_model's closed loop, keeping
+  the surrogate selectable (`closed_loop="surrogate"`), validated by the C++ equivalence harness plus the board's
+  0.40 % cut duty / +0.024 error / 71 cuts on ftp75-sdp / 0 on ftp75-dp.** In mandate: it is the prerequisite for
+  phase-B item 5 and the campaign; reversal: the surrogate flag regenerates every archived walk. Agent E dispatched
+  (governor_model / ems_walk / mpc_ems); agent D dispatched in parallel on the disjoint suite items 0f-4..8
+  (run_hil_suite / hil_replay_suite; hydrogen bands excluded). Bands + HOLD state follow E (agent C').
