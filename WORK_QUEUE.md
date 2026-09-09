@@ -194,7 +194,9 @@ was applied overnight. Bands are never widened; they are re-derived from the mec
 - [ ] 11. **Rulings** - ems-ftp75c-socband is no longer charge-free (17 windows, 447 mC): re-adjudicate the 2026-09-03
       "charge-free by design" before the verified ftp75c frontier is quoted; the FC-only re-arm persisting to Run exit
       (intended?); scp-inrush h2 dropped as an anchor (i_cut stays).
-- [ ] 12. The 75 matched-DP re-solves (provenance_drift since I_AUX_A) - after the H2-model update.
+- [x] 12. (D-4, 2026-09-09: the old records stay unreachable by design; campaign II's tool pass solves fresh records under the h2_map key) The 75 matched-DP re-solves.
+- [ ] 13. **RULING (phase B, agent A 354da3d)** - under the convex H-20 map the D12 admission window is NECESSARY BUT NOT SUFFICIENT: sdp_policy_v7 (alpha 0.134041, `--alpha-mode lever-h20`) admits 46 charge cells (demand bin 0, 0.5 W, 0.035 % dwell, below the SoC target; no walk opens a window) while the closed-form tripwire says charge rejected; alpha sits 1.59 % above the BISECTED charge boundary 0.131942 (bisected vs predicted: degeneracy 0.087452 vs 0.119978, charge -12 %). Options: accept the 46 cells (dwell-negligible); bisect alpha to zero them (charge-edge in reverse); or restate the admission rule on the map's marginal at the cell's own operating point. v7 ships as the frontier meanwhile (reversal: v6 under --h2-map eta-proxy).
+- [ ] 14. **Handoff correction recorded**: the '1010 of 2525 SDP cells refuse the charge action' statement in docs/HANDOFF_H2_MAP_20260909.md and the design note section 9.1 describes the SPLIT arm (bins 20-24, 0.14 % dwell); on the charge arm P_MAX adds zero refusals beyond charge_forbidden_bins (12-24). The rig median stack power is 13.3654 W, not 3.2 W (A0 26 % of the rate, not 63 %); lambda 0.423, not ~0.57. Fold into the design note at the next doc pass.
 
 **Open-item review (2026-09-08, everything else in this file, triaged):**
 - Runs THIS session in parallel with the firmware: **§7d encoder-defect harness** (operator brief, disjoint files).
