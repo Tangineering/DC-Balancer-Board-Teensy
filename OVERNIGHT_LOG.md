@@ -1629,3 +1629,10 @@ during a live campaign, ASCII prints, decision pairs for judgment calls with rev
   PI winding through DROOP_R_MIN at a sustained 0.15 command - a firmware ruling item, benign), ems-ftp75-mpc's
   0.15 rung re-arms the selector at stops (60.75 s battery-only, -9.9 % FC coulombs; delivery table has no
   HOLD), ems-ftp75c-socband now charges 447 mC (no longer charge-free). Zero board defects.
+- **INCIDENT (~23:40): ems-mpc-cross latched PI_TIMEOUT/HIL_LINK|ERROR at 49.326801 s.** Sidecar: tx 199 686 vs
+  rx 200 001 frames, send_errors 0 - the simulator child stopped transmitting for ~315 ms (> the firmware's
+  stale timeout), a HOST STALL, not a board event. Likeliest cause: the live analysis load (up to five agents
+  streaming 350 000-row CSVs while the child ran). **D-2: concurrent analysis agents capped at TWO for the rest
+  of campaign I**; the leg is a re-run candidate for the next campaign (none tonight by the operator's ruling).
+  Correction adopted for the skill: LIVE dispatch must bound concurrency on a shared host. Opus adjudication
+  running to confirm the gap class (ERR_HIL_STALE vs ERR_PI_TIMEOUT).
