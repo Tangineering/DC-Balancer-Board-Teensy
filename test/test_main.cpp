@@ -420,6 +420,16 @@ static void reset_test_state() {
     fcUvLastTickMs    = 0;
     fcUvTransientCount = 0;
     fcUvLastExcursionMs = 0;
+    // fw v30: the FC-only lockout and the battery rail's mirror block.
+    fcUvLockoutSeen    = false;
+    fcUvLockoutUntilMs = 0;
+    btUvArmed         = false;
+    btUvUnderActive   = false;
+    btUvUnderSince    = 0;
+    btUvDwellMs       = 0.0f;
+    btUvLastTickMs    = 0;
+    btUvTransientCount = 0;
+    btUvLastExcursionMs = 0;
 
     // .ino State 98 bench tools — SD data logger (logOpenForProfile/logSampleTick/logDrainTick)
     // Note sdInitTried/sdAvailable are latches on real hardware (one probe per power cycle); the
@@ -835,16 +845,24 @@ static void test_detect_faults() {
     check(error_source_state == 1,
           "detectFaults: error_source_state captures State 1");
 
-    // UV_BATT
+    // UV_BATT — fw v30: ARMED + leaky-dwell (the FC rail's shape), no longer a single
+    // State-2-gated sample. Arm with the BT pair closed and a healthy pack, then a sustained
+    // collapse under the 7.4 V floor latches after UV_BATT_DWELL_LATCH_MS.
     reset_test_state();
-    V_batt = LIMIT_V_BATT_MIN - 0.1f;
     V_bus = 16.0f; I_fc = 0;
     mainState = 2;
-    detectFaults();
-    check(fault_flags & FAULT_UV_BATT,
-          "detectFaults: FAULT_UV_BATT set when V_batt < LIMIT_V_BATT_MIN");
+    g_pin_value[BT_BUS_ENABLE] = HIGH;
+    g_pin_value[BT_REG_ENABLE] = HIGH;
+    V_batt = V_BATT_ARM_THRESH + 0.2f;
+    g_mock_millis = 0; detectFaults();
+    check(btUvArmed, "detectFaults: (setup) UV_BATT arms on a healthy routed pack");
+    V_batt = LIMIT_V_BATT_MIN - 0.1f;
+    g_mock_millis = 1; detectFaults();
+    check((fault_flags & FAULT_UV_BATT) && mainState == 2,
+          "detectFaults: FAULT_UV_BATT bit set on the first tick V_batt < LIMIT_V_BATT_MIN, no latch yet");
+    for (uint32_t t = 2; t <= (uint32_t)UV_BATT_DWELL_LATCH_MS; t++) { g_mock_millis = t; detectFaults(); }
     check(mainState == 99,
-          "detectFaults: mainState → 99 on UV_BATT");
+          "detectFaults: mainState → 99 on UV_BATT after UV_BATT_DWELL_LATCH_MS of dwell");
     check(error_code == ERR_UV_BATT,
           "detectFaults: error_code == ERR_UV_BATT");
 
@@ -4550,7 +4568,7 @@ static void test_share_handoff_mode_constants() {
           "constants: (setup) SHARE_GOV_FILT_ALPHA is the EMA weight the handoff filters share "
           "with the governor's load filter");
     // fw v23 (any-fault run-boundary-gated HIL recovery): stale pin updated.
-    check(FW_VERSION == 29, "pin: FW_VERSION == 29");
+    check(FW_VERSION == 30, "pin: FW_VERSION == 30");
 }
 
 // DARK seed (item B3): resetShareControlState() (and reset_test_state()'s mirror of it) seeds
@@ -10094,7 +10112,7 @@ static void test_uv_fc_arms_only_when_pair_and_healthy() {
 }
 
 static void test_uv_fc_continuous_collapse_latches() {
-    test_group("FAULT_UV_FC: continuous collapse latches at 20ms dwell, not before");
+    test_group("FAULT_UV_FC: continuous collapse latches at UV_FC_DWELL_LATCH_MS (fw v30: 1000 ms), not before");
 
     reset_test_state();
     mainState = 2;
@@ -10104,18 +10122,23 @@ static void test_uv_fc_continuous_collapse_latches() {
     g_mock_millis = 0; detectFaults();   // arm
     check(fcUvArmed, "UV_FC/collapse: (setup) armed");
 
+    // fw v30 RE-POINTED (20 -> 1000 ms): the latch is several purge durations long by design.
+    const uint32_t latchMs = (uint32_t)UV_FC_DWELL_LATCH_MS;
     V_fc = LIMIT_V_FC_MIN - 1.0f;
-    for (uint32_t t = 1; t <= 15; t++) { g_mock_millis = t; detectFaults(); }
+    for (uint32_t t = 1; t <= latchMs - 5; t++) { g_mock_millis = t; detectFaults(); }
     check(mainState == 2 && error_code == ERR_NONE,
-          "UV_FC/collapse: not latched at 15ms of continuous under-dwell");
-    check(fabsf(fcUvDwellMs - 15.0f) < 1e-6f,
+          "UV_FC/collapse: not latched 5 ms short of the dwell latch");
+    check(fabsf(fcUvDwellMs - (float)(latchMs - 5)) < 1e-3f,
           "UV_FC/collapse: dwell tracks the elapsed continuous under-time 1:1");
 
-    for (uint32_t t = 16; t <= 20; t++) { g_mock_millis = t; detectFaults(); }
+    for (uint32_t t = latchMs - 4; t <= latchMs; t++) { g_mock_millis = t; detectFaults(); }
     check(mainState == 99 && error_code == ERR_UV_FC,
-          "UV_FC/collapse: latches once dwell reaches UV_FC_DWELL_LATCH_MS (20ms), naming the "
+          "UV_FC/collapse: latches once dwell reaches UV_FC_DWELL_LATCH_MS, naming the "
           "cause ERR_UV_FC (not ERR_UV_BUS -- WP0096/WP0098's V_fc collapse led the bus event by "
           "~7ms, so the source-rail fault must latch first and name the true cause)");
+    check(fabsf(UV_FC_DWELL_LATCH_MS - 1000.0f) < 1e-6f && fabsf(LIMIT_V_FC_MIN - 4.5f) < 1e-6f,
+          "UV_FC/collapse (fw v30 pins): latch 1000 ms and limit 4.5 V are the brief's working "
+          "figures -- TODO(calibrate) against the H-20 purge measurement");
 }
 
 static void test_uv_fc_transient_flag_bit() {
@@ -10191,6 +10214,282 @@ static void test_uv_fc_dwell_dt_cap() {
           "off a single huge dt");
     check(mainState == 2 && error_code == ERR_NONE,
           "UV_FC/cap: two capped ticks (10ms total) stay below the 20ms latch");
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// fw v30 — THE H-20 PURGE-DIP REWORK. The cell's output swings to ~1 V on every H2 purge
+// (first cell run, 2026-09-15); under the fw v6 tuning one purge latched ERR_UV_FC. The
+// discriminator is DURATION: the dwell latch is ~5x a purge, the leak clears one purge before
+// the next. Working figures (TODO(calibrate) against the bench 'K' log): purge 200 ms, interval
+// 10 s, floor 1 V. Every waveform below is scripted straight onto the sensor globals that
+// updateSensors() would have written, one detectFaults() per 1 kHz tick.
+// ═════════════════════════════════════════════════════════════════════════════
+static void fw30_arm_fc_rail(uint32_t &t) {
+    reset_test_state();
+    mainState = 2;
+    g_pin_value[FC_BUS_ENABLE] = HIGH;
+    g_pin_value[FC_REG_ENABLE] = HIGH;
+    g_pin_value[BT_BUS_ENABLE] = HIGH;
+    g_pin_value[BT_REG_ENABLE] = HIGH;
+    V_bus = 16.0f; V_batt = 8.0f;
+    V_fc = 8.0f;                              // healthy loaded rail, above V_FC_ARM_THRESH
+    t = 0; g_mock_millis = t; detectFaults();
+}
+// One purge: V_fc to the floor for `dipMs`, then back to healthy for `recoverMs`.
+static void fw30_purge(uint32_t &t, uint32_t dipMs, uint32_t recoverMs) {
+    for (uint32_t i = 0; i < dipMs;     i++) { t++; g_mock_millis = t; V_fc = 1.0f; detectFaults(); }
+    for (uint32_t i = 0; i < recoverMs; i++) { t++; g_mock_millis = t; V_fc = 8.0f; detectFaults(); }
+}
+
+static void test_fw30_purge_train_does_not_latch(void) {
+    test_group("fw v30: a purge train (1 V for 200 ms every 10 s, two-source) never latches UV_FC");
+    uint32_t t;
+    fw30_arm_fc_rail(t);
+    check(fcUvArmed, "purge: (setup) the FC rail is armed");
+    float peakDwell = 0.0f; int transientsAfterFirst = -1;
+    for (int n = 0; n < 6; n++) {
+        for (uint32_t i = 0; i < 200; i++) {
+            t++; g_mock_millis = t; V_fc = 1.0f; detectFaults();
+            if (fcUvDwellMs > peakDwell) peakDwell = fcUvDwellMs;
+        }
+        if (n == 0) {
+            // The dip is VISIBLE: the transient bit is up while the rail is under the limit.
+            check((fault_flags & FAULT_UV_FC) != 0 && mainState == 2,
+                  "purge: the transient bit shows the dip (truthful telemetry), no latch");
+        }
+        for (uint32_t i = 0; i < 9800; i++) { t++; g_mock_millis = t; V_fc = 8.0f; detectFaults(); }
+        if (n == 0) transientsAfterFirst = fcUvTransientCount;
+        check(fcUvDwellMs == 0.0f,
+              "purge: the dwell has fully leaked away before the next purge (200/0.05 = 4.0 s "
+              "of recovery needed, 9.8 s available)");
+    }
+    check(mainState == 2 && error_code == ERR_NONE,
+          "purge: six purges, 60 s, no ERR_UV_FC -- the fw v6 20 ms tuning latched on the first");
+    check(fabsf(peakDwell - 200.0f) < 1e-3f,
+          "purge: the peak dwell is exactly one purge (200 ms), a fifth of the 1000 ms latch");
+    check(transientsAfterFirst == 1 && fcUvTransientCount == 6,
+          "purge: every purge is counted as a closed transient, visible via 'S'");
+    check(fcUvLockoutActive(),
+          "purge: a purge-class dip arms the FC-only lockout (brief item d)");
+}
+
+static void test_fw30_break_even_interval_ratchets(void) {
+    test_group("fw v30: the leak arithmetic -- a purge train FASTER than the break-even interval ratchets to a latch");
+    // Break-even: D + D/LEAK = 200 + 4000 = 4.2 s. At a 2.0 s interval each cycle nets
+    // 200 - 0.05*1800 = +110 ms, so the latch (1000 ms) is reached inside ~9 cycles (~18 s).
+    // This pins the arithmetic the constants block states, and it is the tripwire that says the
+    // measured purge interval MUST be re-checked against the shared 0.05 leak.
+    uint32_t t;
+    fw30_arm_fc_rail(t);
+    int cyclesToLatch = -1;
+    for (int n = 0; n < 40 && cyclesToLatch < 0; n++) {
+        fw30_purge(t, 200, 1800);
+        if (mainState == 99) cyclesToLatch = n + 1;
+    }
+    check(cyclesToLatch > 0 && error_code == ERR_UV_FC,
+          "break-even: a 2.0 s purge interval (under the 4.2 s break-even) ratchets into ERR_UV_FC");
+    check(cyclesToLatch >= 8 && cyclesToLatch <= 10,
+          "break-even: the latch lands in the 9th cycle +/-1 (net +110 ms per cycle against 1000 ms)");
+    // The stated break-even itself, from the constants: D/LEAK + D.
+    const float breakEvenMs = 200.0f / UV_BUS_DWELL_LEAK + 200.0f;
+    check(fabsf(breakEvenMs - 4200.0f) < 1e-3f,
+          "break-even: D/LEAK + D = 4200 ms at the shipped leak -- the brochure's 10 s interval "
+          "clears it by 2.4x; a measured interval under 4.2 s needs a dedicated UV_FC_DWELL_LEAK");
+}
+
+static void test_fw30_sustained_collapse_latches_at_one_second(void) {
+    test_group("fw v30: a SUSTAINED collapse to the purge floor latches at exactly the 1000 ms dwell");
+    uint32_t t;
+    fw30_arm_fc_rail(t);
+    for (uint32_t i = 0; i < 999; i++) { t++; g_mock_millis = t; V_fc = 1.0f; detectFaults(); }
+    check(mainState == 2, "sustained: 999 ms under the limit -- not yet");
+    t++; g_mock_millis = t; V_fc = 1.0f; detectFaults();
+    check(mainState == 99 && error_code == ERR_UV_FC,
+          "sustained: the 1000th ms latches ERR_UV_FC -- a purge-depth collapse that does not "
+          "recover IS a depleted or disconnected stack, and only duration says so");
+}
+
+static void test_fw30_dt_cap_at_new_constants(void) {
+    test_group("fw v30: the 5 ms dt cap still bounds a stalled loop -- 200 capped ticks to latch");
+    uint32_t t;
+    fw30_arm_fc_rail(t);
+    V_fc = 1.0f;
+    for (int i = 0; i < 199; i++) { t += 500; g_mock_millis = t; detectFaults(); }
+    check(fabsf(fcUvDwellMs - 199.0f * UV_BUS_DWELL_DT_CAP_MS) < 1e-2f && mainState == 2,
+          "dt cap: 199 stalled ticks credit 995 ms, not 99.5 s -- no latch yet");
+    t += 500; g_mock_millis = t; detectFaults();
+    check(mainState == 99 && error_code == ERR_UV_FC,
+          "dt cap: the 200th capped tick reaches 1000 ms -- >= 200 armed under-samples are needed");
+}
+
+static void test_fw30_share_cut_holds_dwell_source_depleted(void) {
+    test_group("fw v30 (brief c): a SHARE-LOOP cut HOLDS the dwell, so a depleted stack ratchets to a latch across cut/re-entry cycles");
+    uint32_t t;
+    // Cycle: loaded stack collapses under the limit for 300 ms; the share loop cuts FC
+    // (shareIsoFC + FC_BUS_ENABLE LOW); unloaded it recovers above V_FC_ARM_THRESH; re-entry
+    // (switch HIGH, flag clear); loaded again it collapses again.
+    fw30_arm_fc_rail(t);
+    float dwellAtCut = -1.0f, dwellAfterCut = -1.0f;
+    int cyclesToLatch = -1;
+    for (int n = 0; n < 10 && cyclesToLatch < 0; n++) {
+        for (uint32_t i = 0; i < 300; i++) { t++; g_mock_millis = t; V_fc = 2.0f; detectFaults(); if (mainState == 99) break; }
+        if (mainState == 99) { cyclesToLatch = n + 1; break; }
+        if (n == 0) dwellAtCut = fcUvDwellMs;
+        // the share loop's cut
+        shareIsoFC = true; g_pin_value[FC_BUS_ENABLE] = LOW;
+        for (uint32_t i = 0; i < 500; i++) { t++; g_mock_millis = t; V_fc = 8.0f; detectFaults(); }
+        if (n == 0) {
+            dwellAfterCut = fcUvDwellMs;
+            check(!fcUvArmed, "hold: (setup) the cut disarms the block");
+        }
+        // re-entry
+        shareIsoFC = false; g_pin_value[FC_BUS_ENABLE] = HIGH;
+        for (uint32_t i = 0; i < 20; i++) { t++; g_mock_millis = t; V_fc = 8.0f; detectFaults(); }
+        if (n == 0) check(fcUvArmed, "hold: (setup) the re-entry re-arms on the healthy unloaded rail");
+    }
+    check(fabsf(dwellAtCut - 300.0f) < 1e-3f && fabsf(dwellAfterCut - 300.0f) < 1e-3f,
+          "hold: the 300 ms accumulated before the share-loop cut is HELD across it (no dump, "
+          "no leak while disarmed)");
+    check(cyclesToLatch > 0 && error_code == ERR_UV_FC,
+          "hold: the depleted stack LATCHES across cut/re-entry cycles -- through fw v29 the dump "
+          "on every disarm made this stack unlatchable and the cut cycle its only symptom");
+    check(cyclesToLatch == 4,
+          "hold: 4 cycles -- 300 ms per loaded stint, ~1 ms of leak per cycle while re-armed, "
+          "reaches 1000 ms in the 4th");
+
+    // NEGATIVE CONTROL: every OTHER disarm still dumps. An operator/state opening of the pair
+    // with NO share-loop flag set zeroes the dwell exactly as fw v6 did.
+    fw30_arm_fc_rail(t);
+    for (uint32_t i = 0; i < 300; i++) { t++; g_mock_millis = t; V_fc = 2.0f; detectFaults(); }
+    g_pin_value[FC_BUS_ENABLE] = LOW;          // no shareIsoFC / shareSpCutFC: operator 'F', State 3/99
+    t++; g_mock_millis = t; V_fc = 8.0f; detectFaults();
+    check(!fcUvArmed && fcUvDwellMs == 0.0f,
+          "hold (negative control): a non-share-loop disarm still DUMPS the dwell");
+    check(fcUvTransientCount == 1,
+          "hold: the excursion open at the disarm is CLOSED and counted (fw v29 dropped it)");
+    // and a purge answered by a cut credits one purge, which leaks away once re-armed
+    fw30_arm_fc_rail(t);
+    for (uint32_t i = 0; i < 150; i++) { t++; g_mock_millis = t; V_fc = 1.0f; detectFaults(); }
+    shareIsoFC = true; g_pin_value[FC_BUS_ENABLE] = LOW;
+    for (uint32_t i = 0; i < 100; i++) { t++; g_mock_millis = t; V_fc = 8.0f; detectFaults(); }
+    shareIsoFC = false; g_pin_value[FC_BUS_ENABLE] = HIGH;
+    for (uint32_t i = 0; i < 5000; i++) { t++; g_mock_millis = t; V_fc = 8.0f; detectFaults(); }
+    check(fcUvArmed && fcUvDwellMs == 0.0f && mainState == 2,
+          "hold: a purge the share loop answered with a cut credits <= one purge of dwell, which "
+          "leaks to zero within 5 s of re-armed recovery -- no latch");
+}
+
+static void test_fw30_fc_only_lockout_and_vfc_escape(void) {
+    test_group("fw v30 (brief d): the FC-only lockout refuses an FC selection after a purge-class dip; the V_fc escape drops an FC-selected arm");
+
+    // (a) LOCKOUT: after one purge, a >= 0.85 command at Run entry selects BATTERY, not FC.
+    uint32_t t;
+    fw30_arm_fc_rail(t);
+    fw30_purge(t, 200, 300);
+    check(fcUvLockoutActive(), "lockout: (setup) armed by the purge");
+    g_mock_micros = t * 1000;
+    armShareBatteryOnlyStart();                // Run entry arms the selector (BT default)
+    power_share_setpoint = 0.85f;              // asks for the fuel cell alone
+    I_fc = 0.05f; I_batt = 0.05f; share_govTotAFilt = 0.10f;   // under the gate: the arm stands
+    for (int i = 0; i < 50; i++) { t++; g_mock_millis = t; g_mock_micros = t * 1000; powerBalance(); }
+    check(shareBatteryOnlyArmed && !shareSelectorFC,
+          "lockout: a 0.85 command under the lockout selects BT -- the battery stays on the bus");
+    // The lockout lapses -> the still-standing 0.85 selects FC as at fw v28.
+    t += UV_FC_PURGE_LOCKOUT_MS; g_mock_millis = t; g_mock_micros = t * 1000;
+    for (int i = 0; i < 50; i++) { t++; g_mock_millis = t; g_mock_micros = t * 1000; powerBalance(); }
+    check(!fcUvLockoutActive() && shareSelectorFC,
+          "lockout: once it lapses the same command selects FC -- the command was never lost");
+
+    // (b) THE RE-ARM RULE under the lockout lands battery-only whichever rail is named.
+    fw30_arm_fc_rail(t);
+    fw30_purge(t, 200, 300);
+    g_mock_micros = t * 1000;
+    shareClosedLoopRun = true; shareClosedLoopMode = false;
+    share_govTotAFilt = 0.10f; I_fc = 0.05f; I_batt = 0.05f;
+    power_share_setpoint = 0.85f;
+    t++; g_mock_millis = t; g_mock_micros = t * 1000; powerBalance();
+    check(shareBatteryOnlyArmed && shareSelectorReArmed && !shareSelectorFC,
+          "lockout: the closed-before re-arm on a 0.85 command lands BT-only under the lockout");
+
+    // (c) THE V_fc ESCAPE: FC selected (no lockout standing), the armed rail dips under the
+    // limit -> the arm drops with the inhibit on that tick, like the raw-current escape.
+    reset_test_state();
+    mainState = 2;
+    g_pin_value[FC_BUS_ENABLE] = HIGH; g_pin_value[FC_REG_ENABLE] = HIGH;
+    g_pin_value[BT_BUS_ENABLE] = HIGH; g_pin_value[BT_REG_ENABLE] = HIGH;
+    V_bus = 16.0f; V_batt = 8.0f; V_fc = 8.0f;
+    t = 0; g_mock_millis = t; g_mock_micros = 0; detectFaults();     // arm the rail
+    armShareBatteryOnlyStart();
+    power_share_setpoint = 0.85f;
+    I_fc = 0.08f; I_batt = 0.0f; share_govTotAFilt = 0.08f;
+    for (int i = 0; i < 5; i++) { t++; g_mock_millis = t; g_mock_micros = t * 1000; powerBalance(); }
+    check(shareBatteryOnlyArmed && shareSelectorFC, "escape: (setup) FC selected, no lockout");
+    V_fc = 1.0f;                               // the purge begins; the rail is armed
+    t++; g_mock_millis = t; g_mock_micros = t * 1000; powerBalance();
+    check(!shareBatteryOnlyArmed && shareSelectorReArmInhibit,
+          "escape: the FIRST tick of an under-limit V_fc with FC selected drops the arm and raises "
+          "the re-arm inhibit -- the latch's guarded BT release runs next");
+    // Negative control: an UNARMED rail (bench with no fuel cell, V_fc ~0) never trips it.
+    reset_test_state();
+    mainState = 2;
+    g_pin_value[FC_BUS_ENABLE] = HIGH; g_pin_value[FC_REG_ENABLE] = HIGH;
+    g_pin_value[BT_BUS_ENABLE] = HIGH; g_pin_value[BT_REG_ENABLE] = HIGH;
+    V_bus = 16.0f; V_batt = 8.0f; V_fc = 0.0f;
+    t = 0; g_mock_millis = t; g_mock_micros = 0; detectFaults();
+    armShareBatteryOnlyStart();
+    power_share_setpoint = 0.85f;
+    I_fc = 0.08f; I_batt = 0.0f; share_govTotAFilt = 0.08f;
+    for (int i = 0; i < 50; i++) { t++; g_mock_millis = t; g_mock_micros = t * 1000; powerBalance(); }
+    check(shareBatteryOnlyArmed && shareSelectorFC && !fcUvArmed,
+          "escape (negative control): with the rail never seen healthy (no fuel cell) the FC "
+          "selection stands -- the fw v28 fixtures are unaffected");
+}
+
+static void test_fw30_battery_rail_dwell_and_ov_limit(void) {
+    test_group("fw v30 (0i-2): the battery rail takes the leaky-dwell shape at the 7.4 V floor; OV_BATT is live at 8.5 V");
+    check(fabsf(LIMIT_V_BATT_MIN - 7.4f) < 1e-6f && fabsf(LIMIT_V_BATT_MAX - 8.5f) < 1e-6f,
+          "batt pins: 7.4 V floor (2026-07-10 ruling) / 8.5 V ceiling (inside the 8.646 V ADC ceiling)");
+    check(LIMIT_V_BATT_MAX < 3.3f * 2.62f,
+          "batt pins: OV_BATT is REACHABLE -- the limit sits under the BT divider's ADC saturation");
+    uint32_t t;
+    // (a) never arms with no pack
+    reset_test_state(); mainState = 2;
+    g_pin_value[BT_BUS_ENABLE] = HIGH; g_pin_value[BT_REG_ENABLE] = HIGH;
+    V_batt = 0.2f; V_fc = 0.0f; V_bus = 16.0f;
+    for (t = 0; t < 3000; t++) { g_mock_millis = t; detectFaults(); }
+    check(!btUvArmed && !(fault_flags & FAULT_UV_BATT) && mainState == 2,
+          "batt: a routed rail that never reads healthy never arms (bench with no pack)");
+    // (b) a launch sag through the floor for 150 ms does not latch; leaks away
+    reset_test_state(); mainState = 2;
+    g_pin_value[BT_BUS_ENABLE] = HIGH; g_pin_value[BT_REG_ENABLE] = HIGH;
+    V_batt = 8.0f; V_fc = 0.0f; V_bus = 16.0f;
+    t = 0; g_mock_millis = t; detectFaults();
+    check(btUvArmed, "batt: (setup) arms on a healthy routed pack");
+    for (int i = 0; i < 150; i++) { t++; g_mock_millis = t; V_batt = 7.1f; detectFaults(); }
+    check(mainState == 2 && fabsf(btUvDwellMs - 150.0f) < 1e-3f,
+          "batt: a 150 ms launch sag under 7.4 V credits 150 ms, no latch");
+    for (int i = 0; i < 4000; i++) { t++; g_mock_millis = t; V_batt = 7.9f; detectFaults(); }
+    check(btUvDwellMs == 0.0f && btUvTransientCount == 1,
+          "batt: the sag leaks away within 4 s and is counted as a transient");
+    // (c) a pack that STAYS under the floor latches at the dwell
+    for (int i = 0; i < 1000; i++) { t++; g_mock_millis = t; V_batt = 7.3f; detectFaults(); }
+    check(mainState == 99 && error_code == ERR_UV_BATT,
+          "batt: 1000 ms under the floor latches ERR_UV_BATT");
+    // (d) disarm dumps; bring-up disarms
+    reset_test_state(); mainState = 2;
+    g_pin_value[BT_BUS_ENABLE] = HIGH; g_pin_value[BT_REG_ENABLE] = HIGH;
+    V_batt = 8.0f; V_bus = 16.0f; t = 0; g_mock_millis = t; detectFaults();
+    for (int i = 0; i < 100; i++) { t++; g_mock_millis = t; V_batt = 7.0f; detectFaults(); }
+    g_pin_value[BT_BUS_ENABLE] = LOW; t++; g_mock_millis = t; detectFaults();
+    check(!btUvArmed && btUvDwellMs == 0.0f,
+          "batt: opening the BT pair disarms and dumps (no share-cut hold on this rail)");
+    // (e) OV_BATT: a saturated 9 V bench supply reading (8.646 V) now latches
+    reset_test_state(); mainState = 1;
+    V_batt = 8.646f; V_bus = 16.0f;
+    detectFaults();
+    check((fault_flags & FAULT_OV_BATT) != 0,
+          "batt: the ADC-saturated 9 V bench-supply reading trips OV_BATT -- the 9 V bench "
+          "battery convenience is retired with the 8.5 V limit");
 }
 
 static void test_uv_fc_disarm_predicates() {
@@ -10889,9 +11188,18 @@ static void test_uv_boot_gate() {
     detectFaults();
     check(fault_flags & FAULT_UV_FC, "detectFaults: UV_FC fires in State 2 (Run)");
 
+    // fw v30: FAULT_UV_BATT is ARMED the same way (BT pair closed, V_batt observed healthy while
+    // routed) -- a bare "V_batt low in State 2" with the pair open never arms.
     reset_test_state();
-    V_fc = 10.0f; V_batt = LIMIT_V_BATT_MIN - 0.1f; V_bus = 16.0f; I_fc = 0;
+    g_pin_value[BT_BUS_ENABLE] = HIGH;
+    g_pin_value[BT_REG_ENABLE] = HIGH;
+    V_fc = 10.0f; V_batt = V_BATT_ARM_THRESH + 0.2f; V_bus = 16.0f; I_fc = 0;
     mainState = 2;
+    g_mock_millis = 0;
+    detectFaults();
+    check(btUvArmed, "detectFaults: (setup) FAULT_UV_BATT arms once the BT pair is closed and V_batt is healthy");
+    V_batt = LIMIT_V_BATT_MIN - 0.1f;
+    g_mock_millis = 1;
     detectFaults();
     check(fault_flags & FAULT_UV_BATT, "detectFaults: UV_BATT fires in State 2 (Run)");
 }
@@ -24457,10 +24765,9 @@ static void test_uv_fc_armed_under_bench_test() {
     check(fcUvArmed, "UV_FC/bench: arms under BENCH_TEST exactly as in production, including State 98");
 
     V_fc = LIMIT_V_FC_MIN - 1.0f;
-    g_mock_millis = 1000; detectFaults(); // dwell=5ms
-    g_mock_millis = 1005; detectFaults(); // dwell=10ms
-    g_mock_millis = 1010; detectFaults(); // dwell=15ms
-    g_mock_millis = 1015; detectFaults(); // dwell=20ms -> latch
+    // fw v30 RE-POINTED (20 -> 1000 ms latch): the same capped 5 ms steps, walked to the latch.
+    const int stepsToLatch = (int)(UV_FC_DWELL_LATCH_MS / UV_BUS_DWELL_DT_CAP_MS);
+    for (int i = 1; i <= stepsToLatch; i++) { g_mock_millis = 1000 + 5 * i; detectFaults(); }
     check(mainState == 99 && error_code == ERR_UV_FC,
           "UV_FC/bench: a sustained V_fc collapse STILL latches under BENCH_TEST -- this is "
           "exactly the WP0096/WP0098 gap (V_fc under 5V, bus still in regulation, MCU stop with "
@@ -24745,6 +25052,14 @@ int main() {
     test_uv_fc_dwell_dt_cap();
     test_uv_fc_disarm_predicates();
     test_uv_fc_armed_under_bench_test();
+    // fw v30: the purge-dip rework runs under BENCH_TEST exactly as the FC block does (the
+    // battery-rail fixture is production-only: its detector is compiled out here).
+    test_fw30_purge_train_does_not_latch();
+    test_fw30_break_even_interval_ratchets();
+    test_fw30_sustained_collapse_latches_at_one_second();
+    test_fw30_dt_cap_at_new_constants();
+    test_fw30_share_cut_holds_dwell_source_depleted();
+    test_fw30_fc_only_lockout_and_vfc_escape();
     test_dostate98_g_bringup();
     test_dostate98_bringup_interlocks();
     test_dostate98_bringup_abort();
@@ -24877,6 +25192,15 @@ int main() {
     test_uv_fc_dwell_leak();
     test_uv_fc_dwell_dt_cap();
     test_uv_fc_disarm_predicates();
+    // fw v30: the H-20 purge-dip rework, the source-depleted hold, the FC-only lockout and the
+    // battery rail's dwell shape (production + HIL; the bench list carries all but the last).
+    test_fw30_purge_train_does_not_latch();
+    test_fw30_break_even_interval_ratchets();
+    test_fw30_sustained_collapse_latches_at_one_second();
+    test_fw30_dt_cap_at_new_constants();
+    test_fw30_share_cut_holds_dwell_source_depleted();
+    test_fw30_fc_only_lockout_and_vfc_escape();
+    test_fw30_battery_rail_dwell_and_ov_limit();
     test_dostate98_hotplug_guard();
     test_dostate98_bt_bus_fc_charge_guard();
     test_dostate98_quit_closes_charge_paths();

@@ -1,5 +1,33 @@
 # Work queue — updated post round 2026-09-02 (Ag105 η = 0.88, η-era DP/SDP, MPC live, campaigns B and C analysed, physics review closed, session closed out)
 
+## 0i. fw v30 (2026-09-16, the H-20 purge-dip UV rework) - the bench gate and the operator's items before the trip
+
+fw v30 (`teensy_controller.ino`, ledger row 30, `docs/fw30_fc_purge_uv.md`) is committed AS FLASHED (BENCH_TEST 0 / HIL_SIM 0)
+and PENDING FLASH to the real testbench. It supersedes fw v29 before any flash (the chatter fix rides along). Every new constant is
+a WORKING FIGURE from the operator's brief; item 1 is the bench gate that pins them.
+
+- [ ] 1. **BENCH GATE (brief item a) - characterise the H-20 purge on the cell.** State 98 `'K'` logging at 1 kHz, two-source:
+      purge duration and interval; the V_fc floor; the loaded knee (7.8 V @ 2.6 A brochure, TODO(verify: H-20 datasheet));
+      TPS61288 VIN-UVLO dropout during the purge and its soft-start on recovery; WHICH path fires (ERR_UV_FC or the share loop's
+      dark-channel / load-guard cut of FC_BUS_ENABLE on the I_fc collapse); V_bus and I_batt across one purge. Then re-derive:
+      `LIMIT_V_FC_MIN` (knee minus margin; shipped 4.5 V), `UV_FC_DWELL_LATCH_MS` (several x duration; shipped 1000 ms), the
+      leak (shipped: the bus rail's 0.05 - if the measured interval is under the 4.2 s break-even, split `UV_FC_DWELL_LEAK`
+      out as a rail parameter), `UV_FC_PURGE_LOCKOUT_MS` (~3 intervals; shipped 30 s). Closes the purge-timing TODO in
+      docs/HIL_PLANT.md and the 2026-09-15 bench datapoint in docs/boost-bringup-debug.md.
+      **Operating rule until then: the Pi keeps the share command strictly inside (0.15, 0.85) on the testbed** (the first
+      purge of a session precedes any lockout; an FC-only bus collapses at 2.57 V/ms, faster than the RT1987 turn-on).
+- [x] 2. (DONE fw v30) **Battery limits:** `LIMIT_V_BATT_MAX` 10.0 -> 8.5 V (OV_BATT was dead above the 8.646 V ADC ceiling;
+      a 9 V bench supply on BT now latches OV_BATT - the 9 V bench-battery convenience is retired); `LIMIT_V_BATT_MIN` 6.2 ->
+      7.4 V on the armed leaky-dwell shape (`UV_BATT_DWELL_LATCH_MS` 1000 ms, `V_BATT_ARM_THRESH` 7.8 V, a stated 0.4 V
+      deviation from C1); `LIMIT_I_FC_MAX` 1.4 A still TODO(verify) on the cell.
+- [ ] 3. **HIL PLANT before campaign III:** a drained simulated pack under 7.4 V now latches ERR_UV_BATT (campaign I's ftp75c
+      legs drained the pack). Re-read `hil_plant_sim`'s battery OCV floor and the ftp75c stimulus against the 7.4 V floor;
+      decide whether the plant's pack is re-sized or the legs re-specified. Also: the HIL mirror of the purge (a scripted V_fc
+      dip in the plant) is the natural campaign check of items 1-2 of the design note.
+- [ ] 4. **Recorded rulings for the operator to confirm** (design note sections 4-6): the source-depleted ruling (share-loop
+      cut HOLDS the dwell, no second detector); the FC-only lockout + V_fc escape as the item-(d) option; the 0.4 V battery
+      arm margin. Each is one constant or one predicate to revert.
+
 ## 0h. Campaign II (2026-09-09, the first H-20 campaign) - operator rulings and the fix queue
 
 Source: `HIL Results/hil_report_20260909_095715/HIL_FINDINGS.md` (FINAL SUMMARY) and OVERNIGHT_LOG.md session 2026-09-09

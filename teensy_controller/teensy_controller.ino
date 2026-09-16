@@ -1,6 +1,48 @@
 /*
  * teensy_controller.ino — Scale Car DC Balancer Board, Rev 20260622
  *
+ * fw v30 (2026-09-16) - THE H-20 PURGE-DIP UV REWORK + THE BATTERY LIMITS. Built on the brief's
+ *   WORKING FIGURES: the cell ran on the bench for the first time on 2026-09-15 (its output
+ *   swings to ~1 V on every H2 purge) but the purge has NOT been characterised yet, so every new
+ *   constant is TODO(calibrate) against the bench 'K' log the brief's item (a) asks for (purge
+ *   duration, interval, floor, loaded knee, TPS61288 VIN-UVLO dropout / soft-start, WHICH path
+ *   fires, and what V_bus / I_batt do across one purge two-source). Supersedes fw v29 BEFORE ANY
+ *   FLASH; fw v29's chatter fix is carried unchanged.
+ *   (1) FAULT_UV_FC re-tuned: the DISCRIMINATOR IS DURATION, NOT THRESHOLD. LIMIT_V_FC_MIN
+ *       6.0 -> 4.5 V (margin under the 7.8 V loaded knee only; a purge crosses any limit);
+ *       UV_FC_DWELL_LATCH_MS 20 -> 1000 ms (~5x a 100-200 ms purge; a sustained collapse latches
+ *       at 1.0 s); the bus rail's 0.05 leak and 5 ms dt cap REUSED (a 200 ms purge decays in
+ *       4.0 s, break-even purge interval 4.2 s — a dedicated leak becomes a rail parameter if the
+ *       measured interval is under that); V_FC_ARM_THRESH stays 7.0 V, the C1 >= 1.0 V margin now
+ *       a static_assert.
+ *   (2) THE SOURCE-DEPLETED RULING (brief c): no second detector. A SHARE-LOOP cut of
+ *       FC_BUS_ENABLE (shareIsoFC / shareSpCutFC) now HOLDS the dwell across the disarm instead of
+ *       dumping it, so a depleted stack that the share loop keeps cutting ratchets to a latch
+ *       after 1 s of TOTAL loaded under-time — the "N re-entries within T" detector realised
+ *       through the existing shape. Every other disarm (operator, dark stage, bring-up) dumps.
+ *       An excursion open at a disarm is now closed (counted, timed) instead of dropped.
+ *   (3) THE FC-ONLY LOCKOUT (brief d): a purge-class dip (an armed under-limit excursion that
+ *       closed without latching) refuses an FC-only SELECTION for UV_FC_PURGE_LOCKOUT_MS 30 s
+ *       (~3 purge intervals; re-armed by every purge of a running stack) — a >= 0.85 command
+ *       lands battery-only, a standing FC selection walks back to BT through the ordinary
+ *       make-before-break change; plus a V_fc ESCAPE beside the raw-current escape (FC selected,
+ *       rail armed, raw V_fc under the limit -> disarm with the inhibit). Stated: the escape
+ *       loses the race on a deep purge (bus falls at 2.57 V/ms, RT1987 closes in ~8 ms), so the
+ *       lockout is the protection and the Pi keeps the command inside (0.15, 0.85) on the
+ *       testbed until the purge is measured. 'S' prints the lockout.
+ *   (4) BATTERY LIMITS (WORK_QUEUE 0i-2): LIMIT_V_BATT_MAX 10.0 -> 8.5 V (OV_BATT was DEAD —
+ *       10.0 V is above the 8.646 V ADC ceiling; a 9 V bench supply on BT now latches OV_BATT);
+ *       LIMIT_V_BATT_MIN 6.2 -> 7.4 V (the 2026-07-10 pack-floor ruling), enforced through the
+ *       SAME ARMED LEAKY-DWELL SHAPE (UV_BATT_DWELL_LATCH_MS 1000 ms, V_BATT_ARM_THRESH 7.8 V —
+ *       a stated 0.4 V deviation from C1's 1.0 V, since the pack's usable window is only 1.0 V
+ *       wide) in place of the single unfiltered State-2-gated sample; still under !BENCH_TEST.
+ *       CONSEQUENCE for the HIL plant: a drained simulated pack under 7.4 V now latches
+ *       ERR_UV_BATT (campaign I's ftp75c legs drained the pack) — re-read the plant's OCV floor
+ *       before the next campaign. LIMIT_I_FC_MAX 1.4 A is TODO(verify) on the cell, unchanged.
+ *   No packet, frame or record layout change; no share-loop change beyond the selector's two
+ *   lockout reads and the escape term. Tests: see docs/firmware-versions.md row 30.
+ *   BUILD FLAGS AS FLASHED: BENCH_TEST 0 / HIL_SIM 0 (real testbench).
+ *
  * fw v29 (2026-09-16) - THE FC MINORITY CHATTER FIX. One change, closed-loop share path only:
  *   the Youla share controller's AUTHORITY SPAN FOLLOWS THE COMMAND. For an IN-BAND commanded
  *   share (inclusive at both rails, [DROOP_R_MIN, DROOP_R_MAX] = [0.15, 0.85]) the controller's
@@ -1922,7 +1964,12 @@ EthernetUDP Udp;
 // figures are externally sourced (Horizon H-20 product page + manual), not from a repo artifact.
 // Confirm against the physical datasheet and re-derive before trusting FAULT_OC_FC.
 #define LIMIT_I_FC_MAX   1.4f   // A (BUS-SIDE) — H-20 2.6 A input referred through the boost
-#define LIMIT_V_BATT_MIN 6.2f   // V — 2S LiPo cutoff (2 × 3.1V)
+                                // TODO(verify: H-20 bench) — fw v30 brief: confirm on the cell.
+// fw v30 (2026-09-16): 6.2 -> 7.4 V, the 2026-07-10 pack-floor ruling ("keep the battery at
+// 7.4-8.4 V ... enforce the floor eventually via LIMIT_V_BATT_MIN", CLAUDE.md RC-BT bodge record).
+// It is now enforced through the ARMED LEAKY-DWELL shape (see UV_BATT_DWELL_LATCH_MS), not the
+// old single unfiltered State-2-gated sample, so a load-step sag through 7.4 V does not latch.
+#define LIMIT_V_BATT_MIN 7.4f   // V — 2S operating floor (3.7 V/cell), operator ruling 2026-07-10
 // Nominal regulated bus voltage — set by the boost FB network in HARDWARE; the firmware thresholds
 // below derive from it. Death-5 headroom plan (docs/boost-bringup-debug.md) EXECUTED 2026-07-11:
 // RD1 bodged 237k → 215k on BOTH channels (schematic not yet updated), so the no-load setpoint is
@@ -1960,12 +2007,21 @@ EthernetUDP Udp;
                                         //      as "continuously over"). Normal loop ticks are
                                         //      sub-ms; a gap this large restarts the window.
 //#define LIMIT_V_BATT_MAX  8.6f  // V — 2S LiPo max (4.3V/cell × 2 + 0.2V margin)
-// TODO: change to 8.5f. The BT divider (16.2k/10k, BOM-confirmed) saturates the ADC at
-// 3.3*2.62 = 8.646V, so 10.0 can NEVER trip (OV_BATT is currently dead — and under BENCH_TEST
-// the OV checks are the only armed faults). Even the old 8.6f left only ~22 ADC counts of
-// headroom below the ceiling. 8.5V gives real margin while still protecting a 2S pack.
-#define LIMIT_V_BATT_MAX 10.0f  // TEMP for using 9V battery for testing (unreachable — see above)
-#define LIMIT_V_FC_MIN    6.0f  // V — H-20 minimum
+// fw v30 (2026-09-16, WORK_QUEUE 0i item 2): 10.0 -> 8.5 V. The BT divider (16.2k/10k,
+// BOM-confirmed) saturates the ADC at 3.3*2.62 = 8.646V, so the 10.0 V "TEMP for a 9 V bench
+// battery" value could NEVER trip and OV_BATT was dead — and under BENCH_TEST the OV checks are
+// the only armed faults. 8.5 V leaves ~18 ADC counts under the ceiling and still protects a 2S
+// pack. CONSEQUENCE, stated: a 9 V bench supply on the BT input now reads 8.646 V (saturated)
+// and LATCHES ERR_OV_BATT — the 9 V bench-battery convenience is retired with this value.
+#define LIMIT_V_BATT_MAX 8.5f   // V — 2S LiPo max (4.25 V/cell), inside the ADC ceiling
+// fw v30 (2026-09-16): 6.0 -> 4.5 V. THE DISCRIMINATOR FOR A PURGE IS DURATION, NOT THRESHOLD
+// (see UV_FC_DWELL_LATCH_MS): the H-20's output swings to ~1 V on every H2 purge (first cell run,
+// 2026-09-15), so no trip limit above the purge floor separates a purge from a depleted stack.
+// This limit therefore only sets the margin under the LOADED KNEE — 7.8 V at 2.6 A per the
+// brochure (TODO(verify: H-20 datasheet)); fw v5 bench runs loaded 7.8-8.2 V; TP0178's loaded
+// minimum 7.87 V. 4.5 V is the brief's working figure (4-5 V band): ~3.3 V under the knee.
+// TODO(calibrate: H-20 loaded knee, bench 'K' log) — re-derive as knee minus margin.
+#define LIMIT_V_FC_MIN    4.5f  // V — under the H-20 loaded knee; a purge (~1 V) crosses it
 // BT (BUS-SIDE — see the node note at LIMIT_I_FC_MAX). Set to the already-validated conservative
 // per-channel envelope of 3 A (controller_design/system_model.md §9; docs/design-review-2026-07-28.md
 // step 7), which is also the TPS61288 f_c ≤ f_RHPZ/5 margin point at worst-case cap derating.
@@ -2035,12 +2091,56 @@ EthernetUDP Udp;
 // duty cycle is rejected; what one stalled tick may credit), not rail-specific quantities, so
 // they are REUSED rather than duplicated — one shape, two rails.
 // The V_batt counterpart is still deferred: its threshold is blocked on the LM1084-input capture.
-#define UV_FC_DWELL_LATCH_MS   20.0f  // ms of accumulated net under-dwell on V_fc → latch.
-                                       //      Same 20 ms as the bus: the WP0096/WP0098 excursions
-                                       //      are ~10 ms of CONTINUOUS collapse each, so a
-                                       //      repetitive pair (or one longer sag) latches, while a
-                                       //      single isolated 10 ms dip leaks away.
-                                       //      TODO(calibrate) against the fw v6 re-sweep.
+// fw v30 (2026-09-16) — THE PURGE-DIP REWORK. The Horizon H-20 ran on the bench for the first
+// time on 2026-09-15 and its output swings to ~1 V on every H2 purge. Under the fw v6 tuning
+// (20 ms latch, 6.0 V limit — set against ~10 ms BENCH-SUPPLY collapses, never the cell) one
+// purge latches ERR_UV_FC. DESIGN RULE: the discriminator is DURATION, not threshold — a purge
+// reaches ~1 V, so LIMIT_V_FC_MIN cannot separate a purge from a depleted or disconnected stack
+// and only sets the margin under the loaded knee. The leaky-dwell SHAPE is kept (one shape, two
+// rails) and re-tuned on the brief's WORKING FIGURES, every one TODO(calibrate) against the
+// bench 'K' log of the cell (purge duration, interval, floor, loaded knee, TPS61288 VIN-UVLO
+// dropout and soft-start on recovery, and WHICH path fires — this fault or the share loop's cut):
+//   LATCH  1000 ms  = ~5x a 100-200 ms purge. One purge credits <= 200 ms of dwell (no latch);
+//                     a SUSTAINED collapse of the same depth latches at 1.0 s.
+//   LEAK   the bus rail's UV_BUS_DWELL_LEAK 0.05, REUSED: a 200 ms purge decays fully after
+//                     200/0.05 = 4.0 s of armed over-time, so at a 10 s purge interval
+//                     (brochure) each purge starts from zero. The break-even interval, where a
+//                     purge train ratchets instead of decaying, is T = D/LEAK + D = 4.2 s at
+//                     D = 200 ms. IF THE MEASURED INTERVAL IS UNDER THAT, a dedicated
+//                     UV_FC_DWELL_LEAK becomes a rail-specific parameter and must be documented
+//                     as such (brief item b); until measured, one shape, two rails stands.
+//   DT CAP the bus rail's UV_BUS_DWELL_DT_CAP_MS 5 ms, unchanged (a stalled loop still needs
+//                     >= 200 armed under-samples to latch).
+//   V_FC_ARM_THRESH stays 7.0 V: >= 1.0 V above the 4.5 V limit (fw v6 review C1, now a
+//                     static_assert) and under the 7.8-8.2 V healthy loaded rail.
+// A purge that the SHARE LOOP answers (its dark-channel / load-guard cut of FC_BUS_ENABLE on
+// the I_fc collapse) disarms this block; fw v30 HOLDS the dwell across that cut instead of
+// dumping it — see the detector for the SOURCE-DEPLETED ruling (brief item c).
+#define UV_FC_DWELL_LATCH_MS   1000.0f // ms of accumulated net under-dwell on V_fc → latch.
+                                       //      TODO(calibrate: H-20 purge duration, bench 'K' log)
+// fw v30 — THE FC-ONLY LOCKOUT (brief item d). With the fw v28 selector FC-selected the battery
+// is OFF the bus, and a purge then leaves the bus source-less: it collapses at I_load/C_VBUS
+// (2.57 V/ms at the aux load) into ERR_UV_BUS faster than the RT1987's 8 ms turn-on can bring
+// BT back, so no REACTIVE firmware rule can save that case. The rule is therefore PREVENTIVE:
+// once a purge-class dip has been seen (an armed under-limit excursion that closed without
+// latching), an FC-only selection is REFUSED for this window and an FC-selected arm is dropped
+// (see powerBalance()). Working figure 30 s = ~3 brochure purge intervals, so the lockout
+// re-arms itself on every purge of a running stack and only lapses on a stack that has stopped
+// purging. TODO(calibrate: H-20 purge interval). Until (b) is measured the Pi must ALSO keep the
+// share command strictly inside (0.15, 0.85) on the testbed (brief item d) — the first dip of a
+// session is not covered by a lockout that has not been armed yet.
+#define UV_FC_PURGE_LOCKOUT_MS 30000u  // ms after a purge-class dip during which FC-only is refused
+// fw v30 — THE BATTERY RAIL TAKES THE SAME SHAPE (WORK_QUEUE 0i item 2). fw v5 DEFERRED it on
+// the LM1084-input capture; the 7.4 V floor ruling makes the threshold a SoC floor rather than a
+// brownout threshold, so the shape's job here is to reject load-step sags (an EV launch pulls
+// the pack down through 7.4 V for tens of ms) and latch on a pack that STAYS under it. Arming:
+// BT pair closed (BT_REG_ENABLE && BT_BUS_ENABLE) and V_batt seen at/above V_BATT_ARM_THRESH
+// while so routed — a bench with no pack never arms. DEVIATION FROM C1's 1.0 V, stated: the
+// pack's whole usable window is 7.4-8.4 V, so a 1.0 V arm margin would arm only a FULL pack and
+// leave the fault dead for most of every run; 0.4 V (7.8 V, ~50 % SoC resting) is the widest
+// margin that still arms a working pack. TODO(calibrate: pack OCV/SoC curve, launch sag depth).
+#define UV_BATT_DWELL_LATCH_MS 1000.0f // ms of accumulated net under-dwell on V_batt → latch
+#define V_BATT_ARM_THRESH      7.8f    // V — V_batt must be seen at/above this, while routed, to arm
 // ARMING threshold, DISTINCT from the trip limit (fw v6 correctness review C1). Arming and
 // tripping on the SAME 6.0 V leaves zero margin: a fuel-cell ramp that ticks to exactly
 // LIMIT_V_FC_MIN once would arm, then dip back under during the same ramp and latch ERR_UV_FC
@@ -2052,6 +2152,11 @@ EthernetUDP Udp;
 // limit (no ramp arms while still inside the trip band). TODO(calibrate): re-check both edges on
 // the fw v6 re-sweep, and against the vehicle fuel cell rather than the bench source.
 #define V_FC_ARM_THRESH         7.0f  // V — V_fc must be seen at/above this, while routed, to arm
+// fw v30: the C1 margin is a static_assert now that the limit moves with the cell measurement.
+static_assert(V_FC_ARM_THRESH >= LIMIT_V_FC_MIN + 1.0f,
+              "V_FC_ARM_THRESH must sit >= 1.0 V above LIMIT_V_FC_MIN (fw v6 review C1)");
+static_assert(V_BATT_ARM_THRESH > LIMIT_V_BATT_MIN && V_BATT_ARM_THRESH < LIMIT_V_BATT_MAX,
+              "V_BATT_ARM_THRESH must sit strictly between the battery UV and OV limits");
 #define LIMIT_V_RGN_MAX  28.0f  // V — regen node spike ceiling
 #define LIMIT_V_CHG_MAX  24.0f  // V — charger input max
 
@@ -2188,6 +2293,23 @@ uint32_t fcUvLastExcursionMs = 0;  // ms — duration of the most recent CLOSED 
                                    // no print (one repeating "[UV] transient" line per rail would
                                    // be indistinguishable in a scrollback), so it is reported in
                                    // the 'S' status dump instead (fw v6 review S5)
+// fw v30 — the FC-only lockout (see UV_FC_PURGE_LOCKOUT_MS). Stamped by the detector whenever an
+// ARMED under-limit excursion closes without latching (a purge-class dip), read by the selector.
+// A seen-flag rather than a zero sentinel, so the deadline arithmetic stays wrap-safe.
+bool     fcUvLockoutSeen    = false;
+uint32_t fcUvLockoutUntilMs = 0;
+static inline bool fcUvLockoutActive() {
+    return fcUvLockoutSeen && (int32_t)(millis() - fcUvLockoutUntilMs) < 0;
+}
+// fw v30 — FAULT_UV_BATT arming + dwell state, the FC block's mirror on the battery rail (see
+// UV_BATT_DWELL_LATCH_MS). Its own dt timestamp, for the same reason the FC block has its own.
+bool     btUvArmed       = false;  // V_batt has been observed healthy with the BT pair closed
+bool     btUvUnderActive = false;
+uint32_t btUvUnderSince  = 0;
+float    btUvDwellMs     = 0.0f;   // ms — leaky accumulated under-dwell (UV_BATT_DWELL_LATCH_MS)
+uint32_t btUvLastTickMs  = 0;
+uint16_t btUvTransientCount = 0;
+uint32_t btUvLastExcursionMs = 0;
 
 // ── Error code enum ───────────────────────────────────────────────────────────
 // Latching primary cause; set once by triggerFault() on first State-99 entry.
@@ -3990,7 +4112,7 @@ void encDirCommitTick() {
 // header (format v2 and later, offset 18) so logged data is attributable to the
 // firmware that produced it, printed at boot and in the State-98 'S' status.
 // 0 is reserved for "pre-versioning" (logs PS0001–TP0005 and earlier).
-#define FW_VERSION 29
+#define FW_VERSION 30
 
 #ifndef BENCH_TEST
 #define BENCH_TEST 0
@@ -6581,8 +6703,9 @@ void detectFaults() {
     // Init/Idle, and V_batt/V_fc read ~0 before the regulators stabilise. Firing UV here would
     // latch State 99 on the very first tick of every boot (V_fc/V_batt init to 0 < limits).
     // Source: boot-lock review. (FAULT_UV_BUS no longer uses a State-2 gate — since 2026-08-12 it
-    // is armed by the bus itself; see the uvBusArmed block below.)
-    if (mainState == 2 && V_batt < LIMIT_V_BATT_MIN) triggerFault(FAULT_UV_BATT, ERR_UV_BATT);
+    // is armed by the bus itself; see the uvBusArmed block below. The State-2-gated single-sample
+    // FAULT_UV_BATT check that lived here was REPLACED by the armed leaky-dwell block below the
+    // FC rail's, fw v30, 2026-09-16.)
 #endif
 
     // FAULT_OV_BUS — time-persistence filtered (see OV_BUS_PERSIST_* rationale at the constants).
@@ -6658,11 +6781,37 @@ void detectFaults() {
         // not evidence of anything. The staged bring-up owns its own sags (S3), same as the bus.
         bool fcRouted = (digitalRead(FC_BUS_ENABLE) == HIGH) && (digitalRead(FC_REG_ENABLE) == HIGH);
         if (bringupActive || !fcRouted) {
-            // Disarm and DUMP the dwell: a disarmed interval is not evidence of a collapse, and
-            // carrying dwell across it would let two unrelated bench sequences add into a latch.
+            // fw v30 — an OPEN excursion is CLOSED here too (it was silently dropped through fw
+            // v29): counted, timed, and it stamps the FC-only lockout exactly as a close on the
+            // recovery branch below does. A purge that the share loop answers with a cut is
+            // still a purge-class dip the selector must know about.
+            if (fcUvUnderActive) {
+                if (fcUvTransientCount < 65535u) fcUvTransientCount++;
+                fcUvLastExcursionMs = (uint32_t)(nowMs - fcUvUnderSince);
+                fcUvLockoutSeen     = true;
+                fcUvLockoutUntilMs  = nowMs + UV_FC_PURGE_LOCKOUT_MS;
+            }
             fcUvArmed       = false;
             fcUvUnderActive = false;
-            fcUvDwellMs     = 0.0f;
+            // fw v30 — THE SOURCE-DEPLETED RULING (brief item c). Through fw v29 every disarm
+            // DUMPED the dwell. That is right for an operator toggle, a dark stage or bring-up (a
+            // disarmed interval is not evidence, and two unrelated bench sequences must not add
+            // into a latch) — but it made a DEPLETED STACK UNLATCHABLE: the share loop's own cut
+            // of FC_BUS_ENABLE on the I_fc collapse (`shareIsoFC` / `shareSpCutFC`) disarmed the
+            // block and dumped what it had accumulated, the re-entry needed V_fc back above
+            // V_FC_ARM_THRESH (which an UNLOADED depleted stack does reach), the next load
+            // collapsed it again, and the cut/re-entry cycle was the only symptom, forever.
+            // RULING: no second detector. A share-loop cut HOLDS the dwell (frozen: no credit, no
+            // leak, the tick clock keeps running so re-arm sees no dt jump), and the re-armed
+            // block resumes from it. A depleted stack then ratchets across cycles — each loaded
+            // stint under the limit adds, the cut holds, and it latches after UV_FC_DWELL_LATCH_MS
+            // of TOTAL loaded under-time — which is precisely the "N re-entries within T with V_fc
+            // under the knee" detector the brief asked for, realised through the existing shape
+            // with the leak as T. A purge answered by a cut credits <= one purge of dwell, which
+            // the leak clears between purges once re-armed. Every other disarm still dumps.
+            if (!(shareIsoFC || shareSpCutFC) || bringupActive) {
+                fcUvDwellMs = 0.0f;
+            }
         } else if (V_fc >= V_FC_ARM_THRESH) {
             // The rail has demonstrably been healthy while routed — from here a collapse below
             // LIMIT_V_FC_MIN is a real source failure, not a boot ramp or a missing source.
@@ -6693,6 +6842,9 @@ void detectFaults() {
                 // make the two rails indistinguishable in a scrollback.
                 if (fcUvTransientCount < 65535u) fcUvTransientCount++;
                 fcUvLastExcursionMs = (uint32_t)(nowMs - fcUvUnderSince);
+                // fw v30: a purge-class dip — arm the FC-only lockout (UV_FC_PURGE_LOCKOUT_MS).
+                fcUvLockoutSeen    = true;
+                fcUvLockoutUntilMs = nowMs + UV_FC_PURGE_LOCKOUT_MS;
             }
             fcUvUnderActive = false;
             if (fcUvArmed) {
@@ -6701,6 +6853,59 @@ void detectFaults() {
             }
         }
     }
+
+#if !BENCH_TEST
+    // FAULT_UV_BATT — battery-source-rail armed + leaky-dwell filtered (fw v30, 2026-09-16; the
+    // FC block's mirror, see UV_BATT_DWELL_LATCH_MS / V_BATT_ARM_THRESH). REPLACES the single
+    // unfiltered State-2-gated sample above (`mainState == 2 && V_batt < LIMIT_V_BATT_MIN`): with
+    // the limit raised to the 7.4 V operating floor a single sample would latch on every launch
+    // sag. ARMING replaces the State-2 gate (V_batt reads ~0 before the regulators stabilise, and
+    // a bench with no pack never arms). Kept under !BENCH_TEST as the check it replaces was — the
+    // bench-supply rail on the BT input is not a pack. Runs BEFORE the bus block, like the FC
+    // block, so a pack collapse names ERR_UV_BATT and not its bus consequence. Every disarm dumps
+    // (no share-cut hold: the battery is not the purging source).
+    {
+        uint32_t nowMs = millis();
+        bool btRouted = (digitalRead(BT_BUS_ENABLE) == HIGH) && (digitalRead(BT_REG_ENABLE) == HIGH);
+        if (bringupActive || !btRouted) {
+            if (btUvUnderActive) {
+                if (btUvTransientCount < 65535u) btUvTransientCount++;
+                btUvLastExcursionMs = (uint32_t)(nowMs - btUvUnderSince);
+            }
+            btUvArmed       = false;
+            btUvUnderActive = false;
+            btUvDwellMs     = 0.0f;
+        } else if (V_batt >= V_BATT_ARM_THRESH) {
+            btUvArmed = true;
+        }
+
+        float dtMs = (float)(uint32_t)(nowMs - btUvLastTickMs);
+        if (dtMs > UV_BUS_DWELL_DT_CAP_MS) dtMs = UV_BUS_DWELL_DT_CAP_MS;
+        btUvLastTickMs = nowMs;
+
+        if (btUvArmed && V_batt < LIMIT_V_BATT_MIN) {
+            fault_flags |= FAULT_UV_BATT;        // transient indication — not yet a latch
+            if (!btUvUnderActive) {
+                btUvUnderActive = true;
+                btUvUnderSince  = nowMs;
+            }
+            btUvDwellMs += dtMs;
+            if (btUvDwellMs >= UV_BATT_DWELL_LATCH_MS) {
+                triggerFault(FAULT_UV_BATT, ERR_UV_BATT);
+            }
+        } else {
+            if (btUvUnderActive) {
+                if (btUvTransientCount < 65535u) btUvTransientCount++;
+                btUvLastExcursionMs = (uint32_t)(nowMs - btUvUnderSince);
+            }
+            btUvUnderActive = false;
+            if (btUvArmed) {
+                btUvDwellMs -= UV_BUS_DWELL_LEAK * dtMs;
+                if (btUvDwellMs < 0.0f) btUvDwellMs = 0.0f;
+            }
+        }
+    }
+#endif
 
     // FAULT_UV_BUS — bus-armed + leaky-dwell filtered (fw v5, 2026-08-12; see the UV_BUS_DWELL_*
     // and uvBusArmed rationale at the constants/state blocks). Deliberately OUTSIDE the
@@ -7456,6 +7661,11 @@ void hilWarmReset() {
     fcUvUnderActive  = false;
     fcUvDwellMs      = 0.0f;
     fcUvLastTickMs   = millis();
+    fcUvLockoutSeen  = false;      // fw v30
+    btUvArmed        = false;      // fw v30
+    btUvUnderActive  = false;
+    btUvDwellMs      = 0.0f;
+    btUvLastTickMs   = millis();
 
     // ── Motor / drive controller ─────────────────────────────────────────────
     // The shared stop primitive: zeroes v_setpoint and the manual-motor state, clears the PI
@@ -10695,6 +10905,23 @@ void printTestStatus() {
     Serial.print("/"); Serial.print(UV_FC_DWELL_LATCH_MS, 1); Serial.print(" ms");
     Serial.print(", latest excursion "); Serial.print(fcUvLastExcursionMs); Serial.print(" ms");
     Serial.println();
+    // fw v30: the FC-only lockout (a purge-class dip seen within UV_FC_PURGE_LOCKOUT_MS) and the
+    // battery rail's own dwell filter — the only observables of both.
+    Serial.print("FC-only lockout:    ");
+    if (fcUvLockoutActive()) {
+        Serial.print("ACTIVE, "); Serial.print((uint32_t)(fcUvLockoutUntilMs - millis()));
+        Serial.println(" ms left (purge-class dip seen; FC-only selection refused)");
+    } else {
+        Serial.println(fcUvLockoutSeen ? "lapsed" : "never armed (no purge-class dip seen)");
+    }
+#if !BENCH_TEST
+    Serial.print("UV_BATT transients: "); Serial.print(btUvTransientCount);
+    Serial.print(btUvArmed ? "  (armed)" : "  (disarmed — BT pair open, bring-up, or V_batt never seen healthy)");
+    Serial.print("  dwell="); Serial.print(btUvDwellMs, 1);
+    Serial.print("/"); Serial.print(UV_BATT_DWELL_LATCH_MS, 1); Serial.print(" ms");
+    Serial.print(", latest excursion "); Serial.print(btUvLastExcursionMs); Serial.print(" ms");
+    Serial.println();
+#endif
     Serial.print("share sp-cut latch: ");
     Serial.println(shareSpCutFC ? "FC" : (shareSpCutBT ? "BT" : "none"));
     // fw v25: the two share-cut REFUSAL counters, summed over BOTH cut paths (the r-based
@@ -12280,7 +12507,9 @@ void powerBalance() {
         // >= DROOP_R_MAX asks for the fuel cell alone, <= DROOP_R_MIN for the battery alone. The
         // >= test is evaluated first for the same reason as in the selection block below, and the
         // two rails cannot both be met (DROOP_R_MIN < DROOP_R_MAX).
-        shareSelectorFC      = (power_share_setpoint >= DROOP_R_MAX);
+        // fw v30: under the FC-only lockout a rail command re-arms BATTERY-only whichever rail it
+        // named — the battery stays on the bus (see UV_FC_PURGE_LOCKOUT_MS).
+        shareSelectorFC      = (power_share_setpoint >= DROOP_R_MAX) && !fcUvLockoutActive();
         shareSelectorReArmed = true;
         // fw v28 rev 6 (review S2): the FIRST selection of an arm is never dwelled — the dwell
         // rate-limits CHANGES of selection, not the arm itself. Expire the deadline here so the
@@ -12292,6 +12521,13 @@ void powerBalance() {
         if (power_share_setpoint >= DROOP_R_MAX)      wantFC = true;
         else if (power_share_setpoint <= DROOP_R_MIN) wantFC = false;
         // in between: HOLD the current selection (no else)
+        // fw v30 — THE FC-ONLY LOCKOUT (brief item d, UV_FC_PURGE_LOCKOUT_MS). While a purge-class
+        // dip has been seen within the window, the fuel cell is never selected alone: a >= 0.85
+        // command lands as BATTERY-only, and a standing FC selection is walked back to BT through
+        // the ordinary make-before-break selection change (release, one live tick, guarded entry,
+        // the 250 ms dwell). The command is not lost — this is re-evaluated every tick, so the
+        // moment the lockout lapses a still-standing 0.85 selects FC as before.
+        if (fcUvLockoutActive()) wantFC = false;
         if (wantFC != shareSelectorFC) {
             // fw v28 rev 6 (review S2) — SELECTION-CHANGE DWELL. A change is a latch release, one
             // live tick, and a latch entry on the other channel; through rev 5 nothing but the
@@ -12362,7 +12598,19 @@ void powerBalance() {
             // command that selected FC is by construction still >= DROOP_R_MAX on this tick, so
             // without the inhibit the re-entry rule above would re-arm on the very next tick and
             // hand the fuel cell straight back the load the escape just took off it.
-            if (shareSelectorFC && fabsf(I_fc) > SHARE_GOV_I_FC_CEIL_A) {
+            // fw v30 — THE V_fc ESCAPE, the raw-current escape's sibling (brief item d). With FC
+            // selected and the rail ARMED (seen healthy while routed — so a bench with no fuel
+            // cell, V_fc ~0, never trips this), a raw V_fc under LIMIT_V_FC_MIN is a purge or a
+            // collapse in progress on the ONLY source. Drop the arm with the inhibit so the
+            // latch's guarded BT release runs on the next tick. Stated honestly: the bus falls at
+            // I_load/C_VBUS (2.57 V/ms at the aux load) and the RT1987 needs ~8 ms to close BT,
+            // so on a deep purge this escape LOSES the race and ERR_UV_BUS latches anyway — it
+            // covers the slow-collapse case and makes the fast one fail into a named fault with
+            // BT already commanded back. Prevention is the LOCKOUT above plus the Pi keeping the
+            // command inside (0.15, 0.85) until the purge is characterised.
+            const bool fcRailDipping = fcUvArmed && V_fc < LIMIT_V_FC_MIN;
+            if (shareSelectorFC &&
+                (fabsf(I_fc) > SHARE_GOV_I_FC_CEIL_A || fcRailDipping)) {
                 shareBatteryOnlyArmed     = false;
                 shareSelectorReArmed      = false;
                 shareSelectorReArmInhibit = true;

@@ -3143,7 +3143,10 @@ purge valve, the stack-fed blower and the module controller together, because th
 brochure gives the total flow at rated output and nothing that splits it. Operator
 decision (2026-09-08): a **constant** offset, not a purge duty cycle and not a
 load-dependent parasitic. `TODO(bench)`: time the purge interval and duration, measure
-the blower + controller draw, and re-derive the offset as a sum of measured terms.
+the blower + controller draw, and re-derive the offset as a sum of measured terms. (The purge
+timing half of this item is also the fw v30 bench gate, WORK_QUEUE 0i-1 and
+`docs/fw30_fc_purge_uv.md` §7: the cell's ~1 V purge dip, first seen on the bench 2026-09-15,
+sets the fuel-cell rail's undervoltage dwell constants.)
 
 **Concentration losses are not modelled.** The brochure's curve ends at 3.4 A and shows
 the mass-transport knee only in its last point, so a fourth parameter would be fitted to

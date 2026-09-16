@@ -1479,6 +1479,46 @@ anti-windup does not see it (documented residual, deferred).
 
 ---
 
+### First H-20 fuel-cell run — nondestructive; V_fc dips to ~1 V on every H2 purge (2026-09-15; operator observation, no scope, no SD log filed)
+
+**Source: operator observation only** (reported 2026-09-16 in the fw v30 brief). No scope was
+armed and no `'K'` bench log has been filed for this run, so the purge DURATION, INTERVAL, the
+exact V_fc floor, the loaded knee, and whether the TPS61288 dropped out (VIN UVLO) during the
+dip are all **UNMEASURED**. Everything below the observed line is inferred.
+
+**Conditions:** the Horizon H-20 stack on the FC input for the first time (every prior FC-rail
+datapoint in this log — WP0096/WP0098, TP0170–TP0180 — was a bench DC supply). Firmware on the
+board: fw v28 rev 6 (`f0d82e4`). Switch/boost state and the share command during the run are
+not recorded in the brief.
+
+**Observed:** V_fc swings to approximately 1 V on every hydrogen purge. Nothing died.
+
+**Inferred (UNCONFIRMED, pending the `'K'` log):**
+- Under the fw v6 tuning of `FAULT_UV_FC` (20 ms dwell latch, 6.0 V limit — set against the
+  ~10 ms WP0096/WP0098 bench-supply collapses) one purge exceeds the latch and would latch
+  `ERR_UV_FC`; whether the board actually latched on this run, or whether the share loop's own
+  dark-channel / load-guard cut of `FC_BUS_ENABLE` fired first on the I_fc collapse, is the
+  first thing the log must answer.
+- With the fw v28 selector holding the fuel cell ALONE on the bus (commanded share >= 0.85),
+  a purge leaves the bus source-less; at the aux load it collapses at I_load/C_VBUS = 2.57 V/ms
+  and the RT1987 needs ~8 ms to bring BT back, so that case ends in `ERR_UV_BUS` and no
+  reactive firmware rule can prevent it.
+
+**Firmware consequence (separate task, done as fw v30 the same day — `docs/fw30_fc_purge_uv.md`):**
+the discriminator is DURATION, not threshold; the dwell latch moves to 1000 ms and the limit to
+4.5 V on working figures; a share-loop cut holds the dwell (depleted-stack ruling); an FC-only
+selection is refused for 30 s after a purge-class dip. Every figure is `TODO(calibrate)` against
+the measurement below.
+
+**Safety rule while the purge is uncharacterised:** the Pi keeps the share command strictly
+inside (0.15, 0.85) on the testbed so the battery stays on the bus through every purge.
+
+**Measurement that closes this entry** (State 98 `'K'` logging at 1 kHz, two-source, the
+scope-metrology conventions below for any capture): purge duration and interval; the V_fc floor;
+the loaded knee against the 7.8 V @ 2.6 A brochure figure; TPS61288 VIN-UVLO dropout and
+soft-start on recovery; which firmware path fires; V_bus and I_batt across one purge. This
+measurement also closes the purge-timing TODO in `docs/HIL_PLANT.md`.
+
 ## Scope-metrology conventions (adopted 2026-08-03, review BOOST-R1-N6)
 
 Two transcription errors survived into this log during the OV investigation (a 3.9× current

@@ -280,7 +280,12 @@ label). Do **not** add code expecting a BAL-NOK input — there is no pin for it
   FB retune, 2026-07-11; the pre-retune 17.5 V figure is STALE); `LIMIT_V_BUS_MAX` derives as
   `V_BUS_NOMINAL + 1.5f` = 17.5 V (TPS61288 HW OVP triggers at 19V — confirmed).
   Battery is **2S**; verify
-  `LIMIT_V_BATT_MIN`. Consider adding a fault for an illegal switch combination (e.g.
+  `LIMIT_V_BATT_MIN`. **fw v30 limits (2026-09-16):** `LIMIT_V_BATT_MIN` 7.4 V (the 2026-07-10
+  pack floor) and `LIMIT_V_BATT_MAX` 8.5 V (inside the 8.646 V ADC ceiling; a 9 V bench supply on
+  BT now latches OV_BATT), both UV faults on the ARMED LEAKY-DWELL shape; `LIMIT_V_FC_MIN` 4.5 V
+  with a 1000 ms dwell latch because the H-20 purges to ~1 V (duration discriminates, not
+  threshold) — every figure `TODO(calibrate)` against the cell, `docs/fw30_fc_purge_uv.md` §7.
+  Consider adding a fault for an illegal switch combination (e.g.
   `FC_CHARGE_ENABLE` high while `REGEN_ENABLE`/`BT_BUS_ENABLE` high).
 - **Telemetry struct:** it currently sends `I_charge` (no longer measured) and omits the new
   rails (`CHG_VOLTAGE`, `RGN_VOLTAGE`) and the new switch states. Decide what the Pi needs,
@@ -932,3 +937,13 @@ tests). No layout, frame or constant change; controller equations untouched; sig
 rmax)`. Tests 4517 / 175 / 4824, harness 51, 0 firmware warnings. Board validation = the next campaign's `ems-ftp75-sdp` (expect 0
 r-based FC_BUS falls); the tools mirror of the span (governor_model) is queued behind the hold. Still open for the operator: the
 FC-only re-arm persisting to Run exit; hold vs return-to-battery on re-entry; the two-period F1 window-open note (0h-21).
+**fw v30 (same day, supersedes v29 before any flash; ledger row 30, `docs/fw30_fc_purge_uv.md`, WORK_QUEUE 0i):** the H-20 ran
+on the bench for the first time on 2026-09-15 and purges to ~1 V; the fw v6 UV_FC tuning (20 ms / 6.0 V, set on bench-supply
+collapses) latches on one purge. DESIGN RULE: duration discriminates, not threshold. On the brief's WORKING FIGURES (all
+`TODO(calibrate)` against the bench 'K' log = the gate, 0i-1): `LIMIT_V_FC_MIN` 4.5 V, `UV_FC_DWELL_LATCH_MS` 1000 ms, the bus
+rail's 0.05 leak and 5 ms cap reused (break-even purge interval 4.2 s; a faster measured interval splits the leak out), arm 7.0 V
+(C1 margin a static_assert). RULINGS RECORDED: a SHARE-LOOP cut HOLDS the dwell so a depleted stack ratchets to ERR_UV_FC across
+cut/re-entry cycles (no second detector; every other disarm dumps); an FC-ONLY LOCKOUT 30 s after a purge-class dip refuses an
+FC selection (plus a V_fc escape beside the raw-current escape); until measured the Pi keeps the command inside (0.15, 0.85).
+Battery: `LIMIT_V_BATT_MAX` 8.5 V (OV_BATT was dead at 10.0 V; a 9 V bench supply now latches), `LIMIT_V_BATT_MIN` 7.4 V on the
+armed dwell shape (arm 7.8 V) - a drained HIL pack now latches UV_BATT (0i-3 before campaign III). Tests 4563 / 210 / 4870 / 51.
