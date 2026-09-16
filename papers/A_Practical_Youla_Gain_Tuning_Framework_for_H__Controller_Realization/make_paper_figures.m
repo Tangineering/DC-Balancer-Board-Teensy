@@ -58,7 +58,7 @@ cyc = readmatrix(fullfile(here, '..', '..', 'references', 'drive_cycles', 'ftpco
                  'FileType', 'text', 'NumHeaderLines', 2);
 tC = cyc(:, 1); vC = cyc(:, 2) * 1.609344;    % mph -> kph
 keep = tC <= 340;
-h = newFig(FIG_W, FIG_H); hold on;
+h = newFig(FIG_W, 240); hold on;
 plot(tC(keep), vC(keep), 'k-');
 xlim([0 350]); ylim([0 100]);
 xlabel('Time [sec]'); ylabel('Speed [kph]');
