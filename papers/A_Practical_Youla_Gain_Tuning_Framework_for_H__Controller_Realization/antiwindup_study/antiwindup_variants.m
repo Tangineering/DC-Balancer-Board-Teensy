@@ -70,7 +70,7 @@ plot(tA, resA.H.y,     'k--'); plot(tA, resA.YH.y,    'k:', 'LineWidth', 1.2);
 plot(tA, resA.integ.y, 'k-.'); plot(tA, resA.cond.y,  'k-');
 ylabel('v [m/s]'); title('Drivetrain wc=18: Saturated Step Response', 'FontWeight','bold');
 legend({'reference','H_\infty, clamp only','Youla-H, clamp only', ...
-        'Youla-H, integrator back-calc.','Youla-H, full-state conditioning'}, 'Location','southeast');
+        'Youla-H, integrator back-calc.','Youla-H, full-state conditioning'}, 'Location','northeast');
 subplot(2,1,2); hold on; grid on;
 plot(tA, resA.H.u, 'k--'); plot(tA, resA.YH.u, 'k:', 'LineWidth', 1.2);
 plot(tA, resA.integ.u, 'k-.'); plot(tA, resA.cond.u, 'k-');
@@ -96,7 +96,7 @@ xlabel('Time [sec]'); ylabel('v [m/s]'); title('Saturating Step', 'FontWeight','
 subplot(1,2,2); hold on; grid on;
 plot(tB, resB.H.y - rB, 'k--'); plot(tB, resB.YH.y - rB, 'k-');
 xlabel('Time [sec]'); ylabel('v - v_{ref} [m/s]'); title('Slow Ramp, No Saturation', 'FontWeight','bold');
-legend({'H_\infty, conditioned','Youla-H, conditioned'}, 'Location','southwest');
+legend({'H_\infty, conditioned','Youla-H, conditioned'}, 'Location','northeast');
 saveFig(gcf, fullfile(outdir, 'YH-vs-H-cond-18'));
 
 %% ------------------------------------------------------------------ C. example plant, wc = 1
@@ -162,7 +162,7 @@ plot(w, -mag2db(abs(squeeze(freqresp(Wp3, w)))), 'b-.');
 plot(w, -mag2db(abs(squeeze(freqresp(Wu3, w)))), 'b:', 'LineWidth', 1.2);
 set(gca, 'XScale', 'log'); ylim([-60 25]);
 xlabel('Frequency (rad/s)'); ylabel('Magnitude (dB)'); title('Youla-H TSY', 'FontWeight','bold');
-legend({'T','S','Y','1/Wd','1/Wp','1/Wu'}, 'Location','southwest');
+legend({'T','S','Y','1/Wd','1/Wp','1/Wu'}, 'Location','northeast');
 saveFig(gcf, fullfile(outdir, 'YH-TSY-3rd'));
 
 fprintf('\nDone. Figures written to %s\n', outdir);
