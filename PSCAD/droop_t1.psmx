@@ -32,7 +32,7 @@
     <Window defn="droop_t1:Main" call="0" />
   </ViewContext>
   <List classid="View">
-    <View name="Main" zoomscale="1.87501" scrollx="0" scrolly="45" />
+    <View name="Main" zoomscale="4.57766" scrollx="3257" scrolly="1345" />
     <View name="Module_1" zoomscale="2.92969" scrollx="0" scrolly="0" />
     <View name="DroopChain" zoomscale="2.92969" scrollx="0" scrolly="0" />
     <View name="DroopBoost" zoomscale="2.92969" scrollx="0" scrolly="0" />
