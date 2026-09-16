@@ -14,7 +14,8 @@ is wired into the manuscript yet; the drafts reference figures by the paths in t
 | `drafts/section_antiwindup_example_plant.tex` | Option 2: alternative second paragraph + example-plant figure |
 | `drafts/section_alternate_system_replacement.tex` | Option 3: drop-in replacement for the Alternate System subsection |
 
-Python scripts need numpy/scipy/matplotlib and import the repo's `controller_design/hinf_synthesis.py`
+The committed `figures/*.png,pdf` are the MATLAB renders; the Python scripts write their own
+renders to `figures/python/` so the two never overwrite each other. Python scripts need numpy/scipy/matplotlib and import the repo's `controller_design/hinf_synthesis.py`
 for the example-plant syntheses; run them from anywhere. The MATLAB script needs the Control System
 and Robust Control toolboxes and re-synthesizes the drivetrain controller from the Appendix A weights.
 

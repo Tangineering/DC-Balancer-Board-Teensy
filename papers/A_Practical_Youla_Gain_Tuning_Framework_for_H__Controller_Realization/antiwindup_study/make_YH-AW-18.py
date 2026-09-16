@@ -93,10 +93,10 @@ for m,(Y,U,UU) in res.items():
 
 plt.rcParams.update({'font.size':10,'font.family':'serif','axes.linewidth':0.6,'mathtext.fontset':'cm'})
 fig,ax = plt.subplots(2,1,figsize=(7.0,5.2),sharex=True,gridspec_kw={'hspace':0.10,'height_ratios':[1.5,1]})
-st = {'H':dict(c='0.6',ls='--',lw=1.0,label=r'$H_\infty$, clamp only'),
-      'YH':dict(c='k',ls=':',lw=1.1,label='Youla-H, clamp only'),
-      'AWI':dict(c='k',ls='-.',lw=1.0,label='Youla-H, integrator back-calc.'),
-      'AWH':dict(c='k',ls='-',lw=1.2,label='Youla-H, full-state conditioning')}
+st = {'H':dict(c='b',ls='--',lw=1.6,label=r'$H_\infty$, clamp only'),
+      'YH':dict(c='k',ls=':',lw=2.2,label='Youla-H, clamp only'),
+      'AWI':dict(c='k',ls='-.',lw=1.6,label='Youla-H, integrator back-calc.'),
+      'AWH':dict(c='k',ls='-',lw=1.6,label='Youla-H, full-state conditioning')}
 ax[0].plot(t,np.where(t>=0.5,r_step,0.0),c='0.8',lw=0.8)
 for m in modes:
     ax[0].plot(t,res[m][0],**st[m]); ax[1].plot(t,res[m][1],**st[m])
@@ -104,6 +104,6 @@ ax[0].set_ylabel('$v$ [m/s]'); ax[1].set_ylabel('$T_e$ [N$\\cdot$m]'); ax[1].set
 ax[1].axhline(U_MAX,c='0.8',lw=0.6); ax[1].axhline(-U_MAX,c='0.8',lw=0.6)
 h,l=ax[0].get_legend_handles_labels(); fig.legend(h,l,frameon=False,fontsize=9,loc='lower center',ncol=2,bbox_to_anchor=(0.5,0.0)); fig.subplots_adjust(bottom=0.20); ax[0].set_xlim(0,12)
 for a in ax: a.grid(alpha=0.25,lw=0.4)
-out=os.path.join(os.path.dirname(os.path.abspath(__file__)),'figures','YH-AW-18')
+out=os.path.join(os.path.dirname(os.path.abspath(__file__)),'figures','python','YH-AW-18')
 fig.savefig(out+'.png',dpi=400,bbox_inches='tight'); fig.savefig(out+'.pdf',bbox_inches='tight')
 print("saved", out)

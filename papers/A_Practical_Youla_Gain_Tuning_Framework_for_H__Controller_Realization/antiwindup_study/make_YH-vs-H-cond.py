@@ -72,8 +72,8 @@ for name in ['H','YH']:
 
 plt.rcParams.update({'font.size':10,'font.family':'serif','axes.linewidth':0.6,'mathtext.fontset':'cm'})
 fig,ax = plt.subplots(1,2,figsize=(7.0,3.6),gridspec_kw={'wspace':0.45})
-st = {'H':dict(c='0.55',ls='--',lw=1.0,label=r'$H_\infty$, conditioned'),
-      'YH':dict(c='k',ls='-',lw=1.1,label='Youla-H, conditioned')}
+st = {'H':dict(c='b',ls='--',lw=1.6,label=r'$H_\infty$, conditioned'),
+      'YH':dict(c='k',ls='-',lw=1.6,label='Youla-H, conditioned')}
 for name in ['H','YH']:
     YA,UA,YB,UB,YC,UC,rB = res[name]
     ax[0].plot(tA, YA, **st[name]); ax[1].plot(tB, YB-rB, **st[name])
@@ -82,5 +82,5 @@ ax[0].set_xlabel('time [s]'); ax[0].set_ylabel('$v$ [m/s]'); ax[0].set_title('sa
 ax[1].set_xlabel('time [s]'); ax[1].set_ylabel('$v - v_{ref}$ [m/s]'); ax[1].set_title('slow ramp, no saturation', fontsize=8)
 h,l=ax[1].get_legend_handles_labels(); fig.legend(h,l,frameon=False,fontsize=9,loc='lower center',ncol=2,bbox_to_anchor=(0.5,0.0)); fig.subplots_adjust(bottom=0.28)
 for a in ax: a.grid(alpha=0.25, lw=0.4)
-fig.savefig(os.path.join(HERE,'figures','YH-vs-H-cond-18.png'),dpi=400,bbox_inches='tight'); fig.savefig(os.path.join(HERE,'figures','YH-vs-H-cond-18.pdf'),bbox_inches='tight')
+fig.savefig(os.path.join(HERE,'figures','python','YH-vs-H-cond-18.png'),dpi=400,bbox_inches='tight'); fig.savefig(os.path.join(HERE,'figures','python','YH-vs-H-cond-18.pdf'),bbox_inches='tight')
 print("saved YH-vs-H-cond-18")

@@ -1,8 +1,10 @@
 %% antiwindup_variants.m
 %  Discretization / anti-windup study for the Youla-H paper. Runs every variant
 %  explored in the drafting round and writes the figures in the paper's MATLAB
-%  style (black line styles, bold title, boxed legend, 'Time [sec]'). Legends sit
-%  below the axes ('southoutside') so they never cover a trace.
+%  style (black line styles, bold title, boxed legend, 'Time [sec]'). Colours follow
+%  Figure 7 of the paper: black line styles for the Youla-H family, blue for H-inf
+%  (and for the inverse weights on the loop-shape plot). Each figure is a tiledlayout
+%  with ONE shared legend in the 'south' tile, below every subplot.
 %
 %  Variants
 %    A. Drivetrain plant (Eq. Gp_numerical), controllers re-synthesized with the
@@ -64,19 +66,21 @@ resA.cond  = simSat(ctrlYH, Pd, rA, Umax, 'cond',  LYH);
 resA.Hcond = simSat(ctrlH,  Pd, rA, Umax, 'cond',  LH);
 printMetrics('Drivetrain step (settle rel. to step at 0.5 s)', resA, tA, 5, 0.5, Umax);
 
-figure('Name','YH-AW-18','Position',[100 100 1000 750]);
-subplot(2,1,1); hold on; grid on;
-plot(tA, rA, '-', 'Color', [0.75 0.75 0.75]);
-plot(tA, resA.H.y,     'k--'); plot(tA, resA.YH.y,    'k:', 'LineWidth', 1.2);
-plot(tA, resA.integ.y, 'k-.'); plot(tA, resA.cond.y,  'k-');
+figure('Name','YH-AW-18','Position',[100 100 1000 800]);
+tl = tiledlayout(2,1,'TileSpacing','compact','Padding','compact');
+nexttile; hold on; grid on;
+plot(tA, rA, '-', 'Color', [0.75 0.75 0.75], 'LineWidth', 1.0);
+plot(tA, resA.H.y,     'b--', 'LineWidth', 1.5); plot(tA, resA.YH.y,    'k:',  'LineWidth', 2.0);
+plot(tA, resA.integ.y, 'k-.', 'LineWidth', 1.5); plot(tA, resA.cond.y,  'k-',  'LineWidth', 1.5);
 ylabel('v [m/s]'); title('Drivetrain wc=18: Saturated Step Response', 'FontWeight','bold');
-legend({'reference','H_\infty, clamp only','Youla-H, clamp only', ...
-        'Youla-H, integrator back-calc.','Youla-H, full-state conditioning'}, 'Location','northeast');
-subplot(2,1,2); hold on; grid on;
-plot(tA, resA.H.u, 'k--'); plot(tA, resA.YH.u, 'k:', 'LineWidth', 1.2);
-plot(tA, resA.integ.u, 'k-.'); plot(tA, resA.cond.u, 'k-');
+nexttile; hold on; grid on;
+plot(tA, resA.H.u, 'b--', 'LineWidth', 1.5); plot(tA, resA.YH.u, 'k:', 'LineWidth', 2.0);
+plot(tA, resA.integ.u, 'k-.', 'LineWidth', 1.5); plot(tA, resA.cond.u, 'k-', 'LineWidth', 1.5);
 yline( Umax, '-', 'Color', [0.75 0.75 0.75]); yline(-Umax, '-', 'Color', [0.75 0.75 0.75]);
 ylabel('T_e [N\cdotm]'); xlabel('Time [sec]');
+lgd = legend({'H_\infty, clamp only','Youla-H, clamp only', ...
+              'Youla-H, integrator back-calc.','Youla-H, full-state conditioning'}, 'NumColumns', 2);
+lgd.Layout.Tile = 'south';
 saveFig(gcf, fullfile(outdir, 'YH-AW-18'));
 
 %% ------------------------------------------------------------------ B. H vs YH, both conditioned
@@ -89,15 +93,17 @@ fprintf('  ramp  error at 200 s   : Hinf %+.2e   Youla-H %+.2e  m/s\n', resB.H.y
 fprintf('  saturated-mode eig, Hinf  : %s\n', mat2str(sort(eig(ctrlH.A  - LH *ctrlH.C)),  5));
 fprintf('  saturated-mode eig, YoulaH: %s\n', mat2str(sort(eig(ctrlYH.A - LYH*ctrlYH.C)), 5));
 
-figure('Name','YH-vs-H-cond-18','Position',[100 100 1100 480]);
-subplot(1,2,1); hold on; grid on;
-plot(tA, rA, '-', 'Color', [0.75 0.75 0.75]);
-plot(tA, resA.Hcond.y, 'k--'); plot(tA, resA.cond.y, 'k-');
+figure('Name','YH-vs-H-cond-18','Position',[100 100 1100 520]);
+tl = tiledlayout(1,2,'TileSpacing','compact','Padding','compact');
+nexttile; hold on; grid on;
+plot(tA, rA, '-', 'Color', [0.75 0.75 0.75], 'LineWidth', 1.0);
+plot(tA, resA.Hcond.y, 'b--', 'LineWidth', 1.5); plot(tA, resA.cond.y, 'k-', 'LineWidth', 1.5);
 xlabel('Time [sec]'); ylabel('v [m/s]'); title('Saturating Step', 'FontWeight','bold');
-subplot(1,2,2); hold on; grid on;
-plot(tB, resB.H.y - rB, 'k--'); plot(tB, resB.YH.y - rB, 'k-');
+nexttile; hold on; grid on;
+plot(tB, resB.H.y - rB, 'b--', 'LineWidth', 1.5); plot(tB, resB.YH.y - rB, 'k-', 'LineWidth', 1.5);
 xlabel('Time [sec]'); ylabel('v - v_{ref} [m/s]'); title('Slow Ramp, No Saturation', 'FontWeight','bold');
-legend({'H_\infty, conditioned','Youla-H, conditioned'}, 'Location','northeast');
+lgd = legend({'H_\infty, conditioned','Youla-H, conditioned'}, 'NumColumns', 2);
+lgd.Layout.Tile = 'south';
 saveFig(gcf, fullfile(outdir, 'YH-vs-H-cond-18'));
 
 %% ------------------------------------------------------------------ C. example plant, wc = 1
@@ -154,16 +160,19 @@ plotAW(tD, rD, resDplot, Umax2, 'Example Plant wc=0.3: Saturated Response', ...
 % loop shapes for the replacement alternate-system figure (same style as H-TSY-2nd)
 [S3, T3, Y3] = loopTFs(Gc_YH3, Gp2);
 w = logspace(-2, 3, 600);
-figure('Name','YH-TSY-3rd','Position',[100 100 900 620]); hold on; grid on;
-plot(w, mag2db(abs(squeeze(freqresp(T3, w)))), 'k-');
-plot(w, mag2db(abs(squeeze(freqresp(S3, w)))), 'k--');
-plot(w, mag2db(abs(squeeze(freqresp(Y3, w)))), 'k:', 'LineWidth', 1.2);
-plot(w, -mag2db(abs(squeeze(freqresp(Wd3, w)))), 'b--');
-plot(w, -mag2db(abs(squeeze(freqresp(Wp3, w)))), 'b-.');
-plot(w, -mag2db(abs(squeeze(freqresp(Wu3, w)))), 'b:', 'LineWidth', 1.2);
+figure('Name','YH-TSY-3rd','Position',[100 100 900 650]);
+tl = tiledlayout(1,1,'Padding','compact');
+nexttile; hold on; grid on;
+plot(w, mag2db(abs(squeeze(freqresp(T3, w)))), 'k-',  'LineWidth', 1.5);
+plot(w, mag2db(abs(squeeze(freqresp(S3, w)))), 'k--', 'LineWidth', 1.5);
+plot(w, mag2db(abs(squeeze(freqresp(Y3, w)))), 'k:',  'LineWidth', 2.0);
+plot(w, -mag2db(abs(squeeze(freqresp(Wd3, w)))), 'b--', 'LineWidth', 1.5);
+plot(w, -mag2db(abs(squeeze(freqresp(Wp3, w)))), 'b-.', 'LineWidth', 1.5);
+plot(w, -mag2db(abs(squeeze(freqresp(Wu3, w)))), 'b:',  'LineWidth', 2.0);
 set(gca, 'XScale', 'log'); ylim([-60 25]);
 xlabel('Frequency (rad/s)'); ylabel('Magnitude (dB)'); title('Youla-H TSY', 'FontWeight','bold');
-legend({'T','S','Y','1/Wd','1/Wp','1/Wu'}, 'Location','northeast');
+lgd = legend({'T','S','Y','1/Wd','1/Wp','1/Wu'}, 'NumColumns', 6);
+lgd.Layout.Tile = 'south';
 saveFig(gcf, fullfile(outdir, 'YH-TSY-3rd'));
 
 fprintf('\nDone. Figures written to %s\n', outdir);
@@ -267,18 +276,21 @@ function printMetrics(label, res, t, rFinal, tRef, umax)
 end
 
 function plotAW(t, r, res, umax, ttl, leg, fname)
-    styles = {'k--','k:','k-.','k-'}; widths = [1 1.2 1 1];
+% Youla-H family in black (dotted / dash-dot / solid), H-inf in blue dashed.
+    styles = {'b--','k:','k-.','k-'}; widths = [1.5 2.0 1.5 1.5];
     names = fieldnames(res);
-    figure('Name', fname, 'Position', [100 100 1000 750]);
-    subplot(2,1,1); hold on; grid on;
-    plot(t, r, '-', 'Color', [0.75 0.75 0.75]);
+    figure('Name', fname, 'Position', [100 100 1000 800]);
+    tl = tiledlayout(2,1,'TileSpacing','compact','Padding','compact');
+    nexttile; hold on; grid on;
+    plot(t, r, '-', 'Color', [0.75 0.75 0.75], 'LineWidth', 1.0);
     for i = 1:numel(names), plot(t, res.(names{i}).y, styles{i}, 'LineWidth', widths(i)); end
     ylabel('y'); title(ttl, 'FontWeight','bold');
-    legend([{'reference'}, leg], 'Location','southoutside', 'NumColumns', 3);
-    subplot(2,1,2); hold on; grid on;
+    nexttile; hold on; grid on;
     for i = 1:numel(names), plot(t, res.(names{i}).u, styles{i}, 'LineWidth', widths(i)); end
     yline(umax, '-', 'Color', [0.75 0.75 0.75]);
     ylabel('u'); xlabel('Time [sec]');
+    lgd = legend([{'reference'}, leg], 'NumColumns', 3);
+    lgd.Layout.Tile = 'south';
     saveFig(gcf, fname);
 end
 
