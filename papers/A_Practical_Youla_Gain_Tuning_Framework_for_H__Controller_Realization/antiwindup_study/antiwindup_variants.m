@@ -1,7 +1,8 @@
 %% antiwindup_variants.m
 %  Discretization / anti-windup study for the Youla-H paper. Runs every variant
 %  explored in the drafting round and writes the figures in the paper's MATLAB
-%  style (black line styles, bold title, boxed legend, 'Time [sec]'). Colours follow
+%  style (black line styles, bold title, boxed legend, 'Time [sec]', default line
+%  weights and fonts, screen-resolution PNG via saveas). Colours follow
 %  Figure 7 of the paper: black line styles for the Youla-H family, blue for H-inf
 %  (and for the inverse weights on the loop-shape plot). Each figure is a tiledlayout
 %  with ONE shared legend in the 'south' tile, below every subplot.
@@ -69,13 +70,13 @@ printMetrics('Drivetrain step (settle rel. to step at 0.5 s)', resA, tA, 5, 0.5,
 figure('Name','YH-AW-18');
 tl = tiledlayout(2,1,'TileSpacing','compact','Padding','compact');
 nexttile; hold on; grid on;
-plot(tA, rA, '-', 'Color', [0.75 0.75 0.75], 'LineWidth', 1.0);
-plot(tA, resA.H.y,     'b--', 'LineWidth', 1.5); plot(tA, resA.YH.y,    'k:',  'LineWidth', 2.0);
-plot(tA, resA.integ.y, 'k-.', 'LineWidth', 1.5); plot(tA, resA.cond.y,  'k-',  'LineWidth', 1.5);
+plot(tA, rA, '-', 'Color', [0.75 0.75 0.75]);
+plot(tA, resA.H.y,     'b--'); plot(tA, resA.YH.y,    'k:');
+plot(tA, resA.integ.y, 'k-.'); plot(tA, resA.cond.y,  'k-');
 ylabel('v [m/s]'); title('Drivetrain wc=18: Saturated Step Response', 'FontWeight','bold');
 nexttile; hold on; grid on;
-plot(tA, resA.H.u, 'b--', 'LineWidth', 1.5); plot(tA, resA.YH.u, 'k:', 'LineWidth', 2.0);
-plot(tA, resA.integ.u, 'k-.', 'LineWidth', 1.5); plot(tA, resA.cond.u, 'k-', 'LineWidth', 1.5);
+plot(tA, resA.H.u, 'b--'); plot(tA, resA.YH.u, 'k:');
+plot(tA, resA.integ.u, 'k-.'); plot(tA, resA.cond.u, 'k-');
 yline( Umax, '-', 'Color', [0.75 0.75 0.75]); yline(-Umax, '-', 'Color', [0.75 0.75 0.75]);
 ylabel('T_e [N\cdotm]'); xlabel('Time [sec]');
 lgd = legend({'H_\infty, clamp only','Youla-H, clamp only', ...
@@ -96,11 +97,11 @@ fprintf('  saturated-mode eig, YoulaH: %s\n', mat2str(sort(eig(ctrlYH.A - LYH*ct
 figure('Name','YH-vs-H-cond-18');
 tl = tiledlayout(1,2,'TileSpacing','compact','Padding','compact');
 nexttile; hold on; grid on;
-plot(tA, rA, '-', 'Color', [0.75 0.75 0.75], 'LineWidth', 1.0);
-plot(tA, resA.Hcond.y, 'b--', 'LineWidth', 1.5); plot(tA, resA.cond.y, 'k-', 'LineWidth', 1.5);
+plot(tA, rA, '-', 'Color', [0.75 0.75 0.75]);
+plot(tA, resA.Hcond.y, 'b--'); plot(tA, resA.cond.y, 'k-');
 xlabel('Time [sec]'); ylabel('v [m/s]'); title('Saturating Step', 'FontWeight','bold');
 nexttile; hold on; grid on;
-plot(tB, resB.H.y - rB, 'b--', 'LineWidth', 1.5); plot(tB, resB.YH.y - rB, 'k-', 'LineWidth', 1.5);
+plot(tB, resB.H.y - rB, 'b--'); plot(tB, resB.YH.y - rB, 'k-');
 xlabel('Time [sec]'); ylabel('v - v_{ref} [m/s]'); title('Slow Ramp, No Saturation', 'FontWeight','bold');
 lgd = legend({'H_\infty, conditioned','Youla-H, conditioned'}, 'NumColumns', 2);
 lgd.Layout.Tile = 'south';
@@ -163,12 +164,12 @@ w = logspace(-2, 3, 600);
 figure('Name','YH-TSY-3rd');
 tl = tiledlayout(1,1,'Padding','compact');
 nexttile; hold on; grid on;
-plot(w, mag2db(abs(squeeze(freqresp(T3, w)))), 'k-',  'LineWidth', 1.5);
-plot(w, mag2db(abs(squeeze(freqresp(S3, w)))), 'k--', 'LineWidth', 1.5);
-plot(w, mag2db(abs(squeeze(freqresp(Y3, w)))), 'k:',  'LineWidth', 2.0);
-plot(w, -mag2db(abs(squeeze(freqresp(Wd3, w)))), 'b--', 'LineWidth', 1.5);
-plot(w, -mag2db(abs(squeeze(freqresp(Wp3, w)))), 'b-.', 'LineWidth', 1.5);
-plot(w, -mag2db(abs(squeeze(freqresp(Wu3, w)))), 'b:',  'LineWidth', 2.0);
+plot(w, mag2db(abs(squeeze(freqresp(T3, w)))), 'k-');
+plot(w, mag2db(abs(squeeze(freqresp(S3, w)))), 'k--');
+plot(w, mag2db(abs(squeeze(freqresp(Y3, w)))), 'k:');
+plot(w, -mag2db(abs(squeeze(freqresp(Wd3, w)))), 'b--');
+plot(w, -mag2db(abs(squeeze(freqresp(Wp3, w)))), 'b-.');
+plot(w, -mag2db(abs(squeeze(freqresp(Wu3, w)))), 'b:');
 set(gca, 'XScale', 'log'); ylim([-60 25]);
 xlabel('Frequency (rad/s)'); ylabel('Magnitude (dB)'); title('Youla-H TSY', 'FontWeight','bold');
 lgd = legend({'T','S','Y','1/Wd','1/Wp','1/Wu'}, 'NumColumns', 6);
@@ -277,16 +278,16 @@ end
 
 function plotAW(t, r, res, umax, ttl, leg, fname)
 % Youla-H family in black (dotted / dash-dot / solid), H-inf in blue dashed.
-    styles = {'b--','k:','k-.','k-'}; widths = [1.5 2.0 1.5 1.5];
+    styles = {'b--','k:','k-.','k-'};
     names = fieldnames(res);
     figure('Name', fname);
     tl = tiledlayout(2,1,'TileSpacing','compact','Padding','compact');
     nexttile; hold on; grid on;
-    plot(t, r, '-', 'Color', [0.75 0.75 0.75], 'LineWidth', 1.0);
-    for i = 1:numel(names), plot(t, res.(names{i}).y, styles{i}, 'LineWidth', widths(i)); end
+    plot(t, r, '-', 'Color', [0.75 0.75 0.75]);
+    for i = 1:numel(names), plot(t, res.(names{i}).y, styles{i}); end
     ylabel('y'); title(ttl, 'FontWeight','bold');
     nexttile; hold on; grid on;
-    for i = 1:numel(names), plot(t, res.(names{i}).u, styles{i}, 'LineWidth', widths(i)); end
+    for i = 1:numel(names), plot(t, res.(names{i}).u, styles{i}); end
     yline(umax, '-', 'Color', [0.75 0.75 0.75]);
     ylabel('u'); xlabel('Time [sec]');
     lgd = legend([{'reference'}, leg], 'NumColumns', 3);
@@ -295,7 +296,10 @@ function plotAW(t, r, res, umax, ttl, leg, fname)
 end
 
 function saveFig(h, base)
+% Match the paper's existing figures (e.g. H-TSY-2nd.png): a screen-resolution PNG
+% from saveas at the default figure size, default 0.5 pt lines and 10 pt fonts.
+% The PDF is a vector export for the LaTeX build.
     set(h, 'Color', 'w');
-    exportgraphics(h, [base '.png'], 'Resolution', 300);
+    saveas(h, [base '.png']);
     exportgraphics(h, [base '.pdf'], 'ContentType', 'vector');
 end
