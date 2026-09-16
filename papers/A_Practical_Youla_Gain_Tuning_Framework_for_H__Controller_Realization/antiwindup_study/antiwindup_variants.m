@@ -1,7 +1,8 @@
 %% antiwindup_variants.m
 %  Discretization / anti-windup study for the Youla-H paper. Runs every variant
 %  explored in the drafting round and writes the figures in the paper's MATLAB
-%  style (black line styles, bold title, boxed legend, 'Time [sec]').
+%  style (black line styles, bold title, boxed legend, 'Time [sec]'). Legends sit
+%  below the axes ('southoutside') so they never cover a trace.
 %
 %  Variants
 %    A. Drivetrain plant (Eq. Gp_numerical), controllers re-synthesized with the
@@ -63,14 +64,15 @@ resA.cond  = simSat(ctrlYH, Pd, rA, Umax, 'cond',  LYH);
 resA.Hcond = simSat(ctrlH,  Pd, rA, Umax, 'cond',  LH);
 printMetrics('Drivetrain step (settle rel. to step at 0.5 s)', resA, tA, 5, 0.5, Umax);
 
-figure('Name','YH-AW-18');
+figure('Name','YH-AW-18','Position',[100 100 1000 750]);
 subplot(2,1,1); hold on; grid on;
 plot(tA, rA, '-', 'Color', [0.75 0.75 0.75]);
 plot(tA, resA.H.y,     'k--'); plot(tA, resA.YH.y,    'k:', 'LineWidth', 1.2);
 plot(tA, resA.integ.y, 'k-.'); plot(tA, resA.cond.y,  'k-');
 ylabel('v [m/s]'); title('Drivetrain wc=18: Saturated Step Response', 'FontWeight','bold');
 legend({'reference','H_\infty, clamp only','Youla-H, clamp only', ...
-        'Youla-H, integrator back-calc.','Youla-H, full-state conditioning'}, 'Location','southeast');
+        'Youla-H, integrator back-calc.','Youla-H, full-state conditioning'}, ...
+       'Location','southoutside', 'NumColumns', 3);
 subplot(2,1,2); hold on; grid on;
 plot(tA, resA.H.u, 'k--'); plot(tA, resA.YH.u, 'k:', 'LineWidth', 1.2);
 plot(tA, resA.integ.u, 'k-.'); plot(tA, resA.cond.u, 'k-');
@@ -88,7 +90,7 @@ fprintf('  ramp  error at 200 s   : Hinf %+.2e   Youla-H %+.2e  m/s\n', resB.H.y
 fprintf('  saturated-mode eig, Hinf  : %s\n', mat2str(sort(eig(ctrlH.A  - LH *ctrlH.C)),  5));
 fprintf('  saturated-mode eig, YoulaH: %s\n', mat2str(sort(eig(ctrlYH.A - LYH*ctrlYH.C)), 5));
 
-figure('Name','YH-vs-H-cond-18');
+figure('Name','YH-vs-H-cond-18','Position',[100 100 1100 480]);
 subplot(1,2,1); hold on; grid on;
 plot(tA, rA, '-', 'Color', [0.75 0.75 0.75]);
 plot(tA, resA.Hcond.y, 'k--'); plot(tA, resA.cond.y, 'k-');
@@ -96,7 +98,7 @@ xlabel('Time [sec]'); ylabel('v [m/s]'); title('Saturating Step', 'FontWeight','
 subplot(1,2,2); hold on; grid on;
 plot(tB, resB.H.y - rB, 'k--'); plot(tB, resB.YH.y - rB, 'k-');
 xlabel('Time [sec]'); ylabel('v - v_{ref} [m/s]'); title('Slow Ramp, No Saturation', 'FontWeight','bold');
-legend({'H_\infty, conditioned','Youla-H, conditioned'}, 'Location','southwest');
+legend({'H_\infty, conditioned','Youla-H, conditioned'}, 'Location','southoutside', 'NumColumns', 2);
 saveFig(gcf, fullfile(outdir, 'YH-vs-H-cond-18'));
 
 %% ------------------------------------------------------------------ C. example plant, wc = 1
@@ -153,7 +155,7 @@ plotAW(tD, rD, resDplot, Umax2, 'Example Plant wc=0.3: Saturated Response', ...
 % loop shapes for the replacement alternate-system figure (same style as H-TSY-2nd)
 [S3, T3, Y3] = loopTFs(Gc_YH3, Gp2);
 w = logspace(-2, 3, 600);
-figure('Name','YH-TSY-3rd'); hold on; grid on;
+figure('Name','YH-TSY-3rd','Position',[100 100 900 620]); hold on; grid on;
 plot(w, mag2db(abs(squeeze(freqresp(T3, w)))), 'k-');
 plot(w, mag2db(abs(squeeze(freqresp(S3, w)))), 'k--');
 plot(w, mag2db(abs(squeeze(freqresp(Y3, w)))), 'k:', 'LineWidth', 1.2);
@@ -162,7 +164,7 @@ plot(w, -mag2db(abs(squeeze(freqresp(Wp3, w)))), 'b-.');
 plot(w, -mag2db(abs(squeeze(freqresp(Wu3, w)))), 'b:', 'LineWidth', 1.2);
 set(gca, 'XScale', 'log'); ylim([-60 25]);
 xlabel('Frequency (rad/s)'); ylabel('Magnitude (dB)'); title('Youla-H TSY', 'FontWeight','bold');
-legend({'T','S','Y','1/Wd','1/Wp','1/Wu'}, 'Location','southwest');
+legend({'T','S','Y','1/Wd','1/Wp','1/Wu'}, 'Location','southoutside', 'NumColumns', 6);
 saveFig(gcf, fullfile(outdir, 'YH-TSY-3rd'));
 
 fprintf('\nDone. Figures written to %s\n', outdir);
@@ -268,12 +270,12 @@ end
 function plotAW(t, r, res, umax, ttl, leg, fname)
     styles = {'k--','k:','k-.','k-'}; widths = [1 1.2 1 1];
     names = fieldnames(res);
-    figure('Name', fname);
+    figure('Name', fname, 'Position', [100 100 1000 750]);
     subplot(2,1,1); hold on; grid on;
     plot(t, r, '-', 'Color', [0.75 0.75 0.75]);
     for i = 1:numel(names), plot(t, res.(names{i}).y, styles{i}, 'LineWidth', widths(i)); end
     ylabel('y'); title(ttl, 'FontWeight','bold');
-    legend([{'reference'}, leg], 'Location','southeast');
+    legend([{'reference'}, leg], 'Location','southoutside', 'NumColumns', 3);
     subplot(2,1,2); hold on; grid on;
     for i = 1:numel(names), plot(t, res.(names{i}).u, styles{i}, 'LineWidth', widths(i)); end
     yline(umax, '-', 'Color', [0.75 0.75 0.75]);
@@ -283,6 +285,6 @@ end
 
 function saveFig(h, base)
     set(h, 'Color', 'w');
-    exportgraphics(h, [base '.png'], 'Resolution', 300);
+    exportgraphics(h, [base '.png'], 'Resolution', 400);
     exportgraphics(h, [base '.pdf'], 'ContentType', 'vector');
 end

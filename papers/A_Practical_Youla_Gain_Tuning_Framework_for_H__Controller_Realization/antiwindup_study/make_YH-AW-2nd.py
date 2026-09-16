@@ -82,8 +82,8 @@ for m,(Y,U) in res.items():
           f"after step-down: peak {Y[seg].max():.3f}, min {Y[seg].min():.3f}, "
           f"2% settle {t[seg][idx[-1]]-T_HI if len(idx) else 0:.2f} s, final err {err[-1]:+.1e}")
 
-plt.rcParams.update({'font.size':8,'font.family':'serif','axes.linewidth':0.6,'mathtext.fontset':'cm'})
-fig,ax = plt.subplots(2,1,figsize=(3.45,2.6),sharex=True,gridspec_kw={'hspace':0.10,'height_ratios':[1.5,1]})
+plt.rcParams.update({'font.size':10,'font.family':'serif','axes.linewidth':0.6,'mathtext.fontset':'cm'})
+fig,ax = plt.subplots(2,1,figsize=(7.0,5.2),sharex=True,gridspec_kw={'hspace':0.10,'height_ratios':[1.5,1]})
 st = {'H':dict(c='0.6',ls='--',lw=1.0,label=r'$H_\infty$, clamp only'),
       'YH':dict(c='k',ls=':',lw=1.1,label='Youla-H, clamp only'),
       'AWI':dict(c='k',ls='-.',lw=1.0,label='Youla-H, integrator back-calc.'),
@@ -92,7 +92,7 @@ ax[0].plot(t,[ref(x) for x in t],c='0.8',lw=0.8)
 for m in modes: ax[0].plot(t,res[m][0],**st[m]); ax[1].plot(t,res[m][1],**st[m])
 ax[0].set_ylabel('$y$'); ax[1].set_ylabel('$u$'); ax[1].set_xlabel('time [s]')
 ax[1].axhline(U_MAX,c='0.8',lw=0.6); ax[1].set_ylim(-0.4,1.8)
-ax[0].legend(frameon=False,fontsize=6,loc='upper right'); ax[0].set_xlim(0,16)
+h,l=ax[0].get_legend_handles_labels(); fig.legend(h,l,frameon=False,fontsize=9,loc='lower center',ncol=2,bbox_to_anchor=(0.5,0.0)); fig.subplots_adjust(bottom=0.20); ax[0].set_xlim(0,16)
 for a in ax: a.grid(alpha=0.25,lw=0.4)
 out = os.path.join(HERE,'figures','YH-AW-2nd')
-fig.savefig(out+'.png',dpi=300,bbox_inches='tight'); fig.savefig(out+'.pdf',bbox_inches='tight'); print("saved", out)
+fig.savefig(out+'.png',dpi=400,bbox_inches='tight'); fig.savefig(out+'.pdf',bbox_inches='tight'); print("saved", out)
