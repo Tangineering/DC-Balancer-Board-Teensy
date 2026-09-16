@@ -11,8 +11,12 @@ tooling / suite items for the fix round (the 0f queue stays held behind the H2-m
    floor 0.5375 / modal 0.85 / zero charge stages; ems-mpc-cross walks 0.15 -> 0.85 with no arm standing). The DP moving with the
    MPC makes this the map's economics. Decide the offline A/B (terminal price 2.140 g/SoC re-based at 14.644 W vs the convex
    stage cost with A0) and whether the ladder endpoints stay on the selector rails (0f-10).
-2. **The FC minority chatter, second campaign** (ems-ftp75-sdp: 78 FC_BUS falls identical to campaign I). Firmware: clamp the share
-   PI reference at DROOP_R_MIN with anti-windup for in-band commands (0f-9). The DP control case has no stimulus under H-20.
+2. [x] (DONE fw v29, 2026-09-16, PENDING FLASH to the real testbench - BENCH_TEST 0 / HIL_SIM 0 committed as flashed) **The FC
+   minority chatter, second campaign** (ems-ftp75-sdp: 78 FC_BUS falls identical to campaign I). Firmware: the Youla share
+   controller's authority span follows the command - an in-band command bounds the output to [DROOP_R_MIN, DROOP_R_MAX] with the
+   back-calculation anti-windup at the rail; a deferred cut keeps [0, 1] (0f-9). The DP control case has no stimulus under H-20.
+   Board validation is the next campaign's ems-ftp75-sdp (expect 0 r-based FC_BUS falls; the ~0.02 standing share error at the
+   rail remains, it is the split law's). Tools mirror (governor_model `_youla_step` bounds) queued behind the campaign hold.
 3. **Lambda re-pin** `EMS_EQ_H2_LAMBDA_SOC_PER_G` 0.4673 (walked) -> 0.4799 (board cal-charge lever, in band).
 4. **A per-leg H2 basis reference**: the 14.644 W point holds only on the cruise charge legs; the 61 s MPC legs run 8-10 W, FTP-75
    2-5 W, the compressed cycle 1-2 W. The MPC terminal price and ALPHA_MISMATCH_REF are re-based at the cruise point.
@@ -274,7 +278,7 @@ was applied overnight. Bands are never widened; they are re-derived from the mec
       provisional notes to measured citations of hil_report_20260908_200836 (mppt: the F4 plateau-rise null result);
       ems-mpc-single is registered mpc-det; the replay half gives the selector zero coverage (state it, or re-spec
       an entry with a b = 0 W/Y log).
-- [ ] 9. **FIRMWARE ruling** - the FC minority chatter at a sustained command AT the inclusive rail (ems-ftp75-sdp:
+- [x] 9. (DONE fw v29 `teensy_controller.ino`, 2026-09-16 - see 0h-2) **FIRMWARE ruling** - the FC minority chatter at a sustained command AT the inclusive rail (ems-ftp75-sdp:
       71 r-based `applyShareRatio()` cuts / 90 s at I_fc 0.134-0.168 A; the PI winds below DROOP_R_MIN chasing the
       split law's 0.17; fw v6's accepted residual, benign). Candidate: clamp the share PI reference at DROOP_R_MIN
       with anti-windup for in-band commands so only a strictly out-of-band command reaches the r-based cut path.

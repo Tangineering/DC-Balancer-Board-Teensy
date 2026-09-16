@@ -1,6 +1,31 @@
 /*
  * teensy_controller.ino — Scale Car DC Balancer Board, Rev 20260622
  *
+ * fw v29 (2026-09-16) - THE FC MINORITY CHATTER FIX. One change, closed-loop share path only:
+ *   the Youla share controller's AUTHORITY SPAN FOLLOWS THE COMMAND. For an IN-BAND commanded
+ *   share (inclusive at both rails, [DROOP_R_MIN, DROOP_R_MAX] = [0.15, 0.85]) the controller's
+ *   output is bounded to the band and its back-calculation anti-windup absorbs the excess at the
+ *   rail; for the one out-of-band case that still runs the controller (a DEFERRED cut) the span
+ *   stays [0, 1], bit-identically to fw v28. THE DEFECT (board-real, campaigns I and II,
+ *   `ems-ftp75-sdp`, 71-78 FC_BUS falls per 90 s at ~0.8 Hz): a sustained command AT the 0.15
+ *   rail is in band, so the latch does not own it; the asymmetric split law cannot deliver under
+ *   ~0.17, so the standing -0.02 error wound the controller's output below DROOP_R_MIN under the
+ *   fw v3-v28 [0, 1] span; applyShareRatio()'s r-based branch read that as out-of-band intent,
+ *   cut FC (I_fc 0.134-0.168 A, above every handoff threshold), the loop wound back over the
+ *   0.16 re-entry, re-closed FC and repeated - fw v6's accepted "rail-saturated dropout cycle".
+ *   CONSEQUENCES: the r-based cut in applyShareRatio() is now reachable from the controller path
+ *   ONLY through an out-of-band command, and every out-of-band command is the setpoint latch's
+ *   (which freezes the loop before the controller runs) - so the fw v25 refused-cut slew clamp
+ *   and the fw v26 "sustained refusal regime" (LOW-3) become backstops: the clamped regime now
+ *   parks with the output ON DROOP_R_MIN and ZERO refusals instead of a refusal every tick. The
+ *   MDAC state at the rail is the same one the old cycle produced BETWEEN cuts; the standing
+ *   ~0.02 share error at the rail is the split law's and is not a firmware quantity. NO packet,
+ *   frame or record layout change (telemetry v4/58 B, command 22 B, HIL 40 B/18 B, BLG v9/116 B);
+ *   no constant change; the Youla difference equations, prefilter and coefficients untouched.
+ *   Signature: youlaController_Power(sp, alpha, rmin, rmax). Tests 4517 / 175 / 4824, harness 51.
+ *   BUILD FLAGS AS FLASHED: BENCH_TEST 0 / HIL_SIM 0 - a REAL-TESTBENCH build (the repo carries
+ *   the flags as flashed since 2026-09-16; the previous HIL_SIM 1 line was the campaign build).
+ *
  * fw v28 REV 6 (2026-09-08) - THE SELECTOR FIX ROUND. Rev 6 SUPERSEDES rev 5 BEFORE ANY FLASH:
  *   no board has run fw v28 in any revision, so FW_VERSION stays 28. Seven review findings, all
  *   inside the rev 5 re-entry rule and the rev 1 selector. NO packet, frame or record layout
@@ -3965,7 +3990,7 @@ void encDirCommitTick() {
 // header (format v2 and later, offset 18) so logged data is attributable to the
 // firmware that produced it, printed at boot and in the State-98 'S' status.
 // 0 is reserved for "pre-versioning" (logs PS0001–TP0005 and earlier).
-#define FW_VERSION 28
+#define FW_VERSION 29
 
 #ifndef BENCH_TEST
 #define BENCH_TEST 0
@@ -3989,7 +4014,9 @@ void encDirCommitTick() {
 // NEVER flash a HIL_SIM=1 build onto a board attached to a live power stage: the
 // firmware's picture of the hardware is fiction, so its switch decisions are too.
 // Overridable via -DHIL_SIM=1 (same pattern as BENCH_TEST).
-// DEFAULT 0 — an ordinary flash is a NORMAL BENCH BUILD. Set this to 1 (or build with
+// THE COMMITTED VALUE IS THE FLASHED VALUE (operator ruling 2026-09-16): this line carries the
+// mode on the real testbench, so a change here is a deliberate commit naming the mode being
+// pushed. 0 — an ordinary flash is a NORMAL BENCH BUILD. Set this to 1 (or build with
 // -DHIL_SIM=1) only for an HIL flash, and note what that flash costs on a bench: fw v22's
 // State-0 injection wait gate means a HIL_SIM=1 build NEVER leaves State 0 — no bring-up, no
 // Idle, no State-98 console — until a simulator is streaming injection frames at it. So a
@@ -3997,7 +4024,7 @@ void encDirCommitTick() {
 // symptom is the once-per-second "State 0: waiting for HIL injection stream..." line rather
 // than any fault. See docs/HIL_USER_MANUAL.md §2.4.
 #ifndef HIL_SIM
-#define HIL_SIM 1
+#define HIL_SIM 0
 #endif
 
 // ── Network config ────────────────────────────────────────────────────────────
@@ -5022,7 +5049,7 @@ float PI_Controller_Motor(float error);
 float PI_Controller_Power(float error);
 float youlaController_Drive(float error);   // Youla-H velocity controller wrapper (fw v10)
 void  resetDriveControlState();
-float youlaController_Power(float setpoint, float alphaRaw);
+float youlaController_Power(float setpoint, float alphaRaw, float rmin, float rmax);
 void setDroopMdac(float fc_gain, float bt_gain);
 void applyShareRatio(float ratio);
 void resetShareControlState();
@@ -12802,8 +12829,48 @@ void powerBalance() {
     float power_share_actual_local = fabsf(I_fc) / totalA;
     float shareError = spEff - power_share_actual_local;
 #if USE_YOULA_SHARE_CONTROLLER
-    // clamped to [0,1] + anti-windup; filters the measurement internally
-    float droopRatio = youlaController_Power(spEff, power_share_actual_local);
+    // ── fw v29: THE CONTROLLER'S AUTHORITY SPAN FOLLOWS THE COMMAND ──────────────────────────
+    // THE DEFECT (board-real, campaigns I and II, `ems-ftp75-sdp`): a SUSTAINED command AT the
+    // inclusive rail (0.15) is IN BAND, so the latch does not own it and this closed-loop path
+    // runs. The asymmetric split law cannot deliver 0.15 (its minimum is ~0.17 at the rail:
+    // R_FC 1.92 vs R_BT 0.39 ohm), so the error is a standing -0.02, and with a [0, 1] authority
+    // span the integrator walked the OUTPUT below DROOP_R_MIN. applyShareRatio() read that as
+    // out-of-band INTENT and took FC off the bus through its r-based cut (I_fc 0.134-0.168 A at
+    // the cut, above every handoff threshold); resetting nothing, the loop then wound r back over
+    // the 0.16 re-entry, re-closed FC, and repeated at ~0.8 Hz - 71-78 FC_BUS falls per 90 s,
+    // dwell <= 12.4 ms, i_cut <= 0.2236 A, identical on both campaigns. fw v6 had accepted this
+    // as the "rail-saturated dropout cycle" residual; it is now closed.
+    // THE FIX: an IN-BAND command bounds the controller's output to [DROOP_R_MIN, DROOP_R_MAX]
+    // and the back-calculation anti-windup absorbs the excess at the rail. The output then sits
+    // ON the rail (maximum droop authority for the starved side, exactly the MDAC state the old
+    // cycle's band-edge clip produced between cuts) with a bounded, non-winding integrator, and
+    // it moves off the rail the instant the error reverses. The r-based cut in applyShareRatio()
+    // is therefore reachable from this path ONLY through an OUT-OF-BAND command - and every
+    // out-of-band command is the setpoint latch's, which freezes this loop before it runs, with
+    // ONE exception: a DEFERRED cut (the latch refused it on load, see shareCutDeferred*). That
+    // case keeps the full [0, 1] span, bit-identically to fw v28, because applyShareRatio()
+    // suppresses its r-based cut for the deferred side anyway (fw v6 review S1) and the wound
+    // output only ever lands on the band-edge clip that starves the doomed channel.
+    // INCLUSIVE at both rails, deliberately: the Pi clamps to [0.15, 0.85], so a command AT the
+    // rail is the ordinary in-band command and is exactly the one the chatter lived on. The
+    // selector's own rail semantics (>= / <=, fw v28) are unchanged and live upstream of this
+    // point on the frozen path.
+    // WHAT DOES NOT CHANGE: the reference (spEff) was already in band here - the governor's
+    // floor clip and the sliver hold keep it in [lo, hi] - so the REFERENCE is untouched; only
+    // the OUTPUT span moves. The ratio slew limiter below therefore sees an in-band ratio on
+    // every in-band tick and slews it (it used to pass the wound out-of-band value through
+    // unlimited, by design, as a "topology action"). The Youla difference equations, the
+    // prefilter and the coefficients are untouched (do-not-change list); shareControllerStep()'s
+    // anti-windup already takes the bounds as arguments and has done since fw v3.
+    // NOT DONE, stated: the standing -0.02 error at the rail is the split law's, not the
+    // controller's, and no firmware change can deliver 0.15 against a 0.17 physical minimum. The
+    // EMS ladder endpoints are the operator's ruling (WORK_QUEUE 0h-1).
+    const bool  spInBand = (power_share_setpoint >= DROOP_R_MIN &&
+                            power_share_setpoint <= DROOP_R_MAX);
+    const float ctrlMin  = spInBand ? DROOP_R_MIN : 0.0f;
+    const float ctrlMax  = spInBand ? DROOP_R_MAX : 1.0f;
+    // clamped to [ctrlMin, ctrlMax] + anti-windup; filters the measurement internally
+    float droopRatio = youlaController_Power(spEff, power_share_actual_local, ctrlMin, ctrlMax);
     (void)shareError;
 #else
     float droopRatio = PI_Controller_Power(shareError);
@@ -12826,8 +12893,9 @@ void powerBalance() {
         // the site TP0201 walked through at the full rate while BT was dark.
         // KNOWN RESIDUAL (fw v19 review S3, DEFERRED deliberately): at the handoff rate this
         // limiter becomes the DOMINANT actuator dynamic, and it is invisible to
-        // youlaController_Power(), whose anti-windup back-calculates only against its own [0,1]
-        // authority span — it does not know the commanded ratio is being rate-limited downstream,
+        // youlaController_Power(), whose anti-windup back-calculates only against its own
+        // authority span (the band for an in-band command since fw v29, [0,1] before) — it does
+        // not know the commanded ratio is being rate-limited downstream,
         // so its integrator can advance against a split the MDACs have not reached yet. Exposure
         // is BOUNDED by the dwell cap (at most ~200 ms per dark event, after which the full rate
         // resumes and the limiter stops dominating). Extending the anti-windup to see this limiter
@@ -13196,18 +13264,26 @@ void armShareBatteryOnlyStart() {
     shareSelectorDwellUntilMs      = millis();
 }
 
-float youlaController_Power(float setpoint, float alphaRaw) {
+float youlaController_Power(float setpoint, float alphaRaw, float rmin, float rmax) {
     uint32_t now = micros();
     if ((uint32_t)(now - shareCtrl_lastMicros) >= (uint32_t)SHARE_CTRL_TS_US) {
         shareCtrl_lastMicros = now;
         float e = setpoint - shareControllerFilterMeas(alphaRaw);
-        // Authority span [0,1] (2026-08-10): the controller may command the
-        // full ratio range; ratios outside [DROOP_R_MIN, DROOP_R_MAX] are
-        // realized by applyShareRatio() as a channel cutoff, not a clip. The
-        // back-calculation anti-windup bounds follow the span, so the
-        // integrator can settle at 0 or 1 for a fully-one-sided setpoint
-        // instead of winding against the old droop clip.
-        shareCtrl_heldOut = shareControllerStep(e, 0.0f, 1.0f);
+        // fw v29: the AUTHORITY SPAN IS THE CALLER'S. Through fw v28 this line passed [0, 1]
+        // unconditionally (2026-08-10: "ratios outside [DROOP_R_MIN, DROOP_R_MAX] are realized
+        // by applyShareRatio() as a channel cutoff, so the integrator can settle at 0 or 1 for a
+        // fully one-sided setpoint"). That premise was retired on 2026-08-12 when the setpoint
+        // latch took ownership of every out-of-band setpoint and FROZE the loop for it: this
+        // function has not been called with a one-sided setpoint since. What the [0, 1] span
+        // still did was let an IN-BAND command wind the output out of the band whenever the
+        // commanded split was infeasible for the split law (a 0.15 command against a 0.17
+        // delivered minimum), which is the FC minority chatter measured on campaigns I and II
+        // (78 FC_BUS falls / 90 s). powerBalance() now hands in the band for an in-band command
+        // and [0, 1] for the one out-of-band case it still runs the controller on (a deferred
+        // cut); the back-calculation anti-windup in shareControllerStep() absorbs the excess at
+        // whichever bound is live, so the output sits ON the rail and resumes the instant the
+        // error reverses. The controller's difference equations are untouched.
+        shareCtrl_heldOut = shareControllerStep(e, rmin, rmax);
     }
     return shareCtrl_heldOut;
 }

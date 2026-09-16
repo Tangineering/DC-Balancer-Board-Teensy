@@ -4550,7 +4550,7 @@ static void test_share_handoff_mode_constants() {
           "constants: (setup) SHARE_GOV_FILT_ALPHA is the EMA weight the handoff filters share "
           "with the governor's load filter");
     // fw v23 (any-fault run-boundary-gated HIL recovery): stale pin updated.
-    check(FW_VERSION == 28, "pin: FW_VERSION == 28");
+    check(FW_VERSION == 29, "pin: FW_VERSION == 29");
 }
 
 // DARK seed (item B3): resetShareControlState() (and reset_test_state()'s mirror of it) seeds
@@ -6525,11 +6525,20 @@ static void test_share_current_ceiling_sustained_refusal_regime(void) {
           "sustained: no setpoint-latch cut either (the commanded setpoint stayed in band)");
     check(droopSlew_prev >= DROOP_R_MIN - 1e-6f,
           "sustained: the applied ratio pins at DROOP_R_MIN rather than passing below it");
-    check(shareCutRefusedLoad > 0,
-          "sustained: the load guard is exercised — the refusal counter grows, which is the "
-          "documented cost of this regime, not a defect");
+    // fw v29 RE-ADJUDICATION of LOW-3. Through fw v28 this regime parked with the controller
+    // wound BELOW DROOP_R_MIN and the load guard refusing the resulting FC cut on EVERY tick (the
+    // assertion here read `shareCutRefusedLoad > 0`, "the documented cost of this regime"). The
+    // commanded setpoint is in band, so fw v29 bounds the controller's output to the band: the
+    // output sits ON DROOP_R_MIN, no cut is proposed, and the refusal counter stays at zero. The
+    // regime is now benign AND quiet; the counter reading zero is the fix's own tripwire.
+    check(shareCutRefusedLoad == 0,
+          "sustained (fw v29): the load guard is NOT exercised any more — the controller's output "
+          "is bounded to the band for an in-band command, so the clamped regime never proposes "
+          "the cut it used to have refused every tick");
+    check(fabsf(shareCtrl_heldOut - DROOP_R_MIN) < 1e-6f,
+          "sustained (fw v29): the controller's held output sits exactly ON DROOP_R_MIN");
     check(mainState != 99,
-          "sustained: the board does not fault — the regime is benign, just noisy");
+          "sustained: the board does not fault — the regime is benign");
 }
 
 // ═══ fw v27: the minority clip on the open-loop FEEDFORWARD path (relaxing form) ═════════════
@@ -7899,32 +7908,35 @@ static void test_fw27_iso_bypass_proposal_accumulates(void) {
 static void test_refused_cut_band_edge_clip_is_slewed(void) {
     test_group("fw v25: a refused cut's band-edge clip is slew-limited, not slammed");
 
-    // Closed-loop walk with a sustained in-band error that drives the CONTROLLER ratio out of
-    // band while the doomed channel is heavily loaded — the pre-clamp measurement on this exact
-    // fixture stepped droopSlew_prev 0.8129 -> 0.8500 in one tick (0.037, ~1.9x the ceiling).
+    // Through fw v28 this half ran the closed loop on an IN-BAND 0.60 command with a sustained
+    // error that drove the CONTROLLER ratio out of band while BT was heavily loaded — the
+    // pre-clamp measurement on that fixture stepped droopSlew_prev 0.8129 -> 0.8500 in one tick
+    // (0.037, ~1.9x the ceiling). fw v29 CLOSED THAT ROUTE: an in-band command now bounds the
+    // controller's output to the band (the FC minority chatter fix), so no in-band closed-loop
+    // walk can propose an r-based cut any more, and the only controller-path tick that still
+    // carries an out-of-band ratio is a DEFERRED cut, whose own side's r-based branch is
+    // suppressed (fw v6 review S1). The clamp under test is therefore a BACKSTOP at fw v29, kept
+    // because the marker/refusal mechanism is unchanged and a future span change would need it.
+    // The fixture stages exactly what the controller path used to hand applyShareRatio(): the
+    // controller-path marker set, an out-of-band ratio, BT above SHARE_CUT_MAX_HANDOFF_A, a
+    // mid-band MDAC start, and the full-rate slew ceiling for the tick.
     reset_test_state();
     digitalWrite(FC_BUS_ENABLE, HIGH);
     digitalWrite(BT_BUS_ENABLE, HIGH);
     V_bus = 16.0f;
-    // fw v26: 4.0 A -> 1.5 A. At 4.0 A the 0.60 setpoint commands 2.4 A of FC, over
-    // SHARE_GOV_I_FC_CEIL_A, so the current-ceiling clamp pulled the reference DOWN and the run
-    // drove r toward DROOP_R_MIN instead of DROOP_R_MAX — a different refusal than this test is
-    // about. At 1.5 A both ceilings are inert (FC 0.90 A / BT 0.60 A commanded) while BT still
-    // carries 0.9 A, far above SHARE_CUT_MAX_HANDOFF_A (0.5 A), so the refusal under test is
-    // unchanged. The pre-clamp step figure quoted above was measured on the 4.0 A fixture.
     I_fc = 0.6f; I_batt = 0.9f;            // I_tot 1.5 A; BT far above SHARE_CUT_MAX_HANDOFF_A
-    power_share_setpoint = 0.60f;
-    uint32_t t = 0;
+    droopSlew_prev        = 0.5f;          // mid-band start: an unclamped landing is a 0.35 jump
+    shareSlewStepThisTick = DROOP_RATIO_SLEW_PER_TICK;
     float prev = droopSlew_prev, maxStep = 0.0f;
     for (int i = 0; i < 100; i++) {
-        t += 1000; g_mock_micros = t;
-        powerBalance();
+        shareRatioFromController = true;   // what powerBalance() sets before its call
+        applyShareRatio(1.0f);             // an out-of-band controller ratio, BT doomed
         float step = fabsf(droopSlew_prev - prev);
         if (step > maxStep) maxStep = step;
         prev = droopSlew_prev;
     }
     check(shareCutRefusedLoad > 0,
-          "(setup) the run really does drive r out of band and get its cut refused on load");
+          "(setup) the staged controller-path ratio really does propose a cut that is refused on load");
     check(digitalRead(BT_BUS_ENABLE) == HIGH && !shareIsoBT,
           "refused-cut slew: BT stays on the bus for the whole run (the guard held)");
     check(maxStep <= DROOP_RATIO_SLEW_PER_TICK + 1e-5f,
@@ -7932,6 +7944,20 @@ static void test_refused_cut_band_edge_clip_is_slewed(void) {
           "the band-edge clip after a refusal walks, it does not slam");
     check(fabsf(droopSlew_prev - DROOP_R_MAX) < 1e-5f,
           "refused-cut slew: the ratio still REACHES the band edge — limited, not frozen");
+    // fw v29 tripwire: the closed loop itself can no longer produce that refusal from an in-band
+    // command. Same currents, the old 0.60 command, 100 closed-loop ticks: zero refusals.
+    reset_test_state();
+    digitalWrite(FC_BUS_ENABLE, HIGH);
+    digitalWrite(BT_BUS_ENABLE, HIGH);
+    V_bus = 16.0f;
+    I_fc = 0.6f; I_batt = 0.9f;
+    power_share_setpoint = 0.60f;
+    uint32_t t = 0;
+    for (int i = 0; i < 100; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
+    check(shareCutRefusedLoad == 0 && shareCutRefusedBlank == 0,
+          "fw v29: the closed loop on an in-band 0.60 command never proposes a cut any more — "
+          "the controller's output is bounded to the band, so the r-based branch is unreachable "
+          "from an in-band command (the pre-v29 form of this fixture relied on that route)");
 
     // ONE-SHOT PATHS ARE NOT CLAMPED (review M2). The State-98 'O' open-loop droop write is a
     // deliberate operator action and must land exactly where commanded in ONE call, even when its
@@ -11389,6 +11415,134 @@ static void test_fw28_f4_kd_hold_in_charge_window(void) {
     check(fabsf(shareDroopKd - liveTarget) < 1e-3f,
           "F4 (iso): and k_d resumes, reaching the live schedule target it was held away from -- "
           "the freeze is a hold, not a permanent floor");
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// fw v29 — THE CONTROLLER'S AUTHORITY SPAN FOLLOWS THE COMMAND (the FC minority chatter fix).
+// Board-real, campaigns I and II (`ems-ftp75-sdp`): a sustained IN-BAND command at the inclusive
+// 0.15 rail against a split law whose minimum deliverable share is ~0.17 wound the Youla output
+// below DROOP_R_MIN under the fw v3-v28 [0, 1] authority span, applyShareRatio()'s r-based branch
+// read that as out-of-band intent and cut FC, the loop wound back over the 0.16 re-entry, and the
+// bus switch cycled at ~0.8 Hz (71-78 falls / 90 s). fw v29 hands the controller the BAND as its
+// span for an in-band command, so the back-calculation anti-windup pins the output ON the rail.
+// The mock has no plant: the currents are whatever the fixture sets, which is exactly the
+// standing infeasible error the board produced (the MDACs move, the split does not follow).
+// ═════════════════════════════════════════════════════════════════════════════
+static void test_fw29_inband_rail_command_does_not_chatter(void) {
+    test_group("fw v29: an in-band command at the rail pins the controller ON the rail — "
+               "no r-based cut, no bus-switch chatter");
+
+    // ── (a) Discriminator at the wrapper: the SAME error sequence under the two spans. ─────────
+    // Under the retired [0, 1] span the output walks below DROOP_R_MIN (the fw v28 behaviour that
+    // fed the cut); under the band span it lands exactly ON DROOP_R_MIN and never below. Without
+    // this pair the fixture below could pass on a controller that never reaches the rail at all.
+    reset_test_state();
+    float minOld = 1.0f;
+    for (int i = 0; i < 3000; i++) {
+        g_mock_micros += SHARE_CTRL_TS_US;
+        float u = youlaController_Power(DROOP_R_MIN, 0.17f, 0.0f, 1.0f);   // fw v28 span
+        if (u < minOld) minOld = u;
+    }
+    check(minOld < DROOP_R_MIN - SHARE_CUTOFF_HYST,
+          "(a) NEGATIVE CONTROL: under the fw v28 [0,1] span a 0.15 command against a 0.17 "
+          "delivered share winds the output below DROOP_R_MIN by more than the re-entry "
+          "hysteresis — the chatter's mechanism is reproduced by the fixture");
+    reset_test_state();
+    float minNew = 1.0f; bool everBelow = false; int firstOnRail = -1;
+    for (int i = 0; i < 3000; i++) {
+        g_mock_micros += SHARE_CTRL_TS_US;
+        float u = youlaController_Power(DROOP_R_MIN, 0.17f, DROOP_R_MIN, DROOP_R_MAX);
+        if (u < DROOP_R_MIN - 1e-6f) everBelow = true;
+        if (u < minNew) minNew = u;
+        if (firstOnRail < 0 && fabsf(u - DROOP_R_MIN) < 1e-6f) firstOnRail = i;
+    }
+    check(!everBelow && fabsf(minNew - DROOP_R_MIN) < 1e-6f,
+          "(a) under the band span the same sequence lands EXACTLY on DROOP_R_MIN and is never "
+          "below it — the back-calculation anti-windup absorbs the excess at the rail");
+    check(firstOnRail >= 0 && firstOnRail < 3000,
+          "(a) and it does reach the rail (the clamp is exercised, not merely declared)");
+    check(fabsf(shareCtrl_integ) < 1.0f,
+          "(a) the integrator is BOUNDED on the rail (back-calculation), not wound for 3 s");
+    // Recovery: reverse the error (delivered share falls under the command) and the output must
+    // leave the rail within a few ticks — a wound integrator would hold it there.
+    int leaveTick = -1;
+    for (int i = 0; i < 50; i++) {
+        g_mock_micros += SHARE_CTRL_TS_US;
+        float u = youlaController_Power(DROOP_R_MIN, 0.13f, DROOP_R_MIN, DROOP_R_MAX);
+        if (u > DROOP_R_MIN + 1e-4f) { leaveTick = i; break; }
+    }
+    check(leaveTick >= 0 && leaveTick <= 5,
+          "(a) on error reversal the output leaves the rail within 5 Ts ticks — no windup debt");
+
+    // ── (b) The closed loop end to end: FC stays on the bus for the whole run. ────────────────
+    // 1.41 A of total (above the 0.755 A crossover, so k_d is K_DROOP and the governor's floor
+    // clip lo = 0.125/1.41 = 0.089 is BELOW the 0.15 command — the reference is the raw command,
+    // in band, exactly the board's case); delivered share held at 0.17 by the mock.
+    gov_fixture();
+    uint32_t t = 0;
+    const float iTot = 1.41f;
+    I_fc = 0.17f * iTot; I_batt = 0.83f * iTot;
+    share_govTotAFilt    = iTot;
+    power_share_setpoint = DROOP_R_MIN;            // in band, INCLUSIVE rail — the chatter's command
+    shareClosedLoopMode = true; shareClosedLoopRun = true;
+    bool fcEverOff = false, isoEverSet = false, spCutEverSet = false, closedEveryTick = true;
+    float minRatio = 1.0f;
+    for (int i = 0; i < 5000; i++) {
+        t += 1000; g_mock_micros = t; powerBalance();
+        if (digitalRead(FC_BUS_ENABLE) == LOW) fcEverOff  = true;
+        if (shareIsoFC)                        isoEverSet = true;
+        if (shareSpCutFC)                      spCutEverSet = true;
+        if (!shareClosedLoopMode)              closedEveryTick = false;
+        if (shareCtrl_heldOut < minRatio)      minRatio = shareCtrl_heldOut;
+    }
+    check(closedEveryTick,
+          "(b, setup) the run was CLOSED-LOOP on every tick, so the controller path was the one "
+          "exercised — not the latch, not the feedforward hold");
+    check(!spCutEverSet,
+          "(b, setup) the setpoint latch never owned this command (it is in band) — the only "
+          "cut path in play was applyShareRatio()'s r-based branch");
+    check(!fcEverOff && !isoEverSet,
+          "(b) FC_BUS_ENABLE stays HIGH and shareIsoFC is never set across 5 s of a sustained "
+          "0.15 command against a 0.17 delivered share — the fw v6 rail-saturated dropout cycle "
+          "is gone (campaigns I/II: 71-78 falls in 90 s)");
+    check(minRatio >= DROOP_R_MIN - 1e-6f,
+          "(b) the controller output never left the band on any tick");
+    check(fabsf(droopSlew_prev - DROOP_R_MIN) < 1e-6f,
+          "(b) the MDACs settle at the DROOP_R_MIN rail — maximum droop authority for the "
+          "starved FC side, the same MDAC state the old cycle produced BETWEEN cuts");
+
+    // ── (c) The mirror: an in-band 0.85 command against a 0.83 delivered share, BT side. ──────
+    gov_fixture();
+    t = 0;
+    I_fc = 0.83f * iTot; I_batt = 0.17f * iTot;
+    share_govTotAFilt    = iTot;
+    power_share_setpoint = DROOP_R_MAX;
+    shareClosedLoopMode = true; shareClosedLoopRun = true;
+    bool btEverOff = false; float maxRatio = 0.0f;
+    for (int i = 0; i < 5000; i++) {
+        t += 1000; g_mock_micros = t; powerBalance();
+        if (digitalRead(BT_BUS_ENABLE) == LOW || shareIsoBT) btEverOff = true;
+        if (shareCtrl_heldOut > maxRatio) maxRatio = shareCtrl_heldOut;
+    }
+    check(!btEverOff && maxRatio <= DROOP_R_MAX + 1e-6f &&
+          fabsf(droopSlew_prev - DROOP_R_MAX) < 1e-6f,
+          "(c) mirror: a 0.85 command against a 0.83 delivered share pins the output ON "
+          "DROOP_R_MAX, BT never leaves the bus");
+
+    // ── (d) An OUT-OF-BAND command is unchanged: the latch still owns it and cuts. ────────────
+    // The r-based branch is not the only cut; the setpoint latch must still take a 0.10 command
+    // off the bus exactly as at fw v28 (the fix narrows the CONTROLLER's span, not the latch).
+    gov_fixture();
+    t = 0;
+    I_fc = 0.30f; I_batt = 0.30f;                  // under SHARE_CUT_MAX_HANDOFF_A: the cut is admitted
+    share_govTotAFilt = 0.60f;
+    power_share_setpoint = 0.10f;                  // strictly out of band
+    shareClosedLoopMode = true; shareClosedLoopRun = true;
+    g_mock_millis += SHARE_CUT_SURVIVOR_BLANK_MS;  // age out any fixture-side turn-on blanking
+    for (int i = 0; i < 200; i++) { t += 1000; g_mock_micros = t; powerBalance(); }
+    check(digitalRead(FC_BUS_ENABLE) == LOW && shareSpCutFC,
+          "(d) an out-of-band 0.10 command still cuts FC through the setpoint latch — the fix "
+          "changed nothing about out-of-band ownership");
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -16320,13 +16474,13 @@ static void test_youla_wrapper_gating() {
 
     // sub-Ts tick: no update, held initial 0.5
     g_mock_micros = 100;    // < SHARE_CTRL_TS_US since lastMicros = 0 (100-0 < 1000)
-    float u0 = youlaController_Power(0.8f, 0.5f);
+    float u0 = youlaController_Power(0.8f, 0.5f, DROOP_R_MIN, DROOP_R_MAX);
     check(fabsf(u0 - 0.5f) < 1e-6f,
           "wrapper: sub-Ts call returns held output (no state advance)");
 
     // crossing Ts: exactly one difference-equation update, on the FILTERED error
     g_mock_micros = 1200;
-    float u1 = youlaController_Power(0.8f, 0.5f);
+    float u1 = youlaController_Power(0.8f, 0.5f, DROOP_R_MIN, DROOP_R_MAX);
     reset_test_state();
     float alphaFilt = shareControllerFilterMeas(0.5f);   // filter starts at 0.5 -> stays 0.5
     float uref = shareControllerStep(0.8f - alphaFilt, DROOP_R_MIN, DROOP_R_MAX);
@@ -24745,6 +24899,7 @@ int main() {
     test_fw28_f1_symmetric_cases();
     test_fw28_f4_kd_hold_in_charge_window();
     test_fw28r4_kd_hold_on_single_source_topology();
+    test_fw29_inband_rail_command_does_not_chatter();
     // fw v28 rev 5 -- the re-entry rule
     test_fw28r5_reentry_rearm_at_the_rails();
     test_fw28r5_reentry_holds_just_inside_the_rails();

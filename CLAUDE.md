@@ -915,3 +915,20 @@ refusal), `d753237` (D-8: the lens-2 items + D-9), `db9b146` (close). A host REB
   unscored); ems-mpc-cross complete for the first time; the Gfc bridge reproduces campaign I to 10-600 ppm on every
   unchanged-plan leg (the plant unchanged); the sdp-v6 legs' SoC-threshold events carry 1-3 s of cross-campaign phase.
   Replay half 27/27 substantive, census identical to H and I - and campaign I's "five MDAC-saturated entries FELL as the crossover predicts" was a METRIC MISMATCH (FC-only fractions against H's total tag; like-for-like 3-10 pp on four entries, nothing on YP0152): corrected here. The selector still has zero replay coverage. Tool pass: 74 runs, 0 errors; the H-20 matched-DP re-solve done for all 26 EMS rows (MPC legs +0.2..1.2 % above their bounds, the SDP v6 / socband legs +2.4..7.5 %, dp-replay legs +0.2..0.8 % = the plant vs the stage cost); the report-stage eq-H2 at lambda 0.4673 spreads the 61 s strategies 15 % (mpc-single 0.9466 .. sdp-v6 1.0949 vs soc-band; I within 0.47 %) - the convex map discriminates strategies, and the v6 SDP's FC-only clamp is the expensive one at this lambda. Ledgers local under `HIL Results/`. Budget 2 of 5.
+
+## Status & session addendum (2026-09-16, daytime: fw v29 - the FC minority chatter fix, built for the REAL TESTBENCH; git tree consolidated to a single main)
+
+Operator-present round before a trip. Git: one `main` locally and on origin, one worktree, the PSCAD models and the operator's
+papers now committed, the `.ino` committed AS FLASHED (BENCH_TEST 0 / HIL_SIM 0 from this commit - a real-testbench build; the
+HIL_SIM 1 line of the campaign era is gone from the tree). EMS rework and the HIL suite are HELD until the operator returns; no
+campaign III. **fw v29 (`teensy_controller.ino`, ledger row 29, PENDING FLASH):** the Youla share controller's AUTHORITY SPAN
+FOLLOWS THE COMMAND - an in-band command (inclusive rails) bounds the output to `[DROOP_R_MIN, DROOP_R_MAX]` with the existing
+back-calculation anti-windup at the rail; a deferred cut keeps `[0, 1]` bit-identically. Closes WORK_QUEUE 0h-2 / 0f-9: a sustained
+0.15 command against the split law's ~0.17 minimum wound the output below the band under the fw v3-v28 `[0, 1]` span and
+`applyShareRatio()`'s r-based branch cut FC at ~0.8 Hz (71-78 falls / 90 s on campaigns I and II). The r-based cut is now reachable
+from the controller path only through an out-of-band command, which the latch owns and freezes first; the fw v25 refused-cut slew
+clamp and the fw v26 LOW-3 regime become backstops (the clamped regime parks ON the rail with zero refusals - re-adjudicated in the
+tests). No layout, frame or constant change; controller equations untouched; signature `youlaController_Power(sp, alpha, rmin,
+rmax)`. Tests 4517 / 175 / 4824, harness 51, 0 firmware warnings. Board validation = the next campaign's `ems-ftp75-sdp` (expect 0
+r-based FC_BUS falls); the tools mirror of the span (governor_model) is queued behind the hold. Still open for the operator: the
+FC-only re-arm persisting to Run exit; hold vs return-to-battery on re-entry; the two-period F1 window-open note (0h-21).

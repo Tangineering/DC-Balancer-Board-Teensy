@@ -1755,6 +1755,21 @@ Table 5. `selector_bits` at revision 6.
 
 Host-native, in `test/test_main.cpp`, group prefixes `test_fw28r6_*`.
 
+## 37. Closure note, fw v29 (2026-09-16)
+
+fw v29 closes one residual that this document did not list because it predates the selector:
+the fuel-cell minority chatter that campaigns I and II measured on `ems-ftp75-sdp` (71 to 78
+`FC_BUS_ENABLE` falls per 90 s at about 0.8 Hz, with the selector disarmed). The mechanism is
+outside the selector. A sustained in-band command at the inclusive 0.15 rail runs the closed
+loop; the asymmetric split law cannot deliver a share under about 0.17, so the standing error
+wound the Youla controller's output below `DROOP_R_MIN` under its unconditional [0, 1] authority
+span, and `applyShareRatio()`'s ratio-based branch cut the fuel cell. fw v29 makes the authority
+span follow the command: an in-band command bounds the output to `[DROOP_R_MIN, DROOP_R_MAX]`
+and the back-calculation anti-windup absorbs the excess at the rail. The selector, the re-entry
+rule, the dwell and the inhibit are unchanged; the effective setpoint the selector feeds the latch
+is out of band by construction and never reaches the controller. The firmware version ledger row
+29 carries the full record.
+
 1. The S1 path exactly: the charge window's intent disarms and raises the inhibit and its freshness
    token; an in-band command on the same iteration consumes the token without clearing the inhibit;
    the release is refused on an uncharged bus; the rail command on the next tick does **not**
