@@ -26,3 +26,6 @@
 
 # HIL Updates 2026-08-31a
 - Are the boost converters symmetric? In hil_report_20260831_021553\scenario_ems-drive-cycle_hifi I see that the commanded share is exactly 0.50 which achieves a share ratio of 0.50, but the real system has open-loop deviations that require r_cmd to be offset from 0.50 when operating in closed-loop.
+
+# HIL Updates 2026-09-02a
+- Add EMS comparison to HIL report, both written summary and a plot showing performance against the dSOC-matched DP
