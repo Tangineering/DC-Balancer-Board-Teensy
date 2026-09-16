@@ -15,3 +15,14 @@ test/rv_*.exe
 # generator's edge scripts + manifests. Local-only like the campaign ledgers; commit a specific
 # CSV/manifest only when a finding is written up in docs/encoder_defect_harness.md.
 logs/encoder_harness/
+scratchpad_repro.json
+USER_NOTES.md
+
+# Repo-level scratch area (campaign launcher logs, tool-pass logs, review diffs, repro dumps):
+# local-only like the campaign ledgers. A finding that matters is written up under docs/ or
+# a ledger, never cited from here.
+scratchpad/
+
+# Host-native test binaries (the run_tests* targets are tracked deliberately; the encoder
+# harness binary is rebuilt from test/encoder_defect_harness.cpp).
+test/encoder_defect_harness.exe
