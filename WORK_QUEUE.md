@@ -34,6 +34,9 @@ tooling / suite items for the fix round (the 0f queue stays held behind the H2-m
     --matched-dp-allow-long` from main, multi-hour; commit tools/dp_db); until then every deviation / residual column is empty.
 11. [TOOLS, report] the report stage prices whole-run h2_cum_g while the suite scores h2_run_g (A0 x t_entry); record the pricing
     lambda beside the suite's; restate the matched-DP note on H-20 (it still says "dynamic Gfc integrator vs Gfc DC gain").
+    PARTLY DONE: EMS_COMPARISON's Table N.1 caption restated on the campaign's map, and a lambda-free Figure N.3 (regret vs the
+    matched bound, tabulated, the bound leg's own deviation as the floor) added to hil_ems_comparison (43 tests). The
+    ANALYSIS_SUMMARY note, the pricing-lambda record and the whole-run / Run-window basis remain.
 12. [TOOLS] `Planner.delivery_table()` HOLD state SOURCE-aware (FC-only holds are the whole residual on ems-ftp75-mpc / ftp75c-mpc /
    ems-mpc; the queued BT-only preview does not cover them); the 171.4 s post-window residual (347 ms, 17 ms outside
    `exclude_hold_ms`) on ftp75c-mpc.

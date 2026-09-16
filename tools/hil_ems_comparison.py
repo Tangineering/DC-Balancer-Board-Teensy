@@ -548,6 +548,103 @@ def figure_traces(group):
     return fig
 
 
+def figure_regret(group):
+    """Percent deviation of every strategy from its delta-SoC-matched DP bound.
+
+    One horizontal bar per run (the run's own colour), the value written at
+    the bar end, and beneath the axes a table of the numbers the bar is drawn
+    from: the run's hydrogen, its matched bound, the deviation, and the SoC
+    match residual.  The bound leg's OWN deviation (a DP replay played on the
+    plant against the DP solved for that replay's end state) is drawn as a
+    dashed floor: it is the plant-versus-stage-cost mismatch that every run
+    on this stimulus carries, so a strategy's regret is its bar minus that
+    floor.  Runs with no stored bound are listed in the table with a dash.
+    """
+    hra = _hra()
+    plt = hra.plt
+    rows = [s for s in group["strategies"] if s.get("h2_run_g") is not None]
+    if not rows:
+        return None
+    scored = [s for s in rows if s.get("pct_deviation") is not None]
+    if not scored:
+        return None
+    bound_name = group.get("bound")
+    floor = None
+    for s in scored:
+        if bound_name and s["run"] == bound_name:
+            floor = float(s["pct_deviation"])
+
+    n = len(rows)
+    bar_h, row_h = 0.40 * n + 1.6, 0.26 * (n + 1) + 0.5
+    fig_h = bar_h + row_h
+    fig, ax = plt.subplots(figsize=(10.5, fig_h))
+    order = sorted(rows, key=lambda s: (s.get("pct_deviation") is None,
+                                        s.get("pct_deviation") or 0.0))
+    ys = list(range(len(order)))[::-1]
+    for y, s in zip(ys, order):
+        dev = s.get("pct_deviation")
+        if dev is None:
+            ax.text(0.0, y, "no stored bound", va="center", ha="left",
+                    color=hra.TEXT_COLOR, fontsize=8.5, alpha=0.7)
+            continue
+        ax.barh(y, dev, color=s["color"], height=0.62, alpha=0.9)
+        ax.text(dev + (0.08 if dev >= 0 else -0.08), y, "%+.2f %%" % dev,
+                va="center", ha="left" if dev >= 0 else "right",
+                color=hra.TEXT_COLOR, fontsize=8.5)
+    ax.set_yticks(ys)
+    ax.set_yticklabels(["%s  (%s)" % (s["run"], s.get("strategy") or "?")
+                        for s in order], fontsize=8.5)
+    ax.axvline(0.0, color=hra.TEXT_COLOR, linewidth=0.8, alpha=0.6)
+    if floor is not None:
+        ax.axvline(floor, color=hra.TEXT_COLOR, linewidth=1.0,
+                   linestyle="--", alpha=0.8)
+        ax.text(floor + 0.05, max(ys) + 0.62,
+                "bound leg's own deviation %+.2f %% = the plant vs stage-cost "
+                "floor" % floor, color=hra.TEXT_COLOR, fontsize=8,
+                ha="left", va="bottom")
+    devs = [float(s["pct_deviation"]) for s in scored]
+    lo, hi = min(0.0, min(devs)), max(0.0, max(devs))
+    pad = 0.18 * max(hi - lo, 1.0)
+    ax.set_xlim(lo - pad, hi + pad + 0.6)
+    ax.set_ylim(-0.7, max(ys) + 1.25)
+    hra.bl_figures._style_axes(ax, ylabel="")
+    ax.set_xlabel("hydrogen deviation from the delta-SoC-matched DP bound [%]"
+                  "   (positive: the run used more than its bound)",
+                  color=hra.TEXT_COLOR, fontsize=9.5)
+
+    cells = []
+    for s in order:
+        cells.append([s["run"],
+                      s.get("role") or "-",
+                      "%.6f" % s["h2_run_g"],
+                      "-" if s.get("h2_dp_g") is None else "%.6f" % s["h2_dp_g"],
+                      "-" if s.get("pct_deviation") is None
+                      else "%+.2f" % s["pct_deviation"],
+                      "%+.5f" % s["delta_soc_run"]
+                      if s.get("delta_soc_run") is not None else "-",
+                      "-" if s.get("residual_soc") is None
+                      else "%.1e" % s["residual_soc"]])
+    tbl = ax.table(cellText=cells,
+                   colLabels=["run", "role", "h2 run [g]", "h2 DP [g]",
+                              "dev [%]", "delta SoC", "SoC residual"],
+                   colWidths=[0.26, 0.15, 0.12, 0.12, 0.09, 0.12, 0.14],
+                   loc="bottom", cellLoc="center",
+                   bbox=(0.0, -(row_h + 0.55) / bar_h, 1.0, row_h / bar_h))
+    tbl.auto_set_font_size(False)
+    tbl.set_fontsize(7.5)
+    for (r, c), cell in tbl.get_celld().items():
+        cell.set_edgecolor(hra.TEXT_COLOR)
+        cell.set_linewidth(0.4)
+        cell.get_text().set_color(hra.TEXT_COLOR)
+        cell.set_facecolor("none")
+    fig.suptitle("EMS strategies on %s: regret against the delta-SoC-matched "
+                 "DP bound" % group["label"], color=hra.TEXT_COLOR,
+                 fontsize=11)
+    fig.subplots_adjust(left=0.24, right=0.985, top=1.0 - 0.55 / fig_h,
+                        bottom=(row_h + 0.65) / fig_h)
+    return fig
+
+
 def _group_is_stale(group, path, force=False):
     """True when a group's figure must be re-rendered.
 
@@ -572,7 +669,8 @@ def render_figures(groups, report_dir, force=False):
     out_dir.mkdir(parents=True, exist_ok=True)
     for g in groups:
         for key, builder in (("tradeoff", figure_tradeoff),
-                             ("traces", figure_traces)):
+                             ("traces", figure_traces),
+                             ("regret", figure_regret)):
             name = "ems_%s_%s.png" % (key, g["profile_id"])
             path = out_dir / name
             if not _group_is_stale(g, path, force=force):
@@ -681,6 +779,7 @@ def render_group_markdown(group, index):
 
     fig1 = group["figures"].get("tradeoff")
     fig2 = group["figures"].get("traces")
+    fig3 = group["figures"].get("regret")
     if fig1:
         L += ["Figure %d.1 places every strategy in the hydrogen against "
               "state-of-charge plane, joins each run to its delta-SoC-matched "
@@ -694,11 +793,26 @@ def render_group_markdown(group, index):
               "Figure %d.1." % (index, index),
               "",
               "![Figure %d.2](%s)" % (index, fig2), ""]
+    if fig3:
+        L += ["Figure %d.3 tabulates every strategy's hydrogen deviation from "
+              "its own delta-SoC-matched dynamic-programming bound. The "
+              "deviation is lambda-free: the bound is re-solved to each run's "
+              "terminal state of charge, so the state-of-charge difference "
+              "between strategies is removed by construction rather than "
+              "priced. The dashed line is the bound leg's own deviation (a DP "
+              "replay against the DP solved for its own end state), the "
+              "plant-versus-stage-cost mismatch every run on this stimulus "
+              "carries; a strategy's regret is its bar minus that floor. "
+              "Deviations are comparable across strategies within this "
+              "stimulus group only." % index,
+              "",
+              "![Figure %d.3](%s)" % (index, fig3), ""]
 
     L += ["Table %d.1 lists the measured totals, the matched offline "
-          "model-optimum bound (a lower bound on the Gfc DC-gain stage cost, "
-          "not on the logged h2 -- causal runs land 0.09-0.80 %% below it), "
-          "and the SoC-priced ranking." % index,
+          "model-optimum bound (a lower bound under the DP stage cost of the "
+          "campaign's hydrogen map, solved to each run's terminal state of "
+          "charge; the bound leg's own deviation is the plant-versus-"
+          "stage-cost mismatch), and the SoC-priced ranking." % index,
           "",
           "| run | strategy | role | h2 run (g) | delta SoC (run) |"
           " h2 DP bound (g) | deviation vs DP | lambda_term |"
