@@ -66,7 +66,7 @@ resA.cond  = simSat(ctrlYH, Pd, rA, Umax, 'cond',  LYH);
 resA.Hcond = simSat(ctrlH,  Pd, rA, Umax, 'cond',  LH);
 printMetrics('Drivetrain step (settle rel. to step at 0.5 s)', resA, tA, 5, 0.5, Umax);
 
-figure('Name','YH-AW-18','Position',[100 100 1000 800]);
+figure('Name','YH-AW-18');
 tl = tiledlayout(2,1,'TileSpacing','compact','Padding','compact');
 nexttile; hold on; grid on;
 plot(tA, rA, '-', 'Color', [0.75 0.75 0.75], 'LineWidth', 1.0);
@@ -93,7 +93,7 @@ fprintf('  ramp  error at 200 s   : Hinf %+.2e   Youla-H %+.2e  m/s\n', resB.H.y
 fprintf('  saturated-mode eig, Hinf  : %s\n', mat2str(sort(eig(ctrlH.A  - LH *ctrlH.C)),  5));
 fprintf('  saturated-mode eig, YoulaH: %s\n', mat2str(sort(eig(ctrlYH.A - LYH*ctrlYH.C)), 5));
 
-figure('Name','YH-vs-H-cond-18','Position',[100 100 1100 520]);
+figure('Name','YH-vs-H-cond-18');
 tl = tiledlayout(1,2,'TileSpacing','compact','Padding','compact');
 nexttile; hold on; grid on;
 plot(tA, rA, '-', 'Color', [0.75 0.75 0.75], 'LineWidth', 1.0);
@@ -160,7 +160,7 @@ plotAW(tD, rD, resDplot, Umax2, 'Example Plant wc=0.3: Saturated Response', ...
 % loop shapes for the replacement alternate-system figure (same style as H-TSY-2nd)
 [S3, T3, Y3] = loopTFs(Gc_YH3, Gp2);
 w = logspace(-2, 3, 600);
-figure('Name','YH-TSY-3rd','Position',[100 100 900 650]);
+figure('Name','YH-TSY-3rd');
 tl = tiledlayout(1,1,'Padding','compact');
 nexttile; hold on; grid on;
 plot(w, mag2db(abs(squeeze(freqresp(T3, w)))), 'k-',  'LineWidth', 1.5);
@@ -279,7 +279,7 @@ function plotAW(t, r, res, umax, ttl, leg, fname)
 % Youla-H family in black (dotted / dash-dot / solid), H-inf in blue dashed.
     styles = {'b--','k:','k-.','k-'}; widths = [1.5 2.0 1.5 1.5];
     names = fieldnames(res);
-    figure('Name', fname, 'Position', [100 100 1000 800]);
+    figure('Name', fname);
     tl = tiledlayout(2,1,'TileSpacing','compact','Padding','compact');
     nexttile; hold on; grid on;
     plot(t, r, '-', 'Color', [0.75 0.75 0.75], 'LineWidth', 1.0);
@@ -296,6 +296,6 @@ end
 
 function saveFig(h, base)
     set(h, 'Color', 'w');
-    exportgraphics(h, [base '.png'], 'Resolution', 400);
+    exportgraphics(h, [base '.png'], 'Resolution', 300);
     exportgraphics(h, [base '.pdf'], 'ContentType', 'vector');
 end

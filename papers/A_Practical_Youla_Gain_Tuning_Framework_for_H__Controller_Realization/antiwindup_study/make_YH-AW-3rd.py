@@ -39,17 +39,17 @@ print(f"kI = {kI:.4f}   R(0) = {R.dcgain():.4f}   remainder poles (cont.): {np.r
 
 # ---- loop-shape figure (replacement for H-TSY-2nd) ----
 w = np.logspace(-2, 3, 500); dB = lambda g: 20*np.log10(np.abs(g))
-plt.rcParams.update({'font.size':10,'font.family':'serif','axes.linewidth':0.6,'mathtext.fontset':'cm'})
-fig,ax = plt.subplots(figsize=(7.0,4.6))
-ax.plot(w, dB(T_YH.freqresp(w)), 'k-', lw=1.6, label='$T$')
-ax.plot(w, dB(S_YH.freqresp(w)), 'k--', lw=1.6, label='$S$')
-ax.plot(w, dB(Y_YH2.freqresp(w)), 'k:', lw=2.0, label='$Y$')
-ax.plot(w, -dB(Wd.freqresp(w)), c='b', ls='--', lw=1.4, label='$1/W_d$')
-ax.plot(w, -dB(Wp.freqresp(w)), c='b', ls='-.', lw=1.4, label='$1/W_p$')
-ax.plot(w, -dB(Wu.freqresp(w)), c='b', ls=':', lw=1.8, label='$1/W_u$')
+plt.rcParams.update({'font.size':8,'font.family':'serif','axes.linewidth':0.6,'mathtext.fontset':'cm'})
+fig,ax = plt.subplots(figsize=(3.45,2.5))
+ax.plot(w, dB(T_YH.freqresp(w)), 'k-', lw=1.2, label='$T$')
+ax.plot(w, dB(S_YH.freqresp(w)), 'k--', lw=1.2, label='$S$')
+ax.plot(w, dB(Y_YH2.freqresp(w)), 'k:', lw=1.5, label='$Y$')
+ax.plot(w, -dB(Wd.freqresp(w)), c='b', ls='--', lw=1.1, label='$1/W_d$')
+ax.plot(w, -dB(Wp.freqresp(w)), c='b', ls='-.', lw=1.1, label='$1/W_p$')
+ax.plot(w, -dB(Wu.freqresp(w)), c='b', ls=':', lw=1.4, label='$1/W_u$')
 ax.set_xscale('log'); ax.set_ylim(-60,25); ax.set_xlabel('frequency [rad/s]'); ax.set_ylabel('magnitude [dB]')
-ax.grid(alpha=0.25,lw=0.4,which='both'); ax.legend(frameon=False,fontsize=9,ncol=6,loc='upper center',bbox_to_anchor=(0.5,-0.14)); fig.subplots_adjust(bottom=0.22)
-fig.savefig(os.path.join(HERE,'figures','python','YH-TSY-3rd.png'),dpi=400,bbox_inches='tight'); fig.savefig(os.path.join(HERE,'figures','python','YH-TSY-3rd.pdf'),bbox_inches='tight')
+ax.grid(alpha=0.25,lw=0.4,which='both'); ax.legend(frameon=False,fontsize=7,ncol=3,loc='upper center',bbox_to_anchor=(0.5,-0.28)); fig.subplots_adjust(bottom=0.34)
+fig.savefig(os.path.join(HERE,'figures','python','YH-TSY-3rd.png'),dpi=300,bbox_inches='tight'); fig.savefig(os.path.join(HERE,'figures','python','YH-TSY-3rd.pdf'),bbox_inches='tight')
 
 # ---- saturated response ----
 def tustin(s): d = sg.cont2discrete((s.A,s.B,s.C,s.D),Ts,method='bilinear'); return [np.atleast_2d(m) for m in d[:4]]
@@ -82,15 +82,15 @@ for m,(Y,U) in res.items():
     print(f"{m}: rail dwell {np.sum(np.abs(U)>=U_MAX-1e-12)*Ts:.2f} s, after step-down: peak {Y[seg].max():.3f}, "
           f"min {Y[seg].min():.3f}, 2% settle {t[seg][idx[-1]]-T_HI if len(idx) else 0:.2f} s, final err {err[-1]:+.1e}")
 
-fig,ax = plt.subplots(2,1,figsize=(7.0,5.2),sharex=True,gridspec_kw={'hspace':0.10,'height_ratios':[1.5,1]})
-st = {'H':dict(c='b',ls='--',lw=1.6,label=r'$H_\infty$, clamp only'),
-      'YH':dict(c='k',ls=':',lw=2.2,label='Youla-H, clamp only'),
-      'AWI':dict(c='k',ls='-',lw=1.6,label='Youla-H, integrator back-calc.')}
+fig,ax = plt.subplots(2,1,figsize=(3.45,2.9),sharex=True,gridspec_kw={'hspace':0.10,'height_ratios':[1.5,1]})
+st = {'H':dict(c='b',ls='--',lw=1.2,label=r'$H_\infty$, clamp only'),
+      'YH':dict(c='k',ls=':',lw=1.6,label='Youla-H, clamp only'),
+      'AWI':dict(c='k',ls='-',lw=1.2,label='Youla-H, integrator back-calc.')}
 ax[0].plot(t,[ref(x) for x in t],c='0.8',lw=0.8)
 for m in ['H','YH','AWI']: ax[0].plot(t,res[m][0],**st[m]); ax[1].plot(t,res[m][1],**st[m])
 ax[0].set_ylabel('$y$'); ax[1].set_ylabel('$u$'); ax[1].set_xlabel('time [s]')
 ax[1].axhline(U_MAX,c='0.8',lw=0.6); ax[1].set_ylim(-0.4,1.8)
-h,l=ax[0].get_legend_handles_labels(); fig.legend(h,l,frameon=False,fontsize=9,loc='lower center',ncol=2,bbox_to_anchor=(0.5,0.0)); fig.subplots_adjust(bottom=0.20); ax[0].set_xlim(0,20)
+h,l=ax[0].get_legend_handles_labels(); fig.legend(h,l,frameon=False,fontsize=7,loc='lower center',ncol=2,bbox_to_anchor=(0.5,-0.01)); fig.subplots_adjust(bottom=0.30); ax[0].set_xlim(0,20)
 for a in ax: a.grid(alpha=0.25,lw=0.4)
-fig.savefig(os.path.join(HERE,'figures','python','YH-AW-3rd.png'),dpi=400,bbox_inches='tight'); fig.savefig(os.path.join(HERE,'figures','python','YH-AW-3rd.pdf'),bbox_inches='tight')
+fig.savefig(os.path.join(HERE,'figures','python','YH-AW-3rd.png'),dpi=300,bbox_inches='tight'); fig.savefig(os.path.join(HERE,'figures','python','YH-AW-3rd.pdf'),bbox_inches='tight')
 print("saved YH-TSY-3rd, YH-AW-3rd")
