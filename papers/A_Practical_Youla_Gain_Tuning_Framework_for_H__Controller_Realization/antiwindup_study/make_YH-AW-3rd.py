@@ -49,7 +49,7 @@ ax.plot(w, -dB(Wp.freqresp(w)), c='0.55', ls='--', lw=0.8, label='$1/W_p$')
 ax.plot(w, -dB(Wu.freqresp(w)), c='0.55', ls=':', lw=0.9, label='$1/W_u$')
 ax.set_xscale('log'); ax.set_ylim(-60,25); ax.set_xlabel('frequency [rad/s]'); ax.set_ylabel('magnitude [dB]')
 ax.grid(alpha=0.25,lw=0.4,which='both'); ax.legend(frameon=False,fontsize=6.5,ncol=2,loc='lower left')
-fig.savefig(os.path.join(HERE,'YH-TSY-3rd.png'),dpi=300,bbox_inches='tight'); fig.savefig(os.path.join(HERE,'YH-TSY-3rd.pdf'),bbox_inches='tight')
+fig.savefig(os.path.join(HERE,'figures','YH-TSY-3rd.png'),dpi=300,bbox_inches='tight'); fig.savefig(os.path.join(HERE,'figures','YH-TSY-3rd.pdf'),bbox_inches='tight')
 
 # ---- saturated response ----
 def tustin(s): d = sg.cont2discrete((s.A,s.B,s.C,s.D),Ts,method='bilinear'); return [np.atleast_2d(m) for m in d[:4]]
@@ -92,5 +92,5 @@ ax[0].set_ylabel('$y$'); ax[1].set_ylabel('$u$'); ax[1].set_xlabel('time [s]')
 ax[1].axhline(U_MAX,c='0.8',lw=0.6); ax[1].set_ylim(-0.4,1.8)
 ax[0].legend(frameon=False,fontsize=6,loc='upper right'); ax[0].set_xlim(0,20)
 for a in ax: a.grid(alpha=0.25,lw=0.4)
-fig.savefig(os.path.join(HERE,'YH-AW-3rd.png'),dpi=300,bbox_inches='tight'); fig.savefig(os.path.join(HERE,'YH-AW-3rd.pdf'),bbox_inches='tight')
+fig.savefig(os.path.join(HERE,'figures','YH-AW-3rd.png'),dpi=300,bbox_inches='tight'); fig.savefig(os.path.join(HERE,'figures','YH-AW-3rd.pdf'),bbox_inches='tight')
 print("saved YH-TSY-3rd, YH-AW-3rd")

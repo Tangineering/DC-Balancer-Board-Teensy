@@ -82,5 +82,5 @@ ax[0].set_xlabel('time [s]'); ax[0].set_ylabel('$v$ [m/s]'); ax[0].set_title('sa
 ax[1].set_xlabel('time [s]'); ax[1].set_ylabel('$v - v_{ref}$ [m/s]'); ax[1].set_title('slow ramp, no saturation', fontsize=8)
 ax[1].legend(frameon=False, fontsize=6, loc='lower left')
 for a in ax: a.grid(alpha=0.25, lw=0.4)
-fig.savefig(os.path.join(HERE,'YH-vs-H-cond-18.png'),dpi=300,bbox_inches='tight'); fig.savefig(os.path.join(HERE,'YH-vs-H-cond-18.pdf'),bbox_inches='tight')
+fig.savefig(os.path.join(HERE,'figures','YH-vs-H-cond-18.png'),dpi=300,bbox_inches='tight'); fig.savefig(os.path.join(HERE,'figures','YH-vs-H-cond-18.pdf'),bbox_inches='tight')
 print("saved YH-vs-H-cond-18")

@@ -25,7 +25,7 @@
 %  L is pole-placed from the self-conditioned spectrum eig(Ad - Bd Cd / Dd) with the
 %  structural z = -1 eigenvalue (Tustin's (z+1) factor) moved to +0.5.
 %
-%  Output: every figure is written as PNG (300 dpi) + PDF into Figures/antiwindup/.
+%  Output: every figure is written as PNG (300 dpi) + PDF into antiwindup_study/figures/.
 %  Requires: Control System Toolbox, Robust Control Toolbox (hinfsyn, makeweight).
 %  Tested against the Python originals make_YH-AW-*.py; small differences in the
 %  example-plant numbers are expected because those weights were read off a plot.
@@ -34,7 +34,7 @@ clear; clc; close all;
 s  = tf('s');
 Ts = 1e-3;
 scriptdir = fileparts(mfilename('fullpath')); if isempty(scriptdir), scriptdir = pwd; end
-outdir = fullfile(scriptdir, 'antiwindup');     % all figures go to this sub-folder
+outdir = fullfile(scriptdir, 'figures');        % all figures go to this sub-folder
 if ~exist(outdir, 'dir'), mkdir(outdir); end
 
 %% ------------------------------------------------------------------ A. drivetrain

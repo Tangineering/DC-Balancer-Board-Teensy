@@ -1,3 +1,4 @@
+import os
 import numpy as np, scipy.signal as sg, scipy.linalg as la
 import matplotlib; matplotlib.use("Agg"); import matplotlib.pyplot as plt
 
@@ -103,6 +104,6 @@ ax[0].set_ylabel('$v$ [m/s]'); ax[1].set_ylabel('$T_e$ [N$\\cdot$m]'); ax[1].set
 ax[1].axhline(U_MAX,c='0.8',lw=0.6); ax[1].axhline(-U_MAX,c='0.8',lw=0.6)
 ax[0].legend(frameon=False,fontsize=6,loc='upper left'); ax[0].set_xlim(0,12)
 for a in ax: a.grid(alpha=0.25,lw=0.4)
-out='/home/user/DC-Balancer-Board-Teensy/papers/A_Practical_Youla_Gain_Tuning_Framework_for_H__Controller_Realization/Figures/YH-AW-18'
+out=os.path.join(os.path.dirname(os.path.abspath(__file__)),'figures','YH-AW-18')
 fig.savefig(out+'.png',dpi=300,bbox_inches='tight'); fig.savefig(out+'.pdf',bbox_inches='tight')
 print("saved", out)

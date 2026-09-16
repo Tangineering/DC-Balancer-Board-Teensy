@@ -2,7 +2,7 @@
 % purpose (easy optimization, gamma < 1, first-order weights, yet T(0) != 1) AND doubles
 % as the anti-windup example, so that sec:antiwindup can refer to it and the drivetrain
 % figure YH-AW-18 is not needed. Same plant as before; the loop crossover is moved from
-% 1 rad/s to 0.3 rad/s, below the plant pole. Figures/make_YH-AW-3rd.py generates both
+% 1 rad/s to 0.3 rad/s, below the plant pole. antiwindup_study/make_YH-AW-3rd.py generates both
 % figures and every number below (re-synthesized with the repo's H-inf solver;
 % Wp = 1e3 at DC crossing 0.3, Wd = 0.1 -> 20 crossing 0.3, Wu = 0.1 -> 30 crossing 30).
 % If sec:antiwindup keeps its own drivetrain figure, drop the last paragraph here.
@@ -14,7 +14,7 @@ G_{P} = \frac{1}{s+1}
 \end{equation}
 The weighting functions chosen for this system are all first-order, compared to the second-order slopes used in the drivetrain system, and place the crossover at $0.3$\,rad/s, below the plant pole. The weights are relaxed, allowing for easy optimization, but not so relaxed as to be unrealistic for a controller design problem. Figure \ref{fig:TSY-simple} shows the weighting functions and the resulting closed-loop transfer functions.
 \begin{figure}[H]
-    \includegraphics[width=1\linewidth]{Figures/YH-TSY-3rd.pdf}
+    \includegraphics[width=1\linewidth]{antiwindup_study/figures/YH-TSY-3rd.pdf}
     \caption{Weighting functions and closed-loop transfer functions for the Youla-H controller on the simple plant.}
     \label{fig:TSY-simple}
 \end{figure}
@@ -22,7 +22,7 @@ Here $\gamma = 0.987$. Despite the optimization succeeding, $T_H(0) = 0.99898$, 
 
 With the crossover below the plant pole the controller is close to a PI: the split of Equation \ref{eq:split} gives $k_I = 0.293$ with a remainder $R(s)$ whose DC gain is only $0.23$ and whose poles lie at or beyond the plant pole, so the integrator alone holds the low-frequency memory. This is the case in which the explicit integrator state of the Youla-H realization is worth the most. Figure \ref{fig:YH-AW-3rd} holds the reference at $3$, beyond an actuator limit $|u|\le 1.5$, for $2.5$\,s and then drops it to $1$. With a clamp alone, $G_{CH}$ and $G_{CYH}$ alike remain on the rail for $0.7$\,s after the step-down, overshoot to $1.43$, and take $12$\,s to settle; the $H_\infty$ controller winds up exactly as the Youla-H one does, but offers no integrator state to condition. Back-calculating the clamp excess into the Youla-H integrator releases the rail immediately and settles in $2.5$\,s with no undershoot. No conditioning of the remaining states is required here; the drivetrain controller of Section \ref{sec:antiwindup}, whose remainder carries most of the low-frequency gain, is the contrasting case.
 \begin{figure}[H]
-    \includegraphics[width=1\linewidth]{Figures/YH-AW-3rd.pdf}
+    \includegraphics[width=1\linewidth]{antiwindup_study/figures/YH-AW-3rd.pdf}
     \caption{Saturated response of the simple plant (reference in light gray): clamp only, and back-calculation on the integrator state of the realization of Equation \ref{eq:split}.}
     \label{fig:YH-AW-3rd}
 \end{figure}
