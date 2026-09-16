@@ -25,7 +25,8 @@ No such split exists for $G_{CH}$, whose integral action is buried in the slow p
 pair of Equation \ref{eq:Gch}. The split makes the digital realization well posed:
 the integrator is discretized by the trapezoidal rule as an explicit scalar state,
 and $R(s)$ is balance-truncated (which requires a stable system) and discretized by
-Tustin's method. The explicit integrator state also admits the standard PI
+Tustin's method \citep{tustin1947method}. The explicit integrator state also admits the
+standard PI
 anti-windup schemes, back-calculation or conditional integration, directly.
 
 Figure \ref{fig:YH-AW-18} applies this to the drivetrain system with a $5$\,m/s step
@@ -67,6 +68,10 @@ $G_{CYH}$ tracks exactly (Figure \ref{fig:YH-vs-H-cond-18}).
 \end{figure}
 
 % Add to each bibliography block:
+% \bibitem{tustin1947method}
+% Tustin, A. A Method of Analysing the Behaviour of Linear Systems in Terms of Time
+% Series. \textit{Journal of the Institution of Electrical Engineers - Part IIA:
+% Automatic Regulators and Servo Mechanisms} \textbf{1947}, \textit{94}, 130--142.
 % \bibitem{hanus1987conditioning}
 % Hanus, R.; Kinnaert, M.; Henrotte, J.-L. Conditioning Technique, a General
 % Anti-windup and Bumpless Transfer Method. \textit{Automatica} \textbf{1987},
