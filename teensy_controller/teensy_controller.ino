@@ -3968,7 +3968,7 @@ void encDirCommitTick() {
 #define FW_VERSION 28
 
 #ifndef BENCH_TEST
-#define BENCH_TEST 1
+#define BENCH_TEST 0
 #endif
 
 // ── HIL (hardware-in-the-loop) simulation build ──────────────────────────────
@@ -3997,7 +3997,7 @@ void encDirCommitTick() {
 // symptom is the once-per-second "State 0: waiting for HIL injection stream..." line rather
 // than any fault. See docs/HIL_USER_MANUAL.md §2.4.
 #ifndef HIL_SIM
-#define HIL_SIM 0
+#define HIL_SIM 1
 #endif
 
 // ── Network config ────────────────────────────────────────────────────────────

@@ -182,7 +182,7 @@
     <param name="gc_ch_mem" value="false" />
     <param name="gc_ch_ptr" value="false" />
     <param name="gc_ch_rec" value="false" />
-    <param name="revisor" value="ricky, 1788297193" />
+    <param name="revisor" value="ricky, 1788152747" />
   </paramlist>
   <Layers />
   <List classid="Settings">
@@ -1089,7 +1089,7 @@
         </Wire>
       </schematic>
     </Definition>
-    <Definition classid="UserCmpDefn" name="Main" id="1402068275" group="" url="" version="" build="" crc="113496553" view="false" date="1788151405">
+    <Definition classid="UserCmpDefn" name="Main" id="1402068275" group="" url="" version="" build="" crc="26601752" view="false" date="1788151405">
       <paramlist name="">
         <param name="Description" value="" />
       </paramlist>
@@ -1134,7 +1134,7 @@
       <schematic classid="UserCanvas">
         <paramlist>
           <param name="show_grid" value="0" />
-          <param name="size" value="4" />
+          <param name="size" value="0" />
           <param name="orient" value="1" />
           <param name="show_border" value="0" />
           <param name="monitor_bus_voltage" value="0" />
@@ -2449,238 +2449,6 @@
             <param name="rvalue1" value="0" />
             <param name="rvalue2" value="0" />
             <param name="showani" value="0" />
-          </paramlist>
-        </User>
-        <User classid="UserCmp" id="1429955956" name="master:mrun" x="1746" y="594" w="131" h="127" z="-1" orient="0" defn="master:mrun" link="-1" disable="false">
-          <paramlist name="" link="-1" crc="43452455">
-            <param name="Name" value="" />
-            <param name="NV" value="2" />
-            <param name="ENAB" value="1" />
-            <param name="STDEV" value="2.0" />
-            <param name="SeedMethod" value="0" />
-            <param name="SeedValue" value="23309" />
-            <param name="NM" value="1" />
-            <param name="OUTNAM" value="mrunout.out" />
-            <param name="Repeat" value="1" />
-            <param name="Opt" value="1" />
-            <param name="MinMax" value="1" />
-            <param name="NDIV" value="10" />
-            <param name="VType1" value="0" />
-            <param name="IType1" value="1" />
-            <param name="V1Label" value="Var#1" />
-            <param name="V1DR" value="0.0" />
-            <param name="V1DI" value="0" />
-            <param name="N1R" value="10" />
-            <param name="Min1R" value="0.0" />
-            <param name="Inc1R" value="0.5" />
-            <param name="Max1R" value="2" />
-            <param name="V1Run1R" value="1" />
-            <param name="V1Run2R" value="2" />
-            <param name="V1Run3R" value="3" />
-            <param name="V1Run4R" value="4" />
-            <param name="V1Run5R" value="5" />
-            <param name="V1Run6R" value="6" />
-            <param name="V1Run7R" value="7" />
-            <param name="V1Run8R" value="8" />
-            <param name="V1Run9R" value="9" />
-            <param name="V1Run10R" value="10" />
-            <param name="N1I" value="10" />
-            <param name="Min1I" value="0" />
-            <param name="Inc1I" value="1" />
-            <param name="Max1I" value="10" />
-            <param name="V1Run1I" value="1" />
-            <param name="V1Run2I" value="2" />
-            <param name="V1Run3I" value="3" />
-            <param name="V1Run4I" value="4" />
-            <param name="V1Run5I" value="5" />
-            <param name="V1Run6I" value="6" />
-            <param name="V1Run7I" value="7" />
-            <param name="V1Run8I" value="8" />
-            <param name="V1Run9I" value="9" />
-            <param name="V1Run10I" value="10" />
-            <param name="VType2" value="0" />
-            <param name="IType2" value="1" />
-            <param name="V2Label" value="Var#2" />
-            <param name="V2DR" value="0.0" />
-            <param name="V2DI" value="0" />
-            <param name="N2R" value="10" />
-            <param name="Min2R" value="0.0" />
-            <param name="Inc2R" value="1.0" />
-            <param name="Max2R" value="1.0" />
-            <param name="V2Run1R" value="1" />
-            <param name="V2Run2R" value="2" />
-            <param name="V2Run3R" value="3" />
-            <param name="V2Run4R" value="4" />
-            <param name="V2Run5R" value="5" />
-            <param name="V2Run6R" value="6" />
-            <param name="V2Run7R" value="7" />
-            <param name="V2Run8R" value="8" />
-            <param name="V2Run9R" value="9" />
-            <param name="V2Run10R" value="10" />
-            <param name="N2I" value="10" />
-            <param name="Min2I" value="0" />
-            <param name="Inc2I" value="1" />
-            <param name="Max2I" value="10" />
-            <param name="V2Run1I" value="1" />
-            <param name="V2Run2I" value="2" />
-            <param name="V2Run3I" value="3" />
-            <param name="V2Run4I" value="4" />
-            <param name="V2Run5I" value="5" />
-            <param name="V2Run6I" value="6" />
-            <param name="V2Run7I" value="7" />
-            <param name="V2Run8I" value="8" />
-            <param name="V2Run9I" value="9" />
-            <param name="V2Run10I" value="10" />
-            <param name="VType3" value="0" />
-            <param name="IType3" value="1" />
-            <param name="V3Label" value="Var#3" />
-            <param name="V3DR" value="0.0" />
-            <param name="V3DI" value="0" />
-            <param name="N3R" value="10" />
-            <param name="Min3R" value="0.0" />
-            <param name="Inc3R" value="1.0" />
-            <param name="Max3R" value="1.0" />
-            <param name="V3Run1R" value="1" />
-            <param name="V3Run2R" value="2" />
-            <param name="V3Run3R" value="3" />
-            <param name="V3Run4R" value="4" />
-            <param name="V3Run5R" value="5" />
-            <param name="V3Run6R" value="6" />
-            <param name="V3Run7R" value="7" />
-            <param name="V3Run8R" value="8" />
-            <param name="V3Run9R" value="9" />
-            <param name="V3Run10R" value="10" />
-            <param name="N3I" value="10" />
-            <param name="Min3I" value="0" />
-            <param name="Inc3I" value="1" />
-            <param name="Max3I" value="10" />
-            <param name="V3Run1I" value="1" />
-            <param name="V3Run2I" value="2" />
-            <param name="V3Run3I" value="3" />
-            <param name="V3Run4I" value="4" />
-            <param name="V3Run5I" value="5" />
-            <param name="V3Run6I" value="6" />
-            <param name="V3Run7I" value="7" />
-            <param name="V3Run8I" value="8" />
-            <param name="V3Run9I" value="9" />
-            <param name="V3Run10I" value="10" />
-            <param name="VType4" value="0" />
-            <param name="IType4" value="1" />
-            <param name="V4Label" value="Var#4" />
-            <param name="V4DR" value="0.0" />
-            <param name="V4DI" value="0" />
-            <param name="N4R" value="10" />
-            <param name="Min4R" value="0.0" />
-            <param name="Inc4R" value="1.0" />
-            <param name="Max4R" value="1.0" />
-            <param name="V4Run1R" value="1" />
-            <param name="V4Run2R" value="2" />
-            <param name="V4Run3R" value="3" />
-            <param name="V4Run4R" value="4" />
-            <param name="V4Run5R" value="5" />
-            <param name="V4Run6R" value="6" />
-            <param name="V4Run7R" value="7" />
-            <param name="V4Run8R" value="8" />
-            <param name="V4Run9R" value="9" />
-            <param name="V4Run10R" value="10" />
-            <param name="N4I" value="10" />
-            <param name="Min4I" value="0" />
-            <param name="Inc4I" value="1" />
-            <param name="Max4I" value="0" />
-            <param name="V4Run1I" value="1" />
-            <param name="V4Run2I" value="2" />
-            <param name="V4Run3I" value="3" />
-            <param name="V4Run4I" value="4" />
-            <param name="V4Run5I" value="5" />
-            <param name="V4Run6I" value="6" />
-            <param name="V4Run7I" value="7" />
-            <param name="V4Run8I" value="8" />
-            <param name="V4Run9I" value="9" />
-            <param name="V4Run10I" value="10" />
-            <param name="VType5" value="0" />
-            <param name="IType5" value="1" />
-            <param name="V5Label" value="Var#5" />
-            <param name="V5DR" value="0.0" />
-            <param name="V5DI" value="0" />
-            <param name="N5R" value="10" />
-            <param name="Min5R" value="0.0" />
-            <param name="Inc5R" value="1.0" />
-            <param name="Max5R" value="1.0" />
-            <param name="V5Run1R" value="1" />
-            <param name="V5Run2R" value="2" />
-            <param name="V5Run3R" value="3" />
-            <param name="V5Run4R" value="4" />
-            <param name="V5Run5R" value="5" />
-            <param name="V5Run6R" value="6" />
-            <param name="V5Run7R" value="7" />
-            <param name="V5Run8R" value="8" />
-            <param name="V5Run9R" value="9" />
-            <param name="V5Run10R" value="10" />
-            <param name="N5I" value="10" />
-            <param name="Min5I" value="0" />
-            <param name="Inc5I" value="1" />
-            <param name="Max5I" value="10" />
-            <param name="V5Run1I" value="1" />
-            <param name="V5Run2I" value="2" />
-            <param name="V5Run3I" value="3" />
-            <param name="V5Run4I" value="4" />
-            <param name="V5Run5I" value="5" />
-            <param name="V5Run6I" value="6" />
-            <param name="V5Run7I" value="7" />
-            <param name="V5Run8I" value="8" />
-            <param name="V5Run9I" value="9" />
-            <param name="V5Run10I" value="10" />
-            <param name="VType6" value="0" />
-            <param name="IType6" value="1" />
-            <param name="V6Label" value="Va #6" />
-            <param name="V6DR" value="0.0" />
-            <param name="V6DI" value="0" />
-            <param name="N6R" value="10" />
-            <param name="Min6R" value="0.0" />
-            <param name="Inc6R" value="1.0" />
-            <param name="Max6R" value="1.0" />
-            <param name="V6Run1R" value="1" />
-            <param name="V6Run2R" value="2" />
-            <param name="V6Run3R" value="3" />
-            <param name="V6Run4R" value="4" />
-            <param name="V6Run5R" value="5" />
-            <param name="V6Run6R" value="6" />
-            <param name="V6Run7R" value="7" />
-            <param name="V6Run8R" value="8" />
-            <param name="V6Run9R" value="9" />
-            <param name="V6Run10R" value="10" />
-            <param name="N6I" value="10" />
-            <param name="Min6I" value="0" />
-            <param name="Inc6I" value="1" />
-            <param name="Max6I" value="10" />
-            <param name="V6Run1I" value="1" />
-            <param name="V6Run2I" value="2" />
-            <param name="V6Run3I" value="3" />
-            <param name="V6Run4I" value="4" />
-            <param name="V6Run5I" value="5" />
-            <param name="V6Run6I" value="6" />
-            <param name="V6Run7I" value="7" />
-            <param name="V6Run8I" value="8" />
-            <param name="V6Run9I" value="9" />
-            <param name="V6Run10I" value="10" />
-            <param name="MType1" value="2" />
-            <param name="RType1" value="3" />
-            <param name="O1Label" value="Out#1" />
-            <param name="MType2" value="2" />
-            <param name="RType2" value="3" />
-            <param name="O2Label" value="Out#2" />
-            <param name="MType3" value="2" />
-            <param name="RType3" value="3" />
-            <param name="O3Label" value="Out#3" />
-            <param name="MType4" value="2" />
-            <param name="RType4" value="3" />
-            <param name="O4Label" value="Out#4" />
-            <param name="MType5" value="2" />
-            <param name="RType5" value="3" />
-            <param name="O5Label" value="Out#5" />
-            <param name="MType6" value="2" />
-            <param name="RType6" value="3" />
-            <param name="O6Label" value="Out#6" />
           </paramlist>
         </User>
       </schematic>

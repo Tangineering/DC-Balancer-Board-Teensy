@@ -22,11 +22,13 @@ operator leaves — do not infer a mandate.
 
 ## Standing guardrails (non-negotiable, in EVERY agent brief)
 
-- The two `.ino` build-flag lines (BENCH_TEST/HIL_SIM operator flip) are never
-  committed and never git-restored. Committing the `.ino` = flip to repo defaults →
-  commit → flip back, then verify the worktree diff is exactly the two lines.
-- `PSCAD/` (and anything provenance-unconfirmed) stays uncommitted. `HIL Results/`
-  is gitignored — ledgers live there, never in a commit.
+- The `.ino` is committed EXACTLY AS FLASHED (operator ruling 2026-09-16): the BENCH_TEST / HIL_SIM lines carry the
+  mode on the real testbench, so the repo's flags are the flash target - never flip them back to defaults for a commit
+  and never git-restore them. A flag change is a deliberate commit that says which mode is being pushed.
+- `PSCAD/` and the operator's papers under `references/` are committable (ruling 2026-09-16) but remain the
+  OPERATOR'S files: no agent edits them, and they are staged explicitly by the orchestrator, never by a tree-wide add.
+  `HIL Results/` is gitignored - ledgers live there, never in a commit. USER_NOTES.md and `docs/slides/` are committed
+  only when the operator says so.
 - **No tree-wide git operations by ANY subagent** (stash/reset/checkout — the stash
   incident). State it in every implementer brief. Truly overlapping file sets are
   sequenced, never parallelized; disjoint sets (firmware vs tools/) may run in

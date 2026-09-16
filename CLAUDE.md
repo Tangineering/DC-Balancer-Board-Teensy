@@ -374,11 +374,10 @@ machine with `g++` — no Teensy or Arduino IDE required.
 
 See PLAN.md §10 for the full directory layout and test category table.
 
-**HIL build flag.** `HIL_SIM` (repo default **0**) compiles the signal-level
+**HIL build flag.** `HIL_SIM` (the repo carries the flags AS FLASHED on the testbench since 2026-09-16 - currently BENCH_TEST 0 / HIL_SIM 1 - so a flag change is a deliberate commit naming the mode being pushed; the pre-2026-09-16 convention of committing repo defaults 1 / 0 and flipping locally is retired) compiles the signal-level
 hardware-in-the-loop path, in which a UDP **40-byte injection frame** overrides
 `updateSensors()` and an **18-byte observation frame** streams switch/state/command mirrors
-back at 1 kHz. It requires `USE_ETHERNET=1`. An HIL flash requires editing `HIL_SIM` to 1 in
-the `.ino` — a default flash is a normal bench build, and a `HIL_SIM=1` build sits visibly in
+back at 1 kHz. It requires `USE_ETHERNET=1`. A bench flash requires committing `HIL_SIM` 0 / `BENCH_TEST` 1 first; a `HIL_SIM=1` build sits visibly in
 the State-0 wait loop until a simulator streams to it. See `docs/HIL_MODE.md` for the frame
 tables and test plan, and `docs/HIL_USER_MANUAL.md` for the operator procedure.
 

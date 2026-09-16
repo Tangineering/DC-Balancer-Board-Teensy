@@ -1,6 +1,6 @@
-<workspace name="dc_balancer" version="5.1.0" crc="89093313">
+<workspace name="dc_balancer" version="5.1.0" crc="33928187">
   <projects>
-    <project type="project" name="droop_t1" filepath="..\..\..\..\..\Users\Public\Documents\PSCAD\Free\Examples\PowerElectronics\droop_t1.pscx" open="true" />
+    <project type="project" name="droop_t1" filepath=".\droop_t1.pscx" open="true" />
   </projects>
   <simulations />
   <pmr />
