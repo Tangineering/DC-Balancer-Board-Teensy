@@ -12,7 +12,7 @@
 %    8     H-TSY-2nd       example plant 1/(s+1)  -- REPLACE the placeholder weights
 %  Not produced here: Figure 1 (block diagram), Figure 6 (needs the nonlinear
 %  drivetrain model of tan2025scaling) and Figure 7 (the anti-windup step, generated
-%  by ../antiwindup_study/antiwindup_variants.m).
+%  by antiwindup_study/antiwindup_variants.m).
 %
 %  Output: Figures/compressed/<name>.png (screen-resolution PNG via saveas, like
 %  the originals) and .pdf (vector). Adjust FIG_H below to taste; the originals were
@@ -25,7 +25,7 @@ clear; clc; close all;
 s  = tf('s');
 FIG_W = 875;  FIG_H = 380;                     % compressed aspect ratio
 here   = fileparts(mfilename('fullpath')); if isempty(here), here = pwd; end
-outdir = fullfile(here, 'compressed'); if ~exist(outdir, 'dir'), mkdir(outdir); end
+outdir = fullfile(here, 'Figures', 'compressed'); if ~exist(outdir, 'dir'), mkdir(outdir); end
 w  = logspace(-2, 4, 800);                     % TSY frequency grid (Figs 2, 3, 7)
 wG = logspace(-6, 3, 900);                     % Gc frequency grid (Fig 4)
 
@@ -54,7 +54,7 @@ legend({'H\infty', 'Youla-H'}, 'Location', 'south');
 saveFig(h, fullfile(outdir, 'H-&-YH-Gc-18'));
 
 %% Figure 5 -- FTP-75 drive cycle, first 340 s
-cyc = readmatrix(fullfile(here, '..', '..', '..', 'references', 'drive_cycles', 'ftpcol.txt'), ...
+cyc = readmatrix(fullfile(here, '..', '..', 'references', 'drive_cycles', 'ftpcol.txt'), ...
                  'FileType', 'text', 'NumHeaderLines', 2);
 tC = cyc(:, 1); vC = cyc(:, 2) * 1.609344;    % mph -> kph
 keep = tC <= 340;
