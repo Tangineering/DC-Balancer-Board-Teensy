@@ -1,15 +1,35 @@
-% ALTERNATIVE second paragraph + figure for sec:antiwindup, using the example plant of
-% Section \ref{sec:Alternate} instead of the drivetrain. The first paragraph (the split,
-% Equation \ref{eq:split}) and the third-paragraph closing sentences are unchanged from
-% discretization_antiwindup_section_draft.tex. Numbers from antiwindup_study/make_YH-AW-2nd.py,
-% which re-synthesizes the example-plant controller with first-order weights read off
-% Figure \ref{fig:TSY-simple} (gamma = 1.007, T_H(0) = 0.99990 in that re-synthesis;
-% the paper's MATLAB values are 0.9951 and 0.9999817, so quote whichever you keep).
+% OPTION 2 - ALTERNATIVE second paragraph + figure for sec:antiwindup, using the example
+% plant of Section \ref{sec:Alternate} instead of the drivetrain. The first paragraph
+% (the split, Equation \ref{eq:split}) and the closing paragraph on the conditioned
+% comparison are taken unchanged from section_antiwindup_drivetrain.tex; only the
+% numbers quoted there for the conditioned comparison are drivetrain numbers and would
+% need re-deriving on this plant (../antiwindup_variants.m section C computes the
+% conditioned H-inf case as resC.H with mode 'cond' if you add it).
+%
+% Numbers from ../make_YH-AW-2nd.py, which re-synthesizes the example-plant controller
+% with first-order weights read off Figure \ref{fig:TSY-simple} (gamma = 1.007,
+% T_H(0) = 0.99990 in that re-synthesis; the paper's MATLAB values are 0.9951 and
+% 0.9999817, so quote whichever you keep).
 
-Figure \ref{fig:YH-AW-2nd} applies this to the example plant of Section \ref{sec:Alternate} with an actuator limit $|u|\le 1.5$: the reference is held at $3$, beyond the actuator's reach, for $2.5$\,s and then dropped to $1$. With a clamp alone, $G_{CH}$ and $G_{CYH}$ alike stay on the rail for $6.5$\,s after the step-down and take $11$\,s to settle. Back-calculating into the integrator alone releases the rail at once but undershoots to $0.60$: here $k_I = 0.96$ and $R(0) = 0.93$, so the lag states of $R$ hold as much low-frequency gain as the integrator and wind up on their own. Conditioning the full state with the general Hanus law \citep{hanus1987conditioning}, $x_{k+1} = A_d x_k + B_d e_k + L\,(u_{\mathrm{sat},k}-u_k)$, leaves the linear controller unchanged off the clamp and de-winds every state on it: no undershoot, settled $2.9$\,s after the step-down.
+Figure \ref{fig:YH-AW-2nd} applies this to the example plant of Section
+\ref{sec:Alternate} with an actuator limit $|u|\le 1.5$: the reference is held at
+$3$, beyond the actuator's reach, for $2.5$\,s and then dropped to $1$. With a clamp
+alone, $G_{CH}$ and $G_{CYH}$ alike stay on the rail for $6.5$\,s after the
+step-down and take $11$\,s to settle. Back-calculating into the integrator alone
+releases the rail at once but undershoots to $0.60$: here $k_I = 0.96$ and
+$R(0) = 0.93$, so the lag states of $R$ hold as much low-frequency gain as the
+integrator and wind up on their own. Conditioning the full state with the general
+Hanus law \citep{hanus1987conditioning},
+$x_{k+1} = A_d x_k + B_d e_k + L\,(u_{\mathrm{sat},k}-u_k)$, leaves the linear
+controller unchanged off the clamp and de-winds every state on it: no undershoot,
+settled $2.9$\,s after the step-down. As on the drivetrain, the same conditioning
+applied to $G_{CH}$ recovers identically; the Youla-H gain adjustment changes the DC
+tracking, not the saturated-mode dynamics.
 
 \begin{figure}[H]
     \includegraphics[width=1\linewidth]{antiwindup_study/figures/YH-AW-2nd.pdf}
-    \caption{Saturated response of the example plant (reference in light gray): clamp only, integrator-only back-calculation on the realization of Equation \ref{eq:split}, and full-state conditioning.}
+    \caption{Saturated response of the example plant (reference in light gray):
+    clamp only, integrator-only back-calculation on the realization of Equation
+    \ref{eq:split}, and full-state conditioning.}
     \label{fig:YH-AW-2nd}
 \end{figure}
