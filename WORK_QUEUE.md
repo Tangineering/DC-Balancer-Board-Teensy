@@ -63,6 +63,84 @@ tooling / suite items for the fix round (the 0f queue stays held behind the H2-m
 21. [DOC] the F1 window-open delay is TWO commander periods from the standstill trigger (charge-to-full, 39.6 ms) and ZERO from an
     FC-selected arm (REGEN drop and FC_CHARGE open on the same tick) - the design record says one.
 
+## 0i. Testbed flash readiness (2026-09-16) - the pre-vehicle blocker list and the FC purge-dip UV rework brief
+
+Context: the operator flashes the firmware to the physical testbed before a month away. EMS and HIL items are OUT of
+scope here (they stay in 0f-0h). The fuel cell (Horizon H-20) ran on the bench for the first time on 2026-09-15: its
+output voltage swings to ~1 V on every H2 purge. Under the current fw v28 rev 6 fault filter that dip can latch
+ERR_UV_FC, and the share loop reacts to the current collapse independently of the fault. Items 1-4 are firmware
+blockers; 5-7 are bench measurements that gate the vehicle rather than the model.
+
+### Blockers (firmware)
+
+- [ ] 1. **FC purge-dip UV rework (fw v29 candidate) - BRIEF.**
+      Present state (`teensy_controller.ino`, FAULT_UV_FC block in `detectFaults()` and the constants block above
+      `V_FC_ARM_THRESH`): arms once V_fc >= `V_FC_ARM_THRESH` 7.0 V while FC_REG_ENABLE and FC_BUS_ENABLE are both
+      HIGH; latches ERR_UV_FC after `UV_FC_DWELL_LATCH_MS` 20 ms of accumulated net dwell below `LIMIT_V_FC_MIN` 6.0 V;
+      leaks at `UV_BUS_DWELL_LEAK` 0.05 x dt while above the limit; dt capped at `UV_BUS_DWELL_DT_CAP_MS` 5 ms/tick.
+      Tuned (fw v6, 2026-08-12) to catch the ~10 ms WP0096/WP0098 collapses on the BENCH supply, never against the cell.
+      (a) **Measure first, on the cell (bench, State 98 `K` logging, 1 kHz BLG):** purge DURATION, purge INTERVAL,
+          the V_fc floor during a purge, the V_fc knee under load (the 7.8 V @ 2.6 A brochure figure is
+          `TODO(verify: H-20 datasheet)`), whether the TPS61288 drops out (VIN UVLO) during the purge and its soft-start
+          time on recovery, and WHICH firmware path fires: ERR_UV_FC, or the share loop's dark-channel / load-guard cut
+          of FC_BUS_ENABLE on the I_fc collapse. `docs/HIL_PLANT.md` already carries a `TODO(bench)` to time the purge;
+          this measurement closes it too. Also record what the bus does (V_bus, I_batt) across one purge two-source.
+      (b) **Design rule: the discriminator is DURATION, not threshold.** A purge reaches ~1 V, so no `LIMIT_V_FC_MIN`
+          above the purge floor separates a purge from a depleted or disconnected stack; lowering the trip limit is for
+          margin against the loaded knee only. Keep the leaky-dwell SHAPE (one shape, two rails) and re-tune:
+          `UV_FC_DWELL_LATCH_MS` -> several times the measured purge duration (working figure: ~1 s if purges are
+          100-200 ms), with the leak set so ONE purge's dwell fully decays before the NEXT (at 0.05 leak a 10 s interval
+          recovers ~500 ms of dwell - check against the measured interval; a dedicated `UV_FC_DWELL_LEAK` is allowed if
+          the bus rail's 0.05 does not fit, but it becomes a rail-specific parameter and must be documented as such).
+          `LIMIT_V_FC_MIN` -> re-derive from the measured loaded knee minus margin (working figure 4-5 V); keep
+          `V_FC_ARM_THRESH` >= 1.0 V above it (fw v6 review C1). The UV_BUS_DWELL_DT_CAP_MS cap stays.
+      (c) **The disarm-on-cut interaction (check, then decide).** If the share loop cuts FC_BUS_ENABLE during the purge,
+          `fcRouted` goes false, the block DISARMS and DUMPS its dwell, and re-arming needs V_fc back above
+          `V_FC_ARM_THRESH`. A depleted stack that the share loop keeps cutting could therefore never latch UV_FC - the
+          cut/re-entry cycle would be the only symptom. Decide whether a SOURCE-DEPLETED condition needs its own
+          detector (e.g. N FC re-entries within T with V_fc under the knee) or whether the existing cut path is the
+          accepted behaviour. Record the ruling in the design note.
+      (d) **The FC-only hazard.** With the fw v28 selector FC-selected (commanded share >= 0.85) BT_BUS_ENABLE is open;
+          a purge then leaves the bus source-less and it collapses at I_load / C_VBUS into ERR_UV_BUS. Until the purge
+          is characterised and (b) ships, the Pi must keep the share command strictly inside (0.15, 0.85) on the
+          testbed so the battery stays on the bus. Firmware option to rule on: refuse an FC-only selection while a
+          purge-class dip has been seen within the last interval, or hold the selector two-source whenever V_fc is
+          under the knee. Either is a fw v29 item, not a workaround.
+      (e) **Tests:** a scripted purge waveform through `updateSensors()` in the host-native suite (dip to 1 V for the
+          measured duration at the measured interval, N cycles, two-source): must NOT latch UV_FC; a sustained collapse
+          of the same depth MUST latch within the new dwell; the dt-cap and leak arithmetic asserted at the new
+          constants; the disarm-on-cut path (c) pinned whichever way it is ruled. Both builds + HIL target.
+      (f) **Ship:** fw v29, `docs/firmware-versions.md` row, changelog block, `docs/boost-bringup-debug.md` datapoint
+          for the first cell run (the purge dip is a bench event: log it via the bench-incident format), CLAUDE.md
+          section 6 limits note.
+- [ ] 2. **Fault limits that are wrong or placeholder** (limits block near `LIMIT_I_FC_MAX`):
+      `LIMIT_V_BATT_MAX` is the 10.0 V "TEMP for 9 V battery" value - unreachable through the 16.2k/10k divider, so
+      OV_BATT is DEAD; set 8.5 V as the comment already says. `LIMIT_V_BATT_MIN` 6.2 V vs the 2026-07-10 pack floor
+      ruling of 7.4 V (CLAUDE.md RC-BT bodge record: "enforce the floor eventually via LIMIT_V_BATT_MIN"); UV_BATT is
+      a single unfiltered State-2-gated sample - give it the same leaky-dwell shape while there. `LIMIT_I_FC_MAX` 1.4 A
+      rests on the externally sourced H-20 numbers - confirm on the cell (item 1a). `LIMIT_V_BUS_MIN` 12.0 V has the
+      standing note to tighten toward 14.0 V after a loaded-sag measurement.
+- [ ] 3. **Production build configuration.** `BENCH_TEST` defaults to 1 in the `.ino`; every campaign and bench run so
+      far was the bench build. `BENCH_TEST=0` compiles IN OC_FC, OC_BT, UV_BATT, the switch-conflict fault and the
+      Ag105 GENSTAT checks and runs the full State-0 bring-up + gate instead of booting to Idle. The testbed flash is a
+      `BENCH_TEST=0` build - run it on the bench first (a full bring-up from cold, one drive cycle, one fault trip) before
+      it goes on the vehicle. `HIL_SIM` must read 0, `USE_ETHERNET` 1. Pi bridge on protocol v4 / 58 B confirmed.
+- [ ] 4. **Firmware rulings already queued elsewhere, restated here because they block the flash:** the FC minority
+      chatter fix (0h-2 / 0f-9: clamp the share PI reference at DROOP_R_MIN with anti-windup); the FC-only re-arm
+      persisting to Run exit (0f); fw v28 revs 2-6 (encoder auto-flip, EEPROM persistence, deferred commit) have ZERO
+      hardware exposure (HIL-invisible) - one bench run with the encoder deliberately swapped A/B is the minimum, and
+      the EEPROM write duration on the flip tick is still `TODO(verify: PJRC)`.
+
+### Bench measurements that gate the vehicle (not the model)
+
+- [ ] 5. The 30 ms survivor blanking (`SHARE_CUT_SURVIVOR_BLANK_MS`) against a REAL RT1987 turn-on (section 3 item;
+      asymmetric failure direction, never shortened on the model).
+- [ ] 6. The encoder front end: no Schmitt buffer yet; the ML0140-145 edge corruption was measured WITH the 2.2 kOhm
+      pull-ups fitted, so it is open on the vehicle (bodge record 2026-08-16). Root fix or accepted-with-auto-flip ruling.
+- [ ] 7. VESC regen commanded-vs-delivered mapping (`VESC_REGEN_I_MAX_A`, `ETA_REGEN`); the MPPT-release-while-charging
+      step; `AG105_SETTLE_MS` 500 ms; the motor ceiling (10 A VESC-side vs the 15 A vehicle `TODO(calibrate)`) and
+      `MANUAL_MOTOR_V_MAX`; the AD5443/OPA197 DMM measurement (0e). All still `TODO(verify)` / `TODO(calibrate)`.
+
 ## 0e. fw v28 round (operator rulings 2026-09-08) — the source selector, the sliver hold, I_min 0.125 A, the charge-window k_d hold, and the F1 sequencing fix
 
 Rulings (2026-09-08, after the campaign G/G2/H digest): (1) F1 fixed the preferred way; (2) the never-closed
