@@ -70,8 +70,8 @@ for name in ['H','YH']:
     res[name] = (YA,UA,YB,UB,YC,UC,rB)
 # unconditioned reference: bias of H-inf on ramp B without saturation is the same (never clamps)
 
-plt.rcParams.update({'font.size':8,'font.family':'serif','axes.linewidth':0.6,'mathtext.fontset':'cm'})
-fig,ax = plt.subplots(1,2,figsize=(3.45,1.9),gridspec_kw={'wspace':0.45})
+plt.rcParams.update({'font.size':10,'font.family':'serif','axes.linewidth':0.6,'mathtext.fontset':'cm'})
+fig,ax = plt.subplots(1,2,figsize=(7.0,3.6),gridspec_kw={'wspace':0.45})
 st = {'H':dict(c='0.55',ls='--',lw=1.0,label=r'$H_\infty$, conditioned'),
       'YH':dict(c='k',ls='-',lw=1.1,label='Youla-H, conditioned')}
 for name in ['H','YH']:
@@ -80,7 +80,7 @@ for name in ['H','YH']:
 ax[0].plot(tA, [refA(x) for x in tA], c='0.8', lw=0.8, zorder=0)
 ax[0].set_xlabel('time [s]'); ax[0].set_ylabel('$v$ [m/s]'); ax[0].set_title('saturating step', fontsize=8)
 ax[1].set_xlabel('time [s]'); ax[1].set_ylabel('$v - v_{ref}$ [m/s]'); ax[1].set_title('slow ramp, no saturation', fontsize=8)
-ax[1].legend(frameon=False, fontsize=6, loc='lower left')
+h,l=ax[1].get_legend_handles_labels(); fig.legend(h,l,frameon=False,fontsize=9,loc='lower center',ncol=2,bbox_to_anchor=(0.5,0.0)); fig.subplots_adjust(bottom=0.28)
 for a in ax: a.grid(alpha=0.25, lw=0.4)
-fig.savefig(os.path.join(HERE,'figures','YH-vs-H-cond-18.png'),dpi=300,bbox_inches='tight'); fig.savefig(os.path.join(HERE,'figures','YH-vs-H-cond-18.pdf'),bbox_inches='tight')
+fig.savefig(os.path.join(HERE,'figures','YH-vs-H-cond-18.png'),dpi=400,bbox_inches='tight'); fig.savefig(os.path.join(HERE,'figures','YH-vs-H-cond-18.pdf'),bbox_inches='tight')
 print("saved YH-vs-H-cond-18")
