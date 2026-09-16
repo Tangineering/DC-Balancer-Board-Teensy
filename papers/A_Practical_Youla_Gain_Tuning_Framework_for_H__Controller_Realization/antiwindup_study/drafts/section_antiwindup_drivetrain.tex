@@ -26,31 +26,22 @@ pair of Equation \ref{eq:Gch}. The split makes the digital realization well pose
 the integrator is discretized by the trapezoidal rule as an explicit scalar state,
 and $R(s)$ is balance-truncated (which requires a stable system) and discretized by
 Tustin's method \citep{tustin1947method}. The explicit integrator state also admits the
-standard PI
-anti-windup schemes, back-calculation or conditional integration, directly.
+standard PI anti-windup schemes, back-calculation or conditional integration, directly.
 
 Figure \ref{fig:YH-AW-18} applies this to the drivetrain system with a $5$\,m/s step
 and an illustrative limit $|T_e|\le 0.1$\,N$\cdot$m, chosen to rail the actuator for
 about $2$\,s. With a clamp alone, $G_{CH}$ and $G_{CYH}$ alike wind up, overshooting
 $71\%$ with a $10$\,s relay-like recovery. Back-calculating into the integrator alone
-releases the rail but leaves an $18\%$ standing error: here $k_I = 1.8\times10^{-3}$
+releases the rail but leaves an $18\%$ standing error that unwinds extremely slowly. Here, $k_I = 1.8\times10^{-3}$
 while $R(0) = 42$, so the lag states of $R$ hold most of the low-frequency gain and
-wind up on their own. Conditioning the full state with the general Hanus law
+wind up on their own. For some plants and controllers, being able to split the integrator
+separately to allow for exact integrator anti-windup works well on its own. For our
+drivetrain plant and controller, it is better to condition the full state with the general Hanus law
 \citep{hanus1987conditioning}, $x_{k+1} = A_d x_k + B_d e_k + L\,(u_{\mathrm{sat},k}-u_k)$,
-leaves the linear controller unchanged off the clamp and de-winds every state on it:
-$1.3\%$ overshoot, settled $2.2$\,s after the step. $L$ is pole-placed rather than
+which leaves the linear controller unchanged off the clamp and de-winds every state on it, achieving
+$1.3\%$ overshoot and settling $2.2$\,s after the step. $L$ is pole-placed rather than
 the self-conditioned $B_d/D_d$, because Tustin's method gives Equation \ref{eq:split}
 a $(z+1)$ numerator factor that puts a saturated-mode eigenvalue at exactly $z=-1$.
-
-Full-state conditioning applies equally to $G_{CH}$, and the two controllers then
-saturate and recover identically: the self-conditioned saturated-mode eigenvalues
-are the controller's transmission zeros, which the Youla-H gain adjustment leaves
-unchanged. Youla-H therefore offers no anti-windup advantage of its own. What it
-offers is that its benefit survives discretization and saturation intact. On the
-conditioned step both controllers settle in $2.2$\,s, but $G_{CH}$ retains a
-residual error of $-5.7\times10^{-4}$\,m/s where $G_{CYH}$ retains none, and on a
-slow unsaturated ramp the $G_{CH}$ error grows to $-0.6$\,mm/s over $200$\,s while
-$G_{CYH}$ tracks exactly (Figure \ref{fig:YH-vs-H-cond-18}).
 
 \begin{figure}[H]
     \includegraphics[width=1\linewidth]{antiwindup_study/figures/YH-AW-18.pdf}
@@ -60,12 +51,13 @@ $G_{CYH}$ tracks exactly (Figure \ref{fig:YH-vs-H-cond-18}).
     \label{fig:YH-AW-18}
 \end{figure}
 
-\begin{figure}[H]
-    \includegraphics[width=1\linewidth]{antiwindup_study/figures/YH-vs-H-cond-18.pdf}
-    \caption{$H_\infty$ and Youla-H controllers, both with full-state conditioning:
-    saturating step (left) and tracking error on a slow unsaturated ramp (right).}
-    \label{fig:YH-vs-H-cond-18}
-\end{figure}
+Full-state conditioning applies equally to $G_{CH}$, and the two controllers then
+saturate and recover identically. The integrator separation that Youla-H allows for
+makes back-calculation anti-windup simple only when the integrator is all or most of
+the low-frequency gain, which is not the case for our current scenario but is often
+the case in other control applications. In our case, the separation primarily improves
+the elegance of the controller realization.
+
 
 % Add to the bibliography (IEEE style, matching the manuscript's thebibliography):
 % \bibitem{tustin1947method}
