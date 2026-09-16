@@ -4,26 +4,25 @@
 %  defaults, black line styles for the controller family, blue for the inverse
 %  weights, bold titles, boxed legends, 'Time [sec]' / 'Frequency (rad/s)'.
 %
-%  Figure  File            Content
+%  Figure numbers follow the ACC (two-column) version, root.pdf:
 %    2     H-TSY-18        T, S, Y of the H-inf controller vs 1/Wd, 1/Wp, 1/Wu
 %    3     YH-TSY-18       same for the Youla-H controller
 %    4     H-&-YH-Gc-18    |Gc| of both controllers (1e-6 .. 1e3 rad/s)
 %    5     FTP75           FTP-75 target speed, first 340 s, in kph
-%    7     H-TSY-2nd       example plant 1/(s+1)  -- REPLACE the placeholder weights
-%    8     YH-AW-18        saturated drivetrain step: clamp only / integrator
-%                          back-calc. / full-state conditioning (antiwindup study)
-%  Figure 1 (block diagram) and Figure 6 (nonlinear-model tracking error) are not
-%  produced here: 6 needs the nonlinear drivetrain model of tan2025scaling.
+%    8     H-TSY-2nd       example plant 1/(s+1)  -- REPLACE the placeholder weights
+%  Not produced here: Figure 1 (block diagram), Figure 6 (needs the nonlinear
+%  drivetrain model of tan2025scaling) and Figure 7 (the anti-windup step, generated
+%  by ../antiwindup_study/antiwindup_variants.m).
 %
 %  Output: Figures/compressed/<name>.png (screen-resolution PNG via saveas, like
 %  the originals) and .pdf (vector). Adjust FIG_H below to taste; the originals were
-%  875 x 656 px (aspect 0.75), FIG_H = 380 gives 0.43.
+%  875 x 656 px (aspect 0.75), FIG_H = 380 gives 0.43. In the ACC layout every figure
+%  is column-width, so only the aspect ratio matters for the page count.
 %
 %  Requires: Control System Toolbox, Robust Control Toolbox.
 
 clear; clc; close all;
 s  = tf('s');
-Ts = 1e-3;
 FIG_W = 875;  FIG_H = 380;                     % compressed aspect ratio
 here   = fileparts(mfilename('fullpath')); if isempty(here), here = pwd; end
 outdir = fullfile(here, 'compressed'); if ~exist(outdir, 'dir'), mkdir(outdir); end
@@ -66,7 +65,7 @@ xlabel('Time [sec]'); ylabel('Speed [kph]');
 title('FTP75 Drive Cycle: 340sec', 'FontWeight', 'bold');
 saveFig(h, fullfile(outdir, 'FTP75'));
 
-%% Figure 7 -- example plant  (REPLACE the three weights with the originals)
+%% Figure 8 -- example plant  (REPLACE the three weights with the originals)
 Gp2 = 1/(s + 1);
 Wp2 = makeweight(1e4, 1.0, 1e-3);              % placeholder, read off Figure 7
 Wd2 = makeweight(0.1, 1.0, 50);
@@ -76,33 +75,6 @@ Wu2 = makeweight(0.1, 100, 30);
 fprintf('Example plant: gamma = %.4f, T_H(0) = %.7f\n', info2.gamma, info2.T0_H);
 tsyFigure(logspace(-1.5, 2.5, 600), T_H2, S_H2, Y_H2, Wd2, Wp2, Wu2, 'H\infty TSY', [-60 20], ...
           fullfile(outdir, 'H-TSY-2nd'), FIG_W, FIG_H);
-
-%% Figure 8 -- saturated drivetrain step (antiwindup study, section A)
-[kI, R] = splitIntegrator(Gc_YH);
-ctrlH  = c2d(ss(Gc_H), Ts, 'tustin');
-ctrlYH = splitRealization(kI, R, Ts);
-Pd     = c2d(ss(Gp), Ts, 'zoh');
-LH = conditioningGain(ctrlH); LYH = conditioningGain(ctrlYH);
-Umax = 0.10;  tA = (0:Ts:12)';  rA = 5*(tA >= 0.5);
-res.H     = simSat(ctrlH,  Pd, rA, Umax, 'clamp', LH);
-res.YH    = simSat(ctrlYH, Pd, rA, Umax, 'clamp', LYH);
-res.integ = simSat(ctrlYH, Pd, rA, Umax, 'integ', LYH);
-res.cond  = simSat(ctrlYH, Pd, rA, Umax, 'cond',  LYH);
-
-h = newFig(FIG_W, round(1.35*FIG_H));          % two stacked panels + legend
-tl = tiledlayout(2, 1, 'TileSpacing', 'compact', 'Padding', 'compact');
-nexttile; hold on; grid on;
-plot(tA, rA, '-', 'Color', [0.75 0.75 0.75]);
-plot(tA, res.H.y, 'b--'); plot(tA, res.YH.y, 'k:'); plot(tA, res.integ.y, 'k-.'); plot(tA, res.cond.y, 'k-');
-ylabel('v [m/s]'); title('Drivetrain wc=18: Saturated Step Response', 'FontWeight', 'bold');
-nexttile; hold on; grid on;
-plot(tA, res.H.u, 'b--'); plot(tA, res.YH.u, 'k:'); plot(tA, res.integ.u, 'k-.'); plot(tA, res.cond.u, 'k-');
-yline( Umax, '-', 'Color', [0.75 0.75 0.75]); yline(-Umax, '-', 'Color', [0.75 0.75 0.75]);
-ylabel('T_e [N\cdotm]'); xlabel('Time [sec]');
-lgd = legend({'H_\infty, clamp only', 'Youla-H, clamp only', ...
-              'Youla-H, integrator back-calc.', 'Youla-H, full-state conditioning'}, 'NumColumns', 2);
-lgd.Layout.Tile = 'south';
-saveFig(h, fullfile(outdir, 'YH-AW-18'));
 
 fprintf('Done. Figures written to %s\n', outdir);
 
@@ -155,46 +127,6 @@ function G = snapIntegrator(G)
     assert(pmin < 1e-3, 'no near-origin pole to snap (closest %.2e)', pmin);
     p(i) = 0;
     G = zpk(z, p, k);
-end
-
-function [kI, R] = splitIntegrator(Gc)
-    [R, Gi] = stabsep(ss(Gc), 'Offset', 1e-6);
-    assert(order(Gi) == 1, 'expected exactly one marginal pole, got %d', order(Gi));
-    kI = Gi.C*Gi.B;
-    assert(isstable(R), 'remainder is not stable');
-end
-
-function C = splitRealization(kI, R, Ts)
-    Rd = c2d(ss(R), Ts, 'tustin');
-    C  = ss(blkdiag(1, Rd.A), [kI*Ts; Rd.B], [1, Rd.C], kI*Ts/2 + Rd.D, Ts);
-end
-
-function L = conditioningGain(C)
-    Ad = C.A; Bd = C.B; Cd = C.C; Dd = C.D;
-    ev = eig(Ad - (Bd/Dd)*Cd);
-    ev(abs(ev + 1) < 1e-3) = 0.5;
-    L = place(Ad', Cd', ev)';
-end
-
-function out = simSat(C, Pd, r, umax, mode, L)
-    N = numel(r); n = order(C);
-    Ad = C.A; Bd = C.B; Cd = C.C; Dd = C.D;
-    Ap = Pd.A; Bp = Pd.B; Cp = Pd.C; Dp = Pd.D;
-    switch mode
-        case 'clamp', K = zeros(n, 1);
-        case 'integ', K = zeros(n, 1); K(1) = 1;
-        case 'cond',  K = L;
-    end
-    xc = zeros(n, 1); xp = zeros(order(Pd), 1); y = 0;
-    out.y = zeros(N, 1); out.u = zeros(N, 1);
-    for k = 1:N
-        e  = r(k) - y;
-        ul = Cd*xc + Dd*e;
-        u  = min(max(ul, -umax), umax);
-        xc = Ad*xc + Bd*e + K*(u - ul);
-        xp = Ap*xp + Bp*u;  y = Cp*xp + Dp*u;
-        out.y(k) = y; out.u(k) = u;
-    end
 end
 
 function saveFig(h, base)
