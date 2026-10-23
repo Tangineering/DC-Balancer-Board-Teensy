@@ -4,7 +4,10 @@
 **Companion to:** `CLAUDE.md` (firmware reconciliation instructions), `docs/design-review-2026-07-28.md`
 **Hardware revision:** 20260622 (schematic / BOM / Teensy IO CSV mutually consistent)
 **Last revised:** 2026-07-29 — research round + firmware pass; see §13 for what changed.
-**Status:** VESC bringup in progress. Motor replacement decision OPEN but now *decidable* — see §8.
+**Status:** VESC bringup in progress. Motor replacement **decided and fitted**: Castle Creations 1406
+1900 KV sensored, **4 poles / 2 pole pairs** (confirmed 2026-08-15 by the flux-linkage cross-check in
+`controller_design_MIMO/calibration/motor_id_20260815.md`). §8 is kept as the decision record.
+**Pole-count update 2026-10-23:** the pole-count rows in §2, §4 and §9 now carry that value.
 Velocity-mode and drive-cycle testing were firmware-blocked until the encoder was measured; both
 measurements landed **2026-08-13** and `VELOCITY_CHAIN_CALIBRATED` now defaults to **1** (§9, §10).
 **Bus-current precondition CLOSED 2026-08-16:** the VESC-side bus-current limits in §4 are now
@@ -50,7 +53,7 @@ This document does **not** cover the boost converter / power path work. See `CLA
 > 2.6 in tires, so the marketing figure is the outlier — but caliper the tire and count the
 > pinion/spur teeth (§10) before any of this goes in the thesis.
 
-### Motor as delivered
+### Motor as delivered (no longer fitted — see "Motor as fitted" below)
 **Traxxas BL-2s 3300** (part 3384)
 
 | Parameter | Value |
@@ -66,6 +69,20 @@ This document does **not** cover the boost converter / power path work. See `CLA
 | Rated cells | **2S LiPo (7.4 V nom / 8.4 V max)** or 6–7 cell NiMH |
 | Phase connector | Traxxas single quick-connect |
 | Sensor provision | None |
+
+### Motor as fitted (2026-08-15)
+**Castle Creations 1406 1900 KV, sensored** (CSE060-0068-00), chosen in §8 **[repo]**.
+
+| Parameter | Value |
+|---|---|
+| KV | 1900 |
+| Poles | **4 (2 pole pairs)** **[repo]**. Confirmed by measurement: VESC FOC detection gave λ = 1.422 mWb, and λ = 60/(√3·2π·KV·p) predicts 1.451 mWb at p = 2 (2.0 % off). Agrees with the `pole pairs: 2` an ODrive user got from Castle support for this part (§8). |
+| Resistance / inductance | 22.6 mΩ / 10.96 µH (VESC detection) |
+| k_t | 4.266e-3 N·m/A = (3/2)·p·λ |
+
+Source: `controller_design_MIMO/calibration/motor_id_20260815.md`. **Electrical frequency = 2 × shaft
+rate.** That is the tone the bench-log rail-spectra study finds strongest on every live rail
+(`tools/rail_spectral/`, 2026-10-23).
 
 ### Motor controller — VESC Six EDU
 Verified against Trampa's manual and the `vedderb/bldc` hardware target `hwconf/trampa/vesc_edu/`
@@ -206,7 +223,7 @@ Re-running detection later and comparing against these values distinguishes "det
 ### Needs setting or verification
 | Setting | Current | Should be | Notes |
 |---|---|---|---|
-| Motor Poles | 2 (wizard default) | **[measure]** | Field is **poles**, not pole pairs, in FW 5.x/6.x/7.x. See the correction below — it is *not* purely cosmetic. |
+| Motor Poles | 2 (wizard default) — probably still set; see note | **4** (Castle 1406 = 2 pole pairs, §2) | Field is **poles**, not pole pairs, in FW 5.x/6.x/7.x. See the correction below — it is *not* purely cosmetic. *Inferred, not read back:* the ×2 RPM-display artifact noted in §2 is what a field left at 2 on this 4-pole motor produces (VESC divides ERPM by poles/2 = 1). Read the field in VESC Tool and set it to 4. |
 | Gear Ratio | 13 / 36 = 2.77:1 | represent **9.49:1** | Default is a skateboard preset. Motor Pulley 100 / Wheel Pulley 949 gives exactly 9.49; 2 / 19 gives 9.50 (0.1% error) if fields cap at two digits. |
 | Wheel Diameter | 83 mm | **66 mm** **[measure]** | Tire OD, not rim. Caliper the actual mounted tires — RC rubber varies and balloons at speed. |
 | Max ERPM cap | not set | see the caveat below | **This is a weaker protection than previously assumed.** |
@@ -425,7 +442,11 @@ misread as ruling out the one mechanism designed for exactly this.
 
 ---
 
-## 8. OPEN DECISION: motor replacement
+## 8. ~~OPEN DECISION~~ RESOLVED: motor replacement
+
+> **Resolved by 2026-08-15:** the Castle 1406 1900 KV sensored motor recommended below is fitted
+> (§2 "Motor as fitted"). It is 4-pole / 2 pole pairs, confirmed by the λ cross-check. The analysis
+> below is kept as the decision record.
 
 ### Two problems, one fix
 
@@ -700,8 +721,8 @@ is re-measured. `'T'`/`'W'` never close the velocity loop and deliberately bypas
 ### VESC-Tool-side, not firmware
 | Setting | Status |
 |---|---|
-| Motor pole count | **[measure]** or resolved by the motor swap (spec motors 2-pole; Castle/AXE 4-pole) |
-| Max ERPM cap | Blocked on pole count — **and a weak protection regardless (§4)** |
+| Motor pole count | ✅ **4 poles / 2 pole pairs** (Castle 1406, confirmed by the λ cross-check, §2). VESC Tool field probably still 2 — set it to 4 (§4). |
+| Max ERPM cap | No longer blocked on pole count (set the field first) — **and a weak protection regardless (§4)** |
 | Battery Current Max / Regen Max | ✅ **SET 2026-08-16: 6.0 A forward / 1.5 A regen** (§4). This is the real bus protection, and it is now in place — the fw v7 open precondition is **closed**. Regen matches §12.4 exactly. Forward bounds the bus at **1.43× the derived 4.2 A allowance, above the 5.4 A conditional ceiling whose scope validation has not happened**. **Outstanding: re-derive §12.4 against 6.0 A (or lower the setting) before a vehicle run** — see the per-channel `LIMIT_I_BT_MAX`/`LIMIT_I_FC_MAX` note in §4. |
 | Gear ratio (9.49:1), wheel diameter (66 mm) | For VESC's own speed/distance reporting only |
 | `foc_f_zv` | Already 30 kHz by EDU default, and at the practical ceiling (§4) |
@@ -710,6 +731,8 @@ is re-measured. `'T'`/`'W'` never close the velocity loop and deliberately bypas
 mechanical, which is 27,700 ERPM on a 2-pole motor and 55,400 ERPM on a 4-pole. That factor of two
 is the entire difference between a real limit and no limit, so the pole count must be settled before
 the cap means anything — but per §4, even a correct cap does not bound a non-throttle overspeed.
+**Settled (§2): the fitted Castle is 4-pole**, so ERPM = 2 × mechanical RPM. The 27,700 RPM figure is
+the old 3300 KV motor's 2S speed; recompute the cap for the 1900 KV Castle before setting it.
 
 ---
 

@@ -55,9 +55,11 @@ shaft orders, led by **2× the motor shaft rate** (order 31.7):
   for the shuffled null;
 - it reaches ≈14 mV rms on V_batt and ≈34 mV on V_fc near 3 m/s.
 
-The tone is present in the measured `I_batt` / `I_fc` but absent from
-`I_cmd`. The motor/ESC draws the pulsating current; the drive controller
-does not inject it.
+The fitted Castle 1406 has 2 pole pairs (confirmed by the λ cross-check in
+`controller_design_MIMO/calibration/motor_id_20260815.md`), so this tone is
+the motor's **electrical frequency**. It is present in the measured
+`I_batt` / `I_fc` but absent from `I_cmd`. The motor/ESC draws the
+pulsating current; the drive controller does not inject it.
 
 **The data recovers the drivetrain.** The peak positions reproduce the
 6.86:1 reduction and the 70T/29T stage. They put the effective tire radius
