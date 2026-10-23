@@ -26,3 +26,7 @@ scratchpad/
 # Host-native test binaries (the run_tests* targets are tracked deliberately; the encoder
 # harness binary is rebuilt from test/encoder_defect_harness.cpp).
 test/encoder_defect_harness.exe
+
+# Rail-spectral study output (tools/rail_spectral/rail_spectral.py default --out): report and
+# figures regenerated from logs/*.BLG; local-only like the encoder-harness results.
+logs/rail_spectral/
