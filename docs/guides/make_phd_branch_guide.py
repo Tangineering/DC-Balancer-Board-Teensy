@@ -113,8 +113,7 @@ note("<b>No Claude Code?</b> (It needs a Pro or Max plan, or similar.) See the a
 P("Part 2 — Prompt 1: download the repo", h1)
 P("Paste this into Claude Code and fill in the three bracketed values. Use the email address on your GitHub account.")
 box("""
-I'm new to Git and GitHub. Please do the following one-time setup for me, explaining
-each step in one plain sentence as you go.
+Do the following one-time setup, explaining each step in one sentence as you go.
 
 1. Check that git is installed (git --version). If it is not, stop and tell me.
 2. Set my git identity, but only if it is not already set:
@@ -142,11 +141,9 @@ P("This prompt has Claude look at your folders and write a plan. It doesn't chan
   "to your folders. The easiest way to get a path: on Windows, Shift + right-click the folder and choose "
   "<b>Copy as path</b>. On a Mac, right-click it, hold Option and choose <b>Copy … as Pathname</b>.")
 box("""
-I'm the PhD student on this project. I have firmware versions, Raspberry Pi
-data logs, and Python analysis scripts (written with Claude) for those Pi logs.
-They live OUTSIDE this repository, in my own folders, and I want them committed
-on a NEW BRANCH so my supervisor can review and merge them. I'm new to Git, so
-please do the Git work for me.
+I have firmware versions, Raspberry Pi data logs, and Python analysis scripts
+for those Pi logs. They live OUTSIDE this repository, in my own folders, and I
+want them committed on a NEW BRANCH so my collaborator can review and merge them.
 
 IMPORTANT: this task is ONLY packaging my files into Git. The CLAUDE.md firmware
 instructions in this repo do NOT apply to this task. Do not edit, fix, reformat,
@@ -216,35 +213,12 @@ B(["<b>Version order:</b> are the versions in the right order? Correct Claude if
 P("Part 4 — Prompt 3: commit and push", h1)
 P("Once the plan looks right, paste this in the same session:")
 box("""
-The plan is approved, with these corrections: [YOUR CORRECTIONS, or "none"].
-What changed in each version, in my own words (use these in the commit messages):
-  [vNN: ...]
-  [vNN: ...]
+Plan approved. Corrections: [YOUR CORRECTIONS, or "none"]
+Notes for the commit messages: [vNN: what changed] [vNN: what changed]
 
-Now carry it out:
-1. Create the branch from the starting-point commit you identified
-   (git switch -c <branch> <commit>). Never commit to main.
-2. For each firmware version, oldest first: copy its files into
-   teensy_controller/, run git status and git diff --stat to confirm only the
-   expected files changed, then commit with the agreed message. Include
-   FW_VERSION and the BENCH_TEST / HIL_SIM values in each message.
-3. Copy the Pi logs into logs/pi/from_[MY FIRST NAME]_<date>/ and commit them as
-   "PhD Pi logs: <count> files, <date range>".
-4. Copy the analysis scripts into tools/pi_log_analysis/, add the README.md and
-   requirements.txt, and commit as "PhD Pi-log analysis scripts".
-   For both commits: skip anything we agreed to leave out, and tell me if
-   .gitignore excludes any file.
-5. Verify the copies: compare a checksum of every committed file with the
-   original in my folders, and report any mismatch.
-6. Show me git log --oneline for the branch, then push it:
-     git push -u origin <branch>
-   If the push fails because of sign-in, explain what to do. If it fails for a
-   network reason, retry a couple of times.
-7. Finish with a summary I can paste into an email to my supervisor: the
-   branch name, the starting commit, one line per commit, and the link GitHub
-   printed for opening a pull request.
-
-Again: copy my files exactly. Do not edit any firmware, log or script contents.
+Carry out the plan, verify every copy matches my original, push the branch,
+and give me a short summary (branch name, commits, pull-request link) to send
+to my collaborator. Copy files exactly; edit nothing.
 """, "PROMPT 3 — copy everything in this box")
 
 # ---------------- Part 5 ----------------
@@ -264,7 +238,7 @@ Same rules as before: copy exactly, change nothing in my folders, edit no firmwa
 or scripts. Pi logs go in logs/pi/, scripts in tools/pi_log_analysis/ (update
 its README for any new or changed script).
 1. git fetch origin, then switch to my branch and confirm it is up to date with
-   origin. If my supervisor has added commits to it, pull them first.
+   origin. If my collaborator has added commits to it, pull them first.
 2. New items: [PATH(S) TO NEW FIRMWARE / PI LOGS / SCRIPTS]
 3. Show me a plan as before (commit order and messages, flagged files) and wait
    for my OK. Then commit, verify the checksums, push, and give me the summary.
