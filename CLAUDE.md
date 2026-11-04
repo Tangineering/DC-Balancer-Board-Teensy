@@ -1017,6 +1017,7 @@ pairing, the encoder/current-noise analysis, the v37 scope), WORK_QUEUE 0j / 0k.
 - **First HIL run of fw v37 (`hil_report_20261104_125053`, 9 legs, HIL Teensy only - the vehicle stays on v35):** 8/9 PASS,
   comm-loss = the standing sim artefact (= campaign II to sample phase), zero board defects. Ripple legs `law: repo OK`:
   current 1x meas 0.6407/0.6244/0.5871/0.5548 A, force 0.7002/0.4524/0.2900/0.2234 A (<= 0.22 % off prediction); step
-  0->2 m/s settle 1.82 s, overshoot 8.6/9.2 %. v37 costs measured: tracking RMS ~2x, 12.6 % overshoot on pi-silence's
-  1.2 m/s step, a 0.32 m/s undershoot below a 0.4 m/s brake target (operator item); regen dwell 1326 >= 800 ticks.
+  0->2 m/s settle 1.82 s, overshoot 8.6/9.2 %. v37 costs measured: Run-window RMS speed error (v_actual - cmd_v_sp, State 2, t >= 2 s)
+  ems-drive-cycle 0.0106 m/s (fw v28 0.0055, 1.9x), ems-y-b30-v1 0.0431 (0.0365, 1.18x - 98 % of it at the region steps;
+  0.0062 vs 0.0021 = 3x between them), 12.6 % overshoot on pi-silence's 1.2 m/s step, a 0.32 m/s undershoot below a 0.4 m/s brake target (operator item); regen dwell 1326 >= 800 ticks.
   fw v29's span clamp still not exercised on the board (needs ems-ftp75-sdp). Row 37 of docs/firmware-versions.md.
