@@ -13860,6 +13860,29 @@ void chargingControl() {
         // else-if did; from an FC selection FC_BUS is already HIGH and the window opens now.
         if (FC_CHARGE_ALLOWED && digitalRead(FC_BUS_ENABLE) == HIGH && !busSwitchBlanked(FC_BUS_ENABLE)) {
             assertFcChargeEnable(true);       // (2) conduction-gated
+        } else if (!FC_CHARGE_ALLOWED) {
+            // fw v31 rev c -- RESTORE BT_BUS, WHICH THE SUPPRESSED CALL OWNED.
+            //
+            // assertFcChargeEnable(true) does not only open FC_CHARGE: it TAKES
+            // OWNERSHIP of BT_BUS (drives it LOW on purpose) and clears
+            // shareSpCutBT/shareIsoBT so applyShareRatio() cannot re-close BT
+            // under an asserted charge path. Gating that call off removed those
+            // side effects and left this branch as the ONLY one in the function
+            // with no BT_BUS re-close -- the other three all have one.
+            //
+            // That is fatal here rather than cosmetic, because this branch runs
+            // CONTINUOUSLY once the Pi arms charge_goal on any negative demand
+            // while the VESC never commands braking current (regenActive false).
+            // The charge_goal<=0.05 branch, which normally re-closes BT every
+            // tick, then never runs, so a share-selector cut on BT is never
+            // undone and the bus goes source-less -> ERR_UV_BUS. Observed on the
+            // bench 2026-10-27 with the SDP EMS; the sweep EMS never raises
+            // charge_goal, never enters this branch, and ran clean throughout.
+            //
+            // Guarded on !shareSpCutBT exactly like the other three branches:
+            // the share setpoint latch still owns the switch when it has claimed
+            // it (updateShareSetpointCutoff(), 2026-08-12).
+            if (!shareSpCutBT) writeBusSwitch(BT_BUS_ENABLE, HIGH);
         }
         // Release the MPPT input-voltage-threshold regulator ONLY once the charger reports ready,
         // so it does not run during bring-up (active-LOW: HIGH = enabled, LOW = inhibited).
