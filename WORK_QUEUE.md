@@ -8,7 +8,8 @@ Record: `docs/reviews/fw36_regen_2026-11-04/README.md` (findings, ranked regen c
       status/STAT, does it charge; DMM on VCHG (D-BT-SQ orientation) and on V-MOT vs pin 39 (V_rgn 0.85 scale).
 - [ ] 2. **Rulings R1-R4** (regen power-path policy; the Ag105 VBat- wiring and Silvertel; may the bus ever feed the
       charger; telemetry v5 with v37 or BLG-only diagnostics first).
-- [ ] 3. **fw v37** via orchestrated-feature after 1-2: the regen policy, backoff precedence, V_rgn calibration,
+- [x] 3a. **fw v37 BUILT 2026-11-04 (PENDING FLASH; ledger row 37):** v35 + the lower-crossover drive law (WC 60 -> 12, |C*S| 0.41-0.28x in the rotation band) + the State-98 `J` Ag105 commissioning key. Bench next: flash, run `J` (or `J` `1 2` if reg 0x01 reads 3S) for B1, and the v35-vs-v37 noise A/B capture (planning section 6.3 / 9.1).
+- [ ] 3. **fw v38** via orchestrated-feature after 1-2 and the v37 bench results: the regen policy, backoff precedence, V_rgn calibration,
       charger faults gated on "charger proven", selector disarm gated on FC_CHARGE_ALLOWED, OC_FC persistence,
       housekeeping, BLG v10, the regen exerciser key, serial counters; test-suite repair (re-pin the 10 stale checks,
       `#ifndef FC_CHARGE_ALLOWED` + a `run_tests_fcchg` target, reset the v35 window timers in `reset_test_state()`).

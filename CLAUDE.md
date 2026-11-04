@@ -974,3 +974,33 @@ student's bag scripts; need `mcap_ros2`), `logs/rosbags/` (22 Pi bags 2026-09-07
 telemetry**, see its README), `firmware_archive/` (pre-board sketches, fw v19), `docs/operations/`, new drive cycles in
 `references/drive_cycles/`. Student open items: regen returns no charge current; the FC was not delivering power on
 2026-11-03 (undiagnosed); SoC R0/OCV uncalibrated.
+
+## Status & session addendum (2026-11-04, later: fw v36 review, rosbag analysis, fw v37 built - PENDING FLASH)
+
+Records: `docs/reviews/fw36_regen_2026-11-04/README.md` (six-agent review of fw v36 + all 22 Pi bags; ranked regen
+causes), `docs/fw37_planning_2026-11-04.md` (rulings R1-R4, the regen interlock design for v38, telemetry v5 and log
+pairing, the encoder/current-noise analysis, the v37 scope), WORK_QUEUE 0j / 0k. New skill `rosbag-agent-analysis`
+(+ `tools/rosbag_analysis/scout_bags.py`); `tools/rail_spectral/` merged.
+
+- **Regen returns no charge current** because several independent links fail: the UDDS decels never brake (gentler than
+  coast-down); where real regen exists (RegenTest_v2) fw <= v35 kept REGEN closed (charge_goal gate); REGEN never stays up
+  the 500 ms Ag105 settle (20-200 ms flickers, no hysteresis); V-MOT sits at bus level with MOT_PWR closed, so a closed
+  REGEN feeds the charger FROM THE BUS. Suspected hardware: Ag105 VBat- tied to GND (datasheet forbids), D-BT-SQ
+  orientation; V_rgn reads 0.85 x true (the "18.1 V clamp" is ~21.4 V). **R3 (operator): the bus must never feed the
+  charger in Run** - fw v36 (regen un-gated) is NOT flashed and is excluded; the v38 design is a 3-layer interlock
+  (planning section 3.3). The Ag105 has NO charge-enable register or pin.
+- **Current noise** = the drive loop amplifying a smooth once-per-flywheel-rev v_actual ripple (coherence 0.97-1.00;
+  crossover 2.76 Hz sits in the 2-6 Hz rotation band). The Aug fw v18/v19 bad tooth (178 counts/rev, 0.5x dips, +8 A
+  pulses) is real in the BLGs but ABSENT from the Pi-era bags - ask whether the disc changed between 08-25 and 09-07.
+- **fw v37 (PENDING FLASH, ledger row 37)** = fw v35 + ONE control change + one bench tool, so the noise reduction is
+  measured in isolation. (1) Drive law re-synthesised at Wp corner 12 rad/s (was 60): crossover 6.55 rad/s, PM 58.1 deg,
+  worst-corner ||S|| 1.48, rotation-band |C*S| 0.41/0.33/0.29/0.28 of v35 at 2.1/3.1/4.6/5.6 Hz (worst-corner bound
+  0.503 at 2.1 Hz); cost 0->2 m/s settle 1.62 s / 11.6 % overshoot. Every Run-path function is code-identical to v35.
+  (2) State-98 `J` line prompt: `1` start (charger fed from the bus through MOT_PWR + REGEN, bench-attended; refuses
+  unless MOT_PWR on, bus charged, cell OVP active, motor/share idle), `1 2` start-and-fix (writes 2S/2.5 A as soon as
+  the as-found 0x00/0x01 latch), `0` stop, `2`/`2 1`, `3 <count>`, `4` MPPT toggle; auto-config inhibited; as-found
+  latch + restore warning; stops on 3S reg 0x01, V_bus low 20 ms, cap 120 s, X/Q/fault, any pin dropped. MPPTD-LOW
+  semantics during charging are `TODO(verify: Silvertel)`. The GENSTAT 5/6/7 latch (BENCH_TEST 0) may fault an
+  as-found errored charger before `J 2 1`; a BENCH_TEST 1 build compiles it out. Tests 5027 / 210 / 5337 / 51.
+- **Bench next:** flash v37; `J` (B1: does 0x30 ACK, as-found regs, does it charge); the SD capture of planning 6.3 on
+  v35 before the flash and v37 after (open-loop holds as control); hand-turn 10 revs for the 1800/1780 count check.

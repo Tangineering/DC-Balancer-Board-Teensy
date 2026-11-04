@@ -202,6 +202,9 @@ static void reset_test_state() {
     ag105CommNakStreak      = 0;
     ag105CommReadWorstUs    = 0;
     ag105CommFixOnFirstRead = false;
+    ag105CommFwTries        = 0;
+    ag105CommFwOk           = false;
+    for (int i = 0; i < AG105_COMM_NREG; i++) ag105CommAsFoundMs[i] = 0;
     ag105CommEarlyVbusMin   = 0.0f;
     ag105CommEarlyVchgMax   = 0.0f;
     ag105CommEarlyVrgnMax   = 0.0f;
@@ -25170,6 +25173,8 @@ static void j_send(const char* line) {
 // Start a session through the real key path and assert it took (used as setup by most tests).
 static void j_start() {
     j_send("1");
+    check(ag105CommissionActive && digitalRead(REGEN_ENABLE) == HIGH,
+          "(setup) j_start(): the session actually started (flag set, REGEN HIGH)");
 }
 // Tick the session through its round-robin reads (10 ms per pass; 6 slots + the 0xFD/0xFE reads), so
 // every register's AS-FOUND value is latched through the real path (never by poking the latch).
@@ -25385,7 +25390,7 @@ static void test_j_autoconfig_inhibit() {
         if (Wire.transactions - t0 > maxT) maxT = Wire.transactions - t0;
     }
     check(maxT == 2 && Wire.write_log.empty(),
-          "inhibit: ag105ManageMpptThreshold() is not run either -- pollAg105() spends exactly its own 2 transactions");
+          "inhibit (BELT-AND-BRACES ONLY, cannot discriminate in State 98: the MPPT manager does not run here outside a drive cycle anyway): pollAg105() spends exactly its own 2 transactions");
 
     // ── Contrast: SAME fixture, no session (REGEN driven HIGH directly) DOES configure ──
     j_fixture();
@@ -25530,8 +25535,9 @@ static void test_j_mppt_threshold_write() {
     check(ag105MpptWrites == (uint8_t)(w0 + 1) && ag105MpptRegCnt == 40 && ag105MpptRegKnown &&
           (ag105CommRegsWritten & 0x04),
           "'3 40': charged against the v24 EPROM budget, belief updated, session mask bit 2 set");
-    check(ag105MpptVoltsFromCount(40) < V_bus && Serial.tx_contains("WARNING: threshold is BELOW V_bus"),
-          "'3 40': threshold (14.5 V) below V_bus (16 V) prints the charge-from-the-bus warning");
+    check(ag105MpptVoltsFromCount(40) < LIMIT_V_BUS_MAX && Serial.tx_contains("WARNING: threshold is BELOW LIMIT_V_BUS_MAX") &&
+          Serial.tx_contains("may charge FROM THE BUS") && Serial.tx_contains("V_bus=16.00V") && Serial.tx_contains("V_chg="),
+          "'3 40': threshold (14.5 V) below LIMIT_V_BUS_MAX (17.5 V) -> 'may charge FROM THE BUS' warning; V_bus and V_chg are printed");
 
     // Same count again: SKIPPED, no budget spent, no write.
     Wire.write_log.clear();
@@ -25545,9 +25551,32 @@ static void test_j_mppt_threshold_write() {
     Wire.write_log.clear();
     Serial.tx_clear();
     j_send("3 100");
-    check(ag105MpptVoltsFromCount(100) > V_bus && Serial.tx_contains("threshold is ABOVE V_bus") &&
-          !Serial.tx_contains("WARNING"),
-          "'3 100': threshold above V_bus -> the 'above' note, no WARNING");
+    check(ag105MpptVoltsFromCount(100) >= LIMIT_V_BUS_MAX && Serial.tx_contains("at/above LIMIT_V_BUS_MAX") &&
+          Serial.tx_contains("should refuse") && !Serial.tx_contains("WARNING"),
+          "'3 100': threshold (19.8 V) at/above LIMIT_V_BUS_MAX -> 'should refuse', no WARNING");
+
+    // The 17.5 V boundary on BOTH sides, keyed on LIMIT_V_BUS_MAX and NOT on the live V_bus: with
+    // V_bus = 16 V the count just below the line (17.46 V) is ABOVE V_bus (the old rule would have
+    // said 'refuse') but still warns; with V_bus = 18 V the first count at/above the line is BELOW
+    // V_bus (the old rule would have warned) and does not.
+    uint8_t cB = 0;
+    while (ag105MpptVoltsFromCount(cB) < LIMIT_V_BUS_MAX) cB++;
+    check(cB == 74 && ag105MpptVoltsFromCount(73) < LIMIT_V_BUS_MAX, "17.5 V boundary: count 74 is the first at/above (73 is below)");
+    for (int side = 0; side < 2; side++) {
+        j_fixture();
+        j_start_latched();
+        V_bus = side ? 18.0f : 16.0f;
+        Serial.tx_clear();
+        char ln[16];
+        snprintf(ln, sizeof(ln), "3 %d", side ? cB : cB - 1);
+        j_send(ln);
+        if (side == 0)
+            check(ag105MpptVoltsFromCount(cB - 1) > V_bus && Serial.tx_contains("WARNING: threshold is BELOW LIMIT_V_BUS_MAX"),
+                  "'3 73': 17.46 V is ABOVE V_bus (16 V) yet below 17.5 V -> still warns (keyed on LIMIT_V_BUS_MAX, not V_bus)");
+        else
+            check(ag105MpptVoltsFromCount(cB) < V_bus && !Serial.tx_contains("WARNING") && Serial.tx_contains("should refuse"),
+                  "'3 74': 17.55 V is BELOW V_bus (18 V) yet at/above 17.5 V -> no warning (keyed on LIMIT_V_BUS_MAX, not V_bus)");
+    }
 
     // Top of range accepted
     Wire.write_log.clear();
@@ -25916,8 +25945,8 @@ static void test_j_stat_summary_and_motpwr_key() {
     j_send("0");
     check(Serial.tx_contains("ACKed=yes") && Serial.tx_contains("settled=yes") &&
           Serial.tx_contains("max I_charge=1.100A") && Serial.tx_contains("status bytes seen: 0x02") &&
-          Serial.tx_contains("EPROM writes this session=0") && Serial.tx_contains("regs written: none"),
-          "summary: ACKed=yes, settled=yes, max I_charge 1.100 A, status byte 0x02 seen, 0 EPROM writes");
+          Serial.tx_contains("EPROM write attempts this session=0") && Serial.tx_contains("regs written: none"),
+          "summary: ACKed=yes, settled=yes, max I_charge 1.100 A, status byte 0x02 seen, 0 EPROM write attempts");
 
     // A charger that never ACKs: summary says NO and counts NAKs; the session still stops cleanly.
     j_fixture();
@@ -26089,7 +26118,7 @@ static void test_j_start_new_preconditions() {
 
 static void test_j_m2_voltage_profile_stop() {
     test_group("State 98 'J' (fw v37 M2): a plain '1' session stops when reg 0x01 reads a >2S profile (0x09-0x0D)");
-    const uint8_t bad[] = { 0x09, 0x0C, 0x0D, 0xFF };
+    const uint8_t bad[] = { 0x09, 0x0C };
     for (uint8_t v : bad) {
         j_fixture();
         j_start();
@@ -26100,7 +26129,22 @@ static void test_j_m2_voltage_profile_stop() {
         char msg[140];
         snprintf(msg, sizeof(msg), "reg 0x01 reads 0x%02X: session stops (REGEN LOW, MPPT LOW) with the DANGER message", v);
         check(!ag105CommissionActive && digitalRead(REGEN_ENABLE) == LOW && digitalRead(MPPT_DISABLE) == LOW &&
-              Serial.tx_contains("DANGER: reg 0x01") && Serial.tx_contains(">2S charge-voltage profile"), msg);
+              Serial.tx_contains("DANGER: reg 0x01") && Serial.tx_contains("charge voltage ABOVE 2S/8.4 V") &&
+              Serial.tx_contains(">2S charge-voltage profile") && !Serial.tx_contains("OUT-OF-RANGE"), msg);
+    }
+    const uint8_t oor[] = { 0x0D, 0xFF };
+    for (uint8_t v : oor) {
+        j_fixture();
+        j_start();
+        j_release_mppt();
+        Wire.reg_file[AG105_REG_VBATT_CFG] = v;
+        Serial.tx_clear();
+        j_ticks(3);
+        char msg[160];
+        snprintf(msg, sizeof(msg), "reg 0x01 reads 0x%02X: session stops with the OUT-OF-RANGE message and stop reason (not the 3S text)", v);
+        check(!ag105CommissionActive && digitalRead(REGEN_ENABLE) == LOW && digitalRead(MPPT_DISABLE) == LOW &&
+              Serial.tx_contains("DANGER: reg 0x01") && Serial.tx_contains("OUT-OF-RANGE") &&
+              Serial.tx_contains("out-of-range value") && !Serial.tx_contains("charge voltage ABOVE 2S/8.4 V"), msg);
     }
     const uint8_t ok[] = { 0x08, 0x00 };
     for (uint8_t v : ok) {
@@ -26352,6 +26396,381 @@ static void test_j_start_and_fix() {
     j_send("1 3");
     check(!ag105CommissionActive && j_same(s, j_snap()) && Serial.tx_contains("ERROR: J takes"),
           "'1 3': usage error, nothing started");
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// fw v37 correctness-review round (Stage 4, round 2) — M-1 fw-version retry, L-1 hold-on-NAK, L-2 live-ACK
+// release, L-3 fix-window exemption, L-5 as-found ms, L-8 blocking keys, parser/vacuity items.
+// ═════════════════════════════════════════════════════════════════════════════
+static void test_j_m1_fw_version_retry() {
+    test_group("State 98 'J' (fw v37 M-1): a NAK on 0xFD / 0xFE gets ONE retry, then 'unavailable' and the round robin resumes");
+    // ACKs: version printed, FwOk.
+    j_fixture();
+    Wire.reg_file[0xFD] = 0x01; Wire.reg_file[0xFE] = 0x02;
+    j_start();
+    check(ag105CommFwPhase == 1 && !ag105CommFwOk, "fw (setup): after the first ACK the 0xFD read is due");
+    j_ticks(3);
+    check(ag105CommFwOk && ag105CommFwPhase == 3 && Serial.tx_contains("firmware version: major 0x01 minor 0x02") &&
+          !Serial.tx_contains("fw version unavailable"),
+          "fw: with ACKs the version prints and ag105CommFwOk is true");
+
+    // One NAK on 0xFD, retry succeeds.
+    j_fixture();
+    j_start();
+    Wire.fail_next_requestfrom = true;
+    j_ticks(1);
+    check(ag105CommFwPhase == 1 && ag105CommFwTries == 1 && !Serial.tx_contains("unavailable"),
+          "fw 0xFD: one NAK -> one retry pending, nothing abandoned");
+    j_ticks(3);
+    check(ag105CommFwOk && ag105CommFwPhase == 3, "fw 0xFD: the retry ACKs -> version read normally (FwOk)");
+
+    // Two NAKs on 0xFD -> abandoned, round robin resumes.
+    j_fixture();
+    j_start();
+    Wire.fail_next_requestfrom = true; j_ticks(1);
+    Wire.fail_next_requestfrom = true; j_ticks(1);
+    check(ag105CommFwPhase == 3 && !ag105CommFwOk && Serial.tx_count("[J] charger fw version unavailable") == 1,
+          "fw 0xFD: second NAK -> phase abandoned, FwOk false, 'charger fw version unavailable' printed once");
+    check(!ag105CommRegOk[1] && !ag105CommRegOk[3], "fw 0xFD (setup): reg 0x01 / 0x05 not yet read");
+    j_ticks(4);
+    check(ag105CommRegOk[1] && ag105CommRegOk[2] && ag105CommRegOk[3],
+          "fw 0xFD: after the abandon the config / measurement round robin RESUMES (0x01, 0x02, 0x05 read)");
+    check(Serial.tx_count("[J] charger fw version unavailable") == 1, "fw 0xFD: the message is not repeated");
+
+    // 0xFD ok, two NAKs on 0xFE (own retry budget).
+    j_fixture();
+    j_start();
+    j_ticks(1);                                         // 0xFD ok
+    check(ag105CommFwPhase == 2 && ag105CommFwTries == 0, "fw 0xFE (setup): 0xFD read, the retry budget is reset for 0xFE");
+    Wire.fail_next_requestfrom = true; j_ticks(1);
+    check(ag105CommFwPhase == 2 && ag105CommFwTries == 1, "fw 0xFE: one NAK -> retry pending");
+    Wire.fail_next_requestfrom = true; j_ticks(1);
+    check(ag105CommFwPhase == 3 && !ag105CommFwOk && Serial.tx_contains("charger fw version unavailable"),
+          "fw 0xFE: second NAK -> 'unavailable', FwOk false");
+    j_ticks(3);
+    check(ag105CommRegOk[1] && ag105CommRegOk[3], "fw 0xFE: the round robin resumes afterwards (0x01, 0x05 read)");
+}
+
+static void test_j_l1_hold_on_nak() {
+    test_group("State 98 'J' (fw v37 L-1): in '1 2' mode a NAK does not advance the round robin until 0x00 and 0x01 are latched");
+    // Fix mode: NAK on the first read of 0x00.
+    j_fixture();
+    Wire.fail_next_requestfrom = true;
+    j_send("1 2");
+    check(ag105CommissionActive && ag105CommRrIdx == 0 && !ag105CommRegOk[0] && ag105CommNakCount == 1,
+          "'1 2': a NAK on the first read of 0x00 leaves the round-robin index at 0");
+    j_ticks(1);
+    check(ag105CommRegOk[0] && ag105CommAsFoundOk[0] && ag105CommRrIdx == 1,
+          "'1 2': the NEXT read is 0x00 again (it ACKs and latches), then the index advances");
+    j_ticks(1);
+    check(ag105CommAsFoundOk[1] && !ag105CommFixOnFirstRead && ag105CommWrites > 0,
+          "'1 2': 0x01 is the second successful read; the fix runs on that tick");
+
+    // Fix mode: NAK on 0x01 holds at 1.
+    j_fixture();
+    j_send("1 2");
+    Wire.fail_next_requestfrom = true; j_ticks(1);
+    check(ag105CommRrIdx == 1 && !ag105CommAsFoundOk[1] && ag105CommFixOnFirstRead,
+          "'1 2': a NAK on 0x01 (before both latched) holds the index at 1");
+
+    // After the fix, a NAK advances again.
+    j_ticks(10);
+    check(!ag105CommFixOnFirstRead && ag105CommAsFoundOk[0] && ag105CommAsFoundOk[1] && ag105CommFwPhase == 3,
+          "'1 2' (setup): fixed, and the 0xFD/0xFE reads are over");
+    uint8_t idx = ag105CommRrIdx;
+    Wire.fail_next_requestfrom = true; j_ticks(1);
+    check(ag105CommRrIdx == (uint8_t)((idx + 1) % AG105_COMM_NREG),
+          "'1 2' after both are latched: a NAK advances the index (no starvation)");
+
+    // Plain '1': a NAK advances.
+    j_fixture();
+    Wire.fail_next_requestfrom = true;
+    j_send("1");
+    check(ag105CommissionActive && ag105CommRrIdx == 1 && !ag105CommRegOk[0],
+          "plain '1': a NAK on 0x00 ADVANCES the index (contrast with '1 2')");
+}
+
+static void test_j_l2_live_ack_releases_backoff() {
+    test_group("State 98 'J' (fw v37 L-2): a valid pollAg105() live read releases the NAK back-off");
+    j_fixture();
+    Wire.emulate_regs = false;
+    j_start();
+    j_ticks(5);
+    check(ag105CommNakStreak >= 5, "L-2 (setup): streak >= 5, interval 100 ms");
+    Wire.emulate_regs = true;
+    // Control: without a live read, 10 ms after the last attempt there is NO read.
+    unsigned long t0 = Wire.transactions;
+    g_mock_millis = ag105CommLastReadMs + 10; doState98();
+    check(Wire.transactions == t0, "L-2 (control): at the backed-off rate a read 10 ms later does not happen");
+    // A live pollAg105() ACK, then the next pass.
+    pollAg105();
+    check(ag105DataValid, "L-2 (setup): pollAg105() produced a live read");
+    t0 = Wire.transactions;
+    doState98();
+    check(ag105CommNakStreak == 0, "L-2: the live ACK resets the NAK streak");
+    t0 = Wire.transactions;
+    g_mock_millis = ag105CommLastReadMs + 10; doState98();
+    check(Wire.transactions - t0 == 2, "L-2: the next session read comes at the 10 ms rate");
+}
+
+static void test_j_l3_fix_window_exemption() {
+    test_group("State 98 'J' (fw v37 L-3): '1 2' exempts every 0x01 read until the write has run; pending-fix message");
+    // Reachable form: 0x00 NAKs for a long time, the held index never reaches 0x01, nothing stops.
+    j_fixture();
+    Wire.reg_file[AG105_REG_VBATT_CFG] = 0x09;
+    Wire.emulate_regs = false;
+    j_send("1 2");
+    j_ticks(20);
+    check(ag105CommissionActive && ag105CommFixOnFirstRead && ag105CommRrIdx == 0 && Wire.write_log.empty(),
+          "'1 2' with 0x00 NAKing: no stop, no write, index held at 0");
+    Wire.emulate_regs = true;
+    j_ticks(3, 100);                                     // the NAK streak backed the interval off to 100 ms
+    check(ag105CommissionActive && Wire.write_log.size() == 2 && !Serial.tx_contains("DANGER"),
+          "'1 2': once 0x00 ACKs the 3S 0x01 is exempt and the fix is written");
+
+    // PLANTED: a 0x01 read that is NOT the as-found read (as-found[1] already latched, as-found[0] not)
+    // with the fix still pending. Only the "until the write has run" rule exempts it.
+    j_fixture();
+    j_send("1 2");
+    ag105CommAsFoundOk[0] = false; ag105CommAsFoundOk[1] = true; ag105CommAsFoundVal[1] = 0x09;
+    ag105CommRrIdx = 1;
+    Wire.reg_file[AG105_REG_VBATT_CFG] = 0x09;
+    Wire.write_log.clear();
+    Serial.tx_clear();
+    j_ticks(1);
+    check(ag105CommissionActive && !Serial.tx_contains("DANGER"),
+          "(planted) '1 2': a 3S 0x01 read that is not the as-found read, fix still pending -> does NOT stop");
+    // Contrast: the same planted read outside fix mode stops.
+    j_fixture();
+    j_send("1");
+    ag105CommAsFoundOk[1] = true; ag105CommRrIdx = 1; ag105CommFwPhase = 3;
+    Wire.reg_file[AG105_REG_VBATT_CFG] = 0x09;
+    j_ticks(1);
+    check(!ag105CommissionActive, "(planted, contrast) plain '1': the same non-as-found 3S read DOES stop");
+
+    // Pending-fix message.
+    j_fixture();
+    Wire.emulate_regs = false;
+    j_send("1 2");
+    j_ticks(2);
+    Serial.tx_clear();
+    j_send("0");
+    check(Serial.tx_contains("start-and-fix never wrote the profile") && !ag105CommFixOnFirstRead,
+          "'1 2' stopped before the fix ran: 'start-and-fix never wrote the profile' printed");
+    j_fixture();
+    j_start();
+    Serial.tx_clear();
+    j_send("0");
+    check(!Serial.tx_contains("never wrote the profile"), "plain '1' stop: no pending-fix message (contrast)");
+    j_fixture();
+    j_send("1 2");
+    j_ticks(2);
+    Serial.tx_clear();
+    j_send("0");
+    check(!Serial.tx_contains("never wrote the profile"), "'1 2' stop after the fix ran: no pending-fix message (contrast)");
+}
+
+static void test_j_l5_asfound_ms_column() {
+    test_group("State 98 'J' (fw v37 L-5): the summary shows when each as-found value was latched");
+    j_fixture();
+    Wire.reg_file[AG105_REG_VBATT_CFG] = AG105_VAL_2S;
+    j_start();
+    j_ticks(2);
+    j_ticks(10);
+    check(ag105CommAsFoundMs[0] == 0 && ag105CommAsFoundMs[1] > 0 && ag105CommAsFoundMs[2] > ag105CommAsFoundMs[1],
+          "as-found ms: reg 0x00 latched at the power edge (0 ms); 0x01 and 0x02 later, in order");
+    char want1[40], want0[40];
+    snprintf(want1, sizeof(want1), "[0x08] @%u", (unsigned)ag105CommAsFoundMs[1]);
+    snprintf(want0, sizeof(want0), "[0x00] @%u", (unsigned)ag105CommAsFoundMs[0]);
+    Serial.tx_clear();
+    j_send("0");
+    check(Serial.tx_contains("as-found [raw] @ms-after-power") && Serial.tx_contains(want1) && Serial.tx_contains(want0),
+          "summary: header carries the @ms column and each as-found row shows its latch time ('[0x08] @<ms of 0x01>', '[0x00] @0')");
+}
+
+static void test_j_l8_blocking_keys_refused() {
+    test_group("State 98 'J' (fw v37 L-8): 'U' 'E' 'I' refused during a session; a VESC watch is turned off at start");
+    const char keys[] = "UuEeIi";
+    for (const char* k = keys; *k; ++k) {
+        j_fixture();
+        j_start_latched();
+        JPinSnap before = j_snap();
+        unsigned long t0 = Wire.transactions;
+        int fw0 = vesc.getFW_calls, v0 = vesc.getValues_calls;
+        Serial.tx_clear();
+        Serial.rx_queue.push(*k);
+        doState98();
+        char msg[140];
+        snprintf(msg, sizeof(msg), "session active: key '%c' REFUSED -- no VESC read, no I2C scan, no watch toggle, no pin change", *k);
+        check(Serial.tx_contains("REFUSED: Ag105 commissioning active") && j_same(before, j_snap()) &&
+              vesc.getFW_calls == fw0 && vesc.getValues_calls == v0 && !vescWatchActive &&
+              Wire.transactions - t0 <= 2 && !Serial.tx_contains("I2C scan") && ag105CommissionActive, msg);
+    }
+    // Contrasts without a session.
+    j_fixture(); Serial.rx_queue.push('E'); doState98();
+    check(vesc.getFW_calls > 0, "no session (contrast): 'E' really reads the VESC");
+    j_fixture(); Serial.rx_queue.push('U'); doState98();
+    check(vescWatchActive, "no session (contrast): 'U' really turns the VESC watch on");
+    j_fixture(); Serial.tx_clear(); Serial.rx_queue.push('I'); doState98();
+    check(Serial.tx_contains("I2C scan"), "no session (contrast): 'I' really scans");
+
+    // VESC watch on at start is turned off with its message.
+    j_fixture();
+    vescWatchActive = true;
+    j_send("1");
+    check(ag105CommissionActive && !vescWatchActive && Serial.tx_contains("VESC watch ('U') turned OFF for the session"),
+          "start with the VESC watch on: it is turned OFF with its message, session starts");
+    j_fixture();
+    j_send("1");
+    check(!Serial.tx_contains("turned OFF for the session"), "start without a watch: no such message (contrast)");
+}
+
+static void test_j_prompt_x_q_and_parser_variants() {
+    test_group("State 98 'J' (fw v37): X / Q at the prompt, and parser variants");
+    // 'X' typed at the J prompt: cancels the prompt AND runs as the universal stop (session ends).
+    j_fixture(); j_start(); j_release_mppt();
+    Serial.rx_queue.push('J'); doState98();
+    check(pendingInput == PEND_J_PARAMS, "X at prompt (setup): prompt open");
+    Serial.rx_queue.push('X'); doState98();
+    check(pendingInput == PEND_NONE && !ag105CommissionActive && digitalRead(REGEN_ENABLE) == LOW &&
+          digitalRead(MPPT_DISABLE) == LOW && Serial.tx_contains("(input cancelled)"),
+          "'J' then 'X': the prompt is cancelled and 'X' runs as a command -- session stopped (REGEN LOW, MPPT LOW)");
+    // 'Q' at the prompt
+    j_fixture(); j_start(); j_release_mppt();
+    Serial.rx_queue.push('J'); doState98();
+    Serial.rx_queue.push('Q'); doState98();
+    check(pendingInput == PEND_NONE && mainState == 1 && !ag105CommissionActive && digitalRead(REGEN_ENABLE) == LOW &&
+          digitalRead(MPPT_DISABLE) == LOW && digitalRead(MOT_PWR_ENABLE) == LOW,
+          "'J' then 'Q': prompt cancelled, exit to State 1, session stopped, MOT_PWR LOW");
+    // 'X' at the prompt with no session: plain cancel + stop message
+    j_fixture();
+    Serial.rx_queue.push('J'); doState98();
+    Serial.tx_clear();
+    Serial.rx_queue.push('X'); doState98();
+    check(pendingInput == PEND_NONE && Serial.tx_contains("(input cancelled)") && Serial.tx_contains("Manual motor"),
+          "'J' then 'X' without a session: cancel + universal-stop message (contrast)");
+
+    // Usage / refusal variants: no pin change, no Wire write.
+    struct V { const char* line; bool starts; const char* what; };
+    const V usage[] = {
+        {"1 2 3", false, "'1 2 3'"}, {"0 1", false, "'0 1'"}, {"-1", false, "'-1'"}, {"12", false, "'12'"},
+        {"2.", false, "'2.'"}, {"4.5", false, "'4.5'"}, {"3 4.5", false, "'3 4.5'"}, {"3 99999999999999999999", false, "20-digit '3 N'"},
+        {"99999999999999999999", false, "20-digit code"} };
+    for (const V& v : usage) {
+        j_fixture();
+        j_start_latched();
+        j_release_mppt();
+        Wire.write_log.clear();
+        JPinSnap before = j_snap();
+        Serial.tx_clear();
+        j_send(v.line);
+        char msg[140];
+        snprintf(msg, sizeof(msg), "parser: %s -> usage error / refusal, no pin change, no write, session intact", v.what);
+        check((Serial.tx_contains("ERROR: J takes") || Serial.tx_contains("REFUSED")) && j_same(before, j_snap()) &&
+              Wire.write_log.empty() && ag105CommissionActive, msg);
+    }
+    // Direct: "1x" (a letter at the live prompt would cancel; the parser itself must also reject it).
+    j_fixture();
+    JPinSnap b0 = j_snap();
+    Serial.tx_clear();
+    parseJLine("1x");
+    check(Serial.tx_contains("ERROR: J takes") && !ag105CommissionActive && j_same(b0, j_snap()),
+          "parser: '1x' -> usage error, nothing started");
+    // Over-long line (truncated at the 95-char buffer): digits overflow -> usage.
+    j_fixture();
+    b0 = j_snap();
+    std::string longLine(150, '1');
+    j_send(longLine.c_str());
+    check(!ag105CommissionActive && j_same(b0, j_snap()) && Serial.tx_contains("ERROR: J takes"),
+          "parser: an over-long digit line -> usage error, nothing started, no overflow");
+    // Whitespace-only -> status.
+    j_fixture();
+    b0 = j_snap();
+    j_send("   ");
+    check(Serial.tx_contains("[J] session off") && j_same(b0, j_snap()), "parser: whitespace-only line -> status, no pin change");
+    j_fixture();
+    j_send(" \t ");
+    check(Serial.tx_contains("[J] session off") && !ag105CommissionActive, "parser: spaces + tab only -> status");
+    // Leading / trailing whitespace and tabs are accepted.
+    j_fixture();
+    j_send("  1  ");
+    check(ag105CommissionActive && !ag105CommFixOnFirstRead, "parser: '  1  ' (leading/trailing spaces) starts a plain session");
+    j_fixture();
+    j_send("\t1\t");
+    check(ag105CommissionActive, "parser: a tab-wrapped '1' starts");
+    j_fixture();
+    j_send(" 1 \t2 ");
+    check(ag105CommissionActive && ag105CommFixOnFirstRead, "parser: ' 1 <tab>2 ' starts start-and-fix");
+}
+
+static void test_j_3_lowest_and_fail_path() {
+    test_group("State 98 'J' 3: lowest count accepted; a write that does not stick is a FAIL and is charged");
+    j_fixture();
+    Wire.reg_file[AG105_REG_MPPT_V] = 50;
+    j_start_latched();
+    Wire.write_log.clear();
+    j_send("3 0");
+    check(Wire.write_log.size() == 1 && Wire.write_log[0].reg == AG105_REG_MPPT_V && Wire.write_log[0].value == 0 &&
+          Serial.tx_contains("WROTE (verified)"),
+          "'3 0': the lowest count is accepted and written");
+
+    j_fixture();
+    j_start_latched();                                   // as-found reg 0x02 = 0
+    Wire.emulate_regs = false;
+    while (!Wire.rx_queue.empty()) Wire.rx_queue.pop();
+    ag105MpptRegKnown = false; ag105MpptRegCnt = AG105_MPPT_N_RESISTOR;
+    uint8_t w0 = ag105MpptWrites, f0 = ag105MpptFails, cw0 = ag105CommWrites;
+    j_q(0x00); j_q(0x00);                                // pre-read 0, (write 40), read-back 0 -> did not stick
+    Serial.tx_clear();
+    j_send("3 40");
+    check(Serial.tx_contains(": FAIL (read/write/verify)") && !Serial.tx_contains("WROTE"),
+          "'3 40' that does not stick: reported FAIL");
+    check(ag105MpptFails == (uint8_t)(f0 + 1) && ag105MpptWrites == (uint8_t)(w0 + 1) && ag105CommWrites == (uint8_t)(cw0 + 1),
+          "'3' FAIL: ag105MpptFails and the boot EPROM budget and the session counter are all charged at the attempt");
+    check(!ag105MpptRegKnown && ag105MpptRegCnt == AG105_MPPT_N_RESISTOR && !(ag105CommRegsWritten & 0x04),
+          "'3' FAIL: the manager's belief (RegKnown / RegCnt) and the written mask are NOT updated");
+}
+
+static void test_j_settle_boundary_and_restart_reset() {
+    test_group("State 98 'J': ag105CommSettled at exactly AG105_SETTLE_MS; restart after a stop resets every per-session field");
+    j_fixture();
+    j_start();
+    uint32_t t0 = ag105CommStartMs;
+    g_mock_millis = t0 + AG105_SETTLE_MS - 1; doState98();
+    check(!ag105CommSettled, "settled: one ms before AG105_SETTLE_MS -> not settled");
+    g_mock_millis = t0 + AG105_SETTLE_MS; doState98();
+    check(ag105CommSettled, "settled: at exactly AG105_SETTLE_MS -> settled");
+
+    // Plant non-default values after a real stop, then restart.
+    j_fixture();
+    j_start();
+    j_send("0");
+    for (int i = 0; i < AG105_COMM_NREG; i++) {
+        ag105CommAsFoundOk[i] = true; ag105CommAsFoundVal[i] = 77; ag105CommAsFoundMs[i] = 999;
+        ag105CommRegOk[i] = true; ag105CommRegVal[i] = 66;
+    }
+    for (int i = 0; i < 8; i++) ag105CommStatusSeen[i] = 0xFFFFFFFFu;
+    ag105CommFixOnFirstRead = true; ag105CommNakStreak = 9; ag105CommVbusLow = true; ag105CommVbusLowSinceMs = 1234;
+    ag105CommFwPhase = 3; ag105CommFwTries = 1; ag105CommFwOk = true; ag105CommFwMajor = 5; ag105CommFwMinor = 6;
+    ag105CommReadWorstUs = 5555; ag105CommEarlyVbusMin = 1.0f; ag105CommEarlyVchgMax = 99.0f; ag105CommEarlyVrgnMax = 98.0f;
+    ag105CommNakCount = 9; ag105CommAckEver = true; ag105CommWrites = 7; ag105CommRegsWritten = 7;
+    ag105CommMaxIcharge = 2.0f; ag105CommSettled = true; ag105CommLastReadOk = true; ag105CommRrIdx = 4;
+    V_bus = 15.5f; V_chg = 3.0f; V_rgn = 1.5f;
+    parseJLine("1");                                    // start only; no tick, so nothing is re-populated
+    bool clean = ag105CommissionActive;
+    for (int i = 0; i < AG105_COMM_NREG; i++)
+        if (ag105CommAsFoundOk[i] || ag105CommAsFoundVal[i] || ag105CommAsFoundMs[i] || ag105CommRegOk[i] || ag105CommRegVal[i]) clean = false;
+    for (int i = 0; i < 8; i++) if (ag105CommStatusSeen[i]) clean = false;
+    check(clean, "restart: AsFoundOk/Val/Ms, RegOk/Val and StatusSeen are all cleared");
+    check(!ag105CommFixOnFirstRead && ag105CommNakStreak == 0 && !ag105CommVbusLow && ag105CommVbusLowSinceMs == 0,
+          "restart: FixOnFirstRead, NakStreak, VbusLow (and its timestamp) are cleared");
+    check(ag105CommFwPhase == 0 && ag105CommFwTries == 0 && !ag105CommFwOk && ag105CommFwMajor == 0 && ag105CommFwMinor == 0,
+          "restart: FwPhase, FwTries, FwOk, Fw bytes are cleared");
+    check(ag105CommReadWorstUs == 0 && ag105CommNakCount == 0 && !ag105CommAckEver && ag105CommWrites == 0 &&
+          ag105CommRegsWritten == 0 && ag105CommMaxIcharge == 0.0f && !ag105CommSettled && !ag105CommLastReadOk && ag105CommRrIdx == 0,
+          "restart: ReadWorstUs, NakCount, AckEver, Writes, RegsWritten, MaxIcharge, Settled, LastReadOk, RrIdx are cleared");
+    check(ag105CommEarlyVbusMin == 15.5f && ag105CommEarlyVchgMax == 3.0f && ag105CommEarlyVrgnMax == 1.5f,
+          "restart: the early extremes are re-seeded from the CURRENT readings, not the planted ones");
 }
 
 #if HIL_SIM
@@ -26952,6 +27371,15 @@ int main() {
     test_j_l3_nak_backoff_and_worst_read();
     test_j_l5_early_extremes();
     test_j_start_and_fix();
+    test_j_m1_fw_version_retry();
+    test_j_l1_hold_on_nak();
+    test_j_l2_live_ack_releases_backoff();
+    test_j_l3_fix_window_exemption();
+    test_j_l5_asfound_ms_column();
+    test_j_l8_blocking_keys_refused();
+    test_j_prompt_x_q_and_parser_variants();
+    test_j_3_lowest_and_fail_path();
+    test_j_settle_boundary_and_restart_reset();
 #if HIL_SIM
     test_j_hil_link_gating();
 #endif
