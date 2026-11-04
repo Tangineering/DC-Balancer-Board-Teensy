@@ -5152,6 +5152,7 @@ void doEncoderA();
 void doEncoderB();
 bool busBringupStart();
 BringupStatus busBringupTick(bool doInit);
+static BringupStatus busBringupFail(const char* msg, uint16_t fault_bit, ErrorCode_t err);
 void busBringupAbort();
 // Droop/share MDAC-truth anchors — DEFINED further down (next to applyShareRatio() and the fw v19
 // conduction-aware slew limiter, which own them). Declared here only so hilWarmReset() (S2) can
