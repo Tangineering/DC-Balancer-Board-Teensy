@@ -139,6 +139,12 @@ private:
     template<typename T> static std::string fmt(T v) {
         if constexpr (std::is_floating_point_v<T>) {
             char buf[40]; snprintf(buf, sizeof(buf), "%.2f", (double)v); return buf;   // Arduino default
+        } else if constexpr (std::is_same_v<T, unsigned char>) {
+            // Arduino's Print::print(unsigned char, int base = DEC) prints the NUMBER (uint8_t/byte
+            // values are decimal on the wire); a bare ostream<< would emit the character. Plain
+            // `char` stays a character, as on Arduino. (fw v37 test round: '[J] reg 0x02 <- 40'
+            // printed as '<- (' under the old mock.)
+            std::ostringstream oss; oss << (unsigned)v; return oss.str();
         } else {
             std::ostringstream oss; oss << v; return oss.str();
         }

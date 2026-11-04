@@ -157,6 +157,44 @@ static void reset_test_state() {
     chgBackoffActive      = false;
     chgBackoffLowSince    = 0;
 
+    // fw v32a/v35: the FC charge-window timers. File-static in the .ino, but the test includes the
+    // .ino directly so they are reachable; leftover values would leak a lockout / open-time across
+    // cases (fcChgLockout refuses every later window until a cooldown that never elapses).
+    fcChgOpenedMs         = 0;
+    fcChgClosedMs         = 0;
+    fcChgLockout          = false;
+
+    // fw v37: the State-98 'J' Ag105 commissioning session (EVERY global, mirroring the .ino's
+    // declaration block). ag105CommissionActive / ag105CommSummaryPending also gate pollAg105()'s
+    // lazy config, so a leaked true would silently disable the config path in every later case.
+    ag105CommissionActive   = false;
+    ag105CommSummaryPending = false;
+    ag105CommStartMs        = 0;
+    ag105CommLastPrintMs    = 0;
+    ag105CommLastReadMs     = 0;
+    ag105CommRrIdx          = 0;
+    for (int i = 0; i < AG105_COMM_NREG; i++) { ag105CommRegVal[i] = 0; ag105CommRegOk[i] = false; }
+    ag105CommLastReadOk     = false;
+    ag105CommAckEver        = false;
+    ag105CommFirstAckMs     = 0;
+    ag105CommNakCount       = 0;
+    ag105CommFwPhase        = 0;
+    ag105CommFwMajor        = 0;
+    ag105CommFwMinor        = 0;
+    for (int i = 0; i < 8; i++) ag105CommStatusSeen[i] = 0;
+    ag105CommMaxIcharge     = 0.0f;
+    ag105CommSettled        = false;
+    ag105CommWrites         = 0;
+    ag105CommRegsWritten    = 0;
+    ag105CommStatWinStartMs = 0;
+    ag105CommStatSamples    = 0;
+    ag105CommStatHigh       = 0;
+    ag105CommStatEdges      = 0;
+    ag105CommStatPrev       = false;
+    ag105CommStatHaveWin    = false;
+    ag105CommStatPctHigh    = 0;
+    ag105CommStatWinEdges   = 0;
+
     // PI integrator state (hoisted to file scope so it can be reset between cases)
     pi_motor_accum = 0;  pi_motor_lastMicros = 0;
     pi_power_accum = 0;  pi_power_lastMicros = 0;
@@ -801,8 +839,19 @@ static void test_charging_control_mppt_polarity() {
     chargingControl();
     check(g_pin_value[MPPT_DISABLE]    == HIGH,
           "chargingControl: MPPT_DISABLE HIGH (released) during cruise with charger ready");
-    check(g_pin_value[FC_CHARGE_ENABLE] == HIGH,
-          "chargingControl: FC_CHARGE_ENABLE HIGH during cruise");
+    // fw v31 rev b / v35: FC_CHARGE_ALLOWED is 0 in every build -- the fuel cell never charges the
+    // pack, so cruise never opens FC_CHARGE and BT stays on the bus. This fixture otherwise meets
+    // every window-entry condition (FC_BUS conducting and unblanked, V_bus 16 V >= FC_CHG_ENTRY_V,
+    // no purge lockout), so only the flag keeps the path shut -- the check fails if it opened.
+    check(FC_CHARGE_ALLOWED == 0 && V_bus >= FC_CHG_ENTRY_V && !fcUvLockoutActive() &&
+          digitalRead(FC_BUS_ENABLE) == HIGH && !busSwitchBlanked(FC_BUS_ENABLE),
+          "chargingControl: (setup) cruise fixture meets every window-entry condition except the "
+          "FC_CHARGE_ALLOWED==0 flag");
+    check(g_pin_value[FC_CHARGE_ENABLE] == LOW,
+          "chargingControl: FC_CHARGE_ENABLE stays LOW during cruise (FC_CHARGE_ALLOWED==0)");
+    check(g_pin_value[BT_BUS_ENABLE]    == HIGH,
+          "chargingControl: BT_BUS_ENABLE restored HIGH in cruise (FC_CHARGE_ALLOWED==0; was driven "
+          "LOW before the call)");
     check(g_pin_value[REGEN_ENABLE]     == LOW,
           "chargingControl: REGEN_ENABLE LOW during cruise");
 
@@ -822,8 +871,12 @@ static void test_charging_control_mppt_polarity() {
     chargingControl();
     check(g_pin_value[MPPT_DISABLE]    == LOW,
           "chargingControl: MPPT_DISABLE LOW when charger not ready");
-    check(g_pin_value[FC_CHARGE_ENABLE] == HIGH,
-          "chargingControl: FC_CHARGE_ENABLE HIGH on intent even when charger not ready (bootstrap)");
+    // fw v35: with FC_CHARGE_ALLOWED==0 there is no FC bootstrap -- the charger is powered only by
+    // regen (REGEN+MOT_PWR), so charge intent with an unready charger must NOT open FC_CHARGE.
+    check(g_pin_value[FC_CHARGE_ENABLE] == LOW && g_pin_value[BT_BUS_ENABLE] == HIGH &&
+          g_pin_value[REGEN_ENABLE] == LOW,
+          "chargingControl: no FC bootstrap on charge intent with the charger not ready -- "
+          "FC_CHARGE LOW, BT_BUS HIGH, REGEN LOW (FC_CHARGE_ALLOWED==0)");
 }
 
 // ─── detectFaults() ──────────────────────────────────────────────────────────
@@ -4568,7 +4621,7 @@ static void test_share_handoff_mode_constants() {
           "constants: (setup) SHARE_GOV_FILT_ALPHA is the EMA weight the handoff filters share "
           "with the governor's load filter");
     // fw v23 (any-fault run-boundary-gated HIL recovery): stale pin updated.
-    check(FW_VERSION == 30, "pin: FW_VERSION == 30");
+    check(FW_VERSION == 37, "pin: FW_VERSION == 37");
 }
 
 // DARK seed (item B3): resetShareControlState() (and reset_test_state()'s mirror of it) seeds
@@ -11475,8 +11528,12 @@ static void test_charging_control_fc_bootstrap() {
     // this test is about is the charger's readiness, not FC's presence on the bus.
     digitalWrite(FC_BUS_ENABLE, HIGH);
     chargingControl();
-    check(g_pin_value[FC_CHARGE_ENABLE] == HIGH,
-          "chargingControl: FC_CHARGE_ENABLE HIGH to power charger (bootstrap)");
+    check(FC_CHARGE_ALLOWED == 0 && V_bus >= FC_CHG_ENTRY_V && !fcUvLockoutActive() &&
+          digitalRead(FC_BUS_ENABLE) == HIGH && !busSwitchBlanked(FC_BUS_ENABLE),
+          "chargingControl: (setup) bootstrap fixture meets every window-entry condition except "
+          "the FC_CHARGE_ALLOWED==0 flag");
+    check(g_pin_value[FC_CHARGE_ENABLE] == LOW && g_pin_value[REGEN_ENABLE] == LOW,
+          "chargingControl: FC_CHARGE stays LOW -- no FC bootstrap of the charger (FC_CHARGE_ALLOWED==0)");
     check(g_pin_value[MPPT_DISABLE] == LOW,
           "chargingControl: MPPT inhibited until charger ready");
 
@@ -11484,8 +11541,8 @@ static void test_charging_control_fc_bootstrap() {
     ag105_status_raw = AG105_GENSTAT_CHARGING;
     ag105DataValid   = true;   // ag105IsReady() requires a live read, not just the GENSTAT byte
     chargingControl();
-    check(g_pin_value[FC_CHARGE_ENABLE] == HIGH,
-          "chargingControl: FC_CHARGE_ENABLE stays HIGH when ready");
+    check(g_pin_value[FC_CHARGE_ENABLE] == LOW,
+          "chargingControl: FC_CHARGE_ENABLE stays LOW when ready (FC_CHARGE_ALLOWED==0)");
     check(g_pin_value[MPPT_DISABLE] == HIGH,
           "chargingControl: MPPT released once charger ready");
 }
@@ -11550,9 +11607,18 @@ static void test_fw28_f1_disarm_before_open(void) {
     // Once the blanking window clears, the conduction-gated open fires.
     g_mock_millis += SHARE_CUT_SURVIVOR_BLANK_MS;
     chargingControl();
-    check(digitalRead(FC_CHARGE_ENABLE) == HIGH,
-          "F1: the window opens once FC_BUS_ENABLE reads HIGH and is out of its blanking window -- "
-          "a conduction test, not a period count");
+    // fw v31 rev b / v35: FC_CHARGE_ALLOWED is 0, so the conduction-gated open is compiled but
+    // unreachable. Everything that WOULD admit the window is asserted true (FC_BUS HIGH and out
+    // of its blanking, V_bus >= FC_CHG_ENTRY_V, no purge lockout), so the only thing holding
+    // FC_CHARGE LOW is the flag -- and the window opening would fail this check.
+    check(FC_CHARGE_ALLOWED == 0 && digitalRead(FC_BUS_ENABLE) == HIGH &&
+          !busSwitchBlanked(FC_BUS_ENABLE) && V_bus >= FC_CHG_ENTRY_V && !fcUvLockoutActive(),
+          "F1: (setup) FC_BUS HIGH and out of its blanking window, entry V_bus met -- every "
+          "window-open condition except FC_CHARGE_ALLOWED==0 holds");
+    check(digitalRead(FC_CHARGE_ENABLE) == LOW && digitalRead(BT_BUS_ENABLE) == HIGH &&
+          digitalRead(REGEN_ENABLE) == LOW,
+          "F1 (FC_CHARGE_ALLOWED==0): the window stays shut after the blanking clears -- FC_CHARGE "
+          "LOW, BT_BUS HIGH, REGEN LOW; the disarm + make-before-break re-close is what remains");
 }
 
 // (2) Symmetric cases named in the design record: a deferred (unlatched) FC cut opens normally
@@ -11601,12 +11667,15 @@ static void test_fw28_f1_symmetric_cases(void) {
     charge_goal = 1.0f;
     current     = 0.5f;
     chargingControl();
-    check(digitalRead(FC_CHARGE_ENABLE) == HIGH,
-          "F1 symmetric (FC selected): the window opens immediately -- FC_BUS_ENABLE already reads "
-          "HIGH and is not blanked (driven with raw digitalWrite(), never risen)");
-    check(digitalRead(FC_BUS_ENABLE) == HIGH && digitalRead(BT_BUS_ENABLE) == LOW,
-          "F1 symmetric (FC selected): no bus switch moved to open the window -- the topology was "
-          "already exactly what the charge path wants");
+    check(FC_CHARGE_ALLOWED == 0 && digitalRead(FC_BUS_ENABLE) == HIGH &&
+          !busSwitchBlanked(FC_BUS_ENABLE) && V_bus >= FC_CHG_ENTRY_V && !fcUvLockoutActive(),
+          "F1 symmetric (FC selected): (setup) FC_BUS_ENABLE HIGH and unblanked (raw digitalWrite(), "
+          "never risen), entry V_bus met -- every window-open condition except FC_CHARGE_ALLOWED==0");
+    check(digitalRead(FC_CHARGE_ENABLE) == LOW,
+          "F1 symmetric (FC selected): the window does NOT open although the conduction gate would "
+          "admit it -- FC_CHARGE_ALLOWED==0 (fw v31 rev b)");
+    check(digitalRead(FC_BUS_ENABLE) == HIGH && digitalRead(REGEN_ENABLE) == LOW,
+          "F1 symmetric (FC selected): FC_BUS stays HIGH and REGEN LOW (FC_CHARGE_ALLOWED==0)");
     // Review S5: the disarm test fires on EITHER selector cut, not just shareSpCutFC -- with FC
     // selected the arm holds BT off, and testing only shareSpCutFC let the window open with the
     // selector still armed, producing one guarded BT cut/re-close per window transition (S5). So
@@ -12213,9 +12282,14 @@ static void test_fw28r5_f1_disarm_inhibits_the_rearm(void) {
 
     g_mock_millis += SHARE_CUT_SURVIVOR_BLANK_MS;
     chargingControl();
-    check(digitalRead(FC_CHARGE_ENABLE) == HIGH,
-          "F1 + re-entry: and the conduction-gated window opens once the blanking clears -- F1 is "
-          "intact under the new rule");
+    check(FC_CHARGE_ALLOWED == 0 && digitalRead(FC_BUS_ENABLE) == HIGH &&
+          !busSwitchBlanked(FC_BUS_ENABLE) && V_bus >= FC_CHG_ENTRY_V && !fcUvLockoutActive(),
+          "F1 + re-entry: (setup) the blanking has cleared and every window-open condition holds "
+          "except FC_CHARGE_ALLOWED==0");
+    check(digitalRead(FC_CHARGE_ENABLE) == LOW && digitalRead(BT_BUS_ENABLE) == HIGH &&
+          digitalRead(REGEN_ENABLE) == LOW,
+          "F1 + re-entry (FC_CHARGE_ALLOWED==0): the window stays shut after the blanking clears; the "
+          "disarm, the inhibit and the guarded FC_BUS re-close above are the surviving F1 logic");
 }
 
 static void test_fw28r5_inhibit_clears_on_an_inband_command(void) {
@@ -13072,8 +13146,12 @@ static void test_mppt_uv_backoff() {
     g_mock_millis = 0;
     chargingControl();
     check(!chgBackoffActive, "UV backoff: (t=0) not yet active");
-    check(g_pin_value[FC_CHARGE_ENABLE] == HIGH,
-          "UV backoff: (t=0) FC_CHARGE bootstraps open while the backoff hasn't tripped yet");
+    // fw v31 rev b / v35: FC_CHARGE_ALLOWED is 0 (and V_bus 12.79 V is under FC_CHG_ENTRY_V = 12.8
+    // V in any case), so the cruise branch does NOT bootstrap a window before the backoff trips.
+    check(FC_CHARGE_ALLOWED == 0 && V_bus < FC_CHG_ENTRY_V,
+          "UV backoff: (t=0 setup) FC_CHARGE_ALLOWED==0 and the sagging bus is under FC_CHG_ENTRY_V");
+    check(g_pin_value[FC_CHARGE_ENABLE] == LOW,
+          "UV backoff: (t=0) FC_CHARGE stays LOW before the backoff trips (FC_CHARGE_ALLOWED==0; no bootstrap)");
 
     // fw v24 review M4: the dwell moved 60 -> 15 ms (under one 20 ms control period AND under
     // UV_BUS_DWELL_LATCH_MS). Exact boundary walked here: 14 must not trip, 15 must.
@@ -13086,6 +13164,13 @@ static void test_mppt_uv_backoff() {
     chargingControl();
     check(!chgBackoffActive, "UV backoff: 14 ms sustained sag — does NOT trip yet");
 
+    // The backoff's OWN close-and-restore behaviour must be exercised from a state where there is
+    // something to close: with FC_CHARGE_ALLOWED==0 the cruise branch never opens a window, so the
+    // path is forced open (FC_CHARGE HIGH, BT off the bus) just before the tripping call, as an
+    // ALLOWED==1 build or an operator '5' would leave it. The tripped branch must then drive
+    // FC_CHARGE LOW through the guard and put BT back -- both checks below fail if it did not.
+    g_pin_value[FC_CHARGE_ENABLE] = HIGH;
+    g_pin_value[BT_BUS_ENABLE]    = LOW;
     g_mock_millis = 15;
     chargingControl();
     check(chgBackoffActive, "UV backoff: exactly 15 ms sustained sag — trips (>= boundary)");
@@ -16982,9 +17067,17 @@ static void test_drive_controller_replay_regen() {
             if (err > tailWorst) tailWorst = err;
         }
     }
-    check(tailWorst < 0.1f*worst,
-          "drive ctrl replay 'regen': deviation decays into the tail (< 10% of peak) -- "
-          "boundary dither re-converges, divergence would not");
+    // fw v37: the ratio is ill-conditioned once `worst` itself is at float resolution. The
+    // regenerated v37 vectors measure worst = 4.8e-07 A and tail = 1.2e-07 A (a few float ULPs at
+    // the 12 A clamp scale, where 1 ULP ~ 9.5e-07 A); the old vectors happened to give tail == 0
+    // exactly. A pure ratio then fails on rounding noise. So the ratio test is kept, with an
+    // ABSOLUTE floor of 1e-5 A: 10x below DRIVE_REPLAY_REGEN_TOL_A's own 1e-4 A floor and ~10x
+    // above the observed float-ULP noise. A real non-decaying divergence (>= the tolerance scale,
+    // 1e-4 A and up) still fails this check by at least 10x; nothing else in this group changed.
+    const float REGEN_TAIL_ABS_FLOOR_A = 1e-5f;
+    check(tailWorst < fmaxf(0.1f*worst, REGEN_TAIL_ABS_FLOOR_A),
+          "drive ctrl replay 'regen': deviation decays into the tail (< 10% of peak, or under the "
+          "1e-5 A float-resolution floor) -- boundary dither re-converges, divergence would not");
     check(railed > 50, "drive ctrl replay 'regen': a meaningful stretch rails at -12 A (anti-windup exercised)");
 
     // Recovery: the FINAL samples must be unclamped -- the episode's whole point is that the
@@ -23672,6 +23765,17 @@ static void test_y_no_charging_manager() {
           "Y charging: BT_BUS_ENABLE stays HIGH in the mid-share regions — the battery is not "
           "taken off the bus");
 
+    // fw v35 (FC_CHARGE_ALLOWED==0): chargingControl() no longer writes FC_CHARGE at all, so the
+    // FC_CHARGE checks here cannot tell it from a Y that never ran it. Its remaining footprint is
+    // the guarded BT_BUS restore: a BT_BUS found LOW (latch not holding it) is brought HIGH by a
+    // chargingControl() pass (see the D contrast below). Under Y it must stay LOW.
+    g_pin_value[BT_BUS_ENABLE] = LOW;
+    y_run_to(Y_R1 + 2500);
+    check(digitalRead(BT_BUS_ENABLE) == LOW,
+          "Y charging: a BT_BUS found LOW is NOT restored by the profile -- chargingControl()'s "
+          "guarded BT restore never runs under Y");
+    g_pin_value[BT_BUS_ENABLE] = HIGH;
+
     // The same tick must show the control stack IS being driven: the omission is of the CHARGING
     // manager only, not of the motor/droop halves.
     check(fabsf(current) > 0.01f,
@@ -23697,9 +23801,11 @@ static void test_y_no_charging_manager() {
     reset_test_state();
     mainState = 98;
     g_pin_value[MOT_PWR_ENABLE]   = HIGH;
-    g_pin_value[BT_BUS_ENABLE]    = HIGH;
+    // fw v35 (FC_CHARGE_ALLOWED==0): chargingControl() no longer opens FC_CHARGE, so its footprint
+    // is its guarded restore of BT_BUS. BT_BUS starts LOW (not on the bus, not latched by the share
+    // setpoint latch) so that ONLY a chargingControl() pass can bring it HIGH.
+    g_pin_value[BT_BUS_ENABLE]    = LOW;
     g_pin_value[FC_CHARGE_ENABLE] = LOW;
-    // fw v28 (F1): the charge window now opens only onto a conducting fuel cell.
     digitalWrite(FC_BUS_ENABLE, HIGH);
     g_mock_millis = 1000;
     g_mock_micros = 1000000;
@@ -23712,9 +23818,10 @@ static void test_y_no_charging_manager() {
         g_mock_micros += POWER_BAL_PERIOD_US;
         doState98();
     }
-    check(digitalRead(FC_CHARGE_ENABLE) == HIGH && digitalRead(BT_BUS_ENABLE) == LOW,
-          "Y charging (contrast): the DRIVE CYCLE does run chargingControl() — it opens FC_CHARGE "
-          "and drops BT_BUS, which is exactly what 'Y' must never do");
+    check(digitalRead(BT_BUS_ENABLE) == HIGH && digitalRead(FC_CHARGE_ENABLE) == LOW,
+          "Y charging (contrast, FC_CHARGE_ALLOWED==0): the DRIVE CYCLE does run chargingControl() — "
+          "its guarded restore puts BT_BUS HIGH from LOW while FC_CHARGE stays LOW; the Y branch "
+          "left an identical LOW BT_BUS untouched (it never runs the charging manager)");
 }
 
 // ─── 10. Start-over-start takeover: the new run is logged too ──────────────
@@ -25010,6 +25117,852 @@ static void test_combo_boundary_tick_zoh() {
           "boundary ZOH (Y): v_setpoint is held across the boundary, not rewritten or zeroed");
 }
 
+// ═════════════════════════════════════════════════════════════════════════════
+// fw v37 — State-98 'J' Ag105 commissioning session
+// ═════════════════════════════════════════════════════════════════════════════
+// Fixture: State 98, motor node already connected (MOT_PWR HIGH, raw so it is NOT in g_write_log),
+// bus in regulation, every charger power path otherwise open, and a charger that ACKs (the Wire
+// mock's register-file emulation). Every refusal test starts from THIS state with exactly one
+// precondition broken, so the start would have succeeded but for that one thing.
+struct JPinSnap { int v[50]; };
+static JPinSnap j_snap() { JPinSnap s; for (int i = 0; i < 50; i++) s.v[i] = g_pin_value[i]; return s; }
+static bool j_same(const JPinSnap& a, const JPinSnap& b) {
+    for (int i = 0; i < 50; i++) if (a.v[i] != b.v[i]) return false;
+    return true;
+}
+static int j_writes_to(int pin) {
+    int n = 0;
+    for (const WriteEvent& e : g_write_log) if (e.pin == pin) n++;
+    return n;
+}
+// Index of the first logged write of `val` to `pin`, or -1.
+static int j_first_write(int pin, int val) {
+    for (size_t i = 0; i < g_write_log.size(); i++)
+        if (g_write_log[i].pin == pin && g_write_log[i].value == val) return (int)i;
+    return -1;
+}
+
+static void j_fixture() {
+    reset_test_state();
+    mainState     = 98;
+    g_mock_millis = 10000;
+    g_mock_micros = 10000000;
+    V_bus         = 16.0f;
+    g_pin_value[MOT_PWR_ENABLE] = HIGH;    // raw: the session must never WRITE it
+    g_write_log.clear();
+}
+static void j_send(const char* line) {
+    Serial.rx_queue.push('J');
+    doState98();
+    feed_serial_line(line);
+}
+// Start a session through the real key path and assert it took (used as setup by most tests).
+static void j_start() {
+    j_send("1");
+}
+// Release MPPT inside a session ('J' 4) so a later stop has something to undo.
+static void j_release_mppt() {
+    j_send("4");
+}
+// Run the lazy-config settle sequence: the first poll stamps the power edge, the second runs after
+// the settle window. Returns nothing; the caller inspects Wire.write_log / flags.
+static void j_poll_settled(uint8_t ichgCount = 100) {
+    Wire.reg_file[AG105_REG_ICHG_MEAS] = ichgCount;
+    pollAg105();                                       // power edge -> ag105PowerOnMs
+    g_mock_millis += AG105_SETTLE_MS + 50;
+    Wire.write_log.clear();
+    pollAg105();                                       // settled, ACKing
+    pollAg105();
+}
+
+static void test_j_prompt_open_and_cancel() {
+    test_group("State 98 'J' (fw v37): opens the prompt; a letter cancels it");
+    j_fixture();
+    Serial.rx_queue.push('J');
+    doState98();
+    check(pendingInput == PEND_J_PARAMS, "'J': opens the PEND_J_PARAMS line prompt");
+    check(Serial.tx_contains("Ag105 commissioning"), "'J': prints the commissioning prompt");
+    Serial.tx_clear();
+    Serial.rx_queue.push('z');
+    doState98();
+    check(pendingInput == PEND_NONE && Serial.tx_contains("(input cancelled)"),
+          "'J' then a letter: the prompt is cancelled, like every other prompt");
+    check(!ag105CommissionActive && digitalRead(REGEN_ENABLE) == LOW,
+          "'J' then a letter: no session started, REGEN untouched");
+
+    j_fixture();
+    Serial.rx_queue.push('j');
+    doState98();
+    check(pendingInput == PEND_J_PARAMS, "'j' (lower case) opens the prompt too");
+
+    // Bare newline = read-only status, no pin change, no Wire traffic.
+    j_fixture();
+    JPinSnap before = j_snap();
+    j_send("");
+    check(Serial.tx_contains("[J] session off") && j_same(before, j_snap()) && Wire.transactions == 0,
+          "'J' + empty line: status print only -- 'session off', no pin change, no Wire transaction");
+
+    // Garbage / unknown codes -> USAGE, nothing started.
+    j_fixture();
+    j_send("7");
+    check(Serial.tx_contains("ERROR: J takes") && !ag105CommissionActive,
+          "'J' 7: unknown code -> usage error, no session");
+    j_fixture();
+    j_send("1 5");
+    check(Serial.tx_contains("ERROR: J takes") && !ag105CommissionActive && digitalRead(REGEN_ENABLE) == LOW,
+          "'J' 1 5: start takes no argument -> usage error, REGEN stays LOW, no session");
+}
+
+static void test_j_start_refusals() {
+    test_group("State 98 'J' 1 (fw v37): each precondition refuses on its own, touching no pin");
+
+    // Positive control at the exact V_bus boundary: the fixture, unmodified except V_bus == the
+    // threshold, DOES start -- so every refusal below is attributable to its one broken condition.
+    j_fixture();
+    V_bus = V_BUS_CHARGED_THRESH;
+    j_start();
+    check(ag105CommissionActive && digitalRead(REGEN_ENABLE) == HIGH,
+          "start refusals (control): the unmodified fixture starts -- V_bus exactly AT the threshold is accepted (>=)");
+
+    // (a) MOT_PWR LOW
+    j_fixture();
+    g_pin_value[MOT_PWR_ENABLE] = LOW;
+    JPinSnap s = j_snap();
+    j_send("1");
+    check(!ag105CommissionActive && digitalRead(REGEN_ENABLE) == LOW && j_same(s, j_snap()) &&
+          Serial.tx_contains("REFUSED: MOT_PWR_ENABLE is LOW"),
+          "refused: MOT_PWR_ENABLE LOW -- no session, REGEN LOW, no pin moved");
+
+    // (b) V_bus below the charged threshold
+    j_fixture();
+    V_bus = V_BUS_CHARGED_THRESH - 0.1f;
+    s = j_snap();
+    j_send("1");
+    check(!ag105CommissionActive && digitalRead(REGEN_ENABLE) == LOW && j_same(s, j_snap()) &&
+          Serial.tx_contains("below V_BUS_CHARGED_THRESH"),
+          "refused: V_bus below V_BUS_CHARGED_THRESH -- no session, REGEN LOW, no pin moved");
+
+    // (c) FC_CHARGE HIGH
+    j_fixture();
+    g_pin_value[FC_CHARGE_ENABLE] = HIGH;
+    s = j_snap();
+    j_send("1");
+    check(!ag105CommissionActive && digitalRead(REGEN_ENABLE) == LOW && j_same(s, j_snap()) &&
+          Serial.tx_contains("FC_CHARGE_ENABLE is HIGH"),
+          "refused: FC_CHARGE_ENABLE HIGH -- no session, REGEN LOW, FC_CHARGE untouched");
+
+    // (d) REGEN already HIGH (the implementer's added precondition: the charger may already have been auto-configured)
+    j_fixture();
+    g_pin_value[REGEN_ENABLE] = HIGH;
+    s = j_snap();
+    j_send("1");
+    check(!ag105CommissionActive && j_same(s, j_snap()) && Serial.tx_contains("REGEN_ENABLE is already HIGH"),
+          "refused: REGEN already HIGH (charger powered outside a session) -- no session, no pin moved");
+
+    // (e) bring-up active
+    // (e)/(f) call parseJLine() DIRECTLY: with a bring-up or profile flag set, doState98() would
+    // also run that machine's own tick (which legitimately moves pins), polluting the pin
+    // snapshot. The key -> prompt -> parser route is covered by every other test in this group.
+    j_fixture();
+    bringupActive = true;
+    s = j_snap();
+    parseJLine("1");
+    check(!ag105CommissionActive && digitalRead(REGEN_ENABLE) == LOW && j_same(s, j_snap()) &&
+          Serial.tx_contains("staged bring-up in progress"),
+          "refused: staged bring-up active -- no session, REGEN LOW, no pin moved");
+    bringupActive = false;
+
+    // (f) every profile / sweep / armed-profile flag, one at a time
+    struct Flag { bool* p; const char* name; };
+    Flag flags[] = {
+        { &driveCycleActive, "driveCycleActive" }, { &powerShareProfileActive, "powerShareProfileActive" },
+        { &trapProfileActive, "trapProfileActive" }, { &combinedProfileActive, "combinedProfileActive" },
+        { &wProfileActive, "wProfileActive" }, { &tsweepActive, "tsweepActive" } };
+    for (const Flag& f : flags) {
+        j_fixture();
+        *f.p = true;
+        s = j_snap();
+        parseJLine("1");
+        char msg[160];
+        snprintf(msg, sizeof(msg), "refused: %s set -- no session, REGEN LOW, no pin moved", f.name);
+        check(!ag105CommissionActive && digitalRead(REGEN_ENABLE) == LOW && j_same(s, j_snap()) &&
+              Serial.tx_contains("a profile is running/armed"), msg);
+        *f.p = false;
+    }
+    j_fixture();
+    plotArmTarget = PLOT_ARM_SHARE;
+    s = j_snap();
+    parseJLine("1");
+    check(!ag105CommissionActive && digitalRead(REGEN_ENABLE) == LOW && j_same(s, j_snap()) &&
+          Serial.tx_contains("a profile is running/armed"),
+          "refused: a plot-ARMED profile is pending -- no session, REGEN LOW, no pin moved");
+    plotArmTarget = PLOT_ARM_NONE;
+
+    // (g) a second '1' while a session stands must not re-power or re-stamp it
+    j_fixture();
+    j_start();
+    uint32_t startMs = ag105CommStartMs;
+    g_mock_millis += 500;
+    int regenWrites = j_writes_to(REGEN_ENABLE);
+    j_send("1");
+    check(ag105CommissionActive && ag105CommStartMs == startMs && j_writes_to(REGEN_ENABLE) == regenWrites &&
+          Serial.tx_contains("already active"),
+          "refused: '1' while a session stands -- start stamp unchanged, REGEN not re-written");
+}
+
+static void test_j_start_success() {
+    test_group("State 98 'J' 1 (fw v37): a successful start");
+    j_fixture();
+    g_pin_value[MPPT_DISABLE] = HIGH;      // stale released state the start must undo
+    mpptReleased = true;
+    j_start();
+    check(ag105CommissionActive, "start: ag105CommissionActive set");
+    check(digitalRead(REGEN_ENABLE) == HIGH, "start: REGEN_ENABLE HIGH (the charger's feed)");
+    check(digitalRead(MPPT_DISABLE) == LOW && !mpptReleased,
+          "start: MPPT_DISABLE driven LOW (inhibited) and the release mirror cleared");
+    check(digitalRead(FC_CHARGE_ENABLE) == LOW, "start: FC_CHARGE_ENABLE LOW (mutually exclusive with REGEN)");
+    check(j_writes_to(MOT_PWR_ENABLE) == 0 && digitalRead(MOT_PWR_ENABLE) == HIGH,
+          "start: MOT_PWR_ENABLE never WRITTEN by the session and unchanged");
+    check(chargerHasPower(), "start: chargerHasPower() true (REGEN + MOT_PWR)");
+    int iM = j_first_write(MPPT_DISABLE, LOW), iR = j_first_write(REGEN_ENABLE, HIGH);
+    check(iM >= 0 && iR >= 0 && iM < iR,
+          "start ordering: MPPT_DISABLE LOW is written BEFORE REGEN HIGH powers the charger");
+    int iF = j_first_write(FC_CHARGE_ENABLE, LOW);
+    check(iF < 0 || iF < iR, "start ordering: any FC_CHARGE LOW write precedes REGEN HIGH");
+    check(Serial.tx_contains("HAZARD") && Serial.tx_contains("session START"),
+          "start: hazard notice and START line printed");
+    check(Wire.write_log.empty(), "start: the session itself writes no Ag105 register");
+}
+
+static void test_j_autoconfig_inhibit() {
+    test_group("State 98 'J' (fw v37): pollAg105() auto-config is INHIBITED during a session (load-bearing)");
+
+    // ── Session: a powered, settled, ACKing charger must NOT be written to ──
+    j_fixture();
+    j_start();
+    j_poll_settled();
+    check(fabsf(I_charge - 100 * 0.011f) < 1e-3f && ag105DataValid,
+          "inhibit (setup): pollAg105() reached its live-read ACK path -- the inhibit is the only thing that could stop the config");
+    bool wrote01 = false, wrote00 = false;
+    for (const I2CWriteRecord& w : Wire.write_log) { if (w.reg == AG105_REG_VBATT_CFG) wrote01 = true; if (w.reg == AG105_REG_ICHG_CFG) wrote00 = true; }
+    check(!wrote00 && !wrote01 && Wire.write_log.empty(),
+          "inhibit: pollAg105() wrote NEITHER reg 0x00 nor reg 0x01 (no 2-byte write at all)");
+    check(!ag105Configured, "inhibit: ag105Configured stays false");
+    check(Wire.reg_file.count(AG105_REG_ICHG_CFG) == 0 || Wire.reg_file[AG105_REG_ICHG_CFG] == 0,
+          "inhibit: the emulated EPROM still holds its as-found reg 0x00");
+    check(Wire.reg_file.count(AG105_REG_VBATT_CFG) == 0 || Wire.reg_file[AG105_REG_VBATT_CFG] == 0,
+          "inhibit: the emulated EPROM still holds its as-found reg 0x01");
+
+    // The MPPT manager is inhibited too: even with ag105Configured forced true, pollAg105() spends
+    // exactly its own 2 transactions per call (the manager would add reads/writes).
+    ag105Configured = true;
+    ag105MpptState  = AG105_MPPT_IDLE;
+    unsigned long maxT = 0;
+    for (int i = 0; i < 40; i++) {
+        g_mock_millis += 20;
+        unsigned long t0 = Wire.transactions;
+        pollAg105();
+        if (Wire.transactions - t0 > maxT) maxT = Wire.transactions - t0;
+    }
+    check(maxT == 2 && Wire.write_log.empty(),
+          "inhibit: ag105ManageMpptThreshold() is not run either -- pollAg105() spends exactly its own 2 transactions");
+
+    // ── Contrast: SAME fixture, no session (REGEN driven HIGH directly) DOES configure ──
+    j_fixture();
+    digitalWrite(REGEN_ENABLE, HIGH);
+    j_poll_settled();
+    bool c00 = false, c01 = false;
+    for (const I2CWriteRecord& w : Wire.write_log) {
+        if (w.reg == AG105_REG_ICHG_CFG  && w.value == AG105_VAL_2500MA) c00 = true;
+        if (w.reg == AG105_REG_VBATT_CFG && w.value == AG105_VAL_2S)     c01 = true;
+    }
+    check(c00 && c01 && ag105Configured,
+          "inhibit (CONTRAST, no session): the identical powered/settled/ACKing fixture DOES write reg 0x00=0x01 and reg 0x01=0x08 and sets ag105Configured");
+}
+
+static void test_j_profile_write() {
+    test_group("State 98 'J' 2 (fw v37): show / write the 2S + 2.5 A profile (read-verify)");
+
+    // Refused with no session: no Wire traffic at all.
+    j_fixture();
+    j_send("2 1");
+    check(Serial.tx_contains("REFUSED: no session active") && Wire.transactions == 0 && Wire.write_log.empty(),
+          "'2 1' without a session: REFUSED, zero Wire transactions");
+    j_fixture();
+    j_send("2");
+    check(Serial.tx_contains("REFUSED: no session active") && Wire.transactions == 0,
+          "'2' without a session: REFUSED, zero Wire transactions");
+
+    // '2' alone: prints, writes nothing.
+    j_fixture();
+    j_start();
+    check(ag105CommLastReadOk, "'2' (setup): the session's first read ACKed");
+    Wire.write_log.clear();
+    Serial.tx_clear();
+    j_send("2");
+    check(Serial.tx_contains("WOULD be") && Serial.tx_contains("reg 0x01 <- 0x08") && Serial.tx_contains("reg 0x00 <- 0x01"),
+          "'2': prints the profile write that WOULD be done (0x01<-0x08, 0x00<-0x01)");
+    check(Wire.write_log.empty() && Wire.reg_file[AG105_REG_VBATT_CFG] == 0 && Wire.reg_file[AG105_REG_ICHG_CFG] == 0,
+          "'2': writes nothing");
+
+    // '2 1' with SCRIPTED read-backs: [status,data] pairs in transaction order.
+    j_fixture();
+    j_start();
+    Wire.emulate_regs = false;
+    while (!Wire.rx_queue.empty()) Wire.rx_queue.pop();
+    Wire.write_log.clear();
+    auto q = [](uint8_t d) { Wire.rx_queue.push(0x00); Wire.rx_queue.push(d); };
+    q(0x00); q(AG105_VAL_2S);       // reg 0x01: read as-found 0x00, (write), read-back 0x08
+    q(0x00); q(AG105_VAL_2500MA);   // reg 0x00: read as-found 0x00, (write), read-back 0x01
+    Serial.tx_clear();
+    j_send("2 1");
+    check(Wire.write_log.size() == 2 &&
+          Wire.write_log[0].reg == AG105_REG_VBATT_CFG && Wire.write_log[0].value == AG105_VAL_2S &&
+          Wire.write_log[1].reg == AG105_REG_ICHG_CFG  && Wire.write_log[1].value == AG105_VAL_2500MA,
+          "'2 1': writes reg 0x01=0x08 THEN reg 0x00=0x01 (voltage first)");
+    check(Wire.rx_queue.empty(), "'2 1': consumed exactly the scripted read, read-back sequence");
+    check(Serial.tx_contains("reg 0x01 <- 0x08: WROTE") && Serial.tx_contains("reg 0x00 <- 0x01: WROTE"),
+          "'2 1': reports WROTE (verified) for both registers");
+    check(ag105CommWrites == 2 && ag105CommRegsWritten == 0x03,
+          "'2 1': session write counter 2, registers-written mask 0x03");
+
+    // SKIPPED: both already correct -> no write.
+    j_fixture();
+    j_start();
+    Wire.reg_file[AG105_REG_VBATT_CFG] = AG105_VAL_2S;
+    Wire.reg_file[AG105_REG_ICHG_CFG]  = AG105_VAL_2500MA;
+    Wire.write_log.clear();
+    Serial.tx_clear();
+    j_send("2 1");
+    check(Wire.write_log.empty() && Serial.tx_contains("reg 0x01 <- 0x08: SKIPPED") &&
+          Serial.tx_contains("reg 0x00 <- 0x01: SKIPPED") && ag105CommWrites == 0 && ag105CommRegsWritten == 0,
+          "'2 1' with both registers already correct: SKIPPED x2, no write, write counter 0");
+
+    // Per-register read-verify: voltage already right, current wrong -> only reg 0x00 written.
+    j_fixture();
+    j_start();
+    Wire.reg_file[AG105_REG_VBATT_CFG] = AG105_VAL_2S;
+    Wire.write_log.clear();
+    Serial.tx_clear();
+    j_send("2 1");
+    check(Wire.write_log.size() == 1 && Wire.write_log[0].reg == AG105_REG_ICHG_CFG &&
+          Serial.tx_contains("reg 0x01 <- 0x08: SKIPPED") && Serial.tx_contains("reg 0x00 <- 0x01: WROTE") &&
+          ag105CommRegsWritten == 0x01 && ag105CommWrites == 1,
+          "'2 1' with only reg 0x00 wrong: reg 0x01 SKIPPED, reg 0x00 WROTE, nothing else written");
+
+    // A write that does not stick is reported FAIL, not WROTE.
+    j_fixture();
+    j_start();
+    Wire.emulate_regs = false;
+    while (!Wire.rx_queue.empty()) Wire.rx_queue.pop();
+    Wire.write_log.clear();
+    q(0x00); q(0x00);   // as found 0x00; wanted 0x08 -> write; read-back still 0x00
+    q(0x00); q(0x00);
+    q(0x00); q(0x00);
+    q(0x00); q(0x00);
+    Serial.tx_clear();
+    j_send("2 1");
+    check(Serial.tx_contains("reg 0x01 <- 0x08: FAIL") && !Serial.tx_contains("WROTE"),
+          "'2 1': a write that reads back wrong is FAIL, never WROTE");
+
+    // Not ACKing -> refused with no Wire traffic.
+    j_fixture();
+    j_start();
+    ag105CommLastReadOk = false;
+    unsigned long t0 = Wire.transactions;
+    Wire.write_log.clear();
+    Serial.tx_clear();
+    // millis not advanced, so the session tick performs no read of its own in these passes
+    j_send("2 1");
+    check(Serial.tx_contains("not ACKing") && Wire.write_log.empty() && Wire.transactions == t0,
+          "'2 1' while the charger is not ACKing: REFUSED, no Wire transaction, no write");
+
+    // Bad argument.
+    j_fixture();
+    j_start();
+    Wire.write_log.clear();
+    j_send("2 2");
+    check(Serial.tx_contains("ERROR: J takes") && Wire.write_log.empty(),
+          "'2 2': only '2 1' writes -- anything else is a usage error");
+}
+
+static void test_j_mppt_threshold_write() {
+    test_group("State 98 'J' 3 <count> (fw v37): reg 0x02 write, range, budget, warning");
+
+    // No session
+    j_fixture();
+    j_send("3 40");
+    check(Serial.tx_contains("REFUSED: no session active") && Wire.transactions == 0,
+          "'3 40' without a session: REFUSED, zero Wire transactions");
+
+    // In-range below V_bus: write + read-back + warning
+    j_fixture();
+    j_start();
+    Wire.write_log.clear();
+    Serial.tx_clear();
+    uint8_t w0 = ag105MpptWrites;
+    j_send("3 40");
+    check(Wire.write_log.size() == 1 && Wire.write_log[0].reg == AG105_REG_MPPT_V && Wire.write_log[0].value == 40 &&
+          Wire.reg_file[AG105_REG_MPPT_V] == 40,
+          "'3 40': writes reg 0x02 = 40 (and the emulated EPROM read-back holds it)");
+    check(Serial.tx_contains("reg 0x02 <- 40") && Serial.tx_contains("WROTE (verified)"),
+          "'3 40': reports WROTE (verified)");
+    check(ag105MpptWrites == (uint8_t)(w0 + 1) && ag105MpptRegCnt == 40 && ag105MpptRegKnown &&
+          (ag105CommRegsWritten & 0x04),
+          "'3 40': charged against the v24 EPROM budget, belief updated, session mask bit 2 set");
+    check(ag105MpptVoltsFromCount(40) < V_bus && Serial.tx_contains("WARNING: threshold is BELOW V_bus"),
+          "'3 40': threshold (14.5 V) below V_bus (16 V) prints the charge-from-the-bus warning");
+
+    // Same count again: SKIPPED, no budget spent, no write.
+    Wire.write_log.clear();
+    Serial.tx_clear();
+    uint8_t w1 = ag105MpptWrites;
+    j_send("3 40");
+    check(Wire.write_log.empty() && Serial.tx_contains("SKIPPED") && ag105MpptWrites == w1,
+          "'3 40' again: SKIPPED (already held), no write, no budget spent");
+
+    // Above V_bus: no warning
+    Wire.write_log.clear();
+    Serial.tx_clear();
+    j_send("3 100");
+    check(ag105MpptVoltsFromCount(100) > V_bus && Serial.tx_contains("threshold is ABOVE V_bus") &&
+          !Serial.tx_contains("WARNING"),
+          "'3 100': threshold above V_bus -> the 'above' note, no WARNING");
+
+    // Top of range accepted
+    Wire.write_log.clear();
+    j_send("3 250");
+    check(Wire.write_log.size() == 1 && Wire.write_log[0].value == 250, "'3 250': top of the I2C range is accepted");
+
+    // 251 and above refused, with no Wire traffic
+    const char* bad[] = { "3 251", "3 255", "3 256", "3 -1" };
+    for (const char* b : bad) {
+        j_fixture();
+        j_start();
+        Wire.write_log.clear();
+        Serial.tx_clear();
+        unsigned long t0 = Wire.transactions;
+        uint8_t wb = ag105MpptWrites;
+        j_send(b);
+        char msg[120];
+        snprintf(msg, sizeof(msg), "'%s': REFUSED (>= 251 is external-resistor mode), no write, no Wire traffic, no budget", b);
+        check(Serial.tx_contains("count must be 0..250") && Wire.write_log.empty() &&
+              Wire.transactions == t0 && ag105MpptWrites == wb, msg);
+    }
+
+    // '3' with no count
+    j_fixture();
+    j_start();
+    j_send("3");
+    check(Serial.tx_contains("ERROR: J takes") && Wire.write_log.empty(), "'3' with no count: usage error, no write");
+
+    // Budget spent
+    j_fixture();
+    j_start();
+    ag105MpptWrites = (uint8_t)AG105_MPPT_WRITES_PER_BOOT;
+    Wire.write_log.clear();
+    Serial.tx_clear();
+    j_send("3 40");
+    check(Serial.tx_contains("write budget for this boot is spent") && Wire.write_log.empty(),
+          "'3 40' with the boot EPROM budget spent: REFUSED, no write");
+
+    // Not ACKing
+    j_fixture();
+    j_start();
+    ag105CommLastReadOk = false;
+    Wire.write_log.clear();
+    Serial.tx_clear();
+    j_send("3 40");
+    check(Serial.tx_contains("not ACKing") && Wire.write_log.empty(),
+          "'3 40' while the charger is not ACKing: REFUSED, no write");
+}
+
+static void test_j_mppt_toggle() {
+    test_group("State 98 'J' 4 (fw v37): MPPT_DISABLE toggle");
+    j_fixture();
+    j_start();
+    check(digitalRead(MPPT_DISABLE) == LOW, "'4' (setup): the session started with MPPT inhibited");
+    Serial.tx_clear();
+    j_send("4");
+    check(digitalRead(MPPT_DISABLE) == HIGH && mpptReleased && Serial.tx_contains("MPPT released") &&
+          !Serial.tx_contains("REFUSED"),
+          "'J' 4: LOW -> HIGH (released); the '4' goes to the prompt, NOT to the refused top-level REGEN key");
+    check(digitalRead(REGEN_ENABLE) == HIGH, "'J' 4: REGEN untouched (the session still owns it)");
+    j_send("4");
+    check(digitalRead(MPPT_DISABLE) == LOW && !mpptReleased && Serial.tx_contains("MPPT inhibited"),
+          "'J' 4 again: HIGH -> LOW (inhibited), release mirror cleared");
+
+    j_fixture();
+    JPinSnap s = j_snap();
+    j_send("4");
+    check(Serial.tx_contains("REFUSED: no session active") && j_same(s, j_snap()),
+          "'J' 4 with no session: REFUSED, MPPT_DISABLE unchanged");
+    j_fixture(); j_start(); s = j_snap(); j_send("4 1");
+    check(Serial.tx_contains("ERROR: J takes") && j_same(s, j_snap()), "'J' 4 1: usage error, no toggle");
+}
+
+static void test_j_bounded_i2c_and_monitor() {
+    test_group("State 98 'J' (fw v37): at most ONE register transaction per pass; 10 Hz monitor line");
+
+    j_fixture();
+    j_start();
+    // (1) 1 ms per pass: never more than one 2-transaction register read in a pass, and reads do happen.
+    unsigned long maxD = 0, reads = 0;
+    for (int i = 0; i < 300; i++) {
+        g_mock_millis += 1;
+        unsigned long t0 = Wire.transactions;
+        doState98();
+        unsigned long d = Wire.transactions - t0;
+        if (d > maxD) maxD = d;
+        if (d) reads++;
+    }
+    check(maxD == 2, "bounded I2C: no doState98() pass spent more than ONE register read (2 Wire transactions)");
+    check(reads >= 20 && reads <= 40, "bounded I2C (non-vacuous): reads DO happen, rate-limited to one per 10 ms");
+    // (2) frozen clock: after the first read of a millisecond, no further read at all.
+    unsigned long t0 = Wire.transactions;
+    for (int i = 0; i < 50; i++) doState98();
+    check(Wire.transactions - t0 <= 2, "bounded I2C: with the clock frozen, 50 passes spend at most one read");
+    // (3) a big time jump still yields one read, not a catch-up burst.
+    g_mock_millis += 5000;
+    t0 = Wire.transactions;
+    doState98();
+    check(Wire.transactions - t0 == 2, "bounded I2C: a 5 s clock jump yields exactly one read in that pass (no catch-up burst)");
+
+    // Round robin covers all six slots.
+    bool allSlots = true;
+    for (int i = 0; i < AG105_COMM_NREG; i++) if (!ag105CommRegOk[i]) allSlots = false;
+    check(allSlots, "round robin: all six cached register slots have been read");
+
+    // Monitor line cadence
+    j_fixture();
+    Wire.reg_file[0xFD] = 0x01; Wire.reg_file[0xFE] = 0x02;
+    j_start();
+    Serial.tx_clear();
+    for (int i = 0; i < 1000; i++) { g_mock_millis += 1; doState98(); }
+    int lines = Serial.tx_count("[J] t=");
+    check(lines >= 9 && lines <= 11, "monitor: ~10 '[J] t=' lines over 1 s of advanced time");
+    check(Serial.tx_count("firmware version: major 0x01 minor 0x02") == 1,
+          "monitor: the Ag105 firmware version (regs 0xFD/0xFE) is read and printed exactly once");
+    check(Serial.tx_contains(" ack=y") && Serial.tx_contains(" r00=") && Serial.tx_contains(" STAT=") && Serial.tx_contains(" MPPT_DIS=0"),
+          "monitor: line carries ack, the cached registers, STAT and MPPT_DIS");
+
+    // Suppressed in plot mode.
+    j_fixture();
+    j_start();
+    plotModeActive = true;
+    Serial.tx_clear();
+    for (int i = 0; i < 500; i++) { g_mock_millis += 1; doState98(); }
+    check(Serial.tx_count("[J] t=") == 0, "monitor: suppressed while the Serial-Plotter stream is on");
+    check(ag105CommissionActive, "monitor: the session itself keeps running in plot mode");
+}
+
+static void test_j_ownership_refusals() {
+    test_group("State 98 'J' (fw v37): while a session stands the REGEN-owning keys are refused");
+    const char keys[] = "45FfBbGgDdRrTtYyWw";
+    for (const char* k = keys; *k; ++k) {
+        j_fixture();
+        j_start();
+        j_release_mppt();
+        JPinSnap before = j_snap();
+        Serial.tx_clear();
+        Serial.rx_queue.push(*k);
+        doState98();
+        char msg[140];
+        snprintf(msg, sizeof(msg), "session active: key '%c' prints REFUSED, moves no pin, session intact", *k);
+        check(Serial.tx_contains("REFUSED: Ag105 commissioning active") && j_same(before, j_snap()) &&
+              ag105CommissionActive && pendingInput == PEND_NONE &&
+              !driveCycleActive && !powerShareProfileActive && !trapProfileActive &&
+              !combinedProfileActive && !wProfileActive && !bringupActive, msg);
+    }
+    // Contrast: the same keys with NO session are not refused by this rule, and '4'/'F'/'B' really move a pin.
+    for (const char* k = "4FBDRTYW5G"; *k; ++k) {
+        j_fixture();
+        Serial.tx_clear();
+        Serial.rx_queue.push(*k);
+        doState98();
+        char msg[120];
+        snprintf(msg, sizeof(msg), "no session (contrast): key '%c' is NOT refused by the commissioning rule", *k);
+        check(!Serial.tx_contains("commissioning active"), msg);
+    }
+    j_fixture(); Serial.rx_queue.push('4'); doState98();
+    check(digitalRead(REGEN_ENABLE) == HIGH, "no session (contrast): '4' really toggles REGEN -- the refusal above is not vacuous");
+    j_fixture(); Serial.rx_queue.push('F'); doState98();
+    check(digitalRead(FC_REG_ENABLE) == HIGH, "no session (contrast): 'F' really toggles FC_REG_ENABLE");
+    j_fixture(); Serial.rx_queue.push('B'); doState98();
+    check(digitalRead(BT_REG_ENABLE) == HIGH, "no session (contrast): 'B' really toggles BT_REG_ENABLE");
+
+    // Read-only / stop keys stay available during a session.
+    j_fixture();
+    j_start();
+    Serial.tx_clear();
+    Serial.rx_queue.push('S');
+    doState98();
+    check(!Serial.tx_contains("REFUSED") && ag105CommissionActive, "session active: 'S' (status) is not refused and does not end the session");
+}
+
+static void j_assert_stopped(const char* what, bool mpptWasReleased = true) {
+    char msg[200];
+    snprintf(msg, sizeof(msg), "%s: MPPT_DISABLE LOW, REGEN LOW, session flag cleared", what);
+    check(digitalRead(MPPT_DISABLE) == LOW && digitalRead(REGEN_ENABLE) == LOW &&
+          !ag105CommissionActive && !mpptReleased, msg);
+    (void)mpptWasReleased;
+}
+
+static void test_j_stop_paths() {
+    test_group("State 98 'J' (fw v37): EVERY exit path runs the stop sequence");
+
+    // J then 0
+    j_fixture(); j_start(); j_release_mppt();
+    check(digitalRead(MPPT_DISABLE) == HIGH, "stop 'J' 0 (setup): MPPT released so the stop has something to undo");
+    Serial.tx_clear();
+    j_send("0");
+    j_assert_stopped("'J' 0");
+    check(Serial.tx_count("[J] SUMMARY") == 1 && Serial.tx_contains("operator 'J' 0"), "'J' 0: stop line and exactly one summary printed");
+    check(j_writes_to(MOT_PWR_ENABLE) == 0 && digitalRead(MOT_PWR_ENABLE) == HIGH, "'J' 0: MOT_PWR neither written nor changed");
+    check(!chargerHasPower(), "'J' 0: the charger is unpowered again");
+    j_send("0");
+    check(Serial.tx_contains("no session active"), "'J' 0 with no session: harmless no-op message");
+
+    // 120 s cap: boundary
+    j_fixture(); j_start(); j_release_mppt();
+    uint32_t t0 = ag105CommStartMs;
+    g_mock_millis = t0 + AG105_COMMISSION_MAX_MS - 1;
+    doState98();
+    check(ag105CommissionActive, "120 s cap: one ms before the cap the session is still active");
+    Serial.tx_clear();
+    g_mock_millis = t0 + AG105_COMMISSION_MAX_MS;
+    doState98();
+    j_assert_stopped("120 s cap");
+    check(Serial.tx_contains("120 s cap") && Serial.tx_count("[J] SUMMARY") == 1, "120 s cap: stop reason and one summary printed");
+
+    // X
+    j_fixture(); j_start(); j_release_mppt();
+    Serial.tx_clear();
+    Serial.rx_queue.push('X'); doState98();
+    j_assert_stopped("'X' universal stop");
+    check(Serial.tx_contains("universal stop 'X'") && Serial.tx_count("[J] SUMMARY") == 1, "'X': stop reason and one summary printed");
+    check(j_writes_to(MOT_PWR_ENABLE) == 0, "'X': MOT_PWR not written by the session stop");
+    {
+        int iR = j_first_write(REGEN_ENABLE, LOW), iM = j_first_write(MPPT_DISABLE, LOW);
+        check(iM >= 0 && iR >= 0 && iM < iR, "stop ordering: MPPT_DISABLE LOW is written before REGEN LOW");
+    }
+
+    // Q
+    j_fixture(); j_start(); j_release_mppt();
+    Serial.tx_clear();
+    Serial.rx_queue.push('Q'); doState98();
+    j_assert_stopped("'Q' exit");
+    check(mainState == 1, "'Q': lands in State 1");
+    check(digitalRead(MOT_PWR_ENABLE) == LOW, "'Q': MOT_PWR forced LOW by the exit (as before)");
+    {
+        int iR = j_first_write(REGEN_ENABLE, LOW), iMo = j_first_write(MOT_PWR_ENABLE, LOW);
+        check(iR >= 0 && iMo >= 0 && iR < iMo, "'Q': REGEN LOW lands BEFORE MOT_PWR LOW (the charger is never left on the V-MOT node's stored energy alone)");
+    }
+    check(Serial.tx_count("[J] SUMMARY") == 1, "'Q': one summary printed");
+
+    // REGEN found LOW mid-session
+    j_fixture(); j_start(); j_release_mppt();
+    g_pin_value[REGEN_ENABLE] = LOW;
+    Serial.tx_clear();
+    doState98();
+    j_assert_stopped("REGEN found LOW mid-session");
+    check(Serial.tx_contains("REGEN_ENABLE found LOW") && Serial.tx_count("[J] SUMMARY") == 1, "REGEN found LOW: reason and one summary printed");
+
+    // MOT_PWR found LOW mid-session
+    j_fixture(); j_start(); j_release_mppt();
+    g_pin_value[MOT_PWR_ENABLE] = LOW;
+    Serial.tx_clear();
+    doState98();
+    j_assert_stopped("MOT_PWR found LOW mid-session");
+    check(Serial.tx_contains("MOT_PWR_ENABLE found LOW") && j_writes_to(MOT_PWR_ENABLE) == 0,
+          "MOT_PWR found LOW: reason printed; the stop never writes MOT_PWR");
+
+    // FC_CHARGE found HIGH (illegal with REGEN): backstop stop
+    j_fixture(); j_start(); j_release_mppt();
+    g_pin_value[FC_CHARGE_ENABLE] = HIGH;
+    Serial.tx_clear();
+    doState98();
+    j_assert_stopped("FC_CHARGE found HIGH");
+    check(Serial.tx_contains("FC_CHARGE_ENABLE found HIGH") && digitalRead(FC_CHARGE_ENABLE) == HIGH,
+          "FC_CHARGE found HIGH: stop drops REGEN and leaves FC_CHARGE to whoever raised it");
+
+    // After any stop a new session can start again with a clean slate
+    j_fixture(); j_start();
+    Wire.reg_file[AG105_REG_VBATT_CFG] = 0; ag105CommWrites = 5; ag105CommNakCount = 9; ag105CommAckEver = true;
+    j_send("0");
+    j_start();
+    check(ag105CommissionActive && ag105CommWrites == 0 && ag105CommNakCount == 0,
+          "restart after a stop: per-session counters are reset");
+}
+
+static void test_j_fault_path() {
+    test_group("State 98 'J' (fw v37): a fault ends the session through State 99's teardown");
+
+    // (A) fault between passes: flag still set at State-99 entry; doState99() phase 0 abandons it.
+    j_fixture(); j_start(); j_release_mppt();
+    triggerFault(FAULT_OC_FC, ERR_OC_FC);
+    check(mainState == 99 && ag105CommissionActive, "fault (setup): State 99 entered, session flag still set (flag-only handling)");
+    Serial.tx_clear();
+    state99Phase = 0;
+    doState99();
+    check(!ag105CommissionActive && ag105CommSummaryPending,
+          "fault: doState99() phase 0 clears the session flag and defers the summary (ag105CommSummaryPending)");
+    check(Serial.tx_count("[J] SUMMARY") == 0 && !Serial.tx_contains("session STOP"),
+          "fault: nothing is printed inside the timed drain phases");
+
+    // The auto-config stays inhibited through the drain although the session flag is gone.
+    // Phase 0 opened the FC drain path (assertFcChargeEnable(true)) so the charger is powered.
+    check(chargerHasPower(), "fault drain (setup): the teardown powers the charger through the FC path");
+    ag105HadPower = true; ag105PowerOnMs = 0; ag105Configured = false;
+    g_mock_millis += 2000;
+    Wire.write_log.clear();
+    pollAg105();
+    check(Wire.write_log.empty() && !ag105Configured,
+          "fault drain: pollAg105() does NOT auto-configure while the summary is pending");
+    // Contrast: identical, summary no longer pending -> it configures.
+    bool pend = ag105CommSummaryPending;
+    ag105CommSummaryPending = false;
+    ag105Configured = false;
+    Wire.write_log.clear();
+    pollAg105();
+    check(!Wire.write_log.empty() && ag105Configured,
+          "fault drain (CONTRAST): with ag105CommSummaryPending cleared the same poll DOES configure -- the pending flag is the inhibit");
+    ag105CommSummaryPending = pend;
+
+    // Walk the teardown to phase 3: summary printed exactly once, paths closed, MPPT LOW.
+    for (int i = 0; i < 60 && state99Phase != 3; i++) { g_mock_millis += 1; doState99(); }
+    check(state99Phase == 3, "fault (setup): teardown reached phase 3");
+    doState99();
+    check(Serial.tx_count("[J] SUMMARY") == 1 && !ag105CommSummaryPending,
+          "fault: the summary is printed exactly once at the end of the teardown");
+    for (int i = 0; i < 5; i++) { g_mock_millis += 1; doState99(); }
+    check(Serial.tx_count("[J] SUMMARY") == 1, "fault: later State-99 passes do not reprint it");
+    check(digitalRead(REGEN_ENABLE) == LOW && digitalRead(MPPT_DISABLE) == LOW && !ag105CommissionActive,
+          "fault: after the teardown REGEN LOW, MPPT_DISABLE LOW, session flag clear");
+
+    // (B) fault earlier in the SAME pass: the session tick sees mainState != 98 and abandons -- no pin write, no serial.
+    j_fixture(); j_start(); j_release_mppt();
+    mainState = 99;                               // as triggerFault() would leave it mid-pass
+    JPinSnap s = j_snap();
+    Serial.tx_clear();
+    ag105CommissionTick();
+    check(!ag105CommissionActive && ag105CommSummaryPending && j_same(s, j_snap()) && Serial.tx.empty(),
+          "fault in the same pass: the tick abandons the session -- no pin written, nothing printed, summary deferred");
+}
+
+static void test_j_stat_summary_and_motpwr_key() {
+    test_group("State 98 'J' (fw v37): CHARGER_STAT activity decode, summary contents, '3' ends the session");
+
+    // STAT steady HIGH / steady LOW / toggling, decoded over the 2.5 s window.
+    for (int mode = 0; mode < 3; mode++) {
+        j_fixture();
+        g_pin_value[CHARGER_STAT] = (mode == 0) ? HIGH : LOW;   // no start-up edge in the first window
+        j_start();
+        Serial.tx_clear();
+        for (int i = 0; i < 3200; i++) {
+            g_mock_millis += 1;
+            if (mode == 0) g_pin_value[CHARGER_STAT] = HIGH;
+            else if (mode == 1) g_pin_value[CHARGER_STAT] = LOW;
+            else g_pin_value[CHARGER_STAT] = ((i / 500) & 1) ? HIGH : LOW;   // 1 s period, 50 %
+            doState98();
+        }
+        if (mode == 0)
+            check(Serial.tx_contains("steady-HIGH=Charging") && !Serial.tx_contains("steady-LOW"),
+                  "STAT steady HIGH for > 2.5 s: monitor decodes 'steady-HIGH=Charging' (Table 5)");
+        else if (mode == 1)
+            check(Serial.tx_contains("steady-LOW=no input") && !Serial.tx_contains("steady-HIGH"),
+                  "STAT steady LOW for > 2.5 s: monitor decodes 'steady-LOW=no input' (Table 5)");
+        else
+        {
+            size_t at = Serial.tx.rfind("(hi ");
+            int pct = -1, edges = -1;
+            if (at != std::string::npos) (void)sscanf(Serial.tx.c_str() + at, "(hi %d%% e%d", &pct, &edges);
+            check(pct >= 35 && pct <= 50 && edges >= 1 && !Serial.tx_contains("steady-"),
+                  "STAT toggling (40 % HIGH, 1 s period): reports the raw HIGH fraction and a non-zero edge count, no steady-state label");
+        }
+    }
+
+    // Summary contents after a session in which the charger ACKed with a live status byte.
+    j_fixture();
+    j_start();
+    Wire.status_byte = 0x02;
+    Wire.reg_file[AG105_REG_ICHG_MEAS] = 100;
+    for (int i = 0; i < 700; i++) {
+        g_mock_millis += 1;
+        pollAg105();
+        doState98();
+    }
+    Serial.tx_clear();
+    j_send("0");
+    check(Serial.tx_contains("ACKed=yes") && Serial.tx_contains("settled=yes") &&
+          Serial.tx_contains("max I_charge=1.100A") && Serial.tx_contains("status bytes seen: 0x02") &&
+          Serial.tx_contains("EPROM writes this session=0") && Serial.tx_contains("regs written: none"),
+          "summary: ACKed=yes, settled=yes, max I_charge 1.100 A, status byte 0x02 seen, 0 EPROM writes");
+
+    // A charger that never ACKs: summary says NO and counts NAKs; the session still stops cleanly.
+    j_fixture();
+    Wire.emulate_regs = false;           // empty queue -> every requestFrom() returns 0
+    j_start();
+    for (int i = 0; i < 200; i++) { g_mock_millis += 1; doState98(); }
+    check(ag105CommNakCount > 0 && !ag105CommLastReadOk, "no-ACK session: NAKs counted, last read not OK");
+    Serial.tx_clear();
+    j_send("0");
+    check(Serial.tx_contains("ACKed=NO") && digitalRead(REGEN_ENABLE) == LOW && !ag105CommissionActive,
+          "no-ACK session: summary 'ACKed=NO', session stops cleanly (an unpowered charger is a result, not a fault)");
+    check(mainState == 98 && error_code == ERR_NONE, "no-ACK session: no fault latched");
+
+    // Top-level '3' (MOT_PWR toggle) is NOT in the refused list; it ends the session by ownership loss.
+    j_fixture();
+    j_start();
+    j_release_mppt();
+    Serial.rx_queue.push('3');
+    doState98();
+    check(digitalRead(MOT_PWR_ENABLE) == LOW && !ag105CommissionActive && digitalRead(REGEN_ENABLE) == LOW &&
+          digitalRead(MPPT_DISABLE) == LOW,
+          "top-level '3' during a session: MOT_PWR drops and the session ends in the SAME pass (REGEN LOW, MPPT LOW)");
+}
+
+static void test_j_relaxes_after_stop() {
+    test_group("State 98 'J' (fw v37): after a stop pollAg105()'s lazy config is re-enabled");
+    j_fixture();
+    j_start();
+    j_poll_settled();
+    check(Wire.write_log.empty() && !ag105Configured, "re-enable (setup): config inhibited during the session");
+    j_send("0");
+    pollAg105();                                     // unpowered pass: re-arms the power session
+    check(!ag105HadPower && !ag105Configured, "re-enable: the power loss at the stop re-arms the session state");
+    // A fresh power session (REGEN driven directly, as '4' would)
+    digitalWrite(REGEN_ENABLE, HIGH);
+    j_poll_settled();
+    bool c00 = false, c01 = false;
+    for (const I2CWriteRecord& w : Wire.write_log) {
+        if (w.reg == AG105_REG_ICHG_CFG  && w.value == AG105_VAL_2500MA) c00 = true;
+        if (w.reg == AG105_REG_VBATT_CFG && w.value == AG105_VAL_2S)     c01 = true;
+    }
+    check((c00 && c01) || (ag105Configured && Wire.reg_file[AG105_REG_VBATT_CFG] == AG105_VAL_2S),
+          "re-enable: the next powered, settled session configures reg 0x00 and reg 0x01 as before");
+    check(ag105Configured, "re-enable: ag105Configured set again");
+}
+
+#if HIL_SIM
+static void test_j_hil_link_gating() {
+    test_group("State 98 'J' (fw v37): a live HIL injection link refuses / ends a session");
+    j_fixture();
+    hilHaveFrame = true;
+    JPinSnap s = j_snap();
+    j_send("1");
+    check(!ag105CommissionActive && j_same(s, j_snap()) && Serial.tx_contains("HIL injection link is live"),
+          "HIL: 'J' 1 is refused while an injection link is live");
+    hilHaveFrame = false;
+    j_fixture(); j_start(); j_release_mppt();
+    hilHaveFrame = true;
+    doState98();
+    j_assert_stopped("HIL link came up mid-session");
+    hilHaveFrame = false;
+}
+#endif
+
+
 int main() {
     printf("teensy_controller.ino — unit tests\n");
     printf("===================================\n");
@@ -25565,6 +26518,24 @@ int main() {
     test_w_fault_path();
     test_share_cutoff_profile_interaction();
     test_combo_boundary_tick_zoh();
+
+    // ── fw v37: State-98 'J' Ag105 commissioning session ────────────────────
+    test_j_prompt_open_and_cancel();
+    test_j_start_refusals();
+    test_j_start_success();
+    test_j_autoconfig_inhibit();
+    test_j_profile_write();
+    test_j_mppt_threshold_write();
+    test_j_mppt_toggle();
+    test_j_bounded_i2c_and_monitor();
+    test_j_ownership_refusals();
+    test_j_stop_paths();
+    test_j_fault_path();
+    test_j_stat_summary_and_motpwr_key();
+    test_j_relaxes_after_stop();
+#if HIL_SIM
+    test_j_hil_link_gating();
+#endif
 #endif
 
     printf("\n===================================\n");
