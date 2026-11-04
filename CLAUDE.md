@@ -1014,3 +1014,9 @@ pairing, the encoder/current-noise analysis, the v37 scope), WORK_QUEUE 0j / 0k.
   speed - NOT a bench method. Docs: HIL_SCENARIOS.md section 6a, HIL_PLANT.md 3.7, HIL_USER_MANUAL.md section 5
   "Running a subset". Pre-existing (not this round): `test_dp_results_db.py::test_every_stored_record_is_still_reachable_by_its_own_key`
   fails (75 vs 101); `hil_replay_suite.TARGET_FW_VERSION` still 28.
+- **First HIL run of fw v37 (`hil_report_20261104_125053`, 9 legs, HIL Teensy only - the vehicle stays on v35):** 8/9 PASS,
+  comm-loss = the standing sim artefact (= campaign II to sample phase), zero board defects. Ripple legs `law: repo OK`:
+  current 1x meas 0.6407/0.6244/0.5871/0.5548 A, force 0.7002/0.4524/0.2900/0.2234 A (<= 0.22 % off prediction); step
+  0->2 m/s settle 1.82 s, overshoot 8.6/9.2 %. v37 costs measured: tracking RMS ~2x, 12.6 % overshoot on pi-silence's
+  1.2 m/s step, a 0.32 m/s undershoot below a 0.4 m/s brake target (operator item); regen dwell 1326 >= 800 ticks.
+  fw v29's span clamp still not exercised on the board (needs ems-ftp75-sdp). Row 37 of docs/firmware-versions.md.
