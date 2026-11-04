@@ -540,6 +540,16 @@ known to be insufficient on its own. A Schmitt buffer/comparator remains the roo
 stronger pull-up mainly shifts suspicion toward the phototransistor's own slow fall time and
 threshold-region noise rather than the RC rise.
 
+### Hardware record (confirmed by the operator 2026-11-04): 74HC14 Schmitt buffer IS fitted
+
+The 74HC14 Schmitt-trigger buffer on the OPB829DZ encoder outputs, described above and throughout
+the fw v12-v17 `.ino` comments as "planned" / "pending" / "the root fix", **is fitted**. The fit date
+is not recorded; `test/CLAUDE.md` (2026-08-25, fw v18 round) already credits "Schmitt + 90-slot
+wheel" with the >1000x cut in spurious drops, so it was in place by then. The `.ino` comments
+from fw v12-v17 that call it pending are historical and were not rewritten. Consequence for
+encoder analysis: edge chatter is no longer the leading suspect; the once-per-rev speed ripple
+in the 2026-09/10 Pi bags is a different mechanism (`docs/fw37_planning_2026-11-04.md` section 6).
+
 ---
 
 **Campaign records:** the per-campaign HIL ledgers (`HIL_FINDINGS.md`, `HIL_SUMMARY.md`,
