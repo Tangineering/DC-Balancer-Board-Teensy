@@ -4151,7 +4151,7 @@ void encDirCommitTick() {
 // header (format v2 and later, offset 18) so logged data is attributable to the
 // firmware that produced it, printed at boot and in the State-98 'S' status.
 // 0 is reserved for "pre-versioning" (logs PS0001–TP0005 and earlier).
-#define FW_VERSION 36
+#define FW_VERSION 35
 
 #ifndef BENCH_TEST
 #define BENCH_TEST 0
@@ -13736,18 +13736,7 @@ void chargingControl() {
         chgBackoffActive = false;
 
     // charge_goal == 0 → Pi wants no charging; inhibit everything
-    // VESC commanded current: negative = regen braking.
-    // fw v36: HOISTED ABOVE THE charge_goal GATE. charge_goal carries the Pi's
-    // FC->battery charging intent only. Motor regen is a physically separate path
-    // (V-MOT node -> REGEN switch -> charger) and must not be gated on it.
-    // Before this, charge_goal <= 0.05f returned BEFORE regenActive was computed,
-    // so any run that never raises charge_goal could not arm regen at all:
-    // rosbag_sweep-noclip_2026-10-30_01-30-16 had charge_goal 0/4033 and
-    // REGEN_ENABLE high 0/10081 across six wheel-locking decelerations.
-    bool regenActive = (current < -0.1f);   // TODO(calibrate): regen detection threshold
-
-    // charge_goal == 0 -> Pi wants no FC charging; inhibit everything EXCEPT regen
-    if (charge_goal <= 0.05f && !regenActive) {
+    if (charge_goal <= 0.05f) {
         digitalWrite(MPPT_DISABLE, LOW);   // inhibit MPPT (active-LOW: LOW = inhibit)
         mpptReleased = false;              // deliberate mode change, not a readiness flap — no
                                            // holdoff is armed (fw v24)
@@ -13779,13 +13768,10 @@ void chargingControl() {
     // CHARGER_STAT steady-LOW is a fast "no input power" guard but not used here.
     bool chargerReady = ag105IsReady();
 
-    // fw v36: regenActive is now computed above the charge_goal gate (see there).
+    // VESC commanded current: negative = regen braking
+    bool regenActive = (current < -0.1f);   // TODO(calibrate): regen detection threshold
 
     if (regenActive) {
-        // fw v36: the charge_goal early return used to stamp this. Regen can now be
-        // entered directly from an open FC charge window, so the window must be
-        // closed out here too or FC_CHG_COOLDOWN_MS is measured from a stale mark.
-        if (fcChgOpenedMs) { fcChgClosedMs = millis(); fcChgOpenedMs = 0; }
         // Fast regen: inhibit MPPT so the slow input-voltage-threshold regulator does not fight
         // the transient. (MECHANISM CORRECTED fw v24 — AG105_Silvertel.pdf §2.9: the Ag105's MPPT
         // is a threshold regulator that gates the start of charging on V_CHG-IN, NOT a
@@ -13798,11 +13784,7 @@ void chargingControl() {
         digitalWrite(MPPT_DISABLE, LOW);     // inhibit MPPT during regen (active-LOW)
         mpptReleased = false;                // deliberate mode change — no holdoff armed (fw v24)
         // share setpoint latch owns this switch — see updateShareSetpointCutoff() (2026-08-12)
-        // fw v36: guarded to match the other two branches. This branch is reachable
-        // far more often now, so the unguarded close is newly exposed to the Death-5
-        // foldback (closing an ideal-diode switch onto a sagging node).
-        if (!shareSpCutBT && !busHotPlugUnsafe(BT_REG_ENABLE))
-            writeBusSwitch(BT_BUS_ENABLE, HIGH);   // BT keeps contributing to VBUS during regen
+        if (!shareSpCutBT) writeBusSwitch(BT_BUS_ENABLE, HIGH);   // BT continues contributing to VBUS during regen
     } else if (chgBackoffActive) {
         // ── UV BACKOFF (fw v24) ──────────────────────────────────────────────
         // V_bus has been under AG105_CHG_BACKOFF_V for AG105_CHG_BACKOFF_DWELL_MS. Close the
