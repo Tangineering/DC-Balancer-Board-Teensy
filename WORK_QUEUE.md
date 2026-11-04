@@ -29,6 +29,9 @@ Record: `docs/reviews/fw36_regen_2026-11-04/README.md` (findings, ranked regen c
       `/fw_info` topic (operator-entered, so only as reliable as the operator); (b) authoritative - protocol v5 adds a
       u16 `fw_version` to telemetry (60 B, checksum span moves, PLAN.md section 6b, tests, bridge in lockstep; use the
       `protocol-bump` skill). Recommended: (b) with the next firmware version, (a) until then.
+      **Scope widened 2026-11-04 (operator):** v5 (lands with fw v38, planning doc section 4) also carries the main-loop
+      rate, `loop_hz_avg10` (u16 Hz, last 10 iterations), with `loop_dt_max_us` (u16, longest iteration since the
+      previous packet) recommended beside it, so bags record the real loop rate without an SD log. 73 B proposed.
 - [ ] 2. **Get the deployed Pi package into the repo.** `references/EMS/Pi_2026-11-03/` holds node sources only. Missing:
       `~/ros2_ws/src/fchev_ems/` as deployed (`package.xml`, `setup.py` entry points mapping `teensy_bridge`, the EMS
       executables and `drive_cycle_node` to specific dated files), its `resource/` cost-to-go tables, and
