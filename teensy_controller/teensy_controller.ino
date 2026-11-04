@@ -2473,6 +2473,18 @@ static_assert(AG105_MPPT_N_FLOOR <= AG105_MPPT_N_CEIL,
 #define AG105_CHG_BACKOFF_V       12.8f  // V — V_bus below this (sustained) closes FC_CHARGE
 #define AG105_CHG_RESUME_V        13.6f  // V — V_bus above this re-permits FC_CHARGE
 #define AG105_CHG_BACKOFF_DWELL_MS 15u   // ms of sustained sag before backing off
+
+// -- fw v31: REGEN-ONLY CHARGING POLICY -------------------------------------
+// 0 = charge_goal may open the REGEN path only (motor -> battery). The FC->charger
+//     harvest branch in chargingControl() is skipped entirely and the bus is left
+//     in the same state as charge_goal==0, with BT on the bus.
+// 1 = pre-v31 behaviour: cruise/coast harvests from the fuel cell into the pack.
+//
+// WHY A FLAG AND NOT A DELETION. The harvest branch carries the whole fw v28 F1
+// fix (disarm-before-open, conduction gate) and the fw v24 MPPT release holdoff.
+// That reasoning is board-real and expensive; it must not have to be re-derived
+// from a diff later. Skipping the branch costs nothing and keeps it.
+#define FC_CHARGE_ALLOWED 0
 static_assert(AG105_CHG_BACKOFF_DWELL_MS < UV_BUS_DWELL_LATCH_MS,
               "Charger UV backoff dwell must be shorter than the UV latch dwell");
 static_assert(AG105_CHG_BACKOFF_V > AG105_MPPT_VOLTS(AG105_MPPT_N_FLOOR),
@@ -13763,6 +13775,28 @@ void chargingControl() {
         // returns later, either through this same site once the bus recovers above
         // V_BUS_CHARGED_THRESH, or through the share latch's own release.
         if (!shareSpCutBT && !busHotPlugUnsafe(BT_REG_ENABLE)) writeBusSwitch(BT_BUS_ENABLE, HIGH);
+    } else if (!FC_CHARGE_ALLOWED) {
+        // -- fw v31: REGEN-ONLY -----------------------------------------------
+        // charge_goal is up, but the motor is not giving current back on this
+        // tick (and the bus is not in UV backoff). Pre-v31 fell through to the
+        // harvest branch below and opened FC->charger here, which is the fuel
+        // cell charging the pack - not what charge_goal was raised to ask for.
+        //
+        // That fall-through was always reachable, but it became the COMMON case
+        // once the Pi began arming regen on ANY negative P_demand: P_demand goes
+        // negative from the drive-cycle differentiator a tick or two before the
+        // velocity loop actually commands braking current, and every one of
+        // those ticks landed here.
+        //
+        // Hold the same terminal state as the charge_goal==0 branch, in the same
+        // order (guarded FC_CHARGE first, then a bare REGEN write, then BT), so
+        // this is the proven sequence and not a new arrangement of the switches.
+        assertFcChargeEnable(false);
+        digitalWrite(REGEN_ENABLE, LOW);
+        digitalWrite(MPPT_DISABLE, LOW);
+        mpptReleased = false;             // deliberate mode change - no holdoff
+        // share setpoint latch owns this switch - updateShareSetpointCutoff()
+        if (!shareSpCutBT) writeBusSwitch(BT_BUS_ENABLE, HIGH);
     } else {
         // Cruise/coast: close regen path and harvest via the FC→charger path.
         digitalWrite(REGEN_ENABLE, LOW);
