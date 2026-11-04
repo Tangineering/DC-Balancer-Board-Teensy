@@ -16,6 +16,13 @@ launched without them is smaller than the ledgers it will be compared against:
   --with-ftp75c  the five compressed-cycle (ftp75c) regen legs
   --with-alpha   the three ems-sdp-alpha legs (greedy / cal / charge)
 
+The two drive-ripple legs (drive-ripple-meas / drive-ripple-force, 67 s each,
+2026-11-04) are NOT opt-in: they are in the default plan, registered last.
+Run them alone with  --scenarios-only --only "drive-ripple-*"  (quote the glob).
+They score the board against the REPO drive_controller_coeffs.h, so the repo
+must match what was flashed, and tools/drive_ripple.py must sit beside this
+file.
+
 Confirm the plan before starting a long run:
 
     python3 tools/run_hil_suite.py --list --with-ftp75 --with-ftp75c --with-alpha
@@ -13919,7 +13926,11 @@ def scan_drive_ripple(csv_path, spec, run_meta=None):
     by judge_drive_ripple(), never silently re-scored."""
     out = {"variant": spec.get("variant"), "columns_ok": False, "holds": [],
            "step": None, "rows": 0, "error": None, "law_error": None,
-           "config_source": None, "config_mismatch": [], "drag": None}
+           "config_source": None, "config_mismatch": [], "drag": None,
+           # True only when the run's own sidecar was read and compared
+           # (contract review M1): an unreadable sidecar is NOT VERIFIED and
+           # judge_drive_ripple() FAILs ripple_config_consistent on it.
+           "config_verified": False}
     repo, repo_sha, law_err = repo_drive_law()
     alt = drive_ripple.V35_DRIVE_COEFFS
     out["law_error"] = law_err
@@ -13939,6 +13950,7 @@ def scan_drive_ripple(csv_path, spec, run_meta=None):
                 "ran without the ripple hooks")
         else:
             out["config_source"] = "sidecar"
+            out["config_verified"] = True
             for k, want in (("meas_a", a_meas), ("force_n", f_rip)):
                 got = float(sc.get(k) or 0.0)
                 if abs(got - want) > 1e-12:
@@ -14109,6 +14121,17 @@ def scan_drive_ripple(csv_path, spec, run_meta=None):
     return out
 
 
+def drive_ripple_law_verdict(checks):
+    """The summary-row law verdict (contract review M3): "repo OK",
+    "v35-like", "NEITHER" or "unmeasured", read off the identification
+    check's `verdict` tag; "unmeasured" when the check never ran (law parse
+    failure, missing columns, no measurement)."""
+    for c in checks or ():
+        if c.get("name") == "ripple_drive_law_identified":
+            return c.get("verdict") or "unmeasured"
+    return "unmeasured"
+
+
 def judge_drive_ripple(spec, m):
     """Checks + report notes from scan_drive_ripple() output. Pure."""
     checks, notes = [], []
@@ -14130,16 +14153,28 @@ def judge_drive_ripple(spec, m):
                                                  (m.get("repo_law_sha256") or "?")[:16],
                                                  m.get("repo_law"))})
     mism = m.get("config_mismatch") or []
-    checks.append({
-        "name": "ripple_config_consistent", "passed": not mism,
-        "detail": (("the run's sidecar stimulus matches the expectation "
-                    "(meas_a %r, force_n %r, drag %r; source: %s)"
-                    % (m.get("meas_a_used"), m.get("force_n_used"),
-                       m.get("drag"), m.get("config_source")))
-                   if not mism else
-                   ("STIMULUS MISMATCH - the prediction below is built for the "
-                    "run's own sidecar values, but this leg did not run the "
-                    "stimulus its expectation describes: " + "; ".join(mism)))})
+    verified = m.get("config_verified") is True
+    if mism:
+        _cc_detail = ("STIMULUS MISMATCH - the prediction below is built for "
+                      "the run's own sidecar values, but this leg did not run "
+                      "the stimulus its expectation describes: "
+                      + "; ".join(mism))
+    elif not verified:
+        # Contract review M1: an unverified stimulus is not a pass. The
+        # amplitudes are still SCORED from the suite constants, so the other
+        # checks remain informative, but this one says nobody confirmed them.
+        _cc_detail = ("NOT VERIFIED - the run's sidecar was unreadable; "
+                      "stimulus not cross-checked (amplitudes scored from the "
+                      "suite constants: meas_a %r, force_n %r)"
+                      % (m.get("meas_a_used"), m.get("force_n_used")))
+    else:
+        _cc_detail = ("the run's sidecar stimulus matches the expectation "
+                      "(meas_a %r, force_n %r, drag %r; source: %s)"
+                      % (m.get("meas_a_used"), m.get("force_n_used"),
+                         m.get("drag"), m.get("config_source")))
+    checks.append({"name": "ripple_config_consistent",
+                   "passed": bool(verified and not mism),
+                   "detail": _cc_detail})
     variant = spec.get("variant")
     n_meas = repo_ok = alt_ok = closer_alt = closer_repo = 0
     for h in m["holds"]:
@@ -14258,19 +14293,23 @@ def judge_drive_ripple(spec, m):
     # ── drive-law identification (review L1: never vacuous, ties fail) ──────
     if m.get("repo_is_alt"):
         checks.append({"name": "ripple_drive_law_identified", "passed": True,
+                       "verdict": "repo OK",
                        "detail": "the repo header IS the frozen fw v35 law; no "
                                  "alternate to discriminate"})
     elif n_meas < DRIVE_RIPPLE_MIN_HOLDS_IDENTIFIED:
         checks.append({"name": "ripple_drive_law_identified", "passed": False,
+                       "verdict": "unmeasured",
                        "detail": "only %d hold(s) measured; identification needs "
                                  ">= %d" % (n_meas, DRIVE_RIPPLE_MIN_HOLDS_IDENTIFIED)})
     elif 2 * repo_ok > n_meas:
         checks.append({"name": "ripple_drive_law_identified", "passed": True,
+                       "verdict": "repo OK",
                        "detail": "within +/-%.0f %% of the repo law at %d of %d "
                                  "holds (closer to it than to fw v35 at %d)"
                                  % (tol * 100.0, repo_ok, n_meas, closer_repo)})
     elif 2 * alt_ok > n_meas:
         checks.append({"name": "ripple_drive_law_identified", "passed": False,
+                       "verdict": "v35-like",
                        "detail": ("** THE BOARD APPEARS TO RUN THE OTHER DRIVE LAW "
                                   "(fw v35): the measured current 1x is within "
                                   "+/-%.0f %% of the fw v35 prediction at %d of %d "
@@ -14280,14 +14319,27 @@ def judge_drive_ripple(spec, m):
                                   "FAILs as a law defect **"
                                   % (tol * 100.0, alt_ok, n_meas, repo_ok))})
     else:
+        # Concrete next steps (contract review M3), ordered cheapest first.
+        _devs = ["%s %+.0f %%" % ("%.1f" % h["v_nominal"],
+                                 (h["i_1x_a"] / h["pred_repo"]["i_amp"] - 1.0) * 100.0)
+                 for h in m["holds"]
+                 if not h.get("error") and h["pred_repo"]["i_amp"] > 0]
         checks.append({"name": "ripple_drive_law_identified", "passed": False,
+                       "verdict": "NEITHER",
                        "detail": ("the measured current 1x matches NEITHER law: "
                                   "within +/-%.0f %% of the repo law at %d and of "
                                   "fw v35 at %d of %d holds (closer to repo at %d, "
                                   "to fw v35 at %d) - a plant, pipeline or "
                                   "firmware difference the predictor does not "
-                                  "model" % (tol * 100.0, repo_ok, alt_ok, n_meas,
-                                             closer_repo, closer_alt))})
+                                  "model. Per-hold deviation from the repo law: "
+                                  "%s. Check (1) the flashed build and HIL_SIM, "
+                                  "(2) the achieved_rate / max_tick_overrun "
+                                  "checks, (3) config_mismatch, (4) the per-hold "
+                                  "deviations: a uniform offset suggests latency "
+                                  "or plant, a scatter suggests noise"
+                                  % (tol * 100.0, repo_ok, alt_ok, n_meas,
+                                     closer_repo, closer_alt,
+                                     ", ".join(_devs) or "none"))})
     st = m.get("step")
     if st:
         notes.append("drive-ripple 0->%.1f m/s step (report only; TRUE speed, "
@@ -17586,6 +17638,8 @@ def _run_plan(plan, args, problems, results, write_outputs):
                 _dr_i = ["%.3f" % h["i_1x_a"] for h in dr_m["holds"]
                          if h.get("i_1x_a") is not None]
                 key += ", ripple current 1x [%s] A" % "/".join(_dr_i)
+            if dr_spec is not None:
+                key += ", law: %s" % drive_ripple_law_verdict(checks)
             res = {"kind": "scenario", "name": item["name"], "mode": item["mode"],
                    "cmd_mode": _suite_mode(args),
                    "electrical_required": item["electrical_required"],

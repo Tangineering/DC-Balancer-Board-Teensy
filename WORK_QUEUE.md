@@ -13,6 +13,11 @@ Record: `docs/reviews/fw36_regen_2026-11-04/README.md` (findings, ranked regen c
       charger faults gated on "charger proven", selector disarm gated on FC_CHARGE_ALLOWED, OC_FC persistence,
       housekeeping, BLG v10, the regen exerciser key, serial counters; test-suite repair (re-pin the 10 stale checks,
       `#ifndef FC_CHARGE_ALLOWED` + a `run_tests_fcchg` target, reset the v35 window timers in `reset_test_state()`).
+- [ ] 3b. **HIL run of fw v37 (operator, fresh session):** HIL_SIM=1 build of v37; the 7-leg fast set + `drive-ripple-*`
+      (docs/HIL_USER_MANUAL.md section 5 "Running a subset"); then optionally the same on a v35 HIL build for the A/B.
+- [ ] 3c. **Tooling housekeeping:** `test_dp_results_db.py::test_every_stored_record_is_still_reachable_by_its_own_key`
+      fails since before 2026-11-04 (75 vs 101 records); `hil_replay_suite.TARGET_FW_VERSION` is 28 (bump deliberately);
+      the fast-set bands were set on fw v28 and have not been re-run on v29-v37.
 - [ ] 4. **Pi/EMS:** add friction to the SDP `P_demand` regen arm; bridge SAFE fallback <= 250 ms; re-run RegenTest_v2
       (decels steeper than coast-down) on the next build with a 1 kHz 'K' BLG alongside.
 

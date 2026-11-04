@@ -13919,7 +13919,15 @@ def _rip_scan(rip_dir, variant, law, mutate=None, tag=""):
         path = str(rip_dir / ("%s_%s_%s.csv" % (variant, law, tag or "full")))
         synth_ripple_csv(path, scen, coeffs, mutate=mutate)
         spec = rhs.FAULT_EXPECTATIONS[scen]["drive_ripple"]
-        _RIP_CACHE[key] = (spec, rhs.scan_drive_ripple(path, spec), path)
+        # The run's own sidecar, as the child writes it for this stimulus
+        # (contract review M1: an unreadable sidecar no longer passes
+        # ripple_config_consistent, so the "every check passes" fixtures
+        # must carry the sidecar a real run carries).
+        _cfg = dict(SCENARIOS[scen]["drive_ripple"],
+                    flywheel_radius_m=_dr.FLYWHEEL_RADIUS_M)
+        _meta = {"config": {"drive_ripple": _cfg, "drag": "rig"}}
+        _RIP_CACHE[key] = (spec, rhs.scan_drive_ripple(path, spec,
+                                                       run_meta=_meta), path)
     return _RIP_CACHE[key]
 
 
@@ -14173,7 +14181,8 @@ def _m(holds, repo_is_alt=False, step=None, i_max=12.0, meas_a_used=0.020):
     return {"variant": None, "columns_ok": True, "holds": holds, "step": step,
             "rows": 67000, "error": None, "repo_is_alt": repo_is_alt,
             "i_max_a": i_max, "meas_a_used": meas_a_used,
-            "config_mismatch": [], "law_error": None}
+            "config_mismatch": [], "law_error": None,
+            "config_verified": True}
 
 
 _SPEC_MEAS = {"variant": "meas", "meas_a": 0.020, "force_n": 0.0}
@@ -14401,10 +14410,99 @@ def test_ripple_prediction_uses_the_runs_own_sidecar_amplitude(rip_dir):
     assert not _by_name(checks)["ripple_current_1x[1.0]"]["passed"]
 
 
-def test_ripple_unreadable_sidecar_is_recorded_not_a_mismatch(rip_dir):
-    spec, m = _rescan(rip_dir, "meas", None)
-    assert m["config_mismatch"] == []
-    assert "NOT cross-checked" in m["config_source"]
+def test_ripple_unreadable_sidecar_is_not_a_mismatch_but_fails_unverified(rip_dir):
+    """Contract review M1: no mismatch is RECORDED (nothing was compared), but
+    ripple_config_consistent FAILs as NOT VERIFIED, and the amplitudes are
+    still scored from the suite constants."""
+    for meta in (None, {}):
+        spec, m = _rescan(rip_dir, "meas", meta)
+        assert m["config_mismatch"] == []
+        assert m["config_verified"] is False
+        assert "NOT cross-checked" in m["config_source"]
+        assert m["meas_a_used"] == spec["meas_a"]
+        checks, _ = rhs.judge_drive_ripple(spec, m)
+        c = _by_name(checks)["ripple_config_consistent"]
+        assert c["passed"] is False
+        assert c["detail"].startswith(
+            "NOT VERIFIED - the run's sidecar was unreadable; stimulus not "
+            "cross-checked")
+        # the amplitude checks still score (repo-law CSV -> they pass)
+        assert _by_name(checks)["ripple_current_1x[1.0]"]["passed"] is True
+
+
+def test_ripple_config_consistent_needs_an_explicit_verification():
+    """A measurement dict that does not say it was verified is not verified."""
+    m = _m([_hold()])
+    del m["config_verified"]
+    checks, _ = rhs.judge_drive_ripple(_SPEC_MEAS, m)
+    c = _by_name(checks)["ripple_config_consistent"]
+    assert c["passed"] is False and c["detail"].startswith("NOT VERIFIED")
+    # a mismatch wins over the unverified wording
+    m["config_mismatch"] = ["config.drag = 'x'"]
+    c = _by_name(rhs.judge_drive_ripple(_SPEC_MEAS, m)[0])["ripple_config_consistent"]
+    assert c["passed"] is False and "MISMATCH" in c["detail"]
+
+
+def test_ripple_neither_detail_carries_the_next_steps_and_deviations():
+    holds = [_hold(v=v, i=2.0, pr=1.0, pa=3.0) for v in (1.0, 1.5, 2.2, 2.7)]
+    c = _by_name(rhs.judge_drive_ripple(_SPEC_MEAS, _m(holds))[0])[
+        "ripple_drive_law_identified"]
+    assert c["passed"] is False and c["verdict"] == "NEITHER"
+    d = c["detail"]
+    assert "matches NEITHER law" in d
+    for needle in ("(1) the flashed build and HIL_SIM",
+                   "(2) the achieved_rate / max_tick_overrun checks",
+                   "(3) config_mismatch",
+                   "(4) the per-hold deviations: a uniform offset suggests "
+                   "latency or plant, a scatter suggests noise",
+                   "1.0 +100 %", "2.7 +100 %"):
+        assert needle in d, needle
+
+
+@pytest.mark.parametrize("i,expect", [(1.0, "repo OK"), (3.0, "v35-like"),
+                                      (2.0, "NEITHER")])
+def test_ripple_law_verdict_for_the_summary_row(i, expect):
+    holds = [_hold(v=v, i=i, pr=1.0, pa=3.0) for v in (1.0, 1.5, 2.2, 2.7)]
+    checks, _ = rhs.judge_drive_ripple(_SPEC_MEAS, _m(holds))
+    assert rhs.drive_ripple_law_verdict(checks) == expect
+
+
+def test_ripple_law_verdict_unmeasured_cases():
+    # too few holds
+    checks, _ = rhs.judge_drive_ripple(_SPEC_MEAS, _m([_hold(), _hold(v=1.5)]))
+    assert rhs.drive_ripple_law_verdict(checks) == "unmeasured"
+    # no measurement at all / law parse failure: the check never ran
+    checks, _ = rhs.judge_drive_ripple(_SPEC_MEAS, None)
+    assert rhs.drive_ripple_law_verdict(checks) == "unmeasured"
+    assert rhs.drive_ripple_law_verdict([]) == "unmeasured"
+    # repo header == v35: nothing to discriminate, the law is the repo's
+    checks, _ = rhs.judge_drive_ripple(_SPEC_MEAS, _m([_hold()], repo_is_alt=True))
+    assert rhs.drive_ripple_law_verdict(checks) == "repo OK"
+
+
+def test_ripple_summary_row_carries_the_law_verdict(rip_dir, monkeypatch, tmp_path):
+    """_run_plan() appends `law: <verdict>` to a drive-ripple leg's summary
+    row, driven end to end with a fake child that leaves a synthetic
+    repo-law CSV where the real child would."""
+    import shutil
+    _spec, _m0, src = _rip_scan(rip_dir, "meas", "repo")
+
+    def fake_run_child(item, args):
+        shutil.copyfile(src, item["csv"])
+        return {"status": "ok", "returncode": 0, "wall_s": 0.01,
+                "log": item["log"],
+                "summary": {"achieved_hz": 1000.0, "tx_frames": 10,
+                            "rx_frames": 10, "rx_bad": 0}}
+
+    monkeypatch.setattr(rhs, "run_child", fake_run_child)
+    args = _args(only=["drive-ripple-meas"], scenarios_only=True,
+                 keep_going=True, settle_s=0.0, out=str(tmp_path))
+    plan = rhs.build_plan(args)
+    assert [p["name"] for p in plan] == ["drive-ripple-meas"]
+    results, _aborted = rhs._run_plan(plan, args, [], [], lambda m, r: None)
+    km = results[0]["key_metrics"]
+    assert ", law: repo OK" in km and "ripple current 1x [" in km
+    assert results[0]["metrics"]["drive_ripple"]["repo_law_sha256"]
 
 
 def test_ripple_unparseable_repo_law_fails_ripple_law_only(rip_dir, monkeypatch):

@@ -1672,7 +1672,9 @@ gap at the boundary. On a non-HIL build nothing clears a latch except a board re
 ## 5. Suite runs
 
 ```powershell
-# scripted, everything (15 scenarios + 27 replays; `drive` is SKIPPED, see below)
+# the default plan (`--list`, 2026-11-04): 50 scenario slots + 27 replays = 77.
+# 36 scenarios execute; 14 are SKIP records by default (`drive`, see below, plus
+# the --with-ftp75 / --with-ftp75c / --with-alpha opt-in sets). ~53.5 min.
 .venv_hil\Scripts\python.exe tools\run_hil_suite.py --teensy-ip 192.168.1.50
 
 # with the live dashboard on each child (needs a real terminal)
@@ -1684,6 +1686,34 @@ gap at the boundary. On a non-HIL build nothing clears a latch except a board re
 # Mode B: a real Pi drives every scenario
 .venv_hil\Scripts\python.exe tools\run_hil_suite.py --teensy-ip 192.168.1.50 --pi-live --scenarios-only
 ```
+
+**Running a subset.** `--only` and `--skip` take shell-style `fnmatch` globs matched
+against the run name, and **repeat** — one pattern per flag, no comma lists
+(`--only a,b` matches nothing). Quote a glob so the shell does not expand it
+(`"drive-ripple-*"`). Preview first with `--list --scenarios-only` (add the same
+`--only` flags). The selected legs run in **registry order**, not in the order you typed
+them, with the usual 5 s settle between legs. The 7-leg fast set plus the ripple pair
+(~6.3 min):
+
+```powershell
+.venv_hil\Scripts\python.exe tools\run_hil_suite.py --teensy-ip 192.168.1.50 --scenarios-only `
+  --only bringup --only steady --only pi-silence --only ems-drive-cycle `
+  --only regen-harvest-true --only ems-y-b30-v1 --only comm-loss --only "drive-ripple-*"
+```
+
+The ripple pair alone (~2.4 min):
+
+```powershell
+.venv_hil\Scripts\python.exe tools\run_hil_suite.py --teensy-ip 192.168.1.50 --scenarios-only --only "drive-ripple-*"
+```
+
+The drive-ripple pair (`drive-ripple-meas` / `drive-ripple-force`, 67 s each) is in
+the **default plan**, not opt-in, and is **skipped under `--pi-live`** (its stimulus is
+the emulated EMS). It needs `tools/drive_ripple.py` beside `hil_plant_sim.py` and
+`run_hil_suite.py` (both import it at load). It scores the board against the **repo's**
+`teensy_controller/drive_controller_coeffs.h`, so the repo must match what was flashed;
+a "THE BOARD APPEARS TO RUN THE OTHER DRIVE LAW" verdict means check the flash first. See
+`docs/HIL_SCENARIOS.md`, section "Drive-law scenarios".
 
 **`--with-operator`.** The `drive` scenario is marked `operator_required`: its whole
 stimulus is a human driving the firmware over USB serial (`'V'`, `'D'`, `'Y'`). Run
@@ -1720,8 +1750,9 @@ reads:
   stopped testing its own objective — treat it as seriously as a fault failure.
 * **Longer `soc-depletion`.** Its endurance load dropped 3.0 → 2.2 A (at 3.0 A the
   surviving battery channel sat above `LIMIT_I_BT_MAX` for the whole run), and its
-  duration rose 650 → 880 s so the depletion depth is unchanged. **The full suite is
-  now ~34.5 min rather than ~30.6.**
+  duration rose 650 → 880 s so the depletion depth is unchanged. (The suite length
+  quoted here at the time, ~34.5 min, is long stale: `--list` puts the 2026-11-04
+  default plan at ~53.5 min, and ~101.8 min with all three opt-in sets.)
 
 **The EMS frontier check (cross-run, 2026-09-01).** Every check above is
 per-run, and an energy-management result is a COMPARISON — campaign

@@ -628,3 +628,30 @@ phase while dwells and periods repeat - pin them with windows, not instants.
 command reproduces; a regenerated DP table or an inverted MPC plan changes the command, and the bridge then measures the plan,
 not the plant - say which before quoting a delta. Under the convex map every plan went FC-heavy (the MPC and the DP tables
 alike): read the command census before any anchor from the linear era.
+
+## drive-ripple legs (2026-11-04)
+
+`drive-ripple-meas` / `drive-ripple-force` (67 s each, default plan, registered last; `docs/HIL_SCENARIOS.md` 6a)
+inject a once-per-flywheel-revolution ripple: a 0.020 m/s measurement ripple on the injected speed, or a 1.0 N force
+ripple in the mechanics.
+- **Columns.** `v_true` and `fly_theta` exist ONLY on these two legs (the last two CSV columns); read them by header
+  name, never by index. `v_actual` is the INJECTED (measured) speed, which carries the artefact on `-meas`.
+- **Scored quantity.** The 1x of `current` (the post-clamp motor command), lock-in demodulated on the plant flywheel
+  angle `fly_theta` over a whole number of revolutions of each hold. The verdicts, holds, predictions, bus signature
+  and step metrics are in `results.json` `metrics["drive_ripple"]`; the summary row ends `law: repo OK / v35-like /
+  NEITHER / unmeasured`.
+- **Scored law.** The REPO `teensy_controller/drive_controller_coeffs.h`, provenance `repo_law_sha256`. A loud
+  "THE BOARD APPEARS TO RUN THE OTHER DRIVE LAW" means check what was flashed first; it is not a law defect until the
+  flash is confirmed.
+- **Stimulus provenance.** The run's sidecar `config.drive_ripple` (and `config.drag`); `ripple_config_consistent`
+  FAILs on a mismatch and on an unreadable sidecar ("NOT VERIFIED").
+- **Constants hash.** `DRIVE_RIPPLE_*` constants are excluded from the constants hash (stimulus shape, like
+  `FW26_`), and with the hooks off every other leg is byte-identical, so a hash move is never caused by these legs.
+- **Cosmetic and boundary notes.**
+  - The `hold-5050` EMS demonstration banner on these legs is cosmetic (the EMS is only the setpoint source).
+  - They are NOT in the matched-DP pass.
+  - The 0 -> 2 m/s step briefly takes the two-source total to ~1.41-1.43 A, near the fw v26 clamp reachability.
+    Aux bits 4/5 (`fc_ceil` / `bt_ceil`) may flicker there; that is not a clamp finding.
+  - The discriminator check reads `v_true` and validates the hooks and the board's loop gain, not a bench method.
+    The bench-transferable bus signature is report-only.
+  - The report header's "target fw v28" (`hil_replay_suite.TARGET_FW_VERSION`) is stale and is not a v37 finding.

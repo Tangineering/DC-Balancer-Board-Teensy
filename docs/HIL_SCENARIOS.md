@@ -651,109 +651,6 @@ every frontier number is a RANKING on one rig and not an absolute mass.
   zero-cutoff, and the Mode-A command path on a realistic profile; it is the
   scenario whose sub-1 % repeatability anchors cross-campaign comparisons.
 
-### drive-ripple-meas / drive-ripple-force (67 s each, any engine, EMS `hold-5050`) — 2026-11-04
-
-- **Tests:** the drive law's response to a once-per-flywheel-revolution ripple, the
-  A/B that fw v37's lower-crossover law exists for (`docs/fw37_planning_2026-11-04.md`
-  sections 6.1, 9.1). The plant's flywheel is otherwise perfectly smooth, so these
-  are the only legs that contain the disturbance. Each leg injects one hypothesis
-  through `Plant`'s rotation-locked hooks (`SCENARIOS[...]["drive_ripple"]`,
-  `docs/HIL_PLANT.md` section 3.7), locked to the plant's own flywheel angle
-  (R = 0.0762 m, `FLYWHEEL_RADIUS_M`; f_rot = 2.089 Hz per m/s):
-  - `drive-ripple-meas`: **measurement** ripple (encoder artefact), 0.020 m/s peak 1x
-    on the injected `v_actual` only; the true speed is untouched. The amplitude is
-    **constant** in m/s; a real eccentric disc reads v(1 + e cos θ), i.e. an artefact
-    proportional to speed and signed with the rotation direction. The constant form
-    follows the bags' flat ~13–14 mm/s "external" component (planning section 6.2).
-  - `drive-ripple-force`: **force** ripple (real speed ripple), 1.0 N peak 1x added to
-    the net force; the true speed ripples and the injected speed shows it. The plant
-    refuses `force_n >= F_COULOMB` and negative or non-finite amplitudes.
-- **Profile:** SAFE → HYBRID at 3.0 s; ramps to cruise **holds of 10 s at 1.0, 1.5,
-  2.2, 2.7 m/s** (t = 5–15, 16–26, 27–37, 38–48; the first 4 s of each is settle,
-  the last **6 s analysed**, 12–33 whole revolutions); setpoint drop to 0 at 48 (zero
-  cutoff, coast to rest in 3.6 s); a **0 → 2.0 m/s step at 55.0 held 6 s**; setpoint 0
-  at 61; Run exit at 64; end at 67. Share fixed at 0.50 (in band — the share loop is
-  not exercised on purpose); no segment commands braking current (every slow-down is a
-  zero-cutoff coast, because a tracked ramp-down near standstill swings the
-  ripple-modulated command negative). New CSV columns `v_true` and `fly_theta` are
-  appended on these two legs only. The pair is registered LAST, so no existing leg's
-  plan position moves, and it is excluded from the matched-DP pass (a drive-law
-  experiment, not an EMS leg).
-- **Pass/fail** (`FAULT_EXPECTATIONS[...]["drive_ripple"]`, `scan_drive_ripple()` /
-  `judge_drive_ripple()`): fault-free (`allow_only: 0`) and in Run at t = 60.5; then,
-  from a least-squares lock-in on `fly_theta` over an integer number of revolutions
-  (mean and trend fitted jointly):
-  - `ripple_law` (only on failure) — the repo `drive_controller_coeffs.h` did not
-    parse. The leg FAILs with the parser's message and the rest of the campaign runs;
-    `build_plan()` warns up front. The scored law's sha256 is recorded in
-    `metrics["drive_ripple"]["repo_law_sha256"]`.
-  - `ripple_config_consistent` — the run's own sidecar (`config.drive_ripple`,
-    `config.drag`) matches the expectation. The prediction is built from the
-    sidecar's values; a mismatch is a FAIL, never a silent re-score.
-  - `ripple_current_1x[v]` — the `current` 1x amplitude within **±15 %** of the
-    prediction from the **repo** `drive_controller_coeffs.h` closed around this plant's
-    `M_EFF`/`B_EFF`/`K_F` (`tools/drive_ripple.py`: |C S|·A_meas, or |T|·F/K_F). The fw
-    v35 law's prediction (frozen table from `ab4a705`) is printed beside it.
-  - `ripple_discriminator[v]` — a **hook and loop-gain** check, not a bench method.
-    Meas: true/injected 1x within ±15 % of the predicted |L(f_rot)| (the
-    board-dependent part) **and** injected-minus-true 1x within 10 % of A_meas. Force:
-    true/injected in [0.9, 1.1] **and** injected-minus-true 1x under 5 % of the
-    injected 1x. It reads `v_true`, which no bench log has; on bench observables
-    i / v_inj = −C under **both** hypotheses, so it does not transfer.
-  - `ripple_unsaturated[v]` — no `current` sample within 0.05 A of the ±12 A rail.
-  - `ripple_drive_law_identified` — needs **≥ 3 measured holds** and a match (within
-    ±15 %) to the repo law at a **strict majority** of them; ties fail. When it fails
-    and the measurement is within ±15 % of the fw v35 law at a majority, the detail
-    says the board **appears to run the other drive law** (the suite cannot read
-    `FW_VERSION`); otherwise it says the measurement **matches neither law**.
-  - **Report only** (notes, `metrics["drive_ripple"]`): the step's 2 % settle,
-    overshoot, peak `current` and rail time, all on `v_true`, which still carries the
-    1x (one amplitude is +0.25–0.76 % of 2.0 m/s, riding on the overshoot); the
-    `I_fc + I_batt` 1x; phases; and the **bench-transferable bus signature** below.
-- **Bench-transferable signature (report only).** The bus current is billed from the
-  TRUE shaft power, I_bus ≈ K_F·i·v_true/(η_boost·V_bus) + const, so to first order
-  δI_bus = k_bus(v0·δi + I0·δv_true). In bench terms (measured i and v_inj phasors
-  only): artefact hypothesis δv_true = −L·v_inj (L the predicted loop gain); real
-  hypothesis δv_true = v_inj. Both predicted bus phasors are printed beside the
-  measured one, with their contrast. The common v0·δi term dominates, so the contrast
-  is small (6–12 % on the simple engine); a verdict is printed only when one residual
-  is under half the other, otherwise "indistinct". Under the hi-fi engine the gain is
-  approximate (the source currents are converter terminals); the phase is what
-  separates the hypotheses.
-- **Expected `current` 1x amplitudes** (HIL plant, nominal 1.0 ms pipeline latency,
-  2.0 ms controller period; holds 1.0 / 1.5 / 2.2 / 2.7 m/s):
-
-  | law | meas (A) | force (A) | meas true/injected |
-  |-----|----------|-----------|--------------------|
-  | fw v37 (repo) | 0.642 / 0.624 / 0.587 / 0.555 | 0.698 / 0.453 / 0.290 / 0.224 | 0.461 / 0.297 / 0.192 / 0.150 |
-  | fw v35 | 1.511 / 1.798 / 1.846 / 1.818 | 1.645 / 1.305 / 0.913 / 0.733 | 1.409 / 0.861 / 0.557 / 0.442 |
-
-  Step (offline simulation, true speed): fw v37 ~1.8 s settle / ~9 % overshoot; fw v35
-  ~1.25 s / ~3–4 %; both ~1.05 s on the +12 A rail.
-- **Tolerance basis (±15 %, tightened from the spec's proposed ±25 %; re-derived in
-  the fix round):**
-
-  | term | bound |
-  |------|-------|
-  | HIL pipeline latency outside the controller ZOH, band [0, 3] ms around a 1.0 ms nominal (host-tick round trip R = 1–3 ms, minus the tick the step-before-send lead cancels, plus a late-`loop()` tick) | ≤ 4.1 % (fw v35), ≤ 1.4 % (fw v37) |
-  | board's effective controller period 2.0–2.1 ms (`rateLimitDue()` re-arms from `now`) | ≤ 1.1 % alone; ≤ 4.1 % jointly with the latency band |
-  | predictor vs a tick-exact simulation of the same Hanus recursion and plant | ≤ 0.022 % |
-  | lock-in estimation | < 0.1 % |
-
-  About 4.3 % is accounted for, which leaves roughly 3.5x margin. The two laws differ
-  by 2.4–3.3x, so the band can never admit the other law. Within one 6 s window the
-  free-running clock phases are a fixed draw, not their mean, so a run sits at one
-  round trip (or alternates between two adjacent ones).
-- **Deviation from the first spec:** the meas-leg discriminator was specified as
-  "true/injected < 0.3". That ratio is the loop gain |L(f_rot)|, which is 0.46 for fw
-  v37 and 1.41 for fw v35 at the 1.0 m/s hold, so a fixed bound fails a correct board;
-  it is scored against the prediction instead, and the artefact itself (injected minus
-  true) is scored directly.
-- **Why useful:** the only HIL evidence of the drive law's ripple amplification; a
-  validation of the plant hooks and of the board's loop gain where the truth is known;
-  a bench-transferable bus signature to compare against the SD capture; and, because
-  the suite cannot see `FW_VERSION`, a drive-law identifier.
-
 ### ems-soc-band (61 s, any engine, EMS `soc-band`)
 
 - **Tests:** the causal charge-sustaining EMS: a drain phase walks SoC out of the
@@ -1812,6 +1709,130 @@ policy failure.
 15.4 min** on bench. `run_hil_suite.py --list` prints the figure alongside the
 other opt-in sets, with an extra line recording that this set is the only one
 that changes the plant.
+
+## 6a. Drive-law scenarios
+
+Legs whose subject is the velocity loop itself, not energy management. They borrow the `hold-5050` EMS only as a setpoint source (the demonstration banner it prints is cosmetic), pin the share at 0.50, and are excluded from the matched-DP pass.
+
+### drive-ripple-meas / drive-ripple-force (67 s each, any engine, EMS `hold-5050`) — 2026-11-04
+
+- **Tests:** the drive law's response to a once-per-flywheel-revolution ripple, the
+  A/B that fw v37's lower-crossover law exists for (`docs/fw37_planning_2026-11-04.md`
+  sections 6.1, 9.1). The plant's flywheel is otherwise perfectly smooth, so these
+  are the only legs that contain the disturbance. Each leg injects one hypothesis
+  through `Plant`'s rotation-locked hooks (`SCENARIOS[...]["drive_ripple"]`,
+  `docs/HIL_PLANT.md` section 3.7), locked to the plant's own flywheel angle
+  (R = 0.0762 m, `FLYWHEEL_RADIUS_M`; f_rot = 2.089 Hz per m/s):
+  - `drive-ripple-meas`: **measurement** ripple (encoder artefact), 0.020 m/s peak 1x
+    on the injected `v_actual` only; the true speed is untouched. The amplitude is
+    **constant** in m/s; a real eccentric disc reads v(1 + e cos θ), i.e. an artefact
+    proportional to speed and signed with the rotation direction. The constant form
+    follows the bags' flat ~13–14 mm/s "external" component (planning section 6.2).
+  - `drive-ripple-force`: **force** ripple (real speed ripple), 1.0 N peak 1x added to
+    the net force; the true speed ripples and the injected speed shows it. The plant
+    refuses `force_n >= F_COULOMB` and negative or non-finite amplitudes.
+- **Running it:** in the default plan (not opt-in) and registered last; run the pair
+  alone with `run_hil_suite.py --scenarios-only --only "drive-ripple-*"` (quote the glob;
+  `docs/HIL_USER_MANUAL.md` section 5, "Running a subset"). It is skipped under `--pi-live`
+  and scores against the repo `drive_controller_coeffs.h`, so the repo must match the flash.
+- **Profile:** SAFE → HYBRID at 3.0 s; ramps to cruise **holds of 10 s at 1.0, 1.5,
+  2.2, 2.7 m/s** (t = 5–15, 16–26, 27–37, 38–48; the first 4 s of each is settle,
+  the last **6 s analysed**, 12–33 whole revolutions); setpoint drop to 0 at 48 (zero
+  cutoff, coast to rest in 3.6 s); a **0 → 2.0 m/s step at 55.0 held 6 s**; setpoint 0
+  at 61; Run exit at 64; end at 67. Share fixed at 0.50 (in band — the share loop is
+  not exercised on purpose); no segment commands braking current (every slow-down is a
+  zero-cutoff coast, because a tracked ramp-down near standstill swings the
+  ripple-modulated command negative). New CSV columns `v_true` and `fly_theta` are
+  appended on these two legs only. The pair is registered LAST, so no existing leg's
+  plan position moves, and it is excluded from the matched-DP pass (a drive-law
+  experiment, not an EMS leg).
+- **Pass/fail** (`FAULT_EXPECTATIONS[...]["drive_ripple"]`, `scan_drive_ripple()` /
+  `judge_drive_ripple()`): fault-free (`allow_only: 0`) and in Run at t = 60.5; then,
+  from a least-squares lock-in on `fly_theta` over an integer number of revolutions
+  (mean and trend fitted jointly):
+  - `ripple_columns` — the CSV carries `v_true` / `fly_theta` (a child that predates
+    the hooks, or a scenario that did not declare them, FAILs here and nothing else
+    is scored); its detail carries the scored law's sha256.
+  - `ripple_law` (only on failure) — the repo `drive_controller_coeffs.h` did not
+    parse. The leg FAILs with the parser's message and the rest of the campaign runs;
+    `build_plan()` warns up front. The scored law's sha256 is recorded in
+    `metrics["drive_ripple"]["repo_law_sha256"]`.
+  - `ripple_config_consistent` — the run's own sidecar (`config.drive_ripple`,
+    `config.drag`) matches the expectation. The prediction is built from the
+    sidecar's values; a mismatch is a FAIL, never a silent re-score. An unreadable
+    sidecar also FAILs ("NOT VERIFIED - the run's sidecar was unreadable; stimulus not
+    cross-checked"), while the amplitudes are still scored from the suite constants.
+  - `ripple_current_1x[v]` — the `current` 1x amplitude within **±15 %** of the
+    prediction from the **repo** `drive_controller_coeffs.h` closed around this plant's
+    `M_EFF`/`B_EFF`/`K_F` (`tools/drive_ripple.py`: |C S|·A_meas, or |T|·F/K_F). The fw
+    v35 law's prediction (frozen table from `ab4a705`) is printed beside it.
+  - `ripple_discriminator[v]` — a **hook and loop-gain** check, not a bench method.
+    Meas: true/injected 1x within ±15 % of the predicted |L(f_rot)| (the
+    board-dependent part) **and** injected-minus-true 1x within 10 % of A_meas. Force:
+    true/injected in [0.9, 1.1] **and** injected-minus-true 1x under 5 % of the
+    injected 1x. It reads `v_true`, which no bench log has; on bench observables
+    i / v_inj = −C under **both** hypotheses, so it does not transfer.
+  - `ripple_unsaturated[v]` — no `current` sample within 0.05 A of the ±12 A rail. A
+    sanity check that the holds are linear (expected peaks 4–6 A), not a margin test.
+  - `ripple_drive_law_identified` — needs **≥ 3 measured holds** and a match (within
+    ±15 %) to the repo law at a **strict majority** of them; ties fail. When it fails
+    and the measurement is within ±15 % of the fw v35 law at a majority, the detail
+    says the board **appears to run the other drive law** (the suite cannot read
+    `FW_VERSION`; check the flash first); otherwise it says the measurement **matches
+    neither law** and lists next steps (the flashed build and `HIL_SIM`, the
+    `achieved_rate` / `max_tick_overrun` checks, `config_mismatch`, and the per-hold
+    deviations: a uniform offset suggests latency or plant, a scatter suggests noise).
+    The verdict is appended to the summary row as `law: repo OK` / `law: v35-like` /
+    `law: NEITHER` / `law: unmeasured`.
+  - **Report only** (notes, `metrics["drive_ripple"]`): the step's 2 % settle,
+    overshoot, peak `current` and rail time, all on `v_true`, which still carries the
+    1x (one amplitude is +0.25–0.76 % of 2.0 m/s, riding on the overshoot); the
+    `I_fc + I_batt` 1x; phases; and the **bench-transferable bus signature** below.
+- **Bench-transferable signature (report only).** The bus current is billed from the
+  TRUE shaft power, I_bus ≈ K_F·i·v_true/(η_boost·V_bus) + const, so to first order
+  δI_bus = k_bus(v0·δi + I0·δv_true). In bench terms (measured i and v_inj phasors
+  only): artefact hypothesis δv_true = −L·v_inj (L the predicted loop gain); real
+  hypothesis δv_true = v_inj. Both predicted bus phasors are printed beside the
+  measured one, with their contrast. The common v0·δi term dominates, so the contrast
+  is small (6–12 % on the simple engine); a verdict is printed only when one residual
+  is under half the other, otherwise "indistinct". Under the hi-fi engine the gain is
+  approximate (the source currents are converter terminals); the phase is what
+  separates the hypotheses.
+- **Expected `current` 1x amplitudes** (HIL plant, nominal 1.0 ms pipeline latency,
+  2.0 ms controller period; holds 1.0 / 1.5 / 2.2 / 2.7 m/s):
+
+  | law | meas (A) | force (A) | meas true/injected |
+  |-----|----------|-----------|--------------------|
+  | fw v37 (repo) | 0.642 / 0.624 / 0.587 / 0.555 | 0.698 / 0.453 / 0.290 / 0.224 | 0.461 / 0.297 / 0.192 / 0.150 |
+  | fw v35 | 1.511 / 1.798 / 1.846 / 1.818 | 1.645 / 1.305 / 0.913 / 0.733 | 1.409 / 0.861 / 0.557 / 0.442 |
+
+  Step (offline simulation, true speed): fw v37 ~1.8 s settle / ~9 % overshoot; fw v35
+  ~1.25 s / ~3–4 %; both ~1.05 s on the +12 A rail. The fw v37 figure is on the HIL
+  plant (`M_EFF`/`B_EFF`/`K_F` plus Coulomb friction and the ±12 A rail), so it does not
+  equal the 1.624 s / 11.6 % in the ledger, which is the synthesis plant's.
+- **Tolerance basis (±15 %, tightened from the spec's proposed ±25 %; re-derived in
+  the fix round):**
+
+  | term | bound |
+  |------|-------|
+  | HIL pipeline latency outside the controller ZOH, band [0, 3] ms around a 1.0 ms nominal (host-tick round trip R = 1–3 ms, minus the tick the step-before-send lead cancels, plus a late-`loop()` tick) | ≤ 4.1 % (fw v35), ≤ 1.4 % (fw v37) |
+  | board's effective controller period 2.0–2.1 ms (`rateLimitDue()` re-arms from `now`) | ≤ 1.1 % alone; ≤ 4.1 % jointly with the latency band |
+  | predictor vs a tick-exact simulation of the same Hanus recursion and plant | ≤ 0.022 % |
+  | lock-in estimation | < 0.1 % |
+
+  About 4.3 % is accounted for, which leaves roughly 3.5x margin. The two laws differ
+  by 2.4–3.3x, so the band can never admit the other law. Within one 6 s window the
+  free-running clock phases are a fixed draw, not their mean, so a run sits at one
+  round trip (or alternates between two adjacent ones).
+- **Deviation from the first spec:** the meas-leg discriminator was specified as
+  "true/injected < 0.3". That ratio is the loop gain |L(f_rot)|, which is 0.46 for fw
+  v37 and 1.41 for fw v35 at the 1.0 m/s hold, so a fixed bound fails a correct board;
+  it is scored against the prediction instead, and the artefact itself (injected minus
+  true) is scored directly.
+- **Why useful:** the only HIL evidence of the drive law's ripple amplification; a
+  validation of the plant hooks and of the board's loop gain where the truth is known;
+  a bench-transferable bus signature to compare against the SD capture; and, because
+  the suite cannot see `FW_VERSION`, a drive-law identifier.
 
 ## 7. Share-loop and topology scenarios
 

@@ -1004,3 +1004,13 @@ pairing, the encoder/current-noise analysis, the v37 scope), WORK_QUEUE 0j / 0k.
   as-found errored charger before `J 2 1`; a BENCH_TEST 1 build compiles it out. Tests 5027 / 210 / 5337 / 51.
 - **Bench next:** flash v37; `J` (B1: does 0x30 ACK, as-found regs, does it charge); the SD capture of planning 6.3 on
   v35 before the flash and v37 after (open-loop holds as control); hand-turn 10 revs for the 1800/1780 count check.
+- **HIL drive-ripple scenarios (tooling round, same day):** `drive-ripple-meas` (0.020 m/s once-per-rev artefact on the
+  injected speed) and `drive-ripple-force` (1.0 N once-per-rev force), 67 s each: holds at 1.0/1.5/2.2/2.7 m/s + a
+  0->2 m/s step. Scored: the motor-current 1x lock-in within +/-15 % of the prediction from the REPO
+  `drive_controller_coeffs.h` closed around the HIL plant (`tools/drive_ripple.py`; predictor = tick-exact simulation to
+  0.02 %; budget ~4.3 %); v37 expects 0.642/0.624/0.587/0.555 A (meas) and 0.698/0.453/0.290/0.224 A (force), v35
+  1.51-1.85 / 0.73-1.65 A; the law verdict (`law: repo OK / v35-like / NEITHER`) on the summary row. Hooks off =
+  byte-identical streams, `constants_hash` unchanged. The scored artefact/real discriminator needs the plant's true
+  speed - NOT a bench method. Docs: HIL_SCENARIOS.md section 6a, HIL_PLANT.md 3.7, HIL_USER_MANUAL.md section 5
+  "Running a subset". Pre-existing (not this round): `test_dp_results_db.py::test_every_stored_record_is_still_reachable_by_its_own_key`
+  fails (75 vs 101); `hil_replay_suite.TARGET_FW_VERSION` still 28.
