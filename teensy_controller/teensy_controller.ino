@@ -2475,15 +2475,20 @@ static_assert(AG105_MPPT_N_FLOOR <= AG105_MPPT_N_CEIL,
 #define AG105_CHG_BACKOFF_DWELL_MS 15u   // ms of sustained sag before backing off
 
 // -- fw v31: REGEN-ONLY CHARGING POLICY -------------------------------------
-// 0 = charge_goal may open the REGEN path only (motor -> battery). The FC->charger
-//     harvest branch in chargingControl() is skipped entirely and the bus is left
-//     in the same state as charge_goal==0, with BT on the bus.
-// 1 = pre-v31 behaviour: cruise/coast harvests from the fuel cell into the pack.
+// 0 = FC_CHARGE_ENABLE is never opened from the Run control path. The regen
+//     path (motor -> battery) is unaffected. 1 = pre-v31 FC->battery harvest.
 //
-// WHY A FLAG AND NOT A DELETION. The harvest branch carries the whole fw v28 F1
-// fix (disarm-before-open, conduction gate) and the fw v24 MPPT release holdoff.
-// That reasoning is board-real and expensive; it must not have to be re-derived
-// from a diff later. Skipping the branch costs nothing and keeps it.
+// This gates ONE LINE: the conduction-gated assertFcChargeEnable(true) call in
+// chargingControl()'s cruise branch. Everything else in that branch still runs --
+// the fw v28 F1 disarm-before-open, the REGEN_ENABLE close, the fw v24 MPPT
+// release holdoff -- because those manage the BUS, not the charger.
+//
+// DO NOT 'simplify' this into an early-out branch. assertFcChargeEnable(true)
+// also RESTORES FC_BUS when the share-setpoint latch has it cut (see its S2
+// ordering) and clears shareSpCutBT. A branch that skips the call and then
+// re-closes BT only on !shareSpCutBT leaves BOTH bus switches open whenever a
+// share cut is latched: the bus goes source-less and collapses at I_AUX/C_VBUS,
+// which is the campaign-G/H UV_BUS latch. Measured on the bench 2026-10-27.
 #define FC_CHARGE_ALLOWED 0
 static_assert(AG105_CHG_BACKOFF_DWELL_MS < UV_BUS_DWELL_LATCH_MS,
               "Charger UV backoff dwell must be shorter than the UV latch dwell");
@@ -4124,7 +4129,7 @@ void encDirCommitTick() {
 // header (format v2 and later, offset 18) so logged data is attributable to the
 // firmware that produced it, printed at boot and in the State-98 'S' status.
 // 0 is reserved for "pre-versioning" (logs PS0001–TP0005 and earlier).
-#define FW_VERSION 30
+#define FW_VERSION 31
 
 #ifndef BENCH_TEST
 #define BENCH_TEST 0
@@ -6247,6 +6252,9 @@ void setup() {
     Serial1.begin(115200);
     Serial.print("[BOOT] DC balancer firmware v"); Serial.print(FW_VERSION);
     Serial.print(" (BENCH_TEST="); Serial.print(BENCH_TEST); Serial.println(")");
+    Serial.print("[BOOT] FC_CHARGE_ALLOWED="); Serial.print(FC_CHARGE_ALLOWED);
+    Serial.println(FC_CHARGE_ALLOWED ? "  (FC MAY charge the pack)"
+                                     : "  (regen only: motor -> battery)");
 #if HIL_SIM
     // Loud on purpose: in this build every sensor value is fiction supplied by a host, so the
     // firmware's switch decisions are made against a simulated plant. Attaching it to a real
@@ -13775,28 +13783,6 @@ void chargingControl() {
         // returns later, either through this same site once the bus recovers above
         // V_BUS_CHARGED_THRESH, or through the share latch's own release.
         if (!shareSpCutBT && !busHotPlugUnsafe(BT_REG_ENABLE)) writeBusSwitch(BT_BUS_ENABLE, HIGH);
-    } else if (!FC_CHARGE_ALLOWED) {
-        // -- fw v31: REGEN-ONLY -----------------------------------------------
-        // charge_goal is up, but the motor is not giving current back on this
-        // tick (and the bus is not in UV backoff). Pre-v31 fell through to the
-        // harvest branch below and opened FC->charger here, which is the fuel
-        // cell charging the pack - not what charge_goal was raised to ask for.
-        //
-        // That fall-through was always reachable, but it became the COMMON case
-        // once the Pi began arming regen on ANY negative P_demand: P_demand goes
-        // negative from the drive-cycle differentiator a tick or two before the
-        // velocity loop actually commands braking current, and every one of
-        // those ticks landed here.
-        //
-        // Hold the same terminal state as the charge_goal==0 branch, in the same
-        // order (guarded FC_CHARGE first, then a bare REGEN write, then BT), so
-        // this is the proven sequence and not a new arrangement of the switches.
-        assertFcChargeEnable(false);
-        digitalWrite(REGEN_ENABLE, LOW);
-        digitalWrite(MPPT_DISABLE, LOW);
-        mpptReleased = false;             // deliberate mode change - no holdoff
-        // share setpoint latch owns this switch - updateShareSetpointCutoff()
-        if (!shareSpCutBT) writeBusSwitch(BT_BUS_ENABLE, HIGH);
     } else {
         // Cruise/coast: close regen path and harvest via the FC→charger path.
         digitalWrite(REGEN_ENABLE, LOW);
@@ -13872,7 +13858,7 @@ void chargingControl() {
         // The two tests are now SEQUENTIAL, not exclusive (review S5). From a BT selection the
         // disarm above leaves FC_BUS LOW, so test (2) refuses on this period exactly as the
         // else-if did; from an FC selection FC_BUS is already HIGH and the window opens now.
-        if (digitalRead(FC_BUS_ENABLE) == HIGH && !busSwitchBlanked(FC_BUS_ENABLE)) {
+        if (FC_CHARGE_ALLOWED && digitalRead(FC_BUS_ENABLE) == HIGH && !busSwitchBlanked(FC_BUS_ENABLE)) {
             assertFcChargeEnable(true);       // (2) conduction-gated
         }
         // Release the MPPT input-voltage-threshold regulator ONLY once the charger reports ready,
