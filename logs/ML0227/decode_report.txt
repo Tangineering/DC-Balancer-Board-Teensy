@@ -1,0 +1,4 @@
+[decode_benchlog] version=9 fw_version=37 profile_type=8 start_millis=742640 start_micros=742640982 K_DROOP=0.300 ohm
+[decode_benchlog] records read: 30204
+[decode_benchlog] trailer: records_written=30204 dropped_count=0 abandoned=0 close_reason=fault error_code=7
+[decode_benchlog] max_interval_us=2420 missed_periods=1489

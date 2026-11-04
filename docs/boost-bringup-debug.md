@@ -1519,6 +1519,161 @@ the loaded knee against the 7.8 V @ 2.6 A brochure figure; TPS61288 VIN-UVLO dro
 soft-start on recovery; which firmware path fires; V_bus and I_batt across one purge. This
 measurement also closes the purge-timing TODO in `docs/HIL_PLANT.md`.
 
+### First Ag105 commissioning session (`J` `1`) — the bench FC supply reset itself at t ≈ 22.9 s after charger power, `ERR_UV_FC` latched; damage NOT YET ASSESSED (2026-11-04 ~14:54; serial output pasted by the operator; SD log `ML0002.BLG` on the card, not yet pulled; no scope recorded)
+
+**Source:** operator report + the `[J]` monitor/summary text. The 1 kHz SD log `ML0002.BLG`
+(30 204 records, closed cleanly on the latch; it will be renamed `ML0227` on upload — the card's
+counter restarted after it was cleared, see `docs/fw37_planning_2026-11-04.md` §10.3) has NOT been
+analysed yet, so the event sequence (which rail moved first, and by how much) is **UNMEASURED**.
+
+**Conditions:** fw v37 (`BENCH_TEST 1`, `USE_ETHERNET 0`), State 98. BT terminal: the 2S RC Buddy
+pack (~7.7 V). FC terminal: a stiff bench DC supply standing in for the H-20, set to 10-11 V (operator;
+V_fc logged 11.12 V idle); current limit not recorded. The serial record is the single `[J]`
+monitor line quoted below plus the fault and summary block - no other `[J]` lines were captured. `G` bring-up done before the session (so `BT_SEQUENCE_ENABLE` HIGH from
+the bring-up's P1, both boosts and both bus switches on, `MOT_PWR_ENABLE` HIGH). The session's
+power edge: `REGEN_ENABLE` HIGH (the charger fed FROM THE BUS through D-MT-EN + D-RG-EN — the
+bench-attended R3 exception), `MPPT_DISABLE` LOW (inhibited), pollAg105() auto-config inhibited,
+no EPROM writes (`J` `1` only — read-only). Single variable vs the prior datapoint: the FIRST
+powered engagement of `REGEN_ENABLE` / the Ag105 on this board (the WATCH ITEM in the
+2026-08-07 D-RG-EN note above).
+
+**Observed (serial):**
+- The Ag105 ACKed at 0x30 20 ms after power (2 NAKs over the session).
+- As-found EPROM: reg 0x00 = 0x01 (2.5 A), reg 0x01 = 0x08 (2S / 8.4 V) — already the firmware's
+  target config (a pre-v37 lazy config had written it) — and **reg 0x02 = 21 (12.848 V)**, a
+  v24-era dynamic threshold, BELOW the bus. Firmware 0x00.0x1B.
+- Ag105-measured: V_in (reg 0x07) 15.93 V = the bus; **V_batt (reg 0x05) 4.93–4.99 V while the pack
+  reads ~7.7 V** (board V_batt ADC ~7.6–7.7 V in ML0226, same pack, ~15 min earlier).
+- Status bytes seen over the session: 0x00 Battery Disconnect, 0x04 Bring-Up Charge, **0x05
+  OC/Regulation Error**. Max I_charge (reg 0x06) **1.408 A**; 0.000 A at the last line.
+- CHARGER_STAT pin steady LOW throughout (Table 5: steady LOW = "input voltage removed") although
+  the Ag105 itself reported V_in 15.93 V.
+- First 500 ms after power (~1 kHz loop sampling, not a scope): V_bus min 15.90 V, V_chg max
+  15.88 V, V_rgn max 13.50 V (uncalibrated). No bus sag at the power edge.
+- Last monitor line before the fault (t = 22 900 ms): V_chg 15.83 V, V_bus 15.92 V, Ibt 0.056 A,
+  **Ifc 0.000 A**, status 0x04.
+- `[FAULT] flags=0x8040 code=0x7` = `FAULT_UV_FC` + `FAULT_ERROR`, from State 98, ~40 ms after
+  that line. No UV_BUS, OV_*, or other flag. (UV_FC is the armed leaky dwell, 1000 ms at 4.5 V,
+  so V_fc had been low for ~1 s before the latch, if the dwell ran from clean.)
+
+**Observed (operator):** while reading the output the operator heard a noise from the DC supply,
+which appeared to have reset itself; the operator switched the supply off, then a few seconds
+later unplugged the battery.
+
+**Inferred (UNCONFIRMED, pending `ML0002`):**
+- The UV_FC latch is the CONSEQUENCE of the supply dropping its output, not a cause; Ifc = 0.000
+  at 22.9 s suggests the FC source had already stopped delivering by then.
+- What made the supply reset is unknown. Candidates, none tested: (a) the supply's own
+  protection (OVP/OCP trip, a back-feed into its output terminal) — no firmware-visible path
+  from the bus back to the FC terminal is known (D-FC-EN blocks reverse, the boost body diode
+  conducts input → output only); (b) a load step the supply could not ride; (c) a supply fault
+  unrelated to the board. The logged V_fc / I_fc / V_bus / V_chg / I_batt at 1 kHz around
+  t ≈ 21–24 s will discriminate (a)/(b) from (c).
+- The Ag105 does not see the pack: V_batt 4.93 V ≠ 7.7 V, Battery Disconnect / Bring-Up states.
+  Consistent with BOTH open hardware items in `docs/fw37_planning_2026-11-04.md` §3.4: **D-BT-SQ
+  orientation** (schematic: VIN = charger output, VOUT = pack — then the RT1987 blocks the pack
+  from the charger's VBAT pin whenever V_chg_out < V_pack, and the charger sees an open
+  battery) and **Ag105 VBat- tied to GND** (datasheet p.4 forbids). Where the 1.408 A reported
+  by reg 0x06 flowed is unknown; the 0x05 OC/Regulation Error is plausibly the module
+  regulating into a node that is not the pack. **UNCONFIRMED.**
+
+**Log analysis (`logs/ML0227` = the card's `ML0002`, pulled the same afternoon; 30 204 records,
+34.93 s, close_reason fault / error 7; 1 489 missed periods - the `J` session's I2C reads, max
+interval 2.4 ms). This SUPERSEDES the "UNMEASURED" note and the "consequence, not a cause" and
+candidate (a)/(b)/(c) bullets above.** Log t = 0 is the start of the manual log; the charger
+power edge is at log t ≈ 12.0 s (V_chg 0 -> 15.83 V), so `J` t (ms after power) = log t - 12.0 s.
+- t 12-23.69 s: quiescent. I_fc ~7.5 mA, I_batt ~16 mA (both a few ADC LSB), V_bus 15.92 V.
+- **t 23.69-24.72 s (J t ≈ 11.7-12.7 s): a 1.0 s near-linear RAMP of bus load.** I_fc + I_batt rise
+  together at 9.7 A/s to 5.5-5.9 A EACH (~11 A total, the two channels in step - the droop split).
+  I_fc / I_batt are the INA253 BOOST-OUTPUT (bus-side) currents, so the bus power is
+  V_bus x (I_fc + I_batt): **~170 W at the peak** (15.05 V x ~11.3 A). (Corrected the same day: the
+  "7.7 W -> 89 W" first quoted here was V_source x I, the product computeDerivedSignals() retired on
+  2026-07-29 - neither input nor output power.) Each source therefore delivered roughly twice its
+  logged current at its own terminal, e.g. ~9 A from the FC supply at 9.3 V. V_bus sags only 15.89 -> 15.05 V. V_chg tracks V_bus (the
+  charger input), V_rgn tracks V-MOT. **V_batt RISES 7.67 -> 7.77 V while the BT boost draws 5+ A
+  from the pack** - so something else was pushing net current INTO the pack over the same second.
+  The Ag105's own reg 0x06 never reported more than 1.408 A all session (10 ms round-robin read).
+- **t 24.722-24.730 s: the bench supply drops out** (V_fc 9.3 -> 2.1 V in ~4 ms) at a logged (bus-side) I_fc ≈ 5.8 A, roughly 9 A at the
+  supply terminal -
+  the noise the operator heard; the supply's limit setting is not yet recorded. The BT boost
+  takes the whole load: **I_batt 8.3 -> 15.3 -> 16.5 A** (TPS61288 switch limit 15 A cycle-by-cycle),
+  V_bus collapses 15.0 -> **6.84 V** for ~3 ms (UV_BUS + UV_FC flag bits set transiently, 0x140;
+  nothing latched - the UV_BUS dwell is 20 ms). One I_fc sample of 6.36 A at 24.7303 s.
+- **t 24.731 s: the load VANISHES** with the bus at ~7 V (I_batt 0.15 A at 24.7325 s, V_bus
+  overshoots to 16.18 V, then regulates at 15.93 V). V_chg and V_rgn stay at their pre-event
+  levels afterwards, so D-RG-EN and D-MT-EN stayed closed - the load itself stopped, consistent
+  with the charger dropping out on input UV as the bus fell.
+- **t 24.73-31 s: the FC channel delivers EXACTLY 0 A** (0 of ~5 500 samples non-zero, against 79 %
+  non-zero before the event) while V_fc recovers to 11.12 V by t ≈ 25 s; I_batt idles at 32 mA (2x
+  the pre-event idle). The FC path either stopped regulating (FC boost) or is open (D-FC-EN) -
+  **FC-channel health is the first damage question.**
+- t 31-34.9 s: V_fc decays 11.1 -> 3.4 V (operator switched the supply off); UV_FC latched at
+  t ≈ 34.9 s (= the serial `[FAULT]`, J t ≈ 22.9 s). The `J` session ran ~10 s past the event
+  (status 0x04, I_charge 0) - none of its stop conditions fired (the V_bus-low stop needs 20 ms).
+
+**Full `[J]` scrollback (supplied by the operator after the entry above was first written; it
+SUPERSEDES the "single `[J]` line" note in Conditions; 10 Hz lines, J t = ms after power):**
+- t 0-~100 ms: status 0x00 Battery Disconnect. Then 0x04 Bring-Up Charge, and **the Ag105's own
+  V_batt reading (reg 0x05) climbs steadily at ~0.64 V/s from ~2 V**, with reg 0x06 = 0.000 A and
+  the sources idle (I_fc, I_batt <= 0.024 A) - the module charging its own output node while that
+  node is BELOW the 7.67 V pack, i.e. not connected to the pack. This fits D-BT-SQ conducting
+  only charger -> pack (the schematic orientation), blocking until the charger side exceeds the pack.
+- **t = 11 700 ms, the first line with r05 (7.744 V) above the pack (7.67 V), is the first line of
+  the ramp** (I_fc 0.42 A, I_batt 0.39 A). Over the next 1.0 s: I_fc and I_batt 0.4 -> 5.6-5.7 A each,
+  V_chg 15.76 -> 14.33 V, the Ag105's V_in (reg 0x07) 15.79 -> 14.10 V, r05 7.74 -> 8.19 V - while
+  **reg 0x06 reports 0.011-0.033 A throughout**. V_bus - V_chg grows to 0.73 V at ~5 A (the
+  D-MT-EN + D-RG-EN drop), so the current did flow into the charger input.
+- t = 12 800 ms: the collapse (a `[UV]` transient report, 5 ms, no latch), then **status 0x05
+  OC/Regulation Error** for ~4.4 s with regs 0x05-0x07 unreadable (0xFF), then **back to 0x04
+  Bring-Up with r05 climbing again from ~2 V** - a second bring-up cycle, at the same slope, that
+  would have reached the pack voltage again at roughly J t ≈ 26 s. The supply switch-off and the
+  UV_FC latch at J t = 22.9 s ended the session first. **The event was set to repeat.**
+- The summary's "max I_charge 1.408 A" is not visible on any 10 Hz line (it is a session maximum
+  over the 10 ms reads; the lines show <= 0.033 A) - it is probably one read during the collapse.
+
+**Inferred from the log (UNCONFIRMED, leading candidate - recorded as a hypothesis, not a finding):**
+a bus -> Ag105 -> pack path drew ~5-6 A of bus current that the Ag105's own current measurement
+did not see (reg 0x06 <= 1.41 A). The ramp's shape (linear, ~1 s, no plateau) is not a regulated
+charge profile, and status 0x05 OC/Regulation Error was reported. **Leading candidate: the Ag105
+VBat- to GND tie the datasheet forbids (p.4) - if the module's charge-current sense sits in the
+VBat- return, a GND tie bypasses it and the module's output current is unregulated.** Together
+with the 4.93 V V_batt reading this also bears on D-BT-SQ orientation. If true, the board's
+bus -> charger -> pack -> BT boost -> bus circuit was a CIRCULATING loop limited only by the
+sources' limits - the R3 hazard (no bus-fed charging) at full scale. Discriminating measurements:
+VBat- to GND continuity unpowered; VBat+/VBat- currents clamped on the next (scope-armed) power-up.
+
+**Operator confirmation (2026-11-04, same day): the Ag105 VBat- IS tied to PCB GND, BY DESIGN** -
+the schematic makes the battery's V- terminal the PCB ground, so the charger's VBat- shares it.
+The forbidden connection is therefore CONFIRMED (no DMM check needed); what remains inferred is
+the MECHANISM (that the module's charge-current sense sits between VBat- and VIN-/GND and is
+bypassed by the tie, so its output current is unregulated - consistent with reg 0x06 reading
+<= 0.033 A during an ~11 A source ramp). `TODO(verify: Silvertel)`: what sits between VBat- and
+VIN- inside the module, and whether the battery's discharge (BT boost) current may legally flow
+through VBat- if the pack's negative were routed only to VBat-. As the operator notes, keeping
+VBat- separate from GND is not possible on this topology without either (a) routing the pack's
+negative through the module (the BT boost's several-amp discharge current would then also cross
+its internal return - rating unknown), or (b) switching BOTH battery legs off the PCB during
+charging (no battery on the bus while charging - defeats regen harvest). The common-ground
+alternative is a charger with HIGH-SIDE current sensing (sense element in the VBAT+ leg). **The
+bus-fed charger path is unusable on this board revision until the charger's battery return is
+reworked; this is a re-spin / Silvertel question, not a firmware one.** D-BT-SQ orientation stays
+a secondary open item (the reg-0x05 climb is consistent with the schematic orientation).
+
+**Not yet assessed:** whether either boost, the Ag105, D-RG-EN, D-BT-SQ, D-FC-EN, the pack, or the
+supply was damaged. The FC channel's post-event zero current is the specific red flag.
+
+**Safety rule added (see below):** no further `J` session, and no powered engagement of
+`REGEN_ENABLE` or `FC_CHARGE_ENABLE`, until `ML0002` is analysed and the D-BT-SQ / VBat- checks
+are done unpowered.
+
+**Measurements that close this entry:** (1) `ML0002` — event sequence and magnitudes (DONE above,
+as `ML0227`); (2) the
+supply's setpoint, current limit, and what its display showed (OVP/OCP/CC indicator), the kind
+of noise (relay click vs buzz), and any heat/smell on the board (operator); (3) unpowered DMM
+checks: D-BT-SQ orientation, the Ag105 VBat- to GND continuity; (4) a staged `G` bring-up with
+the scope on the boost outputs before anything else is powered, to confirm both boosts survived;
+(5) on the next engagement, scope V_chg and the charger's VBAT+ node and clamp the VBAT+ lead.
+
 ## Scope-metrology conventions (adopted 2026-08-03, review BOOST-R1-N6)
 
 Two transcription errors survived into this log during the OV investigation (a 3.9× current
@@ -1669,6 +1824,17 @@ value — it is the **PCB layout** (see ROOT CAUSE above: the BT output-cap hot 
   downstream riding the decay — so the restriction stands until the firmware mitigation
   lands, not merely until scoped. Interior
   setpoints 0.15/0.5/0.7 and the endpoints 0/1 are demonstrated clean.
+- **No charger-path engagement until the 2026-11-04 `J` incident is closed.** The first powered
+  `REGEN_ENABLE` session drew a 1 s ramp to ~11 A of bus-side current (~170 W of bus power) that the Ag105 did not
+  report, ending with the bench FC supply dropping out, the BT boost at 16.5 A, the bus at 6.84 V,
+  and the FC channel delivering zero afterwards (`logs/ML0227`). The Ag105 VBat- is tied to GND by
+  design (operator-confirmed 2026-11-04), so until the charger's battery return is reworked: no
+  `J`, no State-98 `'4'` / `'5'`, and no Run with `charge_goal` > 0 (fw v37 rev 2 - pending
+  flash - gates `J`, `'4'`/`'5'` ON and the Run / `D` regen branch in firmware; only doState99's ~10 ms
+  capacitor drains stay ungated). Re-verify both boosts with a
+  scope-armed `G` before the next powered session of any kind. The
+  Ag105's reg 0x02 is still 12.848 V (below the bus) in EPROM, so any path that feeds the charger
+  from the bus will try to charge.
 
 ---
 
