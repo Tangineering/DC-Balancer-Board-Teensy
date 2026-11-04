@@ -2490,6 +2490,28 @@ static_assert(AG105_MPPT_N_FLOOR <= AG105_MPPT_N_CEIL,
 // share cut is latched: the bus goes source-less and collapses at I_AUX/C_VBUS,
 // which is the campaign-G/H UV_BUS latch. Measured on the bench 2026-10-27.
 #define FC_CHARGE_ALLOWED 0
+
+// -- fw v32a: CHARGE-WINDOW SAFETIES ----------------------------------------
+// An open FC->charger window is a SINGLE-SOURCE state: assertFcChargeEnable()
+// takes BT off the bus, so the stack alone holds VBUS and feeds the Ag105.
+// That is the state the campaign-G/H UV_BUS latches came from, and the Death-5
+// rule (docs/boost-bringup-debug.md) is that re-closing BT onto a bus that has
+// sagged drives the RT1987 into foldback -- which has already destroyed boosts
+// on this board. These three limits bound the exposure.
+//
+// FC_CHG_ENTRY_V   do not OPEN a window unless the bus is already in regulation.
+//                  Opening onto a weak bus is how a window becomes a collapse.
+// FC_CHG_MAX_MS    force the window shut after this long, whatever the Pi asks.
+//                  Bounds how long the board can sit single-source on one fault.
+// FC_CHG_COOLDOWN_MS  minimum gap before another window, so a stuck charge_goal
+//                  cannot chatter the bus switches at the commander rate.
+#define FC_CHG_ENTRY_V        V_BUS_CHARGED_THRESH
+#define FC_CHG_MAX_MS         30000u
+#define FC_CHG_COOLDOWN_MS     2000u
+static uint32_t fcChgOpenedMs = 0;      // millis() when the window opened, 0 = shut
+static uint32_t fcChgClosedMs = 0;      // millis() when it last shut
+static bool     fcChgLockout  = false;  // set by the dwell limit, cleared on cooldown
+
 static_assert(AG105_CHG_BACKOFF_DWELL_MS < UV_BUS_DWELL_LATCH_MS,
               "Charger UV backoff dwell must be shorter than the UV latch dwell");
 static_assert(AG105_CHG_BACKOFF_V > AG105_MPPT_VOLTS(AG105_MPPT_N_FLOOR),
@@ -4129,7 +4151,7 @@ void encDirCommitTick() {
 // header (format v2 and later, offset 18) so logged data is attributable to the
 // firmware that produced it, printed at boot and in the State-98 'S' status.
 // 0 is reserved for "pre-versioning" (logs PS0001–TP0005 and earlier).
-#define FW_VERSION 31
+#define FW_VERSION 35
 
 #ifndef BENCH_TEST
 #define BENCH_TEST 0
@@ -13721,7 +13743,18 @@ void chargingControl() {
         assertFcChargeEnable(false);
         digitalWrite(REGEN_ENABLE, LOW);
         // share setpoint latch owns this switch — see updateShareSetpointCutoff() (2026-08-12)
-        if (!shareSpCutBT) writeBusSwitch(BT_BUS_ENABLE, HIGH); // BT contributes to VBUS when not FC-charging
+        // fw v32a: HOT-PLUG GUARD ON THE WINDOW-CLOSE RE-CLOSE.
+        // This is the site that closes BT back onto the bus after a charge
+        // window, and until now it was a bare write. If the window left the bus
+        // sagging, that is exactly the Death-5 foldback that has destroyed
+        // boosts here. Guarded like the backoff branch already is.
+        //
+        // Refusing cannot strand the bus: FC_CHARGE is LOW by the line above, so
+        // FC is back on the bus and raises it, and this runs again next period,
+        // re-closing BT as soon as V_bus is over V_BUS_CHARGED_THRESH.
+        if (fcChgOpenedMs) { fcChgClosedMs = millis(); fcChgOpenedMs = 0; }
+        if (!shareSpCutBT && !busHotPlugUnsafe(BT_REG_ENABLE))
+            writeBusSwitch(BT_BUS_ENABLE, HIGH);
         return;
     }
 
@@ -13858,31 +13891,63 @@ void chargingControl() {
         // The two tests are now SEQUENTIAL, not exclusive (review S5). From a BT selection the
         // disarm above leaves FC_BUS LOW, so test (2) refuses on this period exactly as the
         // else-if did; from an FC selection FC_BUS is already HIGH and the window opens now.
-        if (FC_CHARGE_ALLOWED && digitalRead(FC_BUS_ENABLE) == HIGH && !busSwitchBlanked(FC_BUS_ENABLE)) {
+        // fw v32a: three extra conditions before a window may open. Each is a
+        // REFUSAL, never a latch -- chargingControl() re-runs every period, so a
+        // refused window simply opens later once the condition clears.
+        {
+            uint32_t _now = millis();
+            if (fcChgLockout && (_now - fcChgClosedMs) >= FC_CHG_COOLDOWN_MS)
+                fcChgLockout = false;
+            // Dwell limit: a window open longer than FC_CHG_MAX_MS is force-shut
+            // and locked out. Covers a Pi that holds charge_goal high forever.
+            if (fcChgOpenedMs && (_now - fcChgOpenedMs) >= FC_CHG_MAX_MS) {
+                fcChgLockout  = true;
+                fcChgClosedMs = _now;
+                fcChgOpenedMs = 0;
+            }
+        }
+        // fw v33b: ASK THE PURGE LOCKOUT. This is the condition that was missing,
+        // and it is the one that matters.
+        //
+        // A charge window IS an FC-only state: assertFcChargeEnable() takes BT off
+        // the bus. The H-20 swings to ~1 V on every purge, roughly every 10.3 s, so
+        // an FC-only bus has no hold-up when that happens -- this file already says
+        // so: "a purge then leaves the bus source-less: it collapses at I_load/C_VBUS".
+        // That is exactly the UV_FC + UV_BUS pair latched on the bench 2026-10-28,
+        // within seconds of the first window opening.
+        //
+        // fcUvLockoutActive() is the existing PREVENTIVE rule for precisely this,
+        // and powerBalance() already honours it for FC-only share selections. The
+        // charge path must honour it too. On a running stack the lockout re-arms on
+        // every purge (30 s >> 10.3 s interval), so in practice this REFUSES charge
+        // windows outright until the stack stops purging or the bus gains hold-up.
+        // Refusing is the correct answer: the alternative is the collapse above.
+        bool fcChgEntryOk = (V_bus >= FC_CHG_ENTRY_V) && !fcChgLockout
+                            && !fcUvLockoutActive();
+        if (FC_CHARGE_ALLOWED && fcChgEntryOk &&
+            digitalRead(FC_BUS_ENABLE) == HIGH && !busSwitchBlanked(FC_BUS_ENABLE)) {
+            if (!fcChgOpenedMs) fcChgOpenedMs = millis();   // fw v32a: window opens
             assertFcChargeEnable(true);       // (2) conduction-gated
-        } else if (!FC_CHARGE_ALLOWED) {
-            // fw v31 rev c -- RESTORE BT_BUS, WHICH THE SUPPRESSED CALL OWNED.
+        } else {
+            // fw v32a: THE WINDOW MUST BE SHUT HERE, NOT MERELY NOT-OPENED.
             //
-            // assertFcChargeEnable(true) does not only open FC_CHARGE: it TAKES
-            // OWNERSHIP of BT_BUS (drives it LOW on purpose) and clears
-            // shareSpCutBT/shareIsoBT so applyShareRatio() cannot re-close BT
-            // under an asserted charge path. Gating that call off removed those
-            // side effects and left this branch as the ONLY one in the function
-            // with no BT_BUS re-close -- the other three all have one.
+            // Reaching this with a window already open is the dangerous case:
+            // the entry guard refuses mid-window because V_bus sagged under
+            // FC_CHG_ENTRY_V, or the dwell limit fired. Simply skipping the
+            // assert would leave FC_CHARGE_ENABLE HIGH from the previous period
+            // with nothing managing it -- single-source, on a bus already known
+            // to be weak, which is precisely the state these limits exist to end.
             //
-            // That is fatal here rather than cosmetic, because this branch runs
-            // CONTINUOUSLY once the Pi arms charge_goal on any negative demand
-            // while the VESC never commands braking current (regenActive false).
-            // The charge_goal<=0.05 branch, which normally re-closes BT every
-            // tick, then never runs, so a share-selector cut on BT is never
-            // undone and the bus goes source-less -> ERR_UV_BUS. Observed on the
-            // bench 2026-10-27 with the SDP EMS; the sweep EMS never raises
-            // charge_goal, never enters this branch, and ran clean throughout.
-            //
-            // Guarded on !shareSpCutBT exactly like the other three branches:
-            // the share setpoint latch still owns the switch when it has claimed
-            // it (updateShareSetpointCutoff(), 2026-08-12).
-            if (!shareSpCutBT) writeBusSwitch(BT_BUS_ENABLE, HIGH);
+            // So close it explicitly and put BT back, hot-plug-guarded. If the
+            // guard refuses, FC is on the bus to raise it and this re-runs next
+            // period; BT returns as soon as V_bus clears V_BUS_CHARGED_THRESH.
+            // This path also covers FC_CHARGE_ALLOWED == 0, replacing the fw v31c
+            // branch that used to sit here.
+            if (fcChgOpenedMs) { fcChgClosedMs = millis(); fcChgOpenedMs = 0; }
+            assertFcChargeEnable(false);
+            digitalWrite(REGEN_ENABLE, LOW);
+            if (!shareSpCutBT && !busHotPlugUnsafe(BT_REG_ENABLE))
+                writeBusSwitch(BT_BUS_ENABLE, HIGH);
         }
         // Release the MPPT input-voltage-threshold regulator ONLY once the charger reports ready,
         // so it does not run during bring-up (active-LOW: HIGH = enabled, LOW = inhibited).
