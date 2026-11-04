@@ -1,6 +1,34 @@
 /*
  * teensy_controller.ino — Scale Car DC Balancer Board, Rev 20260622
  *
+ * fw v37 REV 2 (2026-11-04) - THE 'J' SESSION TRIP GUARDS + THE CHARGER-FEED HARDWARE GATE.
+ *   FW_VERSION stays 37 (the fw v28 rev convention). Incident: docs/boost-bringup-debug.md
+ *   2026-11-04 "First Ag105 commissioning session (`J` `1`)", logs/ML0227: with the Ag105 fed from
+ *   the bus, I_fc and I_batt ramped to ~5.6 A EACH in 1.0 s while the Ag105's reg 0x06 read
+ *   <= 0.033 A, the bench FC supply dropped out, V_bus fell to 6.84 V for ~3 ms; no stop fired and
+ *   the charger was cycling back to Bring-Up to repeat it. Cause (operator, 2026-11-04): board rev
+ *   20260622 ties the Ag105 VBat- to PCB GND BY DESIGN, which the datasheet forbids (p.4).
+ *   G1-G4 live in the State-98 J-session tick and are independent of BENCH_TEST; detectFaults()
+ *   and doState99() are untouched.
+ *   G1 stop: bus-side I_fc + I_batt > 1.0 A for >= 5 ms (=> roughly 1.5 A of charge current at
+ *   most: commission on a reduced profile). G2 stop: V_bus*(I_fc + I_batt) (the boosts' output,
+ *   review S-M1) - the pre-power-edge baseline - min(P_chg, 21 W)/0.75 > 3.0 W for >= 20 ms,
+ *   P_chg = r06 x an r05 read within 200 ms (0 unless both are measured). G3 stop: live GENSTAT
+ *   5/6/7 (not a 0xFF read, not before 40 ms after the edge), immediate; also recorded, under its
+ *   own reason, on the State-99 abandon path. All TODO(calibrate). A G1/G2/G3 stop drops
+ *   REGEN_ENABLE FIRST (then MPPT_DISABLE), no serial before the pins, and sets the G4 TRIP LATCH
+ *   (reboot only). G5: AG105_VBATN_ISOLATED (default 0, #ifndef-overridable, runtime
+ *   ag105VbatnIsolatedFlag) asserts the charger's battery return has been reworked (D-BT-SQ
+ *   orientation the secondary check). While G5 is closed OR G4 is latched, the charger feed is
+ *   never opened by 'J' 1 / '1 2', '4' ON, '5' ON (refused), chargingControl()'s REGEN branch in
+ *   Run and in State-98 'D' (REGEN held LOW; regen goes to the TL431/BSP170P chopper as with
+ *   charge_goal 0), or its FC_CHARGE cruise window (dead under FC_CHARGE_ALLOWED 0, gated anyway).
+ *   NOT gated: doState99()'s ~10 ms teardown drains (capacitor energy only). Added start
+ *   precondition: bus-side I_fc + I_batt <= 0.2 A. Summary / 'S' / 'J' status print the stop
+ *   reason, peak Isrc, peak unaccounted P and the latch; the restore hint says when it is blocked;
+ *   the [J] line adds Isrc / Pun. No wire, BLG, frame or pin change — the latch is NOT on the wire
+ *   (review S-L5: a v38 / BLG v10 item).
+ *
  * fw v37 (2026-11-04) - THE LOWER-CROSSOVER DRIVE LAW + THE State-98 Ag105 COMMISSIONING KEY 'J'.
  *   BASE = fw v35 (ab4a705, the flashed build). fw v36's regen un-gating is EXCLUDED (operator
  *   ruling R3: the bus never feeds the charger in Run); nothing of v36 is carried. Scope and
@@ -4253,7 +4281,7 @@ void encDirCommitTick() {
 #define FW_VERSION 37
 
 #ifndef BENCH_TEST
-#define BENCH_TEST 0
+#define BENCH_TEST 1
 #endif
 
 // ── HIL (hardware-in-the-loop) simulation build ──────────────────────────────
@@ -4294,7 +4322,7 @@ void encDirCommitTick() {
 // the networkUp guard below must gate every UDP access.
 // Overridable via -DUSE_ETHERNET=1 (same pattern as BENCH_TEST).
 #ifndef USE_ETHERNET
-#define USE_ETHERNET 1
+#define USE_ETHERNET 0
 #endif
 
 // ── Power-share controller selection ─────────────────────────────────────────
@@ -4963,9 +4991,14 @@ const uint32_t VESC_WATCH_PERIOD_MS = 500;   // ~2 Hz
 #define AG105_REG_FW_MINOR     0xFE     // Minor Firmware Version (fixed) — Table 7
 // Round-robin slots. Indices into ag105CommRegVal[] / ag105CommRegOk[].
 #define AG105_COMM_NREG 6
-static const uint8_t AG105_COMM_REGS[AG105_COMM_NREG] = {
+// constexpr (fw v37 rev 2, was const) so the slot index below can be static_assert-ed.
+static constexpr uint8_t AG105_COMM_REGS[AG105_COMM_NREG] = {
     AG105_REG_ICHG_CFG, AG105_REG_VBATT_CFG, AG105_REG_MPPT_V,
     AG105_REG_VBATT_MEAS, AG105_REG_ICHG_MEAS, AG105_REG_VIN_MEAS };
+// fw v37 rev 2 (C-L4): the slot holding reg 0x05 (Ag105-measured V_batt), read by the G2 P_chg credit.
+#define AG105_COMM_SLOT_VBATT_MEAS 3
+static_assert(AG105_COMM_REGS[AG105_COMM_SLOT_VBATT_MEAS] == AG105_REG_VBATT_MEAS,
+              "AG105_COMM_SLOT_VBATT_MEAS must index reg 0x05 in AG105_COMM_REGS");
 bool     ag105CommissionActive   = false;  // session standing; ALSO the pollAg105() auto-config inhibit
 uint32_t ag105CommStartMs        = 0;      // millis() of the REGEN HIGH edge (= charger power edge)
 uint32_t ag105CommLastPrintMs    = 0;
@@ -5005,6 +5038,121 @@ bool     ag105CommAsFoundOk[AG105_COMM_NREG]  = {false};
 #define AG105_COMMISSION_VBUS_LOW_MS 20u    // ms — same order as the UV_BUS latch dwell (20 ms)
 bool     ag105CommVbusLow        = false;
 uint32_t ag105CommVbusLowSinceMs = 0;
+// ── fw v37 rev 2: the J-session TRIP guards + the charger-path HARDWARE GATE ──────────────────
+// The incident: docs/boost-bringup-debug.md, 2026-11-04 entry "First Ag105 commissioning session
+// (`J` `1`)", log logs/ML0227. With the Ag105 fed from the bus, I_fc + I_batt ramped together at
+// ~9.7 A/s to ~5.6 A EACH over 1.0 s (source power 7.7 -> 89 W) while the Ag105's own reg 0x06
+// read 0.011-0.033 A — ~85 W the charger did not account for — until the bench FC supply dropped
+// out and V_bus fell to 6.84 V for ~3 ms; the charger then cycled 0x05 OC/Regulation Error -> 0x04
+// Bring-Up, set to repeat. No session stop fired (the V_bus-low stop needs 20 ms), and under
+// BENCH_TEST 1 OC_FC / OC_BT and the GENSTAT latch are compiled out. Leading cause: the Ag105
+// VBat- is tied to PCB GND BY DESIGN on board rev 20260622 (operator, 2026-11-04: the pack's V-
+// terminal IS PCB ground, so VBat- shares it), which the datasheet forbids (AG105_Silvertel.pdf
+// p.4, pins 14/15) — consistent with a bypassed charge-current sense (the module's measured
+// current never saw the ~5 A). Not a fixable wiring fault: it needs a hardware change (a charger
+// with high-side sensing, or the pack return routed through the module — re-spin / rework, a
+// Silvertel question). G1-G3 live ONLY in the J session tick (State 98) and are independent of
+// BENCH_TEST; detectFaults() is untouched. G1-G4 are the BACKSTOP for a board on which the G5 gate
+// has been enabled after that rework.
+//
+// G5 HARDWARE GATE. AG105_VBATN_ISOLATED = 1 asserts the Ag105's battery return (VBat-) has been
+// reworked so it is NOT tied to PCB GND (datasheet p.4). Default 0 = the 20260622 board as built,
+// on which the bus-fed charger path is UNUSABLE. While false — or while the G4 trip latch is set —
+// the charger feed is never opened by:
+//   * 'J' 1 / '1 2' (refused), '4' REGEN ON (refused), '5' FC_CHARGE ON (refused) — turning either
+//     OFF is always allowed;
+//   * chargingControl()'s REGEN branch, in Run AND in the State-98 drive cycle 'D' (the same
+//     function): REGEN_ENABLE stays LOW, MPPT_DISABLE LOW, regen energy goes to the TL431/BSP170P
+//     chopper exactly as with charge_goal 0;
+//   * chargingControl()'s FC_CHARGE cruise window (dead today under FC_CHARGE_ALLOWED 0; gated
+//     anyway — a one-term safe-direction guard that falls into the existing window-SHUT branch).
+// DELIBERATELY NOT GATED: doState99()'s teardown drain (phase 0 FC_CHARGE ~10 ms onto a bus whose
+// switches are already open; phase 1 REGEN ~10 ms with MOT_PWR LOW — capacitor energy only). The
+// teardown keeps its authority. Secondary item before enabling: D-BT-SQ orientation (schematic
+// VIN = charger output, VOUT = pack). The runtime flag exists so the host tests can flip it (the
+// velocityChainCalibratedFlag pattern).
+// Default by build (orchestrator ruling, rev 2): a HIL_SIM build runs against a SIMULATED plant
+// (every sensor injected over UDP, no live power stage - see the HIL_SIM boot banner), so the
+// VBat- hazard does not exist and the HIL regen-harvest legs need the Run regen branch; it
+// defaults OPEN. Every real-board build defaults CLOSED. Either can be overridden with -D.
+#ifndef AG105_VBATN_ISOLATED
+#if HIL_SIM
+#define AG105_VBATN_ISOLATED 1
+#else
+#define AG105_VBATN_ISOLATED 0
+#endif
+#endif
+bool ag105VbatnIsolatedFlag = (AG105_VBATN_ISOLATED != 0);
+// G1 SOURCE-CURRENT STOP: I_fc + I_batt > AG105_COMMISSION_I_SRC_MAX_A continuously for
+// >= AG105_COMMISSION_I_SRC_DWELL_MS. I_fc / I_batt are the INA253 boost-OUTPUT (bus-side)
+// currents (computeDerivedSignals(), the 2026-07-29 correction: P_fc_actual = V_bus * I_fc).
+// Derivation: commissioning needs register I/O, not charge power. The session's idle draw in
+// ML0227 was 0.02-0.05 A total (before the ramp). A full 2.5 A / 8.4 V charge (21 W) needs
+// 21 W / 0.88 (Ag105 eta, the HIL plant figure — docs/HIL_PLANT.md, CLAUDE.md 2026-09-02) / 15.9 V
+// ~= 1.5 A bus-side, and is NOT a commissioning goal on this unproven board. 1.0 A bus-side caps a
+// session at roughly 1.0 x 15.9 x 0.88 / 8.4 ~= 1.5-1.7 A of charge current (reduced-profile
+// commissioning only). 1.0 A is ~20x the idle draw and ~1/11 of the ML0227 peak; at the ML0227
+// ramp (9.7 A/s per channel, ~19 A/s total) it is crossed ~50 ms into the ramp. The 5 ms dwell
+// rejects single-sample ADC spikes only (the loop runs ~1 kHz; ML0227's worst missed period was
+// 2.4 ms). TODO(calibrate) both.
+#define AG105_COMMISSION_I_SRC_MAX_A     1.0f
+#define AG105_COMMISSION_I_SRC_DWELL_MS  5u
+// START PRECONDITION (review S-L2): bus-side I_fc + I_batt <= this before the power edge, so the
+// G2 baseline is the idle draw and nothing else. ML0227 idle 0.02-0.05 A; 0.2 A = 4-10x that.
+// TODO(calibrate).
+#define AG105_COMMISSION_I_SRC_START_MAX_A 0.2f
+// G2 UNACCOUNTED-POWER STOP, on the BUS-POWER axis (review S-M1):
+//   P_unacct = V_bus * (I_fc + I_batt) - P_bus0 (ag105CommPsrc0) - min(P_chg, P_CHG_CREDIT_MAX) / ETA_MIN
+// (V_bus * (I_fc + I_batt) = P_fc_actual + P_batt_actual, the power the boosts deliver INTO the
+// bus, which is where the charger feed is drawn from). P_chg = I_charge (reg 0x06, only while
+// ag105DataValid) x the session's reg-0x05 V_batt read, only if that slot was read successfully
+// within AG105_COMMISSION_VBATT_FRESH_MS and is not the 0xFF §2.11.5 "unavailable" sentinel;
+// otherwise P_chg = 0 (fail-safe: an unmeasured charger accounts for nothing). The credit is
+// capped at the profile ceiling 2.5 A x 8.4 V = 21 W (Ag105_Table4 0x01 x Table3 0x08): a reading
+// above it is not a reachable charge and must not buy headroom (review C-M3).
+// Stop if P_unacct > AG105_COMMISSION_P_UNACCT_W for >= AG105_COMMISSION_P_UNACCT_DWELL_MS.
+// ETA_MIN 0.75 is the CHARGER efficiency alone (the bus is downstream of the boosts), conservative
+// against the 0.88 Ag105 figure the HIL plant and the DP/SDP engines bill (docs/HIL_PLANT.md;
+// CLAUDE.md 2026-09-02 addendum) so a REAL charge never reads as unaccounted. 3.0 W = ~0.19 A
+// unaccounted bus-side at 15.9 V: ~4-10x the ML0227 idle bus power (0.3-0.8 W), ~1/4 of the
+// ramp's FIRST [J] line (0.81 A x 15.9 V = 12.9 W) and ~1/60 of its peak; at ~19 A/s it is
+// crossed ~10 ms into the ramp, i.e. the ramp onset. The 20 ms dwell covers pollAg105()'s 50 Hz
+// I_charge refresh (a real charge-current step can lag the bus power by one 20 ms poll).
+// TODO(calibrate) all of them.
+#define AG105_COMMISSION_P_UNACCT_W         3.0f
+#define AG105_COMMISSION_P_UNACCT_DWELL_MS  20u
+#define AG105_COMMISSION_ETA_MIN            0.75f
+#define AG105_COMMISSION_P_CHG_CREDIT_MAX_W (2.5f * 8.4f)   // 21 W — Table 4 0x01 x Table 3 0x08
+#define AG105_COMMISSION_VBATT_FRESH_MS     200u            // ~3 round-robin cycles (6 x 10 ms); TODO(calibrate)
+// G3 arms this long after the power edge (review S-L3 / C-L6): two pollAg105() periods (2 x 20 ms),
+// so a status byte from before the edge can never be the one that trips.
+#define AG105_COMMISSION_G3_ARM_MS          40u
+// Trip reasons (G4). 0 = none.
+#define AG105_COMM_TRIP_NONE     0u
+#define AG105_COMM_TRIP_I_SRC    1u   // G1
+#define AG105_COMM_TRIP_P_UNACCT 2u   // G2
+#define AG105_COMM_TRIP_CHG_ERR  3u   // G3, by the session tick
+#define AG105_COMM_TRIP_CHG_ERR_FAULT 4u   // G3, recorded at a fault exit (abandon path, State 99)
+// Session-scoped (reset at every session start):
+bool     ag105CommIsrcHigh          = false;  // G1 dwell armed
+uint32_t ag105CommIsrcHighSinceMs   = 0;
+bool     ag105CommPunacctHigh       = false;  // G2 dwell armed
+uint32_t ag105CommPunacctHighSinceMs = 0;
+float    ag105CommPsrc0             = 0.0f;   // W, baseline BUS power V_bus*(I_fc+I_batt) before REGEN HIGH
+uint32_t ag105CommRegReadMs[AG105_COMM_NREG] = {0};   // millis() of each slot's latest ACKed read (C-M3)
+// Reported in the summary; reset at session START, persist after the stop until the next start:
+float    ag105CommPeakIsrc          = 0.0f;   // A, peak (I_fc + I_batt) this session
+float    ag105CommPeakPunacct       = 0.0f;   // W, peak unaccounted power this session (>= 0)
+// G4 TRIP LATCH — set by a G1/G2/G3 stop; NEVER cleared except by reboot (not by 'Q', 'X', State
+// 99 recovery, or a new session). While set: 'J' 1 refuses, '4' refuses REGEN ON, '5' refuses
+// FC_CHARGE ON, and chargingControl() keeps REGEN / the FC_CHARGE window closed (the G5 gate's set).
+bool     ag105CommTripLatched       = false;
+uint8_t  ag105CommTripReason        = AG105_COMM_TRIP_NONE;
+float    ag105CommTripValue         = 0.0f;   // G1: A, G2: W at the trip; G3: unused
+uint8_t  ag105CommTripStatus        = 0;      // G3: the raw Table 6 status byte at the trip
+uint32_t ag105CommTripAtMs          = 0;      // ms after the charger power edge
+// Why the last session ended (summary line). Points at a string literal; reset at session start.
+const char *ag105CommStopReason     = "none";
 // M2: reg 0x01 values whose charge voltage EXCEEDS the 2S 8.4 V profile — 9..12 = 3S 11.7-12.6 V
 // (Ag105_Table3_Charge_Voltage_Select.json i2c_field_value 9-12); 13..255 are outside Table 7's
 // documented 0x00-0x0C range and are treated the same (unknown = unsafe). 0x00 is external-resistor
@@ -5386,6 +5534,10 @@ void    ag105CommissionTick();
 static bool ag105CommWriteProfile();   // the '2 1' / '1 2' profile write (fw v37)
 void    ag105CommissionPrintStatus();
 void    ag105CommissionPrintSummary();
+// fw v37 rev 2: the trip guards' stop, the G4 / G5 refusal used by 'J' 1, '4' and '5'.
+static void ag105CommissionTrip(uint8_t reason, float value, uint8_t status);
+bool    ag105ChargerFeedRefused(const char *what);
+const char* ag105CommTripReasonName(uint8_t reason);
 const char* ag105GenstatName(uint8_t genstat);
 void updateSensors();
 void updateWheelSpeed();
@@ -8334,6 +8486,9 @@ void printTestHelp() {
     Serial.println("      while ON: 1-6 C A V P O F B G D R T Y W and 'N' writes refused; 'X'/'Q' end it.");
     Serial.println("      Scope V_chg first time; watch r05/Ibt (charge target unverified). A BENCH_TEST 1");
     Serial.println("      build compiles out the GENSTAT 5/6/7 latch if commissioning faults at once.");
+    Serial.println("      fw v37 rev 2: 'J' 1, '4' ON, '5' ON REFUSED (and Run/'D' regen keeps REGEN LOW) unless");
+    Serial.println("      AG105_VBATN_ISOLATED 1 (rev 20260622 ties Ag105 VBat- to GND); a session trip (Isrc /");
+    Serial.println("      unaccounted P / GENSTAT 5-7) LATCHES the same refusals until reboot.");
     Serial.println("  E - read VESC FW+telemetry   U - toggle VESC watch (~2Hz, flags faults)");
     Serial.println("      ** the VESC watch MOVED from 'W' to 'U' (\"UART watch\") — 'W' is now a");
     Serial.println("         motor profile below **");
@@ -8534,6 +8689,10 @@ void doState98() {
             case '4':
                 // REGEN_ENABLE: assertFcChargeEnable(false) required before going HIGH
                 cur = digitalRead(REGEN_ENABLE);
+                // fw v37 rev 2 (G4 / G5): REGEN ON powers the Ag105 from the bus (MOT_PWR is the
+                // other half of the feed) — refused while the charger path is unverified or a J
+                // session tripped. OFF is always allowed. No pin is touched on a refusal.
+                if (!cur && ag105ChargerFeedRefused("REGEN_ENABLE ON ('4')")) break;
                 if (!cur) {
                     assertFcChargeEnable(false);   // FC_CHARGE must be OFF before REGEN goes HIGH
                 }
@@ -8557,6 +8716,10 @@ void doState98() {
                     break;
                 }
                 cur = digitalRead(FC_CHARGE_ENABLE);
+                // fw v37 rev 2 (G4 / G5): FC_CHARGE ON powers the Ag105 from VBUS — refused while
+                // the charger path is unverified or a J session tripped, BEFORE the guard runs (a
+                // refusal touches no pin). OFF still goes through assertFcChargeEnable(false).
+                if (!cur && ag105ChargerFeedRefused("FC_CHARGE_ENABLE ON ('5')")) break;
                 assertFcChargeEnable(!cur);
                 Serial.print("FC_CHARGE_ENABLE -> "); Serial.println(digitalRead(FC_CHARGE_ENABLE));
                 break;
@@ -8695,7 +8858,11 @@ void doState98() {
                 // empty-line form is a read-only status print; every other form is refused at
                 // parse time by parseJLine()'s own bringupActive / precondition guards.
                 pendingInput = PEND_J_PARAMS;
-                Serial.print("Ag105 commissioning [1=start 1 2=start+fix 0=stop 2=profile(2 1=write) 3 <n>=reg0x02 4=MPPT pin, empty=status]: ");
+                Serial.print("Ag105 commissioning [1=start 1 2=start+fix 0=stop 2=profile(2 1=write) 3 <n>=reg0x02 4=MPPT pin, empty=status]");
+                // fw v37 rev 2 (C-L9): say up front when a start would be refused.
+                if (!ag105VbatnIsolatedFlag)    Serial.print(" (start REFUSED: VBat- gate closed)");
+                else if (ag105CommTripLatched)  Serial.print(" (start REFUSED: trip latched, reboot)");
+                Serial.print(": ");
                 if (plotModeActive) Serial.println();   // see 'P' — plot-line concat guard
                 break;
             case 'I':
@@ -11098,6 +11265,9 @@ void ag105CommissionStart(bool fixOnFirstRead) {
         Serial.println("[J] REFUSED: State 98 only");
         return;
     }
+    // fw v37 rev 2 (G4 trip latch, G5 hardware gate): checked before every other precondition so
+    // the operator sees the hardware reason first. Prints its own reason.
+    if (ag105ChargerFeedRefused("'J' session start")) return;
     if (bringupActive) {
         Serial.println("[J] REFUSED: staged bring-up in progress — let it finish first");
         return;
@@ -11150,6 +11320,17 @@ void ag105CommissionStart(bool fixOnFirstRead) {
         Serial.println("    its EPROM may already have been auto-configured). '4' to drop it, then 'J' 1");
         return;
     }
+    // fw v37 rev 2 deviation (an ADDED precondition; tightened to the idle draw by review S-L2):
+    // the bus-side source current must already be at idle BEFORE the power edge. A load that
+    // pre-dates the charger would otherwise either trip G1 and latch the board until reboot for
+    // something the session did not cause, or enter the G2 baseline and mask up to its own size.
+    // Bounds the baseline to <= AG105_COMMISSION_I_SRC_START_MAX_A x V_bus (~3.2 W). NaN-safe.
+    if (!((I_fc + I_batt) <= AG105_COMMISSION_I_SRC_START_MAX_A)) {
+        Serial.print("[J] REFUSED: I_fc + I_batt = "); Serial.print(I_fc + I_batt, 3);
+        Serial.print(" A is above the idle limit for a session start (");
+        Serial.print(AG105_COMMISSION_I_SRC_START_MAX_A, 2); Serial.println(" A) — find the load first");
+        return;
+    }
 
     // L6 (review, REJECTED as a change): there is no separate confirm keystroke — typing 'J' and
     // then '1' at the prompt IS the confirm (deviation from planning §9.2's "waits for a confirm
@@ -11168,11 +11349,25 @@ void ag105CommissionStart(bool fixOnFirstRead) {
     Serial.println("    MPPT_DISABLE starts LOW (inhibited). TODO(verify: Silvertel): whether MPPTD LOW");
     Serial.println("    also bypasses the input threshold while charging is UNVERIFIED.");
 #if BENCH_TEST
-    Serial.println("    (BENCH_TEST build: the GENSTAT 5/6/7 charger-fault latch is compiled OUT.)");
+    Serial.println("    (BENCH_TEST build: the detectFaults() GENSTAT 5/6/7 latch is compiled OUT -");
+    Serial.println("    the session's own G3 stop below still applies.)");
 #else
-    Serial.println("    NOTE: an as-found GENSTAT 5/6/7 latches FAULT_CHARGER_STAT immediately; a");
-    Serial.println("    BENCH_TEST 1 build compiles that check out if commissioning faults at once.");
+    Serial.println("    NOTE: an as-found GENSTAT 5/6/7 latches FAULT_CHARGER_STAT immediately (and the");
+    Serial.println("    session's G3 trip latch with it).");
 #endif
+    // fw v37 rev 2: the trip guards (ML0227 incident, docs/boost-bringup-debug.md 2026-11-04).
+    Serial.println("    TRIP STOPS (fw v37 rev 2; REGEN dropped first; LATCHED until reboot - 'J' 1,");
+    Serial.println("    '4' ON and '5' ON are then refused):");
+    Serial.print  ("      G1 bus-side I_fc+I_batt > "); Serial.print(AG105_COMMISSION_I_SRC_MAX_A, 2);
+    Serial.print  (" A for >= "); Serial.print(AG105_COMMISSION_I_SRC_DWELL_MS); Serial.println(" ms");
+    Serial.println("         => a session is limited to roughly 1.5 A of CHARGE current (TODO(calibrate)):");
+    Serial.println("         commission on a REDUCED charge profile, not the 2.5 A one.");
+    Serial.print  ("      G2 V_bus*(I_fc+I_batt) - baseline - P_chg/"); Serial.print(AG105_COMMISSION_ETA_MIN, 2);
+    Serial.print  (" > "); Serial.print(AG105_COMMISSION_P_UNACCT_W, 2);
+    Serial.print  (" W for >= "); Serial.print(AG105_COMMISSION_P_UNACCT_DWELL_MS);
+    Serial.println(" ms (P_chg = r06 x fresh r05, <= 21 W; 0 if unread/stale)");
+    Serial.print  ("      G3 Ag105 status GENSTAT 5/6/7 (OC/Regulation, Thermal, Timeout) - immediate from ");
+    Serial.print  (AG105_COMMISSION_G3_ARM_MS); Serial.println(" ms after power");
     Serial.print  ("    Session cap "); Serial.print(AG105_COMMISSION_MAX_MS / 1000u);
     Serial.println(" s; pollAg105() auto-config + MPPT manager INHIBITED; 'J' 0 / 'X' / 'Q' stop.");
 
@@ -11222,6 +11417,24 @@ void ag105CommissionStart(bool fixOnFirstRead) {
     ag105CommEarlyVbusMin   = V_bus;
     ag105CommEarlyVchgMax   = V_chg;
     ag105CommEarlyVrgnMax   = V_rgn;
+    // fw v37 rev 2: trip-guard session state. The G2 baseline is the BUS power the boosts deliver
+    // BEFORE the power edge (the aux / idle draw the charger is not responsible for). Clamped to >= 0 and
+    // NaN -> 0: the INA253s are unipolar 0-referenced (CLAUDE.md §5), so a negative product is ADC
+    // offset, not power, and a negative baseline would only add a phantom unaccounted term; a NaN
+    // baseline would make every later compare false (G2 silently dead). The upper side is bounded
+    // by the idle precondition above. The latch itself is NOT reset here (reboot only).
+    ag105CommIsrcHigh           = false;
+    ag105CommIsrcHighSinceMs    = 0;
+    ag105CommPunacctHigh        = false;
+    ag105CommPunacctHighSinceMs = 0;
+    ag105CommPeakIsrc           = 0.0f;
+    ag105CommPeakPunacct        = 0.0f;
+    ag105CommStopReason         = "none";
+    for (uint8_t i = 0; i < AG105_COMM_NREG; i++) ag105CommRegReadMs[i] = 0;
+    {
+        float p0 = V_bus * (I_fc + I_batt);   // = P_fc_actual + P_batt_actual (review S-M1)
+        ag105CommPsrc0 = (p0 > 0.0f) ? p0 : 0.0f;   // NaN fails the compare -> 0
+    }
 
     // The INHIBIT goes up FIRST, before the power edge, so no pollAg105() pass can ever see a
     // powered, settled charger without it.
@@ -11265,19 +11478,113 @@ void ag105CommissionStop(const char *reason) {
     // re-arms ag105Configured / the MPPT session on its next pass — the lazy config cannot fire
     // until a charger path is opened again.
     ag105CommissionActive = false;
+    ag105CommStopReason   = reason;   // callers pass string literals
     Serial.print("[J] session STOP ("); Serial.print(reason);
     Serial.print(") after "); Serial.print(millis() - ag105CommStartMs);
     Serial.println(" ms — MPPT_DISABLE LOW, REGEN_ENABLE LOW");
     ag105CommissionPrintSummary();
 }
 
+// fw v37 rev 2: a G1 / G2 / G3 TRIP stop. Differs from ag105CommissionStop() in ORDER and in the
+// latch:
+//   * REGEN_ENABLE LOW is the FIRST pin action. On a trip the feed itself is the hazard (ML0227:
+//     ~85 W the charger did not account for, ramping ~19 A/s), so removing it is the urgent part.
+//     The normal stop's "MPPT first, so the module is not mid-harvest when its input disappears"
+//     rationale is a nicety for a healthy charger; on a trip the charger is either unregulated
+//     (G1/G2) or self-reporting an error (G3), and the two writes are back to back anyway — the
+//     order only matters if anything could intervene, and then the feed must already be gone.
+//   * NO serial I/O before the pin writes (a USB print can block when the host stalls).
+//   * The G4 latch is set and never cleared except by reboot.
+// FC_CHARGE is LOW (the tick stops on FC_CHARGE HIGH before any guard runs), so REGEN LOW opens
+// every charger power path. MOT_PWR is not written (the session never owns it).
+static void ag105CommissionTrip(uint8_t reason, float value, uint8_t status) {
+    if (!ag105CommissionActive) return;
+    digitalWrite(REGEN_ENABLE, LOW);     // FIRST: remove the bus feed into the charger
+    digitalWrite(MPPT_DISABLE, LOW);     // then inhibit the MPPT loop (active-LOW); mirror follows
+    mpptReleased = false;
+    uint32_t el = millis() - ag105CommStartMs;
+    ag105CommTripLatched  = true;
+    ag105CommTripReason   = reason;
+    ag105CommTripValue    = value;
+    ag105CommTripStatus   = status;
+    ag105CommTripAtMs     = el;
+    ag105CommissionActive = false;       // inhibit cleared (same as ag105CommissionStop())
+    ag105CommStopReason   = ag105CommTripReasonName(reason);
+    // Serial only from here on.
+    Serial.print("[J] *** TRIP: "); Serial.print(ag105CommTripReasonName(reason));
+    if (reason == AG105_COMM_TRIP_CHG_ERR) {
+        Serial.print(" (status 0x"); ag105CommPrintHex2(status);
+        Serial.print(" "); Serial.print(ag105GenstatName(status)); Serial.print(")");
+    } else {
+        Serial.print(" ("); Serial.print(value, 3);
+        Serial.print(reason == AG105_COMM_TRIP_I_SRC ? " A)" : " W)");
+    }
+    Serial.print(" at t="); Serial.print(el);
+    Serial.println(" ms — REGEN_ENABLE LOW, MPPT_DISABLE LOW; LATCHED until reboot");
+    Serial.println("    'J' 1, '4' ON and '5' ON are refused until the Teensy is power-cycled.");
+    ag105CommissionPrintSummary();
+}
+
+const char* ag105CommTripReasonName(uint8_t reason) {
+    switch (reason) {
+        case AG105_COMM_TRIP_I_SRC:    return "G1 source current I_fc+I_batt over the limit";
+        case AG105_COMM_TRIP_P_UNACCT: return "G2 unaccounted source power over the limit";
+        case AG105_COMM_TRIP_CHG_ERR:  return "G3 Ag105 GENSTAT error (5/6/7)";
+        case AG105_COMM_TRIP_CHG_ERR_FAULT:
+            return "G3 Ag105 GENSTAT error (5/6/7), recorded at a fault exit (State 99), not by the session tick";
+        default:                       return "none";
+    }
+}
+
+// G4 / G5 refusal for every State-98 action that would POWER the charger feed ('J' 1 / '1 2',
+// '4' REGEN ON, '5' FC_CHARGE ON). Returns true (after printing why) when the action must be
+// refused; touches no pin. Turning REGEN / FC_CHARGE OFF never calls this.
+bool ag105ChargerFeedRefused(const char *what) {
+    if (!ag105VbatnIsolatedFlag) {
+        Serial.print("REFUSED: "); Serial.print(what);
+        Serial.println(" — the Ag105 charger path is UNUSABLE on this board.");
+        Serial.println("  Board rev 20260622 ties the Ag105 VBat- to PCB GND BY DESIGN (the pack's V- is PCB");
+        Serial.println("  ground), which the datasheet forbids (AG105_Silvertel.pdf p.4, pins 14/15) - the");
+        Serial.println("  leading cause of the 2026-11-04 incident (docs/boost-bringup-debug.md, 'First Ag105");
+        Serial.println("  commissioning session'; logs/ML0227: ~5.6 A per source the charger never measured).");
+        Serial.println("  Needs a hardware change to the charger's battery return. Secondary check before");
+        Serial.println("  enabling: D-BT-SQ orientation. Then rebuild with AG105_VBATN_ISOLATED 1.");
+        return true;
+    }
+    if (ag105CommTripLatched) {
+        Serial.print("REFUSED: "); Serial.print(what);
+        Serial.print(" — a 'J' session TRIP is latched ("); Serial.print(ag105CommTripReasonName(ag105CommTripReason));
+        Serial.print(" at t="); Serial.print(ag105CommTripAtMs); Serial.println(" ms).");
+        Serial.println("  Investigate the charger path, then power-cycle the Teensy to clear it.");
+        return true;
+    }
+    return false;
+}
+
 // End a session on a path that must do NO pin write and NO serial I/O (State-99 entry, or a
 // triggerFault() earlier in the same doState98() pass). doState99()'s teardown owns REGEN /
 // MPPT_DISABLE from here; the summary is deferred (ag105CommSummaryPending), and the pending flag
 // keeps pollAg105()'s auto-config inhibited until the teardown has closed every path (phase 3).
+// fw v37 rev 2: G3 still applies on this path (variables only, no I/O). Under BENCH_TEST 0 the
+// detectFaults() GENSTAT 5/6/7 check latches State 99 BEFORE doState98() runs, so the session
+// tick never sees the error and this abandon is the only place the G4 latch can record it.
 void ag105CommissionAbandon() {
     if (!ag105CommissionActive) return;
+    // Same qualification as the tick's G3: a live byte, not the 0xFF unavailable read, and not
+    // before AG105_COMMISSION_G3_ARM_MS after the power edge. Its own reason code (C-L8).
+    if (ag105DataValid && !ag105CommTripLatched && ag105_status_raw != 0xFF &&
+        (millis() - ag105CommStartMs) >= AG105_COMMISSION_G3_ARM_MS) {
+        uint8_t gs = ag105_status_raw & 0x07;   // Table 6 GENSTAT bits [2:0] (detectFaults() mask)
+        if (gs == 0x05 || gs == 0x06 || gs == 0x07) {
+            ag105CommTripLatched = true;
+            ag105CommTripReason  = AG105_COMM_TRIP_CHG_ERR_FAULT;
+            ag105CommTripValue   = 0.0f;
+            ag105CommTripStatus  = ag105_status_raw;
+            ag105CommTripAtMs    = millis() - ag105CommStartMs;
+        }
+    }
     ag105CommissionActive   = false;
+    ag105CommStopReason     = "fault (State 99 teardown owns the pins)";
     ag105CommSummaryPending = true;
 }
 
@@ -11298,6 +11605,21 @@ void ag105CommissionPrintSummary() {
     Serial.print("  NAKs="); Serial.print(ag105CommNakCount);
     Serial.print("  settled="); Serial.print(ag105CommSettled ? "yes" : "no");
     Serial.print("  max I_charge="); Serial.print(ag105CommMaxIcharge, 3); Serial.println("A");
+    // fw v37 rev 2: stop reason, the trip-guard peaks and the latch.
+    Serial.print("    stop reason: "); Serial.println(ag105CommStopReason);
+    Serial.print("    peak I_fc+I_batt="); Serial.print(ag105CommPeakIsrc, 3);
+    Serial.print("A (G1 stop "); Serial.print(AG105_COMMISSION_I_SRC_MAX_A, 2);
+    Serial.print("A)  peak unaccounted P="); Serial.print(ag105CommPeakPunacct, 2);
+    Serial.print("W (G2 stop "); Serial.print(AG105_COMMISSION_P_UNACCT_W, 2);
+    Serial.print("W, baseline "); Serial.print(ag105CommPsrc0, 2); Serial.println("W)");
+    Serial.print("    trip latch: ");
+    if (ag105CommTripLatched) {
+        Serial.print("LATCHED - "); Serial.print(ag105CommTripReasonName(ag105CommTripReason));
+        Serial.print(" at t="); Serial.print(ag105CommTripAtMs);
+        Serial.println(" ms (reboot clears)");
+    } else {
+        Serial.println("clear");
+    }
     Serial.print("    status bytes seen:");
     uint8_t n = 0;
     for (uint16_t b = 0; b < 256; b++) {
@@ -11351,7 +11673,20 @@ void ag105CommissionPrintSummary() {
         Serial.print(" = "); Serial.print(ag105MpptVoltsFromCount(ag105CommRegVal[2]), 3);
         Serial.print(" V, BELOW LIMIT_V_BUS_MAX "); Serial.print(LIMIT_V_BUS_MAX, 1);
         Serial.println(" V (EPROM — persists): the bus can charge the pack on any path that feeds the charger.");
-        if (ag105CommAsFoundOk[2] && ag105CommAsFoundVal[2] <= (uint8_t)AG105_MPPT_N_MAX) {
+        if (!ag105VbatnIsolatedFlag || ag105CommTripLatched) {
+            // fw v37 rev 2 (review C-M2): both restore routes below need a powered charger ('J' 1,
+            // or '4'/'5'), and every such feed is now refused.
+            Serial.print("    *** RESTORE BLOCKED: ");
+            if (!ag105VbatnIsolatedFlag)
+                Serial.println("the charger feed is gated (rebuild with AG105_VBATN_ISOLATED 1 only on hardware");
+            else
+                Serial.println("a 'J' trip is latched (reboot the Teensy; then a new 'J' session can restore it).");
+            if (!ag105VbatnIsolatedFlag)
+                Serial.println("        whose Ag105 VBat- is reworked off PCB GND).");
+            Serial.println("        With every charger feed gated the charger stays unpowered ('J', '4', '5' and the");
+            Serial.println("        Run regen branch never open it), so a low reg 0x02 is INERT on this board — except");
+            Serial.println("        for doState99()'s ~10 ms teardown drains, which are not gated.");
+        } else if (ag105CommAsFoundOk[2] && ag105CommAsFoundVal[2] <= (uint8_t)AG105_MPPT_N_MAX) {
             Serial.print("    *** RESTORE (inside a new session): 'J' then '3 ");
             Serial.print(ag105CommAsFoundVal[2]); Serial.println("'");
         } else if (ag105CommAsFoundOk[2]) {
@@ -11407,6 +11742,15 @@ void ag105CommissionPrintStatus() {
     Serial.print(" r06="); ag105CommPrintSlot(4);
     Serial.print(" r07="); ag105CommPrintSlot(5);
     Serial.println();
+    Serial.print("    gate: VBat- isolated="); Serial.print(ag105VbatnIsolatedFlag ? "yes" : "NO (feed refused)");
+    Serial.print("  trip latch=");
+    if (ag105CommTripLatched) {
+        Serial.print("LATCHED ("); Serial.print(ag105CommTripReasonName(ag105CommTripReason)); Serial.print(")");
+    } else {
+        Serial.print("clear");
+    }
+    Serial.print("  peak Isrc="); Serial.print(ag105CommPeakIsrc, 3);
+    Serial.print("A peak Pun="); Serial.print(ag105CommPeakPunacct, 2); Serial.println("W");
     Serial.print("    EPROM write attempts this session="); Serial.print(ag105CommWrites);
     Serial.print("  MPPT reg-0x02 write budget used="); Serial.print(ag105MpptWrites);
     Serial.print("/"); Serial.println(AG105_MPPT_WRITES_PER_BOOT);
@@ -11437,6 +11781,72 @@ void ag105CommissionTick() {
     }
     uint32_t now = millis();
     uint32_t el  = now - ag105CommStartMs;
+
+    // ── fw v37 rev 2: TRIP GUARDS (ML0227) — before the cap and before any I2C read, every pass,
+    // so the stop is never delayed by this tick's own Wire transaction. Each trip drops REGEN
+    // first and latches (G4). Independent of BENCH_TEST.
+    // G3: an Ag105 self-reported error. Table 6 GENSTAT = bits [2:0] (the detectFaults() mask; bit 3
+    // is the MPPT flag): 5 OC/Regulation Error, 6 Thermal Shutdown, 7 Timeout Error. Gated on
+    // ag105DataValid exactly like detectFaults() (0x00 is a real status, validity is out-of-band).
+    // Source: Ag105_Table6_I2C_Status_Byte.json. Immediate: no dwell — the module said so itself.
+    // Review S-L3 / C-L6: a 0xFF status byte is the module's unavailable / brown-out read (every
+    // byte 0xFF, AG105_Silvertel.pdf §2.11.5), not a GENSTAT 7, and nothing is trusted before
+    // AG105_COMMISSION_G3_ARM_MS after the edge (a pre-edge byte cannot trip). Still immediate.
+    if (ag105DataValid && ag105_status_raw != 0xFF && el >= AG105_COMMISSION_G3_ARM_MS) {
+        uint8_t gs = ag105_status_raw & 0x07;
+        if (gs == 0x05 || gs == 0x06 || gs == 0x07) {
+            ag105CommissionTrip(AG105_COMM_TRIP_CHG_ERR, 0.0f, ag105_status_raw);
+            return;
+        }
+    }
+    // G1: total source current. M4's dwell shape; the negated compare treats a NaN reading as
+    // over the limit (fail-safe). Peak tracked for the summary (NaN never enters it).
+    {
+        float iSrc = I_fc + I_batt;
+        if (iSrc > ag105CommPeakIsrc) ag105CommPeakIsrc = iSrc;
+        if (!(iSrc <= AG105_COMMISSION_I_SRC_MAX_A)) {
+            if (!ag105CommIsrcHigh) {
+                ag105CommIsrcHigh        = true;
+                ag105CommIsrcHighSinceMs = now;
+            } else if (now - ag105CommIsrcHighSinceMs >= AG105_COMMISSION_I_SRC_DWELL_MS) {
+                ag105CommissionTrip(AG105_COMM_TRIP_I_SRC, iSrc, 0);
+                return;
+            }
+        } else {
+            ag105CommIsrcHigh = false;
+        }
+    }
+    // G2: BUS power the charger does not account for (review S-M1: I_fc / I_batt are boost-output
+    // currents, so the power axis is V_bus). P_chg is fail-safe 0 unless BOTH factors are measured:
+    // I_charge only while pollAg105()'s live read is valid (it already maps the 0xFF sentinel to
+    // 0.0), V_batt from the reg-0x05 slot only if read within AG105_COMMISSION_VBATT_FRESH_MS and
+    // not the 0xFF "all measures transmitted will be 0xFF" sentinel (AG105_Silvertel.pdf §2.11.5).
+    // A stale V_batt gives NO credit (fail-safe), and the credit is capped at the 21 W profile
+    // ceiling. The baseline P_src0 (clamped >= 0 at start) removes the pre-power-edge idle draw.
+    float pUnNow = 0.0f;   // kept for the [J] monitor line below
+    {
+        float pChg = 0.0f;
+        const uint8_t vs = AG105_COMM_SLOT_VBATT_MEAS;
+        if (ag105DataValid && ag105CommRegOk[vs] && ag105CommRegVal[vs] != 0xFF &&
+            (now - ag105CommRegReadMs[vs]) <= AG105_COMMISSION_VBATT_FRESH_MS && I_charge > 0.0f)
+            pChg = I_charge * (ag105CommRegVal[vs] * AG105_VBATT_MEAS_SCALE);
+        if (pChg > AG105_COMMISSION_P_CHG_CREDIT_MAX_W) pChg = AG105_COMMISSION_P_CHG_CREDIT_MAX_W;
+        float pUn = V_bus * (I_fc + I_batt) - ag105CommPsrc0 - pChg / AG105_COMMISSION_ETA_MIN;
+        pUnNow = pUn;
+        if (pUn > ag105CommPeakPunacct) ag105CommPeakPunacct = pUn;
+        if (!(pUn <= AG105_COMMISSION_P_UNACCT_W)) {
+            if (!ag105CommPunacctHigh) {
+                ag105CommPunacctHigh        = true;
+                ag105CommPunacctHighSinceMs = now;
+            } else if (now - ag105CommPunacctHighSinceMs >= AG105_COMMISSION_P_UNACCT_DWELL_MS) {
+                ag105CommissionTrip(AG105_COMM_TRIP_P_UNACCT, pUn, 0);
+                return;
+            }
+        } else {
+            ag105CommPunacctHigh = false;
+        }
+    }
+
     if (el >= AG105_COMMISSION_MAX_MS) { ag105CommissionStop("120 s cap"); return; }
     if (el >= AG105_SETTLE_MS) ag105CommSettled = true;
     // M4 (review): a bus that sags under V_BUS_CHARGED_THRESH (the start precondition) for
@@ -11550,8 +11960,9 @@ void ag105CommissionTick() {
                 if (ag105CommFwPhase == 0 && !ag105CommFixOnFirstRead) ag105CommFwPhase = 1;
             }
             if (slot >= 0) {
-                ag105CommRegVal[slot] = v;
-                ag105CommRegOk[slot]  = true;
+                ag105CommRegVal[slot]    = v;
+                ag105CommRegOk[slot]     = true;
+                ag105CommRegReadMs[slot] = now;   // fw v37 rev 2: freshness for the G2 credit
                 // M5 (review): the first successful read of each register is its AS-FOUND value.
                 bool asFoundRead = !ag105CommAsFoundOk[slot];
                 if (asFoundRead) {
@@ -11625,6 +12036,9 @@ void ag105CommissionTick() {
     Serial.print(" Vbus=");     Serial.print(V_bus, 2);
     Serial.print(" Ibt=");      Serial.print(I_batt, 3);
     Serial.print(" Ifc=");      Serial.print(I_fc, 3);
+    // fw v37 rev 2: the G1 / G2 quantities (Isrc = Ifc + Ibt, Pun = unaccounted source power).
+    Serial.print(" Isrc=");     Serial.print(I_fc + I_batt, 3);
+    Serial.print(" Pun=");      Serial.print(pUnNow, 2);
     Serial.print(" ack=");      Serial.print(ag105CommLastReadOk ? "y" : "n");
     Serial.print(" nak=");      Serial.print(ag105CommNakCount);
     Serial.print(" st=");
@@ -11851,6 +12265,17 @@ void printTestStatus() {
     Serial.print("CHARGER_STAT:       "); Serial.println(digitalRead(CHARGER_STAT));
     Serial.print("charger_powered:    "); Serial.println(chargerHasPower());
     Serial.print("ag105Configured:    "); Serial.println(ag105Configured);
+    // fw v37 rev 2: the charger-feed gate (G5) and the J-session trip latch (G4).
+    Serial.print("Ag105 VBat- gate:   ");
+    Serial.println(ag105VbatnIsolatedFlag ? "OPEN (AG105_VBATN_ISOLATED 1)"
+                                          : "CLOSED (VBat- tied to GND on rev 20260622; '4'/'5' ON + 'J' 1 refused)");
+    Serial.print("J trip latch:       ");
+    if (ag105CommTripLatched) {
+        Serial.print("LATCHED - "); Serial.print(ag105CommTripReasonName(ag105CommTripReason));
+        Serial.print(" at t="); Serial.print(ag105CommTripAtMs); Serial.println(" ms (reboot clears)");
+    } else {
+        Serial.println("clear");
+    }
     printMpptStatus();   // fw v24 — Ag105 reg 0x02 manager (also reachable on its own via 'N')
     Serial.println("--- ADC ---");
     Serial.print("V_fc=");   Serial.print(V_fc,   3); Serial.print("V  ");
@@ -14919,7 +15344,17 @@ void chargingControl() {
         // TL431/BSP170P braking chopper is the primary fast clamp — do not rely on Ag105 here.
         // REGEN_ENABLE and BT_BUS_ENABLE are not mutually exclusive; BT stays on the bus.
         assertFcChargeEnable(false);         // FC_CHARGE must be OFF before REGEN can go HIGH
-        digitalWrite(REGEN_ENABLE, HIGH);    // open regen → charger path
+        // fw v37 rev 2 (review S-M2 / C-M1): THE CHARGER-FEED GATE. On the rev 20260622 board the
+        // Ag105 VBat- is tied to PCB GND (datasheet p.4 forbids), and a REGEN-fed charger drew
+        // ~5.6 A per source it never measured (ML0227). With the gate closed or a J trip latched,
+        // REGEN stays LOW: regen energy goes to the TL431/BSP170P chopper (the primary clamp, not
+        // under firmware control) exactly as with charge_goal 0. Every other line of this branch is
+        // unchanged and still runs — MPPT LOW + mpptReleased = false is the same deliberate mode
+        // change (no holdoff armed), the BT re-close is the same — and the branch owns no timer or
+        // counter, so the gate cannot strand any state: the UV backoff's dwell is updated
+        // unconditionally above, and the cruise branch re-drives REGEN LOW on its first tick.
+        bool chargerFeedGated = !ag105VbatnIsolatedFlag || ag105CommTripLatched;
+        digitalWrite(REGEN_ENABLE, chargerFeedGated ? LOW : HIGH);   // open regen → charger path (ungated only)
         digitalWrite(MPPT_DISABLE, LOW);     // inhibit MPPT during regen (active-LOW)
         mpptReleased = false;                // deliberate mode change — no holdoff armed (fw v24)
         // share setpoint latch owns this switch — see updateShareSetpointCutoff() (2026-08-12)
@@ -15063,7 +15498,9 @@ void chargingControl() {
         // Refusing is the correct answer: the alternative is the collapse above.
         bool fcChgEntryOk = (V_bus >= FC_CHG_ENTRY_V) && !fcChgLockout
                             && !fcUvLockoutActive();
-        if (FC_CHARGE_ALLOWED && fcChgEntryOk &&
+        // fw v37 rev 2: the same charger-feed gate (VBat- isolation / J trip latch). Dead today under
+        // FC_CHARGE_ALLOWED 0; a refused open falls into the window-SHUT branch below (safe direction).
+        if (FC_CHARGE_ALLOWED && fcChgEntryOk && ag105VbatnIsolatedFlag && !ag105CommTripLatched &&
             digitalRead(FC_BUS_ENABLE) == HIGH && !busSwitchBlanked(FC_BUS_ENABLE)) {
             if (!fcChgOpenedMs) fcChgOpenedMs = millis();   // fw v32a: window opens
             assertFcChargeEnable(true);       // (2) conduction-gated

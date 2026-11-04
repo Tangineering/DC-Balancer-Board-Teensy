@@ -1021,3 +1021,16 @@ pairing, the encoder/current-noise analysis, the v37 scope), WORK_QUEUE 0j / 0k.
   ems-drive-cycle 0.0106 m/s (fw v28 0.0055, 1.9x), ems-y-b30-v1 0.0431 (0.0365, 1.18x - 98 % of it at the region steps;
   0.0062 vs 0.0021 = 3x between them), 12.6 % overshoot on pi-silence's 1.2 m/s step, a 0.32 m/s undershoot below a 0.4 m/s brake target (operator item); regen dwell 1326 >= 800 ticks.
   fw v29's span clamp still not exercised on the board (needs ems-ftp75-sdp). Row 37 of docs/firmware-versions.md.
+- **fw v37 FLASHED on the bench (2026-11-04 afternoon, BENCH_TEST 1 / USE_ETHERNET 0 - a USE_ETHERNET 1
+  build hangs in `setup()` at `Ethernet.begin()` with no link).** ML0226: the bad tooth is gone (180.00
+  counts/rev), the new law is on the board and the 1x current fell to 0.30-0.40x at 1.0-2.0 m/s (planning
+  section 10.3). **First `J` `1` session (ML0227) = a bench INCIDENT** (`docs/boost-bringup-debug.md`,
+  2026-11-04 entry): a 1 s ramp to ~11 A of source current the Ag105 did not report, the bench supply
+  dropped out, BT boost 16.5 A, bus 6.84 V, FC channel at 0 A afterwards. Leading candidate (UNCONFIRMED):
+  the forbidden Ag105 VBat- to GND tie. **No charger-path engagement** until that entry is closed.
+  **Operator-confirmed the same day: VBat- is tied to GND BY DESIGN** (pack V- = PCB ground) - a re-spin /
+  Silvertel question. **fw v37 rev 2 (PENDING FLASH, ledger row 37)** hardens `J`: G1 bus-side I_fc+I_batt
+  > 1.0 A / 5 ms, G2 unaccounted bus power > 3 W / 20 ms, G3 GENSTAT 5/6/7, a reboot-only trip latch, and the
+  `AG105_VBATN_ISOLATED` gate (default 0 on real boards, 1 under HIL_SIM) that also holds REGEN LOW in the Run /
+  `D` regen branch - **no regen charging on this board revision**. Tests 5238 / 210 / 5549 / 51. The bench PC now
+  has MSYS2 UCRT64 g++ (set TMP/TEMP; g++ cannot write to C:\WINDOWS).

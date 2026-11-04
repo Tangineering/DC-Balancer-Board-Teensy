@@ -208,6 +208,27 @@ static void reset_test_state() {
     ag105CommEarlyVbusMin   = 0.0f;
     ag105CommEarlyVchgMax   = 0.0f;
     ag105CommEarlyVrgnMax   = 0.0f;
+    // fw v37 rev 2: the trip-guard globals. The G4 latch is REBOOT-ONLY on the board, so a case
+    // that took a trip would otherwise hand every later case a refused 'J' / '4' / '5' and a
+    // REGEN branch pinned LOW; "boot value" is the only order-independent baseline. The G5 gate
+    // returns to its COMPILED default (0 on a real-board build, 1 under HIL_SIM) so the shipped
+    // default is what every untouched fixture sees; the J fixtures and the '4'/'5'/regen tests
+    // that need the charger feed open set ag105VbatnIsolatedFlag = true in their own setup.
+    ag105CommTripLatched    = false;
+    ag105CommTripReason     = AG105_COMM_TRIP_NONE;
+    ag105CommTripValue      = 0.0f;
+    ag105CommTripStatus     = 0;
+    ag105CommTripAtMs       = 0;
+    ag105VbatnIsolatedFlag  = (AG105_VBATN_ISOLATED != 0);
+    ag105CommIsrcHigh           = false;
+    ag105CommIsrcHighSinceMs    = 0;
+    ag105CommPunacctHigh        = false;
+    ag105CommPunacctHighSinceMs = 0;
+    ag105CommPsrc0              = 0.0f;
+    ag105CommPeakIsrc           = 0.0f;
+    ag105CommPeakPunacct        = 0.0f;
+    ag105CommStopReason         = "none";
+    for (int i = 0; i < AG105_COMM_NREG; i++) ag105CommRegReadMs[i] = 0;
 
     // PI integrator state (hoisted to file scope so it can be reset between cases)
     pi_motor_accum = 0;  pi_motor_lastMicros = 0;
@@ -828,6 +849,7 @@ static void test_charging_control_mppt_polarity() {
     g_pin_value[FC_CHARGE_ENABLE] = LOW;
     g_pin_value[BT_BUS_ENABLE]    = LOW;
     g_pin_value[REGEN_ENABLE]     = LOW;
+    ag105VbatnIsolatedFlag = true;   // fw v37 rev 2 (G5): the regen feed is gated closed by default on a real-board build
     chargingControl();
     check(g_pin_value[MPPT_DISABLE]    == LOW,
           "chargingControl: MPPT_DISABLE LOW (inhibited) during regen");
@@ -7817,6 +7839,7 @@ static void test_fw28_f5_state98_key5_refuses_open_under_a_cut(void) {
     // ── Admitted once the cut clears and FC is back on the bus. ──────────────────────────────
     reset_test_state();
     mainState = 98;
+    ag105VbatnIsolatedFlag = true;   // fw v37 rev 2 (G5): '5' ON is refused by the charger-feed gate while it is closed
     digitalWrite(FC_BUS_ENABLE, HIGH);
     digitalWrite(BT_BUS_ENABLE, HIGH);
     Serial.tx_clear();
@@ -25162,6 +25185,9 @@ static void j_fixture() {
     g_mock_millis = 10000;
     g_mock_micros = 10000000;
     V_bus         = 16.0f;
+    ag105VbatnIsolatedFlag = true;         // fw v37 rev 2 (G5): the charger-feed gate defaults CLOSED on a
+                                           // real-board build; the session tests need it open (the closed
+                                           // default is pinned by the G5 tests, which close it themselves)
     g_pin_value[MOT_PWR_ENABLE] = HIGH;    // raw: the session must never WRITE it
     g_write_log.clear();
 }
@@ -26773,6 +26799,934 @@ static void test_j_settle_boundary_and_restart_reset() {
           "restart: the early extremes are re-seeded from the CURRENT readings, not the planted ones");
 }
 
+
+// ═════════════════════════════════════════════════════════════════════════════
+// fw v37 rev 2 — State-98 'J' session TRIP GUARDS (G1-G4) and the charger-feed HARDWARE GATE (G5)
+// ═════════════════════════════════════════════════════════════════════════════
+// Incident: docs/boost-bringup-debug.md, 2026-11-04 "First Ag105 commissioning session" (ML0227).
+// Conventions for this block:
+//  * j_fixture() OPENS the G5 gate (ag105VbatnIsolatedFlag = true); reset_test_state() leaves it at
+//    the COMPILED default, which the G5 tests pin separately.
+//  * G1 tests neutralise G2 by planting ag105CommPsrc0 = 1e6 W AFTER the start (the baseline is
+//    reachable only through the start precondition, which caps it at ~3.2 W); G2 tests keep
+//    I_fc + I_batt under 1.0 A (or raise V_bus) so G1 cannot fire first.
+//  * "Tripped" means the mechanism FIRED: REGEN LOW AND MPPT LOW AND the latch AND the reason code
+//    AND the "*** TRIP:" line AND exactly one summary AND the session flag cleared. (The hazard
+//    banner printed at START contains the word "TRIP", so the marker checked is "*** TRIP:".)
+static void jt_step(uint32_t dt) { g_mock_millis += dt; doState98(); }
+
+// Fixture + start with the given PRE-EDGE bus-side currents; leaves tx / write log clear.
+static void jt_open_with(float ifc0, float ibt0) {
+    j_fixture();
+    I_fc = ifc0; I_batt = ibt0;
+    j_start();
+    Serial.tx_clear();
+    g_write_log.clear();
+}
+static void jt_open() { jt_open_with(0.0f, 0.0f); }
+
+static bool jt_tripped_as(uint8_t reason) {
+    return ag105CommTripLatched && ag105CommTripReason == reason && !ag105CommissionActive &&
+           digitalRead(REGEN_ENABLE) == LOW && digitalRead(MPPT_DISABLE) == LOW && !mpptReleased &&
+           Serial.tx_contains("*** TRIP:") && Serial.tx_count("[J] SUMMARY") == 1 &&
+           ag105CommTripAtMs == (uint32_t)(g_mock_millis - ag105CommStartMs);
+}
+static bool jt_clean() {
+    return !ag105CommTripLatched && ag105CommTripReason == AG105_COMM_TRIP_NONE && ag105CommissionActive &&
+           digitalRead(REGEN_ENABLE) == HIGH && !Serial.tx_contains("*** TRIP:");
+}
+// A G1 trip taken the normal way, then the observable currents cleared for the next assertions.
+static void jt_trip_g1() {
+    jt_open();
+    ag105CommPsrc0 = 1.0e6f;
+    I_fc = 0.6f; I_batt = 0.5f;
+    jt_step(1);
+    jt_step(5);
+    I_fc = 0.0f; I_batt = 0.0f;
+}
+// chargingControl() regen fixture. REGEN is planted HIGH when `regenPlanted` so a gated tick must
+// WRITE it LOW (not merely leave a LOW pin alone).
+static void jt_regen_fixture(int state, bool gateOpen, bool latched, bool regenPlanted) {
+    reset_test_state();
+    mainState        = state;
+    charge_goal      = 1.0f;
+    current          = -1.0f;      // regen braking
+    ag105_status_raw = AG105_GENSTAT_CHARGING;
+    ag105DataValid   = true;
+    g_pin_value[FC_CHARGE_ENABLE] = LOW;
+    g_pin_value[BT_BUS_ENABLE]    = LOW;
+    g_pin_value[REGEN_ENABLE]     = regenPlanted ? HIGH : LOW;
+    ag105VbatnIsolatedFlag = gateOpen;
+    ag105CommTripLatched   = latched;
+    ag105CommTripReason    = latched ? AG105_COMM_TRIP_I_SRC : AG105_COMM_TRIP_NONE;
+    g_write_log.clear();
+}
+
+static void test_j_guard_constants_and_reset_hygiene() {
+    test_group("fw v37 rev 2: trip-guard constants pinned; reset_test_state() returns every new global to its boot value");
+    check(AG105_COMMISSION_I_SRC_MAX_A == 1.0f && AG105_COMMISSION_I_SRC_DWELL_MS == 5u &&
+          AG105_COMMISSION_I_SRC_START_MAX_A == 0.2f,
+          "constants: G1 limit 1.0 A / dwell 5 ms, start precondition 0.2 A");
+    check(AG105_COMMISSION_P_UNACCT_W == 3.0f && AG105_COMMISSION_P_UNACCT_DWELL_MS == 20u &&
+          AG105_COMMISSION_ETA_MIN == 0.75f && fabsf(AG105_COMMISSION_P_CHG_CREDIT_MAX_W - 21.0f) < 1e-4f &&
+          AG105_COMMISSION_VBATT_FRESH_MS == 200u,
+          "constants: G2 limit 3.0 W / dwell 20 ms / eta_min 0.75 / credit cap 21 W / r05 freshness 200 ms");
+    check(AG105_COMMISSION_G3_ARM_MS == 40u && AG105_COMM_SLOT_VBATT_MEAS == 3 &&
+          AG105_COMM_TRIP_NONE == 0u && AG105_COMM_TRIP_I_SRC == 1u && AG105_COMM_TRIP_P_UNACCT == 2u &&
+          AG105_COMM_TRIP_CHG_ERR == 3u && AG105_COMM_TRIP_CHG_ERR_FAULT == 4u,
+          "constants: G3 arm 40 ms, r05 slot 3, reason codes 0/1/2/3/4");
+
+    // Dirty every new global (and the three inputs the guards read), then reset.
+    ag105CommTripLatched = true; ag105CommTripReason = 3; ag105CommTripValue = 9.0f;
+    ag105CommTripStatus = 0x05; ag105CommTripAtMs = 77;
+    ag105VbatnIsolatedFlag = !(AG105_VBATN_ISOLATED != 0);
+    ag105CommIsrcHigh = true; ag105CommIsrcHighSinceMs = 5; ag105CommPunacctHigh = true;
+    ag105CommPunacctHighSinceMs = 6; ag105CommPsrc0 = 12.0f; ag105CommPeakIsrc = 2.0f;
+    ag105CommPeakPunacct = 4.0f; ag105CommStopReason = "dirty";
+    for (int i = 0; i < AG105_COMM_NREG; i++) ag105CommRegReadMs[i] = 1000 + i;
+    ag105DataValid = true; ag105_status_raw = 0x05; I_charge = 1.5f;
+    reset_test_state();
+    check(!ag105CommTripLatched && ag105CommTripReason == AG105_COMM_TRIP_NONE && ag105CommTripValue == 0.0f &&
+          ag105CommTripStatus == 0 && ag105CommTripAtMs == 0,
+          "reset_test_state(): the reboot-only latch and its reason/value/status/at fields are clear");
+    check(ag105VbatnIsolatedFlag == (AG105_VBATN_ISOLATED != 0),
+          "reset_test_state(): the G5 gate is back at its COMPILED default");
+    bool regOk = true;
+    for (int i = 0; i < AG105_COMM_NREG; i++) if (ag105CommRegReadMs[i] != 0) regOk = false;
+    check(!ag105CommIsrcHigh && ag105CommIsrcHighSinceMs == 0 && !ag105CommPunacctHigh &&
+          ag105CommPunacctHighSinceMs == 0 && ag105CommPsrc0 == 0.0f && ag105CommPeakIsrc == 0.0f &&
+          ag105CommPeakPunacct == 0.0f && std::string(ag105CommStopReason) == "none" && regOk,
+          "reset_test_state(): the session dwell / baseline / peak / stop-reason / r05-age fields are clear");
+    check(!ag105DataValid && ag105_status_raw == 0 && I_charge == 0.0f,
+          "reset_test_state(): ag105DataValid, ag105_status_raw and I_charge are reset (the guards read all three)");
+
+    // The compiled default of the gate (orchestrator ruling): closed on a real-board build, open under HIL_SIM.
+#if HIL_SIM
+    check(AG105_VBATN_ISOLATED == 1 && ag105VbatnIsolatedFlag,
+          "G5 default (HIL_SIM build): the gate is compiled OPEN, so the HIL regen-harvest legs keep their behaviour");
+#else
+    check(AG105_VBATN_ISOLATED == 0 && !ag105VbatnIsolatedFlag,
+          "G5 default (real-board build): the gate is compiled CLOSED (rev 20260622 ties the Ag105 VBat- to PCB GND)");
+#endif
+}
+
+// ── G1 ───────────────────────────────────────────────────────────────────────────────────────
+static void test_j_g1_source_current() {
+    test_group("fw v37 rev 2 G1: bus-side I_fc + I_batt > 1.0 A for >= 5 ms trips (REGEN dropped first, latched)");
+
+    // Exactly AT the limit for 100 ms: the compare is strict, nothing fires.
+    jt_open(); ag105CommPsrc0 = 1.0e6f;
+    I_fc = 0.5f; I_batt = 0.5f;
+    for (int i = 0; i < 100; i++) jt_step(1);
+    check(jt_clean() && ag105CommPeakIsrc == 1.0f && !ag105CommIsrcHigh,
+          "G1: exactly 1.0 A for 100 ms -> no trip, peak recorded as exactly 1.0, dwell never armed");
+
+    // 1.001 A: 4 ms no trip, 5 ms trip.
+    jt_open(); ag105CommPsrc0 = 1.0e6f;
+    I_fc = 0.5f; I_batt = 0.501f;
+    jt_step(1); uint32_t t0 = g_mock_millis;
+    check(ag105CommIsrcHigh && jt_clean(), "G1: 1.001 A -- first over-limit sample arms the dwell, no trip");
+    g_mock_millis = t0 + 4; doState98();
+    check(jt_clean(), "G1: 1.001 A held 4 ms -> NOT tripped (just under the 5 ms dwell)");
+    g_mock_millis = t0 + 5; doState98();
+    check(jt_tripped_as(AG105_COMM_TRIP_I_SRC), "G1: 1.001 A held 5 ms -> TRIPPED: reason 1, latch, REGEN LOW, MPPT LOW, TRIP line, one summary");
+    check(ag105CommTripValue > 1.0005f && ag105CommTripValue < 1.0015f,
+          "G1: the trip records the offending current (1.001 A)");
+    check(Serial.tx_contains("G1 source current") && Serial.tx_contains("LATCHED until reboot") &&
+          Serial.tx_contains("stop reason: G1 source current"),
+          "G1: the TRIP line names the guard and the reboot-only latch; the summary carries the stop reason");
+    check(j_writes_to(MOT_PWR_ENABLE) == 0 && j_writes_to(FC_CHARGE_ENABLE) == 0 && j_writes_to(BT_BUS_ENABLE) == 0 &&
+          j_writes_to(FC_BUS_ENABLE) == 0,
+          "G1: the trip writes only REGEN and MPPT_DISABLE -- never MOT_PWR or the bus / charge switches");
+    {
+        int iR = j_first_write(REGEN_ENABLE, LOW), iM = j_first_write(MPPT_DISABLE, LOW);
+        check(iR >= 0 && iM >= 0 && iR < iM, "G1: pin order -- REGEN_ENABLE LOW is written BEFORE MPPT_DISABLE LOW");
+    }
+
+    // A 4 ms excursion that ends is forgotten.
+    jt_open(); ag105CommPsrc0 = 1.0e6f;
+    I_fc = 0.5f; I_batt = 0.501f;
+    jt_step(1); t0 = g_mock_millis;
+    g_mock_millis = t0 + 4; doState98();
+    I_batt = 0.0f; I_fc = 0.0f;
+    jt_step(1);
+    for (int i = 0; i < 50; i++) jt_step(1);
+    check(jt_clean() && !ag105CommIsrcHigh, "G1: a 4 ms excursion that ends is forgotten -- no trip 50 ms later");
+
+    // Dwell re-arm: 4 ms high, one low sample, 4 ms high -> no trip.
+    jt_open(); ag105CommPsrc0 = 1.0e6f;
+    I_fc = 0.6f; I_batt = 0.5f;
+    jt_step(1); t0 = g_mock_millis;
+    g_mock_millis = t0 + 4; doState98();
+    I_fc = 0.0f; I_batt = 0.0f;
+    jt_step(1);                                           // one in-limit sample re-arms
+    check(!ag105CommIsrcHigh, "G1 re-arm: one in-limit sample clears the armed dwell");
+    I_fc = 0.6f; I_batt = 0.5f;
+    jt_step(1); uint32_t t1 = g_mock_millis;
+    g_mock_millis = t1 + 4; doState98();
+    check(jt_clean(), "G1 re-arm: 4 ms high + a low sample + 4 ms high is NOT a 5 ms dwell");
+    g_mock_millis = t1 + 5; doState98();
+    check(jt_tripped_as(AG105_COMM_TRIP_I_SRC), "G1 re-arm: the re-armed dwell still trips at its own 5 ms");
+
+    // NaN current counts as over the limit (fail-safe), at the dwell, and never enters the peak.
+    jt_open(); ag105CommPsrc0 = 1.0e6f;
+    I_fc = NAN; I_batt = 0.0f;
+    jt_step(1); t0 = g_mock_millis;
+    g_mock_millis = t0 + 4; doState98();
+    check(jt_clean() && !std::isnan(ag105CommPeakIsrc), "G1 NaN: not tripped at 4 ms; the peak stays a number");
+    g_mock_millis = t0 + 5; doState98();
+    check(jt_tripped_as(AG105_COMM_TRIP_I_SRC) && std::isnan(ag105CommTripValue),
+          "G1 NaN: tripped at the 5 ms dwell with reason 1 (G1, not G2, wins the same-tick race)");
+
+    // Peak tracked, and reported by the summary.
+    jt_open(); ag105CommPsrc0 = 1.0e6f;
+    I_fc = 0.3f; I_batt = 0.3f; jt_step(1);
+    I_fc = 0.6f; I_batt = 0.35f; jt_step(1);
+    I_fc = 0.2f; I_batt = 0.0f; jt_step(1);
+    check(fabsf(ag105CommPeakIsrc - 0.95f) < 1e-4f, "G1: the peak I_fc+I_batt (0.95 A) is tracked across samples");
+    j_send("0");
+    check(Serial.tx_contains("peak I_fc+I_batt=0.950A") && Serial.tx_contains("(G1 stop 1.00A)"),
+          "G1: the summary prints the peak and the G1 stop level");
+
+    // The tripping tick's FIRST serial output is the TRIP line. (The mock cannot interleave Serial with
+    // digitalWrite, so this proves only that nothing else is printed first in that tick; the
+    // pin-before-serial ORDER itself is a property of the source, noted in the report.)
+    jt_open(); ag105CommPsrc0 = 1.0e6f;
+    I_fc = 0.6f; I_batt = 0.5f;
+    jt_step(1); t0 = g_mock_millis;
+    Serial.tx_clear();
+    g_mock_millis = t0 + 5; doState98();
+    check(ag105CommTripLatched && Serial.tx.compare(0, 13, "[J] *** TRIP:") == 0,
+          "G1: the tripping tick's first serial output is the TRIP line (nothing printed ahead of the pin writes)");
+}
+
+// ── G2 ───────────────────────────────────────────────────────────────────────────────────────
+static void test_j_g2_unaccounted_power() {
+    test_group("fw v37 rev 2 G2: V_bus*(I_fc+I_batt) - baseline - min(P_chg,21 W)/0.75 > 3.0 W for >= 20 ms trips");
+
+    // Threshold pair at V_bus = 16 V, baseline 0: 0.1875 A -> exactly 3.0 W (no trip); 0.1876 A -> 3.0016 W.
+    jt_open();
+    I_fc = 0.1875f;
+    for (int i = 0; i < 50; i++) jt_step(1);
+    check(jt_clean() && ag105CommPeakPunacct == 3.0f, "G2: exactly 3.0 W unaccounted for 50 ms -> no trip (strict compare), peak 3.0");
+    jt_open();
+    I_fc = 0.1874f;
+    for (int i = 0; i < 50; i++) jt_step(1);
+    check(jt_clean() && ag105CommPeakPunacct < 3.0f, "G2: 2.998 W (just under) for 50 ms -> no trip");
+
+    jt_open();
+    I_fc = 0.1876f;
+    jt_step(1); uint32_t t0 = g_mock_millis;
+    check(ag105CommPunacctHigh && jt_clean(), "G2: 3.0016 W -- first sample arms the dwell");
+    g_mock_millis = t0 + 19; doState98();
+    check(jt_clean(), "G2: over the limit for 19 ms -> NOT tripped (just under the 20 ms dwell)");
+    g_mock_millis = t0 + 20; doState98();
+    check(jt_tripped_as(AG105_COMM_TRIP_P_UNACCT), "G2: over the limit for 20 ms -> TRIPPED: reason 2, latch, REGEN LOW, MPPT LOW, TRIP line, one summary");
+    check(ag105CommTripValue > 3.0f && ag105CommTripValue < 3.01f && Serial.tx_contains("G2 unaccounted source power"),
+          "G2: the trip records the unaccounted power (~3.0016 W) and the TRIP line names G2");
+    {
+        int iR = j_first_write(REGEN_ENABLE, LOW), iM = j_first_write(MPPT_DISABLE, LOW);
+        check(iR >= 0 && iM >= 0 && iR < iM && j_writes_to(MOT_PWR_ENABLE) == 0,
+              "G2: pin order REGEN LOW before MPPT LOW, MOT_PWR untouched");
+    }
+
+    // Dwell re-arm for G2.
+    jt_open();
+    I_fc = 0.3f;
+    jt_step(1); t0 = g_mock_millis;
+    g_mock_millis = t0 + 15; doState98();
+    I_fc = 0.0f; jt_step(1);
+    check(!ag105CommPunacctHigh, "G2 re-arm: one in-limit sample clears the armed dwell");
+    I_fc = 0.3f; jt_step(1); uint32_t t1 = g_mock_millis;
+    g_mock_millis = t1 + 19; doState98();
+    check(jt_clean(), "G2 re-arm: 15 ms + low sample + 19 ms is NOT a 20 ms dwell");
+    g_mock_millis = t1 + 20; doState98();
+    check(jt_tripped_as(AG105_COMM_TRIP_P_UNACCT), "G2 re-arm: trips at the re-armed 20 ms");
+
+    // Baseline subtraction: a PRE-EDGE load (inside the 0.2 A start limit) stays inside.
+    jt_open_with(0.15f, 0.0f);
+    check(fabsf(ag105CommPsrc0 - 16.0f * 0.15f) < 1e-3f, "baseline: captured at the start as V_bus*(I_fc+I_batt) = 2.4 W");
+    for (int i = 0; i < 200; i++) jt_step(1);
+    check(jt_clean() && fabsf(ag105CommPeakPunacct) < 0.01f,
+          "baseline: the pre-edge 0.15 A load for 200 ms -> no trip, peak unaccounted ~0 (the baseline cancels it)");
+    I_fc = 0.15f + 0.185f;                                // 2.96 W above baseline
+    for (int i = 0; i < 50; i++) jt_step(1);
+    check(jt_clean() && ag105CommPeakPunacct > 2.9f && ag105CommPeakPunacct < 3.0f,
+          "baseline: 2.96 W above the baseline for 50 ms -> no trip (the limit is on the EXCESS)");
+    I_fc = 0.15f + 0.19f;                                 // 3.04 W above baseline
+    jt_step(1); t0 = g_mock_millis;
+    g_mock_millis = t0 + 20; doState98();
+    check(jt_tripped_as(AG105_COMM_TRIP_P_UNACCT) && ag105CommTripValue > 3.0f && ag105CommTripValue < 3.1f,
+          "baseline: 3.04 W above the baseline for 20 ms -> TRIPPED (reason 2)");
+
+    // A SECOND session re-captures its own baseline (stale baseline 2.4 W would hide a 3.04 W excess).
+    j_fixture(); I_fc = 0.15f; j_start();
+    j_send("0");
+    check(!ag105CommissionActive && !ag105CommTripLatched, "baseline (setup): session 1 stopped normally -- no latch");
+    I_fc = 0.05f;
+    j_start();
+    Serial.tx_clear();
+    check(fabsf(ag105CommPsrc0 - 16.0f * 0.05f) < 1e-3f, "baseline: the second session RE-CAPTURES (0.8 W), not the first session's 2.4 W");
+    I_fc = 0.05f + 0.19f;
+    jt_step(1); t0 = g_mock_millis;
+    g_mock_millis = t0 + 20; doState98();
+    check(jt_tripped_as(AG105_COMM_TRIP_P_UNACCT),
+          "baseline: with the re-captured 0.8 W baseline a 3.04 W excess trips (it would be 1.44 W under the stale one)");
+
+    // Negative baseline -> clamped to 0 (ADC offset, not power): a phantom negative baseline must not add headroom.
+    jt_open_with(-0.05f, 0.0f);
+    check(ag105CommPsrc0 == 0.0f, "baseline: a NEGATIVE pre-edge product is clamped to 0");
+    I_fc = 0.1875f;
+    for (int i = 0; i < 50; i++) jt_step(1);
+    check(jt_clean() && ag105CommPeakPunacct == 3.0f,
+          "baseline: ...so exactly 3.0 W later reads 3.0 W (an unclamped -0.8 W baseline would read 3.8 W and trip)");
+
+    // NaN baseline -> 0, and G2 stays ALIVE (a NaN baseline would make every later compare false).
+    j_fixture();
+    V_bus = INFINITY;                                     // inf * 0 = NaN, and inf passes the V_bus precondition
+    j_start();
+    Serial.tx_clear();
+    check(ag105CommissionActive && ag105CommPsrc0 == 0.0f && !std::isnan(ag105CommPsrc0), "baseline: a NaN product (inf * 0) is stored as 0");
+    V_bus = 16.0f;
+    I_fc = 0.4f;                                          // 6.4 W unaccounted, G1 quiet
+    jt_step(1); t0 = g_mock_millis;
+    g_mock_millis = t0 + 20; doState98();
+    check(jt_tripped_as(AG105_COMM_TRIP_P_UNACCT), "baseline: after a NaN baseline G2 still trips (the guard was not silently killed)");
+
+    // Bus-power axis: the same current is a different power at a different V_bus.
+    jt_open();
+    I_fc = 0.1875f;
+    for (int i = 0; i < 50; i++) jt_step(1);
+    check(jt_clean(), "axis: 0.1875 A at V_bus 16.0 V (3.0 W) -> no trip");
+    jt_open();
+    V_bus = 16.5f; I_fc = 0.1875f;
+    jt_step(1); t0 = g_mock_millis;
+    g_mock_millis = t0 + 20; doState98();
+    check(jt_tripped_as(AG105_COMM_TRIP_P_UNACCT), "axis: the SAME 0.1875 A at V_bus 16.5 V (3.09 W) -> TRIPPED");
+    jt_open();
+    V_bus = 14.0f; I_fc = 0.1876f;
+    for (int i = 0; i < 50; i++) jt_step(1);
+    check(jt_clean() && ag105CommPeakPunacct < 3.0f, "axis: 0.1876 A at V_bus 14.0 V (2.63 W, above V_BUS_CHARGED_THRESH 13.5) -> no trip");
+}
+
+// P_chg credit: reg-0x05 slot x I_charge, fresh / valid / capped.
+// Opens a session with a charger whose reg 0x05 reads `r05`, runs 80 ms of round robin so every
+// slot (incl. slot 3 = reg 0x05) has an ACKed read, and leaves the currents at 0.
+static void jt_open_credit(uint8_t r05, bool dataValid, float ichg) {
+    j_fixture();
+    Wire.reg_file[AG105_REG_VBATT_MEAS] = r05;
+    ag105DataValid = dataValid;
+    I_charge       = ichg;
+    j_start();
+    for (int i = 0; i < 8; i++) jt_step(10);
+    Serial.tx_clear();
+    g_write_log.clear();
+}
+
+static void test_j_g2_charge_credit() {
+    test_group("fw v37 rev 2 G2: the P_chg credit (fresh reg-0x05 x valid I_charge, capped at 21 W) -- fail-safe 0 otherwise");
+
+    // r05 = 125 -> 8.0 V; I_charge 1.0 A -> 8 W -> 10.667 W of bus power credited.
+    // I_fc 0.4 + I_batt 0.3 = 0.7 A -> 11.2 W: unaccounted 0.53 W with the credit, 11.2 W without.
+    jt_open_credit(125, true, 1.0f);
+    check(ag105CommRegOk[AG105_COMM_SLOT_VBATT_MEAS] && ag105CommRegVal[AG105_COMM_SLOT_VBATT_MEAS] == 125,
+          "credit (setup): the session has read reg 0x05 = 125 through the real round robin");
+    I_fc = 0.4f; I_batt = 0.3f;
+    for (int i = 0; i < 100; i++) jt_step(1);
+    check(jt_clean() && ag105CommPeakPunacct > 0.4f && ag105CommPeakPunacct < 1.0f,
+          "credit: a valid I_charge x fresh r05 is credited (8 W / 0.75) -- 11.2 W of bus power reads 0.53 W unaccounted, NO trip over 100 ms");
+
+    // r05 = 0xFF is the 'unavailable' sentinel: no credit.
+    jt_open_credit(0xFF, true, 1.0f);
+    I_fc = 0.4f; I_batt = 0.3f;
+    jt_step(1); uint32_t t0 = g_mock_millis;
+    g_mock_millis = t0 + 20; doState98();
+    check(jt_tripped_as(AG105_COMM_TRIP_P_UNACCT), "credit: r05 == 0xFF (unavailable sentinel) earns NO credit -> the same 11.2 W TRIPS");
+
+    // ag105DataValid false: no credit.
+    jt_open_credit(125, false, 1.0f);
+    I_fc = 0.4f; I_batt = 0.3f;
+    jt_step(1); t0 = g_mock_millis;
+    g_mock_millis = t0 + 20; doState98();
+    check(jt_tripped_as(AG105_COMM_TRIP_P_UNACCT), "credit: ag105DataValid false earns NO credit -> TRIPS");
+
+    // I_charge == 0 with everything else valid: nothing to credit.
+    jt_open_credit(125, true, 0.0f);
+    I_fc = 0.4f; I_batt = 0.3f;
+    jt_step(1); t0 = g_mock_millis;
+    g_mock_millis = t0 + 20; doState98();
+    check(jt_tripped_as(AG105_COMM_TRIP_P_UNACCT), "credit: I_charge 0 -> no credit -> TRIPS");
+
+    // Stale r05 (> 200 ms old): the charger's NAKs stop the slot refreshing; the credit disappears.
+    jt_open_credit(125, true, 1.0f);
+    Wire.emulate_regs = false;                            // every later read NAKs -> slot 3 is never re-stamped
+    for (int i = 0; i < 25; i++) jt_step(10);             // 250 ms
+    check(jt_clean() && (g_mock_millis - ag105CommRegReadMs[AG105_COMM_SLOT_VBATT_MEAS]) > AG105_COMMISSION_VBATT_FRESH_MS,
+          "credit (setup): the r05 slot is now older than 200 ms and the session is still clean");
+    I_fc = 0.4f; I_batt = 0.3f;
+    jt_step(1); t0 = g_mock_millis;
+    g_mock_millis = t0 + 20; doState98();
+    check(jt_tripped_as(AG105_COMM_TRIP_P_UNACCT), "credit: a STALE r05 (> 200 ms) earns NO credit -> TRIPS");
+    Wire.emulate_regs = true;
+
+    // Freshness boundary: age exactly 200 ms still credits; 201 ms does not.
+    for (int age = 200; age <= 201; age++) {
+        jt_open_credit(125, true, 1.0f);
+        Wire.emulate_regs = false;
+        I_fc = 0.4f; I_batt = 0.3f;
+        for (int i = 0; i < 30; i++) {
+            g_mock_millis += 1;
+            ag105CommRegReadMs[AG105_COMM_SLOT_VBATT_MEAS] = g_mock_millis - (uint32_t)age;
+            doState98();
+            if (ag105CommTripLatched) break;              // stop the clock on the trip tick (AtMs is checked)
+        }
+        if (age == 200)
+            check(jt_clean(), "credit freshness: an r05 read exactly 200 ms ago STILL credits (<=) -> no trip over 30 ms");
+        else
+            check(jt_tripped_as(AG105_COMM_TRIP_P_UNACCT), "credit freshness: an r05 read 201 ms ago does NOT credit -> TRIPPED");
+        Wire.emulate_regs = true;
+    }
+
+    // Cap at 21 W: a huge reported I_charge cannot mask a large unaccounted power.
+    // V_bus 40 V, I_fc 0.4 + I_batt 0.39 = 0.79 A -> 31.6 W. Capped credit 21/0.75 = 28 W -> 3.6 W unaccounted.
+    // (Uncapped, 1000 A x 8 V would credit 10 667 W and hide it.)
+    jt_open_credit(125, true, 1000.0f);
+    V_bus = 40.0f; I_fc = 0.4f; I_batt = 0.39f;
+    jt_step(1); t0 = g_mock_millis;
+    g_mock_millis = t0 + 20; doState98();
+    check(jt_tripped_as(AG105_COMM_TRIP_P_UNACCT) && ag105CommTripValue > 3.4f && ag105CommTripValue < 3.8f,
+          "credit cap: I_charge 1000 A is capped at 21 W (28 W of bus power) -> 31.6 W TRIPS with ~3.6 W unaccounted");
+    // Under the cap the credit is honoured in full: 2.5 A x 8 V = 20 W -> 26.67 W credited; 28 W of bus power is 1.33 W unaccounted.
+    jt_open_credit(125, true, 2.5f);
+    V_bus = 40.0f; I_fc = 0.4f; I_batt = 0.3f;
+    for (int i = 0; i < 60; i++) jt_step(1);
+    check(jt_clean() && ag105CommPeakPunacct > 1.0f && ag105CommPeakPunacct < 1.7f,
+          "credit cap (contrast): 20 W of charge power (under the cap) is credited in full -> 28 W reads ~1.33 W, no trip");
+}
+
+// ── G3 ───────────────────────────────────────────────────────────────────────────────────────
+static void test_j_g3_charger_error() {
+    test_group("fw v37 rev 2 G3: Ag105 GENSTAT 5/6/7 (valid, != 0xFF, >= 40 ms after the edge) trips immediately");
+
+    const uint8_t bad[] = { 0x05, 0x06, 0x07, 0x0D };     // 0x0D = MPPT bit + GENSTAT 5
+    for (uint8_t st : bad) {
+        char msg[220];
+        jt_open();
+        ag105DataValid = true; ag105_status_raw = st;
+        g_mock_millis = ag105CommStartMs + 39; doState98();
+        snprintf(msg, sizeof(msg), "G3: status 0x%02X at 39 ms after the edge -> NOT tripped (arm window)", st);
+        check(jt_clean(), msg);
+        g_mock_millis = ag105CommStartMs + 40; doState98();
+        snprintf(msg, sizeof(msg), "G3: status 0x%02X at 40 ms -> TRIPPED on the first eligible tick (reason 3, latch, REGEN LOW, TRIP line, one summary)", st);
+        check(jt_tripped_as(AG105_COMM_TRIP_CHG_ERR) && ag105CommTripStatus == st && ag105CommTripAtMs == 40u, msg);
+        snprintf(msg, sizeof(msg), "G3: status 0x%02X -- the TRIP line carries the status byte; REGEN LOW precedes MPPT LOW", st);
+        int iR = j_first_write(REGEN_ENABLE, LOW), iM = j_first_write(MPPT_DISABLE, LOW);
+        check(Serial.tx_contains("G3 Ag105 GENSTAT error") && Serial.tx_contains("(status 0x") && iR >= 0 && iM > iR, msg);
+    }
+
+    // Non-error and non-trustworthy bytes never trip, however long the session runs.
+    const uint8_t okb[] = { 0x00, 0x03, 0x04, 0x08, 0xFF };
+    for (uint8_t st : okb) {
+        char msg[200];
+        jt_open();
+        ag105DataValid = true; ag105_status_raw = st;
+        for (int i = 0; i < 20; i++) jt_step(10);
+        snprintf(msg, sizeof(msg), "G3: status 0x%02X for 200 ms -> no trip%s", st,
+                 st == 0xFF ? " (0xFF is the unavailable / brown-out read, not GENSTAT 7)" : "");
+        check(jt_clean(), msg);
+    }
+    jt_open();
+    ag105DataValid = false; ag105_status_raw = 0x05;
+    for (int i = 0; i < 20; i++) jt_step(10);
+    check(jt_clean(), "G3: GENSTAT 5 with ag105DataValid FALSE for 200 ms -> no trip (a stale byte is not evidence)");
+
+    // ── the abandon path (State-99 entry, or a triggerFault() earlier in the same pass): variables only ──
+    jt_open();
+    ag105DataValid = true; ag105_status_raw = 0x05;
+    g_mock_millis = ag105CommStartMs + 40;
+    mainState = 99;                                       // as triggerFault() leaves it mid-pass
+    JPinSnap s = j_snap();
+    Serial.tx_clear();
+    ag105CommissionTick();
+    check(!ag105CommissionActive && ag105CommTripLatched && ag105CommTripReason == AG105_COMM_TRIP_CHG_ERR_FAULT &&
+          ag105CommTripStatus == 0x05 && ag105CommTripAtMs == 40u,
+          "G3 abandon: State-99 exit with GENSTAT 5 valid -> latch set, reason 4, status and time recorded");
+    check(j_same(s, j_snap()) && g_write_log.empty() && Serial.tx.empty() && ag105CommSummaryPending,
+          "G3 abandon: NO pin write and NO serial on that path; the summary is deferred");
+
+    const uint8_t aband[] = { 0x04, 0x00, 0xFF };
+    for (uint8_t b : aband) {
+        char msg[160];
+        jt_open();
+        ag105DataValid = true; ag105_status_raw = b;
+        g_mock_millis = ag105CommStartMs + 100;
+        mainState = 99;
+        ag105CommissionTick();
+        snprintf(msg, sizeof(msg), "G3 abandon: a normal status 0x%02X records NOTHING (no latch, reason none)", b);
+        check(!ag105CommissionActive && !ag105CommTripLatched && ag105CommTripReason == AG105_COMM_TRIP_NONE, msg);
+    }
+    jt_open();
+    ag105DataValid = true; ag105_status_raw = 0x05;
+    g_mock_millis = ag105CommStartMs + 39;
+    mainState = 99;
+    ag105CommissionTick();
+    check(!ag105CommTripLatched, "G3 abandon: GENSTAT 5 but only 39 ms after the edge -> not recorded (arm window)");
+    jt_open();
+    ag105DataValid = false; ag105_status_raw = 0x05;
+    g_mock_millis = ag105CommStartMs + 100;
+    mainState = 99;
+    ag105CommissionTick();
+    check(!ag105CommTripLatched, "G3 abandon: GENSTAT 5 with ag105DataValid false -> not recorded");
+
+    // Through the real State-99 teardown: the latch is recorded at phase 0 and the summary shows it at phase 3.
+    jt_open();
+    ag105DataValid = true; ag105_status_raw = 0x06;
+    g_mock_millis = ag105CommStartMs + 50;
+    triggerFault(FAULT_OC_FC, ERR_OC_FC);
+    state99Phase = 0;
+    Serial.tx_clear();
+    doState99();
+    check(ag105CommTripLatched && ag105CommTripReason == AG105_COMM_TRIP_CHG_ERR_FAULT && !ag105CommissionActive,
+          "G3 abandon (real doState99): phase 0 records reason 4 and ends the session");
+    for (int i = 0; i < 60 && state99Phase != 3; i++) { g_mock_millis += 1; doState99(); }
+    doState99();
+    check(state99Phase == 3 && Serial.tx_count("[J] SUMMARY") == 1 &&
+          Serial.tx_contains("stop reason: fault (State 99 teardown owns the pins)") &&
+          Serial.tx_contains("trip latch: LATCHED - G3 Ag105 GENSTAT error (5/6/7), recorded at a fault exit"),
+          "G3 abandon (real doState99): the deferred summary reports the fault stop reason and the LATCHED reason-4 line");
+}
+
+// ── G4 ───────────────────────────────────────────────────────────────────────────────────────
+static void test_j_g4_latch() {
+    test_group("fw v37 rev 2 G4: the trip latch refuses every charger-feed ON, allows every OFF, survives Q / X / State 99");
+
+    // A tripped board.
+    jt_trip_g1();
+    check(ag105CommTripLatched && !ag105CommissionActive && digitalRead(REGEN_ENABLE) == LOW,
+          "G4 (setup): a real G1 trip has latched the board");
+    Serial.tx_clear(); g_write_log.clear();
+    JPinSnap s0 = j_snap();
+    unsigned long wireTx0 = Wire.transactions;
+
+    j_send("1");
+    check(!ag105CommissionActive && j_same(s0, j_snap()) && Wire.transactions == wireTx0 && g_write_log.empty() &&
+          Serial.tx_contains("REFUSED") && Serial.tx_contains("TRIP is latched"),
+          "G4: 'J' 1 is REFUSED with the latch message -- no session, no pin write, no Wire traffic");
+    Serial.tx_clear();
+    j_send("1 2");
+    check(!ag105CommissionActive && j_same(s0, j_snap()) && Wire.transactions == wireTx0 && g_write_log.empty() &&
+          Serial.tx_contains("TRIP is latched") && !ag105CommFixOnFirstRead,
+          "G4: 'J' 1 2 (start-and-fix) is REFUSED the same way -- and arms nothing");
+
+    Serial.tx_clear();
+    Serial.rx_queue.push('4'); doState98();
+    check(digitalRead(REGEN_ENABLE) == LOW && j_same(s0, j_snap()) && g_write_log.empty() &&
+          Serial.tx_contains("REFUSED: REGEN_ENABLE ON ('4')") && Serial.tx_contains("TRIP is latched"),
+          "G4: '4' (REGEN ON) is REFUSED with the latch message -- REGEN stays LOW, no pin written");
+    Serial.tx_clear();
+    Serial.rx_queue.push('5'); doState98();
+    check(digitalRead(FC_CHARGE_ENABLE) == LOW && j_same(s0, j_snap()) && g_write_log.empty() &&
+          Serial.tx_contains("REFUSED: FC_CHARGE_ENABLE ON ('5')") && Serial.tx_contains("TRIP is latched"),
+          "G4: '5' (FC_CHARGE ON) is REFUSED with the latch message -- FC_CHARGE stays LOW, no pin written");
+
+    // The 'J' prompt warns up front.
+    Serial.tx_clear();
+    Serial.rx_queue.push('J'); doState98();
+    check(Serial.tx_contains("start REFUSED: trip latched, reboot"), "G4: the 'J' prompt itself says a start would be refused (trip latched)");
+    Serial.rx_queue.push('z'); doState98();               // cancel the prompt
+
+    // OFF directions are never refused.
+    g_pin_value[REGEN_ENABLE] = HIGH;
+    Serial.tx_clear();
+    Serial.rx_queue.push('4'); doState98();
+    check(digitalRead(REGEN_ENABLE) == LOW && !Serial.tx_contains("REFUSED"), "G4: '4' OFF still works under the latch");
+    g_pin_value[FC_CHARGE_ENABLE] = HIGH;
+    Serial.tx_clear();
+    Serial.rx_queue.push('5'); doState98();
+    check(digitalRead(FC_CHARGE_ENABLE) == LOW && !Serial.tx_contains("REFUSED"), "G4: '5' OFF still works under the latch");
+
+    // 'X' and 'Q' still work, and the latch survives them.
+    Serial.tx_clear();
+    Serial.rx_queue.push('X'); doState98();
+    check(ag105CommTripLatched && mainState == 98, "G4: 'X' still works and the latch survives it");
+    j_send("1");
+    check(!ag105CommissionActive && ag105CommTripLatched && Serial.tx_contains("TRIP is latched"),
+          "G4: a SECOND start attempt after 'X' is still refused (the latch is not cleared by a new attempt)");
+    Serial.rx_queue.push('Q'); doState98();
+    check(mainState == 1 && ag105CommTripLatched && ag105CommTripReason == AG105_COMM_TRIP_I_SRC,
+          "G4: 'Q' still exits to State 1 and the latch (and its reason) survives it");
+
+    // State-99: the teardown completes and the latch is untouched.
+    mainState = 98;
+    triggerFault(FAULT_OC_FC, ERR_OC_FC);
+    state99Phase = 0;
+    for (int i = 0; i < 60 && state99Phase != 3; i++) { g_mock_millis += 1; doState99(); }
+    doState99();
+    check(state99Phase == 3 && ag105CommTripLatched && ag105CommTripReason == AG105_COMM_TRIP_I_SRC,
+          "G4: the State-99 teardown to phase 3 leaves the latch set");
+#if HIL_SIM
+    hilWarmReset();                                       // the only path out of State 99
+    check(mainState == 0 && ag105CommTripLatched && ag105CommTripReason == AG105_COMM_TRIP_I_SRC,
+          "G4 (HIL): the State-99 -> State-0 warm reset does NOT clear the latch (reboot only)");
+#endif
+
+    // 'S' status shows it.
+    mainState = 98; Serial.tx_clear();
+    Serial.rx_queue.push('S'); doState98();
+    check(Serial.tx_contains("J trip latch:       LATCHED - G1 source current"),
+          "G4: the 'S' status dump reports the latch and its reason");
+
+    // A trip during a pending '1 2' leaves no further Wire writes.
+    j_fixture();
+    j_send("1 2");
+    check(ag105CommissionActive && ag105CommFixOnFirstRead, "G4 ('1 2' setup): start-and-fix session stands, fix still pending");
+    ag105CommPsrc0 = 1.0e6f;
+    I_fc = 0.6f; I_batt = 0.5f;
+    jt_step(1); uint32_t t0 = g_mock_millis;
+    Wire.write_log.clear();
+    g_mock_millis = t0 + 5; doState98();                  // trips BEFORE the second as-found read that would fire the fix
+    check(ag105CommTripLatched && !ag105CommissionActive && Wire.write_log.empty(),
+          "G4: a G1 trip while '1 2' is pending -> latched, no charger register was written");
+    for (int i = 0; i < 20; i++) jt_step(10);
+    check(Wire.write_log.empty(), "G4: no Wire write at any later tick");
+    check(Serial.tx_contains("start-and-fix never wrote the profile"), "G4: the trip summary says the pending fix never ran");
+
+    // A tick after a trip is a no-op.
+    I_fc = 0.0f; I_batt = 0.0f;
+    JPinSnap s1 = j_snap();
+    unsigned long wireTx1 = Wire.transactions;
+    Serial.tx_clear(); g_write_log.clear();
+    g_mock_millis += 100; doState98();
+    g_mock_millis += 100; doState98();
+    check(j_same(s1, j_snap()) && g_write_log.empty() && Wire.transactions == wireTx1 && Serial.tx.empty(),
+          "G4: ticks after a trip are no-ops -- no pin, no Wire transaction, no serial");
+    ag105CommissionTick();
+    check(j_same(s1, j_snap()) && Serial.tx.empty() && ag105CommTripReason == AG105_COMM_TRIP_I_SRC,
+          "G4: ag105CommissionTick() called directly after a trip does nothing and does not overwrite the first reason");
+
+    // chargingControl() keeps REGEN LOW under the latch (Run and the State-98 path), contrast with latch clear.
+    for (int st = 0; st < 2; st++) {
+        int state = st ? 98 : 2;
+        char msg[220];
+        jt_regen_fixture(state, /*gate*/true, /*latched*/false, /*regenPlanted*/false);
+        chargingControl();
+        snprintf(msg, sizeof(msg), "G4 contrast (mainState %d): latch clear + gate open -> chargingControl() regen branch DRIVES REGEN HIGH", state);
+        check(g_pin_value[REGEN_ENABLE] == HIGH && g_pin_value[MPPT_DISABLE] == LOW, msg);
+        jt_regen_fixture(state, /*gate*/true, /*latched*/true, /*regenPlanted*/true);
+        chargingControl();
+        snprintf(msg, sizeof(msg), "G4 (mainState %d): latch SET -> the regen branch WRITES REGEN LOW (planted HIGH is pulled down), MPPT LOW, FC_CHARGE LOW", state);
+        check(g_pin_value[REGEN_ENABLE] == LOW && j_first_write(REGEN_ENABLE, LOW) >= 0 && j_first_write(REGEN_ENABLE, HIGH) < 0 &&
+              g_pin_value[MPPT_DISABLE] == LOW && g_pin_value[FC_CHARGE_ENABLE] == LOW, msg);
+    }
+
+    // The same through the real State-98 drive-cycle tick ('D' path).
+    for (int latched = 0; latched < 2; latched++) {
+        reset_test_state();
+        mainState = 98;
+        g_pin_value[MOT_PWR_ENABLE] = HIGH;
+        driveCycleActive = true; driveCyclePhaseIdx = 1; driveCyclePhaseStart = 0;
+        g_mock_millis = 2000; g_mock_micros = 100000;
+        charge_goal = 1.0f; current = -1.0f;
+        ag105_status_raw = AG105_GENSTAT_CHARGING; ag105DataValid = true;
+        g_pin_value[REGEN_ENABLE] = latched ? HIGH : LOW;
+        ag105VbatnIsolatedFlag = true; ag105CommTripLatched = (latched != 0);
+        g_write_log.clear();
+        doState98();
+        if (latched)
+            check(driveCycleActive && g_pin_value[REGEN_ENABLE] == LOW && j_first_write(REGEN_ENABLE, LOW) >= 0,
+                  "G4 ('D' drive-cycle tick): latch SET -> doState98()'s chargingControl() writes REGEN LOW");
+        else
+            check(driveCycleActive && g_pin_value[REGEN_ENABLE] == HIGH,
+                  "G4 contrast ('D' drive-cycle tick): latch clear + gate open -> the regen branch raises REGEN");
+    }
+
+    // The FC_CHARGE cruise window. Dead today under FC_CHARGE_ALLOWED 0 (a compile-time constant with no
+    // override), so every combination must leave it shut; the live gate clauses are asserted when it is enabled.
+    for (int combo = 0; combo < 3; combo++) {
+        reset_test_state();
+        mainState = 2;
+        charge_goal = 1.0f; current = 0.5f;               // cruise
+        ag105_status_raw = AG105_GENSTAT_CHARGING; ag105DataValid = true;
+        V_bus = 16.0f;
+        g_pin_value[FC_BUS_ENABLE] = HIGH; g_pin_value[BT_BUS_ENABLE] = HIGH;
+        ag105VbatnIsolatedFlag = (combo != 1);
+        ag105CommTripLatched   = (combo == 2);
+        chargingControl();
+        char msg[160];
+        snprintf(msg, sizeof(msg), "FC_CHARGE window (gate %s, latch %s): FC_CHARGE stays LOW",
+                 combo == 1 ? "CLOSED" : "open", combo == 2 ? "SET" : "clear");
+        check(g_pin_value[FC_CHARGE_ENABLE] == LOW, msg);
+    }
+#if FC_CHARGE_ALLOWED
+    for (int combo = 0; combo < 3; combo++) {
+        reset_test_state();
+        mainState = 2; charge_goal = 1.0f; current = 0.5f;
+        ag105_status_raw = AG105_GENSTAT_CHARGING; ag105DataValid = true;
+        g_pin_value[FC_BUS_ENABLE] = HIGH; g_pin_value[BT_BUS_ENABLE] = HIGH;
+        ag105VbatnIsolatedFlag = (combo != 1);
+        ag105CommTripLatched   = (combo == 2);
+        chargingControl();
+        if (combo == 0)
+            check(g_pin_value[FC_CHARGE_ENABLE] == HIGH, "FC_CHARGE window contrast (FC_CHARGE_ALLOWED build): gate open + latch clear -> the window opens");
+        else
+            check(g_pin_value[FC_CHARGE_ENABLE] == LOW, "FC_CHARGE window (FC_CHARGE_ALLOWED build): gate closed / latch set -> the window refuses to open");
+    }
+#endif
+}
+
+// ── G5 ───────────────────────────────────────────────────────────────────────────────────────
+static void test_j_g5_gate() {
+    test_group("fw v37 rev 2 G5: the VBat- hardware gate (closed on a real-board build) refuses every charger-feed ON");
+
+    // Gate message first, before any other precondition refusal (MOT_PWR LOW would otherwise refuse).
+    j_fixture();
+    ag105VbatnIsolatedFlag = false;
+    g_pin_value[MOT_PWR_ENABLE] = LOW;
+    I_fc = 0.5f;                                          // a start-limit violation as well
+    JPinSnap s = j_snap();
+    unsigned long w0 = Wire.transactions;
+    j_send("1");
+    check(!ag105CommissionActive && j_same(s, j_snap()) && g_write_log.empty() && Wire.transactions == w0 &&
+          Serial.tx_contains("UNUSABLE on this board") && Serial.tx_contains("'J' session start") &&
+          !Serial.tx_contains("MOT_PWR_ENABLE is LOW") && !Serial.tx_contains("idle limit"),
+          "G5: gate closed -> 'J' 1 is REFUSED with the GATE message ahead of every other precondition; no pin, no Wire");
+    // Both gate and latch: the gate's (hardware) message wins.
+    j_fixture();
+    ag105VbatnIsolatedFlag = false; ag105CommTripLatched = true; ag105CommTripReason = AG105_COMM_TRIP_I_SRC;
+    j_send("1 2");
+    check(!ag105CommissionActive && Serial.tx_contains("UNUSABLE on this board") && !Serial.tx_contains("TRIP is latched") &&
+          !ag105CommFixOnFirstRead,
+          "G5: gate closed AND latch set -> 'J' 1 2 shows the gate message (hardware reason first), arms nothing");
+
+    // '4' / '5' ON refused with the gate message; nothing moves.
+    j_fixture();
+    ag105VbatnIsolatedFlag = false;
+    s = j_snap(); g_write_log.clear(); Serial.tx_clear();
+    Serial.rx_queue.push('4'); doState98();
+    check(digitalRead(REGEN_ENABLE) == LOW && j_same(s, j_snap()) && g_write_log.empty() &&
+          Serial.tx_contains("REFUSED: REGEN_ENABLE ON ('4')") && Serial.tx_contains("UNUSABLE on this board"),
+          "G5: gate closed -> '4' (REGEN ON) REFUSED with the gate message, no pin written");
+    Serial.tx_clear();
+    Serial.rx_queue.push('5'); doState98();
+    check(digitalRead(FC_CHARGE_ENABLE) == LOW && j_same(s, j_snap()) && g_write_log.empty() &&
+          Serial.tx_contains("REFUSED: FC_CHARGE_ENABLE ON ('5')") && Serial.tx_contains("UNUSABLE on this board"),
+          "G5: gate closed -> '5' (FC_CHARGE ON) REFUSED with the gate message, no pin written");
+    // The 'J' prompt warns up front.
+    Serial.tx_clear();
+    Serial.rx_queue.push('J'); doState98();
+    check(Serial.tx_contains("start REFUSED: VBat- gate closed"), "G5: the 'J' prompt says a start would be refused (gate closed)");
+    Serial.rx_queue.push('z'); doState98();
+    // OFF directions still work with the gate closed.
+    g_pin_value[REGEN_ENABLE] = HIGH; Serial.tx_clear();
+    Serial.rx_queue.push('4'); doState98();
+    check(digitalRead(REGEN_ENABLE) == LOW && !Serial.tx_contains("REFUSED"), "G5: gate closed -> '4' OFF still works");
+    g_pin_value[FC_CHARGE_ENABLE] = HIGH; Serial.tx_clear();
+    Serial.rx_queue.push('5'); doState98();
+    check(digitalRead(FC_CHARGE_ENABLE) == LOW && !Serial.tx_contains("REFUSED"), "G5: gate closed -> '5' OFF still works");
+    // Gate-open contrast for each.
+    j_fixture();
+    Serial.rx_queue.push('4'); doState98();
+    check(digitalRead(REGEN_ENABLE) == HIGH, "G5 contrast: gate open (fixture default) -> '4' turns REGEN ON");
+    j_fixture();
+    Serial.rx_queue.push('5'); doState98();
+    check(digitalRead(FC_CHARGE_ENABLE) == HIGH, "G5 contrast: gate open -> '5' turns FC_CHARGE ON");
+    j_fixture();
+    j_start();
+    check(ag105CommissionActive, "G5 contrast: gate open -> 'J' 1 starts");
+
+    // The SHIPPED default (reset_test_state() with no repair): refused on a real-board build, allowed under HIL_SIM.
+    reset_test_state();
+    mainState = 98;
+    Serial.tx_clear();
+    Serial.rx_queue.push('4'); doState98();
+#if HIL_SIM
+    check(digitalRead(REGEN_ENABLE) == HIGH && !Serial.tx_contains("REFUSED"),
+          "G5 shipped default (HIL_SIM build): '4' ON is allowed with no repair");
+#else
+    check(digitalRead(REGEN_ENABLE) == LOW && Serial.tx_contains("UNUSABLE on this board"),
+          "G5 shipped default (real-board build): '4' ON is REFUSED out of the box");
+#endif
+
+    // chargingControl(): Run (mainState 2) and the State-98 path, gate closed vs open.
+    for (int st = 0; st < 2; st++) {
+        int state = st ? 98 : 2;
+        char msg[220];
+        jt_regen_fixture(state, /*gate*/false, /*latched*/false, /*regenPlanted*/true);
+        chargingControl();
+        snprintf(msg, sizeof(msg), "G5 (mainState %d): gate CLOSED -> the regen branch WRITES REGEN LOW (planted HIGH pulled down), MPPT LOW", state);
+        check(g_pin_value[REGEN_ENABLE] == LOW && j_first_write(REGEN_ENABLE, LOW) >= 0 && j_first_write(REGEN_ENABLE, HIGH) < 0 &&
+              g_pin_value[MPPT_DISABLE] == LOW && !mpptReleased, msg);
+        jt_regen_fixture(state, /*gate*/true, /*latched*/false, /*regenPlanted*/false);
+        chargingControl();
+        snprintf(msg, sizeof(msg), "G5 contrast (mainState %d): gate OPEN -> REGEN HIGH", state);
+        check(g_pin_value[REGEN_ENABLE] == HIGH, msg);
+    }
+    // The BT re-close and FC_CHARGE guard in that branch are unchanged by the gate.
+    jt_regen_fixture(2, false, false, false);
+    chargingControl();
+    check(g_pin_value[FC_CHARGE_ENABLE] == LOW && g_pin_value[BT_BUS_ENABLE] == HIGH,
+          "G5: with the gate closed the rest of the regen branch still runs -- FC_CHARGE LOW, BT_BUS re-closed HIGH");
+
+    // The State-98 drive-cycle tick ('D') with the gate closed.
+    reset_test_state();
+    mainState = 98;
+    g_pin_value[MOT_PWR_ENABLE] = HIGH;
+    driveCycleActive = true; driveCyclePhaseIdx = 1; driveCyclePhaseStart = 0;
+    g_mock_millis = 2000; g_mock_micros = 100000;
+    charge_goal = 1.0f; current = -1.0f;
+    ag105_status_raw = AG105_GENSTAT_CHARGING; ag105DataValid = true;
+    g_pin_value[REGEN_ENABLE] = HIGH;
+    ag105VbatnIsolatedFlag = false;
+    g_write_log.clear();
+    doState98();
+    check(driveCycleActive && g_pin_value[REGEN_ENABLE] == LOW && j_first_write(REGEN_ENABLE, LOW) >= 0,
+          "G5 ('D' drive-cycle tick): gate CLOSED -> doState98()'s chargingControl() keeps REGEN LOW");
+
+    // doState99's teardown drain is NOT gated: phase 0 raises FC_CHARGE, phase 1 raises REGEN, phase 2 closes it.
+    reset_test_state();
+    mainState = 98;
+    ag105VbatnIsolatedFlag = false;
+    g_pin_value[MOT_PWR_ENABLE] = HIGH;
+    triggerFault(FAULT_OC_FC, ERR_OC_FC);
+    state99Phase = 0;
+    g_write_log.clear();
+    for (int i = 0; i < 60 && state99Phase != 3; i++) { g_mock_millis += 1; doState99(); }
+    check(state99Phase == 3 && j_first_write(FC_CHARGE_ENABLE, HIGH) >= 0 && j_first_write(REGEN_ENABLE, HIGH) >= 0 &&
+          digitalRead(REGEN_ENABLE) == LOW && digitalRead(FC_CHARGE_ENABLE) == LOW,
+          "G5: the State-99 drain still raises FC_CHARGE (phase 0) and REGEN (phase 1) with the gate closed, then closes both");
+}
+
+// ── start precondition, summary lines, restore hint ───────────────────────────────────────────
+static void test_j_start_current_precondition() {
+    test_group("fw v37 rev 2: start precondition -- bus-side I_fc + I_batt <= 0.2 A (NaN refused)");
+    j_fixture();
+    I_fc = 0.2f;
+    j_start();
+    check(ag105CommissionActive && digitalRead(REGEN_ENABLE) == HIGH, "precondition: exactly 0.2 A starts");
+    j_fixture();
+    I_fc = 0.1f; I_batt = 0.1f;
+    j_start();
+    check(ag105CommissionActive, "precondition: 0.1 A + 0.1 A (the sum is what counts) starts");
+
+    j_fixture();
+    I_fc = 0.201f;
+    JPinSnap s = j_snap(); unsigned long w0 = Wire.transactions;
+    j_send("1");
+    check(!ag105CommissionActive && j_same(s, j_snap()) && g_write_log.empty() && Wire.transactions == w0 &&
+          Serial.tx_contains("REFUSED: I_fc + I_batt") && Serial.tx_contains("idle limit") && !ag105CommTripLatched,
+          "precondition: 0.201 A is REFUSED with the idle-limit message -- no pin change, no latch");
+    j_fixture();
+    I_fc = 0.1f; I_batt = 0.101f;
+    s = j_snap();
+    j_send("1");
+    check(!ag105CommissionActive && j_same(s, j_snap()) && Serial.tx_contains("idle limit"),
+          "precondition: 0.1 + 0.101 A is REFUSED (the sum, not each channel)");
+    j_fixture();
+    I_fc = NAN;
+    s = j_snap();
+    j_send("1");
+    check(!ag105CommissionActive && j_same(s, j_snap()) && Serial.tx_contains("idle limit"),
+          "precondition: a NaN I_fc is REFUSED");
+    j_fixture();
+    I_batt = NAN;
+    s = j_snap();
+    j_send("1 2");
+    check(!ag105CommissionActive && j_same(s, j_snap()) && Serial.tx_contains("idle limit") && !ag105CommFixOnFirstRead,
+          "precondition: a NaN I_batt is REFUSED on the '1 2' form too, arming nothing");
+    j_fixture();
+    I_fc = -0.5f;
+    j_start();
+    check(ag105CommissionActive && ag105CommPsrc0 == 0.0f, "precondition: a negative sum (ADC offset) starts, baseline clamped to 0");
+}
+
+static void test_j_summary_and_restore_hint() {
+    test_group("fw v37 rev 2: the summary carries stop reason / peaks / latch for every stop kind; RESTORE BLOCKED when gated or latched");
+
+    // 'J' 0
+    jt_open(); ag105CommPsrc0 = 1.0e6f;
+    I_fc = 0.3f; I_batt = 0.2f; jt_step(1);
+    j_send("0");
+    check(Serial.tx_count("[J] SUMMARY") == 1 && Serial.tx_contains("stop reason: operator 'J' 0") &&
+          Serial.tx_contains("peak I_fc+I_batt=0.500A") && Serial.tx_contains("peak unaccounted P=") &&
+          Serial.tx_contains("W, baseline 1000000.00W)") && Serial.tx_contains("trip latch: clear"),
+          "summary ('J' 0): stop reason, peaks, baseline and 'trip latch: clear' are all printed");
+    // 120 s cap
+    jt_open();
+    g_mock_millis = ag105CommStartMs + AG105_COMMISSION_MAX_MS; doState98();
+    check(!ag105CommissionActive && !ag105CommTripLatched && Serial.tx_contains("stop reason: 120 s cap") &&
+          Serial.tx_contains("trip latch: clear"),
+          "summary (120 s cap): the cap stop reason and a clear latch");
+    // ownership loss
+    jt_open();
+    g_pin_value[REGEN_ENABLE] = LOW; doState98();
+    check(!ag105CommissionActive && Serial.tx_contains("stop reason: REGEN_ENABLE found LOW") && Serial.tx_contains("peak I_fc+I_batt="),
+          "summary (ownership loss): stop reason and peaks present");
+    // trips
+    jt_trip_g1();
+    check(Serial.tx_contains("stop reason: G1 source current") && Serial.tx_contains("trip latch: LATCHED - G1 source current") &&
+          Serial.tx_contains("peak I_fc+I_batt=1.100A"),
+          "summary (G1 trip): stop reason, 1.100 A peak and the LATCHED line with the reason");
+    jt_open();
+    I_fc = 0.4f;
+    jt_step(1); uint32_t t0 = g_mock_millis;
+    g_mock_millis = t0 + 20; doState98();
+    check(jt_tripped_as(AG105_COMM_TRIP_P_UNACCT) && Serial.tx_contains("stop reason: G2 unaccounted") &&
+          Serial.tx_contains("trip latch: LATCHED - G2 unaccounted") && Serial.tx_contains("peak unaccounted P=6.40W"),
+          "summary (G2 trip): stop reason, 6.40 W peak unaccounted and the LATCHED line");
+    jt_open();
+    ag105DataValid = true; ag105_status_raw = 0x05;
+    g_mock_millis = ag105CommStartMs + 40; doState98();
+    check(jt_tripped_as(AG105_COMM_TRIP_CHG_ERR) && Serial.tx_contains("stop reason: G3 Ag105 GENSTAT error") &&
+          Serial.tx_contains("trip latch: LATCHED - G3 Ag105 GENSTAT error (5/6/7) at t=40"),
+          "summary (G3 trip): stop reason and the LATCHED line with the time");
+
+    // RESTORE hint: a reg 0x02 left below LIMIT_V_BUS_MAX (as-found 40 = 14.5 V).
+    // (a) gate open, no latch -> the in-session restore hint, NOT 'blocked'.
+    j_fixture();
+    Wire.reg_file[AG105_REG_MPPT_V] = 40;
+    j_start();
+    for (int i = 0; i < 8; i++) jt_step(10);
+    j_send("0");
+    check(Serial.tx_contains("RESTORE (inside a new session)") && !Serial.tx_contains("RESTORE BLOCKED"),
+          "restore hint (contrast): gate open, no latch -> the 'J' '3 40' restore line, not RESTORE BLOCKED");
+    // (b) gate closed mid-session -> blocked, gate wording.
+    j_fixture();
+    Wire.reg_file[AG105_REG_MPPT_V] = 40;
+    j_start();
+    for (int i = 0; i < 8; i++) jt_step(10);
+    ag105VbatnIsolatedFlag = false;
+    j_send("0");
+    check(Serial.tx_contains("RESTORE BLOCKED: the charger feed is gated") && !Serial.tx_contains("RESTORE (inside a new session)"),
+          "restore hint: gate closed -> 'RESTORE BLOCKED' (gated) instead of the restore hint");
+    // (c) latched by a G1 trip after the register was read -> blocked, latch wording.
+    j_fixture();
+    Wire.reg_file[AG105_REG_MPPT_V] = 40;
+    j_start();
+    for (int i = 0; i < 8; i++) jt_step(10);
+    ag105CommPsrc0 = 1.0e6f; Serial.tx_clear();
+    I_fc = 0.6f; I_batt = 0.5f;
+    jt_step(1); t0 = g_mock_millis;
+    g_mock_millis = t0 + 5; doState98();
+    check(ag105CommTripLatched && Serial.tx_contains("RESTORE BLOCKED: a 'J' trip is latched") &&
+          !Serial.tx_contains("RESTORE (inside a new session)"),
+          "restore hint: trip latched -> 'RESTORE BLOCKED' (latched) instead of the restore hint");
+
+    // Status line ('J' + empty) and the 'S' dump report the gate.
+    j_fixture();
+    ag105VbatnIsolatedFlag = false;
+    Serial.tx_clear();
+    j_send("");
+    check(Serial.tx_contains("gate: VBat- isolated=NO (feed refused)"), "status line: gate closed is reported");
+    Serial.tx_clear();
+    Serial.rx_queue.push('S'); doState98();
+    check(Serial.tx_contains("Ag105 VBat- gate:   CLOSED") && Serial.tx_contains("J trip latch:       clear"),
+          "'S' dump: gate CLOSED and latch clear are reported");
+    j_fixture();
+    Serial.tx_clear();
+    Serial.rx_queue.push('S'); doState98();
+    check(Serial.tx_contains("Ag105 VBat- gate:   OPEN"), "'S' dump: gate OPEN is reported");
+}
+
 #if HIL_SIM
 static void test_j_hil_link_gating() {
     test_group("State 98 'J' (fw v37): a live HIL injection link refuses / ends a session");
@@ -27380,6 +28334,15 @@ int main() {
     test_j_prompt_x_q_and_parser_variants();
     test_j_3_lowest_and_fail_path();
     test_j_settle_boundary_and_restart_reset();
+    test_j_guard_constants_and_reset_hygiene();
+    test_j_g1_source_current();
+    test_j_g2_unaccounted_power();
+    test_j_g2_charge_credit();
+    test_j_g3_charger_error();
+    test_j_g4_latch();
+    test_j_g5_gate();
+    test_j_start_current_precondition();
+    test_j_summary_and_restore_hint();
 #if HIL_SIM
     test_j_hil_link_gating();
 #endif
