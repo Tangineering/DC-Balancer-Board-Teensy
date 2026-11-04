@@ -1,7 +1,7 @@
 """
 check_wheel.py — is the ~4 Hz current oscillation locked to wheel rotation?
 
-    python3 check_wheel.py ../Logs/rosbag_sweep_2026-10-20_09-08-49 [wheel_radius_m]
+    python3 check_wheel.py ../../logs/rosbags/rosbag_sweep_2026-10-20_09-08-49 [wheel_radius_m]
 
 Test 1: does the peak frequency track vehicle speed?
         f_wheel = v / (2*pi*r).  Constant f/v  =>  once-per-revolution.
@@ -12,7 +12,7 @@ Test 3: does v_actual itself show the same peak?  (points at the encoder)
 """
 import csv, sys, math
 
-BAG = sys.argv[1] if len(sys.argv) > 1 else '../Logs/rosbag_sweep_2026-10-20_09-08-49'
+BAG = sys.argv[1] if len(sys.argv) > 1 else '../../logs/rosbags/rosbag_sweep_2026-10-20_09-08-49'
 R   = float(sys.argv[2]) if len(sys.argv) > 2 else 0.0762
 
 try:

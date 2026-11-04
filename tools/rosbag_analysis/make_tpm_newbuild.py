@@ -2,7 +2,7 @@
 """
 make_tpm_newbuild.py — build the demand transition matrix from YOUR bags.
 
-    python3 make_tpm_newbuild.py -o TPM_newbuild.mat ../Logs/rosbag_a ../Logs/rosbag_b ...
+    python3 make_tpm_newbuild.py -o TPM_newbuild.mat ../../logs/rosbags/rosbag_a ../../logs/rosbags/rosbag_b ...
 
 WHY A NEW TPM
 -------------

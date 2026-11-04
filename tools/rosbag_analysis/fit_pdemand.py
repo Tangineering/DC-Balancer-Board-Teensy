@@ -2,7 +2,7 @@
 """
 fit_pdemand.py — fit a real road-load model for P_demand from measured bags.
 
-    python3 fit_pdemand.py ../Logs/rosbag_sdp_2026-10-29_19-51-48 [more bags ...]
+    python3 fit_pdemand.py ../../logs/rosbags/rosbag_sdp_2026-10-29_19-51-48 [more bags ...]
 
 WHY
 ---

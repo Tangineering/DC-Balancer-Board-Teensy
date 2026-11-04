@@ -1,6 +1,6 @@
 import csv, sys, statistics as st
 
-BAG = sys.argv[1] if len(sys.argv) > 1 else '../Logs/rosbag_sweep_2026-10-20_09-08-49'
+BAG = sys.argv[1] if len(sys.argv) > 1 else '../../logs/rosbags/rosbag_sweep_2026-10-20_09-08-49'
 LSB = 0.00806          # 8.06 mA/count, SCALE_I at 12-bit / Vref 3.3 / K_sns 0.1
 TAUS = [20.0, 60.0, 100.0]
 

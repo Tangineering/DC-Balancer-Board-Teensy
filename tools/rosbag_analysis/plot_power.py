@@ -2,7 +2,7 @@
 """
 plot_power.py — P_fc, P_batt and P_demand only.
 
-    python3 plot_power.py ../Logs/rosbag_sdp_2026-10-28_20-46-53 [out.png]
+    python3 plot_power.py ../../logs/rosbags/rosbag_sdp_2026-10-28_20-46-53 [out.png]
 
 P_fc and P_batt come from /ems_diagnostics; P_demand from /drive_cycle.
 Saves a PNG if a second argument is given, otherwise opens a window.

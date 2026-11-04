@@ -1,10 +1,10 @@
 """
-plot_ab.py — render the A/B sweep runs and save them to Logs/Plots.
+plot_ab.py — render the A/B sweep runs and save them to logs/rosbags/plots.
 
 Run from the Analysis folder, after the CSVs have been exported:
-    python3 plot_ab.py ../Logs/rosbag_sweep-noclip_<stamp> ../Logs/rosbag_sweep-clip_<stamp>
+    python3 plot_ab.py ../../logs/rosbags/rosbag_sweep-noclip_<stamp> ../../logs/rosbags/rosbag_sweep-clip_<stamp>
 
-Saves, into ../Logs/Plots/:
+Saves, into ../../logs/rosbags/plots/:
     <bagname>.png   one 4-panel plot per run
     sweep_AB_compare.png   the two share traces stacked, for the write-up
 """
@@ -14,7 +14,7 @@ import matplotlib
 matplotlib.use("Agg")                     # save only, no window
 import matplotlib.pyplot as plt
 
-OUT = "../Logs/Plots"
+OUT = "../../logs/rosbags/plots"
 
 def load(bag):
     d = {}

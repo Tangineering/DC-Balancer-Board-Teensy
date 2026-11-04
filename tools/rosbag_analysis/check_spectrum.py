@@ -2,7 +2,7 @@
 check_spectrum.py — what does the current noise look like in frequency?
 
 Usage (from the Analysis folder):
-    python3 check_spectrum.py ../Logs/rosbag_sweep_2026-10-20_09-08-49
+    python3 check_spectrum.py ../../logs/rosbags/rosbag_sweep_2026-10-20_09-08-49
 
 IMPORTANT: telemetry is 50 Hz, so this can only show 0-25 Hz. The real ripple is
 at tens of kHz and has ALREADY been aliased down. What you see here is the fold,
@@ -11,7 +11,7 @@ it cannot tell you the switching frequency.
 """
 import csv, sys
 
-BAG = sys.argv[1] if len(sys.argv) > 1 else '../Logs/rosbag_sweep_2026-10-20_09-08-49'
+BAG = sys.argv[1] if len(sys.argv) > 1 else '../../logs/rosbags/rosbag_sweep_2026-10-20_09-08-49'
 
 try:
     import numpy as np

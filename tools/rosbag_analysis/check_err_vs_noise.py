@@ -1,7 +1,7 @@
 """
 check_err_vs_noise.py — is the share tracking error real, or is it feedback noise?
 
-    python3 check_err_vs_noise.py ../Logs/rosbag_sweep_2026-10-20_09-08-49
+    python3 check_err_vs_noise.py ../../logs/rosbags/rosbag_sweep_2026-10-20_09-08-49
 
 For each I_total band it reports:
     err RMS    achieved - commanded share, RMS
@@ -15,7 +15,7 @@ not the noise.
 """
 import csv, sys, bisect
 
-BAG = sys.argv[1] if len(sys.argv) > 1 else '../Logs/rosbag_sweep_2026-10-20_09-08-49'
+BAG = sys.argv[1] if len(sys.argv) > 1 else '../../logs/rosbags/rosbag_sweep_2026-10-20_09-08-49'
 T0  = float(sys.argv[2]) if len(sys.argv) > 2 else 60.0
 
 try:

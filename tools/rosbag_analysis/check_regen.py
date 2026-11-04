@@ -19,7 +19,7 @@ current. So:
                                               the firmware.
 
 Usage:
-    python3 check_regen.py ../Logs/rosbag_sdp_2026-10-27_00-52-58
+    python3 check_regen.py ../../logs/rosbags/rosbag_sdp_2026-10-27_00-52-58
 """
 
 import glob

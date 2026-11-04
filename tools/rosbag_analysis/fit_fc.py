@@ -2,7 +2,7 @@
 """
 fit_fc.py — fit the fuel-cell polarization curve, and from it the fuel map.
 
-    python3 fit_fc.py ../Logs/rosbag_sdp_2026-10-28_20-46-53
+    python3 fit_fc.py ../../logs/rosbags/rosbag_sdp_2026-10-28_20-46-53
 
 Why this exists
 ---------------
