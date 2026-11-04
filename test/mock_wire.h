@@ -36,6 +36,10 @@ struct MockWireClass {
     // Set to true to make requestFrom return 0 bytes (simulates read failure / NAK)
     bool fail_next_requestfrom = false;
 
+    // Optional hook run at the top of every requestFrom() (fw v37 test round: lets a test advance
+    // the mock clock DURING a read, to exercise the 'J' session's worst-read-time measurement).
+    void (*request_hook)() = nullptr;
+
     // ── Ag105 register-file emulation ────────────────────────────────────────
     // The firmware now does read-verify-then-write-if-different on the two Ag105 config registers,
     // so a mock that only captures writes cannot exercise it. When `emulate_regs` is on, writes
@@ -87,6 +91,7 @@ struct MockWireClass {
     // Returns the number of bytes available to read (mimic Arduino)
     uint8_t requestFrom(uint8_t /*addr*/, uint8_t count) {
         transactions++;
+        if (request_hook) request_hook();
         if (fail_next_requestfrom) {
             fail_next_requestfrom = false;
             return 0;   // simulate NAK / no bytes available
@@ -114,6 +119,7 @@ struct MockWireClass {
         _tx_addr = 0;
         next_endtransmission_result = 0;
         fail_next_requestfrom = false;
+        request_hook = nullptr;
         // Emulated charger back to power-on defaults: both config registers 0x00 (ext-resistor
         // mode), which is what a factory Ag105 with no RVS/RCS resistors reads as 4.2V / 1000mA.
         reg_file.clear();
