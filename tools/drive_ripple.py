@@ -15,7 +15,8 @@ this module says what the board's `current` must do in each case.
 
 STDLIB ONLY, deliberately: hil_plant_sim.py and run_hil_suite.py import nothing
 outside the standard library, and neither may grow a numpy dependency through
-this module.  Complex arithmetic and a 5x5 complex solve are all it needs.
+this module.  ⚠️ BOTH NOW IMPORT IT AT MODULE LOAD (2026-11-04): this file must
+sit beside them in tools/, or neither imports at all.  Complex arithmetic and a 5x5 complex solve are all it needs.
 
 ⚠️ CONSTANTS_HASH.  This module is NOT one of the three modules
 `hil_plant_sim.collect_model_constants()` sweeps (h2_map, hil_electrical,
@@ -35,8 +36,9 @@ The loop being predicted (every term cited where it is used below):
                (teensy_controller/drive_controller_coeffs.h, z = e^{j w Ts},
                 Ts = DRIVE_CTRL_TS_US; the Hanus conditioning term is zero while
                 unsaturated, so the LINEAR law is exactly the state space)
-    latency    e^{-j w tau},  tau = Ts/2 (the controller's own ZOH)
+    latency    e^{-j w tau},  tau = Ts_eff/2 (the controller's own ZOH)
                                   + HIL_LOOP_DELAY_S (the HIL pipeline)
+               (Ts_eff in DRIVE_TS_EFF_BAND_S: the board's re-armed 2 ms gate)
     L = C G e^{-j w tau},  S = 1/(1+L),  T = L/(1+L)
 
     measurement ripple n (injected speed = v_true + n):
@@ -70,31 +72,61 @@ def f_rot_hz(v_mps):
 # ─────────────────────────────────────────────────────────────────────────────
 # The HIL pipeline's latency, OUTSIDE the controller's own ZOH.
 #
-# Term by term, at the host's 1 kHz tick (hil_plant_sim.main()) and the
-# board's 1 kHz millis-gated observation send (.ino:4681 hilSendTick(),
-# HIL_SEND_PERIOD_MS 1) with the drive law gated at 2 ms
-# (.ino:14768 youlaController_Drive(), MOTOR_CTRL_PERIOD_US 2000 :3718):
-#   -1.0 ms  the host steps the plant from t_k to t_k + dt and SENDS v(t_k+dt)
-#            at wall time t_k: the injected speed LEADS the plant clock by one
-#            tick (Plant.step() is called before pack_inject()).
-#   +0.5 ms  forward-Euler integration: the force held over [t_k, t_k+dt] is a
-#            ZOH of one host tick, worth half a tick of lag at low frequency.
-#   +0.5 ms  the board's controller tick samples the latest injected frame at
-#            an uncorrelated phase: mean age half a frame period.
-#   +0.5 ms  the post-clamp `current` waits for the next 1 ms observation send.
-#   +0.5 ms  the host applies it at the top of its next tick (rx-before-step,
-#            hil_plant_sim main() "RX-BEFORE-STEP ORDERING").
-#   +2 x ~0.1-0.3 ms  UDP transit, both directions, on a shared L2 segment.
-# Sum: 1.5 ms + 2 delta ~= 1.7-2.1 ms.  1.5 ms is the nominal figure (the
-# transit is the least certain term and is kept OUT of it so the nominal is a
-# lower bound on the pipeline), and HIL_LOOP_DELAY_BAND_S is the band the
-# tolerance below is derived over.  Measured cross-check: the observation
-# round trip the suite sees on `seq` echo is "L = 1 or 2 ticks"
-# (hil_plant_sim main(), the scp-inrush note), i.e. 1-2 ms, which is the
-# +0.5+0.5+0.5+transit part of this sum plus the one-tick lead.
+# RE-DERIVED 2026-11-04 (fix round, review M1).  The first cut itemised five
+# half-tick terms that summed to 1.0 ms while quoting 1.5, and counted the
+# forward-Euler hold and the host pickup as two lags when they are one
+# sample-and-hold.  The derivation now goes through the ONE quantity that is
+# actually an integer: the host-tick round trip.
+#
+# At the host's 1 kHz tick (hil_plant_sim.main(): rx obs -> Plant.step() ->
+# pack_inject()), the board's 1 kHz millis-gated observation send (.ino:4681
+# hilSendTick(), HIL_SEND_PERIOD_MS 1) and the drive law on its 2 ms gate
+# (.ino:12759 motorControlGated(), MOTOR_CTRL_PERIOD_US 2000 :3718):
+#   t_k   host tick at which the frame the controller samples was SENT
+#         (the latest frame older than the controller tick by the transit d);
+#   t_m   first host tick whose rx-before-step sees the observation frame
+#         carrying that controller output (after the wait for the board's next
+#         1 ms send, the transit d, and the wait for the host's next tick top).
+# Every wait in between is absorbed into  R = t_m - t_k, an INTEGER number of
+# host ticks: R = 1 whenever controller-phase + send-wait + 2d fits in one
+# tick, 2 otherwise, 3 on a late loop() service.  The free-running clocks set
+# the phases, and within a 6 s window they are a FIXED DRAW (the two crystals
+# drift by ppm), not their mean - so a run sits at one R (or alternates
+# between two adjacent ones), not at the average.
+# Mapping R onto the loop's continuous-time delay:
+#   -1 tick   the host steps BEFORE it sends: the frame sent at t_k already
+#             carries the plant state one tick past the force applied at t_k,
+#             so the shortest possible round trip (R = 1) is ZERO extra delay.
+#             (This is the same fact as "step-before-pack leads by a tick" and
+#             "the host applies at the next tick top", which therefore cancel
+#             instead of adding, and it is why the forward-Euler one-tick hold
+#             adds nothing of its own: the command only changes every
+#             controller tick, so its 1 ms plant hold is nested inside the
+#             controller's 2 ms ZOH, which loop_terms() carries as Ts/2.)
+#   extra delay = (R - 1) ticks  in {0, 1, 2} ms.
+# Verified on simulate_hold(), whose integer pipeline is exactly this
+# structure: predict_hold() at (d_in + d_out) ticks matches the simulation to
+# <= 0.022 % for both laws, both hooks and all four holds at d = (0,0),
+# (1,1), (1,2), (2,2),
+# and a free delay fit lands on 0.00 / 2.00 / 3.00 / 4.00 ms (+/- 0.02).
+# Measured cross-check: the suite's `seq`-echo round trip is "L = 1 or 2
+# ticks" (hil_plant_sim main(), the scp-inrush note) - R = 1 or 2.
+# NOMINAL 1.0 ms (R = 2, the midpoint of the observed L = 1-2), BAND
+# [0, 3] ms: R = 1..3 plus one tick for a late loop() service between frame
+# arrival and updateSensors() or between the command and the send.
 # ─────────────────────────────────────────────────────────────────────────────
-HIL_LOOP_DELAY_S = 1.5e-3
-HIL_LOOP_DELAY_BAND_S = (0.5e-3, 4.0e-3)
+HIL_LOOP_DELAY_S = 1.0e-3
+HIL_LOOP_DELAY_BAND_S = (0.0, 3.0e-3)
+
+# The board's EFFECTIVE drive-law period.  rateLimitDue() (.ino:3723) re-arms
+# from `now`, not from `last + period`, so every controller tick is late by
+# the loop() service latency and the effective period is 2000 us + that
+# latency; the inner youlaController_Drive() gate (>= TS - 200 us) always
+# passes.  The coefficients were discretised at 2.000 ms, so a slower clock
+# time-scales the law (C evaluated at e^{j w Ts_eff}, ZOH Ts_eff/2).  The band
+# is [2.0, 2.1] ms - a 100 us mean overrun, the order of one loop() iteration
+# carrying a UDP drain; TODO(calibrate) against a BLG t_us census.
+DRIVE_TS_EFF_BAND_S = (2.0e-3, 2.1e-3)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # The scored tolerance on the measured `current` 1x amplitude against the
@@ -221,6 +253,20 @@ def repo_drive_coeffs():
     return load_drive_coeffs(DRIVE_COEFF_HEADER)
 
 
+def coeffs_sha256(c):
+    """sha256 of the parsed LINEAR LAW (TS, DD, AD, BD, CD, L, clamp), over a
+    canonical repr of the float values - the provenance of the law a run was
+    scored against (comments and formatting in the header do not move it)."""
+    import hashlib
+    blob = repr((int(c["TS_US"]), float(c["DD"]),
+                 tuple(tuple(float(v) for v in r) for r in c["AD"]),
+                 tuple(float(v) for v in c["BD"]),
+                 tuple(float(v) for v in c["CD"]),
+                 tuple(float(v) for v in c["L"]),
+                 float(c["I_MIN"]), float(c["I_MAX"])))
+    return hashlib.sha256(blob.encode("ascii")).hexdigest()
+
+
 def coeffs_equal(a, b):
     """True when two coefficient dicts carry the same LINEAR LAW (AD/BD/CD/DD,
     TS) - used to say "the repo header IS the frozen v35 law" instead of
@@ -291,15 +337,19 @@ def hil_plant_params(drag_mode=None, v_mps=None):
     return {"m_eff": _hps.M_EFF, "b_lin": b_lin, "k_f": _hps.K_F}
 
 
-def loop_terms(coeffs, f_hz, plant, delay_s=HIL_LOOP_DELAY_S):
+def loop_terms(coeffs, f_hz, plant, delay_s=HIL_LOOP_DELAY_S, ts_eff_s=None):
     """The open/closed-loop transfer values at one frequency.
 
     `delay_s` is the latency OUTSIDE the controller's own ZOH (see
     HIL_LOOP_DELAY_S); the ZOH's Ts/2 is added here, so passing delay_s = 0
-    still models a sampled controller."""
+    still models a sampled controller.  `ts_eff_s` (default: the header's
+    TS) is the period the board actually steps the law at (see
+    DRIVE_TS_EFF_BAND_S): the same difference equation run on a slower clock
+    is the 2 ms law evaluated at f * ts_eff / ts."""
     w = 2.0 * math.pi * float(f_hz)
-    ts = coeffs["TS_US"] * 1e-6
-    c = controller_response(coeffs, f_hz)
+    ts_design = coeffs["TS_US"] * 1e-6
+    ts = ts_design if ts_eff_s is None else float(ts_eff_s)
+    c = controller_response(coeffs, float(f_hz) * ts / ts_design)
     mech = complex(plant["b_lin"], plant["m_eff"] * w)        # M s + B
     g = plant["k_f"] / mech
     lag = cmath.exp(-1j * w * (0.5 * ts + float(delay_s)))
@@ -311,7 +361,7 @@ def loop_terms(coeffs, f_hz, plant, delay_s=HIL_LOOP_DELAY_S):
 
 
 def predict_hold(coeffs, v_mps, plant, a_meas=0.0, f_rip=0.0,
-                 delay_s=HIL_LOOP_DELAY_S):
+                 delay_s=HIL_LOOP_DELAY_S, ts_eff_s=None):
     """Predicted 1x amplitudes at a cruise hold of speed `v_mps`.
 
     Returns amplitudes [A or m/s] and the current's phase relative to the
@@ -319,7 +369,7 @@ def predict_hold(coeffs, v_mps, plant, a_meas=0.0, f_rip=0.0,
     two hooks are linear inputs to one linear loop, so a hold carrying both is
     the complex sum (the scenarios carry one each)."""
     f = f_rot_hz(v_mps)
-    lt = loop_terms(coeffs, f, plant, delay_s=delay_s)
+    lt = loop_terms(coeffs, f, plant, delay_s=delay_s, ts_eff_s=ts_eff_s)
     # Complex phasors relative to the ripple's own sin(theta + phi) reference.
     n = complex(a_meas)                       # measurement ripple phasor
     d = complex(f_rip)                        # force ripple phasor
@@ -337,35 +387,65 @@ def predict_hold(coeffs, v_mps, plant, a_meas=0.0, f_rip=0.0,
                                 if abs(v_inj) > 0 else None),
         "true_over_inj": (abs(v_true) / abs(v_inj)) if abs(v_inj) > 0 else None,
         "delay_s": float(delay_s),
+        "L_re": lt["L"].real, "L_im": lt["L"].imag,
     }
     return out
 
 
 def predict_hold_band(coeffs, v_mps, plant, a_meas=0.0, f_rip=0.0,
-                      band=HIL_LOOP_DELAY_BAND_S):
-    """(lo, hi) of the predicted current amplitude across the latency band."""
+                      band=HIL_LOOP_DELAY_BAND_S, ts_band=DRIVE_TS_EFF_BAND_S):
+    """(lo, hi) of the predicted current amplitude across the latency band
+    crossed with the controller-period band (a 9 x 3 grid)."""
     vals = []
     lo_d, hi_d = band
     for k in range(9):
         dly = lo_d + (hi_d - lo_d) * k / 8.0
-        vals.append(predict_hold(coeffs, v_mps, plant, a_meas, f_rip,
-                                 delay_s=dly)["i_amp"])
+        for j in range(3):
+            ts = ts_band[0] + (ts_band[1] - ts_band[0]) * j / 2.0
+            vals.append(predict_hold(coeffs, v_mps, plant, a_meas, f_rip,
+                                     delay_s=dly, ts_eff_s=ts)["i_amp"])
     return min(vals), max(vals)
 
 
 def drive_ripple_tolerance_basis(coeffs_list, speeds, plant, a_meas=0.0,
-                                 f_rip=0.0):
+                                 f_rip=0.0, band=HIL_LOOP_DELAY_BAND_S,
+                                 ts_band=DRIVE_TS_EFF_BAND_S):
     """The worst relative spread of the predicted amplitude across the latency
-    band, over every law / hold given: the delay-uncertainty term of the
-    tolerance budget (see docs/HIL_SCENARIOS.md, drive-ripple-*)."""
+    and controller-period bands, over every law / hold given: the timing term
+    of the tolerance budget (see docs/HIL_SCENARIOS.md, drive-ripple-*).
+    Pass ts_band=(ts, ts) or band=(d, d) to isolate one term."""
     worst = 0.0
     for c in coeffs_list:
         for v in speeds:
             nom = predict_hold(c, v, plant, a_meas, f_rip)["i_amp"]
-            lo, hi = predict_hold_band(c, v, plant, a_meas, f_rip)
+            lo, hi = predict_hold_band(c, v, plant, a_meas, f_rip,
+                                       band=band, ts_band=ts_band)
             if nom > 0:
                 worst = max(worst, (hi - nom) / nom, (nom - lo) / nom)
     return worst
+
+
+def bus_ripple_signatures(i_ph, v_inj_ph, i0, v0, k_bus, loop_l):
+    """The BENCH-TRANSFERABLE signature (report only; review M2).
+
+    On bench observables alone - the motor command i, the measured speed
+    v_inj and the bus current - the controller relation i = -C v_inj is the
+    SAME under both hypotheses, so i / v_inj cannot discriminate.  The bus
+    current can, because it is billed from the TRUE shaft power:
+        I_bus = K_F i v_true / (ETA_BOOST V_bus) + const        (Plant.step)
+    and to first order about (I0, v0)
+        dI_bus = k_bus (v0 di + I0 dv_true),   k_bus = K_F / (ETA_BOOST V_bus).
+    Hypothesis MEAS (artefact): v_inj = S n, v_true = -T n, so in bench terms
+        dv_true = -L v_inj          (L the loop gain at f_rot, law-dependent)
+    Hypothesis FORCE (real ripple): dv_true = v_inj.
+    `i_ph`, `v_inj_ph` are complex 1x phasors (lock-in I + jQ); `loop_l` the
+    complex predicted L.  Returns the two predicted bus phasors.  The model
+    is exact for the simple engine; under the hi-fi engine the source
+    currents are converter terminals and the gain is approximate (the
+    PHASE, which is what separates the hypotheses, is not)."""
+    meas = k_bus * (v0 * i_ph + i0 * (-loop_l * v_inj_ph))
+    force = k_bus * (v0 * i_ph + i0 * v_inj_ph)
+    return {"meas": meas, "force": force}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -382,13 +462,18 @@ def drive_ripple_tolerance_basis(coeffs_list, speeds, plant, a_meas=0.0,
 #     plant emitted `d_in` ticks earlier, and its output reaches the plant
 #     `d_out` ticks after it was computed.
 # Its equivalent continuous delay (for predict_hold) is
-#     sim_equivalent_delay_s() = (d_in + d_out - 1) * dt + dt/2
-# i.e. the plant's one-tick lead and its half-tick Euler lag folded in exactly
-# as HIL_LOOP_DELAY_S folds them.
+#     sim_equivalent_delay_s() = (d_in + d_out) * dt
+# d = (0, 0) is the board's shortest real round trip (R = 1 in the
+# HIL_LOOP_DELAY_S derivation): the command computed from the speed emitted
+# at tick k acts at tick k+1, and the step-before-send lead cancels that
+# tick exactly.  CORRECTED 2026-11-04 (review M1): the first cut used
+# (d_in + d_out - 1) dt + dt/2, which double-counted the Euler hold; a free
+# fit of the delay to the simulation gives 0.00 / 2.00 / 3.00 / 4.00 ms at
+# d = (0,0) / (1,1) / (1,2) / (2,2).
 # ─────────────────────────────────────────────────────────────────────────────
 
 def sim_equivalent_delay_s(d_in=1, d_out=1, dt=1e-3):
-    return (d_in + d_out - 1) * dt + 0.5 * dt
+    return (d_in + d_out) * dt
 
 
 # The firmware's zero-setpoint cutoff (.ino:3652 V_SP_ZERO_THRESH = 0.07f;

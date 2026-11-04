@@ -1977,6 +1977,14 @@ def matched_dp_for_run(analysis, meta, hil, mode="lookup",
     scen_meta = (sim.SCENARIOS or {}).get(scenario)
     if not scen_meta or not scen_meta.get("ems_v_profile"):
         return None
+    # The drive-ripple legs (2026-11-04; hil_plant_sim DRIVE_RIPPLE_SCENARIOS)
+    # carry an ems_v_profile only to drive the speed holds: they are drive-law
+    # experiments with the share pinned at 0.50, not energy-management legs,
+    # and their 1x ripple is a stimulus the DP's demand model has no term for.
+    # Keyed on the registry key that defines them, so a future ripple leg is
+    # excluded without a list edit.  No hydrogen bound applies.
+    if scen_meta.get("drive_ripple") is not None:
+        return None
 
     cfg = meta.get("config") or {}
     soc0 = cfg.get("soc0")

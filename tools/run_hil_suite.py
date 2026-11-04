@@ -8025,19 +8025,33 @@ FAULT_EXPECTATIONS["pi-silence"] = {
 # measurement hook, |T| F_rip / K_F for the force hook).
 #
 # THE TOLERANCE, +/-15 % (drive_ripple.PREDICTION_TOL_FRAC; the spec proposed
-# 25 %, tightened on the measured budget - see docs/HIL_SCENARIOS.md):
-#   * HIL pipeline latency, unmodelled spread over [0.5, 4.0] ms around the
-#     nominal 1.5 ms: <= 5.3 % (fw v35 law, the 1.5-2.7 m/s holds); <= 1.6 %
-#     on the fw v37 law (drive_ripple.drive_ripple_tolerance_basis()).
-#   * the frequency-domain predictor vs a tick-exact closed-loop simulation of
-#     the same Hanus recursion on the same plant mechanics: <= 1.1 % at every
-#     hold, both hooks, both laws, three pipeline delays.
-#   * lock-in estimation over >= 12 whole revolutions with a jointly fitted
-#     mean and trend: < 0.1 % on the simulation (early vs late half-window).
-# ~7 % accounted, ~2x margin for what is not (board loop jitter on the 2 ms
-# gate, host tick jitter). The fw v35 and v37 predictions differ by 2.4-3.3x
-# (measurement hook) / 2.4-3.3x (force hook), so the band can never admit the
-# OTHER law - which is what the identification check below relies on.
+# 25 %, tightened on the measured budget). RE-DERIVED in the fix round
+# (review M1, 2026-11-04) - see drive_ripple.HIL_LOOP_DELAY_S for the latency
+# derivation:
+#   * HIL pipeline latency outside the controller ZOH: nominal 1.0 ms, band
+#     [0, 3] ms (the host-tick round trip R = 1..3 ms, minus the one tick the
+#     step-before-send lead cancels, plus a late-loop() tick): <= 4.1 % on
+#     the fw v35 law, <= 1.4 % on the fw v37 law.
+#   * the board's effective drive-law period, 2.0-2.1 ms (rateLimitDue()
+#     re-arms from `now`, .ino:3723): <= 1.1 % alone; the latency x period
+#     grid together stays <= 4.1 % (the two partly cancel).
+#   * predictor vs a tick-exact closed-loop simulation of the same Hanus
+#     recursion on the same mechanics: <= 0.022 % (both laws, both hooks,
+#     every hold, four pipeline delays).
+#   * lock-in estimation over >= 12 whole revolutions, mean and trend fitted
+#     jointly: < 0.1 %.
+# ~4.3 % accounted, ~3.5x margin for what is not (host tick jitter; a
+# within-window phase drift between two adjacent round trips). The fw v35 and
+# v37 predictions differ by 2.4-3.3x, so the band can never admit the OTHER
+# law - which is what the identification check relies on.
+#
+# ⚠️ THE DISCRIMINATOR VALIDATES THE PLANT HOOKS AND THE BOARD'S LOOP GAIN, NOT
+# A BENCH METHOD (review M2). It reads `v_true`, which no bench log carries; on
+# bench observables (i, v_inj) the controller relation i = -C v_inj is the
+# same under both hypotheses. The bench-transferable signature - the
+# I_fc + I_batt 1x phasor predicted under each hypothesis from the measured
+# i and v_inj phasors - is REPORTED, not scored (judge_drive_ripple() notes,
+# metrics["drive_ripple"]["holds"][k]["bus_signature"]).
 # ═════════════════════════════════════════════════════════════════════════════
 def _drive_ripple_expectation(variant):
     name = "drive-ripple-%s" % variant
@@ -11350,7 +11364,19 @@ def build_plan(args):
                   "a live Pi would be an uncontrolled second stimulus over a "
                   "replayed trajectory" % len(REPLAY_SUITE))
 
-    return filter_plan(plan, args.only, args.skip)
+    plan = filter_plan(plan, args.only, args.skip)
+    # Review L2 (2026-11-04): parse the repo drive law ONCE, here, so a broken
+    # drive_controller_coeffs.h is announced before the campaign starts rather
+    # than discovered 40 legs in. Fail-LOUD, not fail-fast: the two
+    # drive-ripple legs record the error and FAIL `ripple_law`; nothing else
+    # in the campaign depends on the header.
+    if any(p["name"] in DRIVE_RIPPLE_SCENARIOS and not p.get("skip_reason")
+           for p in plan):
+        _law_err = repo_drive_law()[2]
+        if _law_err:
+            print("[suite] WARNING: the drive-ripple legs will FAIL "
+                  "`ripple_law`: %s" % _law_err, file=sys.stderr)
+    return plan
 
 
 def filter_plan(plan, only, skip):
@@ -13810,7 +13836,13 @@ HIL_DEFAULT_RATE_HZ = 1000.0   # the suite never overrides hil_plant_sim.py's
 #   ripple_current_1x[v]        |measured/predicted - 1| <= PREDICTION_TOL_FRAC,
 #                               against the REPO header's law; the fw v35
 #                               alternate is printed beside it
-#   ripple_discriminator[v]     meas : true/injected 1x ratio within the same
+#   ripple_law                  (only on failure) the repo header did not parse
+#   ripple_config_consistent    the run's sidecar config.drive_ripple / drag
+#                               match the expectation (the prediction USES the
+#                               sidecar's values; a mismatch is a FAIL)
+#   ripple_discriminator[v]     HOOK + LOOP-GAIN check, needs v_true, NOT a
+#                               bench discriminator:
+#                               meas : true/injected 1x ratio within the same
 #                                      tolerance of the predicted |L(f_rot)|
 #                                      AND the artefact 1x within 10 % of meas_a
 #                               force: true/injected ratio in [0.9, 1.1] AND
@@ -13818,20 +13850,45 @@ HIL_DEFAULT_RATE_HZ = 1000.0   # the suite never overrides hil_plant_sim.py's
 #                                      injected 1x
 #   ripple_unsaturated[v]       no `current` sample in the window within
 #                               0.05 A of the drive law's +/-I_MAX rail
-#   ripple_drive_law_identified the measured amplitudes sit closer (in log
-#                               ratio) to the repo law than to fw v35 at a
-#                               majority of holds - when they do not, the
-#                               detail says LOUDLY that the board appears to
-#                               run the OTHER drive law (the suite cannot read
+#   ripple_drive_law_identified >= 3 holds measured AND within tolerance of
+#                               the repo law at a strict majority of them; else
+#                               FAIL, saying LOUDLY that the board appears to
+#                               run fw v35 only when it is within tolerance of
+#                               THAT law at a majority, and "matches NEITHER
+#                               law" otherwise (the suite cannot read
 #                               FW_VERSION off the wire, WORK_QUEUE 0j)
 # REPORT-ONLY (notes + metrics["drive_ripple"]): the 0 -> 2 m/s step's 2 %
-# settle, overshoot, peak `current` and rail time; the bus-current 1x; and the
-# predicted table for BOTH laws.
+# settle, overshoot, peak `current` and rail time (on v_true, which carries
+# the 1x); the bus-current 1x and its bench-transferable two-hypothesis
+# signature; the scored law's sha256; the predictions for BOTH laws.
 # ─────────────────────────────────────────────────────────────────────────────
 DRIVE_RIPPLE_RAIL_MARGIN_A = 0.05
 DRIVE_RIPPLE_ARTEFACT_TOL = 0.10        # meas: artefact 1x vs meas_a
 DRIVE_RIPPLE_FORCE_RATIO_BAND = (0.9, 1.1)
 DRIVE_RIPPLE_FORCE_ARTEFACT_MAX = 0.05  # force: artefact 1x / injected 1x
+DRIVE_RIPPLE_MIN_HOLDS_IDENTIFIED = 3   # L1: no vacuous identification
+
+# ── THE REPO DRIVE LAW, PARSED ONCE (fix round, review L2) ──────────────────
+# A malformed or missing drive_controller_coeffs.h must not take down a
+# 77-leg campaign for the two legs that read it, so the parse is CAUGHT and
+# recorded: the two drive-ripple legs then FAIL `ripple_law` with the parser's
+# message, every other leg is untouched, and build_plan() prints the same
+# message up front (fail-LOUD at plan time, not fail-fast).  Cached, so the
+# plan-time and scoring-time parses cannot disagree within one process.
+_DRIVE_LAW_CACHE = {}
+
+
+def repo_drive_law():
+    """(coeffs, sha256, error) for the repo header; coeffs None on error."""
+    if "v" not in _DRIVE_LAW_CACHE:
+        try:
+            c = drive_ripple.repo_drive_coeffs()
+            _DRIVE_LAW_CACHE["v"] = (c, drive_ripple.coeffs_sha256(c), None)
+        except (OSError, RuntimeError, ValueError) as exc:
+            _DRIVE_LAW_CACHE["v"] = (None, None,
+                                     "could not parse %s: %s"
+                                     % (drive_ripple.DRIVE_COEFF_HEADER, exc))
+    return _DRIVE_LAW_CACHE["v"]
 
 
 def _fnum(cell):
@@ -13843,13 +13900,77 @@ def _fnum(cell):
         return None
 
 
-def scan_drive_ripple(csv_path, spec):
+def _cplx(li):
+    """A lock-in result as the complex 1x phasor I + jQ (= A e^{j phi} for
+    x = A sin(theta + phi)), the convention drive_ripple.predict_hold() uses."""
+    return complex(li["I"], li["Q"])
+
+
+def scan_drive_ripple(csv_path, spec, run_meta=None):
     """Read one drive-ripple CSV and measure every hold. Returns a dict that is
     JSON-serializable (results.json carries it). `columns_ok` False means the
     CSV has no v_true / fly_theta (a pre-2026-11-04 child, or the hooks were
-    not declared) and nothing else was measured."""
+    not declared) and nothing else was measured.
+
+    `run_meta` is the child's own sidecar (read_run_meta()). When it carries
+    `config.drive_ripple` / `config.drag`, THOSE are the stimulus the
+    prediction is built for (review L3), and any disagreement with the suite's
+    expectation constants is recorded in `config_mismatch` - scored as a FAIL
+    by judge_drive_ripple(), never silently re-scored."""
     out = {"variant": spec.get("variant"), "columns_ok": False, "holds": [],
-           "step": None, "rows": 0, "error": None}
+           "step": None, "rows": 0, "error": None, "law_error": None,
+           "config_source": None, "config_mismatch": [], "drag": None}
+    repo, repo_sha, law_err = repo_drive_law()
+    alt = drive_ripple.V35_DRIVE_COEFFS
+    out["law_error"] = law_err
+    out["repo_law_sha256"] = repo_sha
+    out["alt_law_sha256"] = drive_ripple.coeffs_sha256(alt)
+    # ── the stimulus actually run (L3) ───────────────────────────────────────
+    a_meas = float(spec.get("meas_a") or 0.0)
+    f_rip = float(spec.get("force_n") or 0.0)
+    drag = None
+    cfg = (run_meta or {}).get("config") or {}
+    if run_meta:
+        sc = cfg.get("drive_ripple")
+        drag = cfg.get("drag")
+        if sc is None:
+            out["config_mismatch"].append(
+                "the run's sidecar carries NO config.drive_ripple: the child "
+                "ran without the ripple hooks")
+        else:
+            out["config_source"] = "sidecar"
+            for k, want in (("meas_a", a_meas), ("force_n", f_rip)):
+                got = float(sc.get(k) or 0.0)
+                if abs(got - want) > 1e-12:
+                    out["config_mismatch"].append(
+                        "config.drive_ripple.%s = %r but the expectation says "
+                        "%r" % (k, got, want))
+            for k in ("meas2_a",):
+                if float(sc.get(k) or 0.0) != 0.0:
+                    out["config_mismatch"].append(
+                        "config.drive_ripple.%s = %r: the predictor scores the "
+                        "1x line only and this leg is specified 1x-only"
+                        % (k, sc.get(k)))
+            r_got = sc.get("flywheel_radius_m")
+            if (r_got is not None
+                    and abs(float(r_got) - drive_ripple.FLYWHEEL_RADIUS_M) > 1e-12):
+                out["config_mismatch"].append(
+                    "config.drive_ripple.flywheel_radius_m = %r, this checkout "
+                    "%r" % (r_got, drive_ripple.FLYWHEEL_RADIUS_M))
+            # USE the run's own amplitudes for the prediction.
+            a_meas = float(sc.get("meas_a") or 0.0)
+            f_rip = float(sc.get("force_n") or 0.0)
+        exp_drag = (SCENARIOS.get("drive-ripple-%s" % spec.get("variant")) or {}
+                    ).get("drag")
+        if drag is not None and exp_drag is not None and drag != exp_drag:
+            out["config_mismatch"].append(
+                "config.drag = %r but the scenario declares %r" % (drag, exp_drag))
+    else:
+        out["config_source"] = ("suite constants (the run's sidecar was "
+                                "unreadable - stimulus NOT cross-checked)")
+    out["drag"] = drag
+    out["meas_a_used"] = a_meas
+    out["force_n_used"] = f_rip
     try:
         fh = open(csv_path, newline="")
     except (OSError, TypeError) as exc:
@@ -13857,8 +13978,8 @@ def scan_drive_ripple(csv_path, spec):
         return out
     windows = drive_ripple_analysis_windows()
     ts_, te_, vs_ = DRIVE_RIPPLE_STEP
-    buf = [{"t": [], "cur": [], "bus": [], "vinj": [], "vtrue": [], "th": []}
-           for _ in windows]
+    buf = [{"t": [], "cur": [], "bus": [], "vbus": [], "vinj": [], "vtrue": [],
+            "th": []} for _ in windows]
     step = {"t": [], "v": [], "cur": []}
     with fh:
         rd = csv.DictReader(fh)
@@ -13884,6 +14005,7 @@ def scan_drive_ripple(csv_path, spec):
                     th = _fnum(row.get("fly_theta"))
                     ifc = _fnum(row.get("I_fc"))
                     ibt = _fnum(row.get("I_batt"))
+                    vb = _fnum(row.get("V_bus"))
                     if None in (vi, vt, th):
                         continue
                     b = buf[k]
@@ -13891,15 +14013,13 @@ def scan_drive_ripple(csv_path, spec):
                     b["vtrue"].append(vt); b["th"].append(th)
                     b["bus"].append(None if (ifc is None or ibt is None)
                                     else ifc + ibt)
-    plant = {"m_eff": PLANT_M_EFF, "b_lin": PLANT_B_EFF, "k_f": PLANT_K_F}
-    repo = drive_ripple.repo_drive_coeffs()
-    alt = drive_ripple.V35_DRIVE_COEFFS
+                    b["vbus"].append(vb)
+    if repo is None:
+        return out                       # judged as `ripple_law` FAIL
     out["repo_law"] = repo["source"]
     out["alt_law"] = alt["source"]
     out["repo_is_alt"] = drive_ripple.coeffs_equal(repo, alt)
     out["i_max_a"] = repo["I_MAX"]
-    a_meas = float(spec.get("meas_a") or 0.0)
-    f_rip = float(spec.get("force_n") or 0.0)
     for k, (t0, t1, v_nom) in enumerate(windows):
         b = buf[k]
         h = {"v_nominal": v_nom, "t_window": [t0, t1], "n": len(b["t"])}
@@ -13921,8 +14041,11 @@ def scan_drive_ripple(csv_path, spec):
                                   [r[2] for r in bus_rows])
               if len(bus_rows) >= 100 else None)
         v_mean = sum(b["vtrue"]) / len(b["vtrue"])
+        plant = drive_ripple.hil_plant_params(drag_mode=drag, v_mps=v_mean)
         pr = drive_ripple.predict_hold(repo, v_mean, plant, a_meas=a_meas, f_rip=f_rip)
         pa = drive_ripple.predict_hold(alt, v_mean, plant, a_meas=a_meas, f_rip=f_rip)
+        _keys = ("i_amp", "true_over_inj", "abs_C", "abs_S", "abs_L",
+                 "i_phase_vs_vinj_deg")
         h.update({
             "v_true_mean": v_mean, "f_rot_hz": drive_ripple.f_rot_hz(v_mean),
             "revs": li["revs"],
@@ -13934,13 +14057,52 @@ def scan_drive_ripple(csv_path, spec):
             "artefact_1x": None if la is None else la["amp"],
             "true_over_inj": (lt["amp"] / lv["amp"]) if lv["amp"] > 0 else None,
             "i_max_abs_a": max(abs(x) for x in b["cur"]),
-            "pred_repo": {kk: pr[kk] for kk in ("i_amp", "true_over_inj",
-                                                 "abs_C", "abs_S", "abs_L",
-                                                 "i_phase_vs_vinj_deg")},
-            "pred_alt": {kk: pa[kk] for kk in ("i_amp", "true_over_inj",
-                                                "abs_C", "abs_S", "abs_L",
-                                                "i_phase_vs_vinj_deg")},
+            "pred_repo": {kk: pr[kk] for kk in _keys},
+            "pred_alt": {kk: pa[kk] for kk in _keys},
         })
+        # ── the BENCH-TRANSFERABLE bus signature (M2; report only) ──────────
+        vb = [x for x in b["vbus"] if x is not None]
+        if lb is not None and vb:
+            v_bus_mean = sum(vb) / len(vb)
+            k_bus = PLANT_K_F / (ETA_BOOST * v_bus_mean)
+            i_ph, v_ph, bus_ph = _cplx(li), _cplx(lv), _cplx(lb)
+            sig = {}
+            for lab, pp in (("repo", pr), ("alt", pa)):
+                ll = complex(pp["L_re"], pp["L_im"])
+                sg = drive_ripple.bus_ripple_signatures(
+                    i_ph, v_ph, li["mean"], lv["mean"], k_bus, ll)
+                sig[lab] = sg
+            ref = v_ph if abs(v_ph) > 0 else 1.0
+
+            def _ph(z):
+                return {"amp": abs(z),
+                        "phase_vs_vinj_deg": math.degrees(math.atan2(
+                            (z / ref).imag, (z / ref).real))}
+            meas_err = abs(bus_ph - sig["repo"]["meas"]) / abs(bus_ph) if abs(bus_ph) else None
+            force_err = abs(bus_ph - sig["repo"]["force"]) / abs(bus_ph) if abs(bus_ph) else None
+            h["bus_signature"] = {
+                "report_only": True,
+                "k_bus_a_per_w": k_bus, "v_bus_mean": v_bus_mean,
+                "measured": _ph(bus_ph),
+                "pred_meas_repo_law": _ph(sig["repo"]["meas"]),
+                "pred_force": _ph(sig["repo"]["force"]),
+                "pred_meas_alt_law": _ph(sig["alt"]["meas"]),
+                "rel_err_vs_meas_hyp": meas_err,
+                "rel_err_vs_force_hyp": force_err,
+                # How far apart the two hypotheses' predictions are, relative
+                # to the measured bus line. The v0*di term is common to both
+                # and dominates, so the contrast is only the I0*dv_true term:
+                # ~4-12 % here. A verdict is printed only when the better
+                # hypothesis' residual is under HALF the other's; otherwise
+                # "indistinct" - the first-order bus model's own residual
+                # (aux and droop terms) is a few percent.
+                "contrast": (abs(sig["repo"]["meas"] - sig["repo"]["force"])
+                             / abs(bus_ph) if abs(bus_ph) else None),
+                "closer_hypothesis": (
+                    None if meas_err is None else
+                    "meas" if meas_err < 0.5 * force_err else
+                    "force" if force_err < 0.5 * meas_err else "indistinct"),
+            }
     if step["t"]:
         out["step"] = drive_ripple.step_metrics(step["t"], step["v"], step["cur"],
                                                 ts_, vs_, repo["I_MAX"], t_end=te_)
@@ -13951,6 +14113,11 @@ def judge_drive_ripple(spec, m):
     """Checks + report notes from scan_drive_ripple() output. Pure."""
     checks, notes = [], []
     tol = drive_ripple.PREDICTION_TOL_FRAC
+    if m is not None and m.get("law_error"):
+        checks.append({"name": "ripple_law", "passed": False,
+                       "detail": "the repo drive law could not be parsed, so "
+                                 "nothing was scored: %s" % m["law_error"]})
+        return checks, notes
     if m is None or not m.get("columns_ok"):
         checks.append({"name": "ripple_columns", "passed": False,
                        "detail": ("drive_ripple NOT MEASURED: %s"
@@ -13958,9 +14125,23 @@ def judge_drive_ripple(spec, m):
                                      or "the caller did not run scan_drive_ripple()"))})
         return checks, notes
     checks.append({"name": "ripple_columns", "passed": True,
-                   "detail": "v_true / fly_theta present (%d rows)" % m["rows"]})
+                   "detail": "v_true / fly_theta present (%d rows); scored law "
+                             "sha256 %s (%s)" % (m["rows"],
+                                                 (m.get("repo_law_sha256") or "?")[:16],
+                                                 m.get("repo_law"))})
+    mism = m.get("config_mismatch") or []
+    checks.append({
+        "name": "ripple_config_consistent", "passed": not mism,
+        "detail": (("the run's sidecar stimulus matches the expectation "
+                    "(meas_a %r, force_n %r, drag %r; source: %s)"
+                    % (m.get("meas_a_used"), m.get("force_n_used"),
+                       m.get("drag"), m.get("config_source")))
+                   if not mism else
+                   ("STIMULUS MISMATCH - the prediction below is built for the "
+                    "run's own sidecar values, but this leg did not run the "
+                    "stimulus its expectation describes: " + "; ".join(mism)))})
     variant = spec.get("variant")
-    closer_alt = closer_repo = 0
+    n_meas = repo_ok = alt_ok = closer_alt = closer_repo = 0
     for h in m["holds"]:
         tag = "%.1f" % h["v_nominal"]
         if h.get("error"):
@@ -13970,10 +14151,14 @@ def judge_drive_ripple(spec, m):
                                "detail": "hold %s m/s UNMEASURED: %s"
                                          % (tag, h["error"])})
             continue
+        n_meas += 1
         meas, pr, pa = h["i_1x_a"], h["pred_repo"]["i_amp"], h["pred_alt"]["i_amp"]
         err = meas / pr - 1.0 if pr > 0 else float("inf")
         ok = abs(err) <= tol
-        if not m.get("repo_is_alt") and pr > 0 and pa > 0 and meas > 0:
+        a_in = pa > 0 and abs(meas / pa - 1.0) <= tol
+        repo_ok += 1 if ok else 0
+        alt_ok += 1 if a_in else 0
+        if pr > 0 and pa > 0 and meas > 0:
             if abs(math.log(meas / pa)) < abs(math.log(meas / pr)):
                 closer_alt += 1
             else:
@@ -13987,21 +14172,32 @@ def judge_drive_ripple(spec, m):
                      (meas / pa - 1.0) * 100.0 if pa > 0 else float("nan"),
                      h["i_phase_vs_vinj_deg"],
                      h["pred_repo"]["i_phase_vs_vinj_deg"] or float("nan")))
-        if not ok and pa > 0 and abs(meas / pa - 1.0) <= tol:
-            detail += ("  ** THE MEASURED VALUE MATCHES THE fw v35 DRIVE LAW: the "
-                       "board appears to run the OTHER drive law, not the repo "
-                       "header's **")
+        if not ok and a_in and not m.get("repo_is_alt"):
+            detail += ("  ** THE MEASURED VALUE MATCHES THE fw v35 DRIVE LAW at "
+                       "this hold - see ripple_drive_law_identified **")
         checks.append({"name": "ripple_current_1x[%s]" % tag, "passed": ok,
                        "detail": detail})
         # ── the artefact-vs-real discriminator ─────────────────────────────
+        # ⚠️ WHAT IT VALIDATES (review M2): the PLANT HOOKS (the injected-minus-
+        # true artefact is exactly the declared stimulus) and the BOARD'S LOOP
+        # GAIN (in the meas leg true/injected = |L(f_rot)|, the board-dependent
+        # part). It needs `v_true`, which no bench log has: on bench
+        # observables i / v_inj = -C under BOTH hypotheses, so this check does
+        # NOT transfer. The bench-transferable signature is the bus-current
+        # phasor, reported (not scored) in the hold's `bus_signature`.
         ratio, art = h["true_over_inj"], h["artefact_1x"]
         if variant == "meas":
             pl = h["pred_repo"]["true_over_inj"]
-            a_meas = float(spec.get("meas_a") or 0.0)
+            # The amplitude the run actually carried (scan_drive_ripple() puts
+            # the sidecar's value here); a measurement dict without it falls
+            # back to the expectation's own figure.
+            a_meas = float(m["meas_a_used"] if m.get("meas_a_used") is not None
+                           else (spec.get("meas_a") or 0.0))
             r_ok = ratio is not None and pl and abs(ratio / pl - 1.0) <= tol
             a_ok = (art is not None and a_meas > 0
                     and abs(art / a_meas - 1.0) <= DRIVE_RIPPLE_ARTEFACT_TOL)
-            d = ("ARTEFACT expected: true/injected 1x %.3f vs the predicted "
+            d = ("HOOK + LOOP-GAIN check (needs v_true; not a bench "
+                 "discriminator): true/injected 1x %.3f vs the predicted "
                  "|L(f_rot)| %.3f (tol +/-%.0f %%; fw v35 law %.3f); the "
                  "injected-minus-true 1x %.5f m/s vs the hook's %.5f (tol "
                  "+/-%.0f %%)"
@@ -14014,14 +14210,13 @@ def judge_drive_ripple(spec, m):
                     and abs(ratio / pla - 1.0) <= tol):
                 d += ("  ** the ratio matches the fw v35 law's |L| - see "
                       "ripple_drive_law_identified **")
-            checks.append({"name": "ripple_discriminator[%s]" % tag,
-                           "passed": bool(r_ok and a_ok), "detail": d})
         else:
             lo, hi = DRIVE_RIPPLE_FORCE_RATIO_BAND
             r_ok = ratio is not None and lo <= ratio <= hi
             a_ok = (art is not None and h["v_inj_1x"] > 0
                     and art / h["v_inj_1x"] <= DRIVE_RIPPLE_FORCE_ARTEFACT_MAX)
-            d = ("REAL ripple expected: true/injected 1x %.3f (band [%.1f, %.1f]); "
+            d = ("HOOK check (needs v_true; not a bench discriminator): "
+                 "true/injected 1x %.3f (band [%.1f, %.1f]); "
                  "injected-minus-true 1x %.5f m/s = %.1f %% of the injected "
                  "%.5f (max %.0f %%)"
                  % (ratio if ratio is not None else float("nan"), lo, hi,
@@ -14029,8 +14224,8 @@ def judge_drive_ripple(spec, m):
                     (art / h["v_inj_1x"] * 100.0) if (art is not None and h["v_inj_1x"] > 0)
                     else float("nan"), h["v_inj_1x"],
                     DRIVE_RIPPLE_FORCE_ARTEFACT_MAX * 100.0))
-            checks.append({"name": "ripple_discriminator[%s]" % tag,
-                           "passed": bool(r_ok and a_ok), "detail": d})
+        checks.append({"name": "ripple_discriminator[%s]" % tag,
+                       "passed": bool(r_ok and a_ok), "detail": d})
         rail = abs(float(m.get("i_max_a") or 12.0)) - DRIVE_RIPPLE_RAIL_MARGIN_A
         checks.append({"name": "ripple_unsaturated[%s]" % tag,
                        "passed": h["i_max_abs_a"] < rail,
@@ -14043,27 +14238,63 @@ def judge_drive_ripple(spec, m):
                      % (tag, meas, pr, pa,
                         "n/a" if h["bus_1x_a"] is None else "%.4f A" % h["bus_1x_a"],
                         h["v_inj_1x"], h["v_true_1x"]))
+        bs = h.get("bus_signature")
+        if bs:
+            notes.append(
+                "drive-ripple hold %s m/s BUS SIGNATURE (report only, "
+                "bench-transferable): measured I_fc+I_batt 1x %.4f A at %+.1f deg "
+                "vs v_inj; predicted from the measured i and v_inj phasors - "
+                "ARTEFACT hypothesis %.4f A at %+.1f deg (repo law L; fw v35 L "
+                "%.4f A at %+.1f deg), REAL-RIPPLE hypothesis %.4f A at %+.1f "
+                "deg; contrast %.2f; closer: %s (rel. err %.2f vs %.2f)"
+                % (tag, bs["measured"]["amp"], bs["measured"]["phase_vs_vinj_deg"],
+                   bs["pred_meas_repo_law"]["amp"],
+                   bs["pred_meas_repo_law"]["phase_vs_vinj_deg"],
+                   bs["pred_meas_alt_law"]["amp"],
+                   bs["pred_meas_alt_law"]["phase_vs_vinj_deg"],
+                   bs["pred_force"]["amp"], bs["pred_force"]["phase_vs_vinj_deg"],
+                   bs["contrast"], bs["closer_hypothesis"], bs["rel_err_vs_meas_hyp"],
+                   bs["rel_err_vs_force_hyp"]))
+    # ── drive-law identification (review L1: never vacuous, ties fail) ──────
     if m.get("repo_is_alt"):
         checks.append({"name": "ripple_drive_law_identified", "passed": True,
                        "detail": "the repo header IS the frozen fw v35 law; no "
                                  "alternate to discriminate"})
+    elif n_meas < DRIVE_RIPPLE_MIN_HOLDS_IDENTIFIED:
+        checks.append({"name": "ripple_drive_law_identified", "passed": False,
+                       "detail": "only %d hold(s) measured; identification needs "
+                                 ">= %d" % (n_meas, DRIVE_RIPPLE_MIN_HOLDS_IDENTIFIED)})
+    elif 2 * repo_ok > n_meas:
+        checks.append({"name": "ripple_drive_law_identified", "passed": True,
+                       "detail": "within +/-%.0f %% of the repo law at %d of %d "
+                                 "holds (closer to it than to fw v35 at %d)"
+                                 % (tol * 100.0, repo_ok, n_meas, closer_repo)})
+    elif 2 * alt_ok > n_meas:
+        checks.append({"name": "ripple_drive_law_identified", "passed": False,
+                       "detail": ("** THE BOARD APPEARS TO RUN THE OTHER DRIVE LAW "
+                                  "(fw v35): the measured current 1x is within "
+                                  "+/-%.0f %% of the fw v35 prediction at %d of %d "
+                                  "holds (repo law at %d). The suite cannot read "
+                                  "FW_VERSION off the wire (WORK_QUEUE 0j) - check "
+                                  "what is flashed before reading the per-hold "
+                                  "FAILs as a law defect **"
+                                  % (tol * 100.0, alt_ok, n_meas, repo_ok))})
     else:
-        ident_ok = closer_alt <= closer_repo
-        checks.append({
-            "name": "ripple_drive_law_identified", "passed": ident_ok,
-            "detail": (("measured amplitudes sit closer to the repo law at %d of "
-                        "%d holds" % (closer_repo, closer_repo + closer_alt))
-                       if ident_ok else
-                       ("** THE BOARD APPEARS TO RUN THE OTHER DRIVE LAW (fw v35): "
-                        "the measured current 1x sits closer to the fw v35 "
-                        "prediction at %d of %d holds. The suite cannot read "
-                        "FW_VERSION off the wire (WORK_QUEUE 0j) - check what is "
-                        "flashed before reading the per-hold FAILs as a law "
-                        "defect **" % (closer_alt, closer_repo + closer_alt)))})
+        checks.append({"name": "ripple_drive_law_identified", "passed": False,
+                       "detail": ("the measured current 1x matches NEITHER law: "
+                                  "within +/-%.0f %% of the repo law at %d and of "
+                                  "fw v35 at %d of %d holds (closer to repo at %d, "
+                                  "to fw v35 at %d) - a plant, pipeline or "
+                                  "firmware difference the predictor does not "
+                                  "model" % (tol * 100.0, repo_ok, alt_ok, n_meas,
+                                             closer_repo, closer_alt))})
     st = m.get("step")
     if st:
-        notes.append("drive-ripple 0->%.1f m/s step (report only, TRUE speed): 2 %% "
-                     "settle %s, overshoot %s, peak current %s, %.3f s on the rail"
+        notes.append("drive-ripple 0->%.1f m/s step (report only; TRUE speed, "
+                     "which still carries the 1x ripple: one 1x amplitude is "
+                     "+0.25-0.76 %% of 2.0 m/s depending on law and hook, and "
+                     "it rides on the overshoot figure): 2 %% settle %s, overshoot %s, peak "
+                     "current %s, %.3f s on the rail"
                      % (DRIVE_RIPPLE_STEP[2],
                         "never" if st["settle_2pct_s"] is None
                         else "%.3f s" % st["settle_2pct_s"],
@@ -17305,7 +17536,11 @@ def _run_plan(plan, args, problems, results, write_outputs):
             sig_specs = expect.get("signals_require") or []
             signals = scan_signals(item["csv"], sig_specs) if sig_specs else None
             dr_spec = expect.get("drive_ripple")
-            dr_m = scan_drive_ripple(item["csv"], dr_spec) if dr_spec else None
+            dr_m = (scan_drive_ripple(
+                        item["csv"], dr_spec,
+                        run_meta=read_run_meta(item["csv"],
+                                               child_launched_at(child)))
+                    if dr_spec else None)
             passed, checks = judge_scenario(item["name"], metrics, events, child,
                                             pi_live=getattr(args, "pi_live", False),
                                             duration_s=item.get("duration_s"),

@@ -741,6 +741,13 @@ and passed to `Plant(drive_ripple_cfg=...)`:
   added to the net force after both road-load arms and their zero-crossing guards, so
   the true speed ripples and the injected speed carries it honestly.
 
+The 2x term uses the same phase constant (`sin(2 theta + phase)`), not an independent
+one. The measurement amplitude is **constant** in m/s; a real eccentric disc reads
+`v (1 + e cos theta)`, an artefact proportional to speed and signed with the rotation
+direction. The constant form follows the bags' flat ~13–14 mm/s external component
+(`docs/fw37_planning_2026-11-04.md` section 6.2). `Plant` refuses negative or
+non-finite amplitudes and `force_n >= F_COULOMB` (2.00 N).
+
 `theta` is the plant's flywheel angle, integrated from the TRUE speed after each
 tick's update at `drive_ripple.FLYWHEEL_RADIUS_M` = 0.0762 m (the firmware's
 `FLYWHEEL_RADIUS_M`, `.ino`:2740), wrapped to [0, 2 pi). Both hooks act only while
@@ -767,7 +774,20 @@ prefix (on the `FW26_` reasoning), and `drive_ripple` is imported as a module so
 own constants are never swept.
 
 The prediction the suite scores these legs against, and its offline validation, live
-in `tools/drive_ripple.py` (`docs/HIL_SCENARIOS.md`, drive-ripple-*).
+in `tools/drive_ripple.py` (`docs/HIL_SCENARIOS.md`, drive-ripple-*). The loop it
+predicts carries the controller's ZOH (Ts_eff/2, Ts_eff 2.0–2.1 ms because
+`rateLimitDue()` re-arms from `now`) plus the HIL pipeline. That pipeline is 1.0 ms
+nominal and [0, 3] ms band: the integer host-tick round trip R = 1–3 ms, less the
+one tick the plant's step-before-send lead cancels. The forward-Euler hold adds
+nothing of its own because it is nested inside the controller ZOH. The tolerance
+budget built on these terms (≤ 4.1 % timing, ≤ 0.022 % predictor vs simulation,
+< 0.1 % lock-in, against ±15 %) is in `docs/HIL_SCENARIOS.md`.
+⚠️ The suite's true/injected discriminator validates these hooks and the board's loop
+gain; it needs `v_true` and is not a bench method. On bench observables i / v_inj is
+the same under both hypotheses. The bench-transferable signature is the bus-current
+phasor, reported, not scored.
+`tools/drive_ripple.py` must sit beside `hil_plant_sim.py` and `run_hil_suite.py`:
+both import it at module load.
 
 ## 4. Electrical model
 

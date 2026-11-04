@@ -1814,6 +1814,16 @@ class Plant:
         #                     force gains force_n sin(theta + phase), so the
         #                     TRUE speed ripples and the injected speed shows
         #                     it honestly.
+        # ⚠️ TWO MODELLING CHOICES, stated (fix round, review DOC):
+        #   * the measurement ripple is a CONSTANT amplitude in m/s.  A real
+        #     eccentric disc reads v (1 + e cos theta), i.e. an artefact
+        #     PROPORTIONAL to speed and signed with the direction of rotation;
+        #     the constant form follows the Pi bags' "external" component,
+        #     which is ~13-14 mm/s flat from 1.0 to 2.7 m/s
+        #     (docs/fw37_planning_2026-11-04.md section 6.2) and fits neither
+        #     a pure eccentricity nor a constant force.
+        #   * the 2x term is sin(2 theta + phase): the SAME phase constant as
+        #     the 1x, not an independent 2x phase.
         # theta is the plant's own flywheel angle, integrated from the TRUE
         # speed at drive_ripple.FLYWHEEL_RADIUS_M (= the firmware's
         # FLYWHEEL_RADIUS_M, .ino:2740).  Both hooks act only while |v| >=
@@ -1836,6 +1846,28 @@ class Plant:
         self.ripple_meas2_a = float(cfg.get("meas2_a", 0.0))
         self.ripple_force_n = float(cfg.get("force_n", 0.0))
         self.ripple_phase_rad = float(cfg.get("phase_rad", 0.0))
+        # Refusals (fix round, review L6).  Amplitudes are PEAK values and the
+        # phase carries the sign, so a negative amplitude is a malformed
+        # config, not a phase flip.  The force ripple must stay under the
+        # Coulomb term: the hook adds force_n sin(.) to a moving body whose
+        # friction opposes motion with F_COULOMB, and at force_n >= F_COULOMB
+        # the net drag could reverse sign at the bottom of a coast - a
+        # physically different regime this hook does not claim to model.
+        for _k, _v in (("meas_a", self.ripple_meas_a),
+                       ("meas2_a", self.ripple_meas2_a),
+                       ("force_n", self.ripple_force_n),
+                       ("phase_rad", self.ripple_phase_rad)):
+            if not math.isfinite(_v):
+                raise ValueError("drive_ripple_cfg[%r] = %r is not finite"
+                                 % (_k, _v))
+            if _k != "phase_rad" and _v < 0.0:
+                raise ValueError("drive_ripple_cfg[%r] = %r: amplitudes are "
+                                 "peak values >= 0 (the sign lives in "
+                                 "phase_rad)" % (_k, _v))
+        if self.ripple_force_n >= F_COULOMB:
+            raise ValueError("drive_ripple_cfg['force_n'] = %r N must be < "
+                             "F_COULOMB = %r N" % (self.ripple_force_n,
+                                                  F_COULOMB))
         # Configured = the scenario DECLARED the hooks (even at zero
         # amplitude, which is how the invariance test exercises the code
         # path); `ripple_on` additionally needs a non-zero amplitude.
@@ -12195,6 +12227,88 @@ SCENARIOS["pi-silence"] = {
     "pi_mute_after_s": 8.0,
 }
 
+# ── share-staircase: the share governor's rails, and the cut/restore latency ──
+#
+# TWO PHASES, AT TWO DIFFERENT LOADS, and the split is forced rather than chosen.
+# The two objectives are mutually exclusive at any single load:
+#   PHASE A (t = 6..28, I_tot ~ 1.2 A) — GOVERNOR CHARACTERISATION.  The closed
+#       share loop needs the source total above 2*SHARE_MINORITY_I_MIN_A = 0.60 A,
+#       and at 1.2 A the governor's rails sit at SHARE_MINORITY_I_MIN_A/I_tot =
+#       [0.25, 0.75].  The staircase steps 0.80 -> 0.20 in 0.10 increments, so its
+#       two ENDS are outside those rails and its middle is inside: the clip band
+#       that campaign TP0170-0180 measured incidentally becomes a DESIGNED
+#       observable, swept in both directions in one run.
+#   PHASE B (t = 33..44, I_tot ~ 0.55 A) — THE CUT AND ITS RESTORE.  The setpoint
+#       excursions 0.95 and 0.05 are outside [DROOP_R_MIN 0.15, DROOP_R_MAX 0.85],
+#       so updateShareSetpointCutoff() (.ino:9231-9257) opens BT_BUS and then
+#       FC_BUS.  The latch is REFUSED unless the DOOMED channel carries
+#       <= SHARE_CUT_MAX_HANDOFF_A = 0.5 A (.ino:9234, :9250), and at Phase A's
+#       1.2 A a 50/50 split is 0.60 A — over the guard, so the cut would DEFER.
+#       At 0.55 A the worst case is 0.275 A, clear by 45 %.
+# Hence the load DROP at t = 29: the governor cannot be characterised at a load
+# where the cut fires, and the cut cannot fire at a load where the governor is
+# best characterised.
+#
+# MOTOR-FREE BY CONSTRUCTION: v_setpoint is 0.0 for the whole run, below
+# V_SP_ZERO_THRESH (0.07 m/s), so the drive loop is held in reset and every amp
+# on the bus is the scripted aux load.  A drive transient would move I_tot and
+# therefore move the governor rails mid-staircase, which would make every step's
+# clip level a different number.
+#
+# ⚠️ CORRECTED PREMISE on the cut LATENCY (campaign round 3/4, CLAUDE.md
+# 2026-08-31b).  The observed [0, 20) ms spread is COMMAND-ARRIVAL PHASE — the
+# 50 Hz PiCommander cadence (PI_CMD_HZ) — NOT a firmware tick.  powerBalance()
+# and its cutoff run at POWER_BAL_PERIOD_US = 1000 us (SHARE_CTRL_TS_US is also
+# 1000 us), so the firmware contributes ~1 ms, not ~20.  Changing PI_CMD_HZ would
+# move this distribution; changing a firmware tick would barely touch it.
+SCENARIOS["share-staircase"] = {
+    "description": ("47 s two-phase, motor-free share sweep: a 0.80 -> 0.20 "
+                    "staircase at I_tot ~ 1.2 A (the governor's [0.25, 0.75] "
+                    "rails become a designed observable), then a load drop to "
+                    "~0.55 A and four out-of-band excursions that cut and RESTORE "
+                    "BT_BUS and FC_BUS — with the cut/restore latency measured."),
+    # "any": the setpoint-latched cutoff is firmware logic and the governor rails
+    # are firmware arithmetic; neither needs ideal-diode dynamics.  Running it in
+    # both engines is a free cross-check.  (The hi-fi engine's own reactive
+    # pick-up is handoff-sag's subject, not this one's.)
+    "electrical": "any",
+    "duration_s": 47.0,
+    "pi_timeline": [
+        (0.5, {"mode_cmd": MODE_SAFE}),
+        (3.0, {"mode_cmd": MODE_HYBRID}),
+        # Standstill for the whole run; 0.50 is the firmware's own default split.
+        (5.0, {"v_setpoint": 0.0, "power_share_setpoint": 0.50}),
+        # PHASE A staircase: 0.10 every 3 s.  3 s is ~150 share-loop ticks at
+        # SHARE_CTRL_TS_US 1000 us and 150 command periods at PI_CMD_HZ — long
+        # enough that each step's settled value, not its transient, is what the
+        # trace shows.
+        (6.0, {"power_share_setpoint": 0.80}),    # above the 0.75 rail
+        (9.0, {"power_share_setpoint": 0.70}),
+        (12.0, {"power_share_setpoint": 0.60}),
+        (15.0, {"power_share_setpoint": 0.50}),
+        (18.0, {"power_share_setpoint": 0.40}),
+        (21.0, {"power_share_setpoint": 0.30}),
+        (24.0, {"power_share_setpoint": 0.20}),   # below the 0.25 rail
+        (27.0, {"power_share_setpoint": 0.50}),   # recentre before the load drop
+        # (t = 29: STAIRCASE_LOAD_A drops to STAIRCASE_LOAD_B, ramped over
+        #  SOC_LOAD_RAMP_S by apply_scenario() — see the branch there.)
+        # PHASE B excursions, 3 s apart so each cut and each restore is measured
+        # in isolation.  33 -> BT_BUS cut (sp > DROOP_R_MAX); 36 -> restore;
+        # 39 -> FC_BUS cut (sp < DROOP_R_MIN); 42 -> restore.
+        (33.0, {"power_share_setpoint": 0.95}),
+        (36.0, {"power_share_setpoint": 0.50}),
+        (39.0, {"power_share_setpoint": 0.05}),
+        (42.0, {"power_share_setpoint": 0.50}),
+        # Close the run out Run -> Finish -> Idle, leaving 3 s.
+        (44.0, {"mode_cmd": MODE_SAFE}),
+    ],
+}
+
+# ⚠️ REGISTERED LAST (fix round, review L8): the drive-ripple pair sits at the
+# END of the registry, after every pre-existing leg, so build_plan() (which
+# walks SCENARIOS in insertion order) leaves every existing leg's plan
+# position unchanged.  Keep any future scenario ABOVE this block only if a
+# plan-order shift is intended.
 # ── drive-ripple-meas / drive-ripple-force: the once-per-revolution ripple ───
 #    (2026-11-04, the fw v37 drive-law A/B on HIL)
 #
@@ -12213,9 +12327,12 @@ SCENARIOS["pi-silence"] = {
 #                       1.0 N peak, inside the bags' inferred 0.6-1.5 N band,
 #                       1x only.  The true speed ripples and the injected
 #                       speed shows it honestly.
-# On HIL the truth is known, so the pair also validates the artefact-vs-real
-# discriminator the bench analysis will use (run_hil_suite's `drive_ripple`
-# expectation: the TRUE speed's 1x against the injected one's).
+# On HIL the truth is known, so the pair also validates the PLANT HOOKS and
+# the board's loop gain |L(f_rot)| (run_hil_suite's `drive_ripple`
+# expectation scores the TRUE speed's 1x against the injected one's).  That
+# check needs `v_true` and does NOT transfer to the bench, where i / v_inj is
+# the same under both hypotheses; the bench-transferable signature (the bus
+# current's 1x phasor under each hypothesis) is reported, not scored.
 #
 # THE VEHICLE: `hold-5050` with an `ems_v_profile` and an `ems_run_exit_s`,
 # exactly as `ems-drive-cycle` drives its Run (SAFE -> HYBRID at
@@ -12327,83 +12444,6 @@ SCENARIOS["drive-ripple-force"] = dict(
                   "force_n": DRIVE_RIPPLE_FORCE_N, "phase_rad": 0.0},
 )
 del _DRIVE_RIPPLE_COMMON
-
-# ── share-staircase: the share governor's rails, and the cut/restore latency ──
-#
-# TWO PHASES, AT TWO DIFFERENT LOADS, and the split is forced rather than chosen.
-# The two objectives are mutually exclusive at any single load:
-#   PHASE A (t = 6..28, I_tot ~ 1.2 A) — GOVERNOR CHARACTERISATION.  The closed
-#       share loop needs the source total above 2*SHARE_MINORITY_I_MIN_A = 0.60 A,
-#       and at 1.2 A the governor's rails sit at SHARE_MINORITY_I_MIN_A/I_tot =
-#       [0.25, 0.75].  The staircase steps 0.80 -> 0.20 in 0.10 increments, so its
-#       two ENDS are outside those rails and its middle is inside: the clip band
-#       that campaign TP0170-0180 measured incidentally becomes a DESIGNED
-#       observable, swept in both directions in one run.
-#   PHASE B (t = 33..44, I_tot ~ 0.55 A) — THE CUT AND ITS RESTORE.  The setpoint
-#       excursions 0.95 and 0.05 are outside [DROOP_R_MIN 0.15, DROOP_R_MAX 0.85],
-#       so updateShareSetpointCutoff() (.ino:9231-9257) opens BT_BUS and then
-#       FC_BUS.  The latch is REFUSED unless the DOOMED channel carries
-#       <= SHARE_CUT_MAX_HANDOFF_A = 0.5 A (.ino:9234, :9250), and at Phase A's
-#       1.2 A a 50/50 split is 0.60 A — over the guard, so the cut would DEFER.
-#       At 0.55 A the worst case is 0.275 A, clear by 45 %.
-# Hence the load DROP at t = 29: the governor cannot be characterised at a load
-# where the cut fires, and the cut cannot fire at a load where the governor is
-# best characterised.
-#
-# MOTOR-FREE BY CONSTRUCTION: v_setpoint is 0.0 for the whole run, below
-# V_SP_ZERO_THRESH (0.07 m/s), so the drive loop is held in reset and every amp
-# on the bus is the scripted aux load.  A drive transient would move I_tot and
-# therefore move the governor rails mid-staircase, which would make every step's
-# clip level a different number.
-#
-# ⚠️ CORRECTED PREMISE on the cut LATENCY (campaign round 3/4, CLAUDE.md
-# 2026-08-31b).  The observed [0, 20) ms spread is COMMAND-ARRIVAL PHASE — the
-# 50 Hz PiCommander cadence (PI_CMD_HZ) — NOT a firmware tick.  powerBalance()
-# and its cutoff run at POWER_BAL_PERIOD_US = 1000 us (SHARE_CTRL_TS_US is also
-# 1000 us), so the firmware contributes ~1 ms, not ~20.  Changing PI_CMD_HZ would
-# move this distribution; changing a firmware tick would barely touch it.
-SCENARIOS["share-staircase"] = {
-    "description": ("47 s two-phase, motor-free share sweep: a 0.80 -> 0.20 "
-                    "staircase at I_tot ~ 1.2 A (the governor's [0.25, 0.75] "
-                    "rails become a designed observable), then a load drop to "
-                    "~0.55 A and four out-of-band excursions that cut and RESTORE "
-                    "BT_BUS and FC_BUS — with the cut/restore latency measured."),
-    # "any": the setpoint-latched cutoff is firmware logic and the governor rails
-    # are firmware arithmetic; neither needs ideal-diode dynamics.  Running it in
-    # both engines is a free cross-check.  (The hi-fi engine's own reactive
-    # pick-up is handoff-sag's subject, not this one's.)
-    "electrical": "any",
-    "duration_s": 47.0,
-    "pi_timeline": [
-        (0.5, {"mode_cmd": MODE_SAFE}),
-        (3.0, {"mode_cmd": MODE_HYBRID}),
-        # Standstill for the whole run; 0.50 is the firmware's own default split.
-        (5.0, {"v_setpoint": 0.0, "power_share_setpoint": 0.50}),
-        # PHASE A staircase: 0.10 every 3 s.  3 s is ~150 share-loop ticks at
-        # SHARE_CTRL_TS_US 1000 us and 150 command periods at PI_CMD_HZ — long
-        # enough that each step's settled value, not its transient, is what the
-        # trace shows.
-        (6.0, {"power_share_setpoint": 0.80}),    # above the 0.75 rail
-        (9.0, {"power_share_setpoint": 0.70}),
-        (12.0, {"power_share_setpoint": 0.60}),
-        (15.0, {"power_share_setpoint": 0.50}),
-        (18.0, {"power_share_setpoint": 0.40}),
-        (21.0, {"power_share_setpoint": 0.30}),
-        (24.0, {"power_share_setpoint": 0.20}),   # below the 0.25 rail
-        (27.0, {"power_share_setpoint": 0.50}),   # recentre before the load drop
-        # (t = 29: STAIRCASE_LOAD_A drops to STAIRCASE_LOAD_B, ramped over
-        #  SOC_LOAD_RAMP_S by apply_scenario() — see the branch there.)
-        # PHASE B excursions, 3 s apart so each cut and each restore is measured
-        # in isolation.  33 -> BT_BUS cut (sp > DROOP_R_MAX); 36 -> restore;
-        # 39 -> FC_BUS cut (sp < DROOP_R_MIN); 42 -> restore.
-        (33.0, {"power_share_setpoint": 0.95}),
-        (36.0, {"power_share_setpoint": 0.50}),
-        (39.0, {"power_share_setpoint": 0.05}),
-        (42.0, {"power_share_setpoint": 0.50}),
-        # Close the run out Run -> Finish -> Idle, leaving 3 s.
-        (44.0, {"mode_cmd": MODE_SAFE}),
-    ],
-}
 
 # ── M4 (review 2026-08-31), CLOSED 2026-09-01 (WP-E) ────────────────────────
 # `aux_preload_a` is applied by apply_scenario()'s generic fall-through branch
