@@ -14401,3 +14401,439 @@ def test_rt1987_ramp_is_invisible_to_the_constant_sweep_without_the_era_entry():
     assert len({ha, hb, hbase}) == 3, (
         "absent / legacy / constant-slew are THREE distinct eras: an absent "
         "key is a pre-round sidecar, not a legacy one")
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# 99. The drive-ripple hooks (2026-11-04, the drive-ripple round)
+#
+# Written by a test author independent of the implementer.  The hard
+# requirement of the round is INVARIANCE: with the hooks off (or at zero
+# amplitude) every pre-existing scenario's injected stream, CSV and
+# constants_hash is unchanged.  The remaining tests pin the hook semantics
+# (what the mechanics and the injected speed do) and the two scenarios'
+# stimulus tables.
+# ─────────────────────────────────────────────────────────────────────────
+
+import math  # noqa: E402
+import re  # noqa: E402
+
+import drive_ripple as _dr  # noqa: E402
+
+_RIP_SW = hil.SW_FC_BUS | hil.SW_BT_BUS | hil.SW_MOT_PWR
+_RIP_AUX = hil.AUX_FC_REG | hil.AUX_BT_REG
+_RIP_NEW_KEYS = ("v_true", "fly_theta")
+
+
+def _rip_plant(cfg, electrical=None):
+    p = hil.Plant(electrical=electrical, drive_ripple_cfg=cfg)
+    p.v_bus = hil.V_BUS_NOMINAL
+    return p
+
+
+def _rip_cmd(k):
+    """A scripted open-loop current: kick, hold, coast, kick again."""
+    if k < 2500:
+        return 0.0 if k < 200 else 5.0
+    if k < 4500:
+        return 0.0
+    return 3.0
+
+
+def _rip_run(plant, n, cmd=_rip_cmd, dt=1e-3):
+    out = []
+    for k in range(n):
+        obs = _obs(switch=_RIP_SW, aux=_RIP_AUX, current=cmd(k))
+        out.append(plant.step(dt, obs))
+    return out
+
+
+def _same(a, b):
+    return a == b or (a != a and b != b)
+
+
+def _assert_streams_identical(ref, got, skip=()):
+    assert len(ref) == len(got)
+    for k, (r, g) in enumerate(zip(ref, got)):
+        for key in r:
+            if key in skip:
+                continue
+            assert key in g, (k, key)
+            assert _same(r[key], g[key]), (k, key, r[key], g[key])
+
+
+def test_ripple_invariance_simple_engine_none_vs_all_zero_amplitudes():
+    """THE load-bearing invariance: a closed-loop-style run of Plant.step with
+    drive_ripple_cfg=None vs a config whose amplitudes are all zero gives
+    IDENTICAL per-tick outputs on every pre-existing key (bit-for-bit)."""
+    ref = _rip_run(_rip_plant(None), 6500)
+    zero = _rip_run(_rip_plant({"meas_a": 0.0, "meas2_a": 0.0, "force_n": 0.0,
+                                "phase_rad": 0.0}), 6500)
+    assert max(s["v_actual"] for s in ref) > 0.5          # it actually moved
+    _assert_streams_identical(ref, zero, skip=_RIP_NEW_KEYS)
+    # ... and the zero-amplitude config reports the TRUE speed as injected
+    assert all(s["v_actual"] == s["v_true"] for s in zero)
+
+
+def test_ripple_invariance_hifi_engine_none_vs_all_zero_amplitudes():
+    from hil_electrical import ElectricalSim
+    ref = _rip_run(_rip_plant(None, ElectricalSim(substep_pin=8)), 1600)
+    zero = _rip_run(_rip_plant({"meas_a": 0.0, "force_n": 0.0},
+                               ElectricalSim(substep_pin=8)), 1600)
+    assert max(s["v_actual"] for s in ref) > 0.1
+    _assert_streams_identical(ref, zero, skip=_RIP_NEW_KEYS)
+
+
+def test_ripple_no_new_sensor_keys_without_the_config():
+    out = _rip_run(_rip_plant(None), 50)
+    for s in out:
+        for k in _RIP_NEW_KEYS:
+            assert k not in s
+    out2 = _rip_run(_rip_plant({}), 50)           # declared, zero amplitudes
+    for s in out2:
+        for k in _RIP_NEW_KEYS:
+            assert k in s
+
+
+def test_ripple_zero_config_still_integrates_the_flywheel_angle():
+    p = _rip_plant({"meas_a": 0.0, "force_n": 0.0})
+    assert p.ripple_cfg and not p.ripple_on
+    out = _rip_run(p, 3000)
+    assert out[-1]["fly_theta"] != 0.0
+    assert p.ripple_on is False
+
+
+def test_ripple_constants_hash_ignores_every_drive_ripple_name():
+    """No DRIVE_RIPPLE_* / drive_ripple.* name enters the fingerprint, the
+    exclude prefix is registered, and moving a stimulus constant leaves the
+    hash alone (the FW26_ rule)."""
+    consts = hil.collect_model_constants()
+    for key in consts:
+        low = key.lower()
+        assert "drive_ripple" not in low, key
+        assert "flywheel_radius" not in low, key
+        assert "hil_loop_delay" not in low, key
+    assert "DRIVE_RIPPLE_" in hil.CONSTANTS_EXCLUDE_PREFIXES
+    before = hil.constants_hash(consts)
+    old = (hil.DRIVE_RIPPLE_MEAS_A, hil.DRIVE_RIPPLE_FORCE_N,
+           hil.DRIVE_RIPPLE_SETTLE_S)
+    try:
+        hil.DRIVE_RIPPLE_MEAS_A = 0.5
+        hil.DRIVE_RIPPLE_FORCE_N = 9.0
+        hil.DRIVE_RIPPLE_SETTLE_S = 1.0
+        assert hil.constants_hash(hil.collect_model_constants()) == before
+    finally:
+        (hil.DRIVE_RIPPLE_MEAS_A, hil.DRIVE_RIPPLE_FORCE_N,
+         hil.DRIVE_RIPPLE_SETTLE_S) = old
+
+
+def test_ripple_unknown_config_key_raises():
+    with pytest.raises(ValueError, match="unknown"):
+        hil.Plant(drive_ripple_cfg={"meas_amp": 0.02})
+    with pytest.raises(ValueError):
+        hil.Plant(drive_ripple_cfg={"meas_a": 0.02, "bogus": 1})
+
+
+def test_ripple_config_refusals_negative_nonfinite_and_over_coulomb():
+    """(fix-round behaviour, uncommitted at the time of writing) amplitudes are
+    peak values >= 0, everything finite, and a force ripple must stay under
+    the Coulomb term."""
+    for bad in ({"meas_a": -0.01}, {"meas2_a": -1e-3}, {"force_n": -0.5},
+                {"meas_a": float("nan")}, {"phase_rad": float("inf")},
+                {"force_n": hil.F_COULOMB}, {"force_n": hil.F_COULOMB + 1.0}):
+        with pytest.raises(ValueError):
+            hil.Plant(drive_ripple_cfg=bad)
+    hil.Plant(drive_ripple_cfg={"force_n": hil.F_COULOMB - 1e-6,
+                                "phase_rad": -1.0})      # sign lives in phase
+
+
+def test_ripple_off_below_v_stiction_no_ripple_and_theta_not_integrated():
+    p = _rip_plant({"meas_a": 0.05, "meas2_a": 0.05, "force_n": 1.5})
+    # a drive current that stays under breakaway: the body never moves
+    i_sub = 0.5 * hil.F_COULOMB / hil.K_F
+    out = _rip_run(p, 600, cmd=lambda k: i_sub)
+    for s in out:
+        assert s["v_true"] == 0.0 and s["v_actual"] == 0.0
+        assert s["fly_theta"] == 0.0
+    # and a body sitting just under the threshold with no drive is zeroed
+    # (the deadband), still with no ripple and no angle
+    q = _rip_plant({"meas_a": 0.05, "force_n": 1.5})
+    q.v = 0.99 * hil.V_STICTION
+    s = _rip_run(q, 1, cmd=lambda k: 0.0)[0]
+    assert s["v_actual"] == s["v_true"] and s["fly_theta"] == 0.0
+
+
+def test_ripple_theta_rate_is_v_over_r_and_wraps():
+    p = _rip_plant({"meas_a": 0.0, "force_n": 0.0})
+    out = _rip_run(p, 4000, cmd=lambda k: 5.0)
+    prev = 0.0
+    wraps = 0
+    dt = 1e-3
+    for s in out:
+        th, v = s["fly_theta"], s["v_true"]
+        assert 0.0 <= th < 2.0 * math.pi
+        if abs(v) >= hil.V_STICTION:
+            d = (th - prev) % (2.0 * math.pi)
+            assert d == pytest.approx((v / _dr.FLYWHEEL_RADIUS_M * dt)
+                                      % (2.0 * math.pi), abs=1e-9)
+        else:
+            assert th == prev
+        if th < prev:
+            wraps += 1
+        prev = th
+    assert wraps >= 1
+
+
+def test_ripple_radius_is_the_firmwares_flywheel_radius():
+    assert _dr.FLYWHEEL_RADIUS_M == 0.0762
+    ino = os.path.join(HERE, "..", "teensy_controller", "teensy_controller.ino")
+    if os.path.exists(ino):
+        with open(ino, errors="replace") as fh:
+            src = fh.read()
+        m = re.search(r"#define\s+FLYWHEEL_RADIUS_M\s+([0-9.]+)f", src)
+        assert m and float(m.group(1)) == _dr.FLYWHEEL_RADIUS_M
+
+
+@pytest.mark.parametrize("phase", [0.0, 1.1, math.pi / 2])
+def test_ripple_measurement_hook_injected_minus_true_is_the_sine(phase):
+    cfg = {"meas_a": 0.02, "meas2_a": 0.007, "phase_rad": phase}
+    out = _rip_run(_rip_plant(cfg), 6500)
+    n_checked = 0
+    for s in out:
+        if abs(s["v_true"]) >= hil.V_STICTION:
+            want = (0.02 * math.sin(s["fly_theta"] + phase)
+                    + 0.007 * math.sin(2.0 * s["fly_theta"] + phase))
+            assert s["v_actual"] - s["v_true"] == pytest.approx(want, abs=1e-12)
+            n_checked += 1
+        else:
+            assert s["v_actual"] == s["v_true"]
+    assert n_checked > 3000
+
+
+def test_ripple_measurement_hook_leaves_the_true_mechanics_untouched():
+    """Same command sequence, hooks off vs measurement ripple: the TRUE speed
+    (and every electrical quantity derived from it) is bit-identical; only the
+    injected v_actual differs."""
+    ref = _rip_run(_rip_plant(None), 6500)
+    meas = _rip_run(_rip_plant({"meas_a": 0.02}), 6500)
+    for r, m in zip(ref, meas):
+        assert r["v_actual"] == m["v_true"]
+    _assert_streams_identical(ref, meas, skip=("v_actual",) + _RIP_NEW_KEYS)
+    assert any(r["v_actual"] != m["v_actual"] for r, m in zip(ref, meas))
+
+
+def test_ripple_2x_term_alone():
+    out = _rip_run(_rip_plant({"meas2_a": 0.01}), 3000, cmd=lambda k: 5.0)
+    k = 0
+    for s in out:
+        if abs(s["v_true"]) >= hil.V_STICTION:
+            assert s["v_actual"] - s["v_true"] == pytest.approx(
+                0.01 * math.sin(2.0 * s["fly_theta"]), abs=1e-12)
+            k += 1
+    assert k > 1000
+
+
+def test_ripple_force_hook_injected_equals_true_and_force_is_present():
+    ref = _rip_run(_rip_plant(None), 6500)
+    frc = _rip_run(_rip_plant({"force_n": 1.0}), 6500)
+    assert all(s["v_actual"] == s["v_true"] for s in frc)
+    assert any(abs(r["v_actual"] - f["v_actual"]) > 1e-4
+               for r, f in zip(ref, frc))
+
+
+def test_ripple_force_hook_one_tick_dv_is_f_sin_theta_over_m_dt():
+    """Exact single-tick check: a moving body at a chosen angle gains exactly
+    force * sin(theta + phase) / M_EFF * dt relative to a hooks-off twin."""
+    dt = 1e-3
+    for theta, phase in ((math.pi / 2, 0.0), (1.0, 0.4), (4.0, 0.0)):
+        a = _rip_plant(None)
+        b = _rip_plant({"force_n": 1.5, "phase_rad": phase})
+        a.v = b.v = 1.0
+        b.fly_theta = theta
+        sa = _rip_run(a, 1, cmd=lambda k: 0.0)[0]
+        sb = _rip_run(b, 1, cmd=lambda k: 0.0)[0]
+        assert sb["v_true"] - sa["v_actual"] == pytest.approx(
+            1.5 * math.sin(theta + phase) / hil.M_EFF * dt, abs=1e-12)
+
+
+def test_ripple_force_hook_inert_below_v_stiction():
+    a = _rip_plant(None)
+    b = _rip_plant({"force_n": 1.9})
+    # a drive just over breakaway starts both; only compare the sub-V_STICTION
+    # branch: both start at rest under a sub-breakaway current
+    sa = _rip_run(a, 5, cmd=lambda k: 0.0)
+    sb = _rip_run(b, 5, cmd=lambda k: 0.0)
+    for x, y in zip(sa, sb):
+        assert y["v_true"] == 0.0 == x["v_actual"]
+
+
+def test_ripple_force_hook_does_not_act_during_breakaway_below_v_stiction():
+    """Drive above the Coulomb breakaway from rest: the body accelerates through
+    |v| < V_STICTION for a few ticks.  With phase pi/2 the (unwanted) force
+    would be 1.9 N right there.  Every tick that STARTS below V_STICTION must
+    match the hooks-off twin exactly (theta = 0 would hide the bug with
+    phase 0, since sin(0) = 0)."""
+    i_break = 1.5 * hil.F_COULOMB / hil.K_F
+    a = _rip_plant(None)
+    b = _rip_plant({"force_n": 1.9, "phase_rad": math.pi / 2})
+    prev_a = prev_b = 0.0
+    n_sub = 0
+    for k in range(40):
+        obs = _obs(switch=_RIP_SW, aux=_RIP_AUX, current=i_break)
+        sa = a.step(1e-3, obs)
+        sb = b.step(1e-3, obs)
+        if abs(prev_b) < hil.V_STICTION:
+            assert sb["v_true"] == sa["v_actual"]
+            n_sub += 1
+        prev_a, prev_b = sa["v_actual"], sb["v_true"]
+    assert n_sub >= 2          # the breakaway really spends ticks under 0.02
+
+
+def test_ripple_both_hooks_superpose_in_the_injected_stream():
+    out = _rip_run(_rip_plant({"meas_a": 0.02, "force_n": 1.0}), 4000,
+                   cmd=lambda k: 5.0)
+    s = out[-1]
+    assert s["v_actual"] - s["v_true"] == pytest.approx(
+        0.02 * math.sin(s["fly_theta"]), abs=1e-12)
+
+
+# ── CLI / CSV / sidecar ──────────────────────────────────────────────────
+
+def _ripple_cli(tmp_path, scenario, name="r.csv"):
+    csv_path = str(tmp_path / name)
+    header, rows = _run_main_csv(
+        tmp_path, ["--scenario", scenario, "--electrical", "simple",
+                   "--duration", "0.02"], name=name)
+    with open(hil.meta_path_for(csv_path)) as fh:
+        meta = json.load(fh)
+    return header, rows, meta
+
+
+@pytest.mark.parametrize("scenario", ["drive-ripple-meas", "drive-ripple-force"])
+def test_ripple_csv_has_v_true_and_fly_theta_as_the_last_two_columns(
+        tmp_path, scenario):
+    header, rows, meta = _ripple_cli(tmp_path, scenario)
+    assert header[-3:] == ["h2_gfc_cum_g", "v_true", "fly_theta"]
+    assert header.count("v_true") == header.count("fly_theta") == 1
+    assert rows and all(len(r) == len(header) for r in rows)
+    cfg = meta["config"]["drive_ripple"]
+    want = hil.SCENARIOS[scenario]["drive_ripple"]
+    for k in ("meas_a", "meas2_a", "force_n", "phase_rad"):
+        assert cfg[k] == want[k]
+    assert cfg["flywheel_radius_m"] == 0.0762
+
+
+def test_ripple_columns_and_sidecar_key_absent_from_other_scenarios(tmp_path):
+    header, _rows, meta = _ripple_cli(tmp_path, "steady", name="s.csv")
+    assert "v_true" not in header and "fly_theta" not in header
+    assert header[-1] == "h2_gfc_cum_g"
+    assert "drive_ripple" not in meta["config"]
+    assert "drive_ripple" not in meta
+
+
+def test_ripple_replay_never_carries_the_columns(tmp_path):
+    blg_path = _write_synthetic_blg(tmp_path, fw_version=14, v3=True)
+    header, _rows = _run_main_csv(
+        tmp_path, ["--replay", blg_path, "--duration", "0.02"], name="rp.csv")
+    assert "v_true" not in header and "fly_theta" not in header
+    with open(hil.meta_path_for(str(tmp_path / "rp.csv"))) as fh:
+        meta = json.load(fh)
+    assert "drive_ripple" not in meta["config"]
+
+
+def test_ripple_key_is_registered_on_exactly_the_two_scenarios():
+    have = {n for n, m in hil.SCENARIOS.items() if "drive_ripple" in m}
+    assert have == {"drive-ripple-meas", "drive-ripple-force"}
+    assert set(hil.DRIVE_RIPPLE_SCENARIOS) == have
+    m, f = (hil.SCENARIOS["drive-ripple-meas"]["drive_ripple"],
+            hil.SCENARIOS["drive-ripple-force"]["drive_ripple"])
+    assert m["meas_a"] == 0.020 and m["force_n"] == 0.0 and m["meas2_a"] == 0.0
+    assert f["force_n"] == 1.0 and f["meas_a"] == 0.0 and f["meas2_a"] == 0.0
+    # every key the registry carries is one the Plant accepts
+    for cfg in (m, f):
+        hil.Plant(drive_ripple_cfg=cfg)
+
+
+# ── Scenario tables ──────────────────────────────────────────────────────
+
+def test_ripple_hold_table_geometry():
+    holds = hil.DRIVE_RIPPLE_HOLDS
+    assert [h[2] for h in holds] == [1.0, 1.5, 2.2, 2.7]
+    prev_end = -1.0
+    for t0, t1, v in holds:
+        assert t1 - t0 >= 10.0
+        assert t1 - t0 - hil.DRIVE_RIPPLE_SETTLE_S >= 6.0
+        assert t0 > prev_end
+        prev_end = t1
+        # the profile really holds that speed across the hold
+        for t in (t0, 0.5 * (t0 + t1), t1):
+            assert hil.piecewise(hil.DRIVE_RIPPLE_V_PROFILE, t) == pytest.approx(v)
+    wins = hil.drive_ripple_analysis_windows()
+    for (a0, a1, v), (t0, t1, v2) in zip(wins, holds):
+        assert (a0, a1, v) == (t0 + hil.DRIVE_RIPPLE_SETTLE_S, t1, v2)
+        assert a1 - a0 >= 6.0
+
+
+def test_ripple_step_and_run_exit_instants():
+    prof = hil.DRIVE_RIPPLE_V_PROFILE
+    ts, te, vs = hil.DRIVE_RIPPLE_STEP
+    assert (ts, te, vs) == (55.0, 61.0, 2.0)
+    assert hil.piecewise(prof, ts) == 0.0
+    assert hil.piecewise(prof, ts + 1e-6) == vs
+    assert hil.piecewise(prof, te) == vs
+    assert hil.piecewise(prof, te + 1e-6) == 0.0
+    # the step starts after the last hold's coast to rest (~51.6 s)
+    assert ts > hil.DRIVE_RIPPLE_HOLDS[-1][1] + 3.56
+    assert te < hil.DRIVE_RIPPLE_RUN_EXIT_S < hil.DRIVE_RIPPLE_DURATION_S
+    # profile times never run backwards
+    times = [t for t, _ in prof]
+    assert times == sorted(times)
+    assert prof[-1][0] == hil.DRIVE_RIPPLE_DURATION_S
+
+
+@pytest.mark.parametrize("scenario", ["drive-ripple-meas", "drive-ripple-force"])
+def test_ripple_scenario_wiring(scenario):
+    m = hil.SCENARIOS[scenario]
+    assert m["duration_s"] == hil.DRIVE_RIPPLE_DURATION_S == 67.0
+    assert m["ems"] == "hold-5050"
+    assert m["ems_v_profile"] is hil.DRIVE_RIPPLE_V_PROFILE
+    assert m["ems_run_exit_s"] == hil.DRIVE_RIPPLE_RUN_EXIT_S
+    assert m["electrical"] == "any"
+    assert m.get("description")
+
+
+@pytest.mark.parametrize("breakage", ["short_hold", "short_analysed",
+                                      "profile_mismatch", "step_mismatch",
+                                      "exit_after_end", "exit_before_step_end"])
+def test_ripple_import_time_validator_rejects_inconsistent_tables(
+        monkeypatch, breakage):
+    hil._validate_drive_ripple_profile()          # the shipped tables pass
+    holds = list(hil.DRIVE_RIPPLE_HOLDS)
+    if breakage == "short_hold":
+        # 9 s hold with a shortened settle so the analysed span (8 s) is fine:
+        # ONLY the 10 s hold minimum can trip
+        holds[1] = (16.0, 25.0, 1.5)
+        monkeypatch.setattr(hil, "DRIVE_RIPPLE_HOLDS", tuple(holds))
+        monkeypatch.setattr(hil, "DRIVE_RIPPLE_SETTLE_S", 1.0)
+    elif breakage == "short_analysed":
+        monkeypatch.setattr(hil, "DRIVE_RIPPLE_SETTLE_S", 5.0)
+    elif breakage == "profile_mismatch":
+        holds[2] = (27.0, 37.0, 2.3)
+        monkeypatch.setattr(hil, "DRIVE_RIPPLE_HOLDS", tuple(holds))
+    elif breakage == "step_mismatch":
+        monkeypatch.setattr(hil, "DRIVE_RIPPLE_STEP", (55.0, 61.0, 1.9))
+    elif breakage == "exit_after_end":
+        monkeypatch.setattr(hil, "DRIVE_RIPPLE_RUN_EXIT_S", 68.0)
+    elif breakage == "exit_before_step_end":
+        monkeypatch.setattr(hil, "DRIVE_RIPPLE_RUN_EXIT_S", 60.0)
+    with pytest.raises(AssertionError):
+        hil._validate_drive_ripple_profile()
+
+
+def test_ripple_profile_requests_no_braking_current():
+    """Every slow-down is a drop to the zero cutoff (V_SP_ZERO_THRESH 0.07),
+    every speed-up is a ramp: no segment decelerates through a setpoint ramp
+    (the regen path is not this scenario's subject)."""
+    prof = hil.DRIVE_RIPPLE_V_PROFILE
+    for (t0, v0), (t1, v1) in zip(prof, prof[1:]):
+        if v1 < v0:
+            assert v1 == 0.0 and t1 == t0          # instantaneous drop to 0

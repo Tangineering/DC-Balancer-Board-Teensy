@@ -13886,3 +13886,551 @@ def test_sample_state_in_scopes_the_measurement_not_only_the_census():
              {"t": "2.0", "state": "2", "fault_flags": "0", "h2_cum_g": "0.002"},
              {"t": "3.0", "state": "2", "fault_flags": "0", "h2_cum_g": "0.005"}]
     assert _judge_one(spec, blank, cols)["passed"] is True
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# 99. drive-ripple-*: scan_drive_ripple() / judge_drive_ripple()
+#     (2026-11-04, the drive-ripple round; test author independent of the
+#     implementer).  The CSVs come from the REAL hil_plant_sim.Plant with the
+#     drive law run as a fake board (test_drive_ripple.synth_ripple_csv), so
+#     the loop closes exactly as it does on the rig bar the UDP transport.
+# ─────────────────────────────────────────────────────────────────────────
+
+import copy  # noqa: E402
+
+import drive_ripple as _dr  # noqa: E402
+from test_drive_ripple import synth_ripple_csv  # noqa: E402
+
+_RIP_VARIANTS = {"meas": "drive-ripple-meas", "force": "drive-ripple-force"}
+_RIP_CACHE = {}
+
+
+@pytest.fixture(scope="module")
+def rip_dir(tmp_path_factory):
+    return tmp_path_factory.mktemp("ripple_csv")
+
+
+def _rip_scan(rip_dir, variant, law, mutate=None, tag=""):
+    """(spec, scan output) for one cached synthetic closed-loop run."""
+    key = (variant, law, tag)
+    if key not in _RIP_CACHE:
+        scen = _RIP_VARIANTS[variant]
+        coeffs = _dr.repo_drive_coeffs() if law == "repo" else _dr.V35_DRIVE_COEFFS
+        path = str(rip_dir / ("%s_%s_%s.csv" % (variant, law, tag or "full")))
+        synth_ripple_csv(path, scen, coeffs, mutate=mutate)
+        spec = rhs.FAULT_EXPECTATIONS[scen]["drive_ripple"]
+        _RIP_CACHE[key] = (spec, rhs.scan_drive_ripple(path, spec), path)
+    return _RIP_CACHE[key]
+
+
+def _by_name(checks):
+    return {c["name"]: c for c in checks}
+
+
+# ── registry ─────────────────────────────────────────────────────────────
+
+def test_ripple_expectation_entries_are_derived_from_the_scenario_registry():
+    for variant, scen in _RIP_VARIANTS.items():
+        e = rhs.FAULT_EXPECTATIONS[scen]
+        cfg = SCENARIOS[scen]["drive_ripple"]
+        assert e["drive_ripple"] == {"variant": variant,
+                                     "meas_a": cfg["meas_a"],
+                                     "force_n": cfg["force_n"]}
+        assert e["allow_only"] == 0
+        # still in Run half a second before the step window closes, and that
+        # instant is inside both the run and the Run window
+        assert e["survive_to"]["t"] == hil.DRIVE_RIPPLE_STEP[1] - 0.5
+        assert e["survive_to"]["states"] == {2}
+        assert (hil.DRIVE_RIPPLE_STEP[1] - 0.5 < hil.DRIVE_RIPPLE_RUN_EXIT_S
+                < SCENARIOS[scen]["duration_s"])
+        assert e["survive_to"]["t"] < SCENARIOS[scen]["duration_s"]
+
+
+def test_ripple_rhs_stimulus_geometry_is_the_plants_own():
+    assert rhs.DRIVE_RIPPLE_HOLDS is hil.DRIVE_RIPPLE_HOLDS
+    assert rhs.DRIVE_RIPPLE_STEP is hil.DRIVE_RIPPLE_STEP
+    assert (rhs.PLANT_M_EFF, rhs.PLANT_B_EFF, rhs.PLANT_K_F) == \
+        (hil.M_EFF, hil.B_EFF, hil.K_F)
+    assert rhs.drive_ripple_analysis_windows is hil.drive_ripple_analysis_windows
+
+
+# ── plan ─────────────────────────────────────────────────────────────────
+
+def test_ripple_scenarios_are_in_the_default_plan_and_runnable():
+    plan = rhs.build_plan(_args())
+    for scen in _RIP_VARIANTS.values():
+        item = next(p for p in plan if p["name"] == scen)
+        assert item["kind"] == "scenario"
+        assert not item.get("skip_reason")
+        assert item["duration_s"] == pytest.approx(67.0)
+        assert item["argv"] and "--scenario" in item["argv"]
+    # opt-in sets do NOT hold them
+    for grp in (rhs.ALPHA_SCENARIOS, rhs.FTP75_SCENARIOS, rhs.FTP75C_SCENARIOS):
+        assert not (set(_RIP_VARIANTS.values()) & set(grp))
+
+
+def test_ripple_scenarios_selectable_by_only_and_skip():
+    plan = rhs.build_plan(_args(only=["drive-ripple-*"]))
+    assert {p["name"] for p in plan} == set(_RIP_VARIANTS.values())
+    one = rhs.build_plan(_args(only=["drive-ripple-force"]))
+    assert [p["name"] for p in one] == ["drive-ripple-force"]
+    rest = rhs.build_plan(_args(skip=["drive-ripple-*"]))
+    assert not ({p["name"] for p in rest} & set(_RIP_VARIANTS.values()))
+    assert len(rest) == len(rhs.build_plan(_args())) - 2
+
+
+def test_ripple_scenarios_are_skipped_under_pi_live_for_the_ems_reason():
+    plan = rhs.build_plan(_args(pi_live=True))
+    for scen in _RIP_VARIANTS.values():
+        item = next(p for p in plan if p["name"] == scen)
+        assert item["skip_reason"].startswith("--pi-live")
+
+
+# ── scan: degenerate inputs ──────────────────────────────────────────────
+
+def test_ripple_scan_without_the_columns_is_columns_fail_and_nothing_else(tmp_path):
+    p = tmp_path / "old.csv"
+    with open(p, "w", newline="") as fh:
+        w = csv.writer(fh)
+        w.writerow(["t", "current", "v_actual", "I_fc", "I_batt"])
+        for k in range(100):
+            w.writerow([k * 1e-3, 1.0, 1.0, 0.1, 0.1])
+    spec = rhs.FAULT_EXPECTATIONS["drive-ripple-meas"]["drive_ripple"]
+    m = rhs.scan_drive_ripple(str(p), spec)
+    assert m["columns_ok"] is False and m["holds"] == [] and m["error"]
+    checks, notes = rhs.judge_drive_ripple(spec, m)
+    assert [c["name"] for c in checks] == ["ripple_columns"]
+    assert checks[0]["passed"] is False
+    assert "NOT MEASURED" in checks[0]["detail"] and "v_true" in checks[0]["detail"]
+    assert notes == []
+
+
+def test_ripple_scan_of_an_unreadable_path_is_a_columns_failure(tmp_path):
+    spec = rhs.FAULT_EXPECTATIONS["drive-ripple-force"]["drive_ripple"]
+    for bad in (str(tmp_path / "missing.csv"), None):
+        m = rhs.scan_drive_ripple(bad, spec)
+        assert m["columns_ok"] is False and "could not open" in m["error"]
+        assert rhs.judge_drive_ripple(spec, m)[0][0]["passed"] is False
+
+
+def test_ripple_judge_none_measurement_is_columns_fail():
+    spec = rhs.FAULT_EXPECTATIONS["drive-ripple-meas"]["drive_ripple"]
+    checks, notes = rhs.judge_drive_ripple(spec, None)
+    assert len(checks) == 1 and checks[0]["name"] == "ripple_columns"
+    assert checks[0]["passed"] is False
+    assert "did not run scan_drive_ripple" in checks[0]["detail"]
+
+
+def test_ripple_judge_scenario_with_no_measurement_fails_ripple_columns():
+    m = _metrics(survive_to_t=60.0, state_at_survive=2)
+    passed, checks = rhs.judge_scenario("drive-ripple-meas", m, _events(),
+                                        _child(), duration_s=67.0,
+                                        drive_ripple_m=None)
+    c = _by_name(checks)["ripple_columns"]
+    assert c["passed"] is False
+    assert passed is False
+
+
+# ── scan + judge on closed-loop CSVs ─────────────────────────────────────
+
+@pytest.mark.parametrize("variant", ["meas", "force"])
+def test_ripple_repo_law_csv_passes_every_check(rip_dir, variant):
+    spec, m, _p = _rip_scan(rip_dir, variant, "repo")
+    assert m["columns_ok"] and m["error"] is None and len(m["holds"]) == 4
+    checks, notes = rhs.judge_drive_ripple(spec, m)
+    bad = [c["name"] + ": " + c["detail"][:200] for c in checks if not c["passed"]]
+    assert not bad, bad
+    names = [c["name"] for c in checks]
+    assert names[0] == "ripple_columns" and names[-1] == "ripple_drive_law_identified"
+    for stem in ("ripple_current_1x", "ripple_discriminator", "ripple_unsaturated"):
+        assert sorted(n for n in names if n.startswith(stem)) == \
+            sorted("%s[%s]" % (stem, t) for t in ("1.0", "1.5", "2.2", "2.7"))
+    # 3 per-hold families x 4 holds + columns + law identification (+ the
+    # fix round's config-consistency check where present)
+    assert len(checks) in (14, 15)
+    assert len([n for n in notes if "hold" in n and "BUS SIGNATURE" not in n]) == 4
+    assert any("step" in n for n in notes)
+    # measured at every hold, with whole-revolution windows
+    for h in m["holds"]:
+        assert h["revs"] >= 11.9
+        assert h["i_1x_a"] == pytest.approx(h["pred_repo"]["i_amp"], rel=0.05)
+    assert m["step"] is not None and m["i_max_a"] == 12.0
+    import json as _json
+    _json.dumps(m)                               # results.json-serializable
+
+
+def test_ripple_force_csv_shows_true_equals_injected_and_no_artefact(rip_dir):
+    _spec, m, _p = _rip_scan(rip_dir, "force", "repo")
+    for h in m["holds"]:
+        assert h["true_over_inj"] == pytest.approx(1.0, abs=1e-3)
+        assert h["artefact_1x"] < 0.02 * h["v_inj_1x"]
+
+
+def test_ripple_meas_csv_true_over_injected_matches_the_predicted_loop_gain(rip_dir):
+    _spec, m, _p = _rip_scan(rip_dir, "meas", "repo")
+    ratios = [h["true_over_inj"] for h in m["holds"]]
+    assert ratios == sorted(ratios, reverse=True)       # |L| falls with f_rot
+    for h in m["holds"]:
+        assert h["true_over_inj"] == pytest.approx(h["pred_repo"]["abs_L"],
+                                                   rel=0.05)
+        assert h["artefact_1x"] == pytest.approx(0.020, rel=0.01)
+
+
+@pytest.mark.parametrize("variant", ["meas", "force"])
+def test_ripple_v35_law_csv_fails_loudly_as_the_other_drive_law(rip_dir, variant):
+    spec, m, _p = _rip_scan(rip_dir, variant, "v35")
+    checks, _notes = rhs.judge_drive_ripple(spec, m)
+    by = _by_name(checks)
+    for tag in ("1.0", "1.5", "2.2", "2.7"):
+        c = by["ripple_current_1x[%s]" % tag]
+        assert c["passed"] is False
+        assert re.search(r"OTHER drive law|fw v35 DRIVE LAW", c["detail"]), c["detail"]
+        assert "fw v35" in c["detail"]
+    ident = by["ripple_drive_law_identified"]
+    assert ident["passed"] is False
+    assert "OTHER DRIVE LAW" in ident["detail"]
+    assert "4 of 4" in ident["detail"]
+    assert "FW_VERSION" in ident["detail"]
+    # the artefact/real quantities are physics, not law: the force
+    # discriminator is law-independent; the meas one is scored against the
+    # REPO law's |L| and so trips too
+    for tag in ("1.0", "1.5", "2.2", "2.7"):
+        d = by["ripple_discriminator[%s]" % tag]
+        assert d["passed"] is (variant == "force")
+        assert by["ripple_unsaturated[%s]" % tag]["passed"] is True
+
+
+def test_ripple_hold_with_no_rows_is_unmeasured_fail_others_unaffected(rip_dir):
+    def drop(row):
+        return None if 20.0 <= float(row["t"]) <= 26.0 else row
+    spec, m, _p = _rip_scan(rip_dir, "meas", "repo", mutate=drop, tag="drop15")
+    assert "error" in m["holds"][1] and m["holds"][1]["n"] == 0
+    checks, _ = rhs.judge_drive_ripple(spec, m)
+    by = _by_name(checks)
+    for stem in ("ripple_current_1x", "ripple_discriminator", "ripple_unsaturated"):
+        c = by["%s[1.5]" % stem]
+        assert c["passed"] is False and "UNMEASURED" in c["detail"]
+        for tag in ("1.0", "2.2", "2.7"):
+            assert by["%s[%s]" % (stem, tag)]["passed"] is True
+    # a missing hold neither identifies nor accuses a law
+    assert by["ripple_drive_law_identified"]["passed"] is True
+
+
+def test_ripple_hold_with_fewer_than_100_rows_is_unmeasured(rip_dir):
+    def thin(row):
+        t = float(row["t"])
+        return row if not (31.0 <= t <= 37.0) or int(round(t * 1000)) % 100 == 0 \
+            else None
+    spec, m, _p = _rip_scan(rip_dir, "force", "repo", mutate=thin, tag="thin22")
+    h = m["holds"][2]
+    assert 0 < h["n"] < 100 and "only" in h["error"]
+    checks, _ = rhs.judge_drive_ripple(spec, m)
+    assert _by_name(checks)["ripple_current_1x[2.2]"]["passed"] is False
+
+
+def test_ripple_hold_under_one_revolution_is_unmeasured(rip_dir):
+    def freeze(row):
+        if 9.0 <= float(row["t"]) <= 15.0:
+            row = dict(row, fly_theta="1.000000")
+        return row
+    spec, m, _p = _rip_scan(rip_dir, "meas", "repo", mutate=freeze, tag="frozen10")
+    assert "under one revolution" in m["holds"][0]["error"]
+    checks, _ = rhs.judge_drive_ripple(spec, m)
+    assert _by_name(checks)["ripple_current_1x[1.0]"]["passed"] is False
+
+
+def test_ripple_rows_without_an_observation_frame_are_skipped(rip_dir):
+    def blank_every_other(row):
+        if int(round(float(row["t"]) * 1000)) % 2:
+            row = dict(row, current="")
+        return row
+    spec, m, _p = _rip_scan(rip_dir, "meas", "repo", mutate=blank_every_other,
+                            tag="blank")
+    ref = _rip_scan(rip_dir, "meas", "repo")[1]
+    assert m["holds"][0]["n"] == pytest.approx(ref["holds"][0]["n"] / 2, abs=2)
+    checks, _ = rhs.judge_drive_ripple(spec, m)
+    assert all(c["passed"] for c in checks)
+
+
+# ── judge: edges, on hand-built measurements (pure) ──────────────────────
+
+def _hold(v=1.0, i=1.0, pr=1.0, pa=3.0, ratio=0.46, prl=0.46, pal=1.41,
+          art=0.02, vinj=0.0227, imax=4.0, **over):
+    h = {"v_nominal": v, "t_window": [0.0, 1.0], "n": 1000, "v_true_mean": v,
+         "f_rot_hz": 2.0 * v, "revs": 12.0, "i_1x_a": i,
+         "i_phase_vs_vinj_deg": 150.0, "bus_1x_a": 0.05, "v_inj_1x": vinj,
+         "v_true_1x": None if ratio is None else vinj * ratio, "artefact_1x": art, "true_over_inj": ratio,
+         "i_max_abs_a": imax,
+         "pred_repo": {"i_amp": pr, "true_over_inj": prl, "abs_C": 28.0,
+                       "abs_S": 1.1, "abs_L": prl, "i_phase_vs_vinj_deg": 150.0},
+         "pred_alt": {"i_amp": pa, "true_over_inj": pal, "abs_C": 80.0,
+                      "abs_S": 1.1, "abs_L": pal, "i_phase_vs_vinj_deg": 140.0}}
+    h.update(over)
+    return h
+
+
+def _m(holds, repo_is_alt=False, step=None, i_max=12.0, meas_a_used=0.020):
+    return {"variant": None, "columns_ok": True, "holds": holds, "step": step,
+            "rows": 67000, "error": None, "repo_is_alt": repo_is_alt,
+            "i_max_a": i_max, "meas_a_used": meas_a_used,
+            "config_mismatch": [], "law_error": None}
+
+
+_SPEC_MEAS = {"variant": "meas", "meas_a": 0.020, "force_n": 0.0}
+_SPEC_FORCE = {"variant": "force", "meas_a": 0.0, "force_n": 1.0}
+
+
+def _one(spec, h, name_stem, **kw):
+    checks, _ = rhs.judge_drive_ripple(spec, _m([h], **kw))
+    return next(c for c in checks if c["name"].startswith(name_stem))
+
+
+@pytest.mark.parametrize("ratio,ok", [(0.90, True), (1.00, True), (1.10, True),
+                                      (0.8999, False), (1.1001, False)])
+def test_ripple_force_discriminator_ratio_band_edges(ratio, ok):
+    h = _hold(ratio=ratio, art=0.0)
+    assert _one(_SPEC_FORCE, h, "ripple_discriminator")["passed"] is ok
+
+
+@pytest.mark.parametrize("art,ok", [(0.0, True), (0.05 * 0.0227, True),
+                                    (0.0501 * 0.0227, False), (0.5 * 0.0227, False)])
+def test_ripple_force_discriminator_artefact_bound_is_five_percent(art, ok):
+    h = _hold(ratio=1.0, art=art, vinj=0.0227)
+    assert _one(_SPEC_FORCE, h, "ripple_discriminator")["passed"] is ok
+
+
+def test_ripple_force_discriminator_missing_numbers_fail_not_crash():
+    h = _hold(ratio=None, art=None, v_true_1x=0.01)
+    assert _one(_SPEC_FORCE, h, "ripple_discriminator")["passed"] is False
+
+
+@pytest.mark.parametrize("scale,ok", [(1.0, True), (1.149, True), (0.851, True),
+                                      (1.151, False), (0.849, False)])
+def test_ripple_meas_discriminator_scored_against_predicted_loop_gain(scale, ok):
+    prl = 0.30
+    h = _hold(prl=prl, ratio=prl * scale, art=0.020)
+    assert _one(_SPEC_MEAS, h, "ripple_discriminator")["passed"] is ok
+
+
+def test_ripple_meas_discriminator_is_not_the_spec_threshold_of_point_three():
+    """The implementer scores the ratio against |L|, not '< 0.3': a ratio of
+    0.2 against a predicted |L| of 0.46 FAILS, and 0.46 (> 0.3) PASSES."""
+    assert _one(_SPEC_MEAS, _hold(prl=0.46, ratio=0.46),
+                "ripple_discriminator")["passed"] is True
+    assert _one(_SPEC_MEAS, _hold(prl=0.46, ratio=0.20),
+                "ripple_discriminator")["passed"] is False
+
+
+@pytest.mark.parametrize("art,ok", [(0.020, True), (0.0219, True), (0.0181, True),
+                                    (0.0222, False), (0.0178, False), (0.0, False)])
+def test_ripple_meas_artefact_bound_is_ten_percent_of_the_hook(art, ok):
+    h = _hold(prl=0.46, ratio=0.46, art=art)
+    assert _one(_SPEC_MEAS, h, "ripple_discriminator")["passed"] is ok
+
+
+def test_ripple_meas_artefact_check_fails_for_a_zero_hook_spec():
+    spec = {"variant": "meas", "meas_a": 0.0, "force_n": 0.0}
+    assert _one(spec, _hold(), "ripple_discriminator",
+                meas_a_used=0.0)["passed"] is False
+
+
+@pytest.mark.parametrize("meas,ok", [(1.0, True), (1.149, True), (0.851, True),
+                                     (1.151, False), (0.849, False)])
+def test_ripple_current_1x_tolerance_is_15_percent_of_the_repo_prediction(meas, ok):
+    h = _hold(i=meas, pr=1.0, pa=3.0)
+    assert _one(_SPEC_MEAS, h, "ripple_current_1x")["passed"] is ok
+
+
+def test_ripple_current_1x_flags_a_match_to_the_v35_prediction():
+    c = _one(_SPEC_MEAS, _hold(i=3.0, pr=1.0, pa=3.0), "ripple_current_1x")
+    flag = r"OTHER drive law|fw v35 DRIVE LAW"
+    assert c["passed"] is False and re.search(flag, c["detail"])
+    c2 = _one(_SPEC_MEAS, _hold(i=2.0, pr=1.0, pa=3.0), "ripple_current_1x")
+    assert c2["passed"] is False and not re.search(flag, c2["detail"])
+    c3 = _one(_SPEC_MEAS, _hold(i=1.0, pr=1.0, pa=3.0), "ripple_current_1x")
+    assert not re.search(flag, c3["detail"])
+
+
+def test_ripple_current_1x_zero_prediction_fails_without_crashing():
+    c = _one(_SPEC_MEAS, _hold(i=0.5, pr=0.0, pa=0.0), "ripple_current_1x")
+    assert c["passed"] is False
+
+
+@pytest.mark.parametrize("imax,ok", [(0.0, True), (11.94, True), (11.949, True),
+                                     (11.951, False), (11.96, False), (12.0, False)])
+def test_ripple_saturation_margin_is_fifty_milliamps_under_the_rail(imax, ok):
+    assert rhs.DRIVE_RIPPLE_RAIL_MARGIN_A == 0.05
+    c = _one(_SPEC_MEAS, _hold(imax=imax), "ripple_unsaturated")
+    assert c["passed"] is ok
+
+
+def test_ripple_saturation_uses_the_scanned_law_rail_when_given():
+    assert _one(_SPEC_MEAS, _hold(imax=5.94), "ripple_unsaturated",
+                i_max=6.0)["passed"] is True
+    assert _one(_SPEC_MEAS, _hold(imax=5.96), "ripple_unsaturated",
+                i_max=6.0)["passed"] is False
+    # a missing rail falls back to 12 A
+    assert _one(_SPEC_MEAS, _hold(imax=11.0), "ripple_unsaturated",
+                i_max=None)["passed"] is True
+    assert _one(_SPEC_MEAS, _hold(imax=11.99), "ripple_unsaturated",
+                i_max=None)["passed"] is False
+
+
+def _ident(holds, **kw):
+    checks, _ = rhs.judge_drive_ripple(_SPEC_MEAS, _m(holds, **kw))
+    return _by_name(checks)["ripple_drive_law_identified"]
+
+
+def test_ripple_law_identification_rules():
+    repo = lambda v: _hold(v=v, i=1.0, pr=1.0, pa=3.0)    # noqa: E731
+    alt = lambda v: _hold(v=v, i=3.0, pr=1.0, pa=3.0)     # noqa: E731
+    neither = lambda v: _hold(v=v, i=2.0, pr=1.0, pa=3.0)  # noqa: E731
+    assert _ident([repo(1.0), repo(1.5), repo(2.2), repo(2.7)])["passed"]
+    assert _ident([repo(1.0), repo(1.5), repo(2.2), alt(2.7)])["passed"]
+    c = _ident([repo(1.0), alt(1.5), alt(2.2), alt(2.7)])
+    assert c["passed"] is False and "OTHER DRIVE LAW" in c["detail"]
+    assert "3 of 4" in c["detail"]
+    # the repo header IS v35: nothing to discriminate, passes even when 'alt'
+    c = _ident([alt(1.0), alt(1.5), alt(2.2), alt(2.7)], repo_is_alt=True)
+    assert c["passed"] is True and "no alternate" in c["detail"]
+    # a measurement that sits between the laws is identified as neither
+    assert _ident([neither(1.0), neither(1.5), neither(2.2), neither(2.7)]
+                  )["passed"] is False
+
+
+def test_ripple_law_identification_tie_and_thin_evidence_do_not_pass():
+    """(fix-round rule, review L1: never vacuous, ties fail.)  Stage-1 passed a
+    2-2 tie and a run with every hold unmeasured; the working tree requires a
+    strict majority of >= 3 measured holds within tolerance of the repo law."""
+    repo = lambda v: _hold(v=v, i=1.0, pr=1.0, pa=3.0)    # noqa: E731
+    alt = lambda v: _hold(v=v, i=3.0, pr=1.0, pa=3.0)     # noqa: E731
+    bad = lambda v: dict(_hold(v=v), error="no rows")      # noqa: E731
+    assert _ident([repo(1.0), repo(1.5), alt(2.2), alt(2.7)])["passed"] is False
+    assert _ident([bad(1.0), bad(1.5), bad(2.2), bad(2.7)])["passed"] is False
+    c = _ident([repo(1.0), repo(1.5), bad(2.2), bad(2.7)])
+    assert c["passed"] is False and "only 2" in c["detail"]
+    assert _ident([repo(1.0), repo(1.5), repo(2.2), bad(2.7)])["passed"] is True
+
+
+def test_ripple_step_note_is_report_only_and_names_never_settled():
+    step = {"settle_2pct_s": None, "overshoot_pct": 3.2, "peak_current_a": 12.0,
+            "rail_s": 1.054}
+    checks, notes = rhs.judge_drive_ripple(_SPEC_MEAS, _m([_hold()], step=step))
+    note = next(n for n in notes if "step" in n)
+    assert "never" in note and "3.2" in note and "1.054" in note
+    assert not any("step" in c["name"] for c in checks)       # no band
+    step2 = dict(step, settle_2pct_s=1.82)
+    note2 = next(n for n in rhs.judge_drive_ripple(
+        _SPEC_MEAS, _m([_hold()], step=step2))[1] if "step" in n)
+    assert "1.820 s" in note2
+
+
+def test_ripple_judge_is_pure_and_deterministic():
+    m = _m([_hold()])
+    before = copy.deepcopy(m)
+    a = rhs.judge_drive_ripple(_SPEC_MEAS, m)
+    b = rhs.judge_drive_ripple(_SPEC_MEAS, m)
+    assert a == b and m == before
+
+
+def test_ripple_judge_scenario_runs_the_ripple_checks_for_the_scenarios(rip_dir):
+    spec, m, _p = _rip_scan(rip_dir, "meas", "repo")
+    mt = _metrics(survive_to_t=60.5, state_at_survive=2)
+    passed, checks = rhs.judge_scenario("drive-ripple-meas", mt, _events(),
+                                        _child(), duration_s=67.0,
+                                        drive_ripple_m=m)
+    rip = [c for c in checks if c["name"].startswith("ripple_")]
+    assert len(rip) in (14, 15) and all(c["passed"] for c in rip)
+    # a scenario without the expectation never gets ripple checks
+    _p2, checks2 = rhs.judge_scenario("steady", _metrics(), _events(), _child())
+    assert not [c for c in checks2 if c["name"].startswith("ripple_")]
+
+
+# ── fix-round behaviour (working tree after 05a41fb; flagged in the report) ──
+
+def _sidecar(meas_a=0.020, force_n=0.0, meas2_a=0.0, radius=0.0762, drag=None):
+    cfg = {"drive_ripple": {"meas_a": meas_a, "meas2_a": meas2_a,
+                            "force_n": force_n, "phase_rad": 0.0,
+                            "flywheel_radius_m": radius}}
+    if drag is not None:
+        cfg["drag"] = drag
+    return {"config": cfg}
+
+
+def _rescan(rip_dir, variant, run_meta):
+    spec, _m0, path = _rip_scan(rip_dir, variant, "repo")
+    return spec, rhs.scan_drive_ripple(path, spec, run_meta=run_meta)
+
+
+@pytest.mark.parametrize("variant,kw", [("meas", {}), ("force", {"meas_a": 0.0, "force_n": 1.0})])
+def test_ripple_matching_sidecar_passes_config_consistency(rip_dir, variant, kw):
+    spec, m = _rescan(rip_dir, variant, _sidecar(**kw))
+    assert m["config_mismatch"] == [] and m["config_source"] == "sidecar"
+    checks, _ = rhs.judge_drive_ripple(spec, m)
+    c = _by_name(checks)["ripple_config_consistent"]
+    assert c["passed"] is True
+    assert all(x["passed"] for x in checks)
+
+
+@pytest.mark.parametrize("meta,needle", [
+    ({"config": {}}, "NO config.drive_ripple"),
+    (_sidecar(meas_a=0.030), "meas_a"),
+    (_sidecar(force_n=1.0), "force_n"),
+    (_sidecar(meas2_a=0.005), "meas2_a"),
+    (_sidecar(radius=0.05), "flywheel_radius_m"),
+])
+def test_ripple_sidecar_disagreement_is_a_config_fail(rip_dir, meta, needle):
+    spec, m = _rescan(rip_dir, "meas", meta)
+    assert any(needle in x for x in m["config_mismatch"]), m["config_mismatch"]
+    checks, _ = rhs.judge_drive_ripple(spec, m)
+    c = _by_name(checks)["ripple_config_consistent"]
+    assert c["passed"] is False and "MISMATCH" in c["detail"]
+
+
+def test_ripple_prediction_uses_the_runs_own_sidecar_amplitude(rip_dir):
+    """The CSV was produced with meas_a = 0.020; a sidecar that says 0.030
+    must rebuild the prediction for 0.030 (so ripple_current_1x FAILS and the
+    mismatch is reported), not silently re-score at 0.020."""
+    _spec, base = _rescan(rip_dir, "meas", _sidecar())
+    _spec, other = _rescan(rip_dir, "meas", _sidecar(meas_a=0.030))
+    assert other["meas_a_used"] == 0.030
+    for hb, ho in zip(base["holds"], other["holds"]):
+        assert ho["pred_repo"]["i_amp"] == pytest.approx(
+            1.5 * hb["pred_repo"]["i_amp"], rel=1e-9)
+    checks, _ = rhs.judge_drive_ripple(_spec, other)
+    assert not _by_name(checks)["ripple_current_1x[1.0]"]["passed"]
+
+
+def test_ripple_unreadable_sidecar_is_recorded_not_a_mismatch(rip_dir):
+    spec, m = _rescan(rip_dir, "meas", None)
+    assert m["config_mismatch"] == []
+    assert "NOT cross-checked" in m["config_source"]
+
+
+def test_ripple_unparseable_repo_law_fails_ripple_law_only(rip_dir, monkeypatch):
+    spec, _m0, path = _rip_scan(rip_dir, "meas", "repo")
+    monkeypatch.setitem(rhs._DRIVE_LAW_CACHE, "v", (None, None, "boom"))
+    m = rhs.scan_drive_ripple(path, spec)
+    assert m["law_error"] == "boom"
+    checks, notes = rhs.judge_drive_ripple(spec, m)
+    assert [c["name"] for c in checks] == ["ripple_law"]
+    assert checks[0]["passed"] is False and "boom" in checks[0]["detail"]
+    assert notes == []
+
+
+def test_ripple_repo_drive_law_is_parsed_once_and_cached():
+    rhs._DRIVE_LAW_CACHE.pop("v", None)
+    a = rhs.repo_drive_law()
+    b = rhs.repo_drive_law()
+    assert a is b and a[2] is None and a[0] is not None and len(a[1]) == 64
+
+
+def test_ripple_build_plan_warns_loudly_when_the_header_is_unparseable(
+        monkeypatch, capsys):
+    monkeypatch.setitem(rhs._DRIVE_LAW_CACHE, "v", (None, None, "unreadable"))
+    plan = rhs.build_plan(_args(only=["drive-ripple-*"]))
+    assert len(plan) == 2                      # fail-LOUD, not fail-fast
+    assert "unreadable" in capsys.readouterr().err
+    capsys.readouterr()
+    rhs.build_plan(_args(only=["steady"]))      # no ripple leg planned
+    assert "ripple_law" not in capsys.readouterr().err
