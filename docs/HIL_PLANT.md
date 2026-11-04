@@ -726,6 +726,49 @@ against another, which is the state this round's era keys exist to make impossib
 
 ---
 
+### 3.7 Rotation-locked ripple hooks (2026-11-04, the drive-ripple round)
+
+The flywheel in this model is perfectly smooth, but the Pi bags (fw <= v35) show a
+once-per-revolution 1x tone in `v_actual` (`docs/fw37_planning_2026-11-04.md`
+section 6.1). Two scenario-level hooks reproduce it, both **off by default**, set
+through `SCENARIOS[...]["drive_ripple"]` = `{meas_a, meas2_a, force_n, phase_rad}`
+and passed to `Plant(drive_ripple_cfg=...)`:
+
+- **Measurement ripple** (encoder-artefact hypothesis): the *injected* speed is
+  `v + meas_a sin(theta + phase) + meas2_a sin(2 theta + phase)`. The mechanics are
+  untouched.
+- **Force ripple** (real-speed-ripple hypothesis): `force_n sin(theta + phase)` is
+  added to the net force after both road-load arms and their zero-crossing guards, so
+  the true speed ripples and the injected speed carries it honestly.
+
+`theta` is the plant's flywheel angle, integrated from the TRUE speed after each
+tick's update at `drive_ripple.FLYWHEEL_RADIUS_M` = 0.0762 m (the firmware's
+`FLYWHEEL_RADIUS_M`, `.ino`:2740), wrapped to [0, 2 pi). Both hooks act only while
+`|v| >= V_STICTION`: the disturbance is rotation-locked, so none is invented at
+standstill, and the force ripple's per-tick velocity change (~3e-4 m/s per N) cannot
+push a moving body through zero. A plant with the hooks configured returns two extra
+sensor keys, `v_true` and `fly_theta`, which `main()` appends as the last two CSV
+columns **on those scenarios only** (a deliberate exception to the "column presence
+does not vary within a mode" rule, because the round's hard requirement is a
+byte-identical CSV for every existing scenario; the flag is a registry key, not a CLI
+flag, and every consumer reads by header name). The sidecar's `config.drive_ripple`
+records the resolved amplitudes, likewise only on those runs.
+
+**Invariance.** With `drive_ripple_cfg=None` every ripple line is behind a flag and
+`v_actual` is the unchanged `self.v` expression, so no floating-point operation is
+added to the existing mechanics. Verified 2026-11-04: the 1 kHz injection-frame bytes
+and the full sensor dict of `ems-drive-cycle` and `pi-silence` hash identically on
+the pre-round tree and this one, in simple mode and in hi-fi (substeps pinned with
+`substep_pin`, since the default hi-fi substep count is wall-clock adaptive and not
+reproducible run to run), and also with the hooks configured at zero amplitude.
+`constants_hash` is unchanged (`f120bf08...`): the amplitudes are not module
+constants, the scenario's `DRIVE_RIPPLE_*` stimulus constants are excluded by
+prefix (on the `FW26_` reasoning), and `drive_ripple` is imported as a module so its
+own constants are never swept.
+
+The prediction the suite scores these legs against, and its offline validation, live
+in `tools/drive_ripple.py` (`docs/HIL_SCENARIOS.md`, drive-ripple-*).
+
 ## 4. Electrical model
 
 Deliberately simple, and simplified in named places. The whole electrical section is

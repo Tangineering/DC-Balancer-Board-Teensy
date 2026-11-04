@@ -1404,6 +1404,9 @@ EXPECTED_SCENARIO_NAMES = {
     # a suite-side gate and does not change the registry.
     "ems-ftp75c-5050", "ems-ftp75c-socband", "ems-ftp75c-sdp",
     "ems-ftp75c-dp", "ems-ftp75c-mpc",
+    # 2026-11-04 (the drive-ripple round): the once-per-revolution ripple
+    # A/B legs for the fw v37 drive law. ORDINARY runs (default plan).
+    "drive-ripple-meas", "drive-ripple-force",
 }
 
 
@@ -1534,6 +1537,10 @@ EXPECTED_SCENARIO_DURATIONS_S = {
     "ems-ftp75c-sdp": 180.0,
     "ems-ftp75c-dp": 180.0,
     "ems-ftp75c-mpc": 180.0,
+    # 2026-11-04: four 10 s holds + the step + the Run exit + 3 s
+    # (hil_plant_sim DRIVE_RIPPLE_DURATION_S).
+    "drive-ripple-meas": 67.0,
+    "drive-ripple-force": 67.0,
 }
 
 
@@ -11342,7 +11349,12 @@ def test_mpc_csv_columns_follow_p_chg_loss_w():
     assert j < k
     m = src.index('header_row += ["h2_gfc_cum_g"]')
     assert k < m
-    assert src.rindex("header_row += [") == m
+    # 2026-11-04: the drive-ripple scenarios' `v_true` / `fly_theta` pair is
+    # appended after it (conditionally, drive-ripple-* only) and is now the
+    # last append of all.
+    r = src.index('header_row += ["v_true", "fly_theta"]')
+    assert m < r
+    assert src.rindex("header_row += [") == r
     # The row site mirrors the header: three values, blank when no MPC ran.
     assert 'if mpc_src is None:\n                    row += ["", "", ""]' in src
 

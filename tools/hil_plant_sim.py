@@ -610,6 +610,14 @@ import regen_power                                             # noqa: E402
 # docs/modeling/h20_hydrogen_map_20260908.md.
 import h2_map                                                  # noqa: E402
 
+# The drive-ripple predictor / lock-in module (2026-11-04).  Imported as a
+# MODULE, never `from drive_ripple import ...`: collect_model_constants() sweeps
+# this module's UPPERCASE numerics, and a from-import would re-export
+# drive_ripple.FLYWHEEL_RADIUS_M & co. into this namespace and move every run's
+# `constants_hash` on a commit that changed no plant model value.  The ripple
+# hooks in Plant read the flywheel radius through the module attribute.
+import drive_ripple                                            # noqa: E402
+
 # ── PART A: simple-mode share-law constants ─────────────────────────────────
 #: the firmware's droop design constant k_d, ohm (`K_DROOP`, .ino:2166-2167).
 #: Simple mode needs it because the static asymmetry law is written in terms of
@@ -895,10 +903,14 @@ def unique_output_path(path: str) -> str:
 # alarm the filter exists to prevent: every pre-round sidecar would have read as
 # "the model moved" against a checkout in which it had not.  A scenario's own
 # numbers are already recorded per run in its sidecar.
+# `DRIVE_RIPPLE_` joins them on exactly the FW26_ reasoning (2026-11-04): the
+# ripple amplitudes, hold table and step are the drive-ripple-* scenarios'
+# STIMULUS SHAPE, and the hooks themselves default to zero amplitude, so no
+# plant model value moved in that round and the fingerprint must not either.
 CONSTANTS_EXCLUDE_PREFIXES = (
     "META_", "WARM_RESET_", "HIL_SYNC_", "HIL_INJECT_", "HIL_OUTPUT_",
     "TEENSY_PORT", "SW_", "AUX_", "MDAC_CMD_", "CONSTANTS_EXCLUDE",
-    "UDP_", "PI_CMD_", "FB_", "FW26_",
+    "UDP_", "PI_CMD_", "FB_", "FW26_", "DRIVE_RIPPLE_",
 )
 
 
@@ -1651,7 +1663,7 @@ class Plant:
                  ag105_i_max=AG105_I_MAX, mppt_emulation=False,
                  asymmetry_mode=ASYMMETRY_MODE_DEFAULT,
                  ina_offset_fc=0.0, ina_offset_bt=0.0, noise_active=None,
-                 drag_mode=DRAG_MODE_DEFAULT):
+                 drag_mode=DRAG_MODE_DEFAULT, drive_ripple_cfg=None):
         # ── PART A (C1, 2026-09-01): converter asymmetry, SIMPLE MODE ────────
         # In hi-fi mode the asymmetry lives in the two Boost objects and this
         # plant never applies it.  Simple mode has no converter models at all,
@@ -1788,6 +1800,50 @@ class Plant:
         self.scp_fired = False     # ...and has since been withdrawn (latched)
         self.scp_fired_t = None    # sim time at which the pulse was withdrawn
         self.ag105_status = AG105_ST_DISCONNECT
+        # ── ROTATION-LOCKED RIPPLE HOOKS (2026-11-04, the drive-ripple round) ─
+        # A SCENARIO PARAMETER (SCENARIOS[...]["drive_ripple"]), in the same
+        # class as `mppt_emulation` / `ag105_i_max`: it sizes a STIMULUS, it
+        # does not model the firmware.  Two hypotheses for the once-per-
+        # flywheel-revolution `v_actual` ripple the Pi bags show
+        # (docs/fw37_planning_2026-11-04.md section 6.1), both off by default:
+        #   meas_a / meas2_a  MEASUREMENT ripple (encoder artefact, e.g. an
+        #                     eccentric disc): the INJECTED speed becomes
+        #                     v + meas_a sin(theta+phase) + meas2_a sin(2 theta
+        #                     + phase).  The mechanics are untouched.
+        #   force_n           FORCE ripple (real, e.g. runout drag): the net
+        #                     force gains force_n sin(theta + phase), so the
+        #                     TRUE speed ripples and the injected speed shows
+        #                     it honestly.
+        # theta is the plant's own flywheel angle, integrated from the TRUE
+        # speed at drive_ripple.FLYWHEEL_RADIUS_M (= the firmware's
+        # FLYWHEEL_RADIUS_M, .ino:2740).  Both hooks act only while |v| >=
+        # V_STICTION: the disturbance is rotation-locked, so none is invented
+        # at standstill.
+        # ⚠️ INVARIANCE.  `drive_ripple_cfg=None` (every scenario but the two
+        # drive-ripple-* ones) leaves `ripple_on` False, and every ripple line
+        # in step() is behind that flag: no arithmetic is added to, reordered
+        # in, or removed from the existing mechanics, so the injected stream is
+        # BIT-identical.  The returned sensor dict also gains its two ripple
+        # keys only when the hooks are configured, and the CSV columns follow
+        # the same rule (see main()).  None of the parameters is a module
+        # constant, so `constants_hash` cannot move.
+        cfg = dict(drive_ripple_cfg or {})
+        unknown = set(cfg) - {"meas_a", "meas2_a", "force_n", "phase_rad"}
+        if unknown:
+            raise ValueError("drive_ripple_cfg: unknown key(s) %s"
+                             % sorted(unknown))
+        self.ripple_meas_a = float(cfg.get("meas_a", 0.0))
+        self.ripple_meas2_a = float(cfg.get("meas2_a", 0.0))
+        self.ripple_force_n = float(cfg.get("force_n", 0.0))
+        self.ripple_phase_rad = float(cfg.get("phase_rad", 0.0))
+        # Configured = the scenario DECLARED the hooks (even at zero
+        # amplitude, which is how the invariance test exercises the code
+        # path); `ripple_on` additionally needs a non-zero amplitude.
+        self.ripple_cfg = drive_ripple_cfg is not None
+        self.ripple_on = bool(self.ripple_meas_a or self.ripple_meas2_a
+                              or self.ripple_force_n)
+        self.fly_theta = 0.0      # rad, wrapped [0, 2 pi); integrated only when configured
+        self.v_inj = 0.0          # m/s, the injected (measured) speed of the last tick
 
     def _apply_simple_asymmetry(self, frac_fc, i_total,
                                 g_fc_code=0.0, g_bt_code=0.0):
@@ -1941,7 +1997,36 @@ class Plant:
             if f_drive == 0.0 and (v_try * self.v) < 0.0:
                 self.v = 0.0
                 f_net = 0.0
+        # ── FORCE RIPPLE (drive-ripple-force; inert unless configured) ───────
+        # Added AFTER both road-load arms and their zero-crossing guards, and
+        # only while |v| >= V_STICTION: a body the deadband just zeroed has
+        # |v| = 0 and gets none, and a moving body cannot be pushed through
+        # zero by it (|dv| = force_n/M_EFF*dt ~ 3e-4 m/s per N per tick, two
+        # orders under V_STICTION).  Gated on `ripple_on` so the off path adds
+        # no floating-point operation at all.
+        if self.ripple_on and self.ripple_force_n and abs(self.v) >= V_STICTION:
+            f_net += self.ripple_force_n * math.sin(self.fly_theta
+                                                    + self.ripple_phase_rad)
         self.v += (f_net / M_EFF) * dt
+        # ── FLYWHEEL ANGLE + MEASUREMENT RIPPLE (inert unless configured) ────
+        # theta integrates the TRUE speed (after this tick's update, i.e. the
+        # speed the frame is about to carry); `v_inj` is what the board will
+        # be told.  Off: v_inj IS self.v, and the return dict below reads
+        # self.v directly, so the off path is untouched.
+        if self.ripple_cfg:
+            if abs(self.v) >= V_STICTION:
+                self.fly_theta = ((self.fly_theta + self.v
+                                   / drive_ripple.FLYWHEEL_RADIUS_M * dt)
+                                  % (2.0 * math.pi))
+            v_inj = self.v
+            if (self.ripple_on and abs(self.v) >= V_STICTION
+                    and (self.ripple_meas_a or self.ripple_meas2_a)):
+                ph = self.ripple_phase_rad
+                v_inj = (self.v
+                         + self.ripple_meas_a * math.sin(self.fly_theta + ph)
+                         + self.ripple_meas2_a
+                         * math.sin(2.0 * self.fly_theta + ph))
+            self.v_inj = v_inj
 
         # ── Electrical ───────────────────────────────────────────────────────
         # Motor bus draw from mechanical power, through the boost efficiency.
@@ -2583,7 +2668,7 @@ class Plant:
         self.p_bal_w = (self.p_mot_w + self.p_chg_loss_w
                         - (self.p_fc_w + self.p_batt_w + self.p_chop_w))
 
-        return {
+        out = {
             "V_fc": v_fc,
             "V_batt": v_batt,
             "V_bus": self.v_bus,
@@ -2591,7 +2676,10 @@ class Plant:
             "V_rgn": self.v_rgn,
             "I_fc": self.i_fc,
             "I_batt": self.i_batt,
-            "v_actual": self.v,
+            # The INJECTED speed.  Without the ripple hooks it is the true
+            # speed itself (the pre-2026-11-04 expression, unchanged); with
+            # them it is `v_inj`, which carries any measurement ripple.
+            "v_actual": self.v_inj if self.ripple_cfg else self.v,
             "I_charge": self.i_charge,
             "ag105_status": self.ag105_status,
             # Appended (never reordered) for the CSV's new `soc` column.
@@ -2633,6 +2721,15 @@ class Plant:
             # two MODELS of one quantity (see the H2Consumption docstring).
             "h2_gfc_cum_g": self.h2.gfc_cum_g,
         }
+        if self.ripple_cfg:
+            # Appended (never reordered), 2026-11-04 — the drive-ripple
+            # round's TRUE speed and flywheel angle.  Present ONLY on a plant
+            # whose scenario declared the hooks, so every other scenario's
+            # sensor dict is unchanged; NOT injected (pack_inject() takes its
+            # fields by name).
+            out["v_true"] = self.v
+            out["fly_theta"] = self.fly_theta
+        return out
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -12098,6 +12195,139 @@ SCENARIOS["pi-silence"] = {
     "pi_mute_after_s": 8.0,
 }
 
+# ── drive-ripple-meas / drive-ripple-force: the once-per-revolution ripple ───
+#    (2026-11-04, the fw v37 drive-law A/B on HIL)
+#
+# WHY.  fw v37 re-synthesised the drive law at a lower crossover so that a
+# once-per-flywheel-revolution ripple in `v_actual` (Pi bags, fw <= v35: a
+# smooth 1x tone at f_rot = v / (2 pi 0.0762 m) = 2.089 Hz per m/s, 13-20 mm/s,
+# coherence 0.97-1.00 with the bus current; docs/fw37_planning_2026-11-04.md
+# section 6.1) turns into 2.4-3.6x less motor-current ripple (section 9.1).
+# This plant's flywheel is perfectly smooth, so no other scenario contains the
+# disturbance and the improvement was invisible on HIL.  The two legs inject it
+# through Plant's rotation-locked ripple hooks, one per hypothesis:
+#   drive-ripple-meas   MEASUREMENT ripple (encoder artefact): 0.020 m/s peak,
+#                       the bags' UPPER amplitude, 1x only.  The true speed
+#                       is untouched; only the injected `v_actual` carries it.
+#   drive-ripple-force  FORCE ripple (real speed ripple, e.g. runout drag):
+#                       1.0 N peak, inside the bags' inferred 0.6-1.5 N band,
+#                       1x only.  The true speed ripples and the injected
+#                       speed shows it honestly.
+# On HIL the truth is known, so the pair also validates the artefact-vs-real
+# discriminator the bench analysis will use (run_hil_suite's `drive_ripple`
+# expectation: the TRUE speed's 1x against the injected one's).
+#
+# THE VEHICLE: `hold-5050` with an `ems_v_profile` and an `ems_run_exit_s`,
+# exactly as `ems-drive-cycle` drives its Run (SAFE -> HYBRID at
+# EMS_RUN_ENTRY_S 3.0; the share pinned at 0.50, in band, so the share loop is
+# NOT exercised on purpose; charge_goal 0).  "any" engine, as ems-drive-cycle
+# and pi-silence: the ripple is a MECHANICAL stimulus (Plant.step()'s
+# mechanics are shared by both engines verbatim), and the scored quantity is
+# the board's `current` command, which neither electrical engine reaches.
+#
+# THE PROFILE (sim time, s).  No segment asks for braking current - the regen
+# path is not this scenario's subject: every speed-up is a ramp, and every
+# slow-down is a setpoint DROP to 0, i.e. the firmware's zero cutoff
+# (motorControl(), V_SP_ZERO_THRESH 0.07 m/s: 0 A, controller held reset), so
+# the body coasts on the rig road load.  A tracked ramp-down was tried first
+# and rejected: near standstill the rig's natural deceleration
+# (F_COULOMB/M_EFF = 0.571 m/s^2) is barely above any usable ramp rate, and the
+# ripple then swings the command negative (-0.15 to -1.4 A on
+# drive_ripple.simulate_hold(), depending on the law and the hook).
+#    0.0-  3.0  standstill (MODE_SAFE settle, the staged bring-up)
+#    3.0-  5.0  ramp 0 -> 1.0     (0.50 m/s^2)
+#    5.0- 15.0  HOLD 1.0          f_rot 2.089 Hz   analysed  9.0-15.0
+#   15.0- 16.0  ramp 1.0 -> 1.5   (0.50 m/s^2)
+#   16.0- 26.0  HOLD 1.5          f_rot 3.133 Hz   analysed 20.0-26.0
+#   26.0- 27.0  ramp 1.5 -> 2.2   (0.70 m/s^2)
+#   27.0- 37.0  HOLD 2.2          f_rot 4.595 Hz   analysed 31.0-37.0
+#   37.0- 38.0  ramp 2.2 -> 2.7   (0.50 m/s^2)
+#   38.0- 48.0  HOLD 2.7          f_rot 5.639 Hz   analysed 42.0-48.0
+#   48.0        setpoint 2.7 -> 0: zero cutoff, coast to rest in
+#               (M_EFF/B_EFF) ln(1 + B_EFF*2.7/F_COULOMB) = 3.56 s (~51.6)
+#   51.6- 55.0  standstill        (the controller sits reset in the cutoff)
+#   55.0- 61.0  STEP 0 -> 2.0, held 6 s   (report-only step metrics)
+#   61.0        setpoint 0 -> zero cutoff -> coast to rest (~2.8 s)
+#   64.0        ems_run_exit_s: MODE_SAFE, Run -> Finish -> Idle
+#   67.0        end (last event + 3 s, the suite's trim rule)
+# The 4 s settle excluded at the head of every hold is >= 2.4x the slower
+# law's 2 % settle (fw v37: 1.62 s on the synthesis plant, planning 9.1) and
+# was checked on drive_ripple.simulate_hold() for both laws; each analysed 6 s
+# holds 12-33 whole revolutions.
+DRIVE_RIPPLE_SCENARIOS = ("drive-ripple-meas", "drive-ripple-force")
+DRIVE_RIPPLE_MEAS_A = 0.020          # m/s peak, 1x  (bags' upper amplitude)
+DRIVE_RIPPLE_FORCE_N = 1.0           # N peak, 1x    (bags' 0.6-1.5 N band)
+DRIVE_RIPPLE_SETTLE_S = 4.0          # excluded at the head of every hold
+# (t_start, t_end, v) of each cruise hold, in profile order.
+DRIVE_RIPPLE_HOLDS = ((5.0, 15.0, 1.0), (16.0, 26.0, 1.5),
+                      (27.0, 37.0, 2.2), (38.0, 48.0, 2.7))
+DRIVE_RIPPLE_STEP = (55.0, 61.0, 2.0)          # (t_step, t_end, v_target)
+DRIVE_RIPPLE_RUN_EXIT_S = 64.0
+DRIVE_RIPPLE_DURATION_S = 67.0
+DRIVE_RIPPLE_V_PROFILE = [
+    (0.0, 0.0), (3.0, 0.0), (5.0, 1.0), (15.0, 1.0), (16.0, 1.5), (26.0, 1.5),
+    (27.0, 2.2), (37.0, 2.2), (38.0, 2.7), (48.0, 2.7), (48.0, 0.0),
+    (55.0, 0.0), (55.0, 2.0), (61.0, 2.0), (61.0, 0.0), (67.0, 0.0),
+]
+
+
+def drive_ripple_analysis_windows():
+    """[(t0, t1, v)] — the analysed span of every hold (settle excluded)."""
+    return [(t0 + DRIVE_RIPPLE_SETTLE_S, t1, v)
+            for (t0, t1, v) in DRIVE_RIPPLE_HOLDS]
+
+
+def _validate_drive_ripple_profile():
+    """Import-time: the hold table and the profile must say the same thing."""
+    for (t0, t1, v) in DRIVE_RIPPLE_HOLDS:
+        assert t1 - t0 >= 10.0, "drive-ripple hold shorter than 10 s"
+        assert t1 - t0 - DRIVE_RIPPLE_SETTLE_S >= 6.0, \
+            "drive-ripple analysed span shorter than 6 s"
+        for t in (t0, 0.5 * (t0 + t1), t1):
+            assert abs(piecewise(DRIVE_RIPPLE_V_PROFILE, t) - v) < 1e-12, \
+                "DRIVE_RIPPLE_HOLDS disagrees with DRIVE_RIPPLE_V_PROFILE at %r" % t
+    ts, te, vs = DRIVE_RIPPLE_STEP
+    assert piecewise(DRIVE_RIPPLE_V_PROFILE, ts) == 0.0
+    assert piecewise(DRIVE_RIPPLE_V_PROFILE, ts + 1e-6) == vs
+    assert piecewise(DRIVE_RIPPLE_V_PROFILE, te) == vs
+    assert piecewise(DRIVE_RIPPLE_V_PROFILE, te + 1e-6) == 0.0
+    assert te < DRIVE_RIPPLE_RUN_EXIT_S < DRIVE_RIPPLE_DURATION_S
+
+
+_validate_drive_ripple_profile()
+
+_DRIVE_RIPPLE_COMMON = {
+    "electrical": "any",
+    "duration_s": DRIVE_RIPPLE_DURATION_S,
+    "ems": "hold-5050",
+    "ems_v_profile": DRIVE_RIPPLE_V_PROFILE,
+    "ems_run_exit_s": DRIVE_RIPPLE_RUN_EXIT_S,
+}
+SCENARIOS["drive-ripple-meas"] = dict(
+    _DRIVE_RIPPLE_COMMON,
+    description=("67 s drive-law ripple A/B: cruise holds at 1.0/1.5/2.2/2.7 "
+                 "m/s and a 0 -> 2.0 m/s step, with a once-per-revolution "
+                 "MEASUREMENT ripple (encoder-artefact hypothesis, %.3f m/s "
+                 "peak, 1x) on the injected v_actual only. Scores the "
+                 "board's `current` 1x against the repo drive law's "
+                 "prediction (run_hil_suite `drive_ripple`)."
+                 % DRIVE_RIPPLE_MEAS_A),
+    drive_ripple={"meas_a": DRIVE_RIPPLE_MEAS_A, "meas2_a": 0.0,
+                  "force_n": 0.0, "phase_rad": 0.0},
+)
+SCENARIOS["drive-ripple-force"] = dict(
+    _DRIVE_RIPPLE_COMMON,
+    description=("67 s drive-law ripple A/B: the drive-ripple-meas profile with "
+                 "a once-per-revolution FORCE ripple (real-speed-ripple "
+                 "hypothesis, %.2f N peak, 1x) in the plant mechanics, so the "
+                 "TRUE speed ripples. Scores the board's `current` 1x against "
+                 "the repo drive law's prediction (run_hil_suite "
+                 "`drive_ripple`)." % DRIVE_RIPPLE_FORCE_N),
+    drive_ripple={"meas_a": 0.0, "meas2_a": 0.0,
+                  "force_n": DRIVE_RIPPLE_FORCE_N, "phase_rad": 0.0},
+)
+del _DRIVE_RIPPLE_COMMON
+
 # ── share-staircase: the share governor's rails, and the cut/restore latency ──
 #
 # TWO PHASES, AT TWO DIFFERENT LOADS, and the split is forced rather than chosen.
@@ -13610,6 +13840,22 @@ def main(argv=None):
               f"-{ag105_mppt_volts(AG105_MPPT_N_CEIL):.3f} V); "
               f"{AG105_MPPT_V_THRESH:.1f} V is used only until a count arrives "
               f"or if the board reports external-resistor mode.")
+    # Scenario-level drive-ripple hooks (SCENARIOS[...]["drive_ripple"],
+    # 2026-11-04), same plumbing class as mppt_emulation.  Absent -> None ->
+    # the plant's mechanics, injected stream and CSV schema are exactly the
+    # pre-2026-11-04 ones.  Replay mode bypasses the plant integrator, so it
+    # never carries them.
+    ripple_cfg = None if args.replay else meta.get("drive_ripple")
+    if ripple_cfg is not None:
+        print("[hil] drive-ripple hooks for scenario '%s': measurement %.4f m/s "
+              "(1x) + %.4f m/s (2x), force %.3f N, phase %.3f rad, locked to "
+              "the plant flywheel angle (R = %.4f m); TRUE speed and angle are "
+              "appended to the CSV as v_true / fly_theta"
+              % (scenario, float(ripple_cfg.get("meas_a", 0.0)),
+                 float(ripple_cfg.get("meas2_a", 0.0)),
+                 float(ripple_cfg.get("force_n", 0.0)),
+                 float(ripple_cfg.get("phase_rad", 0.0)),
+                 drive_ripple.FLYWHEEL_RADIUS_M))
     plant = Plant(electrical=electrical, soc0=args.soc0,
                   capacity_ah=args.capacity_ah, ag105_i_max=chg_ceiling,
                   mppt_emulation=mppt_emu,
@@ -13630,7 +13876,8 @@ def main(argv=None):
                   # THE RESOLVED ROAD-LOAD PROFILE (2026-09-02).  Mechanical
                   # only, so unlike the asymmetry it has no hi-fi counterpart to
                   # keep in step: the electrical engines never see it.
-                  drag_mode=drag_mode)
+                  drag_mode=drag_mode,
+                  drive_ripple_cfg=ripple_cfg)
     # Scenario-level Pi-commander mute (SCENARIOS[...]["pi_mute_after_s"]).  Read
     # ONCE here and handed to whichever commander is constructed below; None (the
     # default, and every scenario but `pi-silence`) means "never mute".  Not
@@ -14153,6 +14400,21 @@ def main(argv=None):
         # ways invites them to stop being.
         if not replay:
             header_row += ["h2_gfc_cum_g"]
+        # ── v_true / fly_theta — APPENDED LAST, DRIVE-RIPPLE SCENARIOS ONLY ──
+        #    (2026-11-04)
+        # The plant's TRUE speed and its flywheel angle (rad, wrapped to
+        # [0, 2 pi)), so the analysis can separate the measured (injected)
+        # speed in `v_actual` from the real one and demodulate on the exact
+        # rotation angle.  ⚠️ A DELIBERATE EXCEPTION to "column presence must
+        # not vary with a flag inside one mode": the 2026-11-04 round's hard
+        # requirement is that every existing scenario's CSV stay BYTE-
+        # IDENTICAL, and an unconditional column would change every one.  The
+        # flag is a SCENARIO REGISTRY key (`drive_ripple`), not a CLI flag, so a
+        # given scenario's schema is still fixed; every consumer reads this
+        # file by header name, and these two are the last columns, so no index
+        # moves.
+        if not replay and plant.ripple_cfg:
+            header_row += ["v_true", "fly_theta"]
         writer.writerow(header_row)
 
     # M3: open the electrical-events sidecar UP FRONT and stream into it as events
@@ -14423,6 +14685,16 @@ def main(argv=None):
                 # carried — the file sha for byte identity, the policy-block
                 # sha for the DECISION LAW (stable across a regeneration that
                 # did not change it, and the one to compare across campaigns).
+                # THE DRIVE-RIPPLE HOOKS (2026-11-04).  Present ONLY on a run
+                # whose scenario declared them, on `sdp_policy`'s rule below,
+                # so no other scenario's sidecar grows a null field.
+                **({"drive_ripple": {
+                        "meas_a": plant.ripple_meas_a,
+                        "meas2_a": plant.ripple_meas2_a,
+                        "force_n": plant.ripple_force_n,
+                        "phase_rad": plant.ripple_phase_rad,
+                        "flywheel_radius_m": drive_ripple.FLYWHEEL_RADIUS_M}}
+                   if plant.ripple_cfg else {}),
                 **({"sdp_policy": sdp_raw_src.provenance}
                    if (sdp_raw_src is not None and sdp_raw_src.provenance)
                    else {}),
@@ -15021,6 +15293,14 @@ def main(argv=None):
                 # Same 9 significant digits as the h2 pair (O(1e-3) g).
                 if not replay:
                     row.append(f"{sensors.get('h2_gfc_cum_g', 0.0):.9g}")
+                # v_true / fly_theta (2026-11-04) — drive-ripple scenarios
+                # only, under the SAME condition as the header (see there).
+                # 6 decimals: the true-speed ripple under a measurement hook
+                # is O(1e-3) m/s at the top hold, and the angle feeds an
+                # exact-reference demodulation.
+                if not replay and plant.ripple_cfg:
+                    row.append(f"{sensors['v_true']:.6f}")
+                    row.append(f"{sensors['fly_theta']:.6f}")
                 writer.writerow(row)
 
             ticks += 1

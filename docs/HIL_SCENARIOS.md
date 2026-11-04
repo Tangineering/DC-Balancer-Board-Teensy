@@ -651,6 +651,71 @@ every frontier number is a RANKING on one rig and not an absolute mass.
   zero-cutoff, and the Mode-A command path on a realistic profile; it is the
   scenario whose sub-1 % repeatability anchors cross-campaign comparisons.
 
+### drive-ripple-meas / drive-ripple-force (67 s each, any engine, EMS `hold-5050`) — 2026-11-04
+
+- **Tests:** the drive law's response to a once-per-flywheel-revolution ripple, the
+  A/B that fw v37's lower-crossover law exists for (`docs/fw37_planning_2026-11-04.md`
+  sections 6.1, 9.1). The plant's flywheel is otherwise perfectly smooth, so these
+  are the only legs that contain the disturbance. Each leg injects one hypothesis
+  through `Plant`'s rotation-locked hooks (`SCENARIOS[...]["drive_ripple"]`,
+  `docs/HIL_PLANT.md` section 3.7), locked to the plant's own flywheel angle
+  (R = 0.0762 m, `FLYWHEEL_RADIUS_M`; f_rot = 2.089 Hz per m/s):
+  - `drive-ripple-meas`: **measurement** ripple (encoder artefact), 0.020 m/s peak 1x
+    on the injected `v_actual` only; the true speed is untouched.
+  - `drive-ripple-force`: **force** ripple (real speed ripple), 1.0 N peak 1x added to
+    the net force; the true speed ripples and the injected speed shows it.
+- **Profile:** SAFE → HYBRID at 3.0 s; ramps to cruise **holds of 10 s at 1.0, 1.5,
+  2.2, 2.7 m/s** (t = 5–15, 16–26, 27–37, 38–48; the first 4 s of each is settle,
+  the last **6 s analysed**, 12–33 whole revolutions); setpoint drop to 0 at 48 (zero
+  cutoff, coast to rest in 3.6 s); a **0 → 2.0 m/s step at 55.0 held 6 s**; setpoint 0
+  at 61; Run exit at 64; end at 67. Share fixed at 0.50 (in band — the share loop is
+  not exercised on purpose); no segment commands braking current (every slow-down is a
+  zero-cutoff coast, because a tracked ramp-down near standstill swings the
+  ripple-modulated command negative). New CSV columns `v_true` and `fly_theta` are
+  appended on these two legs only.
+- **Pass/fail** (`FAULT_EXPECTATIONS[...]["drive_ripple"]`, `scan_drive_ripple()` /
+  `judge_drive_ripple()`): fault-free (`allow_only: 0`) and in Run at t = 60.5; then
+  per hold, from a least-squares lock-in on `fly_theta` over an integer number of
+  revolutions (mean and trend fitted jointly):
+  - `ripple_current_1x[v]` — the `current` 1x amplitude within **±15 %** of the
+    prediction from the **repo** `drive_controller_coeffs.h` closed around this plant's
+    `M_EFF`/`B_EFF`/`K_F` (`tools/drive_ripple.py`: |C S|·A_meas, or |T|·F/K_F). The fw
+    v35 law's prediction (frozen table from `ab4a705`) is printed beside it.
+  - `ripple_discriminator[v]` — meas: the true/injected 1x ratio within ±15 % of the
+    predicted |L(f_rot)| **and** the injected-minus-true 1x within 10 % of A_meas;
+    force: true/injected in [0.9, 1.1] **and** the injected-minus-true 1x under 5 % of
+    the injected 1x.
+  - `ripple_unsaturated[v]` — no `current` sample within 0.05 A of the ±12 A rail.
+  - `ripple_drive_law_identified` — the measured amplitudes sit closer (log ratio) to
+    the repo law than to fw v35 at a majority of holds; otherwise the detail says the
+    board **appears to run the other drive law** (the suite cannot read `FW_VERSION`).
+  - **Report only** (notes, `metrics["drive_ripple"]`): the step's 2 % settle (true
+    speed), overshoot, peak `current`, rail time; the `I_fc + I_batt` 1x; phases.
+- **Expected `current` 1x amplitudes** (HIL plant, nominal 1.5 ms pipeline latency;
+  holds 1.0 / 1.5 / 2.2 / 2.7 m/s):
+
+  | law | meas (A) | force (A) | meas true/injected |
+  |-----|----------|-----------|--------------------|
+  | fw v37 (repo) | 0.644 / 0.626 / 0.588 / 0.556 | 0.701 / 0.455 / 0.291 / 0.224 | 0.461 / 0.297 / 0.192 / 0.150 |
+  | fw v35 | 1.520 / 1.815 / 1.865 / 1.836 | 1.654 / 1.317 / 0.923 / 0.740 | 1.409 / 0.861 / 0.557 / 0.442 |
+
+  Step (offline simulation, true speed): fw v37 ~1.8 s settle / ~9 % overshoot; fw v35
+  ~1.25 s / ~3-4 %; both ~1.05 s on the +12 A rail.
+- **Tolerance basis (±15 %, tightened from the spec's proposed ±25 %):** pipeline
+  latency spread over [0.5, 4.0] ms ≤ 5.3 % (fw v35; ≤ 1.6 % fw v37); predictor vs a
+  tick-exact simulation of the same Hanus recursion and plant ≤ 1.1 %; lock-in
+  estimation < 0.1 %. The two laws differ by 2.4–3.3x, so the band can never admit the
+  other law.
+- **Deviation from the first spec:** the meas-leg discriminator was specified as
+  "true/injected < 0.3". That ratio is the loop gain |L(f_rot)|, which is 0.46 for fw
+  v37 and 1.41 for fw v35 at the 1.0 m/s hold, so a fixed bound fails a correct board;
+  it is scored against the prediction instead, and the artefact itself (injected minus
+  true) is scored directly.
+- **Why useful:** the only HIL evidence of the drive law's ripple amplification, a
+  check that the bench analysis's artefact-vs-real discriminator works where the truth
+  is known, and — because the suite cannot see `FW_VERSION` — a firmware identifier
+  for the drive law.
+
 ### ems-soc-band (61 s, any engine, EMS `soc-band`)
 
 - **Tests:** the causal charge-sustaining EMS: a drain phase walks SoC out of the

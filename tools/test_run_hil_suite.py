@@ -71,9 +71,11 @@ def test_build_plan_full_count_40_runs():
     # scenarios, 74 slots.
     # 2026-09-03 (the operator-rulings round): +fw26-clamp-joint -> 48
     # scenarios, 75 slots.
-    assert len(plan) == len(SCENARIOS) + len(REPLAY_SUITE) == 75
+    # 2026-11-04 (the drive-ripple round): +drive-ripple-meas/-force -> 50
+    # scenarios, 77 slots.
+    assert len(plan) == len(SCENARIOS) + len(REPLAY_SUITE) == 77
     kinds = [p["kind"] for p in plan]
-    assert kinds.count("scenario") == 48
+    assert kinds.count("scenario") == 50
     assert kinds.count("replay") == 27
 
 
@@ -85,7 +87,8 @@ def test_build_plan_replay_only():
 
 def test_build_plan_scenarios_only():
     plan = rhs.build_plan(_args(scenarios_only=True))
-    assert len(plan) == 48      # 2026-09-03: +fw26-clamp-joint;
+    assert len(plan) == 50      # 2026-11-04: +the two drive-ripple-* legs;
+                                # 2026-09-03: +fw26-clamp-joint;
                                 # 2026-09-03: +ems-mpc-single;
                                 # fw v26 tools round: +the two fw26-clamp-* legs;
                                 # WP-C: +regen-harvest-true; WP-E: +ems-ftp75-dp;
@@ -1585,7 +1588,10 @@ def test_fault_expectations_schema_only_known_fields():
             "events_forbid_over_absmax", "provisional_note",
             # 2026-08-31 wave 2: the entry-level continuity assertion used by
             # pi-silence -- see child_stream_continuity() / judge_scenario().
-            "child_tx_healthy"}
+            "child_tx_healthy",
+            # 2026-11-04: the drive-ripple-* lock-in expectation --
+            # scan_drive_ripple() / judge_drive_ripple().
+            "drive_ripple"}
     for name, expect in rhs.FAULT_EXPECTATIONS.items():
         assert set(expect) <= known, (name, set(expect) - known)
 
@@ -5544,6 +5550,9 @@ def test_m4_main_keyboardinterrupt_writes_partial_report(tmp_path, monkeypatch):
 PI_LIVE_SKIP_SCENARIOS = {
     "charge-cruise", "charge-regen", "charge-fault", "soc-depletion",
     "handoff-sag", "ems-drive-cycle",
+    # 2026-11-04: the drive-ripple pair joins via "ems": "hold-5050", the
+    # ems-drive-cycle rule, no new code path.
+    "drive-ripple-meas", "drive-ripple-force",
     # fw v26 tools round (2026-09-02): both `fw26-clamp-*` legs join via
     # "pi_timeline", the same rule `share-staircase` and `charge-to-full`
     # join by, and no new code path.
@@ -5662,7 +5671,8 @@ def test_build_plan_pi_live_total_count_still_40():
     is unchanged under --pi-live, only their kind (executed vs skipped)
     differs."""
     plan = rhs.build_plan(_args(pi_live=True))
-    assert len(plan) == 75      # 2026-09-03: +fw26-clamp-joint;
+    assert len(plan) == 77      # 2026-11-04: +the two drive-ripple-* legs;
+                                # 2026-09-03: +fw26-clamp-joint;
                                 # 2026-09-03: +ems-mpc-single;
                                 # fw v26 tools round: +the two fw26-clamp-* legs;
                                 # WP-C: +regen-harvest-true; WP-B: +v-bus-sense-offset;
