@@ -88,3 +88,19 @@ actually driven.
 If the EPA file is re-fetched and its digest differs, the generator refuses to
 run. Update the digest here and in `gen_ftp75_profile.py`'s `RAW_SHA256`
 together, in one change, and regenerate — never bypass the check.
+
+## Pi drive-cycle traces (PhD student, imported 2026-11-04)
+
+Four speed traces that the Pi's `drive_cycle_node` plays on the bench. They are
+copied byte-for-byte from `phd/siddhesh-2026-11-03` (`64fb553`, student folder
+`scale_car/Documentation/Drive Cycles/`). Each is LF, a `time_s,v_mps` header
+plus one row per sample, and is covered by this directory's `* -text`. The
+student did not document how they were generated. The trimming and scaling
+are not verified here, and no repo generator consumes them yet.
+
+| File | Bytes | sha256 | Samples | End time | Peak v | Notes |
+|---|---:|---|---:|---:|---:|---|
+| `RegenTest_decel_sweep.csv` | 24 589 | `50c5bad1ae58cebc6a4b154ca7a4bac12db760e5f72511e415c56eb83f6548b9` | 1834 | 183.3 s | 3.5 | Regen deceleration sweep, ends at rest |
+| `RegenTest_v2_lowspeed.csv` | 20 137 | `bf5f51910d873f463e1d61d1712324c62a97f6e521cb1a4f1a91c6bfaa86b5fd` | 1516 | 151.5 s | 2.0 | Low-speed regen test, ends at rest |
+| `UDDS_trimmed_3.5mps.csv` | 4 245 | `624ef94953b301859ca00740a117797d1d4001ce22bfa75c9a04ba48f187b718` | 334 | 333 s | 3.5 | UDDS slice scaled to a 3.5 m/s peak, ends at rest |
+| `UDDS_trimmed_to_idle.csv` | 3 225 | `2f437aa8add37df98ac0084e9291667f962181e1c62c2d2c81774413a7bc2bdc` | 334 | 333 s | 5 | Integer speeds; **the last row is `333,5`, so it does not end at rest despite the name**. Probably an earlier, unscaled or differently scaled version of the 3.5 m/s file (unverified) |
