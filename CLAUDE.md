@@ -947,3 +947,20 @@ cut/re-entry cycles (no second detector; every other disarm dumps); an FC-ONLY L
 FC selection (plus a V_fc escape beside the raw-current escape); until measured the Pi keeps the command inside (0.15, 0.85).
 Battery: `LIMIT_V_BATT_MAX` 8.5 V (OV_BATT was dead at 10.0 V; a 9 V bench supply now latches), `LIMIT_V_BATT_MIN` 7.4 V on the
 armed dwell shape (arm 7.8 V) - a drained HIL pack now latches UV_BATT (0i-3 before campaign III). Tests 4563 / 210 / 4870 / 51.
+
+## Status & session addendum (2026-11-04: the PhD student's fw v31-v36 line, Pi software and rosbags imported into main)
+
+Imported from `phd/siddhesh-2026-11-03` (`64fb553`, left untouched) into the repo's own layout; path map in
+`docs/phd_handoff_2026-11-03.md`. **The tree tip `.ino` is the student's fw v36 = NOT FLASHED; the board runs fw v35**
+(student README) - an exception to the "committed AS FLASHED" rule, recorded here. One commit per version on
+`teensy_controller/teensy_controller.ino`, authored by the student (v30 student build, v31 revs a/b/c, v35, v36;
+v32-v34 were never committed separately - folded into v35); ledger rows 31-36. All six use `FC_CHARGE_ALLOWED 0`
+(the FC never charges the pack). **The test suite was NOT updated by the student:** v35/v36 fail 10 checks in
+`run_tests` and `run_tests_hil` (9 FC-charge-path tests + the `FW_VERSION == 30` pin), bench/encoder targets pass;
+v31 rev c additionally fails a real hot-plug-guard check (fixed in v35). No tests cover the v32a/v33b charge-window
+limits or v36's regen arming with charge_goal 0. Wire protocol unchanged (v4 / 58 B). New locations:
+`references/EMS/Pi_2026-11-03/` (Pi ROS 2 nodes; bridge 2026-10-31A = EKF SoC), `tools/rosbag_analysis/` (the
+student's bag scripts; need `mcap_ros2`), `logs/rosbags/` (22 Pi bags 2026-09-07..10-30 - **fw version not in the
+telemetry**, see its README), `firmware_archive/` (pre-board sketches, fw v19), `docs/operations/`, new drive cycles in
+`references/drive_cycles/`. Student open items: regen returns no charge current; the FC was not delivering power on
+2026-11-03 (undiagnosed); SoC R0/OCV uncalibrated.
