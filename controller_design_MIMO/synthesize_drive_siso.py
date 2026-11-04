@@ -195,7 +195,35 @@ WC_TARGET = 24.0          # rad/s, the papers' driver-model bandwidth (the TARGE
 # 16 rad/s loop meeting ~56 ms of unmodelled lag; the fix is to model the lag and keep the
 # bandwidth, not to raise it.  The 12 ms low-speed corner is what bounds the design from
 # above (PM@0.5 = 43.7 deg at the chosen rung, 27-33 deg at the failing rungs).
-WC = 60.0                 # rad/s, Wp corner (see ladder above)
+#
+# LADDER RE-RUN 2026-11-04 (fw v37) -- LOWER CROSSOVER FOR CURRENT NOISE.  SUPERSEDES the
+# "no case for chasing bandwidth" choice above for a reason that round could not see: the
+# Pi bags (docs/fw37_planning_2026-11-04.md sections 6.1 / 9.1) show a once-per-flywheel-
+# revolution v_actual ripple (13-20 mm/s, f_rot = 2.089 Hz per m/s) that the shipped loop
+# converts into +/-1.1-1.5 A of motor current and 0.1-0.2 A rms of bus current -- its
+# crests trip OC_FC.  The shipped crossover (17.25 rad/s = 2.75 Hz on the K_F-corrected
+# plant) sits INSIDE the rotation band with |S| 1.26-1.38 there, so the loop amplifies the
+# ripple.  Operator ruling 2026-11-04: lower the crossover ONLY, Wu unchanged (0.25, 300,
+# 12.5), first try.  Ladder run on the current plant (only WC varied; the shipped rung
+# re-run reproduces the shipped coefficients to ~1e-5; |C*S| = §7c's metric, ratio to the
+# shipped rung at 2.1 / 3.1 / 4.6 / 5.6 Hz):
+#   WC  wc[rad/s]  PM    PM@0.5  worst||S||  0->2 m/s settle/overshoot  |C*S| ratio             gates failing
+#   60  17.25      50.2  38.4    2.867       1.034 s /  4.9 %           1.00 1.00 1.00 1.00     none (shipped fw v10..v35)
+#   40  13.70      52.6  43.2    2.203       1.122 s /  6.1 %           0.88 0.78 0.74 0.73     none
+#   24  10.08      55.2  48.3    1.774       1.282 s /  8.1 %           0.66 0.54 0.50 0.49     crossover band only
+#   18   8.38      56.5  50.7    1.626       1.404 s /  9.5 %           0.55 0.44 0.40 0.39     crossover band only
+#   12   6.55      58.1  53.6    1.478       1.624 s / 11.6 %           0.41 0.33 0.29 0.28     crossover band only  <-- CHOSEN
+#    8   5.05       -     -       -          1.918 s / 13.9 %           0.31 0.24 0.21 0.20     crossover band + step/regen no-limit-cycle gates
+# CHOICE: WC = 12.  The lowest rung that passes every stability / robustness / anti-windup
+# / replay gate; it cuts the ripple-to-current gain 2.4-3.6x across 2-6 Hz AND improves PM
+# (+7.9 deg), PM@0.5 (+15.2 deg) and the worst corner (2.867 -> 1.478).  WC = 8 is REJECTED:
+# it fails the 0->2 m/s step and regen no-limit-cycle gates, i.e. it is past the point
+# where the slow loop and the +-12 A rail start hunting.  What WC = 12 costs is setpoint
+# tracking (settle 1.03 -> 1.62 s, overshoot 4.9 -> 11.6 %); the drive cycles ramp at
+# <= 0.3-1 m/s^2, which a ~1 Hz loop follows with modest lag.  The crossover band gate in
+# §2 is RE-SCOPED (not deleted) to the operator's noise/tracking band, 5-30 rad/s, and the
+# §7c rotation-band gate is ADDED so a re-tune back into the band trips.
+WC = 12.0                 # rad/s, Wp corner (fw v37; was 60.0 for fw v10..v35 -- ladders above)
 WP_DC = 1e4               # S weight DC gain (integral-like low-frequency demand)
 
 Wp = strictly_proper_2nd_order_weight(WP_DC, WC)
@@ -260,8 +288,15 @@ print(f"  achieved S/T crossover ~ {wc_H:.2f} rad/s;  ||S||inf = {hinf_norm(S_H)
 # future plant change that pushed the loop far past today's bandwidth would trip it and
 # demand a look rather than passing silently.  The LOWER bound is the one that matters and
 # is unchanged: below ~12 rad/s the drive loop is slower than the papers' driver model.
-gate("achieved crossover in the vicinity of the papers' 24 rad/s (12-30)",
-     12.0 <= wc_H <= 30.0, f"wc = {wc_H:.2f} rad/s")
+# RE-SCOPED 2026-11-04 (fw v37): 12-30 -> 5-30 rad/s, and renamed.  The fw v37 rung
+# (WC = 12, wc 6.55 rad/s) is deliberately BELOW the papers' 12 rad/s floor: the operator
+# traded tracking bandwidth for rotation-band current noise (ladder at WC above).  The band
+# is now the operator's NOISE/TRACKING band.  Lower bound 5.0 rad/s sits just under the
+# WC = 8 rung (5.05 rad/s), which fails the no-limit-cycle gates, so a runaway re-tune
+# toward an even slower loop still trips here; the upper bound 30 is unchanged (a re-tune
+# back up into the rotation band is caught by §7c's |C*S| gate long before it reaches 30).
+gate("achieved crossover inside the operator's noise/tracking band (5-30 rad/s, fw v37)",
+     5.0 <= wc_H <= 30.0, f"wc = {wc_H:.2f} rad/s")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 3. Youla-H DC correction (papers' scalar recipe): Y_YH = Y_H / T_H(0)
@@ -518,6 +553,46 @@ for dc in pm.drive_corners():
 gate("discrete closed loop stable on ALL corners (|z| < 1)", worst_rad < 1.0,
      f"max |z| = {worst_rad:.4f}")
 print(f"  discrete worst-corner ||S||inf = {worstSd:.4f} at {worstSd_corner}")
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 7c. ROTATION-BAND CURRENT-NOISE GAIN |C*S| (added 2026-11-04, fw v37)
+# ─────────────────────────────────────────────────────────────────────────────
+# WHY.  The Pi bags (docs/fw37_planning_2026-11-04.md sections 6.1 / 9.1) show a once-per-
+# flywheel-revolution ripple on v_actual (13-20 mm/s), coherent (0.97-1.00) with a
+# +/-1.1-1.5 A motor-current tone whose crests trip OC_FC.  With the setpoint constant the
+# loop maps that ripple to current through C*S (u = -C*S * n for measurement noise n), so
+# |C(e^{jwTs})*S(jw)| at f_rot is the A-per-(m/s) gain the bench measures.  f_rot =
+# v / (2*pi*R_FLY) = 2.089 Hz per m/s; the four points are the rotation band at 1.0 / 1.5
+# / 2.2 / 2.7 m/s.
+# FORM.  C = the DISCRETE controller the firmware runs (ctrl_d, Tustin at TS), evaluated at
+# z = e^{jwTs}; S = the nominal CONTINUOUS loop with the reduced controller (nomS).  This is
+# the form that reproduces the orchestrator's shipped-v35 reference (80.15 / 99.05 / 102.36
+# / 100.23 A per (m/s), re-measured here from the WC = 60 coefficients; the fully-discrete
+# S with a ZOH plant reads ~1-2 % higher and is printed alongside for information only).
+# GATE (operator 2026-11-04, "current-noise reduction"): every point <= 0.5x the shipped
+# v35 reference.  The reference is a CONSTANT, not re-derived per run, so a future re-tune
+# that drifted the crossover back up trips it.
+ROT_BAND_F_HZ = (2.089, 3.134, 4.6, 5.6)
+ROT_BAND_V_MS = (1.0, 1.5, 2.2, 2.7)
+ROT_BAND_REF_V35 = (80.2, 99.0, 102.4, 100.2)   # A per (m/s), shipped fw v10..v35 rung WC = 60
+ROT_BAND_GATE_RATIO = 0.5
+_w_rot = 2*np.pi*np.asarray(ROT_BAND_F_HZ)
+_C_rot = dfreqresp(ctrl_d, TS, _w_rot)
+_S_rot = 1.0/(1.0 + nomL.freqresp(_w_rot))
+_Sd_rot = 1.0/(1.0 + dfreqresp(c2d_zoh(G22, TS), TS, _w_rot)*_C_rot)
+ROT_BAND = []   # (f, v, |C|, |S|, |C*S|, |C*S_disc|, ref, ratio)
+print("\n= 7c. Rotation-band current-noise gain |C*S| (fw v37) ==")
+print("   f [Hz]  v [m/s]    |C|      |S|    |C*S|  (|C*Sd|)   v35 ref   ratio")
+for f_, v_, c_, s_, sd_, r_ in zip(ROT_BAND_F_HZ, ROT_BAND_V_MS, _C_rot, _S_rot,
+                                   _Sd_rot, ROT_BAND_REF_V35):
+    cs = abs(c_*s_)
+    ROT_BAND.append((f_, v_, abs(c_), abs(s_), cs, abs(c_*sd_), r_, cs/r_))
+    print(f"   {f_:6.3f}  {v_:5.2f}  {abs(c_):8.2f} {abs(s_):7.3f} {cs:8.2f}  "
+          f"({abs(c_*sd_):7.2f})  {r_:7.1f}   {cs/r_:5.3f}")
+_rot_worst = max(r[7] for r in ROT_BAND)
+gate(f"rotation-band |C*S| <= {ROT_BAND_GATE_RATIO}x the shipped v35 reference at every point "
+     f"(current-noise reduction gate, operator 2026-11-04)",
+     _rot_worst <= ROT_BAND_GATE_RATIO, f"worst ratio = {_rot_worst:.3f}")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 8. Time-domain sims (discrete, +-I_CLAMP clamp, back-calculation anti-windup)
@@ -1717,7 +1792,28 @@ worst ||S|| over the 24 drive corners x 3 estimator speeds = 72 plants):
     WC=70, Wu(0.25,300,12.5) -> g_opt 35.44, wc 17.52, PM 51.0, PM@0.5 42.0, ||S|| 2.670
     WC=80, Wu(0.05,300, 2.5) -> g_opt 26.82, wc 21.72, PM 38.3, PM@0.5 27.1, ||S|| 7.630  (all FAIL)
 
-CHOICE: WC={WC:g}, Wu({WU_DC}, 300, {WU_HF}) — the rung that maximizes crossover subject to
+FW v37 LADDER, 2026-11-04 — SUPERSEDES the CHOICE / HEADLINE / CROSSOVER-BAND paragraphs
+below, which are kept as the fw v10..v35 record (they describe the WC = 60 rung).  The Pi
+bags show a once-per-flywheel-revolution v_actual ripple (13-20 mm/s, f_rot = 2.089 Hz per
+m/s) that the WC = 60 loop turned into +/-1.1-1.5 A of motor current (crests trip OC_FC);
+its crossover sat inside the rotation band with |S| > 1 there.  Operator ruling: lower the
+crossover only, Wu unchanged.  Only WC varied (current plant; |C*S| ratio to WC = 60 at
+2.1 / 3.1 / 4.6 / 5.6 Hz):
+    WC=60 -> wc 17.25, PM 50.2, PM@0.5 38.4, ||S|| 2.867, step 1.034 s / 4.9 %,  ratio 1.00 1.00 1.00 1.00  (shipped fw v10..v35)
+    WC=40 -> wc 13.70, PM 52.6, PM@0.5 43.2, ||S|| 2.203, step 1.122 s / 6.1 %,  ratio 0.88 0.78 0.74 0.73
+    WC=24 -> wc 10.08, PM 55.2, PM@0.5 48.3, ||S|| 1.774, step 1.282 s / 8.1 %,  ratio 0.66 0.54 0.50 0.49  (old 12-30 band only)
+    WC=18 -> wc  8.38, PM 56.5, PM@0.5 50.7, ||S|| 1.626, step 1.404 s / 9.5 %,  ratio 0.55 0.44 0.40 0.39  (old 12-30 band only)
+    WC=12 -> wc  6.55, PM 58.1, PM@0.5 53.6, ||S|| 1.478, step 1.624 s / 11.6 %, ratio 0.41 0.33 0.29 0.28  <- CHOSEN (fw v37)
+    WC= 8 -> wc  5.05,                                    step 1.918 s / 13.9 %, ratio 0.31 0.24 0.21 0.20  (no-limit-cycle gates FAIL)
+CHOICE (fw v37): WC={WC:g}, Wu({WU_DC}, 300, {WU_HF}) — the lowest rung passing every stability,
+robustness, anti-windup and replay gate.  WC = 8 fails the step / regen no-limit-cycle gates.
+The crossover band gate is RE-SCOPED 12-30 -> 5-30 rad/s (the operator's noise/tracking
+band; 5.0 sits just under the failing WC = 8 rung) and a rotation-band |C*S| gate is ADDED
+(every point <= 0.5x the shipped reference; table in the "rotation band" section below).
+This run's measured values are in the margins / robustness / rotation-band / time-domain
+sections, not in this table.
+
+CHOICE (fw v10..v35, SUPERSEDED): WC=60, Wu(0.25, 300, 12.5) — the rung that maximizes crossover subject to
 BOTH the gates and the 2.5 worst-||S|| TARGET (not merely the 3.0 gate).  Every rung with a
 higher crossover (WC=65/70 at Wu(0.2..0.25); WC=55 at Wu(0.15)) breaks the 2.5 target, and
 the rungs that break it hardest break PM as well.  The SHAPE of the ladder has changed from
@@ -1768,6 +1864,15 @@ S/T crossover        = {wc_ach:.2f} rad/s   (H-inf full order: {wc_H:.2f})
 phase margin         = {pm_deg:.1f} deg at {w[idx_c]:.2f} rad/s
 delay margin         = {dm*1e3:.2f} ms   (gate > 4 ms = 2*Ts)
 gain margin          = {'inf' if not np.isfinite(gm_db) else f'{gm_db:.1f} dB'}
+
+── rotation band: current-noise gain |C*S| (NEW 2026-11-04, fw v37; §7c) ──
+C = discrete controller at z = e^(jwTs); S = nominal continuous loop (reduced controller).
+Measurement noise n on v_actual maps to motor current as u = -C*S*n, so |C*S| is the
+A per (m/s) gain from the once-per-rev ripple to the current tone.
+   f [Hz]  v [m/s]     |C|       |S|     |C*S|   v35 ref   ratio   (|C*S| with ZOH-discrete S, info)
+{chr(10).join(f"   {r[0]:6.3f}  {r[1]:5.2f}  {r[2]:9.3f} {r[3]:8.4f} {r[4]:9.3f}  {r[6]:7.1f}  {r[7]:6.3f}   ({r[5]:.3f})" for r in ROT_BAND)}
+GATE: every ratio <= {ROT_BAND_GATE_RATIO}  (worst {_rot_worst:.3f}; reference = the shipped fw v10..v35
+WC = 60 rung, 80.2 / 99.0 / 102.4 / 100.2 A per (m/s), a constant)
 
 ── robustness ──
 corner family        = {len(pm.drive_corners())} drive_corners() x v0 in {V0_SET} m/s = {n_corner} plants

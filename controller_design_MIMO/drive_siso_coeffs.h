@@ -13,7 +13,7 @@
 //
 // SISO Youla-H velocity controller for the SC001 drive channel:
 //   Gc(z) = R(z) + kI*Ts/2*(z+1)/(z-1),  e = v_ref - v [m/s]  ->  i_cmd [A]
-// H-inf mixed sensitivity (gamma = 28.1237) + Youla-H DC rescale (T(0) = 1 exact),
+// H-inf mixed sensitivity (gamma = 8.6067) + Youla-H DC rescale (T(0) = 1 exact),
 // Tustin at Ts = 2.0 ms (500 Hz motor channel; VESC UART frame floor).
 // R(z) is 2 DF2T biquad section(s); the integrator is kept separate to match the
 // shipped share-controller header layout byte for byte.
@@ -21,19 +21,19 @@
 // *** ANTI-WINDUP WARNING (differs from share_controller.h) ***
 // The shipped share controller de-winds by back-calculating ONLY the integrator.  That
 // is NOT sufficient here: the non-integral branch R has a low-frequency gain of
-// 454.4 A/(m/s), so against the +-12 A clamp the biquad cascade alone saturates for
-// |e| > 26.4 mm/s and its lag states wind up independently of the integrator.
-// Measured on the 0->2 m/s step: integrator-only AW leaves a -0.27 m/s standing error
-// and a 21.0 mm/s limit cycle.
+// 133.7 A/(m/s), so against the +-12 A clamp the biquad cascade alone saturates for
+// |e| > 89.8 mm/s and its lag states wind up independently of the integrator.
+// Measured on the 0->2 m/s step: integrator-only AW leaves a -0.03 m/s standing error
+// and a 2.6 mm/s limit cycle.
 // RE-CHECKED at the firmware's +-12 A clamp (2026-08-15 operator decision) on the
 // re-identified plant (2026-08-16 calibration): e_sat scales with the clamp, so it must be
 // re-answered on every clamp change.  Integrator-only AW is CLEAN for steps up to
-// ~0.1 m/s (final error < 1e-4 m/s, no limit cycle) and breaks from ~0.2 m/s upward.
+// ~0.2 m/s (final error < 1e-4 m/s, no limit cycle) and breaks from ~0.5 m/s upward.
 // It still FAILS the 0->2 m/s gate, so the Hanus form remains REQUIRED for this baseline.
 // A correct implementation must condition the FULL
 // controller state (Hanus conditioning, used in the synthesis sims):
 //     u_unsat = Cd x + Dd e ;  u = clamp(u_unsat) ;
-//     x[k+1]  = Ad x + Bd e + L*(u - u_unsat)          (Dd = 1.717609289e+00)
+//     x[k+1]  = Ad x + Bd e + L*(u - u_unsat)          (Dd = 2.136687606e-01)
 //
 // *** fw v18: DO NOT USE THE SELF-CONDITIONED FORM L = Bd/Dd (i.e. AC) ***
 // fw v10-v17 shipped the special case L = Bd*Dd^-1, whose saturated-mode matrix is
@@ -59,7 +59,7 @@
 
 #define DRIVE_CTRL_TS_US   2000      // controller update period, microseconds
 #define DRIVE_CTRL_NSOS    2
-static const float DRIVE_CTRL_KI = 7.827835513e+01f;   // integrator gain (continuous kI, Tustin in code)
+static const float DRIVE_CTRL_KI = 5.064105602e+01f;   // integrator gain (continuous kI, Tustin in code)
 // constexpr (not plain const) so the firmware can static_assert these against its own
 // MOTOR_I_CMD_MAX: a namespace-scope `const float` is NOT a constant expression in C++17, so
 // the clamp-pairing guard would not compile against it.  Same float32 values either way.
@@ -68,8 +68,8 @@ static constexpr float DRIVE_CTRL_I_MAX = 1.200000000e+01f;    // A, motor curre
 
 // biquad sections: b0 b1 b2 a1 a2 (a0 = 1)
 static const float DRIVE_CTRL_SOS[DRIVE_CTRL_NSOS][5] = {
-    { 1.639330934e+00f, 2.695416027e+00f, 1.056085093e+00f, -1.492418009e+00f, 5.640286939e-01f },
-    { 1.000000000e+00f, -1.230579459e+00f, 2.414300459e-01f, -1.222884910e+00f, 2.246824505e-01f },
+    { 1.630277046e-01f, 3.246201019e-01f, 1.615923973e-01f, -1.706583996e+00f, 7.307345962e-01f },
+    { 1.000000000e+00f, -1.997325900e+00f, 9.973266840e-01f, -1.999194624e+00f, 9.991947820e-01f },
 };
 
 // ── Hanus self-conditioned state-space realization ──────────────────────────
@@ -104,7 +104,7 @@ static const float DRIVE_CTRL_SOS[DRIVE_CTRL_NSOS][5] = {
 //     bit-identical coefficients.  (Emitting float64 text instead put the reference
 //     vectors 1.7e-2 A away from anything this header can reproduce.)  AC is derived from
 //     the rounded AD/BD/CD/DD and then rounded, so AC == AD - BD*CD/DD holds to
-//     6.9e-07 — a float32 rounding of AC's largest entry, not a compounding error.
+//     5.3e-06 — a float32 rounding of AC's largest entry, not a compounding error.
 //   * ARITHMETIC.  The replay vectors assume a float64 (double) state recursion, and the
 //     firmware uses one.  RE-MEASURED at the fw v18 anti-windup change: a float32 state
 //     recursion now costs only ~1e-5 A on the saturated regen episode
@@ -119,11 +119,11 @@ static const float DRIVE_CTRL_SOS[DRIVE_CTRL_NSOS][5] = {
 // Replay comparisons should be toleranced on the OUTPUT (i_cmd), never on the individual
 // states — and the two episodes need DIFFERENT tolerances:
 //     'small' (unsaturated) : 1e-04 A or tighter.  Clean test of the linear recursion
-//                             (measured on the firmware arithmetic path: 2.38e-04 mA).
+//                             (measured on the firmware arithmetic path: 4.77e-04 mA).
 //     'regen' (saturated)   : 0 mA.  During the saturated transient this controller
 //                             dithers across the +-12 A clamp boundary (2 clamp-state
 //                             transitions in the emitted vectors, closest boundary
-//                             approach 13341.5 uA), so one flipped decision — which any
+//                             approach 702.4 uA), so one flipped decision — which any
 //                             perturbation can cause — is worth ~8 A of state drive.
 //                             Measured worst sensitivity 0.00 mA
 //                             (scalar-order arithmetic (firmware path));
@@ -136,45 +136,45 @@ static const float DRIVE_CTRL_SOS[DRIVE_CTRL_NSOS][5] = {
 // those macros, do not copy the numbers above into a test.
 // Full detail in the figures/drive_siso_replay.csv header.
 #define DRIVE_CTRL_NSTATES 5
-static const float DRIVE_CTRL_DD = 1.71760928630828857e+00f;   // direct feedthrough, A per (m/s)
+static const float DRIVE_CTRL_DD = 2.13668763637542725e-01f;   // direct feedthrough, A per (m/s)
 
 // AD [5][5] — unconditioned state matrix (cross-check only)
 static const float DRIVE_CTRL_AD[5][5] = {
     { 1.00000000000000000e+00f, 0.00000000000000000e+00f, 0.00000000000000000e+00f, 0.00000000000000000e+00f, 0.00000000000000000e+00f },
-    { 0.00000000000000000e+00f, 9.95453119277954102e-01f, -1.55954966321587563e-02f, 1.42631642520427704e-02f, 5.21950249094516039e-04f },
-    { 0.00000000000000000e+00f, -1.55954975634813309e-02f, 8.99340927600860596e-01f, 1.73323512077331543e-01f, 4.44363243877887726e-03f },
-    { 0.00000000000000000e+00f, -1.42631651833653450e-02f, -1.73323541879653931e-01f, 5.91669917106628418e-01f, -3.99195104837417603e-02f },
-    { 0.00000000000000000e+00f, -5.23665919899940491e-04f, -4.45802928879857063e-03f, -4.00532595813274384e-02f, 2.28838920593261719e-01f },
+    { 0.00000000000000000e+00f, 9.98722195625305176e-01f, -6.80781807750463486e-03f, -7.82984774559736252e-03f, -6.94198888595565222e-06f },
+    { 0.00000000000000000e+00f, -6.80781807750463486e-03f, 9.47204172611236572e-01f, -1.06012731790542603e-01f, -7.49893515603616834e-05f },
+    { 0.00000000000000000e+00f, 7.82984774559736252e-03f, 1.06012731790542603e-01f, 7.60188102722167969e-01f, -5.15684718266129494e-04f },
+    { 0.00000000000000000e+00f, 6.92894491294282489e-06f, 7.48485035728663206e-05f, -5.14720391947776079e-04f, 9.99664127826690674e-01f },
 };
 
 // BD [5][1] — input matrix
 static const float DRIVE_CTRL_BD[5][1] = {
     { 1.00000000000000000e+00f },
-    { -5.94164729118347168e-02f },
-    { -1.20190031826496124e-01f },
-    { -8.77784788608551025e-02f },
-    { -3.49337351508438587e-03f },
+    { -1.65667403489351273e-02f },
+    { -5.64289279282093048e-02f },
+    { 4.74593341350555420e-02f },
+    { 4.57203641417436302e-05f },
 };
 
 // CD [1][5] — output matrix
 static const float DRIVE_CTRL_CD[1][5] = {
-    { 1.56556710600852966e-01f, -2.97082366943359375e+01f, -6.00950164794921875e+01f, 4.38892250061035156e+01f, 1.74104142189025879e+00f },
+    { 1.01282112300395966e-01f, -8.28337001800537109e+00f, -2.82144641876220703e+01f, -2.37296676635742188e+01f, -2.29031834751367569e-02f },
 };
 
 // AC [5][5] = AD - BD*CD/DD — the fw v10–v17 self-conditioned state matrix. RETIRED as a runtime coefficient in fw v18 (its eigenvalues are the controller's zeros, one of which is the Tustin zero at z = -1 — see the ANTI-WINDUP warning above). Emitted only as a cross-check of the AD/BD/CD/DD identity; DO NOT implement with it
 static const float DRIVE_CTRL_AC[5][5] = {
-    { 9.08851981163024902e-01f, 1.72962722778320312e+01f, 3.49875946044921875e+01f, -2.55525074005126953e+01f, -1.01364231109619141e+00f },
-    { 5.41569478809833527e-03f, -3.22303324937820435e-02f, -2.09443497657775879e+00f, 1.53250300884246826e+00f, 6.07490018010139465e-02f },
-    { 1.09550850465893745e-02f, -2.09443497657775879e+00f, -3.30581903457641602e+00f, 3.24448037147521973e+00f, 1.26273334026336670e-01f },
-    { 8.00083577632904053e-03f, -1.53250360488891602e+00f, -3.24448132514953613e+00f, 2.83463025093078613e+00f, 4.90564666688442230e-02f },
-    { 3.18414124194532633e-04f, -6.09460026025772095e-02f, -1.26682758331298828e-01f, 4.92111966013908386e-02f, 2.32379958033561707e-01f },
+    { 5.25985419750213623e-01f, 3.87673416137695312e+01f, 1.32047683715820312e+02f, 1.11058197021484375e+02f, 1.07190132141113281e-01f },
+    { 7.85287655889987946e-03f, 3.56473714113235474e-01f, -2.19440746307373047e+00f, -1.84770214557647705e+00f, -1.78273313213139772e-03f },
+    { 2.67481356859207153e-02f, -2.19440746307373047e+00f, -6.50410461425781250e+00f, -6.37290763854980469e+00f, -6.12361356616020203e-03f },
+    { -2.24964171648025513e-02f, 1.84770202636718750e+00f, 6.37290763854980469e+00f, 6.03093624114990234e+00f, 4.57148766145110130e-03f },
+    { -2.16721200558822602e-05f, 1.77938595879822969e-03f, 6.11211638897657394e-03f, 4.56290086731314659e-03f, 9.99669015407562256e-01f },
 };
 
-// L [5][1] — anti-windup CONDITIONING GAIN (fw v18). USE THIS ONE: x_next = AD*x + BD*e + L*(u - u_unsat). Placed so eig(AD - L*CD) = [-0.591196  0.245326  0.5       0.983988  0.999695]
+// L [5][1] — anti-windup CONDITIONING GAIN (fw v18). USE THIS ONE: x_next = AD*x + BD*e + L*(u - u_unsat). Placed so eig(AD - L*CD) = [-0.584832  0.5       0.994432  0.999665  0.999694]
 static const float DRIVE_CTRL_L[5][1] = {
-    { 1.45551145076751709e-01f },
-    { -8.58125369995832443e-03f },
-    { -1.94378476589918137e-02f },
-    { 2.90428404696285725e-03f },
-    { 2.40362691693007946e-03f },
+    { 1.17003536224365234e+00f },
+    { -1.94781441241502762e-02f },
+    { -7.14016109704971313e-02f },
+    { 2.09689904004335403e-02f },
+    { -5.72234284845762886e-06f },
 };
