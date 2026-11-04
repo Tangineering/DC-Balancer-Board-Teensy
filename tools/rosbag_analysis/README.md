@@ -4,7 +4,7 @@ The PhD student's scripts for the ROS 2 bags the Pi records (`/vehicle_state`,
 `/ems_command`, `/ems_diagnostics`, `/drive_cycle`, ...). The bags are in
 `logs/rosbags/` (index: `logs/rosbags/README.md`). They come from
 `phd/siddhesh-2026-11-03` (`64fb553`, student folder `scale_car/Analysis/`).
-The only edits are the default and example paths, which were changed from
+Apart from `scout_bags.py` (added 2026-11-04), the only edits are the default and example paths, which were changed from
 `../Logs/...` to `../../logs/rosbags/...` to match where the bags now live.
 
 The `.BLG` SD-card bench logs the Teensy writes itself are handled by
@@ -20,6 +20,7 @@ checks read `<bag>/csv/*.csv`, which `fchev_plot.py <bag> --csv` writes.
 
 | Script | Reads | Purpose |
 |---|---|---|
+| `scout_bags.py` | mcap | Repo addition (not the student's): one-row-per-bag inventory and quick stats, `--npz` caches arrays for analysis agents; used by the `rosbag-agent-analysis` skill |
 | `fchev_plot.py` | mcap | Four-panel overview (speed, share, currents, SoC/faults); `--csv` dumps every topic |
 | `plot_power.py` | mcap | P_fc / P_batt / P_demand |
 | `plot_ab.py` | csv | A/B overlay of clip vs no-clip sweep runs, written to `../../logs/rosbags/plots` |

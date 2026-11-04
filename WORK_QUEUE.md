@@ -1,5 +1,19 @@
 # Work queue — updated post round 2026-09-02 (Ag105 η = 0.88, η-era DP/SDP, MPC live, campaigns B and C analysed, physics review closed, session closed out)
 
+## 0j. Pi software and rosbag provenance (opened 2026-11-04, deferred by the operator)
+
+- [ ] 1. **Record the firmware version in every rosbag.** The v4 telemetry carries no `FW_VERSION` and has no spare
+      byte, and the Pi only talks to the Teensy over UDP, so the bridge cannot learn it. Options: (a) Pi-only stopgap -
+      `fchev_run.sh` asks for the fw version, puts it in the bag name and the bridge republishes it on a latched
+      `/fw_info` topic (operator-entered, so only as reliable as the operator); (b) authoritative - protocol v5 adds a
+      u16 `fw_version` to telemetry (60 B, checksum span moves, PLAN.md section 6b, tests, bridge in lockstep; use the
+      `protocol-bump` skill). Recommended: (b) with the next firmware version, (a) until then.
+- [ ] 2. **Get the deployed Pi package into the repo.** `references/EMS/Pi_2026-11-03/` holds node sources only. Missing:
+      `~/ros2_ws/src/fchev_ems/` as deployed (`package.xml`, `setup.py` entry points mapping `teensy_bridge`, the EMS
+      executables and `drive_cycle_node` to specific dated files), its `resource/` cost-to-go tables, and
+      `~/fchev/drive_cycles/`. Until then which dated file runs on the Pi is a guess. Ask the student to commit the
+      whole package as it is on the Pi.
+
 ## 0i. fw v30 (2026-09-16, the H-20 purge-dip UV rework) - the bench gate and the operator's items before the trip
 
 fw v30 (`teensy_controller.ino`, ledger row 30, `docs/fw30_fc_purge_uv.md`) is committed AS FLASHED (BENCH_TEST 0 / HIL_SIM 0)
