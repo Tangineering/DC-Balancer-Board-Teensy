@@ -17,7 +17,11 @@
  *       1.03 -> 1.62 s, overshoot 4.9 -> 11.6 %. drive_controller.h (DF2T / general Hanus
  *       structure), MOTOR_I_CMD_MAX 12 A, the encoder ISRs, updateWheelSpeed() and both PIs are
  *       UNCHANGED — the generated header is the whole of the drive-path change; nothing else was
- *       added to the drive path. Replay vectors regenerated (drive_replay_vectors.h).
+ *       added to the drive path. Replay vectors regenerated (drive_replay_vectors.h). The
+ *       454.4 / 544.8 A per (m/s) low-frequency gain figures quoted in older comments throughout
+ *       this file are the fw v10-v35 controller's; the v37 non-integral branch's low-frequency
+ *       gain is 133.7 A per (m/s) (Gs_red(0), drive_siso_metrics.txt), so every saturation /
+ *       full-scale-step argument built on the old figures is now CONSERVATIVE.
  *   (2) 'J' — Ag105 COMMISSIONING SESSION (State 98 only; does not touch the Run path). A line
  *       prompt (numeric codes, the K/N pattern): empty = status, 1 = start, 0 = stop, 2 = show the
  *       profile write, 2 1 = write reg 0x01 = 0x08 (2S) / reg 0x00 = 0x01 (2.5 A) via
@@ -28,9 +32,22 @@
  *       (assertFcChargeEnable(false), then REGEN HIGH), MPPT_DISABLE LOW. While it stands
  *       pollAg105()'s lazy initAg105Charger() and the MPPT manager are INHIBITED (as-found EPROM
  *       evidence), one register is read per loop pass at most (round robin, 10 ms), a [J] line
- *       prints at 10 Hz, and '4' '5' 'F' 'B' 'G' 'D' 'R' 'T' 'Y' 'W' are refused. STOP (J 0, the
- *       120 s cap, 'X', 'Q', REGEN/MOT_PWR found LOW): MPPT_DISABLE LOW, REGEN LOW, inhibit
- *       cleared, a summary line. A fault ends it at doState99() phase 0 (flag only; the teardown
+ *       prints at 10 Hz, and '1'-'6' 'C' 'A' 'V' 'P' 'O' 'F' 'B' 'G' 'D' 'R' 'T' 'Y' 'W' and
+ *       the 'N' write forms are refused (the session owns the power topology). START also needs
+ *       CBAL_DISABLE LOW (cell OVP active) and no manual motor mode / live share loop. STOP (J 0,
+ *       the 120 s cap, 'X', 'Q', REGEN/MOT_PWR found LOW, V_bus < V_BUS_CHARGED_THRESH for
+ *       >= 20 ms, reg 0x01 read as a >2S profile — Table 3 values 9-12, or anything > 12;
+ *       the DANGER line points to '1 2'):
+ *       MPPT_DISABLE LOW, REGEN LOW, inhibit cleared, a summary (as-found vs last read-back per
+ *       register, a loud warning + restore line if reg 0x02 is left below LIMIT_V_BUS_MAX, the
+ *       first-500 ms V_bus min / V_chg max / V_rgn max, the worst session I2C read in us). Writes
+ *       ('2 1', '3') are refused until the target register's as-found value is latched. Session
+ *       reads back off to 100 ms after 5 consecutive NAKs. The MPPT_DISABLE-LOW semantics while
+ *       charging are TODO(verify: Silvertel). Deviation from planning §9.2: no separate confirm
+ *       keystroke — 'J' then '1' is the confirm. '1 2' = START-AND-FIX: same preconditions and
+ *       notice; the 0xFD/0xFE reads are held off so 0x00/0x01 are read first, and the tick that
+ *       latches both as-found values performs the '2 1' writes. The M2 stop is exempt for the
+ *       as-found 0x01 read only; a failed 0x01 write, or any later unsafe 0x01 read, ends it. A fault ends it at doState99() phase 0 (flag only; the teardown
  *       owns the pins; summary at phase 3). No factory-reset code: reg 0xE6's write value is not
  *       in the datasheet. The bench-attended, time-capped exception to R3, State-98-only.
  *   No pin, sequencing, fault, telemetry (UDP v4 / 58 B), command (22 B), HIL frame (40 B / 18 B)
@@ -2955,8 +2972,10 @@ constexpr float ENC_SLOT_PITCH_M = (TWO_PI_F * FLYWHEEL_RADIUS_M) / ENCODER_SLOT
 // growth window exists on every normal start of every run.
 #define ENC_DIR_RUNAWAY_GROWTH_MIN 0.10f  // m/s
 // Post-flip lockout. 5 s with no second flip possible: long against the drive loop's settling
-// (the 16 rad/s crossover settles in ~0.3 s) and against the 0.5 s detection window, so the
-// corrected loop is fully settled before the detector can arm again.
+// and against the 0.5 s detection window, so the corrected loop is fully settled before the
+// detector can arm again. UPDATED fw v37: the drive law now crosses over at 6.55 rad/s and its
+// 0->2 m/s step settles to 2 % in 1.62 s (was 16-17 rad/s / ~0.3 s for fw v10..v35); the 5 s
+// lockout still exceeds 1.62 s + the 0.5 s window with > 2x margin, so the constant is unchanged.
 #define ENC_DIR_FLIP_LOCKOUT_MS   5000u
 // Per-boot flip cap. An inverted harness needs EXACTLY ONE flip. A second, third or fourth is
 // tolerated (a bench operator may re-plug the connector mid-session), but past the cap the sign is
@@ -4953,6 +4972,36 @@ bool     ag105CommStatPrev       = false;
 bool     ag105CommStatHaveWin    = false;  // a completed window exists
 uint8_t  ag105CommStatPctHigh    = 0;      // last completed window: % of samples HIGH
 uint16_t ag105CommStatWinEdges   = 0;      // last completed window: rising edges
+// fw v37 review round (Stage 4).
+// M5: the FIRST successful read of each round-robin register this session = the AS-FOUND value.
+uint8_t  ag105CommAsFoundVal[AG105_COMM_NREG] = {0};
+bool     ag105CommAsFoundOk[AG105_COMM_NREG]  = {false};
+// M4: V_bus under V_BUS_CHARGED_THRESH continuously for >= AG105_COMMISSION_VBUS_LOW_MS ends the
+// session. Dwell timer re-armed whenever V_bus is at or above the threshold.
+#define AG105_COMMISSION_VBUS_LOW_MS 20u    // ms — same order as the UV_BUS latch dwell (20 ms)
+bool     ag105CommVbusLow        = false;
+uint32_t ag105CommVbusLowSinceMs = 0;
+// M2: reg 0x01 values whose charge voltage EXCEEDS the 2S 8.4 V profile — 9..12 = 3S 11.7-12.6 V
+// (Ag105_Table3_Charge_Voltage_Select.json i2c_field_value 9-12); 13..255 are outside Table 7's
+// documented 0x00-0x0C range and are treated the same (unknown = unsafe). 0x00 is external-resistor
+// mode and is WARNED, not stopped (see the hazard notice).
+#define AG105_VBATT_CFG_MAX_SAFE 0x08       // 8 = 2S / 8.4 V (Table 3)
+// L3: NAK back-off and the worst single session read duration.
+#define AG105_COMMISSION_NAK_BACKOFF_N  5u     // consecutive session NAKs before backing off
+#define AG105_COMMISSION_READ_SLOW_MS   100u   // ms — backed-off read interval, until the next ACK
+uint8_t  ag105CommNakStreak      = 0;
+// fw v37 (orchestrator ruling on the M2 consequence): 'J' then "1 2" = START-AND-FIX. Same
+// preconditions and notice as "1"; once BOTH reg 0x00 and 0x01 as-found values are latched the
+// tick performs the "2 1" profile write on that tick and clears this flag. While it is set the M2
+// stop is suppressed for the AS-FOUND read of 0x01 only (the write is the fix) and the 0xFD/0xFE
+// reads are held off so 0x00/0x01 are the first two reads (minimum exposure).
+bool     ag105CommFixOnFirstRead = false;
+uint32_t ag105CommReadWorstUs    = 0;      // worst ag105ReadConfigReg() duration this session [us]
+// L5: first-engagement evidence over the first AG105_COMMISSION_EARLY_MS after the power edge.
+#define AG105_COMMISSION_EARLY_MS 500u
+float    ag105CommEarlyVbusMin   = 0.0f;
+float    ag105CommEarlyVchgMax   = 0.0f;
+float    ag105CommEarlyVrgnMax   = 0.0f;
 
 // ── State 98 bench tools: power-share profile emulator (mirrors DriveCyclePhase) ──────────────
 // Sweeps power_share_setpoint through a phase table while the motor is held at a constant command,
@@ -5299,10 +5348,11 @@ void    printMpptStatus();
 void    parseMpptLine(const char *line);
 // Ag105 commissioning session ('J', fw v37)
 void    parseJLine(const char *line);
-void    ag105CommissionStart();
+void    ag105CommissionStart(bool fixOnFirstRead = false);
 void    ag105CommissionStop(const char *reason);
 void    ag105CommissionAbandon();
 void    ag105CommissionTick();
+static bool ag105CommWriteProfile();   // the '2 1' / '1 2' profile write (fw v37)
 void    ag105CommissionPrintStatus();
 void    ag105CommissionPrintSummary();
 const char* ag105GenstatName(uint8_t genstat);
@@ -8245,9 +8295,12 @@ void printTestHelp() {
     Serial.println("      re-takes I2C control on the next charger POWER CYCLE, not immediately.");
     Serial.println("  J [code] - Ag105 COMMISSIONING session (fw v37; charger fed FROM THE BUS via");
     Serial.println("      MOT_PWR+REGEN — needs 'G' first; 120 s cap; auto-config inhibited):");
-    Serial.println("      empty=status  1=start  0=stop  2=show profile write  2 1=write 0x01=2S/0x00=2.5A");
+    Serial.println("      empty=status  1=start  1 2=start-and-fix (writes 2S/2.5A once as-found 0x00/0x01 read)");
+    Serial.println("      0=stop  2=show profile write  2 1=write 0x01=2S/0x00=2.5A");
     Serial.println("      3 <0..250>=write reg 0x02 (MPPT threshold)  4=toggle MPPT_DISABLE");
-    Serial.println("      while ON: 4 5 F B G D R T Y W refused; 'X'/'Q' end it. Scope V_chg first time.");
+    Serial.println("      while ON: 1-6 C A V P O F B G D R T Y W and 'N' writes refused; 'X'/'Q' end it.");
+    Serial.println("      Scope V_chg first time; watch r05/Ibt (charge target unverified). A BENCH_TEST 1");
+    Serial.println("      build compiles out the GENSTAT 5/6/7 latch if commissioning faults at once.");
     Serial.println("  E - read VESC FW+telemetry   U - toggle VESC watch (~2Hz, flags faults)");
     Serial.println("      ** the VESC watch MOVED from 'W' to 'U' (\"UART watch\") — 'W' is now a");
     Serial.println("         motor profile below **");
@@ -8360,9 +8413,17 @@ void doState98() {
         // the spec's list for symmetry with 'F'), and every profile start would run the motor /
         // share stack on a bus that is also feeding the charger. 'X' (stop), 'Q' (exit, stops the
         // session first), 'J' itself, 'S', and the read-only keys stay available.
+        // fw v37 review round (Stage 4): the session owns the WHOLE power topology, not just REGEN —
+        // '1' '2' (bus switches), '3' (MOT_PWR, half of the charger's feed) and '6' (pack
+        // sequencing) are refused too (M4); 'C' is refused because CBAL_DISABLE HIGH bypasses the
+        // cell OVP while the pack is being charged (M1); 'A' 'V' 'P' 'O' are refused so no manual
+        // motor command or droop write runs on a bus that is feeding the charger (L1). The write
+        // forms of 'N' are refused at parse time in parseMpptLine() (L2).
         if (handleAsCommand && ag105CommissionActive) {
             switch (cmd) {
-                case '4': case '5':
+                case '1': case '2': case '3': case '4': case '5': case '6':
+                case 'C': case 'c':
+                case 'A': case 'a': case 'V': case 'v': case 'P': case 'p': case 'O': case 'o':
                 case 'F': case 'f': case 'B': case 'b': case 'G': case 'g':
                 case 'D': case 'd': case 'R': case 'r': case 'T': case 't':
                 case 'Y': case 'y': case 'W': case 'w':
@@ -8597,7 +8658,7 @@ void doState98() {
                 // empty-line form is a read-only status print; every other form is refused at
                 // parse time by parseJLine()'s own bringupActive / precondition guards.
                 pendingInput = PEND_J_PARAMS;
-                Serial.print("Ag105 commissioning [1=start 0=stop 2=profile(2 1=write) 3 <n>=reg0x02 4=MPPT pin, empty=status]: ");
+                Serial.print("Ag105 commissioning [1=start 1 2=start+fix 0=stop 2=profile(2 1=write) 3 <n>=reg0x02 4=MPPT pin, empty=status]: ");
                 if (plotModeActive) Serial.println();   // see 'P' — plot-line concat guard
                 break;
             case 'I':
@@ -10831,6 +10892,13 @@ void parseMpptLine(const char *line) {
     // Guards, in the same spirit as parseKLogLine()'s: this path does blocking-ish I2C
     // (three transactions) and must not land inside a millis()-deadline-sequenced machine or
     // steal a poll slot from a running profile.
+    // fw v37 (review L2): a 'J' commissioning session owns reg 0x02 ('J' 3); a forced 'N' write
+    // would bypass the session's as-found / write bookkeeping. The empty-line status form above
+    // stays available.
+    if (ag105CommissionActive) {
+        Serial.println("REFUSED: Ag105 commissioning active - use 'J' 3 <count>, or end it ('J' 0)");
+        return;
+    }
     if (bringupActive) {
         Serial.println("REFUSED: staged bring-up in progress — bring the bus up first");
         return;
@@ -10942,10 +11010,8 @@ static void ag105CommPrintHex2(uint8_t v) {
 // One cached round-robin slot. 0xFF on a MEASUREMENT register (0x05/0x06/0x07) is the
 // AG105_Silvertel.pdf §2.11.5 "unavailable" sentinel (input below 9 V / below the MPPT threshold /
 // error state), not a value; on reg 0x02 it is external-resistor mode (Table 7: >= 251).
-static void ag105CommPrintSlot(uint8_t slot) {
-    if (!ag105CommRegOk[slot]) { Serial.print("--"); return; }
-    uint8_t v = ag105CommRegVal[slot];
-    switch (AG105_COMM_REGS[slot]) {
+static void ag105CommPrintRegVal(uint8_t reg, uint8_t v) {
+    switch (reg) {
         case AG105_REG_MPPT_V:
             Serial.print(v);
             if (v <= (uint8_t)AG105_MPPT_N_MAX) {
@@ -10972,13 +11038,18 @@ static void ag105CommPrintSlot(uint8_t slot) {
     }
 }
 
+static void ag105CommPrintSlot(uint8_t slot) {
+    if (!ag105CommRegOk[slot]) { Serial.print("--"); return; }
+    ag105CommPrintRegVal(AG105_COMM_REGS[slot], ag105CommRegVal[slot]);
+}
+
 static int ag105CommSlotOf(uint8_t reg) {
     for (uint8_t i = 0; i < AG105_COMM_NREG; i++) if (AG105_COMM_REGS[i] == reg) return i;
     return -1;
 }
 
 // Start a session. Every precondition refuses with a one-line reason and touches no pin.
-void ag105CommissionStart() {
+void ag105CommissionStart(bool fixOnFirstRead) {
     if (ag105CommissionActive) {
         Serial.println("[J] REFUSED: a session is already active ('J' then 0 stops it)");
         return;
@@ -11019,6 +11090,17 @@ void ag105CommissionStart() {
         Serial.println("[J] REFUSED: FC_CHARGE_ENABLE is HIGH — turn it off first ('5')");
         return;
     }
+    // M1 (review): the cell OVP must be ACTIVE while the pack is charged. CBAL_DISABLE LOW =
+    // BQ29200 balancer/OVP active (PCB schematic polarity, CLAUDE.md §4).
+    if (digitalRead(CBAL_DISABLE)) {
+        Serial.println("[J] REFUSED: CBAL_DISABLE is HIGH (cell OVP bypassed) — 'C' to re-enable it first");
+        return;
+    }
+    // L1 (review): no manual motor command and no live share loop on a bus that feeds the charger.
+    if (manualMotorMode != MOTOR_TEST_OFF || powerBalanceLive) {
+        Serial.println("[J] REFUSED: a manual motor command ('A'/'V') or live power-share ('P') is active — 'X' first");
+        return;
+    }
     // fw v37 deviation from the spec (an ADDED precondition): REGEN already HIGH means the charger
     // has been powered outside a session, and pollAg105()'s lazy initAg105Charger() may already
     // have rewritten reg 0x00/0x01 — the as-found evidence the session exists to read. Make the
@@ -11029,9 +11111,26 @@ void ag105CommissionStart() {
         return;
     }
 
+    // L6 (review, REJECTED as a change): there is no separate confirm keystroke — typing 'J' and
+    // then '1' at the prompt IS the confirm (deviation from planning §9.2's "waits for a confirm
+    // char", recorded in the v37 changelog).
     Serial.println("[J] HAZARD: the Ag105 is about to be fed FROM THE BUS through MOT_PWR + REGEN —");
     Serial.println("    the bench-attended exception to R3 (no bus-fed charging in Run). The charger-");
     Serial.println("    input (D-RG-EN) hot-plug has NEVER been scoped: scope V_chg on the first run.");
+    Serial.println("    CHARGE TARGET UNKNOWN: reg 0x00/0x01 = 0x00 means EXTERNAL-RESISTOR mode, and the");
+    Serial.println("    board's VS/CS wiring is unverified (VS shorted to Vin- = 12.6 V per the datasheet).");
+    Serial.println("    WATCH r05 (Ag105 measured V_batt) and Ibt; if V_batt climbs press 'X' or 'J' 0.");
+    Serial.println("    OV_BATT (8.5 V) is the backstop; a 3S value read in reg 0x01 ends the session");
+    Serial.println("    (under '1 2' the as-found 0x01 is fixed by the write instead; a write that fails");
+    Serial.println("    or does not stick still ends it).");
+    Serial.println("    MPPT_DISABLE starts LOW (inhibited). TODO(verify: Silvertel): whether MPPTD LOW");
+    Serial.println("    also bypasses the input threshold while charging is UNVERIFIED.");
+#if BENCH_TEST
+    Serial.println("    (BENCH_TEST build: the GENSTAT 5/6/7 charger-fault latch is compiled OUT.)");
+#else
+    Serial.println("    NOTE: an as-found GENSTAT 5/6/7 latches FAULT_CHARGER_STAT immediately; a");
+    Serial.println("    BENCH_TEST 1 build compiles that check out if commissioning faults at once.");
+#endif
     Serial.print  ("    Session cap "); Serial.print(AG105_COMMISSION_MAX_MS / 1000u);
     Serial.println(" s; pollAg105() auto-config + MPPT manager INHIBITED; 'J' 0 / 'X' / 'Q' stop.");
 
@@ -11060,6 +11159,15 @@ void ag105CommissionStart() {
     ag105CommStatHaveWin = false;
     ag105CommStatPctHigh = 0;
     ag105CommStatWinEdges = 0;
+    for (uint8_t i = 0; i < AG105_COMM_NREG; i++) { ag105CommAsFoundVal[i] = 0; ag105CommAsFoundOk[i] = false; }
+    ag105CommVbusLow        = false;
+    ag105CommVbusLowSinceMs = 0;
+    ag105CommNakStreak      = 0;
+    ag105CommReadWorstUs    = 0;
+    ag105CommFixOnFirstRead = fixOnFirstRead;
+    ag105CommEarlyVbusMin   = V_bus;
+    ag105CommEarlyVchgMax   = V_chg;
+    ag105CommEarlyVrgnMax   = V_rgn;
 
     // The INHIBIT goes up FIRST, before the power edge, so no pollAg105() pass can ever see a
     // powered, settled charger without it.
@@ -11067,6 +11175,9 @@ void ag105CommissionStart() {
     // MPPT_DISABLE LOW (inhibited, active-LOW — PCB schematic) BEFORE the charger is powered, so it
     // boots with its MPPT loop held off; the operator releases it explicitly with 'J' 4. The
     // release mirror follows the pin (fw v24 safety-L1, same as the 'M' key).
+    // TODO(verify: Silvertel): what MPPTD LOW does DURING charging is unverified — it may hold the
+    // MPPT loop off only, or it may also bypass the input-voltage threshold (i.e. let the module
+    // charge from any input). LOW stays the start default; 'J' 4 + the monitor line is the test.
     digitalWrite(MPPT_DISABLE, LOW);
     mpptReleased = false;
     // FC_CHARGE LOW before REGEN HIGH (CLAUDE.md §2: FC_CHARGE is mutually exclusive with REGEN,
@@ -11081,6 +11192,8 @@ void ag105CommissionStart() {
     ag105CommStatWinStartMs = ag105CommStartMs;
     Serial.print("[J] session START — REGEN_ENABLE HIGH (charger power edge) at t=");
     Serial.print(ag105CommStartMs); Serial.println(" ms; MPPT_DISABLE LOW (inhibited)");
+    if (fixOnFirstRead)
+        Serial.println("[J] START-AND-FIX ('1 2'): reg 0x01 = 0x08 / reg 0x00 = 0x01 will be written as soon as both as-found values are read");
 }
 
 // Stop a session: the full stop sequence. Called by 'J' 0, the time cap, 'X', 'Q', an ownership
@@ -11146,10 +11259,7 @@ void ag105CommissionPrintSummary() {
     if (ag105CommRegsWritten & 0x02) Serial.print(" 0x01");
     if (ag105CommRegsWritten & 0x04) Serial.print(" 0x02");
     if (!ag105CommRegsWritten)       Serial.print(" none");
-    Serial.print(")  last read-back: r00="); ag105CommPrintSlot(0);
-    Serial.print(" r01="); ag105CommPrintSlot(1);
-    Serial.print(" r02="); ag105CommPrintSlot(2);
-    Serial.print("  fw=");
+    Serial.print(")  fw=");
     if (ag105CommFwPhase >= 3) {
         Serial.print("0x"); ag105CommPrintHex2(ag105CommFwMajor);
         Serial.print(".0x"); ag105CommPrintHex2(ag105CommFwMinor);
@@ -11157,6 +11267,50 @@ void ag105CommissionPrintSummary() {
         Serial.print("--");
     }
     Serial.println();
+    // M5 (review): as-found (first read this session) next to the last read-back, per register.
+    Serial.println("    reg   as-found         last read-back");
+    for (uint8_t i = 0; i < AG105_COMM_NREG; i++) {
+        Serial.print("    0x"); ag105CommPrintHex2(AG105_COMM_REGS[i]); Serial.print("  ");
+        if (ag105CommAsFoundOk[i]) {
+            ag105CommPrintRegVal(AG105_COMM_REGS[i], ag105CommAsFoundVal[i]);
+            Serial.print(" [0x"); ag105CommPrintHex2(ag105CommAsFoundVal[i]); Serial.print("]");
+        } else {
+            Serial.print("--");
+        }
+        Serial.print("   ");
+        ag105CommPrintSlot(i);
+        if (ag105CommRegOk[i]) { Serial.print(" [0x"); ag105CommPrintHex2(ag105CommRegVal[i]); Serial.print("]"); }
+        Serial.println();
+    }
+    // M5 (review): a register-mode reg 0x02 threshold left BELOW LIMIT_V_BUS_MAX means a later
+    // bus-fed path (the '4'/'5' keys, a State-99 drain) can charge from the bus. Say so loudly, with
+    // the exact restore line. EPROM: the value persists across power cycles (Table 7).
+    if (ag105CommRegOk[2] && ag105CommRegVal[2] <= (uint8_t)AG105_MPPT_N_MAX &&
+        ag105MpptVoltsFromCount(ag105CommRegVal[2]) < LIMIT_V_BUS_MAX) {
+        Serial.print("    *** WARNING: reg 0x02 is LEFT at "); Serial.print(ag105CommRegVal[2]);
+        Serial.print(" = "); Serial.print(ag105MpptVoltsFromCount(ag105CommRegVal[2]), 3);
+        Serial.print(" V, BELOW LIMIT_V_BUS_MAX "); Serial.print(LIMIT_V_BUS_MAX, 1);
+        Serial.println(" V (EPROM — persists): the bus can charge the pack on any path that feeds the charger.");
+        if (ag105CommAsFoundOk[2] && ag105CommAsFoundVal[2] <= (uint8_t)AG105_MPPT_N_MAX) {
+            Serial.print("    *** RESTORE (inside a new session): 'J' then '3 ");
+            Serial.print(ag105CommAsFoundVal[2]); Serial.println("'");
+        } else if (ag105CommAsFoundOk[2]) {
+            // 'N R' writes AG105_MPPT_N_RESISTOR = 0xFF (parseMpptLine()). That restores resistor
+            // mode exactly when the as-found byte was 0xFF (the factory default); a 251-254 as-found
+            // byte is the same MODE (Table 7: >= 251) but not the same byte.
+            Serial.print("    *** RESTORE (as-found 0x"); ag105CommPrintHex2(ag105CommAsFoundVal[2]);
+            Serial.println(" = external-resistor mode): with NO session, power the charger ('4' or '5')");
+            Serial.println("        and 'N' then 'R' (writes 0xFF = resistor mode; charged to the boot write budget).");
+        } else {
+            Serial.println("    *** RESTORE: as-found reg 0x02 was never read this session — choose the value deliberately.");
+        }
+    }
+    Serial.print("    first "); Serial.print(AG105_COMMISSION_EARLY_MS);
+    Serial.print(" ms after power: V_bus min="); Serial.print(ag105CommEarlyVbusMin, 2);
+    Serial.print("V  V_chg max=");               Serial.print(ag105CommEarlyVchgMax, 2);
+    Serial.print("V  V_rgn max=");               Serial.print(ag105CommEarlyVrgnMax, 2);
+    Serial.print("V (uncalibrated)   worst session I2C read="); Serial.print(ag105CommReadWorstUs);
+    Serial.println(" us");
 }
 
 void ag105CommissionPrintStatus() {
@@ -11225,6 +11379,28 @@ void ag105CommissionTick() {
     uint32_t el  = now - ag105CommStartMs;
     if (el >= AG105_COMMISSION_MAX_MS) { ag105CommissionStop("120 s cap"); return; }
     if (el >= AG105_SETTLE_MS) ag105CommSettled = true;
+    // M4 (review): a bus that sags under V_BUS_CHARGED_THRESH (the start precondition) for
+    // AG105_COMMISSION_VBUS_LOW_MS continuously ends the session — the charger load (or the
+    // hot-plug) is pulling the bus down. Dwell re-armed whenever V_bus is at/above the threshold;
+    // wrap-safe unsigned subtraction. The negated compare also catches a NaN reading.
+    if (!(V_bus >= V_BUS_CHARGED_THRESH)) {
+        if (!ag105CommVbusLow) {
+            ag105CommVbusLow        = true;
+            ag105CommVbusLowSinceMs = now;
+        } else if (now - ag105CommVbusLowSinceMs >= AG105_COMMISSION_VBUS_LOW_MS) {
+            ag105CommissionStop("V_bus below V_BUS_CHARGED_THRESH for >= 20 ms");
+            return;
+        }
+    } else {
+        ag105CommVbusLow = false;
+    }
+    // L5 (review): first-engagement evidence without a scope — the extremes over the first
+    // AG105_COMMISSION_EARLY_MS after the power edge (sampled once per doState98() pass).
+    if (el < AG105_COMMISSION_EARLY_MS) {
+        if (V_bus < ag105CommEarlyVbusMin) ag105CommEarlyVbusMin = V_bus;
+        if (V_chg > ag105CommEarlyVchgMax) ag105CommEarlyVchgMax = V_chg;
+        if (V_rgn > ag105CommEarlyVrgnMax) ag105CommEarlyVrgnMax = V_rgn;
+    }
 
     // pollAg105()'s 50 Hz live read (reg 0x06 + the prepended Table 6 status byte).
     if (ag105DataValid) {
@@ -11236,7 +11412,8 @@ void ag105CommissionTick() {
         }
         if (I_charge > ag105CommMaxIcharge) ag105CommMaxIcharge = I_charge;
     }
-    if (ag105CommAckEver && ag105CommFwPhase == 0) ag105CommFwPhase = 1;   // 0xFD/0xFE once
+    // 0xFD/0xFE once — held off in start-and-fix mode so 0x00/0x01 are the first two reads.
+    if (ag105CommAckEver && ag105CommFwPhase == 0 && !ag105CommFixOnFirstRead) ag105CommFwPhase = 1;
 
     // CHARGER_STAT activity (Ag105_Table5_Status_Output.json): steady HIGH = Charging, steady LOW =
     // Input Voltage Removed, 50 % / 2 s = Fully Charged, pulse sets = errors. Only the two STEADY
@@ -11260,7 +11437,12 @@ void ag105CommissionTick() {
 
     // At most ONE config-register read per pass, and only every AG105_COMMISSION_READ_MS: one
     // 2-byte Wire transaction (STOP + read, ag105ReadConfigReg()) is the whole I2C budget here.
-    if (now - ag105CommLastReadMs >= AG105_COMMISSION_READ_MS) {
+    // L3 (review): after AG105_COMMISSION_NAK_BACKOFF_N consecutive NAKs the interval backs off to
+    // AG105_COMMISSION_READ_SLOW_MS until the next ACK (a silent / booting charger costs a NAK'd
+    // transaction every 100 ms, not every 10 ms).
+    uint32_t readPeriod = (ag105CommNakStreak >= AG105_COMMISSION_NAK_BACKOFF_N)
+                              ? AG105_COMMISSION_READ_SLOW_MS : AG105_COMMISSION_READ_MS;
+    if (now - ag105CommLastReadMs >= readPeriod) {
         ag105CommLastReadMs = now;
         int     slot = -1;
         uint8_t reg;
@@ -11271,22 +11453,58 @@ void ag105CommissionTick() {
             reg  = AG105_COMM_REGS[slot];
             ag105CommRrIdx = (uint8_t)((ag105CommRrIdx + 1) % AG105_COMM_NREG);
         }
-        uint8_t v  = 0;
-        bool    ok = ag105ReadConfigReg(reg, v);
+        uint8_t  v   = 0;
+        uint32_t t0  = micros();
+        bool     ok  = ag105ReadConfigReg(reg, v);
+        uint32_t dUs = micros() - t0;            // wrap-safe unsigned subtraction
+        if (dUs > ag105CommReadWorstUs) ag105CommReadWorstUs = dUs;
         ag105CommLastReadOk = ok;
         if (!ok) {
             if (ag105CommNakCount < 0xFFFF) ag105CommNakCount++;
+            if (ag105CommNakStreak < 0xFF)  ag105CommNakStreak++;
         } else {
+            ag105CommNakStreak = 0;
             if (!ag105CommAckEver) {
                 ag105CommAckEver    = true;
                 ag105CommFirstAckMs = el;
                 // The firmware-version reads are queued from the NEXT read period, so the slot
                 // just read is not skipped.
-                if (ag105CommFwPhase == 0) ag105CommFwPhase = 1;
+                if (ag105CommFwPhase == 0 && !ag105CommFixOnFirstRead) ag105CommFwPhase = 1;
             }
             if (slot >= 0) {
                 ag105CommRegVal[slot] = v;
                 ag105CommRegOk[slot]  = true;
+                // M5 (review): the first successful read of each register is its AS-FOUND value.
+                bool asFoundRead = !ag105CommAsFoundOk[slot];
+                if (asFoundRead) {
+                    ag105CommAsFoundVal[slot] = v;
+                    ag105CommAsFoundOk[slot]  = true;
+                }
+                // M2 (review): a reg 0x01 value whose charge voltage exceeds the 2S 8.4 V profile
+                // (9-12 = 3S 11.7-12.6 V, Ag105_Table3_Charge_Voltage_Select.json; > 12 is outside
+                // Table 7's documented range) would charge the 2S pack past its limit — end the
+                // session (REGEN LOW) at once. 0x00 (external-resistor mode) is warned, not stopped.
+                // START-AND-FIX ('1 2'): the AS-FOUND read of 0x01 is exempt — the profile write
+                // below is the fix. Every LATER read of 0x01 (including the first one after the
+                // write) is not, so a write that failed or did not stick still ends the session.
+                bool m2Exempt = ag105CommFixOnFirstRead && asFoundRead;
+                if (reg == AG105_REG_VBATT_CFG && v > (uint8_t)AG105_VBATT_CFG_MAX_SAFE && !m2Exempt) {
+                    Serial.print("[J] DANGER: reg 0x01 reads 0x"); ag105CommPrintHex2(v);
+                    Serial.println(" — a charge voltage ABOVE 2S/8.4 V (Table 3: 9-12 = 3S). Ending the");
+                    Serial.println("    session. To correct it: 'J' then '1 2' (start-and-fix: the profile is written");
+                    Serial.println("    the moment both as-found values are read; watch V_batt).");
+                    ag105CommissionStop("reg 0x01 holds a >2S charge-voltage profile");
+                    return;
+                }
+                // START-AND-FIX: both as-found values latched -> the "2 1" writes, on this tick.
+                if (ag105CommFixOnFirstRead && ag105CommAsFoundOk[0] && ag105CommAsFoundOk[1]) {
+                    ag105CommFixOnFirstRead = false;   // one shot; also releases the 0xFD/0xFE reads
+                    Serial.println("[J] start-and-fix: as-found 0x00/0x01 latched — writing the 2S / 2.5 A profile");
+                    if (!ag105CommWriteProfile()) {
+                        ag105CommissionStop("start-and-fix: reg 0x01 write failed (charge voltage unproven)");
+                        return;
+                    }
+                }
             } else if (ag105CommFwPhase == 1) {
                 ag105CommFwMajor = v;
                 ag105CommFwPhase = 2;
@@ -11345,13 +11563,40 @@ void ag105CommissionTick() {
     Serial.print(" MPPT_DIS="); Serial.println(digitalRead(MPPT_DISABLE));
 }
 
+// The "2 1" profile write, shared with the '1 2' start-and-fix path. Voltage first, then current
+// (either order is safe on a 2S pack: the as-found 4.2 V target cannot charge it, and 8.4 V / 1 A is
+// inside the pack's rating). Up to 3 Wire transactions per register (read, write, read-back) — a
+// one-shot action, not the periodic path. Returns false when the reg 0x01 write FAILED (read, write
+// or verify), i.e. the charge-voltage register cannot be proven to hold the 2S value.
+// Sources: Ag105_Table3_Charge_Voltage_Select.json (0x08 = 2S/8.4 V),
+//          Ag105_Table4_Charge_Current_Select.json (0x01 = 2.5 A).
+static bool ag105CommWriteProfile() {
+    const uint8_t regs[2] = { AG105_REG_VBATT_CFG, AG105_REG_ICHG_CFG };
+    const uint8_t vals[2] = { AG105_VAL_2S,        AG105_VAL_2500MA };
+    bool vbattOk = true;
+    for (uint8_t i = 0; i < 2; i++) {
+        Ag105WriteResult wr = ag105WriteConfigRegChecked(regs[i], vals[i]);
+        if (wr != AG105_WR_SKIPPED && ag105CommWrites < 0xFF) ag105CommWrites++;
+        if (wr == AG105_WR_WROTE) ag105CommRegsWritten |= (uint8_t)(1u << regs[i]);
+        int s = ag105CommSlotOf(regs[i]);
+        if (wr != AG105_WR_FAIL && s >= 0) { ag105CommRegVal[s] = vals[i]; ag105CommRegOk[s] = true; }
+        if (wr == AG105_WR_FAIL && regs[i] == AG105_REG_VBATT_CFG) vbattOk = false;
+        Serial.print("[J] reg 0x"); ag105CommPrintHex2(regs[i]);
+        Serial.print(" <- 0x");     ag105CommPrintHex2(vals[i]);
+        Serial.println(wr == AG105_WR_WROTE   ? ": WROTE (verified)" :
+                       wr == AG105_WR_SKIPPED ? ": SKIPPED (already held)" :
+                                                ": FAIL (read/write/verify)");
+    }
+    return vbattOk;
+}
+
 // 'J' line parser. Numeric codes only (see PEND_J_PARAMS).
 void parseJLine(const char *line) {
     const char *p = line;
     while (*p == ' ' || *p == '\t') p++;
     if (*p == '\0') { ag105CommissionPrintStatus(); return; }   // bare "J" + newline
 
-    static const char *USAGE = "ERROR: J takes nothing, 1, 0, 2, 2 1, 3 <0..250>, or 4";
+    static const char *USAGE = "ERROR: J takes nothing, 1, 1 2, 0, 2, 2 1, 3 <0..250>, or 4";
     char *end = NULL;
     long code = strtol(p, &end, 10);
     if (end == p) { Serial.println(USAGE); return; }
@@ -11378,8 +11623,9 @@ void parseJLine(const char *line) {
 
     switch (code) {
         case 1:
-            if (haveArg) { Serial.println(USAGE); return; }
-            ag105CommissionStart();
+            // "1" = start; "1 2" = start-and-fix (orchestrator ruling on the M2 consequence).
+            if (haveArg && arg != 2) { Serial.println(USAGE); return; }
+            ag105CommissionStart(haveArg);
             return;
         case 0:
             if (haveArg) { Serial.println(USAGE); return; }
@@ -11403,8 +11649,10 @@ void parseJLine(const char *line) {
         bool cur = digitalRead(MPPT_DISABLE);
         digitalWrite(MPPT_DISABLE, !cur);
         mpptReleased = (!cur == HIGH);
+        // TODO(verify: Silvertel): the LOW (inhibited) semantics during charging are unverified —
+        // MPPTD LOW may also bypass the input-voltage threshold. The monitor line is the test.
         Serial.print("[J] MPPT_DISABLE -> "); Serial.print(!cur ? 1 : 0);
-        Serial.print((!cur) ? " (MPPT released)" : " (MPPT inhibited)");
+        Serial.print((!cur) ? " (MPPT released)" : " (MPPT inhibited — effect while charging UNVERIFIED)");
         Serial.print(" at t="); Serial.print(millis() - ag105CommStartMs); Serial.println(" ms");
         return;
     }
@@ -11424,24 +11672,14 @@ void parseJLine(const char *line) {
             Serial.println("[J] REFUSED: the Ag105 is not ACKing (wait for ack=y)");
             return;
         }
-        // Voltage first, then current (either order is safe on a 2S pack: the as-found 4.2 V
-        // target cannot charge it, and 8.4 V / 1 A is inside the pack's rating); the MPPT loop is
-        // held off unless the operator released it. Up to 3 Wire transactions per register
-        // (read, write, read-back) — a one-shot operator action, not the periodic path.
-        const uint8_t regs[2] = { AG105_REG_VBATT_CFG, AG105_REG_ICHG_CFG };
-        const uint8_t vals[2] = { AG105_VAL_2S,        AG105_VAL_2500MA };
-        for (uint8_t i = 0; i < 2; i++) {
-            Ag105WriteResult wr = ag105WriteConfigRegChecked(regs[i], vals[i]);
-            if (wr != AG105_WR_SKIPPED && ag105CommWrites < 0xFF) ag105CommWrites++;
-            if (wr == AG105_WR_WROTE) ag105CommRegsWritten |= (uint8_t)(1u << regs[i]);
-            int s = ag105CommSlotOf(regs[i]);
-            if (wr != AG105_WR_FAIL && s >= 0) { ag105CommRegVal[s] = vals[i]; ag105CommRegOk[s] = true; }
-            Serial.print("[J] reg 0x"); ag105CommPrintHex2(regs[i]);
-            Serial.print(" <- 0x");     ag105CommPrintHex2(vals[i]);
-            Serial.println(wr == AG105_WR_WROTE   ? ": WROTE (verified)" :
-                           wr == AG105_WR_SKIPPED ? ": SKIPPED (already held)" :
-                                                    ": FAIL (read/write/verify)");
+        // M5 consequence: never write a register before its as-found value has been latched.
+        if (!ag105CommAsFoundOk[0] || !ag105CommAsFoundOk[1]) {
+            Serial.println("[J] REFUSED: as-found reg 0x00/0x01 not yet read — wait one round-robin cycle");
+            return;
         }
+        // A FAILED 0x01 write leaves the charge voltage unproven; the next round-robin read of 0x01
+        // still applies the M2 stop if it reads unsafe.
+        (void)ag105CommWriteProfile();
         return;
     }
 
@@ -11460,6 +11698,10 @@ void parseJLine(const char *line) {
     }
     if (!ag105CommLastReadOk) {
         Serial.println("[J] REFUSED: the Ag105 is not ACKing (wait for ack=y)");
+        return;
+    }
+    if (!ag105CommAsFoundOk[2]) {   // M5 consequence, as for '2 1'
+        Serial.println("[J] REFUSED: as-found reg 0x02 not yet read — wait one round-robin cycle");
         return;
     }
     uint8_t want = (uint8_t)arg;
