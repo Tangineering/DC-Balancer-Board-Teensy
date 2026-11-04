@@ -58,11 +58,11 @@ references in the firmware itself bound it (git history of
 - **2026-10-27, SDP EMS: ERR_UV_BUS** (source-less bus while `charge_goal` was up
   with no braking current). This led to fw v31 rev b and rev c, so the
   10-27 SDP bags ran fw v31 rev a or earlier.
-- **2026-10-28: UV_FC + UV_BUS within seconds of the first FC charge window**
-  (H-20 purge with an FC-only bus). This led to the fw v33b purge-lockout gate
-  (in v35). A charge window opened, so that build had FC charging enabled,
-  although every committed v31+ sketch has `FC_CHARGE_ALLOWED 0`. Ask the
-  student which build ran.
+- **2026-10-28: the student's "UV_FC + UV_BUS within seconds of the first FC charge window"
+  is not in any bag** (review 2026-11-04, `docs/reviews/fw36_regen_2026-11-04/`). The two 10-28
+  bags latched OC_FC and UV_FC; every FC_CHARGE sample in all 22 bags is the State-99 phase-0
+  drain (`0x34`) after a latch, and charge_goal > 0.05 opened no window - consistent with
+  `FC_CHARGE_ALLOWED 0`. The only UV_FC + UV_BUS latch is 10-27 00:52 (in its `/rosout`).
 - **`rosbag_sweep-noclip_2026-10-30_01-30-16`**: cited by fw v36 as the evidence
   that regen never arms with `charge_goal` 0 (charge_goal 0/4033 samples,
   REGEN_ENABLE high 0/10081 across six wheel-locking decelerations). It ran

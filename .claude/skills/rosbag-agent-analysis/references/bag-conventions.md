@@ -26,12 +26,13 @@ firmware's telemetry packer are the authority over this file if they disagree.
 | `/comms_status` | 4 | ~1 Hz | bridge link counters |
 | `/drive_cycle`, `/drive_cycle_status` | 4 | cycle rate | drive-cycle node output |
 | `/soc_diagnostics` | 6 | 50 Hz | only from bridge 2026-10-31A (EKF internals); absent in older bags |
+| `/rosout` | log | - | EMS / bridge / drive-cycle log lines, INCLUDING buffered lines stamped before the recording started (the 10-27 UV_BUS latch is only explained there) and the SDP node's "regen armed / released" decisions. `scout_bags.py` lists it under other topics; read it for every faulted bag |
 
 `/vehicle_state` index map: 0 `v_actual` m/s, 1 `V_batt`, 2 `I_batt` (bus-side BT boost
 current, unipolar), 3 `I_charge` (Ag105 reg 0x06 x 0.011 A, I2C-polled), 4 `V_fc`, 5 `I_fc`
 (bus-side FC boost current), 6 `V_bus`, 7 `V_rgn`, 8 `V_chg`, 9 `power_share_actual`
-(computed BY THE BRIDGE as |I_fc|/(|I_fc|+|I_batt|), held at its last value under the
-bridge's minimum-current gate - not a firmware quantity), 10 `droop_FC`, 11 `droop_BT`,
+(computed BY THE BRIDGE as |I_fc|/(|I_fc|+|I_batt|), held at its last value when the total is
+under the bridge's `share_min_i_a` = 0.05 A - not a firmware quantity; apply your own 0.3 A gate), 10 `droop_FC`, 11 `droop_BT`,
 12 `charger_status` (raw Ag105 Table 6 byte), 13 `switch_state`, 14 `fault_flags`, 15
 `error_code`, 16 `error_source_state`, 17 `SOC` (Pi-side estimate: EKF from bridge
 2026-10-31A, complementary filter before - absolute SoC is not trustworthy, R0/OCV
@@ -86,6 +87,33 @@ uncalibrated).
    ~0.3 A total.
 10. **Statistics hygiene.** Report counts with their denominators (ticks, seconds,
     episodes), medians with ranges, and name the time window.
+
+11. **V_rgn reads ~0.85 x true** (0.849-0.854 x V_bus at rest with MOT_PWR on; V_chg on the
+    same nominal divider reads right). It idles at ~13.5 V, not 0; a rise above that baseline is
+    the regen signal. The "18.1 V clamp" is ~21.4 V true. Report V_rgn in ADC units until
+    calibrated.
+12. **The State-99 teardown looks like switching.** Phase 0 opens FC_CHARGE (`0x34`) and phase 1
+    REGEN (`0x28`) for one tick on or after the latch tick, regardless of `FC_CHARGE_ALLOWED`.
+    Never count a switch tick with `error_code` != 0 as a charge window or a regen episode.
+13. **A switch reading HIGH is not energy flowing.** A REGEN tick with V_chg ~ V_bus - 0.09 V and
+    V_rgn flat is the charger fed FROM THE BUS through MOT_PWR. Real regen = V_rgn above its
+    baseline with the bus currents at 0.
+14. **The EMS's `charge_goal` is not braking.** The SDP node arms it on `P_demand = m v a` with no
+    friction term, so every slowdown arms it; the rig coasts down at ~0.6-0.87 m/s^2, so commanded
+    decels gentler than that never regenerate.
+15. **Sweeps:** get the triangle period from turning points first (some bags use 2 s, others 20 s;
+    sampling at the period aliases to a constant); recording starts mid-sweep and `ec_t[0]` can lag
+    `vs_t[0]` by seconds - mask telemetry before the first command; in a clip bag `/ems_command`
+    (and `/ems_diagnostics[2]`) is the CLIPPED command, rebuild the nominal by fitting the phase;
+    the old sweep node (`sweep_ems_node_V1`) sends SAFE on any `fault_flags` and restarts the sweep
+    on every purge.
+16. **H-20 purges** every 10.34 s, ~100-140 ms, I_fc = 0 and the battery carries all. Exclude
+    +/-0.5 s around each dip from steady-state statistics.
+17. **SoC before 2026-10-25** is a step table of loaded V_batt ({0.1..0.9}); never trend it, and
+    expect an EMS driven by it to dither.
+18. **Separate sources before comparing dates.** V_fc flat at ~8.3-8.6 V with no purge dips
+    (09-07, 09-10, 10-20 before 06:40) is not the H-20.
+19. **Quantization:** currents 8.06 mA/count, V_bus 4.5 mV, V_fc 3.0 mV, V_rgn 7.1 mV.
 
 ## Provenance / comparability
 

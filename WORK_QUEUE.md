@@ -1,5 +1,20 @@
 # Work queue — updated post round 2026-09-02 (Ag105 η = 0.88, η-era DP/SDP, MPC live, campaigns B and C analysed, physics review closed, session closed out)
 
+## 0k. fw v36 review + rosbag regen analysis (2026-11-04) - fw v37 inputs
+
+Record: `docs/reviews/fw36_regen_2026-11-04/README.md` (findings, ranked regen causes, the fw v37 proposal).
+
+- [ ] 1. **Bench gate B1 (zero-code, State 98):** hold REGEN >= 5 s with the bus up; does the Ag105 ACK at 0x30, what
+      status/STAT, does it charge; DMM on VCHG (D-BT-SQ orientation) and on V-MOT vs pin 39 (V_rgn 0.85 scale).
+- [ ] 2. **Rulings R1-R4** (regen power-path policy; the Ag105 VBat- wiring and Silvertel; may the bus ever feed the
+      charger; telemetry v5 with v37 or BLG-only diagnostics first).
+- [ ] 3. **fw v37** via orchestrated-feature after 1-2: the regen policy, backoff precedence, V_rgn calibration,
+      charger faults gated on "charger proven", selector disarm gated on FC_CHARGE_ALLOWED, OC_FC persistence,
+      housekeeping, BLG v10, the regen exerciser key, serial counters; test-suite repair (re-pin the 10 stale checks,
+      `#ifndef FC_CHARGE_ALLOWED` + a `run_tests_fcchg` target, reset the v35 window timers in `reset_test_state()`).
+- [ ] 4. **Pi/EMS:** add friction to the SDP `P_demand` regen arm; bridge SAFE fallback <= 250 ms; re-run RegenTest_v2
+      (decels steeper than coast-down) on the next build with a 1 kHz 'K' BLG alongside.
+
 ## 0j. Pi software and rosbag provenance (opened 2026-11-04, deferred by the operator)
 
 - [ ] 1. **Record the firmware version in every rosbag.** The v4 telemetry carries no `FW_VERSION` and has no spare
