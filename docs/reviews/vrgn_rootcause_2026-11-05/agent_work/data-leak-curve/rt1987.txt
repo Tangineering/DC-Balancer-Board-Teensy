@@ -1,0 +1,1146 @@
+                                                                                                                                       RT1987
+32V/8A Ideal Diode Protection Switch
+1 General Description                                                               2 Features
+                                                                                       8A Continuous/20A Peak Current Capability
+The RT1987 provides an ideal diode reverse current
+                                                                                       Input Supply Voltage: 3.4V to 32V
+blocking function with low forward voltage and an
+                                                                                       20mΩ (typical) RON
+enable input for disconnection. The 3.4V to 32V input
+                                                                                       Analog Ideal Diode Gate Control
+operating range and 8A continuous current rating
+                                                                                         Blocks Reverse Current
+make the RT1987 well suited for multi-port USB-C sink
+                                                                                         Avoids Switch Chatter
+current applications. In addition, this part includes a
+                                                                                         Enables Fast Power Swap
+40V Absolute Maximum Rating (AMR), a 20A peak
+                                                                                       Programmable Soft-Start
+current rating (up to 10ms), undervoltage-lockout,
+                                                                                       Programmable Overvoltage Protection
+overvoltage          protection,         and       over-temperature
+                                                                                       Over-Temperature Protection
+protection.
+                                                                                       Start-Up Short-Circuit Protection
+An adjustable soft-start circuit sets the output voltage
+                                                                                       Compliance with IEC 61000-4-2 and IEC 61000-4-
+slew rate and manages inrush current into high
+                                                                                        5 Standards
+capacitance loads. Short-circuit protection is provided
+during this period, while the integrated MOSFET                                     3 Applications
+provides a low forward voltage drop and high Safe                                      USB-C/Thunderbolt Sink Power Delivery
+Operating Area (SOA).                                                                  Docking Stations
+The RT1987 is available in a VDFN-12T1L 3x3                                            Power ORing Applications
+package and can operate over −40°C to 125°C
+junction temperature.
+
+
+
+
+4 Simplified Application Circuit
+
+                                                                                                   Electrically
+                                                                                                  Isolated Pad
+
+
+                                                                                    CD EXP
+                                                         VIN
+                                     VBUS                                     VIN          VOUT                        VOUT
+                                                      TVS
+                                                      Diode             CIN                                   COUT
+                                                                                    RT1987
+                                 USB-C           ENABLE                       EN
+                                Connector
+
+                                                                                           FLTB             FAULT
+                                                                              CAP
+
+                                                         CCAP                                SS
+                                                                                           POVP                         CSS
+                                                                                        GND
+                                                                                                            ROVP
+
+
+
+
+Copyright © 2024 Richtek Technology Corporation. All rights reserved.                      is a registered trademark of Richtek Technology Corporation.
+RT1987_DS-00            September        2024                                                                                           www.richtek.com
+                                                                                                                                                      1
+RT1987
+5 Ordering Information                                                           6 Marking Information
+RT1987          -
+                                                                                                  YH=: Product Code
+                     Packing                                                       YH=YM
+                                                                                                  YMDAN: Date Code
+                     A: Pin 1 Orientation                                            DAN
+                        (Quadrant 2, Follow EIA-481)
+                                          (1)
+                     Package Type
+                     N: VDFN-12T1L 3x3 (V-Type)
+Note 1.
+Richtek       products         are      Richtek        Green            Policy
+compliant and marked with (1) indicates compatible with the
+current requirements of IPC/JEDEC J-STD-020.
+
+
+                                          Ideal Diode Protection Switch Selection Table
+                                                       Continuous
+                                   Input Supply
+     Part Number                                         Current         OVP Threshold                                    Package
+                                      Voltage
+                                                        Capability
+         RT1985                      3.4V to 23V                           8A               Fixed                    VDFN-12TL 3x3
+         RT1986                      3.4V to 23V                          5.5A              Fixed                    VDFN-12TL 3x3
+         RT1987                      3.4V to 32V                           8A         Programmable                  VDFN-12T1L 3x3
+         RT1988                      3.4V to 53V                           8A         Programmable                 VDFN-20TL 5.2x4
+
+
+
+
+Copyright © 2024 Richtek Technology Corporation. All rights reserved.               is a registered trademark of Richtek Technology Corporation.
+www.richtek.com                                                                                        RT1987_DS-00             September          2024
+2
+                                                                                                                               RT1987
+                                                             Table of Contents
+
+1      General Description ---------------------------------------- 1             17.3   Soft-start Slew Rate Control --------------------15
+2      Features -------------------------------------------------------- 1        17.4   Fault Protection ------------------------------------15
+3      Applications -------------------------------------------------- 1          17.5   Start-up Short-circuit Protection (SCP) ------15
+4      Simplified Application Circuit --------------------------- 1               17.6   Ideal Diode True Reverse Current
+5      Ordering Information -------------------------------------- 2                      Blocking (TRCB) ----------------------------------16
+6      Marking Information---------------------------------------- 2              17.7   Overvoltage Protection (OVP) -----------------16
+7      Pin Configuration ------------------------------------------- 4            17.8   Overtemperature Protection (OTP) -----------16
+8      Functional Pin Description ------------------------------ 4           18   Application Information ----------------------------------17
+9      Functional Block Diagram ------------------------------- 5                 18.1   Input Capacitor Selection -----------------------17
+10     Absolute Maximum Ratings ----------------------------- 6                   18.2   Output Capacitor Selection ---------------------17
+11     ESD Ratings -------------------------------------------------- 6           18.3   Thermal Considerations -------------------------17
+12     Recommended Operating Conditions --------------- 6                    19   Outline Dimension -----------------------------------------19
+13     Electrical Characteristics--------------------------------- 7         20   Footprint Information -------------------------------------20
+14     Typical Application Circuit ------------------------------- 9         21   Packing Information ---------------------------------------21
+15     Timing Diagram ---------------------------------------------- 9            21.1   Tape and Reel Data ------------------------------21
+16     Typical Operating Characteristics -------------------- 10                  21.2   Tape and Reel Packing --------------------------22
+17     Operation ----------------------------------------------------- 14         21.3   Packing Material Anti-ESD Property ---------23
+       17.1    Enable (EN and UVLO)-------------------------- 14             22   Datasheet Revision History -----------------------------24
+       17.2    Power Delivery and Soft-Start ----------------- 14
+
+
+
+
+Copyright © 2024 Richtek Technology Corporation. All rights reserved.              is a registered trademark of Richtek Technology Corporation.
+RT1987_DS-00            September        2024                                                                                   www.richtek.com
+                                                                                                                                              3
+RT1987
+7 Pin Configuration
+                                                                         (TOP VIEW)
+
+                                                       VOUT       1                      12    VIN
+                                                       VOUT       2                      11    VIN
+                                                         CAP      3                      10    VIN
+                                                                             EXP
+                                                        FLTB      4                      9     CD
+                                                           EN     5                      8     POVP
+                                                                                   13
+                                                         GND      6                      7     SS
+
+
+                                                                        VDFN-12T1L 3x3
+
+
+
+
+8 Functional Pin Description
+         Pin No.                Pin Name                                                      Pin Function
+            1, 2              VOUT                 Output voltage. Connect to load.
+             3                CAP                  Connect a capacitor of 1nF to GND.
+                                                   Open-drain fault indicator. Connect a pull-up resistor to a low-voltage supply.
+             4                FLTB
+                                                   This pin pulls low if a fault condition is detected.
+                                                   Enable active high. Pull high to enable ideal diode function. Pull low to
+             5                EN
+                                                   disconnect VIN from VOUT.
+             6                GND                  Ground.
+                                                   Soft-start input. Connect a capacitor, CSS, from SS to GND to set the soft-
+             7                SS
+                                                   start time.
+                                                   Programmable Overvoltage Protection threshold setting. Connect a resistor
+             8                POVP                 between this pin and GND or apply a direct DC voltage level for setting the
+                                                   OVP threshold.
+                                                   Common Drain node of the power switches. It must be electrically connected
+             9                CD
+                                                   to Exposed pad.
+                                                   Input voltage. Connect to a power input and bypass with a 10µF capacitor
+       10, 11, 12             VIN
+                                                   to GND.
+                                                   Exposed pad. The exposed pad is electrically connected to the common-
+                                                   drain node of the internal power MOSFET and must be electrically isolated.
+ 13 (Exposed Pad) EXP                              For improved thermal performance, this pad should be soldered to a large
+                                                   electrically isolated pad and tied to as much copper (electrically isolated) as
+                                                   possible using many vias.
+
+
+
+
+Copyright © 2024 Richtek Technology Corporation. All rights reserved.                    is a registered trademark of Richtek Technology Corporation.
+www.richtek.com                                                                                             RT1987_DS-00             September          2024
+4
+                                                                                                                                                RT1987
+9 Functional Block Diagram
+                                                                                                     CD, EXP
+
+
+
+
+        VIN                                                                                                                                                 VOUT
+                                                                        VCP                                    VCP
+                                 HVREG              AVDD
+
+                                                                                         DG                                  SG       SG
+                                             VIN
+                                        VOUT        TRCB
+
+       CAP
+                                                           EN_VIN_FET                                Driver
+
+                                 Charge            VCP
+                                  pump                                                                                                Soft
+                                                                          VOUT    Foldback                                                                 SS
+                                                                                                                                      start
+                                                                                 current limit
+                                                                                                 D_Acl
+
+
+
+
+                                                                                                                        EN_VOUT_FET
+                                       EN_CP
+                            VIN_FB                 DG
+                                                   SG
+                                                                                                    SCP
+                                                                                                    Timer
+                                     UVLO
+                                                                                                                                                            FLTB
+
+
+                                    OVLO
+                      AVDD
+
+                                                                                           OSC & Control
+                                                                                              logic
+       POVP
+
+
+                                     Input
+        EN
+                                     logic
+                                                                                          Thermal
+                                                                                                                     ESD
+                                                                                         shutdown
+                            730kΩ
+
+
+
+
+                                                                                    GND
+
+
+
+
+Copyright © 2024 Richtek Technology Corporation. All rights reserved.                               is a registered trademark of Richtek Technology Corporation.
+RT1987_DS-00            September            2024                                                                                                www.richtek.com
+                                                                                                                                                               5
+RT1987
+10 Absolute Maximum Ratings
+(Note 2)
+   VIN, VOUT, CD to GND ----------------------------------------------------------------------------------------- −0.3V to +40V
+   EN, SS, FLTB, POVP to GND --------------------------------------------------------------------------------- −0.3V to +6V
+   CAP to VIN --------------------------------------------------------------------------------------------------------- −0.3V to +12V
+   CAP to GND ------------------------------------------------------------------------------------------------------- −0.3V to +46V
+   IEC 61000-4-5 at VIN no CAP -------------------------------------------------------------------------------- 45V
+   Power Dissipation, PD @ TA = 25°C
+    VDFN-12T1L 3x3 ------------------------------------------------------------------------------------------------- 1.89W
+   Package Thermal Resistance                    (Note 3)
+    VDFN-12T1L 3x3, θJA ------------------------------------------------------------------------------------------- 53.05°C/W
+    VDFN-12T1L 3x3, θJC ------------------------------------------------------------------------------------------- 5.22°C/W
+   Lead Temperature (Soldering, 10 sec.) --------------------------------------------------------------------- 260°C
+   Junction Temperature ------------------------------------------------------------------------------------------- 150°C
+   Storage Temperature Range ---------------------------------------------------------------------------------- −65°C to 150°C
+
+Note 2. Stresses beyond those listed under “Absolute Maximum Ratings” may cause permanent damage to the device. These
+        are stress ratings only, and functional operation of the device at these or any other conditions beyond those indicated
+        in the operational sections of the specifications is not implied. Exposure to absolute maximum rating conditions may
+        affect device reliability.
+Note 3. θJA is measured under natural convection (still air) at TA = 25°C with the component mounted on a high effective-
+       thermal-conductivity four-layer test board on a JEDEC 51-7 thermal measurement standard. θJC is measured at the
+       bottom of the package.
+
+
+11 ESD Ratings
+(Note 4)
+   HBM (Human Body Model) All Pins -------------------------------------------------------------------------- ±4kV
+   IEC 61000-4-2 at VIN and VOUT ---------------------------------------------------------------------------- ±8 kV
+
+Note 4. Devices are ESD sensitive. Handling precautions are recommended.
+
+
+12 Recommended Operating Conditions
+(Note 5)
+   Supply Input Voltage, VIN -------------------------------------------------------------------------------------- 3.4V to 32V
+   EN, FLTB ----------------------------------------------------------------------------------------------------------- 0V to 5.5V
+   CAP to VIN --------------------------------------------------------------------------------------------------------- 0V to 5.5V
+   SS, POVP ---------------------------------------------------------------------------------------------------------- 0V to 3V
+   IVIN, IVOUT -------------------------------------------------------------------------------------------------------- 0A to 8A
+   Peak IVIN, IVOUT for 10ms at 2% Duty Cycle ------------------------------------------------------------ 20A
+   Junction Temperature Range ---------------------------------------------------------------------------------- −40°C to 125°C
+
+Note 5. The device is not guaranteed to function outside its operating conditions.
+
+
+
+Copyright © 2024 Richtek Technology Corporation. All rights reserved.            is a registered trademark of Richtek Technology Corporation.
+www.richtek.com                                                                                     RT1987_DS-00             September          2024
+6
+                                                                                                                                 RT1987
+13 Electrical Characteristics
+(TA = TJ = 25°C, VIN = 28V, VEN = 5V, CIN = 10µF, COUT = 10µF, CSS = 5.6nF, unless otherwise noted.)
+            Parameter                       Symbol                       Test Conditions                     Min         Typ        Max        Unit
+ General
+ Input Voltage Range                     VIN                                                                  3.4          --        32             V
+ Input Undervoltage-
+                                         VIN_UVLO           VIN rising                                        3.0          --       3.35            V
+ Lockout
+ UVLO Hysteresis                         VUVLO_HYS                                                             --        250          --        mV
+ Input Quiescent Current                 IQ                 IOUT = 0A                                          --        650         780        µA
+ Input Shutdown Current                  ISHDN              EN = 0V                                            --         75         105        µA
+ Output Leakage Current                  IOUT_LK            VOUT = 32V, VIN = 0V, EN = 0V                      --         45         60         µA
+                                         RON_20V            VIN = 20V, IOUT = 1A       (Note 6)                --         20          --
+ Switch On Resistance                                                                                                                           mΩ
+                                         RON_5V             VIN = 5V, IOUT = 1A       (Note 6)                 --         22          --
+ Enable Input Rising
+                                         VEN_R              EN rising                                          --          --        1.4            V
+ Threshold
+ Enable Input Falling
+                                         VEN_F              EN falling                                        0.6          --         --            V
+ Threshold
+ Enable Input Pull-down
+                                         REN_PD             EN rising                                        475         730         985        kΩ
+ Resistance
+ FLTB Pull-down Voltage                  VFLTB_PD           IFLTB = −3mA                                       --          --        0.3            V
+ Input Overvoltage Protection
+ Overvoltage Protection                                     POVP < 1.25V, VIN rising                          33           --         --
+                                         VOVP_R                                                                                                     V
+ Threshold                                                  POVP > 1.4V, VIN rising                           23           --         --
+ POVP Current                            IPOVP                                                                 --          5          --        µA
+ Overvoltage Protection
+                                         tBLK_OVP           Latch off. No restart.                             --        512          --        µs
+ Blanking Time
+ Ideal Diode (Reverse Current Blocking)
+ Ideal Diode Forward
+                                         VFWD               VIN – VOUT                                         --         35          --        mV
+ Regulation Voltage
+ Fast Reverse Current
+                                         VFRC               VIN – VOUT fast turn off                           --        −50          --        mV
+ Threshold
+ Fast Reverse Current
+                                         tFRC                                                                  --         0.5         --        µs
+ Delay Time
+ Dynamic Timing Characteristics
+                                                            From EN rising edge to VOUT
+ Turn-On Delay Time                      tD_ON                                                                 --          8          --        ms
+                                                            reaching 10% of VIN
+ Turn-On Rise Time                       tON                VOUT from 10% to 90%                               --         1.9         --        ms
+ Short-Circuit Protection
+                                         tSCP_RST           During soft-start                                  --         64          --        ms
+ Restart Time
+ Over-Temperature Protection
+ Over-Temperature                                           Temperature rising. System latches
+                                         TOTP                                                                  --        140          --        °C
+ Protection Threshold                                       off
+
+
+
+
+Copyright © 2024 Richtek Technology Corporation. All rights reserved.                is a registered trademark of Richtek Technology Corporation.
+RT1987_DS-00            September        2024                                                                                     www.richtek.com
+                                                                                                                                                7
+RT1987
+            Parameter                       Symbol                      Test Conditions                    Min          Typ       Max        Unit
+ Start-Up Short-Circuit Protection
+                                                            VIN − VOUT ≥ 26V, during soft-start              --         2.5         --
+ Short-Circuit Protection
+                                         ISCP               VIN − VOUT = 10V, during soft-start              --          7          --            A
+ Current Limit
+                                                            VIN − VOUT ≤ 5V, during soft-start               --         8.5         --
+Note 6. RON is tested at 1A in test mode to bypass ideal diode regulation.
+
+
+
+
+Copyright © 2024 Richtek Technology Corporation. All rights reserved.              is a registered trademark of Richtek Technology Corporation.
+www.richtek.com                                                                                       RT1987_DS-00             September          2024
+8
+                                                                                                                                         RT1987
+14 Typical Application Circuit
+                                                                                                       Electrically
+                                                                                                      Isolated Pad
+
+                                                                                      9    13
+                                                                                      CD EXP
+
+                                                VIN               10, 11, 12                           1, 2
+                             VBUS                                               VIN           VOUT                       VOUT
+                                               TVS                 CIN                                             COUT
+                                               Diode               10µF                                            10µFx2
+                                               AZ4528-01F                             RT1987
+                         USB-C                                            5
+                                                     ENABLE                     EN
+                        Connector                                                                      4
+                                                                                               FLTB              FAULT
+                                                                          3
+                                                                                CAP
+                                                           CCAP
+                                                           1nF                                  SS 7
+                                                                                              POVP 8                        CSS
+                                                                                       GND                      ROVP        5.6nF
+                                                                                         6                      100k
+
+
+
+
+15 Timing Diagram
+
+                                                  EN          VEN_R
+                                                                                       tON
+
+                                                                        tD_ON                           90%
+
+
+                                                VOUT
+                                                                                 10%
+
+                                         Figure 1. Turn-On Delay Time and Turn-On Rise Time
+
+
+
+
+                                                                                                           VOVP_R
+                                               VIN
+                                                                    tBLK_OVP
+
+                                            VOUT
+
+
+
+
+                                             FLTB
+
+
+
+                                               EN
+
+
+                                                         Figure 2. Overvoltage Protection
+
+
+
+
+Copyright © 2024 Richtek Technology Corporation. All rights reserved.                        is a registered trademark of Richtek Technology Corporation.
+RT1987_DS-00            September        2024                                                                                             www.richtek.com
+                                                                                                                                                        9
+RT1987
+16 Typical Operating Characteristics
+
+                              Turn-On Delay Time                                                Turn-On Delay Time
+
+
+
+
+       VIN                                                                 VIN
+     (2V/Div)                                                           (10V/Div)
+      VOUT                                                                VOUT
+     (2V/Div)                                                           (10V/Div)
+       IOUT                                                                IOUT
+     (5A/Div)                                                            (2A/Div)
+       EN                                                                  EN
+     (5V/Div)                               VIN = 5V, ROUT = 0.625Ω                                               VIN = 28V, ROUT = 7Ω
+                                                                         (5V/Div)
+
+                                  Time (4ms/Div)                                                     Time (4ms/Div)
+
+
+
+                               Turn-On Rise Time                                                 Turn-On Rise Time
+
+
+
+
+       VIN                                                                 VIN
+     (2V/Div)                                                           (10V/Div)
+      VOUT                                                                VOUT
+     (2V/Div)                                                           (10V/Div)
+       IOUT                                                                IOUT
+     (5A/Div)                                                            (2A/Div)
+       EN                                                                  EN
+     (5V/Div)                               VIN = 5V, ROUT = 0.625Ω                                               VIN = 28V, ROUT = 7Ω
+                                                                         (5V/Div)
+
+                                 Time (400µs/Div)                                                    Time (1ms/Div)
+
+
+
+                                     Power Off                                                          Power Off
+                                           VIN = 5V, ROUT = 0.625Ω                                               VIN = 28V, ROUT = 7Ω
+
+
+
+
+       VIN                                                                 VIN
+     (2V/Div)                                                           (10V/Div)
+      VOUT                                                                VOUT
+     (2V/Div)                                                           (10V/Div)
+        IIN                                                                 IIN
+     (5A/Div)                                                            (2A/Div)
+       EN                                                                  EN
+     (5V/Div)                                                            (5V/Div)
+
+                                  Time (20µs/Div)                                                  Time (100µs/Div)
+
+
+
+
+Copyright © 2024 Richtek Technology Corporation. All rights reserved.        is a registered trademark of Richtek Technology Corporation.
+www.richtek.com                                                                                 RT1987_DS-00             September          2024
+10
+                                                                                                                             RT1987
+
+                      Fast Reverse Current Blocking                              Ideal Diode True Reverse Current Blocking
+
+                                           VIN = 28V, ROUT = 50Ω                       VIN = 28V, ROUT = 5.6Ω
+                                  A 29V is applied to the VOUT pin                     The VOUT voltage is pulled up to
+    VIN /                           instantaneously at time -1.2µs.         VIN /      30V starting from time -800µs.
+   VOUT                                                                    VOUT
+Offset = 28V                           VOUT                             Offset = 28V                    VOUT
+  (2V/Div)                                                                (1V/Div)
+                                                           VIN                                                  VIN
+    IOUT                                                                      IOUT
+(500mA/Div)                                                                 (5A/Div)
+
+
+
+      FLTB                                                                   FLTB
+     (5V/Div)                                                               (5V/Div)
+
+                                 Time (400ns/Div)                                                     Time (400µs/Div)
+
+
+
+                Recovery of Ideal Diode Ture Reverse                                             Overvoltage Protection
+                         Current Blocking
+                                      VIN = 20V to 25V, IOUT = 50mA                                        OVP Threshold Setting = 33V,
+                                                                                                          VIN = 28V to 35V, IOUT = 50mA
+      FLTB          VIN = 28V, IOUT = 1A, Rsense of IOUT = 15mΩ
+     (5V/Div)            The VIN voltage is pulled down to 26.5V
+                                    instantaneously at time -4µs.
+    VIN /                         VIN
+   VOUT
+Offset = 28V                               VOUT                               VIN
+  (1V/Div)                                                                 (10V/Div)
+                                                                             VOUT
+     VIOUT                                                                 (10V/Div)
+  (20mV/Div)
+                                                                             FLTB
+                                                                            (5V/Div)
+
+                                  Time (20µs/Div)                                                      Time (400µs/Div)
+
+
+
+                           Overvoltage Protection                                           Over Temperature Protection
+                                                                                                                      Temperature = 144°C
+
+                                                                                                        VIN
+
+
+
+
+                                                                             VIN /
+       VIN                                                                                           VOUT
+                                                                            VOUT
+     (5V/Div)
+                                                                           (5V/Div)
+                                      OVP Threshold Setting = 23V,
+      VOUT                           VIN = 20V to 25V, IOUT = 50mA
+     (5V/Div)                                                                EN
+                                                                           (5V/Div)
+      FLTB
+     (5V/Div)                                                               FLTB
+                                                                           (5V/Div)
+                                 Time (400µs/Div)                                                     Time (20ms/Div)
+
+
+
+
+Copyright © 2024 Richtek Technology Corporation. All rights reserved.            is a registered trademark of Richtek Technology Corporation.
+RT1987_DS-00            September        2024                                                                                 www.richtek.com
+                                                                                                                                            11
+RT1987
+                                      Start-Up Short-Circuit Protection                                     Start-Up Short-Circuit Protection Restart Time
+                                      Short the VOUT pin to Ground before enabling.
+                                                                                                                                                                The short circuit condition is
+                                                                                                                                                                    removed at time 20ms.
+
+
+
+       VIN
+                                                                                                VIN
+    (10V/Div)
+                                                                                             (10V/Div)
+      VOUT
+                                                                                               VOUT
+    (10V/Div)
+                                                                                             (10V/Div)
+       IOUT                                                                                            IOUT
+     (2A/Div)                                                                                        (2A/Div)
+        EN
+     (5V/Div)                                                                                          EN
+                                                                                                     (5V/Div)
+                                                  Time (2ms/Div)                                                                                       Time (10ms/Div)
+
+
+                                          Dual Port with Same Output
+                                                                                                                                         Quiescent Current vs. Input Voltage
+                                                                                                                             700
+      IOUT1
+     (1A/Div)                                                                                                                650
+                                                                                            Quiescent Curren (µA)
+
+
+                                                                                                                             600
+      IOUT2
+     (1A/Div)                                                                                                                550
+
+                                                                                                                             500
+
+                                                                                                                             450
+      VOUT
+                                                                                                                             400
+     (5V/Div)
+       EN2                                                                                                                   350
+     (5V/Div)
+                                  Connect the outputs of 2 devices and set VIN1 = 5V                                         300
+                                                                                                                                   0        5         10        15    20         25        30    35
+                                  and VIN2 = 28V, IOUT = 500mA, turn on the device1
+                                  first, then turn on the device2 by EN2                                                                                   Input Voltage (V)
+                                                  Time (2ms/Div)
+
+                                      Shutdown Current vs. Input Voltage                                                            VOUT Leakage Current vs. Temperature
+                            100                                                                                              100
+                             90                                                                                               90
+                                                                                                 VOUT Leakage Current (µA)
+     Shutdown Curren (µA)
+
+
+
+
+                             80                                                                                               80
+                             70                                                                                               70
+                             60                                                                                               60
+                             50                                                                                               50
+                             40                                                                                               40
+                             30                                                                                               30
+                             20                                                                                               20
+                             10                                                                                               10
+                                                                                                                                                                                      VOUT = 32V
+                              0                                                                                                0
+                                  0       5      10      15     20        25   30      35                                          -50    -30   -10        10   30   50     70        90   110   130
+                                                      Input Voltage (V)                                                                                    Temperature (°C)
+
+
+
+
+Copyright © 2024 Richtek Technology Corporation. All rights reserved.                                                         is a registered trademark of Richtek Technology Corporation.
+www.richtek.com                                                                                                                                       RT1987_DS-00             September         2024
+12
+                                                                                                                                                                      RT1987
+
+                                   On Resistance vs. Input Voltage                                                                On Resistance vs. Temperature
+                          50                                                                                          50
+                          45                                                                                          45
+                          40                                                                                          40
+
+
+
+
+                                                                                              On Resistance (mΩ)
+    On Resistance (mΩ)
+
+
+
+
+                          35                                                                                          35
+                          30                                                                                          30
+                          25                                                                                          25
+                          20                                                                                          20
+                          15                                                                                          15
+                          10                                                                                          10
+                           5                                                                                          5
+                           0                                                                                          0
+                               0       5       10       15     20       25       30      35                                -50   -30   -10   10   30     50      70    90    110     130
+                                                    Input Voltage (V)                                                                        Temperature (°C)
+
+
+
+   Ideal Diode Regulation Voltage vs. Output Current                                                   Ideal Diode Regulation Voltage vs. Temperature
+                         250                                                                                          50
+                                                                                                                      45
+                         200                                                                                          40
+    VIN-VOUT (mV)
+
+
+
+
+                                                                                                                      35
+                                                                                                      VIN-VOUT (mV)
+
+
+
+
+                         150                                                                                          30
+                                                                                                                      25
+                         100                                                                                          20
+                                                                                                                      15
+                          50                                                                                          10
+                                                                                                                       5                                      VIN = 28V, IOUT = 0A
+                                                                             VIN = 28V
+                           0                                                                                           0
+                               0   1       2        3   4      5    6        7    8      9                                 -50   -30   -10   10    30    50      70     90   110     130
+                                               Output Current (A)                                                                            Temperature (°C)
+
+
+
+
+Copyright © 2024 Richtek Technology Corporation. All rights reserved.                                                 is a registered trademark of Richtek Technology Corporation.
+RT1987_DS-00                           September        2024                                                                                                          www.richtek.com
+                                                                                                                                                                                   13
+RT1987
+17 Operation
+The RT1987 is a high-side protection device which is particularly well suited for USB-C sink applications. Its ideal
+diode functionality and back-to-back integrated 20mΩ MOSFETs provide reverse current blocking and diode-OR
+power source sharing while programmable soft-start, programmable overvoltage, over-temperature, and short-
+circuit protection features protect the system from faults. The 3.4 to 32V operating range aligns with USB-C voltage
+levels as well as other common power supplies. Unlike single MOSFET devices, the RT1987 completely isolates
+VIN and VOUT when disabled using the EN input.
+
+17.1 Enable (EN and UVLO)
+
+The active high EN pin provides on/off control for the power path while the input undervoltage lockout (UVLO)
+circuit monitors the input voltage (VIN). When VIN > VIN_UVLO (typically 3.175V), driving EN above VEN_R (1.4V
+max) turns on the power path. The timing diagram is shown in Figure 1. Assuming no other faults – such as OVP
+or OTP – VOUT will start to ramp after tD_ON (typically 8ms). VOUT ramps up to VIN with a 10% to 90% rise time
+of approximately tON as set by CSS. See the Soft-Start Slew Rate Control section for more information.
+Driving EN below VEN_F (0.6Vmin) disables the power path and puts the RT1987 in a low quiescent current state,
+drawing just ISHDN (typically 75µA). A low input voltage (VIN < VIN_UVLO − VUVLO_HYS, typically 2.925V) also
+disables the power path.
+
+17.2 Power Delivery and Soft-Start
+
+When an input voltage is first applied to the RT1987, the voltage at VOUT ramps up linearly with a slope
+determined by the SS pin capacitance. During this time, which is typically a few milliseconds, the RT1987 has high
+internal MOSFET stress with a power dissipation equal to (VIN − VOUT) x IOUT, where IOUT is the sum of the
+system load current and the current required to charge the output capacitance. The internal power dissipation is
+calculated as follows:
+                                                                                      dVOUT
+Power = (VIN – VOUT) x IOUT = (VIN – VOUT) x �ISYS +                                              x COUT�
+                                                                                           dt
+Where ISYS is the system load current and COUT is the output capacitance. The internal MOSFET ability to survive
+this high-power scenario depends on the FET safe operating area (SOA) as well as the thermal performance of
+the package – with a soft-start time of just a few milliseconds, the thermal performance of the PCB does not play
+a significant role. Refer to the Application Information section for example calculations and SOA curves to help
+determine an appropriate soft-start time for a given application.
+
+
+                                            VIN
+                                                                                                              2
+                                                      Power = (VIN-VOUT)·IOUT                   Power = IOUT ·RON
+
+
+
+                                                                VOUT
+                                                                                                                     Transient
+                                                                                                                     Load
+                                          IOUT                     COUT Charging Current        System Load
+                                          ISYS
+
+
+                                                                                                                             t
+
+
+                                                     Figure 3. Soft-Start Power Dissipation
+
+
+
+
+Copyright © 2024 Richtek Technology Corporation. All rights reserved.                               is a registered trademark of Richtek Technology Corporation.
+www.richtek.com                                                                                                        RT1987_DS-00             September          2024
+14
+                                                                                                                               RT1987
+When the soft-start ramp is complete, the internal power device switches completely on (provided ISYS x RON >
+VFWD ) and acts like a resistor with resistance RON. Because of the low differential voltage between VIN and VOUT,
+the power dissipation during this mode is considerably lower than during soft-start. Careful PCB layout
+consideration of thermal performance, combined with the low on-resistance of the internal power device, will
+ensure maximum system efficiency and minimal heat generation.
+
+17.3 Soft-Start Slew Rate Control
+
+When the RT1987 is first enabled, the soft-start function limits the rate of rise on the internal gate of the power
+device to control the VOUT ramp and limit in-rush current. An external capacitor, CSS, on the SS pin programs the
+10% to 90% ramp time, tON, as follows:
+        VIN     CSS
+tON =       x�        -100�
+        35     0.0023
+
+With CSS in nF and tON in µs. To calculate CSS:
+            tON
+CSS =               +0.23
+         12.4 x VIN
+
+17.4 Fault Protection
+
+The RT1987 provides protection against reverse current (TRCB), overvoltage (OVP), overtemperature (OTP), and
+short-circuit (OCP) faults. When the device is first enabled, if any of the following conditions exist, the internal
+power MOSFET will not turn on:
+     1. VIN – VOUT < VFRC (typically -50mV)
+     2. VIN > VOVP_R (33V when POVP < 1.25V; 23V when POVP > 1.4V)
+     3. TDIE > TOTP (typically 140°C)
+In addition, for conditions #2 (OVP), the FLTB pin will be pulled low to indicate the fault status of the device. Note
+that a TRCB condition prevents the power device from turning on but does not result in a fault indication. The
+RT1987 continuously monitors these conditions to determine when to allow the power path to be enabled. See
+Table 1 for more information.
+                                            Table 1. Fault Response to Protection Features
+                     Protection                                             Fault Response                                   FLTB Status
+ Reverse Current (TRCB)                                     Auto-restart without soft-start at fault removal             High Impedance
+ Overvoltage Protection (OVP)                               Auto-restart with soft-start at fault removal                Low
+ Over-Temperature Protection (OTP)                          Auto-restart with soft-start at fault removal                Low
+ Start-Up Short-Circuit Protection (SCP)                    Auto-restart after tSCP_RST (typically 64 ms)                Low
+
+17.5 Start-Up Short-Circuit Protection (SCP)
+During the soft-start ramp (tON), the RT1987 monitors for short-circuit faults. If the output current, IOUT, exceeds
+ISCP during the soft-start ramp, the internal MOSFET will turn off. To maximize the power handling capability of
+the internal MOSFET within SOA, ISCP varies with VIN – VOUT. When the output voltage begins to start up, the
+initial value of the current limit is 2.5A. As the output voltage rises above 2V, the current limit starts to increase,
+with its value inversely proportional to VIN-VOUT, as shown in Figure 4. A fixed timer is set to disable the power
+path if the inrush current is continuously clamped by the short-circuit current limit for 250µs. The timer resets if the
+in-rush current drops below the current limit. In the case of an output short-circuit, the RT1987 will disable the
+power path by turning off the internal MOSFET when the 250µs timer elapses. After tSCP_RST (typically 64ms), the
+Copyright © 2024 Richtek Technology Corporation. All rights reserved.              is a registered trademark of Richtek Technology Corporation.
+RT1987_DS-00            September        2024                                                                                   www.richtek.com
+                                                                                                                                             15
+RT1987
+auto-retry mode will enable the power path and try to start up again. Both the SCP current limit and shutdown
+functions are disabled after tON (when the soft-start completes and the internal MOSFET is fully enhanced). Large
+output capacitors may require a longer soft-start time.
+
+
+                                                                                       VIN = 28V
+                                                        23V                             VOUT
+
+
+                                                         2V
+                                                                                                 t
+
+
+
+                                                8.5A(Typ.)                              ISCP
+
+
+
+                                                2.5A(Typ.)
+                                                                                                 t
+
+
+                                                        Figure 4. Short-Circuit Protection
+
+17.6 Ideal Diode True Reverse Current Blocking (TRCB)
+
+When the power path is enabled, the ideal diode control circuitry attempts to regulate VIN – VOUT = VFWD (typically
+35 mV). Provided that IOUT x RON < VFWD, the drive circuitry servos the internal gate drive to maintain this
+differential voltage. If the load current increases such that IOUT x RON > VFWD, then the internal MOSFET is fully
+enhanced, and the VIN to VOUT voltage is determined by the load current and RON. If VIN decreases (or VOUT
+increases) such that VIN – VOUT falls to less than VFWD, the ideal diode gate drive will force the internal MOSFET
+off. The ideal diode control circuitry is designed to accommodate relatively slow changes in load conditions. In the
+case of a fast transient, the RT1987 includes a fast reverse current comparator that trips within tFRC (typically
+about 0.5µs) if VIN – VOUT falls below VFRC (typically – 50mV).
+
+17.7 Programmable Overvoltage Protection (POVP)
+
+The OVP circuit monitors the input voltage (VIN) for an overvoltage event to protect downstream loads. The OVP
+threshold can be set by connecting a resistor between the POVP pin and GND or applying a direct DC voltage
+level to the POVP pin. When EN goes high and prior to the soft-start process, the OVP threshold setting will be
+latched. The OVP threshold remains unaffected by any subsequent changes. See Table 2 for the OVP threshold
+setting.
+When the RT1987 detects an overvoltage event, the resulting behavior depends on the current state of the power
+path. If the power path is on, the internal power device will be switched off after the OVP blanking time (tBLK_OVP
+– typically 512µs). If the power path is off, OVP will prevent the internal power device from being turned on. In both
+cases, the FLTB pin is pulled low, indicating a fault condition. The RT1987 can be re-enabled by toggling the EN
+pin or cycling the input power supply.
+                                          Table 2. Overvoltage Protection Threshold Setting
+                                            POVP Voltage                  OVP Threshold (Min.)
+                                            POVP < 1.25 V                         33V
+                                            POVP > 1.4 V                          23V
+
+17.8 Over-Temperature Protection (OTP)
+
+If the RT1987 die temperature reaches 140°C, the power path is disabled. Toggle the EN pin or cycle the input
+power to re-enable the part.
+
+Copyright © 2024 Richtek Technology Corporation. All rights reserved.            is a registered trademark of Richtek Technology Corporation.
+www.richtek.com                                                                                      RT1987_DS-00            September          2024
+16
+                                                                                                                                                         RT1987
+18 Application Information
+(Note 7)
+
+18.1 Input Capacitor Selection
+
+A quality input capacitor provides a low impedance at high frequency to reduce input voltage transients, supply
+fast load transients, and reduce high-frequency noise. A 10µF ceramic input capacitor is recommended and should
+be placed as close to the VIN and GND pins as possible.
+
+18.2 Output Capacitor Selection
+
+While the RT1987 does not require a specific amount of output capacitance, the user should choose enough low
+ESR output capacitance to minimize high-frequency output voltage transients due to dynamic loads.
+
+18.3 Thermal Considerations
+
+The junction temperature should never exceed the absolute maximum junction temperature TJ(MAX), listed under
+Absolute Maximum Ratings, to avoid permanent damage to the device. The maximum allowable power dissipation
+depends on the thermal resistance of the IC package, the PCB layout, the rate of surrounding airflow, and the
+difference between the junction and ambient temperatures. The maximum power dissipation can be calculated
+using the following formula:
+PD(MAX) = (TJ(MAX) − TA) / θJA
+where TJ(MAX) is the maximum junction temperature, TA is the ambient temperature, and θJA is the junction-to-
+ambient thermal resistance.
+For continuous operation, the maximum operating junction temperature indicated under Recommended Operating
+Conditions is 125°C. The junction-to-ambient thermal resistance, θJA, is highly package dependent. For a VDFN-
+12T1L 3x3 package, the thermal resistance, θJA, is 53.05°C/W on a standard JEDEC 51-7 high effective-thermal-
+conductivity four-layer test board. The maximum power dissipation at TA = 25°C can be calculated as follows:
+PD(MAX) = (125°C − 25°C) / (53.05°C/W) = 1.89W for a VDFN-12T1L 3x3 package.
+The maximum power dissipation depends on the operating ambient temperature for the fixed TJ(MAX) and the
+thermal resistance, θJA. The derating curve in Figure 5 allows the designer to see the effect of rising ambient
+temperature on the maximum power dissipation.
+
+                                                                             4.0
+                                                                                                                 Four-Layer PCB
+                                           Maximum Power Dissipation (W) 1
+
+
+
+
+                                                                             3.5
+
+                                                                             3.0
+
+                                                                             2.5
+
+                                                                             2.0
+
+                                                                             1.5
+
+                                                                             1.0
+
+                                                                             0.5
+
+                                                                             0.0
+                                                                                   0   25         50       75          100        125
+                                                                                            Ambient Temperature (°C)
+
+                                        Figure 5. Derating Curve of Maximum Power Dissipation
+
+
+Copyright © 2024 Richtek Technology Corporation. All rights reserved.                                        is a registered trademark of Richtek Technology Corporation.
+RT1987_DS-00            September        2024                                                                                                             www.richtek.com
+                                                                                                                                                                       17
+RT1987
+
+
+
+
+Note 7. The information provided in this section is for reference only. The customer is solely responsible for the designing,
+        validating, and testing your product incorporating Richtek’s product and ensure such product meets applicable
+        standards and any safety, security, or other requirements.
+Copyright © 2024 Richtek Technology Corporation. All rights reserved.   is a registered trademark of Richtek Technology Corporation.
+www.richtek.com                                                                            RT1987_DS-00             September          2024
+18
+                                                                                                                            RT1987
+19 Outline Dimension
+
+
+
+
+                                                Dimensions In Millimeters              Dimensions In Inches
+                         Symbol
+                                                    Min                 Max              Min                    Max
+                              A                    0.800                1.000          0.031                    0.039
+                             A1                    0.000                0.050          0.000                    0.002
+                             A3                    0.175                0.250          0.007                    0.010
+                              b                    0.200                0.300          0.008                    0.012
+                             b1                    0.700                0.800          0.028                    0.031
+                              D                    2.950                3.050          0.116                    0.120
+                             D2                    2.450                2.550          0.096                    0.100
+                              E                    2.950                3.050          0.116                    0.120
+                             E2                    1.450                1.550          0.057                    0.061
+                              e                                0.500                               0.020
+                              L                    0.350                0.450          0.014                    0.018
+                             L1                    0.200                0.300          0.008                    0.012
+
+                                                        V-Type 12T1L DFN 3x3 Package
+
+
+
+
+Copyright © 2024 Richtek Technology Corporation. All rights reserved.           is a registered trademark of Richtek Technology Corporation.
+RT1987_DS-00            September        2024                                                                                www.richtek.com
+                                                                                                                                          19
+RT1987
+20 Footprint Information
+
+
+
+
+                                   Number of                                Footprint Dimension (mm)                                    Tolerance
+          Package
+                                       Pins           P         A       B     C     C1       D        D1       Sx       Sy       M
+
+V/W/U/XDFN3x3-12T1                      12         0.500 3.800 2.100 0.850 0.550 0.250 0.750 2.500 1.500 2.750                             ±0.05
+
+
+
+
+Copyright © 2024 Richtek Technology Corporation. All rights reserved.               is a registered trademark of Richtek Technology Corporation.
+www.richtek.com                                                                                        RT1987_DS-00             September          2024
+20
+                                                                                                                                    RT1987
+21 Packing Information
+21.1 Tape and Reel Data
+
+
+
+
+                             Tape Size          Pocket Pitch            Reel Size (A)    Units         Trailer      Leader        Reel Width (W2)
+   Package Type                                                                                         (mm)         (mm)
+                             (W1) (mm)             (P) (mm)                             per Reel                                  Min./Max. (mm)
+                                                                        (mm)    (in)
+
+    QFN/DFN 3x3                    12                   8               330      13      2,500           160          600              12.4/14.4
+
+
+
+
+                                                                                         C, D, and K are determined by component size.
+
+                                                                                         The clearance between the components and
+
+                                                                                         the cavity is as follows:
+
+                                                                                         - For 12mm carrier tape: 0.5mm max.
+
+
+
+
+                        W1                     P                           B                     F                         ØJ                    H
+  Tape Size
+                       Max.             Min.       Max.          Min.          Max.     Min.         Max.          Min.         Max.           Max.
+
+     12mm            12.3mm         7.9mm          8.1mm 1.65mm 1.85mm 3.9mm                         4.1mm       1.5mm         1.6mm         0.6mm
+
+
+
+Copyright © 2024 Richtek Technology Corporation. All rights reserved.                   is a registered trademark of Richtek Technology Corporation.
+RT1987_DS-00            September        2024                                                                                        www.richtek.com
+                                                                                                                                                  21
+RT1987
+21.2 Tape and Reel Packing
+
+   Step                         Photo/Description                         Step                      Photo/Description
+
+
+
+
+      1                                                                       4
+
+
+
+
+                                         Reel 13”                                              1 reel per inner box Box G
+
+
+
+
+      2                                                                       5
+
+
+
+
+                        HIC & Desiccant (2 Unit) inside                                        6 inner boxes per outer box
+
+
+
+
+      3                                                                       6
+
+
+
+
+                   Caution label is on backside of Al bag                                           Outer box Carton A
+
+
+
+                    Container              Reel                         Box                                           Carton
+
+  Package                           Size        Units          Item     Reels       Units             Item             Boxes             Units
+
+    QFN and DFN 3x3                  13”       2,500          Box G      1          2,500          Carton A               6             15,000
+
+
+
+
+Copyright © 2024 Richtek Technology Corporation. All rights reserved.             is a registered trademark of Richtek Technology Corporation.
+www.richtek.com                                                                                      RT1987_DS-00             September          2024
+22
+                                                                                                                                               RT1987
+21.3 Packing Material Anti-ESD Property
+
+     Surface                                                                                                                                     Protection
+                            Aluminum Bag                    Reel            Cover tape            Carrier tape              Tube
+    Resistance                                                                                                                                     Band
+       Ω/cm2                   104 to 1011             104 to 1011          104 to 1011           104 to 1011           104 to 1011             104 to 1011
+
+
+
+
+Richtek Technology Corporation
+14F, No. 8, Tai Yuen 1st Street, Chupei City
+Hsinchu, Taiwan, R.O.C.
+Tel: (8863)5526789
+
+Richtek products are sold by description only. Richtek reserves the right to change the circuitry and/or specifications without notice at any time. Customers should
+obtain the latest relevant information and data sheets before placing orders and should verify that such information is current and complete. Richtek cannot assume
+responsibility for use of any circuitry other than circuitry entirely embodied in a Richtek product. Information furnished by Richtek is believed to be accurate and
+reliable. However, no responsibility is assumed by Richtek or its subsidiaries for its use; nor for any infringements of patents or other rights of third parties which
+may result from its use. No license is granted by implication or otherwise under any patent or patent rights of Richtek or its subsidiaries.
+
+Copyright © 2024 Richtek Technology Corporation. All rights reserved.                           is a registered trademark of Richtek Technology Corporation.
+RT1987_DS-00             September         2024                                                                                                 www.richtek.com
+                                                                                                                                                             23
+RT1987
+22 Datasheet Revision History
+   Version              Date              Description                                    Item
+ 00                2024/9/6           Final
+
+
+
+
+Copyright © 2024 Richtek Technology Corporation. All rights reserved.   is a registered trademark of Richtek Technology Corporation.
+www.richtek.com                                                                            RT1987_DS-00             September          2024
+24
+

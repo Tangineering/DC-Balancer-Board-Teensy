@@ -1,0 +1,542 @@
+                                                                                                            BSP170P
+
+      SIPMOS Small-Signal-Transistor
+                  ®
+                                                                          Product Summary
+      Features
+                                                                          V DS                                 -60       V
+      • P-Channel
+                                                                          R DS(on),max                         0.3    Ω
+      • Enhancement mode
+                                                                          ID                                -1.9         A
+      • Avalanche rated
+
+      • dv /dt rated
+
+      • Pb-free lead plating; RoHS compliant                                                    PG-SOT223
+
+      • Qualified according to AEC Q101
+      • Halogen­free according to IEC61249­2­21
+
+
+
+
+      Type             Package         Tape and reel information                 Marking     Lead free      Packing
+      BSP170P          PG-SOT223       H6327: 1000pcs/reel                       BSP170P Yes                Non Dry
+
+      Maximum ratings, at T j=25 °C, unless otherwise specified
+
+      Parameter                                Symbol Conditions                                Value                Unit
+
+                                                                                             steady state
+
+      Continuous drain current                 ID           T A=25 °C                            -1.9                A
+
+                                                            T A=70 °C                            -1.5
+
+      Pulsed drain current                     I D,pulse    T A=25 °C                            -7.6
+
+      Avalanche energy, single pulse           E AS         I D=1.9 A, R GS=25 Ω                  70                 mJ
+
+      Avalanche energy, periodic limited by
+                                            E AR                                                 0.18
+      Tjmax
+
+                                                            I D=1.9 A, V DS=48 V,
+      Reverse diode dv /dt                     dv /dt       di /dt =-200 A/µs,                    -6                 kV/µs
+                                                            T j,max=150 °C
+
+      Gate source voltage                      V GS                                              ±20                 V
+
+      Power dissipation                        P tot        T A=25 °C                             1.8                W
+
+      Operating and storage temperature        T j, T stg                                     -55 ... 150            °C
+
+      ESD class                                             JESD22-C101 (HBM)              1A (250V to 500V)
+
+      Soldering temperature                                                                     260 °C
+
+      IEC climatic category; DIN IEC 68-1                                                     55/150/56
+
+
+
+
+Rev 2.53                                                     page 1                                                       2012-11-26
+                                                                                                         BSP170P
+
+      Parameter                               Symbol Conditions                             Values             Unit
+
+                                                                                     min.     typ.     max.
+
+      Thermal characteristics
+
+
+      Thermal resistance,
+                                              R thJS                                  -        -         20    K/W
+      junction -soldering point
+
+
+      SMD version, device on PCB:             R thJA     minimal footprint            -        -        110    K/W
+
+
+
+                                                         6 cm2 cooling area1)         -        -         70
+
+
+
+      Electrical characteristics, at T j=25 °C, unless otherwise specified
+
+
+      Static characteristics
+
+      Drain-source breakdown voltage          V (BR)DSS V GS=0 V, I D=-250 µA        -60       -          -    V
+
+
+      Gate threshold voltage                  V GS(th)   V DS=V GS, I D=-250 µA      -2.1      -3        -4
+
+
+                                                         V DS=-60 V, V GS=0 V,
+      Zero gate voltage drain current         I DSS                                   -       -0.1       -1    µA
+                                                         T j=25 °C
+
+                                                         V DS=-60 V, V GS=0 V,
+                                                                                      -       -10       -100
+                                                         T j=125 °C
+
+      Gate-source leakage current             I GSS      V GS=-20 V, V DS=0 V         -       -10       -100   nA
+
+      Drain-source on-state resistance        R DS(on)   V GS=-10 V, I D=-1.9 A       -       239       300    mΩ
+
+                                                         |V DS|>2|I D|R DS(on)max,
+      Transconductance                        g fs                                   1.3      2.6         -    S
+                                                         I D=-1.9 A
+
+      1)
+         Device on 40mm*40mm*1.5 epoxy PCB FR4 with 6cm2 (one layer, 70µm thick) copper area for drain connection. PCB
+      is vertical without blown air.
+
+
+
+
+Rev 2.53                                                  page 2                                                   2012-11-26
+                                                                                                BSP170P
+
+      Parameter                          Symbol Conditions                            Values           Unit
+                                                                               min.    typ.    max.
+
+      Dynamic characteristics
+
+      Input capacitance                  C iss                                  -      328     410     pF
+                                                     V GS=0 V, V DS=-25 V,
+      Output capacitance                 C oss                                  -      105     135
+                                                     f =1 MHz
+      Reverse transfer capacitance       C rss                                  -      38       48
+
+      Turn-on delay time                 t d(on)                                -      14       21     ns
+
+      Rise time                          tr          V DD=-30 V, V GS=-         -      28       42
+                                                     10 V, I D=-1.9 A,
+      Turn-off delay time                t d(off)    R G=6 Ω                    -      92      138
+
+      Fall time                          tf                                     -      60       90
+
+      Gate Charge Characteristics
+
+      Gate to source charge              Q gs                                   -      -1.4    -1.9    nC
+
+      Gate to drain charge               Q gd        V DD=-48 V, I D=-1.9 A,    -      -4.9    -7.4
+
+                                         Qg          V GS=0 to -10 V
+      Gate charge total                                                         -      -10     -14
+
+      Gate plateau voltage               V plateau                              -     -4.34      -     V
+
+      Reverse Diode
+
+      Diode continuous forward current   IS                                     -       -      -1.98   A
+                                                     T A=25 °C
+      Diode pulse current                I S,pulse                              -       -      -7.6
+
+                                                     V GS=0 V, I F=-1.9 A,
+      Diode forward voltage              V SD                                   -     -0.83    -1.1    V
+                                                     T j=25 °C
+
+      Reverse recovery time              t rr                                   -      36       54     ns
+                                                     V R=30 V, I F=|I S|,
+                                         Q rr        di F/dt =100 A/µs
+      Reverse recovery charge                                                   -      41       62     nC
+
+
+
+
+Rev 2.53                                              page 3                                               2012-11-26
+                                                                                                                                                                                   BSP170P
+      1 Power dissipation                                                                             2 Drain current
+      P tot=f(T A)                                                                                    I D=f(T A); |V GS|≥10 V
+
+
+
+                                                                                                                      2.1
+
+
+                   1.8
+                                                                                                                      1.8
+
+
+                   1.5
+                                                                                                                      1.5
+
+
+                   1.2
+                                                                                                                      1.2
+       P tot [W]
+
+
+
+
+                                                                                                         -I D [A]
+                   0.9                                                                                                0.9
+
+
+
+                   0.6                                                                                                0.6
+
+
+
+                   0.3                                                                                                0.3
+
+
+
+                     0                                                                                                  0
+                          0                40            80              120                    160                          0                  40               80           120         160
+                                                      T A [°C]                                                                                              T A [°C]
+
+      3 Safe operating area                                                                           4 Max. transient thermal impedance
+
+      I D=f(V DS); T A=25 °C1); D =0                                                                  Z thJA=f(t p)
+      parameter: t p                                                                                  parameter: D =t p/T
+
+                   101                                                                  10 µs                         102
+
+                                                                                 100 µs
+
+                                limited by on-state                                                                                0.5
+                                resistance                                       1 ms
+
+                                                                         10 ms
+                                                                                                                                   0.2
+
+                   100                                                                                                101
+                                                                  100 ms                                                           0.1
+                                                                                                       Z thJS [K/W]
+       -I D [A]
+
+
+
+
+                                                                                                                                   0.05
+
+
+
+                                                                                                                                   0.02
+                                                                    DC
+
+                   10-1                                                                                               100          0.01
+                                                                                                                                                 single pulse
+
+
+
+
+                   10-2                                                                                               10-1
+                          0.1                     1                10                           100                         10-5         10-4    10-3     10-2        10-1   100    101   102
+                                                      -V DS [V]                                                                                                 t p [s]
+
+
+Rev 2.53                                                                                        page 4                                                                                    2012-11-26
+                                                                                                                                                   BSP170P
+      5 Typ. output characteristics                                       6 Typ. drain-source on resistance
+      I D=f(V DS); T j=25 °C                                              R DS(on)=f(I D); T j=25 °C
+      parameter: V GS                                                     parameter: V GS
+
+                  7                                                                    1000
+
+                                          -7 V
+                          -20 V                                                            900
+                  6                         -6V
+                                  -10 V
+                                                     -5.5 V                                800
+
+                  5                                                                        700
+                                                                                                     -4 V
+
+                                                                                           600
+
+
+
+
+                                                                           R DS(on) [mΩ]
+                  4
+       -I D [A]
+
+
+
+
+                                                   -5 V                                                               -4.5 V
+                                                                                           500
+
+                  3                                                                                                                    -5 V
+                                                                                           400
+                                                                                                                                                -5.5 V
+
+                                                                                                                                        -6 V
+                  2
+                                                   -4.5 V                                  300                                                  -7 V
+                                                                                                                                        -10 V
+                                                                                           200                                 -20 V
+                  1                               -4V
+                                                                                           100
+
+                  0                                                                          0
+                      0      1             2            3        4    5                          0                1               2                        3
+                                             -V DS [V]                                                                    -I D [A]
+
+
+      7 Typ. transfer characteristics                                     8 Typ. forward transconductance
+      I D=f(V GS); |V DS|>2|I D|R DS(on)max                               g fs=f(I D); T j=25 °C
+      parameter: T j
+
+                  3                                                                        3.5
+
+
+
+                                                                                             3
+
+
+
+                                                                                           2.5
+                  2
+
+
+                                                                                             2
+       -I D [A]
+
+
+
+
+                                                                           g fs [S]
+
+
+
+
+                                                                                           1.5
+
+                  1
+                                                                                             1
+
+
+
+                                                   125 °C                                  0.5
+                                                              25 °C
+
+                  0                                                                          0
+                      0      1             2            3        4    5                          0          0.5       1              1.5               2       2.5
+                                             -V GS [V]                                                                    -I D [A]
+
+
+Rev 2.53                                                              page 5                                                                                   2012-11-26
+                                                                                                                                                                 BSP170P
+      9 Drain-source on-state resistance                                             10 Typ. gate threshold voltage
+      R DS(on)=f(T j); I D=-1.9 A; V GS=-10 V                                        V GS(th)=f(T j); V GS=V DS; I D=-250 µA
+
+
+
+                       600
+
+                       550                                                                              5
+
+                       500
+
+                       450                                                                                                                      max.
+                                                                                                        4
+                       400
+       R DS(on) [mΩ]
+
+
+
+
+                                          98 %
+                       350                                                                                                                  typ.
+
+
+
+
+                                                                                      -V GS(th) [V]
+                                                                                                        3
+                       300
+
+                       250                          typ.
+
+                                                                                                        2
+                       200                                                                                                               min.
+
+                       150
+
+                       100                                                                              1
+
+                        50
+
+                         0                                                                              0
+                             -60   -20   20         60         100        140                               -60       -20         20            60         100           140
+                                               T j [°C]                                                                                  T j [°C]
+
+      11 Typ. capacitances                                                           12 Forward characteristics of reverse diode
+      C =f(V DS); V GS=0 V; f =1 MHz                                                 I F=f(V SD)
+                                                                                     parameter: T j
+
+                       103                                                                            101
+
+                                                                                                                                                           150 °C, typ
+
+                                                                                                                              25 °C, 98%
+
+
+                                                  Ciss
+
+
+
+                                                                                                      100     150 °C, 98%
+
+                                                  Coss
+       C [pF]
+
+
+
+
+                                                                                      I F [A]
+
+
+
+
+                       102
+
+
+
+                                                  Crss
+                                                                                                      10-1
+
+
+                                                                                                                            25 °C, typ
+
+
+
+
+                       101                                                                            10-2
+                              0     5     10              15         20         25                           0       0.5         1          1.5        2          2.5          3
+                                              -V DS [V]                                                                                  -V SD [V]
+
+
+Rev 2.53                                                                        page 6                                                                                     2012-11-26
+                                                                                                                                                      BSP170P
+      13 Avalanche characteristics                                                                 14 Typ. gate charge
+      I AS=f(t AV); R GS=25 Ω                                                                      V GS=f(Q gate); I D=-1.9 A pulsed
+      parameter: T j(start)                                                                        parameter: V DD
+
+                         101                                                                                   16
+
+
+                                                                                                               14
+
+
+                                                                                                               12
+
+
+                                                                                                               10                       30 V
+                                                                                                                                12 V
+                                                                                                                                               48 V
+       -I AV [A]
+
+
+
+
+                                                                                                    V GS [V]
+                              0                                                    25 °C
+                         10                                                                                     8
+                                                                          100 °C
+
+                                                                 125 °C
+                                                                                                                6
+
+
+                                                                                                                4
+
+
+                                                                                                                2
+
+
+                         10-1                                                                                   0
+                                  100         101          102               103             104                    0      5                 10            15
+                                                         t AV [µs]                                                             Q gate [nC]
+
+
+      15 Drain-source breakdown voltage
+      V BR(DSS)=f(T j); I D=-250 µA
+
+
+
+                         70
+
+
+
+
+                         65
+        -V BR(DSS) [V]
+
+
+
+
+                         60
+
+
+
+
+                         55
+
+
+
+
+                         50
+                              -60       -20         20        60           100         140
+                                                         T j [°C]
+
+
+Rev 2.53                                                                                     page 7                                                       2012-11-26
+                                                               BSP170P
+
+      Package Outline
+
+      SOT-223: Outline
+
+
+
+
+      Footprint                                    Packaging
+                                                   Tape
+
+
+
+
+      Operating and storage temperature
+
+
+
+
+      Dimensions in mm
+
+Rev 2.53                                  page 8                    2012-11-26
+                    BSP170P
+
+
+
+
+Rev 2.53   page 9       2012-11-26
+
