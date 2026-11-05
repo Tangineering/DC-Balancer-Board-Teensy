@@ -133,8 +133,41 @@ loads the same net). The V_rgn reading is then the true REF voltage scaled by 8.
 regulates REF at 2.495 V whatever loads it, so a tripped chopper reads **22.13 V**. The
 observed maximum puts REF at 2.059 V, **436 mV below V_ref**. In this case **the chopper has
 never tripped in any log or bag, whatever the nominal V-MOT figure.** A side effect: the real
-V-MOT trip is raised by the same factor. With a fixed 0.85 ratio, the node reaches 2.495 V at
-about **26 V of V-MOT**, not 22.1 V.
+V-MOT trip is raised (section 5a).
+
+### 5a. Effective trip point in case A
+
+The chopper trips when the node reaches V_ref = 2.495 V. At that point R2-SNT carries 249.5 uA
+and the leak carries I_leak(2.495 V), so
+
+    V_trip = 2.495 x (1 + 78.7/10) + I_leak(2.495 V) x 78.7 kOhm
+           = 22.13 V + 78.7 V per mA of leak at the trip.
+
+Only one point on the leak curve is known: **29.5-33.6 uA at a node voltage of 1.50-1.53 V**
+(15.9 V bus; the range is the session/warm-up spread, ratio 0.854 -> 0.834). The node has to
+rise another ~0.97 V to reach the trip, and the trip depends entirely on how the leak grows over
+that step:
+
+| Leak behaves like | Leak at 2.495 V | Effective V-MOT trip |
+|---|---|---|
+| Constant current (saturated source) | 29.5-33.6 uA | **24.4-24.8 V** |
+| Resistor to GND (fixed ratio, about 47-56 kOhm) | 48-53 uA | **25.9-26.5 V** (22.13 V / ratio) |
+| Junction leak (grows exponentially; e.g. x2 per 0.2 V) | ~0.9 mA | **~90 V, i.e. no trip** before something else gives way |
+
+The warm-up drift in section 3 shows the leak is temperature-dependent, which makes the
+junction-like case plausible, and every case trips higher on a warm board. Compare with the
+limits on V-MOT: the RT1987 is rated to 32 V operating and 40 V absolute maximum
+(`references/Datasheets/RT1987_DS-00.pdf`, sections 10 and 12). The first two cases still clamp
+inside that range; the third does not clamp at all. Until the leak's voltage dependence is
+measured, **in case A the board has no assured V-MOT overvoltage clamp.**
+
+Firmware gives no backstop in case A either. `LIMIT_V_RGN_MAX` (28 V reading) needs the node at
+28 / 8.87 = 3.16 V. A working chopper holds the node at 2.495 V (a 22.13 V reading), and a leak
+that stops the chopper tripping also pulls the node down. Either way the reading cannot get to
+28 V, so `FAULT_OV_RGN` cannot fire.
+
+Measuring the curve: bench trip test (section 6, step 5), or a DMM on the node at two or three
+V-MOT levels from a current-limited supply, with the VESC disconnected.
 
 **Case B: the node is correct and the error is between the node and the ADC result** (the DMM
 reads 1.80 V at the node while firmware reads 1.52 V). True V-MOT is then reading / ratio.
