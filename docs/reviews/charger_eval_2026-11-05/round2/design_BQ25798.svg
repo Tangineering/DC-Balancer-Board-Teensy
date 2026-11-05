@@ -1,0 +1,140 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 760" font-family="Helvetica,Arial,sans-serif" font-size="12">
+  <rect width="1200" height="760" fill="#ffffff"/>
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#333"/></marker>
+    <marker id="s" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#1f5fbf"/></marker>
+  </defs>
+  <text x="20" y="28" font-size="17" font-weight="bold" fill="#111">Path A: BQ25798EVM on the Ag105 pads, always-powered regen + FC charging (board rev 20260622)</text>
+  <text x="20" y="46" fill="#555">Power = black/thick; logic = blue; hardware loop barriers H1 (V-MOT &gt; 1.067·VBUS) and H2 (FC permit) gate /CE and ILIM_HIZ, both fail-safe to INHIBIT</text>
+
+  <!-- Motherboard frame -->
+  <rect x="20" y="62" width="620" height="440" fill="none" stroke="#888" stroke-dasharray="6 4"/>
+  <text x="30" y="80" fill="#666" font-weight="bold">MOTHERBOARD (unchanged power stage; C-D8/C-D10 to 35 V)</text>
+
+  <!-- Sources -->
+  <rect x="40" y="100" width="110" height="40" fill="#f3f3f3" stroke="#333"/><text x="50" y="118">FC boost</text><text x="50" y="133" fill="#555">+ D-FC-EN (27)</text>
+  <rect x="40" y="170" width="110" height="40" fill="#f3f3f3" stroke="#333"/><text x="50" y="188">BT boost</text><text x="50" y="203" fill="#555">+ D-BT-EN (28)</text>
+  <line x1="150" y1="120" x2="210" y2="120" stroke="#000" stroke-width="3"/>
+  <line x1="150" y1="190" x2="210" y2="190" stroke="#000" stroke-width="3"/>
+  <line x1="210" y1="110" x2="210" y2="300" stroke="#000" stroke-width="3"/>
+  <text x="216" y="105" font-weight="bold">VBUS 15.9 V</text>
+
+  <!-- D-MT-EN -->
+  <rect x="250" y="135" width="90" height="34" fill="#fff" stroke="#000"/><text x="258" y="150">D-MT-EN (29)</text><text x="258" y="163" fill="#555">VBUS→V-MOT</text>
+  <line x1="210" y1="152" x2="250" y2="152" stroke="#000" stroke-width="3"/>
+  <line x1="340" y1="152" x2="420" y2="152" stroke="#000" stroke-width="3"/>
+  <text x="352" y="145" font-weight="bold">V-MOT</text>
+  <rect x="420" y="128" width="88" height="48" fill="#f3f3f3" stroke="#333"/><text x="430" y="146">VESC + CAL</text><text x="430" y="161" fill="#555">chopper ~21.4 V</text><text x="430" y="172" fill="#555">VESC cut ~21.35 V?</text>
+
+  <!-- D-BC-RG and D-BC-FC -->
+  <line x1="380" y1="152" x2="380" y2="232" stroke="#000" stroke-width="3"/>
+  <rect x="335" y="232" width="90" height="34" fill="#fff" stroke="#000"/><text x="342" y="247">D-BC-RG (30)</text><text x="342" y="260" fill="#555">closed thru Run</text>
+  <line x1="210" y1="300" x2="250" y2="300" stroke="#000" stroke-width="3"/>
+  <rect x="250" y="283" width="90" height="34" fill="#fff" stroke="#000"/><text x="257" y="298">D-BC-FC (31)</text><text x="257" y="311" fill="#555">FC window</text>
+  <line x1="380" y1="266" x2="380" y2="340" stroke="#000" stroke-width="3"/>
+  <line x1="340" y1="300" x2="380" y2="300" stroke="#000" stroke-width="3"/>
+  <line x1="380" y1="340" x2="600" y2="340" stroke="#000" stroke-width="3"/>
+  <text x="440" y="333" font-weight="bold">VCHG-IN (pad VIN+) 20 µF</text>
+
+  <!-- Pack side -->
+  <rect x="40" y="400" width="110" height="40" fill="#f3f3f3" stroke="#333"/><text x="50" y="418">2S pack VBT</text><text x="50" y="433" fill="#555">7.4–8.4 V → LM1084</text>
+  <line x1="150" y1="420" x2="250" y2="420" stroke="#000" stroke-width="3"/>
+  <line x1="95" y1="400" x2="95" y2="210" stroke="#000" stroke-width="2"/>
+  <rect x="250" y="403" width="100" height="34" fill="#fff" stroke="#000"/><text x="257" y="418">D-BT-SQ (32)</text><text x="257" y="431" fill="#555">VCHG→VBT</text>
+  <line x1="350" y1="420" x2="600" y2="420" stroke="#000" stroke-width="3"/>
+  <text x="430" y="413" font-weight="bold">VCHG (pads VBAT+)</text>
+  <path d="M 200 420 L 200 465 L 400 465 L 400 420" fill="none" stroke="#b05a00" stroke-width="2" stroke-dasharray="5 3"/>
+  <text x="215" y="482" fill="#b05a00">M8 (proposal): 1 kΩ keep-alive VBT→VCHG</text>
+
+  <!-- Teensy -->
+  <rect x="40" y="520" width="200" height="200" fill="#eef4ff" stroke="#1f5fbf"/>
+  <text x="50" y="540" font-weight="bold" fill="#1f5fbf">Teensy 4.1 (3V3)</text>
+  <text x="50" y="560">5  CHG_ARM (P5)  out</text>
+  <text x="50" y="578">10 CHG_QUAL  out</text>
+  <text x="50" y="596">6  CHARGER_STAT in (pull-up)</text>
+  <text x="50" y="614">18/19 SDA/SCL 100 kHz</text>
+  <text x="50" y="632">33/34/16 PERMIT/H1/H2 readback</text>
+  <text x="50" y="650">28/30/31 BT_BUS/REGEN/FCC nets</text>
+  <text x="50" y="668">41 BT_CURRENT (INA253)</text>
+  <text x="50" y="690" fill="#a00" font-weight="bold">MCU WDT: RTWDOG 100 ms +</text>
+  <text x="50" y="706" fill="#a00" font-weight="bold">WDOG1 1 s = REQUIRED FUTURE WORK</text>
+
+  <!-- Carrier -->
+  <rect x="300" y="520" width="340" height="200" fill="#f5f9ff" stroke="#1f5fbf"/>
+  <text x="310" y="540" font-weight="bold" fill="#1f5fbf">CARRIER (3V3, 0.1 % dividers)</text>
+  <rect x="312" y="552" width="150" height="46" fill="#fff" stroke="#1f5fbf"/>
+  <text x="318" y="568">U1 TLV3012B  H1</text><text x="318" y="582" fill="#555">V-MOT·56.2/555 vs</text><text x="318" y="594" fill="#555">VBUS·56.2/520, RH 6.49M</text>
+  <rect x="312" y="606" width="150" height="40" fill="#fff" stroke="#1f5fbf"/>
+  <text x="318" y="622">U2 TLV3012B BT_ACT</text><text x="318" y="636" fill="#555">I_BT &gt; ~0.2 A (19.8 mV)</text>
+  <rect x="480" y="552" width="150" height="152" fill="#fff" stroke="#1f5fbf"/>
+  <text x="486" y="568" fill="#1f5fbf">LVC1G logic</text>
+  <text x="486" y="586">H2 = FCC·¬(BTB+RGN+BT_ACT)</text>
+  <text x="486" y="604">GATE = H1 + H2</text>
+  <text x="486" y="622" font-weight="bold">PERMIT = GATE · P5</text>
+  <text x="486" y="640" font-weight="bold">ILIM_REL = GATE + QUAL</text>
+  <text x="486" y="660" fill="#555">P5, QUAL: 47 k pull-down</text>
+  <text x="486" y="676" fill="#555">unpowered / POR → 0</text>
+  <text x="486" y="692" fill="#555">= INHIBIT</text>
+  <text x="312" y="666" fill="#555">taps: V-MOT @ CAL+,</text><text x="312" y="680" fill="#555">VBUS @ C-D2, EN nets,</text><text x="312" y="694" fill="#555">INA253 BT out</text>
+
+  <!-- tap lines -->
+  <path d="M 420 176 L 420 200 L 460 200 L 460 552" fill="none" stroke="#1f5fbf" stroke-width="1.2" stroke-dasharray="3 3" marker-end="url(#s)"/>
+  <path d="M 210 230 L 230 230 L 230 500 L 330 500 L 330 552" fill="none" stroke="#1f5fbf" stroke-width="1.2" stroke-dasharray="3 3" marker-end="url(#s)"/>
+  <line x1="240" y1="560" x2="300" y2="560" stroke="#1f5fbf" stroke-width="1.5" marker-end="url(#s)"/>
+  <line x1="240" y1="578" x2="300" y2="578" stroke="#1f5fbf" stroke-width="1.5" marker-end="url(#s)"/>
+  <line x1="300" y1="632" x2="240" y2="632" stroke="#1f5fbf" stroke-width="1.5" marker-end="url(#s)"/>
+
+  <!-- EVM frame -->
+  <rect x="680" y="62" width="500" height="660" fill="none" stroke="#888" stroke-dasharray="6 4"/>
+  <text x="690" y="80" fill="#666" font-weight="bold">BQ25798EVM off-board (≤ 0.30 m leads), mods M1–M11</text>
+  <rect x="760" y="250" width="240" height="250" fill="#fffbe9" stroke="#000" stroke-width="1.5"/>
+  <text x="772" y="272" font-weight="bold">BQ25798 (0x6B)</text>
+  <text x="772" y="292">VINDPM 19.0 V regen / 13.5 V FC</text>
+  <text x="772" y="310">IINDPM 1.25 A / ≤0.90 A</text>
+  <text x="772" y="328">ICHG 2.50 A / 1.60 A, VREG 8.40 V</text>
+  <text x="772" y="346">WD 0.5 s, STOP_WD_CHG=1</text>
+  <text x="772" y="364">AUTO_INDET_EN 0, EN_EXTILIM 1</text>
+  <text x="772" y="382">never write REG0A / REG16</text>
+  <text x="772" y="400" fill="#555">50.2 µF in (C11,C12,C29–31 → 35 V)</text>
+  <text x="772" y="418" fill="#555">JP3/JP4 in, JP1/JP2 GND, JP5+JP8 1-2</text>
+  <text x="772" y="436" fill="#555">JP9 2-3, JP24 2S, JP6/10/11/17/32 out</text>
+  <text x="772" y="454" fill="#555">R39/R40 removed, R21 → 150 k</text>
+  <text x="772" y="472" fill="#555">ILIM pin clamp 1.15–1.35 A (HW)</text>
+
+  <!-- power leads -->
+  <line x1="600" y1="340" x2="760" y2="300" stroke="#000" stroke-width="3" marker-end="url(#a)"/>
+  <text x="640" y="306">J1 VIN1  20 AWG pair</text>
+  <line x1="760" y1="440" x2="600" y2="420" stroke="#000" stroke-width="3" marker-end="url(#a)"/>
+  <text x="626" y="446">J5 BAT  18 AWG pair</text>
+
+  <!-- stages -->
+  <rect x="1030" y="250" width="135" height="70" fill="#fff" stroke="#1f5fbf"/>
+  <text x="1036" y="267" font-weight="bold" fill="#1f5fbf">Stage A → /CE</text>
+  <text x="1036" y="283">NMOS, gate=PERMIT</text>
+  <text x="1036" y="298" fill="#555">R42 10k → PULLUP</text>
+  <text x="1036" y="312" fill="#555">no PERMIT = /CE HIGH</text>
+  <rect x="1030" y="340" width="135" height="80" fill="#fff" stroke="#1f5fbf"/>
+  <text x="1036" y="357" font-weight="bold" fill="#1f5fbf">Stage B → ILIM_HIZ</text>
+  <text x="1036" y="373">Q2 gate ← REGN 100k</text>
+  <text x="1036" y="388">Q1 gate = ILIM_REL</text>
+  <text x="1036" y="403" fill="#555">no ILIM_REL = &lt;0.75 V</text>
+  <text x="1036" y="416" fill="#555">= converter off</text>
+  <line x1="1030" y1="285" x2="1000" y2="285" stroke="#1f5fbf" stroke-width="1.5" marker-end="url(#s)"/>
+  <line x1="1030" y1="380" x2="1000" y2="380" stroke="#1f5fbf" stroke-width="1.5" marker-end="url(#s)"/>
+  <path d="M 630 622 L 660 622 L 660 230 L 1090 230 L 1090 250" fill="none" stroke="#1f5fbf" stroke-width="1.5" marker-end="url(#s)"/>
+  <text x="840" y="224" fill="#1f5fbf">PERMIT (twisted w/ GND)</text>
+  <path d="M 630 640 L 670 640 L 670 535 L 1100 535 L 1100 420" fill="none" stroke="#1f5fbf" stroke-width="1.5" marker-end="url(#s)"/>
+  <text x="840" y="530" fill="#1f5fbf">ILIM_REL (twisted w/ GND)</text>
+  <path d="M 240 614 L 270 614 L 270 740 L 880 740 L 880 500" fill="none" stroke="#1f5fbf" stroke-width="1.2" marker-end="url(#s)"/>
+  <text x="560" y="735" fill="#1f5fbf">SDA/SCL (R39/R40 removed; board 10 k to 3V3), STAT open-drain, THERM→J7</text>
+
+  <!-- legend box -->
+  <rect x="700" y="570" width="465" height="140" fill="#fafafa" stroke="#ccc"/>
+  <text x="710" y="590" font-weight="bold">Why no loop / no runaway</text>
+  <text x="710" y="608">• L-R needs D-MT-EN conducting (V-MOT &lt; VBUS); H1 permits only V-MOT &gt; 1.067·VBUS</text>
+  <text x="710" y="625">• L-F needs pack→bus current in an FC window; H2 drops on BT_BUS/REGEN or I_BT &gt; 0.2 A</text>
+  <text x="710" y="642">• Two pins (/CE, ILIM_HIZ), two stages, self-biased from EVM PULLUP/REGN</text>
+  <text x="710" y="659">• Soft layer: VINDPM 18.62–19.38 V &gt; bus max 17.2 V; firmware F1 1 kHz cross-check</text>
+  <text x="710" y="676">• Runaway: high-side sense, HW input clamp 1.15–1.35 A, ICHG ≤ 2.5 A, OC_FC 1.4 A</text>
+  <text x="710" y="693">• Hang: charger WD 0.5 s → EN_CHG=0; MCU WDT resets → EN pull-downs open all paths</text>
+</svg>
