@@ -27,10 +27,11 @@ node as a bare sense divider. Anything that draws current from the TL431 REF net
 TL431 itself and the Teensy pad, reads as a low V_rgn.
 
 Design trip, from the BOM values: the TL431 starts sinking when REF reaches V_ref = 2.495 V,
-which puts V-MOT at **2.495 x 88.7 / 10 = 22.13 V**. *The operator quotes a nominal trip of
-**19.91 V**. That figure is not in the repo and does not follow from the BOM values (it would
-need R1-SNT of about 69.8 kOhm, or a 2.245 V reference). Its source is to be confirmed.* Section
-5 answers the trip question against both figures.
+which puts V-MOT at **2.495 x 88.7 / 10 = 22.13 V** (the 22.1 V design trip). *Resolved
+2026-11-05 (operator): the 19.91 V figure first quoted for this analysis came from an
+**earlier design** with R1-SNT = 69.8 kOhm (2.495 x 79.8 / 10 = 19.91 V). The 20260622 BOM
+and schematic, and the board, carry **78.7 kOhm**, so the nominal trip is 22.1 V.* That also
+fits the measurement: a 69.8 kOhm R1 would make V_rgn read 1.11 x V_bus, not 0.85x.
 
 ## 2. The error: size, and where it is not
 
@@ -142,14 +143,11 @@ reads 1.80 V at the node while firmware reads 1.52 V). True V-MOT is then readin
   is 18.113 / 0.8361 = 21.66 V (ML0157), with REF at 2.442 V, 53 mV below V_ref. **Not
   reached**, by 0.5-0.7 V. That is 2.1 % below, against the TL431B's +/-0.5 % reference
   tolerance (`TODO(verify: TI TL431 datasheet)`).
-- Against the operator's **19.91 V**: the true peaks would be 1.6-1.8 V above it, so the chopper
-  should have been conducting. Three checks argue against that:
-  1. **The arithmetic.** A 19.91 V trip with a 2.495 V reference needs R1-SNT of about 69.8 kOhm.
-     That divider would make V_rgn read **1.11 x V_bus**, but it reads 0.85x. Getting a 19.91 V
-     trip AND a 0.85 reading would need an even larger hidden error. Both cannot hold on the
-     fitted parts unless the 19.91 V comes from different assumptions.
-  2. **No conduction signature.** The dump would take 19.91 / 47 = 0.42 A as soon as it
-     turned on. V-MOT capacitance is at least 480 uF (CAL + C-D6) and at most about 1.4 mF:
+- **No conduction at any level** (independent check, also excludes the superseded 19.91 V
+  design trip, which the case-B true peaks would have exceeded by 1.6-1.8 V):
+  1. **No conduction signature.** Taking the old 19.91 V level as the worked example, the dump
+     would take 19.91 / 47 = 0.42 A (0.46-0.47 A at 21.5-22.1 V) as soon as it turned on.
+     V-MOT capacitance is at least 480 uF (CAL + C-D6) and at most about 1.4 mF:
      the ML0215-ML0217 dark-node decay time constant of 105-122 s, divided by the 88.7 kOhm
      divider alone, bounds it from above, and every other load only lowers that estimate. So
      the rise rate would have dropped by at least 0.30 V/ms true (0.25 V/ms in reading units)
@@ -159,17 +157,16 @@ reads 1.80 V at the node while firmware reads 1.52 V). True V-MOT is then readin
      0.20 V/ms at the 18.2 V peak**, which is not possible with 0.42-0.46 A leaving through a
      dump held on above the trip. There is no consistent slope break at one reading level
      across the bursts.
-  3. **The peak shape.** A rounded peak followed by a slow linear fall matches the regen source
+  2. **The peak shape.** A rounded peak followed by a slow linear fall matches the regen source
      tailing off (the VESC's regen is cut back after about 0.4 s,
      `docs/reviews/fw36_regen_2026-11-04/README.md` item 8), not a clamp.
 
-  Caveat: the regen source current during a burst is not measured, so point 2 is strong
+  Caveat: the regen source current during a burst is not measured, so point 1 is strong
   supporting evidence, not proof.
 
 **Conclusion.** There is no evidence the chopper has ever conducted. In case A that is certain
-(REF never came within 436 mV of V_ref). In case B it holds against the BOM-derived 22.13 V trip
-by 0.5-0.7 V. Against 19.91 V it conflicts with the fitted divider arithmetic and shows no
-conduction signature. Every regen peak recorded to date is the VESC's regen limit, not the
+(REF never came within 436 mV of V_ref). In case B the true peaks (21.47-21.66 V) stayed 0.5-0.7 V
+below the 22.1 V design trip, and the burst traces show no conduction signature at any level. Every regen peak recorded to date is the VESC's regen limit, not the
 chopper.
 
 ## 6. Next steps (bench, in order)
@@ -180,8 +177,8 @@ chopper.
    - About 1.80 V: case B, the error is in the pin/ADC path.
 2. **Case A:** lift the pin-39 connection. If the node recovers to 1.80 V, the Teensy pad is
    leaking; if not, swap U-SNT (the TL431).
-3. **Measure R1-SNT and R2-SNT out of circuit.** Settle the 19.91 V vs 22.13 V nominal at the
-   same time: confirm the fitted values and the TL431 grade.
+3. **Measure R1-SNT and R2-SNT out of circuit** (expect 78.7 k / 10 k, the 22.1 V design;
+   the operator confirms 78.7 k is on the BOM and schematic) and confirm the TL431 grade.
 4. **Optional firmware check:** `pinMode(RGN_VOLTAGE, INPUT_DISABLE)` before reading, to rule
    out the i.MX pad keeper. Pin 38 reading correctly makes this unlikely.
 5. **Bench trip test,** only once 1-3 are done: raise V-MOT slowly from a current-limited supply
