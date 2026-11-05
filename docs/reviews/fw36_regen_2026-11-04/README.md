@@ -51,6 +51,7 @@ sufficient, and the bags never reached the last links.
    true (design 22.1 V), and `LIMIT_V_RGN_MAX` 28 V (:2160) trips at ~32.9 V true, above the
    RT1987's 32 V operating range. The idle 13.5 V is this artefact. Cause on the pin-39 path
    unknown (TL431 REF loading is the leading candidate).
+   **Superseded 2026-11-05 (`docs/vrgn_measurement_error_2026-11-05.md`):** the 0.85 ratio stands (present since the first V_rgn log, TP0074, and temperature-dependent), but 18.1 V is NOT the chopper clamp - the chopper has never been shown to trip; ADC chain and channel carry-over ruled out.
 7. **Policy: MPPT inhibited during regen with the charger bus-fed.** `MPPT_DISABLE` LOW does not
    stop charging (datasheet section 2.9). A configured Ag105 on REGEN would draw up to ~24 W,
    ~1.5 A, from the bus (battery -> BT boost -> bus -> charger -> battery: a net loss, and near the
