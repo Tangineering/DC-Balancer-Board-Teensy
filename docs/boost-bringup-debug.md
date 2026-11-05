@@ -1660,7 +1660,14 @@ reworked; this is a re-spin / Silvertel question, not a firmware one.** D-BT-SQ 
 a secondary open item (the reg-0x05 climb is consistent with the schematic orientation).
 
 **Not yet assessed:** whether either boost, the Ag105, D-RG-EN, D-BT-SQ, D-FC-EN, the pack, or the
-supply was damaged. The FC channel's post-event zero current is the specific red flag.
+supply was damaged.
+
+**Post-incident bring-up (PASS, operator report, same afternoon; fw v37 rev 1 still flashed, no scope
+or SD log recorded):** after the power-down and reconnect, a staged `G` bring-up completed and the
+system "seems to be running normally". This retires the gross-failure case for both boosts and the
+bus switches. Still OPEN: that the FC channel actually SOURCES current again (the 0 A post-event
+signature) - confirm I_fc > 0 under load (e.g. ~0.1 A at `A` 3.8 in ML0226) before closing that
+item; the Ag105, D-RG-EN and D-BT-SQ remain unexercised (the charger path is gated off). The FC channel's post-event zero current is the specific red flag.
 
 **Safety rule added (see below):** no further `J` session, and no powered engagement of
 `REGEN_ENABLE` or `FC_CHARGE_ENABLE`, until `ML0002` is analysed and the D-BT-SQ / VBat- checks
@@ -1829,8 +1836,8 @@ value — it is the **PCB layout** (see ROOT CAUSE above: the BT output-cap hot 
   report, ending with the bench FC supply dropping out, the BT boost at 16.5 A, the bus at 6.84 V,
   and the FC channel delivering zero afterwards (`logs/ML0227`). The Ag105 VBat- is tied to GND by
   design (operator-confirmed 2026-11-04), so until the charger's battery return is reworked: no
-  `J`, no State-98 `'4'` / `'5'`, and no Run with `charge_goal` > 0 (fw v37 rev 2 - pending
-  flash - gates `J`, `'4'`/`'5'` ON and the Run / `D` regen branch in firmware; only doState99's ~10 ms
+  `J`, no State-98 `'4'` / `'5'`, and no Run with `charge_goal` > 0 (fw v37 rev 2 - flashed
+  2026-11-04 - gates `J`, `'4'`/`'5'` ON and the Run / `D` regen branch in firmware; only doState99's ~10 ms
   capacitor drains stay ungated). Re-verify both boosts with a
   scope-armed `G` before the next powered session of any kind. The
   Ag105's reg 0x02 is still 12.848 V (below the bus) in EPROM, so any path that feeds the charger

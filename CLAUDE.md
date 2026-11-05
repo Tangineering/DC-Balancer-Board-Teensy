@@ -1029,7 +1029,7 @@ pairing, the encoder/current-noise analysis, the v37 scope), WORK_QUEUE 0j / 0k.
   dropped out, BT boost 16.5 A, bus 6.84 V, FC channel at 0 A afterwards. Leading candidate (UNCONFIRMED):
   the forbidden Ag105 VBat- to GND tie. **No charger-path engagement** until that entry is closed.
   **Operator-confirmed the same day: VBat- is tied to GND BY DESIGN** (pack V- = PCB ground) - a re-spin /
-  Silvertel question. **fw v37 rev 2 (PENDING FLASH, ledger row 37)** hardens `J`: G1 bus-side I_fc+I_batt
+  Silvertel question. **fw v37 rev 2 (FLASHED on the bench 2026-11-04, ledger row 37)** hardens `J`: G1 bus-side I_fc+I_batt
   > 1.0 A / 5 ms, G2 unaccounted bus power > 3 W / 20 ms, G3 GENSTAT 5/6/7, a reboot-only trip latch, and the
   `AG105_VBATN_ISOLATED` gate (default 0 on real boards, 1 under HIL_SIM) that also holds REGEN LOW in the Run /
   `D` regen branch - **no regen charging on this board revision**. Tests 5238 / 210 / 5549 / 51. The bench PC now
