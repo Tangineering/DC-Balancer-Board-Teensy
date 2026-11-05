@@ -166,8 +166,8 @@ reads 1.80 V at the node while firmware reads 1.52 V). True V-MOT is then readin
 
 **Conclusion.** There is no evidence the chopper has ever conducted. In case A that is certain
 (REF never came within 436 mV of V_ref). In case B the true peaks (21.47-21.66 V) stayed 0.5-0.7 V
-below the 22.1 V design trip, and the burst traces show no conduction signature at any level. Every regen peak recorded to date is the VESC's regen limit, not the
-chopper.
+below the 22.1 V design trip, and the burst traces show no conduction signature at any level. Every regen peak recorded to date is the VESC's regen
+limit, not the chopper.
 
 ## 6. Next steps (bench, in order)
 
