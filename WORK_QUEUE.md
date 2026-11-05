@@ -13,6 +13,8 @@ Record: `docs/reviews/fw36_regen_2026-11-04/README.md` (findings, ranked regen c
       charger faults gated on "charger proven", selector disarm gated on FC_CHARGE_ALLOWED, OC_FC persistence,
       housekeeping, BLG v10, the regen exerciser key, serial counters; test-suite repair (re-pin the 10 stale checks,
       `#ifndef FC_CHARGE_ALLOWED` + a `run_tests_fcchg` target, reset the v35 window timers in `reset_test_state()`).
+      **+ the 1x drive notch** (planning section 9.5): an encoder-angle-referenced 1x canceller on the drive loop's
+      feedback (`v_fb = v_actual - v_hat`, LMS on cos/sin of `encoderPos mod 180`), gated and margin-checked across speed.
 - [ ] 3b. **HIL run of fw v37 (operator, fresh session):** HIL_SIM=1 build of v37; the 7-leg fast set + `drive-ripple-*`
       (docs/HIL_USER_MANUAL.md section 5 "Running a subset"); then optionally the same on a v35 HIL build for the A/B.
 - [ ] 3c. **Tooling housekeeping:** `test_dp_results_db.py::test_every_stored_record_is_still_reachable_by_its_own_key`
