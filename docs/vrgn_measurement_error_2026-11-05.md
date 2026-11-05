@@ -151,7 +151,7 @@ that step:
 | Leak behaves like | Leak at 2.495 V | Effective V-MOT trip |
 |---|---|---|
 | Constant current (saturated source) | 29.5-33.6 uA | **24.4-24.8 V** |
-| Resistor to GND (fixed ratio, about 47-56 kOhm) | 48-53 uA | **25.9-26.5 V** (22.13 V / ratio) |
+| Resistor to GND (fixed ratio, about 45-52 kOhm) | 48-56 uA | **25.9-26.5 V** (22.13 V / ratio) |
 | Junction leak (grows exponentially; e.g. x2 per 0.2 V) | ~0.9 mA | **~90 V, i.e. no trip** before something else gives way |
 
 The warm-up drift in section 3 shows the leak is temperature-dependent, which makes the
