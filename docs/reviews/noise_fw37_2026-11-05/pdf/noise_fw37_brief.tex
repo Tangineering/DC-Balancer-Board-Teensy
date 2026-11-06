@@ -1,0 +1,113 @@
+\documentclass[10pt]{article}
+\usepackage[letterpaper,margin=0.75in]{geometry}
+\usepackage{graphicx,booktabs,caption,helvet,url}
+\renewcommand{\familydefault}{\sfdefault}
+\captionsetup{font=small,labelfont=bf}
+\setlength{\parskip}{0.45em}\setlength{\parindent}{0pt}
+\graphicspath{{../figs/}}
+\pagestyle{empty}
+\newcommand{\Itot}{I\textsubscript{tot}}
+\newcommand{\Vbus}{V\textsubscript{bus}}
+
+\begin{document}
+{\Large\bfseries Drive-law noise reduction: fw v35 vs fw v37}\\[0.3em]
+{\small Scale-car DC balancer board, Pi rosbag comparison. Ricky Tan, 2026-11-06.}
+
+\section*{1. Summary}
+The fw v37 drive law lowers the drive-loop crossover from 2.76~Hz to 1.04~Hz. On the vehicle, it
+reduces the once-per-revolution (1x) flywheel line to 0.25--0.28 of its fw v35 level on the bus
+currents, the bus voltage and the FC share ratio. The design ratio is 0.29. Content above about
+7~Hz is unchanged.
+
+\section*{2. Data and method}
+Two runs of the same SDP drive cycle are compared: \path{rosbag_sdp_2026-10-30_01-49-38}
+(fw v35) and \path{rosbag_sdp_2026-11-05_20-09-52} (fw v37 rev 2). The share controller and
+all other run-path code are identical in the two builds. Statistics use only samples with both
+sources on the bus and \Itot{} $>$ 0.3~A. The analysis excludes $\pm$0.5~s around each H-20 purge
+and $-$0.2/$+$1.0~s around each share-command step. Duplicate telemetry rows are removed, which
+gives a sample rate of 47.62~Hz. The share is s = I\textsubscript{fc}/\Itot.
+
+\section*{3. Results}
+Table~1 gives the 1x amplitude from a tracked-phase lock-in at 1.8--2.9~m/s.
+
+\begin{center}
+\small
+\begin{tabular}{lrrr}
+\toprule
+1x amplitude (peak) & fw v35 & fw v37 & Ratio \\
+\midrule
+\Itot & 213 mA & 54 mA & 0.25 \\
+I\textsubscript{batt} & 187 mA & 47 mA & 0.25 \\
+I\textsubscript{fc} & 34 mA & 9 mA & 0.27 \\
+\Vbus & 14.2 mV & 3.9 mV & 0.28 \\
+Share ratio & 0.032 & 0.008 & 0.25 \\
+v\textsubscript{actual} & 18.6 mm/s & 12.1 mm/s & 0.65 \\
+\bottomrule
+\end{tabular}\\[0.3em]
+\textbf{Table 1.} 1x line at cruise (1160 / 1264 samples).
+\end{center}
+
+The bus-side 1x gain \Itot/v\textsubscript{actual} fell to 0.33, against the design
+controller-gain ratio of 0.34, so the board runs the new law as designed. The v\textsubscript{actual}
+1x fell more than the new law alone predicts (0.65 against 0.85). The once-per-revolution
+disturbance was therefore smaller in the fw v37 run, for a reason the bags do not show.
+
+The bus voltage follows \Vbus{} $\approx$ V\textsubscript{0} $-$ Z\,\Itot, where Z is the bus
+impedance that the two droops set in parallel. Table~2 gives Z from the \Itot{} $\rightarrow$ \Vbus{}
+cross-spectrum and the fraction of the \Vbus{} variance that \Itot{} explains.
+
+\begin{center}
+\small
+\begin{tabular}{llrrr}
+\toprule
+Run & Band & $|$Z$|$ (m$\Omega$) & \Vbus{} rms (mV) & Explained by \Itot \\
+\midrule
+fw v35 & 2--6 Hz & 57 & 10.8 & 67 \% \\
+fw v35 & 6--24 Hz & 41--47 & 7.0--8.7 & 9--12 \% \\
+fw v37 & 2--6 Hz & 41 & 5.4 & 21 \% \\
+fw v37 & 6--24 Hz & -- & 5.5--8.1 & 5--7 \% \\
+Battery only & 2--6 Hz & 159 & 23.1 & 92 \% \\
+\bottomrule
+\end{tabular}\\[0.3em]
+\textbf{Table 2.} Bus impedance and the droop-driven part of \Vbus, clean cruise windows.
+\end{center}
+
+At the 1x line, \Vbus/\Itot{} is 67~m$\Omega$ before and 73~m$\Omega$ after. The \Vbus{} 1x
+reduction is therefore the \Itot{} 1x reduction passed through an unchanged droop. This impedance
+is about 0.2 of the design droop of 0.30--0.36~$\Omega$. In fw v37, most of the remaining \Vbus{}
+noise is not coherent with \Itot, so it does not come through the droop. Its origin is not yet
+determined.
+
+Figure~1 shows the cruise spectra. The 1x peak falls by about one decade in power on every
+channel, including the share ratio. Above about 7~Hz the two runs overlap.
+
+\begin{center}
+\includegraphics[width=0.86\linewidth]{brief_psd_before_after.png}\\
+\textbf{Figure 1.} Cruise PSDs (v $>$ 1.8 m/s), fw v35 (blue) and fw v37 (orange). Grey band:
+1x frequency at 1.8--2.8 m/s.
+\end{center}
+
+The share ratio appeared not to improve because two terms that the drive law does not touch
+dominate it: the H-20 purges and the SDP command steps. Figure~2 shows the share 2--6~Hz rms as
+each term is removed. With both removed, the share noise falls from 0.021 to 0.010.
+
+\begin{center}
+\includegraphics[width=0.48\linewidth]{brief_share_masks.png}\\
+\textbf{Figure 2.} Share-ratio rms, 2--6 Hz, under successive masks.
+\end{center}
+
+\section*{4. Conclusions}
+\begin{itemize}\setlength{\itemsep}{0pt}
+\item The lower crossover reduced the 1x line to 0.25--0.28 on all bus channels and the share
+ratio, in agreement with the design.
+\item \Vbus{} at 1x is the droop image of \Itot{} through about 70~m$\Omega$. Most of the
+remaining \Vbus{} noise is not droop-driven.
+\item The share-ratio reduction is real. Purges and command steps hide it in unmasked data.
+\item Content above 7~Hz did not change. Its largest share component is a flat floor of about
+0.012 rms, of undetermined origin. A 1~kHz SD-card log with synchronous current reads will
+determine whether it is a sampling artefact.
+\item The tracking cost is visible: the speed-error rms below 0.7~Hz increased from 5.0 to
+9.8~mm/s.
+\end{itemize}
+
+\end{document}

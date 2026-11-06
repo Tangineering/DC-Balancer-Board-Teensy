@@ -116,7 +116,46 @@ The stationary sensor floors did not change. I_batt reads 4.91 / 4.97 mA, V_bus 
 and V_batt 8.90 / 9.03 mV (fw v35 / fw v37). This excludes a cable, grounding or temperature
 change in the sensing chain between the runs.
 
-### 2.4 Tracking cost seen in the bag
+### 2.4 V_bus is the droop image of the total current at 1x only
+
+The bus voltage follows V_bus ≈ V0 − Z·I_tot, where Z is the bus impedance that the two droops
+set in parallel. Table 3a gives Z, estimated per band from the I_tot → V_bus cross-spectrum, and
+the fraction of the V_bus variance that I_tot explains (coherence). The windows are the clean
+cruise windows of this section.
+
+**Table 3a.** Bus impedance and the droop-driven part of V_bus.
+
+| Run | Band | \|Z\| (mΩ) | V_bus rms (mV) | Variance explained by I_tot |
+|---|---|---:|---:|---:|
+| fw v35 | 2–6 Hz | 57 | 10.8 | 67 % |
+| fw v35 | 6–24 Hz | 41–47 | 7.0–8.7 | 9–12 % |
+| fw v37 | 2–6 Hz | 41 | 5.4 | 21 % |
+| fw v37 | 6–24 Hz | not resolved | 5.5–8.1 | 5–7 % |
+| Battery only (2026-10-26) | 2–6 Hz | 159 | 23.1 | 92 % |
+
+At the 1x line, V_bus/I_tot is 14.2 mV / 213 mA = 67 mΩ before and 3.9 mV / 53.5 mA = 73 mΩ
+after. The impedance did not change, so the V_bus 1x reduction (0.28x) is the I_tot 1x reduction
+(0.25x) passed through an unchanged droop.
+
+The measured impedance is about 0.2 of the design value. Two droops of k_d/r and k_d/(1 − r) in
+parallel give k_d, which is 0.30–0.36 Ω by design. The measured 40–70 mΩ agrees with the
+realized droop of about 0.21 of design (`agents/sharemodel.md`, Section 2(c)). With the battery alone, Z is 159 mΩ, so dual-source operation roughly
+halves the bus impedance.
+
+Most of the remaining V_bus noise in fw v37 does not come through the droop. In 2–6 Hz, 79 % of
+the variance is incoherent with I_tot; above 6 Hz, more than 90 % is incoherent in both runs. The
+standstill floor (2.9 mV broadband) explains only 1.2–2 mV per band. Real total-current ripple
+above 6 Hz would appear on V_bus through Z. Either the 6–24 Hz I_tot content is partly a sampling
+artefact, or V_bus carries an independent noise source. The 1 kHz BLG run of Section 7 settles
+this as well. In addition, the fw v35 2–6 Hz impedance below the 0.755 A knee (45 mΩ) is lower
+than above it (71 mΩ), which is the opposite of the k_d schedule. A likely cause is the floor
+regime moving the droop codes, and therefore V0, with I_tot. This is low confidence (339 ticks).
+
+Consequently, V_bus at 1x falls further only with less I_tot ripple (action F6) or a lower bus
+impedance. A lower impedance means a lower droop, which reduces share authority and increases the
+share's sensitivity to ΔV0.
+
+### 2.5 Tracking cost seen in the bag
 
 The tracking cost of fw v37 is visible in the bag. Over the 105 s drive window, the speed-error
 rms below 0.7 Hz rose from 5.0 to 9.8 mm/s (1.96x; the HIL `ems-drive-cycle` leg gave 1.9x). The
@@ -370,7 +409,7 @@ The following items are on the Pi side:
   reduction of raw share variance, but it changes EMS economics and needs an EMS ruling.
 - Measure the H-20 purge flow, so that `purge_g_s` is not zero.
 
-The drive-tracking cost (Section 2.4) has its own candidate: setpoint feedforward of
+The drive-tracking cost (Section 2.5) has its own candidate: setpoint feedforward of
 (m_eff·dv_sp/dt + F_drag(v_sp))/K_F, with m_eff 3.5 kg, K_F 0.7538 N/A and F about 2.92 v^0.26 N
 (ML0226). This addresses tracking, not noise.
 
