@@ -1,6 +1,6 @@
 """V_bus at the loop rate (ML0226, fw v37 bench) for the noise brief (README section 9).
 
-Regenerates figs/brief_vbus_1k.png. Usage:
+Regenerates figs/brief_vbus_1k.png and figs/brief_vbus_spectrogram.png. Usage:
     python make_vbus_figs.py <ML0226.csv> <out_dir>
 
 Left panel: V_bus PSD at standstill and at the closed-loop speed holds, on the measured sample rate
@@ -119,3 +119,33 @@ ax2.legend(frameon=False, fontsize=7.5, loc="upper left")
 fig.tight_layout()
 fig.savefig(f"{OUT}/brief_vbus_1k.png", dpi=150)
 print("fs", fs)
+
+# ---- Spectrogram of the whole log (figs/brief_vbus_spectrogram.png) ----
+# Regenerated from the switching agent's figure with true units: the sample rate is the log's
+# MEAN rate (the ticks are bimodal), the time axis is the logged t_us, and the overlay is the
+# motor 6x electrical line, 397 Hz per m/s x v_act, folded at that rate's Nyquist frequency.
+from scipy.signal import spectrogram
+fs_mean = (len(t) - 1) / (t[-1] - t[0])
+f_s, i_s, Sxx = spectrogram(vb - vb.mean(), fs=fs_mean, nperseg=512, noverlap=384, detrend="linear",
+                            scaling="density", mode="psd")
+centres = np.clip((i_s * fs_mean).astype(int), 0, len(t) - 1)
+tt = t[centres] - t[0]
+half = 256
+vfr = np.array([v[max(0, c - half):c + half].mean() for c in centres])
+fig, ax = plt.subplots(figsize=(10.5, 3.7))
+ax.pcolormesh(tt, f_s, 10 * np.log10(Sxx * 1e6 + 1e-12), shading="auto", vmin=-40, vmax=0,
+              cmap="viridis", rasterized=True)
+F = 397.0 * vfr
+Ff = np.abs(((F + fs_mean / 2) % fs_mean) - fs_mean / 2)
+Ff[vfr < 0.3] = np.nan
+ax.plot(tt, Ff, color="#ff6b5b", lw=1.0, ls="--", label="motor 6x electrical, 397 Hz per m/s, folded")
+ax.set_xlim(tt[0], tt[-1]); ax.set_ylim(0, fs_mean / 2)
+ax.set_xlabel("Log time [s]")
+ax.set_ylabel(f"Frequency [Hz] (sample rate {fs_mean:.0f} Hz)")
+ax.grid(False)
+ax.legend(frameon=False, loc="upper left", labelcolor="white", fontsize=8)
+ax.set_title("V_bus spectrogram, ML0226 (dB re 1 mV²/Hz, -40 to 0)", loc="left", fontsize=10,
+             color="#1f1e1c")
+fig.tight_layout()
+fig.savefig(f"{OUT}/brief_vbus_spectrogram.png", dpi=150)
+print("fs_mean", fs_mean)

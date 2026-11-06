@@ -1,7 +1,13 @@
 \documentclass[10pt]{article}
-\usepackage[letterpaper,margin=0.75in]{geometry}
+\usepackage[letterpaper,margin=0.7in]{geometry}
 \usepackage{graphicx,booktabs,caption,helvet,url}
 \renewcommand{\familydefault}{\sfdefault}
+\renewcommand{\topfraction}{0.9}\renewcommand{\bottomfraction}{0.8}
+\renewcommand{\textfraction}{0.07}\renewcommand{\floatpagefraction}{0.85}
+\setcounter{topnumber}{3}\setcounter{bottomnumber}{2}\setcounter{totalnumber}{4}
+\usepackage{titlesec}
+\titlespacing*{\section}{0pt}{0.9em}{0.35em}
+\titleformat*{\section}{\large\bfseries}
 \captionsetup{font=small,labelfont=bf}
 \setlength{\parskip}{0.45em}\setlength{\parindent}{0pt}
 \graphicspath{{../figs/}}
@@ -84,20 +90,22 @@ high-frequency content folded by the telemetry sampling.
 Figure~1 shows the cruise spectra. The 1x peak falls by about one decade in power on every
 channel, including the share ratio. Above about 7~Hz the two runs overlap.
 
-\begin{center}
-\includegraphics[width=0.86\linewidth]{brief_psd_before_after.png}\\
-\textbf{Figure 1.} Cruise PSDs (v $>$ 1.8 m/s), fw v35 (blue) and fw v37 (orange). Grey band:
-1x frequency at 1.8--2.8 m/s.
-\end{center}
+\begin{figure}[!htbp]
+\centering
+\includegraphics[width=0.74\linewidth]{brief_psd_before_after.png}\\[0.2em]
+{\small \textbf{Figure 1.} Cruise PSDs (v $>$ 1.8 m/s), fw v35 (blue) and fw v37 (orange). Grey band:
+1x frequency at 1.8--2.8 m/s.}
+\end{figure}
 
 The share ratio appeared not to improve because two terms that the drive law does not touch
 dominate it: the H-20 purges and the SDP command steps. Figure~2 shows the share 2--6~Hz rms as
 each term is removed. With both removed, the share noise falls from 0.021 to 0.010.
 
-\begin{center}
-\includegraphics[width=0.48\linewidth]{brief_share_masks.png}\\
-\textbf{Figure 2.} Share-ratio rms, 2--6 Hz, under successive masks.
-\end{center}
+\begin{figure}[!htbp]
+\centering
+\includegraphics[width=0.40\linewidth]{brief_share_masks.png}\\[0.2em]
+{\small \textbf{Figure 2.} Share-ratio rms, 2--6 Hz, under successive masks.}
+\end{figure}
 
 Figure~3 breaks down the uncommanded share n = s $-$ cmd in the clean windows. The stacked areas
 give the part of n that is coherent with the 1x rotation angle, then with \Itot, then with
@@ -108,11 +116,12 @@ the setpoint clip at the minority-current floor, which the share loop tracks; it
 deficiency. Above about 6~Hz both runs show a flat floor of about 0.011 rms, which Section~4
 identifies as mostly folded content.
 
-\begin{center}
-\includegraphics[width=\linewidth]{brief_share_budget.png}\\
-\textbf{Figure 3.} Uncommanded share PSD and its coherent parts, clean windows (both sources on
-the bus, v $>$ 0.3 m/s, purges and command steps excluded, de-duplicated).
-\end{center}
+\begin{figure}[!htbp]
+\centering
+\includegraphics[width=0.90\linewidth]{brief_share_budget.png}\\[0.2em]
+{\small \textbf{Figure 3.} Uncommanded share PSD and its coherent parts, clean windows (both sources on
+the bus, v $>$ 0.3 m/s, purges and command steps excluded, de-duplicated).}
+\end{figure}
 
 \section*{4. Remaining \Vbus{} ripple: switching noise and the ideal diodes}
 The bag cannot resolve anything above its 23.8~Hz Nyquist frequency. This section therefore uses a
@@ -123,12 +132,13 @@ firmware loop and the log run at about 875~Hz (median tick 1131~$\mu$s), not 1~k
 Figure~4 shows the \Vbus{} spectrum at the loop rate and what a 21~ms telemetry snapshot makes of
 it.
 
-\begin{center}
-\includegraphics[width=\linewidth]{brief_vbus_1k.png}\\
-\textbf{Figure 4.} Left: \Vbus{} amplitude spectral density in ML0226. The dotted markers show
+\begin{figure}[!htbp]
+\centering
+\includegraphics[width=0.92\linewidth]{brief_vbus_1k.png}\\[0.2em]
+{\small \textbf{Figure 4.} Left: \Vbus{} amplitude spectral density in ML0226. The dotted markers show
 where the motor 6x electrical line lands after folding at the loop's Nyquist frequency. Right:
-\Vbus{} rms in 0.5--23.8~Hz for the true signal, a 21~ms snapshot and a 21~ms mean.
-\end{center}
+\Vbus{} rms in 0.5--23.8~Hz for the true signal, a 21~ms snapshot and a 21~ms mean.}
+\end{figure}
 
 Three results follow from Figure~4:
 \begin{itemize}\setlength{\itemsep}{0pt}
@@ -144,6 +154,18 @@ m/s, which is 6 times the electrical frequency of the 2-pole-pair motor, so it i
 current at only 0.01--0.05, so it is real current that the VESC draws from the bus. The bus
 impedance at this line is 81--133~m$\Omega$, about 1.5 times its low-frequency value.
 \end{itemize}
+
+Figure~5 shows the whole log as a spectrogram. The dashed overlay is 397~Hz per m/s times the
+measured speed, folded at the 438~Hz Nyquist frequency. It follows the dominant line through every
+hold and every ramp, which identifies the line as the 6x electrical order. The fainter rising
+traces are lower motor orders.
+
+\begin{figure}[!htbp]
+\centering
+\includegraphics[width=0.92\linewidth]{brief_vbus_spectrogram.png}\\[0.2em]
+{\small \textbf{Figure 5.} \Vbus{} spectrogram of ML0226 (422 s, sample rate 876 Hz). Dashed: the motor
+6x electrical line predicted from the measured speed, folded at the Nyquist frequency.}
+\end{figure}
 
 Table~3 gives the resulting budget for the bag at fw v37 cruise (about 12.6~mV rms per sample).
 The split is measured on the bench and scaled to the vehicle; that scaling is not verified.
@@ -167,20 +189,15 @@ of the central values is 12.3~mV.
 \end{center}
 
 \textbf{The RT1987 ideal diodes add no measurable \Vbus{} noise.} Below about 1.75~A, which covers
-every current on the rig, each switch servos a forward drop of about 35~mV (RT1987 datasheet
-p.7 and Section 17.6). The typical curve adds about 10~m$\Omega$ of incremental resistance. The
-common 35~mV cancels in the share, so the switches are not the source of the estimated
-$-$45 to $-$65~mV no-load mismatch between the sources; the TPS61288 reference tolerance can account
-for it. No FC dropout or switch chatter occurs at the minority floor: no ML0226 sample with
-\Itot{} above 0.2~A reads I\textsubscript{fc} below 4~mA, and every zero I\textsubscript{fc} in the
-bags falls inside an H-20 purge. The servo bandwidth is not specified. Above it, each switch acts as
-a resistance of about 35~mV / I, which filters boost ripple and is a candidate for the impedance
-rise at 600--800~Hz. Neither effect has been measured.
+every rig current, each switch servos a forward drop of about 35~mV (datasheet p.7, Section 17.6),
+plus about 10~m$\Omega$ incremental. The common 35~mV cancels in the share. No FC dropout or chatter
+occurs at the minority floor: every zero I\textsubscript{fc} in the bags falls inside an H-20
+purge. The servo bandwidth is not specified; above it each switch acts as about 35~mV / I, which
+is a candidate for the impedance rise at 600--800~Hz. This is not measured.
 
-\textbf{Boost switching contributes little to \Vbus.} The FC boost runs in light-load (PFM) mode
-at all rig currents, and the battery boost runs near its PFM boundary of about 0.45~A. The PFM
-ripple appears strongly on I\textsubscript{fc} (about 40~mA per sample) and V\textsubscript{fc},
-because the shunt sits upstream of the ideal diode, but only weakly on \Vbus.
+\textbf{Boost switching contributes little to \Vbus.} The FC boost always runs in light-load (PFM)
+mode and the battery boost runs near its boundary (about 0.45~A). The ripple appears on
+I\textsubscript{fc} and V\textsubscript{fc}, upstream of the ideal diode, but only weakly on \Vbus.
 
 \textbf{Consequence for filtering.} A 20~ms mean in the telemetry would remove most of the folded
 noise in the bags. However, the loop itself samples at 875--1000~Hz, so the 6x line folds near DC
@@ -194,10 +211,9 @@ tick, prevents it.
 ratio, in agreement with the design.
 \item The share-ratio reduction is real. Purges and command steps hide it in unmasked data. The
 remaining 1x share term is the governor's minority-current floor, not a loop deficiency.
-\item \Vbus{} at 1x is the droop image of \Itot{} through about 70~m$\Omega$.
-\item Most of the remaining \Vbus{} noise in the bags is folded high-frequency content. The largest
-part is real bus current at the motor's 6x electrical frequency. The ideal diodes and the boost
-switching contribute little.
+\item \Vbus{} at 1x is the droop image of \Itot{} through about 70~m$\Omega$. The rest of the
+\Vbus{} noise in the bags is mostly folded high-frequency content, largest at the motor's 6x
+electrical frequency. The ideal diodes and the boost switching contribute little.
 \item Content above 7~Hz did not change with fw v37. A 20~ms telemetry mean removes most of it from
 the bags. An analog filter at the ADC pins is needed to keep the 6x line out of the control
 samples.
