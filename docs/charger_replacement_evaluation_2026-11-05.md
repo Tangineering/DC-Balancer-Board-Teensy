@@ -52,6 +52,51 @@ battery survived the 2026-11-04 11-13 A incident and everything runs normally (r
 5. **An MCU hardware watchdog (Teensy 4.1 WDOG1 / RTWDOG) is required future work if Path A is pursued, and must be recorded
    in this feasibility study** (section 5.1).
 
+Rulings added later on 2026-11-05 (round 3, the BQ25798EVM wiring design):
+
+6. **FC charging only in the windows between H-20 purges.** A predicted purge interrupts the FC-charge window, so the battery
+   is back on the bus before the purge voltage dip.
+7. **Regen and FC charging may run concurrently.** The IO CSV row-31 rule "REGEN off before FC_CHARGE" is to be amended
+   (pending documentation change, not yet made). Mechanism, per the operator: regen lifts V-MOT above VBUS, D-BC-FC is
+   reverse-biased, and the FC stops supplying the charger until V-MOT returns to bus voltage. BT_BUS is open in this mode, so
+   the pack cannot form a loop.
+8. **The BT-current trip residual is accepted for now:** INA253 floor about 0.1 A, residual loop up to about 0.29 A.
+9. **The 1 kOhm VBT -> VCHG keep-alive resistor is a last resort only** (it would worsen the energy statistics).
+10. **Assumed part for Path A: the BQ25798EVM.**
+
+### 0.1a Round 3: the BQ25798EVM wiring design (2026-11-05/06)
+
+The full design is in `docs/charger_bq25798_wiring_design_2026-11-05.md`, with its SVGs, calculations and review log in
+`docs/reviews/charger_eval_2026-11-05/round3/`. Its section I is the operator test registry: 112 test IDs in bench order,
+each with a pass/fail criterion and the design change if it fails.
+
+What it means for the Path A vs Path B comparison (orchestrator summary, 2026-11-06):
+
+- **Path A is no longer "wire an EVM to the Ag105 pads".** The loop-safe, fail-safe design needs **two small custom PCBs**:
+  - a 4-layer, 31 x 33 mm carrier that plugs into the 22 Ag105 holes and carries:
+    - the TPS26630 eFuse with its input bulk and TVS;
+    - seven TLV3012B comparators (H1, the FC permit terms, FCC/RGN level sensing);
+    - the permit logic, including the BQ29200 pack-OV term;
+    - two heartbeat/qualification monostables;
+  - a 2-layer, 36 x 24 mm EVM interface board, holding the open-drain drivers for /CE and ILIM_HIZ and the FC-leg ceiling
+    switch.
+  
+  Plus 11 EVM modifications and the motherboard modifications. Parts budget about USD 505-540 including two EVMs. This is
+  still far smaller than a board re-spin (no power stage, no boost, no layout of the main board), but it is a PCB design-and-
+  fab cycle, not a wiring job.
+- **FC charging depends on the MCU hardware watchdog.** If the Teensy hangs inside an FC window, the heartbeat stops the
+  charger, but BT_BUS stays open, and the next purge collapses the FC-only bus. The design therefore makes the watchdog's
+  forced-hang test (T-W-01) a precondition of any FC window, not future work. Regen does not depend on it.
+- **Regen still rests on T-E-03** (does the VESC keep braking with V-MOT held at 19 V?) and on charger dynamics that TI does
+  not publish (T-B-06/-10/-12).
+- **Regen-armed cruise probably needs the keep-alive** (T-B-09 decides it). In cruise, VCHG decays below the RT1987 UVLO in
+  0.17-0.78 s. The design carries a Run-gated keep-alive that draws nothing when parked, as a do-not-populate option
+  consistent with ruling 9.
+- **The review loop did not converge.** Six rounds were run, each with five lenses and every serious finding independently
+  verified. Verified findings per round fell 53 -> 44 -> 34 -> 32 -> 24 -> 16; round 6 had no blocker but nine majors, all
+  applied. The planned final independent audit was not run (account spend limit). **Treat the design as review-round-6, not
+  as audited.** Run another review round and the audit before ordering the carrier PCB.
+
 ### 0.2 Feasibility verdict
 
 **VERDICT: UNDETERMINED. Path A is credible but is NOT yet shown to be fully feasible.** No datasheet fact found in round 2
