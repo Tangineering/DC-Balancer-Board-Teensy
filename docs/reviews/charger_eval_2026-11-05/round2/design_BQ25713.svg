@@ -1,0 +1,179 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 860" width="1280" height="860" font-family="Helvetica, Arial, sans-serif" font-size="12">
+  <title>Path A: BQ25713EVM-017 always-powered charger, block and wiring diagram</title>
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#333"/>
+    </marker>
+    <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#b3261e"/>
+    </marker>
+    <marker id="ab" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#1f5fa8"/>
+    </marker>
+  </defs>
+  <rect x="0" y="0" width="1280" height="860" fill="#ffffff"/>
+  <text x="20" y="28" font-size="18" font-weight="bold" fill="#111">Path A: BQ25713EVM-017 on the Ag105 pads, always-powered regen + FC charging (board rev 20260622)</text>
+  <text x="20" y="48" fill="#444">Power paths in black, logic/permit in blue, forbidden loop paths in red (dashed). PERMIT = P5 AND [(H1 AND RGN AND NOT FCC) OR (FCC AND NOT(RGN OR BTB OR BTA))]</text>
+
+  <!-- ===== motherboard power stage ===== -->
+  <rect x="20" y="70" width="700" height="470" rx="8" fill="#f6f7f9" stroke="#999"/>
+  <text x="32" y="90" font-weight="bold" fill="#333">Motherboard (unchanged power stage)</text>
+
+  <rect x="40" y="110" width="120" height="44" rx="4" fill="#fff" stroke="#333"/>
+  <text x="100" y="128" text-anchor="middle">FC boost</text><text x="100" y="144" text-anchor="middle" fill="#555">TPS61288 + INA253</text>
+  <rect x="40" y="200" width="120" height="44" rx="4" fill="#fff" stroke="#333"/>
+  <text x="100" y="218" text-anchor="middle">BT boost</text><text x="100" y="234" text-anchor="middle" fill="#555">TPS61288 + INA253</text>
+
+  <rect x="190" y="110" width="80" height="34" rx="4" fill="#fff" stroke="#333"/><text x="230" y="131" text-anchor="middle">D-FC-EN 27</text>
+  <rect x="190" y="205" width="80" height="34" rx="4" fill="#fff" stroke="#333"/><text x="230" y="226" text-anchor="middle">D-BT-EN 28</text>
+  <line x1="160" y1="132" x2="190" y2="127" stroke="#333" stroke-width="2"/>
+  <line x1="160" y1="222" x2="190" y2="222" stroke="#333" stroke-width="2"/>
+
+  <!-- VBUS rail -->
+  <line x1="300" y1="100" x2="300" y2="330" stroke="#333" stroke-width="4"/>
+  <text x="306" y="104" font-weight="bold">VBUS 16.0 V</text>
+  <text x="306" y="118" fill="#555" font-size="11">OV latch 17.5 V; TPS OVP 18.3-19.5 V</text>
+  <line x1="270" y1="127" x2="300" y2="127" stroke="#333" stroke-width="2"/>
+  <line x1="270" y1="222" x2="300" y2="222" stroke="#333" stroke-width="2"/>
+
+  <!-- D-MT-EN and V-MOT -->
+  <rect x="330" y="150" width="90" height="34" rx="4" fill="#fff" stroke="#333"/><text x="375" y="171" text-anchor="middle">D-MT-EN 29</text>
+  <line x1="300" y1="167" x2="330" y2="167" stroke="#333" stroke-width="2" marker-end="url(#a)"/>
+  <line x1="450" y1="130" x2="450" y2="300" stroke="#333" stroke-width="4"/>
+  <line x1="420" y1="167" x2="450" y2="167" stroke="#333" stroke-width="2"/>
+  <text x="456" y="134" font-weight="bold">V-MOT</text>
+  <text x="456" y="148" fill="#555" font-size="11">≈VBUS cruise; regen to 19 V (VINDPM)</text>
+  <rect x="560" y="110" width="140" height="44" rx="4" fill="#fff" stroke="#333"/>
+  <text x="630" y="128" text-anchor="middle">VESC + CAL 470 µF</text><text x="630" y="144" text-anchor="middle" fill="#555">cut-off ~21.35 V (M-R0)</text>
+  <line x1="450" y1="132" x2="560" y2="132" stroke="#333" stroke-width="2"/>
+  <rect x="560" y="170" width="140" height="34" rx="4" fill="#fff" stroke="#333"/>
+  <text x="630" y="191" text-anchor="middle">TL431 chopper ~21.4 V</text>
+  <line x1="450" y1="187" x2="560" y2="187" stroke="#333" stroke-width="2"/>
+
+  <!-- charger input switches -->
+  <rect x="330" y="300" width="90" height="34" rx="4" fill="#fff" stroke="#333"/><text x="375" y="321" text-anchor="middle">D-BC-FC 31</text>
+  <line x1="300" y1="317" x2="330" y2="317" stroke="#333" stroke-width="2" marker-end="url(#a)"/>
+  <rect x="480" y="300" width="90" height="34" rx="4" fill="#fff" stroke="#333"/><text x="525" y="321" text-anchor="middle">D-BC-RG 30</text>
+  <line x1="450" y1="300" x2="450" y2="317" stroke="#333" stroke-width="2"/>
+  <line x1="450" y1="317" x2="480" y2="317" stroke="#333" stroke-width="2" marker-end="url(#a)"/>
+
+  <!-- VCHG-IN node -->
+  <line x1="375" y1="334" x2="375" y2="380" stroke="#333" stroke-width="2"/>
+  <line x1="525" y1="334" x2="525" y2="380" stroke="#333" stroke-width="2"/>
+  <line x1="375" y1="380" x2="640" y2="380" stroke="#333" stroke-width="4"/>
+  <text x="380" y="398" font-weight="bold">VCHG-IN (pad 10 VIN+)</text>
+  <text x="380" y="412" fill="#555" font-size="11">C-D8, C-D10 -> 10 µF ≥ 35 V; pin 38 CHG_VOLTAGE</text>
+
+  <!-- VCHG / D-BT-SQ / pack -->
+  <line x1="640" y1="470" x2="420" y2="470" stroke="#333" stroke-width="4"/>
+  <text x="430" y="462" font-weight="bold">VCHG (pads 18/19 VBAT+)</text>
+  <rect x="250" y="453" width="90" height="34" rx="4" fill="#fff" stroke="#333"/><text x="295" y="474" text-anchor="middle">D-BT-SQ 32</text>
+  <line x1="420" y1="470" x2="340" y2="470" stroke="#333" stroke-width="2" marker-end="url(#a)"/>
+  <rect x="40" y="450" width="160" height="44" rx="4" fill="#fff" stroke="#333"/>
+  <text x="120" y="468" text-anchor="middle">2S pack VBT 7.4-8.4 V</text><text x="120" y="484" text-anchor="middle" fill="#555">OV_BATT 8.5 V; LM1084 -> Teensy</text>
+  <line x1="250" y1="470" x2="200" y2="470" stroke="#333" stroke-width="2"/>
+  <line x1="100" y1="450" x2="100" y2="244" stroke="#333" stroke-width="2"/>
+
+  <!-- forbidden loops -->
+  <path d="M 120 450 C 140 380, 200 300, 296 245" fill="none" stroke="#b3261e" stroke-width="1.6" stroke-dasharray="6 4"/>
+  <text x="138" y="360" fill="#b3261e" font-size="11">L-R / L-F loops (forbidden):</text>
+  <text x="138" y="374" fill="#b3261e" font-size="11">pack -> BT boost -> VBUS -> charger -> pack</text>
+  <text x="138" y="388" fill="#b3261e" font-size="11">L-R broken by H1 (D-MT-EN reverse-biased)</text>
+  <text x="138" y="402" fill="#b3261e" font-size="11">L-F broken by F term (BTB, BTA)</text>
+
+  <!-- ===== EVM ===== -->
+  <rect x="760" y="300" width="500" height="250" rx="8" fill="#fff8ec" stroke="#c08a2b"/>
+  <text x="772" y="320" font-weight="bold" fill="#7a5410">BQ25713EVM-017 (off-board, leads ≤ 150 mm)</text>
+  <text x="772" y="336" fill="#7a5410" font-size="11">JP2 on, JP3/JP4 off (2S) - C53 + 3 MLCC removed (51.5 µF total) - C25 -> ≥ 50 V - R32/R35 removed - R26 removed</text>
+  <rect x="780" y="350" width="150" height="60" rx="4" fill="#fff" stroke="#333"/>
+  <text x="855" y="370" text-anchor="middle">J1 VIN / GND</text><text x="855" y="386" text-anchor="middle" fill="#555">RAC R2 10 mΩ (high side)</text>
+  <text x="855" y="401" text-anchor="middle" fill="#555">20 AWG twisted</text>
+  <rect x="960" y="350" width="130" height="80" rx="4" fill="#fff" stroke="#333"/>
+  <text x="1025" y="370" text-anchor="middle" font-weight="bold">U1 BQ25713</text>
+  <text x="1025" y="386" text-anchor="middle" fill="#555">0x6B, WDT 5 s</text>
+  <text x="1025" y="401" text-anchor="middle" fill="#555">VINDPM 19.008 / 13.504 V</text>
+  <text x="1025" y="416" text-anchor="middle" fill="#555">ICHG 2.496 / ≤1.216 A</text>
+  <rect x="1110" y="350" width="130" height="60" rx="4" fill="#fff" stroke="#333"/>
+  <text x="1175" y="370" text-anchor="middle">J5 BAT / GND</text><text x="1175" y="386" text-anchor="middle" fill="#555">RSR R8 10 mΩ</text><text x="1175" y="401" text-anchor="middle" fill="#555">18 AWG twisted</text>
+  <line x1="930" y1="380" x2="960" y2="380" stroke="#333" stroke-width="2"/>
+  <line x1="1090" y1="380" x2="1110" y2="380" stroke="#333" stroke-width="2"/>
+
+  <!-- inhibit stage -->
+  <rect x="780" y="440" width="460" height="98" rx="4" fill="#eef4fb" stroke="#1f5fa8"/>
+  <text x="792" y="458" font-weight="bold" fill="#1f5fa8">Inhibit stage at TP22 (ILIM_HIZ) - fail-safe Hi-Z</text>
+  <text x="792" y="476" font-size="11" fill="#222">VDDA - R19 383k - TP22 - R27 154k (REGEN-HIGH 1.33-2.28 A) ; +324k via Q_c on FCC (FC-LOW 0.30-1.13 A)</text>
+  <text x="792" y="492" font-size="11" fill="#222">Q_a: TP22 -> GND, gate 100k to REGN (TP21)  =>  Hi-Z by default (&lt; 0.4 V)</text>
+  <text x="792" y="508" font-size="11" fill="#222">Q_b: pulls Q_a gate low when PERMIT HIGH (1k, 100k to GND)  =>  ILIM released</text>
+  <text x="792" y="524" font-size="11" fill="#222">Lost wire / dead 3V3 / Teensy reset => Q_b off => Q_a on => Hi-Z</text>
+  <line x1="1025" y1="430" x2="1025" y2="440" stroke="#1f5fa8" stroke-width="2"/>
+
+  <!-- power wires motherboard -> EVM -->
+  <path d="M 640 380 L 740 380 L 740 372 L 780 372" fill="none" stroke="#333" stroke-width="3"/>
+  <path d="M 640 470 L 745 470 L 745 570 L 1175 570 L 1175 410" fill="none" stroke="#333" stroke-width="3"/>
+  <text x="840" y="586" fill="#333" font-size="11">VBAT+ pads 18/19 &lt;- J5-BAT (≤ 2.5 A); VBAT- pads 14/15 -> J5-GND; VIN- pad 4 -> J1-GND</text>
+
+  <!-- ===== Interlock carrier ===== -->
+  <rect x="760" y="70" width="500" height="210" rx="8" fill="#eef4fb" stroke="#1f5fa8"/>
+  <text x="772" y="90" font-weight="bold" fill="#1f5fa8">Interlock carrier on the CHG footprint (3V3 from Teensy J1.29/30)</text>
+  <rect x="775" y="100" width="190" height="62" rx="4" fill="#fff" stroke="#1f5fa8"/>
+  <text x="870" y="117" text-anchor="middle" font-weight="bold">U1 TLV3012B  -> H1</text>
+  <text x="870" y="132" text-anchor="middle" font-size="11">V-MOT 499k/56.2k vs VBUS 464k/56.2k</text>
+  <text x="870" y="146" text-anchor="middle" font-size="11">0.1 %; RH 6.49M (0.30 V hyst)</text>
+  <text x="870" y="158" text-anchor="middle" font-size="11">permit 17.13 V @ 15.9 V bus; guard ≥ 0.73 V</text>
+  <rect x="775" y="170" width="190" height="50" rx="4" fill="#fff" stroke="#1f5fa8"/>
+  <text x="870" y="187" text-anchor="middle" font-weight="bold">U2 TLV3012B -> BTA</text>
+  <text x="870" y="202" text-anchor="middle" font-size="11">INA253 BT out (pin 41) > 19.75 mV</text>
+  <text x="870" y="214" text-anchor="middle" font-size="11">≈ 0.2 A (0.11-0.29 A)</text>
+  <rect x="985" y="100" width="260" height="120" rx="4" fill="#fff" stroke="#1f5fa8"/>
+  <text x="1115" y="117" text-anchor="middle" font-weight="bold">74LVC1G gate network</text>
+  <text x="995" y="135" font-size="11">G1 1G27: N1 = NOR(RGN, BTB, BTA)</text>
+  <text x="995" y="150" font-size="11">G2 1G08: F = FCC AND N1</text>
+  <text x="995" y="165" font-size="11">G4 1G04 + G3 1G11: R = H1 AND RGN AND NOT FCC</text>
+  <text x="995" y="180" font-size="11">G5 1G32: GATE = R OR F</text>
+  <text x="995" y="195" font-size="11">G6 1G08: PERMIT = GATE AND P5 (47k pull-down)</text>
+  <text x="995" y="212" font-size="11" fill="#555">VIH 2.0 / VIL 0.8 V; Ioff ±10 µA (SCES217A)</text>
+  <line x1="965" y1="130" x2="985" y2="130" stroke="#1f5fa8" stroke-width="1.5" marker-end="url(#ab)"/>
+  <line x1="965" y1="195" x2="985" y2="160" stroke="#1f5fa8" stroke-width="1.5" marker-end="url(#ab)"/>
+  <text x="775" y="240" font-size="11" fill="#222">Kelvin taps: VBUS (D-MT-EN VIN / C-D2), V-MOT (D-MT-EN VOUT / CAL+) - NOT the RGN-V divider (TL431 REF)</text>
+  <text x="775" y="256" font-size="11" fill="#222">EN nets from Teensy breakout: REGEN 30 (J1.43/44), FC_CHARGE 31 (J1.45/46), BT_BUS 28 (TODO verify)</text>
+  <text x="775" y="272" font-size="11" fill="#222">Readbacks: H1 -> pin 33, PERMIT -> pin 34, BTA -> pin 17 (CSV first); WDOG1_B reserved pin 20, never 19</text>
+
+  <!-- taps from motherboard -->
+  <path d="M 300 100 L 300 80 L 740 80 L 740 118 L 775 118" fill="none" stroke="#1f5fa8" stroke-width="1.2" stroke-dasharray="3 3"/>
+  <path d="M 450 130 L 450 95 L 730 95 L 730 140 L 775 140" fill="none" stroke="#1f5fa8" stroke-width="1.2" stroke-dasharray="3 3"/>
+  <!-- PERMIT and FCC wires to EVM -->
+  <path d="M 1245 160 L 1265 160 L 1265 500 L 1240 500" fill="none" stroke="#1f5fa8" stroke-width="2" marker-end="url(#ab)"/>
+  <text x="1180" y="296" fill="#1f5fa8" font-size="11">PERMIT, FCC</text>
+
+  <!-- ===== Teensy ===== -->
+  <rect x="20" y="580" width="700" height="260" rx="8" fill="#f1f8f1" stroke="#3a7d3a"/>
+  <text x="32" y="600" font-weight="bold" fill="#2a5e2a">Teensy 4.1 firmware (sketch, not in the .ino)</text>
+  <text x="32" y="622" font-size="11">Pin 5 CHG_ARM (P5, HIGH = armed; was MPPT_DISABLE) -> carrier G6 only, never the EVM</text>
+  <text x="32" y="638" font-size="11">Pin 6 CHRG_OK &lt;- EVM J2-2 (R33 10k to EVM 3V3): LOW => P5 LOW at once, reconfigure</text>
+  <text x="32" y="654" font-size="11">Pins 18/19 I2C (board RSDA/RSCL only, 400 kHz) -> EVM J3, 0x6B; non-blocking, one transaction per 1 ms tick</text>
+  <text x="32" y="676" font-size="11" font-weight="bold">Mode manager: OFF -> ARMING -> REGEN_ARMED &lt;-> (T2 / T3) &lt;-> FC_WINDOW ; any -> TRIPPED (reboot latch)</text>
+  <text x="32" y="694" font-size="11">T2: P5 LOW, FC-only bus, REGEN LOW, BT_BUS LOW, I_BT check, FC_CHARGE HIGH, VINDPM 13.504 V, IIN 0.30 A, P5 HIGH</text>
+  <text x="32" y="710" font-size="11">T3 (on brake intent, 80-120 ms lead): P5 LOW, VINDPM 19.008 V + IIN 1.60 A + ICHG 2.496 A, FC_CHARGE LOW, BT_BUS HIGH, REGEN HIGH, P5 HIGH</text>
+  <text x="32" y="732" font-size="11" font-weight="bold">1 kHz interlock (all builds): F1 H1 vs calibrated V_rgn/V_bus; F1b IIN > 0 with PERMIT LOW; F4 I_BT leak with BT_BUS LOW;</text>
+  <text x="32" y="748" font-size="11" font-weight="bold">G1-G3 J guards; register readback (PTM bits, EN_EXTILIM, VREG, VINDPM); OV_BATT 8.5 V; FAULT_SWITCH_CONFLICT</text>
+  <text x="32" y="770" font-size="11">FC governor: IIN_HOST = clamp(1.20 A - I_fc_other, 0.30, 0.70 A), +100 mA / 20 ms max; P5 LOW if I_fc > 1.25 A for 5 ms</text>
+  <text x="32" y="786" font-size="11">Charger WDT 5 s serviced by a 1 Hz VREG rewrite after the interlock; never WDTMR = 00</text>
+  <text x="32" y="808" font-size="11" fill="#b3261e" font-weight="bold">REQUIRED FUTURE WORK: MCU watchdog RTWDOG 100 ms (TOVAL 3200 @ 32 kHz) + WDOG1 1.0 s; feed once per loop after</text>
+  <text x="32" y="824" font-size="11" fill="#b3261e" font-weight="bold">detectFaults(); reset => EN pull-downs open all paths, PERMIT LOW; ERR_MCU_WDT latched, ack before Run</text>
+
+  <!-- Mode legend -->
+  <rect x="760" y="600" width="500" height="240" rx="8" fill="#fff" stroke="#999"/>
+  <text x="772" y="620" font-weight="bold" fill="#333">Modes (FC_REG BT_REG FC_BUS BT_BUS MOT REGEN FCC SEQ)</text>
+  <text x="772" y="640" font-size="11">Idle: REGEN 0, FCC 0 -> charger unpowered</text>
+  <text x="772" y="656" font-size="11">Run cruise, regen armed: 1 1 1 1 1 1 0 1 -> powered, Hi-Z (H1 = 0)</text>
+  <text x="772" y="672" font-size="11">Regen burst: V-MOT > 1.067 VBUS + 0.3 V -> H1 = 1 -> converts, V-MOT held at 19.0 V</text>
+  <text x="772" y="688" font-size="11">FC window: 1 1 1 0 1 0 1 1 -> F term; FC-LOW ceiling; IIN governed</text>
+  <text x="772" y="704" font-size="11">State 99: P5 LOW first, then FC_CHARGE, REGEN, existing phases</text>
+  <text x="772" y="720" font-size="11">Hang: hardware terms hold; charger WDT zeroes ICHG in 4-7 s; RTWDOG resets</text>
+  <text x="772" y="744" font-weight="bold" fill="#b3261e" font-size="11">BENCH GATES for regen: B3 VINDPM retention on Hi-Z exit,</text>
+  <text x="772" y="760" font-weight="bold" fill="#b3261e" font-size="11">B4b Hi-Z-exit tau ≤ 4 ms (+ head start), B2 Hi-Z entry ≤ 275 µs @ 1.6 A,</text>
+  <text x="772" y="776" font-weight="bold" fill="#b3261e" font-size="11">M-R0 / M-R3 VESC ~21.35 V cut-off (stage 0, decisive)</text>
+  <text x="772" y="800" font-size="11" fill="#555">Inrush: stock 1.52 A (FAIL vs 1.4 A OC_FC) -> modified 0.77 A</text>
+  <text x="772" y="816" font-size="11" fill="#555">Pack at CV: 8.28-8.41 V (D-BT-SQ + leads); never above OV_BATT 8.5 V</text>
+  <text x="772" y="832" font-size="11" fill="#555">Sources: SLUSD83C, SLUUBT8B, SBOS300C, SCES217A, RT1987 DS-00</text>
+</svg>
