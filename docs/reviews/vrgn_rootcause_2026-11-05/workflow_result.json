@@ -1,0 +1,898 @@
+{
+ "investigators": [
+  {
+   "key": "tl431-orientation",
+   "summary": "The swapped-pinout hypothesis is refuted, on four independent grounds that each rule it out alone. Suppose a part with pin 1 REF, pin 2 K, pin 3 A (TL432 DBZ, or the Changjiang CJ431 / onsemi SN / Diodes AZ431 style SOT-23) sat on the TI TL431 DBZ footprint. Its REF pin would then be fed from V-MOT through R-GS 3.3k and R-G 220. That pulls VG down onto the 12 V zener clamp, Vgs = -11.4 to -12.7 V, and the BSP170P turns hard on from V-MOT ~4-6 V upward. The 47 ohm dump would then conduct continuously: 0.34 A and 5.4 W at 15.93 V. The REF pin would carry 4-13 mA, already at or over the 10 mA absolute maximum. The tap (now the cathode) would be clamped flat near the Darlington knee instead of tracking V-MOT. None of this matches the logs. Idle bus load is ~0-0.03 A. The post-regen-peak fall is linear at 11.1-12.2 V/s (reading units), which bounds the V-MOT node's net load to 7-20 mA, against the 0.38-0.43 A the dump would draw. The tap swings 1.50 -> 2.06 V during regen bursts, and the 6.12 V collapse sample reads 0.685 V, against a predicted flat clamp of ~0.9-1.9 V (reading >= ~8-17 V). The other plausible pin permutations either forward-bias the anode-cathode substrate diode or REF into VG (dump on again), or ground REF and float the anode on the tap (a source, not a 31 uA sink); none produces the signature. In the as-designed orientation a HEALTHY TL431 cannot sink 31 uA either. The TL431BI REF current is 2 typ / 4 max uA, plus at most 2.5 uA deviation over temperature, i.e. <= ~6.5 uA, giving a ratio >= 0.968. TI Fig 6-2 shows REF current FALLING as the part warms, so a healthy part would make the ratio rise with warm-up; the logs show it falling. The leak is therefore an abnormal path that grows as the board warms: a damaged TL431 REF input (base-emitter or base-collector junction, or lost current gain), a leaking Teensy pin-39 pad, or board contamination. The DMM node check in doc section 6 remains the decisive next step, and a 10 s check of Vgs on Q-SNT or the temperature of R-SHUNT is enough to close the swapped-pinout question on the bench.",
+   "hypotheses": [
+    {
+     "name": "Swapped TL431 pinout (TL432-style: pin1 REF, pin2 K, pin3 A) fitted on the TI TL431 DBZ footprint",
+     "verdict": "refuted",
+     "predictions": "Model: /tmp/claude-0/-home-user-DC-Balancer-Board-Teensy/2dd4079b-96a3-52c6-9594-2aa3f1f11188/scratchpad/wf/tl431-orientation/model.py. Assumptions: the TL431 Detailed Schematic (Fig 8-2, datasheet p.21) treated as REF->anode through 2 junctions + 3.28k, REF->cathode through the input NPN's B-C diode, and a cathode Darlington knee Vk swept 0.8-1.8 V. Footprint pin 1 = REF sits behind R-G 220 on the VG side; footprint pin 2 = cathode = RGN-V tap; pin 3 = GND. Results: (a) DC point at 15.93 V. REF pin at 1.9-2.0 V. REF current 3.8-13.1 mA (zener clamps VG at V-MOT - Vz, Vz 11.4-12.7 V), at or above the 10 mA abs max. Vgs = -11.4 to -12.7 V, so Q-SNT is fully enhanced. Dump current = V-MOT/(47+0.3) = 0.339 A, 5.4 W in R-SHUNT. Tap = 0.90-1.91 V depending on Vk, roughly flat. (b) Tap against V-MOT (Vk 1.1 V): 0.35 V at 1 V, 1.01 V at 3 V, 1.10 V at 6.1 V (reading 9.76, observed 6.08), 1.15 V at 12.2 V, 1.21 V at 15.93 V, 1.27 V at 20.3 V, 1.32 V at 30 V. Reading 9-12 V for any V-MOT >= 3 V. It cannot reach 2.05 V at a regen peak: that needs ~0.5 V above the knee, i.e. >100 mA injected, against <=0.25 mA available through R1. The tap/ideal ratio falls from 3.0 to 0.39 across the range instead of staying at 0.85. (c) Temperature: a junction-knee clamp falls ~-2 to -4 mV/C, the same direction as the warm-up drift, but this is moot. (d) Trip: the dump turns on from V-MOT = 3.96 / 4.96 / 6.05 V for BSP170P Vgs(th) = -2.1 / -3 / -4 V and never turns off. The 'chopper' is permanently on, never a 22.13 V trip, and the REF current passes 10 mA abs max above ~16 V.",
+     "evidence": "AGAINST, four independent grounds. (1) Standing load. The model predicts 0.339 A on the bus at 15.93 V. The doc measures idle I_fc+I_batt ~0.008-0.03 A (docs/vrgn_measurement_error_2026-11-05.md section 2). My YP0166 window shows I_fc+I_batt = 0.000-0.016 A at 119.2-120.0 s (logs/YP0166/YP0166.csv). (2) Node discharge rate. The post-peak falls of all 14 regen peaks above a 16.5 V reading (ML0151, ML0157, ML0165, ML0195, ...) are linear at 11.1-12.2 V/s reading (one outlier at 74.5 V/s). That is ~14 V/s true, so the node net load is 6.7-19.6 mA for C = 480 uF to 1.4 mF (doc section 5 bounds). A conducting dump gives 0.38-0.43 A at 18-20 V and an exponential decay with tau = 47*C = 23-66 ms. Measured with fall.py in the scratch dir. (3) Proportionality. The tap swings 1.50 -> 2.06 V in bursts (YP0166 reading 13.33 -> 17.55). The collapse sample WP0097 reads 6.08 at bus 6.12 (tap 0.685 V, needing only 0.5 uA of leak). The swapped model gives a near-constant ~1.1-1.5 V. (4) The REF current would sit at 4-13 mA, against II(ref) abs max 10 mA (TL431_TI.pdf section 6.1, text line 203). A swapped part would have been overstressed every time the bus was up since 2026-08-12, yet the ratio has stayed stable for 3 months. Also: R-SHUNT at 5.4 W would be hot to the touch. Supply chain: the BOM orders the genuine TI TL431BIDBZR from Digikey (BOM CSV line 35), and the assembly BOM lists an Ultra Librarian TL431BIDBZR DBZ0003A_N footprint (Scale Car Board BOM.txt line 49; PnP_Scale Car Board_front.txt line 115, U-SNT rotation 270). Pad-to-net mapping on the copper was not checked from the gerbers.",
+     "confidence": 0.01
+    },
+    {
+     "name": "As-designed orientation, HEALTHY TL431BI: REF input current alone draws the 31 uA",
+     "verdict": "refuted",
+     "predictions": "Tap drop = Iref x (R1||R2 = 8.873 k). Iref 2 uA gives ratio 0.990, 4 uA gives 0.980, 6.5 uA (max + full II(dev) 2.5) gives 0.968. 0.85 needs Iref ~31.5 uA. Below Vref (REF 1.52 V < 2.495 V) the input NPN runs at lower emitter current, so Iref should be at or below the spec value, not above it. Temperature: TI Fig 6-2 has Iref falling from ~2.5 uA at -50 C to ~1.5 uA at 125 C, so warm-up should RAISE the ratio slightly.",
+     "evidence": "TL431_TI.pdf section 6.12 (TL431BI), text lines ~543-575: Iref 2 typ / 4 max uA at IKA 10 mA, R1 10k; II(dev) 0.8 typ / 2.5 max uA; Ioff 0.1/0.5 uA. The required leak is 29.5-33.5 uA across ratios 0.854-0.834 at 15.9 V (model.py), 4.8x the conservative worst case. Fig 6-2 (p.15) has a negative TC, against the measured ratio falling with uptime (corr -0.80..-0.97, doc section 3).",
+     "confidence": 0.02
+    },
+    {
+     "name": "As-designed orientation, ABNORMAL junction leak on the RGN-V node (damaged TL431 REF input, e.g. B-E/B-C leakage or gain loss from reverse-EB/ESD stress; or the Teensy pin-39 pad)",
+     "verdict": "consistent",
+     "predictions": "~30-33 uA sink at a 1.5 V node that grows with temperature (as junction leakage does). Sub-uA at a 0.69 V node would also be consistent with the WP0097 single sample (0.5 uA needed), i.e. strongly voltage-nonlinear, BUT that sample is unreliable (V-MOT may sit above V_bus). Q-SNT stays off (VG = V-MOT minus ~Ioff x 3.3k, i.e. mV), and the dump never conducts. Consistent with the 7-20 mA node-load bound and the zero idle load.",
+     "evidence": "Required leak 30.9 uA at 15.93 V, 9.5 uA at 12.19 V (TP0115), 0.5 uA at 6.12 V (WP0097) (model.py; the collapse samples are unreliable). The temperature sign matches a junction leak and is opposite to a healthy TL431's Iref TC (Fig 6-2). This test cannot tell the TL431 apart from the Teensy pad (the V_chg channel on an identical divider reads 0.994, which argues against an ADC-wide fault but not against a single damaged pad). This is the residual explanation once orientation and a healthy part are excluded. Not proven.",
+     "confidence": 0.75
+    },
+    {
+     "name": "Other pin permutations (anode on VG or on the tap, REF grounded)",
+     "verdict": "refuted",
+     "predictions": "(A on VG, REF on tap, K on GND): the anode-cathode substrate diode is forward biased (Fig 6-3: -100 mA at ~-1.9 V), VG is pulled low, and the dump turns on. (REF on VG, A on tap, K on GND): the substrate diode clamps the tap to ~0.7 V, REF pulls VG down, and the dump turns on. (K on VG, A on tap, REF on GND): REF sits below the anode, the part is off, and the floating anode/substrate SOURCES ~Ioff into the tap (reads high, not a 31 uA sink); the chopper could never trip.",
+     "evidence": "Qualitative, from TI Fig 8-1/8-2 (p.21) and Fig 6-3/6-4 (p.15). The first two again imply a continuous 0.34 A dump (refuted by the same load and decay data). The third gives the wrong sign of error. No common SOT-23 TL431 variant found online uses these orders (sources found disagree only between K-REF-A and REF-K-A).",
+     "confidence": 0.01
+    }
+   ],
+   "new_facts": [
+    "TI TL431 DBZ (SOT-23-3): pin 1 CATHODE, pin 2 REF, pin 3 ANODE. TL432 DBZ: pin 1 REF, pin 2 CATHODE, pin 3 ANODE (references/Datasheets/TL431_TI.pdf, SLVS543S, Table 5-1, p.4).",
+    "TL431BI (section 6.12): Vref 2483/2495/2507 mV; Iref 2 typ / 4 max uA; II(dev) 0.8 typ / 2.5 max uA over temperature; Ioff 0.1 typ / 0.5 max uA at VKA 36 V; Imin 0.4/0.7 mA. Abs max II(ref) -0.05..10 mA, VKA 37 V (section 6.1).",
+    "TL431 Fig 6-2 (p.15): typical Iref FALLS with temperature (~2.5 uA at -50 C to ~1.5 uA at 125 C). A healthy part therefore predicts the V_rgn ratio RISING with warm-up, the opposite of the logs.",
+    "TL431 Fig 8-2 (p.21): REF is the base of an input NPN whose collector is CATHODE. The output is a Darlington, with an anode->cathode substrate diode (Fig 8-1).",
+    "BSP170P: Vgs(th) -2.1 / -3 / -4 V at VDS=VGS, ID=-250 uA; RDS(on) 239 typ / 300 max mOhm at VGS=-10 V; IDSS -0.1 / -1 uA; IGSS -10 / -100 nA (BSP170P_Infineon.pdf electrical characteristics table, text lines 92-108).",
+    "BZT52C12: Vz 11.4-12.7 V at 5 mA (references/Datasheets/BZT52C_Diodes.pdf, table row BZT52C12).",
+    "Required RGN-V leak (computed): 30.9 uA at 15.93 V (tap 1.522 V); 29.5-33.5 uA over ratios 0.854-0.834 at 15.9 V; 9.5 uA at the TP0115 sample (12.19 V); 0.5 uA at the WP0097 sample (6.12 V). The collapse samples are unreliable.",
+    "Measured: post-peak V_rgn falls after 14 regen peaks (>16.5 V reading) in ML0151/ML0157/ML0165/ML0195 etc. are linear at 11.1-12.2 V/s reading (median 11.9), one outlier 74.5 V/s. That bounds the V-MOT node net load to ~6.7-19.6 mA (C 480 uF-1.4 mF), against 0.38-0.43 A for a conducting dump (tau 23-66 ms).",
+    "Measured: after regen bursts V-MOT stays isolated above the bus (V_rgn 14.05-14.34 reading against ~13.5 connected) for 0.1-0.4 s at a time while I_cmd = -12 A (e.g. YP0166 119.2-120.1 s). Bus current I_fc+I_batt reads 0.000-0.016 A there.",
+    "BOM sourcing: U-SNT = TI TL431BIDBZR from Digikey 296-18872-1-ND (BOM CSV line 35); footprint = Ultra Librarian DBZ0003A_N for TL431BIDBZR (Scale Car Board BOM.txt line 49; PnP line 115, rotation 270).",
+    "Online: Changjiang CJ431 SOT-23 = 1 REF, 2 CATHODE, 3 ANODE (dtsheet.com copy, via search snippet: https://dtsheet.com/doc/1266413/cj431; also https://wiki.adom.inc/ray/cj431). onsemi NCP431/TLV431 SN-suffix SOT-23 = 1 REF, 2 CATHODE, 3 ANODE (search snippets, e.g. https://pdf.elecfans.com/ONSEMI/NCV431BSNT1G.html; the TL431BSNT1G datasheet itself was not found). Diodes AZ431-A SOT-23 (N) = 1 REF, 2 CATHODE, 3 ANODE in one mirror, with a conflicting REF-ANODE-CATHODE order in another copy (https://www.radiolocman.com/datasheet/pdf.html?di=183407). Tani TL431 SOT-23-3 = 1 Ref, 2 Cathode, 3 Anode. Conclusion: the REF-K-A order is common among second sources, so the hypothesis was physically plausible had a substitute been fitted. The ordered part is TI, and the data refute it."
+   ],
+   "remote_checks": [
+    "Check the copper gerbers (references/PCB Manufacturing Files/copper_top.gbr) at U-SNT (115.32, 21.59), rotation 270, to confirm that DBZ pad 1 reaches R-G/VG, pad 2 reaches the R1/R2 tap and pin-39 trace, and pad 3 reaches GND. This would confirm the library mapping independently of the schematic.",
+    "Extend the decay-slope bound: find every post-burst isolated-V-MOT window with I_cmd = 0 (none were found in the bench CSVs with |I_cmd| < 0.05 A) in the Pi bags (npz idx 7 against idx 6), to bound the node load without a possible VESC source term.",
+    "Ask the operator or assembler whether U-SNT was fitted from the Digikey TI reel or from house stock (a JLC/LCSC-style substitution would be the only route to a REF-K-A part). The BOM says TI.",
+    "Fit the warm-up drift: leak(t) against uptime per session, to test an exponential-in-temperature junction-leak law against a linear contamination or resistive law (the size of the required temperature rise decides between them)."
+   ],
+   "lab_checks": [
+    "Cheapest, about 10 s, bus up with MOT_PWR closed: measure the DMM voltage across R-GS (VG to V-MOT). As designed: ~0 V (mV level). Swapped pinout: 11.4-12.7 V (zener clamp). Or simply touch or IR-check R-SHUNT: swapped pinout = 5.4 W and hot within a minute; as designed = ambient.",
+    "Read the U-SNT top marking under a loupe and compare it with TI's DBZ marking code for TL431BIDBZR (TI package addendum; not checked here).",
+    "DMM on the RGN-V node (TL431 pin 2 / R2-SNT top) after a 10-15 min warm-up: 1.52 V means the node is loaded (case A); 1.80 V means the error is in the pin/ADC path (case B) (doc section 6 step 1).",
+    "Case A: lift the pin-39 trace or the Teensy header pin. If the node recovers to 1.80 V, the pad is leaking; if not, remove or replace U-SNT and re-measure. A REF-pin leak of ~31 uA at 1.5 V REF-anode can also be checked unpowered with a current-limited 1.5 V source into pin 2 (cathode open): a healthy part draws << 1 uA.",
+    "Optional, with heat: warm U-SNT alone with a hot-air pencil at low flow and watch V_rgn. If the ratio falls only when the TL431 is heated and not when the Teensy is, the damaged TL431 is localized."
+   ],
+   "could_not_access": [
+    "dtsheet.com (CJ431 primary datasheet): blocked by the session network allowlist (getaddrinfo ENOTFOUND). The CJ431 pinout rests on a search-engine snippet plus wiki.adom.inc only.",
+    "No onsemi TL431BSNT1G datasheet was retrieved. The onsemi SOT-23 pinout is inferred from NCP431/TLV431 snippets.",
+    "Hotchip, UMW and JLCPCB/LCSC basic-part TL431 datasheets were not retrieved: one search only, no further fetches after the network block.",
+    "The Diodes AZ431 official DS36721 was not fetched; its mirrors conflict.",
+    "The PCB copper pad-to-net mapping for U-SNT was not verified from the gerbers."
+   ]
+  },
+  {
+   "key": "tl431-damaged",
+   "summary": "The four handoff dips in the logs give a measured I-V curve for the node leak, and a damaged TL431 input stage (correct orientation) fits it well. In each dip the bus dropped from 15.9 V to about 12.2 V for 5-8 ms while MOT_PWR was closed and the motor was drawing current, so V-MOT followed V_bus. In all four events the leak behaves like a threshold plus a resistor: I = (V_node - Von)/R with Von 1.19-1.25 V and R 9.2-9.3 k, rms 1 uA. A resistor to GND fits 7x worse and a constant current 8x worse. A reverse-junction leak is also ruled out, because the current grows 3.3x over 0.21 V. A healthy TL431 draws only about 0.5-1 uA at 1.52 V (scaled from SLVS543S Table 6.12 and Fig 6-2), and its REF current falls as it warms, the opposite of what the logs show. The knee is about two Vbe and R is the same order as the TL431's internal REF path (input transistor Vbe + diode Vbe + 3.28k + 2.4k, Fig 8-2). So the best physical match is an input transistor whose current gain has collapsed (REF current roughly equal to its emitter current), with warm-up drift of -2 mV/degC at the node, which needs only a 1-2 degC rise within a session. In-circuit overstress of REF is very unlikely: the 78.7k divider limits REF current to 0.5 mA even at 40 V, against a 10 mA abs max, and no bench event shows V-MOT negative or above 37 V. ESD, handling, assembly or a wrong/clone part are more likely, and the error was already there on 2026-08-12. The I-V shape alone does not single out the TL431 over a Teensy-pad path with a similar knee; a freeze-spray test or a lifted REF pin would settle it. Safety consequence if the leak is on the node: extrapolating this I-V puts the effective chopper trip at about 33 V of V-MOT and the recorded regen peaks at about 25 V true (not 21.5 V), above the RT1987's 32 V operating limit.",
+   "hypotheses": [
+    {
+     "name": "Healthy TL431 REF bias current (in spec)",
+     "verdict": "refuted",
+     "predictions": "REF current = Q1 base current, about Ie/beta. Scaled from Iref 2 uA typ / 4 uA max at REF = 2.495 V with a 2-Vbe (~1.2 V) knee, it is about 0.49-0.99 uA at 1.52 V, giving 4-9 mV of node error (0.3-0.6 % of the ratio). It falls as the part warms (Fig 6-2: about 2.5 uA at -55 C down to 1.45 uA at 125 C).",
+     "evidence": "TL431BI Iref 2 typ / 4 max uA and II(dev) 0.8 typ / 2.5 max uA (references/Datasheets/TL431_TI.pdf, SLVS543S Table 6.12, p.13); Fig 6-2 p.15 shows Iref falling with temperature. Observed: 29.5-33.6 uA (30-60x too large), and the leak rises with warm-up (wrong sign).",
+     "confidence": 0.01
+    },
+    {
+     "name": "Damaged TL431: resistive REF-anode leak (ESD-melted filament, conductive contamination, ~50-60 k)",
+     "verdict": "refuted",
+     "predictions": "Leak proportional to node voltage, so V_rgn/V_bus is constant at every voltage. Metal or doped-silicon filaments have a positive resistance TC, so the leak would fall when warm.",
+     "evidence": "Measured dip I-V (logs TP0115/TP0178/TP0201/TP0209; scratch dips.csv, fitmodels.py): a through-origin resistor fits with rms 6.7-7.0 uA against 1.0-1.1 uA for threshold-linear. The ratio rises from 0.835 at 15.9 V to 0.939 at 12.15 V on the same event. On the rising branch the ideal diode forces V-MOT <= V_bus, so the true ratio there is >= 0.91 at about 13 V. The warm-up sign is also wrong (leak grows when warm).",
+     "confidence": 0.02
+    },
+    {
+     "name": "Damaged TL431: reverse-biased junction leakage (REF-substrate / reverse E-B damage; current-source-like, doubles per ~8-10 C)",
+     "verdict": "refuted",
+     "predictions": "Current nearly independent of the 1.3-1.5 V reverse bias. In-session node drift = -8.87k x dI, with dI about 7 %/C x 31 uA, which gives about 19 mV/C at the node.",
+     "evidence": "The measured leak goes from 9.4 to 33 uA (3.5x) over node 1.286 to 1.497 V (TP0178 event), which is not current-source behaviour; a constant-current fit has rms 8 uA. The observed in-session node shift of 2.3-4.6 mV (ratio drop 0.15-0.3 %, docs/vrgn_measurement_error_2026-11-05.md section 3) would mean only a 0.12-0.24 C warm-up under this model, which is implausibly small next to the 1.8 % session-to-session spread.",
+     "confidence": 0.02
+    },
+    {
+     "name": "Damaged TL431 input stage, correct orientation: Q1 (REF emitter follower) has lost its gain (open collector or beta << 1), so REF current is about the chain current through Vbe(Q1) + Vbe(diode-connected Q) + 3.28k + 2.4k (||7.2k branch)",
+     "verdict": "consistent",
+     "predictions": "I_ref is about (V_REF - 2Vbe)/R_chain: knee about 1.1-1.3 V, R a few k to about 10 k. Below the knee the leak is about 0, so the ratio tends to 1.00 at V-MOT <= 10 V. Node TC about -2 mV/C (Von TC about -4.2 mV/C x Rth/(R+Rth) = 0.494). The bandgap is untouched, so the chopper still trips at REF = 2.495 V, which then needs V-MOT of about 33 V. No extra cathode current, so the dump stays off.",
+     "evidence": "FOR: the measured I-V knee Von is 1.193 / 1.196 / 1.226 / 1.245 V and R is 9.23-9.34 k, nearly constant across 13-25 Aug sessions (fitmodels.py). A diode+R fit needs a single-diode Is of about 1e-26 A, which is the signature of two stacked junctions. ML0227 (fw v37, J session, V_chg = V-MOT minus a drop) brackets the leak at node 1.485 V between 23.2 and 28.4 uA; the model predicts 25.5 uA. The collapse samples fit: WP0097 6.12 V reads 0.993 (model 1.00); TP0115 12.19 V reads 0.938 (model 0.94). The warm-up sign is right, and the in-session ratio drop of 0.15-0.3 % needs only a 1.1-2.2 C die rise. The topology is from Fig 8-2 (p.21): REF goes to the Q1 base, the Q1 emitter goes to 3.28k, then to 2.4k plus a diode-connected Q and to 7.2k. AGAINST / UNKNOWN: measured R is about 1.6x the nominal 3.28k+2.4k = 5.68k (diffused-resistor tolerance or residual beta could explain it, but it is unverified). The 57 mV Von shift between the 0.835 era (mid-Aug) and the 0.850 era (late Aug onward) needs about 14 C, or slow annealing of the damage. Only four dip events exist, all on 13-25 Aug. No in-circuit overstress path found (see new_facts). A Teensy-pad or other leak with a similar ~1.2 V knee is not excluded by the I-V alone.",
+     "confidence": 0.4
+    },
+    {
+     "name": "TL431 cathode-REF (Q1 collector-base) breakdown or leak from VKA transients",
+     "verdict": "refuted",
+     "predictions": "Current flows from the cathode (about V-MOT through 3.3k + 220 ohm) into REF, so REF reads HIGH (ratio > 1).",
+     "evidence": "Wrong sign: the observed reading is low. VKA has never been near the 37 V abs max in the logs (regen peaks 21.5 V true in case B, about 25 V in case A).",
+     "confidence": 0.01
+    },
+    {
+     "name": "Leak into the TL431 error-amp/driver node (REF to the diode-connected device in Fig 8-2, then into the Darlington driver)",
+     "verdict": "weakened",
+     "predictions": "Leak current would also feed the Darlington base, so the cathode would sink (beta^2 gain) and pull VG down. The knee would sit near the driver-node level (about 0-0.2 V when off), not 1.2 V.",
+     "evidence": "The measured knee at 1.2 V does not match. Cathode sink below about 0.64 mA (BSP170P VGS(th) min -2.1 V at -250 uA / 3.3k R-GS; BSP170P_Infineon.pdf p.95 of the text extract) would not be seen in the bus current, so this path cannot be fully excluded remotely.",
+     "confidence": 0.04
+    },
+    {
+     "name": "Wrong part fitted (TL432 pinout on the TL431 footprint)",
+     "verdict": "refuted",
+     "predictions": "REF lands on VG and the cathode on the tap. The REF overdrive makes the part sink hard, the zener clamps VGS at -12 V, and the dump conducts about 0.34 A continuously; the tap would not track V-MOT smoothly.",
+     "evidence": "Idle bus load is 0.008-0.03 A, and the dip data show the node tracking V_bus smoothly on both branches. TL432 DBZ is pin1 REF / pin2 CATHODE (SLVS543S pinout).",
+     "confidence": 0.01
+    }
+   ],
+   "new_facts": [
+    "NEW (measured): the four source-less handoff dips in the bench logs (TP0115 2026-08-13 fw v6; TP0178 08-17 fw v16; TP0201 08-25 fw v18; TP0209 08-25 fw v19; e.g. logs/TP0178/TP0178.csv rows 6485-6496) sweep V_bus 15.9 -> 12.15 -> 15.9 V in about 10 ms with MOT_PWR closed and I_cmd 4.5-6 A. The motor load sits on V-MOT, so the RT1987 conducts forward and V-MOT is about V_bus (minus I x Ron). V_rgn tracks smoothly on both branches.",
+    "NEW (measured, derived from those dips): node leak = (V_node - Von)/R with Von 1.193-1.245 V and R 9.23-9.34 k, rms 0.95-1.10 uA. A resistor to GND fits with rms 6.7-7.0 uA (best R 56-67 k) and a constant current with 7.9-8.1 uA. Per-sample leak at TP0178: 9.4 uA at node 1.286 V, 17.7 at 1.347, 26.3 at 1.427, 33.0 at 1.496 V. Scripts: /tmp/claude-0/-home-user-DC-Balancer-Board-Teensy/2dd4079b-96a3-52c6-9594-2aa3f1f11188/scratchpad/wf/tl431-damaged/dips.py and fitmodels.py; data in dips.csv.",
+    "NEW: Von moves with the session baseline ratio while R stays fixed: Von 1.193-1.196 V at ratio 0.835-0.836 (13/17 Aug), 1.226-1.245 V at 0.845-0.850 (25 Aug). The between-session drift is a threshold shift, not a resistance change.",
+    "NEW (measured): ML0227 (fw v37, J session, charger fed through MOT_PWR+REGEN, about 7 A flowing) has V_bus > V-MOT > V_chg, which brackets the leak at node 1.485 V between 23.2 uA (from V_chg) and 28.4 uA (from V_bus). The dip-fit model predicts 25.5 uA (logs/ML0227/ML0227.csv around row 21150).",
+    "Predicted under the fitted model (TP0178 / TP0209 parameters): ratio 1.00 at V-MOT <= 10 V, 0.94-0.96 at 12 V, 0.88-0.90 at 14 V, 0.80-0.81 at 18 V, 0.74-0.76 at 22.13 V. Effective chopper trip 32.8-33.2 V of V-MOT. The regen peaks at node 2.04-2.06 V correspond to 24.9-25.7 V true, an extrapolation 0.55 V beyond the measured node range.",
+    "TL431 REF input topology (references/Datasheets/TL431_TI.pdf Fig 8-2, p.21): REF drives the base of NPN Q1 (collector to CATHODE). The Q1 emitter goes through 3.28 kOhm to a node, then 2.4 kOhm to a diode-connected NPN to ANODE, and in parallel 7.2 kOhm to the bandgap transistor (800 ohm emitter). A diode-connected device also ties REF to the error-amp/driver node. Section 8.3: 'the reference pin is driven into an npn, which needs base current'.",
+    "TL431BI limits (SLVS543S Table 6.12 p.13): Vref 2483/2495/2507 mV; Iref 2 typ / 4 max uA; II(dev) 0.8 / 2.5 uA; Ioff 0.1 / 0.5 uA at VKA 36 V. Abs max (Table 6.1 p.5): VKA 37 V; II(ref) -0.05 to 10 mA; ESD 2 kV HBM / 1 kV CDM (Table 6.2). Fig 6-2 (p.15): Iref falls from about 2.55 uA (-55 C) to about 1.45 uA (125 C), about 2.0 uA at 25 C. Section 10.6: ESD damage 'can range from subtle performance degradation to complete device failure'.",
+    "In-circuit REF overstress is current-limited: through R1-SNT 78.7k, REF current is at most 40/78.7k = 0.5 mA even at the RT1987's 40 V abs max (20x below the 10 mA abs max). Exceeding the -0.05 mA reverse limit would need V-MOT below about -9 V (computed). The cathode sees V-MOT through 3.3k+220 ohm, and no logged or scope-recorded V-MOT approaches 37 V.",
+    "Bench history before the first V_rgn log (2026-08-12), docs/boost-bringup-debug.md: Death 5 motor-node hot-plug with VESC attached, SCP burst-retry and Teensy brownout (2026-07-08, line 182ff); recurring FAULT_OV_BUS about 19 V bus park (07-31, line 229ff); capture 9, about 18 V park on the boost node (08-03, line 870); capture 10, V-MOT 5.5-7 V sawtooth with VESC boot-loops (08-06, line 1075); TP0010 bus collapse to 6.5 V (08-11, line 1233). None shows V-MOT negative or above 22 V; all are candidate handling/probing occasions, not electrical overstress of REF.",
+    "BSP170P VGS(th) is -2.1 / -3 / -4 V at ID = -250 uA (references/Datasheets/BSP170P_Infineon.pdf, characteristics table). With R-GS 3.3k, a TL431 cathode sink below about 0.64 mA cannot be ruled out from the idle bus current (INA253A1 at 0.1 V/A, 12-bit resolution, about 8 mA per count).",
+    "Web (search snippets only): TI's TL431 pin FMEA (SNVA809) lists the effects of pin opens and shorts. The reverse emitter-base stress literature (Shimamoto 1996 IEICE E79-C; Joshi 1987) documents hot-carrier loss of current gain (excess base current) as a known bipolar degradation. No TI E2E report of post-damage TL431 REF leakage of tens of uA was found; one EDAboard anecdote attributes a shunt-regulator drift to ESD-induced leakage."
+   ],
+   "remote_checks": [
+    "Search every BLG and the Pi bags for further source-less dips (V_bus sag of 1-4 V lasting a few ms with MOT_PWR closed and the motor loaded), especially several in one session at different uptimes. Check that the warm-up drift is a Von shift with R fixed (the predicted signature: about -4.2 mV/C in Von, about -2 mV/C at the node).",
+    "Fit the dip I-V with an explicit V-MOT lag model (RT1987 Ron x motor current, cap hold-up) to narrow R between the diode+R (about 7.8 k) and threshold-linear (about 9.3 k) values, and the extrapolated trip (33-35 V).",
+    "Ask the operator whether R2-SNT, U-SNT or Teensy pin 39 was ever probed, reworked or hand-soldered before 2026-08-12, and whether U-SNT came from the assembler's stock (clone/second-source risk) or was consigned TI TL431BIDBZR. Check the placement file and BOM lot info under references/PCB Manufacturing Files/.",
+    "Check whether the slow 0.835 -> 0.850 step around 08-17..08-25 coincides with a known board event or rework date. With R constant, a +50 mV Von shift needs about 14 C cooler, or annealing of the damage.",
+    "Unlock righto.com (Shirriff's TL431 die reverse-engineering), ti.com (SNVA809 FMEA, E2E) and eevblog.com in the session network settings to confirm the Fig 8-2 input-path reading and look for reports of post-ESD REF leakage."
+   ],
+   "lab_checks": [
+    "1. DMM on the RGN-V node (R2-SNT top) at V_bus about 15.9 V after a 10-15 min warm-up. Case A (leak on the node) predicts 1.50-1.53 V; case B (ADC/pin path) predicts 1.80 V.",
+    "2. Freeze spray / hot air, no rework: watch the V_rgn reading (or the DMM on the node) while cooling U-SNT alone, then Teensy pin 39 alone. A leaking TL431 input stage predicts the node rises about 2 mV per C of U-SNT cooling (about 18 mV per C in reading units). This shows which part leaks before anything is lifted.",
+    "3. Use the VESC's own inpVoltage (State-98 'U' watch) during a regen burst as an independent V-MOT meter. Case A with this I-V predicts about 25 V true at an 18.2 V reading; case B predicts about 21.5 V. Also compare inpVoltage with V_rgn at 15.9 V idle.",
+    "4. Two- or three-point I-V with the VESC disconnected, V-MOT from a current-limited supply at 10 / 12 / 14 / 16 V, DMM on the node. Threshold model: 1.127 (ratio 1.00) / 1.27-1.30 / 1.39-1.42 / 1.50-1.53 V. A resistive leak gives a constant ratio of about 0.85; a Teensy-pad leak can be separated by repeating with the Teensy unpowered or removed.",
+    "5. Lift U-SNT pin 2 (REF). If the node recovers to 1.796 V at 15.93 V, the TL431 is the leak. Curve-trace the removed part's REF-to-anode I-V with the cathode at about 15 V through 3.5k: the damaged-input-stage prediction is about (V - 1.2 V)/9.2 k, about 31 uA at 1.5 V. Compare with a new TL431BIDBZR, which should be under 1 uA at 1.5 V.",
+    "6. Only after 1-5, and before trusting the chopper: bench trip test with a slow V-MOT ramp from a current-limited supply. With the current part, case A predicts the dump turning on near 33 V (above the RT1987's 32 V operating rating), so keep the supply limit below 32 V and expect NO trip; after replacing U-SNT, expect 22.1 V."
+   ],
+   "could_not_access": [
+    "www.righto.com (Ken Shirriff, 'Reverse-engineering the TL431') - host not resolvable from this session; needs allowing in network settings",
+    "eevblog.com thread 'Trap for young players: TL431 reference input current and how to cook your TL431' - host not resolvable; only the search snippet seen",
+    "ti.com (SNVA809 TL431 pin FMEA, TI E2E threads) - host not resolvable; only search snippets seen",
+    "Full texts of the reverse E-B stress papers (IEICE E79-C 1996, Joshi 1987) - abstracts/snippets only",
+    "Lab ambient/board temperature records for the Aug sessions (needed to test whether the 57 mV Von shift is temperature or annealing) - none in the repo",
+    "No recorded VESC inpVoltage during regen anywhere in the repo (the only independent true-V-MOT measurement)"
+   ]
+  },
+  {
+   "key": "teensy-pad",
+   "summary": "An intact Teensy 4.1 pin-39 pad or ADC path cannot account for the roughly 31 uA load. Every mechanism that a correctly working i.MX RT1062 or the Teensy core software could produce is ruled out, either by the numbers or because it would hit pin 38 equally. Pins 38 and 39 are adjacent channels (1 and 2) on the same ADC2 instance, on the same pad type (GPIO_AD_B1_12 and _13). They share one global ADC configuration, and the firmware never configures either pad. The keeper (105-175 kOhm, at most 14.5 uA at 1.52 V), the only pull to ground (the 100k pull-down, at most about 22 uA) and the specified input leakage (1 uA max) each fall short of the roughly 49 kOhm equivalent load needed. Analogread also turns the keeper off. The node goes to 2.05 V for about 240 ms in every regen burst and returns to the same ratio, so no latching keeper is involved. ADC sampling settles in 87 time constants. What remains is a DAMAGED pin-39 pad (an ESD-structure leak to GND at least 30 times the datasheet limit). It fits all the data and has a plausible exposure route: V-MOT sits behind the RT1987 ideal diode and holds charge for about 110 s, so pin 39 can be driven while the Teensy's 3.3 V is off, which NXP says must not happen. But nothing in the logs separates it from a TL431 REF leak, because both load the same node. The Teensy plugs into receptacles J1/J2, so a cheap lab test settles it in minutes. One caution against any junction-leak explanation (pad or TL431): the warm-up drift corresponds to only about a 2 % rise in leak current per session.",
+   "hypotheses": [
+    {
+     "name": "i.MX pad keeper (PKE=1, PUE=0 reset default) loading pin 39",
+     "verdict": "refuted",
+     "confidence": 0.01,
+     "predictions": "To pull an 8.873 kOhm / 1.796 V Thevenin source down to 1.522 V needs about 49.3 kOhm to GND (31 uA). If the keeper were latched low, it would behave the same on pin 38 and would flip high once the node crossed the input threshold, after which the reading would sit HIGH (ratio about 1.1).",
+     "evidence": "(1) Too weak. The keeper resistance R_Keeper is 105-175 kOhm (IMXRT1060CEC Rev 4, Table 22, p.38), so it can draw at most 8.7-14.5 uA at 1.52 V. (2) The core turns it off. teensy4/analog.c analogRead() clears PKE when PKE=1 and PUE=0 (PaulStoffregen/cores, added in commit c5e7163 on 2024-01-15). The firmware never calls pinMode on pin 38 or 39, so both pads stay at the reset default, which is keeper on every GPIO_AD_B1 pad (datasheet pin-list table). (3) Same pad type and same treatment on pin 38, which reads 0.994. (4) Data (my scan, scratch burst2.py): in YP0196, ML0151, ML0195, YP0198 and ML0157 the node goes above 1.70 V for 216-264 samples and peaks at 2.04-2.05 V. The ratio 1-5 s later matches the pre-burst ratio to within 0.0007. There is no latch and no step larger than 0.47 V per sample."
+    },
+    {
+     "name": "Pad pull resistor enabled on pin 39",
+     "verdict": "refuted",
+     "confidence": 0.01,
+     "predictions": "The only pull to GND is the 100k pull-down, and it would have to be configured on pin 39 only.",
+     "evidence": "Pull-down current is at most 48 uA at Vin = NVCC (Table 22, p.38), which scales to at most about 22 uA at 1.52 V. That is short of 31 uA, and nothing enables a pull on pin 39: grep shows no pinMode, IOMUXC or portControlRegister use for 38/39 in teensy_controller.ino, and analog.c lines 111-119 leave existing pulls untouched."
+    },
+    {
+     "name": "ADC source impedance / sampling-time error (8.87 kOhm too high for the default config)",
+     "verdict": "refuted",
+     "confidence": 0.01,
+     "predictions": "A charge-sharing error would depend on the previous channel and on sample time, and would be identical on pin 38, which has the same 8.87 kOhm source.",
+     "evidence": "Core config (analog.c lines 153, 230, 243, 259, 267): async ADACK, ADIV=1, ADHSC=1, ADLSMP=1, ADSTS=3. That gives fADACK 20 MHz (Table 55, p.66), so fADCK = 10 MHz, and 24 sample cycles = 2.4 us. RADIN is at most 7 kOhm and CADIN at most 2 pF (Table 54, p.64-65), so tau = 27.7 ns and the sample lasts about 87 tau, fully settled. The 1 kOhm RAS limit applies only to 150 ns sampling at 40 MHz. Average switched-capacitor current is about 0.1 uA. Carry-over is already ruled out by ML0227 (0.84739 with V_chg at 0 V and at 15.8 V)."
+    },
+    {
+     "name": "ADC channel / instance defect (case B: node correct, conversion wrong)",
+     "verdict": "weakened",
+     "confidence": 0.03,
+     "predictions": "A gain or offset error specific to ADC2 channel 2 of about 15 %, or 339 counts. A DMM would read 1.80 V on the node.",
+     "evidence": "Pins 38 and 39 both use ADC2 only (analog.c lines 81-82), with the same conversion settings and calibration. Datasheet TUE is at most 4.28 LSB, offset at most 0.07 %FSV and gain at most 0.03 %FSV (Table 55, p.67), orders of magnitude below 339 counts. A reading error without a real node load would need a channel-specific mux defect, and that does not fit a temperature-drifting leak. A pad leak would show up as case A, not case B."
+    },
+    {
+     "name": "Alternate peripheral function driving or loading pin 39 (SPI1 MISO1, SAI)",
+     "verdict": "refuted",
+     "confidence": 0.01,
+     "predictions": "Pin 39 would only be loaded if LPSPI3 or another peripheral muxed the pad.",
+     "evidence": "In the Teensy 4.1 SPI library, pin 39 is an alternate MISO for SPI1 (LPSPI3) and pin 38 an alternate CS (PaulStoffregen/SPI SPI.cpp lines 1568 and 1580). The firmware only uses SPI (LPSPI4) on pins 11/12/13 (teensy_controller.ino:16265-16268), Serial1 on pins 0/1 and USB Serial. grep finds no SPI1, setCS, I2S or SAI."
+    },
+    {
+     "name": "Damaged pin-39 pad (ESD clamp / input structure leaking to GND)",
+     "verdict": "consistent",
+     "confidence": 0.3,
+     "predictions": "This is case A: a DMM reads about 1.52 V on the node, and the node recovers to about 1.80 V with the Teensy unplugged from J1/J2. On an unpowered Teensy, pin 39 measures lower to GND than pin 38 in ohms or diode mode. If the leak is junction-like it follows Teensy die temperature.",
+     "evidence": "For: an intact pad leaks at most 1 uA (Table 22, p.38), so 31 uA needs damage at least 30 times the limit. Pin 38's 0.994 ratio puts at most about 1.2 uA on its node, within spec, so a pin-specific defect is exactly what pin 38 vs 39 requires. Exposure route (inferred): V-MOT is isolated by the RT1987 ideal diode and holds charge with a tau of 105-122 s (ML0215-ML0217). The Teensy is board-powered from an LM1084 off VBT (PLAN.md:1771) and browned out on 2026-07-08 with MOT_PWR closed onto the VESC (docs/boost-bringup-debug.md:188). Pin 39 can therefore sit at 1.8-2 V with NVCC off, back-injecting about 135-155 uA. That violates absolute-max Vin (OVDD+0.3 V, Table 7, p.24) and section 4.2.1.3 (p.31), which warns of latch-up from reverse current. Against: the V_batt and V_fc nodes could also inject in some power sequences, so pin 39's exposure is not proven unique. The current, limited by 8.87 kOhm, is only about 0.15 mA. The warm-up drift is only a +1.8 % leak rise (32.8 -> 33.4 uA, ML0164 -> TP0180), weak for a junction leak; the same objection applies to a TL431 junction. The logs cannot separate this from a TL431 REF leak on the same node."
+    },
+    {
+     "name": "Teensy board swap exonerates or incriminates the pad",
+     "verdict": "untestable-remotely",
+     "confidence": 0,
+     "predictions": "If the Teensy were swapped and the ratio did not change, the pad would be exonerated. If the ratio stepped at a swap, the pad would be implicated.",
+     "evidence": "No record of a Teensy replacement in docs/*.md, WORK_QUEUE.md, docs/boost-bringup-debug.md or docs/claude-md-archive.md. Neither the BLG header nor the telemetry carries a Teensy serial number or MAC. The ratio has no step from 2026-08-12 onward."
+    }
+   ],
+   "new_facts": [
+    "Teensy 4.1 pin 38 = A14 = GPIO_AD_B1_12 and pin 39 = A15 = GPIO_AD_B1_13 (cores teensy4/core_pins.h lines 1046-1047 and 1103-1104; pins_arduino.h lines 66-67). Both are ADC2-only, channels 1 and 2 (cores teensy4/analog.c lines 81-82), so the V_chg and V_rgn readings use the same converter.",
+    "analogRead() on Teensy 4.x clears the pad keeper (PKE) when PKE=1 and PUE=0, and leaves user pulls alone (analog.c lines 111-119). This was added in cores commit c5e7163 on 2024-01-15. The Teensyduino version used is not recorded in the repo.",
+    "The firmware calls neither pinMode nor any pad configuration on pin 38 or 39. Both pads stay at the i.MX reset default (keeper, per the IMXRT1060CEC pin-list table), so both get identical treatment.",
+    "Core ADC configuration: async ADACK, ADIV=1, ADHSC=1, 12-bit, ADLSMP=1, ADSTS=3 (analog.c lines 153, 230, 243, 259, 267), with 16-sample averaging set by the firmware (teensy_controller.ino:6682). Datasheet: fADACK = 20 MHz with ADHSC=1, 24 sample and 50 conversion cycles (IMXRT1060CEC Rev 4, Table 55, p.66). So sampling lasts 2.4 us at 10 MHz, and a 16-sample read takes about 80 us.",
+    "i.MX RT1060 GPIO and ADC limits: IIN -1..+1 uA; R_Keeper 105-175 kOhm; 100k pull-down current at most 48 uA at Vin = NVCC (Table 22, p.38). CADIN at most 2 pF and RADIN 5-7 kOhm with ADHSC=1 (Table 54, p.64-65). Absolute maximum Vin -0.5 to OVDD+0.3 V (Table 7, p.24). Section 4.2.1.3 (p.31): I/O must not be driven while NVCC is off. Source: https://www.pjrc.com/teensy/IMXRT1060CEC_rev4.pdf",
+    "Required load (computed): Thevenin source 8.873 kOhm at 1.796 V, so a 1.522 V reading means 30.9 uA drawn off, equivalent to 49.3 kOhm to GND. The keeper gives at most 14.5 uA and the 100k pull-down at most about 22 uA at 1.52 V, so no in-spec pad state can produce the error.",
+    "Measured (my scan): in every regen burst the pin-39 node goes above 1.70 V for 216-264 ms and peaks at 2.04-2.05 V. The ratio afterwards returns to the pre-burst value within 0.0007 (YP0196 0.8464 -> 0.8459; ML0151 0.8437 -> 0.8434; ML0195 0.8468 -> 0.8461; YP0198 0.8457 -> 0.8451; ML0157 0.8370 -> 0.8364). No hysteresis or latch is present. Script: /tmp/claude-0/-home-user-DC-Balancer-Board-Teensy/2dd4079b-96a3-52c6-9594-2aa3f1f11188/scratchpad/wf/teensy-pad/burst2.py",
+    "Pin 39 is an alternate MISO for SPI1 (LPSPI3) and pin 38 an alternate CS1 on Teensy 4.1 (PaulStoffregen/SPI SPI.cpp lines 1568 and 1580). The firmware never starts SPI1 and uses LPSPI4 on pins 11/12/13 (teensy_controller.ino:16265-16268).",
+    "The Teensy plugs into board receptacles J1/J2 (BOM line 54, Amphenol 87606-324LF), so it can be removed for a node measurement without desoldering.",
+    "The within-session warm-up corresponds to only a +1.8 % leak change (32.8 -> 33.4 uA at 15.9 V, from the doc's ML0164 -> TP0180 ratios 0.8375 -> 0.8346). The week-scale shift from 0.835 to 0.85 is about -10 %. That is a weak temperature coefficient for a junction leak.",
+    "Inferred exposure route: the Teensy is board-powered (LM1084 off VBT, PLAN.md:1771) and browned out on 2026-07-08 with MOT_PWR closed onto the VESC (docs/boost-bringup-debug.md:188). V-MOT, isolated by the RT1987 ideal diode, holds charge with a tau of 105-122 s, so pin 39 can back-inject about 135-155 uA into an unpowered Teensy."
+   ],
+   "remote_checks": [
+    "Check whether V_batt (pin 25) and V_fc (pin 24) read correctly against an independent reference (Ag105 I2C or VESC input-voltage telemetry). This tests whether other source-fed pins that can back-inject into an unpowered Teensy are clean, i.e. whether pin 39's exposure is unique.",
+    "Ask the operator for the Teensyduino version, whether the Teensy was ever unplugged, replaced or reflowed, and whether it is USB-powered during bench sessions (USB power removes the unpowered-injection route).",
+    "Ask whether the board is switched off or the battery pulled while V-MOT is still charged, since MOT_PWR stays closed through Idle/Run.",
+    "Check the PJRC Teensy 4.1 schematic to confirm that AD_B1_12/13 go only to the edge pins. I did not fetch it.",
+    "Optional firmware log addition: log tempmonGetTemp() (i.MX die temperature) next to V_rgn. A pad leak would track die temperature, a TL431 leak board ambient."
+   ],
+   "lab_checks": [
+    "Cheapest and decisive: with V-MOT energized at about 15.9 V (or a current-limited supply on V-MOT with the VESC disconnected), measure the RGN-V node with a DMM (TL431 pin 2 or the top of R2-SNT). Then unplug the Teensy from J1/J2, re-energize and measure again. About 1.80 V without the Teensy means the pin-39 pad. About 1.52 V either way means the TL431 or the divider.",
+    "With the Teensy unplugged and unpowered, compare pin 39 to GND against pin 38 to GND in DMM ohms and diode mode, same polarity for both. A damaged pad reads markedly lower on 39.",
+    "If a spare Teensy 4.1 is available, plug it in and log V_rgn/V_bus. A jump to about 0.99 implicates the original pad.",
+    "With the Teensy powered over USB alone and off the board, feed pin 39 from 1.5-1.8 V through 10 kOhm and measure the drop across the resistor (more than 0.1 V means more than 10 uA). Repeat on pin 38 as a control.",
+    "Firmware-only, low priority: pinMode(39, INPUT_DISABLE) before analogRead (expected to show no change), and/or change the CPU clock to shift die temperature while logging V_rgn."
+   ],
+   "could_not_access": [
+    "The GitHub API for PaulStoffregen/cores returned 403 through the proxy. I used a blobless git clone and raw.githubusercontent.com instead.",
+    "The i.MX RT1060 Reference Manual: not fetched. The pad reset state is taken from the datasheet pin-list 'Keeper' column.",
+    "The PJRC Teensy 4.1 schematic, to confirm that pins 38/39 are not shared on the Teensy board itself.",
+    "PJRC forum threads specifically on keeper or high-impedance errors: the search returned only loosely related threads (https://forum.pjrc.com/threads/72926-teensy-4-1-analogRead-inconsistenct, https://forum.pjrc.com/threads/63050-Teensy-4-0-analogRead-bug), which I did not read.",
+    "No I/O injection-current rating exists in IMXRT1060CEC Rev 4, so I could not quantify the back-injection damage threshold.",
+    "The Teensyduino version used to build each firmware is not recorded in the repo."
+   ]
+  },
+  {
+   "key": "data-leak-curve",
+   "summary": "The leak is strongly voltage-dependent and is close to zero at low voltage. It is not a constant current and not a resistor. Four independent bus-dip events (TP0115, TP0178, TP0201, TP0209; 12.2-15.9 V; V-MOT pinned to V_bus because V_rgn starts rising on the same 1 ms sample as V_bus) all give the same leak curve: zero below a threshold of 1.19-1.25 V at the node, then linear at 105-107 uA per V (1/g = 9.3-9.5 kOhm). The threshold moves with session or warm-up; the slope does not. The fw v37 J ramp (ML0227: 11 A through MOT_PWR+REGEN, so V_chg <= V-MOT <= V_bus) reproduces that curve if V-MOT sits about 0.36 of the way from V_bus to V_chg, which is what RT1987 RON 20 mOhm predicts. Its 6.8 V collapse samples put the ratio at 0.93-1.10, so the leak is about 0 at node 0.72 V. The quasi-static small-signal gain dV_rgn/dV_bus near 16 V measures 0.52-0.65 on four logs. The model predicts 0.513; a resistive leak would give 0.85 and a constant current 1.0. If the curve stays linear above the measured range (an extrapolation), the 18.26 V regen peak reading means V-MOT was about 24.6-25.0 V, and the chopper would trip near 33 V rather than 22.1 V. This holds only in case A (the leak is a real load on the node), which the 2026-11-05 doc's step-1 DMM check decides. Data cannot separate a threshold-plus-resistor element from a soft junction plus about 7.5-8.7 kOhm. Both fit, and both rule out exponential, constant-current and resistive leak models.",
+   "hypotheses": [
+    {
+     "name": "Threshold-linear / junction + series-R leak on the RGN-V node (onset ~1.2 V node, ~9.4 kOhm incremental)",
+     "verdict": "supported",
+     "predictions": "I_leak = 0 for Vn < Vth; I_leak ~= g (Vn - Vth) above, g ~107 uA/V, Vth 1.19-1.25 V (lower when warm). Ratio V_rgn/V-MOT = 1.00 for V-MOT < ~10.6-11 V. Small-signal reading gain near 16 V = 8.87*(1/R1)/(1/R1+1/R2+g) = 0.513 V/V. Leak at node 2.495 V ~136 uA -> chopper trips at V-MOT ~32.9 V. 18.26 V peak reading (node 2.059 V) -> V-MOT ~24.6-25.0 V.",
+     "evidence": "TP dips (dip_pts.csv, rising/falling branches averaged to cancel ADC skew): linear fit rms 0.15-0.26 uA; exponential 0.82-0.94; power law 0.68-0.81; square law 0.30-0.36; resistive-through-0 5.5; constant 6.4. Local slopes stay at 92-130 uA/V over 8-31 uA. g is the same in all four (105.5-107.4 uA/V). Vth is 1.197/1.192 V in the TP0115/0178 session (ratio 0.836) and 1.226/1.247 V in TP0201/0209 (ratio 0.845-0.850). That 50 mV shift reproduces the session ratio drift via dVn/dVth = 0.487. J ramp (ML0227 t 23.69-24.72 s) matches g = 107 at x = 0.36; at x = 0.5 it matches TP0209 to 0.1 uA at node 1.464 V. J collapse (24.7281/24.7292 s) leak bounds -7.5..+6.2 uA at node 0.716-0.723 V; the model predicts 0. Block-mean slopes dV_rgn/dV_bus: ML0203 0.521, TP0086 0.525, ML0169 0.571, ML0226 0.654 (corr 0.99-1.00). The step to 1.0 gain below Vth is not directly observed in quasi-static data; only bounded collapse and teardown points cover that range.",
+     "confidence": 0.75
+    },
+    {
+     "name": "Soft junction (n~1-1.5) + ~7.4-8.7 kOhm series resistance (variant of the above)",
+     "verdict": "consistent",
+     "predictions": "Slight upward curvature of dI/dV at low current; same extrapolation as the linear model at higher current (series R dominates).",
+     "evidence": "Fit V = a + nVt ln I + Rs I to the TP dips: nVt 13-38 mV, Rs 7.4-8.7 kOhm, node-voltage rms 1.0-1.2 mV vs 1.4-2.4 mV for pure linear. That is about the size of the ADC quantization (0.8 mV of node per count), so n is poorly constrained. Node voltage at 10 uA is 1.28-1.34 V. That is too high for one Si junction (~0.6 V) unless it is two junctions or an offset path, which is inference. In TI SLVS543S Fig 8-2, REF drives an NPN base whose emitter feeds the 3.28 kOhm / bandgap network to ANODE, a 2-Vbe-plus-resistor path. A degraded-beta TL431 input stage would look like this curve, but that is an unverified hypothesis.",
+     "confidence": 0.4
+    },
+    {
+     "name": "Resistive leak (fixed ratio ~0.85 at all voltages; ~45-52 kOhm to GND)",
+     "verdict": "refuted",
+     "predictions": "Constant ratio. Small-signal gain 0.85. Collapse ratio 0.85. Reading in TP dips = 0.836 x V_bus.",
+     "evidence": "TP dips: the ratio goes from 0.836-0.850 at 15.9 V to 0.929-0.946 at 12.4 V in all four events (a resistor through 0 fits with rms 5.5 uA). The J collapse needs ratio >= 0.928 even at the V-MOT = V_bus bound. Resistive + current-proportional ground shift fitted to the J ramp still misses the collapse by -0.24..-0.59 V reading (models.py). Measured small-signal gain 0.52-0.65, not 0.85.",
+     "confidence": 0.03
+    },
+    {
+     "name": "Constant-current sink (~31 uA, saturated source)",
+     "verdict": "refuted",
+     "predictions": "reading = V-MOT - 2.44 V; ratio falls at lower V; small-signal gain 1.0; node = 0 below V-MOT 2.44 V; accelerating decay toward 0 in dark decays",
+     "evidence": "Every lower-voltage point has the ratio rising, not falling. J collapse residual -1.9..-2.9 V reading. Small-signal gain 0.52-0.65, not 1.0. The rosbag_sdp_2026-10-27 dark decay prefers a negative offset (V0 = -0.84 V reading); V0 = +2.44 gives rms 0.040 vs 0.0099. ML0215/216 spans are too short to constrain V0.",
+     "confidence": 0.01
+    },
+    {
+     "name": "Exponential (diode-like, Vs ~0.15-0.48 V) leak growth",
+     "verdict": "weakened",
+     "predictions": "Local slope dI/dV grows ~3x across node 1.3-1.5 V; extrapolated trip >> 40 V (no clamp).",
+     "evidence": "The J ramp alone (x=0..0.5) and the J collapse are compatible with Vs 0.21-0.48. The higher-precision TP dips show nearly constant local slope, with exponential rms 4x the linear one. Super-linear growth beyond the measured range cannot be excluded, but the measured shape is not exponential.",
+     "confidence": 0.1
+    },
+    {
+     "name": "Measurement artefact (ADC channel skew / ground shift / V-MOT != V_bus) producing the apparent voltage dependence",
+     "verdict": "weakened",
+     "predictions": "Branch asymmetry in the dips; dependence on bus current; disagreement between the slow J ramp and the fast dips.",
+     "evidence": "V_bus, V_chg and V_rgn are read in that order (.ino:7031-7033, averaging 16, .ino:6682). The falling/rising branch difference is about 0.1 V reading, which implies about 0.1-0.15 ms skew. Averaging the two branches cancels it to first order; the fall/rise leak difference is about 1.3 uA. The TP dips carry only <= 1.8 A bus current, the J ramp up to 11 A, and the two agree at physically sensible x. V-MOT <= V_bus during the dips: V_rgn rises on the same sample as V_bus, which is impossible if V-MOT had been held above the bus.",
+     "confidence": 0.1
+    }
+   ],
+   "new_facts": [
+    "Leak-curve data table (node V; leak; confidence; source). Leak = (V-MOT - Vn)/78.7k - Vn/10k, with Vn = V_rgn/8.87 (case A):",
+    "  node 0.02-0.15 V | not constrained (reading = V-MOT expected) | low | ML0215/216 dark decays: tau 117-131 s, 122-185 s; V0 fit indeterminate (rms 0.0049-0.0050 over V0 0-1.5 V)",
+    "  node 0.17-0.54 V | dark, no V-MOT reference; teardown knees at reading 5.38-5.45 V and 3.03-3.06 V reproducible in 6 bags | low (knees unattributed) | rosbag_simple_2026-10-20 t121.4, sdp_10-28_20-46 t229.1, sdp_10-28_22-18 t94.0, sdp_10-29 t229.3, 2026-09-07 t82.6, sweep-noclip_10-30_00-56 t53.9, sdp_10-27_00-52-58 (whole bag)",
+    "  node 0.716-0.723 V (V-MOT 5.76-6.99 V) | -7.5..+6.2 uA, ~+1.3 uA at x=0.36 | medium-high | ML0227 t=24.7281, 24.7292 s (V_bus 6.990/6.836, V_chg 5.897/5.761, V_rgn 6.412/6.347; I_batt 15.3-16.5 A forward through MOT_PWR+REGEN)",
+    "  node 0.983 V | -2.1..+12.9 uA | low (falls ~3 V/ms) | ML0227 t=24.7269",
+    "  node 1.33 V | 6.0..17.9 uA (13.6 at x=0.36) | low-medium | ML0227 t=24.7258",
+    "  node 1.298-1.508 V | 8.4-31.2 uA, linear 105-107 uA/V | HIGH | TP0115 t4.455, TP0178 t7.491, TP0201 t7.702, TP0209 t7.746 (dip_pts.csv)",
+    "  node 1.464-1.521 V | 23.1-30.3 uA (x=0.5); bounds 18.9-30.9 | high (x-dependent) | ML0227 J ramp t23.69-24.72 s binned by current (jramp.py)",
+    "  node 1.497-1.524 V (V-MOT 15.9) | 29.5-33.6 uA | high | the 2026-11-05 doc's established point; TP0115 33.1, TP0209 30.3, ML0227 30.3-30.9",
+    "  node 1.536 V (V-MOT 16.12-16.18) | 31.7-32.5 uA | medium | ML0227 t=24.7325 s post-collapse overshoot",
+    "In the ML0227 J session (REGEN+MOT_PWR closed, ~0 current, t 13-23.6 s) V_chg = 15.834 V and V_bus = 15.924 V, so V-MOT is in [15.834, 15.924]. That is an independent check that V-MOT really equals the bus with MOT_PWR closed: the true ratio V_rgn/V-MOT is 0.8474-0.8522.",
+    "All Pi-bag REGEN-closed windows (sdp_10-28_20-46 t158-160 and t199; sdp_10-29 t158-160; sdp_10-30_01-49 t158-160) are bus-fed. V_chg 15.83, V_rgn 13.5-13.57, ratio V_rgn/V_chg 0.853-0.857. No regen burst ever happened with REGEN closed, so no high-voltage V_chg calibration exists. The sw=40 ticks at State-99 teardown are one tick only, and V_chg is still charging (2.6 V).",
+    "rosbag_sdp_2026-10-27_00-52-58 is entirely State 99 (error_code 9 UV_BUS, source state 2) with switch_state 0x20 (BT_SEQ only, MOT_PWR open). V_bus decays 0.75 -> 0 V and V_chg 0.27 -> 0. V-MOT is dark: V_rgn 4.775 -> 1.53 V over 68.9 s, tau 11-16 s above a reading of 3.1 V and 78-109 s below. This is the tail of a teardown decay, not a static powered point.",
+    "Teardown dark decays from 15.8 V (six bags): the reading falls at 22-74 V/s, stops abruptly at 5.38-5.45 V (slope goes from about -70 to +5 V/s within one 20 ms sample), then declines slowly. A second knee follows at 3.03-3.06 V reading, where the slope drops about 7x. These are reproducible load turn-offs on V-MOT. Candidates: the VESC Six EDU input (firmware HW_LIM_VIN 5.5 V, https://raw.githubusercontent.com/vedderb/bldc/master/hwconf/trampa/vesc_edu/hw_edu_core.h, a firmware limit, not a hardware UVLO) and RT1987 UVLO (VIN rising 3.0-3.35 V, hysteresis 250 mV, RT1987_DS-00 p.6). If those attributions held, V-MOT ~= reading at about 5.4 V and 3.05 V, i.e. ratio about 1.0 at low voltage. That would agree with the threshold model, but the attribution is UNVERIFIED.",
+    "RT1987 (RT1987_DS-00 p.6, p.12): RON 20 mOhm at VIN 20 V and 22 mOhm at 5 V; ISHDN 75 uA typ; the shutdown-current curve is ~50 uA flat above 5 V, falling to ~27 uA at ~3.4 V; VOUT leakage ~5 uA at 25 C (VOUT = 32 V); VFWD 35 mV; OVP threshold >= 23 V or >= 33 V depending on POVP.",
+    "The J ramp's V_bus - V_chg reaches 0.70 V at 10.5 A (66 mOhm). The best-fit split x = 0.36 puts about 23 mOhm in the MOT_PWR leg (RT1987 20 mOhm + copper) and about 43 mOhm in the REGEN/charger leg.",
+    "Over 132 BLGs, the only V_bus excursions below 15 V with MOT_PWR closed are the four TP dips above, ML0227, the WP0096-0101 UV collapses (V-MOT unbounded above; they only give ratio <= ~1.0) and log-start artefacts (TP0086/0113/0211/0212 at t < 30 ms). There are no slow bring-up ramps with MOT_PWR closed in any BLG or bag."
+   ],
+   "remote_checks": [
+    "Decode the remaining WP/TP/YP BLGs that lack CSVs and rerun dips.py. Every additional motor-load bus dip (I_cmd step, I_fc = I_batt = 0 on the falling branch, co-rising V_rgn) adds a skew-cancelled leak curve. In particular look for one reaching V-MOT < 11 V, where the model predicts gain stepping to 1.0.",
+    "Check schematic sheet 4 / RT1987 POVP strapping for D-BRG and D-MT. If POVP selects the 23 V OVP and the regen peaks really reached ~25 V, D-BRG (VIN = V-MOT) would have latched OVP during bursts (only observable if REGEN EN was high).",
+    "Identify the VESC Six EDU input regulator and its UVLO (Trampa schematic or teardown photos) to attribute the 5.40 V teardown knee. If it is a hardware UVLO near 5.4-5.5 V, it becomes a ratio = 1.0 calibration point at low voltage.",
+    "Re-scan the regen bursts under the threshold model. Convert each peak and its rise rate to true V-MOT (gain 0.513 above node Vth) and check against VESC HW_LIM_VIN 27 V, the RT1987 32 V operating limit, and whether any VESC over-voltage fault was logged.",
+    "Fit the warm-up drift within sessions as a pure Vth shift (fixed g): predicted dVth = -5..-9 mV over 5-15 min. Compare with junction tempco to estimate the board temperature rise."
+   ],
+   "lab_checks": [
+    "Cheapest and decisive: with the VESC disconnected, MOT_PWR closed and a current-limited supply on V-MOT, DMM the RGN-V node (R2-SNT top) at V-MOT = 8, 10, 11, 12, 13, 14, 16 V. The threshold model predicts node = V-MOT/8.87 exactly up to about 10.6-11 V, then node = (V-MOT/78.7k + 107uA/V x 1.22 V)/219.7uA/V (e.g. 12.4 V -> 1.30 V vs 1.398 healthy; 16 V -> 1.52 V). If the DMM reads 1.80 V at 16 V, the error is in the pin/ADC path (case B) and this curve describes the ADC path instead.",
+    "Same sweep with the pin-39 trace lifted (or the Teensy unpowered/removed), then with U-SNT lifted. Whichever removal restores node = V-MOT/8.87 above 11 V identifies the leaking element. A REF-pin defect in the TL431 is suggested by the ~2-Vbe-plus-resistor shape, but that is unverified.",
+    "Diode-test or curve-trace the TL431 REF-to-ANODE path out of circuit at 0.5-2.5 V. The model predicts conduction onset at ~1.2 V and ~107 uA/V above it (~136 uA at 2.495 V). Datasheet Iref for a healthy part is 2 typ / 4 max uA at IKA 10 mA (TI SLVS543S).",
+    "Only after the above: the doc's bench trip test (raise V-MOT slowly, VESC disconnected). The threshold model predicts the dump turns on near 32-33 V, so stop at the RT1987 32 V operating limit. If the leak is not fixed first, the board has no assured clamp below that."
+   ],
+   "could_not_access": [
+    "The VESC Six EDU schematic or input-regulator UVLO: only the firmware HW_LIM_VIN 5.5-27 V was found (vedderb/bldc hw_edu_core.h), so the 5.40 V teardown knee is not attributed.",
+    "No regen burst was ever logged with REGEN_ENABLE closed, so there is no simultaneous V_chg vs V_rgn calibration above 16.2 V. Every point above node 1.536 V is extrapolation.",
+    "No BLG carries switch_state; MOT_PWR state in BLGs is inferred from V_rgn tracking V_bus.",
+    "The analogRead conversion time on Teensy 4.1 with averaging 16 was not measured. The ~0.1-0.15 ms inter-channel skew is inferred from branch asymmetry and cancelled by branch averaging.",
+    "Schematic POVP strapping of the RT1987s and the PCB copper resistances were not checked; x = 0.36 is inferred, not measured."
+   ]
+  },
+  {
+   "key": "data-thermal-noise",
+   "summary": "The fine structure of the data rules out a resistive leak. Over 0.05-16 Hz, and quasi-statically, V_rgn moves only 0.45-0.62 x as much as V_bus, with zero phase and flat gain below about 8 Hz. The static ratio is 0.835-0.852. A fixed resistor to GND would give an incremental gain equal to the static ratio. A constant-current leak or an ADC offset would give 1.0, and so would reverse-junction leakage, which is roughly voltage-independent. What fits is a superlinear, knee-type sink on the RGN-V net. It draws close to nothing below a node voltage of about 1.0 V, has a soft knee near 1.1-1.25 V, and above that has an incremental conductance of about 75-115 uS (about 9-13 kOhm), reaching 27-33 uA at 1.50-1.53 V. Three independent pieces of evidence give this curve: (a) small-signal transfer functions across 100+ bench logs and the Pi bags; (b) the ML0227 load ramp; (c) the rising leg of the TP0115 bus collapse, where the RT1987 conducts forward and V-MOT tracks V_bus. The leak's warm-up is load-independent: an exponential with tau = 5.4 +/- 0.4 min and amplitude 1.04 +/- 0.04 uA (3.3 %), with residuals uncorrelated with load. That is far too small for reverse leakage (about x2 per 10 C) and far too large for resistor TCR or ADC drift. It matches a forward/threshold junction shifting by about 10 mV during warm-up (about -2 to -4 mV/C over 3-5 C). Ground shift is at most about 1-2 mV/A at the node, so it cannot produce the static error at 0.01-0.03 A idle. If the sink is on the TL431 REF node (case A) and the linear-above-knee curve can be extrapolated, the effective chopper trip is about 30-33 V and the true V-MOT regen peaks were about 24-26 V, not 21.5 V. That extrapolation goes well beyond the measured 1.29-1.53 V node range and needs bench confirmation.",
+   "hypotheses": [
+    {
+     "name": "Superlinear knee-type sink on the RGN-V net (junction-like onset about 1.1-1.25 V plus about 9-13 kOhm effective series resistance)",
+     "verdict": "supported",
+     "predictions": "Incremental gain dVrgn/dVbus = (G1+G2)/(G1+G2+I') < static ratio; for I' about 75-113 uS this gives 0.50-0.60. Leak about 0 below a node voltage of about 1.0 V, about 9-15 uA at 1.29-1.35 V, about 30 uA at 1.52 V. Positive temperature coefficient of the order of a forward-junction shift (about 0.2-1 %/C). Gain flat in frequency (a static nonlinearity).",
+     "evidence": "MEASURED: ML0226 cross-spectral gain 0.609/0.594/0.593/0.585 at 0.05-0.2/0.2-0.5/0.5-1/1-2 Hz, coherence 0.94-0.99, phase -0.4 to -0.8 deg, H1/H2 bracket 0.585-0.621 (scratch tf.py). ML0203 gain 0.50-0.53 flat over 0.05-16 Hz (coherence 0.85-1.00). 10 s block OLS with corr>0.9 over all clean bench logs: 0.48-0.63 (TP0074-TP0120 0.52-0.63, OLS vs reverse within 1 %). Pi bags 0.46-0.55 (scratch inc2.py/inc2.csv). Binned quasi-DC slope of V_rgn on V_bus (no filtering): ML0226 0.57-0.59, ML0135 0.56, TP0090 0.59, ML0203 0.50-0.52 (scratch binned.py). ML0227 ramp 23.6-24.7 s (V_bus 15.92 -> 15.15 V, 0 -> 10 A): dVrgn/dVbus = 0.638; V-MOT lies between V_bus and V_chg, so the true gain is 0.38-0.64. TP0115 collapse rising leg (RT1987 forward, V-MOT follows), node V / leak uA: 1.290/9.1, 1.343/13.8, 1.393/18.9, 1.438/24.3, 1.484/29.5, 1.500/32.5, i.e. about 105 uS, zero-crossing extrapolation 1.20 V. WP0097 collapse: about -3..+4 uA at node 0.73-1.01 V (noisy, unreliable). Pooled rising samples from 11 logs: about 0 +/- 3 uA at 0.70-0.95 V, 6.5 at 1.20, 14 at 1.30, 16 at 1.35, 21 at 1.40, 22-25 at 1.45 (scratch curve.py). The chord slope 1.29->1.52 V (about 93-105 uS) agrees with the independent small-signal I' (75-113 uS). A resistive path to a fixed about 1.2 V rail is excluded because the leak does not go about 45 uA negative at 0.7 V.",
+     "confidence": 0.8
+    },
+    {
+     "name": "Linear resistive leak or wrong divider value (contamination, about 50 kOhm to GND, R1 about 94 kOhm)",
+     "verdict": "refuted",
+     "predictions": "Incremental gain = static ratio (0.835-0.852) at all frequencies; ratio constant as V_bus moves.",
+     "evidence": "Measured incremental gain is 0.45-0.62 in every clean data set, about 25-45 % below the static ratio. In ML0227 the ratio rises 0.8474 -> 0.8576 as V_bus falls 15.92 -> 15.15 V (50 ms means). Resistor TCR cannot give the 1.04 uA warm-up: that needs a 0.57-0.68 % change in R1 or R2, i.e. about 5700 ppm.",
+     "confidence": 0.03
+    },
+    {
+     "name": "Constant-current leak, ADC offset, or reverse-biased junction leakage (ESD diode, TL431 off-state leakage)",
+     "verdict": "refuted",
+     "predictions": "Incremental gain about 1.0 (reverse leakage is nearly voltage-independent). Reverse leakage roughly doubles per about 10 C (about 7 %/C).",
+     "evidence": "Measured gain 0.45-0.62, not 1.0. The warm-up rise is only 3.3 % total: reverse leakage at about 7 %/C would need the leak site to warm only about 0.5 C, while the same law would make the about +/-10 % spread between sessions require implausibly small ambient changes. Leak is about 0 at a node voltage <1 V (collapse samples), which is incompatible with a constant-current leak.",
+     "confidence": 0.02
+    },
+    {
+     "name": "Ground shift between R2-SNT return and Teensy AGND with bus current",
+     "verdict": "refuted",
+     "predictions": "Static error scales with current (needs about 9 Ohm at 0.03 A); dynamic term gI positive (V_rgn reads high with load).",
+     "evidence": "Static ratio identical at 0.03 A idle (ML0227 0.8474) and 0.29 A mean load (ML0226 0.8479). Band-limited joint regression V_rgn ~ V_bus + I: ML0226 gI +0.5..+4.6 mV/A in reading units, i.e. 0.05-0.5 mV/A at the node. Bench logs mostly -5..-15 mV/A, a sign and size consistent with RT1987 RON about 20 mOhm (RT1987_DS-00.pdf, rt1987.txt:727, 864-866: VFWD 35 mV regulation until I*RON > VFWD) rather than ground lift. The incremental gain stays about 0.6 after partialling out I.",
+     "confidence": 0.02
+    },
+    {
+     "name": "Thermal driver = board/MCU warm-up from power-on, not load heating",
+     "verdict": "supported",
+     "predictions": "Leak at fixed node voltage follows A(1-exp(-t/tau)) in time since boot, independent of the electrical load in each run.",
+     "evidence": "Leak referred to Vn = 1.50 V (idle samples, corrected with I' = 90 uS) across 9 boots / 111 logs: common fit A = 1.044 +/- 0.040 uA, tau = 5.40 +/- 0.40 min, rms residual 0.077 uA. A/a = 3.2-3.9 % per boot. Residual vs per-log mean load: corr -0.14, slope -0.04 uA/A. Boot 1's 5.3 min logging gap continues the curve smoothly (scratch fitexp.py, thermal2.csv). Pi bags rise 40-135 nA/min inside each bag (consistent with early warm-up). ML0226 (7-14 min) rose 0.08 uA, against the model's 0.20 uA, so A or tau varies somewhat between sessions.",
+     "confidence": 0.75
+    },
+    {
+     "name": "TL431 REF input degraded (low beta / damaged input stage) or non-genuine/odd part on U-SNT",
+     "verdict": "consistent",
+     "predictions": "REF current about 0 below the internal transistors' turn-on, rising beyond a soft knee of about 1-2 Vbe through internal emitter resistance. Magnitude 10-20x the datasheet 2 uA typ / 4 uA max Iref (at IKA = 10 mA). Thermal sensitivity of the order of the datasheet II(dev) (0.4-2.5 uA over the temperature range, out of 2 uA), i.e. about 0.2-0.6 %/C.",
+     "evidence": "The knee about 1.1-1.25 V and near-linear 9-13 kOhm incremental fit a junction-plus-resistor input structure. The warm-up percentage (3.3 % over an assumed 5-15 C) is of the same order as the datasheet deviation ratio (TL431_TI.pdf electrical tables, tl431.txt:275-277, 317-319). It is node-specific, which explains why pin 38 on an identical divider is clean. The data cannot separate this from a sink at the Teensy pin-39 end, since both load the same net (unless there is a series fault between them).",
+     "confidence": 0.45
+    },
+    {
+     "name": "Teensy pin-39 pad defect or i.MX RT keeper/bus-hold current",
+     "verdict": "weakened",
+     "predictions": "A keeper/bus-hold holding low pulls hardest near the input threshold (about 1.4-1.7 V) and flips (current reverses) once crossed; it would also act on pins 24-26 and 38. A damaged-ESD pad gives reverse-leakage-like behaviour (gain about 1).",
+     "evidence": "The reading stays smooth with no discontinuity up to node 2.06 V in the regen bursts (no flip). Pin 38 with an identical divider and node voltage (1.785 V) reads 0.994 x V_bus, with no 31 uA-class effect. V_bus/V_fc read correctly. No firmware pinMode/INPUT_DISABLE on the analog pins (teensy_controller.ino:6671-6682; grep found none), so the keeper default is unchanged for all channels alike. A forward-junction-like defect at the pad cannot be excluded remotely.",
+     "confidence": 0.15
+    },
+    {
+     "name": "Case B: node correct, error only in the ADC conversion path (sampling/settling/channel artefact)",
+     "verdict": "weakened",
+     "predictions": "A linear gain error gives incremental = static; an offset gives incremental = 1.0. Pin 38 (same Thevenin 8.87 kOhm, same averaging) would show the same artefact.",
+     "evidence": "Neither linear signature is present; the error vanishes at low node voltage and has a knee. Pin 38 is clean, and channel carry-over is excluded (ML0227 0.84739 with V_chg at 0 V and 15.8 V). Noise floor: V_rgn and V_chg count noise are equal (0.54 vs 0.46 counts rms, ML0227 idle). The only form of case B still possible is a high-resistance series break between the TL431 node and pin 39 combined with a nonlinear sink at the pin; a DMM settles it.",
+     "confidence": 0.1
+    }
+   ],
+   "new_facts": [
+    "Quantization: V_bus readings are exact integer counts x 4.545 mV (3.3*5.64/4095) and V_rgn x 7.148 mV (3.3*8.87/4095); residual from integer <2e-4 count in ML0226 (logs/ML0226/ML0226.csv).",
+    "ML0226 small-signal transfer V_rgn/V_bus (Welch/CSD, 20 s segments): gain 0.609, 0.594, 0.593, 0.585, 0.575 at 0.05-0.2, 0.2-0.5, 0.5-1, 1-2, 2-4 Hz; coherence 0.99/0.99/0.99/0.94/0.73; phase within +/-1.5 deg. Static ratio 0.8479 (scratch wf/data-thermal-noise/tf.py).",
+    "ML0203 transfer gain 0.50-0.53 flat over 0.05-16 Hz (coherence >= 0.85). Phase lag grows above 8 Hz (-6 deg at 8-16 Hz, -28 deg at 32-64 Hz): an effective low-pass of about 1.8 ms on V_rgn relative to V_bus, cause unknown (node capacitance, or V-MOT peak-following through the RT1987).",
+    "Across all clean bench logs (regen windows +/-3 s excluded, 10 s blocks with corr > 0.9), the incremental gain is 0.48-0.63, against static ratios 0.835-0.852. Pi bags (50 Hz) give 0.46-0.55 (scratch wf/data-thermal-noise/inc2.csv). Logs containing regen bursts give nonsense gains unless masked, because V-MOT decouples from V_bus.",
+    "ML0227 ramp 23.60-24.69 s: V_bus 15.923 -> 15.152, V_chg 15.833 -> 14.498, V_rgn 13.494 -> 12.995 (50 ms means) while I_fc+I_batt rose 0.03 -> 10.3 A. V_rgn/V_bus rose 0.8474 -> 0.8576. dVrgn/dVbus = 0.638, dVrgn/dVchg = 0.376.",
+    "Leak curve from the TP0115 bus collapse rising leg (logs/TP0115/TP0115.csv rows 3880-3885; leak = (V_bus-0.035-Vn)/78.7k - Vn/10k): node V / leak uA = 1.290/9.1, 1.343/13.8, 1.393/18.9, 1.438/24.3, 1.484/29.5, 1.500/32.5, a slope of about 105 uS. Falling leg: 1.463/29.2 ... 1.295/12.0, which may be biased low by V-MOT lagging.",
+    "Leak at a node of 0.70-1.0 V is about 0 +/- 3 uA (WP0097 collapse rows 14619-14629; pooled rising samples, scratch curve_pts.csv). These samples are single 1 kHz points during fast transients and carry +/-5 uA timing error.",
+    "Fast V_bus dips are not followed by V-MOT at idle: TP0086/TP0113 starts show V_bus falling about 0.14 V/ms while V_rgn falls about 0.015 V/ms in reading units. That implies a V-MOT idle load of at least about 9 mA (if C = 480 uF), and means the 1 kHz collapse samples overstate V-MOT tracking on falling edges.",
+    "Leak referred to Vn = 1.50 V, warm-up model over 9 boots: A = 1.044 +/- 0.040 uA, tau = 5.40 +/- 0.40 min, rms 0.077 uA. Uncorrelated with per-run load (corr -0.14). Implied knee shift during warm-up = A/I' = 9-14 mV (scratch fitexp.py, thermal2.csv).",
+    "Cross-session leak at Vn = 1.50 V: about 32-33 uA on 2026-08-12..08-17 (boots 1-11, except boot 9 at about 30.1-30.2 uA on 08-16 between boots at 32.4-32.8), 30.9 uA in boot 12 (08-17 late), 28.8-29.6 and 27.1-27.8 uA on 08-25, 26.8-28.1 uA in the Oct Pi bags, 28.4-28.5 uA on 11-04 (ML0226/ML0227). It is a step-like decrease between 08-17 and 08-25 that then stays flat, not a smooth seasonal trend. Equivalent to a knee shift of about 60 mV, too large for ambient alone if the knee is a junction (about 15-30 C).",
+    "Idle noise (ML0227 13-23.5 s, V_chg fed): V_bus 0.55, V_chg 0.46, V_rgn 0.54 counts rms (high-frequency, after 16x hardware averaging). Inter-channel coherence about 0.15-0.19 at all frequencies, a common-mode ADC floor. Idle noise cannot resolve the expected source-impedance change (8.87 kOhm -> about 5 kOhm).",
+    "RT1987 regulates VIN-VOUT = VFWD (35 mV typ) while IOUT*RON < VFWD, with integrated back-to-back 20 mOhm MOSFETs (references/Datasheets/RT1987_DS-00.pdf; pdftotext lines 338, 727, 864-866). So in regulation V-MOT = V_bus - 35 mV, and above about 1.75 A it drops by I*RON. The bench-log regression term of about -5..-15 mV/A (reading units) matches about 20 mOhm.",
+    "Extrapolating the linear-above-knee model (I0 29.6-33.2 uA at 1.522 V, I' 75-113 uS): effective trip V-MOT = 22.13 + 78.7k*I(2.495 V) = 30.2-33.4 V, and the true V-MOT at the 18.263 V regen-peak reading (node 2.059 V) = 23.8-25.7 V. This extrapolates beyond the measured 1.29-1.53 V node range; an exponential/power-law extrapolation gives higher values."
+   ],
+   "remote_checks": [
+    "Read TI TL431 datasheet Figure 7-2 (Iref vs temperature) from the PDF graphic, not the text extract, to get the sign and slope of healthy Iref drift and compare with the +3.3 % warm-up.",
+    "Find i.MX RT1060 datasheet GPIO keeper / bus-hold specs (hold current vs voltage) to bound the pad-keeper hypothesis quantitatively.",
+    "Gerber review: trace RGN-V from U-SNT pin 2 to Teensy J-header pin 39. Look for vias, neighbouring nets, and any series element; check for a cut/rework near it, and whether the 74HC14 rework area (fitted between 08-17 and 08-25, coincident with the step drop in leak) is adjacent.",
+    "Ask the operator what was done to the board between 2026-08-17 and 2026-08-25 (rework, cleaning, re-seating the Teensy), and before boot 9 on 08-16 (the low-leak outlier).",
+    "SPICE: TL431 macromodel with input-stage beta reduced 10-30x. Check whether REF current vs REF voltage reproduces the knee (about 1.1-1.25 V) and the 9-13 kOhm slope, and where it would then trip.",
+    "Re-run the incremental-gain test on any future log with a slow V_bus excursion at low current (e.g. a bring-up ramp captured with MOT_PWR closed), which removes both the RT1987 RON and V-MOT-lag confounds.",
+    "Add (firmware, later) Teensy die temperature (tempmonGetTemp) to the BLG so the warm-up coefficient can be expressed per degree C."
+   ],
+   "lab_checks": [
+    "Cheapest: with the board powered, idle, MOT_PWR closed, measure with a DMM at U-SNT pin 2 and at the Teensy pin 39 header pin. Prediction: both read about 1.52 V, not 1.80 V, if the sink is on the net (case A). If pin 2 reads 1.80 V and pin 39 reads 1.52 V, there is a series break and a pad-side sink.",
+    "Freeze spray / hot air localisation: spray U-SNT, then the Teensy pin-39 area, while watching the V_rgn reading. Cooling the sink site should lower the leak (V_rgn rises; about +1 % per few C by the warm-up fit).",
+    "Pull the Teensy from its J1/J2 receptacles, feed V-MOT from a current-limited supply (VESC disconnected) and DMM the node at V-MOT = 8, 10, 12, 14, 16, 18 V. Predictions if the sink is on the board: node = ideal (V/8.87) below about 9-10 V; low by 8.87 x I_leak above that, with I_leak about 30 uA at 16 V and slope about 90 uS. If the node reads ideal with the Teensy out, the sink is in the Teensy.",
+    "Lift U-SNT pin 2 (or remove U-SNT) and repeat: if the node becomes ideal, the TL431 REF input is the sink; then curve-trace REF-anode on the removed part against a new TL431BIDBZR.",
+    "Only after the above: a chopper trip test with the VESC disconnected, current-limited ramp of V-MOT, watching R-SHUNT current. Predicted trip 30-33 V if the sink stays, above the RT1987 32 V operating rating, so either do it with the RT1987/VESC isolated or fix the sink first."
+   ],
+   "could_not_access": [
+    "TL431 Figure 7-2 (Iref vs temperature) curve values: only the text extract was used.",
+    "i.MX RT1060 keeper/bus-hold electrical specs: the web search returned only an unrelated generic Teensy ADC guide (industrialmonitordirect.com), with no PJRC/NXP keeper data.",
+    "No ambient temperature or Teensy die temperature records for any session.",
+    "No log captures the V_bus bring-up ramp with MOT_PWR closed, which would be the cleanest low-current incremental test.",
+    "Pi bags carry no firmware version or uptime, so warm-up phase in the bags is unknown."
+   ]
+  },
+  {
+   "key": "pcb-assembly",
+   "summary": "The PCB design and manufacturing files show no layout or assembly-data error at the RGN-V node. The Eagle board file (references/Scale Car Board PCB 20260625.brd), the 2026-06-09 Gerbers and the PnP file all agree with each other and with the schematic. U-SNT uses TI's DBZ footprint with pad 1 to R-G (net N$36), pad 2 to RGN-V and pad 3 to GND, which matches TI's TL431 DBZ pinout (cathode 1, REF 2, anode 3). R1-SNT is 78.7k (0402) and R2-SNT is 10k (0603). On top copper, RGN-V is one island: the R1/R2 tap, U-SNT pad 2, a single 0.254 mm trace with no vias, Teensy pin 39 and the J2 probe-header pins 35/36. Its only copper neighbours are the GND pour (about 0.14-0.15 mm gap) and R1-SNT's own V-MOT pad (0.48 mm, the 0402 pad gap). No high-voltage net runs near it. CHG-V to pin 38 has the same kind of GND-pour exposure, or more, and reads correctly, so the routing itself does not explain why only RGN-V is wrong. Nothing in the repo records who assembled the board; the design BOM sources every part from DigiKey, including TI TL431BIDBZR. A generic SOT-23 TL431 with the common REF-cathode-anode order (pin 1 = REF) fitted by mistake is still possible. However, the logged data argue against it: the node follows V-MOT proportionally rather than being clamped, and the dump does not conduct. The one assembly-level mechanism specific to this node that the files leave open is contamination or flux residue under the SOT-23 or around R2-SNT, which CHG-V (resistors only) does not have. It is speculative and could only be checked on the bench.",
+   "hypotheses": [
+    {
+     "name": "Footprint, PnP or netlist error at U-SNT (design data maps REF to the wrong pad)",
+     "verdict": "refuted",
+     "predictions": "If REF were on pad 1 or 3 in the design data, the netlist or Gerber pads would show RGN-V reaching a pad other than 2.",
+     "evidence": "In the brd netlist, signal RGN-V = U$1 pin '39-A15/CS/OUT1A', J2 pins 35 and 36, R1-SNT pin 1, R2-SNT pin 2, U-SNT pad 2. N$36 = U-SNT pad 1 and R-G pin 2. GND includes U-SNT pad 3. In the schematic file (Scale_Car_Board_20260624.sch), device TL431BIDBZR / DBZ0003A_N connects ANODE to 3, CATHODE to 1 and REF to 2, and net RGN-V lists U-SNT REF. TI SLVS543S Table 5-1 (p.4) gives TL431 DBZ as cathode 1, REF 2, anode 3; the TL432 is REF 1, cathode 2. In the footprint, pads 1/2/3 sit at local (-0.95,0.95), (-0.95,-0.95), (0.95,0), each 0.6x1.5 mm. With U-SNT at (115.316, 21.59) rotated R270, the absolute pads are pad 1 (116.266, 22.54), pad 2 (114.366, 22.54), pad 3 (115.316, 20.64). Those match the copper, soldermask and paste flashes in the Gerbers exactly. The RGN-V trace starts at pad 2 (114.366, 22.54) and the N$36 trace at pad 1 (116.266, 22.54). The PnP line is U-SNT 115.32 21.59 270.00 TL431BIDBZRDBZ0003A_N DBZ0003A_N.",
+     "confidence": 0.02
+    },
+    {
+     "name": "Assembler substituted a generic SOT-23 TL431 with pin 1 = REF, pin 2 = cathode",
+     "verdict": "weakened",
+     "predictions": "Device REF would land on N$36, fed from VG (about V-MOT) through 220 ohm, and the device cathode would land on the RGN-V tap. Two outcomes are possible. (a) If REF draws mA, VG falls, the BSP170P turns on (VGS(th) -2.1/-3/-4 V) and the 47 ohm dump draws about 0.34 A continuously. (b) If REF draws little, the overdriven shunt pulls the tap down to its saturation voltage, which would barely move with V-MOT.",
+     "evidence": "Generic parts with this pinout do exist. A GK Goodwork SOT-23 TL431 datasheet and LCSC C111578 (Shikues) are both 1 = REF, 2 = cathode, 3 = anode; LCSC C962727 (TL431N) matches TI. Nothing in the repo shows an assembler with its own parts library was used: the design BOM lists DigiKey 296-18872-1-ND (TI TL431BIDBZR), the Fusion BOM.txt carries Mouser numbers, and a grep for JLCPCB, PCBWay, LCSC, MacroFab, Seeed, turnkey, stencil and hand-solder found nothing. Against (a): the established idle bus load is 0.008-0.03 A. Against (b): the established data show the node following V-MOT. The ratio stays at 0.848 across 15.79-15.96 V, regen bursts push the node to 2.04-2.06 V with rounded peaks, and with the bus at 0 the node decays smoothly from 1.35 V to 0.2 V with tau 105-122 s. A saturated-shunt clamp would not track like that.",
+     "confidence": 0.04
+    },
+    {
+     "name": "PCB leakage from a neighbouring high-voltage net, or an unintended short in the routing",
+     "verdict": "refuted",
+     "predictions": "A conductor near V-MOT, VG or the bus would push the node UP, not down, and a short would show as a copper connection.",
+     "evidence": "Rasterized Gerbers (50-100 px/mm, connected-component labelling) show top-copper RGN-V as one island holding the R2 tap pad, U-SNT pad 2, the trace, Teensy pin 39 and J2 pins 35/36. Its only neighbours are the GND pour (minimum gap 0.141-0.148 mm) and R1-SNT's V-MOT pad at 0.48 mm, which is the gap between that resistor's own pads. On the bottom layer, RGN-V exists only as the through-hole barrels of Teensy 39 and J2 35/36, each in a GND-pour clearance of about 0.148 mm. In the brd, RGN-V has 13 wires, all on layer 1 and none on bottom, and 0 vias. The route runs from R1-SNT pad 1 (112.27, 17.27) down to R2-SNT, then to U-SNT pad 2, then up x = 114.366 from y 22.54 to 45.9, then to (112.27, 48.006), then along a 1.27 mm strap to Teensy pin 39 at (104.902, 48.006) and J2 at x = 107.442 and 109.982. The nearest via is a GND stitch via at (113.03, 22.606), 0.58 mm edge-to-edge from the trace. The V-MOT pour (bbox x 94.3-123.6, y 2.1-18.4) touches only R1-SNT's V-MOT pad. Copper on GND would pull the node down, but only through contamination.",
+     "confidence": 0.03
+    },
+    {
+     "name": "Surface or ionic leak to GND that is specific to this node (flux residue under the SOT-23 between REF pad 2 and GND pad 3, or around R2-SNT)",
+     "verdict": "untestable-remotely",
+     "predictions": "Needs about 50 kohm from the tap to GND, about 31 uA at 1.52 V, rising with temperature and humidity as ionic residues do. It would show on RGN-V but not on CHG-V, because CHG-V has no SOT-23. It would clear after an IPA/flux-remover clean.",
+     "evidence": "Geometry (computed from the brd pads): the REF pad 2 copper (x 114.066-114.666, y 21.79-23.29) is about 0.35 mm by 0.40 mm (about 0.53 mm diagonal) from GND pad 3 (x 115.016-115.616, y 19.89-21.39), all under the package body. The REF-to-cathode pad gap is 1.3 mm, but a leak from the cathode would pull the node UP, because the cathode/VG side sits near V-MOT when the dump is off. On exposure along GND (edge length within 0.25 mm of other copper; a pixel-count estimate), RGN-V has about 82 mm top plus 11 mm bottom and CHG-V about 63 mm top plus 73 mm bottom. Since CHG-V reads 0.994 x V_bus, ordinary masked-trace exposure cannot be the cause, and only the component pads differ: CHG-V has resistors only. Assembly method and cleaning are not recorded anywhere in the repo. This fits the warm-up drift in the established findings, but so does a junction leak in the TL431 or the Teensy pad, so it is not distinctive.",
+     "confidence": 0.15
+    }
+   ],
+   "new_facts": [
+    "The Eagle .brd 'Scale Car Board PCB 20260625.brd' is in the repo (references/) and gives the exact netlist. RGN-V = U$1 pin 39 + J2 pins 35, 36 + R1-SNT pin 1 + R2-SNT pin 2 + U-SNT pad 2. N$36 = U-SNT pad 1 + R-G pin 2. VG = R-G pin 1, R-GS pin 1, Z-SNT pin 2, Q-SNT pin 1. U-SNT pad 3 is on GND.",
+    "The schematic file Scale_Car_Board_20260624.sch maps the TL431BIDBZR device (DBZ0003A_N/M/L) as ANODE 3, CATHODE 1, REF 2. That matches TI SLVS543S Table 5-1 (p.4) for the TL431 DBZ (cathode 1, REF 2, anode 3).",
+    "The Gerbers (gerber_job.gbrjob CreationDate 2026-06-09T23:01:26Z, Fusion Electronics 9.7.0, owner Ricardo Tan) predate the brd file name (20260625) and the schematic (20260622). Even so, every copper, soldermask and paste flash at U-SNT, R1-SNT, R2-SNT, R-G and R-GS matches the brd pad coordinates exactly: U-SNT pads at (116.266, 22.54), (114.366, 22.54), (115.316, 20.64), each 0.6x1.5 mm; R1-SNT pads at (112.269, 17.272) and (113.284, 17.272); R2-SNT pads at (112.268, 18.997) and (112.268, 20.627).",
+    "PnP 'PnP_Scale Car Board_front.txt': U-SNT 115.32 21.59 rot 270 DBZ0003A_N; R1-SNT 112.78 17.27 rot 0 78.7kOhm RESC1005X40; R2-SNT 112.27 19.81 rot 270 10kOhm RESC1608X60; R1-CHG 73.91 5.84 78.7kOhm 0402; R2-CHG 71.37 5.84 10kOhm 0603. Both dividers use identical value and package pairs.",
+    "Fusion BOM.txt (exported 6/9/2026) lists 78.7kOhm 0402 as R1-CHG and R1-SNT, and U-SNT as TL431BIDBZR (Texas Instruments). Design BOM rows 35-37: TL431BIDBZR DigiKey 296-18872-1-ND; R1-SNT YAGEO RT0402BRD0778K7L, 0.1 % thin film; R2-SNT Panasonic ERA-3AEB103V, 0.1 %. The DigiKey/Mouser sourcing does not point to a JLCPCB/LCSC-style parts library. Who assembled the board is not recorded anywhere in the repo or the git log.",
+    "RGN-V is routed entirely on top copper (13 wires, 0 vias), inside the GND pour, with about 0.14-0.15 mm pour clearance. Besides the GND pour, its only copper neighbour is R1-SNT's own V-MOT pad at 0.48 mm. No other signal runs within 1 mm.",
+    "J1/J2 (Amphenol 87606-324LF, 2x24) are parallel breakout rows beside the Teensy headers. Each Teensy pin is strapped by a 1.27 mm trace to two J2 pins (RGN-V on J2 35/36, CHG-V on J2 37/38). controller_design/bench_calibration_manual.md:39 uses J2 as a scope probe header. Pins 38 and 39 are adjacent (2.54 mm pitch) with GND pour between their straps.",
+    "CHG-V runs top and bottom with 2 vias (73.879, 6.893) and (96.266, 31.496). Its GND-pour exposure is comparable to or larger than RGN-V's, yet it reads 0.994 x V_bus, so routing or pour proximity alone cannot explain the RGN-V error.",
+    "BSP170P VGS(th) is -2.1 / -3 / -4 V at ID = -250 uA (references/Datasheets/BSP170P_Infineon.pdf, text line 95).",
+    "Online: SOT-23 TL431 pinouts differ by maker. GK Goodwork and LCSC C111578 (Shikues) are 1 REF / 2 cathode / 3 anode; LCSC C962727 (TL431N) is 1 cathode / 2 REF / 3 anode like TI DBZ (WebSearch summary of https://www.flux.ai/lcsc/tl431.md, https://www.flux.ai/lcsc/tl431n~k9fn.md, https://mm.digikey.com/Volume0/opasdata/d220001/medias/docus/7833/TL431AN%20SOT-23.pdf)."
+   ],
+   "remote_checks": [
+    "Ask the operator or Ricardo Tan who assembled the board (in-house reflow or hand-solder versus a PCBA service), what flux was used and whether the board was cleaned. If it went to a PCBA house, get its BOM and any substitution report.",
+    "Look for a photo of the assembled board (papers/Droop_Control/sections/04_board_design.tex:335 has a TODO for one). The SOT-23 top marking would identify the part: TI TL431BIDBZR is marked with a TI code, while generics carry e.g. '431' / '43A'.",
+    "Confirm which Gerber set was sent to the fab. The repo set is dated 2026-06-09, while the brd and schematic are 06-22/06-25. Pads match at this node either way, but whether other changes landed after 06-09 is unknown."
+   ],
+   "lab_checks": [
+    "Read the U-SNT top marking under a loupe and compare it with TI's TL431BIDBZR marking. A generic part changes the pinout question.",
+    "DMM on the RGN-V node at about 15.9 V (as in docs/vrgn_measurement_error_2026-11-05.md section 6, step 1): about 1.52 V means the node is loaded; about 1.80 V means the pin or ADC path is at fault.",
+    "If the node is loaded, clean around U-SNT and R2-SNT with IPA or flux remover, dry the board, and re-read V_rgn after a warm-up. A recovery points to a surface or ionic leak.",
+    "Unpowered: measure tap-to-GND resistance in both polarities. A healthy board shows about 10 kohm parallel with 88.7 kohm via V-MOT loads. Then lift U-SNT pad 2, or the pin-39 strap, to see which one removes the extra conductance.",
+    "Check J2 pins 35/36 for anything plugged in or bridged (solder or debris between J2 pins and the GND pour, about 0.148 mm clearance)."
+   ],
+   "could_not_access": [
+    "Any record of the assembler, the assembly process or any part substitution: none exists in the repo docs, README, WORK_QUEUE, archive or git log.",
+    "LCSC's own product pages for its TL431 SOT-23 basic part (e.g. C51990). The search returned no page for that number; only flux.ai mirrors and third-party datasheets were seen through the search summary, and no page was fetched directly.",
+    "A photo of the physical board, or the U-SNT top marking."
+   ]
+  },
+  {
+   "key": "repo-archaeology",
+   "summary": "Nothing in the repo records anyone measuring the RGN-V node or V-MOT with a DMM at the same time as a V_rgn reading. The calibration was asked for on 2026-07-08 and again on 2026-07-28 and never done. There is also no record of the dump resistor heating, of any rework near the chopper or pin 39, or of the board's Teensy being swapped. MOT_HOTPLUG_MARGIN 3.0 V was chosen on 2026-07-08, five weeks before the first logged V_rgn, so it was never based on a measured gap. The \"13.3 -> 18.1 V\" note (2026-08-17b) took the 13.3 V idle reading at face value (it is 0.836 x 15.93 V); the word \"held\" was added later and the logs do not support it (ML0157 sits above 18.0 V for 7 ms). The main new finding comes from re-reading 8 slow bus-dip events in the bench logs (2026-08-12 to 08-25), where V-MOT follows V_bus down and back up. They show that the current drawn off the node is not a resistor and not a constant current. It is a threshold load: zero below a node voltage of about 1.19 V, then rising with about 9.5-10 kOhm slope. The fit is good (residual 1.2-3 uA, against 5-8.5 uA for a resistor to GND), and the shape is the same in every event. Two junction drops plus about 10 kOhm is the path TI's own TL431 detailed schematic (Fig 8-2) shows from REF to ANODE. A healthy part divides that current by beta (about 100); this board draws about 30 uA at 1.5 V. That points to a TL431 whose input transistor gain has collapsed (inferred), rather than the Teensy pad or a resistor. If that is right, the chopper's real trip is about 32-33 V on V-MOT (not 22.1 V), and the regen peaks already logged were really about 25 V.",
+   "hypotheses": [
+    {
+     "name": "U-SNT (TL431) REF input damaged or out of spec: input-transistor gain collapsed, so REF loads the node like two junction drops plus the internal emitter resistors",
+     "verdict": "supported",
+     "predictions": "No extra load below a node voltage of about 1.19 V (V-MOT about 10.4 V); above that, load = (Vn - V0)/Rs with V0 about 1.19 V and Rs about 9.5-10 k (the healthy part has the same shape, about 100x smaller). V0 should fall about 4 mV per degC (two junctions), so the ratio falls as the board warms. Predicted readings: V-MOT 12 V reads 11.3-11.4 V; 14 V reads 12.35-12.46 V; 15.9 V reads 13.33-13.47 V; 20 V reads 15.5-15.6 V. Effective chopper trip about 32.2-32.8 V. With the Teensy pulled from its socket, the node still reads about 1.50 V at 15.9 V. A lifted TL431 measured REF-to-ANODE shows the knee.",
+     "evidence": "Measured (inferred from logs): 8 dip events, slow and ramp-shaped with no deep collapse, all fitted to the same law: Rs 8.5-10.0 k, V0 1.168-1.235 V, knee-model residual 1.15-2.98 uA against a resistor-to-GND fit of 5.05-8.52 uA. Events: TP0115 t=1119.5 s, TP0178 804.3 s, TP0201 362.3 s, TP0209 346.4 s, WP0096/97/98/101 (script /tmp/claude-0/-home-user-DC-Balancer-Board-Teensy/2dd4079b-96a3-52c6-9594-2aa3f1f11188/scratchpad/wf/repo-archaeology/dip_fit.py). Falling and rising edges agree to within about 1-2 uA; the small offset between them has the sign expected from V_bus being sampled before V_rgn (.ino:7031-7033). That rules out V-MOT lagging V_bus as the cause. Topology: TI SLVS543S Fig 8-2 (p.21) shows REF driving an NPN base, then an emitter network of 3.28k + 2.4k/7.2k into a diode-connected bandgap transistor and on to ANODE. That is two junction drops plus kOhms, and section 8.3 says REF 'is driven into an npn'. Healthy Iref is 2 typ / 4 max uA at Vref with IKA 10 mA (SLVS543S Elec Char, tl431.txt:275), about 30 uA here at only 1.5 V. A slower V0 at the later, shorter-uptime events (TP0201/TP0209 1.21-1.24 V against 1.18 V at 800-1100 s uptime) fits a negative temperature coefficient. Against: a destroyed-gain mechanism is inferred, not measured; nothing in the record says how the part could have been overstressed (no REF overcurrent path found; HBM rating \u00b12000 V, tl431.txt:217; handling ESD is possible).",
+     "confidence": 0.55
+    },
+    {
+     "name": "Teensy pin-39 pad leak (ESD-structure damage), loading the same net",
+     "verdict": "weakened",
+     "predictions": "Node reads about 1.80 V at 15.9 V once the Teensy is unplugged. Swapping in another Teensy 4.1 removes the 0.85 ratio. The I-V shape would be whatever a damaged CMOS pad gives; there is no natural knee at two junction drops plus about 10 k.",
+     "evidence": "Pin 38 sits on an identical divider and the same pad group (Eagle labels 38-A14/CS/IN1 and 39-A15/CS/OUT1A, references/Scale_Car_Board_20260624.sch net CHG-V/RGN-V) and reads 0.994 x V_bus. A healthy i.MX pad's ESD diodes do not conduct at +1.2 V to GND, and a keeper/pull-down would act like a linear resistor, which the data reject. One asymmetry favours pad stress: pin 39 has been back-biased to about 1.5 V whenever V-MOT was energised with the Teensy browned out (e.g. 2026-07-08 Death-5 round, 'Teensy browned out / USB disconnected', docs/boost-bringup-debug.md:190; WP0072/73/96/98 brownouts), while pin 38's node sat at 0 V until September. That injection is about 100 uA at most, so damage is unlikely (i.MX injection limit not in repo, TODO(verify)). The firmware never touches pin 39 except analogRead (.ino:7033): no pinMode, no SPI1, no attachInterrupt (only ENC_A/ENC_B, .ino:6736-6737), no IOMUXC writes. Every archived sketch also used 39 only as an analog input (firmware_archive/pre_board*/...ino:27/47).",
+     "confidence": 0.2
+    },
+    {
+     "name": "Wrong or contaminated divider resistor (R1-SNT high or R2-SNT parallel leak, linear)",
+     "verdict": "refuted",
+     "predictions": "A constant ratio at every V-MOT.",
+     "evidence": "The ratio moves from 0.837 at 15.9 V to 0.94 at 12.2 V and about 1.0 at 6-8 V within single dips (TP0115/TP0178/TP0201; WP0097 6.12/6.08). A resistor-to-GND fit leaves 5-8.5 uA residual against 1.2-3 uA for the knee model. BOM, Eagle .sch part, .brd element and PnP all give R1-SNT 78.7k / R2-SNT 10k (BOM csv lines 36-37; PnP lines 82/87; .sch:5979-5980; .brd:4111-4127).",
+     "confidence": 0.03
+    },
+    {
+     "name": "Case B: node correct, error between node and ADC result (channel or ADC gain/offset, or a series contact resistance at the J2 socket feeding a pad leak)",
+     "verdict": "weakened",
+     "predictions": "DMM at R2-SNT reads about 1.80 V while firmware reads 1.52 V.",
+     "evidence": "A pure ADC gain or offset error is ruled out by the voltage dependence (the offset needed would be 274 mV at 15.9 V but 84 mV at 12.2 V). Channel carry-over was already ruled out (doc section 2). The only surviving variant needs both a high-resistance J2 contact (pins 35/36 carry RGN-V, .sch net RGN-V) and a junction-like pad leak behind it. No evidence for either.",
+     "confidence": 0.07
+    },
+    {
+     "name": "True V-MOT really is about 2.4 V below V_bus (MOT_PWR switch drop)",
+     "verdict": "refuted",
+     "predictions": "Scope V-MOT below VBUS by about 2.4 V at idle.",
+     "evidence": "Capture 12 (2026-08-11, scope): 'the yellow (VBUS) and blue (V-MOT) traces overlap nearly everywhere' at a 15.9 V baseline (docs/boost-bringup-debug.md:1319-1331). Captures 13/14 (2026-08-12): motor node starts at 15.9 V (docs/share_sweep_whitepaper/main.tex:1115-1117). The idle load (8-30 mA) cannot drop 2.4 V across an RT1987.",
+     "confidence": 0.01
+    },
+    {
+     "name": "18.1 V is the chopper clamp (chopper has conducted)",
+     "verdict": "refuted",
+     "predictions": "A flat top at one fixed reading level; a slope break when the 47 ohm starts conducting.",
+     "evidence": "Origin: the 2026-08-17b addendum read ML0151/ML0157 peaks as the clamp (docs/claude-md-archive.md:1076-1079). 'Held' appears only in later copies (HIL_PLANT.md:258, PSCAD_SIM_DESIGN.md:141/1241, '2026-08-27 bench-calibrated', archive:1367). Measured in ML0157: 66 samples above 17.5 V, 7 above 18.0 V, back to 13.3 V within about 0.3 s while I_cmd stays at -12 A. ML0151: 117 / 19 samples. No log, doc or operator note records the dump heating or conducting. Under the knee model the logged peaks (node 2.04-2.06 V) are 0.44 V short of the 2.495 V REF threshold.",
+     "confidence": 0
+    }
+   ],
+   "new_facts": [
+    "git history in this repo starts at the 2026-09-16 consolidation (git log --reverse: first commits 2026-09-16). Every git -S hit for V_rgn/TL431/chopper/RGN/U-SNT/Q-SNT/R-SHUNT/MOT_HOTPLUG_MARGIN is post-2026-09-16 (8811a5d bulk import, then 2026-11-04/05 commits). The pre-September record survives only in docs/claude-md-archive.md, docs/boost-bringup-debug.md and docs/firmware-versions.md.",
+    "No DMM or scope measurement of the RGN-V node, and no correlation of V-MOT against the V_rgn reading, exists anywhere in the repo. It was requested on 2026-07-08 ('Bench TODO: confirm RGN_VOLTAGE reads the V-MOT node and calibrate MOT_HOTPLUG_MARGIN', docs/boost-bringup-debug.md:212-213) and on 2026-07-28 (design review P1-5 'measure V-MOT, RGN ADC voltage, and reported V_rgn', docs/design-review-2026-07-28.md:140-142, :184). It is still open in WORK_QUEUE.md:8 and docs/fw37_planning_2026-11-04.md:68.",
+    "V-MOT was scoped directly, but never alongside a V_rgn sample: captures 5, 6, 8, 9 CH3 = V-MOT (operator correction 2026-08-03, docs/boost-bringup-debug.md:982-990); capture 12 (2026-08-11) shows VBUS and V-MOT overlapping at about 15.9 V (:1319-1331); captures 13/14 (2026-08-12) show the motor node falling 15.9 -> 8.4 V (docs/share_sweep_whitepaper/main.tex:1115-1117). So true V-MOT is about V_bus at idle (measured).",
+    "MOT_HOTPLUG_MARGIN = 3.0 V was introduced 2026-07-08 with the Death-5 pre-charge sequencing, before any V_rgn data. It is marked 'TODO(calibrate) from the observed connected V_rgn gap' (.ino:2347; docs/boost-bringup-debug.md:201-213). No observed gap was ever recorded and no ERR_MOT_HOTPLUG on the real board is recorded.",
+    "Design-time belief on 2026-07-08: 'Shunt/chopper trip -> 20 V is acceptable for the regen node' (docs/boost-bringup-debug.md:218). This matches the older 69.8k design (19.91 V), not the fitted 78.7k (BOM csv line 36; Eagle .sch:5979; .brd:4111; PnP line 82). docs/PSCAD_SIM_DESIGN.md:141 records 'no explicit trip-voltage spec found on the schematic' and a 16.5 V placeholder that was later replaced by 18.1 V.",
+    "The '13.3 -> 18.1 V' observation comes from the 2026-08-17b round-1 analysis of logs 153-162, fw v14 (docs/claude-md-archive.md:1076-1079): 'the sustained regen rail drove V_rgn 13.3 -> 18.1 V peak - the TL431/BSP170P chopper clamp - with V_bus unmoved'. The source runs are ML0157 (peak 18.113 V at t=181.706 s) and ML0151 (18.206 V, t=151.490 s; same-family log). The 13.3 V baseline is the 0.836 ratio at V_bus 15.93 V; it was not questioned at the time. The 18.1 V was then frozen as 'bench-calibrated 2026-08-27' in hil_electrical (archive:1367), HIL_PLANT.md:243/258 and PSCAD_SIM_DESIGN.md B8, which add the word 'held'.",
+    "Measured (logs): the excursions are short. ML0157 has 66 samples above 17.5 V and 7 above 18.0 V; ML0151 117 and 19. Both return to the 13.3-13.4 V baseline about 0.3 s later.",
+    "Netlist check (references/Scale_Car_Board_20260624.sch library connects; .brd signal RGN-V): U-SNT pad 2 = REF on RGN-V, pad 1 = CATHODE to R-G, pad 3 = ANODE. This matches TI's TL431 DBZ pinout (SLVS543S Table 5-1: DBZ CATHODE 1, REF 2, ANODE 3). RGN-V copper: 40.1 mm, top layer only, 0 vias, contacts U$1 pin 39, J2 35/36, R1-SNT, R2-SNT, U-SNT pad 2. CHG-V uses 2 vias and both layers. V-MOT also carries C-D7 and D-BC-RG VIN.",
+    "The board Teensy is socketed: J1/J2 are 48-position receptacles (BOM csv line 54, 87606-324LF), and RGN-V reaches pin 39 through J2 pins 35/36. A separate bare Teensy 4.1 exists (the HIL Teensy; 'flash a bare Teensy (no PCB needed) + Ethernet', docs/claude-md-archive.md:1299; CLAUDE.md:1017 'HIL Teensy only'). No record of the board Teensy ever being swapped.",
+    "Firmware: pin 39 is touched only by analogRead (.ino:7033). No pinMode, no SPI1/MISO1 use, no IOMUXC writes. attachInterrupt is only on ENC_A/ENC_B (.ino:6736-6737); Serial1 is on pins 0/1 (.ino:16296-16298). analogReadResolution(12) and analogReadAveraging(16) are global (.ino:6671, :6682). Pin 39 was an analog input in every archived sketch (firmware_archive/pre_board_Scale_Car_Teensy/Scale_Car_Teensy.ino:27; ..._Sid_2026-04-21.ino:47).",
+    "NEW (inferred from logs): the node load depends on voltage with a threshold. Over 8 dip events from 2026-08-12 to 2026-08-25, loaded-node current = (Vn - V0)/Rs with V0 1.168-1.235 V and Rs 8.49-10.0 kOhm. Residual 1.15-2.98 uA, against 5.05-8.52 uA for the best resistor to GND (about 65 k) and about 6 uA for a constant current. Example, TP0115 at fixed fw: leak 32.8 / 26.0 / 16.2 / 9.5 uA at Vn 1.497 / 1.426 / 1.338 / 1.290 V. The ratio reaches about 1.0 by V_bus 6-8 V (WP0097: 6.12 / 6.08). Scripts: /tmp/claude-0/-home-user-DC-Balancer-Board-Teensy/2dd4079b-96a3-52c6-9594-2aa3f1f11188/scratchpad/wf/repo-archaeology/dip_fit.py and leak_vs_v.py.",
+    "Under that law (case A, inferred), the effective chopper trip is 32.2-32.8 V on V-MOT, at or above the RT1987's 32 V operating rating. The logged regen peaks of 18.11-18.26 V reading correspond to about 24.7-25.4 V true, not the 21.4 V given by a fixed 0.85 ratio. FAULT_OV_RGN (28 V reading, .ino:2284) is unreachable. The fw v38 plan to multiply SCALE_V_RGN by 1/0.8505 (docs/reviews/fw36_regen_2026-11-04/README.md:153) would under-read V-MOT increasingly above 15.9 V.",
+    "ML0227's collapse samples are not usable for this fit. The charger was fed from V-MOT through MOT_PWR + REGEN with about 11 A, so V-MOT sat below V_bus by the switch drop (ratios 0.896-1.07 scatter).",
+    "No record anywhere of the 47 ohm dump heating, of the chopper firing, or of rework or bodges on U-SNT/Q-SNT/R-SNT/R-SHUNT/pin 39. The three never-rotated bodge records (CLAUDE.md) are RC-BT, the encoder pins 14/15 and the encoder pull-ups.",
+    "Events that put abnormal conditions on V-MOT before the first V_rgn log: 2026-07-08 Death 5. A full-bus MOT_PWR hot-plug onto 470 uF + VESC browned out the Teensy with V-MOT charged; the stiff-supply bring-up hit bus OV at about 19 V while MOT_PWR was raised with the bus switches (docs/boost-bringup-debug.md:187-213). 2026-08-03 capture 9: an 18 V park on the boost node, isolated from V-MOT by the cut switch (.ino:2310-2312). None of these could drive REF past 2.495 V (that needs 22.1 V on V-MOT) or past 10 mA (R1 limits it to below 0.5 mA)."
+   ],
+   "remote_checks": [
+    "Repeat the knee fit on the 21 Pi bags at 50 Hz. Look for bus dips of 10-50 ms that span at least 3 samples between 11 and 15 V, and check that V0 and Rs match the bench values (1.17-1.24 V, 8.5-10 k).",
+    "Regress each event's V0 against uptime (start_millis + t) and against date, to test the temperature coefficient of about -4 mV/degC that two junctions predict. The three events with matched uptimes already suggest it: 1.18 V at 800-1100 s, 1.21-1.24 V at 350 s.",
+    "Re-read the ML0151/ML0157/YP0196 and RegenTest_v2 burst shapes against the knee model (true V-MOT about 25 V at peak). Check whether the burst decay slope fits about 25 V on about 1.2-1.4 mF with the VESC's own cutback, and look for any VESC fault or overvoltage flag in the bags at the peaks.",
+    "Web: find a measured Iref-vs-REF-voltage curve (below threshold) for a healthy TL431, or a TL431 failure-analysis note on REF-input gain degradation, to confirm the healthy curve has the same two-junction knee scaled by 1/beta. Not done here (WebSearch/WebFetch not used).",
+    "Confirm the HIL Teensy is a Teensy 4.1 with pin headers fitted, so it can go straight into the J1/J2 sockets."
+   ],
+   "lab_checks": [
+    "1. Powered, MOT_PWR closed at about 15.9 V after a 10-15 min warm-up: DMM on R2-SNT top (RGN-V). About 1.50 V means the node is genuinely loaded (case A). About 1.80 V means the error is in the pin/socket path.",
+    "2. No solder needed: swap the board Teensy for the spare (HIL) Teensy 4.1 in the J1/J2 receptacles and re-read V_rgn/V_bus at 15.9 V. Ratio still about 0.84-0.85 means the pad is cleared. Ratio about 1.0 means the original Teensy's pin 39 is the load.",
+    "3. With the Teensy unplugged and V-MOT fed from a current-limited bench supply (VESC disconnected), DMM the node at 10, 12, 14, 15.9 and 18 V. Knee model predicts node 1.127 / 1.28 / 1.39-1.41 / 1.50-1.52 / 1.63-1.64 V; a healthy divider gives 1.127 / 1.353 / 1.578 / 1.793 / 2.029 V. A constant ratio would mean a resistor fault instead.",
+    "4. If step 3 shows the knee: replace U-SNT (TL431BIDBZR, SOT-23-3) and repeat. On the removed part, measure REF-to-ANODE I-V with the cathode pulled up through about 3.5 k. Prediction: about 30 uA at 1.5 V with a knee near 1.2 V, against below 1 uA for a new part.",
+    "5. Optional cross-check, no probing needed: read the VESC's own input voltage (VESC Tool real-time data, or the State-98 'U' watch, .ino:9737) during a regen burst. Knee model predicts about 25 V true at an 18.1-18.3 V V_rgn reading; a fixed 0.85 ratio predicts about 21.4 V.",
+    "6. Only after 1-4: the trip test from doc section 6 step 5. Do not take V-MOT above about 30 V with the current TL431 fitted, because the model puts the effective trip at about 32-33 V, at the RT1987's 32 V rating."
+   ],
+   "could_not_access": [
+    "Pre-2026-09-16 git history: the repo starts at the 2026-09-16 consolidation, so git log -p -S finds nothing older. Earlier history was read only from docs/claude-md-archive.md, docs/boost-bringup-debug.md and docs/firmware-versions.md.",
+    "Online sources: WebSearch/WebFetch were not loaded. No vendor application notes, TL431 failure-analysis literature, or i.MX RT1062 pad injection-current limits were consulted (TODO(verify)).",
+    "HIL Results/ campaign ledgers (gitignored, local-only) and the ML0002.BLG commissioning card file named in docs/boost-bringup-debug.md:1522.",
+    "Scope capture JPGs were not re-read photometrically. Their descriptions were taken from docs/boost-bringup-debug.md and the whitepaper text.",
+    "No record of whether the HIL Teensy has pin headers, or of the physical marking on U-SNT (TL431 vs TL432, or batch)."
+   ]
+  },
+  {
+   "key": "fresh-eyes",
+   "summary": "The logs already contain a test that sorts the candidate mechanisms, and earlier analysis missed it. The test is the incremental gain dV_rgn/dV_bus, computed from 0.2-0.5 s block means. That gain is 0.50-0.65 in 13 sessions from 2026-08-12 to 11-04 (median 0.565, correlation 0.99-1.00), against a static ratio of 0.834-0.848. A gain or reference error predicts gain = ratio, and an offset or constant-current leak predicts gain = 1.0. Only a leak whose conductance rises with node voltage gives a gain below the ratio. So any linear mechanism is refuted as the main cause: a wrong or damaged resistor, ohmic contamination, ADC gain, Vref, settling, the internal pull-down, a ground offset, or a firmware or packing error. The pad keeper is refuted as well, by its curvature and by pin 38. At a node voltage of 1.52 V the leak is about 31 uA, with an incremental conductance of about 69 uS (about 3.4 times its average conductance). From the ML0227 brackets it is no more than about 13 uA at 0.98 V. That fits a soft onset near 1.0-1.1 V followed by roughly 14.5 kOhm: about two base-emitter drops plus series resistance. The datasheet internal schematic matches this closely if the TL431 has to supply its own internal bias through REF. That happens when the cathode is open: U-SNT pin 1 unsoldered, or R-G (a 0402) open or tombstoned. A TL431 with a destroyed input stage behaves the same way. A leaking Teensy pin-39 pad and electrochemical flux leakage (the SNT cluster sits 5-8 mm from the hand-soldered J-M terminal) remain possible. A TL432 or swapped-pinout part stays refuted, but for a different reason than the doc gives. The decisive bench measurements are cheap DMM checks: node voltage, U-SNT pin 1 to VG continuity, R-G, and freeze spray.",
+   "hypotheses": [
+    {
+     "name": "TL431 cathode open (U-SNT pin 1 unsoldered or cracked, or R-G 220 ohm 0402 open or tombstoned), so the part powers itself through REF",
+     "verdict": "consistent",
+     "predictions": "With the cathode floating, the REF-input NPN's B-C junction (collector tied directly to CATHODE in TL431_TI.pdf Fig 8-2, p.21) forward-biases. REF current then equals the full emitter or bias current of the internal network (3.28k, 2.4k/7.2k, 800 ohm to anode) instead of I_E/beta. Prediction: about 0 below a node voltage of roughly 2 Vbe (~1.0-1.1 V), then roughly (V-1.07 V)/(5-15 kOhm). That gives tens of uA at 1.5 V and more when warm (Vbe tempco). The chopper can never trip (no gate drive), and there is no dump current, consistent with the idle bus load. Present from assembly. Pin 38 has no such part. On the bench: U-SNT pin 1 is at about REF-0.6 V (~0.9 V) on the device side while the VG pad sits at V-MOT, or R-G measures open.",
+     "evidence": "Fits every measured feature. (1) Incremental gain 0.50-0.65 against a ratio of 0.835-0.848 (scratch a6.py: ML0135 0.621, WP0095/0100 0.565, ML0203 0.519, ML0226 0.651, ML0227 0.623; 13 sessions with corr>0.9, median 0.565). This gives a local leak conductance of ~69 uS at 31 uA: an equivalent '(V-1.07)/14.5k'. (2) ML0227 V_chg/V_bus bracket (scratch a4.py/a5.py): upper bounds on the leak are 30.9 uA at 1.52 V, 28.9 at 1.49, 17.8 at 1.33, 12.9 at 0.98 and 2.3 at 0.77 V. A 50 kOhm resistor would give 30.9/30.3/27.0/19.9/15.6. The low-voltage points are single transient samples, and the 15.2-15.5 V bins carry a possible ground-offset caveat. (3) A healthy TL431 that is off, with its cathode at about 15.9 V, draws only I_E/beta. The datasheet gives Iref 2 typ / 4 max uA at IKA 10 mA (tl431.txt line 275) and deviation 0.4-1.2 uA over temperature (line 277). So a healthy part predicts a ratio of 0.98-0.996, not 0.85. Reaching 31 uA needs effective beta near 1, which is exactly what a floating collector produces. (4) The chopper has never been shown to trip (doc section 5). No log shows the 22.13 V reading a working TL431 would produce. Not proven: no image or measurement of the solder joint, and the order-of-magnitude internal-current estimate is mine, inferred from Fig 8-2 resistor values, not from a datasheet curve.",
+     "confidence": 0.3
+    },
+    {
+     "name": "TL431 die damaged (input-stage beta collapse or a REF-to-anode junction leak from EOS) with the cathode connected",
+     "verdict": "consistent",
+     "predictions": "Same nonlinear leak shape as the open-cathode case, an onset of about 1 V and tens of uA. The chopper may or may not still trip, at a raised level. Pin 1 measures V-MOT and R-G is intact. A swapped U-SNT clears the fault.",
+     "evidence": "Explains the slope and the temperature drift equally well. Needs an EOS event before 2026-08-12, because the ratio was 0.8365 in the first V_rgn log (TP0074, scan.csv). A REF excursion below -0.05 mA (abs max, tl431.txt line 203) during a V-MOT negative transient is one route, unverified. It cannot be separated from the open-cathode case without probing pin 1.",
+     "confidence": 0.2
+    },
+    {
+     "name": "Teensy pin-39 pad leak (damaged ESD or snapback clamp to VSS)",
+     "verdict": "consistent",
+     "predictions": "A nonlinear, temperature-dependent leak, larger on a hot MCU die. Lifting pin 39, or measuring the node with the Teensy unplugged (it is socketed in the J1/J2 receptacles), restores 1.80 V. The ratio should follow die temperature, so changing the CPU clock alone (set_arm_clock) would move it.",
+     "evidence": "Curvature is plausible for a damaged clamp. Against it: the node is fed through 78.7k, which limits any V-MOT surge to about 1 mA per 80 V. That makes EOS through the divider unlikely, leaving handling ESD. No Teensy swap is recorded in the docs (grep found none). Within sessions the ratio sits flat or creeps 1-2 counts per log (scratch a10.py). Two Teensy reboots did not reset it: WP0096 at 27.9 min reads 0.8348, and WP0097-0099 at 0.1-0.5 min after a reboot also read 0.8348 (scan.csv). This weakly suggests a slow board-level thermal state rather than MCU uptime, but a soft reset need not cool the die.",
+     "confidence": 0.2
+    },
+    {
+     "name": "Electrochemical or ionic flux-residue leakage around the RGN-V node (SNT cluster near hand-soldered THT parts)",
+     "verdict": "consistent",
+     "predictions": "Faradaic leakage with an onset near the water-splitting potential (~1.2 V), rising with temperature and humidity. That fits a ratio that falls with warm-up and shifts over weeks (0.835 in August, 0.85 from late August). The node recovers after IPA cleaning and drying.",
+     "evidence": "From the PnP file: R1-SNT (112.78, 17.27), R2-SNT (112.27, 19.81) and U-SNT (115.32, 21.59) sit 4-8 mm from the J-M THT terminal holes (drill file: 1.6 mm holes at x 119.126, y 5.842 and 13.462; J-M placed at 119.13, 9.65). J-M is likely hand-soldered with extra flux and carries VESC current. R1-CHG/R2-CHG sit at (73.9, 5.8) and (71.4, 5.8), well away from it. 31 uA at 1.5 V would need heavy, wet residue, which makes this less likely. Shape and humidity link are not verified.",
+     "confidence": 0.1
+    },
+    {
+     "name": "Wrong or misplaced resistor value (R2-SNT from the shared 10k reel, or R1-SNT/R1-CHG from the shared 78.7k 0402 reel), or a cracked or drifted resistor",
+     "verdict": "refuted",
+     "predictions": "A purely linear error: incremental gain equal to the ratio (0.848), flat within and between sessions (0.1% thin film; ERA-3AEB and RT0402BRD are 25 ppm/K parts per the BOM). For example, R2 = 8.2k would give a fixed 0.8370, and R1 = 95.3k a fixed 0.8424.",
+     "evidence": "Measured incremental gain 0.42-0.65 is not 0.848, and the 'resistor plus ground offset' fit is 2.4-7x worse than the free fit on ML0203, WP0100, WP0122 and TP0132 (scratch a8.py/a9.py). Ratios above 0.8424 in late August cannot come from R1 = 95.3k. The assembly BOM (BOM.txt line 7) shows R2-SNT on an 11-part 10k line that also includes ROP1-BT/FC and RSCL/RSDA. The design CSV gives ROP1 = 40.2k, so the assembly BOM differs from the CSV (RD1 is also 243k in BOM.txt against 237k in the CSV). A reel mix-up is not impossible, but it cannot be the main mechanism. It could add a small linear part on top of the nonlinear leak.",
+     "confidence": 0.03
+    },
+    {
+     "name": "Ohmic surface or PCB leakage to GND (about 50 kOhm)",
+     "verdict": "refuted",
+     "predictions": "Constant ratio, incremental gain 0.848.",
+     "evidence": "Incremental gain 0.50-0.65 (scratch a6.py). Contradicts it unless the leakage is electrochemical and nonlinear (see the flux hypothesis).",
+     "confidence": 0.02
+    },
+    {
+     "name": "i.MX RT pad keeper latched low, or the internal 100k pull-down",
+     "verdict": "refuted",
+     "predictions": "Keeper: a weak MOSFET in triode, which is sublinear (incremental conductance below average), and it would load pin 38 in the same way. Pull-down: linear, 1.52 V/100k = 15 uA, half the needed 31 uA.",
+     "evidence": "Observed incremental conductance is about 3.4x the average (superlinear). Pin 38 is identical, starts at 0 V and is then fed (the keeper would latch it low as well), yet it reads 0.994. Firmware calls no pinMode or INPUT_DISABLE on pin 38 or 39 (grep of teensy_controller.ino), so both pads keep the same default configuration.",
+     "confidence": 0.01
+    },
+    {
+     "name": "Ground offset between the R2-SNT/TL431 anode return and Teensy AGND",
+     "verdict": "refuted",
+     "predictions": "An additive offset of 7.87 x R_g x I in reading units, which is zero at idle. It can only lower the reading if the R2 return sits below Teensy ground.",
+     "evidence": "The deficit is 0.85x at an idle bus load of 0.008-0.03 A. Offsets fitted to the slope data come out at -0.5 to +0.7 mOhm (free fits) and carry the wrong sign or worse residuals (scratch a8.py/a9.py). It is a possible small confound under 5-10 A loads (about 2 mOhm would add about 0.16 V reading at 10 A), which weakens only the ML0227 15.2-15.5 V bracket points.",
+     "confidence": 0.01
+    },
+    {
+     "name": "ADC path: gain or Vref error, channel carry-over, settling with the extra node capacitance, ADC1/ADC2 module mismatch",
+     "verdict": "refuted",
+     "predictions": "All are linear in the node voltage. Vref and gain errors scale every channel together (slope = ratio). Charge-sharing carry-over depends on the previous channel.",
+     "evidence": "Pin 38 reads 0.994 with the same scale and source impedance (teensy_controller.ino:2030 vs :2032; read order :7032-7033). The ratio is 0.84739 with V_chg at 0 V or 15.8 V (doc section 2). Incremental gain is below the ratio. Averaging of 16 is global (:6682).",
+     "confidence": 0
+    },
+    {
+     "name": "Firmware scaling, macro or logging bug",
+     "verdict": "refuted",
+     "predictions": "Not applicable.",
+     "evidence": "SCALE_V_RGN equals SCALE_V_CHG, 3.3 x 88.7/10/4095 (:2030, :2032). V_rgn is written raw into the BLG record (r.V_rgn = V_rgn, :6394; float field :5791) and the telemetry packet (:7683). Decoded values sit on integer ADC counts within 9e-5 (scratch a1.py), so there is no transformation. Pi bags agree (0.849-0.854).",
+     "confidence": 0
+    },
+    {
+     "name": "Chopper loop oscillation, or aliasing of ripple",
+     "verdict": "refuted",
+     "predictions": "Oscillation needs the TL431 near Vref. Averaged ripple is linear and does not change the mean.",
+     "evidence": "REF sits about 1 V below 2.495 V at idle, so the loop has no gain. A conducting dump would draw about 0.34 A on average, against an idle load of 0.008-0.03 A (doc section 2). ADC averaging of linear ripple keeps the mean; rectification needs a nonlinear element, which is the leak itself.",
+     "confidence": 0
+    },
+    {
+     "name": "TL431 orientation error (a TL432 placed, or footprint pin mapping swapped)",
+     "verdict": "refuted",
+     "predictions": "REF would land on VG and the cathode on RGN-V. Per Fig 8-2, the REF NPN's collector is the cathode, so REF (about V-MOT through 3.3k + 220 ohm) would forward-bias B-C into the node. That injects about 4 mA, driving the node high, or turns on the Darlington, pulling VG down so the dump conducts at about 0.34 A.",
+     "evidence": "Node reads low and the dump is off. NOTE: the doc's stated reason ('the TL431 would pull the gate down') is wrong for the pure pin-1/pin-2 swap, because the cathode would sit on the node, not VG. The conclusion still holds through the REF B-C path. Pinout confirmed: TL431 DBZ pin 1 cathode, pin 2 REF, pin 3 anode; TL432 DBZ pin 1 REF, pin 2 cathode (tl431.txt lines 166-185, Table 5-1). The anode-on-node permutations would clamp the node through the anode-to-cathode diode or turn the dump on.",
+     "confidence": 0
+    },
+    {
+     "name": "Wrong part with a 1.24 V reference (TLV431-class)",
+     "verdict": "refuted",
+     "predictions": "Regulates the node at 1.24 V, so the dump would pull V-MOT down to about 11 V.",
+     "evidence": "V-MOT tracks V_bus, and there is no standing load.",
+     "confidence": 0
+    },
+    {
+     "name": "BSP170P gate, zener or R-GS path loading the node",
+     "verdict": "refuted",
+     "predictions": "These parts sit on the VG net, not RGN-V. They can affect the node only through the TL431.",
+     "evidence": "BSP170P IGSS is 100 nA max, and VGS(th) is -2.1 to -4 V at 250 uA (BSP170P_Infineon.pdf, bsp.txt lines 95, 106). Also note: an idle-current resolution of about 8 mA/count only bounds dump current below about 10-20 mA, not to zero.",
+     "confidence": 0
+    },
+    {
+     "name": "Other or unknown (e.g. leakage to a non-GND neighbouring net, Teensy socket contamination between pins 39 and 40)",
+     "verdict": "untestable-remotely",
+     "predictions": "A leak to the pin-40 INA253 output (near 0 V) would shift the ratio with I_fc by about +0.4% at 0.5 A.",
+     "evidence": "Free fits give per-channel current coefficients of about -0.006 to +0.017 V/A, with no consistent sign (a9.py). The ratio correlates with V_batt across logs (r = -0.56, a11.py), most likely incidental (thermal or pack behaviour); unexplained.",
+     "confidence": 0.04
+    }
+   ],
+   "new_facts": [
+    "The incremental gain d(V_rgn reading)/d(V_bus) from 0.5 s block means is 0.50-0.65 in 13 sessions with corr>0.9 (median 0.565), against static ratios of 0.834-0.848. Examples: ML0135 0.621, WP0095 0.565, WP0100 0.565, ML0203 0.519, TP0127 0.637, ML0226 0.651 (corr 0.991), ML0227 0.623 (corr 1.000, V_bus span 0.42 V). Script: /tmp/claude-0/-home-user-DC-Balancer-Board-Teensy/2dd4079b-96a3-52c6-9594-2aa3f1f11188/scratchpad/wf/fresh-eyes/a6.py.",
+    "Implied leak at the RGN-V node (assuming R1 = 78.7k, R2 = 10k): about 31 uA at 1.52 V, with incremental conductance about 69 uS (14.5 kOhm), i.e. 3.4 times its average conductance. This is a superlinear, junction-like leak. Inferred from the gain 0.62 by node algebra.",
+    "In ML0227, V-MOT is bracketed between V_chg and V_bus (the charger is fed from V-MOT through REGEN). The implied leak upper bounds are 30.9 uA at a node voltage of 1.52 V, 28.9 at 1.49, 27.5 at 1.47, 17.8 at 1.33, 12.9 at 0.98 and 2.3 at 0.77 V. A resistor would give 30.9/30.3/29.7/27.0/19.9/15.6 (a4.py, a5.py). The sub-14 V points are single transient samples, and the high-current bins carry a possible ground-offset term of about 0.1-0.16 V reading.",
+    "When V_bus is regressed jointly on load current, load-driven ground offset does not explain the sub-ratio gain. On ML0203 (corr(V_bus, I) = -0.80, the best-conditioned log), the free fit gives V_bus coefficient 0.49 and I coefficient -0.004 V/A (residual rms 0.00093 V). Forcing the coefficient to the ratio plus a ground term gives rms 0.0067 V, 7x worse. WP0100 shows the same at 2.4x. Per-channel currents give the same result (a8.py, a9.py).",
+    "The healthy TL431 REF load is too small. The datasheet gives Iref 2 typ / 4 max uA at IKA = 10 mA and a temperature deviation of 0.4-1.2 uA (TL431_TI.pdf, Electrical Characteristics; tl431.txt lines 275-277). That predicts a ratio of 0.98-0.996, not 0.85. The datasheet also gives the comparator output-low as about 2 V (section 9.2.1.2.2).",
+    "In the TL431 detailed schematic (TL431_TI.pdf p.21, Fig 8-2), the REF-input NPN's collector ties directly to CATHODE. So an open cathode, or a TL432 placed in the footprint, routes internal bias current through REF.",
+    "Firmware path verified: SCALE_V_RGN equals SCALE_V_CHG (teensy_controller.ino:2030, :2032). The values are logged raw (:6394) and sent raw (:7683). Decoded values lie on integer ADC counts within 9e-5. No pinMode, INPUT_DISABLE or pad configuration is applied to pins 38/39.",
+    "Layout (PnP_Scale Car Board_front.txt and drill_1_64.xln): the SNT cluster sits 4-8 mm from the J-M VESC THT terminal (holes at x 119.126 mm, y 5.842/13.462 mm). The charger divider (R1-CHG 73.91, 5.84; R2-CHG 71.37, 5.84) is far from it. The Teensy (U$1) is at 97.28, 61.98, so the RGN-V trace runs about 45 mm.",
+    "The assembly BOM (references/PCB Manufacturing Files/Scale Car Board BOM.txt, exported 6/9/2026) differs from the 20260622 CSV BOM. It lists ROP1 on the 10k line and ROP2 at 40.2k (the CSV has ROP1 = 40.2k, ROP2 = 10k), RD1 at 243k (CSV 237k) and RB3 at 260 ohm (CSV 261). R1-SNT/R1-CHG share one 78.7k 0402 line, and R2-SNT shares an 11-part 10k line.",
+    "The ratio steps between sessions on the same firmware: on fw v14, ML0146-YP0152 read 0.8431 and ML0153-ML0163 (next day) read 0.836. Within sessions it falls 1-2 ADC counts per log, and gaps without logging recover about 1-3 counts (scan.csv; a10.py). A Teensy reboot did not reset it (WP0096 at 27.9 min reads 0.8348, and WP0097-0099 at 0.1-0.5 min after the reboot also read 0.8348).",
+    "Scope capture references/scope_captures/12-Vbus yellow-Vmot blue-Ibat purple-P0.3.jpg (pre-retune era) shows V-MOT (blue) overlaying V_bus (yellow) at about 15.9-17.5 V with MOT_PWR closed. That directly confirms the premise that V-MOT is about V_bus."
+   ],
+   "remote_checks": [
+    "CPU-clock die-temperature test (USB flash only, no PCB access). Log tempmonGetTemp() and V_rgn/V_bus while switching set_arm_clock between 150 and 816 MHz for a few minutes each. A ratio that follows die temperature points to the Teensy pad; no response points off-chip (TL431 or contamination).",
+    "In-situ incremental-impedance test. Briefly enable the i.MX internal pull-up (22k/47k/100k options) or pull-down on pin 39 and record the ADC shift. Calibrate the pull current on pin 38 with the charger unfed (node source impedance 8.87 kOhm). Expect Z39 of about 5.5 kOhm if g_leak is about 69 uS, against 8.87 kOhm if healthy. Repeating it at several pull settings maps the leak curve at about 1.0-1.8 V without lab access.",
+    "Read the VESC's own input voltage ('E' command, vesc.data.inpVoltage, teensy_controller.ino:9688) at idle and during a regen burst ('U' watch). This is an independent V-MOT measurement: at idle it should match V_bus, and in a burst it gives the true peak to compare with the 18.2 V V_rgn reading.",
+    "Repeat the slope test on all 21 Pi bags (index 6/7, 50 Hz, block means), and on any log where the droop MDAC codes vary at roughly constant load, to further decorrelate load from V_bus.",
+    "Inspect the gerber copper and soldermask around U-SNT pin 1 and R-G for footprint or pad-geometry problems (tombstoning risk on the 0402 R-G next to the SOT-223), and check whether the RGN-V trace runs next to GND or low-voltage nets along its ~45 mm route to pin 39.",
+    "Ask the operator for any board photos of the SNT/J-M area. Visible flux residue, a lifted U-SNT pin 1, or a tombstoned R-G would be decisive."
+   ],
+   "lab_checks": [
+    "DMM on the RGN-V node at MOT_PWR closed, ~15.9 V, after warm-up. About 1.52 V means the node is loaded; about 1.80 V means the error is in the pin/ADC path.",
+    "DMM, powered: U-SNT pin 1 to GND, and pin 1 to the VG side of R-G. Healthy: both at about V-MOT (TL431 off). Open cathode joint: device pin about 0.9 V (REF - Vbc) while the VG pad is at V-MOT. Unpowered: R-G should read 220 ohm, and pin 1 to VG continuity should read about 220 ohm.",
+    "Pull the socketed Teensy (or lift pin 39) and re-measure the node from a current-limited supply. Recovery to 1.80 V means the pad leaks; no recovery means a board-side fault (TL431 or contamination).",
+    "Freeze spray, then a hot-air puff, applied separately to U-SNT, to the R1/R2-SNT area and to the Teensy, while watching the node (or the logged ratio). The element whose temperature moves the reading is the leak.",
+    "Node voltage at 3-4 V-MOT levels (e.g. 8, 12, 16, 20 V) from a current-limited supply with the VESC disconnected. This maps I_leak(V) and confirms the onset of about 1 V that a TL431-internal path would show.",
+    "If the above implicates the board: clean with IPA, dry and re-measure. Then reflow or replace U-SNT and R-G. Measure R1-SNT and R2-SNT out of circuit last (they are expected to be fine)."
+   ],
+   "could_not_access": [
+    "No web search was done (WebSearch/WebFetch were not loaded). The Teensy 4.1 pad-keeper default and the i.MX RT1062 pad leakage specifications come from my own background knowledge, not a fetched source.",
+    "The i.MX RT1062 datasheet (pad leakage and keeper strength) is not in references/Datasheets.",
+    "There is no TL431 datasheet curve for REF current below Vref or with the cathode open. The 'open-cathode REF current is tens of uA' figure is my order-of-magnitude estimate from Fig 8-2 resistor values, not a datasheet value.",
+    "No board photos of the SNT area, and no record of the U-SNT pin 1 or R-G solder joints.",
+    "VESC input-voltage readings were never logged alongside V_rgn, so the true V-MOT during regen is unknown."
+   ]
+  }
+ ],
+ "synthesis": {
+  "ranking": [
+   {
+    "mechanism": "Damaged TL431 (U-SNT) REF input stage, correct orientation and cathode connected. The input NPN's current gain has collapsed (from ESD, handling or EOS before 2026-08-12), so REF carries roughly the full emitter-chain current (2 Vbe + internal 3.28k/2.4k network, TI SLVS543S Fig 8-2 p.21).",
+    "probability": 0.36,
+    "for": "Measured: the leak curve is a threshold plus a resistor, I=(Vn-Von)/R, with Von 1.19-1.25 V and R 9.2-9.5 k, identical across four independent bus dips (TP0115/TP0178/TP0201/TP0209). I re-checked TP0178 rows 6480-6500 myself: 9.0 uA at node 1.286 V, 32.7 uA at 1.497 V, a slope of about 113 uA/V, and the falling and rising branches agree. Measured: the incremental gain dV_rgn/dV_bus is 0.50-0.65 in 13+ sessions. I re-checked ML0226: 0.651 against a static ratio of 0.848, corr 0.991. Only a superlinear sink gives that. The knee at about 2 Vbe with a series resistance of a few k matches the REF-to-ANODE path in Fig 8-2. The warm-up sign is right: Von falls, so the leak rises. A healthy part's Iref falls with temperature (Fig 6-2 p.15). The fault is specific to this node: pin 38 sits on an identical divider without a TL431 and reads 0.994.",
+    "against": "The mechanism is inferred. No measurement isolates the TL431. Fitted R is about 1.6x the nominal 5.68k chain. No in-circuit overstress route exists: R1 limits REF current to below 0.5 mA even at 40 V, so handling ESD is required. The I-V alone cannot exclude a pad-side or electrochemical sink with a similar knee. The step drop in leak between 08-17 and 08-25 is unexplained; it would need annealing or about 14 C."
+   },
+   {
+    "mechanism": "TL431 cathode effectively open (U-SNT pin 1 joint open or cracked, or R-G 220 ohm 0402 open or tombstoned), so the part powers its internal bias through REF via the input NPN's base-collector junction.",
+    "probability": 0.26,
+    "for": "It gives the same knee-plus-resistor REF I-V as the damaged-gain case, without needing a die-damage event. It explains a fault present from the first V_rgn log (TP0074, 2026-08-12, 0.8365). It explains why no 22.13 V trip has ever been seen: the chopper could never fire. The dump never conducts, which matches the 0.008-0.03 A idle load.",
+    "against": "The 'tens of uA through REF with the cathode open' magnitude is an order-of-magnitude estimate from the Fig 8-2 resistor values (fresh-eyes), not a datasheet curve. There is no photo or joint inspection. From logs it cannot be told apart from the damaged-gain case; only a voltage reading on U-SNT pin 1 or VG, or an R-G continuity check, separates them."
+   },
+   {
+    "mechanism": "Damaged Teensy 4.1 pin-39 pad (GPIO_AD_B1_13, ESD/input structure leaking to VSS). A possible exposure route is back-injection from the charged V-MOT node (tau 105-122 s) while the Teensy was browned out.",
+    "probability": 0.19,
+    "for": "An intact pad cannot draw 31 uA: IIN max 1 uA, keeper 105-175k, pull-down at most about 22 uA at 1.52 V (IMXRT1060CEC Rev4 Table 22). So a damaged pad would be pin-specific, as observed. An exposure route exists: the 2026-07-08 Death-5 brownout with V-MOT charged (docs/boost-bringup-debug.md:188). The logs cannot distinguish a pad sink from a TL431 sink.",
+    "against": "A damaged CMOS pad has no natural 2-Vbe knee at 1.2 V followed by a constant 9.3k. The injection current is limited to about 0.15 mA by 8.87k. The warm-up is weakly tied to MCU uptime: a reboot did not reset it (WP0096 to WP0097-99 at 0.8348). The leak R stayed constant across 3 months while Von shifted."
+   },
+   {
+    "mechanism": "Electrochemical/ionic flux-residue leakage around U-SNT pad 2 to GND pad 3 (about 0.53 mm under the body) or around R2-SNT. The SNT cluster sits 4-8 mm from the hand-soldered J-M terminal.",
+    "probability": 0.08,
+    "for": "Faradaic onset near about 1.2 V. Rises with temperature and humidity. Specific to this node: CHG-V has only resistors and sits far from J-M. The step-like leak drop between 08-17 and 08-25 (about -10 %) falls in a window with rework activity (the 74HC14 was fitted by 08-25) and could reflect cleaning or reheating.",
+    "against": "31 uA at 1.5 V needs heavy residue. Electrochemical leakage usually polarizes, drifts and depends on humidity, yet the slope R stayed fixed at 9.2-9.5k across sessions. The assembly method is not recorded anywhere."
+   },
+   {
+    "mechanism": "Case B variant: node correct, with a series break or high-resistance J2/pin-39 contact plus a nonlinear sink at the pad (error between node and ADC only)",
+    "probability": 0.04,
+    "for": "It is the only form of case B left once pure ADC gain, offset and carry-over are excluded. It is decided by one DMM reading.",
+    "against": "It needs two independent defects. A pure ADC/channel error is refuted by the voltage dependence: the offset would be 274 mV at 15.9 V but 84 mV at 12.2 V. Pin 38 is clean on the same ADC2 with the same settings."
+   },
+   {
+    "mechanism": "Other or unknown sink on RGN-V (e.g. contamination to a non-GND neighbour, the J2 35/36 header bridged)",
+    "probability": 0.04,
+    "for": "Not excluded remotely. J2 pins 35/36 carry RGN-V with about 0.148 mm GND-pour clearance.",
+    "against": "Any leak to a higher-voltage neighbour pushes the node up. Current coefficients against I_fc/I_batt are inconsistent in sign. No geometric neighbour other than GND."
+   },
+   {
+    "mechanism": "Linear divider fault (wrong or drifted R1-SNT/R2-SNT, ohmic contamination about 50k, ADC gain/Vref, firmware scaling)",
+    "probability": 0.02,
+    "for": "A shared 10k reel (11 parts) and a shared 78.7k reel in the assembly BOM make a reel mix-up conceivable.",
+    "against": "Refuted as the main cause by an incremental gain of 0.50-0.65 against a ratio of 0.835-0.85. The ratio rises to about 0.94 at 12.2 V within a single dip. SCALE_V_RGN equals SCALE_V_CHG (.ino:2030/2032). Logged values are raw ADC counts."
+   },
+   {
+    "mechanism": "Swapped/second-source TL431 pinout (pin1 REF, e.g. TL432/CJ431-style) on the TI DBZ footprint",
+    "probability": 0.01,
+    "for": "The REF-K-A order is common among second sources (CJ431, GK, LCSC C111578).",
+    "against": "It would predict a continuous dump at 0.34 A / 5.4 W and REF at 4-13 mA (over the 10 mA abs max). Measured idle load is 0-0.03 A, and post-peak decay bounds the V-MOT load to 7-20 mA. The design data are verified: brd/gerber/PnP map pad1=N$36 (R-G), pad2=RGN-V, pad3=GND, matching TI DBZ (SLVS543S Table 5-1). The BOM orders a genuine TI TL431BIDBZR (BOM csv line 35)."
+   }
+  ],
+  "matrix": "| Observation (M = measured, I = inferred) | Damaged TL431 input (cathode OK) | TL431 cathode open / R-G open | Teensy pin-39 pad leak | Flux / electrochemical | Linear (resistor, ohmic, ADC gain) | Case B series break + pad sink | Swapped pinout |\n|---|---|---|---|---|---|---|---|\n| Static ratio 0.835-0.854 at 15.9 V, ~31 uA (M) | yes | yes | yes (if damaged) | yes (heavy residue) | yes | yes | no (clamp, 0.34 A dump) |\n| Incremental gain 0.50-0.65 << ratio (M; ML0226 0.651 re-checked) | yes | yes | possible | possible | NO (predicts 0.85) | possible | no |\n| Dip I-V: Von 1.19-1.25 V, R 9.2-9.5k, rms ~1 uA, same R in 4 events (M; TP0178 re-checked) | yes (2Vbe + internal R, Fig 8-2) | yes (same path) | weak (no natural 2Vbe knee) | weak-moderate (~1.2 V onset, but stable R unusual) | NO | possible | no |\n| Leak ~0 at node <=0.72-1.0 V (M, low-quality single samples: WP0097, ML0227) | yes | yes | ? | yes | NO (15-20 uA) | ? | no |\n| Leak rises with warm-up, tau 5.4 min, +3.3 %, load-independent (M) | yes (Von -4 mV/C) | yes | yes if die-temp driven, but reboot did not reset it | yes | NO (would need 5700 ppm) | ? | n/a |\n| Healthy TL431 Iref falls with temperature (datasheet Fig 6-2) | consistent (abnormal path dominates) | consistent | n/a | n/a | n/a | n/a | n/a |\n| Pin 38 identical divider reads 0.994 (M) | yes (no TL431 on CHG-V) | yes | yes (pin-specific damage) | yes (no SOT-23 on CHG-V) | needs a node-specific resistor | yes | n/a |\n| Idle bus load 0.008-0.03 A, dump off (M) | yes | yes | yes | yes | yes | yes | NO |\n| No 22.13 V reading ever; regen peaks 18.1-18.3 reading, rounded (M) | yes (trip pushed to ~33 V) | yes (chopper can never trip) | NO for case 'node loaded but chopper healthy': the trip would also move to ~33 V since the node is loaded | same as pad | n/a | trip should be at 22.13 V true, peaks ~21.5 V true: consistent | n/a |\n| Present from first log 2026-08-12 (M) | needs a pre-Aug ESD event | yes (assembly) | needs a pre-Aug injection/ESD event | yes (assembly) | yes | ? | yes |\n| Step -10 % leak between 08-17 and 08-25, then flat (M) | weak (annealing?) | possible (joint disturbed by rework) | weak | good (cleaning/heat) | no | ? | n/a |\n| Predicted DMM node at 15.9 V | ~1.50-1.53 V | ~1.50-1.53 V | ~1.52 V; 1.80 V with Teensy pulled | ~1.52 V; recovers after IPA clean | 1.52 V, constant ratio vs V | 1.80 V at R2 top, 1.52 V at pin 39 | n/a |\n| Predicted U-SNT pin 1 / VG at 15.9 V | ~V-MOT | device pin ~0.9 V (REF - Vbc) or R-G open; VG at V-MOT | ~V-MOT | ~V-MOT | ~V-MOT | ~V-MOT | VG at V-MOT - 12 V |\n| Predicted VESC inpVoltage at an 18.2 V regen reading (I, extrapolated) | ~24.6-25.7 V | ~24.6-25.7 V | ~24.6-25.7 V | ~24.6-25.7 V | ~21.4 V | ~21.4-21.5 V | n/a |",
+  "key_uncertainties": [
+   "Case A vs case B has never been decided. No DMM or scope reading of the RGN-V node taken alongside a V_rgn sample exists anywhere in the repo. It was requested 2026-07-08 (docs/boost-bringup-debug.md:212) and 2026-07-28 (docs/design-review-2026-07-28.md:140) and is still open in WORK_QUEUE.md:8. Every safety extrapolation below assumes case A.",
+   "Location of the sink. Data fix its I-V shape (measured) but not its site. The TL431 input stage (two variants), the Teensy pad and flux residue all load the same net. The 2Vbe-plus-resistor shape favours the TL431 only by inference from TI Fig 8-2.",
+   "Damaged-gain TL431 vs open cathode / open R-G. Indistinguishable from logs. It matters for safety: the damaged-gain case predicts a trip near 33 V; the open-cathode case predicts no trip at all.",
+   "Behaviour above node 1.536 V is extrapolated. The '33 V effective trip' and the '~25 V true regen peaks' assume the leak stays linear above the measured 1.29-1.53 V node range. No regen burst was ever logged with an independent V-MOT reference (REGEN closed, or VESC inpVoltage).",
+   "Below node ~1.0 V the evidence is single 1 kHz transient samples with +/-3-7 uA timing error (WP0097, ML0227 collapse). 'Leak ~0 below the knee' is medium confidence.",
+   "Cause of the 08-17 to 08-25 step (leak about -10 %, Von +50-60 mV, R unchanged). No rework or cleaning record exists for that window. If a joint was reflowed or the board cleaned then, that would favour the open-joint or flux hypotheses.",
+   "Whether the board Teensy was ever swapped, unplugged or ESD-exposed. Not recorded; telemetry carries no Teensy ID.",
+   "Who assembled the board and with what flux and cleaning. Not recorded. The U-SNT top marking is unverified (genuine TI vs substitute).",
+   "RT1987 POVP strapping on D-MT/D-BRG (23 V vs 33 V OVP option, RT1987_DS-00 p.6). This matters if true regen peaks really reached ~25 V. Not checked.",
+   "Online sources were partly inaccessible to investigators: righto.com (TL431 die analysis), ti.com (SNVA809 FMEA, E2E), eevblog, dtsheet.com. No published measurement of TL431 REF current below Vref, or with the cathode open, was obtained."
+  ],
+  "remote_checks_remaining": [
+   "If the board can still be flashed and run over USB or the Pi without hands on it: read the VESC's own inpVoltage (State-98 'U' watch, .ino:9737; 'E' command, .ino:9688). At idle it should match V_bus (cross-check). During a regen burst, case A predicts about 25 V true at an 18.2 V V_rgn reading; case B/linear predicts about 21.4 V. This is the best case A/B discriminator available without PCB access (VESC ADC accuracy is a few %, adequate for a 15 % difference).",
+   "In-situ incremental impedance via firmware: briefly enable the i.MX internal pull-up on pin 39, then on pin 38 as a calibration with V_chg unfed, and record the ADC shift. A loaded node shows an effective source impedance of about 5-6 kOhm against 8.87 kOhm if healthy. Repeating across pull settings maps the leak curve. Localises nothing, but confirms case A remotely.",
+   "Die-temperature test: log tempmonGetTemp() alongside V_rgn while switching set_arm_clock between 150 and 816 MHz for several minutes each. A ratio that tracks die temperature implicates the pad; no response points off-chip (TL431 or residue).",
+   "Scan the remaining undecoded BLGs and the 21 Pi bags for further motor-load bus dips (especially any reaching V-MOT < 11 V, where the threshold model predicts ratio 1.00), and fit Von against uptime within a session to quantify the temperature coefficient.",
+   "Check RT1987 POVP strapping for D-MT/D-BRG on schematic sheet 4, and the VESC input limit, against ~25 V true peaks. Note that CAL 470 uF and C-D6 10 uF are both 35 V parts (BOM csv lines 30, 81).",
+   "Ask the operator: who assembled the board, and with what flux/cleaning; whether U-SNT came from the DigiKey TI reel; any rework, cleaning or Teensy re-seating between 2026-08-17 and 08-25 and before 08-12; whether any board photo exists that shows U-SNT pin 1, R-G and the U-SNT marking."
+  ],
+  "lab_plan": [
+   "1. (2 min, DMM, powered, MOT_PWR closed, ~15.9 V, after 10-15 min warm-up) Measure the RGN-V node at R2-SNT top / U-SNT pin 2, then at the Teensy pin-39 header. Both ~1.52 V means case A (node loaded). R2 top 1.80 V with pin 39 at 1.52 V means a series break plus a pad sink. 1.80 V at both means an ADC-path fault. In the same session, measure the voltage across R-GS (VG to V-MOT): about 0 V as designed, 11-13 V would mean a swapped part. Touch-check R-SHUNT (should be at ambient).",
+   "2. (1 min, DMM, same powered state) Measure U-SNT pin 1 on the device lead itself, and the VG side of R-G, both to GND. Both ~V-MOT: cathode connected. Device pin ~0.9 V with the VG pad at V-MOT: open cathode joint or open R-G. Unpowered, R-G should read ~220 ohm from U-SNT pin 1 to VG. This splits the two TL431 variants and costs nothing.",
+   "3. (5 min, no solder) Unplug the Teensy from the J1/J2 receptacles. Feed V-MOT from a current-limited bench supply with the VESC disconnected, MOT_PWR not required. DMM the node. Recovery to V-MOT/8.87 means the pad is the sink. Still loaded means a board-side sink. Alternatively, swap in the spare HIL Teensy 4.1 and log the ratio.",
+   "4. (10 min, Teensy out, current-limited supply, keep V-MOT <= 20 V) Sweep V-MOT at 8/10/12/14/16/18 V and DMM the node. Threshold model: 0.902/1.127 (ideal) then ~1.28-1.30 at 12 V, 1.39-1.42 at 14 V, 1.50-1.53 at 16 V, ~1.63 at 18 V. A constant ratio would instead indicate a linear fault.",
+   "5. (5 min) Freeze-spray or warm with low-flow hot air, separately, U-SNT, the R1/R2-SNT area and (if fitted) the Teensy, while watching the node. The element whose temperature moves the reading (cooling raises the node about 2 mV/C at the node under the TL431 model) is the sink.",
+   "6. (15 min) If board-side: clean the U-SNT/R2-SNT area with IPA or flux remover, dry, and re-measure. Recovery means residue. If no recovery: lift U-SNT pin 2, or replace U-SNT with a new TL431BIDBZR and reflow/check R-G. Re-measure (expect 1.796 V at 15.93 V). Curve-trace the removed part REF-to-ANODE with the cathode at ~15 V through ~3.5k. Damaged-part prediction is ~30 uA at 1.5 V with a ~1.2 V knee; a new part draws under 1 uA.",
+   "7. (last, only after the sink is removed) Run the chopper trip test: slow, current-limited V-MOT ramp with the VESC disconnected, watching R-SHUNT current. Expect a trip at ~22.1 V. Do NOT ramp toward 30+ V with the original part fitted; if you must, stop at ~28 V and expect no trip."
+  ],
+  "safety_implications": [
+   "If case A holds (node genuinely loaded, which is the most likely outcome; ~0.93 combined probability over the node-side mechanisms), the TL431/BSP170P chopper does NOT clamp at 22.13 V. With a damaged-gain TL431 the extrapolated trip is ~30-33 V (inferred). With an open cathode or open R-G the chopper cannot trip at all. Either way the board has no verified fast regen clamp below the RT1987's 32 V operating rating, and the CAL 470 uF / C-D6 10 uF parts are rated 35 V (BOM csv lines 30, 81).",
+   "The logged regen peaks (18.11-18.26 V reading) are probably ~24.6-25.7 V true V-MOT, not ~21.4 V. This extrapolates beyond the measured node range. If confirmed, existing vehicle runs have already approached the VESC input limit (VESC EDU firmware HW_LIM_VIN 27 V per vedderb/bldc hw_edu_core.h) and possibly an RT1987 23 V OVP option. Until the node is fixed, limit regen severity (VESC regen current / braking limits) on the vehicle.",
+   "Do NOT apply the planned fw v38 fixed correction (SCALE_V_RGN x 1/0.8505, docs/reviews/fw36_regen_2026-11-04/README.md:153). The error is nonlinear: a fixed factor reads correctly only near 15.9 V and under-reads V-MOT increasingly above it, and over-reads below ~14 V. FAULT_OV_RGN (28 V reading, .ino:2284) is effectively unreachable, and any V_rgn-based regen/OV logic is unreliable until the hardware is fixed.",
+   "MOT_HOTPLUG_MARGIN (3.0 V, .ino:2347) was never calibrated against a measured V_rgn gap, and the V_rgn deficit at 15.9 V is ~2.4-2.6 V. The hot-plug guard therefore operates on a reading that is ~2.5 V low at full bus. Review its margin logic before relying on it for bring-up.",
+   "Bench trip testing with the original U-SNT fitted must keep V-MOT well below 32 V. Replace and verify the part before any trip test.",
+   "Lab probing should use a current-limited supply with the VESC disconnected. Do not short pin 2 to pin 1 of the SOT-23 with a probe: this would pull VG down and turn on the 47 ohm dump at ~0.34 A / 5.4 W."
+  ],
+  "report": "SYNTHESIS: the V_rgn ~0.85 x V_bus mismatch (Teensy pin 39, RGN-V net)\n\n1. What is now established, and how firmly\n\nMEASURED. The error is a real nonlinear current sink, not a linear scale error. Two independent signatures show it.\n(a) Incremental gain. dV_rgn/dV_bus from 0.2-0.5 s block means is 0.50-0.65 in 13+ sessions, against a static ratio of 0.834-0.852 (fresh-eyes a6.py; data-thermal-noise tf.py/inc2.py; data-leak-curve). I re-checked ML0226 (logs/ML0226/ML0226.csv): slope 0.651, corr 0.991, static ratio 0.848. The predictions are: a resistor or gain fault gives gain = ratio (0.85); an offset or constant current gives 1.0; only a leak whose conductance rises with node voltage gives a gain below the ratio. The obvious confound, RT1987 Ron x load, moves the gain the other way (above the ratio), so it cannot produce this.\n(b) Bus-dip I-V. In four motor-load bus dips (TP0115 08-13, TP0178 08-17, TP0201 and TP0209 08-25), V-MOT follows V_bus through the forward-conducting RT1987: V_rgn rises on the same sample as V_bus. They give the same law, I_leak = (Vn - Von)/R, with Von 1.19-1.25 V and R 9.2-9.5 k, rms ~1 uA. A resistor fits with rms 5.5-7 uA and a constant current with ~8 uA. I re-checked TP0178 rows 6480-6500 myself: 32.7 uA at node 1.497 V falling to 9.0 uA at 1.286 V (ratio 0.836 -> 0.939), a slope of ~113 uA/V, with the falling and rising branches agreeing. R is constant across sessions; Von moves with the session baseline (1.19 V at ratio 0.836, 1.23-1.25 V at 0.845-0.850). ML0227's V_chg/V_bus bracket at node 1.485 V (23.2-28.4 uA) matches the model's 25.5 uA. The low-voltage collapse samples put the leak near 0 at node ~0.7-1.0 V (single transient samples; medium confidence).\n(c) Thermal. The warm-up is a load-independent exponential: tau 5.4 +/- 0.4 min, amplitude +1.04 uA (3.3 %), over 9 boots (data-thermal-noise fitexp.py). That fits a forward-junction threshold shift of ~10 mV. It does not fit reverse leakage (far too small a change) or resistor TCR (far too large).\n\nDATASHEET INFERENCE. A healthy TL431BI's REF current is 2 typ / 4 max uA (+2.5 uA over temperature) (TI SLVS543S Table 6.12, references/Datasheets/TL431_TI.pdf), which gives a ratio >= 0.968, and it FALLS with temperature (Fig 6-2 p.15). The observed leak is 8-15x larger with the opposite temperature sign. The TL431 REF input is the base of an NPN whose emitter runs through 3.28k and then a 2.4k/7.2k network into diode-connected/bandgap transistors to ANODE, with its collector on CATHODE (Fig 8-2 p.21). The measured shape, ~2 Vbe onset plus a few-k slope, is what that path delivers if the 1/beta division is lost.\n\n2. Reconciled conflicts\n\n- Swapped pinout. All eight reports reject it. The design data are verified independently: brd/gerbers/PnP give pad1 = N$36 (R-G), pad2 = RGN-V, pad3 = GND, matching TI DBZ (SLVS543S Table 5-1), and the BOM orders the genuine TI part (BOM csv line 35). On the data side, the predicted 0.34 A dump against the measured 0-0.03 A idle load, and the 7-20 mA post-peak decay bound, rule it out. Fresh-eyes notes that the existing doc's stated reason is wrong for a pure 1/2 swap (the cathode would land on the node, not VG); the conclusion still stands via the REF B-C path.\n- Teensy pad: the reports assign 0.15-0.30. The teensy-pad investigator rules out every intact-pad mechanism (keeper 105-175k, pull-down <= ~22 uA at 1.52 V, IIN 1 uA, settling 87 tau; IMXRT1060CEC Rev4 Tables 22/54/55), so only a damaged pad remains. I put it at 0.19. The 2Vbe+R shape and the constant R across 3 months fit a bipolar input chain better than a damaged CMOS clamp, and a reboot did not reset the drift (WP0096 -> WP0097-99 at 0.8348). The logs still cannot exclude it, and the J1/J2 socket makes it the cheapest thing to test.\n- Damaged-gain TL431 vs open cathode (fresh-eyes). Both route full internal current through REF and give the same I-V. They differ only in whether a trip still exists (~33 V vs never). I split the TL431 mass 0.36 / 0.26. The open-joint variant needs no unexplained ESD event; the damaged-die variant needs one before 2026-08-12, because R1 limits REF current to below 0.5 mA in circuit.\n- The '18.1 V clamp' in the HIL/PSCAD docs. Repo-archaeology traced it to the 2026-08-17b analysis of ML0151/ML0157. The 'held' wording was added later. ML0157 has only 7 samples above 18.0 V. Under the knee model those peaks are node 2.04-2.06 V, 0.44 V short of REF 2.495 V. So it is not a clamp; it is most likely VESC-limited regen.\n- Collapse samples. data-leak-curve uses ML0227's collapse with V-MOT bracketed between V_chg and V_bus. Repo-archaeology calls those samples unusable because of the ~11 A switch drops. Both treatments agree that the ratio is >= ~0.93 near node 0.7 V, so the conflict is only about weighting. I treat them as low-weight corroboration.\n\n3. Ranking (see ranking field). TL431 REF-path conduction totals 0.62 (damaged input 0.36, open cathode/R-G 0.26). Teensy pad 0.19. Flux/electrochemical 0.08. Case-B series break 0.04. Other 0.04. Linear faults 0.02. Swapped pinout 0.01. Combined probability that the node itself is loaded (case A): ~0.93.\n\n4. What rests on what\n- Measured: the static ratio, incremental gain, dip I-V, warm-up law, idle load, pin-38 control, the fact that V-MOT ~ V_bus at idle (scope capture 12; ML0227 V_chg bracket), and the absence of any 22.13 V reading.\n- Datasheet inference: healthy Iref magnitude and temperature sign; the TL431 internal path topology; the pad limits.\n- Assumption or extrapolation: the leak is on the node (case A, not yet DMM-verified); linear extrapolation above node 1.536 V (trip ~30-33 V, regen peaks ~25 V true); the open-cathode current magnitude.\n\n5. Lab plan in one line. DMM the node and U-SNT pin 1/VG (minutes, decides case A/B and splits the TL431 variants). Pull the Teensy (pad yes/no). Sweep V-MOT with the Teensy out. Freeze-spray. Clean. Replace U-SNT/R-G. Only then the trip test. If the board can be run remotely before the lab visit, the VESC inpVoltage 'U' watch during a regen burst (~25 V vs ~21.4 V) is the best remote discriminator for case A.\n\n6. Not accessed by the investigators: righto.com, ti.com (SNVA809/E2E), eevblog, dtsheet.com (network-blocked); no board photo or U-SNT marking; no assembler or flux record; pre-2026-09-16 git history (only the archived docs survive); no lab temperature records; no VESC inpVoltage logged alongside V_rgn.\n\nFiles: datasheets references/Datasheets/TL431_TI.pdf and references/Datasheets/BSP170P_Infineon.pdf; doc docs/vrgn_measurement_error_2026-11-05.md; investigator scripts under /tmp/claude-0/-home-user-DC-Balancer-Board-Teensy/2dd4079b-96a3-52c6-9594-2aa3f1f11188/scratchpad/wf/ (tl431-damaged/fitmodels.py, repo-archaeology/dip_fit.py, data-thermal-noise/fitexp.py, fresh-eyes/a6.py)."
+ },
+ "verdicts": [
+  {
+   "lens": "physics",
+   "checks_performed": [
+    "Rendered TI SLVS543S Fig 8-2 (p.21) at 250/600 dpi (scratch wf/verify-physics/fig82c.png, refzoom.png). The REF pin connects to two internal elements: (a) the base of input NPN Q1, whose collector goes to CATHODE and whose emitter runs to 3.28k, then to 2.4k plus a diode-connected NPN, in parallel with 7.2k into the bandgap transistor's collector, and on to ANODE. (b) A diode-connected PNP: emitter on the REF line, base and collector tied to the output-drive node, which is the base of the 150 ohm / 10 kohm Darlington whose collectors are on CATHODE. The synthesis covers only path (a).",
+    "Recomputed the leak at 15.93 V with the node at 1.522 V: (15.93-1.522)/78.7k - 1.522/10k = 30.87 uA. This matches the synthesis's ~31 uA.",
+    "Recomputed the TP0178 chord from the synthesis's two points (9.0 uA at 1.286 V, 32.7 uA at 1.497 V): R = 8.90 kohm, Von = 1.206 V. This is consistent with the stated 9.2-9.5k / 1.19-1.25 V.",
+    "Recomputed the incremental gain for a node sink of slope R: gain = (1/R1)/(1/R1+1/R2+1/R) x 8.87. R = 9.3k gives 0.512. The ML0226 figure of 0.651 corresponds to R = 16.5k, not 9.3k. So the quoted gain range 0.50-0.65 spans slopes of 9-16.5k and is not one constant R. Not a refutation, but the 'constant R' claim holds only for the dip I-V, not for the gain data.",
+    "Diode dynamic resistance: two junctions at 20 uA give 2Vt/I = 2.6 kohm, which adds to any chain-resistor slope. On path (a) with Q1 beta near 0, the slope is about 5.68k (less with the 7.2k branch in parallel) plus 2.6k, about 7-8.3k. Reaching 9.3k then needs (beta+1) of only about 1.1-1.3. That is near-total loss of gain, more extreme than the synthesis's '1.6x' reading suggests.",
+    "Path (b) with the Darlington's first transistor carrying no collector current (cathode open, or that transistor damaged): the REF current is Veb(PNP) + Vbe(Qa) into 150 + 10k ohm. The knee is about 2 Vbe and the slope about 10.15k plus 2.6k of dynamic resistance. At node 1.522 V and a 1.22 V knee this gives about 30 uA. This matches the measured magnitude without any beta-collapse assumption (inferred; IC resistor tolerance not published).",
+    "Linear extrapolation check: trip at REF 2.495 V gives 32.9 V V-MOT. A regen reading of 18.09/18.27 V (node 2.04/2.06 V) gives 25.0/25.4 V true. These match the synthesis's numbers but depend entirely on the leak staying linear.",
+    "Healthy-part bounds confirmed: Iref 2 typ / 4 max uA and II(dev) up to 2.5 uA (tl431.txt lines 275-277, 317-319); Ioff 0.1-1 uA (line 282); IREF >= 4 uA needed (p.22 text). Fig 6-2 is 'Reference Current vs Free-Air Temperature' (line 655).",
+    "BSP170P: VGS(th) -2.1 / -3 / -4 V (BSP170P_Infineon.pdf text line 95), VGS max +/-20 V (line 49). With the TL431 off, VGS is about 0 V through R-GS 3.3k and the dump is off. This is consistent with the 0.008-0.03 A idle load; it does not discriminate between the TL431 variants."
+   ],
+   "errors_found": [
+    "Incomplete device model. TI Fig 8-2 has a second REF-to-ANODE route: a diode-connected PNP from REF into the output-drive node, then the Darlington base-emitter into 150 ohm + 10 kohm. The synthesis attributes the knee-plus-resistor I-V only to Q1's emitter chain. This second path gives a ~2 Vbe knee and a ~10k slope naturally. So the 'damaged Q1 input NPN' sub-mechanism is not uniquely supported by the I-V shape.",
+    "The Q1 beta-collapse story understates what it needs. Once the two-junction dynamic resistance (~2.6k at 20 uA) and the 7.2k parallel branch are counted, matching 9.3k needs (beta+1) of about 1.1-1.3 at tens of uA. That is essentially a dead transistor, not merely a 'collapsed' gain. 'Fitted R ~1.6x nominal' is not the right reading of the mismatch.",
+    "The safety extrapolations (trip ~30-33 V, regen peaks ~25 V true) assume the leak stays linear above node 1.536 V. Under path (b), the Darlington's second transistor (Qb) base-emitter clamps the 10k once ~0.6 V sits across it, at about 60 uA. That is a node of about 1.8-1.9 V, inside the regen-peak range of 2.04-2.06 V. Above that the sink would steepen sharply into a soft clamp near 2 V at the node, about 18 V on the reading. The 18.1-18.3 V regen 'ceiling' could then be the clamp, and true V-MOT could exceed 25 V. On this model the 25 V figure is a lower bound, not an estimate.",
+    "The 'constant R 9.2-9.5k' framing conflicts with the quoted incremental-gain range. A gain of 0.651 (ML0226) implies an incremental slope of about 16.5k at node ~1.52 V, against 9.3k for a gain of 0.51. The gain data and the dip I-V do not describe a single linear-plus-knee sink without an extra effect (RT1987 Ron, filtering, or a convex I-V)."
+   ],
+   "ranking_changes": "Keep the TL431 REF-path family on top, combined at about 0.62. Do not split it 0.36 / 0.26 between 'damaged Q1 gain' and 'open cathode / R-G'. The data cannot separate the sites, and a third internal site (the PNP-clamp / Darlington path in TI Fig 8-2, active if Qa conducts no collector current) matches the 2 Vbe + ~10k signature with fewer assumptions. A suggested split: 'TL431 internal REF conduction, site undetermined', with path-(b)/open-collector and open-cathode variants at least as likely as Q1 beta collapse. The open-cathode variant also has a slope problem (inferred). With the cathode floating, Q1 base-emitter (2 Vbe + ~5k) and path (b) (2 Vbe + ~10k) would conduct in parallel, predicting ~3.5-4k rather than 9.3k, unless the floating cathode node self-biases otherwise. The Teensy pad, flux, case B and the linear-fault entries are unchanged. Downgrade the safety section: replace '~25 V true regen peaks / ~33 V trip' with '>= ~25 V; unbounded by this measurement, because the sink may soft-clamp the node near 2 V'.",
+   "strongest_counterargument": "The I-V signature the synthesis uses to pin the fault on the TL431 input NPN (knee ~1.2 V, slope ~9 k) has a second internal route in TI's own Fig 8-2 (p.21). A diode-connected PNP runs from REF into the output-drive node, which then reaches ANODE through the Darlington base-emitter and 150 ohm + 10 kohm. If the first Darlington transistor carries no collector current, that route gives about 2 Vbe + 10.15k. That yields ~30 uA at node 1.52 V without assuming beta near 1 in Q1. The same route predicts a sharp steepening (Qb turn-on) at node ~1.8-1.9 V. That falls exactly where the regen peaks top out at 2.04-2.06 V node / 18.1-18.3 V reading. So the 'linear extrapolation to ~25 V true / ~33 V trip' may badly understate true V-MOT, and the 18.2 V ceiling may be the sink's own clamp rather than VESC-limited regen. This weakens the top sub-mechanism's specificity and the safety numbers. It does not move the fault off the TL431, or off the RGN-V node, as the most likely site.",
+   "refutes_top": false
+  },
+  {
+   "lens": "data",
+   "refutes_top": false,
+   "ranking_changes": "I found no data that refutes the top mechanism, so the order stays. The core data claims reproduce from the raw CSVs. Two adjustments: (1) No data separates the damaged-gain TL431 (0.36) from the open cathode / open R-G (0.26), or either of them from a damaged pin-39 pad (0.19). The dip I-V, the incremental gain, the warm-up drift and the absence of a trip are all equally consistent with all three. So the 0.36/0.26/0.19 split comes from priors and the Fig 8-2 inference, not from the logs. I would present the TL431 total (~0.62) against the pad (~0.19) as the data-supported division, and the order inside the TL431 pair as essentially a coin flip that only the pin-1/VG DMM reading can settle. (2) Drop or soften the claim that \"R is constant across 3 months\". The four August dips do give R 9.30-9.48 k. But the November ML0226 incremental gain implies a local slope nearer 13-17 k (see errors_found). Either the slope changed or the incremental gain is biased. That cannot be settled without a November dip.",
+   "errors_found": [
+    "The incremental gain is internally inconsistent with the dip-fitted slope. Measured, from logs/ML0226/ML0226.csv with 0.3 s block means (1407 blocks): dV_rgn/dV_bus = 0.649, corr 0.991. Controlling for bus current (I_fc+I_batt) gives 0.637; controlling for current and time gives 0.607. A threshold-plus-resistor leak with R = 9.3 k predicts 8.87*G1/(G1+G2+1/9.3k) = 0.51 (inferred). 0.61-0.65 implies a local slope of about 13.7-16.6 k at node 1.52 V. That contradicts 'R 9.2-9.5k identical' if R is meant to hold through November, and a diode-like curve would push the gain the other way (local R at the top of the curve <= 9.3 k). The most likely cause is a positive bias in the load-driven incremental gain: V-MOT = V_bus - I*R through the switch, plus regen moments. So the incremental gain supports nonlinearity qualitatively, but it should not be quoted as a match to the dip slope.",
+    "All four 'independent' dip events have the same physical type: a source-less share-handoff collapse, with I_fc = I_batt = 0 for ~5 ms and the bus falling at ~0.6-0.7 V/ms. Each event gives 6 dip samples, only 12 fit points in total (TP0178 rows 6486-6495). They are independent in date but not in stimulus, and each one rests on V-MOT tracking V_bus through the RT1987 during that collapse.",
+    "Minor wording: the synthesis says that in TP0178 'falling and rising branches agree'. Measured: the rising branch runs about +0.006-0.008 in ratio above the falling branch at equal V_bus (e.g. 12.98 V rising 0.912 vs ~0.906 interpolated falling; 13.85 V 0.889 vs ~0.881). This is consistent with V_rgn being sampled slightly after V_bus in the loop at ~0.7 V/ms slew (~0.1-0.2 ms skew, inferred). It is not exact agreement. It is symmetric around the static law, so the fit stands.",
+    "The ML0215-ML0217 dark-decay tau of 105-122 s does not discriminate between any of the mechanisms. At V_rgn readings of 1.35 -> 0.2 V the node is 0.15-0.02 V, far below the knee, so every hypothesis predicts the same decay. Also, 480 uF x 88.7 k = 42.6 s is SHORTER than the observed tau. That implies additional capacitance on V-MOT (the VESC's own bulk caps, inferred ~1.2-1.4 mF total) or a feed. It is not evidence for or against any sink, and it should not be used to bound the V-MOT load without accounting for the VESC capacitance."
+   ],
+   "strongest_counterargument": "The logs fix only the I-V shape of the sink: a ~1.19-1.24 V knee plus ~9.4 k, which I reproduced in TP0115/TP0178/TP0201/TP0209 with rms 1.1-1.2 uA, against 6.6 uA for a resistor to GND. They do not fix where the sink is. A damaged pin-39 pad clamp, i.e. a parasitic diode or bipolar stack in series with a few-k well or poly resistance, can also give a knee-plus-resistor curve, so the preference for the TL431 rests entirely on a datasheet-topology analogy (SLVS543S Fig 8-2) and a fitted R that is 1.6x the nominal chain, not on any measurement. Two further points cut against the 'constant R across months' argument for a bipolar chain: the November incremental gain implies a different local slope, and all four dips are the same collapse stimulus. A pure resistor-to-~1.2 V-rail sink is excluded only by low-weight collapse samples (e.g. WP0097 ratio 0.99 at node 0.69 V; that model predicts a ratio well above 1).",
+   "checks_performed": [
+    "Re-ran the TP0178 dip rows 6470-6509 from logs/TP0178/TP0178.csv. Reproduced leak 33.3 uA at node 1.497 V falling to 9.4 uA at 1.286 V (ratio 0.835 -> 0.939). The event is a source-less handoff collapse: I_fc = I_batt = 0 for rows 6486-6490, then battery recovery at 1.6-1.7 A.",
+    "Checked whether V-MOT could exceed V_bus during the collapse (an ideal-diode hold-up would fake a rising ratio). The falling-branch ratio is LOWER than the rising branch at equal V_bus, and the motor load (~0.6 A from ~480 uF) would discharge V-MOT faster than the bus. So V-MOT <= ~V_bus and the rising ratio is not a hold-up artefact. If V-MOT < V_bus, the true leak at the low node is even smaller, which strengthens the nonlinearity.",
+    "Fitted threshold-plus-resistor against a pure ohmic sink on all four dips (script /tmp/claude-0/-home-user-DC-Balancer-Board-Teensy/2dd4079b-96a3-52c6-9594-2aa3f1f11188/scratchpad/wf/verify-data/dip.py). TP0115 R 9.38 k / Von 1.194 V; TP0178 9.30 k / 1.191; TP0201 9.48 k / 1.224; TP0209 9.41 k / 1.243. rms 1.06-1.21 uA against an ohmic rms of 6.55-6.73 uA. The synthesis numbers reproduce.",
+    "Re-ran the ML0226 incremental gain: 0.649 (corr 0.991); controlling for bus current 0.637; controlling for current and time 0.607. In idle-only blocks (55, V_bus span 2.6 mV) the gain is meaningless. Compared with the 0.51 the dip law predicts and found a ~20-25 % mismatch.",
+    "Tested the alternative 'resistor to a ~1.2 V internal rail' (e.g. a pad shorted to core supply). It predicts a ratio >> 1 below the knee, which contradicts the WP0097 collapse ratio of 0.99 at node 0.69 V cited in the synthesis (low-weight sample).",
+    "Checked that a reverse/ohmic leak from the node to the TL431 cathode (VG ~ V-MOT) would SOURCE current and raise the reading, so it cannot explain a low reading.",
+    "Evaluated the dark-decay tau (105-122 s) against the divider-only tau of 480 uF x 88.7 k = 42.6 s. It is non-discriminating, since the node is below the knee, and it implies extra V-MOT capacitance.",
+    "Recomputed the regen-peak extrapolation under the dip law: an 18.2 V reading gives node 2.05 V, leak ~89 uA and true V-MOT ~25.2 V, consistent with the synthesis's 24.6-25.7 V (still an extrapolation beyond node 1.52 V)."
+   ]
+  },
+  {
+   "lens": "devil",
+   "refutes_top": true,
+   "ranking_changes": "Merge the two TL431 REF-path variants into one class, or put \"cathode open / R-G open\" ABOVE \"damaged input-NPN gain\". Both give the same REF I-V, so the split has to rest on priors, and the priors favour the assembly defect. R-G is a 0402 at PnP 118.36, 21.84 next to U-SNT (PnP_front.txt:75, :115; BOM csv line 40), so an open SOT-23 pin-1 joint or a tombstoned R-G is an ordinary defect. A beta collapse that routes the full emitter-chain current through REF needs an ESD event the synthesis itself says has no in-circuit route. Typical ESD damage gives junction leakage or shorts, not clean loss of beta. Suggested numbers: open cathode/R-G about 0.33, damaged gain about 0.20, so TL431 REF path about 0.53 combined. Raise the Teensy pin-39 pad from 0.19 to about 0.25-0.28, because two of the three arguments against it do not hold (see errors). Flux/electrochemical about 0.08. Leave the rest as is. Case A (node loaded) at about 0.93 still holds, because the pad, the TL431 and residue all load the same node. What is NOT supported is ranking among the case-A sinks. On log data alone the honest call is \"cannot yet discriminate TL431 vs pad\". The cheapest discriminator is pulling the socketed Teensy and DMMing the node (lab step 3), together with the U-SNT pin-1/VG reading (step 2).",
+   "errors_found": [
+    "The argument against the pad, 'a reboot did not reset the warm-up (WP0096 -> WP0097-99 at 0.8348)', is invalid. WP0096 ended in a bus collapse; WP0097 starts at 0.58 min uptime (scratchpad wf/data-thermal-noise/thermal2.csv rows 24-25; dips.csv shows WP0096 bus 8.99 V and WP0097 bus 6.12 V). A brief brownout or warm reset cools neither the i.MX die nor the PCB, so neither hypothesis predicts a reset. It is not evidence against a die-temperature-driven pad leak.",
+    "The warm-up is load-independent with tau 5.4 min on MCU uptime. If anything this suits the Teensy's constant self-heating at least as well as board-side heating, since at idle the board dissipates little. The synthesis counts the thermal sign for the TL431 and against the pad. It is neutral at best.",
+    "The '2 Vbe knee' is the x-intercept of a straight line fitted over node 1.29-1.53 V, a 0.24 V span. Any superlinear sink gives an intercept somewhere. For example, a diode plus series resistance reproduces the TP0178 points (9.0 uA at 1.286 V, 32.7 uA at 1.497 V: a ratio of 3.63 over 0.211 V). Below the knee there are only low-quality single collapse samples, which the synthesis itself admits. The fitted R (9.2-9.5k) is about 1.6x the TL431 internal 5.68k chain. So the shape match to TI Fig 8-2 is weak, not discriminating.",
+    "The matrix is internally inconsistent. The 'No 22.13 V reading ever' row marks the pad 'NO' but its text says the trip would also move to about 33 V because the node is loaded. A pad sink loads the node exactly as a damaged-gain TL431 does. The row discriminates only open cathode (never trips) from every loaded-node case. It gives no evidence for the TL431 over the pad.",
+    "'R constant across 3 months while Von shifted' is listed against the pad. A two-junction-plus-resistor model in a damaged pad (an ESD diode stack plus a damaged filament) would show the same pattern. The constancy is not specific to a bipolar TL431 input."
+   ],
+   "strongest_counterargument": "Every log signature fixes only the I-V shape of a sink on RGN-V, not where it sits. Measured: V-MOT is about V_bus, because V_chg reads V-MOT through REGEN at 0.994 while V_rgn reads 0.847 at the same time (ML0227). The leak is superlinear: incremental gain 0.65 against a ratio of 0.848 in ML0226, and the dip I-V. It is about 31 uA at 1.5 V and grows with uptime. A damaged Teensy pad (a socketed, handled part with direct header exposure), a TL431 with an open cathode or tombstoned 0402 R-G, a TL431 with a damaged input, and ionic residue under the SOT-23 all give a superlinear sink of tens of uA. The features the synthesis uses to favour the damaged-gain TL431 do not single it out: a 2 Vbe-looking intercept from a 0.24 V-wide linear fit, an R that is 1.6x the datasheet chain, and a thermal response and a 'reboot' that a warm die explains equally well. The damaged-gain variant also needs an unexplained ESD event, while the open-joint variant needs none. So the top entry should not be top, and the TL431-vs-pad split is roughly even on remote data. Only removing the Teensy, or probing U-SNT pin 1/VG, decides it. That is a 5-minute lab step and needs no further remote analysis.",
+   "checks_performed": [
+    "Read the ADC setup in teensy_controller.ino (6671 analogReadResolution(12), 6682 analogReadAveraging(16), RGN_VOLTAGE 39 at 2014, read at 7033). No pinMode, pull or keeper is applied to pin 39. The pin-38 control (0.994 at node about 1.78 V, above VDD/2) also rules out an active keeper, which would have pulled pin 38 up.",
+    "Read Capture 12 (docs/boost-bringup-debug.md:1303-1340): at 5 V/div V-MOT and V_bus overlap. This weakly supports V-MOT about V_bus, a 2.4 V gap being about 0.5 div. The stronger evidence is the ML0227 V_chg-through-REGEN reading at 0.994.",
+    "Considered a 'V-MOT genuinely low' alternative (RT1987 partial enhancement, series drop). A constant drop gives incremental gain 1. A load-dependent drop raises gain above the ratio. Both are rejected, consistent with the synthesis.",
+    "Considered errors-in-variables attenuation of the incremental gain. ML0226 corr 0.991 bounds the attenuation to about 1-2 %, so it cannot explain 0.65 against 0.85.",
+    "Considered a low-Vref substitute (TLV431-type) with a dead FET. A saturated shunt draws only uA at REF, and an intact FET would dump 0.34 A. Rejected.",
+    "Checked the WP0096/WP0097 'reboot' timing in scratchpad thermal2.csv, scan.csv and dips.csv: WP0097 starts at 0.58 min uptime, right after WP0096's bus collapse, so it was a warm reset.",
+    "Fitted the two TP0178 points to a diode-plus-R form: an n*Vt of about 0.164 V reproduces the ratio. This shows the linear-knee interpretation is not unique.",
+    "Verified R-G (0402, 220 ohm, YAGEO; BOM csv line 40) and the U-SNT/R-G placements (PnP_front.txt:75, :115). Tombstoning or an open joint is a plausible assembly defect.",
+    "Checked the ML0215-217 decay tau of 105-122 s. It exceeds the 42.6 s for 480 uF across 88.7k, which implies extra capacitance (likely the VESC input caps). No refutation, but any post-peak load bound must state which capacitance it assumes."
+   ]
+  }
+ ]
+}

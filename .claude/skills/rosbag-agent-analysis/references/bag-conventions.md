@@ -90,7 +90,8 @@ uncalibrated).
 
 11. **V_rgn reads ~0.85 x true** (0.849-0.854 x V_bus at rest with MOT_PWR on; V_chg on the
     same nominal divider reads right). It idles at ~13.5 V, not 0; a rise above that baseline is
-    the regen signal. The "18.1 V clamp" is ~21.4 V true. Report V_rgn in ADC units until
+    the regen signal. The ~18.1-18.3 V regen peaks are NOT the chopper clamp (it has never been
+    shown to trip; `docs/vrgn_measurement_error_2026-11-05.md`). Report V_rgn in ADC units until
     calibrated.
 12. **The State-99 teardown looks like switching.** Phase 0 opens FC_CHARGE (`0x34`) and phase 1
     REGEN (`0x28`) for one tick on or after the latch tick, regardless of `FC_CHARGE_ALLOWED`.

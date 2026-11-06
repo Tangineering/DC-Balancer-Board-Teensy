@@ -240,7 +240,7 @@ force, so one number sets both the braking force and the electrical return:
 | `ETA_REGEN` | 0.80 | **`TODO(verify)`.** Round-trip mechanical→electrical efficiency (motor copper/iron, inverter conduction/switching, link ESR). A modelling choice in the `ETA_BOOST` (0.85) class, de-rated for the harder braking corner. Same bench item. |
 | `R_CHOPPER_REG` | 0.5 Ω | **`TODO(verify)`.** The TL431/BSP170P clamp's small-signal output resistance. The clamp is a **linear regulator**, not a switched 47 Ω shunt: a bare shunt cannot hold 18.1 V against anything under 0.385 A, so it chatters across the threshold instead of clamping. 0.5 Ω is stiff (0.19 V of droop at the saturation point) without stiffening the node solve. |
 | `V_REGEN_OC_MAX` | 20.0 V | **`TODO(verify)`.** Stands in for the VESC's own DC-link overvoltage cutback, never characterized on this rig. It is the abs-max the ring estimator already uses, comfortably above the 18.1 V clamp, so the **chopper stays the operative limiter** — which is the physical design. |
-| `V_CHOPPER_TRIP` / `R_CHOPPER` / `P_CHOPPER_MAX_W` | 18.1 V / 47 Ω / 20 W | Unchanged — bench-calibrated clamp level (2026-08-27) and the BOM dump resistor. |
+| `V_CHOPPER_TRIP` / `R_CHOPPER` / `P_CHOPPER_MAX_W` | 18.1 V / 47 Ω / 20 W | Unchanged — bench-calibrated clamp level (2026-08-27) and the BOM dump resistor. **2026-11-05: 18.1 V is the peak V_rgn READING during regen, not a clamp; V_rgn reads ~0.85 x true and the chopper has never been shown to trip (`docs/vrgn_measurement_error_2026-11-05.md` §5). Re-derive before relying on it.** |
 
 **The energy balance the model asserts** (written at the site in `Plant.step()` and pinned
 by `test_regen_energy_balance` in both engines):
