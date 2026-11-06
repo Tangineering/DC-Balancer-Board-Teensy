@@ -1,0 +1,179 @@
+====================================================================================================
+H.1  H1 comparator (U102) trip points on V-MOT; R_T1/R_T2 10.0k at the MB joints; 0.1 % dividers; TLV3012B worst case incl. CMRR
+  VBUS 15.20 V: rise 16.553 / fall 16.251 nominal (hyst 0.302); fall 16.053-16.463, rise 16.340-16.751; guard (fall_min - VBUS) 0.853 V; ratio rise/VBUS 1.0890
+  VBUS 15.50 V: rise 16.879 / fall 16.577 nominal (hyst 0.302); fall 16.378-16.791, rise 16.665-17.079; guard (fall_min - VBUS) 0.878 V; ratio rise/VBUS 1.0890
+  VBUS 15.90 V: rise 17.314 / fall 17.012 nominal (hyst 0.302); fall 16.810-17.229, rise 17.097-17.516; guard (fall_min - VBUS) 0.910 V; ratio rise/VBUS 1.0889
+  VBUS 16.39 V: rise 17.847 / fall 17.545 nominal (hyst 0.302); fall 17.340-17.764, rise 17.627-18.052; guard (fall_min - VBUS) 0.950 V; ratio rise/VBUS 1.0889
+  VBUS 17.20 V: rise 18.728 / fall 18.425 nominal (hyst 0.302); fall 18.216-18.650, rise 18.503-18.938; guard (fall_min - VBUS) 1.016 V; ratio rise/VBUS 1.0888
+  VBUS 19.50 V: rise 21.228 / fall 20.926 nominal (hyst 0.302); fall 20.703-21.165, rise 20.989-21.453; guard (fall_min - VBUS) 1.203 V; ratio rise/VBUS 1.0886
+  IN+ divider RC with C106 470 pF: tau 23.5 us; ripple attenuation 1/sqrt(1+(2 pi f tau)^2)
+    f =     8 kHz: attenuation 0.645 -> V-MOT ripple p-p that equals the 0.25 V minimum hysteresis: 0.39 V
+    f =    20 kHz: attenuation 0.320 -> V-MOT ripple p-p that equals the 0.25 V minimum hysteresis: 0.78 V
+    f =    30 kHz: attenuation 0.220 -> V-MOT ripple p-p that equals the 0.25 V minimum hysteresis: 1.14 V
+  Tap short to GND at the CR end: V-MOT through R_T1 10k = 2.2 mA, 48 mW in an 0805 (0.125 W); VBUS through R_T2 = 1.9 mA
+  Open divider bottom: IN+ rises toward V-MOT through 497 k; BAV199 clamp (D104/D105) to 3V3 carries 36.2 uA at 22 V (abs max 7 V, SBOS300C 6.1 note 2)
+H.2  UVB comparator (U103): R114 1.00M / R115 104k (0.1 %), R116 10.0M, shared R_T2: rise 13.72 V, fall 13.33 V nominal
+     fall (inhibit) band 12.89-13.78 V and rise band 13.26-14.16 V incl. REF drift 100 ppm/C over 0-45 C and CMRR 54 dB
+     (25 C basis without CMRR: fall band 12.98-13.69 V)
+     FC VINDPM floor 14.12 V - UVB fall max 13.78 V = margin 0.342 V (>= 0.05 V required; T-B-13, T-C-03)
+     UVB rise max 14.16 V vs the loaded FC-only bus (>= 15.2 V assumed, T-E-08): margin 1.04 V
+H.3  BT_OK threshold 19.75 mV nominal; 18.98-20.52 mV before Vos (incl. REF drift); with Vos +-9 mV and VHYS/2: 6.0-33.5 mV
+     = 0.060-0.335 A of BT boost forward current (0.1 V/A); INA253 zero-current floor up to 10 mV (SLOS954A 7.5); T8 pull-up R144 1.00M injects 3.3 uA into the INA253 output (T-C-08)
+     T9 open: R142 returns through R143 100 ohm to the CR plane; plane-offset coupling with T9 intact ~ R_wire/R143 = 2.0e-04
+H.3b BTB sense (U115): threshold REF/3 0.387-0.441 V worst case, below VEN_F min 0.6 V (RT EC p.7): margin 0.16 V
+     Teensy driving pin 28 LOW: IN- 3 mV; Teensy in reset (EN net only on 10k || REN_PD): EN net 3 mV, IN- 7 mV; open tap: IN- -> 3.3 V (BTB_OFF LOW)
+     pin 28 accidentally INPUT_PULLUP (~22 k against 10 k): EN 1.02 V -> BTB_OFF LOW (permit removed); the old LVC input read that as LOW
+     10 kOhm EN bodge pull-down OPEN and pin 28 high-Z (reset): EN net held only by REN_PD 475-985k against R119+R120: 0.149-0.296 V (VEN_F min 0.6 V; r1 1.00M gave 1.06-1.63 V)
+     comparator offset from the R119 current through R120 with the tap intact (pin 28 LOW): 3.3 mV
+H.4  ILIM regen (Q202 off)           pin 2.06-2.40 V -> clamp 1.331-1.755 A (nominal 1.566 A at REGN 5.0 V; incl. pin leakage +-1.5 uA, FET 1 uA, sense pull-up)
+H.4  ILIM FC (Q202 on, R257 || EVM R23) pin 1.52-1.76 V -> clamp 0.648-0.947 A (nominal 0.803 A at REGN 5.0 V; incl. pin leakage +-1.5 uA, FET 1 uA, sense pull-up)
+     HIZ state (Q203 off, Q201 failed open): ILIM <= 0.11 V from leakage (pin 1.5 uA + PMOS 1 uA + sense 0.3 uA) into R23 || R256 -> below 0.75 V
+     HIZ state with EVM R23 open as well (TP33 R256 200k alone): <= 0.57 V
+     Sense pull-up error with the wire intact: <= 7 mV; sense wire open: comparator IN+ -> 3.3 V (reads RELEASED)
+     ILIM sense (U203) threshold 0.590-0.652 V: below VIL_ILIM_HIZ max 0.75 V (held reading guarantees no switching), above the held level (<= 0.11 V; 0.57 V with EVM R23 open: margin 20 mV) and below the lowest released level 1.52 V
+H.5  eFuse R101 8.06 k -> I_OL 2.233 A nominal (Eq.5; +-8 % per EC 1.84-2.16 A at 9 k) -> 2.05-2.41 A; fast-trip 2x = 4.1-4.8 A in 2.2-4.5 us
+     margin to the regen clamp max 1.755 A (with leakage): 0.30 A
+     UVLO/OVP divider R102 845k / R103 66.5k / R104 49.9k (0.1 %): V_UV 9.91 V (9.70-10.13), V_OV 23.12 V (22.61-23.63); Eq.9/10, V(UVLOR)/V(OVPR) 1.176-1.224 V
+     OVP band vs design clamp 22.28 V max: 0.33 V above; vs BQ25798 VBUS recommended max 24 V (DS 6.3): 0.37 V below; string current at 21 V 21.8 uA
+     dVdT 22 nF at VIN 15.9 V: ramp 7.28 ms, 2.19 V/ms -> inrush into 51.4 uF = 0.112 A; turn-on delay 742+49.5*22 us = 1.83 ms
+     dVdT 22 nF at VIN 19.0 V: ramp 8.69 ms, 2.19 V/ms -> inrush into 51.4 uF = 0.112 A; turn-on delay 742+49.5*22 us = 1.83 ms
+     turn-off, case 1 (overload / fast-trip at 4.8 A): OUT starts near VIN (~16 V) and dips by I x sqrt(L/C103) = 1.9 V; never negative, D103 does not conduct
+     turn-off, case 2 (hard short at the EVM J1 end): C103 + lead quarter period 0.61 us < 1 us hot-short response (EF 6.6): OUT crosses 0 V before the FET opens;
+       D103 freewheels a lead current of the order of I_SCP 45 A for < 1 us, OUT clamped at -VF(I) (~ -0.5 to -1 V): below the -0.3 V abs min (EF 6.1), accepted under EF 9.5.1 / 11 (TODO(verify: TI E2E), T-C-04)
+     IMON R105 27.4 k: 0.764 V/A (0.703-0.826); 1.72 A -> 1.31 V; I_OL max 2.41 A -> 1.99 V (current-regulated above I_OL)
+     fast-trip window (<= 4.5 us) with IMON up to 3.96 V: R129 10k + C129 1 nF (tau 10 us) passes 1.44 V to pin 22; continuous clamp current at 4 V: 40 uA (TODO(verify: i.MX RT1062 injection limit))
+H.6  Inrush. RT1987 soft-start with CSS 5.6 nF: tON 1.07 ms at 16 V, slew 12.0 V/ms (VIN-independent)
+     Run-entry REGEN close (cold): board 20 uF x 12 V/ms = 0.24 A; EVM side behind the eFuse dVdT 0.112 A; EVM dark until VCHG-IN > ~10 V (UVLO)
+     FC_CHARGE close in Run (warm, VCHG-IN held by REGEN): dV ~70 mV, ~5 uC: negligible
+     BT_BUS close (D-BT-EN) onto a pre-biased FC-only bus: I_pk = min(C_eff x SR + I_load, ISCP 8.5 A), width = delta/SR; SCP if clamp > 250 us
+       C_VMOT 0.40 mF, load 0.15 A, delta 0.05 V: I_pk 5.4 A for 4 us; P(1 kHz OC_BT 3.0 A sample lands in it) ~ 0.4 %
+       C_VMOT 0.40 mF, load 0.15 A, delta 0.30 V: I_pk 5.4 A for 25 us; P(1 kHz OC_BT 3.0 A sample lands in it) ~ 2.5 %
+       C_VMOT 0.40 mF, load 0.15 A, delta 0.80 V: I_pk 5.4 A for 67 us; P(1 kHz OC_BT 3.0 A sample lands in it) ~ 6.7 %
+       C_VMOT 0.40 mF, load 0.15 A, delta 1.50 V: I_pk 5.4 A for 125 us; P(1 kHz OC_BT 3.0 A sample lands in it) ~ 12.5 %
+       C_VMOT 0.40 mF, load 0.15 A, delta 2.40 V: I_pk 5.4 A for 200 us; P(1 kHz OC_BT 3.0 A sample lands in it) ~ 20.0 %
+       C_VMOT 0.40 mF, load 0.15 A, delta 4.00 V: I_pk 5.4 A for 334 us; P(1 kHz OC_BT 3.0 A sample lands in it) ~ 33.4 %
+       C_VMOT 0.40 mF, load 1.05 A, delta 0.05 V: I_pk 6.3 A for 4 us; P(1 kHz OC_BT 3.0 A sample lands in it) ~ 0.4 %
+       C_VMOT 0.40 mF, load 1.05 A, delta 0.30 V: I_pk 6.3 A for 25 us; P(1 kHz OC_BT 3.0 A sample lands in it) ~ 2.5 %
+       C_VMOT 0.40 mF, load 1.05 A, delta 0.80 V: I_pk 6.3 A for 67 us; P(1 kHz OC_BT 3.0 A sample lands in it) ~ 6.7 %
+       C_VMOT 0.40 mF, load 1.05 A, delta 1.50 V: I_pk 6.3 A for 125 us; P(1 kHz OC_BT 3.0 A sample lands in it) ~ 12.5 %
+       C_VMOT 0.40 mF, load 1.05 A, delta 2.40 V: I_pk 6.3 A for 200 us; P(1 kHz OC_BT 3.0 A sample lands in it) ~ 20.0 %
+       C_VMOT 0.40 mF, load 1.05 A, delta 4.00 V: I_pk 6.3 A for 334 us; P(1 kHz OC_BT 3.0 A sample lands in it) ~ 33.4 %
+       C_VMOT 0.97 mF, load 0.15 A, delta 0.05 V: I_pk 8.5 A for 6 us; P(1 kHz OC_BT 3.0 A sample lands in it) ~ 0.6 %
+       C_VMOT 0.97 mF, load 0.15 A, delta 0.30 V: I_pk 8.5 A for 36 us; P(1 kHz OC_BT 3.0 A sample lands in it) ~ 3.6 %
+       C_VMOT 0.97 mF, load 0.15 A, delta 0.80 V: I_pk 8.5 A for 97 us; P(1 kHz OC_BT 3.0 A sample lands in it) ~ 9.7 %
+       C_VMOT 0.97 mF, load 0.15 A, delta 1.50 V: I_pk 8.5 A for 181 us; P(1 kHz OC_BT 3.0 A sample lands in it) ~ 18.1 %
+       C_VMOT 0.97 mF, load 0.15 A, delta 2.40 V: I_pk 8.5 A for 290 us  -> SCP TRIP, 64 ms retry; P(1 kHz OC_BT 3.0 A sample lands in it) ~ 29.0 %
+       C_VMOT 0.97 mF, load 0.15 A, delta 4.00 V: I_pk 8.5 A for 484 us  -> SCP TRIP, 64 ms retry; P(1 kHz OC_BT 3.0 A sample lands in it) ~ 48.4 %
+       C_VMOT 0.97 mF, load 1.05 A, delta 0.05 V: I_pk 8.5 A for 7 us; P(1 kHz OC_BT 3.0 A sample lands in it) ~ 0.7 %
+       C_VMOT 0.97 mF, load 1.05 A, delta 0.30 V: I_pk 8.5 A for 41 us; P(1 kHz OC_BT 3.0 A sample lands in it) ~ 4.1 %
+       C_VMOT 0.97 mF, load 1.05 A, delta 0.80 V: I_pk 8.5 A for 108 us; P(1 kHz OC_BT 3.0 A sample lands in it) ~ 10.8 %
+       C_VMOT 0.97 mF, load 1.05 A, delta 1.50 V: I_pk 8.5 A for 203 us; P(1 kHz OC_BT 3.0 A sample lands in it) ~ 20.3 %
+       C_VMOT 0.97 mF, load 1.05 A, delta 2.40 V: I_pk 8.5 A for 325 us  -> SCP TRIP, 64 ms retry; P(1 kHz OC_BT 3.0 A sample lands in it) ~ 32.5 %
+       C_VMOT 0.97 mF, load 1.05 A, delta 4.00 V: I_pk 8.5 A for 542 us  -> SCP TRIP, 64 ms retry; P(1 kHz OC_BT 3.0 A sample lands in it) ~ 54.2 %
+     SCP no-trip bound (60 % of 250 us, 1 A load): delta < 2.56 V at C_VMOT 0.40 mF -> purge-rescue floor = VBUS-BT - 2.56 V
+     SCP no-trip bound (60 % of 250 us, 1 A load): delta < 1.11 V at C_VMOT 0.97 mF -> purge-rescue floor = VBUS-BT - 1.11 V
+     early-purge rescue: highest bus sag rate a rescue close survives = dV_SCP / (tD_ON,max + tON) = 0.147 V/ms at C_VMOT 0.40 mF (H.8 sag 0.2-2.57 V/ms -> every rescue refused)
+     early-purge rescue: highest bus sag rate a rescue close survives = dV_SCP / (tD_ON,max + tON) = 0.064 V/ms at C_VMOT 0.97 mF (H.8 sag 0.2-2.57 V/ms -> every rescue refused)
+     Lever (i) C-DC4 68 nF: tON 13.5 ms, slew 0.95 V/ms -> I_pk 0.96 A + load at 0.97 mF (no SCP); conduction delay tD_ON + 13.5 ms
+     Pre-biased conduction delay (5.6 nF): tD_ON 8 ms typ + (V_bus/VIN) x tON/0.8 ~ 1.3 ms
+H.7  Absorption capability P = min(IINDPM limit, ICHG x (1-6.5 %) x V_BATpin / eta_max 0.93), pack 7.40 V
+     regen image ICHG 2.50 A (round-3 r0)                 input-limit 21.8 W, ICHG-limit 18.8 W -> 18.8 W; vs 18.9 W: -0.5 %; vs 11.1 W: +69.4 %
+     regen image ICHG 3.10 A (r1)                         input-limit 21.8 W, ICHG-limit 23.4 W -> 21.8 W; vs 18.9 W: +15.4 %; vs 11.1 W: +96.5 %
+     raised image stage 1 (VINDPM_STAGE1), ICHG 3.10 A    input-limit 20.9 W, ICHG-limit 23.4 W -> 20.9 W; vs 18.9 W: +10.5 %; vs 11.1 W: +88.2 %
+     FC image ICHG 1.60 A                                 input-limit 11.2 W, ICHG-limit 12.0 W -> 11.2 W; vs 18.9 W: -40.8 %; vs 11.1 W: +0.8 %
+     ICHG needed for the HR1 23 W condition at 7.40 V: 3.05 A; for 18.9 W: 2.51 A
+     At 8.40 V pack, ICHG 3.10 A +3.5 %: demand 30.0 W = 1.61 A at 18.62 V -> the ILIM clamp (max 1.755 A) binds; eFuse I_OL min 2.05 A
+     In CV (pack near 8.4 V) ICHG tapers toward ITERM: capability -> ~0 W (FR-25 regen derate)
+     2->1 m/s, 12 A, static FC image, input-limited: balances at V-MOT 14.0 V; ICHG-limited capability 12.0 W: absorbed
+     3->1 m/s, 12 A, static FC image, input-limited: balances at V-MOT 23.9 V; ICHG-limited capability 12.0 W: cannot balance -> raise required
+     VINDPM_STAGE1 = lowest 100 mV code with -2 % minimum > H1 fall max 17.76 V + 50 mV: 18.2 V (min 17.84, max 18.56)
+     before the raise lands (latency 0.52 ms), C_VMOT 0.40 mF, 18.9 W from H1 rise max 18.05 V: +0.64 V/ms -> 18.38 V (cut 21.35 V)
+     before the raise lands (latency 1.22 ms), C_VMOT 0.40 mF, 18.9 W from H1 rise max 18.05 V: +0.64 V/ms -> 18.83 V (cut 21.35 V)
+     before the raise lands (latency 3.00 ms), C_VMOT 0.40 mF, 18.9 W from H1 rise max 18.05 V: +0.64 V/ms -> 19.96 V (cut 21.35 V)
+       worst unload (VINDPM written above V-MOT, charger draws ~0): un-staged 19.0 V block (r0): V-MOT climbs at 2.62 V/ms; headroom 1.97 V = 0.75 ms for the VINDPM loop to reload
+       worst unload (VINDPM written above V-MOT, charger draws ~0): stage 1: V-MOT climbs at 2.62 V/ms; headroom 2.79 V = 1.06 ms for the VINDPM loop to reload
+     before the raise lands (latency 0.52 ms), C_VMOT 0.97 mF, 18.9 W from H1 rise max 18.05 V: +0.26 V/ms -> 18.19 V (cut 21.35 V)
+     before the raise lands (latency 1.22 ms), C_VMOT 0.97 mF, 18.9 W from H1 rise max 18.05 V: +0.26 V/ms -> 18.37 V (cut 21.35 V)
+     before the raise lands (latency 3.00 ms), C_VMOT 0.97 mF, 18.9 W from H1 rise max 18.05 V: +0.26 V/ms -> 18.84 V (cut 21.35 V)
+       worst unload (VINDPM written above V-MOT, charger draws ~0): un-staged 19.0 V block (r0): V-MOT climbs at 1.08 V/ms; headroom 1.97 V = 1.83 ms for the VINDPM loop to reload
+       worst unload (VINDPM written above V-MOT, charger draws ~0): stage 1: V-MOT climbs at 1.08 V/ms; headroom 2.79 V = 2.58 ms for the VINDPM loop to reload
+     warm-response budget t_d + tau <= (20.5 - VINDPM_max) x C / I_regen,pk 1.1 A: regen-armed cruise (VINDPM 19.0 V, max 19.38 V), C_VMOT 0.40 mF: 0.41 ms
+     warm-response budget t_d + tau <= (20.5 - VINDPM_max) x C / I_regen,pk 1.1 A: regen-armed cruise (VINDPM 19.0 V, max 19.38 V), C_VMOT 0.97 mF: 0.99 ms
+     warm-response budget t_d + tau <= (20.5 - VINDPM_max) x C / I_regen,pk 1.1 A: raised stage 1 (max 18.56 V), C_VMOT 0.40 mF: 0.70 ms
+     warm-response budget t_d + tau <= (20.5 - VINDPM_max) x C / I_regen,pk 1.1 A: raised stage 1 (max 18.56 V), C_VMOT 0.97 mF: 1.71 ms
+     an 8 ms dead time (tD_ON repeat on a D-BT-SQ UVLO recovery) lifts V-MOT by 22 V at 0.4 mF: keep-alive mandatory if T-B-09 measures it
+     false-restore guard: V_rgn > 19.57 V (VINDPM max 19.38 + calibration 0.19 V) with the FC image and H1 = 1 -> forced raise
+H.8  Purge pre-emption lead-time budget:
+     firmware tick + P5 LOW + FC_CHARGE/FCCEIL LOW (one tick)                          1.0 ms
+     VINDPM 19.0 V write + read-back (2 transactions, 100 kHz worst)                   0.8 ms
+     charger shed settle before BT_BUS (bus recovery)                                  2.0 ms
+     RT1987 D-BT-EN tD_ON (8 ms typ, no max: 2x allowance; T-E-06)                    16.0 ms
+     soft-start to the pre-biased bus (tON/0.8 at 16 V)                                1.4 ms
+     readiness check (EN, FCC read-back, P5, optional VBUS-BT ADC)                     1.0 ms
+     purge-onset jitter allowance (UNMEASURED; 50 Hz resolution x3; T-E-01)           60.0 ms
+     margin                                                                           17.8 ms
+     T_LEAD = 100 ms before the predicted purge onset
+     purge 100 ms: window closed 430 ms per 10.34 s cycle -> FC-charge duty 95.8 % UPPER BOUND (uninterrupted admission: standstill or steady load)
+     purge 140 ms: window closed 470 ms per 10.34 s cycle -> FC-charge duty 95.5 % UPPER BOUND (uninterrupted admission: standstill or steady load)
+     hand-off sag: bus falls at ~0.2 V/ms (aux only, MOT_PWR closed, 0.51 mF; ESTIMATE) to 2.57 V/ms (HIL aux model, 40 uF): 0.5 ms costs 0.1-1.3 V
+H.9  VCHG decay with the converter in HIZ between bursts, no keep-alive (C_BAT 80 uF nominal)
+     C x1.0 (80 uF), I 0.65 mA: 8.4 V -> RT1987 UVLO-falling ~3.0 V in 0.66 s; -> VBAT_SHORT 2.06 V in 0.78 s
+     C x1.0 (80 uF), I 1.28 mA: 8.4 V -> RT1987 UVLO-falling ~3.0 V in 0.34 s; -> VBAT_SHORT 2.06 V in 0.40 s
+     C x0.5 (40 uF), I 0.65 mA: 8.4 V -> RT1987 UVLO-falling ~3.0 V in 0.33 s; -> VBAT_SHORT 2.06 V in 0.39 s
+     C x0.5 (40 uF), I 1.28 mA: 8.4 V -> RT1987 UVLO-falling ~3.0 V in 0.17 s; -> VBAT_SHORT 2.06 V in 0.20 s
+H.10 KA option (DNP): VCHG held at 3.63-4.46 V; drain 0.65-1.28 mA + 0.062-0.080 mA in Run only; parked 0.5-2.3 uA
+H.11 Leads (0.30 m each way)
+     input pair W1/W2 20 AWG: 20.0 mOhm round trip; at 1.80 A drop 36 mV, loss 65 mW
+     battery pair W3/W4 18 AWG: 12.6 mOhm round trip; at 3.10 A drop 39 mV, loss 121 mW
+     eFuse at 1.80 A: drop 34-95 mV, loss 62-172 mW
+     CV at 0.2 A (sensed at the BAT pin, JP9 2-3): pack = VREG - leads + R13 + JP5 link 4.7 mV - D-BT-SQ 35 mV = 8.339-8.415 V
+     CV at 3.1 A (sensed at the BAT pin, JP9 2-3): pack = VREG - leads + R13 + JP5 link 73.2 mV - D-BT-SQ 62 mV = 8.244-8.319 V
+H.12 FC-window bus-side load (standstill, no traction)
+     FC image IINDPM 0.90 A at +0 %                                     aux 0.09: 0.99 A  (arm drop 1.20 ok, P_MAX 1.247 ok, OC_FC 1.4 ok)
+     FC image IINDPM 0.90 A at +0 %                                     aux 0.15: 1.05 A  (arm drop 1.20 ok, P_MAX 1.247 ok, OC_FC 1.4 ok)
+     FC hardware clamp max (charger POR in the window), with leakage    aux 0.09: 1.04 A  (arm drop 1.20 ok, P_MAX 1.247 ok, OC_FC 1.4 ok)
+     FC hardware clamp max (charger POR in the window), with leakage    aux 0.15: 1.10 A  (arm drop 1.20 ok, P_MAX 1.247 ok, OC_FC 1.4 ok)
+     regen clamp max (FC image lost, firmware fault)                    aux 0.09: 1.84 A  (arm drop 1.20 OVER, P_MAX 1.247 OVER, OC_FC 1.4 LATCH)
+     regen clamp max (FC image lost, firmware fault)                    aux 0.15: 1.90 A  (arm drop 1.20 OVER, P_MAX 1.247 OVER, OC_FC 1.4 LATCH)
+     H-20 P_MAX 23.416 W stack = 19.90 W bus at ETA_BOOST 0.85: 1.248 A at 15.95 V, 1.309 A at the loaded FC-only bus 15.2 V; OC_FC 1.4 A sits ABOVE the characterised stack range
+     window cap = min(OC_FC margin 1.20 A, (P_MAX_bus - 1.0 W margin)/V_bus) = 1.200 A at 15.2 V; admission/close test G = cap - I_aux - max(I_trac,peak, I_cmd) - I_ripple - margin
+     cruise headroom: governor holds I_aux + I_trac + IINDPM <= 1.10 A -> 0.30 A to OC_FC for traction steps and ripple (FR-14, T-F-04b)
+H.13 Inhibit-latency allowance (H1 fall -> D-MT-EN conduction); deductions 24 us RC, 15 us comparator, 7.0 us Q201 gate (47k x Ciss), 0.1 us LVC
+     release glitch 0.1 us (both Q201 and Q203 must change state; C252 2.2 nF): ILIM_HIZ reaches <= 0.28 V -> no resume (< 0.75 V)
+     release glitch 1.0 us (both Q201 and Q203 must change state; C252 2.2 nF): ILIM_HIZ reaches <= 0.32 V -> no resume (< 0.75 V)
+     I_in 0.90 A, VBUS 15.50: 2.25 V/ms, allowance 360 us
+     I_in 0.90 A, VBUS 15.90: 2.25 V/ms, allowance 374 us
+     I_in 0.90 A, VBUS 16.39: 2.25 V/ms, allowance 392 us
+     I_in 1.25 A, VBUS 15.50: 3.12 V/ms, allowance 246 us
+     I_in 1.25 A, VBUS 15.90: 3.12 V/ms, allowance 256 us
+     I_in 1.25 A, VBUS 16.39: 3.12 V/ms, allowance 269 us
+     I_in 1.80 A, VBUS 15.50: 4.50 V/ms, allowance 157 us
+     I_in 1.80 A, VBUS 15.90: 4.50 V/ms, allowance 164 us
+     I_in 1.80 A, VBUS 16.39: 4.50 V/ms, allowance 173 us
+H.14 FC charge 1.6 A x 8.4 V: loss 0.93 W, dT_JA 41 C (JEDEC; EVM copper better)
+H.14 regen 3.1 A x 8.4 V (burst): loss 2.58 W, dT_JA 114 C (JEDEC; EVM copper better)
+     eFuse 1.80 A worst RON 53 mOhm: 172 mW
+H.15 Run standby draw from VCHG-IN (bus side) while regen-armed:
+     eFuse IQ(ON) (EF 6.5)                                      1.380-1.700 mA
+     D-BC-RG RT1987 IQ (RT EC p.7)                              0.650-0.780 mA
+     CHG_VOLTAGE divider 88.7k at 16 V                          0.180-0.180 mA
+     eFuse UVLO/OVP string                                      0.017-0.017 mA
+     BQ25798 IC, ILIM held, REGN on (UNSPECIFIED; ISD_VBUS 386 uA is HIZ-mode, used as the floor; T-B-04) 0.390-1.000 mA
+     BQ25798 ADC continuous, IBAT+IBUS (adder; battery-side IQ_BAT_ON 540 vs 17-24 uA, DS 6.5; VBUS-side unspecified, T-B-04) 0.200-0.520 mA
+     EVM TS bias from REGN: R18 5.23k + R24 30.1k || R25 10.0k (JP18 in), 5.0 V / 12.74k 0.392-0.392 mA
+     EIB REGN pull-ups sinking in armed cruise (R254 Q202 gate, R272 /CE), 2 x ~0.11 mA 0.200-0.200 mA
+     D103 reverse leakage at 16-23.6 V, 60 C (selection target, T-A-05/T-A-07; B340A fallback below) 0.005-0.100 mA
+     total 3.41-4.89 mA x 16 V = 55-78 mW for all of Run (keep-alive option for comparison: 3.5-7 mW)
+     B340A fallback worst case (DS13005 IRM 20 mA at 100 C, rated 40 V): up to 20 mA x 16 V = 0.32 W -> does not fit; operator decision if no low-IR part qualifies
+     3V3 load of CR + EIB (I2C pull-ups now on the MB side, not on this rail): 1.82 mA worst static; Teensy 4.1 3.3 V pin rated ~250 mA (TODO(verify: PJRC pinout card)); 26 AWG T6: no constraint
+H.16 I2C 10k only (RSDA/RSCL as built): Rp 10.00 k; Cb max for tr 300 ns (Fm) 35 pF, for 1000 ns (Sm) 118 pF; sink at VOL 0.4 V 0.29 mA (3 mA limit)
+H.16 I2C MB RSDA/RSCL changed to 2.7k, CR R145/R146 DNP (r2): Rp 2.70 k; Cb max for tr 300 ns (Fm) 131 pF, for 1000 ns (Sm) 437 pF; sink at VOL 0.4 V 1.07 mA (3 mA limit)
+     Cb estimate: W7 0.30 m x 50 pF/m + board 30 pF + EVM 20 pF + Teensy 10 pF = 75 pF (TEST T-C-06 scopes tr); tr = 172 ns with 2.7k
+     100 kHz: T3 = REG06-07 write (4 bytes) + REG03-05 write (5 bytes) = 0.85 ms; longest poll transaction capped at 0.50 ms
+     400 kHz: T3 = REG06-07 write (4 bytes) + REG03-05 write (5 bytes) = 0.21 ms; longest poll transaction capped at 0.35 ms
+H.17 QUAL one-shot U111 (R150 100k, C150 3.3 uF X7R): tw ~ K x R x C, K 1.0-1.1 (MV 5.8; K at 100k read from Fig 5-6, TODO(calibrate)), R +-1 %, C x0.612-x1.265: 200-464 ms (r1 band: C +-10 % only)
+H.17 heartbeat U113 (R151 100k, C151 330 nF X7R): tw ~ K x R x C, K 1.0-1.1 (MV 5.8; K at 100k read from Fig 5-6, TODO(calibrate)), R +-1 %, C x0.612-x1.265: 20-46 ms (r1 band: C +-10 % only)
+     firmware constants until T-C-10: TW_HB_MAX = 47 ms, TW_QQ_MAX = 464 ms; HB_dead = no CHG_HB rising edge for > TW_HB_MAX + 2 loop periods; loop budget (FR-27) tw_HB_min/4 = 5.0 ms
+     QUAL window must cover the DS 7.3.4 sequence (REGN +150 ms, poor-source ~30 ms, ILIM read) and end before 400 ms after REGEN close
+H.18 CR courtyard estimate 956 mm2 vs top-side free ~881 mm2 and bottom-side free (outside the keep-out) ~840 mm2 -> double-sided placement required
+REG  VINDPM 19.0 V = 0xBE, 18.2 V (stage 1) = 0xB6, 14.5 V = 0x91 (REG05, 100 mV/LSB); IINDPM 1.70 A = 0x00AA, 0.90 A = 0x005A (REG06, 10 mA/LSB); ICHG 3.10 A = 0x0136, 2.50 A = 0x00FA, 1.60 A = 0x00A0 (REG03, 10 mA/LSB); VREG 8.40 V = 0x0348
