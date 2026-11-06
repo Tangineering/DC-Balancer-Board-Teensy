@@ -499,7 +499,7 @@ to the vehicle. That scaling is unverified.
 
 | Rank | Source | Expected mV rms | Confidence |
 |---|---|---:|---|
-| 1 | Folded speed-locked bus ripple: the motor 6x electrical line plus 1x electrical and its orders, through the bus impedance | 8–10 | Medium |
+| 1 | Folded speed-locked bus ripple: the motor 6x electrical line (back-EMF harmonic power ripple, Section 9.7) plus 1x electrical and its orders, through the bus impedance | 8–10 | Medium |
 | 2 | Folded broadband excess, incoherent between channels; the leading candidate is VESC PWM ripple aliasing through the 16-sample ADC average | 5–6 | Low to medium |
 | 3 | ADC floor, folded | 2.7–3.3 | High |
 | 4 | Real in-band droop response to I_tot (1x, 2–6 Hz) | about 2.4 | High |
@@ -610,6 +610,75 @@ items. The run needs 10 s at standstill, steady holds of at least 15 s each at 1
 A differential scope across VIN–VOUT of D-FC and D-BT at 2 m/s would settle the RT1987
 high-frequency behaviour. The board has no test points for this.
 
+### 9.7 Origin of the 6x electrical line (follow-up, 2026-11-06)
+
+The 6x line is a deterministic power ripple locked to rotor angle, not noise. With sinusoidal FOC
+currents, the power that the VESC draws ripples at 6 f_e only if a 5th or 7th harmonic distorts
+the e·i product. Three mechanisms can do this, and each predicts a different scaling of the
+bus-current ripple amplitude A6 with speed v and motor current I:
+- non-sinusoidal back-EMF (5th and 7th harmonics): A6 ∝ v·I, that is, a fixed fraction of the
+  mechanical power;
+- VESC dead-time distortion: A6 ∝ I, independent of speed;
+- cogging, through the speed ripple that it causes: A6 ∝ I / v.
+
+`analyze_6x_scaling.py` fits A6 in 2 s windows of ML0226. The method has three features:
+- **True timestamps.** The fit uses the logged timestamps, because the line is aliased and the
+  sample rate has a +205 µs long tick every 18–19 samples.
+- **Tracked phase.** The phase follows the integral of the 0.5 s smoothed speed. The carrier
+  constant is fitted per window.
+- **Rotation sidebands.** The fit includes ±12 rotation sidebands, because the real 1x speed
+  modulation frequency-modulates the line; at 0.5 m/s the modulation index is about 7. The
+  amplitude is debiased by the power of off-line fits. A fit with ±6 sidebands agrees within a
+  few percent in every speed bin.
+
+Table 9a gives the result. The windows are 294 of 322 (SNR > 1.5, no overlap with another
+speed-locked order, I_cmd > 1 A).
+
+**Table 9a.** 6x bus-current ripple against speed and motor current, ML0226.
+
+| v (m/s) | Windows | A6 peak (mA) | I_cmd (A) | P_mech (W) | k6 = A6 / (P_mech / V_bus) | A6 / I_cmd (mA/A) |
+|---|---:|---:|---:|---:|---:|---:|
+| 0.30–0.45 | 4 | 4.6 | 3.00 | 0.77 | 0.095 | 1.5 |
+| 0.45–0.65 | 57 | 7.1 | 3.40 | 1.39 | 0.083 | 2.1 |
+| 0.70–0.90 | 26 | 15.0 | 3.80 | 2.28 | 0.105 | 3.9 |
+| 0.90–1.15 | 35 | 21.7 | 3.90 | 2.94 | 0.115 | 5.6 |
+| 1.15–1.30 | 48 | 31.6 | 4.20 | 3.89 | 0.129 | 7.5 |
+| 1.30–1.45 | 75 | 33.1 | 4.20 | 4.31 | 0.124 | 7.9 |
+| 1.45–1.60 | 24 | 40.9 | 4.30 | 4.86 | 0.134 | 9.5 |
+| 1.90–2.10 | 25 | 54.6 | 4.66 | 7.03 | 0.124 | 11.8 |
+
+P_mech = K_F · I_cmd · v with K_F = 0.7538 N/A (ML0226 coast-down fit, planning record 10.3).
+
+The data support the back-EMF mechanism and reject the other two:
+- **Identity.** The fitted carrier constant is 397.2 Hz per m/s (IQR 397.0–397.2). This equals
+  6 × 2 pole pairs × 15.84 × 2.089 = 397.1 Hz per m/s, so the line is exactly the 6th electrical
+  harmonic.
+- **Speed scaling at fixed current.** In the open-loop holds at I_cmd = 4.2 A (133 windows,
+  1.10–1.40 m/s), A6 ∝ v^0.99 ± 0.10. Back-EMF harmonics predict v¹, dead time v⁰ and cogging
+  v⁻¹.
+- **Ripple per ampere.** A6 / I_cmd rises eightfold, from 1.5 to 11.8 mA/A, over the speed range.
+  Dead time predicts a constant value.
+- **Fraction of mechanical power.** Above about 1.1 m/s, k6 is constant at 0.12–0.13, which is the
+  back-EMF signature. Below 1 m/s it is about 30 % lower (0.08–0.10).
+
+The ripple is therefore best described as **6th-harmonic power ripple from non-sinusoidal
+back-EMF**, about ±12.5 % of the mechanical power at cruise. Relative to the electrical input
+power the fraction is smaller, by the motor and VESC efficiency.
+
+Three items remain open:
+- **The current exponent is not resolved.** The joint fit gives I^2.6 ± 0.3, but speed and current
+  are strongly correlated in this log and the current range is only 3.0–4.7 A. A run at fixed
+  speed with different loads would separate them.
+- **The low-speed shortfall in k6 is not explained.** One candidate is the VESC current loop
+  rejecting the induced current harmonics better at the lower 6x frequencies (120–360 Hz). This is
+  not verified.
+- **No direct measurement.** A scope on the motor's line-to-line voltage while it coasts unpowered
+  would give the 5th and 7th back-EMF harmonic content directly.
+
+The ripple current that the sources see is also slightly attenuated at high frequency, because
+the V-MOT capacitors absorb part of it. That effect makes the measured growth with speed a lower
+bound; it does not change the conclusion.
+
 **Figures for this section:**
 
 | File | Content |
@@ -620,3 +689,4 @@ high-frequency behaviour. The board has no test points for this.
 | `vbus_switching_budget.png` | Switching budget against measurement |
 | `vbus_rt1987_drop_and_spectra.png` | RT1987 drop models and the V_bus spectra |
 | `vbus_bagtest_residual_dependence.png` | Bag residual against speed, currents and load |
+| `vbus_6x_scaling.png` | 6x ripple amplitude against the back-EMF, dead-time and cogging predictions; k6 against speed (Section 9.7, `analyze_6x_scaling.py`) |

@@ -25,8 +25,8 @@ reduces the once-per-revolution (1x) flywheel line to 0.25--0.28 of its fw v35 l
 currents, the bus voltage and the FC share ratio. The design ratio is 0.29. Content above about
 7~Hz is unchanged. A 1~kHz SD-card log shows that most of the remaining bus-voltage noise in the
 Pi logs is high-frequency content folded by the 21~ms telemetry snapshot. Its largest source is
-real bus current at the motor's 6x electrical frequency. The RT1987 ideal diodes and the boost
-switching contribute little.
+real bus current at the motor's 6x electrical frequency, which is power ripple from the motor's
+non-sinusoidal back-EMF. The RT1987 ideal diodes and the boost switching contribute little.
 
 \section*{2. Data and method}
 Two runs of the same SDP drive cycle are compared: \path{rosbag_sdp_2026-10-30_01-49-38}
@@ -176,7 +176,7 @@ The split is measured on the bench and scaled to the vehicle; that scaling is no
 \toprule
 Source & mV rms & Confidence \\
 \midrule
-Folded motor 6x electrical line and other speed-locked orders & 8--10 & Medium \\
+Folded motor 6x electrical line (back-EMF power ripple, Section 5) and other orders & 8--10 & Medium \\
 Folded broadband excess (likely VESC 15~kHz PWM alias) & 5--6 & Low--medium \\
 ADC floor, folded & 2.7--3.3 & High \\
 Real 1x droop response to \Itot{} (2--6~Hz) & 2.4 & High \\
@@ -205,7 +205,55 @@ in the control samples at about 2.2--2.5~m/s, the cruise speed. No digital filte
 can remove that alias. Only an analog filter at the ADC pin, or averaging over the full loop
 tick, prevents it.
 
-\section*{5. Conclusions}
+\section*{5. Origin of the 6x electrical line}
+The 6x line is a deterministic power ripple locked to rotor angle, not noise. The VESC drives
+sinusoidal FOC currents, so the power it draws ripples at 6 times the electrical frequency only if
+a 5th or 7th harmonic distorts the product of back-EMF and current. Three mechanisms can do this,
+and each predicts a different scaling of the bus-current ripple amplitude A\textsubscript{6} with
+speed v and motor current I:
+\begin{itemize}\setlength{\itemsep}{0pt}
+\item non-sinusoidal back-EMF: A\textsubscript{6} $\propto$ v$\cdot$I, a fixed fraction of the
+mechanical power;
+\item dead-time distortion in the VESC: A\textsubscript{6} $\propto$ I, independent of speed;
+\item cogging, through the speed ripple it causes: A\textsubscript{6} $\propto$ I / v.
+\end{itemize}
+
+A\textsubscript{6} was fitted in 2~s windows of ML0226 (294 windows, 0.3--2.0~m/s). The fit uses
+the logged timestamps, because the line is aliased and the tick interval is irregular. It tracks
+the line's phase from the smoothed speed, and it includes $\pm$12 rotation sidebands, because the
+real once-per-revolution speed ripple frequency-modulates the line. Figure~6 compares the result
+with the three predictions, each computed from the window's own speed and current.
+
+\begin{figure}[!ht]
+\centering
+\includegraphics[width=0.92\linewidth]{vbus_6x_scaling.png}\\[0.2em]
+{\small \textbf{Figure 6.} Left: 6x bus-current ripple amplitude in ML0226 against the three
+predictions, each normalised at the 1.3--1.45~m/s hold. Right: k\textsubscript{6} =
+A\textsubscript{6} / (P\textsubscript{mech} / \Vbus), with P\textsubscript{mech} =
+K\textsubscript{F}$\cdot$I$\cdot$v and K\textsubscript{F} = 0.754~N/A.}
+\end{figure}
+
+The data support the back-EMF mechanism:
+\begin{itemize}\setlength{\itemsep}{0pt}
+\item \textbf{Frequency.} The freely fitted line frequency is 397.2~Hz per m/s, which equals
+6 $\times$ 2 pole pairs $\times$ 15.84 gear ratio $\times$ 2.089~Hz per m/s = 397.1~Hz per m/s.
+\item \textbf{Speed at fixed current.} In the open-loop holds at 4.2~A (133 windows,
+1.10--1.40~m/s), A\textsubscript{6} $\propto$ v\textsuperscript{0.99 $\pm$ 0.10}. Back-EMF
+harmonics predict v\textsuperscript{1}, dead time v\textsuperscript{0} and cogging
+v\textsuperscript{$-$1}.
+\item \textbf{Ripple per ampere.} A\textsubscript{6}/I rises eightfold over the speed range, from
+1.5 to 11.8~mA/A. Dead time predicts a constant value.
+\item \textbf{Fraction of mechanical power.} Above about 1.1~m/s, k\textsubscript{6} is constant
+at 0.12--0.13, which is the back-EMF signature. At cruise the ripple is therefore about
+$\pm$12.5\,\% of the mechanical power, or 55~mA peak on the bus at 2.0~m/s.
+\end{itemize}
+
+Three points are not settled. The current dependence on its own is not resolved, because speed and
+current move together in this log (I = 3.0--4.7~A). Below 1~m/s, k\textsubscript{6} is about
+30\,\% lower, for an unidentified reason. In addition, a scope on the motor's line-to-line voltage
+while it coasts unpowered would measure the 5th and 7th back-EMF harmonics directly.
+
+\section*{6. Conclusions}
 \begin{itemize}\setlength{\itemsep}{0pt}
 \item The lower crossover reduced the 1x line to 0.25--0.28 on all bus channels and the share
 ratio, in agreement with the design.
@@ -214,6 +262,8 @@ remaining 1x share term is the governor's minority-current floor, not a loop def
 \item \Vbus{} at 1x is the droop image of \Itot{} through about 70~m$\Omega$. The rest of the
 \Vbus{} noise in the bags is mostly folded high-frequency content, largest at the motor's 6x
 electrical frequency. The ideal diodes and the boost switching contribute little.
+\item The 6x line is power ripple from non-sinusoidal motor back-EMF, about $\pm$12.5\,\% of the
+mechanical power at cruise. Dead time and cogging are ruled out as its main source.
 \item Content above 7~Hz did not change with fw v37. A 20~ms telemetry mean removes most of it from
 the bags. An analog filter at the ADC pins is needed to keep the 6x line out of the control
 samples.
