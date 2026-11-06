@@ -129,6 +129,13 @@ uncalibrated).
 24. **The H-20 has a second event** ~-0.7 V for ~0.5 s at +5.2..+5.7 s after each purge onset (present
     with I_fc = 0). A purge detector on a V_fc threshold near 1 V below median can catch it; detect
     purges by I_fc -> 0 or by depth > 2 V.
+25. **Bag noise above ~6 Hz is mostly FOLD.** Telemetry is a single-tick snapshot every 21 ms, so content from
+    24 Hz up to the loop's Nyquist (and the loop's own aliases) folds into 0-23.8 Hz: 72-98 % of the snapshot
+    V_bus variance and 84-95 % of the 6-24 Hz share variance on ML0226. Low coherence between bag channels above
+    6 Hz is fold + read skew (V_bus is read ~300 us after the currents), not an independent source. The largest
+    folded line is the motor 6x electrical order at 397 Hz per m/s. (noise round section 9)
+26. **The firmware loop and the BLG run at ~875-884 Hz, not 1 kHz** (median tick 1131 us, mean 1142-1153 us,
+    bimodal at 1128 / 1332 us). Use the measured t_us, never an assumed 1 kHz, for BLG spectra.
 
 ## Provenance / comparability
 

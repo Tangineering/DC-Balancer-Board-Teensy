@@ -34,8 +34,14 @@ The noise round found the following facts that bear on hardware:
   0.21 of the design value.
 - The H-20 purges every 10.34 s and shows a second event of about −0.7 V for 0.5 s, 5.5 s after
   each purge. The firmware infers both only from V_fc.
-- The FC and BT boosts may operate at or inside the TPS61288 PFM boundary at the rig's currents
-  (estimate, unverified).
+- The FC boost always runs in PFM and the BT boost runs near its PFM boundary at the rig's
+  currents (estimate, unverified). The PFM ripple reaches the INA253 shunt and V_fc strongly, but
+  V_bus only weakly (noise round, Section 9.2).
+- The largest V_bus ripple is the motor's 6x electrical line (397 Hz per m/s, 600–1000 Hz at
+  cruise). It is real bus current drawn by the VESC, and the 875–1000 Hz loop folds it into the
+  control samples (noise round, Sections 9.2 and 9.5).
+- The RT1987 ideal diodes add no measurable V_bus noise. Their servo bandwidth is unknown, and the
+  board has no test points across them (noise round, Section 9.3).
 
 ## 2. Candidate changes
 
@@ -128,10 +134,12 @@ and the minority floor, which sit at the rig's operating point.
 operating range (inductor value, current split).
 
 **Rationale.** In PFM the ripple frequency varies with load and aliases unpredictably into the
-ADC and into the droop-injection FB node. The estimated boundary is about 0.56 A (FC) and
-0.40 A (BT), from the 2.6 A typical peak threshold and L = 2.2 µH (TPS61288 DS p.12). The rig's
-moving medians are 0.15 A (FC) and about 0.5 A (BT). `TODO(verify: scope on the SW nodes)`
-before acting on this entry.
+ADC and into the droop-injection FB node. The estimated boundary is 0.57–0.75 A (FC, 9.5–11 V
+input) and 0.45 A (BT, 7.7 V), from the 2.6 A typical peak threshold, L = 2.2 µH and
+f_sw = 500 kHz (TPS61288 DS §8.4.2 p.11–12). The rig's moving medians are 0.15 A (FC) and about
+0.5 A (BT). The 1 kHz log ML0226 bounds the aliased boost ripple on V_bus at 1.2 mV per sample, so
+the main benefit of this entry is on the current channels, not on V_bus.
+`TODO(verify: scope on the SW nodes)` before acting on this entry.
 
 ### 2.7 H-20 status line into the Teensy
 
@@ -177,6 +185,26 @@ of v (ML0226). The drive loop chases it and turns it into bus current. A sensor 
 artefact removes that part at its source. The firmware 1x canceller (fw v38 plan) is the
 as-built alternative.
 
+### 2.11 VESC input decoupling at V-MOT
+
+**Change.** Reduce the motor's 6x electrical ripple at its source. Options are a larger low-ESR
+capacitance at V-MOT (the fitted 470 µF electrolytic has an ESR of about 80 mΩ, BOM line 30), or
+an LC filter between the MOT_PWR switch and the VESC input. The VESC's own input capacitance is
+`TODO(verify: VESC EDU)`.
+
+**Rationale.** The 6x electrical line (397 Hz per m/s) is the largest V_bus ripple at cruise. It
+is real bus current, coherent with I_tot at 0.94–0.99, and the bus impedance at 600–800 Hz is
+81–133 mΩ. The loop folds it near DC at cruise speed, where no digital filter can remove it.
+Reducing the current ripple drawn from VBUS reduces both the bus ripple and that alias.
+
+### 2.12 Test points across the RT1987 switches
+
+**Change.** Add test points at VIN and VOUT of D-FC-EN, D-BT-EN and D-MT-EN.
+
+**Rationale.** The RT1987 servo bandwidth is not in the datasheet. Above that bandwidth the switch
+acts as a resistance of about 35 mV / I, which is 0.23 Ω at 0.15 A. This is a candidate for the
+1.5x bus-impedance rise at 600–800 Hz. A differential scope across each switch settles it.
+
 ## 3. Changes considered and not recommended
 
 - **FC-side bulk hold-up capacitance for purges.** V_fc collapses to about 2 V for 80–140 ms, so
@@ -194,7 +222,7 @@ and a bidirectional pack converter), entries 2.5 and 2.6 change:
   reference.
 - A frequency-split reference becomes the natural design: the FC tracks a low-passed demand, and
   the pack converter takes the fast ripple.
-- Entries 2.1–2.4 and 2.7–2.10 apply to either architecture.
+- Entries 2.1–2.4 and 2.7–2.12 apply to either architecture.
 
 ## 5. Open questions to settle before the re-spin
 

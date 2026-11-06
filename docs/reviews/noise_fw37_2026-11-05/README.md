@@ -217,7 +217,10 @@ The columns overlap and do not sum. The 1x-locked term is part of the I_tot-cohe
    - aliasing of VESC PWM or boost ripple through the short 16-sample burst average;
    - real 25–500 Hz differential current dynamics.
 
-   The 50 Hz bags cannot separate these mechanisms (Section 7).
+   The 50 Hz bags cannot separate these mechanisms (Section 7). **Update (Section 9):** the 1 kHz
+   log ML0226 rules out inter-channel skew (I_fc to I_batt is one read slot, 0.9° at 20 Hz). On
+   the bench, 84–95 % of the snapshot share variance in 6–24 Hz is folded content from above
+   23.8 Hz.
 6. **Minor terms.** Share quantization is 0.001–0.002 rms per band. The k_d schedule moves the
    share by about 0.0005 after S. MDAC quantization is 0.8–2.3e-4 share per code. V_fc adds
    almost nothing beyond I_tot: the multiple coherence rises from 0.0081 to 0.0083 rms at 2–6 Hz.
@@ -369,10 +372,10 @@ speed (VESC electrical or tire); this is low confidence.
   bridge under-reports by about 2.1x over 167 s, if the brochure A0 applies to this stack.
 - **Single-source operation has about 2.2x the V_bus 1x per ampere** of dual-source operation
   (2026-10-26: 33–38 mV for 0.22 A of 1x current, against 12–18 mV with both sources).
-- **The boosts may sit at the PFM boundary.** From the TPS61288 datasheet light-load threshold and
-  L = 2.2 µH, the estimated PFM boundary is about 0.56 A (FC) and 0.40 A (BT). The rig's moving
-  medians are 0.15 A and 0.48–0.52 A. In PFM the ripple frequency varies with load and aliases
-  unpredictably. This estimate uses nominal values and needs a scope on the SW nodes.
+- **The FC boost always runs in PFM, and the BT boost runs near its boundary.** The corrected
+  estimate is in Section 9.2: FC 0.57–0.75 A, BT 0.45 A. The rig's moving medians are 0.15 A and
+  0.48–0.52 A. The PFM ripple frequencies are far above the ADC band, and their contribution to
+  V_bus is small (Section 9.2).
 - **Purges cap clean windows at about 9.3 s** (465 samples). A purge-excluded Welch estimate
   with nperseg 512 returns nothing.
 
@@ -460,3 +463,160 @@ The figures are in `figs/`, named by the agent that produced them:
 | `sensing_asd_vs_floor.png` | Current and share ASDs against the standstill floor |
 
 The agents' full reports and the verifier verdicts are in `agents/`.
+
+## 9. V_bus ripple: switching noise and the RT1987 ideal diodes (follow-up, 2026-11-06)
+
+This section explains the V_bus noise that Section 2.4 found not to come through the droop. It
+compares that noise with the expected switching noise and with the behaviour of the RT1987 ideal
+diodes. Four analysts ran in parallel: an RT1987 topology and physics review, a switching-noise
+budget, an analysis of the 1 kHz SD logs, and dependence tests on the bags. Two adversarial
+verifiers checked each claim, and a critic reconciled the reports. The reports are
+`agents/vbus_*.md`.
+
+The main 1 kHz log is ML0226 (fw v37, bench, closed- and open-loop speed holds). Its FC input is a
+bench supply (11.06 V, no purges), and its battery input is the pack. No 1 kHz log exists with the
+H-20 on the FC input.
+
+### 9.1 The firmware loop runs at about 875–884 Hz, not 1 kHz
+
+The loop in `loop()` (:6768) is free-running. The 1000 µs rate limiter (`POWER_BAL_PERIOD_US`)
+is shorter than one loop pass, so it never holds the loop back. The median tick in ML0226 is
+1131 µs (884 Hz), and the mean is 1142–1153 µs (867–875 Hz), with a second mode at 1332 µs. The
+BLG logs every pass. The bag telemetry rate of 47.62 Hz implies a loop of 1.0 ms or less in Run
+without SD logging; the vehicle loop rate is `TODO(verify)`.
+
+The seven `analogRead()` calls take about 83 µs each. The phase delay of the speed-locked line
+between V_bus and V_rgn, two reads apart, gives 166 µs. V_bus is therefore read about 300 µs
+after I_fc. I_fc and I_batt are adjacent reads, so their skew is negligible for the share.
+
+### 9.2 What each source contributes
+
+Table 9 ranks the sources of the V_bus noise that the bag sees at fw v37 cruise. The total there
+is about 12.6 mV rms per sample. The variance split comes from ML0226 at 1.5–2.0 m/s and is scaled
+to the vehicle. That scaling is unverified.
+
+**Table 9.** Budget of the V_bus noise in the bag band (fw v37 cruise).
+
+| Rank | Source | Expected mV rms | Confidence |
+|---|---|---:|---|
+| 1 | Folded speed-locked bus ripple: the motor 6x electrical line plus 1x electrical and its orders, through the bus impedance | 8–10 | Medium |
+| 2 | Folded broadband excess, incoherent between channels; the leading candidate is VESC PWM ripple aliasing through the 16-sample ADC average | 5–6 | Low to medium |
+| 3 | ADC floor, folded | 2.7–3.3 | High |
+| 4 | Real in-band droop response to I_tot (1x, 2–6 Hz) | about 2.4 | High |
+| 5 | TPS61288 switching and PFM ripple aliased through the 16-sample average | ≤ 1.2 | Medium |
+| 6 | RT1987 in-band effect (about 10 mΩ series, common 35 mV offset, no dropout or chatter) | ≤ 0.6 | Medium to high |
+
+The quadrature sum of the central values is about 12.3 mV, against 12.6 mV measured.
+
+The dominant source is the motor's 6x electrical line. Its frequency is 397 Hz per m/s
+(6 × f_e, with f_e = 2.089 × 15.84 × 2 pole pairs per m/s), so it is real at 600–1000 Hz at
+cruise. In ML0226 it carries 61–66 % of the snapshot variance at 1.5–2.0 m/s. It is coherent with
+I_tot at 0.94–0.99, with I_fc and I_batt at 0.99, and with the commanded motor current I_cmd at
+only 0.01–0.05. It is therefore real bus current drawn by the VESC, not a measurement artefact.
+The bus impedance at this line is 81–133 mΩ, about 1.5x the 2–134 Hz value of 52–98 mΩ.
+
+The TPS61288 contributes little to V_bus. Re-derived from DS §8.4.2 (p.11–12), L = 2.2 µH and
+f_sw = 500 kHz, the PFM boundary is about 0.45 A for BT (7.7 V) and 0.57–0.75 A for FC
+(9.5–11 V). The FC boost therefore always runs in PFM, and the BT boost runs near its boundary at
+cruise. All PFM frequencies are far above the ADC band. The motor-on broadband floor of V_bus
+rises from 0.44 to only 0.51 LSB, so aliased boost ripple on V_bus is at most 1.2 mV per sample.
+The ripple is large elsewhere: I_fc broadband rises from 0.42 to 5.0 LSB (about 40 mA per sample)
+and V_fc from 5–7 to 25–29 LSB. The INA253 shunt sits upstream of the RT1987, so the shunt sees
+the boost output ripple that the bus does not.
+
+The standstill floor is the ADC chain. V_bus, V_rgn, I_fc and I_batt all read 0.42–0.50 LSB at
+standstill, and their cross-channel correlation is at most 0.06, so a common reference term is
+excluded. The vehicle standstill floor (2.9–3.5 mV, and 4.7–4.9 mV in the battery-only bag) is
+higher than the bench floor (2.2–2.5 mV per snapshot). This difference is not explained.
+
+### 9.3 The RT1987 ideal diodes
+
+The RT1987 adds no measurable noise to V_bus. Its effects are as follows:
+- **Topology.** On the 20260622 netlist, each path runs from the boost output (FB tap and output
+  ceramics) through the INA253 shunt, a 10 µF capacitor and the RT1987 to the common VBUS node.
+  The V_bus divider taps the post-diode VBUS node. The shunt and the switch are therefore outside
+  each boost's regulation and droop loop.
+- **Forward regulation.** The servo holds VIN − VOUT at about 35 mV while I·RON < 35 mV, that is
+  below about 1.75 A (DS p.7, §17.6 p.16). Every rig current is in this regime. The typical curve
+  (DS p.13, VIN 28 V) is not flat: it reads 35 / 46 / 55 mV at 0 / 1 / 2 A, so the incremental
+  resistance is about 10.5 mΩ.
+- **Effect on the share.** The common 35 mV offset cancels in the split. VFWD changes by only
+  0.03 mV/°C, and its part-to-part spread is not specified (`TODO(verify: Richtek)`). The RT1987
+  is therefore not the source of the −45 to −65 mV ΔV0 estimate. The TPS61288 reference tolerance
+  (0.588–0.612 V, DS §6.5 p.6, about ±320 mV at 16 V) can account for it.
+- **Light load.** No dropout or limit cycle occurs at the FC minority floor:
+  - ML0226: 0 of 245 879 ticks with I_tot > 0.2 A have I_fc below 4 mA; the minimum is 0.048 A.
+  - Bags: every zero I_fc sample while moving falls inside a purge.
+  - I_fc and I_batt are positively correlated in every band, so the two sources do not trade
+    current.
+- **Above the servo bandwidth.** The datasheet does not give the servo bandwidth. Above it, the
+  switch acts as a resistance of about VFWD/I: 0.23 Ω at 0.15 A and 0.07 Ω at 0.5 A. With the VBUS
+  ceramics this forms a low-pass of 9–120 kHz, which attenuates the boost ripple by 0.03–0.36. The
+  same mechanism is a candidate for the impedance rise at 600–800 Hz (Section 9.2). Neither effect
+  has been measured.
+- **HIL model.** The HIL plant models the drop as 35 mV + I × 21 mΩ (`tools/hil_electrical.py`
+  :139–140, :1601). Against the typical curve this overstates the drop by 1.5 mV at 0.15 A and by
+  10 mV at 1 A. The error does not matter for the share or the handoff logic, because
+  `DROOP_FIXED_SERIES_OHM` (0.033 Ω) lands on the empirical series resistance of 30 mΩ.
+
+### 9.4 Why the bags show low coherence and a flat spectrum
+
+The bag's low V_bus–I_tot coherence above 6 Hz does not show an independent voltage source. Two
+effects explain it:
+- **Folding.** In ML0226, 72–98 % of the 21 ms snapshot V_bus variance below 23.8 Hz is folded
+  content from above 23.8 Hz. At standstill the snapshot reads 2.3–2.5 mV against 0.56 mV of true
+  in-band content. A 21 ms boxcar mean followed by decimation removes the fold almost completely
+  (`figs/vbus_blg1k_fold.png`). Folding many components with different transfer functions
+  scrambles coherence: the bench line coherence of 0.94–0.99 falls to 0.08–0.39 after decimation.
+- **Read skew.** V_bus is read about 300 µs after the currents. For the 6x line the same-tick
+  correlation goes as cos(2π · 397 v · 0.33 ms). It is +0.34 at 1.5 m/s and −0.48 at 2.5 m/s, so
+  pooling over speed drives it to about zero.
+
+The bag excess is white: the fw v37 cruise bands of 5.7 / 6.2 / 8.7 mV match the 5.2 / 6.4 /
+8.9 mV that white noise of 12.6 mV per sample predicts. The 12–23.8 Hz band is larger only
+because it is wider. Speed is the only variable that moves the bag residual by a large amount:
+from 3.1 mV below 0.5 m/s to 13.5 mV at 2.5–3.5 m/s. I_fc level, I_batt across the BT PFM
+boundary, the share command and the time since a purge each change it by at most ±8 %.
+
+### 9.5 Consequences
+
+A 20 ms boxcar mean in the telemetry (action F5) would remove most of the V_bus and share noise
+that the bags show. However, the loop itself samples at 875–1000 Hz, so the 6x line folds near
+DC in the control samples when v ≈ f_loop / 397, which is about 2.2–2.5 m/s, the cruise speed. A
+boxcar applied after sampling cannot remove that alias. Only an analog filter at the ADC pin, or
+averaging over the full tick, prevents it. That near-DC alias also reaches the drive and share
+controllers, which use the same samples. Its size in the vehicle is not measured.
+
+The firmware and re-spin actions from this section are:
+- **Firmware:** keep F5. Add continuous ADC conversion that averages over the full tick (the
+  DMA proposal in `agents/sensing.md`), which places nulls at multiples of the loop rate.
+  Stamp `micros()` around `updateSensors()` and log the loop period. Consider a fixed 1 kHz loop
+  so that the sampling and the logs have a defined rate.
+- **Re-spin:** an RC at the V_bus divider tap (100 nF gives 194 Hz with the 8.2 kΩ source), test
+  points across each RT1987, and better VESC input decoupling at V-MOT to reduce the 6x line at
+  its source. The details are in `docs/respin_noise_notes_2026-11-05.md`.
+
+### 9.6 The measurement that settles the rest
+
+A vehicle 1 kHz `K` log with the H-20 and the pack (switch state 0x27) settles most of the open
+items. The run needs 10 s at standstill, steady holds of at least 15 s each at 1.0, 1.5, 2.0 and
+2.5 m/s, and at least one natural purge. It gives:
+- the vehicle loop rate;
+- the vehicle split of the V_bus excess into folded line, broadband excess and floor;
+- the vehicle standstill floor;
+- the bus impedance at 1x and 6x at the vehicle operating point;
+- the first look at a purge and at the RT1987 at 1 kHz.
+
+A differential scope across VIN–VOUT of D-FC and D-BT at 2 m/s would settle the RT1987
+high-frequency behaviour. The board has no test points for this.
+
+**Figures for this section:**
+
+| File | Content |
+|---|---|
+| `vbus_blg1k_fold.png` | True, snapshot and boxcar V_bus band rms for each ML0226 segment |
+| `vbus_blg1k_psd.png` | V_bus ASD by condition; single versus dual source |
+| `vbus_switching_speedline.png` | ML0226 V_bus spectrogram with the speed-locked line. The frequency axis assumes a 1 kHz sample rate; multiply by 0.876 for true Hz. |
+| `vbus_switching_budget.png` | Switching budget against measurement |
+| `vbus_rt1987_drop_and_spectra.png` | RT1987 drop models and the V_bus spectra |
+| `vbus_bagtest_residual_dependence.png` | Bag residual against speed, currents and load |
