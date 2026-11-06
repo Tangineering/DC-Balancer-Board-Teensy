@@ -1,0 +1,77 @@
+# freeform: signal-noise insights from the fw v37 bag (11-05) vs fw v35 (10-30) and older bags
+
+Scope: `rosbag_sdp_2026-11-05_20-09-52` (fw v37 rev 2), `rosbag_sdp_2026-10-30_01-49-38` (fw v35), `rosbag_sdp_2026-10-26_23-57-14` (<= v31a, battery-only), and `-10-29_19-51-48` (pre-fault span only). Unless a line says otherwise, the steps are: duplicate rows dropped (see insight 1) and data put on a 21 ms grid; purges excluded at +/-0.5 s; own share s = I_fc/(I_fc+I_batt) with a 0.3 A gate, in 0x27 only. Scripts are in `scratchpad/freeform/a1..a20.py`.
+
+## 1. The telemetry rate is 47.62 Hz, not 50 Hz, and the bags carry one duplicate row in every 21 (NEW)
+- `.ino:6812` sends on `if (millis() - lastSend > 20)`, which gives a 21 ms period. The bridge republishes `/vehicle_state` on a 50 Hz timer (`publish_hz` 50.0, `create_timer`). The result is an identical consecutive row every 21 publishes: 447/9379 (10-30), 398/8355 (11-05) and 585/12292 (10-26). Spacing is median 21 (p10-p90 20-21), there are 0 triple repeats, and the unique-row rate is 47.62 Hz in all three. The 10-20 simple bag reads 46.9 Hz with 39 triples, so that bag also has real drops.
+- Consequences:
+  - Nyquist is 23.8 Hz.
+  - The duplicate pattern is a 50/21 = 2.381 Hz sampling modulation. In a synthetic test, a 4.6 Hz line on the duplicated grid gets images at 2.22 Hz (-22 dB) and 6.98 Hz (-19 dB).
+  - In 10-30 cruise I_batt (v 2.0-2.5 m/s), de-duplication halves the PSD at 1x+2.381 Hz (1.16e-3 to 6.0e-4 A^2/Hz). About half of the "fixed 6.93 Hz line" in `docs/fw37_planning_2026-11-04.md` 6.1 is therefore probably this image of the 1x line at 4.55 Hz. Confidence is moderate: only 3 Welch segments. The 4.10 Hz line is not explained.
+- The EKF and `/h2_usage` use per-packet `_dt` (monotonic), so they are unaffected. `/soc_diagnostics` and `/h2_usage` carry the same 398 duplicates.
+
+## 2. The 1x reduction matches the design ratio, and the stationary floor did not move (quantitative closure)
+- Cruise I_batt at 2.2 m/s (1x = 4.60 Hz, de-duplicated): PSD at 1x went from 4.41e-2 to 3.58e-3 A^2/Hz. That is an amplitude ratio of 0.285, against the designed |C*S| new/old of 0.29 at 4.6 Hz (3 segments per bag).
+- Stationary floors are unchanged (10-30 then 11-05): I_batt 4.91 / 4.97 mA, V_bus 3.44 / 2.87 mV, V_batt 8.90 / 9.03 mV. Nothing else in the sensing chain changed between the runs, which rules out a cable, temperature or grounding change.
+- The two runs are near-replicates. The SDP command staircase is identical (44 steps > 0.05, same times within 0.04 s). Purge onsets fall at the same drive-cycle phase in all three bags (-5.26 / -5.61 / -6.14 s before first v_sp > 0, 10.340 s period).
+- Trap: epoch medians locked to the purges are confounded by the staircase. My first purge figure showed a 0.25 to 0.5 share bump about 1 s after each purge, and that bump is entirely commanded (cmd 0.84 to 0.24 transitions).
+
+## 3. At the rails, the share signal is a load-divided floor, not a regulated variable (NEW; bears on the share-noise question)
+- The command sits at 0.16 for 73-76 % of each run. There the FC minority current is held at a median 0.129 A (IQR 0.048 for v35, 0.032 for v37), which equals `SHARE_MINORITY_I_MIN_A` 0.125 A. Delivered share follows 0.098/I_tot + 0.048 (R^2 0.69, v37) or 0.080/I_tot + 0.078 (R^2 0.42, v35). The BT minority at the 0.80+ rail behaves the same way (0.129 A). See `freeform_rail_share_vs_load.png`.
+- The command staircase explains 90 % (v35) and 92 % (v37) of total share variance. After subtracting the per-rung median, the residual 2-6 Hz band falls from 0.028 to 0.011 (-60 %) and the 6-12 Hz band from 0.013 to 0.009. Contiguous runs of 128 samples or more were used, steps were excluded from -0.05 to +0.4 s, and there were 9 or 10 segments. The quick scan's "share 2-6 Hz UP" is therefore most likely staircase edges and mixed switch states, not loop noise.
+- The residual standard deviation is dominated by content below 0.4 Hz at the rails, which is the 1/I_tot floor riding on load: 0.065 (v37) and 0.071 (v35) at the 0.16 rung, against 0.015-0.025 at the mid rungs 0.245 and 0.49 in both runs.
+- Coherence between share and I_tot at the 0.16 rung:
+  - 0.4-1 Hz: phase 155-161 deg. The minority current is held there.
+  - 6-24 Hz: coherence 0.3-0.46, gain about 0.13 per A, phase about 0 deg. Fast load increments split roughly 0.27 to FC; this is inferred as s + gain*I_tot and is presumably the passive droop ratio.
+- Verdict, with medium confidence: this data gives no sign that the share loop needs more or less bandwidth. The share "noise" is the command staircase plus the floor law.
+
+## 4. The H-20 has a second periodic event at +5.5 s after each purge (NEW)
+- V_fc shows a rectangular step of -0.69 V (sem 0.005, n=7 fully idle epochs; median -0.72 V over 23 epochs in 10-26). It is 0.53 s wide and starts at +5.34..+5.70 s after every purge, in every cycle of all three bags.
+- No other channel moves with it. Over the 7 idle epochs: I_batt -0.3 mA, V_bus -0.1 mV, V_rgn -0.1 mV, V_chg 0. V_batt reads +1.7 mV (sem 0.3), probably ADC crosstalk.
+- Under load (moving 0x27) the step is -0.54 / -0.57 V, and I_fc does not change (0.154 vs 0.161 A median), so the boost absorbs it. The source is internal to the H-20 (controller, fan or valve) and is unverified. It accounts for the 0.25 V standard deviation in the 4-7 s post-purge window at rest. It is harmless to the share loop and far above `LIMIT_V_FC_MIN` 4.5 V. It raises the bridge's `i_stack` (I_fc*V_bus/(eta*V_fc)) by about 7 % for 5 % of the time, which is about 0.35 % in hydrogen. See `freeform_fc_midcycle_dip.png`.
+
+## 5. Pack R0 is about 0.025 ohm from the telemetry, and the EKF's own innovations confirm it (NEW; matters for the EKF)
+- I took the cross-spectrum of the inferred pack current (I_batt*V_bus/(V_batt*0.90)) against V_batt over moving windows.
+  - The transfer magnitude is 0.021-0.028 ohm and flat from 0.2 to 12 Hz, with phase within +/-10 deg.
+  - Coherence is 0.5-0.95 in the 0.2-1 and 4-7 Hz bands.
+  - A least-squares fit high-passed above 0.3 Hz gives 0.0265 (10-26), 0.0261 (10-30), 0.0235 (11-05) and 0.0266 (10-29) ohm.
+- Independent check: the `/soc_diagnostics` innovation (11-05), high-passed above 0.3 Hz, regresses on `i_pack` with a slope of +0.0257 ohm. That is 0.050 minus 0.024, so the innovations themselves measure the error in the `pack_r_int_ohm` 0.050 placeholder.
+- The innovation high-pass standard deviation is 8.9 mV. Only 18 % of that is explained by current; the rest is the V_batt floor (insight 6). `r_meas` 4e-4 (sigma 20 mV) is about 2x the measured floor.
+- Caveats: R0 is measured at the board's V_batt sense point (wiring, connector and the BT_SEQ switch included), and it scales with the assumed eta of 0.90.
+
+## 6. The V_batt channel floor is 3x V_bus, and the telemetry is a one-tick snapshot (NEW)
+- At rest, V_batt is 9.0 mV rms, which is 4.3 LSB of 2.1 mV. It is white from 1 to 24 Hz (PSD about 3.5e-6 V^2/Hz), Gaussian (kurtosis -0.2..-0.3, 21-22 distinct codes) and uncorrelated with I_batt, V_bus, V_rgn and V_fc (|r| <= 0.08).
+- V_bus reads 2.9-3.4 mV with a coarser 4.5 mV LSB.
+- Moving V_batt rms is 8.4-10.7 mV, essentially at the floor. The R0*I signal is smaller than the noise floor except at the 1x line.
+- `sendTelemetry()` ships the single most recent `analogRead()` (with `analogReadAveraging(16)`). Every component from 24 to 500 Hz folds into the bags. The cause of the V_batt excess is unverified; candidates are BT boost input ripple or the divider/ADC node.
+
+## 7. Smaller items
+- /h2_usage: current noise does not bias the Faraday integral. The integral is linear in I and per-packet, the mean of mdot equals mdot of the mean exactly, and ticks at the quantum level (`i_stack` < 0.03 A) carry 0.1 % of the total. The bias that does exist is `purge_g_s` = 0 ("UNMEASURED"). Against the repo's A0 of 6.633e-5 g/s, the bridge's 5.97e-5 g/s mean under-reports by about 2.1x (0.0063 g vs about 0.0174 g over 167 s), assuming the brochure A0 applies to this stack.
+- OC_FC headroom: the I_fc snapshot maximum went from 1.160 to 0.903 A and p99.9 from 0.996 to 0.857 A. Ticks above 1.0 A went from 4/8933 to 0/7958. The snapshot margin to the 1.4 A trip roughly doubled, from 0.24 to 0.50 A; the 1 kHz crest itself is unsampled.
+- Stack impedance (stack current to V_fc, moving 0x27): about 1.2-1.3 ohm below 1 Hz, falling to 0.37-0.54 ohm at 7-12 Hz with -6..-16 deg phase, which is capacitive. V_fc 2-6 Hz rms halved (0.124 to 0.059 V) with v37.
+- Purges cap contiguous clean windows at about 9.3 s (465 samples). Any purge-excluded Welch with nperseg 512 silently returns nothing.
+
+**Not verified:** the origin of the mid-period event, the cause of the V_batt floor excess, and R0 apart from the eta assumption. The 4.10 Hz line remains unexplained.
+
+
+## Adversarial verification (data and physics lenses)
+
+- [C1] Teensy telemetry arrives at 47.62 Hz (21 ms, `millis() - lastSend > 20` at .ino:6812) and the bridge's 50 Hz timer inserts exactly one duplicate /vehicle_state row per 21 publishes (398/8355 in 11-05, 447/9379 in 10-30, 585/12292 in 10-26).
+   data: CONFIRMED -- Teensy telemetry arrives at 47.62 Hz: the send period is 21 ms because of `millis() - lastSend > 20` at teensy_controller.ino:6812. The bridge's 50 Hz publish timer (teensy_bridge_node_2026-11-03A.py:444, 599-600) re-publishes the stale packet exactly once per 21 publishes, at a 2.38 Hz beat, with no triples. The counts are 398 duplicates in 8356 rows (11-05), 447 in 9380 (10-30) and 585 in 12293 (10-26).
+   physics: CONFIRMED -- Teensy telemetry arrives at 47.62 Hz, a 21 ms period, because `millis() - lastSend > 20` at teensy_controller.ino:6812 is a strict inequality on integer ms. The bridge's 50 Hz create_timer republishes the latest packet (teensy_bridge_node_2026-11-03A.py:444, 599-600), so it inserts about one duplicate /vehicle_state row per 21 publishes (spacing mostly 21, sometimes 20 or 22, never two in a row). The counts are 398/8356 rows in 11-05, 447/9380 in 10-30 and 585/12293 in 10-26. The effective uniqu
+- [C2] The cruise 1x I_batt line (2.2 m/s, 4.60 Hz) fell by an amplitude ratio of 0.285 (PSD 4.41e-2 -> 3.58e-3 A^2/Hz), matching the designed |C*S| ratio 0.29, while the stationary floors stayed within 0.6 mV / 0.06 mA (I_batt 4.91/4.97 mA, V_batt 8.90/9.03 mV).
+   data: PARTLY -- The cruise 1x I_batt line (v 2.0-2.5 m/s, mean 2.21 m/s, about 4.6-4.7 Hz, all in 0x27) fell by an amplitude ratio of 0.29. The estimates are 0.293 from peak PSD (nperseg 256), 0.291 at nperseg 128 and 0.290 from 3.8-5.4 Hz band RMS (0.136 to 0.040 A), which matches the designed |C*S| ratio of 0.29.
+
+Absolute PSD levels depend on the resolution: 2.50e-2 to 2.14e-3 A^2/Hz at fs 50 Hz and 0.195 Hz bins. They should not be quoted as fixed values.
+
+With high-pass (above 1 Hz) or successive-differenc
+   physics: PARTLY -- The cruise (2.2 m/s) 1x I_batt line at 4.65 Hz fell from a PSD of 4.54e-2 to 3.52e-3 A^2/Hz, an amplitude ratio of 0.278. That is consistent with the designed |C*S| ratio of 0.29 at 4.6 Hz, but with only 3 Welch segments per bag the ratio is uncertain by roughly +/-25 %. The stationary high-frequency floor, measured by successive differences, did not rise: I_batt went from about 5.7 to about 4.8 mA and V_batt from about 8.5 to about 8.1 mV (mean over switch states). The plain-std stationary figu
+- [C3] At the 0.16 command rail (73-76 % of run time) the FC minority current is held at a median 0.129 A and delivered share follows 0.098/I_tot + 0.048 (R^2 0.69, v37); the command staircase explains 90-92 % of share variance, and the staircase-removed 2-6 Hz share residual fell 0.028 -> 0.011 from v35 to v37.
+   data: CONFIRMED -- The command is at the 0.16 rail for 73-76 % of run time, which is 56-58 % of the gated 0x27 samples. At the rail the FC minority current has a median of 0.129 A in v37 and 0.137 A in v35. In v37 the delivered share follows 0.099/I_tot + 0.047 (R^2 0.69); the fit is weaker in v35 (R^2 0.41). The command staircase explains 90-91 % of share variance. The staircase-removed 2-6 Hz residual fell from 0.026 to 0.010 between v35 and v37, confirmed by Welch and bandpass. That result rests on about 30 s o
+   physics: CONFIRMED -- At the 0.16 command rail (73-76 % of total run time; about 57 % of valid 0x27, I_tot>0.3 ticks), the FC minority current is held near the 0.125 A minority floor (median 0.129 A on v37, 0.137 A on v35). The cause is the band clip at teensy_controller.ino:622. On v37 the delivered share follows 0.099/I_tot + 0.047 (R^2 0.69); the fit is weaker on v35 (R^2 0.41). The command staircase explains 90-91 % of share variance. The staircase-removed 2-6 Hz share residual fell about 0.026-0.028 -> 0.010-0.0
+- [C4] The H-20 shows a second periodic event: a rectangular -0.69 V (sem 0.005) V_fc step, 0.53 s wide, at +5.34..+5.70 s after every purge in all three bags, with no counterpart on I_batt, V_bus, V_rgn or V_chg (<=0.3 mV / 0.3 mA) and I_fc unchanged under load.
+   data: PARTLY -- After every H-20 purge, about 5.25-5.75 s after onset (0.50-0.54 s wide), the stack shows a second periodic rectangular V_fc dip. It appears in all three bags (10-26, 10-30, 11-05) on every purge cycle. On the open-circuit stack (0x26, I_fc = 0) it is -0.68 V against the flanking windows, sem 0.002, n=23 in 10-26, drifting from -0.70 to -0.66 V across the bag. Under load (0x27, I_fc 0.12-0.39 A) it shrinks to about -0.3 to -0.6 V. It has no detectable counterpart on I_batt, V_bus, V_rgn or V_chg
+   physics: PARTLY -- The H-20 shows a second periodic V_fc event phase-locked to the 10.34 s purge cycle. It is a rectangular step about 0.50 s wide, with edges at +5.22..+5.26 s and +5.72..+5.76 s after the purge onset (V_fc below median-2 V). It appears in every cycle of 10-26, 10-30 and 11-05 by edge detection. Its depth is -0.72 V at idle with the FC off the bus (10-26, I_fc = 0, so it is intrinsic to the stack and its controller) and a median of -0.56 to -0.69 V under load, where load transients blur the level.
+- [C5] Pack R0 seen from the telemetry is 0.0235-0.0266 ohm (flat 0.2-12 Hz, four bags), and the EKF innovation regresses on i_pack with slope +0.0257 ohm = the error of the 0.050 ohm placeholder.
+   data: CONFIRMED -- The pack resistance seen from the telemetry is 0.024-0.027 ohm (HP>0.3 Hz least squares, five SDP bags including the battery-only 10-26 control). It is approximately flat (0.022-0.029 ohm) over 0.2-12 Hz and lower (about 0.021) above 12 Hz. This value assumes the 0.9 boost efficiency in I_pack and includes wiring up to the V_batt sense point. On 11-05 the EKF innovation regresses on i_pack with slope +0.0257 ohm, which equals r0 placeholder 0.050 minus a true R of 0.0243. Replacing r0 with about
+   physics: PARTLY -- On the 11-05 bag, the EKF innovation regresses on the bridge's i_pack (HP > 0.3 Hz) with a slope of +0.0257 ohm (r = 0.42; band slopes 0.023-0.029 ohm, 0.3-12 Hz). The bridge's model is y = -i*(R0_true - 0.050), so the 0.050 ohm placeholder overstates the effective resistance by about 0.026 ohm. The implied R0_true of about 0.024 ohm matches the CSD estimate of 0.0235-0.0266 ohm. This R0 is the effective source impedance seen at the V_batt sense node: pack, BT_SEQ path and wiring. It is conditio

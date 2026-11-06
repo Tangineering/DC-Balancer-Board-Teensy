@@ -1,5 +1,24 @@
 # Work queue — updated post round 2026-09-02 (Ag105 η = 0.88, η-era DP/SDP, MPC live, campaigns B and C analysed, physics review closed, session closed out)
 
+## 0l. fw v37 noise round (2026-11-05) - share-ratio noise, firmware noise actions
+
+Record: `docs/reviews/noise_fw37_2026-11-05/README.md` (bag `rosbag_sdp_2026-11-05_20-09-52`, fw v37 rev 2, vs
+fw v35 `10-30_01-49-38`). Re-spin items: `docs/respin_noise_notes_2026-11-05.md`. Verdict: 1x fell 0.2-0.4x on every
+channel incl. the share (hidden by the SDP staircase + purges); the share loop rejects the 1x band (|S(4.6 Hz)| 0.26)
+and needs NO bandwidth change; the remaining steady share 1x is the governor minority floor 0.125/share_govTotAFilt.
+
+- [ ] 1. **Bench BLG A/B (settles the 6-24 Hz share floor, the 10 Hz lines, in-situ S/T, purge-detector latency):**
+      1 kHz BLG at ~2.2 m/s, cmd 0.16 then 0.49, >= 30 s each, purges flagged; then the same with F4 (synchronous
+      I_fc/I_batt reads). Record section 7.
+- [ ] 2. **Operator ruling (F2):** noise metric at the minority rail - FC current (frequency-split FC reference) or
+      flat share (slow filter on the floor `lo`). Today's 20 ms EMA achieves neither (H(I_fc/I_tot) 0.19 vs 0.23).
+- [ ] 3. **Firmware (orchestrated-feature, fw v38 candidates):** F1 telemetry `lastSend += 20` (47.62 Hz + 1-in-21
+      duplicate rows today); F3 purge-aware share freeze (ratio windup +0.17..+0.41, post-purge I_fc kick up to 3.6x);
+      F4 synchronous current reads; F7 share-loop gate tolerance. F5 telemetry boxcar means = protocol v5 (planning
+      section 4).
+- [ ] 4. **Pi:** bridge `pack_r_int_ohm` 0.050 -> ~0.025 ohm (R0 from telemetry + EKF innovations), `r_meas` ~1e-4;
+      SDP share-command dwell (EMS ruling); purge H2 term.
+
 ## 0k. fw v36 review + rosbag regen analysis (2026-11-04) - fw v37 inputs
 
 Record: `docs/reviews/fw36_regen_2026-11-04/README.md` (findings, ranked regen causes, the fw v37 proposal).

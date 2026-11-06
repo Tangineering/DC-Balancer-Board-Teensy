@@ -1,4 +1,4 @@
-# Pi rosbags (scale-car bench runs, 2026-09 through 2026-10)
+# Pi rosbags (scale-car bench runs, 2026-09 through 2026-11)
 
 ROS 2 bags (`.mcap` plus `metadata.yaml`) that the Raspberry Pi recorded during
 the PhD student's bench runs. They come from `phd/siddhesh-2026-11-03`
@@ -32,6 +32,7 @@ ceiling `1.10 / I_total_filtered` switched on or off.
 | `rosbag_sdp_2026-10-28_22-18-10` | sdp | 111 | 5562 | 2.0 |  |
 | `rosbag_sdp_2026-10-29_19-51-48` | sdp | 235 | 11775 | 4.2 |  |
 | `rosbag_sdp_2026-10-30_01-49-38` | sdp | 188 | 9380 | 3.3 |  |
+| `rosbag_sdp_2026-11-05_20-09-52` | sdp (fw v37 rev 2, vehicle build; first bag with `/h2_usage`) | 167 | 8356 | 4.9 |  |
 | `rosbag_simple_2026-10-20_00-38-02` | simple | 225 | 11239 | 4.4 | yes |
 | `rosbag_sweep-clip_2026-10-22_23-18-00` | sweep-clip | 83 | 4170 | 1.4 | yes |
 | `rosbag_sweep-noclip_2026-10-22_23-25-13` | sweep-noclip | 83 | 4165 | 1.3 | yes |
@@ -70,6 +71,10 @@ references in the firmware itself bound it (git history of
 - fw v35 was the flashed build as of 2026-11-03. fw v36 has not run on the board.
 - The 2026-09-07 / 09-10 bags are from around the time fw v30 was written (2026-09-16 ledger date), so they
   ran an earlier build. Unverified.
+
+- **`rosbag_sdp_2026-11-05_20-09-52`**: fw v37 rev 2 (`da0746c`), vehicle build. The student's
+  `Teensy_v37.ino` (`6b1ca57` on `phd/siddhesh-2026-11-03`) differs from `da0746c` only in
+  `BENCH_TEST 0` and `USE_ETHERNET 1`. Bridge 2026-11-03A (`references/EMS/Pi_2026-11-05/`).
 
 Record the firmware version with every future bag (for example in the bag name
 or a sidecar note) so the next round does not have to infer it.

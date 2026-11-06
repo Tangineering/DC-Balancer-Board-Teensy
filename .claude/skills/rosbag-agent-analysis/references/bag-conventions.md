@@ -114,6 +114,21 @@ uncalibrated).
 18. **Separate sources before comparing dates.** V_fc flat at ~8.3-8.6 V with no purge dips
     (09-07, 09-10, 10-20 before 06:40) is not the H-20.
 19. **Quantization:** currents 8.06 mA/count, V_bus 4.5 mV, V_fc 3.0 mV, V_rgn 7.1 mV.
+20. **Telemetry is 47.62 Hz, and one row in 21 is an exact repeat** (fw <= v37: `millis() - lastSend
+    > 20` gives a 21 ms period; the bridge republishes on a 50 Hz timer). De-duplicate before any
+    spectrum and use fs = 47.62 Hz (Nyquist 23.8 Hz). The repeats put image lines at f +/- 2.38 Hz
+    (about -20 dB); half of the old "6.93 Hz line" is the 1x image. (noise round 2026-11-05)
+21. **`vs[:,10]` / `vs[:,11]` are Q16 droop GAINS** (`droop_gain_*_actual x 65535`), not 0-4095 MDAC
+    codes. The droop ratio is r = g_BT/(g_FC+g_BT).
+22. **Share noise needs the command staircase and the purges removed.** The SDP staircase explains
+    ~90 % of share variance and the purges dominate 2-6 Hz; an unmasked share PSD says nothing about
+    the loop. At the 0.16 / 0.84 rails the delivered share is the governor minority floor
+    0.125 A / I_tot_filt (below ~0.78 A of total), not the command - a load-divided quantity.
+23. **Purges cap clean windows at ~9.3 s** (465 samples): a purge-excluded Welch with nperseg 512
+    returns nothing; use nperseg <= 128 and accumulate across segments.
+24. **The H-20 has a second event** ~-0.7 V for ~0.5 s at +5.2..+5.7 s after each purge onset (present
+    with I_fc = 0). A purge detector on a V_fc threshold near 1 V below median can catch it; detect
+    purges by I_fc -> 0 or by depth > 2 V.
 
 ## Provenance / comparability
 
