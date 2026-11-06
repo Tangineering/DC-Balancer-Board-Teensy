@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1760" height="1420" viewBox="0 0 1760 1420">
 <rect x="0" y="0" width="1760" height="1420" fill="#ffffff"/>
-<text x="880.0" y="26.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="18" text-anchor="middle" fill="#1b1f24" font-weight="bold">CHG adapter carrier (CR) and EVM interface board (EIB): schematic, round 3 r1</text>
+<text x="880.0" y="26.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="18" text-anchor="middle" fill="#1b1f24" font-weight="bold">CHG adapter carrier (CR) and EVM interface board (EIB): schematic, round 3 r6</text>
 <text x="880.0" y="46.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="11" text-anchor="middle" fill="#5b6470" font-weight="normal">Net-label schematic. Values from calc/r3_calc.py; pin numbers in design section B.8. Every net name matches section B</text>
 <rect x="20.0" y="70.0" width="560.0" height="340.0" rx="6" fill="#f4f6f8" stroke="#1b1f24" stroke-width="1.4"/>
 <text x="28.0" y="88.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="13" text-anchor="start" fill="#1b1f24" font-weight="bold">1  eFuse U101 TPS26630RGER</text>
@@ -60,11 +60,11 @@
 <polyline points="123.0,174.0 137.0,174.0" fill="none" stroke="#444" stroke-width="1.6"/>
 <polyline points="126.0,177.0 134.0,177.0" fill="none" stroke="#444" stroke-width="1.4"/>
 <polyline points="128.5,180.0 131.5,180.0" fill="none" stroke="#444" stroke-width="1.2"/>
-<text x="141.0" y="165.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="start" fill="#1b1f24" font-weight="normal">C102 100n 50V</text>
+<text x="141.0" y="165.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="start" fill="#1b1f24" font-weight="normal">C102a/b/c 1u+4.7u+0.1u; D107</text>
 <polyline points="60.0,150.0 60.0,166.0" fill="none" stroke="#1b1f24" stroke-width="1.4"/>
 <polyline points="60.0,194.0 60.0,210.0" fill="none" stroke="#1b1f24" stroke-width="1.4"/>
 <rect x="55.5" y="166.0" width="9" height="28" fill="#fff" stroke="#1b1f24" stroke-width="1.3"/>
-<text x="68.0" y="183.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="start" fill="#1b1f24" font-weight="normal">R102 845k</text>
+<text x="68.0" y="183.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="start" fill="#1b1f24" font-weight="normal">R102 845k 0805</text>
 <polyline points="60.0,150.0 110.0,150.0" fill="none" stroke="#c0392b" stroke-width="1.4"/>
 <polyline points="60.0,210.0 200.0,210.0" fill="none" stroke="#1b1f24" stroke-width="1.4"/>
 <polyline points="60.0,210.0 60.0,211.0" fill="none" stroke="#1b1f24" stroke-width="1.4"/>
@@ -117,7 +117,7 @@
 <polyline points="445.0,176.0 459.0,176.0" fill="none" stroke="#444" stroke-width="1.6"/>
 <polyline points="448.0,179.0 456.0,179.0" fill="none" stroke="#444" stroke-width="1.4"/>
 <polyline points="450.5,182.0 453.5,182.0" fill="none" stroke="#444" stroke-width="1.2"/>
-<text x="466.0" y="172.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="8" text-anchor="start" fill="#1b1f24" font-weight="normal">D103 40V 3A</text>
+<text x="466.0" y="172.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="8" text-anchor="start" fill="#1b1f24" font-weight="normal">D103 low-IR Schottky</text>
 <polyline points="360.0,190.0 401.0,190.0" fill="none" stroke="#1b1f24" stroke-width="1.4"/>
 <polyline points="429.0,190.0 470.0,190.0" fill="none" stroke="#1b1f24" stroke-width="1.4"/>
 <rect x="401.0" y="185.5" width="28" height="9" fill="#fff" stroke="#1b1f24" stroke-width="1.3"/>
@@ -131,7 +131,7 @@
 <polyline points="378.0,240.0 392.0,240.0" fill="none" stroke="#444" stroke-width="1.6"/>
 <polyline points="381.0,243.0 389.0,243.0" fill="none" stroke="#444" stroke-width="1.4"/>
 <polyline points="383.5,246.0 386.5,246.0" fill="none" stroke="#444" stroke-width="1.2"/>
-<text x="330.0" y="232.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="8" text-anchor="start" fill="#1b1f24" font-weight="normal">C105 10n</text>
+<text x="300.0" y="232.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="8" text-anchor="start" fill="#1b1f24" font-weight="normal">C105 DNP (r6)</text>
 <polyline points="455.0,190.0 455.0,200.0" fill="none" stroke="#1b1f24" stroke-width="1.4"/>
 <polyline points="447.0,200.0 463.0,200.0" fill="none" stroke="#1b1f24" stroke-width="2"/>
 <polyline points="447.0,205.0 463.0,205.0" fill="none" stroke="#1b1f24" stroke-width="2"/>
@@ -147,7 +147,7 @@
 <text x="415.0" y="254.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="middle" fill="#1b1f24" font-weight="normal"></text>
 <polygon points="470.0,262.0 476.0,255.0 613.0,255.0 613.0,269.0 476.0,269.0 470.0,262.0" fill="#ffffff" stroke="#1f6fb2" stroke-width="1.1"/>
 <text x="479.0" y="265.5" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="start" fill="#1f6fb2" font-weight="normal">CHG_EFUSE_FLT (T16)</text>
-<text x="392.0" y="254.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="8" text-anchor="start" fill="#1b1f24" font-weight="normal">R106 10k to 3V3</text>
+<text x="392.0" y="254.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="8" text-anchor="start" fill="#1b1f24" font-weight="normal">R106 DNP (pin 35 INPUT_PULLUP)</text>
 <text x="366.0" y="292.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="start" fill="#5b6470" font-weight="normal">open (internal 2.48-3.3 V)</text>
 <polyline points="360.0,306.0 380.0,306.0" fill="none" stroke="#1b1f24" stroke-width="1.4"/>
 <polyline points="373.0,306.0 387.0,306.0" fill="none" stroke="#444" stroke-width="1.6"/>
@@ -170,7 +170,7 @@
 <polyline points="660.0,115.0 686.0,115.0" fill="none" stroke="#1b1f24" stroke-width="1.4"/>
 <polyline points="714.0,115.0 740.0,115.0" fill="none" stroke="#1b1f24" stroke-width="1.4"/>
 <rect x="686.0" y="110.5" width="28" height="9" fill="#fff" stroke="#1b1f24" stroke-width="1.3"/>
-<text x="700.0" y="107.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="middle" fill="#1b1f24" font-weight="normal">R109 487k</text>
+<text x="700.0" y="107.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="middle" fill="#1b1f24" font-weight="normal">R109 487k 0805</text>
 <polyline points="740.0,115.0 780.0,115.0 780.0,130.0 840.0,130.0" fill="none" stroke="#1b1f24" stroke-width="1.4"/>
 <polyline points="780.0,115.0 780.0,136.0" fill="none" stroke="#1b1f24" stroke-width="1.4"/>
 <polyline points="780.0,164.0 780.0,185.0" fill="none" stroke="#1b1f24" stroke-width="1.4"/>
@@ -193,7 +193,7 @@
 <polyline points="660.0,230.0 686.0,230.0" fill="none" stroke="#1b1f24" stroke-width="1.4"/>
 <polyline points="714.0,230.0 740.0,230.0" fill="none" stroke="#1b1f24" stroke-width="1.4"/>
 <rect x="686.0" y="225.5" width="28" height="9" fill="#fff" stroke="#1b1f24" stroke-width="1.3"/>
-<text x="700.0" y="222.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="middle" fill="#1b1f24" font-weight="normal">R111 442k</text>
+<text x="700.0" y="222.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="middle" fill="#1b1f24" font-weight="normal">R111 442k 0805</text>
 <polyline points="740.0,230.0 810.0,230.0 810.0,170.0 840.0,170.0" fill="none" stroke="#1b1f24" stroke-width="1.4"/>
 <polyline points="810.0,230.0 810.0,246.0" fill="none" stroke="#1b1f24" stroke-width="1.4"/>
 <polyline points="810.0,274.0 810.0,290.0" fill="none" stroke="#1b1f24" stroke-width="1.4"/>
@@ -230,7 +230,7 @@
 <polyline points="660.0,320.0 686.0,320.0" fill="none" stroke="#1b1f24" stroke-width="1.4"/>
 <polyline points="714.0,320.0 740.0,320.0" fill="none" stroke="#1b1f24" stroke-width="1.4"/>
 <rect x="686.0" y="315.5" width="28" height="9" fill="#fff" stroke="#1b1f24" stroke-width="1.3"/>
-<text x="700.0" y="312.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="middle" fill="#1b1f24" font-weight="normal">R114 1.00M</text>
+<text x="700.0" y="312.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="middle" fill="#1b1f24" font-weight="normal">R114 1.00M 0805</text>
 <polyline points="740.0,320.0 780.0,320.0 780.0,330.0 840.0,330.0" fill="none" stroke="#1b1f24" stroke-width="1.4"/>
 <polyline points="780.0,320.0 780.0,341.0" fill="none" stroke="#1b1f24" stroke-width="1.4"/>
 <polyline points="780.0,369.0 780.0,390.0" fill="none" stroke="#1b1f24" stroke-width="1.4"/>
@@ -258,12 +258,12 @@
 <rect x="920.5" y="311.0" width="9" height="28" fill="#fff" stroke="#1b1f24" stroke-width="1.3"/>
 <text x="933.0" y="328.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="start" fill="#1b1f24" font-weight="normal"></text>
 <polyline points="925.0,300.0 820.0,300.0 820.0,330.0" fill="none" stroke="#1b1f24" stroke-width="1.4"/>
-<text x="932.0" y="322.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="8" text-anchor="start" fill="#1b1f24" font-weight="normal">R116 11.0M</text>
+<text x="932.0" y="322.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="8" text-anchor="start" fill="#1b1f24" font-weight="normal">R116 10.0M</text>
 <polygon points="840.0,445.0 903.0,480.0 840.0,515.0 840.0,445.0" fill="#ffffff" stroke="#1b1f24" stroke-width="1.5"/>
 <text x="846.0" y="459.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="12" text-anchor="start" fill="#1b1f24" font-weight="normal">+</text>
 <text x="846.0" y="509.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="12" text-anchor="start" fill="#1b1f24" font-weight="normal">-</text>
 <text x="861.0" y="484.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="start" fill="#1b1f24" font-weight="bold">U104 BT_OK</text>
-<text x="640.0" y="444.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="start" fill="#1b1f24" font-weight="normal">REF -R141 61.9k- IN+ -R142 1.00k- KELVIN (T9); R143 100R KELVIN-GND</text>
+<text x="640.0" y="444.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="start" fill="#1b1f24" font-weight="normal">REF -R141 61.9k- IN+ -R142 1.00k SOT- KELVIN (T9); R143 100R KELVIN-GND</text>
 <polygon points="820.0,460.0 814.0,453.0 726.0,453.0 726.0,467.0 814.0,467.0 820.0,460.0" fill="#ffffff" stroke="#1f6fb2" stroke-width="1.1"/>
 <text x="730.0" y="463.5" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="start" fill="#1f6fb2" font-weight="normal">IN+ 19.75 mV</text>
 <polygon points="700.0,500.0 694.0,493.0 606.0,493.0 606.0,507.0 694.0,507.0 700.0,500.0" fill="#ffffff" stroke="#2e8b57" stroke-width="1.1"/>
@@ -297,84 +297,92 @@
 <rect x="726.0" y="625.5" width="28" height="9" fill="#fff" stroke="#1b1f24" stroke-width="1.3"/>
 <text x="740.0" y="622.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="middle" fill="#1b1f24" font-weight="normal">R120 10k</text>
 <polyline points="780.0,630.0 840.0,630.0" fill="none" stroke="#1b1f24" stroke-width="1.4"/>
-<text x="640.0" y="660.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="start" fill="#2e8b57" font-weight="normal">R119 1.00M IN- -&gt; 3V3 (open tap -&gt; BTB_OFF LOW)</text>
+<text x="640.0" y="660.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="start" fill="#2e8b57" font-weight="normal">R119 10.0M IN- -&gt; 3V3 (open tap -&gt; BTB_OFF LOW)</text>
 <polyline points="903.0,610.0 980.0,610.0" fill="none" stroke="#1b1f24" stroke-width="1.4"/>
 <polygon points="980.0,610.0 986.0,603.0 1039.0,603.0 1039.0,617.0 986.0,617.0 980.0,610.0" fill="#ffffff" stroke="#1f6fb2" stroke-width="1.1"/>
 <text x="989.0" y="613.5" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="start" fill="#1f6fb2" font-weight="normal">BTB_OFF</text>
 <rect x="1180.0" y="70.0" width="560.0" height="600.0" rx="6" fill="#f4f6f8" stroke="#1b1f24" stroke-width="1.4"/>
 <text x="1188.0" y="88.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="13" text-anchor="start" fill="#1b1f24" font-weight="bold">3  Permit logic and monostables (SN74LVC, VCC = 3V3)</text>
 <rect x="1200.0" y="105.0" width="255.0" height="34.0" rx="6" fill="#fff" stroke="#1b1f24" stroke-width="1.4"/>
-<text x="1208.0" y="119.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="bold">U105 3G04</text>
-<text x="1214.0" y="133.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9.5" text-anchor="start" fill="#1b1f24" font-weight="normal">FCC -&gt; FCCN; P5 -&gt; P5N; 3A to GND</text>
+<text x="1208.0" y="119.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="bold">U105 3G04 (C114)</text>
+<text x="1214.0" y="133.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9.5" text-anchor="start" fill="#1b1f24" font-weight="normal">1A, 3A to GND (r6 spare); CHG_ARM -&gt; P5N</text>
 <rect x="1200.0" y="160.0" width="255.0" height="34.0" rx="6" fill="#fff" stroke="#1b1f24" stroke-width="1.4"/>
 <text x="1208.0" y="174.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="bold">U116A 2G08 AND</text>
 <text x="1214.0" y="188.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9.5" text-anchor="start" fill="#1b1f24" font-weight="normal">UVB, FCCEIL -&gt; UF</text>
 <rect x="1200.0" y="200.0" width="255.0" height="34.0" rx="6" fill="#fff" stroke="#1b1f24" stroke-width="1.4"/>
 <text x="1208.0" y="214.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="bold">U116B 2G08 AND</text>
-<text x="1214.0" y="228.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9.5" text-anchor="start" fill="#1b1f24" font-weight="normal">FCCN, UVB -&gt; W</text>
+<text x="1214.0" y="228.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9.5" text-anchor="start" fill="#1b1f24" font-weight="normal">FCC_OFF (= FCCN), UVB -&gt; W</text>
 <rect x="1200.0" y="240.0" width="255.0" height="34.0" rx="6" fill="#fff" stroke="#1b1f24" stroke-width="1.4"/>
 <text x="1208.0" y="254.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="bold">U106A 2G32 OR</text>
-<text x="1214.0" y="268.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9.5" text-anchor="start" fill="#1b1f24" font-weight="normal">UF, H1 -&gt; X</text>
+<text x="1214.0" y="268.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9.5" text-anchor="start" fill="#1b1f24" font-weight="normal">UF, H1R -&gt; X</text>
 <rect x="1200.0" y="280.0" width="255.0" height="34.0" rx="6" fill="#fff" stroke="#1b1f24" stroke-width="1.4"/>
 <text x="1208.0" y="294.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="bold">U106B 2G32 OR</text>
-<text x="1214.0" y="308.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9.5" text-anchor="start" fill="#1b1f24" font-weight="normal">FCCN, H1 -&gt; RFC_OFF</text>
+<text x="1214.0" y="308.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9.5" text-anchor="start" fill="#1b1f24" font-weight="normal">FCC_OFF, H1R -&gt; RFC_OFF</text>
 <rect x="1200.0" y="320.0" width="255.0" height="34.0" rx="6" fill="#fff" stroke="#1b1f24" stroke-width="1.4"/>
 <text x="1208.0" y="334.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="bold">U107 1G11 3-AND</text>
 <text x="1214.0" y="348.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9.5" text-anchor="start" fill="#1b1f24" font-weight="normal">BT_OK, X, FCI_OK -&gt; Y1</text>
 <rect x="1200.0" y="360.0" width="255.0" height="34.0" rx="6" fill="#fff" stroke="#1b1f24" stroke-width="1.4"/>
 <text x="1208.0" y="374.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="bold">U108 1G11 3-AND</text>
-<text x="1214.0" y="388.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9.5" text-anchor="start" fill="#1b1f24" font-weight="normal">FCC, BTB_OFF, Y1 -&gt; H2c</text>
+<text x="1214.0" y="388.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9.5" text-anchor="start" fill="#1b1f24" font-weight="normal">FCC_ON, BTB_OFF, Y1 -&gt; H2c</text>
 <rect x="1200.0" y="400.0" width="255.0" height="34.0" rx="6" fill="#fff" stroke="#1b1f24" stroke-width="1.4"/>
 <text x="1208.0" y="414.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="bold">U109 1G11 3-AND</text>
-<text x="1214.0" y="428.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9.5" text-anchor="start" fill="#1b1f24" font-weight="normal">H1, RGN, W -&gt; H1q</text>
+<text x="1214.0" y="428.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9.5" text-anchor="start" fill="#1b1f24" font-weight="normal">H1, RGN_ON, W -&gt; H1q</text>
 <rect x="1470.0" y="105.0" width="255.0" height="34.0" rx="6" fill="#fff" stroke="#1b1f24" stroke-width="1.4"/>
 <text x="1478.0" y="119.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="bold">U110A 2G32 OR</text>
 <text x="1484.0" y="133.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9.5" text-anchor="start" fill="#1b1f24" font-weight="normal">H1q, H2c -&gt; GATE</text>
 <rect x="1470.0" y="145.0" width="255.0" height="48.0" rx="6" fill="#fff" stroke="#1b1f24" stroke-width="1.4"/>
 <text x="1478.0" y="159.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="bold">U111 1G123</text>
 <text x="1484.0" y="173.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9.5" text-anchor="start" fill="#1b1f24" font-weight="normal">B = QUAL, CLR = P5N -&gt; QQ</text>
-<text x="1484.0" y="187.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9.5" text-anchor="start" fill="#1b1f24" font-weight="normal">R150 100k / C150 3.3u: 0.30-0.40 s</text>
+<text x="1484.0" y="187.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9.5" text-anchor="start" fill="#1b1f24" font-weight="normal">R150 100k / C150 3.3u: 0.20-0.46 s</text>
 <rect x="1470.0" y="200.0" width="255.0" height="34.0" rx="6" fill="#fff" stroke="#1b1f24" stroke-width="1.4"/>
 <text x="1478.0" y="214.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="bold">U110B 2G32 OR</text>
-<text x="1484.0" y="228.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9.5" text-anchor="start" fill="#1b1f24" font-weight="normal">GATE, QQ -&gt; ILIM_PRE</text>
+<text x="1484.0" y="228.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9.5" text-anchor="start" fill="#1b1f24" font-weight="normal">GATE, QQF -&gt; ILIM_PRE</text>
 <rect x="1470.0" y="240.0" width="255.0" height="48.0" rx="6" fill="#fff" stroke="#1b1f24" stroke-width="1.4"/>
 <text x="1478.0" y="254.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="bold">U113 1G123</text>
 <text x="1484.0" y="268.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9.5" text-anchor="start" fill="#1b1f24" font-weight="normal">B = HB, CLR = 3V3 -&gt; ARM_OK</text>
-<text x="1484.0" y="282.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9.5" text-anchor="start" fill="#1b1f24" font-weight="normal">R151 100k / C151 330n: 30-40 ms</text>
+<text x="1484.0" y="282.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9.5" text-anchor="start" fill="#1b1f24" font-weight="normal">R151 100k / C151 330n: 20-46 ms</text>
 <rect x="1470.0" y="295.0" width="255.0" height="34.0" rx="6" fill="#fff" stroke="#1b1f24" stroke-width="1.4"/>
 <text x="1478.0" y="309.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="bold">U114A 2G08 AND</text>
-<text x="1484.0" y="323.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9.5" text-anchor="start" fill="#1b1f24" font-weight="normal">P5, ARM_OK -&gt; CE_DRV</text>
+<text x="1484.0" y="323.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9.5" text-anchor="start" fill="#1b1f24" font-weight="normal">P5, ARM_OK' -&gt; CE_DRV</text>
 <rect x="1470.0" y="335.0" width="255.0" height="34.0" rx="6" fill="#fff" stroke="#1b1f24" stroke-width="1.4"/>
 <text x="1478.0" y="349.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="bold">U114B 2G08 AND</text>
-<text x="1484.0" y="363.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9.5" text-anchor="start" fill="#1b1f24" font-weight="normal">ILIM_PRE, ARM_OK -&gt; ILIM_REL</text>
-<polygon points="1200.0,455.0 1206.0,448.0 1427.0,448.0 1427.0,462.0 1206.0,462.0 1200.0,455.0" fill="#ffffff" stroke="#1f6fb2" stroke-width="1.1"/>
-<text x="1209.0" y="458.5" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="start" fill="#1f6fb2" font-weight="normal">FCC (T5, R122 1k, R134 100k pd)</text>
-<polygon points="1200.0,473.0 1206.0,466.0 1427.0,466.0 1427.0,480.0 1206.0,480.0 1200.0,473.0" fill="#ffffff" stroke="#1f6fb2" stroke-width="1.1"/>
-<text x="1209.0" y="476.5" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="start" fill="#1f6fb2" font-weight="normal">RGN (T4, R121 1k, R133 100k pd)</text>
-<polygon points="1200.0,491.0 1206.0,484.0 1378.0,484.0 1378.0,498.0 1206.0,498.0 1200.0,491.0" fill="#ffffff" stroke="#1f6fb2" stroke-width="1.1"/>
-<text x="1209.0" y="494.5" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="start" fill="#1f6fb2" font-weight="normal">P5 (pad 11; R108 47k pd)</text>
-<polygon points="1200.0,509.0 1206.0,502.0 1434.0,502.0 1434.0,516.0 1206.0,516.0 1200.0,509.0" fill="#ffffff" stroke="#1f6fb2" stroke-width="1.1"/>
-<text x="1209.0" y="512.5" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="start" fill="#1f6fb2" font-weight="normal">QUAL (T10; R147 1k, R123 47k pd)</text>
-<polygon points="1200.0,527.0 1206.0,520.0 1385.0,520.0 1385.0,534.0 1206.0,534.0 1200.0,527.0" fill="#ffffff" stroke="#1f6fb2" stroke-width="1.1"/>
-<text x="1209.0" y="530.5" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="start" fill="#1f6fb2" font-weight="normal">FCCEIL (T11; R124 47k pd)</text>
-<polygon points="1200.0,545.0 1206.0,538.0 1427.0,538.0 1427.0,552.0 1206.0,552.0 1200.0,545.0" fill="#ffffff" stroke="#1f6fb2" stroke-width="1.1"/>
-<text x="1209.0" y="548.5" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="start" fill="#1f6fb2" font-weight="normal">HB (T21; R135 1k, R136 100k pd)</text>
-<polygon points="1200.0,563.0 1206.0,556.0 1462.0,556.0 1462.0,570.0 1206.0,570.0 1200.0,563.0" fill="#ffffff" stroke="#1f6fb2" stroke-width="1.1"/>
-<text x="1209.0" y="566.5" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="start" fill="#1f6fb2" font-weight="normal">FCI_OK (R137 0R to 3V3, or U117 DNP)</text>
+<text x="1484.0" y="363.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9.5" text-anchor="start" fill="#1b1f24" font-weight="normal">ILIM_PRE, ARM_OK' -&gt; ILIM_REL</text>
+<rect x="1470.0" y="375.0" width="255.0" height="34.0" rx="6" fill="#fff" stroke="#1b1f24" stroke-width="1.4"/>
+<text x="1478.0" y="389.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="bold">U118A 2G08 AND (r2)</text>
+<text x="1484.0" y="403.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9.5" text-anchor="start" fill="#1b1f24" font-weight="normal">H1, RGN_ON -&gt; H1R</text>
+<rect x="1470.0" y="413.0" width="255.0" height="34.0" rx="6" fill="#fff" stroke="#1b1f24" stroke-width="1.4"/>
+<text x="1478.0" y="427.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="bold">U118B 2G08 AND (r2)</text>
+<text x="1484.0" y="441.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9.5" text-anchor="start" fill="#1b1f24" font-weight="normal">QQ, FCC_OFF -&gt; QQF</text>
+<polygon points="1200.0,455.0 1206.0,448.0 1616.0,448.0 1616.0,462.0 1206.0,462.0 1200.0,455.0" fill="#ffffff" stroke="#1f6fb2" stroke-width="1.1"/>
+<text x="1209.0" y="458.5" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="start" fill="#1f6fb2" font-weight="normal">FCC (F06/T5, R122 1k -&gt; U119/U120; R187 3.3M pu; R134 DNP)</text>
+<polygon points="1200.0,473.0 1206.0,466.0 1511.0,466.0 1511.0,480.0 1206.0,480.0 1200.0,473.0" fill="#ffffff" stroke="#1f6fb2" stroke-width="1.1"/>
+<text x="1209.0" y="476.5" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="start" fill="#1f6fb2" font-weight="normal">RGN (F05/T4, R121 1k -&gt; U121; R133 100k pd)</text>
+<polygon points="1200.0,491.0 1206.0,484.0 1413.0,484.0 1413.0,498.0 1206.0,498.0 1200.0,491.0" fill="#ffffff" stroke="#1f6fb2" stroke-width="1.1"/>
+<text x="1209.0" y="494.5" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="start" fill="#1f6fb2" font-weight="normal">CHG_ARM (pad 11; R108 47k pd)</text>
+<polygon points="1200.0,509.0 1206.0,502.0 1462.0,502.0 1462.0,516.0 1206.0,516.0 1200.0,509.0" fill="#ffffff" stroke="#1f6fb2" stroke-width="1.1"/>
+<text x="1209.0" y="512.5" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="start" fill="#1f6fb2" font-weight="normal">QUAL (F11/T10; R147 1k, R123 47k pd)</text>
+<polygon points="1200.0,527.0 1206.0,520.0 1413.0,520.0 1413.0,534.0 1206.0,534.0 1200.0,527.0" fill="#ffffff" stroke="#1f6fb2" stroke-width="1.1"/>
+<text x="1209.0" y="530.5" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="start" fill="#1f6fb2" font-weight="normal">FCCEIL (F12/T11; R124 47k pd)</text>
+<polygon points="1200.0,545.0 1206.0,538.0 1455.0,538.0 1455.0,552.0 1206.0,552.0 1200.0,545.0" fill="#ffffff" stroke="#1f6fb2" stroke-width="1.1"/>
+<text x="1209.0" y="548.5" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="start" fill="#1f6fb2" font-weight="normal">HB (F21/T21; R135 1k, R136 100k pd)</text>
+<polygon points="1200.0,563.0 1206.0,556.0 1532.0,556.0 1532.0,570.0 1206.0,570.0 1200.0,563.0" fill="#ffffff" stroke="#1f6fb2" stroke-width="1.1"/>
+<text x="1209.0" y="566.5" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="start" fill="#1f6fb2" font-weight="normal">FCI_OK (R137 0R; U117/R160-R163/C124/C127 DNP)</text>
+<polygon points="1200.0,581.0 1206.0,574.0 1602.0,574.0 1602.0,588.0 1206.0,588.0 1200.0,581.0" fill="#ffffff" stroke="#1f6fb2" stroke-width="1.1"/>
+<text x="1209.0" y="584.5" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="start" fill="#1f6fb2" font-weight="normal">BAL (F08/T22; R178 100k, D108 clamp, R179 1M pu) -&gt; U123</text>
 <polygon points="1475.0,455.0 1481.0,448.0 1779.0,448.0 1779.0,462.0 1481.0,462.0 1475.0,455.0" fill="#ffffff" stroke="#1f6fb2" stroke-width="1.1"/>
 <text x="1484.0" y="458.5" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="start" fill="#1f6fb2" font-weight="normal">ILIM_REL: R131A -&gt; J101.7, R131B -&gt; J101.8</text>
 <polygon points="1475.0,473.0 1481.0,466.0 1674.0,466.0 1674.0,480.0 1481.0,480.0 1475.0,473.0" fill="#ffffff" stroke="#1f6fb2" stroke-width="1.1"/>
 <text x="1484.0" y="476.5" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="start" fill="#1f6fb2" font-weight="normal">CE_DRV: R130 100R -&gt; J101.5</text>
-<polygon points="1475.0,491.0 1481.0,484.0 1681.0,484.0 1681.0,498.0 1481.0,498.0 1475.0,491.0" fill="#ffffff" stroke="#1f6fb2" stroke-width="1.1"/>
-<text x="1484.0" y="494.5" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="start" fill="#1f6fb2" font-weight="normal">RFC_OFF: R132 100R -&gt; J101.9</text>
+<polygon points="1475.0,491.0 1481.0,484.0 1688.0,484.0 1688.0,498.0 1481.0,498.0 1475.0,491.0" fill="#ffffff" stroke="#1f6fb2" stroke-width="1.1"/>
+<text x="1484.0" y="494.5" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="start" fill="#1f6fb2" font-weight="normal">RFC_OFF: R132 100R -&gt; J101.10</text>
 <polygon points="1475.0,509.0 1481.0,502.0 1835.0,502.0 1835.0,516.0 1481.0,516.0 1475.0,509.0" fill="#ffffff" stroke="#1f6fb2" stroke-width="1.1"/>
 <text x="1484.0" y="512.5" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="start" fill="#1f6fb2" font-weight="normal">H1 R126 -&gt; T13; H2c R127 -&gt; T14; BT_OK R128 -&gt; T15</text>
 <polygon points="1475.0,527.0 1481.0,520.0 1737.0,520.0 1737.0,534.0 1481.0,534.0 1475.0,527.0" fill="#ffffff" stroke="#1f6fb2" stroke-width="1.1"/>
 <text x="1484.0" y="530.5" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="start" fill="#1f6fb2" font-weight="normal">J101.11 ILIM_SENSE -&gt; R125 1k -&gt; T12</text>
-<polygon points="1475.0,545.0 1481.0,538.0 1709.0,538.0 1709.0,552.0 1481.0,552.0 1475.0,545.0" fill="#ffffff" stroke="#1f6fb2" stroke-width="1.1"/>
-<text x="1484.0" y="548.5" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="start" fill="#1f6fb2" font-weight="normal">J101.13 CE_SENSE -&gt; T20 (direct)</text>
-<text x="1200.0" y="600.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="start" fill="#5b6470" font-weight="normal">STAT pad 3: R107 10k to 3V3 -&gt; J101.4.  SDA/SCL pads 8/7: R145/R146 2.7k to 3V3 -&gt; W7 to EVM J8.</text>
-<text x="1200.0" y="618.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="start" fill="#5b6470" font-weight="normal">No RC filter in front of a plain LVC input; RC only on the 1G123 Rext/Cext pins; A/B inputs are Schmitt.</text>
+<polygon points="1475.0,545.0 1481.0,538.0 1779.0,538.0 1779.0,552.0 1481.0,552.0 1475.0,545.0" fill="#ffffff" stroke="#1f6fb2" stroke-width="1.1"/>
+<text x="1484.0" y="548.5" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="start" fill="#1f6fb2" font-weight="normal">J101.13 CE_SENSE -&gt; R148 1k -&gt; T20 (pin 7)</text>
+<text x="1200.0" y="600.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="start" fill="#5b6470" font-weight="normal">STAT pad 3: R107 10k to 3V3 -&gt; J101.4. SDA/SCL pads 8/7 -&gt; W7; R145/R146 DNP (pull-ups MB 2.7k, PM9).</text>
+<text x="1200.0" y="618.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="start" fill="#5b6470" font-weight="normal">Decoupling 100 nF: C110 U102, C111 U103, C112 U104, C113 U115, C114-C123 U105-U116, C126 U118, C131-C135 U119-U123 (r6); C125 10u bulk.</text>
 <rect x="20.0" y="430.0" width="560.0" height="160.0" rx="6" fill="#f4f6f8" stroke="#1b1f24" stroke-width="1.4" stroke-dasharray="5,3"/>
 <text x="28.0" y="448.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="13" text-anchor="start" fill="#1b1f24" font-weight="bold">4  Keep-alive option (DO NOT POPULATE unless T-B-09 fails)</text>
 <polygon points="110.0,490.0 104.0,483.0 23.0,483.0 23.0,497.0 104.0,497.0 110.0,490.0" fill="#ffffff" stroke="#c0392b" stroke-width="1.1"/>
@@ -395,8 +403,14 @@
 <polygon points="460.0,490.0 466.0,483.0 589.0,483.0 589.0,497.0 466.0,497.0 460.0,490.0" fill="#ffffff" stroke="#8e44ad" stroke-width="1.1"/>
 <text x="469.0" y="493.5" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="start" fill="#8e44ad" font-weight="normal">VCHG (pads 18/19)</text>
 <text x="30.0" y="570.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="start" fill="#5b6470" font-weight="normal">VCHG held 3.63-4.46 V while REGEN is closed; 0.7-1.4 mA in Run, 0.5-2.3 uA parked; QOD open</text>
+<rect x="20.0" y="598.0" width="560.0" height="88.0" rx="6" fill="#f4f6f8" stroke="#1b1f24" stroke-width="1.4"/>
+<text x="28.0" y="616.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="13" text-anchor="start" fill="#1b1f24" font-weight="bold">2b  r6: EN-net comparators and pack-OV permit input</text>
+<text x="30.0" y="632.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="start" fill="#1b1f24" font-weight="normal">U119 FCC_OFF: IN+ = REF/3 (R184 20.0k / R185 10.0k, C130); IN- = FCC via R186 10.0k, R187 3.30M pu -&gt; FCCN</text>
+<text x="30.0" y="647.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="start" fill="#1b1f24" font-weight="normal">U120 FCC_ON / U121 RGN_ON: IN+ = tap x R189/(R188 453k + R189 1.00M) (R190/R191 for RGN), IN- = REF: 1.75-1.88 V</text>
+<text x="30.0" y="662.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="start" fill="#1b1f24" font-weight="normal">U123 SN74LVC1G14 (Schmitt): BAL (T22) via R178 100k, D108 BAV199, R179 1.00M pu -&gt; OVN = NOT(OV)</text>
+<text x="30.0" y="677.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="start" fill="#1b1f24" font-weight="normal">U122 SN74LVC1G08: ARM_OK' = ARM_OK . OVN -&gt; U114 pins 2 and 6 (open tap / unpowered BQ29200 = OV = inhibit)</text>
 <rect x="20.0" y="690.0" width="1720.0" height="530.0" rx="6" fill="#f0fff4" stroke="#1b1f24" stroke-width="1.4"/>
-<text x="28.0" y="708.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="13" text-anchor="start" fill="#1b1f24" font-weight="bold">5  EVM interface board (EIB, 2xx) on the chassis; VCC = 3V3 from ribbon pin 2; AGND = TP49 (E8)</text>
+<text x="28.0" y="708.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="13" text-anchor="start" fill="#1b1f24" font-weight="bold">5  EVM interface board (EIB, 2xx) on the chassis; VCC = 3V3 from ribbon pins 1+2 via CR R176/R177 200R (R274 10k bleed); AGND = TP49 (E8) only</text>
 <rect x="330.0" y="730.0" width="200.0" height="290.0" rx="6" fill="#fff" stroke="#1b1f24" stroke-width="1.4"/>
 <text x="338.0" y="748.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="13" text-anchor="start" fill="#1b1f24" font-weight="bold">U201 SN74LVC3G06</text>
 <circle cx="330.0" cy="770.0" r="2.6" fill="#1b1f24"/>
@@ -447,8 +461,8 @@
 <polyline points="283.0,900.0 297.0,900.0" fill="none" stroke="#444" stroke-width="1.6"/>
 <polyline points="286.0,903.0 294.0,903.0" fill="none" stroke="#444" stroke-width="1.4"/>
 <polyline points="288.5,906.0 291.5,906.0" fill="none" stroke="#444" stroke-width="1.2"/>
-<polygon points="148.0,950.0 142.0,943.0 26.0,943.0 26.0,957.0 142.0,957.0 148.0,950.0" fill="#ffffff" stroke="#1f6fb2" stroke-width="1.1"/>
-<text x="30.0" y="953.5" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="start" fill="#1f6fb2" font-weight="normal">RFC_OFF (J201.9)</text>
+<polygon points="148.0,950.0 142.0,943.0 19.0,943.0 19.0,957.0 142.0,957.0 148.0,950.0" fill="#ffffff" stroke="#1f6fb2" stroke-width="1.1"/>
+<text x="23.0" y="953.5" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="start" fill="#1f6fb2" font-weight="normal">RFC_OFF (J201.10)</text>
 <polyline points="150.0,950.0 186.0,950.0" fill="none" stroke="#1b1f24" stroke-width="1.4"/>
 <polyline points="214.0,950.0 250.0,950.0" fill="none" stroke="#1b1f24" stroke-width="1.4"/>
 <rect x="186.0" y="945.5" width="28" height="9" fill="#fff" stroke="#1b1f24" stroke-width="1.3"/>
@@ -465,7 +479,7 @@
 <polyline points="530.0,770.0 720.0,770.0" fill="none" stroke="#1b1f24" stroke-width="1.4"/>
 <polygon points="720.0,770.0 726.0,763.0 828.0,763.0 828.0,777.0 726.0,777.0 720.0,770.0" fill="#ffffff" stroke="#c0392b" stroke-width="1.1"/>
 <text x="729.0" y="773.5" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="start" fill="#c0392b" font-weight="normal">/CE (E5, TP36)</text>
-<text x="560.0" y="760.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="8" text-anchor="start" fill="#5b6470" font-weight="normal">R272 47k /CE -&gt; REGN on the EVM (R42 site)</text>
+<text x="560.0" y="760.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="8" text-anchor="start" fill="#5b6470" font-weight="normal">R272 (R42 site, link to TP27) + R272b (TP36, link to JP12) 47k /CE -&gt; REGN on the EVM</text>
 <polyline points="530.0,860.0 640.0,860.0" fill="none" stroke="#1b1f24" stroke-width="1.4"/>
 <polyline points="640.0,860.0 640.0,821.0" fill="none" stroke="#1b1f24" stroke-width="1.4"/>
 <polyline points="640.0,849.0 640.0,810.0" fill="none" stroke="#1b1f24" stroke-width="1.4"/>
@@ -481,8 +495,8 @@
 <polyline points="859.0,860.0 900.0,860.0" fill="none" stroke="#1b1f24" stroke-width="1.4"/>
 <rect x="831.0" y="855.5" width="28" height="9" fill="#fff" stroke="#1b1f24" stroke-width="1.3"/>
 <text x="845.0" y="852.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="middle" fill="#1b1f24" font-weight="normal">R255 48.7k</text>
-<polygon points="900.0,860.0 906.0,853.0 1050.0,853.0 1050.0,867.0 906.0,867.0 900.0,860.0" fill="#ffffff" stroke="#c0392b" stroke-width="1.1"/>
-<text x="909.0" y="863.5" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="start" fill="#c0392b" font-weight="normal">ILIM_FEED (E2, JP14)</text>
+<polygon points="900.0,860.0 906.0,853.0 1092.0,853.0 1092.0,867.0 906.0,867.0 900.0,860.0" fill="#ffffff" stroke="#c0392b" stroke-width="1.1"/>
+<text x="909.0" y="863.5" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="start" fill="#c0392b" font-weight="normal">ILIM_FEED (E2, JP14 pin 2)</text>
 <polyline points="530.0,950.0 860.0,950.0" fill="none" stroke="#1b1f24" stroke-width="1.4"/>
 <polyline points="820.0,950.0 820.0,916.0" fill="none" stroke="#1b1f24" stroke-width="1.4"/>
 <polyline points="820.0,944.0 820.0,910.0" fill="none" stroke="#1b1f24" stroke-width="1.4"/>
@@ -523,8 +537,8 @@
 <polygon points="1470.0,855.0 1464.0,848.0 1327.0,848.0 1327.0,862.0 1464.0,862.0 1470.0,855.0" fill="#ffffff" stroke="#2e8b57" stroke-width="1.1"/>
 <text x="1331.0" y="858.5" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="start" fill="#2e8b57" font-weight="normal">ILIM_SNS (E4, JP21)</text>
 <polyline points="1470.0,855.0 1500.0,855.0" fill="none" stroke="#1b1f24" stroke-width="1.4"/>
-<text x="1300.0" y="880.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="8" text-anchor="start" fill="#1b1f24" font-weight="normal">R258 100k series; R259 10M to 3V3</text>
-<text x="1460.0" y="912.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="8" text-anchor="start" fill="#1b1f24" font-weight="normal">IN- = REF x 26.1k/36.1k (0.86-0.93 V); R265 100R</text>
+<text x="1300.0" y="880.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="8" text-anchor="start" fill="#1b1f24" font-weight="normal">R258 10.0k series (r3); R259 10M to 3V3</text>
+<text x="1460.0" y="912.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="8" text-anchor="start" fill="#1b1f24" font-weight="normal">IN- = REF x R261 10.0k/(R260 10.0k + R261) (0.59-0.65 V); R265 470R (r4)</text>
 <polyline points="1554.0,870.0 1600.0,870.0" fill="none" stroke="#1b1f24" stroke-width="1.4"/>
 <polygon points="1600.0,870.0 1606.0,863.0 1729.0,863.0 1729.0,877.0 1606.0,877.0 1600.0,870.0" fill="#ffffff" stroke="#1f6fb2" stroke-width="1.1"/>
 <text x="1609.0" y="873.5" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="start" fill="#1f6fb2" font-weight="normal">J201.11 -&gt; pin 33</text>
@@ -536,22 +550,23 @@
 <text x="1338.0" y="958.5" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="start" fill="#2e8b57" font-weight="normal">nCE_SNS (E6, JP17)</text>
 <polyline points="1470.0,955.0 1500.0,955.0" fill="none" stroke="#1b1f24" stroke-width="1.4"/>
 <text x="1300.0" y="980.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="8" text-anchor="start" fill="#1b1f24" font-weight="normal">R262 1M / R263 1M to AGND</text>
-<text x="1460.0" y="1012.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="8" text-anchor="start" fill="#1b1f24" font-weight="normal">IN- = own REF: /CE threshold ~2.5 V; R264 100R</text>
+<text x="1460.0" y="1012.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="8" text-anchor="start" fill="#1b1f24" font-weight="normal">IN- = own REF: /CE threshold ~2.5 V; R264 470R (r4)</text>
 <polyline points="1554.0,970.0 1600.0,970.0" fill="none" stroke="#1b1f24" stroke-width="1.4"/>
-<polygon points="1600.0,970.0 1606.0,963.0 1722.0,963.0 1722.0,977.0 1606.0,977.0 1600.0,970.0" fill="#ffffff" stroke="#1f6fb2" stroke-width="1.1"/>
-<text x="1609.0" y="973.5" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="start" fill="#1f6fb2" font-weight="normal">J201.13 -&gt; pin 8</text>
-<text x="40.0" y="1050.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="start" fill="#1b1f24" font-weight="normal">EVM side: R21 removed, JP14 shunt removed, JP13/JP21 open, R23 -&gt; 49.9k, R256 200k + C252 2.2n at TP33: regen clamp 1.33-1.76 A, FC clamp (Q202 on) 0.65-0.95 A, held &lt;= 0.11 V</text>
+<polygon points="1600.0,970.0 1606.0,963.0 1778.0,963.0 1778.0,977.0 1606.0,977.0 1600.0,970.0" fill="#ffffff" stroke="#1f6fb2" stroke-width="1.1"/>
+<text x="1609.0" y="973.5" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="start" fill="#1f6fb2" font-weight="normal">J201.13 -&gt; R148 -&gt; pin 7</text>
+<text x="40.0" y="1050.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="start" fill="#1b1f24" font-weight="normal">EVM side: R21 -&gt; 0 ohm, JP14 shunt + pin 1, JP13 pin 1 and R20 removed, R23 -&gt; 49.9k, R256 200k + C252 2.2n across JP21 pins 1-2: regen clamp 1.33-1.76 A, FC clamp (Q202 on) 0.65-0.95 A, held &lt;= 0.11 V</text>
 <text x="40.0" y="1070.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="start" fill="#c0392b" font-weight="bold">Release needs BOTH Q203 on (feed) and Q201 off (hold), each from its own driver and ribbon conductor; any open lead/resistor/driver leaves the converter in HIZ</text>
-<text x="40.0" y="1090.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="start" fill="#c0392b" font-weight="normal">Fail-safe: VCC = 0 -&gt; U201/U202 outputs float -&gt; /CE HIGH (R272), Q203 off (R271), Q201 on (R252), Q202 on (R254); U203/U204 sink -&gt; pins 33/8 LOW -&gt; flagged</text>
+<text x="40.0" y="1090.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="start" fill="#c0392b" font-weight="normal">Fail-safe: VCC = 0 -&gt; U201/U202 outputs float -&gt; /CE HIGH (R272/R272b), Q203 off (R271), Q201 on (R252), Q202 on (R254); pins 33/7 read LOW through pad pull-downs -&gt; flagged</text>
 <text x="40.0" y="1110.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="start" fill="#1b1f24" font-weight="normal">Broken sense wire: E4 -&gt; R259 pulls U203 IN+ HIGH (reads released); E6 -&gt; R263 pulls U204 IN+ LOW (reads /CE LOW): both are the dangerous direction and trip FR-08</text>
-<text x="40.0" y="1130.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="start" fill="#5b6470" font-weight="normal">Ribbon J201/J101: 1 GND, 2 3V3, 3 GND, 4 STAT (E7 TP38), 5 CE_DRV, 6 GND, 7 ILIM_REL_A, 8 ILIM_REL_B, 9 RFC_OFF, 10 GND, 11 ILIM_SENSE, 12 GND, 13 CE_SENSE, 14 GND</text>
-<text x="40.0" y="1150.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="start" fill="#5b6470" font-weight="normal">Decoupling C201-C204 100 nF at each VCC/V+; C205 100 nF at Q203 source (REGN)</text>
+<text x="40.0" y="1130.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="start" fill="#5b6470" font-weight="normal">Ribbon J201/J101 (1.27 mm, r4): 1 3V3 (R176), 2 3V3 (R177), 3 GND, 4 STAT (E7 TP38 via R275 1k, r5), 5 CE_DRV, 6 KEY (pin omitted), 7 ILIM_REL_A, 8 ILIM_REL_B, 9 GND, 10 RFC_OFF, 11 ILIM_SENSE, 12 GND, 13 CE_SENSE, 14 GND</text>
+<text x="40.0" y="1150.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="start" fill="#5b6470" font-weight="normal">Decoupling C201-C204 100 nF at each VCC/V+; C205 100 nF at Q203 source (REGN). J201 GND pins 3/9/12/14 joined -&gt; R273 10R -&gt; AGND (single DC ground E8). E-pad row (r6, top to bottom): E8 - E3 E4 E2 - E7 - E1 - E5 E6 (E1 and E7 isolated by empty pads; 12 positions, 27.94 mm c-c)</text>
 <rect x="20.0" y="1235.0" width="1720.0" height="170.0" rx="6" fill="#fff" stroke="#1b1f24" stroke-width="1.4"/>
 <text x="28.0" y="1253.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="13" text-anchor="start" fill="#1b1f24" font-weight="bold">6  Power-up / reset states</text>
-<text x="34.0" y="1268.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">Teensy reset (pins high-Z): P5, QUAL, FCCEIL LOW (47k), HB no edges (100k) -&gt; ARM_OK 0; RGN = FCC = 0 (10k bodge + 100k CR pull-downs) -&gt; GATE 0; charger unpowered.</text>
+<text x="34.0" y="1268.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">Teensy reset (pins high-Z): P5, QUAL, FCCEIL LOW (47k), HB no edges (100k) -&gt; ARM_OK 0; EN nets LOW (10k bodge) -&gt; FCC_ON = RGN_ON = 0 -&gt; GATE 0; charger unpowered.</text>
 <text x="34.0" y="1290.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">Monostable power-up: Q LOW (glitch-free reset, SCES586E) -&gt; QQ = 0, ARM_OK = 0 until the first heartbeat edge.</text>
-<text x="34.0" y="1312.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">Comparator POR (&lt;= 1.9 ms) or unpowered: H1 = UVB = BT_OK = BTB_OFF = LOW -&gt; H1q = H2c = 0.</text>
-<text x="34.0" y="1334.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">CR 3V3 lost: EIB outputs float -&gt; /CE HIGH, ILIM_HIZ held (if REGN up), FC clamp. eFuse U101 is supplied from VCHG-IN, independent of 3V3.</text>
-<text x="34.0" y="1356.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">Teensy hang: no heartbeat edges -&gt; ARM_OK falls within 30-40 ms -&gt; CE_DRV 0 (/CE HIGH) and ILIM_REL 0 (held) in every mode; BT_BUS stays as it was (R5).</text>
-<text x="34.0" y="1378.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">Charger POR: ILIM clamp latched from the pin at that instant: 100 mA if held, regen or FC level if released; /CE follows P5 . ARM_OK until firmware re-images.</text>
+<text x="34.0" y="1312.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">Comparator POR (&lt;= 1.9 ms, or V+ below its minimum): H1 = UVB = BT_OK = BTB_OFF = FCC_OFF = FCC_ON = RGN_ON = LOW -&gt; H1q = H2c = 0, RFC_OFF = H1R (r6).</text>
+<text x="34.0" y="1334.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">CR 3V3 lost: no external source back-powers it (r2); EIB outputs float -&gt; /CE HIGH, ILIM held (if REGN up), FC clamp; pin 7 LOW with P5 LOW and REGN expected -&gt; FR-08(b). eFuse U101 runs from VCHG-IN.</text>
+<text x="34.0" y="1356.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">Teensy hang or stalled 1 kHz monitor: no heartbeat edges -&gt; ARM_OK falls within 20-46 ms -&gt; CE_DRV 0 (/CE HIGH) and ILIM_REL 0 (held) in every mode; BT_BUS stays as it was (R5).</text>
+<text x="34.0" y="1378.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">Charger POR: ILIM clamp latched from the pin at that instant: 100 mA if held, regen or FC level if released; /CE follows P5 . ARM_OK' until firmware re-images.</text>
+<text x="34.0" y="1400.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">r6: BQ29200 OUT HIGH (cell &gt; 4.35 V for 1.6-4.9 s), T22 open or balance lead unplugged -&gt; OVN 0 -&gt; ARM_OK' 0 -&gt; /CE HIGH and ILIM held in every mode; pin 7 shows the unexpected inhibit.</text>
 </svg>

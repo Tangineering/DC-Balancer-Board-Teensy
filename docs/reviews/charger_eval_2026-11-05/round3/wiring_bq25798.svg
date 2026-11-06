@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1760" height="1300" viewBox="0 0 1760 1300">
 <rect x="0" y="0" width="1760" height="1300" fill="#ffffff"/>
-<text x="880.0" y="26.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="18" text-anchor="middle" fill="#1b1f24" font-weight="bold">BQ25798EVM in place of the Ag105: wiring (board rev 20260622, round 3 r1)</text>
+<text x="880.0" y="26.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="18" text-anchor="middle" fill="#1b1f24" font-weight="bold">BQ25798EVM in place of the Ag105: wiring (board rev 20260622, round 3 r6)</text>
 <text x="880.0" y="46.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="11" text-anchor="middle" fill="#5b6470" font-weight="normal">docs/charger_bq25798_wiring_design_2026-11-05.md sections A.2-A.8 are the netlist; this drawing must match them</text>
 <rect x="20.0" y="70.0" width="580.0" height="1200.0" rx="6" fill="#f4f6f8" stroke="#1b1f24" stroke-width="1.4"/>
 <text x="28.0" y="88.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="13" text-anchor="start" fill="#1b1f24" font-weight="bold">MB  motherboard rev 20260622 (Ag105 removed)</text>
@@ -18,11 +18,11 @@
 <text x="308.0" y="166.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#5b6470" font-weight="normal">D-MT-EN VIN, D-BT-EN VOUT (EN 28 -&gt; T3)</text>
 <rect x="300.0" y="200.0" width="280.0" height="70.0" rx="6" fill="#fff" stroke="#1b1f24" stroke-width="1.4"/>
 <text x="308.0" y="218.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="13" text-anchor="start" fill="#1b1f24" font-weight="bold">V-MOT node</text>
-<text x="308.0" y="240.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#2e8b57" font-weight="normal">C-D6 pad 1 -&gt; R170 10.0k -&gt; T1; pad 2 -&gt; T7b</text>
+<text x="308.0" y="240.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#2e8b57" font-weight="normal">C-D6 pad 1 -&gt; R170 10.0k -&gt; T1; pad 2 -&gt; T7b (shield)</text>
 <text x="308.0" y="256.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#5b6470" font-weight="normal">CAL 470 uF, VESC J-M, chopper</text>
 <rect x="40.0" y="290.0" width="240.0" height="64.0" rx="6" fill="#fff" stroke="#1b1f24" stroke-width="1.4"/>
 <text x="48.0" y="308.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="13" text-anchor="start" fill="#1b1f24" font-weight="bold">VCHG-IN: C-D8, C-D10 (35 V)</text>
-<text x="48.0" y="330.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#5b6470" font-weight="normal">R1/R2-CHG -&gt; pin 38; C-D8 pad 1 -&gt; W8</text>
+<text x="48.0" y="330.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#5b6470" font-weight="normal">R1/R2-CHG -&gt; pin 38 (no W8, r2: no current limit in Run)</text>
 <rect x="300.0" y="290.0" width="280.0" height="64.0" rx="6" fill="#fff" stroke="#1b1f24" stroke-width="1.4"/>
 <text x="308.0" y="308.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="13" text-anchor="start" fill="#1b1f24" font-weight="bold">D-BT-SQ  RT1987 (EN = pin 32)</text>
 <text x="308.0" y="330.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">VIN = VCHG   VOUT = VBT (pack +)</text>
@@ -52,10 +52,10 @@
 <text x="165.0" y="614.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="start" fill="#5b6470" font-weight="normal">nc</text>
 <circle cx="80.0" cy="638.0" r="4" fill="#1f6fb2"/>
 <text x="90.0" y="642.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1f6fb2" font-weight="bold">7 SCL</text>
-<text x="165.0" y="642.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="start" fill="#1f6fb2" font-weight="normal">SCL -&gt; Teensy 19, RSCL 10k</text>
+<text x="165.0" y="642.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="start" fill="#1f6fb2" font-weight="normal">SCL -&gt; Teensy 19, RSCL 2.7k (PM9)</text>
 <circle cx="80.0" cy="666.0" r="4" fill="#1f6fb2"/>
 <text x="90.0" y="670.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1f6fb2" font-weight="bold">8 SDA</text>
-<text x="165.0" y="670.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="start" fill="#1f6fb2" font-weight="normal">SDA -&gt; Teensy 18, RSDA 10k</text>
+<text x="165.0" y="670.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="start" fill="#1f6fb2" font-weight="normal">SDA -&gt; Teensy 18, RSDA 2.7k (PM9)</text>
 <circle cx="80.0" cy="694.0" r="4" fill="#5b6470"/>
 <text x="90.0" y="698.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#5b6470" font-weight="bold">9 NC3</text>
 <text x="165.0" y="698.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="start" fill="#5b6470" font-weight="normal">nc</text>
@@ -116,98 +116,98 @@
 <circle cx="568.0" cy="858.0" r="2.6" fill="#2e8b57"/>
 <text x="560.0" y="862.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="end" fill="#2e8b57" font-weight="normal">T5</text>
 <text x="52.0" y="881.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="bold">J1.29</text>
-<text x="105.0" y="881.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">3V3</text>
+<text x="105.0" y="881.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">3V3 (only rail source; CR R175 68R)</text>
 <circle cx="568.0" cy="877.0" r="2.6" fill="#2e8b57"/>
 <text x="560.0" y="881.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="end" fill="#2e8b57" font-weight="normal">T6</text>
-<text x="52.0" y="900.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="bold">J1.01</text>
-<text x="105.0" y="900.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">GND</text>
+<text x="52.0" y="900.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="bold">J2.31</text>
+<text x="105.0" y="900.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">BT-CURR (pin 41, INA253 BT)</text>
 <circle cx="568.0" cy="896.0" r="2.6" fill="#2e8b57"/>
-<text x="560.0" y="900.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="end" fill="#2e8b57" font-weight="normal">T7</text>
-<text x="52.0" y="919.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="bold">J2.31</text>
-<text x="105.0" y="919.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">BT-CURR (pin 41, INA253 BT)</text>
+<text x="560.0" y="900.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="end" fill="#2e8b57" font-weight="normal">T8</text>
+<text x="52.0" y="919.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="bold">J1.23</text>
+<text x="105.0" y="919.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">pin 10  CHG_QUAL (out)</text>
 <circle cx="568.0" cy="915.0" r="2.6" fill="#2e8b57"/>
-<text x="560.0" y="919.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="end" fill="#2e8b57" font-weight="normal">T8</text>
-<text x="52.0" y="938.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="bold">J1.23</text>
-<text x="105.0" y="938.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">pin 10  CHG_QUAL (out)</text>
+<text x="560.0" y="919.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="end" fill="#2e8b57" font-weight="normal">T10</text>
+<text x="52.0" y="938.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="bold">J2.19</text>
+<text x="105.0" y="938.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">pin 17  CHG_FCCEIL (out)</text>
 <circle cx="568.0" cy="934.0" r="2.6" fill="#2e8b57"/>
-<text x="560.0" y="938.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="end" fill="#2e8b57" font-weight="normal">T10</text>
-<text x="52.0" y="957.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="bold">J2.19</text>
-<text x="105.0" y="957.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">pin 17  CHG_FCCEIL (out)</text>
+<text x="560.0" y="938.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="end" fill="#2e8b57" font-weight="normal">T11</text>
+<text x="52.0" y="957.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="bold">J2.47</text>
+<text x="105.0" y="957.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">pin 33  CHG_ILIM_RB (in, far end)</text>
 <circle cx="568.0" cy="953.0" r="2.6" fill="#2e8b57"/>
-<text x="560.0" y="957.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="end" fill="#2e8b57" font-weight="normal">T11</text>
-<text x="52.0" y="976.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="bold">J2.47</text>
-<text x="105.0" y="976.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">pin 33  CHG_ILIM_RB (in, far end)</text>
+<text x="560.0" y="957.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="end" fill="#2e8b57" font-weight="normal">T12</text>
+<text x="52.0" y="976.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="bold">J2.45</text>
+<text x="105.0" y="976.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">pin 34  CHG_H1_RB (in, GPIO only)</text>
 <circle cx="568.0" cy="972.0" r="2.6" fill="#2e8b57"/>
-<text x="560.0" y="976.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="end" fill="#2e8b57" font-weight="normal">T12</text>
-<text x="52.0" y="995.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="bold">J2.45</text>
-<text x="105.0" y="995.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">pin 34  CHG_H1_RB (in, GPIO only)</text>
+<text x="560.0" y="976.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="end" fill="#2e8b57" font-weight="normal">T13</text>
+<text x="52.0" y="995.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="bold">J2.21</text>
+<text x="105.0" y="995.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">pin 16  CHG_H2_RB (in)</text>
 <circle cx="568.0" cy="991.0" r="2.6" fill="#2e8b57"/>
-<text x="560.0" y="995.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="end" fill="#2e8b57" font-weight="normal">T13</text>
-<text x="52.0" y="1014.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="bold">J2.21</text>
-<text x="105.0" y="1014.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">pin 16  CHG_H2_RB (in)</text>
+<text x="560.0" y="995.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="end" fill="#2e8b57" font-weight="normal">T14</text>
+<text x="52.0" y="1014.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="bold">J2.07</text>
+<text x="105.0" y="1014.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">pin 23  CHG_BTOK_RB (in)</text>
 <circle cx="568.0" cy="1010.0" r="2.6" fill="#2e8b57"/>
-<text x="560.0" y="1014.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="end" fill="#2e8b57" font-weight="normal">T14</text>
-<text x="52.0" y="1033.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="bold">J2.07</text>
-<text x="105.0" y="1033.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">pin 23  CHG_BTOK_RB (in)</text>
+<text x="560.0" y="1014.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="end" fill="#2e8b57" font-weight="normal">T15</text>
+<text x="52.0" y="1033.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="bold">J2.43</text>
+<text x="105.0" y="1033.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">pin 35  CHG_EFUSE_FLT (in, INPUT_PULLUP)</text>
 <circle cx="568.0" cy="1029.0" r="2.6" fill="#2e8b57"/>
-<text x="560.0" y="1033.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="end" fill="#2e8b57" font-weight="normal">T15</text>
-<text x="52.0" y="1052.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="bold">J2.43</text>
-<text x="105.0" y="1052.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">pin 35  CHG_EFUSE_FLT (in)</text>
+<text x="560.0" y="1033.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="end" fill="#2e8b57" font-weight="normal">T16</text>
+<text x="52.0" y="1052.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="bold">J2.09</text>
+<text x="105.0" y="1052.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">pin 22 (A8) CHG_IIN (analog)</text>
 <circle cx="568.0" cy="1048.0" r="2.6" fill="#2e8b57"/>
-<text x="560.0" y="1052.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="end" fill="#2e8b57" font-weight="normal">T16</text>
-<text x="52.0" y="1071.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="bold">J2.09</text>
-<text x="105.0" y="1071.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">pin 22 (A8) CHG_IIN (analog)</text>
+<text x="560.0" y="1052.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="end" fill="#2e8b57" font-weight="normal">T17</text>
+<text x="52.0" y="1071.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="bold">J2.29</text>
+<text x="105.0" y="1071.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">GND (T17 shield, CR end only)</text>
 <circle cx="568.0" cy="1067.0" r="2.6" fill="#2e8b57"/>
-<text x="560.0" y="1071.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="end" fill="#2e8b57" font-weight="normal">T17</text>
-<text x="52.0" y="1090.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="bold">J2.29</text>
-<text x="105.0" y="1090.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">GND (T17 return)</text>
+<text x="560.0" y="1071.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="end" fill="#2e8b57" font-weight="normal">T17r</text>
+<text x="52.0" y="1090.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="bold">ROS pad 2</text>
+<text x="105.0" y="1090.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">pin 7  CHG_CE_RB (in, far end; ROS removed)</text>
 <circle cx="568.0" cy="1086.0" r="2.6" fill="#2e8b57"/>
-<text x="560.0" y="1090.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="end" fill="#2e8b57" font-weight="normal">T17r</text>
-<text x="52.0" y="1109.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="bold">J1.19</text>
-<text x="105.0" y="1109.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">pin 8  CHG_CE_RB (in, far end; RENC2 pull-up)</text>
+<text x="560.0" y="1090.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="end" fill="#2e8b57" font-weight="normal">T20</text>
+<text x="52.0" y="1109.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="bold">J2.11</text>
+<text x="105.0" y="1109.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">pin 21  CHG_HB heartbeat (out)</text>
 <circle cx="568.0" cy="1105.0" r="2.6" fill="#2e8b57"/>
-<text x="560.0" y="1109.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="end" fill="#2e8b57" font-weight="normal">T20</text>
-<text x="52.0" y="1128.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="bold">J2.11</text>
-<text x="105.0" y="1128.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">pin 21  CHG_HB heartbeat (out)</text>
+<text x="560.0" y="1109.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="end" fill="#2e8b57" font-weight="normal">T21</text>
+<text x="52.0" y="1128.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="bold">J2.33</text>
+<text x="105.0" y="1128.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">pin 40 FC_CURRENT (U117 option, DNP)</text>
 <circle cx="568.0" cy="1124.0" r="2.6" fill="#2e8b57"/>
-<text x="560.0" y="1128.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="end" fill="#2e8b57" font-weight="normal">T21</text>
-<text x="52.0" y="1147.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="bold">J2.33</text>
-<text x="105.0" y="1147.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">pin 40 FC_CURRENT (U117 option, DNP)</text>
+<text x="560.0" y="1128.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="end" fill="#2e8b57" font-weight="normal">T19</text>
+<text x="52.0" y="1147.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="bold">BAL pad 8</text>
+<text x="105.0" y="1147.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">BQ29200 OUT (BAL-NOK) -&gt; pack-OV permit, 30 AWG (r6)</text>
 <circle cx="568.0" cy="1143.0" r="2.6" fill="#2e8b57"/>
-<text x="560.0" y="1147.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="end" fill="#2e8b57" font-weight="normal">T19</text>
-<text x="52.0" y="1180.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#5b6470" font-weight="normal">CO-5V pad 1 (+5 V) -&gt; T18, keep-alive option only (DNP). T1/T2: 10.0k at the joint, then the wire.</text>
+<text x="560.0" y="1147.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="end" fill="#2e8b57" font-weight="normal">T22</text>
+<text x="52.0" y="1180.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#5b6470" font-weight="normal">CO-5V pad 1 (+5 V) -&gt; F101 fuse + R172 33R at the joint -&gt; T18, keep-alive option only (DNP). T1/T2: 10.0k at the joint, then the wire.</text>
 <text x="52.0" y="1198.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#5b6470" font-weight="normal">Pins 5, 6, 18, 19 reach CR through CHG pads 11, 3, 8, 7 (no tap). Pin 20 kept for WDOG1_B (R5).</text>
-<text x="52.0" y="1216.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#5b6470" font-weight="normal">Pin 7 unused (ROS / old encoder supply net, T-A-01). Pin 2 spare (P24, optional PURGE_SENSE).</text>
+<text x="52.0" y="1216.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#5b6470" font-weight="normal">Pins 2, 8 (encoder nets) untouched (T-A-01b); F24 optional PURGE_SENSE on pin 2 only if cleared. No T7.</text>
 <rect x="650.0" y="110.0" width="400.0" height="1000.0" rx="6" fill="#eef6ff" stroke="#1b1f24" stroke-width="1.4"/>
-<text x="658.0" y="128.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="13" text-anchor="start" fill="#1b1f24" font-weight="bold">CR  CHG adapter carrier (31 x 33 mm, 2 oz)</text>
-<text x="660.0" y="150.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#5b6470" font-weight="normal">22 header pins = CHG pads (A.2); pin-level netlist B.8</text>
+<text x="658.0" y="128.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="13" text-anchor="start" fill="#1b1f24" font-weight="bold">CR  CHG adapter carrier (31 x 33 mm, 4-layer, 2 oz)</text>
+<text x="660.0" y="150.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#5b6470" font-weight="normal">1x10 + 1x12 header pins = CHG pads (A.2); netlist B.8</text>
 <rect x="670.0" y="170.0" width="360.0" height="128.0" rx="6" fill="#fff" stroke="#1b1f24" stroke-width="1.4"/>
 <text x="678.0" y="188.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="13" text-anchor="start" fill="#1b1f24" font-weight="bold">U101 eFuse TPS26630RGER</text>
-<text x="680.0" y="208.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">IN/IN_SYS &lt;- VCHGIN (pad 10 + W8)   OUT -&gt; VCHGOUT</text>
+<text x="680.0" y="208.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">IN/IN_SYS &lt;- VCHGIN (pad 10 only)   OUT -&gt; VCHGOUT</text>
 <text x="680.0" y="226.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">I_OL 2.05-2.41 A (R101 8.06k); UVLO 9.9 V; OVP 23.1 V</text>
-<text x="680.0" y="244.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">OUT: D103 40 V 3 A Schottky + C103 1 uF at the pins</text>
-<text x="680.0" y="262.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">IMON 27.4k -&gt; R129 10k / C129 1n -&gt; T17; FLT -&gt; T16</text>
+<text x="680.0" y="244.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">IN: C102a/b/c 1u+4.7u(100V)+0.1u, D107 SMAJ33A class; OUT: D103 SMA + C103 (r5 region table)</text>
+<text x="680.0" y="262.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">IMON 27.4k -&gt; R129 10k / C129 1n -&gt; T17; FLT -&gt; T16 (R106 DNP)</text>
 <text x="680.0" y="280.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#5b6470" font-weight="normal">MODE open, SHDN open, PGTH + PGOOD to GND</text>
 <rect x="670.0" y="315.0" width="360.0" height="150.0" rx="6" fill="#fff" stroke="#1b1f24" stroke-width="1.4"/>
-<text x="678.0" y="333.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="13" text-anchor="start" fill="#1b1f24" font-weight="bold">Comparators (TLV3012B x 4)</text>
+<text x="678.0" y="333.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="13" text-anchor="start" fill="#1b1f24" font-weight="bold">Comparators (TLV3012B x 7, r6)</text>
 <text x="680.0" y="353.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">U102 H1: V-MOT (T1) vs VBUS (T2C), ratio 1.089</text>
-<text x="680.0" y="371.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">U103 UVB: VBUS &gt; 13.35 / 13.71 V (same T2 wire)</text>
+<text x="680.0" y="371.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">U103 UVB: VBUS &gt; 13.33 / 13.72 V (same T2 wire)</text>
 <text x="680.0" y="389.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">U104 BT_OK: BT-CURR (T8) &lt; 19.75 mV, Kelvin T9 + R143</text>
 <text x="680.0" y="407.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">U115 BTB_OFF: D-BT-EN (T3) &lt; REF/3 (0.39-0.44 V)</text>
-<text x="680.0" y="425.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#5b6470" font-weight="normal">BAV199 input clamps; outputs LOW when unpowered/POR</text>
+<text x="680.0" y="425.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">U119 FCC_OFF (T5 &lt; REF/3); U120 FCC_ON, U121 RGN_ON (&gt; 1.75 V)</text>
 <text x="680.0" y="443.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#5b6470" font-weight="normal">readbacks: H1 -&gt; T13, H2c -&gt; T14, BT_OK -&gt; T15</text>
 <rect x="670.0" y="482.0" width="360.0" height="250.0" rx="6" fill="#fff" stroke="#1b1f24" stroke-width="1.4"/>
 <text x="678.0" y="500.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="13" text-anchor="start" fill="#1b1f24" font-weight="bold">Permit logic + monostables (SN74LVC, 3V3 from T6)</text>
-<text x="680.0" y="520.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">H1q = H1 . RGN . /FCC . UVB</text>
-<text x="680.0" y="538.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">H2c = FCC . BTB_OFF . BT_OK . FCI_OK . ((UVB . FCCEIL) + H1)</text>
+<text x="680.0" y="520.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">H1q = H1 . RGN_ON . FCC_OFF . UVB;  H1R = H1 . RGN_ON (U118A)</text>
+<text x="680.0" y="538.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">H2c = FCC_ON . BTB_OFF . BT_OK . FCI_OK . ((UVB . FCCEIL) + H1R)</text>
 <text x="680.0" y="556.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">GATE = H1q + H2c</text>
-<text x="680.0" y="574.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">QQ  = U111 one-shot (QUAL edge, cleared by P5), 0.30-0.40 s</text>
-<text x="680.0" y="592.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">ARM_OK = U113 heartbeat (pin 21 edges), 30-40 ms</text>
-<text x="680.0" y="610.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">ILIM_REL = (GATE + QQ) . ARM_OK  -&gt; W5 pins 7 and 8</text>
-<text x="680.0" y="628.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">CE_DRV = P5 . ARM_OK               -&gt; W5 pin 5</text>
-<text x="680.0" y="646.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">RFC_OFF = /FCC + H1                -&gt; W5 pin 9</text>
-<text x="680.0" y="664.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#5b6470" font-weight="normal">inputs: FCC T5, RGN T4, BTB T3, QUAL T10, FCCEIL T11, HB T21,</text>
-<text x="680.0" y="682.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#5b6470" font-weight="normal">P5 pad 11; pull-downs on every Teensy-driven input</text>
+<text x="680.0" y="574.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">QQ = U111 one-shot (QUAL, CLR = P5N); QQF = QQ . FCC_OFF</text>
+<text x="680.0" y="592.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">ARM_OK' = ARM_OK (U113, 20-46 ms) . OVN (BQ29200 via U123, r6)</text>
+<text x="680.0" y="610.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">ILIM_REL = (GATE + QQF) . ARM_OK' -&gt; W5 pins 7 and 8</text>
+<text x="680.0" y="628.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">CE_DRV = P5 . ARM_OK'              -&gt; W5 pin 5</text>
+<text x="680.0" y="646.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">RFC_OFF = FCC_OFF + H1R            -&gt; W5 pin 10</text>
+<text x="680.0" y="664.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#5b6470" font-weight="normal">inputs: FCC F06 (U119/U120), RGN F05 (U121), BTB F04, BAL F08,</text>
+<text x="680.0" y="682.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#5b6470" font-weight="normal">QUAL F11, FCCEIL F12, HB F21, CHG_ARM (P5) pad 11</text>
 <text x="680.0" y="700.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#5b6470" font-weight="normal">FCI_OK = 3V3 (R137) unless U117 option fitted</text>
 <rect x="670.0" y="750.0" width="360.0" height="70.0" rx="6" fill="#fff" stroke="#1b1f24" stroke-width="1.4" stroke-dasharray="5,3"/>
 <text x="678.0" y="768.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="13" text-anchor="start" fill="#1b1f24" font-weight="bold">Keep-alive option (DNP, R9)</text>
@@ -215,14 +215,16 @@
 <text x="680.0" y="804.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#5b6470" font-weight="normal">-&gt; VCHG (pads 18/19). Fit only if T-B-09 fails</text>
 <rect x="670.0" y="835.0" width="360.0" height="110.0" rx="6" fill="#fff" stroke="#1b1f24" stroke-width="1.4"/>
 <text x="678.0" y="853.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="13" text-anchor="start" fill="#1b1f24" font-weight="bold">Connectors and pads</text>
-<text x="680.0" y="871.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">J101 2x7 shrouded -&gt; W5 14-way ribbon to EIB J201</text>
-<text x="680.0" y="889.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">tap field P1-P24 (solder holes) -&gt; T1-T21</text>
-<text x="680.0" y="907.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">power pads: VCHGOUT/GND (W1/W2), VCHG/GND (W3/W4), VCHGIN2 (W8)</text>
-<text x="680.0" y="925.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">SCL/SDA/GND pads -&gt; W7 to EVM J8; R145/R146 2.7k pull-ups</text>
+<text x="680.0" y="871.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">J101 2x7 1.27 mm SMT, keyed -&gt; W5 ribbon to EIB J201</text>
+<text x="680.0" y="889.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">tap field F01-F24 (3 x 8 top-side SMT pads, no holes) -&gt; T1-T21</text>
+<text x="680.0" y="907.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">power holes (r5): W1/W2 1.3 mm, pad 2.3 (30.3/27.7, 61.2), W3/W4 1.5 mm (24.3, 45.4/55.6)</text>
+<text x="680.0" y="925.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">SCL/SDA/GND pads -&gt; W7 to EVM J8; R145/R146 DNP</text>
 <text x="670.0" y="980.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#444" font-weight="bold">Power star: CR GND = pads 4, 14, 15</text>
 <text x="670.0" y="998.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1f6fb2" font-weight="normal">STAT pad 3: R107 10k to 3V3 -&gt; W5 pin 4</text>
+<text x="670.0" y="1052.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1f6fb2" font-weight="normal">3V3: T6 -&gt; R175 68R; R176/R177 200R -&gt; W5 1/2 (r4)</text>
 <text x="670.0" y="1016.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1f6fb2" font-weight="normal">THERM pad 13 -&gt; W6 (only if NTC, T-E-09)</text>
-<text x="670.0" y="1034.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1f6fb2" font-weight="normal">readback in: W5 11 ILIM_SENSE -&gt; R125 -&gt; T12; W5 13 CE_SENSE -&gt; T20</text>
+<text x="670.0" y="1034.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1f6fb2" font-weight="normal">readback in: W5 11 -&gt; R125 -&gt; T12; W5 13 -&gt; R148 -&gt; T20 (pin 7)</text>
+<text x="670.0" y="1070.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#5b6470" font-weight="normal">r6: Eagle coords, +y UP; outline chamfer at the pin-11 corner (A.8)</text>
 <polyline points="550.0,590.0 650.0,590.0" fill="none" stroke="#5b6470" stroke-width="6" stroke-dasharray="2,4"/>
 <text x="595.0" y="580.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="middle" fill="#5b6470" font-weight="normal">22 header pins</text>
 <polyline points="568.0,820.0 612.0,820.0 612.0,900.0 650.0,889.0" fill="none" stroke="#2e8b57" stroke-width="0.8"/>
@@ -249,27 +251,26 @@
 <text x="585.0" y="235.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="start" fill="#2e8b57" font-weight="normal">T1, T7b</text>
 <polyline points="580.0,390.0 640.0,390.0 640.0,389.0 670.0,389.0" fill="none" stroke="#2e8b57" stroke-width="1.2"/>
 <text x="585.0" y="385.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="start" fill="#2e8b57" font-weight="normal">T9</text>
-<polyline points="280.0,322.0 290.0,322.0 290.0,360.0 642.0,360.0 642.0,208.0 670.0,208.0" fill="none" stroke="#c0392b" stroke-width="2.0"/>
-<text x="300.0" y="356.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="start" fill="#c0392b" font-weight="normal">W8 20 AWG</text>
 <rect x="1110.0" y="470.0" width="270.0" height="400.0" rx="6" fill="#f0fff4" stroke="#1b1f24" stroke-width="1.4"/>
 <text x="1118.0" y="488.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="13" text-anchor="start" fill="#1b1f24" font-weight="bold">EIB  EVM interface board (chassis)</text>
 <text x="1120.0" y="510.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="bold">U201 SN74LVC3G06 (open drain)</text>
-<text x="1120.0" y="530.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">  1Y -&gt; /CE (E5, TP36); R272 47k at R42 site</text>
+<text x="1120.0" y="530.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">  1Y -&gt; /CE (E5, TP36); R272 + R272b 47k on the EVM</text>
 <text x="1120.0" y="550.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">  2Y -&gt; Q203 gate (PMOS feed)</text>
 <text x="1120.0" y="570.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">  3Y -&gt; Q202 gate (FC leg)</text>
 <text x="1120.0" y="590.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="bold">U202 SN74LVC1G06 -&gt; Q201 gate (hold)</text>
 <text x="1120.0" y="610.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">Q203 BSS84: REGN -&gt; R255 48.7k -&gt; E2</text>
-<text x="1120.0" y="630.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">   (JP14 ILIM side; EVM R21 removed)</text>
+<text x="1120.0" y="630.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">   (JP14 pin 2; EVM R21 = 0 ohm)</text>
 <text x="1120.0" y="650.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">Q201 2N7002K: ILIM (E3, TP33) -&gt; AGND</text>
 <text x="1120.0" y="670.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">Q202 2N7002K + R257 59.0k -&gt; E3</text>
 <text x="1120.0" y="690.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">gate pull-ups 47k to REGN (E1)</text>
 <text x="1120.0" y="710.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">47k pull-downs on every driver input</text>
 <text x="1120.0" y="730.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="bold">U203 TLV3012B ILIM sense (E4, JP21)</text>
-<text x="1120.0" y="750.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">   thr 0.86-0.93 V -&gt; W5 11 -&gt; pin 33</text>
+<text x="1120.0" y="750.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">   thr 0.59-0.65 V -&gt; R265 470R -&gt; W5 11</text>
 <text x="1120.0" y="770.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="bold">U204 TLV3012B /CE sense (E6, JP17)</text>
-<text x="1120.0" y="790.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">   /CE/2 vs REF -&gt; W5 13 -&gt; pin 8</text>
-<text x="1120.0" y="810.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">STAT: E7 TP38 -&gt; W5 4; AGND: E8 TP49</text>
-<text x="1120.0" y="830.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#c0392b" font-weight="bold">unpowered: /CE HIGH, Q201 on, Q203 off</text>
+<text x="1120.0" y="790.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">   /CE/2 vs REF -&gt; R264 470R -&gt; W5 13</text>
+<text x="1120.0" y="810.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">STAT: E7 TP38 -&gt; R275 1k (r5) -&gt; W5 4; AGND: E8 TP49</text>
+<text x="1120.0" y="830.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">R273 10R ribbon GND; R274 10k bleed</text>
+<text x="1120.0" y="850.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#c0392b" font-weight="bold">unpowered: /CE HIGH, Q201 on, Q203 off</text>
 <rect x="1420.0" y="110.0" width="320.0" height="1100.0" rx="6" fill="#fff7e6" stroke="#1b1f24" stroke-width="1.4"/>
 <text x="1428.0" y="128.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="13" text-anchor="start" fill="#1b1f24" font-weight="bold">EVM  BQ25798EVM (BMS034A/B-003)</text>
 <rect x="1435.0" y="160.0" width="290.0" height="62.0" rx="6" fill="#fff" stroke="#1b1f24" stroke-width="1.4"/>
@@ -287,27 +288,27 @@
 <text x="1445.0" y="433.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1f6fb2" font-weight="normal">pin 2 AGND</text>
 <rect x="1435.0" y="480.0" width="290.0" height="62.0" rx="6" fill="#fff" stroke="#1b1f24" stroke-width="1.4"/>
 <text x="1443.0" y="498.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="11" text-anchor="start" fill="#1b1f24" font-weight="bold">J8 (KK 254 4-pin)</text>
-<text x="1445.0" y="516.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1f6fb2" font-weight="normal">1 AGND, 2 SCL, 3 SDA &lt;- W7</text>
-<text x="1445.0" y="533.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1f6fb2" font-weight="normal">4 EV2400 pull-up (empty)</text>
+<text x="1445.0" y="516.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1f6fb2" font-weight="normal">2 SCL, 3 SDA &lt;- W7 (1, 4 empty)</text>
+<text x="1445.0" y="533.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1f6fb2" font-weight="normal">W7 GND bonded at the CR only</text>
 <rect x="1435.0" y="580.0" width="290.0" height="96.0" rx="6" fill="#fff" stroke="#1b1f24" stroke-width="1.4"/>
-<text x="1443.0" y="598.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="11" text-anchor="start" fill="#1b1f24" font-weight="bold">EIB joints (A.5)</text>
-<text x="1445.0" y="616.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">E1 TP27 REGN   E2 JP14 (ILIM side)</text>
-<text x="1445.0" y="633.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">E3 TP33 ILIM   E4 JP21 (sense)</text>
-<text x="1445.0" y="650.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">E5 TP36 /CE    E6 JP17 (sense)</text>
-<text x="1445.0" y="667.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">E7 TP38 STAT   E8 TP49 AGND</text>
+<text x="1443.0" y="598.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="11" text-anchor="start" fill="#1b1f24" font-weight="bold">EIB joints (A.5, r6 row top-&gt;bottom)</text>
+<text x="1445.0" y="616.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">E8 TP49 AGND   E3 TP33 ILIM</text>
+<text x="1445.0" y="633.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">E4 JP21 (sense)  E2 JP14 pin 2</text>
+<text x="1445.0" y="650.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">E7 TP38 STAT   E1 JP12 REGN pin</text>
+<text x="1445.0" y="667.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">E5 TP36 /CE    E6 JP17 (sense)</text>
 <rect x="1435.0" y="730.0" width="290.0" height="79.0" rx="6" fill="#fff" stroke="#1b1f24" stroke-width="1.4"/>
 <text x="1443.0" y="748.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="11" text-anchor="start" fill="#1b1f24" font-weight="bold">On-EVM parts</text>
-<text x="1445.0" y="766.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">R256 200k + C252 2.2n at TP33</text>
-<text x="1445.0" y="783.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">R272 47k /CE -&gt; REGN (R42 site)</text>
-<text x="1445.0" y="800.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">EVM R23 -&gt; 49.9k</text>
+<text x="1445.0" y="766.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">R256 200k + C252 2.2n across JP21 1-2</text>
+<text x="1445.0" y="783.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">R272 (R42 site) + R272b (TP36) 47k -&gt; REGN</text>
+<text x="1445.0" y="800.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">EVM R23 -&gt; 49.9k; R21 -&gt; 0 ohm</text>
 <rect x="1435.0" y="860.0" width="290.0" height="164.0" rx="6" fill="#fff" stroke="#1b1f24" stroke-width="1.4"/>
 <text x="1443.0" y="878.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="11" text-anchor="start" fill="#1b1f24" font-weight="bold">Mods (section C)</text>
-<text x="1445.0" y="896.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">JP17, R42, R21, R39, R40, JP32, JP7, JP30 out</text>
-<text x="1445.0" y="913.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">JP14 shunt out; JP13/JP21 open</text>
-<text x="1445.0" y="930.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">JP1/JP2 2-3; JP3, JP4, JP5 in</text>
+<text x="1445.0" y="896.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">JP17 shunt + pin 2 (AGND), R42, R39, R40, JP32, JP7, JP30 out</text>
+<text x="1445.0" y="913.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">JP14 shunt + pin 1, JP13 pin 1, R20 out</text>
+<text x="1445.0" y="930.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">JP1/JP2 2-3; JP3/JP5 links in holes, JP4 shunt</text>
 <text x="1445.0" y="947.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">JP8 1-2; JP9 2-3; JP6/10/11 out</text>
 <text x="1445.0" y="964.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">C11, C12, C29-C31 -&gt; 35 V</text>
-<text x="1445.0" y="981.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">J2 block removed; JP24 2S kept</text>
+<text x="1445.0" y="981.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">J2 removed, J3/J4 insulated; JP24 kept</text>
 <text x="1445.0" y="998.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">JP18 kept unless NTC (T-E-09)</text>
 <text x="1445.0" y="1015.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">no capacitor added at the input</text>
 <polyline points="1050.0,200.0 1260.0,200.0 1260.0,190.0 1435.0,190.0" fill="none" stroke="#c0392b" stroke-width="3"/>
@@ -317,19 +318,19 @@
 <polyline points="1050.0,1070.0 1405.0,1070.0 1405.0,324.0 1435.0,324.0" fill="none" stroke="#1b1f24" stroke-width="3.4"/>
 <text x="1070.0" y="1094.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#8e44ad" font-weight="normal">W3/W4  18 AWG twisted pair, &lt;= 0.30 m</text>
 <polyline points="1050.0,925.0 1385.0,925.0 1385.0,510.0 1435.0,510.0" fill="none" stroke="#1f6fb2" stroke-width="1.8"/>
-<text x="1070.0" y="919.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1f6fb2" font-weight="normal">W7  4-way twisted I2C, &lt;= 0.30 m</text>
+<text x="1070.0" y="919.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1f6fb2" font-weight="normal">W7  SCL-GND-SDA twisted triple, &lt;= 0.30 m</text>
 <polyline points="1050.0,871.0 1090.0,871.0 1090.0,670.0 1110.0,670.0" fill="none" stroke="#1f6fb2" stroke-width="2.2"/>
 <rect x="1080.0" y="385.0" width="300.0" height="64.0" rx="6" fill="#fff" stroke="#1f6fb2" stroke-width="1"/>
-<text x="1088.0" y="402.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1f6fb2" font-weight="normal">W5  14-way ribbon, &lt;= 0.30 m (CR J101 -&gt; EIB J201)</text>
-<text x="1088.0" y="420.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="start" fill="#1f6fb2" font-weight="normal">1 GND 2 3V3 3 GND 4 STAT 5 CE_DRV 6 GND 7 REL_A</text>
-<text x="1088.0" y="436.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="start" fill="#1f6fb2" font-weight="normal">8 REL_B 9 RFC_OFF 10 GND 11 ILIM_SNS 12 GND 13 CE_SNS 14 GND</text>
+<text x="1088.0" y="402.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1f6fb2" font-weight="normal">W5  14-way 0.635 mm ribbon, &lt;= 0.30 m (J101 -&gt; J201)</text>
+<text x="1088.0" y="420.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="start" fill="#1f6fb2" font-weight="normal">1 3V3 2 3V3 3 GND 4 STAT 5 CE_DRV 6 KEY (pin omitted) 7 REL_A</text>
+<text x="1088.0" y="436.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="start" fill="#1f6fb2" font-weight="normal">8 REL_B 9 GND 10 RFC_OFF 11 ILIM_SNS 12 GND 13 CE_SNS 14 GND</text>
 <polyline points="1380.0,620.0 1415.0,620.0 1415.0,610.0 1435.0,610.0" fill="none" stroke="#1b1f24" stroke-width="1.6"/>
 <polyline points="1050.0,1016.0 1375.0,1016.0 1375.0,410.0 1435.0,410.0" fill="none" stroke="#1f6fb2" stroke-width="1.4" stroke-dasharray="6,3"/>
 <text x="1070.0" y="1010.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1f6fb2" font-weight="normal">W6  26 AWG pair (only if NTC)</text>
 <rect x="1110.0" y="1100.0" width="280.0" height="170.0" rx="6" fill="#fff" stroke="#1b1f24" stroke-width="1.4"/>
 <text x="1118.0" y="1118.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="11" text-anchor="start" fill="#1b1f24" font-weight="bold">Legend</text>
 <polyline points="1122.0,1140.0 1162.0,1140.0" fill="none" stroke="#c0392b" stroke-width="3"/>
-<text x="1170.0" y="1144.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">charger input (VCHG-IN / VCHGOUT / W8)</text>
+<text x="1170.0" y="1144.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">charger input (VCHG-IN / VCHGOUT)</text>
 <polyline points="1122.0,1160.0 1162.0,1160.0" fill="none" stroke="#8e44ad" stroke-width="3"/>
 <text x="1170.0" y="1164.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">charger output (VCHG)</text>
 <polyline points="1122.0,1180.0 1162.0,1180.0" fill="none" stroke="#1b1f24" stroke-width="3"/>
