@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 470" width="980" height="470" font-family="Helvetica, Arial, sans-serif" font-size="12">
+<rect width="980" height="470" fill="#ffffff"/>
+<text x="20" y="28" font-size="16" font-weight="bold">Fig 3. How the two charger inhibit pins are driven (EVM interface board + EVM mods; simplified from design B.6)</text>
+<!-- REGN rail -->
+<line x1="40" y1="70" x2="940" y2="70" stroke="#2a7a2a" stroke-width="3"/>
+<text x="40" y="62" font-weight="bold" fill="#2a7a2a">REGN (the charger's own 5 V LDO; exists only while the charger has input power)</text>
+<!-- /CE -->
+<text x="40" y="105" font-weight="bold">A. /CE (charge enable, active LOW)</text>
+<rect x="150" y="120" width="70" height="26" fill="#fff" stroke="#222"/><text x="156" y="137">R272 47k</text>
+<rect x="240" y="120" width="76" height="26" fill="#fff" stroke="#222"/><text x="245" y="137">R272b 47k</text>
+<path d="M185 70 V120 M278 70 V120 M185 146 V180 H420 M278 146 V180" stroke="#222" fill="none" stroke-width="1.5"/>
+<circle cx="420" cy="180" r="4"/><text x="430" y="176" font-weight="bold">/CE pin (TP36)</text>
+<path d="M360 180 V215" stroke="#222" stroke-width="1.5"/>
+<rect x="320" y="215" width="140" height="40" fill="#eef3fb" stroke="#335"/><text x="328" y="232">U201 open-drain</text><text x="328" y="247">sinks when CE_DRV HIGH</text>
+<path d="M390 255 V275 M375 275 H405" stroke="#222" stroke-width="1.5"/>
+<text x="520" y="132">Default (no logic, MCU in reset, ribbon unplugged): two independent</text>
+<text x="520" y="148">47k pull-ups to REGN hold /CE HIGH = no charging. The inhibit is</text>
+<text x="520" y="164">powered by the charger itself, so it cannot be "unpowered and off".</text>
+<text x="520" y="186">U204 senses /CE at the EVM pin and reports it to Teensy pin 7.</text>
+<!-- ILIM_HIZ -->
+<text x="40" y="310" font-weight="bold">B. ILIM_HIZ (input-current limit pin; &lt; 0.75 V stops the converter with REGN still on)</text>
+<rect x="120" y="330" width="120" height="40" fill="#eef3fb" stroke="#335"/><text x="126" y="347">Q203 P-FET + R255</text><text x="126" y="362">48.7k feed from REGN</text>
+<path d="M110 70 V350 H120" stroke="#222" stroke-width="1.5" stroke-dasharray="4 3" fill="none"/>
+<path d="M240 350 H420" stroke="#222" stroke-width="1.5"/>
+<circle cx="420" cy="350" r="4"/><text x="428" y="345" font-weight="bold">ILIM_HIZ (TP33)</text>
+<path d="M300 350 V395 M420 350 V395 M520 350 V395 M420 350 H520" stroke="#222" fill="none" stroke-width="1.5"/>
+<rect x="255" y="395" width="95" height="38" fill="#eef3fb" stroke="#335"/><text x="261" y="411">Q201 hold-down</text><text x="261" y="426">ON by default</text>
+<rect x="372" y="395" width="96" height="38" fill="#fff" stroke="#222"/><text x="378" y="411">EVM R23</text><text x="378" y="426">49.9k (mod)</text>
+<rect x="485" y="395" width="110" height="38" fill="#eef3fb" stroke="#335"/><text x="490" y="411">Q202 + R257 59k</text><text x="490" y="426">FC leg, ON default</text>
+<text x="610" y="345">Held (default): Q201 ON -&gt; pin &lt;= 0.11 V -&gt; converter OFF.</text>
+<text x="610" y="363">Released (ILIM_REL HIGH): Q201 OFF, Q203 feeds the</text>
+<text x="610" y="379">divider. VILIM = 1 V + 0.8 ohm x ILIM (SLUSDV2C):</text>
+<text x="610" y="397">- regen (RFC_OFF HIGH): Q202 OFF, pin 2.06-2.40 V = 1.33-1.76 A</text>
+<text x="610" y="413">- FC window (RFC_OFF LOW): Q202 ON, 1.52-1.76 V = 0.65-0.95 A</text>
+<text x="610" y="431">Two drive conductors (A feed, B hold) so one broken</text>
+<text x="610" y="447">wire cannot release the pin. U203 reports the pin level.</text>
+</svg>

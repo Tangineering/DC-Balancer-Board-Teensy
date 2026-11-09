@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 520" width="980" height="520" font-family="Helvetica, Arial, sans-serif" font-size="12">
+<rect width="980" height="520" fill="#ffffff"/>
+<defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#222"/></marker></defs>
+<text x="20" y="28" font-size="16" font-weight="bold">Fig 4. Charger operating modes in Run (simplified from design F.2 / F.4)</text>
+<g stroke="#222" stroke-width="1.5">
+<rect x="20" y="60" width="200" height="80" fill="#f0f0f0"/>
+<rect x="290" y="60" width="230" height="80" fill="#fff4d6"/>
+<rect x="290" y="210" width="230" height="96" fill="#d9e8fb"/>
+<rect x="640" y="210" width="320" height="96" fill="#dff2df"/>
+<rect x="640" y="60" width="320" height="96" fill="#dff2df"/>
+<rect x="290" y="380" width="300" height="96" fill="#fde2e2"/>
+<rect x="640" y="380" width="320" height="96" fill="#fde2e2"/>
+</g>
+<text x="30" y="80" font-weight="bold">Idle</text><text x="30" y="97">REGEN, FC_CHARGE open</text><text x="30" y="113">charger unpowered</text>
+<text x="300" y="80" font-weight="bold">Run entry: qualification</text><text x="300" y="97">REGEN closes, charger boots;</text><text x="300" y="113">EN_CHG 0, /CE HIGH; one-shot lets</text><text x="300" y="129">it read its ILIM pin (0.20-0.46 s)</text>
+<text x="300" y="230" font-weight="bold">Regen-armed cruise</text><text x="300" y="247">regen image: VINDPM 19.0 V,</text><text x="300" y="263">IINDPM 1.70 A, ICHG 3.10 A*</text><text x="300" y="279">ILIM held (H1 = 0): converter off</text><text x="300" y="295" fill="#555">draw 3.5-5.0 mA from the bus</text>
+<text x="650" y="80" font-weight="bold">Regen burst</text><text x="650" y="97">V-MOT &gt; 1.089 x VBUS -&gt; H1 releases ILIM;</text><text x="650" y="113">charger takes 1.33-1.76 A from V-MOT only</text><text x="650" y="129">(D-MT-EN reverse-biased, bus cannot feed)</text><text x="650" y="145" fill="#a03030">must start within the warm budget (T-B-10)</text>
+<text x="650" y="230" font-weight="bold">FC window (between purges)</text><text x="650" y="247">BT_BUS open, FC_CHARGE closed; FC image:</text><text x="650" y="263">VINDPM 14.5 V, IINDPM &lt;= 0.90 A (governor)</text><text x="650" y="279">brake: FC stops feeding, raised image 1.70 A</text><text x="650" y="295" fill="#555">needs: schedule locked, charge_goal &gt; 0.05, T-W-01</text>
+<text x="300" y="400" font-weight="bold">Purge pre-emption (T_LEAD 100 ms)</text><text x="300" y="417">FC_CHARGE opens -&gt; VINDPM &gt;= 18.2 V</text><text x="300" y="433">read back -&gt; BT_BUS closes. Battery is on</text><text x="300" y="449">the bus ~21 ms after the window closes.</text><text x="300" y="465" fill="#a03030">early purge (&gt; 55 ms early) = State 99 for now</text>
+<text x="650" y="400" font-weight="bold">Any mode: MCU hang / reset</text><text x="650" y="417">no heartbeat -&gt; /CE HIGH and ILIM held in</text><text x="650" y="433">20-46 ms, no firmware needed. In an FC window</text><text x="650" y="449">the battery is still off the bus: the MCU</text><text x="650" y="465">watchdog (T-W-01) must reset before the purge.</text>
+<path d="M220 100 H290" stroke="#222" stroke-width="1.5" marker-end="url(#a)"/>
+<path d="M405 140 V210" stroke="#222" stroke-width="1.5" marker-end="url(#a)"/>
+<path d="M480 210 V180 H620 V120 H640" stroke="#222" fill="none" stroke-width="1.5" marker-end="url(#a)"/>
+<path d="M640 140 H600 V195 H500 V210" stroke="#222" fill="none" stroke-width="1.5" marker-end="url(#a)"/><text x="545" y="174" font-size="11">H1 rises</text><text x="530" y="192" font-size="11">burst ends</text>
+<path d="M520 265 H640" stroke="#222" stroke-width="1.5" marker-end="url(#a)"/><text x="535" y="258" font-size="11">window opens</text>
+<path d="M800 306 V340 H440 V380" stroke="#222" fill="none" stroke-width="1.5" marker-end="url(#a)"/><text x="600" y="333" font-size="11">purge predicted / traction / done</text>
+<path d="M330 380 V306" stroke="#222" stroke-width="1.5" marker-end="url(#a)"/>
+<text x="20" y="505" font-size="11" fill="#555">* ICHG 3.10 A only after T-B-19 / T-E-11 (pack acceptance, efficiency at 19 V); 2.50 A until then. Any fault -&gt; State 99: permits dropped first, then switches opened.</text>
+</svg>
