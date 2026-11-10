@@ -1,0 +1,43 @@
+Section 1. ERR_ISO_MISMATCH residual with the module output at zero
+  I_L 0.10 A, reg06 0.00 A: residual 0.100 A, threshold 0.150 A -> no trip
+  I_L 0.10 A, reg06 0.10 A: residual 0.200 A, threshold 0.150 A -> TRIP
+  I_L 0.20 A, reg06 0.00 A: residual 0.200 A, threshold 0.150 A -> TRIP
+  I_L 0.20 A, reg06 0.20 A: residual 0.400 A, threshold 0.150 A -> TRIP
+  I_L 0.30 A, reg06 0.00 A: residual 0.300 A, threshold 0.150 A -> TRIP
+  I_L 0.30 A, reg06 0.30 A: residual 0.600 A, threshold 0.150 A -> TRIP
+  I_L 0.60 A, reg06 0.00 A: residual 0.600 A, threshold 0.150 A -> TRIP
+  I_L 0.60 A, reg06 0.60 A: residual 1.200 A, threshold 0.150 A -> TRIP
+  Trip for any I_L above 0.150 A when reg06 reads 0 (unsigned floor).
+
+Section 1b. Charging, output below I_L (input-limited)
+  I_o 0.00 A, I_L 0.30 A: I_PACK1 -0.30 A, reg06 0.00 A, residual 0.30 A -> TRIP
+  I_o 0.10 A, I_L 0.30 A: I_PACK1 -0.20 A, reg06 0.00 A, residual 0.20 A -> TRIP
+  I_o 0.20 A, I_L 0.30 A: I_PACK1 -0.10 A, reg06 0.00 A, residual 0.10 A -> no trip
+
+Section 2. R_KA drop at the battery standby current
+  I_BAT 120 uA: drop 0.120 V across 1 kOhm; module battery pins at V_pack - 0.12 V
+  I_BAT 420 uA: drop 0.420 V across 1 kOhm; module battery pins at V_pack - 0.42 V
+  The battery side of the module is therefore supplied from the pack through R_KA
+  whenever the input is absent, in the bonded mode included.
+
+Section 3. Module input capacitance admitted by S0-11 and the residual energy
+  slew 4.17 V/ms: C_in up to 144 uF
+  slew 5.79 V/ms: C_in up to 104 uF
+  V_in 16.0 V: E   9.8 mJ; at 13.0 W the module runs  0.75 ms after the eFuse cut
+  V_in 16.0 V: E   9.8 mJ; at 22.4 W the module runs  0.44 ms after the eFuse cut
+  V_in 18.0 V: E  14.7 mJ; at 13.0 W the module runs  1.13 ms after the eFuse cut
+  V_in 18.0 V: E  14.7 mJ; at 22.4 W the module runs  0.66 ms after the eFuse cut
+  V_in 21.5 V: E  24.7 mJ; at 13.0 W the module runs  1.90 ms after the eFuse cut
+  V_in 21.5 V: E  24.7 mJ; at 22.4 W the module runs  1.10 ms after the eFuse cut
+  D-BT-SQ is disabled 0.3-0.7 ms after the FF1 clear (design Table 11), RT1987 turn-off
+  after EN low is TODO(verify: RT1987 DS-00); S_GND is on within about 0.3 ms.
+
+Section 4. Pack-current bound on the S0-2 real-pack runs (lab supply limit only)
+  regen 1.75 A: supply limit 1.32 A at 18 V; eta 0.80: module output 2.57 A, pack 1.97 A (I_L 0.6 A)
+  regen 1.75 A: supply limit 1.32 A at 18 V; eta 0.88: module output 2.83 A, pack 2.23 A (I_L 0.6 A)
+  regen 1.75 A: supply limit 1.32 A at 18 V; eta 0.95: module output 3.05 A, pack 2.45 A (I_L 0.6 A)
+  FC 1.25 A: supply limit 0.97 A at 16 V; eta 0.80: module output 1.69 A, pack 1.39 A (I_L 0.3 A)
+  FC 1.25 A: supply limit 0.97 A at 16 V; eta 0.88: module output 1.86 A, pack 1.56 A (I_L 0.3 A)
+  FC 1.25 A: supply limit 0.97 A at 16 V; eta 0.95: module output 2.00 A, pack 1.70 A (I_L 0.3 A)
+  The bound is a power bound on a lab supply CC loop (millisecond response, output
+  capacitor dump not bounded); the rig has no fast pack-current trip.

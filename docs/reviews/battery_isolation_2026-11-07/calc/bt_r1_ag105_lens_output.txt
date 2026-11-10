@@ -1,0 +1,61 @@
+
+==============================================================================
+A. Commissioning (section 9.2) with the as-found vehicle registers
+==============================================================================
+  V_pack 7.40 V: I_o 2.80 A (rating 2.5 A), P_in  23.5 W, I_chg_in 1.479 A, bus-side 1.629 A vs OC_FC 1.4 A -> TRIPS; vs bench limit 1.5 A (bus side, before FC-boost loss) -> LIMITED
+  V_pack 7.80 V: I_o 2.80 A (rating 2.5 A), P_in  24.8 W, I_chg_in 1.559 A, bus-side 1.709 A vs OC_FC 1.4 A -> TRIPS; vs bench limit 1.5 A (bus side, before FC-boost loss) -> LIMITED
+  V_pack 7.99 V: I_o 2.80 A (rating 2.5 A), P_in  25.4 W, I_chg_in 1.597 A, bus-side 1.747 A vs OC_FC 1.4 A -> TRIPS; vs bench limit 1.5 A (bus side, before FC-boost loss) -> LIMITED
+  Pack >= 8.0 V: Ag105 reports Fully Charged at detection (DS p.5/p.6, 0.2 V/cell) -> no charge current.
+
+==============================================================================
+B. RCS drift-high single fault (Table 4 JSON: larger R = larger current)
+==============================================================================
+  R_CS    62k I_set 1.75 A regen V_pack 7.4 I_o 2.35 A (in rating) V_in 17.00 I_in 1.16 A eFuse(no trip) U_C2(no trip)
+  R_CS    62k I_set 1.75 A regen V_pack 7.4 I_o 2.35 A (in rating) V_in 21.50 I_in 0.92 A eFuse(no trip) U_C2(no trip)
+  R_CS    62k I_set 1.75 A regen V_pack 8.0 I_o 2.35 A (in rating) V_in 17.00 I_in 1.26 A eFuse(no trip) U_C2(no trip)
+  R_CS    62k I_set 1.75 A regen V_pack 8.0 I_o 2.35 A (in rating) V_in 21.50 I_in 0.99 A eFuse(no trip) U_C2(no trip)
+  R_CS    62k I_set 1.75 A FC    V_pack 7.4 I_o 2.05 A (in rating) V_in 15.92 I_in 1.08 A eFuse(no trip) U_C2(no trip) bus 1.23 A vs OC_FC
+  R_CS    62k I_set 1.75 A FC    V_pack 8.0 I_o 2.05 A (in rating) V_in 15.92 I_in 1.17 A eFuse(no trip) U_C2(no trip) bus 1.32 A vs OC_FC
+  R_CS   100k I_set 2.00 A regen V_pack 7.4 I_o 2.60 A (OVER rating) V_in 17.00 I_in 1.29 A eFuse(no trip) U_C2(no trip)
+  R_CS   100k I_set 2.00 A regen V_pack 7.4 I_o 2.60 A (OVER rating) V_in 21.50 I_in 1.02 A eFuse(no trip) U_C2(no trip)
+  R_CS   100k I_set 2.00 A regen V_pack 8.0 I_o 2.60 A (OVER rating) V_in 17.00 I_in 1.39 A eFuse(no trip) U_C2(no trip)
+  R_CS   100k I_set 2.00 A regen V_pack 8.0 I_o 2.60 A (OVER rating) V_in 21.50 I_in 1.10 A eFuse(no trip) U_C2(no trip)
+  R_CS   100k I_set 2.00 A FC    V_pack 7.4 I_o 2.30 A (in rating) V_in 15.92 I_in 1.21 A eFuse(no trip) U_C2(no trip) bus 1.36 A vs OC_FC
+  R_CS   100k I_set 2.00 A FC    V_pack 8.0 I_o 2.30 A (in rating) V_in 15.92 I_in 1.31 A eFuse(no trip) U_C2(no trip) bus 1.46 A vs OC_FC
+  R_CS   200k I_set 2.50 A regen V_pack 7.4 I_o 3.10 A (OVER rating) V_in 17.00 I_in 1.53 A eFuse(no trip) U_C2(no trip)
+  R_CS   200k I_set 2.50 A regen V_pack 7.4 I_o 3.10 A (OVER rating) V_in 21.50 I_in 1.21 A eFuse(no trip) U_C2(no trip)
+  R_CS   200k I_set 2.50 A regen V_pack 8.0 I_o 3.10 A (OVER rating) V_in 17.00 I_in 1.66 A eFuse(no trip) U_C2(no trip)
+  R_CS   200k I_set 2.50 A regen V_pack 8.0 I_o 3.10 A (OVER rating) V_in 21.50 I_in 1.31 A eFuse(no trip) U_C2(no trip)
+  R_CS   200k I_set 2.50 A FC    V_pack 7.4 I_o 2.80 A (OVER rating) V_in 15.92 I_in 1.48 A eFuse(no trip) U_C2(no trip) bus 1.63 A vs OC_FC
+  R_CS   200k I_set 2.50 A FC    V_pack 8.0 I_o 2.80 A (OVER rating) V_in 15.92 I_in 1.60 A eFuse(no trip) U_C2(no trip) bus 1.75 A vs OC_FC
+
+==============================================================================
+C. eFuse-only bound on Ag105 OUTPUT current when its regulation is blind (F19 / OR-I)
+==============================================================================
+  V_in 15.92 V, V_pack 7.4: I_o up to 4.09 A = 1.64 x rating (U_C2 caps only the pack share at 3.47 A; I_L adds on top)
+  V_in 15.92 V, V_pack 8.4: I_o up to 3.60 A = 1.44 x rating (U_C2 caps only the pack share at 3.47 A; I_L adds on top)
+  V_in 17.00 V, V_pack 7.4: I_o up to 4.37 A = 1.75 x rating (U_C2 caps only the pack share at 3.47 A; I_L adds on top)
+  V_in 17.00 V, V_pack 8.4: I_o up to 3.85 A = 1.54 x rating (U_C2 caps only the pack share at 3.47 A; I_L adds on top)
+  V_in 21.50 V, V_pack 7.4: I_o up to 5.52 A = 2.21 x rating (U_C2 caps only the pack share at 3.47 A; I_L adds on top)
+  V_in 21.50 V, V_pack 8.4: I_o up to 4.87 A = 1.95 x rating (U_C2 caps only the pack share at 3.47 A; I_L adds on top)
+
+==============================================================================
+D. Stage-3 C_HU energy left on the Ag105 input at window exit (eFuse off)
+==============================================================================
+  from 13.82 V:   52.5 mJ above V_LOCK; at  0.25 W draw ->   211.0 ms powered after exit
+  from 13.82 V:   52.5 mJ above V_LOCK; at 15.00 W draw ->     3.5 ms powered after exit
+  from 13.82 V:   52.5 mJ above V_LOCK; at 21.00 W draw ->     2.5 ms powered after exit
+  from 18.00 V:  152.2 mJ above V_LOCK; at  0.32 W draw ->   469.9 ms powered after exit
+  from 18.00 V:  152.2 mJ above V_LOCK; at 15.00 W draw ->    10.1 ms powered after exit
+  from 18.00 V:  152.2 mJ above V_LOCK; at 21.00 W draw ->     7.2 ms powered after exit
+  from 21.47 V:  255.0 mJ above V_LOCK; at  0.39 W draw ->   659.8 ms powered after exit
+  from 21.47 V:  255.0 mJ above V_LOCK; at 15.00 W draw ->    17.0 ms powered after exit
+  from 21.47 V:  255.0 mJ above V_LOCK; at 21.00 W draw ->    12.1 ms powered after exit
+
+==============================================================================
+E. Reverse-current gate coverage
+==============================================================================
+  S0-9 tests 3.0 A / 60 s; U_C1 passes up to 3.33 A indefinitely (no time limit), windows 30 s each at up to 20 transitions/min (design 8, 12.4).
+  S0-10 tests 15 A / 1 ms; BT boost switch limit 17.1 A (design 7.6, SLVSFP3C 7.5); U_C1 path to bond = 76 us + 3 x 88-114 us gate rise = 0.34-0.42 ms.
+   tau 88 us: trip-to-bond ~ 0.34 ms
+   tau 114 us: trip-to-bond ~ 0.42 ms

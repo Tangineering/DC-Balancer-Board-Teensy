@@ -1,0 +1,216 @@
+
+==============================================================================================================
+Section 0: model reduction check
+==============================================================================================================
+  Z-versus-L equivalence over pins 33, 28-32 (pull-downs), 16 environments x 729 vectors x 2 stages: 0 mismatches
+
+==============================================================================================================
+Section 1: exhaustive steady state, revision-6 network (Stage 1 and 2), fault-free and single faults
+==============================================================================================================
+  fault                stage  (a)fw (a')fw (b)fw  defaults(c)  false-cold  Q_MD-vs-feed  p5-sources  example
+  None                     1      0      0      0           0           0             0           0   -
+  EFUSE_FET_SHORT          1  31424      0      0           0           0         47712           0   a p33=L,p28=L,p29=L,p30=L,p31=L,p32=L,p5=L,p34=T,p20=Z env=resid
+  U_AND_STUCK_H            1  17088      0      0           0           0             0           0   a p33=L,p28=L,p29=L,p30=L,p31=L,p32=L,p5=L,p34=T,p20=Z env=resid,teensy
+  FF1Q_SB_STUCK_L          1    192      0      0           0           0             0           0   a p33=H,p28=L,p29=L,p30=L,p31=H,p32=L,p5=L,p34=T,p20=Z env=ff1_prev,resid,teensy,v5
+  Q_X2_OPEN                1      0      0      0           0           0             0           0   -
+  Q_X1_OPEN                1      0      0     32           0           0             0           0   b p33=H,p28=H,p29=L,p30=L,p31=H,p32=H,p5=L,p34=T,p20=Z env=bus,ff1_prev,teensy,v5
+  DBCFC_SHORT              1      0      0      0           0           0             0           0   -
+  DBCRG_SHORT              1      0      0      0           0           0             0           0   -
+  LB3V3_TAP_OPEN           1      0      0      0           0       32768             0           0   -
+  Q_MD_DS_SHORT            1      0      0      0           0           0           416           0   -
+  U_MDI_STUCK_H            1      0      0      0           0           0           416           0   -
+  U_MDI_STUCK_L            1      0      0      0           0           0             0           0   -
+  MD_G_OPEN                1      0      0      0           0           0             0           0   -
+  U_MS_OUT_STUCK_L         1      0      0      0           0         464             0           0   -
+  R_MS1_OPEN               1      0      0      0           0         464             0           0   -
+  R_MS2_OPEN               1      0      0      0           0           0             0           0   -
+  PIN8_TAP_OPEN            1      0      0      0           0           0             0           0   -
+  P5_PUSHPULL              1      0      0      0           0           0             0       32768   -
+  None                     2      0      0      0           0           0             0           0   -
+  EFUSE_FET_SHORT          2  40480      0      0           0           0         42560           0   a p33=L,p28=L,p29=L,p30=L,p31=L,p32=L,p5=L,p34=T,p20=Z env=resid
+  U_AND_STUCK_H            2  22048      0      0           0           0             0           0   a p33=L,p28=L,p29=L,p30=L,p31=L,p32=L,p5=L,p34=T,p20=Z env=resid,teensy
+  FF1Q_SB_STUCK_L          2    256      0      0           0           0             0           0   a p33=H,p28=L,p29=L,p30=L,p31=H,p32=L,p5=L,p34=T,p20=Z env=ff1_prev,resid,teensy,v5
+  Q_X2_OPEN                2      0      0      0           0           0             0           0   -
+  Q_X1_OPEN                2      0      0     32           0           0             0           0   b p33=H,p28=H,p29=L,p30=L,p31=H,p32=H,p5=L,p34=T,p20=Z env=bus,ff1_prev,teensy,v5
+  DBCFC_SHORT              2      0      0     16           0           0             0           0   b p33=H,p28=H,p29=L,p30=H,p31=L,p32=H,p5=L,p34=T,p20=Z env=bus,ff1_prev,teensy,v5,vmot_above
+  DBCRG_SHORT              2      0      0      0           0           0             0           0   -
+  LB3V3_TAP_OPEN           2      0      0      0           0       32768             0           0   -
+  Q_MD_DS_SHORT            2      0      0      0           0           0           448           0   -
+  U_MDI_STUCK_H            2      0      0      0           0           0           448           0   -
+  U_MDI_STUCK_L            2      0      0      0           0           0             0           0   -
+  MD_G_OPEN                2      0      0      0           0           0             0           0   -
+  U_MS_OUT_STUCK_L         2      0      0      0           0         512             0           0   -
+  R_MS1_OPEN               2      0      0      0           0         512             0           0   -
+  R_MS2_OPEN               2      0      0      0           0           0             0           0   -
+  PIN8_TAP_OPEN            2      0      0      0           0           0             0           0   -
+  P5_PUSHPULL              2      0      0      0           0           0             0       32768   -
+
+  Reading. Fault-free and under every new single fault the firmware-legal (a), (a') and (b) counts stay 0 and the
+  defaults (c) hold: Q_MD, U_MS, pin 8 and open-drain pin 5 sit outside the EF_EN and S_GND equations (eq. 5-7), so
+  the revision-6 delta cannot create (a) or (b) by itself. (a)/(b) still appear only under EFUSE_FET_SHORT or
+  U_AND_STUCK_H plus a feed (rows F11, F35, F36), unchanged from round 3.
+  New in revision 6: 'false-cold' counts states in which pin 8 reads LOW (cold) while the module node is fed or holds
+  a residual above the threshold. Fault-free it is 0 except through LB3V3_TAP_OPEN, where R_UMS (10 kOhm to the dead
+  rail) defeats the INPUT_PULLUP: section 5.3 item 3 and Table 13 assume an unpowered U_MS reads HIGH or LOW only by
+  its output stage. Single faults U_MS_OUT_STUCK_L / R_MS1_OPEN give false-cold reads until the next window's
+  positive control. 'Q_MD-vs-feed' is the 17 W R_MD case; fault-free it needs a residual-free fed node with EF_EN L,
+  which only an eFuse bypass gives (row F11 + probe), plus the Q_MD/U_MDI short rows F50.
+
+==============================================================================================================
+Section 2: Run -> Finish -> Idle (or State-98 'Q') inside a regen tail: self-test step 1 and k_idle
+==============================================================================================================
+  Idle entry happens in the same doState3() call that leaves State 2 (ino:7954-7957, 8017-8018); the
+  Idle-entry self-test step 1 runs on the next chgModeTick() and expects CH1_OK L and CH2_OK L (design 9.3).
+  A comparator that asserted on the pulse permits until V-MOT falls below its release level.
+
+  peak V   decay V/s  release V   CH permits for (s after peak)   step-1 FAIL if Idle entry within
+   21.20       14.0      16.13                         0.362   0.362 s of the last pulse peak
+   21.20       14.0      16.43                         0.341   0.341 s of the last pulse peak
+   21.20       20.0      16.13                         0.254   0.254 s of the last pulse peak
+   21.20       20.0      16.43                         0.238   0.238 s of the last pulse peak
+   21.47       14.0      16.13                         0.381   0.381 s of the last pulse peak
+   21.47       14.0      16.43                         0.360   0.360 s of the last pulse peak
+   21.47       20.0      16.13                         0.267   0.267 s of the last pulse peak
+   21.47       20.0      16.43                         0.252   0.252 s of the last pulse peak
+
+  -> ERR_CHG_SELFTEST (reboot-only, refuses EVERY window, FC windows included) when the Finish command or 'Q'
+     arrives up to 0.381 s after a regen pulse peak. Bursts stay above bus for 0.3-0.6 s (facts_prior s6).
+
+  k_idle = 1 s mean of V-MOT/VBUS from Idle entry (MOT_PWR H, motor command 0): inflation vs the true 1.000
+  entry after peak   peak 21.47 V, 14 V/s   peak 21.20 V, 20 V/s   ERR_VMOT_CAL (+/-3 %)
+           0.00 s               1.0670               1.0424   LATCH (regen refused)
+           0.05 s               1.0509               1.0277   LATCH (regen refused)
+           0.10 s               1.0371               1.0161   LATCH (regen refused)
+           0.15 s               1.0255               1.0076   biased, passes
+           0.20 s               1.0160               1.0023   biased, passes
+           0.25 s               1.0087               1.0001   biased, passes
+           0.30 s               1.0036               1.0000   biased, passes
+
+  Biased k_idle (passes the 3 % band) against ERR_VOK_STUCK: a healthy channel permits from assert down to its
+  release; r = ratio / k_idle reads below 1.003 while ratio < 1.003 k. Time in that band at 14-20 V/s:
+    k_idle 1.01 decay 14.0 V/s:   5.6 ms (latch needs 50 ms)
+    k_idle 1.01 decay 20.0 V/s:   3.9 ms (latch needs 50 ms)
+    k_idle 1.02 decay 14.0 V/s:  17.1 ms (latch needs 50 ms)
+    k_idle 1.02 decay 20.0 V/s:  11.9 ms (latch needs 50 ms)
+    k_idle 1.03 decay 14.0 V/s:  28.5 ms (latch needs 50 ms)
+    k_idle 1.03 decay 20.0 V/s:  20.0 ms (latch needs 50 ms)
+
+  Reading. Two Idle-entry checks assume V-MOT at bus level, and the Finish path enters Idle within one loop of the
+  Pi command, braking or not. (1) Step 1 reads CH1_OK/CH2_OK H for up to 0.38 s after a pulse peak and fails, which
+  sets the reboot-only ERR_CHG_SELFTEST. The same holds for 'Q' during a D/Y/W regen hold. The rev-6 host test
+  (12.11) enters Idle from State 2 with the pump toggling but with V-MOT at bus level, so it does not cover this.
+  (2) k_idle, refreshed at every Idle entry, averages the tail into a 1 s mean: an entry within about 0.1 s of a
+  peak inflates it by more than 3 % and latches ERR_VMOT_CAL (regen windows refused); a smaller inflation passes and
+  only biases r (no ERR_VOK_STUCK: the band stays below 50 ms). Stage 2 only: in Stage 1 the CH bits are tied LOW
+  and k_idle is not used. The tail exists in every Stage-2 Run with a brake command, window or not.
+
+==============================================================================================================
+Section 3: regen window, pulse n >= 2: VCHG-IN residual at the VOK assert and the ERR_MOD_SENSE (b) deadline
+==============================================================================================================
+  VCHG-IN tracks V-MOT through D-BC-RG until the VOK release, then holds on 20 uF with tau 0.984 s; the window
+  entry rule 'V_chg below 11 V' applies to the first pulse only. No Ag105 draw (present evidence: the cold
+  start of 65-170 ms is not reached before the 18 V threshold is lost, design 7.8: 'no pulse is captured').
+
+  decay  spacing  off-span  residual   >=13.5 V (stale anchor)
+   14.0    0.523     0.147     14.14   YES
+   14.0    0.535     0.159     13.97   YES
+   14.0    0.562     0.186     13.59   YES
+   15.0    0.523     0.171     13.80   YES
+   15.0    0.535     0.183     13.64   YES
+   15.0    0.562     0.210     13.27   no
+   16.0    0.523     0.192     13.51   YES
+   16.0    0.535     0.204     13.35   no
+   16.0    0.562     0.231     12.99   no
+   17.0    0.523     0.211     13.26   no
+   17.0    0.535     0.223     13.10   no
+   17.0    0.562     0.250     12.74   no
+   20.0    0.523     0.255     12.67   no
+   20.0    0.535     0.267     12.52   no
+   20.0    0.562     0.294     12.18   no
+
+  Deadline check (10 ms from the anchor; EF_EN stays H for the whole VOK span of 0.24-0.38 s):
+    I1: anchor = first iteration with EF_EN H whose V_chg read and the previous read are both >= 13.5 V
+    I2: anchor = second consecutive V_chg >= 13.5 V read taken with EF_EN H
+    t_D_ON ms   residual V   P(false ERR_MOD_SENSE) I1   I2
+            8         13.6                       1.00   0.10
+            8         14.1                       1.00   0.09
+            9         13.6                       1.00   0.10
+            9         14.1                       1.00   0.10
+           10         13.6                       1.00   0.09
+           10         14.1                       1.00   0.09
+           12         13.6                       1.00   0.09
+           12         14.1                       1.00   0.10
+
+  Reading. CC-1 re-keyed the positive control from the EF_EN rise to 'the second settled V_chg reading at or above
+  13.5 V' on the assumption that V_chg is below 13.5 V until D-BC-RG feeds VCHG-IN. Inside a window that holds only for
+  the first pulse. When the VESC re-pulses 0.523-0.562 s later and V-MOT decayed at about 16 V/s or slower, VCHG-IN
+  still holds 13.5-14.2 V at the next VOK assert, so the anchor is taken at the EF_EN rise, t_D_ON before the feed.
+  The residual itself does not reach pin 8: the eFuse drains 21 uF into C_mod (about 0.2-0.5 V) and stops at UVLO.
+  Under reading I1 every such pulse latches at t_D_ON 8 ms or more: pin 8 rises about t_D_ON + 2.9 ms after the
+  assert, and on the 1.131 ms iteration grid the first HIGH read lands at anchor + 10.18 ms or later (the deadline
+  is met only for t_D_ON below about 7.1 ms); one hit refuses every window for the power cycle. Under the stricter reading I2 the stale
+  anchor needs two reads inside the 1.24 ms eFuse turn-on delay (about 10 % of pulses), which over 56 pulses per
+  30 s window is still near-certain. No host test (12.11) drives a second pulse with a residual V_chg.
+
+==============================================================================================================
+Section 4: exit drain wait (two pin-8 LOW reads within 10 ms) with the deferred SD/I2C iteration
+==============================================================================================================
+  Iteration 0 writes the feed drop (pin 30 or FC_CHARGE LOW) and, per 12.4 item 5, defers logDrainTick() and
+  the Ag105 I2C poll to iteration 1. Pin 8 is read at the start of each iteration (chgModeTick after
+  detectFaults). L = duration of iteration 1. ERR_MOD_DRAIN if the second LOW read is later than 10 ms.
+
+  start V  C_mod uF  drain ms   L=1.13   L=2.40   L=5.00   L=7.50   L=9.76  (time of 2nd LOW read, ms)
+    16.0       100      0.84    2.26     3.53     6.13     8.63    10.89*
+    16.0       145      1.22    3.39     4.66     7.26     9.76    12.02*
+    16.0       221      1.85    3.39     4.66     7.26     9.76    12.02*
+    16.4       100      0.88    2.26     3.53     6.13     8.63    10.89*
+    16.4       145      1.27    3.39     4.66     7.26     9.76    12.02*
+    16.4       221      1.93    3.39     4.66     7.26     9.76    12.02*
+    21.5       100      1.28    3.39     4.66     7.26     9.76    12.02*
+    21.5       145      1.86    3.39     4.66     7.26     9.76    12.02*
+    21.5       221      2.83    4.52     4.66     7.26     9.76    12.02*
+  (* = false ERR_MOD_DRAIN on a healthy board; windows refused for the power cycle)
+
+  Largest iteration-1 length that still passes: 10 ms - T (read 1 at T, read 2 at T + L when the drain is
+  shorter than T) = 8.87 ms; when the drain exceeds T, 10 ms - 2T = 7.74 ms.
+
+  Reading. The 10 ms T_drain,max is wall-clock while the confirmation needs two reads; revision 6 (R6-11) moved every
+  other confirmation to 'iterations or 30 ms' because of the 9.76 ms measured gap, but kept 10 ms here, and the FM3-3
+  deferral moves the SD drain and the I2C poll into exactly the first drain-wait iteration. Any iteration-1 length
+  above 7.7-8.9 ms latches ERR_MOD_DRAIN with the module already cold. The host test of 12.11 injects a 10 ms
+  iteration after the exit write and checks only ERR_CHG_EXIT/ENTRY/LADDER, not ERR_MOD_DRAIN. The same arithmetic
+  bounds ERR_MOD_SENSE (b): worst lag 3.38 ms plus a 9.76 ms gap exceeds the 10 ms regen deadline.
+
+==============================================================================================================
+Section 5: invariant (d) and the D-BT-SQ opening order on every exit path
+==============================================================================================================
+  regen exit (9.5)                         p30 L -> wait p8 LOW x2 -> p33 L -> confirm -> p5 L after 20 ms cold  -> feed removed and node cold before the bond
+  FC exit (9.7)                            FC_CHARGE L -> wait p8 LOW x2 -> p33 L -> confirm -> BT_BUS -> p10/p5 L  -> feed removed and node cold before the bond
+  probe (9.7a)                             (p33 L already) -> FC_CHARGE H <=100 ms -> FC_CHARGE L  -> feed removed and node cold before the bond
+  State 99 (9.9)                           FC_CHARGE L, REGEN L -> wait p8 LOW (cap 10 ms) -> p33 L -> p32 L  -> feed removed and node cold before the bond
+  ERR_CHG_LADDER, LB alive (12.4 item 4)   ends window -> sets p32 L -> (order vs drain unstated)  -> see trace below
+  hardware trip (9.10)                     FF1 clear -> eFuse off <=76 us -> bond 0.3 ms -> module runs <=1.1 ms (F10)  -> F10 by design (bounded)
+
+  Trace (LB alive, FC window at 1.25 A, a settled ladder mismatch on 3 iterations, e.g. one SG bit wrong):
+    it k   : ERR_CHG_LADDER -> 'ends any window, sets pin 32 LOW' (Table 16 row, 9.10 F51 row);
+    it k   : pin 32 LOW: D-BT-SQ EN falls while FC_CHARGE is still HIGH and FF1 set (FCQ, EF_EN H): the Ag105
+             output is opened under 1.25 A - the case that 12.4 item 7 (CC-7) calls unreachable ('a pin-32 LOW
+             write inside a window would open the battery path during charge (gate S0-3) ... neither is reachable
+             from a key') and that S0-3 must bound;
+    it k+1 : FC_CHARGE L, drain wait, pin 33 L (the exit itself is (d)-correct).
+  The pin-32 LOW of R6-12 is needed only when the ladders read code 0 (dead LB rail, cross-lock lost, F51); with the
+  rail alive the cross-lock X disables D-BT-SQ at the bond anyway. (d) itself holds on every commanded path.
+
+==============================================================================================================
+Section 6: defaults (c) for unpowered, reset and hang, revision-6 elements
+==============================================================================================================
+  Teensy unpowered (LB 3V3 absent)                        Q_MD OFF (R_MDG)                    pin 8 n/a                                        FF1 clear (no rail)
+  Teensy reset, LB 3V3 up (pins Z)                        Q_MD ON (EF_EN L)                   pin 8 LOW once dumped                            FF1 clear at once (U_P33)
+  Loop hang in a regen window (pins static, pump static)  Q_MD OFF until PUMP_OK falls, then ON pin 8 HIGH in a pulse, LOW after dump            FF1 clear after 43-76 ms
+  LB 3V3 tap open, Teensy alive (F51)                     Q_MD OFF (U_MDI unpowered)          pin 8 LOW (R_UMS to dead rail vs ~22k pull-up)   FF1 clear; bonded on R_PA
+
+  Reading. (c) holds: the eFuse is off (R_SDP or FF1 clear) and the pack bonded in every row. With Q_MD off (no
+  rail) the residual module node decays on R_MB (16 V to 9 V in at most 0.42 s): the module can convert from C_mod
+  (at most 51 mJ) with the pack bonded, the F10 class. In the F51 row pin 8 reads LOW whatever the node does, which
+  contradicts Table 13 ('HIGH (reads fed) with U_MS released or unpowered without a clamp'); the ladder code-0 rule
+  still ends the window, so this is a documentation error, not a new path.

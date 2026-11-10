@@ -1,0 +1,255 @@
+
+====================================================================================================
+Section 1: exhaustive combinational enumeration (fault-free, then single faults)
+====================================================================================================
+  GPIO vectors 26244, environments 640; states per fault 16,796,160
+  fault               (a) hw-only  (a) fw-legal  (a') fw-legal  (b) hw-only  (b) fw-legal  example (fw-legal)
+  None                          0             0              0            0             0  -
+  EFUSE_FET_SHORT       9,297,180     3,716,928              0            0             0  -
+  U_AND_STUCK_H         5,098,140     1,850,688              0            0             0  -
+  U_OR_STUCK_H                  0             0              0            0             0  -
+  U_VA_STUCK_H                  0             0              0            0             0  -
+  CH1_STUCK_OK                  0             0              0            0             0  -
+  FF1_Q_STUCK_H           219,024       219,024              0            0             0  a: p33=L p28=L p29=L p30=L p31=H p32=L p34=T vmot_above=0 bus=1 3V3=1
+  FF1Q_SB_STUCK_L          16,524        16,524              0            0             0  a: p33=H p28=L p29=L p30=L p31=H p32=L p34=T vmot_above=0 bus=1 3V3=1
+  U_P33_STUCK_H                 0             0              0            0             0  -
+  Q_X1_OPEN                     0             0              0          648           648  b: p33=H p28=H p29=L p30=L p31=H p32=H p34=T vmot_above=0 bus=1 3V3=1
+  Q_X2_OPEN                     0             0              0            0             0  -
+  DBTEN_SHORT                   0             0              0        1,944         1,944  b: p33=H p28=L p29=L p30=L p31=H p32=H p34=T vmot_above=0 bus=1 3V3=1
+  DBCFC_SHORT                   0             0              0        1,296         1,296  b: p33=H p28=H p29=L p30=L p31=L p32=H p34=T vmot_above=1 bus=1 3V3=1
+  DBCRG_SHORT                   0             0              0            0             0  -
+  FCQ_TAP_OPEN                  0             0              0          648           648  b: p33=H p28=H p29=L p30=L p31=H p32=H p34=T vmot_above=1 bus=1 3V3=1
+
+  Reading: 'hw-only' counts every GPIO vector, including those firmware refuses; 'fw-legal' applies the rev-4
+  refusal (REGEN / FC_CHARGE HIGH only while FF1.Q reads HIGH). 'resid' = board-side VCHG-IN still charged above
+  the eFuse UVLO from a previous window (C-D8/C-D10, 20 uF).
+  Fault-free: (a), (a') and (b) are UNREACHABLE in every steady state, for every GPIO vector including high-Z,
+  with 3V3 or 5V absent, and with any comparator trip. The proof is structural: EF_EN needs FF1.Q and the bond
+  needs NOT FF1Q_SB (eq. 5, 6); the FC feed and the BT_BUS clamp are the same pin-31 net (FCQ -> Q_X1), and the
+  regen feed is clamped by the same VOK terms that require V-MOT above VBUS.
+  Single faults that reach (a) in a firmware-legal steady state: the eFuse bypass class (EFUSE_FET_SHORT,
+  U_AND_STUCK_H) only through a still-charged VCHG-IN, and FF1Q_SB_STUCK_L (bonded while FF1 is set, F33 class).
+  Steady-state (b) needs a D-BT-EN short in an FC window (F16, D5 cuts it) or a D-BC-RG short with V-MOT at the
+  bus and the eFuse on. The steady-state model cannot see the transient cases; sections 2-4 treat them.
+
+====================================================================================================
+Section 2: exit timing - charger input removal against bond conduction (invariant d)
+====================================================================================================
+  S_GND conduction after FF1 clear: 18.6-51.8 us (tau 88-114 us, V_th 1.2-2.3 V, final 6.3 V)
+  eFuse FET off after EF_EN falls: 0.8-1.5 us (SLVSE94G tSD(dly)) -> the eFuse is always off first.
+  But the eFuse output node still holds C_EO 1 uF plus the Ag105's own input capacitance C_mod, which is NOT
+  given (Ag105 DS; design section 7.5 'gate S0-11'). The module keeps converting until VCHG-IN_M < 11 V (DS p.19):
+     C_mod     V0   P_in     t_run  overlap with bond  E (ML0227 config, sense bypassed)
+       0uF  13.82   14.8     2.4us              0.0us                           0.03 mJ
+       0uF  18.00   22.4     4.5us              0.0us                           0.10 mJ
+       0uF  21.40   22.4     7.5us              0.0us                           0.17 mJ
+      10uF  13.82   14.8    26.0us              7.4us                           0.38 mJ
+      10uF  18.00   22.4    49.8us             31.2us                           1.12 mJ
+      10uF  21.40   22.4    82.7us             64.1us                           1.85 mJ
+      47uF  13.82   14.8   113.5us             94.9us                           1.68 mJ
+      47uF  18.00   22.4   217.5us            198.9us                           4.87 mJ
+      47uF  21.40   22.4   361.0us            342.4us                           8.09 mJ
+     100uF  13.82   14.8   238.8us            220.2us                           3.53 mJ
+     100uF  18.00   22.4   457.7us            439.1us                          10.25 mJ
+     100uF  21.40   22.4   759.7us            741.1us                          17.02 mJ
+     470uF  13.82   14.8  1113.7us           1095.1us                          16.48 mJ
+     470uF  18.00   22.4  2134.2us           2115.6us                          47.81 mJ
+     470uF  21.40   22.4  3542.6us           3524.0us                          79.35 mJ
+  D-BT-SQ stays enabled 0.3-0.7 ms after FF1 clears (X charge, Table 11) plus the RT1987 turn-off time
+  (TODO(verify: RT1987 DS-00)), so any C_mod above about 4 uF puts the module in the ML0227 configuration
+  (fed, bonded, output path closed) for the overlap above. The charge is capped by the stored energy (<= 0.11 J at
+  470 uF / 21.4 V). Invariant (d) as written ('charger input removed before the bond closes') holds only for the
+  eFuse FET, not for the module input, unless C_mod <= ~4 uF (S0-11 must measure it) or the Stage-3 dump FET
+  (Q_HU/R_HU, keyed to FF1./Q) is fitted in every stage.
+
+====================================================================================================
+Section 2b: 3V3 slow collapse inside a window (HR5 'with 3V3 absent' claim)
+====================================================================================================
+  Q_A V_th 0.8 V: S_GND bond begins when 3V3 falls below 0.84 V (U_BF HIGH = VCC)
+  Q_A V_th 1.5 V: S_GND bond begins when 3V3 falls below 1.57 V (U_BF HIGH = VCC)
+  eFuse turns off only when SHDN = 0.957 x 3V3 < V_SHUTF (>= 0.8 V): 3V3 below 0.84 V at the
+  minimum threshold; V_SHUTF max is not stated in the design (TODO(verify: SLVSE94G section 6.5)).
+  With Q_A at the high end of V_th and V_SHUTF at its minimum, 3V3 between 0.84 V and 1.57 V gives
+  bonded + eFuse ON. In that band U_AND (FF1.Q, PUMP_OK, SRC all tracking VCC) can keep EF_EN at VCC level;
+  LVC behaviour below 1.65 V is unspecified. D-BT-SQ follows pin 32 (Teensy, also collapsing) and the RT1987
+  EN threshold (TODO(verify: RT1987 DS-00)). The duration equals the 3V3 fall time through that band (rail
+  capacitance / load; not in the design). Section 9.10 and Table 13 treat '3V3 lost' as a step to 0 V (Ioff),
+  so the claim 'eFuse off ... with 3V3 absent' is proven only for the absent rail, not for the collapse.
+
+====================================================================================================
+Section 3: firmware sequences (design sections 9.2-9.10) - invariant check after every step
+====================================================================================================
+  Boot + boot self-test (9.3) + bring-up                         fault=None             -> no violation
+  Regen window entry/hold/exit (9.5)                             fault=None             -> no violation
+  FC window entry/exit (9.7)                                     fault=None             -> no violation
+  State 99 from an FC window (9.9)                               fault=None             -> no violation
+  Teensy reset mid FC window (9.10)                              fault=None             -> no violation
+  Loop hang mid regen window (9.10)                              fault=None             -> no violation
+  Boot + boot self-test (9.3) + bring-up                         fault=EFUSE_FET_SHORT  -> no violation
+  Regen window entry/hold/exit (9.5)                             fault=EFUSE_FET_SHORT  -> step 9 (exit 2 p33 L): a; step 10 (bonded, VCHG-IN residual): a
+  FC window entry/exit (9.7)                                     fault=EFUSE_FET_SHORT  -> step 7 (exit 2 p33 L): a; step 8 (exit 3 BT_BUS H): a
+  State 99 from an FC window (9.9)                               fault=EFUSE_FET_SHORT  -> step 3 (9.9-2 p33 L): a; step 4 (phase 2): a; step 5 (phase 3 pump stop): a
+  Teensy reset mid FC window (9.10)                              fault=EFUSE_FET_SHORT  -> step 2 (Teensy reset: all Z): a
+  Loop hang mid regen window (9.10)                              fault=EFUSE_FET_SHORT  -> step 2 (hang: pins static, pump stops): a; step 3 (43-76 ms later): a
+  Boot + boot self-test (9.3) + bring-up                         fault=U_AND_STUCK_H    -> no violation
+  Regen window entry/hold/exit (9.5)                             fault=U_AND_STUCK_H    -> step 9 (exit 2 p33 L): a; step 10 (bonded, VCHG-IN residual): a
+  FC window entry/exit (9.7)                                     fault=U_AND_STUCK_H    -> step 7 (exit 2 p33 L): a; step 8 (exit 3 BT_BUS H): a
+  State 99 from an FC window (9.9)                               fault=U_AND_STUCK_H    -> step 3 (9.9-2 p33 L): a; step 4 (phase 2): a; step 5 (phase 3 pump stop): a
+  Teensy reset mid FC window (9.10)                              fault=U_AND_STUCK_H    -> step 2 (Teensy reset: all Z): a
+  Loop hang mid regen window (9.10)                              fault=U_AND_STUCK_H    -> step 2 (hang: pins static, pump stops): a; step 3 (43-76 ms later): a
+  Boot + boot self-test (9.3) + bring-up                         fault=FF1Q_SB_STUCK_L  -> no violation
+  Regen window entry/hold/exit (9.5)                             fault=FF1Q_SB_STUCK_L  -> step 5 (hold: VOK asserts): a; step 7 (hold: next pulse): a; step 8 (exit 1 p30 L): a
+  FC window entry/exit (9.7)                                     fault=FF1Q_SB_STUCK_L  -> step 5 (6 FC_CHARGE): a
+  State 99 from an FC window (9.9)                               fault=FF1Q_SB_STUCK_L  -> step 1 (FC window open): a
+  Teensy reset mid FC window (9.10)                              fault=FF1Q_SB_STUCK_L  -> step 1 (FC window open): a
+  Loop hang mid regen window (9.10)                              fault=FF1Q_SB_STUCK_L  -> step 1 (regen window, VOK): a
+  Boot + boot self-test (9.3) + bring-up                         fault=U_P33_STUCK_H    -> no violation
+  Regen window entry/hold/exit (9.5)                             fault=U_P33_STUCK_H    -> no violation
+  FC window entry/exit (9.7)                                     fault=U_P33_STUCK_H    -> no violation
+  State 99 from an FC window (9.9)                               fault=U_P33_STUCK_H    -> no violation
+  Teensy reset mid FC window (9.10)                              fault=U_P33_STUCK_H    -> no violation
+  Loop hang mid regen window (9.10)                              fault=U_P33_STUCK_H    -> no violation
+  Boot + boot self-test (9.3) + bring-up                         fault=Q_X1_OPEN        -> no violation
+  Regen window entry/hold/exit (9.5)                             fault=Q_X1_OPEN        -> no violation
+  FC window entry/exit (9.7)                                     fault=Q_X1_OPEN        -> no violation
+  State 99 from an FC window (9.9)                               fault=Q_X1_OPEN        -> no violation
+  Teensy reset mid FC window (9.10)                              fault=Q_X1_OPEN        -> no violation
+  Loop hang mid regen window (9.10)                              fault=Q_X1_OPEN        -> no violation
+  Boot + boot self-test (9.3) + bring-up                         fault=Q_X2_OPEN        -> no violation
+  Regen window entry/hold/exit (9.5)                             fault=Q_X2_OPEN        -> no violation
+  FC window entry/exit (9.7)                                     fault=Q_X2_OPEN        -> no violation
+  State 99 from an FC window (9.9)                               fault=Q_X2_OPEN        -> no violation
+  Teensy reset mid FC window (9.10)                              fault=Q_X2_OPEN        -> no violation
+  Loop hang mid regen window (9.10)                              fault=Q_X2_OPEN        -> no violation
+  Boot + boot self-test (9.3) + bring-up                         fault=DBTEN_SHORT      -> no violation
+  Regen window entry/hold/exit (9.5)                             fault=DBTEN_SHORT      -> no violation
+  FC window entry/exit (9.7)                                     fault=DBTEN_SHORT      -> step 5 (6 FC_CHARGE): b
+  State 99 from an FC window (9.9)                               fault=DBTEN_SHORT      -> step 1 (FC window open): b
+  Teensy reset mid FC window (9.10)                              fault=DBTEN_SHORT      -> step 1 (FC window open): b
+  Loop hang mid regen window (9.10)                              fault=DBTEN_SHORT      -> no violation
+  Boot + boot self-test (9.3) + bring-up                         fault=DBCFC_SHORT      -> no violation
+  Regen window entry/hold/exit (9.5)                             fault=DBCFC_SHORT      -> step 5 (hold: VOK asserts): b; step 7 (hold: next pulse): b; step 8 (exit 1 p30 L): b
+  FC window entry/exit (9.7)                                     fault=DBCFC_SHORT      -> no violation
+  State 99 from an FC window (9.9)                               fault=DBCFC_SHORT      -> no violation
+  Teensy reset mid FC window (9.10)                              fault=DBCFC_SHORT      -> no violation
+  Loop hang mid regen window (9.10)                              fault=DBCFC_SHORT      -> step 1 (regen window, VOK): b
+  Notes: steady-state steps only (see sections 2 and 4 for the transient overlaps). 'resid' marks the board-side
+  VCHG-IN (C-D8/C-D10) still above the eFuse UVLO after a feed is dropped. With the fault-free network no step of
+  any sequence reaches (a), (a') or (b). The eFuse-bypass faults reach (a) on the first bonded step after any exit
+  while VCHG-IN is still charged (the 20 uF board side, plus the RT1987 turn-off time, TODO(verify: RT1987 DS-00)).
+
+====================================================================================================
+Section 4: counterexample traces
+====================================================================================================
+
+ 4.1 State 99 under PACK_RETURN_CHANGEOVER as specified in design 9.9 step 3
+     ('skip the State-99 FC_CHARGE and REGEN drain phases (ino:8299-8327) and go directly to phase 2').
+     The cited range is the whole of ino case 0 and case 1. It contains, besides the two drains:
+        ino:8306  commandMotorCurrent(0)                         (the only motor zero on the fault path;
+                                                                  triggerFault() ino:7064-7076 does not zero it)
+        ino:8308-8309 writeBusSwitch(FC_BUS_ENABLE, LOW) / (BT_BUS_ENABLE, LOW)
+        ino:8313-8315 shareIsoFC / shareSpCutFC / shareSpCutBT reset
+        ino:8325  digitalWrite(MOT_PWR_ENABLE, LOW)              (the State-99 MOT_PWR teardown of Death 5)
+     Phase 2 (ino:8329-8340) then writes REGEN L, MPPT L, FC_REG_ENABLE L, BT_REG_ENABLE L.
+     ok        t0   Run cruise, motor command +I, FC_BUS H, BT_BUS H, MOT_PWR H, both boosts ON, bonded
+     ok        t0   fault -> triggerFault() -> mainState 99 (no pin writes)
+     ok        t0+  9.9 step 1-2: FC_CHARGE L, REGEN L, pin 33 L (already bonded)
+     VIOLATION t0+  9.9 step 3: skip ino:8299-8327 -> phase 2: FC_REG L, BT_REG L
+     VIOLATION      result: FC_BUS H and BT_BUS H onto two DISABLED boosts; MOT_PWR H; VESC still holds +I
+     VIOLATION      path: pack -> VBT -> BT boost L/body diode -> BT_BUS (D-BT-EN forward) -> VBUS -> D-MT-EN -> V-MOT -> VESC
+     VIOLATION t0+1 phase 3: pump stops; State 99 latched in that configuration until power cycle
+     Rule broken: CLAUDE.md section 2 and the ino:8251-8255 contract ('closes every path and disables the boosts
+     LAST, so no energized path ever points into a disabled converter'). Design 9.9 step 3 also says 'Phase 0
+     already has both bus switches LOW', which contradicts its own skip range. The new State-99 host test of
+     section 12.11 checks only 'FC_CHARGE and REGEN never HIGH after pin 33 goes LOW'; it would pass this trace.
+     The existing suite pins MOT_PWR LOW at t0+10 ms (test_main.cpp:22547), so implementing the skip forces an
+     edit of exactly the test that would have caught it.
+
+ 4.2 FC charge window in Run (State 2, cruise) - reachable under IC1 Stage 1
+     Design 9.7: 'The FC window is permitted only at standstill'. But section 12.2 item 4 requires
+     FC_CHARGE_ALLOWED 1 for Stage 1, and section 12.4 item 6 keeps chargingControl()'s window policy and only
+     wraps assertFcChargeEnable() with the mode manager. chargingControl()'s State-2 cruise branch opens a window
+     whenever charge_goal > 0 (ino:15503-15506: FC_CHARGE_ALLOWED && fcChgEntryOk && ag105VbatnIsolatedFlag &&
+     FC_BUS HIGH). No IC1 entry condition, refusal (12.4 item 7 admits CHG_FC in any main state) or host test
+     (12.11) excludes State 2. Trace:
+     t0  State 2 cruise, Pi charge_goal > 0, bonded, BT_BUS H
+     t1  chargingControl() (50 Hz) -> mode manager CHG_ENTERING: pin 33 H, settled confirm, sense check
+     t2  BT_BUS dropped (9.7 step 5); assertFcChargeEnable(true): FCQ H -> Q_X1 clamps D-BT-EN in hardware
+     t3  Ag105 starts; bus = FC only; traction continues (no traction-exit rule for FC windows, 9.6 is regen-only)
+     charger + aux on the bus 0.965 A: traction headroom  4.5 W to P_MAX 1.247 A,  7.0 W to OC_FC 1.4 A (single sample -> State 99)
+     charger + aux on the bus 1.075 A: traction headroom  2.8 W to P_MAX 1.247 A,  5.2 W to OC_FC 1.4 A (single sample -> State 99)
+     Any cruise traction above about 2.7-5.3 W saturates the H-20 (P_MAX) and above 5.2-7.0 W latches OC_FC; with
+     the D-BT-EN clamp in hardware the firmware cannot bring BT back without first closing the window. In
+     addition the [RER] regen arm (1 kHz) can fire inside CHG_FC; the refusal rule admits REGEN HIGH in CHG_FC,
+     and no transition CHG_FC -> CHG_REGEN is specified. The chargingControl() else-branch also writes
+     REGEN_ENABLE LOW every 50 Hz period outside its own window (ino:15524), so the two owners of pin 30 disagree
+     whenever the 1 kHz [RER] arm and the 50 Hz brake detection disagree.
+
+ 4.3 eFuse bypass (F11, U_AND_STUCK_H, F35, F36-M2) at a VOK release in a regen window
+     Fault-free: VOK release -> EF_EN L -> eFuse off in ~18-38 us (Table 11), before V-MOT reaches VBUS (62-124 us).
+     With the eFuse bypassed the only cut is the four clamps -> D-BC-RG EN LOW -> RT1987 turn-off, whose time is
+     NOT specified (Table 11 'TODO(verify: RT1987 DS-00)'). Once V-MOT falls to VBUS, D-MT-EN conducts and the
+     charger is fed from the bus while D-BT-SQ and D-BT-EN are on (BT_BUS may stay closed in a regen window):
+     invariant (b) for t_off(D-BC-RG) on EVERY pulse, plus the 20 uF board-side VCHG-IN energy.
+     Detection: ERR_EFUSE_BYPASS needs 'an I2C ACK with EF_EN L', i.e. VCHG-IN fed while EF_EN is LOW. Rev 4
+     refuses every feed in the bonded mode (12.4 item 7) and feeds only with EF_EN HIGH in windows, so in service
+     the condition never occurs except at these same transients; pin 38 reads the board side (12.5 item 1), and
+     IMON is a test point only. The fault is therefore latent until gate C-2 is repeated.
+
+ 4.4 Run command arriving during the Idle-entry self-test (9.3, ~420 ms)
+     Steps 4, 5, 7 and 8 hold pin 33 HIGH (charge mode) for up to 2 ms each and step 8 for up to 90 ms. Nothing in
+     9.3 or 12.4 holds the State 1 -> 2 transition or the motor command during the self-test (only steps 6-7 check
+     |I_PACK1| <= 0.5 A, and only before they start). A Pi Run command in that interval puts traction current
+     through the Ag105 sense in reverse until U_C1 trips at 2.52-3.50 A; the trip then fails step 4 (expects FF1.Q H)
+     -> ERR_CHG_SELFTEST (reboot-only, every window refused), or, in step 8, is indistinguishable from the pump
+     clear the step expects. 9.6 holds the motor only inside regen windows.
+
+ 4.5 D-BC-FC power-stage short (Table 14 row F17) inside a regen window: invariant (b) on a SINGLE fault
+     F17 claims 'Charge mode: eFuse needs VOK or FCQ -> Benign'. But a regen window IS the VOK case: VCHG-IN is
+     tied to VBUS through the short, BT_BUS may stay closed (Table 12 regen row), D-BT-SQ is on, so at every VOK
+     assert the eFuse feeds the charger from the BUS (section 3 trace above, and section 1: 1,296 fw-legal states).
+     Sequence per pulse: V-MOT crosses the assert level -> EF_EN H -> eFuse ramps from VCHG-IN = VBUS (no RT1987
+     delay on this path) -> charger draws from VBUS -> BT boost refills VBUS from VBT -> charger output -> VBT.
+     V-MOT is not loaded by the charger, so VOK stays asserted; only when D-BC-RG turns on (t_D_ON 8 ms typical,
+     no maximum) does V-MOT dump into VBUS through D-BC-RG + the short and fall toward VBUS, release VOK, and cut
+     the eFuse; the clamps then turn D-BC-RG off and the next rise repeats the cycle for the whole window
+     (up to 30 s).
+     Loop gain: the Ag105 regulates the PACK current I_p (sense intact, charge mode) and supplies I_o = I_p + I_L;
+     I_L includes the BT-boost input that feeds the charger. With BT share s on the bus:
+     dI_L/dI_o = s x V_out / (eta_chg x eta_bt x V_bt) = s x 1.365  (eta_chg 0.88 DS p.20; eta_bt 0.90 ASSUMED)
+     s = 0.25: loop gain 0.34 -> I_o = 1.75 / (1 - g) =   2.66 A -> saturates at the module limit (>= 2.5 A rated)
+     s = 0.50: loop gain 0.68 -> I_o = 1.75 / (1 - g) =   5.51 A -> saturates at the module limit (>= 2.5 A rated)
+     s = 0.75: loop gain 1.02 -> I_o = 1.75 / (1 - g) =      inf -> saturates at the module limit (>= 2.5 A rated)
+     s = 1.00: loop gain 1.37 -> I_o = 1.75 / (1 - g) =      inf -> saturates at the module limit (>= 2.5 A rated)
+     eFuse I_OL 1.84 A at VBUS 16 V = 29.4 W in -> I_o up to 3.24 A before the eFuse limits
+     eFuse I_OL 2.16 A at VBUS 16 V = 34.6 W in -> I_o up to 3.80 A before the eFuse limits
+     Bounds that do NOT act: U_C2 (pack current stays regulated at 1.75 A < 2.65 A), the eFuse I_OL (1.42 A of
+     input at a 2.5 A output < 1.84 A), G1/G2 (not applied in regen windows, 12.7 items 3-4), ERR_PROFILE_OC
+     (I_p is still 1.75 A). The only bound is the VOK duty cycle. F17's own detection column names 'V_chg with
+     FC_CHARGE and REGEN LOW', but Table 16 has no fault for it, so the short is latent and the first regen window
+     after it runs the loop. The same unfed-V_chg check would also expose F15 (D-BC-RG short: VCHG-IN = V-MOT = VBUS
+     in the bonded mode) before any window.
+     Magnitude: the loop current flows only once the module is converting. In the isolated interval (VOK assert
+     to D-BC-RG on, t_D_ON 8 ms typical, no maximum) a cold module at the measured 65-170 ms start (facts_prior
+     section 6) draws little; once D-BC-RG conducts, regen holds V-MOT above the release level only at a regen
+     current of roughly (0.112-0.16 V) / R_path, and at that power regen, not the BT boost, feeds the charger.
+     The loop is therefore large in exactly the configurations the design is aiming for: a module that starts
+     within the pulse (the S0-6 GO case, 5.3-6.4 ms allowance on the 19 ms pulse) or one kept powered across
+     VOK releases (Stage 3 C_HU). Per isolated interval, at the module limit: up to about 22.7 W x 8 ms = 0.18 J;
+     with Stage 3 the module is warm at every assert, so the loop forms on every pulse of every window.
+
+====================================================================================================
+Section 5: invariant verdicts
+====================================================================================================
+  (a) charger powered AND bonded: PROVEN unreachable in every steady state of the fault-free network, all GPIO
+      vectors incl. high-Z, rails absent, any trip (section 1). Transient: holds for the eFuse FET (0.8-1.5 us vs
+      >= 18.6 us bond) but NOT for the module input unless C_mod <= ~4 uF (section 2); slow 3V3 collapse band
+      0.84-1.57 V not covered (section 2b). Single faults: eFuse-bypass class with a charged VCHG-IN; FF1Q_SB stuck
+      LOW (entry confirmation catches it, cable-open F33 does not - already adjudicated).
+  (b) loop: PROVEN unreachable fault-free (FC feed and BT clamp share the pin-31 net; regen feed clamped by VOK).
+      Single fault: D-BC-FC short gives (b) at every VOK assert in a regen window, at the module output limit (4.5);
+      eFuse bypass gives (b) for the unspecified RT1987 turn-off time at every VOK release (4.3),
+      latent in service; D-BT-EN short in an FC window bounded by D5 (F16).
+  (c) unpowered / reset / hang defaults: PROVEN for reset (FF1 clears at once) and hang (43-76 ms); every RT1987 EN
+      on its pull-down at reset. State 99 as specified (4.1) is NOT a safe latched default.
+  (d) every exit removes charger input before the bond: holds for the eFuse switch; module input residual as (a).

@@ -1,0 +1,64 @@
+==============================================================================================================
+[1] Revision-8 LB-entry resistors
+==============================================================================================================
+  U_MS input bias  0.010 nA through R_MS3: node-threshold shift   0.002 mV
+  U_MS input bias  1.000 nA through R_MS3: node-threshold shift   0.158 mV
+  U_MS input bias 10.000 nA through R_MS3: node-threshold shift   1.578 mV
+  R_MS3 x C_in    5 pF =  110.0 ns (exit-hold-check sample 150 us; drain slope effect nil)
+  R_MS3 x C_in   15 pF =  330.0 ns (exit-hold-check sample 150 us; drain slope effect nil)
+  dump 21.50 V -> 9.17 V, C_mod   47 uF:  0.60 ms (+ ~0.0002 ms R_MS3) vs T_drain,max 10 ms
+  dump 21.50 V -> 9.17 V, C_mod  100 uF:  1.27 ms (+ ~0.0002 ms R_MS3) vs T_drain,max 10 ms
+  dump 21.50 V -> 9.17 V, C_mod  221 uF:  2.81 ms (+ ~0.0002 ms R_MS3) vs T_drain,max 10 ms
+  dump 15.95 V -> 9.17 V, C_mod   47 uF:  0.39 ms (+ ~0.0002 ms R_MS3) vs T_drain,max 10 ms
+  dump 15.95 V -> 9.17 V, C_mod  100 uF:  0.83 ms (+ ~0.0002 ms R_MS3) vs T_drain,max 10 ms
+  dump 15.95 V -> 9.17 V, C_mod  221 uF:  1.83 ms (+ ~0.0002 ms R_MS3) vs T_drain,max 10 ms
+  open R_MS2, node 13.5 V: IN+ clamp current 0.081 mA (rev 7 text: up to 0.215 mA)
+  open R_MS2, node 21.5 V: IN+ clamp current 0.147 mA (rev 7 text: up to 0.215 mA)
+  pack-negative open, D_VC1 V_F 0.25 V: pin 20 = -0.125 V (pad abs min -0.5 V); BQ29200 VC1 -0.25 V vs -0.3 V
+  pack-negative open, D_VC1 V_F 0.40 V: pin 20 = -0.200 V (pad abs min -0.5 V); BQ29200 VC1 -0.40 V vs -0.3 V
+  pack-negative open, D_VC1 V_F 0.55 V: pin 20 = -0.275 V (pad abs min -0.5 V); BQ29200 VC1 -0.55 V vs -0.3 V
+  BAL_OK R_BL2   82k tol 0 %: VBAL+ for VIH 2.0 V with 5 uA leakage =  7.79 V (entry floor LIMIT_V_BATT_MIN 7.4 V: margin -0.39 V)
+  BAL_OK R_BL2   82k tol 1 %: VBAL+ for VIH 2.0 V with 5 uA leakage =  7.90 V (entry floor LIMIT_V_BATT_MIN 7.4 V: margin -0.50 V)
+  BAL_OK R_BL2  100k tol 0 %: VBAL+ for VIH 2.0 V with 5 uA leakage =  6.92 V (entry floor LIMIT_V_BATT_MIN 7.4 V: margin +0.48 V)
+  BAL_OK R_BL2  100k tol 1 %: VBAL+ for VIH 2.0 V with 5 uA leakage =  7.01 V (entry floor LIMIT_V_BATT_MIN 7.4 V: margin +0.39 V)
+  PROFILE VOH 2.9 V: Q_CS/Q_MP gate 2.36 V vs BSS138 VGS(th) max 1.5 V (overdrive 0.86 V); gate tau (23k x 100 pF ASSUMED) 2.3 us
+  PROFILE VOH 3.3 V: Q_CS/Q_MP gate 2.68 V vs BSS138 VGS(th) max 1.5 V (overdrive 1.18 V); gate tau (23k x 100 pF ASSUMED) 2.3 us
+==============================================================================================================
+[2] Fixed window split r 0.85 at code 718: steady point and eFuse start on the FC-only bus
+==============================================================================================================
+  g_FC 0.1753; firmware code (uint16_t)(g*4095) = 717 (IC1 states 718)
+  design chain                                   R 0.353: P_in 13.00 W aux 0.02: V_bus 15.65 V_chg 15.60 I_fc 0.854 A | SC-1(a) margin +2.60 V | OC_FC margin +0.446 A
+  design chain                                   R 0.353: P_in 14.05 W aux 0.15: V_bus 15.58 V_chg 15.52 I_fc 1.055 A | SC-1(a) margin +2.52 V | OC_FC margin +0.245 A
+  bench-scaled                                   R 0.094: P_in 13.00 W aux 0.02: V_bus 15.87 V_chg 15.82 I_fc 0.842 A | SC-1(a) margin +2.82 V | OC_FC margin +0.458 A
+  bench-scaled                                   R 0.094: P_in 14.05 W aux 0.15: V_bus 15.85 V_chg 15.80 I_fc 1.039 A | SC-1(a) margin +2.80 V | OC_FC margin +0.261 A
+  bench floor 0.16 V/A, no g-scaling (ASSUMED bound) R 0.160: P_in 13.00 W aux 0.02: V_bus 15.81 V_chg 15.76 I_fc 0.845 A | SC-1(a) margin +2.76 V | OC_FC margin +0.455 A
+  bench floor 0.16 V/A, no g-scaling (ASSUMED bound) R 0.160: P_in 14.05 W aux 0.15: V_bus 15.78 V_chg 15.73 I_fc 1.043 A | SC-1(a) margin +2.73 V | OC_FC margin +0.257 A
+  eFuse start (entry step 6) on the FC-only bus: I_fc = aux + C_mod x slew (+ module start current if it overlaps)
+    C_mod   47 uF slew 4.17 V/ms aux 0.15: inrush 0.196 A, I_fc 0.346 A, V_chg dip to 15.82 V  
+    C_mod   47 uF slew 5.79 V/ms aux 0.15: inrush 0.272 A, I_fc 0.422 A, V_chg dip to 15.78 V  
+    C_mod  100 uF slew 4.17 V/ms aux 0.15: inrush 0.417 A, I_fc 0.567 A, V_chg dip to 15.72 V  
+    C_mod  100 uF slew 5.79 V/ms aux 0.15: inrush 0.579 A, I_fc 0.729 A, V_chg dip to 15.66 V  
+    C_mod  150 uF slew 4.17 V/ms aux 0.15: inrush 0.625 A, I_fc 0.775 A, V_chg dip to 15.64 V   ; S0-11 inrush > 0.6 A
+    C_mod  150 uF slew 5.79 V/ms aux 0.15: inrush 0.868 A, I_fc 1.018 A, V_chg dip to 15.53 V   ; S0-11 inrush > 0.6 A
+    C_mod  221 uF slew 4.17 V/ms aux 0.15: inrush 0.922 A, I_fc 1.072 A, V_chg dip to 15.51 V   ; S0-11 inrush > 0.6 A
+    C_mod  221 uF slew 5.79 V/ms aux 0.15: inrush 1.280 A, I_fc 1.430 A, V_chg dip to 15.36 V  OC_FC (with INA zero) ; S0-11 inrush > 0.6 A
+  inrush <= 0.6 A at the max slew 5.79 V/ms holds only for C_mod <= 103.6 uF; S0-11 accepts up to 221 uF
+  fallback 'raise C_DV': C_DV >=  21.3 nF for 0.6 A at 221 uF; min slew 1.96 V/ms; ramp 0 -> 15.95 V  8.2 ms + UVLO delay 1.24 ms (scaled with C_DV? TODO(verify: SLVSE94G)) =  9.4 ms
+   vs the ERR_MOD_DUMP_ON sample 10 ms after chargerHasPower() (IC1 Table 16 states 'ramp at most about 5 ms')
+   vs the regen-pulse budget (eFuse 4.4-5.6 ms of the 5.3-6.4 ms chain, calc4 s11) - Stage 2 only
+  overlap: module start 0.45 A during the ramp, C_mod  47 uF, aux 0.15: I_fc 0.872 A <= OC_FC (gate C-3 measures; a 65-170 ms start never overlaps)
+  overlap: module start 0.45 A during the ramp, C_mod 100 uF, aux 0.15: I_fc 1.179 A <= OC_FC (gate C-3 measures; a 65-170 ms start never overlaps)
+  overlap: module start 0.97 A during the ramp, C_mod  47 uF, aux 0.15: I_fc 1.392 A > OC_FC (gate C-3 measures; a 65-170 ms start never overlaps)
+  overlap: module start 0.97 A during the ramp, C_mod 100 uF, aux 0.15: I_fc 1.699 A > OC_FC (gate C-3 measures; a 65-170 ms start never overlaps)
+==============================================================================================================
+[3] D-s exit on a traction request: 0 A hold against the fw v37 drive law
+==============================================================================================================
+  coeffs teensy_controller/drive_controller_coeffs.h TS 2000 us, I rail +/-12.0; plant m_eff 3.5, k_f 0.7538, b 0.534
+  step 0->1.0 m/s      hold   43 ms | no hold: v_pk 1.136 (os  13.6 %) I_pk 12.00 A | held, law running: v_pk 1.143 (os  14.3 %) I at release 12.00 A | held, law reset: v_pk 1.136 (os  13.6 %) I at release 12.00 A
+  step 0->1.0 m/s      hold   62 ms | no hold: v_pk 1.136 (os  13.6 %) I_pk 12.00 A | held, law running: v_pk 1.146 (os  14.6 %) I at release 12.00 A | held, law reset: v_pk 1.136 (os  13.6 %) I at release 12.00 A
+  step 0->2.0 m/s      hold   43 ms | no hold: v_pk 2.175 (os   8.8 %) I_pk 12.00 A | held, law running: v_pk 2.177 (os   8.8 %) I at release 12.00 A | held, law reset: v_pk 2.175 (os   8.8 %) I at release 12.00 A
+  step 0->2.0 m/s      hold   62 ms | no hold: v_pk 2.175 (os   8.8 %) I_pk 12.00 A | held, law running: v_pk 2.177 (os   8.9 %) I at release 12.00 A | held, law reset: v_pk 2.175 (os   8.8 %) I at release 12.00 A
+  ramp 1.0 m/s2 to 1.0 hold   43 ms | no hold: v_pk 1.107 (os  10.7 %) I_pk  9.15 A | held, law running: v_pk 1.107 (os  10.7 %) I at release  3.59 A | held, law reset: v_pk 1.107 (os  10.7 %) I at release  3.59 A
+  ramp 1.0 m/s2 to 1.0 hold   62 ms | no hold: v_pk 1.107 (os  10.7 %) I_pk  9.15 A | held, law running: v_pk 1.107 (os  10.7 %) I at release  4.30 A | held, law reset: v_pk 1.107 (os  10.7 %) I at release  4.30 A
+  Bus-side: the release current is a motor-phase current at near-zero speed; it is bounded by the 12 A rail in every
+  case, so no bus or switch rating is reached. The held-law-running row is a launch-quality item of ruling OR-2'.

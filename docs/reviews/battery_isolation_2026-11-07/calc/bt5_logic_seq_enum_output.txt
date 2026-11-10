@@ -1,0 +1,139 @@
+
+==============================================================================================================
+Section 1: exhaustive steady state, revision-7 network, GPIO in {L,H,Z} incl. pins 5, 8, 20
+==============================================================================================================
+  states evaluated: 4478976 (6 control pins x {L,H,Z}, pin 8 x {L,H,Z}, pump T/S, 9 env bits, 2 stages; pins 5/20 x {L,H,Z} on the pin-8-Z subset)
+  (a) charger powered AND pack bonded, firmware-legal vectors, fault-free : 0
+  (b) bus->charger->pack->BT boost->bus loop, firmware-legal, fault-free    : 0
+  (c) Teensy unpowered/reset with S_GND off or eFuse on without residual    : 0
+  pin 5 or pin 20 level changes any hardware output (besides pin-5 sourcing)  : 0
+  false-cold reads (pin 8 LOW while node fed), all from pin 8 driven LOW     : 2511 of 2511
+
+  Reading. Fault-free, (a), (b) and (c) are 0 over every GPIO level including Z: the revision-7 delta (D_N20 deleted,
+  Stage 3 deleted, pin 20 analog) touches no term of eq. 1-13. Pin 20 has no hardware effect in any level. A pin 8
+  mis-configured as an output driven LOW blinds the drain wait, ERR_MOD_FED and the eFuse-blocking probe; it is caught
+  by ERR_MOD_SENSE (b) in the configuration check or FC window that precedes every regen window of a power cycle (the
+  check always sees a crossing: entry requires V_chg < 11 V). The single-fault rows are unchanged from bt4 section 1.
+
+==============================================================================================================
+Section 2: ERR_MOD_SENSE (c) at a regen-window exit taken between pulses (healthy board)
+==============================================================================================================
+  Rule text (Table 16 (c), 9.5 exit step 1): arm when pin 8 read HIGH in this window AND V_chg >= 13.5 V on
+  the last settled reading; latch if pin 8 reads LOW 50 us or 150 us after the feed-drop write.
+  V_chg is pin 38 = VCHG-IN, the eFuse INPUT. After a VOK release EF_EN is L, the eFuse blocks and Q_MD dumps
+  the module node to < 9 V within ~1-3 ms, while VCHG-IN holds its charge (tau 0.984 s, D-BC-RG an ideal
+  diode, clamped). The rule never asks whether the node is fed at the moment of the write.
+
+  peak  decay  release  t_rel(s)  VCHG>=13.5 until(s)  trap span(s)  trap/period(0.523-0.562 s)  node@50us
+  21.20   14.0    16.13     0.381                0.556         0.175           31-33 %                 4.13 V
+  21.20   14.0    16.43     0.360                0.553         0.193           34-37 %                 4.21 V
+  21.20   20.0    16.13     0.273                0.448         0.175           31-33 %                 4.13 V
+  21.20   20.0    16.43     0.258                0.451         0.193           34-37 %                 4.21 V
+  21.47   14.0    16.13     0.400                0.576         0.175           31-33 %                 4.13 V
+  21.47   14.0    16.43     0.379                0.572         0.193           34-37 %                 4.21 V
+  21.47   20.0    16.13     0.286                0.461         0.175           31-33 %                 4.13 V
+  21.47   20.0    16.43     0.271                0.464         0.193           34-37 %                 4.21 V
+
+  Every exit written in [t_rel, t_rel + span] after a captured pulse (pin 8 HIGH earlier in the window)
+  latches ERR_MOD_SENSE (c) on a healthy board: windows refused for the power cycle and the last
+  eFuse-blocking probe voided (a new configuration check is needed).
+
+  Monte Carlo, 20000 exits (seed 5):
+    exit at a uniform phase of the pulse period (traction request, Pi finish/loss, 30 s cap): 33.7 % latch
+    release-dwell exit, brake demand ending between the last peak and its VOK release      : 62.0 % latch
+
+  Reading. Revision 7 conditions (c) on V_chg, the eFuse input, but the 0.248 ms hold that the rule relies on
+  (calc/verify_ms_shdn_short.py S3) starts from a FED node. Between regen pulses VCHG-IN stays at or above 13.5 V for
+  0.17-0.19 s after every VOK release (the BT4-LS-02 residual, calc7 section 5) while the node is already dumped, so
+  pin 8 is LOW at the 50 us sample. No host test of 12.11 exits between pulses (the (c) tests inject pin 8 = EF_EN
+  and a fed node held 0.25 ms). The probe trace of section 3 is the same defect.
+
+==============================================================================================================
+Section 3: configuration check -> eFuse-blocking probe: is the probe's FC_CHARGE drop a (c) exit?
+==============================================================================================================
+  9.7a step 7 (comm. 7)    FC_CHARGE H, EF_EN H, node fed                                                         pin 8 HIGH (positive control passes)
+  comm. step 11            FC_CHARGE L; (c) samples pin 8 HIGH at 50/150 us (node fed)                            no latch; drain; p33 L
+  probe step 2             pin 8 LOW 20 ms (cold)                                                                 -
+  probe step 3             FC_CHARGE H with EF_EN L; V_chg >= 13.5 V on two settled reads                         last settled V_chg >= 13.5 V
+  probe step 4             pin 8 LOW on two reads (healthy eFuse blocks)                                          probe PASS
+  probe step 5             FC_CHARGE L = a commanded feed drop; pin 8 read HIGH earlier in the check; V_chg >= 13.5 V (c) samples pin 8: LOW -> ERR_MOD_SENSE (c), probe VOID
+
+  Reading. 12.4 item 3 applies the exit hold check at 'every commanded exit [that] drops the feed (pin 30 or
+  FC_CHARGE)'; the probe's step-5 FC_CHARGE drop satisfies every written arming term (pin 8 HIGH earlier in the same
+  configuration check, V_chg >= 13.5 V confirmed by probe step 3). Under that reading every healthy probe voids
+  itself and every regen window of the power cycle is refused. Whether the probe is outside 'this window' is not
+  stated. Arming on 'EF_EN H and pin 8 HIGH on the last settled reading' removes both traces.
+
+==============================================================================================================
+Section 4: ERR_MOD_DUMP_ON (FC window, pin 32 HIGH) versus an Ag105 cold start inside Table 8a
+==============================================================================================================
+  Sample: 10 ms after chargerHasPower() first true (EF_EN H AND V_chg >= 13.5 V on two settled iterations).
+  Node (VCHG-IN_M) timeline from the VCHG-IN 13.5 V crossing t_c: UVLO crossed 0.05-0.09 ms earlier, eFuse
+  turn-on 1.24 ms, output slew <= 5.79 V/ms (a slower dV/dt only moves node-up later).
+
+  loop ms  gap  uvlo_r  CHP true (ms after t_c)  node>=9 V at  sample at  sample - node-up (ms)
+   1.131   no   12.38        1.13- 2.26              2.73   11.13-12.26     8.40- 9.54
+   1.131   no   12.88        1.13- 2.26              2.77   11.13-12.26     8.36- 9.49
+   1.131  yes   12.38        1.13- 2.26              2.73   11.13-22.02     8.40-19.30
+   1.131  yes   12.88        1.13- 2.26              2.77   11.13-22.02     8.36-19.25
+   1.341   no   12.38        1.34- 2.68              2.73   11.34-12.68     8.61- 9.96
+   1.341   no   12.88        1.34- 2.68              2.77   11.34-12.68     8.57- 9.91
+   1.341  yes   12.38        1.34- 2.68              2.73   11.34-22.44     8.61-19.72
+   1.341  yes   12.88        1.34- 2.68              2.77   11.34-22.44     8.57-19.67
+
+  -> the dump check samples 8.4-19.7 ms after the module node passes 9 V.
+
+  Table 8a allowance for the Ag105 start after the eFuse ramp (allowance - 4.4..5.6 ms), t_D_ON 8 ms:
+    19 ms pulse: Ag105 start to current must be <= -0.3-2.0 ms after node-up
+    47 ms pulse: Ag105 start to current must be <= 20.8-24.9 ms after node-up
+  FC-profile input at the sample if started: 13.0 W / 15.9 V = 0.82 A at VCHG-IN (> 0.4 A threshold)
+  FC-profile input at the sample if started: 13.0 W / 17.5 V = 0.74 A at VCHG-IN (> 0.4 A threshold)
+  FC-profile input at the sample if started: 14.8 W / 15.9 V = 0.93 A at VCHG-IN (> 0.4 A threshold)
+  FC-profile input at the sample if started: 14.8 W / 17.5 V = 0.85 A at VCHG-IN (> 0.4 A threshold)
+
+  Reading. calc7 section 4 takes 'a healthy node draws about 23 mA' from the 65-170 ms prior cold start. Stage 2 is
+  built only after S0-6 shows a start inside Table 8a (design 14.3): <= 0-2 ms after node-up for the 19 ms family and
+  <= 21-25 ms for the 47 ms family. Any start faster than about 7-10 ms (the whole 19 ms GO band and the lower third
+  of the 47 ms band) puts the FC-profile input current (0.74-0.93 A, Table 8) into the 10 ms sample of every FC window
+  (pin 32 HIGH, D-BT-SQ on, the module converts): ERR_MOD_DUMP_ON latches on a healthy board, ends the FC window and
+  refuses every window, regen included, for the power cycle. In configuration checks and commissioning pin 32 is LOW
+  (output only through R_KA, ~14 mA), so the check there is valid at any start time. The host test of 12.11 ('a 23 mA
+  step ... does not latch') encodes the slow-start premise.
+
+==============================================================================================================
+Section 5: Finish (State 3) inside a regen window: Idle-entry self-test step 1 vs the running exit
+==============================================================================================================
+  t =   0.00 ms  doState3(): 9.8 starts the regen exit: pin 30 L (feed drop), exit hold check
+  t =   1.13 ms  drain wait read 1 (deferred SD/I2C iteration)
+  t =   2.26 ms  Idle entry (State 3 -> 1 within two iterations, Appendix E BT4-LS-01 verifier); drain read 2
+  t =   2.36 ms  self-test step 1 if CHG_SELFTEST starts on the Idle-entry event: expects FF1.Q L, SG bits H, pin 8 L
+  t =   3.39 ms  exit step 3: pin 33 L (only now); bonded confirmation needs 2 settled iterations more
+  t =   5.66 ms  bonded settled reading
+  t =  23.00 ms  pin 5 L after 20 ms cold; CHG_EXITING -> CHG_BONDED
+
+  Reading. 9.3 runs the self-test 'at each Idle entry'; 9.8 runs the exit 'if a window stands'; 12.4 lists the mode
+  manager states but no transition into CHG_SELFTEST, and the self-test abort list (State-2 request, fault, window
+  request) does not include 'exit in progress'. If CHG_SELFTEST starts on the Idle-entry event, step 1 reads FF1.Q H
+  (pin 33 still H) and fails: a reboot-only ERR_CHG_SELFTEST on a healthy board. The rule 'CHG_SELFTEST is entered
+  only from CHG_BONDED, after CHG_EXITING has completed' is needed. The revision-7 host test 'Finish at the peak'
+  would expose it at implementation if it is run with a window open.
+
+==============================================================================================================
+Section 6: invariant (d) on every exit path, revision 7
+==============================================================================================================
+  regen exit 9.5             p30 L -> (c) check -> p8 LOW x2 (deadline max(10 ms, 4 it) <= 30 ms) -> p33 L -> confirm -> p5 L   feed off, node cold, then bond
+  FC exit 9.7                FC_CHARGE L -> (c) -> p8 LOW x2 -> p33 L -> confirm -> BT_BUS -> p10/p5 L                          same
+  UVLO-dip FC exit 9.7       eFuse already off with EF_EN H (Q_MD OFF) -> FC_CHARGE L -> Q_MD ON -> drain                       same
+  probe 9.7a                 p33 L throughout; FC_CHARGE H <= 100 ms with EF_EN L                                               bonded, input blocked by eFuse
+  commissioning 9.2-11       FC_CHARGE L -> p8 LOW -> p33 L -> FF1 L -> pump stop -> p32 H                                      same
+  State 99 9.9               FC_CHARGE L, REGEN L -> p8 LOW x2 or deadline -> p33 L -> p32 L                                    same (deadline: F49 class)
+  ERR_CHG_LADDER, code != 0  commanded exit -> bonded confirmation -> p32 L                                                     same
+  ERR_CHG_LADDER, code 0     p32 L at once; LB rail dead: eFuse off on R_SDP, bonded on R_PA, Q_MD OFF                          F10 class, node on R_MB
+  hardware trip 9.10         FF1 clear -> eFuse off <= 76 us -> bond ~0.3 ms; module <= 1.1 ms                                  F10 by design
+  ERR_MOD_DUMP_ON exit       commanded exit with Q_MD stuck ON (node already near 0)                                            same
+
+  Reading. (d) holds on every commanded path: the feed write precedes the drain wait and the pin-33 LOW. The exits that
+  bond with a hot node are the deadline expiries (ERR_MOD_DRAIN, F49/F56) and the dead-rail code-0 path (Q_MD
+  unpowered), both bounded by C_mod (<= 51 mJ) as in round 4. One spec conflict, harmless: State 99 phase 2 writes
+  MPPT LOW, but the pin-5 chokepoint (12.4 item 7) refuses a pin-5 change until pin 8 has read LOW for 20 ms; phase 2
+  can run ~11 ms after phase 0, so the write is refused and pin 5 stays released on an unpowered module.

@@ -1,0 +1,41 @@
+== 1. Pin-20 source and the i.MX RT pad keeper / leakage ==
+Thevenin source at pin 20: 100 kOhm
+ VC1 3.00 V -> open-circuit pin 20 1.500 V (VIL 0.3*3.3 = 0.99 V, VIH 0.7*3.3 = 2.31 V: inside the undefined band)
+   keeper 105k held LOW: pin 0.768 V (err -732 mV) ; held HIGH: pin 2.378 V (err +878 mV)
+   keeper 175k held LOW: pin 0.955 V (err -545 mV) ; held HIGH: pin 2.155 V (err +655 mV)
+ VC1 3.70 V -> open-circuit pin 20 1.850 V (VIL 0.3*3.3 = 0.99 V, VIH 0.7*3.3 = 2.31 V: inside the undefined band)
+   keeper 105k held LOW: pin 0.948 V (err -902 mV) ; held HIGH: pin 2.557 V (err +707 mV)
+   keeper 175k held LOW: pin 1.177 V (err -673 mV) ; held HIGH: pin 2.377 V (err +527 mV)
+ VC1 4.25 V -> open-circuit pin 20 2.125 V (VIL 0.3*3.3 = 0.99 V, VIH 0.7*3.3 = 2.31 V: inside the undefined band)
+   keeper 105k held LOW: pin 1.088 V (err -1037 mV) ; held HIGH: pin 2.698 V (err +573 mV)
+   keeper 175k held LOW: pin 1.352 V (err -773 mV) ; held HIGH: pin 2.552 V (err +427 mV)
+ keeper-LOW gain spans 0.512-0.636; a calibration at one end read at the other: 24.2 % gain error
+   1 % residual gain drift at VC1 4.2 V: V_VC1 error 42 mV -> mismatch error 84 mV (threshold 80, healthy margin 38.5)
+   2 % residual gain drift at VC1 4.2 V: V_VC1 error 84 mV -> mismatch error 168 mV (threshold 80, healthy margin 38.5)
+   5 % residual gain drift at VC1 4.2 V: V_VC1 error 210 mV -> mismatch error 420 mV (threshold 80, healthy margin 38.5)
+ mismatch sensitivity to a pin-20 current: dMismatch/dI = 2 (V_VC1 term) x 2 (divider) x R_th
+   I = 0.1 uA (IIN spec max 1 uA): mismatch error 40 mV
+   I = 0.2 uA (IIN spec max 1 uA): mismatch error 80 mV
+   I = 0.5 uA (IIN spec max 1 uA): mismatch error 200 mV
+   I = 1.0 uA (IIN spec max 1 uA): mismatch error 400 mV
+ uncalibrated leakage that consumes the 38.5 mV margin: 96 nA
+
+== 2. Tap lead chafed to VBT / VCHG: voltage at pin 20 ==
+ LB side of the lead = VC1_T = pin 20 directly (section 5.2 line 498: no series resistor at LB)
+  VBT 8.5 V: pin 20 forced to 8.5 V vs Table 7 max OVDD+0.3 = 3.6 V; ESD-diode current limited only by the chafe/wire; current through R_VC1a (8.5-4.25)/200k = 21.2 uA (the only current row F54 / calc7 bound)
+  VCHG-IN / V-MOT 21.5 V: pin 20 forced to 21.5 V vs Table 7 max OVDD+0.3 = 3.6 V; ESD-diode current limited only by the chafe/wire; current through R_VC1a (21.5-4.25)/200k = 86.2 uA (the only current row F54 / calc7 bound)
+
+== 3. C-2a item 5: D_VC1 jumpered with a supply as the pack ==
+  V_pack 7.40 V: VC1 = 0 -> VC2-VC1 = 7.40 V vs SLUSA52C 7.1 max 8 V -> within
+  V_pack 7.95 V: VC1 = 0 -> VC2-VC1 = 7.95 V vs SLUSA52C 7.1 max 8 V -> within
+  V_pack 8.00 V: VC1 = 0 -> VC2-VC1 = 8.00 V vs SLUSA52C 7.1 max 8 V -> within
+  V_pack 8.40 V: VC1 = 0 -> VC2-VC1 = 8.40 V vs SLUSA52C 7.1 max 8 V -> OVERSTRESS
+  V_pack 8.50 V: VC1 = 0 -> VC2-VC1 = 8.50 V vs SLUSA52C 7.1 max 8 V -> OVERSTRESS
+
+== 4. C-2a item 20 reverse sense pulse on the fitted unit-Q module ==
+  1 A for 6.34 ms (iteration 1.34 ms + 5 ms): I2t 0.006 A2s = 0.04 x S0-10 (17 A, 0.5 ms = 0.1445 A2s); 0.3 x S0-9 3.5 A
+  1 A for 14.76 ms (iteration 9.76 ms + 5 ms): I2t 0.015 A2s = 0.10 x S0-10 (17 A, 0.5 ms = 0.1445 A2s); 0.3 x S0-9 3.5 A
+  3 A for 6.34 ms (iteration 1.34 ms + 5 ms): I2t 0.057 A2s = 0.39 x S0-10 (17 A, 0.5 ms = 0.1445 A2s); 0.9 x S0-9 3.5 A
+  3 A for 14.76 ms (iteration 9.76 ms + 5 ms): I2t 0.133 A2s = 0.92 x S0-10 (17 A, 0.5 ms = 0.1445 A2s); 0.9 x S0-9 3.5 A
+  7 A for 6.34 ms (iteration 1.34 ms + 5 ms): I2t 0.311 A2s = 2.15 x S0-10 (17 A, 0.5 ms = 0.1445 A2s); 2.0 x S0-9 3.5 A
+  7 A for 14.76 ms (iteration 9.76 ms + 5 ms): I2t 0.723 A2s = 5.01 x S0-10 (17 A, 0.5 ms = 0.1445 A2s); 2.0 x S0-9 3.5 A

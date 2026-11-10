@@ -1,0 +1,79 @@
+==============================================================================
+Section 1. D_VM (M16, GND anode -> VMID cathode): reversed fit or short = cell-1 short through the balance lead
+==============================================================================
+Loop: cell1(+) = VMID -> balance-lead VMID wire -> J-BL pin 2 -> D_VM -> GND pour -> lead A/B -> SGND ->
+      S_GND (bonded) -> PACK- -> R_SH -> pack-negative lead -> pack(-) -> [pack PCM, unknown] -> cell1(-)
+Inputs: V_cell1 3.0-4.2 V; balance wire ASSUMED 22-26 AWG, 0.15-0.30 m (pack lead + harness);
+        main return chain 3-13 mOhm (design budget 12.9 mOhm, sec. 7.6); cell R_int ASSUMED 5-20 mOhm;
+        shorted D_VM ASSUMED 10-100 mOhm; reversed D_VM: V_F ASSUMED 0.5-0.8 V at high current
+  22 AWG: 53.0 mOhm/m, 0.326 mm2, 642 cmil; Onderdonk melt current 1 s 94 A, 10 s 30 A
+  24 AWG: 84.2 mOhm/m, 0.205 mm2, 404 cmil; Onderdonk melt current 1 s 59 A, 10 s 19 A
+  26 AWG: 133.9 mOhm/m, 0.129 mm2, 254 cmil; Onderdonk melt current 1 s 37 A, 10 s 12 A
+  D_VM short    22 AWG 0.15 m, V_cell1 3.0 V, R_main 3 mOhm, R_int 5 mOhm, R_D 10 mOhm: I =  115.6 A
+  D_VM short    22 AWG 0.15 m, V_cell1 3.0 V, R_main 13 mOhm, R_int 20 mOhm, R_D 10 mOhm: I =   58.9 A
+  D_VM short    22 AWG 0.15 m, V_cell1 3.0 V, R_main 13 mOhm, R_int 20 mOhm, R_D 100 mOhm: I =   21.3 A
+  D_VM reversed 22 AWG 0.15 m, V_cell1 3.0 V, R_main 13 mOhm, R_int 20 mOhm, R_D 5 mOhm: I =   54.4 A
+  D_VM reversed 22 AWG 0.15 m, V_cell1 3.0 V, R_main 13 mOhm, R_int 20 mOhm, R_D 20 mOhm: I =   36.1 A
+  D_VM short    22 AWG 0.15 m, V_cell1 4.2 V, R_main 3 mOhm, R_int 5 mOhm, R_D 10 mOhm: I =  161.9 A
+  D_VM short    22 AWG 0.15 m, V_cell1 4.2 V, R_main 13 mOhm, R_int 20 mOhm, R_D 10 mOhm: I =   82.4 A
+  D_VM short    22 AWG 0.15 m, V_cell1 4.2 V, R_main 13 mOhm, R_int 20 mOhm, R_D 100 mOhm: I =   29.8 A
+  D_VM reversed 22 AWG 0.15 m, V_cell1 4.2 V, R_main 13 mOhm, R_int 20 mOhm, R_D 5 mOhm: I =   80.5 A
+  D_VM reversed 22 AWG 0.15 m, V_cell1 4.2 V, R_main 13 mOhm, R_int 20 mOhm, R_D 20 mOhm: I =   55.8 A
+  D_VM short    26 AWG 0.30 m, V_cell1 3.0 V, R_main 3 mOhm, R_int 5 mOhm, R_D 10 mOhm: I =   51.6 A
+  D_VM short    26 AWG 0.30 m, V_cell1 3.0 V, R_main 13 mOhm, R_int 20 mOhm, R_D 10 mOhm: I =   36.1 A
+  D_VM short    26 AWG 0.30 m, V_cell1 3.0 V, R_main 13 mOhm, R_int 20 mOhm, R_D 100 mOhm: I =   17.3 A
+  D_VM reversed 26 AWG 0.30 m, V_cell1 3.0 V, R_main 13 mOhm, R_int 20 mOhm, R_D 5 mOhm: I =   32.0 A
+  D_VM reversed 26 AWG 0.30 m, V_cell1 3.0 V, R_main 13 mOhm, R_int 20 mOhm, R_D 20 mOhm: I =   23.6 A
+  D_VM short    26 AWG 0.30 m, V_cell1 4.2 V, R_main 3 mOhm, R_int 5 mOhm, R_D 10 mOhm: I =   72.2 A
+  D_VM short    26 AWG 0.30 m, V_cell1 4.2 V, R_main 13 mOhm, R_int 20 mOhm, R_D 10 mOhm: I =   50.5 A
+  D_VM short    26 AWG 0.30 m, V_cell1 4.2 V, R_main 13 mOhm, R_int 20 mOhm, R_D 100 mOhm: I =   24.3 A
+  D_VM reversed 26 AWG 0.30 m, V_cell1 4.2 V, R_main 13 mOhm, R_int 20 mOhm, R_D 5 mOhm: I =   47.3 A
+  D_VM reversed 26 AWG 0.30 m, V_cell1 4.2 V, R_main 13 mOhm, R_int 20 mOhm, R_D 20 mOhm: I =   36.5 A
+  range over the grid: 17-177 A; no fuse in the loop (F_PK is in the pack-positive lead);
+  the only interrupter is the pack PCM, whose existence and trip are unknown (facts_prior section 9, line 237).
+  Before revision 5 nothing joined VMID to GND except RB3/RB1A (260/100 Ohm) into the BQ29200: a fault there gave mA.
+==============================================================================
+Section 2. F34b in service: pack negative opens while the BT boost runs -> D_VM carries the boost input current
+==============================================================================
+TPS61288 VIN range 2.0-18 V; VIN UVLO falling 1.8-2.0 V; switch peak limit 12/15/17.1 A (TPS61288 DS, sec. 7.5).
+After the open, VBT - GND = V_cell2 - V_F(D_VM) - I x R_balance: the boost keeps regulating the bus from cell 2.
+  P_in  20.0 W (53.3 W = 7.2 A at 7.4 V, in-service figure of sec. 7.6), V_cell2 3.7 V: I(D_VM, balance lead) =   6.4 A until the Teensy browns out
+  P_in  20.0 W (53.3 W = 7.2 A at 7.4 V, in-service figure of sec. 7.6), V_cell2 4.2 V: I(D_VM, balance lead) =   5.4 A until the Teensy browns out
+  P_in  53.3 W (53.3 W = 7.2 A at 7.4 V, in-service figure of sec. 7.6), V_cell2 3.7 V: I(D_VM, balance lead) =  20.7 A until the Teensy browns out
+  P_in  53.3 W (53.3 W = 7.2 A at 7.4 V, in-service figure of sec. 7.6), V_cell2 4.2 V: I(D_VM, balance lead) =  16.4 A until the Teensy browns out
+  P_in  80.0 W, V_cell2 3.7 V: no operating point below the switch limit -> input at the current limit (12-17.1 A peak)
+  P_in  80.0 W (53.3 W = 7.2 A at 7.4 V, in-service figure of sec. 7.6), V_cell2 4.2 V: I(D_VM, balance lead) =  29.3 A until the Teensy browns out
+  Duration = 5 V rail hold-up to the Teensy reset (not given in the design; UNCONFIRMED, ms-scale); the boost EN has
+  only the internal 850-1100 kOhm pull-down (TPS61288 DS R_EN).
+  Gate B-PKN opens pack negative with the Teensy on USB and the boosts idle: it measures only the brown-out current.
+==============================================================================
+Section 3. VBATN_X shorted to pack positive (harness chafe, SB copper): pack short through the Ag105 internal sense
+==============================================================================
+Bonded mode: VBATN_X is tied to Vin- = GND through the module sense R_s (S_CHG off). Charge mode: U_C1 trips,
+FF1 clears, S_GND re-bonds and S_CHG opens -> the same loop as the bonded mode.
+Loop: pack(+) -> F_PK -> chafe -> VBATN_X lead -> pins 14/15 stubs -> R_s (+ internal parallel switch, unknown) ->
+      Vin- pin 4 -> GND pour -> lead A/B -> S_GND -> R_SH -> pack(-)
+Inputs: V_pack 7.4-8.4 V; R_int 10-40 mOhm ASSUMED (calc5 sec. 1 range); R_s 10-75 mOhm (S0-1 unknown; 60-74 mOhm
+        is the design's OV_BATT boundary, sec. 12.6); VBATN_X 10.3-17.2 mOhm (sec. 12.6); chain 3-13 mOhm; chafe 0-50 mOhm
+  V 7.4 V, R_s   10 mOhm, R_int 10, chain  3, chafe  0: I =   222 A (55.6 x I_DIS 4 A), I/F_PK = 11.1 x, P(R_s) =    494 W
+  V 7.4 V, R_s   10 mOhm, R_int 40, chain 13, chafe 50: I =    60 A (15.0 x I_DIS 4 A), I/F_PK =  3.0 x, P(R_s) =     36 W
+  V 7.4 V, R_s   40 mOhm, R_int 10, chain  3, chafe  0: I =   117 A (29.2 x I_DIS 4 A), I/F_PK =  5.8 x, P(R_s) =    547 W
+  V 7.4 V, R_s   40 mOhm, R_int 40, chain 13, chafe 50: I =    48 A (12.1 x I_DIS 4 A), I/F_PK =  2.4 x, P(R_s) =     93 W
+  V 7.4 V, R_s   75 mOhm, R_int 10, chain  3, chafe  0: I =    75 A (18.8 x I_DIS 4 A), I/F_PK =  3.8 x, P(R_s) =    425 W
+  V 7.4 V, R_s   75 mOhm, R_int 40, chain 13, chafe 50: I =    39 A ( 9.8 x I_DIS 4 A), I/F_PK =  2.0 x, P(R_s) =    116 W
+  V 8.4 V, R_s   10 mOhm, R_int 10, chain  3, chafe  0: I =   252 A (63.1 x I_DIS 4 A), I/F_PK = 12.6 x, P(R_s) =    636 W
+  V 8.4 V, R_s   10 mOhm, R_int 40, chain 13, chafe 50: I =    68 A (17.0 x I_DIS 4 A), I/F_PK =  3.4 x, P(R_s) =     46 W
+  V 8.4 V, R_s   40 mOhm, R_int 10, chain  3, chafe  0: I =   133 A (33.2 x I_DIS 4 A), I/F_PK =  6.6 x, P(R_s) =    704 W
+  V 8.4 V, R_s   40 mOhm, R_int 40, chain 13, chafe 50: I =    55 A (13.7 x I_DIS 4 A), I/F_PK =  2.7 x, P(R_s) =    120 W
+  V 8.4 V, R_s   75 mOhm, R_int 10, chain  3, chafe  0: I =    85 A (21.4 x I_DIS 4 A), I/F_PK =  4.3 x, P(R_s) =    548 W
+  V 8.4 V, R_s   75 mOhm, R_int 40, chain 13, chafe 50: I =    45 A (11.2 x I_DIS 4 A), I/F_PK =  2.2 x, P(R_s) =    149 W
+  F_PK is a 20 A slow-blow ATO (sec. 5.6); its clearing time at 2.3-11 x rating is TODO(verify: fuse datasheet).
+  U_C1 (2.52-3.50 A discharge) can only re-bond; in the bonded mode it has no actuator that opens this loop.
+==============================================================================
+Section 4. Pre-heat of M13 / M16 against the Ag105 absolute maximum storage temperature
+==============================================================================
+Ag105 DS V1.1 p.19, Absolute Maximum Ratings row 2: storage -40 to +100 C.
+Design M13/M16: pre-heat the board area to 100-120 C. M16 (J-BL pin 3, (11.43, 30.48)) is 4.0 mm below and
+7.5 mm left of the Ag105 body corner (x 18.9, y 34.5): distance 8.5 mm.
+Build order of Table 6 puts M1/M2 (module cut, unit fitted) before M13/M16; gate D-3 (module qualification) is a
+pre-rework gate, so the qualified unit is soaked at up to 20 C above its absolute maximum after qualification.

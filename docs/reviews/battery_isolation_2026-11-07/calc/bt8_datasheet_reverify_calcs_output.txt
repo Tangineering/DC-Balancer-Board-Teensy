@@ -1,0 +1,60 @@
+================================================================================================
+[1] TLV3011B inputs behind R_MS3 22k (U_MS IN+) and R_IMF 10k (U_IM IN-)
+================================================================================================
+  R_MS3 -> U_MS IN+: lead chafed to VBT  8.5 V -> input  8.500 V (abs max 7.0 V: EXCEEDED by 1.5 V); current 10 pA, not the 0.22-0.81 mA calc8 assumed (no V+ clamp exists)
+  R_MS3 -> U_MS IN+: lead chafed to VBUS 17.5 V -> input 17.500 V (abs max 7.0 V: EXCEEDED by 10.5 V); current 10 pA, not the 0.22-0.81 mA calc8 assumed (no V+ clamp exists)
+  R_MS3 -> U_MS IN+: lead chafed to VCHG-IN 21.5 V -> input 21.500 V (abs max 7.0 V: EXCEEDED by 14.5 V); current 10 pA, not the 0.22-0.81 mA calc8 assumed (no V+ clamp exists)
+  R_IMF -> U_IM IN-: lead chafed to VBT  8.5 V -> input  8.500 V (abs max 7.0 V: EXCEEDED by 1.5 V); current 10 pA, not the 0.22-0.81 mA calc8 assumed (no V+ clamp exists)
+  R_IMF -> U_IM IN-: lead chafed to VBUS 17.5 V -> input 17.500 V (abs max 7.0 V: EXCEEDED by 10.5 V); current 10 pA, not the 0.22-0.81 mA calc8 assumed (no V+ clamp exists)
+  R_IMF -> U_IM IN-: lead chafed to VCHG-IN 21.5 V -> input 21.500 V (abs max 7.0 V: EXCEEDED by 14.5 V); current 10 pA, not the 0.22-0.81 mA calc8 assumed (no V+ clamp exists)
+  calc8 s5 'injected (v - 3.6)/R, 3.6 V clamp onset ASSUMED' has no clamp to inject into.
+  with an external clamp to 3V3 behind R_MS3: 0.81 mA at 21.5 V, input <= 3.72 V (< 7 V)
+  with an external clamp to 3V3 behind R_IMF: 1.78 mA at 21.5 V, input <= 3.72 V (< 7 V)
+
+================================================================================================
+[2] Driven LVC outputs (SHDN_EF via R_SD 1k, MD_G via R_MDS 1k) and the CB-end pins
+================================================================================================
+  3V3 3.2 V: LVC output abs max 3.7 V; VBT chafe 8.5 V exceeds it by 4.8 V
+  3V3 3.3 V: LVC output abs max 3.8 V; VBT chafe 8.5 V exceeds it by 4.7 V
+  3V3 3.4 V: LVC output abs max 3.9 V; VBT chafe 8.5 V exceeds it by 4.6 V
+  CB end, chafe to VBT  8.5 V: TPS26631 SHDN / IMON pin  8.5 V vs 5.5 V abs max; BSS138 Q_CS/Q_MP V_GS  8.42 V (R_PG 1k, R_PGP 100k) vs +/-20 V V_GSS
+  CB end, chafe to VBUS 17.5 V: TPS26631 SHDN / IMON pin 17.5 V vs 5.5 V abs max; BSS138 Q_CS/Q_MP V_GS 17.33 V (R_PG 1k, R_PGP 100k) vs +/-20 V V_GSS
+  CB end, chafe to VCHG-IN 21.5 V: TPS26631 SHDN / IMON pin 21.5 V vs 5.5 V abs max; BSS138 Q_CS/Q_MP V_GS 21.29 V (R_PG 1k, R_PGP 100k) vs +/-20 V V_GSS
+  No LB-end element (R_SD, R_IMF, R_PGL, R_MDS) is in series with the CB-end pin of its own lead.
+
+================================================================================================
+[3] Teensy pin 20 (i.MX RT1062, GPIO_AD_B1 pad on NVCC_GPIO)
+================================================================================================
+  OVDD 3.2 V: Vin abs max 3.5 V; a pad clamp conducting 0.22-0.81 mA sits about 0.5-0.7 V above OVDD (silicon junction, UNCONFIRMED) -> outside Table 7 for every chafe of row F54b
+  OVDD 3.3 V: Vin abs max 3.6 V; a pad clamp conducting 0.22-0.81 mA sits about 0.5-0.7 V above OVDD (silicon junction, UNCONFIRMED) -> outside Table 7 for every chafe of row F54b
+  OVDD 3.4 V: Vin abs max 3.7 V; a pad clamp conducting 0.22-0.81 mA sits about 0.5-0.7 V above OVDD (silicon junction, UNCONFIRMED) -> outside Table 7 for every chafe of row F54b
+  IIN max 1.0 uA (Table 22) x 0.488 V/uA = 488 mV of mismatch vs the 80 mV threshold
+  datasheet IIN / calc8 allowance = 12.7x; the 80 mV budget needs the pad 12.7x inside its own limit
+  at the revision-7 100 kOhm source: 400 mV (R_VC1c raised the sensitivity by 22 %)
+    drift  100 nA ->    49 mV
+    drift  200 nA ->    98 mV
+    drift  500 nA ->   244 mV
+
+================================================================================================
+[4] D_VC1 candidates against V_F <= 0.25 V at 16.2 mA (T_min) and I_R <= 40 uA at 4.2 V (T_M16,max)
+================================================================================================
+  NSR0320MW2 (onsemi, SOD-323, 20 V 1 A): slope 10->100 mA typ gives n_eff 1.01
+    V_F(typ) at 16.2 mA, 25 C: 0.253 V vs 0.25 V limit -> FAILS before any cold shift
+    V_F(max) at 16.2 mA, 25 C: 0.283 V vs 0.25 V limit -> FAILS before any cold shift
+    max V_F at T_min -20.0 C with -1.0 mV/K (ASSUMED tempco): 0.328 V
+    max V_F at T_min   0.0 C with -1.0 mV/K (ASSUMED tempco): 0.308 V
+    max V_F at T_min -20.0 C with -1.5 mV/K (ASSUMED tempco): 0.350 V
+    max V_F at T_min   0.0 C with -1.5 mV/K (ASSUMED tempco): 0.320 V
+    I_R typ 200 uA at V_R 2 V, 85 C (table) = 5.0x the 40 uA limit at half the 4.2 V stress;
+    I_R typ 10 uA at 15 V, 25 C -> under the design x2 per 10 K rule the 40 uA limit is reached near 45 C (typical part, before the max column)
+  PMEG2005ESF (Nexperia, DSN0603-2): V_F 0.31 typ / 0.38 max at 10 mA (secondary copy, UNCONFIRMED) -> FAILS V_F
+  BAT54-class: V_F 0.40 max at 10 mA (design row BT3-BM-01 already excludes it)
+  Inference: a part that meets V_F at 16.2 mA at 25 C needs a die larger than the 1 A NSR0320, whose
+  own 85 C leakage is 5x the budget; no stocked part was found that meets both endpoints at any T_min <= 25 C.
+
+================================================================================================
+[5] BQ29200 pins touched by the revision-8 set (SLUSA52C 7.1)
+================================================================================================
+  VC1-GND -0.3..16 V (D_VC1 limit consistent); VC2-VC1 -0.3..8 V (row F47 consistent);
+  VC1_CB: no row in 7.1 (TODO(verify: TI) stands; B-PKN lifts RB1A.2 until rated)
+  IIN at VC1 -0.2..+0.2 uA at 0-60 C only (7.5): outside 0-60 C the VC1 input current is unrated

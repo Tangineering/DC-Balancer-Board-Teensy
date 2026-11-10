@@ -1,0 +1,19 @@
+1. Exit step 2, FF1 set (Q_MD off), drain via R_MB only, I_idle min 0 (DS gives no minimum)
+   C=1.500 mF V0=18.0 V -> 9.15 V: 3.349 s (cap 0.010 s)
+   C=1.500 mF V0=21.5 V -> 9.15 V: 4.229 s (cap 0.010 s)
+   C=1.721 mF V0=18.0 V -> 9.15 V: 3.843 s (cap 0.010 s)
+   C=1.721 mF V0=21.5 V -> 9.15 V: 4.852 s (cap 0.010 s)
+   with I_idle 18 mA as well (fastest case):
+   C=1.5 mF V0=18.0: 0.601 s
+   C=1.5 mF V0=21.5: 0.820 s
+2. Hold-up 18 V -> 11 V, I_idle 18 mA, with and without R_MB
+   C=1.38 mF idle-only 537 ms, with R_MB 432 ms (target 535)
+   C=1.50 mF idle-only 583 ms, with R_MB 469 ms (target 535)
+   C_HU required with R_MB kept: 1.710 mF
+3. Proposed fix: dump on at feed drop through R_MD 10 Ohm (|| R_MB negligible)
+   C=1.500 mF V0=18.0 -> 9.15 V: 10.1 ms (tau 15.0 ms)
+   C=1.500 mF V0=21.5 -> 9.15 V: 12.8 ms (tau 15.0 ms)
+   C=1.721 mF V0=18.0 -> 9.15 V: 11.6 ms (tau 17.2 ms)
+   C=1.721 mF V0=21.5 -> 9.15 V: 14.7 ms (tau 17.2 ms)
+   C=1.931 mF V0=18.0 -> 9.15 V: 13.0 ms (tau 19.3 ms)
+   C=1.931 mF V0=21.5 -> 9.15 V: 16.4 ms (tau 19.3 ms)

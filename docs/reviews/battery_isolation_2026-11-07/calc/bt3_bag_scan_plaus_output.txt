@@ -1,0 +1,24 @@
+rosbag_2026-09-07_22-06-29                    pass@1.0A False pass@0.4A True  pass@1.0A then Vb<8 False pass@0.4A then Vb<8 True 
+rosbag_2026-09-10_22-10-26                    pass@1.0A False pass@0.4A False pass@1.0A then Vb<8 False pass@0.4A then Vb<8 False
+rosbag_sdp_2026-10-26_23-57-14                pass@1.0A True  pass@0.4A True  pass@1.0A then Vb<8 True  pass@0.4A then Vb<8 True 
+rosbag_sdp_2026-10-27_00-52-58                pass@1.0A False pass@0.4A False pass@1.0A then Vb<8 False pass@0.4A then Vb<8 False
+rosbag_sdp_2026-10-28_20-46-53                pass@1.0A True  pass@0.4A True  pass@1.0A then Vb<8 True  pass@0.4A then Vb<8 True 
+rosbag_sdp_2026-10-28_22-18-10                pass@1.0A False pass@0.4A True  pass@1.0A then Vb<8 False pass@0.4A then Vb<8 True 
+rosbag_sdp_2026-10-29_19-51-48                pass@1.0A False pass@0.4A True  pass@1.0A then Vb<8 False pass@0.4A then Vb<8 True 
+rosbag_sdp_2026-10-30_01-49-38                pass@1.0A False pass@0.4A True  pass@1.0A then Vb<8 False pass@0.4A then Vb<8 True 
+rosbag_sdp_2026-11-05_20-09-52                pass@1.0A False pass@0.4A True  pass@1.0A then Vb<8 False pass@0.4A then Vb<8 True 
+rosbag_simple_2026-10-20_00-38-02             pass@1.0A False pass@0.4A True  pass@1.0A then Vb<8 False pass@0.4A then Vb<8 True 
+rosbag_sweep-clip_2026-10-22_23-18-00         pass@1.0A False pass@0.4A True  pass@1.0A then Vb<8 False pass@0.4A then Vb<8 False
+rosbag_sweep-noclip_2026-10-22_23-25-13       pass@1.0A False pass@0.4A True  pass@1.0A then Vb<8 False pass@0.4A then Vb<8 False
+rosbag_sweep-noclip_2026-10-23_17-27-44       pass@1.0A False pass@0.4A True  pass@1.0A then Vb<8 False pass@0.4A then Vb<8 False
+rosbag_sweep-noclip_2026-10-25_21-09-10       pass@1.0A False pass@0.4A True  pass@1.0A then Vb<8 False pass@0.4A then Vb<8 False
+rosbag_sweep-noclip_2026-10-27_01-09-42       pass@1.0A False pass@0.4A True  pass@1.0A then Vb<8 False pass@0.4A then Vb<8 True 
+rosbag_sweep-noclip_2026-10-27_02-52-00       pass@1.0A False pass@0.4A True  pass@1.0A then Vb<8 False pass@0.4A then Vb<8 True 
+rosbag_sweep-noclip_2026-10-30_00-56-01       pass@1.0A True  pass@0.4A True  pass@1.0A then Vb<8 True  pass@0.4A then Vb<8 True 
+rosbag_sweep-noclip_2026-10-30_01-30-16       pass@1.0A False pass@0.4A True  pass@1.0A then Vb<8 False pass@0.4A then Vb<8 True 
+rosbag_sweep_2026-10-20_04-00-39              pass@1.0A False pass@0.4A False pass@1.0A then Vb<8 False pass@0.4A then Vb<8 False
+rosbag_sweep_2026-10-20_06-40-47              pass@1.0A False pass@0.4A True  pass@1.0A then Vb<8 False pass@0.4A then Vb<8 False
+rosbag_sweep_2026-10-20_07-47-28              pass@1.0A False pass@0.4A False pass@1.0A then Vb<8 False pass@0.4A then Vb<8 False
+rosbag_sweep_2026-10-20_08-41-34              pass@1.0A False pass@0.4A True  pass@1.0A then Vb<8 False pass@0.4A then Vb<8 False
+rosbag_sweep_2026-10-20_09-08-49              pass@1.0A False pass@0.4A True  pass@1.0A then Vb<8 False pass@0.4A then Vb<8 False
+totals (of bags): [3, 19, 3, 12]

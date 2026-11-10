@@ -1,0 +1,70 @@
+
+Section 1. eFuse-blocking probe: is a valid reg 0x07 possible in the probe configuration?
+-----------------------------------------------------------------------------------------
+R_KA fitted = False
+  VBat+ (VCHG) is floating behind the disabled D-BT-SQ: the module sees 0 V -> Bring-Up;
+  no current can flow -> 'battery disconnect' status (DS p.6) = Table 5 mode 2 'Disconnected
+  Battery Error' -> error state -> all measures 0xFF (DS p.14). GENSTAT 000 is also outside the
+  12.5 item 2 validity set. => reg 0x07 is never valid: the probe CANNOT latch on a bypassed eFuse.
+R_KA fitted = True
+  V_pack 7.40 V: unpowered VBat+ 7.28 V (standby 120 uA); max output current through R_KA 1.00 mA = 0.080 % of I_set (10 % needed to leave Bring-Up/detection, DS p.6)
+  V_pack 7.40 V: unpowered VBat+ 6.98 V (standby 420 uA); max output current through R_KA 1.00 mA = 0.080 % of I_set (10 % needed to leave Bring-Up/detection, DS p.6)
+  V_pack 7.70 V: unpowered VBat+ 7.58 V (standby 120 uA); max output current through R_KA 0.70 mA = 0.056 % of I_set (10 % needed to leave Bring-Up/detection, DS p.6)
+  V_pack 7.70 V: unpowered VBat+ 7.28 V (standby 420 uA); max output current through R_KA 0.70 mA = 0.056 % of I_set (10 % needed to leave Bring-Up/detection, DS p.6)
+  V_pack 7.99 V: unpowered VBat+ 7.87 V (standby 120 uA); max output current through R_KA 0.41 mA = 0.033 % of I_set (10 % needed to leave Bring-Up/detection, DS p.6)
+  V_pack 7.99 V: unpowered VBat+ 7.57 V (standby 420 uA); max output current through R_KA 0.41 mA = 0.033 % of I_set (10 % needed to leave Bring-Up/detection, DS p.6)
+  Outcome undocumented: 'fully charged' once VCHG reaches 8.0 V through 1 kOhm (valid),
+  or OC/Regulation Error ('voltage behaviour not expected from a battery', DS p.11) (0xFF, and
+  GENSTAT 101 also trips G3 / FAULT_CHARGER_STAT in the configuration check, design 12.5 item 4).
+No step of 9.2/9.7a reads reg 0x07 while EF_EN is HIGH (a positive control), and S0-7 records reg 0x07
+only with the input ABSENT. The probe has no demonstrated detection power in either R_KA state.
+
+Section 2. S0-2 measurement resolution on the 0.5 mOhm rig shunt
+----------------------------------------------------------------
+  8-bit DSO at 1 mV/div: LSB 31.2 uV = 62 mA of pack current
+  8-bit DSO at 2 mV/div: LSB 62.5 uV = 125 mA of pack current
+  S0-2 steady criterion 0.05 A: 25.0 uV on the shunt
+  criterion margin to the simulator sink limit (I_set+0.3 vs I_set+0.2) 0.10 A: 50.0 uV on the shunt
+  full regen I_set 1.75 A: 875.0 uV on the shunt
+  Ag105 ripple current 0.30 A p-p (DS p.20 row 13): 150 uV p-p on the shunt
+  => the 0.05 A agreement is below one LSB; the 0.10 A blind-module margin is 1.6-3.2 LSB under
+     3x larger converter ripple; a blind module clamped by a simulator sinking at I_set+0.3 A differs
+     from a passing one by 0.10 A, which this chain cannot resolve.
+  alternative rig shunt 10 mOhm: 0.05 A -> 0.50 mV; loss at 2.5 A 62 mW
+  alternative rig shunt 20 mOhm: 0.05 A -> 1.00 mV; loss at 2.5 A 125 mW
+
+Section 3. Stage-0 rig earth loop across the Ag105 sense
+--------------------------------------------------------
+  R_s  20 mOhm, R_loop 0.1 Ohm: bypass  16.7 %, pack 2.10 A, module output 2.70 A (rating 2.5 A), reg06 under-reads by 16.7 %
+  R_s  20 mOhm, R_loop 0.3 Ohm: bypass   6.2 %, pack 1.87 A, module output 2.47 A (rating 2.5 A), reg06 under-reads by 6.2 %
+  R_s  20 mOhm, R_loop 1.0 Ohm: bypass   2.0 %, pack 1.79 A, module output 2.39 A (rating 2.5 A), reg06 under-reads by 2.0 %
+  R_s  50 mOhm, R_loop 0.1 Ohm: bypass  33.3 %, pack 2.62 A, module output 3.22 A (rating 2.5 A), reg06 under-reads by 33.3 %
+  R_s  50 mOhm, R_loop 0.3 Ohm: bypass  14.3 %, pack 2.04 A, module output 2.64 A (rating 2.5 A), reg06 under-reads by 14.3 %
+  R_s  50 mOhm, R_loop 1.0 Ohm: bypass   4.8 %, pack 1.84 A, module output 2.44 A (rating 2.5 A), reg06 under-reads by 4.8 %
+  R_s 100 mOhm, R_loop 0.1 Ohm: bypass  50.0 %, pack 3.50 A, module output 4.10 A (rating 2.5 A), reg06 under-reads by 50.0 %
+  R_s 100 mOhm, R_loop 0.3 Ohm: bypass  25.0 %, pack 2.33 A, module output 2.93 A (rating 2.5 A), reg06 under-reads by 25.0 %
+  R_s 100 mOhm, R_loop 1.0 Ohm: bypass   9.1 %, pack 1.93 A, module output 2.52 A (rating 2.5 A), reg06 under-reads by 9.1 %
+  S0-2 criterion: agreement within max(0.05 A, 10 %). Bypass shares above 10 % produce a false NO-GO of
+  the regulation layer, and drive the qualification unit Q above the 2.5 A output rating (D-3(a) envelope).
+
+Section 4. Single-bit corruption of the commissioned registers
+--------------------------------------------------------------
+  reg 0x01 = 0x08:
+    bit 0 flipped -> 0x09: 3S 11.7
+    bit 1 flipped -> 0x0A: 3S 12.0
+    bit 2 flipped -> 0x0C: 3S 12.6
+    bit 3 flipped -> 0x00: resistor mode, VSEL open: 4.2 V
+    bit 4 flipped -> 0x18: 4.2 V default (Table 8)
+    bit 5 flipped -> 0x28: 4.2 V default (Table 8)
+    bit 6 flipped -> 0x48: 4.2 V default (Table 8)
+    bit 7 flipped -> 0x88: 4.2 V default (Table 8)
+  reg 0x00 = 0x00:
+    bit 0 flipped -> 0x01: 2500
+    bit 1 flipped -> 0x02: 2000
+    bit 2 flipped -> 0x04: 1500
+    bit 3 flipped -> 0x08: 500
+    bit 4 flipped -> 0x10: 1000 mA default (Table 8)
+    bit 5 flipped -> 0x20: 1000 mA default (Table 8)
+    bit 6 flipped -> 0x40: 1000 mA default (Table 8)
+    bit 7 flipped -> 0x80: 1000 mA default (Table 8)
+  reg 0x01: three of eight single-bit errors (0x09, 0x0A, 0x0C) select a 3S charge voltage.

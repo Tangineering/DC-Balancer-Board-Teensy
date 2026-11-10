@@ -1,0 +1,103 @@
+
+==============================================================================
+Section 1: R-2R ladder settling (design 5.2 Fig.5, 7.7; calc ic1_rev3 sec 7)
+==============================================================================
+   entry: ladder B SG1_ON+SG2_ON fall (bits 0,1): step    309 mV -> within 30 mV after 4.67 ms (wrong-code 1.99 ms, undecodable 2.68 ms)  [9.5 step 4 / 9.7 step 3: confirm within 2 ms]
+   entry: ladder A FF1.Q rises (bit 0): step    103 mV -> within 30 mV after 2.47 ms (wrong-code 0.69 ms, undecodable 1.78 ms)  [9.5 step 4: confirm within 2 ms]
+   exit: ladder A FF1.Q + EF_EN fall (bits 0,1): step    309 mV -> within 30 mV after 4.67 ms (wrong-code 1.99 ms, undecodable 2.68 ms)  [9.5 exit step 3: confirm within 2 ms]
+   exit in regen pulse: ladder B SG bits + OK1_N/OK2_N (bits 0-3): step   1547 mV -> within 30 mV after 7.89 ms (wrong-code 3.86 ms, undecodable 4.03 ms)  [9.5 exit step 3]
+   VOK toggle in a pulse: ladder B OK1_N+OK2_N (bits 2,3): step   1237 mV -> within 30 mV after 7.44 ms (wrong-code 3.61 ms, undecodable 3.83 ms)  [12.4 item 4: mismatch/decode fail > 2 ms latches]
+   VOK toggle: ladder A EF_EN (bit 1): step    206 mV -> within 30 mV after 3.86 ms (wrong-code 1.51 ms, undecodable 2.34 ms)  [12.4 item 4]
+   self-test 5: UC2_N + FF1/SG change (ladder B bits 4,0,1): step   1959 mV -> within 30 mV after 8.36 ms (wrong-code 4.14 ms, undecodable 4.22 ms)  [9.3 step 5: within 1 ms]
+   self-test 6: UC1_N (ladder A bit 4) + FF1.Q (bit 0): step   1753 mV -> within 30 mV after 8.14 ms (wrong-code 4.01 ms, undecodable 4.13 ms)  [9.3 step 6: within 1 ms]
+   Traction exit (9.6): 1 loop (1.13 ms, facts_firmware 8) + S_GND rise 0.3 ms + ladder settle 4.67 ms = 6.1 ms vs claimed <= 5 ms (V2-5 GO)
+
+==============================================================================
+Section 2: VOK release race (design 7.2 item 2; Table 11)
+==============================================================================
+   proxy fit: t_PD = 3.56 us + 44.444 us*mV / V_OD ;  tap ratio 0.1254, tap tau 12.5 us
+   ic1_rev3 calc sec 2 puts all hysteresis on assert; a centred V_HYS lowers release by up to 32 mV at V-MOT
+   charger 22.4 W, 0.48 mF    VBUS 16.0: calc margin eFuse off  30.3 us, V-MOT at VBUS   61.8 us -> bus-fed window   0.0 us (design claim holds)
+   charger 22.4 W, 0.48 mF    VBUS 16.0: centred hys eFuse off  30.3 us, V-MOT at VBUS   49.5 us -> bus-fed window   0.0 us (design claim holds)
+   charger 22.4 W, 0.48 mF    VBUS 17.5: calc margin eFuse off  30.3 us, V-MOT at VBUS   55.6 us -> bus-fed window   0.0 us (design claim holds)
+   charger 22.4 W, 0.48 mF    VBUS 17.5: centred hys eFuse off  30.3 us, V-MOT at VBUS   43.3 us -> bus-fed window   0.0 us (design claim holds)
+   charger 22.4 W, 0.97 mF    VBUS 16.0: calc margin eFuse off  38.1 us, V-MOT at VBUS  125.0 us -> bus-fed window   0.0 us (design claim holds)
+   charger 22.4 W, 0.97 mF    VBUS 16.0: centred hys eFuse off  38.1 us, V-MOT at VBUS  100.1 us -> bus-fed window   0.0 us (design claim holds)
+   charger 22.4 W, 0.97 mF    VBUS 17.5: calc margin eFuse off  38.1 us, V-MOT at VBUS  112.5 us -> bus-fed window   0.0 us (design claim holds)
+   charger 22.4 W, 0.97 mF    VBUS 17.5: centred hys eFuse off  38.1 us, V-MOT at VBUS   87.6 us -> bus-fed window   0.0 us (design claim holds)
+   VESC draws 5 A, 0.48 mF    VBUS 16.0: calc margin eFuse off  19.0 us, V-MOT at VBUS   12.3 us -> bus-fed window   6.7 us (claim CONTRADICTED)
+   VESC draws 5 A, 0.48 mF    VBUS 16.0: centred hys eFuse off  19.0 us, V-MOT at VBUS    9.8 us -> bus-fed window   9.1 us (claim CONTRADICTED)
+   VESC draws 5 A, 0.48 mF    VBUS 17.5: calc margin eFuse off  19.0 us, V-MOT at VBUS   11.1 us -> bus-fed window   7.9 us (claim CONTRADICTED)
+   VESC draws 5 A, 0.48 mF    VBUS 17.5: centred hys eFuse off  19.0 us, V-MOT at VBUS    8.6 us -> bus-fed window  10.3 us (claim CONTRADICTED)
+   VESC draws 20 A, 0.48 mF   VBUS 16.0: calc margin eFuse off  14.1 us, V-MOT at VBUS    3.6 us -> bus-fed window  10.4 us (claim CONTRADICTED)
+   VESC draws 20 A, 0.48 mF   VBUS 16.0: centred hys eFuse off  14.1 us, V-MOT at VBUS    2.9 us -> bus-fed window  11.2 us (claim CONTRADICTED)
+   VESC draws 20 A, 0.48 mF   VBUS 17.5: calc margin eFuse off  14.1 us, V-MOT at VBUS    3.3 us -> bus-fed window  10.8 us (claim CONTRADICTED)
+   VESC draws 20 A, 0.48 mF   VBUS 17.5: centred hys eFuse off  14.1 us, V-MOT at VBUS    2.5 us -> bus-fed window  11.5 us (claim CONTRADICTED)
+   VESC draws 20 A, 4 mF      VBUS 16.0: calc margin eFuse off  24.3 us, V-MOT at VBUS   30.1 us -> bus-fed window   0.0 us (design claim holds)
+   VESC draws 20 A, 4 mF      VBUS 16.0: centred hys eFuse off  24.3 us, V-MOT at VBUS   24.1 us -> bus-fed window   0.2 us (claim CONTRADICTED)
+   VESC draws 20 A, 4 mF      VBUS 17.5: calc margin eFuse off  24.3 us, V-MOT at VBUS   27.1 us -> bus-fed window   0.0 us (design claim holds)
+   VESC draws 20 A, 4 mF      VBUS 17.5: centred hys eFuse off  24.3 us, V-MOT at VBUS   21.1 us -> bus-fed window   3.2 us (claim CONTRADICTED)
+
+==============================================================================
+Section 3: Reverse sense current during a BT-boost step in charge mode (design 9.6, F8, S0-9/S0-10)
+==============================================================================
+   (S0-10 tests 15 A for 1 ms = 0.225 A^2 s; Ag105 DS p.20 row 6 gives 4 A continuous discharge)
+   R_s   5.0 mOhm: worst S_CHG-off at   149 us after onset, sense peak 12.28 A, I^2t 0.0075 A^2 s, PACK- below GND up to 0.67 V (ramp 200 us, trip 3.33 A, Ciss 11.40 nF)
+   R_s  20.0 mOhm: worst S_CHG-off at   151 us after onset, sense peak 12.43 A, I^2t 0.0078 A^2 s, PACK- below GND up to 0.67 V (ramp 200 us, trip 3.33 A, Ciss 11.40 nF)
+   R_s  50.0 mOhm: worst S_CHG-off at   154 us after onset, sense peak 10.92 A, I^2t 0.0078 A^2 s, PACK- below GND up to 0.67 V (ramp 200 us, trip 3.33 A, Ciss 11.40 nF)
+   R_s 100.0 mOhm: worst S_CHG-off at   155 us after onset, sense peak  5.92 A, I^2t 0.0035 A^2 s, PACK- below GND up to 0.67 V (ramp 200 us, trip 3.33 A, Ciss 11.40 nF)
+   OCV 7.4 V, DCIR 24 mOhm, 16.46 A, contacts 40 mOhm, PACK- excursion 0.0 V: VBT-GND = 6.35 V (LM1084 regulation needs 6.5 V, SNVS037H 5.5)
+   OCV 7.4 V, DCIR 24 mOhm, 16.46 A, contacts 40 mOhm, PACK- excursion 0.8 V: VBT-GND = 5.55 V (LM1084 regulation needs 6.5 V, SNVS037H 5.5)
+   OCV 7.4 V, DCIR 24 mOhm, 16.46 A, contacts 40 mOhm, PACK- excursion 1.0 V: VBT-GND = 5.35 V (LM1084 regulation needs 6.5 V, SNVS037H 5.5)
+   OCV 7.4 V, DCIR 60 mOhm, 16.46 A, contacts 40 mOhm, PACK- excursion 0.0 V: VBT-GND = 5.75 V (LM1084 regulation needs 6.5 V, SNVS037H 5.5)
+   OCV 7.4 V, DCIR 60 mOhm, 16.46 A, contacts 40 mOhm, PACK- excursion 0.8 V: VBT-GND = 4.95 V (LM1084 regulation needs 6.5 V, SNVS037H 5.5)
+   OCV 7.4 V, DCIR 60 mOhm, 16.46 A, contacts 40 mOhm, PACK- excursion 1.0 V: VBT-GND = 4.75 V (LM1084 regulation needs 6.5 V, SNVS037H 5.5)
+
+==============================================================================
+Section 4: Regen pulse timeline vs the S0-6 '15 ms' criterion (design 7.8, 15.1 S0-6)
+==============================================================================
+   rise 19 ms, assert 16.90 V (t  3.5 ms), t_D_ON  8 ms, eFuse 5.79 V/ms: Ag105 input at 18 V at  16.7 ms; VESC stop 19.0 ms; budget for cold start + current rise  +2.3 ms
+   rise 19 ms, assert 16.90 V (t  3.5 ms), t_D_ON  8 ms, eFuse 4.17 V/ms: Ag105 input at 18 V at  17.9 ms; VESC stop 19.0 ms; budget for cold start + current rise  +1.1 ms
+   rise 19 ms, assert 16.90 V (t  3.5 ms), t_D_ON 12 ms, eFuse 5.79 V/ms: Ag105 input at 18 V at  20.7 ms; VESC stop 19.0 ms; budget for cold start + current rise  -1.7 ms
+   rise 19 ms, assert 16.90 V (t  3.5 ms), t_D_ON 12 ms, eFuse 4.17 V/ms: Ag105 input at 18 V at  21.9 ms; VESC stop 19.0 ms; budget for cold start + current rise  -2.9 ms
+   rise 19 ms, assert 17.24 V (t  4.7 ms), t_D_ON  8 ms, eFuse 5.79 V/ms: Ag105 input at 18 V at  17.9 ms; VESC stop 19.0 ms; budget for cold start + current rise  +1.1 ms
+   rise 19 ms, assert 17.24 V (t  4.7 ms), t_D_ON  8 ms, eFuse 4.17 V/ms: Ag105 input at 18 V at  19.1 ms; VESC stop 19.0 ms; budget for cold start + current rise  -0.1 ms
+   rise 19 ms, assert 17.24 V (t  4.7 ms), t_D_ON 12 ms, eFuse 5.79 V/ms: Ag105 input at 18 V at  21.9 ms; VESC stop 19.0 ms; budget for cold start + current rise  -2.9 ms
+   rise 19 ms, assert 17.24 V (t  4.7 ms), t_D_ON 12 ms, eFuse 4.17 V/ms: Ag105 input at 18 V at  23.1 ms; VESC stop 19.0 ms; budget for cold start + current rise  -4.1 ms
+   rise 47 ms, assert 16.90 V (t  8.6 ms), t_D_ON  8 ms, eFuse 5.79 V/ms: Ag105 input at 18 V at  21.8 ms; VESC stop 47.0 ms; budget for cold start + current rise +25.2 ms
+   rise 47 ms, assert 16.90 V (t  8.6 ms), t_D_ON  8 ms, eFuse 4.17 V/ms: Ag105 input at 18 V at  23.0 ms; VESC stop 47.0 ms; budget for cold start + current rise +24.0 ms
+   rise 47 ms, assert 16.90 V (t  8.6 ms), t_D_ON 12 ms, eFuse 5.79 V/ms: Ag105 input at 18 V at  25.8 ms; VESC stop 47.0 ms; budget for cold start + current rise +21.2 ms
+   rise 47 ms, assert 16.90 V (t  8.6 ms), t_D_ON 12 ms, eFuse 4.17 V/ms: Ag105 input at 18 V at  27.0 ms; VESC stop 47.0 ms; budget for cold start + current rise +20.0 ms
+   rise 47 ms, assert 17.24 V (t 11.6 ms), t_D_ON  8 ms, eFuse 5.79 V/ms: Ag105 input at 18 V at  24.8 ms; VESC stop 47.0 ms; budget for cold start + current rise +22.2 ms
+   rise 47 ms, assert 17.24 V (t 11.6 ms), t_D_ON  8 ms, eFuse 4.17 V/ms: Ag105 input at 18 V at  26.0 ms; VESC stop 47.0 ms; budget for cold start + current rise +21.0 ms
+   rise 47 ms, assert 17.24 V (t 11.6 ms), t_D_ON 12 ms, eFuse 5.79 V/ms: Ag105 input at 18 V at  28.8 ms; VESC stop 47.0 ms; budget for cold start + current rise +18.2 ms
+   rise 47 ms, assert 17.24 V (t 11.6 ms), t_D_ON 12 ms, eFuse 4.17 V/ms: Ag105 input at 18 V at  30.0 ms; VESC stop 47.0 ms; budget for cold start + current rise +17.0 ms
+   facts_prior 6 warm-response requirement: tau_warm <= 2 ms (board C) / 4 ms (0.97 mF); S0-6 GO says <= ~15 ms
+
+==============================================================================
+Section 5: FF1 set race (design Fig.2; Table 11 row 1)
+==============================================================================
+   C_N1  70 pF, Vt 0.8 V: /CLR released 0.14 us, CLK edge 0.26 us, margin +0.12 us 
+   C_N1  70 pF, Vt 1.4 V: /CLR released 0.33 us, CLK edge 0.52 us, margin +0.19 us 
+   C_N1  70 pF, Vt 2.0 V: /CLR released 0.60 us, CLK edge 0.88 us, margin +0.29 us 
+   C_N1 100 pF, Vt 0.8 V: /CLR released 0.20 us, CLK edge 0.26 us, margin +0.06 us 
+   C_N1 100 pF, Vt 1.4 V: /CLR released 0.47 us, CLK edge 0.52 us, margin +0.05 us 
+   C_N1 100 pF, Vt 2.0 V: /CLR released 0.85 us, CLK edge 0.88 us, margin +0.03 us 
+   C_N1 130 pF, Vt 0.8 V: /CLR released 0.26 us, CLK edge 0.26 us, margin +0.01 us 
+   C_N1 130 pF, Vt 1.4 V: /CLR released 0.62 us, CLK edge 0.52 us, margin -0.09 us (FF1 FAILS TO SET)
+   C_N1 130 pF, Vt 2.0 V: /CLR released 1.11 us, CLK edge 0.88 us, margin -0.22 us (FF1 FAILS TO SET)
+
+==============================================================================
+Section 6: D5 arming (design Fig.3, Table 11 '10 ms')
+==============================================================================
+   Q_D5 gate reaches 0.8 V after  2.8 ms (claimed arming delay 10 ms)
+   Q_D5 gate reaches 1.5 V after  6.1 ms (claimed arming delay 10 ms)
+   Q_D5 gate reaches 2.0 V after  9.5 ms (claimed arming delay 10 ms)
+
+==============================================================================
+Section 7: eFuse inrush into the Ag105 input in an FC window (design 7.5, C-3, S0-11)
+==============================================================================
+   C_in   22 uF: inrush 0.13 A (I_OL caps at 1.84-2.16 A); FC-only bus 0.28 A 
+   C_in  100 uF: inrush 0.58 A (I_OL caps at 1.84-2.16 A); FC-only bus 0.73 A 
+   C_in  220 uF: inrush 1.28 A (I_OL caps at 1.84-2.16 A); FC-only bus 1.43 A -> OC_FC latch (State 99)
+   C_in  470 uF: inrush 2.73 A (I_OL caps at 1.84-2.16 A); FC-only bus 2.31 A -> OC_FC latch (State 99)

@@ -1,0 +1,56 @@
+==============================================================================
+Section 1: SB control inputs against a negative SGND offset (FF1Q_SB LOW = PCB GND)
+==============================================================================
+   V_th 0.8 V: Q_A conducts at SGND offset 0.838 V; Q_C at 0.880 V
+   V_th 1.3 V: Q_A conducts at SGND offset 1.361 V; Q_C at 1.430 V
+   V_th 1.5 V: Q_A conducts at SGND offset 1.571 V; Q_C at 1.650 V
+   R_ret both leads 1.87 mOhm; lead A alone 21.6 mOhm; lead B alone 2.05 mOhm
+   I =  7.2 A: offset both    13 mV, lead A alone   155 mV; R_ret for 0.838 V offset = 116.4 mOhm
+   I = 17.1 A: offset both    32 mV, lead A alone   369 mV; R_ret for 0.838 V offset =  49.0 mOhm
+   both leads open: offset 0.838 V -> S_CHG path self-limits at I =  13.5 A (above this S_CHG is fully on; below it S_CHG sits in the linear region)
+   both leads open: offset 1.365 V -> S_CHG path self-limits at I =  22.0 A (above this S_CHG is fully on; below it S_CHG sits in the linear region)
+   both leads open: offset 1.650 V -> S_CHG path self-limits at I =  26.6 A (above this S_CHG is fully on; below it S_CHG sits in the linear region)
+   both leads open, I  3.0 A: S_CHG linear drop ~ (0.84 - I*R_chain) -> P(S_CHG) <=  1.96 W; Ag105 sense reverse current  3.0 A (I_DIS 4 A, DS p.20)
+   both leads open, I  7.2 A: S_CHG linear drop ~ (0.84 - I*R_chain) -> P(S_CHG) <=  2.83 W; Ag105 sense reverse current  7.2 A (I_DIS 4 A, DS p.20)
+   both leads open, I 13.5 A: S_CHG linear drop ~ (0.84 - I*R_chain) -> P(S_CHG) <=  0.04 W; Ag105 sense reverse current 13.5 A (I_DIS 4 A, DS p.20)
+==============================================================================
+Section 2: Q_D5 body diode clamps D5_N whenever N1 is LOW
+==============================================================================
+   body-diode current through R_UD5 ~ 0.24 mA
+   N1 0.20 V, V_SD 0.45 V -> D5_N = 0.65 V (LVC244A V_IL max 0.8 V, V_IH min 2.0 V; expected H = 3.3 V)
+   N1 0.20 V, V_SD 0.60 V -> D5_N = 0.80 V (LVC244A V_IL max 0.8 V, V_IH min 2.0 V; expected H = 3.3 V)
+   N1 0.20 V, V_SD 0.70 V -> D5_N = 0.90 V (LVC244A V_IL max 0.8 V, V_IH min 2.0 V; expected H = 3.3 V)
+   N1 0.32 V, V_SD 0.45 V -> D5_N = 0.77 V (LVC244A V_IL max 0.8 V, V_IH min 2.0 V; expected H = 3.3 V)
+   N1 0.32 V, V_SD 0.60 V -> D5_N = 0.92 V (LVC244A V_IL max 0.8 V, V_IH min 2.0 V; expected H = 3.3 V)
+   N1 0.32 V, V_SD 0.70 V -> D5_N = 1.02 V (LVC244A V_IL max 0.8 V, V_IH min 2.0 V; expected H = 3.3 V)
+==============================================================================
+Section 3: KS+ shorted to KS- (twisted pair, connector or LB): both channels read zero
+==============================================================================
+   OUT1 = OUT2 = 1.650 V at any pack current -> I_PACK1 = I_PACK2 = 0 A (XCHK difference 0)
+   U_C1 margin to trip 0.150 V, U_C2 margin 0.157 V: never trip
+   injection: SIG -> 1.3948 V (< 1.460 V validity, < TH): self-test steps 6/7 PASS
+   gated checks never evaluated with I_PACK1 = 0: sense-path (>= 0.2 A), ERR_SGND_OPEN (> 1 A),
+   ERR_RET_DEGRADED (>= 5 A), ERR_PROFILE_OC (> I_set + 0.25 A); ERR_ISO_MISMATCH runs in FC windows only
+   R_SH shunted by 2 x R_K = 4.4 Ohm: 0.0114 % of the current diverted (no fusing)
+==============================================================================
+Section 4: pack negative open upstream of R_SH (R_SH, its joints, the pack connector contact)
+==============================================================================
+   V_cell 3.7 V: pack(-) ~ -4.30 V vs GND (KS+ common mode; INA240 range -4 V, SBOS662C 7.3); VC1 ~ -0.6 V (abs max -0.3 V, SLUSA52C 7.1); board supply <= 43 mA through RB3||RB1A
+   V_cell 4.2 V: pack(-) ~ -4.80 V vs GND (KS+ common mode; INA240 range -4 V, SBOS662C 7.3); VC1 ~ -0.6 V (abs max -0.3 V, SLUSA52C 7.1); board supply <= 50 mA through RB3||RB1A
+   board voltage <= V_cell2 - 0.6 V = 3.1-3.6 V << LM1084 6.5 V (SNVS037H 5.5): Teensy browns out
+==============================================================================
+Section 5: per-power-cycle configuration check on an FC-only bus (DD 9.7a, Q_X1 keyed to FCQ)
+==============================================================================
+   exposure per unscheduled check = (t_check + d_purge)/T = 6.7 % per boot (purge into an FC-only bus -> UV_BUS within 20 ms, DD 9.7)
+==============================================================================
+Section 6: Ag105 output with the unregulated VBT load (regen profile 1.75 A)
+==============================================================================
+   I_L 0.6 A -> I_o 2.35 A (-6 % vs the 2.5 A Table-4 maximum); I_PACK1 sees 1.75 A only
+   I_L 1.0 A -> I_o 2.75 A (+10 % vs the 2.5 A Table-4 maximum); I_PACK1 sees 1.75 A only
+   I_L 1.4 A -> I_o 3.15 A (+26 % vs the 2.5 A Table-4 maximum); I_PACK1 sees 1.75 A only
+==============================================================================
+Section 7: SB pack-positive copper upstream of F_PK
+==============================================================================
+   R_int 10 mOhm: prospective SB pack+ to SGND short   576 A, F_PK (20 A) not in the loop
+   R_int 20 mOhm: prospective SB pack+ to SGND short   335 A, F_PK (20 A) not in the loop
+   R_int 40 mOhm: prospective SB pack+ to SGND short   182 A, F_PK (20 A) not in the loop

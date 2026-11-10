@@ -1,0 +1,83 @@
+====================================================================================================
+[1] MD_G-SHDN_EF short (BT8-FM-01)
+====================================================================================================
+shorted node over 3V3 3.2-3.4 V, 1 % resistors, both EF_EN states: 1.546-1.676 V
+  (bt8_fmea_rev8_sleeve section 1 at 3V3 3.3 V: 1.594-1.626 V; the 3V3 range widens it)
+  SLVSE94G 6.5 guarantees OFF below 0.8 V and ON above 2.0 V: the node is in neither band
+single-chafe outcomes with SHDN_EF in its own sleeve (revision 12):
+  healthy SHDN_EF with EF_EN H: 3.157 V (> 2.0 V: eFuse on)
+  SHDN_EF to GND: eFuse off in both states -> ERR_MOD_SENSE (b) positive control fails (loud, availability)
+  MD_G to GND: dump lost -> row F49, ERR_MOD_DRAIN at the first exit; MD_G to a HIGH conductor: row F50
+  MD_G to SHDN_EF: needs a failure of both sleeves (two insulation failures, the F54c acceptance class)
+  double-fault residual: Q_MD worst linear dissipation at node 15.5 V = 4.00 W
+  double-fault residual: Q_MD worst linear dissipation at node 16.0 V = 4.27 W
+  double-fault residual: Q_MD worst linear dissipation at node 17.5 V = 5.10 W
+====================================================================================================
+[2] J-FC bench-supply setting (BT8-REQ-01)
+====================================================================================================
+divider ratio 0.2674; Thevenin 7.33 kOhm; full scale at 3.3 V: 12.342 V
+  J-FC  9.30 V -> pin 24 2.487 V
+  J-FC 12.00 V -> pin 24 3.209 V
+  J-FC 12.30 V -> pin 24 3.289 V
+  J-FC 16.00 V -> pin 24 4.278 V
+  pin 24 reaches 3.6 V (OVDD + 0.3 V at 3.3 V) at J-FC 13.46 V
+  ADC headroom at 12.0 V: 2.8 % of full scale
+  window draw from J-FC at  9.3 V: 1.59-2.04 A; limit 2.0 A -> margin x0.98
+  window draw from J-FC at 12.0 V: 1.24-1.58 A; limit 2.0 A -> margin x1.27
+  commissioning steps 1-11 (pin 32 LOW, module quiescent): 1.5 A limit retained
+====================================================================================================
+[3] eFuse inrush against C_mod at C_DV 10 nF (BT8-TR-01)
+====================================================================================================
+largest C_mod for 0.6 A at 5.79 V/ms: 103.6 uF
+  C_mod   47.0 uF: C_DV >=  10.0 nF; slowest slew 4.17 V/ms; ramp 0 -> 15.95 V 3.8 ms (+ UVLO delay, its C_DV scaling TODO(verify: SLVSE94G))
+  C_mod  100.0 uF: C_DV >=  10.0 nF; slowest slew 4.17 V/ms; ramp 0 -> 15.95 V 3.8 ms (+ UVLO delay, its C_DV scaling TODO(verify: SLVSE94G))
+  C_mod  103.6 uF: C_DV >=  10.0 nF; slowest slew 4.17 V/ms; ramp 0 -> 15.95 V 3.8 ms (+ UVLO delay, its C_DV scaling TODO(verify: SLVSE94G))
+  C_mod  150.0 uF: C_DV >=  14.5 nF; slowest slew 2.88 V/ms; ramp 0 -> 15.95 V 5.5 ms (+ UVLO delay, its C_DV scaling TODO(verify: SLVSE94G))
+  C_mod  221.0 uF: C_DV >=  21.3 nF; slowest slew 1.96 V/ms; ramp 0 -> 15.95 V 8.2 ms (+ UVLO delay, its C_DV scaling TODO(verify: SLVSE94G))
+  ERR_MOD_DUMP_ON sample re-keyed: the later of 10 ms and the S0-11 measured ramp + 2 ms after chargerHasPower()
+====================================================================================================
+[4] Fixed window split code (BT8-TR-02)
+====================================================================================================
+g_FC = 0.1753; g x 4095 = 717.77; (uint16_t) cast (ino:15264-15265) -> code 717
+====================================================================================================
+[5] BAL_OK pack threshold at R_BL2 100 kOhm 1 % (BT8-TR-03)
+====================================================================================================
+VBAL+ at which BAL_OK reaches VIH, worst 1 % corner: 7.00 V; margin to 7.4 V entry floor +0.40 V
+====================================================================================================
+[6] HR2 parked figure as net pack current (BT8-REQ-04)
+====================================================================================================
+  dead 0.450 s, I_L 0.20 A (ASSUMED, B8): gross 1.196 A, net 1.187 A
+  dead 0.450 s, I_L 0.30 A (ASSUMED, B8): gross 1.196 A, net 1.183 A
+  dead 0.569 s, I_L 0.20 A (ASSUMED, B8): gross 1.181 A, net 1.170 A
+  dead 0.569 s, I_L 0.30 A (ASSUMED, B8): gross 1.181 A, net 1.165 A
+====================================================================================================
+[7] Pin-20 leakage at the datasheet limit against the F47 signal (BT8-DS-03)
+====================================================================================================
+sensitivity 0.488 V/uA; at the IMXRT1060CEC Table 22 limit 1 uA: 488 mV
+allowance (80 - 41.5 mV)/sensitivity = 79 nA; ratio 12.7x
+worst healthy error at the datasheet limit 0.53 V; F47 reversed signal >= 8.0 - 2 x 0.25 = 7.5 V
+  any threshold in (0.53, 7.0) V detects F47 on the first evaluation
+====================================================================================================
+[8] D_VC1 real-part leakage factor (BT8-DS-04)
+====================================================================================================
+NSR0320MW2 (onsemi NSR0320MW2T1/D Rev. 8 as read in round 8): I_S 0.96 uA; I_R/I_S at 25 C = 10.4
+die meeting V_F 0.25 V at 16.2 mA at 25 C: I_S 1.06 uA, I_R(25 C) about 11.0 uA,
+  40 uA reached at about 44 C under the design x2 per 10 K rule (T_min 25 C, the most favourable ruling)
+NSR0320MW2 max row 0.27 V at 10 mA -> 0.283 V at 16.2 mA, 25 C; margin to the -0.3 V VC1 limit 0.017 V
+====================================================================================================
+[9] TLV3011B inputs and CB-end pins under a lead chafe (BT8-DS-01, BT8-DS-02)
+====================================================================================================
+  chafe  8.5 V: U_MS IN+ / U_IM IN- = 8.500 V (no V+ clamp, IB 10 pA, SBOS300C 6.2 note 2, 6.7); current into a failed-short input <= 0.24 mA (R_MS3) / 0.52 mA (R_IMF); CB SHDN/IMON pin 8.5 V vs 5.5 V; Q_CS/Q_MP V_GS 8.42 V vs 20 V
+  chafe 17.5 V: U_MS IN+ / U_IM IN- = 17.500 V (no V+ clamp, IB 10 pA, SBOS300C 6.2 note 2, 6.7); current into a failed-short input <= 0.65 mA (R_MS3) / 1.42 mA (R_IMF); CB SHDN/IMON pin 17.5 V vs 5.5 V; Q_CS/Q_MP V_GS 17.33 V vs 20 V
+  chafe 21.5 V: U_MS IN+ / U_IM IN- = 21.500 V (no V+ clamp, IB 10 pA, SBOS300C 6.2 note 2, 6.7); current into a failed-short input <= 0.83 mA (R_MS3) / 1.82 mA (R_IMF); CB SHDN/IMON pin 21.5 V vs 5.5 V; Q_CS/Q_MP V_GS 21.29 V vs 20 V
+====================================================================================================
+[10] Idle-entry self-test under the revision-12 rule (BT8-LS-01)
+====================================================================================================
+a window request waits for the self-test: first P window delayed by at most 457.5 ms
+  T1 Run -> parked form -> Finish -> Idle         : self-test runs to PASS, window follows
+  T2 parked request standing at an Idle entry     : self-test runs to PASS, window follows
+  T3 State 98 Q (MOT_PWR LOW), Stage 2            : deferred by step 10; step 10 re-runs when MOT_PWR is HIGH
+  T4 State 98 Q, Stage 1, request standing        : self-test runs to PASS, window follows
+  T5 boot -> State 0 -> State 1 -> Run at 0-490 ms: 0 -> 1 is not an Idle entry: the boot self-test pass stands
+  residual: Finish -> Idle -> Run within 357.7-457.5 ms -> deferred; D-s refused (code 16) until the next
+  Idle iteration without a State-2 request re-runs it to PASS

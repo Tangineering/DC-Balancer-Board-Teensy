@@ -1,0 +1,32 @@
+[1 D_VC1/D_VCB leakage floor and temperature]
+  n=1.00: I_S floor implied by V_F spec =  2.67 uA (I_R(4.2 V) >= I_S, before barrier lowering)
+  n=1.05: I_S floor implied by V_F spec =  4.25 uA (I_R(4.2 V) >= I_S, before barrier lowering)
+  n=1.10: I_S floor implied by V_F spec =  6.48 uA (I_R(4.2 V) >= I_S, before barrier lowering)
+  phi_B 0.50 eV: 45 C: x  3.9 I_R   38.7 uA, VC1 low by   10.1 mV ( 1.0 x V_OA); 60 C: x  9.6 I_R   96.5 uA, VC1 low by   25.2 mV ( 2.5 x V_OA); 85 C: x 37.6 I_R  376.0 uA, VC1 low by   98.1 mV ( 9.8 x V_OA)
+  phi_B 0.55 eV: 45 C: x  4.4 I_R   43.7 uA, VC1 low by   11.4 mV ( 1.1 x V_OA); 60 C: x 11.8 I_R  118.3 uA, VC1 low by   30.9 mV ( 3.1 x V_OA); 85 C: x 52.1 I_R  521.0 uA, VC1 low by  136.0 mV (13.6 x V_OA)
+  phi_B 0.60 eV: 45 C: x  4.9 I_R   49.4 uA, VC1 low by   12.9 mV ( 1.3 x V_OA); 60 C: x 14.5 I_R  145.2 uA, VC1 low by   37.9 mV ( 3.8 x V_OA); 85 C: x 72.2 I_R  721.8 uA, VC1 low by  188.4 mV (18.8 x V_OA)
+  sign: reverse current flows cell1 -> RB3 -> VC1 -> D_VC1 -> GND, so VC1-GND reads LOW:
+  cell-1 OVP is masked by I_R*RB3; cell 2 (VC2-VC1) reads high by the same amount.
+  BQ29200 own VC1 input current: +/-0.2 uA (SLUSA52C 7.5) -> 10 uA diode = 50 x the IC's own term
+
+[2 D_VC1 short or reversed: VC2 - VC1 vs SLUSA52C 7.1 abs max 8 V]
+  V_pack 7.4 V: short VC2-VC1 = 7.40 V (within 8 V); reversed (V_F 0.3 V) = 7.10 V (within 8 V)
+  V_pack 8.0 V: short VC2-VC1 = 8.00 V (within 8 V); reversed (V_F 0.3 V) = 7.70 V (within 8 V)
+  V_pack 8.4 V: short VC2-VC1 = 8.40 V (EXCEEDS 8 V); reversed (V_F 0.3 V) = 8.10 V (EXCEEDS 8 V)
+  V_pack 8.5 V: short VC2-VC1 = 8.50 V (EXCEEDS 8 V); reversed (V_F 0.3 V) = 8.20 V (EXCEEDS 8 V)
+  RB3 limits the short current to 16 mA (calc6 s1) but not the VC2-VC1 voltage across the IC.
+
+[3 U_MS with R_MS2 open]
+  node 13.5 V: IN+ -> 13.5 V through R_MS1 100 k (I_B 10 pA, no clamp to V+); abs max 7 V (SBOS300C 6.2 note 2: inputs above 7 V must be externally clamped)
+  node 16.0 V: IN+ -> 16.0 V through R_MS1 100 k (I_B 10 pA, no clamp to V+); abs max 7 V (SBOS300C 6.2 note 2: inputs above 7 V must be externally clamped)
+  node 21.5 V: IN+ -> 21.5 V through R_MS1 100 k (I_B 10 pA, no clamp to V+); abs max 7 V (SBOS300C 6.2 note 2: inputs above 7 V must be externally clamped)
+  healthy divider at 21.5 V: IN+ = 3.00 V (within (V+)+0.2)
+
+[4 F_VX prospective current vs a typical 4 A SMD fuse interrupting rating]
+  V_pack 8.4 V, loop 33.3 mOhm + fuse 16 mOhm:  170.4 A =  3.4 x the 50 A interrupting rating
+  V_pack 7.4 V, loop 188.3 mOhm + fuse 16 mOhm:   36.2 A =  0.7 x the 50 A interrupting rating
+
+[5 Pin 8 released level if RENC2 2.2 k returns to 5 V (archive: 'possibly to 5 V')]
+  released node = 4.59 V (Teensy 4.1 I/O not 5 V tolerant; 3V3 + 0.3 = 3.6 V)
+  U_MS sink when LOW: 2.75 mA (V_OL spec only at 5 mA, VS 5 V: 200 mV max)
+  with RENC2 to 3V3: U_MS sink 1.98 mA

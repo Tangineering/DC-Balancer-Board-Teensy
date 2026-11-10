@@ -1,0 +1,131 @@
+====================================================================================================
+[1] ERR_MOD_SENSE (c): precondition read in the iteration of the write
+====================================================================================================
+  release 16.13 V: V_chg >= 13.5 V for  175.1 ms after the VOK release
+  release 16.43 V: V_chg >= 13.5 V for  193.3 ms after the VOK release
+  revision 7 exposure (bt5_transient_sim s1, fmea_round5_calcs s1): 21.4-37.0 % of random-phase regen exits
+  revision 8 precondition: EF_EN (ladder A bit 1, raw) H AND pin 8 HIGH, both read in the write iteration
+  immediately before the write, AND pin 8 HIGH continuously for >= 2 ms (micros() since its first HIGH
+  read in the current EF_EN-H interval), AND V_chg >= 13.5 V in the same iteration.
+  Between pulses EF_EN is L (VOK released) -> not evaluated: exposure 0 %. Probe step 5: EF_EN L -> not evaluated.
+  Re-assert span (EF_EN H, node cold during t_D_ON + ramp): pin 8 LOW -> not evaluated.
+  ramp slew 4.17 V/ms: node >= min(17.51 V, V_chg) 2 ms after the U_MS edge; with V_chg >= 13.5 V the node is >= 13.4 V
+  ramp slew 5.79 V/ms: node >= min(20.75 V, V_chg) 2 ms after the U_MS edge; with V_chg >= 13.5 V the node is >= 13.4 V
+  healthy fall 13.4 V -> 9.17 V, C_mod  47 uF, P_in  0.0 W:    266 us (>= 150 us)
+  healthy fall 13.4 V -> 9.17 V, C_mod  47 uF, P_in 14.8 W:    183 us (>= 150 us)
+  healthy fall 13.4 V -> 9.17 V, C_mod  47 uF, P_in 22.7 W:    170 us (>= 150 us)
+  healthy fall 13.4 V -> 9.17 V, C_mod  60 uF, P_in  0.0 W:    340 us (>= 150 us)
+  healthy fall 13.4 V -> 9.17 V, C_mod  60 uF, P_in 14.8 W:    234 us (>= 150 us)
+  healthy fall 13.4 V -> 9.17 V, C_mod  60 uF, P_in 22.7 W:    217 us (>= 150 us)
+  healthy fall 13.4 V -> 9.17 V, C_mod 100 uF, P_in  0.0 W:    566 us (>= 150 us)
+  healthy fall 13.4 V -> 9.17 V, C_mod 100 uF, P_in 14.8 W:    390 us (>= 150 us)
+  healthy fall 13.4 V -> 9.17 V, C_mod 100 uF, P_in 22.7 W:    361 us (>= 150 us)
+  healthy fall 13.4 V -> 9.17 V, C_mod 221 uF, P_in  0.0 W:   1252 us (>= 150 us)
+  healthy fall 13.4 V -> 9.17 V, C_mod 221 uF, P_in 14.8 W:    861 us (>= 150 us)
+  healthy fall 13.4 V -> 9.17 V, C_mod 221 uF, P_in 22.7 W:    798 us (>= 150 us)
+  UVLO case (EF_EN H, V_chg < 13.0 V, node 9.3 V, C_mod 100 uF): fall in    21 us -> a check without the V_chg term would false-latch at the 150 us sample
+  UVLO case (EF_EN H, V_chg < 13.0 V, node 9.5 V, C_mod 100 uF): fall in    53 us -> a check without the V_chg term would false-latch at the 150 us sample
+  UVLO case (EF_EN H, V_chg < 13.0 V, node 9.3 V, C_mod 221 uF): fall in    47 us -> a check without the V_chg term would false-latch at the 150 us sample
+  UVLO case (EF_EN H, V_chg < 13.0 V, node 9.5 V, C_mod 221 uF): fall in   117 us -> a check without the V_chg term would false-latch at the 150 us sample
+  F55 (pin 8 = EF_EN): pin 8 HIGH for the whole EF_EN-H interval (> 2 ms in every FC window, configuration check
+  and dump check), falls within ~3 us + U_MS delay after the write -> latched at the first such exit.
+
+====================================================================================================
+[2] ERR_MOD_DUMP_ON in pin-32-LOW sessions only; FC-window coverage
+====================================================================================================
+  pin 32 LOW: healthy 4-iteration-mean step <= 23 mA node + 9.2 mA R_KA path + 0.20 A BT handoff = 0.232 A; threshold 0.40 A; margin 0.168 A
+  (single-sample INA253 floor +/-0.1 A, calc7 s10; a 4-iteration mean reduces it by about 2x if uncorrelated, UNCONFIRMED)
+  V_bus 15.9 V: stuck dump 1.065 A -> step >= 1.088 A, margin above 0.40 A 0.688 A
+  V_bus 17.5 V: stuck dump 1.172 A -> step >= 1.195 A, margin above 0.40 A 0.795 A
+  Module start speed does not matter with pin 32 LOW: the output path is R_KA only (14 mA), so the input is <= 9.2 mA plus I_q.
+  FC window (pin 32 HIGH), stuck dump arising after the power-cycle dump check:
+    V_bus 15.9 V, module input 0.45 A: FC bus 1.68 A vs OC_FC 1.4 A -> OC_FC latches (BENCH_TEST 0); eFuse input 1.53 A vs U_IM 1.51-1.98 A
+    V_bus 17.5 V, module input 0.45 A: FC bus 1.79 A vs OC_FC 1.4 A -> OC_FC latches (BENCH_TEST 0); eFuse input 1.64 A vs U_IM 1.51-1.98 A
+    V_bus 15.9 V, module input 0.97 A: FC bus 2.20 A vs OC_FC 1.4 A -> OC_FC latches (BENCH_TEST 0); eFuse input 2.05 A vs U_IM 1.51-1.98 A
+    V_bus 17.5 V, module input 0.97 A: FC bus 2.31 A vs OC_FC 1.4 A -> OC_FC latches (BENCH_TEST 0); eFuse input 2.16 A vs U_IM 1.51-1.98 A
+    V_bus 15.9 V, module not charging (Fully Charged): FC bus 1.23 A, below OC_FC; R_MD 16.9 W until the Fully-Charged exit (two valid reads, 40 ms at 50 Hz)
+    V_bus 17.5 V, module not charging (Fully Charged): FC bus 1.34 A, below OC_FC; R_MD 20.4 W until the Fully-Charged exit (two valid reads, 40 ms at 50 Hz)
+
+====================================================================================================
+[3] D_VC1: V_F <= 0.25 V at 16.2 mA at T_min, I_R(4.2 V) <= 40 uA at T_hot (design x2 per 10 K rule)
+====================================================================================================
+  n 1.0, T_min -20.0 C: I_S(T_min) >=   170.8 nA -> 40 uA budget holds up to T_M16,max =  58.7 C
+  n 1.0, T_min   0.0 C: I_S(T_min) >=   395.2 nA -> 40 uA budget holds up to T_M16,max =  66.6 C
+  n 1.0, T_min  10.0 C: I_S(T_min) >=   575.1 nA -> 40 uA budget holds up to T_M16,max =  71.2 C
+  n 1.0, T_min  15.0 C: I_S(T_min) >=   687.0 nA -> 40 uA budget holds up to T_M16,max =  73.6 C
+  n 1.0, T_min  20.0 C: I_S(T_min) >=   815.8 nA -> 40 uA budget holds up to T_M16,max =  76.2 C
+  n 1.1, T_min -20.0 C: I_S(T_min) >=   484.1 nA -> 40 uA budget holds up to T_M16,max =  43.7 C
+  n 1.1, T_min   0.0 C: I_S(T_min) >=  1038.0 nA -> 40 uA budget holds up to T_M16,max =  52.7 C
+  n 1.1, T_min  10.0 C: I_S(T_min) >=  1459.8 nA -> 40 uA budget holds up to T_M16,max =  57.8 C
+  n 1.1, T_min  15.0 C: I_S(T_min) >=  1715.9 nA -> 40 uA budget holds up to T_M16,max =  60.4 C
+  n 1.1, T_min  20.0 C: I_S(T_min) >=  2005.8 nA -> 40 uA budget holds up to T_M16,max =  63.2 C
+  (I_R >= I_S; barrier lowering only raises I_R, so these T_M16,max values are upper bounds;
+   the thermionic model of fmea_round5_calcs s3 gives 41-107 C over phi_B 0.35-0.65 eV for T_min -20..10 C)
+  I_R    40 uA: VC1 low by  10.4 mV (cell-1 OVP late by the same); mismatch term  20.9 mV
+  I_R   114 uA: VC1 low by  29.8 mV (cell-1 OVP late by the same); mismatch term  59.5 mV
+  I_R   153 uA: VC1 low by  39.9 mV (cell-1 OVP late by the same); mismatch term  79.9 mV
+
+====================================================================================================
+[4] ERR_CELL_MISMATCH budget (revision 8)
+====================================================================================================
+    5.0 mV  V_BT (pin 25) after the C-2a item 5 two-point calibration (now gated)
+    6.0 mV  2 x V_VC1 channel after two-point calibration (3 mV each)
+    3.4 mV  V_PACKN 2 counts (calc4 s7)
+    5.7 mV  2 x tap load offset through RB3 (calc7 s2)
+    0.5 mV  |I_PACK1| <= 1 A x R_SH
+  sum of terms other than D_VC1 leakage and pin-20 leakage drift: 20.6 mV
+  2 x D_VC1 leakage at 40 uA: 20.9 mV -> total 41.5 mV, margin to 80 mV 38.5 mV
+  pin-20 source   100 kOhm: 400 mV of mismatch per uA of pin current; uncalibrated leakage drift allowed    96 nA
+  pin-20 source   122 kOhm: 488 mV of mismatch per uA of pin current; uncalibrated leakage drift allowed    79 nA
+  latch leakage with every other term at its bound: (80 - 20.6) / (2 x 261) =   114 uA
+  latch leakage with the other terms at zero: 80 / (2 x 261) =   153 uA
+  (revision 7 Table 16 'about 75 uA' was the excess above 40 uA, not the total; BT5 verifier)
+
+====================================================================================================
+[5] LB-entry series elements on flying leads that land on an LB input (chafe to a positive conductor)
+====================================================================================================
+  R_VC1c (VC1 tap -> pin 20): chafe to  8.5 V -> injected  0.22 mA (3.6 V clamp onset ASSUMED)
+  R_VC1c (VC1 tap -> pin 20): chafe to 17.5 V -> injected  0.63 mA (3.6 V clamp onset ASSUMED)
+  R_VC1c (VC1 tap -> pin 20): chafe to 21.5 V -> injected  0.81 mA (3.6 V clamp onset ASSUMED)
+  R_MS3 (MS lead -> U_MS IN+): chafe to  8.5 V -> injected  0.22 mA (3.6 V clamp onset ASSUMED)
+  R_MS3 (MS lead -> U_MS IN+): chafe to 17.5 V -> injected  0.63 mA (3.6 V clamp onset ASSUMED)
+  R_MS3 (MS lead -> U_MS IN+): chafe to 21.5 V -> injected  0.81 mA (3.6 V clamp onset ASSUMED)
+  R_PGL (PROFILE lead -> pin 10 net): chafe to  8.5 V -> injected  0.22 mA (3.6 V clamp onset ASSUMED)
+  R_PGL (PROFILE lead -> pin 10 net): chafe to 17.5 V -> injected  0.63 mA (3.6 V clamp onset ASSUMED)
+  R_PGL (PROFILE lead -> pin 10 net): chafe to 21.5 V -> injected  0.81 mA (3.6 V clamp onset ASSUMED)
+  Teensy 3V3 load (about 100 mA, UNCONFIRMED) exceeds every injected current, so the rail cannot rise;
+  pad injection limit TODO(verify: IMXRT1060CEC); TLV3011B input current limit TODO(verify: SBOS300C 6.1)
+  VC1 tap filter with R_VC1c: tau = (100k + 22k) x 100 nF = 12.2 ms (was 10.0 ms); DC ratio VC1/2 unchanged
+  R_MS3 with C_MS on the lead side: added delay R_MS3 x C_in(IN+, ~5 pF ASSUMED) = 110 ns; U_MS DC threshold unchanged (TLV3011B bias pA)
+  R_PGL with about 4 x 50 pF of gate load (ASSUMED): tau 4.4 us; pin 10 changes only on a cold module (ms scale)
+  BAL_OK: VBAL+ 7.4 V -> U_LA input 2.49 V (LVC244A VIH 2.0 V at 3.0-3.6 V, TODO(verify: SCAS414))
+  BAL_OK: VBAL+ 8.5 V -> U_LA input 2.86 V (LVC244A VIH 2.0 V at 3.0-3.6 V, TODO(verify: SCAS414))
+  BAL_OK Thevenin 66 kOhm x 5 uA input leakage = 0.33 V worst offset; drain at 8.5 V 29 uA
+  BAL_OK lead chafed to  8.5 V: U_LA input  5.78 V vs 6.5 V absolute maximum -> within
+  BAL_OK lead chafed to  9.5 V: U_LA input  6.46 V vs 6.5 V absolute maximum -> within
+  BAL_OK lead chafed to 17.5 V: U_LA input 11.90 V vs 6.5 V absolute maximum -> EXCEEDS: lead must stay segregated from this conductor
+  BAL_OK lead chafed to 21.5 V: U_LA input 14.63 V vs 6.5 V absolute maximum -> EXCEEDS: lead must stay segregated from this conductor
+
+====================================================================================================
+[6] ERR_IPACK_PLAUS gain band with I_NB,cal (non-boost VBT load) in place of I_L,cal
+====================================================================================================
+  I_NB 0.1-0.3 A calibrated to +/-0.05 A, eta 0.85-0.95 both ways, BT 1-4 A, INA253 floor +/-0.1 A: ratio 0.839-1.188 against the band 0.75-1.30
+  with the B8 I_L,cal (0.6 A, LM1084 + BT-boost input) mistaken for I_NB: lowest ratio 0.703 (fmea_round5_calcs s6) -> excluded by the separate constant
+  1 s mean (1000 samples at 1 kHz): the INA253 floor term averages down; the static spread above is the bound used
+
+====================================================================================================
+[7] Gate corrections
+====================================================================================================
+  C-2a item 5 with VC1 held at GND: VC2-VC1 = 7.40 V vs 8 V absolute maximum (SLUSA52C 7.1): within, margin 0.60 V
+  C-2a item 5 with VC1 held at GND: VC2-VC1 = 8.00 V vs 8 V absolute maximum (SLUSA52C 7.1): at the limit
+  C-2a item 5 with VC1 held at GND: VC2-VC1 = 8.40 V vs 8 V absolute maximum (SLUSA52C 7.1): OVERSTRESS
+  C-2a item 5 with VC1 held at GND: VC2-VC1 = 8.50 V vs 8 V absolute maximum (SLUSA52C 7.1): OVERSTRESS
+  revision 8 item 5 grounds the R_VC1a/R_VC1b junction on LB instead: VC1 sag 21 uA x 261 Ohm = 5.5 mV, BQ29200 not stressed
+  C-2a item 20 at 1 A, iteration  1.34 ms + 5 ms: I2t 0.006 A2s = 0.04 x S0-10 (0.1445 A2s);  0.3 % of the F_VX 4 A melting I2t 2.469 A2s
+  C-2a item 20 at 1 A, iteration  9.76 ms + 5 ms: I2t 0.015 A2s = 0.10 x S0-10 (0.1445 A2s);  0.6 % of the F_VX 4 A melting I2t 2.469 A2s
+  C-2a item 20 at 3 A, iteration  1.34 ms + 5 ms: I2t 0.057 A2s = 0.39 x S0-10 (0.1445 A2s);  2.3 % of the F_VX 4 A melting I2t 2.469 A2s
+  C-2a item 20 at 3 A, iteration  9.76 ms + 5 ms: I2t 0.133 A2s = 0.92 x S0-10 (0.1445 A2s);  5.4 % of the F_VX 4 A melting I2t 2.469 A2s
+  C-2a item 20 at 7 A, iteration  1.34 ms + 5 ms: I2t 0.311 A2s = 2.15 x S0-10 (0.1445 A2s); 12.6 % of the F_VX 4 A melting I2t 2.469 A2s
+  C-2a item 20 at 7 A, iteration  9.76 ms + 5 ms: I2t 0.723 A2s = 5.01 x S0-10 (0.1445 A2s); 29.3 % of the F_VX 4 A melting I2t 2.469 A2s
+  F_VX 4 A (Littelfuse 451/453 amp code 004, rev GD as read in BT5-DS-03): 16.0 mOhm, melting I2t 2.469 A2s (8 ms);
+  revision 7 quoted 3.152 A2s, the amp code 005 (5 A) value

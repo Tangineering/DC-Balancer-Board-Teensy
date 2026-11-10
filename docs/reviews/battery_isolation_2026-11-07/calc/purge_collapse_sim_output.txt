@@ -1,0 +1,139 @@
+
+==============================================================================================================
+Section 1: Collapse rates before any firmware action (bus-side, analytic)
+==============================================================================================================
+  charger 13.0 W at 15.9 V + aux 0.15 A on B+C+M (C_mod 100 uF)     :   6.163 V/ms
+  charger 14.8 W at 15.9 V + aux 0.15 A on B+C+M (C_mod 221 uF)     :   3.888 V/ms
+  charger 14.8 W + F (30 uF) joined, C_mod 100 uF                   :   4.978 V/ms
+  aux 0.09 A alone on VBUS 35 uF (campaign G check)                 :   2.571 V/ms
+  aux 0.015 A on B+F (65 uF), eFuse off                             :   0.231 V/ms
+  aux 0.0005 A on B+F (65 uF), eFuse off                            :   0.008 V/ms
+  V-MOT 0.48 mF, VESC 0.075 A                          :  0.156 V/ms; V-MOT at 100 / 140 ms  0.28 /  0.00 V; reaches 8 V at   50.6 ms
+  V-MOT 0.48 mF, VESC + traction 0.28 A (variant D)    :  0.740 V/ms; V-MOT at 100 / 140 ms  0.00 /  0.00 V; reaches 8 V at   10.7 ms
+  V-MOT 1.50 mF, VESC 0.075 A                          :  0.050 V/ms; V-MOT at 100 / 140 ms 10.90 /  8.90 V; reaches 8 V at  158.0 ms
+  V-MOT 1.50 mF, VESC + traction 0.28 A (variant D)    :  0.237 V/ms; V-MOT at 100 / 140 ms  0.00 /  0.00 V; reaches 8 V at   33.4 ms
+  V-MOT 5.00 mF, VESC 0.075 A                          :  0.015 V/ms; V-MOT at 100 / 140 ms 14.40 / 13.80 V; reaches 8 V at  526.7 ms
+  V-MOT 5.00 mF, VESC + traction 0.28 A (variant D)    :  0.071 V/ms; V-MOT at 100 / 140 ms  8.80 /  5.96 V; reaches 8 V at  111.3 ms
+
+==============================================================================================================
+Section 2: Reference traces (p99 loop 1.341 ms, C_mod 221 uF, eFuse UVLO high corner, V-MOT 1.5 mF)
+==============================================================================================================
+CP   P_in 14.8 W aux  15.0 mA var P E1 T_fall  0 ms: eFuse off    1.1  lockout    1.3  exit    1.4  bond    4.1 (V_M  4.67 V)  BT_EN    6.8  BT cond    -    latch   21.8 [UV_BUS]  MOT low   34.0  boosts low   43.5  Vbus min  0.49  BT peak  0.00 A  warm eFuse restarts 0  UVLO ['MOT']
+CP   P_in 14.8 W aux  15.0 mA var P E1 T_fall 20 ms: eFuse off   13.6  lockout   13.8  exit   13.6  bond   16.3 (V_M  4.86 V)  BT_EN   19.0  BT cond   37.9  latch    -   [none]  MOT low    -    boosts low    -    Vbus min  8.80  BT peak  1.29 A  warm eFuse restarts 0  UVLO []
+CP   P_in 13.0 W aux   0.5 mA var P E1 T_fall  0 ms: eFuse off    3.1  lockout    3.3  exit    4.1  bond    6.8 (V_M  4.60 V)  BT_EN    9.5  BT cond   32.2  latch    -   [none]  MOT low    -    boosts low    -    Vbus min 11.86  BT peak  1.34 A  warm eFuse restarts 0  UVLO []
+CP   P_in 13.0 W aux   0.5 mA var P E1 T_fall 20 ms: eFuse off   10.8  lockout   11.0  exit   10.9  bond   13.6 (V_M  4.74 V)  BT_EN   16.3  BT cond   41.9  latch    -   [none]  MOT low    -    boosts low    -    Vbus min 12.08  BT peak  1.34 A  warm eFuse restarts 0  UVLO []
+MPPT P_in 14.8 W aux   0.5 mA var P E1 T_fall  0 ms: eFuse off   13.6  lockout   14.2  exit   13.6  bond   16.3 (V_M  5.54 V)  BT_EN   19.0  BT cond   42.7  latch    -   [none]  MOT low    -    boosts low    -    Vbus min 12.72  BT peak  1.34 A  warm eFuse restarts 0  UVLO []
+MPPT P_in 14.8 W aux   0.5 mA var P E1 T_fall 20 ms: eFuse off   31.3  lockout   31.8  exit   31.3  bond   34.0 (V_M  5.52 V)  BT_EN   36.7  BT cond   59.8  latch    -   [none]  MOT low    -    boosts low    -    Vbus min 12.22  BT peak  1.34 A  warm eFuse restarts 0  UVLO []
+MPPT P_in 14.8 W aux   0.5 mA var P E2 T_fall  0 ms: eFuse off   15.0  lockout   15.5  exit   13.6  bond   17.7 (V_M  5.50 V)  BT_EN    -    BT cond    -    latch   13.6 [E2 window collapse]  MOT low   25.8  boosts low   35.4  Vbus min 10.79  BT peak  0.00 A  warm eFuse restarts 0  UVLO []
+MPPT P_in 14.8 W aux   0.5 mA var P E2 T_fall 20 ms: eFuse off   32.7  lockout   33.2  exit   31.3  bond   35.4 (V_M  5.48 V)  BT_EN    -    BT cond    -    latch   31.3 [E2 window collapse]  MOT low   43.5  boosts low   53.0  Vbus min 11.00  BT peak  0.00 A  warm eFuse restarts 0  UVLO []
+MPPT P_in 14.8 W aux   0.5 mA var D E1 T_fall  0 ms: eFuse off   12.3  lockout   12.8  exit   12.2  bond   15.0 (V_M  5.53 V)  BT_EN   17.7  BT cond    -    latch   32.6 [UV_BUS]  MOT low   44.9  boosts low   54.4  Vbus min  6.17  BT peak  0.00 A  warm eFuse restarts 0  UVLO []
+MPPT P_in 14.8 W aux   0.5 mA var D E1 T_fall 20 ms: eFuse off   24.5  lockout   25.0  exit   24.5  bond   27.2 (V_M  5.55 V)  BT_EN   29.9  BT cond    -    latch   44.9 [UV_BUS]  MOT low   57.1  boosts low   66.6  Vbus min  6.35  BT peak  0.00 A  warm eFuse restarts 0  UVLO []
+CP   P_in 14.8 W aux 150.0 mA var D E1 T_fall  0 ms: eFuse off    1.0  lockout    1.2  exit    1.4  bond    4.1 (V_M  4.67 V)  BT_EN    6.8  BT cond   15.4  latch   20.4 [UV_BUS]  MOT low   32.6  boosts low   42.2  Vbus min  0.49  BT peak  0.18 A  warm eFuse restarts 0  UVLO ['FCBUS', 'MOT']
+CP   P_in 14.8 W aux 150.0 mA var D E1 T_fall 20 ms: eFuse off   12.3  lockout   12.4  exit   12.2  bond   15.0 (V_M  4.80 V)  BT_EN   17.7  BT cond   26.3  latch   36.7 [UV_BUS]  MOT low   49.0  boosts low   58.5  Vbus min  0.44  BT peak  0.18 A  warm eFuse restarts 0  UVLO ['FCBUS', 'MOT']
+
+==============================================================================================================
+Section 3: Grid: latch timing and the recovery race H-R (FC_BUS + FC_REG still HIGH at t_rec)
+==============================================================================================================
+864 cases (3 load modes x 2 C_mod x 3 aux x 3 C_V x 2 T_fall x 2 eFuse corners x 2 variants x 2 policies), p99 loop
+
+[E1 variant P] 216 cases: latch at 20.4-76.2 ms (no latch by 160 ms: 76); MOT_PWR LOW at 32.6-88.4 ms; FC_BUS still HIGH at t_rec 80 ms: 68 (with D-MT-EN joined: 68); at 100 ms: 68; BT_BUS conducted before the latch: 155; warm eFuse restarts: 14; V_M at bond 1.51-5.56 V
+   H-R cases at 80 ms: modes ['CP', 'MPPT'], aux [0.5, 15.0] mA, C_V [0.48000000000000004, 1.5, 5.0] mF; bus at t_rec 16.00-16.00 V, V-MOT 16.00-16.00 V
+   latest-latch H-R case: CP 13.0 W C_mod 100 uF aux 0.5 mA C_V 0.48 mF T_fall 0 ms eFuse (12.1, 12.88): latch    -   ms, exit    1.4 ms
+
+[E1 variant D] 216 cases: latch at 20.4-47.6 ms (no latch by 160 ms: 55); MOT_PWR LOW at 32.6-59.8 ms; FC_BUS still HIGH at t_rec 80 ms: 47 (with D-MT-EN joined: 47); at 100 ms: 47; BT_BUS conducted before the latch: 158; warm eFuse restarts: 8; V_M at bond 1.50-5.55 V
+   H-R cases at 80 ms: modes ['CP', 'MPPT'], aux [0.5, 15.0] mA, C_V [0.48000000000000004, 1.5, 5.0] mF; bus at t_rec 16.00-16.00 V, V-MOT 16.00-16.00 V
+   latest-latch H-R case: CP 13.0 W C_mod 100 uF aux 0.5 mA C_V 0.48 mF T_fall 20 ms eFuse (11.47, 12.38): latch    -   ms, exit    8.2 ms
+
+[E2 variant P] 216 cases: latch at 1.4-50.3 ms (no latch by 160 ms: 0); MOT_PWR LOW at 13.6-62.6 ms; FC_BUS still HIGH at t_rec 80 ms: 0 (with D-MT-EN joined: 0); at 100 ms: 0; BT_BUS conducted before the latch: 0; warm eFuse restarts: 28; V_M at bond 1.46-5.81 V
+
+[E2 variant D] 216 cases: latch at 1.4-31.3 ms (no latch by 160 ms: 0); MOT_PWR LOW at 13.6-43.5 ms; FC_BUS still HIGH at t_rec 80 ms: 0 (with D-MT-EN joined: 0); at 100 ms: 0; BT_BUS conducted before the latch: 0; warm eFuse restarts: 22; V_M at bond 1.46-5.68 V
+
+==============================================================================================================
+Section 3b: FC fall-time sweep: bus state at t_rec with FC_BUS still HIGH (severity = 16 V - V_bus)
+==============================================================================================================
+Hazard class at t_rec (FC boost leaves VIN UVLO with FC_BUS + FC_REG HIGH):
+  BENIGN  : V_bus >= 15.5 V (bus held by BT after a ride-through; the boost charges only its own 30 uF)
+  IN-FAMILY: 12.0 <= V_bus < 15.5 V (no deeper than the TP0178 12.15 V dropout, nondestructive)
+  HAZARD  : V_bus < 12.0 V (TP0010 class: 6.5 V sags with 3+ A reconnect spikes, 33 events nondestructive,
+            "Death-5-family stress" in boost-bringup-debug.md); also flagged if D-MT-EN is joined then
+[E1 variant D t_rec 80 ms] 324 cases: OPEN 165, BENIGN 137, IN-FAMILY 2, HAZARD 20
+    IN-FAMILY: T_fall [75.0] ms, modes ['MPPT'], aux [0.5] mA; lowest bus 12.69 V (V-MOT 12.69 V, D-MT-EN joined True, latch    -   ms, exit   76.2 ms, case MPPT T_fall 75 ms aux 0.5 mA C_V 5.00 mF)
+    HAZARD: T_fall [60.0, 75.0] ms, modes ['MPPT'], aux [0.5, 15.0, 150.0] mA; lowest bus 6.73 V (V-MOT 7.99 V, D-MT-EN joined True, latch   84.3 ms, exit   63.9 ms, case MPPT T_fall 75 ms aux 15.0 mA C_V 0.48 mF)
+[E1 variant D t_rec 100 ms] 324 cases: OPEN 181, BENIGN 139, HAZARD 4
+    HAZARD: T_fall [75.0] ms, modes ['MPPT'], aux [0.5, 15.0] mA; lowest bus 9.53 V (V-MOT 11.22 V, D-MT-EN joined True, latch   99.3 ms, exit   74.8 ms, case MPPT T_fall 75 ms aux 15.0 mA C_V 5.00 mF)
+[E1 variant P t_rec 80 ms] 324 cases: OPEN 144, BENIGN 152, IN-FAMILY 20, HAZARD 8
+    IN-FAMILY: T_fall [40.0, 60.0, 75.0] ms, modes ['MPPT'], aux [0.5, 15.0] mA; lowest bus 12.04 V (V-MOT 12.42 V, D-MT-EN joined True, latch   99.3 ms, exit   78.9 ms, case MPPT T_fall 75 ms aux 15.0 mA C_V 0.48 mF)
+    HAZARD: T_fall [60.0] ms, modes ['MPPT'], aux [0.5, 15.0] mA; lowest bus 8.70 V (V-MOT 10.20 V, D-MT-EN joined True, latch   85.7 ms, exit   65.3 ms, case MPPT T_fall 60 ms aux 15.0 mA C_V 0.48 mF)
+[E1 variant P t_rec 100 ms] 324 cases: OPEN 152, BENIGN 156, IN-FAMILY 8, HAZARD 8
+    IN-FAMILY: T_fall [60.0, 75.0] ms, modes ['MPPT'], aux [0.5] mA; lowest bus 12.39 V (V-MOT 12.39 V, D-MT-EN joined True, latch    -   ms, exit   84.3 ms, case MPPT T_fall 75 ms aux 0.5 mA C_V 1.50 mF)
+    HAZARD: T_fall [75.0] ms, modes ['MPPT'], aux [0.5, 15.0] mA; lowest bus 7.42 V (V-MOT 9.30 V, D-MT-EN joined True, latch   99.3 ms, exit   78.9 ms, case MPPT T_fall 75 ms aux 15.0 mA C_V 0.48 mF)
+[E2 variant D t_rec 80 ms] 324 cases: OPEN 324
+[E2 variant D t_rec 100 ms] 324 cases: OPEN 324
+[E2 variant P t_rec 80 ms] 324 cases: OPEN 312, IN-FAMILY 12
+    IN-FAMILY: T_fall [75.0] ms, modes ['MPPT'], aux [0.5, 15.0] mA; lowest bus 12.04 V (V-MOT 12.42 V, D-MT-EN joined True, latch   78.9 ms, exit   78.9 ms, case MPPT T_fall 75 ms aux 15.0 mA C_V 0.48 mF)
+[E2 variant P t_rec 100 ms] 324 cases: OPEN 324
+
+==============================================================================================================
+Section 4: Worst-gap sensitivity: one 9.76 ms iteration at the exit trigger / at the 12 V crossing (E1 and E2)
+==============================================================================================================
+CP   aux  15.0 mA var P E1 gap at t_exit_trigger   : latch   27.4 (UV_BUS), MOT LOW   39.7, bond   12.5 at V_M  0.31 V; FC_BUS HIGH at 80 ms: False
+CP   aux  15.0 mA var P E1 gap at t_vbus_lt12_seen : latch   27.4 (UV_BUS), MOT LOW   39.7, bond   12.5 at V_M  0.31 V; FC_BUS HIGH at 80 ms: False
+CP   aux  15.0 mA var P E2 gap at t_exit_trigger   : latch    1.4 (E2 window collapse), MOT LOW   22.0, bond   13.8 at V_M  4.26 V; FC_BUS HIGH at 80 ms: False
+MPPT aux   0.5 mA var P E1 gap at t_exit_trigger   : latch    -   (none), MOT LOW    -  , bond   24.7 at V_M  0.36 V; FC_BUS HIGH at 80 ms: True
+MPPT aux   0.5 mA var P E2 gap at t_exit_trigger   : latch   13.6 (E2 window collapse), MOT LOW   34.2, bond   26.1 at V_M  5.22 V; FC_BUS HIGH at 80 ms: False
+MPPT aux   0.5 mA var D E1 gap at t_exit_trigger   : latch   38.3 (UV_BUS), MOT LOW   50.6, bond   23.4 at V_M  0.36 V; FC_BUS HIGH at 80 ms: False
+MPPT aux   0.5 mA var D E1 gap at t_vbus_lt12_seen : latch   38.3 (UV_BUS), MOT LOW   50.6, bond   23.4 at V_M  0.36 V; FC_BUS HIGH at 80 ms: False
+MPPT aux   0.5 mA var D E2 gap at t_exit_trigger   : latch   12.2 (E2 window collapse), MOT LOW   32.9, bond   24.7 at V_M  5.14 V; FC_BUS HIGH at 80 ms: False
+
+==============================================================================================================
+Section 5: BT_BUS re-close of policy E1 when it conducts before the latch (capture-11 family check)
+==============================================================================================================
+ramp 0.50 V/ms: 57 of 108 cases conduct before the latch
+   CP   aux   0.5 mA C_V 0.48 mF var P: conducts   48.1 ms, peak bus-side current  0.35 A, latch    -  
+   CP   aux   0.5 mA C_V 0.48 mF var D: conducts   37.4 ms, peak bus-side current  0.63 A, latch   40.8
+   CP   aux   0.5 mA C_V 1.50 mF var D: conducts   32.1 ms, peak bus-side current  1.14 A, latch   31.3
+   CP   aux   0.5 mA C_V 1.50 mF var P: conducts   51.9 ms, peak bus-side current  0.86 A, latch    -  
+   CP   aux   0.5 mA C_V 1.50 mF var D: conducts   41.7 ms, peak bus-side current  1.14 A, latch   43.5
+   CP   aux   0.5 mA C_V 5.00 mF var P: conducts   58.4 ms, peak bus-side current  2.61 A, latch    -  
+   CP   aux   0.5 mA C_V 5.00 mF var D: conducts   52.7 ms, peak bus-side current  2.89 A, latch    -  
+   CP   aux  15.0 mA C_V 0.48 mF var P: conducts   42.9 ms, peak bus-side current  0.32 A, latch    -  
+   CP   aux  15.0 mA C_V 0.48 mF var D: conducts   34.1 ms, peak bus-side current  0.64 A, latch   40.8
+   CP   aux  15.0 mA C_V 1.50 mF var P: conducts   42.9 ms, peak bus-side current  0.05 A, latch   42.2
+   CP   aux 150.0 mA C_V 0.48 mF var P: conducts   15.7 ms, peak bus-side current  0.17 A, latch   20.4
+   CP   aux 150.0 mA C_V 0.48 mF var D: conducts   15.7 ms, peak bus-side current  0.17 A, latch   20.4
+ramp 0.81 V/ms: 72 of 108 cases conduct before the latch
+   CP   aux   0.5 mA C_V 0.48 mF var P: conducts   29.2 ms, peak bus-side current  0.52 A, latch   29.9
+   CP   aux   0.5 mA C_V 0.48 mF var D: conducts   24.5 ms, peak bus-side current  0.80 A, latch   24.5
+   CP   aux   0.5 mA C_V 0.48 mF var P: conducts   39.9 ms, peak bus-side current  0.52 A, latch    -  
+   CP   aux   0.5 mA C_V 0.48 mF var D: conducts   31.4 ms, peak bus-side current  0.80 A, latch    -  
+   CP   aux   0.5 mA C_V 1.50 mF var P: conducts   32.2 ms, peak bus-side current  1.34 A, latch    -  
+   CP   aux   0.5 mA C_V 1.50 mF var D: conducts   27.1 ms, peak bus-side current  1.62 A, latch    -  
+   CP   aux   0.5 mA C_V 1.50 mF var P: conducts   41.9 ms, peak bus-side current  1.34 A, latch    -  
+   CP   aux   0.5 mA C_V 1.50 mF var D: conducts   36.8 ms, peak bus-side current  1.62 A, latch    -  
+   CP   aux   0.5 mA C_V 5.00 mF var P: conducts   36.3 ms, peak bus-side current  4.18 A, latch    -  
+   CP   aux   0.5 mA C_V 5.00 mF var D: conducts   34.9 ms, peak bus-side current  4.46 A, latch    -  
+   CP   aux   0.5 mA C_V 5.00 mF var P: conducts   48.1 ms, peak bus-side current  4.18 A, latch    -  
+   CP   aux   0.5 mA C_V 5.00 mF var D: conducts   44.2 ms, peak bus-side current  4.46 A, latch    -  
+   capture 11 (boost-bringup-debug.md): the same 100 nF ramp onto V-MOT + VESC drew a 0.7-1 A hump, no SCP cut;
+   RT1987 SCP: 2.5 A start limit, 250 us timer, disabled after tON (DS-00 s17.5).
+
+==============================================================================================================
+Section 6: Energies and stresses per unpredicted purge
+==============================================================================================================
+  R_MD dump from 11.00 V, C_M  101 uF:   6.1 mJ, peak 0.73 A, 15.9->9 V in 0.30 ms
+  R_MD dump from 13.00 V, C_M  101 uF:   8.5 mJ, peak 0.87 A, 15.9->9 V in 0.56 ms
+  R_MD dump from 15.90 V, C_M  101 uF:  12.8 mJ, peak 1.06 A, 15.9->9 V in 0.86 ms
+  R_MD dump from 11.00 V, C_M  222 uF:  13.4 mJ, peak 0.73 A, 15.9->9 V in 0.67 ms
+  R_MD dump from 13.00 V, C_M  222 uF:  18.8 mJ, peak 0.87 A, 15.9->9 V in 1.22 ms
+  R_MD dump from 15.90 V, C_M  222 uF:  28.1 mJ, peak 1.06 A, 15.9->9 V in 1.90 ms
+  IC1 5.3: one dump at 21.5 V / 221 uF = 51 mJ is the design case; the probe bypass case is 0.17 J in 10 ms.
+  RT1987 reverse differentials in the collapsed state (abs max VIN, VOUT -0.3..40 V to GND, DS-00 s10):
+   D-MT-EN, V-MOT at the chopper clamp 22.13 V, bus 0 V   : |VIN-VOUT| 22.13 V, max pin 22.13 V vs 40 V
+   D-BC-RG (pin 30 LOW), V-MOT 22.13 V, VCHG-IN 0 V       : |VIN-VOUT| 22.13 V, max pin 22.13 V vs 40 V
+   D-BT-EN (pin 28 LOW), BT boost 16 V, bus 0 V           : |VIN-VOUT| 16.00 V, max pin 16.00 V vs 40 V
+   D-BC-FC (pin 31 LOW), bus 0 V, VCHG-IN 12.9 V          : |VIN-VOUT| 12.90 V, max pin 12.90 V vs 40 V
+  Teensy supply: VBT = pack 7.4-8.4 V (no VBUS -> VBT path, facts_board 6.3 item 2); LM1084 needs >= 6.5 V
+   pack 7.4 V, logic load 0.25 A (boost-bringup-debug.md capture 7: ~200 mA), return 20 mOhm (sense R_s + leads, ASSUMED): LM1084 input 7.395 V, margin 0.895 V
+   pack 7.4 V, logic load 0.25 A (boost-bringup-debug.md capture 7: ~200 mA), return 100 mOhm (sense R_s + leads, ASSUMED): LM1084 input 7.375 V, margin 0.875 V
+  E1 BT re-close pack current (bus-side 1.0 A at 16 V, eta 0.92 ASSUMED, pack 7.4 V): 2.35 A; pack sag at 50-100 mOhm (boost-bringup-debug.md capture 7 note): 0.12-0.24 V
+  State 99 latched until power cycle: logic drain on the pack at 0.2-0.25 A (UNCONFIRMED) is 4.8-6.0 Ah/day; a 5 Ah pack (capacity unverified, facts_prior s9) reaches its cut-off within about a day unless power-cycled.

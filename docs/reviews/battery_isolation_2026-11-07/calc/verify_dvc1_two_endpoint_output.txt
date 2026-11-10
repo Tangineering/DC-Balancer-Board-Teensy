@@ -1,0 +1,20 @@
+R_eff=(V_cell-V_F)/I_F = 243.8 Ohm (RB3 nominal 261 Ohm); budget 40 uA -> 9.8 mV
+[A] design x2/10 K scaling
+ n 1.0: I_S(-20C) >= 0.171 uA -> 3.86 uA at 25 C
+   T_hot 45 C: I_R >=    15.5 uA, VC1 error >=    3.8 mV ( 0.39 x budget)
+   T_hot 55 C: I_R >=    30.9 uA, VC1 error >=    7.5 mV ( 0.77 x budget)
+   T_hot 60 C: I_R >=    43.7 uA, VC1 error >=   10.7 mV ( 1.09 x budget)
+   T_hot 70 C: I_R >=    87.4 uA, VC1 error >=   21.3 mV ( 2.19 x budget)
+   T_hot 85 C: I_R >=   247.3 uA, VC1 error >=   60.3 mV ( 6.18 x budget)
+ n 1.1: I_S(-20C) >= 0.484 uA -> 10.95 uA at 25 C
+   T_hot 45 C: I_R >=    43.8 uA, VC1 error >=   10.7 mV ( 1.10 x budget)
+   T_hot 55 C: I_R >=    87.6 uA, VC1 error >=   21.4 mV ( 2.19 x budget)
+   T_hot 60 C: I_R >=   123.9 uA, VC1 error >=   30.2 mV ( 3.10 x budget)
+   T_hot 70 C: I_R >=   247.8 uA, VC1 error >=   60.4 mV ( 6.20 x budget)
+   T_hot 85 C: I_R >=   701.0 uA, VC1 error >=  170.9 mV (17.53 x budget)
+[A'] calc7's own 25 C numbers: I_S >= 0.96-2.33 uA vs 40 uA@85 C referred to 25 C = 0.62 uA -> infeasible even at 25 C V_F
+[B] thermionic emission, n = 1, PhiB at the cold-V_F bound
+ area 1e-06 cm2: PhiB <= 0.383 eV; I_S(85 C) >=    58.4 uA; error >=   14.2 mV
+ area 1e-05 cm2: PhiB <= 0.433 eV; I_S(85 C) >=   114.7 uA; error >=   28.0 mV
+ area 1e-04 cm2: PhiB <= 0.483 eV; I_S(85 C) >=   225.4 uA; error >=   55.0 mV
+ area 1e-03 cm2: PhiB <= 0.533 eV; I_S(85 C) >=   442.7 uA; error >=  107.9 mV

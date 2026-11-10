@@ -1,0 +1,25 @@
+rosbag_2026-09-07_22-06-29                   launch    0.5 s | first request      - s | last error-free sw 0x26 FC_BUS LOW | standstill battery-only   0.5 s
+rosbag_2026-09-10_22-10-26                   launch    0.0 s | first request      - s | last error-free sw 0x27 FC_BUS HIGH | standstill battery-only   0.0 s
+rosbag_sdp_2026-10-26_23-57-14               launch   55.9 s | first request   72.4 s | last error-free sw 0x26 FC_BUS LOW | standstill battery-only  94.5 s
+rosbag_sdp_2026-10-27_00-52-58               launch      - s | first request      - s | last error-free sw 0x-- FC_BUS - | standstill battery-only   0.0 s
+rosbag_sdp_2026-10-28_20-46-53               launch   56.0 s | first request   67.5 s | last error-free sw 0x27 FC_BUS HIGH | standstill battery-only   0.0 s
+rosbag_sdp_2026-10-28_22-18-10               launch   56.1 s | first request   67.7 s | last error-free sw 0x27 FC_BUS HIGH | standstill battery-only  56.1 s
+rosbag_sdp_2026-10-29_19-51-48               launch   56.1 s | first request   67.6 s | last error-free sw 0x27 FC_BUS HIGH | standstill battery-only  56.1 s
+rosbag_sdp_2026-10-30_01-49-38               launch   56.1 s | first request   67.6 s | last error-free sw 0x27 FC_BUS HIGH | standstill battery-only  56.0 s
+rosbag_sdp_2026-11-05_20-09-52               launch   54.8 s | first request   66.0 s | last error-free sw 0x27 FC_BUS HIGH | standstill battery-only  54.8 s
+rosbag_simple_2026-10-20_00-38-02            launch   55.7 s | first request      - s | last error-free sw 0x27 FC_BUS HIGH | standstill battery-only  55.7 s
+rosbag_sweep-clip_2026-10-22_23-18-00        launch    0.0 s | first request      - s | last error-free sw 0x27 FC_BUS HIGH | standstill battery-only   0.0 s
+rosbag_sweep-noclip_2026-10-22_23-25-13      launch    0.0 s | first request      - s | last error-free sw 0x27 FC_BUS HIGH | standstill battery-only   0.0 s
+rosbag_sweep-noclip_2026-10-23_17-27-44      launch    0.0 s | first request      - s | last error-free sw 0x27 FC_BUS HIGH | standstill battery-only   0.0 s
+rosbag_sweep-noclip_2026-10-25_21-09-10      launch   54.6 s | first request      - s | last error-free sw 0x27 FC_BUS HIGH | standstill battery-only   0.0 s
+rosbag_sweep-noclip_2026-10-27_01-09-42      launch   55.8 s | first request      - s | last error-free sw 0x27 FC_BUS HIGH | standstill battery-only   0.0 s
+rosbag_sweep-noclip_2026-10-27_02-52-00      launch   56.2 s | first request      - s | last error-free sw 0x27 FC_BUS HIGH | standstill battery-only   0.0 s
+rosbag_sweep-noclip_2026-10-30_00-56-01      launch   50.9 s | first request      - s | last error-free sw 0x27 FC_BUS HIGH | standstill battery-only   0.0 s
+rosbag_sweep-noclip_2026-10-30_01-30-16      launch   50.6 s | first request      - s | last error-free sw 0x27 FC_BUS HIGH | standstill battery-only   0.0 s
+rosbag_sweep_2026-10-20_04-00-39             launch    0.0 s | first request      - s | last error-free sw 0x27 FC_BUS HIGH | standstill battery-only   0.0 s
+rosbag_sweep_2026-10-20_06-40-47             launch    0.0 s | first request      - s | last error-free sw 0x27 FC_BUS HIGH | standstill battery-only   0.0 s
+rosbag_sweep_2026-10-20_07-47-28             launch    0.0 s | first request      - s | last error-free sw 0x27 FC_BUS HIGH | standstill battery-only   0.0 s
+rosbag_sweep_2026-10-20_08-41-34             launch    0.0 s | first request      - s | last error-free sw 0x27 FC_BUS HIGH | standstill battery-only   0.0 s
+rosbag_sweep_2026-10-20_09-08-49             launch   56.1 s | first request      - s | last error-free sw 0x27 FC_BUS HIGH | standstill battery-only  56.1 s
+bags with a request: 6; first request after the first launch: 6
+bags whose last error-free sample has FC_BUS LOW: 2

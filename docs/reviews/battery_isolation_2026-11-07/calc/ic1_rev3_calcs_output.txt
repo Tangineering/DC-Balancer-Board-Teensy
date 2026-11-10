@@ -1,0 +1,139 @@
+
+==============================================================================
+Section 1: Ag105 code envelope with the unregulated VBT load I_L
+==============================================================================
+-- FC  (BT_BUS open): I_L = 0.3 A (UNCONFIRMED working value, gate B8)
+   code 1 I_set 2.50 A  I_o 2.80 A  legal=False  P_in(eta .88) @7.4/7.8/8.1/8.2/8.4 V = 23.5/24.8/25.8/26.1/26.7  (eta .80: 25.9/27.3/28.3/28.7/29.4)
+   code 2 I_set 2.00 A  I_o 2.30 A  legal=True   P_in(eta .88) @7.4/7.8/8.1/8.2/8.4 V = 19.3/20.4/21.2/21.4/22.0  (eta .80: 21.3/22.4/23.3/23.6/24.1)
+   code 3 I_set 1.75 A  I_o 2.05 A  legal=True   P_in(eta .88) @7.4/7.8/8.1/8.2/8.4 V = 17.2/18.2/18.9/19.1/19.6  (eta .80: 19.0/20.0/20.8/21.0/21.5)
+   code 4 I_set 1.50 A  I_o 1.80 A  legal=True   P_in(eta .88) @7.4/7.8/8.1/8.2/8.4 V = 15.1/16.0/16.6/16.8/17.2  (eta .80: 16.6/17.5/18.2/18.4/18.9)
+   code 5 I_set 1.25 A  I_o 1.55 A  legal=True   P_in(eta .88) @7.4/7.8/8.1/8.2/8.4 V = 13.0/13.7/14.3/14.4/14.8  (eta .80: 14.3/15.1/15.7/15.9/16.3)
+   code 6 I_set 1.00 A  I_o 1.30 A  legal=True   P_in(eta .88) @7.4/7.8/8.1/8.2/8.4 V = 10.9/11.5/12.0/12.1/12.4  (eta .80: 12.0/12.7/13.2/13.3/13.7)
+-- regen (BT_BUS closed): I_L = 0.6 A (UNCONFIRMED working value, gate B8)
+   code 1 I_set 2.50 A  I_o 3.10 A  legal=False  P_in(eta .88) @7.4/7.8/8.1/8.2/8.4 V = 26.1/27.5/28.5/28.9/29.6  (eta .80: 28.7/30.2/31.4/31.8/32.6)
+   code 2 I_set 2.00 A  I_o 2.60 A  legal=False  P_in(eta .88) @7.4/7.8/8.1/8.2/8.4 V = 21.9/23.0/23.9/24.2/24.8  (eta .80: 24.1/25.4/26.3/26.6/27.3)
+   code 3 I_set 1.75 A  I_o 2.35 A  legal=True   P_in(eta .88) @7.4/7.8/8.1/8.2/8.4 V = 19.8/20.8/21.6/21.9/22.4  (eta .80: 21.7/22.9/23.8/24.1/24.7)
+   code 4 I_set 1.50 A  I_o 2.10 A  legal=True   P_in(eta .88) @7.4/7.8/8.1/8.2/8.4 V = 17.7/18.6/19.3/19.6/20.0  (eta .80: 19.4/20.5/21.3/21.5/22.1)
+   code 5 I_set 1.25 A  I_o 1.85 A  legal=True   P_in(eta .88) @7.4/7.8/8.1/8.2/8.4 V = 15.6/16.4/17.0/17.2/17.7  (eta .80: 17.1/18.0/18.7/19.0/19.4)
+   code 6 I_set 1.00 A  I_o 1.60 A  legal=True   P_in(eta .88) @7.4/7.8/8.1/8.2/8.4 V = 13.5/14.2/14.7/14.9/15.3  (eta .80: 14.8/15.6/16.2/16.4/16.8)
+-- ceiling at I_o = 2.5 A: 21.0/22.2/23.0/23.3/23.9 W
+-- pack voltage at which 2.5 A reaches 23 W: 8.10 V (eta 0.88)
+-- I_o needed for the 18.9 W peak at 7.4 V: 2.248 A
+-- FC window bus current at 16 V, code 5 (1.25 A) + I_L 0.3 A, plus aux 0.15 A
+   V_pack 7.4: P_in 13.03 W  I_bus 0.815 A  + aux 0.15 = 0.965 A  headroom to 1.247 A P_MAX +0.282 A
+   V_pack 8.0: P_in 14.09 W  I_bus 0.881 A  + aux 0.15 = 1.031 A  headroom to 1.247 A P_MAX +0.216 A
+   V_pack 8.4: P_in 14.80 W  I_bus 0.925 A  + aux 0.15 = 1.075 A  headroom to 1.247 A P_MAX +0.172 A
+
+==============================================================================
+Section 2: VMOT_OK channel: thresholds and worst-case tolerance
+==============================================================================
+   nominal VBUS   0.0 V: assert  0.427 V (nan x)  release  0.409 V (nan x)
+   nominal VBUS  13.5 V: assert 14.441 V (1.0697 x)  release 13.812 V (1.0231 x)
+   nominal VBUS  15.9 V: assert 16.932 V (1.0649 x)  release 16.194 V (1.0185 x)
+   nominal VBUS  16.0 V: assert 17.036 V (1.0648 x)  release 16.294 V (1.0183 x)
+   nominal VBUS  16.5 V: assert 17.555 V (1.0640 x)  release 16.790 V (1.0176 x)
+   nominal VBUS  17.5 V: assert 18.593 V (1.0625 x)  release 17.783 V (1.0162 x)
+   worst VBUS  13.5 V: assert 14.310..14.639 V  release 13.686..13.937 V  release margin above VBUS >= +0.186 V
+   worst VBUS  15.9 V: assert 16.792..17.139 V  release 16.061..16.328 V  release margin above VBUS >= +0.161 V
+   worst VBUS  16.0 V: assert 16.896..17.243 V  release 16.160..16.428 V  release margin above VBUS >= +0.160 V
+   worst VBUS  16.5 V: assert 17.413..17.764 V  release 16.654..16.926 V  release margin above VBUS >= +0.154 V
+   worst VBUS  17.5 V: assert 18.448..18.806 V  release 17.644..17.922 V  release margin above VBUS >= +0.144 V
+   zero-input bus-tap offset (min) 50.4 mV vs V_OS max 9 mV -> NOT OK at V-MOT = VBUS = 0: True
+   V-MOT tap at the 28 V OV_RGN limit: 3.51 V (TLV3011B CM max V+ + 0.2 = 5.2 V at 5 V)
+   VESC peak 21.20 V min (facts_prior sec 6) vs worst assert at 17.5 V bus 18.806 V: margin +2.39 V
+   No-limit-cycle condition: Ag105 threshold (18.0 V default, DS p.10, tolerance UNKNOWN) must exceed the release maximum:
+      VBUS 16.0: release max 16.428 V -> margin to 18.0 V +1.572 V
+      VBUS 16.5: release max 16.926 V -> margin to 18.0 V +1.074 V
+      VBUS 17.5: release max 17.922 V -> margin to 18.0 V +0.078 V
+   C_VMOT 0.48 mF, P_in 19.8 W: fall  2.29 V/ms; time from release-min to VBUS     70 us
+   C_VMOT 0.48 mF, P_in 22.4 W: fall  2.59 V/ms; time from release-min to VBUS     62 us
+   C_VMOT 0.97 mF, P_in 19.8 W: fall  1.13 V/ms; time from release-min to VBUS    141 us
+   C_VMOT 0.97 mF, P_in 22.4 W: fall  1.28 V/ms; time from release-min to VBUS    124 us
+   C_VMOT 4.0 mF, P_in 19.8 W: fall  0.28 V/ms; time from release-min to VBUS    580 us
+   C_VMOT 4.0 mF, P_in 22.4 W: fall  0.31 V/ms; time from release-min to VBUS    513 us
+
+==============================================================================
+Section 3: RCS and MPPTS networks
+==============================================================================
+   RCS: 62k alone = code-3 equivalent (1750 mA, Table 4 JSON); 62k || 39.2k = 24.02 k (Table 4 JSON 24k = 1250 mA; error +0.07 %)
+      fault '62k open (base resistor lost)': R = open
+      fault '62k + switch stuck on': R = 24.0 k
+      fault '39.2k leg open': R = 62.0 k
+      fault 'CS shorted to Vin-': R = 0.0 k
+   MPPTS for 11.00 V:  40.00 k
+   MPPTS for 13.60 V:  41.56 k
+   MPPTS for 13.82 V:  41.70 k
+   MPPTS for 18.00 V:  44.83 k
+   MPPTS for 33.00 V:  71.43 k
+   MPPTS 41.2 k -> 13.04 V; +/-0.1 % -> 12.97..13.10 V
+   MPPTS 41.7 k -> 13.82 V; +/-0.1 % -> 13.76..13.88 V
+   MPPTS 42.2 k -> 14.57 V; +/-0.1 % -> 14.51..14.63 V
+   Bus 16.0 V, D-BC-FC 35 mV regulation (RT1987 DS-00 sec 13), eFuse 45 mOhm max at 85 C (SLVSE94G sec 6.5) x 1 A: input = 15.92 V; margin to 13.82 V = 2.10 V
+
+==============================================================================
+Section 4: Pumped arm: hold voltage and hang-to-off time
+==============================================================================
+   f = 442 Hz, per-edge transfer 0.910, k = 20.8, V_H = 3.698 V (+/-0.235 V leakage)
+   ON margin 1.383 V
+   hang to PUMP_OK low: 43..76 ms
+   after the worst measured 9.76 ms gap: H >= 2.96 V (stays above VT- max 1.35)
+   minimum pump frequency for ON: 26 Hz (mean loop <= 19.2 ms)
+
+==============================================================================
+Section 5: TPS26631 enable, slew and limits
+==============================================================================
+   SHDN_EF high from an LVC output through 1k into 22k: 3.16 V (V_SHUTR max 2 V)
+   SHDN_EF with the gate output high-Z: 10 uA x 22k = 0.22 V (V_SHUTF min 0.8 V)
+   C_dVdT 10 nF: slew 4.17/5.00/5.79 V/ms, UVLO turn-on delay 1237 us, 0->18 V 3.6 ms, inrush per 100 uF 0.58 A
+   C_dVdT 22 nF: slew 1.90/2.27/2.63 V/ms, UVLO turn-on delay 1831 us, 0->18 V 7.9 ms, inrush per 100 uF 0.26 A
+   I_OL (R_ILIM 9k): 1.84/2.00/2.16 A; tSD(dly) 0.8/1/1.5 us; latch-off (MODE open) Table 8-1
+   P_in bound at I_OL max x 21.47 V = 46.4 W
+   UVLO divider 100k/13k: rising 10.43 V, falling 9.75 V
+
+==============================================================================
+Section 6: Comparator thresholds
+==============================================================================
+   TLV3011B V_OS 9 mV: 0.180 A
+   INA240 V_OS 25 uV: 0.050 A
+   INA240 ref divider 0.1 % of 1.65 V: 0.033 A
+   threshold divider 0.1 % (two resistors): 0.030 A
+   U_C1 discharge 3.0 A: worst linear sum +/-0.29 A plus gain 0.2 % and R_SH tolerance (+/-0.006 A + TODO(verify) shunt) -> 2.67..3.33 A with a 1 % shunt
+   U_C2 charge 3.2 A: worst linear sum +/-0.29 A plus gain 0.2 % and R_SH tolerance (+/-0.006 A + TODO(verify) shunt) -> 2.87..3.53 A with a 1 % shunt
+   I_PACK ADC: 0.806 mV/count = 16.1 mA/count
+   D5 BT-loop: threshold 0.5 A = 50 mV; trip range 0.31..0.59 A (INA253 floor lowers the trip current)
+
+==============================================================================
+Section 7: 5-bit R-2R status ladders
+==============================================================================
+   step 103.1 mV, half step 51.6 mV
+   mismatch error <= ~16 mV; VOH worst-spec droop on MSB 50 mV; sum 66 mV vs half step 52 mV -> calibrate per code (C-2)
+   ADC source impedance R = 20k with 100 nF at the pin: tau 2.0 ms
+
+==============================================================================
+Section 8: Return path
+==============================================================================
+   J-BT pin 2 screw only: R 21.56 mOhm, I   7.2 A -> SB ground below PCB GND by   155 mV
+   J-BT pin 2 screw only: R 21.56 mOhm, I  17.1 A -> SB ground below PCB GND by   369 mV
+   with G9 soldered parallel lead: R  1.88 mOhm, I   7.2 A -> SB ground below PCB GND by    14 mV
+   with G9 soldered parallel lead: R  1.88 mOhm, I  17.1 A -> SB ground below PCB GND by    32 mV
+   BSS138 V_GS(th) min 0.8 V (BSS138/D p.2): Q_A 'off' with LB low = offset; margin 0.43 V (screw only), 0.77 V (with G9)
+   new series elements excluding fuse/terminals: 1.7 mOhm of the 12.9 mOhm budget (rev 2 sec 4.1)
+   VBT-GND at 7.4 V, 17.1 A, two contacts + full budget: 6.50 V (LM1084 needs 6.5 V)
+
+==============================================================================
+Section 9: Timing budgets
+==============================================================================
+   pump stop -> PUMP_OK low -> N1 -> FF1 clear -> eFuse off: 43..76 ms + 1.5 us
+   VOK release -> eFuse off: tap RC 13 us (13.6k||100k x 1 nF ~ 12 us) + t_PD 4 us + gates <0.1 us + tSD 1.5 us = about 18 us
+   V-MOT tap RC with 1 nF: 12.5 us
+   U_C trip -> eFuse off: 70 us filter (1.5k x 47 nF) + 4 us + 1.5 us ~ 76 us; S_GND gate rise tau 88-114 us
+   D-BT-SQ release after FF1 set: X node tau 4.7 ms (~5 ms) + t_D_ON 8 ms typ (no max) = ~13 ms
+   D-BT-SQ cross-lock on exit: X node 10k x 100 nF tau 1.0 ms -> 0.3-0.7 ms to EN < 0.6 V (rev 2)
+   regen: entry on first negative command: FF1 at 1 ms; first V-MOT pulse peaks at 19-47 ms (facts_prior sec 6)
+   regen: [RER] 40 ms arm dwell: FF1 at 41 ms; first V-MOT pulse peaks at 19-47 ms (facts_prior sec 6)
+
+==============================================================================
+Section 10: Stage-3 hold-up on the eFuse output (UNCONFIRMED Ag105 behaviour)
+==============================================================================
+   regen pulse spacing: hold 535 ms from 18.0 V to 11 V UVLO at 18 mA: C_HU >= 1.38 mF; stored 0.22 J
+   H-20 purge, FC threshold: hold 140 ms from 13.82 V to 11 V UVLO at 18 mA: C_HU >= 0.89 mF; stored 0.09 J

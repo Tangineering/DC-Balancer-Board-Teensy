@@ -1,0 +1,35 @@
+
+[1] U_IM trip window with the SLVSE94G IMON gain tolerance (design: 1.68-1.75 A, gain tolerance excluded)
+   3V3 nominal: threshold 0.4783 V; trip nominal 1.714 A; worst range 1.539-1.920 A
+      upper trip minus I_OL min (1.822 A): +0.098 A -> U_IM can sit ABOVE I_OL: a start into an overload at I_OL is not detected
+      lower trip minus regen input, eta 0.80 at 18 V (design calc5 s9) (1.370 A): +0.169 A
+      lower trip minus regen input at the 2.5 A output ceiling, eta 0.80, 8.4 V, 18 V (1.458 A): +0.081 A
+   3V3 3.20 V (Table 10 ASSUMED): threshold 0.4638 V; trip nominal 1.662 A; worst range 1.491-1.863 A
+      upper trip minus I_OL min (1.822 A): +0.042 A -> U_IM can sit ABOVE I_OL: a start into an overload at I_OL is not detected
+      lower trip minus regen input, eta 0.80 at 18 V (design calc5 s9) (1.370 A): +0.121 A
+      lower trip minus regen input at the 2.5 A output ceiling, eta 0.80, 8.4 V, 18 V (1.458 A): +0.033 A
+   3V3 3.40 V (Table 10 ASSUMED): threshold 0.4928 V; trip nominal 1.766 A; worst range 1.587-1.977 A
+      upper trip minus I_OL min (1.822 A): +0.155 A -> U_IM can sit ABOVE I_OL: a start into an overload at I_OL is not detected
+      lower trip minus regen input, eta 0.80 at 18 V (design calc5 s9) (1.370 A): +0.217 A
+      lower trip minus regen input at the 2.5 A output ceiling, eta 0.80, 8.4 V, 18 V (1.458 A): +0.129 A
+   gain only: trip 1.587-1.864 A (spread x1.175)
+   feasible window needs trip_hi <= 1.822 A and trip_lo >= 1.46 A: ratio 1.248 available
+   absolute-REF threshold: gain x ref spread = 1.210 before offsets (3V3-ratiometric at +/-3 %: 1.248)
+   start into a hard short, V_IN 13.50 V, T_A 25 C: thermal-regulated current about 0.28 A (P 3.8 W; RthJA 31.4 C/W is the EVM figure, board value BENCH)
+   start into a hard short, V_IN 13.50 V, T_A 60 C: thermal-regulated current about 0.20 A (P 2.7 W; RthJA 31.4 C/W is the EVM figure, board value BENCH)
+   start into a hard short, V_IN 16.00 V, T_A 25 C: thermal-regulated current about 0.24 A (P 3.8 W; RthJA 31.4 C/W is the EVM figure, board value BENCH)
+   start into a hard short, V_IN 16.00 V, T_A 60 C: thermal-regulated current about 0.17 A (P 2.7 W; RthJA 31.4 C/W is the EVM figure, board value BENCH)
+   start into a hard short, V_IN 21.47 V, T_A 25 C: thermal-regulated current about 0.18 A (P 3.8 W; RthJA 31.4 C/W is the EVM figure, board value BENCH)
+   start into a hard short, V_IN 21.47 V, T_A 60 C: thermal-regulated current about 0.13 A (P 2.7 W; RthJA 31.4 C/W is the EVM figure, board value BENCH)
+   I_OL can be held only while V_IN - V_OUT <= 2.10 V at T_A 25 C (the regime in which U_IM is the only time bound)
+   I_OL can be held only while V_IN - V_OUT <= 1.49 V at T_A 60 C (the regime in which U_IM is the only time bound)
+
+[2] eFuse-blocking probe (section 9.7a): module state and timing when the eFuse is bypassed
+   module input fed by the bypass at most 0.092 s before FC_CHARGE drops (t_D_ON 8 ms typical consumed first)
+   measured Ag105 cold start 65-170 ms; firmware's own settle gate 500 ms: the read lands inside the module boot in every worst case
+   battery side during the probe: FF1 clear -> S_CHG OFF -> Ag105 VBat- (pins 14/15, VBATN_X) open; pin 32 LOW ->
+   D-BT-SQ disabled; VBAT+ reaches the pack only through R_KA 1 kOhm (if fitted). Expected GENSTAT: Battery
+   Disconnect (Table 6 code 000) = Table 5 mode 2 'Disconnected Battery Error' -> DS p.14: all measures 0xFF.
+   Design rule (Table 16): 0xFF / NAK = no evidence. Net: a bypassed eFuse reads 0xFF or NAK -> ERR_EFUSE_BYPASS
+   cannot latch in the configuration in which the probe runs (UNCONFIRMED on hardware; no gate injects a bypass).
+   expected valid reading if the module did report: 113 counts (design 113)

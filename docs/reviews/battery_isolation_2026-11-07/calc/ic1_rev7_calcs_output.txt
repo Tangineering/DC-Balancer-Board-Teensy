@@ -1,0 +1,95 @@
+
+[1 Balance network after M16 rev 7: D_VCB deleted, RB1A 100 Ohm -> 4.7 kOhm, D_VC1 kept]
+V_cell 3.7: VC1_CB bridged to GND drains cell 1 at  37.0 mA (RB1A 100) -> 0.79 mA (RB1A 4.7k), 0.019 Ah/day, 2.91 mW in RB1A
+V_cell 4.2: VC1_CB bridged to GND drains cell 1 at  42.0 mA (RB1A 100) -> 0.89 mA (RB1A 4.7k), 0.021 Ah/day, 3.75 mW in RB1A
+  balance current at RCB 4.7k, RCB1=RCB2=   33 Ohm (UNCONFIRMED): ICB1 0.89 mA, ICB2 0.87 mA (SLUSA52C Table 7.6 at RCB 4700: 0.5/0.75/1 mA)
+  balance current at RCB 4.7k, RCB1=RCB2=  160 Ohm (UNCONFIRMED): ICB1 0.86 mA, ICB2 0.85 mA (SLUSA52C Table 7.6 at RCB 4700: 0.5/0.75/1 mA)
+  balance current at RCB 4.7k, RCB1=RCB2=  540 Ohm (UNCONFIRMED): ICB1 0.80 mA, ICB2 0.79 mA (SLUSA52C Table 7.6 at RCB 4700: 0.5/0.75/1 mA)
+F34b: V_F 0.00 V: board return bound through RB3 = (V_cell2 - V_F)/RB3 =  16.2 mA (rev 6 with RB1A: 58.1 mA)
+F34b: V_F 0.25 V: board return bound through RB3 = (V_cell2 - V_F)/RB3 =  15.2 mA (rev 6 with RB1A: 58.1 mA)
+  VC1_CB with no clamp, pin structure at -0.3 V: 0.83 mA through RB1A 4.7k (with RB1A 100 Ohm it would be 39.0 mA); VC1_CB abs max not in SLUSA52C 7.1: TODO(verify: TI)
+  VC1_CB with no clamp, pin structure at -0.6 V: 0.77 mA through RB1A 4.7k (with RB1A 100 Ohm it would be 36.0 mA); VC1_CB abs max not in SLUSA52C 7.1: TODO(verify: TI)
+D_VC1 short: cell-1 drain 16.2 mA = 0.39 Ah/day; VC2-VC1 = V_pack 8.40/8.50 V vs 8 V abs max (SLUSA52C 7.1)
+
+[2 VC1 tap to Teensy pin 20 (A6): R_VC1a 200k at the VC1 pad, R_VC1b 200k + C_VC1 100 nF on LB]
+VC1 3.0 V: pin 20 1.500 V; tap current  7.50 uA; VC1 sag through RB3 1.96 mV
+VC1 4.2 V: pin 20 2.100 V; tap current 10.50 uA; VC1 sag through RB3 2.74 mV
+VC1 4.4 V: pin 20 2.200 V; tap current 11.00 uA; VC1 sag through RB3 2.87 mV
+Thevenin 100 kOhm, tau 10 ms; ADC LSB at VC1 1.61 mV (12-bit, 3V3 = 3.30 V)
+F34b: VC1 = -0.25 V -> pin 20 -0.125 V through 100 kOhm (<= 1.3 uA); fault VC1 at 8.5 V -> pin 20 4.25 V, clamp current <=  6.5 uA (ASSUMED 3.6 V clamp onset)
+Chafe of the tap lead to GND or to VBT 8.5 V through R_VC1a: <= 42.5 uA; VC1 moves <= 11.1 mV
+  mismatch error term: V_BT channel after two-point cal (ASSUMED 5 mV):   5.0 mV
+  mismatch error term: 2 x V_VC1 channel after two-point cal (ASSUMED 3 mV each):   6.0 mV
+  mismatch error term: V_PACKN 2 counts (calc4 section 7: 1.692 mV/count):   3.4 mV
+  mismatch error term: 2 x tap load offset through RB3 (section above):   5.7 mV
+  mismatch error term: 2 x D_VC1 leakage at T_M16,max (40 uA x 261 Ohm):  20.9 mV
+  mismatch error term: |I_PACK1| <= 1 A x R_SH 0.5 mOhm:   0.5 mV
+  worst-case sum  41.5 mV against the ERR_CELL_MISMATCH threshold 80 mV (TODO(calibrate)): margin 38.5 mV
+  D_VC1 short or reversed D_VC1: V_VC1 ~ 0 V (short) or ~ +V_F -> mismatch reads ~ V_pack (7.4-8.5 V): latches on the first evaluation
+
+[3 D_VC1 specification (FM4-5, BT4-DS-01)]
+D_VC1 carries at most 16.2 mA (RB3 alone); rev 6 asked V_F <= 0.25 V at 45 mA (RB1A current, now gone)
+  n 1.0: V_F 0.25 V at 16.2 mA implies I_S >=  0.96 uA at 25 C
+  n 1.0: V_F 0.25 V at 45.0 mA implies I_S >=  2.68 uA at 25 C
+  n 1.1: V_F 0.25 V at 16.2 mA implies I_S >=  2.33 uA at 25 C
+  n 1.1: V_F 0.25 V at 45.0 mA implies I_S >=  6.48 uA at 25 C
+  ASSUMED x2 per 10 K: a 40 uA limit at 45 C equals 10.00 uA at 25 C (scale x  4.0)
+  ASSUMED x2 per 10 K: a 40 uA limit at 60 C equals  3.54 uA at 25 C (scale x 11.3)
+  ASSUMED x2 per 10 K: a 40 uA limit at 85 C equals  0.62 uA at 25 C (scale x 64.0)
+  I_R 40 uA x 261 Ohm = 10.44 mV VC1 error (cell 1 reads low, cell 2 high)
+
+[4 ERR_MOD_DUMP_ON: FC_CURRENT step at the EF_EN rise (FM4-3, BT4-1)]
+V_bus 15.9 V: healthy node draw  23.0 mA; stuck dump 1.083 A; step margin to 0.4 A: 0.38 A below / 0.68 A above; R_MD 16.9 W
+V_bus 16.0 V: healthy node draw  23.0 mA; stuck dump 1.090 A; step margin to 0.4 A: 0.38 A below / 0.69 A above; R_MD 17.1 W
+V_bus 17.5 V: healthy node draw  23.5 mA; stuck dump 1.190 A; step margin to 0.4 A: 0.38 A below / 0.79 A above; R_MD 20.4 W
+FC_CURRENT LSB (INA253A1 0.1 V/A, 12-bit, 3.30 V) =  8.1 mA
+energy to detection (feed at the eFuse + 2 iterations + 10 ms + one 9.76 ms gap: about 25-30 ms, 30 ms used): 0.51 J at 16 V, 0.61 J at 17.5 V (R_MD single-pulse requirement 1.71 J)
+MD_G series 1 kOhm: chafe to GND  3.3 mA; gate fraction with R_MDG 100k  99.0 %
+
+[5 Deadline rule: later of 10 ms and 4 iterations after the edge, capped at 30 ms (BT4-LS-03, BT4-LS-02)]
+  loop 1.000 ms, iteration-1 length  1.00 ms: deadline 10.00 ms; latest 2nd LOW read  5.00 ms -> PASS (drain 0.84-3.02 ms)
+  loop 1.000 ms, iteration-1 length  9.76 ms: deadline 12.76 ms; latest 2nd LOW read 11.76 ms -> PASS (drain 0.84-3.02 ms)
+  loop 1.131 ms, iteration-1 length  1.13 ms: deadline 10.00 ms; latest 2nd LOW read  4.52 ms -> PASS (drain 0.84-3.02 ms)
+  loop 1.131 ms, iteration-1 length  9.76 ms: deadline 13.15 ms; latest 2nd LOW read 12.02 ms -> PASS (drain 0.84-3.02 ms)
+  loop 1.341 ms, iteration-1 length  1.34 ms: deadline 10.00 ms; latest 2nd LOW read  5.36 ms -> PASS (drain 0.84-3.02 ms)
+  loop 1.341 ms, iteration-1 length  9.76 ms: deadline 13.78 ms; latest 2nd LOW read 12.44 ms -> PASS (drain 0.84-3.02 ms)
+  ERR_MOD_SENSE (b): pin 8 HIGH at most 3.38 ms after the anchor (Table 16); with the same deadline rule the first
+  read after a 9.76 ms gap lands at <= anchor + 9.76 + 1.341 = 11.10 ms, inside max(10 ms, 4 iterations >= 13.15 ms)
+  crossing-anchor margin at the p99 loop without a gap: 10 - 3.38 - 1.341 = 5.28 ms
+  residual at re-assert: release 16.13 V, 0.126 s from release to re-assert (tau 0.984 s): 14.19 V
+  residual at re-assert: release 16.13 V, 0.2 s from release to re-assert (tau 0.984 s): 13.16 V
+  residual at re-assert: release 16.43 V, 0.126 s from release to re-assert (tau 0.984 s): 14.46 V
+  residual at re-assert: release 16.43 V, 0.2 s from release to re-assert (tau 0.984 s): 13.41 V
+  any residual >= 13.0 V is above UVLO rising (<= 12.88 V); the eFuse drains VCHG-IN to <= 12.10 V within ~1.24 ms,
+  so a V_chg read below 13.0 V precedes the real feed (t_D_ON 8 ms typical) and re-arms the crossing anchor.
+
+[6 Exit-iteration pin-8 hold check (FM4-2): samples 50 us and 150 us after the feed-drop write]
+  healthy U_MS stays HIGH >= 0.248 ms after the feed drop (calc/verify_ms_shdn_short.py S3: 100 uF, 13.5 V, 1.0 A ESTIMATE)
+  margin of the 150 us sample: 0.098 ms; mirrored node (MS shorted to SHDN_EF) falls in ~3 us + U_MS delay
+  (open-drain TLV3011B delay not specified, TODO(verify: SBOS300C); must be < 50 us for detection, measured at C-2b)
+
+[7 U_MS threshold with the CMRR term (BT4-DS-07)]
+  CMRR 54 dB at VCM 1.242 V: 2.48 mV at IN+ =  17.8 mV at the node; window 8.69-9.15 V ->  8.67- 9.17 V
+
+[8 F_VX prospective current (BT4-DS-05)]
+  R_int 0, R_FVX    0 mOhm:  360.5 A at 8.4 V
+  R_int 0, R_FVX   10 mOhm:  252.3 A at 8.4 V
+  R_int 0, R_FVX   16 mOhm:  213.7 A at 8.4 V
+  R_int 0, R_FVX   30 mOhm:  157.6 A at 8.4 V
+  -> interrupting rating >= 300 A DC at >= 32 V covers every case with R_FVX >= 5 mOhm; R_FVX = 0 is non-physical for a 4 A fuse
+     (R_FVX 5 mOhm: 296.8 A)
+
+[9 R_MD duty (BT4-TR-03, FM4-3)]
+  limit cycle 79-184 ms period (bt4_transient_sim section 1): 12.7 Hz x 51 mJ = 0.65 W mean for 30 s
+  stuck-on dump in a regen pulse: 0.46-1.45 J per pulse (fmea_round4 section 1); detected before the first regen window
+  of the next power cycle by ERR_MOD_DUMP_ON; within one drive R_MD may fail open (row F49, ERR_MOD_DRAIN)
+
+[10 ERR_IPACK_PLAUS gain band (BT4-TR-02)]
+  healthy I_PACK1/predicted over BT_CURRENT 1-4 A, V_batt 7.4-8.4 V, eta 0.85-0.95 (ASSUMED), I_L 0.1-0.3 A, INA253 floor +/-0.1 A: 0.822-1.194
+  -> band 0.75-1.30 (TODO(calibrate) at C-2/W1 with eta_cal and I_L,cal) has margin on both sides; a common-mode
+     gain loss of more than about 25 % on U_SH1 latches; U_SH2 is checked by ERR_IPACK_XCHK against U_SH1
+
+[11 Idle-entry CH settle (BT4-LS-01)]
+  CH permits up to 0.238-0.381 s after the pulse peak (bt4_logic_seq_enum section 2); settle rule: both CH bits L on
+  settled reads for 100 ms, deadline 1 s after Idle entry -> earliest k_idle sample at release + 0.1 s with V-MOT at
+  bus level (excess integral 0, k_idle 1.000); a Finish at the peak completes step 10 by 0.48 s < 1 s deadline

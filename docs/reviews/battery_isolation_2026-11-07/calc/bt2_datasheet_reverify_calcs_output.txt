@@ -1,0 +1,29 @@
+
+[1] TPS26631 FLT during the entry ramp (UVLO asserted, SLVSE94G 6.5/6.6/8.3.3)
+   UVLO rising 12.38-12.88 V, falling 11.47-12.10 V
+   input ramp 12.00 V/ms: FLT LOW for  1.16- 1.40 ms after IN_SYS passes 4.5 V  (vs the 3 ms ERR_CHG_LADDER persistence: ok)
+   input ramp  5.00 V/ms: FLT LOW for  2.08- 2.38 ms after IN_SYS passes 4.5 V  (vs the 3 ms ERR_CHG_LADDER persistence: ok)
+   input ramp  3.65 V/ms: FLT LOW for  2.66- 3.00 ms after IN_SYS passes 4.5 V  (vs the 3 ms ERR_CHG_LADDER persistence: ok)
+   input ramp  2.60 V/ms: FLT LOW for  3.53- 3.92 ms after IN_SYS passes 4.5 V  (vs the 3 ms ERR_CHG_LADDER persistence: LATCH)
+   input ramp  1.00 V/ms: FLT LOW for  8.38- 9.08 ms after IN_SYS passes 4.5 V  (vs the 3 ms ERR_CHG_LADDER persistence: LATCH)
+   ramp below 3.64 V/ms (worst case) holds FLT LOW >= 3 ms -> ERR_CHG_LADDER on entry
+   While IN_SYS < 4.5 V (RT1987 t_D_ON 8 ms typ, no max) FLT is undriven -> EF_FLT_N reads HIGH
+
+[2] TPS26631 overload timing (SLVSE94G 6.6, 8.3.1.1, 8.3.7.1.2, 8.3.7.2.1, Table 8-1)
+   I_OL 1.82-2.14 A; fast trip 3 x I_OL = 5.47-6.42 A (TPS26631, not disabled by PGTH)
+   post-start overload: latch after tCL 129-202 ms (design claims tCB + tCL <= 233 ms; tCB inapplicable)
+   post-start overload: FLT LOW after 1.09-1.6 ms
+   start-up INTO an overload: thermal regulation up to 2.3-2.9 s, FLT only after the timeout
+   input energy at I_OL max, 21.47 V, 47 ms (regen pulse, longest (47 ms), VOK-gated restart each pulse):    2.2 J, FLT never/late asserted
+   input energy at I_OL max, 21.47 V, 19 ms (regen pulse, shortest (19 ms)):    0.9 J, FLT never/late asserted
+   input energy at I_OL max, 16.0 V, 2900 ms (FC window entry, until the Treg timeout):   99.2 J, FLT never/late asserted
+
+[3] BQ29200 CD delay (SLUSA52C 7.3, 7.5; BOM CBLD 0.33 uF X7R)
+   recommended CCD max 0.1 uF (7.3); fitted 0.33 uF = 3.3 x the maximum
+   XDELAY 6-12 s/uF (0-60 C) x 0.33 uF = 1.98-3.96 s (spec excludes capacitor variation; outside the recommended C range)
+   XDELAY 5.5-13.5 s/uF (-40..110 C) x 0.33 uF = 1.82-4.46 s (spec excludes capacitor variation; outside the recommended C range)
+   with X7R 5 % initial + 15 % temperature: 1.58-4.75 s (0-60 C)
+
+[4] AHCT1G125 pump driver current (SCLS378P recommended IOH)
+   PUMP_H at 0.00 V: first-edge current about  10.0 mA (recommended |IOH| max 8 mA at 4.5 V)
+   PUMP_H at 3.70 V: first-edge current about   1.5 mA (recommended |IOH| max 8 mA at 4.5 V)

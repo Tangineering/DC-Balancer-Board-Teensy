@@ -1,0 +1,95 @@
+====================================================================================================
+[1] Hard lead time over every placement of the one gap; T_lead,min and T_late
+====================================================================================================
+  64 cases (2 loops x 4 gap placements x drain typ/deadline x confirmation typ/deadline x t_D_ON 8/12 ms)
+  worst conduction after the PREDICTION: 61.68 ms (write 29.91 ms; case (0.001131, 'drop', 'deadline', 'deadline', 0.012))
+     gap at None    : worst conduction  53.26 ms after the prediction
+     gap at drop    : worst conduction  61.68 ms after the prediction
+     gap at drain   : worst conduction  61.68 ms after the prediction
+     gap at confirm : worst conduction  61.68 ms after the prediction
+  worst conduction after the OBSERVING iteration (the one that writes the feed drop): 60.55 ms (case (0.001131, 'drain', 'deadline', 'deadline', 0.012))
+  T_late = ceil(worst-from-observation 60.55 ms) = 61 ms: a prediction first observed with purge_tto below T_late cannot be guaranteed to conduct before the onset -> latch, no exit
+  T_lead,min = ceil10(T_late + one gap before the observing iteration 9.76 ms) = 80 ms (revision 9: 60 ms; conduction at 61.68 ms after the prediction, BT6-LS-03)
+  An ideal predictor announcing at T_lead,min is observed at purge_tto >= 70.24 ms (one gap before the observing iteration): margin 9.24 ms over T_late, so a healthy predictor never trips the late rule
+  Margin at the onset for an ideal announcement at T_lead,min: 18.32 ms
+  Full tier (State 2 in closed loop, filtered total >= 0.25 A): worst write 29.91 ms + dark walk 258.81 ms = 288.72 ms -> T_lead,nom = 290 ms (unchanged; an upper bound: the walk assumes a 0.85 start and the clip floor lo = 0.125/I_tot lifts the end)
+====================================================================================================
+[2] Re-entry and usable time per purge period (literal V_chg rule), revision-10 lead times
+====================================================================================================
+  VCHG-IN 15.95 V -> 11.0 V on the bleed: 365.6 ms after the feed drop
+  P                typ   T_lead   80 ms | purge gate  160.0 | V_chg gate  287.0 | binding V_chg | resumes onset+ 370.5 ms | dead 0.450 s | usable 9.890 s (95.6 %) | mean 1.196 A
+  P                worst T_lead   80 ms | purge gate  160.0 | V_chg gate  287.0 | binding V_chg | resumes onset+ 488.7 ms | dead 0.569 s | usable 9.771 s (94.5 %) | mean 1.181 A
+  D-s              typ   T_lead   80 ms | purge gate  160.0 | V_chg gate  287.0 | binding V_chg | resumes onset+ 370.5 ms | dead 0.450 s | usable 9.890 s (95.6 %) | mean 1.196 A
+  D-s              worst T_lead   80 ms | purge gate  160.0 | V_chg gate  287.0 | binding V_chg | resumes onset+ 488.7 ms | dead 0.569 s | usable 9.771 s (94.5 %) | mean 1.181 A
+  D (not adopted)  typ   T_lead  290 ms | purge gate  199.6 | V_chg gate   77.0 | binding purge end | resumes onset+ 283.1 ms | dead 0.573 s | usable 9.767 s (94.5 %) | mean 1.181 A
+  D (not adopted)  worst T_lead  290 ms | purge gate  293.3 | V_chg gate   77.0 | binding purge end | resumes onset+ 495.1 ms | dead 0.785 s | usable 9.555 s (92.4 %) | mean 1.155 A
+  With the V_chg gate binding, the dead time runs from the feed drop to the charge resume and does not depend on
+  the lead: P and D-s are identical, and a longer lead moves the resume earlier relative to the onset only.
+====================================================================================================
+[3] Window-admission horizon
+====================================================================================================
+  P and D-s       : 201.8 ms entry + 1.0 s useful + 80 ms lead = 1.282 s
+  D (not adopted) : 201.8 ms entry + 1.0 s useful + 290 ms lead = 1.492 s
+====================================================================================================
+[4] Standstill share loop below the 0.25 A gate (fw v37 rev 2)
+====================================================================================================
+  closed loop above 2 x I_min = 0.25 A; open loop below 0.20 A (ino:14313-14327)
+     total 0.016 A: lo = 7.812, hi = -6.812: FROZEN return before the EMA (SHARE_I_TOT_MIN_A, ino:14287)
+     total 0.024 A: lo = 5.208, hi = -4.208: FROZEN return before the EMA (SHARE_I_TOT_MIN_A, ino:14287)
+     total 0.090 A: lo = 1.389, hi = -0.389: feedforward clip band EMPTY -> HOLD prevRatio (ino:13772-13782)
+     total 0.150 A: lo = 0.833, hi =  0.167: feedforward clip band EMPTY -> HOLD prevRatio (ino:13772-13782)
+     total 0.165 A: lo = 0.758, hi =  0.242: feedforward clip band EMPTY -> HOLD prevRatio (ino:13772-13782)
+     total 0.200 A: lo = 0.625, hi =  0.375: feedforward clip band EMPTY -> HOLD prevRatio (ino:13772-13782)
+     total 0.225 A: lo = 0.556, hi =  0.444: feedforward clip band EMPTY -> HOLD prevRatio (ino:13772-13782)
+     total 0.250 A: lo = 0.500, hi =  0.500: feedforward clip band EMPTY -> HOLD prevRatio (ino:13772-13782)
+  EMA from 0.91 A to the open-loop exit at aux 0.09 A: 40 ticks (45-54 ms)
+  EMA from 1.08 A to the open-loop exit at aux 0.15 A: 57 ticks (64-76 ms)
+  -> at a standstill total the override and the shift back move no MDAC code; on the vehicle (bag standstill total
+     0.016 A median, 0.024 A maximum, bt6_bag_launch_output) the loop freezes on the first sample. The BT_BUS
+     re-close is therefore the whole ruling-(1) shift in P and D-s; the override is kept for State 2 in closed loop.
+====================================================================================================
+[5] PI-4 fail-closed rule: bt6 section-3 grid with the predictor action = immediate ERR_FC_ONLY_COLLAPSE
+====================================================================================================
+  4860 cases (both in-iteration orderings), p99 loop, C_mod 221 uF
+     t_rec  80 ms: {'OPEN': 4860}
+     t_rec 100 ms: {'OPEN': 4860}
+  BT_BUS HIGH writes after the onset: 0; bus-side BT peak above 2.5 A: 0; latch at 1.4-70.7 ms after the onset
+  Baseline as written in revision 9 (bt6 output s3): 15 HAZARD at 80 ms, 886 BT_BUS writes, 137 peaks above 2.5 A
+====================================================================================================
+[6] HR2 on the recorded Pi sessions, request-gated (bt6_req_ds_request_gate_output.txt TOTALS)
+====================================================================================================
+  EMS request time (charge_goal > 0.05): 446.6 s
+  D-s AND request AND V_batt < 8.0 V: 107.3 s = 24.0 % of the request, 37.3 mAh
+  D   AND request AND V_batt < 8.0 V: 127.5 s = 28.5 % of the request, 44.3 mAh
+  D increment over D-s: 20.2 s (7.0 mAh) gated, 50 s (17.4 mAh) ungated; D-s/D = 84 % gated, 92 % ungated
+  Request time refused under D-s (in motion, or V_batt >= 8.0 V): 76.0 %
+  plant model, request at every stop, 61 s cycle   : D pessimistic / D-s = 1.84
+  plant model, request at every stop, FTP-75 slice : D pessimistic / D-s = 1.19
+  plant model, request at every stop, ftp75c       : D pessimistic / D-s = 1.22
+  plant model, request at every stop, UDDS         : D pessimistic / D-s = 1.21
+====================================================================================================
+[7] State-99 pack drain (UNCONFIRMED inputs) and the window lower V_batt bound
+====================================================================================================
+  remaining 2 Ah at 0.20 A (State-99 logic load, pc s6, UNCONFIRMED):  10.0 h
+  remaining 2 Ah at 0.25 A (State-99 logic load, pc s6, UNCONFIRMED):   8.0 h
+  remaining 5 Ah at 0.20 A (State-99 logic load, pc s6, UNCONFIRMED):  25.0 h
+  remaining 5 Ah at 0.25 A (State-99 logic load, pc s6, UNCONFIRMED):  20.0 h
+  UV_BATT arms only after V_batt >= V_BATT_ARM_THRESH 7.8 V with the BT pair routed (ino:2261-2267, 7283-7294);
+  a pack that boots below 7.8 V never arms it. Revision 10 adds the entry condition V_batt >= LIMIT_V_BATT_MIN
+  7.4 V (ino:2096) on two settled iterations, read directly, independent of btUvArmed (refusal code 14).
+====================================================================================================
+[8] Traction release after a State-2 window exit (FM6-3)
+====================================================================================================
+  t_D_ON 8 ms: D-BT-EN conducts 27.77 ms after the BT_BUS write; worst healthy write 15.27 ms (Table 21) -> traction released 43.04 ms after the command; deadline chain write 29.91 ms -> 57.68 ms
+  t_D_ON 12 ms: D-BT-EN conducts 31.77 ms after the BT_BUS write; worst healthy write 15.27 ms (Table 21) -> traction released 47.04 ms after the command; deadline chain write 29.91 ms -> 61.68 ms
+====================================================================================================
+[9] Firmware size estimate per package (ESTIMATE, UNCONFIRMED)
+====================================================================================================
+  Mode manager, 8 states, self-test, two ladder decoders, EEPROM record         :   1916-  2874 lines
+  27 new ERR_ conditions (18 exist in fw v37 rev 2) at 100-150 lines each       :   2700-  4050 lines
+  Ag105 policy, FC window, configuration check, probe, dump check               :   1250-  1875 lines
+  Purge interface, PI-4 latch, D-s window, in-band substitution, traction hold  :    958-  1916 lines
+  Telemetry v6 / BLG and the refusal word                                       :    312-   625 lines
+  total .ino: 7136-11340 lines; host checks at 0.203 per line: 1449-2302
+  Stage-1 share: every package except the regen/VOK parts of the faults (about 6 of the 27 conditions):
+     Stage 1 about 6536-10440 lines (92-92 %); the purge package (fourth row) 958-1916 lines

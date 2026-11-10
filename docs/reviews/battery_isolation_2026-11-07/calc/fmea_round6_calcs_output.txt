@@ -1,0 +1,57 @@
+==============================================================================================================
+Section 1: BT_BUS re-close failed (never conducts) at a PREDICTED purge; UV_BUS the only detector after the write
+==============================================================================================================
+  IC1 rev 9 as written (UV_BUS 20 ms dwell), 54 cases:
+    t_rec  80 ms: OPEN 36, BENIGN 0, IN-FAMILY 13, HAZARD 5
+    t_rec 100 ms: OPEN 41, BENIGN 0, IN-FAMILY 9, HAZARD 4
+    lowest HAZARD bus: 8.22 V at t_rec 100 ms (aux 15.0 mA, V-MOT 5.00 mF, T_fall 75 ms; 12 V crossing   84.3 ms, latch  103.4 ms, FC_BUS LOW  104.7 ms; V-MOT 14.87 V)
+    trace, aux 15 mA, V-MOT 1.5 mF:
+      T_fall    0 ms: 12 V crossing   17.7, latch   36.7, FC_BUS LOW   38.1 ms; at 80 ms V_bus  0.50 V, FC_BUS LOW -> OPEN
+      T_fall   10 ms: 12 V crossing   25.9, latch   44.9, FC_BUS LOW   46.3 ms; at 80 ms V_bus  0.50 V, FC_BUS LOW -> OPEN
+      T_fall   20 ms: 12 V crossing   34.0, latch   53.1, FC_BUS LOW   54.4 ms; at 80 ms V_bus  0.50 V, FC_BUS LOW -> OPEN
+      T_fall   40 ms: 12 V crossing   50.3, latch   69.4, FC_BUS LOW   70.7 ms; at 80 ms V_bus  3.23 V, FC_BUS LOW -> OPEN
+      T_fall   60 ms: 12 V crossing   66.7, latch   85.7, FC_BUS LOW   87.1 ms; at 80 ms V_bus  8.88 V, FC_BUS HIGH -> HAZARD
+      T_fall   75 ms: 12 V crossing   78.9, latch   97.9, FC_BUS LOW   99.3 ms; at 80 ms V_bus 11.74 V, FC_BUS HIGH -> HAZARD
+  remedy R (reading (b) kept to the purge end, no dwell, threshold 12.0 V), 54 cases:
+    t_rec  80 ms: OPEN 40, BENIGN 0, IN-FAMILY 13, HAZARD 1
+    t_rec 100 ms: OPEN 45, BENIGN 0, IN-FAMILY 9, HAZARD 0
+    lowest HAZARD bus: 11.74 V at t_rec 80 ms (aux 15.0 mA, V-MOT 1.50 mF, T_fall 75 ms; 12 V crossing    -   ms, latch   78.9 ms, FC_BUS LOW   80.3 ms; V-MOT 13.53 V)
+  remedy R (reading (b) kept to the purge end, no dwell, threshold 13.5 V), 54 cases:
+    t_rec  80 ms: OPEN 46, BENIGN 0, IN-FAMILY 8, HAZARD 0
+    t_rec 100 ms: OPEN 48, BENIGN 0, IN-FAMILY 6, HAZARD 0
+
+  Late (not failed) D-BT-EN: t_D_ON swept, BT_BUS written at 44.73 ms before the onset, ramp 0.81 / 0.50 V/ms
+    slope 0.81 V/ms, t_D_ON  12.0 ms (conduction ~ -13.0 ms after the onset on a live bus): at 80 ms OPEN 0, BENIGN 54, IN-FAMILY 0, HAZARD 0
+    slope 0.81 V/ms, t_D_ON  25.0 ms (conduction ~   0.0 ms after the onset on a live bus): at 80 ms OPEN 0, BENIGN 54, IN-FAMILY 0, HAZARD 0
+    slope 0.81 V/ms, t_D_ON  40.0 ms (conduction ~  15.0 ms after the onset on a live bus): at 80 ms OPEN 0, BENIGN 54, IN-FAMILY 0, HAZARD 0
+    slope 0.81 V/ms, t_D_ON  60.0 ms (conduction ~  35.0 ms after the onset on a live bus): at 80 ms OPEN 6, BENIGN 48, IN-FAMILY 0, HAZARD 0
+    slope 0.81 V/ms, t_D_ON  80.0 ms (conduction ~  55.0 ms after the onset on a live bus): at 80 ms OPEN 21, BENIGN 33, IN-FAMILY 0, HAZARD 0
+    slope 0.81 V/ms, t_D_ON 100.0 ms (conduction ~  75.0 ms after the onset on a live bus): at 80 ms OPEN 33, BENIGN 21, IN-FAMILY 0, HAZARD 0
+    slope 0.50 V/ms, t_D_ON  12.0 ms (conduction ~  -0.7 ms after the onset on a live bus): at 80 ms OPEN 0, BENIGN 54, IN-FAMILY 0, HAZARD 0
+    slope 0.50 V/ms, t_D_ON  25.0 ms (conduction ~  12.3 ms after the onset on a live bus): at 80 ms OPEN 0, BENIGN 54, IN-FAMILY 0, HAZARD 0
+    slope 0.50 V/ms, t_D_ON  40.0 ms (conduction ~  27.3 ms after the onset on a live bus): at 80 ms OPEN 0, BENIGN 54, IN-FAMILY 0, HAZARD 0
+    slope 0.50 V/ms, t_D_ON  60.0 ms (conduction ~  47.3 ms after the onset on a live bus): at 80 ms OPEN 12, BENIGN 42, IN-FAMILY 0, HAZARD 0
+    slope 0.50 V/ms, t_D_ON  80.0 ms (conduction ~  67.3 ms after the onset on a live bus): at 80 ms OPEN 30, BENIGN 24, IN-FAMILY 0, HAZARD 0
+    slope 0.50 V/ms, t_D_ON 100.0 ms (conduction ~  87.3 ms after the onset on a live bus): at 80 ms OPEN 36, BENIGN 0, IN-FAMILY 18, HAZARD 0
+==============================================================================================================
+Section 2: Share override R_OV at standstill: the feedforward clip band and the EMA after the feed drop
+==============================================================================================================
+  filtered total 0.090 A: lo 1.389, hi -0.389 -> band EMPTY -> HOLD prevRatio (R_OV ignored)
+  filtered total 0.100 A: lo 1.250, hi -0.250 -> band EMPTY -> HOLD prevRatio (R_OV ignored)
+  filtered total 0.120 A: lo 1.042, hi -0.042 -> band EMPTY -> HOLD prevRatio (R_OV ignored)
+  filtered total 0.150 A: lo 0.833, hi 0.167 -> band EMPTY -> HOLD prevRatio (R_OV ignored)
+  filtered total 0.200 A: lo 0.625, hi 0.375 -> band EMPTY -> HOLD prevRatio (R_OV ignored)
+  filtered total 0.250 A: lo 0.500, hi 0.500 -> band EMPTY -> HOLD prevRatio (R_OV ignored)
+  open-loop entry below 2*I_min - hyst = 0.20 A; closed loop needs above 2*I_min = 0.25 A
+  window total 1.03 A -> aux 0.09 A after the feed drop: filtered total below 0.20 A after 42 ticks (47.5 ms at the 1.13 ms median loop, 56.3 ms at the 1.341 ms p99 loop)
+  window total 1.25 A -> aux 0.15 A after the feed drop: filtered total below 0.20 A after 61 ticks (68.9 ms at the 1.13 ms median loop, 81.8 ms at the 1.341 ms p99 loop)
+  Standstill aux total 0.09-0.15 A (IC1 9.11.3) never re-opens the band: R_OV and the shift back move no MDAC code.
+==============================================================================================================
+Section 3: Survivor blanking (30 ms from the BT_BUS write, ino:4869) against D-BT-EN conduction
+==============================================================================================================
+  t_D_ON  8 ms: conduction 27.77 ms after the write; blanking ends at 30.00 ms -> covered
+  t_D_ON 10 ms: conduction 29.77 ms after the write; blanking ends at 30.00 ms -> covered
+  t_D_ON 12 ms: conduction 31.77 ms after the write; blanking ends at 30.00 ms -> UNCOVERED by 1.77 ms
+  t_D_ON 15 ms: conduction 34.77 ms after the write; blanking ends at 30.00 ms -> UNCOVERED by 4.77 ms
+  t_D_ON 20 ms: conduction 39.77 ms after the write; blanking ends at 30.00 ms -> UNCOVERED by 9.77 ms
+  break-even t_D_ON = 10.23 ms (IC1 Table 21 worst healthy: blanking end 45.3 ms < conduction 47.0 ms)

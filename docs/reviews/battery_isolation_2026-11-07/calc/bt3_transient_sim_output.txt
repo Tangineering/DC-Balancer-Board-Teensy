@@ -1,0 +1,108 @@
+
+[1] VOK single-channel assert on a pulse peaking between the channel assert levels
+   REF 1.223 V: BT 2.0431 V; assert 17.036 V, release 16.287 V (release/assert 0.9560)
+   REF 1.242 V: BT 2.0439 V; assert 17.043 V, release 16.294 V (release/assert 0.9560)
+   REF 1.260 V: BT 2.0447 V; assert 17.049 V, release 16.300 V (release/assert 0.9560)
+   hysteresis = assert x 0.0440 = 0.747 V at a 17.0 V assert
+   DD Table 9 at VBUS 16.0 V: assert 16.90-17.24 V, release 16.16-16.43 V (all tolerance corners)
+   Peak inside [A1, A2): only channel 1 asserts; it holds until V-MOT falls to its own release, 0.75 V lower.
+   Rise 58-252 V/s (second-pulse and first-pulse dV/dt, regen_dynamics.md 1.1); decay 14.2-20.1 V/s
+   (sink slope after the command ends, regen_dynamics.md 1.1; facts_prior 6). ERR_VOK_STUCK dwell 50 ms.
+   channel spread d = 0.05 V (band 16.90-16.95 V):
+      decay  8.0 V/s: longest  99.3 ms, peaks latching 5/5
+      decay 14.2 V/s: longest  56.3 ms, peaks latching 5/5
+      decay 17.0 V/s: longest  47.1 ms, peaks latching 0/5
+      decay 20.1 V/s: longest  40.0 ms, peaks latching 0/5
+   channel spread d = 0.11 V (band 16.90-17.01 V):
+      decay  8.0 V/s: longest 107.8 ms, peaks latching 11/11
+      decay 14.2 V/s: longest  61.5 ms, peaks latching 11/11
+      decay 17.0 V/s: longest  51.7 ms, peaks latching 3/11
+      decay 20.1 V/s: longest  44.0 ms, peaks latching 0/11
+   channel spread d = 0.34 V (band 16.90-17.24 V):
+      decay  8.0 V/s: longest 140.5 ms, peaks latching 34/34
+      decay 14.2 V/s: longest  81.7 ms, peaks latching 34/34
+      decay 17.0 V/s: longest  69.2 ms, peaks latching 26/34
+      decay 20.1 V/s: longest  59.4 ms, peaks latching 15/34
+   both-assert check (peak 21.35 V, spread 0.34 V, decay 14 V/s): 23.2 ms (calc5 s6: 23.6 ms)
+   decay rate needed for the 50 ms dwell to hold on a single-assert pulse: >= 14.9 V/s (DD static_assert: 6.6 V/s; measured sink slope 14.2-20.1 V/s)
+   second-pulse peaks 16.8-19.0 V (regen_dynamics.md 1.1): worst-spread band covers 15 % of that range; d = 0.11 V covers 5 %
+
+[2] Ag105 input hold-up after the eFuse cut (threshold-stop model required by S0-5) vs T_drain 2 ms
+   FC window exit, module charging (stops at 13.82 V FC threshold): V0 13.82 V
+      C_mod  47 uF: time above the 11 V lockout |  0.5 mA   270.7 ms |  1.0 mA   135.4 ms |  2.0 mA    67.7 ms |  5.0 mA    27.1 ms | 18.0 mA     7.5 ms | energy above lockout  1.7 mJ
+      C_mod 100 uF: time above the 11 V lockout |  0.5 mA   569.6 ms |  1.0 mA   284.8 ms |  2.0 mA   142.4 ms |  5.0 mA    57.0 ms | 18.0 mA    15.8 ms | energy above lockout  3.5 mJ
+      C_mod 144 uF: time above the 11 V lockout |  0.5 mA   817.8 ms |  1.0 mA   408.9 ms |  2.0 mA   204.4 ms |  5.0 mA    81.8 ms | 18.0 mA    22.7 ms | energy above lockout  5.1 mJ
+      C_mod 220 uF: time above the 11 V lockout |  0.5 mA  1246.4 ms |  1.0 mA   623.2 ms |  2.0 mA   311.6 ms |  5.0 mA   124.6 ms | 18.0 mA    34.6 ms | energy above lockout  7.7 mJ
+   FC exit Fully Charged / configuration check (module not drawing: bus 16.0 V): V0 16.00 V
+      C_mod  47 uF: time above the 11 V lockout |  0.5 mA   480.0 ms |  1.0 mA   240.0 ms |  2.0 mA   120.0 ms |  5.0 mA    48.0 ms | 18.0 mA    13.3 ms | energy above lockout  3.2 mJ
+      C_mod 100 uF: time above the 11 V lockout |  0.5 mA  1010.0 ms |  1.0 mA   505.0 ms |  2.0 mA   252.5 ms |  5.0 mA   101.0 ms | 18.0 mA    28.1 ms | energy above lockout  6.8 mJ
+      C_mod 144 uF: time above the 11 V lockout |  0.5 mA  1450.0 ms |  1.0 mA   725.0 ms |  2.0 mA   362.5 ms |  5.0 mA   145.0 ms | 18.0 mA    40.3 ms | energy above lockout  9.8 mJ
+      C_mod 220 uF: time above the 11 V lockout |  0.5 mA  2210.0 ms |  1.0 mA  1105.0 ms |  2.0 mA   552.5 ms |  5.0 mA   221.0 ms | 18.0 mA    61.4 ms | energy above lockout 14.9 mJ
+   Regen: eFuse cut at the VOK release (module stopped at 18 V; node follows V-MOT to release): V0 16.30 V
+      C_mod  47 uF: time above the 11 V lockout |  0.5 mA   508.8 ms |  1.0 mA   254.4 ms |  2.0 mA   127.2 ms |  5.0 mA    50.9 ms | 18.0 mA    14.1 ms | energy above lockout  3.5 mJ
+      C_mod 100 uF: time above the 11 V lockout |  0.5 mA  1070.6 ms |  1.0 mA   535.3 ms |  2.0 mA   267.6 ms |  5.0 mA   107.1 ms | 18.0 mA    29.7 ms | energy above lockout  7.3 mJ
+      C_mod 144 uF: time above the 11 V lockout |  0.5 mA  1537.0 ms |  1.0 mA   768.5 ms |  2.0 mA   384.3 ms |  5.0 mA   153.7 ms | 18.0 mA    42.7 ms | energy above lockout 10.5 mJ
+      C_mod 220 uF: time above the 11 V lockout |  0.5 mA  2342.6 ms |  1.0 mA  1171.3 ms |  2.0 mA   585.6 ms |  5.0 mA   234.3 ms | 18.0 mA    65.1 ms | energy above lockout 16.0 mJ
+   calc5 section 10 model (convert at 14.8-22.4 W down to 11 V): 0.05-1.08 ms -> T_drain 2 ms.
+   Under the S0-5 GO behaviour the module stops drawing at its threshold, so after T_drain it is still
+   powered for C x dV / I_q: >= 22.7 ms even at I_q 18 mA max (C_mod 144 uF, FC exit), and the
+   datasheet gives no lower bound on I_q, so no upper bound on the hold-up.
+   I_q needed to drain the FC-exit hold-up within T_drain 2 ms at C_mod 144 uF: 0.20 A
+
+[3] eFuse-blocking probe (T_hold 0.5 s, reg 0x07 >= 64 counts = 9.0 V) and ERR_VCHG_FED (1.0 s blanking)
+   VCHG-IN bleed 34.0 kOhm (R1-CHG path 49.2 k || UVLO divider 110.5 k); reg 0x07 count 64 = 9.02 V
+   Probe: module node voltage after T_hold 0.5 s, configuration check (module not drawing, V0 16.0 V):
+      C_mod  47 uF:  0.5 mA 10.25 V LATCH |  1.0 mA  5.58 V ok |  2.0 mA  1.00 V ok |  5.0 mA  0.99 V ok | 18.0 mA  0.96 V ok
+      C_mod 100 uF:  0.5 mA 12.90 V LATCH |  1.0 mA 10.70 V LATCH |  2.0 mA  6.09 V ok |  5.0 mA  1.00 V ok | 18.0 mA  0.99 V ok
+      C_mod 144 uF:  0.5 mA 13.75 V LATCH |  1.0 mA 12.17 V LATCH |  2.0 mA  9.00 V ok |  5.0 mA  1.00 V ok | 18.0 mA  0.99 V ok
+      C_mod 220 uF:  0.5 mA 14.47 V LATCH |  1.0 mA 13.40 V LATCH |  2.0 mA 11.27 V LATCH |  5.0 mA  4.69 V ok | 18.0 mA  1.00 V ok
+   DD 9.7a: 'step 2 waits more than 5 times the worst hold-up (92 ms)'. The 92 ms of bt2_transient_sim s3
+   is computed AT I_q 18 mA MAX, i.e. it is the SHORTEST hold-up; the longest is unbounded by the datasheet.
+      C_mod 100 uF: the probe false-latches ERR_EFUSE_BYPASS for any I_q below 1.38 mA
+      C_mod 144 uF: the probe false-latches ERR_EFUSE_BYPASS for any I_q below 1.99 mA
+      C_mod 220 uF: the probe false-latches ERR_EFUSE_BYPASS for any I_q below 3.05 mA
+   ERR_VCHG_FED after a regen window: V_chg (= VCHG-IN) at the end of the 200 ms dwell + 1.0 s blanking,
+   module node at 16.30 V at the VOK release (body-diode back-feed holds VCHG-IN up):
+      C_mod 100 uF: 0.0 mA 13.67 V LATCH | 0.2 mA 11.65 V LATCH | 0.5 mA  8.61 V ok | 1.0 mA  4.26 V ok | 2.0 mA  2.96 V ok
+      C_mod 144 uF: 0.0 mA 14.20 V LATCH | 0.2 mA 12.73 V LATCH | 0.5 mA 10.52 V ok | 1.0 mA  6.85 V ok | 2.0 mA  3.32 V ok
+      C_mod 220 uF: 0.0 mA 14.68 V LATCH | 0.2 mA 13.68 V LATCH | 0.5 mA 12.18 V LATCH | 1.0 mA  9.67 V ok | 2.0 mA  4.89 V ok
+   calc5 s5 derived the 1.0 s blanking from VCHG-IN alone (20 uF, tau 0.984 s), not from the module-side
+   hold-up that the eFuse's unblocked reverse path couples onto VCHG-IN.
+
+[4] Warm re-entry: eFuse input = C_mod x slew + warm module draw, against U_IM 1.68-1.75 A
+   FC profile (calc5 s9: 1.07 A eta 0.88 / 1.18 A eta 0.80):
+      C_mod  47 uF (inrush 0.20-0.28 A): input 1.27-1.46 A vs U_IM 1.68-1.75 A -> ok
+      C_mod 100 uF (inrush 0.42-0.58 A): input 1.49-1.76 A vs U_IM 1.68-1.75 A -> TRIP
+      C_mod 104 uF (inrush 0.44-0.61 A): input 1.51-1.79 A vs U_IM 1.68-1.75 A -> TRIP
+   Regen profile (calc5 s9: 1.24 A eta 0.88 / 1.37 A eta 0.80):
+      C_mod  47 uF (inrush 0.20-0.28 A): input 1.44-1.65 A vs U_IM 1.68-1.75 A -> ok
+      C_mod 100 uF (inrush 0.42-0.58 A): input 1.66-1.95 A vs U_IM 1.68-1.75 A -> TRIP
+      C_mod 104 uF (inrush 0.44-0.61 A): input 1.68-1.98 A vs U_IM 1.68-1.75 A -> TRIP
+   104 uF is the largest C_mod the S0-11 GO (inrush <= 0.6 A at 5.79 V/ms) admits. The U_IM margin above the
+   legitimate draw (0.31-0.51 A) is smaller than the inrush the same gate admits, so the margin holds only
+   while the module is cold during the eFuse ramp (65-170 ms cold start). Section 2 shows the module can be
+   warm at the next window or the next pulse: hold-up across the 535 ms pulse spacing needs I_q below
+      C_mod 100 uF: 1.00 mA
+      C_mod 144 uF: 1.44 mA
+      C_mod 220 uF: 2.19 mA
+
+[5] Traction onset in a charge-mode window: reverse sense pulse
+    5.0 A step: SIG1 crosses TH1 in  64.1 us; sense carries the pulse   87- 136 us (until S_GND reaches V_GS(th)); S0-10 tests 17 A for >= 0.5 ms
+   10.0 A step: SIG1 crosses TH1 in  25.0 us; sense carries the pulse   48-  97 us (until S_GND reaches V_GS(th)); S0-10 tests 17 A for >= 0.5 ms
+   16.5 A step: SIG1 crosses TH1 in  14.0 us; sense carries the pulse   37-  86 us (until S_GND reaches V_GS(th)); S0-10 tests 17 A for >= 0.5 ms
+   With R_chain = R_s + 1.6 + 10.3-17.2 mOhm, the S_GND body diodes clamp the sense drop near 0.7-1.0 V;
+   the pulse is inside S0-10 if R_s >= ~25 mOhm. No contradiction found.
+
+[6] VOK release race on a VESC-draw fall: bus feed duration
+   VESC  5.0 A: V-MOT  10.4 V/ms, crosses margin in 10.8 us; feed >=  8.2 us (filter lag on a ramp = tau 12.5 us); charge at 1.37 A <= 11.3 uC
+   VESC 20.0 A: V-MOT  41.7 V/ms, crosses margin in  2.7 us; feed >= 16.3 us (filter lag on a ramp = tau 12.5 us); charge at 1.37 A <= 22.3 uC
+   DD 7.2 item 2: 'at most about 12 us (about 15 uC)'. The ramp lag of the 12.5 us tap filter alone exceeds
+   12 us at the 20 A fall; the bound is about 16 us (22 uC) before the open-drain delay. Magnitude negligible.
+
+[7] LM1084 input at the 7.4 V floor and 17.1 A (DD 7.6), with the pack internal resistance counted
+   R_int    0 mOhm: VBT - GND 6.84 V 
+   R_int   10 mOhm: VBT - GND 6.67 V 
+   R_int   20 mOhm: VBT - GND 6.50 V < 6.5 V
+   R_int   40 mOhm: VBT - GND 6.15 V < 6.5 V
+   DD 7.6 counts no R_int; '7.4 V floor' is the light-load V_batt. Consequence: transient 5V sag of
+   at most ~0.35 V; Teensy VIN and the pump margin survive (informational, not a finding).

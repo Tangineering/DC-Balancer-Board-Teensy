@@ -1,0 +1,127 @@
+
+[1] Module-node dump: per-dump numbers and repetitive cadence
+   C_mod  100 uF from 18.0 V: I_pk 1.20 A, P_pk  21.6 W, tau 1.52 ms, E  16.4 mJ, equivalent rectangular pulse 0.76 ms at P_pk
+   C_mod  100 uF from 21.5 V: I_pk 1.43 A, P_pk  30.8 W, tau 1.52 ms, E  23.3 mJ, equivalent rectangular pulse 0.76 ms at P_pk
+   C_mod  145 uF from 18.0 V: I_pk 1.20 A, P_pk  21.6 W, tau 2.19 ms, E  23.7 mJ, equivalent rectangular pulse 1.09 ms at P_pk
+   C_mod  145 uF from 21.5 V: I_pk 1.43 A, P_pk  30.8 W, tau 2.19 ms, E  33.7 mJ, equivalent rectangular pulse 1.09 ms at P_pk
+   C_mod  221 uF from 18.0 V: I_pk 1.20 A, P_pk  21.6 W, tau 3.33 ms, E  36.0 mJ, equivalent rectangular pulse 1.67 ms at P_pk
+   C_mod  221 uF from 21.5 V: I_pk 1.43 A, P_pk  30.8 W, tau 3.33 ms, E  51.3 mJ, equivalent rectangular pulse 1.67 ms at P_pk
+   Cadence. CC-18 used one dump per 535 ms (the VESC-trip pulse spacing). DD 7.2 item 5 and row F23c admit a
+   module-driven VOK limit cycle (the charger pulls V-MOT to the release level). Under rev 6 every release
+   dumps the node, so the next cycle needs a cold start; the shortest cycle is t_D_ON + eFuse delay + ramp +
+   cold start (+ the draw time to the release, taken as 0):
+   C_mod  100 uF, cold start   65 ms: period  79.4 ms; mean R_MD 0.294 W;  378 dumps and  8.82 J per 30 s window (CC-18: 0.095 W, 56 dumps, 2.86 J)
+   C_mod  100 uF, cold start  170 ms: period 184.4 ms; mean R_MD 0.127 W;  163 dumps and  3.80 J per 30 s window (CC-18: 0.095 W, 56 dumps, 2.86 J)
+   C_mod  145 uF, cold start   65 ms: period  79.4 ms; mean R_MD 0.425 W;  378 dumps and 12.75 J per 30 s window (CC-18: 0.095 W, 56 dumps, 2.86 J)
+   C_mod  145 uF, cold start  170 ms: period 184.4 ms; mean R_MD 0.183 W;  163 dumps and  5.49 J per 30 s window (CC-18: 0.095 W, 56 dumps, 2.86 J)
+   C_mod  221 uF, cold start   65 ms: period  79.4 ms; mean R_MD 0.646 W;  378 dumps and 19.39 J per 30 s window (CC-18: 0.095 W, 56 dumps, 2.86 J)
+   C_mod  221 uF, cold start  170 ms: period 184.4 ms; mean R_MD 0.278 W;  163 dumps and  8.35 J per 30 s window (CC-18: 0.095 W, 56 dumps, 2.86 J)
+
+[2] eFuse start from a dumped (0 V) module node: V-MOT sag against the VOK release
+   C_VMOT 0.48 mF, rise   117 V/s, C_mod 100 uF: VOK RELEASES at 11.34 ms with the module node at  6.22 V (below 11 V) -> dump; the pulse never powers the module
+   C_VMOT 0.48 mF, rise   117 V/s, C_mod 221 uF: VOK RELEASES at 10.73 ms with the module node at  2.67 V (below 11 V) -> dump; the pulse never powers the module
+   C_VMOT 0.48 mF, rise   280 V/s, C_mod 100 uF: node charged at 13.08 ms, smallest V-MOT margin above release  0.14 V
+   C_VMOT 0.48 mF, rise   280 V/s, C_mod 221 uF: VOK RELEASES at 11.43 ms with the module node at  6.73 V (below 11 V) -> dump; the pulse never powers the module
+   C_VMOT 0.97 mF, rise   117 V/s, C_mod 100 uF: node charged at 13.09 ms, smallest V-MOT margin above release  0.18 V
+   C_VMOT 0.97 mF, rise   117 V/s, C_mod 221 uF: VOK RELEASES at 11.56 ms with the module node at  7.47 V (below 11 V) -> dump; the pulse never powers the module
+   C_VMOT 0.97 mF, rise   280 V/s, C_mod 100 uF: node charged at 13.43 ms, smallest V-MOT margin above release  2.17 V
+   C_VMOT 0.97 mF, rise   280 V/s, C_mod 221 uF: node charged at 13.09 ms, smallest V-MOT margin above release  0.24 V
+   C_VMOT 4.00 mF, rise   117 V/s, C_mod 100 uF: node charged at 13.36 ms, smallest V-MOT margin above release  1.68 V
+   C_VMOT 4.00 mF, rise   117 V/s, C_mod 221 uF: node charged at 13.27 ms, smallest V-MOT margin above release  1.23 V
+   C_VMOT 4.00 mF, rise   280 V/s, C_mod 100 uF: node charged at 13.74 ms, smallest V-MOT margin above release  2.98 V
+   C_VMOT 4.00 mF, rise   280 V/s, C_mod 221 uF: node charged at 13.64 ms, smallest V-MOT margin above release  2.98 V
+   DD 7.2 item 5 states that no cycle occurs if the Ag105 stops drawing above the release level. The eFuse
+   inrush into a node that rev 6 dumps to 0 V at every release is a draw that does not depend on the Ag105
+   threshold. Rev 5 kept the node at 0.02-2.3 s of hold-up (bt3 s2), so later pulses saw a part-charged node.
+
+[3] Release followed by re-assert before the dump makes the module cold
+   C_mod  100 uF from 18.0 V: below 11 V after 0.75 ms, below U_MS low edge after 1.10 ms
+   C_mod  100 uF from 21.5 V: below 11 V after 1.02 ms, below U_MS low edge after 1.37 ms
+   C_mod  145 uF from 18.0 V: below 11 V after 1.08 ms, below U_MS low edge after 1.59 ms
+   C_mod  145 uF from 21.5 V: below 11 V after 1.47 ms, below U_MS low edge after 1.98 ms
+   C_mod  221 uF from 18.0 V: below 11 V after 1.64 ms, below U_MS low edge after 2.42 ms
+   C_mod  221 uF from 21.5 V: below 11 V after 2.23 ms, below U_MS low edge after 3.02 ms
+   V-MOT rebound over the 0.74 V hysteresis at   117 V/s:  6.32 ms
+   V-MOT rebound over the 0.74 V hysteresis at   280 V/s:  2.64 ms
+   EF_EN rises at the VOK assert (RGQ term) and turns Q_MD off within about 1 us (DD 5.3 item 1), so the dump
+   stops at the re-assert, before t_D_ON. At the measured rise rates the rebound (2.6-6.3 ms) exceeds the
+   21.5 V -> 11 V drain (1.0-2.2 ms): the claim holds for the recorded pulses. A faster V-MOT rebound (VESC
+   switching ripple, a step of regen current into 0.48 mF) is not bounded by any primary: the rebound rate that
+   defeats it is   332 V/s at 221 uF (= 0.16 A net into 0.48 mF).
+
+[4] eFuse-blocking probe with a real bypass (eFuse IN-OUT shorted): FC-bus current
+   V_bus 15.9 V: steady FC current 1.231 A (aux 0.15 + R_MD + R_MB + U_MS + I_q 18 mA) -> OC_FC 1.4 A margin +0.169 A
+   V_bus 16.0 V: steady FC current 1.237 A (aux 0.15 + R_MD + R_MB + U_MS + I_q 18 mA) -> OC_FC 1.4 A margin +0.163 A
+   V_bus 17.5 V: steady FC current 1.338 A (aux 0.15 + R_MD + R_MB + U_MS + I_q 18 mA) -> OC_FC 1.4 A margin +0.062 A
+   C_mod  100 uF: D-BC-FC soft start at 12 V/ms charges   122 uF through the bypass: 1.46 A; peak at the end of the ramp 2.68 A for 1.33 ms (> OC_FC 1.4 A)
+   C_mod  145 uF: D-BC-FC soft start at 12 V/ms charges   167 uF through the bypass: 2.00 A; peak at the end of the ramp 3.22 A for 1.33 ms (> OC_FC 1.4 A)
+   C_mod  221 uF: D-BC-FC soft start at 12 V/ms charges   243 uF through the bypass: 2.92 A; peak at the end of the ramp 4.13 A for 1.33 ms (> OC_FC 1.4 A)
+   DD 9.7a / calc6 s3 state 'about 1.07 A from the FC bus'; the soft-start charge of the module capacitance
+   through the bypass is omitted. Whether the INA253 FC sample sees the ramp depends on the bus capacitance
+   share (not given); at 17.5 V the steady figure alone leaves 0.06 A to OC_FC.
+   F35 variant (SHDN_EF stuck HIGH, eFuse itself on): output current = C*slew + V/R_MD:
+      C_mod  100 uF, slew 4.17 V/ms: 1.49 A at 16 V (I_OL 2.055-2.412 A: below I_OL)
+      C_mod  100 uF, slew 5.79 V/ms: 1.65 A at 16 V (I_OL 2.055-2.412 A: below I_OL)
+      C_mod  145 uF, slew 4.17 V/ms: 1.68 A at 16 V (I_OL 2.055-2.412 A: below I_OL)
+      C_mod  145 uF, slew 5.79 V/ms: 1.91 A at 16 V (I_OL 2.055-2.412 A: below I_OL)
+      C_mod  221 uF, slew 4.17 V/ms: 1.99 A at 16 V (I_OL 2.055-2.412 A: below I_OL)
+      C_mod  221 uF, slew 5.79 V/ms: 2.35 A at 16 V (I_OL 2.055-2.412 A: start-into-overload)
+
+[5] U_MS crossing vs the 10 ms cap; Stage 3
+   Stages 1-2, C_mod  100 uF: 21.5 V -> 8.69 V in 1.37 ms (cap 10 ms)
+   Stages 1-2, C_mod  145 uF: 21.5 V -> 8.69 V in 1.98 ms (cap 10 ms)
+   Stages 1-2, C_mod  221 uF: 21.5 V -> 8.69 V in 3.02 ms (cap 10 ms)
+   Stage 3: Q_MD is keyed to FF1./Q (DD Fig. 6, 14.4), so during exit step 2 (pin 33 still HIGH, FF1 set) the
+   dump is OFF; only R_MB, R_MS and the module idle current discharge C_HU:
+      I_q  0.0 mA, from 18.0 V: pin 8 LOW after    4022 ms -> ERR_MOD_DRAIN at 10 ms
+      I_q  0.0 mA, from 21.5 V: pin 8 LOW after    5003 ms -> ERR_MOD_DRAIN at 10 ms
+      I_q 18.0 mA, from 18.0 V: pin 8 LOW after    1837 ms -> ERR_MOD_DRAIN at 10 ms
+      I_q 18.0 mA, from 21.5 V: pin 8 LOW after    2086 ms -> ERR_MOD_DRAIN at 10 ms
+   Exit step 3 (pin 33 LOW, which would start the dump) is reached only after step 2, so every Stage-3 commanded
+   exit latches ERR_MOD_DRAIN (windows refused for the power cycle, row F49) and then re-bonds with C_HU charged.
+   Stage-3 hold-up across the 535 ms spacing, now with the rev-6 bleed R_MB || R_MS on the node:
+      C_HU 1.5 mF + C_mod 100 uF from 18 V at I_q 18 mA: above 11 V for   498 ms (need 535 ms); C_HU needed 1.62 mF (DD 14.4: 1.38 mF without R_MB)
+      C_HU 1.5 mF + C_mod 221 uF from 18 V at I_q 18 mA: above 11 V for   536 ms (need 535 ms); C_HU needed 1.50 mF (DD 14.4: 1.38 mF without R_MB)
+   Stage-3 dump peak: 21.5 V / 10 Ohm = 2.15 A against the Q_MD floor 'at least 2 A pulsed' (DD Table 7); energy at 21.5 V 0.35 J per FF1 clear
+
+[6] F_VX: Littelfuse 451/453 4 A (very fast) as the candidate
+   cold resistance 16.0 mOhm (calc6 assumed 10-30 mOhm); melting I2t 3.152 A^2 s (8 ms basis); breaking 300 A at 32 VDC
+   chafe V_pack 8.4 V, calc6 loop 33.3 mOhm + F_VX:  170.4 A; melt time ~I2t/I^2 =  0.109 ms (adiabatic approximation; the 8 ms-basis I2t overstates it at high current)
+   chafe V_pack 7.4 V, calc6 loop 188.3 mOhm + F_VX:   36.2 A; melt time ~I2t/I^2 =  2.402 ms (adiabatic approximation; the 8 ms-basis I2t overstates it at high current)
+   reverse pulse 12.0 A for 0.3 ms: 0.043 A^2 s =  1.4 % of melting I2t
+   reverse pulse 16.5 A for 0.3 ms: 0.082 A^2 s =  2.6 % of melting I2t
+   reverse pulse 17.0 A for 0.5 ms: 0.144 A^2 s =  4.6 % of melting I2t
+   200 % of rating (8 A) opens within 5 s maximum; 100 % carries 4 h minimum (datasheet p.1): a 4-8 A soft fault
+   through the Ag105 sense is not cleared within seconds.
+
+[7] Row F34b with R_SH open: INA240 IN+ (KS+, held at pack(-) by R_K1) against SBOS662C 7.1 (-6 V)
+   V_cell 3.7 V, board current via clamps    0 mA: GND 3.95 V above pack(-) -> KS+ at -3.95 V vs INA240 GND (within)
+   V_cell 3.7 V, board current via clamps   10 mA: GND 4.67 V above pack(-) -> KS+ at -4.67 V vs INA240 GND (within)
+   V_cell 3.7 V, board current via clamps   30 mA: GND 6.12 V above pack(-) -> KS+ at -6.12 V vs INA240 GND (EXCEEDS -6 V abs max)
+   V_cell 3.7 V, board current via clamps   55 mA: GND 7.40 V above pack(-) -> KS+ at -7.40 V vs INA240 GND (EXCEEDS -6 V abs max)
+   V_cell 4.2 V, board current via clamps    0 mA: GND 4.45 V above pack(-) -> KS+ at -4.45 V vs INA240 GND (within)
+   V_cell 4.2 V, board current via clamps   10 mA: GND 5.17 V above pack(-) -> KS+ at -5.17 V vs INA240 GND (within)
+   V_cell 4.2 V, board current via clamps   30 mA: GND 6.62 V above pack(-) -> KS+ at -6.62 V vs INA240 GND (EXCEEDS -6 V abs max)
+   V_cell 4.2 V, board current via clamps   55 mA: GND 8.40 V above pack(-) -> KS+ at -8.40 V vs INA240 GND (EXCEEDS -6 V abs max)
+   Once IN+ passes the -6 V rating the INA240 input structure is a further board-return path in parallel with the
+   clamps (GND -> U_SH1 IN+ / U_SH2 IN- -> KS+ -> R_K1 2.2 Ohm -> pack(-)), which carries both cells and is limited
+   only by R_K1. With the boost VIN at its 2.0 V minimum (VBT - GND = 2 V, GND 6.4 V above pack(-)):
+      GND 6.4 V: at least 0.18 A through R_K1 if the input clamps at -6 V (0.07 W in a 0.25 W fusible; 1.09 W in the INA240 input pair)
+      GND 7.0 V: at least 0.45 A through R_K1 if the input clamps at -6 V (0.45 W in a 0.25 W fusible; 2.73 W in the INA240 input pair)
+   The input clamp voltage beyond -6 V is not specified; the bound above is the lower bound of the current.
+
+[8] eFuse I_OL and U_IM at R_ILIM 8.06 kOhm against start currents
+   C_mod  100 uF, warm draw 0.00 A: start current 0.59 A -> ok
+   C_mod  100 uF, warm draw 1.07 A: start current 1.66 A -> U_IM TRIP
+   C_mod  100 uF, warm draw 1.24 A: start current 1.83 A -> U_IM TRIP
+   C_mod  100 uF, warm draw 1.37 A: start current 1.96 A -> U_IM TRIP
+   C_mod  104 uF, warm draw 0.00 A: start current 0.61 A -> ok
+   C_mod  104 uF, warm draw 1.07 A: start current 1.68 A -> U_IM TRIP
+   C_mod  104 uF, warm draw 1.24 A: start current 1.85 A -> U_IM TRIP
+   C_mod  104 uF, warm draw 1.37 A: start current 1.98 A -> U_IM TRIP
+   C_mod  221 uF, warm draw 0.00 A: start current 1.29 A -> ok
+   C_mod  221 uF, warm draw 1.07 A: start current 2.36 A -> U_IM TRIP, > I_OL min
+   C_mod  221 uF, warm draw 1.24 A: start current 2.53 A -> U_IM TRIP, > I_OL min
+   C_mod  221 uF, warm draw 1.37 A: start current 2.66 A -> U_IM TRIP, > I_OL min
+   Cold starts (warm draw 0) stay below U_IM at every C_mod up to 221 uF; the rev-6 dump is what makes the
+   start cold. Section 3 bounds the exception.

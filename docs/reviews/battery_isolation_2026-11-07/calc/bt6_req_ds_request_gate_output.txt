@@ -1,0 +1,30 @@
+rosbag_2026-09-07_22-06-29                   req    0.0s req&still    0.0s | D&g&Vb    0.0 Ds&g&Vb    0.0 D&g    0.0 Ds&g    0.0 Ds(still only)    0.0
+rosbag_2026-09-10_22-10-26                   req    0.0s req&still    0.0s | D&g&Vb    0.0 Ds&g&Vb    0.0 D&g    0.0 Ds&g    0.0 Ds(still only)    0.0
+rosbag_sdp_2026-10-26_23-57-14               req    7.5s req&still    0.0s | D&g&Vb    0.0 Ds&g&Vb    0.0 D&g    0.0 Ds&g    0.0 Ds(still only)   90.1
+rosbag_sdp_2026-10-28_20-46-53               req  153.8s req&still   38.8s | D&g&Vb   42.5 Ds&g&Vb   37.0 D&g   42.5 Ds&g   37.0 Ds(still only)   90.5
+rosbag_sdp_2026-10-28_22-18-10               req   18.0s req&still    0.0s | D&g&Vb    0.0 Ds&g&Vb    0.0 D&g    0.0 Ds&g    0.0 Ds(still only)   53.6
+rosbag_sdp_2026-10-29_19-51-48               req  112.2s req&still   38.6s | D&g&Vb   41.0 Ds&g&Vb   36.7 D&g   41.0 Ds&g   36.7 Ds(still only)   90.4
+rosbag_sdp_2026-10-30_01-49-38               req   87.0s req&still   27.1s | D&g&Vb   30.7 Ds&g&Vb   25.7 D&g   30.7 Ds&g   25.7 Ds(still only)   79.3
+rosbag_sdp_2026-11-05_20-09-52               req   68.1s req&still    8.4s | D&g&Vb   13.4 Ds&g&Vb    7.8 D&g   13.4 Ds&g    7.8 Ds(still only)   60.3
+rosbag_simple_2026-10-20_00-38-02            req    0.0s req&still    0.0s | D&g&Vb    0.0 Ds&g&Vb    0.0 D&g    0.0 Ds&g    0.0 Ds(still only)   53.3
+rosbag_sweep-clip_2026-10-22_23-18-00        req    0.0s req&still    0.0s | D&g&Vb    0.0 Ds&g&Vb    0.0 D&g    0.0 Ds&g    0.0 Ds(still only)    0.0
+rosbag_sweep-noclip_2026-10-22_23-25-13      req    0.0s req&still    0.0s | D&g&Vb    0.0 Ds&g&Vb    0.0 D&g    0.0 Ds&g    0.0 Ds(still only)    0.0
+rosbag_sweep-noclip_2026-10-23_17-27-44      req    0.0s req&still    0.0s | D&g&Vb    0.0 Ds&g&Vb    0.0 D&g    0.0 Ds&g    0.0 Ds(still only)    0.0
+rosbag_sweep-noclip_2026-10-25_21-09-10      req    0.0s req&still    0.0s | D&g&Vb    0.0 Ds&g&Vb    0.0 D&g    0.0 Ds&g    0.0 Ds(still only)   52.2
+rosbag_sweep-noclip_2026-10-27_01-09-42      req    0.0s req&still    0.0s | D&g&Vb    0.0 Ds&g&Vb    0.0 D&g    0.0 Ds&g    0.0 Ds(still only)   53.3
+rosbag_sweep-noclip_2026-10-27_02-52-00      req    0.0s req&still    0.0s | D&g&Vb    0.0 Ds&g&Vb    0.0 D&g    0.0 Ds&g    0.0 Ds(still only)   53.8
+rosbag_sweep-noclip_2026-10-30_00-56-01      req    0.0s req&still    0.0s | D&g&Vb    0.0 Ds&g&Vb    0.0 D&g    0.0 Ds&g    0.0 Ds(still only)   48.6
+rosbag_sweep-noclip_2026-10-30_01-30-16      req    0.0s req&still    0.0s | D&g&Vb    0.0 Ds&g&Vb    0.0 D&g    0.0 Ds&g    0.0 Ds(still only)  125.6
+rosbag_sweep_2026-10-20_04-00-39             req    0.0s req&still    0.0s | D&g&Vb    0.0 Ds&g&Vb    0.0 D&g    0.0 Ds&g    0.0 Ds(still only)    0.0
+rosbag_sweep_2026-10-20_06-40-47             req    0.0s req&still    0.0s | D&g&Vb    0.0 Ds&g&Vb    0.0 D&g    0.0 Ds&g    0.0 Ds(still only)    0.0
+rosbag_sweep_2026-10-20_07-47-28             req    0.0s req&still    0.0s | D&g&Vb    0.0 Ds&g&Vb    0.0 D&g    0.0 Ds&g    0.0 Ds(still only)    0.0
+rosbag_sweep_2026-10-20_08-41-34             req    0.0s req&still    0.0s | D&g&Vb    0.0 Ds&g&Vb    0.0 D&g    0.0 Ds&g    0.0 Ds(still only)    0.0
+rosbag_sweep_2026-10-20_09-08-49             req    0.0s req&still    0.0s | D&g&Vb    0.0 Ds&g&Vb    0.0 D&g    0.0 Ds&g    0.0 Ds(still only)   53.6
+TOTALS (0: D&goal&Vb<8, 1: D-s&goal&Vb<8, 2: D&goal, 3: D-s&goal, 4: D-s ungated; r: request s; rs: request&still s) {0: 127.5, 1: 107.3, 2: 127.5, 3: 107.3, 4: 904.6, 'r': 446.6, 'rs': 112.8}
+Section B
+rosbag_sdp_2026-10-26_23-57-14 still&req share values {} | moving&req {np.float64(0.0): np.int64(376)}
+rosbag_sdp_2026-10-28_20-46-53 still&req share values {np.float64(0.15): np.int64(1939)} | moving&req {np.float64(0.15): np.int64(5753)}
+rosbag_sdp_2026-10-28_22-18-10 still&req share values {} | moving&req {np.float64(0.16): np.int64(850), np.float64(0.245): np.int64(50)}
+rosbag_sdp_2026-10-29_19-51-48 still&req share values {np.float64(0.16): np.int64(1929)} | moving&req {np.float64(0.16): np.int64(3151), np.float64(0.245): np.int64(490), np.float64(0.49): np.int64(40)}
+rosbag_sdp_2026-10-30_01-49-38 still&req share values {np.float64(0.16): np.int64(1353)} | moving&req {np.float64(0.16): np.int64(2595), np.float64(0.245): np.int64(360), np.float64(0.49): np.int64(40)}
+rosbag_sdp_2026-11-05_20-09-52 still&req share values {np.float64(0.16): np.int64(419)} | moving&req {np.float64(0.16): np.int64(2585), np.float64(0.245): np.int64(360), np.float64(0.49): np.int64(40)}

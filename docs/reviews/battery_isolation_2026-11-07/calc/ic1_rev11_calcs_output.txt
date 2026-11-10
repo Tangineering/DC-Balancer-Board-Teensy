@@ -1,0 +1,39 @@
+====================================================================================================
+[1] D-s on the recorded Pi sessions with the dump-check precondition (codes 12 and 4) and the request flag
+====================================================================================================
+  per bag (mean over 10 purge phases), D-s mask = live & request(charge_goal>0.05) & still & V_batt<8.0 V
+  rosbag_sdp_2026-10-26_23-57-14             rev-10 figure (no precondition)    0.0 s | rev-10 literal (code 12)   0.0 s | rev-11 State-2 dump check: nominal chain    0.0-   0.0 s, slow chain    0.0-   0.0 s
+  rosbag_sdp_2026-10-28_20-46-53             rev-10 figure (no precondition)   37.0 s | rev-10 literal (code 12)   0.0 s | rev-11 State-2 dump check: nominal chain   36.7-  36.7 s, slow chain   36.1-  36.0 s
+  rosbag_sdp_2026-10-28_22-18-10             rev-10 figure (no precondition)    0.0 s | rev-10 literal (code 12)   0.0 s | rev-11 State-2 dump check: nominal chain    0.0-   0.0 s, slow chain    0.0-   0.0 s
+  rosbag_sdp_2026-10-29_19-51-48             rev-10 figure (no precondition)   36.7 s | rev-10 literal (code 12)   0.0 s | rev-11 State-2 dump check: nominal chain   36.7-  36.7 s, slow chain   36.2-  36.2 s
+  rosbag_sdp_2026-10-30_01-49-38             rev-10 figure (no precondition)   25.7 s | rev-10 literal (code 12)   0.0 s | rev-11 State-2 dump check: nominal chain   25.7-  25.7 s, slow chain   25.3-  25.3 s
+  rosbag_sdp_2026-11-05_20-09-52             rev-10 figure (no precondition)    7.8 s | rev-10 literal (code 12)   0.0 s | rev-11 State-2 dump check: nominal chain    7.4-   7.4 s, slow chain    7.3-   7.2 s
+  TOTAL rev-10 figure (no precondition, nominal chain, reproduces bt6 TOTALS[1]) 107.3 s
+  TOTAL rev-10 literal specification (dump check in State 1/98 only; first request in State 2): 0.0 s
+  TOTAL rev-11 (State-2 dump check at the first standstill request), nominal chain: 106.6 s (dump 20 ms) to 106.6 s (dump 60 ms); charge at 1.25 A: 37.0-37.0 mAh
+  TOTAL rev-11 (State-2 dump check at the first standstill request), slow chain (T_ENTRY/T_COLD worst): 104.9 s (dump 20 ms) to 104.8 s (dump 60 ms); charge at 1.25 A: 36.4-36.4 mAh
+  Code 4 (PI-4 UNKNOWN until the first tracked purge): the H-20 read V_fc > 7 V for 53.6-55.2 s before the first
+  launch and the first request came at 67.5-72.4 s (fmea_round7_calcs_output.txt section 1), i.e. at least
+  5.2 purge periods of 10.34 s before it; an ideal predictor (OR-P) tracks from the first purge, so code 4 does not bind at the first request on any of the 6 sessions.
+  Request origin (bt7_req_origin_output.txt TOTALS): 446.6 s of charge_goal = 419.3 s regen latch + 0.0 s FC-charge
+  branch + 27.3 s other; all 112.8 s at standstill are the regen latch. Under the revision-11 explicit request
+  flag (reserved command byte = 0xA5) the deployed nodes send 0 or 1 there, so the recorded sessions carry
+  0 s of FC-window request and every variant delivers 0 s against EMS requests. The figures above are therefore
+  a COUNTERFACTUAL (recorded charge_goal treated as a flagged request) and measure only the precondition cost.
+====================================================================================================
+[2] FC-only window operating point at the revision-11 fixed window split r = 0.85 (BT7-TR-01)
+====================================================================================================
+  r 0.85 g_FC 0.1753 (code  718) design chain  R_FC 0.353 ohm: V_chg 15.52-15.60 V; margin to 13.82 V +1.70 V, to 14.32 V +1.20 V, to 13.0 V +2.52 V, to 13.5 V +2.02 V; deliverable 100-100 % (13.82) / 100-100 % (14.32); OC_FC margin after INA zero +0.245 A
+  r 0.85 g_FC 0.1753 (code  718) bench-scaled  R_FC 0.094 ohm: V_chg 15.80-15.82 V; margin to 13.82 V +1.98 V, to 14.32 V +1.48 V, to 13.0 V +2.80 V, to 13.5 V +2.30 V; deliverable 100-100 % (13.82) / 100-100 % (14.32); OC_FC margin after INA zero +0.261 A
+  r 0.15 g_FC 0.9932 (code 4067) design chain  R_FC 2.000 ohm: V_chg 13.50-13.99 V; margin to 13.82 V -0.32 V, to 14.32 V -0.82 V, to 13.0 V +0.50 V, to 13.5 V +0.00 V; deliverable 87-100 % (13.82) / 65-85 % (14.32); OC_FC margin after INA zero +0.109 A
+  r 0.15 g_FC 0.9932 (code 4067) bench-scaled  R_FC 0.533 ohm: V_chg 15.32-15.44 V; margin to 13.82 V +1.50 V, to 14.32 V +1.00 V, to 13.0 V +2.32 V, to 13.5 V +1.82 V; deliverable 100-100 % (13.82) / 100-100 % (14.32); OC_FC margin after INA zero +0.233 A
+  Window criterion proposed for W1/W2b: in-window V_chg >= measured S0-4 threshold + 0.3 V and >= 14.0 V.
+  At r 0.85 the design chain gives the minimum V_chg above; at r 0.15 (the revision-10 closed-loop clamp) it fails.
+====================================================================================================
+[3] Iteration-gap bound behind the PI-4 late-prediction rule (FM7-2)
+====================================================================================================
+  An ideal announcement at T_lead,min 80 ms is observed late (below T_late 61 ms) only if the
+  iteration that precedes the observing iteration exceeds 19.0 ms; measured worst gap 9.76 ms on a
+  State-98, USE_ETHERNET 0 build (margin 9.24 ms). Proposed W1/W2b criterion on the production build:
+  maximum iteration <= 15 ms (4 ms below the 19 ms bound, TODO(calibrate)); otherwise T_lead,min is raised by
+  the excess of the measured maximum over 19 ms (a predictor requirement under OR-P).

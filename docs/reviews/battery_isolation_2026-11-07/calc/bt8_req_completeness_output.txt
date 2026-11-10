@@ -1,0 +1,56 @@
+====================================================================================================
+[1] HR2 headline numbers (detailed_design_IC1.md Tables 20, 22, 27; calc10 sections 1-3)
+====================================================================================================
+  dead 0.450 s: usable 95.6 %, I_set x usable = 1.196 A
+  dead 0.569 s: usable 94.5 %, I_set x usable = 1.181 A
+  horizon = 0.2018 + 1.0 + 0.080 = 1.2818 s (PI-3: 1.282 s)
+  T_lead,min = ceil10(T_late 61 + gap 9.76) = 80 ms; T_late = ceil(60.55) = 61 ms
+  D-s 61 s cycle: 5.5 s x 1.25 A = 1.9 mAh (Table 27)
+  D-s RegenTest_decel_sweep: 91.8 s x 1.25 A = 31.9 mAh (Table 27)
+  net pack current with I_L,bonded 0.20 A over the 0.450 s dead time: 1.187 A
+  net pack current with I_L,bonded 0.20 A over the 0.569 s dead time: 1.170 A
+  net pack current with I_L,bonded 0.30 A over the 0.450 s dead time: 1.183 A
+  net pack current with I_L,bonded 0.30 A over the 0.569 s dead time: 1.165 A
+====================================================================================================
+[2] J-FC 16 V commissioning setpoint (DD section 9.2 step 2) against pin 24 and the window draw
+====================================================================================================
+  divider full scale = 3.3 x (R1+R2)/R2 = 12.342 V (SCALE_V_FC, ino:2024)
+  J-FC  9.30 V: pin 24 open-circuit 2.487 V (abs max 3.6 V); current into the clamp at a 3.6 V clamp    0.0 uA (Thevenin 7.33 kOhm)
+  J-FC 12.00 V: pin 24 open-circuit 3.209 V (abs max 3.6 V); current into the clamp at a 3.6 V clamp    0.0 uA (Thevenin 7.33 kOhm)
+  J-FC 12.34 V: pin 24 open-circuit 3.299 V (abs max 3.6 V); current into the clamp at a 3.6 V clamp    0.0 uA (Thevenin 7.33 kOhm)
+  J-FC 13.00 V: pin 24 open-circuit 3.476 V (abs max 3.6 V); current into the clamp at a 3.6 V clamp    0.0 uA (Thevenin 7.33 kOhm)
+  J-FC 16.00 V: pin 24 open-circuit 4.278 V (abs max 3.6 V); current into the clamp at a 3.6 V clamp   92.6 uA (Thevenin 7.33 kOhm)
+  window J-FC current at  9.30 V: 1.59-2.04 A against the 1.5 A step-2 limit (EXCEEDS)
+  window J-FC current at 12.00 V: 1.24-1.58 A against the 1.5 A step-2 limit (EXCEEDS at the upper end)
+  window J-FC current at 16.00 V: 0.93-1.19 A against the 1.5 A step-2 limit (INSIDE)
+  9.3 V = the bench FC supply of ML0227 (docs/boost-bringup-debug.md, 2026-11-04 log analysis)
+  16 V > the 15.95 V bus regulation target: the FC boost cannot boost (VIN > VOUT, TODO(verify: SLVSFP3C));
+  the fixed-split droop R_FC 0.094-0.353 Ohm that W1 is meant to check (calc11 s2) is then not in circuit.
+====================================================================================================
+[3] Gate dependency chain around D_VC1 (DD Table 7 D_VC1 row; sections 9.2 step 1, 9.7, 15.2, 15.3; OR-AC)
+====================================================================================================
+  D_VC1 part selected
+     B8 (T_M16,max)
+        an FC window at the hottest ambient
+           commissioning (sec 9.2)
+              BG-17b
+                 D_VC1 fitted (M16)
+              B-PKN
+                 D_VC1 V_F <= 0.25 V at 16.2 mA at T_min (a selected part)
+           BAL_OK H (balance plug in)
+              C-1 D_VC1 orientation check (D_VC1 fitted)
+           V_batt < 8.0 V (code 7)
+        a regen window (BT_BUS closed)
+           Stage 2: VOK channels, pin 30 (not fitted in Stage 1, sec 14.2)
+        V_batt 8.4 V in charge mode
+           entry refused at >= 8.0 V (code 7) until S0-8b
+     ruling OR-AC
+  -> D_VC1 must be fitted (BG-17b, C-1, B-PKN, BAL_OK) before B8 can produce the T_M16,max that selects it.
+====================================================================================================
+[4] W1 duration against FC_CHG_MAX_MS
+====================================================================================================
+  W1 asks a 60 s window; FC_CHG_MAX_MS force-closes at 30 s (DD section 9.7 exit list), then a 2 s cooldown; a single 60 s window cannot occur on the specified firmware
+====================================================================================================
+[5] CC-B6: 3V3 rail order of magnitude (UNCONFIRMED part currents)
+====================================================================================================
+  LB total about 15.5 mA against the 250 mA PJRC external budget (facts_board section 6.1): 6 % before the existing 3V3 loads

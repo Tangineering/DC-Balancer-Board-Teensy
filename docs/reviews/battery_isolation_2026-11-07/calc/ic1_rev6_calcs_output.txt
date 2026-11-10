@@ -1,0 +1,76 @@
+
+[1 Pin-side BQ29200 clamps (replace D_VM at VMID)]
+V_cell 3.0 V: clamp short via RB3  11.5 mA ( 34.5 mW, rating 100 mW); via RB1A  30.0 mA ( 90.0 mW, rating 125 mW, x0.72)
+V_cell 3.7 V: clamp short via RB3  14.2 mA ( 52.5 mW, rating 100 mW); via RB1A  37.0 mA (136.9 mW, rating 125 mW, x1.10)
+V_cell 4.2 V: clamp short via RB3  16.1 mA ( 67.6 mW, rating 100 mW); via RB1A  42.0 mA (176.4 mW, rating 125 mW, x1.41)
+RB3 || RB1A = 72.3 Ohm; F34b board return bound at V_cell2 4.2 V: 58.1 mA
+  board current   10 mA: VBT - GND <=  3.23 V (V_cell2 4.2 V, V_F 0.25 V)
+  board current   30 mA: VBT - GND <=  1.78 V (V_cell2 4.2 V, V_F 0.25 V)
+  board current   50 mA: VBT - GND <=  0.34 V (V_cell2 4.2 V, V_F 0.25 V)
+  -> above ~55 mA VBT - GND reaches 0: the board cannot draw more; the TPS61288 (VIN min 2.0 V) cannot run.
+  clamp current per diode at most: D_VCB 42 mA, D_VC1 16 mA
+
+[2 F_VX in VBATN_X (module end)]
+  regen I_set                            1.75 A
+  FC I_set                               1.25 A
+  F38 high-R CSEL ceiling                2.50 A
+  U_C1 trip max (reverse, transient)     3.50 A
+  U_C2 trip max (charge, transient)      3.64 A
+F_VX 4.0 A fast-acting: 75 % derating gives 3.00 A continuous >= 2.50 A; rating <= Ag105 I_DIS 4 A (DS p.20 row 6)
+  chafe V_pack 8.4 V, R_loop 33.3 mOhm:  252.3 A =  63.1 x F_VX rating
+  chafe V_pack 7.4 V, R_loop 188.3 mOhm:   39.3 A =   9.8 x F_VX rating
+  R_FVX 10 mOhm (ASSUMED): R_s boundary 50-54 mOhm; offset added at 1.75 A 17.5 mV
+  R_FVX 30 mOhm (ASSUMED): R_s boundary 30-34 mOhm; offset added at 1.75 A 52.5 mV
+
+[3 Module-node dump (Q_MD/R_MD keyed to NOT EF_EN) and bleed R_MB]
+C_mod  100 uF: tau 1.52 ms; 21.5->11 V 1.02 ms; 21.5->9 V 1.32 ms; 16->9 V 0.87 ms; 16->0.5 V   5.3 ms; energy at 21.5 V 23.3 mJ
+   Q_MD open, bleed R_MB only: 16->9 V 0.19 s; 21.47->11 V 0.22 s
+C_mod  145 uF: tau 2.19 ms; 21.5->11 V 1.47 ms; 21.5->9 V 1.91 ms; 16->9 V 1.26 ms; 16->0.5 V   7.6 ms; energy at 21.5 V 33.7 mJ
+   Q_MD open, bleed R_MB only: 16->9 V 0.28 s; 21.47->11 V 0.32 s
+C_mod  221 uF: tau 3.33 ms; 21.5->11 V 2.23 ms; 21.5->9 V 2.90 ms; 16->9 V 1.92 ms; 16->0.5 V  11.5 ms; energy at 21.5 V 51.3 mJ
+   Q_MD open, bleed R_MB only: 16->9 V 0.42 s; 21.47->11 V 0.49 s
+R_MD peak 1.43 A; probe with a bypassed eFuse: 17.1 W (1.0 A from the FC bus); 10 ms 0.17 J, 100 ms cap 1.71 J
+R_MB dissipation at 21.5 V 140 mW, 6.5 mA (0.65 % of a 1 A input)
+dump-off interlock: in 1 us the eFuse output rises <= 5.8 mV -> <= 0.39 mA in R_MD
+
+[4 U_MS module-node comparator (VCHG-IN_M, threshold ~9 V)]
+divider ratio 0.1394; threshold nominal 8.91 V; range 8.69-9.15 V (REF, V_OS, hysteresis, 0.1 %)
+IN+ at 21.5 V 3.00 V (below 3V3 + 0.2 V); divider current 0.19 mA
+
+[5 U_IM window with SLVSE94G gain tolerance; R_ILIM 9.09k -> 8.06k]
+R_ILIM 9.09k: I_OL 1.822-2.139 A; fast trip 3 x I_OL 5.5-6.4 A; P_in bound at 21.47 V 45.9 W
+R_ILIM 8.25k: I_OL 2.007-2.356 A; fast trip 3 x I_OL 6.0-7.1 A; P_in bound at 21.47 V 50.6 W
+R_ILIM 8.06k: I_OL 2.055-2.412 A; fast trip 3 x I_OL 6.2-7.2 A; P_in bound at 21.47 V 51.8 W
+3V3 3.2: U_IM trip 1.508-1.863 A (one-sided hysteresis)
+3V3 3.3: U_IM trip 1.556-1.920 A (one-sided hysteresis)
+3V3 3.4: U_IM trip 1.603-1.977 A (one-sided hysteresis)
+upper trip 1.977 A vs I_OL min 2.055 A at 8.06k: margin 0.078 A (need >= 0.05)
+lower trip at 3.2 V vs largest legitimate input 1.458 A (calc bt3 datasheet lens s1): margin 0.050 A
+
+[6 ERR_VOK_STUCK ratio rule]
+VBUS 13.5 V: healthy-permit floor ratio V_MOT/VBUS >= 1.0117
+VBUS 15.9 V: healthy-permit floor ratio V_MOT/VBUS >= 1.0081
+VBUS 16.0 V: healthy-permit floor ratio V_MOT/VBUS >= 1.0080
+VBUS 16.5 V: healthy-permit floor ratio V_MOT/VBUS >= 1.0072
+VBUS 17.5 V: healthy-permit floor ratio V_MOT/VBUS >= 1.0062
+stuck channel at bus level reads r = 1.000 against the Idle self-calibration (V-MOT = VBUS - D-MT-EN drop)
+ADC LSB: pin 39 7.15 mV, pin 26 4.55 mV; ratio quantum at 16 V 0.053 % (one sample)
+r_TH 1.003: margin 0.003 below the 1.0063 healthy floor and 0.003 above a stuck channel
+  rev-5 dwell rule: single-assert interval at  8.0 V/s =  94.2 ms (50 ms dwell)
+  rev-5 dwell rule: single-assert interval at 14.2 V/s =  53.1 ms (50 ms dwell)
+  rev-5 dwell rule: single-assert interval at 17.0 V/s =  44.4 ms (50 ms dwell)
+  rev-5 dwell rule: single-assert interval at 20.1 V/s =  37.5 ms (50 ms dwell)
+
+[7 Iteration-count confirmation (FM3-3)]
+4 iterations at the median 4.52 ms, at p99 5.36 ms; with one worst gap 13.15 ms (< 30 ms cap < 43 ms pump hang)
+settled after one worst gap = gap + median = 10.89 ms (fmea_round3 s3 printed 2*gap = 19.52 ms)
+ladder persistence 3 iterations at the median 3.39 ms
+
+[8 ERR_IPACK_PLAUS re-key (BT3-RO-01)]
+BT_CURRENT 0.4 A with the 0.10 A INA253 floor: true >= 0.30 A -> pack discharge >= 0.539 A (15.1 V bus, 8.4 V pack, eta 1.0) = x2.16 the 0.25 A pass/latch level
+
+[9 Exit and traction delay with the measured drain]
+C_mod  100 uF: drain to pin-8 LOW 1.32 ms (+1 iteration) ; traction delay 4.71 ms median, 5.34 ms p99 (drain + one pin-8 confirm read + two settled exit reads)
+C_mod  145 uF: drain to pin-8 LOW 1.91 ms (+1 iteration) ; traction delay 5.30 ms median, 5.93 ms p99 (drain + one pin-8 confirm read + two settled exit reads)
+C_mod  221 uF: drain to pin-8 LOW 2.90 ms (+1 iteration) ; traction delay 6.29 ms median, 6.92 ms p99 (drain + one pin-8 confirm read + two settled exit reads)
+cap T_drain,max 10 ms -> ERR_MOD_DRAIN

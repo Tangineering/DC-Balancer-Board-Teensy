@@ -1,0 +1,109 @@
+
+==============================================================================================================
+Section 1: HIL anchor: the FC-only window bus law at the closed-loop codes 4067/717 (campaign I, fw v28 rev 6)
+==============================================================================================================
+  rows 130000, in-window rows (codes 4067/717, switch 0x35) 121278; state ['2'], v_actual max 0.000 m/s
+  in window: V_bus median 14.4164 V, V_chg median 14.3673 V, I_fc median 0.7614 A, I_batt max 0.000 A
+  fit V_bus = 15.878 + (-1.919) * I_fc  -> realised FC droop 1.919 ohm (design chain RE_MAX*g_FC = 2.000 ohm at r 0.15)
+  path drop V_bus - V_chg at 0.761 A: 0.0491 V -> 0.0645 ohm (D-BC-FC + eFuse in the plant)
+  The window is a State-2 standstill FC charge window (old topology: BT held off the bus by
+  assertFcChargeEnable(); IC1 D-s drops BT_BUS by the mode manager - the share loop sees the same FC-only bus).
+
+  g_FC at r 0.15, k_d 0.30 = 0.993 (code 4067); g_BT = 0.175 (code 717)
+  FC droop at r 0.15: design chain 2.000 ohm; bench fit 0.16 V/A at g 0.298 scaled by g: 0.533 ohm (the 4x design/bench gap is an OPEN finding, hil_plant_sim.py:467-505)
+  Every earlier window model: pc V0 15.9 V stiff (purge_collapse_sim.py:67); out s1 0.16 V/A for any split (purge_demand_budget.py:51,109); bt6 s4 "k_d x dI" with k_d 0.30 ohm.
+
+==============================================================================================================
+Section 2: FC-only window operating point vs the FC droop resistance (Ag105 constant input power, IC1 Table 8)
+==============================================================================================================
+  aux on the bus 0.02 A (bag standstill total, bt6_bag_launch) and 0.15 A (IC1 Table 8 bounding); R_PATH 0.064 ohm
+  realisation                  R_FC  Vpk   aux |  V_bus  V_chg   I_fc | to 13.82 to 13.0 to 13.5 | OC_FC+INA | P_avail@13.82  @14.32
+  out s1 / pc assumption      0.160  7.4  0.02 |  15.81  15.76  0.845 |    +1.94   +2.76   +2.26 |    +0.455 |        100.0%  100.0%
+  out s1 / pc assumption      0.160  7.4  0.15 |  15.79  15.74  0.976 |    +1.92   +2.74   +2.24 |    +0.324 |        100.0%  100.0%
+  out s1 / pc assumption      0.160  7.8  0.02 |  15.81  15.75  0.890 |    +1.93   +2.75   +2.25 |    +0.410 |        100.0%  100.0%
+  out s1 / pc assumption      0.160  7.8  0.15 |  15.79  15.73  1.021 |    +1.91   +2.73   +2.23 |    +0.279 |        100.0%  100.0%
+  out s1 / pc assumption      0.160  8.0  0.02 |  15.80  15.75  0.912 |    +1.93   +2.75   +2.25 |    +0.388 |        100.0%  100.0%
+  out s1 / pc assumption      0.160  8.0  0.15 |  15.78  15.73  1.043 |    +1.91   +2.73   +2.23 |    +0.257 |        100.0%  100.0%
+  bench-scaled, r 0.15        0.533  7.4  0.02 |  15.49  15.44  0.862 |    +1.62   +2.44   +1.94 |    +0.438 |        100.0%  100.0%
+  bench-scaled, r 0.15        0.533  7.4  0.15 |  15.42  15.36  0.996 |    +1.54   +2.36   +1.86 |    +0.304 |        100.0%  100.0%
+  bench-scaled, r 0.15        0.533  7.8  0.02 |  15.47  15.41  0.909 |    +1.59   +2.41   +1.91 |    +0.391 |        100.0%  100.0%
+  bench-scaled, r 0.15        0.533  7.8  0.15 |  15.39  15.34  1.043 |    +1.52   +2.34   +1.84 |    +0.257 |        100.0%  100.0%
+  bench-scaled, r 0.15        0.533  8.0  0.02 |  15.45  15.39  0.933 |    +1.57   +2.39   +1.89 |    +0.367 |        100.0%  100.0%
+  bench-scaled, r 0.15        0.533  8.0  0.15 |  15.38  15.32  1.067 |    +1.50   +2.32   +1.82 |    +0.233 |        100.0%  100.0%
+  design chain, r 0.5         0.600  7.4  0.02 |  15.43  15.38  0.865 |    +1.56   +2.38   +1.88 |    +0.435 |        100.0%  100.0%
+  design chain, r 0.5         0.600  7.4  0.15 |  15.35  15.30  1.000 |    +1.48   +2.30   +1.80 |    +0.300 |        100.0%  100.0%
+  design chain, r 0.5         0.600  7.8  0.02 |  15.40  15.35  0.913 |    +1.53   +2.35   +1.85 |    +0.387 |        100.0%  100.0%
+  design chain, r 0.5         0.600  7.8  0.15 |  15.32  15.26  1.048 |    +1.44   +2.26   +1.76 |    +0.252 |        100.0%  100.0%
+  design chain, r 0.5         0.600  8.0  0.02 |  15.39  15.33  0.937 |    +1.51   +2.33   +1.83 |    +0.363 |        100.0%  100.0%
+  design chain, r 0.5         0.600  8.0  0.15 |  15.31  15.25  1.071 |    +1.43   +2.25   +1.75 |    +0.229 |        100.0%  100.0%
+  HIL measured, r 0.15        1.919  7.4  0.02 |  14.14  14.08  0.943 |    +0.26   +1.08   +0.58 |    +0.357 |        100.0%   88.3%
+  HIL measured, r 0.15        1.919  7.4  0.15 |  13.85  13.79  1.093 |    -0.03   +0.79   +0.29 |    +0.207 |         98.2%   74.0%
+  HIL measured, r 0.15        1.919  7.8  0.02 |  14.03  13.97  1.001 |    +0.15   +0.97   +0.47 |    +0.299 |        100.0%   83.8%
+  HIL measured, r 0.15        1.919  7.8  0.15 |  13.74  13.68  1.152 |    -0.14   +0.68   +0.18 |    +0.148 |         93.2%   70.2%
+  HIL measured, r 0.15        1.919  8.0  0.02 |  13.97  13.91  1.030 |    +0.09   +0.91   +0.41 |    +0.270 |        100.0%   81.7%
+  HIL measured, r 0.15        1.919  8.0  0.15 |  13.68  13.62  1.182 |    -0.20   +0.62   +0.12 |    +0.118 |         90.9%   68.5%
+  design chain, r 0.15        2.000  7.4  0.02 |  14.05  13.99  0.949 |    +0.17   +0.99   +0.49 |    +0.351 |        100.0%   84.8%
+  design chain, r 0.15        2.000  7.4  0.15 |  13.75  13.69  1.100 |    -0.13   +0.69   +0.19 |    +0.200 |         93.8%   70.5%
+  design chain, r 0.15        2.000  7.8  0.02 |  13.93  13.87  1.008 |    +0.05   +0.87   +0.37 |    +0.292 |        100.0%   80.5%
+  design chain, r 0.15        2.000  7.8  0.15 |  13.63  13.57  1.160 |    -0.25   +0.57   +0.07 |    +0.140 |         89.0%   66.9%
+  design chain, r 0.15        2.000  8.0  0.02 |  13.88  13.81  1.037 |    -0.01   +0.81   +0.31 |    +0.263 |         99.5%   78.5%
+  design chain, r 0.15        2.000  8.0  0.15 |  13.57  13.50  1.191 |    -0.32   +0.50   +0.00 |    +0.109 |         86.8%   65.2%
+  Columns: margins of V_chg to the Ag105 FC threshold, to SC-1 reading (a) and to chargerHasPower(); OC_FC margin
+  after the INA253A1 zero error; the share of the Table-8 input power the module can draw if it regulates its
+  input at 13.82 V (nominal) or 14.32 V (S0-4 acceptance +0.5 V). Below 100 % the 1.25 A I_set is not reached.
+   out s1 / pc assumption    : V_chg 15.73-15.76 V; deliverable at 13.82 V 100-100 %, at 14.32 V 100-100 %; I_fc up to 1.043 A
+   bench-scaled, r 0.15      : V_chg 15.32-15.44 V; deliverable at 13.82 V 100-100 %, at 14.32 V 100-100 %; I_fc up to 1.067 A
+   design chain, r 0.5       : V_chg 15.25-15.38 V; deliverable at 13.82 V 100-100 %, at 14.32 V 100-100 %; I_fc up to 1.071 A
+   HIL measured, r 0.15      : V_chg 13.62-14.08 V; deliverable at 13.82 V 91-100 %, at 14.32 V 68-88 %; I_fc up to 1.182 A
+   design chain, r 0.15      : V_chg 13.50-13.99 V; deliverable at 13.82 V 87-100 %, at 14.32 V 65-85 %; I_fc up to 1.191 A
+
+  Entry: the frozen pre-window split (loop below 0.075 A at standstill, ino:14287) becomes closed loop when the
+  module starts; the dark-BT handoff slew is 0.002 per tick (ino:3242, 3288-3325), so the walk 0.5 -> 0.15 is
+   175 ticks = 175 ms at a 1.000 ms loop; the bus walks down with it (design chain: 15.40 V -> 13.93 V at 7.8 V)
+   175 ticks = 235 ms at a 1.341 ms loop; the bus walks down with it (design chain: 15.40 V -> 13.93 V at 7.8 V)
+
+==============================================================================================================
+Section 3: (i) Predicted purge at exactly T_lead,min = 80 ms (P and D-s): bus at the drop, the re-close and the onset
+==============================================================================================================
+  Exit chain (calc10 section 1): D-BT-EN conducts at most 61.68 ms after the prediction; margin at an 80 ms onset 18.32 ms.
+   out s1 / pc assumption    : window bus 15.80 V -> after the feed drop 15.95 V (unload step +0.14 V; OV_BUS margin +1.05 V with a 0.5 V overshoot ASSUMED); step-4 guard busHotPlugUnsafe (13.5 V) passes
+   bench-scaled, r 0.15      : window bus 15.45 V -> after the feed drop 15.94 V (unload step +0.49 V; OV_BUS margin +1.06 V with a 0.5 V overshoot ASSUMED); step-4 guard busHotPlugUnsafe (13.5 V) passes
+   design chain, r 0.5       : window bus 15.39 V -> after the feed drop 15.94 V (unload step +0.55 V; OV_BUS margin +1.06 V with a 0.5 V overshoot ASSUMED); step-4 guard busHotPlugUnsafe (13.5 V) passes
+   HIL measured, r 0.15      : window bus 13.97 V -> after the feed drop 15.91 V (unload step +1.94 V; OV_BUS margin +1.09 V with a 0.5 V overshoot ASSUMED); step-4 guard busHotPlugUnsafe (13.5 V) passes
+   design chain, r 0.15      : window bus 13.88 V -> after the feed drop 15.91 V (unload step +2.03 V; OV_BUS margin +1.09 V with a 0.5 V overshoot ASSUMED); step-4 guard busHotPlugUnsafe (13.5 V) passes
+  At the onset BT carries the auxiliary load through D-BT-EN at the held split (D-s: r 0.15, R_BT = 0.30/0.85):
+   D-s, r 0.15                              aux 0.02 A: V_bus 15.94 V; reading (b) 12.0 V and UV_BUS: no trip
+   D-s, r 0.15                              aux 0.15 A: V_bus 15.90 V; reading (b) 12.0 V and UV_BUS: no trip
+   P, worst held split (g_BT capped at 1)   aux 0.02 A: V_bus 15.91 V; reading (b) 12.0 V and UV_BUS: no trip
+   P, worst held split (g_BT capped at 1)   aux 0.15 A: V_bus 15.65 V; reading (b) 12.0 V and UV_BUS: no trip
+  No contradiction in (i): the feed drop removes the sag before the re-close, so the step-4 guard passes and
+  the BT takeover at the onset is a light-load event. The window-time bus (section 2) does not reach (i).
+
+==============================================================================================================
+Section 4: (ii) Unpredicted purge inside a window from the drooped operating point (pc model, V0 replaced)
+==============================================================================================================
+  pc as written, 15.9 V       : 144 cases; latch 1.4-31.3 ms; FC_BUS LOW (phase 0) 2.7-32.6 ms; FC_BUS+FC_REG HIGH at 80 ms: 0; eFuse off 0.98-32.66 ms; warm eFuse restarts 43; BT peak 0.00 A; module node at the bond 3.88-5.80 V
+  design-chain droop, 13.8 V  : 144 cases; latch 1.4-29.9 ms; FC_BUS LOW (phase 0) 2.7-31.3 ms; FC_BUS+FC_REG HIGH at 80 ms: 0; eFuse off 0.42-31.30 ms; warm eFuse restarts 19; BT peak 0.00 A; module node at the bond 4.54-5.76 V
+  HIL-like, 14.0 V            : 144 cases; latch 1.4-31.3 ms; FC_BUS LOW (phase 0) 2.7-32.6 ms; FC_BUS+FC_REG HIGH at 80 ms: 0; eFuse off 0.46-32.66 ms; warm eFuse restarts 39; BT peak 0.00 A; module node at the bond 3.77-5.65 V
+  A lower start moves reading (a) closer, so the latch comes earlier; every case is OPEN (FC_BUS LOW) at 80 ms,
+  no BT_BUS write follows (E2), and the module node is cold at the bond. The teardown and the recovery stresses
+  of IC1 Tables 23-24 (FC_REG LOW at phase 0 + 20 ms, the H-20 recharging only the 30 uF behind a disabled
+  boost and an open D-FC-EN) are unchanged. No rating exceeded; no contradiction from this lens in (ii).
+
+==============================================================================================================
+Section 5: (iii) Variant D: traction and a braking event on the FC-only bus at the window split
+==============================================================================================================
+  IC1 Table 26 gives D a traction allowance of 0.06-0.33 A bus-side (out s1, at 0.16 V/A); bt6 s4 put the
+  brake-onset bus rise at k_d x dI = 0.30 x 0.405 = 0.12 V.
+   out s1 / pc assumption    : traction allowance to 13.82 V +12.075 A, to the no-dwell 13.0 V latch +17.200 A; brake-onset rise 0.06 V (bt6: 0.12 V); OV_BUS margin +1.63 V
+   bench-scaled, r 0.15      : traction allowance to 13.82 V +2.978 A, to the no-dwell 13.0 V latch +4.516 A; brake-onset rise 0.22 V (bt6: 0.12 V); OV_BUS margin +1.82 V
+   design chain, r 0.5       : traction allowance to 13.82 V +2.542 A, to the no-dwell 13.0 V latch +3.908 A; brake-onset rise 0.24 V (bt6: 0.12 V); OV_BUS margin +1.85 V
+   HIL measured, r 0.15      : traction allowance to 13.82 V +0.076 A, to the no-dwell 13.0 V latch +0.503 A; brake-onset rise 0.78 V (bt6: 0.12 V); OV_BUS margin +2.69 V
+   design chain, r 0.15      : traction allowance to 13.82 V +0.026 A, to the no-dwell 13.0 V latch +0.436 A; brake-onset rise 0.81 V (bt6: 0.12 V); OV_BUS margin +2.76 V
+  D-MT-EN blocks V-MOT -> bus and pin 30 is LOW (OR-7), so the regen energy stays on V-MOT (VESC stop 21.35 V,
+  chopper 22.13 V, facts_prior s6) as in fw v37 Run today; no rating is exceeded on braking. The re-acceleration
+  after the brake is the binding event: at the window split the FC-only bus has no traction allowance to the
+  module threshold (0.03-0.08 A) and 0.44-0.50 A to the no-dwell latch under the design-chain or HIL droop.
+  (The large allowances of the stiff rows are voltage headroom only; the FC budget of Table 8 still binds there.)
+  HIL witness (campaign I charge-cruise, fw v28, codes 4067/717, traction 3.5 A current command): in-window
+  V_bus min 13.18 V, V_chg min 13.13 V at I_fc up to 1.40 A - 0.13 V above the IC1 reading-(a) threshold.

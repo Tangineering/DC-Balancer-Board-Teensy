@@ -1,0 +1,45 @@
+
+[1 BRD geometry at the BQ29200 (M16 clamp landing)]
+RB3 and RB1A package RESC1005X40 (0402); BQ29200 DRB 8-SON; CBL2 CAPC1608X85 (0603)
+RB3 pad pitch (VMID pad to VC1 pad)   1.015 mm
+RB1A pad pitch (VMID pad to VC1_CB)   1.015 mm
+D_VC1 as specified: RB3 pad2 -> CBL2 pad2 (GND) 2.35 mm; alternative across CBL2 itself 1.55 mm
+D_VCB: RB1A pad2 -> CBL2 pad2 3.54 mm (crosses the VC1 trace at x=19.32); -> GND via (20.066,29.21) 1.08 mm
+clearance BQ29200 group (y<=32.3) to Ag105 body edge (y=34.5): 2.2 mm; GND pour solid, thermals=no (BRD)
+anode-to-VMID bridge, R_loop 0.05 Ohm ASSUMED: cell-1 short 84 A (no fuse in the balance lead)
+anode-to-VMID bridge, R_loop 0.20 Ohm ASSUMED: cell-1 short 21 A (no fuse in the balance lead)
+anode-to-VMID bridge, R_loop 0.50 Ohm ASSUMED: cell-1 short 8 A (no fuse in the balance lead)
+C-1 diode test with a VMID bridge, balance plug out: GND->VC1 reads RB3 = 0.26 V both directions; GND->VC1_CB reads RB1A = 0.10 V both directions (reverse is not open -> C-1 catches it)
+
+[2 F50 (Q_MD D-S short or U_MDI stuck HIGH) in a Stage-2 regen window]
+V 17.20 V: R_MD 1.147 A; steady eFuse input 1.165 A (U_IM min 1.51: NO trip); ramp-end peak 1.747 A (may trip, unit-dependent)
+V 18.00 V: R_MD 1.200 A; steady eFuse input 1.218 A (U_IM min 1.51: NO trip); ramp-end peak 1.800 A (may trip, unit-dependent)
+V 21.35 V: R_MD 1.423 A; steady eFuse input 1.441 A (U_IM min 1.51: NO trip); ramp-end peak 2.023 A (trips)
+V 21.50 V: R_MD 1.433 A; steady eFuse input 1.451 A (U_IM min 1.51: NO trip); ramp-end peak 2.033 A (trips)
+module boot 65-170 ms vs pulse 19-47 ms (design CC-16): the module draws ~I_q inside a pulse, so the module term does not lift the input above U_IM
+pulse 19 ms: 0.59 J per pulse in R_MD (healthy dump 0.051 J); window mean 1.09 W (x12 the 0.095 W design mean) over 56 pulses / 30 s
+pulse 47 ms: 1.45 J per pulse in R_MD (healthy dump 0.051 J); window mean 2.71 W (x28 the 0.095 W design mean) over 56 pulses / 30 s
+pin-8 positive control: node fed by the eFuse -> pin 8 HIGH -> passes; ERR_MOD_DRAIN: dump works -> passes
+FC window 16 V: R_MD 1.067 A + aux 0.15 A = 1.217 A; + inrush up to 0.6 A -> above OC_FC 1.4 A at the first window (State 99): Stage 1 is covered by OC_FC, not by U_IM as row F50 states
+rms through R_MD over a window: healthy 0.055 A, stuck-on (47 ms pulses) 0.424 A (x7.7)
+
+[3 C-2 U_MS threshold ramp with Q_MD on (bonded, EF_EN L)]
+ramp at 8.69 V: load 0.582 A, R_MD 5.03 W (2512 continuous ~1 W class, TODO(select))
+ramp at 9.15 V: load 0.613 A, R_MD 5.58 W (2512 continuous ~1 W class, TODO(select))
+ramp at 9.50 V: load 0.636 A, R_MD 6.02 W (2512 continuous ~1 W class, TODO(select))
+current-limited supply 0.1 A: node cannot exceed 1.49 V (threshold not reachable)
+current-limited supply 0.5 A: node cannot exceed 7.47 V (threshold not reachable)
+0 -> 9.5 V ramp over 9.5 s with Q_MD on: 19.0 J into R_MD (healthy dump 0.051 J, probe cap 1.71 J)
+
+[4 Pin 8 (ENC_B net) LOW-level load on U_MS]
+RENC2 2.2k: U_MS sinks 1.98 mA at 3.3 V
+RENC2 4.7k: U_MS sinks 1.18 mA at 3.3 V
+U_MS V_OL at that sink: TODO(verify: SBOS300C); Teensy V_IL max TODO(verify: IMXRT1060 datasheet)
+
+[5 Section 15 listed order vs prerequisites]
+D-3    at position  4: after M1, M2, M13, M16 (all Stage-1 rework) -> cannot be 'pre-rework'
+P-M1   at position 10: after M1 and F_VX (CB fitted)
+C-2    at position 14: contains fed-exit items (pin-8 drain, ERR_MOD_DRAIN, V_chg after a window) that need a powered module; commissioning step 1 requires C-2 to pass first, and an un-commissioned module latches ERR_AG105_CFG
+B-FPK  at position 20: F_PK at its M14 position (Stage-1 harness)
+B-PKN  at position 21: SB and R_SH (Stage-1), M16 clamps, and C-1 clamp-orientation check before any balance-plug connection
+commissioning 9.2 step 1 prerequisites: C-1, C-1b, C-1c, C-2, P8, B-FPK, B-PKN, BG-17, D-3 (C-1d not listed)

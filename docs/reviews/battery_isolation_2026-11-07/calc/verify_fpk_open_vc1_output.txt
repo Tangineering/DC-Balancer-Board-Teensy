@@ -1,0 +1,7 @@
+Vcell2=3.0 VF=0.5: R_par=72.3 Ohm, I_max=34.6 mA (RB3 9.6 mA 24 mW vs 100 mW; RB1A 25.0 mA 63 mW vs 125 mW); VC1-GND ~ -0.5 V vs -0.3 V abs max
+Vcell2=3.0 VF=0.7: R_par=72.3 Ohm, I_max=31.8 mA (RB3 8.8 mA 20 mW vs 100 mW; RB1A 23.0 mA 53 mW vs 125 mW); VC1-GND ~ -0.7 V vs -0.3 V abs max
+Vcell2=3.7 VF=0.5: R_par=72.3 Ohm, I_max=44.3 mA (RB3 12.3 mA 39 mW vs 100 mW; RB1A 32.0 mA 102 mW vs 125 mW); VC1-GND ~ -0.5 V vs -0.3 V abs max
+Vcell2=3.7 VF=0.7: R_par=72.3 Ohm, I_max=41.5 mA (RB3 11.5 mA 34 mW vs 100 mW; RB1A 30.0 mA 90 mW vs 125 mW); VC1-GND ~ -0.7 V vs -0.3 V abs max
+Vcell2=4.2 VF=0.5: R_par=72.3 Ohm, I_max=51.2 mA (RB3 14.2 mA 52 mW vs 100 mW; RB1A 37.0 mA 137 mW vs 125 mW); VC1-GND ~ -0.5 V vs -0.3 V abs max
+Vcell2=4.2 VF=0.7: R_par=72.3 Ohm, I_max=48.4 mA (RB3 13.4 mA 47 mW vs 100 mW; RB1A 35.0 mA 123 mW vs 125 mW); VC1-GND ~ -0.7 V vs -0.3 V abs max
+Fix (fuse in pack+): VC1-GND = V(cell1) >= 3.0 V > -0.3 V; VC2-VC1 = Vcell2 <= 4.2 V < 8 V

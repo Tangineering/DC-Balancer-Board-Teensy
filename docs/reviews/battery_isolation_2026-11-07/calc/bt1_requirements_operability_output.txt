@@ -1,0 +1,56 @@
+
+==============================================================================
+A. Regen pulse: hardware chain latency against the V-MOT rise (design sec 7.8, Table 11)
+==============================================================================
+chain VOK assert -> Ag105 input at 18 V: 12.84 ms (typical; t_D_ON has no max)
+  rise   19 ms, assert 16.90 V: assert->peak  15.5 ms; budget left for Ag105 start + tau   +2.7 ms
+  rise   19 ms, assert 17.24 V: assert->peak  14.3 ms; budget left for Ag105 start + tau   +1.5 ms
+  rise   47 ms, assert 16.90 V: assert->peak  38.4 ms; budget left for Ag105 start + tau  +25.5 ms
+  rise   47 ms, assert 17.24 V: assert->peak  35.4 ms; budget left for Ag105 start + tau  +22.6 ms
+  EVAL 3.2 requirement: tau_warm <= 2 ms (board C) / <= 4 ms (0.97 mF); design S0-6 GO uses 'about 15 ms'
+
+==============================================================================
+B. Regen energy captured per pulse with a cold start (design sec 7.8: every pulse starts cold)
+==============================================================================
+  C 0.48 mF: node energy above 18 V   31.6 mJ; harvested per pulse   0.0-  22.5 mJ; 2 pulses ->   0.0-  45.0 mJ = 0.00-0.71 % of 6.32 J; into pack  0.0-  5.0 mC vs 661 mC
+  C 0.97 mF: node energy above 18 V   63.9 mJ; harvested per pulse   0.0-  45.5 mJ; 2 pulses ->   0.0-  91.0 mJ = 0.00-1.44 % of 6.32 J; into pack  0.0- 10.0 mC vs 661 mC
+  C 4.00 mF: node energy above 18 V  263.6 mJ; harvested per pulse   0.0- 187.6 mJ; 2 pulses ->   0.0- 375.2 mJ = 0.00-5.94 % of 6.32 J; into pack  0.0- 41.3 mC vs 661 mC
+
+==============================================================================
+C. HR1 23 W against the design's own regen entry gate V_batt < 8.0 V (design sec 9.5)
+==============================================================================
+  V_pack 7.4 V: regen profile (I_o 2.35 A) P_in 19.76 W; module ceiling 2.5 A 21.02 W
+  V_pack 7.8 V: regen profile (I_o 2.35 A) P_in 20.83 W; module ceiling 2.5 A 22.16 W
+  V_pack 8.0 V: regen profile (I_o 2.35 A) P_in 21.36 W; module ceiling 2.5 A 22.73 W
+  23 W needs V_pack >= 8.10 V at 2.5 A; the entry gate admits only V_batt < 8.0 V -> 23 W unreachable in any window
+
+==============================================================================
+D. FC window charge per H-20 purge cycle at standstill (design sec 9.7)
+==============================================================================
+  cold start 0.065 s: start  0.07 s, charging  9.54 s/cycle, 11.92 C/cycle, mean 1.153 A, ~  3.9 h for 90 % of a 5 Ah pack (capacity UNVERIFIED)
+  cold start 0.17 s: start  0.17 s, charging  9.43 s/cycle, 11.79 C/cycle, mean 1.140 A, ~  3.9 h for 90 % of a 5 Ah pack (capacity UNVERIFIED)
+  Bring-Up into open VCHG, 2 -> 7.4 V at 0.64 V/s (no R_KA, ruling 9): start  8.44 s, charging  1.16 s/cycle,  1.45 C/cycle, mean 0.141 A, ~ 32.0 h for 90 % of a 5 Ah pack (capacity UNVERIFIED)
+  Bring-Up into open VCHG, 2 -> 8.4 V at 0.64 V/s: start 10.00 s, charging  0.00 s/cycle,  0.00 C/cycle, mean 0.000 A, ~  inf h for 90 % of a 5 Ah pack (capacity UNVERIFIED)
+  With fw v33b in force (ino:15483-15500), fcUvLockoutActive() re-arms on every purge (UV_FC_PURGE_LOCKOUT_MS 30 s
+  > 10.34 s interval): on a running H-20 every window is refused -> 0 C/cycle.
+
+==============================================================================
+E. Drive-cycle fractions: standstill time and true braking time
+==============================================================================
+  UDDS_trimmed_3.5mps.csv     :   333.0 s; standstill  17.4 %; decel steeper than coast-down  0.00 % in 0 events
+  UDDS_trimmed_to_idle.csv    :   333.0 s; standstill  17.4 %; decel steeper than coast-down  0.00 % in 0 events
+  RegenTest_decel_sweep.csv   :   183.3 s; standstill  52.9 %; decel steeper than coast-down  5.18 % in 5 events
+  RegenTest_v2_lowspeed.csv   :   151.5 s; standstill  56.1 %; decel steeper than coast-down  4.22 % in 6 events
+
+==============================================================================
+F. Self-test step 7 charge-mode exposure (design sec 9.3)
+==============================================================================
+  Step 7 holds FF1 set until the pump clears it: 43-76 ms (calc sec 4), limit 90 ms,
+  against the design's statement 'at most about 2 ms per step'. Idle pack discharge (Teensy + aux, BT_BUS closed)
+  then runs reverse through the Ag105 sense for up to 90 ms at every Idle entry.
+
+==============================================================================
+G. UDDS stop durations (FC window candidates if State-2 standstill windows were allowed)
+==============================================================================
+  stops: 2; durations (s): [20.0, 38.0]
+  charge time if every stop were a window (0.6 s guards, 0.17 s start): 56.5 s of 333 s -> 70.6 C per cycle (purge synchronisation ignored)

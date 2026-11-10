@@ -1,0 +1,78 @@
+
+==============================================================================
+Section 1. Q_MD stuck ON (F50): eFuse input against U_IM and OC_FC, R_MD energy
+==============================================================================
+FC bus / bench 16 V: R_MD current 1.067 A, 17.1 W
+regen peak 21.5 V: R_MD current 1.433 A, 30.8 W
+config check / commissioning (pin 32 LOW): eFuse input 1.093 A vs U_IM 1.508-1.977 A -> trip = False; FC bus 1.243 A vs OC_FC 1.4 A -> latch = False
+  R_MD energy for a 0.5 s powered interval (AG105_SETTLE_MS 500 ms + reads): 8.5 J
+  R_MD energy for a 1.0 s powered interval (AG105_SETTLE_MS 500 ms + reads): 17.1 J
+  R_MD energy for a 2.0 s powered interval (AG105_SETTLE_MS 500 ms + reads): 34.1 J
+FC window charging, V_batt 7.4: module input 0.657 A, eFuse input 1.724 A (U_IM trips on a unit iff its trip <= 1.724 A; units trimmed to 1.508-1.977 A); FC bus 1.874 A -> OC_FC (BENCH_TEST 0) = True
+FC window charging, V_batt 8.0: module input 0.710 A, eFuse input 1.777 A (U_IM trips on a unit iff its trip <= 1.777 A; units trimmed to 1.508-1.977 A); FC bus 1.927 A -> OC_FC (BENCH_TEST 0) = True
+FC window charging, V_batt 8.4: module input 0.746 A, eFuse input 1.812 A (U_IM trips on a unit iff its trip <= 1.812 A; units trimmed to 1.508-1.977 A); FC bus 1.962 A -> OC_FC (BENCH_TEST 0) = True
+  before the module starts (cold start 65-170 ms, Bring-Up up to ~8-12 s, DD Table 11): eFuse input 1.085 A, FC bus 1.235 A: no U_IM, no OC_FC
+  a 30 s FC window on a BENCH_TEST 1 build with a unit trimmed above the sum: 512 J into R_MD
+regen pulse at 19.0 V for 19 ms (upper bound, VCHG-IN held): 0.46 J; 56 pulses per 30 s window (calc CC s3 cadence): 26 J, mean 0.85 W
+regen pulse at 21.5 V for 47 ms (upper bound, VCHG-IN held): 1.45 J; 56 pulses per 30 s window (calc CC s3 cadence): 81 J, mean 2.70 W
+
+==============================================================================
+Section 2. MS (U_MS sense wire) shorted to SHDN_EF: U_MS mirrors EF_EN
+==============================================================================
+EF_EN 3.3 V, node   0.0 V: shorted node 2.954 V -> pin 8 HIGH (fed); healthy reading would be LOW; eFuse SHDN ON
+EF_EN 3.3 V, node   9.0 V: shorted node 3.034 V -> pin 8 HIGH (fed); healthy reading would be HIGH; eFuse SHDN ON
+EF_EN 3.3 V, node  16.0 V: shorted node 3.097 V -> pin 8 HIGH (fed); healthy reading would be HIGH; eFuse SHDN ON
+EF_EN 3.3 V, node  21.5 V: shorted node 3.146 V -> pin 8 HIGH (fed); healthy reading would be HIGH; eFuse SHDN ON
+EF_EN 0.0 V, node   0.0 V: shorted node 0.000 V -> pin 8 LOW (cold); healthy reading would be LOW; eFuse SHDN OFF
+EF_EN 0.0 V, node   9.0 V: shorted node 0.081 V -> pin 8 LOW (cold); healthy reading would be HIGH; eFuse SHDN OFF
+EF_EN 0.0 V, node  16.0 V: shorted node 0.143 V -> pin 8 LOW (cold); healthy reading would be HIGH; eFuse SHDN OFF
+EF_EN 0.0 V, node  21.5 V: shorted node 0.192 V -> pin 8 LOW (cold); healthy reading would be HIGH; eFuse SHDN OFF
+-> the window works, the positive control (EF_EN H) passes, every exit 'drains' at once, the probe
+   (EF_EN L, bypass puts 16 V on the node) reads cold = PASS, ERR_MOD_FED can never assert.
+healthy U_MS stays HIGH after the feed drop: C_mod 100 uF from 16.0 V to 9.15 V: 0.84 ms
+healthy U_MS stays HIGH after the feed drop: C_mod 100 uF from 21.5 V to 9.15 V: 1.28 ms
+healthy U_MS stays HIGH after the feed drop: C_mod 221 uF from 16.0 V to 9.15 V: 1.85 ms
+healthy U_MS stays HIGH after the feed drop: C_mod 221 uF from 21.5 V to 9.15 V: 2.83 ms
+mirrored U_MS falls with the SHDN node: tau 0.90 us plus tSD 0.8-1.5 us and the comparator delay
+
+==============================================================================
+Section 3. Stage 3 with the revision-6 exit rule (Q_MD re-keyed to FF1./Q, R_MB kept)
+==============================================================================
+exit step 2 with FF1 still set (Q_MD off): C_HU 1.5 mF from 18.0 V to 9.15 V through R_MB alone: 3.35 s (T_drain,max 10 ms -> ERR_MOD_DRAIN on every commanded exit)
+exit step 2 with FF1 still set (Q_MD off): C_HU 1.5 mF from 21.5 V to 9.15 V through R_MB alone: 4.23 s (T_drain,max 10 ms -> ERR_MOD_DRAIN on every commanded exit)
+C_HU 1.38 mF, 18 V -> 11 V: idle only 537 ms; with R_MB 432 ms (DD 14.4 sizing target 535 ms)
+C_HU 1.50 mF, 18 V -> 11 V: idle only 583 ms; with R_MB 469 ms (DD 14.4 sizing target 535 ms)
+
+==============================================================================
+Section 4. D_VC1 / D_VCB reverse leakage and short (BQ29200 accuracy, balancer, cell-1 drain)
+==============================================================================
+D_VC1 I_R     10 uA: VC1 reads low by    2.6 mV; bottom-cell OVP late / top-cell OVP early by 2.6 mV (0.1 x the +/-25 mV OVP accuracy); apparent mismatch 5.2 mV (balancing starts at 17-45 mV, stops near 0 +/-9 mV: steady true imbalance driven toward ~5 mV); cell-1 drain 7.2 mAh per 30 days
+D_VC1 I_R     50 uA: VC1 reads low by   13.0 mV; bottom-cell OVP late / top-cell OVP early by 13.0 mV (0.5 x the +/-25 mV OVP accuracy); apparent mismatch 26.0 mV (balancing starts at 17-45 mV, stops near 0 +/-9 mV: steady true imbalance driven toward ~26 mV); cell-1 drain 36.0 mAh per 30 days
+D_VC1 I_R    100 uA: VC1 reads low by   26.0 mV; bottom-cell OVP late / top-cell OVP early by 26.0 mV (1.0 x the +/-25 mV OVP accuracy); apparent mismatch 52.0 mV (balancing starts at 17-45 mV, stops near 0 +/-9 mV: steady true imbalance driven toward ~52 mV); cell-1 drain 72.0 mAh per 30 days
+D_VC1 I_R    300 uA: VC1 reads low by   78.0 mV; bottom-cell OVP late / top-cell OVP early by 78.0 mV (3.1 x the +/-25 mV OVP accuracy); apparent mismatch 156.0 mV (balancing starts at 17-45 mV, stops near 0 +/-9 mV: steady true imbalance driven toward ~156 mV); cell-1 drain 216.0 mAh per 30 days
+D_VC1 I_R   1000 uA: VC1 reads low by  260.0 mV; bottom-cell OVP late / top-cell OVP early by 260.0 mV (10.4 x the +/-25 mV OVP accuracy); apparent mismatch 520.0 mV (balancing starts at 17-45 mV, stops near 0 +/-9 mV: steady true imbalance driven toward ~520 mV); cell-1 drain 720.0 mAh per 30 days
+  ASSUMED x2/10 K: a part at the DD limit 10 uA (25 C) leaks 10 uA at 25 C -> VC1 error 2.6 mV
+  ASSUMED x2/10 K: a part at the DD limit 10 uA (25 C) leaks 40 uA at 45 C -> VC1 error 10.4 mV
+  ASSUMED x2/10 K: a part at the DD limit 10 uA (25 C) leaks 160 uA at 65 C -> VC1 error 41.6 mV
+  ASSUMED x2/10 K: a part at the DD limit 10 uA (25 C) leaks 640 uA at 85 C -> VC1 error 166.4 mV
+D_VCB short or reversed (F47, undetected in service): cell-1 drain 37 mA (0.89 Ah per day; RB1A 137 mW in a 125 mW part)
+D_VCB short or reversed (F47, undetected in service): cell-1 drain 42 mA (1.01 Ah per day; RB1A 176 mW in a 125 mW part)
+
+==============================================================================
+Section 5. F_VX open inside a charge window (row F14 restated)
+==============================================================================
+V_pack 7.4: module output pins VBT at ~8.3 V; pack(-) sits +0.90 V vs GND -> S_GND body diodes reverse-biased: the module, not the pack, supplies the board load, return to Vin- outside the sense
+V_pack 7.8: module output pins VBT at ~8.3 V; pack(-) sits +0.50 V vs GND -> S_GND body diodes reverse-biased: the module, not the pack, supplies the board load, return to Vin- outside the sense
+V_pack 8.2: module output pins VBT at ~8.3 V; pack(-) sits +0.10 V vs GND -> S_GND body diodes reverse-biased: the module, not the pack, supplies the board load, return to Vin- outside the sense
+
+==============================================================================
+Section 6. D_VCB short with balancing enabled: BQ29200 top-cell balance switch from VDD to a grounded VC1_CB
+==============================================================================
+RCB2    33 Ohm (max ICB 15 mA), VBAL+ 7.4: switch current  55.5 mA (3.7 x the 15 mA internal-balancing figure), VDD 1.85 V (below the 4 V VDD minimum of SLUSA52C 7.3/7.6)
+RCB2    33 Ohm (max ICB 15 mA), VBAL+ 8.4: switch current  63.0 mA (4.2 x the 15 mA internal-balancing figure), VDD 2.10 V (below the 4 V VDD minimum of SLUSA52C 7.3/7.6)
+RCB2   160 Ohm (nom ICB 10 mA), VBAL+ 7.4: switch current  28.5 mA (1.9 x the 15 mA internal-balancing figure), VDD 4.55 V (above the 4 V VDD minimum of SLUSA52C 7.3/7.6)
+RCB2   160 Ohm (nom ICB 10 mA), VBAL+ 8.4: switch current  32.3 mA (2.2 x the 15 mA internal-balancing figure), VDD 5.17 V (above the 4 V VDD minimum of SLUSA52C 7.3/7.6)
+RCB2   540 Ohm (min ICB 5 mA), VBAL+ 7.4: switch current  11.6 mA (0.8 x the 15 mA internal-balancing figure), VDD 6.24 V (above the 4 V VDD minimum of SLUSA52C 7.3/7.6)
+RCB2   540 Ohm (min ICB 5 mA), VBAL+ 8.4: switch current  13.1 mA (0.9 x the 15 mA internal-balancing figure), VDD 7.09 V (above the 4 V VDD minimum of SLUSA52C 7.3/7.6)
+cell-1 drain through RB1A with D_VCB shorted: 37-42 mA (section 4); the balancer sees cell 2 high by >17-45 mV
+once cell 1 has lost the mismatch, and pulls VDD into the grounded VC1_CB through RCB2.

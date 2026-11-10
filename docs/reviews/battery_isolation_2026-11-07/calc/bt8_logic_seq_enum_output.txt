@@ -1,0 +1,92 @@
+
+================================================================================================================
+Section 1: revision-8 LB-entry resistors (R_BL3/R_BL2, R_PGL, R_MS3, R_VC1c): logic levels, every GPIO level
+================================================================================================================
+  BAL_OK = VBAL+ x R_BL2 / (R_BL1 + R_BL3 + R_BL2), offset +/- I_I x Thevenin (I_I 5 uA, TODO(verify: TI SN74LVC244A))
+    R_BL2 100k  pack 7.4 V: nominal 2.492 V, worst 2.160 V  (VIH 2.0 V) -> H
+    R_BL2 100k  pack 8.0 V: nominal 2.694 V, worst 2.362 V  (VIH 2.0 V) -> H
+    R_BL2 100k  pack 8.5 V: nominal 2.862 V, worst 2.530 V  (VIH 2.0 V) -> H
+    R_BL2 100k: lowest pack with a guaranteed H = 6.92 V (Thevenin 66.3 kOhm, offset 0.332 V)
+    R_BL2  82k  pack 7.4 V: nominal 2.175 V, worst 1.885 V  (VIH 2.0 V) -> INDETERMINATE
+    R_BL2  82k  pack 8.0 V: nominal 2.351 V, worst 2.062 V  (VIH 2.0 V) -> H
+    R_BL2  82k  pack 8.5 V: nominal 2.498 V, worst 2.209 V  (VIH 2.0 V) -> H
+    R_BL2  82k: lowest pack with a guaranteed H = 7.79 V (Thevenin 57.9 kOhm, offset 0.289 V)
+    The fitted value is 100 kOhm (Table 7: 'R_BL2 was 82 kOhm'); the 82 kOhm rows are the pre-revision-8 value.
+  PROFILE HIGH at 3V3 3.2 V: Q_CS/Q_MP V_GS = 2.60 V (BSS138 V_GS(th) max 1.5 V) -> ON
+  PROFILE HIGH at 3V3 3.3 V: Q_CS/Q_MP V_GS = 2.68 V (BSS138 V_GS(th) max 1.5 V) -> ON
+  PROFILE HIGH at 3V3 3.4 V: Q_CS/Q_MP V_GS = 2.76 V (BSS138 V_GS(th) max 1.5 V) -> ON
+  PROFILE with pin 10 L or Z: pin-10 net on R_P10 10k, CB gates on R_PGP 100k -> 0 V -> OFF (regen profile)
+  U_MS IN+: lead node Thevenin 13.94 kOhm x C_MS 1 nF = 13.9 us; R_MS3 22k x C_in (pF) adds < 0.1 us
+    exit hold check samples at 50 us and 150 us: unchanged by R_MS3 (TLV3011B input bias pA range)
+  VC1 tap at the bond: PACK- step 0.05 V -> mismatch term 2 x step decays below 80 mV in 2.7 ms (persistence 1 s)
+  VC1 tap at the bond: PACK- step 0.10 V -> mismatch term 2 x step decays below 80 mV in 11.2 ms (persistence 1 s)
+  VC1 tap at the bond: PACK- step 0.20 V -> mismatch term 2 x step decays below 80 mV in 19.6 ms (persistence 1 s)
+  (c) Teensy unpowered/reset, pins 33/28/29/30/31/32/10/5/8/20 in {L,H,Z}: 15116544 states, S_GND off or eFuse on without a residual: 0
+
+  Reading. The four revision-8 resistors change analog levels only. BAL_OK holds a guaranteed H down to a 6.92 V pack
+  with the fitted 100 kOhm (0.48 V below the 7.4 V entry floor); PROFILE drives the CB FETs at 2.60-2.76 V; U_MS and
+  the exit hold check keep their timing; the VC1 tap transient at a bond is 2-14 ms against a 1 s persistence. No
+  revision-8 resistor is a term of the latch, the eFuse enable or the S_GND drive, so (a), (b), (c) are unchanged.
+
+================================================================================================================
+Section 2: revision-11 sequences through the hardware network (bt5.hw5): (a), (b), (b'), (d)
+================================================================================================================
+  R11-1 State-2 dump check (pin 32 L) then window at the same stop   steps 11, states  176: (a) 0 (b) 0 (b') 32 (d) 0
+  R11-1 dump check aborted by traction (no verdict)                  steps  5, states   80: (a) 0 (b) 0 (b') 0 (d) 0
+  R11-5 / F64 exit step 4 with BT_REG LOW -> latch, no BT_BUS write  steps  5, states   80: (a) 0 (b) 0 (b') 0 (d) 0
+  P exit on a State 1->2 request (VESC held)                         steps  4, states   64: (a) 0 (b) 0 (b') 0 (d) 0
+  Finish inside a D-s window (exit continues in State 1)             steps  4, states   64: (a) 0 (b) 0 (b') 0 (d) 0
+  State-98 Q inside a P window (exit, then MOT_PWR L)                steps  5, states   80: (a) 0 (b) 0 (b') 0 (d) 0
+  Idle-entry self-test steps 4-8 after a P exit (charge mode, BT_BUS H) steps  4, states   64: (a) 0 (b) 0 (b') 32 (d) 0
+
+  Reading. (a), (b) and (d) are 0 on every revision-11 sequence. The (b') states are the charge-mode steps with BT_BUS
+  HIGH and FCQ LOW (entry steps 3-4, self-test steps 4-8), the accepted board load through the sense in reverse.
+
+================================================================================================================
+Section 3: timed model - R11-5 exit rule (F64) and the R11-4 restore against D-BT-EN conduction
+================================================================================================================
+  loop 1.131 ms, BT_REG LOW: latch (1326.6630000000039, 'R11-5 BT_REG LOW at exit step 4'); BT_BUS write None; FC_BUS at the FC recovery (False, False)
+  loop 1.341 ms, BT_REG LOW: latch (1327.5899999999813, 'R11-5 BT_REG LOW at exit step 4'); BT_BUS write None; FC_BUS at the FC recovery (False, False)
+  Restore of the stored split = the iteration after the BT_BUS write (12.4 item 10):
+    loop 1.131 ms, no gap: restore at write + 1.13 ms; D-BT-EN conduction bound write + 27.8 ms -> restore first
+    loop 1.131 ms, no gap: restore at write + 1.13 ms; D-BT-EN conduction bound write + 31.8 ms -> restore first
+    loop 1.131 ms, 9.76 ms gap after the write: restore at write + 9.76 ms; D-BT-EN conduction bound write + 27.8 ms -> restore first
+    loop 1.131 ms, 9.76 ms gap after the write: restore at write + 9.76 ms; D-BT-EN conduction bound write + 31.8 ms -> restore first
+    loop 1.341 ms, no gap: restore at write + 1.34 ms; D-BT-EN conduction bound write + 27.8 ms -> restore first
+    loop 1.341 ms, no gap: restore at write + 1.34 ms; D-BT-EN conduction bound write + 31.8 ms -> restore first
+    loop 1.341 ms, 9.76 ms gap after the write: restore at write + 9.76 ms; D-BT-EN conduction bound write + 27.8 ms -> restore first
+    loop 1.341 ms, 9.76 ms gap after the write: restore at write + 9.76 ms; D-BT-EN conduction bound write + 31.8 ms -> restore first
+
+  Reading. With BT_REG LOW the exit latches at step 4 with no BT_BUS write, and FC_BUS is LOW at the FC recovery: the
+  bt7 section-6 trace is closed (no write onto a disabled TPS61288). The restore lands 1.1-9.8 ms after the BT_BUS
+  write, before the 27.8-31.8 ms conduction bound of Table 20 in every case (Appendix I item 3). The R11-5 entry
+  condition makes the BT_REG-LOW exit reachable only through a firmware defect (row F64).
+
+================================================================================================================
+Section 4: Idle-entry self-test vs a standing request (OR-RQ parked form) and Run/Idle/State-98 transitions
+================================================================================================================
+  T1 Run -> Pi MODE_SAFE + 0xA5 + charge_goal (parked form, 9.11.6) -> Finish -> Idle    [as written] self-test deferred (aborted by the window request at its first step) -> windows REFUSED until a later Idle entry passes
+  T1 Run -> Pi MODE_SAFE + 0xA5 + charge_goal (parked form, 9.11.6) -> Finish -> Idle    [wait] self-test pass -> windows admitted
+  T2 Idle with the parked request already standing at a later Idle entry                 [as written] self-test deferred (aborted by the window request at its first step) -> windows REFUSED until a later Idle entry passes
+  T2 Idle with the parked request already standing at a later Idle entry                 [wait] self-test pass -> windows admitted
+  T3 State 98 -> Q (MOT_PWR LOW, ino:9279) -> Idle, Stage 2, no request                  [as written] self-test deferred (step 10, MOT_PWR LOW) -> windows REFUSED until a later Idle entry passes
+  T3 State 98 -> Q (MOT_PWR LOW, ino:9279) -> Idle, Stage 2, no request                  [wait] self-test deferred (step 10, MOT_PWR LOW) -> windows REFUSED until a later Idle entry passes
+  T4 State 98 -> Q -> Idle, Stage 1, parked request standing                             [as written] self-test deferred (aborted by the window request at its first step) -> windows REFUSED until a later Idle entry passes
+  T4 State 98 -> Q -> Idle, Stage 1, parked request standing                             [wait] self-test pass -> windows admitted
+  T5 boot -> State 0 -> State 1 (if an Idle entry runs the self-test) -> Pi mode_cmd 0-3 (changeToRun):
+      first command 0.04 s: deferred (aborted by the State-2 request at 40 ms < 457.5 ms) -> D-s windows in this Run REFUSED
+      first command 0.02 s: deferred (aborted by the State-2 request at 20 ms < 457.5 ms) -> D-s windows in this Run REFUSED
+      first command 0.00 s: deferred (aborted by the State-2 request at 0 ms < 457.5 ms) -> D-s windows in this Run REFUSED
+      first command 0.04 s: deferred (aborted by the State-2 request at 40 ms < 457.5 ms) -> D-s windows in this Run REFUSED
+      first command 0.03 s: deferred (aborted by the State-2 request at 30 ms < 457.5 ms) -> D-s windows in this Run REFUSED
+      first command 0.49 s: pass -> D-s windows in this Run admitted
+      5 of 6 recorded sessions would abort (offset of the bag start to the Teensy Idle entry UNCONFIRMED)
+  Later Idle entries reachable from State 1 without driving: State 98 'T' then 'Q' (ino:9279: MOT_PWR LOW; Stage 2 step 10 -> deferred again; Stage 1: request still standing -> aborted again)
+
+  Reading. Section 9.3 'Abort' and 12.4 item 8 abort the Idle-entry self-test on a window request and record
+  'deferred'; a deferred result 'refuses every window until a later Idle entry passes'. The OR-RQ parked request is
+  sent in every packet from the MODE_SAFE packet that causes the Finish, so it stands at the Idle entry: the self-test
+  aborts at its first step and every P window of that Idle is refused, with no refusal code in Table 25. A parked
+  vehicle has no later Idle entry that can pass (T2, T4; T3 in Stage 2). The same rule defers the boot-time Idle
+  self-test whenever the Pi commands Run within 357.7-457.5 ms of the Idle entry, which refuses every D-s window of
+  that Run. The 'wait' reading (9.3 last paragraph: the self-test 'delays the first window') removes T1, T2, T4.

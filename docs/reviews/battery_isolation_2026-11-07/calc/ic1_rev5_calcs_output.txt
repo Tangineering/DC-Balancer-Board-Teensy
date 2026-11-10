@@ -1,0 +1,84 @@
+
+[1] SB-internal pack+ short with F_PK at the pack terminal (FM2-1)
+   R_int 40 mOhm (ASSUMED): prospective   174 A -> F_PK 20 A is in the loop (rev 4: no fuse in this loop)
+   R_int 20 mOhm (ASSUMED): prospective   329 A -> F_PK 20 A is in the loop (rev 4: no fuse in this loop)
+   R_int 10 mOhm (ASSUMED): prospective   592 A -> F_PK 20 A is in the loop (rev 4: no fuse in this loop)
+   any loop resistance below 0.37 Ohm exceeds 20 A: the hazard does not depend on R_int
+   F_PK open, body-diode drop 0.30 V (ASSUMED small-signal), V_cell1 3.0 V: VC1 - GND = +2.70 V (limit -0.3 V, SLUSA52C 7.1)
+   F_PK open, body-diode drop 0.30 V (ASSUMED small-signal), V_cell1 3.7 V: VC1 - GND = +3.40 V (limit -0.3 V, SLUSA52C 7.1)
+   F_PK open, body-diode drop 0.30 V (ASSUMED small-signal), V_cell1 4.2 V: VC1 - GND = +3.90 V (limit -0.3 V, SLUSA52C 7.1)
+   F_PK open, body-diode drop 0.50 V (ASSUMED small-signal), V_cell1 3.0 V: VC1 - GND = +2.50 V (limit -0.3 V, SLUSA52C 7.1)
+   F_PK open, body-diode drop 0.50 V (ASSUMED small-signal), V_cell1 3.7 V: VC1 - GND = +3.20 V (limit -0.3 V, SLUSA52C 7.1)
+   F_PK open, body-diode drop 0.50 V (ASSUMED small-signal), V_cell1 4.2 V: VC1 - GND = +3.70 V (limit -0.3 V, SLUSA52C 7.1)
+
+[2] Q_D5 body diode blocked by D_D5S BAT54 (FM2-4)
+   rev 4, N1 0.10 V: D5_N <= 1.50 V (below LVC244A V_IH 2.0 V) -> step 1 fails on a healthy board
+   rev 4, N1 0.32 V: D5_N <= 1.72 V (below LVC244A V_IH 2.0 V) -> step 1 fails on a healthy board
+   rev 5, N1 LOW, D_D5S reverse biased: D5_N >= 3.3 - 20 mV = 3.28 V (hot leakage TODO(verify: BAT54 I_R vs T))
+   rev 5 D5 trip: N1 current 0.29 mA, N1 <= 0.42 V vs VT- min 0.89 V: margin 0.47 V (clear preserved)
+
+[3] Pack-negative open upstream of R_SH: Schottky D_VM from GND to VMID (FM2-6)
+   rev 4: board return through RB3 || RB1A = 72.2 Ohm; VC1 - GND between -V_clamp and -V_cell2 (< -0.3 V)
+   rev 5 with D_VM at V_F 0.20 V (at the brown-out board current, BENCH): VC1 = VMID = -0.20 V -> meets the -0.3 V limit
+   rev 5 with D_VM at V_F 0.25 V (at the brown-out board current, BENCH): VC1 = VMID = -0.25 V -> meets the -0.3 V limit
+   rev 5 with D_VM at V_F 0.30 V (at the brown-out board current, BENCH): VC1 = VMID = -0.30 V -> FAILS the -0.3 V limit
+   rev 5 with D_VM at V_F 0.40 V (at the brown-out board current, BENCH): VC1 = VMID = -0.40 V -> FAILS the -0.3 V limit
+   normal operation: D_VM reverse biased by V_cell1 3.0 V (conducts only if pack(-) < GND - 3.0 V - V_F)
+   normal operation: D_VM reverse biased by V_cell1 4.2 V (conducts only if pack(-) < GND - 4.2 V - V_F)
+
+[4] ERR_IPACK_PLAUS margin (FM2-3, BT2-BM-01)
+   BT_CURRENT 1.0 A at 16.0 V, V_batt 8.4 V, eta 0.9 (ASSUMED): pack discharge >= 2.12 A vs the 0.5 A floor -> x4.2
+   BT_CURRENT 1.0 A at 16.0 V, V_batt 8.4 V, eta 0.95 (ASSUMED): pack discharge >= 2.01 A vs the 0.5 A floor -> x4.0
+   BT_CURRENT 1.0 A at 16.0 V, V_batt 7.4 V, eta 0.9 (ASSUMED): pack discharge >= 2.40 A vs the 0.5 A floor -> x4.8
+   BT_CURRENT 1.0 A at 16.0 V, V_batt 7.4 V, eta 0.95 (ASSUMED): pack discharge >= 2.28 A vs the 0.5 A floor -> x4.6
+   KS+/KS- short: OUT1 = OUT2 = 1.650 V, I_PACK1 = 0 -> ERR_IPACK_PLAUS fires
+
+[5] ERR_VCHG_FED threshold and blanking (FM2-7, BT2-LS-01)
+   bleed 49.20 kOhm x 20 uF: tau 0.984 s
+   from 16.00 V to 11 V: 0.369 s
+   from 17.50 V to 11 V: 0.457 s
+   from 21.47 V to 11 V: 0.658 s
+   threshold 11 V: above the highest unfed level (VBT 8.5 V via R_KA, UNCONFIRMED path) and below the 13.5 V window floor; blanking 1.0 s after any feed edge (> 0.658 s from 21.47 V; TODO(calibrate) at C-2)
+   SCALE_V_CHG full scale 3.3 x 88.7 / 10 = 29.27 V (ino:2030)
+
+[6] ERR_VOK_STUCK re-keyed on channel disagreement (BT2-TR-01)
+   healthy disagreement: rise 2.9 ms; fall 16.5 ms at 20 V/s, 23.6 ms at 14 V/s
+   50 ms threshold valid while the slowest V-MOT decay is >= 6.6 V/s (re-derive if V-MOT C grows)
+   both-permit secondary check: longest post-brake tail 375 ms -> dwell 400 ms after the 200 ms rule
+
+[7] Regen-window open latency: command-step arm (OR-V') against the [RER] power arm (BT2-TR-02, BT2-RO-01)
+   OR-V' arm: pin 30 HIGH 5.4-7.4 ms after the I_cmd step
+   VOK assert 8.5-16.6 ms after the step (onset <= 5 ms + 3.5-11.6 ms): pin 30 leads VOK by +1.1 ms at the worst pairing (19 ms pulse, p99 loop)
+   [RER] power arm: pin 30 HIGH 42.3-45.4 ms after the step; first pulse peaks at 24-52 ms: lost
+
+[8] G1 residual error budget (BT2-TR-04)
+   eta 0.80-0.88 uncalibrated at I_o 1.55 A, 8.4 V / 15.1 V: 0.098 A
+   I_L spread +/-0.05 A (ASSUMED after calibration): 0.035 A
+   I_batt floor 0.10 + eta 0.098 + I_L 0.035 + aux 0.03 + I_PACK1 0.022 = 0.284 A
+   with eta calibrated to +/-0.02 at W1: eta term 0.023 A
+   working I_G1 0.35 A (TODO(calibrate)); D5 range 0.31-0.59 A -> G1 does not resolve sub-D5 flows
+
+[9] IMON over-current comparator U_IM (DS2-1)
+   IMON 0.279 V/A; threshold 3V3 x 10.0k/69.0k = 0.4783 V -> 1.71 A input
+   TLV3011B V_OS -9 mV: trip 1.68 A (IMON gain tolerance excluded)
+   TLV3011B V_OS +9 mV: trip 1.75 A (IMON gain tolerance excluded)
+   legitimate input regen eta 0.88 at the 18 V threshold: 1.24 A
+   legitimate input regen eta 0.80 at the 18 V threshold: 1.37 A
+   legitimate input FC eta 0.80 at the 13.82 V threshold: 1.18 A
+   S0-11 inrush criterion 0.6 A < trip; I_OL min 1.82 A > trip
+
+[10] Module run-on after the eFuse cut (BT2-TR-05, BT2-LS-04, BT2-AG-5): T_drain
+   C_in  10 uF + C_EO: from 21.35 V at 22.4 W:   1.8 mJ,  0.08 ms
+   C_in  10 uF + C_EO: from 16.00 V at 14.8 W:   0.7 mJ,  0.05 ms
+   C_in  47 uF + C_EO: from 21.35 V at 22.4 W:   8.0 mJ,  0.36 ms
+   C_in  47 uF + C_EO: from 16.00 V at 14.8 W:   3.2 mJ,  0.22 ms
+   C_in 100 uF + C_EO: from 21.35 V at 22.4 W:  16.9 mJ,  0.75 ms
+   C_in 100 uF + C_EO: from 16.00 V at 14.8 W:   6.8 mJ,  0.46 ms
+   C_in 144 uF + C_EO: from 21.35 V at 22.4 W:  24.3 mJ,  1.08 ms
+   C_in 144 uF + C_EO: from 16.00 V at 14.8 W:   9.8 mJ,  0.66 ms
+   T_drain 2 ms covers C_in up to 144 uF (S0-11 bound); TODO(calibrate) from S0-11
+
+[11] Module output ceiling against I_L (FM2-10)
+   I_set 1.75 A: I_o <= 2.5 A needs I_L <= 0.75 A (Table 4 JSON code 1 rating)
+   I_set 1.25 A: I_o <= 2.5 A needs I_L <= 1.25 A (Table 4 JSON code 1 rating)
+   regen-window hold condition: estimated I_L <= 0.75 A (BT_CURRENT x V_bus / (eta x V_batt) + LM1084), TODO(calibrate) at B8

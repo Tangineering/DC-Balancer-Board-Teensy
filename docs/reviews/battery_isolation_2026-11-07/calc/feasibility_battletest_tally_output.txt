@@ -1,0 +1,52 @@
+Round 1 (revision 3, 7 lenses): total 62 = 1 blocker + 20 major + 41 minor; refuted 0; matches appendix: True
+  blocker+major by lens: {'ag105': 3, 'build': 5, 'datasheet': 1, 'fmea': 6, 'logic': 4, 'transient': 2}
+Round 2 (revision 4, 7 lenses): total 42 = 1 blocker + 16 major + 25 minor; refuted 0; matches appendix: True
+  blocker+major by lens: {'ag105': 1, 'build': 2, 'datasheet': 1, 'fmea': 6, 'logic': 3, 'requirements': 1, 'transient': 3}
+  blocker+major attributed to the preceding revision's fixes: 1 of 17
+Round 3 (revision 5, 7 lenses): total 25 = 2 blocker + 12 major + 11 minor; refuted 0; matches appendix: True
+  blocker+major by lens: {'ag105': 1, 'build': 4, 'datasheet': 2, 'fmea': 2, 'logic': 2, 'requirements': 1, 'transient': 2}
+  blocker+major attributed to the preceding revision's fixes: 2 of 14
+Round 4 (revision 6, 5 lenses): total 29 = 0 blocker + 9 major + 20 minor; refuted 0; matches appendix: True
+  blocker+major by lens: {'build': 2, 'datasheet': 1, 'fmea': 2, 'logic': 2, 'transient': 2}
+  history cross-check: 10 minors listed + minorCount 10 = 20 (appendix 20): True
+  distinct blocker+major defects: 8
+  blocker+major attributed to the preceding revision's fixes: 7 of 9
+Round 5 (revision 7, 5 lenses): total 22 = 0 blocker + 8 major + 14 minor; refuted 0; matches appendix: True
+  blocker+major by lens: {'build': 2, 'datasheet': 1, 'fmea': 2, 'logic': 2, 'transient': 1}
+  history cross-check: 4 minors listed + minorCount 10 = 14 (appendix 14): True
+  distinct blocker+major defects: 5
+  blocker+major attributed to the preceding revision's fixes: 7 of 8
+Round 6 (revision 9 (purge package), 4 lenses): total 13 = 0 blocker + 3 major + 10 minor; refuted 0; matches appendix: True
+  blocker+major by lens: {'logic': 2, 'transient': 1}
+  history cross-check: 5 minors listed + minorCount 5 = 10 (appendix 10): True
+  distinct blocker+major defects: 3
+  blocker+major attributed to the preceding revision's fixes: 2 of 3
+  blocker+major lying in revision-9 purge-package content: 3 of 3
+Round 7 (revision 10 (purge package), 4 lenses): total 8 = 0 blocker + 3 major + 5 minor; refuted 0; matches appendix: True
+  blocker+major by lens: {'fmea': 1, 'logic': 1, 'requirements': 1}
+  history cross-check: 1 minors listed + minorCount 4 = 5 (appendix 5): True
+  distinct blocker+major defects: 2
+  blocker+major attributed to the preceding revision's fixes: 0 of 3
+  blocker+major lying in revision-9 purge-package content: 3 of 3
+Round 8 (revision 11 (whole design incl. revision-8 hardware), 5 lenses): total 14 = 0 blocker + 3 major + 11 minor; refuted 0; matches appendix: True
+  blocker+major by lens: {'fmea': 1, 'logic': 1, 'requirements': 1}
+  history cross-check: 5 minors listed + minorCount 6 = 11 (appendix 11): True
+  distinct blocker+major defects: 3
+  blocker+major attributed to the preceding revision's fixes: 2 of 3
+  findings (any severity) lying in revision-8 hardware or ruling content: 6 of 14
+  filed as major, lowered to minor by the verifiers: 5
+All rounds: total 215 = 4 blocker + 74 major + 137 minor
+Blocker+major per round: R1 21, R2 17, R3 14, R4 9, R5 8, R6 3, R7 3, R8 3
+  R1->R2 total change: -32.3 %
+  R2->R3 total change: -40.5 %
+  R3->R4 total change: +16.0 %
+  R4->R5 total change: -24.1 %
+  R5->R6 total change: -40.9 %
+  R6->R7 total change: -38.5 %
+  R7->R8 total change: +75.0 %
+Rounds 1-5 attacked the whole design; rounds 6-7 attacked only the purge package (section 9.11); round 8 attacked revision 11 as a whole, aimed at the revision-8 hardware (Appendix F items 1-4) and the revision 9-11 rules.
+Appendix I items 2-6 were not reported on by round 8 (Appendix J); round 8 answered Appendix I item 1.
+Revision 12 (after round 8) has not been battle-tested.
+  rounds 1-5 total 180; rounds 6-7 total 21; round 8 total 14
+Completeness critic: 33 gaps; 18 closed in CC-A; 7 closed in revision 7 (CC-B5, B9, B10, B12-B15); 1 closed in revision 8 (CC-B4); 2 turned into rulings (CC-B1 = OR-Z, CC-B2 = OR-Y); 5 open (CC-B3, CC-B6, CC-B7 part selection, CC-B8, CC-B11).
+  check: 33 = 33

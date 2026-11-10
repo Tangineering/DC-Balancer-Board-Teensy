@@ -1,0 +1,23 @@
+====================================================================================================
+[1] Pre-Run charge requests and H-20 state before the first launch
+====================================================================================================
+  rosbag_sdp_2026-10-26_23-57-14             first command    0.04 s, first launch   55.39 s, first request   72.39 s, request before launch: no , H-20 V_fc>7 V before launch   54.9 s
+  rosbag_sdp_2026-10-28_20-46-53             first command    0.02 s, first launch   55.52 s, first request   67.52 s, request before launch: no , H-20 V_fc>7 V before launch   54.9 s
+  rosbag_sdp_2026-10-28_22-18-10             first command    0.00 s, first launch   55.65 s, first request   67.65 s, request before launch: no , H-20 V_fc>7 V before launch   55.2 s
+  rosbag_sdp_2026-10-29_19-51-48             first command    0.04 s, first launch   55.64 s, first request   67.64 s, request before launch: no , H-20 V_fc>7 V before launch   55.2 s
+  rosbag_sdp_2026-10-30_01-49-38             first command    0.03 s, first launch   55.63 s, first request   67.63 s, request before launch: no , H-20 V_fc>7 V before launch   55.1 s
+  rosbag_sdp_2026-11-05_20-09-52             first command    0.49 s, first launch   55.59 s, first request   67.59 s, request before launch: no , H-20 V_fc>7 V before launch   53.6 s
+  bags with any request: 6; with a request before the first launch: 0
+====================================================================================================
+[2] Request falling edges while still (substitution ends; selector may re-arm)
+====================================================================================================
+  total falling edges at a stop: 0
+====================================================================================================
+[3] EMS 'mode' field and switch_state before the first launch (is the pre-launch interval Idle or Run?)
+====================================================================================================
+  rosbag_sdp_2026-10-26_23-57-14             mode values before launch {0.0: 1107}; switch_state before launch {'0x26': 2770}; t_first_vs 0.00 s
+  rosbag_sdp_2026-10-28_20-46-53             mode values before launch {0.0: 1110}; switch_state before launch {'0x27': 2777}; t_first_vs 0.00 s
+  rosbag_sdp_2026-10-28_22-18-10             mode values before launch {0.0: 1113}; switch_state before launch {'0x26': 2783}; t_first_vs 0.00 s
+  rosbag_sdp_2026-10-29_19-51-48             mode values before launch {0.0: 1112}; switch_state before launch {'0x26': 2782}; t_first_vs 0.00 s
+  rosbag_sdp_2026-10-30_01-49-38             mode values before launch {0.0: 1112}; switch_state before launch {'0x26': 2782}; t_first_vs 0.00 s
+  rosbag_sdp_2026-11-05_20-09-52             mode values before launch {0.0: 1102}; switch_state before launch {'0x26': 2702}; t_first_vs 1.57 s

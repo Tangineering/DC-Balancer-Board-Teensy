@@ -1,0 +1,59 @@
+Section 1. Per-bag purge census (50 Hz /vehicle_state)
+bag                                           dur_s  run_s   n int_med
+rosbag_2026-09-07_22-06-29                       85     85   0       -
+rosbag_2026-09-10_22-10-26                      139    139   0       -
+rosbag_sdp_2026-10-26_23-57-14                  246    243  19  10.340
+rosbag_sdp_2026-10-27_00-52-58                   69     69   0       -
+rosbag_sdp_2026-10-28_20-46-53                  235    232  23  10.340
+rosbag_sdp_2026-10-28_22-18-10                  111    108   8  10.340
+rosbag_sdp_2026-10-29_19-51-48                  235    233  22  10.340
+rosbag_sdp_2026-10-30_01-49-38                  188    186  16  10.340
+rosbag_sdp_2026-11-05_20-09-52                  167    165  16  10.340
+rosbag_simple_2026-10-20_00-38-02               225    225   0       -
+rosbag_sweep-clip_2026-10-22_23-18-00            83     82   8  10.340
+rosbag_sweep-noclip_2026-10-22_23-25-13          83     82   8  10.340
+rosbag_sweep-noclip_2026-10-23_17-27-44          79     78   7  10.340
+rosbag_sweep-noclip_2026-10-25_21-09-10         112    111  11  10.340
+rosbag_sweep-noclip_2026-10-27_01-09-42          79     78   7  10.340
+rosbag_sweep-noclip_2026-10-27_02-52-00          99     98   9  10.340
+rosbag_sweep-noclip_2026-10-30_00-56-01          88     87   5  10.350
+rosbag_sweep-noclip_2026-10-30_01-30-16         202    199  19  10.340
+rosbag_sweep_2026-10-20_04-00-39                120    120   0       -
+rosbag_sweep_2026-10-20_06-40-47                 88     87   8  10.340
+rosbag_sweep_2026-10-20_07-47-28                128    127  12  10.340
+rosbag_sweep_2026-10-20_08-41-34                 98     97   9  10.340
+rosbag_sweep_2026-10-20_09-08-49                110    109  10  10.340
+
+Section 2. Onset-to-onset interval, consecutive pairs only (8-13 s)
+  n = 193; median 10.340 s; mean 10.341 s; sd 0.013 s
+  min 10.320 s; max 10.360 s; p1 10.320; p99 10.360
+  excluded pairs (not consecutive): 6; first 10: [('rosbag_sdp_2026-10-26_23-57-14', np.float64(18.3), np.float64(20.68)), ('rosbag_sdp_2026-10-26_23-57-14', np.float64(101.04), np.float64(20.68)), ('rosbag_sdp_2026-10-26_23-57-14', np.float64(204.44), np.float64(20.68)), ('rosbag_sdp_2026-10-28_22-18-10', np.float64(4.12), np.float64(20.68)), ('rosbag_sdp_2026-10-30_01-49-38', np.float64(29.74), np.float64(20.68)), ('rosbag_sweep_2026-10-20_09-08-49', np.float64(25.28), np.float64(20.68))]
+  load dependence: interval = 10.343 + -0.0138 * mean I_fc[A]; r = -0.126; mean I_fc range 0.000-0.425 A
+  vs mean bus-side FC power: slope -0.0009 s/W over 0.00-6.74 W
+
+Section 3. Prediction error of 'last onset + median of the last <=5 intervals' (onset - t_pred)
+  n = 139; mean 0.1 ms; sd 14.2 ms; min (earliest) -30.0 ms; max (latest) 29.9 ms
+  p0.1:   -28.7 ms
+  p1:   -20.3 ms
+  p5:   -20.1 ms
+  p50:    -0.0 ms
+  p95:    20.1 ms
+  p99:    20.2 ms
+  p99.9:    28.6 ms
+  NOTE: includes the 20 ms sample quantisation and Pi receive-time jitter on both onsets.
+
+Section 4. Purge depth and duration (all detected onsets)
+  n = 217; duration below 6.0 V: median 100 ms, min 80, max 140 ms (+/-20 ms per edge)
+  samples below 4.5 V (fw v30 trip) per purge: [0, 0, 0, 4, 40, 122, 46, 5] (index = count)
+  V_fc minimum at 50 Hz: median 1.88 V, min 1.07, max 2.40 V
+
+Section 5. Bus response by pre-purge topology (sample before onset)
+  two-source (FC_BUS and BT_BUS closed): n = 172; V_bus min 15.29-15.93 V (median 15.79); sag 0.09 V median, 0.57 V max; pre-purge I_fc 0.000-0.712 A
+  FC-only (FC_BUS closed, BT_BUS open): n = 4; V_bus min 12.89-14.62 V (median 13.55); sag 2.37 V median, 3.04 V max; pre-purge I_fc 0.020-0.024 A
+    rosbag_sweep-noclip_2026-10-25_21-09-10 t=8.32s Vbus_pre=15.93 Vbus_min=13.48 Ifc_pre=0.020 Ibt_max=0.024 Vfc_min=1.79 sw=[37, 39, 39, 39, 39, 39, 39, 39, 39]
+    rosbag_sweep-noclip_2026-10-27_02-52-00 t=6.86s Vbus_pre=15.93 Vbus_min=12.89 Ifc_pre=0.024 Ibt_max=0.032 Vfc_min=2.05 sw=[37, 39, 39, 39, 39, 39, 39, 39, 39]
+    rosbag_sweep-noclip_2026-10-30_00-56-01 t=8.64s Vbus_pre=15.92 Vbus_min=14.62 Ifc_pre=0.020 Ibt_max=0.024 Vfc_min=1.84 sw=[37, 39, 39, 39, 39, 39, 39, 39, 39, 39]
+    rosbag_sweep-noclip_2026-10-30_01-30-16 t=9.27s Vbus_pre=15.93 Vbus_min=13.63 Ifc_pre=0.020 Ibt_max=0.024 Vfc_min=2.32 sw=[37, 39, 39, 39, 39, 39, 39, 39, 39]
+  BT-only (BT_BUS closed, FC_BUS open): n = 41; V_bus min 15.61-15.93 V (median 15.92); sag 0.01 V median, 0.09 V max; pre-purge I_fc 0.000-0.000 A
+  neither: n = 0
+  two-source: I_batt rise during purge median 0.254 A, max 1.072 A; pre-purge I_fc median 0.137 A, max 0.712 A

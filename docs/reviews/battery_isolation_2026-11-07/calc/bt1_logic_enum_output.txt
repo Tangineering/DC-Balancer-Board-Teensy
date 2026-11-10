@@ -1,0 +1,106 @@
+==============================================================================================
+Section 0: analog facts that decide logic levels
+==============================================================================================
+  p33 Hi-Z, BAT54 VF 0.20 V: pin33/CLK = 1.550 V, N1(/CLR) = 1.750 V (LVC VIL max 0.8 V, VIH min 2.0 V at VCC 2.7-3.6 V: UNDEFINED band; TODO(verify: SCES794G))
+  p33 Hi-Z, BAT54 VF 0.25 V: pin33/CLK = 1.525 V, N1(/CLR) = 1.775 V (LVC VIL max 0.8 V, VIH min 2.0 V at VCC 2.7-3.6 V: UNDEFINED band; TODO(verify: SCES794G))
+  p33 Hi-Z, BAT54 VF 0.32 V: pin33/CLK = 1.490 V, N1(/CLR) = 1.810 V (LVC VIL max 0.8 V, VIH min 2.0 V at VCC 2.7-3.6 V: UNDEFINED band; TODO(verify: SCES794G))
+  -> with the pin released, FF1 /CLR is NOT asserted and CLK sits at the input threshold; only PUMP_OK
+     (43-76 ms after the last pump edge) or another clear source makes N1 a valid LOW.
+
+  Ladder output tau = R x C = 2.0 ms; decode window +/-30 mV (design 7.7)
+  ladder A bit0 FF1.Q         : step    103 mV -> within 30 mV after  2.5 ms (design confirms within 1 ms (9.3 step 4-6) / 2 ms (9.5 step 4, 12.4 item 4))
+  ladder A bit1 EF_EN         : step    206 mV -> within 30 mV after  3.9 ms (design confirms within 1 ms (9.3 step 4-6) / 2 ms (9.5 step 4, 12.4 item 4))
+  ladder B bits0+1 SG1+SG2    : step    309 mV -> within 30 mV after  4.7 ms (design confirms within 1 ms (9.3 step 4-6) / 2 ms (9.5 step 4, 12.4 item 4))
+  ladder B bits2+3 OK1+OK2    : step   1237 mV -> within 30 mV after  7.4 ms (design confirms within 1 ms (9.3 step 4-6) / 2 ms (9.5 step 4, 12.4 item 4))
+  ladder A bit4 UC1_N         : step   1650 mV -> within 30 mV after  8.0 ms (design confirms within 1 ms (9.3 step 4-6) / 2 ms (9.5 step 4, 12.4 item 4))
+  ladder B bit4 UC2_N         : step   1650 mV -> within 30 mV after  8.0 ms (design confirms within 1 ms (9.3 step 4-6) / 2 ms (9.5 step 4, 12.4 item 4))
+
+  VBUS tap open (R_Bk1a lifted): BT_k = 58.6 mV -> channel asserts OK at V-MOT > 0.49 V (i.e. at any live bus)
+
+  Bus-fed loop with BT_BUS closed (Ag105 regulates NET pack current through its sense):
+    P_chg = (I_set + I_L + s*P_aux/(Vp*eta_b)) * Vp/eta / (1 - s/(eta*eta_b))
+    BT share s=0.15: P_chg =  26.3 W = 1.64 A at 16.0 V (eFuse I_OL 1.84-2.16 A -> latch-off <= 233 ms if above)
+    BT share s=0.50: P_chg =  60.6 W = 3.79 A at 16.0 V (eFuse I_OL 1.84-2.16 A -> latch-off <= 233 ms if above)
+    BT share s=0.79: P_chg = 9196.5 W = 574.78 A at 16.0 V (eFuse I_OL 1.84-2.16 A -> latch-off <= 233 ms if above)
+    BT share s=0.85: loop gain >= 1 -> unbounded until eFuse I_OL / Ag105 2.5 A ceiling
+
+==============================================================================================
+Section 1: exhaustive static enumeration (GPIO x conditions x single fault)
+==============================================================================================
+  evaluated 3569184 (GPIO, condition, fault) states
+  fault                    (a) powered&bonded  ML0227 config  (b) bus loop
+  none                                      0              0             0
+  5V_LB_open                                0              0            24
+  3V3_LB_open                               0              0             0
+  VBUS_tap_pad_lift                         0              0            48
+  VBUS_tap_open_ch1                         0              0             0
+  SB_connector_open                     12312           4104             0
+  F_T_open                                  0              0             0
+  C_VT_short                                0              0             0
+  eFuse_FET_short                       45144              0             0
+  U_NOR_stuck_high                          0              0             0
+  D_BC_RG_short                             0              0             0
+  D_BC_FC_short                             0              0           864
+  D_BT_EN_short                             0              0          1944
+  X_open                                    0              0             0
+  S_GND1_short                          12312           4104             0
+  FF1_stuck_high                            0              0             0
+  stage3_C_HU                           64152              0             0
+
+  First counterexample per (fault, invariant):
+  [5V_LB_open / loop] p33=H p34=T p28=H p29=H p30=H p31=L p32=H p20=Z | vmot=bus vbus_up=1 settled=False ff1_prev=1 pump_prev=1 chu=0 | ff1=1 pump_ok=1 vok=1 ef_en=1 chg=1 bonded=0 d_bt_sq=1 d_bt_en=1
+  [VBUS_tap_pad_lift / loop] p33=H p34=T p28=H p29=H p30=H p31=L p32=H p20=Z | vmot=bus vbus_up=1 settled=True ff1_prev=1 pump_prev=0 chu=0 | ff1=1 pump_ok=1 vok=1 ef_en=1 chg=1 bonded=0 d_bt_sq=1 d_bt_en=1
+  [SB_connector_open / viol_a] p33=H p34=T p28=L p29=L p30=L p31=H p32=L p20=Z | vmot=above vbus_up=1 settled=True ff1_prev=1 pump_prev=0 chu=0 | ff1=1 pump_ok=1 vok=1 ef_en=1 chg=1 bonded=1 d_bt_sq=0 d_bt_en=0
+  [SB_connector_open / ml0227] p33=H p34=T p28=L p29=L p30=L p31=H p32=H p20=Z | vmot=above vbus_up=1 settled=True ff1_prev=1 pump_prev=0 chu=0 | ff1=1 pump_ok=1 vok=1 ef_en=1 chg=1 bonded=1 d_bt_sq=1 d_bt_en=0
+  [eFuse_FET_short / viol_a] p33=L p34=T p28=L p29=L p30=L p31=H p32=L p20=Z | vmot=above vbus_up=1 settled=True ff1_prev=0 pump_prev=0 chu=0 | ff1=0 pump_ok=1 vok=1 ef_en=0 chg=1 bonded=1 d_bt_sq=0 d_bt_en=0
+  [D_BC_FC_short / loop] p33=H p34=T p28=H p29=L p30=L p31=L p32=H p20=Z | vmot=above vbus_up=1 settled=True ff1_prev=1 pump_prev=0 chu=0 | ff1=1 pump_ok=1 vok=1 ef_en=1 chg=1 bonded=0 d_bt_sq=1 d_bt_en=1
+  [D_BT_EN_short / loop] p33=H p34=T p28=L p29=L p30=L p31=H p32=H p20=Z | vmot=above vbus_up=1 settled=True ff1_prev=1 pump_prev=0 chu=0 | ff1=1 pump_ok=1 vok=1 ef_en=1 chg=1 bonded=0 d_bt_sq=1 d_bt_en=1
+  [S_GND1_short / viol_a] p33=H p34=T p28=L p29=L p30=L p31=H p32=L p20=Z | vmot=above vbus_up=1 settled=True ff1_prev=1 pump_prev=0 chu=0 | ff1=1 pump_ok=1 vok=1 ef_en=1 chg=1 bonded=1 d_bt_sq=0 d_bt_en=0
+  [S_GND1_short / ml0227] p33=H p34=T p28=L p29=L p30=L p31=H p32=H p20=Z | vmot=above vbus_up=1 settled=True ff1_prev=1 pump_prev=0 chu=0 | ff1=1 pump_ok=1 vok=1 ef_en=1 chg=1 bonded=1 d_bt_sq=1 d_bt_en=0
+  [stage3_C_HU / viol_a] p33=L p34=T p28=L p29=L p30=L p31=L p32=L p20=Z | vmot=above vbus_up=1 settled=True ff1_prev=0 pump_prev=0 chu=1 | ff1=0 pump_ok=1 vok=1 ef_en=0 chg=1 bonded=1 d_bt_sq=0 d_bt_en=0
+
+==============================================================================================
+Section 2: reset / hang defaults (all GPIO Z, pump stopped)
+==============================================================================================
+  warm reset from Idle (FF1 clear, PUMP_OK still H), t < 43-76 ms    vmot=above: N1=X FF1=X EF_EN=X bonded=X chg=0
+  warm reset from Idle (FF1 clear, PUMP_OK still H), t < 43-76 ms    vmot=bus  : N1=X FF1=X EF_EN=0 bonded=X chg=0
+  warm reset mid-window (FF1 set, PUMP_OK still H), t < 43-76 ms     vmot=above: N1=X FF1=X EF_EN=X bonded=X chg=0
+  warm reset mid-window (FF1 set, PUMP_OK still H), t < 43-76 ms     vmot=bus  : N1=X FF1=X EF_EN=0 bonded=X chg=0
+  after PUMP_OK falls (t > 76 ms)                                    vmot=above: N1=0 FF1=0 EF_EN=0 bonded=1 chg=0
+  after PUMP_OK falls (t > 76 ms)                                    vmot=bus  : N1=0 FF1=0 EF_EN=0 bonded=1 chg=0
+  FF1=X means the latch state is not determined by the design: /CLR sits at 1.78-1.80 V and CLK at
+  1.50-1.55 V. The release of pin 33 from a driven LOW is itself a slow rising CLK edge. The table 12 row
+  'Unpowered, reset, hung: p33 Z (pull-down), FF1 clear' and HR5 'FF1 needs a pin-33 edge' are not met
+  until PUMP_OK falls (43-76 ms).
+
+==============================================================================================
+Section 3: firmware sequences (design 9.3-9.9) with checks after every step
+==============================================================================================
+
+  9.5 regen entry/hold/exit
+    fault none              : no violation
+    fault eFuse_FET_short   : no violation
+    fault SB_connector_open : step 5 hold=vmot=above: viol_a; step 5 hold=vmot=above: ml0227
+    fault stage3_C_HU       : step 8 p33=L: viol_a; step 9 confirm=2: viol_a; step 10 p5=L: viol_a
+    fault VBUS_tap_pad_lift : step 4 p30=H: loop; step 6 hold=vmot=bus: loop
+    fault 5V_LB_open        : no violation
+
+  9.7 FC entry/exit
+    fault none              : no violation
+    fault eFuse_FET_short   : no violation
+    fault SB_connector_open : step 6 p31=H: viol_a; step 6 p31=H: ml0227; step 7 hold=vmot=bus: viol_a; step 7 hold=vmot=bus: ml0227
+    fault stage3_C_HU       : step 9 p33=L: viol_a; step 10 confirm=2: viol_a; step 11 p28=H: viol_a; step 12 p10=L: viol_a
+    fault VBUS_tap_pad_lift : no violation
+    fault 5V_LB_open        : no violation
+
+  9.9 + ino State 99 phases (from an FC window)
+    fault none              : no violation
+    fault eFuse_FET_short   : step 5 p31=H: viol_a; step 6 wait=10: viol_a
+    fault SB_connector_open : no violation
+    fault stage3_C_HU       : step 2 p33=L: viol_a; step 3 p27=L: viol_a; step 4 p28=L: viol_a; step 5 p31=H: viol_a
+    fault VBUS_tap_pad_lift : no violation
+    fault 5V_LB_open        : no violation
+
+  Notes: the 9.9 trace reproduces the ino State-99 phases 0-2 (ino:8299-8331), which design 9.9 step 4
+  keeps ('run the existing drains'): FC_CHARGE and REGEN are raised again AFTER pin 33 is LOW, i.e. in the
+  bonded mode. stage3_C_HU models C_HU on VCHG-IN_M still above the Ag105 UVLO at the bonding instant.

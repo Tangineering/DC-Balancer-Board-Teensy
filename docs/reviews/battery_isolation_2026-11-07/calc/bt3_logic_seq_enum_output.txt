@@ -1,0 +1,136 @@
+
+====================================================================================================
+Section 1: exhaustive steady-state enumeration (fault-free, then single faults), Stage 1 and Stage 2
+====================================================================================================
+  fault              stage  (a)hw   (a)fw   (a')fw  (b)fw   fed+bonded(fw)  example (a) or (b), firmware-legal
+  None                   1        0       0       0       0         31932   -
+  EFUSE_FET_SHORT        1   863595  490788       0       0         31932   a: p33=L p28=L p29=L p30=L p31=L p32=L p35=L p10=L p34=T p20=L env=resid
+  U_AND_STUCK_H          1   490347  260388       0       0         31932   a: p33=L p28=L p29=L p30=L p31=L p32=L p35=L p10=L p34=T p20=L env=resid,teensy
+  U_RS_STUCK_H           1        0       0       0       0         31932   -
+  U_OR_STUCK_H           1        0       0       0       0         31932   -
+  FF1Q_SB_STUCK_L        1     1539     972       0       0         31932   a: p33=H p28=L p29=L p30=L p31=H p32=L p35=L p10=L p34=T p20=Z env=resid,teensy,v5
+  Q_X1_OPEN              1        0       0       0      72         31932   b: p33=H p28=H p29=L p30=L p31=H p32=H p35=L p10=L p34=T p20=Z env=bus,teensy,v5
+  Q_X2_OPEN              1        0       0       0       0         31932   -
+  DBTEN_SHORT            1        0       0       0     216         31932   b: p33=H p28=L p29=L p30=L p31=H p32=H p35=L p10=L p34=T p20=Z env=bus,teensy,v5
+  DBCFC_SHORT            1        0       0       0       0        229428   -
+  DBCRG_SHORT            1        0       0       0       0        259110   -
+  U_N33_OPEN             1        0       0       0       0         31644   -
+  U_NP_OPEN              1        0       0       0       0         30960   -
+  U_CLS_STUCK_H          1    14364    7344       0       0         12672   a: p33=L p28=L p29=L p30=L p31=H p32=L p35=L p10=L p34=T p20=L env=resid,teensy,uc1,v5
+  LB3V3_TAP_OPEN         1        0       0       0       0         32256   -
+  None                   2        0       0       0       0         38682   -
+  EFUSE_FET_SHORT        2   825876  552186       0       0         38682   a: p33=L p28=L p29=L p30=L p31=L p32=L p35=L p10=L p34=T p20=L env=resid
+  U_AND_STUCK_H          2   452628  294138       0       0         38682   a: p33=L p28=L p29=L p30=L p31=L p32=L p35=L p10=L p34=T p20=L env=resid,teensy
+  U_RS_STUCK_H           2        0       0       0       0         38682   -
+  U_OR_STUCK_H           2        0       0       0       0         38682   -
+  FF1Q_SB_STUCK_L        2     1782    1296       0       0         38682   a: p33=H p28=L p29=L p30=L p31=H p32=L p35=L p10=L p34=T p20=Z env=resid,teensy,v5
+  Q_X1_OPEN              2        0       0       0      72         38682   b: p33=H p28=H p29=L p30=L p31=H p32=H p35=L p10=L p34=T p20=Z env=bus,teensy,v5
+  Q_X2_OPEN              2        0       0       0       0         38682   -
+  DBTEN_SHORT            2        0       0       0     216         38682   b: p33=H p28=L p29=L p30=L p31=H p32=H p35=L p10=L p34=T p20=Z env=bus,teensy,v5
+  DBCFC_SHORT            2        0       0       0      36        256752   b: p33=H p28=H p29=L p30=H p31=L p32=H p35=L p10=L p34=T p20=Z env=bus,teensy,v5,vmot_above
+  DBCRG_SHORT            2        0       0       0       0        288684   -
+  U_N33_OPEN             2        0       0       0       0         38394   -
+  U_NP_OPEN              2        0       0       0       0         37224   -
+  U_CLS_STUCK_H          2    16632    8640       0       0         14400   a: p33=L p28=L p29=L p30=L p31=H p32=L p35=L p10=L p34=T p20=L env=resid,teensy,uc1,v5
+  LB3V3_TAP_OPEN         2        0       0       0       0         48384   -
+
+  Reading. Fault-free, (a), (a') and (b) are unreachable for every GPIO vector (including Z) and every environment,
+  because EF_EN needs FF1.Q and the bond needs NOT FF1Q_SB (eq. 5, 6). The 'fed+bonded' column is the bonded-mode
+  VCHG-IN feed that the firmware-legal rule still permits (the eFuse-blocking probe; and Stage-2 VOK with p30 H in
+  charge mode followed by an FF1 clear). It is not (a) without an eFuse bypass.
+  LB3V3_TAP_OPEN (a single wire, M6 J2 05/06, Teensy alive): (a) stays unreachable because SHDN_EF falls to R_SDP, but
+  in the same state the D-BT-SQ cross-lock (X) and all four D-BC-RG clamps release (open-drain pull-ups to a dead rail
+  read 'OK' and 'bus present'), so the eFuse FET is the only hardware element between a bus-fed VCHG-IN and an
+  ML0227 configuration - see section 4.
+
+====================================================================================================
+Section 2: pin 5 (MPPT_DISABLE) and pin 30 (REGEN_ENABLE) have two writers inside a Stage-2 regen window
+====================================================================================================
+  Design 12.4 item 6 removes REGEN writes at ino:[15308, 15375, 15395, 15524] (all LOW writes). ino:15357 (the only HIGH writer:
+  'digitalWrite(REGEN_ENABLE, chargerFeedGated ? LOW : HIGH)') is not listed; with AG105_VBATN_ISOLATED = 1
+  (design 12.2 item 3) chargerFeedGated = ag105CommTripLatched only. MPPT_DISABLE writes at ino:15304, 15358,
+  15377, 15549-15554 are not addressed by any removal, refusal or host test (12.11 lists only REGEN).
+
+  charge_goal 0.0 phase  0 ms: pin 5 LOW for  98.2 % of the open window; pin 30 HIGH while pin 33 LOW (bonded) for    0 ms; first conflicting writes [(20, 'p5', 0, 15304)]
+  charge_goal 0.0 phase  7 ms: pin 5 LOW for  99.9 % of the open window; pin 30 HIGH while pin 33 LOW (bonded) for    0 ms; first conflicting writes [(7, 'p5', 0, 15304)]
+  charge_goal 0.0 phase 13 ms: pin 5 LOW for  99.1 % of the open window; pin 30 HIGH while pin 33 LOW (bonded) for    0 ms; first conflicting writes [(13, 'p5', 0, 15304)]
+  charge_goal 0.0 phase 19 ms: pin 5 LOW for  98.4 % of the open window; pin 30 HIGH while pin 33 LOW (bonded) for    0 ms; first conflicting writes [(19, 'p5', 0, 15304)]
+  charge_goal 0.5 phase  0 ms: pin 5 LOW for  98.2 % of the open window; pin 30 HIGH while pin 33 LOW (bonded) for    3 ms; first conflicting writes [(0, 'p30', 1, 15357), (20, 'p5', 0, 15358)]
+  charge_goal 0.5 phase  7 ms: pin 5 LOW for  99.9 % of the open window; pin 30 HIGH while pin 33 LOW (bonded) for    0 ms; first conflicting writes [(7, 'p5', 0, 15358)]
+  charge_goal 0.5 phase 13 ms: pin 5 LOW for  99.1 % of the open window; pin 30 HIGH while pin 33 LOW (bonded) for    0 ms; first conflicting writes [(13, 'p5', 0, 15358)]
+  charge_goal 0.5 phase 19 ms: pin 5 LOW for  98.4 % of the open window; pin 30 HIGH while pin 33 LOW (bonded) for    0 ms; first conflicting writes [(19, 'p5', 0, 15358)]
+
+  Reading. With charge_goal 0 (OR-O: charge_goal ignored in Run) the charge_goal branch writes pin 5 LOW every 20 ms;
+  with charge_goal > 0.05 the regen branch writes pin 5 LOW every 20 ms and pin 30 HIGH every 20 ms. In both cases the
+  OR-4 condition (MPPTD HIGH inside every window, section 9.5 entry step 2) holds only until the first chargingControl()
+  tick, 0-20 ms after entry, i.e. before or at the first VOK pulse. With charge_goal > 0.05 pin 30 also stays HIGH after
+  the exit bond for the remaining 50 Hz ticks of the brake and is re-raised on every later brake tick in the bonded
+  mode; ERR_VCHG_FED evaluates only with pins 30 and 31 commanded LOW (Table 16), so it is blind to this feed.
+
+  Invariant (d) on a commanded exit while the brake is still commanded (I_L hold, 30 s cap, ladder mismatch):
+  if ino:15357 survives and no write chokepoint refuses it, a chargingControl() tick falls inside the 2 ms
+  T_drain in 80 of 800 exit phases (10 %): pin 30 is re-raised, RGQ = VOK & P30Q re-enables the eFuse, and
+  pin 33 then goes LOW onto a powered, converting module (the F10 hardware-trip case on a commanded exit).
+
+====================================================================================================
+Section 2b: a brake whose window is refused (V_chg not yet below 11 V, rate limit, or IC1_STAGE 1)
+====================================================================================================
+  VCHG-IN 21.47 V -> 11 V after 0.658 s (tau 0.984 s); a brake that starts sooner is refused a window by the
+  entry precondition 'V_chg below 11 V' (design 9.5). With the rate limit (20 transitions/min) spent, every
+  brake is refused. In Stage 1 (IC1_STAGE 1) no brake opens a window.
+  Stage 1, charge_goal 0.5, 500 ms brake + 2.5 s cruise, window refused: pin 30 HIGH, pack bonded, for 3000 of 3000 ms (no LOW writer left: 15308/15524 removed);
+     D-BC-RG EN = pin 30 directly (M5 not made): VCHG-IN = V-MOT = VBUS through MOT_PWR, continuously; ERR_VCHG_FED not evaluated (pin 30 commanded HIGH);
+     eFuse held off only by FF1.Q L and the SRC term (Stage 1: FCQ L) - the 'input unfed in the bonded mode'
+     barrier of rows F11/F13b/F35/F36 and of HR3 is gone for the whole brake.
+  Stage 2, charge_goal 0.5, 500 ms brake + 2.5 s cruise, window refused: pin 30 HIGH, pack bonded, for 3000 of 3000 ms (no LOW writer left: 15308/15524 removed);
+     D-BC-RG on whenever VOK: VCHG-IN fed from V-MOT at every regen pulse; ERR_VCHG_FED not evaluated (pin 30 commanded HIGH);
+     eFuse held off only by FF1.Q L and the SRC term (Stage 1: FCQ L) - the 'input unfed in the bonded mode'
+     barrier of rows F11/F13b/F35/F36 and of HR3 is gone for the whole brake.
+
+====================================================================================================
+Section 3: self-test step 1 (design 9.3) at boot and at an Idle entry
+====================================================================================================
+  boot (setup(), pump not started, 12.3 item 5)                                                             step 1 PASS
+  Idle entry from Run (pump toggling in every state, 12.4 item 1; Table 12 Idle and Self-test rows p34 = T) step 1 FAIL (mismatch: ['pump_ok'])
+
+  Reading. Step 1 expects PUMP_OK L. The only pump-stop request in the self-test is in step 2, after step 1, and
+  12.4 item 1 keeps pin 34 toggling in every state except CHG_INHIBITED, State-99 phase 3 and self-test stop intervals.
+  At every Idle entry from Run the pump is running, PUMP_OK is H, step 1 fails on a healthy board, and section 9.3
+  sets the reboot-only ERR_CHG_SELFTEST latch, which refuses every window until a power cycle. The boot self-test
+  passes, so the defect appears at the first Run -> Idle transition of every power cycle (and in State 98 -> Idle).
+
+====================================================================================================
+Section 4: LB 3V3 supply lead open (M6, J2 05/06) with the Teensy running - barrier inventory per mode
+====================================================================================================
+  mode                                         fault           bonded eFuse D-BT-SQ D-BC-RG  fed+bonded  (a) (a') (b)
+  Idle/Run bonded (p32 H, p30 L, p31 L)        None              True False   False   False       False  False False False
+  Idle/Run bonded (p32 H, p30 L, p31 L)        LB3V3_TAP_OPEN    True False    True   False       False  False False False
+  Idle/Run bonded (p32 H, p30 L, p31 L)        tap+F11           True False    True   False       False  False False False
+  Regen window, VOK false (V-MOT at bus)       None             False False    True   False       False  False False False
+  Regen window, VOK false (V-MOT at bus)       LB3V3_TAP_OPEN    True False    True    True        True  False False False
+  Regen window, VOK false (V-MOT at bus)       tap+F11           True  True    True    True        True  True True True
+  FC window                                    None             False  True    True   False       False  False False False
+  FC window                                    LB3V3_TAP_OPEN    True False    True   False        True  False False False
+  FC window                                    tap+F11           True  True    True   False        True  True True False
+  State 99 latched (p32 H kept, Table 12)      None              True False   False   False       False  False False False
+  State 99 latched (p32 H kept, Table 12)      LB3V3_TAP_OPEN    True False    True   False       False  False False False
+  State 99 latched (p32 H kept, Table 12)      tap+F11           True False    True   False       False  False False False
+
+  Reading. With the LB rail dead the bond is made (FF1Q_SB on R_PA) and the eFuse is held off by R_SDP, so (a) needs
+  a second fault. But the same single lead removes the D-BT-SQ cross-lock (D-BT-SQ follows p32, which the design keeps
+  HIGH in Idle, Run and State 99) and releases all four D-BC-RG clamps (D-BC-RG follows p30 whatever V-MOT and VBUS do).
+  In a regen window pin 30 is HIGH, so VCHG-IN is bus-fed through D-MT-EN and D-BC-RG with the pack bonded until the
+  firmware drops pin 30 (ERR_CHG_LADDER after 3 ms of a mismatched ladder: ladders read code 0). Table 13 and the HR5
+  row treat '3V3 lost' as 'Teensy also unpowered'; R4-3 (g) states only that a 5 V loss no longer reads OK.
+
+====================================================================================================
+Section 5: defaults (c) and exit ordering (d), revision-5 network
+====================================================================================================
+  Teensy unpowered/reset, stage 1, VCHG-IN residual, V-MOT above bus: bonded=True eFuse=False D-BT-SQ=False (a)=False (b)=False
+  Teensy unpowered/reset, stage 2, VCHG-IN residual, V-MOT above bus: bonded=True eFuse=False D-BT-SQ=False (a)=False (b)=False
+  Hang in a regen window after 43-76 ms (p34 static): FF1=False bonded=True eFuse=False (a)=False; fed+bonded=True
+
+  (c) holds for an absent rail, a reset and a hang (after 43-76 ms) with the fault-free network. (d) holds for a
+  commanded exit only while pin 30 and FC_CHARGE have a single writer (section 2); for a hardware exit the module
+  converts from C_in for up to about 1.1 ms after the bond with D-BT-SQ still enabled for 0.3-0.7 ms (row F10,
+  unchanged in kind).

@@ -1,0 +1,60 @@
+====================================================================================================
+[1] Predictor lead time T_lead (prediction -> purge onset)
+====================================================================================================
+  D-BT-EN conduction after the EN write onto a live 15.95 V bus: tON = 19.77 ms; t_D_ON + tON = 27.77 ms (t_D_ON 8 ms) / 31.77 ms (12 ms)
+  Sequencing sheet, healthy chain: typical 33.58-34.71 ms, worst healthy 47.04 ms (p99 loop, one 9.76 ms gap, slow node, t_D_ON 12 ms)
+  Deadline-based chain (prediction->drop 1.34 + hold check 0.15 + drain deadline 13.15 + confirmation deadline 13.15 ms): BT_BUS write at 27.79 ms; conduction at 59.56 ms
+  (the demand sheet's 58.2 ms omits the 1.34 ms from the prediction to the feed-drop write)
+  DESIGN REQUIREMENT T_lead,min = 60 ms (deadline chain rounded up to 10 ms): margin 13.0 ms over the healthy worst
+  Full tier (ruling-1 shift complete): typical 100.2-168.0 ms (ESTIMATE); worst 274.08 ms (sequencing sheet); deadline chain + dark-handoff walk 286.60 ms
+  DESIGN REQUIREMENT T_lead,nom = 290 ms (State-2 windows; deadline chain + dark walk, rounded up to 10 ms)
+  The demand sheet's 108.3 ms full tier rests on a 20-50 ms EMA ESTIMATE of the shift; the firmware slew
+  constants (DROOP_RATIO_SLEW_PER_TICK 0.02, handoff 0.002 for <= 175 ticks, ino:3242, 3288-3325) bound it
+  at 258.8 ms instead, so the sequencing figure governs.
+  Sensitivity: every ms of t_D_ON above 12 ms adds 1 ms to both requirements.
+====================================================================================================
+[2] Re-entry and usable time per purge period (adopted literal rule: V_chg below 11 V on two settled reads)
+====================================================================================================
+  VCHG-IN 15.95 V -> 11.0 V on the bleed: 365.6 ms after the feed drop (tau 0.984 s, TODO(calibrate))
+  P      typ   T_lead    60 ms | purge gate  160.0 ms | V_chg gate  307.0 ms | charge resumes onset+ 390.5 ms | dead 0.450 s | usable 9.890 s (95.6 %) | mean 1.196 A at I_set
+  P      worst T_lead    60 ms | purge gate  160.0 ms | V_chg gate  307.0 ms | charge resumes onset+ 508.7 ms | dead 0.569 s | usable 9.771 s (94.5 %) | mean 1.181 A at I_set
+  D-s/D  typ   T_lead   290 ms | purge gate  199.6 ms | V_chg gate   77.0 ms | charge resumes onset+ 283.1 ms | dead 0.573 s | usable 9.767 s (94.5 %) | mean 1.181 A at I_set
+  D-s/D  worst T_lead   290 ms | purge gate  293.3 ms | V_chg gate   77.0 ms | charge resumes onset+ 495.1 ms | dead 0.785 s | usable 9.555 s (92.4 %) | mean 1.155 A at I_set
+  Strict reading (wait out the 1.0 s ERR_VCHG_FED blanking) for comparison: dead 1.084-1.202 s, usable 88.4-89.5 %
+  (seq s5). The literal reading is adopted: a fed VCHG-IN (F15, F17, pin 31 stuck HIGH) never falls below 11 V,
+  so the entry refusal is the same; only the ERR_VCHG_FED latch waits for the blanking.
+  Without R_KA, Bring-Up  8.4 s per cold start, P      worst: usable 1.541 s (14.9 %), mean 0.186 A
+  Without R_KA, Bring-Up  8.4 s per cold start, D-s/D  worst: usable 1.325 s (12.8 %), mean 0.160 A
+  Without R_KA, Bring-Up  8.4 s per cold start, P      typ  : usable 1.555 s (15.0 %), mean 0.188 A
+  Without R_KA, Bring-Up  8.4 s per cold start, D-s/D  typ  : usable 1.432 s (13.8 %), mean 0.173 A
+  Without R_KA, Bring-Up 11.7 s per cold start, P      worst: usable 0.000 s ( 0.0 %), mean 0.000 A
+  Without R_KA, Bring-Up 11.7 s per cold start, D-s/D  worst: usable 0.000 s ( 0.0 %), mean 0.000 A
+  Without R_KA, Bring-Up 11.7 s per cold start, P      typ  : usable 0.000 s ( 0.0 %), mean 0.000 A
+  Without R_KA, Bring-Up 11.7 s per cold start, D-s/D  typ  : usable 0.000 s ( 0.0 %), mean 0.000 A
+====================================================================================================
+[3] Window-admission horizon
+====================================================================================================
+  P     : a window may open only when the predicted time to the next onset is at least 201.8 ms entry + 1.0 s useful + 60 ms lead = 1.262 s
+  D-s/D : a window may open only when the predicted time to the next onset is at least 201.8 ms entry + 1.0 s useful + 290 ms lead = 1.492 s
+  Inter-purge interval after re-entry (period - worst dead time): 9.555 s, so every period admits one window under an ideal predictor
+  Window transitions: 2 per period = 11.6 per minute against the [RER] limit of 20 per minute
+====================================================================================================
+[4] HR2: variant P charge rate and variants D / D-s per drive cycle
+====================================================================================================
+  Variant P (parked, R_KA fitted, CC region below the 8.0 V entry gate): 1.181-1.196 A mean = 1.18-1.20 Ah per parked hour; 0 Ah per drive cycle
+  (demand sheet Table 4, rule v11 nominal: 1.196 A; rule blank: 1.103-1.117 A; agreement)
+  cycle                         len s |  D-s s  D-s %  D-s mAh  D-s A |    D s    D %   D mAh D pess mAh |  D-s/D
+  61 s cycle (ems-dp-replay)       61 |    5.5   9.0%      1.9  0.112 |   57.1  93.6%    19.8        3.5 |   0.10
+  FTP-75 rig slice                345 |   67.1  19.4%     23.3  0.243 |  181.9  52.7%    63.2       27.8 |   0.37
+  ftp75c                          175 |   35.7  20.4%     12.4  0.255 |   93.4  53.4%    32.4       15.1 |   0.38
+  UDDS_trimmed_3.5mps             333 |   55.5  16.7%     19.3  0.209 |  144.8  43.5%    50.3       23.3 |   0.38
+  RegenTest_v2_lowspeed           152 |   80.5  53.0%     28.0  0.663 |   98.2  64.6%    34.1       29.5 |   0.82
+  RegenTest_decel_sweep           183 |   91.8  50.2%     31.9  0.628 |  111.0  60.7%    38.5       34.3 |   0.83
+  Literal re-entry rule: these are rule-'none' figures; rule 'blank' lowers every D figure by 2-7 % (out s4), so
+  the adopted literal rule lowers them by at most 7 %. D-s mAh check: I_set x t (CC) reproduces the sheet.
+====================================================================================================
+[5] HR2 on the 22 recorded Pi sessions (2831 s live; out s5)
+====================================================================================================
+  D with the 8.0 V gate: 650 s (23.0 %); D-s: 600 s (21.2 %); D-s share of D = 92 %
+  Moving windows (D minus D-s) add 50 s = 1.8 % of live time, 17.4 mAh at I_set over 47 min
+  EMS request time 447 s; D yields 127 s inside it (28.4 %)

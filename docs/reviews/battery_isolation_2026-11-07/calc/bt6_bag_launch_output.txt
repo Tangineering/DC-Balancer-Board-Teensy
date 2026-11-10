@@ -1,0 +1,28 @@
+Launches from standstill with the stack running: 20 (22 bags scanned)
+  max bus-side total within   40 ms of the step: median 0.016 A, p90 0.025 A, max 0.032 A; above 1.25 A: 0, above 1.40 A (OC_FC): 0 of 20
+  max bus-side total within   60 ms of the step: median 0.020 A, p90 0.025 A, max 0.040 A; above 1.25 A: 0, above 1.40 A (OC_FC): 0 of 20
+  max bus-side total within  100 ms of the step: median 0.032 A, p90 0.130 A, max 0.145 A; above 1.25 A: 0, above 1.40 A (OC_FC): 0 of 20
+  max bus-side total within  200 ms of the step: median 0.294 A, p90 0.413 A, max 0.451 A; above 1.25 A: 0, above 1.40 A (OC_FC): 0 of 20
+  pre-step bus-side total (median of the 200 ms before): median 0.016 A, max 0.024 A
+
+  per launch (bag, t, v_setpoint, pre, max@40/60/100/200 ms):
+   rosbag_2026-09-07_22-06-29                     0.26 s  vsp 0.05  pre 0.024  0.024 0.024 0.032 0.250
+   rosbag_sdp_2026-10-26_23-57-14                55.59 s  vsp 0.05  pre 0.016  0.024 0.024 0.032 0.242
+   rosbag_sdp_2026-10-26_23-57-14               198.59 s  vsp 0.06  pre 0.024  0.024 0.024 0.105 0.371
+   rosbag_sdp_2026-10-28_20-46-53                55.72 s  vsp 0.05  pre 0.016  0.016 0.016 0.024 0.250
+   rosbag_sdp_2026-10-28_20-46-53               198.72 s  vsp 0.06  pre 0.016  0.008 0.016 0.105 0.387
+   rosbag_sdp_2026-10-29_19-51-48                55.84 s  vsp 0.05  pre 0.020  0.016 0.024 0.024 0.226
+   rosbag_sdp_2026-10-29_19-51-48               198.84 s  vsp 0.06  pre 0.008  0.024 0.024 0.024 0.338
+   rosbag_sdp_2026-10-30_01-49-38                55.83 s  vsp 0.05  pre 0.020  0.016 0.016 0.024 0.322
+   rosbag_sdp_2026-11-05_20-09-52                55.79 s  vsp 0.05  pre 0.024  0.024 0.024 0.024 0.073
+   rosbag_simple_2026-10-20_00-38-02             55.80 s  vsp 0.05  pre 0.024  0.024 0.024 0.032 0.266
+   rosbag_sweep-noclip_2026-10-25_21-09-10       55.84 s  vsp 0.05  pre 0.016  0.016 0.024 0.024 0.210
+   rosbag_sweep-noclip_2026-10-27_01-09-42       55.86 s  vsp 0.05  pre 0.016  0.032 0.032 0.032 0.177
+   rosbag_sweep-noclip_2026-10-27_02-52-00       55.91 s  vsp 0.05  pre 0.012  0.008 0.008 0.016 0.169
+   rosbag_sweep-noclip_2026-10-30_00-56-01       50.66 s  vsp 0.05  pre 0.008  0.008 0.008 0.081 0.379
+   rosbag_sweep-noclip_2026-10-30_01-30-16       72.71 s  vsp 0.05  pre 0.012  0.008 0.016 0.137 0.347
+   rosbag_sweep-noclip_2026-10-30_01-30-16       94.11 s  vsp 0.05  pre 0.008  0.016 0.016 0.145 0.451
+   rosbag_sweep-noclip_2026-10-30_01-30-16      115.11 s  vsp 0.05  pre 0.008  0.016 0.016 0.121 0.371
+   rosbag_sweep-noclip_2026-10-30_01-30-16      135.91 s  vsp 0.05  pre 0.008  0.016 0.016 0.129 0.427
+   rosbag_sweep-noclip_2026-10-30_01-30-16      156.61 s  vsp 0.05  pre 0.008  0.008 0.008 0.113 0.411
+   rosbag_sweep_2026-10-20_09-08-49              55.83 s  vsp 0.05  pre 0.020  0.032 0.040 0.040 0.201

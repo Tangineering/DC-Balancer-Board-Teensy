@@ -1,0 +1,63 @@
+==============================================================================
+Section 1. Idle-entry self-test duration (DD 9.3, Table 11, 7.7)
+==============================================================================
+  typ (hang-to-off 43 ms)    loop median:  357.7 ms
+  typ (hang-to-off 43 ms)    loop p99   :  363.5 ms
+  max (hang-to-off 76 ms)    loop median:  423.7 ms
+  max (hang-to-off 76 ms)    loop p99   :  429.5 ms
+  limit (90 ms waits)        loop median:  451.7 ms
+  limit (90 ms waits)        loop p99   :  457.5 ms
+  -> the 'about 430 ms' of DD 9.3 lies inside 357-458 ms; it had no calc citation.
+
+==============================================================================
+Section 2. U_MS positive-control deadline (DD 9.5 hold duties, Table 16 ERR_MOD_SENSE (b))
+==============================================================================
+  From VOK assert (EF_EN rise) at t_D_ON 8.0 ms:
+    V_chg reaches 13.5 V at             9.12 ms
+    module node reaches U_MS level at  11.77 -  12.51 ms
+    lag from V_chg 13.5 V to pin 8 H:   2.65 -  3.38 ms
+  EF_EN H interval 10.0 ms with V_chg >= 13.5 V from 9.12 ms: pin 8 HIGH guaranteed = False  -> rev-6 rule would latch ERR_MOD_SENSE
+  EF_EN H interval 11.0 ms with V_chg >= 13.5 V from 9.12 ms: pin 8 HIGH guaranteed = False  -> rev-6 rule would latch ERR_MOD_SENSE
+  EF_EN H interval 12.0 ms with V_chg >= 13.5 V from 9.12 ms: pin 8 HIGH guaranteed = False  -> rev-6 rule would latch ERR_MOD_SENSE
+  -> keyed on the EF_EN interval, the rev-6 rule false-latches on a VOK interval of 10 ms up to
+     about 12.5 ms at typical t_D_ON (later with a slower RT1987; t_D_ON has no maximum).
+     Keyed on the second settled V_chg >= 13.5 V read (t0), the worst lag is 3.38 ms; a 10 ms span after t0
+     leaves 6.62 ms, and with the 9.76 ms worst iteration at least one pin-8 read falls after t0 + 3.38 ms
+     whenever the span is >= 10 ms (two reads at most 9.76 ms apart inside it).
+  ERR_VCHG_SENSE (b): V_chg passes 12 V at 9.00 ms after EF_EN rise at t_D_ON 8 ms;
+     the 20 ms EF_EN-H window false-latches only if t_D_ON exceeds 19.0 ms (no RT1987 maximum; V2-0).
+
+==============================================================================
+Section 3. R_MD dissipation at the regen pulse cadence (DD 5.3 item 1, 14.4)
+==============================================================================
+  C_mod   100 uF:  23.1 mJ per dump; mean 0.043 W at one dump per 535 ms;  1.30 J per 30 s window (56 dumps)
+  C_mod   221 uF:  51.1 mJ per dump; mean 0.095 W at one dump per 535 ms;  2.86 J per 30 s window (56 dumps)
+  -> R_MD needs a repetitive-pulse rating, not only the single 1.71 J probe pulse of Table 7.
+
+==============================================================================
+Section 4. LB load on the Teensy 3V3 rail, resistive part only (DD Figures 2-5, Table 7)
+==============================================================================
+  13 x 10k pull-ups, all outputs LOW:  4.29 mA
+  threshold and bias dividers:           0.46 mA
+  ladders (10 bits x 0.55 mA):           5.50 mA
+  resistive total (worst):              10.25 mA
+  IC quiescent currents (2 x INA240A3, 9 x TLV3011B, 17 LVC/AHCT gates, 2 x LVC244A) are not
+  stated in DD Table 7: TODO(verify: SBOS662C, SBOS300C, TI LVC datasheets). Budget reference:
+  PJRC 250 mA recommended maximum for external 3.3 V use (facts_board section 6.1), shared with
+  the existing SNS/MDAC/pull-up load, which is also not totalled in the study.
+
+==============================================================================
+Section 5. Fault-code space (DD Table 16; ino:2038-2058, ino:2440-2459)
+==============================================================================
+  new IC1 fault conditions in Table 16: 23
+  free bits in the 16-bit fault_flags word: 0
+  error_code values after 0x10: 0x11-0x27 (fits the uint8 field)
+  -> the IC1 faults need a new flag word (at least 23 bits, i.e. a uint32) in protocol v6.
+
+==============================================================================
+Section 6. Exit-side cold-module wait for the pin-5 and pin-10 writes (DD 9.5 exit, 12.4 item 2)
+==============================================================================
+  loop median: bonded confirmation at <=   9.7 ms; earliest legal pin-5/pin-10 write  22.9 ms after the feed drop
+  loop p99: bonded confirmation at <=  10.9 ms; earliest legal pin-5/pin-10 write  22.9 ms after the feed drop
+  -> rev-6 exit step 5 (pin 5 LOW) and FC exit step 4 (pin 10, pin 5 LOW) come before the
+     20 ms cold condition of 12.4 item 2 holds; the writes are deferred, traction is not.

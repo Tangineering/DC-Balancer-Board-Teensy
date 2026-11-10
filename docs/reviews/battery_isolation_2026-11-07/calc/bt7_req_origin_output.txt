@@ -1,0 +1,7 @@
+rosbag_sdp_2026-10-26_23-57-14           req    7.5 regen    7.5 fcc    0.0 other    0.0 still    0.0 still_regen    0.0 still_fcc    0.0 move_regen    7.5 move_fcc    0.0 pdem_still_max    nan
+rosbag_sdp_2026-10-28_20-46-53           req  153.8 regen  127.0 fcc    0.0 other   26.8 still   38.8 still_regen   38.8 still_fcc    0.0 move_regen   88.2 move_fcc    0.0 pdem_still_max    0.2
+rosbag_sdp_2026-10-28_22-18-10           req   18.0 regen   17.9 fcc    0.0 other    0.1 still    0.0 still_regen    0.0 still_fcc    0.0 move_regen   17.9 move_fcc    0.0 pdem_still_max    nan
+rosbag_sdp_2026-10-29_19-51-48           req  112.2 regen  112.2 fcc    0.0 other    0.0 still   38.6 still_regen   38.6 still_fcc    0.0 move_regen   73.6 move_fcc    0.0 pdem_still_max    0.1
+rosbag_sdp_2026-10-30_01-49-38           req   87.0 regen   86.7 fcc    0.0 other    0.2 still   27.1 still_regen   27.1 still_fcc    0.0 move_regen   59.7 move_fcc    0.0 pdem_still_max    0.0
+rosbag_sdp_2026-11-05_20-09-52           req   68.1 regen   68.0 fcc    0.0 other    0.1 still    8.4 still_regen    8.4 still_fcc    0.0 move_regen   59.6 move_fcc    0.0 pdem_still_max    0.0
+TOTALS {'req': np.float64(446.6), 'regen': np.float64(419.3), 'fcc': np.float64(0.0), 'other': np.float64(27.3), 'still': np.float64(112.8), 'still_regen': np.float64(112.8), 'still_fcc': np.float64(0.0), 'move_regen': np.float64(306.5), 'move_fcc': np.float64(0.0)}

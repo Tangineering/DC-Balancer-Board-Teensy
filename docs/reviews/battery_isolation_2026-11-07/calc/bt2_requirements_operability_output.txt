@@ -1,0 +1,56 @@
+
+==============================================================================
+A. Regen-window open latency (design 9.5 + Table 11) against the first VESC pulse
+==============================================================================
+  confirmation 2.26 ms: Ag105 input reaches 18 V at >=  56.2 ms after the I_cmd step (Ag105 start time NOT included)
+  confirmation 4.02 ms: Ag105 input reaches 18 V at >=  57.9 ms after the I_cmd step (Ag105 start time NOT included)
+  first pulse rise 19 ms: V-MOT peaks (VESC stop) at  24.0 ms after the I_cmd step
+  first pulse rise 47 ms: V-MOT peaks (VESC stop) at  52.0 ms after the I_cmd step
+  -> pin 30 is not yet HIGH (>= 42.3 ms) when the 19-40 ms pulses end; no first pulse can be captured,
+     independent of the Ag105 cold-start result (S0-6) and of Stage 3.
+
+==============================================================================
+B. Share of capturable node energy in the first pulse (regen_dynamics.md section 1.1 table)
+==============================================================================
+  C = 0.97 mF (node energy above 18.0 V per pulse, J; ideal instantaneous Ag105):
+    ML0151 41.36: pulses 2; E/pulse 0.065, 0.064; first-pulse share  50.6 %; reachable after the arm 0.064 J
+    ML0157 47.30: pulses 2; E/pulse 0.063, 0.062; first-pulse share  50.4 %; reachable after the arm 0.062 J
+    ML0165 22.64: pulses 1; E/pulse 0.061; first-pulse share 100.0 %; reachable after the arm 0.000 J
+    ML0165 28.55: pulses 2; E/pulse 0.063, 0.061; first-pulse share  50.8 %; reachable after the arm 0.061 J
+    ML0195 33.20: pulses 2; E/pulse 0.065, 0.047; first-pulse share  58.3 %; reachable after the arm 0.047 J
+    YP0166 21.97: pulses 3; E/pulse 0.063, 0.062, 0.056; first-pulse share  35.1 %; reachable after the arm 0.117 J
+    YP0196 21.97: pulses 2; E/pulse 0.065, 0.049; first-pulse share  57.1 %; reachable after the arm 0.049 J
+    YP0198 21.98: pulses 2; E/pulse 0.065, 0.000; first-pulse share 100.0 %; reachable after the arm 0.000 J
+    all 8 events: 0.910 J above 18 V; reachable after the arm 0.399 J (43.9 %)
+  C = 4.0 mF (node energy above 18.0 V per pulse, J; ideal instantaneous Ag105):
+    ML0151 41.36: pulses 2; E/pulse 0.269, 0.262; first-pulse share  50.6 %; reachable after the arm 0.262 J
+    ML0157 47.30: pulses 2; E/pulse 0.259, 0.255; first-pulse share  50.4 %; reachable after the arm 0.255 J
+    ML0165 22.64: pulses 1; E/pulse 0.252; first-pulse share 100.0 %; reachable after the arm 0.000 J
+    ML0165 28.55: pulses 2; E/pulse 0.259, 0.251; first-pulse share  50.8 %; reachable after the arm 0.251 J
+    ML0195 33.20: pulses 2; E/pulse 0.270, 0.193; first-pulse share  58.3 %; reachable after the arm 0.193 J
+    YP0166 21.97: pulses 3; E/pulse 0.261, 0.254, 0.229; first-pulse share  35.1 %; reachable after the arm 0.483 J
+    YP0196 21.97: pulses 2; E/pulse 0.270, 0.202; first-pulse share  57.1 %; reachable after the arm 0.202 J
+    YP0198 21.98: pulses 2; E/pulse 0.268, 0.000; first-pulse share 100.0 %; reachable after the arm 0.000 J
+    all 8 events: 3.753 J above 18 V; reachable after the arm 1.646 J (43.9 %)
+  first-pulse share: min 35.1 %, median 53.9 %, max 100.0 %; events with zero reachable energy: 2 of 8
+  Pi bag (fw <= v35): second pulses peak 16.8-19.0 V (regen_dynamics.md 1.1) -> 0-37 % of a first pulse
+  above 18 V; some sit below the 16.90-17.24 V VOK assert and never power the charger at all.
+
+==============================================================================
+C. FC window mean pack current per H-20 purge cycle with the fw v32a cooldown retained
+==============================================================================
+  cold start 0.065 s (R_KA):  7.95 s charging per 10.34 s cycle -> mean 0.961 A (design 14.2 / bt1 calc D: about 1.14 A with R_KA)
+  cold start 0.17 s (R_KA):  7.84 s charging per 10.34 s cycle -> mean 0.948 A (design 14.2 / bt1 calc D: about 1.14 A with R_KA)
+  Bring-Up 2->7.4 V at 0.64 V/s (no R_KA):  0.00 s charging per 10.34 s cycle -> mean 0.000 A (design 14.2 / bt1 calc D: about 1.14 A with R_KA)
+  Drive-cycle share: FC windows only in State 1 / State 98 (design 9.7, 12.2 item 2, OR-O); a UDDS run
+  is State 2 throughout (doState2 leaves only on changeToFin, ino:7955-7957) -> 0 % of the 333 s cycle.
+
+==============================================================================
+D. Change-set calibration from git (teensy_controller.ino, lines added / removed)
+==============================================================================
+  fw v28 (9318e16) + revs 2-6: +1916 / -215
+  fw v37 rounds (db59fb7, e22e5cb, 95cc709): +1273 / -119
+  fw v37 rev 2 J guards (da0746c): +449 / -12
+  fw v37 J session (one State-98 mode, 3 guards, latch) = ~1,250 added lines incl. review rounds;
+  IC1 = 7-state mode manager + 10-step self-test + ladder decode/EEPROM calibration + 14 faults +
+  watchdog round + purge predictor + Idle call site + telemetry v5 + BLG bump + State-98 keys.

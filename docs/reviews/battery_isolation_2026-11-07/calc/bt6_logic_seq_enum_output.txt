@@ -1,0 +1,147 @@
+
+==============================================================================================================
+Section 1: revision-9 sequences through the hardware network: (a), (b), (b'), (d)
+==============================================================================================================
+  (a)  efuse on AND S_GND on (charger powered, pack bonded)
+  (b)  hw() loop term: efuse on, fed from the bus, D-BT-SQ and D-BT-EN both effective
+  (b') D-BT-EN effective while FF1 is set (BT boost draws through the sense in reverse; the key constraint)
+  (d)  S_GND on while the module node is hot from a feed (efuse on), firmware-legal steps only
+  pre-purge exit 9.11.3 (P, D-s)               steps 5, states    80: (a) 0  (b) 0  (b') 0  (d) 0
+  re-entry 9.7 entry 1-6                       steps 4, states    64: (a) 0  (b) 0  (b') 16  (d) 0
+  E2 collapse teardown Table 23                steps 6, states    96: (a) 0  (b) 0  (b') 0  (d) 0
+  UNKNOWN-after-onset commanded exit (PI-4)    steps 4, states    64: (a) 0  (b) 0  (b') 0  (d) 0
+
+  Reading. Revision 9 adds no hardware, so the network invariants hold on every new sequence as written: the feed
+  drop precedes the bond, BT_BUS is written only after the bond, and the E2 teardown writes no BT_BUS HIGH. The
+  hardware alone does not hold (b') between exit step 1 and step 3: Q_X1 is keyed to FCQ only (design section 6
+  item 9: EN_BE = p28 AND NOT FCQ), so from the FC_CHARGE LOW write to the bonded confirmation the BT_BUS closure is
+  prevented by firmware ownership (12.4 item 7, SC-8) alone. That interval is 4.7-15.3 ms per exit (Table 21) and,
+  with a window per 10.34 s period, occurs about 5.8 times per minute (section 2).
+
+==============================================================================================================
+Section 2: ideal predictor: BT_BUS conducting before the onset; selector cut against D-BT-EN conduction
+==============================================================================================================
+  P (State 1/98)  worst: BT_BUS write 29.9 ms, conduction 61.7 ms after the prediction, margin to the onset -1.7 ms (loop 1.131 ms, gap at drop, drain deadline, confirmation deadline, t_D_ON 12 ms)
+  D-s (State 2)   worst: BT_BUS write 29.9 ms, conduction 61.7 ms after the prediction, margin to the onset 228.3 ms (loop 1.131 ms, gap at drop, drain deadline, confirmation deadline, t_D_ON 12 ms)
+  -> healthy chains conduct before the onset (Table 20 healthy worst 47.0 ms). The deadline chain with the one 9.76 ms gap placed before the feed drop (not inside the drain or confirmation, as Table 20 places it) and both waits at their 10 ms deadlines conducts at 61.7 ms: 1.7 ms past T_lead,min 60 ms.
+
+  Share-latch survivor-blanking race (State 2 only; selector armed battery-only at the BT_BUS write):
+  the latch cuts FC_BUS (sp 0.0 < DROOP_R_MIN, I_fc <= 0.5 A, both bus pins HIGH) once BT_BUS is out of its
+  30 ms blanking (ino:13398-13410); the bus is source-less until D-BT-EN conducts.
+    t_D_ON  8.0 ms: conduction at write+27.8 ms, FC cut at write+31.3 ms: source-less 0.00 ms, bus minimum 15.90 V
+    t_D_ON 10.0 ms: conduction at write+29.8 ms, FC cut at write+31.3 ms: source-less 0.00 ms, bus minimum 15.90 V
+    t_D_ON 12.0 ms: conduction at write+31.8 ms, FC cut at write+31.3 ms: source-less 0.43 ms, bus minimum 15.72 V
+    t_D_ON 16.0 ms: conduction at write+35.8 ms, FC cut at write+31.3 ms: source-less 4.43 ms, bus minimum 13.25 V
+    t_D_ON 20.0 ms: conduction at write+39.8 ms, FC cut at write+31.3 ms: source-less 8.43 ms, bus minimum 10.79 V
+
+  Reading. The arm can stand at the BT_BUS write only if the re-entry rule re-armed it between the FC_CHARGE LOW
+  write and the override (ino:14106-14125 requires FC_CHARGE LOW, a rail command and the total under 0.25 A, all
+  true at a standstill exit) or if it was never disarmed. The override R_OV is in band, so it HOLDS an armed
+  selection (ino:14127-14130). With t_D_ON <= 10.2 ms the blanking covers the conduction; above it the bus sags
+  for a few ms with no fault (UV_BUS needs 20 ms). This is open item 32; no new defect, recorded for W2a.
+
+==============================================================================================================
+Section 3: unpredicted onset inside an FC window, predictor reports UNKNOWN / purge_active at t_det (PI-4)
+==============================================================================================================
+  Design 9.11.2: UNKNOWN (PI-4: 'after an onset that it did not predict') 'closes an open one as a prediction
+  does', i.e. runs the commanded exit with the BT_BUS re-close; SC-1 (E2) latches with no re-close. The design
+  states no precedence and no bound on the recognition latency t_det. Exit-first: the feed drop takes EF_EN
+  low, so SC-1 reading (a) is disarmed and only reading (b) V_bus < 12 V remains, until the BT_BUS write.
+  2430 cases per order (3 load modes x 3 aux x 3 C_V x 5 T_fall x 2 variants x 9 t_det), p99 loop, C_mod 221 uF
+  [det-first, t_rec  80 ms] OPEN 1559, BENIGN 832, IN-FAMILY 24, HAZARD 15
+     IN-FAMILY: t_det [10, 50, 60, 70] ms, T_fall [0, 60, 75] ms; lowest bus 12.04 V (V-MOT 12.42 V, D-MT-EN joined True); case MPPT 14.8 W aux 15.0 mA C_V 0.48 mF T_fall 75 ms var P t_det 70 ms: exit 70.7 ms, BT_BUS write - ms at V_bus - V, BT conducts - ms, latch 80.2 ms [E2], BT peak 0.00 A
+     HAZARD: t_det [50, 60, 70] ms, T_fall [60, 75] ms; lowest bus 10.95 V (V-MOT 10.95 V, D-MT-EN joined True); case MPPT 14.8 W aux 0.5 mA C_V 0.48 mF T_fall 75 ms var D t_det 50 ms: exit 50.3 ms, BT_BUS write 58.5 ms at V_bus 13.82 V, BT conducts 76.4 ms, latch - ms [none], BT peak 0.80 A
+  [det-first, t_rec 100 ms] OPEN 1568, BENIGN 859, IN-FAMILY 3
+     IN-FAMILY: t_det [10, 70] ms, T_fall [0, 75] ms; lowest bus 12.45 V (V-MOT 12.45 V, D-MT-EN joined True); case MPPT 14.8 W aux 0.5 mA C_V 1.50 mF T_fall 75 ms var P t_det 70 ms: exit 70.7 ms, BT_BUS write - ms at V_bus - V, BT conducts - ms, latch 110.2 ms [E2], BT peak 0.00 A
+  [exit-first, t_rec  80 ms] OPEN 1539, BENIGN 849, IN-FAMILY 27, HAZARD 15
+     IN-FAMILY: t_det [10, 30, 50, 60, 70] ms, T_fall [0, 20, 40, 60, 75] ms; lowest bus 12.04 V (V-MOT 12.42 V, D-MT-EN joined True); case MPPT 14.8 W aux 15.0 mA C_V 0.48 mF T_fall 75 ms var P t_det 70 ms: exit 70.7 ms, BT_BUS write - ms at V_bus - V, BT conducts - ms, latch 80.2 ms [E2], BT peak 0.00 A
+     HAZARD: t_det [50, 60, 70] ms, T_fall [60, 75] ms; lowest bus 10.95 V (V-MOT 10.95 V, D-MT-EN joined True); case MPPT 14.8 W aux 0.5 mA C_V 0.48 mF T_fall 75 ms var D t_det 50 ms: exit 50.3 ms, BT_BUS write 58.5 ms at V_bus 13.82 V, BT conducts 76.4 ms, latch - ms [none], BT peak 0.80 A
+  [exit-first, t_rec 100 ms] OPEN 1548, BENIGN 876, IN-FAMILY 6
+     IN-FAMILY: t_det [10, 30, 50, 70] ms, T_fall [0, 20, 40, 60, 75] ms; lowest bus 12.41 V (V-MOT 13.49 V, D-MT-EN joined True); case MPPT 14.8 W aux 0.5 mA C_V 5.00 mF T_fall 20 ms var P t_det 30 ms: exit 31.3 ms, BT_BUS write - ms at V_bus - V, BT conducts - ms, latch 153.7 ms [E2], BT peak 0.00 A
+  exit-first, t_rec 80 ms, by t_det: [HAZARD / IN-FAMILY / BT_BUS written after onset / BT peak > 2.5 A / exit stuck at the 13.5 V guard with no latch at 80 ms]
+     t_det    0 ms:   0 /   0 / 226 /  15 /   0   of 270
+     t_det    2 ms:   0 /   0 / 223 /  15 /   0   of 270
+     t_det   10 ms:   0 /   1 / 195 /  21 /   1   of 270
+     t_det   20 ms:   0 /   0 / 114 /  29 /   0   of 270
+     t_det   30 ms:   0 /   1 /  62 /  29 /   1   of 270
+     t_det   40 ms:   0 /   0 /  36 /  16 /   0   of 270
+     t_det   50 ms:  13 /   8 /  22 /   8 /   1   of 270
+     t_det   60 ms:   1 /   9 /   7 /   3 /   3   of 270
+     t_det   70 ms:   1 /   8 /   1 /   1 /   8   of 270
+  baseline E2 only (no predictor exit), t_rec  80 ms: {'OPEN': 264, 'IN-FAMILY': 6}
+  baseline E2 only (no predictor exit), t_rec 100 ms: {'OPEN': 270}
+  exit-first: BT_BUS re-close written after the onset in 886 of 2430 cases; bus-side peak above the RT1987 2.5 A start limit (DS-00 s17.5) in 137
+     largest 4.46 A: CP 13.0 W aux 0.5 mA C_V 5.00 mF T_fall 60 ms var D t_det 30 ms
+
+  Reading. The baseline (SC-1 alone, no predictor exit) writes no BT_BUS after any onset and has no HAZARD case,
+  as revision 9 claims. Adding the PI-4 rule 'UNKNOWN closes an open session as a prediction does' changes that in
+  both orderings, because at the moment the predictor recognises the onset SC-1 has usually not tripped yet (V_chg
+  is still above 13.0 V; with the ideal MPPT hold it stays there for tens of ms): the commanded exit drops the feed,
+  which takes EF_EN low and disarms SC-1 reading (a); the bus, now carrying only its auxiliary load, stays above
+  the 13.5 V guard, so the BT_BUS write is made and ends SC-1 coverage with FC_BUS and FC_REG HIGH. That is policy
+  E1 re-entered through the predictor interface: D4 turn-on stress (peaks to 4.46 A against the 2.5 A RT1987
+  start limit) at every recognition latency, the H-R HAZARD class (bus 10.95 V at the FC recovery with V-MOT
+  joined, no latch) at 50-70 ms, and a guard-refusal stall (exit waiting at V_bus 12.0-13.5 V, reading (a)
+  disarmed, reading (b) not yet tripped) that leaves FC_BUS HIGH at the recovery.
+
+==============================================================================================================
+Section 4: D-s entry steps 1-4: FC_BUS cut by the re-entry rule before the mode manager drops BT_BUS
+==============================================================================================================
+  Ownership (12.4 item 7, SC-8) starts at entry step 5. Entry steps 1-4 (pin 10, pin 5, pin 33 with a
+  4-iteration confirmation, the sense-path check) leave pins 27/28 to the share latch in State 2.
+   filtered total 0.91 A -> below the 0.20 A closed-loop exit in 39 ticks (44-53 ms); the window closes >= 290 ms before the onset and the shift back is >= 160 ms after it
+   filtered total 1.08 A -> below the 0.20 A closed-loop exit in 57 ticks (64-76 ms); the window closes >= 290 ms before the onset and the shift back is >= 160 ms after it
+   inhibit: the in-band R_OV clears it with no cut latched (ino:14096-14105); fcUvLockoutActive() is TRUE on a
+   purging H-20 (30 s > 10.34 s, ino:2256), so a 0.15 OR a 0.85 command re-arms BATTERY-only (ino:14119).
+   t =   0.0 ms  chgModeTick(): shift back releases R_OV, restores the stored EMS command (a rail, 0.15 or 0.85); 'no share override standing' is now true and every other 9.7 entry condition holds (Table 22 D-s: the shift back is the binding gate); F1 conduction gate passes (FC_BUS HIGH, unblanked); entry step 1 (pin 10 HIGH)
+   t =   0.0 ms  powerBalance() (same or next iteration): not armed, shareClosedLoopRun, open-loop, !inhibit, FC_CHARGE LOW, total <= 0.25 A, rail command: RE-ARM battery-only (ino:14106-14125); updateShareSetpointCutoff(): sp_eff 0.0, FC_BUS and BT_BUS HIGH, BT unblanked (written >= 450 ms earlier), |I_fc| <= 0.5 A: FC_BUS LOW, shareSpCutFC (ino:13398-13410). The bus is held by BT alone.
+   t =   1.3 ms  entry step 2: pin 5 released
+   t =   2.6 ms  entry step 3: pin 33 HIGH; confirmation 2-4 iterations
+   t =   6.5 ms  entry step 4: sense-path check passes (one iteration)
+   t =   7.9 ms  entry step 5: the mode manager drops BT_BUS (writeBusSwitch is unconditional, ino:4920-4932); BT_CURRENT < 0.2 A on the next read (aux only): the bus is SOURCE-LESS (FC_BUS LOW by the latch, BT_BUS LOW)
+   t =   9.2 ms  entry step 6: assertFcChargeEnable(true): the S2 restore writes FC_BUS HIGH unguarded (ino:12745-12749) and FC_CHARGE HIGH; D-FC-EN conducts only after t_D_ON 8 ms plus its soft-start
+   bus from 15.9 V to 12.0 V at 2.570 V/ms (HIL I_AUX 0.09 A on 35 uF): 1.5 ms after step 5 -> ERR_FC_ONLY_COLLAPSE (b) latches State 99 on a healthy board
+   bus from 15.9 V to 12.0 V at 4.300 V/ms (0.15 A aux on 35 uF (pc s1)): 0.9 ms after step 5 -> ERR_FC_ONLY_COLLAPSE (b) latches State 99 on a healthy board
+   bus from 15.9 V to 12.0 V at 0.231 V/ms (pc s1 upper aux decay with F joined): 16.9 ms after step 5 -> ERR_FC_ONLY_COLLAPSE (b) latches State 99 on a healthy board
+
+  Reading. Section 9.7 checks the F1 conduction gate as an entry CONDITION (before step 1), SC-8 starts at step 5,
+  and 9.11.4 lets the entry follow the shift back 'whatever share the loop holds', so nothing re-checks that FC_BUS
+  conducts when BT_BUS is dropped. In State 1/98 no share loop runs (variant P is immune). In State 2 the latch,
+  the re-entry rule and the load guard keep their writes on pins 27/28 through steps 1-4 (2.6-30 ms), and the
+  shift back to a rail command re-arms the selector deterministically (the 12.11 host test 'R_OV never arms the
+  selector' does not cover the shift back). Whether the cut lands inside steps 1-4 or before the admission depends
+  on the unspecified call order of chgModeTick() and doState2(); an in-band to rail EMS change during steps 1-4
+  gives the same trace without the shift back. The outcome is a State-99 latch with a perfect predictor (invariant f),
+  and an unguarded FC_BUS write by the S2 restore onto a sagging bus. Fix: extend SC-8 ownership to the whole
+  CHG_ENTERING state (from the pin-10 write), and re-test FC_BUS HIGH, unblanked and no shareSpCut*/shareIso*
+  latched immediately before step 5 (refuse with code 11 otherwise).
+
+==============================================================================================================
+Section 5: healthy board, ideal predictor, 120 s purge train: UV_FC, UV_BUS, ERR_VCHG_FED, [RER], E2
+==============================================================================================================
+  P   purge 100 ms: UV_FC dwell peak  100.6 ms of 1000 (FC_BUS HIGH throughout, bonded); window transitions max 12 per 60 s (limit 20)
+  P   purge 140 ms: UV_FC dwell peak  140.8 ms of 1000 (FC_BUS HIGH throughout, bonded); window transitions max 12 per 60 s (limit 20)
+  P   purge 180 ms: UV_FC dwell peak  181.0 ms of 1000 (FC_BUS HIGH throughout, bonded); window transitions max 12 per 60 s (limit 20)
+  D-s purge 100 ms: UV_FC dwell peak  100.6 ms of 1000 (FC_BUS HIGH throughout, bonded); window transitions max 12 per 60 s (limit 20)
+  D-s purge 140 ms: UV_FC dwell peak  140.8 ms of 1000 (FC_BUS HIGH throughout, bonded); window transitions max 12 per 60 s (limit 20)
+  D-s purge 180 ms: UV_FC dwell peak  181.0 ms of 1000 (FC_BUS HIGH throughout, bonded); window transitions max 12 per 60 s (limit 20)
+  ERR_VCHG_FED after a predicted exit: tau 0.984 s -> V_chg 5.77 V at the end of the 1.0 s blanking (latch if >= 11 V): no latch
+  ERR_VCHG_FED after a predicted exit: tau 2.000 s -> V_chg 9.67 V at the end of the 1.0 s blanking (latch if >= 11 V): no latch
+  ERR_VCHG_FED after a predicted exit: tau 2.690 s -> V_chg 11.00 V at the end of the 1.0 s blanking (latch if >= 11 V): no latch
+  ERR_VCHG_FED after a predicted exit: tau 3.000 s -> V_chg 11.43 V at the end of the 1.0 s blanking (latch if >= 11 V): LATCH
+  break-even tau for the 1.0 s blanking: 2.69 s (2.7 x the design tau, TODO(calibrate) at C-2b)
+
+  Reading. With the ideal predictor no onset falls inside a session, so SC-1 never sees a purge; UV_BUS stays armed
+  on a bus that BT holds; UV_FC accumulates at most one purge per period and leaks it in under 4 s; the window
+  rate is 11.6 per minute. No healthy-board latch is found on the predicted train itself. The healthy-board latch
+  of section 4 (State 2 entry) and the policy conflict of section 3 are the revision-9 sequencing defects.
+
+==============================================================================================================
+Section 6: (c) Teensy unpowered / reset and (e) the next power-up
+==============================================================================================================
+  Teensy unpowered/reset, every pin level and env bit: 373248 states, S_GND off or eFuse on without residual: 0
+
+  Reading. (c) holds: revision 9 adds no hardware. (e) next power-up: no window state is stored, setup() drives
+  every path switch LOW (ino:6709-6715), the bring-up connects V-MOT only from a regulated bus; nothing re-closes
+  onto a collapsed node at power-up. On the FC recovery after an E2 latch, FC_BUS is LOW in phase 0 (Table 23);
+  the exception is the exit-first ordering of section 3, where FC_BUS and FC_REG stay HIGH.

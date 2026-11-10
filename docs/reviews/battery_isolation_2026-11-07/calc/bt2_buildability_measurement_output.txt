@@ -1,0 +1,42 @@
+==============================================================================
+Section 1. Shared Kelvin pair: signature of a KS+ to KS- short (or a cracked Kelvin joint)
+==============================================================================
+discharge   1.0 A: intact OUT1 1.600 V / OUT2 1.700 V; KS shorted OUT1 = OUT2 = 1.650 V -> I_PACK1 = I_PACK2 = 0, |I1-I2| = 0 (XCHK passes)
+discharge   3.0 A: intact OUT1 1.500 V / OUT2 1.800 V; KS shorted OUT1 = OUT2 = 1.650 V -> I_PACK1 = I_PACK2 = 0, |I1-I2| = 0 (XCHK passes)
+discharge   7.2 A: intact OUT1 1.290 V / OUT2 2.010 V; KS shorted OUT1 = OUT2 = 1.650 V -> I_PACK1 = I_PACK2 = 0, |I1-I2| = 0 (XCHK passes)
+discharge  17.1 A: intact OUT1 0.795 V / OUT2 2.505 V; KS shorted OUT1 = OUT2 = 1.650 V -> I_PACK1 = I_PACK2 = 0, |I1-I2| = 0 (XCHK passes)
+  current in the KS-pair short at 7.2 A pack: 0.82 mA (no fusing, silent)
+  current in the KS-pair short at 17.1 A pack: 1.94 mA (no fusing, silent)
+Consequences with I_PACK1 = 0: sense-path test step 5 SKIPPED (needs >= 0.2 A discharge);
+ERR_SGND_OPEN and ERR_RET_DEGRADED never evaluate (need I_PACK1 > 1 A / >= 5 A);
+ERR_PROFILE_OC never fires; U_C1 and U_C2 never trip; ERR_ISO_MISMATCH only in FC windows.
+Independent pack-current estimate (bonded): I_pack ~= I_batt_bus*V_bus/(eta*V_batt) + I_LM1084
+  I_batt(bus) 0.3 A, V_batt 7.4 V -> I_pack >= 0.72 A (+ LM1084 load), eta 0.90 ASSUMED
+  I_batt(bus) 0.3 A, V_batt 8.4 V -> I_pack >= 0.63 A (+ LM1084 load), eta 0.90 ASSUMED
+  I_batt(bus) 1.0 A, V_batt 7.4 V -> I_pack >= 2.40 A (+ LM1084 load), eta 0.90 ASSUMED
+  I_batt(bus) 1.0 A, V_batt 8.4 V -> I_pack >= 2.12 A (+ LM1084 load), eta 0.90 ASSUMED
+  I_batt(bus) 2.0 A, V_batt 7.4 V -> I_pack >= 4.80 A (+ LM1084 load), eta 0.90 ASSUMED
+  I_batt(bus) 2.0 A, V_batt 8.4 V -> I_pack >= 4.23 A (+ LM1084 load), eta 0.90 ASSUMED
+  I_batt(bus) 3.0 A, V_batt 7.4 V -> I_pack >= 7.21 A (+ LM1084 load), eta 0.90 ASSUMED
+  I_batt(bus) 3.0 A, V_batt 8.4 V -> I_pack >= 6.35 A (+ LM1084 load), eta 0.90 ASSUMED
+
+==============================================================================
+Section 2. BQ29200 OUT fly-wire: open-wire behaviour, present vs proposed bias
+==============================================================================
+Present (R_OVG 1k, R_OVP 1M to GND): wire open -> Q_OV gate 0 V < V_th,min 0.8 V -> OVP actuation silently lost (F25 'latent')
+Proposed (R_OVP replaced by 1 MOhm to 3V3): pull-up current 3.3 uA < 30 uA guaranteed sink at 0.05 V -> OUT low <= about 5.5 mV (gate off)
+  wire open -> gate 3.3 V > V_th,max 1.5 V -> Q_OV on, N1 LOW, FF1 cannot set (fail-safe, seen as ERR_CHG_ENTRY / self-test step 4)
+  OVP: OUT 6-9.5 V back-feeds 3V3 through 1 MOhm: <= 6.2 uA (negligible)
+
+==============================================================================
+Section 3. LB footprint versus the free strip beside the Teensy
+==============================================================================
+  SOT-23-5/SC-70 logic (U_P33,U_CKS,U_CLS,U_BF,U_PS,U_SG1,U_SG2,U_CH1,U_CH2,U_VA,U_OR,U_AND,U_FF,U_PD): 14 x 12.2 = 172 mm2
+  TSSOP-20 LVC244A x2: 2 x 56.0 = 112 mm2
+  TSSOP-8 INA240 x2: 2 x 27.6 = 55 mm2
+  SOT-23-6 TLV3011B x7: 7 x 12.2 = 86 mm2
+  SOT-23 BSS138 x15 + BAT54 x14: 29 x 12.2 = 355 mm2
+  0603/0805 passives (~150): 150 x 4.2 = 624 mm2
+  0805 thin-film 49.9k x8 + C_P1 1206: 9 x 7.0 = 63 mm2
+Component courtyard total 1467 mm2; 2-layer routed at x2.0-2.5 -> 2933-3667 mm2 plus about 30 wire landing pads
+Free strip right of J2 (x 112-131, y 30-98, RSDA/RSCL at x 112.5 excluded): about 1297 mm2 (BRD element scan; mounting holes and connector keep-outs not checked)

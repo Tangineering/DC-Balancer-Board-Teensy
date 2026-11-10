@@ -1,0 +1,11 @@
+[1] GND above pack(-) = V_cell1 + V_F + I*72.3 (cap 2*V_cell); threshold current for KS+ < -6 V
+   V_cell 3.7: I_th  28.4 mA; at 55 mA GND 7.40 V
+   V_cell 4.2: I_th  21.4 mA; at 55 mA GND 8.40 V
+[2] Proposed Schottky clamp GND->KS+ (V_F 0.3 V): current via R_K1 before it fuses
+   GND 4.45 V above pack(-): 1.89 A,   7.8 W in 0.25 W R_K1
+   GND 6.4 V above pack(-): 2.77 A,  16.9 W in 0.25 W R_K1
+   GND 8.4 V above pack(-): 3.68 A,  29.8 W in 0.25 W R_K1
+[3] Proposed series R_S = 100 Ohm per lead: offset and gain terms
+   I_B x dR (1 % match): 180.0 uV = 0.360 A equivalent
+   10 uA I_B mismatch: 1.00 mV =  2.00 A equivalent
+   series gain error 3000/(R_S+3000): 3.23 % (2.2 Ohm: 0.073 %)

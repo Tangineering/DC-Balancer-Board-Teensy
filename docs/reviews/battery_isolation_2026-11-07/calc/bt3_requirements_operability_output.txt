@@ -1,0 +1,25 @@
+# Inputs: tools/decode_benchlog.py CSVs of logs/{ML0151,ML0157,ML0165,ML0195,YP0166,YP0196}.BLG
+A. I_cmd at the HR1 evidence events (window -0.30 .. +0.60 s around the listed time)
+  ML0151  41.36: V-MOT(true) peak 21.42 V at 41.3857 s; onset(+1 V) 41.3652 s; I_cmd min -12.00 A; first I_cmd<-0.1 41.3561 s; OR-V' arm 41.3595 s; v_sp 2.66->2.00 m/s; dt arm-onset -5.7 ms
+  ML0157  47.30: V-MOT(true) peak 21.31 V at 47.3227 s; onset(+1 V) 47.3055 s; I_cmd min -12.00 A; first I_cmd<-0.1 47.2976 s; OR-V' arm 47.2988 s; v_sp 3.00->2.00 m/s; dt arm-onset -6.8 ms
+  ML0165  22.64: V-MOT(true) peak 21.23 V at 22.6626 s; onset(+1 V) 22.6465 s; I_cmd min -12.00 A; first I_cmd<-0.1 22.6386 s; OR-V' arm 22.6398 s; v_sp 3.00->2.50 m/s; dt arm-onset -6.8 ms
+  ML0165  28.55: V-MOT(true) peak 21.30 V at 28.5790 s; onset(+1 V) 28.5551 s; I_cmd min -12.00 A; first I_cmd<-0.1 28.5461 s; OR-V' arm 28.5495 s; v_sp 2.50->1.50 m/s; dt arm-onset -5.7 ms
+  ML0195  33.20: V-MOT(true) peak 21.44 V at 33.2386 s; onset(+1 V) 33.2022 s; I_cmd min -12.00 A; first I_cmd<-0.1 33.1929 s; OR-V' arm 33.1964 s; v_sp 2.00->1.00 m/s; dt arm-onset -5.9 ms
+  YP0166  21.97: V-MOT(true) peak 21.33 V at 21.9961 s; onset(+1 V) 21.9744 s; I_cmd min -12.00 A; first I_cmd<-0.1 21.9675 s; OR-V' arm 21.9687 s; v_sp 2.82->1.50 m/s; dt arm-onset -5.7 ms
+  YP0196  21.97: V-MOT(true) peak 21.44 V at 22.0136 s; onset(+1 V) 21.9782 s; I_cmd min -12.00 A; first I_cmd<-0.1 21.9702 s; OR-V' arm 21.9714 s; v_sp 1.88->1.00 m/s; dt arm-onset -6.8 ms
+
+B. fw v37 drive law, held error step (2 ms ticks, vehicle speed frozen): time to i_cmd <= -2 A
+  e = -0.10 m/s: i_cmd at t=0 -0.021 A; reaches -2 A at 26 ms
+  e = -0.20 m/s: i_cmd at t=0 -0.043 A; reaches -2 A at 14 ms
+  e = -0.30 m/s: i_cmd at t=0 -0.064 A; reaches -2 A at 10 ms
+  e = -0.50 m/s: i_cmd at t=0 -0.107 A; reaches -2 A at 8 ms
+  e = -1.00 m/s: i_cmd at t=0 -0.214 A; reaches -2 A at 4 ms
+
+C. Pack discharge estimate at the OR-V' arm tick (entry needs < 1.5 A; I_L hold <= 0.75 A)
+  ML0151  41.36: BT_CURRENT pre-brake  0.43 A, at arm  0.06 A; V_batt 8.41 V; pack discharge est at arm 0.13 A, max in next 10 ms 0.13 A; I_L est (BT x Vbus/(0.88 Vbatt)) 0.14 A
+  ML0157  47.30: BT_CURRENT pre-brake  0.39 A, at arm  0.39 A; V_batt 8.30 V; pack discharge est at arm 0.80 A, max in next 10 ms 0.80 A; I_L est (BT x Vbus/(0.88 Vbatt)) 0.86 A
+  ML0165  22.64: BT_CURRENT pre-brake  0.42 A, at arm  0.27 A; V_batt 8.35 V; pack discharge est at arm 0.53 A, max in next 10 ms 0.53 A; I_L est (BT x Vbus/(0.88 Vbatt)) 0.58 A
+  ML0165  28.55: BT_CURRENT pre-brake  0.32 A, at arm  0.06 A; V_batt 8.45 V; pack discharge est at arm 0.11 A, max in next 10 ms 0.11 A; I_L est (BT x Vbus/(0.88 Vbatt)) 0.12 A
+  ML0195  33.20: BT_CURRENT pre-brake  0.35 A, at arm  0.06 A; V_batt 8.43 V; pack discharge est at arm 0.13 A, max in next 10 ms 0.13 A; I_L est (BT x Vbus/(0.88 Vbatt)) 0.14 A
+  YP0166  21.97: BT_CURRENT pre-brake  1.01 A, at arm  0.72 A; V_batt 8.21 V; pack discharge est at arm 1.46 A, max in next 10 ms 1.46 A; I_L est (BT x Vbus/(0.88 Vbatt)) 1.58 A
+  YP0196  21.97: BT_CURRENT pre-brake  0.60 A, at arm  0.10 A; V_batt 8.41 V; pack discharge est at arm 0.21 A, max in next 10 ms 0.21 A; I_L est (BT x Vbus/(0.88 Vbatt)) 0.23 A

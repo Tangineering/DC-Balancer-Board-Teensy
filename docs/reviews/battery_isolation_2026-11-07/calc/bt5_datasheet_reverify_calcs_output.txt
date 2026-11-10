@@ -1,0 +1,55 @@
+[1 D_VC1 feasibility invariant]
+  design ASSUMED x2.00 per 10 K
+    n 1.0, T_hot   45 C: minimum VC1 leakage error     3.8 mV (design budget 10.4 mV) -> feasible
+    n 1.0, T_hot   60 C: minimum VC1 leakage error    10.7 mV (design budget 10.4 mV) -> INFEASIBLE x1.0
+    n 1.0, T_hot   70 C: minimum VC1 leakage error    21.3 mV (design budget 10.4 mV) -> INFEASIBLE x2.1
+    n 1.0, T_hot   85 C: minimum VC1 leakage error    60.3 mV (design budget 10.4 mV) -> INFEASIBLE x5.8
+    n 1.1, T_hot   45 C: minimum VC1 leakage error    10.7 mV (design budget 10.4 mV) -> INFEASIBLE x1.0
+    n 1.1, T_hot   60 C: minimum VC1 leakage error    30.2 mV (design budget 10.4 mV) -> INFEASIBLE x2.9
+    n 1.1, T_hot   70 C: minimum VC1 leakage error    60.4 mV (design budget 10.4 mV) -> INFEASIBLE x5.8
+    n 1.1, T_hot   85 C: minimum VC1 leakage error   170.9 mV (design budget 10.4 mV) -> INFEASIBLE x16.4
+  NSR0320 primary, 25->85 C at 15 V: 450/10 typ = x45 over 60 K -> x1.89 per 10 K
+    n 1.0, T_hot   45 C: minimum VC1 leakage error     2.6 mV (design budget 10.4 mV) -> feasible
+    n 1.0, T_hot   60 C: minimum VC1 leakage error     6.7 mV (design budget 10.4 mV) -> feasible
+    n 1.0, T_hot   70 C: minimum VC1 leakage error    12.6 mV (design budget 10.4 mV) -> INFEASIBLE x1.2
+    n 1.0, T_hot   85 C: minimum VC1 leakage error    32.6 mV (design budget 10.4 mV) -> INFEASIBLE x3.1
+    n 1.1, T_hot   45 C: minimum VC1 leakage error     7.3 mV (design budget 10.4 mV) -> feasible
+    n 1.1, T_hot   60 C: minimum VC1 leakage error    18.9 mV (design budget 10.4 mV) -> INFEASIBLE x1.8
+    n 1.1, T_hot   70 C: minimum VC1 leakage error    35.6 mV (design budget 10.4 mV) -> INFEASIBLE x3.4
+    n 1.1, T_hot   85 C: minimum VC1 leakage error    92.3 mV (design budget 10.4 mV) -> INFEASIBLE x8.9
+  at RB3 261 Ohm the fault current is 16.1 mA; the 40 uA limit is 2.49e-03 of it
+  n 1.0: I_S needed for 0.25 V at 16.2 mA: 0.96 uA at 25 C (calc7) but 0.171 uA at -20 C, i.e. 3.9 uA referred to 25 C with x2/10 K
+  n 1.1: I_S needed for 0.25 V at 16.2 mA: 2.33 uA at 25 C (calc7) but 0.484 uA at -20 C, i.e. 11.0 uA referred to 25 C with x2/10 K
+
+[2 NSR0320MW2T1G (onsemi NSR0320MW2T1/D Rev 8): the lowest-V_F small Schottky checked]
+  V_F max 0.27 V at 10 mA, 25 C (> 0.25 V at 16.2 mA before any cold shift)
+  ASSUMED tempco -1.0 mV/K: V_F(16.2 mA, -20 C) about 0.326 V -> VC1 at -0.326 V (SLUSA52C 7.1 minimum -0.3 V)
+  ASSUMED tempco -1.5 mV/K: V_F(16.2 mA, -20 C) about 0.348 V -> VC1 at -0.348 V (SLUSA52C 7.1 minimum -0.3 V)
+  I_R typ 200 uA at V_R 2.0 V, 85 C; typ 450 uA at 15 V, 85 C (no maximum given at 85 C)
+  -> at 85 C: 200 uA vs the 40 uA limit (x5); VC1 error 200 uA x 261 Ohm = 52.2 mV vs 10.4 mV
+
+[3 Consequence of the hot leakage]
+  I_R   40 uA: VC1 reads  10.4 mV low -> true cell-1 OVP trip about 4.35 V +  10.4 mV; ERR_CELL_MISMATCH sees  20.9 mV of 80 mV
+  I_R  100 uA: VC1 reads  26.1 mV low -> true cell-1 OVP trip about 4.35 V +  26.1 mV; ERR_CELL_MISMATCH sees  52.2 mV of 80 mV
+  I_R  200 uA: VC1 reads  52.2 mV low -> true cell-1 OVP trip about 4.35 V +  52.2 mV; ERR_CELL_MISMATCH sees 104.4 mV of 80 mV
+  I_R  450 uA: VC1 reads 117.5 mV low -> true cell-1 OVP trip about 4.35 V + 117.5 mV; ERR_CELL_MISMATCH sees 234.9 mV of 80 mV
+
+[4 TPS2663 R_ILIM]
+  row R(ILIM) 30.00 k: 0.540/0.600/0.660 A, tolerance -10.0/+10.0 %, Eq.5 typ 0.600 A
+  row R(ILIM)  9.00 k: 1.840/2.000/2.160 A, tolerance -8.0/+8.0 %, Eq.5 typ 2.000 A
+  row R(ILIM)  4.02 k: 4.185/4.500/4.815 A, tolerance -7.0/+7.0 %, Eq.5 typ 4.478 A
+  row R(ILIM)  3.00 k: 5.580/6.000/6.420 A, tolerance -7.0/+7.0 %, Eq.5 typ 6.000 A
+  8.06 k: Eq.5 typ 2.233 A; +/-8 % -> 2.055-2.412 A (design 2.06-2.41 A); 0.1 % resistor adds 0.1 %
+  TPS26631 pulse phase: I(OL_Pulse) = 2 x I(OL) = 4.11-4.82 A for tCB(dly) 20-31 ms (SLVSE94G 6.5/6.6)
+  GAIN(IMON) specified only for 0.6 A <= I(OUT) <= 2 A; U_IM trip 1.51-1.98 A lies inside it
+
+[5 F_VX Littelfuse 451/453 rev GD, 08/23/21]
+  3.5 A (03.5)  cold R 0.0200 Ohm, melting I2t 1.920 A2s
+  4 A (004.)    cold R 0.0160 Ohm, melting I2t 2.469 A2s
+  5 A (005.)    cold R 0.0125 Ohm, melting I2t 3.152 A2s
+  design cites 16.0 mOhm with 3.152 A2s: the resistance is the 4 A row, the I2t is the 5 A row
+
+[6 Pin-8 low-level sink with RENC2 fitted]
+  RENC2 4.7 k + R_UMS 10 k + Teensy INPUT_PULLUP 22 k (PUS(3)): U_MS sinks 1.18 mA at 3V3 3.30 V
+  RENC2 2.2 k + R_UMS 10 k + Teensy INPUT_PULLUP 22 k (PUS(3)): U_MS sinks 1.98 mA at 3V3 3.30 V
+  SBOS300C 6.9 gives V_OL only at VS = 5 V, 5 mA (200 mV max); 3.3 V supply not tabulated

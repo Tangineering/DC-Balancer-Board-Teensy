@@ -1,0 +1,99 @@
+
+==============================================================================
+Section 1: ERR_VOK_STUCK against the normal post-brake V-MOT tail (DD Table 16, FP 6)
+==============================================================================
+  rise 19 ms, decay 14 V/s: after the VESC stop, a channel stays 'permit' for 351-373 ms (to release 16.43/16.13 V)
+  rise 19 ms, decay 20 V/s: after the VESC stop, a channel stays 'permit' for 246-261 ms (to release 16.43/16.13 V)
+  rise 47 ms, decay 14 V/s: after the VESC stop, a channel stays 'permit' for 351-373 ms (to release 16.43/16.13 V)
+  rise 47 ms, decay 20 V/s: after the VESC stop, a channel stays 'permit' for 246-261 ms (to release 16.43/16.13 V)
+  ERR_VOK_STUCK opens 200 ms after the command stops being negative -> false latch whenever the brake
+  command ends less than (tail - 200 ms) after a VESC stop.
+  rise 19 ms decay 14 V/s worst (assert 16.90, release 16.13): false latch for brake durations 16-194 ms, 536-714 ms, 1054-1198 ms; 42.2 % of durations 0-1.2 s
+  rise 19 ms decay 14 V/s best  (assert 17.24, release 16.43): false latch for brake durations 18-172 ms, 536-692 ms, 1056-1198 ms; 38.2 % of durations 0-1.2 s
+  rise 19 ms decay 20 V/s worst (assert 16.90, release 16.13): false latch for brake durations 20-82 ms, 540-602 ms, 1058-1120 ms; 16.0 % of durations 0-1.2 s
+  rise 19 ms decay 20 V/s best  (assert 17.24, release 16.43): false latch for brake durations 22-68 ms, 540-586 ms, 1060-1106 ms; 12.0 % of durations 0-1.2 s
+  rise 47 ms decay 14 V/s worst (assert 16.90, release 16.13): false latch for brake durations 32-222 ms, 580-770 ms, 1126-1198 ms; 38.2 % of durations 0-1.2 s
+  rise 47 ms decay 14 V/s best  (assert 17.24, release 16.43): false latch for brake durations 34-200 ms, 582-748 ms, 1130-1198 ms; 33.8 % of durations 0-1.2 s
+  rise 47 ms decay 20 V/s worst (assert 16.90, release 16.13): false latch for brake durations 42-110 ms, 590-658 ms, 1136-1198 ms; 17.0 % of durations 0-1.2 s
+  rise 47 ms decay 20 V/s best  (assert 17.24, release 16.43): false latch for brake durations 46-96 ms, 592-642 ms, 1140-1190 ms; 13.0 % of durations 0-1.2 s
+  healthy-pair disagreement: assert spread 0.34 V / slowest rise 0.116 V/ms = 2.9 ms; release spread 0.30 V / slowest decay 14 V/s = 21.6 ms
+  -> 'exactly one CHk_OK permits for >= 50 ms' cannot occur on a healthy pair; a stuck channel
+     at bus level gives a permanent one-channel permit.
+
+==============================================================================
+Section 2: OR-V regen arm (40 ms) against pulse 1 (DD 9.5, Table 11, Table 8a; RER 6; FP 6)
+==============================================================================
+  pulse 19 ms (VESC stop at 24.0 ms): pin 30 HIGH at 42.3-45.4 ms; t_D_ON 8 ms -> module input at 18 V at 55.6-60.0 ms = +31.6..+36.0 ms after the VESC stop (cold start 0)
+  pulse 19 ms (VESC stop at 24.0 ms): pin 30 HIGH at 42.3-45.4 ms; t_D_ON 12 ms -> module input at 18 V at 59.6-64.0 ms = +35.6..+40.0 ms after the VESC stop (cold start 0)
+  pulse 47 ms (VESC stop at 52.0 ms): pin 30 HIGH at 42.3-45.4 ms; t_D_ON 8 ms -> module input at 18 V at 55.6-60.0 ms = +3.6..+8.0 ms after the VESC stop (cold start 0)
+  pulse 47 ms (VESC stop at 52.0 ms): pin 30 HIGH at 42.3-45.4 ms; t_D_ON 12 ms -> module input at 18 V at 59.6-64.0 ms = +7.6..+12.0 ms after the VESC stop (cold start 0)
+  Pulse 1 is never captured: the chain starts after the VESC has stopped, for every cold-start time.
+  C 0.97 mF, pulse 19 ms, decay 14 V/s, cold start   0 ms: V-MOT at charger start 20.91 V; pack energy from the tail 0.071 J (to VOK release) / 0.048 J (above the 18 V threshold)
+  C 0.97 mF, pulse 19 ms, decay 14 V/s, cold start  65 ms: V-MOT at charger start 20.00 V; pack energy from the tail 0.055 J (to VOK release) / 0.032 J (above the 18 V threshold)
+  C 0.97 mF, pulse 19 ms, decay 14 V/s, cold start 170 ms: V-MOT at charger start 18.53 V; pack energy from the tail 0.031 J (to VOK release) / 0.008 J (above the 18 V threshold)
+  C 0.97 mF, pulse 19 ms, decay 20 V/s, cold start   0 ms: V-MOT at charger start 20.72 V; pack energy from the tail 0.067 J (to VOK release) / 0.044 J (above the 18 V threshold)
+  C 0.97 mF, pulse 19 ms, decay 20 V/s, cold start  65 ms: V-MOT at charger start 19.42 V; pack energy from the tail 0.045 J (to VOK release) / 0.022 J (above the 18 V threshold)
+  C 0.97 mF, pulse 19 ms, decay 20 V/s, cold start 170 ms: V-MOT at charger start 17.32 V; pack energy from the tail 0.013 J (to VOK release) / 0.000 J (above the 18 V threshold)
+  C 0.97 mF, pulse 47 ms, decay 14 V/s, cold start   0 ms: V-MOT at charger start 21.30 V; pack energy from the tail 0.077 J (to VOK release) / 0.055 J (above the 18 V threshold)
+  C 0.97 mF, pulse 47 ms, decay 14 V/s, cold start  65 ms: V-MOT at charger start 20.39 V; pack energy from the tail 0.062 J (to VOK release) / 0.039 J (above the 18 V threshold)
+  C 0.97 mF, pulse 47 ms, decay 14 V/s, cold start 170 ms: V-MOT at charger start 18.92 V; pack energy from the tail 0.037 J (to VOK release) / 0.014 J (above the 18 V threshold)
+  C 0.97 mF, pulse 47 ms, decay 20 V/s, cold start   0 ms: V-MOT at charger start 21.28 V; pack energy from the tail 0.077 J (to VOK release) / 0.054 J (above the 18 V threshold)
+  C 0.97 mF, pulse 47 ms, decay 20 V/s, cold start  65 ms: V-MOT at charger start 19.98 V; pack energy from the tail 0.054 J (to VOK release) / 0.032 J (above the 18 V threshold)
+  C 0.97 mF, pulse 47 ms, decay 20 V/s, cold start 170 ms: V-MOT at charger start 17.88 V; pack energy from the tail 0.021 J (to VOK release) / 0.000 J (above the 18 V threshold)
+  C 4.00 mF, pulse 19 ms, decay 14 V/s, cold start   0 ms: V-MOT at charger start 20.91 V; pack energy from the tail 0.279 J (to VOK release) / 0.189 J (above the 18 V threshold)
+  C 4.00 mF, pulse 19 ms, decay 14 V/s, cold start  65 ms: V-MOT at charger start 20.00 V; pack energy from the tail 0.217 J (to VOK release) / 0.127 J (above the 18 V threshold)
+  C 4.00 mF, pulse 19 ms, decay 14 V/s, cold start 170 ms: V-MOT at charger start 18.53 V; pack energy from the tail 0.123 J (to VOK release) / 0.032 J (above the 18 V threshold)
+  C 4.00 mF, pulse 19 ms, decay 20 V/s, cold start   0 ms: V-MOT at charger start 20.72 V; pack energy from the tail 0.261 J (to VOK release) / 0.172 J (above the 18 V threshold)
+  C 4.00 mF, pulse 19 ms, decay 20 V/s, cold start  65 ms: V-MOT at charger start 19.42 V; pack energy from the tail 0.175 J (to VOK release) / 0.087 J (above the 18 V threshold)
+  C 4.00 mF, pulse 19 ms, decay 20 V/s, cold start 170 ms: V-MOT at charger start 17.32 V; pack energy from the tail 0.049 J (to VOK release) / 0.000 J (above the 18 V threshold)
+  C 4.00 mF, pulse 47 ms, decay 14 V/s, cold start   0 ms: V-MOT at charger start 21.30 V; pack energy from the tail 0.307 J (to VOK release) / 0.217 J (above the 18 V threshold)
+  C 4.00 mF, pulse 47 ms, decay 14 V/s, cold start  65 ms: V-MOT at charger start 20.39 V; pack energy from the tail 0.244 J (to VOK release) / 0.153 J (above the 18 V threshold)
+  C 4.00 mF, pulse 47 ms, decay 14 V/s, cold start 170 ms: V-MOT at charger start 18.92 V; pack energy from the tail 0.147 J (to VOK release) / 0.057 J (above the 18 V threshold)
+  C 4.00 mF, pulse 47 ms, decay 20 V/s, cold start   0 ms: V-MOT at charger start 21.28 V; pack energy from the tail 0.299 J (to VOK release) / 0.211 J (above the 18 V threshold)
+  C 4.00 mF, pulse 47 ms, decay 20 V/s, cold start  65 ms: V-MOT at charger start 19.98 V; pack energy from the tail 0.211 J (to VOK release) / 0.123 J (above the 18 V threshold)
+  C 4.00 mF, pulse 47 ms, decay 20 V/s, cold start 170 ms: V-MOT at charger start 17.88 V; pack energy from the tail 0.081 J (to VOK release) / 0.000 J (above the 18 V threshold)
+  2->1 m/s (0.30 s): decel energy into the pack 1.81 J; pulse 2 starts at or after 524 ms (none within the decel)
+  3->1 m/s (0.58 s): decel energy into the pack 5.55 J; pulse 2 starts at or after 524 ms (at the decel end)
+
+==============================================================================
+Section 3: module alive after an eFuse cut (ERR_EFUSE_BYPASS; re-bond with the module converting)
+==============================================================================
+  The Ag105 answers I2C below 9 V input (returns 0xFF, Ag105 DS p.14 as cited in DD 12.5 item 2).
+  C_in    10 uF, regen, VOK release  : converts   0.04 ms (  0.8 mJ) after the cut, then I2C alive a further   3.7-  4.6 ms (logic to 5.0/3.5 V, UNCONFIRMED; at I_q 18 mA max)
+  C_in    10 uF, regen, exit at peak : converts   0.08 ms (  1.8 mJ) after the cut, then I2C alive a further   3.7-  4.6 ms (logic to 5.0/3.5 V, UNCONFIRMED; at I_q 18 mA max)
+  C_in    10 uF, FC window exit      : converts   0.05 ms (  0.7 mJ) after the cut, then I2C alive a further   3.7-  4.6 ms (logic to 5.0/3.5 V, UNCONFIRMED; at I_q 18 mA max)
+  C_in    47 uF, regen, VOK release  : converts   0.16 ms (  3.6 mJ) after the cut, then I2C alive a further  16.0- 20.0 ms (logic to 5.0/3.5 V, UNCONFIRMED; at I_q 18 mA max)
+  C_in    47 uF, regen, exit at peak : converts   0.36 ms (  8.0 mJ) after the cut, then I2C alive a further  16.0- 20.0 ms (logic to 5.0/3.5 V, UNCONFIRMED; at I_q 18 mA max)
+  C_in    47 uF, FC window exit      : converts   0.22 ms (  3.2 mJ) after the cut, then I2C alive a further  16.0- 20.0 ms (logic to 5.0/3.5 V, UNCONFIRMED; at I_q 18 mA max)
+  C_in   100 uF, regen, VOK release  : converts   0.34 ms (  7.5 mJ) after the cut, then I2C alive a further  33.7- 42.1 ms (logic to 5.0/3.5 V, UNCONFIRMED; at I_q 18 mA max)
+  C_in   100 uF, regen, exit at peak : converts   0.75 ms ( 16.9 mJ) after the cut, then I2C alive a further  33.7- 42.1 ms (logic to 5.0/3.5 V, UNCONFIRMED; at I_q 18 mA max)
+  C_in   100 uF, FC window exit      : converts   0.46 ms (  6.8 mJ) after the cut, then I2C alive a further  33.7- 42.1 ms (logic to 5.0/3.5 V, UNCONFIRMED; at I_q 18 mA max)
+  C_in   220 uF, regen, VOK release  : converts   0.73 ms ( 16.5 mJ) after the cut, then I2C alive a further  73.7- 92.1 ms (logic to 5.0/3.5 V, UNCONFIRMED; at I_q 18 mA max)
+  C_in   220 uF, regen, exit at peak : converts   1.65 ms ( 37.0 mJ) after the cut, then I2C alive a further  73.7- 92.1 ms (logic to 5.0/3.5 V, UNCONFIRMED; at I_q 18 mA max)
+  C_in   220 uF, FC window exit      : converts   1.01 ms ( 14.9 mJ) after the cut, then I2C alive a further  73.7- 92.1 ms (logic to 5.0/3.5 V, UNCONFIRMED; at I_q 18 mA max)
+  VBT 7.4 V, tau 88 us: S_GND conducts at 19-40 us, S_CHG commanded off at 23-44 us after FF1 clears
+  VBT 7.4 V, tau 114 us: S_GND conducts at 24-52 us, S_CHG commanded off at 29-57 us after FF1 clears
+  VBT 8.4 V, tau 88 us: S_GND conducts at 16-34 us, S_CHG commanded off at 20-37 us after FF1 clears
+  VBT 8.4 V, tau 114 us: S_GND conducts at 21-44 us, S_CHG commanded off at 25-48 us after FF1 clears
+  In a regen window EF_EN = FF1.Q AND PUMP_OK AND (VOK OR FCQ) (DD eq. 5): pin 30 LOW does not drop it,
+  so the eFuse cut and the re-bond start on the same pin-33 edge.
+
+==============================================================================
+Section 4: G1 residual form in an FC window (DD 12.7 item 1; T7 registers; CALC4 section 8)
+==============================================================================
+  T7: reg 0x05 = measured BATTERY voltage, reg 0x06 = measured charge current, reg 0x07 = measured INPUT voltage.
+  DD 12.7: P_chg,est 'from valid reg 0x07 and reg 0x06 reads'; residual = I_fc + I_batt - (P_chg,est/(0.88 V_bus) + I_AUX) > 0.30 A for 5 ms
+  V_batt 7.4 V, eta 0.88, V_bus 16.0 V: charger bus current 0.815 A; residual (0x05 x 0x06) +0.158 A [+0.358 A with both INA253 floors]; residual (0x07 x 0x06, as written) -0.606 A
+  V_batt 7.4 V, eta 0.88, V_bus 15.1 V: charger bus current 0.863 A; residual (0x05 x 0x06) +0.167 A [+0.367 A with both INA253 floors]; residual (0x07 x 0x06, as written) -0.557 A
+  V_batt 7.4 V, eta 0.80, V_bus 16.0 V: charger bus current 0.896 A; residual (0x05 x 0x06) +0.239 A [+0.439 A with both INA253 floors]; residual (0x07 x 0x06, as written) -0.524 A
+  V_batt 7.4 V, eta 0.80, V_bus 15.1 V: charger bus current 0.950 A; residual (0x05 x 0x06) +0.253 A [+0.453 A with both INA253 floors]; residual (0x07 x 0x06, as written) -0.471 A
+  V_batt 8.4 V, eta 0.88, V_bus 16.0 V: charger bus current 0.925 A; residual (0x05 x 0x06) +0.179 A [+0.379 A with both INA253 floors]; residual (0x07 x 0x06, as written) -0.496 A
+  V_batt 8.4 V, eta 0.88, V_bus 15.1 V: charger bus current 0.980 A; residual (0x05 x 0x06) +0.190 A [+0.390 A with both INA253 floors]; residual (0x07 x 0x06, as written) -0.441 A
+  V_batt 8.4 V, eta 0.80, V_bus 16.0 V: charger bus current 1.017 A; residual (0x05 x 0x06) +0.271 A [+0.471 A with both INA253 floors]; residual (0x07 x 0x06, as written) -0.403 A
+  V_batt 8.4 V, eta 0.80, V_bus 15.1 V: charger bus current 1.078 A; residual (0x05 x 0x06) +0.288 A [+0.488 A with both INA253 floors]; residual (0x07 x 0x06, as written) -0.343 A
+  Reading A trips G1 in steady state (threshold 0.30 A) once the INA253 floors add; reading B
+  is negative by about 0.5 A, so G1 cannot see an unaccounted bus flow below about 0.8 A.
+  charger current ramp 0 -> full in   10 ms: estimate lag error up to 0.88 A (> 0.30 A for one poll; blanking ends 5 ms after the dVdT ramp, long before a 65-170 ms cold start)
+  charger current ramp 0 -> full in   30 ms: estimate lag error up to 0.59 A (> 0.30 A for one poll; blanking ends 5 ms after the dVdT ramp, long before a 65-170 ms cold start)
+  charger current ramp 0 -> full in   60 ms: estimate lag error up to 0.29 A (<= 0.30 A for one poll; blanking ends 5 ms after the dVdT ramp, long before a 65-170 ms cold start)
+  charger current ramp 0 -> full in  100 ms: estimate lag error up to 0.18 A (<= 0.30 A for one poll; blanking ends 5 ms after the dVdT ramp, long before a 65-170 ms cold start)

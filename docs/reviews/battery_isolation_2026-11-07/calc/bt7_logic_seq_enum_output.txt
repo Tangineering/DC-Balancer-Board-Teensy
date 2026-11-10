@@ -1,0 +1,106 @@
+
+================================================================================================================
+Section 1: revision-10 sequences through the hardware network (bt5.hw5): (a), (b), (b'), (d)
+================================================================================================================
+  R10 prediction exit 9.11.3 steps 1-4                           steps 5, states   80: (a) 0 (b) 0 (b') 0 [in an exit/teardown 0] (d) 0
+  R10-1 PI-4 latch in CHG_FC -> State 99 (Table 23)              steps 5, states   80: (a) 0 (b) 0 (b') 0 [in an exit/teardown 0] (d) 0
+  R10-1 PI-4 latch during a non-prediction exit, after the feed drop steps 4, states   64: (a) 0 (b) 0 (b') 0 [in an exit/teardown 0] (d) 0
+  R10-1 guard refusal at exit step 4 -> latch                    steps 4, states   64: (a) 0 (b) 0 (b') 0 [in an exit/teardown 0] (d) 0
+  R10-4 D-s entry 1-6 after FC_BUS re-test                       steps 4, states   64: (a) 0 (b) 0 (b') 16 [in an exit/teardown 0] (d) 0
+  R10-6 D-s traction exit with hold                              steps 5, states   80: (a) 0 (b) 0 (b') 0 [in an exit/teardown 0] (d) 0
+  9.7b dump check with a prediction exit                         steps 7, states  112: (a) 0 (b) 0 (b') 16 [in an exit/teardown 0] (d) 0
+
+  Reading. Revision 10 adds no hardware: on every revision-10 sequence (a), (b) and (d) are 0, and the only (b')
+  states are entry steps 3-5 (pin 33 HIGH, BT_BUS still HIGH, FC_CHARGE LOW; board load through the sense in
+  reverse, section 9.3 accepted, U_C1 bound). No exit or teardown step has BT_BUS HIGH with FF1 set.
+
+================================================================================================================
+Section 2: timed model of the revision-10 mode manager over one predicted purge (ideal predictor)
+================================================================================================================
+  8784 traces (P: State 1; Ds: State 2 at standstill; 2 loops x 4 gap placements x t_D_ON 8/12 x purge 80/160 ms x exit injections x 8 offsets x EMS share 0.16/0.15/0.85 x selector cut before the stop x relabel reading)
+    latch            0
+    srcless          0
+    viol             0
+    e_bad            0
+    bt_after_onset   0
+    launch_on_fc     0
+    code11           0
+    step5            0
+    refused          360
+    windows_after    336
+    reentry_missing  0
+  code-11 refusals by (variant, injection, EMS share): {}
+
+  Reading. Counts are of traces, onset at t = 1400 ms. 'latch' on a healthy trace is an (f) violation; 'srcless' is
+  any iteration outside State 99 with neither source pair conducting; 'e_bad' is FC_BUS HIGH at the FC recovery with
+  no live bus (Death-5 / H-R); 'bt_after_onset' a prediction exit whose BT_BUS write falls in the purge; 'launch_on_fc'
+  a traction release before D-BT-EN conducts; 'code11' an entry still refused on the F1 conduction gate 100 ms after the gates (the 30 ms blanking wait after
+  the F1 disarm is not counted); 'refused' a
+  share-latch write refused by SC-8; 'reentry_missing' a trace whose request still stood with no window after the
+  purge (an availability loss, not a safety one).
+
+================================================================================================================
+Section 3: reachability of the adopted variants over a power cycle (code paths kept by IC1)
+================================================================================================================
+  [dump_check_needed] 9.7b: a dump-check pass in this power cycle precedes every FC window (R8-2); D-s needs it earlier in the power cycle, else code 12 (design 1818-1819, Table 25)
+  [dump_check_states] 12.4 item 7: CHG_CONFIG (configuration check, dump check, probe) refused unless mainState is 1 or 98 with the motor command 0
+  [dump_check_trigger] 9.7b: run 'before the first FC window of a power cycle without a configuration check'; 9.7a: the configuration check runs before the first REGEN window (none in Stage 1, REGEN HIGH refused when IC1_STAGE 1, 12.4 item 7)
+  [permit] PI-4: purge_tto UNKNOWN before the first purge after an H-20 start refuses every FC-fed session
+  [finish] doState3 (ino:7961-8018): bus switches left as they are (comment ino:7989), selector flags cleared (ino:8010-8015), shareSpCutFC / shareIsoFC NOT cleared
+  [idle] doState1 (ino:7826-7917): no bus-switch write; powerBalance() (the only latch release, ino:13421) is called in State 2 only (ino:7944-7950)
+  [run_assert] doState2 re-asserts FC_BUS only if !shareSpCutFC (ino:7929)
+  [cut] setpoint-latch FC cut sets shareSpCutFC (ino:13546-13552) whenever the battery-only selector is armed (Idle->Run arm ino:15102; re-entry rule on a rail command at <= 0.25 A, ino:14106-14125)
+  [P_gate] 9.7 entry: the existing F1 conduction gate (FC_BUS HIGH, unblanked) is an entry condition; the F1 disarm is specified for the D-s entry only (9.11.6); no State-1 writer of pin 27 exists
+  G1 recorded-session shape: boot, Run at once, request only at stops in Run
+      State 2 request -> refused code 12 (no dump check; CHG_CONFIG not allowed in State 2)
+      State 2 request -> refused code 12 (no dump check; CHG_CONFIG not allowed in State 2)
+  G2 operator parks with a request before driving (unstated procedure)
+      State 1 request -> dump check passes, then P window
+      State 2 request -> D-s window (F1 disarm if FC cut)
+  G3 drive, final stop on a rail command, Finish, park with a request
+      State 1 request -> dump check passes, then P window
+      State 1 request -> refused code 11 (FC_BUS LOW, shareSpCutFC held from Run; no State-1 writer) - also blocks the dump check
+      State 1 request -> refused code 11 (FC_BUS LOW, shareSpCutFC held from Run; no State-1 writer) - also blocks the dump check
+  G4 drive, final stop in band (launch-released), Finish, park
+      State 1 request -> dump check passes, then P window
+  G5 Run entered and finished at standstill (battery-only start never released), park
+      State 1 request -> refused code 11 (FC_BUS LOW, shareSpCutFC held from Run; no State-1 writer) - also blocks the dump check
+
+  Reading. (g1) D-s is reachable only after an FC-fed session in State 1 or 98 of the same power cycle (G1 vs G2):
+  the dump check is triggered only before the first FC window and CHG_CONFIG is refused in State 2, so a power cycle
+  whose first request arrives in Run refuses every D-s window with code 12 until the vehicle is parked with a request.
+  The recorded sessions have that shape (first request at 66.0-72.4 s, after the launch at about 55.8 s; bt7 bag
+  script). (g2) The fw v37 Finish keeps a share-latch FC cut into Idle (G3, G5): State 1 has no writer of pin 27 and
+  no latch release, so every State-1 FC-fed session (P window, dump check, configuration check) is refused with code
+  11 for the whole Idle; the F1 disarm that revision 10 adds is specified for the D-s entry only.
+
+================================================================================================================
+Section 4: PI-4 latch with a recognition latency beyond the calc10 grid (reduced grid; calc10 s5 method)
+================================================================================================================
+  t_det 70 ms: t_rec 80 ms {'OPEN': 16}
+  t_det 77 ms: t_rec 80 ms {'OPEN': 16}
+  t_det 79 ms: t_rec 80 ms {'OPEN': 15, 'IN-FAMILY': 1}
+  t_det 85 ms: t_rec 80 ms {'OPEN': 15, 'IN-FAMILY': 1}
+  t_det never: t_rec 80 ms {'OPEN': 15, 'IN-FAMILY': 1}
+
+  Reading. The PI-4 latch only adds a latch; it never adds a write. Recognition after about 78 ms reduces to the
+  baseline E2 classes that Table 23 row 3 already accepts (FC_BUS HIGH at 80 ms only with the bus at 12.04 V or more,
+  IN-FAMILY). The calc10 'OPEN in 4860 of 4860' holds for t_det <= 70 ms, the grid bound, not for any recognition.
+
+================================================================================================================
+Section 5: (c) Teensy unpowered / reset, every pin level (revision 10 adds no hardware)
+================================================================================================================
+  373248 states; S_GND off or eFuse on without a residual: 0
+
+================================================================================================================
+Section 6: exit step 4 with BT_REG LOW (State 98): busHotPlugUnsafe() is vacuous, no R10-1 refusal
+================================================================================================================
+  loop 1.131 ms: BT_BUS written at 1326.7 ms (no refusal: BT_REG LOW makes busHotPlugUnsafe() false, ino:13043-13045); onset 1400 ms; outcome (1417.1430000000107, 'SC-1 (b)'); FC_BUS at the FC recovery (False, False)
+  loop 1.341 ms: BT_BUS written at 1327.6 ms (no refusal: BT_REG LOW makes busHotPlugUnsafe() false, ino:13043-13045); onset 1400 ms; outcome (1417.4369999999742, 'SC-1 (b)'); FC_BUS at the FC recovery (False, False)
+
+  Reading. The window entry conditions (9.7) test V_bus, the F1 gate and BT_CURRENT but neither FC_REG nor BT_REG,
+  and the 'guarded path' of exit step 4 is busHotPlugUnsafe(BT_REG_ENABLE) = BT_REG HIGH AND V_bus < 13.5 V, which is
+  false for a disabled boost. In State 98 (keys 'B'/'2' are free while bonded, 12.4 item 7 CC-7) a window can open with
+  the BT boost disabled; the prediction exit then re-closes BT_BUS onto the disabled TPS61288 (the S5 back-feed
+  doctrine every fw v37 release path enforces, ino:13421-13426, 13441-13450) and the predicted purge leaves the bus
+  with no regulated source: SC-1 (b) latches State 99 on a board with no fault.

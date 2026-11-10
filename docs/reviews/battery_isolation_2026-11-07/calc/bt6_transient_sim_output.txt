@@ -1,0 +1,104 @@
+
+==============================================================================================================
+Section 1: Predicted purge at exactly T_lead,min = 60 ms (State 1, variant P)
+==============================================================================================================
+  t_D_ON    8 ms: BT_BUS write 27.79 ms, D-BT-EN fully on 55.56 ms after the prediction; margin to a 60 ms onset  +4.44 ms
+  t_D_ON   12 ms: BT_BUS write 27.79 ms, D-BT-EN fully on 59.56 ms after the prediction; margin to a 60 ms onset  +0.44 ms
+  t_D_ON   16 ms: BT_BUS write 27.79 ms, D-BT-EN fully on 63.56 ms after the prediction; margin to a 60 ms onset  -3.56 ms
+  t_D_ON   20 ms: BT_BUS write 27.79 ms, D-BT-EN fully on 67.56 ms after the prediction; margin to a 60 ms onset  -7.56 ms
+  At the onset the bus load is aux + VESC idle; the FC boost leaves regulation (VIN UVLO 1.8-2.0 V, SLVSFP3C 7.5)
+  and D-FC-EN blocks reverse current, so the BT boost takes the load through an enabled ideal diode with no
+  switching event. No contradiction.
+
+  PURGE_LEAD_SHORT (D-BT-EN not yet on at the onset): bus decay before the RT1987 ramp catches it.
+  D-MT-EN blocks V-MOT -> bus; V-MOT joins only once it has fallen below the bus (pc model).
+   aux    0.5 mA, V-MOT 0.48 mF: bus below 12 V at    28.2 ms; UV_BUS latch (20 ms dwell) at    48.2 ms if the ramp has not caught it
+   aux    0.5 mA, V-MOT 1.50 mF: bus below 12 V at    80.9 ms; UV_BUS latch (20 ms dwell) at   100.9 ms if the ramp has not caught it
+   aux    0.5 mA, V-MOT 5.00 mF: bus below 12 V at    >200 ms; UV_BUS latch (20 ms dwell) at     none ms if the ramp has not caught it
+   aux   15.0 mA, V-MOT 0.48 mF: bus below 12 V at    16.9 ms; UV_BUS latch (20 ms dwell) at    36.9 ms if the ramp has not caught it
+   aux   15.0 mA, V-MOT 1.50 mF: bus below 12 V at    16.9 ms; UV_BUS latch (20 ms dwell) at    36.9 ms if the ramp has not caught it
+   aux   15.0 mA, V-MOT 5.00 mF: bus below 12 V at    16.9 ms; UV_BUS latch (20 ms dwell) at    36.9 ms if the ramp has not caught it
+   aux  150.0 mA, V-MOT 0.48 mF: bus below 12 V at     1.7 ms; UV_BUS latch (20 ms dwell) at    21.7 ms if the ramp has not caught it
+   aux  150.0 mA, V-MOT 1.50 mF: bus below 12 V at     1.7 ms; UV_BUS latch (20 ms dwell) at    21.7 ms if the ramp has not caught it
+   aux  150.0 mA, V-MOT 5.00 mF: bus below 12 V at     1.7 ms; UV_BUS latch (20 ms dwell) at    21.7 ms if the ramp has not caught it
+  Section 9.11.3 states "UV_BUS ... puts FC_BUS LOW about 22-23 ms after the onset, before the earliest FC recovery
+  at 80 ms": compare the rows above. The statement is the heavy-aux corner only; where the bus decays slowly the late
+  D-BT-EN ramp (0.81 V/ms) catches a bus that is still above 12 V, so the outcome is a ride-through (BENIGN at t_rec),
+  not a latch. No hazard either way; the stated timing is not general.
+
+==============================================================================================================
+Section 2: Variant D-s: the share override at standstill (firmware constants, fw v37 rev 2)
+==============================================================================================================
+  closed-loop entry > 0.250 A, exit < 0.200 A of filtered total; the in-band clip floor lo = 0.125/I_tot reaches DROOP_R_MIN 0.15 only at I_tot >= 0.833 A
+  Window (FC-only): I_tot = charger 0.82-0.93 A (out s1) + aux. After the feed drop: standstill total.
+   window 0.97 A -> bag standstill median 0.016 A (bt6_bag_launch) loop 1.000 ms: R_OV 0.15 out of the clip from   4.0 ms; open loop (HOLD) from  33.0 ms
+   window 0.97 A -> bag standstill median 0.016 A (bt6_bag_launch) loop 1.341 ms: R_OV 0.15 out of the clip from   5.4 ms; open loop (HOLD) from  44.3 ms
+   window 0.97 A -> plant aux 0.09 + VESC 0.075                  loop 1.000 ms: R_OV 0.15 out of the clip from   4.0 ms; open loop (HOLD) from  62.0 ms
+   window 0.97 A -> plant aux 0.09 + VESC 0.075                  loop 1.341 ms: R_OV 0.15 out of the clip from   5.4 ms; open loop (HOLD) from  83.1 ms
+   window 0.97 A -> plant aux 0.15 + VESC 0.075                  loop 1.000 ms: R_OV 0.15 out of the clip from   4.0 ms; open loop (HOLD) from never (stays in the 0.20-0.25 A sliver: bounded HOLD [0.444, 0.556])
+   window 0.97 A -> plant aux 0.15 + VESC 0.075                  loop 1.341 ms: R_OV 0.15 out of the clip from   5.4 ms; open loop (HOLD) from never (stays in the 0.20-0.25 A sliver: bounded HOLD [0.444, 0.556])
+   window 1.08 A -> bag standstill median 0.016 A (bt6_bag_launch) loop 1.000 ms: R_OV 0.15 out of the clip from   6.0 ms; open loop (HOLD) from  35.0 ms
+   window 1.08 A -> bag standstill median 0.016 A (bt6_bag_launch) loop 1.341 ms: R_OV 0.15 out of the clip from   8.0 ms; open loop (HOLD) from  46.9 ms
+   window 1.08 A -> plant aux 0.09 + VESC 0.075                  loop 1.000 ms: R_OV 0.15 out of the clip from   7.0 ms; open loop (HOLD) from  64.0 ms
+   window 1.08 A -> plant aux 0.09 + VESC 0.075                  loop 1.341 ms: R_OV 0.15 out of the clip from   9.4 ms; open loop (HOLD) from  85.8 ms
+   window 1.08 A -> plant aux 0.15 + VESC 0.075                  loop 1.000 ms: R_OV 0.15 out of the clip from   7.0 ms; open loop (HOLD) from never (stays in the 0.20-0.25 A sliver: bounded HOLD [0.444, 0.556])
+   window 1.08 A -> plant aux 0.15 + VESC 0.075                  loop 1.341 ms: R_OV 0.15 out of the clip from   9.4 ms; open loop (HOLD) from never (stays in the 0.20-0.25 A sliver: bounded HOLD [0.444, 0.556])
+  The override starts after the bonded confirmation, 5.81-15.27 ms after the prediction (Table 21). By then the
+  filtered total has already fallen below 0.833 A, so the in-band clip lifts R_OV to lo > 0.15; the dark-BT handoff
+  slew (0.002/tick, ino:3288) moves r by at most 0.002 x ticks until the loop leaves closed loop; after that the
+  open-loop branch HOLDS ("AT THE SHIPPED CONSTANTS THIS IS ALWAYS THE HOLD", ino:13746) or the sliver HOLD binds.
+   loop 1.000 ms, window 0.97 A: maximum ratio motion from the override start to the HOLD 0.114 (closed loop ends after  62.0 ms); Table 20 assumes a 0.35 + 0.36 walk in 258.8 ms
+   loop 1.000 ms, window 1.08 A: maximum ratio motion from the override start to the HOLD 0.118 (closed loop ends after  64.0 ms); Table 20 assumes a 0.35 + 0.36 walk in 258.8 ms
+   loop 1.341 ms, window 0.97 A: maximum ratio motion from the override start to the HOLD 0.116 (closed loop ends after  83.1 ms); Table 20 assumes a 0.35 + 0.36 walk in 258.8 ms
+   loop 1.341 ms, window 1.08 A: maximum ratio motion from the override start to the HOLD 0.120 (closed loop ends after  85.8 ms); Table 20 assumes a 0.35 + 0.36 walk in 258.8 ms
+  The direction is not even fixed: if the window wound r to the 0.15 clamp (section 9.11.3, UNCONFIRMED), the clip
+  lo = 0.125/I_tot (0.4 at 0.31 A) walks r UP, i.e. toward the fuel cell, during the same interval.
+  Consequence: at standstill at most 0.12 of ratio motion (direction set by the clip) happens after the close; T_lead,nom 290 ms for D-s rests on a walk that the
+  firmware never executes. Re-deriving D-s with T_lead,min 60 ms (as variant P) moves the binding re-entry gate to
+  V_chg below 11 V (calc9 s2: onset + 0.391-0.509 s) and the dead time from 0.573-0.785 s to 0.450-0.569 s per period.
+
+==============================================================================================================
+Section 3: Unpredicted purge, policy E2: latch time vs the VESC idle current and the MPPT threshold (pc model)
+==============================================================================================================
+  MPPT ideal hold, P_in 14.8 W, C_mod 221 uF, eFuse corner (12.10, 12.88), variant P, p99 loop 1.341 ms, E2.
+  Class at t_rec (FC boost leaves VIN UVLO): OPEN = FC_BUS LOW; else bus voltage (pc section 3b classes).
+  0 of 120 cases with FC_BUS and FC_REG still HIGH at t_rec 80 ms (I_VESC 0.075 A, the pc value: 0)
+  Why the latch does not slip: under the hold the bus + VCHG-IN + module node (about 0.31 mF) decays on I_IDLE,
+  the bleeds and aux, while V-MOT decays on I_VESC / C_V. D-MT-EN joins V-MOT only once V-MOT has fallen BELOW the
+  bus, so a SMALLER VESC idle current keeps V-MOT out of the merged node and the 13.0 V reading comes sooner; a
+  higher MPPT threshold (14.3 V) adds only the extra 1.3 V on the 0.31 mF node. The E2 latch-before-recovery claim
+  survives both ASSUMED inputs over the swept range. No contradiction.
+
+==============================================================================================================
+Section 4: Variant D: braking onto the FC-only bus
+==============================================================================================================
+  In an FC window pin 30 is LOW (window types exclusive, OR-7) and D-MT-EN conducts bus -> V-MOT only, so the
+  regen current charges V-MOT alone; V-MOT is bounded by the VESC stop (~21.35 V) and the chopper clamp (22.13 V,
+  facts_prior s6). This is the same path as fw v37 rev 2 Run today (AG105_VBATN_ISOLATED 0 holds REGEN LOW).
+   V-MOT 0.48 mF: after braking it returns from 21.35 V to the bus on the VESC idle in   34.6 ms (0.075 A ASSUMED); RT1987 D-MT-EN |VOUT-VIN| at most 6.18 V vs 40 V abs max
+   V-MOT 1.50 mF: after braking it returns from 21.35 V to the bus on the VESC idle in  108.0 ms (0.075 A ASSUMED); RT1987 D-MT-EN |VOUT-VIN| at most 6.18 V vs 40 V abs max
+   V-MOT 5.00 mF: after braking it returns from 21.35 V to the bus on the VESC idle in  360.0 ms (0.075 A ASSUMED); RT1987 D-MT-EN |VOUT-VIN| at most 6.18 V vs 40 V abs max
+  FC-only bus side: the traction step DOWN at the brake onset removes at most 0.33 A + 0.075 A from the FC boost;
+  the bus rises by the droop k_d x dI (K_DROOP 0.30 Ohm held in FC windows, fw v28 rev 4): about 0.12 V, inside
+  the 17.5 V OV_BUS limit. No rating is exceeded and no new path exists. No contradiction.
+
+==============================================================================================================
+Section 5: State 99 after an unpredicted purge: pack drain until a power cycle, and the next power-up
+==============================================================================================================
+  pc section 6: the Teensy stays on the pack through the LM1084 at 0.2-0.25 A (UNCONFIRMED) until a power cycle;
+  IC1 Table 24 D6/D7 and section 9.11.5 "Residuals" record it as a property of the present State 99.
+   2.0 Ah of remaining charge at 0.20 A:  10.0 h to empty
+   2.0 Ah of remaining charge at 0.25 A:   8.0 h to empty
+   3.0 Ah of remaining charge at 0.20 A:  15.0 h to empty
+   3.0 Ah of remaining charge at 0.25 A:  12.0 h to empty
+   5.0 Ah of remaining charge at 0.20 A:  25.0 h to empty
+   5.0 Ah of remaining charge at 0.25 A:  20.0 h to empty
+  Variant P is the parked mode that IC1 sells at 1.18-1.20 Ah per parked hour (Table 22), i.e. the mode most likely
+  to run unattended for hours; a parked window opens only below 8.0 V (entry gate), so the pack is already below
+  the top of its window when State 99 latches.
+  The LM1084 stops regulating below 6.5 V input (SNVS037H 5.5) but passes pack - dropout to the Teensy VIN; nothing
+  in IC1 or fw v37 disconnects the logic load at a pack floor, the pack PCM is "missing primary" (facts_prior s9),
+  and the BQ29200 is OVP-only. On the next power-up UV_BATT (7.4 V) uses the ARMED dwell shape: it arms only after
+  V_batt has been seen at or above V_BATT_ARM_THRESH 7.8 V (ino:2261-2267), so a pack that drained below 7.4 V
+  never arms it, while the FC-window entry gate is only "V_batt below 8.0 V" (Table 25 code 7) with no lower bound;
+  the Ag105 then pre-charges at 10 % below 2.7 V/cell and charges normally above (DS p.6, facts_ag105).

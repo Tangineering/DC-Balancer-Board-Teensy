@@ -1,0 +1,118 @@
+
+================================================================================================
+Section 1: Inputs (see the docstring for citations)
+================================================================================================
+  T_IT_MED           = 0.001131
+  T_IT_P99           = 0.001341
+  T_GAP              = 0.00976
+  R_MD               = 15.0
+  C_MOD              = (0.0001, 0.000221)
+  V_MS               = (8.69, 9.15)
+  V_NODE_FC          = 15.95
+  T_D_ON             = 0.008
+  T_D_ON_SENS        = 0.012
+  CSS_BUS_NF         = 100.0
+  SLEW_FULL          = 0.02
+  SLEW_HANDOFF       = 0.002
+  HANDOFF_CAP_TICKS  = 175
+  WC_SHARE           = (30.0, 60.0)
+  T_PERIOD           = 10.34
+  T_PURGE            = (0.1, 0.14)
+  VCHG_TAU           = 0.984
+  T_VCHG_BLANK       = 1.0
+  T_COLD             = (0.065, 0.17)
+  T_BRINGUP          = (8.4, 11.7)
+
+================================================================================================
+Section 2: Exit chain from 'purge predicted' to BT conducting
+================================================================================================
+  Module-node dump 15.95 V -> U_MS edge:     0.83 ms (100 uF, 9.15 V) ..     2.01 ms (221 uF, 8.69 V)
+  (DD Table 11 gives 1.3-2.9 ms from 21.5 V for the regen window; the FC window starts lower)
+  RT1987 CSS 100 nF ramp at 15.95 V: tON =    19.77 ms; onset = t_D_ON + tON =    27.77 ms (t_D_ON 8 ms) /    31.77 ms (12 ms)
+
+  typ (median loop, fast node)
+    prediction -> FC_CHARGE LOW (feed drop)         1.13 ms
+    feed drop -> 2nd pin-8 LOW read (drain)          2.41 ms
+    -> pin 33 LOW (bond command)                     3.54 ms
+    -> both S_GND on (hardware, +0.3 ms)             3.84 ms
+    -> bonded confirmation + BT_BUS write            5.81 ms
+    -> BT pass FET conducting (t_D_ON + tON)        33.57 ms
+    -> survivor blanking ends (write + 30 ms)       35.80 ms
+
+  typ (median loop, slow node)
+    prediction -> FC_CHARGE LOW (feed drop)         1.13 ms
+    feed drop -> 2nd pin-8 LOW read (drain)          3.54 ms
+    -> pin 33 LOW (bond command)                     4.67 ms
+    -> both S_GND on (hardware, +0.3 ms)             4.97 ms
+    -> bonded confirmation + BT_BUS write            6.94 ms
+    -> BT pass FET conducting (t_D_ON + tON)        34.70 ms
+    -> survivor blanking ends (write + 30 ms)       36.94 ms
+
+  worst healthy (p99 + one 9.76 ms gap, slow node, t_D_ON 12 ms)
+    prediction -> FC_CHARGE LOW (feed drop)         1.34 ms
+    feed drop -> 2nd pin-8 LOW read (drain)         11.25 ms
+    -> pin 33 LOW (bond command)                    12.59 ms
+    -> both S_GND on (hardware, +0.3 ms)            12.89 ms
+    -> bonded confirmation + BT_BUS write           15.27 ms
+    -> BT pass FET conducting (t_D_ON + tON)        47.04 ms
+    -> survivor blanking ends (write + 30 ms)       45.27 ms
+
+  Deadline bound (drain cap 30 ms + confirmation cap 30 ms + onset at t_D_ON 12 ms):    93.26 ms
+  Beyond the confirmation deadline the board latches ERR_CHG_EXIT (State 99) instead of re-closing BT_BUS.
+
+================================================================================================
+Section 3: Share shift toward the battery (in-band reference to DROOP_R_MIN)
+================================================================================================
+  median loop: powerBalance() tick     1.13 ms
+     full-rate walk 0.85->0.15: 35 ticks =    39.59 ms
+     dark-handoff walk: 175 ticks at 0.002 (span 0.35) + 18 at 0.02 = 193 ticks =   218.28 ms
+  p99    loop: powerBalance() tick     1.34 ms
+     full-rate walk 0.85->0.15: 35 ticks =    46.93 ms
+     dark-handoff walk: 175 ticks at 0.002 (span 0.35) + 18 at 0.02 = 193 ticks =   258.81 ms
+  Youla design bandwidth 30 rad/s: 10-90 % rise ~2.2/wc =    73.33 ms; 2 % settle ~4/wc =   133.33 ms (ESTIMATE, first-order)
+  Youla design bandwidth 60 rad/s: 10-90 % rise ~2.2/wc =    36.67 ms; 2 % settle ~4/wc =    66.67 ms (ESTIMATE, first-order)
+  Adopted: typ shift complete    66.67 ms..  133.33 ms after BT conduction onset;
+           worst   258.81 ms after the BT_BUS write (dark-handoff limiter, p99 loop; covers the onset).
+
+================================================================================================
+Section 4: Predictor lead time T_lead (prediction -> purge onset)
+================================================================================================
+  Hard tier (BT_BUS conducting before onset):   typ    34.70 ms   worst    47.04 ms
+  Full tier (share shift complete before onset): typ   101.37 ms..  168.04 ms   worst   274.09 ms
+  Deadline bound of the hard tier:                  93.26 ms
+  Variant P (State 1): powerBalance() is not called in Idle (ino:7826-7869), so no shift exists; only the hard tier applies.
+
+================================================================================================
+Section 5: Earliest post-purge re-entry (times relative to purge onset t = 0)
+================================================================================================
+  VCHG-IN 15.95 V -> 11.0 V on the bleed:   365.62 ms after the feed drop (tau 0.984 s, TODO(calibrate))
+  ERR_VCHG_FED blanking: 1.0 s after the feed drop
+  Entry chain (gates met -> Ag105 charge current), typ     :    83.53 ms  (of which cold start    65.00 ms)
+  Entry chain (gates met -> Ag105 charge current), typ-slow:   188.53 ms  (of which cold start   170.00 ms)
+  Entry chain (gates met -> Ag105 charge current), worst   :   201.79 ms  (of which cold start   170.00 ms)
+  Variant D shift back toward FC after the purge:    39.59 ms (full-rate slew) ..   133.33 ms (Youla 4/wc at 30 rad/s)
+
+  var reading                  case   T_lead     purge-gate  VCHG-gate   binding       resume(onset+)  dead/period  usable
+  P   strict (blanking)        typ       34.70 ms   160.00 ms   965.30 ms  VCHG          1048.83 ms     1.084 s     9.256 s ( 89.5 %)
+  P   strict (blanking)        worst     47.04 ms   160.00 ms   952.96 ms  VCHG          1154.75 ms     1.202 s     9.138 s ( 88.4 %)
+  P   literal (V_chg < 11 V)   typ       34.70 ms   160.00 ms   330.91 ms  VCHG           414.45 ms     0.449 s     9.891 s ( 95.7 %)
+  P   literal (V_chg < 11 V)   worst     47.04 ms   160.00 ms   318.58 ms  VCHG           520.37 ms     0.567 s     9.773 s ( 94.5 %)
+  D   strict (blanking)        typ      168.04 ms   293.33 ms   831.96 ms  VCHG           915.50 ms     1.084 s     9.256 s ( 89.5 %)
+  D   strict (blanking)        worst    274.09 ms   293.33 ms   725.91 ms  VCHG           927.71 ms     1.202 s     9.138 s ( 88.4 %)
+  D   literal (V_chg < 11 V)   typ      168.04 ms   293.33 ms   197.58 ms  purge+shift    376.87 ms     0.545 s     9.795 s ( 94.7 %)
+  D   literal (V_chg < 11 V)   worst    274.09 ms   293.33 ms    91.53 ms  purge+shift    495.13 ms     0.769 s     9.571 s ( 92.6 %)
+
+================================================================================================
+Section 6: Usable charge time per period: summary
+================================================================================================
+  Variant P: usable 9.138-9.891 s of 10.34 s (88.4-95.7 %), before the Ag105 Bring-Up question and before the demand budget (facts_purge_demand.md)
+  Variant D: usable 9.138-9.795 s of 10.34 s (88.4-94.7 %), before the Ag105 Bring-Up question and before the demand budget (facts_purge_demand.md)
+
+================================================================================================
+Section 7: Sensitivities
+================================================================================================
+  If every cold start runs a Bring-Up of 8.4 s: usable 0.908-1.556 s per period
+  If every cold start runs a Bring-Up of 11.7 s: usable 0.000-0.000 s per period
+  F1 selector re-close adder (only if the pre-purge shift let the selector cut FC_BUS):    39.60 ms-   39.90 ms measured (campaigns I/II); selector dwell 0.25 s on a source change
+  Window transitions at one window per period: entry + exit = 11.6 per minute against the 20/min [RER] limit
+  T_lead change from t_D_ON 8 -> 12 ms (hard tier): +    4.00 ms

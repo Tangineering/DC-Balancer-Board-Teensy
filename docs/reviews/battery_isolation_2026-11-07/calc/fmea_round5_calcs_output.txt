@@ -1,0 +1,175 @@
+====================================================================================================
+[1] ERR_MOD_SENSE (c): exit hold check on a commanded exit between VOK pulses
+====================================================================================================
+  release 16.13 V: V_chg stays >= 13.5 V for 175 ms after the release (tau 0.984 s)
+  release 16.43 V: V_chg stays >= 13.5 V for 193 ms after the release (tau 0.984 s)
+  tau x0.9: hold >= 13.5 V for 158 ms (release 16.13 V)
+  tau x1.0: hold >= 13.5 V for 175 ms (release 16.13 V)
+  tau x1.1: hold >= 13.5 V for 193 ms (release 16.13 V)
+  tau x1.2: hold >= 13.5 V for 210 ms (release 16.13 V)
+  The module node is dumped below 8.67-9.17 V within 1.3-2.9 ms of the release (Q_MD on, EF_EN L, calc6 s3),
+  so pin 8 is already LOW at the exit write; the 50 us sample reads LOW -> ERR_MOD_SENSE (c) latches.
+  Fraction of the window time in which a commanded exit meets the trigger but the node is cold:
+    decay 14.0 V/s spacing 0.523 s off-span 0.147 s: exposed   144 ms = 27.5 % of the period
+    decay 15.0 V/s spacing 0.535 s off-span 0.183 s: exposed   180 ms = 33.6 % of the period
+    decay 16.0 V/s spacing 0.523 s off-span 0.192 s: exposed   189 ms = 36.1 % of the period
+    decay 17.0 V/s spacing 0.535 s off-span 0.223 s: exposed   190 ms = 35.6 % of the period
+    decay 20.0 V/s spacing 0.562 s off-span 0.294 s: exposed   190 ms = 33.9 % of the period
+  release-dwell exit 200 ms after the last release, release 16.13 V, tau x1.0: V_chg 13.16 V -> not evaluated
+  release-dwell exit 200 ms after the last release, release 16.13 V, tau x1.1: V_chg 13.41 V -> not evaluated
+  release-dwell exit 200 ms after the last release, release 16.43 V, tau x1.0: V_chg 13.41 V -> not evaluated
+  release-dwell exit 200 ms after the last release, release 16.43 V, tau x1.1: V_chg 13.66 V -> CHECK RUNS (false latch)
+  release-dwell exit 220 ms after the last release, release 16.13 V, tau x1.0: V_chg 12.90 V -> not evaluated
+  release-dwell exit 220 ms after the last release, release 16.13 V, tau x1.1: V_chg 13.16 V -> not evaluated
+  release-dwell exit 220 ms after the last release, release 16.43 V, tau x1.0: V_chg 13.14 V -> not evaluated
+  release-dwell exit 220 ms after the last release, release 16.43 V, tau x1.1: V_chg 13.41 V -> not evaluated
+  release-dwell exit 250 ms after the last release, release 16.13 V, tau x1.0: V_chg 12.51 V -> not evaluated
+  release-dwell exit 250 ms after the last release, release 16.13 V, tau x1.1: V_chg 12.80 V -> not evaluated
+  release-dwell exit 250 ms after the last release, release 16.43 V, tau x1.0: V_chg 12.74 V -> not evaluated
+  release-dwell exit 250 ms after the last release, release 16.43 V, tau x1.1: V_chg 13.04 V -> not evaluated
+    p_exposed 0.25,  1 random-time exits per power cycle: P(at least one false latch) = 0.25
+    p_exposed 0.25,  3 random-time exits per power cycle: P(at least one false latch) = 0.58
+    p_exposed 0.25,  5 random-time exits per power cycle: P(at least one false latch) = 0.76
+    p_exposed 0.25, 10 random-time exits per power cycle: P(at least one false latch) = 0.94
+    p_exposed 0.30,  1 random-time exits per power cycle: P(at least one false latch) = 0.30
+    p_exposed 0.30,  3 random-time exits per power cycle: P(at least one false latch) = 0.66
+    p_exposed 0.30,  5 random-time exits per power cycle: P(at least one false latch) = 0.83
+    p_exposed 0.30, 10 random-time exits per power cycle: P(at least one false latch) = 0.97
+    p_exposed 0.36,  1 random-time exits per power cycle: P(at least one false latch) = 0.36
+    p_exposed 0.36,  3 random-time exits per power cycle: P(at least one false latch) = 0.74
+    p_exposed 0.36,  5 random-time exits per power cycle: P(at least one false latch) = 0.89
+    p_exposed 0.36, 10 random-time exits per power cycle: P(at least one false latch) = 0.99
+  Probe (9.7a step 5): the feed drop follows step 3 (V_chg >= 13.5 V on two settled reads) and step 4 (pin 8
+  LOW = pass) in a check whose positive control read pin 8 HIGH: the Table 16 (c) trigger is met and the
+  healthy probe result itself (pin 8 LOW) latches (c) and voids the probe, unless the probe drop is excluded.
+
+====================================================================================================
+[2] ERR_MOD_SENSE (c) during a pulse (node fed): time for the node to fall below the U_MS threshold
+====================================================================================================
+  V0 13.5 V C_mod    47 uF P_in  0.0 W: fall to 9.17 V in    268 us  ok
+  V0 13.5 V C_mod    47 uF P_in 16.7 W: fall to 9.17 V in    178 us  ok
+  V0 13.5 V C_mod    47 uF P_in 22.7 W: fall to 9.17 V in    168 us  ok
+  V0 13.5 V C_mod   100 uF P_in  0.0 W: fall to 9.17 V in    570 us  ok
+  V0 13.5 V C_mod   100 uF P_in 16.7 W: fall to 9.17 V in    379 us  ok
+  V0 13.5 V C_mod   100 uF P_in 22.7 W: fall to 9.17 V in    358 us  ok
+  V0 13.5 V C_mod   221 uF P_in  0.0 W: fall to 9.17 V in   1261 us  ok
+  V0 13.5 V C_mod   221 uF P_in 16.7 W: fall to 9.17 V in    837 us  ok
+  V0 13.5 V C_mod   221 uF P_in 22.7 W: fall to 9.17 V in    791 us  ok
+  V0 15.0 V C_mod    47 uF P_in  0.0 W: fall to 9.17 V in    342 us  ok
+  V0 15.0 V C_mod    47 uF P_in 16.7 W: fall to 9.17 V in    211 us  ok
+  V0 15.0 V C_mod    47 uF P_in 22.7 W: fall to 9.17 V in    196 us  ok
+  V0 15.0 V C_mod   100 uF P_in  0.0 W: fall to 9.17 V in    728 us  ok
+  V0 15.0 V C_mod   100 uF P_in 16.7 W: fall to 9.17 V in    449 us  ok
+  V0 15.0 V C_mod   100 uF P_in 22.7 W: fall to 9.17 V in    417 us  ok
+  V0 15.0 V C_mod   221 uF P_in  0.0 W: fall to 9.17 V in   1608 us  ok
+  V0 15.0 V C_mod   221 uF P_in 16.7 W: fall to 9.17 V in    993 us  ok
+  V0 15.0 V C_mod   221 uF P_in 22.7 W: fall to 9.17 V in    921 us  ok
+  V0 16.0 V C_mod    47 uF P_in  0.0 W: fall to 9.17 V in    387 us  ok
+  V0 16.0 V C_mod    47 uF P_in 16.7 W: fall to 9.17 V in    233 us  ok
+  V0 16.0 V C_mod    47 uF P_in 22.7 W: fall to 9.17 V in    215 us  ok
+  V0 16.0 V C_mod   100 uF P_in  0.0 W: fall to 9.17 V in    824 us  ok
+  V0 16.0 V C_mod   100 uF P_in 16.7 W: fall to 9.17 V in    497 us  ok
+  V0 16.0 V C_mod   100 uF P_in 22.7 W: fall to 9.17 V in    457 us  ok
+  V0 16.0 V C_mod   221 uF P_in  0.0 W: fall to 9.17 V in   1821 us  ok
+  V0 16.0 V C_mod   221 uF P_in 16.7 W: fall to 9.17 V in   1097 us  ok
+  V0 16.0 V C_mod   221 uF P_in 22.7 W: fall to 9.17 V in   1009 us  ok
+  C_mod 100-221 uF is the design's range (calc6 s3); 47 uF ASSUMED as a lower-than-stated case. P_in 16.7 W =
+  1.75 A x 8.4 V / 0.88; 22.7 W = the 8.0 V entry-gate cap (design 7.1). calc7 s6 used 13.5 V, 100 uF, 1.0 A.
+
+====================================================================================================
+[3] D_VC1: V_F <= 0.25 V at 16.2 mA at T_cold together with I_R(4.2 V) <= 40 uA at T_hot
+====================================================================================================
+  n 1.00 phi_B 0.35 eV T_cold -20.0 C: I_S(T_cold) >=    170.7 nA; I_R >=    13.9 uA at 60 C,    37.7 uA at 85 C; 40 uA exceeded above 87.0 C
+  n 1.00 phi_B 0.35 eV T_cold   0.0 C: I_S(T_cold) >=    395.1 nA; I_R >=     8.6 uA at 60 C,    23.2 uA at 85 C; 40 uA exceeded above 100.5 C
+  n 1.00 phi_B 0.35 eV T_cold  10.0 C: I_S(T_cold) >=    574.9 nA; I_R >=     6.9 uA at 60 C,    18.5 uA at 85 C; 40 uA exceeded above 107.0 C
+  n 1.00 phi_B 0.45 eV T_cold -20.0 C: I_S(T_cold) >=    170.7 nA; I_R >=    41.9 uA at 60 C,   144.6 uA at 85 C; 40 uA exceeded above 59.5 C
+  n 1.00 phi_B 0.45 eV T_cold   0.0 C: I_S(T_cold) >=    395.1 nA; I_R >=    18.4 uA at 60 C,    63.5 uA at 85 C; 40 uA exceeded above 75.5 C
+  n 1.00 phi_B 0.45 eV T_cold  10.0 C: I_S(T_cold) >=    574.9 nA; I_R >=    12.7 uA at 60 C,    43.8 uA at 85 C; 40 uA exceeded above 83.5 C
+  n 1.00 phi_B 0.55 eV T_cold -20.0 C: I_S(T_cold) >=    170.7 nA; I_R >=   126.0 uA at 60 C,   554.5 uA at 85 C; 40 uA exceeded above 43.0 C
+  n 1.00 phi_B 0.55 eV T_cold   0.0 C: I_S(T_cold) >=    395.1 nA; I_R >=    39.5 uA at 60 C,   174.0 uA at 85 C; 40 uA exceeded above 60.5 C
+  n 1.00 phi_B 0.55 eV T_cold  10.0 C: I_S(T_cold) >=    574.9 nA; I_R >=    23.4 uA at 60 C,   103.2 uA at 85 C; 40 uA exceeded above 69.0 C
+  n 1.00 phi_B 0.65 eV T_cold -20.0 C: I_S(T_cold) >=    170.7 nA; I_R >=   378.7 uA at 60 C,  2125.9 uA at 85 C; 40 uA exceeded above 32.5 C
+  n 1.00 phi_B 0.65 eV T_cold   0.0 C: I_S(T_cold) >=    395.1 nA; I_R >=    84.9 uA at 60 C,   476.9 uA at 85 C; 40 uA exceeded above 50.5 C
+  n 1.00 phi_B 0.65 eV T_cold  10.0 C: I_S(T_cold) >=    574.9 nA; I_R >=    43.4 uA at 60 C,   243.5 uA at 85 C; 40 uA exceeded above 59.0 C
+  n 1.05 phi_B 0.35 eV T_cold -20.0 C: I_S(T_cold) >=    294.6 nA; I_R >=    24.0 uA at 60 C,    65.1 uA at 85 C; 40 uA exceeded above 72.5 C
+  n 1.05 phi_B 0.35 eV T_cold   0.0 C: I_S(T_cold) >=    655.2 nA; I_R >=    14.2 uA at 60 C,    38.4 uA at 85 C; 40 uA exceeded above 86.5 C
+  n 1.05 phi_B 0.35 eV T_cold  10.0 C: I_S(T_cold) >=    936.5 nA; I_R >=    11.2 uA at 60 C,    30.2 uA at 85 C; 40 uA exceeded above 93.0 C
+  n 1.05 phi_B 0.45 eV T_cold -20.0 C: I_S(T_cold) >=    294.6 nA; I_R >=    72.3 uA at 60 C,   249.6 uA at 85 C; 40 uA exceeded above 49.5 C
+  n 1.05 phi_B 0.45 eV T_cold   0.0 C: I_S(T_cold) >=    655.2 nA; I_R >=    30.5 uA at 60 C,   105.3 uA at 85 C; 40 uA exceeded above 65.5 C
+  n 1.05 phi_B 0.45 eV T_cold  10.0 C: I_S(T_cold) >=    936.5 nA; I_R >=    20.6 uA at 60 C,    71.3 uA at 85 C; 40 uA exceeded above 73.0 C
+  n 1.05 phi_B 0.55 eV T_cold -20.0 C: I_S(T_cold) >=    294.6 nA; I_R >=   217.4 uA at 60 C,   956.9 uA at 85 C; 40 uA exceeded above 35.5 C
+  n 1.05 phi_B 0.55 eV T_cold   0.0 C: I_S(T_cold) >=    655.2 nA; I_R >=    65.5 uA at 60 C,   288.5 uA at 85 C; 40 uA exceeded above 52.5 C
+  n 1.05 phi_B 0.55 eV T_cold  10.0 C: I_S(T_cold) >=    936.5 nA; I_R >=    38.2 uA at 60 C,   168.1 uA at 85 C; 40 uA exceeded above 61.0 C
+  n 1.05 phi_B 0.65 eV T_cold -20.0 C: I_S(T_cold) >=    294.6 nA; I_R >=   653.6 uA at 60 C,  3669.1 uA at 85 C; 40 uA exceeded above 26.0 C
+  n 1.05 phi_B 0.65 eV T_cold   0.0 C: I_S(T_cold) >=    655.2 nA; I_R >=   140.9 uA at 60 C,   790.8 uA at 85 C; 40 uA exceeded above 44.0 C
+  n 1.05 phi_B 0.65 eV T_cold  10.0 C: I_S(T_cold) >=    936.5 nA; I_R >=    70.7 uA at 60 C,   396.7 uA at 85 C; 40 uA exceeded above 52.5 C
+  n 1.10 phi_B 0.35 eV T_cold -20.0 C: I_S(T_cold) >=    483.9 nA; I_R >=    39.5 uA at 60 C,   106.9 uA at 85 C; 40 uA exceeded above 60.5 C
+  n 1.10 phi_B 0.35 eV T_cold   0.0 C: I_S(T_cold) >=   1037.6 nA; I_R >=    22.5 uA at 60 C,    60.8 uA at 85 C; 40 uA exceeded above 74.5 C
+  n 1.10 phi_B 0.35 eV T_cold  10.0 C: I_S(T_cold) >=   1459.3 nA; I_R >=    17.4 uA at 60 C,    47.1 uA at 85 C; 40 uA exceeded above 81.0 C
+  n 1.10 phi_B 0.45 eV T_cold -20.0 C: I_S(T_cold) >=    483.9 nA; I_R >=   118.7 uA at 60 C,   409.9 uA at 85 C; 40 uA exceeded above 41.0 C
+  n 1.10 phi_B 0.45 eV T_cold   0.0 C: I_S(T_cold) >=   1037.6 nA; I_R >=    48.3 uA at 60 C,   166.7 uA at 85 C; 40 uA exceeded above 56.5 C
+  n 1.10 phi_B 0.45 eV T_cold  10.0 C: I_S(T_cold) >=   1459.3 nA; I_R >=    32.2 uA at 60 C,   111.1 uA at 85 C; 40 uA exceeded above 64.5 C
+  n 1.10 phi_B 0.55 eV T_cold -20.0 C: I_S(T_cold) >=    483.9 nA; I_R >=   357.0 uA at 60 C,  1571.6 uA at 85 C; 40 uA exceeded above 29.0 C
+  n 1.10 phi_B 0.55 eV T_cold   0.0 C: I_S(T_cold) >=   1037.6 nA; I_R >=   103.8 uA at 60 C,   456.9 uA at 85 C; 40 uA exceeded above 46.0 C
+  n 1.10 phi_B 0.55 eV T_cold  10.0 C: I_S(T_cold) >=   1459.3 nA; I_R >=    59.5 uA at 60 C,   262.0 uA at 85 C; 40 uA exceeded above 54.0 C
+  n 1.10 phi_B 0.65 eV T_cold -20.0 C: I_S(T_cold) >=    483.9 nA; I_R >=  1073.4 uA at 60 C,  6026.0 uA at 85 C; 40 uA exceeded above 21.0 C
+  n 1.10 phi_B 0.65 eV T_cold   0.0 C: I_S(T_cold) >=   1037.6 nA; I_R >=   223.1 uA at 60 C,  1252.4 uA at 85 C; 40 uA exceeded above 38.5 C
+  n 1.10 phi_B 0.65 eV T_cold  10.0 C: I_S(T_cold) >=   1459.3 nA; I_R >=   110.1 uA at 60 C,   618.1 uA at 85 C; 40 uA exceeded above 47.0 C
+  calc7 s3 evaluated the V_F limit at 25 C only (I_S >= 0.96-2.33 uA at 25 C) although Table 7 states it
+  'over -20 to 85 C'. VC1 error = I_R x RB3 (261 Ohm, calc7 s2); ERR_CELL_MISMATCH sees 2x; latch at ~75 uA.
+    I_R    40 uA: VC1 low by  10.4 mV (BQ29200 cell-1 OVP late by the same); mismatch term  20.9 mV
+    I_R    75 uA: VC1 low by  19.6 mV (BQ29200 cell-1 OVP late by the same); mismatch term  39.1 mV
+    I_R   150 uA: VC1 low by  39.1 mV (BQ29200 cell-1 OVP late by the same); mismatch term  78.3 mV
+    I_R   300 uA: VC1 low by  78.3 mV (BQ29200 cell-1 OVP late by the same); mismatch term 156.6 mV
+
+====================================================================================================
+[4] VC1 tap lead chafe: pin 20 sits directly on the lead (R_VC1a is at the VC1 end, R_VC1b to GND on LB)
+====================================================================================================
+  chafe to VBT (pack, 8.5 V): no LB-side series element -> pin 20 forced to 8.5 V; clamp current ~    4.7 A (limited only by the source, the lead and the ESD structure, 1 Ohm ASSUMED)
+      with a series 10 kOhm at the LB entry:  0.49 mA injected
+      with a series 22 kOhm at the LB entry:  0.22 mA injected
+      with a series 47 kOhm at the LB entry:  0.10 mA injected
+  chafe to VBUS 16.0 V: no LB-side series element -> pin 20 forced to 16.0 V; clamp current ~   11.8 A (limited only by the source, the lead and the ESD structure, 1 Ohm ASSUMED)
+      with a series 10 kOhm at the LB entry:  1.24 mA injected
+      with a series 22 kOhm at the LB entry:  0.56 mA injected
+      with a series 47 kOhm at the LB entry:  0.26 mA injected
+  chafe to VBUS 17.5 V: no LB-side series element -> pin 20 forced to 17.5 V; clamp current ~   13.2 A (limited only by the source, the lead and the ESD structure, 1 Ohm ASSUMED)
+      with a series 10 kOhm at the LB entry:  1.39 mA injected
+      with a series 22 kOhm at the LB entry:  0.63 mA injected
+      with a series 47 kOhm at the LB entry:  0.30 mA injected
+  chafe to VCHG-IN_M 21.5 V: no LB-side series element -> pin 20 forced to 21.5 V; clamp current ~   11.9 A (limited only by the source, the lead and the ESD structure, 1 Ohm ASSUMED)
+      with a series 10 kOhm at the LB entry:  1.79 mA injected
+      with a series 22 kOhm at the LB entry:  0.81 mA injected
+      with a series 47 kOhm at the LB entry:  0.38 mA injected
+  The design's F54 bound '<= 42.5 uA through R_VC1a' is the current drawn FROM VC1; it is not the pin-20 stress.
+  A series R at the pin with C_VC1 on the pin side keeps the 10 ms filter; the DC divider is unchanged.
+
+====================================================================================================
+[5] ERR_CELL_MISMATCH: V_BT (pin 25) error when only the VC1 tap is two-point calibrated
+====================================================================================================
+  3V3 3.20 V, V_BT 7.4: pin-25 reading error  +231.2 mV (+/-9.2 mV divider) -> exceeds the 80 mV threshold before any real imbalance
+  3V3 3.20 V, V_BT 8.4: pin-25 reading error  +262.5 mV (+/-10.4 mV divider) -> exceeds the 80 mV threshold before any real imbalance
+  3V3 3.25 V, V_BT 7.4: pin-25 reading error  +113.8 mV (+/-9.2 mV divider) -> exceeds the 80 mV threshold before any real imbalance
+  3V3 3.25 V, V_BT 8.4: pin-25 reading error  +129.2 mV (+/-10.4 mV divider) -> exceeds the 80 mV threshold before any real imbalance
+  3V3 3.28 V, V_BT 7.4: pin-25 reading error   +45.1 mV (+/-9.2 mV divider) -> within the 80 mV threshold before any real imbalance
+  3V3 3.28 V, V_BT 8.4: pin-25 reading error   +51.2 mV (+/-10.4 mV divider) -> within the 80 mV threshold before any real imbalance
+  3V3 3.30 V, V_BT 7.4: pin-25 reading error    +0.0 mV (+/-9.2 mV divider) -> within the 80 mV threshold before any real imbalance
+  3V3 3.30 V, V_BT 8.4: pin-25 reading error    +0.0 mV (+/-10.4 mV divider) -> within the 80 mV threshold before any real imbalance
+  3V3 3.32 V, V_BT 7.4: pin-25 reading error   -44.6 mV (+/-9.2 mV divider) -> within the 80 mV threshold before any real imbalance
+  3V3 3.32 V, V_BT 8.4: pin-25 reading error   -50.6 mV (+/-10.4 mV divider) -> within the 80 mV threshold before any real imbalance
+  3V3 3.35 V, V_BT 7.4: pin-25 reading error  -110.4 mV (+/-9.2 mV divider) -> exceeds the 80 mV threshold before any real imbalance
+  3V3 3.35 V, V_BT 8.4: pin-25 reading error  -125.4 mV (+/-10.4 mV divider) -> exceeds the 80 mV threshold before any real imbalance
+  3V3 3.40 V, V_BT 7.4: pin-25 reading error  -217.6 mV (+/-9.2 mV divider) -> exceeds the 80 mV threshold before any real imbalance
+  3V3 3.40 V, V_BT 8.4: pin-25 reading error  -247.1 mV (+/-10.4 mV divider) -> exceeds the 80 mV threshold before any real imbalance
+  The design's own U_IM analysis uses 3V3 = 3.2-3.4 V (section 5.2); calc7 s2 ASSUMED 5 mV 'after two-point
+  cal' for V_BT, but no gate calibrates pin 25 (Table 19 item 5 calibrates the VC1 tap only).
+  V_BT 7.4: margin 38.5 mV holds only for 3V3 in 3.2829-3.3173 V (+/-0.52 %)
+  V_BT 8.4: margin 38.5 mV holds only for 3V3 in 3.2849-3.3152 V (+/-0.46 %)
+
+====================================================================================================
+[6] ERR_IPACK_PLAUS gain band with I_L,cal taken from gate B8 (State 99 response)
+====================================================================================================
+  I_L,cal 0.15 A (true non-boost load 0.15 A): lowest healthy ratio 0.823 -> inside
+  I_L,cal 0.30 A (true non-boost load 0.15 A): lowest healthy ratio 0.779 -> inside
+  I_L,cal 0.60 A (true non-boost load 0.15 A): lowest healthy ratio 0.703 -> BELOW 0.75: State 99 in healthy traction
+  I_L,cal 0.75 A (true non-boost load 0.15 A): lowest healthy ratio 0.670 -> BELOW 0.75: State 99 in healthy traction

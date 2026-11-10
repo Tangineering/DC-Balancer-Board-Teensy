@@ -1,0 +1,59 @@
+
+==============================================================================
+1. MD_G shorted to SHDN_EF (same CB-LB sleeve, section 5.7 item 4)
+==============================================================================
+EF_EN H: shorted node = 1.594-1.626 V (1 % resistors, SHDN pull-up current 10 uA included)
+EF_EN L: shorted node = 1.594-1.626 V (1 % resistors, SHDN pull-up current 10 uA included)
+eFuse SHDN band: OFF guaranteed only below 0.8 V, ON guaranteed only above 2.0 V (SLVSE94G 6.5) -> ~1.6 V is INDETERMINATE in BOTH EF_EN states
+Q_MD gate (TODO(select) logic-level N-MOSFET) also sits at ~1.6 V in both states.
+  rev 6 (no R_MDS, ~25 Ohm LVC output, ASSUMED): EF_EN H -> node 0.081 V
+  rev 6 (no R_MDS, ~25 Ohm LVC output, ASSUMED): EF_EN L -> node 3.215 V
+
+==============================================================================
+2. Q_MD linear-mode dissipation while the module node is fed and Q_MD conducts partially
+==============================================================================
+V_node 15.5 V: worst Q_MD dissipation 4.00 W at I_Q = 0.517 A
+V_node 16.0 V: worst Q_MD dissipation 4.27 W at I_Q = 0.533 A
+V_node 17.5 V: worst Q_MD dissipation 5.10 W at I_Q = 0.583 A
+I_Q [A]  P_Q [W] at 16 V   P_RMD [W]
+   0.02     0.31          0.01
+   0.05     0.76          0.04
+   0.10     1.45          0.15
+   0.20     2.60          0.60
+   0.30     3.45          1.35
+   0.39     3.96          2.28
+
+Dump check: latches only on a step > 0.4 A; module input <= 0.009 A -> I_Q up to 0.391 A passes
+FC window module input 0.838-0.936 A (Table 8 power / in-window V_chg)
+OC_FC (BENCH_TEST 0 only) trips for I_Q above 0.314-0.412 A; U_IM (minimum 1.51 A) above 0.574-0.672 A
+-> in an FC window, I_Q <= 0.314 A runs to the 30 s cap undetected; at that edge P_Q = 3.40 W, P_RMD = 1.48 W (30 s: 44.5 J into R_MD)
+  R_thJA 125 K/W (ASSUMED class value): P for Tj 150 C at Ta 40 C = 0.88 W
+  R_thJA 250 K/W (ASSUMED class value): P for Tj 150 C at Ta 40 C = 0.44 W
+  R_thJA 350 K/W (ASSUMED class value): P for Tj 150 C at Ta 40 C = 0.31 W
+R_MD design duty (CC-18): 0.095 W mean, 51 mJ per dump; probe-cap single pulse 1.71 J
+
+==============================================================================
+3. Other conductor pairs inside the CB-LB sleeve (single insulation failure)
+==============================================================================
+MS-SHDN_EF, EF_EN H, module node 21.5 V: lead node 3.15 V -> pin 8 HIGH (follows EF_EN; exit hold check catches; eFuse level OK)
+MS-SHDN_EF, EF_EN L, module node 21.5 V: lead node 0.19 V -> pin 8 LOW (follows EF_EN; exit hold check catches; eFuse level OK)
+  R_MS3 x 5 pF (ASSUMED IN+ capacitance) = 110 ns << 150 us hold-check wait
+MD_G-IMON, EF_EN H: IMON node held at 0.00 V by U_MDI -> U_IM blind in the window (but see EF_EN L)
+MD_G-IMON, EF_EN L: IMON node 3.00 V > 0.478 V -> UIM_N LOW -> N1 LOW -> FF1 cannot set (loud refusal)
+SHDN_EF-IMON, EF_EN H: IMON node 2.88 V -> U_IM trips at entry (loud)
+SHDN_EF-EF_FLT_N: EF_EN L -> EF_FLT_N reads 0.29 V (false FLT, loud)
+MD_G-EF_FLT_N: EF_EN H -> EF_FLT_N reads 0.30 V (false FLT in window, loud)
+PROFILE-MD_G, EF_EN H, pin 10 H: MD_G 0.14 V (Q_MD off); profile gates follow NOT EF_EN -> regen profile (18 V threshold) in an FC window: no charge, benign
+PROFILE-MD_G, EF_EN L, pin 10 L: MD_G 3.13 V (dump intact)
+PROFILE-SHDN_EF, EF_EN L, pin 10 H: SHDN_EF 0.14 V < 0.8 V (eFuse off)
+PROFILE-MS, pin 10 H, module cold: MS_D 1.40 V > 1.242 V -> pin 8 HIGH while cold -> ERR_MOD_DRAIN (loud)
+
+==============================================================================
+4. Revision-8 resistor single faults (Appendix F later-review items 1-4)
+==============================================================================
+BAL_OK ratio 0.3367; Thevenin 66.3 kOhm; leakage offset 0.332 V
+  pack voltage for BAL_OK = VIH: 5.94 V (no leakage), 6.92 V (5 uA) vs LIMIT_V_BATT_MIN 7.4 V -> worst effect is a window refusal (ERR_BAL_ABSENT, not latched)
+  BAL_OK lead (between R_BL1 and R_BL3) at 8.5 V pack: 4.21 V (section 5.7 says no sleeve conductor above 3.6 V; source impedance 74 kOhm, not a hazard source)
+PROFILE gate voltage with R_PGL: 2.68 V at 3V3 3.30 V; 2.52 V at a 3.1 V VOH (BSS138 V_GS(th) max 1.5 V, onsemi BSS138/D)
+R_VC1c open, pin 20 read at 50 Hz: charge-sharing drift time constant ~400 s (C_S 5 pF ASSUMED) -> reading holds its last value; mismatch latch waits for an 80 mV pack change (fail-safe, detection delayed)
+R_VC1c open, pin 20 read at 1000 Hz: charge-sharing drift time constant ~20 s (C_S 5 pF ASSUMED) -> reading holds its last value; mismatch latch waits for an 80 mV pack change (fail-safe, detection delayed)

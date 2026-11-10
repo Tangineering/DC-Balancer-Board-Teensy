@@ -1,0 +1,138 @@
+
+==============================================================================
+Section 1: Kelvin-lead series resistors: short bound and trip-budget terms
+==============================================================================
+   R_K =  1.0 Ohm: KS lead shorted to pack+ -> I <=  8.42 A, P(R_K) =   70.8 W (0.25 W part:   283 x rating)
+   R_K =  2.2 Ohm: KS lead shorted to pack+ -> I <=  3.85 A, P(R_K) =   32.5 W (0.25 W part:   130 x rating)
+   R_K =  4.7 Ohm: KS lead shorted to pack+ -> I <=  1.80 A, P(R_K) =   15.3 W (0.25 W part:    61 x rating)
+   R_K = 10.0 Ohm: KS lead shorted to pack+ -> I <=  0.85 A, P(R_K) =    7.2 W (0.25 W part:    29 x rating)
+   R_K 2.2 Ohm, 1 % parts: I_B x dR =   4.0 uV = 0.008 A; per 10 uA of I_B mismatch (TODO(verify: SBOS662C)) 0.044 A
+   R_K 2.2 Ohm, 5 % parts: I_B x dR =  19.8 uV = 0.040 A; per 10 uA of I_B mismatch (TODO(verify: SBOS662C)) 0.044 A
+   R_K 10.0 Ohm, 1 % parts: I_B x dR =  18.0 uV = 0.036 A; per 10 uA of I_B mismatch (TODO(verify: SBOS662C)) 0.200 A
+   KS+ bonded to PCB GND through R_K 2.2 Ohm: drop <= 1.75 A x 50 mOhm = 88 mV -> 40 mA in the bond (was up to 2.4 A unbounded by R_K)
+
+==============================================================================
+Section 2: U_C1 / U_C2 thresholds and tolerance (rev 4)
+==============================================================================
+   U_C1 discharge: TH 1.5000 V, nominal 3.000 A; terms TLV3011B V_OS 9 mV 0.180, TLV3011B CMRR at VCM 0.060, INA240 V_OS 25 uV 0.050, INA240 ref divider 0.1 % 0.033, threshold divider 0.1 % x 2 0.033, R_K 2.2 Ohm 1 % x I_B 0.008
+      range at 3V3 = 3.30 V: 2.60..3.40 A; with 3V3 3.2-3.4 V: 2.52..3.50 A
+   U_C2 charge (reversed channel): TH 1.4932 V, nominal 3.136 A; terms TLV3011B V_OS 9 mV 0.180, TLV3011B CMRR at VCM 0.060, INA240 V_OS 25 uV 0.050, INA240 ref divider 0.1 % 0.033, threshold divider 0.1 % x 2 0.033, R_K 2.2 Ohm 1 % x I_B 0.008
+      range at 3V3 = 3.30 V: 2.73..3.54 A; with 3V3 3.2-3.4 V: 2.65..3.64 A
+
+==============================================================================
+Section 3: VOK channel: bus-present comparator and open-tap behaviour
+==============================================================================
+   U_BP threshold REF 1.223 V, V_OS -9 mV -> bus present above VBUS  9.34 V
+   U_BP threshold REF 1.223 V, V_OS +0 mV -> bus present above VBUS  9.41 V
+   U_BP threshold REF 1.223 V, V_OS +9 mV -> bus present above VBUS  9.49 V
+   U_BP threshold REF 1.242 V, V_OS -9 mV -> bus present above VBUS  9.49 V
+   U_BP threshold REF 1.242 V, V_OS +0 mV -> bus present above VBUS  9.56 V
+   U_BP threshold REF 1.242 V, V_OS +9 mV -> bus present above VBUS  9.63 V
+   U_BP threshold REF 1.260 V, V_OS -9 mV -> bus present above VBUS  9.63 V
+   U_BP threshold REF 1.260 V, V_OS +0 mV -> bus present above VBUS  9.70 V
+   U_BP threshold REF 1.260 V, V_OS +9 mV -> bus present above VBUS  9.77 V
+   bus tap open (top string open, pad lift, wire): BTk = 58.6 mV -> bus ABSENT -> channel blocks
+   R_Bk2 or C_Bk short: BTk = 0 V -> bus ABSENT -> channel blocks
+   BTk at VBUS 13.5 V (lowest window bus): 1.733 V (> 1.269 V worst threshold)
+   BTk at VBUS 17.5 V: 2.231 V ; V-MOT tap at 21.5 V (Q_H off): 2.697 V (TLV3011B at 3V3: input to V+ + 0.2 = 3.5 V)
+   centred 8 mV hysteresis lowers the release by up to 32 mV at V-MOT; worst release margin at VBUS 17.5 V: 0.144 - 0.032 = 0.112 V
+
+==============================================================================
+Section 4: Status ladders: R = 2.00k, 2R = 4.02k, C = 10 nF
+==============================================================================
+   1 LSB                 : settle to 30 mV in   24.7 us; to 10 mV in   46.7 us
+   2 bits (309 mV)       : settle to 30 mV in   46.7 us; to 10 mV in   68.6 us
+   OK1+OK2 (1237 mV)     : settle to 30 mV in   74.4 us; to 10 mV in   96.4 us
+   MSB (1650 mV)         : settle to 30 mV in   80.1 us; to 10 mV in  102.1 us
+   full scale (3197 mV)  : settle to 30 mV in   93.4 us; to 10 mV in  115.3 us
+   tau 20 us (rev 3: 2000 us). Bit drive <= 3.3 V / ~6 k = 0.55 mA per bit; 10 bits <= 5.5 mA from 3V3
+   ADC sample capacitor 5 pF (ASSUMED): kickback <= 1.6 mV, recovered in 10 us
+   ADC sample capacitor 20 pF (ASSUMED): kickback <= 6.6 mV, recovered in 38 us
+   traction exit at median loop 1.131 ms: confirm after 2 iterations = 2.26 ms; one extra iteration if the first read straddles an edge: 3.39 ms
+   traction exit at p99 loop 1.341 ms: confirm after 2 iterations = 2.68 ms; one extra iteration if the first read straddles an edge: 4.02 ms
+
+==============================================================================
+Section 5: Signal-side injection R_I = 8.2k into SIG1 / SIG2 (R_F 1.5k)
+==============================================================================
+   I_pack -0.5 A, U_C1: OUT 1.6750 V -> SIG_inj 1.4160 V = 4.68 A equivalent; trips (SIG < TH 1.500 V): True
+   I_pack -0.5 A, U_C2: OUT 1.6250 V -> SIG_inj 1.3737 V = 5.53 A equivalent; trips (SIG < TH 1.493 V): True
+   I_pack +0.0 A, U_C1: OUT 1.6500 V -> SIG_inj 1.3948 V = 5.10 A equivalent; trips (SIG < TH 1.500 V): True
+   I_pack +0.0 A, U_C2: OUT 1.6500 V -> SIG_inj 1.3948 V = 5.10 A equivalent; trips (SIG < TH 1.493 V): True
+   I_pack +0.5 A, U_C1: OUT 1.6250 V -> SIG_inj 1.3737 V = 5.53 A equivalent; trips (SIG < TH 1.500 V): True
+   I_pack +0.5 A, U_C2: OUT 1.6750 V -> SIG_inj 1.4160 V = 4.68 A equivalent; trips (SIG < TH 1.493 V): True
+   validity: firmware requires SIG_inj (pin 16/17) <= 1.460 V (3.8 A equivalent) and |I_PACK| <= 0.5 A
+   R_F open: SIG pulled to 0 V through R_I -> ADC reads ~0 V (expected ~1.40 V) -> detected
+   D5 injection: pin 35 -> R_I3 100k -> D_I3 -> U_D5 IN- (R_D5a 10k to BT-CURR): +273 mV = 2.73 A equivalent (INA253A1 0.1 V/A) against the 0.5 A threshold
+
+==============================================================================
+Section 6: Buffered pin-33 clear and set path
+==============================================================================
+   pin 33 high-Z: U_P33 input = I_I x R_P33 10k = 50 mV < VT- min 0.89 V -> P33B LOW
+   P33B LOW: N1 = VF(BAT54 at 0.31 mA) <= 0.20 V < U_CLS VT- min 0.89 V -> /CLR LOW
+   P33B LOW: N1 = VF(BAT54 at 0.30 mA) <= 0.32 V < U_CLS VT- min 0.89 V -> /CLR LOW
+   CLK: tau 9.4 us, VT+ 1.48 V -> U_CKS switches at 5.59 us
+   CLK: tau 9.4 us, VT+ 2.00 V -> U_CKS switches at 8.76 us
+   CLK: tau 10.6 us, VT+ 1.48 V -> U_CKS switches at 6.31 us
+   CLK: tau 10.6 us, VT+ 2.00 V -> U_CKS switches at 9.87 us
+   /CLR release: C_N1 70 pF, from 0.3 V to VT+ 2.0 V: 0.59 us
+   /CLR release: C_N1 130 pF, from 0.3 V to VT+ 2.0 V: 1.09 us
+   worst margin = 5.59 - 1.09 us = 4.51 us
+
+==============================================================================
+Section 7: V_PACKN divider with R_VPS in the lower leg
+==============================================================================
+   V(pin 23) = 1.7286 V + 0.4762 x V_PACKN ; decode V_PACKN = 2.100 x V23 - 1.100 x 3V3
+   rev-3 decode (2 V23 - 3.3) error: offset +0.1571 V, gain -0.0476
+   1 ADC count = 1.692 mV of V_PACKN
+   5 mOhm at  1.0 A =   5.0 mV =   3.0 counts
+   5 mOhm at  3.0 A =  15.0 mV =   8.9 counts
+   5 mOhm at  5.0 A =  25.0 mV =  14.8 counts
+   5 mOhm at  7.2 A =  36.0 mV =  21.3 counts
+   5 mOhm at 17.1 A =  85.5 mV =  50.5 counts
+
+==============================================================================
+Section 8: FC-window bus current against G1
+==============================================================================
+   eta 0.88: V_pack 7.4: P_in 13.03 W, bus 0.815 A + aux 0.15 = 0.965 A (rev-3 G1 limit 1.0 A)
+   eta 0.88: V_pack 7.72: P_in 13.60 W, bus 0.850 A + aux 0.15 = 1.000 A (rev-3 G1 limit 1.0 A)
+   eta 0.88: V_pack 8.0: P_in 14.09 W, bus 0.881 A + aux 0.15 = 1.031 A (rev-3 G1 limit 1.0 A)
+   eta 0.88: V_pack 8.4: P_in 14.80 W, bus 0.925 A + aux 0.15 = 1.075 A (rev-3 G1 limit 1.0 A)
+   eta 0.8: V_pack 7.4: P_in 14.34 W, bus 0.896 A + aux 0.15 = 1.046 A (rev-3 G1 limit 1.0 A)
+   eta 0.8: V_pack 7.72: P_in 14.96 W, bus 0.935 A + aux 0.15 = 1.085 A (rev-3 G1 limit 1.0 A)
+   eta 0.8: V_pack 8.0: P_in 15.50 W, bus 0.969 A + aux 0.15 = 1.119 A (rev-3 G1 limit 1.0 A)
+   eta 0.8: V_pack 8.4: P_in 16.28 W, bus 1.017 A + aux 0.15 = 1.167 A (rev-3 G1 limit 1.0 A)
+
+==============================================================================
+Section 9: eFuse UVLO divider R_UV1 100k / R_UV2 10.5k
+==============================================================================
+   rising 12.38..12.88 V; falling 11.47..12.10 V (SLVSE94G 6.5)
+   against Ag105 VIN min 11 V (DS p.19) and the FC-window bus floor 13.5 V
+
+==============================================================================
+Section 10: D5 arming delay, R_D5d 100k / C_D5d 100 nF from FCQ 3.27 V
+==============================================================================
+   Q_D5 V_th 0.8 V: 2.8 ms
+   Q_D5 V_th 1.5 V: 6.1 ms
+
+==============================================================================
+Section 11: Hardware chain against the 19 ms and 47 ms pulses (linear V-MOT ramp, facts_prior sec 6)
+==============================================================================
+   pulse 19 ms, VOK 16.9 V at 3.49 ms, t_D_ON  8.0: allowance for eFuse enable -> I_set =  6.44 ms (eFuse delay + ramp alone 4.4-5.6 ms)
+   pulse 19 ms, VOK 16.9 V at 3.49 ms, t_D_ON 12.0: allowance for eFuse enable -> I_set =  2.44 ms (eFuse delay + ramp alone 4.4-5.6 ms)
+   pulse 19 ms, VOK 17.24 V at 4.67 ms, t_D_ON  8.0: allowance for eFuse enable -> I_set =  5.26 ms (eFuse delay + ramp alone 4.4-5.6 ms)
+   pulse 19 ms, VOK 17.24 V at 4.67 ms, t_D_ON 12.0: allowance for eFuse enable -> I_set =  1.26 ms (eFuse delay + ramp alone 4.4-5.6 ms)
+   pulse 47 ms, VOK 16.9 V at 8.62 ms, t_D_ON  8.0: allowance for eFuse enable -> I_set = 29.30 ms (eFuse delay + ramp alone 4.4-5.6 ms)
+   pulse 47 ms, VOK 16.9 V at 8.62 ms, t_D_ON 12.0: allowance for eFuse enable -> I_set = 25.30 ms (eFuse delay + ramp alone 4.4-5.6 ms)
+   pulse 47 ms, VOK 17.24 V at 11.56 ms, t_D_ON  8.0: allowance for eFuse enable -> I_set = 26.37 ms (eFuse delay + ramp alone 4.4-5.6 ms)
+   pulse 47 ms, VOK 17.24 V at 11.56 ms, t_D_ON 12.0: allowance for eFuse enable -> I_set = 22.37 ms (eFuse delay + ramp alone 4.4-5.6 ms)
+
+==============================================================================
+Section 12: Miscellaneous
+==============================================================================
+   regen window maximum input power at the 8.0 V entry gate, 2.5 A ceiling: 22.73 W (< 23 W)
+   BAL_OK divider 150k/82k at VBAL+ 6.0 V: 2.12 V (LVC V_IH 2.0 V; I_I 5 uA x 53k = 0.27 V); drain 26 uA
+   BAL_OK divider 150k/82k at VBAL+ 7.4 V: 2.62 V (LVC V_IH 2.0 V; I_I 5 uA x 53k = 0.27 V); drain 32 uA
+   BAL_OK divider 150k/82k at VBAL+ 8.5 V: 3.00 V (LVC V_IH 2.0 V; I_I 5 uA x 53k = 0.27 V); drain 37 uA
+   C_VTk = 2 x 2.2 uF in series = 1.1 uF per channel (one cracked part leaves 2.2 uF, not a short)
+   both S_GND off, I 7.2 A: body-diode loss 5.0-7.2 W total (V_SD 0.7-1.0 V)
+   both S_GND off, I 17.1 A: body-diode loss 12.0-17.1 W total (V_SD 0.7-1.0 V)
