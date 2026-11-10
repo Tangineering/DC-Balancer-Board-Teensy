@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 480" width="980" height="480" font-family="Helvetica, Arial, sans-serif" font-size="12">
+<rect width="980" height="480" fill="#ffffff"/>
+<defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#222"/></marker></defs>
+<text x="20" y="28" font-size="16" font-weight="bold">Fig 1. Power path with the Ag105 replaced (simplified)</text><text x="20" y="46" font-size="12" fill="#555">Blue = RT1987 ideal-diode switch: conducts left-to-right only, while its EN (Teensy pin) is HIGH.</text>
+<!-- VBUS bar -->
+<line x1="400" y1="70" x2="400" y2="300" stroke="#222" stroke-width="4"/>
+<text x="372" y="62" font-weight="bold">VBUS 16.0 V</text>
+<!-- FC row -->
+<rect x="20" y="70" width="95" height="40" fill="#fde8c8" stroke="#222"/><text x="30" y="88">H-20 fuel</text><text x="30" y="103">cell 7-11 V</text>
+<rect x="140" y="70" width="120" height="40" fill="#eeeeee" stroke="#222"/><text x="148" y="88">FC boost</text><text x="148" y="103">TPS61288 + INA253</text>
+<rect x="290" y="72" width="90" height="36" fill="#d9e8fb" stroke="#222"/><text x="297" y="88">D-FC-EN</text><text x="297" y="102">FC_BUS (27)</text>
+<path d="M115 90 H140 M260 90 H290 M380 90 H400" stroke="#222" stroke-width="2.5" fill="none"/>
+<!-- BT row -->
+<rect x="20" y="250" width="95" height="40" fill="#fde8c8" stroke="#222"/><text x="30" y="268">2S pack</text><text x="30" y="283">7.4-8.4 V (VBT)</text>
+<rect x="140" y="250" width="120" height="40" fill="#eeeeee" stroke="#222"/><text x="148" y="268">BT boost</text><text x="148" y="283">TPS61288 + INA253</text>
+<rect x="290" y="252" width="90" height="36" fill="#d9e8fb" stroke="#222"/><text x="297" y="268">D-BT-EN</text><text x="297" y="282">BT_BUS (28)</text>
+<path d="M115 270 H140 M260 270 H290 M380 270 H400" stroke="#222" stroke-width="2.5" fill="none"/>
+<!-- motor path -->
+<rect x="425" y="72" width="105" height="36" fill="#d9e8fb" stroke="#222"/><text x="432" y="88">D-MT-EN</text><text x="432" y="102">MOT_PWR (29)</text>
+<path d="M400 90 H425 M530 90 H560" stroke="#222" stroke-width="2.5" fill="none"/>
+<line x1="560" y1="70" x2="560" y2="170" stroke="#222" stroke-width="4"/>
+<text x="568" y="64" font-weight="bold">V-MOT</text>
+<rect x="610" y="45" width="130" height="40" fill="#eeeeee" stroke="#222"/><text x="618" y="62">VESC + motor</text><text x="618" y="77">(regen source)</text>
+<path d="M560 65 H610" stroke="#222" stroke-width="2.5"/>
+<text x="580" y="110" font-size="11" fill="#555">rises to ~21.35 V in braking,</text>
+<text x="580" y="124" font-size="11" fill="#555">then the VESC cuts out (T-E-03)</text>
+<!-- charge input switches -->
+<rect x="425" y="212" width="105" height="36" fill="#d9e8fb" stroke="#222"/><text x="432" y="228">D-BC-FC</text><text x="432" y="242">FC_CHARGE (31)</text>
+<path d="M400 230 H425 M530 230 H700" stroke="#222" stroke-width="2.5" fill="none"/>
+<rect x="590" y="152" width="90" height="36" fill="#d9e8fb" stroke="#222"/><text x="597" y="168">D-BC-RG</text><text x="597" y="182">REGEN (30)</text>
+<path d="M560 170 H590 M680 170 H700" stroke="#222" stroke-width="2.5" fill="none"/>
+<line x1="700" y1="160" x2="700" y2="240" stroke="#222" stroke-width="4"/>
+<text x="706" y="155" font-weight="bold">VCHG-IN</text>
+<text x="706" y="256" font-size="11" fill="#555">(Ag105 VIN+ pad 10)</text>
+<!-- carrier -->
+<rect x="725" y="175" width="125" height="60" fill="#ffe0d0" stroke="#c0502a" stroke-width="2"/>
+<text x="732" y="193" font-weight="bold">CR carrier</text><text x="732" y="208">eFuse TPS26630</text><text x="732" y="223">2.23 A, OVP 23.1 V</text>
+<path d="M700 205 H725 M850 205 H860" stroke="#222" stroke-width="2.5"/>
+<!-- EVM -->
+<rect x="860" y="160" width="105" height="150" fill="#dff2df" stroke="#2a7a2a" stroke-width="2"/>
+<text x="867" y="180" font-weight="bold">BQ25798EVM</text><text x="867" y="198">VBUS in</text><text x="867" y="214">VINDPM 19.0 V</text><text x="867" y="229">(14.5 V in FC</text><text x="867" y="243">window)</text><text x="867" y="270">BAT out, sensed</text><text x="867" y="285">on BAT+ (IBAT)</text>
+<!-- battery return -->
+<path d="M860 300 H700 V360 H655" stroke="#222" stroke-width="2.5" fill="none"/>
+<text x="705" y="295" font-weight="bold">VCHG</text>
+<rect x="560" y="342" width="95" height="36" fill="#d9e8fb" stroke="#222"/><text x="567" y="358">D-BT-SQ</text><text x="567" y="372">BT_SEQ (32)</text>
+<path d="M560 360 H67 V290" stroke="#222" stroke-width="2.5" fill="none" marker-end="url(#a)"/>
+<text x="300" y="352">charge current into the pack (VBT)</text>
+<!-- teensy note -->
+<text x="20" y="320" font-size="11" fill="#555">VBT also feeds the LM1084 5 V reg -> Teensy</text>
+<!-- ground note -->
+<rect x="20" y="400" width="945" height="62" fill="#f6f6f6" stroke="#999"/>
+<text x="30" y="420" font-weight="bold">One ground.</text><text x="110" y="420">FC return, pack negative, charger VIN- and charger BAT- are all the same PCB GND. The Ag105 senses its charge current in BAT-,</text>
+<text x="30" y="437">so on this board its sense was bypassed (2026-11-04 incident). The BQ25798 senses on the BAT+ / input side, so a common ground is legal.</text>
+<text x="30" y="454">Loop to prevent: VBUS -> charger -> pack -> BT boost -> VBUS. It needs BT_BUS closed while the charger is fed from VBUS; the permit logic (Fig 2) forbids exactly that.</text>
+</svg>
