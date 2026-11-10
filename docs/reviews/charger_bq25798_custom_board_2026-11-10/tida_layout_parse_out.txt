@@ -1,0 +1,340 @@
+
+====================================================================================================
+1. Layer stack (PcbDoc board record: LAYERnNAME / COPTHICK / DIELHEIGHT / DIELTYPE / DIELCONST)
+====================================================================================================
+Altium DIELTYPE: 1 = core, 2 = prepreg (Altium convention)
+  L1   Top Layer       Cu  2.80 mil (71.1 um, 2.04 oz)   dielectric below: 12.0 mil (0.305 mm) type 2 er 4.200 FR-4 High TG
+  L2   Signal Layer 1  Cu  2.80 mil (71.1 um, 2.04 oz)   dielectric below: 26.0 mil (0.660 mm) type 1 er 4.200 FR-4 High TG
+  L3   Signal Layer 2  Cu  2.80 mil (71.1 um, 2.04 oz)   dielectric below: 12.0 mil (0.305 mm) type 2 er 4.200 FR-4 High TG
+  L32  Bottom Layer    Cu  2.80 mil (71.1 um, 2.04 oz)   dielectric below: -
+  Copper + dielectric total: 61.2 mil = 1.554 mm (solder mask not included)
+
+====================================================================================================
+2. Component placements (PcbDoc Components6 records)
+====================================================================================================
+U1: pattern RQM0029A-MFG, layer TOP, rotation 180 deg, PcbDoc (41.680, 90.661) mm
+
+Parts within 12 mm of U1, cell frame (mm; +y = power edge side):
+  Ref    Pattern                        Side        Rot   cell x   cell y     dist
+  U1     RQM0029A-MFG                   TOP         180    -0.00    -0.00     0.00
+  C7     0402                           BOTTOM      270     1.88     0.60     1.97
+  C1     0402                           BOTTOM      270    -1.92     0.60     2.02
+  NT1    Net-Tie_20milWide_60milLong    MID2         90     0.00    -2.41     2.41
+  C11    0402                           TOP         180    -1.27     3.15     3.40
+  C12    0402                           TOP         360     1.28     3.15     3.40
+  C19    0402L                          TOP          90     3.35     0.75     3.44
+  C22    0402                           BOTTOM       90     3.38     0.95     3.51
+  C6     0402                           TOP          90    -3.70     0.40     3.72
+  C20    0603                           TOP          90     4.60     0.65     4.65
+  C18    0603                           TOP         360    -4.27    -2.13     4.78
+  C5     0603                           TOP         270    -4.92     0.10     4.93
+  R3     0402                           BOTTOM      180     4.05    -2.90     4.98
+  C10    0603                           TOP          90    -3.15     4.17     5.23
+  R5     0402                           BOTTOM      360     4.05    -3.93     5.64
+  C13    0805_HV                        TOP         270     3.53     4.47     5.69
+  C21    0603                           TOP          90     6.10     0.65     6.13
+  C9     0603                           TOP          90    -4.55     4.17     6.17
+  C16    0805_HV                        BOTTOM      270     4.29     4.48     6.20
+  C4     0603                           TOP         270    -6.30     0.10     6.30
+  R4     0603                           BOTTOM       90     6.20    -2.98     6.88
+  L1     IHLP-2020BZ                    BOTTOM      180    -0.02     7.00     7.00
+  C14    0805_HV                        TOP         270     5.58     4.47     7.15
+  C8     0603                           TOP          90    -5.92     4.17     7.25
+  C3     0603                           TOP         270    -7.67     0.10     7.68
+  C17    0805_HV                        BOTTOM      270     6.34     4.47     7.76
+  R1     0603                           BOTTOM       90     7.85     0.60     7.88
+  R6     0603                           BOTTOM      270     7.80    -2.98     8.35
+  C15    0805_HV                        TOP         270     7.60     4.47     8.82
+  C2     0603                           TOP         270    -9.02     0.10     9.03
+
+====================================================================================================
+3. Gerber layers and the U1 land pattern as drawn
+====================================================================================================
+cluster of 17 pads at (24.438, 52.227); U4 mapping error 1.07 mm
+cluster of 28 pads at (33.142, 36.769); U4 mapping error 34.59 mm
+U1 cluster centroid (board) (24.438, 52.227) mm
+U1 land-pattern extent (board): x 21.903..26.303, y 49.497..53.898 -> 4.400 x 4.400 mm; centre (24.103, 51.697)
+Offset Gerber - PcbDoc: (-17.577, -38.964) mm
+
+U1 flashes on GTL, cell frame (power edge at +y), sorted by edge:
+         x        y       w       h  aperture
+    -0.900    1.725   0.200   0.950  D40 ApertureMacroInstance
+    -0.450    1.700   0.200   1.000  D39 ApertureMacroInstance
+    -0.000    1.700   0.200   1.000  D39 ApertureMacroInstance
+     0.450    1.700   0.200   1.000  D39 ApertureMacroInstance
+     0.900    1.700   0.200   1.000  D39 ApertureMacroInstance
+    -1.369    1.631   0.192   0.192  D31 CircleAperture
+     1.381    1.631   0.175   0.175  D35 CircleAperture
+    -1.900    1.200   0.600   0.200  D32 ApertureMacroInstance
+     1.900    1.200   0.600   0.200  D32 ApertureMacroInstance
+    -1.147    0.847   0.508   0.508  D137 CircleAperture
+    -0.597    0.847   0.508   0.508  D137 CircleAperture
+     0.575    0.833   0.508   0.508  D137 CircleAperture
+     1.125    0.812   0.508   0.508  D137 CircleAperture
+    -1.900    0.800   0.600   0.200  D32 ApertureMacroInstance
+     1.900    0.800   0.600   0.200  D32 ApertureMacroInstance
+    -1.900    0.400   0.600   0.200  D32 ApertureMacroInstance
+     1.900    0.400   0.600   0.200  D32 ApertureMacroInstance
+    -1.175    0.297   0.508   0.508  D137 CircleAperture
+    -0.575    0.297   0.508   0.508  D137 CircleAperture
+     0.575    0.297   0.508   0.508  D137 CircleAperture
+     1.125    0.297   0.508   0.508  D137 CircleAperture
+    -1.900   -0.000   0.600   0.200  D32 ApertureMacroInstance
+     1.900   -0.000   0.600   0.200  D32 ApertureMacroInstance
+    -0.000   -0.158   0.508   0.508  D137 CircleAperture
+    -1.900   -0.400   0.600   0.200  D32 ApertureMacroInstance
+     1.860   -0.400   0.680   0.200  D38 ApertureMacroInstance
+    -0.575   -0.553   0.762   0.762  D138 CircleAperture
+     0.575   -0.552   0.762   0.762  D138 CircleAperture
+    -1.900   -0.800   0.600   0.200  D32 ApertureMacroInstance
+     1.875   -0.800   0.650   0.200  D37 ApertureMacroInstance
+     0.000   -1.108   0.762   0.762  D138 CircleAperture
+    -1.900   -1.200   0.600   0.200  D32 ApertureMacroInstance
+     1.850   -1.200   0.700   0.200  D36 ApertureMacroInstance
+     1.079   -1.207   0.508   0.508  D137 CircleAperture
+     1.431   -1.631   0.175   0.175  D35 CircleAperture
+    -1.000   -1.900   0.200   0.600  D34 ApertureMacroInstance
+    -0.600   -1.900   0.200   0.600  D34 ApertureMacroInstance
+    -0.200   -1.900   0.200   0.600  D34 ApertureMacroInstance
+     0.200   -1.900   0.200   0.600  D34 ApertureMacroInstance
+     0.600   -1.900   0.200   0.600  D34 ApertureMacroInstance
+     1.000   -1.900   0.200   0.600  D34 ApertureMacroInstance
+    -1.413   -1.938   0.157   0.157  D33 CircleAperture
+    -0.597   -2.753   0.508   0.508  D137 CircleAperture
+  count: 43 flashes inside the 4.8 mm window
+
+Regions on GTL whose bounding box lies inside the U1 outline +/-2.4 mm (cell frame):
+  x -2.200..-1.300  y -2.200..-1.500  (35 vertices)
+  x 1.300..2.200  y -2.200..-1.500  (36 vertices)
+  x -1.147..0.353  y -3.153..-1.602  (24 vertices)
+  x -1.385..0.972  y -1.385..0.046  (69 vertices)
+  x -2.200..-1.250  y 1.500..2.200  (35 vertices)
+  x 1.250..2.200  y 1.500..2.200  (35 vertices)
+
+GTS (Top Solder mask) openings in the U1 window: 29; size histogram (short x long, mm): {(0.292, 0.292): 1, (0.3, 0.7): 17, (0.258, 0.258): 1, (0.275, 0.275): 2, (0.3, 0.8): 1, (0.3, 0.75): 1, (0.3, 0.78): 1, (0.3, 1.1): 4, (0.3, 1.05): 1}
+   regions in the window (w x h, mm): [(0.9, 0.7), (0.9, 0.7), (0.95, 0.7), (0.95, 0.7)]
+
+GTP (Top Paste) openings in the U1 window: 29; size histogram (short x long, mm): {(0.192, 0.192): 1, (0.2, 0.6): 17, (0.157, 0.157): 1, (0.175, 0.175): 2, (0.2, 0.7): 1, (0.2, 0.65): 1, (0.2, 0.68): 1, (0.2, 1.0): 4, (0.2, 0.95): 1}
+   regions in the window (w x h, mm): [(0.9, 0.7), (0.9, 0.7), (0.95, 0.7), (0.95, 0.7)]
+
+====================================================================================================
+4. Drill holes (Excellon RoundHoles) - whole board and within the power-cell window
+====================================================================================================
+Whole board: {0.2: 10, 0.254: 448, 0.3: 24, 0.381: 12, 1.0: 4, 1.016: 19, 1.1: 2, 1.25: 4, 0.6: 1}
+Window cell x -9..9, y -6..12: 76 holes, sizes {0.254: 64, 0.381: 12}
+All holes in the window, cell frame (y descending): (x, y, drill)
+  ( -7.20,  11.30) 0.254
+  ( -6.80,  10.95) 0.254
+  ( -8.40,  10.70) 0.254
+  ( -7.85,  10.70) 0.254
+  ( -7.30,  10.70) 0.254
+  (  5.95,   9.70) 0.254
+  (  7.25,   9.70) 0.254
+  (  8.30,   9.70) 0.254
+  (  4.40,   9.35) 0.254
+  ( -1.78,   7.90) 0.381
+  (  1.73,   7.90) 0.381
+  ( -1.78,   7.00) 0.381
+  (  1.73,   7.00) 0.381
+  ( -5.31,   6.84) 0.254
+  (  3.90,   6.50) 0.254
+  (  5.05,   6.50) 0.254
+  (  6.15,   6.50) 0.254
+  (  7.20,   6.50) 0.254
+  (  8.20,   6.50) 0.254
+  (  1.73,   6.10) 0.381
+  ( -1.78,   6.09) 0.381
+  ( -6.30,   5.75) 0.254
+  ( -5.45,   5.75) 0.254
+  ( -4.65,   5.75) 0.254
+  ( -3.85,   5.75) 0.254
+  ( -7.06,   5.74) 0.254
+  (  2.70,   4.15) 0.254
+  ( -0.83,   3.95) 0.381
+  ( -0.03,   3.95) 0.381
+  (  0.77,   3.95) 0.381
+  (  6.58,   2.65) 0.254
+  (  8.60,   2.65) 0.254
+  (  4.56,   2.61) 0.254
+  ( -2.08,   2.15) 0.254
+  (  2.45,   2.10) 0.254
+  ( -2.90,   1.65) 0.254
+  (  7.11,   1.35) 0.254
+  ( -1.15,   0.85) 0.254
+  ( -0.60,   0.85) 0.254
+  (  0.57,   0.83) 0.254
+  (  1.12,   0.81) 0.254
+  (  4.15,   0.55) 0.254
+  ( -2.78,   0.40) 0.254
+  ( -1.18,   0.30) 0.254
+  ( -0.58,   0.30) 0.254
+  (  0.57,   0.30) 0.254
+  (  1.12,   0.30) 0.254
+  (  2.62,  -0.10) 0.254
+  ( -0.00,  -0.16) 0.254
+  (  3.37,  -0.34) 0.254
+  ( -0.58,  -0.55) 0.381
+  (  0.58,  -0.55) 0.381
+  ( -4.15,  -0.90) 0.254
+  (  3.59,  -1.00) 0.254
+  (  4.90,  -1.05) 0.254
+  (  5.85,  -1.05) 0.254
+  (  6.85,  -1.05) 0.254
+  (  0.00,  -1.11) 0.381
+  (  1.08,  -1.21) 0.254
+  ( -8.40,  -1.45) 0.254
+  ( -7.00,  -1.45) 0.254
+  ( -5.90,  -1.50) 0.254
+  (  3.12,  -1.60) 0.254
+  ( -6.05,  -2.25) 0.254
+  ( -0.60,  -2.75) 0.254
+  (  2.62,  -2.90) 0.254
+  ( -2.32,  -3.05) 0.254
+  ( -7.85,  -3.32) 0.254
+  (  8.80,  -3.75) 0.254
+  (  4.65,  -4.65) 0.254
+  (  6.15,  -4.80) 0.254
+  ( -3.40,  -5.30) 0.254
+  ( -6.58,  -5.86) 0.254
+  ( -1.50,  -5.86) 0.254
+  (  6.12,  -5.86) 0.254
+  (  8.66,  -5.86) 0.254
+Holes inside the U1 land-pattern extent (|x|,|y| <= 2.2 mm): 14
+  (-2.076,  2.147) drill 0.254
+  (-1.147,  0.847) drill 0.254
+  (-0.597,  0.847) drill 0.254
+  ( 0.575,  0.833) drill 0.254
+  ( 1.125,  0.812) drill 0.254
+  (-1.175,  0.297) drill 0.254
+  (-0.575,  0.297) drill 0.254
+  ( 0.575,  0.297) drill 0.254
+  ( 1.125,  0.297) drill 0.254
+  (-0.000, -0.158) drill 0.254
+  ( 0.575, -0.552) drill 0.381
+  (-0.575, -0.553) drill 0.381
+  ( 0.000, -1.108) drill 0.381
+  ( 1.079, -1.207) drill 0.254
+
+Check: every GTL straight pin-pad flash against the SLUSDV2C p.149 rectangles:
+  max summed deviation (centre x + centre y + width + height): 0.0006 mm
+
+Under-body vias: edge clearance of the via land to the three nearest pin pads (mm):
+  (-2.076,  2.147) drill 0.254 land 0.508 -> 1 STAT 0.193; 2 VBUS 0.593; 29 PMID 0.822
+  (-1.147,  0.847) drill 0.254 land 0.508 -> 29 PMID 0.175; 3 VBUS 0.199; 2 VBUS 0.265
+  (-0.597,  0.847) drill 0.254 land 0.508 -> 28 SW1 0.102; 29 PMID 0.197; 27 GND 0.355
+  ( 0.575,  0.833) drill 0.254 land 0.508 -> 26 SW2 0.114; 25 SYS 0.177; 27 GND 0.346
+  ( 1.125,  0.812) drill 0.254 land 0.508 -> 25 SYS 0.154; 22 BAT 0.221; 23 BAT 0.302
+  (-1.175,  0.297) drill 0.254 land 0.508 -> 4 BTST1 0.171; 5 REGN 0.215; 3 VBUS 0.331
+  (-0.575,  0.297) drill 0.254 land 0.508 -> 28 SW1 0.649; 29 PMID 0.725; 27 GND 0.766
+  ( 0.575,  0.297) drill 0.254 land 0.508 -> 26 SW2 0.649; 25 SYS 0.676; 27 GND 0.766
+  ( 1.125,  0.297) drill 0.254 land 0.508 -> 21 /INT 0.221; 20 PROG 0.261; 22 BAT 0.369
+  (-0.000, -0.158) drill 0.254 land 0.508 -> 27 GND 1.104; 28 SW1 1.148; 26 SW2 1.148
+  ( 0.575, -0.552) drill 0.381 land 0.762 -> 19 BTST2 0.565; 18 BATP 0.605; 14 SCL 0.667
+  (-0.575, -0.553) drill 0.381 land 0.762 -> 6 D+ 0.645; 7 D- 0.654; 11 ACDRV1 0.666
+  ( 0.000, -1.108) drill 0.381 land 0.762 -> 13 /CE 0.121; 12 /QON 0.121; 14 SCL 0.320
+  ( 1.079, -1.207) drill 0.254 land 0.508 -> 16 TS 0.113; 15 SDA 0.139; 17 ILIM_HIZ 0.167
+
+Via land diameters (circular flashes on GTL/GBL concentric with a drill, window):
+  GTL: drill -> land: {(0.254, 0.508): 64, (0.381, 0.762): 12}
+  G1: drill -> land: {(0.254, 0.508): 30, (0.381, 0.762): 6}
+  G2: drill -> land: {(0.254, 0.508): 17, (0.381, 0.762): 7}
+  GBL: drill -> land: {(0.254, 0.508): 64, (0.381, 0.762): 12}
+
+====================================================================================================
+5. Copper per layer in the power-cell window (cell frame)
+====================================================================================================
+
+GTL (Top Layer (L1)): objects {'Region': 19, 'Line': 141, 'Flash': 153}
+  line widths (mm: count): {0.152: 31, 0.254: 108, 0.381: 2}
+  regions > 1 mm^2 bbox: 15 (dark 10, clear 5)
+   dark   x -26.05.. 23.46  y -23.86.. 51.05
+   clear  x -24.37.. 21.51  y -21.21.. 30.11
+   dark   x   1.65.. 21.10  y  -9.20..  2.00
+   dark   x   1.33.. 21.25  y  -2.00..  4.55
+   dark   x -10.90.. -1.62  y   0.05.. 11.81
+   dark   x   1.60.. 15.85  y  11.20.. 14.85
+   dark   x  -8.65..  1.10  y   9.45.. 14.40
+   clear  x  -2.42..  2.37  y   5.45..  8.55
+   dark   x  -7.20.. -1.33  y   2.30..  4.20
+   dark   x  -3.97.. -2.41  y  -2.60.. -0.03
+   dark   x  -1.38..  0.97  y  -1.38..  0.05
+   dark   x  -1.15..  0.35  y  -3.15.. -1.60
+   clear  x   4.13..  5.17  y  -5.17.. -4.13
+   clear  x   8.29..  9.32  y  -4.27.. -3.23
+
+G1 (Signal Layer 1 (L2)): objects {'Region': 22, 'Line': 3, 'Flash': 37}
+  line widths (mm: count): {0.381: 3}
+  regions > 1 mm^2 bbox: 22 (dark 1, clear 21)
+   dark   x -26.05.. 23.46  y -23.86.. 51.05
+   clear  x  -2.45..  2.40  y   5.45..  8.55
+   clear  x -10.35.. -6.28  y  10.18.. 13.85
+   clear  x   8.08.. 11.73  y   2.12..  4.68
+   clear  x  -1.69..  1.64  y  -0.22..  1.37
+   clear  x   2.11..  4.11  y  -2.12..  0.42
+   clear  x  -3.41.. -1.56  y   1.13..  2.66
+   clear  x   0.56..  1.60  y  -1.72.. -0.69
+   clear  x  -3.92.. -2.88  y  -5.82.. -4.78
+   clear  x  -3.29.. -2.26  y  -0.12..  0.92
+   clear  x   4.04..  5.08  y   2.09..  3.13
+   clear  x   4.13..  5.17  y  -5.17.. -4.13
+   clear  x   6.07..  7.10  y   2.13..  3.16
+   clear  x   6.59..  7.63  y   0.83..  1.87
+
+G2 (Signal Layer 2 (L3)): objects {'Region': 27, 'Line': 36, 'Flash': 26}
+  line widths (mm: count): {0.152: 3, 0.254: 7, 0.508: 22, 0.762: 4}
+  regions > 1 mm^2 bbox: 27 (dark 3, clear 24)
+   dark   x -26.05.. 23.46  y -23.86.. 51.05
+   clear  x -13.60..  3.22  y -12.20..  8.60
+   clear  x  -6.79.. 19.67  y  11.78.. 17.48
+   clear  x -10.36.. -6.28  y  10.18.. 16.97
+   clear  x  -3.92..  6.67  y  -6.38.. -4.28
+   clear  x   8.08.. 11.73  y   2.12..  4.68
+   clear  x  -7.58.. -3.33  y   5.22..  7.36
+   dark   x   0.32..  2.08  y   0.30..  3.75
+   dark   x  -2.13.. -0.38  y   0.30..  3.75
+   clear  x   3.38..  8.71  y   5.98..  7.02
+   clear  x  -7.51.. -5.38  y  -2.77.. -0.93
+   clear  x   4.38..  7.37  y  -1.57.. -0.53
+   clear  x   2.61..  4.11  y  -2.12.. -0.48
+   clear  x   6.73..  8.82  y   9.18.. 10.22
+
+GBL (Bottom Layer (L4)): objects {'Region': 11, 'Line': 65, 'Flash': 99}
+  line widths (mm: count): {0.152: 2, 0.254: 51, 0.508: 12}
+  regions > 1 mm^2 bbox: 11 (dark 4, clear 7)
+   dark   x -26.05.. 23.46  y -23.86.. 51.05
+   clear  x -10.46.. 12.71  y -21.91.. 17.96
+   clear  x -16.16.. -7.96  y -10.02.. 22.03
+   dark   x   1.23.. 12.45  y   1.75.. 17.70
+   clear  x -10.36.. -3.85  y  10.14.. 15.21
+   clear  x  -3.27..  3.22  y   5.35..  8.65
+   dark   x  -8.70.. -5.15  y  10.40.. 14.95
+   dark   x   3.93..  7.12  y  -0.22..  2.04
+   clear  x  -3.92.. -2.88  y  -5.82.. -4.78
+   clear  x  -2.84.. -1.81  y  -3.57.. -2.53
+   clear  x  -1.11.. -0.08  y  -3.27.. -2.23
+
+Minimum drawn line width per copper layer, whole board (mm):
+  GTL: min 0.152, histogram {0.152: 97, 0.203: 47, 0.254: 281, 0.381: 2, 0.508: 46}
+  G1: min 0.381, histogram {0.381: 3}
+  G2: min 0.152, histogram {0.152: 37, 0.254: 28, 0.508: 22, 0.762: 4}
+  GBL: min 0.152, histogram {0.152: 25, 0.203: 76, 0.254: 127, 0.508: 34}
+
+====================================================================================================
+5b. BQ25792RQM library part in BQ25792.SchDoc: pin number -> name (Altium RECORD=2 pin records)
+====================================================================================================
+Part names found: ['BQ25792RQM', 'BQ2579x']
+Pins whose SchDoc number and name equal SLUSDV2C Table 5-1: 29 of 29
+Missing: []
+
+====================================================================================================
+6. Design-rule export (.RUL), values in mil
+====================================================================================================
+  RuleKind=MinimumAnnularRing|RuleName=MinimumAnnularRing|Scope=Board|Minimum=5.00
+  RuleKind=MinimumAnnularRing|RuleName=MinimumAnnularRing_ThermalPadVias|Scope=Board|Minimum=5.91
+  RuleKind=ShortCircuit|RuleName=ShortCircuit|Scope=Board|Allowed=0
+  RuleKind=SolderMaskExpansion|RuleName=SolderMaskExpansion|Scope=Board|Minimum=1.97
+  RuleKind=Width|RuleName=Width|Scope=Board|Minimum=6.00
+  RuleKind=Clearance|RuleName=Clearance|Scope=Board|Minimum=5.00
+  RuleKind=Clearance|RuleName=Clearance_FiducialMark|Scope=Board|Minimum=0.00
+  RuleKind=Clearance|RuleName=Clearance_Poly|Scope=Board|Minimum=10.00
+  RuleKind=Clearance|RuleName=Clearance_Keepouts|Scope=Board|Minimum=0.00

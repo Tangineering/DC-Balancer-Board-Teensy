@@ -1,0 +1,11 @@
+Removed Pin From Net: NetName=GND Pin=U4-5
+Removed Pin From Net: NetName=PPHV Pin=U4-20-21-22
+Removed Pin From Net: NetName=VBUS Pin=U4-23-24-25
+Removed Pin From Net: NetName=VBUS Pin=U4-32-33
+Removed Pin From Net: NetName=PP5V Pin=U4-34-35
+Removed Pin From Net: NetName=NetR28_2 Pin=U5-C
+Added Pin To Net: NetName=GND Pin=U4-10
+Added Pin To Net: NetName=GND Pin=U4-18
+Added Class: Name=FiducialMark
+Added Class: Name=Mounting Holes
+Added Class: Name=Shunt
