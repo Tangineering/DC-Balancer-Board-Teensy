@@ -1,0 +1,155 @@
+4.3 Bill of Materials
+Table 4-1 lists the BQ2579XEVM bill of materials.
+Table 4-1. BQ2579XEVM Bill of Materials
+Designator QTY Value Description Package Reference Part Number Manufacturer
+C2, C4 2 1000pF CAP, CERM, 1000 pF, 50 V, ±1%, C0G/NP0, 0402 0402 GRM1555C1H102FA01D MuRata
+C6, C8 2 0.047uF CAP, CERM, 0.047 uF, 25 V, ±10%, X7R, 0402 0402 GRM155R71E473KA88D MuRata
+C11, C12, C19, C20, C21, C22,
+C23, C29, C30, C31
+10 10uF CAP, CERM, 10 uF, 25 V, ±10%, X5R, 0805 0805 C2012X5R1E106K125AB TDK
+C13, C14, C15, C18, C32 5 0.1uF CAP, CERM, 0.1 uF, 50 V,±10%, X7R, 0402 0402 C1005X7R1H104K050BE TDK
+C33, C34 (BQ25798BKUPEVM
+only)
+2 33uF Aluminum Polymer Capacitor 33uF 20% 25V SMD2 (7343-31) ECASD41E336M040KA0 Murata
+C35 1 4.7uF CAP, CERM, 4.7 uF, 16 V, ±10%, X5R, 0603 0603 GRM188R61C475KAAJD MuRata
+C36 1 1000pF CAP, CERM, 1000 pF, 50 V, ±5%, C0G/NP0, 0402 0402 GRM1555C1H102JA01D MuRata
+C38, C39 2 10uF CAP, CERM, 10 uF, 25 V, ±20%, X5R, 0603 0603 GRT188R61E106ME13D MuRata
+C43, C44 2 0.1uF CAP, CERM, 0.1 uF, 25 V, ±10%, X5R, 0402 0402 GRM155R61E104KA87D MuRata
+D2, D6 2 12V Diode, Zener, 12 V, 300 mW, SOD-523 SOD-523 BZT52C12T-7 Diodes Inc.
+D11, D12 2 30V Diode, Schottky, 30 V, 0.2 A, SOD-323 SOD-323 BAT54HT1G ON Semiconductor
+D13 1 Green LED, Green, SMD 1.6x0.8x0.8mm LTST-C190GKT Lite-On
+H1, H2, H3, H4 4 Bumpon, Hemisphere, 0.44 X 0.20, Clear Transparent Bumpon SJ-5303 (CLEAR) 3M
+J1, J2, J3, J4 4 Terminal Block, 5.08 mm, 2x1, Brass, TH 2x1 5.08 mm Terminal
+Block
+ED120/2DS On-Shore Technology
+J5 1 Terminal Block, 5.08 mm, 3x1, Brass, TH 3x1 5.08 mm Terminal
+Block
+ED120/3DS On-Shore Technology
+J6 1 Connector, Receptacle, Micro-USB Type B, R/A, Bottom
+Mount SMT
+7.5x2.45x5mm 47346-0001 Molex
+J7 1 Terminal Block, 3.5 mm, 2x1, Tin, TH Terminal Block, 3.5 mm,
+2x1, TH
+0393570002 Molex
+J8 1 Header (friction lock), 100mil, 4x1, R/A, TH 4x1 R/A Header 0022053041 Molex
+J9 1 Header (shrouded), 100mil, 5x2, High-Temperature, Gold, TH 5x2 Shrouded header N2510-6002-RB 3M
+JP1, JP2, JP7, JP8, JP9 5 Header, 100mil, 3x1, Tin, TH Header, 3 PIN, 100mil,
+Tin
+PEC03SAAN Sullins Connector
+Solutions
+JP3, JP4, JP5 3 Header, 100mil, 2x1, Gold, TH Header, 100mil, 2x1, TH HTSW-102-07-G-S Samtec
+JP6, JP10, JP11, JP12, JP13,
+JP14, JP15, JP16, JP17, JP18,
+JP19, JP20, JP21, JP22, JP23,
+JP24, JP25, JP26, JP27, JP28,
+JP29, JP30, JP31, JP32, JP33
+25 Header, 100mil, 2x1, Tin, TH Header, 2 PIN, 100mil,
+Tin
+PEC02SAAN Sullins Connector
+Solutions
+L2 1 1uH Inductor, Shielded, Ferrite, 1 uH, 11.1 A, 0.0078 ohm, SMD SMD 7.1x3.0x6.5mm SPM6530T-1R0M120 TDK
+Q1, Q2, Q3, Q4 4 30V MOSFET, N-CH, 30 V, 60 A, DNH0008A (VSONP-8) DNH0008A CSD17581Q3A Texas Instruments
+Q5 1 30V MOSFET, N-CH, 30 V, 60 A, DQG0008A (VSON-CLIP-8) DQG0008A CSD17575Q3 Texas Instruments
+R2, R6, R11, R12, R13 5 0.01 RES, 0.01, 1%, 1 W, 2010 2010 WSL2010R0100FEA18 Vishay-Dale
+R4, R9 2 294 RES, 294, 1%, 0.1 W, AEC-Q200 Grade 0, 0603 0603 CRCW0603294RFKEA Vishay-Dale
+Board Layout, Schematic and Bill of Materials www.ti.com
+22 BQ25792EVM, BQ25798EVM and BQ25798BKUPEVM (BMS034) Evaluation Module SLUUCB5E – JUNE 2020 – REVISED JULY 2022
+Submit Document Feedback
+Copyright © 2022 Texas Instruments Incorporated
+Table 4-1. BQ2579XEVM Bill of Materials (continued)
+Designator QTY Value Description Package Reference Part Number Manufacturer
+R15 1 100 RES, 100, 1%, 0.1 W, 0603 0603 RC0603FR-07100RL Yageo
+R17, R36 2 0 RES, 0, 5%, 0.1 W, AEC-Q200 Grade 0, 0603 0603 CRCW06030000Z0EA Vishay-Dale
+R18 1 5.23k RES, 5.23 k, 1%, 0.063 W, AEC-Q200 Grade 0, 0402 0402 CRCW04025K23FKED Vishay-Dale
+R19 1 7.68k RES, 7.68 k, 1%, 0.063 W, AEC-Q200 Grade 0, 0402 0402 CRCW04027K68FKED Vishay-Dale
+R20 1 255k RES, 255 k, 1%, 0.1 W, AEC-Q200 Grade 0, 0603 0603 CRCW0603255KFKEA Vishay-Dale
+R21 1 127k RES, 127 k, 1%, 0.1 W, AEC-Q200 Grade 0, 0603 0603 CRCW0603127KFKEA Vishay-Dale
+R22 1 0 RES, 0, 1%, 0.5 W, 0805 0805 5106 Keystone
+R23 1 100k RES, 100 k, 1%, 0.1 W, 0603 0603 RC0603FR-07100KL Yageo
+R24 1 30.1k RES, 30.1 k, 1%, 0.063 W, AEC-Q200 Grade 0, 0402 0402 CRCW040230K1FKED Vishay-Dale
+R25, R39, R40, R41, R42 5 10.0k RES, 10.0 k, 1%, 0.063 W, AEC-Q200 Grade 0, 0402 0402 CRCW040210K0FKED Vishay-Dale
+R26 1 4.87k RES, 4.87 k, 1%, 0.063 W, AEC-Q200 Grade 0, 0402 0402 CRCW04024K87FKED Vishay-Dale
+R27 1 3.57k RES, 3.57 k, 1%, 0.1 W, AEC-Q200 Grade 0, 0603 0603 CRCW06033K57FKEA Vishay-Dale
+R28 1 4.75k RES, 4.75 k, 1%, 0.1 W, AEC-Q200 Grade 0, 0603 0603 CRCW06034K75FKEA Vishay-Dale
+R29 1 6.20k RES, 6.20 k, 1%, 0.1 W, 0603 0603 RC0603FR-076K2L Yageo
+R30 1 8.20k RES, 8.20 k, 1%, 0.1 W, 0603 0603 RC0603FR-078K2L Yageo
+R31 1 10.5k RES, 10.5 k, 1%, 0.1 W, AEC-Q200 Grade 0, 0603 0603 CRCW060310K5FKEA Vishay-Dale
+R32 1 14.0k RES, 14.0 k, 1%, 0.1 W, AEC-Q200 Grade 0, 0603 0603 CRCW060314K0FKEA Vishay-Dale
+R33 1 18.0k RES, 18.0 k, 1%, 0.1 W, AEC-Q200 Grade 0, 0603 0603 ERJ-3EKF1802V Panasonic
+R34 1 27.0k RES, 27.0 k, 1%, 0.1 W, AEC-Q200 Grade 0, 0603 0603 ERJ-3EKF2702V Panasonic
+R35, R37, R43 3 10.0 RES, 10.0, 1%, 0.25 W, AEC-Q200 Grade 0, 1206 1206 ERJ-8ENF10R0V Panasonic
+R38 1 2.21k RES, 2.21 k, 1%, 0.063 W, AEC-Q200 Grade 0, 0402 0402 CRCW04022K21FKED Vishay-Dale
+S1 1 Switch, Normally open, 2.3N force, 200k operations, SMD KSR KSR221GLFS C&K Components
+SH-JP1, SH-JP2, SH-JP6, SH-
+JP7, SH-JP8, SH-JP9, SH-JP11,
+SH-JP12, SH-JP14, SH-JP17,
+SH-JP18, SH-JP24, SH-JP30,
+SH-JP32
+14 1x2 Shunt, 100mil, Gold plated, Black Shunt SNT-100-BK-G Samtec
+TP1, TP2, TP4, TP6, TP7, TP9,
+TP11, TP13, TP14, TP15, TP16,
+TP17, TP18, TP19, TP20, TP21,
+TP22, TP30, TP31, TP32, TP33,
+TP34, TP35, TP36, TP37, TP38,
+TP39, TP40, TP41, TP42, TP43
+31 Test Point, Miniature, White, TH White Miniature
+Testpoint
+5002 Keystone
+TP23, TP24, TP25, TP26 4 Test Point, Miniature, Red, TH Red Miniature Testpoint 5000 Keystone
+TP27, TP28 2 Test Point, Miniature, Orange, TH Orange Miniature
+Testpoint
+5003 Keystone
+TP29 1 Test Point, Miniature, Yellow, TH Yellow Miniature
+Testpoint
+5004 Keystone
+TP44, TP45, TP46, TP47, TP48,
+TP49, TP50
+7 Test Point, Compact, SMT Testpoint_Keystone_Co
+mpact
+5016 Keystone
+U1 1 BQ2579x HotRod VQFN-HR29 BQ25792RQM Texas Instruments
+www.ti.com Board Layout, Schematic and Bill of Materials
+SLUUCB5E – JUNE 2020 – REVISED JULY 2022
+Submit Document Feedback
+BQ25792EVM, BQ25798EVM and BQ25798BKUPEVM (BMS034) Evaluation Module 23
+Copyright © 2022 Texas Instruments Incorporated
+Table 4-1. BQ2579XEVM Bill of Materials (continued)
+Designator QTY Value Description Package Reference Part Number Manufacturer
+U2 1 100-mA, 30-V, Fixed-Output, Linear-Voltage Regulator,
+DBZ0003A (SOT-23-3)
+DBZ0003A TLV76033DBZR Texas Instruments
+C1, C3, C26 0 1uF CAP, CERM, 1 uF, 25 V, ±10%, X7R, 0805 0805 GRM219R71E105KA88D MuRata
+C5, C7 0 2200pF CAP, CERM, 2200 pF, 50 V, ±5%, C0G/NP0, 0603 0603 GRM1885C1H222JA01D MuRata
+C9, C10, C24, C27, C28 0 10uF CAP, CERM, 10 uF, 25 V, ±10%, X5R, 0805 0805 C2012X5R1E106K125AB TDK
+C16, C17 0 0.01uF CAP, CERM, 0.01 uF, 50 V, ±5%, X7R, 0402 0402 C0402C103J5RACTU Kemet
+C25 0 33uF CAP, TA, 33 uF, 35 V, ±20%, 0.065 ohm, SMD 7343-31 T521D336M035ATE065 Kemet
+C37 0 0.1uF CAP, CERM, 0.1 uF, 50 V,±10%, X7R, 0402 0402 C1005X7R1H104K050BE TDK
+C40 0 10uF CAP, CERM, 10 uF, 25 V, ±20%, X5R, 0603 0603 GRT188R61E106ME13D MuRata
+C41 0 1000pF CAP, CERM, 1000 pF, 50 V, ±5%, C0G/NP0, 0402 0402 GRM1555C1H102JA01D MuRata
+C42 0 1000pF CAP, CERM, 1000 pF, 50 V, ±1%, C0G/NP0, 0402 0402 GRM1555C1H102FA01D MuRata
+D1, D5, D10 0 40V Diode, Schottky, 40 V, 0.38 A, SOD-523 SOD-523 ZLLS350TA Diodes Inc.
+D3, D4, D7, D8 0 30V Diode, Schottky, 30 V, 1 A, SOD-123 SOD-123 MBR130T1G Diodes Inc.
+D9 0 12V Diode, Zener, 12 V, 300 mW, SOD-523 SOD-523 BZT52C12T-7 Diodes Inc.
+FID1, FID2, FID3, FID4, FID5,
+FID6
+0 Fiducial mark. There is nothing to buy or mount. N/A N/A N/A
+L1 0 1uH Inductor, 1 uH, 3.2 A, 0.028 ohm, SMD 2.5x2mm MPIM252010F1R0M-LF Microgate
+R1, R5, R14 0 0 RES, 0, 1%, 0.5 W, 0805 0805 5106 Keystone
+R3, R8, R16 0 100k RES, 100 k, 1%, 0.0625 W, 0402 0402 RC0402FR-07100KL Yageo America
+R7, R10 0 2.0 RES, 2.0, 5%, 0.1 W, AEC-Q200 Grade 0, 0603 0603 CRCW06032R00JNEA Vishay-Dale
+SH-JP3, SH-JP4, SH-JP5, SH-
+JP10, SH-JP13, SH-JP15, SH-
+JP16, SH-JP19, SH-JP20, SH-
+JP21, SH-JP22, SH-JP23, SH-
+JP25, SH-JP26, SH-JP27, SH-
+JP28, SH-JP29, SH-JP31, SH-
+JP33
+0 1x2 Shunt, 100mil, Gold plated, Black Shunt SNT-100-BK-G Samtec
+TP3, TP5, TP8, TP10, TP12 0 Test Point, Miniature, White, TH White Miniature
+Testpoint
+5002 Keystone
+Board Layout, Schematic and Bill of Materials www.ti.com
+24 BQ25792EVM, BQ25798EVM and BQ25798BKUPEVM (BMS034) Evaluation Module SLUUCB5E – JUNE 2020 – REVISED JULY 2022
+Submit Document Feedback
+Copyright © 2022 Texas Instruments Incorporated
+

@@ -1,0 +1,133 @@
+==============================================================================================================
+Round 4 stack-up / area study for the extended CR (stackup_area.py)
+==============================================================================================================
+
+1. CR courtyard booking (B.8 / E packages; A.8 courtyards; R3 bookings for the rest)
+   0402               x   5      9.5 mm2
+   0402 (DNP)         x   1      1.9 mm2
+   0603               x  78    339.3 mm2
+   0603 (DNP)         x  11     47.9 mm2
+   0805               x   7     42.8 mm2
+   1206               x   2     21.8 mm2
+   1206 (DNP)         x   1     10.9 mm2
+   1210               x   1     15.2 mm2
+   SC70-5             x   2     14.0 mm2
+   SC70-6             x   3     21.0 mm2
+   SMA                x   2     40.9 mm2
+   SOD-323 (DNP)      x   1      6.1 mm2
+   SOT-23             x   4     40.0 mm2
+   SOT-23-6           x   7     70.0 mm2
+   SOT-23-6 (DNP)     x   2     20.0 mm2
+   SSOP-8             x   8    120.0 mm2
+   VQFN-24            x   1     36.0 mm2
+   J101 2x7 1.27 mm SMT (R3 r5 3.9 x 9.4)                                      36.7 mm2
+   tap field F01-F24, 3 x 8 SMT pads at 2.54 mm (R3 21 x 8)                   168.0 mm2
+   W1/W2 holes, 2.3 mm pad + 1.0 mm (A.8)                                      21.8 mm2
+   W3/W4 holes, 2.5 mm pad + 1.0 mm (A.8)                                      24.5 mm2
+   W6/W7 SMT pads 5 x 1.2 x 1.5 mm + clearance (R3 5 x 4)                      20.0 mm2
+   two-terminal passives: 106 footprints (13 DNP); ICs/diodes: 30 footprints
+   CR parts 857 mm2 (fitted only 771) + fixed items 271 mm2 = CR courtyard total 1128 mm2 (r6 H.22(k): ~1082)
+   pour (ASSUMPTION) W2 (27.7, 61.2) -> pads 14/15 GND, ~8.7 mm x 2.5 mm (A.6)                         21.8 mm2
+   pour (ASSUMPTION) W4 -> pins 14/15 and W3 -> pins 18/19, 2 x 2.4 mm x 3.0 mm                        14.4 mm2
+   pour (ASSUMPTION) VCHGOUT OUT 17/18 -> C103/D103 -> W1, ~6 mm x 2.5 mm outside the courtyards       15.0 mm2
+   pour (ASSUMPTION) VCHGIN pad 10 -> U101 IN_SYS, ~3.5 mm x 2.5 mm                                     8.8 mm2
+   + L1 power pours outside courtyards 60 mm2 -> CR demand incl. pours 1188 mm2
+   round-3 side split with this booking: top 693 mm2, bottom 435 mm2 (r6 H.22(k): top ~678, bottom ~404)
+
+   EIB: 24 resistors + 5 capacitors 0603, U201 SSOP-8, U202 SC70-5, U203/U204 SOT-23-6, Q201-Q203 SOT-23: parts 198 mm2
+   J201 2x7 1.27 mm (r4; booked as J101, 3.9 x 9.4)               36.7 mm2
+   8 E-lead pads, 1.0 mm hole (R3 8 x 6)                          48.0 mm2
+   2 x M3 hole keep-out, dia 7 mm (A.9)                           77.0 mm2
+   EIB courtyard total 360 mm2 = 42 % of 36 x 24 mm (r3 H.18b: 559 mm2 with the 2.54 mm J201 25.4 x 9.0)
+   merged CR + EIB (no J101/J201, no EIB M3 holes, E-pad row kept): 1338 mm2 (1398 incl. pours)
+   NOTE: merging moves the E1-E8 leads to the CR, 0.30 m from the EVM; the A.5 build maxima are E8 20, E3 25, E4 30,
+         E2 35, E7 40, E5/E6 60, E1 85 mm, so a merged board violates every length-critical lead unless the EVM's
+         TP49/TP33/JP21 sit within ~20 mm of the merged board's E-pad row (A.5, A.9).
+
+2. Usable top area of the 31 x 33 mm footprint
+   courtyard limit 960.0 mm2; minus 1x12 column keep-out 89.4, 1x10 column keep-out 74.7, outboard strips 19.4 (R) + 43.1 (L), chamfer 1.1
+   usable: strict 732 mm2 (left outboard strip excluded), 775 mm2 (left strip counted); round-3 H.18 basis 881 mm2
+   round-3 r6 top side under the strict basis: 693 / 732 = 95 % (H.22(k) quoted 678 / 881 = 77 %)
+
+   routing overhead (ASSUMPTION): 448 pins - 75 GND - 12 NC - 110 nets = 251 signal connections (classes: 150 x 1 mm, 70 x 10 mm, 30 x 20 mm)
+   track area at 0.4 mm pitch 580 mm2; L1 overhead 4-layer (local tracks + 275 vias) 236 mm2, 2-layer (all but 10 % cross-unders + GND vias) 576 mm2
+   utilisation budget U = eta / (1 + overhead / courtyards), eta 0.90: 4-layer single-sided U4 = 0.75 (0.74-0.77 for track demand x1.5..x0.5), 2-layer single-sided U2 = 0.61 (0.53-0.71); r3 EIB budget 0.70 (A.9)
+
+3. Single-sided placement vs extension area (strict usable basis; one far-end support keep-out 38.5 mm2)
+   demand: CR 1188 mm2 incl. pours (1101 without the 87 mm2 of DNP option footprints U112/U117/D101/R_KA/...); merged CR + EIB 1398 mm2
+   ext     usable  | CR single-sided U (no-DNP U)         | merged single-sided U  | CR double-sided (bottom = r3 set)
+   0       732     |  162 % ( 150 %) no        -   |  191 % no        -   | top  103 % with the r3 bottom set 435 mm2; bottom still needed at U4: 638 mm2
+   250     936     |  127 % ( 118 %) no        -   |  149 % no        -   | top   80 % with the r3 bottom set 435 mm2; bottom still needed at U4: 485 mm2
+   400     1081    |  110 % ( 102 %) no        -   |  129 % no        -   | top   70 % with the r3 bottom set 435 mm2; bottom still needed at U4: 376 mm2
+   600     1275    |   93 % (  86 %) no        -   |  110 % no        -   | top   59 % with the r3 bottom set 435 mm2; bottom still needed at U4: 231 mm2
+   900     1566    |   76 % (  70 %) 4L marg.  -   |   89 % no        -   | top   48 % with the r3 bottom set 435 mm2; bottom still needed at U4: 13 mm2
+   ('4L' = within U4 0.75; '4L marg.' = within 0.80, the top of the swept range; '2L' = within U2 0.61)
+   break-even extension (strict basis):
+     CR                         single-sided 4L: + 917 mm2 (U4 0.75; + 817 at 0.80, +1036 at 0.70) | single-sided 2L: +1307 mm2 (U2 0.61; +1005 at 0.71, +1610 at 0.53)
+     CR without DNP footprints  single-sided 4L: + 798 mm2 (U4 0.75; + 705 at 0.80, + 908 at 0.70) | single-sided 2L: +1160 mm2 (U2 0.61; + 879 at 0.71, +1440 at 0.53)
+     CR + EIB merged            single-sided 4L: +1205 mm2 (U4 0.75; +1087 at 0.80, +1345 at 0.70) | single-sided 2L: +1664 mm2 (U2 0.61; +1308 at 0.71, +2020 at 0.53)
+   double-sided 4L, top side at U4 0.75 with the round-3 bottom set kept: +319 mm2
+   sensitivity: left outboard strip counted (base 775 mm2): single-sided 4L +873, 2L +1263 mm2 (CR incl. pours)
+
+4. Stack-up thickness: 4-layer 1/1/1/1 oz 1.640 mm, 2/1/1/2 oz 1.710 mm (core trimmed by the fab to the 1.6 mm target)
+   2-layer 1.6 mm, 1 oz: L1-L2 dielectric 1.53 mm (finished 1.6 mm including copper; TODO(verify: fab laminate))
+   2-layer 1.6 mm, 2 oz: L1-L2 dielectric 1.46 mm (finished 1.6 mm including copper; TODO(verify: fab laminate))
+
+5. Loop inductance (per mm of 2.5 / 4.0 mm pour over its return plane)
+   4L L1/L2 or L3/L4, h 0.20 mm           pp 0.101 / 0.063 nH/mm   microstrip 0.080 / 0.054 nH/mm
+   4L L3/L2 across the core, h 1.10 mm    pp 0.553 / 0.346 nH/mm   microstrip 0.277 / 0.206 nH/mm
+   2L, h 1.53 mm (1 oz)                   pp 0.769 / 0.481 nH/mm   microstrip 0.333 / 0.254 nH/mm
+   2L, h 1.46 mm (2 oz)                   pp 0.734 / 0.459 nH/mm   microstrip 0.325 / 0.247 nH/mm
+   C102b link 8 mm x 2.5 mm (r5 rule)     4L(0.2) pp 0.80 / ms 0.64 nH | 2L(1.46) pp 5.87 / ms 2.60 nH | 2L(1.53) pp 6.15 / ms 2.66 nH
+   D103 cathode run 4 mm x 2.5 mm (r5)    4L(0.2) pp 0.40 / ms 0.32 nH | 2L(1.46) pp 2.94 / ms 1.30 nH | 2L(1.53) pp 3.08 / ms 1.33 nH
+   2-layer (h 1.46-1.53) longest run for <= 2 nH added at w 2.5 mm: pp 2.6-2.7 mm, microstrip 6.0-6.2 mm (4L 0.2 mm: pp 20 mm)
+   2-layer (h 1.46-1.53) longest run for <= 2 nH added at w 4.0 mm: pp 4.2-4.4 mm, microstrip 7.9-8.1 mm (4L 0.2 mm: pp 32 mm)
+   vias (0.3 mm): through 1.6 mm 1.30 nH each; 4L L1->L2 (0.2 mm) 0.079 nH; 4L L1->L3 (~1.37 mm) 1.07 nH; 6 in parallel (no mutual) 1.6 mm 0.22 nH
+   commutation-loop extra overshoot dV = L x I_off / t_off (IN up + OUT down; IN margin 67 - 33 = 34 V, OUT already -0.5..-1 V vs -0.3 V abs min, H.5):
+     4L r5 placement (C102b 0.8 + D103 0.4 + vias ~0.2)   L 1.4 nH: 45 A/50 ns 1.3 V, 45 A/100 ns 0.6 V, 45 A/200 ns 0.3 V, 65 A/50 ns 1.8 V, 65 A/100 ns 0.9 V, 65 A/200 ns 0.5 V
+     2L at the r5 lengths, pp (5.9 + 2.9 + vias 0.4)      L 9.2 nH: 45 A/50 ns 8.3 V, 45 A/100 ns 4.1 V, 45 A/200 ns 2.1 V, 65 A/50 ns 12.0 V, 65 A/100 ns 6.0 V, 65 A/200 ns 3.0 V
+     2L pin-adjacent, each loop at its 2 nH budget        L 4.0 nH: 45 A/50 ns 3.6 V, 45 A/100 ns 1.8 V, 45 A/200 ns 0.9 V, 65 A/50 ns 5.2 V, 65 A/100 ns 2.6 V, 65 A/200 ns 1.3 V
+   OUT-side share (D103 loop only) at 45 A:
+     4L D103 0.4 + via 0.08 nH                0.48 nH: 50 ns 0.43 V, 100 ns 0.22 V, 200 ns 0.11 V
+     2L D103 at 4 mm pp 2.9 + vias 0.4 nH     3.34 nH: 50 ns 3.00 V, 100 ns 1.50 V, 200 ns 0.75 V
+     2L D103 at 2 nH budget                   2.00 nH: 50 ns 1.80 V, 100 ns 0.90 V, 200 ns 0.45 V
+
+6. Inductive coupling, aggressor = commutation-loop conductor, victim = 10 mm comparator-input run, di/dt 65 A / 100 ns
+   d mm   | 4L h 0.20: M' / EMF      | 2L h 1.46: M' / EMF      | ratio 2L/4L
+   2      | 0.0039 nH/mm    25.5 mV | 0.1142 nH/mm   742.0 mV |  29.1
+   5      | 0.0006 nH/mm     4.1 mV | 0.0293 nH/mm   190.7 mV |  46.0
+   10     | 0.0002 nH/mm     1.0 mV | 0.0082 nH/mm    53.2 mV |  51.2
+   20     | 0.0000 nH/mm     0.3 mV | 0.0021 nH/mm    13.7 mV |  52.7
+   30     | 0.0000 nH/mm     0.1 mV | 0.0009 nH/mm     6.1 mV |  53.0
+   40     | 0.0000 nH/mm     0.1 mV | 0.0005 nH/mm     3.5 mV |  53.2
+   2-layer distance that matches the 4-layer coupling at 5 mm: d x h2/h4 = 36.5 mm (far field, M' ~ mu0 h^2 / (pi d^2))
+   filtered input H1 inputs (C106/C107 470 pF, ~50 kOhm): 2L at 5 mm EMF 191 mV x t_off / tau = 0.81 mV at the pin
+   filtered input UVB IN+ (C108 1 nF, ~94 kOhm)         : 2L at 5 mm EMF 191 mV x t_off / tau = 0.20 mV at the pin
+   filtered input BT_OK IN- (C140 10 nF, R140 10 kOhm)  : 2L at 5 mm EMF 191 mV x t_off / tau = 0.19 mV at the pin
+   unfiltered high-impedance inputs (B.8: U115 IN- N_BBM, U119 IN- N_FOM, U120 IN+ N_FNP, U121 IN+ N_RNP) see the EMF for t_off; smallest static margins 0.16 V (BTB_OFF, H.3) and ~0.24 V at the U120/U121 node ((1.745 - 1.4) V x 1.00/1.453)
+
+7. IPC-2221 external widths (both layers of a 2-layer board, L1/L4 of a 4-layer board)
+   2.41 A input side, eFuse I_OL (A.8)      : 1 oz 1.01 mm (10 C) / 0.66 mm (20 C); 2 oz 0.51 / 0.33 mm; internal 1 oz 2.63 mm (10 C)
+   3.21 A battery side, ICHG max (A.3)      : 1 oz 1.50 mm (10 C) / 0.99 mm (20 C); 2 oz 0.75 / 0.49 mm; internal 1 oz 3.90 mm (10 C)
+   3.50 A battery-side design target (A.8)  : 1 oz 1.69 mm (10 C) / 1.11 mm (20 C); 2 oz 0.85 / 0.56 mm; internal 1 oz 4.40 mm (10 C)
+   2.0 mm external: 1 oz 4.0 A / 2 oz 6.5 A at 10 C rise
+   2.5 mm external: 1 oz 4.6 A / 2 oz 7.7 A at 10 C rise
+   3.0 mm external: 1 oz 5.3 A / 2 oz 8.8 A at 10 C rise
+   4.0 mm external: 1 oz 6.5 A / 2 oz 10.8 A at 10 C rise
+   3.0 mm 1 oz: 0.164 mOhm/mm; 20 mm relocation of W3/W4 into an extension: 3.3 mOhm, 34 mW and 10.5 mV at 3.21 A (H.11 battery pair 12.6 mOhm)
+   2.5 mm 2 oz: 0.098 mOhm/mm; 20 mm relocation of W3/W4 into an extension: 2.0 mOhm, 20 mW and 6.3 mV at 3.21 A (H.11 battery pair 12.6 mOhm)
+   2.5 mm 1 oz: 0.197 mOhm/mm; 20 mm relocation of W3/W4 into an extension: 3.9 mOhm, 41 mW and 12.6 mV at 3.21 A (H.11 battery pair 12.6 mOhm)
+   GND plane sheet resistance: 1 oz 0.49 mOhm/sq, 2 oz 0.25 mOhm/sq
+
+8. U101 thermal-pad vias (0.3 mm, 25 um plating TODO(verify: fab plating), 1.6 mm): 163 K/W each, 9 in parallel 18.1 K/W; at the H.14 eFuse dissipation 0.17 W: 3.1 K across the via field
+
+9. Extension strip width w = A / side (one full side) vs room to the MB outline
+   +250 mm2: w 7.6 mm on a 33 mm side (+-x), 8.1 mm on a 31 mm side (+-y)
+   +400 mm2: w 12.1 mm on a 33 mm side (+-x), 12.9 mm on a 31 mm side (+-y)
+   +600 mm2: w 18.2 mm on a 33 mm side (+-x), 19.4 mm on a 31 mm side (+-y)
+   +900 mm2: w 27.3 mm on a 33 mm side (+-x), 29.0 mm on a 31 mm side (+-y)
+   room to the MB edge -x (J-BL/J-NTC, x 3.28-17.23)                                  17.7 mm
+   room to the MB edge +x (CO-5V 2.1 mm at x 49.30, REG-5V 4.83 mm at x 50.97)        82.4 mm
+   room to the MB edge +y (OP-FC SOIC at y 67.30, L-FC at y 77.01)                    30.9 mm
+   room to the MB edge -y (C4A/B-BT at y 32.54, BAL, L-BT at y 20.78)                 34.1 mm
+==============================================================================================================

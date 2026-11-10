@@ -1,0 +1,5 @@
+tab X tip (65.00, 62.30): worst pin at (45.998, 61.944) carries 2.69 N for a 10 N push
+tab Y tip (28.71, 76.51): worst pin at (20.998, 64.484) carries 3.07 N for a 10 N push
+mirror axis y = 50.514; tab X mirrored to [48.7, 32.73, 65.0, 44.73]
+  overlap with REG-5V (height 4.83 mm vs 2.54 mm standoff): 89.1 mm2 -> cannot seat
+  overlap with CO-5V (height 2.10 mm vs 2.54 mm standoff): 14.1 mm2 -> seats

@@ -1,0 +1,1465 @@
+www.ti.com                                                                                 Table of Contents
+
+User's Guide
+
+BQ25792EVM, BQ25798EVM and BQ25798BKUPEVM
+(BMS034) Evaluation Module
+
+                                                                   ABSTRACT
+
+This user's guide describes the characteristics, operation, and functionality of the BQ25792 and BQ25798
+Evaluation Module (EVM). It will also describe the equipment, test setup, and software required to operate the
+EVM. A complete schematic diagram, printed-circuit board (PCB) layouts, and bill of materials (BOM) are also
+included in this document.
+
+Throughout this user's guide, the abbreviations and terms EVM, BQ2579XEVM, BMS034, and evaluation
+module are synonymous with the BQ25792EVM, BQ25798BKUPEVM, and BQ25798EVM.
+
+p
+
+                                                                                                   WARNING
+
+                                   Hot surface! Contact may cause burns. Do not touch!
+
+                                   Some components may reach high temperatures >55°C when the board is powered on. The user must
+                                   not touch the board at any point during operation or immediately after operating, as high temperatures
+                                   may be present.
+
+                                                  Table of Contents
+
+1 Introduction.............................................................................................................................................................................3
+   1.1 EVM Features.................................................................................................................................................................... 3
+   1.2 I/O Descriptions..................................................................................................................................................................4
+   1.3 Recommended Operating Conditions................................................................................................................................ 6
+
+2 Test Setup and Results.......................................................................................................................................................... 6
+   2.1 Equipment.......................................................................................................................................................................... 6
+   2.2 Equipment Setup................................................................................................................................................................6
+   2.3 Software Setup...................................................................................................................................................................7
+   2.4 Test Procedure................................................................................................................................................................... 9
+
+3 PCB Layout Guidelines........................................................................................................................................................ 14
+4 Board Layout, Schematic and Bill of Materials..................................................................................................................15
+
+   4.1 BMS034 Board Layout..................................................................................................................................................... 15
+   4.2 BQ2579XEVM (BMS034) Schematics............................................................................................................................. 19
+   4.3 Bill of Materials.................................................................................................................................................................22
+5 Revision History................................................................................................................................................................... 25
+
+                                                    List of Figures
+
+Figure 2-1. Equipment Test Setup for Testing Battery Charging..................................................................................................7
+Figure 2-2. Single-Bit Registers Section......................................................................................................................................9
+Figure 2-3. Multi-Bit Register Section........................................................................................................................................ 10
+Figure 2-4. 16-Bit Register Section............................................................................................................................................10
+Figure 2-5. Icon Guide............................................................................................................................................................... 10
+Figure 2-6. Chip Configuration................................................................................................................................................... 11
+Figure 2-7. Charger Configuration............................................................................................................................................. 11
+Figure 2-8. Single-Bit Register Section......................................................................................................................................12
+Figure 2-9. Multi-Bit Register Section........................................................................................................................................ 13
+
+SLUUCB5E ­ JUNE 2020 ­ REVISED JULY 2022  BQ25792EVM, BQ25798EVM and BQ25798BKUPEVM (BMS034) Evaluation                                    1
+Submit Document Feedback
+                                                                                           Module
+
+                                          Copyright © 2022 Texas Instruments Incorporated
+Table of Contents                                                   www.ti.com
+
+Figure 2-10. OTG Configuration Section................................................................................................................................... 13
+Figure 2-11. Chip Configuration................................................................................................................................................. 13
+Figure 4-1. BMS034A/B Top Layer............................................................................................................................................ 15
+Figure 4-2. BMS034A/B Signal Layer 1.....................................................................................................................................16
+Figure 4-3. BMS034A/B Signal Layer 2.....................................................................................................................................17
+Figure 4-4. BMS034A/B Bottom Layer...................................................................................................................................... 18
+Figure 4-5. BQ25792EVM (BMS034A/B-001) and BQ25798EVM (BMS034A/B-003) Schematic Page 1................................19
+Figure 4-6. BQ25792EVM (BMS034A/B-001), BQ25798BKUPEVM (BMS034A/B-005) and BQ25798EVM (BMS034A/
+
+   B-003) Schematic Page 2...................................................................................................................................................... 20
+Figure 4-7. BQ25798BKUPEVM (BMS034A/B-002) Schematic Page 1................................................................................... 21
+
+                                                     List of Tables
+
+Table 1-1. Device Data Sheet...................................................................................................................................................... 3
+Table 1-2. EVM Connections....................................................................................................................................................... 4
+Table 1-3. EVM Shunt and Switch Installation............................................................................................................................. 4
+Table 1-4. Recommended Operating Conditions.........................................................................................................................6
+Table 4-1. BQ2579XEVM Bill of Materials................................................................................................................................. 22
+
+2  BQ25792EVM, BQ25798EVM and BQ25798BKUPEVM (BMS034) Evaluation    SLUUCB5E ­ JUNE 2020 ­ REVISED JULY 2022
+                                                                                                Submit Document Feedback
+   Module
+
+                   Copyright © 2022 Texas Instruments Incorporated
+www.ti.com                                                                                 Introduction
+
+1 Introduction
+
+The BQ25792 and BQ25798 (BQ25792/8) is an integrated switched-mode buck-boost battery charge
+management device in QFN package. It is intended to charge 1- to 4-series cell Li-ion and Li-polymer batteries.
+The charger features a narrow VDC architecture (NVDC) which allows the system to be regulated to a minimum
+value even if the battery is completely discharged. Additionally, the BQ25792/8 supports input source detection
+through D+ and D- which is compatible with USB2.0, USB3.0 power delivery, non-standard adapters, and high
+voltage adapters. With dual input source selection, USB OTG support, and an integrated 16-bit multi-channel
+analog-to-digital converter (ADC), the BQ25792/8 is a complete charging solution.
+
+1.1 EVM Features
+
+The BQ25792/8EVM is a complete module for evaluating the BQ25792/8 charger IC in the QFN package. Key
+features of this EVM include:
+
+· Synchronous Switch Mode Buck-Boost Charger for 1s-4s Battery Configuration for 5-A Charging with 10-mA
+    Resolution
+
+· Support for 3.6-V to 24-V Wide Range of Input Sources USB Auto-Detect, USB PD and Wireless Input
+· Dual Input Source Selector to Drive Bi-Directional Blocking NFETs
+· Power up USB Port from Battery (USB OTG) with 2.8-V to 22-V OTG Output Voltage with 10-mV Resolution
+· Low Battery Quiescent Current < 1 µA in Shutdown Mode
+· BQ25798 has MPPT and backup mode features.
+
+The device data sheet, listed in Table 1-1, provides detailed features and operation.
+
+                                          Table 1-1. Device Data Sheet
+
+                                          Device   Data Sheet
+
+                                          BQ25792  SLUSDG1
+
+                                          BQ25798  SLUSDV2
+
+SLUUCB5E ­ JUNE 2020 ­ REVISED JULY 2022           BQ25792EVM, BQ25798EVM and BQ25798BKUPEVM (BMS034) Evaluation  3
+Submit Document Feedback
+                                                                                           Module
+
+                                          Copyright © 2022 Texas Instruments Incorporated
+Introduction                                                                                                                         www.ti.com
+
+1.2 I/O Descriptions
+
+Table 1-2 table lists the BQ2579XEVM board connections and ports.
+
+        Connector, Port                     Table 1-2. EVM Connections
+   J1 VIN1
+                           Description
+            GND            Positive rail of the priority input adapter or power supply
+   J2 VIN2                 Ground
+                           Positive rail of the secondary input adapter or power supply
+            GND            Ground
+   J3 SYSTEM               Positive rail of the charger system output voltage, typically connected to the system load
+                           Ground
+            GND            Positive rail of the charger output voltage for reverse mode (OTG). This output also shares the rail with
+   J4 VPMID                VBUS in forward mode
+                           Ground
+            GND            Positive rail of the charger battery input
+   J5 BATTERY              Input connected to the positive terminal of the battery for remote battery voltage measurement
+                           Ground
+            SNS_BATP       USB Micro B port used for input source type detection and handshaking. Connected to either VIN1 or
+            GND            VIN2
+   J6 USB port             Input connected to an external battery temperature sensing thermistor
+
+   J7 EXTERNAL             Ground
+            THERMISTOR     I2C communication port for use with the EV2300/2400 Interface Board
+            GND            I2C communication port for use with the USB2ANY Interface Adapter (for future use)
+
+   J8 Communication port
+   J9 Communication port
+
+Table 1-3 lists the shunt installations available on the EVM, and their respective descriptions.
+
+                           Table 1-3. EVM Shunt and Switch Installation
+
+   Shunt      Description                                                                                   BQ25792/6/8 Setting
+    JP1
+    JP2       ACDRV1 pin connection to control ACFET1-RBFET1. Connect this to _acdrv1 net (labeled          ACDRV1 to VAC1 FETs (short
+    JP3       VAC1 FET) when utilizing the input protection MOSFETs. Connect this to GND when input         pins 1 to 2)
+    JP4       protection MOSFETs are not used or bypassed
+    JP5
+    JP6       ACDRV2 pin connection to control ACFET2-RBFET2. Connect this to _acdrv2 net (labeled          ACDRV2 to VAC2 FETs (short
+    JP7       VAC2 FET) when utilizing the input protection MOSFETs. Connect this to GND when input         pins 1 to 2)
+    JP8       protection MOSFETs are not used or bypassed
+    JP9
+              VIN1/VAC1 to VBUS bypass connection. Connect this when the input protection MOSFET            Not Installed
+   JP10       feature is not desired. This connects the input source on VIN1 to VBUS.
+
+              VIN2/VAC2 to VBUS bypass connection. Connect this when the input protection MOSFET            Not Installed
+              feature is not desired. This connects the input source on VIN2 to VBUS.
+
+              BAT to BATTERY bypass connection. Connect this when the ship and shutdown mode                Not Installed
+              features are not desired and JP8 pins 1 and 2 are shorted.
+
+              USB Micro B input D­ connection to charger D- pin. Connect this when the input source         Installed
+              detection and handshake features are desired.
+
+              USB port J6 positive rail to charger VBUS selection. Use shunt to select either VIN1/VAC1 or USB_VIN to VAC1
+              VIN2/VAC2 as the connection for the USB port.
+
+              SDRV pin connection to control SFET. Short pins 1 to 2 of JP8 and install shunt across JP5    Short pins 2 to 3
+              when ship and shutdown mode features are not desired. Short pins 2 to 3 of JP8 and remove
+              shunt from JP5 when ship and shutdown mode features are desired.
+
+              BATP pin connection. BATP is always connected to J5 pin 2 for remote battery sense. If        Short pin 2 to J5 pin 1
+
+              off-board remote sense is not used, short pin 2 to J5 pin 1 (BATTERY) for the charger constant (BATTERY)
+
+              voltage sensing to occur at the J5 connector after the Q5 ship mode FET Short pin 2 to pin 3
+
+              (BAT pin) for the charger constant voltage sensing to occur on the PCB board close to the IC
+
+              before Q5 ship mode FET. Do not leave BATP pin floating.
+
+              Charger D+ and D- pin short connection. Connect this to simulate a DCP type adapter for the   Installed
+              input source detection and handshake feature. Remove in order to use the charger's D+/D-
+              detection feature.
+
+4  BQ25792EVM, BQ25798EVM and BQ25798BKUPEVM (BMS034) Evaluation                              SLUUCB5E ­ JUNE 2020 ­ REVISED JULY 2022
+                                                                                                                          Submit Document Feedback
+   Module
+
+                           Copyright © 2022 Texas Instruments Incorporated
+www.ti.com                                                                                                                    Introduction
+
+                         Table 1-3. EVM Shunt and Switch Installation (continued)
+
+Shunt       Description                                                                                  BQ25792/6/8 Setting
+JP11
+JP12        USB Micro B input D+ connection to charger D+ pin. Connect this when the input source        Installed
+JP13        detection and handshake features are desired.
+JP14
+JP15        REGN to TS resistor divider network connection. This must remain connected.                  Installed
+JP16
+JP17        ILIM_HIZ pin setting for 500 mA. Connect to set the external input current limit setting to  Not Installed
+JP18        500mA
+
+JP19        ILIM_HIZ pin setting for 1.5 A. Install shunt to set the external input current limit setting to 1.5 Installed
+JP20        A.
+JP21
+JP22        Thermistor COOL temperature setting. Connect jumper to simulate charger entering TCOOL Not Installed
+JP23        (T1-T2) temperature region.
+JP24
+JP25        Thermistor COLD temperature setting. Connect jumper to simulate charger entering TCOLD Not Installed
+JP26        (<T1) temperature region.
+JP27
+JP28        CE pin connection to ground to enable charging. When removed, CE pin will pull up to disable Installed
+JP29        charge
+JP30
+JP31        Thermistor NORMAL temperature setting. Connect jumper to simulate charger entering           Installed
+JP32        TNORMAL (T2-T3) temperature region. Keep connected when testing other thermistor
+JP33        temperature settings (JP17 - TCOOL, JP18 - TCOLD, JP21 - TWARM, JP22 - THOT).
+            Remove this jumper whenever using an externally connected thermistor.
+  S1
+            Thermistor WARM temperature setting. Connect jumper to simulate charger entering TWARM Not Installed
+            (T3-T5) temperature region.
+
+            Thermistor HOT temperature setting. Connect jumper to simulate charger entering THOT         Not Installed
+            (>T5) temperature region.
+
+            ILIM_HIZ pin setting for HIZ mode. Connect to enter the charger high impedance (HIZ) mode Not Installed
+            to disable the converter
+
+            PROG pin setting for 1S, 1.5 MHz. Connect to configure charger default setting to 1S charge Not Installed
+            regulation voltage, 2 A charging current, and 1.5 MHz switching frequency
+
+            PROG pin setting for 1S, 750 kHz. Connect to configure charger default setting to 1S charge Not Installed
+            regulation voltage, 2 A charging current, and 750 kHz switching frequency
+
+            PROG pin setting for 2S, 1.5 MHz. Connect to configure charger default setting to 2S charge Installed
+            regulation voltage, 2 A charging current, and 1.5 MHz switching frequency
+
+            PROG pin setting for 2S, 750 kHz. Connect to configure charger default setting to 2S charge Not Installed
+            regulation voltage, 2 A charging current, and 750 kHz switching frequency
+
+            PROG pin setting for 3S, 1.5 MHz. Connect to configure charger default setting to 3S charge Not Installed
+            regulation voltage, 1 A charging current, and 1.5 MHz switching frequency
+
+            PROG pin setting for 3S, 750 kHz. Connect to configure charger default setting to 3S charge Not Installed
+            regulation voltage, 1 A charging current, and 750 kHz switching frequency
+
+            PROG pin setting for 4S, 1.5 MHz. Connect to configure charger default setting to 4S charge Not Installed
+            regulation voltage, 1 A charging current, and 1.5 MHz switching frequency
+
+            PROG pin setting for 4S, 750 kHz. Connect to configure charger default setting to 4S charge Not Installed
+            regulation voltage, 1 A charging current, and 750 kHz switching frequency
+
+            Input connection for onboard PULLUP rail LDO. Connect to power onboard 3.3V pullup rail.     Installed
+            LDO input will be connected via diode-OR between VBUS and BAT
+
+            EV2400 internal pullup to PULLUP connection. Connect to use EV2400 internal 3.3 V pullup to Not Installed
+            drive the EVM PULLUP rail.
+
+            STAT pin LED indicator connection. This indicates the current charger Status                 Installed
+
+            USB2ANY internal pullup to PULLUP connection. Connect to use the USB2ANY internal 3.3 V Not Installed
+            pullup to drive the EVM PULLUP rail
+
+            QON control switch. Press to either exit Ship Mode or reset the System Power                 Default Off
+
+SLUUCB5E ­ JUNE 2020 ­ REVISED JULY 2022  BQ25792EVM, BQ25798EVM and BQ25798BKUPEVM (BMS034) Evaluation                             5
+Submit Document Feedback
+                                                                                                                            Module
+
+                                          Copyright © 2022 Texas Instruments Incorporated
+Introduction                                                                                                       www.ti.com
+
+1.3 Recommended Operating Conditions
+
+                         Table 1-4. Recommended Operating Conditions
+
+                                              Description                         Min   Typ                  Max Unit
+
+   V(VINx) at J1 or J2   Power supply voltage to the external blocking FETs       3.6                        24    V
+                         which allow power to VBUS pin
+
+   I(INx) into J1 or J2  Power supply current, which can be limited by charger's  0.01                       3.3   A
+                         input current limit feature (IINDPM)
+
+   V(BATTERY) voltage at J5 Battery voltage supported for precharge               2.2     3.8(1S), 7.6(2S),  18.8  V
+                                                                                        11.4(3S), 15.2V(4S)
+
+   I(BATTERY) out of/into J5 Battery charge current                               0.01 2 (1S, 2S), 1(3S, 4S) 5     A
+
+   V(SYS) at J3          System voltage regulation range                          3.2                        19    V
+
+   I(SYS) out of J3      System load current                                      0                          5     A
+
+                                                                        Note
+      If hotplugging adaptors with voltage greater than 15 volts, it is reccomended to install RSNUB1,
+      CSNUB1, RSNUB2, and CSBUB2 as listed on the schematic.
+
+                                                                        Note
+      If hotplugging 4S batteries and a shipFET is installed, it is reccomended to install component CSNUB3
+      as listed on the schematic
+
+                                                                        Note
+      If hotplugging 4S batteries and a shipFET is not installed, it is reccomended to install component
+      DVTS as listed on the schematic.
+
+2 Test Setup and Results
+2.1 Equipment
+
+This section includes a list of supplies required to perform tests on the BQ25790EVM.
+
+1. Power Supplies for VBUS pin: Power Supply #1 (PS1): A power supply capable of supplying up to 24 V at
+     3 A is required.
+
+2. Battery Simulator for BAT pin: Load #1 (4-Quadrant Supply): A "Kepco" Load, BOP, 20-5M, DC 0 to ±20 V,
+     0 to ±6 A (or higher) or a Keithley 2450 3-A sourcemeter. When using both, a 1000-µF or higher, low ESR,
+     25-V rated or higher connected at the EVM battery and ground terminals is recommended.
+     Alternative Option: A 0­20 V/0­5 A, > 60-W DC electronic load set in a constant voltage loading mode in
+     parallel with a second power supply can be used. The second power supply is set to a voltage slightly below
+     the electronic load's constant voltage setting. When enabled, the charger's charge current then replaces the
+     current provided the second power supply.
+
+3. System load simulator for SYS pin:Load #2 ( Electronic load set to constant resistance or Resistive Load):
+     10 , 5 W (or higher).
+
+4. Meters: (6x) "Fluke 75" multimeters, (equivalent or better).
+     Alternative Option: (4x) equivalent voltage meters and (2x) equivalent current meters. The current meters
+     must be capable of measuring at least 5 A. If used in series between the PS#1, Load#1 or Load#2, the
+     meters should be set for manual not auto ranging. Current meters add significant series resistance which
+     affects charger performance.
+
+5. Computer: A computer with at least one USB port and a USB cable. A valid internet connection is required
+     when using the GUI Composer application.
+
+6. PC Communication Interface:EV2300/2400 USB-Based PC Interface Board (when using Battery
+     Management Studio) or USB2ANY Interface Adapter (when using the GUI Composer application).
+
+2.2 Equipment Setup
+
+Use the following list to set up the EVM testing equipment. Refer to Figure 2-1 for the test setup connections to
+the EVM:
+
+6  BQ25792EVM, BQ25798EVM and BQ25798BKUPEVM (BMS034) Evaluation                        SLUUCB5E ­ JUNE 2020 ­ REVISED JULY 2022
+                                                                                                                    Submit Document Feedback
+   Module
+
+                         Copyright © 2022 Texas Instruments Incorporated
+www.ti.com                                                                                           Test Setup and Results
+
+1. Review the EVM connections in Table 1-2.
+2. Set PS#1 for 5.0-V, 3-A current limit and then turn off the supply. Connect PS#1 to J1 (VIN1 and PGND).
+3. Connect a voltage meter across TP23 (VBUS) and TP44 (PGND) to measure the input voltage as seen from
+
+     the VBUS pins of the charger.
+4. Connect a voltage meter across TP1 and TP2 (I_VAC1_SENSE) to measure the input current into the VBUS
+
+     pins through the VIN1 path. Alternatively, you may connect a current meter between PS1 and J1.
+5. Set Load #1 to constant voltage mode, capable of sinking (for example, compliance) at least 3 A, and output
+
+     to 5.0 V, and then disable load. Connect Load #1 to J5 (BATTERY and PGND).
+6. Connect a voltage meter across TP29 (BAT) and TP46 (PGND) to measure the battery voltage as seen from
+
+     the BAT pins of the charger.
+7. Connect a voltage meter across TP19 and TP20 (I_BAT_SENSE) to measure the battery charge current out
+
+     of and discharge current into BAT pins. Alternatively, you may connect a current meter between Load #1 and
+     J5.
+8. Connect a voltage meter across TP28 (SYS) and TP45 (PGND) to measure the system voltage as seen
+     from the SYS pins of the charger.
+9. Install shunts as shown in Table 1-3.
+
+                 VPMID  ±     VVBUS              ±
+                        V                        V
+                        +                        +
+
+                                                                                                     +
+                                                                                                     V VSYS
+                                                                                                     ±
+
+            Power Supply #1                                                                          Optional Load #2:
+                                        IVAC1 V                                                           eLoad or
+                                                                                                           resistor
+
+                                                                                                          Load #1:
+                                                                                                            Battery
+                                                                                                          Simulator
+
+                 USB2ANY
+
+            USB                                                                                      V IBAT
+
+                                10-pin
+                              Connector
+
+            OR
+
+                                                                     +  V±
+
+                                                                     VBAT
+
+                 EV2300/2400
+
+            USB                                     4-pin Connector
+
+                 Figure 2-1. Equipment Test Setup for Testing Battery Charging
+
+2.3 Software Setup
+
+The charger is controlled by a state machine that uses I2C registers and the state machine makes decisions
+based off of the I2C registers. Software only helps with reading and writing to those registers.
+
+2.3.1 BQSTUDIO using EV2400
+
+Download the latest version of BQSTUDIOTEST. Double click the Battery Management Studio installation file
+and follow the installation steps. The software supports Microsoft® Windows® XP, 7, and 10 operating systems.
+Launch BQSTUDIO and select Charger. If the EVM configuration file for BQSTUDIO does not appear in the
+Charger, close BQSTUDIO and either download the .BQZ file from the EVM product folder at www.ti.com or
+
+SLUUCB5E ­ JUNE 2020 ­ REVISED JULY 2022                             BQ25792EVM, BQ25798EVM and BQ25798BKUPEVM (BMS034) Evaluation  7
+Submit Document Feedback
+                                                                                                     Module
+
+                                                    Copyright © 2022 Texas Instruments Incorporated
+Test Setup and Results                                                             www.ti.com
+
+request the file via e2e.ti.com. The file must be saved into C:\XXX\BatteryManagementStudio\config, where XXX
+is the directory you selected to install BQSTUDIO.
+
+2.3.2 TI Charger GUI for USB2ANY
+
+Navigate to the TI-CHARGER-GUI tool folder. Once at the tool page click on the "Evaluate in the cloud" button.
+The browser will automatically be redirected to the TI Charger GUI landing page. From the landing page locate
+the device desired for evaluation and click "Select Device." Note that the EVM must be powered and the
+USB2ANY must be connected to both the EVM and the PC for a connection to be established. Also, update the
+USB2ANY to the latest verision with the USB2ANY Explorer Software.
+
+8  BQ25792EVM, BQ25798EVM and BQ25798BKUPEVM (BMS034) Evaluation                   SLUUCB5E ­ JUNE 2020 ­ REVISED JULY 2022
+                                                                                                               Submit Document Feedback
+   Module
+
+                                  Copyright © 2022 Texas Instruments Incorporated
+www.ti.com                                                                                 Test Setup and Results
+
+2.4 Test Procedure
+
+2.4.1 Initial Settings
+
+Use the following steps to enable the EVM test setup.
+1. Make sure Section 2.2 steps have been followed.
+2. Remove the shunt on JP17 to disable charge.
+3. Make sure the PROG pin jumpers, JP22-JP29, are set to the desired frequency and cell count.
+4. Make sure the TS Jumpers are installed to the correct posistions if a thermistor is being simulated.
+5. If using BQStudio, launch the BQSTUDIO software and select Charger then BQ25792EVM, if not already
+
+     done.
+6. If using TI Charger GUI, go to the TI Charger GUI website and select the charger from the list.
+7. Turn on PS1 and Load #1:
+
+     · Measure  VSYS-PGND (TP26 and TP48) = 8.55 V ±0.2 V
+8. Verify PG LED (D13) is on.
+
+                                                                          Note
+
+            If the PG LED is not lit, confirm a valid PS1 is connected and the correct shunt configuration was
+            placed.
+
+                                                                          Note
+
+            If the device is not communicating and does not ACK, verify that Section 2.2 and the steps in
+            this section have been followed. Verify the voltage across TP42 (PULLUP) and TP49 (AGND) is
+            approximately 3.3 V.
+
+2.4.2 Communication Verification
+
+If using Battery Management Studio, use the following steps for communications verification:
+1. In Battery Management Studio, select "READ REGISTER" at the top of the page. "Device ACK OK" should
+
+     appear at the top of the page.
+2. Select Field View in the top right of the screen. Note there are two tabs, one for 8-bit registers and one
+
+     for 16-bit registers. In the 8-bit tab, there are sections for chip, charger and OTG single-bit and multi-bit
+     registers. In the 16-bit tab are the charger and OTG multi-bit registers for setting voltages and currents. In
+     addition, the ADC registers are on the 16-bit tab.
+3. Prepare the charge mode charger register settings in the following way if not already set there by default:
+     · On the 8-bit Registers tab in the Chip Config Single-bit Registers section
+
+         ­ Change Watchdog Timer to disabled
+         ­ Check the "ShipFET Present?" check box
+
+                                         Figure 2-2. Single-Bit Registers Section
+
+· On the 8-bit Registers tab in the Charger Multi-bit Registers section
+    ­ Set the Precharge current to 240 mA
+    ­ Set ABS VINDPM to 4000 mV
+    ­ Set VSYSMIN to 7000 mV
+
+SLUUCB5E ­ JUNE 2020 ­ REVISED JULY 2022  BQ25792EVM, BQ25798EVM and BQ25798BKUPEVM (BMS034) Evaluation              9
+Submit Document Feedback
+                                                                                           Module
+
+                                          Copyright © 2022 Texas Instruments Incorporated
+Test Setup and Results                                                   www.ti.com
+
+                                                 Figure 2-3. Multi-Bit Register Section
+     · On the 16-bit Registers tab in the Charger Multi-bit Registers section
+
+         ­ Set the Charge Voltage charging regulation limit to 8400 mV
+         ­ Set the Charge Current to 500 mA.
+         ­ Set the input current regulation limit (IINDPM) to 3000 mA.
+
+                                                  Figure 2-4. 16-Bit Register Section
+If using TI Charger GUI, follow these steps.
+1. In the TI Charger GUI homepage, select the charger you are using. You should see at the bottom-left,
+
+     Hardware Connected. Here is a brief description of what the icons on the left side panel mean:
+
+                                                           Figure 2-5. Icon Guide
+
+                                                                          Note
+            If the EVM is powered but not communicating (for example, does not ACK), try updating the
+            USB2ANY firmware to the latest version using the software at . The software tells you to press the
+            reset button, on the opposite side of the USB connector to the LED, using a paper clip or narrow
+            pin.
+
+2. Go to the Chip Configuration and set the Watchdog Timer to disabled and check the "ShipFET present?"
+     box.
+
+10  BQ25792EVM, BQ25798EVM and BQ25798BKUPEVM (BMS034) Evaluation        SLUUCB5E ­ JUNE 2020 ­ REVISED JULY 2022
+                                                                                                     Submit Document Feedback
+    Module
+
+                        Copyright © 2022 Texas Instruments Incorporated
+www.ti.com                                                                                 Test Setup and Results
+
+                                                      Figure 2-6. Chip Configuration
+3. Go to the Charger Configuration and set
+
+      · VSYSMIN to 7 V
+      · Charge Voltage to 8.4 V
+      · Charge Current to 0.5 A
+      · Precharge current to 0.24 A
+      · IINDPM to 3 A
+      · ABS VINDPM to 0.4 V
+
+                                                   Figure 2-7. Charger Configuration
+
+2.4.3 Charge Mode Verification
+
+Use the following steps for charge mode verification, including pre-charge, CC and CV phases for boost
+operation:
+1. PS1 and Load #1 should be on from Section 2.4.1. In the EVM GUI, it is generally recommended to
+
+     read REG22-REG27 (or READ ALL REGISTERS) one time in order to show all the interrupts (from status
+     changes, automated routine completion, faults) that occurred since the last read. Reading those registers a
+     second clears the interrupts. After reading the registers,
+     · Verify  REG1B reports all Normal, meaning no DPM loops active and no WD timer fault (bits 7-4),
+
+         VAC1 Present (bit2), VBUS Present (bit 0) and Power Good (bit 3)
+2. Reinstall the shunt on jumper J17 to enable charge
+
+     · Verify  STAT LED (D13) is lit
+3. Take measurements as follows, noting that you may have to adjust the output of the load to accommodate
+
+     for voltage drop across the leads from the load to the EVM:
+     · Measure  VVBUS-PGND (TP23 and TP44) = 5.0 V ±0.2 V
+     · Measure  VBAT-PGND (TP29 and TP46) = 5.0 V ±0.2 V
+     · Measure  IBAT_SENSE (voltage across 0.01 ohm resistor between TP19 and TP20) = 240 mA ±60 mA
+     · Click READ ALL REGISTERS and Verify  REG1Cb[7:5] reports pre charge
+4. Increase Load #1 regulation voltage to 8.0 V and take measurements as follows, noting that you may have
+     to adjust the output of the load to accommodate for voltage drop across the leads from the load to the EVM:
+     · Measure  VVBUS-PGND (TP23 and TP44) = 5.0 V ±0.2 V
+     · Measure  VBAT-PGND (TP29 and TP46) = 8.0 V ±0.1 V
+
+SLUUCB5E ­ JUNE 2020 ­ REVISED JULY 2022  BQ25792EVM, BQ25798EVM and BQ25798BKUPEVM (BMS034) Evaluation           11
+Submit Document Feedback
+                                                                                           Module
+
+                                          Copyright © 2022 Texas Instruments Incorporated
+Test Setup and Results                                                                 www.ti.com
+
+     · Measure  IBAT_SENSE (voltage across 0.01- resistor between TP19 and TP20) = 500 mA ±50 mA
+     · Measure  IVAC1_SENSE (voltage across 0.01- resistor between TP1 and TP2) = 900 mA ±60 mA
+     · Click READ ALL REGISTERS and Verify  REG1Cb[7:5] reports fast charge
+5. Increase Load #1 regulation voltage to 8.4 V and take measurements as follows:
+
+     · Measure  VBAT-PGND (TP29 and TP46) = 8.4 V ±0.04 V
+     · Measure  IBAT_SENSE (voltage across 0.01- resistor between TP19 and TP20) = 0 mA ±10 mA
+     · Click READ ALL REGISTERS and Verify  REG1Cb[7:5] reports termination
+6. Helpful hints when changing voltages and register settings from those above during charge mode:
+
+     · If increasing charge current or adding a load at SYS J3 terminal, you will likely need to disable the
+         EN_ILIM bit using 8-bit register tab/Charger Single-bit Registers/REG14b[1] and increase the IINDPM
+         register setting in 16-bit register tab/Charger Multi-bit Registers/REG06b[8:0].
+
+     · If increasing the input voltage above 8 V for the charger to enter buck mode, you will need to increase the
+         VAC_OVP from 7 V default using 8-bit register tab/Charger Multi-bit Registers/REG10b[5:4].
+
+     · The battery configuration is set at startup using the PROG pin (Jumpers JP24 to JP31). The battery
+         configuration can also be changed using 16-bit register tab/Charger Multi-bit Registers/REG0Ab[7:6].
+         Note that the SYSMIN and charge current charge with cell configuration.
+
+     · The status, fault and interrupt bits report are helpful debug tools.
+
+2.4.4 OTG Mode Verification
+
+Use the following steps for OTG mode verification for boost operation:
+
+1. Power up then turn off Load#2 output. Set to CR = 12 V/0.5 A = 24 . Disconnect PS1 from J1 and attach
+     Load#2 to J1 (VIN1 and GND).
+
+2. Increase Load #1 regulation voltage to 8.0 V and take measurements as follows:
+
+     · Measure  VBAT-PGND (TP27 and TP46) = 8.0 V ±0.1 V
+3. For BQStudio, prepare the OTG mode charger register settings in the following way:
+
+     · On the 8-bit Registers tab in the Chip Config Single-bit Registers section:
+
+         ­ Check the EN OTG Mode box
+         ­ Check the EN ACDRV1 box
+     · On the 8-bit Registers tab in the OTG Multi-bit Registers section:
+
+         ­ Set IOTG 1000 mA to change the OTG current limit.
+
+                                              Figure 2-8. Single-Bit Register Section
+
+    · On the 16-bit Registers tab in the OTG Multi-bit Registers section:
+        ­ Set the OTG mode regulation voltage to 12000 mV
+
+12  BQ25792EVM, BQ25798EVM and BQ25798BKUPEVM (BMS034) Evaluation                      SLUUCB5E ­ JUNE 2020 ­ REVISED JULY 2022
+                                                                                                                   Submit Document Feedback
+    Module
+
+                             Copyright © 2022 Texas Instruments Incorporated
+www.ti.com                                                                                 Test Setup and Results
+
+                                           Figure 2-9. Multi-Bit Register Section
+
+For GUI composer, go to OTG Configuration Section and change the following registers:
+· OTG Reg Voltage to 12 V
+· IOTG Limit to 1 A.
+
+                                               Figure 2-10. OTG Configuration Section
+
+     Next go to the Chip configuration and check the EN OTG Mode box and EN ACDRV1 box.
+
+                                                    Figure 2-11. Chip Configuration
+
+4. Take measurements as follows:
+     · Measure  VVBUS-PGND (TP21 and TP45) = 12.0 V ±0.2 V
+     · Measure  VAC1-PGND (TP22 and TP45) = 12.0 V ±0.2 V
+     · Click READ ALL REGISTERS
+         ­ Verify  REG1Bb[6] reports VINDPM or OTG
+         ­ Verify  REG1Cb[4:1] reports VBUS Status as Normal OTG
+
+5. Turn on Load#2 output set to CR of 24 .
+6. Take measurements as follows:
+
+     · Measure  VAC1-PGND (TP22 and TP45) = 12.0 V ±0.2 V
+     · Measure  IAC1-SENSE (TP1 and TP2) = 500 mA ±0.10 A
+7. Lower the Load#2 CR to 10 .
+8. Take measurements as follows to confirm OTG current function:
+     · Measure  VAC1-PGND (TP22 and TP45) < 12.0 V ±0.2 V
+     · Measure  IAC1-SENSE (TP1 and TP2) = 1000 mA ±0.10 A
+     · Click READ ALL REGISTERS and Verify  REG1Bb[7] reports IINDPM
+9. Hints for further OTG testing:
+     · Enabling OTG mode is a two-step process, first enable OTG and then turn on the appropriate AC drive
+
+         FETs.
+
+SLUUCB5E ­ JUNE 2020 ­ REVISED JULY 2022  BQ25792EVM, BQ25798EVM and BQ25798BKUPEVM (BMS034) Evaluation     13
+Submit Document Feedback
+                                                                                           Module
+
+                                          Copyright © 2022 Texas Instruments Incorporated
+PCB Layout Guidelines                                                   www.ti.com
+
+3 PCB Layout Guidelines
+
+Careful placement of components is critical in order for the charger to meet specifications. The items below are
+listed in order of placement priority.
+
+1. Place high frequency decoupling capacitors for PMID and SYS (C3 and C18 on the EVM) as close possible
+     to their respective pins and ground pin on the same layer as the charger IC (in other words, no vias) in order
+     to have the smallest current loop.
+
+2. Place bulk capacitors for PMID and SYS as close possible to their respective pins and the charger's ground
+     pin on the same layer as the charger IC on the same layer as the charger IC (in other words, no vias).
+
+3. Place the REGN capacitor (C35) to ground and BTST capacitors (C6 and C8) to SW as close as possible to
+     their respective pins only using vias for 1 side of each component if necessary.
+
+4. Place high frequency decoupling capacitors for VBUS and BAT pins as close as possible to their respective
+     pins. Use at least 2 vias per capacitor terminal if required.
+
+5. Place bulk capacitors for VBUS and BAT pins as close as possible to their respective pins. Use at least 2
+     vias per capacitor terminal if required.
+
+6. Place the inductor close to SW1 and SW2 pins. It is acceptable to use multiple vias to make these
+     connections as the vias are only adding small amounts of inductance and resistance to an inductor.
+
+7. While this EVM has analog ground (AGND) and power ground (PGND) planes that connect close to the
+     charge GND pin, two grounds not required. Resistors and capacitors used for setting sensitive nodes (for
+     example, ILIM, TS) can use one common ground plane but with their ground terminals connected away from
+     high current ground return paths containing switching noise.
+
+Note that this EVM has test points and jumpers requiring traces out to the PCB edges. Routing these traces
+required some PCB layout compromises for less critical components than those listed in the first six items above.
+
+14  BQ25792EVM, BQ25798EVM and BQ25798BKUPEVM (BMS034) Evaluation       SLUUCB5E ­ JUNE 2020 ­ REVISED JULY 2022
+                                                                                                    Submit Document Feedback
+    Module
+
+                       Copyright © 2022 Texas Instruments Incorporated
+www.ti.com                                                                                 Board Layout, Schematic and Bill of Materials
+
+4 Board Layout, Schematic and Bill of Materials
+4.1 BMS034 Board Layout
+
+Figure 4-1 through Figure 4-4 show the board layout for the BQ2579XEVMs.
+
+                                          Figure 4-1. BMS034A/B Top Layer
+
+SLUUCB5E ­ JUNE 2020 ­ REVISED JULY 2022  BQ25792EVM, BQ25798EVM and BQ25798BKUPEVM (BMS034) Evaluation  15
+Submit Document Feedback
+                                                                                           Module
+
+                                          Copyright © 2022 Texas Instruments Incorporated
+Board Layout, Schematic and Bill of Materials                                                   www.ti.com
+
+                                               Figure 4-2. BMS034A/B Signal Layer 1
+
+16  BQ25792EVM, BQ25798EVM and BQ25798BKUPEVM (BMS034) Evaluation                               SLUUCB5E ­ JUNE 2020 ­ REVISED JULY 2022
+                                                                                                                            Submit Document Feedback
+    Module
+
+                                               Copyright © 2022 Texas Instruments Incorporated
+www.ti.com                                                                                 Board Layout, Schematic and Bill of Materials
+
+                                          Figure 4-3. BMS034A/B Signal Layer 2
+
+SLUUCB5E ­ JUNE 2020 ­ REVISED JULY 2022  BQ25792EVM, BQ25798EVM and BQ25798BKUPEVM (BMS034) Evaluation  17
+Submit Document Feedback
+                                                                                           Module
+
+                                          Copyright © 2022 Texas Instruments Incorporated
+Board Layout, Schematic and Bill of Materials                                                   www.ti.com
+
+                                               Figure 4-4. BMS034A/B Bottom Layer
+
+18  BQ25792EVM, BQ25798EVM and BQ25798BKUPEVM (BMS034) Evaluation                               SLUUCB5E ­ JUNE 2020 ­ REVISED JULY 2022
+                                                                                                                            Submit Document Feedback
+    Module
+
+                                               Copyright © 2022 Texas Instruments Incorporated
+www.ti.com                                                                                 Board Layout, Schematic and Bill of Materials
+
+4.2 BQ2579XEVM (BMS034) Schematics
+Figure 4-5, Figure 4-6, and Figure 4-7 illustrate the schematics for the BQ2579XEVM.
+
+Figure 4-5. BQ25792EVM (BMS034A/B-001) and BQ25798EVM (BMS034A/B-003) Schematic Page 1
+
+SLUUCB5E ­ JUNE 2020 ­ REVISED JULY 2022                                              BQ25792EVM, BQ25798EVM and BQ25798BKUPEVM (BMS034) Evaluation Module  19
+Submit Document Feedback
+
+                                          Copyright © 2022 Texas Instruments Incorporated
+Board Layout, Schematic and Bill of Materials                                                                                                                                                                                                                                                                           www.ti.com
+
+EXTERNAL        1                                                                 1
+                                                                                     2
+
+THERMISTOR      2       EXT_TS                                                REGN                                                                                                          REGN                                                                           /QON                             /CE
+                                                                                           JP12                                                                                                                                                                                             S1
+    GND
+                                                                                                                                                                                                                    1                     1                                         AGND
+                                                                                                                                                                                                                             500mA                 1.5A
+            J7                                                                                                            1                              1                                                          2                     2
+                                                                                                                                                   TS            TS                                                          IINDPM                IINDPM
+                                                                                                                          2                              2                                                                                                                                                        1
+                                                                                                                                                   COOL          COLD                                                                                                                                                         CHARGE
+                                                                                                                                                                                                                       JP13                  JP14                                                                 2
+                                                                                                           R18                                                                                                                                                                                                                ENABLE
+                                                                                                           5.23k                                   JP15         JP16
+
+                AGND                                                                                                      R19                                                                                       R20                   R21                                                                           JP17
+                                                                                                                          7.68k                                                                                     255k                  127k
+
+                                                                              TS                                                                         R22       EXT_TS                   ILIM_HIZ
+
+                                                                                                           1      TS      1                        TS    0       TS                                                                                                                                               AGND
+                                                                                                                                                         1       HOT
+                                                                                                           2      NORMAL  2                        WARM  2                                         ENABLE        1               R23
+                                                                                                                                                                                                                                 100k
+                                                                                                                                                                                                      HIZ        2
+
+                                                                                  R24                           JP18                               JP19         JP20
+                                                                                  30.1k
+                                                                                                           R25                                                                                             JP21
+                                                                                                           10.0k
+                                                                                                                          R26
+                                                                                                                          4.87k
+
+                                                                                  AGND                                                                                                                           AGND
+
+                VBUS                  BAT                                                                                                                PROG
+
+                                                                                                                                                                           1        1S      1         1S            1        2S           1        2S      1       3S      1       3S            1      4S        1           4S
+
+                        D11                         D12                                                                                                                    2        1.5MHz  2         750kHz        2        1.5MHz       2        750kHz  2       1.5MHz  2       750kHz        2      1.5MHz    2           750kHz
+
+                                                                                                                                                                              JP222A ICHG      JP232A ICHG             JP242A ICHG           JP25 2A ICHG     JP261A ICHG          JP271A ICHG      JP281A ICHG         JP29 1A ICHG
+
+                                                                R35                          U2            OUT 1                              R36        PULLUP            R27              R28                     R29                   R30              R31             R32                   R33              R34
+                                                                10.0                      2 IN             GND 3                              0                            3.00k            4.70k                   6.04k                 8.20k            10.5k           13.7k                 17.4k            27.0k
+                                                                      C43                                                 C44
+                                      JP30    1                                 0.1uF                                               0.1uF
+                                           PULLUP2
+                                           CONNECT                                           TLV76033DBZR                   PGND
+
+                                                                        PGND                                                                                                                                                                                                                                      AGND
+
+                                                         EV2400
+                                                         PULLUP
+
+                                                    JP31
+
+            J8                       R37                    1  2
+                       4
+                       3             10.0                             PULLUP                               PULLUP                                                                                                   PULLUP                                  VBUS           VBUS           SCL           SCL       /INT                /INT
+                       2                 SDA                                                                                                                                                                                                                 BAT           BAT           SDA            SDA        /CE                /CE
+                       1                                                                                                                    R39                                                                                                             REGN           REGN         PROG            PROG      STAT                STAT
+                                      SCL                                                                                                   10.0k                                                                                         R38              PULLUP          PULLUP      ILIM_HIZ         ILIM_HIZ  /QON                /QON
+                            AGND                                                                                                                                                                                                          2.21k
+                                                                                                                                                                                                                                       1
+                                                                                                                                                                                                                                               D13
+                                                                                                                                                         R40               R41              R42                                                Green
+                                                                                                                                                         10.0k             10.0k            10.0k
+
+                                                                                                                                                                                                                                       2
+
+                                                                                                                                                                                                                                                                                                                        TS            TS
+
+                                      SCL                                                                                                                                                                                              1
+
+                                                                                                                                                                                                                       STAT LED        2
+
+                9                 10                                                                                         SCL                            SDA               /INT             /CE                     CONNECT
+                7                 8
+                5                     SDA                                                                                                                                                                                        JP32
+                3
+                1                 6                                                                                                                                                                                                          STAT
+
+                    J9            4
+
+                                  2
+
+                                      AGND          USB2ANY
+                                                    PULLUP
+
+                                                      JP33  1  2
+                                     R43
+                                     10.0                             PULLUP
+
+    Figure 4-6. BQ25792EVM (BMS034A/B-001), BQ25798BKUPEVM (BMS034A/B-005) and BQ25798EVM (BMS034A/B-003) Schematic Page 2
+
+20          BQ25792EVM, BQ25798EVM and BQ25798BKUPEVM (BMS034) Evaluation Module                                                                                                                                                                                       SLUUCB5E ­ JUNE 2020 ­ REVISED JULY 2022
+                                                                                                                                                                                                                                                                                                   Submit Document Feedback
+
+                                                                                                                                                         Copyright © 2022 Texas Instruments Incorporated
+www.ti.com                                                                                             Board Layout, Schematic and Bill of Materials
+
+                                          Figure 4-7. BQ25798BKUPEVM (BMS034A/B-002) Schematic Page 1
+
+SLUUCB5E ­ JUNE 2020 ­ REVISED JULY 2022  BQ25792EVM, BQ25798EVM and BQ25798BKUPEVM (BMS034) Evaluation Module  21
+Submit Document Feedback
+
+                                          Copyright © 2022 Texas Instruments Incorporated
+Board Layout, Schematic and Bill of Materials                                                                                                                           www.ti.com
+
+4.3 Bill of Materials                                                                                                                                    Manufacturer
+                                                                                                                                                         MuRata
+Table 4-1 lists the BQ2579XEVM bill of materials.                                                                                                        MuRata
+                                                                                                                                                         TDK
+                                                                   Table 4-1. BQ2579XEVM Bill of Materials
+                                                                                                                                                         TDK
+               Designator      QTY   Value            Description                                           Package Reference       Part Number          Murata
+C2, C4                           2  1000pF                                                                                          GRM1555C1H102FA01D
+C6, C8                           2  0.047uF           CAP, CERM, 1000 pF, 50 V, ±1%, C0G/NP0, 0402          0402                    GRM155R71E473KA88D   MuRata
+C11, C12, C19, C20, C21, C22,   10                                                                                                  C2012X5R1E106K125AB  MuRata
+C23, C29, C30, C31                    10uF            CAP, CERM, 0.047 uF, 25 V, ±10%, X7R, 0402            0402                                         MuRata
+C13, C14, C15, C18, C32          5                                                                                                                       MuRata
+C33, C34 (BQ25798BKUPEVM         2                    CAP, CERM, 10 uF, 25 V, ±10%, X5R, 0805               0805                                         Diodes Inc.
+only)                                                                                                                                                    ON Semiconductor
+C35                              1             0.1uF  CAP, CERM, 0.1 uF, 50 V,±10%, X7R, 0402               0402                    C1005X7R1H104K050BE  Lite-On
+C36                              1             33uF   Aluminum Polymer Capacitor 33uF 20% 25V               SMD2 (7343-31)          ECASD41E336M040KA0   3M
+C38, C39                         2                                                                                                                       On-Shore Technology
+C43, C44                         2   4.7uF            CAP, CERM, 4.7 uF, 16 V, ±10%, X5R, 0603              0603                    GRM188R61C475KAAJD
+D2, D6                           2  1000pF                                                                                                               On-Shore Technology
+D11, D12                         2                    CAP, CERM, 1000 pF, 50 V, ±5%, C0G/NP0, 0402          0402                    GRM1555C1H102JA01D
+D13                              1   10uF                                                                                                                Molex
+H1, H2, H3, H4                   4   0.1uF            CAP, CERM, 10 uF, 25 V, ±20%, X5R, 0603               0603                    GRT188R61E106ME13D
+J1, J2, J3, J4                   4    12V                                                                                                                Molex
+                                      30V             CAP, CERM, 0.1 uF, 25 V, ±10%, X5R, 0402              0402                    GRM155R61E104KA87D
+J5                               1  Green                                                                                                                Molex
+                                                      Diode, Zener, 12 V, 300 mW, SOD-523                   SOD-523                 BZT52C12T-7          3M
+J6                               1                                                                                                                       Sullins Connector
+                                                      Diode, Schottky, 30 V, 0.2 A, SOD-323                 SOD-323                 BAT54HT1G            Solutions
+J7                               1                                                                                                                       Samtec
+                                                      LED, Green, SMD                                       1.6x0.8x0.8mm           LTST-C190GKT         Sullins Connector
+J8                               1                                                                                                                       Solutions
+J9                               1                    Bumpon, Hemisphere, 0.44 X 0.20, Clear                Transparent Bumpon SJ-5303 (CLEAR)
+JP1, JP2, JP7, JP8, JP9          5                                                                                                                       TDK
+                                                      Terminal Block, 5.08 mm, 2x1, Brass, TH               2x1 5.08 mm Terminal    ED120/2DS            Texas Instruments
+JP3, JP4, JP5                    3                                                                          Block                                        Texas Instruments
+JP6, JP10, JP11, JP12, JP13,    25                                                                                                                       Vishay-Dale
+JP14, JP15, JP16, JP17, JP18,                         Terminal Block, 5.08 mm, 3x1, Brass, TH               3x1 5.08 mm Terminal    ED120/3DS            Vishay-Dale
+JP19, JP20, JP21, JP22, JP23,    1                                                                          Block
+JP24, JP25, JP26, JP27, JP28,    4
+JP29, JP30, JP31, JP32, JP33     1                    Connector, Receptacle, Micro-USB Type B, R/A, Bottom  7.5x2.45x5mm            47346-0001
+L2                               5                    Mount SMT
+Q1, Q2, Q3, Q4                   2
+Q5                                                    Terminal Block, 3.5 mm, 2x1, Tin, TH                  Terminal Block, 3.5 mm, 0393570002
+R2, R6, R11, R12, R13                                                                                       2x1, TH
+R4, R9
+                                                      Header (friction lock), 100mil, 4x1, R/A, TH          4x1 R/A Header          0022053041
+
+                                                      Header (shrouded), 100mil, 5x2, High-Temperature, Gold, TH 5x2 Shrouded header N2510-6002-RB
+
+                                                      Header, 100mil, 3x1, Tin, TH                          Header, 3 PIN, 100mil, PEC03SAAN
+                                                                                                            Tin
+
+                                                      Header, 100mil, 2x1, Gold, TH                         Header, 100mil, 2x1, TH HTSW-102-07-G-S
+
+                                                      Header, 100mil, 2x1, Tin, TH                          Header, 2 PIN, 100mil, PEC02SAAN
+                                                                                                            Tin
+
+                                               1uH    Inductor, Shielded, Ferrite, 1 uH, 11.1 A, 0.0078 ohm, SMD SMD 7.1x3.0x6.5mm  SPM6530T-1R0M120
+
+                                               30V    MOSFET, N-CH, 30 V, 60 A, DNH0008A (VSONP-8)          DNH0008A                CSD17581Q3A
+
+                                               30V    MOSFET, N-CH, 30 V, 60 A, DQG0008A (VSON-CLIP-8)      DQG0008A                CSD17575Q3
+
+                                               0.01   RES, 0.01, 1%, 1 W, 2010                              2010                    WSL2010R0100FEA18
+
+                                               294    RES, 294, 1%, 0.1 W, AEC-Q200 Grade 0, 0603           0603                    CRCW0603294RFKEA
+
+22  BQ25792EVM, BQ25798EVM and BQ25798BKUPEVM (BMS034) Evaluation Module                                                                          SLUUCB5E ­ JUNE 2020 ­ REVISED JULY 2022
+                                                                                                                                                                              Submit Document Feedback
+
+                                                                       Copyright © 2022 Texas Instruments Incorporated
+www.ti.com                                                                                                                               Board Layout, Schematic and Bill of Materials
+
+                                                 Table 4-1. BQ2579XEVM Bill of Materials (continued)
+
+               Designator      QTY        Value  Description                                              Package Reference        Part Number       Manufacturer
+R15                              1         100                                                                                     RC0603FR-07100RL  Yageo
+R17, R36                         2               RES, 100, 1%, 0.1 W, 0603                                0603                     CRCW06030000Z0EA  Vishay-Dale
+R18                              1           0                                                                                     CRCW04025K23FKED  Vishay-Dale
+R19                              1        5.23k  RES, 0, 5%, 0.1 W, AEC-Q200 Grade 0, 0603                0603                     CRCW04027K68FKED  Vishay-Dale
+R20                              1        7.68k                                                                                    CRCW0603255KFKEA  Vishay-Dale
+R21                              1        255k   RES, 5.23 k, 1%, 0.063 W, AEC-Q200 Grade 0, 0402         0402                     CRCW0603127KFKEA  Vishay-Dale
+R22                              1        127k                                                                                     5106              Keystone
+R23                              1               RES, 7.68 k, 1%, 0.063 W, AEC-Q200 Grade 0, 0402         0402                     RC0603FR-07100KL  Yageo
+R24                              1           0                                                                                     CRCW040230K1FKED  Vishay-Dale
+R25, R39, R40, R41, R42          5        100k   RES, 255 k, 1%, 0.1 W, AEC-Q200 Grade 0, 0603            0603                     CRCW040210K0FKED  Vishay-Dale
+R26                              1        30.1k                                                                                    CRCW04024K87FKED  Vishay-Dale
+R27                              1        10.0k  RES, 127 k, 1%, 0.1 W, AEC-Q200 Grade 0, 0603            0603                     CRCW06033K57FKEA  Vishay-Dale
+R28                              1        4.87k                                                                                    CRCW06034K75FKEA  Vishay-Dale
+R29                              1        3.57k  RES, 0, 1%, 0.5 W, 0805                                  0805                     RC0603FR-076K2L   Yageo
+R30                              1        4.75k                                                                                    RC0603FR-078K2L   Yageo
+R31                              1        6.20k  RES, 100 k, 1%, 0.1 W, 0603                              0603                     CRCW060310K5FKEA  Vishay-Dale
+R32                              1        8.20k                                                                                    CRCW060314K0FKEA  Vishay-Dale
+R33                              1        10.5k  RES, 30.1 k, 1%, 0.063 W, AEC-Q200 Grade 0, 0402         0402                     ERJ-3EKF1802V     Panasonic
+R34                              1        14.0k                                                                                    ERJ-3EKF2702V     Panasonic
+R35, R37, R43                    3        18.0k  RES, 10.0 k, 1%, 0.063 W, AEC-Q200 Grade 0, 0402         0402                     ERJ-8ENF10R0V     Panasonic
+R38                              1        27.0k                                                                                    CRCW04022K21FKED  Vishay-Dale
+S1                               1         10.0  RES, 4.87 k, 1%, 0.063 W, AEC-Q200 Grade 0, 0402         0402                     KSR221GLFS        C&K Components
+SH-JP1, SH-JP2, SH-JP6, SH-     14        2.21k                                                                                    SNT-100-BK-G      Samtec
+JP7, SH-JP8, SH-JP9, SH-JP11,                    RES, 3.57 k, 1%, 0.1 W, AEC-Q200 Grade 0, 0603           0603
+SH-JP12, SH-JP14, SH-JP17,      31         1x2
+SH-JP18, SH-JP24, SH-JP30,                       RES, 4.75 k, 1%, 0.1 W, AEC-Q200 Grade 0, 0603           0603
+SH-JP32                          4
+TP1, TP2, TP4, TP6, TP7, TP9,    2               RES, 6.20 k, 1%, 0.1 W, 0603                             0603
+TP11, TP13, TP14, TP15, TP16,
+TP17, TP18, TP19, TP20, TP21,    1               RES, 8.20 k, 1%, 0.1 W, 0603                             0603
+TP22, TP30, TP31, TP32, TP33,
+TP34, TP35, TP36, TP37, TP38,    7               RES, 10.5 k, 1%, 0.1 W, AEC-Q200 Grade 0, 0603           0603
+TP39, TP40, TP41, TP42, TP43
+TP23, TP24, TP25, TP26           1               RES, 14.0 k, 1%, 0.1 W, AEC-Q200 Grade 0, 0603           0603
+TP27, TP28
+                                                 RES, 18.0 k, 1%, 0.1 W, AEC-Q200 Grade 0, 0603           0603
+TP29
+                                                 RES, 27.0 k, 1%, 0.1 W, AEC-Q200 Grade 0, 0603           0603
+TP44, TP45, TP46, TP47, TP48,
+TP49, TP50                                       RES, 10.0, 1%, 0.25 W, AEC-Q200 Grade 0, 1206            1206
+U1
+                                                 RES, 2.21 k, 1%, 0.063 W, AEC-Q200 Grade 0, 0402         0402
+
+                                                 Switch, Normally open, 2.3N force, 200k operations, SMD  KSR
+
+                                                 Shunt, 100mil, Gold plated, Black                        Shunt
+
+                                                 Test Point, Miniature, White, TH                         White Miniature          5002              Keystone
+                                                                                                          Testpoint
+
+                                                 Test Point, Miniature, Red, TH                           Red Miniature Testpoint  5000              Keystone
+                                                 Test Point, Miniature, Orange, TH                                                 5003              Keystone
+                                                 Test Point, Miniature, Yellow, TH                        Orange Miniature         5004              Keystone
+                                                 Test Point, Compact, SMT                                 Testpoint                5016              Keystone
+                                                 BQ2579x HotRod                                                                    BQ25792RQM        Texas Instruments
+                                                                                                          Yellow Miniature
+                                                                                                          Testpoint
+
+                                                                                                          Testpoint_Keystone_Co
+                                                                                                          mpact
+
+                                                                                                          VQFN-HR29
+
+SLUUCB5E ­ JUNE 2020 ­ REVISED JULY 2022                                                                  BQ25792EVM, BQ25798EVM and BQ25798BKUPEVM (BMS034) Evaluation Module  23
+Submit Document Feedback
+
+                                                              Copyright © 2022 Texas Instruments Incorporated
+Board Layout, Schematic and Bill of Materials                                                                                                                www.ti.com
+
+                                               Table 4-1. BQ2579XEVM Bill of Materials (continued)                                            Manufacturer
+                                                                                                                                              Texas Instruments
+               Designator      QTY   Value     Description                                            Package Reference  Part Number
+U2                               1                                                                                       TLV76033DBZR         MuRata
+                                      1uF      100-mA, 30-V, Fixed-Output, Linear-Voltage Regulator,  DBZ0003A                                MuRata
+C1, C3, C26                      0  2200pF     DBZ0003A (SOT-23-3)                                                       GRM219R71E105KA88D   TDK
+C5, C7                           0                                                                                       GRM1885C1H222JA01D   Kemet
+C9, C10, C24, C27, C28           0   10uF      CAP, CERM, 1 uF, 25 V, ±10%, X7R, 0805                 0805               C2012X5R1E106K125AB  Kemet
+C16, C17                         0  0.01uF                                                                               C0402C103J5RACTU     TDK
+C25                              0   33uF      CAP, CERM, 2200 pF, 50 V, ±5%, C0G/NP0, 0603           0603               T521D336M035ATE065   MuRata
+C37                              0   0.1uF                                                                               C1005X7R1H104K050BE  MuRata
+C40                              0   10uF      CAP, CERM, 10 uF, 25 V, ±10%, X5R, 0805                0805               GRT188R61E106ME13D   MuRata
+C41                              0  1000pF                                                                               GRM1555C1H102JA01D   Diodes Inc.
+C42                              0  1000pF     CAP, CERM, 0.01 uF, 50 V, ±5%, X7R, 0402               0402               GRM1555C1H102FA01D   Diodes Inc.
+D1, D5, D10                      0                                                                                       ZLLS350TA            Diodes Inc.
+D3, D4, D7, D8                   0    40V      CAP, TA, 33 uF, 35 V, ±20%, 0.065 ohm, SMD             7343-31            MBR130T1G            N/A
+D9                               0    30V                                                                                BZT52C12T-7
+FID1, FID2, FID3, FID4, FID5,    0    12V      CAP, CERM, 0.1 uF, 50 V,±10%, X7R, 0402                0402               N/A                  Microgate
+FID6                                                                                                                                          Keystone
+L1                               0    1uH      CAP, CERM, 10 uF, 25 V, ±20%, X5R, 0603                0603               MPIM252010F1R0M-LF   Yageo America
+R1, R5, R14                      0      0                                                                                5106                 Vishay-Dale
+R3, R8, R16                      0             CAP, CERM, 1000 pF, 50 V, ±5%, C0G/NP0, 0402           0402               RC0402FR-07100KL     Samtec
+R7, R10                          0   100k                                                                                CRCW06032R00JNEA
+SH-JP3, SH-JP4, SH-JP5, SH-      0     2.0     CAP, CERM, 1000 pF, 50 V, ±1%, C0G/NP0, 0402           0402               SNT-100-BK-G         Keystone
+JP10, SH-JP13, SH-JP15, SH-           1x2
+JP16, SH-JP19, SH-JP20, SH-      0             Diode, Schottky, 40 V, 0.38 A, SOD-523                 SOD-523            5002
+JP21, SH-JP22, SH-JP23, SH-
+JP25, SH-JP26, SH-JP27, SH-                    Diode, Schottky, 30 V, 1 A, SOD-123                    SOD-123
+JP28, SH-JP29, SH-JP31, SH-
+JP33                                           Diode, Zener, 12 V, 300 mW, SOD-523                    SOD-523
+TP3, TP5, TP8, TP10, TP12
+                                               Fiducial mark. There is nothing to buy or mount.       N/A
+
+                                               Inductor, 1 uH, 3.2 A, 0.028 ohm, SMD                  2.5x2mm
+                                               RES, 0, 1%, 0.5 W, 0805                                0805
+                                               RES, 100 k, 1%, 0.0625 W, 0402                         0402
+                                               RES, 2.0, 5%, 0.1 W, AEC-Q200 Grade 0, 0603            0603
+                                               Shunt, 100mil, Gold plated, Black                      Shunt
+
+                                               Test Point, Miniature, White, TH                       White Miniature
+                                                                                                      Testpoint
+
+24  BQ25792EVM, BQ25798EVM and BQ25798BKUPEVM (BMS034) Evaluation Module                                                 SLUUCB5E ­ JUNE 2020 ­ REVISED JULY 2022
+                                                                                                                                                     Submit Document Feedback
+
+                                                            Copyright © 2022 Texas Instruments Incorporated
+www.ti.com                                                                                      Revision History
+
+5 Revision History
+
+NOTE: Page numbers for previous revisions may differ from page numbers in the current version.
+
+Changes from Revision D (September 2021) to Revision E (July 2022)                              Page
+
+· Changed Recommended Operating Conditions................................................................................................. 6
+· Changed Equipment........................................................................................................................................... 6
+· Changed Software Setup....................................................................................................................................7
+· Changed Initial Settings......................................................................................................................................9
+· Changed Communication Verification.................................................................................................................9
+· Changed OTG Mode Verification......................................................................................................................12
+· Updated Figure 4-7 ..........................................................................................................................................19
+
+Changes from Revision C (June 2021) to Revision D (September 2021)                              Page
+
+· Updated Equipment Test Setup for Testing Battery Charging image..................................................................6
+
+Changes from Revision B (December 2020) to Revision C (June 2021)                               Page
+
+· Changed BQ25796EVM to BQ25798BKUPEVM........................................................................................... 0
+· Removed BQ25796 and added BQ25798BKUPEVM ....................................................................................... 1
+· Deleted BQ25796. ............................................................................................................................................. 3
+· Removed BQ25796............................................................................................................................................ 3
+· Corrected typos in JP9, JP14 and JP31 descriptions.........................................................................................4
+· Removed BQ25796.......................................................................................................................................... 15
+· Renamed BQ25796EVM to BQ25798BKUPEVM............................................................................................ 19
+· Updated Figure 4-7 ..........................................................................................................................................19
+· For C22,C34, changed reference to BQ25798BKUPEVM and part number.................................................... 22
+
+Changes from Revision A (September 2020) to Revision B (December 2020)                          Page
+
+· Added BQ25796 and BQ25798 features and data sheet literature numbers..................................................... 3
+· Updated description for JP1, JP2, JP5, JP8, and JP9 shunts............................................................................ 4
+· Deleted EVM revision E2 text. Added BQ25796 schematic and reference to BQ25798 schematic. ...............19
+· Updated existing BOM to include BQ25796EVM components.........................................................................22
+
+Changes from Revision * (June 2020) to Revision A (September 2020)                              Page
+
+· Deleted BQ25795EVM....................................................................................................................................... 3
+· Deleted BQ25795. ............................................................................................................................................. 3
+· Deleted BQ25795EVM from text and table.........................................................................................................3
+· Deleted BQ25795EVM....................................................................................................................................... 4
+· Updated Equipment Test Setup for Testing Battery Charging image..................................................................6
+· Updated BMS034E2/A Top Layer image.......................................................................................................... 15
+· Changed BMS034E1 to BMS034E2/A............................................................................................................. 15
+· Updated both schematic images...................................................................................................................... 19
+· Updated from BMS034E1 to BMS034E2/A...................................................................................................... 19
+· Updated C37, D3 and D7 to non-populated .................................................................................................... 22
+· Added D3, D4, D7 and D8 to MBR130T1G...................................................................................................... 22
+
+SLUUCB5E ­ JUNE 2020 ­ REVISED JULY 2022  BQ25792EVM, BQ25798EVM and BQ25798BKUPEVM (BMS034) Evaluation  25
+Submit Document Feedback
+                                                                                                Module
+
+                                          Copyright © 2022 Texas Instruments Incorporated
+                                          STANDARD TERMS FOR EVALUATION MODULES
+
+1. Delivery: TI delivers TI evaluation boards, kits, or modules, including any accompanying demonstration software, components, and/or
+      documentation which may be provided together or separately (collectively, an "EVM" or "EVMs") to the User ("User") in accordance
+      with the terms set forth herein. User's acceptance of the EVM is expressly subject to the following terms.
+
+      1.1 EVMs are intended solely for product or software developers for use in a research and development setting to facilitate feasibility
+             evaluation, experimentation, or scientific analysis of TI semiconductors products. EVMs have no direct function and are not
+             finished products. EVMs shall not be directly or indirectly assembled as a part or subassembly in any finished product. For
+             clarification, any software or software tools provided with the EVM ("Software") shall not be subject to the terms and conditions
+             set forth herein but rather shall be subject to the applicable terms that accompany such Software
+
+      1.2 EVMs are not intended for consumer or household use. EVMs may not be sold, sublicensed, leased, rented, loaned, assigned,
+             or otherwise distributed for commercial purposes by Users, in whole or in part, or used in any finished product or production
+             system.
+
+2 Limited Warranty and Related Remedies/Disclaimers:
+
+      2.1 These terms do not apply to Software. The warranty, if any, for Software is covered in the applicable Software License
+             Agreement.
+
+      2.2 TI warrants that the TI EVM will conform to TI's published specifications for ninety (90) days after the date TI delivers such EVM
+             to User. Notwithstanding the foregoing, TI shall not be liable for a nonconforming EVM if (a) the nonconformity was caused by
+             neglect, misuse or mistreatment by an entity other than TI, including improper installation or testing, or for any EVMs that have
+             been altered or modified in any way by an entity other than TI, (b) the nonconformity resulted from User's design, specifications
+             or instructions for such EVMs or improper system design, or (c) User has not paid on time. Testing and other quality control
+             techniques are used to the extent TI deems necessary. TI does not test all parameters of each EVM.
+             User's claims against TI under this Section 2 are void if User fails to notify TI of any apparent defects in the EVMs within ten (10)
+             business days after delivery, or of any hidden defects with ten (10) business days after the defect has been detected.
+
+      2.3 TI's sole liability shall be at its option to repair or replace EVMs that fail to conform to the warranty set forth above, or credit
+             User's account for such EVM. TI's liability under this warranty shall be limited to EVMs that are returned during the warranty
+             period to the address designated by TI and that are determined by TI not to conform to such warranty. If TI elects to repair or
+             replace such EVM, TI shall have a reasonable time to repair such EVM or provide replacements. Repaired EVMs shall be
+             warranted for the remainder of the original warranty period. Replaced EVMs shall be warranted for a new full ninety (90) day
+             warranty period.
+
+                                               WARNING
+
+                     Evaluation Kits are intended solely for use by technically qualified,
+                      professional electronics experts who are familiar with the dangers
+                    and application risks associated with handling electrical mechanical
+
+                                         components, systems, and subsystems.
+
+                         User shall operate the Evaluation Kit within TI's recommended
+                      guidelines and any applicable legal or environmental requirements
+                      as well as reasonable and customary safeguards. Failure to set up
+
+                           and/or operate the Evaluation Kit within TI's recommended
+                          guidelines may result in personal injury or death or property
+                          damage. Proper set up entails following TI's instructions for
+                        electrical ratings of interface circuits such as input, output and
+
+                                                          electrical loads.
+
+             NOTE:
+             EXPOSURE TO ELECTROSTATIC DISCHARGE (ESD) MAY CAUSE DEGREDATION OR FAILURE OF THE EVALUATION
+             KIT; TI RECOMMENDS STORAGE OF THE EVALUATION KIT IN A PROTECTIVE ESD BAG.
+                                                                                                                                                                             www.ti.com
+
+  3 Regulatory Notices:
+         3.1 United States
+                 3.1.1 Notice applicable to EVMs not FCC-Approved:
+                FCC NOTICE: This kit is designed to allow product developers to evaluate electronic components, circuitry, or software
+                associated with the kit to determine whether to incorporate such items in a finished product and software developers to write
+                software applications for use with the end product. This kit is not a finished product and when assembled may not be resold or
+                otherwise marketed unless all required FCC equipment authorizations are first obtained. Operation is subject to the condition
+                that this product not cause harmful interference to licensed radio stations and that this product accept harmful interference.
+                Unless the assembled kit is designed to operate under part 15, part 18 or part 95 of this chapter, the operator of the kit must
+                operate under the authority of an FCC license holder or must secure an experimental authorization under part 5 of this chapter.
+                 3.1.2 For EVMs annotated as FCC ­ FEDERAL COMMUNICATIONS COMMISSION Part 15 Compliant:
+
+                CAUTION
+                This device complies with part 15 of the FCC Rules. Operation is subject to the following two conditions: (1) This device may not
+                cause harmful interference, and (2) this device must accept any interference received, including interference that may cause
+                undesired operation.
+                Changes or modifications not expressly approved by the party responsible for compliance could void the user's authority to
+                operate the equipment.
+
+                FCC Interference Statement for Class A EVM devices
+                NOTE: This equipment has been tested and found to comply with the limits for a Class A digital device, pursuant to part 15 of
+                the FCC Rules. These limits are designed to provide reasonable protection against harmful interference when the equipment is
+                operated in a commercial environment. This equipment generates, uses, and can radiate radio frequency energy and, if not
+                installed and used in accordance with the instruction manual, may cause harmful interference to radio communications.
+                Operation of this equipment in a residential area is likely to cause harmful interference in which case the user will be required to
+                correct the interference at his own expense.
+
+                FCC Interference Statement for Class B EVM devices
+                NOTE: This equipment has been tested and found to comply with the limits for a Class B digital device, pursuant to part 15 of
+                the FCC Rules. These limits are designed to provide reasonable protection against harmful interference in a residential
+                installation. This equipment generates, uses and can radiate radio frequency energy and, if not installed and used in accordance
+                with the instructions, may cause harmful interference to radio communications. However, there is no guarantee that interference
+                will not occur in a particular installation. If this equipment does cause harmful interference to radio or television reception, which
+                can be determined by turning the equipment off and on, the user is encouraged to try to correct the interference by one or more
+                of the following measures:
+
+                              · Reorient or relocate the receiving antenna.
+                              · Increase the separation between the equipment and receiver.
+                              · Connect the equipment into an outlet on a circuit different from that to which the receiver is connected.
+                              · Consult the dealer or an experienced radio/TV technician for help.
+
+         3.2 Canada
+                 3.2.1 For EVMs issued with an Industry Canada Certificate of Conformance to RSS-210 or RSS-247
+                Concerning EVMs Including Radio Transmitters:
+                This device complies with Industry Canada license-exempt RSSs. Operation is subject to the following two conditions:
+                (1) this device may not cause interference, and (2) this device must accept any interference, including interference that may
+                cause undesired operation of the device.
+
+                Concernant les EVMs avec appareils radio:
+                Le présent appareil est conforme aux CNR d'Industrie Canada applicables aux appareils radio exempts de licence. L'exploitation
+                est autorisée aux deux conditions suivantes: (1) l'appareil ne doit pas produire de brouillage, et (2) l'utilisateur de l'appareil doit
+                accepter tout brouillage radioélectrique subi, même si le brouillage est susceptible d'en compromettre le fonctionnement.
+
+                Concerning EVMs Including Detachable Antennas:
+                Under Industry Canada regulations, this radio transmitter may only operate using an antenna of a type and maximum (or lesser)
+                gain approved for the transmitter by Industry Canada. To reduce potential radio interference to other users, the antenna type
+                and its gain should be so chosen that the equivalent isotropically radiated power (e.i.r.p.) is not more than that necessary for
+                successful communication. This radio transmitter has been approved by Industry Canada to operate with the antenna types
+                listed in the user guide with the maximum permissible gain and required antenna impedance for each antenna type indicated.
+                Antenna types not included in this list, having a gain greater than the maximum gain indicated for that type, are strictly prohibited
+                for use with this device.
+
+2
+www.ti.com
+
+                Concernant les EVMs avec antennes détachables
+                Conformément à la réglementation d'Industrie Canada, le présent émetteur radio peut fonctionner avec une antenne d'un type et
+                d'un gain maximal (ou inférieur) approuvé pour l'émetteur par Industrie Canada. Dans le but de réduire les risques de brouillage
+                radioélectrique à l'intention des autres utilisateurs, il faut choisir le type d'antenne et son gain de sorte que la puissance isotrope
+                rayonnée équivalente (p.i.r.e.) ne dépasse pas l'intensité nécessaire à l'établissement d'une communication satisfaisante. Le
+                présent émetteur radio a été approuvé par Industrie Canada pour fonctionner avec les types d'antenne énumérés dans le
+                manuel d'usage et ayant un gain admissible maximal et l'impédance requise pour chaque type d'antenne. Les types d'antenne
+                non inclus dans cette liste, ou dont le gain est supérieur au gain maximal indiqué, sont strictement interdits pour l'exploitation de
+                l'émetteur
+         3.3 Japan
+                 3.3.1 Notice for EVMs delivered in Japan: Please see http://www.tij.co.jp/lsds/ti_ja/general/eStore/notice_01.page 
+
+                           
+                           http://www.tij.co.jp/lsds/ti_ja/general/eStore/notice_01.page
+                 3.3.2 Notice for Users of EVMs Considered "Radio Frequency Products" in Japan: EVMs entering Japan may not be certified
+                           by TI as conforming to Technical Regulations of Radio Law of Japan.
+                If User uses EVMs in Japan, not certified to Technical Regulations of Radio Law of Japan, User is required to follow the
+                instructions set forth by Radio Law of Japan, which includes, but is not limited to, the instructions below with respect to EVMs
+                (which for the avoidance of doubt are stated strictly for convenience and should be verified by User):
+                1. Use EVMs in a shielded room or any other test facility as defined in the notification #173 issued by Ministry of Internal
+                     Affairs and Communications on March 28, 2006, based on Sub-section 1.1 of Article 6 of the Ministry's Rule for
+                     Enforcement of Radio Law of Japan,
+                2. Use EVMs only after User obtains the license of Test Radio Station as provided in Radio Law of Japan with respect to
+                     EVMs, or
+                3. Use of EVMs only after User obtains the Technical Regulations Conformity Certification as provided in Radio Law of Japan
+                     with respect to EVMs. Also, do not transfer EVMs, unless User gives the same notice above to the transferee. Please note
+                     that if User does not follow the instructions above, User will be subject to penalties of Radio Law of Japan.
+
+                 
+                 
+                
+                1. 61118328173
+
+                     
+                2. 
+                3. 
+                
+
+                            
+                
+                
+                
+                 3.3.3 Notice for EVMs for Power Line Communication: Please see http://www.tij.co.jp/lsds/ti_ja/general/eStore/notice_02.page
+
+                           http:/
+                           /www.tij.co.jp/lsds/ti_ja/general/eStore/notice_02.page
+         3.4 European Union
+                 3.4.1 For EVMs subject to EU Directive 2014/30/EU (Electromagnetic Compatibility Directive):
+                           This is a class A product intended for use in environments other than domestic environments that are connected to a
+                           low-voltage power-supply network that supplies buildings used for domestic purposes. In a domestic environment this
+                           product may cause radio interference in which case the user may be required to take adequate measures.
+
+                                                                                                                                                                                             3
+                                                  www.ti.com
+
+   4 EVM Use Restrictions and Warnings:
+
+   4.1 EVMS ARE NOT FOR USE IN FUNCTIONAL SAFETY AND/OR SAFETY CRITICAL EVALUATIONS, INCLUDING BUT NOT
+         LIMITED TO EVALUATIONS OF LIFE SUPPORT APPLICATIONS.
+
+   4.2 User must read and apply the user guide and other available documentation provided by TI regarding the EVM prior to handling
+         or using the EVM, including without limitation any warning or restriction notices. The notices contain important safety information
+         related to, for example, temperatures and voltages.
+
+   4.3 Safety-Related Warnings and Restrictions:
+
+   4.3.1  User shall operate the EVM within TI's recommended specifications and environmental considerations stated in the user
+          guide, other available documentation provided by TI, and any other applicable requirements and employ reasonable and
+          customary safeguards. Exceeding the specified performance ratings and specifications (including but not limited to input
+          and output voltage, current, power, and environmental ranges) for the EVM may cause personal injury or death, or
+          property damage. If there are questions concerning performance ratings and specifications, User should contact a TI
+          field representative prior to connecting interface electronics including input power and intended loads. Any loads applied
+          outside of the specified output range may also result in unintended and/or inaccurate operation and/or possible
+          permanent damage to the EVM and/or interface electronics. Please consult the EVM user guide prior to connecting any
+          load to the EVM output. If there is uncertainty as to the load specification, please contact a TI field representative.
+          During normal operation, even with the inputs and outputs kept within the specified allowable ranges, some circuit
+          components may have elevated case temperatures. These components include but are not limited to linear regulators,
+          switching transistors, pass transistors, current sense resistors, and heat sinks, which can be identified using the
+          information in the associated documentation. When working with the EVM, please be aware that the EVM may become
+          very warm.
+
+   4.3.2  EVMs are intended solely for use by technically qualified, professional electronics experts who are familiar with the
+          dangers and application risks associated with handling electrical mechanical components, systems, and subsystems.
+          User assumes all responsibility and liability for proper and safe handling and use of the EVM by User or its employees,
+          affiliates, contractors or designees. User assumes all responsibility and liability to ensure that any interfaces (electronic
+          and/or mechanical) between the EVM and any human body are designed with suitable isolation and means to safely
+          limit accessible leakage currents to minimize the risk of electrical shock hazard. User assumes all responsibility and
+          liability for any improper or unsafe handling or use of the EVM by User or its employees, affiliates, contractors or
+          designees.
+
+   4.4 User assumes all responsibility and liability to determine whether the EVM is subject to any applicable international, federal,
+         state, or local laws and regulations related to User's handling and use of the EVM and, if applicable, User assumes all
+         responsibility and liability for compliance in all respects with such laws and regulations. User assumes all responsibility and
+         liability for proper disposal and recycling of the EVM consistent with all applicable international, federal, state, and local
+         requirements.
+
+   5. Accuracy of Information: To the extent TI provides information on the availability and function of EVMs, TI attempts to be as accurate
+         as possible. However, TI does not warrant the accuracy of EVM descriptions, EVM availability or other information on its websites as
+         accurate, complete, reliable, current, or error-free.
+
+   6. Disclaimers:
+
+          6.1 EXCEPT AS SET FORTH ABOVE, EVMS AND ANY MATERIALS PROVIDED WITH THE EVM (INCLUDING, BUT NOT
+                LIMITED TO, REFERENCE DESIGNS AND THE DESIGN OF THE EVM ITSELF) ARE PROVIDED "AS IS" AND "WITH ALL
+                FAULTS." TI DISCLAIMS ALL OTHER WARRANTIES, EXPRESS OR IMPLIED, REGARDING SUCH ITEMS, INCLUDING BUT
+                NOT LIMITED TO ANY EPIDEMIC FAILURE WARRANTY OR IMPLIED WARRANTIES OF MERCHANTABILITY OR FITNESS
+                FOR A PARTICULAR PURPOSE OR NON-INFRINGEMENT OF ANY THIRD PARTY PATENTS, COPYRIGHTS, TRADE
+                SECRETS OR OTHER INTELLECTUAL PROPERTY RIGHTS.
+
+          6.2 EXCEPT FOR THE LIMITED RIGHT TO USE THE EVM SET FORTH HEREIN, NOTHING IN THESE TERMS SHALL BE
+                CONSTRUED AS GRANTING OR CONFERRING ANY RIGHTS BY LICENSE, PATENT, OR ANY OTHER INDUSTRIAL OR
+                INTELLECTUAL PROPERTY RIGHT OF TI, ITS SUPPLIERS/LICENSORS OR ANY OTHER THIRD PARTY, TO USE THE
+                EVM IN ANY FINISHED END-USER OR READY-TO-USE FINAL PRODUCT, OR FOR ANY INVENTION, DISCOVERY OR
+                IMPROVEMENT, REGARDLESS OF WHEN MADE, CONCEIVED OR ACQUIRED.
+
+   7. USER'S INDEMNITY OBLIGATIONS AND REPRESENTATIONS. USER WILL DEFEND, INDEMNIFY AND HOLD TI, ITS
+         LICENSORS AND THEIR REPRESENTATIVES HARMLESS FROM AND AGAINST ANY AND ALL CLAIMS, DAMAGES, LOSSES,
+         EXPENSES, COSTS AND LIABILITIES (COLLECTIVELY, "CLAIMS") ARISING OUT OF OR IN CONNECTION WITH ANY
+         HANDLING OR USE OF THE EVM THAT IS NOT IN ACCORDANCE WITH THESE TERMS. THIS OBLIGATION SHALL APPLY
+         WHETHER CLAIMS ARISE UNDER STATUTE, REGULATION, OR THE LAW OF TORT, CONTRACT OR ANY OTHER LEGAL
+         THEORY, AND EVEN IF THE EVM FAILS TO PERFORM AS DESCRIBED OR EXPECTED.
+
+4
+www.ti.com
+  8. Limitations on Damages and Liability:
+         8.1 General Limitations. IN NO EVENT SHALL TI BE LIABLE FOR ANY SPECIAL, COLLATERAL, INDIRECT, PUNITIVE,
+                INCIDENTAL, CONSEQUENTIAL, OR EXEMPLARY DAMAGES IN CONNECTION WITH OR ARISING OUT OF THESE
+                TERMS OR THE USE OF THE EVMS , REGARDLESS OF WHETHER TI HAS BEEN ADVISED OF THE POSSIBILITY OF
+                SUCH DAMAGES. EXCLUDED DAMAGES INCLUDE, BUT ARE NOT LIMITED TO, COST OF REMOVAL OR
+                REINSTALLATION, ANCILLARY COSTS TO THE PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES, RETESTING,
+                OUTSIDE COMPUTER TIME, LABOR COSTS, LOSS OF GOODWILL, LOSS OF PROFITS, LOSS OF SAVINGS, LOSS OF
+                USE, LOSS OF DATA, OR BUSINESS INTERRUPTION. NO CLAIM, SUIT OR ACTION SHALL BE BROUGHT AGAINST TI
+                MORE THAN TWELVE (12) MONTHS AFTER THE EVENT THAT GAVE RISE TO THE CAUSE OF ACTION HAS
+                OCCURRED.
+         8.2 Specific Limitations. IN NO EVENT SHALL TI'S AGGREGATE LIABILITY FROM ANY USE OF AN EVM PROVIDED
+                HEREUNDER, INCLUDING FROM ANY WARRANTY, INDEMITY OR OTHER OBLIGATION ARISING OUT OF OR IN
+                CONNECTION WITH THESE TERMS, , EXCEED THE TOTAL AMOUNT PAID TO TI BY USER FOR THE PARTICULAR
+                EVM(S) AT ISSUE DURING THE PRIOR TWELVE (12) MONTHS WITH RESPECT TO WHICH LOSSES OR DAMAGES ARE
+                CLAIMED. THE EXISTENCE OF MORE THAN ONE CLAIM SHALL NOT ENLARGE OR EXTEND THIS LIMIT.
+  9. Return Policy. Except as otherwise provided, TI does not offer any refunds, returns, or exchanges. Furthermore, no return of EVM(s)
+        will be accepted if the package has been opened and no return of the EVM(s) will be accepted if they are damaged or otherwise not in
+        a resalable condition. If User feels it has been incorrectly charged for the EVM(s) it ordered or that delivery violates the applicable
+        order, User should contact TI. All refunds will be made in full within thirty (30) working days from the return of the components(s),
+        excluding any postage or packaging costs.
+ 10. Governing Law: These terms and conditions shall be governed by and interpreted in accordance with the laws of the State of Texas,
+        without reference to conflict-of-laws principles. User agrees that non-exclusive jurisdiction for any dispute arising out of or relating to
+        these terms and conditions lies within courts located in the State of Texas and consents to venue in Dallas County, Texas.
+        Notwithstanding the foregoing, any judgment may be enforced in any United States or foreign court, and TI may seek injunctive relief
+        in any United States or foreign court.
+
+                                       Mailing Address: Texas Instruments, Post Office Box 655303, Dallas, Texas 75265
+                                                             Copyright © 2019, Texas Instruments Incorporated
+
+                                                                                                                                                                                             5
+                                 IMPORTANT NOTICE AND DISCLAIMER
+
+TI PROVIDES TECHNICAL AND RELIABILITY DATA (INCLUDING DATASHEETS), DESIGN RESOURCES (INCLUDING REFERENCE
+DESIGNS), APPLICATION OR OTHER DESIGN ADVICE, WEB TOOLS, SAFETY INFORMATION, AND OTHER RESOURCES "AS IS"
+AND WITH ALL FAULTS, AND DISCLAIMS ALL WARRANTIES, EXPRESS AND IMPLIED, INCLUDING WITHOUT LIMITATION ANY
+IMPLIED WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE OR NON-INFRINGEMENT OF THIRD
+PARTY INTELLECTUAL PROPERTY RIGHTS.
+
+These resources are intended for skilled developers designing with TI products. You are solely responsible for (1) selecting the appropriate
+TI products for your application, (2) designing, validating and testing your application, and (3) ensuring your application meets applicable
+standards, and any other safety, security, regulatory or other requirements.
+
+These resources are subject to change without notice. TI grants you permission to use these resources only for development of an
+application that uses the TI products described in the resource. Other reproduction and display of these resources is prohibited. No license
+is granted to any other TI intellectual property right or to any third party intellectual property right. TI disclaims responsibility for, and you fully
+indemnify TI and its representatives against any claims, damages, costs, losses, and liabilities arising out of your use of these resources.
+
+TI's products are provided subject to TI's Terms of Sale, TI's General Quality Guidelines, or other applicable terms available either on
+ti.com or provided in conjunction with such TI products. TI's provision of these resources does not expand or otherwise alter TI's applicable
+warranties or warranty disclaimers for TI products. Unless TI explicitly designates a product as custom or customer-specified, TI products
+are standard, catalog, general purpose devices.
+
+TI objects to and rejects any additional or different terms you may propose.
+
+IMPORTANT NOTICE
+
+                                                           Copyright © 2026, Texas Instruments Incorporated
+
+                                                                               Last updated 10/2025
+

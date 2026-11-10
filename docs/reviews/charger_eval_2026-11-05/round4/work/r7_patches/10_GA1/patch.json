@@ -1,0 +1,305 @@
+{
+ "group": "GA1",
+ "edits": [
+  {
+   "old": "**a 0.125 mm polyimide sheet bonded over the MB area under the CR** (r3, PM4)",
+   "new": "**a 0.125 mm polyimide sheet bonded over the MB area under the CR** (r3, PM4; **r7:** cut to the r7 outline + 1 mm with trims at CO-5V, J-NTC, L-FC and ROP1-FC, A.7, H.23(m))",
+   "note": "A.1 MB row: r7 sheet outline"
+  },
+  {
+   "old": "new 4-layer PCB, 31.0 x 33.0 mm (board x 17.70-48.70, y 34.14-67.14), 2 oz outer / 1 oz inner copper, ICs on the top side, passives-only bottom side (<= 1.0 mm) outside a bottom keep-out and the MB power-copper shadow (A.7, H.18), 22 header pins",
+   "new": "new 4-layer PCB, 31.0 x 33.0 mm (board x 17.70-48.70, y 34.14-67.14) (**superseded in r7:** the r7 outline = that r6 rectangle + **tab X** toward the Teensy (x 48.70-65.00, y 56.30-68.30) + **tab Y** toward L-FC (x 17.70-37.56, y 67.14-76.00); bounding box x 17.70-65.00, y 34.14-76.00 = 47.30 x 41.86 mm, area 1394.06 mm², H.23(a); A.7), 2 oz outer / 1 oz inner copper (4-layer build unchanged in r7), ICs on the top side, passives-only bottom side (<= 1.0 mm) outside a bottom keep-out and the MB power-copper shadow (A.7, H.18) (**superseded in r7:** outside the bottom clearance rule, which covers the footprint and both tabs, A.7, H.23(d)); **r7: two fitted far-end support feet, FT1 (4.0 x 1.6 mm, centre (61.72, 66.705)) under tab X and FT2 (4.0 x 4.0 mm, centre (28.00, 73.250), bedded through a 1.0 mm fill hole) under tab Y, both non-conductive (A.6, A.7, H.23(i))**; 22 header pins",
+   "note": "A.1 CR row: r7 outline, tabs, bbox/area, bottom clearance rule, feet"
+  },
+  {
+   "old": "top-side SMT tap pads F01-F24; keep-alive",
+   "new": "top-side SMT tap pads F01-F24 (**r7:** 20 pads in a 6 x 4 grid on tab X; F08, F09, F10 and F22 on the footprint; A.4); keep-alive",
+   "note": "A.1 CR row: tap field split"
+  },
+  {
+   "old": "**r6: outline chamfer at the pin-11 corner**",
+   "new": "**r6: outline chamfer at the pin-11 corner** (**superseded in r7:** the chamfer moves to the tab Y -x/+y corner (17.70, 76.00), still the only chamfered corner and on the pin-11 side, H.23(a))",
+   "note": "A.1 CR row: chamfer relocated"
+  },
+  {
+   "old": "on two M3 nylon standoffs on the chassis just off the EVM's right edge",
+   "new": "on two M3 nylon standoffs on the chassis (**superseded in r7:** the same two standoffs stand on the EVM plate, so the EIB and the EVM form one rigid body, A.7) just off the EVM's right edge",
+   "note": "A.1 EIB row: on the EVM plate"
+  },
+  {
+   "old": "R273 10 ohm ground link, R274 10 kOhm 3V3 bleed |",
+   "new": "R273 10 ohm ground link, R274 10 kOhm 3V3 bleed; **r7: R276 10.0 ohm in series with E1 at the EIB E1 pad (A.5)** |",
+   "note": "A.1 EIB row: R276"
+  },
+  {
+   "old": "Off-board on M3 nylon standoffs on the chassis, >= 20 mm from the LM1084 side of MB, leads <= 0.30 m |",
+   "new": "Off-board on M3 nylon standoffs on the chassis, >= 20 mm from the LM1084 side of MB, leads <= 0.30 m (**superseded in r7:** on the EVM plate, an insulating plate fixed to the chassis; the EVM rests on its stock bumpons H1-H4 and is held by edge clamps with silicone pads; no drilling of the EVM and no corner-hole standoffs, because the corner circles are fiducials, not holes (SLUUCB5E Figs 4-1 to 4-4); reference placement just past the MB +y edge, corridor fallback (i) if MS2 requires it (A.7, H.23(l)); W-lead maxima 0.30 m until MS2, then the route maxima of A.3) |",
+   "note": "A.1 EVM row: EVM plate, no drilling, no corner-hole standoffs"
+  },
+  {
+   "old": "The full drawing is `round3/wiring_bq25798.svg`.",
+   "new": "The full drawing is `round3/wiring_bq25798.svg`. **r7:** the regenerated drawing is `round4/wiring_bq25798.svg`; the r7 carrier layout is `round4/carrier_layout_r7.svg` and the schematic `round4/carrier_schematic.svg` (generator `round4/calc/make_svgs_r7.py`).",
+   "note": "A.1: r7 figures"
+  },
+  {
+   "old": "plus a chassis cable tie within 30 mm of the CR edge;",
+   "new": "plus a chassis cable tie within 30 mm of the CR edge (**r7:** at the MB +y edge, 29.744 mm from the tab X top edge, H.23(l));",
+   "note": "A.3 W1: chassis tie position"
+  },
+  {
+   "old": "| 0.30 m | Twisted with W2",
+   "new": "| 0.30 m (**r7:** until MS2; then 230 mm, or 260 mm in corridor fallback (i); r7 note below) | Twisted with W2",
+   "note": "A.3 W1 max"
+  },
+  {
+   "old": "| input return | 20 AWG, black | 0.30 m |",
+   "new": "| input return | 20 AWG, black | 0.30 m (**r7:** until MS2; then 240 / 270 mm) |",
+   "note": "A.3 W2 max"
+  },
+  {
+   "old": "| 0.30 m | Twisted with W4",
+   "new": "| 0.30 m (**r7:** until MS2; then 180 / 170 mm) | Twisted with W4",
+   "note": "A.3 W3 max"
+  },
+  {
+   "old": "| battery return | 18 AWG, black | 0.30 m |",
+   "new": "| battery return | 18 AWG, black | 0.30 m (**r7:** until MS2; then 180 / 170 mm) |",
+   "note": "A.3 W4 max"
+  },
+  {
+   "old": "is folded once toward **-x over the tap field at >= 8 mm above the CR top**, and runs along W1/W2;",
+   "new": "is folded once toward **-x over the tap field at >= 8 mm above the CR top**, and runs along W1/W2 (**superseded in r7:** the flat cable is folded once toward +y, passes over tab X at the same fold height (>= 8 mm above the CR top) with W1/W2 and crosses the MB +y edge in the W-lead band x 56-68.91; it is dressed clear of the tap pads so every tap stays reworkable);",
+   "note": "A.3 W5 dressing (basis A5)"
+  },
+  {
+   "old": "| 0.30 m | **1 3V3",
+   "new": "| 0.30 m (**r7:** factory cable kept; route-rule maximum 200 mm, or 180 mm in fallback (i), so the cable fits) | **1 3V3",
+   "note": "A.3 W5 max"
+  },
+  {
+   "old": "| 0.30 m | **Only if** an NTC",
+   "new": "| 0.30 m (**r7:** until MS2; then 110 / 120 mm) | **Only if** an NTC",
+   "note": "A.3 W6 max"
+  },
+  {
+   "old": "| 0.30 m | **GND conductor bonded",
+   "new": "| 0.30 m (**r7:** until MS2; then SCL 140 / 180 mm, SDA 130 / 170 mm) | **GND conductor bonded",
+   "note": "A.3 W7 max"
+  },
+  {
+   "old": "unspecified above 2 A, T-B-19 measures). Drops and losses in H.11.",
+   "new": "unspecified above 2 A, T-B-19 measures). Drops and losses in H.11.\n\n**r7 (W-lead routes and maxima, H.23(l)):** the CR ends of W1-W7 are unchanged; the tabs do not shorten the EVM leads, only the EVM placement does. Every W lead leaves the CR over tab X and crosses the MB +y edge at x 56-68.91 mm. The upper limit keeps the chassis cable tie at the MB +y edge within 30 mm of the CR edge: the tie sits 29.744 mm from the tab X top edge (margin 0.256 mm). Until MS2 confirms the EVM reference placement (A.7), the 0.30 m caps of the table stay the T-A-02 bound. After MS2, the route-rule maxima become the build maxima. The route rule (A.7) sets the build maximum to 1.25 x the routed length (CR pad, tab X, MB +y edge, terminal approach on its wire-entry side, terminal), rounded up to 10 mm. The table below gives the route-rule figures for the reference placement and for corridor fallback (i) (EVM and EIB shifted 27.03 mm toward -x; it needs 45.3 mm of chassis room past the MB -x edge, A.7). Corridor fallbacks (ii) and (iii) fail (H.23(l)).\n\n| Lead | Reference placement: route / build max (mm) | Corridor fallback (i): route / build max (mm) |\n|---|---|---|\n| W1 | 181.6 / **230** | 207.5 / **260** |\n| W2 | 189.1 / **240** | 215.1 / **270** |\n| W3 | 139.2 / **180** | 128.2 / **170** |\n| W4 | 143.8 / **180** | 133.3 / **170** |\n| W6 | 81.9 / **110** | 92.8 / **120** |\n| W7 SCL | 109.2 / **140** | 136.2 / **180** |\n| W7 SDA | 103.0 / **130** | 129.9 / **170** |\n| W5 (0.30 m factory cable) | 159.8 / **200** | 141.6 / **180** |\n\nAt the reference build maxima the W1/W2 pair has 15.66 mOhm (28.2 mV and 50.7 mW at 1.80 A). The W3/W4 pair has 7.54 mOhm (23.4 mV and 72.5 mW at 3.10 A; 24.2 mV and 77.7 mW at 3.21 A). At 0.30 m each, the H.11 basis, the pairs have 19.99 mOhm and 12.57 mOhm. Every fallback (i) maximum of W1-W4, W6 and W7 is <= 0.30 m, so H.11 bounds it as well. Every reference route keeps >= 10.10 mm from the MB switched conductors (VSW-FC/VSW-BT pours, L-FC/L-BT bodies, REG-FC/REG-BT boxes). At the reference placement W3/W4 pass between the EVM right edge and the USB corridor in a channel 4.97 mm wide; the outer size of the twisted 18 AWG pair is TODO(measure: MS2/MS7).",
+   "note": "A.3: r7 W-lead route maxima, pair resistances, chassis tie, fallbacks"
+  },
+  {
+   "old": "no holes, 3 x 8 grid at 2.54 mm;",
+   "new": "no holes, 3 x 8 grid at 2.54 mm (**superseded in r7:** 6 x 4 grid at 2.54 mm on tab X plus residual pads F08, F09, F10 and F22 on the footprint);",
+   "note": "A.4 heading: grid superseded"
+  },
+  {
+   "old": "unusable, solder the tap to the pin's second position on the MB pad.",
+   "new": "unusable, solder the tap to the pin's second position on the MB pad.\n\n**r7 (tap field on tab X, H.23(g)):** the r6 tap field (3 x 8 grid, envelope x 23.15-42.43, y 35.05-41.63, A.7) is superseded. Twenty pads (F01-F07, F11-F21, F23, F24) and R175 occupy a 6 x 4 grid at 2.54 mm on tab X, with centres at x 50.80 / 53.34 / 55.88 / 58.42 / 60.96 / 63.50 mm and y 58.94 / 61.48 / 64.02 / 66.56 mm. The pad envelope is x 50.050-64.250, y 58.190-67.310. Its low pad edge is 2.233 mm from the MB 5V copper rim (rule >= 2.0 mm). R175 stands vertical in grid column 1, rows 2-3 (courtyard x 49.650-51.950, y 60.375-65.125), beside F07. Two grid positions stay spare: (53.34, 64.02) and (50.80, 66.56). Four residual pads stay on the footprint low row y 35.80: F08 (T22) at x 26.44, F09 (T8) at x 28.98, F10 (T9) at x 31.52 and F22 (T18) at x 41.68. The CR field column of the table gives each pad centre. Grid rows 1-2 and R175 lie inside the thermal band (A.7); the band admits pads, wires, the RTV bead and temperature-insensitive passives such as R175.\n\n**r7 lengths (information):** each r7 straight length runs from the pad centre to the `.brd` pad of the MB point, for example C-D6 pad 1 at (97.790, 16.412) and SNS-BT pad 15 at (55.443, 26.492), not to the part centres above. The sum over the 20 taps (T7b follows T1; T18, T19 and F24 are options) falls from 1308.0 mm (r6) to 850.9 mm straight (-34.9 %) and 856.7 mm dressed. The Length column keeps the r6 maxima; they stay valid upper bounds, because every r7 straight and dressed length is shorter.\n\n**r7 dressing rule:** wires from tab X stay at y > 56 until x > 63 and never pass over the LM1084 body (REG-5V box x 50.97-62.31, y 36.87-54.51). The straight lines of T1, T7b and T5 cross the REG-5V box. These three wires are dressed toward +y in the inter-row gaps, never across neighbouring pads. The tap wires are fitted after the FT1 bed has cured (PM4 order, A.7). T18 could not follow the dressing rule from tab X, so F22 sits on the footprint low row. Its straight path (10.54 mm) passes beside the pin-1 post, 0.240 mm from the post square, and crosses that post's 1.9 mm CR pad land; the wire is dressed over the CR top there. The F22 pad courtyard is 5.33 mm from the J101 box. The T18 joint at CO-5V pad 1 sits 0.172 mm (centreline end) from the REG-5V box, so F101 and R172 at that joint receive a temperature-derating check in T-A-05.",
+   "note": "A.4: r7 tap field, straight lengths, dressing rule, T18"
+  },
+  {
+   "old": "| T1 | F01 |",
+   "new": "| T1 | F01 (**r7:** (50.80, 58.94); 63.4 mm straight, 67.3 mm dressed) |",
+   "note": "A.4 tap row: r7 pad centre and straight length"
+  },
+  {
+   "old": "| T7b | F02 |",
+   "new": "| T7b | F02 (**r7:** (53.34, 58.94); 59.5 mm straight, 62.5 mm dressed) |",
+   "note": "A.4 tap row: r7 pad centre and straight length"
+  },
+  {
+   "old": "| T2 | F03 |",
+   "new": "| T2 | F03 (**r7:** (58.42, 66.56); 9.9 mm straight) |",
+   "note": "A.4 tap row: r7 pad centre and straight length"
+  },
+  {
+   "old": "| T3 | F04 |",
+   "new": "| T3 | F04 (**r7:** (55.88, 61.48); 36.3 mm straight) |",
+   "note": "A.4 tap row: r7 pad centre and straight length"
+  },
+  {
+   "old": "| T4 | F05 |",
+   "new": "| T4 | F05 (**r7:** (58.42, 58.94); 35.6 mm straight) |",
+   "note": "A.4 tap row: r7 pad centre and straight length"
+  },
+  {
+   "old": "| T5 | F06 |",
+   "new": "| T5 | F06 (**r7:** (55.88, 58.94); 39.2 mm straight, 41.0 mm dressed) |",
+   "note": "A.4 tap row: r7 pad centre and straight length"
+  },
+  {
+   "old": "| T6 | F07 |",
+   "new": "| T6 | F07 (**r7:** (53.34, 61.48), beside R175; 34.3 mm straight) |",
+   "note": "A.4 tap row: r7 pad centre and straight length"
+  },
+  {
+   "old": "| T22 | F08 (r6; the capture puts F08 at the low-y tap-field position nearest BAL, x ~26.4) |",
+   "new": "| T22 | F08 (r6; the capture puts F08 at the low-y tap-field position nearest BAL, x ~26.4; **r7:** residual pad on the footprint low row, (26.44, 35.80); 5.4 mm straight) |",
+   "note": "A.4 tap row: r7 pad centre and straight length"
+  },
+  {
+   "old": "| T8 | F09 |",
+   "new": "| T8 | F09 (**r7:** residual pad on the footprint, (28.98, 35.80); 82.8 mm straight) |",
+   "note": "A.4 tap row: r7 pad centre and straight length"
+  },
+  {
+   "old": "| T9 | F10 |",
+   "new": "| T9 | F10 (**r7:** residual pad on the footprint, (31.52, 35.80); 25.7 mm straight to SNS-BT pad 15) |",
+   "note": "A.4 tap row: r7 pad centre and straight length"
+  },
+  {
+   "old": "| T10 | F11 |",
+   "new": "| T10 | F11 (**r7:** (63.50, 64.02); 23.6 mm straight) |",
+   "note": "A.4 tap row: r7 pad centre and straight length"
+  },
+  {
+   "old": "| T11 | F12 |",
+   "new": "| T11 | F12 (**r7:** (58.42, 64.02); 51.7 mm straight) |",
+   "note": "A.4 tap row: r7 pad centre and straight length"
+  },
+  {
+   "old": "| T12 | F13 |",
+   "new": "| T12 | F13 (**r7:** (60.96, 58.94); 55.6 mm straight) |",
+   "note": "A.4 tap row: r7 pad centre and straight length"
+  },
+  {
+   "old": "| T13 | F14 |",
+   "new": "| T13 | F14 (**r7:** (63.50, 58.94); 52.1 mm straight) |",
+   "note": "A.4 tap row: r7 pad centre and straight length"
+  },
+  {
+   "old": "| T14 | F15 |",
+   "new": "| T14 | F15 (**r7:** (63.50, 61.48); 46.7 mm straight) |",
+   "note": "A.4 tap row: r7 pad centre and straight length"
+  },
+  {
+   "old": "| T15 | F16 |",
+   "new": "| T15 | F16 (**r7:** (55.88, 66.56); 56.7 mm straight) |",
+   "note": "A.4 tap row: r7 pad centre and straight length"
+  },
+  {
+   "old": "| T16 | F17 |",
+   "new": "| T16 | F17 (**r7:** (58.42, 61.48); 56.7 mm straight) |",
+   "note": "A.4 tap row: r7 pad centre and straight length"
+  },
+  {
+   "old": "| T17 | F18 |",
+   "new": "| T17 | F18 (**r7:** (60.96, 66.56); 51.1 mm straight) |",
+   "note": "A.4 tap row: r7 pad centre and straight length"
+  },
+  {
+   "old": "| T17r | F19 |",
+   "new": "| T17r | F19 (**r7:** (60.96, 64.02); 49.7 mm straight) |",
+   "note": "A.4 tap row: r7 pad centre and straight length"
+  },
+  {
+   "old": "| T20 | F20 |",
+   "new": "| T20 | F20 (**r7:** (55.88, 64.02); 26.3 mm straight) |",
+   "note": "A.4 tap row: r7 pad centre and straight length"
+  },
+  {
+   "old": "| T21 | F21 |",
+   "new": "| T21 | F21 (**r7:** (63.50, 66.56); 48.0 mm straight) |",
+   "note": "A.4 tap row: r7 pad centre and straight length"
+  },
+  {
+   "old": "| T18 | F22 |",
+   "new": "| T18 | F22 (**r7:** residual pad on the footprint low row, (41.68, 35.80); 10.5 mm straight) |",
+   "note": "A.4 tap row: r7 pad centre and straight length"
+  },
+  {
+   "old": "| T19 | F23 |",
+   "new": "| T19 | F23 (**r7:** (60.96, 61.48); 50.2 mm straight) |",
+   "note": "A.4 tap row: r7 pad centre and straight length"
+  },
+  {
+   "old": "| - | F24 |",
+   "new": "| - | F24 (**r7:** (53.34, 66.56); 37.8 mm straight) |",
+   "note": "A.4 tap row: r7 pad centre and straight length"
+  },
+  {
+   "old": "### A.5 EIB wiring to the EVM (28 AWG Kynar; EIB on the chassis beside the EVM's right edge)",
+   "new": "### A.5 EIB wiring to the EVM (28 AWG Kynar; EIB on the EVM plate beside the EVM's right edge, r7; on the chassis in r6)",
+   "note": "A.5 heading: EVM plate"
+  },
+  {
+   "old": "JP21 pin 1 (902, 408), JP14 pin 2",
+   "new": "JP21 pin 1 (902, 408) (**superseded in r7:** that point is the upper post, pin 2 (AGND); pin 1 is the lower square post), JP14 pin 2",
+   "note": "A.5: JP21 pixel point is pin 2"
+  },
+  {
+   "old": "**T-A-02** confirms each point by net and **T-A-06** records every final length against these maxima on the dry fit.",
+   "new": "**T-A-02** confirms each point by net and **T-A-06** records every final length against these maxima on the dry fit.\n\n**r7 (vector EVM positions, H.23(k)):** the EVM points now come from the SLUUCB5E rev E vector layer figures (Figs 4-1 to 4-4), in the EVM frame of `work/evm_geometry.md` Table 1 (mm, top view, origin at the lower-left board corner, +y up). The r6 rendered-figure scale (8.66 px/mm) was 2.5 % (x) and 2.2 % (y) high (`work/evm_geometry.md` 7.1), so the r6 straight distances were 1.0-3.0 % short; the r6 pixel positions above are superseded. JP21 pin 1 (ILIM_HIZ) is the lower square post at (75.312, 64.769) EVM mm; the r6 point (902, 408) px is the upper post, pin 2 (AGND). The EIB placement relative to the EVM is unchanged: pad column 7 mm off the EVM right edge (x 95.90 EVM mm), E3 at y 68.499 (5 mm above TP33), rows 2.54 mm apart downward. The r6 rule (straight x 1.25, rounded up to 5 mm) re-runs on the vector positions. E1 rises from 85 to 90 mm and E5 from 60 to 65 mm; the other six maxima are unchanged. The three sense and hold leads with a pickup criterion (`work/eib_merge_failsafe.md` Table 9: sustained EMF <= 10 % of the smallest margin) use at most 0.51 of their limit: E3 0.27 of 92 mm, E4 0.51 of 59 mm, E6 0.31 of 196 mm. The EIB stands on the EVM plate with the EVM (A.7), so the two ends of every E lead move as one body.",
+   "note": "A.5: r7 vector positions, JP21, maxima, criterion margins"
+  },
+  {
+   "old": "| 13.5 / **20 mm** |",
+   "new": "| 13.5 / **20 mm** (**r7:** 13.6 / **20 mm**) |",
+   "note": "A.5 E8 r7"
+  },
+  {
+   "old": "| 16.5 / **25 mm** (r5: 20) |",
+   "new": "| 16.5 / **25 mm** (r5: 20) (**r7:** 16.7 / **25 mm**) |",
+   "note": "A.5 E3 r7"
+  },
+  {
+   "old": "(JP21 open; R256/C252 share the post on their own joint)",
+   "new": "(JP21 open; R256/C252 share the post on their own joint; **r7:** the lower square post, (75.312, 64.769) EVM mm)",
+   "note": "A.5 E4 point"
+  },
+  {
+   "old": "| 20.3 / **30 mm** |",
+   "new": "| 20.3 / **30 mm** (**r7:** 20.6 / **30 mm**) |",
+   "note": "A.5 E4 r7"
+  },
+  {
+   "old": "| 24.1 / **35 mm** |",
+   "new": "| 24.1 / **35 mm** (**r7:** 24.6 / **35 mm**) |",
+   "note": "A.5 E2 r7"
+  },
+  {
+   "old": "| 29.5 / **40 mm** (r5: 30) |",
+   "new": "| 29.5 / **40 mm** (r5: 30) (**r7:** 29.9 / **40 mm**) |",
+   "note": "A.5 E7 r7"
+  },
+  {
+   "old": "(r6: shorter than TP27, 67 vs 77 mm straight)",
+   "new": "(r6: shorter than TP27, 67 vs 77 mm straight, rendered-figure distances; **r7:** JP12 pin 1, the square post, at (39.370, 13.741) EVM mm)",
+   "note": "A.5 E1 point"
+  },
+  {
+   "old": "| 67.3 / **85 mm** (r5: 65) |",
+   "new": "| 67.3 / **85 mm** (r5: 65) (**superseded in r7:** 69.0 / **90 mm**) |",
+   "note": "A.5 E1 r7 max 90"
+  },
+  {
+   "old": "| Supply for the Q201-Q203 gate pull-ups only;",
+   "new": "| Supply for the Q201-Q203 gate pull-ups only (**superseded in r7:** E1 supplies the Q201/Q202 gate pull-ups R252 and R254, the Q203 gate resistor R271 and the release feed through Q203/R255 (B.6); of the H.15 \"REGN pull-ups R254/R272/R272b\", only R254 passes through E1, because R272/R272b sit on the EVM); **r7: E1 enters the EIB through R276 (below)**;",
+   "note": "A.5 E1 load statement corrected (basis A6)"
+  },
+  {
+   "old": "| 47.7 / **60 mm** (r5: 50) |",
+   "new": "| 47.7 / **60 mm** (r5: 50) (**superseded in r7:** 49.1 / **65 mm**) |",
+   "note": "A.5 E5 r7 max 65"
+  },
+  {
+   "old": "| 44.3 / **60 mm** |",
+   "new": "| 44.3 / **60 mm** (**r7:** 45.4 / **60 mm**) |",
+   "note": "A.5 E6 r7"
+  },
+  {
+   "old": "Parts fitted on the EVM itself (not on the EIB):",
+   "new": "**r7: R276 (E1 damping, H.23(k)).** The EIB carries **R276 10.0 ohm 1 % 0603 (CRCW060310R0FKEA, the R273 part number)** in series with E1 at the EIB E1 pad, between the E1 lead and the EIB REGN node (C205). Without R276, E1 with its E8 return and C205 (100 nF) is a series LC at 1.471 MHz (85 mm) or 1.430 MHz (90 mm), against the 1.5 MHz BQ25798 switching frequency (JP24/EM19). On the DC wire resistance the undamped Q is 19.3 (85 mm) and 19.1 (90 mm), or 25.5 and 25.6 with the E8 return at its 20 mm maximum. With the skin-effect resistance (Rac/Rdc 1.71 at 1.43 MHz) these fall to 13.1 and 13.0 (18.4 and 18.5); all are upper bounds, since the proximity effect and the C205 ESR frequency dependence are not modelled. With R276 the Q is 0.108 (85 mm) and 0.111 (90 mm): the loop is overdamped (zeta 4.6 and 4.5). R276 with C205 is also a 159 kHz low-pass, so a 1.5 MHz REGN ripple reaches C205 at 0.106 of its EVM amplitude; T-C-16 checks the ring. The static drop across R276 is 1.02 mV at the H.15 E1 load (0.102 mA, held, R254 only, REGN 4.8 V) and at most 3.96 mV (0.396 mA, released into the regen clamp, REGN 5.2 V). In the held states Q203 is off and Q201 sets the hold level, so the drop changes nothing. In the released states the drop lowers the ILIM_HIZ release level by at most 1.786 mV, which lowers IINDPM by at most 2.23 mA. This is the safe direction (less input current). The gate drives are unaffected at the mV level.\n\nParts fitted on the EVM itself (not on the EIB):",
+   "note": "A.5: R276 paragraph"
+  },
+  {
+   "old": "landed at the Teensy AGND end (instead of the CR end) with a 100 ohm tie to the CR plane, as T9/R143 do for BT_OK.",
+   "new": "landed at the Teensy AGND end (instead of the CR end) with a 100 ohm tie to the CR plane, as T9/R143 do for BT_OK.\n- **r7 (tabs, feet and the EVM plate; the topology is unchanged):** the CR L2 GND plane continues without a break into tab X and tab Y. Every tab-side pad, part and bottom passive therefore returns to the same plane, which still bonds to MB GND only at CHG pads 4/14/15. The far-end feet FT1 and FT2 are non-conductive (PA66 or PBT blocks on neutral-cure RTV beds) and add no ground contact between the CR and the MB. The MB vias are not tented (H.23(c2)); the polyimide sheet and the L4 solder mask keep the tab undersides off the exposed via rings. The EVM plate is insulating, and no fastener, clamp or adhesive bonds EVM copper to the plate, the CR or the chassis (checked in T-A-02). The single-point scheme above therefore holds as written: the EVM ground reaches the CR only through W2 and W4, and the EIB ground reaches the EVM only through E8 at TP49 and the CR only through R273.",
+   "note": "A.6: r7 L2 plane into tabs, feet non-conductive, EVM plate insulating"
+  }
+ ]
+}

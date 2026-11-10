@@ -1,0 +1,673 @@
+r7_calc.py - H.23 of the r7 BQ25798EVM wiring design (round 4). BRD: references\Scale Car Board PCB 20260625.brd
+Board coordinates mm, top view, +y up. ORDER-OF-MAGNITUDE labels apply to every resonance and pin-load figure.
+
+======================================================================================================================
+H.23(a) r7 outline: vertices, areas, chamfer, bounding box
+======================================================================================================================
+Sources: r6 rectangle DOC A.7; tab X, tab Y and the relocated chamfer BASIS D1 / section 1.
+vertex  x       y       corner
+  V1     17.70   34.14  convex
+  V2     48.70   34.14  convex
+  V3     48.70   56.30  concave
+  V4     65.00   56.30  convex
+  V5     65.00   68.30  convex
+  V6     48.70   68.30  convex
+  V7     48.70   67.14  concave
+  V8     37.56   67.14  concave
+  V9     37.56   76.00  convex
+  V10    18.70   76.00  convex
+  V11    17.70   75.00  convex
+areas: r6 rectangle 1023.00 + tab X 195.60 + tab Y 175.96 - chamfer 0.50 = 1394.06 mm2 (shoelace 1394.06 mm2)
+added by the tabs: 371.06 mm2 gross (minimal proposal: tab Y 206.3 mm2, total 1424.9 mm2; r7 trim -30.84 mm2)
+bounding box x 17.70-65.00, y 34.14-76.00 = 47.30 x 41.86 mm (minimal: 47.30 x 42.37 mm)
+concave corners (fab router radius, TODO(verify: MS8 minimum inside-corner radius)): (48.70, 56.30), (48.70, 67.14), (37.56, 67.14)
+chamfer: the only chamfered corner, 1.0 mm x 45 deg at the tab Y -x/+y corner (17.70, 76.00); the r6 chamfer corner (17.70, 67.14) is now a point on the straight left edge x 17.70
+
+======================================================================================================================
+H.23(b) plan clearance of every tab edge/corner to MB part boxes and non-GND copper rims within 5 mm
+======================================================================================================================
+Part box = mb_neighbours.element_records bbox (pads + layers 21/22/39/40/51/52; BRD). Copper rim: a trace by w/2 around its centreline, a polygon by w/2 beyond its vertex path (outline width from the BRD), a via by its pad radius 0.3782 mm (drill 0.35 + 2 x clamp(rvViaOuter 0.25 x drill, rlMinViaOuter 0.2032, rlMaxViaOuter 0.5080); BRD design rules; confirmed by the 0.9596 mm stop-mask flashes = pad + 2 x mlMinStopFrame 0.1016 in GBR, H.23(c2)), an MB CHG header pad (shape="square" in the BRD) by its square of side 1.650 mm (drill + 2 x clamp(rvPadTop x drill, rlMinPadTop, rlMaxPadTop); the pad corners are not rounded in the model).
+Clearance = plan distance from the feature (rim) to the nearest free edge of the tab; < 0: the rim reaches over that edge. 'UNDER the tab' = the centreline/box overlaps the tab (content in H.23(c)); 'under the CR r6 part (wholly inside the r7 outline)' = the feature lies under the r6 rectangle beside the tab root, and the distance to the free tab edges is shown for information. When such a feature also runs OUTSIDE the r7 outline, the clearance and the status refer to the part outside the outline (wires clipped exactly against the outline). For part boxes the body clearance (layers 21 + 51 straight outlines, markers excluded) is given too. GND copper is the board-wide pour and is not listed.
+
+--- tab X [(48.7, 56.3), (65.0, 56.3), (65.0, 68.3), (48.7, 68.3)]; free edges: ['tab X low edge y 56.30', 'tab X right edge x 65.00', 'tab X top edge y 68.30', 'tab X left step x 48.70 (y 67.14-68.30)']
+  feature class                      feature                                                                   clear mm    body  nearest free edge                          status
+  non-GND copper rim                 3V3 via (56.431,60.663) pad 0.7564                                          -0.378       -  tab X low edge y 56.30                     UNDER the tab
+  non-GND copper rim                 CS-MDAC-FC via (58.420,60.038) pad 0.7564                                   -0.378       -  tab X low edge y 56.30                     UNDER the tab
+  non-GND copper rim                 SCL via (64.651,58.809) pad 0.7564                                          -0.378       -  tab X right edge x 65.00                   UNDER the tab
+  non-GND copper rim                 CHRG-STAT via (63.500,58.928) pad 0.7564                                    -0.378       -  tab X right edge x 65.00                   UNDER the tab
+  non-GND copper rim                 MPPT-DISABLE via (65.024,61.722) pad 0.7564                                 -0.354       -  tab X right edge x 65.00                   RIM OVERLAPS the tab edge
+  non-GND copper rim                 3V3 L1 trace w0.508 (62.99,54.10)-(56.43,60.66)                             -0.254       -  tab X low edge y 56.30                     UNDER the tab
+  non-GND copper rim                 CS-MDAC-FC L1 trace w0.254 (64.77,53.93)-(58.67,60.04)                      -0.127       -  tab X low edge y 56.30                     UNDER the tab
+  non-GND copper rim                 CS-MDAC-FC L1 trace w0.254 (58.67,60.04)-(58.42,60.04)                      -0.127       -  tab X low edge y 56.30                     UNDER the tab
+  non-GND copper rim                 SDA L1 trace w0.254 (48.99,56.86)-(46.00,56.86)                             -0.127       -  tab X low edge y 56.30                     UNDER the tab
+  non-GND copper rim                 SDA L1 trace w0.254 (61.75,62.64)-(54.76,62.64)                             -0.127       -  tab X right edge x 65.00                   UNDER the tab
+  non-GND copper rim                 SDA L1 trace w0.254 (54.76,62.64)-(48.99,56.86)                             -0.127       -  tab X low edge y 56.30                     UNDER the tab
+  non-GND copper rim                 SDA L1 trace w0.254 (65.70,58.69)-(61.75,62.64)                             -0.127       -  tab X right edge x 65.00                   UNDER the tab
+  non-GND copper rim                 SCL L1 trace w0.254 (49.53,56.13)-(55.37,61.98)                             -0.127       -  tab X low edge y 56.30                     UNDER the tab
+  non-GND copper rim                 SCL L1 trace w0.254 (61.38,61.98)-(55.37,61.98)                             -0.127       -  tab X right edge x 65.00                   UNDER the tab
+  non-GND copper rim                 SCL L1 trace w0.254 (64.65,58.81)-(64.55,58.81)                             -0.127       -  tab X right edge x 65.00                   UNDER the tab
+  non-GND copper rim                 SCL L1 trace w0.254 (64.55,58.81)-(61.38,61.98)                             -0.127       -  tab X right edge x 65.00                   UNDER the tab
+  non-GND copper rim                 CHRG-STAT L1 trace w0.254 (49.78,55.63)-(54.36,60.20)                       -0.127       -  tab X low edge y 56.30                     UNDER the tab
+  non-GND copper rim                 CHRG-STAT L1 trace w0.254 (54.36,60.20)-(55.63,61.47)                       -0.127       -  tab X low edge y 56.30                     UNDER the tab
+  non-GND copper rim                 CHRG-STAT L1 trace w0.254 (55.63,61.47)-(60.96,61.47)                       -0.127       -  tab X right edge x 65.00                   UNDER the tab
+  non-GND copper rim                 CHRG-STAT L1 trace w0.254 (60.96,61.47)-(62.99,59.44)                       -0.127       -  tab X right edge x 65.00                   UNDER the tab
+  non-GND copper rim                 CHRG-STAT L1 trace w0.254 (62.99,59.44)-(63.50,58.93)                       -0.127       -  tab X right edge x 65.00                   UNDER the tab
+  non-GND copper rim                 MPPT-DISABLE L1 trace w0.254 (21.00,64.48)-(62.26,64.48)                    -0.127       -  tab X left step x 48.70 (y 67.14-68.30)    UNDER the tab
+  non-GND copper rim                 MPPT-DISABLE L1 trace w0.254 (62.26,64.48)-(65.02,61.72)                    -0.127       -  tab X right edge x 65.00                   UNDER the tab
+  non-GND copper rim                 CB-DISABLE L1 trace w0.254 (43.43,63.75)-(61.47,63.75)                      -0.127       -  tab X left step x 48.70 (y 67.14-68.30)    UNDER the tab
+  non-GND copper rim                 CB-DISABLE L1 trace w0.254 (61.47,63.75)-(66.80,58.42)                      -0.127       -  tab X right edge x 65.00                   UNDER the tab
+  non-GND copper rim                 VBUS L1 polygon w1.016 bbox (65.53,19.56)-(79.55,72.64)                      0.024       -  tab X right edge x 65.00                   FLAG < 0.5 mm
+  non-GND copper rim                 SCL L1 trace w0.254 (47.72,54.32)-(49.53,56.13)                              0.039       -  tab X low edge y 56.30                     FLAG < 0.5 mm (part outside the r7 outline: (48.70,55.30)-(49.53,56.13); the rest lies under the CR r6 part)
+  non-GND copper rim                 N$7 L1 trace w0.254 (49.28,69.34)-(48.01,68.07)                              0.203       -  tab X top edge y 68.30                     FLAG < 0.5 mm
+  non-GND copper rim                 SDA via (65.702,58.590) pad 0.7564                                           0.324       -  tab X right edge x 65.00                   FLAG < 0.5 mm
+  non-GND copper rim                 5V via (59.389,55.579) pad 0.7564                                            0.343       -  tab X low edge y 56.30                     FLAG < 0.5 mm
+  non-GND copper rim                 3V3 via (51.097,69.131) pad 0.7564                                           0.453       -  tab X top edge y 68.30                     FLAG < 0.5 mm
+  non-GND copper rim                 5V L1 trace w0.508 (56.64,52.83)-(59.39,55.58)                               0.467       -  tab X low edge y 56.30                     FLAG < 0.5 mm
+  non-GND copper rim                 CHRG-STAT L1 trace w0.254 (49.78,53.34)-(49.78,55.63)                        0.547       -  tab X low edge y 56.30                     ok
+  non-GND copper rim                 N$7 L1 trace w0.254 (48.01,68.07)-(47.24,67.31)                              0.567       -  tab X left step x 48.70 (y 67.14-68.30)    ok
+  non-GND copper rim                 SDA L1 trace w0.254 (65.70,58.59)-(65.70,58.69)                              0.575       -  tab X right edge x 65.00                   ok
+  non-GND copper rim                 3V3 L1 trace w0.254 (51.10,69.13)-(51.10,69.37)                              0.704       -  tab X top edge y 68.30                     ok
+  non-GND copper rim                 N$7 L1 trace w0.254 (49.28,70.10)-(49.28,69.34)                              0.915       -  tab X top edge y 68.30                     ok
+  non-GND copper rim                 MISO via (53.998,69.596) pad 0.7564                                          0.918       -  tab X top edge y 68.30                     ok
+  non-GND copper rim                 3V3 L1 trace w0.254 (51.10,69.37)-(48.83,71.63)                              0.939       -  tab X top edge y 68.30                     ok
+  non-GND copper rim                 MISO L1 trace w0.254 (49.03,72.13)-(51.56,69.60)                             1.169       -  tab X top edge y 68.30                     ok
+  non-GND copper rim                 MISO L1 trace w0.254 (51.56,69.60)-(54.00,69.60)                             1.169       -  tab X top edge y 68.30                     ok
+  non-GND copper rim                 N$7 L1 trace w0.254 (47.24,67.31)-(45.21,67.31)                              1.329       -  tab X left step x 48.70 (y 67.14-68.30)    ok
+  non-GND copper rim                 CB-DISABLE via (66.802,58.420) pad 0.7564                                    1.424       -  tab X right edge x 65.00                   ok
+  non-GND copper rim                 5V L1 polygon w0.508 bbox (49.78,37.85)-(61.98,54.61)                        1.436       -  tab X low edge y 56.30                     ok
+  non-GND copper rim                 N$7 L1 trace w0.254 (49.28,70.61)-(49.28,70.10)                              1.677       -  tab X top edge y 68.30                     ok
+  part box                           MDAC-FC box (47.11,70.00)-(52.97,73.25)                                      1.701   1.701  tab X top edge y 68.30                     ok
+  part box                           REG-5V box (50.97,36.87)-(62.31,54.51)                                       1.786   3.953  tab X low edge y 56.30                     ok
+  non-GND copper rim                 CHG pad SDA SDA (45.998,56.864) 1.650 mm square                              1.877       -  tab X low edge y 56.30                     under the CR r6 part (wholly inside the r7 outline; distance to the free tab edges)
+  non-GND copper rim                 3V3 L1 trace w0.508 (62.99,37.08)-(62.99,54.10)                              1.944       -  tab X low edge y 56.30                     ok
+  non-GND copper rim                 SCL L1 trace w0.254 (46.00,54.32)-(47.72,54.32)                              2.079       -  tab X low edge y 56.30                     under the CR r6 part (wholly inside the r7 outline; distance to the free tab edges)
+  non-GND copper rim                 EN-REG-BT via (63.967,53.807) pad 0.7564                                     2.115       -  tab X low edge y 56.30                     ok
+  part box                           C-D2 box (67.12,68.80)-(70.04,70.90)                                         2.181   2.531  tab X right edge x 65.00                   ok
+  non-GND copper rim                 N$7 L1 trace w0.254 (48.77,71.12)-(49.28,70.61)                              2.185       -  tab X top edge y 68.30                     ok
+  non-GND copper rim                 FC-CURR L1 trace w0.254 (51.40,70.63)-(51.05,70.97)                          2.201       -  tab X top edge y 68.30                     ok
+  non-GND copper rim                 FC-CURR L1 trace w0.254 (52.21,70.63)-(51.40,70.63)                          2.201       -  tab X top edge y 68.30                     ok
+  non-GND copper rim                 CHG pad SCL SCL (45.998,54.324) 1.650 mm square                              2.202       -  tab X low edge y 56.30                     under the CR r6 part (wholly inside the r7 outline; distance to the free tab edges)
+  non-GND copper rim                 CS-MDAC-FC L1 trace w0.254 (64.77,39.37)-(64.77,53.93)                       2.239       -  tab X low edge y 56.30                     ok
+  non-GND copper rim                 VDROOP-FC L1 trace w0.254 (47.86,70.63)-(45.70,70.63)                        2.347       -  tab X top edge y 68.30                     ok
+  non-GND copper rim                 EN-REG-BT L1 trace w0.254 (63.97,53.81)-(64.01,53.77)                        2.366       -  tab X low edge y 56.30                     ok
+  non-GND copper rim                 EN-REG-BT L1 trace w0.254 (64.01,53.77)-(64.01,38.61)                        2.407       -  tab X low edge y 56.30                     ok
+  non-GND copper rim                 FC-CURR L1 trace w0.254 (51.05,70.97)-(51.05,74.57)                          2.544       -  tab X top edge y 68.30                     ok
+  non-GND copper rim                 VBUS L1 trace w0.254 (67.70,69.85)-(67.70,67.42)                             2.578       -  tab X right edge x 65.00                   ok
+  non-GND copper rim                 VBUS L1 trace w0.254 (67.70,67.42)-(68.58,66.55)                             2.578       -  tab X right edge x 65.00                   ok
+  non-GND copper rim                 N$7 L1 trace w0.254 (48.76,71.13)-(48.77,71.12)                              2.693       -  tab X top edge y 68.30                     ok
+  non-GND copper rim                 N$7 L1 trace w0.254 (47.86,71.13)-(48.76,71.13)                              2.701       -  tab X top edge y 68.30                     ok
+  non-GND copper rim                 CHRG-STAT L1 trace w0.254 (49.78,46.23)-(49.78,53.34)                        2.833       -  tab X low edge y 56.30                     ok
+  non-GND copper rim                 CHG pad NC3 (unconnected) (45.998,59.404) 1.650 mm square                    2.952       -  tab X low edge y 56.30                     under the CR r6 part (wholly inside the r7 outline; distance to the free tab edges)
+  non-GND copper rim                 3V3 L1 trace w0.254 (48.83,71.63)-(47.86,71.63)                              3.201       -  tab X top edge y 68.30                     ok
+  non-GND copper rim                 5V L1 trace w0.508 (56.64,50.45)-(56.64,52.83)                               3.214       -  tab X low edge y 56.30                     ok
+  non-GND copper rim                 3V3 L1 trace w0.254 (46.23,71.63)-(47.86,71.63)                              3.305       -  tab X top edge y 68.30                     ok
+  non-GND copper rim                 N$7 L1 trace w0.254 (45.21,67.31)-(44.20,67.31)                              3.361       -  tab X left step x 48.70 (y 67.14-68.30)    ok
+  non-GND copper rim                 VBUS L1 trace w0.254 (68.58,66.55)-(78.69,56.44)                             3.453       -  tab X right edge x 65.00                   ok
+  non-GND copper rim                 SCK via (53.848,72.136) pad 0.7564                                           3.458       -  tab X top edge y 68.30                     ok
+  part box                           OP-FC box (40.22,67.30)-(45.12,75.28)                                        3.576   3.833  tab X top edge y 68.30                     ok
+  non-GND copper rim                 VDROOP-FC L1 trace w0.254 (45.70,70.63)-(43.94,72.39)                        3.667       -  tab X top edge y 68.30                     ok
+  non-GND copper rim                 SCK L1 trace w0.254 (52.21,72.13)-(53.84,72.13)                              3.701       -  tab X top edge y 68.30                     ok
+  non-GND copper rim                 SCK L1 trace w0.254 (53.84,72.13)-(53.85,72.14)                              3.701       -  tab X top edge y 68.30                     ok
+  non-GND copper rim                 MISO L1 trace w0.254 (47.86,72.13)-(49.03,72.13)                             3.701       -  tab X top edge y 68.30                     ok
+  non-GND copper rim                 3V3 via (46.228,71.628) pad 0.7564                                           3.767       -  tab X top edge y 68.30                     ok
+  part box                           D-FC-EN box (67.08,71.57)-(70.58,76.32)                                      3.876   4.866  tab X right edge x 65.00                   ok
+  non-GND copper rim                 CS-MDAC-FC via (49.995,72.601) pad 0.7564                                    3.923       -  tab X top edge y 68.30                     ok
+  non-GND copper rim                 5V L1 trace w0.508 (56.64,52.07)-(56.64,50.45)                               3.976       -  tab X low edge y 56.30                     ok
+  non-GND copper rim                 CHG pad NC2 (unconnected) (45.998,51.784) 1.650 mm square                    4.141       -  tab X low edge y 56.30                     under the CR r6 part (wholly inside the r7 outline; distance to the free tab edges)
+  non-GND copper rim                 CS-MDAC-FC L1 trace w0.254 (49.55,72.63)-(49.57,72.60)                       4.174       -  tab X top edge y 68.30                     ok
+  non-GND copper rim                 CS-MDAC-FC L1 trace w0.254 (49.57,72.60)-(49.99,72.60)                       4.174       -  tab X top edge y 68.30                     ok
+  non-GND copper rim                 MOSI L1 trace w0.254 (52.21,72.63)-(52.87,73.29)                             4.201       -  tab X top edge y 68.30                     ok
+  non-GND copper rim                 CS-MDAC-FC L1 trace w0.254 (47.86,72.63)-(49.55,72.63)                       4.201       -  tab X top edge y 68.30                     ok
+  non-GND copper rim                 N$7 L1 trace w0.254 (44.20,67.31)-(43.31,68.20)                              4.377       -  tab X left step x 48.70 (y 67.14-68.30)    ok
+  non-GND copper rim                 MOSI via (53.457,73.289) pad 0.7564                                          4.610       -  tab X top edge y 68.30                     ok
+  non-GND copper rim                 VCHG-IN L1 trace w1.524 (46.00,61.94)-(46.28,62.23)                          4.710       -  tab X left step x 48.70 (y 67.14-68.30)    under the CR r6 part (wholly inside the r7 outline; distance to the free tab edges)
+  non-GND copper rim                 CHG pad VIN+ VCHG-IN (45.998,61.944) 1.650 mm square                         4.757       -  tab X left step x 48.70 (y 67.14-68.30)    under the CR r6 part (wholly inside the r7 outline; distance to the free tab edges)
+  non-GND copper rim                 VCHG-IN L1 trace w1.524 (43.18,49.53)-(43.18,61.21)                          4.758       -  tab X low edge y 56.30                     under the CR r6 part (wholly inside the r7 outline; distance to the free tab edges)
+  non-GND copper rim                 MOSI L1 trace w0.254 (52.87,73.29)-(53.46,73.29)                             4.862       -  tab X top edge y 68.30                     ok
+  non-GND copper rim                 N$6 L1 trace w0.254 (69.34,71.12)-(68.58,71.88)                              4.937       -  tab X right edge x 65.00                   ok
+  non-GND copper rim                 N$6 L1 trace w0.254 (68.58,71.88)-(68.58,72.69)                              4.937       -  tab X right edge x 65.00                   ok
+  non-GND copper rim                 VCHG-IN L1 trace w1.524 (43.91,61.94)-(46.00,61.94)                          5.095       -  tab X left step x 48.70 (y 67.14-68.30)    under the CR r6 part (wholly inside the r7 outline; distance to the free tab edges)
+  non-GND copper rim                 VCHG-IN L1 trace w1.524 (43.69,61.72)-(43.91,61.94)                          6.305       -  tab X left step x 48.70 (y 67.14-68.30)    under the CR r6 part (wholly inside the r7 outline; distance to the free tab edges)
+  non-GND copper rim                 VCHG-IN L1 trace w1.524 (43.18,61.21)-(43.69,61.72)                          6.616       -  tab X low edge y 56.30                     under the CR r6 part (wholly inside the r7 outline; distance to the free tab edges)
+
+--- tab Y [(17.7, 67.14), (37.56, 67.14), (37.56, 76.0), (18.7, 76.0), (17.7, 75.0)]; free edges: ['tab Y right edge x 37.56', 'tab Y top edge y 76.00', 'chamfer (18.70,76.00)-(17.70,75.00)', 'left edge x 17.70 (tab Y part, y 67.14-75.00)']
+  feature class                      feature                                                                   clear mm    body  nearest free edge                          status
+  part box                           J-FC box (3.28,72.14)-(17.23,87.88)                                          0.470   1.570  chamfer (18.70,76.00)-(17.70,75.00)        box < 0.5 mm only (body 1.570 mm)
+  part box                           ROP1-FC box (38.06,73.43)-(39.66,75.86)                                      0.501   0.501  tab Y right edge x 37.56                   ok
+  L-FC body (Eaton 12.9 mm, centred) L-FC Eaton body (22.564,76.862)-(36.364,89.762)                              0.862       -  tab Y top edge y 76.00                     ok
+  part box                           L-FC box (21.05,77.01)-(36.56,89.61)                                         1.012   1.012  tab Y top edge y 76.00                     ok
+  L-FC body (silkscreen 12.6 mm)     L-FC silkscreen body (22.739,77.012)-(36.189,89.612)                         1.012       -  tab Y top edge y 76.00                     ok
+  non-GND copper rim                 N$8 L1 trace w0.254 (39.57,76.17)-(38.86,75.46)                              1.175       -  tab Y right edge x 37.56                   ok
+  non-GND copper rim                 N$8 L1 trace w0.254 (38.86,75.46)-(39.88,74.45)                              1.175       -  tab Y right edge x 37.56                   ok
+  part box                           J-NTC box (3.55,52.91)-(16.25,67.35)                                         1.448   1.448  left edge x 17.70 (tab Y part, y 67.14-75. ok
+  part box                           ROP2-FC box (39.17,76.42)-(41.60,78.02)                                      1.664   2.019  tab Y right edge x 37.56                   ok
+  non-GND copper rim                 N$8 L1 trace w0.254 (39.57,77.22)-(39.57,76.17)                              1.891       -  tab Y right edge x 37.56                   ok
+  non-GND copper rim                 N$8 L1 trace w0.254 (39.37,77.22)-(39.57,77.22)                              2.054       -  tab Y right edge x 37.56                   ok
+  non-GND copper rim                 N$8 L1 trace w0.254 (39.88,74.45)-(39.88,73.66)                              2.191       -  tab Y right edge x 37.56                   ok
+  non-GND copper rim                 N$8 L1 trace w0.254 (39.88,73.66)-(39.88,72.39)                              2.191       -  tab Y right edge x 37.56                   ok
+  non-GND copper rim                 N$8 L1 trace w0.254 (39.88,72.39)-(40.64,71.63)                              2.191       -  tab Y right edge x 37.56                   ok
+  non-GND copper rim                 MPPT-DISABLE L1 trace w0.254 (21.00,64.48)-(62.26,64.48)                     2.529       -  tab Y right edge x 37.56                   under the CR r6 part (wholly inside the r7 outline; distance to the free tab edges)
+  part box                           C1-FC box (18.51,78.55)-(20.60,81.47)                                        2.552   2.910  tab Y top edge y 76.00                     ok
+  part box                           OP-FC box (40.22,67.30)-(45.12,75.28)                                        2.659   2.659  tab Y right edge x 37.56                   ok
+  non-GND copper rim                 N$8 L1 trace w0.254 (40.64,71.63)-(42.04,70.23)                              2.953       -  tab Y right edge x 37.56                   ok
+  non-GND copper rim                 CHG pad MPPTD MPPT-DISABLE (20.998,64.484) 1.650 mm square                   3.077       -  left edge x 17.70 (tab Y part, y 67.14-75. under the CR r6 part (wholly inside the r7 outline; distance to the free tab edges)
+  non-GND copper rim                 VDROOP-FC L1 trace w0.254 (41.20,76.82)-(41.20,77.22)                        3.605       -  tab Y right edge x 37.56                   ok
+  non-GND copper rim                 VDROOP-FC L1 trace w0.254 (41.20,76.82)-(42.21,75.81)                        3.605       -  tab Y right edge x 37.56                   ok
+  non-GND copper rim                 VDROOP-FC L1 trace w0.254 (41.20,77.22)-(42.52,78.54)                        3.712       -  tab Y right edge x 37.56                   ok
+  non-GND copper rim                 VFC L1 polygon w0.152 bbox (9.22,80.34)-(27.36,87.81)                        4.264       -  tab Y top edge y 76.00                     ok
+  non-GND copper rim                 3V3 L1 trace w0.254 (42.42,72.39)-(42.04,72.77)                              4.350       -  tab Y right edge x 37.56                   ok
+  non-GND copper rim                 N$8 L1 trace w0.254 (42.04,68.20)-(42.04,69.21)                              4.350       -  tab Y right edge x 37.56                   ok
+  non-GND copper rim                 N$8 L1 trace w0.254 (42.04,70.23)-(42.04,69.21)                              4.350       -  tab Y right edge x 37.56                   ok
+  non-GND copper rim                 VDROOP-FC L1 trace w0.254 (42.21,75.81)-(42.72,75.81)                        4.523       -  tab Y right edge x 37.56                   ok
+  part box                           RINJ-FC box (42.13,76.51)-(43.73,78.94)                                      4.593   4.648  tab Y right edge x 37.56                   ok
+  non-GND copper rim                 3V3 L1 trace w0.254 (42.93,71.88)-(42.42,72.39)                              4.731       -  tab Y right edge x 37.56                   ok
+  non-GND copper rim                 VFC L1 trace w0.305 (16.62,83.82)-(19.56,80.89)                              4.733       -  tab Y top edge y 76.00                     ok
+  non-GND copper rim                 VFC L1 trace w0.305 (21.98,83.31)-(19.56,80.89)                              4.733       -  tab Y top edge y 76.00                     ok
+  non-GND copper rim                 VFC L1 trace w0.305 (19.56,80.89)-(18.66,81.79)                              4.733       -  tab Y top edge y 76.00                     ok
+  non-GND copper rim                 CHG pad MPPTSEL (unconnected) (20.998,61.944) 1.650 mm square                5.022       -  left edge x 17.70 (tab Y part, y 67.14-75. under the CR r6 part (wholly inside the r7 outline; distance to the free tab edges)
+
+L-FC against the tab Y top edge y 76.00: silkscreen body y0 77.012 -> 1.012 mm; Eaton 12.9 mm body centred on the footprint origin (29.464, 83.312) -> y0 76.862 -> 0.862 mm (ASSUMPTION: centred; TODO(verify: Eaton HCM1A1305V3 drawing); MS3 caliper). At the untrimmed y 76.51: 0.502 / 0.352 mm.
+
+Named rework points (BASIS D1) against both tabs (plan distance, box or pad centre; > 0 = not covered):
+  R171/T2 joint on C-D2 pad 1    tab X   3.118 mm   tab Y  30.145 mm   not covered
+  RENC2                          tab X  15.733 mm   tab Y  43.173 mm   not covered
+  BAL pad 8                      tab X  34.504 mm   tab Y  36.701 mm   not covered
+  RB1A                           tab X  38.765 mm   tab Y  38.425 mm   not covered
+  CBL2                           tab X  38.410 mm   tab Y  36.115 mm   not covered
+  CO-5V                          tab X  14.318 mm   tab Y  27.763 mm   not covered
+  T18 point (CO-5V pad 1)        tab X  15.216 mm   tab Y  29.227 mm   not covered
+  ROP1-FC                        tab X  10.394 mm   tab Y   0.501 mm   not covered
+  ROP2-FC                        tab X  10.782 mm   tab Y   1.664 mm   not covered
+MB part boxes overlapping a tab rectangle: none
+
+======================================================================================================================
+H.23(c) MB content under each tab (parts, layer-1 copper by net with areas, vias)
+======================================================================================================================
+
+--- tab X: region area 195.60 mm2 (raster 0.020 mm)
+  MB part boxes overlapping: none
+  net 3V3            copper rim area inside   3.41 +- 0.3 mm2 (union of the net's shapes; per-shape sum 3.69); trace length inside   6.2 mm; via/wire
+  net CB-DISABLE     copper rim area inside   4.59 +- 0.3 mm2 (union of the net's shapes; per-shape sum 4.64); trace length inside  17.8 mm; wire
+  net CHRG-STAT      copper rim area inside   4.52 +- 0.3 mm2 (union of the net's shapes; per-shape sum 4.84); trace length inside  16.2 mm; via/wire
+  net CS-MDAC-FC     copper rim area inside   1.76 +- 0.3 mm2 (union of the net's shapes; per-shape sum 1.93); trace length inside   5.5 mm; via/wire
+  net MPPT-DISABLE   copper rim area inside   4.63 +- 0.3 mm2 (union of the net's shapes; per-shape sum 4.77); trace length inside  17.4 mm; via/wire
+  net SCL            copper rim area inside   5.11 +- 0.3 mm2 (union of the net's shapes; per-shape sum 5.40); trace length inside  18.6 mm; via/wire
+  net SDA            copper rim area inside   5.14 +- 0.3 mm2 (union of the net's shapes; per-shape sum 5.29); trace length inside  20.0 mm; wire
+  non-GND copper under the tab: 29.16 mm2 = the union over all non-GND nets (sum of the per-net unions 29.16 mm2; the difference is copper shared by two nets, expected 0); each net's area is the union of its traces, vias and pads (cells counted once). The rest is the board-wide GND pour (isolation gaps not modelled)
+  precision (BASIS section 11 B6): each per-net area is stated to +-0.3 mm2 (raster bias of the 0.020 mm cell-centre count along the copper edges: about half a cell times the edge length, e.g. 0.01 mm x ~35 mm of edge for a 17 mm trace); the per-net digits above are the raster result, not its accuracy
+  vias whose pad overlaps the tab (15): [('GND', 49.285, 68.421, 'rim only (centre 0.121 mm outside)'), ('GND', 55.118, 59.182, 'centre inside'), ('GND', 58.42, 56.896, 'centre inside'), ('GND', 53.594, 57.658, 'centre inside'), ('GND', 64.008, 68.58, 'rim only (centre 0.280 mm outside)'), ('GND', 62.23, 58.674, 'centre inside'), ('GND', 59.436, 60.452, 'centre inside'), ('GND', 53.086, 62.738, 'centre inside'), ('GND', 57.404, 65.278, 'centre inside'), ('GND', 52.07, 65.532, 'centre inside'), ('3V3', 56.431, 60.663, 'centre inside'), ('CS-MDAC-FC', 58.42, 60.038, 'centre inside'), ('SCL', 64.651, 58.809, 'centre inside'), ('CHRG-STAT', 63.5, 58.928, 'centre inside'), ('MPPT-DISABLE', 65.024, 61.722, 'rim only (centre 0.024 mm outside)')]
+  of which non-GND: 5 [('3V3', 56.431, 60.663, 'centre inside'), ('CS-MDAC-FC', 58.42, 60.038, 'centre inside'), ('SCL', 64.651, 58.809, 'centre inside'), ('CHRG-STAT', 63.5, 58.928, 'centre inside'), ('MPPT-DISABLE', 65.024, 61.722, 'rim only (centre 0.024 mm outside)')]
+
+--- tab Y: region area 175.47 mm2 (raster 0.020 mm)
+  MB part boxes overlapping: none
+  non-GND copper under the tab: 0.00 mm2 = the union over all non-GND nets (sum of the per-net unions 0.00 mm2; the difference is copper shared by two nets, expected 0); each net's area is the union of its traces, vias and pads (cells counted once). The rest is the board-wide GND pour (isolation gaps not modelled)
+  vias whose pad overlaps the tab (0): []
+  of which non-GND: 0 []
+
+======================================================================================================================
+H.23(c2) MB via stop-mask census (GBR soldermask_top.gbr / soldermask_bottom.gbr against the BRD vias)
+======================================================================================================================
+BRD: 368 vias, drill [0.35] mm, pad [0.7564] mm; 368 of them carry alwaysstop="yes" (Eagle: stop mask regardless of mlViaStopLimit 9999mil)
+  top stop mask: 368 of 368 vias have a flash at the via centre; apertures {"('C', '0.959600')": 368}
+  bottom stop mask: 368 of 368 vias have a flash at the via centre; apertures {"('C', '0.959600')": 368}
+Finding: the MB vias are NOT tented. round4/work/mb_mechanical.md 4.1 ('all tented', from mlViaStopLimit) and DOC A.7 ('16 tented GND vias') read only the design rule; the per-via alwaysstop flag overrides it and the fab Gerber shows an opening at every via. Under the CR the exposed via rings are covered by the polyimide sheet (kept, BASIS D4); the bottom clearance rule already keeps 1.0 mm from every non-GND via rim.
+
+======================================================================================================================
+H.23(d) bottom clearance rule area on the footprint, tab X and tab Y (minus header bodies, W1-W4 pads, foot keep-outs)
+======================================================================================================================
+Raster 0.05 mm over x 17.70-65.00, y 34.14-76.64. Courtyard region = r7 outline inset 0.5 mm on the free edges (DOC A.7); the tab roots are interior. Exclusions (MIN r7_footprint_underside.py basis): header bodies 2.54 mm wide centred on the columns + 0.5 mm (ASSUMPTION, as MIN), W1-W4 pads + 0.5 mm (DOC A.8), MB part boxes + 1.0 mm and every non-GND MB layer-1 copper rim + 1.0 mm (BASIS bottom clearance rule), foot keep-outs.
+
+  step                                                                                                      footpr.    tab X    tab Y    total
+  MIN replica (r6 courtyard rects, tab Y to 39.72/76.51, polygons without rim, via r 0.425, r3 keep-out)      381.7     57.1    177.7    616.5
+  + copper rims (polygon w/2, via pad 0.7564 mm, MB CHG pads)                                                 376.9     55.4    177.7    610.0
+  + named r3 keep-out x 24.5-36.0, y 48.5-53.5 retired (bottom clearance rule covers it)                      379.3     55.4    177.7    612.3
+  + tab Y trimmed to x 37.56 / y 76.00, chamfer relocated                                                     379.3     55.4    157.0    591.7
+  + r7 inset region (tab-root strips recovered)                                                               391.6     55.1    157.0    603.6
+  - FT1/FT2 keep-outs (body + 0.5 mm), FT1 RTV lane (FT2: fill hole, no lane) = r7 bottom area                391.6     44.3    133.2    569.1
+  MIN (proposal Table 7): footprint 383.9 + tab X 57.0 + tab Y 177.9 = 618.9 mm2
+  foot keep-outs remove 34.6 mm2 that the rule had left free; keep-outs [('FT1', (59.22, 65.41, 64.22, 68.01), (59.22, 68.01, 64.22, 68.3)), ('FT2', (25.5, 70.75, 30.5, 75.75), None)]
+  of which the 1.0 mm rule around the non-GND MB CHG header pads (outside the header-body keep-out) removes 4.1 mm2
+
+======================================================================================================================
+H.23(e) area booking on the strict basis of stackup_area.md (top usable, top U, bottom U, single-sided U)
+======================================================================================================================
+Top usable (strict basis): r7 1081.1 mm2 = footprint 754.1 + tab X 173.3 + tab Y 153.7; same raster method on the r6 footprint 733.3 mm2 (STK 732, chamfer as a 1.5 mm disk here)
+  FT2 fill-hole keep-out (BASIS section 11 B2): 1.0 mm hole + 0.5 mm copper/part ring = 2.0 mm disc at (28.00, 73.250) on the CR top, booked as top area: 3.14 mm2 (raster; exact pi x 1.0^2 = 3.14 mm2); top usable without it 1084.2 mm2
+  MIN top usable 1096.6 mm2 (732 + tab X 173.8 + tab Y 185.9 + root strip 4.9): difference -15.5 mm2
+Demand (STK 3): 1188 mm2 incl. 60 mm2 of pours; r3 bottom set 435.25 mm2 (stackup_area.py bot_r3, unrounded; top 752.75); DNP footprints 87 mm2; forbidden-part footprints 19.3 mm2 (MIN 5.2)
+r7 allocation moves from the r3 bottom set to the top (BASIS D5/D6; courtyards DOC A.8, packages stackup_area.py). The comparators U102-U104, U115, U119-U121 (SOT-23-6, 10 mm2 each) are already top-side in the r3 booking (stackup_area.py side 'top'), so only their passives move; ASSUMPTION on which passives the BASIS wording covers, two readings:
+  core = the 0.1 % dividers and the comparator input filter capacitors ['C106', 'C107', 'C108', 'C140', 'R109', 'R110', 'R111', 'R112', 'R114', 'R115'] = 48.81 mm2
+  extended = core + the reference / REF-3 / FCC_ON / RGN_ON dividers and tap capacitors ['C109', 'C130', 'R117', 'R118', 'R141', 'R142', 'R184', 'R185', 'R188', 'R189', 'R190', 'R191'] = +52.20 mm2
+  R175 1206 (tab X top beside F07, BASIS D6; r3 bottom in stackup_area.py) = 10.92 mm2
+  r7 adopted (BASIS section 10 A3) = R175 + the six 0.1 % divider resistors ['R109', 'R110', 'R111', 'R112', 'R114', 'R115'] = 42.34 mm2; C106, C107, C108, C140 stay on the bottom
+
+  case                                    top mm2      top U bottom mm2   bottom U
+  r3 bottom set kept                        752.8      69.6%      435.2      76.5%
+  r7 allocation, core + R175                812.5      75.2%      375.5      66.0%
+  r7 allocation, extended + R175            864.7      80.0%      323.3      56.8%
+  r7 adopted (A3)                           795.1      73.5%      392.9      69.0%
+  (U to two decimals: r3 bottom set kept top 69.63 % / bottom 76.48 %; r7 allocation, core + R175 top 75.16 % / bottom 65.99 %; r7 allocation, extended + R175 top 79.98 % / bottom 56.81 %; r7 adopted (A3) top 73.55 % / bottom 69.04 %)
+  r7 adopted case against the <= 75 % target on each side (bottom area after the ADOPTED foot keep-outs, 569.1 mm2): top 73.55 % pass, bottom 69.04 % pass -> PASSES
+  balanced split (equal U both sides): move 25.6 mm2 from the r3 bottom set to the top -> 72.0 % each side
+  MIN: top U 68.7 %, bottom U 70.3 % (435 of 618.9, MIN's rounded r3 bottom set); target <= 75 % each side (BASIS D6)
+Single-sided U (every part on the top):
+  all footprints                       109.9 %  (MIN 108.3)
+  forbidden-part footprints deleted    108.1 %  (MIN 106.6)
+  all DNP footprints removed           101.8 %  (MIN 100.4)
+Sensitivity: the r7 tap field courtyards (pad envelope + 0.25 mm) book 159.6 mm2 = the 6 x 4 grid envelope 141.4 mm2 (20 pads + R175 + 2 spares after A2; the envelope does not depend on the pad count) + the residual pads F08-F10 (one row) and F22 (T18, A2) 18.2 mm2, against the 168.0 mm2 of STK (21 x 8 mm): -8.4 mm2 of top demand
+
+======================================================================================================================
+H.23(f) farthest point of the r7 outline from the U101 commutation-loop region
+======================================================================================================================
+Loop region (MIN r7_minimal_calc.loop_distance, from DOC A.8): IN strip x 36.1-44.55, y 52.03-61.55; OUT strip x 30.8-39.3, y 62.85-66.64; U101 courtyard x 39.3-44.3, y 61.6-66.6.
+farthest point (17.70, 34.14) at 25.66 mm; points >= 36.5 mm (2-layer parity separation, STK 5.2): 0
+footprint low-y band x 23.15-42.43, y 35.05-41.63 (comparator area, BASIS D5): 10.40 mm from the loop band (y >= 52.03); 8.54-27.82 mm from the LM1084 box (x 50.97)
+
+======================================================================================================================
+H.23(g) tap field on tab X: 6 x 4 grid at 2.54 mm, 20 pads (F01-F07, F11-F21, F23, F24) + R175; residual F08-F10 and F22 (T18, A2) on the footprint
+======================================================================================================================
+Placement: pad courtyard = pad + 0.25 mm (DOC A.8 convention, ASSUMPTION for SMT tap pads) >= 0.5 mm inside the tab X free edges; field pushed to the +x limit; low pad edge >= 2.0 mm from the 5V copper rim; the free y band of the lowest row is 58.708-59.180, the field takes its middle.
+  pad centres x [50.8, 53.34, 55.88, 58.42, 60.96, 63.5], y [58.94, 61.48, 64.02, 66.56]
+  pad envelope x 50.050-64.250, y 58.190-67.310; courtyard x 49.800-64.500, y 57.940-67.560; margins to the outline: right 0.500, top 0.740, low 1.640 mm
+  low pad edge to the 5V copper rim: 2.233 mm (rule >= 2.0); MIN field (y 57.80) 1.093 mm
+  assignment: Hungarian minimum of the straight-length sum over the free positions, R175 vertical in column 1 (rows 2-3, the option of three with the least sum), T6/F07 forced adjacent to R175, then the T1/T7b and T17/T17r pairs repaired onto adjacent positions (+0.5 mm). Tab X set after BASIS section 10 A2: 20 pads (T18 moved to the footprint residual row) + R175; spare grid positions [(53.34, 64.02), (50.8, 66.56)]
+  assignment change against the first-run set with T18 on tab X (first run: R175 rows 2-3, spare [(50.8, 66.56)], T18/F22 at (50.8, 58.94)): R175 rows 2-3; T1 (53.34, 58.94) -> (50.80, 58.94); T7b (55.88, 58.94) -> (53.34, 58.94); T5 (53.34, 61.48) -> (55.88, 58.94); T6 (53.34, 64.02) -> (53.34, 61.48)
+  T18 / F22 residual position (A2; destination CO-5V pad 1 (50.800, 41.084); straight path must not cross the REG-5V box x 50.97-62.31, y 36.87-54.51; F08-F10 hold k = 1-3 on the low row):
+    low row y 35.80, k 4   (34.06, 35.80): straight 17.55 mm; crosses REG-5V no (path to the box 0.172 mm); nearest 1x10 post pin 1: centreline 0.462 mm from the post centre, passes BESIDE (not over) the 0.64 mm post, 0.060 mm from its square; over the 1.9 mm pad land(s) [1]; pad courtyard to the J101 box 5.67 mm
+    low row y 35.80, k 5   (36.60, 35.80): straight 15.15 mm; crosses REG-5V no (path to the box 0.172 mm); nearest 1x10 post pin 1: centreline 0.200 mm from the post centre, passes OVER the 0.64 mm post; over the 1.9 mm pad land(s) [1]; pad courtyard to the J101 box 5.33 mm
+    low row y 35.80, k 6   (39.14, 35.80): straight 12.80 mm; crosses REG-5V no (path to the box 0.172 mm); nearest 1x10 post pin 1: centreline 0.160 mm from the post centre, passes OVER the 0.64 mm post; over the 1.9 mm pad land(s) [1]; pad courtyard to the J101 box 5.33 mm
+    low row y 35.80, k 7   (41.68, 35.80): straight 10.54 mm; crosses REG-5V no (path to the box 0.172 mm); nearest 1x10 post pin 1: centreline 0.677 mm from the post centre, passes BESIDE (not over) the 0.64 mm post, 0.240 mm from its square; over the 1.9 mm pad land(s) [1]; pad courtyard to the J101 box 5.33 mm  <- CHOSEN (B3: low row, nearest CO-5V)
+    row y 38.34, k 7       (41.68, 38.34): straight 9.52 mm; crosses REG-5V no (path to the box 0.172 mm); nearest 1x10 post pin 1: centreline 0.532 mm from the post centre, passes BESIDE (not over) the 0.64 mm post, 0.133 mm from its square; over the 1.9 mm pad land(s) [1]; pad courtyard to the J101 box 2.79 mm
+    row y 40.88, k 7       (41.68, 40.88): straight 9.12 mm; crosses REG-5V no (path to the box 0.172 mm); nearest 1x10 post pin 2: centreline 0.647 mm from the post centre, passes BESIDE (not over) the 0.64 mm post, 0.320 mm from its square; over the 1.9 mm pad land(s) [2]; pad courtyard to the J101 box 0.25 mm
+    every candidate ends at CO-5V pad 1 (50.800, 41.084), 0.172 mm from the REG-5V box (x 50.97): the wire end and the joint sit beside the LM1084 body whichever F22 position is chosen (F101/R172 temperature derating at that joint: T-A-05, BASIS B3)
+    choice (BASIS section 11 B3): F22 (T18) at (41.68, 35.80), straight 10.54 mm; the path passes beside (not over) the pin-1 post (0.240 mm from the post square; it crosses that post's 1.9 mm CR pad land, so the wire is dressed over the CR top there); pad courtyard 5.33 mm from the J101 box x 37.0-44.5, y 42.13-51.53 (BASIS D7). The shortest candidate row y 40.88, k 7 (41.68, 40.88), 9.12 mm, has its pad courtyard 0.25 mm from the J101 box, where the mated W5 socket envelope extends past the box (BASIS B3; envelope size TODO(verify: W5 IDC socket drawing)); rejected.
+  R175 1206 courtyard (vertical, 2.3 x 4.75 mm, DOC A.8) x 49.650-51.950, y 60.375-65.125
+  adjacency check: T1/T7b True, T17/T17r True, T6 next to R175 True; T8/T9 on the residual row: adjacent
+  residual pads on the footprint: F08 (T22) (26.44, 35.8), F09 (T8) (28.98, 35.8), F10 (T9) (31.52, 35.8) (DOC A.7 r6 positions k = 1-3 on the low row y 35.80), F22 (T18) (41.68, 35.8) (A2)
+
+  tap   F    MB point (BRD)                 r7 pad             MB point xy         r6 (mm)  r7 (mm)    delta LM1084  dressed
+  T1    F01  C-D6 pad 1 (V-MOT)             ( 50.80, 58.94)  ( 97.790, 16.412)     68.6     63.4     -5.2    yes     67.3
+  T7b   F02  C-D6 pad 2 (GND, shield)       ( 53.34, 58.94)  ( 97.790, 19.363)     67.7     59.5     -8.2    yes     62.5  (not in the 20-tap sum)
+  T2    F03  C-D2 pad 1 (VBUS)              ( 58.42, 66.56)  ( 67.705, 69.850)     47.0      9.9    -37.2     no      9.9
+  T3    F04  J1.39 (D-BT-EN)                ( 55.88, 61.48)  ( 87.122, 42.926)     54.5     36.3    -18.2     no     36.3
+  T4    F05  J1.43 (D-BC-RG)                ( 58.42, 58.94)  ( 87.122, 37.846)     54.3     35.6    -18.7     no     35.6
+  T5    F06  J1.45 (D-BC-FC)                ( 55.88, 58.94)  ( 87.122, 35.306)     54.4     39.2    -15.2    yes     41.0
+  T6    F07  J1.29 (3V3)                    ( 53.34, 61.48)  ( 87.122, 55.626)     57.0     34.3    -22.7     no     34.3
+  T22   F08  BAL pad 8 (BAL-NOK)            ( 26.44, 35.80)  ( 25.859, 30.439)      5.4      5.4     +0.0     no      5.4
+  T8    F09  J2.31 (BT-CURR)                ( 28.98, 35.80)  (109.982, 53.086)     82.8     82.8     +0.0     no     82.8
+  T9    F10  SNS-BT pad 15 (GND, Kelvin)    ( 31.52, 35.80)  ( 55.443, 26.492)     25.7     25.7     +0.0     no     25.7
+  T10   F11  J1.23 (pin 10)                 ( 63.50, 64.02)  ( 87.122, 63.246)     59.8     23.6    -36.1     no     23.6
+  T11   F12  J2.19 (pin 17)                 ( 58.42, 64.02)  (109.982, 68.326)     82.8     51.7    -31.1     no     51.7
+  T12   F13  J2.47 (pin 33)                 ( 60.96, 58.94)  (109.982, 32.766)     77.4     55.6    -21.8     no     55.6
+  T13   F14  J2.45 (pin 34)                 ( 63.50, 58.94)  (109.982, 35.306)     77.3     52.1    -25.1     no     52.1
+  T14   F15  J2.21 (pin 16)                 ( 63.50, 61.48)  (109.982, 65.786)     81.9     46.7    -35.2     no     46.7
+  T15   F16  J2.07 (pin 23)                 ( 55.88, 66.56)  (109.982, 83.566)     89.5     56.7    -32.8     no     56.7
+  T16   F17  J2.43 (pin 35)                 ( 58.42, 61.48)  (109.982, 37.846)     77.2     56.7    -20.5     no     56.7
+  T17   F18  J2.09 (pin 22, IMON)           ( 60.96, 66.56)  (109.982, 81.026)     88.2     51.1    -37.1     no     51.1
+  T17r  F19  J2.29 (GND, shield)            ( 60.96, 64.02)  (109.982, 55.626)     79.1     49.7    -29.4     no     49.7
+  T20   F20  ROS pad 2 (pin 7)              ( 55.88, 64.02)  ( 81.534, 69.797)     58.0     26.3    -31.7     no     26.3
+  T21   F21  J2.11 (pin 21)                 ( 63.50, 66.56)  (109.982, 78.486)     87.0     48.0    -39.0     no     48.0
+  T18   F22  CO-5V pad 1 (option)           ( 41.68, 35.80)  ( 50.800, 41.084)     18.2     10.5     -7.7     no     10.5  (not in the 20-tap sum)
+  T19   F23  J2.33 (option)                 ( 60.96, 61.48)  (109.982, 50.546)     78.2     50.2    -27.9     no     50.2  (not in the 20-tap sum)
+  F24   F24  J1.07 (spare, option)          ( 53.34, 66.56)  ( 87.122, 83.566)     70.7     37.8    -32.9     no     37.8  (not in the 20-tap sum)
+  SUM of the 20 taps (T7b follows T1; T18, T19, F24 are options): r6 1308.0 mm (F08-F10 at their r6 pads, the rest at the r6 field centre), r7 straight 850.9 mm (-34.9 %), r7 dressed 856.7 mm
+  sensitivity of the r6 basis: only F08 held at its r6 position (T8, T9 at the field centre): r6 sum 1303.6 mm, r7 -34.7 %; all 20 at the field centre (first-run basis): r6 sum 1308.7 mm, r7 -35.0 %
+  'LM1084' = the straight line from the pad crosses the REG-5V box (x 50.97-62.31, y 36.87-54.51); 'dressed' = pad -> (63.50, pad y) -> MB point for those taps (BASIS D6: wires stay at y > 56 until x > 63). T18 (CO-5V, x 50.80) could not follow that rule from tab X; it lands on the footprint residual position (A2) with a straight path clear of the REG-5V box.
+  BRD point vs mb_mech_calc.py TAPS (MIN used the latter): ['T1: BRD (97.790, 16.412) vs (97.790, 19.800), 3.39 mm apart', 'T7b: BRD (97.790, 19.363) vs (97.790, 19.800), 0.44 mm apart', 'T9: BRD (55.443, 26.492) vs (55.118, 23.622), 2.89 mm apart']
+  MIN reported r3 1308.9 -> r7 892.8 mm (-32 %) with the mb_mech_calc points and the field centre (57.08, 61.61)
+
+======================================================================================================================
+H.23(h) thermal band: tab X distances from the MB 5V copper rim; the 6.4 mm band boundary
+======================================================================================================================
+5V layer-1 copper (BRD): 5V L1 trace w0.508 (56.64,52.07)-(56.64,50.45); 5V L1 trace w0.508 (56.64,50.45)-(56.64,52.83); 5V L1 trace w0.508 (78.99,85.34)-(78.99,80.62); 5V L1 trace w0.508 (78.99,80.62)-(76.20,77.83); 5V L1 trace w0.508 (56.64,52.83)-(59.39,55.58); 5V L1 trace w0.406 (54.61,43.18)-(52.32,45.47); 5V L1 trace w0.406 (52.32,45.47)-(52.32,45.97); 5V L1 trace w0.406 (52.32,45.97)-(59.69,45.97); 5V L1 polygon w0.508 bbox (49.78,37.85)-(61.98,54.61); 5V via (76.200,77.828) pad 0.7564; 5V via (59.389,55.579) pad 0.7564
+(the 5V layer-16 trace (60.66, 56.85)-(76.20, 75.69) lies on the MB underside and is not part of the layer-1 rim)
+  tab X low edge y 56.30                 nearest  0.343 mm, farthest  3.399 mm -> inside the band
+  tap field row 1 (low pad edges)        nearest  2.233 mm, farthest  4.190 mm -> inside the band
+  tap field row 2 pads                   nearest  4.773 mm, farthest  7.808 mm -> inside the band
+  tap field row 3 pads                   nearest  7.313 mm, farthest 10.019 mm -> outside
+  tap field row 4 pads                   nearest  9.853 mm, farthest 12.519 mm -> outside
+  R175 courtyard                         nearest  5.511 mm, farthest 10.408 mm -> inside the band
+  FT1 foot body                          nearest  9.953 mm, farthest 12.310 mm -> outside
+  tab X top edge y 68.30                 nearest 12.343 mm, farthest 13.702 mm -> outside
+  tab X right edge x 65.00               nearest  3.399 mm, farthest 13.525 mm -> inside the band
+  tab X bottom courtyard limit y 56.80   nearest  0.843 mm, farthest  3.333 mm -> inside the band
+Band boundary inside tab X (largest y with distance <= 6.4 mm, per x):
+  x 48.7: y 60.68, x 49.7: y 61.02, x 50.7: y 61.22, x 51.7: y 61.26, x 52.7: y 61.26, x 53.7: y 61.26, x 54.7: y 61.26, x 55.7: y 61.26, x 56.7: y 61.80, x 57.7: y 62.14, x 58.7: y 62.32, x 59.7: y 62.34, x 60.7: y 62.22, x 61.7: y 61.94, x 62.7: y 61.48, x 63.7: y 60.92, x 64.7: y 60.50
+  band area inside tab X 84.9 of 195.6 mm2 (43 %)
+Content rule (BASIS section 1): the band carries pads, wires, the RTV bead and temperature-insensitive passives (R175, 1 % logic series resistors and pull-downs) only. Thermal estimate at 1/5/10 mm: 4.5-23.5 / 3.3-17.0 / 2.4-11.9 C (mb_mechanical.md Table 4, ESTIMATE; MS4 replaces it).
+
+======================================================================================================================
+H.23(i) far-end support feet FT1/FT2: spots, copper under them, heights, stiffness, first modes, pin loads (ORDER OF MAGNITUDE)
+======================================================================================================================
+Rules (BASIS D3): body >= 0.5 mm inside the r7 outline; no MB via pad (any net) under the body; every non-GND MB layer-1 copper rim (polygon outline width, 0.7564 mm via pads, square CHG pads) >= 1.0 mm from the body; every MB part box >= 1.0 mm from the body. The first-run 4 x 4 scan below uses a 0.10 mm grid (8449 spots for 4 x 4).
+A1 search (BASIS section 10): body width (x) 3.0-4.0 mm and height (y) 1.4-4.0 mm in 0.1 mm steps; the body lies inside its tab rectangle (the tab root line is interior, not an outline edge). Placement tolerance t of a centre = the largest t such that the body moved by any (dx, dy) in [-t, t] x [-t, t] meets the rule; the union of those moved bodies is the body grown by t on every side, so t is computed exactly as the largest growth that meets the rule. tx = the largest x half-range of moves with the y half-range held at t, ty likewise, so min(tx, ty) = t. Stage 1 (raster 0.02 mm, every centre of the grid, half-cell convention, error about +-0.02 mm) gives the best t of every size; stage 2 (exact distances, bisection to 1e-4 mm) hill-climbs the centre on the 0.02 mm grid, then resolves a plateau of equal t by the tie rule (FT1: larger x; FT2: centred) and finally moves the centre y off the grid to the exact max-min y (golden-section search on t(y), BASIS section 11 B1). Adopted FT1 = the largest bed area with tx >= 0.25 and ty >= 0.25 mm (a tip-zone centre x >= 60.0 is preferred when it also meets 0.25 mm). Adopted FT2 (BASIS section 11 B2) = the 4 x 4 body moved from the max-min centre toward the far edge to the largest lever (distance from the pin-11 row y 64.484) with t >= 0.25 mm; the max-min result is kept as a labelled alternative.
+Start point (62.70, 61.26) (mb_support_spots_out.txt; MIN keep-out x 60.70-64.70, y 59.26-63.26): via pads under the body [('CHRG-STAT', 63.5, 58.928), ('MPPT-DISABLE', 65.024, 61.722)]; non-GND copper clearance -0.127 mm (SDA L1 trace w0.254 (61.75,62.64)-(54.76,62.64)). MIN reported 'over no via' from via centres only.
+4 x 4 mm, via-free spots in tab X by copper-clearance threshold (count, largest-x centre): 1.00 mm: 0 -, 0.75 mm: 0 -, 0.50 mm: 0 -, 0.25 mm: 0 -, 0.00 mm: 0 -
+  best 4 x 4 spot in the tip zone (x >= 60.0), copper clearance relaxed: centre (62.50, 61.40), clearance -0.127 mm (SDA L1 trace w0.254 (61.75,62.64)-(54.76,62.64))
+
+FT1 candidate sizes (tab X): stage-1 best tolerance t = min(tx, ty) in mm per body size (rows: height y, columns: width x; '-' = no compliant centre); second figure = best t with the centre in the tip zone x >= 60.0 where it differs:
+  h \ w      3.0     3.1     3.2     3.3     3.4     3.5     3.6     3.7     3.8     3.9     4.0
+   1.4      0.39    0.39    0.39    0.39    0.39    0.39    0.39    0.39    0.39    0.39    0.39
+   1.5      0.34    0.34    0.34    0.34    0.34    0.34    0.34    0.34    0.34    0.34    0.34
+   1.6      0.29    0.29    0.29    0.29    0.29    0.29    0.29    0.29    0.29    0.29    0.29
+   1.7      0.24    0.24    0.24    0.24    0.24    0.24    0.24    0.24    0.24    0.24    0.24
+   1.8      0.19    0.19    0.19    0.19    0.19    0.19    0.19    0.19    0.19    0.19    0.19
+   1.9      0.14    0.14    0.14    0.14    0.14    0.14    0.14    0.14    0.14    0.14    0.14
+   2.0      0.09    0.09    0.09    0.09    0.09    0.09    0.09    0.09    0.09    0.09    0.09
+   2.1      0.04    0.04    0.04    0.04    0.04    0.04    0.04    0.04    0.04    0.04    0.04
+   2.2         -       -       -       -       -       -       -       -       -       -       -
+   2.3         -       -       -       -       -       -       -       -       -       -       -
+   2.4         -       -       -       -       -       -       -       -       -       -       -
+   2.5         -       -       -       -       -       -       -       -       -       -       -
+   2.6         -       -       -       -       -       -       -       -       -       -       -
+   2.7         -       -       -       -       -       -       -       -       -       -       -
+   2.8         -       -       -       -       -       -       -       -       -       -       -
+   2.9         -       -       -       -       -       -       -       -       -       -       -
+   3.0         -       -       -       -       -       -       -       -       -       -       -
+   3.1         -       -       -       -       -       -       -       -       -       -       -
+   3.2         -       -       -       -       -       -       -       -       -       -       -
+   3.3         -       -       -       -       -       -       -       -       -       -       -
+   3.4         -       -       -       -       -       -       -       -       -       -       -
+   3.5         -       -       -       -       -       -       -       -       -       -       -
+   3.6         -       -       -       -       -       -       -       -       -       -       -
+   3.7         -       -       -       -       -       -       -       -       -       -       -
+   3.8         -       -       -       -       -       -       -       -       -       -       -
+   3.9         -       -       -       -       -       -       -       -       -       -       -
+   4.0         -       -       -       -       -       -       -       -       -       -       -
+  stage-2 exact results (sizes in descending bed area down to the adopted area; area mm2, best centre, t, tx, ty, binding feature):
+    4.0 x 1.7   6.80 mm2  centre (61.76, 66.705) tip zone  t 0.244  tx 0.264  ty 0.244  FAILS 0.25  [MPPT-DISABLE L1 trace w0.254 (21.00,64.48)-(62.26,64.48) (1.0 mm)]
+    3.9 x 1.7   6.63 mm2  centre (61.82, 66.705) tip zone  t 0.244  tx 0.254  ty 0.244  FAILS 0.25  [MPPT-DISABLE L1 trace w0.254 (21.00,64.48)-(62.26,64.48) (1.0 mm)]
+    3.8 x 1.7   6.46 mm2  centre (61.86, 66.705) tip zone  t 0.244  tx 0.264  ty 0.244  FAILS 0.25  [MPPT-DISABLE L1 trace w0.254 (21.00,64.48)-(62.26,64.48) (1.0 mm)]
+    4.0 x 1.6   6.40 mm2  centre (61.72, 66.705) tip zone  t 0.294  tx 0.304  ty 0.294  meets 0.25  [MPPT-DISABLE L1 trace w0.254 (21.00,64.48)-(62.26,64.48) (1.0 mm)]
+
+FT2 candidate sizes (tab Y): stage-1 best tolerance t = min(tx, ty) in mm per body size (rows: height y, columns: width x; '-' = no compliant centre):
+  h \ w      3.0     3.1     3.2     3.3     3.4     3.5     3.6     3.7     3.8     3.9     4.0
+   1.4      3.47    3.47    3.47    3.47    3.47    3.47    3.47    3.47    3.47    3.47    3.47
+   1.5      3.42    3.42    3.42    3.42    3.42    3.42    3.42    3.42    3.42    3.42    3.42
+   1.6      3.37    3.37    3.37    3.37    3.37    3.37    3.37    3.37    3.37    3.37    3.37
+   1.7      3.32    3.32    3.32    3.32    3.32    3.32    3.32    3.32    3.32    3.32    3.32
+   1.8      3.27    3.27    3.27    3.27    3.27    3.27    3.27    3.27    3.27    3.27    3.27
+   1.9      3.22    3.22    3.22    3.22    3.22    3.22    3.22    3.22    3.22    3.22    3.22
+   2.0      3.17    3.17    3.17    3.17    3.17    3.17    3.17    3.17    3.17    3.17    3.17
+   2.1      3.12    3.12    3.12    3.12    3.12    3.12    3.12    3.12    3.12    3.12    3.12
+   2.2      3.07    3.07    3.07    3.07    3.07    3.07    3.07    3.07    3.07    3.07    3.07
+   2.3      3.02    3.02    3.02    3.02    3.02    3.02    3.02    3.02    3.02    3.02    3.02
+   2.4      2.97    2.97    2.97    2.97    2.97    2.97    2.97    2.97    2.97    2.97    2.97
+   2.5      2.92    2.92    2.92    2.92    2.92    2.92    2.92    2.92    2.92    2.92    2.92
+   2.6      2.87    2.87    2.87    2.87    2.87    2.87    2.87    2.87    2.87    2.87    2.87
+   2.7      2.82    2.82    2.82    2.82    2.82    2.82    2.82    2.82    2.82    2.82    2.82
+   2.8      2.77    2.77    2.77    2.77    2.77    2.77    2.77    2.77    2.77    2.77    2.77
+   2.9      2.72    2.72    2.72    2.72    2.72    2.72    2.72    2.72    2.72    2.72    2.72
+   3.0      2.67    2.67    2.67    2.67    2.67    2.67    2.67    2.67    2.67    2.67    2.67
+   3.1      2.62    2.62    2.62    2.62    2.62    2.62    2.62    2.62    2.62    2.62    2.62
+   3.2      2.57    2.57    2.57    2.57    2.57    2.57    2.57    2.57    2.57    2.57    2.57
+   3.3      2.52    2.52    2.52    2.52    2.52    2.52    2.52    2.52    2.52    2.52    2.52
+   3.4      2.47    2.47    2.47    2.47    2.47    2.47    2.47    2.47    2.47    2.47    2.47
+   3.5      2.42    2.42    2.42    2.42    2.42    2.42    2.42    2.42    2.42    2.42    2.42
+   3.6      2.37    2.37    2.37    2.37    2.37    2.37    2.37    2.37    2.37    2.37    2.37
+   3.7      2.32    2.32    2.32    2.32    2.32    2.32    2.32    2.32    2.32    2.32    2.32
+   3.8      2.27    2.27    2.27    2.27    2.27    2.27    2.27    2.27    2.27    2.27    2.27
+   3.9      2.22    2.22    2.22    2.22    2.22    2.22    2.22    2.22    2.22    2.22    2.22
+   4.0      2.17    2.17    2.17    2.17    2.17    2.17    2.17    2.17    2.17    2.17    2.17
+  stage-2 exact results (sizes in descending bed area down to the adopted area; area mm2, best centre, t, tx, ty, binding feature):
+    4.0 x 4.0  16.00 mm2  centre (28.00, 71.320)  t 2.180  tx 7.060  ty 2.180  meets 0.25  [tab root line]
+
+FT1 ADOPTED: body 4.0 x 1.6 mm (bed area 6.40 mm2), centre (61.72, 66.705), body x 59.720-63.720, y 65.905-67.505; tolerance t = 0.294 mm, tx 0.304 / ty 0.294 mm (binding: MPPT-DISABLE L1 trace w0.254 (21.00,64.48)-(62.26,64.48) (1.0 mm)); zone: tip zone (x >= 60.0); via pads under: none; nearest non-GND copper rim 1.294 mm (MPPT-DISABLE L1 trace w0.254 (21.00,64.48)-(62.26,64.48)); nearest MB part box 3.64 mm (C-D2); foot keep-out (body + 0.5 mm) x 59.220-64.220, y 65.405-68.005 (5.0 x 2.6 mm), RTV access lane x 59.220-64.220, y 68.005-68.300 (to the tab X top edge; unchanged method)
+FT2 ADOPTED: body 4.0 x 4.0 mm (bed area 16.00 mm2), centre (28.00, 73.250), body x 26.000-30.000, y 71.250-75.250; tolerance t = 0.250 mm, tx 7.060 / ty 0.250 mm (binding: r7 outline edge (0.5 mm)); lever a = 8.766 mm from the pin-11 row; via pads under: none; nearest non-GND copper rim > 3 mm (none in the search radius); nearest MB part box 1.76 mm (L-FC); foot keep-out (body + 0.5 mm) x 25.500-30.500, y 70.750-75.750 (5.0 x 5.0 mm), RTV access lane none (BASIS section 11 B2: bedded through the 1.0 mm fill hole at the foot centre)
+Labelled alternatives (not adopted):
+  FT1 alternative A (r7 first run, 4.0 x 2.0): 4.0 x 2.0 mm at (62.00, 66.70) meets the rule with margin 0.024 mm (VBUS L1 polygon w1.016 bbox (65.53,19.56)-(79.55,72.64) (1.0 mm)); tolerance tx 0.024 / ty 0.089 mm (t = 0.024); one-sided slack +x 0.024, -x 7.591, +y 0.100, -y 0.089 mm
+  FT1 alternative B (relaxed 4 x 4 over masked signal traces; operator option only, the D3 MB-mask fallback is unavailable there): 4.0 x 4.0 mm at (62.50, 61.40) VIOLATES the rule (margin -1.127 mm: SDA L1 trace w0.254 (61.75,62.64)-(54.76,62.64) (1.0 mm); copper clearance -0.127 mm); tolerances not applicable
+  FT2 alternative (r7 first run, 4 x 4 at the far edge): 4.0 x 4.0 mm at (27.63, 73.50) meets the rule with margin 0.000 mm (r7 outline edge (0.5 mm)); tolerance tx 6.723 / ty 0.000 mm (t = 0.000); one-sided slack +x 7.430, -x 6.723, +y 0.000, -y 4.360 mm
+  FT2 alternative M (second run, A1 max-min centre at mid-height of tab Y, lever a = 6.836 mm): 4.0 x 4.0 mm at (28.00, 71.32) meets the rule with margin 2.180 mm (tab root line); tolerance tx 7.060 / ty 2.180 mm (t = 2.180); one-sided slack +x 7.060, -x 7.770, +y 2.180, -y 2.180 mm
+FT1 decision: A1 (BASIS sections 10/11 B1): the largest bed area (width 3.0-4.0 x height 1.4-4.0 mm, 0.1 mm steps) whose placement tolerance is >= +-0.25 mm in x and in y against the full D3 rule, centred at the exact max-min centre; FT1 = 4.0 (x) x 1.6 (y) mm, tip zone (x >= 60.0). At the exact max-min centre y 66.705 the 4.0 x 1.6 body reaches t = 0.294 mm (tx 0.304, ty 0.294); the next height, 4.0 x 1.7, reaches t = 0.244 mm at y 66.705 (< 0.25 mm), so 1.6 mm is the largest compliant height. The 0.02 mm grid centre y 66.70 gave t 0.289 mm.
+FT2 decision: BASIS section 11 B2 (A1 restated for FT2): the largest lever (distance from the pin-11 row y 64.484) subject to t >= 0.25 mm; FT2 = 4.0 (x) x 4.0 (y) mm at centre x 28.00 (the A1 max-min centre x of tab Y). The trimmed tab Y has no non-GND copper and no via under it (H.23(c)), so the tolerance is set by the outline inset at the far edge (binding: r7 outline edge (0.5 mm)) and the tab root line; the far spot (28.00, 73.250) has lever a = 8.766 mm from the pin-11 row (mid-height max-min spot 6.836 mm; first-run far-edge spot 9.016 mm), t = 0.250 mm, tx 7.060 / ty 0.250 mm, one-sided slack +x 7.060, -x 7.343, +y 0.250, -y 4.110 mm.
+FT2 fill hole (BASIS section 11 B2): 1.0 mm NPTH through tab Y at the foot centre (28.00, 73.250), RTV injected from the CR top with a blunt needle; the hole lies inside the foot body with 1.500 mm to the body edge, so the injected RTV lands on the foot. The hole is a CR feature only: under its plan projection the MB carries GND pour under solder mask (nearest non-GND copper rim 7.18 mm from the hole edge (VFC L1 polygon w0.152 bbox (9.22,80.34)-(27.36,87.81)); nearest via pad 9.89 mm (GND at (38.749, 72.646)); nearest MB part box 3.26 mm (L-FC)), and the foot body covers it on the MB side, so no MB feature bears on it. CR-top keep-out: 0.5 mm copper and part ring = 2.0 mm disc, 1.750 mm inside the r7 outline, booked in the top area (H.23(e)).
+FT1 fallback sheet cut-out (BASIS D3 / section 11 B1) = the FT1 keep-out rectangle x 59.220-64.220, y 65.405-68.005 (5.0 x 2.6 mm): non-GND copper rim exposed: none; nearest non-GND rim 0.794 mm outside the cut-out (MPPT-DISABLE L1 trace w0.254 (21.00,64.48)-(62.26,64.48)), so the sheet still covers the MPPT-DISABLE trace by that margin; MB via pads inside the cut-out: none; MB part boxes: none.
+  FT1: non-GND copper directly under the body none; nets within 1.0 mm: none; the rest is MB GND pour under solder mask
+  FT2: non-GND copper directly under the body none; nets within 1.0 mm: none; the rest is MB GND pour under solder mask
+Foot height h_f = 2.54 - t_bed = 2.24 mm at t_bed 0.30 mm (bed range 0.15-0.45 mm); CR underside 2.665 mm above the MB, sheet 0.125 mm (BASIS D2/D3); the foot-to-CR RTV bond is taken as zero thickness (ASSUMPTION; TODO(measure: T-A-09))
+RTV bed under the tab X foot: k_s = E_RTV x A / t_bed (BASIS D3), A 6.4 mm2, E (1.0, 3.0) MPa (ASSUMPTION), t (0.15, 0.3, 0.45) mm -> 14-128 N/mm (nominal t: 21-64 N/mm). Bonded-thin-layer correction (Gent, E_c = E (1 + 2 S^2), S = A/(perimeter t) = 1.90 at 0.30 mm) would raise k_s up to x8: an upper-bound sensitivity only.
+RTV bed under the tab Y foot: k_s = E_RTV x A / t_bed (BASIS D3), A 16.0 mm2, E (1.0, 3.0) MPa (ASSUMPTION), t (0.15, 0.3, 0.45) mm -> 36-320 N/mm (nominal t: 53-160 N/mm). Bonded-thin-layer correction (Gent, E_c = E (1 + 2 S^2), S = A/(perimeter t) = 3.33 at 0.30 mm) would raise k_s up to x23: an upper-bound sensitivity only.
+
+--- tab X: cantilever clamped at the 1x10 pin column x 45.998 (MBM eq. 3), width = tab X height 12.0 mm; L 19.002 mm, foot at a = 15.722 mm
+  EI 81920 N mm2 (E 20 GPa, t 1.6 mm); tip stiffness 3EI/L^3 = 35.8 N/mm; at the foot 3EI/a^3 = 63.2 N/mm
+  m_f 1: f1 unpropped 2353 Hz (eq. 3); propped (Rayleigh, mode shape phi(a/L) = 0.763, tip-spring model, capped at the rigid tip-prop value 10323 Hz): k_s 14 / 21 / 64 / 128 N/mm -> 2604 / 2721 / 3336 / 4089 Hz
+  m_f 2: f1 unpropped 1664 Hz (eq. 3); propped (Rayleigh, mode shape phi(a/L) = 0.763, tip-spring model, capped at the rigid tip-prop value 7299 Hz): k_s 14 / 21 / 64 / 128 N/mm -> 1841 / 1924 / 2359 / 2891 Hz
+
+--- tab Y: plate edge-cantilever clamped along the pin-11 row y 64.484 (mb_pinload.py), width = tab Y width 19.86 mm; upper estimate (only pin 11 lies on that line); L 11.516 mm, foot at a = 8.766 mm
+  EI 135578 N mm2 (E 20 GPa, t 1.6 mm); tip stiffness 3EI/L^3 = 266.3 N/mm; at the foot 3EI/a^3 = 603.8 N/mm
+  m_f 1: f1 unpropped 6407 Hz (eq. 3); propped (Rayleigh, mode shape phi(a/L) = 0.673, tip-spring model, capped at the rigid tip-prop value 28106 Hz): k_s 36 / 53 / 160 / 320 N/mm -> 6593 / 6683 / 7204 / 7921 Hz
+  m_f 2: f1 unpropped 4531 Hz (eq. 3); propped (Rayleigh, mode shape phi(a/L) = 0.673, tip-spring model, capped at the rigid tip-prop value 19874 Hz): k_s 36 / 53 / 160 / 320 N/mm -> 4662 / 4726 / 5094 / 5601 Hz
+  sensitivity: clamped at the tab Y root y 67.14 instead (L 8.86 mm): f1 7654-10825 Hz unpropped
+
+Pin loads (MBM eq. 2, rigid CR on 22 equal axial pin springs, pin group of DOC A.8; tab mass as a uniform load over the tab part of each cantilever; the foot as a spring at a; ORDER OF MAGNITUDE):
+  pin centroid (32.362, 50.514), Sxx 3409.1, Syy 1454.8 mm2 (Sxy = 0 by symmetry of each column)
+  main  5.0 g, 0.6 g/cm2, 10 g: worst pin 0.069 N without feet; with feet (bed E 1 / 3 MPa at t 0.30 mm) 0.063 / 0.056 N; r6 CR alone 0.022 N
+  main  5.0 g, 0.6 g/cm2, 30 g: worst pin 0.208 N without feet; with feet (bed E 1 / 3 MPa at t 0.30 mm) 0.189 / 0.168 N; r6 CR alone 0.067 N
+  main  5.0 g, 0.8 g/cm2, 10 g: worst pin 0.085 N without feet; with feet (bed E 1 / 3 MPa at t 0.30 mm) 0.077 / 0.067 N; r6 CR alone 0.022 N
+  main  5.0 g, 0.8 g/cm2, 30 g: worst pin 0.255 N without feet; with feet (bed E 1 / 3 MPa at t 0.30 mm) 0.230 / 0.202 N; r6 CR alone 0.067 N
+  main 10.0 g, 0.6 g/cm2, 10 g: worst pin 0.092 N without feet; with feet (bed E 1 / 3 MPa at t 0.30 mm) 0.085 / 0.078 N; r6 CR alone 0.045 N
+  main 10.0 g, 0.6 g/cm2, 30 g: worst pin 0.275 N without feet; with feet (bed E 1 / 3 MPa at t 0.30 mm) 0.256 / 0.235 N; r6 CR alone 0.134 N
+  main 10.0 g, 0.8 g/cm2, 10 g: worst pin 0.107 N without feet; with feet (bed E 1 / 3 MPa at t 0.30 mm) 0.099 / 0.090 N; r6 CR alone 0.045 N
+  main 10.0 g, 0.8 g/cm2, 30 g: worst pin 0.322 N without feet; with feet (bed E 1 / 3 MPa at t 0.30 mm) 0.297 / 0.269 N; r6 CR alone 0.134 N
+  10 N push at the tab X tip (65.00, 62.30): worst pin 2.69 N at (45.998, 61.944) without the foot; with it: k_s 14 N/mm: foot takes 2.41 N, worst pin 1.99 N; k_s 21 N/mm: foot takes 3.31 N, worst pin 1.73 N; k_s 64 N/mm: foot takes 6.60 N, worst pin 0.77 N; k_s 128 N/mm: foot takes 8.79 N, worst pin 0.52 N
+  10 N push at the tab Y tip (27.63, 76.00): worst pin 3.06 N at (20.998, 64.484) without the foot; with it: k_s 36 N/mm: foot takes 0.82 N, worst pin 2.83 N; k_s 53 N/mm: foot takes 1.19 N, worst pin 2.73 N; k_s 160 N/mm: foot takes 3.08 N, worst pin 2.20 N; k_s 320 N/mm: foot takes 5.09 N, worst pin 1.64 N
+  sensitivity, FT2 at the mid-height max-min spot instead (alternative M, 4.0 x 4.0 mm at (28.00, 71.320), a = 6.836 mm, tolerance tx 7.060 / ty 2.180 mm): 10 N tab Y tip push: k_s 36 N/mm: foot takes 0.55 N, worst pin 2.92 N; k_s 53 N/mm: foot takes 0.81 N, worst pin 2.85 N; k_s 160 N/mm: foot takes 2.26 N, worst pin 2.47 N; k_s 320 N/mm: foot takes 4.07 N, worst pin 2.00 N
+  bed stress at 30 g (whole tab load at the tip, stiffest bed): <= 63.2 kPa
+
+======================================================================================================================
+H.23(j) header post arithmetic with the 0.125 mm sheet; CR top height; stack top vs the Ag105 envelope
+======================================================================================================================
+Inputs: TSW-1xx-07 A 10.92, B 2.54, C 5.84 mm, body 2.54 mm (Samtec F-226; A - B - C = 2.54); sheet 0.125 mm (DOC A.7, kept BASIS D4); MB 1.6 mm (ASSUMPTION, TODO(measure: MS6 caliper at the CHG holes)); CR 1.6 mm (ASSUMPTION, TODO(verify: CR fab stack-up), MS6/MS8).
+r6 orientation (DOC D.1 PM4 steps 2-4): strips inserted from the CR bottom, body against the CR underside, CR-top joints first, then seated on the sheet and soldered at the MB bottom, MB-bottom tails cut to <= 1.0 mm in step 4; 'post length = MB + body + CR + top fillet'. That is the short end B up through the CR and the long end C down through the MB; r7 keeps it.
+  r6/r7: B up through the CR, C down (adopted)     CR-top protrusion 0.940 mm (>= 0.5 for a fillet: yes); MB-bottom protrusion 4.115 mm (cut to <= 1.0 mm in PM4 step 4)
+  alternative: C up, B down                        CR-top protrusion 4.240 mm (>= 0.5 for a fillet: yes); MB-bottom protrusion 0.815 mm (no cut needed; >= 0.5 for a fillet: yes)
+  sensitivity CR 1.60 / MB 1.50 mm: B-up CR-top 0.940 mm, MB-bottom 4.215 mm
+  sensitivity CR 1.60 / MB 1.70 mm: B-up CR-top 0.940 mm, MB-bottom 4.015 mm
+  sensitivity CR 1.71 / MB 1.50 mm: B-up CR-top 0.830 mm, MB-bottom 4.215 mm
+  sensitivity CR 1.71 / MB 1.70 mm: B-up CR-top 0.830 mm, MB-bottom 4.015 mm
+CR underside 2.665 mm, CR top 4.265 mm above the MB top (unchanged from r6). W5 IDC socket + ribbon fold >= 8.0 mm above the CR top (DOC A.3): stack top >= 12.265 mm + the cable thickness (TODO(verify: cable assembly drawing)) against the nominal Ag105 envelope 13.14 mm (AG105_Silvertel.pdf Fig. 11: 2.54 + 1.60 + 9): margin <= 0.875 mm before the cable; gate D-2 / MS1 decides.
+  minimal proposal (no sheet): CR top 4.14 mm, MB-bottom protrusion 4.24 mm; the kept sheet adds 0.125 mm to both stack heights and removes 0.125 mm from the MB-bottom protrusion.
+
+======================================================================================================================
+H.23(k) E-lead maxima on the vector EVM positions; E1/E8/C205 resonance; R276 static drop
+======================================================================================================================
+r6 placement rule (DOC A.5/A.9): EIB pad column 7 mm off the EVM right edge (x 95.90 EVM mm), E3 5 mm above the TP33 level (y 68.499), rows 2.54 mm apart downward; build max = straight x 1.25 rounded up to 5 mm. Points: evm_geometry.md Table 1 (vector).
+  E8  row  1 (95.90, 73.579) -> TP49                         (83.440, 79.120): straight  13.6 mm, build max  20 mm (r6 20)
+  E3  row  3 (95.90, 68.499) -> TP33                         (80.011, 63.499): straight  16.7 mm, build max  25 mm (r6 25); criterion limit 92 mm -> 0.27 of it
+  E4  row  4 (95.90, 65.959) -> JP21 pin 1 (lower post)      (75.312, 64.769): straight  20.6 mm, build max  30 mm (r6 30); criterion limit 59 mm -> 0.51 of it
+  E2  row  5 (95.90, 63.419) -> JP14 pin 2                   (71.375, 64.769): straight  24.6 mm, build max  35 mm (r6 35)
+  E7  row  7 (95.90, 58.339) -> TP38                         (66.041, 59.689): straight  29.9 mm, build max  40 mm (r6 40)
+  E1  row  9 (95.90, 53.259) -> JP12 pin 1 (REGN)            (39.370, 13.741): straight  69.0 mm, build max  90 mm (r6 85)
+  E5  row 11 (95.90, 48.179) -> TP36                         (55.874, 19.710): straight  49.1 mm, build max  65 mm (r6 60)
+  E6  row 12 (95.90, 45.639) -> JP17 pin 1                   (54.611, 26.796): straight  45.4 mm, build max  60 mm (r6 60); criterion limit 196 mm -> 0.31 of it
+  E4 to the upper JP21 post (the r6 A.5 pixel point (902, 408) = pin 2, AGND): 20.6 mm (same, because the E4 row lies between the posts); the correct E4 post is pin 1 = the lower square post (75.312, 64.769)
+
+E1 + E8 + C205 series loop (EIBM model: two-wire line of length l, spacing s 5 mm, 28 AWG radius 0.16 mm, L = (mu0/pi) l ln(s/a); return conductor of the same length l; R = 28 AWG x 2l + ESR 20 mOhm (ASSUMPTION) + R276):
+  l  85 mm: L 117.0 nH, f0 1.471 MHz (BQ25798 fsw 1.5 MHz, JP24/EM19), Z0 1.082 Ohm; Q 19.3 without R276 (25.5 with the E8 return at its 20 mm maximum instead of l), 0.108 with R276 (zeta 4.6: overdamped)
+  l  90 mm: L 123.9 nH, f0 1.430 MHz (BQ25798 fsw 1.5 MHz, JP24/EM19), Z0 1.113 Ohm; Q 19.1 without R276 (25.6 with the E8 return at its 20 mm maximum instead of l), 0.111 with R276 (zeta 4.5: overdamped)
+  Q upper bound: the undamped Q above uses the DC wire resistance and is an UPPER bound. Skin effect at f0 1.430 MHz (90 mm): copper rho 1.72e-08 Ohm m, mu0: skin depth 55.2 um against the 160 um 28 AWG radius (a/delta 2.90); Rac/Rdc 1.71 (exact round-wire Bessel ratio; high-frequency asymptote a/(2 delta) + 1/4 = 1.70); undamped Q with Rac 13.0 at 90 mm (13.1 at 85 mm; 18.5 / 18.4 with the E8 return at 20 mm). Proximity effect of the return conductor (s/a = 31) and the C205 ESR frequency dependence are not modelled (both lower Q further). The R276 conclusion (overdamped) is unchanged.
+  R276 x C205 low-pass: fc 159 kHz; a 1.5 MHz REGN ripple reaches C205 at 0.106 of its EVM amplitude (x9.5 attenuation; T-C-16 criterion)
+
+R276 static drop. E1 current = the EIB REGN loads (DOC B.6): R252 (Q201 gate, conducts when U202 sinks = release), R254 (Q202 gate, conducts when U201 3Y sinks = RFC_OFF HIGH = regen clamp), R271 (Q203 G-S, conducts when U201 2Y sinks = release), each 47 kOhm to ~0 V; plus the release feed REGN -> Q203 -> R255 48.7 kOhm -> E2 -> ILIM_HIZ. R272/R272b (H.15 'REGN pull-ups') sit on the EVM and do not pass through E1.
+  state                                                      REGN   I_E1 mA    drop mV pin shift mV    IINDPM mA
+  held, RFC_OFF LOW (FC clamp selected)                       4.8     0.000       0.00        0.000         0.00
+  held, RFC_OFF HIGH = the H.15 E1 load (R254 only)           4.8     0.102       1.02        0.000         0.00
+  released, regen clamp (pin 2.06 V)                          4.8     0.363       3.63        1.634         2.04
+  released, FC clamp (pin 1.52 V)                             4.8     0.272       2.72        0.892         1.12
+  held, RFC_OFF LOW (FC clamp selected)                       5.2     0.000       0.00        0.000         0.00
+  held, RFC_OFF HIGH = the H.15 E1 load (R254 only)           5.2     0.111       1.11        0.000         0.00
+  released, regen clamp (pin 2.06 V)                          5.2     0.396       3.96        1.786         2.23
+  released, FC clamp (pin 1.52 V)                             5.2     0.297       2.97        0.975         1.22
+  What the drop shifts: (1) REGN at the EIB node (C205 = Q203 source, R252/R254/R271 tops) falls by the drop; the gate drives (VGS(th) <= 2.0 V class against ~4.8 V) are unaffected at the mV level; Q203's VGS is unaffected (source and R271 move together). (2) The released ILIM_HIZ level falls by drop x Rbot/(R255 + Rbot) (Rbot = R23 || R256 = 39.94 kOhm regen, || R257 = 23.82 kOhm FC), i.e. IINDPM falls by that / 0.8 V/A: the safe direction (less input current). (3) Held states: Q203 is off, no feed flows, the held level is set by Q201, so the drop changes nothing.
+  The work note's '1.6 mV at 2 mA' = 0.36 mA x 10 Ohm x 39.9/88.6: 1.6 mV is the pin shift and 2 mA the IINDPM shift; the R276 current is 0.36 mA, not 2 mA.
+
+======================================================================================================================
+H.23(l) EVM reference placement, Teensy USB corridor, EIB position, W-lead routes and maxima, chassis tie
+======================================================================================================================
+EVM placement (BASIS D7): EVM bottom edge toward the MB, gap g = 20.0 mm (J8 mates from -y; its pins reach EVM y -6.24 (EVMG Table 2), leaving 13.76 mm to the MB edge for the KK housing and wire exit; TODO(verify: Molex 22-01-3047 mated length), MS2); right edge x 88.50 (<= 88.5). EVM board rectangle x -0.40-88.50, y 118.044-206.944; it overhangs the MB -x edge (x 0) by 0.40 mm (chassis room TODO(measure: MS2)).
+USB corridor (BASIS D7): x 93.47-101.09 from y 93.73, length 45.0 mm (plug + bend ASSUMPTION, MS2) -> y to 138.73. EVM to corridor: 4.97 mm in x.
+EIB (r6 rule): pad column x 95.50, E3 y 186.543 (E8 191.623 .. E6 163.683); outline (pad row 2.0 mm inside the EVM-facing long edge, row centred on the 36 mm edge, ASSUMPTION) x 93.50-117.50, y 159.65-195.65
+  EIB vs USB corridor: no overlap; the EIB lies in the corridor x band (x 93.50-101.09) from 65.92 mm above the Teensy edge y 93.73, 20.92 mm beyond the assumed 45 mm corridor. A USB cable that runs straight +y for more than 65.9 mm would meet it (MS2).
+  EIB bottom edge to the J5 body top (W3/W4 entry below the EIB, DOC A.7 >= 3 mm): 4.84 mm
+Route rule (BASIS section 1): CR pad -> tab X top edge (x1 in 56-65) -> straight to the MB +y edge (x2 in 56-80, and <= 68.91 so the chassis tie at the MB edge stays <= 30 mm from the CR edge, DOC A.3 r5) -> shortest path around the EVM, the USB corridor, the EIB and the MB -> 10 mm straight approach normal to the terminal's wire-entry face (ASSUMPTION) -> terminal. Plan lengths; build max = 1.25 x route rounded up to 10 mm. Switched conductors (VSW-FC/VSW-BT pours, L-FC/L-BT bodies (Eaton), REG-FC/REG-BT boxes) must stay >= 10 mm from the corridor segment.
+
+  lead    terminal                       approach point       route nodes (board)                     route      max      tie   sw min
+  W1      J1 pin 2 VIN1                  (  -7.80, 168.84)  (30.3,61.2) (56.0,68.3) (56.0,98.0)     181.6      230    29.74    10.10
+          full path: (30.30, 61.20) -> (56.00, 68.30) -> (56.00, 98.04) -> (-0.40, 118.04) -> (-7.80, 168.84) -> (6.20, 168.84)
+  W2      J1 pin 1 PGND                  (  -7.80, 173.92)  (27.7,61.2) (56.0,68.3) (56.0,98.0)     189.1      240    29.74    10.10
+          full path: (27.70, 61.20) -> (56.00, 68.30) -> (56.00, 98.04) -> (-0.40, 118.04) -> (-7.80, 173.92) -> (6.20, 173.92)
+  W3      J5 pin 1 BATTERY               (  96.09, 142.24)  (24.3,45.4) (56.0,68.3) (68.8,98.0)     139.2      180    29.98    15.30
+          full path: (24.30, 45.40) -> (56.00, 68.30) -> (68.75, 98.04) -> (88.50, 118.04) -> (93.47, 138.73) -> (96.09, 142.24) -> (82.09, 142.24)
+  W4      J5 pin 3 PGND                  (  96.09, 152.40)  (24.3,55.6) (56.0,68.3) (68.8,98.0)     143.8      180    29.98    15.25
+          full path: (24.30, 55.60) -> (56.00, 68.30) -> (68.75, 98.04) -> (88.50, 118.04) -> (96.09, 152.40) -> (82.09, 152.40)
+  W6      J7 pin 1 EXT_TS                (  62.49, 110.82)  (33.0,57.5) (56.0,68.3) (60.5,98.0)      81.9      110    29.74    12.27
+          full path: (33.00, 57.50) -> (56.00, 68.30) -> (60.50, 98.04) -> (62.49, 110.82) -> (62.49, 124.27)
+  W7 SCL  J8 pin 2 SCL (pin tip)         (  17.63, 101.80)  (27.0,57.5) (56.0,68.3) (56.0,98.0)     109.2      140    29.74    10.10
+          full path: (27.00, 57.50) -> (56.00, 68.30) -> (56.00, 98.04) -> (17.63, 101.80) -> (17.63, 111.80)
+  W7 SDA  J8 pin 3 SDA (pin tip)         (  20.17, 101.80)  (31.0,57.5) (56.0,68.3) (56.0,98.0)     103.0      130    29.74    10.10
+          full path: (31.00, 57.50) -> (56.00, 68.30) -> (56.00, 98.04) -> (20.17, 101.80) -> (20.17, 111.80)
+  W5      EIB J201, 3 mm inside the EIB  ( 114.50, 149.65)  (40.8,46.8) (56.0,68.3) (68.8,98.0)     159.8      200    29.98    15.30
+          full path: (40.75, 46.83) -> (56.00, 68.30) -> (68.75, 98.04) -> (88.50, 118.04) -> (93.47, 138.73) -> (114.50, 149.65) -> (114.50, 177.65)
+  W3 J5 approach point (96.09, 142.24) lies in the corridor x band, 3.51 mm beyond the assumed corridor end y 138.73
+  W4 J5 approach point (96.09, 152.40) lies in the corridor x band, 13.67 mm beyond the assumed corridor end y 138.73
+  W3/W4 pass between the EVM right edge (x 88.50) and the corridor (x 93.47): channel 4.97 mm wide (twisted 18 AWG pair outer size TODO(measure: MS2/MS7)); with a longer plug + bend allowance or clamp bodies past the EVM edge, the pair routes around the corridor's +x side instead.
+
+AWG table check against DOC H.11 at 0.30 m: input pair 19.99 mOhm (H.11: 20 mOhm, 36 mV / 65 mW at 1.80 A -> 36.0 mV / 64.8 mW); battery pair 12.57 mOhm (H.11: 12.6 mOhm, 39 mV / 121 mW at 3.10 A -> 39.0 mV / 120.8 mW)
+  W1/W2 input pair (20 AWG)    build maxima 230 / 240 mm: pair 15.66 mOhm (28.2 mV / 50.7 mW at 1.80 A); at 0.30 m each: 19.99 mOhm (36.0 mV / 64.8 mW at 1.80 A)
+  W3/W4 battery pair (18 AWG)  build maxima 180 / 180 mm: pair 7.54 mOhm (23.4 mV / 72.5 mW at 3.10 A, 24.2 mV / 77.7 mW at 3.21 A); at 0.30 m each: 12.57 mOhm (39.0 mV / 120.8 mW at 3.10 A, 40.3 mV / 129.5 mW at 3.21 A)
+  W6                           build max 110 mm: 14.7 mOhm per conductor (signal; 0.30 m: 40.2 mOhm)
+  W7 SCL                       build max 140 mm: 29.8 mOhm per conductor (signal; 0.30 m: 63.9 mOhm)
+  W7 SDA                       build max 130 mm: 27.7 mOhm per conductor (signal; 0.30 m: 63.9 mOhm)
+  W5 ribbon: route 159.8 mm, 1.25 x route 199.7 mm against the 0.30 m factory cable assembly (DOC A.3): fits
+  Until MS2 confirms the placement, the r6 0.30 m caps stay the T-A-02 bound (BASIS D7).
+Chassis-tie distance from the tab X top edge (y 68.30) to the MB +y edge (y 98.044): 29.744 mm (DOC A.3 r5: tie within 30 mm of the CR edge) -> margin 0.256 mm
+Note: DOC A.3 W5 folds the ribbon 'toward -x over the tap field' and runs it along W1/W2; with the W leads leaving over tab X and 18 taps on tab X, that fold direction needs restating (r7 design text).
+
+USB corridor fallbacks (BASIS section 10 A4): open-ended corridor x 93.47-101.09 from y 93.73 upward (no end). At the reference placement the EIB (x 93.50-117.50) and the W3/W4 J5 approach points (x 96.09) lie inside that band.
+  (i) EVM + EIB group shifted -x by 27.03 mm (the EIB rectangle and the W3/W4 J5 approach points >= 3.0 mm left of x 93.47): EVM x -27.43-61.47 (left edge -27.43, overhang past the MB -x edge x 0: 27.43 mm; the leads reach further, see the chassis-room line); EIB x 66.47-90.47; J5 approach points x 69.06; E-leads unchanged (EIB fixed to the EVM). W-lead routes (route rule, x2 <= 68.91, chassis tie <= 30 mm):
+    W1      route  207.5 mm, build max 260 mm, x2 56.00, chassis tie 29.74 mm, approach (-34.83, 168.84)
+    W2      route  215.1 mm, build max 270 mm, x2 56.00, chassis tie 29.74 mm, approach (-34.83, 173.92)
+    W3      route  128.2 mm, build max 170 mm, x2 61.25, chassis tie 29.74 mm, approach (69.06, 142.24)
+    W4      route  133.3 mm, build max 170 mm, x2 60.50, chassis tie 29.74 mm, approach (69.06, 152.40)
+    W6      route   92.8 mm, build max 120 mm, x2 56.00, chassis tie 29.74 mm, approach (35.46, 110.82)
+    W7 SCL  route  136.2 mm, build max 180 mm, x2 56.00, chassis tie 29.74 mm, approach (-9.40, 101.80)
+    W7 SDA  route  129.9 mm, build max 170 mm, x2 56.00, chassis tie 29.74 mm, approach (-6.86, 101.80)
+    W5      route  141.6 mm, build max 180 mm, x2 67.50, chassis tie 29.85 mm, approach (87.47, 149.65)
+    chassis room past the MB -x edge (BASIS section 11 B5): the most negative x of any approach point, route node or terminal is -34.83 (W1 approach point (-34.83, 168.84); EVM overhang 27.43 mm); + 20 AWG bend allowance 10.5 mm (ASSUMPTION: bend radius 6 x OD with OD 1.6 mm (PVC hook-up wire) = 9.6 mm, plus OD/2 = 10.4, rounded up to 0.5 mm; TODO(measure: MS2 wire OD)) -> 45.3 mm of chassis room past x 0, clear of the J-BL/J-FC/J-NTC harness volume (MS2 measures both). The 'EVM rotated' variant is not evaluated (open item).
+    verdict (i): PASSES geometrically: no lead blocked, every chassis tie <= 30 mm, build maxima W1 260, W2 270, W3 170, W4 170, W6 120, W7 SCL 180, W7 SDA 170, W5 180; every W1-W4/W6/W7 maximum <= 0.30 m; W5 1.25 x route 177 mm fits the 0.30 m ribbon; it needs 45.3 mm of chassis room past the MB -x edge (W1 approach point at x -34.83 + 10.5 mm bend allowance; the EVM itself overhangs 27.4 mm), clear of the J-BL/J-FC/J-NTC harnesses (MS2)
+  (ii) EIB moved to the corridor +x side: EIB x 104.09-128.09 (left edge = corridor edge 101.09 + 3.0), pad column 2.0 mm inside the EVM-facing edge at x 106.09 (EVM frame 106.49); EVM unchanged at x -0.40-88.50. E-leads (r6 rule: straight x 1.25 rounded up to 5 mm):
+    E8  straight  23.7 mm, build max  30 mm (D7 20, +10)
+    E3  straight  26.9 mm, build max  35 mm (D7 25, +10); criterion limit 92 mm -> 0.38 of it
+    E4  straight  31.2 mm, build max  40 mm (D7 30, +10); criterion limit 59 mm -> 0.68 of it (EXCEEDS the ~0.5 D7 design margin)
+    E2  straight  35.1 mm, build max  45 mm (D7 35, +10)
+    E7  straight  40.5 mm, build max  55 mm (D7 40, +15)
+    E1  straight  77.9 mm, build max 100 mm (D7 90, +10)
+    E5  straight  58.1 mm, build max  75 mm (D7 65, +10)
+    E6  straight  55.2 mm, build max  70 mm (D7 60, +10); criterion limit 196 mm -> 0.36 of it
+    E1 + E8 + C205 at the new E1 maximum 100 mm: f0 1.356 MHz, Z0 1.173 Ohm, undamped Q 18.7 (DC wire resistance; 12.8 with the skin-effect Rac), 0.117 with R276 (overdamped)
+    W3/W4/W5 routes with the open-ended corridor:
+    W3      BLOCKED: approach point (96.09, 142.24) inside the USB corridor
+    W4      BLOCKED: approach point (96.09, 152.40) inside the USB corridor
+    W5      BLOCKED: the only path runs around the MB (below its +y edge): the corridor walls off the +x side
+    verdict (ii): FAILS: the E-lead bundle (EIB pad rows y 163.68-191.62) and the shared EVM plate (one rigid body, D7/D8) must span the corridor band x 93.47-101.09; W3 approach point (96.09, 142.24) inside the USB corridor; W4 approach point (96.09, 152.40) inside the USB corridor; W5 the only path runs around the MB (below its +y edge): the corridor walls off the +x side; E-lead maxima above D7: E8 30 (D7 20), E3 35 (D7 25), E4 40 (D7 30), E2 45 (D7 35), E7 55 (D7 40), E1 100 (D7 90), E5 75 (D7 65), E6 70 (D7 60); E4 at 0.68 of its criterion limit
+  (iii) EIB at the EVM left edge (mirror of the r6 rule: pad column 7 mm off the EVM left edge, EVM frame x -7.00, board x -7.40): EIB x -29.40--5.40 (overhang past the MB -x edge 29.40 mm). E-leads:
+    E8  straight  90.6 mm, build max 115 mm (D7 20)
+    E3  straight  87.2 mm, build max 110 mm (D7 25); criterion limit 92 mm: straight inside, build max 1.20 of it
+    E4  straight  82.3 mm, build max 105 mm (D7 30); criterion limit 59 mm: straight EXCEEDS it, build max 1.78 of it
+    E2  straight  78.4 mm, build max 100 mm (D7 35)
+    E7  straight  73.1 mm, build max  95 mm (D7 40)
+    E1  straight  60.9 mm, build max  80 mm (D7 90)
+    E5  straight  69.0 mm, build max  90 mm (D7 65)
+    E6  straight  64.4 mm, build max  85 mm (D7 60); criterion limit 196 mm: straight inside, build max 0.43 of it
+    verdict (iii): FAILS: E4 (JP21 pin 1) straight 82.3 mm exceeds its 59 mm pickup criterion limit (build max 105 mm); E8 115 / E3 110 mm also exceed D7
+  first passing fallback (BASIS A4: the design adopts the reference placement with the first passing fallback, decided by MS2): i
+
+======================================================================================================================
+H.23(m) polyimide sheet: the r6 sheet against MB part bodies; the r7 sheet outline with trims
+======================================================================================================================
+Part body = layers 21 + 51 straight wires and rectangles of the package (pin-1 arcs, circles and polygons excluded); L-FC also as the Eaton 12.9 mm body centred on its origin (ASSUMPTION). Rule (BASIS D4): the sheet keeps >= 0.5 mm from every MB part body; the five r6 cut-outs ('D-BT-SQ', 'C-D11', 'C-D12', 'C-DC11', 'C-DC12') stay.
+
+r6 sheet x 16.70-49.70, y 33.14-68.14 (DOC A.7):
+  C4A-BT                 body (43.032,28.780)-(46.376,32.180): clearance 0.960 mm
+  C4B-BT                 body (46.842,28.780)-(50.186,32.180): clearance 0.960 mm
+  CO-5V                  body (49.300,37.774)-(52.300,41.474): OVERLAP 0.400 x 3.700 mm (1.48 mm2)
+  J-BL                   body (3.530,26.670)-(16.130,49.530): clearance 0.570 mm
+  J-NTC                  body (3.552,52.914)-(16.252,67.354): clearance 0.448 mm (< 0.5)
+  RB1B                   body (26.796,31.200)-(28.068,32.300): clearance 0.840 mm
+  RB2                    body (18.500,31.114)-(19.600,32.386): clearance 0.754 mm
+
+r7 sheet before trims = r7 outline + 1 mm (mitred offset), vertices: (16.700, 33.140), (49.700, 33.140), (49.700, 55.300), (66.000, 55.300), (66.000, 69.300), (47.700, 69.300), (47.700, 68.140), (38.560, 68.140), (38.560, 77.000), (18.286, 77.000), (16.700, 75.414)
+  trim for CO-5V                  body (49.300,37.774)-(52.300,41.474), clearance before +0.000 mm: vertical x 49.700 -> 48.800 over y 37.274-41.974
+  trim for J-NTC                  body (3.552,52.914)-(16.252,67.354), clearance before +0.448 mm: vertical x 16.700 -> 16.752 over y 52.414-67.854
+  trim for L-FC (Eaton 12.9 mm)   body (22.564,76.862)-(36.364,89.762), clearance before +0.000 mm: horizontal y 77.000 -> 76.362 over x 22.064-36.864
+  trim for ROP1-FC                body (38.061,73.799)-(39.663,75.499), clearance before +0.000 mm: vertical x 38.560 -> 37.561 over y 73.299-75.999
+r7 sheet after trims: 27 vertices: (16.700, 33.140), (49.700, 33.140), (49.700, 37.274), (48.800, 37.274), (48.800, 41.974), (49.700, 41.974), (49.700, 55.300), (66.000, 55.300), (66.000, 69.300), (47.700, 69.300), (47.700, 68.140), (38.560, 68.140), (38.560, 73.299), (37.561, 73.299), (37.561, 75.999), (38.560, 75.999), (38.560, 77.000), (36.864, 77.000), (36.864, 76.362), (22.064, 76.362), (22.064, 77.000), (18.286, 77.000), (16.700, 75.414), (16.700, 67.854), (16.752, 67.854), (16.752, 52.414), (16.700, 52.414)
+  check: bodies within 0.5 mm after the trims: none; trimmed vertices inside the CR outline: none; area 1560.8 mm2; bbox [16.7, 33.14, 66.0, 77.0]
+  relief holes (DOC A.7, unchanged): 2.2 mm diameter at the 22 header pads (DOC A.8 table); cut-outs (body + 0.5 mm, unchanged): {'D-BT-SQ': [27.718, 47.849, 31.718, 52.226], 'C-D11': [24.615, 48.692, 27.709, 51.892], 'C-D12': [32.743, 48.438, 35.837, 51.638], 'C-DC11': [32.986, 51.195, 35.086, 53.453], 'C-DC12': [26.89, 51.449, 28.99, 53.707]}
+  r6 sheet 33.0 x 35.0 mm; r7 sheet bbox 49.30 x 43.86 mm (BOM: check the sheet stock size)
+
+======================================================================================================================
+H.23 SUMMARY
+======================================================================================================================
+  r7 outline gross area                            1394.06 mm2 (r6 1023.00 + tab X 195.60 + tab Y 175.96 - chamfer 0.50)  [H.23(a)]
+  r7 outline bounding box                          x 17.70-65.00, y 34.14-76.00 = 47.30 x 41.86 mm  [H.23(a)]
+  L-FC to tab Y top edge                           1.012 mm (12.6 mm silkscreen) / 0.862 mm (12.9 mm Eaton body, centred ASSUMPTION)  [H.23(b)]
+  MB parts under either tab                        none  [H.23(b)]
+  ROP1-FC box to tab Y right edge                  0.501 mm  [H.23(b)]
+  OP-FC box to tab Y                               2.659 mm  [H.23(b)]
+  REG-5V box to tab X low edge                     1.786 mm  [H.23(b)]
+  tab X items < 0.5 mm outside the tab             MPPT-DISABLE via (65.024,61.722) pad 0.7564: -0.354; VBUS L1 polygon w1.016 bbox (65.53,19.56)-(7: 0.024; SCL L1 trace w0.254 (47.72,54.32)-(49.53,56.: 0.039 (part outside the r7 outline, to the tab X low edge y 56.30); N$7 L1 trace w0.254 (49.28,69.34)-(48.01,68.: 0.203; SDA via (65.702,58.590) pad 0.7564: 0.324; 5V via (59.389,55.579) pad 0.7564: 0.343; 3V3 via (51.097,69.131) pad 0.7564: 0.453; 5V L1 trace w0.508 (56.64,52.83)-(59.39,55.5: 0.467  [H.23(b)]
+  tab Y items < 0.5 mm outside the tab             J-FC: 0.470  [H.23(b)]
+  MB vias tented?                                  no: 368/368 vias have a top stop-mask opening (0.9596 mm) in soldermask_top.gbr  [H.23(c2)]
+  non-GND MB copper under tab X                    29.16 mm2 (3V3, CB-DISABLE, CHRG-STAT, CS-MDAC-FC, MPPT-DISABLE, SCL, SDA; per-net areas +-0.3 mm2, raster bias); 15 vias (5 non-GND)  [H.23(c)]
+  non-GND MB copper under tab Y                    0.00 mm2 (none; per-net areas +-0.3 mm2, raster bias); 0 vias (0 non-GND)  [H.23(c)]
+  bottom clearance rule area (r7)                  569.1 mm2 = footprint 391.6 + tab X 44.3 + tab Y 133.2 (MIN 618.9)  [H.23(d)]
+  top usable (strict)                              1081.1 mm2 after the FT2 fill-hole keep-out disc (3.14 mm2; 1084.2 without it) (MIN 1096.6)  [H.23(e)]
+  bottom area used for U                           569.1 mm2 (H.23(d), after the foot keep-outs)  [H.23(e)]
+  top U / bottom U, r3 bottom set kept             69.63 % / 76.48 % (top 752.8 / bottom 435.2 mm2)  [H.23(e)]
+  top U / bottom U, r7 allocation, core + R175     75.16 % / 65.99 % (top 812.5 / bottom 375.5 mm2)  [H.23(e)]
+  top U / bottom U, r7 allocation, extended + R175 79.98 % / 56.81 % (top 864.7 / bottom 323.3 mm2)  [H.23(e)]
+  top U / bottom U, r7 adopted (A3)                73.55 % / 69.04 % (top 795.1 / bottom 392.9 mm2)  [H.23(e)]
+  r7 adopted allocation (A3)                       R175 + R109, R110, R111, R112, R114, R115 to the top (42.34 mm2); C106, C107, C108, C140 stay bottom: top 73.55 % (795.1 mm2), bottom 69.04 % (392.9 of 569.1 mm2): PASSES the <= 75 % target  [H.23(e)]
+  balanced split                                   move 25.6 mm2 from the r3 bottom set to the top -> 72.0 % each side  [H.23(e)]
+  single-sided U                                   109.9 % (all footprints) .. 101.8 % (DNP removed)  [H.23(e)]
+  farthest outline point from the U101 loop        (17.70, 34.14) at 25.66 mm vs 36.5 mm 2-layer parity (none reaches)  [H.23(f)]
+  tab X tap field pad centres                      x [50.8, 53.34, 55.88, 58.42, 60.96, 63.5], y [58.94, 61.48, 64.02, 66.56]  [H.23(g)]
+  tab X pads (A2)                                  20 pads + R175 (rows 2-3 of column 1); spare positions [(53.34, 64.02), (50.8, 66.56)]; assignment changes: T1 -> (50.80, 58.94); T7b -> (53.34, 58.94); T5 -> (55.88, 58.94); T6 -> (53.34, 61.48)  [H.23(g)]
+  T18 pad (A2, B3)                                 F22 at (41.68, 35.80) on the footprint low row, straight 10.54 mm to CO-5V pad 1; passes beside (not over) the pin-1 post (0.240 mm from the post square); pad courtyard 5.33 mm from the J101 box; every candidate ends at CO-5V pad 1, 0.172 mm from the REG-5V box (shortest candidate (41.68, 40.88), 9.12 mm, rejected: courtyard 0.25 mm from the J101 box); residual pads F08 (T22), F09 (T8), F10 (T9), F22 (T18)  [H.23(g)]
+  tap straight-length sum (20 taps)                r6 1308.0 mm -> r7 850.9 mm (-34.9 %); dressed 856.7 mm (r6 basis: F08-F10 at their r6 pads; only F08 held: r6 1303.6 mm, -34.7 %)  [H.23(g)]
+  thermal band in tab X                            boundary y 60.5..62.34 across x 48.7-65.0; band area 84.9 mm2; tab X low edge 0.343 mm, top edge 12.343 mm from the 5V rim  [H.23(h)]
+  FT1 adopted (A1, B1)                             4.0 x 1.6 mm body (bed 6.40 mm2) at (61.72, 66.705) (exact max-min y), body x 59.720-63.720, y 65.905-67.505; tolerance t 0.294 mm, tx 0.304 / ty 0.294 mm (binding: MPPT-DISABLE L1 trace w0.254); 4.0 x 1.7 reaches t 0.244 (< 0.25); tip zone (x >= 60.0); copper clearance 1.294 mm (MPPT-DISABLE L1 trace w0.254 (21.00,64.48)-(62.26,64.48)); nearest part box 3.64 mm (C-D2); via pads under: none  [H.23(i)]
+  FT2 adopted (B2)                                 4.0 x 4.0 mm body (bed 16.00 mm2) at (28.00, 73.250), body x 26.000-30.000, y 71.250-75.250; largest lever a 8.766 mm with t >= 0.25: t 0.250 mm, tx 7.060 / ty 0.250 mm (binding: r7 outline edge); no non-GND copper within 3 mm; nearest part box 1.76 mm (L-FC); via pads under: none; no edge lane; mid-height alternative M (28.00, 71.320), a 6.836 mm, t 2.180 mm  [H.23(i)]
+  FT2 fill hole (B2)                               1.0 mm NPTH at (28.00, 73.250), 1.500 mm inside the foot body edge; CR feature only (MB under it: GND pour; nearest non-GND rim 7.18 mm, via 9.89 mm, part box 3.26 mm from the hole edge); CR-top keep-out disc 2.0 mm booked in the top area  [H.23(i)]
+  FT1 fallback sheet cut-out (B1)                  = the FT1 keep-out 5.0 x 2.6 mm; non-GND copper rim exposed: none (nearest 0.794 mm outside, MPPT-DISABLE L1 trace w0.254); via pads inside: none  [H.23(i)]
+  foot keep-outs (body + 0.5 mm)                   FT1 x 59.220-64.220, y 65.405-68.005, lane x 59.220-64.220, y 68.005-68.300; FT2 x 25.500-30.500, y 70.750-75.750, no lane  [H.23(i)]
+  FT1 alternative A (r7 first run)                 4.0 x 2.0 mm at (62.00, 66.70): meets the rule (margin 0.024 mm, VBUS L1 polygon w1.016 bbox) but tolerance tx 0.024 / ty 0.089 mm; one-sided slack +x 0.024, -x 7.591, +y 0.100, -y 0.089 mm (fails the 0.25 mm criterion)  [H.23(i)]
+  FT1 alternative B (relaxed 4 x 4)                (62.50, 61.40): violates the rule, copper clearance -0.127 mm (masked signal traces under the body; operator option only)  [H.23(i)]
+  foot height                                      h_f = 2.54 - t_bed = 2.24 mm (t_bed 0.30 +- 0.15 mm)  [H.23(i)]
+  tab X f1 unpropped / propped (bed E 1-3 MPa, t 0.30) 1664-2353 Hz / 1924-3336 Hz (ORDER OF MAGNITUDE)  [H.23(i)]
+  tab X stiffness tip / at the foot vs bed         35.8 / 63.2 N/mm vs RTV bed 14-128 N/mm  [H.23(i)]
+  tab Y f1 unpropped / propped (bed E 1-3 MPa, t 0.30) 4531-6407 Hz / 4726-7204 Hz (ORDER OF MAGNITUDE)  [H.23(i)]
+  tab Y stiffness tip / at the foot vs bed         266.3 / 603.8 N/mm vs RTV bed 36-320 N/mm  [H.23(i)]
+  worst pin at 30 g, without / with feet           0.208-0.322 N / 0.168-0.297 N (ORDER OF MAGNITUDE)  [H.23(i)]
+  10 N push at the tab X tip: worst pin            2.69 N without foot; 0.52-1.99 N with foot  [H.23(i)]
+  10 N push at the tab Y tip: worst pin            3.06 N without foot; 1.64-2.83 N with foot  [H.23(i)]
+  post arithmetic (B up, with sheet)               CR-top protrusion 0.940 mm; MB-bottom 4.115 mm before the PM4 cut  [H.23(j)]
+  stack top                                        CR top 4.265 mm; W5 fold >= 12.265 mm + cable vs Ag105 envelope 13.14 mm (margin <= 0.875 mm)  [H.23(j)]
+  E-lead build maxima (mm)                         E8 20, E3 25, E4 30, E2 35, E7 40, E1 90, E5 65, E6 60  [H.23(k)]
+  E1/E8/C205 resonance                             1.471 MHz at 85 mm, 1.430 MHz at 90 mm; Q 19.3 / 19.1 undamped (25.5 / 25.6 with the E8 return at 20 mm), 0.108 / 0.111 with R276 (overdamped)  [H.23(k)]
+  E1/C205 Q upper-bound note                       the undamped Q is an upper bound: 28 AWG skin depth 55 um at 1.43 MHz vs 160 um radius, Rac/Rdc 1.71 -> undamped Q about 13.0 (90 mm) / 13.1 (85 mm); R276 conclusion unchanged  [H.23(k)]
+  R276 static drop                                 1.02 mV at the H.15 E1 load (0.102 mA, held); worst 3.96 mV at 0.396 mA (released, regen clamp (pin 2.06 V), REGN 5.2 V): release-level shift 1.786 mV = IINDPM 2.23 mA (lower, safe direction)  [H.23(k)]
+  EVM reference placement                          x -0.40-88.50, y 118.044-206.944 (g 20 mm, right edge 88.50); EVM-to-USB-corridor 4.97 mm  [H.23(l)]
+  EIB position (r6 rule)                           x 93.50-117.50, y 159.65-195.65; USB corridor (45 mm ASSUMPTION): clear, 20.92 mm beyond its end  [H.23(l)]
+  W-lead build maxima (route rule)                 W1 230 mm, W2 240 mm, W3 180 mm, W4 180 mm, W6 110 mm, W7 SCL 140 mm, W7 SDA 130 mm, W5 200 mm  [H.23(l)]
+  W1/W2 input pair (20 AWG) resistance             15.66 mOhm at the route maxima vs 19.99 mOhm at 0.30 m  [H.23(l)]
+  W3/W4 battery pair (18 AWG) resistance           7.54 mOhm at the route maxima vs 12.57 mOhm at 0.30 m  [H.23(l)]
+  chassis-tie distance                             29.744 mm (tab X top edge to MB +y edge; <= 30 mm)  [H.23(l)]
+  corridor fallback (i): group shifted -x          shift 27.03 mm, EVM x -27.43-61.47 (EVM overhang 27.43 mm past the MB -x edge; chassis room needed 45.3 mm); PASSES geometrically: no lead blocked, every chassis tie <= 30 mm, build maxima W1 260, W2 270, W3 170, W4 170, W6 120, W7 SCL 180, W7 SDA 170, W5 180; every W1-W4/W6/W7 maximum <= 0.30 m; W5 1.25 x route 177 mm fits the 0.30 m ribbon; it needs 45.3 mm of chassis room past the MB -x edge (W1 approach point at x -34.83 + 10.5 mm bend allowance; the EVM itself overhangs 27.4 mm), clear of the J-BL/J-FC/J-NTC harnesses (MS2)  [H.23(l)]
+  corridor fallback (ii): EIB at x >= 104.09       E-lead maxima E8 30, E3 35, E4 40, E2 45, E7 55, E1 100, E5 75, E6 70; E1 100 mm: f0 1.356 MHz, Q 0.117 with R276; FAILS: the E-lead bundle (EIB pad rows y 163.68-191.62) and the shared EVM plate (one rigid body, D7/D8) must span the corridor band x 93.47-101.09; W3 approach point (96.09, 142.24) inside the USB corridor; W4 approach point (96.09, 152.40) inside the USB corridor; W5 the only path runs around the MB (below its +y edge): the corridor walls off the +x side; E-lead maxima above D7: E8 30 (D7 20), E3 35 (D7 25), E4 40 (D7 30), E2 45 (D7 35), E7 55 (D7 40), E1 100 (D7 90), E5 75 (D7 65), E6 70 (D7 60); E4 at 0.68 of its criterion limit  [H.23(l)]
+  corridor fallback (iii): EIB at the EVM left edge E4 straight 82.3 mm vs 59 mm limit; FAILS: E4 (JP21 pin 1) straight 82.3 mm exceeds its 59 mm pickup criterion limit (build max 105 mm); E8 115 / E3 110 mm also exceed D7  [H.23(l)]
+  r6 sheet vs CO-5V body                           OVERLAP 0.400 mm in x over 3.700 mm (1.48 mm2): the r6 sheet drapes onto the 2.1 mm tantalum  [H.23(m)]
+  r7 sheet trims                                   CO-5V: vertical x 49.700 -> 48.800 over y 37.274-41.974; J-NTC: vertical x 16.700 -> 16.752 over y 52.414-67.854; L-FC (Eaton 12.9 mm): horizontal y 77.000 -> 76.362 over x 22.064-36.864; ROP1-FC: vertical x 38.560 -> 37.561 over y 73.299-75.999  [H.23(m)]
+  r7 sheet                                         27 vertices, area 1560.8 mm2, bbox 49.30 x 43.86 mm  [H.23(m)]

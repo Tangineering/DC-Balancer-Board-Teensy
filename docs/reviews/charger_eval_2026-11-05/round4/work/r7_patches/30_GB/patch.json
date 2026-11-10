@@ -1,0 +1,70 @@
+{
+ "group": "GB",
+ "edits": [
+  {
+   "old": "| S -> REGN (E1), D -> R255, G -> R271 47 kOhm to S |",
+   "new": "| S -> REGN (E1; **r7:** the C205 node, which E1 reaches through R276), D -> R255, G -> R271 47 kOhm to S |",
+   "note": "B.6 Q203 row: source on the C205 node behind R276"
+  },
+  {
+   "old": "| J201 | 2x7 **1.27 mm** header mating",
+   "new": "| **R276 (r7)** | **10.0 ohm 1 % 0603** (CRCW060310R0FKEA, the R273 MPN) | E1 (JP12 REGN pin lead) -> **R276** (at the E1 pad end) -> EIB REGN node (C205, Q203 source) | E1 damping (H.23(k)). The E1 lead, its E8 return and C205 form a series LC near the 1.5 MHz BQ25798 switching frequency (JP24, EM19). At the 90 mm E1 maximum f0 is 1.430 MHz (1.471 MHz at the r6 85 mm). The undamped Q is 19.1 (19.3 at 85 mm), an upper bound from the DC wire resistance; the skin-effect Rac gives 13.0. With R276 the Q is 0.111 (zeta 4.5, overdamped). R276 x C205 is a 159 kHz low-pass: a 1.5 MHz REGN ripple reaches C205 at 0.106 of its EVM amplitude (T-C-16). **E1 load (r7 correction):** E1 carries only the EIB REGN loads, namely the gate pull-ups R252 (Q201) and R254 (Q202), the Q203 gate-source resistor R271 and, while released, the feed through Q203 and R255. R272 and R272b sit on the EVM and draw from REGN there, not through E1. I_E1 is 0-0.111 mA held and 0.272-0.396 mA released (REGN 4.8-5.2 V). The R276 drop is 1.02 mV at the H.15 E1 load (0.102 mA, held, R254 only) and at most 3.96 mV (released, regen clamp, REGN 5.2 V). That drop lowers the released ILIM_HIZ level by at most 1.786 mV, which lowers IINDPM by 2.23 mA (safe direction). Held levels do not change: Q203 is off and no feed flows. R276 open acts as an E1 lead off (fault table, first row); R276 shorted restores the undamped r6 circuit (T-A-02 meters R276 at 10.0 ohm +-1 %) |\n| J201 | 2x7 **1.27 mm** header mating",
+   "note": "B.6 part list: new R276 row (H.23(k))"
+  },
+  {
+   "old": "R272 and R272b 47.0 kOhm from /CE to REGN on separate joints and links.",
+   "new": "R272 and R272b 47.0 kOhm from /CE to REGN on separate joints and links.\n\n**r7:** R276 is the only change to the EIB circuit. Every fail-safe argument of this section holds unchanged: the r1-r2 release through two series switches (Q201 hold, Q203 feed), the R272/R272b /CE pull-ups to REGN, the U203/U204 far-end senses and the single DC ground at E8 through R273. The EIB now sits on the EVM plate on its two M3 nylon standoffs (A.7, EM23), so the EVM and the EIB move as one rigid body.",
+   "note": "B.6: fail-safe arguments unchanged; EIB on the EVM plate"
+  },
+  {
+   "old": "| E2 (feed) lead off, R255 open, Q203 open, U201 2Y stuck open, ribbon 7 open (R268 pulls 2A LOW) |",
+   "new": "| E2 (feed) lead off, R255 open, Q203 open, U201 2Y stuck open, ribbon 7 open (R268 pulls 2A LOW); **r7: E1 lead off or R276 open** (no REGN at the EIB, so no feed; the Q201/Q202 gates then float, but no feed current exists for them to switch) |",
+   "note": "B.6 fault table: R276 open = E1 lead off"
+  },
+  {
+   "old": "F22 T18 (DNP), F23 T19 (DNP), F24 spare |",
+   "new": "F22 T18 (DNP), F23 T19 (DNP), F24 spare; **r7:** nets unchanged; F01-F07, F11-F21, F23 and F24 sit on the tab X field, F08, F09, F10 and F22 on the footprint low row, F22 at (41.68, 35.80) (A.4, H.23(g)) |",
+   "note": "B.8 tap field: r7 placement note, nets unchanged"
+  },
+  {
+   "old": "| Keep-alive (DNP) | U112 TPS22810 (DBV):",
+   "new": "| **Mechanical (r7)** | FT2 fill hole: 1.0 mm NPTH at (28.00, 73.250), no net, with a 2.0 mm copper and part keep-out disc on the CR top (H.23(i)); FT1 and FT2 are bonded feet without a CR pad or net (A.7) |\n| Keep-alive (DNP) | U112 TPS22810 (DBV):",
+   "note": "B.8 carrier: FT2 fill hole for the capture"
+  },
+  {
+   "old": "2 S -> REGN (E1); 3 D -> R255",
+   "new": "2 S -> REGN (**r7:** the C205 node; E1 reaches it only through R276); 3 D -> R255",
+   "note": "B.8 EIB Q203 source net"
+  },
+  {
+   "old": "| R275 (r5) | E7 (TP38, STAT) - J201.4, at the E7 pad end |",
+   "new": "| R275 (r5) | E7 (TP38, STAT) - J201.4, at the E7 pad end |\n| **R276 (r7)** | REGN_E1 (E1 pad, the JP12 REGN pin lead) - REGN, at the E1 pad end; the REGN node carries only Q203 S, R271, R252, R254 and C205 |",
+   "note": "B.8 EIB: R276 netlist row"
+  },
+  {
+   "old": "| Local | C205 100 nF REGN - AGND at Q203 source |",
+   "new": "| Local | C205 100 nF REGN - AGND at Q203 source (**r7:** on the REGN side of R276, so R276 x C205 filters the E1 lead, H.23(k)) |",
+   "note": "B.8 EIB: C205 behind R276"
+  },
+  {
+   "old": "Make every change **before the first power-up**. Never move a PROG jumper with power applied.",
+   "new": "Make every change **before the first power-up**. Never move a PROG jumper with power applied. **r7:** The carrier extension and the EVM placement change the electrical function of no EM item, so no EM item becomes unnecessary; r7 changes the text of EM5 (JP21 post identity) and EM23 (EVM mount) only.",
+   "note": "C intro: no EM becomes unnecessary"
+  },
+  {
+   "old": "E4 on the pin-1 post on its own joint (r3) |",
+   "new": "E4 on the pin-1 post on its own joint (r3). **r7:** JP21 pin 1 is the lower, square post at (75.312, 64.769) EVM mm (ILIM_HIZ; bottom-layer trace to TP33); the upper, round post at (75.312, 67.309) is pin 2 (AGND). The r3-r6 A.5 pixel point (902, 408) is pin 2 (**superseded in r7:** `round4/work/evm_geometry.md` Table 1 and section 7.2; H.23(k)) |",
+   "note": "EM5: JP21 pin 1 = lower square post"
+  },
+  {
+   "old": "T-A-02 meters the bottom terminal to AGND |",
+   "new": "T-A-02 meters the bottom terminal (r7: the R256/C252 terminal on pin 2, the upper post) to AGND |",
+   "note": "EM5: disambiguate 'bottom terminal'"
+  },
+  {
+   "old": "| EM23 | Bumpons H1-H4 | fitted | remove; M3 nylon standoffs (hole diameter checked, T-A-02) | mounting |",
+   "new": "| EM23 | Bumpons H1-H4 (3M SJ-5303, 11.18 mm diameter, 5.08 mm tall; SLUUCB5E Table 4-1) and the EVM mount (r7) | fitted (adhesive, underside, centred 7.620 mm in from each corner) | remove; M3 nylon standoffs (hole diameter checked, T-A-02) (**superseded in r7:** the EVM has no mounting holes). **r7:** keep the bumpons; they rest on the EVM plate (insulating, fixed to the chassis; A.7). Hold the EVM with two nylon clamp bars or four corner L-clamps with 0.5 mm silicone pads. Each clamp presses an edge lip no wider than 2.0 mm. Notch the clamp at J8. Keep every clamp clear of TP48/TP49, the terminal-block wire faces and the fiducials. Bond no EVM copper to the plate, the CR or the chassis with a fastener or adhesive. Mount the EIB on the same plate on its two M3 nylon standoffs. Do not drill the EVM. Plate and clamp geometry: TODO(design: from MS2 and MS7) | The EVM has no mounting holes: its largest drill is 1.25 mm (the J1-J5 pins), and the corner circles are the fiducials FID1-FID6 (SLUUCB5E Figs 4-1 to 4-4, Table 4-1). A hole at a bumpon centre cuts the ground pour and 7-17 stitching vias, and two bumpon zones overlap the TP48/TP49 AGND pads (`round4/work/evm_geometry.md` sections 3 and 9). One plate for the EVM and the EIB makes one rigid body, so the E leads see no relative motion (A.5 maxima). Edge features for the clamp design: the J5/J3 wire faces 2.41 mm in from the right edge, J1/J2 at the left edge, J4 at the top edge, J7 at the bottom edge, the J8 pins over the bottom edge to y -6.24 mm, and J6 1.0 mm over the left edge (`round4/work/evm_geometry.md` section 9). T-A-02 checks the clamp fit and the insulation (EVM copper to plate and chassis > 1 MOhm); T-A-05 checks the plate, clamp and pad materials |",
+   "note": "EM23 rewritten per basis D7"
+  }
+ ]
+}

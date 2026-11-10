@@ -1,0 +1,99 @@
+
+=== 1. Outline and clearances (MB frame, mm)
+main 31.00 x 33.00 = 1023.0 mm2 (chamfer -0.5); arm 31.53 x 11.14 = 351.2 mm2; total 1373.7 mm2 (+34 %)
+bounding box x 17.70-80.23 (62.53), y 34.14-67.14
+arm low edge y 56.00: to REG-5V body top 1.49 mm; to 5V pour bbox top 1.39 mm; to 5V via centre 0.42 mm (tented)
+arm top edge y 67.14: to C-D2 body 1.66 mm; arm tip x 80.23: to RENC2 0.50 mm, to J1 body 2.83 mm
+main right edge x 48.70 to REG-5V body 2.27 mm, to CO-5V 0.60 mm (r6, unchanged)
+pin column x 45.998 to arm tip: 34.23 mm (cantilever length)
+
+=== 2. Area booking (courtyard mm2)
+arm courtyard-usable: 31.53 x 10.14 = 319.7 mm2 (0.5 mm in from the top, bottom and tip; the x 48.20-48.70 root strip of the main outline joins it)
+arm demand: field 3x7 153.7 + J101 36.7 + R175 1206 10.9 + 6 x 0603 26.1 = 227.4 -> U 71 %
+main top demand: 753 - 168 (r6 field) - 36.7 (J101) - 10.9 (R175) + 25.0 (1x4 field) + 15.2 (bead) - 26.1 = 551.6 on 732 strict -> U 75 % (r6: 753/732 = 103 %)
+bottom (main only, r3 set): 435 on 591 -> U 74 %; arm bottom: none (continuous L4 GND)
+whole CR: 1214 mm2 of courtyard on 1643 mm2 of usable area (top main 732 + arm 320 + bottom 591) -> 74 %
+single-sided needs +798..+917 mm2 of extension (stackup_area); this arm gives 340 mm2 (no support keep-out on the top: the foot is bonded under the CR) -> single-sided NOT reached
+
+=== 3. Tap fields and tap wire lengths (mm)
+arm field 3 x 7 centres x 63.00-78.24, y 58.00/60.54/63.08; envelope x 62.25-78.99, y 57.25-63.83; centroid (70.62, 60.54)
+low pads (main, y 35.80): F08 x 24.00 (T22), F09 x 38.70 (T8), F10 x 41.24 (T9), F22 x 43.78 (T18 option)
+tap                    r6 str r7 str     -%  r6 bld  r7 bld  field
+T1 C-D6 pad1 (V-MOT)     67.6   49.0   -28%     150      90  arm
+T7b C-D6 pad2 (GND)      68.7   52.2   -24%     150     100  arm
+T2 C-D2 pad1 (VBUS)      47.0    9.8   -79%     100      30  arm
+T3 J1.39                 54.5   24.1   -56%     120      60  arm
+T4 J1.43                 54.3   28.1   -48%     120      60  arm
+T5 J1.45                 54.4   30.2   -45%     120      70  arm
+T6 J1.29                 57.0   17.2   -70%     120      50  arm
+T22 BAL pad8             10.5    5.7   -46%      50      30  low
+T8 J2.31                 78.6   73.3    -7%     150     130  low
+T9 SNS-BT GND/REF        26.7   18.5   -31%     120      50  low
+T10 J1.23                59.8   16.7   -72%     120      50  arm
+T11 J2.19                82.8   40.1   -52%     150      80  arm
+T12 J2.47                77.4   48.2   -38%     150      90  arm
+T13 J2.45                77.3   46.8   -39%     150      90  arm
+T14 J2.21                81.9   39.7   -52%     150      80  arm
+T15 J2.07                89.5   45.6   -49%     150      90  arm
+T16 J2.43                77.2   45.4   -41%     150      90  arm
+T17 J2.09                88.2   44.4   -50%     150      90  arm
+T17r J2.29               79.1   39.7   -50%     150      80  arm
+T20 ROS pad2             58.0   14.3   -75%     100      40  arm
+T21 J2.11                87.0   43.3   -50%     150      80  arm
+SUM straight r6 1378 -> r7 732 mm (-47 %); build r6 2770 -> r7 1530 mm (-45 %)
+rule check on r6 taps (1.5 x straight + 15, ceil 10): T22 40 (r6 50), T2 90 (r6 100), T8 140 (r6 150), T12 140 (r6 150)
+T18 option (CO-5V pad 1 ~(50.8, 39.62)) from the low field: 8.0 mm straight (r6 0.05 m)
+
+=== 4. Arm thermal bands
+arm low edge         y 56.00 -> d 1.39 mm from the 5V pour
+band A/B boundary    y 61.00 -> d 6.39 mm from the 5V pour
+J101 courtyard low   y 62.74 -> d 8.13 mm from the 5V pour
+arm top edge         y 67.14 -> d 12.53 mm from the 5V pour
+Table 4 nominal 0.63 W: 1 mm 7.0/8.6/13.6 C, 5 mm 5.2/6.4/9.9 C, 10 mm 3.8/4.6/6.9 C; 1.08 W worst 1 mm 23.5 C
+main-footprint comparator block (x 24-36) to the pour bbox (x >= 49.78): >= 13.8 mm
+
+=== 5. Pin load, arm resonance, tip foot (ORDER OF MAGNITUDE)
+main  5.0 g, rho 0.6, m_arm 2.11 g, 30 g: per-pin 0.175 N unpropped / 0.105 N with the foot; foot reaction 0.310 N -> bond stress 24 kPa on 12.9 mm2
+main  5.0 g, rho 0.8, m_arm 2.81 g, 30 g: per-pin 0.211 N unpropped / 0.118 N with the foot; foot reaction 0.413 N -> bond stress 32 kPa on 12.9 mm2
+main 10.0 g, rho 0.6, m_arm 2.11 g, 30 g: per-pin 0.242 N unpropped / 0.172 N with the foot; foot reaction 0.310 N -> bond stress 24 kPa on 12.9 mm2
+main 10.0 g, rho 0.8, m_arm 2.81 g, 30 g: per-pin 0.278 N unpropped / 0.185 N with the foot; foot reaction 0.413 N -> bond stress 32 kPa on 12.9 mm2
+mass factor 1: f1 unpropped (L 34.2 mm) 725 Hz; propped at the foot (L 31.0 mm, clamped-pinned) 3878 Hz
+mass factor 2: f1 unpropped (L 34.2 mm) 513 Hz; propped at the foot (L 31.0 mm, clamped-pinned) 2742 Hz
+10 N handling push at the unpropped tip: deflection 1.76 mm (gap to MB 2.54 mm); with the foot: ~0
+
+=== 6. Header stack
+TSW -05 A 8.51 B 3.30 C 2.67: C up through CR -> top protrusion 1.07 mm; B down through sheet+MB -> 1.57 mm below the MB | reversed: B up -> 1.70, C down -> 0.94
+TSW -07 A 10.92 B 2.54 C 5.84: C up through CR -> top protrusion 4.24 mm; B down through sheet+MB -> 0.81 mm below the MB | reversed: B up -> 0.94, C down -> 4.12
+stack top above MB: body 2.54 + sheet 0.125 + CR 1.60 = 4.265 mm; + J101 mated socket and W5 fold >= 8 mm (A.3)
+air under the arm: 2.54 mm (no MB part in x 48.70-80.23, y 56.00-67.14; .brd query)
+
+=== 7. EVM placement and W-lead lengths (mm)
+EIB (EVM frame): x 93.90-117.90, y 41.61-77.61; E-row y 45.64..73.58; J201 ~(114.90, 59.61)
+R0 best X0 12 (weighted 1308): W1 153, W2 156, W3 138, W4 133, W5 143, W6 84, W7 88
+R90cw best X0 27 (weighted 1405): W1 250, W2 253, W3 104, W4 99, W5 51, W6 128, W7 168
+chosen R0, X0 12
+  W1 route 153 mm -> build max (x1.25, ceil 10) 200 mm (r6 cap 300)
+  W2 route 156 mm -> build max (x1.25, ceil 10) 200 mm (r6 cap 300)
+  W3 route 138 mm -> build max (x1.25, ceil 10) 180 mm (r6 cap 300)
+  W4 route 133 mm -> build max (x1.25, ceil 10) 170 mm (r6 cap 300)
+  W5 route 143 mm -> build max (x1.25, ceil 10) 180 mm (r6 cap 300)
+  W6 route 84 mm -> build max (x1.25, ceil 10) 110 mm (r6 cap 300)
+  W7 route 88 mm -> build max (x1.25, ceil 10) 110 mm (r6 cap 300)
+H.11 check: 0.30 m 20 AWG pair 20.0 mOhm, 18 AWG pair 12.6 mOhm
+at the build maxima: input pair 0.20 m -> 13.3 mOhm; battery pair 0.18 m -> 7.5 mOhm (24 mV, 78 mW at 3.21 A)
+R_PATH_RG (H.19) 0.117-0.193 ohm with 20 mOhm of W1/W2 -> 0.110-0.186 ohm
+
+=== 8. Merged-EIB E-lead lengths if the EVM sat 3 mm past the +y edge, right edge toward the MB (best case)
+X0 8: E8 40/55, E3 43/55, E4 47/60, E2 51/65, E7 57/75, E1 90/115, E5 73/95, E6 71/90  (straight/x1.25 max; G1 limit 60, E1 90)
+X0 15: E8 42/55, E3 43/55, E4 47/60, E2 51/65, E7 57/75, E1 88/110, E5 70/90, E6 70/90  (straight/x1.25 max; G1 limit 60, E1 90)
+X0 25: E8 46/60, E3 44/55, E4 48/65, E2 52/70, E7 57/75, E1 85/110, E5 68/85, E6 68/90  (straight/x1.25 max; G1 limit 60, E1 90)
+EVM-frame E straight / max (evm_geometry.md Table 6, EIB at the EVM, unchanged): E8 13.6/20, E3 16.7/25, E4 20.6/30, E2 24.6/35, E7 29.9/40, E1 69.0/90, E5 49.1/65, E6 45.4/60
+
+=== 9. Supplementary
+short arm: courtyard 165.3 mm2, demand 111.4 -> 67 %; main top 626.8 on 732 -> 86 %
+arm L4 to MB VBUS pour: 0.46 pF (A <= 139.2 mm2, d 2.665 mm)
+R_path,max 0.193 ohm: 0.330 ms (0.4 mF), 0.800 ms (0.97 mF)
+R_path,max 0.186 ohm: 0.333 ms (0.4 mF), 0.807 ms (0.97 mF)
+EVM mezzanine stack: 41.38 mm
+T-A-08 pull 5 N on 12.9 mm2: 388 kPa; ratio to the 30 g foot reaction 0.413 N: 12
+R0 chassis footprint past the +y edge: x 7.0-129.9, y 98.0-206.9

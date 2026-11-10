@@ -1,0 +1,85 @@
+====================================================================================================
+1. EVM outline 88.90 x 88.90 mm (evm_geometry.md section 3); nearest power-stage copper to each E point:
+   TP49 (E8)             right edge   5.5 mm, bottom edge  79.1 mm, nearest SW2 TP10/TP11    32.6 mm
+   TP33 (E3)             right edge   8.9 mm, bottom edge  63.5 mm, nearest SW2 TP10/TP11    25.9 mm
+   JP21 pin 1 (E4)       right edge  13.6 mm, bottom edge  64.8 mm, nearest SW2 TP10/TP11    21.2 mm
+   JP14 pin 2 (E2)       right edge  17.5 mm, bottom edge  64.8 mm, nearest SW2 TP10/TP11    17.3 mm
+   TP38 (E7)             right edge  22.9 mm, bottom edge  59.7 mm, nearest SW2 TP10/TP11    12.0 mm
+   JP12 pin 1 REGN (E1)  right edge  49.5 mm, bottom edge  13.7 mm, nearest U1 outline       26.9 mm
+   TP27 REGN (E1 alt.)   right edge  62.2 mm, bottom edge  80.0 mm, nearest SW1 TP3/TP4      19.8 mm
+   TP36 /CE (E5)         right edge  33.0 mm, bottom edge  19.7 mm, nearest C37-C40          20.6 mm
+   JP17 pin 1 /CE (E6)   right edge  34.3 mm, bottom edge  26.8 mm, nearest C37-C40          13.5 mm
+2. U204 trip referred to /CE: 2.39-2.58 V (R3 TLV3012B constants, 0-45 C rise, 1 % divider)
+   margin E3 hold (pin, Q201 on)                                  0.750 V -> 10 % budget 75 mV
+   margin E4 sense, nuisance (held 0.11 V -> reads released)      0.477 V -> 10 % budget 48 mV
+   margin E4 sense, masking (released 1.52 V -> reads held)       0.870 V -> 10 % budget 87 mV
+   margin E6 sense, nuisance (/CE HIGH 4.17 V -> reads LOW)       1.587 V -> 10 % budget 159 mV
+   margin E6 sense, masking (/CE LOW -> reads HIGH)               2.285 V -> 10 % budget 229 mV
+   budgets (loop EMF, sustained): E3 75 mV, E4 48 mV, E6 159 mV (E6: the 1:2 divider halves EMF and margin alike)
+3. EVM L2 ripple: di/dt 12.32 A/us (on-time 250 ns), ripple 3.08 A p-p, inductor peak 4.75 A
+   dm/dt upper bounds: ripple loop 616 A m2/s (sustained 250 ns), hot loop 2.38e+04 A m2/s (2 ns edges)
+   EMF in a lead pair (s = 5 mm untwisted) vs length, closest approach r0 (ripple: sustained; hot loop: ns, before filtering):
+   r0 10 mm  L  10 mm:  5.5 mV /  212 mV; L  30 mm: 10.3 mV /  395 mV; L  60 mm: 11.7 mV /  451 mV; L 100 mm: 12.1 mV /  466 mV; L 300 mm: 12.3 mV /  474 mV
+   r0 13 mm  L  10 mm:  2.6 mV /  101 mV; L  30 mm:  5.5 mV /  212 mV; L  60 mm:  6.7 mV /  258 mV; L 100 mm:  7.1 mV /  272 mV; L 300 mm:  7.3 mV /  280 mV
+   r0 20 mm  L  10 mm:  0.7 mV /   29 mV; L  30 mm:  1.8 mV /   71 mV; L  60 mm:  2.6 mV /   99 mV; L 100 mm:  2.9 mV /  110 mV; L 300 mm:  3.1 mV /  118 mV
+   asymptote (L -> inf) at r0 13 mm: ripple 7.3 mV, hot loop 281 mV: the EVM term saturates with length (field ~ r^-3)
+   E3: ripple pickup reaches the 75 mV budget only below r0 = 4.1 mm from the stage centre-line (dipole model invalid there)
+   E4: ripple pickup reaches the 48 mV budget only below r0 = 5.1 mm from the stage centre-line (dipole model invalid there)
+   E6: ripple pickup reaches the 159 mV budget only below r0 = 2.8 mm from the stage centre-line (dipole model invalid there)
+   ns spike at the ILIM_HIZ pin with Q201 on (impulse into the E3+E8 loop, rings on C252):
+     L  10 mm s 0.6 mm: L_loop   5.3 nH, EMF    12 mV for 2 ns -> pin peak  7.1 mV (budget 75 mV)
+     L  10 mm s 5.0 mm: L_loop  13.8 nH, EMF   101 mV for 2 ns -> pin peak 36.7 mV (budget 75 mV)
+     L  60 mm s 0.6 mm: L_loop  31.7 nH, EMF    31 mV for 2 ns -> pin peak  7.4 mV (budget 75 mV)
+     L  60 mm s 5.0 mm: L_loop  82.6 nH, EMF   258 mV for 2 ns -> pin peak 38.3 mV (budget 75 mV)
+     L 300 mm s 0.6 mm: L_loop 158.6 nH, EMF    34 mV for 2 ns -> pin peak  3.6 mV (budget 75 mV)
+     L 300 mm s 5.0 mm: L_loop 413.0 nH, EMF   280 mV for 2 ns -> pin peak 18.6 mV (budget 75 mV)
+   E4: R258 10.0 kOhm x 3 pF = 30 ns; a 2 ns spike reaches IN+ at ~0.07 of its EMF; TLV3012B response 2-4 us (DOC B.1)
+   E4: R258 10.0 kOhm x 8 pF = 80 ns; a 2 ns spike reaches IN+ at ~0.03 of its EMF; TLV3012B response 2-4 us (DOC B.1)
+4. Parallel aggressor conductor (line current, coplanar worst case), M' = mu0/2pi ln((d+s)/d):
+   untwisted s 5 mm, d 10 mm   M' 8.11e-08 H/m  class A (load steps, >= 1 us: 1 A/us)                                        L_max E3    925 mm, E4    588 mm, E6   1957 mm
+   untwisted s 5 mm, d 10 mm   M' 8.11e-08 H/m  class B (inductor-ripple class: 10 A/us; EVM L2 12.3 A/us, MB boost 3.8 A/us) L_max E3     92 mm, E4     59 mm, E6    196 mm
+   untwisted s 2 mm, d 10 mm   M' 3.65e-08 H/m  class A (load steps, >= 1 us: 1 A/us)                                        L_max E3   2057 mm, E4   1308 mm, E6   4352 mm
+   untwisted s 2 mm, d 10 mm   M' 3.65e-08 H/m  class B (inductor-ripple class: 10 A/us; EVM L2 12.3 A/us, MB boost 3.8 A/us) L_max E3    206 mm, E4    131 mm, E6    435 mm
+   untwisted s 5 mm, d 20 mm   M' 4.46e-08 H/m  class A (load steps, >= 1 us: 1 A/us)                                        L_max E3   1681 mm, E4   1069 mm, E6   3556 mm
+   untwisted s 5 mm, d 20 mm   M' 4.46e-08 H/m  class B (inductor-ripple class: 10 A/us; EVM L2 12.3 A/us, MB boost 3.8 A/us) L_max E3    168 mm, E4    107 mm, E6    356 mm
+   twisted (pitch 25 mm, s 0.6 mm, d 10 mm): residual one half twist M 1.46e-10 H -> 0.15 mV at class A, independent of length
+   twisted (pitch 25 mm, s 0.6 mm, d 10 mm): residual one half twist M 1.46e-10 H -> 1.46 mV at class B, independent of length
+5. Capacitive pickup: lead-to-aggressor C' 4.8 pF/m at 10 mm, lead-to-chassis C' 13.5 pF/m at 5 mm height; aggressor edge 20 V
+   L  10 mm (parallel run): C_c 0.05 pF -> ILIM_HIZ node (C252 2.2 nF) 0.4 mV; /CE node (23.5 kOhm, C 0.1 pF + 5 pF pin ASSUMED) 0.19 V for ~0.12 us
+   L  60 mm (parallel run): C_c 0.29 pF -> ILIM_HIZ node (C252 2.2 nF) 2.6 mV; /CE node (23.5 kOhm, C 0.8 pF + 5 pF pin ASSUMED) 0.94 V for ~0.14 us
+   L 300 mm (parallel run): C_c 1.44 pF -> ILIM_HIZ node (C252 2.2 nF) 13.1 mV; /CE node (23.5 kOhm, C 4.0 pF + 5 pF pin ASSUMED) 2.75 V for ~0.25 us
+   lead-off masking: a floating E4 (R259 10 MOhm pulls IN+ to 3V3 = 'released') or E6 (R262 + R263 2 MOhm pulls IN+ to 0 = '/CE LOW'):
+     L  30 mm: spike 0.81 V at the lead, recovery tau E4 35 us, E6 7 us (an aggressor edge every 33-50 us at 20-30 kHz PWM ASSUMED)
+     L  60 mm: spike 1.41 V at the lead, recovery tau E4 41 us, E6 8 us (an aggressor edge every 33-50 us at 20-30 kHz PWM ASSUMED)
+     L 300 mm: spike 3.40 V at the lead, recovery tau E4 85 us, E6 17 us (an aggressor edge every 33-50 us at 20-30 kHz PWM ASSUMED)
+6. Q201 turn-on through R252: tau 2.35 us; the 2N7002K Rds passes the hold-loop Z0 over ~us, much slower than the LC period
+   E3+E8 L  20 mm s 0.6 mm: L_loop  10.6 nH, f0 with C252 33.00 MHz, Z0  2.2 ohm (Q201 Rds 2-4 ohm -> zeta 0.46-0.91 once fully on)
+   E3+E8 L  20 mm s 5.0 mm: L_loop  27.5 nH, f0 with C252 20.45 MHz, Z0  3.5 ohm (Q201 Rds 2-4 ohm -> zeta 0.28-0.57 once fully on)
+   E3+E8 L  60 mm s 0.6 mm: L_loop  31.7 nH, f0 with C252 19.05 MHz, Z0  3.8 ohm (Q201 Rds 2-4 ohm -> zeta 0.26-0.53 once fully on)
+   E3+E8 L  60 mm s 5.0 mm: L_loop  82.6 nH, f0 with C252 11.81 MHz, Z0  6.1 ohm (Q201 Rds 2-4 ohm -> zeta 0.16-0.33 once fully on)
+   E3+E8 L 100 mm s 0.6 mm: L_loop  52.9 nH, f0 with C252 14.76 MHz, Z0  4.9 ohm (Q201 Rds 2-4 ohm -> zeta 0.20-0.41 once fully on)
+   E3+E8 L 100 mm s 5.0 mm: L_loop 137.7 nH, f0 with C252  9.14 MHz, Z0  7.9 ohm (Q201 Rds 2-4 ohm -> zeta 0.13-0.25 once fully on)
+   E3+E8 L 300 mm s 0.6 mm: L_loop 158.6 nH, f0 with C252  8.52 MHz, Z0  8.5 ohm (Q201 Rds 2-4 ohm -> zeta 0.12-0.24 once fully on)
+   E3+E8 L 300 mm s 5.0 mm: L_loop 413.0 nH, f0 with C252  5.28 MHz, Z0 13.7 ohm (Q201 Rds 2-4 ohm -> zeta 0.07-0.15 once fully on)
+   E1 + C205 100 nF, L  20 mm (return via E8, s 5 mm): L  27.5 nH, f0 3.03 MHz, critical damping R = sqrt(L/C) 0.52 ohm
+   E1 + C205 100 nF, L  60 mm (return via E8, s 5 mm): L  82.6 nH, f0 1.75 MHz, critical damping R = sqrt(L/C) 0.91 ohm
+   E1 + C205 100 nF, L  85 mm (return via E8, s 5 mm): L 117.0 nH, f0 1.47 MHz, critical damping R = sqrt(L/C) 1.08 ohm
+   E1 + C205 100 nF, L 300 mm (return via E8, s 5 mm): L 413.0 nH, f0 0.78 MHz, critical damping R = sqrt(L/C) 2.03 ohm
+   E1 ring: Q = sqrt(L/C)/(R_lead + ESR 20 mOhm); the Q201 gate low-pass R252 x Ciss = 68 kHz attenuates a 1.5 MHz ripple 22x
+     L 60 mm, series R_E1   0.0 ohm: Q  20.0; release-level shift 0.0 mV = 0 mA of ILIM clamp (0.8 ohm/V, DS 7.3.4.3)
+     L 60 mm, series R_E1  10.0 ohm: Q   0.1; release-level shift 1.6 mV = 2 mA of ILIM clamp (0.8 ohm/V, DS 7.3.4.3)
+     L 60 mm, series R_E1 100.0 ohm: Q   0.0; release-level shift 16.2 mV = 20 mA of ILIM clamp (0.8 ohm/V, DS 7.3.4.3)
+     L 85 mm, series R_E1   0.0 ohm: Q  19.3; release-level shift 0.0 mV = 0 mA of ILIM clamp (0.8 ohm/V, DS 7.3.4.3)
+     L 85 mm, series R_E1  10.0 ohm: Q   0.1; release-level shift 1.6 mV = 2 mA of ILIM clamp (0.8 ohm/V, DS 7.3.4.3)
+     L 85 mm, series R_E1 100.0 ohm: Q   0.0; release-level shift 16.2 mV = 20 mA of ILIM clamp (0.8 ohm/V, DS 7.3.4.3)
+   H.13 tau 48.3 us with C252 alone; leads E2/E3/E4 add <= 2 pF (0.1 %) at L  60 mm -> H.13 0.28 / 0.32 V unchanged
+   H.13 tau 48.3 us with C252 alone; leads E2/E3/E4 add <= 12 pF (0.6 %) at L 300 mm -> H.13 0.28 / 0.32 V unchanged
+7. Ground. EVM AGND reaches the CR plane through E8 (+ island R273) in parallel with W2 (20 AWG) || W4 (18 AWG)
+   G1 W 60 mm, E8 20 mm     W2||W4 0.77 mOhm, E8 4.3 mOhm: E8 current without island  230 mA (T-F-11 limit 20 mA); with R273 island 0.12 mA; plane-to-EVM offset <= 3.9 mV (H.11 scaled) -> R273 current <= 0.39 mA
+   G1 W 60 mm, E8 60 mm     W2||W4 0.77 mOhm, E8 12.8 mOhm: E8 current without island   85 mA (T-F-11 limit 20 mA); with R273 island 0.12 mA; plane-to-EVM offset <= 3.9 mV (H.11 scaled) -> R273 current <= 0.39 mA
+   r6 W 0.30 m, E8 20 mm    W2||W4 3.86 mOhm, E8 4.3 mOhm: E8 current without island  713 mA (T-F-11 limit 20 mA); with R273 island 0.58 mA; plane-to-EVM offset <= 19.5 mV (H.11 scaled) -> R273 current <= 1.95 mA
+   G2 W 0.10 m, E8 0.10 m   W2||W4 1.29 mOhm, E8 21.3 mOhm: E8 current without island   85 mA (T-F-11 limit 20 mA); with R273 island 0.19 mA; plane-to-EVM offset <= 6.5 mV (H.11 scaled) -> R273 current <= 0.65 mA
+   G2 W 0.30 m, E8 0.30 m   W2||W4 3.86 mOhm, E8 63.9 mOhm: E8 current without island   85 mA (T-F-11 limit 20 mA); with R273 island 0.57 mA; plane-to-EVM offset <= 19.5 mV (H.11 scaled) -> R273 current <= 1.95 mA
+8. 28 AWG  60 mm = 12.8 mOhm: in series with R255 48.7 kOhm 2.6e-07 of the release level; E3 hold drop at 3 uA leakage 0.038 uV; U203 R259 0.33 uA x lead 0.0042 uV; E8 drop at 2 mA 0.03 mV
+8. 28 AWG 300 mm = 63.9 mOhm: in series with R255 48.7 kOhm 1.3e-06 of the release level; E3 hold drop at 3 uA leakage 0.19 uV; U203 R259 0.33 uA x lead 0.021 uV; E8 drop at 2 mA 0.13 mV
+9. EIB section on the CR: courtyard ~253 mm2 (H.18b basis without J201 and the two M3 keep-outs); J101 body freed 37 mm2; net CR increase ~217 mm2 against a top side at ~678 of ~881 mm2 (DOC H.22(k)) -> 895 mm2 = 102 % of the r6 top area

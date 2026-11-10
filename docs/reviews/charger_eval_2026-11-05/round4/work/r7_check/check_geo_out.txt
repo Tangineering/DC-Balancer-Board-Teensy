@@ -1,0 +1,140 @@
+BRD Scale Car Board PCB 20260625.brd
+MB outline bbox (0.0, 0.0, 131.064, 98.044) holes [(3.302, 94.742, 3.7973), (3.302, 3.302, 3.7973)]
+via dia 0.7564 CHG pad dia (1.1 drill) 1.65
+
+[1] r7 outline area (shoelace) 1394.060 mm2; r6 rect 1023.000; tab X 195.600; tab Y (with chamfer) 175.460
+
+[1/2] tab X: features within 3 mm (rim clearance = distance to the tab region - half width; 'UNDER' = centre geometry overlaps the tab)
+   -0.378  UNDER  free-edge rim   3.985  3V3 via (56.431,60.663) d0.7564
+   -0.378  UNDER  free-edge rim   3.359  CS-MDAC-FC via (58.420,60.038) d0.7564
+   -0.378  UNDER  free-edge rim  -0.029  SCL via (64.651,58.809) d0.7564
+   -0.378  UNDER  free-edge rim   1.122  CHRG-STAT via (63.500,58.928) d0.7564
+   -0.354         free-edge rim  -0.354  MPPT-DISABLE via (65.024,61.722) d0.7564
+   -0.254  UNDER  free-edge rim  -0.254  3V3 L1 trace w0.508 (62.99,54.10)-(56.43,60.66)
+   -0.127  UNDER  free-edge rim  -0.127  CS-MDAC-FC L1 trace w0.254 (64.77,53.93)-(58.67,60.04)
+   -0.127  UNDER  free-edge rim   3.611  CS-MDAC-FC L1 trace w0.254 (58.67,60.04)-(58.42,60.04)
+   -0.127  UNDER  free-edge rim   0.437  SDA L1 trace w0.254 (48.99,56.86)-(46.00,56.86)  [touches r6 rect]
+   -0.127  UNDER  free-edge rim   3.120  SDA L1 trace w0.254 (61.75,62.64)-(54.76,62.64)
+   -0.127  UNDER  free-edge rim   0.437  SDA L1 trace w0.254 (54.76,62.64)-(48.99,56.86)
+   -0.127  UNDER  free-edge rim  -0.127  SDA L1 trace w0.254 (65.70,58.69)-(61.75,62.64)
+   -0.127  UNDER  free-edge rim  -0.127  SCL L1 trace w0.254 (49.53,56.13)-(55.37,61.98)
+   -0.127  UNDER  free-edge rim   3.491  SCL L1 trace w0.254 (61.38,61.98)-(55.37,61.98)
+   -0.127  UNDER  free-edge rim   0.222  SCL L1 trace w0.254 (64.65,58.81)-(64.55,58.81)
+   -0.127  UNDER  free-edge rim   0.324  SCL L1 trace w0.254 (64.55,58.81)-(61.38,61.98)
+   -0.127  UNDER  free-edge rim  -0.127  CHRG-STAT L1 trace w0.254 (49.78,55.63)-(54.36,60.20)
+   -0.127  UNDER  free-edge rim   3.771  CHRG-STAT L1 trace w0.254 (54.36,60.20)-(55.63,61.47)
+   -0.127  UNDER  free-edge rim   3.913  CHRG-STAT L1 trace w0.254 (55.63,61.47)-(60.96,61.47)
+   -0.127  UNDER  free-edge rim   1.881  CHRG-STAT L1 trace w0.254 (60.96,61.47)-(62.99,59.44)
+   -0.127  UNDER  free-edge rim   1.373  CHRG-STAT L1 trace w0.254 (62.99,59.44)-(63.50,58.93)
+   -0.127  UNDER  free-edge rim   2.529  MPPT-DISABLE L1 trace w0.254 (21.00,64.48)-(62.26,64.48)  [touches r6 rect]
+   -0.127  UNDER  free-edge rim  -0.127  MPPT-DISABLE L1 trace w0.254 (62.26,64.48)-(65.02,61.72)
+   -0.127  UNDER  free-edge rim   3.259  CB-DISABLE L1 trace w0.254 (43.43,63.75)-(61.47,63.75)  [touches r6 rect]
+   -0.127  UNDER  free-edge rim  -0.127  CB-DISABLE L1 trace w0.254 (61.47,63.75)-(66.80,58.42)
+    0.024         free-edge rim   0.024  VBUS L1 polygon w1.016 bbox (65.53,19.56)-(79.55,72.64)
+    0.039         free-edge rim   0.039  SCL L1 trace w0.254 (47.72,54.32)-(49.53,56.13)  [touches r6 rect]
+    0.203         free-edge rim   0.203  N$7 L1 trace w0.254 (49.28,69.34)-(48.01,68.07)
+    0.324         free-edge rim   0.324  SDA via (65.702,58.590) d0.7564
+    0.343         free-edge rim   0.343  5V via (59.389,55.579) d0.7564
+    0.453         free-edge rim   0.453  3V3 via (51.097,69.131) d0.7564
+    0.467         free-edge rim   0.467  5V L1 trace w0.508 (56.64,52.83)-(59.39,55.58)
+    0.547         free-edge rim   0.547  CHRG-STAT L1 trace w0.254 (49.78,53.34)-(49.78,55.63)
+    0.567         free-edge rim   0.567  N$7 L1 trace w0.254 (48.01,68.07)-(47.24,67.31)
+    0.575         free-edge rim   0.575  SDA L1 trace w0.254 (65.70,58.59)-(65.70,58.69)
+    0.704         free-edge rim   0.704  3V3 L1 trace w0.254 (51.10,69.13)-(51.10,69.37)
+    0.915         free-edge rim   0.915  N$7 L1 trace w0.254 (49.28,70.10)-(49.28,69.34)
+    0.918         free-edge rim   0.918  MISO via (53.998,69.596) d0.7564
+    0.939         free-edge rim   0.939  3V3 L1 trace w0.254 (51.10,69.37)-(48.83,71.63)
+    1.169         free-edge rim   1.169  MISO L1 trace w0.254 (49.03,72.13)-(51.56,69.60)
+    1.169         free-edge rim   1.169  MISO L1 trace w0.254 (51.56,69.60)-(54.00,69.60)
+    1.329         free-edge rim   1.329  N$7 L1 trace w0.254 (47.24,67.31)-(45.21,67.31)
+    1.424         free-edge rim   1.424  CB-DISABLE via (66.802,58.420) d0.7564
+    1.436         free-edge rim   1.436  5V L1 polygon w0.508 bbox (49.78,37.85)-(61.98,54.61)
+    1.654         free-edge rim   4.710  VCHG-IN L1 trace w1.524 (46.00,61.94)-(46.28,62.23)  [touches r6 rect]
+    1.677         free-edge rim   1.677  N$7 L1 trace w0.254 (49.28,70.61)-(49.28,70.10)
+    1.701         free-edge rim   1.701  PART MDAC-FC box (47.11,70.00)-(52.97,73.25) body (47.46,70.00)-(52.61,73.25) bodyclr 1.701
+    1.786         free-edge rim   1.786  PART REG-5V box (50.97,36.87)-(62.31,54.51) body (51.56,43.33)-(61.72,52.35) bodyclr 3.953
+    1.877         free-edge rim   1.877  CHG pad SDA SDA tht sq1.650  [touches r6 rect]
+    1.877         free-edge rim   4.757  CHG pad VIN+ VCHG-IN tht sq1.650  [touches r6 rect]
+    1.940         free-edge rim   5.095  VCHG-IN L1 trace w1.524 (43.91,61.94)-(46.00,61.94)  [touches r6 rect]
+    1.944         free-edge rim   1.944  3V3 L1 trace w0.508 (62.99,37.08)-(62.99,54.10)
+    2.036         free-edge rim   2.036  REG-5V pad 4 5V smd
+    2.079         free-edge rim   2.079  SCL L1 trace w0.254 (46.00,54.32)-(47.72,54.32)  [touches r6 rect]
+    2.115         free-edge rim   2.115  EN-REG-BT via (63.967,53.807) d0.7564
+    2.163         free-edge rim   2.163  MDAC-FC pad 1 FC-CURR smd
+    2.165         free-edge rim   2.165  MDAC-FC pad 10 VDROOP-FC smd
+    2.181         free-edge rim   2.181  PART C-D2 box (67.12,68.80)-(70.04,70.90) body (67.48,68.80)-(69.68,70.90) bodyclr 2.531
+    2.185         free-edge rim   2.185  N$7 L1 trace w0.254 (48.77,71.12)-(49.28,70.61)
+    2.201         free-edge rim   2.201  FC-CURR L1 trace w0.254 (51.40,70.63)-(51.05,70.97)
+    2.201         free-edge rim   2.201  FC-CURR L1 trace w0.254 (52.21,70.63)-(51.40,70.63)
+    2.202         free-edge rim   2.202  CHG pad SCL SCL tht sq1.650  [touches r6 rect]
+    2.239         free-edge rim   2.239  CS-MDAC-FC L1 trace w0.254 (64.77,39.37)-(64.77,53.93)
+    2.274         free-edge rim   2.274  C-D2 pad 1 VBUS smd
+    2.347         free-edge rim   2.347  VDROOP-FC L1 trace w0.254 (47.86,70.63)-(45.70,70.63)
+    2.366         free-edge rim   2.366  EN-REG-BT L1 trace w0.254 (63.97,53.81)-(64.01,53.77)
+    2.407         free-edge rim   2.407  EN-REG-BT L1 trace w0.254 (64.01,53.77)-(64.01,38.61)
+    2.544         free-edge rim   2.544  FC-CURR L1 trace w0.254 (51.05,70.97)-(51.05,74.57)
+    2.578         free-edge rim   2.578  VBUS L1 trace w0.254 (67.70,69.85)-(67.70,67.42)
+    2.578         free-edge rim   2.578  VBUS L1 trace w0.254 (67.70,67.42)-(68.58,66.55)
+    2.664         free-edge rim   2.664  MDAC-FC pad 9 N$7 smd
+    2.693         free-edge rim   2.693  N$7 L1 trace w0.254 (48.76,71.13)-(48.77,71.12)
+    2.701         free-edge rim   2.701  N$7 L1 trace w0.254 (47.86,71.13)-(48.76,71.13)
+    2.833         free-edge rim   2.833  CHRG-STAT L1 trace w0.254 (49.78,46.23)-(49.78,53.34)
+
+[1/2] tab Y: features within 3 mm (rim clearance = distance to the tab region - half width; 'UNDER' = centre geometry overlaps the tab)
+    0.470         free-edge rim   0.470  PART J-FC box (3.28,72.14)-(17.23,87.88) body (3.53,72.39)-(16.13,87.63) bodyclr 1.570
+    0.501         free-edge rim   0.501  PART ROP1-FC box (38.06,73.43)-(39.66,75.86) body (38.06,73.80)-(39.66,75.50) bodyclr 0.501
+    0.815         free-edge rim   0.815  ROP1-FC pad 1 N$8 smd
+    1.012         free-edge rim   1.012  PART L-FC box (21.05,77.01)-(36.56,89.61) body (22.74,77.01)-(36.19,89.61) bodyclr 1.012
+    1.175         free-edge rim   1.175  N$8 L1 trace w0.254 (39.57,76.17)-(38.86,75.46)
+    1.175         free-edge rim   1.175  N$8 L1 trace w0.254 (38.86,75.46)-(39.88,74.45)
+    1.448         free-edge rim   1.448  PART J-NTC box (3.55,52.91)-(16.25,67.35) body (3.55,52.91)-(16.25,67.35) bodyclr 1.448
+    1.664         free-edge rim   1.664  PART ROP2-FC box (39.17,76.42)-(41.60,78.02) body (39.54,76.42)-(41.24,78.02) bodyclr 2.019
+    1.769         free-edge rim   1.769  ROP2-FC pad 1 N$8 smd
+    1.831         free-edge rim   3.077  CHG pad MPPTD MPPT-DISABLE tht sq1.650  [touches r6 rect]
+    1.891         free-edge rim   1.891  N$8 L1 trace w0.254 (39.57,77.22)-(39.57,76.17)
+    2.054         free-edge rim   2.054  N$8 L1 trace w0.254 (39.37,77.22)-(39.57,77.22)
+    2.191         free-edge rim   2.191  N$8 L1 trace w0.254 (39.88,74.45)-(39.88,73.66)
+    2.191         free-edge rim   2.191  N$8 L1 trace w0.254 (39.88,73.66)-(39.88,72.39)
+    2.191         free-edge rim   2.191  N$8 L1 trace w0.254 (39.88,72.39)-(40.64,71.63)
+    2.529         free-edge rim   2.529  MPPT-DISABLE L1 trace w0.254 (21.00,64.48)-(62.26,64.48)  [touches r6 rect]
+    2.552         free-edge rim   2.552  PART C1-FC box (18.51,78.55)-(20.60,81.47) body (18.51,78.91)-(20.60,81.11) bodyclr 2.910
+    2.659         free-edge rim   2.659  PART OP-FC box (40.22,67.30)-(45.12,75.28) body (40.22,69.68)-(45.12,73.58) bodyclr 2.659
+    2.953         free-edge rim   2.953  N$8 L1 trace w0.254 (40.64,71.63)-(42.04,70.23)
+
+[2] tab X region 195.60 mm2; non-GND copper rim area by net: {'3V3': 3.41, 'CB-DISABLE': 4.59, 'CHRG-STAT': 4.52, 'CS-MDAC-FC': 1.76, 'MPPT-DISABLE': 4.63, 'SCL': 5.11, 'SDA': 5.14}; union 29.16 mm2
+    MB part boxes overlapping: none
+    vias whose pad overlaps (15): [('GND', 49.2852, 68.4212), ('GND', 55.118, 59.182), ('GND', 58.42, 56.896), ('GND', 53.594, 57.658), ('GND', 64.008, 68.58), ('GND', 62.23, 58.674), ('GND', 59.436, 60.452), ('GND', 53.086, 62.738), ('GND', 57.404, 65.278), ('GND', 52.07, 65.532), ('3V3', 56.431, 60.663), ('CS-MDAC-FC', 58.42, 60.0376), ('SCL', 64.650625, 58.808625), ('CHRG-STAT', 63.5, 58.928), ('MPPT-DISABLE', 65.024, 61.722)]
+
+[2] tab Y region 175.46 mm2; non-GND copper rim area by net: {}; union 0.00 mm2
+    MB part boxes overlapping: none
+    vias whose pad overlaps (0): []
+
+[3] tab X inset region 173.3 mm2; bottom-clearance-rule area 55.1 mm2; minus foot keep-out (59.5, 65.2, 64.5, 68.3): 44.7 mm2
+
+[3] tab Y inset region 157.2 mm2; bottom-clearance-rule area 157.0 mm2; minus foot keep-out (25.13, 71.0, 30.13, 76.0): 134.5 mm2
+
+[4] FT1 (r7: 4x2 at (62.0,66.7)) body (60.0, 65.7, 64.0, 67.7): inside outline-0.5: True; via pads under: none; nearest non-GND rims: [(1.024, 'VBUS L1 polygon w1.016 bbox (65.53,19.56)-(79.55,72.64)'), (1.089, 'MPPT-DISABLE L1 trace w0.254 (21.00,64.48)-(62.26,64.48)'), (1.089, 'MPPT-DISABLE L1 trace w0.254 (62.26,64.48)-(65.02,61.72)')]; nearest part boxes: [(3.311, 'C-D2'), (4.947, 'D-FC-EN'), (6.638, 'C-DC1')]
+
+[4] FT2 (r7: 4x4 at (27.63,73.5)) body (25.63, 71.5, 29.63, 75.5): inside outline-0.5: True; via pads under: none; nearest non-GND rims: [(4.825, 'VFC L1 polygon w0.152 bbox (9.22,80.34)-(27.36,87.81)'), (5.814, 'L-FC pad P$1 VFC smd'), (6.889, 'MPPT-DISABLE L1 trace w0.254 (21.00,64.48)-(62.26,64.48)')]; nearest part boxes: [(1.512, 'L-FC'), (5.88, 'C1-FC'), (8.4, 'J-FC')]
+
+[4] FT1 start point 4x4 (62.7,61.26) body (60.7, 59.26, 64.7, 63.26): inside outline-0.5: False; via pads under: [('CHRG-STAT', 63.5, 58.928), ('MPPT-DISABLE', 65.024, 61.722)]; nearest non-GND rims: [(-0.127, 'CB-DISABLE L1 trace w0.254 (61.47,63.75)-(66.80,58.42)'), (-0.127, 'CHRG-STAT L1 trace w0.254 (55.63,61.47)-(60.96,61.47)'), (-0.127, 'CHRG-STAT L1 trace w0.254 (60.96,61.47)-(62.99,59.44)')]; nearest part boxes: [(4.746, 'REG-5V'), (6.049, 'C-D2'), (8.214, 'C-DC1')]
+[4] tab X 4.0 x 4.0 via-free, copper >= 1.0 mm: 0 spots (0.2 mm grid)
+[4] tab X 4.0 x 3.0 via-free, copper >= 1.0 mm: 0 spots (0.2 mm grid)
+[4] tab X 3.0 x 4.0 via-free, copper >= 1.0 mm: 0 spots (0.2 mm grid)
+[4] tab X 4.0 x 2.0 via-free, copper >= 1.0 mm: 0 spots (0.2 mm grid)
+
+[8] CO-5V box (49.3, 37.266, 52.3, 41.982) body(21/51) (49.3, 37.774, 52.3, 41.474) pads {'1': (50.8, 41.084), '2': (50.8, 38.164)} side top
+    r6 sheet x 16.70-49.70 vs CO-5V body: overlap 0.400 x 3.700 mm = 1.480 mm2
+    r6 sheet x 16.70-49.70 vs CO-5V box: overlap 0.400 x 4.715 mm = 1.886 mm2
+    J-NTC body (3.552, 52.914, 16.252, 67.354): distance to r6 sheet 0.448
+    J-BL body (3.53, 26.67, 16.13, 49.53): distance to r6 sheet 0.570
+    C4A-BT body (43.032, 28.78, 46.376, 32.18): distance to r6 sheet 0.960
+    C4B-BT body (46.842, 28.78, 50.186, 32.18): distance to r6 sheet 0.960
+    RB1B body (26.796, 31.2, 28.068, 32.3): distance to r6 sheet 0.840
+    RB2 body (18.5, 31.114, 19.6, 32.386): distance to r6 sheet 0.754
+    REG-5V body (51.562, 43.326, 61.722, 52.347): distance to r6 sheet 1.862
+
+[10] farthest r7 outline vertex from the loop region: (17.7, 34.14) at 25.663 mm
+     dense boundary max 25.663 at (17.7, 34.14)
+     low-y band to the loop band y>=52.03: 10.40; to the REG-5V box (50.97...)
+     REG-5V box (50.972, 36.874, 62.312, 54.514) band-to-box min 8.54 max-x-gap 27.82

@@ -1,0 +1,9139 @@
+{
+ "a": {
+  "vertices": [
+   [
+    17.7,
+    34.14
+   ],
+   [
+    48.7,
+    34.14
+   ],
+   [
+    48.7,
+    56.3
+   ],
+   [
+    65.0,
+    56.3
+   ],
+   [
+    65.0,
+    68.3
+   ],
+   [
+    48.7,
+    68.3
+   ],
+   [
+    48.7,
+    67.14
+   ],
+   [
+    37.56,
+    67.14
+   ],
+   [
+    37.56,
+    76.0
+   ],
+   [
+    18.7,
+    76.0
+   ],
+   [
+    17.7,
+    75.0
+   ]
+  ],
+  "area_r6": 1023.0000000000001,
+  "area_tab_x": 195.59999999999997,
+  "area_tab_y": 175.95960000000002,
+  "chamfer": 0.5,
+  "area_total": 1394.0596000000005,
+  "bbox": [
+   17.7,
+   34.14,
+   65.0,
+   76.0
+  ],
+  "concave": [
+   [
+    48.7,
+    56.3
+   ],
+   [
+    48.7,
+    67.14
+   ],
+   [
+    37.56,
+    67.14
+   ]
+  ]
+ },
+ "b": {
+  "rows": {
+   "tab X": [
+    {
+     "kind": "non-GND copper rim",
+     "label": "3V3 via (56.431,60.663) pad 0.7564",
+     "net": "3V3",
+     "clearance": -0.378,
+     "edge": "tab X low edge y 56.30",
+     "edge_clear": 3.985,
+     "status": "UNDER the tab",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "CS-MDAC-FC via (58.420,60.038) pad 0.7564",
+     "net": "CS-MDAC-FC",
+     "clearance": -0.378,
+     "edge": "tab X low edge y 56.30",
+     "edge_clear": 3.359,
+     "status": "UNDER the tab",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "SCL via (64.651,58.809) pad 0.7564",
+     "net": "SCL",
+     "clearance": -0.378,
+     "edge": "tab X right edge x 65.00",
+     "edge_clear": -0.029,
+     "status": "UNDER the tab",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "CHRG-STAT via (63.500,58.928) pad 0.7564",
+     "net": "CHRG-STAT",
+     "clearance": -0.378,
+     "edge": "tab X right edge x 65.00",
+     "edge_clear": 1.122,
+     "status": "UNDER the tab",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "MPPT-DISABLE via (65.024,61.722) pad 0.7564",
+     "net": "MPPT-DISABLE",
+     "clearance": -0.354,
+     "edge": "tab X right edge x 65.00",
+     "edge_clear": -0.354,
+     "status": "RIM OVERLAPS the tab edge",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "3V3 L1 trace w0.508 (62.99,54.10)-(56.43,60.66)",
+     "net": "3V3",
+     "clearance": -0.254,
+     "edge": "tab X low edge y 56.30",
+     "edge_clear": -0.254,
+     "status": "UNDER the tab",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "CS-MDAC-FC L1 trace w0.254 (64.77,53.93)-(58.67,60.04)",
+     "net": "CS-MDAC-FC",
+     "clearance": -0.127,
+     "edge": "tab X low edge y 56.30",
+     "edge_clear": -0.127,
+     "status": "UNDER the tab",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "CS-MDAC-FC L1 trace w0.254 (58.67,60.04)-(58.42,60.04)",
+     "net": "CS-MDAC-FC",
+     "clearance": -0.127,
+     "edge": "tab X low edge y 56.30",
+     "edge_clear": 3.611,
+     "status": "UNDER the tab",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "SDA L1 trace w0.254 (48.99,56.86)-(46.00,56.86)",
+     "net": "SDA",
+     "clearance": -0.127,
+     "edge": "tab X low edge y 56.30",
+     "edge_clear": 0.437,
+     "status": "UNDER the tab",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "SDA L1 trace w0.254 (61.75,62.64)-(54.76,62.64)",
+     "net": "SDA",
+     "clearance": -0.127,
+     "edge": "tab X right edge x 65.00",
+     "edge_clear": 3.12,
+     "status": "UNDER the tab",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "SDA L1 trace w0.254 (54.76,62.64)-(48.99,56.86)",
+     "net": "SDA",
+     "clearance": -0.127,
+     "edge": "tab X low edge y 56.30",
+     "edge_clear": 0.437,
+     "status": "UNDER the tab",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "SDA L1 trace w0.254 (65.70,58.69)-(61.75,62.64)",
+     "net": "SDA",
+     "clearance": -0.127,
+     "edge": "tab X right edge x 65.00",
+     "edge_clear": -0.127,
+     "status": "UNDER the tab",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "SCL L1 trace w0.254 (49.53,56.13)-(55.37,61.98)",
+     "net": "SCL",
+     "clearance": -0.127,
+     "edge": "tab X low edge y 56.30",
+     "edge_clear": -0.127,
+     "status": "UNDER the tab",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "SCL L1 trace w0.254 (61.38,61.98)-(55.37,61.98)",
+     "net": "SCL",
+     "clearance": -0.127,
+     "edge": "tab X right edge x 65.00",
+     "edge_clear": 3.491,
+     "status": "UNDER the tab",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "SCL L1 trace w0.254 (64.65,58.81)-(64.55,58.81)",
+     "net": "SCL",
+     "clearance": -0.127,
+     "edge": "tab X right edge x 65.00",
+     "edge_clear": 0.222,
+     "status": "UNDER the tab",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "SCL L1 trace w0.254 (64.55,58.81)-(61.38,61.98)",
+     "net": "SCL",
+     "clearance": -0.127,
+     "edge": "tab X right edge x 65.00",
+     "edge_clear": 0.324,
+     "status": "UNDER the tab",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "CHRG-STAT L1 trace w0.254 (49.78,55.63)-(54.36,60.20)",
+     "net": "CHRG-STAT",
+     "clearance": -0.127,
+     "edge": "tab X low edge y 56.30",
+     "edge_clear": -0.127,
+     "status": "UNDER the tab",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "CHRG-STAT L1 trace w0.254 (54.36,60.20)-(55.63,61.47)",
+     "net": "CHRG-STAT",
+     "clearance": -0.127,
+     "edge": "tab X low edge y 56.30",
+     "edge_clear": 3.771,
+     "status": "UNDER the tab",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "CHRG-STAT L1 trace w0.254 (55.63,61.47)-(60.96,61.47)",
+     "net": "CHRG-STAT",
+     "clearance": -0.127,
+     "edge": "tab X right edge x 65.00",
+     "edge_clear": 3.913,
+     "status": "UNDER the tab",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "CHRG-STAT L1 trace w0.254 (60.96,61.47)-(62.99,59.44)",
+     "net": "CHRG-STAT",
+     "clearance": -0.127,
+     "edge": "tab X right edge x 65.00",
+     "edge_clear": 1.881,
+     "status": "UNDER the tab",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "CHRG-STAT L1 trace w0.254 (62.99,59.44)-(63.50,58.93)",
+     "net": "CHRG-STAT",
+     "clearance": -0.127,
+     "edge": "tab X right edge x 65.00",
+     "edge_clear": 1.373,
+     "status": "UNDER the tab",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "MPPT-DISABLE L1 trace w0.254 (21.00,64.48)-(62.26,64.48)",
+     "net": "MPPT-DISABLE",
+     "clearance": -0.127,
+     "edge": "tab X left step x 48.70 (y 67.14-68.30)",
+     "edge_clear": 2.529,
+     "status": "UNDER the tab",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "MPPT-DISABLE L1 trace w0.254 (62.26,64.48)-(65.02,61.72)",
+     "net": "MPPT-DISABLE",
+     "clearance": -0.127,
+     "edge": "tab X right edge x 65.00",
+     "edge_clear": -0.127,
+     "status": "UNDER the tab",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "CB-DISABLE L1 trace w0.254 (43.43,63.75)-(61.47,63.75)",
+     "net": "CB-DISABLE",
+     "clearance": -0.127,
+     "edge": "tab X left step x 48.70 (y 67.14-68.30)",
+     "edge_clear": 3.259,
+     "status": "UNDER the tab",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "CB-DISABLE L1 trace w0.254 (61.47,63.75)-(66.80,58.42)",
+     "net": "CB-DISABLE",
+     "clearance": -0.127,
+     "edge": "tab X right edge x 65.00",
+     "edge_clear": -0.127,
+     "status": "UNDER the tab",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "VBUS L1 polygon w1.016 bbox (65.53,19.56)-(79.55,72.64)",
+     "net": "VBUS",
+     "clearance": 0.024,
+     "edge": "tab X right edge x 65.00",
+     "edge_clear": 0.024,
+     "status": "FLAG < 0.5 mm",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "SCL L1 trace w0.254 (47.72,54.32)-(49.53,56.13)",
+     "net": "SCL",
+     "clearance": 0.039,
+     "edge": "tab X low edge y 56.30",
+     "edge_clear": 0.039,
+     "status": "FLAG < 0.5 mm (part outside the r7 outline: (48.70,55.30)-(49.53,56.13); the rest lies under the CR r6 part)",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "N$7 L1 trace w0.254 (49.28,69.34)-(48.01,68.07)",
+     "net": "N$7",
+     "clearance": 0.203,
+     "edge": "tab X top edge y 68.30",
+     "edge_clear": 0.203,
+     "status": "FLAG < 0.5 mm",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "SDA via (65.702,58.590) pad 0.7564",
+     "net": "SDA",
+     "clearance": 0.324,
+     "edge": "tab X right edge x 65.00",
+     "edge_clear": 0.324,
+     "status": "FLAG < 0.5 mm",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "5V via (59.389,55.579) pad 0.7564",
+     "net": "5V",
+     "clearance": 0.343,
+     "edge": "tab X low edge y 56.30",
+     "edge_clear": 0.343,
+     "status": "FLAG < 0.5 mm",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "3V3 via (51.097,69.131) pad 0.7564",
+     "net": "3V3",
+     "clearance": 0.453,
+     "edge": "tab X top edge y 68.30",
+     "edge_clear": 0.453,
+     "status": "FLAG < 0.5 mm",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "5V L1 trace w0.508 (56.64,52.83)-(59.39,55.58)",
+     "net": "5V",
+     "clearance": 0.467,
+     "edge": "tab X low edge y 56.30",
+     "edge_clear": 0.467,
+     "status": "FLAG < 0.5 mm",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "CHRG-STAT L1 trace w0.254 (49.78,53.34)-(49.78,55.63)",
+     "net": "CHRG-STAT",
+     "clearance": 0.547,
+     "edge": "tab X low edge y 56.30",
+     "edge_clear": 0.547,
+     "status": "ok",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "N$7 L1 trace w0.254 (48.01,68.07)-(47.24,67.31)",
+     "net": "N$7",
+     "clearance": 0.567,
+     "edge": "tab X left step x 48.70 (y 67.14-68.30)",
+     "edge_clear": 0.567,
+     "status": "ok",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "SDA L1 trace w0.254 (65.70,58.59)-(65.70,58.69)",
+     "net": "SDA",
+     "clearance": 0.575,
+     "edge": "tab X right edge x 65.00",
+     "edge_clear": 0.575,
+     "status": "ok",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "3V3 L1 trace w0.254 (51.10,69.13)-(51.10,69.37)",
+     "net": "3V3",
+     "clearance": 0.704,
+     "edge": "tab X top edge y 68.30",
+     "edge_clear": 0.704,
+     "status": "ok",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "N$7 L1 trace w0.254 (49.28,70.10)-(49.28,69.34)",
+     "net": "N$7",
+     "clearance": 0.915,
+     "edge": "tab X top edge y 68.30",
+     "edge_clear": 0.915,
+     "status": "ok",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "MISO via (53.998,69.596) pad 0.7564",
+     "net": "MISO",
+     "clearance": 0.918,
+     "edge": "tab X top edge y 68.30",
+     "edge_clear": 0.918,
+     "status": "ok",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "3V3 L1 trace w0.254 (51.10,69.37)-(48.83,71.63)",
+     "net": "3V3",
+     "clearance": 0.939,
+     "edge": "tab X top edge y 68.30",
+     "edge_clear": 0.939,
+     "status": "ok",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "MISO L1 trace w0.254 (49.03,72.13)-(51.56,69.60)",
+     "net": "MISO",
+     "clearance": 1.169,
+     "edge": "tab X top edge y 68.30",
+     "edge_clear": 1.169,
+     "status": "ok",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "MISO L1 trace w0.254 (51.56,69.60)-(54.00,69.60)",
+     "net": "MISO",
+     "clearance": 1.169,
+     "edge": "tab X top edge y 68.30",
+     "edge_clear": 1.169,
+     "status": "ok",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "N$7 L1 trace w0.254 (47.24,67.31)-(45.21,67.31)",
+     "net": "N$7",
+     "clearance": 1.329,
+     "edge": "tab X left step x 48.70 (y 67.14-68.30)",
+     "edge_clear": 1.329,
+     "status": "ok",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "CB-DISABLE via (66.802,58.420) pad 0.7564",
+     "net": "CB-DISABLE",
+     "clearance": 1.424,
+     "edge": "tab X right edge x 65.00",
+     "edge_clear": 1.424,
+     "status": "ok",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "5V L1 polygon w0.508 bbox (49.78,37.85)-(61.98,54.61)",
+     "net": "5V",
+     "clearance": 1.436,
+     "edge": "tab X low edge y 56.30",
+     "edge_clear": 1.436,
+     "status": "ok",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "N$7 L1 trace w0.254 (49.28,70.61)-(49.28,70.10)",
+     "net": "N$7",
+     "clearance": 1.677,
+     "edge": "tab X top edge y 68.30",
+     "edge_clear": 1.677,
+     "status": "ok",
+     "body": null
+    },
+    {
+     "kind": "part box",
+     "label": "MDAC-FC box (47.11,70.00)-(52.97,73.25)",
+     "net": "-",
+     "clearance": 1.701,
+     "edge": "tab X top edge y 68.30",
+     "edge_clear": 1.701,
+     "status": "ok",
+     "body": 1.701
+    },
+    {
+     "kind": "part box",
+     "label": "REG-5V box (50.97,36.87)-(62.31,54.51)",
+     "net": "-",
+     "clearance": 1.786,
+     "edge": "tab X low edge y 56.30",
+     "edge_clear": 1.786,
+     "status": "ok",
+     "body": 3.953
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "CHG pad SDA SDA (45.998,56.864) 1.650 mm square",
+     "net": "SDA",
+     "clearance": 1.877,
+     "edge": "tab X low edge y 56.30",
+     "edge_clear": 1.877,
+     "status": "under the CR r6 part (wholly inside the r7 outline; distance to the free tab edges)",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "3V3 L1 trace w0.508 (62.99,37.08)-(62.99,54.10)",
+     "net": "3V3",
+     "clearance": 1.944,
+     "edge": "tab X low edge y 56.30",
+     "edge_clear": 1.944,
+     "status": "ok",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "SCL L1 trace w0.254 (46.00,54.32)-(47.72,54.32)",
+     "net": "SCL",
+     "clearance": 2.079,
+     "edge": "tab X low edge y 56.30",
+     "edge_clear": 2.079,
+     "status": "under the CR r6 part (wholly inside the r7 outline; distance to the free tab edges)",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "EN-REG-BT via (63.967,53.807) pad 0.7564",
+     "net": "EN-REG-BT",
+     "clearance": 2.115,
+     "edge": "tab X low edge y 56.30",
+     "edge_clear": 2.115,
+     "status": "ok",
+     "body": null
+    },
+    {
+     "kind": "part box",
+     "label": "C-D2 box (67.12,68.80)-(70.04,70.90)",
+     "net": "-",
+     "clearance": 2.181,
+     "edge": "tab X right edge x 65.00",
+     "edge_clear": 2.181,
+     "status": "ok",
+     "body": 2.531
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "N$7 L1 trace w0.254 (48.77,71.12)-(49.28,70.61)",
+     "net": "N$7",
+     "clearance": 2.185,
+     "edge": "tab X top edge y 68.30",
+     "edge_clear": 2.185,
+     "status": "ok",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "FC-CURR L1 trace w0.254 (51.40,70.63)-(51.05,70.97)",
+     "net": "FC-CURR",
+     "clearance": 2.201,
+     "edge": "tab X top edge y 68.30",
+     "edge_clear": 2.201,
+     "status": "ok",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "FC-CURR L1 trace w0.254 (52.21,70.63)-(51.40,70.63)",
+     "net": "FC-CURR",
+     "clearance": 2.201,
+     "edge": "tab X top edge y 68.30",
+     "edge_clear": 2.201,
+     "status": "ok",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "CHG pad SCL SCL (45.998,54.324) 1.650 mm square",
+     "net": "SCL",
+     "clearance": 2.202,
+     "edge": "tab X low edge y 56.30",
+     "edge_clear": 2.202,
+     "status": "under the CR r6 part (wholly inside the r7 outline; distance to the free tab edges)",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "CS-MDAC-FC L1 trace w0.254 (64.77,39.37)-(64.77,53.93)",
+     "net": "CS-MDAC-FC",
+     "clearance": 2.239,
+     "edge": "tab X low edge y 56.30",
+     "edge_clear": 2.239,
+     "status": "ok",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "VDROOP-FC L1 trace w0.254 (47.86,70.63)-(45.70,70.63)",
+     "net": "VDROOP-FC",
+     "clearance": 2.347,
+     "edge": "tab X top edge y 68.30",
+     "edge_clear": 2.347,
+     "status": "ok",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "EN-REG-BT L1 trace w0.254 (63.97,53.81)-(64.01,53.77)",
+     "net": "EN-REG-BT",
+     "clearance": 2.366,
+     "edge": "tab X low edge y 56.30",
+     "edge_clear": 2.366,
+     "status": "ok",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "EN-REG-BT L1 trace w0.254 (64.01,53.77)-(64.01,38.61)",
+     "net": "EN-REG-BT",
+     "clearance": 2.407,
+     "edge": "tab X low edge y 56.30",
+     "edge_clear": 2.407,
+     "status": "ok",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "FC-CURR L1 trace w0.254 (51.05,70.97)-(51.05,74.57)",
+     "net": "FC-CURR",
+     "clearance": 2.544,
+     "edge": "tab X top edge y 68.30",
+     "edge_clear": 2.544,
+     "status": "ok",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "VBUS L1 trace w0.254 (67.70,69.85)-(67.70,67.42)",
+     "net": "VBUS",
+     "clearance": 2.578,
+     "edge": "tab X right edge x 65.00",
+     "edge_clear": 2.578,
+     "status": "ok",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "VBUS L1 trace w0.254 (67.70,67.42)-(68.58,66.55)",
+     "net": "VBUS",
+     "clearance": 2.578,
+     "edge": "tab X right edge x 65.00",
+     "edge_clear": 2.578,
+     "status": "ok",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "N$7 L1 trace w0.254 (48.76,71.13)-(48.77,71.12)",
+     "net": "N$7",
+     "clearance": 2.693,
+     "edge": "tab X top edge y 68.30",
+     "edge_clear": 2.693,
+     "status": "ok",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "N$7 L1 trace w0.254 (47.86,71.13)-(48.76,71.13)",
+     "net": "N$7",
+     "clearance": 2.701,
+     "edge": "tab X top edge y 68.30",
+     "edge_clear": 2.701,
+     "status": "ok",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "CHRG-STAT L1 trace w0.254 (49.78,46.23)-(49.78,53.34)",
+     "net": "CHRG-STAT",
+     "clearance": 2.833,
+     "edge": "tab X low edge y 56.30",
+     "edge_clear": 2.833,
+     "status": "ok",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "CHG pad NC3 (unconnected) (45.998,59.404) 1.650 mm square",
+     "net": "(unconnected)",
+     "clearance": 2.952,
+     "edge": "tab X low edge y 56.30",
+     "edge_clear": 2.952,
+     "status": "under the CR r6 part (wholly inside the r7 outline; distance to the free tab edges)",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "3V3 L1 trace w0.254 (48.83,71.63)-(47.86,71.63)",
+     "net": "3V3",
+     "clearance": 3.201,
+     "edge": "tab X top edge y 68.30",
+     "edge_clear": 3.201,
+     "status": "ok",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "5V L1 trace w0.508 (56.64,50.45)-(56.64,52.83)",
+     "net": "5V",
+     "clearance": 3.214,
+     "edge": "tab X low edge y 56.30",
+     "edge_clear": 3.214,
+     "status": "ok",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "3V3 L1 trace w0.254 (46.23,71.63)-(47.86,71.63)",
+     "net": "3V3",
+     "clearance": 3.305,
+     "edge": "tab X top edge y 68.30",
+     "edge_clear": 3.305,
+     "status": "ok",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "N$7 L1 trace w0.254 (45.21,67.31)-(44.20,67.31)",
+     "net": "N$7",
+     "clearance": 3.361,
+     "edge": "tab X left step x 48.70 (y 67.14-68.30)",
+     "edge_clear": 3.361,
+     "status": "ok",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "VBUS L1 trace w0.254 (68.58,66.55)-(78.69,56.44)",
+     "net": "VBUS",
+     "clearance": 3.453,
+     "edge": "tab X right edge x 65.00",
+     "edge_clear": 3.453,
+     "status": "ok",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "SCK via (53.848,72.136) pad 0.7564",
+     "net": "SCK",
+     "clearance": 3.458,
+     "edge": "tab X top edge y 68.30",
+     "edge_clear": 3.458,
+     "status": "ok",
+     "body": null
+    },
+    {
+     "kind": "part box",
+     "label": "OP-FC box (40.22,67.30)-(45.12,75.28)",
+     "net": "-",
+     "clearance": 3.576,
+     "edge": "tab X top edge y 68.30",
+     "edge_clear": 3.576,
+     "status": "ok",
+     "body": 3.833
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "VDROOP-FC L1 trace w0.254 (45.70,70.63)-(43.94,72.39)",
+     "net": "VDROOP-FC",
+     "clearance": 3.667,
+     "edge": "tab X top edge y 68.30",
+     "edge_clear": 3.667,
+     "status": "ok",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "SCK L1 trace w0.254 (52.21,72.13)-(53.84,72.13)",
+     "net": "SCK",
+     "clearance": 3.701,
+     "edge": "tab X top edge y 68.30",
+     "edge_clear": 3.701,
+     "status": "ok",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "SCK L1 trace w0.254 (53.84,72.13)-(53.85,72.14)",
+     "net": "SCK",
+     "clearance": 3.701,
+     "edge": "tab X top edge y 68.30",
+     "edge_clear": 3.701,
+     "status": "ok",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "MISO L1 trace w0.254 (47.86,72.13)-(49.03,72.13)",
+     "net": "MISO",
+     "clearance": 3.701,
+     "edge": "tab X top edge y 68.30",
+     "edge_clear": 3.701,
+     "status": "ok",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "3V3 via (46.228,71.628) pad 0.7564",
+     "net": "3V3",
+     "clearance": 3.767,
+     "edge": "tab X top edge y 68.30",
+     "edge_clear": 3.767,
+     "status": "ok",
+     "body": null
+    },
+    {
+     "kind": "part box",
+     "label": "D-FC-EN box (67.08,71.57)-(70.58,76.32)",
+     "net": "-",
+     "clearance": 3.876,
+     "edge": "tab X right edge x 65.00",
+     "edge_clear": 3.876,
+     "status": "ok",
+     "body": 4.866
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "CS-MDAC-FC via (49.995,72.601) pad 0.7564",
+     "net": "CS-MDAC-FC",
+     "clearance": 3.923,
+     "edge": "tab X top edge y 68.30",
+     "edge_clear": 3.923,
+     "status": "ok",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "5V L1 trace w0.508 (56.64,52.07)-(56.64,50.45)",
+     "net": "5V",
+     "clearance": 3.976,
+     "edge": "tab X low edge y 56.30",
+     "edge_clear": 3.976,
+     "status": "ok",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "CHG pad NC2 (unconnected) (45.998,51.784) 1.650 mm square",
+     "net": "(unconnected)",
+     "clearance": 4.141,
+     "edge": "tab X low edge y 56.30",
+     "edge_clear": 4.141,
+     "status": "under the CR r6 part (wholly inside the r7 outline; distance to the free tab edges)",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "CS-MDAC-FC L1 trace w0.254 (49.55,72.63)-(49.57,72.60)",
+     "net": "CS-MDAC-FC",
+     "clearance": 4.174,
+     "edge": "tab X top edge y 68.30",
+     "edge_clear": 4.174,
+     "status": "ok",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "CS-MDAC-FC L1 trace w0.254 (49.57,72.60)-(49.99,72.60)",
+     "net": "CS-MDAC-FC",
+     "clearance": 4.174,
+     "edge": "tab X top edge y 68.30",
+     "edge_clear": 4.174,
+     "status": "ok",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "MOSI L1 trace w0.254 (52.21,72.63)-(52.87,73.29)",
+     "net": "MOSI",
+     "clearance": 4.201,
+     "edge": "tab X top edge y 68.30",
+     "edge_clear": 4.201,
+     "status": "ok",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "CS-MDAC-FC L1 trace w0.254 (47.86,72.63)-(49.55,72.63)",
+     "net": "CS-MDAC-FC",
+     "clearance": 4.201,
+     "edge": "tab X top edge y 68.30",
+     "edge_clear": 4.201,
+     "status": "ok",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "N$7 L1 trace w0.254 (44.20,67.31)-(43.31,68.20)",
+     "net": "N$7",
+     "clearance": 4.377,
+     "edge": "tab X left step x 48.70 (y 67.14-68.30)",
+     "edge_clear": 4.377,
+     "status": "ok",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "MOSI via (53.457,73.289) pad 0.7564",
+     "net": "MOSI",
+     "clearance": 4.61,
+     "edge": "tab X top edge y 68.30",
+     "edge_clear": 4.61,
+     "status": "ok",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "VCHG-IN L1 trace w1.524 (46.00,61.94)-(46.28,62.23)",
+     "net": "VCHG-IN",
+     "clearance": 4.71,
+     "edge": "tab X left step x 48.70 (y 67.14-68.30)",
+     "edge_clear": 4.71,
+     "status": "under the CR r6 part (wholly inside the r7 outline; distance to the free tab edges)",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "CHG pad VIN+ VCHG-IN (45.998,61.944) 1.650 mm square",
+     "net": "VCHG-IN",
+     "clearance": 4.757,
+     "edge": "tab X left step x 48.70 (y 67.14-68.30)",
+     "edge_clear": 4.757,
+     "status": "under the CR r6 part (wholly inside the r7 outline; distance to the free tab edges)",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "VCHG-IN L1 trace w1.524 (43.18,49.53)-(43.18,61.21)",
+     "net": "VCHG-IN",
+     "clearance": 4.758,
+     "edge": "tab X low edge y 56.30",
+     "edge_clear": 4.758,
+     "status": "under the CR r6 part (wholly inside the r7 outline; distance to the free tab edges)",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "MOSI L1 trace w0.254 (52.87,73.29)-(53.46,73.29)",
+     "net": "MOSI",
+     "clearance": 4.862,
+     "edge": "tab X top edge y 68.30",
+     "edge_clear": 4.862,
+     "status": "ok",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "N$6 L1 trace w0.254 (69.34,71.12)-(68.58,71.88)",
+     "net": "N$6",
+     "clearance": 4.937,
+     "edge": "tab X right edge x 65.00",
+     "edge_clear": 4.937,
+     "status": "ok",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "N$6 L1 trace w0.254 (68.58,71.88)-(68.58,72.69)",
+     "net": "N$6",
+     "clearance": 4.937,
+     "edge": "tab X right edge x 65.00",
+     "edge_clear": 4.937,
+     "status": "ok",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "VCHG-IN L1 trace w1.524 (43.91,61.94)-(46.00,61.94)",
+     "net": "VCHG-IN",
+     "clearance": 5.095,
+     "edge": "tab X left step x 48.70 (y 67.14-68.30)",
+     "edge_clear": 5.095,
+     "status": "under the CR r6 part (wholly inside the r7 outline; distance to the free tab edges)",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "VCHG-IN L1 trace w1.524 (43.69,61.72)-(43.91,61.94)",
+     "net": "VCHG-IN",
+     "clearance": 6.305,
+     "edge": "tab X left step x 48.70 (y 67.14-68.30)",
+     "edge_clear": 6.305,
+     "status": "under the CR r6 part (wholly inside the r7 outline; distance to the free tab edges)",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "VCHG-IN L1 trace w1.524 (43.18,61.21)-(43.69,61.72)",
+     "net": "VCHG-IN",
+     "clearance": 6.616,
+     "edge": "tab X low edge y 56.30",
+     "edge_clear": 6.616,
+     "status": "under the CR r6 part (wholly inside the r7 outline; distance to the free tab edges)",
+     "body": null
+    }
+   ],
+   "tab Y": [
+    {
+     "kind": "part box",
+     "label": "J-FC box (3.28,72.14)-(17.23,87.88)",
+     "net": "-",
+     "clearance": 0.47,
+     "edge": "chamfer (18.70,76.00)-(17.70,75.00)",
+     "edge_clear": 0.47,
+     "status": "box < 0.5 mm only (body 1.570 mm)",
+     "body": 1.57
+    },
+    {
+     "kind": "part box",
+     "label": "ROP1-FC box (38.06,73.43)-(39.66,75.86)",
+     "net": "-",
+     "clearance": 0.501,
+     "edge": "tab Y right edge x 37.56",
+     "edge_clear": 0.501,
+     "status": "ok",
+     "body": 0.501
+    },
+    {
+     "kind": "L-FC body (Eaton 12.9 mm, centred)",
+     "label": "L-FC Eaton body (22.564,76.862)-(36.364,89.762)",
+     "net": "-",
+     "clearance": 0.862,
+     "edge": "tab Y top edge y 76.00",
+     "edge_clear": 0.862,
+     "status": "ok",
+     "body": null
+    },
+    {
+     "kind": "part box",
+     "label": "L-FC box (21.05,77.01)-(36.56,89.61)",
+     "net": "-",
+     "clearance": 1.012,
+     "edge": "tab Y top edge y 76.00",
+     "edge_clear": 1.012,
+     "status": "ok",
+     "body": 1.012
+    },
+    {
+     "kind": "L-FC body (silkscreen 12.6 mm)",
+     "label": "L-FC silkscreen body (22.739,77.012)-(36.189,89.612)",
+     "net": "-",
+     "clearance": 1.012,
+     "edge": "tab Y top edge y 76.00",
+     "edge_clear": 1.012,
+     "status": "ok",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "N$8 L1 trace w0.254 (39.57,76.17)-(38.86,75.46)",
+     "net": "N$8",
+     "clearance": 1.175,
+     "edge": "tab Y right edge x 37.56",
+     "edge_clear": 1.175,
+     "status": "ok",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "N$8 L1 trace w0.254 (38.86,75.46)-(39.88,74.45)",
+     "net": "N$8",
+     "clearance": 1.175,
+     "edge": "tab Y right edge x 37.56",
+     "edge_clear": 1.175,
+     "status": "ok",
+     "body": null
+    },
+    {
+     "kind": "part box",
+     "label": "J-NTC box (3.55,52.91)-(16.25,67.35)",
+     "net": "-",
+     "clearance": 1.448,
+     "edge": "left edge x 17.70 (tab Y part, y 67.14-75.00)",
+     "edge_clear": 1.448,
+     "status": "ok",
+     "body": 1.448
+    },
+    {
+     "kind": "part box",
+     "label": "ROP2-FC box (39.17,76.42)-(41.60,78.02)",
+     "net": "-",
+     "clearance": 1.664,
+     "edge": "tab Y right edge x 37.56",
+     "edge_clear": 1.664,
+     "status": "ok",
+     "body": 2.019
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "N$8 L1 trace w0.254 (39.57,77.22)-(39.57,76.17)",
+     "net": "N$8",
+     "clearance": 1.891,
+     "edge": "tab Y right edge x 37.56",
+     "edge_clear": 1.891,
+     "status": "ok",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "N$8 L1 trace w0.254 (39.37,77.22)-(39.57,77.22)",
+     "net": "N$8",
+     "clearance": 2.054,
+     "edge": "tab Y right edge x 37.56",
+     "edge_clear": 2.054,
+     "status": "ok",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "N$8 L1 trace w0.254 (39.88,74.45)-(39.88,73.66)",
+     "net": "N$8",
+     "clearance": 2.191,
+     "edge": "tab Y right edge x 37.56",
+     "edge_clear": 2.191,
+     "status": "ok",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "N$8 L1 trace w0.254 (39.88,73.66)-(39.88,72.39)",
+     "net": "N$8",
+     "clearance": 2.191,
+     "edge": "tab Y right edge x 37.56",
+     "edge_clear": 2.191,
+     "status": "ok",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "N$8 L1 trace w0.254 (39.88,72.39)-(40.64,71.63)",
+     "net": "N$8",
+     "clearance": 2.191,
+     "edge": "tab Y right edge x 37.56",
+     "edge_clear": 2.191,
+     "status": "ok",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "MPPT-DISABLE L1 trace w0.254 (21.00,64.48)-(62.26,64.48)",
+     "net": "MPPT-DISABLE",
+     "clearance": 2.529,
+     "edge": "tab Y right edge x 37.56",
+     "edge_clear": 2.529,
+     "status": "under the CR r6 part (wholly inside the r7 outline; distance to the free tab edges)",
+     "body": null
+    },
+    {
+     "kind": "part box",
+     "label": "C1-FC box (18.51,78.55)-(20.60,81.47)",
+     "net": "-",
+     "clearance": 2.552,
+     "edge": "tab Y top edge y 76.00",
+     "edge_clear": 2.552,
+     "status": "ok",
+     "body": 2.91
+    },
+    {
+     "kind": "part box",
+     "label": "OP-FC box (40.22,67.30)-(45.12,75.28)",
+     "net": "-",
+     "clearance": 2.659,
+     "edge": "tab Y right edge x 37.56",
+     "edge_clear": 2.659,
+     "status": "ok",
+     "body": 2.659
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "N$8 L1 trace w0.254 (40.64,71.63)-(42.04,70.23)",
+     "net": "N$8",
+     "clearance": 2.953,
+     "edge": "tab Y right edge x 37.56",
+     "edge_clear": 2.953,
+     "status": "ok",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "CHG pad MPPTD MPPT-DISABLE (20.998,64.484) 1.650 mm square",
+     "net": "MPPT-DISABLE",
+     "clearance": 3.077,
+     "edge": "left edge x 17.70 (tab Y part, y 67.14-75.00)",
+     "edge_clear": 3.077,
+     "status": "under the CR r6 part (wholly inside the r7 outline; distance to the free tab edges)",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "VDROOP-FC L1 trace w0.254 (41.20,76.82)-(41.20,77.22)",
+     "net": "VDROOP-FC",
+     "clearance": 3.605,
+     "edge": "tab Y right edge x 37.56",
+     "edge_clear": 3.605,
+     "status": "ok",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "VDROOP-FC L1 trace w0.254 (41.20,76.82)-(42.21,75.81)",
+     "net": "VDROOP-FC",
+     "clearance": 3.605,
+     "edge": "tab Y right edge x 37.56",
+     "edge_clear": 3.605,
+     "status": "ok",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "VDROOP-FC L1 trace w0.254 (41.20,77.22)-(42.52,78.54)",
+     "net": "VDROOP-FC",
+     "clearance": 3.712,
+     "edge": "tab Y right edge x 37.56",
+     "edge_clear": 3.712,
+     "status": "ok",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "VFC L1 polygon w0.152 bbox (9.22,80.34)-(27.36,87.81)",
+     "net": "VFC",
+     "clearance": 4.264,
+     "edge": "tab Y top edge y 76.00",
+     "edge_clear": 4.264,
+     "status": "ok",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "3V3 L1 trace w0.254 (42.42,72.39)-(42.04,72.77)",
+     "net": "3V3",
+     "clearance": 4.35,
+     "edge": "tab Y right edge x 37.56",
+     "edge_clear": 4.35,
+     "status": "ok",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "N$8 L1 trace w0.254 (42.04,68.20)-(42.04,69.21)",
+     "net": "N$8",
+     "clearance": 4.35,
+     "edge": "tab Y right edge x 37.56",
+     "edge_clear": 4.35,
+     "status": "ok",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "N$8 L1 trace w0.254 (42.04,70.23)-(42.04,69.21)",
+     "net": "N$8",
+     "clearance": 4.35,
+     "edge": "tab Y right edge x 37.56",
+     "edge_clear": 4.35,
+     "status": "ok",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "VDROOP-FC L1 trace w0.254 (42.21,75.81)-(42.72,75.81)",
+     "net": "VDROOP-FC",
+     "clearance": 4.523,
+     "edge": "tab Y right edge x 37.56",
+     "edge_clear": 4.523,
+     "status": "ok",
+     "body": null
+    },
+    {
+     "kind": "part box",
+     "label": "RINJ-FC box (42.13,76.51)-(43.73,78.94)",
+     "net": "-",
+     "clearance": 4.593,
+     "edge": "tab Y right edge x 37.56",
+     "edge_clear": 4.593,
+     "status": "ok",
+     "body": 4.648
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "3V3 L1 trace w0.254 (42.93,71.88)-(42.42,72.39)",
+     "net": "3V3",
+     "clearance": 4.731,
+     "edge": "tab Y right edge x 37.56",
+     "edge_clear": 4.731,
+     "status": "ok",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "VFC L1 trace w0.305 (16.62,83.82)-(19.56,80.89)",
+     "net": "VFC",
+     "clearance": 4.733,
+     "edge": "tab Y top edge y 76.00",
+     "edge_clear": 4.733,
+     "status": "ok",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "VFC L1 trace w0.305 (21.98,83.31)-(19.56,80.89)",
+     "net": "VFC",
+     "clearance": 4.733,
+     "edge": "tab Y top edge y 76.00",
+     "edge_clear": 4.733,
+     "status": "ok",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "VFC L1 trace w0.305 (19.56,80.89)-(18.66,81.79)",
+     "net": "VFC",
+     "clearance": 4.733,
+     "edge": "tab Y top edge y 76.00",
+     "edge_clear": 4.733,
+     "status": "ok",
+     "body": null
+    },
+    {
+     "kind": "non-GND copper rim",
+     "label": "CHG pad MPPTSEL (unconnected) (20.998,61.944) 1.650 mm square",
+     "net": "(unconnected)",
+     "clearance": 5.022,
+     "edge": "left edge x 17.70 (tab Y part, y 67.14-75.00)",
+     "edge_clear": 5.022,
+     "status": "under the CR r6 part (wholly inside the r7 outline; distance to the free tab edges)",
+     "body": null
+    }
+   ]
+  },
+  "lfc_silk_gap": 1.0120000000000005,
+  "lfc_eaton_gap": 0.8619999999999948,
+  "rework": {
+   "R171/T2 joint on C-D2 pad 1": [
+    3.1176152745327608,
+    30.144999999999996
+   ],
+   "RENC2": [
+    15.733100000000007,
+    43.173100000000005
+   ],
+   "BAL pad 8": [
+    34.503660704336866,
+    36.701
+   ],
+   "RB1A": [
+    38.765050786791186,
+    38.424949999999995
+   ],
+   "CBL2": [
+    38.41038410003863,
+    36.114900000000006
+   ],
+   "CO-5V": [
+    14.318349999999995,
+    27.76274796778049
+   ],
+   "T18 point (CO-5V pad 1)": [
+    15.215999999999994,
+    29.226918003785478
+   ],
+   "ROP1-FC": [
+    10.393832460286246,
+    0.501100000000001
+   ],
+   "ROP2-FC": [
+    10.782255715410386,
+    1.664055020875208
+   ]
+  },
+  "parts_under": [],
+  "flags_lt_0p5": [
+   [
+    "tab X",
+    "3V3 via (56.431,60.663) pad 0.7564",
+    -0.378
+   ],
+   [
+    "tab X",
+    "CS-MDAC-FC via (58.420,60.038) pad 0.7564",
+    -0.378
+   ],
+   [
+    "tab X",
+    "SCL via (64.651,58.809) pad 0.7564",
+    -0.378
+   ],
+   [
+    "tab X",
+    "CHRG-STAT via (63.500,58.928) pad 0.7564",
+    -0.378
+   ],
+   [
+    "tab X",
+    "MPPT-DISABLE via (65.024,61.722) pad 0.7564",
+    -0.354
+   ],
+   [
+    "tab X",
+    "3V3 L1 trace w0.508 (62.99,54.10)-(56.43,60.66)",
+    -0.254
+   ],
+   [
+    "tab X",
+    "CS-MDAC-FC L1 trace w0.254 (64.77,53.93)-(58.67,60.04)",
+    -0.127
+   ],
+   [
+    "tab X",
+    "CS-MDAC-FC L1 trace w0.254 (58.67,60.04)-(58.42,60.04)",
+    -0.127
+   ],
+   [
+    "tab X",
+    "SDA L1 trace w0.254 (48.99,56.86)-(46.00,56.86)",
+    -0.127
+   ],
+   [
+    "tab X",
+    "SDA L1 trace w0.254 (61.75,62.64)-(54.76,62.64)",
+    -0.127
+   ],
+   [
+    "tab X",
+    "SDA L1 trace w0.254 (54.76,62.64)-(48.99,56.86)",
+    -0.127
+   ],
+   [
+    "tab X",
+    "SDA L1 trace w0.254 (65.70,58.69)-(61.75,62.64)",
+    -0.127
+   ],
+   [
+    "tab X",
+    "SCL L1 trace w0.254 (49.53,56.13)-(55.37,61.98)",
+    -0.127
+   ],
+   [
+    "tab X",
+    "SCL L1 trace w0.254 (61.38,61.98)-(55.37,61.98)",
+    -0.127
+   ],
+   [
+    "tab X",
+    "SCL L1 trace w0.254 (64.65,58.81)-(64.55,58.81)",
+    -0.127
+   ],
+   [
+    "tab X",
+    "SCL L1 trace w0.254 (64.55,58.81)-(61.38,61.98)",
+    -0.127
+   ],
+   [
+    "tab X",
+    "CHRG-STAT L1 trace w0.254 (49.78,55.63)-(54.36,60.20)",
+    -0.127
+   ],
+   [
+    "tab X",
+    "CHRG-STAT L1 trace w0.254 (54.36,60.20)-(55.63,61.47)",
+    -0.127
+   ],
+   [
+    "tab X",
+    "CHRG-STAT L1 trace w0.254 (55.63,61.47)-(60.96,61.47)",
+    -0.127
+   ],
+   [
+    "tab X",
+    "CHRG-STAT L1 trace w0.254 (60.96,61.47)-(62.99,59.44)",
+    -0.127
+   ],
+   [
+    "tab X",
+    "CHRG-STAT L1 trace w0.254 (62.99,59.44)-(63.50,58.93)",
+    -0.127
+   ],
+   [
+    "tab X",
+    "MPPT-DISABLE L1 trace w0.254 (21.00,64.48)-(62.26,64.48)",
+    -0.127
+   ],
+   [
+    "tab X",
+    "MPPT-DISABLE L1 trace w0.254 (62.26,64.48)-(65.02,61.72)",
+    -0.127
+   ],
+   [
+    "tab X",
+    "CB-DISABLE L1 trace w0.254 (43.43,63.75)-(61.47,63.75)",
+    -0.127
+   ],
+   [
+    "tab X",
+    "CB-DISABLE L1 trace w0.254 (61.47,63.75)-(66.80,58.42)",
+    -0.127
+   ],
+   [
+    "tab X",
+    "VBUS L1 polygon w1.016 bbox (65.53,19.56)-(79.55,72.64)",
+    0.024
+   ],
+   [
+    "tab X",
+    "SCL L1 trace w0.254 (47.72,54.32)-(49.53,56.13)",
+    0.039
+   ],
+   [
+    "tab X",
+    "N$7 L1 trace w0.254 (49.28,69.34)-(48.01,68.07)",
+    0.203
+   ],
+   [
+    "tab X",
+    "SDA via (65.702,58.590) pad 0.7564",
+    0.324
+   ],
+   [
+    "tab X",
+    "5V via (59.389,55.579) pad 0.7564",
+    0.343
+   ],
+   [
+    "tab X",
+    "3V3 via (51.097,69.131) pad 0.7564",
+    0.453
+   ],
+   [
+    "tab X",
+    "5V L1 trace w0.508 (56.64,52.83)-(59.39,55.58)",
+    0.467
+   ],
+   [
+    "tab Y",
+    "J-FC box (3.28,72.14)-(17.23,87.88)",
+    0.47
+   ]
+  ]
+ },
+ "c": {
+  "tab X": {
+   "area": 195.60000000000002,
+   "parts": [],
+   "nets": {
+    "3V3": {
+     "area": 3.412,
+     "area_prec": 0.3,
+     "trace_len": 6.166
+    },
+    "CS-MDAC-FC": {
+     "area": 1.758,
+     "area_prec": 0.3,
+     "trace_len": 5.527
+    },
+    "SDA": {
+     "area": 5.137,
+     "area_prec": 0.3,
+     "trace_len": 20.038
+    },
+    "SCL": {
+     "area": 5.114,
+     "area_prec": 0.3,
+     "trace_len": 18.622
+    },
+    "CHRG-STAT": {
+     "area": 4.518,
+     "area_prec": 0.3,
+     "trace_len": 16.237
+    },
+    "MPPT-DISABLE": {
+     "area": 4.634,
+     "area_prec": 0.3,
+     "trace_len": 17.437
+    },
+    "CB-DISABLE": {
+     "area": 4.59,
+     "area_prec": 0.3,
+     "trace_len": 17.765
+    }
+   },
+   "non_gnd_area": 29.162000000000003,
+   "vias": [
+    [
+     "GND",
+     49.285,
+     68.421,
+     "rim only (centre 0.121 mm outside)"
+    ],
+    [
+     "GND",
+     55.118,
+     59.182,
+     "centre inside"
+    ],
+    [
+     "GND",
+     58.42,
+     56.896,
+     "centre inside"
+    ],
+    [
+     "GND",
+     53.594,
+     57.658,
+     "centre inside"
+    ],
+    [
+     "GND",
+     64.008,
+     68.58,
+     "rim only (centre 0.280 mm outside)"
+    ],
+    [
+     "GND",
+     62.23,
+     58.674,
+     "centre inside"
+    ],
+    [
+     "GND",
+     59.436,
+     60.452,
+     "centre inside"
+    ],
+    [
+     "GND",
+     53.086,
+     62.738,
+     "centre inside"
+    ],
+    [
+     "GND",
+     57.404,
+     65.278,
+     "centre inside"
+    ],
+    [
+     "GND",
+     52.07,
+     65.532,
+     "centre inside"
+    ],
+    [
+     "3V3",
+     56.431,
+     60.663,
+     "centre inside"
+    ],
+    [
+     "CS-MDAC-FC",
+     58.42,
+     60.038,
+     "centre inside"
+    ],
+    [
+     "SCL",
+     64.651,
+     58.809,
+     "centre inside"
+    ],
+    [
+     "CHRG-STAT",
+     63.5,
+     58.928,
+     "centre inside"
+    ],
+    [
+     "MPPT-DISABLE",
+     65.024,
+     61.722,
+     "rim only (centre 0.024 mm outside)"
+    ]
+   ]
+  },
+  "tab Y": {
+   "area": 175.4696,
+   "parts": [],
+   "nets": {},
+   "non_gnd_area": 0.0,
+   "vias": []
+  }
+ },
+ "c2": {
+  "mask": {
+   "top": {
+    "vias": 368,
+    "with_opening": 368,
+    "apertures": {
+     "('C', '0.959600')": 368
+    }
+   },
+   "bottom": {
+    "vias": 368,
+    "with_opening": 368,
+    "apertures": {
+     "('C', '0.959600')": 368
+    }
+   }
+  },
+  "alwaysstop": 368,
+  "via_pad_mm": [
+   0.7564
+  ]
+ },
+ "d": {
+  "steps": [
+   [
+    "MIN replica (r6 courtyard rects, tab Y to 39.72/76.51, polygons without rim, via r 0.425, r3 keep-out)",
+    [
+     381.743,
+     57.05,
+     177.668
+    ],
+    616.46
+   ],
+   [
+    "+ copper rims (polygon w/2, via pad 0.7564 mm, MB CHG pads)",
+    [
+     376.935,
+     55.405,
+     177.668
+    ],
+    610.008
+   ],
+   [
+    "+ named r3 keep-out x 24.5-36.0, y 48.5-53.5 retired (bottom clearance rule covers it)",
+    [
+     379.26,
+     55.405,
+     177.668
+    ],
+    612.333
+   ],
+   [
+    "+ tab Y trimmed to x 37.56 / y 76.00, chamfer relocated",
+    [
+     379.26,
+     55.405,
+     156.985
+    ],
+    591.65
+   ],
+   [
+    "+ r7 inset region (tab-root strips recovered)",
+    [
+     391.58,
+     55.07,
+     156.985
+    ],
+    603.635
+   ],
+   [
+    "- FT1/FT2 keep-outs (body + 0.5 mm), FT1 RTV lane (FT2: fill hole, no lane) = r7 bottom area",
+    [
+     391.58,
+     44.26,
+     133.235
+    ],
+    569.075
+   ]
+  ],
+  "bottom_split": [
+   391.58,
+   44.26,
+   133.235
+  ],
+  "bottom_total": 569.075,
+  "foot_keepouts": [
+   [
+    "FT1",
+    [
+     59.22,
+     65.405499900174,
+     64.22,
+     68.00549990017399
+    ],
+    [
+     59.22,
+     68.00549990017399,
+     64.22,
+     68.3
+    ]
+   ],
+   [
+    "FT2",
+    [
+     25.5,
+     70.75,
+     30.5,
+     75.75
+    ],
+    null
+   ]
+  ]
+ },
+ "e": {
+  "top_usable": 1081.065,
+  "top_split": [
+   754.075,
+   173.278,
+   153.713
+  ],
+  "top6": 733.348,
+  "bottom": 569.075,
+  "r3_bottom": 435.25,
+  "fill_hole_top_keepout": 3.145,
+  "top_usable_without_fill": 1084.21,
+  "move_core": 48.81,
+  "move_ext": 52.2,
+  "move_r175": 10.925,
+  "cases": [
+   [
+    "r3 bottom set kept",
+    752.75,
+    0.696,
+    435.25,
+    0.765
+   ],
+   [
+    "r7 allocation, core + R175",
+    812.485,
+    0.752,
+    375.515,
+    0.66
+   ],
+   [
+    "r7 allocation, extended + R175",
+    864.685,
+    0.8,
+    323.315,
+    0.568
+   ],
+   [
+    "r7 adopted (A3)",
+    795.085,
+    0.735,
+    392.915,
+    0.69
+   ]
+  ],
+  "single_sided": [
+   [
+    "all footprints",
+    1.099
+   ],
+   [
+    "forbidden-part footprints deleted",
+    1.081
+   ],
+   [
+    "all DNP footprints removed",
+    1.018
+   ]
+  ],
+  "tapfield_booking": 159.574,
+  "move_adopt": 42.335,
+  "adopted": {
+   "parts": {
+    "R175": "1206",
+    "R109": "0805",
+    "R110": "0603",
+    "R111": "0805",
+    "R112": "0603",
+    "R114": "0805",
+    "R115": "0603"
+   },
+   "top_mm2": 795.085,
+   "top_U": 73.55,
+   "bottom_mm2": 392.915,
+   "bottom_U": 69.04,
+   "passes": true,
+   "extra": null
+  }
+ },
+ "f": {
+  "far": [
+   17.7,
+   34.13999999999999
+  ],
+  "dist": 25.6634389745412,
+  "n365": 0
+ },
+ "g": {
+  "xs": [
+   50.8,
+   53.34,
+   55.88,
+   58.42,
+   60.96,
+   63.5
+  ],
+  "ys": [
+   58.94,
+   61.48,
+   64.02,
+   66.56
+  ],
+  "envelope": [
+   50.05,
+   58.19,
+   64.25,
+   67.31
+  ],
+  "courtyard": [
+   49.8,
+   57.94,
+   64.5,
+   67.56
+  ],
+  "r175_box": [
+   49.65,
+   60.375,
+   51.949999999999996,
+   65.125
+  ],
+  "assignment": {
+   "T1": [
+    "F01",
+    50.8,
+    58.94,
+    68.599,
+    63.377,
+    true,
+    67.33
+   ],
+   "T7b": [
+    "F02",
+    53.34,
+    58.94,
+    67.714,
+    59.516,
+    true,
+    62.525
+   ],
+   "T2": [
+    "F03",
+    58.42,
+    66.56,
+    47.031,
+    9.851,
+    false,
+    9.851
+   ],
+   "T3": [
+    "F04",
+    55.88,
+    61.48,
+    54.525,
+    36.336,
+    false,
+    36.336
+   ],
+   "T4": [
+    "F05",
+    58.42,
+    58.94,
+    54.334,
+    35.62,
+    false,
+    35.62
+   ],
+   "T5": [
+    "F06",
+    55.88,
+    58.94,
+    54.417,
+    39.174,
+    true,
+    41.035
+   ],
+   "T6": [
+    "F07",
+    53.34,
+    61.48,
+    57.016,
+    34.285,
+    false,
+    34.285
+   ],
+   "T22": [
+    "F08",
+    26.44,
+    35.8,
+    5.392,
+    5.392,
+    false,
+    5.392
+   ],
+   "T8": [
+    "F09",
+    28.98,
+    35.8,
+    82.826,
+    82.826,
+    false,
+    82.826
+   ],
+   "T9": [
+    "F10",
+    31.52,
+    35.8,
+    25.67,
+    25.67,
+    false,
+    25.67
+   ],
+   "T10": [
+    "F11",
+    63.5,
+    64.02,
+    59.769,
+    23.635,
+    false,
+    23.635
+   ],
+   "T11": [
+    "F12",
+    58.42,
+    64.02,
+    82.812,
+    51.741,
+    false,
+    51.741
+   ],
+   "T12": [
+    "F13",
+    60.96,
+    58.94,
+    77.393,
+    55.572,
+    false,
+    55.572
+   ],
+   "T13": [
+    "F14",
+    63.5,
+    58.94,
+    77.252,
+    52.145,
+    false,
+    52.145
+   ],
+   "T14": [
+    "F15",
+    63.5,
+    61.48,
+    81.926,
+    46.681,
+    false,
+    46.681
+   ],
+   "T15": [
+    "F16",
+    55.88,
+    66.56,
+    89.465,
+    56.712,
+    false,
+    56.712
+   ],
+   "T16": [
+    "F17",
+    58.42,
+    61.48,
+    77.194,
+    56.72,
+    false,
+    56.72
+   ],
+   "T17": [
+    "F18",
+    60.96,
+    66.56,
+    88.208,
+    51.112,
+    false,
+    51.112
+   ],
+   "T17r": [
+    "F19",
+    60.96,
+    64.02,
+    79.104,
+    49.735,
+    false,
+    49.735
+   ],
+   "T20": [
+    "F20",
+    55.88,
+    64.02,
+    58.013,
+    26.296,
+    false,
+    26.296
+   ],
+   "T21": [
+    "F21",
+    63.5,
+    66.56,
+    87.008,
+    47.988,
+    false,
+    47.988
+   ],
+   "T18": [
+    "F22",
+    41.68,
+    35.8,
+    18.218,
+    10.54,
+    false,
+    10.54
+   ],
+   "T19": [
+    "F23",
+    60.96,
+    61.48,
+    78.151,
+    50.227,
+    false,
+    50.227
+   ],
+   "F24": [
+    "F24",
+    53.34,
+    66.56,
+    70.692,
+    37.821,
+    false,
+    37.821
+   ]
+  },
+  "sum_r6": 1307.952,
+  "sum_r6_f08_only": 1303.609,
+  "sum_r6_field_centre": 1308.726,
+  "sum_r7": 850.87,
+  "sum_r7_dressed": 856.683,
+  "tab_x_pads": [
+   "T1",
+   "T7b",
+   "T2",
+   "T3",
+   "T4",
+   "T5",
+   "T6",
+   "T10",
+   "T11",
+   "T12",
+   "T13",
+   "T14",
+   "T15",
+   "T16",
+   "T17",
+   "T17r",
+   "T20",
+   "T21",
+   "T19",
+   "F24"
+  ],
+  "spare": [
+   [
+    53.34,
+    64.02
+   ],
+   [
+    50.8,
+    66.56
+   ]
+  ],
+  "r175_rows": [
+   2,
+   3
+  ],
+  "assignment_changes": [
+   [
+    "T1",
+    [
+     53.34,
+     58.94
+    ],
+    [
+     50.8,
+     58.94
+    ]
+   ],
+   [
+    "T7b",
+    [
+     55.88,
+     58.94
+    ],
+    [
+     53.34,
+     58.94
+    ]
+   ],
+   [
+    "T5",
+    [
+     53.34,
+     61.48
+    ],
+    [
+     55.88,
+     58.94
+    ]
+   ],
+   [
+    "T6",
+    [
+     53.34,
+     64.02
+    ],
+    [
+     53.34,
+     61.48
+    ]
+   ]
+  ],
+  "t18_candidates": [
+   {
+    "label": "low row y 35.80, k 4",
+    "pad": [
+     34.06,
+     35.8
+    ],
+    "straight": 17.554,
+    "crosses_reg5v": false,
+    "path_to_reg5v": 0.172,
+    "pad_lands_crossed": [
+     1
+    ],
+    "nearest_post": 1,
+    "centreline_to_post_centre": 0.462,
+    "path_to_post_square": 0.06,
+    "courtyard_to_j101": 5.672
+   },
+   {
+    "label": "low row y 35.80, k 5",
+    "pad": [
+     36.6,
+     35.8
+    ],
+    "straight": 15.151,
+    "crosses_reg5v": false,
+    "path_to_reg5v": 0.172,
+    "pad_lands_crossed": [
+     1
+    ],
+    "nearest_post": 1,
+    "centreline_to_post_centre": 0.2,
+    "path_to_post_square": 0.0,
+    "courtyard_to_j101": 5.33
+   },
+   {
+    "label": "low row y 35.80, k 6",
+    "pad": [
+     39.14,
+     35.8
+    ],
+    "straight": 12.801,
+    "crosses_reg5v": false,
+    "path_to_reg5v": 0.172,
+    "pad_lands_crossed": [
+     1
+    ],
+    "nearest_post": 1,
+    "centreline_to_post_centre": 0.16,
+    "path_to_post_square": 0.0,
+    "courtyard_to_j101": 5.33
+   },
+   {
+    "label": "low row y 35.80, k 7",
+    "pad": [
+     41.68,
+     35.8
+    ],
+    "straight": 10.54,
+    "crosses_reg5v": false,
+    "path_to_reg5v": 0.172,
+    "pad_lands_crossed": [
+     1
+    ],
+    "nearest_post": 1,
+    "centreline_to_post_centre": 0.677,
+    "path_to_post_square": 0.24,
+    "courtyard_to_j101": 5.33
+   },
+   {
+    "label": "row y 38.34, k 7",
+    "pad": [
+     41.68,
+     38.34
+    ],
+    "straight": 9.524,
+    "crosses_reg5v": false,
+    "path_to_reg5v": 0.172,
+    "pad_lands_crossed": [
+     1
+    ],
+    "nearest_post": 1,
+    "centreline_to_post_centre": 0.532,
+    "path_to_post_square": 0.133,
+    "courtyard_to_j101": 2.79
+   },
+   {
+    "label": "row y 40.88, k 7",
+    "pad": [
+     41.68,
+     40.88
+    ],
+    "straight": 9.122,
+    "crosses_reg5v": false,
+    "path_to_reg5v": 0.172,
+    "pad_lands_crossed": [
+     2
+    ],
+    "nearest_post": 2,
+    "centreline_to_post_centre": 0.647,
+    "path_to_post_square": 0.32,
+    "courtyard_to_j101": 0.25
+   }
+  ],
+  "t18_pad": [
+   41.68,
+   35.8
+  ],
+  "t18_end_to_reg5v": 0.172,
+  "residual": {
+   "T22": [
+    26.44,
+    35.8
+   ],
+   "T8": [
+    28.98,
+    35.8
+   ],
+   "T9": [
+    31.52,
+    35.8
+   ],
+   "T18": [
+    41.68,
+    35.8
+   ]
+  }
+ },
+ "h": {
+  "classes": {
+   "tab X low edge y 56.30": [
+    0.343,
+    3.399
+   ],
+   "tap field row 1 (low pad edges)": [
+    2.233,
+    4.19
+   ],
+   "tap field row 2 pads": [
+    4.773,
+    7.808
+   ],
+   "tap field row 3 pads": [
+    7.313,
+    10.019
+   ],
+   "tap field row 4 pads": [
+    9.853,
+    12.519
+   ],
+   "R175 courtyard": [
+    5.511,
+    10.408
+   ],
+   "FT1 foot body": [
+    9.953,
+    12.31
+   ],
+   "tab X top edge y 68.30": [
+    12.343,
+    13.702
+   ],
+   "tab X right edge x 65.00": [
+    3.399,
+    13.525
+   ],
+   "tab X bottom courtyard limit y 56.80": [
+    0.843,
+    3.333
+   ]
+  },
+  "boundary": [
+   [
+    48.7,
+    60.68
+   ],
+   [
+    49.7,
+    61.02
+   ],
+   [
+    50.7,
+    61.22
+   ],
+   [
+    51.7,
+    61.26
+   ],
+   [
+    52.7,
+    61.26
+   ],
+   [
+    53.7,
+    61.26
+   ],
+   [
+    54.7,
+    61.26
+   ],
+   [
+    55.7,
+    61.26
+   ],
+   [
+    56.7,
+    61.8
+   ],
+   [
+    57.7,
+    62.14
+   ],
+   [
+    58.7,
+    62.32
+   ],
+   [
+    59.7,
+    62.34
+   ],
+   [
+    60.7,
+    62.22
+   ],
+   [
+    61.7,
+    61.94
+   ],
+   [
+    62.7,
+    61.48
+   ],
+   [
+    63.7,
+    60.92
+   ],
+   [
+    64.7,
+    60.5
+   ]
+  ],
+  "band_area": 84.9
+ },
+ "i": {
+  "ft1": {
+   "centre": [
+    61.72,
+    66.70549990017399
+   ],
+   "size": [
+    4.0,
+    1.6
+   ],
+   "body": [
+    59.72,
+    65.905499900174,
+    63.72,
+    67.50549990017399
+   ],
+   "cu_clear": 1.2944999001739983,
+   "cu_who": "MPPT-DISABLE L1 trace w0.254 (21.00,64.48)-(62.26,64.48)",
+   "vias": [],
+   "part_clear": 3.641,
+   "part": "C-D2",
+   "t": 0.294,
+   "tx": 0.304,
+   "ty": 0.294,
+   "bind": "MPPT-DISABLE L1 trace w0.254 (21.00,64.48)-(62.26,64.48) (1.0 mm)",
+   "zone": "tip zone (x >= 60.0)",
+   "rule_margin": null,
+   "slack": null,
+   "under": {},
+   "within": []
+  },
+  "ft2": {
+   "centre": [
+    28.0,
+    73.25
+   ],
+   "size": [
+    4.0,
+    4.0
+   ],
+   "body": [
+    26.0,
+    71.25,
+    30.0,
+    75.25
+   ],
+   "cu_clear": null,
+   "cu_who": null,
+   "vias": [],
+   "part_clear": 1.762,
+   "part": "L-FC",
+   "t": 0.25,
+   "tx": 7.06,
+   "ty": 0.25,
+   "bind": "r7 outline edge (0.5 mm)",
+   "zone": "-",
+   "rule_margin": null,
+   "slack": {
+    "+x": 7.06,
+    "-x": 7.343,
+    "+y": 0.25,
+    "-y": 4.11
+   },
+   "under": {},
+   "within": []
+  },
+  "keepouts": {
+   "FT1": [
+    [
+     59.22,
+     65.405499900174,
+     64.22,
+     68.00549990017399
+    ],
+    [
+     59.22,
+     68.00549990017399,
+     64.22,
+     68.3
+    ]
+   ],
+   "FT2": [
+    [
+     25.5,
+     70.75,
+     30.5,
+     75.75
+    ],
+    null
+   ]
+  },
+  "alternatives": {
+   "old_ft1": {
+    "centre": [
+     62.0,
+     66.7
+    ],
+    "size": [
+     4.0,
+     2.0
+    ],
+    "body": [
+     60.0,
+     65.7,
+     64.0,
+     67.7
+    ],
+    "cu_clear": 1.0239999999999965,
+    "cu_who": "VBUS L1 polygon w1.016 bbox (65.53,19.56)-(79.55,72.64)",
+    "vias": [],
+    "part_clear": 3.311,
+    "part": "C-D2",
+    "t": 0.024,
+    "tx": 0.024,
+    "ty": 0.089,
+    "bind": null,
+    "zone": null,
+    "rule_margin": 0.024,
+    "slack": {
+     "+x": 0.024,
+     "-x": 7.591,
+     "+y": 0.1,
+     "-y": 0.089
+    },
+    "under": null,
+    "within": null
+   },
+   "relax44": {
+    "centre": [
+     62.5,
+     61.4
+    ],
+    "size": [
+     4.0,
+     4.0
+    ],
+    "body": [
+     60.5,
+     59.4,
+     64.5,
+     63.4
+    ],
+    "cu_clear": -0.127,
+    "cu_who": "SDA L1 trace w0.254 (61.75,62.64)-(54.76,62.64)",
+    "vias": [],
+    "part_clear": 4.886,
+    "part": "REG-5V",
+    "t": null,
+    "tx": null,
+    "ty": null,
+    "bind": null,
+    "zone": null,
+    "rule_margin": -1.127,
+    "slack": null,
+    "under": null,
+    "within": null
+   },
+   "old_ft2": {
+    "centre": [
+     27.63,
+     73.5
+    ],
+    "size": [
+     4.0,
+     4.0
+    ],
+    "body": [
+     25.63,
+     71.5,
+     29.63,
+     75.5
+    ],
+    "cu_clear": null,
+    "cu_who": null,
+    "vias": [],
+    "part_clear": 1.512,
+    "part": "L-FC",
+    "t": 0.0,
+    "tx": 6.723,
+    "ty": 0.0,
+    "bind": null,
+    "zone": null,
+    "rule_margin": 0.0,
+    "slack": {
+     "+x": 7.43,
+     "-x": 6.723,
+     "+y": 0.0,
+     "-y": 4.36
+    },
+    "under": null,
+    "within": null
+   },
+   "ft2_mid": {
+    "centre": [
+     28.0,
+     71.31999991273025
+    ],
+    "size": [
+     4.0,
+     4.0
+    ],
+    "body": [
+     26.0,
+     69.31999991273025,
+     30.0,
+     73.31999991273025
+    ],
+    "cu_clear": null,
+    "cu_who": null,
+    "vias": [],
+    "part_clear": 3.692,
+    "part": "L-FC",
+    "t": 2.18,
+    "tx": 7.06,
+    "ty": 2.18,
+    "bind": null,
+    "zone": null,
+    "rule_margin": 2.18,
+    "slack": {
+     "+x": 7.06,
+     "-x": 7.77,
+     "+y": 2.18,
+     "-y": 2.18
+    },
+    "under": null,
+    "within": null
+   }
+  },
+  "candidates": {
+   "FT1": {
+    "stage1": {
+     "3.0x1.4": [
+      0.39,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      0.39
+     ],
+     "3.1x1.4": [
+      0.39,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      0.39
+     ],
+     "3.2x1.4": [
+      0.39,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      0.39
+     ],
+     "3.3x1.4": [
+      0.39,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      0.39
+     ],
+     "3.4x1.4": [
+      0.39,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      0.39
+     ],
+     "3.5x1.4": [
+      0.39,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      0.39
+     ],
+     "3.6x1.4": [
+      0.39,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      0.39
+     ],
+     "3.7x1.4": [
+      0.39,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      0.39
+     ],
+     "3.8x1.4": [
+      0.39,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      0.39
+     ],
+     "3.9x1.4": [
+      0.39,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      0.39
+     ],
+     "4.0x1.4": [
+      0.39,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      0.39
+     ],
+     "3.0x1.5": [
+      0.34,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      0.34
+     ],
+     "3.1x1.5": [
+      0.34,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      0.34
+     ],
+     "3.2x1.5": [
+      0.34,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      0.34
+     ],
+     "3.3x1.5": [
+      0.34,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      0.34
+     ],
+     "3.4x1.5": [
+      0.34,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      0.34
+     ],
+     "3.5x1.5": [
+      0.34,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      0.34
+     ],
+     "3.6x1.5": [
+      0.34,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      0.34
+     ],
+     "3.7x1.5": [
+      0.34,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      0.34
+     ],
+     "3.8x1.5": [
+      0.34,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      0.34
+     ],
+     "3.9x1.5": [
+      0.34,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      0.34
+     ],
+     "4.0x1.5": [
+      0.34,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      0.34
+     ],
+     "3.0x1.6": [
+      0.29,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      0.29
+     ],
+     "3.1x1.6": [
+      0.29,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      0.29
+     ],
+     "3.2x1.6": [
+      0.29,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      0.29
+     ],
+     "3.3x1.6": [
+      0.29,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      0.29
+     ],
+     "3.4x1.6": [
+      0.29,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      0.29
+     ],
+     "3.5x1.6": [
+      0.29,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      0.29
+     ],
+     "3.6x1.6": [
+      0.29,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      0.29
+     ],
+     "3.7x1.6": [
+      0.29,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      0.29
+     ],
+     "3.8x1.6": [
+      0.29,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      0.29
+     ],
+     "3.9x1.6": [
+      0.29,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      0.29
+     ],
+     "4.0x1.6": [
+      0.29,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      0.29
+     ],
+     "3.0x1.7": [
+      0.24,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      0.24
+     ],
+     "3.1x1.7": [
+      0.24,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      0.24
+     ],
+     "3.2x1.7": [
+      0.24,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      0.24
+     ],
+     "3.3x1.7": [
+      0.24,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      0.24
+     ],
+     "3.4x1.7": [
+      0.24,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      0.24
+     ],
+     "3.5x1.7": [
+      0.24,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      0.24
+     ],
+     "3.6x1.7": [
+      0.24,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      0.24
+     ],
+     "3.7x1.7": [
+      0.24,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      0.24
+     ],
+     "3.8x1.7": [
+      0.24,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      0.24
+     ],
+     "3.9x1.7": [
+      0.24,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      0.24
+     ],
+     "4.0x1.7": [
+      0.24,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      0.24
+     ],
+     "3.0x1.8": [
+      0.19,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      0.19
+     ],
+     "3.1x1.8": [
+      0.19,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      0.19
+     ],
+     "3.2x1.8": [
+      0.19,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      0.19
+     ],
+     "3.3x1.8": [
+      0.19,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      0.19
+     ],
+     "3.4x1.8": [
+      0.19,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      0.19
+     ],
+     "3.5x1.8": [
+      0.19,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      0.19
+     ],
+     "3.6x1.8": [
+      0.19,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      0.19
+     ],
+     "3.7x1.8": [
+      0.19,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      0.19
+     ],
+     "3.8x1.8": [
+      0.19,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      0.19
+     ],
+     "3.9x1.8": [
+      0.19,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      0.19
+     ],
+     "4.0x1.8": [
+      0.19,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      0.19
+     ],
+     "3.0x1.9": [
+      0.14,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      0.14
+     ],
+     "3.1x1.9": [
+      0.14,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      0.14
+     ],
+     "3.2x1.9": [
+      0.14,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      0.14
+     ],
+     "3.3x1.9": [
+      0.14,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      0.14
+     ],
+     "3.4x1.9": [
+      0.14,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      0.14
+     ],
+     "3.5x1.9": [
+      0.14,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      0.14
+     ],
+     "3.6x1.9": [
+      0.14,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      0.14
+     ],
+     "3.7x1.9": [
+      0.14,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      0.14
+     ],
+     "3.8x1.9": [
+      0.14,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      0.14
+     ],
+     "3.9x1.9": [
+      0.14,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      0.14
+     ],
+     "4.0x1.9": [
+      0.14,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      0.14
+     ],
+     "3.0x2.0": [
+      0.09,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      0.09
+     ],
+     "3.1x2.0": [
+      0.09,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      0.09
+     ],
+     "3.2x2.0": [
+      0.09,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      0.09
+     ],
+     "3.3x2.0": [
+      0.09,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      0.09
+     ],
+     "3.4x2.0": [
+      0.09,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      0.09
+     ],
+     "3.5x2.0": [
+      0.09,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      0.09
+     ],
+     "3.6x2.0": [
+      0.09,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      0.09
+     ],
+     "3.7x2.0": [
+      0.09,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      0.09
+     ],
+     "3.8x2.0": [
+      0.09,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      0.09
+     ],
+     "3.9x2.0": [
+      0.09,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      0.09
+     ],
+     "4.0x2.0": [
+      0.09,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      0.09
+     ],
+     "3.0x2.1": [
+      0.04,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      0.04
+     ],
+     "3.1x2.1": [
+      0.04,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      0.04
+     ],
+     "3.2x2.1": [
+      0.04,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      0.04
+     ],
+     "3.3x2.1": [
+      0.04,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      0.04
+     ],
+     "3.4x2.1": [
+      0.04,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      0.04
+     ],
+     "3.5x2.1": [
+      0.04,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      0.04
+     ],
+     "3.6x2.1": [
+      0.04,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      0.04
+     ],
+     "3.7x2.1": [
+      0.04,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      0.04
+     ],
+     "3.8x2.1": [
+      0.04,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      0.04
+     ],
+     "3.9x2.1": [
+      0.04,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      0.04
+     ],
+     "4.0x2.1": [
+      0.04,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      0.04
+     ],
+     "3.0x2.2": [
+      -0.01,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.01
+     ],
+     "3.1x2.2": [
+      -0.01,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.01
+     ],
+     "3.2x2.2": [
+      -0.01,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.01
+     ],
+     "3.3x2.2": [
+      -0.01,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.01
+     ],
+     "3.4x2.2": [
+      -0.01,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.01
+     ],
+     "3.5x2.2": [
+      -0.01,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.01
+     ],
+     "3.6x2.2": [
+      -0.01,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.01
+     ],
+     "3.7x2.2": [
+      -0.01,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.01
+     ],
+     "3.8x2.2": [
+      -0.01,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.01
+     ],
+     "3.9x2.2": [
+      -0.01,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.01
+     ],
+     "4.0x2.2": [
+      -0.01,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.01
+     ],
+     "3.0x2.3": [
+      -0.06,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.06
+     ],
+     "3.1x2.3": [
+      -0.06,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.06
+     ],
+     "3.2x2.3": [
+      -0.06,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.06
+     ],
+     "3.3x2.3": [
+      -0.06,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.06
+     ],
+     "3.4x2.3": [
+      -0.06,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.06
+     ],
+     "3.5x2.3": [
+      -0.06,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.06
+     ],
+     "3.6x2.3": [
+      -0.06,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.06
+     ],
+     "3.7x2.3": [
+      -0.06,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.06
+     ],
+     "3.8x2.3": [
+      -0.06,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.06
+     ],
+     "3.9x2.3": [
+      -0.06,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.06
+     ],
+     "4.0x2.3": [
+      -0.06,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.06
+     ],
+     "3.0x2.4": [
+      -0.11,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.11
+     ],
+     "3.1x2.4": [
+      -0.11,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.11
+     ],
+     "3.2x2.4": [
+      -0.11,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.11
+     ],
+     "3.3x2.4": [
+      -0.11,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.11
+     ],
+     "3.4x2.4": [
+      -0.11,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.11
+     ],
+     "3.5x2.4": [
+      -0.11,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.11
+     ],
+     "3.6x2.4": [
+      -0.11,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.11
+     ],
+     "3.7x2.4": [
+      -0.11,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.11
+     ],
+     "3.8x2.4": [
+      -0.11,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.11
+     ],
+     "3.9x2.4": [
+      -0.11,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.11
+     ],
+     "4.0x2.4": [
+      -0.11,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.11
+     ],
+     "3.0x2.5": [
+      -0.16,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.16
+     ],
+     "3.1x2.5": [
+      -0.16,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.16
+     ],
+     "3.2x2.5": [
+      -0.16,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.16
+     ],
+     "3.3x2.5": [
+      -0.16,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.16
+     ],
+     "3.4x2.5": [
+      -0.16,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.16
+     ],
+     "3.5x2.5": [
+      -0.16,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.16
+     ],
+     "3.6x2.5": [
+      -0.16,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.16
+     ],
+     "3.7x2.5": [
+      -0.16,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.16
+     ],
+     "3.8x2.5": [
+      -0.16,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.16
+     ],
+     "3.9x2.5": [
+      -0.16,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.16
+     ],
+     "4.0x2.5": [
+      -0.16,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.16
+     ],
+     "3.0x2.6": [
+      -0.21,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.21
+     ],
+     "3.1x2.6": [
+      -0.21,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.21
+     ],
+     "3.2x2.6": [
+      -0.21,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.21
+     ],
+     "3.3x2.6": [
+      -0.21,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.21
+     ],
+     "3.4x2.6": [
+      -0.21,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.21
+     ],
+     "3.5x2.6": [
+      -0.21,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.21
+     ],
+     "3.6x2.6": [
+      -0.21,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.21
+     ],
+     "3.7x2.6": [
+      -0.21,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.21
+     ],
+     "3.8x2.6": [
+      -0.21,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.21
+     ],
+     "3.9x2.6": [
+      -0.21,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.21
+     ],
+     "4.0x2.6": [
+      -0.21,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.21
+     ],
+     "3.0x2.7": [
+      -0.26,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.26
+     ],
+     "3.1x2.7": [
+      -0.26,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.26
+     ],
+     "3.2x2.7": [
+      -0.26,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.26
+     ],
+     "3.3x2.7": [
+      -0.26,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.26
+     ],
+     "3.4x2.7": [
+      -0.26,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.26
+     ],
+     "3.5x2.7": [
+      -0.26,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.26
+     ],
+     "3.6x2.7": [
+      -0.26,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.26
+     ],
+     "3.7x2.7": [
+      -0.26,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.26
+     ],
+     "3.8x2.7": [
+      -0.26,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.26
+     ],
+     "3.9x2.7": [
+      -0.26,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.26
+     ],
+     "4.0x2.7": [
+      -0.26,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.26
+     ],
+     "3.0x2.8": [
+      -0.31,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.31
+     ],
+     "3.1x2.8": [
+      -0.31,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.31
+     ],
+     "3.2x2.8": [
+      -0.31,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.31
+     ],
+     "3.3x2.8": [
+      -0.31,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.31
+     ],
+     "3.4x2.8": [
+      -0.31,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.31
+     ],
+     "3.5x2.8": [
+      -0.31,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.31
+     ],
+     "3.6x2.8": [
+      -0.31,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.31
+     ],
+     "3.7x2.8": [
+      -0.31,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.31
+     ],
+     "3.8x2.8": [
+      -0.31,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.31
+     ],
+     "3.9x2.8": [
+      -0.31,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.31
+     ],
+     "4.0x2.8": [
+      -0.31,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.31
+     ],
+     "3.0x2.9": [
+      -0.36,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.36
+     ],
+     "3.1x2.9": [
+      -0.36,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.36
+     ],
+     "3.2x2.9": [
+      -0.36,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.36
+     ],
+     "3.3x2.9": [
+      -0.36,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.36
+     ],
+     "3.4x2.9": [
+      -0.36,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.36
+     ],
+     "3.5x2.9": [
+      -0.36,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.36
+     ],
+     "3.6x2.9": [
+      -0.36,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.36
+     ],
+     "3.7x2.9": [
+      -0.36,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.36
+     ],
+     "3.8x2.9": [
+      -0.36,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.36
+     ],
+     "3.9x2.9": [
+      -0.36,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.36
+     ],
+     "4.0x2.9": [
+      -0.36,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.36
+     ],
+     "3.0x3.0": [
+      -0.39,
+      [
+       49.830000000000005,
+       61.51
+      ],
+      -0.41
+     ],
+     "3.1x3.0": [
+      -0.41,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.41
+     ],
+     "3.2x3.0": [
+      -0.41,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.41
+     ],
+     "3.3x3.0": [
+      -0.41,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.41
+     ],
+     "3.4x3.0": [
+      -0.41,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.41
+     ],
+     "3.5x3.0": [
+      -0.41,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.41
+     ],
+     "3.6x3.0": [
+      -0.41,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.41
+     ],
+     "3.7x3.0": [
+      -0.41,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.41
+     ],
+     "3.8x3.0": [
+      -0.41,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.41
+     ],
+     "3.9x3.0": [
+      -0.41,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.41
+     ],
+     "4.0x3.0": [
+      -0.41,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.41
+     ],
+     "3.0x3.1": [
+      -0.42,
+      [
+       49.81,
+       61.489999999999995
+      ],
+      -0.46
+     ],
+     "3.1x3.1": [
+      -0.44,
+      [
+       49.830000000000005,
+       61.51
+      ],
+      -0.46
+     ],
+     "3.2x3.1": [
+      -0.46,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.46
+     ],
+     "3.3x3.1": [
+      -0.46,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.46
+     ],
+     "3.4x3.1": [
+      -0.46,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.46
+     ],
+     "3.5x3.1": [
+      -0.46,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.46
+     ],
+     "3.6x3.1": [
+      -0.46,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.46
+     ],
+     "3.7x3.1": [
+      -0.46,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.46
+     ],
+     "3.8x3.1": [
+      -0.46,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.46
+     ],
+     "3.9x3.1": [
+      -0.46,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.46
+     ],
+     "4.0x3.1": [
+      -0.46,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.46
+     ],
+     "3.0x3.2": [
+      -0.45,
+      [
+       49.790000000000006,
+       61.47
+      ],
+      -0.51
+     ],
+     "3.1x3.2": [
+      -0.47,
+      [
+       49.81,
+       61.489999999999995
+      ],
+      -0.51
+     ],
+     "3.2x3.2": [
+      -0.49,
+      [
+       49.830000000000005,
+       61.51
+      ],
+      -0.51
+     ],
+     "3.3x3.2": [
+      -0.51,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.51
+     ],
+     "3.4x3.2": [
+      -0.51,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.51
+     ],
+     "3.5x3.2": [
+      -0.51,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.51
+     ],
+     "3.6x3.2": [
+      -0.51,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.51
+     ],
+     "3.7x3.2": [
+      -0.51,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.51
+     ],
+     "3.8x3.2": [
+      -0.51,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.51
+     ],
+     "3.9x3.2": [
+      -0.51,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.51
+     ],
+     "4.0x3.2": [
+      -0.51,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.51
+     ],
+     "3.0x3.3": [
+      -0.47,
+      [
+       49.75,
+       61.43
+      ],
+      -0.56
+     ],
+     "3.1x3.3": [
+      -0.5,
+      [
+       49.790000000000006,
+       61.47
+      ],
+      -0.56
+     ],
+     "3.2x3.3": [
+      -0.52,
+      [
+       49.81,
+       61.489999999999995
+      ],
+      -0.56
+     ],
+     "3.3x3.3": [
+      -0.54,
+      [
+       49.830000000000005,
+       61.51
+      ],
+      -0.56
+     ],
+     "3.4x3.3": [
+      -0.56,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.56
+     ],
+     "3.5x3.3": [
+      -0.56,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.56
+     ],
+     "3.6x3.3": [
+      -0.56,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.56
+     ],
+     "3.7x3.3": [
+      -0.56,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.56
+     ],
+     "3.8x3.3": [
+      -0.56,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.56
+     ],
+     "3.9x3.3": [
+      -0.56,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.56
+     ],
+     "4.0x3.3": [
+      -0.56,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.56
+     ],
+     "3.0x3.4": [
+      -0.49,
+      [
+       49.730000000000004,
+       61.41
+      ],
+      -0.61
+     ],
+     "3.1x3.4": [
+      -0.52,
+      [
+       49.75,
+       61.43
+      ],
+      -0.61
+     ],
+     "3.2x3.4": [
+      -0.55,
+      [
+       49.790000000000006,
+       61.47
+      ],
+      -0.61
+     ],
+     "3.3x3.4": [
+      -0.57,
+      [
+       49.81,
+       61.489999999999995
+      ],
+      -0.61
+     ],
+     "3.4x3.4": [
+      -0.59,
+      [
+       49.830000000000005,
+       61.51
+      ],
+      -0.61
+     ],
+     "3.5x3.4": [
+      -0.61,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.61
+     ],
+     "3.6x3.4": [
+      -0.61,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.61
+     ],
+     "3.7x3.4": [
+      -0.61,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.61
+     ],
+     "3.8x3.4": [
+      -0.61,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.61
+     ],
+     "3.9x3.4": [
+      -0.61,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.61
+     ],
+     "4.0x3.4": [
+      -0.61,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.61
+     ],
+     "3.0x3.5": [
+      -0.52,
+      [
+       49.71,
+       61.39
+      ],
+      -0.66
+     ],
+     "3.1x3.5": [
+      -0.54,
+      [
+       49.730000000000004,
+       61.41
+      ],
+      -0.66
+     ],
+     "3.2x3.5": [
+      -0.57,
+      [
+       49.75,
+       61.43
+      ],
+      -0.66
+     ],
+     "3.3x3.5": [
+      -0.6,
+      [
+       49.790000000000006,
+       61.47
+      ],
+      -0.66
+     ],
+     "3.4x3.5": [
+      -0.62,
+      [
+       49.81,
+       61.489999999999995
+      ],
+      -0.66
+     ],
+     "3.5x3.5": [
+      -0.64,
+      [
+       49.830000000000005,
+       61.51
+      ],
+      -0.66
+     ],
+     "3.6x3.5": [
+      -0.66,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.66
+     ],
+     "3.7x3.5": [
+      -0.66,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.66
+     ],
+     "3.8x3.5": [
+      -0.66,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.66
+     ],
+     "3.9x3.5": [
+      -0.66,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.66
+     ],
+     "4.0x3.5": [
+      -0.66,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.66
+     ],
+     "3.0x3.6": [
+      -0.55,
+      [
+       49.690000000000005,
+       61.37
+      ],
+      -0.71
+     ],
+     "3.1x3.6": [
+      -0.57,
+      [
+       49.71,
+       61.39
+      ],
+      -0.71
+     ],
+     "3.2x3.6": [
+      -0.59,
+      [
+       49.730000000000004,
+       61.41
+      ],
+      -0.71
+     ],
+     "3.3x3.6": [
+      -0.62,
+      [
+       49.75,
+       61.43
+      ],
+      -0.71
+     ],
+     "3.4x3.6": [
+      -0.65,
+      [
+       49.790000000000006,
+       61.47
+      ],
+      -0.71
+     ],
+     "3.5x3.6": [
+      -0.67,
+      [
+       49.81,
+       61.489999999999995
+      ],
+      -0.71
+     ],
+     "3.6x3.6": [
+      -0.69,
+      [
+       49.830000000000005,
+       61.51
+      ],
+      -0.71
+     ],
+     "3.7x3.6": [
+      -0.71,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.71
+     ],
+     "3.8x3.6": [
+      -0.71,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.71
+     ],
+     "3.9x3.6": [
+      -0.71,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.71
+     ],
+     "4.0x3.6": [
+      -0.71,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.71
+     ],
+     "3.0x3.7": [
+      -0.57,
+      [
+       49.650000000000006,
+       61.33
+      ],
+      -0.74
+     ],
+     "3.1x3.7": [
+      -0.6,
+      [
+       49.690000000000005,
+       61.37
+      ],
+      -0.76
+     ],
+     "3.2x3.7": [
+      -0.62,
+      [
+       49.71,
+       61.39
+      ],
+      -0.76
+     ],
+     "3.3x3.7": [
+      -0.64,
+      [
+       49.730000000000004,
+       61.41
+      ],
+      -0.76
+     ],
+     "3.4x3.7": [
+      -0.67,
+      [
+       49.75,
+       61.43
+      ],
+      -0.76
+     ],
+     "3.5x3.7": [
+      -0.7,
+      [
+       49.790000000000006,
+       61.47
+      ],
+      -0.76
+     ],
+     "3.6x3.7": [
+      -0.72,
+      [
+       49.81,
+       61.489999999999995
+      ],
+      -0.76
+     ],
+     "3.7x3.7": [
+      -0.74,
+      [
+       49.830000000000005,
+       61.51
+      ],
+      -0.76
+     ],
+     "3.8x3.7": [
+      -0.76,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.76
+     ],
+     "3.9x3.7": [
+      -0.76,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.76
+     ],
+     "4.0x3.7": [
+      -0.76,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.76
+     ],
+     "3.0x3.8": [
+      -0.59,
+      [
+       49.63,
+       61.309999999999995
+      ],
+      -0.79
+     ],
+     "3.1x3.8": [
+      -0.62,
+      [
+       49.650000000000006,
+       61.33
+      ],
+      -0.79
+     ],
+     "3.2x3.8": [
+      -0.65,
+      [
+       49.690000000000005,
+       61.37
+      ],
+      -0.81
+     ],
+     "3.3x3.8": [
+      -0.67,
+      [
+       49.71,
+       61.39
+      ],
+      -0.81
+     ],
+     "3.4x3.8": [
+      -0.69,
+      [
+       49.730000000000004,
+       61.41
+      ],
+      -0.81
+     ],
+     "3.5x3.8": [
+      -0.72,
+      [
+       49.75,
+       61.43
+      ],
+      -0.81
+     ],
+     "3.6x3.8": [
+      -0.75,
+      [
+       49.790000000000006,
+       61.47
+      ],
+      -0.81
+     ],
+     "3.7x3.8": [
+      -0.77,
+      [
+       49.81,
+       61.489999999999995
+      ],
+      -0.81
+     ],
+     "3.8x3.8": [
+      -0.79,
+      [
+       49.830000000000005,
+       61.51
+      ],
+      -0.81
+     ],
+     "3.9x3.8": [
+      -0.81,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.81
+     ],
+     "4.0x3.8": [
+      -0.81,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.81
+     ],
+     "3.0x3.9": [
+      -0.62,
+      [
+       49.61,
+       61.29
+      ],
+      -0.82
+     ],
+     "3.1x3.9": [
+      -0.64,
+      [
+       49.63,
+       61.309999999999995
+      ],
+      -0.84
+     ],
+     "3.2x3.9": [
+      -0.67,
+      [
+       49.650000000000006,
+       61.33
+      ],
+      -0.84
+     ],
+     "3.3x3.9": [
+      -0.7,
+      [
+       49.690000000000005,
+       61.37
+      ],
+      -0.86
+     ],
+     "3.4x3.9": [
+      -0.72,
+      [
+       49.71,
+       61.39
+      ],
+      -0.86
+     ],
+     "3.5x3.9": [
+      -0.74,
+      [
+       49.730000000000004,
+       61.41
+      ],
+      -0.86
+     ],
+     "3.6x3.9": [
+      -0.77,
+      [
+       49.75,
+       61.43
+      ],
+      -0.86
+     ],
+     "3.7x3.9": [
+      -0.8,
+      [
+       49.790000000000006,
+       61.47
+      ],
+      -0.86
+     ],
+     "3.8x3.9": [
+      -0.82,
+      [
+       49.81,
+       61.489999999999995
+      ],
+      -0.86
+     ],
+     "3.9x3.9": [
+      -0.84,
+      [
+       49.830000000000005,
+       61.51
+      ],
+      -0.86
+     ],
+     "4.0x3.9": [
+      -0.86,
+      [
+       60.790000000000006,
+       66.71
+      ],
+      -0.86
+     ],
+     "3.0x4.0": [
+      -0.65,
+      [
+       49.59,
+       61.269999999999996
+      ],
+      -0.85
+     ],
+     "3.1x4.0": [
+      -0.67,
+      [
+       49.61,
+       61.29
+      ],
+      -0.87
+     ],
+     "3.2x4.0": [
+      -0.69,
+      [
+       49.63,
+       61.309999999999995
+      ],
+      -0.89
+     ],
+     "3.3x4.0": [
+      -0.72,
+      [
+       49.650000000000006,
+       61.33
+      ],
+      -0.89
+     ],
+     "3.4x4.0": [
+      -0.75,
+      [
+       49.690000000000005,
+       61.37
+      ],
+      -0.91
+     ],
+     "3.5x4.0": [
+      -0.77,
+      [
+       49.71,
+       61.39
+      ],
+      -0.91
+     ],
+     "3.6x4.0": [
+      -0.79,
+      [
+       49.730000000000004,
+       61.41
+      ],
+      -0.91
+     ],
+     "3.7x4.0": [
+      -0.82,
+      [
+       49.75,
+       61.43
+      ],
+      -0.91
+     ],
+     "3.8x4.0": [
+      -0.85,
+      [
+       49.790000000000006,
+       61.47
+      ],
+      -0.91
+     ],
+     "3.9x4.0": [
+      -0.87,
+      [
+       49.81,
+       61.489999999999995
+      ],
+      -0.91
+     ],
+     "4.0x4.0": [
+      -0.89,
+      [
+       49.830000000000005,
+       61.51
+      ],
+      -0.91
+     ]
+    },
+    "stage2": [
+     {
+      "w": 4.0,
+      "h": 1.7,
+      "area": 6.8,
+      "which": "best",
+      "centre": [
+       61.76,
+       66.70549991895625
+      ],
+      "t": 0.244,
+      "tx": 0.264,
+      "ty": 0.244,
+      "bind": "MPPT-DISABLE L1 trace w0.254 (21.00,64.48)-(62.26,64.48) (1.0 mm)"
+     },
+     {
+      "w": 3.9,
+      "h": 1.7,
+      "area": 6.63,
+      "which": "best",
+      "centre": [
+       61.82,
+       66.70549991895625
+      ],
+      "t": 0.244,
+      "tx": 0.254,
+      "ty": 0.244,
+      "bind": "MPPT-DISABLE L1 trace w0.254 (21.00,64.48)-(62.26,64.48) (1.0 mm)"
+     },
+     {
+      "w": 3.8,
+      "h": 1.7,
+      "area": 6.46,
+      "which": "best",
+      "centre": [
+       61.86,
+       66.70549991895625
+      ],
+      "t": 0.244,
+      "tx": 0.264,
+      "ty": 0.244,
+      "bind": "MPPT-DISABLE L1 trace w0.254 (21.00,64.48)-(62.26,64.48) (1.0 mm)"
+     },
+     {
+      "w": 4.0,
+      "h": 1.6,
+      "area": 6.4,
+      "which": "best",
+      "centre": [
+       61.72,
+       66.70549990017399
+      ],
+      "t": 0.294,
+      "tx": 0.304,
+      "ty": 0.294,
+      "bind": "MPPT-DISABLE L1 trace w0.254 (21.00,64.48)-(62.26,64.48) (1.0 mm)"
+     }
+    ]
+   },
+   "FT2": {
+    "stage1": {
+     "3.0x1.4": [
+      3.47,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.1x1.4": [
+      3.47,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.2x1.4": [
+      3.47,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.3x1.4": [
+      3.47,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.4x1.4": [
+      3.47,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.5x1.4": [
+      3.47,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.6x1.4": [
+      3.47,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.7x1.4": [
+      3.47,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.8x1.4": [
+      3.47,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.9x1.4": [
+      3.47,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "4.0x1.4": [
+      3.47,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.0x1.5": [
+      3.42,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.1x1.5": [
+      3.42,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.2x1.5": [
+      3.42,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.3x1.5": [
+      3.42,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.4x1.5": [
+      3.42,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.5x1.5": [
+      3.42,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.6x1.5": [
+      3.42,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.7x1.5": [
+      3.42,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.8x1.5": [
+      3.42,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.9x1.5": [
+      3.42,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "4.0x1.5": [
+      3.42,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.0x1.6": [
+      3.37,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.1x1.6": [
+      3.37,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.2x1.6": [
+      3.37,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.3x1.6": [
+      3.37,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.4x1.6": [
+      3.37,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.5x1.6": [
+      3.37,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.6x1.6": [
+      3.37,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.7x1.6": [
+      3.37,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.8x1.6": [
+      3.37,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.9x1.6": [
+      3.37,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "4.0x1.6": [
+      3.37,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.0x1.7": [
+      3.32,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.1x1.7": [
+      3.32,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.2x1.7": [
+      3.32,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.3x1.7": [
+      3.32,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.4x1.7": [
+      3.32,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.5x1.7": [
+      3.32,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.6x1.7": [
+      3.32,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.7x1.7": [
+      3.32,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.8x1.7": [
+      3.32,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.9x1.7": [
+      3.32,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "4.0x1.7": [
+      3.32,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.0x1.8": [
+      3.27,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.1x1.8": [
+      3.27,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.2x1.8": [
+      3.27,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.3x1.8": [
+      3.27,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.4x1.8": [
+      3.27,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.5x1.8": [
+      3.27,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.6x1.8": [
+      3.27,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.7x1.8": [
+      3.27,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.8x1.8": [
+      3.27,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.9x1.8": [
+      3.27,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "4.0x1.8": [
+      3.27,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.0x1.9": [
+      3.22,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.1x1.9": [
+      3.22,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.2x1.9": [
+      3.22,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.3x1.9": [
+      3.22,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.4x1.9": [
+      3.22,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.5x1.9": [
+      3.22,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.6x1.9": [
+      3.22,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.7x1.9": [
+      3.22,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.8x1.9": [
+      3.22,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.9x1.9": [
+      3.22,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "4.0x1.9": [
+      3.22,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.0x2.0": [
+      3.17,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.1x2.0": [
+      3.17,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.2x2.0": [
+      3.17,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.3x2.0": [
+      3.17,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.4x2.0": [
+      3.17,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.5x2.0": [
+      3.17,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.6x2.0": [
+      3.17,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.7x2.0": [
+      3.17,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.8x2.0": [
+      3.17,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.9x2.0": [
+      3.17,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "4.0x2.0": [
+      3.17,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.0x2.1": [
+      3.12,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.1x2.1": [
+      3.12,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.2x2.1": [
+      3.12,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.3x2.1": [
+      3.12,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.4x2.1": [
+      3.12,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.5x2.1": [
+      3.12,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.6x2.1": [
+      3.12,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.7x2.1": [
+      3.12,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.8x2.1": [
+      3.12,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.9x2.1": [
+      3.12,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "4.0x2.1": [
+      3.12,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.0x2.2": [
+      3.07,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.1x2.2": [
+      3.07,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.2x2.2": [
+      3.07,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.3x2.2": [
+      3.07,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.4x2.2": [
+      3.07,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.5x2.2": [
+      3.07,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.6x2.2": [
+      3.07,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.7x2.2": [
+      3.07,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.8x2.2": [
+      3.07,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.9x2.2": [
+      3.07,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "4.0x2.2": [
+      3.07,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.0x2.3": [
+      3.02,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.1x2.3": [
+      3.02,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.2x2.3": [
+      3.02,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.3x2.3": [
+      3.02,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.4x2.3": [
+      3.02,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.5x2.3": [
+      3.02,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.6x2.3": [
+      3.02,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.7x2.3": [
+      3.02,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.8x2.3": [
+      3.02,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.9x2.3": [
+      3.02,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "4.0x2.3": [
+      3.02,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.0x2.4": [
+      2.97,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.1x2.4": [
+      2.97,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.2x2.4": [
+      2.97,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.3x2.4": [
+      2.97,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.4x2.4": [
+      2.97,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.5x2.4": [
+      2.97,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.6x2.4": [
+      2.97,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.7x2.4": [
+      2.97,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.8x2.4": [
+      2.97,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.9x2.4": [
+      2.97,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "4.0x2.4": [
+      2.97,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.0x2.5": [
+      2.92,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.1x2.5": [
+      2.92,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.2x2.5": [
+      2.92,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.3x2.5": [
+      2.92,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.4x2.5": [
+      2.92,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.5x2.5": [
+      2.92,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.6x2.5": [
+      2.92,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.7x2.5": [
+      2.92,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.8x2.5": [
+      2.92,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.9x2.5": [
+      2.92,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "4.0x2.5": [
+      2.92,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.0x2.6": [
+      2.87,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.1x2.6": [
+      2.87,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.2x2.6": [
+      2.87,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.3x2.6": [
+      2.87,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.4x2.6": [
+      2.87,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.5x2.6": [
+      2.87,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.6x2.6": [
+      2.87,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.7x2.6": [
+      2.87,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.8x2.6": [
+      2.87,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.9x2.6": [
+      2.87,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "4.0x2.6": [
+      2.87,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.0x2.7": [
+      2.82,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.1x2.7": [
+      2.82,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.2x2.7": [
+      2.82,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.3x2.7": [
+      2.82,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.4x2.7": [
+      2.82,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.5x2.7": [
+      2.82,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.6x2.7": [
+      2.82,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.7x2.7": [
+      2.82,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.8x2.7": [
+      2.82,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.9x2.7": [
+      2.82,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "4.0x2.7": [
+      2.82,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.0x2.8": [
+      2.77,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.1x2.8": [
+      2.77,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.2x2.8": [
+      2.77,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.3x2.8": [
+      2.77,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.4x2.8": [
+      2.77,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.5x2.8": [
+      2.77,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.6x2.8": [
+      2.77,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.7x2.8": [
+      2.77,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.8x2.8": [
+      2.77,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.9x2.8": [
+      2.77,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "4.0x2.8": [
+      2.77,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.0x2.9": [
+      2.72,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.1x2.9": [
+      2.72,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.2x2.9": [
+      2.72,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.3x2.9": [
+      2.72,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.4x2.9": [
+      2.72,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.5x2.9": [
+      2.72,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.6x2.9": [
+      2.72,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.7x2.9": [
+      2.72,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.8x2.9": [
+      2.72,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.9x2.9": [
+      2.72,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "4.0x2.9": [
+      2.72,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.0x3.0": [
+      2.67,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.1x3.0": [
+      2.67,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.2x3.0": [
+      2.67,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.3x3.0": [
+      2.67,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.4x3.0": [
+      2.67,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.5x3.0": [
+      2.67,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.6x3.0": [
+      2.67,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.7x3.0": [
+      2.67,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.8x3.0": [
+      2.67,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.9x3.0": [
+      2.67,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "4.0x3.0": [
+      2.67,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.0x3.1": [
+      2.62,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.1x3.1": [
+      2.62,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.2x3.1": [
+      2.62,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.3x3.1": [
+      2.62,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.4x3.1": [
+      2.62,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.5x3.1": [
+      2.62,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.6x3.1": [
+      2.62,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.7x3.1": [
+      2.62,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.8x3.1": [
+      2.62,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.9x3.1": [
+      2.62,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "4.0x3.1": [
+      2.62,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.0x3.2": [
+      2.57,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.1x3.2": [
+      2.57,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.2x3.2": [
+      2.57,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.3x3.2": [
+      2.57,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.4x3.2": [
+      2.57,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.5x3.2": [
+      2.57,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.6x3.2": [
+      2.57,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.7x3.2": [
+      2.57,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.8x3.2": [
+      2.57,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.9x3.2": [
+      2.57,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "4.0x3.2": [
+      2.57,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.0x3.3": [
+      2.52,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.1x3.3": [
+      2.52,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.2x3.3": [
+      2.52,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.3x3.3": [
+      2.52,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.4x3.3": [
+      2.52,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.5x3.3": [
+      2.52,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.6x3.3": [
+      2.52,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.7x3.3": [
+      2.52,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.8x3.3": [
+      2.52,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.9x3.3": [
+      2.52,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "4.0x3.3": [
+      2.52,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.0x3.4": [
+      2.47,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.1x3.4": [
+      2.47,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.2x3.4": [
+      2.47,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.3x3.4": [
+      2.47,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.4x3.4": [
+      2.47,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.5x3.4": [
+      2.47,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.6x3.4": [
+      2.47,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.7x3.4": [
+      2.47,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.8x3.4": [
+      2.47,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.9x3.4": [
+      2.47,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "4.0x3.4": [
+      2.47,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.0x3.5": [
+      2.42,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.1x3.5": [
+      2.42,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.2x3.5": [
+      2.42,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.3x3.5": [
+      2.42,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.4x3.5": [
+      2.42,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.5x3.5": [
+      2.42,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.6x3.5": [
+      2.42,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.7x3.5": [
+      2.42,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.8x3.5": [
+      2.42,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.9x3.5": [
+      2.42,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "4.0x3.5": [
+      2.42,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.0x3.6": [
+      2.37,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.1x3.6": [
+      2.37,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.2x3.6": [
+      2.37,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.3x3.6": [
+      2.37,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.4x3.6": [
+      2.37,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.5x3.6": [
+      2.37,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.6x3.6": [
+      2.37,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.7x3.6": [
+      2.37,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.8x3.6": [
+      2.37,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.9x3.6": [
+      2.37,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "4.0x3.6": [
+      2.37,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.0x3.7": [
+      2.32,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.1x3.7": [
+      2.32,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.2x3.7": [
+      2.32,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.3x3.7": [
+      2.32,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.4x3.7": [
+      2.32,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.5x3.7": [
+      2.32,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.6x3.7": [
+      2.32,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.7x3.7": [
+      2.32,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.8x3.7": [
+      2.32,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.9x3.7": [
+      2.32,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "4.0x3.7": [
+      2.32,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.0x3.8": [
+      2.27,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.1x3.8": [
+      2.27,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.2x3.8": [
+      2.27,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.3x3.8": [
+      2.27,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.4x3.8": [
+      2.27,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.5x3.8": [
+      2.27,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.6x3.8": [
+      2.27,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.7x3.8": [
+      2.27,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.8x3.8": [
+      2.27,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.9x3.8": [
+      2.27,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "4.0x3.8": [
+      2.27,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.0x3.9": [
+      2.22,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.1x3.9": [
+      2.22,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.2x3.9": [
+      2.22,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.3x3.9": [
+      2.22,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.4x3.9": [
+      2.22,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.5x3.9": [
+      2.22,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.6x3.9": [
+      2.22,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.7x3.9": [
+      2.22,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.8x3.9": [
+      2.22,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.9x3.9": [
+      2.22,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "4.0x3.9": [
+      2.22,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.0x4.0": [
+      2.17,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.1x4.0": [
+      2.17,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.2x4.0": [
+      2.17,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.3x4.0": [
+      2.17,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.4x4.0": [
+      2.17,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.5x4.0": [
+      2.17,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.6x4.0": [
+      2.17,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.7x4.0": [
+      2.17,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.8x4.0": [
+      2.17,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "3.9x4.0": [
+      2.17,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ],
+     "4.0x4.0": [
+      2.17,
+      [
+       27.97,
+       71.31
+      ],
+      null
+     ]
+    },
+    "stage2": [
+     {
+      "w": 4.0,
+      "h": 4.0,
+      "area": 16.0,
+      "which": "best",
+      "centre": [
+       28.0,
+       71.31999991273025
+      ],
+      "t": 2.18,
+      "tx": 7.06,
+      "ty": 2.18,
+      "bind": "tab root line"
+     }
+    ]
+   }
+  },
+  "rule": "A1 (BASIS sections 10/11 B1): the largest bed area (width 3.0-4.0 x height 1.4-4.0 mm, 0.1 mm steps) whose placement tolerance is >= +-0.25 mm in x and in y against the full D3 rule, centred at the exact max-min centre; FT1 = 4.0 (x) x 1.6 (y) mm, tip zone (x >= 60.0)",
+  "rule2": "BASIS section 11 B2 (A1 restated for FT2): the largest lever (distance from the pin-11 row y 64.484) subject to t >= 0.25 mm; FT2 = 4.0 (x) x 4.0 (y) mm at centre x 28.00 (the A1 max-min centre x of tab Y)",
+  "feasible_44": {
+   "1.0": 0,
+   "0.75": 0,
+   "0.5": 0,
+   "0.25": 0,
+   "0.0": 0
+  },
+  "ft2_mid_push": [
+   [
+    35.556,
+    0.551,
+    2.916
+   ],
+   [
+    53.333,
+    0.815,
+    2.848
+   ],
+   [
+    160.0,
+    2.263,
+    2.472
+   ],
+   [
+    320.0,
+    4.071,
+    2.002
+   ]
+  ],
+  "ft2_fill_hole": {
+   "centre": [
+    28.0,
+    73.25
+   ],
+   "d": 1.0,
+   "ko_disc": 2.0,
+   "in_body": 1.5,
+   "cu": [
+    7.178,
+    "VFC L1 polygon w0.152 bbox (9.22,80.34)-(27.36,87.81)"
+   ],
+   "via": [
+    9.888,
+    "GND"
+   ],
+   "part": [
+    3.262,
+    "L-FC"
+   ],
+   "ring_to_outline": 1.75
+  },
+  "ft1_fallback_cutout": {
+   "rect": [
+    59.22,
+    65.405499900174,
+    64.22,
+    68.00549990017399
+   ],
+   "exposed": [],
+   "nearest": [
+    0.794,
+    "MPPT-DISABLE L1 trace w0.254 (21.00,64.48)-(62.26,64.48)"
+   ],
+   "vias": [],
+   "parts": []
+  },
+  "best_tip44": [
+   [
+    62.5,
+    61.4
+   ],
+   -0.127
+  ],
+  "ks": {
+   "tab X": {
+    "all": [
+     42.667,
+     21.333,
+     14.222,
+     128.0,
+     64.0,
+     42.667
+    ],
+    "nom": [
+     21.333,
+     64.0
+    ]
+   },
+   "tab Y": {
+    "all": [
+     106.667,
+     53.333,
+     35.556,
+     320.0,
+     160.0,
+     106.667
+    ],
+    "nom": [
+     53.333,
+     160.0
+    ]
+   }
+  },
+  "tabs": {
+   "tab X": {
+    "k_tip": 35.819,
+    "k_a": 63.239,
+    "f": [
+     [
+      1.0,
+      2353.328,
+      [
+       2603.946,
+       2720.611,
+       3335.995,
+       4088.958
+      ]
+     ],
+     [
+      2.0,
+      1664.054,
+      [
+       1841.268,
+       1923.763,
+       2358.905,
+       2891.33
+      ]
+     ]
+    ]
+   },
+   "tab Y": {
+    "k_tip": 266.32,
+    "k_a": 603.816,
+    "f": [
+     [
+      1.0,
+      6407.341,
+      [
+       6592.669,
+       6683.405,
+       7203.865,
+       7920.69
+      ]
+     ],
+     [
+      2.0,
+      4530.674,
+      [
+       4661.721,
+       4725.881,
+       5093.902,
+       5600.774
+      ]
+     ]
+    ]
+   }
+  },
+  "pin_rows": [
+   [
+    5.0,
+    0.6,
+    10.0,
+    0.069,
+    [
+     0.063,
+     0.056
+    ],
+    0.022
+   ],
+   [
+    5.0,
+    0.6,
+    30.0,
+    0.208,
+    [
+     0.189,
+     0.168
+    ],
+    0.067
+   ],
+   [
+    5.0,
+    0.8,
+    10.0,
+    0.085,
+    [
+     0.077,
+     0.067
+    ],
+    0.022
+   ],
+   [
+    5.0,
+    0.8,
+    30.0,
+    0.255,
+    [
+     0.23,
+     0.202
+    ],
+    0.067
+   ],
+   [
+    10.0,
+    0.6,
+    10.0,
+    0.092,
+    [
+     0.085,
+     0.078
+    ],
+    0.045
+   ],
+   [
+    10.0,
+    0.6,
+    30.0,
+    0.275,
+    [
+     0.256,
+     0.235
+    ],
+    0.134
+   ],
+   [
+    10.0,
+    0.8,
+    10.0,
+    0.107,
+    [
+     0.099,
+     0.09
+    ],
+    0.045
+   ],
+   [
+    10.0,
+    0.8,
+    30.0,
+    0.322,
+    [
+     0.297,
+     0.269
+    ],
+    0.134
+   ]
+  ],
+  "pushes": {
+   "tab X": [
+    2.686,
+    [
+     45.998,
+     61.944
+    ],
+    [
+     [
+      14.222,
+      2.411,
+      1.987
+     ],
+     [
+      21.333,
+      3.312,
+      1.725
+     ],
+     [
+      64.0,
+      6.604,
+      0.77
+     ],
+     [
+      128.0,
+      8.788,
+      0.521
+     ]
+    ]
+   ],
+   "tab Y": [
+    3.06,
+    [
+     20.998,
+     64.484
+    ],
+    [
+     [
+      35.556,
+      0.818,
+      2.832
+     ],
+     [
+      53.333,
+      1.193,
+      2.727
+     ],
+     [
+      160.0,
+      3.08,
+      2.202
+     ],
+     [
+      320.0,
+      5.094,
+      1.642
+     ]
+    ]
+   ]
+  }
+ },
+ "j": {
+  "rows": [
+   [
+    "r6/r7: B up through the CR, C down (adopted)",
+    0.94,
+    4.115
+   ],
+   [
+    "alternative: C up, B down",
+    4.24,
+    0.815
+   ]
+  ],
+  "cr_under": 2.665,
+  "cr_top": 4.265000000000001,
+  "stack": 12.265,
+  "env": 13.14
+ },
+ "k": {
+  "emax": {
+   "E8": [
+    13.637,
+    20
+   ],
+   "E3": [
+    16.657,
+    25
+   ],
+   "E4": [
+    20.622,
+    30
+   ],
+   "E2": [
+    24.562,
+    35
+   ],
+   "E7": [
+    29.89,
+    40
+   ],
+   "E1": [
+    68.973,
+    90
+   ],
+   "E5": [
+    49.118,
+    65
+   ],
+   "E6": [
+    45.385,
+    60
+   ]
+  },
+  "resonance": {
+   "85.0": {
+    "L_nH": 117.029,
+    "f0_MHz": 1.471,
+    "Z0": 1.082,
+    "Q": 19.251,
+    "Q_R276": 0.1076,
+    "Q_E8_20mm": 25.542
+   },
+   "90.0": {
+    "L_nH": 123.913,
+    "f0_MHz": 1.43,
+    "Z0": 1.113,
+    "Q": 19.086,
+    "Q_R276": 0.1107,
+    "Q_E8_20mm": 25.638
+   }
+  },
+  "drop_rows": [
+   [
+    "held, RFC_OFF LOW (FC clamp selected)",
+    4.8,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   [
+    "held, RFC_OFF HIGH = the H.15 E1 load (R254 only)",
+    4.8,
+    0.102,
+    1.021,
+    0.0,
+    0.0
+   ],
+   [
+    "released, regen clamp (pin 2.06 V)",
+    4.8,
+    0.363,
+    3.626,
+    1.6339,
+    2.042
+   ],
+   [
+    "released, FC clamp (pin 1.52 V)",
+    4.8,
+    0.272,
+    2.716,
+    0.892,
+    1.115
+   ],
+   [
+    "held, RFC_OFF LOW (FC clamp selected)",
+    5.2,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   [
+    "held, RFC_OFF HIGH = the H.15 E1 load (R254 only)",
+    5.2,
+    0.111,
+    1.106,
+    0.0,
+    0.0
+   ],
+   [
+    "released, regen clamp (pin 2.06 V)",
+    5.2,
+    0.396,
+    3.964,
+    1.786,
+    2.232
+   ],
+   [
+    "released, FC clamp (pin 1.52 V)",
+    5.2,
+    0.297,
+    2.968,
+    0.9749,
+    1.219
+   ]
+  ],
+  "q_upper_bound": {
+   "85.0": {
+    "f0_MHz": 1.471,
+    "skin_depth_um": 54.419,
+    "rac_rdc": 1.737,
+    "rac_rdc_asymptote": 1.72,
+    "Q_ac": 13.056,
+    "Q_ac_E8_20mm": 18.39
+   },
+   "90.0": {
+    "f0_MHz": 1.43,
+    "skin_depth_um": 55.202,
+    "rac_rdc": 1.715,
+    "rac_rdc_asymptote": 1.699,
+    "Q_ac": 12.987,
+    "Q_ac_E8_20mm": 18.504
+   }
+  }
+ },
+ "l": {
+  "evm": [
+   -0.4000000000000057,
+   118.044,
+   88.5,
+   206.94400000000002
+  ],
+  "usb": [
+   93.47,
+   93.73,
+   101.09,
+   138.73000000000002
+  ],
+  "eib": [
+   93.5,
+   159.65300000000002,
+   117.5,
+   195.65300000000002
+  ],
+  "eib_overlaps_usb": false,
+  "eib_choice": "r6 rule kept (EIB beside the EVM right edge)",
+  "j201": [
+   114.5,
+   177.65300000000002
+  ],
+  "fallbacks": {
+   "i": {
+    "shift": 27.03,
+    "evm": [
+     -27.430000000000007,
+     118.044,
+     61.47,
+     206.94400000000002
+    ],
+    "eib": [
+     66.47,
+     159.65300000000002,
+     90.47,
+     195.65300000000002
+    ],
+    "overhang": 27.43,
+    "xmin": [
+     "W1",
+     "approach point",
+     [
+      -34.82600000000001,
+      168.843
+     ]
+    ],
+    "bend_allowance": 10.5,
+    "chassis_room": 45.326,
+    "routes": {
+     "W1": {
+      "L": 207.535,
+      "max": 260,
+      "tie": 29.744,
+      "blocked": null
+     },
+     "W2": {
+      "L": 215.081,
+      "max": 270,
+      "tie": 29.744,
+      "blocked": null
+     },
+     "W3": {
+      "L": 128.188,
+      "max": 170,
+      "tie": 29.744,
+      "blocked": null
+     },
+     "W4": {
+      "L": 133.255,
+      "max": 170,
+      "tie": 29.744,
+      "blocked": null
+     },
+     "W6": {
+      "L": 92.788,
+      "max": 120,
+      "tie": 29.744,
+      "blocked": null
+     },
+     "W7 SCL": {
+      "L": 136.194,
+      "max": 180,
+      "tie": 29.744,
+      "blocked": null
+     },
+     "W7 SDA": {
+      "L": 129.945,
+      "max": 170,
+      "tie": 29.744,
+      "blocked": null
+     },
+     "W5": {
+      "L": 141.563,
+      "max": 180,
+      "tie": 29.849,
+      "blocked": null
+     }
+    },
+    "passes": true,
+    "verdict": "PASSES geometrically: no lead blocked, every chassis tie <= 30 mm, build maxima W1 260, W2 270, W3 170, W4 170, W6 120, W7 SCL 180, W7 SDA 170, W5 180; every W1-W4/W6/W7 maximum <= 0.30 m; W5 1.25 x route 177 mm fits the 0.30 m ribbon; it needs 45.3 mm of chassis room past the MB -x edge (W1 approach point at x -34.83 + 10.5 mm bend allowance; the EVM itself overhangs 27.4 mm), clear of the J-BL/J-FC/J-NTC harnesses (MS2)"
+   },
+   "ii": {
+    "eib": [
+     104.09,
+     159.65300000000002,
+     128.09,
+     195.65300000000002
+    ],
+    "xcol_board": 106.09,
+    "e_leads": {
+     "E8": [
+      23.707,
+      30
+     ],
+     "E3": [
+      26.947,
+      35
+     ],
+     "E4": [
+      31.201,
+      40
+     ],
+     "E2": [
+      35.141,
+      45
+     ],
+     "E7": [
+      40.472,
+      55
+     ],
+     "E1": [
+      77.889,
+      100
+     ],
+     "E5": [
+      58.073,
+      75
+     ],
+     "E6": [
+      55.195,
+      70
+     ]
+    },
+    "e1": {
+     "max": 100,
+     "f0_MHz": 1.356,
+     "Q": 18.75,
+     "Q_ac": 12.848,
+     "Q_R276": 0.1166
+    },
+    "routes": {
+     "W3": {
+      "L": null,
+      "max": null,
+      "blocked": "approach point (96.09, 142.24) inside the USB corridor"
+     },
+     "W4": {
+      "L": null,
+      "max": null,
+      "blocked": "approach point (96.09, 152.40) inside the USB corridor"
+     },
+     "W5": {
+      "L": 519.185,
+      "max": null,
+      "blocked": "the only path runs around the MB (below its +y edge): the corridor walls off the +x side"
+     }
+    },
+    "passes": false,
+    "verdict": "FAILS: the E-lead bundle (EIB pad rows y 163.68-191.62) and the shared EVM plate (one rigid body, D7/D8) must span the corridor band x 93.47-101.09; W3 approach point (96.09, 142.24) inside the USB corridor; W4 approach point (96.09, 152.40) inside the USB corridor; W5 the only path runs around the MB (below its +y edge): the corridor walls off the +x side; E-lead maxima above D7: E8 30 (D7 20), E3 35 (D7 25), E4 40 (D7 30), E2 45 (D7 35), E7 55 (D7 40), E1 100 (D7 90), E5 75 (D7 65), E6 70 (D7 60); E4 at 0.68 of its criterion limit"
+   },
+   "iii": {
+    "eib": [
+     -29.400000000000006,
+     159.65300000000002,
+     -5.400000000000006,
+     195.65300000000002
+    ],
+    "e_leads": {
+     "E8": [
+      90.61,
+      115
+     ],
+     "E3": [
+      87.155,
+      110
+     ],
+     "E4": [
+      82.321,
+      105
+     ],
+     "E2": [
+      78.387,
+      100
+     ],
+     "E7": [
+      73.053,
+      95
+     ],
+     "E1": [
+      60.925,
+      80
+     ],
+     "E5": [
+      69.019,
+      90
+     ],
+     "E6": [
+      64.428,
+      85
+     ]
+    },
+    "passes": false,
+    "verdict": "FAILS: E4 (JP21 pin 1) straight 82.3 mm exceeds its 59 mm pickup criterion limit (build max 105 mm); E8 115 / E3 110 mm also exceed D7"
+   }
+  },
+  "first_passing_fallback": "i",
+  "routes": {
+   "W1": {
+    "term": "J1 pin 2 VIN1",
+    "L": 181.583,
+    "max": 230,
+    "P1": [
+     56.0,
+     68.3
+    ],
+    "P2": [
+     56.0,
+     98.044
+    ],
+    "nodes": [
+     [
+      56.0,
+      98.044
+     ],
+     [
+      -0.4001000000000057,
+      118.0439
+     ],
+     [
+      -7.796000000000006,
+      168.843
+     ]
+    ],
+    "tie": 29.744,
+    "sw": 10.104
+   },
+   "W2": {
+    "term": "J1 pin 1 PGND",
+    "L": 189.129,
+    "max": 240,
+    "P1": [
+     56.0,
+     68.3
+    ],
+    "P2": [
+     56.0,
+     98.044
+    ],
+    "nodes": [
+     [
+      56.0,
+      98.044
+     ],
+     [
+      -0.4001000000000057,
+      118.0439
+     ],
+     [
+      -7.796000000000006,
+      173.923
+     ]
+    ],
+    "tie": 29.744,
+    "sw": 10.104
+   },
+   "W3": {
+    "term": "J5 pin 1 BATTERY",
+    "L": 139.228,
+    "max": 180,
+    "P1": [
+     56.0,
+     68.3
+    ],
+    "P2": [
+     68.75,
+     98.044
+    ],
+    "nodes": [
+     [
+      68.75,
+      98.044
+     ],
+     [
+      88.5001,
+      118.0439
+     ],
+     [
+      93.4699,
+      138.73010000000002
+     ],
+     [
+      96.088,
+      142.237
+     ]
+    ],
+    "tie": 29.979,
+    "sw": 15.302
+   },
+   "W4": {
+    "term": "J5 pin 3 PGND",
+    "L": 143.801,
+    "max": 180,
+    "P1": [
+     56.0,
+     68.3
+    ],
+    "P2": [
+     68.75,
+     98.044
+    ],
+    "nodes": [
+     [
+      68.75,
+      98.044
+     ],
+     [
+      88.5001,
+      118.0439
+     ],
+     [
+      96.088,
+      152.397
+     ]
+    ],
+    "tie": 29.979,
+    "sw": 15.25
+   },
+   "W6": {
+    "term": "J7 pin 1 EXT_TS",
+    "L": 81.87,
+    "max": 110,
+    "P1": [
+     56.0,
+     68.3
+    ],
+    "P2": [
+     60.5,
+     98.044
+    ],
+    "nodes": [
+     [
+      60.5,
+      98.044
+     ],
+     [
+      62.49399999999999,
+      110.817
+     ]
+    ],
+    "tie": 29.744,
+    "sw": 12.274
+   },
+   "W7 SCL": {
+    "term": "J8 pin 2 SCL (pin tip)",
+    "L": 109.24,
+    "max": 140,
+    "P1": [
+     56.0,
+     68.3
+    ],
+    "P2": [
+     56.0,
+     98.044
+    ],
+    "nodes": [
+     [
+      56.0,
+      98.044
+     ],
+     [
+      17.633999999999993,
+      101.804
+     ]
+    ],
+    "tie": 29.744,
+    "sw": 10.104
+   },
+   "W7 SDA": {
+    "term": "J8 pin 3 SDA (pin tip)",
+    "L": 103.0,
+    "max": 130,
+    "P1": [
+     56.0,
+     68.3
+    ],
+    "P2": [
+     56.0,
+     98.044
+    ],
+    "nodes": [
+     [
+      56.0,
+      98.044
+     ],
+     [
+      20.173999999999996,
+      101.804
+     ]
+    ],
+    "tie": 29.744,
+    "sw": 10.104
+   },
+   "W5": {
+    "term": "EIB J201, 3 mm inside the EIB +x edge (ASSUMPTION)",
+    "L": 159.777,
+    "max": 200,
+    "P1": [
+     56.0,
+     68.3
+    ],
+    "P2": [
+     68.75,
+     98.044
+    ],
+    "nodes": [
+     [
+      68.75,
+      98.044
+     ],
+     [
+      88.5001,
+      118.0439
+     ],
+     [
+      93.4699,
+      138.73010000000002
+     ],
+     [
+      114.5,
+      149.65300000000002
+     ]
+    ],
+    "tie": 29.979,
+    "sw": 15.302
+   }
+  },
+  "pairs": {
+   "W1/W2 input pair (20 AWG)": {
+    "La": 0.23,
+    "Lb": 0.24,
+    "R_max_mOhm": 15.656,
+    "R_030_mOhm": 19.986
+   },
+   "W3/W4 battery pair (18 AWG)": {
+    "La": 0.18,
+    "Lb": 0.18,
+    "R_max_mOhm": 7.542,
+    "R_030_mOhm": 12.57
+   }
+  },
+  "tie": 29.744
+ },
+ "m": {
+  "r6_rows": [
+   [
+    "C4A-BT",
+    [
+     43.0323,
+     28.78,
+     46.3757,
+     32.18
+    ],
+    false,
+    0.96,
+    [
+     3.343,
+     -0.96
+    ]
+   ],
+   [
+    "C4B-BT",
+    [
+     46.8423,
+     28.78,
+     50.185700000000004,
+     32.18
+    ],
+    false,
+    0.96,
+    [
+     2.858,
+     -0.96
+    ]
+   ],
+   [
+    "CO-5V",
+    [
+     49.3,
+     37.774,
+     52.3,
+     41.474000000000004
+    ],
+    true,
+    0.0,
+    [
+     0.4,
+     3.7
+    ]
+   ],
+   [
+    "J-BL",
+    [
+     3.529999999999996,
+     26.669999999999998,
+     16.13,
+     49.53
+    ],
+    false,
+    0.57,
+    [
+     -0.57,
+     16.39
+    ]
+   ],
+   [
+    "J-NTC",
+    [
+     3.5519999999999996,
+     52.914,
+     16.252,
+     67.354
+    ],
+    false,
+    0.448,
+    [
+     -0.448,
+     14.44
+    ]
+   ],
+   [
+    "RB1B",
+    [
+     26.796,
+     31.2,
+     28.067999999999998,
+     32.3
+    ],
+    false,
+    0.84,
+    [
+     1.272,
+     -0.84
+    ]
+   ],
+   [
+    "RB2",
+    [
+     18.5,
+     31.114,
+     19.6,
+     32.386
+    ],
+    false,
+    0.754,
+    [
+     1.1,
+     -0.754
+    ]
+   ]
+  ],
+  "r7_base": [
+   [
+    16.7,
+    33.14
+   ],
+   [
+    49.7,
+    33.14
+   ],
+   [
+    49.7,
+    55.3
+   ],
+   [
+    66.0,
+    55.3
+   ],
+   [
+    66.0,
+    69.3
+   ],
+   [
+    47.7,
+    69.3
+   ],
+   [
+    47.7,
+    68.14
+   ],
+   [
+    38.56,
+    68.14
+   ],
+   [
+    38.56,
+    77.0
+   ],
+   [
+    18.2857864376269,
+    77.0
+   ],
+   [
+    16.7,
+    75.4142135623731
+   ]
+  ],
+  "r7_sheet": [
+   [
+    16.7,
+    33.14
+   ],
+   [
+    49.7,
+    33.14
+   ],
+   [
+    49.7,
+    37.274
+   ],
+   [
+    48.8,
+    37.274
+   ],
+   [
+    48.8,
+    41.974000000000004
+   ],
+   [
+    49.7,
+    41.974000000000004
+   ],
+   [
+    49.7,
+    55.3
+   ],
+   [
+    66.0,
+    55.3
+   ],
+   [
+    66.0,
+    69.3
+   ],
+   [
+    47.7,
+    69.3
+   ],
+   [
+    47.7,
+    68.14
+   ],
+   [
+    38.56,
+    68.14
+   ],
+   [
+    38.56,
+    73.299
+   ],
+   [
+    37.5611,
+    73.299
+   ],
+   [
+    37.5611,
+    75.999
+   ],
+   [
+    38.56,
+    75.999
+   ],
+   [
+    38.56,
+    77.0
+   ],
+   [
+    36.864,
+    77.0
+   ],
+   [
+    36.864,
+    76.362
+   ],
+   [
+    22.064,
+    76.362
+   ],
+   [
+    22.064,
+    77.0
+   ],
+   [
+    18.2857864376269,
+    77.0
+   ],
+   [
+    16.7,
+    75.4142135623731
+   ],
+   [
+    16.7,
+    67.854
+   ],
+   [
+    16.752,
+    67.854
+   ],
+   [
+    16.752,
+    52.414
+   ],
+   [
+    16.7,
+    52.414
+   ]
+  ],
+  "trims": [
+   [
+    "CO-5V",
+    [
+     49.3,
+     37.774,
+     52.3,
+     41.474000000000004
+    ],
+    0.0,
+    "vertical x 49.700 -> 48.800 over y 37.274-41.974"
+   ],
+   [
+    "J-NTC",
+    [
+     3.5519999999999996,
+     52.914,
+     16.252,
+     67.354
+    ],
+    0.448,
+    "vertical x 16.700 -> 16.752 over y 52.414-67.854"
+   ],
+   [
+    "L-FC (Eaton 12.9 mm)",
+    [
+     22.564,
+     76.862,
+     36.364,
+     89.762
+    ],
+    0.0,
+    "horizontal y 77.000 -> 76.362 over x 22.064-36.864"
+   ],
+   [
+    "ROP1-FC",
+    [
+     38.0611,
+     73.799,
+     39.6629,
+     75.499
+    ],
+    0.0,
+    "vertical x 38.560 -> 37.561 over y 73.299-75.999"
+   ]
+  ],
+  "residual": []
+ },
+ "summary": [
+  {
+   "key": "r7 outline gross area",
+   "value": "1394.06 mm2 (r6 1023.00 + tab X 195.60 + tab Y 175.96 - chamfer 0.50)",
+   "source": "H.23(a)"
+  },
+  {
+   "key": "r7 outline bounding box",
+   "value": "x 17.70-65.00, y 34.14-76.00 = 47.30 x 41.86 mm",
+   "source": "H.23(a)"
+  },
+  {
+   "key": "L-FC to tab Y top edge",
+   "value": "1.012 mm (12.6 mm silkscreen) / 0.862 mm (12.9 mm Eaton body, centred ASSUMPTION)",
+   "source": "H.23(b)"
+  },
+  {
+   "key": "MB parts under either tab",
+   "value": "none",
+   "source": "H.23(b)"
+  },
+  {
+   "key": "ROP1-FC box to tab Y right edge",
+   "value": "0.501 mm",
+   "source": "H.23(b)"
+  },
+  {
+   "key": "OP-FC box to tab Y",
+   "value": "2.659 mm",
+   "source": "H.23(b)"
+  },
+  {
+   "key": "REG-5V box to tab X low edge",
+   "value": "1.786 mm",
+   "source": "H.23(b)"
+  },
+  {
+   "key": "tab X items < 0.5 mm outside the tab",
+   "value": "MPPT-DISABLE via (65.024,61.722) pad 0.7564: -0.354; VBUS L1 polygon w1.016 bbox (65.53,19.56)-(7: 0.024; SCL L1 trace w0.254 (47.72,54.32)-(49.53,56.: 0.039 (part outside the r7 outline, to the tab X low edge y 56.30); N$7 L1 trace w0.254 (49.28,69.34)-(48.01,68.: 0.203; SDA via (65.702,58.590) pad 0.7564: 0.324; 5V via (59.389,55.579) pad 0.7564: 0.343; 3V3 via (51.097,69.131) pad 0.7564: 0.453; 5V L1 trace w0.508 (56.64,52.83)-(59.39,55.5: 0.467",
+   "source": "H.23(b)"
+  },
+  {
+   "key": "tab Y items < 0.5 mm outside the tab",
+   "value": "J-FC: 0.470",
+   "source": "H.23(b)"
+  },
+  {
+   "key": "MB vias tented?",
+   "value": "no: 368/368 vias have a top stop-mask opening (0.9596 mm) in soldermask_top.gbr",
+   "source": "H.23(c2)"
+  },
+  {
+   "key": "non-GND MB copper under tab X",
+   "value": "29.16 mm2 (3V3, CB-DISABLE, CHRG-STAT, CS-MDAC-FC, MPPT-DISABLE, SCL, SDA; per-net areas +-0.3 mm2, raster bias); 15 vias (5 non-GND)",
+   "source": "H.23(c)"
+  },
+  {
+   "key": "non-GND MB copper under tab Y",
+   "value": "0.00 mm2 (none; per-net areas +-0.3 mm2, raster bias); 0 vias (0 non-GND)",
+   "source": "H.23(c)"
+  },
+  {
+   "key": "bottom clearance rule area (r7)",
+   "value": "569.1 mm2 = footprint 391.6 + tab X 44.3 + tab Y 133.2 (MIN 618.9)",
+   "source": "H.23(d)"
+  },
+  {
+   "key": "top usable (strict)",
+   "value": "1081.1 mm2 after the FT2 fill-hole keep-out disc (3.14 mm2; 1084.2 without it) (MIN 1096.6)",
+   "source": "H.23(e)"
+  },
+  {
+   "key": "bottom area used for U",
+   "value": "569.1 mm2 (H.23(d), after the foot keep-outs)",
+   "source": "H.23(e)"
+  },
+  {
+   "key": "top U / bottom U, r3 bottom set kept",
+   "value": "69.63 % / 76.48 % (top 752.8 / bottom 435.2 mm2)",
+   "source": "H.23(e)"
+  },
+  {
+   "key": "top U / bottom U, r7 allocation, core + R175",
+   "value": "75.16 % / 65.99 % (top 812.5 / bottom 375.5 mm2)",
+   "source": "H.23(e)"
+  },
+  {
+   "key": "top U / bottom U, r7 allocation, extended + R175",
+   "value": "79.98 % / 56.81 % (top 864.7 / bottom 323.3 mm2)",
+   "source": "H.23(e)"
+  },
+  {
+   "key": "top U / bottom U, r7 adopted (A3)",
+   "value": "73.55 % / 69.04 % (top 795.1 / bottom 392.9 mm2)",
+   "source": "H.23(e)"
+  },
+  {
+   "key": "r7 adopted allocation (A3)",
+   "value": "R175 + R109, R110, R111, R112, R114, R115 to the top (42.34 mm2); C106, C107, C108, C140 stay bottom: top 73.55 % (795.1 mm2), bottom 69.04 % (392.9 of 569.1 mm2): PASSES the <= 75 % target",
+   "source": "H.23(e)"
+  },
+  {
+   "key": "balanced split",
+   "value": "move 25.6 mm2 from the r3 bottom set to the top -> 72.0 % each side",
+   "source": "H.23(e)"
+  },
+  {
+   "key": "single-sided U",
+   "value": "109.9 % (all footprints) .. 101.8 % (DNP removed)",
+   "source": "H.23(e)"
+  },
+  {
+   "key": "farthest outline point from the U101 loop",
+   "value": "(17.70, 34.14) at 25.66 mm vs 36.5 mm 2-layer parity (none reaches)",
+   "source": "H.23(f)"
+  },
+  {
+   "key": "tab X tap field pad centres",
+   "value": "x [50.8, 53.34, 55.88, 58.42, 60.96, 63.5], y [58.94, 61.48, 64.02, 66.56]",
+   "source": "H.23(g)"
+  },
+  {
+   "key": "tab X pads (A2)",
+   "value": "20 pads + R175 (rows 2-3 of column 1); spare positions [(53.34, 64.02), (50.8, 66.56)]; assignment changes: T1 -> (50.80, 58.94); T7b -> (53.34, 58.94); T5 -> (55.88, 58.94); T6 -> (53.34, 61.48)",
+   "source": "H.23(g)"
+  },
+  {
+   "key": "T18 pad (A2, B3)",
+   "value": "F22 at (41.68, 35.80) on the footprint low row, straight 10.54 mm to CO-5V pad 1; passes beside (not over) the pin-1 post (0.240 mm from the post square); pad courtyard 5.33 mm from the J101 box; every candidate ends at CO-5V pad 1, 0.172 mm from the REG-5V box (shortest candidate (41.68, 40.88), 9.12 mm, rejected: courtyard 0.25 mm from the J101 box); residual pads F08 (T22), F09 (T8), F10 (T9), F22 (T18)",
+   "source": "H.23(g)"
+  },
+  {
+   "key": "tap straight-length sum (20 taps)",
+   "value": "r6 1308.0 mm -> r7 850.9 mm (-34.9 %); dressed 856.7 mm (r6 basis: F08-F10 at their r6 pads; only F08 held: r6 1303.6 mm, -34.7 %)",
+   "source": "H.23(g)"
+  },
+  {
+   "key": "thermal band in tab X",
+   "value": "boundary y 60.5..62.34 across x 48.7-65.0; band area 84.9 mm2; tab X low edge 0.343 mm, top edge 12.343 mm from the 5V rim",
+   "source": "H.23(h)"
+  },
+  {
+   "key": "FT1 adopted (A1, B1)",
+   "value": "4.0 x 1.6 mm body (bed 6.40 mm2) at (61.72, 66.705) (exact max-min y), body x 59.720-63.720, y 65.905-67.505; tolerance t 0.294 mm, tx 0.304 / ty 0.294 mm (binding: MPPT-DISABLE L1 trace w0.254); 4.0 x 1.7 reaches t 0.244 (< 0.25); tip zone (x >= 60.0); copper clearance 1.294 mm (MPPT-DISABLE L1 trace w0.254 (21.00,64.48)-(62.26,64.48)); nearest part box 3.64 mm (C-D2); via pads under: none",
+   "source": "H.23(i)"
+  },
+  {
+   "key": "FT2 adopted (B2)",
+   "value": "4.0 x 4.0 mm body (bed 16.00 mm2) at (28.00, 73.250), body x 26.000-30.000, y 71.250-75.250; largest lever a 8.766 mm with t >= 0.25: t 0.250 mm, tx 7.060 / ty 0.250 mm (binding: r7 outline edge); no non-GND copper within 3 mm; nearest part box 1.76 mm (L-FC); via pads under: none; no edge lane; mid-height alternative M (28.00, 71.320), a 6.836 mm, t 2.180 mm",
+   "source": "H.23(i)"
+  },
+  {
+   "key": "FT2 fill hole (B2)",
+   "value": "1.0 mm NPTH at (28.00, 73.250), 1.500 mm inside the foot body edge; CR feature only (MB under it: GND pour; nearest non-GND rim 7.18 mm, via 9.89 mm, part box 3.26 mm from the hole edge); CR-top keep-out disc 2.0 mm booked in the top area",
+   "source": "H.23(i)"
+  },
+  {
+   "key": "FT1 fallback sheet cut-out (B1)",
+   "value": "= the FT1 keep-out 5.0 x 2.6 mm; non-GND copper rim exposed: none (nearest 0.794 mm outside, MPPT-DISABLE L1 trace w0.254); via pads inside: none",
+   "source": "H.23(i)"
+  },
+  {
+   "key": "foot keep-outs (body + 0.5 mm)",
+   "value": "FT1 x 59.220-64.220, y 65.405-68.005, lane x 59.220-64.220, y 68.005-68.300; FT2 x 25.500-30.500, y 70.750-75.750, no lane",
+   "source": "H.23(i)"
+  },
+  {
+   "key": "FT1 alternative A (r7 first run)",
+   "value": "4.0 x 2.0 mm at (62.00, 66.70): meets the rule (margin 0.024 mm, VBUS L1 polygon w1.016 bbox) but tolerance tx 0.024 / ty 0.089 mm; one-sided slack +x 0.024, -x 7.591, +y 0.100, -y 0.089 mm (fails the 0.25 mm criterion)",
+   "source": "H.23(i)"
+  },
+  {
+   "key": "FT1 alternative B (relaxed 4 x 4)",
+   "value": "(62.50, 61.40): violates the rule, copper clearance -0.127 mm (masked signal traces under the body; operator option only)",
+   "source": "H.23(i)"
+  },
+  {
+   "key": "foot height",
+   "value": "h_f = 2.54 - t_bed = 2.24 mm (t_bed 0.30 +- 0.15 mm)",
+   "source": "H.23(i)"
+  },
+  {
+   "key": "tab X f1 unpropped / propped (bed E 1-3 MPa, t 0.30)",
+   "value": "1664-2353 Hz / 1924-3336 Hz (ORDER OF MAGNITUDE)",
+   "source": "H.23(i)"
+  },
+  {
+   "key": "tab X stiffness tip / at the foot vs bed",
+   "value": "35.8 / 63.2 N/mm vs RTV bed 14-128 N/mm",
+   "source": "H.23(i)"
+  },
+  {
+   "key": "tab Y f1 unpropped / propped (bed E 1-3 MPa, t 0.30)",
+   "value": "4531-6407 Hz / 4726-7204 Hz (ORDER OF MAGNITUDE)",
+   "source": "H.23(i)"
+  },
+  {
+   "key": "tab Y stiffness tip / at the foot vs bed",
+   "value": "266.3 / 603.8 N/mm vs RTV bed 36-320 N/mm",
+   "source": "H.23(i)"
+  },
+  {
+   "key": "worst pin at 30 g, without / with feet",
+   "value": "0.208-0.322 N / 0.168-0.297 N (ORDER OF MAGNITUDE)",
+   "source": "H.23(i)"
+  },
+  {
+   "key": "10 N push at the tab X tip: worst pin",
+   "value": "2.69 N without foot; 0.52-1.99 N with foot",
+   "source": "H.23(i)"
+  },
+  {
+   "key": "10 N push at the tab Y tip: worst pin",
+   "value": "3.06 N without foot; 1.64-2.83 N with foot",
+   "source": "H.23(i)"
+  },
+  {
+   "key": "post arithmetic (B up, with sheet)",
+   "value": "CR-top protrusion 0.940 mm; MB-bottom 4.115 mm before the PM4 cut",
+   "source": "H.23(j)"
+  },
+  {
+   "key": "stack top",
+   "value": "CR top 4.265 mm; W5 fold >= 12.265 mm + cable vs Ag105 envelope 13.14 mm (margin <= 0.875 mm)",
+   "source": "H.23(j)"
+  },
+  {
+   "key": "E-lead build maxima (mm)",
+   "value": "E8 20, E3 25, E4 30, E2 35, E7 40, E1 90, E5 65, E6 60",
+   "source": "H.23(k)"
+  },
+  {
+   "key": "E1/E8/C205 resonance",
+   "value": "1.471 MHz at 85 mm, 1.430 MHz at 90 mm; Q 19.3 / 19.1 undamped (25.5 / 25.6 with the E8 return at 20 mm), 0.108 / 0.111 with R276 (overdamped)",
+   "source": "H.23(k)"
+  },
+  {
+   "key": "E1/C205 Q upper-bound note",
+   "value": "the undamped Q is an upper bound: 28 AWG skin depth 55 um at 1.43 MHz vs 160 um radius, Rac/Rdc 1.71 -> undamped Q about 13.0 (90 mm) / 13.1 (85 mm); R276 conclusion unchanged",
+   "source": "H.23(k)"
+  },
+  {
+   "key": "R276 static drop",
+   "value": "1.02 mV at the H.15 E1 load (0.102 mA, held); worst 3.96 mV at 0.396 mA (released, regen clamp (pin 2.06 V), REGN 5.2 V): release-level shift 1.786 mV = IINDPM 2.23 mA (lower, safe direction)",
+   "source": "H.23(k)"
+  },
+  {
+   "key": "EVM reference placement",
+   "value": "x -0.40-88.50, y 118.044-206.944 (g 20 mm, right edge 88.50); EVM-to-USB-corridor 4.97 mm",
+   "source": "H.23(l)"
+  },
+  {
+   "key": "EIB position (r6 rule)",
+   "value": "x 93.50-117.50, y 159.65-195.65; USB corridor (45 mm ASSUMPTION): clear, 20.92 mm beyond its end",
+   "source": "H.23(l)"
+  },
+  {
+   "key": "W-lead build maxima (route rule)",
+   "value": "W1 230 mm, W2 240 mm, W3 180 mm, W4 180 mm, W6 110 mm, W7 SCL 140 mm, W7 SDA 130 mm, W5 200 mm",
+   "source": "H.23(l)"
+  },
+  {
+   "key": "W1/W2 input pair (20 AWG) resistance",
+   "value": "15.66 mOhm at the route maxima vs 19.99 mOhm at 0.30 m",
+   "source": "H.23(l)"
+  },
+  {
+   "key": "W3/W4 battery pair (18 AWG) resistance",
+   "value": "7.54 mOhm at the route maxima vs 12.57 mOhm at 0.30 m",
+   "source": "H.23(l)"
+  },
+  {
+   "key": "chassis-tie distance",
+   "value": "29.744 mm (tab X top edge to MB +y edge; <= 30 mm)",
+   "source": "H.23(l)"
+  },
+  {
+   "key": "corridor fallback (i): group shifted -x",
+   "value": "shift 27.03 mm, EVM x -27.43-61.47 (EVM overhang 27.43 mm past the MB -x edge; chassis room needed 45.3 mm); PASSES geometrically: no lead blocked, every chassis tie <= 30 mm, build maxima W1 260, W2 270, W3 170, W4 170, W6 120, W7 SCL 180, W7 SDA 170, W5 180; every W1-W4/W6/W7 maximum <= 0.30 m; W5 1.25 x route 177 mm fits the 0.30 m ribbon; it needs 45.3 mm of chassis room past the MB -x edge (W1 approach point at x -34.83 + 10.5 mm bend allowance; the EVM itself overhangs 27.4 mm), clear of the J-BL/J-FC/J-NTC harnesses (MS2)",
+   "source": "H.23(l)"
+  },
+  {
+   "key": "corridor fallback (ii): EIB at x >= 104.09",
+   "value": "E-lead maxima E8 30, E3 35, E4 40, E2 45, E7 55, E1 100, E5 75, E6 70; E1 100 mm: f0 1.356 MHz, Q 0.117 with R276; FAILS: the E-lead bundle (EIB pad rows y 163.68-191.62) and the shared EVM plate (one rigid body, D7/D8) must span the corridor band x 93.47-101.09; W3 approach point (96.09, 142.24) inside the USB corridor; W4 approach point (96.09, 152.40) inside the USB corridor; W5 the only path runs around the MB (below its +y edge): the corridor walls off the +x side; E-lead maxima above D7: E8 30 (D7 20), E3 35 (D7 25), E4 40 (D7 30), E2 45 (D7 35), E7 55 (D7 40), E1 100 (D7 90), E5 75 (D7 65), E6 70 (D7 60); E4 at 0.68 of its criterion limit",
+   "source": "H.23(l)"
+  },
+  {
+   "key": "corridor fallback (iii): EIB at the EVM left edge",
+   "value": "E4 straight 82.3 mm vs 59 mm limit; FAILS: E4 (JP21 pin 1) straight 82.3 mm exceeds its 59 mm pickup criterion limit (build max 105 mm); E8 115 / E3 110 mm also exceed D7",
+   "source": "H.23(l)"
+  },
+  {
+   "key": "r6 sheet vs CO-5V body",
+   "value": "OVERLAP 0.400 mm in x over 3.700 mm (1.48 mm2): the r6 sheet drapes onto the 2.1 mm tantalum",
+   "source": "H.23(m)"
+  },
+  {
+   "key": "r7 sheet trims",
+   "value": "CO-5V: vertical x 49.700 -> 48.800 over y 37.274-41.974; J-NTC: vertical x 16.700 -> 16.752 over y 52.414-67.854; L-FC (Eaton 12.9 mm): horizontal y 77.000 -> 76.362 over x 22.064-36.864; ROP1-FC: vertical x 38.560 -> 37.561 over y 73.299-75.999",
+   "source": "H.23(m)"
+  },
+  {
+   "key": "r7 sheet",
+   "value": "27 vertices, area 1560.8 mm2, bbox 49.30 x 43.86 mm",
+   "source": "H.23(m)"
+  }
+ ]
+}

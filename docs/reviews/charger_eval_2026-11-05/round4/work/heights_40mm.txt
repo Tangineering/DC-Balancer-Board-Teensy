@@ -1,0 +1,22 @@
+| CO-5V | CAPM3528X210 | 2.1 | IPC-7351 package name |
+| REG-5V | TO254P1524X483-4N | 4.83 | IPC-7351 package name (LM1084 KTT TO-263) |
+| CIN-5V, C-D2, C-D1, C-D3, C-D4, C-D8, C-D5, C-D10, C1-FC, C3-FC, C3-BT, C1-BT, C-D11, C-D12 | CAPC2012X110 | 1.1 | IPC-7351 package name |
+| R1-BUS, R2-BUS, RENC2, ROS, RENC1, R2-CHG, ROP1-FC, RD2-FC, ROP2-FC, RINJ-FC, RD1-FC, RC-FC, R1-FC, R2-FC, R1-BT, R2-BT, RC-BT, RD1-BT, RINJ-BT, RD2-BT, ROP2-BT, ROP1-BT | RESC1608X60 | 0.6 | IPC-7351 package name |
+| J1 | AMPHENOL_87606-324LF | None | TODO(measure): Amphenol 87606-324LF body height (vendor drawing not retrievable, 403) |
+| U$1 | TEENSY41 | None | TODO(measure): Teensy 4.1 on PREC024SAAN-RC headers, seated top height |
+| MDAC-FC, MDAC-BT | RM_10_ADI | 1.1 | ad5426_5432_5443.pdf, RM-10 MSOP outline '1.10 MAX' |
+| SNS-FC, SNS-BT | SOP65P640X120-20N | 1.2 | IPC-7351 package name; INA253 DS 'TSSOP - 1.2 mm max height' |
+| CSNS-FC, CSNS-BT, C6-FC, CC-FC, C5-FC, C2-FC, CBL2, CBL1, CBL3, CBLD, C2-BT, C5-BT, CC-BT, C6-BT | CAPC1608X85 | 0.85 | IPC-7351 package name |
+| D-FC-EN, D-BT-EN, D-BC-RG, D-MT-EN, D-BC-FC, D-BT-SQ | IC_RT1987N-A | 1.0 | RT1987_DS-00.pdf section 19, dimension A 0.800-1.000 |
+| C4B-FC, C4C-FC, C4C-BT, C4A-FC, C4A-BT, C4B-BT | CAPC3225X135 | 1.35 | IPC-7351 package name |
+| C-DC1, C-DC2, C-DC4, C-DC3, C-DC6, C-DC7, C-DC8, C-DC11, C-DC12 | CAPC1005X60 | 0.6 | IPC-7351 package name |
+| J3 | 2X10 | None | TODO(verify: Wurth 61302021821 drawing) receptacle height |
+| R1-CHG, RB2, RB3, RB1B, RB1A | RESC1005X40 | 0.4 | IPC-7351 package name |
+| C-D7, C-D9 | CAPC3216X135 | 1.35 | IPC-7351 package name |
+| OP-FC, OP-BT | D0008A-IPC_A | 1.75 | OPA197IDR.pdf, D0008A 'SOIC - 1.75 mm max height' |
+| L-FC, L-BT | HCM1A1305V3-2R2-R | 5.0 | Eaton catalogue listing 13.8 x 12.9 x 5.0 mm (web); TODO(verify: Eaton ELX1488 datasheet, fetch failed) |
+| REG-FC, REG-BT | CONV_TPS61288LRQQR | 1.0 | TPS61288LRQQR.pdf, 'VQFN-HR - 1 mm max height' |
+| J-BL | CUI_TB005_-762-03BE | 21.7 | TB005-762_CUI.pdf p.2, body height 21.70 |
+| J-NTC | 691411410002 | 13.9 | Wurth 691411410002 DS rev 001.004 p.1: 13.9 +-0.1 to the push-button top, body 9.2 +-0.1 |
+| J-FC, J-BT | CUI_TB005-762-02BE | 21.7 | TB005-762_CUI.pdf p.2, body height 21.70 |
+| BAL | DRB8_1P6X2P4 | 1.0 | BQ29200_TI.pdf, 'VSON - 1 mm max height' |

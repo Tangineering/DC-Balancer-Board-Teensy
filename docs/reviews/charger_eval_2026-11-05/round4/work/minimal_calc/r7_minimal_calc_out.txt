@@ -1,0 +1,103 @@
+BRD: C:\Life Ops\School\Thesis\DC-Balancer-round4\references\Scale Car Board PCB 20260625.brd
+MAIN (17.7, 34.14, 48.7, 67.14) 1023.0 mm2; TAB_X (48.7, 56.3, 65.0, 68.3) 195.6 mm2; TAB_Y (17.7, 67.14, 39.72, 76.51) 206.3 mm2; total gross 1424.9 mm2; added 401.9 mm2
+
+=== TAB X  outline (48.7, 56.3, 65.0, 68.3)  gross 195.6 mm2  courtyard-usable 173.8 mm2 (rect [48.7, 56.8, 64.5, 67.8])
+  MB parts overlapping the tab outline: none
+  grow 0.0 mm: under POWER 0.0, under 3V3 3.3, under SIGNAL 24.2, under any non-GND 27.5 mm2; clear of POWER (rule A) 173.8, clear of all non-GND (rule B) 146.3 mm2
+  MB L1 traces inside the tab (mm): {'3V3 w0.508': 6.2, 'CB-DISABLE w0.254': 17.8, 'CHRG-STAT w0.254': 16.2, 'CS-MDAC-FC w0.254': 5.5, 'MPPT-DISABLE w0.254': 17.4, 'SCL w0.254': 18.6, 'SDA w0.254': 20.0}
+  vias inside the tab (all tented, mlViaStopLimit, mb_mechanical 4.1): 12, non-GND: [('3V3', 56.43, 60.66), ('CS-MDAC-FC', 58.42, 60.04), ('SCL', 64.65, 58.81), ('CHRG-STAT', 63.5, 58.93)]
+  non-GND L1 polygons touching the tab (bbox): none
+  grow 1.0 mm: under POWER 0.2, under 3V3 17.1, under SIGNAL 111.2, under any non-GND 116.8 mm2; clear of POWER (rule A) 173.6, clear of all non-GND (rule B) 57.0 mm2
+
+=== TAB Y  outline (17.7, 67.14, 39.72, 76.51)  gross 206.3 mm2  courtyard-usable 185.9 mm2 (rect [18.2, 67.14, 39.22, 76.01])
+  MB parts overlapping the tab outline: [('ROP1-FC', 'RESC1608X60', [38.06, 73.43, 39.66, 75.86]), ('ROP2-FC', 'RESC1608X60', [39.17, 76.42, 41.6, 78.02])]
+  grow 0.0 mm: under POWER 0.0, under 3V3 0.0, under SIGNAL 0.2, under any non-GND 0.2 mm2; clear of POWER (rule A) 185.9, clear of all non-GND (rule B) 185.6 mm2
+  MB L1 traces inside the tab (mm): {'N$8 w0.254': 2.5}
+  vias inside the tab (all tented, mlViaStopLimit, mb_mechanical 4.1): 1, non-GND: []
+  non-GND L1 polygons touching the tab (bbox): none
+  grow 1.0 mm: under POWER 0.0, under 3V3 0.0, under SIGNAL 3.4, under any non-GND 3.4 mm2; clear of POWER (rule A) 185.9, clear of all non-GND (rule B) 182.5 mm2
+
+  recovered root strip of tab X (x 48.20-48.70, y 56.80-66.64): 4.9 mm2
+  tab top usable total 364.6 mm2
+  underside of tab X outside MB parts (+1 mm): rule A (clear of POWER +1 mm) 173.6 mm2, rule B (clear of every non-GND L1 feature +1 mm) 57.0 mm2
+  underside of tab Y outside MB parts (+1 mm): rule A (clear of POWER +1 mm) 178.2 mm2, rule B (clear of every non-GND L1 feature +1 mm) 177.9 mm2
+  underside capacity, gross: rule A 351.8, rule B 235.0 mm2
+
+=== Area booking (strict basis)
+  top usable = 732 (footprint, strict) + 364.6 (tabs) = 1096.6 mm2
+  r3 bottom set kept (435 mm2): top U = 68.7 %
+  demand all footprints                                                 U 0.70: bottom needed 420 mm2; tab undersides hold 246 (rule A) / 164 (rule B) at the same U -> footprint residual 174 / 256 mm2
+  demand all footprints                                                 U 0.75: bottom needed 366 mm2; tab undersides hold 264 (rule A) / 176 (rule B) at the same U -> footprint residual 102 / 189 mm2
+  demand all footprints                                                 U 0.80: bottom needed 311 mm2; tab undersides hold 281 (rule A) / 188 (rule B) at the same U -> footprint residual 29 / 123 mm2
+  demand forbidden-part footprints deleted (R106, R134, R145, R146, C105) U 0.70: bottom needed 401 mm2; tab undersides hold 246 (rule A) / 164 (rule B) at the same U -> footprint residual 155 / 237 mm2
+  demand forbidden-part footprints deleted (R106, R134, R145, R146, C105) U 0.75: bottom needed 346 mm2; tab undersides hold 264 (rule A) / 176 (rule B) at the same U -> footprint residual 82 / 170 mm2
+  demand forbidden-part footprints deleted (R106, R134, R145, R146, C105) U 0.80: bottom needed 291 mm2; tab undersides hold 281 (rule A) / 188 (rule B) at the same U -> footprint residual 10 / 103 mm2
+  demand all DNP footprints removed                                     U 0.70: bottom needed 333 mm2; tab undersides hold 246 (rule A) / 164 (rule B) at the same U -> footprint residual 87 / 169 mm2
+  demand all DNP footprints removed                                     U 0.75: bottom needed 279 mm2; tab undersides hold 264 (rule A) / 176 (rule B) at the same U -> footprint residual 15 / 102 mm2
+  demand all DNP footprints removed                                     U 0.80: bottom needed 224 mm2; tab undersides hold 281 (rule A) / 188 (rule B) at the same U -> footprint residual 0 / 36 mm2
+  single-sided U (all footprints) = 108.3 %
+  single-sided U (forbidden-part footprints deleted (R106, R134, R145, R146, C105)) = 106.6 %
+  single-sided U (all DNP footprints removed) = 100.4 %
+
+=== Pin load (ORDER OF MAGNITUDE, mb_pinload.py model; ASSUMPTIONS: main CR 5-10 g, populated areal mass 0.6-0.8 g/cm2, 30 g shock normal to the MB, TODO(measure: M5))
+  pin centroid (32.36, 50.51), Sxx 3409, Syy 1455 mm2
+  main  5.0 g, 0.6 g/cm2, 10 g: tab masses X 1.17 g, Y 1.24 g; worst pin 0.074 N (r6 CR alone 0.022 N); ratio 3.30
+  main  5.0 g, 0.6 g/cm2, 30 g: tab masses X 1.17 g, Y 1.24 g; worst pin 0.221 N (r6 CR alone 0.067 N); ratio 3.30
+  main  5.0 g, 0.8 g/cm2, 10 g: tab masses X 1.56 g, Y 1.65 g; worst pin 0.091 N (r6 CR alone 0.022 N); ratio 4.06
+  main  5.0 g, 0.8 g/cm2, 30 g: tab masses X 1.56 g, Y 1.65 g; worst pin 0.272 N (r6 CR alone 0.067 N); ratio 4.06
+  main 10.0 g, 0.6 g/cm2, 10 g: tab masses X 1.17 g, Y 1.24 g; worst pin 0.096 N (r6 CR alone 0.045 N); ratio 2.15
+  main 10.0 g, 0.6 g/cm2, 30 g: tab masses X 1.17 g, Y 1.24 g; worst pin 0.288 N (r6 CR alone 0.134 N); ratio 2.15
+  main 10.0 g, 0.8 g/cm2, 10 g: tab masses X 1.56 g, Y 1.65 g; worst pin 0.113 N (r6 CR alone 0.045 N); ratio 2.53
+  main 10.0 g, 0.8 g/cm2, 30 g: tab masses X 1.56 g, Y 1.65 g; worst pin 0.339 N (r6 CR alone 0.134 N); ratio 2.53
+  f1 tab X (from pin column x 45.998 to x 65.00), L 19.0 mm: 1664-2353 Hz unpropped (E 20 GPa, t 1.6 mm, mass factor 2-1; upper estimate)
+  f1 tab Y (from pin 11 y 64.484 to y 76.51), L 12.0 mm: 4155-5875 Hz unpropped (E 20 GPa, t 1.6 mm, mass factor 2-1; upper estimate)
+  EVM on the CR (rejected): per-pin load per gram of EVM at 30 g with the EVM CG 44.5 mm from the pin centroid: 0.066 N/g (EVM mass TODO(measure))
+  EVM on the CR (rejected): per-pin load per gram of EVM at 30 g with the EVM CG 60.0 mm from the pin centroid: 0.084 N/g (EVM mass TODO(measure))
+
+=== Tap lengths, straight (mm)
+  T1 C-D6 pad1 (V-MOT)     r3 field  67.6  ->  r7 tab X     58.4
+  T2 C-D2 pad1 (VBUS)      r3 field  47.0  ->  r7 tab X     13.4
+  T3 J1.39                 r3 field  54.5  ->  r7 tab X     35.4
+  T4 J1.43                 r3 field  54.3  ->  r7 tab X     38.3
+  T5 J1.45                 r3 field  54.4  ->  r7 tab X     39.9
+  T6 J1.29                 r3 field  57.0  ->  r7 tab X     30.6
+  T22 BAL pad8             r3 field  10.5  ->  r7 residual   5.4
+  T8 J2.31                 r3 field  78.6  ->  r7 residual  82.8
+  T9 SNS-BT GND/REF        r3 field  26.7  ->  r7 residual  26.6
+  T10 J1.23                r3 field  59.8  ->  r7 tab X     30.1
+  T11 J2.19                r3 field  82.8  ->  r7 tab X     53.3
+  T12 J2.47                r3 field  77.4  ->  r7 tab X     60.3
+  T13 J2.45                r3 field  77.3  ->  r7 tab X     59.1
+  T14 J2.21                r3 field  81.9  ->  r7 tab X     53.1
+  T15 J2.07                r3 field  89.5  ->  r7 tab X     57.3
+  T16 J2.43                r3 field  77.2  ->  r7 tab X     58.0
+  T17 J2.09                r3 field  88.2  ->  r7 tab X     56.4
+  T17r J2.29               r3 field  79.1  ->  r7 tab X     53.2
+  T20 ROS pad2             r3 field  58.0  ->  r7 tab X     25.8
+  T21 J2.11                r3 field  87.0  ->  r7 tab X     55.5
+  SUM of the 20 taps (T7b follows T1): r3 1308.9 mm, r7 892.8 mm (-32 %)
+  tab X field pad centres x [50.73, 53.27, 55.81, 58.35, 60.89, 63.43], y [57.8, 60.34, 62.88, 65.42]; pad envelope [49.98, 57.05, 64.18, 66.17]; inside tab X courtyard limit (48.7, 56.8, 64.5, 67.8): True
+  distance of the field's low-y pad edge from the 5V pour rim (y ~54.86, mb_mechanical 4.1): 2.19 mm
+
+=== Commutation-loop separation: farthest outline point (np.float64(17.7), np.float64(34.14)) at 25.7 mm; grid points >= 36.5 mm (2-layer parity distance, stackup_area 5.2): 0
+
+=== E-lead maxima: straight x 1.25 rounded up to 5 mm (vector positions) and the pickup criterion
+  E8 straight 13.6 -> build max 20 mm; criterion limit (eib_merge_failsafe.md Table 9): runs with its group
+  E3 straight 16.7 -> build max 25 mm; criterion limit (eib_merge_failsafe.md Table 9): 92 mm untwisted at s 5 mm (206 mm at s 2 mm)
+  E4 straight 20.6 -> build max 30 mm; criterion limit (eib_merge_failsafe.md Table 9): 59 mm untwisted at s 5 mm (131 mm within 2 mm of E8)
+  E2 straight 24.6 -> build max 35 mm; criterion limit (eib_merge_failsafe.md Table 9): none (48.7 kOhm feed)
+  E7 straight 29.9 -> build max 40 mm; criterion limit (eib_merge_failsafe.md Table 9): none (static)
+  E1 straight 69.0 -> build max 90 mm; criterion limit (eib_merge_failsafe.md Table 9): none (static); damping resistor above ~20 mm
+  E5 straight 49.1 -> build max 65 mm; criterion limit (eib_merge_failsafe.md Table 9): none (static)
+  E6 straight 45.4 -> build max 60 mm; criterion limit (eib_merge_failsafe.md Table 9): 196 mm untwisted at s 5 mm
+  E1 + C205 series resonance at 85 mm (scaled from 1.47 MHz at 85 mm as 1/sqrt(L)): 1.47 MHz; BQ25798 fsw 1.5 MHz (JP24, EM19)
+  E1 + C205 series resonance at 90 mm (scaled from 1.47 MHz at 85 mm as 1/sqrt(L)): 1.43 MHz; BQ25798 fsw 1.5 MHz (JP24, EM19)
+
+=== Header post arithmetic (TSW body 2.54 mm; tail B below the body, post C above; MB 1.6, CR 1.6 mm ASSUMED, TODO(measure/verify))
+  TSW-05 C up through the CR: CR-top protrusion 1.07 mm (>= 0.5 for a fillet), MB-bottom protrusion 1.70 mm (cut to <= 1.0)
+  TSW-05 B up through the CR: CR-top protrusion 1.70 mm (>= 0.5 for a fillet), MB-bottom protrusion 1.07 mm (cut to <= 1.0)
+  TSW-07 C up through the CR: CR-top protrusion 4.24 mm (>= 0.5 for a fillet), MB-bottom protrusion 0.94 mm (cut to <= 1.0)
+  TSW-07 B up through the CR: CR-top protrusion 0.94 mm (>= 0.5 for a fillet), MB-bottom protrusion 4.24 mm (cut to <= 1.0)
+  TSW-14 C up through the CR: CR-top protrusion 6.53 mm (>= 0.5 for a fillet), MB-bottom protrusion 1.19 mm (cut to <= 1.0)
+  TSW-14 B up through the CR: CR-top protrusion 1.19 mm (>= 0.5 for a fillet), MB-bottom protrusion 6.53 mm (cut to <= 1.0)
+  stack: CR underside 2.54 mm above the MB top (r6 2.665 on the 0.125 mm sheet); CR top 4.14 mm

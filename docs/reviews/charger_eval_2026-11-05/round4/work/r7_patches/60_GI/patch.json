@@ -1,0 +1,165 @@
+{
+ "group": "GI",
+ "edits": [
+  {
+   "old": "J8 pinout; corner-hole diameter; TP49-to-PGND resistance; final E1-E8 lengths |",
+   "new": "J8 pinout; corner-hole diameter (**superseded in r7:** the EVM has no mounting holes; the corner circles are the fiducials FID1-FID6, SLUUCB5E Figs 4-1 to 4-4 and Table 4-1; the EVM plate fit replaces the check, EM23); TP49-to-PGND resistance; final E1-E8 lengths; **r7:** EVM plate and clamp fit, EVM-to-plate insulation, R276, final W1-W7 lengths |",
+   "note": "T-A-02 question: corner hole superseded; r7 items"
+  },
+  {
+   "old": "M3 rod through a corner hole; ruler for E1-E8;",
+   "new": "M3 rod through a corner hole (**superseded in r7:** no holes, EM23); ruler for E1-E8;",
+   "note": "T-A-02 test: M3 rod superseded"
+  },
+  {
+   "old": "with the EIB not yet connected and power off, /CE (TP36) to TP49 > 1 MOhm. |",
+   "new": "with the EIB not yet connected and power off, /CE (TP36) to TP49 > 1 MOhm. **r7 (EM23, A.7):** seat the EVM on its stock bumpons H1-H4 (3M SJ-5303) on the EVM plate and fit the clamps; inspect each clamp lip (<= 2.0 mm, notched at J8, clear of TP48/TP49, the terminal wire faces and the fiducials); with W1-W7 disconnected, DMM from EVM copper (TP49, J1 pin 1) to the plate and to the chassis; seat the EIB on its two M3 nylon standoffs on the same plate; before E1 is fitted, DMM across R276 at the EIB E1 pad; check that E4 lands on JP21 pin 1, the lower square post (75.312, 64.769) EVM mm (H.23(k)); ruler on each E lead and each W lead along its dressed route. |",
+   "note": "T-A-02 test: r7 EVM plate, insulation, R276, lead lengths"
+  },
+  {
+   "old": "holes pass M3; E-leads within A.5;",
+   "new": "holes pass M3 (**superseded in r7:** no holes; see the r7 criteria); E-leads within A.5;",
+   "note": "T-A-02 pass: holes superseded"
+  },
+  {
+   "old": "r5: JP17 pin 2 absent; TP36-TP49 > 1 MOhm power off. |",
+   "new": "r5: JP17 pin 2 absent; TP36-TP49 > 1 MOhm power off. **r7:** the EVM rests on all four bumpons without rocking; every clamp clear of TP48/TP49, J8, the terminal wire faces and the fiducials; no fastener or adhesive on EVM copper; EVM copper (TP49, J1 pin 1) to the plate and to the chassis > 1 MOhm with W1-W7 disconnected; the EIB on the same plate; R276 10.0 ohm +-1 %; each E lead within its r7 A.5 build maximum (E8 20, E3 25, E4 30, E2 35, E7 40, E1 90, E5 65, E6 60 mm, H.23(k); the r6 E1 85 mm and E5 60 mm are superseded), E4 on the lower JP21 post; each of W1-W4, W6 and W7 <= 0.30 m until MS2 confirms the EVM placement, then within its route maximum (H.23(l): reference placement W1 230, W2 240, W3 180, W4 180, W6 110, W7 SCL 140, W7 SDA 130 mm; corridor fallback (i) W1 260, W2 270, W3 170, W4 170, W6 120, W7 SCL 180, W7 SDA 170 mm). |",
+   "note": "T-A-02 pass: r7 plate, insulation, R276, E maxima, W maxima"
+  },
+  {
+   "old": "M2.5 or adhesive standoffs;",
+   "new": "M2.5 or adhesive standoffs (**superseded in r7:** no fastener on the EVM; a clamp that touches a listed item or an insulation reading <= 1 MOhm: re-cut or re-pad the clamp and re-measure);",
+   "note": "T-A-02 fail: standoff fallback superseded"
+  },
+  {
+   "old": "or re-route, re-measure** |",
+   "new": "or re-route, re-measure** **r7:** R276 out of tolerance: replace it; a W lead over its maximum: shorten and re-dress it, or move the EVM plate (MS2) and recompute the route maxima (H.23(l)). |",
+   "note": "T-A-02 fail: r7 R276 and W-lead fallbacks"
+  },
+  {
+   "old": "and the >= 6 A link. |",
+   "new": "and the >= 6 A link. **r7:** R276 (CRCW060310R0FKEA, 10.0 ohm 1 % 0603, the R273 MPN); the EVM plate, the clamp bars or L-clamps and the silicone pads (material, temperature rating, insulation); the FT1/FT2 foot blocks (PA66 or PBT; FT1 body 4.0 x 1.6 mm, FT2 body 4.0 x 4.0 mm with the 1.0 mm fill hole, h_f 2.24 mm, H.23(i)); the RTV (neutral cure, temperature rating, adhesion to polyimide without primer, modulus; acetoxy cure excluded; E_RTV 1-3 MPa is assumed in H.23(i)); the polyimide sheet stock size for the r7 sheet (bbox 49.30 x 43.86 mm, H.23(m)); **F101 and R172 at CO-5V pad 1, 0.172 mm from the REG-5V box (H.23(g)): the F101 current rating and opening time and the R172 power rating derated to the board temperature beside the LM1084 (MS4, T-A-07)**. |",
+   "note": "T-A-05 question: r7 parts and F101/R172 temperature derating"
+  },
+  {
+   "old": "D107 meets its four limits r5: each added item read from its datasheet or drawing and recorded.",
+   "new": "D107 meets its four limits r5: each added item read from its datasheet or drawing and recorded. **r7:** each r7 item read from its datasheet and recorded; the RTV confirmed neutral cure; F101 and R172 within rating after derating to the MS4 board temperature.",
+   "note": "T-A-05 pass: r7"
+  },
+  {
+   "old": "else the fused W8 fallback (A.3) |",
+   "new": "else the fused W8 fallback (A.3). **r7:** an RTV without neutral cure or without polyimide adhesion data: another neutral-cure RTV, or the sheet cut-out fallback of A.7 (T-A-09); F101 or R172 below rating after derating: a higher-rated part on the same footprint, or T18 not fitted (it is an option). |",
+   "note": "T-A-05 fail: r7"
+  },
+  {
+   "old": "**placement fits** (r2); **r6: pin identity (the 22-hole pattern is symmetric under a y-mirror)** |",
+   "new": "**placement fits** (r2); **r6: pin identity (the 22-hole pattern is symmetric under a y-mirror)**; **r7: the r7 outline with tab X, tab Y, FT1/FT2, the FT2 fill hole and the relocated chamfer; the bottom clearance rule; the thermal band; the r7 sheet** |",
+   "note": "T-A-06 question: r7 scope"
+  },
+  {
+   "old": "lay it on the bare MB (chamfer at the pin-11 corner, matching the CHG silkscreen)",
+   "new": "lay it on the bare MB (chamfer at the pin-11 corner, matching the CHG silkscreen; **r7:** the chamfer is at the tab Y -x/+y corner (17.70, 76.00) on the pin-11 side, and the r6 corner (17.70, 67.14) is a point on the straight left edge, H.23(a); a y-mirrored print also puts tab X over REG-5V)",
+   "note": "T-A-06 step 0: chamfer relocated"
+  },
+  {
+   "old": "E-lead lengths on a dry fit)",
+   "new": "E-lead lengths on a dry fit; **r7:** the EIB on the EVM plate, E4 on the lower JP21 post)",
+   "note": "T-A-06 test: EIB on the EVM plate"
+  },
+  {
+   "old": "the 1:1 print of the polyimide sheet (outline + 1 mm, pad holes, five cut-outs);",
+   "new": "the 1:1 print of the polyimide sheet (outline + 1 mm, pad holes, five cut-outs) (**superseded in r7:** the r7 sheet = the r7 outline + 1 mm with the CO-5V, J-NTC, L-FC and ROP1-FC trims, 27 vertices, bbox 49.30 x 43.86 mm, H.23(m); the r6 sheet overlapped the CO-5V body by 0.400 x 3.700 mm);",
+   "note": "T-A-06 test: sheet print superseded by the r7 sheet"
+  },
+  {
+   "old": "**every E lead measured on the dry fit against its A.5 build maximum**. |",
+   "new": "**every E lead measured on the dry fit against its A.5 build maximum**. **r7:** (1) placement DRC on the r7 outline with the FT1 keep-out x 59.220-64.220, y 65.405-68.005 and its lane to y 68.300, the FT2 keep-out x 25.500-30.500, y 70.750-75.750 and the 2.0 mm FT2 fill-hole disc at (28.00, 73.250) on the CR top (H.23(i)); (2) bottom-clearance-rule overlay: every CR bottom courtyard against the `.brd` layer-1 copper rims of every non-GND net (polygon outline width, 0.7564 mm via pads, square CHG pads) and against every MB part box, + 1.0 mm, on the footprint and on both tabs (H.23(b)-(d)); (3) L4 solder-mask Gerber check; (4) thermal-band content check on tab X (band boundary y 60.5-62.34, H.23(h)); (5) the comparators U102-U104, U115, U119-U121 with R109-R112, R114 and R115 in the footprint low-y band x 23.15-42.43, y 35.05-41.63 (H.23(e), H.23(f)); (6) tap pads at the H.23(g) centres: 20 on the tab X grid, F08-F10 and F22 on the residual row; (7) 1:1 print of the r7 sheet laid on the bare MB; (8) dry fit of both tabs on the MB with the MS3 items in place. |",
+   "note": "T-A-06 test: r7 steps"
+  },
+  {
+   "old": "placement DRC with >= 0.5 mm courtyard clearance on the 31 x 33 mm outline; no bottom-side part in the keep-out (x 24.5-36.0, y 48.5-53.5);",
+   "new": "placement DRC with >= 0.5 mm courtyard clearance on the 31 x 33 mm outline (**superseded in r7:** on the r7 outline, H.23(a)); no bottom-side part in the keep-out (x 24.5-36.0, y 48.5-53.5) (**superseded in r7:** the bottom clearance rule covers that rectangle, H.23(d));",
+   "note": "T-A-06 pass: 31 x 33 outline and keep-out superseded"
+  },
+  {
+   "old": "bottom parts <= 1.0 mm and outside the MB power-copper shadow (+1 mm);",
+   "new": "bottom parts <= 1.0 mm and outside the MB power-copper shadow (+1 mm) (**superseded in r7:** by the bottom clearance rule, which also covers the signal nets, the copper rims and both tabs);",
+   "note": "T-A-06 pass: power-copper shadow superseded"
+  },
+  {
+   "old": "outside the tap-field envelope and the J101 strip;",
+   "new": "outside the tap-field envelope (**r7:** the tab X field and the residual row F08-F10, F22, H.23(g)) and the J101 strip;",
+   "note": "T-A-06 pass: r7 tap field position"
+  },
+  {
+   "old": "chamfer at the pin-11 corner on the print and on the board**",
+   "new": "chamfer at the pin-11 corner on the print and on the board** (**r7:** at (17.70, 76.00))",
+   "note": "T-A-06 pass: chamfer position"
+  },
+  {
+   "old": "r6 isolation set > 1 MOhm; W2 pour present. |",
+   "new": "r6 isolation set > 1 MOhm; W2 pour present. **r7:** zero courtyard violations on the r7 outline; zero bottom-clearance-rule violations (H.23(d)); L4 solder-mask openings only at W1-W4 and the 22 header rings; both foot keep-outs and the fill-hole disc free of copper and parts; inside the thermal band only pads, wires, the RTV bead and temperature-insensitive passives (R175, 1 % logic series resistors and pull-downs); top U <= 75 % and bottom U <= 75 % (adopted allocation 73.55 % / 69.04 %, H.23(e)); every r7 sheet edge >= 0.5 mm from every MB part body on the print; both tabs seat without touching an MB part or an MS3 item. |",
+   "note": "T-A-06 pass: r7 criteria"
+  },
+  {
+   "old": "re-run r5: socket envelope fails -> rotate J101 or move the tap-field / IN-strip boundaries (A.7) and re-run H.21(k). |",
+   "new": "re-run r5: socket envelope fails -> rotate J101 or move the tap-field / IN-strip boundaries (A.7) and re-run H.21(k) (**superseded in r7:** the tap field is on tab X, so only the IN-strip boundary moves; the F22 courtyard is 5.33 mm from the J101 box, H.23(g)). **r7:** a bottom-clearance-rule violation: move the part to the top or trim the tab; any change of the outline, a foot, the tap field or the allocation: re-run `round4/calc/r7_calc.py` (H.23) and T-A-08. |",
+   "note": "T-A-06 fail: r7"
+  },
+  {
+   "old": "the overlay can only be added before PM4 step 1 |",
+   "new": "the overlay can only be added before PM4 step 1 (**r7:** unchanged; the r7 sheet and the FT1/FT2 beds come later in PM4, and the overlay path lies outside both tabs) |",
+   "note": "T-A-06c: sheet timing unchanged in r7"
+  },
+  {
+   "old": "| T-B-01 | First power:",
+   "new": "| T-A-08 | **Pre-capture survey (r7; gate for PM0; the MS1 part gates PM1):** the operator measurements MS1-MS8 (J.2 items 46-53) | The r7 outline, the foot spots, the post arithmetic, the thermal band and the EVM placement rest on MB items, heights, temperatures and fab figures that the `.brd` and the schematic do not record | MS1: Ag105 standoff at four corners, module top height and module mass after removal. MS2: lid clearance over the footprint and both tabs; chassis room past the MB +y edge for the EVM plate and past the MB -x edge for corridor fallback (i); chassis clearance under the MB for the 22 tails; Teensy USB plug length and bend room. MS3: inside each tab outline + 0.5 mm and under each foot spot, position and height of the OPA197 5 V bodge wire, the 10 kOhm EN bodge resistors (D-FC-EN), the 74HC14, the 2026-08-16 encoder reroute wires, R171 on C-D2 pad 1 and RENC2; L-FC body by caliper. MS4: MB surface temperature at 1, 5 and 10 mm from the 5V copper rim along x = 57, closed enclosure, Run with Ethernet and SD active, V_batt 8.4 V and 7.4 V, 30 min soak; LM1084 input current. MS5: accelerometer on the MB near the CHG footprint in a representative run, peak shock and spectrum 0.1-8 kHz. MS6: MB thickness at the CHG holes (caliper); CR finished thickness and laminate modulus from the fab. MS7: EVM as received (thickness, outline, mass, tail protrusion, heights of J7, J8, J9, the jumper headers with shunts and the test points). MS8: the fab 1.6 mm 4-layer stack-up, L4 tenting, minimum inside-corner router radius, 2 oz outer minimum space at the U101 0.5 mm pitch | no unrecorded item inside a tab outline + 0.5 mm or under a foot spot; L-FC body >= 0.5 mm from the tab Y top edge (H.23(b): 1.012 mm at the 12.6 mm silkscreen, 0.862 mm at the 12.9 mm Eaton body, centred); stack top (>= 12.265 mm + the W5 cable, H.23(j)) within the MS1 module envelope (nominal 13.14 mm); MS6 thicknesses entered in the post arithmetic with CR-top protrusion >= 0.5 mm (H.23(j)); MS4 rise at 5 mm within or below the 3.3-17.0 C estimate (H.23(h)) and every part outside the band within its rated temperature; MS5 spectrum consistent with the feet (H.23(i), order of magnitude); MS2 confirms the reference placement or corridor fallback (i) (45.3 mm of chassis room past the MB -x edge, clear of the J-BL/J-FC/J-NTC harnesses, H.23(l)); MS7 heights clear of the clamp and plate design; MS8 router radius and copper rules met by the r7 capture | Trim the tab or move the foot, re-run `round4/calc/r7_calc.py` (H.23) and repeat; MS1 envelope exceeded: PM1 holds (A.7); MS2 rules out the reference placement and fallback (i): no EVM placement is adopted (J.2 item 57); MS4 rise above a part rating: widen the thermal band and move the part |\n| T-A-09 | **Foot fit and bond check (r7):** the FT1 and FT2 RTV beds after cure (A.7, PM4) | The feet carry the far-end support of both tabs (H.23(i): a 10 N push at the tab X tip puts 2.69 N on the worst pin without the foot and 0.52-1.99 N with it); each bed bonds neutral-cure RTV to the 0.125 mm polyimide sheet, whose adhesion without primer is unverified (TODO(verify: RTV datasheet)); E_RTV 1-3 MPa is assumed | After the 22 MB joints are soldered and inspected, the beds applied (FT1 through its lane at the tab X top edge, FT2 through the 1.0 mm fill hole) and cured >= 24 h: feeler gauge 0.05 mm at both interfaces of each bed; loupe on the 22 header joints; the T-F-12 DMM readings; then a 5 N upward pull at each tab tip for 10 s (spring scale); repeat the loupe inspection and the DMM readings | the 0.05 mm feeler does not enter at either interface of either bed; no debond after the pull; no new joint crack; the T-F-12 readings unchanged | Re-bed; if the RTV does not hold on polyimide, cut the sheet at the foot spot (FT1: no larger than its 5.0 x 2.6 mm keep-out, so the MPPT-DISABLE trace stays covered, H.23(i)), bed onto the MB solder mask and repeat |\n| T-B-01 | First power:",
+   "note": "new rows T-A-08, T-A-09"
+  },
+  {
+   "old": "| T-D-01 | Teensy held in reset",
+   "new": "| T-C-16 | **E1/C205 ring with R276 (r7)** | E1 with its E8 return and C205 (100 nF) form a series LC at 1.430 MHz at the 90 mm E1 maximum, near the 1.5 MHz switching frequency; undamped Q 19.1 with the DC wire resistance (about 13.0 with the skin effect), 0.111 with R276 (H.23(k)); R276 x C205 passes 0.106 of the EVM REGN ripple at 1.5 MHz | Charger converting at the regen image (ICHG 3.10 A); SCOPE with ground springs on REGN at C205 against E8 on the EIB and at TP27 against TP49 on the EVM, on one time base; first with R276 bridged by a temporary link, then with R276 in circuit; E1 and E8 at their built lengths | with R276: the ring amplitude at C205 does not exceed the REGN ripple at TP27; the bridged run is recorded as characterisation | Check the R276 value and its position at the E1 pad (A.9); shorten E1 and E8 toward their straight lengths; recompute H.23(k) with the measured lengths and repeat |\n| T-D-01 | Teensy held in reset",
+   "note": "new row T-C-16"
+  },
+  {
+   "old": "**every tap net against VBT, VCHG, VCHG-IN and MB GND; EVM J2/J3/J4 insulated** |",
+   "new": "**every tap net against VBT, VCHG, VCHG-IN and MB GND; EVM J2/J3/J4 insulated**; **r7: the underside of both tabs and the FT1/FT2 beds** |",
+   "note": "T-F-12 question: r7 scope"
+  },
+  {
+   "old": "inspect W3/W4, J5, JP5, C-D11 and the link-fuse joint for chafe and clearance. |",
+   "new": "inspect W3/W4, J5, JP5, C-D11 and the link-fuse joint for chafe and clearance. **r7:** extend the loupe and chafe inspection under tab X and tab Y (sheet edge and trims, the FT1/FT2 beds; the MB vias are not tented, so the sheet is the only cover of their rings, H.23(c2)); DMM from every tab X tap pad to the MB nets under tab X (3V3, CB-DISABLE, CHRG-STAT, CS-MDAC-FC, MPPT-DISABLE, SCL, SDA; H.23(c)); W5 dressed over tab X at the fold height and clear of every tap pad (A.3); the chassis tie at the MB +y edge (29.744 mm from the tab X top edge, H.23(l)). |",
+   "note": "T-F-12 test: r7 inspection under both tabs, beds"
+  },
+  {
+   "old": "fallback-2 inspection clean. |",
+   "new": "fallback-2 inspection clean. **r7:** no chafe on the sheet under either tab; both beds intact (no gap at either interface, no crack); every tab X tap pad >= 1 MOhm to the MB nets under tab X; W5 clear of every tap pad. |",
+   "note": "T-F-12 pass: r7"
+  },
+  {
+   "old": "| Re-work before Run |",
+   "new": "| Re-work before Run; **r7:** a cracked or debonded bed: re-bed and repeat T-A-09 |",
+   "note": "T-F-12 fail: r7"
+  },
+  {
+   "old": "(PM4 step 1a is only reachable before the sheet is bonded) |",
+   "new": "(PM4 step 1a is only reachable before the sheet is bonded; **r7:** the removal also cuts the FT1/FT2 RTV beds before the sheet is peeled, A.7) |",
+   "note": "T-F-16 fail: carrier removal cuts the beds"
+  },
+  {
+   "old": "| T-G-01 | Regen decels",
+   "new": "| T-F-18 | **Tab vibration and joint integrity (r7; MS5 follow-up)** | The tab first-mode figures are order-of-magnitude upper estimates (assumed 20 GPa laminate, clamped root): tab X 1664-2353 Hz unpropped and 1924-3336 Hz propped, tab Y 4531-6407 Hz and 4726-7204 Hz (H.23(i)); the 22 header joints carry the tab moments | Vehicle, representative run (the T-G-04 profile); accelerometers on the MB near pin 10 and on the tab X top over FT1; spectrum 0.1-8 kHz; transmissibility tab/MB; then the T-A-09 loupe inspection and the T-F-12 resistance checks | no cracked joint; no change in the T-F-12 readings; no bed debond; transmissibility <= 3 where the MB excitation is above the logger noise floor (provisional criterion; the operator sets the final value before the run) | A cracked joint or a debond: stop vehicle runs with the CR, re-solder, re-bed (T-A-09) and find the cause; transmissibility > 3: a stiffer bed (smaller t_bed or a higher-modulus RTV) or the relaxed FT1 option (J.2 item 58), then repeat |\n| T-G-01 | Regen decels",
+   "note": "new row T-F-18"
+  },
+  {
+   "old": "regen ICHG is capped until the carrier is removed for the overlay.\n",
+   "new": "regen ICHG is capped until the carrier is removed for the overlay.\n46. **MS1, Ag105 envelope (r7; gates PM1):** Ag105 standoff at four corners, module top height and module mass after\n    removal. It decides whether the CR stack top (>= 12.265 mm + the W5 cable, H.23(j)) stays within the measured module\n    envelope (nominal 13.14 mm, AG105_Silvertel.pdf Figure 11) (T-A-08).\n47. **MS2, enclosure and chassis (r7):** lid clearance over the footprint and both tabs, chassis room past the MB +y edge\n    for the EVM plate (88.90 x 88.90 mm EVM + clamps + the J8 mating gap) and past the MB -x edge, the MB mounting scheme,\n    chassis clearance under the MB for the 22 tails, and the Teensy USB plug length and bend room. It decides the EVM plate\n    position and the W-lead route maxima (H.23(l)); until then every W lead keeps the 0.30 m cap (T-A-02).\n48. **MS3, unrecorded MB items (r7; gate for PM0):** position and height of the OPA197 5 V bodge wire, the 10 kOhm EN bodge\n    resistors, the 74HC14, the 2026-08-16 encoder reroute wires, R171 on C-D2 pad 1 and RENC2 inside each tab outline\n    + 0.5 mm and under each foot spot; the L-FC body by caliper. It decides the tab outlines (T-A-08).\n49. **MS4, LM1084 thermal survey (r7):** MB surface temperature at 1, 5 and 10 mm from the 5V copper rim into tab X. It\n    decides the thermal-band split; the estimate is a 3.3-17.0 C rise at 5 mm (H.23(h)), and the F101/R172 derating at\n    CO-5V pad 1 uses the same reading (T-A-05).\n50. **MS5, vibration (r7):** MB acceleration near the CHG footprint in a representative run, peak shock and spectrum\n    0.1-8 kHz. It decides whether the feet suffice; the H.23(i) first-mode figures are order-of-magnitude upper estimates,\n    and T-F-18 confirms after the build.\n51. **MS6, thicknesses (r7):** MB thickness at the CHG holes, CR finished thickness and laminate modulus. It decides the\n    post arithmetic (CR-top protrusion 0.940 mm at 1.6 / 1.6 mm), the foot height (h_f 2.24 mm) and the first-mode\n    estimates (H.23(i), H.23(j)).\n52. **MS7, EVM as received (r7):** thickness, as-built outline, mass, tail protrusion and the heights of J7, J8, J9, the\n    jumper headers with shunts and the test points. It decides the clamp design and the plate clearances.\n53. **MS8, fab rules (r7):** the fab 1.6 mm 4-layer stack-up, L4 tenting, minimum inside-corner router radius and the 2 oz\n    outer minimum space at the U101 0.5 mm pitch. It decides the PM0 DFM check (copper weight) and the three concave\n    tab-root corners (H.23(a)).\n54. **EVM plate and clamp design (r7, EM23):** the plate and clamp geometry is TODO(design: from MS2 and MS7); the EVM rests\n    on its stock bumpons, no fastener or adhesive bonds EVM copper to the plate, the CR or the chassis, and T-A-02 checks the\n    insulation (> 1 MOhm).\n55. **Foot bond on polyimide (r7):** the FT1/FT2 beds bond neutral-cure RTV to the polyimide sheet without primer, which no\n    datasheet in the library confirms (TODO(verify: RTV datasheet)); the bed stiffness rests on E_RTV 1-3 MPa assumed\n    (14-128 N/mm under FT1, 36-320 N/mm under FT2, H.23(i)). T-A-09 decides; the fallback is a sheet cut-out with the bed on\n    the MB solder mask (FT1: no larger than its 5.0 x 2.6 mm keep-out).\n56. **L-FC body (r7):** the Eaton listing gives a 12.9 mm body against the 12.6 mm silkscreen; centred, the 12.9 mm body\n    lies 0.862 mm from the tab Y top edge (1.012 mm at the silkscreen, H.23(b)). TODO(verify: Eaton HCM1A1305V3 drawing);\n    the MS3 caliper reading decides.\n57. **Teensy USB corridor and the EVM placement (r7):** the reference placement rests on a 45 mm plug + bend ASSUMPTION; the\n    EIB then lies 20.92 mm beyond the corridor end, and a USB cable that runs straight +y for more than 65.9 mm would meet\n    it; W3/W4 pass through a 4.97 mm channel between the EVM right edge and the corridor (H.23(l)). Corridor fallback (i)\n    (EVM + EIB shifted -x by 27.03 mm) passes geometrically but needs 45.3 mm of chassis room past the MB -x edge, clear of\n    the J-BL/J-FC/J-NTC harnesses; fallbacks (ii) and (iii) fail. The \"EVM rotated\" variant is not evaluated. MS2\n    decides; if neither placement fits, no EVM placement is adopted.\n58. **FT1 relaxed 4 x 4 mm option (r7, operator):** a 4.0 x 4.0 mm FT1 at (62.50, 61.40) would bear on masked signal traces\n    (copper clearance -0.127 mm to the SDA trace), where the sheet cut-out fallback is unavailable (H.23(i)). The adopted\n    FT1 is 4.0 x 1.6 mm (bed 6.40 mm2, placement tolerance 0.294 mm). The relaxed option is recorded for an operator ruling\n    only.\n59. **W5 stack height (r7):** the W5 IDC socket and ribbon fold reach >= 12.265 mm above the MB plus the cable thickness\n    (TODO(verify: cable assembly drawing)) against the nominal 13.14 mm Ag105 envelope: the margin is <= 0.875 mm before\n    the cable (H.23(j)). MS1 decides.\n60. **G1 island merge (r7, documented option, not adopted):** an EIB merged into the CR as an island is admissible only\n    with the EVM within 10-60 mm of a CR edge on one rigid co-mount, under the ten conditions of\n    `round4/work/eib_merge_failsafe.md` section 7 (island + R273 as the only tie, A.9 pad order and isolation pairs unchanged,\n    lead dressing, parts kept and deleted, E1 damping, one rigid body, thermal, area, the EVM stage >= 20 mm from U104,\n    U102, U103 and T8/T9). With the EVM off the MB (0.10-0.30 m from the CR edge) a direct merge exports the unbuffered\n    ILIM_HIZ node, REGN, /CE and STAT.\n61. **Mezzanine over the MB (r7, option, not adopted):** an EVM carrier over the MB is recorded for a later round by\n    operator ruling; no part-free 89 x 89 mm MB region exists for the EVM beside the CR.\n",
+   "note": "J.2 items 46-61 (r7)"
+  },
+  {
+   "old": "TODO(verify) tied to T-C-04 / T-C-15.\n",
+   "new": "TODO(verify) tied to T-C-04 / T-C-15.\n- r7 additions: TI SLUUCB5E rev E (fetched 2026-11-10, `round4/work/evm/sluucb5e.pdf`): Figures 4-1 to 4-4 read as vector\n  paths (`round4/work/evm_calc/evm_geom.py`; this supersedes the r6 150 dpi PNG reading for the A.5 positions), no mounting\n  hole on any layer, and Table 4-1 BOM (FID1-FID6 fiducials, \"nothing to buy or mount\"; H1-H4 3M SJ-5303 bumpons,\n  0.44 x 0.20 in = 11.18 x 5.08 mm). 3M SJ-5303 dimensions from that BOM line; the 3M datasheet is not in the library,\n  TODO(verify: 3M SJ-5303 datasheet). On-Shore Technology ED120/XDS rev A drawing (EVM J1-J5 terminal blocks, 13.0 mm).\n  Samtec F-226 TSW/HTSW catalogue page (TSW-1xx-07: A 10.92, B 2.54, C 5.84 mm, body 2.54 mm; H.23(j)). Eaton\n  HCM1A1305V3 catalogue listing 13.8 x 12.9 x 5.0 mm (web; the drawing was not obtained, TODO(verify: Eaton HCM1A1305V3\n  drawing)). `AG105_Silvertel.pdf` Figure 11 p.21 (module envelope 13.14 mm). MB fab Gerbers `references/PCB Manufacturing\n  Files/soldermask_top.gbr` and `soldermask_bottom.gbr` (via stop-mask census: 368 of 368 vias open, 0.9596 mm, H.23(c2)).\n  The board `.brd` (listed above) for the H.23 copper rims, via pad sizes from its design rules, the `alwaysstop` via flags\n  and the part boxes. Molex 22-01-3047 (J8 mate) mated length, TODO(verify: Molex 22-01-3047 drawing). Round-4 work notes\n  `round4/work/evm_geometry.md`, `round4/work/mb_mechanical.md` (LM1084 estimate, Table 4), `round4/work/eib_merge_failsafe.md`\n  (Table 9 pickup criterion; section 7 G1 merge conditions), `round4/work/stackup_area.md`; `round4/calc/r7_calc.py` with\n  `r7_calc_out.txt` (H.23).\n",
+   "note": "K: r7 sources"
+  }
+ ]
+}

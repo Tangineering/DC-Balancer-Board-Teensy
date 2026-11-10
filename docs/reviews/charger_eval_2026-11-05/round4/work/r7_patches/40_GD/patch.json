@@ -1,0 +1,145 @@
+{
+ "group": "GD",
+ "edits": [
+  {
+   "old": "and EIB in KiCad from B.8 and A.7/A.8**, run ERC/DRC",
+   "new": "and EIB in KiCad from B.8 and A.7/A.8** (**superseded in r7:** the named bottom keep-out retires; the bottom side follows the bottom clearance rule of A.7), run ERC/DRC",
+   "note": "PM0: bottom keep-out superseded by the bottom clearance rule"
+  },
+  {
+   "old": "Add the A.7 pin-11 corner chamfer to the outline and pin-1 / pin-11 markers to the silkscreen |",
+   "new": "Add the A.7 pin-11 corner chamfer to the outline and pin-1 / pin-11 markers to the silkscreen (**superseded in r7:** the chamfer moves to (17.70, 76.00), below). **r7:** capture the CR on the r7 outline of A.7 (H.23(a)). The r7 outline is the r6 rectangle (x 17.70-48.70, y 34.14-67.14) plus tab X (x 48.70-65.00, y 56.30-68.30) and tab Y (x 17.70-37.56, y 67.14-76.00): 1394.06 mm² gross, bounding box 47.30 x 41.86 mm. Put the 1.0 mm x 45 degree chamfer at the tab Y -x/+y corner (17.70, 76.00), on the pin-11 side; it is the only chamfered corner. The r6 chamfer corner (17.70, 67.14) becomes a point on the straight left edge. Give the three concave corners (48.70, 56.30), (48.70, 67.14) and (37.56, 67.14) the fab's minimum inside-corner router radius (TODO(verify: MS8)). Split the tap field per A.4 and H.23(g): F01-F07, F11-F21, F23, F24 and R175 on tab X; F08, F09, F10 and F22 on the footprint low row y 35.80 (x 26.44, 28.98, 31.52, 41.68). Put R175 and the 0.1 % divider resistors R109, R110, R111, R112, R114, R115 on the top; C106, C107, C108 and C140 stay on the bottom (A.8; top 73.55 %, bottom 69.04 %, H.23(e)). Keep both foot keep-outs free on the bottom (H.23(i)): FT1 x 59.220-64.220, y 65.405-68.005 with its RTV lane to the tab X top edge (y 68.005-68.300); FT2 x 25.500-30.500, y 70.750-75.750, no lane. Drill the FT2 fill hole, 1.0 mm NPTH at (28.00, 73.250), with a 2.0 mm copper and part keep-out disc on the CR top. Run the bottom DRC with the bottom clearance rule on the footprint and on both tabs. Measure the rule from the `.brd` layer-1 copper rims (polygon outline width and 0.7564 mm via pads included). Apply the thermal band content rule of A.7 on tab X |",
+   "note": "PM0: r7 outline, chamfer relocation, tap field split, allocation A3, foot keep-outs, fill hole, bottom clearance rule DRC"
+  },
+  {
+   "old": "placement DRC on the 31 x 33 mm outline; 1:1 print of the hole pattern and the assembled placement over the bare CHG footprint; spacer dry fit) |",
+   "new": "placement DRC on the 31 x 33 mm outline (**superseded in r7:** on the r7 outline); 1:1 print of the hole pattern and the assembled placement over the bare CHG footprint (r7: and over both tabs); spacer dry fit (**superseded in r7:** no spacer, the TSW body seats on the sheet, H.23(j); dry fit of both tabs and both feet)). **r7:** T-A-08 (the pre-capture survey MS1-MS7) gates PM0; a tab trim re-runs `round4/calc/r7_calc.py`. T-A-06 adds the bottom-clearance-rule overlay on the `.brd` copper rims, the print of the r7 sheet outline with its trims and the chamfer check at (17.70, 76.00) |",
+   "note": "PM0 gate: 31 x 33 outline and spacer dry fit superseded; T-A-08 gate"
+  },
+  {
+   "old": "**Do it only after the T-B and T-C gates pass on the bench** (study condition 13) |",
+   "new": "**Do it only after the T-B and T-C gates pass on the bench** (study condition 13). **r7:** record MS1 first (gate D-2, unchanged; `docs/reviews/battery_isolation_2026-11-07/detailed_design_IC1.md` section 15.2): the Ag105 standoff at the four corners, the module top height above the MB and the module mass after removal (T-A-08). MS1 decides the r7 stack top, >= 12.265 mm plus the cable, against the nominal 13.14 mm Ag105 envelope (H.23(j)) |",
+   "note": "PM1: MS1 first, gate D-2 unchanged"
+  },
+  {
+   "old": "| Every divider tap is then high-impedance at the source |",
+   "new": "| Every divider tap is then high-impedance at the source. **r7:** C-D2 pad 1 lies outside tab X (the C-D2 box is 3.64 mm from the FT1 body, H.23(i)); orient R171 and the T2 wire away from tab X. MS3 records the R171 position and height (T-A-08) |",
+   "note": "PM3: R171 near tab X, MS3 survey"
+  },
+  {
+   "old": "(0.125 mm, silicone adhesive, CR outline + 1 mm, 2.2 mm relief holes at the 22 header pads,",
+   "new": "(0.125 mm, silicone adhesive, CR outline + 1 mm (**superseded in r7:** the r7 sheet outline of A.7, that is the r7 outline + 1 mm trimmed to >= 0.5 mm from the CO-5V, J-NTC, L-FC and ROP1-FC bodies, bounding box 49.30 x 43.86 mm, H.23(m); the r6 outline + 1 mm overlapped the CO-5V body by 0.400 x 3.700 mm), 2.2 mm relief holes at the 22 header pads,",
+   "note": "PM4 step 1: r7 sheet outline with trims; r6 CO-5V overlap"
+  },
+  {
+   "old": "behind the 1x12 body, where no cutter fits;**",
+   "new": "behind the 1x12 body, where no cutter fits;** **(2c) (r7) bond the two feet to the CR underside with the BOM neutral-cure RTV (H.23(i)): FT1 (4.0 x 1.6 mm) centred at (61.72, 66.705) under tab X; FT2 (4.0 x 4.0 mm) centred at (28.00, 73.250) under tab Y, drilled 1.0 mm through at its centre on the CR fill hole. The foot height is h_f = 2.24 mm (2.54 mm less the 0.30 mm nominal bed). Let the bond cure before (3) (cure time TODO(verify: RTV datasheet)). Keep the W1-W4 leads clear of tab X and of the FT1 lane until (6): their joints stay in (2b), only their dressing waits;**",
+   "note": "PM4 (2c): feet bonded to the CR before seating; W1-W4 dressing deferred"
+  },
+  {
+   "old": "(plastic body resting on the sheet) and solder the 22 joints **at the MB bottom**;",
+   "new": "(plastic body resting on the sheet) and solder the 22 joints **at the MB bottom**, **(r7) with tab X and tab Y resting on temporary loose props that touch the CR without lifting it (the header bodies on the sheet set the height; no adhesive is wet during soldering)**;",
+   "note": "PM4 (3): both tabs supported while the 22 MB joints are soldered"
+  },
+  {
+   "old": "(or less if the chassis clearance under the MB requires it, measured in T-A-06)",
+   "new": "(or less if the chassis clearance under the MB requires it, measured in T-A-06 (**superseded in r7:** measured in MS2, T-A-08); r7: the MB-bottom protrusion is 4.115 mm before the cut, H.23(j))",
+   "note": "PM4 (4): chassis clearance from MS2; protrusion before the cut"
+  },
+  {
+   "old": "the TSW post option is chosen in T-A-05 so the CR-top protrusion is >= 0.5 mm for a fillet |",
+   "new": "the TSW post option is chosen in T-A-05 so the CR-top protrusion is >= 0.5 mm for a fillet. **r7:** with the sheet, the TSW-1xx-07 post leaves a 0.940 mm CR-top protrusion (H.23(j); MB and CR 1.6 mm assumed, TODO(measure: MS6)). **(5) (r7)** remove the props and inspect the 22 MB joints under a loupe. Then bed FT1 through its RTV lane at the tab X top edge (x 59.220-64.220, y 68.005-68.300). Bed FT2 through the fill hole from the CR top with a blunt needle. Use the neutral-cure RTV only (no acetoxy cure near copper). The bed is 0.30 +- 0.15 mm thick and carries no preload. Cure the beds for >= 24 h. **(6) (r7)** after the cure and T-A-09, dress W1-W4 over tab X toward the MB +y edge (A.3). Mate W5 and dress it per A.3, clear of the tap pads. Then solder W6, W7 and the taps (PM6) |",
+   "note": "PM4 (5)/(6): post arithmetic with the sheet; beds after inspection, cure >= 24 h, then W1-W7 and taps"
+  },
+  {
+   "old": "(2b) the four recorded W1-W4 underside heights <= 0.5 mm incl. fillet (rework before (3) if not).",
+   "new": "(2b) the four recorded W1-W4 underside heights <= 0.5 mm incl. fillet (rework before (3) if not). **r7:** (5) no cracked or lifted joint under the loupe before the beds; after the cure, T-A-09 (feeler 0.05 mm at both bed interfaces, 5 N tab-tip pull for 10 s, joint resistance unchanged). Fail: re-bed; if the RTV does not hold on polyimide, use the sheet cut-out fallback of A.7. The FT1 cut-out is no larger than its 5.0 x 2.6 mm keep-out, so the MPPT-DISABLE trace stays covered (H.23(i)).",
+   "note": "PM4 check: T-A-09 and the cut-out fallback"
+  },
+  {
+   "old": "T22 to BQ29200 pin 8 (PM11, r6), the rest into J1/J2 with single male pins; no T7 |",
+   "new": "T22 to BQ29200 pin 8 (PM11, r6), the rest into J1/J2 with single male pins; no T7. **r7:** the tab X field carries 20 pads (F01-F07, F11-F21, F23, F24) and R175 at the H.23(g) centres. T22, T8, T9 and T18 land on F08, F09, F10 and F22 on the footprint low row y 35.80. Fit the tap wires only after the PM4 (5) beds have cured. Dress each tab X wire toward +y in the inter-row gaps until x > 63. Never dress it across the REG-5V box (x 50.97-62.31, y 36.87-54.51) or a neighbouring pad; T1, T7b and T5 need this dressing. The 20 straight lengths sum to 850.9 mm (r6 1308.0 mm, -34.9 %, H.23(g)); the A.4 maxima stay the upper bounds |",
+   "note": "PM6: tab X field, residual row F08-F10/F22, dressing rule, r7 straight lengths"
+  },
+  {
+   "old": "T19 only with the U117 option; else leave the DNP parts unpopulated |",
+   "new": "T19 only with the U117 option; else leave the DNP parts unpopulated. **r7:** the T18 CR end is F22 at (41.68, 35.80) on the footprint low row, 10.54 mm straight to CO-5V pad 1 (H.23(g)). That joint sits 0.172 mm from the REG-5V box, so T-A-05 adds a temperature-derating check of F101 and R172 there |",
+   "note": "PM7: T18 on F22; derating check at the CO-5V joint"
+  },
+  {
+   "old": "`2,Input,Digital,H-20 purge valve sense,PURGE_SENSE,\"Optocoupler from the H-20 purge-valve drive; LOW = valve open\"`.",
+   "new": "`2,Input,Digital,H-20 purge valve sense,PURGE_SENSE,\"Optocoupler from the H-20 purge-valve drive; LOW = valve open\"`.\n\n**r7:** the r7 carrier extension changes no Teensy pin, direction, pad setting or note, so r7 requires no IO CSV change beyond the rows above.",
+   "note": "D.3: no CSV change in r7"
+  },
+  {
+   "old": "### D.4 CLAUDE.md bodge record (add under the never-rotated hardware records once built)\n",
+   "new": "### D.4 CLAUDE.md bodge record (add under the never-rotated hardware records once built)\n\n**r7:** the record stays a proposal for `CLAUDE.md` (D.5). r7 adds tab X and tab Y, the feet FT1 and FT2 with their beds and the FT2 fill hole, the r7 sheet, the EVM plate and R276.\n",
+   "note": "D.4: r7 note, still a proposal"
+  },
+  {
+   "old": "14-way ribbon to a chassis-mounted EVM interface board",
+   "new": "14-way ribbon to an EVM interface board (r7: on the EVM plate with the EVM)",
+   "note": "D.4: EIB on the EVM plate"
+  },
+  {
+   "old": "taps are top-side SMT pads, and its bottom carries passives only (<= 1.0 mm) outside the MB VBT / VCHG / VCHG-IN copper.",
+   "new": "taps are top-side SMT pads, and its bottom carries passives only (<= 1.0 mm) outside the MB VBT / VCHG / VCHG-IN copper\n  (superseded in r7: >= 1.0 mm in plan from every non-GND MB layer-1 feature and every MB part box, the bottom clearance\n  rule, on the footprint and both tabs).",
+   "note": "D.4: bottom clearance rule replaces the power-copper shadow"
+  },
+  {
+   "old": "The carrier outline has a chamfer at the pin-11 corner;",
+   "new": "The carrier outline has a chamfer at the pin-11 corner (r7: at the tab Y -x/+y corner (17.70, 76.00), still on the\n  pin-11 side);",
+   "note": "D.4: chamfer relocated"
+  },
+  {
+   "old": "- Bodge parts and wires: R170/R171 10.0 kOhm",
+   "new": "- r7: the carrier extends past the CHG footprint by tab X (x 48.70-65.00, y 56.30-68.30, toward the Teensy) and tab Y\n  (x 17.70-37.56, y 67.14-76.00, toward L-FC); no MB part lies under either tab. Two PA66/PBT feet carry the tab ends:\n  FT1 4.0 x 1.6 mm at (61.72, 66.705) and FT2 4.0 x 4.0 mm at (28.00, 73.250). Each foot is bonded to the carrier and\n  bedded on the polyimide sheet in neutral-cure RTV (0.30 +- 0.15 mm), after the 22 MB joints were soldered; FT2 is\n  bedded through a 1.0 mm fill hole in tab Y. The MB solder mask is never bonded: to remove, cut the beds and peel the\n  sheet. The sheet is cut to the carrier outline + 1 mm, trimmed at CO-5V, J-NTC, L-FC and ROP1-FC. Twenty tap pads\n  (F01-F07, F11-F21, F23, F24) sit on tab X; T22, T8, T9 and T18 land on the footprint low row (F08, F09, F10, F22).\n  The EVM rests on its stock bumpons on an insulating EVM plate under edge clamps (no drilling); the EVM interface\n  board sits on the same plate on two M3 nylon standoffs; R276 10.0 ohm is in series with E1 at the EIB.\n- Bodge parts and wires: R170/R171 10.0 kOhm",
+   "note": "D.4: r7 bullet (tabs, feet, beds, fill hole, r7 sheet, EVM plate, R276)"
+  },
+  {
+   "old": "## E. Bill of materials\n",
+   "new": "### D.5 Proposals for files this design does not edit (r7)\n\nThe r7 revision changes the carrier's mechanics, its placement map and the EVM mount. It changes no pin, threshold, timing or firmware requirement (G). The following table gives the r7 proposal for each file that this design does not edit.\n\n| File | r7 proposal |\n|---|---|\n| `CLAUDE.md` | No change beyond the D.4 bodge record. The record gains the r7 items (tab X, tab Y, FT1/FT2 with their beds, the FT2 fill hole, the r7 sheet, the EVM plate, R276) and is added under the never-rotated hardware records once the carrier is built |\n| `teensy_controller/teensy_controller.ino` | No change: r7 changes no pin, direction, threshold or timing |\n| `WORK_QUEUE.md` | One queue item for the operator measurements MS1-MS8 with their gates (text below) |\n| `references/Scale Car Teensy IO - IO.csv` | No change (D.3) |\n\nThe proposed `WORK_QUEUE.md` item is:\n\n```\n- BQ25798EVM carrier r7: operator measurements MS1-MS8 (docs/charger_bq25798_wiring_design_2026-11-05.md, T-A-08).\n  Gates: MS1 (Ag105 standoff at four corners, module top height, module mass; gate D-2) before PM1.\n  MS2-MS7 before PM0: MS2 enclosure and chassis room (lid clearance, EVM plate position, the 45.3 mm past the MB -x\n  edge for corridor fallback (i), chassis clearance under the MB, USB plug and bend) -> W-lead route maxima;\n  MS3 unrecorded items inside each tab outline + 0.5 mm and under each foot spot, L-FC body -> tab outlines;\n  MS4 LM1084 thermal survey -> thermal band; MS5 vibration -> foot design (T-F-18 after the build);\n  MS6 MB and CR thickness -> post arithmetic, foot height; MS7 EVM as received -> clamp design.\n  MS8 fab rules (stack-up, L4 tenting, inside-corner router radius, 2 oz minimum space) before the PM0 DFM check.\n  A tab trim re-runs docs/reviews/charger_eval_2026-11-05/round4/calc/r7_calc.py. Until MS2, every W lead stays\n  within 0.30 m (T-A-02).\n```\n\n## E. Bill of materials\n",
+   "note": "D.5: new section (files not edited)"
+  },
+  {
+   "old": "| CR PCB | 5 | 31.0 x 33.0 mm, **4-layer**, 1.6 mm, 2 oz outer / 1 oz inner, ENIG | from PM0 Gerbers | - | any PCB service | allowance USD 70 |",
+   "new": "| CR PCB | 5 | 31.0 x 33.0 mm (**superseded in r7:** the r7 outline of A.7, bounding box 47.30 x 41.86 mm, 1394.06 mm² gross, three concave corners and one 1.0 mm NPTH, H.23(a)), **4-layer**, 1.6 mm, 2 oz outer / 1 oz inner, ENIG | from PM0 Gerbers | - | any PCB service | allowance USD 70 (**r7:** USD 70-100, TODO(verify: fab quote)) |",
+   "note": "E: CR PCB on the r7 outline, allowance 70-100"
+  },
+  {
+   "old": "| R273 | 1 | 10.0 ohm 1 % (EIB ground link) | CRCW060310R0FKEA | 0603 | | - |",
+   "new": "| R273 | 1 | 10.0 ohm 1 % (EIB ground link) | CRCW060310R0FKEA | 0603 | | - |\n| **R276 (r7)** | 1 (+1) | 10.0 ohm 1 % (EIB, in series with E1 at the E1 pad; A.5, A.9) | CRCW060310R0FKEA (same MPN as R273) | 0603 | | - |",
+   "note": "E: R276 new line"
+  },
+  {
+   "old": "cut per A.7 (CR outline + 1 mm,",
+   "new": "cut per A.7 (CR outline + 1 mm (**superseded in r7:** the r7 sheet outline with its four trims, bounding box 49.30 x 43.86 mm, H.23(m)),",
+   "note": "E: polyimide sheet on the r7 sheet outline"
+  },
+  {
+   "old": "sheet or >= 40 mm tape stock;",
+   "new": "sheet or >= 40 mm tape stock (**superseded in r7:** the 43.86 mm short side needs sheet stock or tape >= 43.86 mm wide; stock size checked in T-A-05);",
+   "note": "E: sheet stock size check"
+  },
+  {
+   "old": "for the A.4 tap and A.3 W1-W4 strain relief beads |",
+   "new": "for the A.4 tap and A.3 W1-W4 strain relief beads (**r7:** also the FT1/FT2 foot bonds and beds; this line already requires neutral cure, so r7 adds no second RTV; adhesion to polyimide and PA66/PBT without primer and the temperature rating TODO(verify: RTV datasheet), T-A-05) |",
+   "note": "E: RTV line covers the foot beds (already neutral cure)"
+  },
+  {
+   "old": "| Hardware | - | M3 x 10 mm nylon standoffs x 6 (+ screws), ferrules 0.5/0.75 mm², heat-shrink, Kapton tape, cable ties | - | - | - | - |",
+   "new": "| Hardware | - | M3 x 10 mm nylon standoffs x 6 (**superseded in r7:** x 2, the EIB pair only; the four EVM standoffs are deleted because the EVM has no mounting holes, EM23) (+ screws), ferrules 0.5/0.75 mm², heat-shrink, Kapton tape, cable ties | - | - | - | - |\n| **EVM plate (r7)** | 1 plate + 2 clamp bars or 4 corner L-clamps, with 0.5 mm silicone pads | insulating plate carrying the EVM on its stock bumpons H1-H4 and the EIB on its two M3 nylon standoffs; the clamps press <= 2.0 mm EVM edge lips, notched at J8, clear of TP48/TP49, the terminal wire faces and the fiducials (EM23, A.7) | plate and clamp geometry TODO(design: from MS2 and MS7); materials and temperature ratings checked in T-A-05 | - | distributor or workshop | allowance USD 0-15 |\n| **FT1, FT2 feet (r7)** | 2 (+2) | PA66 or PBT block, height h_f 2.24 mm (2.54 mm less the 0.30 mm nominal bed); FT1 4.0 x 1.6 mm, FT2 4.0 x 4.0 mm with a 1.0 mm hole at its centre (H.23(i)); bonded and bedded with the BOM neutral-cure RTV | no candidate MPN (material, temperature rating and RTV adhesion checked in T-A-05) | - | distributor or workshop | allowance USD 0-5 |",
+   "note": "E: EVM standoffs x4 superseded; EVM plate and feet lines"
+  },
+  {
+   "old": "plus strip/twist allowance, H.20);",
+   "new": "plus strip/twist allowance, H.20; **r7:** the 20 straight tap lengths fall from 1308.0 to 850.9 mm, H.23(g), so the r6 quantity stays an upper bound);",
+   "note": "E: 26 AWG quantity stays a bound"
+  },
+  {
+   "old": "USD 190-225 (not verified; 4-layer CR in r2; r3 input bulk, TVS, select-on-test kits; r4 1.27 mm cable assembly and headers; r5 polyimide sheet, RTV, 0402 parts, R275; r6 three comparators, two single gates, the thermocouple). **Total about USD 505-540.**",
+   "new": "USD 190-225 (not verified; 4-layer CR in r2; r3 input bulk, TVS, select-on-test kits; r4 1.27 mm cable assembly and headers; r5 polyimide sheet, RTV, 0402 parts, R275; r6 three comparators, two single gates, the thermocouple). **Total about USD 505-540** (**superseded in r7:** r7 adds USD 0-50, that is the CR PCB on the r7 outline USD 0-30, the EVM plate and clamps USD 0-15 and the FT1/FT2 feet USD 0-5; R276 falls within the resistor lines and the four EVM standoffs are deleted. Carrier, EIB, parts, wire and hardware: allowance USD 190-275. **Total about USD 505-590 (r7)**, with the EVMs at USD 312.90).",
+   "note": "E: cost range recomputed from the r6 total"
+  }
+ ]
+}

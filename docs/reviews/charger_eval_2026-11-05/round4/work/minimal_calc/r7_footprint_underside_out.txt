@@ -1,0 +1,7 @@
+footprint underside, courtyard-limited 960.0 mm2; outside keep-out/bodies/W pads/MB parts 645.5 mm2
+  rule A (clear of POWER +1 mm) 488.8 mm2; rule A + 3V3 488.8 mm2; rule B (clear of every non-GND +1 mm) 383.9 mm2
+  non-GND MB L1 nets under/near the footprint: {'5V': 'POWER', 'CB-DISABLE': 'SIGNAL', 'CHRG-STAT': 'SIGNAL', 'D-BT-SQ': 'SIGNAL', 'MPPT-DISABLE': 'SIGNAL', 'N$31': 'SIGNAL', 'N$32': 'SIGNAL', 'N$33': 'SIGNAL', 'N$34': 'SIGNAL', 'N$7': 'SIGNAL', 'N$8': 'SIGNAL', 'SCL': 'SIGNAL', 'SDA': 'SIGNAL', 'VBAL+': 'POWER', 'VBT': 'POWER', 'VCHG': 'POWER', 'VCHG-IN': 'POWER'}
+  W1 VCHGOUT at (30.3, 61.2): MB L1 copper within pad radius + 1 mm (net, centre-line edge distance mm): [('GND poly (inside outline)', 0.0)]
+  W2 GND at (27.7, 61.2): MB L1 copper within pad radius + 1 mm (net, centre-line edge distance mm): [('GND poly (inside outline)', 0.0)]
+  W3 VCHG at (24.3, 45.4): MB L1 copper within pad radius + 1 mm (net, centre-line edge distance mm): [('GND poly (inside outline)', 0.0), ('VCHG poly (inside outline)', 0.0)]
+  W4 GND at (24.3, 55.6): MB L1 copper within pad radius + 1 mm (net, centre-line edge distance mm): [('GND poly (inside outline)', 0.0)]

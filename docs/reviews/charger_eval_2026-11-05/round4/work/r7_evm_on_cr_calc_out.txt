@@ -1,0 +1,209 @@
+
+======================================================================================================================
+1. EVM as a mezzanine over the MB (plan check)
+======================================================================================================================
+   J-BL    x   3.28- 17.23  y  26.42- 49.78  h 21.70 mm   [TB005-762_CUI.pdf p.2, body height 21.70]
+   J-FC    x   3.28- 17.23  y  72.14- 87.88  h 21.70 mm   [TB005-762_CUI.pdf p.2, body height 21.70]
+   J-BT    x   3.53- 17.48  y   7.88- 23.62  h 21.70 mm   [TB005-762_CUI.pdf p.2, body height 21.70]
+   J-NTC   x   3.55- 16.25  y  52.91- 67.35  h 13.90 mm   [Wurth 691411410002 DS rev 001.004 p.1: 13.9 +-0.1 to the push-button t]
+   L-BT    x  20.29- 35.80  y   8.18- 20.78  h 5.00 mm   [Eaton catalogue listing 13.8 x 12.9 x 5.0 mm (web); TODO(verify: Eaton]
+   L-FC    x  21.05- 36.56  y  77.01- 89.61  h 5.00 mm   [Eaton catalogue listing 13.8 x 12.9 x 5.0 mm (web); TODO(verify: Eaton]
+   REG-5V  x  50.97- 62.31  y  36.87- 54.51  h 4.83 mm   [IPC-7351 package name (LM1084 KTT TO-263)]
+   J1      x  83.06- 88.64  y  31.29- 93.17  h unknown   [TODO(measure): Amphenol 87606-324LF body height (vendor drawing not re]
+   J3      x  84.58-109.98  y  22.75- 27.83  h unknown   [TODO(verify: Wurth 61302021821 drawing) receptacle height]
+   U$1     x  88.39-106.17  y  31.50- 93.73  h unknown   [TODO(measure): Teensy 4.1 on PREC024SAAN-RC headers, seated top height]
+   CAL     x  99.78-110.53  y   7.90- 21.74  h unknown   [TODO(verify: Panasonic EEE-FN1V471UP, FN G case); 53 mm away]
+   J2      x 105.92-111.50  y  31.29- 93.17  h unknown   [TODO(measure): Amphenol 87606-324LF body height (vendor drawing not re]
+   J-M     x 113.33-127.28  y   1.78- 17.52  h 21.70 mm   [TB005-762_CUI.pdf p.2, body height 21.70]
+   U-SNT   x 113.82-116.82  y  19.89- 23.29  h unknown   [TODO(verify: TL431 DBZ outline); 66 mm away, not used]
+   R-SHUNT x 115.04-128.81  y  23.84- 96.56  h unknown   [TODO(verify: Yageo SQP20A drawing); 68 mm away]
+   free x-span between the terminal-block rear faces (x 17.48) and J1 (x 83.06): 65.58 mm vs EVM 88.90 mm
+   J1 + U$1 (Teensy) span y 31.29-93.73: MB depth outside it = 31.29 mm (low side), 4.32 mm (high side)
+   best placement covering no TB005 block (21.70 mm), J-NTC (13.90 mm) or unmeasured J1/J2/J3/U$1: 10.4 % of the EVM over the MB, at x -5.9-83.0, y 88.1-177.0
+   over J1/J2 the EVM underside must clear h_J1 + 5.08 mm (TSW-101-07 body + tail above the receptacle) + heat-shrink + wire bend; EVM top = that + 0.5 clearance + t_EVM (TODO, 1.6 assumed) + 13.0 (ED120 blocks, On-Shore) = h_J1 + 20.2 mm
+
+======================================================================================================================
+2. r7 CR outline: footprint + +y band + lane/strip around L-FC + head at the MB +y edge (+ optional tongue)
+======================================================================================================================
+   L-FC bbox x 21.05-36.56 y 77.01-89.61 (5.0 mm, Eaton listing, TODO(verify)); OP-FC x 40.22-45.12 y 67.30-75.28 (1.75 mm)
+   A footprint (r6)         x  17.70- 48.70  y  34.14- 67.14    31.0 x 33.00 = 1023.0 mm2
+   B +y band                x  17.70- 48.70  y  67.14- 76.51    31.0 x  9.37 =  290.5 mm2
+   C lane (right of L-FC)   x  37.06- 48.70  y  76.51- 90.11    11.6 x 13.60 =  158.2 mm2
+   D strip (left of L-FC)   x  17.70- 20.55  y  76.51- 90.11     2.9 x 13.60 =   38.8 mm2
+   E head (MB +y edge)      x  10.00- 48.70  y  90.11- 98.04    38.7 x  7.93 =  307.0 mm2
+   F tongue (off-board)     x  10.00- 48.70  y  98.04-110.04    38.7 x 12.00 =  464.4 mm2
+   method check: footprint alone 1023 mm2 outline, 730 mm2 strict usable (stackup_area.py strict basis 732 mm2, chamfer 1.1 mm2 not modelled)
+   V1 footprint + B (no edge reach)                   outline   1313 mm2 (+ 290), strict usable top   1013 mm2 (+ 283)
+   V2 ring + head to the MB edge (t = 0)              outline   1798 mm2 (+ 775), strict usable top   1412 mm2 (+ 682)
+   V3a ring + head + tongue t = 8 mm                  outline   2127 mm2 (+1104), strict usable top   1733 mm2 (+1003)
+   V3 ring + head + tongue t = 12 mm                  outline   2280 mm2 (+1257), strict usable top   1882 mm2 (+1151)
+   V4 = V3 + +x core (x 48.70-65.00, y 55.01-67.14)   outline   2478 mm2 (+1455), strict usable top   2069 mm2 (+1339)
+   merged demand 1398 mm2 (stackup booking) - 26.1 deleted (R176/R177, R130-R132) = 1372; - DNP footprints 87 = 1285; - optional R264/R265 8.7
+   V1 footprint + B (no edge reach)                   single-sided U 135 % (no DNP 127 %); double-sided top U  92 % (r3 bottom set 435 mm2 kept on the footprint bottom)
+   V2 ring + head to the MB edge (t = 0)              single-sided U  97 % (no DNP  91 %); double-sided top U  66 % (r3 bottom set 435 mm2 kept on the footprint bottom)
+   V3a ring + head + tongue t = 8 mm                  single-sided U  79 % (no DNP  74 %); double-sided top U  54 % (r3 bottom set 435 mm2 kept on the footprint bottom)
+   V3 ring + head + tongue t = 12 mm                  single-sided U  73 % (no DNP  68 %); double-sided top U  50 % (r3 bottom set 435 mm2 kept on the footprint bottom)
+   V4 = V3 + +x core (x 48.70-65.00, y 55.01-67.14)   single-sided U  66 % (no DNP  62 %); double-sided top U  45 % (r3 bottom set 435 mm2 kept on the footprint bottom)
+   budget U4 = 0.75 (0.70-0.80 swept in stackup_area.py)
+   island region t = 0 (head x 10.0-43.8): usable 212 mm2 vs EIB section 246 mm2 courtyard (198 parts + 48 E pads) / 0.70 = 351 mm2 -> does not fit (short 140 mm2)
+   island region t = 8 (off-board tongue only, x 10.0-48.7): usable 264 mm2 vs EIB section 246 mm2 courtyard (198 parts + 48 E pads) / 0.70 = 351 mm2 -> does not fit (short 88 mm2)
+   island region t = 12 (off-board tongue only, x 10.0-48.7): usable 413 mm2 vs EIB section 246 mm2 courtyard (198 parts + 48 E pads) / 0.70 = 351 mm2 -> fits
+
+======================================================================================================================
+3. MB parts and copper under each extension region (body 2.54 mm seated on the 0.125 mm sheet: CR underside 2.665 mm)
+======================================================================================================================
+   B +y band parts: OP-FC 1.75 (air 0.92), MDAC-FC 1.10 (air 1.56), RD2-FC 0.60 (air 2.06), RINJ-FC 0.60 (air 2.06), ROP1-FC 0.60 (air 2.06), ROP2-FC 0.60 (air 2.06)
+     copper (non-GND): VDROOP-FC L1 trace 0.254 10.1 mm; N$8 L1 trace 0.254 9.9 mm; N$7 L1 trace 0.254 8.2 mm; 3V3 L1 trace 0.254 4.3 mm; 3V3 L16 trace 0.254 2.8 mm; CS-MDAC-FC L1 trace 0.254 0.8 mm; MISO L1 trace 0.254 0.8 mm; vias 6 (all tented, mlViaStopLimit 9999mil)
+   C lane (right of L-FC) parts: C4A-FC 1.35 (air 1.31), C4B-FC 1.35 (air 1.31), C3-FC 1.10 (air 1.56), REG-FC 1.00 (air 1.67), C2-FC 0.85 (air 1.81), C5-FC 0.85 (air 1.81), C6-FC 0.85 (air 1.81), CC-FC 0.85 (air 1.81), RC-FC 0.60 (air 2.06), RD1-FC 0.60 (air 2.06), RD2-FC 0.60 (air 2.06), RINJ-FC 0.60 (air 2.06), ROP2-FC 0.60 (air 2.06)
+     copper (non-GND): VSW-FC L1 pour 22.1 mm2; VOUT-FC L1 pour 14.8 mm2; VFB-FC L1 trace 0.254 14.0 mm; VOUT-FC L16 trace 0.254 8.0 mm; FC-V L16 trace 0.254 5.8 mm; EN-REG-FC L16 trace 0.254 5.0 mm; N$3 L1 trace 0.254 4.3 mm; VOUT-FC L1 trace 0.254 4.1 mm; VSW-FC L1 trace 0.254 3.5 mm; VDROOP-FC L1 trace 0.254 3.1 mm; N$2 L1 trace 0.254 2.7 mm; VCOMP-FC L1 trace 0.254 2.3 mm; N$4 L1 trace 0.254 1.9 mm; VFC L1 trace 0.305 1.7 mm; VFC L1 pour 1.7 mm2; VSW-FC L1 trace 0.406 1.5 mm; EN-REG-FC L1 trace 0.254 1.3 mm; N$8 L1 trace 0.254 0.9 mm; vias 10 (all tented, mlViaStopLimit 9999mil); SWITCH NODE VSW-FC
+   D strip (left of L-FC) parts: C1-FC 1.10 (air 1.56)
+     copper (non-GND): VFC L1 pour 21.8 mm2; VFC L1 trace 0.305 11.9 mm; vias 0 (all tented, mlViaStopLimit 9999mil)
+   E head (MB +y edge) parts: C4A-FC 1.35 (air 1.31), C4B-FC 1.35 (air 1.31), C2-FC 0.85 (air 1.81), R1-FC 0.60 (air 2.06), R2-FC 0.60 (air 2.06)
+     copper (non-GND): FC-V L1 trace 0.254 13.8 mm; VFC L1 trace 0.305 11.5 mm; VFC L1 trace 0.406 3.8 mm; FC-V L16 trace 0.254 2.6 mm; FC-V L1 trace 0.406 1.7 mm; VOUT-FC L1 pour 0.6 mm2; vias 6 (all tented, mlViaStopLimit 9999mil)
+   F tongue (off-board): off-board (no MB copper or part); enclosure clearance TODO(measure, M2)
+
+======================================================================================================================
+4. Head support spots (4 x 4 mm foot: no part body + 0.25 mm, no via; DRILL: also 3.0 mm from non-GND copper)
+======================================================================================================================
+   FOOT                    904 of 1946 grid points; x range 12.00-46.50; leftmost (12.00, 92.11), rightmost (46.50, 95.11)
+   FOOT off power copper   746 of 1946 grid points; x range 12.00-46.50; leftmost (12.00, 92.11), rightmost (46.50, 95.11)
+   DRILL (GND only)        726 of 1946 grid points; x range 12.00-46.50; leftmost (12.00, 92.11), rightmost (46.50, 95.11)
+   candidate (14.0, 94.0): FOOT True, off power copper True, DRILL True
+   candidate (35.5, 95.5): FOOT True, off power copper True, DRILL True
+   candidate (38.0, 95.0): FOOT True, off power copper True, DRILL True
+   candidate (16.0, 95.5): FOOT True, off power copper True, DRILL True
+
+======================================================================================================================
+5. Clearances: island / E-pad row to switching parts, LM1084 5V pour, C4A-FC
+======================================================================================================================
+   island on the head (t = 0, rejected) x 10.0-43.8, y 90.11-97.54: to L-FC 0.5, REG-FC 2.1, C4A-FC 1.0, C2-FC 0.0 mm; VSW-FC pour 2.6 mm
+   island on the tongue (chosen) x 10.0-48.7, y 98.04-110.04: to L-FC 8.4, REG-FC 10.0, C4A-FC 5.3, C2-FC 7.4 mm; VSW-FC pour 10.5 mm
+   island to 5V pour: 43.5 mm (merge condition 8 / H.4 thermal basis; mb_mechanical Table 4: 20 mm -> 1.4-6.3 C)
+   L-FC    bbox gap to the island   8.4 mm; to the E-pad row (y 96.29)   6.7 mm
+   REG-FC  bbox gap to the island  10.0 mm; to the E-pad row (y 96.29)   8.2 mm
+   C4A-FC  bbox gap to the island   5.3 mm; to the E-pad row (y 96.29)   3.6 mm
+   C4B-FC  bbox gap to the island   5.3 mm; to the E-pad row (y 96.29)   3.6 mm
+   C2-FC   bbox gap to the island   7.4 mm; to the E-pad row (y 96.29)   5.7 mm
+   C5-FC   bbox gap to the island   9.9 mm; to the E-pad row (y 96.29)   8.2 mm
+   L-BT    bbox gap to the island  77.3 mm; to the E-pad row (y 96.29)  75.5 mm
+   REG-BT  bbox gap to the island  75.5 mm; to the E-pad row (y 96.29)  73.8 mm
+   REG-5V  bbox gap to the island  43.6 mm; to the E-pad row (y 96.29)  41.8 mm
+   VSW-FC pour (L1) vertex nearest the island: 10.5 mm
+   VSW-BT pour (L1) vertex nearest the island: 75.0 mm
+
+======================================================================================================================
+6. Pin-field load and extension resonance (ORDER OF MAGNITUDE; beam FE along y; assumptions as mb_pinload.py)
+======================================================================================================================
+   widths: B band 31.0 mm (y 67.14-76.51), ring arms 14.49 mm (lane 11.64 + strip 2.85), head 38.7 mm, tongue 38.7 mm
+   t  0.0 mm, part-mass factor 1: f1   714 Hz unpropped (clamped at y 64.48),  4335 Hz with the head feet at y 94.5
+   t  0.0 mm, part-mass factor 2: f1   505 Hz unpropped (clamped at y 64.48),  3066 Hz with the head feet at y 94.5
+   t  8.0 mm, part-mass factor 1: f1   406 Hz unpropped (clamped at y 64.48),  2461 Hz with the head feet at y 94.5
+   t  8.0 mm, part-mass factor 2: f1   287 Hz unpropped (clamped at y 64.48),  1740 Hz with the head feet at y 94.5
+   t 12.0 mm, part-mass factor 1: f1   330 Hz unpropped (clamped at y 64.48),  1638 Hz with the head feet at y 94.5
+   t 12.0 mm, part-mass factor 2: f1   233 Hz unpropped (clamped at y 64.48),  1158 Hz with the head feet at y 94.5
+   t 12, main  5 g, ext 0.6 g/cm2 (ext 8.1 g), no feet, 30 g: worst pin 1.060 N (upper bound); feet reaction 0.000 N
+   t 12, main  5 g, ext 0.6 g/cm2 (ext 8.1 g), feet   , 30 g: worst pin 0.140 N (upper bound); feet reaction 1.973 N
+   t 12, main  5 g, ext 0.8 g/cm2 (ext 10.7 g), no feet, 30 g: worst pin 1.391 N (upper bound); feet reaction 0.000 N
+   t 12, main  5 g, ext 0.8 g/cm2 (ext 10.7 g), feet   , 30 g: worst pin 0.165 N (upper bound); feet reaction 2.630 N
+   t 12, main 10 g, ext 0.6 g/cm2 (ext 8.1 g), no feet, 30 g: worst pin 1.127 N (upper bound); feet reaction 0.000 N
+   t 12, main 10 g, ext 0.6 g/cm2 (ext 8.1 g), feet   , 30 g: worst pin 0.207 N (upper bound); feet reaction 1.973 N
+   t 12, main 10 g, ext 0.8 g/cm2 (ext 10.7 g), no feet, 30 g: worst pin 1.458 N (upper bound); feet reaction 0.000 N
+   t 12, main 10 g, ext 0.8 g/cm2 (ext 10.7 g), feet   , 30 g: worst pin 0.232 N (upper bound); feet reaction 2.630 N
+   reference (mb_mechanical Table 6): r6 CR alone 0.067-0.134 N/pin at 30 g; +x usable 0.196-0.305 N unsupported; pin section ~141 N at an assumed 345 MPa yield
+
+======================================================================================================================
+7. EVM on the chassis beside the MB +y edge: rotation, offset, lead lengths
+======================================================================================================================
+   Teensy 4.1 USB end (package text 'USB', x -33.02..-27.31 -> board y 93.73, x 93.47-101.09): the USB plug exits +y; the EVM keeps x <= 93.5 - 5 mm
+   EVM edge facing the MB = right  t  0.0: X0  -26.0, row E8 x 47.19 (EVM x -26.0-62.9); E8/E3/E4/E2 14/16/20/24; E7 30; E6/E5/E1 49/50/65; W1/W2 124/124; W3/W4 69/56; W7 126 mm (straight, horizontal, gap 5 mm)
+   EVM edge facing the MB = right  t 12.0: X0  -26.0, row E8 x 47.19 (EVM x -26.0-62.9); E8/E3/E4/E2 13/16/20/24; E7 29; E6/E5/E1 48/50/64; W1/W2 136/136; W3/W4 80/68; W7 137 mm (straight, horizontal, gap 5 mm)
+   EVM edge facing the MB = top    t  0.0: X0   88.0, row E8 x 39.19 (EVM x -0.9-88.0); E8/E3/E4/E2 38/41/36/33; E7 36; E6/E5/E1 70/78/90; W1/W2 95/92; W3/W4 124/104; W7 135 mm (straight, horizontal, gap 5 mm)
+   EVM edge facing the MB = top    t 12.0: X0   88.0, row E8 x 39.19 (EVM x -0.9-88.0); E8/E3/E4/E2 38/41/36/33; E7 36; E6/E5/E1 70/77/90; W1/W2 105/102; W3/W4 136/116; W7 146 mm (straight, horizontal, gap 5 mm)
+   EVM edge facing the MB = bottom t  0.0: X0  -33.0, row E8 x 47.19 (EVM x -33.0-55.9); E8/E3/E4/E2 86/70/72/72; E7 66; E6/E5/E1 34/27/24; W1/W2 109/112; W3/W4 86/86; W7 68 mm (straight, horizontal, gap 5 mm)
+   EVM edge facing the MB = bottom t 12.0: X0  -33.0, row E8 x 47.19 (EVM x -33.0-55.9); E8/E3/E4/E2 85/70/71/71; E7 66; E6/E5/E1 33/26/24; W1/W2 119/122; W3/W4 97/97; W7 77 mm (straight, horizontal, gap 5 mm)
+   EVM edge facing the MB = left   t  0.0: X0   88.0, row E8 x 39.19 (EVM x -0.9-88.0); E8/E3/E4/E2 95/87/82/78; E7 73; E6/E5/E1 75/81/78; W1/W2 49/49; W3/W4 146/133; W7 83 mm (straight, horizontal, gap 5 mm)
+   EVM edge facing the MB = left   t 12.0: X0   88.0, row E8 x 39.19 (EVM x -0.9-88.0); E8/E3/E4/E2 95/87/82/78; E7 72; E6/E5/E1 74/81/78; W1/W2 61/61; W3/W4 157/145; W7 92 mm (straight, horizontal, gap 5 mm)
+   constrained case (EVM kept inside the MB x-range, X0 >= -0.5): X0 -0.5, row E8 at x 47.19; E8/E3/E4/E2 34/26/32/36; E7 40; E6/E5/E1 41/40/56; W1/W2 138/139; W3/W4 76/67 mm
+
+   CHOSEN: EVM right edge (J5, TP33/TP49 cluster) facing the MB, tongue t = 12 mm, X0 = -26.0, E8 pad at x 47.19
+     J5p1    EVM ( 82.49,  24.19) -> board (  -1.81,  121.46)
+     J5p3    EVM ( 82.49,  34.35) -> board (   8.35,  121.46)
+     TP49    EVM ( 83.44,  79.12) -> board (  53.12,  120.50)
+     TP33    EVM ( 80.01,  63.50) -> board (  37.50,  123.93)
+     JP21p1  EVM ( 75.31,  64.77) -> board (  38.77,  128.63)
+     JP14p2  EVM ( 71.38,  64.77) -> board (  38.77,  132.57)
+     TP38    EVM ( 66.04,  59.69) -> board (  33.69,  137.90)
+     JP17p1  EVM ( 54.61,  26.80) -> board (   0.80,  149.33)
+     TP36    EVM ( 55.87,  19.71) -> board (  -6.29,  148.07)
+     JP12p1  EVM ( 39.37,  13.74) -> board ( -12.26,  164.57)
+     J1p2    EVM (  6.60,  50.80) -> board (  24.80,  197.34)
+     J1p1    EVM (  6.60,  55.88) -> board (  29.88,  197.34)
+     J8p2    EVM ( 18.03,   5.95) -> board ( -20.05,  185.91)
+     L2      EVM ( 47.37,  53.21) -> board (  27.21,  156.57)
+     U1      EVM ( 47.50,  42.04) -> board (  16.04,  156.44)
+     EVM outline on the chassis: x -26.00-62.90, y 115.04-203.94 (gap 5 mm to the tongue tip); J5 wire face at y 117.45 facing -y; J1 wire face at y 201.34 facing +y; J8 mates from -x (pins to x -32.24)
+     E-pad row (SMT 1.5 x 1.5 mm, 2.54 mm pitch) on the tongue edge y 108.79: E8 x 47.19, E3 x 42.11, E4 x 39.57, E2 x 37.03, E7 x 31.95, E6 x 26.87, E5 x 24.33, E1 x 19.25
+     lead target  | g  5 dz  +0: straight / r3 max / r7 max | g  5 dz +10: straight / r3 max / r7 max | g 15 dz +10: straight / r3 max / r7 max
+     E8   TP49    |  13.1 /  20 /  30 |  16.5 /  25 /  40 |  24.6 /  35 /  50   (r6 max 20)
+     E3   TP33    |  15.8 /  20 /  30 |  18.7 /  25 /  40 |  27.4 /  35 /  55   (r6 max 25)
+     E4   JP21p1  |  19.9 /  25 /  35 |  22.2 /  30 /  45 |  31.5 /  40 /  60   (r6 max 30)
+     E2   JP14p2  |  23.8 /  30 /  40 |  25.9 /  35 /  50 |  35.3 /  45 /  65   (r6 max 35)
+     E7   TP38    |  29.2 /  40 /  50 |  30.8 /  40 /  60 |  40.4 /  55 /  70   (r6 max 40)
+     E1   JP12p1  |  64.1 /  85 /  95 |  64.8 /  85 / 105 |  73.6 /  95 / 115   (r6 max 90)
+     E5   TP36    |  49.8 /  65 /  75 |  50.8 /  65 /  85 |  58.9 /  75 /  95   (r6 max 65)
+     E6   JP17p1  |  48.2 /  65 /  75 |  49.2 /  65 /  85 |  57.7 /  75 /  95   (r6 max 60)
+     W1   J1p2    | 136.3 / 175 / 185 | 136.6 / 175 / 195 | 146.6 / 185 / 205   (r6 max 300)
+     W2   J1p1    | 136.2 / 175 / 185 | 136.5 / 175 / 195 | 146.5 / 185 / 205   (r6 max 300)
+     W3   J5p1    |  80.4 / 105 / 115 |  81.0 / 105 / 125 |  90.5 / 115 / 135   (r6 max 300)
+     W4   J5p3    |  67.8 /  85 /  95 |  68.5 /  90 / 105 |  78.2 / 100 / 120   (r6 max 300)
+     W7   J8p2    | 137.5 / 175 / 185 | 137.8 / 175 / 195 | 147.2 / 185 / 205   (r6 max 300)
+   r3 rule = straight 3-D x 1.25 rounded up to 5 mm; r7 rule = 1.25 x horizontal + |dz| + 10 mm service loop, rounded up
+
+======================================================================================================================
+8. Pickup checks for the length-critical leads (eib_merge_calc.py dipole model; budgets E3 75 / E4 48 / E6 159 mV)
+======================================================================================================================
+   t 0: row y 96.29, L-FC centre (28.8, 83.3) 13.0 mm away; lead pair s 5 mm, 60 mm run: 0.4-4.0 mV sustained
+   t 0: row y 96.29, L-FC centre (28.8, 83.3) 13.0 mm away; lead pair s 2 mm, 60 mm run: 0.2-1.6 mV sustained
+   t 12: row y 108.79, L-FC centre (28.8, 83.3) 25.5 mm away; lead pair s 5 mm, 60 mm run: 0.1-0.9 mV sustained
+   t 12: row y 108.79, L-FC centre (28.8, 83.3) 25.5 mm away; lead pair s 2 mm, 60 mm run: 0.0-0.3 mV sustained
+   di/dt bound 7.27 A/us = 16.0 V / 2.2 uH; the E-leads leave the row in +y, away from L-FC, so this is an upper bound
+   W1-W4 pairs: DC + ms steps (class A, 1 A/us): merge-note Table 9 limits E3 925 / E4 588 / E6 1957 mm at 10 mm
+
+======================================================================================================================
+9. W-lead resistance (20 AWG 33.3 mOhm/m, 18 AWG 20.9 mOhm/m: the values implied by H.11 20.0 / 12.6 mOhm at 0.30 m)
+======================================================================================================================
+   W1/W2 input    r6 0.30 m: 20.0 mOhm; r7 build max 195 mm: 13.0 mOhm (-7.0); at 1.80 A: 65 -> 42 mW
+   W3/W4 battery  r6 0.30 m: 12.5 mOhm; r7 build max 125 mm: 5.2 mOhm (-7.3); at 3.21 A: 129 -> 54 mW
+   R_PATH_RG (H.19) 0.117-0.193 ohm includes W1/W2 20 mOhm -> 0.110-0.186 ohm; warm budget numerator (20.5 - 19.38 - 1.1 x R_max) rises by 7.7 mV (H.7, regen-armed cruise)
+
+======================================================================================================================
+10. Header stack-up and height envelope
+======================================================================================================================
+   TSW-1xx-07-G-S: body 2.54; CR end (B 2.54) through the CR 1.6 -> 0.94 mm above the CR top (fillet); MB end (C 5.84) through sheet 0.125 + MB 1.6 -> 4.12 mm below the MB before the PM4 cut to <= 1.0 mm
+   CR underside 2.665 mm above the MB top (foot height under the head, where no sheet lies); CR top 4.265 mm
+   air over OP-FC 0.92 mm, over C4A-FC 1.31 mm, over MDAC-FC 1.56 mm, over REG-FC 1.67 mm (T-A-06 criterion >= 0.3 mm)
+   L-FC top 5.0 mm stands 0.73 mm above the CR top inside the window; Ag105 nominal envelope 2.54 + 1.60 + 9 = 13.14 mm
+
+======================================================================================================================
+11. Routed W leads (waypoints; dressing corridors keep W pairs off the island and apart from the E leads)
+======================================================================================================================
+   W1 -> J1 pin 2 (VIN1)              routed 205.7 mm in plan; build max 230 mm (+ dz 10 + loop 10, rounded up; r6 max 300 mm)  via (45.0,92.0) (52.0,97.0) (66.9,115.0) (66.9,206.9) (24.8,206.9)
+   W2 -> J1 pin 1 (PGND)              routed 201.9 mm in plan; build max 225 mm (+ dz 10 + loop 10, rounded up; r6 max 300 mm)  via (45.0,92.0) (52.0,97.0) (66.9,115.0) (66.9,206.9) (29.9,206.9)
+   W3 -> J5 pin 1 (BATTERY)           routed  80.6 mm in plan; build max 105 mm (+ dz 10 + loop 10, rounded up; r6 max 300 mm)  via (19.1,70.0) (19.1,90.0) (9.0,97.0)
+   W4 -> J5 pin 3 (PGND)              routed  68.1 mm in plan; build max  90 mm (+ dz 10 + loop 10, rounded up; r6 max 300 mm)  via (19.1,70.0) (19.1,90.0) (9.0,97.0)
+   W7 -> J8 pins 2/3 (pin tips)       routed 162.6 mm in plan; build max 185 mm (+ dz 10 + loop 10, rounded up; r6 max 300 mm)  via (19.1,70.0) (19.1,90.0) (9.0,97.0) (-34.2,125.0) (-34.2,185.9)
+   W6 -> J7 pin 1 (only with an NTC)  routed 113.3 mm in plan; build max 135 mm (+ dz 10 + loop 10, rounded up; r6 max 300 mm)  via (19.1,70.0) (19.1,90.0) (9.0,97.0) (-26.2,130.0) (-26.2,141.1)
+   J8: the KK 254 housing body beyond the pin tips is not in the library (TODO(verify: Molex 22-01-3047 drawing)); W7 ends at the pin tips
+   E-lead corridor: from the tongue edge (y 110.04) straight +y to the EVM; W3/W4/W6/W7 leave the CR at x < 10 (left of the tongue), W1/W2 at x > 48.7 (right of it), so no W pair crosses the island or runs with an E lead
+   figure: work/r7_evm_on_cr_map.png
+
+======================================================================================================================
+12. H.11 / H.19 with the routed build maxima (20 AWG 33.3 mOhm/m, 18 AWG 20.9 mOhm/m)
+======================================================================================================================
+   W1/W2 pair 0.455 m of conductor: 15.2 mOhm (r6 20.0); 49 mW at 1.80 A (r6 65)
+   W3/W4 pair 0.195 m of conductor: 4.1 mOhm (r6 12.5); 42 mW at 3.21 A (r6 129)
+   R_PATH_RG (H.19) 0.117-0.193 ohm -> 0.112-0.188 ohm; H.7 warm-budget numerator (20.5 - 19.38 - 1.1 x R_max) +5.3 mV
+   island minimum tongue for 351 mm2 (linear between t 8 -> 264 and t 12 -> 413 mm2): 10.3 mm
+   L-FC    gap to the t = 12 E-pad row (y 108.79): 19.2 mm
+   REG-FC  gap to the t = 12 E-pad row (y 108.79): 20.7 mm
+   C4A-FC  gap to the t = 12 E-pad row (y 108.79): 16.1 mm

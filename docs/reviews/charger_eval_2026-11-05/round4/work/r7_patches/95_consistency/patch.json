@@ -1,0 +1,230 @@
+{
+ "group": "consistency",
+ "edits": [
+  {
+   "old": "per-column pin count (10 and 12); spacer dry fit; calipers on OP-FC and J-NTC/J-BL heights;",
+   "new": "per-column pin count (10 and 12); spacer dry fit (**superseded in r7:** no spacer, the TSW body seats on the sheet, H.23(j); the r7 dry fit of both tabs is item (8) below); calipers on OP-FC and J-NTC/J-BL heights (**superseded in r7:** the conditional overhang they served is retired, A.7; MS3 measures the L-FC body, T-A-08);",
+   "note": "I T-A-06 test column: spacer and overhang-height checks unmarked although r7 has no spacer and no overhang"
+  },
+  {
+   "old": "fix the capture; overhang only per A.7; re-run r5",
+   "new": "fix the capture; overhang only per A.7 (**superseded in r7:** no overhang; an outline fix trims a tab and re-runs `round4/calc/r7_calc.py`, below); re-run r5",
+   "note": "I T-A-06 fail column: live pointer to the superseded A.7 overhang bullet"
+  },
+  {
+   "old": "From here on the CR is handled with the 0.30 m leads attached.",
+   "new": "From here on the CR is handled with the 0.30 m leads attached (**r7:** the W1-W4 leads at their A.3 build maxima, that is the 0.30 m caps until MS2 and the route-rule maxima after it).",
+   "note": "D.1 PM4 (2b): r7 W leads are cut to the A.3 build maxima, not always 0.30 m"
+  },
+  {
+   "old": "U104 divider bottom routed to the F10 (T9) hole and to R143 only",
+   "new": "U104 divider bottom routed to the F10 (T9) pad (top-side SMT, no hole since r3; r7: residual row at (31.52, 35.80)) and to R143 only",
+   "note": "A.8 Analog: F10 is an SMT pad, not a hole"
+  },
+  {
+   "old": "before the W leads and the\n  tap wires are fitted (PM4 order: 22 MB joints, inspection, FT1/FT2 beds, cure, then W1-W7 and the taps).",
+   "new": "before the W1-W4 leads are dressed and before W5-W7 and the\n  tap wires are fitted (PM4 order: W1-W4 joints in step (2b) before seating, 22 MB joints, inspection, FT1/FT2 beds, cure, then the W1-W4 dressing, W5-W7 and the taps).",
+   "note": "A.7 foot bedding: PM4 order contradicted D.1 PM4 (2b)/(2c), r7-16, T-F-12"
+  },
+  {
+   "old": "The +y side of FT2\n  lies behind the L-FC body, so FT2 is bedded through a 1.0 mm NPTH fill hole through tab Y and the foot at the foot centre\n  (28.00, 73.250), injected from the CR top with a blunt needle.",
+   "new": "The +y side of FT2\n  lies behind the L-FC body, so FT2 is bedded through a 1.0 mm NPTH fill hole at the foot centre (28.00, 73.250). The hole\n  passes through tab Y and the foot, and the RTV is injected from the CR top with a blunt needle.",
+   "note": "A.7 foot bedding: dangling participle, sentence length"
+  },
+  {
+   "old": "**r7:** T-A-08 (the pre-capture survey MS1-MS7) gates PM0",
+   "new": "**r7:** T-A-08 (the pre-capture survey MS1-MS8; its MS1 part gates PM1) gates PM0",
+   "note": "D.1 PM0: survey is MS1-MS8 everywhere else (merged from three sweeps)"
+  },
+  {
+   "old": "| PM4 unchanged; gate D-2 (MS1);",
+   "new": "| PM4 header orientation and post option unchanged; gate D-2 (MS1);",
+   "note": "H.23(j): r7 does change PM4 (steps 2c, 5, 6); only the header orientation and post option stay"
+  },
+  {
+   "old": "| `work/evm_geometry.md` | EVM outline, mounting provisions (fiducials, bumpons), connector, test-point and JP21 positions from the SLUUCB5E rev E vector figures |",
+   "new": "| `work/evm_geometry.md` | EVM outline, mounting provisions (fiducials, bumpons), connector, test-point and JP21 positions from the SLUUCB5E rev E vector figures |\n| `work/evm_calc/evm_geom.py` (+ `evm_geom_out.txt`) | Extraction of the EVM positions from the SLUUCB5E rev E vector layer figures (Figs 4-1 to 4-4) with a per-axis scale calibration; source of `work/evm_geometry.md` and of the A.5 and H.23(k) EVM positions |",
+   "note": "Supporting files: K cites round4/work/evm_calc/evm_geom.py, the round-4 table did not list it"
+  },
+  {
+   "old": "the tie sits 29.744 mm from the tab X top edge (margin 0.256 mm).",
+   "new": "the tie sits 29.744 mm from the tab X top edge where a lead crosses at x <= 65.00 (margin 0.256 mm) and 29.98 mm from the tab X corner (65.00, 68.30) where W3, W4 and W5 cross at x 68.75 at the reference placement (margin 0.02 mm).",
+   "note": "A.3: r7_calc H.23(l) gives 29.98 mm for W3/W4/W5; the x <= 68.91 limit comes from the corner distance"
+  },
+  {
+   "old": "The chassis tie at\n  the MB +y edge lies 29.744 mm from the tab X top edge (<= 30 mm, A.3).",
+   "new": "The chassis tie at\n  the MB +y edge lies 29.744 mm from the tab X top edge, and 29.98 mm from its corner (65.00, 68.30) for W3, W4 and W5,\n  which cross at x 68.75 (<= 30 mm, A.3).",
+   "note": "A.7 EVM reference placement: same single-value chassis tie as A.3 (integrator addition)"
+  },
+  {
+   "old": "chassis tie 29.744 mm from the tab X top edge to the MB +y edge (<= 30 mm, margin 0.256 mm)",
+   "new": "chassis tie 29.744 mm from the tab X top edge to the MB +y edge (<= 30 mm, margin 0.256 mm) for the leads crossing at x <= 65.00 (W1, W2, W6, W7); W3, W4 and W5 cross at x 68.75, 29.98 mm from the tab X corner (65.00, 68.30) (margin 0.02 mm)",
+   "note": "H.23(l) W-lead row: chassis tie per r7_calc_out.txt"
+  },
+  {
+   "old": "Grid rows 1-2 and R175 lie inside the thermal band (A.7)",
+   "new": "Grid row 1, part of row 2 and part of the R175 courtyard lie inside the thermal band (A.7)",
+   "note": "A.4: row 2 (4.773-7.808 mm) and R175 (5.511-10.408 mm) cross the 6.4 mm boundary; matches A.7"
+  },
+  {
+   "old": "inside the band: the tab X low edge (0.343 mm), tap rows 1 and 2 (nearest 2.233 and 4.773 mm), the R175 courtyard (5.511-10.408 mm)",
+   "new": "inside the band: the tab X low edge (0.343-3.399 mm) and tap row 1 (2.233-4.190 mm); crossing the band boundary: tap row 2 (4.773-7.808 mm) and the R175 courtyard (5.511-10.408 mm)",
+   "note": "H.23(h): row 2 and R175 cross the boundary; matches A.7"
+  },
+  {
+   "old": "(core + reference, REF-3, FCC_ON and RGN_ON dividers and tap capacitors)",
+   "new": "(core + reference, REF/3, FCC_ON and RGN_ON dividers and tap capacitors)",
+   "note": "A.8 table: REF/3 is the document spelling"
+  },
+  {
+   "old": "(bed 6.40 mm2, placement tolerance 0.294 mm)",
+   "new": "(bed 6.40 mm², placement tolerance 0.294 mm)",
+   "note": "J.2 item 58: unit notation"
+  },
+  {
+   "old": "the r7 outline = that r6 rectangle + **tab X** toward the Teensy (x 48.70-65.00, y 56.30-68.30) + **tab Y** toward L-FC",
+   "new": "the r7 outline = that r6 rectangle + tab X toward the Teensy (x 48.70-65.00, y 56.30-68.30) + tab Y toward L-FC",
+   "note": "A.1: coined terms are bolded at their A.7 definition only"
+  },
+  {
+   "old": "After MS2, the route-rule maxima become the build maxima. The route rule (A.7) sets the build maximum to 1.25 x the routed length (CR pad, tab X, MB +y edge, terminal approach on its wire-entry side, terminal), rounded up to 10 mm.",
+   "new": "The **route rule** sets the build maximum of a W lead to 1.25 x its routed length (CR pad, tab X, MB +y edge, terminal approach on its wire-entry side, terminal), rounded up to 10 mm. After MS2, the route-rule maxima become the build maxima.",
+   "note": "A.3: route rule is defined here, not in A.7; define before use, bold the coined term"
+  },
+  {
+   "old": "The table below gives the route-rule figures for the reference placement and for corridor fallback (i) (EVM and EIB shifted 27.03 mm toward -x; it needs 45.3 mm of chassis room past the MB -x edge, A.7).",
+   "new": "The table below gives the route-rule figures for the reference placement and for corridor fallback (i), in which the EVM and the EIB shift 27.03 mm toward -x (45.3 mm of chassis room past the MB -x edge, A.7).",
+   "note": "A.3: nested parentheticals, sentence length"
+  },
+  {
+   "old": "At 0.30 m each, the H.11 basis, the pairs have 19.99 mOhm and 12.57 mOhm.",
+   "new": "At the 0.30 m caps used in H.11, the pairs have 19.99 mOhm and 12.57 mOhm.",
+   "note": "A.3: awkward appositive"
+  },
+  {
+   "old": "in the EVM frame of `work/evm_geometry.md` Table 1",
+   "new": "in the EVM frame of `round4/work/evm_geometry.md` Table 1",
+   "note": "A.5: body cites work notes as round4/work/..."
+  },
+  {
+   "old": "high (`work/evm_geometry.md` 7.1)",
+   "new": "high (`round4/work/evm_geometry.md` section 7.1)",
+   "note": "A.5: path and section wording"
+  },
+  {
+   "old": "The three sense and hold leads with a pickup criterion (`work/eib_merge_failsafe.md` Table 9: sustained EMF <= 10 % of the smallest margin) use at most 0.51 of their limit: E3 0.27 of 92 mm, E4 0.51 of 59 mm, E6 0.31 of 196 mm.",
+   "new": "The three sense and hold leads E3, E4 and E6 have a pickup criterion (`round4/work/eib_merge_failsafe.md` Table 9: sustained EMF <= 10 % of the smallest margin). Each uses at most 0.51 of its length limit: E3 0.27 of 92 mm, E4 0.51 of 59 mm, E6 0.31 of 196 mm.",
+   "note": "A.5: path, unnamed subject, sentence length"
+  },
+  {
+   "old": "(CRCW060310R0FKEA, the R273 part number)",
+   "new": "(CRCW060310R0FKEA, the R273 MPN)",
+   "note": "A.5: same wording as A.9, B.6, E, T-A-05"
+  },
+  {
+   "old": "With the skin-effect resistance (Rac/Rdc 1.71 at 1.43 MHz) these fall to 13.1 and 13.0 (18.4 and 18.5); all are upper bounds, since the proximity effect and the C205 ESR frequency dependence are not modelled.",
+   "new": "With the skin-effect resistance (Rac/Rdc 1.71 at 1.43 MHz) these fall to 13.1 and 13.0 (18.4 and 18.5). All are upper bounds, because the model omits the proximity effect and the frequency dependence of the C205 ESR.",
+   "note": "A.5 R276: sentence length, noun cluster"
+  },
+  {
+   "old": "Tab Y ends at y 76.00 so that\n  the L-FC body keeps 0.862 mm with the Eaton 12.9 mm body centred on its footprint origin (ASSUMPTION, TODO(verify: Eaton\n  HCM1A1305V3 drawing), MS3 caliper) and 1.012 mm with the 12.6 mm silkscreen body; at y 76.51 these would be 0.352 / 0.502 mm.",
+   "new": "Tab Y ends at y 76.00 so that\n  the L-FC body keeps 0.862 mm with the Eaton 12.9 mm body centred on its footprint origin (ASSUMPTION, TODO(verify: Eaton\n  HCM1A1305V3 drawing), MS3 caliper). With the 12.6 mm silkscreen body the gap is 1.012 mm. A tab Y edge at y 76.51, 0.5 mm\n  short of the L-FC silkscreen line (y 77.01), would leave only 0.352 / 0.502 mm.",
+   "note": "A.7 tab trims: sentence length; y 76.51 was an unexplained earlier edge (basis section 1), now stated by what it is"
+  },
+  {
+   "old": "on its bottom, thermal-band-class passives under the bottom\n  clearance rule; and FT1.",
+   "new": "on its bottom, only the passive classes that the thermal band admits, under the bottom\n  clearance rule; and FT1.",
+   "note": "A.7 tab content: undefined shorthand"
+  },
+  {
+   "old": "| **Tab X bottom** (r7) | thermal-band-class passives only: 1 % logic series resistors and pull-downs",
+   "new": "| **Tab X bottom** (r7) | only the passive classes that the thermal band admits (A.7): 1 % logic series resistors and pull-downs",
+   "note": "A.8 placement table: undefined shorthand"
+  },
+  {
+   "old": "The W5 IDC socket and ribbon fold (>= 8.0 mm above the CR top, A.3)\n  stay the tallest item: the stack top is >= 12.265 mm plus the cable thickness (TODO(verify: cable assembly drawing)) against the\n  nominal Ag105 envelope of 13.14 mm (`AG105_Silvertel.pdf` Figure 11 p.21), a margin of <= 0.875 mm before the cable.",
+   "new": "The W5 IDC socket and ribbon fold (>= 8.0 mm above the CR top, A.3)\n  stay the tallest item. The stack top is >= 12.265 mm plus the cable thickness (TODO(verify: cable assembly drawing)). The\n  nominal Ag105 envelope is 13.14 mm (`AG105_Silvertel.pdf` Figure 11 p.21), so the margin is <= 0.875 mm before the cable.",
+   "note": "A.7 header stack: sentence length"
+  },
+  {
+   "old": "The EIB, placed by the r6 rule, occupies x 93.50-117.50, y 159.65-195.65: it clears the assumed corridor\n  by 20.92 mm but lies inside its x band, so a USB cable that runs straight +y for more than 65.9 mm would meet it.",
+   "new": "The EIB, placed by the r6 rule, occupies x 93.50-117.50, y 159.65-195.65. It lies 20.92 mm beyond the end of the assumed\n  corridor but inside its x band, so a USB cable that runs straight +y for more than 65.9 mm would meet it.",
+   "note": "A.7 EVM placement: 'clears by' read as lateral clearance; matches J.2 item 57"
+  },
+  {
+   "old": "  - (ii) the EIB on the corridor +x side (EIB x 104.09-128.09) fails: the E-lead bundle and the shared EVM plate must span the\n    corridor band, the W3/W4 J5 approach points (96.09, 142.24) and (96.09, 152.40) fall inside the corridor, W5 has no path on\n    the +x side, and every E-lead maximum grows (E1 100 mm, E5 75 mm; E4 at 0.68 of its pickup-criterion limit);",
+   "new": "  - (ii) the EIB on the corridor +x side (EIB x 104.09-128.09) fails. The E-lead bundle and the shared EVM plate must span the\n    corridor band, and the W3/W4 J5 approach points (96.09, 142.24) and (96.09, 152.40) fall inside the corridor. W5 has no path on\n    the +x side, and every E-lead maximum grows (E1 100 mm, E5 75 mm; E4 at 0.68 of its pickup-criterion limit);",
+   "note": "A.7 fallback (ii): sentence length"
+  },
+  {
+   "old": "  raises the commutation-loop inductance 4-7x per mm and the coupling into the comparator inputs 46-53x; parity with the 4-layer\n  coupling at 5 mm needs 36.5 mm of separation, while the farthest r7 outline point (17.70, 34.14) lies 25.66 mm from the U101\n  loop (H.23(f)).",
+   "new": "  raises the commutation-loop inductance 4-7x per mm and the coupling into the comparator inputs 46-53x. To match the 4-layer\n  coupling at 5 mm, a 2-layer CR needs 36.5 mm of separation, but the farthest r7 outline point (17.70, 34.14) lies only\n  25.66 mm from the U101 loop (H.23(f)).",
+   "note": "A.8 stack-up: sentence length, nominalization"
+  },
+  {
+   "old": "**r7 area booking (H.23(e); supersedes the H.18 / H.22(k) figures and the 95-103 % strict-basis overrun).** On the strict basis\nof `round4/work/stackup_area.md`, the r7 outline offers",
+   "new": "**r7 area booking (H.23(e); supersedes the H.18 / H.22(k) figures).** The strict usable area (`round4/work/stackup_area.md`\nsection 2.2) is the courtyard limit less the header-column keep-outs, the outboard strips and the chamfer clearance. On that\narea the r6 footprint build used 95 % of the top side (103 % with the power pours booked), and the r7 outline offers",
+   "note": "A.8: 'strict basis' and the 95-103 % figure were undefined work-note terms"
+  },
+  {
+   "old": "booking and the strict-basis 95-103 % retire",
+   "new": "booking and its 95-103 % use of the strict usable area (A.8) retire",
+   "note": "0.3 r7-5: undefined 'strict-basis'"
+  },
+  {
+   "old": "(**superseded in r7:** strict basis on the r7 outline, top 795.1",
+   "new": "(**superseded in r7:** strict usable area (A.8) on the r7 outline, top 795.1",
+   "note": "H.22: undefined 'strict basis'"
+  },
+  {
+   "old": "against 1308.0 mm on the r6 basis, H.23(g))",
+   "new": "against 1308.0 mm in r6, H.23(g))",
+   "note": "H.20: plain revision reference"
+  },
+  {
+   "old": "- Modifications: no EVM modification (EM) and no MB modification (PM) becomes unnecessary; the text of EM5 and EM23 changes,",
+   "new": "- Modifications: every EVM modification (EM) and every MB modification (PM) stays necessary; the text of EM5 and EM23 changes,",
+   "note": "0.2: double negative"
+  },
+  {
+   "old": "The six round-4 questions\nhave these answers:",
+   "new": "Revision r7 settles six design\npoints:",
+   "note": "0.2: the round-4 question list is not in the document"
+  },
+  {
+   "old": "or a key for an error that the round-4 work found in r6 or in its own earlier estimates:",
+   "new": "or the finding key of an error that r7 corrects:",
+   "note": "0.3 lead-in: reference to round-4 working estimates the reader does not have"
+  },
+  {
+   "old": "the r7 tap lengths use the MB pad centres from the `.brd`; an earlier round-4 estimate placed T1 3.39 mm off its pad and T9 at the package centre (A.4)",
+   "new": "the r7 tap lengths run to the MB pad centres from the `.brd` (for example C-D6 pad 1 and SNS-BT pad 15), not to the part centres (A.4)",
+   "note": "0.3 r7-15: design history; examples are those of A.4"
+  },
+  {
+   "old": "It produced four fact-finding notes, three carrier\nproposals with an independent assessment, and the calculation H.23",
+   "new": "It produced four fact-finding notes, three candidate\ncarrier layouts with an independent assessment of each, and the calculation H.23",
+   "note": "0.4: 'proposal' otherwise means a D.5 recommendation (one term, one meaning)"
+  },
+  {
+   "old": "**r7:** The carrier extension and the EVM placement change the electrical function of no EM item, so no EM item becomes unnecessary; r7 changes the text of EM5 (JP21 post identity) and EM23 (EVM mount) only.",
+   "new": "**r7:** the carrier extension and the EVM placement change the electrical function of no EM item, so every EM item stays necessary. r7 changes only the text of EM5 (JP21 post identity) and EM23 (EVM mount).",
+   "note": "C EM intro: lowercase after r7 tag, double negative, sentence length"
+  },
+  {
+   "old": "**(2c) (r7) bond the two feet to the CR underside with the BOM neutral-cure RTV (H.23(i)): FT1 (4.0 x 1.6 mm) centred at (61.72, 66.705) under tab X; FT2 (4.0 x 4.0 mm) centred at (28.00, 73.250) under tab Y, drilled 1.0 mm through at its centre on the CR fill hole.",
+   "new": "**(2c) (r7) bond the two feet to the CR underside with the BOM neutral-cure RTV (H.23(i)). Centre FT1 (4.0 x 1.6 mm) at (61.72, 66.705) under tab X. Centre FT2 (4.0 x 4.0 mm, drilled 1.0 mm through at its centre) on the CR fill hole at (28.00, 73.250) under tab Y.",
+   "note": "D.1 PM4 (2c): one instruction per sentence, as in the r7 steps (5) and (6)"
+  },
+  {
+   "old": "the reference placement rests on a 45 mm plug + bend ASSUMPTION; the\n    EIB then lies 20.92 mm beyond the corridor end, and a USB cable that runs straight +y for more than 65.9 mm would meet\n    it; W3/W4 pass through a 4.97 mm channel between the EVM right edge and the corridor (H.23(l)).",
+   "new": "the reference placement rests on a 45 mm plug + bend ASSUMPTION. The\n    EIB then lies 20.92 mm beyond the corridor end, and a USB cable that runs straight +y for more than 65.9 mm would meet\n    it. W3/W4 pass through a 4.97 mm channel between the EVM right edge and the corridor (H.23(l)).",
+   "note": "J.2 item 57: sentence length"
+  },
+  {
+   "old": "an EIB merged into the CR as an island is admissible only\n    with the EVM within 10-60 mm of a CR edge on one rigid co-mount, under the ten conditions of\n    `round4/work/eib_merge_failsafe.md` section 7 (island",
+   "new": "an EIB merged into the CR as an island is admissible only\n    with the EVM within 10-60 mm of a CR edge on one rigid co-mount. It must also meet the ten conditions of\n    `round4/work/eib_merge_failsafe.md` section 7 (island",
+   "note": "J.2 item 60: sentence length"
+  }
+ ]
+}
