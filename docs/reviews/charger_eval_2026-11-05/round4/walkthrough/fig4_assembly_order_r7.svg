@@ -1,0 +1,102 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1180 1000" width="1180" height="1000" font-family="Helvetica, Arial, sans-serif" font-size="12">
+<rect width="1180" height="1000" fill="#ffffff"/>
+<defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#222"/></marker><marker id="ap" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#7b1fa2"/></marker></defs>
+<text x="20" y="28" font-size="16" font-weight="bold">Fig 4. Build order for the r7 carrier and the gates that hold each step (design D.1, I)</text>
+<text x="20.0" y="46.0" fill="#555">Grey = rework or build step; amber = measured gate; purple chips = operator survey items MS1-MS8 (T-A-08). Solid arrow = the step the item gates; dashed arrow = a later step that uses its result.</text>
+<rect x="300.0" y="70.0" width="560.0" height="46.0" fill="#f3f3f3" stroke="#222" stroke-width="1.5"/>
+<text x="310.0" y="88.0" font-weight="bold">Before any rework: MS1a with the Ag105 in place</text>
+<text x="310.0" y="104.0" font-size="11">standoff at four corners, module top height (information only, D-H)</text>
+<line x1="580.0" y1="116.0" x2="580.0" y2="130.0" stroke="#222" stroke-width="1.5" marker-end="url(#a)"/>
+<rect x="300.0" y="130.0" width="560.0" height="62.0" fill="#eeeeee" stroke="#222" stroke-width="1.5"/>
+<text x="310.0" y="148.0" font-weight="bold">PM0  KiCad capture of CR and EIB</text>
+<text x="310.0" y="164.0" font-size="11">r7 outline (tab X, tab Y, chamfer at (17.70, 76.00)), foot keep-outs FT1/FT2,</text>
+<text x="310.0" y="178.0" font-size="11">FT2 1.0 mm fill hole, tap field split, bottom clearance rule, thermal band rule</text>
+<rect x="340.0" y="198.0" width="480.0" height="38.0" fill="#fff4d6" stroke="#b08900" stroke-width="1.2" rx="6"/>
+<text x="352.0" y="213.0" font-size="11" fill="#5d4300">T-A-06: pin identity (script + 1:1 print), netlist diff = 0, DRC on the r7 outline,</text>
+<text x="352.0" y="227.0" font-size="11" fill="#5d4300">dry fit of both tabs and both feet; T-A-08 survey must pass first</text>
+<line x1="580.0" y1="236.0" x2="580.0" y2="250.0" stroke="#222" stroke-width="1.5" marker-end="url(#a)"/>
+<rect x="300.0" y="250.0" width="560.0" height="46.0" fill="#eeeeee" stroke="#222" stroke-width="1.5"/>
+<text x="310.0" y="268.0" font-weight="bold">PM1  Remove the Ag105 (after the T-B and T-C bench gates)</text>
+<text x="310.0" y="284.0" font-size="11">then MS1b module mass (information); MS6 MB thickness at the empty CHG holes</text>
+<line x1="580.0" y1="296.0" x2="580.0" y2="310.0" stroke="#222" stroke-width="1.5" marker-end="url(#a)"/>
+<rect x="300.0" y="310.0" width="560.0" height="46.0" fill="#eeeeee" stroke="#222" stroke-width="1.5"/>
+<text x="310.0" y="328.0" font-weight="bold">PM2  C-D8 / C-D10 to &gt;= 35 V;  PM3  R170 / R171 at C-D6 / C-D2</text>
+<text x="310.0" y="344.0" font-size="11">R171 body toward +y, clear of tab X (T-A-06 item (8) dry fit)</text>
+<line x1="580.0" y1="356.0" x2="580.0" y2="370.0" stroke="#222" stroke-width="1.5" marker-end="url(#a)"/>
+<rect x="300.0" y="370.0" width="560.0" height="92.0" fill="#eeeeee" stroke="#222" stroke-width="1.5"/>
+<text x="310.0" y="388.0" font-weight="bold">PM4 (1)-(2c)  sheet, headers, W1-W4 joints, feet taped</text>
+<text x="310.0" y="404.0" font-size="11">(1) polyimide sheet 0.125 mm on the MB (r7 outline + 1 mm, trims, relief holes)</text>
+<text x="310.0" y="418.0" font-size="11">(2) headers into the CR, 22 joints at the CR top</text>
+<text x="310.0" y="432.0" font-size="11">(2b) W1-W4 joints; underside trimmed and measured &lt;= 0.5 mm</text>
+<text x="310.0" y="446.0" font-size="11">(2c) feet taped: block 2.14-2.19 mm; edge distances FT1 / FT2 recorded</text>
+<rect x="340.0" y="468.0" width="480.0" height="38.0" fill="#fff4d6" stroke="#b08900" stroke-width="1.2" rx="6"/>
+<text x="352.0" y="483.0" font-size="11" fill="#5d4300">(2d) dry-seat gate: 0.05 mm feeler not under either header body;</text>
+<text x="352.0" y="497.0" font-size="11" fill="#5d4300">at each foot 0.15 mm enters and 0.45 mm does not</text>
+<line x1="580.0" y1="506.0" x2="580.0" y2="520.0" stroke="#222" stroke-width="1.5" marker-end="url(#a)"/>
+<rect x="300.0" y="520.0" width="560.0" height="76.0" fill="#eeeeee" stroke="#222" stroke-width="1.5"/>
+<text x="310.0" y="538.0" font-weight="bold">PM4 (3)-(5)  seat, solder, cut, bed the feet</text>
+<text x="310.0" y="554.0" font-size="11">(3) fixture, two diagonal pins, feeler re-check (3f)/(3h), other 20 joints</text>
+<text x="310.0" y="568.0" font-size="11">(4) MB-bottom tails &lt;= min(1.0 mm, MS2 under-MB clearance - 0.5 mm)</text>
+<text x="310.0" y="582.0" font-size="11">(5) bed FT1 through its lane, FT2 through the fill hole; cure &gt;= 24 h</text>
+<rect x="340.0" y="602.0" width="480.0" height="38.0" fill="#fff4d6" stroke="#b08900" stroke-width="1.2" rx="6"/>
+<text x="352.0" y="617.0" font-size="11" fill="#5d4300">T-A-09: cure probe, 0.05 mm feelers at FT1, FT2 witness fillets,</text>
+<text x="352.0" y="631.0" font-size="11" fill="#5d4300">0.4 N pull at each grip for 10 s, joint resistance unchanged</text>
+<line x1="580.0" y1="640.0" x2="580.0" y2="654.0" stroke="#222" stroke-width="1.5" marker-end="url(#a)"/>
+<rect x="300.0" y="654.0" width="560.0" height="92.0" fill="#eeeeee" stroke="#222" stroke-width="1.5"/>
+<text x="310.0" y="672.0" font-weight="bold">PM4 (6)  dress the leads (A.3)</text>
+<text x="310.0" y="688.0" font-size="11">pin 7-10 RTV dome; W7 (and W6); inspect A1/A2 zones, bond tie bases; polyimide strip</text>
+<text x="310.0" y="702.0" font-size="11">trunk on B1/B3 posts &gt;= 10.14 mm above CR top; W5 on S1-S3 (S2/S3 &gt;= 10.735 mm)</text>
+<text x="310.0" y="716.0" font-size="11">off-CR support x 37.75-46.7; chassis ties &lt;= 2.4 / 16.4 / 17.4 mm past MB +y</text>
+<text x="310.0" y="730.0" font-size="11">W1/W2 and W5 slack as service loops on the EVM plate</text>
+<line x1="580.0" y1="746.0" x2="580.0" y2="760.0" stroke="#222" stroke-width="1.5" marker-end="url(#a)"/>
+<rect x="300.0" y="760.0" width="560.0" height="62.0" fill="#eeeeee" stroke="#222" stroke-width="1.5"/>
+<text x="310.0" y="778.0" font-weight="bold">PM6  Taps (gap path); PM7-PM11 on their own gates</text>
+<text x="310.0" y="794.0" font-size="11">tab X wires on the A.4 gap path; F20/F21 (over FT1) last, &lt;= 350 C, &lt;= 3 s</text>
+<text x="310.0" y="808.0" font-size="11">PM10/PM11 after T-A-01b/c; PM7 (T18) only if T-B-09 fails</text>
+<rect x="340.0" y="828.0" width="480.0" height="24.0" fill="#fff4d6" stroke="#b08900" stroke-width="1.2" rx="6"/>
+<text x="352.0" y="843.0" font-size="11" fill="#5d4300">T-A-09 again on FT1 (F20/F21 soldered over it)</text>
+<rect x="340.0" y="858.0" width="480.0" height="38.0" fill="#fff4d6" stroke="#b08900" stroke-width="1.2" rx="6"/>
+<text x="352.0" y="873.0" font-size="11" fill="#5d4300">T-F-12: tap-to-tap and tap-to-power DMM, loupe on 1.04 mm gaps, pin 7-10 covers,</text>
+<text x="352.0" y="887.0" font-size="11" fill="#5d4300">every lead on the A.3 path, jacket heights at the controlling points, tie limits</text>
+<line x1="580.0" y1="896.0" x2="580.0" y2="910.0" stroke="#222" stroke-width="1.5" marker-end="url(#a)"/>
+<rect x="300.0" y="910.0" width="560.0" height="46.0" fill="#f3f3f3" stroke="#222" stroke-width="1.5"/>
+<text x="310.0" y="928.0" font-weight="bold">First power-up and the bench/vehicle registry (section I)</text>
+<text x="310.0" y="944.0" font-size="11">T-F-18 tab vibration and joint integrity after a vehicle run (MS5 follow-up)</text>
+<rect x="20.0" y="110.0" width="230.0" height="64.0" fill="#f3e5f5" stroke="#7b1fa2" stroke-width="1.2" rx="5"/>
+<text x="28.0" y="126.0" font-weight="bold" fill="#7b1fa2">MS2-MS5, MS7; MS6 board edge</text>
+<text x="28.0" y="141.0" font-size="11" fill="#7b1fa2">chassis room, MB items, thermal,</text>
+<text x="28.0" y="155.0" font-size="11" fill="#7b1fa2">vibration, EVM, MB thickness</text>
+<text x="28.0" y="169.0" font-size="11" fill="#7b1fa2">-&gt; gate PM0</text>
+<line x1="250.0" y1="120.0" x2="298.0" y2="150.0" stroke="#7b1fa2" stroke-width="1.2" marker-end="url(#ap)"/>
+<rect x="20.0" y="250.0" width="230.0" height="50.0" fill="#f3e5f5" stroke="#7b1fa2" stroke-width="1.2" rx="5"/>
+<text x="28.0" y="266.0" font-weight="bold" fill="#7b1fa2">MS6 at the CHG holes</text>
+<text x="28.0" y="281.0" font-size="11" fill="#7b1fa2">taken after PM1, before PM4</text>
+<text x="28.0" y="295.0" font-size="11" fill="#7b1fa2">-&gt; post arithmetic; gates PM4</text>
+<line x1="250.0" y1="260.0" x2="298.0" y2="390.0" stroke="#7b1fa2" stroke-width="1.2" marker-end="url(#ap)"/>
+<rect x="20.0" y="420.0" width="230.0" height="50.0" fill="#f3e5f5" stroke="#7b1fa2" stroke-width="1.2" rx="5"/>
+<text x="28.0" y="436.0" font-weight="bold" fill="#7b1fa2">MS3 (gates PM0)</text>
+<text x="28.0" y="451.0" font-size="11" fill="#7b1fa2">L-FC height (&lt;= 5.0 mm basis)</text>
+<text x="28.0" y="465.0" font-size="11" fill="#7b1fa2">-&gt; 3-D spacer heights at PM4 (6)</text>
+<line x1="250.0" y1="430.0" x2="298.0" y2="674.0" stroke="#7b1fa2" stroke-width="1.2" stroke-dasharray="5,3" marker-end="url(#ap)"/>
+<rect x="930.0" y="560.0" width="230.0" height="50.0" fill="#f3e5f5" stroke="#7b1fa2" stroke-width="1.2" rx="5"/>
+<text x="938.0" y="576.0" font-weight="bold" fill="#7b1fa2">MS2 (gates PM0)</text>
+<text x="938.0" y="591.0" font-size="11" fill="#7b1fa2">under-MB clearance</text>
+<text x="938.0" y="605.0" font-size="11" fill="#7b1fa2">-&gt; tail cut length at PM4 (4)</text>
+<line x1="930.0" y1="570.0" x2="862.0" y2="568.0" stroke="#7b1fa2" stroke-width="1.2" stroke-dasharray="5,3" marker-end="url(#ap)"/>
+<rect x="930.0" y="660.0" width="230.0" height="50.0" fill="#f3e5f5" stroke="#7b1fa2" stroke-width="1.2" rx="5"/>
+<text x="938.0" y="676.0" font-weight="bold" fill="#7b1fa2">MS2 (gates PM0)</text>
+<text x="938.0" y="691.0" font-size="11" fill="#7b1fa2">chassis-tie points, EVM plate</text>
+<text x="938.0" y="705.0" font-size="11" fill="#7b1fa2">-&gt; W3/W4/W6/W7 maxima at PM4 (6)</text>
+<line x1="930.0" y1="670.0" x2="862.0" y2="714.0" stroke="#7b1fa2" stroke-width="1.2" stroke-dasharray="5,3" marker-end="url(#ap)"/>
+<rect x="930.0" y="800.0" width="230.0" height="50.0" fill="#f3e5f5" stroke="#7b1fa2" stroke-width="1.2" rx="5"/>
+<text x="938.0" y="816.0" font-weight="bold" fill="#7b1fa2">MS5 (gates PM0: feet)</text>
+<text x="938.0" y="831.0" font-size="11" fill="#7b1fa2">peak MB acceleration &lt;= 30 g;</text>
+<text x="938.0" y="845.0" font-size="11" fill="#7b1fa2">spectrum -&gt; T-F-18 after build</text>
+<line x1="930.0" y1="810.0" x2="862.0" y2="930.0" stroke="#7b1fa2" stroke-width="1.2" stroke-dasharray="5,3" marker-end="url(#ap)"/>
+<rect x="930.0" y="110.0" width="230.0" height="50.0" fill="#f3e5f5" stroke="#7b1fa2" stroke-width="1.2" rx="5"/>
+<text x="938.0" y="126.0" font-weight="bold" fill="#7b1fa2">MS8</text>
+<text x="938.0" y="141.0" font-size="11" fill="#7b1fa2">router radius, stack-up,</text>
+<text x="938.0" y="155.0" font-size="11" fill="#7b1fa2">2 oz space -&gt; PM0 DRC</text>
+<line x1="930.0" y1="120.0" x2="862.0" y2="150.0" stroke="#7b1fa2" stroke-width="1.2" marker-end="url(#ap)"/>
+<text x="20.0" y="985.0" font-size="11" fill="#555">MS1b gates nothing. A tab trim after the survey re-runs round4/calc/r7_calc.py (H.23) before PM0.</text>
+</svg>

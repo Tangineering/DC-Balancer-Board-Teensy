@@ -1,0 +1,94 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1180 726" width="1180" height="726" font-family="Helvetica, Arial, sans-serif" font-size="12">
+<rect width="1180" height="726" fill="#ffffff"/>
+<defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#222"/></marker><marker id="ap" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#7b1fa2"/></marker></defs>
+<text x="20" y="28" font-size="16" font-weight="bold">Fig 3. Side section along +y through tab Y and L-FC, r7 (heights in mm above the MB top)</text>
+<text x="20.0" y="46.0" fill="#555">Section at x 36.00 (the controlling trunk point, B3 post, W5 run); FT2 and its fill hole projected from x 28.00, the 1x12 header body and pin 11 projected from x 20.998.</text>
+<text x="20.0" y="62.0" fill="#555">Plan and height share one scale (18 px/mm), so the 10 mm arc is true. The thin layers (sheet, bed, tape) are drawn thicker than scale.</text>
+<rect x="300.0" y="440.0" width="576.0" height="28.8" fill="#c8e6c9" stroke="#2e7d32" stroke-width="1"/>
+<text x="306.0" y="458.9" font-size="11" font-weight="bold" fill="#1b5e20">MB 1.6 mm</text>
+<rect x="300.0" y="436.0" width="294.5" height="4.0" fill="#ffcc80" stroke="#e65100" stroke-width="1"/>
+<rect x="300.0" y="392.0" width="103.6" height="44.0" fill="#cfd8dc" stroke="#455a64" stroke-width="1"/>
+<rect x="502.5" y="430.6" width="72.0" height="5.4" fill="#fff59d" stroke="#f9a825" stroke-width="1"/>
+<rect x="502.5" y="392.0" width="72.0" height="4.0" fill="#90caf9" stroke="#1565c0" stroke-width="1"/>
+<rect x="502.5" y="396.0" width="72.0" height="34.6" fill="#a5d6a7" stroke="#1b5e20" stroke-width="1.5"/>
+<text x="538.5" y="417.3" font-weight="bold" text-anchor="middle" fill="#1b5e20">FT2</text>
+<rect x="300.0" y="363.2" width="288.0" height="28.8" fill="#ffe0d0" stroke="#c0502a" stroke-width="2"/>
+<text x="415.2" y="383.0" font-size="11" font-weight="bold" fill="#c0502a">CR 1.6 mm</text>
+<rect x="529.5" y="363.2" width="18.0" height="28.8" fill="#ffffff" stroke="#c0502a" stroke-width="1"/>
+<rect x="375.0" y="346.3" width="11.5" height="89.7" fill="#ffd54f" stroke="#8d6e63" stroke-width="1"/>
+<rect x="603.5" y="350.0" width="232.2" height="90.0" fill="#e0e0e0" stroke="#424242" stroke-width="2"/>
+<text x="739.8" y="382.4" font-weight="bold" text-anchor="middle">L-FC body</text>
+<text x="739.8" y="404.0" font-size="11" text-anchor="middle" fill="#555">5.0 mm (ASSUMPTION, MS3)</text>
+<text x="739.8" y="425.6" font-size="11" text-anchor="middle" fill="#555">starts at y 76.862</text>
+<path d="M423.5,350.0 L423.8,340.6 L424.5,331.2 L425.7,321.8 L427.4,312.6 L429.6,303.4 L432.3,294.4 L435.5,285.5 L439.1,276.8 L443.1,268.3 L447.6,260.0 L452.6,252.0 L457.9,244.2 L463.6,236.7 L469.7,229.6 L476.2,222.7 L483.1,216.2 L490.2,210.1 L497.7,204.4 L505.5,199.0 L513.5,194.1 L521.8,189.6 L530.3,185.6 L539.0,182.0 L547.9,178.8 L556.9,176.1 L566.1,173.9 L575.4,172.2 L584.7,171.0 L594.1,170.2 L603.5,170.0" stroke="#c62828" stroke-width="1.5" fill="none" stroke-dasharray="5,4"/>
+<line x1="603.5" y1="170.0" x2="876.0" y2="170.0" stroke="#c62828" stroke-width="1.5" stroke-dasharray="5,4"/>
+<text x="651.0" y="162.0" font-size="11" fill="#c62828">10 mm 3-D clearance: 15.00 mm over L-FC</text>
+<line x1="603.5" y1="350.0" x2="465.6" y2="234.3" stroke="#c62828" stroke-width="1"/>
+<text x="542.6" y="296.1" font-size="11" fill="#c62828">r 10 mm</text>
+<rect x="467.4" y="180.7" width="54.0" height="182.6" fill="#e1bee7" stroke="#7b1fa2" stroke-width="1.5"/>
+<rect x="457.1" y="95.2" width="85.5" height="85.5" fill="#ef9a9a" stroke="#b71c1c" stroke-width="1.5" stroke-dasharray="4,3" rx="30"/>
+<text x="499.8" y="113.2" font-size="11" font-weight="bold" text-anchor="middle" fill="#7f0000">trunk</text>
+<rect x="455.8" y="153.8" width="160.0" height="16.2" fill="#4db6ac" fill-opacity="0.6" stroke="#00695c" stroke-width="1.5"/>
+<line x1="542.5" y1="190.7" x2="603.5" y2="190.7" stroke="#555" stroke-width="1"/>
+<line x1="542.5" y1="186.7" x2="542.5" y2="194.7" stroke="#555" stroke-width="1"/>
+<line x1="603.5" y1="186.7" x2="603.5" y2="194.7" stroke="#555" stroke-width="1"/>
+<text x="573.0" y="205.7" font-size="11" text-anchor="middle">d 3.39</text>
+<line x1="894.0" y1="468.8" x2="894.0" y2="80.0" stroke="#999" stroke-width="1"/>
+<line x1="890.0" y1="440.0" x2="898.0" y2="440.0" stroke="#555" stroke-width="1"/>
+<line x1="898.0" y1="440.0" x2="906.0" y2="440.0" stroke="#bbb" stroke-width="0.8"/>
+<text x="908.0" y="444.0" font-size="11">0 MB top</text>
+<line x1="890.0" y1="437.8" x2="898.0" y2="437.8" stroke="#555" stroke-width="1"/>
+<line x1="898.0" y1="437.8" x2="906.0" y2="426.0" stroke="#bbb" stroke-width="0.8"/>
+<text x="908.0" y="430.0" font-size="11">0.125 sheet top</text>
+<line x1="890.0" y1="392.0" x2="898.0" y2="392.0" stroke="#555" stroke-width="1"/>
+<line x1="898.0" y1="392.0" x2="906.0" y2="392.0" stroke="#bbb" stroke-width="0.8"/>
+<text x="908.0" y="396.0" font-size="11">2.665 CR underside</text>
+<line x1="890.0" y1="363.2" x2="898.0" y2="363.2" stroke="#555" stroke-width="1"/>
+<line x1="898.0" y1="363.2" x2="906.0" y2="363.2" stroke="#bbb" stroke-width="0.8"/>
+<text x="908.0" y="367.2" font-size="11">4.265 CR top</text>
+<line x1="890.0" y1="350.0" x2="898.0" y2="350.0" stroke="#555" stroke-width="1"/>
+<line x1="898.0" y1="350.0" x2="906.0" y2="349.2" stroke="#bbb" stroke-width="0.8"/>
+<text x="908.0" y="353.2" font-size="11">5.00 L-FC top (assumed)</text>
+<line x1="890.0" y1="180.7" x2="898.0" y2="180.7" stroke="#555" stroke-width="1"/>
+<line x1="898.0" y1="180.7" x2="906.0" y2="180.7" stroke="#bbb" stroke-width="0.8"/>
+<text x="908.0" y="184.7" font-size="11">14.41 trunk jacket bottom (min)</text>
+<line x1="890.0" y1="170.0" x2="898.0" y2="170.0" stroke="#555" stroke-width="1"/>
+<line x1="898.0" y1="170.0" x2="906.0" y2="166.7" stroke="#bbb" stroke-width="0.8"/>
+<text x="908.0" y="170.7" font-size="11">15.00 W5 ribbon bottom (min)</text>
+<line x1="457.1" y1="137.9" x2="255.9" y2="103.0" stroke="#999" stroke-width="0.8"/>
+<text x="20.0" y="107.0" font-size="11" fill="#b71c1c">round-lead trunk W1-W4, W6, W7:</text>
+<text x="20.0" y="121.0" font-size="11" fill="#b71c1c">jacket bottom &gt;= 14.41 mm above the MB</text>
+<text x="20.0" y="135.0" font-size="11" fill="#b71c1c">(&gt;= 10.14 mm above the CR top),</text>
+<text x="20.0" y="149.0" font-size="11" fill="#b71c1c">3.39 mm in plan from L-FC</text>
+<line x1="455.8" y1="161.9" x2="292.2" y2="191.2" stroke="#999" stroke-width="0.8"/>
+<text x="20.0" y="195.2" font-size="11" fill="#00695c">W5 ribbon (0.9 mm assumed), 8.89 mm wide:</text>
+<text x="20.0" y="209.2" font-size="11" fill="#00695c">bottom &gt;= 15.00 mm (&gt;= 10.735 above CR top);</text>
+<text x="20.0" y="223.2" font-size="11" fill="#00695c">overlaps L-FC by 0.68 mm in plan</text>
+<line x1="467.4" y1="269.0" x2="213.6" y2="263.2" stroke="#999" stroke-width="0.8"/>
+<text x="20.0" y="267.2" font-size="11" fill="#7b1fa2">B3 spacer post, merged with S3,</text>
+<text x="20.0" y="281.2" font-size="11" fill="#7b1fa2">at (35.00, 70.80)</text>
+<line x1="375.0" y1="348.8" x2="183.3" y2="311.8" stroke="#999" stroke-width="0.8"/>
+<text x="20.0" y="315.8" font-size="11" fill="#6d4c41">pin 11 post, 0.94 mm proud</text>
+<text x="20.0" y="329.8" font-size="11" fill="#6d4c41">(RTV dome on pins 7-10)</text>
+<line x1="330.0" y1="414.8" x2="213.6" y2="374.8" stroke="#999" stroke-width="0.8"/>
+<text x="20.0" y="378.8" font-size="11" fill="#263238">header body 2.54 mm (TSW, PBT),</text>
+<text x="20.0" y="392.8" font-size="11" fill="#263238">seats on the sheet</text>
+<line x1="569.1" y1="394.0" x2="569.1" y2="482.0" stroke="#999" stroke-width="0.8"/>
+<text x="573.1" y="486.0" font-size="11" fill="#1565c0">acrylic transfer tape 0.05 mm to the CR (2.19 + 0.30 + 0.05 = 2.54 mm)</text>
+<line x1="547.5" y1="413.3" x2="547.5" y2="500.0" stroke="#999" stroke-width="0.8"/>
+<text x="551.5" y="504.0" font-size="11" fill="#1b5e20">foot block h_f 2.19 mm (+0/-0.05)</text>
+<line x1="507.9" y1="433.3" x2="507.9" y2="518.0" stroke="#999" stroke-width="0.8"/>
+<text x="511.9" y="522.0" font-size="11" fill="#b26a00">FT2 bed: alkoxy RTV, 0.30 mm nominal, gated 0.15-0.45 mm by feelers (PM4 (2d))</text>
+<line x1="307.2" y1="438.0" x2="307.2" y2="536.0" stroke="#999" stroke-width="0.8"/>
+<text x="311.2" y="540.0" font-size="11" fill="#e65100">polyimide sheet 0.125 mm (to y 76.362)</text>
+<line x1="538.5" y1="365.2" x2="616.8" y2="330.2" stroke="#999" stroke-width="0.8"/>
+<text x="618.6" y="328.4" font-size="11" fill="#c0502a">FT2 fill hole 1.0 mm NPTH</text>
+<text x="618.6" y="341.4" font-size="11" fill="#c0502a">at (28.00, 73.25)</text>
+<rect x="20.0" y="600.0" width="1140.0" height="110.0" fill="#fff3f3" stroke="#c62828" stroke-width="1"/>
+<text x="30.0" y="618.0" font-weight="bold" fill="#c62828">Open point: vertical order of W5 and the trunk</text>
+<text x="30.0" y="635.0" font-size="11" fill="#c62828">The W5 ribbon (8.89 mm wide) and the trunk envelope (half-width 2.37 mm) overlap in plan on the +y runs (x 25.80 / x 28.70) from y 57.00, and on the whole +x run across tab Y and off the CR to A1.</text>
+<text x="30.0" y="650.0" font-size="11" fill="#c62828">The heights conflict from B1 (25.80, 64.50), where the trunk rises, to A1.</text>
+<text x="30.0" y="665.0" font-size="11" fill="#c62828">The centre lines cross at (28.70, 69.60). Both heights are H.23(l) minimums (14.41 and 15.00 mm), B3/S3 is one merged spot, and the design states no vertical order of the two runs.</text>
+<text x="30.0" y="680.0" font-size="11" fill="#c62828">A stacked height needs the bundle's vertical thickness, which neither the design nor the calc states; this drawing shows both runs at their minimums, so they intersect here.</text>
+<text x="30.0" y="702.0" font-size="11" fill="#555">Heights: H.23(i) foot budget, H.23(j) stack, H.23(l) 3-D rule (H_LFC 5.0 mm ASSUMPTION, MS3 caliper); MB and CR 1.6 mm assumed (MS6).</text>
+</svg>

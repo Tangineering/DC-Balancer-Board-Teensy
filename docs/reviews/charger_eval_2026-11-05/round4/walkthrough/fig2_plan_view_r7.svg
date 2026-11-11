@@ -1,0 +1,186 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1088 748" width="1088" height="748" font-family="Helvetica, Arial, sans-serif" font-size="12">
+<rect width="1088" height="748" fill="#ffffff"/>
+<defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#222"/></marker><marker id="ap" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#7b1fa2"/></marker></defs>
+<text x="20" y="28" font-size="16" font-weight="bold">Fig 2. Plan view of the MB region around the CR, r7 (top view, board mm, +y up; simplified)</text>
+<text x="20.0" y="46.0" fill="#555">Drawn: r7 outline, Ag105 footprint, feet, tap field, comparator band, W-lead dressing path with anchors, polyimide strip. MB parts are boxes only.</text>
+<rect x="30.0" y="70.0" width="728.0" height="658.0" fill="#ffffff" stroke="#999" stroke-width="1"/>
+<rect x="30.0" y="251.7" width="728.0" height="476.3" fill="#f4f4f2" stroke="none" stroke-width="1"/>
+<line x1="30.0" y1="251.7" x2="758.0" y2="251.7" stroke="#37474f" stroke-width="2.5"/>
+<text x="37.0" y="243.6" font-size="11" font-weight="bold" fill="#37474f">MB +y edge (y 98.044)</text>
+<text x="37.0" y="87.5" font-size="11" font-style="italic" fill="#555">chassis (off the MB)</text>
+<rect x="386.8" y="556.4" width="79.4" height="123.5" fill="#ffe0b2" stroke="#777" stroke-width="1"/>
+<text x="426.5" y="612.5" font-weight="bold" text-anchor="middle" fill="#bf360c">LM1084</text>
+<text x="426.5" y="627.9" font-size="11" text-anchor="middle" fill="#bf360c">(REG-5V)</text>
+<rect x="187.9" y="309.7" width="96.6" height="90.3" fill="#e0e0e0" stroke="#777" stroke-width="1"/>
+<text x="236.2" y="332.5" font-weight="bold" text-anchor="middle">L-FC (Eaton body)</text>
+<text x="236.2" y="347.9" font-size="11" text-anchor="middle" fill="#555">0.862 mm past tab Y</text>
+<rect x="611.4" y="285.8" width="39.1" height="433.2" fill="#eceff1" stroke="#777" stroke-width="1"/>
+<text x="631.0" y="378.0" font-size="11" text-anchor="middle" fill="#37474f">J1</text>
+<rect x="648.7" y="281.9" width="109.3" height="435.6" fill="#eceff1" stroke="#777" stroke-width="1"/>
+<text x="703.4" y="378.0" font-weight="bold" text-anchor="middle" fill="#37474f">Teensy 4.1</text>
+<rect x="311.5" y="411.1" width="34.3" height="55.8" fill="#eeeeee" stroke="#777" stroke-width="1"/>
+<text x="328.7" y="459.9" font-size="11" text-anchor="middle" fill="#555">OP-FC</text>
+<rect x="407.0" y="331.0" width="49.7" height="57.4" fill="#eeeeee" stroke="#777" stroke-width="1"/>
+<text x="431.8" y="381.4" font-size="11" text-anchor="middle" fill="#555">SNS-FC</text>
+<rect x="499.6" y="403.8" width="24.5" height="33.2" fill="#d9e8fb" stroke="#777" stroke-width="1"/>
+<line x1="648.7" y1="458.0" x2="648.7" y2="578.0" stroke="#37474f" stroke-width="2"/>
+<text x="652.7" y="476.0" font-size="11" fill="#37474f">Teensy edge</text>
+<text x="652.7" y="490.0" font-size="11" fill="#37474f">x 88.39</text>
+<text x="527.6" y="420.0" font-size="11" fill="#555">D-FC-EN</text>
+<path d="M292.9,440.3 L352.0,440.3 L366.0,435.8 L432.5,426.4" stroke="#80cbc4" stroke-width="61.236" fill="none" stroke-opacity="0.45" stroke-linecap="butt" stroke-linejoin="round"/>
+<path d="M436.0,402.5 L436.0,288.4" stroke="#80cbc4" stroke-width="52.206" fill="none" stroke-opacity="0.45" stroke-linecap="butt" stroke-linejoin="round"/>
+<path d="M454.4,402.5 L457.0,339.5 L495.5,330.3" stroke="#80cbc4" stroke-width="56" fill="none" stroke-opacity="0.45" stroke-linecap="butt" stroke-linejoin="round"/>
+<path d="M153.9,699.0 L370.9,699.0 L370.9,543.9 L485.0,543.9 L485.0,459.9 L370.9,459.9 L370.9,468.0 L292.9,468.0 L292.9,406.0 L160.9,406.0 L153.9,413.0 Z" stroke="#1565c0" stroke-width="2.5" fill="#e3f2fd" fill-opacity="0.55"/>
+<path d="M153.9,699.0 L370.9,699.0 L370.9,543.9 L485.0,543.9 L485.0,459.9 L370.9,459.9 L370.9,468.0 L292.9,468.0 L292.9,406.0 L160.9,406.0 L153.9,413.0 Z" stroke="#1565c0" stroke-width="2.5" fill="none"/>
+<rect x="153.9" y="468.0" width="217.0" height="231.0" fill="none" stroke="#455a64" stroke-width="1.5" stroke-dasharray="6,4"/>
+<rect x="192.0" y="646.6" width="135.0" height="46.1" fill="#bbdefb" stroke="#1565c0" stroke-width="1" stroke-dasharray="4,3"/>
+<text x="275.0" y="655.2" font-size="11" font-weight="bold" text-anchor="middle" fill="#0d47a1">comparator band</text>
+<text x="275.0" y="667.8" font-size="11" text-anchor="middle" fill="#0d47a1">x 23.15-42.43</text>
+<text x="275.0" y="679.7" font-size="11" text-anchor="middle" fill="#0d47a1">y 35.05-41.63</text>
+<rect x="209.8" y="682.1" width="10.5" height="10.5" fill="#2e7d32" stroke="#1b5e20" stroke-width="0.8"/>
+<rect x="227.6" y="682.1" width="10.5" height="10.5" fill="#2e7d32" stroke="#1b5e20" stroke-width="0.8"/>
+<rect x="245.4" y="682.1" width="10.5" height="10.5" fill="#2e7d32" stroke="#1b5e20" stroke-width="0.8"/>
+<rect x="316.5" y="682.1" width="10.5" height="10.5" fill="#2e7d32" stroke="#1b5e20" stroke-width="0.8"/>
+<path d="M370.9,513.2 L377.9,510.9 L384.9,509.5 L391.9,509.2 L398.9,509.2 L405.9,509.2 L412.9,509.2 L419.9,509.2 L426.9,505.4 L433.9,503.0 L440.9,501.8 L447.9,501.6 L454.9,502.5 L461.9,504.4 L468.9,507.6 L475.9,511.6 L482.9,514.5" stroke="#e65100" stroke-width="1.5" fill="none" stroke-dasharray="4,3"/>
+<rect x="448.0" y="465.5" width="28.0" height="11.2" fill="#c8e6c9" fill-opacity="0.6" stroke="#1b5e20" stroke-width="1.5" stroke-dasharray="3,2"/>
+<rect x="212.0" y="411.2" width="28.0" height="28.0" fill="#c8e6c9" fill-opacity="0.6" stroke="#1b5e20" stroke-width="1.5" stroke-dasharray="3,2"/>
+<circle cx="226.0" cy="425.2" r="3.5" fill="#ffffff" stroke="#1b5e20" stroke-width="1.2"/>
+<rect x="380.3" y="520.2" width="10.5" height="10.5" fill="#2e7d32" stroke="#1b5e20" stroke-width="0.8"/>
+<rect x="380.3" y="502.4" width="10.5" height="10.5" fill="#a1887f" stroke="#5d4037" stroke-width="0.8"/>
+<rect x="380.3" y="484.6" width="10.5" height="10.5" fill="#a1887f" stroke="#5d4037" stroke-width="0.8"/>
+<rect x="380.3" y="466.8" width="10.5" height="10.5" fill="#2e7d32" stroke="#1b5e20" stroke-width="0.8"/>
+<rect x="398.1" y="520.2" width="10.5" height="10.5" fill="#2e7d32" stroke="#1b5e20" stroke-width="0.8"/>
+<rect x="398.1" y="502.4" width="10.5" height="10.5" fill="#ffffff" stroke="#2e7d32" stroke-width="0.8" stroke-dasharray="2,2"/>
+<rect x="398.1" y="484.6" width="10.5" height="10.5" fill="#2e7d32" stroke="#1b5e20" stroke-width="0.8"/>
+<rect x="398.1" y="466.8" width="10.5" height="10.5" fill="#ffffff" stroke="#2e7d32" stroke-width="0.8" stroke-dasharray="2,2"/>
+<rect x="415.9" y="520.2" width="10.5" height="10.5" fill="#2e7d32" stroke="#1b5e20" stroke-width="0.8"/>
+<rect x="415.9" y="502.4" width="10.5" height="10.5" fill="#2e7d32" stroke="#1b5e20" stroke-width="0.8"/>
+<rect x="415.9" y="484.6" width="10.5" height="10.5" fill="#2e7d32" stroke="#1b5e20" stroke-width="0.8"/>
+<rect x="415.9" y="466.8" width="10.5" height="10.5" fill="#2e7d32" stroke="#1b5e20" stroke-width="0.8"/>
+<rect x="433.7" y="520.2" width="10.5" height="10.5" fill="#2e7d32" stroke="#1b5e20" stroke-width="0.8"/>
+<rect x="433.7" y="502.4" width="10.5" height="10.5" fill="#2e7d32" stroke="#1b5e20" stroke-width="0.8"/>
+<rect x="433.7" y="484.6" width="10.5" height="10.5" fill="#2e7d32" stroke="#1b5e20" stroke-width="0.8"/>
+<rect x="433.7" y="466.8" width="10.5" height="10.5" fill="#2e7d32" stroke="#1b5e20" stroke-width="0.8"/>
+<rect x="451.5" y="520.2" width="10.5" height="10.5" fill="#2e7d32" stroke="#1b5e20" stroke-width="0.8"/>
+<rect x="451.5" y="502.4" width="10.5" height="10.5" fill="#2e7d32" stroke="#1b5e20" stroke-width="0.8"/>
+<rect x="451.5" y="484.6" width="10.5" height="10.5" fill="#2e7d32" stroke="#1b5e20" stroke-width="0.8"/>
+<rect x="451.5" y="466.8" width="10.5" height="10.5" fill="#2e7d32" stroke="#1b5e20" stroke-width="0.8"/>
+<rect x="469.2" y="520.2" width="10.5" height="10.5" fill="#2e7d32" stroke="#1b5e20" stroke-width="0.8"/>
+<rect x="469.2" y="502.4" width="10.5" height="10.5" fill="#2e7d32" stroke="#1b5e20" stroke-width="0.8"/>
+<rect x="469.2" y="484.6" width="10.5" height="10.5" fill="#2e7d32" stroke="#1b5e20" stroke-width="0.8"/>
+<rect x="469.2" y="466.8" width="10.5" height="10.5" fill="#2e7d32" stroke="#1b5e20" stroke-width="0.8"/>
+<path d="M210.6,539.0 L210.6,523.6 L210.6,499.8 L210.6,486.5 L210.6,450.8 L247.0,450.8 L275.0,442.4 L282.0,440.3 L352.0,440.3 L366.0,435.8 L453.5,423.5" stroke="#b71c1c" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M200.1,620.2 L200.8,609.0 L200.8,560.0 L210.6,539.0" stroke="#b71c1c" stroke-width="2" fill="none"/>
+<path d="M453.5,423.5 L436.0,406.0 L436.0,251.7 L436.0,210.0" stroke="#b71c1c" stroke-width="3" fill="none"/>
+<path d="M453.5,423.5 L457.0,339.5 L530.5,322.0 L570.8,251.7 L590.0,210.0" stroke="#b71c1c" stroke-width="3" fill="none"/>
+<path d="M315.2,610.2 L230.9,610.2 L230.9,564.1 L230.9,426.3 L275.0,426.3 L324.0,426.3 L341.5,421.4 L453.5,421.4 L457.0,337.4 L530.5,322.0 L553.2,251.7 L565.5,210.0" stroke="#00897b" stroke-width="2" fill="none" stroke-dasharray="6,3"/>
+<rect x="200.1" y="476.0" width="21.0" height="21.0" fill="#e1bee7" stroke="#7b1fa2" stroke-width="1.5"/>
+<rect x="264.5" y="431.9" width="21.0" height="21.0" fill="#e1bee7" stroke="#7b1fa2" stroke-width="1.5"/>
+<rect x="264.5" y="593.7" width="21.0" height="21.0" fill="#b2ebf2" stroke="#00838f" stroke-width="1.5"/>
+<rect x="220.4" y="553.6" width="21.0" height="21.0" fill="#b2ebf2" stroke="#00838f" stroke-width="1.5"/>
+<rect x="264.5" y="415.8" width="21.0" height="21.0" fill="#b2ebf2" stroke="#00838f" stroke-width="1.5"/>
+<rect x="432.5" y="402.5" width="42.0" height="42.0" fill="#d7ccc8" fill-opacity="0.85" stroke="#4e342e" stroke-width="1.5"/>
+<rect x="422.0" y="392.0" width="63.0" height="63.0" fill="none" stroke="#4e342e" stroke-width="0.8" stroke-dasharray="3,2"/>
+<rect x="495.5" y="287.0" width="70.0" height="70.0" fill="#d7ccc8" fill-opacity="0.85" stroke="#4e342e" stroke-width="1.5"/>
+<rect x="485.0" y="276.5" width="91.0" height="91.0" fill="none" stroke="#4e342e" stroke-width="0.8" stroke-dasharray="3,2"/>
+<line x1="422.0" y1="469.0" x2="492.5" y2="496.5" stroke="#888" stroke-width="0.8"/>
+<text x="495.5" y="500.5" font-weight="bold" fill="#1565c0">tab X</text>
+<text x="495.5" y="515.5" fill="#1565c0">x 48.70-65.00</text>
+<text x="495.5" y="530.5" fill="#1565c0">y 56.30-68.30</text>
+<line x1="166.5" y1="455.0" x2="76.0" y2="445.4" stroke="#888" stroke-width="0.8"/>
+<text x="37.0" y="449.4" font-weight="bold" fill="#1565c0">tab Y</text>
+<text x="37.0" y="464.4" fill="#1565c0">x 17.70-37.56</text>
+<text x="37.0" y="479.4" fill="#1565c0">y 67.14-76.00</text>
+<line x1="153.9" y1="546.0" x2="148.0" y2="531.5" stroke="#888" stroke-width="0.8"/>
+<text x="37.0" y="535.5" font-weight="bold" fill="#455a64">Ag105 footprint</text>
+<text x="37.0" y="550.5" fill="#455a64">31 x 33 mm (dashed)</text>
+<line x1="476.0" y1="471.1" x2="492.5" y2="453.8" stroke="#888" stroke-width="0.8"/>
+<text x="495.5" y="457.8" font-weight="bold" fill="#1b5e20">FT1 4.0 x 1.6</text>
+<text x="495.5" y="472.8" fill="#1b5e20">(61.72, 66.71)</text>
+<line x1="212.0" y1="425.2" x2="198.4" y2="409.0" stroke="#888" stroke-width="0.8"/>
+<text x="37.0" y="413.0" font-weight="bold" fill="#1b5e20">FT2 4.0 x 4.0 + 1.0 mm</text>
+<text x="37.0" y="428.0" fill="#1b5e20">fill hole (28.00, 73.25)</text>
+<line x1="474.5" y1="525.4" x2="492.5" y2="559.5" stroke="#888" stroke-width="0.8"/>
+<text x="495.5" y="563.5" font-weight="bold" fill="#1b5e20">tap field 6 x 4 at 2.54 mm</text>
+<text x="495.5" y="578.5" fill="#1b5e20">(20 pads + R175 + 2 spare)</text>
+<line x1="321.8" y1="687.4" x2="338.5" y2="712.8" stroke="#888" stroke-width="0.8"/>
+<text x="341.5" y="716.8" font-size="11" fill="#1b5e20">F08-F10, F22 (low row y 35.80)</text>
+<line x1="200.1" y1="486.5" x2="185.2" y2="493.0" stroke="#888" stroke-width="0.8"/>
+<text x="37.0" y="497.0" font-size="11" font-weight="bold" fill="#7b1fa2">B1 post (25.80, 64.50)</text>
+<line x1="275.0" y1="452.9" x2="300.0" y2="491.6" stroke="#888" stroke-width="0.8"/>
+<text x="303.0" y="495.6" font-size="11" font-weight="bold" fill="#7b1fa2">B3 post + S3</text>
+<line x1="285.5" y1="604.2" x2="296.5" y2="591.0" stroke="#888" stroke-width="0.8"/>
+<text x="299.5" y="595.0" font-size="11" font-weight="bold" fill="#00838f">S1</text>
+<line x1="241.4" y1="564.1" x2="261.5" y2="545.5" stroke="#888" stroke-width="0.8"/>
+<text x="264.5" y="549.5" font-size="11" font-weight="bold" fill="#00838f">S2</text>
+<line x1="474.5" y1="402.5" x2="492.5" y2="377.5" stroke="#888" stroke-width="0.8"/>
+<text x="495.5" y="381.5" font-size="11" font-weight="bold" fill="#4e342e">A1 tie base 6 x 6</text>
+<line x1="565.5" y1="322.0" x2="580.0" y2="325.0" stroke="#888" stroke-width="0.8"/>
+<text x="583.0" y="329.0" font-size="11" font-weight="bold" fill="#4e342e">A2 tie base 10 x 10</text>
+<line x1="366.0" y1="378.0" x2="398.0" y2="279.5" stroke="#888" stroke-width="0.8"/>
+<text x="296.0" y="283.5" font-size="11" font-weight="bold" fill="#00695c">polyimide strip</text>
+<line x1="210.6" y1="525.0" x2="125.8" y2="580.5" stroke="#888" stroke-width="0.8"/>
+<text x="37.0" y="584.5" font-size="11" font-weight="bold" fill="#b71c1c">trunk x 25.80</text>
+<rect x="427.6" y="234.9" width="16.8" height="16.8" fill="#ffcdd2" fill-opacity="0.6" stroke="#c62828" stroke-width="1"/>
+<rect x="544.9" y="129.9" width="16.8" height="121.8" fill="#ffcdd2" fill-opacity="0.6" stroke="#c62828" stroke-width="1"/>
+<rect x="562.4" y="136.9" width="16.8" height="114.8" fill="#ffcdd2" fill-opacity="0.6" stroke="#c62828" stroke-width="1"/>
+<text x="313.5" y="226.8" font-size="11" fill="#c62828">west tie &lt;= 2.4 mm</text>
+<text x="597.0" y="154.0" font-size="11" fill="#c62828">W5 tie &lt;= 17.4 mm,</text>
+<text x="597.0" y="168.0" font-size="11" fill="#c62828">W3/W4 tie &lt;= 16.4 mm</text>
+<text x="597.0" y="182.0" font-size="11" fill="#c62828">past the MB +y edge</text>
+<line x1="240.0" y1="154.0" x2="240.0" y2="72.1" stroke="#7b1fa2" stroke-width="2.5" marker-end="url(#ap)"/>
+<text x="250.5" y="95.9" font-size="11" font-weight="bold" fill="#7b1fa2">to the EVM plate (r7): EVM x -0.40-88.50, y 118.04-206.94;</text>
+<text x="250.5" y="109.9" font-size="11" fill="#7b1fa2">EIB x 93.50-117.50 beside its right edge (reference placement)</text>
+<line x1="618.0" y1="707.0" x2="688.0" y2="707.0" stroke="#222" stroke-width="2.5"/>
+<line x1="618.0" y1="703.0" x2="618.0" y2="711.0" stroke="#222" stroke-width="1.5"/>
+<line x1="688.0" y1="703.0" x2="688.0" y2="711.0" stroke="#222" stroke-width="1.5"/>
+<text x="653.0" y="700.0" font-size="11" text-anchor="middle">10 mm</text>
+<text x="778.0" y="80.0" font-size="13" font-weight="bold">Legend</text>
+<rect x="778.0" y="91.0" width="22.0" height="13.0" fill="#e3f2fd" stroke="#1565c0" stroke-width="1.5"/>
+<text x="808.0" y="102.0" font-size="11">r7 CR outline (1394.06 mm2)</text>
+<rect x="778.0" y="113.0" width="22.0" height="13.0" fill="none" stroke="#455a64" stroke-width="1.2" stroke-dasharray="4,3"/>
+<text x="808.0" y="124.0" font-size="11">Ag105 footprint 31 x 33 mm</text>
+<rect x="778.0" y="135.0" width="22.0" height="13.0" fill="#c8e6c9" stroke="#1b5e20" stroke-width="1.2" stroke-dasharray="4,3"/>
+<text x="808.0" y="146.0" font-size="11">foot FT1 / FT2 (CR bottom side)</text>
+<rect x="778.0" y="157.0" width="22.0" height="13.0" fill="#2e7d32" stroke="#1b5e20" stroke-width="1.5"/>
+<text x="808.0" y="168.0" font-size="11">tap pad 1.5 x 1.5 mm (F-pad)</text>
+<rect x="778.0" y="179.0" width="22.0" height="13.0" fill="#a1887f" stroke="#5d4037" stroke-width="1.5"/>
+<text x="808.0" y="190.0" font-size="11">R175 pads (a, b)</text>
+<rect x="778.0" y="201.0" width="22.0" height="13.0" fill="#ffffff" stroke="#2e7d32" stroke-width="1.2" stroke-dasharray="4,3"/>
+<text x="808.0" y="212.0" font-size="11">spare tap grid position</text>
+<rect x="778.0" y="223.0" width="22.0" height="13.0" fill="#bbdefb" stroke="#1565c0" stroke-width="1.2" stroke-dasharray="4,3"/>
+<text x="808.0" y="234.0" font-size="11">comparator band (A.8)</text>
+<line x1="778.0" y1="252.0" x2="800.0" y2="252.0" stroke="#e65100" stroke-width="3"/>
+<text x="808.0" y="256.0" font-size="11">thermal band boundary (H.23(h))</text>
+<line x1="778.0" y1="274.0" x2="800.0" y2="274.0" stroke="#b71c1c" stroke-width="3"/>
+<text x="808.0" y="278.0" font-size="11">W1-W4, W6, W7 dressing path</text>
+<line x1="778.0" y1="296.0" x2="800.0" y2="296.0" stroke="#00897b" stroke-width="2" stroke-dasharray="6,3"/>
+<text x="808.0" y="300.0" font-size="11">W5 ribbon path</text>
+<rect x="778.0" y="311.0" width="22.0" height="13.0" fill="#e1bee7" stroke="#7b1fa2" stroke-width="1.5"/>
+<text x="808.0" y="322.0" font-size="11">B1/B3 spacer post (bead)</text>
+<rect x="778.0" y="333.0" width="22.0" height="13.0" fill="#b2ebf2" stroke="#00838f" stroke-width="1.5"/>
+<text x="808.0" y="344.0" font-size="11">W5 spacer S1-S3</text>
+<rect x="778.0" y="355.0" width="22.0" height="13.0" fill="#d7ccc8" stroke="#4e342e" stroke-width="1.5"/>
+<text x="808.0" y="366.0" font-size="11">tie base A1/A2 (+-1.5 mm zone)</text>
+<line x1="778.0" y1="384.0" x2="800.0" y2="384.0" stroke="#80cbc4" stroke-width="10"/>
+<text x="808.0" y="388.0" font-size="11">polyimide strip on the MB</text>
+<rect x="778.0" y="399.0" width="22.0" height="13.0" fill="#ffcdd2" stroke="#c62828" stroke-width="1.5"/>
+<text x="808.0" y="410.0" font-size="11">chassis-tie limit past the edge</text>
+<rect x="778.0" y="421.0" width="22.0" height="13.0" fill="#eeeeee" stroke="#777" stroke-width="1.5"/>
+<text x="808.0" y="432.0" font-size="11">MB part box (.brd)</text>
+<text x="778.0" y="468.0" font-size="13" font-weight="bold">Notes</text>
+<text x="778.0" y="486.0" font-size="11" fill="#555">Trunk: W3 up x 24.40 joins at y 57.00;</text>
+<text x="778.0" y="501.0" font-size="11" fill="#555">+y on x 25.80, +x across tab Y</text>
+<text x="778.0" y="516.0" font-size="11" fill="#555">at y 69.60-71.10, leaves at x 37.56;</text>
+<text x="778.0" y="531.0" font-size="11" fill="#555">y 71.75 at x 48.00, then to A1.</text>
+<text x="778.0" y="546.0" font-size="11" fill="#555">West group: A1 -&gt; x 58.00 -&gt; MB edge.</text>
+<text x="778.0" y="561.0" font-size="11" fill="#555">East group: A1 -&gt; A2 -&gt; MB edge</text>
+<text x="778.0" y="576.0" font-size="11" fill="#555">(W3/W4 at x 77.25, W5 at x 74.75).</text>
+<text x="778.0" y="591.0" font-size="11" fill="#555">No W lead crosses tab X.</text>
+<text x="778.0" y="606.0" font-size="11" fill="#555">Every span between anchors &lt;= 30 mm</text>
+<text x="778.0" y="621.0" font-size="11" fill="#555">(longest 26.0 mm, S2-S3).</text>
+<text x="778.0" y="636.0" font-size="11" fill="#555">Polyimide strip bbox x 36.06-65.28,</text>
+<text x="778.0" y="651.0" font-size="11" fill="#555">y 65.30-92.80; it stops at A1 and A2.</text>
+<text x="778.0" y="666.0" font-size="11" fill="#555">Sources: r7_calc_out.json H.23(a), (g),</text>
+<text x="778.0" y="681.0" font-size="11" fill="#555">(h), (i), (l); MB boxes from the .brd.</text>
+</svg>
