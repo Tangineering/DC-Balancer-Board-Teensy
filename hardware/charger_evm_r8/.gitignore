@@ -6,3 +6,15 @@ fp-info-cache
 _autosave-*
 # packer debug dumps
 placement_dump.json
+# routing intermediates
+*.dsn
+*.ses
+route_dump.json
+finish_dump.json
+finish_routes.json
+_dbg.json
+drc_finish.rpt
+drc_place.rpt
+*_placed.kicad_pcb
+*_routed_fr.kicad_pcb
+freerouting.log

@@ -4,6 +4,12 @@ import json, os, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 if sys.argv[1] == "dump":
     import pcbnew, pcbbuild as pb, importlib
+    try:  # a wxWidgets debug assert opens a modal dialog that blocks an unattended run
+        import wx
+        wx.DisableAsserts()
+    except Exception:
+        pass
+    
     L = importlib.import_module("layout_" + sys.argv[2])
     b = pcbnew.LoadBoard(os.path.join(sys.argv[3], sys.argv[2] + ".kicad_pcb"))
     fr = pb.Frame(L.YOFF)

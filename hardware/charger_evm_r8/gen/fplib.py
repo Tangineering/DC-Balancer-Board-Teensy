@@ -132,7 +132,7 @@ def lead_smd(outdir, name, n):
     for i in range(n):
         L.append(smd_pad(str(i + 1), x0 + 2.0 * i, 0, 1.2, 1.5, "rect", paste=False))
     L.append(rect("F.CrtYd", x0 - 0.85, -1.0, -x0 + 0.85, 1.0))
-    L.append(line("F.SilkS", x0 - 0.9, 1.1, x0 - 0.9, -1.1))
+    L.append(line("F.Fab", x0 - 0.9, 1.1, x0 - 0.9, -1.1))  # pad-1 mark
     write(outdir, name, L)
 
 
@@ -172,9 +172,9 @@ def m3(outdir, name):
     L = hdr(name, "M3 hole 3.2 mm NPTH, 7.0 mm copper-free keep-out (A.9)", smd=False, board_only=True,
             exclude_bom=True)
     L.append('(pad "" np_thru_hole circle (at 0 0) (size 3.2 3.2) (drill 3.2) (layers "*.Cu" "*.Mask"))')
-    L.append(keepout_circle(0, 0, 3.5, ["F.Cu", "B.Cu"], fps=False))
+    L.append(keepout_circle(0, 0, 3.5, ["F.Cu", "B.Cu"], fps=False, pads=False))
     L.append(circ("F.CrtYd", 0, 0, 3.5))
-    L.append(circ("F.SilkS", 0, 0, 3.5, 0.12))
+    L.append(circ("F.Fab", 0, 0, 3.5, 0.12))
     write(outdir, name, L)
 
 
@@ -188,6 +188,14 @@ def _load(lib, stock, name):
     fp = Footprint.from_file(os.path.join(STOCK, lib + ".pretty", stock + ".kicad_mod"))
     fp.entryName = name
     return fp
+
+
+def _strip_silk(fp):
+    """D-12: small passives and ICs carry no silkscreen on this dense board; their outline and pin-1 mark stay on
+    F.Fab (fab drawing, InteractiveHtmlBom)."""
+    fp.graphicItems = [g for g in fp.graphicItems if getattr(g, "layer", "") not in ("F.SilkS", "B.SilkS")]
+    for prop in getattr(fp, "properties", []) or []:
+        pass
 
 
 def _set_courtyard(fp, x0, y0, x1, y1):
@@ -234,6 +242,7 @@ def vqfn24(outdir, name):
     x0, y0, x1, y1 = _extent(fp, with_fab=False)
     c = round(max(-x0, -y0, x1, y1) + 0.10, 3)
     _set_courtyard(fp, -c, -c, c, c)
+    _strip_silk(fp)
     fp.to_file(os.path.join(outdir, name + ".kicad_mod"))
 
 
@@ -249,6 +258,7 @@ def ssop_ti(outdir, name):
             pad.size = Position(X=0.4, Y=1.1) if rotated else Position(X=1.1, Y=0.4)
     x0, y0, x1, y1 = _extent(fp)
     _set_courtyard(fp, round(x0 - 0.1, 3), round(y0 - 0.1, 3), round(x1 + 0.1, 3), round(y1 + 0.1, 3))
+    _strip_silk(fp)
     fp.to_file(os.path.join(outdir, name + ".kicad_mod"))
 
 
@@ -258,6 +268,7 @@ def tight(outdir, name, lib, stock):
     fp = _load(lib, stock, name)
     x0, y0, x1, y1 = _extent(fp)
     _set_courtyard(fp, round(x0 - 0.1, 3), round(y0 - 0.1, 3), round(x1 + 0.1, 3), round(y1 + 0.1, 3))
+    _strip_silk(fp)
     fp.to_file(os.path.join(outdir, name + ".kicad_mod"))
 
 
@@ -277,9 +288,9 @@ def ftsh(outdir, name, drop6):
     cy = max(3.81 + 0.37, 9.02 / 2) + 0.10
     L.append(rect("F.CrtYd", -cx, -cy, cx, cy))
     L.append(rect("F.Fab", -1.715, -4.51, 1.715, 4.51, 0.1))
-    L.append(line("F.SilkS", -1.8, -4.6, -1.8, 4.6, 0.12))
-    L.append(line("F.SilkS", 1.8, -4.6, 1.8, 4.6, 0.12))
-    L.append(line("F.SilkS", -3.7, -4.25, -3.2, -4.25, 0.15))  # pin-1 mark
+    L.append(line("F.SilkS", -1.7, -4.75, 1.7, -4.75, 0.12))   # body ends, clear of the pads (pad ends +-4.18)
+    L.append(line("F.SilkS", -1.7, 4.75, 1.7, 4.75, 0.12))
+    L.append(line("F.SilkS", -3.0, -4.85, -2.2, -4.85, 0.15))  # pin-1 mark above pad 1
     write(outdir, name, L)
 
 

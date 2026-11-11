@@ -11,6 +11,12 @@ import re
 import sys
 
 import pcbnew
+try:  # a wxWidgets debug assert opens a modal dialog that blocks an unattended run
+    import wx
+    wx.DisableAsserts()
+except Exception:
+    pass
+
 from shapely.geometry import Polygon, box, Point
 from shapely.ops import unary_union
 from shapely import affinity
@@ -220,13 +226,16 @@ def build(board_name, projdir):
     # greedy placement
     log = greedy(b, fr, fps, L, pinnet)
     # silkscreen/fab notes
-    for txt, x, y, layer, size in getattr(L, "TEXTS", []):
+    for tx in getattr(L, "TEXTS", []):
+        txt, x, y, layer, size = tx[:5]
         t = pcbnew.PCB_TEXT(b)
         t.SetText(txt)
         t.SetPosition(fr.v(x, y))
         t.SetLayer(layer)
         t.SetTextSize(pcbnew.VECTOR2I_MM(size, size))
         t.SetTextThickness(pcbnew.FromMM(0.15 if size >= 0.8 else 0.12))
+        if len(tx) > 5 and tx[5] == "L":
+            t.SetHorizJustify(pcbnew.GR_TEXT_H_ALIGN_LEFT)
         if layer in (pcbnew.B_SilkS, pcbnew.B_Fab):
             t.SetMirrored(True)
         b.Add(t)
@@ -268,6 +277,7 @@ def greedy(b, fr, fps, L, pinnet):
     module; every placement is re-checked by the KiCad DRC afterwards."""
     import numpy as np
     import packer
+    packer.MARGIN = getattr(L, "PACK_MARGIN", packer.MARGIN)   # routing channel kept around every courtyard
     log = []
     L.setup(fps)
     grid = packer.Grid(*L.GRID_BOUNDS)

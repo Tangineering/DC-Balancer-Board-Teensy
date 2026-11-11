@@ -1,0 +1,72 @@
+(version 1)
+# 2-layer fab rules (EIB). Each value is the MORE CONSERVATIVE of OSH Park standard 2-layer and
+# PCBWay standard PCB, read from the fabs' pages on 2026-11-10:
+#   [OSH]  https://docs.oshpark.com/services/two-layer/
+#   [PCBW] https://www.pcbway.com/capabilities.html  (standard section; "Advanced PCB" table where noted)
+#   [PCBP] https://www.pcbway.com/pcb_prototype/      (order-form options)
+# To use: copy this file next to the project as <project>.kicad_dru. Mask expansion, mask web and
+# board thickness are board-setup values, not custom-rule constraints: apply them with
+# apply_board_setup.py.
+
+# Trace width. [OSH] 6 mil (0.1524 mm). [PCBW] standard 4 mil (0.1 mm); Advanced table, 1 oz outer,
+# normal process ">=5/6 mil" (width/spacing). [PCBP] offers 4/4, 5/5, 6/6 mil.
+# Rule: 6 mil. TODO(verify): which PCBWay track/space option is the base price (page does not say).
+(rule "fab_track_width"
+  (constraint track_width (min 0.1524mm)))
+
+# Copper-to-copper clearance. [OSH] 6 mil (0.1524 mm). [PCBW] standard "Min Spacing" 4 mil (0.1 mm);
+# Advanced 1 oz outer normal process 6 mil. Rule: 6 mil.
+(rule "fab_clearance"
+  (constraint clearance (min 0.1524mm)))
+
+# Copper-to-board-edge. [OSH] 15 mil (0.381 mm) "from nominal board edge". [PCBW] Advanced, CNC
+# milling, normal process 0.25 mm (not in the standard section). Rule: 0.381 mm.
+(rule "fab_edge_clearance"
+  (constraint edge_clearance (min 0.381mm)))
+
+# Minimum drill, PTH and via. [OSH] "Minimum Drill Size" 10 mil (0.254 mm); drilled vs finished not
+# stated. [PCBW] 0.15 mm minimum, but "Any holes ... smaller than 0.2mm will be subject to extra
+# charges"; Advanced: 0.2 mm hole allowed up to 1.6 mm board. Rule: 0.254 mm.
+# TODO(verify: OSH Park) whether 10 mil is drilled or finished; a 0.3 mm via drill clears both readings.
+(rule "fab_hole_size"
+  (constraint hole_size (min 0.254mm)))
+
+# Annular ring. [OSH] 5 mil (0.127 mm). [PCBW] "Min Width of Annular Ring" 0.15 mm (6 mil).
+# Rule: 0.15 mm.
+(rule "fab_annular_ring"
+  (constraint annular_width (min 0.15mm)))
+
+# Via pad diameter. Neither fab states a value. Derived: min drill 0.254 + 2 x 0.15 ring = 0.554 mm.
+(rule "fab_via_diameter"
+  (condition "A.Type == 'Via'")
+  (constraint via_diameter (min 0.554mm)))
+
+# Hole-to-hole (edge to edge). [OSH] no minimum; 5 mil (0.127 mm) recommended. [PCBW] Advanced,
+# normal process: component hole 16 mil (0.4064 mm); via <= 0.45 mm: 11 mil (0.2794 mm).
+# Rule: 0.4064 mm in general, 0.2794 mm between two vias. TODO(verify: PCBWay) that the Advanced
+# figures are edge-to-edge (the page does not define the measure).
+(rule "fab_hole_to_hole"
+  (constraint hole_to_hole (min 0.4064mm)))
+(rule "fab_hole_to_hole_via_via"
+  (condition "A.Type == 'Via' && B.Type == 'Via'")
+  (constraint hole_to_hole (min 0.2794mm)))
+
+# Silkscreen text. [OSH] line 5 mil (0.127 mm) recommended, 3 mil for short lines/text; text height
+# not stated. [PCBW] character width 0.15 mm, height 0.8 mm, width:height 1:5.
+# Rule: height >= 0.8 mm, stroke >= 0.15 mm (keep stroke >= height/5 for taller text).
+# Silkscreen line width has no custom-rule constraint: draw silk lines at >= 0.15 mm.
+(rule "fab_silk_text"
+  (layer "?.Silkscreen")
+  (constraint text_height (min 0.8mm))
+  (constraint text_thickness (min 0.15mm)))
+
+# Not expressible as constraints (see apply_board_setup.py):
+#   Solder-mask expansion: [OSH] value not stated; "Maximum soldermask alignment" 3 mil "Covers
+#     retraction, expansion, and shift". [PCBW] Advanced "solder mask opening" >= 2 mil normal.
+#     Setting: 0.0508 mm (2 mil). TODO(verify) against both fabs' preferred expansion.
+#   Solder-mask web: [OSH] 4 mil (0.1016 mm). [PCBW] green, < 2 oz: 4 mil (>= 4.5 mil black).
+#     Setting: 0.1016 mm (use green mask at PCBWay; other colours need 0.1143 mm).
+#   Board thickness: [OSH] 63 mil (1.6 mm) nominal. [PCBP] "1.6mm (Default)". Setting: 1.6 mm.
+#   Copper weight: [OSH] 1 oz both sides. [PCBW] outer 1-8 oz, default not stated; [PCBP] lists
+#     1oz/2oz/3oz. Design for 1 oz. TODO(verify: PCBWay) that 1 oz is the base price.
+#   Free mask colours at PCBWay: green, red, yellow, blue. Free silk colours: white, black.
