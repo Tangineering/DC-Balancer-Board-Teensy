@@ -1,0 +1,3 @@
+Layer Pairs Export File for PCB: C:\Users\a0232175.ENT\Documents\PD_BQ_Ref_Design (8-31-2020 8-51-05 AM) Correct_Gerbers\PD_BQ_Ref_Design_PCB.PcbDoc
+LayersSetName=Top_Bot_Thru_Holes|DrillFile=pd_bq_ref_design_pcb-roundholes.txt|DrillLayers=gtl,g1,g2,gbl
+LayersSetName=Top_Bot_Slot_Holes|DrillFile=pd_bq_ref_design_pcb-slotholes.txt|DrillLayers=gtl,g1,g2,gbl

@@ -1,0 +1,39 @@
+------------------------------------------------------------------------------------------
+Gerber File Extension Report For: PD_BQ_Ref_Design_PCB.GBR   9/2/2020  12:14:35 PM
+------------------------------------------------------------------------------------------
+
+
+------------------------------------------------------------------------------------------
+Layer Extension     Layer Description                      
+------------------------------------------------------------------------------------------
+.GTO                Top Overlay                             
+.GTP                Top Paste                               
+.GTS                Top Solder                              
+.GTL                Top Layer                               
+.G1                 Signal Layer 1                          
+.G2                 Signal Layer 2                          
+.GBL                Bottom Layer                            
+.GBS                Bottom Solder                           
+.GBP                Bottom Paste                            
+.GBO                Bottom Overlay                          
+.GM1                M1 Board Outline                        
+.GM2                M2 Board Dimensions                     
+.GM3                M3 3D STEP Top                          
+.GM4                M4 3D STEP Bottom                       
+.GM5                M5 Assembly Top                         
+.GM6                M6 Assembly Bottom                      
+.GM9                M9 Title Sheet                          
+.GM10               M10 Fab Notes                           
+.GM11               M11 Gerber Information                  
+.GM12               M12 Stackup                             
+.GM13               M13 Component Bodies Top                
+.GM14               M14 Component Bodies Bottom             
+.GM15               M15 Courtyards Top                      
+.GM16               M16 Courtyards Bottom                   
+.GM17               M17 Embedded Cavity                     
+.GM18               M18 Embedded Assembly                   
+.GM19               M19 Embedded Keepout                    
+.GKO                Keep-Out Layer                          
+.GPT                Top Pad Master                          
+.GPB                Bottom Pad Master                       
+------------------------------------------------------------------------------------------

@@ -1,0 +1,641 @@
+# mech_parse.py output
+# source: C:\Life Ops\School\Thesis\DC-Balancer-Charger-custom\references\Scale Car Board PCB 20260625.brd
+# convention: Eagle board coords, top view, origin = MB lower-left (dimension corner), +x right, +y UP, mm
+# design rules: rvPadTop 0.25, rlMinPadTop 10mil, rlMaxPadTop 20mil; rvViaOuter 0.25, rlMinViaOuter 8mil; mtCopper[0] 0.035mm
+
+## 3. Board outline (layer 20 Dimension, <plain>)
+outline bbox x 0.000-131.064, y 0.000-98.044 (131.064 x 98.044 mm)
+plain hole at (3.302, 94.742) drill 3.7973
+plain hole at (3.302, 3.302) drill 3.7973
+
+## 1. CHG element
+library Silvertel Ag105, package AG105, value AG105, origin (47.498, 34.544), rot R180, side top
+outline bboxes (board mm, x0,y0,x1,y1): {"silk": [17.134, 32.78, 49.262, 67.708], "copper": [20.173, 35.719, 46.823, 65.309], "all": [17.134, 32.78, 49.262, 67.708]}
+package has layers present: ['21']
+pads (drill, auto pad dia from DRU, shape):
+  MPPTD    x  20.998 y  64.484 drill 1.10 pad 1.650 square  MB net: MPPT-DISABLE
+  MPPTSEL  x  20.998 y  61.944 drill 1.10 pad 1.650 square  MB net: (none)
+  THERM    x  20.998 y  59.404 drill 1.10 pad 1.650 square  MB net: N$34
+  VBAT-1   x  20.998 y  56.864 drill 1.10 pad 1.650 square  MB net: GND
+  VBAT-2   x  20.998 y  54.324 drill 1.10 pad 1.650 square  MB net: GND
+  VLOAD-1  x  20.998 y  51.784 drill 1.10 pad 1.650 square  MB net: (none)
+  VLOAD-2  x  20.998 y  49.244 drill 1.10 pad 1.650 square  MB net: (none)
+  VBAT+1   x  20.998 y  46.704 drill 1.10 pad 1.650 square  MB net: VCHG
+  VBAT+2   x  20.998 y  44.164 drill 1.10 pad 1.650 square  MB net: VCHG
+  LDIS     x  20.998 y  41.624 drill 1.10 pad 1.650 square  MB net: (none)
+  VLOAD+1  x  20.998 y  39.084 drill 1.10 pad 1.650 square  MB net: (none)
+  VLOAD+2  x  20.998 y  36.544 drill 1.10 pad 1.650 square  MB net: (none)
+  VIN+     x  45.998 y  61.944 drill 1.10 pad 1.650 square  MB net: VCHG-IN
+  NC3      x  45.998 y  59.404 drill 1.10 pad 1.650 square  MB net: (none)
+  SDA      x  45.998 y  56.864 drill 1.10 pad 1.650 square  MB net: SDA
+  SCL      x  45.998 y  54.324 drill 1.10 pad 1.650 square  MB net: SCL
+  NC2      x  45.998 y  51.784 drill 1.10 pad 1.650 square  MB net: (none)
+  NC1      x  45.998 y  49.244 drill 1.10 pad 1.650 square  MB net: (none)
+  VIN-     x  45.998 y  46.704 drill 1.10 pad 1.650 square  MB net: GND
+  STAT     x  45.998 y  44.164 drill 1.10 pad 1.650 square  MB net: CHRG-STAT
+  CSEL     x  45.998 y  41.624 drill 1.10 pad 1.650 square  MB net: (none)
+  VSEL     x  45.998 y  39.084 drill 1.10 pad 1.650 square  MB net: (none)
+silk outline (line centre) x 17.198-49.199 y 32.843-67.644; with 0.127 width: (17.134, 32.78, 49.262, 67.708)
+FOOTPRINT RECT used below (silk line centre): (17.198, 32.843, 49.199, 67.644), 32.001 x 34.801 mm
+
+## 3b. CHG footprint to board edge
+left (-x)  : 17.198 mm
+right (+x) : 81.865 mm
+low-y (-y) : 32.843 mm
+high-y (+y): 30.400 mm
+
+## 2. Elements within 25 mm of the CHG footprint edge (gap = edge-to-edge, footprint vs element 'all' bbox)
+  C-D12      10uF                   pkg CAPC2012X110                 side top    at ( 34.290, 50.038) R90    all-bbox (33.18, 48.58, 35.4, 51.496) silk (33.18, 48.874, 35.4, 51.201) docu (33.505, 48.878, 35.075, 51.198) gap -16.02 dir UNDER/OVERLAP
+  C-DC11     1nF                    pkg CAPC1005X60                  side top    at ( 34.036, 52.324) R180   all-bbox (33.271, 51.632, 34.801, 53.016) silk (33.423, 51.632, 34.649, 53.016) docu (33.426, 51.964, 34.646, 52.684) gap -15.93 dir UNDER/OVERLAP
+  D-BT-SQ    RT1987N-A              pkg IC_RT1987N-A                 side top    at ( 29.718, 50.038) R180   all-bbox (27.543, 48.263, 32.418, 51.813) silk (28.154, 48.286, 32.418, 51.79) docu (28.154, 48.474, 32.418, 51.601) gap -15.22 dir UNDER/OVERLAP
+  C-DC12     5.6nF                  pkg CAPC1005X60                  side top    at ( 27.940, 52.578) R0     all-bbox (27.175, 51.886, 28.705, 53.27) silk (27.326, 51.886, 28.554, 53.27) docu (27.33, 52.218, 28.55, 52.938) gap -11.51 dir UNDER/OVERLAP
+  C-D11      10uF                   pkg CAPC2012X110                 side top    at ( 26.162, 50.292) R90    all-bbox (25.052, 48.834, 27.272, 51.75) silk (25.052, 49.129, 27.272, 51.456) docu (25.377, 49.132, 26.947, 51.452) gap -10.07 dir UNDER/OVERLAP
+  OP-FC      OPA197IDD0008A-IPC_A   pkg D0008A-IPC_A                 side top    at ( 42.672, 71.628) R90    all-bbox (40.143, 67.18, 45.201, 75.276) silk (40.143, 67.18, 45.201, 72.383) docu (40.143, 69.604, 45.201, 73.652) gap  -0.46 dir UNDER/OVERLAP
+  J-BL       TB005_762_03BE         pkg CUI_TB005_-762-03BE          side top    at ( 11.430, 45.720) R270   all-bbox (3.255, 26.395, 17.33, 49.805) silk (3.466, 26.606, 17.33, 49.593) docu (3.466, 26.606, 17.33, 49.593) gap  -0.13 dir UNDER/OVERLAP
+  CO-5V      10uF TANT              pkg CAPM3528X210                 side top    at ( 50.800, 39.624) R270   all-bbox (49.236, 37.266, 52.363, 41.982) silk (49.236, 37.711, 52.363, 41.538) docu (49.24, 37.714, 52.36, 41.534) gap   0.04 dir R
+  C4A-BT     22uF                   pkg CAPC3225X135                 side top    at ( 44.704, 30.480) R90    all-bbox (42.969, 28.422, 46.436, 32.538) silk (42.969, 28.716, 46.436, 32.243) docu (43.294, 28.72, 46.114, 32.24) gap   0.31 dir LOWY
+  C4B-BT     22uF                   pkg CAPC3225X135                 side top    at ( 48.514, 30.480) R90    all-bbox (46.779, 28.422, 50.246, 32.538) silk (46.779, 28.716, 50.246, 32.243) docu (47.104, 28.72, 49.924, 32.24) gap   0.31 dir LOWY
+  RB1B       100Ohm                 pkg RESC1005X40                  side top    at ( 27.432, 31.750) R270   all-bbox (26.732, 30.975, 28.131, 32.525) silk (26.732, 31.136, 28.131, 32.363) docu (27.072, 31.14, 27.792, 32.36) gap   0.32 dir LOWY
+  RB2        160Ohm                 pkg RESC1005X40                  side top    at ( 19.050, 31.750) R180   all-bbox (18.275, 31.05, 19.825, 32.45) silk (18.436, 31.05, 19.664, 32.45) docu (18.44, 31.39, 19.66, 32.11) gap   0.39 dir LOWY
+  CBL1       100nF                  pkg CAPC1608X85                  side top    at ( 21.082, 30.988) R90    all-bbox (20.219, 29.753, 21.945, 32.223) silk (20.219, 30.049, 21.945, 31.927) docu (20.547, 30.053, 21.617, 31.923) gap   0.62 dir LOWY
+  J-NTC      691411410002           pkg 691411410002                 side top    at (  9.652, 59.944) R90    all-bbox (3.352, 52.714, 16.452, 67.554) silk (3.452, 52.814, 16.352, 67.454) docu (3.602, 52.964, 16.202, 67.304) gap   0.75 dir L
+  C4C-BT     22uF                   pkg CAPC3225X135                 side top    at ( 52.324, 30.480) R90    all-bbox (50.589, 28.422, 54.056, 32.538) silk (50.589, 28.716, 54.056, 32.243) docu (50.914, 28.72, 53.734, 32.24) gap   1.42 dir R/LOWY
+  BAL        BQ29200DRBTDRB8_1P6X2P pkg DRB8_1P6X2P4                 side top    at ( 24.384, 29.464) R0     all-bbox (22.484, 27.813, 26.284, 31.115) silk (22.733, 27.813, 26.035, 31.115) docu (22.733, 27.813, 26.035, 31.115) gap   1.73 dir LOWY
+  REG-5V     LM1084ISX-5.0/NOPB     pkg TO254P1524X483-4N            side top    at ( 56.642, 45.974) R90    all-bbox (50.947, 36.774, 62.337, 54.539) silk (51.499, 36.774, 61.785, 46.387) docu (51.499, 36.774, 61.785, 52.41) gap   1.75 dir R
+  CBL2       100nF                  pkg CAPC1608X85                  side top    at ( 18.542, 30.226) R180   all-bbox (17.307, 29.363, 19.777, 31.089) silk (17.604, 29.363, 19.481, 31.089) docu (17.607, 29.691, 19.477, 30.761) gap   1.75 dir LOWY
+  MDAC-FC    AD5443YRMZ-REEL7RM_10_ pkg RM_10_ADI                    side top    at ( 50.038, 71.628) R180   all-bbox (46.599, 69.925, 52.969, 73.331) silk (46.599, 69.925, 51.741, 73.331) docu (47.387, 70.052, 52.689, 73.204) gap   2.28 dir HIGHY
+  CBL3       100nF                  pkg CAPC1608X85                  side top    at ( 27.940, 29.210) R270   all-bbox (27.077, 27.975, 28.803, 30.445) silk (27.077, 28.271, 28.803, 30.149) docu (27.405, 28.275, 28.475, 30.145) gap   2.40 dir LOWY
+  RB3        260Ohm                 pkg RESC1005X40                  side top    at ( 18.796, 28.448) R0     all-bbox (18.021, 27.748, 19.571, 29.148) silk (18.182, 27.748, 19.41, 29.148) docu (18.186, 28.088, 19.406, 28.808) gap   3.70 dir LOWY
+  RB1A       100Ohm                 pkg RESC1005X40                  side top    at ( 20.828, 27.940) R90    all-bbox (20.128, 27.165, 21.527, 28.715) silk (20.128, 27.326, 21.527, 28.554) docu (20.468, 27.33, 21.188, 28.55) gap   4.13 dir LOWY
+  J-FC       TB005-762-02BE         pkg CUI_TB005-762-02BE           side top    at ( 11.430, 83.820) R270   all-bbox (3.255, 72.115, 17.33, 87.905) silk (3.466, 72.326, 17.33, 87.694) docu (3.466, 72.326, 17.33, 87.694) gap   4.47 dir HIGHY
+  CBLD       330nF                  pkg CAPC1608X85                  side top    at ( 22.860, 26.162) R270   all-bbox (21.997, 24.927, 23.723, 27.397) silk (21.997, 25.223, 23.723, 27.101) docu (22.325, 25.227, 23.395, 27.097) gap   5.45 dir LOWY
+  SNS-BT     INA253A1IPWR           pkg SOP65P640X120-20N            side top    at ( 55.118, 23.622) R90    all-bbox (51.543, 19.232, 58.693, 27.557) silk (51.605, 19.232, 58.632, 25.886) docu (51.805, 19.232, 58.431, 25.886) gap   5.78 dir R/LOWY
+  ROP1-FC    10kOhm                 pkg RESC1608X60                  side top    at ( 38.862, 74.649) R270   all-bbox (37.998, 73.434, 39.726, 75.864) silk (37.998, 73.736, 39.726, 75.562) docu (38.327, 73.739, 39.397, 75.559) gap   5.79 dir HIGHY
+  CSNS-BT    100nF                  pkg CAPC1608X85                  side top    at ( 56.896, 29.464) R270   all-bbox (56.033, 28.229, 57.759, 30.699) silk (56.033, 28.525, 57.759, 30.402) docu (56.361, 28.529, 57.431, 30.399) gap   7.16 dir R/LOWY
+  C2-BT      100nF                  pkg CAPC1608X85                  side top    at ( 44.196, 24.130) R90    all-bbox (43.333, 22.895, 45.059, 25.365) silk (43.333, 23.191, 45.059, 25.069) docu (43.661, 23.195, 44.731, 25.065) gap   7.48 dir LOWY
+  RD2-FC     10kOhm                 pkg RESC1608X60                  side top    at ( 45.720, 76.708) R180   all-bbox (44.505, 75.844, 46.935, 77.572) silk (44.806, 75.844, 46.633, 77.572) docu (44.81, 76.173, 46.63, 77.243) gap   8.20 dir HIGHY
+  C5-BT      100nF                  pkg CAPC1608X85                  side top    at ( 40.132, 23.368) R90    all-bbox (39.269, 22.133, 40.995, 24.603) silk (39.269, 22.429, 40.995, 24.306) docu (39.597, 22.433, 40.667, 24.303) gap   8.24 dir LOWY
+  ROP2-FC    40.2kOhm               pkg RESC1608X60                  side top    at ( 40.386, 77.216) R0     all-bbox (39.171, 76.352, 41.601, 78.08) silk (39.473, 76.352, 41.3, 78.08) docu (39.476, 76.681, 41.296, 77.751) gap   8.71 dir HIGHY
+  RINJ-FC    53.6kOhm               pkg RESC1608X60                  side top    at ( 42.926, 77.724) R270   all-bbox (42.062, 76.509, 43.79, 78.939) silk (42.062, 76.811, 43.79, 78.638) docu (42.391, 76.814, 43.461, 78.634) gap   8.86 dir HIGHY
+  J-BT       TB005-762-02BE         pkg CUI_TB005-762-02BE           side top    at ( 11.684, 19.558) R270   all-bbox (3.509, 7.853, 17.584, 23.643) silk (3.72, 8.065, 17.584, 23.431) docu (3.72, 8.065, 17.584, 23.431) gap   9.20 dir LOWY
+  L-FC       2.2uH                  pkg HCM1A1305V3-2R2-R            side top    at ( 29.464, 83.312) R0     all-bbox (20.987, 76.948, 36.564, 89.675) silk (20.987, 76.948, 36.252, 89.675) docu None gap   9.30 dir HIGHY
+  R1-BT      16.2kOhm               pkg RESC1608X60                  side top    at ( 28.448, 22.606) R180   all-bbox (27.233, 21.742, 29.663, 23.47) silk (27.534, 21.742, 29.362, 23.47) docu (27.538, 22.071, 29.358, 23.141) gap   9.37 dir LOWY
+  R2-BT      10kOhm                 pkg RESC1608X60                  side top    at ( 31.496, 22.606) R180   all-bbox (30.281, 21.742, 32.711, 23.47) silk (30.582, 21.742, 32.409, 23.47) docu (30.586, 22.071, 32.406, 23.141) gap   9.37 dir LOWY
+  RD1-FC     237kOhm                pkg RESC1608X60                  side top    at ( 45.720, 78.740) R0     all-bbox (44.505, 77.876, 46.935, 79.604) silk (44.806, 77.876, 46.633, 79.604) docu (44.81, 78.205, 46.63, 79.275) gap  10.23 dir HIGHY
+  REG-BT     TPS61288LRQQR          pkg CONV_TPS61288LRQQR           side top    at ( 45.466, 20.574) R90    all-bbox (43.741, 17.937, 47.191, 22.549) silk (44.441, 17.937, 46.779, 22.138) docu (44.153, 17.937, 46.779, 22.138) gap  10.29 dir LOWY
+  C1-FC      10uF                   pkg CAPC2012X110                 side top    at ( 19.558, 80.010) R270   all-bbox (18.448, 78.552, 20.668, 81.468) silk (18.448, 78.847, 20.668, 81.174) docu (18.773, 78.85, 20.343, 81.17) gap  10.91 dir HIGHY
+  CIN-5V     10uF                   pkg CAPC2012X110                 side top    at ( 61.722, 39.624) R270   all-bbox (60.612, 38.166, 62.832, 41.082) silk (60.612, 38.461, 62.832, 40.788) docu (60.937, 38.464, 62.507, 40.784) gap  11.41 dir R
+  SNS-FC     INA253A1IPWR           pkg SOP65P640X120-20N            side top    at ( 57.404, 82.804) R90    all-bbox (53.829, 78.414, 60.979, 86.739) silk (53.891, 78.414, 60.918, 85.068) docu (54.091, 78.414, 60.718, 85.068) gap  11.72 dir R/HIGHY
+  L-BT       2.2uH                  pkg HCM1A1305V3-2R2-R            side top    at ( 28.702, 14.478) R0     all-bbox (20.225, 8.115, 35.802, 20.841) silk (20.225, 8.115, 35.49, 20.841) docu None gap  12.00 dir LOWY
+  RC-FC      61.2kOhm               pkg RESC1608X60                  side top    at ( 45.720, 80.772) R180   all-bbox (44.505, 79.908, 46.935, 81.636) silk (44.806, 79.908, 46.633, 81.636) docu (44.81, 80.237, 46.63, 81.307) gap  12.26 dir HIGHY
+  C-DC4      5.6nF                  pkg CAPC1005X60                  side top    at ( 60.452, 24.384) R0     all-bbox (59.687, 23.692, 61.217, 25.076) silk (59.839, 23.692, 61.065, 25.076) docu (59.842, 24.024, 61.062, 24.744) gap  13.05 dir R/LOWY
+  C6-FC      27pF                   pkg CAPC1608X85                  side top    at ( 42.977, 82.144) R90    all-bbox (42.114, 80.909, 43.839, 83.379) silk (42.114, 81.205, 43.839, 83.082) docu (42.442, 81.209, 43.512, 83.079) gap  13.26 dir HIGHY
+  C-D3       10uF                   pkg CAPC2012X110                 side top    at ( 59.690, 21.590) R90    all-bbox (58.58, 20.132, 60.8, 23.048) silk (58.58, 20.426, 60.8, 22.754) docu (58.905, 20.43, 60.475, 22.75) gap  13.56 dir R/LOWY
+  C3-BT      2.2uF                  pkg CAPC2012X110                 side top    at ( 39.878, 17.526) R90    all-bbox (38.768, 16.068, 40.988, 18.984) silk (38.768, 16.362, 40.988, 18.69) docu (39.093, 16.366, 40.663, 18.686) gap  13.86 dir LOWY
+  CC-FC      2nF                    pkg CAPC1608X85                  side top    at ( 45.720, 82.804) R180   all-bbox (44.485, 81.941, 46.955, 83.667) silk (44.782, 81.941, 46.658, 83.667) docu (44.785, 82.269, 46.655, 83.339) gap  14.30 dir HIGHY
+  C3-FC      2.2uF                  pkg CAPC2012X110                 side top    at ( 40.386, 83.566) R90    all-bbox (39.276, 82.108, 41.496, 85.024) silk (39.276, 82.403, 41.496, 84.73) docu (39.601, 82.406, 41.171, 84.726) gap  14.46 dir HIGHY
+  CC-BT      2nF                    pkg CAPC1608X85                  side top    at ( 47.498, 17.272) R180   all-bbox (46.263, 16.409, 48.733, 18.135) silk (46.559, 16.409, 48.436, 18.135) docu (46.563, 16.737, 48.433, 17.807) gap  14.71 dir LOWY
+  C6-BT      27pF                   pkg CAPC1608X85                  side top    at ( 43.434, 16.764) R90    all-bbox (42.571, 15.529, 44.297, 17.999) silk (42.571, 15.825, 44.297, 17.703) docu (42.899, 15.829, 43.969, 17.699) gap  14.84 dir LOWY
+  D-BT-EN    RT1987N-A              pkg IC_RT1987N-A                 side top    at ( 63.754, 22.860) R180   all-bbox (61.579, 21.085, 66.454, 24.635) silk (62.191, 21.108, 66.454, 24.612) docu (62.191, 21.296, 66.454, 24.424) gap  14.85 dir R/LOWY
+  REG-FC     TPS61288LRQQR          pkg CONV_TPS61288LRQQR           side top    at ( 44.196, 86.106) R90    all-bbox (42.471, 83.468, 45.921, 88.081) silk (43.171, 83.468, 45.509, 87.669) docu (42.883, 83.468, 45.509, 87.669) gap  15.82 dir HIGHY
+  RC-BT      27.4kOhm               pkg RESC1608X60                  side top    at ( 47.498, 15.240) R180   all-bbox (46.283, 14.376, 48.713, 16.104) silk (46.584, 14.376, 48.411, 16.104) docu (46.588, 14.705, 48.408, 15.775) gap  16.74 dir LOWY
+  CSNS-FC    100nF                  pkg CAPC1608X85                  side top    at ( 62.484, 81.280) R270   all-bbox (61.621, 80.045, 63.347, 82.515) silk (61.621, 80.341, 63.347, 82.219) docu (61.949, 80.345, 63.019, 82.215) gap  17.55 dir R/HIGHY
+  C-D2       10uF                   pkg CAPC2012X110                 side top    at ( 68.580, 69.850) R0     all-bbox (67.122, 68.74, 70.038, 70.96) silk (67.416, 68.74, 69.743, 70.96) docu (67.42, 69.065, 69.74, 70.635) gap  17.96 dir R/HIGHY
+  D-FC-EN    RT1987N-A              pkg IC_RT1987N-A                 side top    at ( 68.834, 74.168) R90    all-bbox (67.059, 71.468, 70.609, 76.343) silk (67.082, 71.468, 70.586, 75.732) docu (67.27, 71.468, 70.398, 75.732) gap  18.27 dir R/HIGHY
+  RD1-BT     237kOhm                pkg RESC1608X60                  side top    at ( 47.498, 13.208) R0     all-bbox (46.283, 12.344, 48.713, 14.072) silk (46.584, 12.344, 48.411, 14.072) docu (46.588, 12.673, 48.408, 13.743) gap  18.77 dir LOWY
+  C5-FC      100nF                  pkg CAPC1608X85                  side top    at ( 40.538, 87.300) R0     all-bbox (39.303, 86.437, 41.773, 88.162) silk (39.6, 86.437, 41.477, 88.162) docu (39.603, 86.765, 41.473, 87.835) gap  18.79 dir HIGHY
+  C1-BT      10uF                   pkg CAPC2012X110                 side top    at ( 19.050, 12.446) R270   all-bbox (17.94, 10.988, 20.16, 13.904) silk (17.94, 11.283, 20.16, 13.609) docu (18.265, 11.286, 19.835, 13.606) gap  18.94 dir LOWY
+  C-DC3      1nF                    pkg CAPC1005X60                  side top    at ( 67.564, 23.622) R180   all-bbox (66.799, 22.93, 68.329, 24.314) silk (66.95, 22.93, 68.177, 24.314) docu (66.954, 23.262, 68.174, 23.982) gap  19.56 dir R/LOWY
+  RINJ-BT    53.6kOhm               pkg RESC1608X60                  side top    at ( 44.704, 11.430) R90    all-bbox (43.84, 10.215, 45.568, 12.645) silk (43.84, 10.517, 45.568, 12.343) docu (44.169, 10.52, 45.239, 12.34) gap  20.20 dir LOWY
+  C-D1       10uF                   pkg CAPC2012X110                 side top    at ( 68.834, 77.978) R0     all-bbox (67.376, 76.868, 70.292, 79.088) silk (67.671, 76.868, 69.998, 79.088) docu (67.674, 77.193, 69.994, 78.763) gap  20.38 dir R/HIGHY
+  C-D4       10uF                   pkg CAPC2012X110                 side top    at ( 68.072, 21.336) R90    all-bbox (66.962, 19.878, 69.182, 22.794) silk (66.962, 20.172, 69.182, 22.5) docu (67.287, 20.176, 68.857, 22.496) gap  20.41 dir R/LOWY
+  C2-FC      100nF                  pkg CAPC1608X85                  side top    at ( 42.926, 89.408) R90    all-bbox (42.063, 88.173, 43.789, 90.643) silk (42.063, 88.469, 43.789, 90.347) docu (42.391, 88.473, 43.461, 90.343) gap  20.53 dir HIGHY
+  RD2-BT     10kOhm                 pkg RESC1608X60                  side top    at ( 47.498, 11.176) R180   all-bbox (46.283, 10.312, 48.713, 12.04) silk (46.584, 10.312, 48.411, 12.04) docu (46.588, 10.641, 48.408, 11.711) gap  20.80 dir LOWY
+  C4A-FC     22uF                   pkg CAPC3225X135                 side top    at ( 46.482, 90.678) R90    all-bbox (44.747, 88.62, 48.214, 92.736) silk (44.747, 88.914, 48.214, 92.442) docu (45.072, 88.918, 47.892, 92.438) gap  20.98 dir HIGHY
+  C4B-FC     22uF                   pkg CAPC3225X135                 side top    at ( 50.292, 90.678) R90    all-bbox (48.557, 88.62, 52.024, 92.736) silk (48.557, 88.914, 52.024, 92.442) docu (48.882, 88.918, 51.702, 92.438) gap  20.98 dir HIGHY
+  C4C-FC     22uF                   pkg CAPC3225X135                 side top    at ( 54.102, 90.678) R90    all-bbox (52.367, 88.62, 55.834, 92.736) silk (52.367, 88.914, 55.834, 92.442) docu (52.692, 88.918, 55.512, 92.438) gap  21.21 dir R/HIGHY
+  ROP2-BT    40.2kOhm               pkg RESC1608X60                  side top    at ( 41.910, 10.729) R0     all-bbox (40.695, 9.865, 43.125, 11.594) silk (40.996, 9.865, 42.823, 11.594) docu (41.0, 10.194, 42.82, 11.264) gap  21.25 dir LOWY
+  C-DC1      1nF                    pkg CAPC1005X60                  side top    at ( 71.120, 69.850) R90    all-bbox (70.428, 69.085, 71.812, 70.615) silk (70.428, 69.236, 71.812, 70.463) docu (70.76, 69.24, 71.48, 70.46) gap  21.28 dir R/HIGHY
+  ROP1-BT    10kOhm                 pkg RESC1608X60                  side top    at ( 38.100, 10.435) R180   all-bbox (36.885, 9.571, 39.315, 11.299) silk (37.187, 9.571, 39.014, 11.299) docu (37.19, 9.9, 39.01, 10.97) gap  21.54 dir LOWY
+  C-DC2      5.6nF                  pkg CAPC1005X60                  side top    at ( 71.374, 75.946) R270   all-bbox (70.682, 75.181, 72.066, 76.711) silk (70.682, 75.332, 72.066, 76.559) docu (71.014, 75.336, 71.734, 76.556) gap  22.77 dir R/HIGHY
+  OP-BT      OPA197IDD0008A-IPC_A   pkg D0008A-IPC_A                 side top    at ( 40.132,  6.858) R0     all-bbox (35.684, 4.329, 43.78, 9.387) silk (35.684, 4.329, 40.887, 9.387) docu (38.108, 4.329, 42.156, 9.387) gap  23.46 dir LOWY
+  R1-FC      27.4kOhm               pkg RESC1608X60                  side top    at ( 26.924, 92.964) R180   all-bbox (25.709, 92.1, 28.139, 93.828) silk (26.01, 92.1, 27.838, 93.828) docu (26.014, 92.429, 27.834, 93.499) gap  24.46 dir HIGHY
+  R2-FC      10kOhm                 pkg RESC1608X60                  side top    at ( 30.226, 92.964) R180   all-bbox (29.011, 92.1, 31.441, 93.828) silk (29.312, 92.1, 31.14, 93.828) docu (29.316, 92.429, 31.136, 93.499) gap  24.46 dir HIGHY
+
+## 2b. Elements whose bbox intersects the footprint rect (parts under the Ag105)
+  OP-FC      OPA197IDD0008A-IPC_A D0008A-IPC_A               side top all (40.143, 67.18, 45.201, 75.276)
+  D-BT-SQ    RT1987N-A            IC_RT1987N-A               side top all (27.543, 48.263, 32.418, 51.813)
+  C-D11      10uF                 CAPC2012X110               side top all (25.052, 48.834, 27.272, 51.75)
+  C-D12      10uF                 CAPC2012X110               side top all (33.18, 48.58, 35.4, 51.496)
+  C-DC11     1nF                  CAPC1005X60                side top all (33.271, 51.632, 34.801, 53.016)
+  C-DC12     5.6nF                CAPC1005X60                side top all (27.175, 51.886, 28.705, 53.27)
+  J-BL       TB005_762_03BE       CUI_TB005_-762-03BE        side top all (3.255, 26.395, 17.33, 49.805)
+
+## 2c. Named parts of interest (anywhere)
+  BAL          BQ29200DRBTDRB8_1P6X2P4  pkg DRB8_1P6X2P4                   side top    at ( 24.384, 29.464) R0     all (22.484, 27.813, 26.284, 31.115) gap 1.73
+  CAL          470uF EEE-FN1V471UPCAP_F pkg CAP_FN_G_PAN                   side top    at (105.156, 15.240) R90    all (99.708, 7.823, 110.604, 21.742) gap 51.72
+  CO-5V        10uF TANT                pkg CAPM3528X210                   side top    at ( 50.800, 39.624) R270   all (49.236, 37.266, 52.363, 41.982) gap 0.04
+  D-BC-FC      RT1987N-A                pkg IC_RT1987N-A                   side top    at ( 92.456,  8.382) R90    all (90.681, 5.682, 94.231, 10.557) gap 47.09
+  D-BC-RG      RT1987N-A                pkg IC_RT1987N-A                   side top    at ( 82.550,  4.064) R0     all (79.85, 2.289, 84.725, 5.839) gap 40.85
+  D-BT-EN      RT1987N-A                pkg IC_RT1987N-A                   side top    at ( 63.754, 22.860) R180   all (61.579, 21.085, 66.454, 24.635) gap 14.85
+  D-BT-SQ      RT1987N-A                pkg IC_RT1987N-A                   side top    at ( 29.718, 50.038) R180   all (27.543, 48.263, 32.418, 51.813) gap -15.22
+  D-FC-EN      RT1987N-A                pkg IC_RT1987N-A                   side top    at ( 68.834, 74.168) R90    all (67.059, 71.468, 70.609, 76.343) gap 18.27
+  D-MT-EN      RT1987N-A                pkg IC_RT1987N-A                   side top    at ( 93.218, 19.050) R180   all (91.043, 17.275, 95.918, 20.825) gap 43.54
+  J-BL         TB005_762_03BE           pkg CUI_TB005_-762-03BE            side top    at ( 11.430, 45.720) R270   all (3.255, 26.395, 17.33, 49.805) gap -0.13
+  J-BT         TB005-762-02BE           pkg CUI_TB005-762-02BE             side top    at ( 11.684, 19.558) R270   all (3.509, 7.853, 17.584, 23.643) gap 9.2
+  J-FC         TB005-762-02BE           pkg CUI_TB005-762-02BE             side top    at ( 11.430, 83.820) R270   all (3.255, 72.115, 17.33, 87.905) gap 4.47
+  J-M          TB005-762-02BE           pkg CUI_TB005-762-02BE             side top    at (119.126,  5.842) R90    all (113.226, 1.757, 127.301, 17.547) gap 65.83
+  J-NTC        691411410002             pkg 691411410002                   side top    at (  9.652, 59.944) R90    all (3.352, 52.714, 16.452, 67.554) gap 0.75
+  J1           87606-324LF              pkg AMPHENOL_87606-324LF           side top    at ( 85.852, 61.976) R90    all (83.037, 31.261, 88.667, 93.266) gap 33.84
+  J2           87606-324LF              pkg AMPHENOL_87606-324LF           side top    at (108.712, 61.976) R90    all (105.897, 31.261, 111.527, 93.266) gap 56.7
+  J3           PINHD-2X10               pkg 2X10                           side top    at ( 97.282, 25.295) R0     all (84.506, 22.678, 110.058, 27.911) gap 35.65
+  L-BT         2.2uH                    pkg HCM1A1305V3-2R2-R              side top    at ( 28.702, 14.478) R0     all (20.225, 8.115, 35.802, 20.841) gap 12.0
+  L-FC         2.2uH                    pkg HCM1A1305V3-2R2-R              side top    at ( 29.464, 83.312) R0     all (20.987, 76.948, 36.564, 89.675) gap 9.3
+  REG-5V       LM1084ISX-5.0/NOPB       pkg TO254P1524X483-4N              side top    at ( 56.642, 45.974) R90    all (50.947, 36.774, 62.337, 54.539) gap 1.75
+
+## 4. MB copper by region (regions clipped to the board outline)
+
+### region UNDER: x 17.198-49.199 y 32.843-67.644
+  wires (net, layer: count, width min-max, extent of the touching segments):
+    VBT                Top    n   7 w 1.016-2.540 extent (26.924, 23.876, 47.498, 49.925) POWER?
+    VCHG-IN            Bottom n   1 w 1.524-1.524 extent (38.862, 10.668, 40.386, 35.306) POWER?
+    VCHG-IN            Top    n   9 w 1.524-1.524 extent (38.862, 33.782, 47.046, 62.992) POWER?
+    VBT                Bottom n   1 w 1.016-1.016 extent (46.482, 34.036, 58.166, 35.052) POWER?
+    N$34               Top    n   1 w 0.610-0.610 extent (15.117, 59.099, 21.303, 59.709) POWER?
+    VBAL+              Top    n   7 w 0.406-0.406 extent (13.767, 31.547, 27.635, 39.827)
+    CB-DISABLE         Bottom n   2 w 0.254-0.254 extent (33.147, 43.561, 41.529, 54.991)
+    CB-DISABLE         Top    n   6 w 0.254-0.254 extent (31.623, 31.623, 61.595, 63.881)
+    CHRG-STAT          Top    n   3 w 0.254-0.254 extent (45.871, 44.037, 49.911, 46.355)
+    D-BT-SQ            Bottom n   4 w 0.254-0.254 extent (36.957, 35.941, 61.087, 41.021)
+    D-BT-SQ            Top    n   9 w 0.254-0.254 extent (31.066, 40.767, 37.211, 53.975)
+    MPPT-DISABLE       Top    n   1 w 0.254-0.254 extent (20.871, 64.357, 62.389, 64.611)
+    N$31               Top    n   4 w 0.254-0.254 extent (31.066, 49.661, 33.678, 52.451)
+    N$32               Top    n   2 w 0.254-0.254 extent (28.116, 49.911, 29.845, 50.415)
+    N$33               Top    n   2 w 0.254-0.254 extent (28.116, 51.161, 28.552, 52.705)
+    N$7                Top    n   4 w 0.254-0.254 extent (43.18, 67.183, 48.133, 68.326)
+    SCL                Top    n   2 w 0.254-0.254 extent (45.871, 54.197, 49.657, 56.261)
+    SDA                Top    n   2 w 0.254-0.254 extent (45.871, 56.737, 54.889, 62.763)
+  polygons touching:
+    GND                Top    bbox (0.089, 0.33, 130.48, 97.46) pour solid rank 3 isolate None verts 4
+    GND                Bottom bbox (0.33, 0.33, 130.48, 97.714) pour solid rank 3 isolate None verts 4
+    VBT                Top    bbox (30.81, 48.336, 34.976, 49.759) pour solid rank None isolate None verts 9
+    VCHG               Top    bbox (20.143, 43.307, 28.651, 49.962) pour solid rank None isolate None verts 8
+  vias: 23
+    CB-DISABLE           2  [(33.27, 43.69), (41.4, 54.86)]
+    D-BT-SQ              1  [(37.08, 40.89)]
+    GND                 18  [(46.74, 33.27), (42.42, 33.02), (42.28, 67.02), (35.56, 52.07), (36.32, 53.59), (37.34, 51.56), (31.24, 52.32), (33.02, 47.24), (37.59, 46.23), (26.42, 52.32), (28.19, 46.48), (29.72, 52.58)] ...
+    VBT                  1  [(46.99, 34.54)]
+    VCHG-IN              1  [(39.62, 34.54)]
+  elements (any part of bbox in region):
+    C-D11        10uF                   CAPC2012X110                 top    all (25.052, 48.834, 27.272, 51.75)
+    C-D12        10uF                   CAPC2012X110                 top    all (33.18, 48.58, 35.4, 51.496)
+    C-DC11       1nF                    CAPC1005X60                  top    all (33.271, 51.632, 34.801, 53.016)
+    C-DC12       5.6nF                  CAPC1005X60                  top    all (27.175, 51.886, 28.705, 53.27)
+    D-BT-SQ      RT1987N-A              IC_RT1987N-A                 top    all (27.543, 48.263, 32.418, 51.813)
+    J-BL         TB005_762_03BE         CUI_TB005_-762-03BE          top    all (3.255, 26.395, 17.33, 49.805)
+    OP-FC        OPA197IDD0008A-IPC_A   D0008A-IPC_A                 top    all (40.143, 67.18, 45.201, 75.276)
+
+### region LEFT(-x) 30mm: x 0.000-17.198 y 32.843-67.644
+  wires (net, layer: count, width min-max, extent of the touching segments):
+    N$34               Top    n   3 w 0.610-0.610 extent (6.847, 55.829, 21.303, 59.709) POWER?
+    VBAL+              Top    n   5 w 0.406-0.406 extent (11.227, 31.547, 18.491, 45.923)
+    VMID               Top    n   2 w 0.406-0.406 extent (11.227, 32.309, 14.935, 38.303) POWER?
+  polygons touching:
+    GND                Top    bbox (0.089, 0.33, 130.48, 97.46) pour solid rank 3 isolate None verts 4
+    GND                Bottom bbox (0.33, 0.33, 130.48, 97.714) pour solid rank 3 isolate None verts 4
+  vias: 3
+    GND                  2  [(14.73, 37.08), (13.46, 34.04)]
+    S$3                  1  [(1.52, 38.61)]
+  elements (any part of bbox in region):
+    J-BL         TB005_762_03BE         CUI_TB005_-762-03BE          top    all (3.255, 26.395, 17.33, 49.805)
+    J-NTC        691411410002           691411410002                 top    all (3.352, 52.714, 16.452, 67.554)
+
+### region RIGHT(+x) 30mm: x 49.199-79.198 y 32.843-67.644
+  wires (net, layer: count, width min-max, extent of the touching segments):
+    VBT                Bottom n   1 w 1.016-1.016 extent (46.482, 34.036, 58.166, 35.052) POWER?
+    VBT                Top    n   5 w 0.508-1.016 extent (57.15, 34.036, 61.976, 40.753) POWER?
+    3V3                Bottom n   5 w 0.508-0.508 extent (50.843, 28.194, 63.246, 69.385) POWER?
+    3V3                Top    n   2 w 0.508-0.508 extent (56.177, 36.83, 63.246, 60.917) POWER?
+    5V                 Bottom n   3 w 0.508-0.508 extent (59.135, 55.325, 76.454, 75.946) POWER?
+    5V                 Top    n  10 w 0.406-0.508 extent (50.597, 40.881, 59.893, 55.833) POWER?
+    BT-V               Bottom n   1 w 0.254-0.254 extent (62.611, 31.623, 80.053, 49.065)
+    CB-DISABLE         Bottom n   3 w 0.254-0.254 extent (66.675, 58.293, 84.709, 65.913)
+    CB-DISABLE         Top    n   2 w 0.254-0.254 extent (43.307, 58.293, 66.929, 63.881)
+    CHRG-STAT          Bottom n   2 w 0.254-0.254 extent (63.373, 58.801, 78.445, 73.533)
+    CHRG-STAT          Top    n   8 w 0.254-0.254 extent (48.387, 44.831, 63.627, 61.595)
+    CS-MDAC-FC         Bottom n   9 w 0.254-0.254 extent (49.403, 38.227, 80.391, 69.895)
+    CS-MDAC-FC         Top    n   5 w 0.254-0.254 extent (58.293, 38.227, 66.929, 60.165)
+    D-BT-EN            Bottom n   1 w 0.254-0.254 extent (71.501, 31.115, 82.423, 42.037)
+    D-BT-SQ            Bottom n   3 w 0.254-0.254 extent (45.339, 33.147, 80.137, 41.021)
+    D-BT-SQ            Top    n   2 w 0.254-0.254 extent (60.833, 33.147, 67.183, 36.195)
+    D-FC-EN            Top    n   2 w 0.254-0.254 extent (73.279, 61.595, 79.883, 68.199)
+    EN-REG-BT          Bottom n   9 w 0.254-0.254 extent (56.175, 30.353, 80.391, 78.613)
+    EN-REG-BT          Top    n   2 w 0.254-0.254 extent (63.84, 38.481, 64.135, 53.934)
+    MPPT-DISABLE       Bottom n   2 w 0.254-0.254 extent (64.897, 61.595, 79.883, 76.073)
+    MPPT-DISABLE       Top    n   2 w 0.254-0.254 extent (20.871, 61.595, 65.151, 64.611)
+    SCL                Bottom n   2 w 0.254-0.254 extent (64.524, 58.682, 78.623, 72.441)
+    SCL                Top    n   5 w 0.254-0.254 extent (47.593, 54.197, 64.778, 62.103)
+    SDA                Bottom n   3 w 0.254-0.254 extent (65.575, 58.463, 79.4, 72.034)
+    SDA                Top    n   4 w 0.254-0.254 extent (48.863, 56.737, 65.829, 62.763)
+    VBUS               Top    n   7 w 0.254-0.254 extent (67.578, 26.543, 78.814, 69.977) POWER?
+  polygons touching:
+    GND                Top    bbox (0.089, 0.33, 130.48, 97.46) pour solid rank 3 isolate None verts 4
+    GND                Bottom bbox (0.33, 0.33, 130.48, 97.714) pour solid rank 3 isolate None verts 4
+    5V                 Top    bbox (49.784, 37.846, 61.976, 54.61) pour solid rank None isolate None verts 21
+    VBUS               Top    bbox (65.532, 19.558, 79.546, 72.644) pour solid rank None isolate None verts 22
+  vias: 42
+    3V3                  2  [(62.99, 37.08), (56.43, 60.66)]
+    5V                   1  [(59.39, 55.58)]
+    CB-DISABLE           1  [(66.8, 58.42)]
+    CHRG-STAT            1  [(63.5, 58.93)]
+    CS-MDAC-FC           2  [(66.8, 38.35), (58.42, 60.04)]
+    D-BT-SQ              2  [(60.96, 36.07), (67.06, 33.27)]
+    EN-REG-BT            2  [(64.01, 38.61), (63.97, 53.81)]
+    GND                 27  [(65.79, 37.08), (52.58, 36.83), (66.29, 41.4), (66.29, 48.51), (66.29, 55.63), (54.61, 33.51), (50.04, 33.51), (55.12, 59.18), (58.42, 56.9), (55.12, 55.88), (51.31, 55.63), (53.59, 57.66)] ...
+    MPPT-DISABLE         1  [(65.02, 61.72)]
+    SCL                  1  [(64.65, 58.81)]
+    SDA                  1  [(65.7, 58.59)]
+    VBT                  1  [(57.66, 34.54)]
+  elements (any part of bbox in region):
+    CIN-5V       10uF                   CAPC2012X110                 top    all (60.612, 38.166, 62.832, 41.082)
+    CO-5V        10uF TANT              CAPM3528X210                 top    all (49.236, 37.266, 52.363, 41.982)
+    R1-BUS       46.4kOhm               RESC1608X60                  top    all (78.287, 45.872, 80.717, 47.6)
+    REG-5V       LM1084ISX-5.0/NOPB     TO254P1524X483-4N            top    all (50.947, 36.774, 62.337, 54.539)
+
+### region LOWY(-y) 30mm: x 17.198-49.199 y 2.843-32.843
+  wires (net, layer: count, width min-max, extent of the touching segments):
+    VBT                Top    n  25 w 0.254-2.540 extent (8.001, 12.827, 44.718, 49.417) POWER?
+    VCHG-IN            Bottom n   4 w 1.524-1.524 extent (38.862, 4.826, 59.436, 35.306) POWER?
+    3V3                Bottom n   2 w 0.508-0.508 extent (46.228, 8.636, 51.57, 10.922) POWER?
+    N$35               Top    n   2 w 0.406-0.406 extent (22.657, 26.733, 23.112, 28.692)
+    N$38               Top    n   4 w 0.406-0.406 extent (25.656, 29.586, 28.143, 31.446)
+    VBAL+              Top    n   9 w 0.406-0.406 extent (17.069, 31.547, 27.635, 36.525)
+    VC1                Top    n   6 w 0.406-0.406 extent (19.1, 28.245, 23.112, 30.429)
+    VC1_CB             Top    n   2 w 0.406-0.406 extent (20.625, 28.244, 23.112, 29.342)
+    VC2                Top    n   4 w 0.406-0.406 extent (19.354, 30.236, 23.112, 31.966)
+    VMID               Top    n   5 w 0.406-0.406 extent (16.307, 27.229, 21.031, 28.651) POWER?
+    VSW-BT             Top    n  11 w 0.406-0.406 extent (34.049, 14.275, 45.919, 22.797) POWER?
+    VOUT-BT            Top    n   6 w 0.254-0.305 extent (46.167, 13.081, 50.19, 29.157) POWER?
+    3V3                Top    n   8 w 0.254-0.254 extent (44.958, 5.715, 47.736, 9.017) POWER?
+    5V                 Top    n   1 w 0.254-0.254 extent (42.419, 7.366, 43.688, 7.62) POWER?
+    BT-V               Top    n   4 w 0.254-0.254 extent (29.136, 22.479, 54.483, 30.861)
+    CB-DISABLE         Top    n   5 w 0.254-0.254 extent (25.732, 29.012, 33.401, 33.401)
+    CS-MDAC-BT         Bottom n   2 w 0.254-0.254 extent (48.745, 7.226, 49.898, 7.493)
+    CS-MDAC-BT         Top    n   3 w 0.254-0.254 extent (47.482, 6.715, 48.999, 7.493)
+    EN-REG-BT          Top    n   6 w 0.254-0.254 extent (42.545, 21.872, 54.483, 30.353)
+    MISO               Top    n   2 w 0.254-0.254 extent (47.482, 6.215, 49.657, 6.731)
+    N$10               Top    n   4 w 0.254-0.254 extent (40.005, 21.197, 44.418, 24.27)
+    N$11               Top    n   2 w 0.254-0.254 extent (46.556, 15.113, 48.4, 17.399)
+    N$15               Top    n   8 w 0.254-0.254 extent (37.591, 4.016, 48.771, 6.35)
+    N$16               Top    n   7 w 0.254-0.254 extent (37.591, 7.366, 41.222, 10.856)
+    N$9                Top    n   4 w 0.254-0.254 extent (39.751, 16.524, 44.418, 19.951)
+    VCOMP-BT           Top    n   4 w 0.254-0.254 extent (44.964, 17.145, 46.85, 19.276)
+    VDROOP-BT          Top    n  13 w 0.254-0.254 extent (40.513, 4.715, 47.736, 10.856)
+    VFB-BT             Top    n  18 w 0.254-0.254 extent (43.282, 11.049, 46.81, 19.463)
+    VOUT-BT            Bottom n   2 w 0.254-0.254 extent (48.133, 13.843, 49.657, 21.209) POWER?
+    GND                Top    n   4 w 0.203-0.203 extent (44.189, 19.401, 45.766, 20.426) POWER?
+  polygons touching:
+    GND                Top    bbox (0.089, 0.33, 130.48, 97.46) pour solid rank 3 isolate None verts 4
+    GND                Bottom bbox (0.33, 0.33, 130.48, 97.714) pour solid rank 3 isolate None verts 4
+    VBT                Top    bbox (7.874, 12.7, 28.194, 23.622) pour solid rank None isolate None verts 10
+    VBT                Top    bbox (43.942, 21.844, 44.577, 23.622) pour solid rank None isolate None verts 4
+    VSW-BT             Top    bbox (32.842, 16.332, 44.628, 23.038) pour solid rank None isolate None verts 14
+    VOUT-BT            Top    bbox (43.18, 21.336, 53.594, 29.718) pour solid rank None isolate None verts 13
+  vias: 40
+    3V3                  1  [(46.48, 8.89)]
+    CS-MDAC-BT           1  [(48.87, 7.37)]
+    GND                 37  [(47.75, 20.07), (47.75, 18.8), (48.77, 19.56), (41.91, 14.99), (39.88, 6.86), (20.57, 10.41), (43.69, 26.16), (41.15, 29.46), (45.64, 16.17), (41.66, 18.8), (45.57, 13.02), (48.01, 8.64)] ...
+    VOUT-BT              1  [(48.26, 21.08)]
+  elements (any part of bbox in region):
+    BAL          BQ29200DRBTDRB8_1P6X2P DRB8_1P6X2P4                 top    all (22.484, 27.813, 26.284, 31.115)
+    C1-BT        10uF                   CAPC2012X110                 top    all (17.94, 10.988, 20.16, 13.904)
+    C2-BT        100nF                  CAPC1608X85                  top    all (43.333, 22.895, 45.059, 25.365)
+    C3-BT        2.2uF                  CAPC2012X110                 top    all (38.768, 16.068, 40.988, 18.984)
+    C4A-BT       22uF                   CAPC3225X135                 top    all (42.969, 28.422, 46.436, 32.538)
+    C4B-BT       22uF                   CAPC3225X135                 top    all (46.779, 28.422, 50.246, 32.538)
+    C5-BT        100nF                  CAPC1608X85                  top    all (39.269, 22.133, 40.995, 24.603)
+    C6-BT        27pF                   CAPC1608X85                  top    all (42.571, 15.529, 44.297, 17.999)
+    CBL1         100nF                  CAPC1608X85                  top    all (20.219, 29.753, 21.945, 32.223)
+    CBL2         100nF                  CAPC1608X85                  top    all (17.307, 29.363, 19.777, 31.089)
+    CBL3         100nF                  CAPC1608X85                  top    all (27.077, 27.975, 28.803, 30.445)
+    CBLD         330nF                  CAPC1608X85                  top    all (21.997, 24.927, 23.723, 27.397)
+    CC-BT        2nF                    CAPC1608X85                  top    all (46.263, 16.409, 48.733, 18.135)
+    J-BL         TB005_762_03BE         CUI_TB005_-762-03BE          top    all (3.255, 26.395, 17.33, 49.805)
+    J-BT         TB005-762-02BE         CUI_TB005-762-02BE           top    all (3.509, 7.853, 17.584, 23.643)
+    L-BT         2.2uH                  HCM1A1305V3-2R2-R            top    all (20.225, 8.115, 35.802, 20.841)
+    MDAC-BT      AD5443YRMZ-REEL7RM_10_ RM_10_ADI                    top    all (46.345, 4.139, 52.715, 7.545)
+    OP-BT        OPA197IDD0008A-IPC_A   D0008A-IPC_A                 top    all (35.684, 4.329, 43.78, 9.387)
+    R1-BT        16.2kOhm               RESC1608X60                  top    all (27.233, 21.742, 29.663, 23.47)
+    R2-BT        10kOhm                 RESC1608X60                  top    all (30.281, 21.742, 32.711, 23.47)
+    RB1A         100Ohm                 RESC1005X40                  top    all (20.128, 27.165, 21.527, 28.715)
+    RB1B         100Ohm                 RESC1005X40                  top    all (26.732, 30.975, 28.131, 32.525)
+    RB2          160Ohm                 RESC1005X40                  top    all (18.275, 31.05, 19.825, 32.45)
+    RB3          260Ohm                 RESC1005X40                  top    all (18.021, 27.748, 19.571, 29.148)
+    RC-BT        27.4kOhm               RESC1608X60                  top    all (46.283, 14.376, 48.713, 16.104)
+    RD1-BT       237kOhm                RESC1608X60                  top    all (46.283, 12.344, 48.713, 14.072)
+    RD2-BT       10kOhm                 RESC1608X60                  top    all (46.283, 10.312, 48.713, 12.04)
+    REG-BT       TPS61288LRQQR          CONV_TPS61288LRQQR           top    all (43.741, 17.937, 47.191, 22.549)
+    RINJ-BT      53.6kOhm               RESC1608X60                  top    all (43.84, 10.215, 45.568, 12.645)
+    ROP1-BT      10kOhm                 RESC1608X60                  top    all (36.885, 9.571, 39.315, 11.299)
+    ROP2-BT      40.2kOhm               RESC1608X60                  top    all (40.695, 9.865, 43.125, 11.594)
+
+### region HIGHY(+y) 30mm: x 17.198-49.199 y 67.644-97.644
+  wires (net, layer: count, width min-max, extent of the touching segments):
+    FC-V               Top    n   5 w 0.254-0.406 extent (27.536, 90.805, 42.037, 93.167)
+    VFC                Top    n  16 w 0.305-0.406 extent (11.278, 80.733, 42.596, 93.167) POWER?
+    VSW-FC             Top    n   6 w 0.254-0.406 extent (34.887, 83.185, 44.649, 87.427) POWER?
+    3V3                Bottom n   1 w 0.254-0.254 extent (43.307, 71.501, 46.355, 71.755) POWER?
+    3V3                Top    n   7 w 0.254-0.254 extent (41.91, 69.239, 51.224, 72.898) POWER?
+    CS-MDAC-FC         Top    n   1 w 0.254-0.254 extent (47.736, 72.501, 49.673, 72.755)
+    EN-REG-FC          Bottom n   2 w 0.254-0.254 extent (44.069, 87.249, 78.359, 88.773)
+    EN-REG-FC          Top    n   2 w 0.254-0.254 extent (43.694, 87.404, 44.323, 88.773)
+    FC-V               Bottom n   2 w 0.254-0.254 extent (41.783, 88.011, 76.073, 92.075)
+    GND                Top    n   8 w 0.254-0.254 extent (40.259, 84.314, 45.151, 85.983) POWER?
+    MISO               Top    n   2 w 0.254-0.254 extent (47.736, 69.469, 51.689, 72.255)
+    N$2                Top    n   3 w 0.254-0.254 extent (44.778, 80.645, 46.622, 82.931)
+    N$3                Top    n   5 w 0.254-0.254 extent (40.259, 82.564, 43.148, 85.483)
+    N$4                Top    n   2 w 0.254-0.254 extent (41.186, 86.729, 43.148, 87.427)
+    N$7                Top    n   9 w 0.254-0.254 extent (43.18, 67.183, 49.403, 71.255)
+    N$8                Top    n  10 w 0.254-0.254 extent (38.735, 68.072, 42.164, 77.343)
+    VCOMP-FC           Top    n   2 w 0.254-0.254 extent (43.694, 82.677, 45.072, 84.808)
+    VDROOP-FC          Top    n  12 w 0.254-0.254 extent (41.074, 70.501, 47.99, 78.666)
+    VFB-FC             Top    n  14 w 0.254-0.254 extent (42.799, 76.581, 45.032, 84.995)
+    VOUT-FC            Bottom n   4 w 0.254-0.254 extent (47.371, 78.867, 48.387, 86.741) POWER?
+    VOUT-FC            Top    n   5 w 0.254-0.254 extent (44.897, 78.613, 48.133, 86.881) POWER?
+  polygons touching:
+    GND                Top    bbox (0.089, 0.33, 130.48, 97.46) pour solid rank 3 isolate None verts 4
+    GND                Bottom bbox (0.33, 0.33, 130.48, 97.714) pour solid rank 3 isolate None verts 4
+    VFC                Top    bbox (9.22, 80.34, 27.356, 87.808) pour solid rank None isolate None verts 8
+    VFC                Top    bbox (42.494, 87.198, 43.358, 89.078) pour solid rank None isolate None verts 4
+    VSW-FC             Top    bbox (35.636, 81.61, 43.358, 87.554) pour solid rank None isolate None verts 18
+    VOUT-FC            Top    bbox (44.272, 84.658, 55.931, 90.348) pour solid rank None isolate None verts 13
+  vias: 23
+    3V3                  2  [(43.43, 71.63), (46.23, 71.63)]
+    EN-REG-FC            1  [(44.2, 88.65)]
+    FC-V                 1  [(41.91, 91.95)]
+    GND                 17  [(46.48, 85.34), (46.48, 84.07), (47.5, 84.58), (38.35, 80.52), (39.12, 89.41), (44.2, 90.93), (44.2, 92.46), (28.7, 91.19), (25.4, 89.66), (45.58, 68.32), (48.12, 69.45), (41.03, 79.5)] ...
+    VOUT-FC              2  [(47.5, 86.61), (48.01, 78.99)]
+  elements (any part of bbox in region):
+    C1-FC        10uF                   CAPC2012X110                 top    all (18.448, 78.552, 20.668, 81.468)
+    C2-FC        100nF                  CAPC1608X85                  top    all (42.063, 88.173, 43.789, 90.643)
+    C3-FC        2.2uF                  CAPC2012X110                 top    all (39.276, 82.108, 41.496, 85.024)
+    C4A-FC       22uF                   CAPC3225X135                 top    all (44.747, 88.62, 48.214, 92.736)
+    C4B-FC       22uF                   CAPC3225X135                 top    all (48.557, 88.62, 52.024, 92.736)
+    C5-FC        100nF                  CAPC1608X85                  top    all (39.303, 86.437, 41.773, 88.162)
+    C6-FC        27pF                   CAPC1608X85                  top    all (42.114, 80.909, 43.839, 83.379)
+    CC-FC        2nF                    CAPC1608X85                  top    all (44.485, 81.941, 46.955, 83.667)
+    J-FC         TB005-762-02BE         CUI_TB005-762-02BE           top    all (3.255, 72.115, 17.33, 87.905)
+    L-FC         2.2uH                  HCM1A1305V3-2R2-R            top    all (20.987, 76.948, 36.564, 89.675)
+    MDAC-FC      AD5443YRMZ-REEL7RM_10_ RM_10_ADI                    top    all (46.599, 69.925, 52.969, 73.331)
+    OP-FC        OPA197IDD0008A-IPC_A   D0008A-IPC_A                 top    all (40.143, 67.18, 45.201, 75.276)
+    R1-FC        27.4kOhm               RESC1608X60                  top    all (25.709, 92.1, 28.139, 93.828)
+    R2-FC        10kOhm                 RESC1608X60                  top    all (29.011, 92.1, 31.441, 93.828)
+    RC-FC        61.2kOhm               RESC1608X60                  top    all (44.505, 79.908, 46.935, 81.636)
+    RD1-FC       237kOhm                RESC1608X60                  top    all (44.505, 77.876, 46.935, 79.604)
+    RD2-FC       10kOhm                 RESC1608X60                  top    all (44.505, 75.844, 46.935, 77.572)
+    REG-FC       TPS61288LRQQR          CONV_TPS61288LRQQR           top    all (42.471, 83.468, 45.921, 88.081)
+    RINJ-FC      53.6kOhm               RESC1608X60                  top    all (42.062, 76.509, 43.79, 78.939)
+    ROP1-FC      10kOhm                 RESC1608X60                  top    all (37.998, 73.434, 39.726, 75.864)
+    ROP2-FC      40.2kOhm               RESC1608X60                  top    all (39.171, 76.352, 41.601, 78.08)
+
+## 5. Candidate support-foot spots (top side)
+  LEFT(-x) 30mm: 0 grid points with a 3.0 mm-radius clear circle (no top OR bottom signal wire, via, pad or top part bbox; GND pours NOT counted)
+  RIGHT(+x) 30mm: 232 grid points with a 3.0 mm-radius clear circle (no top OR bottom signal wire, via, pad or top part bbox; GND pours NOT counted)
+    (68.20, 44.84) clearance 3.30 to wire:CS-MDAC-FC, 19.00 mm from footprint edge
+    (68.20, 51.84) clearance 3.30 to wire:CS-MDAC-FC, 19.00 mm from footprint edge
+    (70.20, 48.34) clearance 3.53 to via:GND, 21.00 mm from footprint edge
+    (70.70, 55.34) clearance 3.15 to via:GND, 21.50 mm from footprint edge
+    (72.70, 51.84) clearance 5.78 to wire:CS-MDAC-FC, 23.50 mm from footprint edge
+    (74.70, 55.84) clearance 3.12 to wire:VBUS, 25.50 mm from footprint edge
+  LOWY(-y) 30mm: 0 grid points with a 3.0 mm-radius clear circle (no top OR bottom signal wire, via, pad or top part bbox; GND pours NOT counted)
+  HIGHY(+y) 30mm: 216 grid points with a 3.0 mm-radius clear circle (no top OR bottom signal wire, via, pad or top part bbox; GND pours NOT counted)
+    (23.20, 70.64) clearance 6.03 to wire:MPPT-DISABLE, 3.00 mm from footprint edge
+    (27.70, 70.64) clearance 6.03 to wire:MPPT-DISABLE, 3.00 mm from footprint edge
+    (32.20, 70.64) clearance 6.03 to wire:MPPT-DISABLE, 3.00 mm from footprint edge
+    (36.20, 94.14) clearance 3.09 to wire:FC-V, 26.50 mm from footprint edge
+
+## 5b. Existing non-plated holes and large plated holes on the board
+  plain hole (3.302, 94.742) drill 3.797 gap-to-footprint 30.45
+  plain hole (3.302, 3.302) drill 3.797 gap-to-footprint 32.65
+
+## 6. Heights of elements near the footprint and per-side sweep
+  C-D12      CAPC2012X110               gap -16.02  height 1.10  [IPC-7351 name CAPC2012X110]
+  C-DC11     CAPC1005X60                gap -15.93  height 0.60  [IPC-7351 name CAPC1005X60]
+  D-BT-SQ    IC_RT1987N-A               gap -15.22  height 1.00  [RT1987_DS-00.pdf s19 Outline Dimension, A max 1.000 mm]
+  C-DC12     CAPC1005X60                gap -11.51  height 0.60  [IPC-7351 name CAPC1005X60]
+  C-D11      CAPC2012X110               gap -10.07  height 1.10  [IPC-7351 name CAPC2012X110]
+  OP-FC      D0008A-IPC_A               gap  -0.46  height 1.75  [OPA197IDR.pdf D0008A 'SOIC - 1.75 mm max height' (txt line 2338)]
+  J-BL       CUI_TB005_-762-03BE        gap  -0.13  height 21.70  [TB005-762_CUI.pdf p2 mechanical drawing, 21.70 mm]
+  CO-5V      CAPM3528X210               gap   0.04  height 2.10  [IPC-7351 name CAPM3528X210]
+  C4A-BT     CAPC3225X135               gap   0.31  height 1.35  [IPC-7351 name CAPC3225X135]
+  C4B-BT     CAPC3225X135               gap   0.31  height 1.35  [IPC-7351 name CAPC3225X135]
+  RB1B       RESC1005X40                gap   0.32  height 0.40  [IPC-7351 name RESC1005X40]
+  RB2        RESC1005X40                gap   0.39  height 0.40  [IPC-7351 name RESC1005X40]
+  CBL1       CAPC1608X85                gap   0.62  height 0.85  [IPC-7351 name CAPC1608X85]
+  J-NTC      691411410002               gap   0.75  height unknown  [TODO(verify: Wurth 691411410002 datasheet, not in references)]
+  C4C-BT     CAPC3225X135               gap   1.42  height 1.35  [IPC-7351 name CAPC3225X135]
+  BAL        DRB8_1P6X2P4               gap   1.73  height 1.00  [BQ29200_TI.pdf 'VSON - 1 mm max height']
+  REG-5V     TO254P1524X483-4N          gap   1.75  height 4.83  [IPC-7351 name TO254P1524X483-4N]
+  CBL2       CAPC1608X85                gap   1.75  height 0.85  [IPC-7351 name CAPC1608X85]
+  MDAC-FC    RM_10_ADI                  gap   2.28  height unknown  [TODO(verify: AD5443 RM-10 outline; ad5426_5432_5443.pdf text extraction gives no height)]
+  CBL3       CAPC1608X85                gap   2.40  height 0.85  [IPC-7351 name CAPC1608X85]
+  RB3        RESC1005X40                gap   3.70  height 0.40  [IPC-7351 name RESC1005X40]
+  RB1A       RESC1005X40                gap   4.13  height 0.40  [IPC-7351 name RESC1005X40]
+  J-FC       CUI_TB005-762-02BE         gap   4.47  height 21.70  [TB005-762_CUI.pdf p2 mechanical drawing, 21.70 mm]
+  CBLD       CAPC1608X85                gap   5.45  height 0.85  [IPC-7351 name CAPC1608X85]
+  SNS-BT     SOP65P640X120-20N          gap   5.78  height 1.20  [IPC-7351 name SOP65P640X120-20N]
+  ROP1-FC    RESC1608X60                gap   5.79  height 0.60  [IPC-7351 name RESC1608X60]
+  CSNS-BT    CAPC1608X85                gap   7.16  height 0.85  [IPC-7351 name CAPC1608X85]
+  C2-BT      CAPC1608X85                gap   7.48  height 0.85  [IPC-7351 name CAPC1608X85]
+  RD2-FC     RESC1608X60                gap   8.20  height 0.60  [IPC-7351 name RESC1608X60]
+  C5-BT      CAPC1608X85                gap   8.24  height 0.85  [IPC-7351 name CAPC1608X85]
+  ROP2-FC    RESC1608X60                gap   8.71  height 0.60  [IPC-7351 name RESC1608X60]
+  RINJ-FC    RESC1608X60                gap   8.86  height 0.60  [IPC-7351 name RESC1608X60]
+  J-BT       CUI_TB005-762-02BE         gap   9.20  height 21.70  [TB005-762_CUI.pdf p2 mechanical drawing, 21.70 mm]
+  L-FC       HCM1A1305V3-2R2-R          gap   9.30  height unknown  [TODO(verify: Eaton HCM1A1305V3 datasheet, not in references)]
+  R1-BT      RESC1608X60                gap   9.37  height 0.60  [IPC-7351 name RESC1608X60]
+  R2-BT      RESC1608X60                gap   9.37  height 0.60  [IPC-7351 name RESC1608X60]
+  RD1-FC     RESC1608X60                gap  10.23  height 0.60  [IPC-7351 name RESC1608X60]
+  REG-BT     CONV_TPS61288LRQQR         gap  10.29  height 1.00  [TPS61288LRQQR.pdf 'VQFN-HR - 1 mm max height']
+  C1-FC      CAPC2012X110               gap  10.91  height 1.10  [IPC-7351 name CAPC2012X110]
+  CIN-5V     CAPC2012X110               gap  11.41  height 1.10  [IPC-7351 name CAPC2012X110]
+  SNS-FC     SOP65P640X120-20N          gap  11.72  height 1.20  [IPC-7351 name SOP65P640X120-20N]
+  L-BT       HCM1A1305V3-2R2-R          gap  12.00  height unknown  [TODO(verify: Eaton HCM1A1305V3 datasheet, not in references)]
+  RC-FC      RESC1608X60                gap  12.26  height 0.60  [IPC-7351 name RESC1608X60]
+  C-DC4      CAPC1005X60                gap  13.05  height 0.60  [IPC-7351 name CAPC1005X60]
+  C6-FC      CAPC1608X85                gap  13.26  height 0.85  [IPC-7351 name CAPC1608X85]
+  C-D3       CAPC2012X110               gap  13.56  height 1.10  [IPC-7351 name CAPC2012X110]
+  C3-BT      CAPC2012X110               gap  13.86  height 1.10  [IPC-7351 name CAPC2012X110]
+  CC-FC      CAPC1608X85                gap  14.30  height 0.85  [IPC-7351 name CAPC1608X85]
+  C3-FC      CAPC2012X110               gap  14.46  height 1.10  [IPC-7351 name CAPC2012X110]
+  CC-BT      CAPC1608X85                gap  14.71  height 0.85  [IPC-7351 name CAPC1608X85]
+  C6-BT      CAPC1608X85                gap  14.84  height 0.85  [IPC-7351 name CAPC1608X85]
+  D-BT-EN    IC_RT1987N-A               gap  14.85  height 1.00  [RT1987_DS-00.pdf s19 Outline Dimension, A max 1.000 mm]
+  REG-FC     CONV_TPS61288LRQQR         gap  15.82  height 1.00  [TPS61288LRQQR.pdf 'VQFN-HR - 1 mm max height']
+  RC-BT      RESC1608X60                gap  16.74  height 0.60  [IPC-7351 name RESC1608X60]
+  CSNS-FC    CAPC1608X85                gap  17.55  height 0.85  [IPC-7351 name CAPC1608X85]
+  C-D2       CAPC2012X110               gap  17.96  height 1.10  [IPC-7351 name CAPC2012X110]
+  D-FC-EN    IC_RT1987N-A               gap  18.27  height 1.00  [RT1987_DS-00.pdf s19 Outline Dimension, A max 1.000 mm]
+  RD1-BT     RESC1608X60                gap  18.77  height 0.60  [IPC-7351 name RESC1608X60]
+  C5-FC      CAPC1608X85                gap  18.79  height 0.85  [IPC-7351 name CAPC1608X85]
+  C1-BT      CAPC2012X110               gap  18.94  height 1.10  [IPC-7351 name CAPC2012X110]
+  C-DC3      CAPC1005X60                gap  19.56  height 0.60  [IPC-7351 name CAPC1005X60]
+  RINJ-BT    RESC1608X60                gap  20.20  height 0.60  [IPC-7351 name RESC1608X60]
+  C-D1       CAPC2012X110               gap  20.38  height 1.10  [IPC-7351 name CAPC2012X110]
+  C-D4       CAPC2012X110               gap  20.41  height 1.10  [IPC-7351 name CAPC2012X110]
+  C2-FC      CAPC1608X85                gap  20.53  height 0.85  [IPC-7351 name CAPC1608X85]
+  RD2-BT     RESC1608X60                gap  20.80  height 0.60  [IPC-7351 name RESC1608X60]
+  C4A-FC     CAPC3225X135               gap  20.98  height 1.35  [IPC-7351 name CAPC3225X135]
+  C4B-FC     CAPC3225X135               gap  20.98  height 1.35  [IPC-7351 name CAPC3225X135]
+  C4C-FC     CAPC3225X135               gap  21.21  height 1.35  [IPC-7351 name CAPC3225X135]
+  ROP2-BT    RESC1608X60                gap  21.25  height 0.60  [IPC-7351 name RESC1608X60]
+  C-DC1      CAPC1005X60                gap  21.28  height 0.60  [IPC-7351 name CAPC1005X60]
+  ROP1-BT    RESC1608X60                gap  21.54  height 0.60  [IPC-7351 name RESC1608X60]
+  C-DC2      CAPC1005X60                gap  22.77  height 0.60  [IPC-7351 name CAPC1005X60]
+  OP-BT      D0008A-IPC_A               gap  23.46  height 1.75  [OPA197IDR.pdf D0008A 'SOIC - 1.75 mm max height' (txt line 2338)]
+  R1-FC      RESC1608X60                gap  24.46  height 0.60  [IPC-7351 name RESC1608X60]
+  R2-FC      RESC1608X60                gap  24.46  height 0.60  [IPC-7351 name RESC1608X60]
+  MDAC-BT    RM_10_ADI                  gap  25.30  height unknown  [TODO(verify: AD5443 RM-10 outline; ad5426_5432_5443.pdf text extraction gives no height)]
+  R1-BUS     RESC1608X60                gap  29.09  height 0.60  [IPC-7351 name RESC1608X60]
+
+  side HIGHY(+y): first contact with each element as the band grows (band = full footprint span)
+    at   0.0 mm: OP-FC      h 1.75    bbox (40.14, 67.18, 45.2, 75.28)
+    at   2.5 mm: MDAC-FC    h ?       bbox (46.6, 69.92, 52.97, 73.33)
+    at   4.5 mm: J-FC       h 21.70   bbox (3.25, 72.11, 17.33, 87.91)
+    at   6.0 mm: ROP1-FC    h 0.60    bbox (38.0, 73.43, 39.73, 75.86)
+    at   8.5 mm: RD2-FC     h 0.60    bbox (44.51, 75.84, 46.94, 77.57)
+    at   9.0 mm: ROP2-FC    h 0.60    bbox (39.17, 76.35, 41.6, 78.08)
+    at   9.0 mm: RINJ-FC    h 0.60    bbox (42.06, 76.51, 43.79, 78.94)
+    at   9.5 mm: L-FC       h ?       bbox (20.99, 76.95, 36.56, 89.67)
+    at  10.5 mm: RD1-FC     h 0.60    bbox (44.51, 77.88, 46.94, 79.6)
+    at  11.0 mm: C1-FC      h 1.10    bbox (18.45, 78.55, 20.67, 81.47)
+    at  12.5 mm: RC-FC      h 0.60    bbox (44.51, 79.91, 46.94, 81.64)
+    at  13.5 mm: C6-FC      h 0.85    bbox (42.11, 80.91, 43.84, 83.38)
+    at  14.5 mm: CC-FC      h 0.85    bbox (44.48, 81.94, 46.95, 83.67)
+    at  14.5 mm: C3-FC      h 1.10    bbox (39.28, 82.11, 41.5, 85.02)
+    at  16.0 mm: REG-FC     h 1.00    bbox (42.47, 83.47, 45.92, 88.08)
+    at  19.0 mm: C5-FC      h 0.85    bbox (39.3, 86.44, 41.77, 88.16)
+    at  21.0 mm: C2-FC      h 0.85    bbox (42.06, 88.17, 43.79, 90.64)
+    at  21.0 mm: C4A-FC     h 1.35    bbox (44.75, 88.62, 48.21, 92.74)
+    at  21.0 mm: C4B-FC     h 1.35    bbox (48.56, 88.62, 52.02, 92.74)
+    at  24.5 mm: R1-FC      h 0.60    bbox (25.71, 92.1, 28.14, 93.83)
+    at  24.5 mm: R2-FC      h 0.60    bbox (29.01, 92.1, 31.44, 93.83)
+
+  side LOWY(-y): first contact with each element as the band grows (band = full footprint span)
+    at   0.0 mm: J-BL       h 21.70   bbox (3.25, 26.39, 17.33, 49.8)
+    at   0.5 mm: C4A-BT     h 1.35    bbox (42.97, 28.42, 46.44, 32.54)
+    at   0.5 mm: C4B-BT     h 1.35    bbox (46.78, 28.42, 50.25, 32.54)
+    at   0.5 mm: RB1B       h 0.40    bbox (26.73, 30.98, 28.13, 32.52)
+    at   0.5 mm: RB2        h 0.40    bbox (18.27, 31.05, 19.82, 32.45)
+    at   1.0 mm: CBL1       h 0.85    bbox (20.22, 29.75, 21.95, 32.22)
+    at   2.0 mm: BAL        h 1.00    bbox (22.48, 27.81, 26.28, 31.11)
+    at   2.0 mm: CBL2       h 0.85    bbox (17.31, 29.36, 19.78, 31.09)
+    at   2.5 mm: CBL3       h 0.85    bbox (27.08, 27.98, 28.8, 30.45)
+    at   4.0 mm: RB3        h 0.40    bbox (18.02, 27.75, 19.57, 29.15)
+    at   4.5 mm: RB1A       h 0.40    bbox (20.13, 27.16, 21.53, 28.71)
+    at   5.5 mm: CBLD       h 0.85    bbox (22.0, 24.93, 23.72, 27.4)
+    at   7.5 mm: C2-BT      h 0.85    bbox (43.33, 22.89, 45.06, 25.36)
+    at   8.5 mm: C5-BT      h 0.85    bbox (39.27, 22.13, 40.99, 24.6)
+    at   9.5 mm: J-BT       h 21.70   bbox (3.51, 7.85, 17.58, 23.64)
+    at   9.5 mm: R1-BT      h 0.60    bbox (27.23, 21.74, 29.66, 23.47)
+    at   9.5 mm: R2-BT      h 0.60    bbox (30.28, 21.74, 32.71, 23.47)
+    at  10.5 mm: REG-BT     h 1.00    bbox (43.74, 17.94, 47.19, 22.55)
+    at  12.5 mm: L-BT       h ?       bbox (20.23, 8.12, 35.8, 20.84)
+    at  14.0 mm: C3-BT      h 1.10    bbox (38.77, 16.07, 40.99, 18.98)
+    at  15.0 mm: CC-BT      h 0.85    bbox (46.26, 16.41, 48.73, 18.14)
+    at  15.0 mm: C6-BT      h 0.85    bbox (42.57, 15.53, 44.3, 18.0)
+    at  17.0 mm: RC-BT      h 0.60    bbox (46.28, 14.38, 48.71, 16.1)
+    at  19.0 mm: RD1-BT     h 0.60    bbox (46.28, 12.34, 48.71, 14.07)
+    at  19.0 mm: C1-BT      h 1.10    bbox (17.94, 10.99, 20.16, 13.9)
+    at  20.5 mm: RINJ-BT    h 0.60    bbox (43.84, 10.21, 45.57, 12.64)
+    at  21.0 mm: RD2-BT     h 0.60    bbox (46.28, 10.31, 48.71, 12.04)
+    at  21.5 mm: ROP2-BT    h 0.60    bbox (40.7, 9.87, 43.12, 11.59)
+    at  22.0 mm: ROP1-BT    h 0.60    bbox (36.88, 9.57, 39.31, 11.3)
+    at  23.5 mm: OP-BT      h 1.75    bbox (35.68, 4.33, 43.78, 9.39)
+    at  25.5 mm: MDAC-BT    h ?       bbox (46.34, 4.14, 52.72, 7.54)
+
+  side RIGHT(+x): first contact with each element as the band grows (band = full footprint span)
+    at   0.5 mm: CO-5V      h 2.10    bbox (49.24, 37.27, 52.36, 41.98)
+    at   2.0 mm: REG-5V     h 4.83    bbox (50.95, 36.77, 62.34, 54.54)
+    at  11.5 mm: CIN-5V     h 1.10    bbox (60.61, 38.17, 62.83, 41.08)
+    at  29.5 mm: R1-BUS     h 0.60    bbox (78.29, 45.87, 80.72, 47.6)
+
+  side LEFT(-x): first contact with each element as the band grows (band = full footprint span)
+    at   0.0 mm: J-BL       h 21.70   bbox (3.25, 26.39, 17.33, 49.8)
+    at   1.0 mm: J-NTC      h ?       bbox (3.35, 52.71, 16.45, 67.55)
+
+## 6b. Candidate overhang rectangles: contents and tallest part
+  A  HIGHY, left of OP-FC, below L-FC: x 17.50-38.90 y 67.64-76.40 (21.4 x 8.8 mm = 187 mm2)
+      ROP1-FC    RESC1608X60                h 0.60 [IPC-7351 name RESC1608X60]
+      copper wires in rect: {'N$8/Top': [0.254]}
+      polygons in rect: [('GND', 'Top', [0.089, 0.33, 130.48, 97.46]), ('GND', 'Bottom', [0.33, 0.33, 130.48, 97.714])]
+      vias in rect: [('GND', 38.75, 72.65)]
+  A' HIGHY, full width, below L-FC/over OP-FC: x 17.50-49.20 y 67.64-76.40 (31.7 x 8.8 mm = 278 mm2)
+      OP-FC      D0008A-IPC_A               h 1.75 [OPA197IDR.pdf D0008A 'SOIC - 1.75 mm max height' (txt line 2338)]
+      ROP2-FC    RESC1608X60                h 0.60 [IPC-7351 name RESC1608X60]
+      ROP1-FC    RESC1608X60                h 0.60 [IPC-7351 name RESC1608X60]
+      RD2-FC     RESC1608X60                h 0.60 [IPC-7351 name RESC1608X60]
+      MDAC-FC    RM_10_ADI                  h unknown [TODO(verify: AD5443 RM-10 outline; ad5426_5432_5443.pdf text extraction gives no height)]
+      copper wires in rect: {'3V3/Top': [0.254], '3V3/Bottom': [0.254], 'N$7/Top': [0.254], 'VDROOP-FC/Top': [0.254], 'N$8/Top': [0.254], 'MISO/Top': [0.254], 'CS-MDAC-FC/Top': [0.254]}
+      polygons in rect: [('GND', 'Top', [0.089, 0.33, 130.48, 97.46]), ('GND', 'Bottom', [0.33, 0.33, 130.48, 97.714])]
+      vias in rect: [('GND', 45.58, 68.32), ('GND', 48.12, 69.45), ('GND', 38.75, 72.65), ('GND', 45.86, 75.19), ('3V3', 43.43, 71.63), ('3V3', 46.23, 71.63)]
+  B  LOWY, right of J-BL, above L-BT: x 17.50-49.20 y 21.30-32.84 (31.7 x 11.5 mm = 366 mm2)
+      J-BT       CUI_TB005-762-02BE         h 21.70 [TB005-762_CUI.pdf p2 mechanical drawing, 21.70 mm]
+      C4B-BT     CAPC3225X135               h 1.35 [IPC-7351 name CAPC3225X135]
+      C4A-BT     CAPC3225X135               h 1.35 [IPC-7351 name CAPC3225X135]
+      REG-BT     CONV_TPS61288LRQQR         h 1.00 [TPS61288LRQQR.pdf 'VQFN-HR - 1 mm max height']
+      BAL        DRB8_1P6X2P4               h 1.00 [BQ29200_TI.pdf 'VSON - 1 mm max height']
+      CBLD       CAPC1608X85                h 0.85 [IPC-7351 name CAPC1608X85]
+      CBL3       CAPC1608X85                h 0.85 [IPC-7351 name CAPC1608X85]
+      CBL2       CAPC1608X85                h 0.85 [IPC-7351 name CAPC1608X85]
+      CBL1       CAPC1608X85                h 0.85 [IPC-7351 name CAPC1608X85]
+      C5-BT      CAPC1608X85                h 0.85 [IPC-7351 name CAPC1608X85]
+      C2-BT      CAPC1608X85                h 0.85 [IPC-7351 name CAPC1608X85]
+      R2-BT      RESC1608X60                h 0.60 [IPC-7351 name RESC1608X60]
+      R1-BT      RESC1608X60                h 0.60 [IPC-7351 name RESC1608X60]
+      RB3        RESC1005X40                h 0.40 [IPC-7351 name RESC1005X40]
+      RB2        RESC1005X40                h 0.40 [IPC-7351 name RESC1005X40]
+      RB1B       RESC1005X40                h 0.40 [IPC-7351 name RESC1005X40]
+      RB1A       RESC1005X40                h 0.40 [IPC-7351 name RESC1005X40]
+      copper wires in rect: {'N$10/Top': [0.254], 'VBT/Top': [0.254, 1.016, 1.524, 2.54], 'VSW-BT/Top': [0.406], 'EN-REG-BT/Top': [0.254], 'VOUT-BT/Top': [0.254, 0.305], 'BT-V/Top': [0.254], 'VCHG-IN/Bottom': [1.524], 'VBAL+/Top': [0.406], 'VMID/Top': [0.406], 'N$35/Top': [0.406], 'VC2/Top': [0.406], 'VC1/Top': [0.406], 'N$38/Top': [0.406], 'VC1_CB/Top': [0.406], 'CB-DISABLE/Top': [0.254]}
+      polygons in rect: [('GND', 'Top', [0.089, 0.33, 130.48, 97.46]), ('GND', 'Bottom', [0.33, 0.33, 130.48, 97.714]), ('VBT', 'Top', [7.874, 12.7, 28.194, 23.622]), ('VBT', 'Top', [43.942, 21.844, 44.577, 23.622]), ('VSW-BT', 'Top', [32.842, 16.332, 44.628, 23.038]), ('VOUT-BT', 'Top', [43.18, 21.336, 53.594, 29.718])]
+      vias in rect: [('GND', 43.69, 26.16), ('GND', 41.15, 29.46), ('GND', 19.56, 25.4), ('GND', 25.4, 26.16), ('GND', 24.89, 31.75), ('GND', 29.97, 32.77), ('GND', 20.07, 29.21), ('GND', 26.67, 27.18), ('GND', 35.05, 25.4), ('GND', 30.99, 25.15), ('GND', 33.27, 27.56), ('GND', 35.41, 29.59), ('GND', 37.34, 28.96), ('GND', 41.66, 26.16), ('GND', 38.1, 24.13), ('GND', 23.37, 31.75)]
+  B' LOWY, shallow (to y 26.0): x 17.50-49.20 y 26.00-32.84 (31.7 x 6.8 mm = 217 mm2)
+      C4B-BT     CAPC3225X135               h 1.35 [IPC-7351 name CAPC3225X135]
+      C4A-BT     CAPC3225X135               h 1.35 [IPC-7351 name CAPC3225X135]
+      BAL        DRB8_1P6X2P4               h 1.00 [BQ29200_TI.pdf 'VSON - 1 mm max height']
+      CBLD       CAPC1608X85                h 0.85 [IPC-7351 name CAPC1608X85]
+      CBL3       CAPC1608X85                h 0.85 [IPC-7351 name CAPC1608X85]
+      CBL2       CAPC1608X85                h 0.85 [IPC-7351 name CAPC1608X85]
+      CBL1       CAPC1608X85                h 0.85 [IPC-7351 name CAPC1608X85]
+      RB3        RESC1005X40                h 0.40 [IPC-7351 name RESC1005X40]
+      RB2        RESC1005X40                h 0.40 [IPC-7351 name RESC1005X40]
+      RB1B       RESC1005X40                h 0.40 [IPC-7351 name RESC1005X40]
+      RB1A       RESC1005X40                h 0.40 [IPC-7351 name RESC1005X40]
+      copper wires in rect: {'VBT/Top': [1.016, 1.524, 2.54], 'EN-REG-BT/Top': [0.254], 'VOUT-BT/Top': [0.305], 'BT-V/Top': [0.254], 'VCHG-IN/Bottom': [1.524], 'VBAL+/Top': [0.406], 'VMID/Top': [0.406], 'N$35/Top': [0.406], 'VC2/Top': [0.406], 'VC1/Top': [0.406], 'N$38/Top': [0.406], 'VC1_CB/Top': [0.406], 'CB-DISABLE/Top': [0.254]}
+      polygons in rect: [('GND', 'Top', [0.089, 0.33, 130.48, 97.46]), ('GND', 'Bottom', [0.33, 0.33, 130.48, 97.714]), ('VOUT-BT', 'Top', [43.18, 21.336, 53.594, 29.718])]
+      vias in rect: [('GND', 43.69, 26.16), ('GND', 41.15, 29.46), ('GND', 25.4, 26.16), ('GND', 24.89, 31.75), ('GND', 29.97, 32.77), ('GND', 20.07, 29.21), ('GND', 26.67, 27.18), ('GND', 33.27, 27.56), ('GND', 35.41, 29.59), ('GND', 37.34, 28.96), ('GND', 41.66, 26.16), ('GND', 23.37, 31.75)]
+  C  RIGHT, between footprint and LM1084 courtyard: x 49.20-50.90 y 32.84-67.64 (1.7 x 34.8 mm = 59 mm2)
+      CO-5V      CAPM3528X210               h 2.10 [IPC-7351 name CAPM3528X210]
+      copper wires in rect: {'3V3/Bottom': [0.508], 'CS-MDAC-FC/Bottom': [0.254], 'VBT/Bottom': [1.016], 'SDA/Top': [0.254], 'SCL/Top': [0.254], '5V/Top': [0.406], 'CHRG-STAT/Top': [0.254], 'D-BT-SQ/Bottom': [0.254], 'MPPT-DISABLE/Top': [0.254], 'CB-DISABLE/Top': [0.254]}
+      polygons in rect: [('GND', 'Top', [0.089, 0.33, 130.48, 97.46]), ('GND', 'Bottom', [0.33, 0.33, 130.48, 97.714]), ('5V', 'Top', [49.784, 37.846, 61.976, 54.61])]
+      vias in rect: [('GND', 50.04, 33.51)]
+  D  LEFT, between J-BL/J-NTC courtyards and footprint: x 16.50-17.20 y 32.84-67.64 (0.7 x 34.8 mm = 24 mm2)
+      J-BL       CUI_TB005_-762-03BE        h 21.70 [TB005-762_CUI.pdf p2 mechanical drawing, 21.70 mm]
+      copper wires in rect: {'N$34/Top': [0.61], 'VBAL+/Top': [0.406]}
+      polygons in rect: [('GND', 'Top', [0.089, 0.33, 130.48, 97.46]), ('GND', 'Bottom', [0.33, 0.33, 130.48, 97.714])]
+      vias in rect: none
+
+## 7. Key distances from the CHG silk line centre (x 17.198-49.199, y 32.843-67.644); silk line width 0.127 mm
+  LM1084 (REG-5V): courtyard tKeepout x0 50.947 -> 1.748 mm; tab pad x 51.222-62.062 y 46.644-54.264 -> 2.023 mm; body docu x0 51.562 -> 2.363 mm
+  5V pour (LM1084 tab copper) x0 49.784 -> 0.585 mm from CHG silk; bbox [49.784, 37.846, 61.976, 54.61]
+  CO-5V: silk x0 49.236 (outer) vs CHG silk outer 49.262 -> -0.026 mm; pad copper x0 49.698 -> 0.499 mm; y 37.266-41.982
+  J-BL: courtyard tKeepout x1 16.405 -> 0.793 mm; silk x1 17.330 -> -0.132 mm; y 26.395-49.805; pads [('1', 11.43, 45.72), ('2', 11.43, 38.1), ('3', 11.43, 30.48)]
+  J-NTC: courtyard tKeepout x1 16.452 -> 0.745 mm; silk x1 16.352 -> 0.846 mm; y 52.714-67.554; pads [('1', 7.152, 56.134), ('A1', 12.152, 56.134), ('2', 7.152, 63.754), ('A2', 12.152, 63.754)]
+  J-FC: courtyard tKeepout x1 16.405 -> 0.793 mm; silk x1 17.330 -> -0.132 mm; y 72.115-87.905; pads [('1', 11.43, 83.82), ('2', 11.43, 76.2)]
+  OP-FC: bbox [40.143, 67.18, 45.201, 75.276] copper [40.456, 67.98, 44.888, 75.276]
+  C4A-BT: bbox [42.969, 28.422, 46.436, 32.538] copper [43.346, 28.422, 46.062, 32.538]
+  C4B-BT: bbox [46.779, 28.422, 50.246, 32.538] copper [47.156, 28.422, 49.872, 32.538]
+  C4C-BT: bbox [50.589, 28.422, 54.056, 32.538] copper [50.966, 28.422, 53.682, 32.538]
+  MDAC-FC: bbox [46.599, 69.925, 52.969, 73.331] copper [47.107, 70.463, 52.969, 72.793]
+  BAL: bbox [22.484, 27.813, 26.284, 31.115] copper [22.484, 28.248, 26.284, 30.68]
