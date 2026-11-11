@@ -1,0 +1,10 @@
+{
+ "group": "r8_Zc",
+ "edits": [
+  {
+   "note": "0.3 r8-13: locations converted by r8_Zb",
+   "old": "D.1 PM0/PM4, D.4 record, E sheet line,",
+   "new": "D.1 PM0/PM4, D.4 record, E CR PCB, sheet and cost lines, 0.3 r7-9,"
+  }
+ ]
+}

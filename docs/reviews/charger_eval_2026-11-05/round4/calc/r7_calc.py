@@ -67,6 +67,30 @@ maximum height for the MB and its PCBs; decision: the 10 mm switched-conductor r
   group with a 2 mm margin; the west-group MB tie-base search); the 3-D switched-conductor heights per lead; the
   polyimide strip with the via pad radius and the W5 elevated-run vias; W1/W2 and W5 labelled fixed length. H.23(m)
   relief holes enlarged to clear the pad corners by 0.5 mm (merge check) and enlarged cut-outs.
+
+Revision 5 (r8 of the design; charger-design audit run 001, docs/reviews/charger-design/run-001-2026-11-10.md, ledger
+CHG-R1-01..08, D01..D04, W01, A02): every section above is unchanged and prints the same lines; H.23(n)-(w) are added:
+  H.23(n) R106s FLT series resistor: bridge-current bound with resistor and supply tolerances against the 10 mA FLT
+  absolute maximum (tps2663.pdf SLVSE94G sec 6.1), EN level, FLT readback level = R(FLT) drop + pull-up drop (sec 6.5),
+  FR-23 diagnostic dwell vs tCL_PLIM (sec 6.6). H.23(o) T3 I2C transaction schedule at 100/400 kHz (bits per byte with
+  ACK, START/Sr/STOP, t_BUF, the FR-07 cap), write-first / read-back-after. H.23(p) W1/W2 L' = (mu0/pi) acosh(s/2a) over
+  conductor, insulation OD and twist pitch, the recommended wire, the unchanged in_spike model, the plan-rule OD limit.
+  H.23(q) pin-38 decay below UVLO and the proposed 12 V / 0.5 s criterion across initial voltage and eFuse states.
+  H.23(r) foot-bond fallback height and gate re-run, FT2 repair access. H.23(s) B1 riser B1R (machined wedge) and the CR-end
+  strain relief over the full 3-D profile. H.23(t) W5 / trunk vertical stacking. H.23(u) EVM-to-CR distances E1-E8.
+  H.23(v) E8 pickup with / without R276. H.23(w) the closing-pass hand figures.
+
+Revision 6 (r8 integration): every section above is unchanged and prints the same lines; H.23(x) is added: the figures
+  that the r8 FR and test text derives from H.23(n), (o) and (q) (FR-12(b2) timeout basis, the four field reads in sum,
+  the T1 step-8 increment, the T-C-05c pad pull-up current).
+
+Revision 7 (r8 verification round): H.23(y) is added after H.23(x). Every line printed by revisions 4-6 keeps its position
+  and its numbers; three lines change wording only: the H.23(p) model line states that the helix factor is evaluated at OD
+  max (as the code always did), and the H.23(q) input, r7 and worst-case lines and its summary row label IQ(ON) 1.38 mA as
+  the TYPICAL value (tps2663.pdf sec 6.5 gives no minimum). H.23(y): (1) the F17-F15 node level with FLT asserted and
+  U108 HIGH; (2) the T3 FIFO case and the FR-07 queue-priority bound; (3) the W1/W2 lead current when the FET opens and
+  the helix factor at OD min; (4) the B1R lateral support of the trunk; (5) W5 / trunk figures at the T-F-12 points;
+  (6) the C205/TP27 sweep over the E1 build range 70.8-90 mm; (7) the T1 increment with the step-8c pre-edge read.
 """
 import json
 import math
@@ -5474,6 +5498,1215 @@ def sec_m():
 
 
 # ======================================================================================================================
+# Revision 5 (r8 of the design; charger-design audit run 001, docs/reviews/charger-design/run-001-2026-11-10.md and
+# ledger.md): H.23(n)-(w). The sections above are unchanged; these sections compute the numbers of the r8 fixes.
+# ======================================================================================================================
+# H.23(n) R106s FLT series resistor (CHG-R1-01, A-01)
+R106S = (990.0, 1000.0, 1010.0)       # ohm, r8 R106s 1.00 kOhm 1 % between U101 FLT (pin 14) and the F17 pad (agreed fix)
+V_IO_RNG = (3.135, 3.30, 3.465)       # V, Teensy 3V3 +-5 % ASSUMPTION; TODO(verify: PJRC Teensy 4.1 schematic, 3.3 V
+#                                       regulator tolerance)
+R_FLT = (36.0, 70.0, 130.0)           # ohm, tps2663.pdf (SLVSE94G) sec 6.5 R(FLT) "FLT pull-down resistance" min/typ/max
+I_FLT_ABS = 10e-3                     # A, tps2663.pdf sec 6.1: IFLT sink current absolute maximum
+I_FLT_LEAK = 150e-9                   # A, tps2663.pdf sec 6.5 I(FLT) input leakage maximum
+R_PU35 = (11e3, 22e3, 33e3)           # ohm, Teensy pin-35 INPUT_PULLUP (i.MX RT1062 PUS 22 kOhm) +-50 % ASSUMPTION;
+#                                       TODO(verify: IMXRT1060CEC pad pull-up range; PJRC core pinMode())
+VIL_FRAC = 0.30                       # x OVDD, i.MX RT1062 GPIO VIL ASSUMPTION; TODO(verify: IMXRT1060CEC)
+R127_R = (990.0, 1000.0, 1010.0)      # ohm, DOC B.4 R127 1 kOhm 1 % (pin 16 H2C readback series resistor)
+T_CLPLIM = (129e-3, 162e-3, 202e-3)   # s, tps2663.pdf sec 6.6 tCL_PLIM(dly) maximum duration in current limiting
+T_CLPLIM_FLT = (1.09e-3, 1.3e-3, 1.6e-3)   # s, tps2663.pdf sec 6.6 tCL_PLIM_FLT(dly)
+FLT_DIAG_DWELL = 250e-3               # s, DOC FR-23 r4 dwell (> tCL_PLIM), kept for the r8 FLT-LOW diagnostic read
+
+
+def sec_n():
+    head("H.23(n) R106s FLT series resistor (r8, CHG-R1-01): bridge current bound with tolerances, EN level, FLT "
+         "readback level; FR-23 FLT-LOW diagnostic dwell")
+    out("Inputs: R106s %.2f kOhm 1 %% (%.0f-%.0f ohm); Teensy 3V3 %.3f-%.3f V (ASSUMPTION +-5 %%, TODO(verify: PJRC "
+        "Teensy 4.1 schematic)); U101 FLT pull-down resistance R(FLT) %.0f/%.0f/%.0f ohm min/typ/max (tps2663.pdf "
+        "SLVSE94G sec 6.5; the FLT output is specified as a resistance, so V_OL = I x R(FLT)); FLT sink current %.0f mA "
+        "absolute maximum (tps2663.pdf sec 6.1); FLT leakage <= %.0f nA (sec 6.5); i.MX output driver resistance 0 ohm "
+        "(current bound) or %.0f ohm (H.23(g) ASSUMPTION, level estimate); pin-35 pull-up %.0f-%.0f kOhm (ASSUMPTION, "
+        "TODO(verify: IMXRT1060CEC)); VIL %.2f x 3V3 (ASSUMPTION); RT1987 EN thresholds VEN_R max %.1f V, VEN_F min "
+        "%.1f V (RT1987_DS-00.pdf EC table)."
+        % (R106S[1] / 1e3, R106S[0], R106S[2], V_IO_RNG[0], V_IO_RNG[2], R_FLT[0], R_FLT[1], R_FLT[2], I_FLT_ABS * 1e3,
+           I_FLT_LEAK * 1e9, R_DRV, R_PU35[0] / 1e3, R_PU35[2] / 1e3, VIL_FRAC, VEN_R_MAX, VEN_F_MIN))
+    # r7 (no series resistor): the bridge F05-F17 / F06-F17 with the EN output HIGH and FLT asserted
+    i_r7_max = V_IO_RNG[2] / (0.0 + R_FLT[0])
+    i_r7_40 = (V_IO_RNG[0] / (R_DRV + R_FLT[2]), V_IO_RNG[2] / (R_DRV + R_FLT[0]))
+    v_en_r7 = (V_IO_RNG[0] * R_FLT[0] / (R_DRV + R_FLT[0]), V_IO_RNG[2] * R_FLT[2] / (R_DRV + R_FLT[2]))
+    r_flt_off = VEN_F_MIN * R_DRV / (V_IO_RNG[1] - VEN_F_MIN)
+    out("  r7 (no series resistor), bridge F05-F17 or F06-F17, EN output HIGH, FLT asserted: FLT current %.1f-%.1f mA "
+        "with the %.0f ohm driver (up to %.1f mA with a 0 ohm driver) against the %.0f mA absolute maximum; the EN net "
+        "sits at %.2f-%.2f V (driver/R(FLT) divider; the 10 kOhm EN bodge resistor is negligible), above VEN_R max %.1f V, "
+        "so the switch stays as commanded; EN falls below VEN_F min %.1f V only for R(FLT) < %.1f ohm (>= %.1f mA). The "
+        "r7 statement 'pulls the EN net only toward off' is not supported."
+        % (i_r7_40[0] * 1e3, i_r7_40[1] * 1e3, R_DRV, i_r7_max * 1e3, I_FLT_ABS * 1e3, v_en_r7[0], v_en_r7[1], VEN_R_MAX,
+           VEN_F_MIN, r_flt_off, V_IO_RNG[1] / (R_DRV + r_flt_off) * 1e3))
+    # r8 with R106s
+    i_max = V_IO_RNG[2] / (0.0 + R106S[0] + R_FLT[0])
+    i_min = V_IO_RNG[0] / (R_DRV + R106S[2] + R_FLT[2])
+    v_flt_pin = max(V_IO_RNG[2] * rf / (rd + R106S[0] + rf) for rf in R_FLT for rd in (0.0, R_DRV))
+    v_en_min = min(v - v / (R_DRV + r + rf) * R_DRV for v in V_IO_RNG for r in R106S for rf in R_FLT)
+    p_r = i_max ** 2 * R106S[2]
+    out("  r8 (R106s between U101 FLT and the F17 pad), same bridge, EN output HIGH, FLT asserted: FLT current %.3f mA "
+        "maximum (3V3 %.3f V, driver 0 ohm, R106s %.0f ohm, R(FLT) %.0f ohm) = %.3f of the %.0f mA absolute maximum "
+        "(factor %.2f below it); %.3f mA minimum (3V3 %.3f V, driver %.0f ohm, R106s %.0f ohm, R(FLT) %.0f ohm). The "
+        "FLT pin rises to <= %.3f V (I x R(FLT)). The EN net stays >= %.3f V (%.0f ohm driver), above VEN_R max %.1f V: "
+        "the switch follows its command and pin 35 reads the EN level (HIGH), so an eFuse fault is masked while that EN "
+        "output is HIGH. R106s dissipates <= %.1f mW."
+        % (i_max * 1e3, V_IO_RNG[2], R106S[0], R_FLT[0], i_max / I_FLT_ABS, I_FLT_ABS * 1e3, I_FLT_ABS / i_max,
+           i_min * 1e3, V_IO_RNG[0], R_DRV, R106S[2], R_FLT[2], v_flt_pin, v_en_min, R_DRV, VEN_R_MAX, p_r * 1e3))
+    out("  same bridge, EN output LOW: FLT released -> pin 35 reads LOW ('fault') through the bridge (FR-08 sees an EN "
+        "LOW with FLT 'fault'), FLT pin at 0 V through R106s with <= %.0f nA leakage; FLT asserted -> no current. The "
+        "bridge therefore shows as FLT = EN level on every Idle/Run edge (T-F-12 tap-to-tap DMM before power-up stays "
+        "the primary detector)." % (I_FLT_LEAK * 1e9))
+    i_h2c_r7 = V_IO_RNG[2] / (R127_R[0] + R_FLT[0])
+    i_h2c = V_IO_RNG[2] / (R127_R[0] + R106S[0] + R_FLT[0])
+    out("  bridge F17-F15 (pin 16 H2C readback through R127 1 kOhm, U108 output resistance 0 ohm ASSUMPTION), FLT "
+        "asserted, U108 HIGH: FLT current <= %.3f mA (r7 without R106s: %.3f mA, the A.8 '<= 3.3 mA')."
+        % (i_h2c * 1e3, i_h2c_r7 * 1e3))
+    # normal readback level
+    rb_max = V_IO_RNG[2] * (R106S[2] + R_FLT[2]) / (R_PU35[0] + R106S[2] + R_FLT[2])
+    rb_typ = V_IO_RNG[1] * (R106S[1] + R_FLT[1]) / (R_PU35[1] + R106S[1] + R_FLT[1])
+    rb_r7 = V_IO_RNG[2] * R_FLT[2] / (R_PU35[0] + R_FLT[2])
+    vil = VIL_FRAC * V_IO_RNG[0]
+    i_pu = V_IO_RNG[2] / (R_PU35[0] + R106S[0] + R_FLT[0])
+    v_hi = V_IO_RNG[0] - I_FLT_LEAK * R_PU35[2]
+    out("  FLT readback with no bridge: FLT asserted -> pin 35 LOW level = V_OL + pull-up drop = 3V3 x (R(FLT) + R106s) / "
+        "(R_pu + R(FLT) + R106s): %.3f V typical (22 kOhm, 70 ohm, 1.00 kOhm), %.3f V maximum (%.0f kOhm, %.0f ohm, %.0f "
+        "ohm, %.3f V) against VIL %.3f V (%.2f x %.3f V): margin %.3f V (r7 without R106s: <= %.3f V). FLT sinks <= %.3f "
+        "mA of pull-up current. FLT released -> pin 35 >= %.3f V (leakage x the 33 kOhm pull-up)."
+        % (rb_typ, rb_max, R_PU35[0] / 1e3, R_FLT[2], R106S[2], V_IO_RNG[2], vil, VIL_FRAC, V_IO_RNG[0], vil - rb_max,
+           rb_r7, i_pu * 1e3, v_hi))
+    out("  FR-23 FLT-LOW diagnostic read (r8, A-01): one REG1B read when FLT reads LOW and V_chg > 10.2 V for > %.0f ms; "
+        "the dwell exceeds the tCL_PLIM current-limit maximum %.0f ms (tps2663.pdf sec 6.6; margin %.0f ms), so an "
+        "eFuse still current-limiting has latched off and the charger is unpowered: NACK expected. FLT asserts %.2f-%.2f "
+        "ms after current limiting begins (tCL_PLIM_FLT, sec 6.6)."
+        % (FLT_DIAG_DWELL * 1e3, T_CLPLIM[2] * 1e3, (FLT_DIAG_DWELL - T_CLPLIM[2]) * 1e3, T_CLPLIM_FLT[0] * 1e3,
+           T_CLPLIM_FLT[2] * 1e3))
+    RJ["n"] = dict(i_bridge_max_mA=f2(i_max * 1e3), i_bridge_min_mA=f2(i_min * 1e3), abs_max_mA=I_FLT_ABS * 1e3,
+                   factor=f2(I_FLT_ABS / i_max), v_flt_pin_max=f2(v_flt_pin), v_en_min=f2(v_en_min),
+                   p_r106s_mW=f2(p_r * 1e3), i_h2c_mA=f2(i_h2c * 1e3), readback_low_typ=f2(rb_typ),
+                   readback_low_max=f2(rb_max), vil=f2(vil), readback_margin=f2(vil - rb_max),
+                   r7_bridge_mA=(f2(i_r7_40[0] * 1e3), f2(i_r7_40[1] * 1e3), f2(i_r7_max * 1e3)),
+                   r7_en_V=(f2(v_en_r7[0]), f2(v_en_r7[1])), r7_rflt_for_off=f2(r_flt_off),
+                   diag_dwell_margin_ms=f2((FLT_DIAG_DWELL - T_CLPLIM[2]) * 1e3))
+    summ("R106s FLT bridge bound (r8, CHG-R1-01)", "F05/F06-F17 bridge: FLT current <= %.3f mA (%.2f x below the %.0f mA "
+         "abs max, tps2663.pdf 6.1; 3V3 +5 %%, R106s -1 %%, R(FLT) 36 ohm, 0 ohm driver); EN stays >= %.2f V (as "
+         "commanded); r7 without R106s %.1f-%.1f mA (40 ohm driver)" % (i_max * 1e3, I_FLT_ABS / i_max,
+                                                                       I_FLT_ABS * 1e3, v_en_min, i_r7_40[0] * 1e3,
+                                                                       i_r7_40[1] * 1e3), "H.23(n)")
+    summ("FLT readback level (r8)", "LOW = 3V3 x (R(FLT) + R106s)/(R_pu + R(FLT) + R106s): %.3f V typ, %.3f V max vs VIL "
+         "%.3f V (margin %.3f V); FR-23 diagnostic dwell 250 ms vs tCL_PLIM 202 ms (margin %.0f ms)"
+         % (rb_typ, rb_max, vil, vil - rb_max, (FLT_DIAG_DWELL - T_CLPLIM[2]) * 1e3), "H.23(n)")
+
+
+# H.23(o) T3 I2C transaction schedule (CHG-R1-02)
+I2C_TBUF = {100e3: 4.7e-6, 400e3: 1.3e-6}   # s, bus free time STOP -> START (Sm / Fm), NXP UM10204 Table 10;
+#                                             not in references/: TODO(verify: NXP UM10204 rev 7)
+I2C_CAP = {100e3: 0.50e-3, 400e3: 0.35e-3}  # s, DOC FR-07 longest-transaction cap
+FR07_DEADLINE = 1.5e-3                      # s, DOC FR-07 / G.1 T3: edge to write complete
+
+
+def i2c_bits_write(n_data):
+    """START + address(W) + register + n data bytes (8 bits + ACK each) + STOP; START and STOP one bit time each
+    (round3 H.16 convention)."""
+    return (2 + n_data) * 9 + 2
+
+
+def i2c_bits_read(n_data):
+    """START + address(W) + register + repeated START + address(R) + n data bytes (master ACK/NACK) + STOP."""
+    return (3 + n_data) * 9 + 3
+
+
+def sec_o():
+    head("H.23(o) T3 raise: published I2C transaction schedule at 100 and 400 kHz (r8, CHG-R1-02)")
+    out("Bit counts: a byte = 8 bits + ACK = 9 bit times; START, repeated START and STOP = 1 bit time each (the round3 "
+        "H.16 convention, 'bytes x 9 + 2'); bus free time t_BUF between transactions %.1f us (100 kHz) / %.1f us "
+        "(400 kHz) (NXP UM10204 Table 10, TODO(verify: not in references/)); the wait for a transaction already in "
+        "flight = the FR-07 cap %.2f / %.2f ms. Writes: W(REG06:07) = %d bits (address, register, 2 data); W(REG03-05) "
+        "= %d bits (3 data). Reads: R(n) = %d + 9 n bits (address W, register, repeated START, address R, n data)."
+        % (I2C_TBUF[100e3] * 1e6, I2C_TBUF[400e3] * 1e6, I2C_CAP[100e3] * 1e3, I2C_CAP[400e3] * 1e3,
+           i2c_bits_write(2), i2c_bits_write(3), i2c_bits_read(0)))
+    rows = {}
+    for f in (100e3, 400e3):
+        tb, cap = I2C_TBUF[f], I2C_CAP[f]
+        w2, w3 = i2c_bits_write(2) / f, i2c_bits_write(3) / f
+        r2, r1, r7_ = i2c_bits_read(2) / f, i2c_bits_read(1) / f, i2c_bits_read(7) / f
+        t_w = cap + tb + w2 + tb + w3
+        t_r6 = cap + tb + w2 + tb + r2 + tb + r2 + tb + w3      # r6 FR-46 literal: write, read REG01:02 + REG06:07, write
+        four = [("REG01:02 VREG", r2), ("REG03:04 ICHG", r2), ("REG05 VINDPM", r1), ("REG06:07 IINDPM", r2)]
+        t_v4 = t_w + sum(tb + t for _, t in four)
+        t_v1 = t_w + tb + r7_
+        rows[f] = dict(w2=w2, w3=w3, t_w=t_w, t_r6=t_r6, r7=r7_, t_v1=t_v1, t_v4=t_v4, four=four, cap=cap,
+                       wr_only=w2 + w3)
+        lab = "%.0f kHz" % (f / 1e3)
+        out("  %s: W(REG06:07) %.3f ms, W(REG03-05) %.3f ms (writes alone %.3f ms; round3 H.16 '%.2f ms'). r8 schedule "
+            "(write first, read back after): in-flight %.3f + t_BUF + W(REG06:07) + t_BUF + W(REG03-05) = edge to write "
+            "complete %.3f ms against the FR-07 %.1f ms deadline (margin %.3f ms). r6 FR-46 literal schedule (W(REG06:07), "
+            "R(REG01:02), R(REG06:07), then W(REG03-05)): %.3f ms (%s)."
+            % (lab, w2 * 1e3, w3 * 1e3, (w2 + w3) * 1e3, (w2 + w3) * 1e3, cap * 1e3, t_w * 1e3, FR07_DEADLINE * 1e3,
+               (FR07_DEADLINE - t_w) * 1e3, t_r6 * 1e3, "MISSES the deadline by %.3f ms" % ((t_r6 - FR07_DEADLINE) * 1e3)
+               if t_r6 > FR07_DEADLINE else "inside the deadline"))
+        out("    verification read after the deadline: (a) one R(REG01-07), 7 data bytes: %.3f ms (%s the %.2f ms cap); "
+            "complete %.3f ms after the edge. (b) four field reads %s: each %s the cap; complete %.3f ms after the edge. "
+            "A queued write waits behind a read for at most one byte + STOP = %.3f ms (reads abortable at a byte "
+            "boundary, FR-07)."
+            % (r7_ * 1e3, "inside" if r7_ <= cap else "EXCEEDS", cap * 1e3, t_v1 * 1e3,
+               ", ".join("%s %.3f ms" % (n, t * 1e3) for n, t in four),
+               "inside" if all(t <= cap for _, t in four) else "NOT all inside", t_v4 * 1e3, 10 / f * 1e3))
+    out("  Recommendation (r8): the T3 raising writes REG06:07 then REG03-05 complete first; the FR-46 read-back of "
+        "REG01:02, REG03:04, REG05 and REG06:07 follows as four field reads (each inside the FR-07 cap at both rates, "
+        "no 16-bit field split across transactions); a mismatch takes the immediate P5-LOW path. The edge-to-write "
+        "deadline excludes the read-back. No V-MOT peak is derived from the read-back delay (agreed fix, rejected part).")
+    RJ["o"] = {("%.0fk" % (f / 1e3)): dict(w2_ms=f2(v["w2"] * 1e3), w3_ms=f2(v["w3"] * 1e3), edge_to_write_ms=f2(v["t_w"] * 1e3),
+                                         r6_literal_ms=f2(v["t_r6"] * 1e3), read7_ms=f2(v["r7"] * 1e3),
+                                         verify_single_ms=f2(v["t_v1"] * 1e3), verify_four_ms=f2(v["t_v4"] * 1e3),
+                                         cap_ms=v["cap"] * 1e3) for f, v in rows.items()}
+    a, b = rows[100e3], rows[400e3]
+    summ("T3 schedule (r8, CHG-R1-02)", "edge to write complete %.3f ms (100 kHz) / %.3f ms (400 kHz) vs 1.5 ms; r6 FR-46 "
+         "literal %.3f / %.3f ms; read-back after (four field reads, each <= cap) complete at %.3f / %.3f ms; one 7-byte "
+         "read %.3f ms exceeds the 0.50 ms cap at 100 kHz" % (a["t_w"] * 1e3, b["t_w"] * 1e3, a["t_r6"] * 1e3,
+                                                             b["t_r6"] * 1e3, a["t_v4"] * 1e3, b["t_v4"] * 1e3,
+                                                             a["r7"] * 1e3), "H.23(o)")
+
+
+# H.23(p) W1/W2 lead inductance (CHG-R1-D04)
+def awg_d(n):
+    """Bare diameter of an AWG gauge, mm (ASTM B258 definition)."""
+    return 0.127 * 92 ** ((36 - n) / 39.0)
+
+
+C103_OUT = 1.0e-6         # F, DOC H.5 / B.4 C103 (the 0.61 us quarter period of 0.15 uH x C103)
+T_FASTTRIP = 1.0e-6       # s, tps2663.pdf sec 6.6 tFASTTRIP(dly) hot-short response
+TWIST_P = (20.0, 25.0)    # mm, r8 W1/W2 twist pitch (A.3 >= 1 twist / 25 mm; r8 adds the 20 mm lower bound)
+W12_INSUL = [             # (label, OD min, OD max) mm: insulation classes, ASSUMPTION; TODO(verify: maker datasheet)
+    ("thin-wall PTFE/ETFE (M22759/11 or /16 class)", 1.10, 1.45),
+    ("r7 calc assumption (PVC hook-up, 1.6 mm)", 1.60, 1.60),
+    ("PVC 300 V hook-up (UL1007/UL1569 class)", 1.55, 1.80),
+    ("600 V PVC or silicone (UL1015/UL3135 class)", 1.95, 2.60),
+]
+TRUNK_LEADS = ["W1", "W2", "W3", "W4", "W6", "W7 SCL", "W7 SDA", "W7 GND"]
+WEST_LEADS = ["W1", "W2", "W6", "W7 SCL", "W7 SDA", "W7 GND"]
+
+
+def paths_with_od(od12):
+    """w_paths() with the W1/W2 jacket OD set to od12 (every other OD as in H.23(l)); restores the globals."""
+    global H_TRUNK, H_WEST
+    sv = (OD["W1"], OD["W2"], H_TRUNK, H_WEST)
+    try:
+        OD["W1"], OD["W2"] = [od12], [od12]
+        H_TRUNK, H_WEST = hgrp(TRUNK_LEADS), hgrp(WEST_LEADS)
+        return w_paths(), H_TRUNK, H_WEST
+    finally:
+        OD["W1"], OD["W2"], H_TRUNK, H_WEST = sv
+
+
+def plan_rule_with_od(od12):
+    paths, htr, hwe = paths_with_od(od12)
+    hz = hazard_rects()
+    res = {}
+    for lead, p in paths.items():
+        if lead == "W5":
+            continue
+        res[lead] = (path_min(p, hz, BEAD_LEN), path_min(p, {"tap field courtyard": FIELD["cyd"]}, BEAD_LEN))
+    worst = min(res.items(), key=lambda kv: kv[1][0][0])
+    return res, worst, htr, hwe
+
+
+def lprime(s_mm, a_mm):
+    return MU0_PI * math.acosh(s_mm / (2.0 * a_mm))
+
+
+def spike_worst(Lh):
+    worst = None
+    for v0 in (16.0, 22.0):
+        for cs in (5e-6, 20e-6):
+            for lin in (50e-9, 150e-9):
+                vpk, ioff, ipk = in_spike(v0, cs, lin, 3.4e-6, lout=Lh)
+                if worst is None or vpk > worst[0]:
+                    worst = (vpk, ioff, ipk, v0, cs, lin)
+    return worst
+
+
+def sec_p():
+    head("H.23(p) W1/W2 lead inductance: L' = (mu0/pi) acosh(s/2a) over the wire geometry; recommended wire; hard-short "
+         "IN peak with the unchanged in_spike model (r8, CHG-R1-D04)")
+    cond = {"20 AWG solid": awg_d(20) / 2, "20 AWG 7/28 (bundle 3 d)": 3 * awg_d(28) / 2,
+            "20 AWG 19/32 (bundle 5 d)": 5 * awg_d(32) / 2}
+    a_lo, a_hi = min(cond.values()), max(cond.values())
+    out("Model: parallel round conductors, external inductance per unit length L' = (mu0/pi) acosh(s/2a) (H/m), s = "
+        "centre spacing = the jacket OD for a twisted pair whose jackets touch, a = conductor radius. Lower bound (the "
+        "spike-critical case): s = OD min, a = the largest conductor radius (stranded bundle, current on the bundle "
+        "surface at the 0.4-1 MHz ring), no internal inductance, divided by the helix factor k = sqrt(1 + (pi OD_max / p)^2) "
+        "evaluated at OD max (conservative: a larger k gives a smaller L') and the tightest pitch p = %.0f mm (the build length is cut along the wire). Upper bound: s = OD max, a = the "
+        "solid radius, k = 1, plus the DC internal inductance 2 x mu0/(8 pi) = 0.10 uH/m. Conductor radii (ASTM B258 "
+        "diameters): %s. The in_spike model of H.23(l) (round3 r3_calc.py H.19(b)) is unchanged; only lout = L' x "
+        "length changes. r7 basis: 0.5 uH/m, unsourced (CHG-R1-D04)."
+        % (TWIST_P[0], "; ".join("%s a = %.4f mm" % (k, v) for k, v in cond.items())))
+    v95 = spike_worst(95e-9)
+    out("  check of the counter-review figure: lout 95 nH (thin-wall PTFE at 290 mm): IN peak %.2f V, lead peak %.2f A "
+        "(CHG-R1-D04 round 2: 34.68 V / 140.95 A)" % (v95[0], v95[2]))
+    p_ok = plan_rule_with_od(AWG20_OD)
+    out("  plan dressing rule (D-F2, >= 2.0 mm) on the designed path at the r7 W1/W2 OD %.2f mm: worst lead %s %.3f mm "
+        "(%s), trunk half-width %.3f mm (reproduces H.23(l))." % (AWG20_OD, p_ok[1][0], p_ok[1][1][0][0],
+                                                                 p_ok[1][1][0][1], p_ok[2]))
+    lo, hi = 1.0, 3.0
+    for _ in range(30):
+        mid = 0.5 * (lo + hi)
+        if plan_rule_with_od(mid)[1][1][0][0] >= HAZ_GAP - 1e-9:
+            lo = mid
+        else:
+            hi = mid
+    od_allow = lo
+    pr_al = plan_rule_with_od(od_allow)
+    out("  largest W1/W2 OD that keeps the 2.0 mm plan dressing rule on the designed path (bisection): %.3f mm (worst "
+        "lead %s at %s; trunk half-width %.3f mm, west group %.3f mm). A larger OD widens the trunk bundle (hgrp) and "
+        "breaks the rule at the +x pocket unless the path is re-routed." % (od_allow, pr_al[1][0], pr_al[1][1][0][1],
+                                                                          pr_al[2], pr_al[3]))
+    rows = []
+    for lab, od0, od1 in W12_INSUL:
+        k = math.sqrt(1 + (math.pi * od1 / TWIST_P[0]) ** 2)
+        lmin = lprime(od0, a_hi) / k if od0 > 2 * a_hi else float("nan")
+        lmax = lprime(od1, a_lo) + 0.10e-6
+        wl = spike_worst(lmin * W12_BUILD[0] / 1000.0)
+        wh = spike_worst(lmax * W12_BUILD[2] / 1000.0)
+        qp = (math.pi / 2) * math.sqrt(lmax * W12_BUILD[2] / 1000.0 * C103_OUT)
+        rows.append((lab, od0, od1, lmin, lmax, wl, wh, qp, od1 <= od_allow + 1e-9))
+        out("  %-46s OD %.2f-%.2f mm: L' %.3f-%.3f uH/m; at 290 mm with L' min (%.0f nH): IN peak %.2f V (margin %.2f V "
+            "to D107 VBR(min) 36 V), %.0f A at turn-off, lead peak %.0f A; at 310 mm with L' max (%.0f nH): IN peak "
+            "%.2f V, lead peak %.0f A; OUT ring quarter period with C103 %.1f uF at L max %.3f us (< tFASTTRIP %.1f us: "
+            "%s); plan rule at OD max: %s"
+            % (lab, od0, od1, lmin * 1e6, lmax * 1e6, lmin * W12_BUILD[0] * 1e6, wl[0], 36.0 - wl[0], wl[1], wl[2],
+               lmax * W12_BUILD[2] * 1e6, wh[0], wh[2], C103_OUT * 1e6, qp * 1e6, T_FASTTRIP * 1e6,
+               "yes" if qp < T_FASTTRIP else "NO", "met" if od1 <= od_allow + 1e-9 else "FAILS (> %.3f mm)" % od_allow))
+    # recommended wire
+    rec_od = (1.60, math.floor(min(1.75, od_allow) * 20 + 1e-9) / 20)
+    k = math.sqrt(1 + (math.pi * rec_od[1] / TWIST_P[0]) ** 2)
+    lmin = lprime(rec_od[0], a_hi) / k
+    lmax = lprime(rec_od[1], a_lo) + 0.10e-6
+    rec = {}
+    for Lmm in W12_BUILD:
+        rec[Lmm] = (spike_worst(lmin * Lmm / 1000.0), spike_worst(lmax * Lmm / 1000.0))
+    qp = (math.pi / 2) * math.sqrt(lmax * W12_BUILD[2] / 1000.0 * C103_OUT)
+    pr_rec = plan_rule_with_od(rec_od[1])
+    out("  RECOMMENDED W1/W2 (r8): 20 AWG stranded copper, 19/32 (or 7/28), insulation OD %.2f-%.2f mm (PVC 300 V "
+        "hook-up class, UL1007/UL1569; any insulation whose measured OD lies in the range is admissible), twisted pair, "
+        "pitch %.0f-%.0f mm, jackets touching. L' %.3f-%.3f uH/m (lower bound: OD %.2f, a %.4f mm, k %.4f; upper: OD "
+        "%.2f, solid a, + internal):"
+        % (rec_od[0], rec_od[1], TWIST_P[0], TWIST_P[1], lmin * 1e6, lmax * 1e6, rec_od[0], a_hi, k, rec_od[1]))
+    for Lmm in W12_BUILD:
+        w0, w1 = rec[Lmm]
+        out("    %3.0f mm: L %.1f-%.1f nH; IN peak %.2f V (L min; V0 %.0f V, C_S %.0f uF, L_IN %.0f nH) / %.2f V (L max); "
+            "margin to D107 VBR(min) 36 V %.2f V; %.0f A at turn-off; lead peak %.0f A (L min) / %.0f A (L max)"
+            % (Lmm, lmin * Lmm * 1e6, lmax * Lmm * 1e6, w0[0], w0[3], w0[4] * 1e6, w0[5] * 1e9, w1[0], 36.0 - w0[0],
+               w0[1], w0[2], w1[2]))
+    out("    plan rule at OD %.2f mm: worst lead %s %.3f mm (%s); trunk half-width %.3f mm; OUT ring quarter period at L "
+        "max %.3f us (< 1 us); the statement 'no pair reaches 36 V' holds only inside this modelled envelope (20 AWG "
+        "19/32 or 7/28, OD %.2f-%.2f mm, pitch %.0f-%.0f mm, 290-310 mm, the H.19(b) source grid)."
+        % (rec_od[1], pr_rec[1][0], pr_rec[1][1][0][0], pr_rec[1][1][0][1], pr_rec[2], qp * 1e6, rec_od[0], rec_od[1],
+           TWIST_P[0], TWIST_P[1]))
+    EXTRA["p"] = dict(rec_od=rec_od, od_allow=od_allow, lmin=lmin, lmax=lmax, h_trunk=pr_rec[2], h_west=pr_rec[3])
+    RJ["p"] = dict(conductor_radii={k_: f2(v) for k_, v in cond.items()}, check_95nH=(f2(v95[0]), f2(v95[2])),
+                   od_allow=f2(od_allow),
+                   candidates=[dict(label=r[0], od=(r[1], r[2]), lprime_uH_m=(f2(r[3] * 1e6), f2(r[4] * 1e6)),
+                                    in_peak_290_Lmin=f2(r[5][0]), lead_peak_290=f2(r[5][2]), in_peak_310_Lmax=f2(r[6][0]),
+                                    quarter_us=f2(r[7] * 1e6), plan_ok=r[8]) for r in rows],
+                   recommended=dict(od=rec_od, pitch=TWIST_P, lprime_uH_m=(f2(lmin * 1e6), f2(lmax * 1e6)),
+                                    rows={str(k_): dict(in_peak_Lmin=f2(v[0][0]), in_peak_Lmax=f2(v[1][0]),
+                                                        i_off=f2(v[0][1]), lead_peak_Lmin=f2(v[0][2]),
+                                                        margin=f2(36.0 - v[0][0])) for k_, v in rec.items()},
+                                    plan_worst=f2(pr_rec[1][1][0][0]), h_trunk=f2(pr_rec[2])))
+    w290 = rec[W12_BUILD[0]][0]
+    summ("W1/W2 wire (r8, CHG-R1-D04)", "20 AWG 19/32 (or 7/28), OD %.2f-%.2f mm, pitch %.0f-%.0f mm: L' %.3f-%.3f uH/m; "
+         "worst IN peak %.2f V at 290 mm (margin %.2f V to 36 V), lead peak %.0f A; plan rule %.3f mm (OD limit %.3f mm); "
+         "counter-review check 95 nH -> %.2f V / %.2f A" % (rec_od[0], rec_od[1], TWIST_P[0], TWIST_P[1], lmin * 1e6,
+                                                          lmax * 1e6, w290[0], 36.0 - w290[0], w290[2],
+                                                          pr_rec[1][1][0][0], od_allow, v95[0], v95[2]), "H.23(p)")
+
+
+# H.23(q) pin-38 decay (CHG-R1-D02)
+C_VCHGIN_NOM = 25.8e-6       # F, round3 r3_calc.py C_BOARD_VCHGIN: C-D8 + C-D10 20 uF + C102a 1 uF + C102b 4.7 uF + C102c
+C_VCHGIN = (0.66 * C_VCHGIN_NOM, 1.10 * C_VCHGIN_NOM)   # ASSUMPTION: -34 % (DC bias and tolerance at ~10 V) / +10 %
+#                                                        (tolerance at low voltage); TODO(verify: C-D8/C-D10/C102 parts)
+R_DIV38 = 88.7e3             # ohm, R1-CHG 78.7 kOhm + 10 kOhm (round3 K_DIV 10/88.7)
+R_UVOV = 845e3 + 66.5e3 + 49.9e3   # ohm, R102 + R103 + R104 (round3 H.5)
+IQ_ON = (1.38e-3, 1.70e-3)   # A, tps2663.pdf sec 6.5 IQ(ON) TYPICAL 1.38 mA / MAXIMUM 1.70 mA (enabled,
+#                              4.5 V < V(IN_SYS) < 60 V); no minimum is specified (revision 7 label correction)
+V_INSYS_MIN = 4.5            # V, tps2663.pdf sec 6.5 operating V(IN_SYS) minimum (IQ below it unspecified)
+UVLO_F = (9.70, 10.13)       # V, DOC H.5 eFuse UVLO band (falling basis 9.9 V, FR-12)
+ON_STATE = ((30e-6, 4.9e-3), (57e-6, 3.4e-3))   # (C, I) round3 r3_calc.py H.21(g): eFuse ON, charger held, EVM side
+V0_SET = (12.5, 16.0, 19.38, 22.28)  # V, V_chg before the switches open: just above 12 V, V_bus, VINDPM max, design clamp
+
+
+def t_decay(v0, v1, c, iq_fn, dt=1e-4, tmax=20.0):
+    """Time for C dV/dt = -(V/R_DIV38 + V/R_UVOV + iq_fn(V)) to fall from v0 to v1 (Euler, dt 0.1 ms)."""
+    v, t = v0, 0.0
+    if v0 <= v1:
+        return 0.0
+    while v > v1 and t < tmax:
+        i = v / R_DIV38 + v / R_UVOV + iq_fn(v)
+        v -= i / c * dt
+        t += dt
+    return t if v <= v1 else float("inf")
+
+
+def sec_q():
+    head("H.23(q) pin-38 V_chg decay after both charger-path EN readbacks go LOW: the r7 '3 V within 2 s' test and the r8 "
+         "proposed '12 V after 0.5 s' stuck-path criterion (CHG-R1-D02)")
+    r_par = 1 / (1 / R_DIV38 + 1 / R_UVOV)
+    out("Inputs: VCHG-IN (IN side of U101) capacitance %.1f uF nominal (round3 C_BOARD_VCHGIN), %.1f-%.1f uF (ASSUMPTION "
+        "-34 %%/+10 %%, TODO(verify: C-D8/C-D10/C102 datasheets; T-C-04 measures)); loads: pin-38 divider %.1f kOhm, "
+        "UVLO/OVP string %.1f kOhm (parallel %.1f kOhm), eFuse IN_SYS current IQ(ON) %.2f mA typ / %.2f mA max, no minimum (tps2663.pdf sec 6.5, "
+        "specified while enabled and V(IN_SYS) > %.1f V). eFuse states: ON (V above UVLO, no latch: the EVM side is "
+        "connected, C and standby draw of round3 H.21(g): %s); LATCHED or in UVLO (FET off, IN side only, IQ(ON) typ above "
+        "4.5 V); UNBIASED (IQ = 0, a bound for the unspecified UVLO/latched IQ, TODO(verify: SLVSE94G IQ in UVLO; "
+        "T-C-04))." % (C_VCHGIN_NOM * 1e6, C_VCHGIN[0] * 1e6, C_VCHGIN[1] * 1e6, R_DIV38 / 1e3, R_UVOV / 1e3,
+                       r_par / 1e3, IQ_ON[0] * 1e3, IQ_ON[1] * 1e3, V_INSYS_MIN,
+                       ", ".join("%.0f uF / %.1f mA" % (c * 1e6, i * 1e3) for c, i in ON_STATE)))
+    # r7 FR-12(b): 9.9 V -> 3 V within 2 s (below UVLO: IN side only)
+    r7rows = []
+    for c in (C_VCHGIN[0], C_VCHGIN_NOM, C_VCHGIN[1]):
+        t_rc = c * r_par * math.log(9.9 / 3.0)
+        t_iq = t_decay(9.9, 3.0, c, lambda v: IQ_ON[0] if v > V_INSYS_MIN else 0.0)
+        r7rows.append((c, t_rc, t_iq))
+    out("  r7 FR-12(b) basis, 9.9 V -> 3.0 V below UVLO (IN side only): UNBIASED (RC, tau = C x %.1f kOhm) %s; LATCHED "
+        "with IQ(ON) typ down to 4.5 V then RC: %s. The 2 s limit fails in the UNBIASED state for C >= %.1f uF (a warm "
+        "reset with a fast bring-up can false-fail FR-12(b))."
+        % (r_par / 1e3, ", ".join("%.1f uF %.2f s (tau %.2f s)" % (c * 1e6, t1, c * r_par) for c, t1, _ in r7rows),
+           ", ".join("%.1f uF %.2f s" % (c * 1e6, t2) for c, _, t2 in r7rows), 2.0 / (r_par * math.log(9.9 / 3.0)) * 1e6))
+    # r8 proposed: V_chg < 12 V after both EN readbacks LOW for >= 0.5 s
+    out("  r8 proposed stuck-path criterion: V_chg (pin 38) < 12.0 V once both EN readbacks have been LOW for >= 0.5 s. "
+        "Time from V0 to 12.0 V (12 V lies above the UVLO band %.2f-%.2f V and above 4.5 V, so IQ(ON) applies whenever "
+        "the eFuse is enabled):" % UVLO_F)
+    worst = (0.0, None)
+    tab = []
+    for v0 in V0_SET:
+        cells = []
+        for c, i in ON_STATE:
+            t = c * (v0 - 12.0) / i if v0 > 12.0 else 0.0     # constant standby draw (round3 H.21(g) basis)
+            cells.append(("ON %.0f uF/%.1f mA" % (c * 1e6, i * 1e3), t))
+        for c in C_VCHGIN:
+            t = t_decay(v0, 12.0, c, lambda v: IQ_ON[0])
+            cells.append(("LATCHED %.1f uF" % (c * 1e6), t))
+        for c in C_VCHGIN:
+            t = c * r_par * math.log(v0 / 12.0) if v0 > 12.0 else 0.0
+            cells.append(("UNBIASED %.1f uF" % (c * 1e6), t))
+        tab.append((v0, cells))
+        for lab, t in cells:
+            if not lab.startswith("UNBIASED") and t > worst[0]:
+                worst = (t, "%s from %.2f V" % (lab, v0))
+        out("    V0 %5.2f V: %s" % (v0, "; ".join("%s %.3f s" % z for z in cells)))
+    # break-even IN-side current for 0.5 s from the highest V0 with the largest C
+    v0m, cm = V0_SET[-1], C_VCHGIN[1]
+    lo_, hi_ = 0.0, 5e-3
+    for _ in range(40):
+        mid = 0.5 * (lo_ + hi_)
+        if t_decay(v0m, 12.0, cm, lambda v: mid) <= 0.5:
+            hi_ = mid
+        else:
+            lo_ = mid
+    out("  worst case with the eFuse enabled (ON or LATCHED): %.3f s (%s): margin %.3f s against 0.5 s. UNBIASED (IQ = 0 "
+        "above 12 V is outside the IQ(ON) conditions) would exceed 0.5 s from >= %.1f V; the criterion needs an IN-side "
+        "eFuse current >= %.3f mA (from %.2f V, %.1f uF) against IQ(ON) typ %.2f mA (no minimum specified): TODO(verify) across the initial "
+        "voltage and the eFuse states in T-C-04 (proposed criterion, not an established bound)."
+        % (worst[0], worst[1], 0.5 - worst[0], 12.0 * math.exp(0.5 / (C_VCHGIN[1] * r_par)), hi_ * 1e3, v0m, cm * 1e6,
+           IQ_ON[0] * 1e3))
+    vb_nom, vb_low = 15.9, 14.16
+    k_tol = 0.02
+    out("  stuck path (a shorted D-BC-FC or D-BC-RG with MOT_PWR HIGH in Idle): V_chg = V_bus (V-MOT) = %.1f V no-load "
+        "(CLAUDE.md section 6), >= %.2f V at the UVB rise maximum: %.2f V / %.2f V above 12.0 V; with a pin-38 gain error "
+        "of +-%.0f %% (divider 1 %% resistors, ASSUMPTION) the reading stays >= %.2f V. A healthy path decays below 12 V "
+        "in <= %.3f s (eFuse enabled)." % (vb_nom, vb_low, vb_nom - 12.0, vb_low - 12.0, k_tol * 100,
+                                          vb_low * (1 - k_tol), worst[0]))
+    RJ["q"] = dict(r7=[dict(c_uF=f2(c * 1e6), t_rc=f2(t1), t_iq=f2(t2)) for c, t1, t2 in r7rows],
+                   r8={str(v0): [(lab, f2(t)) for lab, t in cells] for v0, cells in tab},
+                   worst_enabled=(f2(worst[0]), worst[1]), margin_s=f2(0.5 - worst[0]),
+                   i_break_even_mA=f2(hi_ * 1e3), stuck_low_V=f2(vb_low * (1 - k_tol)))
+    summ("pin-38 decay (r8, CHG-R1-D02)", "r7 9.9 -> 3 V: %.2f-%.2f s (UNBIASED RC, C %.1f-%.1f uF); r8 12 V / 0.5 s: "
+         "worst %.3f s with the eFuse enabled (margin %.3f s); needs IN-side current >= %.3f mA from %.2f V (IQ(ON) typ "
+         "%.2f mA); stuck path >= %.2f V" % (r7rows[0][1], r7rows[-1][1], C_VCHGIN[0] * 1e6, C_VCHGIN[1] * 1e6,
+                                             worst[0], 0.5 - worst[0], hi_ * 1e3, v0m, IQ_ON[0] * 1e3,
+                                             vb_low * (1 - k_tol)), "H.23(q)")
+
+
+# H.23(r) foot-bond fallback (CHG-R1-05, A-04)
+T_RM = (0.125, 0.150, 0.175)   # mm, removed sheet stack (film + PSA): 0.125 if the DOC A.7 0.125 mm is the total;
+#                                + 0.025-0.050 mm silicone PSA if it is the film alone (ASSUMPTION; TODO(verify:
+#                                polyimide sheet datasheet, PSA thickness), measured with a micrometer before re-making
+T_RM_MEAS = 0.01               # mm, +- micrometer reading of the removed stack (ASSUMPTION)
+
+
+def sec_r():
+    head("H.23(r) foot-bond fallback: re-made foot height from the measured removed sheet stack; PM4 (2d) gate re-run; "
+         "FT2 repair access (r8, CHG-R1-05, A-04)")
+    fi = RJ["i"]
+    out("Basis (H.23(i), D-F1): h_f = %.2f - t_bed - t_bond = %.2f mm with headers and feet both on the sheet. The "
+        "fallback removes the sheet (film + PSA) under one foot, so that foot stands t_rm lower while the headers keep "
+        "their sheet seat. Unchanged foot: t_bed grows by t_rm." % (H_HDR, H_F))
+    fx = {"FT1": fi["ft1"], "FT2": fi["ft2"]}
+    for tn, a_ in (("FT1", 6.4), ("FT2", 16.0)):
+        tb = (T_BED[0] + T_RM[0], T_BED[2] + T_RM[0])
+        kmin_g = E_RTV[0] * a_ / T_BED[2]
+        kmin_f = E_RTV[0] * a_ / tb[1]
+        out("  %s unchanged foot, t_rm %.3f mm: gated bed %.3f-%.3f mm becomes %.3f-%.3f mm; k_s min %.2f N/mm (E %.0f "
+            "MPa, A %.1f mm2) against the gated minimum %.2f N/mm (x%.3f)" % (tn, T_RM[0], T_BED[0], T_BED[2], tb[0], tb[1],
+                                                                          kmin_f, E_RTV[0], a_, kmin_g, kmin_f / kmin_g))
+    out("  re-made foot h_f' = h_f + t_rm (t_rm = the measured removed stack, film + PSA, +-%.2f mm reading): %s; block "
+        "tolerance +0/-0.05 mm as h_f; the bed returns to the nominal %.2f mm and the PM4 (2d) 0.15 / 0.45 mm feeler "
+        "gate is repeated before the CR is soldered."
+        % (T_RM_MEAS, ", ".join("t_rm %.3f mm -> %.3f mm" % (t, H_F + t) for t in T_RM), T_BED[1]))
+    mc = {}
+    for tn, lever in (("FT1", fx["FT1"]["centre"][0] - 45.998), ("FT2", fx["FT2"]["centre"][1] - PIN11_Y)):
+        bow = BOW * lever
+        rng = random.Random(11)
+        n, n_in = 200000, 0
+        for _ in range(n):
+            t = (T_BED[1] + rng.uniform(-TOL_BODY, TOL_BODY) + rng.uniform(-bow, bow) - rng.uniform(*TOL_BLOCK)
+                 + (T_BOND - rng.uniform(*TOL_TAPE)) + rng.uniform(-T_RM_MEAS, T_RM_MEAS))
+            if GATE[0] < t < GATE[1]:
+                n_in += 1
+        mc[tn] = n_in / n
+    out("  gate re-run with the re-made foot (H.23(i) contributors + the +-%.2f mm t_rm reading, uniform, 200 000 builds, "
+        "ORDER OF MAGNITUDE): FT1 %.1f %% pass, FT2 %.1f %% pass (H.23(i): %s); a fail re-makes the foot again"
+        % (T_RM_MEAS, 100 * mc["FT1"], 100 * mc["FT2"], "79.7 / 85.8 %"))
+    c2 = fx["FT2"]["centre"]
+    body = (c2[0] - 2.0, c2[1] - 2.0, c2[0] + 2.0, c2[1] + 2.0)
+    gap_lfc = LFC_EATON[1] - body[3]
+    slot = Z_CR_TOP - T_CR - 0.125
+    out("  FT2 repair access after the CR is soldered: FT2 body x %.2f-%.2f, y %.2f-%.2f under tab Y; slot height under "
+        "the CR %.3f mm (CR underside %.3f mm - sheet 0.125 mm); +y face to the tab Y +y edge (y %.2f) %.2f mm and to "
+        "the L-FC body (y %.3f, %.1f mm tall, ASSUMPTION) %.3f mm in plan: no tool or new foot passes on that side; -x "
+        "face to the tab Y -x edge (x %.2f) %.2f mm under the tab Y bottom parts (decouplers, height cap 1.0 mm); fill "
+        "hole (1.0 mm) at the foot centre from the CR top. The sheet under FT2 cannot be removed without lifting the CR, "
+        "so the fallback is executable before the 22 joints are soldered (T-A-09 at the PM4 (2d) dry seat); after "
+        "soldering, a re-bed is limited to RTV injection through the fill hole."
+        % (body[0], body[2], body[1], body[3], slot, Z_CR_TOP - T_CR, TAB_Y[3], TAB_Y[3] - body[3], LFC_EATON[1], H_LFC,
+           gap_lfc, TAB_Y[0], body[0] - TAB_Y[0]))
+    RJ["r"] = dict(t_rm=T_RM, h_f_new=[f2(H_F + t) for t in T_RM], gate_pass=mc, ft2_body=body, ft2_gap_lfc=f2(gap_lfc),
+                   slot=f2(slot))
+    summ("foot-bond fallback (r8, CHG-R1-05)", "re-made foot h_f' = %.2f + t_rm: %.3f mm at t_rm 0.125 (%.3f / %.3f at "
+         "0.150 / 0.175); gate re-run FT1 %.1f %% / FT2 %.1f %%; unchanged foot k_s down to x%.3f; FT2 +y face %.3f mm "
+         "from L-FC" % (H_F, H_F + T_RM[0], H_F + T_RM[1], H_F + T_RM[2], 100 * mc["FT1"], 100 * mc["FT2"],
+                        T_BED[2] / (T_BED[2] + T_RM[0]), gap_lfc), "H.23(r)")
+
+
+# H.23(s) B1 riser and strain relief; H.23(t) W5 / trunk stacking (CHG-R1-D03, CHG-R1-W01)
+RISER_MARGIN = 0.50            # mm, design margin over the 3-D requirement (sag, layer and tape tolerance; ASSUMPTION,
+#                                T-F-12 measures)
+RISER_X = (24.30, 27.30)       # mm, candidate block width 3.0 mm centred on the trunk x 25.80, used only when the toe
+#                                lies clear of the W2 exclusion; the chosen 65 deg toe lies inside it, so the built B1R is
+#                                the RISER_W_NARROW block below (revision 7 comment correction)
+RISER_W_NARROW = 2.50          # mm, block width when the toe lies inside the W2 pad exclusion band (+x edge on x 26.05)
+RISER_DEGS = (55.0, 60.0, 65.0, 70.0)   # deg, candidate ramp angles
+RISER_Y_END = 67.10            # mm, riser block end inside the footprint interior (tab Y top starts at y 67.14)
+RIB_T = 0.9                    # mm, W5 ribbon thickness ASSUMPTION (H.23(j))
+
+
+def z_need(q, h):
+    """3-D switched-conductor requirement (H.23(l) sw3d inner loop, unchanged): jacket bottom above the MB top at plan
+    point q for a lead of plan half-width h."""
+    need, who = 0.0, None
+    for s_ in SHAPES:
+        if s_["net"] not in SWITCHED or s_["kind"] not in ("poly", "wire"):
+            continue
+        if s_["closed"] and pip(q[0], q[1], s_["pts"]):
+            d = -h
+        else:
+            d = min(dpt_seg(q[0], q[1], p_[0], p_[1], r_[0], r_[1]) for p_, r_ in shape_segs(s_)) - s_["r"] - h
+        if d < SW_GAP:
+            z = H_POUR + (SW_GAP if d <= 0 else math.sqrt(SW_GAP ** 2 - d * d))
+            if z > need:
+                need, who = z, s_["net"]
+    for nm, r_, H in (("REG-FC box", ELS["REG-FC"]["bbox"], H_REG), ("REG-BT box", ELS["REG-BT"]["bbox"], H_REG),
+                      ("L-BT body", ELS["L-BT"]["bbox"], H_LFC), ("L-FC body (Eaton)", LFC_EATON, H_LFC)):
+        d = d_rect_pt(r_, q[0], q[1]) - h
+        if d < SW_GAP:
+            z = H + (SW_GAP if d <= 0 else math.sqrt(SW_GAP ** 2 - d * d))
+            if z > need:
+                need, who = z, nm
+    return need, who
+
+
+def sample_path(pts, step=0.05):
+    sl = arclen(pts)
+    out_ = []
+    for i in range(len(pts) - 1):
+        a, b = pts[i], pts[i + 1]
+        n = max(1, int(math.ceil((sl[i + 1] - sl[i]) / step)))
+        for k in range(n + (1 if i == len(pts) - 2 else 0)):
+            t = k / n
+            out_.append((sl[i] + t * (sl[i + 1] - sl[i]), (a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1]))))
+    return out_
+
+
+def sec_s_t():
+    head("H.23(s) B1 riser and CR-end strain relief: a buildable profile that meets the 3-D switched-conductor rule over "
+         "its full length (r8, CHG-R1-D03); H.23(t) W5 ribbon / round-lead trunk vertical stacking (r8, CHG-R1-W01)")
+    P = WP
+    rec = EXTRA["p"]
+    h_old = H_TRUNK
+    h_new = rec["h_trunk"]
+    tb = 2 * h_new
+    # requirement along the trunk run on the CR (x 25.80 from T1, then +x on tab Y), above the CR top
+    trunk = [P["T1"], P["B1"], P["T2"], P["T3"], P["B3"], P["T4"], P["T5"], P["T6"], P["A1"]]
+    smp = sample_path(trunk)
+    prof = []
+    for s, q in smp:
+        nd, who = z_need(q, h_new)
+        prof.append((s, q, nd, who, pip(q[0], q[1], OUTLINE)))
+    s_b1 = arclen(trunk)[1]
+    on_cr = [z for z in prof if z[4]]
+    mx_cr = max(on_cr, key=lambda z: z[2])
+    onset = min((z for z in prof if z[2] > 0), key=lambda z: z[0])
+    out("Inputs: trunk bundle half-width %.3f mm with the r8 W1/W2 OD %.2f mm (H.23(p); r7 %.3f mm), round bundle "
+        "thickness T_b = 2 x half-width = %.3f mm (hgrp, ASSUMPTION as in H.23(l)); the requirement z_req is the H.23(l) "
+        "3-D rule recomputed at that half-width (L-FC 5.0 mm ASSUMPTION); CR top %.3f mm above the MB; design margin "
+        "%.2f mm (ASSUMPTION: sag, wedge and post height tolerance; T-F-12 measures)." % (h_new, rec["rec_od"][1], h_old,
+                                                                                 tb, Z_CR_TOP, RISER_MARGIN))
+    out("  requirement onset on the trunk: (%.2f, %.3f), %.3f mm before B1 (r7 half-width: B1 at the onset); maximum on "
+        "the CR %.3f mm above the MB = %.3f mm above the CR top at (%.2f, %.2f) (%s)"
+        % (onset[1][0], onset[1][1], s_b1 - onset[0], mx_cr[2], mx_cr[2] - Z_CR_TOP, mx_cr[1][0], mx_cr[1][1], mx_cr[3]))
+    # the r7 conflict at B1 (r7 half-width)
+    pts_w2 = [(27.70, 61.20), P["T1"], P["B1"], P["T2"]]
+    s_w2_b1 = arclen(pts_w2)[2]
+    q_be = (25.80, P["T1"][1] + (BEAD_LEN - arclen(pts_w2)[1]))
+    nd_be = z_need(q_be, h_old)[0]
+    out("  r7 conflict (r7 half-width %.3f mm): W2 reaches B1 %.2f mm from its joint, so its >= %.1f mm copper bead ends "
+        "at (%.2f, %.2f), %.2f mm past B1, where the rule needs the jacket %.3f mm above the CR top; the r7 B1 post "
+        "(>= 10.14 mm) and the bead cannot both hold." % (h_old, s_w2_b1, BEAD_LEN, q_be[0], q_be[1],
+                                                           BEAD_LEN - s_w2_b1, nd_be - Z_CR_TOP))
+    # B3 post height: the CR maximum requirement + margin, rounded up to 0.1 mm
+    z_top = math.ceil((mx_cr[2] - Z_CR_TOP + RISER_MARGIN) * 10 - 1e-9) / 10.0
+    sl_tr = arclen(trunk)
+    s_b3n = sl_tr[4] - ANCHOR_FP / 2                  # B3 post edge on the -s side
+    y_t1 = P["T1"][1]
+    od12_min = rec["rec_od"][0]
+
+    def design(y0, m):
+        """Wedge B1R: the wire on the ramp z = m (y - y0) from the toe y0 to the apex at RISER_Y_END (capped at z_top),
+        then a straight free span from the apex to the B3 post edge at z_top, then level at z_top."""
+        za = min(z_top, m * (RISER_Y_END - y0))
+        sa = RISER_Y_END - y_t1                           # arc length from T1 along the x 25.80 run
+
+        def zfun(s):
+            if s <= sa:
+                return min(z_top, max(0.0, m * (s + y_t1 - y0)))
+            if s <= s_b3n:
+                return za + (z_top - za) * (s - sa) / (s_b3n - sa)
+            return z_top
+        return za, zfun
+
+    def ok(y0, m):
+        za, zf = design(y0, m)
+        for s, q, nd, _, oncr in prof:
+            if oncr and nd > 0 and zf(s) + 1e-9 < nd - Z_CR_TOP + RISER_MARGIN:
+                return False
+        return True
+
+    opts = []
+    for deg in RISER_DEGS:
+        m_ = math.tan(math.radians(deg))
+        y0m = None
+        y_ = RISER_Y_END - 0.5
+        while y_ > y_t1 - 8.0:
+            if ok(y_, m_):
+                y0m = y_
+                break
+            y_ -= 0.01
+        opts.append((deg, m_, y0m, None if y0m is None else m_ * (y_t1 - y0m)))
+    w2x = W_PADS["W2 GND"]
+    w2_excl = (w2x[0] - w2x[2] / 2 - 0.5, w2x[1] + w2x[2] / 2 + 0.5)
+    out("  riser options (machined insulating wedge B1R under the trunk on the x 25.80 run: the wire on the ramp z = m "
+        "(y - y0) from the toe y0 to the apex at y %.2f, then a straight free span to the B3 post edge; B3 post %.1f mm "
+        "above the CR top = the CR maximum %.3f + %.2f mm rounded up to 0.1 mm; latest toe y0 that meets the "
+        "requirement + margin over the full CR profile; W1/W2 join the trunk at T1 y %.2f and count as joining on the "
+        "copper when the ramp there is <= the W1/W2 jacket radius %.3f mm):"
+        % (RISER_Y_END, z_top, mx_cr[2] - Z_CR_TOP, RISER_MARGIN, y_t1, od12_min / 2))
+    for deg, m_, y0m, zt1 in opts:
+        if y0m is None:
+            out("    %4.1f deg: infeasible" % deg)
+            continue
+        za, _ = design(y0m, m_)
+        out("    %4.1f deg (m %.3f): latest toe y0 %.2f; ramp at T1 %.2f mm (%s); apex %.2f mm above the CR top"
+            % (deg, m_, y0m, max(0.0, zt1), "W1/W2 join on the copper" if zt1 <= od12_min / 2 + 1e-9 else
+               "W1/W2 would join a raised trunk", za))
+    feas = [z for z in opts if z[2] is not None and z[3] <= od12_min / 2 + 1e-9]
+    deg, m, y0, zt1 = feas[0] if feas else [z for z in opts if z[2] is not None][-1]
+    y0 = math.floor(y0 * 100 + 1e-6) / 100
+    za, z_built_s = design(y0, m)
+    rx = RISER_X if y0 >= w2_excl[1] - 1e-9 else (w2_excl[0] - RISER_W_NARROW, w2_excl[0])
+    a_blk = (rx[1] - rx[0]) * (RISER_Y_END - y0)
+
+    def z_built(s, q):
+        return z_built_s(s)
+    mins = []
+    for s, q, nd, who, oncr in prof:
+        if not oncr or nd <= 0:
+            continue
+        zb = z_built(s, q)
+        mins.append((zb - (nd - Z_CR_TOP), q, nd - Z_CR_TOP, zb, who))
+    mn = min(mins, key=lambda z: z[0])
+    x_edge = TAB_Y[2]
+    span = s_b3n - (RISER_Y_END - y_t1)
+    span_slope = math.degrees(math.atan((z_top - za) / span))
+    ctl_s = [0.0, 1.0, 2.0, 2.67, 3.5, 4.5, 5.0]
+    pts_ctl = []
+    for ds in ctl_s:
+        s_ = (64.50 - y_t1) + ds
+        q_ = (25.80, y_t1 + s_)
+        pts_ctl.append((ds, q_, z_need(q_, h_new)[0] - Z_CR_TOP, z_built(s_, q_)))
+    out("  CHOSEN (r8): the shallowest listed slope whose W1/W2 join stays on the copper, %.0f deg (m %.3f). B1R = a "
+        "machined insulating wedge (G10/FR-4 laminate or PEEK, ASSUMPTION; bonded to the CR top with the %.2f mm "
+        "transfer tape), footprint x %.2f-%.2f, y %.2f-%.2f (%.2f mm2, replaces the 9.00 mm2 B1 spot; its +x edge on the "
+        "W2 pad exclusion x %.2f), ramp face at %.0f deg from the toe y %.2f to the apex %.2f mm above the CR top at y "
+        "%.2f. The leads leave the copper at the toe, lie on the ramp, then span free %.1f mm along the trunk via T2 "
+        "(rising at %.1f deg) to B3, a post %.1f mm above the CR top (%.3f mm above the MB), and run level to the tab Y "
+        "+x edge x %.2f. Full-profile check on the CR (every 0.05 mm from T1 to x %.2f): minimum margin over the "
+        "requirement %.3f mm at (%.2f, %.2f) (required %.3f, built %.3f mm above the CR top; %s): %s. T-F-12 check "
+        "points past B1 (s, required / built above the CR top): %s."
+        % (deg, m, T_BOND, rx[0], rx[1], y0, RISER_Y_END, a_blk, w2_excl[0], deg, y0, za, RISER_Y_END, span, span_slope,
+           z_top, z_top + Z_CR_TOP, x_edge, x_edge, mn[0], mn[1][0], mn[1][1], mn[2], mn[3], mn[4],
+           "PASS (>= the %.2f mm design margin)" % RISER_MARGIN if mn[0] >= RISER_MARGIN - 1e-9 else "FAIL",
+           "; ".join("+%.2f mm %.2f / %.2f" % (ds, rq, bt) for ds, _, rq, bt in pts_ctl)))
+    # bead (strain relief) per lead: plan run on the copper to the toe, and the jacket length to the apex
+    paths, _, _ = paths_with_od(rec["rec_od"][1])
+    bead = {}
+    for lead in ("W1", "W2", "W3", "W4", "W6", "W7 SCL", "W7 SDA"):
+        pts = [p for p, _ in paths[lead]]
+        sl = arclen(pts)
+        s_y0, y_on = None, y0
+        for i in range(len(pts) - 1):
+            a, b = pts[i], pts[i + 1]
+            if abs(a[0] - 25.80) < 1e-6 and abs(b[0] - 25.80) < 1e-6 and a[1] <= y0 <= b[1] and s_y0 is None:
+                s_y0 = sl[i] + (y0 - a[1])
+        if s_y0 is None:          # joins at T1, past the toe, within its jacket radius of the copper
+            j = next(i for i in range(len(pts)) if abs(pts[i][0] - 25.80) < 1e-6)
+            s_y0, y_on = sl[j], pts[j][1]
+        jac = s_y0 + math.hypot(RISER_Y_END - y_on, za - m * (y_on - y0))
+        bead[lead] = (s_y0, jac)
+    out("  CR-end strain relief (r8 restatement of the r5 bead): each lead's jacket is bonded by RTV over >= %.1f mm from "
+        "its joint, on the CR copper to the toe and on along the ramp face (the wedge is bonded to the CR). Copper run "
+        "to the toe or join / jacket length to the apex: %s"
+        % (BEAD_LEN, "; ".join("%s %.2f / %.2f mm%s" % (k, v[0], v[1], "" if v[0] >= BEAD_LEN else
+                                                       " (copper part < 5 mm, completed on the ramp)")
+                               for k, v in bead.items())))
+    a_int = RJ["e2"]["regions"]["interior"]["sum"] - ANCHOR_FP ** 2 + a_blk
+    out("  free span from the apex to the B3 post edge %.1f mm (<= 30 mm anchor rule); interior booking with B1R instead "
+        "of the B1 spot %.1f of %.1f mm2 = %.1f %% (<= 75 %%: %s); tab Y booking unchanged (B3 keeps its spot)"
+        % (span, a_int, RJ["e2"]["areas"]["interior"], 100 * a_int / RJ["e2"]["areas"]["interior"],
+           "pass" if a_int / RJ["e2"]["areas"]["interior"] <= 0.75 else "FAIL"))
+    # off-CR: support end for a straight descent to A1 (information; the support itself stays TODO(design))
+    off = [z for z in prof if not z[4]]
+    s_a1 = arclen(trunk)[-1]
+    s_edge = min(z[0] for z in off)
+    z_hold = z_top + Z_CR_TOP
+
+    def off_ok(s_e):
+        for s, q, nd, _, _ in off:
+            z = z_hold if s <= s_e else z_hold * (s_a1 - s) / (s_a1 - s_e)
+            if nd > 0 and z + 1e-9 < nd + RISER_MARGIN:
+                return False
+        return True
+    lo_, hi_ = s_edge, s_a1 - 0.01
+    for _ in range(40):
+        mid = 0.5 * (lo_ + hi_)
+        if off_ok(mid):
+            hi_ = mid
+        else:
+            lo_ = mid
+    s_e = hi_
+    q_e = [z[1] for z in off if z[0] >= s_e][0]
+    out("  off the CR (information; the support stays TODO(design: T-A-06 dry fit)): held at %.3f mm above the MB from "
+        "the tab Y +x edge, a straight descent to the MB top at A1 meets the requirement + %.2f mm when the support "
+        "reaches (%.2f, %.2f) (%.1f mm along the trunk past the CR edge)."
+        % (z_hold, RISER_MARGIN, q_e[0], q_e[1], s_e - s_edge))
+    # ---- H.23(t) stacking
+    out("")
+    w5 = [(40.75, 46.83), P["F1"], P["F2"], P["S3"], P["F3"], P["F4"], P["A1R"]]
+    w5s = sample_path(w5, 0.1)
+    s_trunk = [(s, q) for s, q in smp]
+
+    def trunk_bottom(s, q):
+        if pip(q[0], q[1], OUTLINE):
+            if q[0] < 25.81 and q[1] < P["T1"][1]:
+                return Z_CR_TOP
+            return Z_CR_TOP + z_built(s, q)
+        return z_hold if s <= s_e else z_hold * (s_a1 - s) / (s_a1 - s_e)
+    full_trunk = [P["T0"], P["J67"], P["T1"]] + trunk[1:]
+    s_full = sample_path(full_trunk, 0.1)
+    off0 = arclen(full_trunk)[2]
+    ov_rows = []
+    for s, q in w5s:
+        best = None
+        for st, qt in s_full:
+            d = math.hypot(q[0] - qt[0], q[1] - qt[1])
+            if best is None or d < best[0]:
+                best = (d, st, qt)
+        d, st, qt = best
+        overlap = d < RIBBON_W / 2 + h_new
+        zt = trunk_bottom(st - off0, qt) if st >= off0 else Z_CR_TOP
+        own = z_need(q, RIBBON_W / 2)[0]
+        fold = Z_CR_TOP + W5_FOLD if s < arclen(w5)[-1] - 1e-9 else 0.0
+        zb = max(fold, own, zt + tb if overlap else 0.0)
+        ov_rows.append((s, q, overlap, zt, zt + tb if overlap else None, own, zb))
+    ovs = [r for r in ov_rows if r[2] and r[1][1] >= P["T0"][1] - 1e-9]
+    first_ride = next((r for r in ov_rows if r[2] and r[4] is not None and r[4] > Z_CR_TOP + W5_FOLD), None)
+    top = max(r[6] for r in ov_rows) + RIB_T
+    top_r = max(ov_rows, key=lambda r: r[6])
+    ctl = [(36.5, 71.10), (41.5, 71.10), (44.0, 71.10)]
+    out("H.23(t) W5 / trunk stacking (r8, CHG-R1-W01): the W5 ribbon (%.2f mm wide, %.1f mm thick ASSUMPTION) overlaps "
+        "the trunk (round bundle %.3f mm) in plan from the trunk start y %.2f (T0) on the x 25.80 run to A1 (%d of %d W5 "
+        "samples). Below the "
+        "riser the trunk top (%.3f mm above the MB) lies under the W5 fold (%.3f mm), so W5 is ABOVE the trunk there. "
+        "DECISION: W5 stays above the trunk over the whole overlap and rests on the trunk top, bonded by RTV (the B3/S3 "
+        "union spot carries both); W5 bottom = max(fold %.3f, own 3-D requirement, trunk bottom + T_b)."
+        % (RIBBON_W, RIB_T, tb, P["T0"][1], len(ovs), len(ov_rows),
+           Z_CR_TOP + tb, Z_CR_TOP + W5_FOLD, Z_CR_TOP + W5_FOLD))
+    if first_ride:
+        out("  W5 first rides on the trunk at (%.2f, %.2f), where the trunk top passes the fold height" %
+            (first_ride[1][0], first_ride[1][1]))
+    out("  heights above the MB (trunk bottom / trunk top / W5 bottom / W5 top): at the B3 level (tab Y) %.3f / %.3f "
+        "/ %.3f / %.3f mm; stack top %.3f mm at (%.2f, %.2f) (%.3f mm above the CR top); W5 own requirement >= %.2f mm is "
+        "met with %.3f mm margin. The r7 figures (trunk >= 14.41, W5 >= 15.00 mm) assumed no overlap."
+        % (Z_CR_TOP + z_top, Z_CR_TOP + z_top + tb, Z_CR_TOP + z_top + tb, Z_CR_TOP + z_top + tb + RIB_T, top,
+           top_r[1][0], top_r[1][1], top - Z_CR_TOP, max(r[5] for r in ov_rows),
+           min(r[6] - r[5] for r in ov_rows if r[5] > 0)))
+    for qc in ctl:
+        st = min(s_trunk, key=lambda z: math.hypot(z[1][0] - qc[0], z[1][1] - qc[1]))
+        zb_ = trunk_bottom(st[0], st[1])
+        out("    controlling point (%.2f, %.2f): requirement %.3f mm, trunk bottom %.3f mm, W5 bottom %.3f mm above the MB"
+            % (qc[0], qc[1], z_need(qc, h_new)[0], zb_, zb_ + tb))
+    EXTRA["st"] = dict(z_top=z_top, m=m, y0=y0, za=za)
+    EXTRA["t"] = dict(ov_rows=ov_rows, first_ride=first_ride, rx=rx, h=h_new, tb=tb, z_top=z_top)   # revision 7
+    RJ["s"] = dict(h_trunk=f2(h_new), T_b=f2(tb), onset=(f2(onset[1][1]), f2(s_b1 - onset[0])),
+                   max_req_above_cr=f2(mx_cr[2] - Z_CR_TOP), b3_height=f2(z_top), slope_deg=deg, toe_y=y0, apex=f2(za),
+                   block=(rx[0], y0, rx[1], RISER_Y_END), block_area=f2(a_blk), min_margin=f2(mn[0]),
+                   checkpoints=[(f2(ds), f2(rq), f2(bt)) for ds, _, rq, bt in pts_ctl],
+                   min_at=mn[1], bead={k: (f2(v[0]), f2(v[1])) for k, v in bead.items()}, free_span=f2(span),
+                   interior_U=f2(100 * a_int / RJ["e2"]["areas"]["interior"]), off_support_end=q_e,
+                   options=[(dd, f2(mm), y_) for dd, mm, y_, _ in opts])
+    RJ["t"] = dict(order="W5 above the trunk", stack_top=f2(top), stack_top_at=top_r[1], trunk_top_plateau=f2(
+        Z_CR_TOP + z_top + tb), w5_bottom_plateau=f2(Z_CR_TOP + z_top + tb))
+    summ("B1 riser B1R (r8, CHG-R1-D03)", "machined insulating wedge at %.0f deg, x %.2f-%.2f, y %.2f-%.2f, apex %.2f mm; "
+         "leads leave the copper at the toe y %.2f; B3 post %.1f mm above the CR top; full CR profile margin >= %.3f mm "
+         "(design margin %.2f); bonded jacket >= %.2f mm per lead" % (deg, rx[0], rx[1], y0, RISER_Y_END, za, y0, z_top,
+                                                                     mn[0], RISER_MARGIN,
+                                                                     min(v[1] for v in bead.values())),
+         "H.23(s)")
+    summ("W5 / trunk stacking (r8, CHG-R1-W01)", "W5 above the trunk, resting on it; trunk round bundle %.3f mm; heights "
+         "on tab Y trunk %.3f-%.3f, W5 %.3f-%.3f mm above the MB; stack top %.3f mm" %
+         (tb, Z_CR_TOP + z_top, Z_CR_TOP + z_top + tb, Z_CR_TOP + z_top + tb, Z_CR_TOP + z_top + tb + RIB_T, top),
+         "H.23(t)")
+
+
+# H.23(u) EVM-to-CR distances; H.23(v) E8 pickup; H.23(w) closing-pass hand figures (CHG-R1-07)
+def sec_u_v_w():
+    head("H.23(u) EVM points of the E leads to the r7 CR outline at the H.23(l) reference placement (r8, CHG-R1-07)")
+    X0, Y0 = EVM_RIGHT - EVM_W, MB_OUTLINE[3] + G_J8
+    out("Board point = (X0 + x_EVM, Y0 + y_EVM) with X0 = EVM_RIGHT - EVM_W = %.3f, Y0 = MB +y edge + g = %.3f (H.23(l)); "
+        "EVM points: round4/work/evm_geometry.md Table 1 (vector); distance = plan distance to the nearest point of the "
+        "r7 outline (H.23(a)); the r7-superseded basis was the tab X top edge." % (X0, Y0))
+    dist = {}
+    for e, (row, pt) in sorted(E_ROWS.items(), key=lambda kv: kv[1][0]):
+        p = EVM_PTS[pt]
+        b = (X0 + p[0], Y0 + p[1])
+        best = None
+        for (a, c) in edges(OUTLINE):
+            dx, dy = c[0] - a[0], c[1] - a[1]
+            t = max(0.0, min(1.0, ((b[0] - a[0]) * dx + (b[1] - a[1]) * dy) / (dx * dx + dy * dy)))
+            qn = (a[0] + t * dx, a[1] + t * dy)
+            d = math.hypot(b[0] - qn[0], b[1] - qn[1])
+            if best is None or d < best[0]:
+                best = (d, qn)
+        d_tx = dpt_seg(b[0], b[1], TAB_X[0], TAB_X[3], TAB_X[2], TAB_X[3])
+        dist[e] = (best[0], best[1], b, d_tx)
+        out("  %-3s %-28s EVM (%.3f, %.3f) -> board (%.3f, %.3f): %.3f mm to the r7 outline at (%.2f, %.2f); to the tab X "
+            "top edge %.3f mm" % (e, pt, p[0], p[1], b[0], b[1], best[0], best[1][0], best[1][1], d_tx))
+    d_evm = Y0 - max(v[1] for v in OUTLINE)
+    lo = min(dist.items(), key=lambda kv: kv[1][0])
+    hi = max(dist.items(), key=lambda kv: kv[1][0])
+    oth = [v[0] for k, v in dist.items() if k != "E1"]
+    out("  range %.1f-%.1f mm (%s %.1f ... %s %.1f); without E1 %.1f-%.1f mm; EVM board edge to the CR %.2f mm (y %.3f "
+        "- the tab Y +y edge %.2f)" % (lo[1][0], hi[1][0], lo[0], lo[1][0], hi[0], hi[1][0], min(oth), max(oth), d_evm,
+                                      Y0, max(v[1] for v in OUTLINE)))
+    RJ["u"] = {e: dict(board=(f2(v[2][0]), f2(v[2][1])), d=f2(v[0]), at=(f2(v[1][0]), f2(v[1][1])), d_tabx=f2(v[3]))
+               for e, v in dist.items()}
+    summ("EVM-to-CR distances (r8, CHG-R1-07)", ", ".join("%s %.1f" % (e, dist[e][0]) for e in
+                                                         sorted(dist, key=lambda k: dist[k][0])) +
+         " mm; EVM edge %.2f mm" % d_evm, "H.23(u)")
+    # ---- H.23(v)
+    head("H.23(v) E8 pickup through the E1/E8/C205 loop current, with and without R276 (r8, CHG-R1-07)")
+    l8 = 0.020
+    L8 = (MU0 / (2 * math.pi)) * l8 * (math.log(2 * l8 / A28) - 0.75)
+    L8_hf = (MU0 / (2 * math.pi)) * l8 * (math.log(2 * l8 / A28) - 1.0)
+    out("E8 partial self-inductance at its 20 mm maximum, 28 AWG radius %.2f mm: (mu0/2pi) l (ln(2l/a) - 3/4) = %.2f nH "
+        "(DC, internal included; %.2f nH with -1, no internal). Loop current at the drive frequency f: |I| = V_r / |R + "
+        "jwL + 1/(jwC205)| with L, R of H.23(k); E8 drop = |I| x |R_E8 + jw L_E8| (R_E8 = 28 AWG x 20 mm). Ripple V_r = "
+        "10 mV at TP27 (the TP27 amplitude is not specified, TODO(verify: SLUUCB5E/SLUSDV2C))." % (A28 * 1e3, L8 * 1e9,
+                                                                                                L8_hf * 1e9))
+    r_e8 = R28 * l8
+    rows = []
+    for Lmm in (85.0, 90.0):
+        Lm = Lmm * 1e-3
+        Ll = loop_L(Lm, 5e-3)
+        f0 = 1 / (2 * math.pi * math.sqrt(Ll * C205))
+        dlt, kac, _ = skin(f0)
+        for rlab, rl in (("DC, return l", R28 * 2 * Lm + ESR205), ("DC, E8 20 mm", R28 * (Lm + 0.020) + ESR205),
+                         ("AC, return l", R28 * 2 * Lm * kac + ESR205), ("AC, E8 20 mm", R28 * (Lm + 0.020) * kac + ESR205)):
+            for f, flab in ((f0, "f0"), (1.5e6, "1.5 MHz")):
+                w = 2 * math.pi * f
+                for r276, lab276 in ((0.0, "no R276"), (R276, "R276")):
+                    z = complex(rl + r276, w * Ll - 1 / (w * C205))
+                    i = 0.010 / abs(z)
+                    v8 = i * abs(complex(r_e8, w * L8))
+                    vc = 0.010 * abs(1 / complex(0, w * C205)) / abs(z)
+                    rows.append((Lmm, rlab, flab, lab276, f, i, v8, vc / 0.010))
+    nr_f0 = [r for r in rows if r[3] == "no R276" and r[2] == "f0"]
+    wr_f0 = [r for r in rows if r[3] == "R276" and r[2] == "f0"]
+    nr_15 = [r for r in rows if r[3] == "no R276" and r[2] == "1.5 MHz"]
+    wr_15 = [r for r in rows if r[3] == "R276" and r[2] == "1.5 MHz"]
+    for lab, rr in (("without R276 at f0", nr_f0), ("with R276 at f0", wr_f0), ("without R276 at 1.5 MHz", nr_15),
+                    ("with R276 at 1.5 MHz", wr_15)):
+        out("  %-24s E8 drop per 10 mV: %s; C205/TP27 ratio %s"
+            % (lab, ", ".join("%.0f mm %s %.3f mV" % (r[0], r[1], r[6] * 1e3) for r in rr),
+               ", ".join("%.3f" % r[7] for r in rr)))
+    rng_nr = (min(r[6] for r in nr_f0), max(r[6] for r in nr_f0))
+    rng_dc = [r[6] for r in nr_f0 if r[1] == "AC, return l" and r[0] == 90.0] + \
+             [r[6] for r in nr_f0 if r[1] == "DC, return l" and r[0] == 85.0]
+    wr = max(r[6] for r in wr_f0)
+    ratio_nr = (min(r[7] for r in nr_15), max(r[7] for r in nr_15))
+    ratio_nr_t = (min(r[7] for r in nr_15 if "return l" in r[1]), max(r[7] for r in nr_15 if "return l" in r[1]))
+    tp27_max = 4.8e-3 / (wr / 0.010)
+    out("  DOC A.5 / T-C-16 figures: undamped 20-31 mV per 10 mV = %.1f mV (90 mm, AC, return l) to %.1f mV (85 mm, DC, "
+        "return l) (full set %.1f-%.1f mV); damped %.3f mV per 10 mV (the A.5 '0.17 mV'; the hand formula 10 mV x 2 pi "
+        "f0 L_E8 / 10 ohm gives %.4f mV at 90 mm); C205/TP27 at 1.5 MHz without R276 %.2f-%.2f (two-wire return; %.2f-%.2f "
+        "over the full set; T-C-16 '7.8-8.8'); with R276 the T-C-16 4.8 mV limit is met for a TP27 ripple up to %.0f mV "
+        "(the T-C-16 'about 280 mV')."
+        % (rng_dc[0] * 1e3, rng_dc[1] * 1e3, rng_nr[0] * 1e3, rng_nr[1] * 1e3, wr * 1e3,
+           0.010 * 2 * math.pi * rr_f0(90.0) * L8 / R276 * 1e3, ratio_nr_t[0], ratio_nr_t[1], ratio_nr[0], ratio_nr[1],
+           tp27_max * 1e3))
+    RJ["v"] = dict(L8_nH=f2(L8 * 1e9), undamped_mV=(f2(rng_nr[0] * 1e3), f2(rng_nr[1] * 1e3)),
+                   undamped_A5_mV=(f2(rng_dc[0] * 1e3), f2(rng_dc[1] * 1e3)), damped_mV=f2(wr * 1e3),
+                   ratio_bridged=(f2(ratio_nr_t[0]), f2(ratio_nr_t[1])), tp27_max_mV=f2(tp27_max * 1e3),
+                   rows=[(r[0], r[1], r[2], r[3], f2(r[6] * 1e3), f2(r[7])) for r in rows])
+    summ("E8 pickup (r8, CHG-R1-07)", "L_E8 %.2f nH; per 10 mV REGN ripple at f0: %.1f-%.1f mV without R276 (A.5 basis "
+         "%.1f-%.1f), %.3f mV with R276; C205/TP27 bridged %.2f-%.2f at 1.5 MHz; TP27 <= %.0f mV for the 4.8 mV limit"
+         % (L8 * 1e9, rng_nr[0] * 1e3, rng_nr[1] * 1e3, rng_dc[0] * 1e3, rng_dc[1] * 1e3, wr * 1e3, ratio_nr_t[0],
+            ratio_nr_t[1], tp27_max * 1e3), "H.23(v)")
+    # ---- H.23(w)
+    head("H.23(w) closing-pass hand figures recomputed (r8, CHG-R1-07); each DOC citation becomes this section")
+    P = WP
+    trunk = [P["T1"], P["B1"], P["T2"], P["T3"], P["B3"], P["T4"], P["T5"], P["T6"], P["A1"]]
+    sl = arclen(trunk)
+    s_b1 = sl[1]
+
+    def at_s(s):
+        for i in range(len(trunk) - 1):
+            if sl[i] - 1e-9 <= s <= sl[i + 1] + 1e-9:
+                t = (s - sl[i]) / (sl[i + 1] - sl[i])
+                return (trunk[i][0] + t * (trunk[i + 1][0] - trunk[i][0]),
+                        trunk[i][1] + t * (trunk[i + 1][1] - trunk[i][1]))
+    z_b1 = z_need(P["B1"], H_TRUNK)[0] - Z_CR_TOP
+    q267 = at_s(s_b1 + 2.67)
+    z267 = z_need(q267, H_TRUNK)[0] - Z_CR_TOP
+    s756 = s_b1
+    while z_need(at_s(s756), H_TRUNK)[0] - Z_CR_TOP < 7.555 and s756 < sl[2]:
+        s756 += 0.005
+    out("  (1) r7 requirement on the trunk (r7 half-width %.3f mm): %.3f mm above the CR top at B1; %.3f mm at %.2f mm "
+        "past B1 (%.2f, %.2f); 7.555 mm is reached %.3f mm past B1 (DOC A.3 '7.56 mm only 2.7 mm past B1')"
+        % (H_TRUNK, z_b1, z267, 2.67, q267[0], q267[1], s756 - s_b1))
+    s_b3 = sl[4]
+    s_a1 = sl[-1]
+    x415 = s_b3 + math.hypot(P["T4"][0] - P["B3"][0], P["T4"][1] - P["B3"][1]) + (41.5 - P["T4"][0])
+    z_line = 14.41 * (s_a1 - x415) / (s_a1 - s_b3)
+    z_req415 = z_need((41.5, 71.10), H_TRUNK)[0]
+    out("  (2) a lead straight from 14.41 mm above the MB at B3 to the MB top at A1 (%.3f mm along the path): at x 41.5 "
+        "(%.3f mm past B3) it stands %.3f mm above the MB against the %.3f mm requirement (DOC A.3 'about 10.8 mm "
+        "against 13.45 mm')" % (s_a1 - s_b3, x415 - s_b3, z_line, z_req415))
+    ce = RJ["m"]["cutouts_enlarged"]
+    web = (ce["C-D12"]["rect"][0] - ce["D-BT-SQ"]["rect"][2], ce["D-BT-SQ"]["rect"][2], ce["C-D12"]["rect"][0])
+    out("  (3) web between the two merged cut-out openings = C-D12 x0 - D-BT-SQ x1 = %.3f - %.3f = %.3f mm (H.23(m) "
+        "enlarged cut-outs; DOC A.7 '0.625 mm')" % (web[2], web[1], web[0]))
+    a_ty = RJ["e2"]["areas"]["tab Y"]
+    gates9 = 6 * CY_PKG["SSOP-8"] + 3 * CY_PKG["SC70-6"]
+    ov = ANCHOR_FP * max(0.0, ANCHOR_FP - abs(P["S3"][1] - P["B3"][1]))
+    u_b3s3 = 2 * ANCHOR_FP ** 2 - ov
+    dec = 9 * CY_PKG["0603"]
+    out("  (4) tab Y top %.3f mm2: nine LVC gates %.1f mm2 (6 SSOP-8 x %.1f + 3 SC70-6 x %.1f) + the B3/S3 union %.2f mm2 "
+        "= %.2f mm2 = %.1f %% (DOC '82.6 %%'); nine gates + nine 0603 decouplers (%.2f mm2) = %.2f mm2 = %.1f %% (DOC "
+        "'150.2 of 153.7 mm2', the r7-superseded 97.7 %%)" % (a_ty, gates9, CY_PKG["SSOP-8"], CY_PKG["SC70-6"], u_b3s3,
+                                                          gates9 + u_b3s3, 100 * (gates9 + u_b3s3) / a_ty, dec,
+                                                          gates9 + dec, 100 * (gates9 + dec) / a_ty))
+    pu = RJ["i"]["pulls"]["tabs"]
+    out("  (5) T-A-09 pull, tip-load basis (H.23(i)): 1 x the 30 g stress at %.3f N (tab Y, FT2) / %.3f N (tab X, FT1); "
+        "a 2 N pull = %.2f x (FT2) / %.2f x (FT1) (linear in the pull; DOC 'about 4.8 x' at FT2)"
+        % (pu["tab Y"]["W30_N"], pu["tab X"]["W30_N"], 2.0 / pu["tab Y"]["W30_N"], 2.0 / pu["tab X"]["W30_N"]))
+    c102b_h = 2.5
+    out("  (6) W5 over C102b at the J101 fold: fold height %.1f mm above the CR top - C102b body %.1f mm (ASSUMPTION, "
+        "TODO(verify: C102b datasheet), MS3 caliper) = %.1f mm (DOC '>= 5.5 mm'); plan offset 0.775 mm (H.23(l))"
+        % (W5_FOLD, c102b_h, W5_FOLD - c102b_h))
+    f12, f24 = (55.88, 64.02), (55.88, 66.56)
+    m11, m24 = TAPS["T11"][2], TAPS["F24"][2]
+    t11_0, t11_1 = math.hypot(f12[0] - m11[0], f12[1] - m11[1]), math.hypot(f24[0] - m11[0], f24[1] - m11[1])
+    f24_0, f24_1 = math.hypot(f24[0] - m24[0], f24[1] - m24[1]), math.hypot(f12[0] - m24[0], f12[1] - m24[1])
+    d1, d0 = t11_1, t11_0
+    out("  (7) F12/F24 swap (T11 to (55.88, 66.56), F24 to (55.88, 64.02)): T11 straight %.3f -> %.3f mm, change %.3f mm "
+        "on the 20-tap sum (SUM20 holds T11, not F24; DOC J.2 item 63 '-0.14 mm'); F24 (option, outside the sum) %.3f -> "
+        "%.3f mm" % (t11_0, t11_1, t11_1 - t11_0, f24_0, f24_1))
+    RJ["w"] = dict(z_b1=f2(z_b1), z_267=f2(z267), s_7555=f2(s756 - s_b1), line_415=f2(z_line), req_415=f2(z_req415),
+                   web=f2(web[0]), tab_y_b3s3=f2(100 * (gates9 + u_b3s3) / a_ty), tab_y_dec=f2(gates9 + dec),
+                   pull_2N=(f2(2.0 / pu["tab Y"]["W30_N"]), f2(2.0 / pu["tab X"]["W30_N"])),
+                   c102b=W5_FOLD - c102b_h, swap=f2(d1 - d0))
+    summ("closing-pass hand figures (r8, CHG-R1-07)", "B1 %.3f / +2.67 mm %.3f mm above the CR top; straight B3-A1 lead "
+         "%.2f vs %.2f mm at x 41.5; web %.3f mm; tab Y %.1f %% / %.1f mm2; 2 N pull %.2f x at FT2; W5 over C102b %.1f mm; "
+         "F12/F24 swap %.3f mm" % (z_b1, z267, z_line, z_req415, web[0], 100 * (gates9 + u_b3s3) / a_ty, gates9 + dec,
+                                   2.0 / pu["tab Y"]["W30_N"], W5_FOLD - c102b_h, d1 - d0), "H.23(w)")
+
+
+# ======================================================================================================================
+# Revision 6 (r8 integration): H.23(x), the integrator's derived figures. The sections above are unchanged.
+# ======================================================================================================================
+TW_HB_MAX = 47e-3        # s, DOC FR-08 / H.17: U113 width, firmware constant TW_HB_MAX, provisional until T-C-10
+STEP8B_MAX = 70e-3       # s, DOC F.5 T1 step 8b (r7): the heartbeat exercise with QUAL HIGH, <= 70 ms
+STEP8C_P33 = 5e-3        # s, DOC F.5 T1 step 8c (r8): pin 33 LOW within 5 ms of the P5 rise
+VCHG_PROBE = 3.0         # V, DOC FR-12(b3): the Idle probe waits for V_chg < 3 V
+VCHG_STUCK = 12.0        # V, DOC FR-12(b1): r8 proposed stuck-path threshold
+B1_DWELL = 0.5           # s, DOC FR-12(b1): both EN readbacks LOW for >= 0.5 s
+
+
+def sec_x():
+    head("H.23(x) r8 integration figures derived from H.23(n), (o) and (q) (r8, CHG-R1-D02, CHG-R1-02, CHG-R1-04, "
+         "CHG-R1-01)")
+    r_par = 1 / (1 / R_DIV38 + 1 / R_UVOV)
+    tau_max = C_VCHGIN[1] * r_par
+    t_b2 = B1_DWELL + tau_max * math.log(VCHG_STUCK / VCHG_PROBE)
+    out("  (1) FR-12(b2) discharge timeout: worst case after (b1) = %.1f s dwell + tau_max x ln(%.0f/%.0f), tau_max = "
+        "%.1f uF x %.1f kOhm = %.3f s (UNBIASED, the H.23(q) maximum): %.3f s; the FR-12(b2) 5 s timeout lies %.2f s above it"
+        % (B1_DWELL, VCHG_STUCK, VCHG_PROBE, C_VCHGIN[1] * 1e6, r_par / 1e3, tau_max, t_b2, 5.0 - t_b2))
+    sums = {}
+    for f in (100e3, 400e3):
+        bits = [i2c_bits_read(2), i2c_bits_read(2), i2c_bits_read(1), i2c_bits_read(2)]
+        sums[f] = (sum(bits) / f, sum(bits) / f + 4 * I2C_TBUF[f])
+    out("  (2) FR-46 four field reads (REG01:02, REG03:04, REG05, REG06:07) in sum: %.3f ms at 100 kHz (%.3f ms with four "
+        "t_BUF), %.3f ms at 400 kHz (%.3f ms with four t_BUF): the T1 step-8c pre-edge read bound '<= 1.83 ms at 100 kHz'"
+        % (sums[100e3][0] * 1e3, sums[100e3][1] * 1e3, sums[400e3][0] * 1e3, sums[400e3][1] * 1e3))
+    hb = TW_HB_MAX * 1.1
+    inc = hb + STEP8B_MAX + STEP8C_P33
+    out("  (3) T1 arming increment (A-03): step-8 heartbeat pause TW_HB_MAX x 1.1 = %.1f ms + step 8b <= %.0f ms + step 8c "
+        "pin-33 release <= %.0f ms = %.1f ms (the F.5 '~0.13 s')" % (hb * 1e3, STEP8B_MAX * 1e3, STEP8C_P33 * 1e3, inc * 1e3))
+    i_pu = V_IO_RNG[2] / R_PU35[0]
+    out("  (4) T-C-05c pad pull-up current with FLT released and pin 30 LOW: 3V3 max %.3f V into the %.0f kOhm minimum "
+        "pull-up = %.3f mA (the T-C-05c bound '<= 0.35 mA'); with FLT asserted the pull-up current is the H.23(n) "
+        "<= 0.288 mA" % (V_IO_RNG[2], R_PU35[0] / 1e3, i_pu * 1e3))
+    out("  (5) not computed here: the R106s 0402 courtyard in the tab X bottom booking and its bottom-clearance check "
+        "(H.23(d)/(e) re-run with R106s placed; TODO(calc); the T-A-06 DRC is the gate)")
+    RJ["x"] = dict(t_b2_s=f2(t_b2), tau_max_s=f2(tau_max), four_reads_ms={"100k": f2(sums[100e3][0] * 1e3),
+                   "400k": f2(sums[400e3][0] * 1e3)}, t1_increment_ms=f2(inc * 1e3), tc05c_pullup_mA=f2(i_pu * 1e3))
+    summ("r8 integration figures (rev 6)", "FR-12(b2) worst %.2f s vs 5 s; four field reads %.2f / %.2f ms; T1 increment "
+         "%.0f ms; T-C-05c pull-up %.3f mA" % (t_b2, sums[100e3][0] * 1e3, sums[400e3][0] * 1e3, inc * 1e3, i_pu * 1e3),
+         "H.23(x)")
+
+
+# ======================================================================================================================
+# Revision 7 (r8 verification round): H.23(y). The sections above print the same lines (wording-only changes in H.23(p)
+# and H.23(q), see the module docstring).
+# ======================================================================================================================
+VIH_FRAC = 0.70          # x OVDD, i.MX RT1062 GPIO VIH ASSUMPTION; TODO(verify: IMXRT1060CEC)
+
+
+def in_spike_lead_off(v0, cs, lin, cin, rin=0.045, ron=0.031, cout=1.0e-6, lout=0.15e-6, dt=1e-9, tend=12e-6):
+    """The in_spike model unchanged; returns the OUT-lead (W1/W2) current at the instant the FET opens."""
+    vs, vin, vout = v0, v0, v0
+    i_in, i_out = 0.0, 0.0
+    t, t_cross, on, i_lead_off = 0.0, None, True, None
+    while t < tend and i_lead_off is None:
+        di_in = (vs - i_in * rin - vin) / lin
+        i_in += di_in * dt
+        i_fet = (vin - vout) / ron if on else 0.0
+        i_out += vout / lout * dt
+        vs -= i_in / cs * dt
+        vin += (i_in - i_fet) / cin * dt
+        vout += (i_fet - i_out) / cout * dt
+        if on and t_cross is None and i_fet > 45.0:
+            t_cross = t
+        if on and t_cross is not None and t >= t_cross + 1e-6:
+            i_lead_off = (i_out, t, vout)
+        t += dt
+    return i_lead_off
+
+
+def sec_y():
+    head("H.23(y) r8 verification-round figures (r8, calc revision 7; CHG-R1-01, -02, -D04, -D03, -W01, -07, -04)")
+    # (1) F17-F15 node, FLT asserted, U108 H2C HIGH
+    def node(v, r127, rpu, rflt_path):
+        g1, g2, g3 = 1 / r127, 1 / rpu, 1 / rflt_path
+        return v * (g1 + g2) / (g1 + g2 + g3)
+    n_min = node(V_IO_RNG[0], R127_R[2], R_PU35[2], R106S[0] + R_FLT[0])
+    n_max = node(V_IO_RNG[2], R127_R[0], R_PU35[0], R106S[2] + R_FLT[2])
+    n_r7 = node(V_IO_RNG[2], R127_R[0], R_PU35[0], R_FLT[2])
+    vil = (VIL_FRAC * V_IO_RNG[0], VIL_FRAC * V_IO_RNG[2])
+    vih = (VIH_FRAC * V_IO_RNG[0], VIH_FRAC * V_IO_RNG[2])
+    out("  (1) bridge F17-F15 with FLT asserted and U108 H2C HIGH (CHG-R1-01): the node is U108 -> R127 -> node -> R106s + "
+        "R(FLT) -> GND with the pin-35 pull-up to 3V3 (U108 output resistance 0 ohm ASSUMPTION): %.2f V minimum (3V3 %.3f V, "
+        "R127 %.0f ohm, pull-up %.0f kOhm, R106s %.0f + R(FLT) %.0f ohm) to %.2f V maximum (3V3 %.3f V, R127 %.0f ohm, "
+        "pull-up %.0f kOhm, R106s %.0f + R(FLT) %.0f ohm), inside the undefined band between VIL %.2f-%.2f V and VIH "
+        "%.2f-%.2f V (VIL %.2f / VIH %.2f x 3V3, ASSUMPTIONs): pins 35 and 16 can read either level. r7 (no R106s): <= "
+        "%.3f V, a defined LOW. With FLT released both pins read the U108 level."
+        % (n_min, V_IO_RNG[0], R127_R[2], R_PU35[2] / 1e3, R106S[0], R_FLT[0], n_max, V_IO_RNG[2], R127_R[0],
+           R_PU35[0] / 1e3, R106S[2], R_FLT[2], vil[0], vil[1], vih[0], vih[1], VIL_FRAC, VIH_FRAC, n_r7))
+    # (2) T3 FIFO case
+    fifo = {}
+    for f in (100e3, 400e3):
+        tb, cap = I2C_TBUF[f], I2C_CAP[f]
+        w2, w3, r2 = i2c_bits_write(2) / f, i2c_bits_write(3) / f, i2c_bits_read(2) / f
+        t_fifo = cap + tb + r2 + tb + r2 + tb + w2 + tb + w3
+        inflight = max(w3, 10 / f)
+        fifo[f] = (t_fifo, inflight, cap)
+    out("  (2) T3 raise behind one FR-41(iii) ramp group (CHG-R1-02): a ramp write in flight (the FR-07 cap term) and its "
+        "two FR-46 field reads R(REG01:02), R(REG06:07) queued ahead of the raise, FIFO order: edge to write complete %.3f ms "
+        "at 100 kHz (MISSES the 1.5 ms FR-07 deadline by %.3f ms), %.3f ms at 400 kHz. With the FR-07 r8 queue-priority "
+        "rule (a posted raise is serviced before every queued transaction that has not started; an in-flight read aborts at "
+        "the next byte boundary; an in-flight write completes), the in-flight term is max(W(REG03-05), one byte + STOP) = "
+        "%.3f ms at 100 kHz / %.3f ms at 400 kHz, inside the %.2f / %.2f ms cap term of H.23(o), so the published 1.359 / "
+        "0.565 ms hold only with that rule."
+        % (fifo[100e3][0] * 1e3, (fifo[100e3][0] - FR07_DEADLINE) * 1e3, fifo[400e3][0] * 1e3, fifo[100e3][1] * 1e3,
+           fifo[400e3][1] * 1e3, fifo[100e3][2] * 1e3, fifo[400e3][2] * 1e3))
+    # (3) W1/W2 lead current at FET turn-off; helix factor at OD min
+    rec = EXTRA["p"]
+    a_hi = 5 * awg_d(32) / 2
+    k_max = math.sqrt(1 + (math.pi * rec["rec_od"][1] / TWIST_P[0]) ** 2)
+    k_min = math.sqrt(1 + (math.pi * rec["rec_od"][0] / TWIST_P[0]) ** 2)
+    l_odmin = lprime(rec["rec_od"][0], a_hi) / k_min
+    lo = in_spike_lead_off(22.0, 20e-6, 150e-9, 3.4e-6, lout=rec["lmin"] * W12_BUILD[0] / 1000.0)
+    sp_odmin = spike_worst(l_odmin * W12_BUILD[0] / 1000.0)
+    out("  (3) W1/W2 (CHG-R1-D04): at 290 mm and the L' minimum (V0 22 V, C_S 20 uF, L_IN 150 nH) the W1/W2 lead carries "
+        "%.1f A when the FET opens (t = %.3f us, OUT %.2f V, unclamped model); the lead peak is the H.23(p) 130 A. Helix factor "
+        "at OD max (the H.23(p) basis) %.4f, at OD min %.4f: L' minimum %.4f uH/m and IN peak %.2f V at 290 mm with k at OD "
+        "min (H.23(p) %.4f uH/m, %.2f V; the H.23(p) basis is the conservative one)."
+        % (lo[0], lo[1] * 1e6, lo[2], k_max, k_min, l_odmin * 1e6, sp_odmin[0], rec["lmin"] * 1e6,
+           spike_worst(rec["lmin"] * W12_BUILD[0] / 1000.0)[0]))
+    # (4) B1R lateral support
+    tt = EXTRA["t"]
+    rx, h = tt["rx"], tt["h"]
+    ov_p, ov_m = 25.80 + h - rx[1], rx[0] - (25.80 - h)
+    u_edge = rx[1] - 25.80
+    z_edge = h - math.sqrt(h * h - u_edge * u_edge)
+    out("  (4) B1R lateral support (CHG-R1-D03): face width %.2f mm (x %.2f-%.2f) against the trunk width 2 x %.3f = %.3f mm "
+        "on x 25.80: support %.0f %% of the width; the trunk overhangs %.3f mm on +x and %.3f mm on -x. The H.23(s) profile "
+        "check credits the whole trunk width with the face height at x 25.80. That holds for a cohesive round bundle whose "
+        "lowest generatrix (x 25.80) lies on the face: its lower surface at lateral offset u stands h - sqrt(h^2 - u^2) above "
+        "the face plane, %.4f mm at the +x face edge (u %.2f mm) and up to %.3f mm at the bundle edge, never below it. A lead "
+        "that leaves the bundle past the +x edge is not supported: the trunk is bound into one bundle and bonded to the face "
+        "from the toe to the apex (A.3 r8), and T-F-12 measures the lowest lead at the +x trunk edge."
+        % (rx[1] - rx[0], rx[0], rx[1], h, 2 * h, 100 * (rx[1] - rx[0]) / (2 * h), ov_p, ov_m, z_edge, u_edge, h))
+    # (5) W5 / trunk figures at the T-F-12 points
+    rows = tt["ov_rows"]
+    fr = tt["first_ride"]
+    pre = [r for r in rows if r[2] and r[4] is not None and r[1][1] >= WP["T0"][1] - 1e-9 and fr is not None
+           and r[0] < fr[0]]
+    gaps = [r[6] - r[4] for r in pre]
+    r73 = min(rows, key=lambda r: math.hypot(r[1][0] - 28.70, r[1][1] - 73.10))
+    mrow = min((r for r in rows if r[5] > 0), key=lambda r: r[6] - r[5])
+    tab_y_margin = Z_CR_TOP + tt["z_top"] + tt["tb"] - 15.00
+    out("  (5) W5 / trunk (CHG-R1-W01): between the trunk start (y %.2f) and the ride point (%.2f, %.2f) W5 lies above the "
+        "trunk with an air gap of %.3f-%.3f mm (%d samples), so it rests on the trunk only from the ride point to A1; W5 "
+        "bottom at (%.2f, %.2f) (the T-F-12 point and the FT2 fill hole at (28.00, 73.25)): %.3f mm above the MB, on the "
+        "trunk (fold height %.3f mm); the minimum W5 margin over its own requirement is %.3f mm at (%.2f, %.2f), where the "
+        "requirement is %.3f mm and the W5 bottom %.3f mm above the MB; over tab Y the margin against the 15.00 mm r7 "
+        "figure is %.3f mm (W5 bottom %.3f mm)."
+        % (WP["T0"][1], fr[1][0], fr[1][1], min(gaps), max(gaps), len(gaps), r73[1][0], r73[1][1], r73[6],
+           Z_CR_TOP + W5_FOLD, mrow[6] - mrow[5], mrow[1][0], mrow[1][1], mrow[5], mrow[6], tab_y_margin,
+           Z_CR_TOP + tt["z_top"] + tt["tb"]))
+    # (6) C205/TP27 sweep over the E1 build range
+    best, band, sweep_pts = None, [], []
+    l8 = 0.020
+    f = 1.5e6
+    w = 2 * math.pi * f
+    nstep = int(round((90.0 - 70.8) / 0.1))
+    for k in range(nstep + 1):
+        Lmm = 70.8 + 0.1 * k
+        Lm = Lmm * 1e-3
+        Ll = loop_L(Lm, 5e-3)
+        f0 = 1 / (2 * math.pi * math.sqrt(Ll * C205))
+        _, kac, _ = skin(f0)
+        mx = None
+        for rlab, rl in (("DC, return l", R28 * 2 * Lm + ESR205), ("DC, E8 20 mm", R28 * (Lm + l8) + ESR205),
+                         ("AC, return l", R28 * 2 * Lm * kac + ESR205), ("AC, E8 20 mm", R28 * (Lm + l8) * kac + ESR205)):
+            z = complex(rl, w * Ll - 1 / (w * C205))
+            ratio = abs(1 / complex(0, w * C205)) / abs(z)
+            if mx is None or ratio > mx[0]:
+                mx = (ratio, rlab)
+        sweep_pts.append((Lmm, mx[0], mx[1]))
+        if best is None or mx[0] > best[1]:
+            best = (Lmm, mx[0], mx[1])
+        if mx[0] > 17.80:
+            band.append(Lmm)
+    q_k = max(r[1] for r in sweep_pts)
+    assert 25.0 <= best[1] <= 25.6, best
+    picks = [p for p in sweep_pts if any(abs(p[0] - x) < 0.05 for x in (70.8, 75.0, 80.0, 85.0, 90.0))]
+    # with R276 at 1.5 MHz, the E8 drop per 10 mV at 85/90 mm
+    L8 = (MU0 / (2 * math.pi)) * l8 * (math.log(2 * l8 / A28) - 0.75)
+    wr15 = 0.0
+    for Lmm in (85.0, 90.0):
+        Lm = Lmm * 1e-3
+        Ll = loop_L(Lm, 5e-3)
+        _, kac, _ = skin(1 / (2 * math.pi * math.sqrt(Ll * C205)))
+        for rl in (R28 * 2 * Lm + ESR205, R28 * (Lm + l8) + ESR205, R28 * 2 * Lm * kac + ESR205,
+                   R28 * (Lm + l8) * kac + ESR205):
+            z = complex(rl + R276, w * Ll - 1 / (w * C205))
+            wr15 = max(wr15, 0.010 / abs(z) * abs(complex(R28 * l8, w * L8)))
+    out("  (6) C205/TP27 ratio without R276 at 1.5 MHz over the E1 build range 70.8-90 mm in 0.1 mm steps, maximum over the "
+        "four return/resistance cases of H.23(v) (CHG-R1-07): %s; maximum %.2f at %.1f mm (%s; there f0 = 1.5 MHz); above "
+        "17.80 for %s; the bound valid over the whole range is the H.23(k) undamped Q 25.6 (DC wire resistance, E8 return at "
+        "20 mm), which the sweep maximum does not exceed; omit threshold 0.5 V p-p / 25.6 = %.1f mV p-p at TP27 (17.80 gives "
+        "%.1f mV). With R276 at 1.5 MHz the E8 drop is <= %.4f mV per 10 mV, so the 4.8 mV limit holds for a TP27 ripple up "
+        "to %.0f mV (the H.23(v) %s mV is the f0 basis)."
+        % (", ".join("%.1f mm %.2f" % (p[0], p[1]) for p in picks), best[1], best[0], best[2],
+           ("%.1f-%.1f mm" % (min(band), max(band))) if band else "no length", 500.0 / 25.6, 500.0 / 17.80,
+           wr15 * 1e3, 4.8e-3 / (wr15 / 0.010) * 1e3, "273"))
+    # (7) T1 increment with the step-8c pre-edge read
+    rd100 = sum([i2c_bits_read(2), i2c_bits_read(2), i2c_bits_read(1), i2c_bits_read(2)]) / 100e3
+    rd100b = rd100 + 4 * I2C_TBUF[100e3]
+    inc = TW_HB_MAX * 1.1 + STEP8B_MAX + rd100b + STEP8C_P33
+    out("  (7) T1 increment with every term (CHG-R1-04): step-8 pause %.1f ms + step 8b <= %.0f ms + step-8c pre-edge read "
+        "%.3f ms at 100 kHz with four t_BUF + pin-33 release <= %.0f ms = %.1f ms (H.23(x) row (3) %.1f ms omitted the read); "
+        "the T1 budget ~0.58-0.73 s is unchanged; the step-8c read bound is <= %.2f ms at 100 kHz."
+        % (TW_HB_MAX * 1.1e3, STEP8B_MAX * 1e3, rd100b * 1e3, STEP8C_P33 * 1e3, inc * 1e3,
+           (TW_HB_MAX * 1.1 + STEP8B_MAX + STEP8C_P33) * 1e3, math.ceil(rd100b * 1e5) / 1e2))
+    RJ["y"] = dict(f17_f15_node_V=(f2(n_min), f2(n_max)), f17_f15_node_r7_V=f2(n_r7), vil=vil, vih=vih,
+                   t3_fifo_ms={"100k": f2(fifo[100e3][0] * 1e3), "400k": f2(fifo[400e3][0] * 1e3)},
+                   inflight_ms={"100k": f2(fifo[100e3][1] * 1e3), "400k": f2(fifo[400e3][1] * 1e3)},
+                   lead_at_off_A=f2(lo[0]), k_odmax=f2(k_max), k_odmin=f2(k_min), in_peak_k_odmin=f2(sp_odmin[0]),
+                   b1r_overhang_mm=(f2(ov_p), f2(ov_m)), b1r_support_frac=f2((rx[1] - rx[0]) / (2 * h)),
+                   w5_gap_pre_ride_mm=(f2(min(gaps)), f2(max(gaps))), w5_at_28_70_73_10=f2(r73[6]),
+                   w5_min_margin=(f2(mrow[6] - mrow[5]), mrow[1], f2(mrow[5])), w5_tab_y_margin=f2(tab_y_margin),
+                   c205_sweep_max=(best[0], f2(best[1]), best[2]),
+                   c205_band_over_17_80=(min(band), max(band)) if band else None,
+                   tp27_limit_15MHz_mV=f2(4.8e-3 / (wr15 / 0.010) * 1e3), t1_increment_full_ms=f2(inc * 1e3))
+    summ("r8 verification figures (rev 7)", "F17-F15 node %.2f-%.2f V (undefined band); T3 FIFO %.3f ms at 100 kHz; lead "
+         "%.0f A at FET off; B1R support %.0f %% of the trunk width; W5 gap %.3f-%.3f mm before the ride point, %.3f mm at "
+         "(28.70, 73.10); C205/TP27 max %.2f at %.1f mm; T1 increment %.1f ms"
+         % (n_min, n_max, fifo[100e3][0] * 1e3, lo[0], 100 * (rx[1] - rx[0]) / (2 * h), min(gaps), max(gaps), r73[6],
+            best[1], best[0], inc * 1e3), "H.23(y)")
+
+
+def rr_f0(Lmm):
+    return 1 / (2 * math.pi * math.sqrt(loop_L(Lmm * 1e-3, 5e-3) * C205))
+
+
+def sec_r8():
+    sec_n()
+    sec_o()
+    sec_p()
+    sec_q()
+    sec_r()
+    sec_s_t()
+    sec_u_v_w()
+    sec_x()       # revision 6 (r8 integration): H.23(x)
+    sec_y()       # revision 7 (r8 verification round): H.23(y)
+
+
+# ======================================================================================================================
 # main
 # ======================================================================================================================
 def main():
@@ -5494,6 +6727,7 @@ def main():
     sec_k()
     sec_l()
     sec_m()
+    sec_r8()      # revision 5 (r8): H.23(n)-(w)
     head("H.23 SUMMARY")
     for k, v, s in SUMMARY:
         out("  %-48s %s  [%s]" % (k, v, s))

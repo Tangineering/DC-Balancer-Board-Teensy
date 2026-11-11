@@ -184,3 +184,45 @@ The count rose in round 7 because round 4 added a large body of new mechanical a
 blocker. Two of its three majors (R1-01, D01) sit in round-3 content that rounds 1-6 did not catch, and D03 sits in content added by the
 closing pass itself. The design has therefore not converged in the strict sense (a round with no major), but it is close: every remaining
 item has an agreed, local fix.
+
+## 5. r8 (audit fixes)
+
+Design revision r8 applies the 13 findings of the final independent audit (run 001, section 4) and CHG-R1-W01 from the round-4
+walkthrough. The agreed fix and the rejected parts of each finding in `docs/reviews/charger-design/run-001-2026-11-10.md` were binding;
+where the agreed fix left a choice, the design states the choice and section L.8 of the design records the reason.
+
+### 5.1 Calculation
+
+`calc/r7_calc.py` revision 5 adds H.23(n) (R106s bound and FLT readback), H.23(o) (T3 transaction schedule), H.23(p) (W1/W2 L' sweep
+and wire choice), H.23(q) (pin-38 decay), H.23(r) (foot fallback), H.23(s) (B1R riser), H.23(t) (W5 / trunk stacking), H.23(u)-(w)
+(the r7 hand figures). Revision 6 adds H.23(x) (the r8 integration figures: the FR-12(b2) 3.695 s bound, the 1.830 ms field-read sum,
+the 126.7 ms T1 increment and the 0.315 mA T-C-05c pull-up current). The output lines of revision 4 are byte-identical.
+
+### 5.2 Patches
+
+Five writer groups and three integration groups, applied in order with `calc/apply_patches.py`, each with 0 failures:
+
+| Group | Edits | Scope |
+|---|---|---|
+| r8_E | 14 | CHG-R1-01 hardware side (A.8, B.4, B.8, E, T-C-05c), CHG-R1-A02 (K) |
+| r8_G | 33 | CHG-R1-01 firmware side (FR-23 E2), CHG-R1-02, CHG-R1-D01, CHG-R1-03, CHG-R1-04, CHG-R1-D02 (F.3, F.5, G.1-G.3, H.16, H.21, I, J.2 item 33) |
+| r8_M | 106 | CHG-R1-D04, CHG-R1-D03, CHG-R1-W01, CHG-R1-05, CHG-R1-06 conversions, CHG-R1-07 in A.3/A.7, H.23(n)-(w) rows |
+| r8_T | 25 | CHG-R1-08, CHG-R1-07 relabels, CHG-R1-06 in A.4/A.5/C, 0.2, D.5, J.2 items 55, 60, 62-67 |
+| r8_Z | 45 | integration: title and status, 0.3 r8 block, 0.4, L.8, B.4 D103, A.8 bookings, D.4, E, H.22(i), H.23(k), H.23(x), T-C-04, T-C-05c, T-C-06, T-C-10, T-C-16, T-F-12, J.2 item 68, K, L.7 |
+| r8_Zb, r8_Zc | 3, 1 | further CHG-R1-06 conversions found by the integration sweep (0.3 r7-9, E CR PCB row, E cost paragraph) |
+
+The pre-r8 text is `work/r8_patches/design_pre_r8.md`. After the patches every table row has the column count of its table, every
+test ID cited is defined in section I (119), and every H.23 row cited exists ((a)-(x)).
+
+### 5.3 Figures
+
+`calc/make_svgs_r7.py` now draws R106s in the U101 FLT path (schematic and wiring), the B1R wedge in place of the B1 bead (layout), and
+labels the W1/W2 wire specification; the three SVGs were regenerated and rendered to `work/svg_png/`.
+
+### 5.4 Residuals
+
+The residuals are in design J.2 items 64-68: the B1R dressing at the T-A-06 dry fit, the design-margin and L-FC height ASSUMPTIONs,
+the off-CR support, the sheet PSA thickness, the eFuse IQ in UVLO and latched states (the FR-12(b1) criterion stays TODO(verify)),
+the R106s courtyard in the tab X bottom booking (TODO(calc)), the fault masking while a bridged EN is HIGH, two T-F-12 check values
+that H.23(t) does not print, and the ISR latency outside the T3 budget.
+

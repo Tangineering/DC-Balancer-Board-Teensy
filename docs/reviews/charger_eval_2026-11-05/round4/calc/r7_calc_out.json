@@ -12784,6 +12784,912 @@
    ]
   ]
  },
+ "n": {
+  "i_bridge_max_mA": 3.377,
+  "i_bridge_min_mA": 2.657,
+  "abs_max_mA": 10.0,
+  "factor": 2.961,
+  "v_flt_pin_max": 0.402,
+  "v_en_min": 3.017,
+  "p_r106s_mW": 11.519,
+  "i_h2c_mA": 1.719,
+  "readback_low_typ": 0.153,
+  "readback_low_max": 0.325,
+  "vil": 0.94,
+  "readback_margin": 0.615,
+  "r7_bridge_mA": [
+   18.441,
+   45.592,
+   96.25
+  ],
+  "r7_en_V": [
+   1.485,
+   2.65
+  ],
+  "r7_rflt_for_off": 8.889,
+  "diag_dwell_margin_ms": 48.0
+ },
+ "o": {
+  "100k": {
+   "w2_ms": 0.38,
+   "w3_ms": 0.47,
+   "edge_to_write_ms": 1.359,
+   "r6_literal_ms": 2.329,
+   "read7_ms": 0.93,
+   "verify_single_ms": 2.294,
+   "verify_four_ms": 3.208,
+   "cap_ms": 0.5
+  },
+  "400k": {
+   "w2_ms": 0.095,
+   "w3_ms": 0.117,
+   "edge_to_write_ms": 0.565,
+   "r6_literal_ms": 0.808,
+   "read7_ms": 0.233,
+   "verify_single_ms": 0.799,
+   "verify_four_ms": 1.028,
+   "cap_ms": 0.35
+  }
+ },
+ "p": {
+  "conductor_radii": {
+   "20 AWG solid": 0.406,
+   "20 AWG 7/28 (bundle 3 d)": 0.482,
+   "20 AWG 19/32 (bundle 5 d)": 0.505
+  },
+  "check_95nH": [
+   34.678,
+   140.953
+  ],
+  "od_allow": 1.787,
+  "candidates": [
+   {
+    "label": "thin-wall PTFE/ETFE (M22759/11 or /16 class)",
+    "od": [
+     1.1,
+     1.45
+    ],
+    "lprime_uH_m": [
+     0.164,
+     0.573
+    ],
+    "in_peak_290_Lmin": 38.228,
+    "lead_peak_290": 188.761,
+    "in_peak_310_Lmax": 32.212,
+    "quarter_us": 0.662,
+    "plan_ok": true
+   },
+   {
+    "label": "r7 calc assumption (PVC hook-up, 1.6 mm)",
+    "od": [
+     1.6,
+     1.6
+    ],
+    "lprime_uH_m": [
+     0.401,
+     0.62
+    ],
+    "in_peak_290_Lmin": 33.762,
+    "lead_peak_290": 129.728,
+    "in_peak_310_Lmax": 31.975,
+    "quarter_us": 0.689,
+    "plan_ok": true
+   },
+   {
+    "label": "PVC 300 V hook-up (UL1007/UL1569 class)",
+    "od": [
+     1.55,
+     1.8
+    ],
+    "lprime_uH_m": [
+     0.382,
+     0.674
+    ],
+    "in_peak_290_Lmin": 33.969,
+    "lead_peak_290": 132.305,
+    "in_peak_310_Lmax": 31.746,
+    "quarter_us": 0.718,
+    "plan_ok": false
+   },
+   {
+    "label": "600 V PVC or silicone (UL1015/UL3135 class)",
+    "od": [
+     1.95,
+     2.6
+    ],
+    "lprime_uH_m": [
+     0.473,
+     0.833
+    ],
+    "in_peak_290_Lmin": 33.102,
+    "lead_peak_290": 121.587,
+    "in_peak_310_Lmax": 31.224,
+    "quarter_us": 0.798,
+    "plan_ok": false
+   }
+  ],
+  "recommended": {
+   "od": [
+    1.6,
+    1.75
+   ],
+   "pitch": [
+    20.0,
+    25.0
+   ],
+   "lprime_uH_m": [
+    0.399,
+    0.661
+   ],
+   "rows": {
+    "290.0": {
+     "in_peak_Lmin": 33.786,
+     "in_peak_Lmax": 31.987,
+     "i_off": 68.068,
+     "lead_peak_Lmin": 130.031,
+     "margin": 2.214
+    },
+    "300.0": {
+     "in_peak_Lmin": 33.638,
+     "in_peak_Lmax": 31.89,
+     "i_off": 67.509,
+     "lead_peak_Lmin": 128.271,
+     "margin": 2.362
+    },
+    "310.0": {
+     "in_peak_Lmin": 33.509,
+     "in_peak_Lmax": 31.799,
+     "i_off": 67.101,
+     "lead_peak_Lmin": 126.601,
+     "margin": 2.491
+    }
+   },
+   "plan_worst": 2.017,
+   "h_trunk": 2.443
+  }
+ },
+ "q": {
+  "r7": [
+   {
+    "c_uF": 17.028,
+    "t_rc": 1.651,
+    "t_iq": 0.621
+   },
+   {
+    "c_uF": 25.8,
+    "t_rc": 2.501,
+    "t_iq": 0.944
+   },
+   {
+    "c_uF": 28.38,
+    "t_rc": 2.752,
+    "t_iq": 1.038
+   }
+  ],
+  "r8": {
+   "12.5": [
+    [
+     "ON 30 uF/4.9 mA",
+     0.003
+    ],
+    [
+     "ON 57 uF/3.4 mA",
+     0.008
+    ],
+    [
+     "LATCHED 17.0 uF",
+     0.006
+    ],
+    [
+     "LATCHED 28.4 uF",
+     0.009
+    ],
+    [
+     "UNBIASED 17.0 uF",
+     0.056
+    ],
+    [
+     "UNBIASED 28.4 uF",
+     0.094
+    ]
+   ],
+   "16.0": [
+    [
+     "ON 30 uF/4.9 mA",
+     0.024
+    ],
+    [
+     "ON 57 uF/3.4 mA",
+     0.067
+    ],
+    [
+     "LATCHED 17.0 uF",
+     0.044
+    ],
+    [
+     "LATCHED 28.4 uF",
+     0.073
+    ],
+    [
+     "UNBIASED 17.0 uF",
+     0.398
+    ],
+    [
+     "UNBIASED 28.4 uF",
+     0.663
+    ]
+   ],
+   "19.38": [
+    [
+     "ON 30 uF/4.9 mA",
+     0.045
+    ],
+    [
+     "ON 57 uF/3.4 mA",
+     0.124
+    ],
+    [
+     "LATCHED 17.0 uF",
+     0.08
+    ],
+    [
+     "LATCHED 28.4 uF",
+     0.133
+    ],
+    [
+     "UNBIASED 17.0 uF",
+     0.663
+    ],
+    [
+     "UNBIASED 28.4 uF",
+     1.105
+    ]
+   ],
+   "22.28": [
+    [
+     "ON 30 uF/4.9 mA",
+     0.063
+    ],
+    [
+     "ON 57 uF/3.4 mA",
+     0.172
+    ],
+    [
+     "LATCHED 17.0 uF",
+     0.11
+    ],
+    [
+     "LATCHED 28.4 uF",
+     0.183
+    ],
+    [
+     "UNBIASED 17.0 uF",
+     0.856
+    ],
+    [
+     "UNBIASED 28.4 uF",
+     1.426
+    ]
+   ]
+  },
+  "worst_enabled": [
+   0.183,
+   "LATCHED 28.4 uF from 22.28 V"
+  ],
+  "margin_s": 0.317,
+  "i_break_even_mA": 0.375,
+  "stuck_low_V": 13.877
+ },
+ "r": {
+  "t_rm": [
+   0.125,
+   0.15,
+   0.175
+  ],
+  "h_f_new": [
+   2.315,
+   2.34,
+   2.365
+  ],
+  "gate_pass": {
+   "FT1": 0.79677,
+   "FT2": 0.85755
+  },
+  "ft2_body": [
+   26.0,
+   71.25,
+   30.0,
+   75.25
+  ],
+  "ft2_gap_lfc": 1.612,
+  "slot": 2.54
+ },
+ "s": {
+  "h_trunk": 2.443,
+  "T_b": 4.885,
+  "onset": [
+   64.45,
+   0.05
+  ],
+  "max_req_above_cr": 10.168,
+  "b3_height": 10.7,
+  "slope_deg": 65.0,
+  "toe_y": 62.54,
+  "apex": 9.779,
+  "block": [
+   23.55,
+   62.54,
+   26.05,
+   67.1
+  ],
+  "block_area": 11.4,
+  "min_margin": 0.504,
+  "checkpoints": [
+   [
+    0.0,
+    2.002,
+    4.203
+   ],
+   [
+    1.0,
+    5.256,
+    6.348
+   ],
+   [
+    2.0,
+    6.841,
+    8.492
+   ],
+   [
+    2.67,
+    7.623,
+    9.785
+   ],
+   [
+    3.5,
+    8.403,
+    9.859
+   ],
+   [
+    4.5,
+    9.139,
+    9.948
+   ],
+   [
+    5.0,
+    9.441,
+    9.992
+   ]
+  ],
+  "min_at": [
+   25.8,
+   69.6
+  ],
+  "bead": {
+   "W1": [
+    4.713,
+    15.361
+   ],
+   "W2": [
+    2.36,
+    13.008
+   ],
+   "W3": [
+    17.454,
+    28.244
+   ],
+   "W4": [
+    7.592,
+    18.382
+   ],
+   "W6": [
+    12.043,
+    22.833
+   ],
+   "W7 SCL": [
+    5.421,
+    16.211
+   ],
+   "W7 SDA": [
+    10.044,
+    20.834
+   ]
+  },
+  "free_span": 10.376,
+  "interior_U": 64.034,
+  "off_support_end": [
+   40.75,
+   71.1
+  ],
+  "options": [
+   [
+    55.0,
+    1.428,
+    60.24999999999942
+   ],
+   [
+    60.0,
+    1.732,
+    61.44999999999918
+   ],
+   [
+    65.0,
+    2.145,
+    62.53999999999896
+   ],
+   [
+    70.0,
+    2.747,
+    63.31999999999881
+   ]
+  ]
+ },
+ "t": {
+  "order": "W5 above the trunk",
+  "stack_top": 20.75,
+  "stack_top_at": [
+   32.8,
+   73.1
+  ],
+  "trunk_top_plateau": 19.85,
+  "w5_bottom_plateau": 19.85
+ },
+ "u": {
+  "E8": {
+   "board": [
+    83.04,
+    197.164
+   ],
+   "d": 129.418,
+   "at": [
+    37.56,
+    76.0
+   ],
+   "d_tabx": 130.121
+  },
+  "E3": {
+   "board": [
+    79.611,
+    181.543
+   ],
+   "d": 113.612,
+   "at": [
+    37.56,
+    76.0
+   ],
+   "d_tabx": 114.182
+  },
+  "E4": {
+   "board": [
+    74.912,
+    182.813
+   ],
+   "d": 113.156,
+   "at": [
+    37.56,
+    76.0
+   ],
+   "d_tabx": 114.941
+  },
+  "E2": {
+   "board": [
+    70.975,
+    182.813
+   ],
+   "d": 111.918,
+   "at": [
+    37.56,
+    76.0
+   ],
+   "d_tabx": 114.669
+  },
+  "E7": {
+   "board": [
+    65.641,
+    177.733
+   ],
+   "d": 105.537,
+   "at": [
+    37.56,
+    76.0
+   ],
+   "d_tabx": 109.435
+  },
+  "E1": {
+   "board": [
+    38.97,
+    131.785
+   ],
+   "d": 55.803,
+   "at": [
+    37.56,
+    76.0
+   ],
+   "d_tabx": 64.226
+  },
+  "E5": {
+   "board": [
+    55.474,
+    137.754
+   ],
+   "d": 64.3,
+   "at": [
+    37.56,
+    76.0
+   ],
+   "d_tabx": 69.454
+  },
+  "E6": {
+   "board": [
+    54.211,
+    144.84
+   ],
+   "d": 70.825,
+   "at": [
+    37.56,
+    76.0
+   ],
+   "d_tabx": 76.54
+  }
+ },
+ "v": {
+  "L8_nH": 19.086,
+  "undamped_mV": [
+   20.009,
+   41.667
+  ],
+  "undamped_A5_mV": [
+   20.009,
+   31.406
+  ],
+  "damped_mV": 0.176,
+  "ratio_bridged": [
+   7.747,
+   15.132
+  ],
+  "tp27_max_mV": 273.14,
+  "rows": [
+   [
+    85.0,
+    "DC, return l",
+    "f0",
+    "no R276",
+    31.406,
+    19.251
+   ],
+   [
+    85.0,
+    "DC, return l",
+    "f0",
+    "R276",
+    0.175,
+    0.108
+   ],
+   [
+    85.0,
+    "DC, return l",
+    "1.5 MHz",
+    "no R276",
+    25.662,
+    15.132
+   ],
+   [
+    85.0,
+    "DC, return l",
+    "1.5 MHz",
+    "R276",
+    0.179,
+    0.106
+   ],
+   [
+    85.0,
+    "DC, E8 20 mm",
+    "f0",
+    "no R276",
+    41.667,
+    25.542
+   ],
+   [
+    85.0,
+    "DC, E8 20 mm",
+    "f0",
+    "R276",
+    0.176,
+    0.108
+   ],
+   [
+    85.0,
+    "DC, E8 20 mm",
+    "1.5 MHz",
+    "no R276",
+    30.188,
+    17.802
+   ],
+   [
+    85.0,
+    "DC, E8 20 mm",
+    "1.5 MHz",
+    "R276",
+    0.179,
+    0.106
+   ],
+   [
+    85.0,
+    "AC, return l",
+    "f0",
+    "no R276",
+    21.299,
+    13.056
+   ],
+   [
+    85.0,
+    "AC, return l",
+    "f0",
+    "R276",
+    0.175,
+    0.107
+   ],
+   [
+    85.0,
+    "AC, return l",
+    "1.5 MHz",
+    "no R276",
+    19.375,
+    11.425
+   ],
+   [
+    85.0,
+    "AC, return l",
+    "1.5 MHz",
+    "R276",
+    0.178,
+    0.105
+   ],
+   [
+    85.0,
+    "AC, E8 20 mm",
+    "f0",
+    "no R276",
+    30.001,
+    18.39
+   ],
+   [
+    85.0,
+    "AC, E8 20 mm",
+    "f0",
+    "R276",
+    0.175,
+    0.108
+   ],
+   [
+    85.0,
+    "AC, E8 20 mm",
+    "1.5 MHz",
+    "no R276",
+    24.907,
+    14.687
+   ],
+   [
+    85.0,
+    "AC, E8 20 mm",
+    "1.5 MHz",
+    "R276",
+    0.179,
+    0.105
+   ],
+   [
+    90.0,
+    "DC, return l",
+    "f0",
+    "no R276",
+    29.407,
+    19.086
+   ],
+   [
+    90.0,
+    "DC, return l",
+    "f0",
+    "R276",
+    0.171,
+    0.111
+   ],
+   [
+    90.0,
+    "DC, return l",
+    "1.5 MHz",
+    "no R276",
+    14.785,
+    8.718
+   ],
+   [
+    90.0,
+    "DC, return l",
+    "1.5 MHz",
+    "R276",
+    0.179,
+    0.105
+   ],
+   [
+    90.0,
+    "DC, E8 20 mm",
+    "f0",
+    "no R276",
+    39.501,
+    25.638
+   ],
+   [
+    90.0,
+    "DC, E8 20 mm",
+    "f0",
+    "R276",
+    0.171,
+    0.111
+   ],
+   [
+    90.0,
+    "DC, E8 20 mm",
+    "1.5 MHz",
+    "no R276",
+    15.605,
+    9.202
+   ],
+   [
+    90.0,
+    "DC, E8 20 mm",
+    "1.5 MHz",
+    "R276",
+    0.179,
+    0.106
+   ],
+   [
+    90.0,
+    "AC, return l",
+    "f0",
+    "no R276",
+    20.009,
+    12.987
+   ],
+   [
+    90.0,
+    "AC, return l",
+    "f0",
+    "R276",
+    0.17,
+    0.11
+   ],
+   [
+    90.0,
+    "AC, return l",
+    "1.5 MHz",
+    "no R276",
+    13.138,
+    7.747
+   ],
+   [
+    90.0,
+    "AC, return l",
+    "1.5 MHz",
+    "R276",
+    0.178,
+    0.105
+   ],
+   [
+    90.0,
+    "AC, E8 20 mm",
+    "f0",
+    "no R276",
+    28.509,
+    18.504
+   ],
+   [
+    90.0,
+    "AC, E8 20 mm",
+    "f0",
+    "R276",
+    0.17,
+    0.111
+   ],
+   [
+    90.0,
+    "AC, E8 20 mm",
+    "1.5 MHz",
+    "no R276",
+    14.677,
+    8.655
+   ],
+   [
+    90.0,
+    "AC, E8 20 mm",
+    "1.5 MHz",
+    "R276",
+    0.179,
+    0.105
+   ]
+  ]
+ },
+ "w": {
+  "z_b1": 1.216,
+  "z_267": 7.55,
+  "s_7555": 2.675,
+  "line_415": 10.751,
+  "req_415": 13.452,
+  "web": 0.625,
+  "tab_y_b3s3": 82.556,
+  "tab_y_dec": 150.15,
+  "pull_2N": [
+   4.843,
+   4.338
+  ],
+  "c102b": 5.5,
+  "swap": -0.142
+ },
+ "x": {
+  "t_b2_s": 3.695,
+  "tau_max_s": 2.305,
+  "four_reads_ms": {
+   "100k": 1.83,
+   "400k": 0.458
+  },
+  "t1_increment_ms": 126.7,
+  "tc05c_pullup_mA": 0.315
+ },
+ "y": {
+  "f17_f15_node_V": [
+   1.603,
+   1.929
+  ],
+  "f17_f15_node_r7_V": 0.434,
+  "vil": [
+   0.9404999999999999,
+   1.0394999999999999
+  ],
+  "vih": [
+   2.1944999999999997,
+   2.4254999999999995
+  ],
+  "t3_fifo_ms": {
+   "100k": 2.329,
+   "400k": 0.808
+  },
+  "inflight_ms": {
+   "100k": 0.47,
+   "400k": 0.117
+  },
+  "lead_at_off_A": 128.266,
+  "k_odmax": 1.037,
+  "k_odmin": 1.031,
+  "in_peak_k_odmin": 33.762,
+  "b1r_overhang_mm": [
+   2.193,
+   0.193
+  ],
+  "b1r_support_frac": 0.512,
+  "w5_gap_pre_ride_mm": [
+   0.198,
+   3.115
+  ],
+  "w5_at_28_70_73_10": 19.408,
+  "w5_min_margin": [
+   1.866,
+   [
+    28.7,
+    64.01038022813688
+   ],
+   10.416
+  ],
+  "w5_tab_y_margin": 4.85,
+  "c205_sweep_max": [
+   81.7,
+   25.468,
+   "DC, E8 20 mm"
+  ],
+  "c205_band_over_17_80": [
+   78.5,
+   85.0
+  ],
+  "tp27_limit_15MHz_mV": 267.902,
+  "t1_increment_full_ms": 128.549
+ },
  "summary": [
   {
    "key": "r7 outline gross area",
@@ -13199,6 +14105,71 @@
    "key": "r7 sheet",
    "value": "29 vertices, area 1554.6 mm2, bbox 49.30 x 43.86 mm",
    "source": "H.23(m)"
+  },
+  {
+   "key": "R106s FLT bridge bound (r8, CHG-R1-01)",
+   "value": "F05/F06-F17 bridge: FLT current <= 3.377 mA (2.96 x below the 10 mA abs max, tps2663.pdf 6.1; 3V3 +5 %, R106s -1 %, R(FLT) 36 ohm, 0 ohm driver); EN stays >= 3.02 V (as commanded); r7 without R106s 18.4-45.6 mA (40 ohm driver)",
+   "source": "H.23(n)"
+  },
+  {
+   "key": "FLT readback level (r8)",
+   "value": "LOW = 3V3 x (R(FLT) + R106s)/(R_pu + R(FLT) + R106s): 0.153 V typ, 0.325 V max vs VIL 0.940 V (margin 0.615 V); FR-23 diagnostic dwell 250 ms vs tCL_PLIM 202 ms (margin 48 ms)",
+   "source": "H.23(n)"
+  },
+  {
+   "key": "T3 schedule (r8, CHG-R1-02)",
+   "value": "edge to write complete 1.359 ms (100 kHz) / 0.565 ms (400 kHz) vs 1.5 ms; r6 FR-46 literal 2.329 / 0.808 ms; read-back after (four field reads, each <= cap) complete at 3.208 / 1.028 ms; one 7-byte read 0.930 ms exceeds the 0.50 ms cap at 100 kHz",
+   "source": "H.23(o)"
+  },
+  {
+   "key": "W1/W2 wire (r8, CHG-R1-D04)",
+   "value": "20 AWG 19/32 (or 7/28), OD 1.60-1.75 mm, pitch 20-25 mm: L' 0.399-0.661 uH/m; worst IN peak 33.79 V at 290 mm (margin 2.21 V to 36 V), lead peak 130 A; plan rule 2.017 mm (OD limit 1.787 mm); counter-review check 95 nH -> 34.68 V / 140.95 A",
+   "source": "H.23(p)"
+  },
+  {
+   "key": "pin-38 decay (r8, CHG-R1-D02)",
+   "value": "r7 9.9 -> 3 V: 1.65-2.75 s (UNBIASED RC, C 17.0-28.4 uF); r8 12 V / 0.5 s: worst 0.183 s with the eFuse enabled (margin 0.317 s); needs IN-side current >= 0.375 mA from 22.28 V (IQ(ON) typ 1.38 mA); stuck path >= 13.88 V",
+   "source": "H.23(q)"
+  },
+  {
+   "key": "foot-bond fallback (r8, CHG-R1-05)",
+   "value": "re-made foot h_f' = 2.19 + t_rm: 2.315 mm at t_rm 0.125 (2.340 / 2.365 at 0.150 / 0.175); gate re-run FT1 79.7 % / FT2 85.8 %; unchanged foot k_s down to x0.783; FT2 +y face 1.612 mm from L-FC",
+   "source": "H.23(r)"
+  },
+  {
+   "key": "B1 riser B1R (r8, CHG-R1-D03)",
+   "value": "machined insulating wedge at 65 deg, x 23.55-26.05, y 62.54-67.10, apex 9.78 mm; leads leave the copper at the toe y 62.54; B3 post 10.7 mm above the CR top; full CR profile margin >= 0.504 mm (design margin 0.50); bonded jacket >= 13.01 mm per lead",
+   "source": "H.23(s)"
+  },
+  {
+   "key": "W5 / trunk stacking (r8, CHG-R1-W01)",
+   "value": "W5 above the trunk, resting on it; trunk round bundle 4.885 mm; heights on tab Y trunk 14.965-19.850, W5 19.850-20.750 mm above the MB; stack top 20.750 mm",
+   "source": "H.23(t)"
+  },
+  {
+   "key": "EVM-to-CR distances (r8, CHG-R1-07)",
+   "value": "E1 55.8, E5 64.3, E6 70.8, E7 105.5, E2 111.9, E4 113.2, E3 113.6, E8 129.4 mm; EVM edge 42.04 mm",
+   "source": "H.23(u)"
+  },
+  {
+   "key": "E8 pickup (r8, CHG-R1-07)",
+   "value": "L_E8 19.09 nH; per 10 mV REGN ripple at f0: 20.0-41.7 mV without R276 (A.5 basis 20.0-31.4), 0.176 mV with R276; C205/TP27 bridged 7.75-15.13 at 1.5 MHz; TP27 <= 273 mV for the 4.8 mV limit",
+   "source": "H.23(v)"
+  },
+  {
+   "key": "closing-pass hand figures (r8, CHG-R1-07)",
+   "value": "B1 1.216 / +2.67 mm 7.550 mm above the CR top; straight B3-A1 lead 10.75 vs 13.45 mm at x 41.5; web 0.625 mm; tab Y 82.6 % / 150.2 mm2; 2 N pull 4.84 x at FT2; W5 over C102b 5.5 mm; F12/F24 swap -0.142 mm",
+   "source": "H.23(w)"
+  },
+  {
+   "key": "r8 integration figures (rev 6)",
+   "value": "FR-12(b2) worst 3.69 s vs 5 s; four field reads 1.83 / 0.46 ms; T1 increment 127 ms; T-C-05c pull-up 0.315 mA",
+   "source": "H.23(x)"
+  },
+  {
+   "key": "r8 verification figures (rev 7)",
+   "value": "F17-F15 node 1.60-1.93 V (undefined band); T3 FIFO 2.329 ms at 100 kHz; lead 128 A at FET off; B1R support 51 % of the trunk width; W5 gap 0.198-3.115 mm before the ride point, 19.408 mm at (28.70, 73.10); C205/TP27 max 25.47 at 81.7 mm; T1 increment 128.5 ms",
+   "source": "H.23(y)"
   }
  ]
 }

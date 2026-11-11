@@ -1,9 +1,10 @@
-"""Plots for the round-4 (r7) design walkthrough.
+"""Plots for the round-4 design walkthrough (design revision r8; the script keeps its r7 file name).
 
-Every plotted result is read from ../calc/r7_calc_out.json (revision 4) or recomputed with a function imported from
-../calc/r7_calc.py (in_spike, sw3d, loop_L and the module constants). Importing r7_calc parses the MB .brd at module
-level but does not run main(), so no calc output file is rewritten. Values that exist only in the design text or the
-review records are cited constants with the source line named beside them.
+Every plotted result is read from ../calc/r7_calc_out.json (calc revision 7) or recomputed with a function imported from
+../calc/r7_calc.py (in_spike, spike_worst, lprime, awg_d, z_need, sample_path, loop_L and the module constants).
+Importing r7_calc parses the MB .brd at module level but does not run main(), so no calc output file is rewritten.
+Every recomputation is cross-checked against the JSON value that the calc prints (check()). Values that exist only in
+the design text or the review records are cited constants with the source line named beside them.
 
 Run:  "C:/Users/ricky/miniforge3/python.exe" -I make_figs_r7.py
 Output: plot_*.png (150 dpi) and plot_*.svg in this folder.
@@ -65,102 +66,200 @@ def check(label, got, want, tol):
 # =====================================================================================================================
 def p1():
     hs = J["l"]["hard_short"]
-    v0s, css, lins = (16.0, 22.0), (5e-6, 20e-6), (50e-9, 150e-9)    # r7_calc.sec_l() worst-case corners
-    CIN = 3.4e-6                                                    # r7_calc.sec_l() C_IN 3.4 uF
-    VBR = 36.0                                                      # D107 VBR(min), r7_calc.sec_l() / H.23(l)
+    pj = J["p"]
+    VBR = 36.0                                                      # D107 VBR(min), r7_calc.py H.23(l) / H.23(p)
     build = R.W12_BUILD                                             # (290, 300, 310) mm, D-F3
 
-    def worst(Lmm, lpm):
-        return max(R.in_spike(v0, cs, lin, CIN, lout=lpm * 1e-6 * Lmm / 1000.0)[0]
-                   for v0 in v0s for cs in css for lin in lins)
+    def worst(Lmm, lpm):                                            # H.23(p) spike_worst(): the H.19(b) source grid
+        return R.spike_worst(lpm * 1e-6 * Lmm / 1000.0)[0]
 
-    for row in hs:                                                  # reproduce the calc rows at 0.5 uH/m
-        check("IN peak at %.1f mm" % row["lead_mm"], worst(row["lead_mm"], 0.5), row["in_peak_V"], 0.01)
+    for row in hs:                                                  # the r7 rows at 0.5 uH/m (H.23(l))
+        check("r7 IN peak at %.1f mm, 0.5 uH/m" % row["lead_mm"], worst(row["lead_mm"], 0.5), row["in_peak_V"], 0.01)
+    # r8 wire (H.23(p)): lower bound s = OD min 1.60 mm, a = 19/32 bundle radius, helix factor at OD max and 20 mm pitch;
+    # upper bound s = OD max 1.75 mm, a = solid 20 AWG radius, k = 1, + 0.10 uH/m internal (r7_calc.sec_p()).
+    a_hi = max(pj["conductor_radii"].values())
+    a_lo = min(pj["conductor_radii"].values())
+    od0, od1 = pj["recommended"]["od"]
+    k = math.sqrt(1 + (math.pi * od1 / R.TWIST_P[0]) ** 2)
+    lmin = R.lprime(od0, 5 * R.awg_d(32) / 2) / k * 1e6
+    lmax = (R.lprime(od1, R.awg_d(20) / 2) + 0.10e-6) * 1e6
+    check("r8 L' min (uH/m)", lmin, pj["recommended"]["lprime_uH_m"][0], 0.001)
+    check("r8 L' max (uH/m)", lmax, pj["recommended"]["lprime_uH_m"][1], 0.001)
+    check("conductor radius a_hi used", 5 * R.awg_d(32) / 2, a_hi, 0.001)
+    check("conductor radius a_lo used", R.awg_d(20) / 2, a_lo, 0.001)
+    for Lmm in build:
+        rr = pj["recommended"]["rows"]["%.1f" % Lmm]
+        check("r8 IN peak at %.0f mm, L' min" % Lmm, worst(Lmm, lmin), rr["in_peak_Lmin"], 0.01)
+        check("r8 IN peak at %.0f mm, L' max" % Lmm, worst(Lmm, lmax), rr["in_peak_Lmax"], 0.01)
+    ptfe = pj["candidates"][0]                                      # thin-wall PTFE/ETFE, excluded in r8
+    kp = math.sqrt(1 + (math.pi * ptfe["od"][1] / R.TWIST_P[0]) ** 2)
+    lptfe = R.lprime(ptfe["od"][0], 5 * R.awg_d(32) / 2) / kp * 1e6
+    check("PTFE L' min (uH/m)", lptfe, ptfe["lprime_uH_m"][0], 0.001)
+    check("PTFE IN peak at 290 mm", worst(290.0, lptfe), ptfe["in_peak_290_Lmin"], 0.01)
 
-    L = np.arange(150.0, 350.0 + 1e-9, 5.0)
-    # 0.5 uH/m is the calc basis (145-155 nH at 0.30 m +- 10 mm, design H.5 row); 0.33 and 0.62 uH/m are the
-    # 20 AWG pair range of the CHG-R1-D04 verifier (charger-design/run-001-2026-11-10.md line 124), plotted as
-    # sensitivity bounds; they are not design values.
-    series = [(0.33, ":", LIGHT), (0.5, "-", INK), (0.62, "--", MID)]
-    fig, ax = plt.subplots(figsize=(6.4, 4.0))
-    fig.subplots_adjust(left=0.11, right=0.97, top=0.9, bottom=0.17)
-    ax.axvspan(build[0], build[2], color=FAINT, lw=0, label="fixed W1/W2 build 0.30 m +- 10 mm")
-    res = {}
-    for lpm, ls, c in series:
-        v = [worst(x, lpm) for x in L]
-        res[lpm] = v
-        ax.plot(L, v, ls, color=c, lw=1.8, label="lead %.2f uH/m" % lpm)
-    ax.axhline(VBR, color=INK, lw=1.0, ls="-.")
-    ax.text(352, VBR + 0.1, "D107 VBR(min) 36 V", ha="right", va="bottom", fontsize=8, color=INK)
-    for row in (hs[0], hs[1]):
-        ax.axvline(row["lead_mm"], color=MID, lw=0.8, ls=(0, (2, 2)))
-        ax.plot([row["lead_mm"]], [row["in_peak_V"]], "o", ms=5, mfc="white", mec=INK)
-    ax.text(hs[1]["lead_mm"] - 1.5, 31.55, "r7 rev-2 W1\nroute\n%.1f mm:\n%.1f V" % (hs[1]["lead_mm"], hs[1]["in_peak_V"]),
-            fontsize=7, color=INK, ha="right", va="bottom")
-    ax.annotate("rev-4 shortest W1\nroute %.1f mm\n%.1f V" % (hs[0]["lead_mm"], hs[0]["in_peak_V"]),
-                (hs[0]["lead_mm"], hs[0]["in_peak_V"]), xytext=(6, 14), textcoords="offset points", fontsize=7,
-                color=INK)
-    ax.plot([hs[3]["lead_mm"]], [hs[3]["in_peak_V"]], "s", ms=5, mfc="white", mec=INK)
-    ax.annotate("300 mm: %.1f V" % hs[3]["in_peak_V"], (hs[3]["lead_mm"], hs[3]["in_peak_V"]),
-                xytext=(6, 8), textcoords="offset points", fontsize=7)
+    L = np.arange(150.0, 350.0 + 1e-9, 2.5)
+    fig, ax = plt.subplots(figsize=(6.8, 4.3))
+    fig.subplots_adjust(left=0.1, right=0.97, top=0.91, bottom=0.16)
+    ax.axvspan(build[0], build[2], color=FAINT, lw=0, label="fixed W1/W2 build 0.30 m +- 10 mm (D-F3)")
+    vmin = np.array([worst(x, lmin) for x in L])
+    vmax = np.array([worst(x, lmax) for x in L])
+    v05 = np.array([worst(x, 0.5) for x in L])
+    vpt = np.array([worst(x, lptfe) for x in L])
+    ax.fill_between(L, vmax, vmin, color=MID, alpha=0.18, lw=0)
+    ax.plot(L, vmin, "-", color=INK, lw=2.0, label="r8 wire, L' min %.3f uH/m (spike-critical)" % lmin)
+    ax.plot(L, vmax, "--", color=INK, lw=1.4, label="r8 wire, L' max %.3f uH/m" % lmax)
+    ax.plot(L, vpt, ":", color=MID, lw=1.6, label="thin-wall PTFE, L' min %.3f uH/m (excluded)" % lptfe)
+    ax.plot(L, v05, "-.", color=LIGHT, lw=1.2, label="r7 basis 0.5 uH/m (unsourced, superseded)")
+    ax.axhline(VBR, color=INK, lw=1.0, ls=(0, (6, 2)))
+    ax.text(200, VBR + 0.12, "D107 VBR(min) 36 V", ha="left", va="bottom", fontsize=8, color=INK)
+    # crossing of the r8 L' min curve with 36 V (walkthrough recomputation, not a calc row)
+    lo, hi = 150.0, 290.0
+    for _ in range(40):
+        mid = 0.5 * (lo + hi)
+        if worst(mid, lmin) > VBR:
+            lo = mid
+        else:
+            hi = mid
+    x36 = 0.5 * (lo + hi)
+    rows = {Lmm: pj["recommended"]["rows"]["%.1f" % Lmm] for Lmm in build}
+    ax.plot([290.0], [rows[290.0]["in_peak_Lmin"]], "o", ms=5, mfc="white", mec=INK)
+    ax.annotate("290 mm: %.2f V\n(margin %.2f V, H.23(p))" % (rows[290.0]["in_peak_Lmin"], rows[290.0]["margin"]),
+                (290.0, rows[290.0]["in_peak_Lmin"]), xytext=(-14, 30), textcoords="offset points", fontsize=7,
+                ha="right", arrowprops=dict(arrowstyle="-", color=MID, lw=0.7))
+    ax.plot([290.0], [ptfe["in_peak_290_Lmin"]], "s", ms=5, mfc="white", mec=MID)
+    ax.annotate("PTFE at 290 mm: %.2f V" % ptfe["in_peak_290_Lmin"], (290.0, ptfe["in_peak_290_Lmin"]),
+                xytext=(8, 4), textcoords="offset points", fontsize=7, color=MID)
+    ax.axvline(x36, color=MID, lw=0.8, ls=(0, (2, 2)))
+    ax.text(x36 - 1.5, 30.75, "r8 L' min\nreaches 36 V\nat %.0f mm" % x36, fontsize=7, ha="right", va="bottom")
     ax.set_xlim(150, 352)
+    ax.set_ylim(30.5, 41.5)
     ax.set_xlabel("W1/W2 lead length (mm)")
     ax.set_ylabel("U101 IN peak (V)")
-    ax.set_title("Hard short at EVM J1: U101 IN peak against W1/W2 lead length")
-    ax.legend(loc="upper right", bbox_to_anchor=(1.0, 0.86))
-    source(fig, "r7_calc.py H.23(l), in_spike() = r3_calc.py H.19(b); worst of V0 16/22 V, C_S 5/20 uF, "
-                "L_IN 50/150 nH; C_IN 3.4 uF")
+    ax.set_title("Hard short at EVM J1: U101 IN peak against W1/W2 lead length (r8 wire)")
+    ax.legend(loc="upper right", fontsize=7)
+    source(fig, "r7_calc.py H.23(p): L' = (mu0/pi) acosh(s/2a), 20 AWG 19/32 or 7/28, OD 1.60-1.75 mm, pitch 20-25 mm;\n"
+                "spike_worst() = H.19(b) in_spike, V0 16/22 V, C_S 5/20 uF, L_IN 50/150 nH; 36 V crossing: this script")
     save(fig, "plot_hard_short")
-    return {k: (min(v), max(v)) for k, v in res.items()}, {lpm: [worst(x, lpm) for x in (290.0, 310.0)]
-                                                           for lpm, _, _ in series}
+    cut = {Lmm: (worst(Lmm, lmin), worst(Lmm, 0.5)) for Lmm in (hs[1]["lead_mm"], hs[0]["lead_mm"])}
+    return dict(lmin=lmin, lmax=lmax, x36=x36, routes_r8_vs_r7=cut, ptfe=lptfe)
 
 
 # =====================================================================================================================
 # P2 3-D switched-conductor rule along the W1 round-lead run (r7_calc.sw3d)
 # =====================================================================================================================
 def p2():
-    path = R.w_paths()["W1"]
-    ivs, _ = R.sw3d(path, "W1")
-    iv = ivs[0]
-    jv = J["l"]["rev4"]["sw3d"]["W1"][0]
-    check("W1 run start s (B1)", iv["s0"], jv["s"][0], 0.002)
-    check("W1 run end s", iv["s1"], jv["s"][1], 0.002)
-    check("W1 peak requirement", iv["need"], jv["need"], 0.002)
-    s = np.array([p[0] for p in iv["prof"]]) - iv["s0"]
-    need = np.array([p[2] for p in iv["prof"]])
-    zb = np.array([p[3] for p in iv["prof"]])
-    sl = R.arclen([q for q, _ in path])
-    pts = [q for q, _ in path]
-    sB3 = sl[pts.index(tuple(R.WP["B3"]))] - iv["s0"]
-    fig, ax = plt.subplots(figsize=(6.6, 4.0))
-    fig.subplots_adjust(left=0.1, right=0.97, top=0.9, bottom=0.17)
-    ax.fill_between(s, 0, zb, step="mid", color=FAINT, lw=0, label="lead base (CR top on the CR, MB top off it)")
-    ax.plot(s, need, "-", color=INK, lw=1.8, label="required jacket-bottom height (3-D 10 mm rule)")
-    ax.axhline(R.Z_CR_TOP, color=MID, lw=1.0, ls="--")
-    ax.text(1.2, R.Z_CR_TOP - 0.15, "CR top %.3f mm" % R.Z_CR_TOP, ha="left", va="top", fontsize=7.5, color=MID,
-            bbox=dict(fc="white", ec="none", pad=0.4))
-    ax.axhline(R.H_LFC, color=MID, lw=1.0, ls=":")
-    ax.text(1.2, R.H_LFC + 0.15, "L-FC body top %.1f mm (ASSUMPTION; MS3)" % R.H_LFC,
-            ha="left", va="bottom", fontsize=7.5, color=MID, bbox=dict(fc="white", ec="none", pad=0.4))
-    w5 = J["j"]["w5_over_lfc_bottom"]
-    ax.axhline(w5, color=LIGHT, lw=1.4, ls="-.")
-    ax.text(0.3, w5 + 0.15, "W5 ribbon requirement >= %.2f mm" % w5, fontsize=7.5, color=INK)
-    for lab, x in (("B1", 0.0), ("B3", sB3)):
-        ax.axvline(x, color=INK, lw=0.8, ls=(0, (1, 2)))
-        ax.text(x + 0.3, 6.2, lab + " post", rotation=90, fontsize=7.5, va="bottom")
-    ax.plot([s[np.argmax(need)]], [need.max()], "o", ms=5, mfc="white", mec=INK)
-    ax.annotate("peak %.2f mm\n(L-FC body, Eaton)" % need.max(), (s[np.argmax(need)], need.max()),
-                xytext=(8, -4), textcoords="offset points", fontsize=7.5, va="top")
-    ax.set_xlim(-0.5, s[-1] + 0.5)
-    ax.set_ylim(0, 19.5)
-    ax.set_xlabel("distance along the run from B1 (25.80, 64.50) to (50.45, 72.09) (mm)")
+    """r8 trunk profile (H.23(s)) and W5 stacking (H.23(t)): the built trunk bottom on the B1R ramp, the free span, the B3
+    post and the off-CR descent, against the 3-D requirement at the r8 trunk half-width; the W5 ribbon above the trunk,
+    each W5 sample projected onto its nearest trunk point (the overlap test of r7_calc.sec_s_t())."""
+    S, T = J["s"], J["t"]
+    P = R.WP
+    h = R.paths_with_od(J["p"]["recommended"]["od"][1])[1]     # exact trunk half-width at the r8 OD (H.23(p)/(s))
+    check("trunk half-width at the r8 W1/W2 OD", h, S["h_trunk"], 0.001)
+    tb = 2 * h
+    m = math.tan(math.radians(S["slope_deg"]))
+    y0, z_top = S["toe_y"], S["b3_height"]
+    zc = R.Z_CR_TOP
+    trunk = [P["T1"], P["B1"], P["T2"], P["T3"], P["B3"], P["T4"], P["T5"], P["T6"], P["A1"]]
+    sl = R.arclen(trunk)
+    smp = R.sample_path(trunk)
+    za = min(z_top, m * (R.RISER_Y_END - y0))
+    sa = R.RISER_Y_END - P["T1"][1]                    # apex, along the x 25.80 run from T1
+    s_b3n = sl[4] - R.ANCHOR_FP / 2                    # B3 post edge on the -s side
+    check("B1R apex above the CR top", za, S["apex"], 0.002)
+
+    def z_cr(s):                                       # r7_calc.sec_s_t() design(): built height above the CR top
+        if s <= sa:
+            return min(z_top, max(0.0, m * (s + P["T1"][1] - y0)))
+        if s <= s_b3n:
+            return za + (z_top - za) * (s - sa) / (s_b3n - sa)
+        return z_top
+    qe = tuple(S["off_support_end"])
+    s_e = min(smp, key=lambda z: math.hypot(z[1][0] - qe[0], z[1][1] - qe[1]))[0]
+    s_a1, z_hold = sl[-1], z_top + zc
+
+    def bottom(s, q):                                  # trunk jacket bottom above the MB top
+        if R.pip(q[0], q[1], R.OUTLINE):
+            return zc + z_cr(s)
+        return z_hold if s <= s_e else z_hold * (s_a1 - s) / (s_a1 - s_e)
+    s_arr, need, bot, base, oncr = [], [], [], [], []
+    for s, q in smp:
+        nd, _ = R.z_need(q, h)
+        on = R.pip(q[0], q[1], R.OUTLINE)
+        s_arr.append(s), need.append(nd), bot.append(bottom(s, q)), base.append(zc if on else 0.0), oncr.append(on)
+    s_arr, need, bot, base = map(np.array, (s_arr, need, bot, base))
+    mask = np.array(oncr) & (need > 0)
+    mg = bot[mask] - need[mask]
+    check("trunk minimum margin on the CR", mg.min(), S["min_margin"], 0.002)
+    check("trunk requirement maximum on the CR (above the CR top)", need[np.array(oncr)].max() - zc,
+          S["max_req_above_cr"], 0.002)
+    s_min = s_arr[mask][int(np.argmin(mg))]
+    for ds, rq, bt in S["checkpoints"]:                # T-F-12 check points past B1
+        sq = (P["B1"][1] - P["T1"][1]) + ds
+        q = (25.80, P["T1"][1] + sq)
+        check("check point +%.2f mm required" % ds, R.z_need(q, h)[0] - zc, rq, 0.002)
+        check("check point +%.2f mm built" % ds, z_cr(sq), bt, 0.002)
+    # W5 above the trunk (H.23(t)): W5 path from r7_calc.sec_s_t(), fold Z_CR_TOP + W5_FOLD, ribbon 0.9 mm (RIB_T)
+    w5 = [(40.75, 46.83), P["F1"], P["F2"], P["S3"], P["F3"], P["F4"], P["A1R"]]
+    w5s = R.sample_path(w5, 0.1)
+    full = [P["T0"], P["J67"], P["T1"]] + trunk[1:]
+    sfull = R.sample_path(full, 0.1)
+    off0 = R.arclen(full)[2]
+    w5_end = R.arclen(w5)[-1]
+    wrows = []
+    for s, q in w5s:
+        d, st, qt = min(((math.hypot(q[0] - b[0], q[1] - b[1]), a, b) for a, b in sfull), key=lambda z: z[0])
+        if d >= R.RIBBON_W / 2 + h:
+            continue
+        zt = bottom(st - off0, qt) if st >= off0 else zc
+        own = R.z_need(q, R.RIBBON_W / 2)[0]
+        fold = zc + R.W5_FOLD if s < w5_end - 1e-9 else 0.0
+        zb = max(fold, own, zt + tb)
+        wrows.append((st - off0, zb, own))
+    wrows.sort()
+    top = max(r[1] for r in wrows) + R.RIB_T
+    check("W5 stack top", top, T["stack_top"], 0.002)
+    ws = np.array([r[0] for r in wrows if r[0] >= 0])
+    wb = np.array([r[1] for r in wrows if r[0] >= 0])
+
+    fig, ax = plt.subplots(figsize=(7.6, 4.6))
+    fig.subplots_adjust(left=0.08, right=0.98, top=0.91, bottom=0.15)
+    ax.fill_between(s_arr, 0, base, step="mid", color=FAINT, lw=0, label="lead base (CR top on the CR, MB top off it)")
+    ax.fill_between(s_arr, bot, bot + tb, color="#C9C9C9", lw=0, label="trunk round bundle T_b %.3f mm" % tb)
+    ax.plot(s_arr, bot, "-", color=INK, lw=1.9, label="trunk jacket bottom, built (B1R, span, B3 post)")
+    need_p = np.where(need > 0, need, np.nan)
+    ax.plot(s_arr, need_p, "--", color=INK, lw=1.3, label="required jacket bottom (3-D 10 mm rule, h %.3f mm)" % h)
+    ax.fill_between(ws, wb, wb + R.RIB_T, color="#7A7A7A", lw=0, label="W5 ribbon (0.9 mm ASSUMPTION), projected")
+    ax.axhline(R.H_LFC, color=MID, lw=0.9, ls=":")
+    ax.text(6.0, R.H_LFC + 0.15, "L-FC top %.1f mm (ASSUMPTION)" % R.H_LFC, fontsize=7, color=MID)
+    ax.text(6.0, zc - 0.2, "CR top %.3f mm" % zc, fontsize=7, color=MID, va="top")
+    s_edge = s_arr[~np.array(oncr)].min()
+    marks = [("toe/T1", 0.0), ("B1R apex", sa), ("B3 post", sl[4]), ("CR edge x 37.56", s_edge),
+             ("support end (40.75, 71.10)", s_e), ("A1", s_a1)]
+    for lab, x in marks:
+        ax.axvline(x, color=MID, lw=0.7, ls=(0, (1, 2)))
+        ax.text(x + 0.25, 0.5, lab, rotation=90, fontsize=6.8, va="bottom", color=INK)
+    ax.axvspan(s_edge, s_a1, ymin=0.0, ymax=1.0, color="#F4F4F4", lw=0, zorder=-2)
+    ax.text(33.0, 23.4, "off the CR: support TODO(design: T-A-06 dry fit);\ndescent shown as information "
+            "(H.23(s))", fontsize=6.8, ha="center", va="top", color=MID)
+    ax.plot([s_min], [need[mask][int(np.argmin(mg))]], "o", ms=5, mfc="white", mec=INK)
+    ax.annotate("minimum margin %.3f mm\nat T2 (25.80, 69.60)" % S["min_margin"], (s_min, need[mask][int(np.argmin(mg))]),
+                xytext=(17, -36), textcoords="offset points", fontsize=7, ha="left", va="top",
+                arrowprops=dict(arrowstyle="-", color=MID, lw=0.7))
+    ax.annotate("stack top %.3f mm at (%.2f, %.2f)" % (T["stack_top"], T["stack_top_at"][0], T["stack_top_at"][1]),
+                (sl[4], top), xytext=(-190, 12), textcoords="offset points", fontsize=7,
+                arrowprops=dict(arrowstyle="-", color=MID, lw=0.7))
+    ax.set_xlim(-0.6, s_a1 + 0.6)
+    ax.set_ylim(0, 31)
+    ax.set_xlabel("distance along the trunk from T1 (25.80, 62.60) to A1 (60.50, 73.50) (mm)")
     ax.set_ylabel("height above the MB top (mm)")
-    ax.set_title("W1 round-lead run: required height under the 3-D switched-conductor rule")
-    ax.legend(loc="upper right", fontsize=7)
-    source(fig, "r7_calc.py H.23(l) rev. 4, sw3d() on the W1 path (west group); H_LFC, Z_CR_TOP; "
-                "W5 figure H.23(j)")
+    ax.set_title("Trunk and W5 heights under the 3-D switched-conductor rule (r8)")
+    ax.legend(loc="upper left", fontsize=6.6, ncol=2)
+    source(fig, "r7_calc.py H.23(s) (B1R 65 deg, toe y 62.54, apex, B3 post 10.7 mm, support end) and H.23(t) "
+                "(W5 over the trunk);\n"
+                "z_need() at the r8 half-width; H_LFC 5.0 mm ASSUMPTION")
     save(fig, "plot_lead_height_profile")
-    return dict(run=s[-1], peak=need.max(), sB3=sB3, need_B1=need[0], end=need[-1])
+    return dict(run=s_a1, sa=sa, sB3=sl[4], s_edge=s_edge, s_e=s_e, min_margin=mg.min(), s_min=s_min, top=top,
+                w5_min_margin=min(r[1] - r[2] for r in wrows if r[2] > 0))
 
 
 # =====================================================================================================================
@@ -204,12 +303,19 @@ def p4():
     names = ["band", "interior", "tab X", "tab Y", "tab Y bottom"]
     labels = ["band\n(top)", "interior\n(top)", "tab X\n(top)", "tab Y\n(top)", "tab Y\n(bottom)"]
     U = [reg[n]["U"] for n in names]
+    sums = {n: reg[n]["sum"] for n in names}
+    # r8: the B1R wedge replaces the 3 x 3 mm B1 spot in the footprint interior (H.23(s) interior_U)
+    u7_int = U[1]
+    U[1] = J["s"]["interior_U"]
+    sums["interior"] = reg["interior"]["sum"] - R.ANCHOR_FP ** 2 + J["s"]["block_area"]
+    check("r8 interior booking", 100 * sums["interior"] / J["e2"]["areas"]["interior"], U[1], 0.01)
+    labels[1] = "interior\n(top, r8)"
     lim = 100.0 * R.U_TARGET
     fig, ax = plt.subplots(figsize=(5.8, 3.8))
     fig.subplots_adjust(left=0.12, right=0.97, top=0.9, bottom=0.2)
     bars = ax.bar(range(5), U, 0.7, color=[MID, MID, MID, MID, LIGHT])
     for i, (b, n) in enumerate(zip(bars, names)):
-        ax.text(b.get_x() + b.get_width() / 2, U[i] - 2.0, "%.2f %%\n%.1f /\n%.1f\nmm2" % (U[i], reg[n]["sum"],
+        ax.text(b.get_x() + b.get_width() / 2, U[i] - 2.0, "%.2f %%\n%.1f /\n%.1f\nmm2" % (U[i], sums[n],
                 J["e2"]["areas"][n]), ha="center", va="top", fontsize=7, color="white" if i < 4 else INK)
     ax.axhline(lim, color=INK, lw=1.0, ls="--")
     ax.text(4.45, lim + 1.5, "%.0f %% limit" % lim, ha="right", fontsize=8)
@@ -218,8 +324,10 @@ def p4():
     ax.set_ylim(0, 100)
     ax.set_ylabel("courtyard area booked U (%)")
     ax.grid(axis="x", visible=False)
-    ax.set_title("Area booking per A.8 region of the r7 carrier")
-    source(fig, "r7_calc_out.json H.23(e2) regions (courtyard sum / region area); limit U_TARGET in r7_calc.py")
+    ax.set_title("Area booking per A.8 region of the carrier (r8)")
+    ax.text(1, U[1] + 1.5, "r7 (B1 spot): %.1f %%" % u7_int, ha="center", fontsize=7)
+    source(fig, "r7_calc_out.json H.23(e2) regions (courtyard sum / region area); interior with B1R: H.23(s);\n"
+                "limit U_TARGET in r7_calc.py")
     save(fig, "plot_area_booking")
     return dict(zip(names, U)), lim
 
@@ -238,8 +346,8 @@ def p5():
             check("k_s %s" % nm, got, want, 0.01)
     t = np.linspace(0.10, 0.60, 201)
     gate = i["foot_height"]["gate"]
-    fig, axs = plt.subplots(1, 2, figsize=(9.6, 4.0))
-    fig.subplots_adjust(left=0.07, right=0.98, top=0.86, bottom=0.17, wspace=0.28)
+    fig, axs = plt.subplots(1, 2, figsize=(9.6, 4.9))
+    fig.subplots_adjust(left=0.07, right=0.98, top=0.88, bottom=0.31, wspace=0.28)
     ax = axs[0]
     ax.axvspan(gate[0], gate[1], color=FAINT, lw=0, label="PM4 (2d) gate %.2f-%.2f mm" % tuple(gate))
     sty = {"FT1 (tab X)": ("-", INK), "FT2 (tab Y)": ("--", MID)}
@@ -250,14 +358,34 @@ def p5():
         ax.plot(t, lo, ls, color=c, lw=1.2, label="%s, %.1f mm2, E %.0f MPa" % (nm, a, min(R.E_RTV)))
         ax.plot(t, hi, ls, color=c, lw=2.0, label="%s, %.1f mm2, E %.0f MPa" % (nm, a, max(R.E_RTV)))
     ax.axvline(R.T_BED[1], color=MID, lw=0.8, ls=":")
-    ax.text(R.T_BED[1] + 0.005, 11, "nominal %.2f mm" % R.T_BED[1], fontsize=7)
+    ax.text(R.T_BED[1] + 0.005, 2200, "nominal %.2f mm" % R.T_BED[1], fontsize=7, va="top")
+    # r8 foot-bond fallback (H.23(r)): an UNCHANGED foot over a sheet cut-out sees the gated band shifted by t_rm
+    rr = J["r"]
+    t_rm = rr["t_rm"][0]
+    fb = (gate[0] + t_rm, gate[1] + t_rm)
+    ax.axvspan(fb[0], fb[1], ymin=0.0, ymax=0.12, facecolor="none", edgecolor=INK, hatch="////", lw=0,
+               label="foot-bond fallback, unchanged foot: bed %.3f-%.3f mm" % fb)
+    kfb, kg = {}, {}
+    for nm, a in A.items():
+        kfb[nm] = min(R.E_RTV) * a / fb[1]
+        kg[nm] = min(R.E_RTV) * a / gate[1]
+        ax.plot([fb[1]], [kfb[nm]], "v", ms=5, mfc="white", mec=INK, zorder=5)
+    check("fallback FT1 k_s min", kfb["FT1 (tab X)"], 11.13, 0.01)   # H.23(r) text row
+    check("fallback FT2 k_s min", kfb["FT2 (tab Y)"], 27.83, 0.01)   # H.23(r) text row
     ax.set_yscale("log")
     ax.set_ylim(8, 3000)
     ax.set_xlim(0.10, 0.60)
     ax.set_xlabel("RTV bed gap t (mm)")
     ax.set_ylabel("bed stiffness k = E A / t (N/mm)")
     ax.set_title("(a) FT1/FT2 bed stiffness against bed gap")
-    ax.legend(loc="upper right", fontsize=6.5)
+    ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.15), ncol=2, fontsize=6.5)
+    fig.text(0.07, 0.035, "Triangles: the unchanged foot at the fallback bed %.3f mm with E 1 MPa: FT1 %.2f N/mm and "
+             "FT2 %.2f N/mm, x%.3f of the gated minimum %.2f / %.2f N/mm.\n"
+             "The re-made foot h_f' = %.2f mm + t_rm "
+             "(%.3f mm at t_rm %.3f mm) returns the bed to the nominal %.2f mm (H.23(r))."
+             % (fb[1], kfb["FT1 (tab X)"], kfb["FT2 (tab Y)"], kfb["FT1 (tab X)"] / kg["FT1 (tab X)"],
+                kg["FT1 (tab X)"], kg["FT2 (tab Y)"], R.H_F, rr["h_f_new"][0], t_rm, R.T_BED[1]),
+             fontsize=6.8, color=INK, va="bottom")
     ax = axs[1]
     pu = i["pulls"]
     kslab = ["k_s min", "k_s nom (E 1)", "k_s nom (E 3)", "k_s max"]
@@ -281,7 +409,7 @@ def p5():
     ax.legend(loc="upper left", fontsize=6.8)
     fig.suptitle("Far-end support feet FT1/FT2: bed stiffness and the T-A-09 pull", fontsize=10)
     source(fig, "r7_calc.py H.23(i): E_RTV, T_BED, foot sizes, k_s, PM4 (2d) gate; pulls (tip-load basis, "
-                "recommended pull)")
+                "recommended pull); H.23(r): foot-bond fallback (t_rm 0.125 mm)")
     save(fig, "plot_feet")
     return A, pu
 

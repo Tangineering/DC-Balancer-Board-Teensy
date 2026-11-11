@@ -1,0 +1,130 @@
+{
+  "group": "r8_T",
+  "edits": [
+    {
+      "note": "CHG-R1-07: 0.2 E-point distances cite calc H.23(u)",
+      "old": "(hand calculation: the plan\n  distance from each `round4/work/evm_geometry.md` Table 1 point",
+      "new": "(`round4/calc/r7_calc.py` H.23(u), revision 5 (**superseded in r8:** hand calculation): the plan\n  distance from each `round4/work/evm_geometry.md` Table 1 point"
+    },
+    {
+      "note": "0.2: r8 summary paragraph",
+      "old": "The r7 outline is not frozen before the operator survey T-A-08 (MS1-MS8) passes. MS2 decides the EVM placement and the W-lead\nmaxima (A.3, A.7).",
+      "new": "The r7 outline is not frozen before the operator survey T-A-08 (MS1-MS8) passes. MS2 decides the EVM placement and the W-lead\nmaxima (A.3, A.7).\n\n**r8 (audit run 001, `docs/reviews/charger-design/run-001-2026-11-10.md`):** the adjudicated findings change no fail-safe\nargument of r1-r7. Revision r8 settles seven points:\n\n- FLT pad bridges: R106s 1.00 kOhm 1 % between U101 FLT and the F17 pad holds the FLT sink current at <= 3.377 mA, a factor\n  of 2.96 below the 10 mA absolute maximum (tps2663.pdf sec 6.1), and the FLT LOW readback at <= 0.325 V (H.23(n); A.4, A.8, B.4).\n- T3 timing: the REG03-05 raise write completes 1.359 ms after the edge at 100 kHz, against the 1.5 ms FR-07 deadline; the\n  REG01-07 verification follows the write as four field reads, outside that deadline (H.23(o); G.1, FR-46).\n- Flash and SD admission: the flash commit and the SD close have separate gates; Idle admits on battery support, and only\n  the SD close and sync may run in State 99 phase 3 (G.3, FR-43).\n- W1/W2 conductor: 20 AWG stranded copper, insulation OD 1.60-1.75 mm, twisted at a 20-25 mm pitch; in the modelled\n  envelope the IN peak at a hard short is 33.79 V at 290 mm, against the 36 V limit (H.23(p); A.3).\n- B1 riser and stacking: a machined insulating wedge B1R replaces the B1 spot and holds the trunk on the full requirement\n  profile (minimum margin 0.504 mm, H.23(s)); W5 rests on the trunk, and the stack top is 20.750 mm above the MB, which is\n  information under D-H (H.23(t); A.3).\n- Firmware and test definitions: the FR-12(b) pin-38 criterion separates the stuck-path test from complete discharge\n  (H.23(q)); the FR-48 Idle probe and the FR-23 FLT-LOW diagnostic read become explicit exceptions to the FR-23 gate; T1\n  step 8b, T-B-16 and T-F-16 are restated (G.2, I).\n- Traceability: every hand calculation of the r7 closing pass is a calc row of `round4/calc/r7_calc.py` revision 5\n  (H.23(u)-(w)), and the TPS26630 datasheet is local (`references/Datasheets/tps2663.pdf`, K)."
+    },
+    {
+      "note": "CHG-R1-06: A.4 heading marker held the new grid; live text is now the r7 grid, marker holds the r6 grid",
+      "old": "3 x 8 grid at 2.54 mm (**superseded in r7:** 6 x 4 grid at 2.54 mm on tab X plus residual pads F08, F09, F10 and F22 on the footprint)",
+      "new": "6 x 4 grid at 2.54 mm on tab X plus residual pads F08, F09, F10 and F22 on the footprint (r7; **superseded in r7:** 3 x 8 grid at 2.54 mm)"
+    },
+    {
+      "note": "CHG-R1-01 cross-reference: A.4 T16 row names R106s",
+      "old": "a CR-side pull-up would back-feed the CR rail through the Teensy pad pull-up when T6 opens) |",
+      "new": "a CR-side pull-up would back-feed the CR rail through the Teensy pad pull-up when T6 opens); **r8 (CHG-R1-01):** CR **R106s 1.00 kOhm 1 %** in series between U101 FLT and the F17 pad, placed behind the pad, holds a powered F05-F17 or F06-F17 bridge to <= 3.377 mA of FLT sink current against the 10 mA absolute maximum (tps2663.pdf sec 6.1; H.23(n), B.4, A.8) |"
+    },
+    {
+      "note": "CHG-R1-06: A.5 r6 pixel list - live text names the post the point really is; marker holds the old label",
+      "old": "JP21 pin 1 (902, 408) (**superseded in r7:** that point is the upper post, pin 2 (AGND); pin 1 is the lower square post), JP14 pin 2",
+      "new": "JP21 pin 2, the upper post (AGND), (902, 408) (r7: pin 1 is the lower square post; **superseded in r7:** JP21 pin 1 (902, 408)), JP14 pin 2"
+    },
+    {
+      "note": "CHG-R1-06: A.5 E1 build maximum - live r7 value, marker holds the r6 value",
+      "old": "| REGN | 67.3 / **85 mm** (r5: 65) (**superseded in r7:** 69.0 / **90 mm**) |",
+      "new": "| REGN | **r7:** 69.0 / **90 mm** (**superseded in r7:** 67.3 / **85 mm**; r5: 65) |"
+    },
+    {
+      "note": "CHG-R1-06: A.5 E1 supply statement - live r7 text, marker holds the r6 text",
+      "old": "| Supply for the Q201-Q203 gate pull-ups only (**superseded in r7:** E1 supplies the Q201/Q202 gate pull-ups R252 and R254, the Q203 gate resistor R271 and the release feed through Q203/R255 (B.6); of the H.15 \"REGN pull-ups R254/R272/R272b\", only R254 passes through E1, because R272/R272b sit on the EVM);",
+      "new": "| **r7:** E1 supplies the Q201/Q202 gate pull-ups R252 and R254, the Q203 gate resistor R271 and the release feed through Q203/R255 (B.6); of the H.15 \"REGN pull-ups R254/R272/R272b\", only R254 passes through E1, because R272/R272b sit on the EVM (**superseded in r7:** Supply for the Q201-Q203 gate pull-ups only);"
+    },
+    {
+      "note": "CHG-R1-06: A.5 E1 route - live r7 route, marker holds the r6 edge-dressing instruction",
+      "old": "dressed along the EVM bottom edge, away from L2 and the SW nodes (**superseded in r7:** any EVM-edge route is at least 96.05 mm long, over the 90 mm maximum. **r7:** E1 runs from the E1 pad",
+      "new": "**r7:** an EVM-edge route is at least 96.05 mm long, over the 90 mm maximum (**superseded in r7:** dressed along the EVM bottom edge, away from L2 and the SW nodes). E1 runs from the E1 pad"
+    },
+    {
+      "note": "CHG-R1-06: A.5 E1 route - close the paragraph without the old trailing parenthesis",
+      "old": "(**superseded in r7:** a hand calculation that stated the pin-2 figure as a distance to the hole); T-A-06 records the length) |",
+      "new": "(**superseded in r7:** a hand calculation that stated the pin-2 figure as a distance to the hole); T-A-06 records the length |"
+    },
+    {
+      "note": "CHG-R1-06: A.5 E5 build maximum - live r7 value, marker holds the r6 value",
+      "old": "| /CE drive | 47.7 / **60 mm** (r5: 50) (**superseded in r7:** 49.1 / **65 mm**) |",
+      "new": "| /CE drive | **r7:** 49.1 / **65 mm** (**superseded in r7:** 47.7 / **60 mm**; r5: 50) |"
+    },
+    {
+      "note": "CHG-R1-07: A.5 E8 drop cites calc H.23(v)",
+      "old": "Without R276, the E8 drop at f0 is 20-31 mV per 10 mV of REGN ripple (E8 partial inductance 19.1 nH at its 20 mm maximum; hand calculation on the H.23(k) loop).",
+      "new": "Without R276, the E8 drop at f0 is 20.0-31.4 mV per 10 mV of REGN ripple with a return of the E1 length, and up to 41.7 mV with the E8 return at its 20 mm maximum (E8 partial inductance 19.09 nH at its 20 mm maximum; `round4/calc/r7_calc.py` H.23(v), revision 5, on the H.23(k) loop; **superseded in r8:** 20-31 mV per 10 mV of REGN ripple (E8 partial inductance 19.1 nH at its 20 mm maximum; hand calculation on the H.23(k) loop))."
+    },
+    {
+      "note": "CHG-R1-07: A.5 damped E8 drop cites calc H.23(v)",
+      "old": "With R276 the drop is 0.17 mV per 10 mV of ripple.",
+      "new": "With R276 the drop is 0.170-0.176 mV per 10 mV of ripple (H.23(v); **superseded in r8:** 0.17 mV)."
+    },
+    {
+      "note": "CHG-R1-06: C EM5 marker held a source citation; it now holds the superseded pin identification",
+      "old": "The r3-r6 A.5 pixel point (902, 408) is pin 2 (**superseded in r7:** `round4/work/evm_geometry.md` Table 1 and section 7.2; H.23(k))",
+      "new": "The r3-r6 A.5 pixel point (902, 408) is pin 2 (`round4/work/evm_geometry.md` Table 1 and section 7.2; H.23(k); **superseded in r7:** the r3-r6 identification of that point as JP21 pin 1)"
+    },
+    {
+      "note": "CHG-R1-06: C EM23 - the r6 standoff instruction was live before the marker; live text is now the r7 clamp mount",
+      "old": "| remove; M3 nylon standoffs (hole diameter checked, T-A-02) (**superseded in r7:** the EVM has no mounting holes). **r7:** keep the bumpons;",
+      "new": "| **r7:** keep the bumpons;"
+    },
+    {
+      "note": "CHG-R1-06: C EM23 - old instruction moved into the marker at the end of the change cell",
+      "old": "Tack each E lead to the EIB within 10 mm of its pad. Plate, clamp and stop geometry: TODO(design: from MS2, MS5 and MS7) |",
+      "new": "Tack each E lead to the EIB within 10 mm of its pad. Plate, clamp and stop geometry: TODO(design: from MS2, MS5 and MS7). The r6 instruction is withdrawn because the EVM has no mounting holes (**superseded in r7:** remove; M3 nylon standoffs (hole diameter checked, T-A-02)) |"
+    },
+    {
+      "note": "D.5: r8 proposals for the protected files",
+      "old": "which the fixed W1/W2 length of 0.30 m +- 10 mm exceeds by up to 10 mm, D-F3.)\n",
+      "new": "which the fixed W1/W2 length of 0.30 m +- 10 mm exceeds by up to 10 mm, D-F3.)\n\n**r8 proposals.** Revision r8 adds one CR part (R106s), the B1R wedge and the W1/W2 wire specification (A.3, A.4, B.4,\nH.23(n), H.23(p), H.23(s)). It restates the firmware requirements FR-07/FR-46 (the T3 write-first exception), FR-12(b) (the\npin-38 criterion), FR-22/FR-48 (the Idle probe exception to the FR-23 gate), FR-23 (the bounded FLT-LOW diagnostic read) and\nFR-43 (separate flash and SD gates) (G.1, G.2, G.3). It changes no pin, direction or threshold of the IO CSV. The r7\nproposals above stay valid; the following table adds the r8 proposal for each file.\n\n| File | r8 proposal |\n|---|---|\n| `CLAUDE.md` | The D.4 bodge record gains three items once built: R106s (1.00 kOhm 1 %, U101 FLT to the F17 pad), the B1R wedge, and the W1/W2 wire (20 AWG stranded copper, insulation OD 1.60-1.75 mm, twist pitch 20-25 mm). No other change |\n| `teensy_controller/teensy_controller.ino` | No edit from this design. The orchestrated firmware round that implements G.2 implements the r8 statements of FR-07/FR-46, FR-12(b), FR-22/FR-48, FR-23 and FR-43, with the host tests that G.2 and G.3 list for them |\n| `WORK_QUEUE.md` | One more queue item for the r8 verifications (text below) |\n| `references/Scale Car Teensy IO - IO.csv` | No change: r8 changes no pin or direction |\n\nThe proposed r8 `WORK_QUEUE.md` item is:\n\n```\n- BQ25798EVM carrier r8: open verifications (docs/charger_bq25798_wiring_design_2026-11-05.md, J.2 items 64-67).\n  Sheet PSA thickness (H.23(r), the foot fallback height); eFuse IN-side current in UVLO and in the latched state\n  (H.23(q), the FR-12(b) 12 V / 0.5 s criterion, T-C-04); Teensy 3V3 tolerance and pin-35 pull-up range (H.23(n));\n  the B1R 65 deg ramp dressing at the T-A-06 dry fit (H.23(s)); the T-B-16 qualification waveform against a measured\n  braking-duty statistic (J.2 item 64).\n```\n"
+    },
+    {
+      "note": "CHG-R1-08: H.14 states the T-B-16 run-A waveform and labels it a qualification choice",
+      "old": "| bursts only; T-B-16 at max(measured ICHG, 3.21 A) (TREG fold-back would cut capability) |",
+      "new": "| bursts only; T-B-16 at max(measured ICHG, 3.21 A) (TREG fold-back would cut capability); **r8:** T-B-16 run A alternates 0.6 s at that current with 1.4 s at the 1.6 A FC-window ICHG (period 2.0 s, 30 % duty), so the 2.67 W and 0.97 W figures above are its two dissipation levels; the waveform and the TDIE < 100 C criterion are qualification choices (J.2 item 64) |"
+    },
+    {
+      "note": "CHG-R1-08 / A-05: T-B-16 waveform 0.6 s on / 1.4 s off, inter-burst current, optional 60 % run, qualification labels",
+      "old": "| T-B-16 | Thermal | Off-board mount; 3.1 A bursts | 30 min 1.6 A FC + 5 min of 0.6 s 3.1 A bursts at 1 Hz duty 30 % **r5:** run the 3.1 A case at max(measured ICHG from T-B-19, 3.21 A) (ICHG +3.5 % upper bound) and include the JP5 joint; with fallback 2 fitted, also the link fuse temperature rise. **r6:** the MB VBT trace under the CR and one VBAT+ header joint are logged on the vehicle in T-F-16. | TDIE < 100 C, TREG_STAT 0; **r4: thermocouple on the JP5 and JP3 link joints at 3.1 A / 2.4 A: rise < 20 C** r5: rise < 20 C at the JP5 joint and the leads at that current; fuse within its derating curve. | Forced air / ICHG 2.5 A (accept the H.7 margin at 2.5 A only with FR-25 active); r4: a hot JP5/JP3 joint -> link soldered into the plated holes (EM11/EM12) or a heavier link |",
+      "new": "| T-B-16 | Thermal | Off-board mount; 3.1 A bursts. **r8 (CHG-R1-08):** the inter-burst current is the 1.6 A FC-window ICHG. It represents regen inside an FC window (0.2), and it bounds the regen-armed cruise mode, in which the charger carries no current between bursts | **r8:** (a) Set ICHG to the FC-window value, 1.6 A, and hold it for 30 min. (b) Run A: for 5 min, alternate 0.6 s at the burst current with 1.4 s at 1.6 A (period 2.0 s, 30 % duty). The burst current is max(measured ICHG from T-B-19, 3.21 A) (r5: the ICHG +3.5 % upper bound, H.11). (c) Optional run B: repeat step (a). Then run the same two currents at 0.6 s on and 0.4 s off (period 1.0 s, 60 % duty) for 5 min. Record run B separately as \"T-B-16 run B (60 %)\". (d) In each run, log TDIE, TREG_STAT and the thermocouples on the JP5 and JP3 link joints and on the leads. If fallback 2 is fitted, also log the link fuse temperature rise. The waveform and the TDIE < 100 C criterion are qualification choices; neither is derived from a measured regen statistic or from a transient thermal model (J.2 item 64). The superseded waveform stated 0.6 s at 1 Hz, which is a 60 % duty, as 30 %, and it did not state the inter-burst current (**superseded in r8:** 30 min 1.6 A FC + 5 min of 0.6 s 3.1 A bursts at 1 Hz duty 30 % **r5:** run the 3.1 A case at max(measured ICHG from T-B-19, 3.21 A) (ICHG +3.5 % upper bound) and include the JP5 joint; with fallback 2 fitted, also the link fuse temperature rise.) **r6:** the MB VBT trace under the CR and one VBAT+ header joint are logged on the vehicle in T-F-16 (r8: with the run-A waveform; run B only if run here). | TDIE < 100 C, TREG_STAT 0; **r4: thermocouple on the JP5 and JP3 link joints at 3.1 A / 2.4 A: rise < 20 C** r5: rise < 20 C at the JP5 joint and the leads at that current; fuse within its derating curve. **r8:** these criteria apply to run A. Run B has no pass criterion; it records the TDIE, TREG_STAT and joint rises reached at 60 % duty (information). | Forced air / ICHG 2.5 A (accept the H.7 margin at 2.5 A only with FR-25 active); r4: a hot JP5/JP3 joint -> link soldered into the plated holes (EM11/EM12) or a heavier link. **r8:** a run-B result causes no design change; a run-B TDIE >= 100 C or TREG_STAT 1 is recorded in J.2 item 64 as the limit of sustained 60 % braking duty |"
+    },
+    {
+      "note": "CHG-R1-08: T-F-16 synchronised with the T-B-16 run-A waveform",
+      "old": "the T-B-16 burst profile (0.6 s at 30 % duty, 5 min) and a 2 min continuous hold; ambient logged |",
+      "new": "**r8:** the T-B-16 run-A waveform, that is 0.6 s at that current and 1.4 s at the 1.6 A FC-window ICHG (period 2.0 s, 30 % duty, 5 min), and a 2 min continuous hold; ambient logged. If T-B-16 run B was run, run it here with the same waveform and record it separately as \"T-F-16 run B (60 %)\"; it has no pass criterion (**superseded in r8:** the T-B-16 burst profile (0.6 s at 30 % duty, 5 min) and a 2 min continuous hold; ambient logged) |"
+    },
+    {
+      "note": "CHG-R1-05 / A-04: J.2 item 55 records the foot fallback height and the post-soldering access",
+      "old": "    within the foot keep-out coordinates (FT1: no larger than its 5.0 x 2.6 mm keep-out).\n",
+      "new": "    within the foot keep-out coordinates (FT1: no larger than its 5.0 x 2.6 mm keep-out). **r8 (CHG-R1-05):** with the sheet\n    cut out, an unchanged foot leaves a 0.275-0.575 mm bed and x0.783 of the gated bed stiffness (H.23(r)). The fallback\n    therefore re-makes the foot at h_f' = 2.19 mm + the measured removed stack thickness, sheet and PSA together (2.315 mm\n    at 0.125 mm), and the PM4 (2d) feeler gate runs again (A.7, PM4). The PSA thickness is TODO(verify: polyimide tape\n    datasheet). The fallback is executable only before the 22 header joints are soldered; after soldering, a re-bed is\n    limited to RTV injection through the fill hole (H.23(r)).\n"
+    },
+    {
+      "note": "CHG-R1-07: J.2 item 60 E-point distances cite calc H.23(u)",
+      "old": "    (37.56, 76.00), hand calculation on the `round4/work/evm_geometry.md` Table 1 points; the EVM board edge lies 42.0 mm\n    from tab Y)",
+      "new": "    (37.56, 76.00), `round4/calc/r7_calc.py` H.23(u), revision 5, on the `round4/work/evm_geometry.md` Table 1 points; the EVM board edge lies 42.04 mm\n    from tab Y; **superseded in r8:** hand calculation, 42.0 mm)"
+    },
+    {
+      "note": "CHG-R1-D03 / W01: J.2 item 62 restates the trunk support and the W5 stacking",
+      "old": "Spacer posts\n    hold the trunk jacket bottom >= 14.41 mm above the MB on the CR (10.14 mm above the CR top) and >= 14.35 mm off it, and\n    the W5 ribbon bottom >= 15.00 mm (A.3, H.23(l)).",
+      "new": "**r8:** the machined\n    insulating wedge B1R carries the trunk from B1 on the full requirement profile (minimum margin 0.504 mm), and the B3 post\n    holds the trunk jacket bottom 14.965 mm above the MB (10.7 mm above the CR top) (H.23(s)). Off the CR the trunk stays\n    above the requirement at the controlling points x 41.5 and x 44.0 (H.23(t)). W5 rests on the trunk with RTV over the whole\n    plan overlap, from the trunk start (y 57.00) to A1, at 19.850-20.750 mm above the MB at the B3 level (W5 requirement\n    margin 1.866 mm, H.23(t)) (A.3) (**superseded in r8:** Spacer posts hold the trunk jacket bottom >= 14.41 mm above the\n    MB on the CR (10.14 mm above the CR top) and >= 14.35 mm off it, and the W5 ribbon bottom >= 15.00 mm (A.3, H.23(l)).)"
+    },
+    {
+      "note": "CHG-R1-07: J.2 item 62 C102b clearance cites calc H.23(w) row (6)",
+      "old": "that is >= 5.5 mm above the about 2.5 mm C102b body (hand calculation).",
+      "new": "that is >= 5.5 mm above the about 2.5 mm C102b body (`round4/calc/r7_calc.py` H.23(w) row (6), revision 5; the 2.5 mm body is an\n    ASSUMPTION, TODO(verify: C102b datasheet), MS3 caliper; **superseded in r8:** hand calculation)."
+    },
+    {
+      "note": "CHG-R1-07: J.2 item 63 F12/F24 swap cites calc H.23(w) row (7)",
+      "old": "and the F12/F24 swap also satisfies it (-0.14 mm, hand calculation).",
+      "new": "and the F12/F24 swap also satisfies it (-0.142 mm, `round4/calc/r7_calc.py` H.23(w) row (7), revision 5;\n    **superseded in r8:** -0.14 mm, hand calculation)."
+    },
+    {
+      "note": "J.2: new r8 items 64-67",
+      "old": "    T-F-12 tap-to-tap check before power-up is the only detector of all three.\n",
+      "new": "    T-F-12 tap-to-tap check before power-up is the only detector of all three.\n64. **T-B-16 waveform and criterion (r8, CHG-R1-08, A-05):** the run-A waveform (0.6 s at max(measured ICHG, 3.21 A), 1.4 s\n    at the 1.6 A FC-window ICHG, 30 % duty) and the TDIE < 100 C criterion are qualification choices. Neither is derived\n    from a measured braking statistic (burst length, burst period, braking duty) or from a transient thermal model of the\n    BQ25798 on the EVM. A pass therefore establishes the thermal performance under that waveform only. The optional run B\n    (60 % duty) records the TDIE reached at a higher braking duty; a run-B TDIE >= 100 C or TREG_STAT 1 is recorded here\n    as the limit of sustained 60 % braking. TODO(design: braking-duty statistic from the vehicle).\n65. **FR-12(b) pin-38 criterion (r8, CHG-R1-D02):** the r7 test (V_chg < 3 V within 2 s) fails for a VCHG-IN capacitance\n    >= 20.6 uF, because the decay from 9.9 V to 3 V takes 1.65-2.75 s without eFuse bias current (H.23(q)). The proposed\n    criterion, V_chg < 12 V after both EN readbacks have read LOW for >= 0.5 s, holds with the eFuse enabled (worst case\n    0.183 s, margin 0.317 s), but it fails from >= 14.9 V with no eFuse bias current; it needs an IN-side current of\n    >= 0.375 mA. IQ(ON) is >= 1.38 mA, and the IQ in UVLO and in the latched state is not specified (H.23(q)). The criterion\n    stays TODO(verify: T-C-04 measurement across the initial voltage and the eFuse states). A stuck path reads >= 13.88 V\n    (14.16 V with a -2 % gain error), so the 12 V threshold separates it; the battery-side ACK diagnostic stays.\n66. **B1R wedge and the W-lead profile (r8, CHG-R1-D03, CHG-R1-W01):** the 65 deg ramp face is steep. Lead stiffness only\n    lifts the leads above the ramp line, so the 3-D rule holds, but the T-A-06 dry fit must confirm that the leads can be\n    dressed on it (H.23(s)). The 0.5 mm design margin and the 5.0 mm L-FC body height stay ASSUMPTIONs (item 56); the\n    off-CR support stays TODO(design: T-A-06 dry fit). The 20.750 mm stack top above the MB is information under D-H\n    (H.23(t)).\n67. **Assumed inputs of the r8 calc rows (r8):** the Teensy 3V3 tolerance (+-5 %), the pin-35 pull-up range (11-33 kOhm),\n    VIL (0.30 x 3V3) and the U108 output resistance (H.23(n)); t_BUF 4.7 / 1.3 us from NXP UM10204, which is not in\n    `references/`, with the ISR latency outside the bus budget (H.23(o)); the sheet PSA thickness (H.23(r)); the ribbon\n    thickness 0.9 mm (H.23(t)); the VCHG-IN capacitance band 17.0-28.4 uF (H.23(q)); the C102b body height 2.5 mm\n    (H.23(w)). Each is TODO(verify) at its calc row.\n"
+    }
+  ]
+}

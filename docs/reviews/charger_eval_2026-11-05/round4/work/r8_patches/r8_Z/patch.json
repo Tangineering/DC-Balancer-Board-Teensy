@@ -1,0 +1,230 @@
+{
+ "group": "r8_Z",
+ "edits": [
+  {
+   "note": "title to r8",
+   "old": "wiring, carrier and operating design (board rev 20260622), round 4 r7\n",
+   "new": "wiring, carrier and operating design (board rev 20260622), round 4 r8\n"
+  },
+  {
+   "note": "status line to r8",
+   "old": "**Status (2026-11-10, revision r7 after the round-4 carrier change and review round 7; r6 after",
+   "new": "**Status (2026-11-10, revision r8 after the final independent audit run 001 (`docs/reviews/charger-design/run-001-2026-11-10.md`); r7 after the round-4 carrier change and review round 7; r6 after"
+  },
+  {
+   "note": "supporting files: r8 patch sets and calc revisions 5-6",
+   "old": "| `calc/apply_patches.py`, `work/r7_patches/` | The text patch sets of the r7 revision rounds and the script that applies each set to this document atomically |\n",
+   "new": "| `calc/apply_patches.py`, `work/r7_patches/` | The text patch sets of the r7 revision rounds and the script that applies each set to this document atomically |\n| `work/r8_patches/` (r8) | The r8 patch sets (r8_E hardware FLT path and K; r8_G firmware requirements, F/G/H.16/H.21 and their tests; r8_M mechanics, W leads and marker conversions; r8_T tests, records and relabels; r8_Z integration) and `design_pre_r8.md`, the r7 text before r8 |\n| `calc/r7_calc.py` revisions 5 and 6 (r8) | H.23(n)-(w) for the audit fixes (revision 5) and H.23(x) for the r8 integration figures (revision 6); every line printed by revision 4 is unchanged |\n"
+  },
+  {
+   "note": "0.2 traceability bullet: revision 6",
+   "old": "revision 5\n  (H.23(u)-(w)), and the TPS26630 datasheet is local",
+   "new": "revision 5\n  (H.23(u)-(w)), the r8 integration figures are revision 6 (H.23(x)), and the TPS26630 datasheet is local"
+  },
+  {
+   "note": "0.3 r8 block",
+   "old": "| close round, no finding key |\n\n### 0.4 Review-design loop",
+   "new": "| close round, no finding key |\n\n**Round 4 r8 (this revision), from the final independent audit run 001** (`docs/reviews/charger-design/run-001-2026-11-10.md`, ledger\n`docs/reviews/charger-design/ledger.md`; 13 adjudicated findings, 0 blocker, 3 major and 10 minor, and CHG-R1-W01 from the round-4\nwalkthrough; `round4/calc/r7_calc.py` revisions 5 and 6; superseded r7 text stays in place inside \"superseded in r8\" markers; the\ndispositions that differ from the finding as written are in section L.8):\n\n| # | Change | Finding |\n|---|---|---|\n| r8-1 | **R106s 1.00 kOhm 1 % between U101 FLT and the F17 pad:** an F05-F17 or F06-F17 bridge drives at most 3.377 mA into FLT (0.338 of the 10 mA absolute maximum, SLVSE94G §6.1), and the EN net stays >= 3.017 V, so the switch follows its command and the fault is masked while that EN is HIGH; FLT LOW readback = V_OL + pull-up drop, 0.153 V typical / 0.325 V maximum (H.23(n)); the A.8 rows and the A.8 placement rule, B.4, B.8, E, the A.4 T16 row and the new test T-C-05c | CHG-R1-01 |\n| r8-2 | **FR-23 exception E2, the bounded FLT-LOW diagnostic read:** one REG1B read when FLT reads LOW and V_chg > 10.2 V for > 250 ms (tCL_PLIM 202 ms maximum, SLVSE94G §6.6); NACK expected; ACK with VBUS_PRESENT_STAT 1 latches the carrier fault; the unreachable r4 plausibility rule and the F.3 T16-open row are superseded; new F.3 bridge row, H.21 row and FR-22 (xxx) | CHG-R1-01 (A-01) |\n| r8-3 | **T3 write-first, read-back-after exception in G.1 and FR-46:** the REG06:07 and REG03-05 raise writes complete 1.359 ms (100 kHz) / 0.565 ms (400 kHz) after the edge, against 1.5 ms; the read-back follows as four field reads, each inside the FR-07 cap; a mismatch takes the immediate P5-LOW path; H.16 recomputed from the published schedule (H.23(o)); no V-MOT peak is published; T-C-06 adds the 100 kHz run and the ISR latency; FR-22 (xxxiii) | CHG-R1-02 |\n| r8-4 | **FR-43 split into `flashWriteAllowed` and `sdOpAllowed`:** flash is admitted with FC_BUS LOW or in battery-supported Idle (BT_BUS HIGH with its EN read back HIGH, BT_REG HIGH, V_bus >= `V_BUS_CHARGED_THRESH`, `busHotPlugUnsafe()` false, selector disarmed, no cut), never in State 99, and never through `fcPurgeExposure()`; SD close and sync have their own gate, which admits State 99 phase 3; G.3, J.2 item 33, the FR-43 host tests, T-W-01 and T-W-02 | CHG-R1-D01 |\n| r8-5 | **W1/W2 wire specified:** 20 AWG stranded copper (19/32 or 7/28), insulation OD 1.60-1.75 mm, twisted at a 20-25 mm pitch with the jackets touching; L' 0.399-0.661 uH/m from (mu0/pi) acosh(s/2a); IN peak 33.79 / 33.64 / 33.51 V at 290 / 300 / 310 mm (margin >= 2.21 V to 36 V); thin-wall PTFE (38.23 V) and 600 V-class insulation (plan rule) excluded; \"no pair reaches 36 V\" limited to the modelled envelope; A.3, B.4 (D103), H.5, H.23(l), E, T-A-02, L.7 | CHG-R1-D04 |\n| r8-6 | **FR-23 exception E1, the FR-12(b) Idle probe:** one address poll in State 1 with every charger path LOW; NACK ignored; on ACK, the ADC_EN one-shot write, the REG3B read, then ADC_EN cleared and REG2E read back; FR-22 (xxii) and T-D-15 through the production gate | CHG-R1-03 (A-07) |\n| r8-7 | **T1 step 8b split, new step 8c:** after the heartbeat exercise, P5 rises with QUAL already LOW, so CLR = P5N clears QQ (pin 33 LOW within 5 ms); end-of-T1 check of P5, /CE sense, EN_CHG, QUAL and pin 33; T1 budget ~0.58-0.73 s (+126.7 ms, H.23(x)); T9 inherits it; T-F-03 extended; T-C-10 to the P5 rise; FR-22 (xxxii) | CHG-R1-04 (A-03) |\n| r8-8 | **B1R wedge and the CR-end strain relief:** a machined insulating wedge (x 23.55-26.05, y 62.54-67.10, 65 deg ramp face, apex 9.78 mm above the CR top) replaces the B1 bead; B3 becomes a post 10.7 mm above the CR top; the r5 bead covers >= 5.0 mm of jacket on the copper and on along the ramp; full-profile minimum margin 0.504 mm (H.23(s)); interior booking 64.0 %; A.3, A.8, D.1 PM4, E, T-A-06, T-F-12 | CHG-R1-D03 |\n| r8-9 | **W5 above the trunk:** W5 rests on the trunk with RTV from (28.70, 64.01) to A1; trunk 14.965-19.850 mm and W5 19.850-20.750 mm above the MB at the B3 level; stack top 20.750 mm, information under D-H (H.23(t)); A.3, A.7, H.23(j), PM4 (6), T-A-06, T-F-12 | CHG-R1-W01 |\n| r8-10 | **Foot-bond fallback:** a re-made foot h_f' = 2.19 mm + the measured removed stack t_rm (film + PSA; 2.315 mm at 0.125 mm), the PM4 (2d) gate repeated, the decision moved before soldering by the T-A-09 step 0 bond coupon, FT2 repair access after soldering limited to an RTV re-bed through the fill hole (H.23(r)); PSA thickness TODO(verify); A.7, PM4, T-A-09, J.2 item 55 | CHG-R1-05 (A-04) |\n| r8-11 | **FR-12(b) split into (b1) stuck-path test, (b2) discharge wait and (b3) Idle probe:** (b1) V_chg < 12.0 V once both EN read-backs have been LOW for >= 0.5 s, a proposed criterion, TODO(verify: T-C-04) (worst case 0.183 s with the eFuse enabled, H.23(q)); (b2) no pass/fail on time, 5 s timeout (3.695 s worst case, H.23(x)); T-C-04, T-F-02, H.21, FR-22 (xxxi), J.2 item 65 | CHG-R1-D02 |\n| r8-12 | **T-B-16 waveform:** 0.6 s at max(ICHG, 3.21 A) and 1.4 s at the 1.6 A FC-window ICHG (30 % duty), an optional run B at 60 % recorded separately, T-F-16 synchronised, the waveform and the TDIE < 100 C criterion labelled as qualification choices (J.2 item 64); H.14 note | CHG-R1-08 (A-05) |\n| r8-13 | **Superseded markers converted:** at each listed location the live text is the current instruction and the marker holds the old text (A.1, A.3, A.4 heading, A.5, A.7, B.4 D103, C EM5/EM23, D.1 PM0/PM4, D.4 record, E sheet line, H.5, H.11, H.22(i), H.23(l)/(m), T-A-02, T-A-06, T-C-04, T-F-12, J.2 item 47); the rev-2 W-lead tables are labelled history | CHG-R1-06 (A-06) |\n| r8-14 | **Hand calculations moved into the calc:** E1-E8 distances (H.23(u)), the E8 pickup with and without R276 (H.23(v)), the closing-pass figures (H.23(w)) and the r8 integration figures (H.23(x)); the T-C-16 abort ratio now uses the built E1 length (17.80 at 85 mm, 9.20 at 90 mm) | CHG-R1-07 |\n| r8-15 | **TPS26630 datasheet local:** `references/Datasheets/tps2663.pdf` (SLVSE94G) is cited in K and wherever SLVSE94G values are used; item closed | CHG-R1-A02 |\n| r8-16 | **Records:** D.4 record and D.5 proposals gain R106s, B1R and the W1/W2 wire; BOM lines for R106s, the B1R wedge, the B3 post, the W1/W2 wire and the bond coupon; J.2 items 64-68; supporting files, 0.2, 0.4 and L.8 | integration |\n\n### 0.4 Review-design loop"
+  },
+  {
+   "note": "0.4 r8 paragraph",
+   "old": "and applied the 10 mm switched-conductor rule as a 3-D distance (A.3).\n\n## A.",
+   "new": "and applied the 10 mm switched-conductor rule as a 3-D distance (A.3).\n\n**r8:** the final independent audit, run 001 of 2026-11-10 (`docs/reviews/charger-design/run-001-2026-11-10.md`), reviewed the r7 text in two rounds: a Codex review with finding-verifier agents and an independent first-pass reviewer, then a Codex counter-review in the same thread. It produced 13 adjudicated findings (0 blocker, 3 major, 10 minor) and seven adjacent items A-01 to A-07, each folded into one finding. The round-4 walkthrough raised one more finding, CHG-R1-W01 (the W5 and trunk vertical order). All 14 are applied in r8 (r8 block in 0.3). The agreed fix and its rejected parts in the run-001 adjudication table are binding; the dispositions that differ from the finding as written, and the choices that the agreed fix left open, are in section L.8. The r8 closing pass extended `round4/calc/r7_calc.py` to revision 6 (H.23(n)-(x); every revision-4 line unchanged), regenerated the three round-4 SVGs (R106s, the B1R wedge, the W1/W2 wire) and re-checked the test-ID cross-references of section I.\n\n## A."
+  },
+  {
+   "note": "B.4 D103: quarter period on the r8 wire",
+   "old": "C103 + the ~0.15 uH lead ring with a 0.61 us quarter period, shorter than",
+   "new": "C103 + the ~0.15 uH lead ring with a 0.61 us quarter period (r8: 116-205 nH at 290-310 mm and <= 0.711 us with the A.3 wire, H.23(p)), shorter than"
+  },
+  {
+   "note": "B.4 D103: marker direction (CHG-R1-06)",
+   "old": "the only other lever is the OUT-loop inductance (W1/W2 tightly twisted and as short as possible) (**superseded in r7:** W1/W2 tightly twisted at the fixed 0.30 m +- 10 mm; a shorter W1/W2 raises the hard-short IN-side spike at U101, H.5, D-F3).",
+   "new": "the only other lever is the OUT-loop inductance: W1/W2 tightly twisted at the fixed 0.30 m +- 10 mm, because a shorter W1/W2 raises the hard-short IN-side spike at U101 (H.5, D-F3), in the A.3 wire (r8: 20 AWG stranded copper, insulation OD 1.60-1.75 mm, twist pitch 20-25 mm, L' 0.399-0.661 uH/m, H.23(p)) (**superseded in r7:** W1/W2 tightly twisted and as short as possible)."
+  },
+  {
+   "note": "A.8 interior row: B1R booking",
+   "old": "and the W-lead RTV bead B1 and the W5 spacer beads S1 and S2 (H.23(l)); booked 182.5 mm² = 63.2 % (H.23(e2)).",
+   "new": "the B1R wedge (r8: x 23.55-26.05, y 62.54-67.10, 11.40 mm², H.23(s)) and the W5 spacer beads S1 and S2 (H.23(l)); booked 184.9 mm² = 64.0 % (H.23(s)) (**superseded in r8:** and the W-lead RTV bead B1 and the W5 spacer beads S1 and S2 (H.23(l)); booked 182.5 mm² = 63.2 % (H.23(e2)))."
+  },
+  {
+   "note": "A.8 booking table: interior with B1R",
+   "old": "DNP U112, U117, D101; beads B1, S1, S2 | 182.5 | 63.2 % |",
+   "new": "DNP U112, U117, D101; B1R wedge (r8), beads S1, S2 | 184.9 | 64.0 % (r8, H.23(s); **superseded in r8:** bead B1, 182.5 mm², 63.2 %) |"
+  },
+  {
+   "note": "A.8 tab Y row: hand calculation reproduced by the calc",
+   "old": "111.0 + 39.15 = 150.2 of 153.7 mm², hand calculation)",
+   "new": "111.0 + 39.15 = 150.2 of 153.7 mm², hand calculation; r8: `round4/calc/r7_calc.py` H.23(w) row (4) reproduces 150.15 mm² = 97.7 %)"
+  },
+  {
+   "note": "D.4: r8 note",
+   "old": "r7 adds tab X and tab Y, the feet FT1 and FT2 with their beds and the FT2 fill hole, the r7 sheet, the EVM plate and R276.\n",
+   "new": "r7 adds tab X and tab Y, the feet FT1 and FT2 with their beds and the FT2 fill hole, the r7 sheet, the EVM plate and R276. **r8:** the record adds R106s, the B1R wedge with the B3 post, the W5-on-trunk stack and the W1/W2 wire specification (D.5).\n"
+  },
+  {
+   "note": "D.4 record: marker direction of the bottom rule (CHG-R1-06)",
+   "old": "taps are top-side SMT pads, and its bottom carries passives only (<= 1.0 mm) outside the MB VBT / VCHG / VCHG-IN copper\n  (superseded in r7: >= 1.0 mm in plan from every non-GND MB layer-1 feature and every MB part box, the bottom clearance\n  rule, on the footprint and both tabs).",
+   "new": "taps are top-side SMT pads, and its bottom carries passives only (<= 1.0 mm), >= 1.0 mm in plan from every non-GND MB\n  layer-1 feature and every MB part box (the bottom clearance rule), on the footprint and both tabs (superseded in r7: outside\n  the MB VBT / VCHG / VCHG-IN copper)."
+  },
+  {
+   "note": "D.4 record: r8 bullet",
+   "old": "- IO CSV rows 5, 6, 7, 10, 16, 17, 19, 20, 21, 22, 23, 27, 28, 29, 30, 31, 32, 33, 34, 35, 41 amended in lockstep.",
+   "new": "- r8: R106s 1.00 kOhm 1 % (0402) sits between U101 FLT (pin 14) and the F17 tap pad, with R106 still DNP. A machined\n  insulating wedge B1R (65 deg ramp, apex 9.78 mm above the carrier top) carries the W1-W4 trunk from the W1/W2 joints, and\n  an insulating post at B3 holds it 10.7 mm above the carrier top; the W5 ribbon rests on the trunk from tab Y to A1. W1/W2\n  are 20 AWG stranded copper, insulation OD 1.60-1.75 mm, twisted at a 20-25 mm pitch.\n- IO CSV rows 5, 6, 7, 10, 16, 17, 19, 20, 21, 22, 23, 27, 28, 29, 30, 31, 32, 33, 34, 35, 41 amended in lockstep."
+  },
+  {
+   "note": "D.5 WORK_QUEUE item: J.2 items 64-68",
+   "old": "J.2 items 64-67).",
+   "new": "J.2 items 64-68)."
+  },
+  {
+   "note": "BOM wire line: r8 W1/W2 specification",
+   "old": "| 20 AWG red + black 1 m each;",
+   "new": "| 20 AWG red + black 1 m each (r8, W1/W2: stranded copper 19/32 or 7/28, insulation OD 1.60-1.75 mm as measured, PVC 300 V hook-up class UL1007/UL1569 or any insulation whose measured OD lies in that range; no thin-wall PTFE and no 600 V-class insulation; A.3, H.23(p); OD and twist pitch checked in T-A-02);"
+  },
+  {
+   "note": "BOM anchors line: B1R wedge and B3 post",
+   "old": "| **W-lead anchors, spacers and strip (r7 review 7)** | 2 tie bases (+2), 5 spacer posts (+3), 1 off-CR support, 1 strip | adhesive cable-tie bases A1 (6 x 6 mm) and A2 (10 x 10 mm) bonded on the MB solder mask; insulating spacer posts at B1 and B3 for the trunk (>= 10.14 mm above the CR top), at S2 and S3 for W5 (>= 10.735 mm above the CR top) and at S1 for the 8 mm W5 fold;",
+   "new": "| **W-lead anchors, spacers and strip (r7 review 7; r8 B1R)** | 2 tie bases (+2), 1 wedge B1R (+1), 3 posts B3, S1, S2 (+3), 1 off-CR support, 1 strip (**superseded in r8:** 5 spacer posts (+3)) | adhesive cable-tie bases A1 (6 x 6 mm) and A2 (10 x 10 mm) bonded on the MB solder mask; **r8:** the B1R wedge, machined G10/FR-4 or PEEK (ASSUMPTION; temperature rating checked in T-A-05), footprint x 23.55-26.05, y 62.54-67.10, ramp face at 65 deg to an apex 9.78 mm above the CR top, bonded with the BOM foot transfer tape (A.3, H.23(s)); an insulating post at B3 that holds the trunk jacket bottom 10.7 mm above the CR top (H.23(s)); posts S1 and S2 at the 8 mm W5 fold; W5 rests on the trunk from (28.70, 64.01) to A1 (H.23(t)) (**superseded in r8:** insulating spacer posts at B1 and B3 for the trunk (>= 10.14 mm above the CR top), at S2 and S3 for W5 (>= 10.735 mm above the CR top) and at S1 for the 8 mm W5 fold);"
+  },
+  {
+   "note": "BOM sheet line: marker direction (CHG-R1-06)",
+   "old": "cut per A.7 (CR outline + 1 mm (**superseded in r7:** the r7 sheet outline with its five trims, bounding box 49.30 x 43.86 mm, H.23(m)), 2.2 mm relief holes",
+   "new": "cut per A.7 (the r7 sheet outline with its five trims, bounding box 49.30 x 43.86 mm, H.23(m) (**superseded in r7:** CR outline + 1 mm), 2.2 mm relief holes"
+  },
+  {
+   "note": "BOM sheet stock: marker direction (CHG-R1-06)",
+   "old": "| sheet or >= 40 mm tape stock (**superseded in r7:** the 43.86 mm short side needs sheet stock or tape >= 43.86 mm wide; stock size checked in T-A-05; the W-lead strip of A.3 comes from the same stock);",
+   "new": "| sheet stock or tape >= 43.86 mm wide (r7: the 43.86 mm short side; stock size checked in T-A-05; the W-lead strip of A.3 and, r8, the T-A-09 step 0 coupon offcut come from the same stock) (**superseded in r7:** sheet or >= 40 mm tape stock);"
+  },
+  {
+   "note": "BOM: bond coupon line",
+   "old": "| **Overlay wire (r6)** | 0.05 m (+0.05) |",
+   "new": "| **Bond coupon (r8)** | 1 (+1) | solder-masked FR-4 coupon (mask equal to the MB solder mask, TODO(verify: MB fab solder-mask type)), an offcut of the BOM polyimide sheet, one FT1-size block (4.0 x 1.6 mm) of the BOM foot material and 0.30 mm shims, for the T-A-09 step 0 bond coupon (A.7, H.23(r)) | - | - | workshop | within the hardware allowance |\n| **Overlay wire (r6)** | 0.05 m (+0.05) |"
+  },
+  {
+   "note": "FR-12(b2): calc row for the 5 s timeout",
+   "old": "(above 0.5 s + 2.30 s x ln(12/3) = 3.69 s, the H.23(q) maximum time constant with no eFuse bias; hand calculation, TODO(calc row))",
+   "new": "(above 0.5 s + 2.305 s x ln(12/3) = 3.695 s, the H.23(q) maximum time constant with no eFuse bias; `round4/calc/r7_calc.py` H.23(x) row (1))"
+  },
+  {
+   "note": "T1 step 8c: four field reads calc row",
+   "old": "as field reads, <= 1.83 ms at 100 kHz, H.23(o);",
+   "new": "as field reads, <= 1.83 ms at 100 kHz, H.23(o) and H.23(x) row (2);"
+  },
+  {
+   "note": "T1 budget: calc row",
+   "old": "and steps 8b-8c (<= ~75 ms), which",
+   "new": "and steps 8b-8c (<= ~75 ms; 126.7 ms in total, H.23(x) row (3)), which"
+  },
+  {
+   "note": "H.22(i): marker direction E1/E5 (CHG-R1-06)",
+   "old": "E1 (JP12) 67.3 / 85 (**superseded in r7:** 69.0 / 90), E5 47.7 / 60 (**superseded in r7:** 49.1 / 65),",
+   "new": "E1 (JP12) 69.0 / 90 (r7, H.23(k); **superseded in r7:** 67.3 / 85), E5 49.1 / 65 (r7, H.23(k); **superseded in r7:** 47.7 / 60),"
+  },
+  {
+   "note": "H.23(k): E8 pickup figures from H.23(v)",
+   "old": "(7.8-8.8 with R276 bridged); E8 common-impedance drop at f0 per 10 mV of REGN ripple: 20-31 mV undamped, 0.17 mV with R276",
+   "new": "(7.75-15.13 with R276 bridged on the two-wire return, 7.75-17.80 over the H.23(v) set; **superseded in r8:** 7.8-8.8); E8 common-impedance drop at f0 per 10 mV of REGN ripple: 20.0-31.4 mV undamped (up to 41.7 mV with the E8 return at 20 mm), 0.170-0.176 mV with R276 (**superseded in r8:** 20-31 mV and 0.17 mV)"
+  },
+  {
+   "note": "H.23(x) row",
+   "old": "| each figure replaces a 'hand calculation' citation (A.3, A.7, A.8, J.2 item 63, L.7) |\n",
+   "new": "| each figure replaces a 'hand calculation' citation (A.3, A.7, A.8, J.2 item 63, L.7) |\n| H.23 | **(x) r8 integration figures (r8, calc revision 6)** (`round4/calc/r7_calc.py` H.23(x)) | (1) FR-12(b2): 0.5 s + 2.305 s x ln(12/3) = 3.695 s worst case, 1.31 s under the 5 s timeout; (2) the four FR-46 field reads in sum: 1.830 ms at 100 kHz, 0.458 ms at 400 kHz; (3) T1 increment: TW_HB_MAX x 1.1 = 51.7 ms + step 8b <= 70 ms + step 8c <= 5 ms = 126.7 ms; (4) T-C-05c pad pull-up current 0.315 mA (3.465 V into 11 kOhm); (5) the R106s courtyard in the tab X bottom booking: TODO(calc), the T-A-06 DRC is the gate | FR-12(b2), F.5 T1, T-C-05c, J.2 item 68 |\n"
+  },
+  {
+   "note": "T-C-04: R106s and the r8 decay measurement",
+   "old": "ramp VCHG-IN 0 -> 12 V -> 0 with R106 fitted, log pin 35.",
+   "new": "ramp VCHG-IN 0 -> 12 V -> 0 with R106 DNP and R106s fitted, log pin 35 (r8; **superseded in r8:** with R106 fitted). **r8 (CHG-R1-D02, FR-12(b1)):** with both EN outputs LOW, set VCHG-IN to 12.5, 16.0, 19.38 and 22.28 V in turn, in each of three eFuse states (ON, in UVLO, latched); remove the source; measure the eFuse IN-side current and the time for pin 38 to fall to 12.0 V."
+  },
+  {
+   "note": "T-C-04: r8 pass criterion",
+   "old": "TODO(verify: i.MX RT1062 DS)** | IN peak >= 60 V:",
+   "new": "TODO(verify: i.MX RT1062 DS)**; **r8:** pin 38 falls to 12.0 V within 0.5 s from every start voltage in every eFuse state, and the IN-side current is >= 0.375 mA in UVLO and in the latched state (H.23(q)) | IN peak >= 60 V:"
+  },
+  {
+   "note": "T-C-04: r8 fail branch; marker direction (CHG-R1-06)",
+   "old": "Survival or E2E failure: shorten or retwist W1/W2 (**superseded in r7:** retwist only; a shorter W1/W2 raises the IN-side spike, 34.9 V at 181.6 mm against D107 VBR(min) 36 V, H.5, D-F3),",
+   "new": "Survival or E2E failure: retwist W1/W2 in the A.3 wire, never shorter (r7: a shorter W1/W2 raises the IN-side spike, H.5, H.23(p), D-F3) (**superseded in r7:** shorten or retwist W1/W2),"
+  },
+  {
+   "note": "T-C-04: r8 fail branch for the decay",
+   "old": "FLT LOW below 4.5 V: FR-12/FR-23 already gate on V_chg |",
+   "new": "FLT LOW below 4.5 V: FR-12/FR-23 already gate on V_chg. **r8:** a decay to 12.0 V slower than 0.5 s, or an IN-side current < 0.375 mA in UVLO or latched: set the FR-12(b1) dwell to 1.5 s (H.23(q): 1.426 s worst case with no bias current), then repeat T-F-02 |"
+  },
+  {
+   "note": "T-C-05c: pull-up current calc row",
+   "old": "<= 0.35 mA (3.465 V into the 11 kOhm minimum pull-up of the H.23(n) inputs)",
+   "new": "<= 0.35 mA (3.465 V into the 11 kOhm minimum pull-up of the H.23(n) inputs: 0.315 mA, H.23(x) row (4))"
+  },
+  {
+   "note": "T-C-06: 100 kHz T3 run and ISR latency",
+   "old": "| Firmware sequences T1-T9 on emulated supplies; I2C at 400 kHz |",
+   "new": "| Firmware sequences T1-T9 on emulated supplies; I2C at 400 kHz (r8: T3 also at the 100 kHz fallback) |"
+  },
+  {
+   "note": "T-C-06: r8 pass and fail",
+   "old": "commit refused in every window/Run state; executed in Idle with HB stopped. | Fix firmware; 100 kHz fallback if tr fails |",
+   "new": "commit refused in every window/Run state; executed in Idle with HB stopped. **r8 (CHG-R1-02):** 20 T3 raises at 400 kHz and 20 at 100 kHz, each with a transaction in flight at the H1 edge: H1 edge to the REG03-05 write complete <= 1.5 ms on the LA (H.23(o) predicts 1.359 / 0.565 ms without ISR latency); the four field reads follow the writes, each <= the FR-07 cap; a forced read-back mismatch takes P5 LOW at once; record the pin-34 ISR latency (edge to the first SCL edge), the TODO(calibrate) of H.16 | Fix firmware; 100 kHz fallback if tr fails. **r8:** a 100 kHz edge-to-write time > 1.5 ms means the ISR latency exceeds the 0.141 ms H.23(o) margin: re-run H.23(o) with the measured latency, then fix the ISR path or restate FR-07 |"
+  },
+  {
+   "note": "T-C-10: steps 8b-8c to the P5 rise",
+   "old": "**r4: the T1 step-8b ILIM-leg test completes inside the measured minimum tw_QQ with >= 50 ms margin",
+   "new": "**r4: the T1 steps 8b-8c ILIM-leg test, to the P5 rise of step 8c (r8; **superseded in r8:** the T1 step-8b ILIM-leg test), completes inside the measured minimum tw_QQ with >= 50 ms margin"
+  },
+  {
+   "note": "T-C-16: E8 figures from H.23(v)",
+   "old": "R276 x C205 passes 0.106 of the EVM REGN ripple at 1.5 MHz (7.8-8.8 with R276 bridged); E8 is the only DC ground of the EIB, so the loop current shifts EIB AGND against TP49 by 20-31 mV per 10 mV of REGN ripple without R276 and by 0.17 mV with it (A.5)",
+   "new": "R276 x C205 passes 0.106 of the EVM REGN ripple at 1.5 MHz (7.75-15.13 with R276 bridged on the two-wire return, 7.75-17.80 over the H.23(v) set; **superseded in r8:** 7.8-8.8); E8 is the only DC ground of the EIB, so the loop current shifts EIB AGND against TP49 by 20.0-31.4 mV per 10 mV of REGN ripple without R276 (up to 41.7 mV with the E8 return at 20 mm) and by 0.170-0.176 mV with it (A.5, H.23(v); **superseded in r8:** 20-31 mV and 0.17 mV, hand calculation)"
+  },
+  {
+   "note": "T-C-16: abort ratio at the built E1 length",
+   "old": "(2) If 8.8 x the TP27 component exceeds 0.5 V p-p (TP27 above 57 mV p-p), omit the bridged run.",
+   "new": "(2) If R_b x the TP27 component exceeds 0.5 V p-p, omit the bridged run. R_b is the H.23(v) C205/TP27 ratio without R276 at the built E1 length, the maximum over the return cases: 17.80 at 85 mm and 9.20 at 90 mm. For any other built length, use 17.80 until H.23(v) is re-run at that length (TP27 above 28 mV p-p) (r8; **superseded in r8:** if 8.8 x the TP27 component exceeds 0.5 V p-p (TP27 above 57 mV p-p); 8.8 holds at 90 mm only)."
+  },
+  {
+   "note": "T-C-16: pass-column figures",
+   "old": "the prediction with R276 (0.17 mV per 10 mV) passes for a TP27 ripple below about 280 mV. Bridged run: characterisation only; the C205/TP27 ratio (predicted 7.8-8.8) or the abort is recorded",
+   "new": "the prediction with R276 (0.170-0.176 mV per 10 mV, H.23(v)) passes for a TP27 ripple up to 273 mV (H.23(v); **superseded in r8:** 0.17 mV, about 280 mV). Bridged run: characterisation only; the C205/TP27 ratio (predicted 7.75-17.80, H.23(v); **superseded in r8:** 7.8-8.8) or the abort is recorded"
+  },
+  {
+   "note": "T-F-12: diode path through R106s",
+   "old": "a designed diode path, for example F17 through the U101 FLT output to F19, reads low in one polarity only",
+   "new": "a designed diode path, for example F17 through R106s and the U101 FLT output to F19 (r8: >= 0.99 kOhm plus the diode, H.23(n)), reads low in one polarity only"
+  },
+  {
+   "note": "J.2 item 68",
+   "old": "    (H.23(w)). Each is TODO(verify) at its calc row.\n",
+   "new": "    (H.23(w)). Each is TODO(verify) at its calc row.\n68. **r8 residuals (r8 closing pass):** (a) an F05-F17 or F06-F17 bridge leaves the eFuse fault masked while that EN output\n    is HIGH, because pin 35 then reads the EN level (H.23(n)); the T-F-12 tap-to-tap check before power-up stays the primary\n    detector, and FR-08 and the FR-23 E2 read see it only while the EN is LOW. (b) The R106s 0402 courtyard is not yet in the\n    H.23(d)/(e) bottom booking of tab X, TODO(calc); the T-A-06 DRC is the gate (H.23(x) row (5)). (c) H.23(t) prints no r8\n    requirement at (37.75, 71.10) or at x 46.7; T-F-12 keeps the CR maximum 14.433 mm and the r7 value 8.61 mm there as\n    TODO(verify) bounds. (d) The T-C-16 abort ratio is exact only at 85 and 90 mm (H.23(v)); another built E1 length uses the\n    17.80 bound until H.23(v) is re-run. (e) The T3 budget of H.23(o) excludes the pin-34 ISR latency, TODO(calibrate: T-C-06).\n"
+  },
+  {
+   "note": "K r8 additions: revision 6",
+   "old": "- r8 additions: `round4/calc/r7_calc.py` revision 5 with `r7_calc_out.txt` and `r7_calc_out.json`, H.23(n) to H.23(w).\n",
+   "new": "- r8 additions: `round4/calc/r7_calc.py` revision 5 with `r7_calc_out.txt` and `r7_calc_out.json`, H.23(n) to H.23(w);\n  revision 6 adds H.23(x), the r8 integration figures.\n"
+  },
+  {
+   "note": "L.7 hard-short row: r8 basis",
+   "old": "at 290-300 mm it stays at 32.8-32.9 V, so the r3-r6 basis of H.5, H.19 and T-C-04 holds unchanged |",
+   "new": "at 290-300 mm it stays at 32.8-32.9 V, so the r3-r6 basis of H.5, H.19 and T-C-04 holds unchanged (r8: these figures rest on the 0.5 uH/m lead basis, which CHG-R1-D04 found unsourced; with the r8 A.3 wire H.23(p) gives 33.51-33.79 V at 290-310 mm, >= 2.21 V under 36 V, inside the modelled envelope) |"
+  },
+  {
+   "note": "L.7 low-y-band row: H.23(w) row (4)",
+   "old": "(hand calculation: 111.0 + 15.9 of 153.7 mm²)",
+   "new": "(`round4/calc/r7_calc.py` H.23(w) row (4): 111.0 + 15.90 = 126.90 of 153.713 mm²; **superseded in r8:** hand calculation: 111.0 + 15.9 of 153.7 mm²)"
+  },
+  {
+   "note": "L.7 ta09 row: H.23(w) row (5)",
+   "old": "2 N would load FT2 to about 4.8 x the 30 g service stress (hand calculation, linear in the pull);",
+   "new": "2 N would load FT2 to 4.84 x the 30 g service stress (`round4/calc/r7_calc.py` H.23(w) row (5), linear in the pull; **superseded in r8:** about 4.8 x, hand calculation);"
+  },
+  {
+   "note": "L.7 10 mm rule row: r8 riser",
+   "old": "and an off-CR support follows the H.23(l) profile (decision 2026-11-10) |",
+   "new": "and an off-CR support follows the H.23(l) profile (decision 2026-11-10) (r8: the B1 post conflicted with the r5 jacket bead, CHG-R1-D03; the B1R wedge, the B3 post at 10.7 mm and W5 resting on the trunk replace the spacer heights, H.23(s), H.23(t)) |"
+  },
+  {
+   "note": "L.8 section",
+   "old": "the bend keeps 5.02 mm and 6.57 mm |\n\nNo finding was rejected.\n",
+   "new": "the bend keeps 5.02 mm and 6.57 mm |\n\nNo finding was rejected.\n\n### L.8 Final audit run 001 (r8)\n\nAll 13 adjudicated findings of run 001 (`docs/reviews/charger-design/run-001-2026-11-10.md`; 0 blocker, 3 major, 10 minor), the\nadjacent items A-01 to A-07 folded into them, and CHG-R1-W01 from the round-4 walkthrough were applied. The per-group patch sets are in\n`round4/work/r8_patches/`, and the log is `round4/review_loop.md`, section 5. The agreed fix and its rejected parts are binding. The\nfollowing table lists each place where the applied fix differs from the finding as written, or where the agreed fix left a choice:\n\n| Finding | Proposed | Applied instead | Why |\n|---|---|---|---|\n| CHG-R1-01 | \"only toward off\" replaced, and the T16 detector called wholly ineffective | the A.8 rows state that the switch follows its command and the bridge is visible but misattributed (pin 35 reads the EN level); the detector is kept | rejected part of the adjudication: an EN-LOW bridge reads as an apparent eFuse fault and can refuse charging |\n| CHG-R1-01 | R106s bounded with the 40 ohm driver model (3.17 mA) | the bound uses the resistor and supply tolerances with a 0 ohm driver: 2.657-3.377 mA, a factor of 2.96 below 10 mA (H.23(n)) | round-2 refinement: the driver resistance is an ASSUMPTION, so the protection bound must not rely on it |\n| CHG-R1-01 | R106s \"behind the pad\" | R106s electrically between U101 FLT and F17, placed on the tab X bottom beside F17 (fallback: the footprint interior near pin 14), both FLT nets solder-masked with tented vias and no test pad, 0402 on its own BOM line | the polyimide sheet covers the bottom terminals, so a top-side bridge cannot reach them; a top-side position in the tap field would create new short-table pairs; the bound holds at any position once the F17 pad is the only exposed copper of the net |\n| CHG-R1-01 (A-01) | one REG1B read; ACK with VBUS_PRESENT latches the carrier fault | as proposed, and an ACK with VBUS_PRESENT_STAT 0 runs the FR-48(a) D-BT-SQ check; one read per episode, never counted as I2C traffic | with no input power the charger can ACK only from the battery side, which is the D-BT-SQ short signature |\n| CHG-R1-01 | a powered bridge test | T-C-05c asserts FLT through UVLO (VCHG-IN 8.0 V) and releases it at 16.0 V | SLVSE94G §5: a UVLO event asserts FLT; this avoids an overload inside the bridge test |\n| CHG-R1-02 | one seven-byte read REG01-07 after the writes | four field reads (REG01:02, REG03:04, REG05, REG06:07) | the seven-byte read takes 0.930 ms at 100 kHz, above the 0.50 ms FR-07 cap; each field read stays inside the cap at both rates and no 16-bit field is split (H.23(o)) |\n| CHG-R1-02 | a V-MOT peak for the delayed raise | none published; H.16 gives the transaction schedule only | rejected part of the adjudication |\n| CHG-R1-D01 | exempt the SD close from \"no SD log open\" | two gates: `flashWriteAllowed` (no bench log recording and no SD operation in flight; never in State 99) and `sdOpAllowed` (Idle, State 98 with the heartbeat stopped, or State 99 phase 3) | round-2 refinement: an exemption alone leaves the State-99 contradiction; a file that is merely open is not affected by the IRQ mask |\n| CHG-R1-D01 | battery-supported Idle admission | as proposed, with `fcPurgeExposure()` explicitly excluded, and the FC_BUS LOW path kept for a manually configured State 98 | `fcPurgeExposure()` is TRUE in Idle; the \"never true\" claim for State 98 was rejected |\n| CHG-R1-D04 | specify the wire and sweep L' | 20 AWG stranded copper, insulation OD 1.60-1.75 mm, 20-25 mm pitch; thin-wall PTFE and 600 V-class insulation excluded | thin-wall PTFE reaches 38.23 V, above the 36 V D107 VBR(min); an OD above 1.787 mm breaks the 2.0 mm plan dressing rule (H.23(p)); \"no pair reaches 36 V\" is limited to the modelled envelope (rejected part) |\n| CHG-R1-03 (A-07) | state whether ADC_EN is cleared | ADC_EN is always cleared by an explicit write after the REG3B read, then REG2E is read back | whether the one-shot clears ADC_EN by itself is TODO(verify: SLUSDV2C Table 7-55); a left-on ADC would draw pack current in Idle |\n| CHG-R1-04 | split 8b; expiry wait or CLR | CLR: P5 rises with QUAL already LOW (step 8c), pin 33 LOW within 5 ms | it leaves P5 HIGH for step 9, proves the U111 CLR path at every Run entry, and avoids the 0.20-0.51 s expiry wait |\n| CHG-R1-04 | extend T-F-03 beyond IBAT 0 +- 20 mA | one brake with IBAT above the cruise reading by > 0.1 A, LA on pins 5, 7, 10 and 33, and a forced T9 | the 0.1 A detection threshold is an assumption, TODO(calibrate: T-G-01) |\n| CHG-R1-D03 | a redesigned riser, for example a stepped riser block | a machined insulating wedge B1R with a 65 deg ramp face, a B3 post at 10.7 mm and a 10.4 mm free span; lowering B1 alone was not used | rejected part; 65 deg is the shallowest computed slope at which W1/W2 still join the trunk on the copper (ramp 0.13 mm at T1, under the 0.8 mm jacket radius); the full-profile minimum margin is 0.504 mm (H.23(s)); the dressing is confirmed at the T-A-06 dry fit (J.2 item 66) |\n| CHG-R1-W01 | decide the order and/or a plan separation | W5 above the trunk over the whole overlap, resting on it with RTV; no plan separation | below the riser the trunk top already lies under the W5 fold, so no lead crosses under another (H.23(t)) |\n| CHG-R1-05 (A-04) | a re-made foot and a repair after soldering | the fallback is decided before soldering by the T-A-09 step 0 bond coupon; after soldering, only an RTV re-bed through the fill hole; a repeat debond needs the CR desoldered | H.23(r): the sheet under FT2 cannot be removed under a soldered CR (1.612 mm to L-FC, 2.540 mm slot) |\n| CHG-R1-D02 | 12 V after 0.5 s as the criterion | (b1) 12 V / 0.5 s as a proposed criterion, TODO(verify: T-C-04); (b2) a 5 s timeout with no pass/fail; dwell 1.5 s if T-C-04 measures < 0.375 mA | rejected part: 12 V / 0.5 s is not an established bound; the 5 s timeout lies above the 3.695 s worst case (H.23(x)) |\n| CHG-R1-08 (A-05) | state the inter-burst current | 1.6 A, the FC-window ICHG; run B (60 %) is information only | 1.6 A represents regen inside an FC window and bounds the regen-armed mode, where the charger carries 0 A between bursts |\n| CHG-R1-06 (A-06) | move obsolete text into historical blocks | each marker now holds the old text and the live text is the current instruction; the r7 rev-2 W-lead tables stay in place, labelled history | the revision convention keeps replaced text in place; the destruction claim was rejected |\n| CHG-R1-07 | add the hand calculations to `r7_calc.py` | revision 5 (H.23(u)-(w)) and revision 6 (H.23(x)); the T-C-16 abort ratio re-based on the built E1 length | the r7 ratio 8.8 holds at 90 mm only; H.23(v) gives 17.80 at 85 mm |\n| CHG-R1-A02 | add the datasheet | the datasheet is local (`references/Datasheets/tps2663.pdf`); K cites it, and this design closes the item in K | the ledger is outside the files this design edits; its status is updated in the audit record |\n\nNo finding was rejected.\n"
+  }
+ ]
+}

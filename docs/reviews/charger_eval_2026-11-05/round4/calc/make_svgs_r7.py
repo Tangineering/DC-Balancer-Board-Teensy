@@ -6,6 +6,8 @@ Writes, into round4/:
                           placement past the MB +y edge as a second panel at a smaller scale;
   wiring_bq25798.svg      the round-3 wiring drawing (round3/calc/make_svgs.py) with the r7 changes only;
   carrier_schematic.svg   the round-3 carrier / EIB schematic with the r7 changes only.
+r8 (charger-design audit run 001): R106s 1.00 kOhm between U101 FLT and the F17 pad (wiring and schematic, B.4);
+  the B1R wedge (r7_calc_out.json s.block, H.23(s)) replaces the B1 bead on the layout.
 
 Edit this generator, not the SVGs. Coordinate sources (no coordinate is typed in by hand except where a comment cites the
 design section it comes from):
@@ -179,7 +181,7 @@ W12_LEN = "fixed 0.30 m +- 10 mm (D-F3); slack = service loop"  # r7 review 7 D-
 
 
 def wiring():
-    s = Svg(1760, 1300, "BQ25798EVM in place of the Ag105: wiring (board rev 20260622, round 4 r7)")
+    s = Svg(1760, 1300, "BQ25798EVM in place of the Ag105: wiring (board rev 20260622, round 4 r8)")
     s.text(880, 46, "docs/charger_bq25798_wiring_design_2026-11-05.md sections A.2-A.8 are the netlist; this drawing must match them", 11, "middle", MUTE)
 
     # ---------------- motherboard
@@ -267,7 +269,7 @@ def wiring():
     s.text(cx + 30, cy + 112, "I_OL 2.05-2.41 A (R101 8.06k); UVLO 9.9 V; OVP 23.1 V", 10)
     s.text(cx + 30, cy + 128, "IN: C102a/b/c 1u+4.7u(100V)+0.1u, D107 SMAJ33A class;", 10)
     s.text(cx + 30, cy + 144, "OUT: D103 SMA + C103 (r5 region table)", 10)
-    s.text(cx + 30, cy + 160, "IMON 27.4k -> R129 10k / C129 1n -> T17; FLT -> T16 (R106 DNP)", 10)
+    s.text(cx + 30, cy + 160, "IMON 27.4k -> R129 10k / C129 1n -> T17; FLT -> R106s 1k -> T16 (r8)", 10)
     s.text(cx + 30, cy + 176, "MODE open, SHDN open, PGTH + PGOOD to GND", 10, color=MUTE)
     s.box(cx + 20, cy + 205, 360, 150, "Comparators (TLV3012B x 7, r6)", "#fff")
     s.text(cx + 30, cy + 243, "U102 H1: V-MOT (T1) vs VBUS (T2C), ratio 1.089", 10)
@@ -299,7 +301,7 @@ def wiring():
     s.text(cx + 20, cy + 906, "THERM pad 13 -> W6 (only if NTC, T-E-09)", 10, color=SIG)
     s.text(cx + 20, cy + 924, "readback in: W5 11 -> R125 -> T12; W5 13 -> R148 -> T20 (pin 7)", 10, color=SIG)
     s.text(cx + 20, cy + 960, "r7: Eagle coords, +y UP; chamfer at the tab Y -x/+y corner (17.70, 76.00), pin-11 side", 10, color=MUTE)
-    s.text(cx + 20, cy + 978, "r7: W leads on the A.3 dressing path (B1/B3, S1-S3, A1/A2)", 10, color=MUTE)
+    s.text(cx + 20, cy + 978, "r8: W leads on the A.3 dressing path (B1R wedge, B3, S1-S3, A1/A2)", 10, color=MUTE)
 
     s.line([(pad["22"][0] + 10, fy + 160), (cx, fy + 160)], MUTE, 6, "2,4")
     s.text(620, fy + 150, "22 pins", 10, "middle", MUTE)
@@ -353,7 +355,7 @@ def wiring():
         anchors[t.split()[0]] = y + 30
     s.line([(cx + cw, cy + 90), (1260, cy + 90), (1260, anchors["J1"]), (vx + 15, anchors["J1"])], PWR, 3)
     s.line([(cx + cw, cy + 100), (1250, cy + 100), (1250, anchors["J1"] + 17), (vx + 15, anchors["J1"] + 17)], INK, 3)
-    s.text(1070, cy + 84, "W1/W2  20 AWG twisted pair", 10, color=PWR)
+    s.text(1070, cy + 84, "W1/W2 20 AWG, OD 1.60-1.75 (r8)", 10, color=PWR)
     s.text(1070, cy + 116, W12_LEN, 10, color=PWR)                                                       # r7 review 7 (D-F3)
     s.line([(cx + cw, cy + 950), (1395, cy + 950), (1395, anchors["J5"]), (vx + 15, anchors["J5"])], BAT, 3.4)
     s.line([(cx + cw, cy + 960), (1405, cy + 960), (1405, anchors["J5"] + 34), (vx + 15, anchors["J5"] + 34)], INK, 3.4)
@@ -387,7 +389,7 @@ def wiring():
 
 # ===================================================================== carrier schematic (round 3 + r7 changes)
 def schematic():
-    s = Svg(1760, 1420, "CHG adapter carrier (CR) and EVM interface board (EIB): schematic, round 4 r7")
+    s = Svg(1760, 1420, "CHG adapter carrier (CR) and EVM interface board (EIB): schematic, round 4 r8")
     s.text(880, 46, "Net-label schematic. Values from calc/r3_calc.py; pin numbers in design section B.8. Every net name matches section B", 11, "middle", MUTE)
 
     # ---------- eFuse
@@ -444,7 +446,7 @@ def schematic():
     s.text(470, 222, "C129 1n", 8)
     s.res(360, 262, 470, 262, "")
     s.flag(470, 262, "CHG_EFUSE_FLT (T16)", "R")
-    s.text(392, 254, "R106 DNP (pin 35 INPUT_PULLUP)", 8)
+    s.text(380, 254, "R106s 1.00k 1 % (r8, B.4); R106 DNP", 8)            # r8: the series resistor drawn here is R106s
     s.text(366, 292, "open (internal 2.48-3.3 V)", 9, color=MUTE)
     s.line([(360, 306), (380, 306)])
     s.gnd(380, 306)
@@ -767,11 +769,11 @@ def layout():
     J = json.load(open(CALC_JSON))
     paths = full_paths()
     W, H = 1320, 1010
-    s = Svg(W, H, "CHG carrier r7 (round 4): outline, tabs, feet, tap field")
+    s = Svg(W, H, "CHG carrier r8 (round 4): outline, tabs, feet, tap field")
     s.text(PX0, 50, "Top view, Eagle .brd board coordinates in mm (+y up), 8 px/mm. Sources: r7_calc_out.json H.23 (a), (d), (g), (h), (i), (l), (m); "
                     "design A.7/A.8; MB parts and layer-1 copper from the .brd (mb_neighbours.py via r7_calc.py).", 10, color=MUTE)
     s.text(PX0, 66, "Drawn on the CR top side: outlines, header pads, W1-W4 holes, W6/W7 pads, tap pads, R175 pads, J101 and comparator regions, "
-                    "the W-lead dressing path, beads B1/B3 and W5 spacers S1-S3 (calc revision 4).", 10, color=MUTE)
+                    "the W-lead dressing path, the B1R wedge (r8), bead/post B3 and W5 spacers S1-S3 (calc revisions 4 and 5).", 10, color=MUTE)
     s.text(PX0, 80, "Drawn under the CR or on the MB: MB parts, MB copper, feet (CR bottom), polyimide sheet with relief holes and cut-outs, "
                     "polyimide strip, tie bases A1/A2.", 10, color=MUTE)
     s.raw('<defs>'
@@ -997,6 +999,11 @@ def layout():
           % (pts_attr([q[0] for q in cp5]), 2 * cp5[0][1] * S))
     # CR beads B1/B3 (RTV spacer posts) and W5 spacer beads S1-S3, 3.0 x 3.0 mm footprints (ASSUMPTION, H.23(l))
     for nm, (x, y) in Ld["anchors"]["cr"].items():
+        if nm == "B1":      # r8 (H.23(s)): the B1R wedge replaces the B1 bead
+            p = rect_px(tuple(J["s"]["block"]))
+            s.raw('<rect x="%.2f" y="%.2f" width="%.2f" height="%.2f" fill="#ce93d8" fill-opacity="0.85" stroke="#4a148c" '
+                  'stroke-width="1.3"/>' % (p[0], p[1], p[2] - p[0], p[3] - p[1]))
+            continue
         fill, st = ("#e1bee7", "#6a1b9a") if nm.startswith("B") else ("#b2ebf2", "#00838f")
         p = rect_px((x - 1.5, y - 1.5, x + 1.5, y + 1.5))
         s.raw('<rect x="%.2f" y="%.2f" width="%.2f" height="%.2f" fill="%s" fill-opacity="0.85" stroke="%s" stroke-width="1.3"/>'
@@ -1078,7 +1085,7 @@ def layout():
     for nm, tb in tbs.items():
         c = tb["centre"]
         lab(c[0] + tb["side"] / 2 - 0.3, c[1] - tb["side"] / 2 + 0.4, nm, 9, anchor="end", color="#3e2723", bold=True)   # inside the base
-    lab(23.9, 66.6, "B1", 7.5, anchor="end", color="#6a1b9a", bold=True)
+    lab(23.4, 66.6, "B1R", 7.5, anchor="end", color="#4a148c", bold=True)      # r8: wedge x 23.55-26.05 (H.23(s))
     lab(35.0, 74.95, "B3/S3", 7.5, anchor="middle", color="#6a1b9a", bold=True)
     lab(35.0, 45.2, "S1", 7.5, anchor="middle", color="#00838f", bold=True)
     lab(30.4, 53.1, "S2", 7.5, color="#00838f", bold=True)
@@ -1273,7 +1280,8 @@ def layout():
         ("band", dict(stroke="#546e7a", sw=1.6, op=0.22, line=PWR), "W-lead path: centre line, band = jacket envelope"),
         ("band", dict(stroke="#0b8f8f", sw=1.6, op=0.16, line="#0b8f8f", dash="6,2"), "W5 ribbon: centre line, 8.89 mm band"),
         ("line", dict(stroke="#8e24aa", sw=6, op=0.75, dash="4,3"), "3-D rule: span held above the MB on spacers"),
-        ("sq", dict(fill="#e1bee7", stroke="#6a1b9a"), "RTV bead / spacer post B1, B3 (3 x 3 mm)"),
+        ("sq", dict(fill="#ce93d8", stroke="#4a148c"), "B1R wedge, 65 deg ramp, apex 9.78 mm (r8)"),
+        ("sq", dict(fill="#e1bee7", stroke="#6a1b9a"), "RTV bead / post B3 10.7 mm (3 x 3 mm)"),
         ("sq", dict(fill="#b2ebf2", stroke="#00838f"), "W5 spacer bead S1-S3 (3 x 3 mm)"),
         ("rect", dict(fill="#d7ccc8", stroke="#5d4037", sw=1.4), "MB tie base A1/A2; dashed: +-1.5 mm zone"),
         ("rect", dict(fill="#80cbc4", stroke="#80cbc4", sw=1, op=0.45), "polyimide strip on the MB (envelope + 2 mm)"),
@@ -1339,11 +1347,11 @@ def layout():
         "W6/W7 pads: A.8 gives 1.2 x 1.5 mm; the orientation (1.2 mm along x) is an ASSUMPTION. Header pads are drawn at the A.8 minimum 1.9 mm.",
         "W-lead dressing path (A.3, H.23(l)): trunk +y on x 25.80, +x across tab Y at y 69.60-71.75, off the CR at x 37.56 to tie base A1; west group "
         "(W1, W2, W6, W7) up x 58.00, east group (W3, W4, W5) via A2.",
-        "    Anchors: beads B1/B3 and W5 spacers S1-S3 on the CR (3.0 x 3.0 mm, ASSUMPTION; B3 and S3 merge), tie bases A1 %.0f x %.0f mm +- %.1f and "
+        "    Anchors: r8 B1R wedge x 23.55-26.05, y 62.54-67.10 (H.23(s)); bead/post B3 and W5 spacers S1-S3 on the CR (3.0 x 3.0 mm, ASSUMPTION; B3 and S3 merge), tie bases A1 %.0f x %.0f mm +- %.1f and "
         "A2 %.0f x %.0f mm +- %.1f on the MB (zone dashed); longest span 26.0 mm (<= 30 mm)."
         % (tbs["A1"]["side"], tbs["A1"]["side"], tbs["A1"]["tol"], tbs["A2"]["side"], tbs["A2"]["side"], tbs["A2"]["tol"]),
         "3-D switched-conductor rule (decision 2026-11-10, no height limit): the round leads are held >= %.2f mm above the MB from B1 to (%.2f, %.2f), "
-        "W5 >= %.2f mm (L-FC top 5.0 mm, ASSUMPTION)."
+        "W5 >= %.2f mm (L-FC top 5.0 mm, ASSUMPTION); r8: trunk on the B1R ramp, B3 post 10.7 mm above the CR top (14.965 mm above the MB), W5 on the trunk at 19.850-20.750 mm (H.23(s), H.23(t))."
         % (J["l"]["rev4"]["sw3d"]["W1"][0]["need"], J["l"]["rev4"]["sw3d"]["W1"][0]["p1"][0], J["l"]["rev4"]["sw3d"]["W1"][0]["p1"][1],
            J["l"]["rev4"]["sw3d"]["W5"][0]["need"]),
         "Polyimide strip on the MB under the leads off the CR: lead envelope + 2.0 mm within x %.2f-%.2f, y %.2f-%.2f (drawn from the tab Y +x edge); "

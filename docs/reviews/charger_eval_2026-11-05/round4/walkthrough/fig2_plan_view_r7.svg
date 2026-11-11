@@ -1,8 +1,8 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1088 748" width="1088" height="748" font-family="Helvetica, Arial, sans-serif" font-size="12">
-<rect width="1088" height="748" fill="#ffffff"/>
-<defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#222"/></marker><marker id="ap" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#7b1fa2"/></marker></defs>
-<text x="20" y="28" font-size="16" font-weight="bold">Fig 2. Plan view of the MB region around the CR, r7 (top view, board mm, +y up; simplified)</text>
-<text x="20.0" y="46.0" fill="#555">Drawn: r7 outline, Ag105 footprint, feet, tap field, comparator band, W-lead dressing path with anchors, polyimide strip. MB parts are boxes only.</text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1088 788" width="1088" height="788" font-family="Helvetica, Arial, sans-serif" font-size="12">
+<rect width="1088" height="788" fill="#ffffff"/>
+<defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#222"/></marker><marker id="ap" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#7b1fa2"/></marker><marker id="ap8" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#ad1457"/></marker></defs>
+<text x="20" y="28" font-size="16" font-weight="bold">Fig 2. Plan view of the MB region around the CR, r8 (top view, board mm, +y up; simplified)</text>
+<text x="20.0" y="46.0" fill="#555">Drawn: r7 outline, Ag105 footprint, feet, tap field, comparator band, W-lead dressing path with anchors (r8: B1R wedge), polyimide strip, F17 / R106s (r8). MB parts are boxes only.</text>
 <rect x="30.0" y="70.0" width="728.0" height="658.0" fill="#ffffff" stroke="#999" stroke-width="1"/>
 <rect x="30.0" y="251.7" width="728.0" height="476.3" fill="#f4f4f2" stroke="none" stroke-width="1"/>
 <line x1="30.0" y1="251.7" x2="758.0" y2="251.7" stroke="#37474f" stroke-width="2.5"/>
@@ -74,8 +74,10 @@
 <path d="M453.5,423.5 L436.0,406.0 L436.0,251.7 L436.0,210.0" stroke="#b71c1c" stroke-width="3" fill="none"/>
 <path d="M453.5,423.5 L457.0,339.5 L530.5,322.0 L570.8,251.7 L590.0,210.0" stroke="#b71c1c" stroke-width="3" fill="none"/>
 <path d="M315.2,610.2 L230.9,610.2 L230.9,564.1 L230.9,426.3 L275.0,426.3 L324.0,426.3 L341.5,421.4 L453.5,421.4 L457.0,337.4 L530.5,322.0 L553.2,251.7 L565.5,210.0" stroke="#00897b" stroke-width="2" fill="none" stroke-dasharray="6,3"/>
-<rect x="200.1" y="476.0" width="21.0" height="21.0" fill="#e1bee7" stroke="#7b1fa2" stroke-width="1.5"/>
 <rect x="264.5" y="431.9" width="21.0" height="21.0" fill="#e1bee7" stroke="#7b1fa2" stroke-width="1.5"/>
+<rect x="194.8" y="468.3" width="17.5" height="31.9" fill="#fce4ec" stroke="#ad1457" stroke-width="1.8"/>
+<line x1="200.1" y1="496.0" x2="200.1" y2="472.5" stroke="#ad1457" stroke-width="1.5" marker-end="url(#ap8)"/>
+<rect x="431.6" y="500.3" width="14.7" height="14.7" fill="none" stroke="#ad1457" stroke-width="2"/>
 <rect x="264.5" y="593.7" width="21.0" height="21.0" fill="#b2ebf2" stroke="#00838f" stroke-width="1.5"/>
 <rect x="220.4" y="553.6" width="21.0" height="21.0" fill="#b2ebf2" stroke="#00838f" stroke-width="1.5"/>
 <rect x="264.5" y="415.8" width="21.0" height="21.0" fill="#b2ebf2" stroke="#00838f" stroke-width="1.5"/>
@@ -91,9 +93,9 @@
 <text x="37.0" y="449.4" font-weight="bold" fill="#1565c0">tab Y</text>
 <text x="37.0" y="464.4" fill="#1565c0">x 17.70-37.56</text>
 <text x="37.0" y="479.4" fill="#1565c0">y 67.14-76.00</text>
-<line x1="153.9" y1="546.0" x2="148.0" y2="531.5" stroke="#888" stroke-width="0.8"/>
-<text x="37.0" y="535.5" font-weight="bold" fill="#455a64">Ag105 footprint</text>
-<text x="37.0" y="550.5" fill="#455a64">31 x 33 mm (dashed)</text>
+<line x1="153.9" y1="553.0" x2="148.0" y2="540.6" stroke="#888" stroke-width="0.8"/>
+<text x="37.0" y="544.6" font-weight="bold" fill="#455a64">Ag105 footprint</text>
+<text x="37.0" y="559.6" fill="#455a64">31 x 33 mm (dashed)</text>
 <line x1="476.0" y1="471.1" x2="492.5" y2="453.8" stroke="#888" stroke-width="0.8"/>
 <text x="495.5" y="457.8" font-weight="bold" fill="#1b5e20">FT1 4.0 x 1.6</text>
 <text x="495.5" y="472.8" fill="#1b5e20">(61.72, 66.71)</text>
@@ -105,10 +107,14 @@
 <text x="495.5" y="578.5" fill="#1b5e20">(20 pads + R175 + 2 spare)</text>
 <line x1="321.8" y1="687.4" x2="338.5" y2="712.8" stroke="#888" stroke-width="0.8"/>
 <text x="341.5" y="716.8" font-size="11" fill="#1b5e20">F08-F10, F22 (low row y 35.80)</text>
-<line x1="200.1" y1="486.5" x2="185.2" y2="493.0" stroke="#888" stroke-width="0.8"/>
-<text x="37.0" y="497.0" font-size="11" font-weight="bold" fill="#7b1fa2">B1 post (25.80, 64.50)</text>
+<line x1="194.8" y1="491.3" x2="99.4" y2="502.8" stroke="#888" stroke-width="0.8"/>
+<text x="37.0" y="506.8" font-size="11" font-weight="bold" fill="#ad1457">B1R wedge</text>
+<text x="37.0" y="520.8" font-size="11" fill="#ad1457">(r8, 65 deg)</text>
 <line x1="275.0" y1="452.9" x2="300.0" y2="491.6" stroke="#888" stroke-width="0.8"/>
 <text x="303.0" y="495.6" font-size="11" font-weight="bold" fill="#7b1fa2">B3 post + S3</text>
+<line x1="446.3" y1="511.8" x2="492.5" y2="601.5" stroke="#888" stroke-width="0.8"/>
+<text x="495.5" y="605.5" font-size="11" font-weight="bold" fill="#ad1457">F17 (T16): R106s on the</text>
+<text x="495.5" y="619.5" font-size="11" fill="#ad1457">tab X bottom beside it (r8)</text>
 <line x1="285.5" y1="604.2" x2="296.5" y2="591.0" stroke="#888" stroke-width="0.8"/>
 <text x="299.5" y="595.0" font-size="11" font-weight="bold" fill="#00838f">S1</text>
 <line x1="241.4" y1="564.1" x2="261.5" y2="545.5" stroke="#888" stroke-width="0.8"/>
@@ -156,31 +162,37 @@
 <text x="808.0" y="278.0" font-size="11">W1-W4, W6, W7 dressing path</text>
 <line x1="778.0" y1="296.0" x2="800.0" y2="296.0" stroke="#00897b" stroke-width="2" stroke-dasharray="6,3"/>
 <text x="808.0" y="300.0" font-size="11">W5 ribbon path</text>
-<rect x="778.0" y="311.0" width="22.0" height="13.0" fill="#e1bee7" stroke="#7b1fa2" stroke-width="1.5"/>
-<text x="808.0" y="322.0" font-size="11">B1/B3 spacer post (bead)</text>
-<rect x="778.0" y="333.0" width="22.0" height="13.0" fill="#b2ebf2" stroke="#00838f" stroke-width="1.5"/>
-<text x="808.0" y="344.0" font-size="11">W5 spacer S1-S3</text>
-<rect x="778.0" y="355.0" width="22.0" height="13.0" fill="#d7ccc8" stroke="#4e342e" stroke-width="1.5"/>
-<text x="808.0" y="366.0" font-size="11">tie base A1/A2 (+-1.5 mm zone)</text>
-<line x1="778.0" y1="384.0" x2="800.0" y2="384.0" stroke="#80cbc4" stroke-width="10"/>
-<text x="808.0" y="388.0" font-size="11">polyimide strip on the MB</text>
-<rect x="778.0" y="399.0" width="22.0" height="13.0" fill="#ffcdd2" stroke="#c62828" stroke-width="1.5"/>
-<text x="808.0" y="410.0" font-size="11">chassis-tie limit past the edge</text>
-<rect x="778.0" y="421.0" width="22.0" height="13.0" fill="#eeeeee" stroke="#777" stroke-width="1.5"/>
-<text x="808.0" y="432.0" font-size="11">MB part box (.brd)</text>
-<text x="778.0" y="468.0" font-size="13" font-weight="bold">Notes</text>
-<text x="778.0" y="486.0" font-size="11" fill="#555">Trunk: W3 up x 24.40 joins at y 57.00;</text>
-<text x="778.0" y="501.0" font-size="11" fill="#555">+y on x 25.80, +x across tab Y</text>
-<text x="778.0" y="516.0" font-size="11" fill="#555">at y 69.60-71.10, leaves at x 37.56;</text>
-<text x="778.0" y="531.0" font-size="11" fill="#555">y 71.75 at x 48.00, then to A1.</text>
-<text x="778.0" y="546.0" font-size="11" fill="#555">West group: A1 -&gt; x 58.00 -&gt; MB edge.</text>
-<text x="778.0" y="561.0" font-size="11" fill="#555">East group: A1 -&gt; A2 -&gt; MB edge</text>
-<text x="778.0" y="576.0" font-size="11" fill="#555">(W3/W4 at x 77.25, W5 at x 74.75).</text>
-<text x="778.0" y="591.0" font-size="11" fill="#555">No W lead crosses tab X.</text>
-<text x="778.0" y="606.0" font-size="11" fill="#555">Every span between anchors &lt;= 30 mm</text>
-<text x="778.0" y="621.0" font-size="11" fill="#555">(longest 26.0 mm, S2-S3).</text>
-<text x="778.0" y="636.0" font-size="11" fill="#555">Polyimide strip bbox x 36.06-65.28,</text>
-<text x="778.0" y="651.0" font-size="11" fill="#555">y 65.30-92.80; it stops at A1 and A2.</text>
-<text x="778.0" y="666.0" font-size="11" fill="#555">Sources: r7_calc_out.json H.23(a), (g),</text>
-<text x="778.0" y="681.0" font-size="11" fill="#555">(h), (i), (l); MB boxes from the .brd.</text>
+<rect x="778.0" y="311.0" width="22.0" height="13.0" fill="#fce4ec" stroke="#ad1457" stroke-width="1.5"/>
+<text x="808.0" y="322.0" font-size="11">B1R riser wedge (r8, A.3)</text>
+<rect x="778.0" y="333.0" width="22.0" height="13.0" fill="#e1bee7" stroke="#7b1fa2" stroke-width="1.5"/>
+<text x="808.0" y="344.0" font-size="11">B3 post (bead), 10.7 mm (r8)</text>
+<rect x="778.0" y="355.0" width="22.0" height="13.0" fill="#b2ebf2" stroke="#00838f" stroke-width="1.5"/>
+<text x="808.0" y="366.0" font-size="11">W5 spacer S1-S3</text>
+<rect x="778.0" y="377.0" width="22.0" height="13.0" fill="#d7ccc8" stroke="#4e342e" stroke-width="1.5"/>
+<text x="808.0" y="388.0" font-size="11">tie base A1/A2 (+-1.5 mm zone)</text>
+<line x1="778.0" y1="406.0" x2="800.0" y2="406.0" stroke="#80cbc4" stroke-width="10"/>
+<text x="808.0" y="410.0" font-size="11">polyimide strip on the MB</text>
+<rect x="778.0" y="421.0" width="22.0" height="13.0" fill="#ffcdd2" stroke="#c62828" stroke-width="1.5"/>
+<text x="808.0" y="432.0" font-size="11">chassis-tie limit past the edge</text>
+<rect x="778.0" y="443.0" width="22.0" height="13.0" fill="#eeeeee" stroke="#777" stroke-width="1.5"/>
+<text x="808.0" y="454.0" font-size="11">MB part box (.brd)</text>
+<text x="778.0" y="490.0" font-size="13" font-weight="bold">Notes</text>
+<text x="778.0" y="508.0" font-size="11" fill="#555">Trunk: W3 up x 24.40 joins at y 57.00;</text>
+<text x="778.0" y="523.0" font-size="11" fill="#555">+y on x 25.80, +x across tab Y</text>
+<text x="778.0" y="538.0" font-size="11" fill="#555">at y 69.60-71.10, leaves at x 37.56;</text>
+<text x="778.0" y="553.0" font-size="11" fill="#555">y 71.75 at x 48.00, then to A1.</text>
+<text x="778.0" y="568.0" font-size="11" fill="#555">West group: A1 -&gt; x 58.00 -&gt; MB edge.</text>
+<text x="778.0" y="583.0" font-size="11" fill="#555">East group: A1 -&gt; A2 -&gt; MB edge</text>
+<text x="778.0" y="598.0" font-size="11" fill="#555">(W3/W4 at x 77.25, W5 at x 74.75).</text>
+<text x="778.0" y="613.0" font-size="11" fill="#555">No W lead crosses tab X.</text>
+<text x="778.0" y="628.0" font-size="11" fill="#555">Every span between anchors &lt;= 30 mm</text>
+<text x="778.0" y="643.0" font-size="11" fill="#555">(longest 26.0 mm, S2-S3; r8 trunk</text>
+<text x="778.0" y="658.0" font-size="11" fill="#555">span B1R apex to B3 10.4 mm).</text>
+<text x="778.0" y="673.0" font-size="11" fill="#555">r8: W5 above the trunk over the</text>
+<text x="778.0" y="688.0" font-size="11" fill="#555">whole overlap, on it from (28.70, 64.01).</text>
+<text x="778.0" y="703.0" font-size="11" fill="#555">Polyimide strip bbox x 36.06-65.28,</text>
+<text x="778.0" y="718.0" font-size="11" fill="#555">y 65.30-92.80; it stops at A1 and A2.</text>
+<text x="778.0" y="733.0" font-size="11" fill="#555">Sources: r7_calc_out.json H.23(a), (g),</text>
+<text x="778.0" y="748.0" font-size="11" fill="#555">(h), (i), (l), (s), (t); MB boxes from</text>
+<text x="778.0" y="763.0" font-size="11" fill="#555">the .brd.</text>
 </svg>

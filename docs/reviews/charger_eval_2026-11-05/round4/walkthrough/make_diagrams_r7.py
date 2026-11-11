@@ -1,10 +1,11 @@
-"""Simplified walkthrough diagrams for the round-4 (r7) BQ25798EVM carrier design.
+"""Simplified walkthrough diagrams for the round-4 BQ25798EVM carrier design, revision r8 (file names keep "r7").
 
 Emits four hand-style SVGs next to this script (same drawing style as ../../round3/walkthrough/fig1-fig4):
 
   fig1_power_path_r7.svg     power path VBUS/V-MOT -> CR -> EVM -> pack, EIB on the EVM plate, taps; r7 items marked
   fig2_plan_view_r7.svg      top-view plan of the MB region around the CR (r7 outline, tabs, feet, tap field, W-lead path)
-  fig3_side_stack_r7.svg     side section through tab Y: stack heights, FT2 bed, spacer post, 3-D clearance to L-FC
+  fig3_side_stack_r7.svg     (a) side section through tab Y: stack heights, FT2 bed, B3 post, trunk and W5 stacked,
+                             3-D clearance to L-FC; (b) side section through the B1R riser wedge (r8)
   fig4_assembly_order_r7.svg PM build order with the measurement gates MS1-MS8
 
 Sources (read at run time, nothing is computed that the calc does not already state):
@@ -39,6 +40,8 @@ EVM_EDGE = "#2a7a2a"
 NOTE_FILL = "#f6f6f6"
 R7 = "#7b1fa2"          # marks an item new in r7
 R7_FILL = "#f3e5f5"
+R8 = "#ad1457"          # marks an item new or changed in r8 (audit run 001)
+R8_FILL = "#fce4ec"
 WARN = "#c62828"
 
 
@@ -52,7 +55,9 @@ class Svg:
             '<defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" '
             'orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#222"/></marker>'
             '<marker id="ap" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" '
-            'orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="%s"/></marker></defs>' % R7,
+            'orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="%s"/></marker>'
+            '<marker id="ap8" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" '
+            'orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="%s"/></marker></defs>' % (R7, R8),
             '<text x="20" y="28" font-size="16" font-weight="bold">%s</text>' % escape(title),
         ]
 
@@ -104,10 +109,13 @@ class Svg:
         d = ' stroke-dasharray="%s"' % dash if dash else ""
         self.add('<circle cx="%.1f" cy="%.1f" r="%.1f" fill="%s" stroke="%s" stroke-width="%g"%s/>' % (x, y, r, fill, stroke, sw, d))
 
-    def r7tag(self, x, y):
-        """Small purple 'r7' badge with its top-left corner at (x, y)."""
-        self.rect(x, y, 22, 14, fill=R7, stroke=R7, rx=3)
-        self.text(x + 11, y + 11, "r7", 11, "#ffffff", bold=True, anchor="middle")
+    def r7tag(self, x, y, tag="r7", col=R7):
+        """Small 'r7' (purple) or 'r8' (magenta) badge with its top-left corner at (x, y)."""
+        self.rect(x, y, 22, 14, fill=col, stroke=col, rx=3)
+        self.text(x + 11, y + 11, tag, 11, "#ffffff", bold=True, anchor="middle")
+
+    def r8tag(self, x, y):
+        self.r7tag(x, y, "r8", R8)
 
     def save(self, name):
         self.el.append("</svg>")
@@ -120,9 +128,10 @@ class Svg:
 # D1  power path
 # ---------------------------------------------------------------------------------------------------------------------
 def fig1():
-    s = Svg(1320, 640, "Fig 1. Power path with the BQ25798EVM, r7 (simplified)")
+    s = Svg(1320, 652, "Fig 1. Power path with the BQ25798EVM, r8 (simplified)")
     s.text(20, 46, "Blue = RT1987 ideal-diode switch: conducts left-to-right only, while its EN (Teensy pin) is HIGH. "
-                   "Purple outline and the r7 badge = new or changed in r7 (round 4).", 12, GREY)
+                   "Purple + r7 badge = new or changed in r7 (round 4); magenta + r8 badge = new or changed in r8 "
+                   "(audit run 001).", 12, GREY)
 
     # VBUS bar
     s.line(400, 75, 400, 305, sw=4)
@@ -165,13 +174,19 @@ def fig1():
     s.rect(712, 318, 170, 46, R7_FILL, R7, sw=1.5, dash="5,3")
     s.r7tag(716, 322)
     s.lines(742, 333, ["tab X + tab Y, feet", "FT1/FT2; 47.30 x 41.86 mm"], 11, R7, dy=14)
+    # r8 items on the CR (B.4 R106s, H.23(n); A.3 B1R, H.23(s))
+    s.rect(712, 372, 170, 76, R8_FILL, R8, sw=1.5, dash="5,3")
+    s.r8tag(716, 376)
+    s.lines(742, 387, ["R106s 1.00 kOhm 1 %:", "U101 FLT -> F17 (T16);", "FLT sink <= 3.377 mA"], 11, R8, dy=14)
+    s.text(720, 443, "B1R wedge, B3 post 10.7 mm", 11, R8)
 
-    # W1/W2
+    # W1/W2 (r7 fixed length; r8 wire specification, A.3 / H.23(p))
     s.path("M882 160 H1015", sw=2.5)
     s.text(890, 150, "W1/W2", bold=True)
     s.r7tag(942, 139)
-    s.text(890, 178, "20 AWG pair, fixed", 11, R7)
-    s.text(890, 192, "0.30 m +-10 mm", 11, R7)
+    s.r8tag(966, 139)
+    s.text(890, 178, "fixed 0.30 m +-10 mm", 11, R7)
+    s.lines(890, 196, ["20 AWG stranded,", "OD 1.60-1.75 mm,", "twist 20-25 mm"], 11, R8, dy=14)
 
     # EVM plate (r7) containing EVM and EIB
     s.rect(1000, 70, 300, 400, R7_FILL, R7, sw=1.5, dash="6,3")
@@ -195,8 +210,8 @@ def fig1():
                         "E6 JP17 (/CE sense), E7 TP38 (STAT),", "E8 TP49 (AGND)"], 11, GREY, dy=14)
 
     # W5 ribbon CR -> EIB, W7 I2C CR -> EVM J8
-    s.path("M882 245 H960 V390 H1240 V292", stroke="#00897b", sw=2, dash="6,3")
-    s.path("M882 225 H940 V280 H1015", stroke="#1565c0", sw=1.5)
+    s.path("M882 290 H960 V390 H1240 V292", stroke="#00897b", sw=2, dash="6,3")
+    s.path("M882 268 H940 V280 H1015", stroke="#1565c0", sw=1.5)
     s.line(1015, 420, 1045, 420, stroke="#00897b", sw=2, dash="6,3")
     s.text(1052, 424, "W5 14-way ribbon, J101 -> J201 (fixed 0.30 m)", 11, "#00897b")
     s.line(1015, 442, 1045, 442, stroke="#1565c0", sw=1.5)
@@ -226,12 +241,13 @@ def fig1():
     s.path("M680 345 H698 V295 H712", stroke="#b08900", sw=1.5, dash="4,3")
 
     # ground note
-    s.rect(20, 540, 1280, 85, NOTE_FILL, "#999")
+    s.rect(20, 540, 1280, 98, NOTE_FILL, "#999")
     s.text(30, 560, "One ground.", bold=True)
     s.text(110, 560, "FC return, pack negative and the charger input and battery returns are all MB GND. The BQ25798 senses on the BAT+ / input")
     s.text(30, 577, "side, so a common ground is legal. The EVM and the EIB share the EVM plate (r7); the EIB's only circuit change in r7 is R276.")
     s.text(30, 594, "Loop to prevent: VBUS -> charger -> pack -> BT boost -> VBUS. It needs BT_BUS closed while the charger is fed from VBUS;")
-    s.text(30, 611, "the permit logic on the CR forbids exactly that (design F.3). The r7 changes are mechanical: no net, threshold or timing moved.")
+    s.text(30, 611, "the permit logic on the CR forbids exactly that (design F.3). r7 moved no net, threshold or timing; r8 adds R106s in the FLT")
+    s.text(30, 628, "readback path (CHG-R1-01) and states its firmware changes as requirements only (G.2, D.5).")
     s.save("fig1_power_path_r7.svg")
 
 
@@ -243,10 +259,10 @@ def fig2():
     K = 7.0
     OX, OY = 30, 70
     W = int(OX + (X1 - X0) * K + 330)
-    H = int(OY + (Y1 - Y0) * K + 20)
-    s = Svg(W, H, "Fig 2. Plan view of the MB region around the CR, r7 (top view, board mm, +y up; simplified)")
-    s.text(20, 46, "Drawn: r7 outline, Ag105 footprint, feet, tap field, comparator band, W-lead dressing path with anchors, "
-                   "polyimide strip. MB parts are boxes only.", 12, GREY)
+    H = int(OY + (Y1 - Y0) * K + 60)
+    s = Svg(W, H, "Fig 2. Plan view of the MB region around the CR, r8 (top view, board mm, +y up; simplified)")
+    s.text(20, 46, "Drawn: r7 outline, Ag105 footprint, feet, tap field, comparator band, W-lead dressing path with anchors "
+                   "(r8: B1R wedge), polyimide strip, F17 / R106s (r8). MB parts are boxes only.", 12, GREY)
 
     def P(x, y):
         return (OX + (x - X0) * K, OY + (Y1 - y) * K)
@@ -369,9 +385,17 @@ def fig2():
     s.poly([P(*p) for p in w5], stroke="#00897b", sw=2, dash="6,3", closed=False)
 
     # anchors: beads/posts B1, B3 and spacers S1-S3 (3 x 3 mm), tie bases A1 (6 x 6) and A2 (10 x 10)
-    for k in ("B1", "B3"):
-        x, y = dw[k]
-        R(x - 1.5, y - 1.5, x + 1.5, y + 1.5, fill="#e1bee7", stroke=R7, sw=1.5)
+    x, y = dw["B3"]
+    R(x - 1.5, y - 1.5, x + 1.5, y + 1.5, fill="#e1bee7", stroke=R7, sw=1.5)
+    blk = J["s"]["block"]                     # r8 B1R wedge footprint (H.23(s)), replaces the 3 x 3 mm B1 spot
+    R(blk[0], blk[1], blk[2], blk[3], fill=R8_FILL, stroke=R8, sw=1.8)
+    # ramp direction arrow toe -> apex along +y on the wedge
+    ta, tb_ = P((blk[0] + blk[2]) / 2 - 0.5, blk[1] + 0.6), P((blk[0] + blk[2]) / 2 - 0.5, blk[3] - 0.6)
+    s.line(ta[0], ta[1], tb_[0], tb_[1], stroke=R8, sw=1.5, arrow="ap8")
+    # F17 (T16) pad with R106s beside it on the tab X bottom (B.4, A.8 r8 placement)
+    f17 = J["g"]["assignment"]["T16"]
+    a = P(f17[1] - 1.05, f17[2] + 1.05)
+    s.rect(a[0], a[1], 2.1 * K, 2.1 * K, fill="none", stroke=R8, sw=2.0)
     for k in ("S1", "S2", "S3"):
         x, y = dw[k]
         R(x - 1.5, y - 1.5, x + 1.5, y + 1.5, fill="#b2ebf2", stroke="#00838f", sw=1.5)
@@ -392,14 +416,16 @@ def fig2():
 
     lab(56.0, 67.0, ["tab X", "x 48.70-65.00", "y 56.30-68.30"], 66.5, 62.5, "#1565c0")
     lab(19.5, 69.0, ["tab Y", "x 17.70-37.56", "y 67.14-76.00"], 1.0, 69.8, "#1565c0")
-    lab(17.7, 56.0, ["Ag105 footprint", "31 x 33 mm (dashed)"], 1.0, 57.5, "#455a64")
+    lab(17.7, 55.0, ["Ag105 footprint", "31 x 33 mm (dashed)"], 1.0, 56.2, "#455a64")
     b1 = J["i"]["ft1"]["centre"]
     lab(b1[0] + 2.0, b1[1], ["FT1 4.0 x 1.6", "(61.72, 66.71)"], 66.5, 68.6, "#1b5e20")
     lab(26.0, 73.25, ["FT2 4.0 x 4.0 + 1.0 mm", "fill hole (28.00, 73.25)"], 1.0, 75.0, "#1b5e20")
     lab(63.5, 58.94, ["tap field 6 x 4 at 2.54 mm", "(20 pads + R175 + 2 spare)"], 66.5, 53.5, "#1b5e20")
     lab(41.68, 35.8, ["F08-F10, F22 (low row y 35.80)"], 44.5, 31.6, "#1b5e20", bold=False, size=11)
-    lab(dw["B1"][0] - 1.5, dw["B1"][1], ["B1 post (25.80, 64.50)"], 1.0, 63.0, R7, size=11)
+    lab(blk[0], (blk[1] + blk[3]) / 2 - 1.0, ["B1R wedge", "(r8, 65 deg)"], 1.0, 61.6, R8, size=11)
     lab(dw["B3"][0], dw["B3"][1] - 1.5, ["B3 post + S3"], 39.0, 63.2, R7, size=11)
+    lab(f17[1] + 1.05, f17[2] - 0.6, ["F17 (T16): R106s on the", "tab X bottom beside it (r8)"], 66.5, 47.5, R8,
+        size=11)
     lab(dw["S1"][0] + 1.5, dw["S1"][1], ["S1"], 38.5, 49.0, "#00838f", size=11)
     lab(dw["S2"][0] + 1.5, dw["S2"][1], ["S2"], 33.5, 55.5, "#00838f", size=11)
     lab(dw["A1"][0] + 3, dw["A1"][1] + 3, ["A1 tie base 6 x 6"], 66.5, 79.5, "#4e342e", size=11)
@@ -451,7 +477,8 @@ def fig2():
         ("line", "#e65100", None, "thermal band boundary (H.23(h))"),
         ("line", "#b71c1c", None, "W1-W4, W6, W7 dressing path"),
         ("ldash", "#00897b", None, "W5 ribbon path"),
-        ("box", R7, "#e1bee7", "B1/B3 spacer post (bead)"),
+        ("box", R8, R8_FILL, "B1R riser wedge (r8, A.3)"),
+        ("box", R7, "#e1bee7", "B3 post (bead), 10.7 mm (r8)"),
         ("box", "#00838f", "#b2ebf2", "W5 spacer S1-S3"),
         ("box", "#4e342e", "#d7ccc8", "tie base A1/A2 (+-1.5 mm zone)"),
         ("band", "#80cbc4", None, "polyimide strip on the MB"),
@@ -482,11 +509,15 @@ def fig2():
              "(W3/W4 at x 77.25, W5 at x 74.75).",
              "No W lead crosses tab X.",
              "Every span between anchors <= 30 mm",
-             "(longest 26.0 mm, S2-S3).",
+             "(longest 26.0 mm, S2-S3; r8 trunk",
+             "span B1R apex to B3 10.4 mm).",
+             "r8: W5 above the trunk over the",
+             "whole overlap, on it from (28.70, 64.01).",
              "Polyimide strip bbox x 36.06-65.28,",
              "y 65.30-92.80; it stops at A1 and A2.",
              "Sources: r7_calc_out.json H.23(a), (g),",
-             "(h), (i), (l); MB boxes from the .brd."]
+             "(h), (i), (l), (s), (t); MB boxes from",
+             "the .brd."]
     s.lines(lx, ny + 18, notes, 11, GREY, dy=15)
     s.save("fig2_plan_view_r7.svg")
 
@@ -495,16 +526,17 @@ def fig2():
 # D3  side section
 # ---------------------------------------------------------------------------------------------------------------------
 def fig3():
-    s = Svg(1180, 726, "Fig 3. Side section along +y through tab Y and L-FC, r7 (heights in mm above the MB top)")
-    s.text(20, 46, "Section at x 36.00 (the controlling trunk point, B3 post, W5 run); FT2 and its fill hole projected from x 28.00, "
-                   "the 1x12 header body and pin 11 projected from x 20.998.", 12, GREY)
-    s.text(20, 62, "Plan and height share one scale (18 px/mm), so the 10 mm arc is true. The thin layers (sheet, bed, tape) "
-                   "are drawn thicker than scale.", 12, GREY)
+    s = Svg(1180, 1370, "Fig 3. Side sections through tab Y and the B1R riser, r8 (heights in mm above the MB top)")
+    s.text(20, 46, "(a) Section along +y at x 36.00 (the controlling trunk point, B3 post, W5 run); FT2 and its fill hole "
+                   "projected from x 28.00, the 1x12 header body and pin 11 from x 20.998.", 12, GREY)
+    s.text(20, 62, "(b) Section along +y at x 25.80 (the trunk run on B1R). In each panel plan and height share one scale; "
+                   "the thin layers (sheet, bed, tape) are drawn thicker than scale.", 12, GREY)
 
+    # ---------------- panel (a) ----------------
     K = 18.0
     Y0, Y1 = 60.0, 92.0          # board y range along the section
     OX = 300
-    ZB = 440                     # pixel row of the MB top (h = 0)
+    ZB = 500                     # pixel row of the MB top (h = 0)
 
     def X(y):
         return OX + (y - Y0) * K
@@ -512,28 +544,31 @@ def fig3():
     def Z(h):
         return ZB - h * K
 
+    s.text(20, 92, "(a) x 36.00: B3 post, trunk and W5 over tab Y", 13, bold=True)
     fh = J["i"]["foot_height"]
     t_sheet, t_bed = 0.125, fh["t_bed_nom"]
     cr_u, cr_t = J["j"]["cr_under"], J["j"]["cr_top"]
     lfc_box = [t[1] for t in J["m"]["trims"] if t[0].startswith("L-FC")][0]   # Eaton body, H.23(m)
     lfc_y0, lfc_y1 = lfc_box[1], lfc_box[3]
     H_LFC = J["l"]["rev4"]["heights"]["H_LFC"]
-    need_round = J["l"]["rev4"]["sw3d"]["W1"][0]["need"]                      # 14.408 mm
-    need_w5 = J["j"]["w5_over_lfc_bottom"]                                    # 15.00 mm
+    need_w5 = J["j"]["w5_over_lfc_bottom"]                                    # 15.00 mm, W5 own requirement
     rib = J["j"]["ribbon_assumed"]
+    S_, T_ = J["s"], J["t"]
+    h_tr, t_b = S_["h_trunk"], S_["T_b"]                                      # r8 trunk half-width, bundle
+    z_tb = cr_t + S_["b3_height"]                                             # trunk bottom on the B3 post
+    z_tt = T_["trunk_top_plateau"]                                            # = W5 bottom
+    z_top = T_["stack_top"]
+    req36 = cr_t + S_["max_req_above_cr"]                                     # requirement at (36.00, 71.10)
     tab_end, sheet_end = 76.0, 76.362
     LX = 20                      # left label column
 
     # MB
     s.rect(X(Y0), Z(0), (Y1 - Y0) * K, 1.6 * K, fill="#c8e6c9", stroke="#2e7d32")
     s.text(X(Y0) + 6, Z(-1.05), "MB 1.6 mm", 11, "#1b5e20", bold=True)
-    # sheet (exaggerated to 4 px)
     st = Z(0) - 4
     s.rect(X(Y0), st, (sheet_end - Y0) * K, 4, fill="#ffcc80", stroke="#e65100", sw=1)
-    # header body projected (pin 11 at y 64.484, body to 64.484 + 1.27)
     hdr1 = 64.484 + 1.27
     s.rect(X(Y0), Z(cr_u), (hdr1 - Y0) * K, st - Z(cr_u), fill="#cfd8dc", stroke="#455a64")
-    # FT2: bed on the sheet, foot block, tape to the CR underside
     f0, f1 = J["i"]["ft2"]["body"][1], J["i"]["ft2"]["body"][3]
     bt = st - t_bed * K
     s.rect(X(f0), bt, (f1 - f0) * K, st - bt, fill="#fff59d", stroke="#f9a825", sw=1)
@@ -542,13 +577,10 @@ def fig3():
     s.rect(X(f0), tape_top, (f1 - f0) * K, 4, fill="#90caf9", stroke="#1565c0", sw=1)
     s.rect(X(f0), tape_bot, (f1 - f0) * K, bt - tape_bot, fill="#a5d6a7", stroke="#1b5e20", sw=1.5)
     s.text(X((f0 + f1) / 2), (tape_bot + bt) / 2 + 4, "FT2", 12, "#1b5e20", bold=True, anchor="middle")
-    # CR with the fill hole
     s.rect(X(Y0), Z(cr_t), (tab_end - Y0) * K, (cr_t - cr_u) * K, fill=CR_FILL, stroke=CR_EDGE, sw=2)
     s.text(X(66.4), Z(cr_u) - 9, "CR 1.6 mm", 11, CR_EDGE, bold=True)
     s.rect(X(73.25 - 0.5), Z(cr_t), K, (cr_t - cr_u) * K, fill="#ffffff", stroke=CR_EDGE, sw=1)
-    # pin 11 post, 0.94 mm proud of the CR top
     s.rect(X(64.484 - 0.32), Z(cr_t + 0.94), 0.64 * K, st - Z(cr_t + 0.94), fill="#ffd54f", stroke="#8d6e63", sw=1)
-    # L-FC body
     s.rect(X(lfc_y0), Z(H_LFC), (lfc_y1 - lfc_y0) * K, H_LFC * K, fill="#e0e0e0", stroke="#424242", sw=2)
     s.text(X((lfc_y0 + Y1) / 2), Z(3.2), "L-FC body", 12, INK, bold=True, anchor="middle")
     s.text(X((lfc_y0 + Y1) / 2), Z(2.0), "5.0 mm (ASSUMPTION, MS3)", 11, GREY, anchor="middle")
@@ -560,36 +592,37 @@ def fig3():
     pts = [(cx - r * math.cos(math.radians(a)), cz - r * math.sin(math.radians(a))) for a in range(0, 91, 3)]
     s.poly(pts, stroke=WARN, sw=1.5, dash="5,4", closed=False)
     s.line(cx, cz - r, X(Y1), cz - r, stroke=WARN, sw=1.5, dash="5,4")
-    s.text(X(79.5), cz - r - 8, "10 mm 3-D clearance: 15.00 mm over L-FC", 11, WARN)
+    s.text(X(80.0), cz - r + 15, "10 mm 3-D clearance: 15.00 mm over L-FC", 11, WARN)
     ex, ez = cx - r * math.cos(math.radians(40)), cz - r * math.sin(math.radians(40))
     s.line(cx, cz, ex, ez, stroke=WARN, sw=1)
     s.text((cx + ex) / 2 + 8, (cz + ez) / 2 + 4, "r 10 mm", 11, WARN)
 
-    # B3 post (merged with S3) at y 70.80 from the CR top to the trunk jacket bottom
-    trunk_c, trunk_h = 71.10, 2.374
+    # B3 post (merged with S3) at y 70.80 from the CR top to the trunk jacket bottom (r8: 10.7 mm above the CR top)
+    trunk_c = 71.10
     post0, post1 = 70.8 - 1.5, 70.8 + 1.5
-    s.rect(X(post0), Z(need_round), (post1 - post0) * K, (need_round - cr_t) * K, fill="#e1bee7", stroke=R7, sw=1.5)
-    # the bundle's vertical thickness is stated nowhere; the shape is drawn with its plan width (ASSUMPTION)
-    s.rect(X(trunk_c - trunk_h), Z(need_round + 2 * trunk_h), 2 * trunk_h * K, 2 * trunk_h * K,
-           fill="#ef9a9a", stroke="#b71c1c", sw=1.5, rx=30, dash="4,3")
-    s.text(X(trunk_c), Z(need_round + 2 * trunk_h) + 18, "trunk", 11, "#7f0000", bold=True, anchor="middle")
-    # W5 ribbon, 8.89 mm wide, centred on y 73.10
+    s.rect(X(post0), Z(z_tb), (post1 - post0) * K, (z_tb - cr_t) * K, fill="#e1bee7", stroke=R7, sw=1.5)
+    # trunk: round bundle of diameter T_b (H.23(s)/(t)), bottom on the post
+    s.circle(X(trunk_c), Z(z_tb + t_b / 2), t_b / 2 * K, fill="#ef9a9a", stroke="#b71c1c", sw=1.5)
+    s.text(X(trunk_c), Z(z_tb + t_b / 2) + 4, "trunk", 11, "#7f0000", bold=True, anchor="middle")
+    # W5 ribbon, 8.89 mm wide, centred on y 73.10, resting on the trunk top (H.23(t))
     w0, w1 = 73.10 - 4.445, 73.10 + 4.445
-    s.add('<rect x="%.1f" y="%.1f" width="%.1f" height="%.1f" fill="#4db6ac" fill-opacity="0.6" stroke="#00695c" '
-          'stroke-width="1.5"/>' % (X(w0), Z(need_w5 + rib), (w1 - w0) * K, rib * K))
-    # plan gap trunk edge -> L-FC face at the trunk jacket bottom
-    gy = Z(need_round) + 10
-    s.line(X(trunk_c + trunk_h), gy, X(lfc_y0), gy, stroke="#555", sw=1)
-    s.line(X(trunk_c + trunk_h), gy - 4, X(trunk_c + trunk_h), gy + 4, stroke="#555", sw=1)
+    s.add('<rect x="%.1f" y="%.1f" width="%.1f" height="%.1f" fill="#4db6ac" fill-opacity="0.75" stroke="#00695c" '
+          'stroke-width="1.5"/>' % (X(w0), Z(z_top), (w1 - w0) * K, (z_top - z_tt) * K))
+    # plan gap trunk edge -> L-FC face
+    gy = Z(z_tb) + 12
+    s.line(X(trunk_c + h_tr), gy, X(lfc_y0), gy, stroke="#555", sw=1)
+    s.line(X(trunk_c + h_tr), gy - 4, X(trunk_c + h_tr), gy + 4, stroke="#555", sw=1)
     s.line(X(lfc_y0), gy - 4, X(lfc_y0), gy + 4, stroke="#555", sw=1)
-    s.text(X((trunk_c + trunk_h + lfc_y0) / 2), gy + 15, "d 3.39", 11, anchor="middle")
+    s.text(X((trunk_c + h_tr + lfc_y0) / 2), gy + 15, "d %.2f" % (lfc_y0 - trunk_c - h_tr), 11, anchor="middle")
 
     # height axis with real values
     ax = X(Y1) + 18
-    s.line(ax, Z(-1.6), ax, Z(20.0), stroke="#999", sw=1)
+    s.line(ax, Z(-1.6), ax, Z(22.0), stroke="#999", sw=1)
     ticks = [(0.0, "0 MB top"), (t_sheet, "0.125 sheet top"), (cr_u, "2.665 CR underside"),
              (cr_t, "4.265 CR top"), (H_LFC, "5.00 L-FC top (assumed)"),
-             (need_round, "14.41 trunk jacket bottom (min)"), (need_w5, "15.00 W5 ribbon bottom (min)")]
+             (req36, "%.3f requirement at (36.00, 71.10)" % req36),
+             (z_tb, "%.3f trunk bottom, B3 post top" % z_tb), (need_w5, "15.00 W5 requirement over L-FC"),
+             (z_tt, "%.3f trunk top = W5 bottom" % z_tt), (z_top, "%.3f stack top (information, D-H)" % z_top)]
     last = None
     for h, t in ticks:
         yy = Z(h)
@@ -601,23 +634,21 @@ def fig3():
         s.text(ax + 14, ty, t, 11)
         last = ty
 
-    # left-column callouts
     def left(px, py, ty, rows, color=INK):
-        wid = max(len(r) for r in rows) * 11 * 0.55
+        wid = max(len(r_) for r_ in rows) * 11 * 0.55
         s.line(px, py, LX + wid + 6, ty - 4, stroke="#999", sw=0.8)
         s.lines(LX, ty, rows, 11, color, dy=14)
 
-    left(X(trunk_c - trunk_h), Z(need_round + trunk_h), Z(18.5),
-         ["round-lead trunk W1-W4, W6, W7:", "jacket bottom >= 14.41 mm above the MB", "(>= 10.14 mm above the CR top),",
-          "3.39 mm in plan from L-FC"], "#b71c1c")
-    left(X(w0), Z(need_w5 + rib / 2), Z(13.6),
-         ["W5 ribbon (0.9 mm assumed), 8.89 mm wide:", "bottom >= 15.00 mm (>= 10.735 above CR top);",
-          "overlaps L-FC by 0.68 mm in plan"], "#00695c")
-    left(X(post0), Z(9.5), Z(9.6), ["B3 spacer post, merged with S3,", "at (35.00, 70.80)"], R7)
-    left(X(64.484 - 0.32), Z(cr_t + 0.8), Z(6.9), ["pin 11 post, 0.94 mm proud", "(RTV dome on pins 7-10)"], "#6d4c41")
+    left(X(trunk_c - h_tr), Z(z_tb + h_tr), Z(17.6),
+         ["round-lead trunk W1-W4, W6, W7 (r8): one", "RTV-bound round bundle, 4.885 mm; bottom",
+          "%.3f mm above the MB (%.1f mm above the" % (z_tb, S_["b3_height"]), "CR top) on the B3 post"], "#b71c1c")
+    left(X(w0), Z((z_tt + z_top) / 2), Z(21.6),
+         ["W5 ribbon (0.9 mm assumed), 8.89 mm wide:", "rests on the trunk top, bonded with RTV;",
+          "%.3f-%.3f mm above the MB" % (z_tt, z_top)], "#00695c")
+    left(X(post0), Z(9.5), Z(10.6), ["B3 post, merged with S3,", "at (35.00, 70.80)"], R7)
+    left(X(64.484 - 0.32), Z(cr_t + 0.8), Z(7.2), ["pin 11 post, 0.94 mm proud", "(RTV dome on pins 7-10)"], "#6d4c41")
     left(X(Y0) + 30, Z(1.4), Z(3.4), ["header body 2.54 mm (TSW, PBT),", "seats on the sheet"], "#263238")
 
-    # bottom callouts: vertical leaders, the rightmost feature on the top row so that no leader crosses a label
     def below(px, py, row, rows, color=INK):
         ty = ZB + 46 + row * 18
         s.line(px, py, px, ty - 4, stroke="#999", sw=0.8)
@@ -630,18 +661,121 @@ def fig3():
     s.line(X(73.25), Z(cr_t) + 2, X(77.6), Z(6.1), stroke="#999", sw=0.8)
     s.lines(X(77.7), Z(6.2), ["FT2 fill hole 1.0 mm NPTH", "at (28.00, 73.25)"], 11, CR_EDGE, dy=13)
 
-    # open point
-    s.rect(20, 600, 1140, 110, "#fff3f3", WARN)
-    s.text(30, 618, "Open point: vertical order of W5 and the trunk", 12, WARN, bold=True)
-    s.text(30, 635, "The W5 ribbon (8.89 mm wide) and the trunk envelope (half-width 2.37 mm) overlap in plan on the +y runs "
-                    "(x 25.80 / x 28.70) from y 57.00, and on the whole +x run across tab Y and off the CR to A1.", 11, WARN)
-    s.text(30, 650, "The heights conflict from B1 (25.80, 64.50), where the trunk rises, to A1.", 11, WARN)
-    s.text(30, 665, "The centre lines cross at (28.70, 69.60). Both heights are H.23(l) minimums (14.41 and 15.00 mm), B3/S3 is "
-                    "one merged spot, and the design states no vertical order of the two runs.", 11, WARN)
-    s.text(30, 680, "A stacked height needs the bundle's vertical thickness, which neither the design nor the calc states; "
-                    "this drawing shows both runs at their minimums, so they intersect here.", 11, WARN)
-    s.text(30, 702, "Heights: H.23(i) foot budget, H.23(j) stack, H.23(l) 3-D rule (H_LFC 5.0 mm ASSUMPTION, MS3 caliper); "
-                    "MB and CR 1.6 mm assumed (MS6).", 11, GREY)
+    # ---------------- panel (b) ----------------
+    K2 = 24.0
+    Yb0, Yb1 = 58.0, 71.0
+    OX2 = 330
+    ZB2 = 1215
+
+    def X2(y):
+        return OX2 + (y - Yb0) * K2
+
+    def Z2(h):
+        return ZB2 - h * K2
+
+    s.text(20, 672, "(b) x 25.80: the trunk on the B1R riser wedge (r8, CHG-R1-D03), W5 above it (CHG-R1-W01)", 13,
+           bold=True)
+    m = math.tan(math.radians(S_["slope_deg"]))
+    y_toe, y_apx, z_apx = S_["toe_y"], 67.10, S_["apex"]                       # H.23(s); RISER_Y_END 67.10
+    y_t2 = 69.60
+    mm_ = S_["min_margin"]
+    REQ_T2 = 9.497   # mm above the CR top required at T2 (25.80, 69.60): H.23(s) full-profile check row (text output)
+    z_t2 = REQ_T2 + mm_                                                        # built at T2: 10.001 mm (H.23(s))
+    s.rect(X2(Yb0), Z2(0), (Yb1 - Yb0) * K2, 1.6 * K2, fill="#c8e6c9", stroke="#2e7d32")
+    s.text(X2(Yb0) + 6, Z2(-1.05), "MB 1.6 mm", 11, "#1b5e20", bold=True)
+    st2 = Z2(0) - 4
+    s.rect(X2(Yb0), st2, (Yb1 - Yb0) * K2, 4, fill="#ffcc80", stroke="#e65100", sw=1)
+    s.text(X2(Yb0) + 6, Z2(0.55), "(no header body in this plane)", 11, GREY)
+    s.rect(X2(Yb0), Z2(cr_t), (Yb1 - Yb0) * K2, (cr_t - cr_u) * K2, fill=CR_FILL, stroke=CR_EDGE, sw=2)
+    s.text(X2(Yb0) + 6, Z2(cr_u) - 9, "CR 1.6 mm", 11, CR_EDGE, bold=True)
+    # wedge on its transfer tape
+    s.rect(X2(y_toe), Z2(cr_t) - 3, (y_apx - y_toe) * K2, 3, fill="#90caf9", stroke="#1565c0", sw=0.8)
+    wedge = [(X2(y_toe), Z2(cr_t) - 3), (X2(y_apx), Z2(cr_t) - 3), (X2(y_apx), Z2(cr_t + z_apx))]
+    s.poly(wedge, stroke=R8, sw=2, fill=R8_FILL, op=0.95)
+    s.text(X2(y_apx) - 30, Z2(cr_t + 2.0), "B1R", 13, R8, bold=True, anchor="middle")
+    # slope angle mark at the toe
+    ar = 1.6 * K2
+    apts = [(X2(y_toe) + ar * math.cos(math.radians(a)), Z2(cr_t) - 3 - ar * math.sin(math.radians(a)))
+            for a in range(0, int(S_["slope_deg"]) + 1, 5)]
+    s.poly(apts, stroke=R8, sw=1, closed=False)
+    s.text(X2(y_toe) + ar + 4, Z2(cr_t) - 10, "%.0f deg" % S_["slope_deg"], 11, R8)
+    # trunk bottom polyline (built) and the bundle band above it (vertical thickness T_b, H.23(t))
+    bl = [(Yb0, 0.0), (y_toe, 0.0), (y_apx, z_apx), (y_t2, z_t2)]
+    band = [(X2(y), Z2(cr_t + z)) for y, z in bl] + [(X2(y), Z2(cr_t + z + t_b)) for y, z in reversed(bl)]
+    s.poly(band, stroke="#b71c1c", sw=1.2, fill="#ef9a9a", op=0.75)
+    s.poly([(X2(y), Z2(cr_t + z)) for y, z in bl], stroke="#b71c1c", sw=2.5, closed=False)
+    s.lines(X2(58.2), Z2(cr_t + t_b / 2) + 4, ["trunk", "(bundle 4.885 mm)"], 11, "#7f0000", dy=14)
+    # W5 above the trunk: the 8 mm fold until the trunk top passes it at the ride point (H.23(t))
+    fold = cr_t + 8.0
+    w5b = []
+    for k in range(0, 261):
+        y = Yb0 + k * (y_t2 - Yb0) / 260
+        if y <= y_toe:
+            zt = cr_t + t_b
+        elif y <= y_apx:
+            zt = cr_t + m * (y - y_toe) + t_b
+        else:
+            zt = cr_t + z_apx + (z_t2 - z_apx) * (y - y_apx) / (y_t2 - y_apx) + t_b
+        w5b.append((y, max(fold, zt)))
+    rb = [(X2(y), Z2(z)) for y, z in w5b] + [(X2(y), Z2(z + rib)) for y, z in reversed(w5b)]
+    s.poly(rb, stroke="#00695c", sw=1.2, fill="#4db6ac", op=0.75)
+    # requirement: the H.23(s) T-F-12 check points past B1 and the T2 minimum-margin row
+    rq = [(64.50 + d, cr_t + q) for d, q, _b in S_["checkpoints"]] + [(y_t2, cr_t + REQ_T2)]
+    s.poly([(X2(y), Z2(z)) for y, z in rq], stroke=INK, sw=1.5, dash="6,3", closed=False)
+    for y, z in rq:
+        s.line(X2(y) - 4, Z2(z) - 4, X2(y) + 4, Z2(z) + 4, stroke=INK, sw=1.2)
+        s.line(X2(y) - 4, Z2(z) + 4, X2(y) + 4, Z2(z) - 4, stroke=INK, sw=1.2)
+    # W1/W2 joints projected (W2 x 27.70, W1 x 30.30, y 61.20), T1 and T2
+    s.circle(X2(61.2), Z2(cr_t) - 5, 5, fill="#b71c1c", stroke="#7f0000", sw=1)
+    s.line(X2(62.6), Z2(cr_u) + 2, X2(62.6), Z2(cr_u) + 26, stroke="#999", sw=0.8)
+    s.text(X2(62.6) + 4, Z2(cr_u) + 22, "T1 y 62.60", 11, GREY)
+    s.line(X2(y_t2), Z2(cr_t + z_t2) - 2, X2(y_t2), Z2(cr_u) + 26, stroke="#999", sw=0.8, dash="2,2")
+    s.text(X2(y_t2) - 4, Z2(cr_u) + 22, "T2 y 69.60", 11, GREY, anchor="end")
+    # right-hand height axis for panel (b)
+    ax2 = X2(Yb1) + 18
+    s.line(ax2, Z2(-1.6), ax2, Z2(21.0), stroke="#999", sw=1)
+    ticks2 = [(cr_t, "4.265 CR top"), (fold, "%.3f W5 fold (8.0 mm above the CR top)" % fold),
+              (cr_t + z_apx, "%.3f B1R apex (%.3f above the CR top)" % (cr_t + z_apx, z_apx)),
+              (cr_t + z_t2, "%.3f trunk bottom at T2 (built)" % (cr_t + z_t2)),
+              (cr_t + z_t2 + t_b, "%.3f trunk top at T2" % (cr_t + z_t2 + t_b))]
+    last = None
+    for h, t in ticks2:
+        yy = Z2(h)
+        s.line(ax2 - 4, yy, ax2 + 4, yy, stroke="#555", sw=1)
+        ty = yy + 4
+        if last is not None and last - ty < 14:
+            ty = last - 14
+        s.line(ax2 + 4, yy, ax2 + 12, ty - 4, stroke="#bbb", sw=0.8)
+        s.text(ax2 + 14, ty, t, 11)
+        last = ty
+
+    left(X2((y_toe + y_apx) / 2 + 0.6), Z2(cr_t + 3.0), Z2(5.6),
+         ["B1R: machined insulating wedge", "(G10/FR-4 or PEEK, ASSUMPTION),", "toe y %.2f, apex y %.2f;" % (y_toe, y_apx),
+          "footprint x 23.55-26.05: the 2.50 mm", "face carries %.0f %% of the trunk width;" % (100 * J["y"]["b1r_support_frac"]),
+          "taped to the CR (0.05 mm)"], R8)
+    left(X2(61.2) - 5, Z2(cr_t) - 5, Z2(10.4),
+         ["W1/W2 joints, projected (y 61.20;", "x 27.70 / 30.30); RTV bead over", ">= 5.0 mm of jacket, on the copper",
+          "and on along the ramp"], "#7f0000")
+    left(X2(63.0), Z2(fold + 0.45), Z2(16.4),
+         ["W5 (projected from x 28.70):", "at the 8 mm fold, then on the", "trunk top from (28.70, 64.01)"], "#00695c")
+    left(X2(65.5), Z2(cr_t + 7.62), Z2(20.6),
+         ["3-D requirement: H.23(s) T-F-12", "check points (x) past B1 and T2"], INK)
+    left(X2(y_t2) - 3, Z2(cr_t + REQ_T2) + 2, Z2(13.2),
+         ["minimum margin %.3f mm at T2" % mm_, "(required %.3f, built %.3f mm" % (REQ_T2, z_t2),
+          "above the CR top; H.23(s))"], INK)
+    s.lines(X2(y_t2) + 6, Z2(cr_t + z_t2 + t_b + 3.0), ["trunk turns +x at T2;", "free span 10.4 mm",
+                                                         "to the B3 post"], 11, "#7f0000", dy=13)
+
+    # notes
+    s.rect(20, 1272, 1140, 88, "#f6f6f6", "#999")
+    s.text(30, 1290, "Resolved in r8 (the open point of the r7 walkthrough): the vertical order of W5 and the trunk "
+                     "(CHG-R1-W01)", 12, INK, bold=True)
+    s.text(30, 1307, "W5 lies above the trunk over the whole plan overlap, from the trunk start (y 57.00) to A1; it rests "
+                     "on the trunk top and is bonded to it with RTV", 11)
+    s.text(30, 1322, "from (28.70, 64.01) to A1 (H.23(t)). B1R carries the trunk from the CR copper to the B3 post with a "
+                     "minimum margin of 0.504 mm (H.23(s)).", 11)
+    s.text(30, 1340, "Heights: H.23(i) foot budget, H.23(j) stack, H.23(s)/(t) trunk and W5 (L-FC 5.0 mm, ribbon 0.9 mm "
+                     "and bundle 4.885 mm are ASSUMPTIONs; MS3, MS2/MS7); MB and CR 1.6 mm assumed (MS6).", 11, GREY)
     s.save("fig3_side_stack_r7.svg")
 
 
@@ -649,7 +783,7 @@ def fig3():
 # D4  assembly order with gates
 # ---------------------------------------------------------------------------------------------------------------------
 def fig4():
-    s = Svg(1180, 1000, "Fig 4. Build order for the r7 carrier and the gates that hold each step (design D.1, I)")
+    s = Svg(1180, 1120, "Fig 4. Build order for the r8 carrier and the gates that hold each step (design D.1, I)")
     s.text(20, 46, "Grey = rework or build step; amber = measured gate; purple chips = operator survey items MS1-MS8 (T-A-08). "
                    "Solid arrow = the step the item gates; dashed arrow = a later step that uses its result.", 12, GREY)
 
@@ -687,9 +821,10 @@ def fig4():
               ["standoff at four corners, module top height (information only, D-H)"], fill="#f3f3f3")
     arrow(y1, y1 + 14)
     y = y1 + 14
-    y1 = step(y, 62, "PM0  KiCad capture of CR and EIB",
+    y1 = step(y, 76, "PM0  KiCad capture of CR and EIB",
               ["r7 outline (tab X, tab Y, chamfer at (17.70, 76.00)), foot keep-outs FT1/FT2,",
-               "FT2 1.0 mm fill hole, tap field split, bottom clearance rule, thermal band rule"])
+               "FT2 1.0 mm fill hole, tap field split, bottom clearance rule, thermal band rule;",
+               "r8: R106s 0402 on the tab X bottom beside F17; B1R area x 23.55-26.05, y 62.54-67.10"])
     pm0_y = y + 20
     y = gate(y1 + 6, ["T-A-06: pin identity (script + 1:1 print), netlist diff = 0, DRC on the r7 outline,",
                       "dry fit of both tabs and both feet; T-A-08 survey must pass first"])
@@ -702,13 +837,17 @@ def fig4():
     y = y1 + 14
     y1 = step(y, 46, "PM2  C-D8 / C-D10 to >= 35 V;  PM3  R170 / R171 at C-D6 / C-D2",
               ["R171 body toward +y, clear of tab X (T-A-06 item (8) dry fit)"])
-    arrow(y1, y1 + 14)
-    y = y1 + 14
-    y1 = step(y, 92, "PM4 (1)-(2c)  sheet, headers, W1-W4 joints, feet taped",
+    y = gate(y1 + 6, ["r8: T-A-09 step 0 bond coupon before PM4 (1): sheet offcut on masked FR-4, an FT1-size",
+                      "block bedded on the sheet and one on the mask, 0.4 N for 10 s each (A.7, H.23(r))"])
+    arrow(y, y + 14)
+    y += 14
+    y1 = step(y, 120, "PM4 (1)-(2c)  sheet, headers, W1-W4 joints, B1R, feet taped",
               ["(1) polyimide sheet 0.125 mm on the MB (r7 outline + 1 mm, trims, relief holes)",
                "(2) headers into the CR, 22 joints at the CR top",
-               "(2b) W1-W4 joints; underside trimmed and measured <= 0.5 mm",
-               "(2c) feet taped: block 2.14-2.19 mm; edge distances FT1 / FT2 recorded"])
+               "(2b) W1-W4 joints; underside trimmed and measured <= 0.5 mm; r8: B1R taped to the",
+               "     CR top, W1/W2 on the ramp, RTV bead >= 5.0 mm of jacket from each joint",
+               "(2c) feet taped: block 2.14-2.19 mm; r8: if the coupon failed, sheet cut under the feet",
+               "     and re-made blocks h_f' = 2.19 mm + t_rm; edge distances FT1 / FT2 recorded"])
     pm4a_y = y + 20
     y = gate(y1 + 6, ["(2d) dry-seat gate: 0.05 mm feeler not under either header body;",
                       "at each foot 0.15 mm enters and 0.45 mm does not"])
@@ -723,10 +862,11 @@ def fig4():
                       "0.4 N pull at each grip for 10 s, joint resistance unchanged"])
     arrow(y, y + 14)
     y += 14
-    y1 = step(y, 92, "PM4 (6)  dress the leads (A.3)",
+    y1 = step(y, 106, "PM4 (6)  dress the leads (A.3)",
               ["pin 7-10 RTV dome; W7 (and W6); inspect A1/A2 zones, bond tie bases; polyimide strip",
-               "trunk on B1/B3 posts >= 10.14 mm above CR top; W5 on S1-S3 (S2/S3 >= 10.735 mm)",
-               "off-CR support x 37.75-46.7; chassis ties <= 2.4 / 16.4 / 17.4 mm past MB +y",
+               "r8: B3 post 10.7 mm above the CR top; trunk bound into one bundle, on the B1R ramp",
+               "r8: W5 on S1/S2 at the 8 mm fold, on the trunk from (28.70, 64.01) to A1 (RTV)",
+               "off-CR support TODO(design); chassis ties <= 2.4 / 16.4 / 17.4 mm past MB +y;",
                "W1/W2 and W5 slack as service loops on the EVM plate"])
     pm4c_y = y + 60
     arrow(y1, y1 + 14)
@@ -737,7 +877,8 @@ def fig4():
     pm6_y = y + 20
     y = gate(y1 + 6, ["T-A-09 again on FT1 (F20/F21 soldered over it)"])
     y = gate(y + 6, ["T-F-12: tap-to-tap and tap-to-power DMM, loupe on 1.04 mm gaps, pin 7-10 covers,",
-                     "every lead on the A.3 path, jacket heights at the controlling points, tie limits"])
+                     "every lead on the A.3 path; r8: jacket heights at the B1R check points, T2, B3 and",
+                     "the off-CR controlling points; W5 on the trunk, no trunk lead above W5; tie limits"])
     arrow(y, y + 14)
     y += 14
     y1 = step(y, 46, "First power-up and the bench/vehicle registry (section I)",
@@ -745,17 +886,17 @@ def fig4():
 
     # MS chips
     chip(20, 110, "MS2-MS5, MS7; MS6 board edge", ["chassis room, MB items, thermal,", "vibration, EVM, MB thickness", "-> gate PM0"], pm0_y)
-    chip(20, 250, "MS6 at the CHG holes", ["taken after PM1, before PM4", "-> post arithmetic; gates PM4"], pm4a_y)
-    chip(20, 420, "MS3 (gates PM0)", ["L-FC height (<= 5.0 mm basis)", "-> 3-D spacer heights at PM4 (6)"], pm4c_y - 40,
+    chip(20, 290, "MS6 at the CHG holes", ["taken after PM1, before PM4", "-> post arithmetic; gates PM4"], pm4a_y)
+    chip(20, 520, "MS3 (gates PM0)", ["L-FC height (<= 5.0 mm basis)", "-> B1R / B3 heights at PM4 (6)"], pm4c_y - 40,
          uses=True)
-    chip(930, 560, "MS2 (gates PM0)", ["under-MB clearance", "-> tail cut length at PM4 (4)"], pm4b_y, side="right",
+    chip(930, 600, "MS2 (gates PM0)", ["under-MB clearance", "-> tail cut length at PM4 (4)"], pm4b_y, side="right",
          uses=True)
-    chip(930, 660, "MS2 (gates PM0)", ["chassis-tie points, EVM plate", "-> W3/W4/W6/W7 maxima at PM4 (6)"], pm4c_y,
+    chip(930, 720, "MS2 (gates PM0)", ["chassis-tie points, EVM plate", "-> W3/W4/W6/W7 maxima at PM4 (6)"], pm4c_y,
          side="right", uses=True)
-    chip(930, 800, "MS5 (gates PM0: feet)", ["peak MB acceleration <= 30 g;", "spectrum -> T-F-18 after build"], y + 20,
+    chip(930, 880, "MS5 (gates PM0: feet)", ["peak MB acceleration <= 30 g;", "spectrum -> T-F-18 after build"], y + 20,
          side="right", uses=True)
     chip(930, 110, "MS8", ["router radius, stack-up,", "2 oz space -> PM0 DRC"], pm0_y, side="right")
-    s.text(20, 985, "MS1b gates nothing. A tab trim after the survey re-runs round4/calc/r7_calc.py (H.23) before PM0.", 11, GREY)
+    s.text(20, 1105, "MS1b gates nothing. A tab trim after the survey re-runs round4/calc/r7_calc.py (H.23) before PM0.", 11, GREY)
     s.save("fig4_assembly_order_r7.svg")
 
 

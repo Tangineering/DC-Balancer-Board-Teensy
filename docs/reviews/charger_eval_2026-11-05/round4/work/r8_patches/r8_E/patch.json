@@ -1,0 +1,75 @@
+{
+  "group": "r8_E",
+  "edits": [
+    {
+      "note": "A.8 CHG-R1-01: R106s is the one series resistor that does limit a bridge into its source pin",
+      "old": "The CR series resistors of A.4 sit behind the pads, so they do not limit a bridge between two tap wires.",
+      "new": "The CR series resistors of A.4 sit behind the pads, so they do not limit a bridge between two tap wires. r8: R106s\n(1.00 kOhm, B.4) sits between the U101 FLT output and the F17 pad, so it limits the current that a bridge at F17 drives\ninto FLT; it does not limit the contention between the two tap wires (H.23(n))."
+    },
+    {
+      "note": "A.8 CHG-R1-01: F05-F17 consequence rewritten from H.23(n); the r7 'only toward off' claim kept in the marker",
+      "old": "an asserted FLT sinks pin 30 without a series resistor, which pulls the REGEN EN net only toward off |",
+      "new": "r8: an asserted FLT draws 2.657-3.377 mA from pin 30 through R106s (0.338 of the 10 mA FLT sink absolute maximum at the worst tolerance corner, SLVSE94G §6.1), and the EN net stays >= 3.017 V, above the RT1987 VEN_R maximum 1.4 V, so the switch follows its command (H.23(n)) (**superseded in r8:** \"an asserted FLT sinks pin 30 without a series resistor, which pulls the REGEN EN net only toward off\"; without R106s the FLT current is 18.4-45.6 mA with the 40 ohm driver and up to 96.2 mA with a 0 ohm driver, and the EN net sits at 1.48-2.65 V, so the switch also stayed as commanded, H.23(n)) |"
+    },
+    {
+      "note": "A.8 CHG-R1-01: F05-F17 detector; misattributed but visible (the 'wholly ineffective' part was rejected); FR-23 r8 diagnostic and T-C-05c",
+      "old": "| announces itself: pin 35 reads \"fault\" whenever pin 30 is LOW (FR-08) |",
+      "new": "| announces itself as an apparent eFuse fault: pin 35 reads \"fault\" whenever pin 30 is LOW (FR-08); r8: with pin 30 LOW and the charger powered through the FC path, the FR-23 FLT-LOW diagnostic read finds the charger answering and latches the carrier fault; T-F-12 before power-up and T-C-05c (powered injection) |"
+    },
+    {
+      "note": "A.8 CHG-R1-01: F06-F17 row through R106s; detector as F05-F17 with the regen path",
+      "old": "| as the F05-F17 row, with pin 31 and the FC_CHARGE EN net | announces itself: pin 35 reads \"fault\" whenever pin 31 is LOW (FR-08) |",
+      "new": "| as the F05-F17 row, with pin 31 and the FC_CHARGE EN net (r8: FLT current and EN level through R106s as there, H.23(n)) | announces itself as an apparent eFuse fault: pin 35 reads \"fault\" whenever pin 31 is LOW (FR-08); r8: with pin 31 LOW and the charger powered through the regen path, the FR-23 FLT-LOW diagnostic read latches the carrier fault; T-F-12 and T-C-05c |"
+    },
+    {
+      "note": "A.8 CHG-R1-01: F17-F15 current through R127 + R106s",
+      "old": "an asserted FLT sinks U108 H2C through R127 (<= 3.3 mA)",
+      "new": "an asserted FLT sinks U108 H2C through R127 and R106s (<= 1.719 mA, H.23(n)) (**superseded in r8:** \"through R127 (<= 3.3 mA)\", 3.377 mA without R106s)"
+    },
+    {
+      "note": "A.8 CHG-R1-01: R106s placement rule, target, fallback and booking (new r8 paragraph before the per-region placement)",
+      "old": "**Per-region placement (r5, finding efuse-cluster-no-room-at-pad10-reopen;",
+      "new": "**r8 R106s placement (CHG-R1-01).** R106s (B.4, B.8) sits between U101 FLT (pin 14, net `N_FLT`) and the F17 pad (net\n`CHG_EFUSE_FLT`). The H.23(n) bound holds at any position of R106s, provided that the F17 pad is the only exposed copper of\n`CHG_EFUSE_FLT` apart from the R106s terminal. The layout therefore meets these rules:\n\n- the `CHG_EFUSE_FLT` copper from the F17 pad to R106s is solder-masked over its full length and carries no test pad;\n- the `N_FLT` copper from pin 14 to R106s is solder-masked over its full length and carries no test pad;\n- every via on either net is tented on both sides;\n- the R106s courtyard meets the courtyard rules of the region that holds it, and the T-A-06 DRC is the gate.\n\nThe placement target is the tab X bottom beside the F17 pad, joined to the pad by one tented via. The tab X bottom admits\n1 % logic series resistors (the Tab X bottom row below; the A.7 thermal band rule). On the bottom, the polyimide sheet\ncovers the R106s terminals, and a hand-solder bridge on the top tap field cannot reach them; a top-side position in the tap\nfield would add new pairs to the short table above. The position must meet the bottom clearance rule (A.7, H.23(c)) and\nstay out of the FT1 keep-out and its RTV lane; TODO(calc: H.23(d) bottom-clearance check of the R106s 0402 courtyard,\n1.9 x 1.0 mm). If no tab X bottom position meets the rule, R106s goes on the footprint interior top as near to pin 14 as\nthe courtyard check allows, under the same masking rules. Booking: one 0402 courtyard (1.90 mm², the courtyard list below)\nis added to the H.23(e) adopted bottom total of 392.9 mm² of 569.1 mm² (69.04 %); TODO(calc: H.23(e) and H.23(e2) with\nR106s on the tab X bottom).\n\n**Per-region placement (r5, finding efuse-cluster-no-room-at-pad10-reopen;"
+    },
+    {
+      "note": "B.4 CHG-R1-A02: basis column names the local datasheet copy",
+      "old": "| Ref | Part / value | Connection | Basis (SLVSE94G) |",
+      "new": "| Ref | Part / value | Connection | Basis (SLVSE94G, `references/Datasheets/tps2663.pdf`, r8) |"
+    },
+    {
+      "note": "B.4 CHG-R1-01: R106 row restated for R106s; new R106s row with the tolerance bound and readback level; old text kept in markers",
+      "old": "| R106 | **DNP (r4)**, footprint kept | FLT (14, open drain) -> pin 35, pulled up only by the Teensy pad (`INPUT_PULLUP`, FR-01) | FLT LOW on overload, OVP, UVLO, TSD. Behaviour below 4.5 V IN is unspecified: T-C-04. r4 (finding pin35-flt-floats-on-open-tap): with the pull-up at the Teensy end an open T16 reads \"no fault\" (monitors stay armed); FLT sinks the ~0.15 mA pad pull-up (pad pull-up value TODO(verify: PJRC core pinMode / IMXRT1060RM PUS), T-C-05) and has no path into the CR rail |",
+      "new": "| R106 | **DNP (r4)**, footprint kept on the F17 side of R106s (r8) | footprint `CHG_EFUSE_FLT` - 3V3; r8: FLT (14, open drain) -> R106s -> F17 -> pin 35, pulled up only by the Teensy pad (`INPUT_PULLUP`, FR-01) (**superseded in r8:** \"FLT (14, open drain) -> pin 35, pulled up only by the Teensy pad\") | FLT LOW on overload, OVP, UVLO, TSD. Behaviour below 4.5 V IN is unspecified: T-C-04. r4 (finding pin35-flt-floats-on-open-tap): with the pull-up at the Teensy end an open T16 reads \"no fault\" (monitors stay armed). r8: with FLT asserted, FLT sinks <= 0.288 mA of pad pull-up current through R106s (11 kOhm pull-up, ASSUMPTION, H.23(n); pad pull-up value TODO(verify: PJRC core pinMode / IMXRT1060RM PUS), T-C-05) (**superseded in r8:** \"FLT sinks the ~0.15 mA pad pull-up\"). Neither `N_FLT` nor `CHG_EFUSE_FLT` connects to the CR 3V3 rail, so the pin-35 pull-up has no path into the CR rail (r4 rationale unchanged) |\n| **R106s (r8)** | **1.00 kOhm 1 %, 0402** (E) | FLT (14) -> `N_FLT` -> R106s -> `CHG_EFUSE_FLT` -> F17 (T16) -> pin 35; placement A.8 (r8 R106s placement) | §6.1: FLT sink current 10 mA absolute maximum. §6.5: FLT pull-down resistance R(FLT) 36/70/130 ohm min/typ/max, leakage <= 150 nA; the FLT output is specified as a resistance, so V_OL = I x R(FLT). **Pad bridge (A.8 F05-F17, F06-F17; finding CHG-R1-01):** with a push-pull Teensy output HIGH bridged to F17 and FLT asserted, R106s holds the FLT current to 2.657-3.377 mA; the maximum is at 3V3 +5 %, R106s -1 %, R(FLT) 36 ohm and a 0 ohm driver, 0.338 of the absolute maximum (a factor of 2.96 below it); the FLT pin rises to <= 0.402 V and R106s dissipates <= 11.5 mW (H.23(n)). R106s does not stop the bridge from masking a fault while the bridged output is HIGH (A.8); it removes the overstress of the FLT output. **Readback (no bridge):** FLT asserted gives pin 35 = 3V3 x (R(FLT) + R106s) / (R_pu + R(FLT) + R106s), that is V_OL plus the pull-up drop: 0.153 V typical, 0.325 V maximum against VIL 0.940 V, margin 0.615 V; FLT released gives pin 35 >= 3.130 V (H.23(n); 3V3 +-5 %, pull-up 11-33 kOhm and VIL 0.30 x 3V3 are ASSUMPTIONs, TODO(verify: PJRC Teensy 4.1 schematic, IMXRT1060CEC)). **Value (r8 decision):** 1.00 kOhm, the agreed value of finding CHG-R1-01. A larger value raises the asserted readback level toward VIL; a smaller value reduces the factor below the absolute maximum. 1.00 kOhm keeps both a factor of 2.96 and a 0.615 V margin. T-C-05c measures both |"
+    },
+    {
+      "note": "B.8 CHG-R1-01: U101 pin 14 now drives N_FLT",
+      "old": "14 FLT -> CHG_EFUSE_FLT;",
+      "new": "14 FLT -> N_FLT (r8; **superseded in r8:** 14 FLT -> CHG_EFUSE_FLT);"
+    },
+    {
+      "note": "B.8 CHG-R1-01: R106s netlist row",
+      "old": "| R106 | **DNP (r4)**: footprint CHG_EFUSE_FLT - 3V3; CHG_EFUSE_FLT -> F17 (pull-up is the Teensy pin-35 pad) |",
+      "new": "| R106 | **DNP (r4)**: footprint CHG_EFUSE_FLT - 3V3; CHG_EFUSE_FLT -> F17 (pull-up is the Teensy pin-35 pad) |\n| **R106s (r8)** | N_FLT - CHG_EFUSE_FLT (1.00 kOhm 1 % 0402; N_FLT is U101 pin 14 and the R106s terminal only; both nets solder-masked, every via tented, no test pad, A.8) |"
+    },
+    {
+      "note": "E CHG-R1-01: BOM line for R106s",
+      "old": "| R101, R105 | 1 + 1 | 8.06 k, 27.4 k 1 % | **r5: CRCW04028K06FKED, CRCW040227K4FKED** (+x pocket) | **0402** | | - |",
+      "new": "| R101, R105 | 1 + 1 | 8.06 k, 27.4 k 1 % | **r5: CRCW04028K06FKED, CRCW040227K4FKED** (+x pocket) | **0402** | | - |\n| **R106s (r8)** | 1 (+1) | 1.00 kOhm 1 % (U101 FLT series resistor, B.4; dissipation <= 11.5 mW, H.23(n); power rating TODO(verify: Vishay D/CRCW e3, doc 20035), T-A-05) | CRCW04021K00FKED | 0402 | | - |"
+    },
+    {
+      "note": "I CHG-R1-01: new test T-C-05c, powered FLT pad-bridge injection",
+      "old": "Fix EIB; find a residual back-feed source with an ammeter in place of the rail conductors |",
+      "new": "Fix EIB; find a residual back-feed source with an ammeter in place of the rail conductors |\n| T-C-05c | **Powered FLT pad-bridge injection (r8, finding CHG-R1-01)** | A.8 rows F05-F17, F06-F17 and F17-F15; B.4 R106s: the R106s bound on the FLT current against the 10 mA absolute maximum (SLVSE94G §6.1), the EN level under a bridge, and the FLT readback level | CR + bench Teensy on emulated supplies (T-C class). PSU1 on VCHG-IN, DMM, SCOPE. Pins 30 and 31 drive emulated EN nets, each with the 10 kOhm EN-to-GND bodge resistor. The bridge is a jumper from the bridged pad to the F17 pad through a 1.00 ohm 1 % shunt; the DMM reads the shunt voltage. Steps: (1) Set VCHG-IN to 16.0 V (FLT released). Measure pin 35. (2) Set VCHG-IN to 8.0 V (below the UVLO 9.70-10.13 V of B.4, so FLT is asserted). Measure pin 35. (3) Connect the bridge F05-F17. (4) Set pin 30 HIGH. Measure the shunt current, the pin-30 EN net and pin 35. (5) Set pin 30 LOW. Measure pin 35. (6) Set VCHG-IN to 16.0 V. Repeat steps 4 and 5. (7) Remove the bridge. Connect the bridge F06-F17 and repeat steps 2 to 6 with pin 31. (8) Remove the bridge. When the T-C-06 bench state gives H2c = 1, connect the bridge F17-F15 at VCHG-IN 8.0 V and measure the shunt current. (9) Remove the bridge. Repeat steps 1 and 2. Record the FR-08 and FR-23 flags of the firmware in each step (recorded, not scored here) | Step 1: pin 35 >= 3.10 V (H.23(n) 3.130 V minimum). Step 2: pin 35 <= 0.33 V (H.23(n) 0.325 V maximum; VIL 0.940 V). Step 4 at 8.0 V: shunt current 2.6-3.4 mA (H.23(n) 2.657-3.377 mA, below the 10 mA absolute maximum), EN net >= 3.0 V (H.23(n) 3.017 V), pin 35 HIGH. Steps 4 and 5 at 16.0 V: pin 35 follows the bridged output; with pin 30 HIGH the shunt current is < 0.01 mA (FLT released, leakage <= 150 nA, SLVSE94G §6.5); with pin 30 LOW the shunt carries only the pin-35 pad pull-up current, <= 0.35 mA (3.465 V into the 11 kOhm minimum pull-up of the H.23(n) inputs). Step 5: pin 35 LOW. Step 8: shunt current <= 1.72 mA (H.23(n) 1.719 mA). Step 9: the step 1 and step 2 results again, within 0.05 V, so the FLT output is undamaged | Shunt current above 3.4 mA or EN net below 3.0 V: inspect the `CHG_EFUSE_FLT` route for exposed copper between F17 and R106s and check the fitted R106s value (A.8 masking rules). If the route and value are correct, measure the Teensy 3V3 and the driver level, re-run `round4/calc/r7_calc.py` H.23(n) with the measured values, and raise R106s only while the step 2 level keeps >= 0.3 V margin to VIL. Step 2 level above 0.33 V: measure the pin-35 pad pull-up (T-C-05), re-run H.23(n), and lower R106s only while the step 4 bound stays >= 2x below 10 mA. Step 9 changed: replace U101 and repeat T-C-04 |"
+    },
+    {
+      "note": "K CHG-R1-A02: SLVSE94G is now a local copy; sections used by r8 added",
+      "old": "- TI SLVSE94G TPS2663x (§4 comparison, Table 5-1, §6.1, §6.3, §6.5, §6.6, §8.3.1, §8.3.3, §8.3.7, Table 8-1, §9.2.2, §9.5.1, §11).",
+      "new": "- TI SLVSE94G TPS2663x, revised June 2024 (§4 comparison, Table 5-1, §6.1, §6.3, §6.5, §6.6, §8.3.1, §8.3.3, §8.3.7, Table 8-1,\n  §9.2.2, §9.5.1, §11). **r8:** local copy `references/Datasheets/tps2663.pdf`; every SLVSE94G citation in this design\n  refers to that file. r8 values read from it: §6.1 FLT sink current 10 mA absolute maximum (p.5); §6.5 R(FLT) FLT pull-down\n  resistance 36/70/130 ohm and I(FLT) leakage <= 150 nA; §6.6 tCL_PLIM (current-limit time to latch-off, 202 ms maximum)\n  and tCL_PLIM_FLT 1.09-1.60 ms (H.23(n)). This closes finding CHG-R1-A02 (the datasheet was cited but not in the\n  library up to r7)."
+    },
+    {
+      "note": "K: r8 additions bullet (R106s inputs and their ASSUMPTIONs)",
+      "old": "`round4/calc/r7_calc.py` with\n  `r7_calc_out.txt` (H.23).",
+      "new": "`round4/calc/r7_calc.py` with\n  `r7_calc_out.txt` (H.23).\n- r8 additions: `round4/calc/r7_calc.py` revision 5 with `r7_calc_out.txt` and `r7_calc_out.json`, H.23(n) to H.23(w).\n  H.23(n) (R106s) takes SLVSE94G §6.1/§6.5/§6.6 from `references/Datasheets/tps2663.pdf` and the RT1987 VEN_R / VEN_F\n  limits from DS-00 EC p.7; the Teensy 3V3 tolerance (+-5 %), the pin-35 pad pull-up range (11-33 kOhm), VIL (0.30 x 3V3)\n  and the i.MX driver resistance (0 / 40 ohm) are ASSUMPTIONs, TODO(verify: PJRC Teensy 4.1 schematic, IMXRT1060CEC),\n  measured in T-C-05 and T-C-05c. Vishay D/CRCW e3 (doc 20035) for the R106s 0402 candidate CRCW04021K00FKED."
+    }
+  ]
+}

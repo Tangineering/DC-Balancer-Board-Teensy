@@ -1,0 +1,170 @@
+{
+  "group": "r8_G",
+  "edits": [
+    {
+      "note": "CHG-R1-01 / A-01: T16-open row, unreachable FLT plausibility replaced by the FR-23 E2 diagnostic read",
+      "old": "flag; FLT LOW with fresh I2C and VBUS_PRESENT_STAT = 1 for > 250 ms -> carrier fault latched (FR-23) |",
+      "new": "flag. **r8 (A-01):** FLT LOW with V_chg > 10.2 V for > 250 ms -> one bounded REG1B diagnostic read (FR-23 exception E2); a NACK is expected, because an eFuse that current-limits for longer than tCL_PLIM (202 ms max, tps2663.pdf (SLVSE94G) §6.6) has latched off and the charger is unpowered; an ACK with VBUS_PRESENT_STAT = 1 latches the carrier fault, and an ACK with VBUS_PRESENT_STAT = 0 runs the FR-48(a) D-BT-SQ check (**superseded in r8:** FLT LOW with fresh I2C and VBUS_PRESENT_STAT = 1 for > 250 ms -> carrier fault latched (FR-23); unreachable, because FR-23 attempts I2C only with FLT HIGH) |"
+    },
+    {
+      "note": "CHG-R1-01: F.3 row for the FLT-to-EN tap bridge with R106s",
+      "old": "| **QUAL stuck HIGH** (pin 10 stuck, T10 tap shorted HIGH)",
+      "new": "| **FLT tap bridged to an EN tap: F05 T4 - F17 T16 or F06 T5 - F17 T16 (r8, CHG-R1-01)** | With R106s 1.00 kOhm between U101 FLT and the F17 pad (B.4), an asserted FLT sinks <= 3.377 mA from a HIGH EN output, 0.338 of the 10 mA absolute maximum (tps2663.pdf (SLVSE94G) §6.1; H.23(n)). The EN net stays >= 3.017 V, above VEN_R max 1.4 V (RT1987_DS-00 EC table), so the switch follows its command; pin 35 reads the EN level, so an eFuse fault is masked while that EN is HIGH and \"fault\" shows whenever that EN is LOW (the r7 A.8 basis \"pulls the EN net only toward off\" does not hold: without R106s the bridge carries 18.4-45.6 mA and the EN net stays at 1.48-2.65 V, H.23(n)). Detected before power-up by the T-F-12 tap-to-tap check; in operation FR-08 sees \"fault\" with that EN LOW, and a real eFuse latch is still named by the FR-23 E2 diagnostic read |\n| **QUAL stuck HIGH** (pin 10 stuck, T10 tap shorted HIGH)"
+    },
+    {
+      "note": "CHG-R1-04: T1 step 8b split; step 8c re-arms P5 through the U111 CLR with QUAL already LOW",
+      "old": "pin 33 HIGH within 5 ms of the next rising edge; QUAL 0; pin 33 LOW within TW_QQ_MAX x 1.1. Whole step <= ~70 ms against tw_QQ,min 0.20 s.",
+      "new": "pin 33 HIGH within 5 ms of the next rising edge; QUAL 0. **8c) Re-arm (r8, CHG-R1-04):** QUAL LOW does not end QQ (U111 CLR = P5N stays released while P5 is LOW, B.1, SCES586E), so pin 33 still reads HIGH here (a pin 33 already LOW means QQ ended early: carrier fault, no arming); run the FR-46 pre-edge read (REG01:02, REG03:04, REG05, REG06:07 as field reads, <= 1.83 ms at 100 kHz, H.23(o); I-3 holds from step 7); then P5 0 -> 1 with QUAL already LOW (I-5): CLR = P5N falls and clears QQ at once; pin 33 LOW within 5 ms of the P5 rise (proves the CLR path; GATE = H1q = 0 with H1 rb 0) and /CE sense LOW within 1 ms (CE_DRV = P5 AND ARM_OK'); pin 33 still HIGH 5 ms after the P5 rise -> carrier fault, no arming. Steps 8b-8c, from the second QUAL edge to the P5 rise, take <= ~75 ms (the heartbeat exercise <= ~70 ms with its pause <= TW_HB_MAX 47 ms x 1.1, B.1 / T-C-10, plus the read-back) and complete inside the T-C-10 measured minimum tw_QQ with >= 50 ms margin (tw_QQ,min 0.20 s, H.17). The one-shot expiry is never waited for: the r8 choice of the CLR re-arm over the 0.20-0.51 s expiry wait (TW_QQ_MAX x 1.1, H.17 / T-C-10) keeps the T1 budget short, proves the U111 CLR path at every Run entry and leaves P5 HIGH for step 9 (**superseded in r8:** \"QUAL 0; pin 33 LOW within TW_QQ_MAX x 1.1. Whole step <= ~70 ms against tw_QQ,min 0.20 s.\": the expiry needs >= 0.20 s, and P5 was left LOW, so the step-9 EN_CHG = 1 write could not release /CE)."
+    },
+    {
+      "note": "CHG-R1-04 / A-03: T1 step 9 with P5 HIGH, end-of-T1 check, budget column with the step-8 pause",
+      "old": "9) REG14 readback, then write REG0F = 0x22 (EN_CHG 1), read back; P5 stays 1 | arm ~0.45-0.6 s after REGEN",
+      "new": "9) REG14 readback, then write REG0F = 0x22 (EN_CHG 1), read back; P5 stays 1 (r8: HIGH since step 8c). **End-of-T1 check (r8, A-03):** P5 (pin 5) HIGH, /CE sense (pin 7) LOW, EN_CHG = 1 read back, QUAL LOW, and pin 33 LOW with H1 rb 0; any other state -> carrier fault, no arming (T-F-03) | **r8 (A-03):** arm ~0.58-0.73 s after REGEN: the r3 figure plus ~0.13 s for the step-8 heartbeat pause (<= TW_HB_MAX x 1.1 = 52 ms, B.1 / T-C-10) and steps 8b-8c (<= ~75 ms), which the r3 figure did not count (**superseded in r8:** arm ~0.45-0.6 s after REGEN)"
+    },
+    {
+      "note": "CHG-R1-02: T3 step 3 write first, read back after (G.1 / FR-46 exception)",
+      "old": "then write REG03-05: ICHG 3.10 A, VINDPM 18.2 V; read back. 4) Ratchet",
+      "new": "then write REG03-05: ICHG 3.10 A, VINDPM 18.2 V. **3b) (r8, CHG-R1-02: write first, read back after)** Only after the REG03-05 write completes: the FR-46 read-back as four field reads REG01:02, REG03:04, REG05, REG06:07 (each inside the FR-07 cap at 100 and 400 kHz, no 16-bit field split, H.23(o)); a mismatch takes the immediate P5-LOW path of FR-46 (the converter stops absorbing and V-MOT rises toward the VESC OV cut: safe, harvest lost) (**superseded in r8:** \"; read back.\" under the r6 FR-46 group order, which put R(REG01:02) and R(REG06:07) between the two raising writes: 2.329 ms at 100 kHz, H.23(o)). 4) Ratchet"
+    },
+    {
+      "note": "CHG-R1-02: T3 budget from the published transaction schedule",
+      "old": "edge to write complete <= 1.5 ms (FR-07): 0.5 ms at 400 kHz, 1.35 ms at 100 kHz with the 0.5 ms transaction cap |",
+      "new": "edge to write complete <= 1.5 ms (FR-07): **r8:** 0.565 ms at 400 kHz and 1.359 ms at 100 kHz (margin 0.141 ms) with a capped transaction already in flight and t_BUF (H.23(o); ISR latency not included, TODO(calibrate: T-C-06)); the step-3b read-back completes 1.028 / 3.208 ms after the edge and lies outside this deadline (**superseded in r8:** 0.5 ms at 400 kHz, 1.35 ms at 100 kHz with the 0.5 ms transaction cap, which counted the two writes only) |"
+    },
+    {
+      "note": "CHG-R1-04 / A-03: T9 inherits the step-8c re-arm",
+      "old": "then T1 steps 4-9 from the REGN marker, if T-B-07 shows",
+      "new": "then T1 steps 4-9 from the REGN marker (r8: including step 8c and the end-of-T1 check, so T9 ends with P5 HIGH only after the step-8c read-back; T-F-03), if T-B-07 shows"
+    },
+    {
+      "note": "CHG-R1-02: G.1 FR-46 read-back as field reads; T3 write-first exception",
+      "old": "(one\n3-byte read 0x01-0x03 plus the written field: ~0.25 ms at 400 kHz, ~1.0 ms at 100 kHz, inside the FR-07 cap when split), and the\nsame read precedes every P5, QUAL or EN_CHG rising edge; a mismatch drops P5 before any rewrite.",
+      "new": "(r8: as separate field reads, REG01:02 and then the written field, each inside the FR-07 cap; R(REG01:02) takes 0.120 ms at 400 kHz and 0.480 ms at 100 kHz, H.23(o); **superseded in r8:** one\n3-byte read 0x01-0x03 plus the written field: ~0.25 ms at 400 kHz, ~1.0 ms at 100 kHz, inside the FR-07 cap when split), and the\nsame read precedes every P5, QUAL or EN_CHG rising edge; a mismatch drops P5 before any rewrite. **T3 exception (r8, CHG-R1-02; stated also in FR-46):** inside a raise (T3 and the sag-to-raise re-entry) the two raising writes, REG06:07 and then REG03-05, complete first, and the read-back follows both as four field reads REG01:02, REG03:04, REG05, REG06:07 (100 kHz: 0.48 / 0.48 / 0.39 / 0.48 ms; 400 kHz: 0.120 / 0.120 / 0.098 / 0.120 ms; each inside the FR-07 cap, no 16-bit field split; H.23(o)). Edge to write complete is then 1.359 ms at 100 kHz and 0.565 ms at 400 kHz against the FR-07 1.5 ms; the read-back completes 3.208 / 1.028 ms after the edge, outside that deadline. A mismatch takes the immediate P5-LOW path. A single 7-byte REG01-07 read is not used: at 100 kHz it takes 0.930 ms, above the 0.50 ms cap (H.23(o)); four field reads were chosen over a cap exception because each stays inside the cap at both rates and none splits a 16-bit field."
+    },
+    {
+      "note": "CHG-R1-02: FR-07 deadline excludes the read-back",
+      "old": "edge to write complete <= 1.5 ms. **r6 (finding loop-budget",
+      "new": "edge to write complete <= 1.5 ms (r8: the deadline covers the two raising writes only; the FR-46 read-back follows them, G.1 T3 exception, H.23(o)). **r6 (finding loop-budget"
+    },
+    {
+      "note": "CHG-R1-D02 / CHG-R1-03: FR-12(b) stuck-path test separated from the discharge wait; Idle probe through FR-23 E1",
+      "old": "**Part (b), Idle checks (after the FR-07 bus clear):** FCC = REGEN = 0 -> V_chg decays below 3 V within 2 s (shorted D-BC-FC/D-BC-RG); H1 rb 0; H2c rb 0; I2C to 0x6B NACK (charger unpowered); **r6: an ACK here runs the FR-48 D-BT-SQ check (VBAT ADC against pin-25 V_batt) before any outcome is assigned**.",
+      "new": "**Part (b), Idle checks (after the FR-07 bus clear):** **(b1) stuck-path test (r8, CHG-R1-D02):** once the FC_CHARGE and REGEN EN read-backs have both read LOW for >= 0.5 s, V_chg (pin 38) < 12.0 V; a reading >= 12.0 V means a shorted D-BC-FC/D-BC-RG (a stuck path reads >= 13.88 V; a healthy path falls below 12 V in <= 0.183 s with the eFuse enabled, H.23(q)). The criterion is **proposed, not established:** TODO(verify: T-C-04 across initial V_chg 12.5-22.28 V and the eFuse ON, UVLO and latched states; with no IN-side eFuse current it fails from >= 14.9 V, and IQ in UVLO and latched is unspecified in tps2663.pdf §6.5, H.23(q)); if T-C-04 shows less than 0.375 mA in any state, the dwell becomes 1.5 s (1.426 s worst with no bias current, H.23(q)). **(b2) discharge wait, not a pass/fail on time:** the (b3) probe waits until V_chg < 3 V; if V_chg is still >= 3 V 5 s after (b1) passed (above 0.5 s + 2.30 s x ln(12/3) = 3.69 s, the H.23(q) maximum time constant with no eFuse bias; hand calculation, TODO(calc row)), the probe is skipped for this boot and `chg_flags.vchg_slow_decay` is logged, with no refusal (FR-48(b) still checks D-BT-SQ in the first cruise second). **(b3) Idle probe:** one address poll to 0x6B through the FR-23 exception E1; a NACK is expected (charger unpowered) and ignored; **r6: an ACK runs the FR-48(a) D-BT-SQ check (VBAT ADC against pin-25 V_batt) before any outcome is assigned**. H1 rb 0; H2c rb 0. (**superseded in r8:** \"FCC = REGEN = 0 -> V_chg decays below 3 V within 2 s (shorted D-BC-FC/D-BC-RG); H1 rb 0; H2c rb 0; I2C to 0x6B NACK (charger unpowered)\": the decay from 9.9 V to 3 V below UVLO takes 1.65-2.75 s (H.23(q)), so a warm reset with a fast bring-up could false-fail it and refuse regen for one boot, and the probe could not pass the FR-23 gate.)"
+    },
+    {
+      "note": "CHG-R1-01 / A-01: FR-23 FLT plausibility rule superseded by exception E2",
+      "old": "**r4 FLT plausibility (finding pin35-flt-floats-on-open-tap):** FLT LOW with fresh I2C and VBUS_PRESENT_STAT = 1 for > 250 ms (beyond the 202 ms tCL_PLIM current-limit dwell, SLVSE94G §6.6) -> carrier fault latched (a FLT reading that contradicts a powered charger);",
+      "new": "**r4 FLT plausibility (finding pin35-flt-floats-on-open-tap); r8 FLT-LOW case (A-01):** exception E2 below (**superseded in r8:** FLT LOW with fresh I2C and VBUS_PRESENT_STAT = 1 for > 250 ms (beyond the 202 ms tCL_PLIM current-limit dwell, SLVSE94G §6.6) -> carrier fault latched (a FLT reading that contradicts a powered charger); unreachable, because this gate attempts I2C only with FLT HIGH, so i2c_fresh is never TRUE while FLT reads LOW);"
+    },
+    {
+      "note": "CHG-R1-03 / CHG-R1-01 / A-07: FR-23 bounded exceptions E1 (Idle probe) and E2 (FLT-LOW diagnostic read)",
+      "old": "the \"charger unbiased\" state (the eFuse latched with T16 open) |",
+      "new": "the \"charger unbiased\" state (the eFuse latched with T16 open). **r8 exceptions to the I2C gate (CHG-R1-03; CHG-R1-01, A-01).** Each is bounded, uses the FR-07 engine and its caps, never sets i2c_fresh, never counts toward the QUAL or I2C-dead NACK rules and never changes `regnExpected`. **(E1) FR-12(b3) Idle probe:** in State 1 only, once per boot, after FR-12(b1) has passed and V_chg (pin 38) < 3 V (FR-12(b2)), with P5, QUAL, FCCEIL, REGEN and FCC LOW: one address poll to 0x6B; a NACK is expected (charger unpowered) and ignored; on an ACK, and only then, the FR-48(a) sequence runs: one ADC_EN one-shot write to REG2E, the REG3B VBAT_ADC read once the conversion has completed (tADC_CONV, SLUSDV2C §6.5), then ADC_EN cleared (REG2E written with ADC_EN 0 and read back; A-07: cleared so that the battery-only ADC draws no pack current in Idle, whether or not the one-shot clears it by itself, TODO(verify: SLUSDV2C Table 7-55 ADC_RATE one-shot behaviour)); at most three transactions follow the poll. **(E2) FLT-LOW diagnostic read:** when FLT (pin 35) reads LOW and V_chg > 10.2 V, both continuously for > 250 ms (the tCL_PLIM maximum is 202 ms, tps2663.pdf (SLVSE94G) §6.6: margin 48 ms, H.23(n)), one REG1B read; a NACK is expected (an eFuse that current-limits for longer than tCL_PLIM has latched off and the charger is unpowered) and ends the episode; an ACK with VBUS_PRESENT_STAT = 1 latches the carrier fault (a FLT reading that contradicts a powered charger: a FLT tap, R106s or bridge fault); an ACK with VBUS_PRESENT_STAT = 0 means the charger is battery-powered and runs the FR-48(a) check. One read per episode; the episode re-arms only after FLT reads HIGH or V_chg < 10.2 V. The pin-35 LOW level through R106s is 0.153 V typical and 0.325 V maximum against VIL 0.940 V (V_OL = I x R(FLT), R(FLT) 36-130 ohm, tps2663.pdf §6.5; H.23(n)) |"
+    },
+    {
+      "note": "CHG-R1-03: FR-48(a) reached through FR-23 E1/E2; ADC_EN cleared (A-07)",
+      "old": "(a) Idle: if 0x6B ACKs with V_chg (pin 38) < 3 V (charger input unpowered), set ADC_EN (one-shot), read REG3B VBAT_ADC",
+      "new": "(a) Idle and FLT-LOW (r8): if 0x6B ACKs to the FR-23 E1 Idle probe (V_chg < 3 V) or to the E2 diagnostic read with VBUS_PRESENT_STAT = 0 (the charger input unpowered in both cases), set ADC_EN (one-shot), read REG3B VBAT_ADC and then clear ADC_EN with a REG2E read-back (A-07) (**superseded in r8:** \"(a) Idle: if 0x6B ACKs with V_chg (pin 38) < 3 V (charger input unpowered), set ADC_EN (one-shot), read REG3B VBAT_ADC\", which named no route through the FR-23 gate)"
+    },
+    {
+      "note": "CHG-R1-02: FR-46 T3 write-first exception",
+      "old": "The 20 ms slot-5 REG00-0A verify stays |",
+      "new": "The 20 ms slot-5 REG00-0A verify stays. **r8 (CHG-R1-02): T3 exception, write first and read back after:** inside a raise the REG06:07 and REG03-05 writes complete before any read-back; the read-back then follows as the four field reads REG01:02, REG03:04, REG05, REG06:07, each inside the FR-07 cap (H.23(o)), and a mismatch takes the P5-LOW path above at once. Outside T3 the read-back follows each write as field reads (REG01:02, then the written field); no read-back transaction spans more than one 16-bit field. The FR-07 edge-to-write-complete deadline excludes the read-back (100 kHz: writes complete at 1.359 ms, read-back at 3.208 ms; 400 kHz: 0.565 / 1.028 ms; H.23(o)) |"
+    },
+    {
+      "note": "CHG-R1-D01: FR-43 separate flash and SD gates; battery-supported Idle admission",
+      "old": "one predicate `flashWriteAllowed` = mainState 1 (or State 98 with no profile, no 'J' session, no window) AND \\|v_actual\\| below 0.05 m/s for >= 1 s AND REGEN, FC_CHARGE and FC_BUS LOW AND no charger window AND no SD log open AND NOT `chgHbRunning` AND `rtwdogMode == WDT_LONG`; never in State 2, 3 or 99",
+      "new": "**r8 (CHG-R1-D01): two operation-specific predicates.** (1) `flashWriteAllowed` (EEPROM commit, 'Z' clear) = mainState 1 (or State 98 with no profile, no 'J' session, no window) AND \\|v_actual\\| below 0.05 m/s for >= 1 s AND REGEN and FC_CHARGE EN LOW and read back LOW AND no charger window AND **bus support: either FC_BUS LOW (the r5 condition, a manually configured State 98) or battery-supported Idle, that is BT_BUS HIGH with its EN read back HIGH, BT_REG_ENABLE HIGH, V_bus >= `V_BUS_CHARGED_THRESH`, `busHotPlugUnsafe()` false, the share selector disarmed and no `shareIso*` / `shareSpCut*` flag or deferred BT cut standing** AND no bench SD log recording (sampling stopped) and no SD operation in flight AND NOT `chgHbRunning` AND `rtwdogMode == WDT_LONG`. Battery-supported admission covers the normal Idle vector 1 1 1 1 1 0 0 1 (F.2), in which FC_BUS stays HIGH: with the pack on the bus through BT_BUS, a purge during the IRQ-masked span (<= ~1.2 s, H.21(e)) removes only the FC contribution. `fcPurgeExposure()` is deliberately not used: it is TRUE in Idle whenever FC_REG is HIGH and the scheduler is unlocked (F.4), so it would refuse every Idle commit. (2) `sdOpAllowed` (SD close and sync only) = [mainState 1 AND NOT `chgHbRunning`] OR [State 98 with no 'J' session AND NOT `chgHbRunning`] OR [State 99 with `state99Phase == 3`, the latched phase: every path switch LOW, P5/QUAL/FCCEIL LOW, heartbeat stopped]; it does not test \"no SD log open\" (it exists to close that log) and is never TRUE in State 2, 3 or State 99 phases 0-2. (**superseded in r8:** one predicate `flashWriteAllowed` = mainState 1 (or State 98 with no profile, no 'J' session, no window) AND \\|v_actual\\| below 0.05 m/s for >= 1 s AND REGEN, FC_CHARGE and FC_BUS LOW AND no charger window AND no SD log open AND NOT `chgHbRunning` AND `rtwdogMode == WDT_LONG`; never TRUE in normal Idle, which keeps FC_BUS HIGH, and its \"no SD log open\" term blocked the SD close it also governed.) `flashWriteAllowed` is never TRUE in State 2, 3 or 99"
+    },
+    {
+      "note": "CHG-R1-D01: FR-43 SD bracket separate from the flash bracket",
+      "old": "SD close/sync only in State 1, 98 or 99 phase 3 and through the same bracket;",
+      "new": "SD close/sync only through `mcuSdOpBegin()` / `mcuSdOpEnd()` under `sdOpAllowed` (r8: a separate bracket that stretches RTWDOG to >= the T-W-01 measured worst close time plus margin, TODO(calibrate: T-W-01), and restores and reads back the short timeout before any EN may rise; **superseded in r8:** SD close/sync only in State 1, 98 or 99 phase 3 and through the same bracket);"
+    },
+    {
+      "note": "CHG-R1-D01: FR-43 host tests for battery-supported Idle, the SD gate and State 99",
+      "old": "Host tests: no commit in States 2/3/98-with-HB/99; commit in Idle with HB stopped; 'Z' refused while HB runs; the RTWDOG mode follows `chgHbRunning` on every T1/T6/T7/trip edge |",
+      "new": "Host tests: no commit in States 2/3/98-with-HB/99; commit in Idle with HB stopped; 'Z' refused while HB runs; the RTWDOG mode follows `chgHbRunning` on every T1/T6/T7/trip edge; **r8:** a commit and a 'Z' clear ADMITTED in the normal Idle vector 1 1 1 1 1 0 0 1 (FC_BUS HIGH, BT_BUS HIGH with the EN read-back HIGH, V_bus charged); REFUSED in Idle with the BT_BUS EN read-back LOW, with BT_REG LOW, with V_bus below `V_BUS_CHARGED_THRESH`, with a share-loop BT cut standing or deferred, with \\|v_actual\\| >= 0.05 m/s and while a bench SD log is recording; a commit requested in State 99 stays pending in every phase, phase 3 included, and executes at the next admitted Idle; an SD close ADMITTED in State 99 phase 3, in Idle with a log open and in State 98 without a 'J' session, REFUSED in State 99 phases 0-2, in States 2 and 3 and with the heartbeat running; neither predicate calls `fcPurgeExposure()` |"
+    },
+    {
+      "note": "CHG-R1-03: FR-22 (xxii) through the real FR-23 gate",
+      "old": "(xxii) FR-48: an ACK in Idle with VBAT ADC = V_batt latches `CHG_DBTSQ_SHORT`, an ACK with VBAT < 3 V does not, the cruise check fires after >= 1 s of held ILIM only;",
+      "new": "(xxii) FR-48: an ACK in Idle with VBAT ADC = V_batt latches `CHG_DBTSQ_SHORT`, an ACK with VBAT < 3 V does not, the cruise check fires after >= 1 s of held ILIM only; **r8 (CHG-R1-03): every Idle case runs through the production FR-23 gate (the probe issued by exception E1, the ACK from the I2C mock, no ACK injected into the diagnostic); a NACK is ignored with no I2C-dead count and no flag; the probe is refused outside State 1, before FR-12(b1) passes, with V_chg >= 3 V and a second time in one boot; on an ACK the ADC_EN write, the REG3B read and the ADC_EN clear with its REG2E read-back occur in that order (A-07)**;"
+    },
+    {
+      "note": "CHG-R1-01/02/04/D02: FR-22 new host-test items (xxx)-(xxxiii)",
+      "old": "(xxix) pins 38/39 at full scale take no FR-08/FR-30/T10 decision for 5 ms after the reading leaves full scale |",
+      "new": "(xxix) pins 38/39 at full scale take no FR-08/FR-30/T10 decision for 5 ms after the reading leaves full scale; **r8:** (xxx) FR-23 E2: FLT LOW with V_chg > 10.2 V for 249 ms issues no read and for 251 ms exactly one REG1B read; a NACK ends the episode with no flag; an ACK with VBUS_PRESENT_STAT = 1 latches the carrier fault and one with VBUS_PRESENT_STAT = 0 runs FR-48(a); no second read until FLT reads HIGH or V_chg < 10.2 V; i2c_fresh and `regnExpected` unchanged; (xxxi) FR-12(b1)/(b2): a healthy decay per H.23(q) with the eFuse enabled passes, V_chg held at 13.88 V fails as a stuck path, and a decay that stays >= 3 V for 5 s skips the probe with `vchg_slow_decay` and no refusal; (xxxii) T1 steps 8b-8c with tw_QQ at 0.20 s and at 0.46 s (both monostable extremes, H.17): pin 33 HIGH before and LOW within 5 ms after the step-8c P5 rise, step 9 entered with P5 HIGH, the end-of-T1 check passes and QUAL is LOW on every P5 change; a model in which the P5 rise does not clear QQ fails step 8c; T9 running steps 4-9 reaches the same end state; (xxxiii) T3 at 100 and 400 kHz: both raising writes complete before the first read-back transaction, edge to write complete <= 1.5 ms with a capped read in flight, no transaction exceeds the FR-07 cap, and a read-back mismatch drops P5 on the completion callback of the failing read |"
+    },
+    {
+      "note": "CHG-R1-D01: G.3 item (2) flash gate wording",
+      "old": "(2) every flash write goes through `mcuFlashOpBegin()` in a quiescent state only (FR-43), which",
+      "new": "(2) every flash write goes through `mcuFlashOpBegin()` in a quiescent state only (FR-43; r8: battery-supported Idle admitted, flash never in State 99), which"
+    },
+    {
+      "note": "CHG-R1-D01: G.3 SD close under the separate gate",
+      "old": "SD close/sync only in State 1, 98 or 99 phase 3; each I2C bus clear",
+      "new": "SD close/sync only under the separate FR-43 `sdOpAllowed` gate (r8: Idle or State 98 with the heartbeat stopped, or State 99 phase 3; **superseded in r8:** SD close/sync only in State 1, 98 or 99 phase 3, which shared the flash bracket); each I2C bus clear"
+    },
+    {
+      "note": "CHG-R1-D01: G.3 r8 paragraph",
+      "old": "entries) through the gated API.",
+      "new": "entries) through the gated API.\n\n**r8 (CHG-R1-D01): flash and SD gates separated.** The r5 predicate required FC_BUS LOW, which the normal Idle vector (F.2: 1 1 1 1 1 0 0 1) never has, so no commit was admitted outside a manually configured State 98; its \"no SD log open\" term blocked the SD close it also governed; and it allowed that close in State 99 phase 3 while it forbade State 99 in the same bracket. FR-43 now defines `flashWriteAllowed` (battery-supported Idle admitted, flash never in State 99) and `sdOpAllowed` (SD close and sync only: Idle and State 98 with the heartbeat stopped, and State 99 phase 3), each with its own bracket. The watchdog windowing is unchanged: both gates require the heartbeat stopped, so neither operation runs under the 50 ms RTWDOG timeout."
+    },
+    {
+      "note": "CHG-R1-02: H.16 T3 rows recomputed from the H.23(o) schedule",
+      "old": "| H.16 | T3 raise transfer time | 0.21 ms at 400 kHz; 0.85 ms at 100 kHz | FR-07 |",
+      "new": "| H.16 | T3 raise transfer time, the two writes alone (**superseded in r8 as the T3 budget by the two rows below:** 0.21 ms at 400 kHz; 0.85 ms at 100 kHz) | 0.213 ms at 400 kHz; 0.850 ms at 100 kHz (H.23(o)) | FR-07 |\n| H.16 | **T3 transaction schedule, write first (r8, CHG-R1-02)** (`round4/calc/r7_calc.py` H.23(o); 9 bits per byte, START / repeated START / STOP 1 bit each, t_BUF 4.7 / 1.3 us TODO(verify: NXP UM10204, not in references/), in-flight wait = the FR-07 cap 0.50 / 0.35 ms) | edge to write complete 1.359 ms at 100 kHz (margin 0.141 ms to 1.5 ms) and 0.565 ms at 400 kHz; the r6 FR-46 literal order 2.329 ms at 100 kHz (misses by 0.829 ms) and 0.808 ms at 400 kHz; ISR latency not included (TODO(calibrate: T-C-06)) | G.1 T3 exception, FR-46; T-C-06 |\n| H.16 | **T3 read-back after the writes (r8)** (`round4/calc/r7_calc.py` H.23(o)) | four field reads REG01:02 / REG03:04 / REG05 / REG06:07: 0.48 / 0.48 / 0.39 / 0.48 ms at 100 kHz (each <= the 0.50 ms cap), complete 3.208 ms after the edge; 0.120 / 0.120 / 0.098 / 0.120 ms at 400 kHz, complete 1.028 ms; one 7-byte REG01-07 read 0.930 ms at 100 kHz exceeds the cap (0.233 ms at 400 kHz) | four field reads chosen; no V-MOT peak is derived from the read-back delay |"
+    },
+    {
+      "note": "CHG-R1-D02 / CHG-R1-01: H.21 rows for the pin-38 decay and the FLT-LOW diagnostic",
+      "old": "| H.22 | **VREG corruption by a single-bit address error (r6)**",
+      "new": "| H.21 | **Pin-38 V_chg decay for FR-12(b) (r8, CHG-R1-D02)** (`round4/calc/r7_calc.py` H.23(q); VCHG-IN 17.0-28.4 uF ASSUMPTION, loads 81.2 kOhm, IQ(ON) 1.38-1.70 mA, tps2663.pdf §6.5) | r7 test 9.9 -> 3 V: 1.65 / 2.50 / 2.75 s at 17.0 / 25.8 / 28.4 uF with no eFuse bias current (0.62-1.04 s with IQ(ON) down to 4.5 V), so the 2 s limit fails for C >= 20.6 uF; r8 proposed V_chg < 12.0 V after both EN read-backs LOW for >= 0.5 s: worst 0.183 s with the eFuse enabled (LATCHED, 28.4 uF, from 22.28 V; margin 0.317 s); fails from >= 14.9 V with no eFuse bias current (needs >= 0.375 mA IN-side; IQ in UVLO and latched unspecified, TODO(verify: tps2663.pdf §6.5; T-C-04)); a stuck path reads >= 13.88 V | FR-12(b); T-F-02, T-C-04 |\n| H.21 | **FLT-LOW diagnostic read and FLT readback (r8, CHG-R1-01 / A-01)** (`round4/calc/r7_calc.py` H.23(n)) | dwell 250 ms vs tCL_PLIM max 202 ms (tps2663.pdf §6.6): margin 48 ms; FLT asserts 1.09-1.60 ms after current limiting starts (tCL_PLIM_FLT, §6.6); pin-35 LOW level through R106s 0.153 V typ / 0.325 V max vs VIL 0.940 V (margin 0.615 V; V_OL = I x R(FLT), R(FLT) 36-130 ohm, §6.5) | FR-23 E2; FR-22 (xxx) |\n| H.22 | **VREG corruption by a single-bit address error (r6)**"
+    },
+    {
+      "note": "CHG-R1-03 / A-07: T-D-15 through the real gate",
+      "old": "operator message shown | Fix FR-48 (thresholds, ADC_EN one-shot in battery-only mode); if the ADC cannot run in battery-only mode, Idle detection by the ACK alone |",
+      "new": "operator message shown; **r8 (CHG-R1-03): production build only, no test hook: the Idle latch is reached through the FR-23 exception E1 probe (the LA on SDA/SCL shows one address poll after V_chg < 3 V, then the REG2E write, the REG3B read and the ADC_EN clear); REG2E reads ADC_EN = 0 after the Idle read (A-07); in the healthy case (1) the LA shows the poll NACKed and no further Idle transaction** | Fix FR-48 (thresholds, ADC_EN one-shot in battery-only mode); if the ADC cannot run in battery-only mode, Idle detection by the ACK alone; **r8: no probe on the LA -> fix the FR-23 E1 exception or the FR-12(b2) discharge wait; ADC_EN still 1 after the read -> fix the FR-48(a) clear write** |"
+    },
+    {
+      "note": "CHG-R1-D02: T-F-02 warm resets and the proposed stuck-path criterion",
+      "old": "log the stored INA253 BT floor with the bus-switch states at its capture instant |",
+      "new": "log the stored INA253 BT floor with the bus-switch states at its capture instant; **r8 (CHG-R1-D02):** 5 of the 20 boots are warm resets from regen-armed Run (V_chg at V-MOT when the reset lands) followed by the fastest bring-up; log V_chg at the FR-12(b1) instant and the time to V_chg < 3 V |"
+    },
+    {
+      "note": "CHG-R1-D02: T-F-02 pass / fail",
+      "old": "MOT_PWR and BT_BUS never written LOW after State 0 (LA on both EN nets)** | Fix; a BT_OK-only failure: re-select R142 (T-C-03); a ratio false-fail: re-calibrate k from T-E-05 |",
+      "new": "MOT_PWR and BT_BUS never written LOW after State 0 (LA on both EN nets)**; **r8:** FR-12(b1) passes on every boot, the 5 warm resets included (V_chg < 12.0 V after 0.5 s of both EN read-backs LOW); the FR-12(b3) probe runs on every boot or is skipped with `vchg_slow_decay`, never counted as a failure | Fix; a BT_OK-only failure: re-select R142 (T-C-03); a ratio false-fail: re-calibrate k from T-E-05; **r8: a (b1) false fail on a warm reset -> lengthen the dwell to 1.5 s (H.23(q)) and repeat the T-C-04 decay measurement** |"
+    },
+    {
+      "note": "CHG-R1-04 / A-03: T-F-03 extended (end-of-T1 state, step 8c, regen harvest, forced T9)",
+      "old": "| Scope VCHG-IN, V-MOT, I_fc, I_batt | IBAT 0 +- 20 mA; I_fc/I_batt unchanged +- 50 mA; inrush <= 0.5 A (r3: 0.42 A computed with C102a/b/c, H.6); T1 steps 5, 6 and 8 pass (REGN marker, pin-33 release proof, heartbeat) | Fix |",
+      "new": "| Scope VCHG-IN, V-MOT, I_fc, I_batt; **r8 (CHG-R1-04, A-03):** LA on pins 5, 7, 10 and 33 through T1; after the 60 s cruise, one brake of >= 0.5 s; before the vehicle run, one T9 re-qualification forced on the T-C-06 rig (VCHG-IN interrupted for ~100 ms with REGEN HIGH, FR-30) with the same LA channels | IBAT 0 +- 20 mA; I_fc/I_batt unchanged +- 50 mA; inrush <= 0.5 A (r3: 0.42 A computed with C102a/b/c, H.6); T1 steps 5, 6 and 8 pass (REGN marker, pin-33 release proof, heartbeat); **r8: step 8b passes and step 8c shows pin 33 HIGH before the P5 rise and LOW within 5 ms after it; at the end of T1 and of the forced T9: P5 HIGH, /CE sense LOW, EN_CHG = 1 read back, QUAL LOW, pin 33 LOW; the brake raises IBAT above the cruise reading by > 0.1 A (an assumed detection threshold, TODO(calibrate: T-G-01)), so regen harvest is armed; the step 8b-8c duration recorded against the T-C-10 minimum tw_QQ - 50 ms** | Fix; **r8: P5 LOW or /CE sense HIGH at the end of T1 -> fix FR-04 step 8c; pin 33 LOW before the P5 rise -> QQ shorter than steps 8b-8c (re-measure T-C-10, shorten the step-8b pause margin); pin 33 HIGH 5 ms after the P5 rise -> U111 CLR path fault (B.1): carrier fault** |"
+    },
+    {
+      "note": "CHG-R1-D01: T-W-01 SD close cases",
+      "old": "(50 ms only between T1 step 0 and T6/T7).",
+      "new": "(50 ms only between T1 step 0 and T6/T7); **r8:** an SD close requested in State 99 phases 0-2 and in phase 3, and in Idle with the log open."
+    },
+    {
+      "note": "CHG-R1-D01: T-W-01 pass criteria for the SD gate",
+      "old": "commits refused where FR-43 forbids them. |",
+      "new": "commits refused where FR-43 forbids them; **r8 (CHG-R1-D01):** an SD close in State 99 phase 3 and in Idle with a log open completes through the `sdOpAllowed` bracket with zero watchdog resets; an SD close requested in State 99 phases 0-2 is refused and stays pending; a commit requested in State 99 phase 3 stays pending and executes at the next admitted Idle. |"
+    },
+    {
+      "note": "CHG-R1-D01: T-W-02 in the normal Idle vector",
+      "old": "forces an encoder commit through `mcuFlashOpBegin()` in Idle;",
+      "new": "forces an encoder commit through `mcuFlashOpBegin()` in Idle (r8: the normal Idle vector, FC_BUS HIGH and BT_BUS HIGH with the read-back HIGH, with a purge emulated on the FC input during the IRQ-masked span on the T-D-14 rig);"
+    },
+    {
+      "note": "CHG-R1-D01: T-W-02 pass / fail",
+      "old": "heartbeat running: request refused and pending | Reset in Idle: lengthen the bracketed timeout (both stages) or compact sector 61 at boot (FR-43 option); records the measured erase time in place of the recalled figure |",
+      "new": "heartbeat running: request refused and pending; **r8:** the commit ADMITTED in the normal Idle vector with V_bus above `LIMIT_V_BUS_MIN` throughout the emulated purge, and REFUSED (pending) with the BT_BUS EN read-back LOW | Reset in Idle: lengthen the bracketed timeout (both stages) or compact sector 61 at boot (FR-43 option); records the measured erase time in place of the recalled figure; **r8: V_bus below `LIMIT_V_BUS_MIN` during the emulated purge -> withdraw the battery-supported admission and commit only with FC_REG LOW (an operator-initiated quiet Idle)** |"
+    },
+    {
+      "note": "CHG-R1-D01: J.2 item 33",
+      "old": "33. **Encoder-direction record committed only in Idle (r5, FR-43):** a runaway flip found in Run is held in RAM and committed at\n    the next quiescent Idle;",
+      "new": "33. **Encoder-direction record committed only in Idle (r5, FR-43; r8 battery-supported Idle):** a runaway flip found in Run is held in RAM and committed at\n    the next admitted Idle (r8: the normal Idle vector with BT_BUS HIGH and read back, FR-43; **superseded in r8:** the next quiescent Idle, which the r5 FC_BUS-LOW term never admitted, CHG-R1-D01); State 99 holds the request in every phase;"
+    }
+  ]
+}

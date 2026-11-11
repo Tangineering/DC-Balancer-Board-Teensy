@@ -16,6 +16,7 @@ Windows PowerShell 5.1.
 | kiutils | 1.4.8 | `tools\pcb\.venv` |
 | easyeda2kicad | 1.0.1 | `tools\pcb\.venv\Scripts\easyeda2kicad.exe` |
 | KiKit | 1.8.1 | `tools\pcb\.venv\Scripts\kikit.exe` |
+| InteractiveHtmlBom | 2.12.0 | `tools\pcb\.venv\Scripts\generate_interactive_bom.exe` |
 | Freerouting | 2.5.0 | `C:\Tools\freerouting\freerouting-2.5.0.jar` |
 | JDK for Freerouting (Temurin) | 25.0.5+8 | `C:\Tools\jdk-25.0.5+8\bin\java.exe` |
 | JDK, pre-existing (not used by Freerouting) | 17.0.9 | `C:\Program Files\BellSoft\LibericaJDK-17-Full\bin\java.exe` |
@@ -26,8 +27,8 @@ not on `PATH` and `JAVA_HOME` is unchanged; call it by its full path.
 Note that ngspice is installed only as `ngspice.dll`. There is no `ngspice.exe`; batch
 simulation uses the shared-library API (section 3.4).
 
-The following tools are NOT installed: KiBot, InteractiveHtmlBom, a KiCad-GUI JLCPCB/LCSC
-parts plugin, and KiCad MCP servers. Fab design rules for OSH Park and PCBWay are in
+The following tools are NOT installed: KiBot, a KiCad-GUI JLCPCB/LCSC parts plugin, and KiCad
+MCP servers. Fab design rules for OSH Park and PCBWay are in
 `tools\pcb\fab_rules\` (section 3.9).
 
 The venv packages were installed with this command:
@@ -39,6 +40,16 @@ The venv packages were installed with this command:
 KiKit pulled in click 8.5.1, commentjson 0.9.0, markdown2 2.5.5, pybars3 0.9.7, shapely 2.2.0,
 solidpython 1.1.3, prettytable 0.7.2, euclid3 0.1, lark-parser 0.7.8, ply 3.11, PyMeta3 0.5.1
 and pypng 0.0.19. numpy comes from KiCad's Python.
+
+InteractiveHtmlBom was installed without its declared wxPython dependency, so the venv uses
+KiCad's bundled wxPython 4.2.2 instead of a second copy:
+
+```powershell
+& $py -m pip install --no-deps interactivehtmlbom==2.12.0 jsonschema==4.26.0 attrs==26.1.0 jsonschema-specifications==2025.9.1 referencing==0.37.0 rpds-py==2026.9.1 typing_extensions==4.16.0
+```
+
+Note that `pip check` therefore reports "interactivehtmlbom 2.12.0 requires wxpython, which is
+not installed". This message is expected.
 
 ## 2. Libraries and Python environment
 
@@ -177,6 +188,23 @@ All three presets returned exit code 0 on the test board. `jlcpcb` and `pcbway` 
 `jlcpcb` reads the LCSC number from the field `LCSC` (change with `--field`). `pcbway` reads
 manufacturer and part-number fields (`--manufacturer`, `--partNumber`). KiKit 1.8.1 also has
 `neodenyy1` and `openpnp` presets.
+
+### 3.8a Interactive HTML BOM
+
+```powershell
+$env:INTERACTIVE_HTML_BOM_CLI_MODE = '1'
+$env:INTERACTIVE_HTML_BOM_NO_DISPLAY = '1'
+& "C:\Life Ops\School\Thesis\DC-Balancer-round4\tools\pcb\.venv\Scripts\generate_interactive_bom.exe" --no-browser --dest-dir <outdir> --name-format "%f_ibom" board.kicad_pcb
+```
+
+The test board gave `rtest_ibom.html` (172 kB, exit code 0, about 1 s). The "Adding duplicate
+image handler" lines on stderr are harmless.
+
+WARNING: Set both environment variables before you run the command or import the package.
+Without `INTERACTIVE_HTML_BOM_CLI_MODE`, the package registers a KiCad action plugin when it is
+imported. Outside KiCad this opens a modal "wxWidgets Debug Alert" dialog
+(`assert "PgmOrNull()" failed in ACTION_PLUGINS::register_action()`), which blocks an
+unattended run until someone dismisses it.
 
 ### 3.9 Fab design rules (OSH Park and PCBWay, conservative)
 
