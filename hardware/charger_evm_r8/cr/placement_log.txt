@@ -1,0 +1,131 @@
+packer: best try 0 placed 8 of 9, cost 0.0
+U114   F taby_only    (20.775, 68.675) rot 0  target -
+U110   F taby_only    (25.925, 68.675) rot 0  target -
+U106   F taby_only    (30.025, 69.725) rot 90  target -
+U116   F taby_only    (20.775, 71.725) rot 0  target -
+U118   F taby_only    (24.875, 72.775) rot 90  target -
+U105   F taby_only    UNPLACED -> fallback int_logic
+U107   F taby_only    (33.225, 68.125) rot 0  target -
+U108   F taby_only    (32.525, 70.775) rot 90  target -
+U109   F taby_only    (30.675, 73.425) rot 0  target -
+phase tab Y gates done
+packer: best try 0 placed 1 of 1, cost 0.0
+U105   F int_logic    (45.375, 36.175) rot 0  target -
+phase tab Y gates fallback done
+packer: best try 30 placed 11 of 11, cost 93.1
+U122   F int_logic    (33.075, 60.675) rot 90  target (20.77, 68.68)
+U123   F int_analog   (30.725, 49.575) rot 0  target -
+D108   F int_analog   (23.575, 36.450) rot 90  target -
+D104   F int_analog   (31.700, 47.075) rot 0  target (36.12, 39.15)
+D105   F int_analog   (25.400, 52.225) rot 0  target (38.39, 39.15)
+D106   F int_analog   (24.200, 48.525) rot 0  target (32.09, 39.15)
+U111   F int_logic    (34.075, 53.675) rot 90  target (36.56, 54.94)
+U113   F int_logic    (27.525, 48.275) rot 90  target -
+U112   F taby_logic   (24.525, 59.275) rot 90  target (41.68, 35.80)
+U117   F taby_logic   (28.225, 65.275) rot 0  target (34.11, 68.78)
+D101   F taby_logic   (33.875, 50.025) rot 0  target -
+phase top ICs done
+packer: best try 65 placed 6 of 6, cost 28.0
+R109   F div          (35.675, 44.150) rot 90  target (39.85, 48.39)
+R111   F div          (33.300, 44.875) rot 0  target (38.51, 52.65)
+R114   F div          (29.000, 44.875) rot 0  target (36.01, 51.41)
+R110   F div          (33.500, 43.100) rot 0  target (34.38, 43.11)
+R112   F div          (31.150, 44.350) rot 90  target (32.36, 45.69)
+R115   F div          (28.600, 43.450) rot 0  target (28.61, 43.84)
+phase dividers done
+packer: best try 67 placed 23 of 23, cost 34.0
+C110   B bot_core     (39.050, 41.050) rot 90  target (38.39, 41.05)
+C111   B bot_core     (31.550, 41.050) rot 90  target (34.36, 41.05)
+C112   B bot_core     (37.150, 37.550) rot 90  target (35.70, 37.55)
+C113   B bot_core     (26.300, 41.050) rot 90  target (26.30, 41.05)
+C114   B bot_core     (46.850, 36.650) rot 0  target (47.27, 37.15)
+C115   B bot_core     (30.500, 70.150) rot 0  target (29.05, 71.63)
+C116   B bot_core     (34.100, 68.100) rot 0  target (34.11, 68.12)
+C117   B bot_core     (32.500, 71.650) rot 0  target (32.52, 71.66)
+C118   B bot_core     (31.550, 73.600) rot 90  target (31.56, 73.42)
+C119   B bot_core     (27.800, 69.650) rot 0  target (27.82, 69.65)
+C120   B bot_core     (33.100, 55.600) rot 0  target (33.10, 55.58)
+C121   B bot_core     (23.500, 52.350) rot 90  target (26.55, 50.18)
+C122   B bot_core     (22.650, 69.650) rot 0  target (22.68, 69.65)
+C123   B bot_core     (22.650, 72.700) rot 0  target (22.68, 72.70)
+C124   B bot_core     (29.350, 66.250) rot 0  target (29.36, 66.23)
+C125   B bot_core     (39.400, 60.975) rot 90  target (50.80, 61.00)
+C126   B bot_core     (23.900, 74.700) rot 0  target (23.90, 74.68)
+C131   B bot_core     (30.350, 41.050) rot 90  target (30.33, 41.05)
+C132   B bot_core     (38.750, 38.350) rot 90  target (39.75, 37.55)
+C133   B bot_core     (40.800, 41.050) rot 90  target (42.45, 41.05)
+C134   B bot_core     (32.550, 61.800) rot 90  target (32.42, 61.78)
+C135   B bot_core     (31.700, 46.650) rot 0  target (31.82, 50.23)
+R106s  B bot_logic    (55.545, 58.405) rot 90  target (58.42, 61.48)
+phase bottom decouplers done
+packer: best try 36 placed 38 of 38, cost 184.0
+C106   B bot_analog   (31.300, 43.750) rot 90  target (34.28, 43.60)
+C107   B bot_analog   (29.750, 45.950) rot 90  target (32.52, 44.94)
+C108   B bot_analog   (28.750, 44.000) rot 0  target (28.73, 44.00)
+C109   B bot_analog   (24.050, 39.150) rot 90  target (24.03, 39.15)
+C127   B bot_analog   (32.050, 66.200) rot 0  target (29.36, 64.33)
+C129   B bot_analog   (39.650, 58.050) rot 90  target (60.96, 64.02)
+C130   B bot_analog   (28.050, 39.150) rot 90  target (28.06, 39.15)
+C140   B bot_analog   (31.550, 36.000) rot 90  target (35.70, 35.65)
+C150   B bot_analog   (34.075, 57.050) rot 0  target (34.07, 55.58)
+C151   B bot_analog   (27.500, 54.800) rot 0  target (27.52, 50.18)
+R113   B bot_analog   (30.550, 54.150) rot 90  target (32.42, 51.48)
+R116   B bot_analog   (27.400, 56.000) rot 0  target (26.94, 51.59)
+R117   B bot_analog   (24.350, 41.100) rot 0  target (25.16, 39.62)
+R118   B bot_analog   (25.250, 38.350) rot 90  target (24.03, 39.15)
+R119   B bot_analog   (26.450, 38.350) rot 90  target (26.30, 39.15)
+R120   B bot_analog   (40.800, 49.050) rot 90  target (44.90, 49.05)
+R129   B bot_analog   (37.950, 62.000) rot 90  target (48.85, 65.53)
+R140   B bot_analog   (30.350, 36.000) rot 90  target (32.34, 35.73)
+R141   B bot_analog   (30.800, 37.950) rot 0  target (34.56, 36.12)
+R142   B bot_analog   (27.950, 36.000) rot 90  target (32.47, 35.73)
+R143   B bot_analog   (29.150, 36.000) rot 90  target (31.52, 35.80)
+R144   B bot_analog   (26.000, 35.800) rot 0  target (28.98, 35.80)
+R150   B bot_analog   (35.800, 55.600) rot 0  target (33.75, 55.58)
+R151   B bot_analog   (30.100, 56.100) rot 0  target (27.20, 50.18)
+R160   B bot_analog   (26.650, 66.200) rot 0  target (28.23, 64.80)
+R161   B bot_analog   (25.000, 62.750) rot 0  target (27.09, 64.33)
+R162   B bot_analog   (37.950, 59.300) rot 90  target (46.43, 62.90)
+R163   B bot_analog   (34.750, 66.250) rot 0  target (29.43, 66.44)
+R178   B bot_analog   (27.500, 41.850) rot 90  target (26.55, 40.92)
+R179   B bot_analog   (28.700, 42.050) rot 90  target (26.60, 43.48)
+R184   B bot_analog   (38.050, 43.750) rot 90  target (29.20, 39.62)
+R185   B bot_analog   (24.050, 36.450) rot 90  target (28.06, 39.15)
+R186   B bot_analog   (39.250, 43.750) rot 90  target (30.33, 39.15)
+R187   B bot_analog   (38.050, 46.450) rot 90  target (30.33, 39.15)
+R188   B bot_analog   (40.450, 43.750) rot 90  target (37.47, 35.65)
+R189   B bot_analog   (40.000, 45.700) rot 0  target (37.47, 35.65)
+R190   B bot_analog   (38.050, 49.150) rot 90  target (32.83, 48.64)
+R191   B bot_analog   (40.050, 46.900) rot 0  target (40.18, 39.15)
+phase bottom analog done
+packer: best try 0 placed 13 of 13, cost 0.0
+R108   B taby_bot     (19.550, 67.750) rot 0  target -
+R123   B taby_bot     (22.250, 67.750) rot 0  target -
+R124   B taby_bot     (24.950, 67.750) rot 0  target -
+R130   B taby_bot     (27.650, 67.750) rot 0  target -
+R131A  B taby_bot     (30.350, 67.750) rot 0  target -
+R131B  B taby_bot     (36.050, 68.500) rot 90  target -
+R132   B taby_bot     (19.550, 68.950) rot 0  target -
+R136   B taby_bot     (24.600, 69.700) rot 90  target -
+R137   B taby_bot     (30.500, 68.950) rot 0  target -
+R145   B taby_bot     (33.200, 69.300) rot 0  target -
+R146   B taby_bot     (19.550, 70.150) rot 0  target -
+R176   B taby_bot     (35.150, 71.200) rot 90  target -
+R177   B taby_bot     (36.350, 71.200) rot 90  target -
+phase tab Y bottom logic done
+packer: best try 11 placed 14 of 14, cost 64.0
+C152   B bot_core     (25.450, 60.400) rot 90  target (25.48, 60.41)
+R107   B bot_logic    (39.600, 48.850) rot 90  target (44.32, 46.77)
+R121   B bot_logic    (39.450, 55.350) rot 90  target (39.80, 55.98)
+R122   B bot_logic    (39.600, 51.550) rot 90  target (46.04, 48.26)
+R125   B bot_logic    (40.800, 51.750) rot 90  target (47.22, 51.61)
+R126   B bot_logic    (36.250, 59.650) rot 90  target (36.26, 59.65)
+R127   B bot_logic    (35.700, 73.150) rot 0  target (38.54, 68.23)
+R128   B bot_logic    (38.250, 56.600) rot 90  target (41.39, 57.63)
+R133   B bot_logic    (33.850, 58.500) rot 0  target (31.76, 53.23)
+R134   B bot_core     (38.400, 51.850) rot 90  target (39.85, 42.92)
+R135   B bot_logic    (34.300, 59.850) rot 0  target (37.59, 60.60)
+R147   B bot_logic    (36.000, 61.600) rot 0  target (39.56, 61.18)
+R148   B bot_logic    (48.400, 59.800) rot 90  target (51.03, 54.79)
+R192   B bot_core     (30.350, 57.700) rot 0  target (32.83, 50.03)
+phase bottom passives done
