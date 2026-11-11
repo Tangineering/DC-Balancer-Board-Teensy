@@ -97,6 +97,19 @@ What it means for the Path A vs Path B comparison (orchestrator summary, 2026-11
   applied. The planned final independent audit was not run (account spend limit). **Treat the design as review-round-6, not
   as audited.** Run another review round and the audit before ordering the carrier PCB.
 
+**Round 4 (2026-11-10, design r7).** The carrier may now extend sideways past the 31 x 33 mm footprint; the EVM stays the power stage.
+The record is `docs/reviews/charger_eval_2026-11-05/round4/review_loop.md`.
+
+- The carrier grows two tabs (tab X toward the Teensy, tab Y on +y), still 4-layer, with two bonded feet (FT1, FT2). The EVM and the
+  EIB stay off the carrier, on one plate beside the motherboard. The tap field moves to tab X, which shortens the 20 tap wires by
+  about 31 %.
+- W1/W2 stay at a fixed 0.30 m: a shorter route raises the hard-short spike to within about 1 V of the D107 breakdown.
+- The operator ruled on 2026-11-10 that there is no height limit for the motherboard and its PCBs. The Ag105 envelope is no longer a gate.
+- Review round 7 verified 60 findings (no blocker, 10 major), all applied. The final independent audit, which round 3 skipped, then
+  found 13 (no blocker, 3 major, 10 minor; ledger `docs/reviews/charger-design/`). The audit fixes are not yet applied.
+- Parts budget about USD 520-630 including two EVMs. Before ordering: apply the audit fixes, take the operator measurements MS1-MS8,
+  and run the KiCad capture.
+
 ### 0.2 Feasibility verdict
 
 **VERDICT: UNDETERMINED. Path A is credible but is NOT yet shown to be fully feasible.** No datasheet fact found in round 2

@@ -144,3 +144,43 @@ were regenerated from `r7_calc_out.json`.
 - J.2 item 63: the tap-assignment choice and the F08-F09 pair (`TODO(design)`).
 - J.2 item 62: the C102b exception needs a ruling.
 - About 60 superseded markers hold the new text while the old text stays live. The latest marker in each chain is correct.
+
+## 4. Final independent audit (run 001, 2026-11-10)
+
+The final audit was run with the adversarial-doc-review method on the committed r7. Codex (a different model family) reviewed the whole
+design in eight challenge areas. Finding-verifier agents re-checked each finding with the severity labels removed. An independent
+reviewer, which did not see the Codex findings, raised four more. Codex then answered the verdicts on the same thread. The record is
+`docs/reviews/charger-design/run-001-2026-11-10.md`, and the findings are rows CHG-R1-* in `docs/reviews/charger-design/ledger.md`.
+
+| Measure | Count |
+|---|---|
+| Findings (Codex 8, independent reviewer 4, verifier-adjacent 1 standalone) | 13 |
+| Blocker | 0 |
+| Major | 3 (CHG-R1-01, -02, -D01) |
+| Minor | 10 |
+| Refuted | 0 |
+| Severity disputes left after the counter-review | 0 |
+
+The three majors:
+
+- CHG-R1-01: a bridge between the F17 eFuse-fault pad and the F05/F06 enable pads drives U101 FLT against a Teensy output; the EN is
+  guaranteed off only at >= 67.5 mA, against a 10 mA FLT rating.
+- CHG-R1-02: the T3 brake-raise sequence with the FR-46 readbacks needs about 2.30 ms at 100 kHz, against the 1.5 ms deadline.
+- CHG-R1-D01: the FR-43 flash/SD predicate is never true in normal Idle and contradicts itself on State 99.
+
+None of the three is a hardware-destruction path on the design as written: the first two fail toward a missed or late inhibit that the
+ISR path covers, and the third refuses flash and SD operations. Each is a design-text fix. The audit fixes are not applied; they wait for
+the operator's approval.
+
+### 4.1 Convergence
+
+| Round | Verified findings | Blockers | Majors | Note |
+|---|---|---|---|---|
+| 1-6 (round 3, r1-r6) | 53, 44, 34, 32, 24, 16 | - | 9 in round 6 | `../round3/review_loop.md` |
+| 7 (round 4, r7) | 60 | 0 | 10 | new content: the carrier extension, feet, tap field, W-lead dressing |
+| Final audit | 13 | 0 | 3 | after the review-7 fixes and the closing pass |
+
+The count rose in round 7 because round 4 added a large body of new mechanical and layout content. The audit then fell to 13 with no
+blocker. Two of its three majors (R1-01, D01) sit in round-3 content that rounds 1-6 did not catch, and D03 sits in content added by the
+closing pass itself. The design has therefore not converged in the strict sense (a round with no major), but it is close: every remaining
+item has an agreed, local fix.
