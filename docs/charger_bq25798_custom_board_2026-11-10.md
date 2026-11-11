@@ -68,7 +68,7 @@ favour the CCB.
 However, the CCB costs about 70-155 h more effort than Path A. It delays the first bench charge from about 1-3 weeks to
 about 7-13 weeks (§7.1.2, §7.1.4). These are base figures. One re-spin of the CCB (AS-9) adds about 26-62 h and 3-6
 weeks. Condition 1 below places the Path A bench gates before the CCB. That sequence needs about 599-1032 h, and its first
-CCB bench charge comes after about 12.5-21 weeks (§7.1.9). The CCB opens 24 new items, of which 12 are proposed as major (§7.2.6). Its main risks are
+CCB bench charge comes after about 12.5-21 weeks (§7.1.9). The CCB opens 27 new items (N-01 to N-27), of which 12 are proposed as major (§7.2.6). Its main risks are
 listed below:
 
 1. a first-pass layout of a 0.4 mm-pitch package (TI publishes no EVM layout files, but the TIDA-050047 reference design

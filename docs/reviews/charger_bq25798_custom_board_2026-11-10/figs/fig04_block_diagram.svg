@@ -1,0 +1,512 @@
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN"
+  "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg xmlns:xlink="http://www.w3.org/1999/xlink" width="649.08pt" height="421.776pt" viewBox="0 0 649.08 421.776" xmlns="http://www.w3.org/2000/svg" version="1.1">
+ <metadata>
+  <rdf:RDF xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:cc="http://creativecommons.org/ns#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+   <cc:Work>
+    <dc:type rdf:resource="http://purl.org/dc/dcmitype/StillImage"/>
+    <dc:format>image/svg+xml</dc:format>
+    <dc:creator>
+     <cc:Agent>
+      <dc:title>Matplotlib v3.11.1, https://matplotlib.org/</dc:title>
+     </cc:Agent>
+    </dc:creator>
+   </cc:Work>
+  </rdf:RDF>
+ </metadata>
+ <defs>
+  <style type="text/css">*{stroke-linejoin: round; stroke-linecap: butt}</style>
+ </defs>
+ <g id="figure_1">
+  <g id="patch_1">
+   <path d="M 0 421.776 
+L 649.08 421.776 
+L 649.08 0 
+L 0 0 
+z
+" style="fill: #ffffff"/>
+  </g>
+  <g id="axes_1">
+   <g id="patch_2">
+    <path d="M 172.08 83.376 
+Q 183.168 83.376 192.467146 83.376 
+" style="fill: none; stroke: #222222; stroke-width: 1.6; stroke-linecap: round"/>
+    <path d="M 188.867146 81.576 
+L 192.467146 83.376 
+L 188.867146 85.176 
+z
+" style="fill: #222222; stroke: #222222; stroke-width: 1.6; stroke-linecap: round"/>
+   </g>
+   <g id="patch_3">
+    <path d="M 316.224 83.376 
+Q 332.856 83.376 347.699146 83.376 
+" style="fill: none; stroke: #222222; stroke-width: 1.6; stroke-linecap: round"/>
+    <path d="M 344.099146 81.576 
+L 347.699146 83.376 
+L 344.099146 85.176 
+z
+" style="fill: #222222; stroke: #222222; stroke-width: 1.6; stroke-linecap: round"/>
+   </g>
+   <g id="line2d_1">
+    <path d="M 393.84 155.448 
+L 393.84 172.08 
+L 183.168 172.08 
+L 183.168 111.096 
+" clip-path="url(#p50146d47c0)" style="fill: none; stroke: #222222; stroke-width: 1.6"/>
+   </g>
+   <g id="patch_4">
+    <path d="M 183.168 111.096 
+Q 177.624 111.096 173.868854 111.096 
+" style="fill: none; stroke: #222222; stroke-width: 1.6; stroke-linecap: round"/>
+    <path d="M 177.468854 112.896 
+L 173.868854 111.096 
+L 177.468854 109.296 
+z
+" style="fill: #222222; stroke: #222222; stroke-width: 1.6; stroke-linecap: round"/>
+   </g>
+   <g id="line2d_2">
+    <path d="M 172.08 155.448 
+L 188.712 155.448 
+L 188.712 136.044 
+" clip-path="url(#p50146d47c0)" style="fill: none; stroke: #1f5fa8; stroke-width: 0.9"/>
+   </g>
+   <g id="patch_5">
+    <path d="M 188.712 136.044 
+Q 269.1 136.044 348.481769 136.044 
+" style="fill: none; stroke: #1f5fa8; stroke-width: 0.9; stroke-linecap: round"/>
+    <path d="M 344.881769 134.244 
+L 348.481769 136.044 
+L 344.881769 137.844 
+z
+" style="fill: #1f5fa8; stroke: #1f5fa8; stroke-width: 0.9; stroke-linecap: round"/>
+   </g>
+   <g id="patch_6">
+    <path d="M 421.56 188.712 
+Q 421.56 172.08 421.56 156.789641 
+" style="fill: none; stroke: #1f5fa8; stroke-width: 1.2; stroke-linecap: round"/>
+    <path d="M 419.76 160.389641 
+L 421.56 156.789641 
+L 423.36 160.389641 
+z
+" style="fill: #1f5fa8; stroke: #1f5fa8; stroke-width: 1.2; stroke-linecap: round"/>
+   </g>
+   <g id="patch_7">
+    <path d="M 191.484 199.8 
+Q 181.782 199.8 173.086231 199.8 
+" style="fill: none; stroke: #1f5fa8; stroke-width: 0.9; stroke-linecap: round"/>
+    <path d="M 176.686231 201.6 
+L 173.086231 199.8 
+L 176.686231 198 
+z
+" style="fill: #1f5fa8; stroke: #1f5fa8; stroke-width: 0.9; stroke-linecap: round"/>
+   </g>
+   <g id="line2d_3">
+    <path d="M 172.08 221.976 
+L 177.624 221.976 
+L 177.624 249.696 
+" clip-path="url(#p50146d47c0)" style="fill: none; stroke: #1f5fa8; stroke-width: 0.9"/>
+   </g>
+   <g id="patch_8">
+    <path d="M 177.624 249.696 
+Q 185.94 249.696 193.249769 249.696 
+" style="fill: none; stroke: #1f5fa8; stroke-width: 0.9; stroke-linecap: round"/>
+    <path d="M 189.649769 247.896 
+L 193.249769 249.696 
+L 189.649769 251.496 
+z
+" style="fill: #1f5fa8; stroke: #1f5fa8; stroke-width: 0.9; stroke-linecap: round"/>
+   </g>
+   <g id="line2d_4">
+    <path d="M 117.7488 277.416 
+" clip-path="url(#p50146d47c0)" style="fill: none; stroke-dasharray: 3.7,1.6; stroke-dashoffset: 0; stroke: #1f5fa8"/>
+   </g>
+   <g id="patch_9">
+    <path d="M 117.7488 277.416 
+Q 156.0024 277.416 193.137966 277.416 
+" style="fill: none; stroke-dasharray: 3.7,1.6; stroke-dashoffset: 0; stroke: #1f5fa8; stroke-linecap: round"/>
+    <path d="M 189.537966 275.616 
+L 193.137966 277.416 
+L 189.537966 279.216 
+z
+" style="fill: #1f5fa8; stroke-dasharray: 3.7,1.6; stroke-dashoffset: 0; stroke: #1f5fa8; stroke-linecap: round"/>
+   </g>
+   <g id="line2d_5">
+    <path d="M 194.256 349.488 
+" clip-path="url(#p50146d47c0)" style="fill: none; stroke-dasharray: 3.7,1.6; stroke-dashoffset: 0; stroke: #1f5fa8"/>
+   </g>
+   <g id="patch_10">
+    <path d="M 194.256 349.488 
+Q 158.22 349.488 123.302034 349.488 
+" style="fill: none; stroke-dasharray: 3.7,1.6; stroke-dashoffset: 0; stroke: #1f5fa8; stroke-linecap: round"/>
+    <path d="M 126.902034 351.288 
+L 123.302034 349.488 
+L 126.902034 347.688 
+z
+" style="fill: #1f5fa8; stroke-dasharray: 3.7,1.6; stroke-dashoffset: 0; stroke: #1f5fa8; stroke-linecap: round"/>
+   </g>
+   <g id="patch_11">
+    <path d="M 319.5504 294.048 
+L 346.1616 294.048 
+L 346.1616 188.712 
+L 319.5504 188.712 
+z
+" clip-path="url(#p50146d47c0)" style="fill: #fff7d6; stroke-dasharray: 2.96,1.28; stroke-dashoffset: 0; stroke: #b08900; stroke-width: 0.8; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_12">
+    <path d="M 316.224 210.888 
+Q 332.856 210.888 348.146359 210.888 
+" style="fill: none; stroke: #1f5fa8; stroke-width: 1.2; stroke-linecap: round"/>
+    <path d="M 344.546359 209.088 
+L 348.146359 210.888 
+L 344.546359 212.688 
+z
+" style="fill: #1f5fa8; stroke: #1f5fa8; stroke-width: 1.2; stroke-linecap: round"/>
+   </g>
+   <g id="patch_13">
+    <path d="M 316.224 233.064 
+Q 332.856 233.064 348.146359 233.064 
+" style="fill: none; stroke: #1f5fa8; stroke-width: 1.2; stroke-linecap: round"/>
+    <path d="M 344.546359 231.264 
+L 348.146359 233.064 
+L 344.546359 234.864 
+z
+" style="fill: #1f5fa8; stroke: #1f5fa8; stroke-width: 1.2; stroke-linecap: round"/>
+   </g>
+   <g id="patch_14">
+    <path d="M 316.224 255.24 
+Q 332.856 255.24 348.146359 255.24 
+" style="fill: none; stroke: #1f5fa8; stroke-width: 1.2; stroke-linecap: round"/>
+    <path d="M 344.546359 253.44 
+L 348.146359 255.24 
+L 344.546359 257.04 
+z
+" style="fill: #1f5fa8; stroke: #1f5fa8; stroke-width: 1.2; stroke-linecap: round"/>
+   </g>
+   <g id="patch_15">
+    <path d="M 349.488 274.644 
+Q 332.856 274.644 317.565641 274.644 
+" style="fill: none; stroke: #1f5fa8; stroke-width: 1.2; stroke-linecap: round"/>
+    <path d="M 321.165641 276.444 
+L 317.565641 274.644 
+L 321.165641 272.844 
+z
+" style="fill: #1f5fa8; stroke: #1f5fa8; stroke-width: 1.2; stroke-linecap: round"/>
+   </g>
+   <g id="patch_16">
+    <path d="M 524.124 316.224 
+L 537.4296 316.224 
+L 537.4296 304.0272 
+L 524.124 304.0272 
+z
+" clip-path="url(#p50146d47c0)" style="fill: #d6e6f7; stroke: #222222; stroke-width: 0.7; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_17">
+    <path d="M 524.124 343.944 
+L 537.4296 343.944 
+L 537.4296 331.7472 
+L 524.124 331.7472 
+z
+" clip-path="url(#p50146d47c0)" style="fill: #fde3c4; stroke: #222222; stroke-width: 0.7; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_18">
+    <path d="M 524.124 371.664 
+L 537.4296 371.664 
+L 537.4296 359.4672 
+L 524.124 359.4672 
+z
+" clip-path="url(#p50146d47c0)" style="fill: #ececec; stroke: #222222; stroke-width: 0.7; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_19">
+    <path d="M 9.0864 393.84 
+L 118.8576 393.84 
+Q 122.184 393.84 122.184 390.5136 
+L 122.184 42.3504 
+Q 122.184 39.024 118.8576 39.024 
+L 9.0864 39.024 
+Q 5.76 39.024 5.76 42.3504 
+L 5.76 390.5136 
+Q 5.76 393.84 9.0864 393.84 
+z
+" clip-path="url(#p50146d47c0)" style="fill: #ececec; stroke: #222222; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_20">
+    <path d="M 136.5984 233.064 
+L 168.7536 233.064 
+Q 172.08 233.064 172.08 229.7376 
+L 172.08 64.5264 
+Q 172.08 61.2 168.7536 61.2 
+L 136.5984 61.2 
+Q 133.272 61.2 133.272 64.5264 
+L 133.272 229.7376 
+Q 133.272 233.064 136.5984 233.064 
+z
+" clip-path="url(#p50146d47c0)" style="fill: #d6e6f7; stroke: #222222; stroke-linejoin: miter"/>
+   </g>
+   <g id="line2d_6">
+    <path d="M 117.7488 83.376 
+L 133.272 83.376 
+" clip-path="url(#p50146d47c0)" style="fill: none; stroke: #222222; stroke-width: 1.4; stroke-linecap: square"/>
+   </g>
+   <g id="line2d_7">
+    <path d="M 117.7488 111.096 
+L 133.272 111.096 
+" clip-path="url(#p50146d47c0)" style="fill: none; stroke: #222222; stroke-width: 1.4; stroke-linecap: square"/>
+   </g>
+   <g id="line2d_8">
+    <path d="M 117.7488 133.272 
+L 133.272 133.272 
+" clip-path="url(#p50146d47c0)" style="fill: none; stroke: #222222; stroke-width: 1.4; stroke-linecap: square"/>
+   </g>
+   <g id="line2d_9">
+    <path d="M 117.7488 155.448 
+L 133.272 155.448 
+" clip-path="url(#p50146d47c0)" style="fill: none; stroke: #1f5fa8; stroke-width: 0.9; stroke-linecap: square"/>
+   </g>
+   <g id="line2d_10">
+    <path d="M 117.7488 177.624 
+L 133.272 177.624 
+" clip-path="url(#p50146d47c0)" style="fill: none; stroke: #1f5fa8; stroke-width: 0.9; stroke-linecap: square"/>
+   </g>
+   <g id="line2d_11">
+    <path d="M 117.7488 199.8 
+L 133.272 199.8 
+" clip-path="url(#p50146d47c0)" style="fill: none; stroke: #1f5fa8; stroke-width: 0.9; stroke-linecap: square"/>
+   </g>
+   <g id="line2d_12">
+    <path d="M 117.7488 221.976 
+L 133.272 221.976 
+" clip-path="url(#p50146d47c0)" style="fill: none; stroke: #1f5fa8; stroke-width: 0.9; stroke-linecap: square"/>
+   </g>
+   <g id="patch_21">
+    <path d="M 197.5824 116.64 
+L 312.8976 116.64 
+Q 316.224 116.64 316.224 113.3136 
+L 316.224 53.4384 
+Q 316.224 50.112 312.8976 50.112 
+L 197.5824 50.112 
+Q 194.256 50.112 194.256 53.4384 
+L 194.256 113.3136 
+Q 194.256 116.64 197.5824 116.64 
+z
+" clip-path="url(#p50146d47c0)" style="fill: #d6e6f7; stroke: #222222; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_22">
+    <path d="M 352.8144 155.448 
+L 512.4816 155.448 
+Q 515.808 155.448 515.808 152.1216 
+L 515.808 53.4384 
+Q 515.808 50.112 512.4816 50.112 
+L 352.8144 50.112 
+Q 349.488 50.112 349.488 53.4384 
+L 349.488 152.1216 
+Q 349.488 155.448 352.8144 155.448 
+z
+" clip-path="url(#p50146d47c0)" style="fill: #fde3c4; stroke: #222222; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_23">
+    <path d="M 352.8144 294.048 
+L 512.4816 294.048 
+Q 515.808 294.048 515.808 290.7216 
+L 515.808 192.0384 
+Q 515.808 188.712 512.4816 188.712 
+L 352.8144 188.712 
+Q 349.488 188.712 349.488 192.0384 
+L 349.488 290.7216 
+Q 349.488 294.048 352.8144 294.048 
+z
+" clip-path="url(#p50146d47c0)" style="fill: #fde3c4; stroke: #222222; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_24">
+    <path d="M 197.5824 382.752 
+L 312.8976 382.752 
+Q 316.224 382.752 316.224 379.4256 
+L 316.224 192.0384 
+Q 316.224 188.712 312.8976 188.712 
+L 197.5824 188.712 
+Q 194.256 188.712 194.256 192.0384 
+L 194.256 379.4256 
+Q 194.256 382.752 197.5824 382.752 
+z
+" clip-path="url(#p50146d47c0)" style="fill: #d6e6f7; stroke: #222222; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_25">
+    <path d="M 208.6704 377.208 
+L 301.8096 377.208 
+Q 305.136 377.208 305.136 373.8816 
+L 305.136 357.2496 
+Q 305.136 353.9232 301.8096 353.9232 
+L 208.6704 353.9232 
+Q 205.344 353.9232 205.344 357.2496 
+L 205.344 373.8816 
+Q 205.344 377.208 208.6704 377.208 
+z
+" clip-path="url(#p50146d47c0)" style="fill: #fde3c4; stroke: #222222; stroke-linejoin: miter"/>
+   </g>
+   <g id="text_1">
+    <text style="font-weight: 700; font-size: 10px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; text-anchor: start; fill: #222222" x="5.76" y="16.130437" transform="rotate(-0 5.76 16.130437)">CCB block diagram with the IC-independent [I] and BQ25798-specific [S] content (design §1.10, Figure 1.10)</text>
+   </g>
+   <g id="text_2">
+    <text style="font-weight: 700; font-size: 8.5px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; text-anchor: middle; fill: #222222" x="63.972" y="53.798672" transform="rotate(-0 63.972 53.798672)">MB and Teensy</text>
+   </g>
+   <g id="text_3">
+    <text style="font-size: 6.8px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; text-anchor: start; fill: #222222" x="11.304" y="85.142406" transform="rotate(-0 11.304 85.142406)">VCHG-IN (D-BC-FC, D-BC-RG)</text>
+   </g>
+   <g id="text_4">
+    <text style="font-size: 6.8px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; text-anchor: start; fill: #222222" x="11.304" y="112.862672" transform="rotate(-0 11.304 112.862672)">MB VCHG -&gt; D-BT-SQ -&gt; pack</text>
+   </g>
+   <g id="text_5">
+    <text style="font-size: 6.8px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; text-anchor: start; fill: #222222" x="11.304" y="135.038672" transform="rotate(-0 11.304 135.038672)">GND: pads 4, 14, 15</text>
+   </g>
+   <g id="text_6">
+    <text style="font-size: 6.8px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; text-anchor: start; fill: #222222" x="11.304" y="157.214672" transform="rotate(-0 11.304 157.214672)">SDA/SCL Teensy 18/19 (2.7k)</text>
+   </g>
+   <g id="text_7">
+    <text style="font-size: 6.8px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; text-anchor: start; fill: #222222" x="11.304" y="179.390672" transform="rotate(-0 11.304 179.390672)">J-NTC pin 1 (TS_EXT)</text>
+   </g>
+   <g id="text_8">
+    <text style="font-size: 6.8px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; text-anchor: start; fill: #222222" x="11.304" y="201.566406" transform="rotate(-0 11.304 201.566406)">Teensy 6 &lt;- STAT</text>
+   </g>
+   <g id="text_9">
+    <text style="font-size: 6.8px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; text-anchor: start; fill: #222222" x="11.304" y="223.742406" transform="rotate(-0 11.304 223.742406)">Teensy 5 CHG_ARM (P5)</text>
+   </g>
+   <g id="text_10">
+    <text style="font-size: 6.8px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; fill: #222222" transform="translate(11.304 266.940148)">Taps T1-T22: V-MOT, VBUS,</text>
+    <text style="font-size: 6.8px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; fill: #222222" transform="translate(11.304 275.102008)">EN pins 28/30/31, BT current,</text>
+    <text style="font-size: 6.8px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; fill: #222222" transform="translate(11.304 283.263336)">BQ29200 OUT, HB 21, QUAL 10,</text>
+    <text style="font-size: 6.8px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; fill: #222222" transform="translate(11.304 291.424664)">FCCEIL 17</text>
+   </g>
+   <g id="text_11">
+    <text style="font-size: 6.8px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; fill: #222222" transform="translate(11.304 352.717742)">Readbacks to Teensy 16, 22,</text>
+    <text style="font-size: 6.8px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; fill: #222222" transform="translate(11.304 360.879602)">23, 33, 34, 35 and 7</text>
+   </g>
+   <g id="text_12">
+    <text style="font-size: 7px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; fill: #222222" transform="translate(143.363266 119.054891)">H301</text>
+    <text style="font-size: 7px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; fill: #222222" transform="translate(140.345063 127.866688)">header</text>
+    <text style="font-size: 7px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; fill: #222222" transform="translate(148.912406 136.204891)">[I]</text>
+    <text style="font-size: 7px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; fill: #222222" transform="translate(152.676 142.757)"/>
+    <text style="font-size: 7px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; fill: #222222" transform="translate(137.518813 153.438562)">22 pads:</text>
+    <text style="font-size: 7px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; fill: #222222" transform="translate(138.430453 162.401844)">11 nets,</text>
+    <text style="font-size: 7px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; fill: #222222" transform="translate(148.22225 171.558719)">11</text>
+    <text style="font-size: 7px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; fill: #222222" transform="translate(138.766781 180.366688)">anchors</text>
+   </g>
+   <g id="text_13">
+    <text style="font-size: 5.8px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; text-anchor: middle; fill: #222222" x="125.5104" y="78.656241" transform="rotate(-0 125.5104 78.656241)">10</text>
+   </g>
+   <g id="text_14">
+    <text style="font-size: 5.8px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; text-anchor: middle; fill: #222222" x="125.5104" y="106.376241" transform="rotate(-0 125.5104 106.376241)">18/19</text>
+   </g>
+   <g id="text_15">
+    <text style="font-size: 5.8px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; text-anchor: middle; fill: #222222" x="125.5104" y="128.552241" transform="rotate(-0 125.5104 128.552241)">4/14/15</text>
+   </g>
+   <g id="text_16">
+    <text style="font-size: 5.8px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; text-anchor: middle; fill: #222222" x="125.5104" y="150.728241" transform="rotate(-0 125.5104 150.728241)">7/8</text>
+   </g>
+   <g id="text_17">
+    <text style="font-size: 5.8px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; text-anchor: middle; fill: #222222" x="125.5104" y="172.904241" transform="rotate(-0 125.5104 172.904241)">13</text>
+   </g>
+   <g id="text_18">
+    <text style="font-size: 5.8px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; text-anchor: middle; fill: #222222" x="125.5104" y="195.080241" transform="rotate(-0 125.5104 195.080241)">3</text>
+   </g>
+   <g id="text_19">
+    <text style="font-size: 5.8px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; text-anchor: middle; fill: #222222" x="125.5104" y="217.256241" transform="rotate(-0 125.5104 217.256241)">11</text>
+   </g>
+   <g id="text_20">
+    <text style="font-size: 6.6px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; fill: #222222" transform="translate(224.191125 68.697187)">Input protection [I]</text>
+    <text style="font-size: 6.6px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; fill: #222222" transform="translate(218.240813 77.528297)">U301 TPS26630 eFuse</text>
+    <text style="font-size: 6.6px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; fill: #222222" transform="translate(219.078703 85.499859)">C302a/b/c, D307 TVS,</text>
+    <text style="font-size: 6.6px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; fill: #222222" transform="translate(235.699359 93.691594)">C303, D303</text>
+    <text style="font-size: 6.6px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; fill: #222222" transform="translate(219.514922 102.278297)">VCHGIN -&gt; VCHGOUT</text>
+   </g>
+   <g id="text_21">
+    <text style="font-size: 6.5px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; fill: #222222" transform="translate(407.134992 84.261094)">Power stage [S]</text>
+    <text style="font-size: 6.5px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; fill: #222222" transform="translate(379.161125 92.629844)">U501 BQ25798 (RQM, 4 x 4 mm)</text>
+    <text style="font-size: 6.5px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; fill: #222222" transform="translate(380.856711 100.80918)">L501 1.0 uH, PROG R529 6.04 k</text>
+    <text style="font-size: 6.5px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; fill: #222222" transform="translate(364.238039 108.876797)">VBUS 2 x 10 uF 50 V, PMID 3 x 10 uF 50 V</text>
+    <text style="font-size: 6.5px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; fill: #222222" transform="translate(385.909953 117.001797)">SYS 5 x 10 uF, BAT 2 x 10 uF</text>
+    <text style="font-size: 6.5px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; fill: #222222" transform="translate(376.345813 125.18418)">SDRV 1 nF to GND, BATP via 100 R</text>
+   </g>
+   <g id="text_22">
+    <text style="font-size: 6px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; text-anchor: middle; fill: #222222" x="332.856" y="76.390594" transform="rotate(-0 332.856 76.390594)">VCHGOUT</text>
+   </g>
+   <g id="text_23">
+    <text style="font-size: 6.5px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; text-anchor: middle; fill: #222222" x="282.96" y="167.192077" transform="rotate(-0 282.96 167.192077)">BAT -&gt; net VCHG -&gt; pads 18/19</text>
+   </g>
+   <g id="text_24">
+    <text style="font-size: 6px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; text-anchor: start; fill: #1f5fa8" x="255.24" y="131.830594" transform="rotate(-0 255.24 131.830594)">SDA/SCL, TS_EXT (direct, no board pull-ups)</text>
+   </g>
+   <g id="text_25">
+    <text style="font-size: 6.5px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; fill: #222222" transform="translate(388.832414 218.798594)">Charger interface block [S]</text>
+    <text style="font-size: 6.5px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; fill: #222222" transform="translate(390.705227 226.923594)">(ex-EIB stages, now local)</text>
+    <text style="font-size: 6.5px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; fill: #222222" transform="translate(369.092727 235.292344)">U401 SN74LVC3G06 (/CE, Q403, Q402)</text>
+    <text style="font-size: 6.5px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; fill: #222222" transform="translate(403.687961 243.420898)">U402 (Q401 hold)</text>
+    <text style="font-size: 6.5px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; fill: #222222" transform="translate(374.773625 251.298594)">Q401 hold, Q402 FC leg, Q403 feed</text>
+    <text style="font-size: 6.5px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; fill: #222222" transform="translate(388.922297 259.72168)">R472, R472b 47 k to REGN</text>
+    <text style="font-size: 6.5px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; fill: #222222" transform="translate(378.445617 267.789297)">U403 ILIM sense, U404 /CE sense</text>
+   </g>
+   <g id="text_26">
+    <text style="font-size: 6.3px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; text-anchor: start; fill: #1f5fa8" x="425.9952" y="173.7432" transform="rotate(-0 425.9952 173.7432)">/CE, ILIM_HIZ</text>
+   </g>
+   <g id="text_27">
+    <text style="font-weight: 700; font-size: 7.8px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; text-anchor: middle; fill: #222222" x="255.24" y="202.954781" transform="rotate(-0 255.24 202.954781)">Interlock block [I]</text>
+   </g>
+   <g id="text_28">
+    <text style="font-size: 6.6px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; fill: #222222" transform="translate(199.8 219.335098)">7 comparators U302-U304, U315,</text>
+    <text style="font-size: 6.6px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; fill: #222222" transform="translate(199.8 227.256387)">U319-U321 (H1, UVB, BT_OK,</text>
+    <text style="font-size: 6.6px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; fill: #222222" transform="translate(199.8 235.177676)">BTB_OFF, FCC_OFF/ON, RGN_ON)</text>
+    <text style="font-size: 6.6px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; fill: #222222" transform="translate(199.8 243.098965)"/>
+    <text style="font-size: 6.6px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; fill: #222222" transform="translate(199.8 251.02077)">permit logic U305-U310, U314,</text>
+    <text style="font-size: 6.6px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; fill: #222222" transform="translate(199.8 258.942059)">U316, U318, U322</text>
+    <text style="font-size: 6.6px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; fill: #222222" transform="translate(199.8 266.863348)"/>
+    <text style="font-size: 6.6px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; fill: #222222" transform="translate(199.8 274.785152)">heartbeat monostable U313</text>
+    <text style="font-size: 6.6px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; fill: #222222" transform="translate(199.8 282.706441)">(ARM_OK, 20-46 ms)</text>
+    <text style="font-size: 6.6px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; fill: #222222" transform="translate(199.8 290.62773)"/>
+    <text style="font-size: 6.6px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; fill: #222222" transform="translate(199.8 298.549535)">pack-OV input U323 (OVN)</text>
+    <text style="font-size: 6.6px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; fill: #222222" transform="translate(199.8 306.470824)"/>
+    <text style="font-size: 6.6px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; fill: #222222" transform="translate(199.8 314.392629)">tap field F01-F24</text>
+   </g>
+   <g id="text_29">
+    <text style="font-size: 6.6px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; text-anchor: middle; fill: #222222" x="255.24" y="367.637897" transform="rotate(-0 255.24 367.637897)">U311 QUAL one-shot [S]</text>
+   </g>
+   <g id="text_30">
+    <text style="font-size: 5.8px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; text-anchor: start; fill: #1f5fa8" x="173.7432" y="184.674867" transform="rotate(-0 173.7432 184.674867)">pad 3 STAT &lt;- U501 (R475)</text>
+   </g>
+   <g id="text_31">
+    <text style="font-size: 5.9px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; fill: #1f5fa8" transform="translate(139.970641 265.000028)">flying taps</text>
+    <text style="font-size: 5.9px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; fill: #1f5fa8" transform="translate(134.217219 272.081641)">(not via H301)</text>
+   </g>
+   <g id="text_32">
+    <text style="font-size: 6px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; fill: #7a5d00" transform="translate(334.414828 292.596094) rotate(-90)">interface contract (§1.10.2, §1.14)</text>
+   </g>
+   <g id="text_33">
+    <text style="font-size: 6.6px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; fill: #222222" transform="translate(524.124 211.019613)">commands (fail-safe LOW):</text>
+    <text style="font-size: 6.6px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; fill: #222222" transform="translate(524.124 218.940902)">CE_DRV, ILIM_REL, RFC_OFF</text>
+    <text style="font-size: 6.6px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; fill: #222222" transform="translate(524.124 226.862191)"/>
+    <text style="font-size: 6.6px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; fill: #222222" transform="translate(524.124 234.78348)">senses: ILIM_SENSE, CE_SENSE,</text>
+    <text style="font-size: 6.6px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; fill: #222222" transform="translate(524.124 242.70477)">STAT</text>
+   </g>
+   <g id="text_34">
+    <text style="font-size: 6.6px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; fill: #222222" transform="translate(541.8648 307.879409)">[I] carries over to any IC that</text>
+    <text style="font-size: 6.6px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; fill: #222222" transform="translate(541.8648 315.801213)">     meets the §1.14 contract</text>
+   </g>
+   <g id="text_35">
+    <text style="font-size: 6.6px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; text-anchor: start; fill: #222222" x="541.8648" y="339.560311" transform="rotate(-0 541.8648 339.560311)">[S] redesigned for another IC</text>
+   </g>
+   <g id="text_36">
+    <text style="font-size: 6.6px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; text-anchor: start; fill: #222222" x="541.8648" y="367.280311" transform="rotate(-0 541.8648 367.280311)">MB side</text>
+   </g>
+   <g id="text_37">
+    <text style="font-size: 6.6px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; fill: #222222" transform="translate(524.124 66.875613)">Ground: one plane (GND).</text>
+    <text style="font-size: 6.6px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; fill: #222222" transform="translate(524.124 74.797418)">Input loop returns to pad 4;</text>
+    <text style="font-size: 6.6px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; fill: #222222" transform="translate(524.124 82.719223)">battery loop to pads 14/15;</text>
+    <text style="font-size: 6.6px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; fill: #222222" transform="translate(524.124 90.641027)">quiet returns join the plane</text>
+    <text style="font-size: 6.6px; font-family: 'DejaVu Sans', 'Arial', 'Helvetica', sans-serif; fill: #222222" transform="translate(524.124 98.562832)">away from both paths (§1.13).</text>
+   </g>
+  </g>
+ </g>
+ <defs>
+  <clipPath id="p50146d47c0">
+   <rect x="5.76" y="5.76" width="637.56" height="410.256"/>
+  </clipPath>
+ </defs>
+</svg>
