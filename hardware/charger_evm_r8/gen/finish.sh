@@ -18,6 +18,6 @@ for r in $(seq 1 "$ROUNDS"); do
   [ "$n" -lt "$prev" ] && prev=$n
   "$PY" gen/finish_dump.py "$B/$B.kicad_pcb" "$B/drc_finish.rpt" "$B/finish_dump.json" "$LAYERS" 2>&1 | grep -v -E "leak|image handler"
   extra="--protect ${PROTECT:-/3V3}"; [ -n "$PLANE" ] && extra="$extra --plane-net $PLANE"
-  "$NP" gen/finish_route.py "$B/finish_dump.json" "$B/finish_routes.json" --via "$VIA" --drill "$DRILL" --res "$RES" --clear "$CLEAR" $extra
+  "$NP" gen/finish_route.py "$B/finish_dump.json" "$B/finish_routes.json" --via "$VIA" --drill "$DRILL" --res "$RES" --clear "$CLEAR" --track "${TRACK:-$CLEAR}" $extra
   "$PY" gen/finish_apply.py "$B/$B.kicad_pcb" "$B/finish_routes.json" 2>&1 | grep -v -E "leak|image handler"
 done

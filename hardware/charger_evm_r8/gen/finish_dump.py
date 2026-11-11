@@ -26,7 +26,7 @@ def poly_pts(sps, i):
 items = []   # dict(kind, net, layers, geom)  geom: poly pts | seg (x0,y0,x1,y1,w) | circ (x,y,r)
 for fp in b.GetFootprints():
     for p in fp.Pads():
-        ls = [ln for ln in layers if p.IsOnLayer(LID[ln])]
+        ls = [ln for ln in layers if p.IsOnLayer(LID[ln]) and p.FlashLayer(LID[ln])]
         if not ls and not p.GetDrillSizeX():
             continue
         for ln in (ls or layers[:1]):
@@ -36,18 +36,20 @@ for fp in b.GetFootprints():
                                   ref=fp.GetReference(), num=p.GetNumber()))
         if p.GetDrillSizeX() > 0:   # the hole blocks every routing layer
             c = p.GetPosition()
+            # the hole blocks every routing layer; 0.127 mm is added so that the router's copper clearance
+            # reproduces the fab's 0.254 mm plated-hole-to-inner-copper rule
             items.append(dict(kind="hole", net=p.GetNetname(), layers=layers,
-                              circ=(mm(c.x), mm(c.y), mm(max(p.GetSizeX(), p.GetDrillSizeX())) / 2)))
+                              circ=(mm(c.x), mm(c.y), mm(p.GetDrillSizeX()) / 2 + 0.127)))
 for t in b.GetTracks():
     if t.GetClass() == "PCB_VIA":
         c = t.GetPosition()
-        items.append(dict(kind="via", net=t.GetNetname(), layers=layers,
+        items.append(dict(kind="via", net=t.GetNetname(), layers=layers, locked=t.IsLocked(),
                           circ=(mm(c.x), mm(c.y), mm(t.GetWidth(pcbnew.F_Cu)) / 2)))
     else:
         ln = b.GetLayerName(t.GetLayer())
         if ln in layers:
             s, e = t.GetStart(), t.GetEnd()
-            items.append(dict(kind="track", net=t.GetNetname(), layers=[ln],
+            items.append(dict(kind="track", net=t.GetNetname(), layers=[ln], locked=t.IsLocked(),
                               seg=(mm(s.x), mm(s.y), mm(e.x), mm(e.y), mm(t.GetWidth()))))
 for z in b.Zones():
     if z.GetIsRuleArea():

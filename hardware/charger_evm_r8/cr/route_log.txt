@@ -1,2 +1,1 @@
-tracks widened to 0.16 mm: 131
-stitching vias /GND: 8
+tracks widened to 0.16 mm: 0

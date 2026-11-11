@@ -18,3 +18,9 @@ drc_place.rpt
 *_placed.kicad_pcb
 *_routed_fr.kicad_pcb
 freerouting.log
+*_pours.kicad_pcb
+pf_dump.json
+pf_routes.json
+*_base.kicad_pcb
+pf_dump*.json
+pf_routes*.json

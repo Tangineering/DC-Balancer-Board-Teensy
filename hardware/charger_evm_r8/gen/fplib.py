@@ -52,9 +52,10 @@ def smd_pad(num, x, y, w, h, shape="roundrect", paste=True):
     return '(pad "%s" smd %s (at %.4f %.4f) (size %.4f %.4f) (layers %s)%s)' % (num, shape, x, y, w, h, layers, rr)
 
 
-def pth_pad(num, x, y, dia, drill, shape="circle"):
-    return '(pad "%s" thru_hole %s (at %.4f %.4f) (size %.4f %.4f) (drill %.4f) (layers "*.Cu" "*.Mask"))' % (
-        num, shape, x, y, dia, dia, drill)
+def pth_pad(num, x, y, dia, drill, shape="circle", inner_unused_removed=False):
+    extra = " (remove_unused_layers yes) (keep_end_layers yes)" if inner_unused_removed else ""
+    return '(pad "%s" thru_hole %s (at %.4f %.4f) (size %.4f %.4f) (drill %.4f) (layers "*.Cu" "*.Mask")%s)' % (
+        num, shape, x, y, dia, dia, drill, extra)
 
 
 def keepout_circle(cx, cy, r, layers, tracks=True, vias=True, pads=True, pour=True, fps=True, n=24):
@@ -91,16 +92,17 @@ def chg22(outdir, name):
         ey = 64.484 - (n - 11) * 2.54
         pos[n] = (20.998 - 45.998, -(ey - 39.084))
     for n, (x, y) in pos.items():
-        L.append(pth_pad(str(n), x, y, 1.9, 1.1, "rect" if n in (1, 11) else "circle"))
+        # D-30: 1.9 mm pads on L1/L4 (A.8 pad >= 1.9 mm); not flashed on L2/L3 where the pin has no inner connection
+        L.append(pth_pad(str(n), x, y, 1.9, 1.1, "rect" if n in (1, 11) else "circle", inner_unused_removed=True))
     # B side: header bodies 2.54 mm wide (A.8 header strips)
     L.append(rect("B.CrtYd", -1.27 - 0.25, 1.27 + 0.25, 1.27 + 0.25, -(9 * 2.54) - 1.27 - 0.25))
     L.append(rect("B.CrtYd", -25.0 - 1.27 - 0.25, 2.54 + 1.27 + 0.25, -25.0 + 1.27 + 0.25,
                   -(64.484 - 39.084) - 1.27 - 0.25))
     L.append(rect("B.Fab", -1.27, 1.27, 1.27, -(9 * 2.54) - 1.27, 0.1))
     L.append(rect("B.Fab", -26.27, 2.54 + 1.27, -23.73, -(64.484 - 39.084) - 1.27, 0.1))
-    # F side courtyard: pad rows + 0.25
-    L.append(rect("F.CrtYd", -1.2, 1.2, 1.2, -(9 * 2.54) - 1.2))
-    L.append(rect("F.CrtYd", -26.2, 2.54 + 1.2, -23.8, -(64.484 - 39.084) - 1.2))
+    # F side courtyard: one circle per pad, pad + 0.10 mm (D-03); the top side between the pins stays usable
+    for n, (x, y) in pos.items():
+        L.append(circ("F.CrtYd", x, y, 0.95 + 0.10))
     # pin-1 and pin-11 identity marks on both silk layers (T-A-06 step 0)
     for lay in ("F.SilkS", "B.SilkS"):
         L.append('(fp_text user "1" (at 1.9 0 0) (layer "%s") (effects (font (size 0.8 0.8) (thickness 0.15))%s))'

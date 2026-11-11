@@ -5,10 +5,11 @@ from shapely.ops import unary_union
 import layout_cr as L
 
 YOFF = 100.0
-TRACK = 0.16
-CLEAR = 0.16
-VIA = (0.56, 0.26)     # 0.254 mm minimum hole + 2 x 0.15 mm ring (tools/pcb fab rules)
+TRACK = 0.127
+CLEAR = 0.127    # 5/5 mil (operator ruling 2026-11-11; D-29)
+VIA = (0.6, 0.3)       # TOOLCHAIN: 0.3 mm via drill (OSH Park drilled/finished hole TODO)
 PASSES = 30
+EDGE_BAND = 0.40   # >= the 0.381 mm fab copper-to-edge rule; opens the U101 +y escape channel (D-09)
 SILK_REFS = {"J1", "J101"}
 P = L.P
 
@@ -41,7 +42,6 @@ def power_zones():
     return [
         ("GND_L2_plane", P.buffer(-0.45, join_style=2), "In1", "/GND", 0),   # A.8 stack-up: L2 solid GND
         ("VCHGIN_L3_strap", VIN_L3, "In2", "/VCHGIN", 3),
-        ("VCHGOUT_L3_strap", VOUT_IN, "In2", "/VCHGOUT", 3),
         ("VCHGOUT_L4_strap", VOUT_IN, "B", "/VCHGOUT", 3),
     ]
 
@@ -50,7 +50,7 @@ def power_zones():
 VIN_L1 = unary_union([box(36.95, 57.20, 42.35, 61.50), box(40.15, 61.50, 42.65, 62.55),
                       box(42.35, 60.60, 47.05, 61.55), box(44.85, 60.60, 47.05, 62.95),
                       box(42.35, 56.55, 44.45, 57.95)])
-VOUT_L1 = unary_union([box(33.30, 62.70, 41.15, 66.64), box(29.10, 60.00, 31.50, 62.40)])
+VOUT_L1 = unary_union([box(33.30, 62.70, 41.15, 66.64), box(29.10, 60.00, 36.80, 63.80)])   # D-22: W1 corridor
 VCHG_L1 = box(19.90, 43.10, 25.65, 47.20)
 GND_L1_STAR = unary_union([box(19.90, 53.60, 25.70, 57.90), box(26.20, 59.70, 29.20, 62.70)])
 

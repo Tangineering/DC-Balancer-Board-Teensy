@@ -92,14 +92,14 @@ CR = [
      dict(mpn="TPS26630RGER", mfr="Texas Instruments")),
     R("R102", "845k 0.1%", "R0805", "VCHGIN", "N_UV", mpn="TNPW0805845KBEEA", **VISH01),
     R("R103", "66.5k 0.1%", "R0402", "N_UV", "N_OV", mpn="TNPW040266K5BEED", **VISH01),
-    R("R104", "49.9k 0.1%", "R0402", "N_OV", GND, mpn="TNPW040249K9BEED", **VISH01),
+    R("R104", "49.9k 0.1%", "R0402", "N_OV", GND, side="B", mpn="TNPW040249K9BEED", **VISH01),
     R("R101", "8.06k 1%", "R0402", "N_ILIM", GND, mpn="CRCW04028K06FKED", **VISH01),
     C("C101", "22nF 50V X7R", "C0402", "N_DVDT", GND, mpn="GRM155R71H223KA12D", mfr="Murata"),
     C("C103", "1uF 50V X7R", "C0805", "VCHGOUT", GND, mpn="GRM21BR71H105KA12L", mfr="Murata"),
     ("D103", "D", "Schottky 40V SMA", "SMA", {"1": "VCHGOUT", "2": GND},
      dict(mpn="selected in T-A-05 (bench fallback B340A-13-F)", mfr="Diodes Inc.")),
     R("R105", "27.4k 1%", "R0402", "N_IMON", GND, mpn="CRCW040227K4FKED", **VISH01),
-    C("C105", "DNP", "C0402", "N_IMON", GND, dnp=True, note="SLVSE94G 8.3.9: no IMON bypass capacitor"),
+    # C105 removed: DNP tier 1 (D-31; SLVSE94G 8.3.9 forbids an IMON bypass capacitor)
     R("R129", "10.0k 1%", "R0603", "N_IMON", "CHG_IIN", side="B", mpn="CRCW060310K0FKEA", **VISH01),
     C("C129", "1.0nF 50V C0G", "C0603", "CHG_IIN", GND, side="B", mpn="GRM1885C1H102JA01D", mfr="Murata"),
     # R106 (DNP since r4) is omitted: see LAYOUT_DECISIONS.md D-08 (r8 F17 exposed-copper rule).
@@ -153,7 +153,7 @@ CR = [
     R("R121", "1.00k 1%", "R0603", "RGN_TAP", "RGN", side="B", mpn="CRCW06031K00FKEA", **VISH01),
     R("R133", "100k 1%", "R0603", "RGN", GND, side="B", mpn="CRCW0603100KFKEA", **VISH01),
     R("R122", "1.00k 1%", "R0603", "FCC_TAP", "FCC", side="B", mpn="CRCW06031K00FKEA", **VISH01),
-    R("R134", "100k 1%", "R0603", "FCC", GND, side="B", dnp=True, mpn="CRCW0603100KFKEA", **VISH01),
+    # R134 removed: DNP tier 2 (D-31; FCC pull-down, DNP since r6)
     # ---- U119 FCC_OFF
     tlv3012("U119", "FCCN", "N_FOP", "N_FOM", "REF119"),
     R("R184", "20.0k 1%", "R0603", "REF119", "N_FOP", side="B", mpn="CRCW060320K0FKEA", **VISH01),
@@ -225,15 +225,8 @@ CR = [
       "14": GND},
      dict(mpn="FTSH-107-01-L-DV class (T-A-05)", mfr="Samtec")),
     R("R107", "10.0k 1%", "R0603", "STAT", V33, side="B", mpn="CRCW060310K0FKEA", **VISH01),
-    R("R145", "DNP", "R0603", "SDA", V33, side="B", dnp=True),
-    R("R146", "DNP", "R0603", "SCL", V33, side="B", dnp=True),
-    # ---- keep-alive option (all DNP, B.5)
-    ("U112", "TPS22810", "TPS22810", "SOT-23-6",
-     {"1": "T18_KA", "2": GND, "3": "RGN", "4": "N_CT", "5": None, "6": "N_KA"},
-     dict(mpn="TPS22810DBVR", mfr="Texas Instruments", dnp=True)),
-    C("C152", "2.2nF 50V C0G", "C0603", "N_CT", GND, side="B", dnp=True, mpn="GRM1885C1H222JA01D", mfr="Murata"),
-    ("D101", "D", "BAT54H", "SOD-323", {"1": "N_KA2", "2": "N_KA"}, dict(mpn="BAT54HT1G", mfr="onsemi", dnp=True)),
-    R("R192", "680 0.25W (R_KA)", "R1206", "N_KA2", "VCHG", side="B", dnp=True, mpn="CRCW1206680RFKEA", **VISH01),
+    # R145, R146 removed: DNP tier 1 (D-31; the I2C pull-ups stay on the MB 3V3 side, A.2)
+    # ---- keep-alive option (B.5) removed: DNP tier 2 (D-31; operator ruling 2026-11-11). F22 (T18) pad kept.
     # ---- decoupling (B.8 "Decoupling"): every VCC/V+ cap is placed under its IC on the bottom
     *[C(c, "100nF 50V X7R", "C0603", V33, GND, side="B", mpn="GRM188R71H104KA93D", mfr="Murata")
       for c in ("C110", "C111", "C112", "C113", "C114", "C115", "C116", "C117", "C118", "C119", "C120", "C121",
@@ -251,7 +244,8 @@ CR = [
     tap("F10", "KELVIN"), tap("F11", "QUAL_TAP"), tap("F12", "FCCEIL"), tap("F13", "ILIM_SENSE_RB"),
     tap("F14", "H1_RB"), tap("F15", "H2C_RB"), tap("F16", "BTOK_RB"), tap("F17", "CHG_EFUSE_FLT"),
     tap("F18", "CHG_IIN"), tap("F19", GND), tap("F20", "CE_SENSE_RB"), tap("F21", "HB_TAP"),
-    tap("F22", "T18_KA"), tap("F23", "T19_FCI"), tap("F24", None),
+    tap("F22", None),  # T18 pad kept, no CR net after DNP tier 2 (D-31)
+    tap("F23", "T19_FCI"), tap("F24", None),
 ]
 
 # --------------------------------------------------------------------------------------------

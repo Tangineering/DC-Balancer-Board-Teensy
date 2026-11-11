@@ -40,6 +40,8 @@ def add_zone(b, fr, poly, layer, net, prio, name, thermal_tht=True, min_w=0.2, c
     z.SetNet(b.FindNet(net))
     z.SetAssignedPriority(prio)
     z.SetZoneName(name)
+    if layer in (pcbnew.In1_Cu, pcbnew.In2_Cu):
+        clear = max(clear, 0.27)   # fab: plated hole to internal copper 0.254 mm
     z.SetLocalClearance(pcbnew.FromMM(clear))
     z.SetMinThickness(pcbnew.FromMM(min_w))
     z.SetPadConnection(pcbnew.ZONE_CONNECTION_THT_THERMAL if thermal_tht else pcbnew.ZONE_CONNECTION_FULL)
@@ -153,7 +155,23 @@ def freeroute(b, projdir, name, passes=40):
     pcbnew.ImportSpecctraSES(b, ses)
 
 
+def stitch_only(board_name, projdir):
+    """ROUTE_STITCH_ONLY=1: add the GND stitching vias to a routed board, refill, save."""
+    L = importlib.import_module("route_" + board_name)
+    pcb = os.path.join(projdir, board_name + ".kicad_pcb")
+    b = pcbnew.LoadBoard(pcb)
+    fr = pb.Frame(L.YOFF)
+    log = []
+    for net, pitch, region, keep in L.stitching():
+        stitch(b, fr, L, net, pitch, region, keep, log=log)
+    pcbnew.ZONE_FILLER(b).Fill(b.Zones())
+    b.Save(pcb)
+    print("\n".join(log))
+
+
 def main(board_name, projdir):
+    if os.environ.get("ROUTE_STITCH_ONLY") == "1":
+        return stitch_only(board_name, projdir)
     L = importlib.import_module("route_" + board_name)
     pcb = os.path.join(projdir, board_name + ".kicad_pcb")
     src = os.path.join(projdir, board_name + "_placed.kicad_pcb")
@@ -172,7 +190,7 @@ def main(board_name, projdir):
     nc.SetViaDiameter(pcbnew.FromMM(getattr(L, "VIA", (0.6, 0.3))[0]))
     nc.SetViaDrill(pcbnew.FromMM(getattr(L, "VIA", (0.6, 0.3))[1]))
     # edge band: Freerouting does not apply the fab copper-to-edge rule (0.381 mm); a 0.45 mm keep-out ring does
-    band = L.P.difference(L.P.buffer(-0.45, join_style=2))
+    band = L.P.difference(L.P.buffer(-getattr(L, "EDGE_BAND", 0.45), join_style=2))
     pb.add_rule_area(b, fr, band, [pcbnew.F_Cu, pcbnew.In1_Cu, pcbnew.In2_Cu, pcbnew.B_Cu] if L.P.area > 1200 else
                      [pcbnew.F_Cu, pcbnew.B_Cu], "edge_band_router", tracks=True, vias=True, pads=False, pour=False,
                      fps=False)
@@ -187,7 +205,9 @@ def main(board_name, projdir):
         add_track(b, fr, pts, net, w, LAYER[layer])
     pcbnew.ZONE_FILLER(b).Fill(b.Zones())
     # 3. autoroute (skip with ROUTE_REUSE_SES=1 to import an existing session)
-    if os.environ.get("ROUTE_REUSE_SES") == "1":
+    if os.environ.get("ROUTE_SKIP_FR") == "1":
+        pass   # signal routing by gen/pathfinder.py afterwards
+    elif os.environ.get("ROUTE_REUSE_SES") == "1":
         pcbnew.ImportSpecctraSES(b, os.path.join(projdir, board_name + ".ses"))
     else:
         freeroute(b, projdir, board_name, L.PASSES)
@@ -208,8 +228,9 @@ def main(board_name, projdir):
         add_zone(b, fr, poly, LAYER[layer], net, prio, name)
     pcbnew.ZONE_FILLER(b).Fill(b.Zones())
     print("pours filled", flush=True)
-    for net, pitch, region, keep in L.stitching():
-        stitch(b, fr, L, net, pitch, region, keep, log=log)
+    if os.environ.get("ROUTE_SKIP_FR") != "1":
+        for net, pitch, region, keep in L.stitching():
+            stitch(b, fr, L, net, pitch, region, keep, log=log)
     pcbnew.ZONE_FILLER(b).Fill(b.Zones())
     for lname in getattr(L, "POWER_LAYERS", []):
         b.SetLayerType(LAYER[lname], pcbnew.LT_SIGNAL)

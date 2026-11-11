@@ -299,6 +299,8 @@ def greedy(b, fr, fps, L, pinnet):
         phase_name, side, refs = ph[:3]
         fallback = ph[3] if len(ph) > 3 else None
         forced = ph[4] if len(ph) > 4 else None
+        base_margin = getattr(L, 'PACK_MARGIN', 0.03)
+        packer.MARGIN = getattr(L, 'PHASE_MARGIN', {}).get(phase_name.replace(' fallback', ''), base_margin)
         parts = []
         for ref in refs:
             fp = fps[ref]
