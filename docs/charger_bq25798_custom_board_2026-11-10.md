@@ -1,6 +1,6 @@
 # Custom BQ25798 charger board in the CHG footprint: design document (2026-11-10)
 
-**Status:** revision r1 (2026-11-10). Table 0.9 (§0.9) records the revisions.
+**Status:** revision r2 (2026-11-10). Table 0.9 (§0.9) records the revisions.
 
 ## 0. Status, scope and verdict
 
@@ -31,7 +31,14 @@ The design rests on the following constraints:
 5. The LM1084 (REG-5V) courtyard is 1.75 mm to the right of the CHG silk outline. The LM1084 is 4.83 mm tall and runs
    hot. The CO-5V silk touches the CHG silk outline. J-NTC and J-BL are to the left, and J-BL must stay serviceable
    ([MECH] §2.1, §7; §1.2).
-6. The CCB sits on a moving vehicle, for which no vibration specification exists (§1.7).
+6. The vehicle does not move. It sits on a testbench and drives flywheels (operator statement, 2026-11-10). This fact
+   supersedes the r1 constraint "the CCB sits on a moving vehicle, for which no vibration specification exists".
+   Retention therefore covers handling, probing and repeated insertion only (§1.7). Two further facts of the same
+   statement apply:
+   - **6a.** A fan may be mounted on the CCB. The fan takes its supply from the bench supply or from its own regulator,
+     never from the LM1084 / CO-5V rail ([LC] §8.10; §1.2.3).
+   - **6b.** The CCB has no height restriction. The free height H_env becomes a record-only value, and gate D-2 no longer
+     constrains the CCB height (§1.3.2, §1.3.3).
 7. A parallel study searches for alternative charger ICs. The IC-independent content is therefore kept separate from the
    BQ25798-specific content (§0.6).
 
@@ -43,7 +50,7 @@ This document adds a third design path beside the two round-3 paths. It does not
 |---|---|---|
 | `docs/charger_bq25798_wiring_design_2026-11-05.md` ([WD], round 3 r6) | **Path A**: BQ25798EVM with modifications EM1-EM25, carrier CR in the 22 CHG holes, EIB on a ribbon, leads W1-W8 | Stays the Path A design. The CCB reuses its netlist values (B.1-B.8), register images (G.1), firmware requirements (G.2) and test registry (section I) |
 | `docs/charger_replacement_evaluation_2026-11-05.md` ([EVAL]) | Charger study: rulings, requirements HR1-HR5, loop analysis, **Path B** (MB re-spin) | Stays the study and the Path B record. The CCB meets HR1-HR5 through the carried-over interlock (§1.12) |
-| `docs/battery_isolation_feasibility_2026-11-07.md` | Battery isolation with the Ag105 kept; gate D-2 (Ag105 standoff height, unmeasured) | Gate D-2 is not a CCB gate; the standoff height is a measurement for the CCB envelope (§1.3.3, M1) |
+| `docs/battery_isolation_feasibility_2026-11-07.md` | Battery isolation with the Ag105 kept; gate D-2 (Ag105 standoff height, unmeasured) | Gate D-2 is not a CCB gate. In r1 the standoff height was a measurement for the CCB envelope (§1.3.3, M1). In r2 it is record only, because the CCB has no height restriction (operator statement, 2026-11-10) |
 | `docs/reviews/charger_eval_2026-11-05/round3/review_loop.md` ([LOOP]) | Six review rounds of the round-3 design | §7.2 dispositions all 203 finding keys against the CCB |
 
 ### 0.3 Verdict
@@ -53,9 +60,9 @@ feasible in hardware either, because its round-3 design was not audited ([EVAL] 
 
 The CCB removes the root cause of 29 of the 203 round-3 review findings, including the one blocker and 11 majors (§7.2.2).
 It deletes the 0.3 m leads, the ribbon, the EIB and the 17 physical EVM modifications. On the recorded allowances, two
-populated CCBs cost USD 422-697, against USD 505-540 for Path A (§4.5.3). However, the test plan needs four populated
-boards (vehicle, spare, FI1 and LOOP1, §6.1.4). These cost USD 600-875, which is USD 60-370 above Path A before the LOOP1
-layout variant is priced (§7.1.3). The fault-injection build of Path A is not priced either. Cost therefore does not
+populated CCBs cost USD 470-745, against USD 505-540 for Path A (§4.5.3). However, the test plan needs four populated
+boards (vehicle, spare, FI1 and LOOP1, §6.1.4). These cost USD 652-927, which is USD 112-422 above Path A before the LOOP1
+layout variant is priced (§7.1.3). The r2 figures include the bench fan, its mount and the tall-stack headers (§4.5.2). The fault-injection build of Path A is not priced either. Cost therefore does not
 favour the CCB.
 
 However, the CCB costs about 70-155 h more effort than Path A. It delays the first bench charge from about 1-3 weeks to
@@ -67,9 +74,12 @@ listed below:
 1. a first-pass layout of a 0.4 mm-pitch package (TI publishes no EVM layout files, but the TIDA-050047 reference design
    publishes an Altium project and 4-layer Gerbers of a BQ2579x power stage, transcribed in §3.4.7; §7.1.6);
 2. about 2.7 W of loss at 13.4 mm from the courtyard of the hot LM1084, measured from the power cell edge (§1.6.1,
-   §3.7);
+   §3.7). With the bench fan on over both sides at 2 m/s and g 5 mm, the junction is 49-61 C above room air. With the
+   fan stopped, it is 79-117 C above room air, so the FR-50 trip must act ([LC] §8.6, §8.7; §3.7.2a);
 3. 3.21 A through header pins of unverified current rating (§3.3);
-4. retention of an 8-12 g cantilevered board on a vehicle without a vibration specification (§1.7).
+4. retention of an 8-13 g board on a tall cantilevered stack during handling, probing and repeated insertion (§1.4,
+   §1.7). The r1 form of this risk (a vehicle without a vibration specification) is superseded by the testbench facts
+   (operator statement, 2026-11-10; §0.1 item 6).
 
 **Verdict: the CCB is not the next step.** Path A stays the next step while the BQ25798 behaviour gates are open and while
 the parallel IC search can still change the IC (§7.3.2). The operator can choose the CCB when all of the conditions below
@@ -78,14 +88,19 @@ are true:
 1. The IC is fixed by bench evidence: the gates T-B-06, T-B-09, T-B-10, T-B-12 and T-B-21 pass, and the IC search keeps
    the BQ25798. Four of these gates need the modified EVM, the EIB and the CR of Path A (§7.3.3). §7.1.9 gives the effort,
    cost and schedule of this sequence.
-2. T-K-01 shows a free height H_env of at least the planned stack plus the proposed 1 mm margin (§6.4.1). The planned
-   stack is 7.14 mm for option S and 7.14 + h_k mm for option K. Against the nominal 13.14 mm Ag105 envelope, the
-   socket seat height h_k must therefore be 5.0 mm or less (§1.3.2).
-3. T-K-02 shows an MB temperature T_MB,0 (Ag105 fitted and idle, no CCB) at or below the admissible value of §3.7.3 for
-   the built option. The admissible value uses the MB self-heating term R_MB from the T-K-02 heater step. On the
-   modelled R_MB of 5.5-9.2 C/W, option K (h_k 3.0 mm) with a compressed k 3 gap pad admits T_MB,0 of 16-35 C (§3.7.4). Option K without
-   the pad is not viable (-41 to 11 C). Option S admits 14-29 C without the pad and 28-45 C with it. The lower end of each
-   band applies until R_MB, the pin conductivity and the pad data are measured.
+2. The seated stack gives an underside air gap g of 5 mm or more, and preferably 5-8 mm (H_u 5.1-8.1 mm), so that the
+   fan air passes under the power cell (§1.3.2 rule 3; [LC] §8.9). T-K-04 measures the seated H_u (M3). The r1 form of
+   this condition (T-K-01 H_env at least the planned stack plus 1 mm, and h_k <= 5.0 mm) is superseded by the testbench
+   facts: the CCB has no height restriction (operator statement, 2026-11-10). H_env is a record-only value.
+3. The fan-on and fan-off soak T-K-20 (with its fan-on leg T-K-14; M15-M17) passes. With the fan on at 2.9 W, TDIE
+   is 100 C or less at the measured room air, with 2 m/s or more in the gap and over the top (M15). With the fan
+   stopped, the FR-50 trip acts before TREG_STAT (REG1D bit 2, [DS] Table 7-38) sets. The derate alone does not hold
+   100 C ([LC] §8.7). The model gives 78-90 C on a 25 C bench at g 5 mm and 2 m/s over both sides ([LC] §8.6;
+   §3.7.3a). Air through the gap only gives 88-115 C at 2.9 W, so the top flow is part of this condition ([LC] §8.6).
+   No gap pad is needed. T_MB,0 is not decisive: with the fan on, T_J moves by 0.15-0.30 C per C of MB idle offset
+   ([LC] §8.6b). r1 record, superseded by the testbench facts (operator statement, 2026-11-10): T-K-02 had to show
+   T_MB,0 at or below the admissible value of §3.7.3. That value was 14-29 C for option S without the pad, 28-45 C
+   with it, and 16-35 C for option K (h_k 3.0 mm) with a compressed k 3 pad.
 4. A PCBA service with an inspection method for the hidden U501 joints is available (B-7).
 
 Before the CCB PCB is ordered, three further conditions apply:
@@ -95,9 +110,10 @@ Before the CCB PCB is ordered, three further conditions apply:
    pins 14, 15, 18 and 19 (O-10).
 3. A review loop on this document closes without an open blocker (§7.2.5 item 2).
 
-When these conditions hold, the CCB is the preferred path if the vehicle must run the road and drive-cycle tests (T-G
-group) with a durable installation in place of chassis-mounted leads (§7.3.2). If T-K-02, T-K-17 or T-K-19 fails, Path
-B1 is preferred, because it places the charger by design and carries the battery current in MB copper. A hybrid sequence
+When these conditions hold, the CCB is the preferred path if the T-G drive-cycle tests must run on the testbench with
+a durable installation in place of chassis-mounted leads (§6.4.4, §7.3.2). If T-K-20 or T-K-17 fails, Path B1 is
+preferred. B1 places the charger by design and carries the battery current in MB copper. On the testbench, T-K-02 is
+record only and T-K-19 is not applicable. A hybrid sequence
 is also possible: one stock BQ25798EVM (USD 156.45) runs the IC-behaviour subset of §6.5.3 while the CCB is designed and
 fabricated (§7.3.3).
 
@@ -169,7 +185,7 @@ The review folder `docs/reviews/charger_bq25798_custom_board_2026-11-10/` holds 
 
 | File | Content |
 |---|---|
-| `bom.csv` | Machine-readable BOM: 103 part lines plus the PCB line (section 4) |
+| `bom.csv` | Machine-readable BOM: 111 part lines plus the PCB line (section 4) |
 | `make_bom.py`, `bom_cost.json` | BOM generator and its cost roll-up ([BOMGEN]) |
 | `schematic_blocks.txt` | Figure 1.10 as a separate text file |
 | `mech_parse.py`, `mech_parse_out.txt`, `mech_parse_out.json` | Parser of the MB `.brd` file and its output ([MECH]) |
@@ -177,7 +193,8 @@ The review folder `docs/reviews/charger_bq25798_custom_board_2026-11-10/` holds 
 | [TID] | Transcribed facts of SLUSDV2C and SLUUCB5E ([TID]) |
 | `tida_layout_parse.py`, `tida_layout_parse_out.txt` | Parser of the TIDA-050047 PCB file, Gerbers and drill file around U1, and its output ([TLP]) |
 | `digest_study_reviews.md` | Rulings, requirements and the round 1-6 finding table ([STUDY]) |
-| `layout_calc.py`, `layout_calc_out.txt` | Layout arithmetic: widths, vias, losses, thermal model, area ([LC]) |
+| `layout_calc.py`, `layout_calc_out.txt` | Layout arithmetic: widths, vias, losses, thermal model (with the r2 forced-air section 8), area ([LC]) |
+| `tall_stack_calc.py`, `tall_stack_calc_out.txt` | r2 tall header stack checks ([TS]) |
 | `sch_calc.py`, `sch_calc_out.txt` | Schematic arithmetic: inductor ripple, peak and current requirement, capacitance, PMID ripple on a VBUS sweep, comparator-input impedances, pin currents ([CALC]) |
 | `make_ledger.py`, `ledger_table.md` | Generator of the 203-key finding ledger of §7.A ([LEDG]) |
 | `ti_prices.json` | TI store prices of 2026-11-10 ([TI-PD]) |
@@ -195,6 +212,7 @@ Table 0.9 lists the revisions of this document.
 |---|---|---|---|
 | r0 | 2026-11-10 | First issue | - |
 | r1 | 2026-11-10 | Applies review run 001: 22 findings (8 major, 12 minor, 2 nit; no blocker) and nine further corrections that the adjudication records with them. The main changes are the thermal gate on T_MB,0 with the MB self-heating term and the option-K stack (§3.7), the solder-bridge fault class (§2.3.2), the L501 saturation criterion (§2.1.3), the four-board cost and the re-spin contingency (§4.5, §7.1), five ledger statuses (§7.2), the header-joint and retention tests (§6.4) and the consistency corrections of findings CCB-R1-06, CCB-R1-07, CCB-R1-08 and CCB-R1-22 | Review folder: `run-001-2026-11-10.md` (findings, verification, adjudication), `ledger_table.md`, `layout_calc_out.txt`, `sch_calc_out.txt`, `bom_cost.json` |
+| r2 | 2026-11-10 | Applies three operator facts (operator statement, 2026-11-10): the vehicle is a stationary testbench that drives flywheels; a fan may be mounted on the CCB; the CCB has no height restriction. The main changes are the forced-air thermal model and the fan-off guard (§1.6.3, §3.7.2a, §3.7.3a, §3.7.4a), the fan inlet and outlet edges (§1.2.3), the gap rule g 5 mm minimum and 5-8 mm recommended with the tall header and spacer classes (§1.3.2, §1.3.4, §1.4), the tall-pin resistance and loop inductance (§3.3), the fan and tall-stack BOM lines (§4), the new soak test T-K-20 and the measurements M15-M17 (§1.9, §6.4), and the comparison, ledger and open items (§7, §8). The envelope rule, gate D-2, the gap pad, the T_MB,0 heater-step gate, and the vibration and road items are superseded by these facts. They are kept as records, and their test IDs and measurement numbers stay. The tall-stack check found that the r1 statement "the IN-side transient is unchanged" (§1.11.2 item 4) does not hold without the W1/W2 lead (N-25). Revision r2 is not reviewed | Review folder: `layout_calc.py` section 8 and `layout_calc_out.txt` ([LC] §8), `tall_stack_calc.py` and `tall_stack_calc_out.txt` ([TS]), `make_bom.py`, `bom.csv`, `bom_cost.json` |
 
 ## 1. IC-independent base
 
@@ -255,22 +273,78 @@ underside on a GND pour does not create a hazard. In contrast, the low-y band co
 The LM1084 constraint is thermal and vertical. The LM1084 is 4.83 mm tall (LM1084 DS, KTT0003B). The CCB top surface sits
 at about 2.54 + 1.6 = 4.14 mm above the MB with the default header (1.3), so the CCB edge faces the LM1084 sidewall. The
 gap is 2.86 mm from the CCB edge (x 48.70) to the LM1084 body (x 51.562) ([MECH] table 2.1). The CCB therefore never covers
-the LM1084, at any header height.
+the LM1084, at any header height. With the r2 gap rule (H_u 5.1-8.1 mm, §1.3.2 rule 3), the CCB underside is 0.3-3.3 mm
+above the LM1084 top (4.83 mm). The CCB edge then faces the air above the LM1084, not its sidewall. The rule x <= 48.70
+keeps the CCB 2.86 mm clear of the air that rises from the LM1084 body. The fan outlet air leaves away from the LM1084
+(§1.2.3).
 
 CO-5V (2.10 mm) touches the CHG silk. The CCB edge at x 48.70 is 0.54 mm inboard of the CO-5V silk (x 49.236). The CCB
 underside (2.54 mm) is above the CO-5V top (2.10 mm), so a small plan error does not cause a static collision. However,
 the vertical air over CO-5V would be only 0.44 mm, below the g_air minimum of 1.0 mm (1.3.2), so an overlap is a chafe
 risk under vibration. A CCB with an underside below 3.1 mm (2.10 + 1.0) must therefore keep its right edge at x <= 48.70
-with no exception.
+with no exception. On the testbench the chafe source is handling, not vibration (operator statement, 2026-11-10). With
+the r2 gap rule (H_u >= 5.1 mm), the air over CO-5V is 3.0 mm or more, so the CO-5V condition no longer binds. The
+right edge stays at x <= 48.70 because of the LM1084.
 
 J-BL is a screw terminal block, not a plug-and-socket connector ([MECH] §2.2). "Pluggable" here means that the
 position-3 screw and the wires stay removable (gate JBL, `docs/battery_isolation_feasibility_2026-11-07.md` line 788).
 The CCB left edge at x 17.70 is 1.30 mm from the J-BL courtyard (x 16.405). The screwdriver approaches vertically over
 x 3.5-16.1. A tall CCB part near the left edge can obstruct an angled driver, so the screwdriver envelope is a
-measurement (M8).
+measurement (M8). The taller r2 stack (H_u 5.1-8.1 mm) raises the CCB left edge by 2.6-5.6 mm over the r1 value, and
+the fan and its mount must stay at x >= 17.70 (§1.2.3). M8 and the T-K-04 screwdriver trial therefore stay in force at
+the chosen H_u.
 
-On a moving vehicle the high-y overhang is a cantilever. The last pin row is pin 11 at y 64.484, so the free edge at
-y 76.40 is 11.9 mm past the pin field. A foot at y 70.64 (1.4) reduces the free cantilever to 5.8 mm.
+The high-y overhang is a cantilever. The last pin row is pin 11 at y 64.484, so the free edge at y 76.40 is 11.9 mm past
+the pin field. A foot at y 70.64 (1.4) reduces the free cantilever to 5.8 mm. In r1 the load case was vehicle
+acceleration. On the testbench (operator statement, 2026-11-10) the load case is handling: a cable plugged into the CCB,
+a probe pressed on it, or a hand on the tab. A 10 N vertical force at the tab edge deflects the plate 0.04-0.07 mm
+without the feet and about 0.01 mm with them, nearly independent of H_u ([TS] §(e); §1.4).
+
+#### 1.2.3 Fan inlet and outlet edges (IC-independent, r2)
+
+A fan may blow air through the underside gap and over the CCB top (operator statement, 2026-11-10). The air must enter
+at an open side of the gap. Table 1.2a assesses each CCB edge as the fan inlet.
+
+| Edge | Assessment as the inlet |
+|---|---|
+| **Low-y body edge** (y 34.14, x 17.70-48.70) | **Use.** It is a straight 31.0 mm edge without a foot. The header columns (x 20.998 and x 45.998) run along +y, so they bound the channel and do not block it. The feet (y 70.64) sit at the outlet ([LC] §8.1) |
+| High-y tab edge (y 76.40) | **Reserve.** The lumped model has no term that depends on the flow direction, so it gives the same R_total for both directions by construction. [LC] §8.1 computes the low-y inlet only. However, both feet then sit at the inlet, and a fan there stands over L-FC (courtyard y >= 76.948, height unmeasured, M7) |
+| Right (+x) | **Reject.** It faces the LM1084 and CO-5V (§1.2.1). The operator statement excludes this side |
+| Left (-x) | **Reject.** The J-BL, J-NTC and J-FC blocks (21.70 mm) close this side, and a fan there obstructs the J-BL service (M8) |
+
+The flow is therefore along +y. The channel between the column keep-outs is 22.34 mm wide (x 22.33-44.67), with 891 mm²
+of the 1219 mm² CCB underside in the flow and a mean flow length of 39.9 mm ([LC] §8.1). The air leaves at the tab end
+(y 76.40) and at the open body edge y 67.14 for x 38.90-44.67, away from the LM1084 ([LC] §8.1).
+
+The flow direction does not change the overhang choice. The high-y choice of §1.2.2 rests on MB copper, probe access and
+foot spots, and none of these depends on the flow. The high-y tab also leaves the low-y body edge free of feet, which
+suits the inlet. A low-y overhang would still cover the BAL probe sites and would still have no foot spot.
+
+A fan at the low-y inlet stands above part of the low-y band (rect B' of [MECH] §6). It carries no CCB copper there, but
+it obstructs the bench access that §1.2.1 protects. The fan rules are the following:
+
+1. Mount the fan at the low-y body edge with its axis along +y.
+2. Make the fan face cover the gap and a stream of about 10 mm above the CCB top. [LC] §8.9 uses this geometry.
+3. Keep the fan frame and its mount inside x 17.70-48.70.
+4. Keep the lowest fan-frame edge 1.0 mm (g_air) or more above every MB part beneath it. The tallest parts there are
+   C4A-BT and C4B-BT (1.35 mm) and BAL (1.00 mm) ([MECH] §2.1). The frame edge is therefore 2.35 mm or more above the MB.
+5. Do not let the fan, its mount or a duct touch MB copper (§1.5 rule 6).
+6. Remove the fan before the battery-isolation gates BG-17a/b and B-PKN. RB1A and BAL OUT lie under the fan position.
+7. Connect the fan to the bench supply or to its own regulator. Do not connect it to the LM1084 / CO-5V rail.
+
+Rule 7 follows from the LM1084 budget. The LM1084 carries 0.15-0.25 A of logic load. [LC] §8.10 assumes a fan current
+of 0.05-0.20 A, because no fan MPN is chosen (TODO(verify: fan datasheet)). Such a fan adds 0.12-0.68 W
+(+20 to +133 %) and about +5 to +27 C of junction rise at RθJA 40.4 C/W ([LC] §8.10). The limit is the LM1084 heating
+and fan-motor noise on the Teensy rail, not the 5 A rating. This revision puts no fan supply on the CCB.
+
+The fan must deliver 1.97-3.55 CFM for gaps of 5-8 mm at 2-3 m/s over both sides. At an assumed 30-50 % duct capture, the
+fan rating is 3.9-11.8 CFM ([LC] §8.9). Its static pressure must exceed the bare-channel drop of 5.4-12.7 Pa by the
+duct and obstacle losses ([LC] §8.2, §8.9).
+The fan part number, its airflow and static-pressure curve, its depth and its mass are TODO(verify: fan datasheet). The
+capture fraction and the gap velocity are TODO(measure: M15).
+
+The fan need not be proven on. With the fan off, the FR-50 TDIE trip stops the charger; the derate alone does not hold
+100 C. The CCB node time constant is 164-303 s, so the guard has minutes to act ([LC] §8.7; §3.7).
 
 ### 1.3 Header stack-up and underside height (IC-independent)
 
@@ -283,14 +357,21 @@ This subsection uses the following terms:
 - **h_mb**: the tallest MB part under the CCB outline.
 - **g_air**: the air gap between the tallest MB part and the lowest CCB feature (bottom part or pin tail).
 - **H_env**: the free height above the MB at the CCB outline, limited by the chassis or by any part above the board.
+  Record only in r2: the CCB has no height restriction (operator statement, 2026-11-10).
+- **g**: the air gap of the fan channel, from the polyimide sheet (0.125 mm, §1.5 rule 3) to the CCB underside;
+  g = H_u - 0.125 mm ([LC] §8.1).
 
 #### 1.3.2 Design rule
 
-H_u must meet both inequalities below. The first rule protects the MB parts. The second rule keeps the CCB inside the
-free envelope.
+H_u must meet rules 1 and 3 below. Rule 1 protects the MB parts. Rule 3 lets the fan air pass under the power cell.
+Rule 2 is the r1 envelope rule and is record only in r2.
 
 1. H_u >= h_mb + t_bot + g_air, where t_bot is the tallest CCB bottom feature above that MB part.
-2. H_u + t_pcb + h_top <= H_env, where t_pcb is the CCB thickness and h_top its tallest top-side part.
+2. H_u + t_pcb + h_top <= H_env, where t_pcb is the CCB thickness and h_top its tallest top-side part. **Superseded by
+   the testbench facts** (no height restriction, operator statement, 2026-11-10). Record H_env (M6), but do not use it to
+   reject a stack.
+3. g >= 5 mm (H_u >= 5.125 mm), and g of 5-8 mm (H_u 5.1-8.1 mm) is the recommended band ([LC] §8.9). This rule is new
+   in r2.
 
 The values for the default rect-A outline are:
 
@@ -305,6 +386,56 @@ With the default 2.54 mm plastic header body, H_u = 2.54 mm. This value meets ru
 under rect A (1.94 mm air or more). Over OP-FC (rect A'), the air is only 0.79 mm, below the 1.0 mm minimum. Rect A' therefore
 needs H_u >= 1.75 + 1.0 = 2.75 mm.
 
+Rule 3 sets a taller stack than r1. At H_u 5.125 mm, the air is 4.0 mm over the 1.10 mm parts under the footprint and
+3.4 mm over OP-FC, so rule 1 holds everywhere and rect A' is open. The basis of rule 3 is the following ([LC] §8.1, §8.7,
+§8.9):
+
+- The 5 mm minimum clears the obstacles in the channel. With a 1.0 mm CCB underside part over a 1.10 mm MB part, the
+  worst cross-section is 42 % blocked at g 5 mm and 70 % at g 3 mm.
+- A taller gap does not lower the junction temperature with the fan on. At 2 m/s in the gap only, R_total rises from
+  13.6-22.8 C/W at g 5 mm to 16.7-25.3 C/W at g 12 mm. The developing-flow h falls as the channel grows, and the pin
+  and gap-conduction paths to the MB weaken. At a fixed flow of 1.0 CFM, T_J - T_air rises from 54-76 C (g 5 mm) to
+  69-92 C (g 12 mm) at 2.7 W.
+- A taller gap raises the junction temperature with the fan off. At 2.7 W, T_J - T_air is 79-117 C at g 5 mm and
+  99-131 C at g 12 mm.
+
+Above g 8 mm, therefore, the fan-on result gains nothing, and the fan-off result becomes worse. With both sides at
+2 m/s, T_J - T_air is 49-61 C at g 5 mm, 51-62 C at g 8 mm and 52-63 C at g 10 mm. §3.7 gives the thermal model.
+
+A preliminary estimate of 2026-11-10 proposed a gap of 8-12 mm and 8-14 C/W for air ducted through the gap only. The
+calculation supports neither value. The gap path alone is 34.3-52.3 C/W at g 5 mm and 2 m/s ([LC] §8.5b). A taller gap
+is worse with the fan on and with the fan off ([LC] §8.5, §8.7, §8.9).
+
+Table 1.3a gives the header classes for each H_u ([TS] §(e)). For option S, the minimum pin length is the sum of a
+1.0 mm tail under the MB, the 1.66 mm MB, H_u, the 1.6 mm CCB and 1.5 mm above the CCB. For option K, the socket seat
+height is h_k = H_u - 2.54 mm, with a 2.54 mm male body.
+
+| H_u | Option S, minimum pin length | Option K, h_k | Candidate classes (all heights and MPNs TODO(verify: maker drawing)) |
+|---|---|---|---|
+| 5 mm ([TS] row; the rule-3 minimum H_u 5.125 mm needs 10.9 mm and gives h_k 2.59 mm) | 10.8 mm | 2.46 mm, below common socket seat heights | S1, S2, S3 |
+| 8 mm ([TS] row; the band top H_u 8.125 mm needs 13.9 mm and gives h_k 5.59 mm) | 13.8 mm | 5.46 mm | S1, S2, S3, K2, K3 |
+| 10 mm (record) | 15.8 mm | 7.46 mm | S1, S2, S3, K2, K3 |
+| 12 mm (record) | 17.8 mm | 9.46 mm | S1, S2, S3, K1 (H_u about 11.05 mm), K2, K3 |
+
+The candidate classes are the following:
+
+- S1, a Samtec TSW-110/-112 header with a long-post lead style;
+- S2, a Samtec MTSW-110/-112 header with a movable body set at the gap;
+- S3, a standard header with a spacer strip;
+- K1, a Samtec SSW/SSQ socket strip with a TSW male header;
+- K2, a Samtec ESQ elevated socket strip (long tail, stacking);
+- K3, a Harwin M20 female header with a long-pin male header.
+
+K1 with its 8.51 mm body (TODO(verify: Samtec SSW drawing)) gives H_u of about 11.05 mm, above the recommended band.
+The two strips run along y, so they form the side walls of the channel under the power cell.
+
+The taller pins add resistance and inductance. Over the r1 H_u of 2.54 mm, H_u 5-12 mm adds 0.66-2.54 mΩ per pin and at
+most 43 mW over the six power pins ([TS] §(a); §3.3). The pin pair 10 and 4 gains up to 5.2 nH at H_u 5 mm and 10.8 nH at
+H_u 8 mm ([TS] §(b)); §1.11.2 gives the effect on the eFuse hard-short transient. The I2C lines gain at most 0.82 pF
+([TS] §(d)).
+
+The two paragraphs below are the r1 record of rule 2. They are kept for traceability and do not constrain the r2 stack.
+
 For rule 2, the Ag105 itself proves a free volume over the footprint up to h_s + 1.60 + 9 mm ([AG] Fig 11 keep-out). With
 the nominal h_s = 2.54 mm, that is 13.14 mm. A CCB on the default header with a 3.0 mm inductor (TDK SPM6530T, [TID] line
 139) reaches 2.54 + t_pcb + 3.0 mm. With t_pcb = 1.6 mm (TODO(verify: CCB fab stack-up)), that is 7.14 mm, which is 6.0 mm
@@ -315,10 +446,15 @@ height. The CCB top then reaches 7.14 + h_k mm, which is 6.0 - h_k mm below the 
 margin, the socket seat height must be h_k <= 13.14 - 1 - 7.14 = 5.0 mm ([LC] §5.3). An SSW-class socket body of 8.51 mm
 (TODO(verify: Samtec SSW drawing)) gives a 15.65 mm top, 2.51 mm above the envelope.
 
+Record (r2): with the 3.0 mm inductor and t_pcb 1.6 mm, the r2 band H_u 5.1-8.1 mm puts the CCB top at 9.7-12.7 mm.
+This value stays below the nominal Ag105 top of 13.14 mm for H_u of 8.54 mm or less. A heatsink on U501 (§3.7) raises
+h_top, which rule 2 no longer limits.
+
 #### 1.3.3 Dependence on gate D-2
 
 The CCB does not need to match the Ag105 height. The CCB clears the MB parts through rule 1, which does not contain h_s.
-The value h_s enters the design in two places only:
+In r2, gate D-2 no longer constrains the CCB height, because the CCB has no height restriction (operator statement,
+2026-11-10). Items 1 and 2 below are therefore record only. In r1, the value h_s entered the design in two places:
 
 1. **As the proven envelope over the footprint.** The free height over the footprint is at least h_s + 10.6 mm. The CCB
    top must stay below it unless H_env is measured directly (M6). Option S (7.14 mm) meets this rule for any
@@ -335,14 +471,21 @@ However, the module removal method sets the hole condition, which is a CCB gate 
 
 Table 1.3 compares the two attachment options. Heights marked TODO come from the chosen part's drawing.
 
-| Option | Stack (MB up) | H_u | Removal | Vibration behaviour | MB rework |
+| Option | Stack (MB up) | H_u | Removal | Vibration behaviour (r2: handling and insertion) | MB rework |
 |---|---|---|---|---|---|
-| **S: soldered** | Male 0.64 mm square-pin strips (TSW-110 + TSW-112 class) soldered in the MB holes and in the CCB | 2.54 mm (body), +/- seat variation TODO(measure: M3) | Desolder 22 pins. The MB GND pads are solid to both pours on a 1.66 mm board, so desoldering is a lifted-pad and barrel risk ([STUDY] §4.2) | 22 solder joints carry the load; no contact fretting | None beyond the module removal |
-| **K: socketed** | Female socket strips soldered once in the MB holes; male strips on the CCB plug into them | h_k + male body height (h_k + 2.54 mm; h_k <= 5.0 mm, §1.3.2), TODO(verify: socket and header drawings) | Pull the CCB; no heat on the MB | Contacts can fret or back out; positive retention by the foot screw (1.4) is required | Socket strips soldered into the MB once |
+| **S: soldered** | Male 0.64 mm square-pin strips (TSW-110 + TSW-112 class) soldered in the MB holes and in the CCB; r2: long-post or movable-body pins of 10.8-13.8 mm (classes S1-S3, Table 1.3a) | r1: 2.54 mm (body). r2: 5.1-8.1 mm from §1.3.2 rule 3, +/- seat variation TODO(measure: M3) | Desolder 22 pins. The MB GND pads are solid to both pours on a 1.66 mm board, so desoldering is a lifted-pad and barrel risk ([STUDY] §4.2) | 22 solder joints carry the load; no contact fretting | None beyond the module removal |
+| **K: socketed** | Female socket strips soldered once in the MB holes; male strips on the CCB plug into them | h_k + male body height (h_k + 2.54 mm). r1: h_k <= 5.0 mm, superseded (no height restriction). r2: h_k 2.6-5.6 mm for §1.3.2 rule 3 (classes K2, K3, Table 1.3a), TODO(verify: socket and header drawings) | Pull the CCB; no heat on the MB | Contacts can fret or back out under repeated insertion; positive retention by the foot screw (1.4) is required | Socket strips soldered into the MB once |
 
 This section recommends **option K with a screwed foot** for the first CCB revision. The first revision of a new power
 board probably needs rework, and repeated desoldering on the solid-GND MB pads risks the MB. The socket also lets the Ag105
 plug back in as a fallback (1.3.3 item 2). Option S is the choice for a frozen revision, because it has no contact interface.
+
+In r2 the recommendation stands. On the testbench, repeated insertion is the main mechanical load case, which favours the
+socket. Within rule 3, option K needs h_k of 2.6-5.6 mm. A seat height near 5.5 mm (H_u about 8 mm, class K2 or K3) is
+the practical point, because h_k 2.59 mm at the rule-3 minimum (H_u 5.125 mm) is below common socket seat heights
+([TS] §(e)). The fan-off cost of
+H_u 8 mm over 5 mm is about +10 C at 2.7 W (T_J - T_air 89-124 C against 79-117 C, [LC] §8.7). With the fan on, the cost
+is about +2 C (§1.3.2).
 
 The socket choice must meet three conditions:
 
@@ -353,15 +496,24 @@ The socket choice must meet three conditions:
    x 26.2, 5.2 mm from the column ([STUDY] §4.2), so a single-row socket fits. TODO(measure: M3, dry fit).
 
 The CCB height with option K is unknown until the socket is chosen. A taller H_u improves rule 1 and opens rect A' (H_u
->= 2.75 mm). However, a taller stack lengthens the lever arm of the pins under lateral acceleration. The socket seat height
-must also satisfy h_k <= 5.0 mm (§1.3.2).
+>= 2.75 mm). In r1, a taller stack lengthened the lever arm of the pins under lateral acceleration, and h_k had to be
+5.0 mm or less. Both points are superseded by the testbench facts (operator statement, 2026-11-10). For handling loads,
+a 10 N lateral force sways the CCB 0.0041 mm at H_u 8 mm and 0.0137 mm at H_u 12 mm, with a pin bending stress of 13 and
+20 MPa ([TS] §(e)). The pin yield stress of about 500 MPa is TODO(verify: Samtec pin alloy). The cost of a tall stack is
+the foot-bond moment (§1.4), not the pin sway.
 
-Option K also costs thermal margin. The longer pin path, the thicker air layer and the socket contacts raise R_board.
+r1 record (still air; in r2 it applies only with the fan off): option K also costs thermal margin. The longer pin
+path, the thicker air layer and the socket contacts raise R_board.
 Option S has 14.3-18.3 C/W. Option K at h_k = 3.0 mm has 21.6-27.3 C/W before the contact term and 30.0-38.5 C/W with it
-([LC] §5.5; §3.7.2). Option K therefore needs the compressed gap pad of §3.7.4 to meet the junction target (verdict
-condition 3). Option S on the vehicle, with option K on FIX1 only, keeps more margin. Without the pad, option S admits
-T_MB,0 of 14-29 C, against -41 to 11 C for option K at h_k = 3.0 mm (§3.7.3). However, option S brings back the desoldering risk on the
+([LC] §5.5; §3.7.2). In r1, option K therefore needed the compressed gap pad of §3.7.4 to meet the junction target of
+the r1 verdict condition 3. Option S on the vehicle MB, with option K on FIX1 only, kept more margin. Without the pad,
+option S admits T_MB,0 of 14-29 C, against -41 to 11 C for option K at h_k = 3.0 mm (§3.7.3). However, option S brings back the desoldering risk on the
 solid-GND MB pads.
+
+In r2, with the fan on, both options
+meet the junction target without the gap pad, and T_MB,0 has a small effect: dT_J/dT_MB0 is 0.15-0.30 at g 5 mm and
+2 m/s over both sides ([LC] §8.6, §8.6b; §3.7). The gap pad is then not needed, and the r1 thermal argument for option S
+over option K is superseded by the testbench facts (operator statement, 2026-11-10).
 
 #### 1.3.5 Pin tails and the CCB underside
 
@@ -372,6 +524,10 @@ The CR rules transfer unchanged ([WD] A.7):
 - Fit only passives of 1.0 mm or less on the underside, outside the bottom keep-out x 24.5-36.0, y 48.5-53.5.
 - Keep underside parts outside the projected outlines of MB VBT, the VBT pour, the VCHG pour and VCHG-IN, each grown by 1 mm.
 
+In r2, every underside part inside x 22.33-44.67 stands in the fan channel ([LC] §8.1). The worst-section blockage of
+§1.3.2 (42 % at g 5 mm) already assumes a 1.0 mm underside part over the 1.10 mm MB parts. The model does not credit the
+mixing or the pressure drop of these obstacles. TODO(measure: M15).
+
 ### 1.4 Support at the overhang end (IC-independent)
 
 No existing MB hole can take a standoff. The MB has only two NPTH holes, at (3.302, 3.302) and (3.302, 94.742), at least
@@ -380,7 +536,7 @@ No existing MB hole can take a standoff. The MB has only two NPTH holes, at (3.3
 | Option | Description | MB rework | Assessment |
 |---|---|---|---|
 | E: existing hole | Standoff into an existing MB hole | none | **Not possible**: no hole within reach |
-| B: bonded foot | Nylon M3 hex spacer of length H_u, epoxy-bonded to the MB solder mask; nylon M3 screw from the CCB top into the spacer | **None** (adhesive only) | **Recommended.** It carries the cantilever and gives positive z retention for option K |
+| B: bonded foot | Nylon M3 hex spacer of length H_u, epoxy-bonded to the MB solder mask; nylon M3 screw from the CCB top into the spacer. r2: a tall spacer of 5.1-8.1 mm, equal to H_u (§1.3.2 rule 3) | **None** (adhesive only) | **Recommended.** It carries the cantilever and gives positive z retention for option K |
 | D: drilled foot | Nylon M3 spacer and screw through a new MB hole | **Yes**: the hole cuts both GND pours (no trace); operator approval required | Strongest; use only if the bonded foot fails the retention check |
 | P: pad only | Adhesive or silicone pad between the CCB and the MB, no fastener | none | Damps the cantilever, but gives no positive retention |
 
@@ -393,17 +549,32 @@ The foot rules are:
 1. Bond the foot to bare solder mask, not to the polyimide sheet. The CR sheet uses a silicone pressure-sensitive adhesive
    ([WD] A.7), which is a weak bond base. Cut the sheet clear of the foot spots.
 2. Make the foot length equal to H_u of the chosen stack, measured on the dry fit (M3). A foot that is too long lifts the
-   header out of the socket.
+   header out of the socket. In r2 the foot is a tall spacer of 5.1-8.1 mm. Standard nylon M3 hex spacer lengths cover this
+   band. TODO(verify: spacer MPN and length tolerance).
 3. Put a plated or bare M3 clearance hole in the CCB at each foot spot, with no copper within 3.0 mm except the GND net.
    TODO(verify: nylon screw head diameter, from the chosen part).
 4. Choose the adhesive from a product with a datasheet shear strength. TODO(verify: adhesive datasheet). The CR BOM line
    "Adhesive" is RTV ([WD] A.3 W1), which is a strain-relief product, not a structural bond. The adhesion of the MB solder
    mask to its copper is a second, possibly weaker, link. TODO(verify: MB fabricator, solder-mask adhesion); T-K-18 tests
    the whole bond in torsion and in pull.
+5. Run the T-K-18 torsion and pull test with a spacer of the chosen H_u. A lateral force F at the CCB loads each bond
+   with the moment F x H_u. At 2.5 N per foot, the moment is 12.5 N mm at H_u 5 mm and 20.0 N mm at H_u 8 mm. At the
+   r1 H_u of 2.54 mm it is 6.3 N mm ([TS] §(e)). The moment grows by the factor H_u / 2.54. This factor is 2.0-3.2 in
+   the rule-3 band (H_u 5.125-8.125 mm) and 4.7 at H_u 12 mm.
+
+The feet also carry the vertical handling loads at the tab. A 10 N force at the tab edge (y 76.40) puts 18.6-22.1 N
+on the two feet (both clamp lines of [TS] §(e)), about twice the tip force, at any H_u from 5 to 12 mm ([TS] §(e)). An upward pull on the tab puts the
+same force in tension on the foot screws and bonds. The plate deflection at that load is 0.010-0.014 mm with the feet and
+0.039-0.070 mm without them. These figures exclude the socket-contact, bond and MB compliance and the rotation of the CCB
+about the pin field. TODO(measure: T-K-18, dry fit). The laminate modulus (20 GPa) is TODO(verify: laminate datasheet).
+
+The two foot spacers stand in the fan outlet at the tab end (§1.2.3). [LC] §8.1 lists them as obstacles and does not
+credit their pressure drop.
 
 ### 1.5 Keep-outs over MB power copper and abrasion (IC-independent)
 
-The voltages involved are small, but abrasion on a moving vehicle is the dominant risk. V-MOT reaches 21.2-21.5 V and the
+The voltages involved are small, but abrasion is the dominant risk. In r1 the source of abrasion was a moving vehicle. On
+the testbench (operator statement, 2026-11-10) the sources are handling, probing and repeated insertion. V-MOT reaches 21.2-21.5 V and the
 clamp 21.98-22.28 V ([WD] C, EM14). The IPC-2221B clearance at this voltage is small. TODO(verify: IPC-2221B Table 6-1).
 The design therefore relies on insulation layers and on air gaps, not on spacing.
 
@@ -420,8 +591,13 @@ The rules are:
    2.2 mm relief holes at the 22 pads and cut-outs over the five parts under the footprint ([WD] A.7, PM4). Extend the
    sheet over rect A, with holes at the two foot spots.
 4. Keep the CCB underside at least g_air = 1.0 mm above every MB part (1.3.2), so vibration does not bring the two
-   surfaces into contact.
-5. Inspect the sheet for chafe after the first drive, as in the CR inspection T-F-12 ([WD] A.7) and [DD] C-4.
+   surfaces into contact. On the testbench the load is handling, not vibration; the r2 gap of 5 mm or more (1.3.2 rule 3)
+   gives 4.0 mm or more over the 1.10 mm parts.
+5. Inspect the sheet for chafe after the first drive, as in the CR inspection T-F-12 ([WD] A.7) and [DD] C-4. On the
+   testbench, inspect it after the first bench run and after each reinsertion of the CCB.
+6. Do not let the fan, its mount or a duct rest on MB copper (r2). The low-y band under the fan position holds VBT traces,
+   the VOUT-BT pour and, below y 23.6, the VSW-BT switch-node pour ([MECH] §4.2, §6). When a duct wall must touch the MB,
+   put it on the polyimide sheet or on solder mask over a GND pour.
 
 Note that the MB logic traces MPPT-DISABLE (y 64.48, full width) and CB-DISABLE (x 33.27, x 41.40) run under the CCB. A CCB
 switch node above them couples into them unless a solid CCB ground layer lies between. The CCB layer next to the underside
@@ -482,18 +658,70 @@ overheated CCB loses charge current rather than failing. However, a 2-3 W source
 
 A 2.54 W loss (about 2.7 W with the eFuse and logic, §3.7.1) is about the same magnitude as the loss of the round-3 EVM.
 The EVM sat 20 mm or more from the LM1084 on standoffs ([STUDY] line 269). The CCB moves this heat to 13.4 mm from the
-LM1084 courtyard (power cell edge). It also puts the heat over a closed air layer of H_u - 0.125 mm (2.415 mm for
+LM1084 courtyard (power cell edge). In r1, it also put the heat over a closed air layer of H_u - 0.125 mm (2.415 mm for
 option S). This is the one mechanical risk the CCB adds over Path A.
 
-Most of this heat enters the MB under the cell. For option S, the model of §3.7.2 sends 72-87 % of the 2.7 W
-(1.9-2.35 W) into the MB. The heat passes through the pins, the air layer or the gap pad. This heat raises the MB under the cell by 11-21 C
-([LC] §5.5). The thermal
-gate therefore uses the MB temperature without the CCB, T_MB,0, plus this computed self-heating (§3.7.3).
+r1 record (still air): most of this heat enters the MB under the cell. For option S, the model of §3.7.2 sends 72-87 % of
+the 2.7 W (1.9-2.35 W) into the MB. The heat passes through the pins, the air layer or the gap pad. This heat raises the
+MB under the cell by 11-21 C ([LC] §5.5). The r1 thermal gate therefore used the MB temperature without the CCB, T_MB,0,
+plus this computed self-heating (§3.7.3).
 
-### 1.7 Retention, coating and mass on a moving vehicle (IC-independent)
+r2 (testbench): a fan may blow air through the gap and over the CCB top (operator statement, 2026-11-10). The fan-on
+case is the design case, and the fan-off case is a fault case that FR-50 guards (§1.6.3). With air ducted through the
+gap at 2-4 m/s and a still top, the MB far-field share falls to 23-48 % at g 5 mm ([LC] §8.5). With the fan on over both
+sides, T_J moves by only 0.15-0.30 C per C of MB idle offset ([LC] §8.6b). T_MB,0 is therefore a record-only input in r2,
+and the decisive thermal measurement is the fan-on and fan-off soak (M16; §3.7.3a).
 
-No source gives a vibration or shock specification for the vehicle ([STUDY] §4.2). The design therefore relies on
-positive retention and inspection, not on a rated vibration level.
+#### 1.6.3 Bench fan: design case and fault case (IC-independent, r2)
+
+The vehicle does not move: it sits on a testbench and drives flywheels. A fan may be mounted on the CCB, and the CCB has
+no height restriction (operator statement, 2026-11-10). §1.2.3 sets the fan position, the flow direction (+y, inlet at
+the low-y body edge) and the supply rule. This subsection sets the thermal role of the fan and the fan parts.
+
+The thermal cases are the following ([LC] §8.6, §8.7; §3.7.2a):
+
+1. **Design case, fan on.** Air at 2 m/s or more flows through the gap and over the CCB top. At g 5 mm and 2.7 W, the
+   junction is 49-61 C above room air, and 74-86 C on a 25 C bench. At 2.9 W it is 78-90 C on a 25 C bench.
+2. **Fault case, fan off.** At g 5 mm and 2.7 W, the junction is 79-117 C above room air. The FR-50 TDIE trip must act,
+   because the derate alone does not hold 100 C (§5.6; [LC] §8.7). The CCB node time constant is 164-303 s, so the guard has minutes to act ([LC] §8.7).
+3. **Partial cases.** Air through the gap only gives 59-84 C above room air at g 5 mm and 2 m/s; air over the top only
+   gives 58-71 C. Both are worse than the design case, so the duct must cover both the gap and the top (§1.2.3 rule 2).
+
+The fan parts are the following:
+
+1. **Fan class.** An axial DC fan with a 25-30 mm frame at the low-y edge. Its rating must be 3.9-11.8 CFM free air. Its static
+   pressure must exceed the bare-channel 5.4-12.7 Pa by the duct and obstacle losses ([LC] §8.9; Table 1.6a). The fan MPN, its airflow and static-pressure curve, its
+   current and its depth are TODO(verify: fan datasheet). The frame size is a class only: a 31.0 mm body edge with a
+   10 mm top stream sets the face area ([LC] §8.9).
+2. **Supply.** The bench supply, or a regulator of its own if the fan voltage differs (DNP option in the BOM). Never the
+   LM1084 / CO-5V rail (§1.2.3 rule 7; [LC] §8.10).
+3. **Connector.** A 2-wire fan lead with an inline 2-pin connector to the bench supply. The fan has no connector on the
+   CCB or on the MB, and it uses no CCB or MB copper. TODO(verify: connector MPN).
+4. **Tachometer.** None. The fan is not on a Teensy pin. The only spare pins are 2 and 8, both on encoder nets, so no
+   pin is proposed for a tachometer or a fan enable (§5.4.1). FR-50 makes fan supervision unnecessary (thermal case 2).
+5. **Mount and duct.** A bracket or printed frame at the low-y edge per §1.2.3 rules 1-5. Side baffles that close the
+   gap at the low-y corners are optional. TODO(verify: duct design after M15).
+
+Table 1.6a gives the airflow requirement for the recommended gap band ([LC] §8.9). The duct covers the full 31.0 mm body
+width and a 10 mm stream above the top. The capture fraction is an assumption, TODO(measure: M15).
+
+| g | v (gap and top) | Gap flow | Top stream | Delivered | Fan rating at 30-50 % capture | Channel Δp |
+|---|---|---|---|---|---|---|
+| 5 mm | 2 m/s | 0.66 CFM | 1.31 CFM | 1.97 CFM | 3.9-6.6 CFM | >= 5.9 Pa |
+| 5 mm | 3 m/s | 0.99 CFM | 1.97 CFM | 2.96 CFM | 5.9-9.9 CFM | >= 12.7 Pa |
+| 8 mm | 2 m/s | 1.05 CFM | 1.31 CFM | 2.36 CFM | 4.7-7.9 CFM | >= 5.4 Pa |
+| 8 mm | 3 m/s | 1.58 CFM | 1.97 CFM | 3.55 CFM | 7.1-11.8 CFM | >= 12.0 Pa |
+
+The channel Δp excludes the duct and obstacle losses. An optional top-side heatsink on U501 lowers the fan-off case
+by 14-26 C at R_sa 120 C/W (§3.7.4a).
+
+### 1.7 Retention, coating and mass on the testbench (IC-independent)
+
+The r1 title of this subsection was "Retention, coating and mass on a moving vehicle". The vehicle does not move: it sits
+on a testbench and drives flywheels (operator statement, 2026-11-10). The r1 vibration case is therefore not applicable
+(testbench). Retention covers handling, probing, cable insertion and repeated insertion of the CCB. The r1 basis is kept
+below for traceability: no source gives a vibration or shock specification for the vehicle ([STUDY] §4.2), so the design
+relies on positive retention and inspection, not on a rated vibration level.
 
 #### 1.7.1 Mass estimate
 
@@ -504,12 +732,19 @@ Table 1.7 gives an upper-bound mass. Material densities are general values, not 
 | Laminate | Outline area ~1219 mm² (1.8) x 1.6 mm; FR-4 density ~1.85 g/cm³ TODO(verify: fab datasheet) | ~3.6 g |
 | Copper | 4 layers, 1 oz outer + 2 oz inner (stack ST2 of §3.1.3; the ST1 baseline 1 oz / 1 oz gives about 1.5 g), full coverage as an upper bound, 8.96 g/cm³ | <= 2.3 g |
 | Inductor (BQ25798-specific) | SPM6530T, 6.5 x 7.1 x 3.0 mm = 138 mm³, bounded by the density of iron (7.87 g/cm³) | <= 1.1 g; TODO(verify: TDK datasheet mass) |
-| Header pins | 22 pins, 0.64 mm square, ~12 mm long TODO(verify: header drawing), brass ~8.5 g/cm³ | ~0.9 g |
+| Header pins | 22 pins, 0.64 mm square, brass ~8.5 g/cm³. r1: ~12 mm long. r2: 10.8-17.8 mm for H_u 5-12 mm (Table 1.3a) TODO(verify: header drawing) | r1: ~0.9 g. r2: 0.83-1.36 g |
 | Other parts | ~25 power-stage placements ([TID] EVM refdes table) plus the CR and EIB parts | TODO(verify: BOM masses); estimate a few grams |
-| **Total** | | **~8-12 g** (estimate) |
+| **Total** | Fan, fan mount and any U501 heatsink excluded (TODO(verify: fan and heatsink datasheets)) | **~8-13 g** (estimate; r1 ~8-12 g) |
 
-At 10 g of acceleration, a 12 g board applies F = m a = 0.012 kg x 98.1 m/s² = 1.2 N. Two feet and 22 contacts share this
-load. The per-contact socket retention force is TODO(verify: socket datasheet), so the margin is not yet known.
+Not applicable (testbench): at 10 g of acceleration, a 12 g board applies F = m a = 0.012 kg x 98.1 m/s² = 1.2 N. Two
+feet and 22 contacts share this load. This r1 load case is superseded by the testbench facts (operator statement,
+2026-11-10).
+
+The r2 load case is handling. [TS] §(e) uses a force of 5-10 N at the tab edge, which is about 40-85 times the weight of
+a 12 g board (0.12 N). With the feet screwed, the feet carry 18.6-22.1 N at 10 N (§1.4). With option K and no foot
+screws, a 10 N downward force at the tab edge gives a moment of 119 N mm about pin 11 and a largest contact tension of
+0.58 N ([TS] §(e)). The per-contact socket withdrawal force is TODO(verify: socket datasheet), so the margin without the
+screws is not yet known. The screwed feet remove this load path.
 
 #### 1.7.2 Retention rules
 
@@ -520,12 +755,19 @@ load. The per-contact socket retention force is TODO(verify: socket datasheet), 
    T_s = TODO(verify: nylon M3 screw datasheet); T-K-18 sets T_s at or below half the measured bond breakaway torque.
 3. Stake the inductor and any part heavier than 1 g with a bead of adhesive to the CCB. TODO(verify: adhesive datasheet).
 4. Strain-relieve every flying tap lead at the CCB within 30 mm, as the CR rule requires ([WD] r5-10, r5-23).
-5. After the first drive, inspect every header joint, foot bond, staked part and tap lead, as in [DD] C-4.
+5. After the first drive, inspect every header joint, foot bond, staked part and tap lead, as in [DD] C-4. On the
+   testbench, do this inspection after the first bench run and after each reinsertion of the CCB.
+6. Support the tab with one hand when you plug a cable into the CCB or press a probe on it (r2).
+7. Remove the two foot screws before you pull the CCB from its socket (r2). Pull the CCB straight up.
+8. Attach the fan to its mount with screws. Do not let the fan hang on its cable or on the CCB parts (r2).
+
+Rule 1 stays in force on the testbench, because handling and repeated insertion still need the screwed feet ([TS] §(e)).
+The r1 road and vibration items (T-K-19, M14) are not applicable (testbench); T-K-18 applies to handling loads only.
 
 #### 1.7.3 Conformal coating zones
 
 1. Coat the CCB top and underside, except the zones in items 2-4.
-2. Do not coat the header pins, the socket contacts or the foot screw holes.
+2. Do not coat the header pins, the socket contacts, the foot screw holes or the fan-mount holes (r2).
 3. Do not coat the test points and the SMT tap pads until the bench gates pass.
 4. Do not coat the MB inside the socket strip footprint.
 5. Choose a coating that tolerates the IC copper temperature. TODO(verify: coating datasheet, maximum temperature).
@@ -543,9 +785,27 @@ The proposed outline is the CR outline plus the rect-A tab. It is an L-shaped bo
 | Left column, pins 22 to 11 | x 20.998, y 36.544-64.484 | x 3.298, y 2.404-30.344 |
 | Right column, pins 1 to 10 | x 45.998, y 39.084-61.944 | x 28.298, y 4.944-27.804 |
 | Foot holes | (23.20, 70.64), (32.20, 70.64) | (5.50, 36.50), (14.50, 36.50) |
+| Fan-mount holes (r2, proposal) | (26.70, 36.14), (37.70, 36.14), M2 clearance, near the low-y inlet edge | (9.00, 2.00), (20.00, 2.00) |
 
 The body is 31.0 x 33.0 mm = 1023 mm², and the tab is 21.2 x 9.26 mm = 196 mm². The total is about 1219 mm² per side.
 Rect A' would add 9.8 x 9.26 = 91 mm² (H_u >= 2.75 mm, passives only).
+
+The fan-mount holes (r2) carry a bracket that holds the fan at the low-y inlet edge (§1.2.3). The proposed positions
+are the following:
+
+- They are 5.7 mm from pin 22 (local (3.298, 2.404)) and 8.8 mm from pin 1 (local (28.298, 4.944)).
+- Beneath them lies no MB power copper of the §1.5 list: VBT is at x 34.04-35.56 and the VCHG-IN diagonal starts at
+  x 39.62 ([WD] A.7).
+- They sit in the channel inlet (x 22.33-44.67), so the bracket screws are small obstacles to the gap flow.
+
+The rules for the holes are the following:
+
+1. Keep a copper-free ring around each hole, except the GND net, as for the foot holes (§1.4 rule 3).
+2. Choose screws that end 1.0 mm (t_bot) or less below the CCB underside.
+3. Fit no fan-mount holes if the fan stands on a bench stand. That option needs no CCB feature.
+
+The hole positions, the bracket and the screw size are TODO(verify: capture placement, L-1; fan and bracket drawings).
+The holes cost about 25 mm² of courtyard per side (two keep-out rings of about 2 mm radius), which L-1 must include.
 
 The CR placed its pin-11 chamfer at (17.70, 67.14) ([WD] A.7). The tab removes that corner, so the marker must move. The
 proposed marker sits on the tab's +x/+y corner; a y-mirrored capture moves it to a low-y corner. TODO(verify: rerun `pin_identity_check.py` with
@@ -554,7 +814,7 @@ the new outline, so a y-mirrored capture moves the marker to a corner the print 
 The CR booked about 1082 mm² of courtyard, double-sided, with no charger power stage ([WD] H.18, H.22(k)). The CCB adds a
 power stage and removes the J101 header, the W1-W4 lead holes and the EIB interface. Whether 1219 mm² per side is enough is
 a placement result. TODO(verify: capture placement, L-1). If it is not enough, rect A' is the first extension and a taller
-H_u is its condition.
+H_u is its condition. The r2 gap rule (H_u >= 5.125 mm, §1.3.2 rule 3) meets that condition.
 
 ### 1.9 Measurements before layout
 
@@ -563,23 +823,27 @@ Item n of this list is referred to as Mn.
 
 1. **Ag105 standoff h_s (gate D-2).** Where: the fitted Ag105 on the vehicle MB, at all four module corners, before
    removal. Instrument: feeler gauges or a caliper depth rod. Precision: 0.1 mm. Sets: the proven envelope h_s + 10.6 mm
-   (1.3.3 item 1). Also record the module top height and the pin length below the MB.
+   (1.3.3 item 1). Also record the module top height and the pin length below the MB. r2: record only, because gate D-2
+   no longer constrains the CCB height (operator statement, 2026-11-10).
 2. **Hole condition after module removal.** Where: all 22 CHG holes. Instrument: pin gauges (1.05 / 1.10 / 1.15 mm) and a
    loupe. Precision: 0.05 mm, plus a pass/fail record for each lifted pad or damaged barrel. Sets: header or socket tail
    choice; any pad repair.
 3. **Header and socket seat height.** Where: a dry fit of the chosen strips in the MB holes, with the CCB blank or a 1:1 FR-4
    template, after the module removal (T-K-04). Before the removal, an optional dry fit in a 1.66 mm FR-4 coupon drilled
    1.10 mm gives an early value (T-K-01). Instrument: caliper. Precision: 0.05 mm. Sets: H_u and the foot length (1.4
-   rule 2).
+   rule 2). r2: also sets the channel gap g = H_u - 0.125 mm against 1.3.2 rule 3 (5 mm minimum, 5-8 mm recommended).
+   Measure H_u at the inlet edge (y 34.14), at mid-body and at the tab.
 4. **Hole positions.** Where: the 22 CHG holes, after the module removal (T-K-04), against a 1:1 print of the A.8 table
    and the pin-11 marker. Instrument:
    print overlay, then a caliper across the 25.0 mm row spacing and the 12-pin column length (27.94 mm). Precision: 0.1 mm.
    Sets: confirmation of the 1.1 pin field; `pin_identity_check.py` step 0.
 5. **LM1084 and CO-5V actual heights and positions.** Where: REG-5V at (56.642, 45.974) and CO-5V at (50.800, 39.624).
    Instrument: caliper. Precision: 0.1 mm. Sets: the right-edge rule x <= 48.70 and the H_u > 2.10 mm condition (1.2.2).
+   r2: the LM1084 clearance stays checked at the chosen H_u (1.2.2).
 6. **Free height H_env.** Where: above the CHG footprint and above rect A, to the lowest chassis part, cable or body panel
    in the installed vehicle. Instrument: caliper or a stack of gauge blocks. Precision: 0.5 mm. Sets: rule 2 of 1.3.2 and
-   the tallest top-side part.
+   the tallest top-side part. r2: **record only (testbench)**. The CCB has no height restriction (operator statement,
+   2026-11-10), so H_env rejects no stack. Record it with the fan and its mount in place.
 7. **Heights of the parts near rect A.** Where: L-FC at (29.464, 83.312), OP-FC at (42.672, 71.628), MDAC-FC at
    (50.038, 71.628), ROP1-FC. Instrument: caliper. Precision: 0.1 mm. Sets: the y 76.40 limit and the rect A' condition.
    The y 76.40 edge is 0.55 mm from the L-FC courtyard (y 76.948, [MECH] §6). If L-FC is taller than H_u, record
@@ -588,8 +852,9 @@ Item n of this list is referred to as Mn.
 8. **J-BL wire and screw envelope.** Where: J-BL at (11.430, 45.720) with the installed wires, and J-NTC and J-FC. Record
    the wire bend radius, the wire exit height and the screwdriver path to the position-3 screw. Instrument: caliper and a
    trial with the operator's screwdriver. Precision: 0.5 mm. Sets: the maximum part height within 5 mm of the CCB left edge.
-9. **Screwdriver access to the CCB foot screws.** Where: above (23.20, 70.64) and (32.20, 70.64) in the installed vehicle.
-   Instrument: trial fit. Precision: pass/fail. Sets: whether option B can be serviced in place.
+9. **Screwdriver access to the CCB foot screws.** Where: above (23.20, 70.64) and (32.20, 70.64) in the installed vehicle
+   (r2: on the testbench, with the fan and its mount in place). Instrument: trial fit. Precision: pass/fail. Sets: whether
+   option B can be serviced in place.
 10. **Foot spot surface.** Where: (23.20, 70.64) and (32.20, 70.64). Instrument: loupe and a continuity check to GND.
     Precision: pass/fail (no exposed copper other than GND, no silkscreen ink under the bond). Sets: the bond surface
     preparation; confirms no MB rework is needed.
@@ -602,12 +867,30 @@ Item n of this list is referred to as Mn.
     Precision: 1 C. Method: record T_MB,0; then inject 2.3 W into the heater (the option-S P_MB at 2.7 W, §3.7.2) and
     record the steady-state rise of the MB surface beside it. R_MB is the rise divided by 2.3 W. Sets: the ambient for the
     charger thermal design (1.6.2) and the MB self-heating term of §3.7.3. TODO(verify: heater placement beside the fitted
-    Ag105).
+    Ag105). r2: **record only**. With the fan on, T_J moves by 0.15-0.30 C per C of MB idle offset ([LC] §8.6b), so item
+    16 replaces this item as the decisive thermal measurement.
 13. **MB thickness and copper weight.** Where: an MB board edge. Instrument: micrometer; the fab order record for copper.
     Precision: 0.01 mm. Sets: the socket and header tail length and confirms the 1.6608 mm design value.
 14. **Vibration environment.** Where: the MB mounting point on the vehicle during a drive. Instrument: an accelerometer or
     an IMU log, if available. Precision: peak acceleration within 1 g. Sets: the retention margin of 1.7.1. If no
-    instrument is available, record TODO(measure) and rely on the post-drive inspection (1.7.2 item 5).
+    instrument is available, record TODO(measure) and rely on the post-drive inspection (1.7.2 item 5). r2: **not
+    applicable (testbench)**. The vehicle does not move (operator statement, 2026-11-10).
+15. **Fan delivery and gap velocity (r2).** Where: the fan at the low-y inlet (1.2.3). Measure first on the 1:1 FR-4
+    template of item 3, seated at the chosen H_u before layout. Measure again on the built CCB. Measure the air velocity
+    at the inlet edge, in the gap at the inlet, at mid-body and at the outlets (y 67.14 and y 76.40). Also measure it
+    about 5 mm above the CCB top. Instrument: vane or hot-wire anemometer with a probe that fits the 5-8 mm gap,
+    TODO(verify: instrument). Precision: 0.2 m/s. Sets: the gap and top velocities of the forced-air model (2 m/s or
+    more on both sides, [LC] §8.6), the duct capture fraction (30-50 % assumed, [LC] §8.9) and the fan choice. Record
+    the fan voltage and current. Make sure that the fan supply is not the LM1084 / CO-5V rail (1.2.3 rule 7).
+16. **Fan-on and fan-off thermal soak (r2).** Where: the built CCB at the chosen H_u. Run the charger at the 2.7 W
+    point and at the 2.08 W derate image ([LC] §5.8, §8.7). Instrument: thermocouples on the U501 top, the PGND pour
+    beside U501, L501, the MB surface under the cell, the inlet air and the outlet air at y 67.14 and y 76.40; TDIE over
+    I2C. Precision: 1 C. Method: record the fan-on steady state. Then stop the fan and record the transient to the
+    FR-50 derate and trip. Sets: the real h and gap flow, the fan-on T_J at 2.9 W against the 100 C target (model
+    78-90 C at 25 C room air, [LC] §8.6), and the FR-50 thresholds, TODO(calibrate). This item runs after the build.
+    §3.7.3a and the T-K-20 row give the pass criteria. T-K-14 is the fan-on leg of T-K-20.
+17. **Bench room air (r2).** Where: the fan inlet, over a bench session. Instrument: thermocouple. Precision: 1 C. Sets:
+    T_air of the forced-air model. The [LC] §8 margins assume 25 C room air.
 
 ### 1.10 Architecture and the IC interface contract (IC-independent)
 
@@ -734,8 +1017,13 @@ exposed test pad" carries over ([WD] A.8).
 3. **The input-path resistance falls.** R_PATH_RG 0.12-0.19 Ohm included W1/W2, EVM R2 (10 mOhm) and EVM JP3 ([STUDY]
    §3.1, finding input-path-ir-drop-omitted). The warm-response budget H.19 must be re-derived with the board copper.
    TODO(calc: H.19 with R_PATH_RG minus W1/W2, R2, JP3).
-4. **The IN-side transient is unchanged.** C302a/b/c and D307 absorb the energy of the 50-150 nH MB VCHG-IN path, which is
-   upstream of the board and does not change ([WD] B.4).
+4. **The IN-side transient changes (r2).** The r1 statement "The IN-side transient is unchanged" is superseded (N-25).
+   C302a/b/c and D307 still absorb the energy of the 50-150 nH MB VCHG-IN path, which is upstream of the board
+   ([WD] B.4). However, the OUT loop sets the turn-off current. Without the 150 nH W1/W2 lead, 5-20 nH of OUT copper
+   raises the ideal hard-short turn-off current from 65 A to 103-117 A. The ideal U301 IN peak then rises from 32.8 V
+   to 35.5-40.0 V. At 10-20 nH the peak exceeds the D307 VBR minimum of 36.7 V, so D307 conducts ([TS] §(c)). The tall
+   stack adds 0-0.3 V. The 60 V T-C-04 criterion, the 67 V U301 maximum and the MB end (about 20 V) keep their margins.
+   The OUT copper inductance and the D307 energy are TODO(calc) (§6.7 item 5).
 
 ### 1.12 Interlock logic carried over (IC-independent unless marked)
 
@@ -1065,7 +1353,7 @@ serves single-fault safety. Table 2.6 gives the verdict for every EIB part ([WD]
 | U204 TLV3012B /CE sense + R262/R263 | U404 + R462/R463 | **Kept, simplified role** | /CE swings to REGN (up to 5.2 V); a Teensy 4.1 pad is a 3.3 V input, TODO(verify: i.MX RT1060 datasheet absolute maximum). The 2.5 V threshold and the "dead source reads /CE LOW" property feed FR-08(b) unchanged |
 | R264, R265 470 Ohm (sense output series) | - | **Deleted** | They limited a ribbon conductor short to GND to 6.7 mA ([WD] B.6, r4). The outputs now reach the taps F13/F20 through R325/R348 1.00 kOhm alone: a tap-wire short to GND then draws 3.3 mA, inside the TLV3012B 10 mA output-short absolute maximum (SBOS300C §6.2, as cited in [WD] B.6) |
 | R250, R251, R253, R266 1 kOhm (driver input series) | - | **Deleted** | Input damping for ribbon conductors ([WD] B.6); on-board traces need none. SN74LVC inputs see CMOS edges from U314/U306 ([WD] B.3) |
-| R267-R270 47 kOhm (driver input pull-downs) | R467-R470 | **Kept, re-justified** | Each sits at its receiver input pin. On a moving vehicle a cracked trace or joint is credible; an open input then reads LOW, which is the safe state ([WD] B.6 table). R468 (U401 pin 3) and R470 (U402 pin 2) protect the two ILIM_REL branches separately |
+| R267-R270 47 kOhm (driver input pull-downs) | R467-R470 | **Kept, re-justified** | Each sits at its receiver input pin. On the testbench, handling, repeated insertion and thermal cycling make a cracked trace or joint credible (the r1 basis was a moving vehicle); an open input then reads LOW, which is the safe state ([WD] B.6 table). R468 (U401 pin 3) and R470 (U402 pin 2) protect the two ILIM_REL branches separately |
 | R272, R272b 47.0 kOhm (/CE pull-ups to REGN, on the EVM) | R472, R472b | **Kept** | Single-fault tolerance of the inhibit ([WD] EM2, H.19). The links L1/L2 disappear; separate pads and vias replace them (§2.2.2 rule 3) |
 | R256 200 kOhm + C252 2.2 nF C0G (on the EVM) | R456 + C452 | **Kept** | R523-open guard (<= 0.57 V) and release-glitch filter ([WD] EM5, H.13) |
 | R273 10 Ohm (ribbon GND to EIB AGND) | - | **Deleted** | Single DC ground link of a separate board ([WD] A.6). The CCB has one ground plane |
@@ -1730,6 +2018,20 @@ Each socket contact also adds thermal resistance in series with its pin: 166-417
 of 2-20 mΩ ([LC] §5.1; §3.7.2). Option K of §1.3.4 therefore needs the contact resistance before its board resistance and
 its pin-joint temperature can be predicted. T-F-16 uses an absolute joint-temperature limit on the CCB (§3.7.6).
 
+**Tall pins (r2).** The fan channel sets H_u 5.1-8.1 mm (§1.3.2 rule 3), so each power pin is longer than the r1 6 mm
+body. Over the r1 H_u of 2.54 mm, H_u 5 mm and 8 mm add 2.46 mm and 5.46 mm of pin. That is 0.661 mΩ and 1.466 mΩ
+per pin (0.269 mΩ per mm, same alloy assumption; [TS] §(a)). The pin body then totals 2.27-3.08 mΩ, and at H_u 12 mm
+4.15 mΩ. The extra continuous loss is 2.46-5.46 mW on pin 18 at 1.93 A, and 11.2-24.8 mW over the six power pins at
+H_u 5-8 mm (43.0 mW at 12 mm). This is at most 1.6 % of the 2.7 W board loss. The pin body at 1.93 A dissipates
+8.5-11.5 mW in total at H_u 5-8 mm. A pin with both ends held at the board temperatures and uniform heating rises at its
+midpoint by P x R_th / 8. With R_th 230-335 C/W (k 70 W/mK, [TS] §(a)), the rise is 0.24-0.48 C (calculation of this
+subsection). The socket-contact loss of option K stays the larger term. The required pin ratings of §3.3.1 and T-A-05
+do not change.
+
+The longer pins also weaken the pin conduction path to the MB: the pin thermal resistance rises from 144 C/W (r1) to
+230-335 C/W at H_u 5-8 mm ([TS] §(a)). The forced-air model of §3.7.2a includes this path at the r2 length. The weaker
+path matters only in the fan-off case (§3.7.2a item 5).
+
 #### 3.3.3 Copper at the header
 
 1. Connect pins 4, 14, 15, 18 and 19 to their pours on all four layers. Use a solid connection or four spokes of >= 0.5 mm.
@@ -2136,7 +2438,8 @@ about **2.7 W** at the regen operating point.
 
 #### 3.7.2 Lumped board model
 
-[LC] §5.1-5.9 gives an order-of-magnitude model. Its parameters are general values, not data for this board. [LC] §5.0
+This subsection is the r1 still-air model. In r2 it is the fan-off record at the r1 gap of 2.415 mm, and §3.7.2a gives
+the forced-air model of the design case (operator statement, 2026-11-10). [LC] §5.1-5.9 gives an order-of-magnitude model. Its parameters are general values, not data for this board. [LC] §5.0
 keeps the superseded model, which credited all six pins with copper on both boards and held the MB at a fixed
 temperature.
 
@@ -2213,11 +2516,118 @@ The model ignores spreading inside the CCB, so the copper near U501 runs hotter 
 plastic body (140 mm², k 0.25 W/mK assumed, 73 C/W before its two dry interfaces), which is conservative ([LC] §5.9).
 The D-BT-SQ path from the VCHG pour to VBT is also omitted, which is conservative for the pin-18 joint.
 
+#### 3.7.2a Forced-air model: design case and fault case (M, r2)
+
+The CCB sits on a testbench, a fan may blow through the underside gap and over the top, and the CCB has no height
+restriction (operator statement, 2026-11-10). [LC] §8 extends the network of §3.7.2 for this case. With the fan off,
+radiation off and g 2.415 mm, [LC] §8 reproduces the r1 option-S CCB rise exactly: 58.350, 63.704, 48.526 and 54.526 C
+at the four corners of k_pin and R_MB ([LC] §8.3).
+
+The model differs from §3.7.2 in these terms ([LC] §8):
+
+1. **Reference.** The reference is the room air at the fan inlet, T_air. The MB idle offset dT_MB0 = T_MB,0 - T_air
+   enters only at the far end of R_MB (5.49-9.21 C/W, [LC] §5.1).
+2. **Pins.** The six pins have the r1 landings and fin terms, over a path of H_u + 1.6 mm with H_u = g + 0.125 mm
+   (k_pin 70-110 W/mK; socket contacts 2-20 mΩ for option K).
+3. **Radiation across the gap.** Solder mask to polyimide, emissivity 0.90 each, gives h_rad 6.67 W/m²K. r1 omitted
+   this term, which was conservative. TODO(verify: solder-mask and polyimide emissivity).
+4. **Top surface.** Fan on: laminar flat plate, Nu = 0.664 Re^0.5 Pr^(1/3), plus h_rad 6.69 W/m²K. Fan off: the r1
+   value h = 10 W/m²K.
+5. **Underside gap.** Fan on: a parallel-plate channel with D_h = 2g and simultaneously developing laminar flow
+   (Stephan correlation, Shah and London 1978; fully developed limit Nu 7.54). The low end of each band scales Nu by
+   4.86/7.54 (one wall heated, one adiabatic). The CCB wall and the sheet wall couple through the air by the lumped NTU
+   relation, so the air temperature rise is inside the result. Fan off: conduction only, plus radiation.
+6. **Channel.** The flow runs along +y from the low-y inlet (§1.2.3). The channel is 22.34 mm wide (x 22.33-44.67),
+   with 891 mm² of the 1219 mm² underside in the flow and a mean flow length of 39.9 mm ([LC] §8.1). The other 328 mm²
+   gets still-air conduction only. The model does not credit the mixing or the pressure drop of the obstacles.
+   TODO(measure: M15).
+7. **Air properties.** Handbook values at 1 atm (Incropera and DeWitt, Table A.4): film at about 40 C, k 0.0271 W/mK,
+   ν 1.70e-5 m²/s, Pr 0.705; inlet at 25 C, ρ 1.184 kg/m³, c_p 1007 J/kgK.
+8. **Junction.** T_J = T_CCB + 9.7 C/W x P_IC, with P_IC = (2.3/2.54)(P - 0.15 W) as in §3.7.2. The IC term is 16.2,
+   20.6, 22.4 and 24.2 C at 2.0, 2.5, 2.7 and 2.9 W. The model ignores spreading inside the CCB, as r1 does.
+
+The results are the following:
+
+1. **Channel.** Table 3.9e gives the gap flow ([LC] §8.2). Δp = (96/Re x L/D_h + 0.674 + 0.5 + 1.0) x ρv²/2, without
+   the duct and obstacle losses. Re_Dh above 2800 is transitional; the laminar Nu is kept, which is conservative.
+
+   | g (mm) | v (m/s) | Re_Dh | h per wall (W/m²K) | Channel flow (CFM) | Δp channel (Pa) |
+   |---|---|---|---|---|---|
+   | 3 | 2 | 706 | 28.2-43.8 | 0.28 | 7.3 |
+   | 5 | 2 | 1176 | 22.3-34.6 | 0.47 | 5.9 |
+   | 5 | 3 | 1765 | 25.7-39.9 | 0.71 | 12.7 |
+   | 8 | 2 | 1882 | 19.9-30.9 | 0.76 | 5.4 |
+   | 8 | 3 | 2824 | 23.8-36.9 | 1.14 | 12.0 |
+   | 10 | 2 | 2353 | 19.4-30.1 | 0.95 | 5.3 |
+   | 12 | 2 | 2824 | 19.1-29.6 | 1.14 | 5.3 |
+
+2. **Design case: both sides forced.** Table 3.9f gives R_total from the CCB to room air and T_J - T_air at 2.7 W,
+   with the gap and the top at the same velocity ([LC] §8.6). Each cell gives R_total (C/W); T_J - T_air (C).
+
+   | g (mm) | 1 m/s | 2 m/s | 3 m/s | 4 m/s |
+   |---|---|---|---|---|
+   | 3 | 10.2-15.9; 50-65 | 8.7-13.2; 46-58 | 7.9-11.7; 44-54 | 7.3-10.7; 42-51 |
+   | 5 | 11.6-17.3; 54-69 | 9.8-14.2; 49-61 | 8.7-12.4; 46-56 | 8.0-11.3; 44-53 |
+   | 8 | 12.9-18.3; 57-72 | 10.7-14.7; 51-62 | 9.4-12.8; 48-57 | 8.5-11.5; 45-54 |
+   | 10 | 13.5-18.6; 59-73 | 11.0-14.9; 52-63 | 9.7-13.0; 48-57 | 8.7-11.7; 46-54 |
+   | 12 | 13.9-18.9; 60-73 | 11.3-15.1; 53-63 | 9.9-13.1; 49-58 | 8.9-11.7; 46-54 |
+
+3. **Load sweep.** Table 3.9g gives T_J - T_air and T_J on a 25 C bench ([LC] §8.6). Each cell gives T_J - T_air;
+   T_J at 25 C (C).
+
+   | Configuration | 2.0 W | 2.5 W | 2.7 W | 2.9 W |
+   |---|---|---|---|---|
+   | Both sides, g 5 mm, 2 m/s | 36-45; 61-70 | 45-56; 70-81 | 49-61; 74-86 | 53-65; 78-90 |
+   | Both sides, g 5 mm, 3 m/s | 34-42; 59-67 | 42-52; 67-77 | 46-56; 71-81 | 49-60; 74-85 |
+   | Both sides, g 8 mm, 2 m/s | 38-46; 63-71 | 47-58; 72-83 | 51-62; 76-87 | 55-67; 80-92 |
+   | Both sides, g 8 mm, 3 m/s | 35-42; 60-67 | 44-53; 69-78 | 48-57; 73-82 | 51-61; 76-86 |
+   | Gap only, g 5 mm, 2 m/s | 43-63; 68-88 | 55-78; 80-103 | 59-84; 84-109 | 63-90; 88-115 |
+   | Gap only, g 8 mm, 2 m/s | 47-66; 72-91 | 59-82; 84-107 | 64-88; 89-113 | 69-94; 94-119 |
+
+4. **Partial cases.** Air through the gap only, with a still top, gives R_total 13.6-22.8 C/W at g 5 mm and 2 m/s
+   (59-84 C at 2.7 W). The MB far-field share is then 28-48 % ([LC] §8.5). The gap path alone, without the pins, the MB
+   and the top, is 34.3-52.3 C/W at g 5 mm and 2 m/s ([LC] §8.5b). Air over the top only, with a still gap, gives
+   13.2-18.1 C/W at g 5 mm and 2 m/s (58-71 C) ([LC] §8.4). The top alone over 1219 mm² is 22.8 C/W at 2 m/s
+   (L 35 mm, Re_L 4118, h_conv 29.4 W/m²K) and 24.6 C/W over the 42.3 mm path. Neither partial case meets the design
+   case, so the duct covers both sides (§1.2.3 rule 2).
+5. **Fault case: fan off.** Table 3.9h gives the still-air result with radiation for each gap ([LC] §8.7). The 2.08 W
+   column is the FR-50 2.50 A derate image (1.93 W charger and 0.15 W eFuse and logic, [LC] §5.8). A taller gap is
+   worse with the fan off. Radiation, which r1 omitted, lowers T_J - T_air by 4-34 C.
+
+   | g (mm) | R_total (C/W) | T_J - T_air at 2.7 W | T_J at 25 C, 2.08 W | T_J at 25 C, 2.7 W | T_J at 25 C, 2.9 W |
+   |---|---|---|---|---|---|
+   | 2.415 | 16.7-30.0 | 67-104 C | - | - | - |
+   | 5 | 21.1-34.9 | 79-117 C | 86-116 C | 104-142 C | 110-150 C |
+   | 8 | 24.7-37.7 | 89-124 C | - | - | - |
+   | 10 | 26.6-39.0 | 94-128 C | 97-125 C | 119-153 C | 126-162 C |
+   | 12 | 28.2-40.0 | 99-131 C | 101-127 C | 124-156 C | 131-165 C |
+
+   The CCB node has a heat capacity of about 7.8 J/K (laminate 3.6 g, copper 2.3 g, L501 1.1 g, pins 0.9 g and parts
+   3 g from Table 1.7, with general specific heats). At g 5 mm its time constant is 164-271 s fan-off and 106-178 s with air through the gap
+   at 2 m/s. At g 10 mm it is 207-303 s fan-off ([LC] §8.7). The MB adds capacity, so these are lower bounds.
+6. **MB idle offset.** Table 3.9i gives the effect of dT_MB0 at 2.7 W ([LC] §8.6, §8.6b). With the fan on over both
+   sides, T_MB,0 is not decisive.
+
+   | Configuration | dT_MB0 0 C | 10 C | 20 C | dT_J / dT_MB0 |
+   |---|---|---|---|---|
+   | Both sides, g 5 mm, 2 m/s | 49-61 C | 52-63 C | 55-64 C | 0.15-0.30 |
+   | Gap only, g 10 mm, 2 m/s | 66-90 C | 69-92 C | 73-95 C | 0.25-0.35 |
+   | Fan off, g 10 mm | 94-128 C | 101-133 C | 108-139 C | 0.55-0.70 |
+
+7. **Duct air.** With all 2.7 W into the duct air, the outlet air is at most 10.1 C above the inlet at g 5 mm and
+   2 m/s, and 6.3 C at g 8 mm ([LC] §8.6c). The outlet air leaves at y 67.14 and y 76.40, away from the LM1084 (§1.2.3).
+
+A taller gap does not improve the fan-on result. At a fixed velocity of 2 m/s through the gap, R_total rises from
+11.6-20.4 C/W at g 3 mm to 16.7-25.3 C/W at g 12 mm. At a fixed channel flow of 1.0 CFM, T_J - T_air rises from 48-67 C
+to 69-92 C ([LC] §8.9). The developing-flow h falls as D_h grows, and the pin and gap-conduction paths to the MB weaken.
+The gap is therefore set by obstacle clearance and pressure drop: g 5 mm minimum and 5-8 mm recommended (§1.3.2 rule 3).
+
 #### 3.7.3 Copper needed for a junction target
 
 The design target is **T_J <= 100 C at ICHG 3.10 A**, which leaves 20 C to the default TREG of 120 C ([DS] REG16). At the
-target, U501 does not fold back the charge current. With the MB as a fixed boundary at T_MB,local, the required board
-resistance is:
+target, U501 does not fold back the charge current. The target is unchanged in r2. The T_MB,local and T_MB,0 rows below
+are the r1 still-air record; they do not decide the r2 design, which uses the fan-on case of §3.7.3a. With the MB as a
+fixed boundary at T_MB,local, the required board resistance is:
 
 R_board <= (100 - T_MB,local - 22.4) / 2.7 W, with T_MB,local = T_MB,0 + P_MB x R_MB (§3.7.2).
 
@@ -2250,6 +2660,7 @@ give an admissible T_MB,0 of 30-43 C without the pad and 42-55 C with it at 750 
 
 T-K-02 measures T_MB,0 (M12 of §1.9, at the worst vehicle load). The MB self-heating P_MB x R_MB is computed (R_MB
 5.5-9.2 C/W, 11-21 C at 2.7 W) until the heater step of T-K-02 measures R_MB. The LM1084 sets part of T_MB,0 (3.7.5).
+In r2, T_MB,0 and R_MB are record only, because the fan-on T_J moves by 0.15-0.30 C per C of dT_MB0 (Table 3.9i).
 
 The copper rules that serve this target are:
 
@@ -2263,7 +2674,31 @@ The copper rules that serve this target are:
    pin 10 on the VCHG-IN trace, so these three pins spread less heat into the MB (3.7.2).
 4. Prefer stack ST2 (2 oz inner), which halves the lateral resistance of L2.
 
+#### 3.7.3a Junction target with forced air (M, r2)
+
+The design case meets the 100 C target without a gap pad. At g 5 mm with 2 m/s over both sides, T_J is 74-86 C at 2.7 W
+and 78-90 C at 2.9 W on a 25 C bench (Table 3.9g). At g 8 mm it is 76-87 C and 80-92 C. On a 25 C bench, the margin to 100 C at
+2.9 W is therefore 10-22 C at g 5 mm and 8-20 C at g 8 mm. At g 5 mm the target holds up to a room air of 35 C at the
+upper end of the band.
+
+The copper rules 1-4 of §3.7.3 stay, because they lower the CCB rise in every case. The pass criterion of the build is
+the fan-on and fan-off soak (M16; T-K-20, with its fan-on leg T-K-14):
+
+1. With the fan on, TDIE is 100 C or less at the 2.9 W point, at the measured room air (M17). The measured gap and top
+   velocities are 2 m/s or more (M15). Air through the gap only gives 88-115 C at 2.9 W ([LC] §8.6).
+2. With the fan stopped at the 2.7 W point and at the 2.08 W derate image, the FR-50 trip acts before TREG_STAT
+   (REG1D bit 2, [DS] Table 7-38) sets. The derate alone does not hold 100 C ([LC] §8.7).
+3. The measured fan-on h and gap velocity are recorded against Table 3.9e and Table 3.9f.
+
+The soak also measures the real h and gap flow. The model has these unknowns: the obstacle effect in the channel, the
+emissivities, the duct capture fraction and the spreading inside the CCB (§3.7.2a).
+
 #### 3.7.4 Thermal gap pad option
+
+**Superseded (r2).** With forced air on the testbench (operator statement, 2026-11-10), the design case meets the 100 C
+target without a pad (§3.7.3a). The pad is therefore not fitted, and the BOM carries it as a not-fitted line only. The pad
+would also block the fan channel under the power cell. The text below is the r1 record, kept for traceability; L-6 is
+not applicable in r2.
 
 A thermally conductive, electrically insulating gap pad can join the CCB underside under the cell to the MB GND pour. The
 pad must be compressed. An uncompressed pad loads neither face, so its interface resistances dominate and no conductance
@@ -2301,6 +2736,36 @@ presses with 7.9-39.4 N, or 3.9-19.7 N per foot. TODO(verify: gap-pad datasheet,
 thickness). The pad also couples the CCB to any MB heat from the LM1084. TODO(verify: gap-pad datasheet for conductivity
 and outgassing). TODO(measure: M12 and a rev-A thermocouple on U501 copper with and without the pad).
 
+#### 3.7.4a Optional top-side heatsink on U501 (S, r2)
+
+With no height restriction (operator statement, 2026-11-10), a heatsink on the U501 top is possible. [LC] §8.8 uses a
+two-resistor model: RθJB 9.7 C/W to the board path, and RθJC(top) 20.9 C/W + R_TIM + R_sa to room air ([DS] §6.4). R_TIM
+over the 4.0 x 4.0 mm top is 3.1 C/W at 0.5 K·cm²/W and 12.5 C/W at 2.0 K·cm²/W. Table 3.9j gives T_J - T_air at
+2.7 W ([LC] §8.8).
+
+| Configuration | No heatsink | R_sa 120 C/W | 60 C/W | 40 C/W | 20 C/W | 10 C/W |
+|---|---|---|---|---|---|---|
+| Both sides, g 5 mm, 2 m/s | 49-61 C | 43-53 C | 40-49 C | 37-46 C | 34-42 C | 31-40 C |
+| Gap only, g 10 mm, 2 m/s | 66-90 C | 56-74 C | 50-66 C | 47-62 C | 42-55 C | 37-51 C |
+| Fan off, g 5 mm | 79-117 C | 65-91 C | 58-80 C | 54-74 C | 47-65 C | 42-59 C |
+| Fan off, g 10 mm | 94-128 C | 75-98 C | 66-85 C | 60-78 C | 52-68 C | 46-62 C |
+
+With the fan on, a heatsink of R_sa 60 C/W or less lowers T_J by 9-12 C. With the fan off, R_sa 120 C/W already lowers it
+by 14-26 C at g 5 mm. At R_sa 40 C/W, the fan-off T_J is 79-99 C on a 25 C bench at g 5 mm, so the fan-off case also
+meets 100 C. The heatsink is therefore mainly a fan-off backstop. It is a DNP option in r2.
+
+The model treats JEDEC metrics as network resistances, so these figures are indicative. The row order of the [DS] §6.4
+extract (RθJA 44.2, RθJC(top) 20.9, RθJB 9.7, ψJT 0.5, ψJB 9.7) comes from a text extraction that lost the column
+alignment. TODO(verify: [DS] §6.4 row order). The heatsink rules are the following:
+
+1. Fit the heatsink on the U501 mould compound only. It then carries no switch-node voltage.
+2. Keep it clear of L501 (3.0 mm tall, beside U501) and of the C511/C512 input capacitors.
+3. Attach it with a thermal adhesive or a clip. Its mass on a 4 x 4 mm package needs a positive attachment.
+4. Keep the ψJT reading valid: put the U501 thermocouple of M16 on the package edge when a heatsink is fitted.
+
+The heatsink part, its R_sa at the measured air velocity and the adhesive are TODO(verify: heatsink and thermal-adhesive
+datasheets).
+
 #### 3.7.5 Influence of the LM1084
 
 The LM1084 courtyard starts at x 50.947 ([MECH] table 2.1). The power cell edge (x 37.5) is 13.4 mm from it, and the U501
@@ -2311,6 +2776,14 @@ heat reaches the CCB mainly through the MB laminate and the air. Its dissipation
 In the other direction, a 2.7 W source 13.4 mm (power cell edge to courtyard) to 25.7 mm (U501 centre to body) away
 raises the LM1084 ambient. The round-3 EVM sat 20 mm or more away
 on standoffs (§1.6.2). The CCB adds this coupling; it is the one thermal risk the CCB adds over Path A.
+
+The bench fan (r2) changes the coupling in two ways. First, the flow runs along +y and leaves at y 67.14 and y 76.40,
+away from the LM1084. The warm duct air is at most 10.1 C above the inlet at g 5 mm and 2 m/s, and it does not pass
+the LM1084 ([LC] §8.1, §8.6c). Second, the fan must not load the LM1084. The LM1084 carries 0.15-0.25 A of logic load
+and dissipates 0.36-0.60 W at VBT 7.4 V and 0.51-0.85 W at 8.4 V. [LC] §8.10 assumes a fan current of 0.05-0.20 A at
+5 V, because no fan MPN is chosen (TODO(verify: fan datasheet)). Such a fan would add 0.12-0.68 W, that is +20 to
++133 %, and about +5 to +27 C of junction rise at RθJA 40.4 C/W ([LC] §8.10; LM1084 data sheet, thermal information,
+KTT, JEDEC board). The fan therefore takes its power from the bench supply or its own regulator (§1.2.3 rule 7; §1.6.3).
 
 #### 3.7.6 Temperature at the header pins
 
@@ -2327,6 +2800,11 @@ band. A temperature reading also cannot find a degraded joint: a 20 mΩ contact 
 T-F-16, T-B-16 and T-K-14 therefore use an absolute joint-temperature limit and refer the trace rise to T_MB,local
 (§6.3.5). T-K-17 decides the joint condition by the 4-wire contact resistance. TODO(measure: T-F-16 on the CCB, with a
 thermocouple on pin 18 and on the U501 PGND pour).
+
+The joint values above are the r1 still-air record. [LC] §8 does not compute the pin-18 joint with forced air. With the
+fan on, the CCB rise falls from 49-64 C (r1, option S, Table 3.9c) to 26-38 C at g 5 mm and 2 m/s over both sides
+([LC] §8.6). The joint temperature therefore falls too. The longer r2 pins (230-335 C/W, §3.3.2) carry less converter heat
+into the joint. TODO(calc: pin-18 joint with forced air). TODO(measure: pin-18 thermocouple in the M16 soak).
 
 ### 3.8 Test points and probe access (M)
 
@@ -2386,17 +2864,31 @@ Assemble in this order: underside reflow, top reflow, then the header strips by 
 The §1.7.3 zones apply. The layout adds:
 
 1. Coat Z-Q and Z-D first in priority. The MΩ nodes of 3.6.1 depend on surface insulation, and the coating protects them
-   from condensation on a vehicle.
+   from condensation on the testbench MB (r1: on a vehicle).
 2. Mask the header pins, the foot holes, the test points, the tap pads and the SW probe footprints (3.8 item 3).
 3. If the gap pad of 3.7.4 is fitted, coat the CCB underside under it. The thin film adds little thermal resistance.
    TODO(verify: coating thickness and conductivity).
+   r2: not applicable, because the gap pad is not fitted (3.7.4, superseded by the testbench facts, operator statement,
+   2026-11-10).
 4. Choose a coating rated above the U501 copper temperature (> 100 C at the 3.7.3 target). TODO(verify: coating datasheet).
 
 ## 4. Bill of materials
 
 This section gives the bill of materials (BOM) of the CCB, with stock, unit prices, fabrication and assembly cost, and a
-cost comparison with Path A. Nothing is ordered. The machine-readable BOM is `bom.csv` in the review folder: 103 part lines
-plus the PCB line. The generator `make_bom.py` regenerates it and the cost roll-up `bom_cost.json` ([BOMGEN]).
+cost comparison with Path A. Nothing is ordered. The machine-readable BOM is `bom.csv` in the review folder: 111 part lines
+plus the PCB line. The generator `make_bom.py` regenerates it and the cost roll-up `bom_cost.json` ([BOMGEN]). r2 adds
+eight lines for the testbench (operator statement, 2026-11-10):
+
+- the fan;
+- the fan lead and its connector;
+- the fan mount and duct;
+- a DNP fan regulator;
+- the soak thermocouples;
+- the anemometer (tool);
+- a DNP U501 heatsink;
+- the not-fitted r1 gap pad.
+
+r2 also re-classes the H301 headers and the option-K sockets as tall-stack parts (§1.3.2).
 
 Each CSV line carries the label of §0.4 in the column `class_IC`. The column `carried_over_from_round3_refdes` names the
 round-3 or EVM designator, or "new". The part list of section 2 is the source of every designator, value and rating.
@@ -2442,7 +2934,8 @@ Table 4.1 gives the fitted placements per board, from the CSV `qty_per_board` co
 | Header H301 (two strips) | I | 2 | - | §2.5.2 |
 | **Total** | | **176** | about 28 | |
 
-The 16 test points of §2.5.10 are copper probe pads, not purchased parts. They have no BOM line.
+The 16 test points of §2.5.10 are copper probe pads, not purchased parts. They have no BOM line. The r2 fan parts
+(§1.6.3) are bench items with the scope `build` in the CSV, not board placements, so Table 4.1 does not change.
 
 #### 4.1.2 Lines of note (mixed)
 
@@ -2511,7 +3004,11 @@ The EVM 25 V X5R 0805 parts C2012X5R1E106K125AB stay on SYS only, where §2.1.2 
 | D303 Schottky, D307 TVS | Selected by datasheet in T-A-05 ([WD] E); B340A-13-F is a bench-only fallback for D303 | T-A-05 |
 | C511, C512, C529-C531 | Candidate only (§4.1.2 item 3) | T-A-04, T-A-05 |
 | R541/C541 input snubber (DNP) | No MPN (§2.1.2) | only if fitted |
-| Socket strips (header option K) | Samtec SSW-110 / SSW-112 class named as a candidate only; tail diameter for the 1.10 mm MB drill and accepted pin range TODO(verify: Samtec drawing) | §1.3.4 conditions 1-3 |
+| Socket strips (header option K) | r2: elevated class for h_k = H_u - 2.54 mm (2.6-5.6 mm): Samtec ESQ-110 / ESQ-112 (K2) or a Harwin M20 female with a long-pin male (K3), candidates only. The r1 SSW-110 / SSW-112 class gives H_u about 11.05 mm, above the r2 band. Tail diameter for the 1.10 mm MB drill, seat height and accepted pin range TODO(verify: Samtec, Harwin drawings) | §1.3.4 conditions 1-3; §1.3.2 Table 1.3a |
+| H301 header strips (r2) | Tall-stack class for H_u 5.1-8.1 mm: Samtec TSW-110 / TSW-112 with a long-post lead style (S1) or MTSW-110 / MTSW-112 with a movable body (S2); pin length 10.8-13.8 mm or more. Lead style TODO(verify: Samtec drawing) | §1.3.2 Table 1.3a |
+| Fan (r2) | Axial DC fan, 25-30 mm frame class, 3.9-11.8 CFM rating; static pressure above the bare-channel 5.4-12.7 Pa by the duct and obstacle losses ([LC] §8.9). TODO(verify: fan MPN, airflow and static-pressure curve, current) | §1.6.3; M15 |
+| Fan lead connector (r2) | Inline 2-pin connector to the bench supply. TODO(verify: connector MPN) | §1.6.3 item 3 |
+| U501 heatsink (r2, DNP) | R_sa 60 C/W or less at the measured air velocity, clear of L501. TODO(verify: heatsink and thermal-adhesive datasheets) | §3.7.4a |
 | Header pin current rating | TODO(verify: Samtec TSW datasheet) | O-10 |
 | Support-foot spacer length | Equal to H_u from the dry fit | §1.4 rule 2, measurement M3 |
 | Foot adhesive (epoxy); no threadlocker on the foot screws; foot-screw torque T_s | TODO(verify: adhesive datasheet, MB solder-mask adhesion, nylon M3 screw datasheet) | §1.4 rule 4, §1.7.2 rule 2, T-K-18 |
@@ -2565,7 +3062,7 @@ Table 2.6b).
 
 Hand-fitted parts in both options:
 
-1. the H301 strips (TSW-110, TSW-112), soldered per the §1.3.5 tail rules;
+1. the H301 strips (tall-stack TSW-110 / TSW-112 or MTSW class, §1.3.2), soldered per the §1.3.5 tail rules;
 2. the F01-F24 tap pins and their wires;
 3. R342 from the select-on-test kit, after T-C-03/T-E-10;
 4. R525 or R526, after T-E-09 (never both, §2.2.1).
@@ -2574,12 +3071,19 @@ Hand-fitted parts in both options:
 
 | Item | Qty | Basis | Cost class |
 |---|---|---|---|
-| Socket strips in the MB holes (option K) | 1 set (1x10 + 1x12) per vehicle MB | §1.3.4 | AL USD 4 each |
+| Socket strips in the MB holes (option K), elevated class (r2) | 1 set (1x10 + 1x12) per vehicle MB | §1.3.4; Table 1.3a | AL USD 6 each (r1: USD 4) |
 | Nylon M3 spacer + nylon M3 screw | 2 per board (+2) | §1.4 option B, feet at (23.20, 70.64) and (32.20, 70.64) | AL USD 1 each |
 | Foot epoxy (no threadlocker, §1.7.2 rule 2) | 1 per build | §1.4 rule 4, §1.7.2 rule 2 | AL USD 15 |
 | Polyimide sheet (extended over rect A) | 1 per installation (+1) | §1.5 rule 3; [WD] E r5 | A3 USD 10 |
 | Neutral-cure RTV (tap strain relief, inductor staking) | 1 tube | §1.7.2 rules 3-4; [WD] E r5 | A3 USD 15 |
 | Type-K thermocouple | 1 | [WD] E r6, T-F-16; also serves T-B-16 | A3 USD 15 |
+| Bench fan (r2) | 1 per bench installation | §1.6.3 item 1 | AL USD 10 |
+| Fan lead and inline connector (r2) | 1 | §1.6.3 item 3 | AL USD 3 |
+| Fan mount and duct (r2) | 1 | §1.2.3 rules 1-5; §1.6.3 item 5 | AL USD 5 |
+| Fan regulator (r2, DNP option) | 0 | §1.6.3 item 2; only if the bench supply voltage does not match the fan | T |
+| Soak thermocouples (r2) | 1 lot of 6 | M16; §3.7.3a | AL USD 20 |
+| Anemometer (r2, tool, not in the roll-up) | 0 | M15 | T |
+| Gap pad (r1 option, not fitted in r2) | 0 | §3.7.4 superseded | - |
 | Wire (taps only; no 18/20 AWG lead wire) | 1 lot | [WD] E wire line less W1-W4 and W6 | AL USD 10 |
 
 ### 4.5 Cost roll-up (mixed)
@@ -2605,17 +3109,22 @@ Table 4.4 gives the roll-up from `make_bom.py` (`bom_cost.json`). All figures ar
 |---|---|---|---|---|---|
 | TI silicon (V, V\*) | 38.49 | 101.94 | 178.91 | 217.40 | §4.2 |
 | Round-3 allowances (A3) | 50.00 | 77.50 | 93.50 | 101.50 | [WD] E |
-| This section's allowances (AL): L501, 50 V caps, headers, sockets, 21 tap pins, feet, adhesive, wire, stencil | 82.50 | 124.00 | 173.00 | 197.50 | §4.1.2, §4.4 |
+| This section's allowances (AL): L501, 50 V caps, tall-stack headers, elevated sockets, 21 tap pins, feet, adhesive, wire, stencil; r2 bench fan, fan lead, fan mount, soak thermocouples | 126.50 | 172.00 | 225.00 | 251.50 | §4.1.2, §4.4 |
 | Unpriced chip passives at USD 0.15 per placement (AL) | 18.60 (124) | 48.15 (321) | 84.75 (565) | 103.05 (687) | §4.5.1 |
 | Bare PCB, one lot of five (AL) | 70-120 | 70-120 | 70-120 | 70-120 | §4.4.1 |
-| **Subtotal, hand assembly (option H)** | **260-310** | **422-472** | **600-650** | **689-739** | |
+| **Subtotal, hand assembly (option H)** | **304-354** | **470-520** | **652-702** | **743-793** | |
 | PCBA service (option P, AL): USD 100-250 including the stencil, less the USD 25 stencil of the AL row | +75-225 | +75-225 | +75-225 | +75-225 | §4.4.3 |
-| **Total, option P** | **335-535** | **497-697** | **675-875** | **764-964** | |
+| **Total, option P** | **379-579** | **545-745** | **727-927** | **818-1018** | |
 
 Only USD 38.49 / 101.94 / 178.91 / 217.40 of these totals are verified prices. Everything else is an allowance and must be replaced
 by quotes before an order. The PCBA range is the largest single uncertainty. The option-P totals count the stencil once,
 because the PCBA allowance includes it (§4.4.3). `make_bom.py` nets the USD 25 stencil out of option P, so
 `bom_cost.json` gives the same option-P figures as Table 4.4.
+
+r2 raises the AL row by USD 44.00 (build 1) to USD 54.00 (build 5) over r1. Of this, USD 38.00 per build is the bench fan,
+its lead, its mount and the soak thermocouples. The rest is the tall-stack header allowance (USD 3.00 per strip in place of
+USD 2.00) and the elevated-socket allowance (USD 6.00 per strip in place of USD 4.00). The r1 totals were USD 260-310,
+422-472, 600-650 and 689-739 (option H) and USD 335-535, 497-697, 675-875 and 764-964 (option P).
 
 #### 4.5.3 Comparison with round-3 Path A (mixed)
 
@@ -2626,12 +3135,13 @@ wire and hardware at the round-3 allowance of USD 190-225 ([WD] E "Cost").
 |---|---|---|
 | Charger hardware | 2 x BQ25798EVM: USD 312.90 (verified; 161 in stock on 2026-11-10) | 2 boards + spares; U501 silicon USD 20.15 (4 x 5.038: 2 boards and 2 CSV spares) |
 | Boards | CR + EIB in one panel: allowance USD 70 | CCB lot of five: allowance USD 70-120 |
-| Parts, wire, hardware | allowance USD 120-155 (USD 190-225 less the USD 70 PCB) | V + A3 + AL + passives: USD 351.59 |
-| **Total** | **about USD 505-540** | **about USD 422-472 (option H); 497-697 (option P)** |
+| Parts, wire, hardware | allowance USD 120-155 (USD 190-225 less the USD 70 PCB) | V + A3 + AL + passives: USD 399.59 (r2, with the bench fan) |
+| **Total** | **about USD 505-540** | **about USD 470-520 (option H); 545-745 (option P)** |
 
-With hand assembly, two CCBs are USD 33-118 below Path A on these allowances (full span, §7.0.4 item 5). With a PCBA
-service they are between USD 43 below and USD 192 above Path A. The test plan needs build 4, which is USD 60-145 (option
-H) or USD 135-370 (option P) above Path A (§7.1.3). The cost case for the CCB is therefore weak. Its case rests on the
+With hand assembly, two CCBs are between USD 70 below and USD 15 above Path A on these allowances (full span, §7.0.4
+item 5). With a PCBA service they are USD 5-240 above Path A. The test plan needs build 4, which is USD 112-197 (option
+H) or USD 187-422 (option P) above Path A (§7.1.3). The Path A figures carry no bench fan; a Path A EVM on the bench
+would need its own cooling decision, which is outside the scope of this document. The cost case for the CCB is therefore weak. Its case rests on the
 removed leads, ribbon and EVM modifications (§2.3-2.4), not on price.
 
 ### 4.6 Round-3 BOM lines: removed, moved and carried over (mixed)
@@ -2834,6 +3344,7 @@ Candidates considered and rejected:
 | `CHG_INT` (BQ25798 /INT) | interrupt on fault flags | Not assigned | The only spare pins are 2 and 8, both on encoder nets (A.4); pin 20 is reserved for WDOG1_B (G.3). The 20 ms I2C poll (G.1 slot 0) already reads the flag registers | BQ25798-specific |
 | CCB temperature input | thermal guard next to the LM1084 | Not assigned | The BQ25798 TDIE ADC is already in the continuous scan (G.1 REG2E-0x30 row); new FR-50 reads it over I2C | BQ25798-specific |
 | Drop pin 33 or pin 7 | the senses are now on the same board as the IC | Rejected | Both prove the state at the IC pin; an open drive joint or a stuck driver is still possible on a single board (B.6 fault table, re-scoped) | IC-independent |
+| Fan tachometer or fan enable (r2) | bench fan supervision (§1.6.3) | Not assigned | The fan runs from the bench supply or its own regulator, not from a Teensy-controlled source. With the fan stopped, the FR-50 TDIE trip acts (the derate alone does not hold 100 C), and the CCB node time constant of 164-303 s gives it minutes to act ([LC] §8.7). A tachometer would need one of the spare pins 2 and 8 | IC-independent |
 | `PURGE_SENSE` on pin 2 | H-20 purge-valve sense | Conditional, unchanged | Only if T-E-02 adopts it and T-A-01b clears pin 2 (D.3 conditional row) | IC-independent |
 
 #### 5.4.2 Proposed CSV diff (IC-independent unless marked)
@@ -2983,8 +3494,25 @@ EC TDIE_ADC LSB 0.5 C). Because the POR value reads 0 C, the guard must ignore T
 after each charger POR. The conversion is disabled by TDIE_ADC_DIS, bit 1 of REG2F_ADC_Function_Disable_0 (offset 2Fh,
 reset 0h, SLUSDV2C §7.5.1.43), which the image must leave at 0. The IC's own thermal regulation stays at its POR value; REG16 remains on the never-write list.
 
+*FR-50 on the testbench (r2, proposal).* The bench fan cools the CCB in the design case, and FR-50 is the guard for a
+stopped fan (operator statement, 2026-11-10; §1.6.3). The fan is not supervised: it has no tachometer and no Teensy pin
+(§5.4.1). The model gives these figures ([LC] §8.7; §3.7.2a):
+
+1. With the fan off at g 5 mm on a 25 C bench, T_J is 104-142 C at 2.7 W and 86-116 C at the 2.08 W derate image. The
+   derate alone therefore does not hold T_J under 100 C at the upper end of the band, so the trip must act.
+2. TREG (default 120 C, [DS] REG16) folds back the charge current by itself before TSHUT (150 C). FR-50 must act below
+   TREG so that the firmware, not TREG, owns the response.
+3. The CCB node time constant is 164-303 s fan-off. A stopped fan therefore takes minutes to reach the thresholds, far
+   longer than the TDIE refresh, so the fan need not be proven on.
+
+The proposed starting values are `CHG_TDIE_DERATE_C` about 95 C and `CHG_TDIE_TRIP_C` about 105-110 C, both
+TODO(calibrate: fan-on and fan-off soak, M16 and T-K-20). The fan-on 2.9 W point (model 78-90 C at 25 C room air) must
+stay below `CHG_TDIE_DERATE_C` with margin, so the soak sets the final values. With the fan on, the derate must not act
+at 2.9 W. With the fan stopped, the trip must act before TREG_STAT (REG1D bit 2, [DS] Table 7-38) sets (item 1).
+
 **FR-51. Battery-path continuity check (BQ25798-specific detection, IC-independent hazard).** The CCB carries the
-3.21 A battery current through header pins 18/19 and 14/15 on a moving vehicle (A.2, A.8). A fretting header joint opens
+3.21 A battery current through header pins 18/19 and 14/15 (A.2, A.8). On the testbench, handling and repeated
+insertion can fret a socket contact (the r1 basis was a moving vehicle). A fretting header joint opens
 the charger BAT node while the converter runs. FR-51 uses the BQ25798 VBAT ADC (REG3B, at the BATP sense, D8) and pin-25
 V_batt (pack side of D-BT-SQ). The FR-48 Idle comparison uses the same two readings, so the code path is shared.
 
@@ -3085,7 +3613,8 @@ between Path A, Path B and the charger board, and for the parallel charger-IC se
 7. Test registry deltas: drop T-A-02, T-C-13; re-scope T-C-05, T-C-07, T-F-11, T-B-16, T-B-19; keep T-C-10 and run it
    on the charger-board monostables before TW_HB_MAX / TW_QQ_MAX are fixed.
 8. Thermal measurement (TODO(measure)): charger board on the MB with the LM1084 at Run dissipation; sets CHG_TDIE_DERATE_C
-   and CHG_TDIE_TRIP_C (FR-50).
+   and CHG_TDIE_TRIP_C (FR-50). r2: the measurement is the fan-on and fan-off soak (M16, T-K-20 with its fan-on leg T-K-14); starting values about
+   95 C and 105-110 C (§5.6, FR-50).
 9. I2C pull-up check (TODO(measure)): SCL/SDA rise time at 400 kHz on the charger board with the 2.7 kOhm MB pull-ups.
 10. Coordination with the charger-IC search: if another IC is chosen, keep items 1, 3 (mechanism), 4 (IC-independent
     cases), 7 (IC-independent tests), 8, 9 and replace the BQ25798-specific FRs per the section-5.9 interface table.
@@ -3198,7 +3727,14 @@ The global substitutions G1-G5 apply to every carried test and do not count as a
    It does not cover a criterion on input current, inrush or ringing, which a lower R_path can raise; those criteria need a
    repeat at the CCB minimum R_path (TODO(calc: H.19 with the CCB path)).
 5. **G5 (temperatures):** the 0 C, 25 C and 60 C corners stay. Whether 60 C bounds the CCB logic region is decided by the
-   new test T-K-14.
+   new test T-K-14. r2: T-K-14 runs as the fan-on leg of T-K-20, and T-K-20 also records the fan-off case (6.4.4).
+
+r2 adds two marks for the T-K tests. The vehicle is a stationary testbench that drives flywheels, a fan may be mounted on
+the CCB, and the CCB has no height restriction (operator statement, 2026-11-10). These facts supersede some r1 test content:
+
+- **Not applicable (testbench):** the test or step checks a road or vibration condition that the testbench does not have.
+  The ID stays in the registry, and the r1 content stays in its row as a record.
+- **Record only:** the test or step still runs, but its result no longer decides a design value or a gate.
 
 #### 6.1.4 Equipment added to the round-3 list
 
@@ -3211,10 +3747,13 @@ The CCB adds the following codes:
 | FI1 | Fault-injection unit: a second populated CCB on which pins and parts are lifted for the open-joint tests. FI1 is never fitted to the vehicle | T-C-05, T-D-03, T-D-06, T-D-11 |
 | LOOP1 | A CCB built with a current-probe wire loop in series with L501. The layout variant is TODO(layout: split L501 pad with a wire-bridge option). LOOP1 is never fitted to the vehicle | T-K-08 |
 | SCOPE-HF | Oscilloscope and probe with >= 500 MHz bandwidth, tip-and-barrel or <= 5 mm ground spring; a differential probe for BTST-SW. The 500 MHz figure is a proposal: the registry SCOPE (>= 100 MHz) resolves the 1.5 MHz waveform but not the edge ringing. TODO(verify: bench equipment available) | T-K-07, T-K-09, T-K-10 |
-| MOHM | 4-wire milliohm measurement (1 A source and mV meter, as in T-A-06c) | T-K-17, T-K-19 |
+| MOHM | 4-wire milliohm measurement (1 A source and mV meter, as in T-A-06c) | T-K-17, T-K-19 (r2: not applicable, testbench) |
 | SCALE | Spring scale >= 20 N (as in T-F-12) | T-K-17, T-K-18 |
 | GAUGE | Feeler gauges, pin gauges 1.05/1.10/1.15 mm, caliper with depth rod (§1.9) | T-K-01, T-K-03, T-K-04 |
-| IMU | Accelerometer or IMU logger on the MB (§1.9 item 14). TODO(measure: availability); the post-drive inspection replaces it if absent | T-K-19 |
+| IMU | Accelerometer or IMU logger on the MB (§1.9 item 14). TODO(measure: availability); the post-drive inspection replaces it if absent. r2: not needed; the testbench does not move (operator statement, 2026-11-10) | T-K-19 (r2: not applicable, testbench) |
+| FAN (r2) | The bench fan with its mount and duct at the low-y inlet edge (§1.2.3, §1.6.3), powered from the bench supply or its own regulator, never from the LM1084 / CO-5V rail. MPN, airflow and static-pressure curve TODO(verify: fan datasheet) | T-K-14, T-K-20 |
+| ANEMO (r2) | Vane or hot-wire anemometer with a probe that fits the 5-8 mm gap; precision 0.2 m/s (§1.9 item 15). TODO(verify: instrument) | T-K-20 |
+| TC6 (r2) | A lot of six or more type-K thermocouples with a logger, 1 C resolution, for the soak points of §1.9 item 16 (the THERM code covers one thermocouple) | T-K-14, T-K-20 |
 
 ### 6.2 Counts
 
@@ -3228,11 +3767,14 @@ Table 6.1 gives the disposition counts per round-3 group. The 112 IDs were count
 | T-D failure injection | 15 | 0 | 11 | 4 |
 | T-E vehicle measurements | 14 | 0 | 14 | 0 |
 | T-F board integration | 19 | 0 | 15 | 4 |
-| T-G road | 7 | 0 | 7 | 0 |
+| T-G road (r2: drive cycles on the testbench, §6.4.4) | 7 | 0 | 7 | 0 |
 | T-W watchdog | 2 | 0 | 2 | 0 |
 | **Total** | **112** | **2** | **89** | **21** |
 
-The CCB adds **19 new tests**, T-K-01 to T-K-19 (section 6.4).
+The CCB adds **20 new tests**, T-K-01 to T-K-20 (section 6.4). Revision r1 defined T-K-01 to T-K-19. Revision r2 adds
+T-K-20 (fan-on and fan-off thermal soak). On the testbench (operator statement, 2026-11-10), T-K-19 is not applicable,
+T-K-02 is record only, and the envelope items of T-K-01 are record only. The IDs stay. Therefore 18 T-K tests gate the
+design or a phase in r2.
 
 The count of only two retirements has a reason. Most round-3 tests check charger behaviour, carrier logic or MB facts, and
 these stay on a single board. The lead, ribbon and EVM-modification content sits mostly inside multi-purpose tests, so those
@@ -3284,7 +3826,7 @@ datasheet; only the method (current-limited bench supply, BATSIM, the G4 resisto
 | T-B-14 | Unchanged | ADC and IMON accuracy; C305 for C105 | Mixed (IMON is the eFuse, IC-independent) |
 | T-B-14b | Modified | **Reference point:** the shunt and integrating DMM sit in the FIX1 battery wire (pins 18/19 to BATSIM), not on W3. The CCB has no wire between the charger and the MB, so the accounting check is bench-only. Pass unchanged | BQ25798-specific |
 | T-B-15 | Unchanged | CV and termination | BQ25798-specific |
-| T-B-16 | Modified | **Object:** the CCB's own power stage on FIX1 in still air, without the LM1084. **Retired items:** the JP5/JP3 link-joint temperatures and the fallback "link soldered into the plated holes (EM11/EM12)". **Replaced by:** the header joints of pins 10 and 18/19. **Added fail lever:** the 750 kHz alternate (R529 8.2 kOhm, L501 2.2 uH, §2.1.3). The in-situ soak beside the LM1084 is the new T-K-14. **Pass:** TDIE < 100 C and TREG_STAT 0 (unchanged). **Changed pass item:** the round-3 "joint rise < 20 C" is replaced, because on FIX1 the pin joints sit near the board temperature (§3.7.6). The CCB-side joints of pins 10 and 18/19 must stay at or below the header rating minus 20 C (TODO(verify: Samtec TSW datasheet, operating temperature)); their rise over ambient is recorded as the T-K-14 input | BQ25798-specific |
+| T-B-16 | Modified | **Object:** the CCB's own power stage on FIX1 in still air, without the LM1084. **Retired items:** the JP5/JP3 link-joint temperatures and the fallback "link soldered into the plated holes (EM11/EM12)". **Replaced by:** the header joints of pins 10 and 18/19. **Added fail lever:** the 750 kHz alternate (R529 8.2 kOhm, L501 2.2 uH, §2.1.3). The in-situ soak beside the LM1084 is the new T-K-14. **Pass:** TDIE < 100 C and TREG_STAT 0 (unchanged). **Changed pass item:** the round-3 "joint rise < 20 C" is replaced, because on FIX1 the pin joints sit near the board temperature (§3.7.6). The CCB-side joints of pins 10 and 18/19 must stay at or below the header rating minus 20 C (TODO(verify: Samtec TSW datasheet, operating temperature)); their rise over ambient is recorded as the T-K-14 input. **r2 (testbench, fan):** the r2 thermal design relies on the bench fan (§3.7.3a), so the gating run uses FAN at the M15 velocities over the top and through a FIX1 gap of the chosen g. The still-air run is record only; it is the fan-off image for the FR-50 thresholds of T-K-20 | BQ25798-specific |
 | T-B-17 | Unchanged | Unpowered I2C clamp; R345/R346 are DNP, so the MB pull-ups (PM9) alone are the bus pull-ups | BQ25798-specific |
 | T-B-18 | Unchanged | STAT/CHG_STAT with ILIM forced; Q401 for Q201 | BQ25798-specific |
 | T-B-19 | Modified | **Object:** the CCB power stage. Its layout differs from the EVM, so the round-3 efficiency basis (eta_max 0.93) is re-measured. **Added points:** VBUS 21.5 V and 22.6 V, because the [DS] efficiency curves stop at 20 V (§1.6.2). **Added record:** the U501 and L501 case temperatures at each point, as input to T-K-14. Pass unchanged (P_in >= 20.8 W at 7.4 V with ICHG 3.10 A) | BQ25798-specific |
@@ -3300,7 +3842,7 @@ datasheet; only the method (current-limited bench supply, BATSIM, the G4 resisto
 | T-C-01c | Unchanged | U315 POR | IC-independent |
 | T-C-02 | Unchanged | H1 trip points | IC-independent |
 | T-C-03 | Unchanged | UVB and BT_OK thresholds; R342 select-on-test. The 60 C corner is valid only if T-K-14 shows the comparator region <= 60 C (G5) | IC-independent |
-| T-C-04 | Modified | **Retired part:** the OUT excursion "with the real 0.30 m W1/W2 lead" (§1.11.2 item 2). **Changed step (2):** the hard short is applied at the C511/C512 pads (the U501 VBUS input) through on-board copper only. **Added decision:** D303 may become DNP only if step (2) shows OUT >= -0.3 V (§1.11.2 item 2, O-12). **Added record:** the U501 VBUS pin voltage during step (2) against the [DS] §6.1 minimum (-2 V, converter not switching, [DS] §6.1 p.7). Steps (1) and (3), the IN-side spike criteria and the r6 vehicle MB-end step are unchanged; the reduced-voltage order (8 V, 12 V, then full voltage) is unchanged | IC-independent (eFuse); the VBUS-pin record is BQ25798-specific |
+| T-C-04 | Modified | **Retired part:** the OUT excursion "with the real 0.30 m W1/W2 lead" (§1.11.2 item 2). **Changed step (2):** the hard short is applied at the C511/C512 pads (the U501 VBUS input) through on-board copper only. **Added decision:** D303 may become DNP only if step (2) shows OUT >= -0.3 V (§1.11.2 item 2, O-12). **Added record:** the U501 VBUS pin voltage during step (2) against the [DS] §6.1 minimum (-2 V, converter not switching, [DS] §6.1 p.7). Steps (1) and (3), the IN-side spike criteria and the r6 vehicle MB-end step are unchanged; the reduced-voltage order (8 V, 12 V, then full voltage) is unchanged. **r2 (tall stack and on-board OUT copper, [TS] §(c)-(d)):** the IN-side peak is no longer the round-3 value. Without the 150 nH W1/W2 lead, the ideal model gives 35.5-40.0 V at U301 IN for 5-20 nH of OUT copper, and the r2 stack (H_u 5.1-8.1 mm, up to +10.8 nH on the pad-10 / pad-4 loop) raises this by 0-0.3 V, to at most 40.3 V. The MB end stays at 19.8-20.0 V. **Added records:** (a) the U301 IN and MB-end peaks against these values; (b) whether D307 conducts (the ideal peak exceeds its 36.7 V VBR minimum at 10-20 nH), with its current or clamp voltage where the probe allows; (c) the CCB-GND-to-MB-GND voltage across pad 4 during step (2), against the [TS] §(d) estimate of 0.08-1.34 V (three pins) to 0.24-4.02 V (one pin) at 65 A falling in 0.1-1.0 us. The pass criteria (60 V at IN, U301 67 V, MB end 35 V and 40 V) are unchanged. D307 energy and the OUT copper inductance are TODO(calc) (N-25) | IC-independent (eFuse); the VBUS-pin record is BQ25798-specific |
 | T-C-05 | Modified | **Deleted fault cases:** opens of E1-E8, of each W5 conductor and of the links L1/L2; R273 open; each 3V3 ribbon conductor open; all adjacent ribbon-pair shorts (3-4, 4-5, 11-12 and the rest); the T-C-13 cross-references. **Kept fault cases (G2):** R455, R452, R471, R472, R472b open singly and R472 + R472b together; Q401 drain open; Q403 D-S short; Q401 D-S short; T16 (F17) open. **Added fault cases, on FI1:** an open joint on each sense trace (lift R458 at U403 and R462 at U404); an open joint on each drive trace (lift U401 pin 7, U401 2Y and 3Y outputs, U402 pin 4); each driver input open, which R467-R470 must pull LOW (§2.3.2); pin 6 stuck LOW and pin 6 shorted to CE_DRV (FR-22/FR-44 re-scope, Table 5.2); pin 6 driven HIGH by firmware with the STAT sink <= 3.3 mA through R475 (Table 2.5). **Pass:** the [WD] B.6 outcomes for the kept part rows, unchanged; the added rows fail safe (converter held or /CE HIGH) and FR-08 or FR-44 flags them, except the pull-down-protected input opens, which read LOW and need no flag | Mixed (method IC-independent; the fault list is BQ25798-specific) |
 | T-C-06 | Unchanged | Firmware sequences on emulated supplies | IC-independent |
 | T-C-07 | Modified | **Deleted:** each W5 conductor open, the ribbon-pair shorts (1-3, 2-3, 3-4, 4-5, 11-12) and the "one W5 3V3 conductor open" case. **Changed:** the CR and EIB rails are one rail behind R375 (§2.6.2 item 1), so "CR and EIB rails < 0.8 V" reads "the 3V3 rail < 0.8 V" (held at 0.3-0.45 V across R474 by the BAV199 back-feed, Table 2.8), and ">= 3.05 V in normal operation" applies to the merged load U302-U323 plus U401-U404 (U301 is fed from VCHGIN, not from 3V3). **Kept:** tap opens T2-T6, T8-T11, T21 with the bus energised and the Teensy driving; the shorts of C325, of one decoupler (C401) and of the rail to GND with the MCU-reset check | IC-independent |
@@ -3340,7 +3882,9 @@ T-E-13) carry over unchanged. They measure the vehicle, the H-20, the VESC, the 
 charger packaging. T-E-09 now decides a population choice (R525 fitted XOR R526 fitted, Table 2.5) before CCB
 assembly.
 
-All 7 T-G tests and both T-W tests carry over unchanged. They test the system, the firmware and the watchdog.
+All 7 T-G tests and both T-W tests carry over unchanged. They test the system, the firmware and the watchdog. In r2
+the T-G tests run as drive cycles on the stationary testbench, with "drive" as §6.4.4 defines it (operator statement,
+2026-11-10).
 
 | ID | Disposition | Reason or modification | Label |
 |---|---|---|---|
@@ -3361,7 +3905,7 @@ All 7 T-G tests and both T-W tests carry over unchanged. They test the system, t
 | T-F-13 | Modified | **Changed step (1):** Kelvin from V-MOT to the C511/C512 pads (CCB VBUS) and from MB GND at D-BC-RG to TP511. **Changed pass:** the H.19 band 0.117-0.193 ohm included W1/W2, EVM R2 and EVM JP3, so a CCB reading below 0.117 ohm is expected and is not a failure. The pass becomes "R_path within the re-derived CCB band" (TODO(calc), O-11), and the warm budget still clears the measured t_d + tau. Step (2) on the MB VCHG-IN vias is unchanged | IC-independent |
 | T-F-14 | Unchanged | CV hold with the calibrated scale | IC-independent |
 | T-F-15 | Unchanged | IMON and CHG_VOLTAGE ground offset; R305 for R105 (§1.13.4 item 2) | IC-independent |
-| T-F-16 | Modified | **Object:** the MB VBT trace under the CCB and the MB-side joint of pin 18. **Changed reference:** every rise is measured against T_MB,local, a thermocouple on the MB surface at x 25-35, y 55-75, away from the VBT trace and the header. On the CCB the pins conduct converter heat into their joints (§3.7.6), so ambient is not a valid reference. **Changed pass:** VBT trace rise over T_MB,local < 20 C (IPC-2221 predicts <= 10 C at 3.21 A on 1 oz, [WD] A.8); pin-18 joint absolute temperature at or below the header or socket rated operating temperature minus 20 C (TODO(verify: Samtec TSW or socket datasheet, T-A-05)). The expected joint level (T_MB,local + 20-26 C without the gap pad, + 10-17 C with it, option S, §3.7.6) is recorded, not gated. **Joint condition:** decided by T-K-17 (4-wire contact resistance), not by temperature. **Changed fail branch:** a trace rise >= 20 C caps the regen ICHG image at 2.50 A until the overlay rework (unchanged). A joint above its absolute limit points to the gap pad (§3.7.4), H_u, 750 kHz or ICHG 2.50 A, not to the MB overlay | IC-independent |
+| T-F-16 | Modified | **Object:** the MB VBT trace under the CCB and the MB-side joint of pin 18. **Changed reference:** every rise is measured against T_MB,local, a thermocouple on the MB surface at x 25-35, y 55-75, away from the VBT trace and the header. On the CCB the pins conduct converter heat into their joints (§3.7.6), so ambient is not a valid reference. **Changed pass:** VBT trace rise over T_MB,local < 20 C (IPC-2221 predicts <= 10 C at 3.21 A on 1 oz, [WD] A.8); pin-18 joint absolute temperature at or below the header or socket rated operating temperature minus 20 C (TODO(verify: Samtec TSW or socket datasheet, T-A-05)). The expected joint level (T_MB,local + 20-26 C without the gap pad, + 10-17 C with it, option S, §3.7.6) is recorded, not gated. **Joint condition:** decided by T-K-17 (4-wire contact resistance), not by temperature. **Changed fail branch:** a trace rise >= 20 C caps the regen ICHG image at 2.50 A until the overlay rework (unchanged). A joint above its absolute limit points to the gap pad (§3.7.4), H_u, 750 kHz or ICHG 2.50 A, not to the MB overlay. **r2:** the gap pad is superseded by the bench fan (§3.7.4); a joint above its limit points to the fan velocity (M15), H_u, 750 kHz or ICHG 2.50 A. The pin-18 joint with forced air is TODO(calc) and is measured in T-K-20 | IC-independent |
 | T-F-17 | Unchanged | BQ29200 pack-OV permit | IC-independent |
 
 ### 6.4 New tests (T-K)
@@ -3370,10 +3914,10 @@ All 7 T-G tests and both T-W tests carry over unchanged. They test the system, t
 
 | ID | Purpose | Setup and steps | Pass | Decides | Order | Label |
 |---|---|---|---|---|---|---|
-| T-K-01 | Measure the mechanical envelope before the Ag105 is removed and before the capture freezes | Vehicle MB, Ag105 fitted, power off, pack unplugged; GAUGE. Steps: M1, M5-M10 and M13 of §1.9: Ag105 standoff h_s at four corners (gate D-2), module top and pin length below the MB; LM1084 and CO-5V heights; free height H_env above the footprint and rect A; heights of L-FC, OP-FC, MDAC-FC, ROP1-FC; J-BL wire and screwdriver envelope; foot-spot access and surface; MB thickness. Optional (M3 on a coupon): a dry fit of the chosen strips in a 1.66 mm FR-4 coupon drilled 1.10 mm, for an early seat height. M2, M3 on the MB and M4 need the empty holes and run in T-K-04 | Every value recorded at the §1.9 precision. The planned stack (H_u + t_pcb + 3.0 mm: 7.14 mm for option S, 7.14 + h_k mm for option K, with t_pcb 1.6 mm, §1.3.2) is at least 1 mm below H_env (the 1 mm margin is a proposal for operator ruling); for option K, h_k <= 5.0 mm against the nominal 13.14 mm Ag105 envelope. CO-5V top < H_u (2.10 mm vs 2.54 mm planned). OP-FC height confirms the rect-A' condition H_u >= 2.75 mm | The header option S or K (§1.3.4), with H_u taken from the planned stack until T-K-04 measures the seat height; the top-part height limit; use of rect A only or rect A'; the foot length; the part-height limit within 5 mm of the left edge | Before T-A-06 and before PM1. h_s can be measured only while the Ag105 is fitted | IC-independent |
-| T-K-02 | Measure the LM1084 thermal environment as an input to the charger thermal design | Vehicle in Run at the worst available load, Ag105 fitted and idle, no CCB; THERM on the LM1084 tab, in air at x 48.7 / z 4 mm beside CHG pins 4-8, and on the MB surface at x 25-35, y 55-75 (§1.9 items 11-12); ambient logged; 30 min to steady state. Heater step (M12): bond a heater of about 400 mm² at or beside x 25-35, y 55-75, inject 2.3 W (the option-S P_MB at 2.7 W, §3.7.2), and wait for steady state again | Temperatures recorded at 1 C; steady state reached (rise < 1 C in the last 5 min); T_MB,0 recorded; R_MB = MB surface rise beside the heater / 2.3 W recorded | Ambient for the CCB thermal design (§1.6.2); the admissible T_MB,0 of §3.7.3 with the measured R_MB (verdict condition 3); the keep-out distance of §1.6.1 rule 4; starting values for the FR-50 thresholds (§5.6); whether 1.5 MHz stays the baseline | Before T-A-06 and before PM1 | IC-independent |
+| T-K-01 | Measure the mechanical envelope before the Ag105 is removed and before the capture freezes | Vehicle MB, Ag105 fitted, power off, pack unplugged; GAUGE. Steps: M1, M5-M10 and M13 of §1.9: Ag105 standoff h_s at four corners (gate D-2), module top and pin length below the MB; LM1084 and CO-5V heights; free height H_env above the footprint and rect A; heights of L-FC, OP-FC, MDAC-FC, ROP1-FC; J-BL wire and screwdriver envelope; foot-spot access and surface; MB thickness. Optional (M3 on a coupon): a dry fit of the chosen strips in a 1.66 mm FR-4 coupon drilled 1.10 mm, for an early seat height. M2, M3 on the MB and M4 need the empty holes and run in T-K-04 | Every value recorded at the §1.9 precision. The planned stack (H_u + t_pcb + 3.0 mm: 7.14 mm for option S, 7.14 + h_k mm for option K, with t_pcb 1.6 mm, §1.3.2) is at least 1 mm below H_env (the 1 mm margin is a proposal for operator ruling); for option K, h_k <= 5.0 mm against the nominal 13.14 mm Ag105 envelope. CO-5V top < H_u (2.10 mm vs 2.54 mm planned). OP-FC height confirms the rect-A' condition H_u >= 2.75 mm. **r2 (testbench):** the CCB has no height restriction (operator statement, 2026-11-10). The H_env criterion and the h_k <= 5.0 mm limit are therefore record only (M6), and gate D-2 does not constrain the stack. Still gating: M5 (LM1084 and CO-5V positions, against the right-edge rule at the chosen H_u, §1.2.2), M7, M8 (J-BL pluggability with the taller CCB) and M9-M10 (foot spots, with the fan and its mount in place) | The header option S or K (§1.3.4), with H_u taken from the planned stack until T-K-04 measures the seat height; the top-part height limit (r2: none); use of rect A only or rect A'; the foot length; the part-height limit within 5 mm of the left edge | Before T-A-06 and before PM1. h_s can be measured only while the Ag105 is fitted | IC-independent |
+| T-K-02 | Measure the LM1084 thermal environment as an input to the charger thermal design | Vehicle in Run at the worst available load, Ag105 fitted and idle, no CCB; THERM on the LM1084 tab, in air at x 48.7 / z 4 mm beside CHG pins 4-8, and on the MB surface at x 25-35, y 55-75 (§1.9 items 11-12); ambient logged; 30 min to steady state. Heater step (M12): bond a heater of about 400 mm² at or beside x 25-35, y 55-75, inject 2.3 W (the option-S P_MB at 2.7 W, §3.7.2), and wait for steady state again | Temperatures recorded at 1 C; steady state reached (rise < 1 C in the last 5 min); T_MB,0 recorded; R_MB = MB surface rise beside the heater / 2.3 W recorded | Ambient for the CCB thermal design (§1.6.2); the admissible T_MB,0 of §3.7.3 with the measured R_MB (r1 verdict condition 3); the keep-out distance of §1.6.1 rule 4; starting values for the FR-50 thresholds (§5.6); whether 1.5 MHz stays the baseline. **r2: record only.** With the bench fan on, T_J moves by 0.15-0.30 C per C of MB idle offset ([LC] §8.6b), so T_MB,0 and R_MB no longer decide verdict condition 3. T-K-20 replaces the heater-step gate. The LM1084 tab and air temperatures (M11) stay as the baseline for T-K-14. The heater step is optional and record only | Before T-A-06 and before PM1 | IC-independent |
 | T-K-03 | Confirm that the fabricated bare CCB matches the capture before any part is soldered | All bare boards of the order; fab electrical-test report; DMM; GAUGE; the MB with loose header pins. Steps: (1) fab flying-probe or netlist-test result against the capture netlist, or DMM isolation between each pair of VCHGIN, VCHGOUT, PMID, SW1, SW2, VCHG, CHG_SYS, REGN, 3V3 and GND; (2) caliper on outline, thickness and foot holes against §1.8; (3) export the header drill positions from the fab drill file to CSV and run [PIC] `--csv <file> --kicad-y-down` (with `--dx/--dy`); (4) lay the bare CCB on loose pins in the MB and meter from CCB net copper to MB parts: pad 10 copper to C-D8 pad 1, pads 18/19 copper to C-D11 pad 1, pads 4/14/15 to MB GND, pad 11 copper to Teensy pin 5 ([WD] T-A-06 step 0(c)); (5) loupe on the underside; (6) stack-up and copper weight from the fab record | Zero netlist errors; each power-net pair > 10 MOhm; dimensions within 0.1 mm; [PIC] exit 0 with no mirror reported; every punch-through reading as listed; pin-11 marker at the planned corner; every underside via tented and no exposed copper other than header and foot pads (§1.5 rule 1) | Release of the boards to assembly | After fabrication; gates T-K-05 and every later test | IC-independent |
-| T-K-04 | Confirm the seated clearances on the vehicle MB after Ag105 removal | Vehicle MB after PM1 and T-F-01; polyimide sheet bonded (§1.5 rule 3); GAUGE. Steps: (1) hole condition of all 22 holes with pin gauges and a loupe (§1.9 item 2); (2) seat a bare or stage-1 CCB, unsoldered and unscrewed; (3) feeler gauge between the lowest CCB feature and D-BT-SQ, C-D11, C-D12, C-DC11, C-DC12, ROP1-FC and (rect A' only) OP-FC; (4) gaps from the CCB right edge to CO-5V and to the LM1084 body; left edge to the J-BL courtyard; (5) screwdriver trial on the J-BL position-3 screw and on both foot screws; (6) seat height (M3); (7) hole positions against a 1:1 print of the pin field and a caliper across the 25.0 mm row spacing (M4) | g_air >= 1.0 mm at every part, target 1.4 mm under the 1.10 mm parts (§1.3.2); CCB right edge <= x 48.70 with no contact to CO-5V; LM1084 gap recorded against the planned 2.86 mm (§1.2.2); J-BL and foot screws reachable; CCB top <= H_env minus the T-K-01 margin; hole positions within 0.1 mm of the A.8 table (the M4 precision) | Socket or solder for the vehicle; final foot length; release to fitting | After PM1, T-F-01 and T-A-06c; before the CCB is soldered or screwed; gates T-K-17 and T-K-18 | IC-independent |
+| T-K-04 | Confirm the seated clearances on the vehicle MB after Ag105 removal | Vehicle MB after PM1 and T-F-01; polyimide sheet bonded (§1.5 rule 3); GAUGE. Steps: (1) hole condition of all 22 holes with pin gauges and a loupe (§1.9 item 2); (2) seat a bare or stage-1 CCB, unsoldered and unscrewed; (3) feeler gauge between the lowest CCB feature and D-BT-SQ, C-D11, C-D12, C-DC11, C-DC12, ROP1-FC and (rect A' only) OP-FC; (4) gaps from the CCB right edge to CO-5V and to the LM1084 body; left edge to the J-BL courtyard; (5) screwdriver trial on the J-BL position-3 screw and on both foot screws; (6) seat height (M3); (7) hole positions against a 1:1 print of the pin field and a caliper across the 25.0 mm row spacing (M4) | g_air >= 1.0 mm at every part, target 1.4 mm under the 1.10 mm parts (§1.3.2); CCB right edge <= x 48.70 with no contact to CO-5V; LM1084 gap recorded against the planned 2.86 mm (§1.2.2); J-BL and foot screws reachable; CCB top <= H_env minus the T-K-01 margin; hole positions within 0.1 mm of the A.8 table (the M4 precision). **r2 (testbench):** the H_env item is record only (no height restriction, operator statement, 2026-11-10). Added pass item: the seated channel gap g = H_u - 0.125 mm is 5 mm or more at the inlet edge (y 34.14), at mid-body and at the tab, and preferably 5-8 mm (§1.3.2 rule 3; M3) | Socket or solder for the vehicle; final foot length (r2: spacer length = H_u, §1.4); release to fitting | After PM1, T-F-01 and T-A-06c; before the CCB is soldered or screwed; gates T-K-17 and T-K-18 | IC-independent |
 
 Note that gate D-2 (the fitted Ag105 standoff) is not a pass/fail gate for the CCB. The CCB clears the MB parts through
 g_air, which does not contain h_s (§1.3.3). T-K-01 records h_s only as the proven envelope and as the reversibility
@@ -3401,20 +3945,29 @@ U302-U323 and U401-U404. Tests T-K-09 to T-K-11 cover that change.
 |---|---|---|---|---|---|---|
 | T-K-09 | Prove that converter switching on the same board causes no false comparator, logic or monostable transition | Stage-2 CCB on FIX1 with the T-C rig (bench Teensy, PSUs on T1/T2); LA on H1q, H2c, GATE, ARM_OK, QQ, BT_OK rb, UVB, BTB_OFF, FCC_ON, RGN_ON and TP302-TP305; SCOPE (20 MHz and full bandwidth) at the divider bottoms R310, R312, R315, R318, R385, R389, R391 and R463 (N_CSP) against TP306. Converter at ICHG 3.10 A, VBUS 19 V and 21.5 V. Steps: (1) inputs at the nominal operating point, 10 min in the regen image and 10 min in the FC image; (2) each comparator input held at the [WD] H.1-H.3 worst-case margin from its trip, 2 min each; (3) stop the heartbeat edges with the hang key while switching at full current; (4) hold QUAL LOW while switching; (5) record divider-bottom noise | (1)-(2) zero spurious output transitions; (3) zero U313 trigger edges after the last HB edge, ARM_OK falls within the T-C-10 measured width (20-46 ms) and IBAT < 10 mA within TW_HB_MAX (the T-D-02 criterion); (4) zero QQ edges; (5) divider-bottom noise referred to each comparator input below its hysteresis margin (TODO(calc: B.2 margins)), which answers the §1.13.4 item 3 TODO. U320, U321 and U404 have no feedback resistor, so their 2-8 mV internal hysteresis is not a noise margin; their limit is 50 % of the static margin at IN+ (the factor is TODO(operator ruling)): at R389 / R391, 0.60 V peak with FCC / RGN LOW (static margin 1.202 V, the unsafe direction) and 0.39 V peak with them HIGH (0.781 V); at R463, 0.48 V peak with /CE HIGH (0.962 V); the /CE LOW margin is TODO(measure: T-K-10) ([CALC]) | Acceptance of the logic/power partition in the layout; added filter capacitance (the C336, C337 and C453 fit decision, §2.5.6); release to T-F-05 on the vehicle | After T-K-07 and the stage-1 T-C group; gates the stage-2 runs of T-C-04, T-C-05 and T-C-07, and T-K-11 | IC-independent (method); the stimulus is BQ25798-specific |
 | T-K-10 | Prove the charger control pins hold their levels under switching | As T-K-09; probes with ground springs on TP504 (ILIM_HIZ), TP505 (/CE), TP503 (REGN), TP506 (TS) and the STAT net. Modes: ILIM held, regen release, FC release, /CE HIGH and LOW, each with the converter running where the mode allows; VBUS 12 V (lowest REGN headroom) and 21.5 V | Held ILIM_HIZ plus peak noise below the U403 minimum trip 0.587 V and below VIL_ILIM_HIZ 0.75 V (Table 2.6, [WD] T-B-03); released levels including noise within 2.06-2.40 V (regen) and 1.52-1.76 V (FC); /CE >= 3.0 V when not armed, including dips; zero spurious U403/U404 output transitions; REGN within the [DS] EC range (TODO(verify: DS EC REGN)) and its ripple recorded | Adequacy of R456/C452 as the ILIM_HIZ filter; local REGN decoupling at the pull-ups; evidence for O-6 (REGN loading) | With T-K-09; gates T-B-03, T-B-07 and T-B-23 (the POR ADC samples the ILIM_HIZ pin) | BQ25798-specific |
-| T-K-11 | Re-run the safety chain with REGN generated by U501 and the converter switching (the T-C group ran on stage 1) | Stage-2 CCB on FIX1 with the T-C rig. Steps: (1) the T-C-01 vectors that release or hold the converter (GATE, ILIM_REL, CE_DRV, RFC_OFF), with the real ILIM_HIZ and /CE pin response; (2) 20 Teensy resets with the converter running (T-D-01 method); (3) T6 (F07) opened while charging at 1.76 A input; (4) VCHG-IN removed while charging; (5) an eFuse latch from the T-C-04 step (1) overload | Each state matches its Table 2.8 row: (1) converter stops or releases as the truth table says; (2) the T-D-01 pass; (3) the converter stops within 20 ms (Q401 on through R452, /CE HIGH), pin 7 reads LOW and FR-08(b) trips; (4) U404 reports /CE LOW and FR-23 holds FR-08(b) quiet; (5) FLT LOW on pin 35 and no FR-08 trip (§2.6.2 item 3); IBAT < 10 mA wherever the row says inhibited | Release of stage 2 to the T-D bench group and to PM1 | After T-K-09 and T-K-10; gates the T-D group and PM1 | Mixed |
+| T-K-11 | Re-run the safety chain with REGN generated by U501 and the converter switching (the T-C group ran on stage 1) | Stage-2 CCB on FIX1 with the T-C rig. Steps: (1) the T-C-01 vectors that release or hold the converter (GATE, ILIM_REL, CE_DRV, RFC_OFF), with the real ILIM_HIZ and /CE pin response; (2) 20 Teensy resets with the converter running (T-D-01 method); (3) T6 (F07) opened while charging at 1.76 A input; (4) VCHG-IN removed while charging; (5) an eFuse latch from the T-C-04 step (1) overload | Each state matches its Table 2.8 row: (1) converter stops or releases as the truth table says; (2) the T-D-01 pass; (3) the converter stops within 20 ms (Q401 on through R452, /CE HIGH), pin 7 reads LOW and FR-08(b) trips; (4) U404 reports /CE LOW and FR-23 holds FR-08(b) quiet; (5) FLT LOW on pin 35 and no FR-08 trip (§2.6.2 item 3); IBAT < 10 mA wherever the row says inhibited. r2: in step (5), also record the CCB-GND-to-MB-GND voltage across pad 4 during the turn-off; the tall stack raises the [TS] §(d) estimate to 0.08-1.34 V (three pins) at H_u 5-8 mm, and no spurious comparator or logic transition may follow it | Release of stage 2 to the T-D bench group and to PM1 | After T-K-09 and T-K-10; gates the T-D group and PM1 | Mixed |
 
 #### 6.4.4 On the vehicle motherboard
+
+In r2, "vehicle" means the vehicle MB on the stationary testbench that drives the flywheels (operator statement,
+2026-11-10). "Drive" means a drive cycle on that testbench. The bench fan (FAN) runs in every T-K test on the MB unless
+the row states the fan-off case. T-K-12 and T-K-13 run with the fan on and again with the fan off. The difference
+separates the fan-motor conducted and radiated noise from the charger contribution. The fan lead returns to the bench
+supply and does not use MB copper as its return (§1.6.3 item 3). The fan noise at the MB analog nets is TODO(measure:
+T-K-12, T-K-13). T-K-20 is the decisive thermal test in r2. T-K-14 is its fan-on leg with the
+additional records of the round-3 neighbourhood (LM1084, CO-5V, comparator area).
 
 | ID | Purpose | Setup and steps | Pass | Decides | Order | Label |
 |---|---|---|---|---|---|---|
 | T-K-12 | Measure the conducted charger ripple that now enters the MB at pad 10 without the W1/W2 lead inductance | Vehicle MB with the CCB fitted; VESC unpowered; charger running from a bench current source into V-MOT (regen image, as in T-F-15) and through D-BC-FC (FC image); SCOPE at 20 MHz and full bandwidth on C-D8 pad 1 (VCHG-IN), C-D6 pad 1 (H1 tap via R170), C-D2 pad 1 (T2 tap via R171) and pin 38, against MB GND | V-MOT ripple at the H1 tap within the H.1 limits (the T-E-07 criterion), with the charger contribution included; VCHG-IN and pin-38 ripple recorded | Population of the input RC snubber R541/C541 (decision D9 (§2.1.1)); C302 values | After the CCB is fitted (after T-K-04, T-K-17, T-K-18); before T-K-13 and T-F-03 | Mixed |
 | T-K-13 | Prove that charger switching does not disturb the Teensy analog inputs or the MB nets under the CCB | Vehicle MB with the CCB fitted; Teensy on a bench build that logs pins 22, 24, 25, 26, 38, 39, 40 and 41 at the production ADC settings; charger off, then converting at 0.3, 1.0 and 1.76 A input in the regen and FC images; SCOPE on MPPT-DISABLE (pin 5, header pin 11; runs at y 64.48 under the CCB) and CB-DISABLE (pin 9; runs at x 33.27 and x 41.40) at the CCB position (§1.5); SCOPE on the OP-FC output (FC droop chain under rect A') | Per channel: mean shift <= 2 LSB and standard-deviation increase <= 2 LSB against charger off (the T-C-15 cross-channel criterion); FR-49 never triggered by noise on pins 38/39; the pin-5 and pin-9 nets never cross the SN74LVC VIL 0.8 V / VIH 2.0 V band from their static level ([WD] B.3); CB-DISABLE never crosses the BQ29200 input threshold (TODO(verify: BQ29200 DS)); I_fc and I_batt unchanged within 50 mA in the share loop (the T-F-03 criterion) | Acceptance of the CCB ground layer next to the underside (§1.5); filter changes; use of rect A' | After T-K-12; before T-F-03 and before any FC window | IC-independent |
-| T-K-14 | Thermal soak of the CCB in situ beside a hot LM1084 | Vehicle MB, CCB fitted, vehicle in Run with the T-K-02 LM1084 load; charger from a bench current source into V-MOT (regen image) and in the FC image; THERM on U501 top, L501, D303, D304/D305 (BAV199), the U302-U304 area, the LM1084 tab, the CO-5V body, the pin-18/19 header joint (MB side), the MB surface at the T-K-02 point (fitted before the CCB) and the air under the tab; TDIE over I2C. Profiles: 30 min at 2.5 A continuous; the T-B-16 burst profile at max(measured ICHG from T-B-19, 3.21 A) | TDIE < 100 C and TREG_STAT 0 (the T-B-16 criterion); comparator and logic area <= 60 C, else re-run T-C-03, T-C-10 and T-A-07 at the measured maximum + 10 C; LM1084 tab rise over the T-K-02 baseline recorded, with the junction estimate inside the [LM] §5.3 range (TODO(verify: LM1084 DS §5.3 control vs output section rows and the KTT thermal metrics)); CO-5V within its rating (TODO(verify: CO-5V datasheet)); pin-18/19 MB-side joint at or below the header or socket rating minus 20 C, with its rise over T_MB,local recorded (the modified T-F-16 criterion, §6.3.5); the MB surface rise over the T-K-02 T_MB,0 recorded, which checks P_MB x R_MB and R_total of §3.7.2 | FR-50 `CHG_TDIE_DERATE_C` and `CHG_TDIE_TRIP_C` (§5.6); the regen ICHG image (3.10 A or 2.50 A); the 750 kHz alternate; forced air; the T-A-07 temperature basis | After T-B-16 (bench) and T-K-13; before T-K-15, T-F-04 and the T-G group | Mixed (method IC-independent; TDIE and loss BQ25798-specific) |
-| T-K-15 | Verify the FR-50 temperature guard | FIX1; HG on U501 with THERM; firmware with FR-50 and the T-K-14 thresholds. Steps: heat until TDIE crosses `CHG_TDIE_DERATE_C`, then `CHG_TDIE_TRIP_C`; cool | At the derate threshold ICHG falls to the 2.50 A image and FC windows close through T5; at the trip threshold P5 goes LOW and stays latched until Idle (§5.6); TDIE against THERM recorded (REG41_TDIE_ADC, two's complement, 0.5 C per LSB, POR value 0 C; [DS] §7.5.1.53 Table 7-66) | Acceptance of FR-50 | After T-K-14; before T-G-01 | BQ25798-specific (detection); IC-independent (hazard) |
+| T-K-14 | Thermal soak of the CCB in situ beside a hot LM1084 | Vehicle MB, CCB fitted, vehicle in Run with the T-K-02 LM1084 load; charger from a bench current source into V-MOT (regen image) and in the FC image; THERM on U501 top, L501, D303, D304/D305 (BAV199), the U302-U304 area, the LM1084 tab, the CO-5V body, the pin-18/19 header joint (MB side), the MB surface at the T-K-02 point (fitted before the CCB) and the air under the tab; TDIE over I2C. Profiles: 30 min at 2.5 A continuous; the T-B-16 burst profile at max(measured ICHG from T-B-19, 3.21 A) | TDIE < 100 C and TREG_STAT 0 (the T-B-16 criterion); comparator and logic area <= 60 C, else re-run T-C-03, T-C-10 and T-A-07 at the measured maximum + 10 C; LM1084 tab rise over the T-K-02 baseline recorded, with the junction estimate inside the [LM] §5.3 range (TODO(verify: LM1084 DS §5.3 control vs output section rows and the KTT thermal metrics)); CO-5V within its rating (TODO(verify: CO-5V datasheet)); pin-18/19 MB-side joint at or below the header or socket rating minus 20 C, with its rise over T_MB,local recorded (the modified T-F-16 criterion, §6.3.5); the MB surface rise over the T-K-02 T_MB,0 recorded, which checks P_MB x R_MB and R_total of §3.7.2. **r2 (testbench, fan):** T-K-14 runs as the fan-on leg of T-K-20, with FAN at the M15 velocities and the TC6 points of T-K-20 added. The pass items above stay and apply with the fan on. The T-K-02 T_MB,0 comparison is record only. The fan-off case and the FR-50 thresholds move to T-K-20 | FR-50 `CHG_TDIE_DERATE_C` and `CHG_TDIE_TRIP_C` (§5.6; r2: decided by T-K-20); the regen ICHG image (3.10 A or 2.50 A); the 750 kHz alternate; forced air (r2: fitted by design, §1.6.3); the T-A-07 temperature basis | After T-B-16 (bench) and T-K-13; before T-K-15, T-F-04 and the T-G group. r2: together with T-K-20 | Mixed (method IC-independent; TDIE and loss BQ25798-specific) |
+| T-K-15 | Verify the FR-50 temperature guard | FIX1; HG on U501 with THERM; firmware with FR-50 and the T-K-14 thresholds (r2: the T-K-20 thresholds). Steps: heat until TDIE crosses `CHG_TDIE_DERATE_C`, then `CHG_TDIE_TRIP_C`; cool | At the derate threshold ICHG falls to the 2.50 A image and FC windows close through T5; at the trip threshold P5 goes LOW and stays latched until Idle (§5.6); TDIE against THERM recorded (REG41_TDIE_ADC, two's complement, 0.5 C per LSB, POR value 0 C; [DS] §7.5.1.53 Table 7-66) | Acceptance of FR-50 | After T-K-14 (r2: after T-K-20); before T-G-01 | BQ25798-specific (detection); IC-independent (hazard) |
 | T-K-16 | Verify the FR-51 battery-path check and bound the transient of a BAT-path opening | FIX1 with a relay or MOSFET switch in the battery wire between pins 18/19 and BATSIM; SCOPE on TP502 (VCHG), TP510 (CHG_SYS) and SW2; firmware with FR-51. Steps: (1) with BATSIM at 7.4 V, open the battery wire while charging at 0.5 A first, then 1.0 A and 3.10 A, 10 events each; then a 10 ms on/off chatter; (2) repeat the 3.10 A events with BATSIM at 7.8 V, 8.2 V and 8.3 V (above VREG - `CHG_VBAT_AGREE_V`); (3) at 8.3 V, open the wire and hold it open until the IC terminates (CHG_STAT 111b); (4) at 8.37 V, inside the published blind band, record the outcome | VCHG and CHG_SYS peaks below the [DS] §6.1 absolute maxima (BAT 20 V, SYS 23 V, Table 2.2); at every BATSIM setting of steps (1)-(2), P5 LOW and `chg_flags.bat_path_fault` set within 150 ms (FR-51 item 5); at 8.2 V and 8.3 V the trip comes from criterion (b); in step (3) the fault is set and `chgFull` is not (FR-51 item 4); step (4) is recorded only, against the FR-51 item 6 band; no part damage; charging stays refused until Idle | `CHG_VBAT_AGREE_V` (with the T-E-13 gain and the T-K-17 header drop); whether the omitted BAT TVS (decision D11 (§2.1.1)) must be fitted | After T-B-19 and T-K-17 (header drop); before T-F-03 | Mixed |
-| T-K-17 | Measure the header contact resistance and the retention of the CCB | CCB on the vehicle MB (option K or S); MOHM; SCALE. Steps: (1) 4-wire from the MB pad to the CCB pad on pins 4, 10, 14, 15, 18 and 19; (2) option K only, foot screws removed: axial pull-out force by SCALE, then re-seat; (3) mating cycles logged; (4) apply the T-F-11 12 A brake and the 3.1 A burst; measure the MB-pad-to-CCB-pad voltage on pins 4, 14 and 15; divide each voltage by the step-(1) resistance of that pin | Each power contact <= the socket or header datasheet contact resistance (TODO(verify: chosen part datasheet)); within each pair (18/19, 14/15) the resistance ratio <= 1.5, which is the 60/40 sharing basis of the >= 2.0 A per-pin rating (Table 1.13, [WD] A.8 r6); pull-out force recorded (retention is credited to the foot screws, §1.7.2 item 1); step (4): pin 4 <= 3 A and pins 14 and 15 <= 2.0 A each, including MB ground current that the CCB plane carries (Table 1.13, §1.13.3) | Option S or K for the vehicle; the header drop that enters the FR-51 threshold | After T-K-04; repeated after each T-K-19 interval | IC-independent |
-| T-K-18 | Verify the overhang support | Two nylon M3 spacers bonded at (23.20, 70.64) and (32.20, 70.64) (§1.4), cured per the adhesive datasheet; one sacrificial spacer bonded with the same adhesive and cure to a scrap FR-4 board with solder mask (TODO(verify: mask equivalent to the MB)); torque driver; SCALE; feeler gauge; no threadlocker (§1.7.2 rule 2). Steps: (1) on the sacrificial spacer, increase the torque on the hex in steps until the bond breaks, and record the breakaway torque T_b; (2) set T_s at or below T_b / 2 (proposed, TODO(operator ruling)) and within the screw rating (TODO(verify: nylon M3 screw datasheet)); (3) on the MB feet, ten fit-and-remove cycles of each foot screw at T_s, with the spacer hex held; (4) with the screw removed, T_s applied to each spacer hex by the torque driver for 10 s; (5) with both screws tight at T_s and the gap pad fitted if used, feeler between the header body and its seat; (6) axial pull for 10 s on each foot of max(20 N, F_pad), where F_pad is the gap-pad compression force at the fitted thickness (§3.7.4; 0 N without a pad); (7) deflection of the tab corner (38.90, 76.40) under 1.2 N | (1)-(2) T_b and T_s recorded; (3)-(4) no bond movement, no mask lift and no crack after the cycles and the torsion hold; (5) header still seated (no gap > 0.05 mm, proposed); (6) no bond movement and no crack; the pull is at least 2 x the per-foot gap-pad load (F_pad / 2) and about 16 x the 1.2 N load of a 12 g board at 10 g (§1.7.1); the 20 N floor is the T-F-12 pull-check value and is provisional pending an operator ruling; (7) deflection recorded | T_s; bonded foot (option B) or drilled foot (option D, operator approval, §1.4) | After T-K-04; before T-K-19 and any drive | IC-independent |
-| T-K-19 | Check retention on the road, where no vibration specification exists (§1.7, item 14) | Vehicle; IMU if available; MOHM. Steps: baseline T-K-17 and photographs; a first attended 10 min drive with P5 held LOW (charger inhibited), to separate mechanical from electrical effects; then inspections after 1 h and 5 h of cumulative driving: header joints or socket seating, foot bonds (loupe on the bond edge for a mask lift or a crack; each foot screw checked at T_s without loosening, and it must not turn), staked L501, tap-lead strain relief, polyimide chafe and coating cracks (the T-F-12 items); re-run T-K-17; read the FR-51 event count | Contact resistance within 20 % of the baseline (proposed, TODO(operator ruling)); zero `bat_path_fault` events; no visible movement, chafe or crack; no mask lift at a foot bond and no foot screw that turns at T_s | Retention adequacy; option S for a frozen revision; the inspection interval (the 6-month class of T-C-12 and T-F-17) | After T-K-17, T-K-18 and T-F-12; the first drive before T-G-01; repeats at the chosen interval | IC-independent |
+| T-K-17 | Measure the header contact resistance and the retention of the CCB | CCB on the vehicle MB (option K or S); MOHM; SCALE. Steps: (1) 4-wire from the MB pad to the CCB pad on pins 4, 10, 14, 15, 18 and 19; (2) option K only, foot screws removed: axial pull-out force by SCALE, then re-seat; (3) mating cycles logged; (4) apply the T-F-11 12 A brake and the 3.1 A burst; measure the MB-pad-to-CCB-pad voltage on pins 4, 14 and 15; divide each voltage by the step-(1) resistance of that pin | Each power contact <= the socket or header datasheet contact resistance (TODO(verify: chosen part datasheet)); within each pair (18/19, 14/15) the resistance ratio <= 1.5, which is the 60/40 sharing basis of the >= 2.0 A per-pin rating (Table 1.13, [WD] A.8 r6); pull-out force recorded (retention is credited to the foot screws, §1.7.2 item 1); step (4): pin 4 <= 3 A and pins 14 and 15 <= 2.0 A each, including MB ground current that the CCB plane carries (Table 1.13, §1.13.3) | Option S or K for the vehicle; the header drop that enters the FR-51 threshold | After T-K-04; repeated after each T-K-19 interval. r2: T-K-19 is not applicable (testbench); repeat step (1) after every 10 mating cycles and after each removal of the CCB, with the 20 % drift record of T-K-19 as the proposed limit (OT-1). The r2 tall pins add 0.66-1.47 mOhm per pin at H_u 5-8 mm ([TS] §(a)), which the step-(1) reading includes | IC-independent |
+| T-K-18 | Verify the overhang support | Two nylon M3 spacers bonded at (23.20, 70.64) and (32.20, 70.64) (§1.4), cured per the adhesive datasheet; one sacrificial spacer bonded with the same adhesive and cure to a scrap FR-4 board with solder mask (TODO(verify: mask equivalent to the MB)); torque driver; SCALE; feeler gauge; no threadlocker (§1.7.2 rule 2). Steps: (1) on the sacrificial spacer, increase the torque on the hex in steps until the bond breaks, and record the breakaway torque T_b; (2) set T_s at or below T_b / 2 (proposed, TODO(operator ruling)) and within the screw rating (TODO(verify: nylon M3 screw datasheet)); (3) on the MB feet, ten fit-and-remove cycles of each foot screw at T_s, with the spacer hex held; (4) with the screw removed, T_s applied to each spacer hex by the torque driver for 10 s; (5) with both screws tight at T_s and the gap pad fitted if used, feeler between the header body and its seat; (6) axial pull for 10 s on each foot of max(20 N, F_pad), where F_pad is the gap-pad compression force at the fitted thickness (§3.7.4; 0 N without a pad); (7) deflection of the tab corner (38.90, 76.40) under 1.2 N | (1)-(2) T_b and T_s recorded; (3)-(4) no bond movement, no mask lift and no crack after the cycles and the torsion hold; (5) header still seated (no gap > 0.05 mm, proposed); (6) no bond movement and no crack; the pull is at least 2 x the per-foot gap-pad load (F_pad / 2) and about 16 x the 1.2 N load of a 12 g board at 10 g (§1.7.1); the 20 N floor is the T-F-12 pull-check value and is provisional pending an operator ruling; (7) deflection recorded. **r2 (testbench, tall stack):** the load case is handling, probing and repeated insertion, not vibration (operator statement, 2026-11-10); the 1.2 N case of a 12 g board at 10 g is a record. The spacers are of length H_u (5.1-8.1 mm, §1.4), so steps (1)-(4) use a spacer of the chosen H_u; a lateral force F at the CCB gives a bond moment F x H_u, 2.0-3.2 times the r1 value at H_u 5-8 mm ([TS] §(e)). Step (5) has no gap pad (§3.7.4 superseded), so F_pad = 0 N in step (6). The 20 N floor is about 1.8-2.2 x the 9.3-11.1 N per-foot reaction of a 10 N upward pull at the tab edge ([TS] §(e): 18.6-22.1 N on the two feet, both clamp lines). Added step (8): with both screws tight, a 10 N force at the tab edge (38.90, 76.40), up, down and sideways; pass: no bond movement, header still seated, deflection recorded against the [TS] §(e) value of 0.0104-0.0133 mm with the feet | T_s; bonded foot (option B) or drilled foot (option D, operator approval, §1.4); r2: the spacer length | After T-K-04; before T-K-19 and any drive (r2: before T-K-12 and any drive cycle) | IC-independent |
+| T-K-19 | Check retention on the road, where no vibration specification exists (§1.7, item 14). **r2: T-K-19 is not applicable (testbench).** The vehicle does not move, so no road vibration acts on the CCB (operator statement, 2026-11-10). The row above is the r1 record. Retention matters only for handling and repeated insertion, which T-K-17 (repeat after mating cycles) and T-K-18 step (8) cover. The visual items (foot bonds, staked L501, tap-lead strain relief, polyimide chafe, coating) stay in the 6-month T-C-12 / T-F-17 inspection class | Vehicle; IMU if available; MOHM. Steps: baseline T-K-17 and photographs; a first attended 10 min drive with P5 held LOW (charger inhibited), to separate mechanical from electrical effects; then inspections after 1 h and 5 h of cumulative driving: header joints or socket seating, foot bonds (loupe on the bond edge for a mask lift or a crack; each foot screw checked at T_s without loosening, and it must not turn), staked L501, tap-lead strain relief, polyimide chafe and coating cracks (the T-F-12 items); re-run T-K-17; read the FR-51 event count | Contact resistance within 20 % of the baseline (proposed, TODO(operator ruling)); zero `bat_path_fault` events; no visible movement, chafe or crack; no mask lift at a foot bond and no foot screw that turns at T_s | Retention adequacy; option S for a frozen revision; the inspection interval (the 6-month class of T-C-12 and T-F-17) | After T-K-17, T-K-18 and T-F-12; the first drive before T-G-01; repeats at the chosen interval | IC-independent |
+| T-K-20 | Decide the r2 thermal design: the fan-on junction temperature and the fan-off guard; measure the real h and gap flow (r2, new) | Vehicle MB on the testbench, CCB fitted at the chosen H_u (M3), FAN at the low-y inlet (§1.2.3), ANEMO, TC6, firmware with FR-50 and the starting thresholds of §5.6. Thermocouples (M16): U501 top (T_J is about T_top + psiJT 0.5 C/W x P_IC, about +1.2 C at 2.31 W, [DS] §6.4), the PGND pour beside U501, L501, the MB surface under the cell, the pin-18 MB-side joint, the inlet air, the outlet air at y 67.14 and at the tab end y 76.40; TDIE over I2C. Charger from a bench current source in the regen image. Steps: (1) fan on: air velocity at the inlet edge, in the gap at the inlet, at mid-body and at both outlets, and about 5 mm above the CCB top (M15); fan voltage and current; (2) fan on: 2.7 W and 2.9 W points to steady state (rise < 1 C in the last 5 min); (3) stop the fan at the 2.7 W point; log TDIE, the derate and trip instants and the CCB heating curve; continue for 30 min or more, or until the FR-50 trip (30 min is about 6-11 x the 164-303 s lower-bound time constant, [LC] §8.7); (4) repeat step (3) at the 2.08 W derate image (ICHG 2.50 A); (5) restart the fan and log the recovery | (2) TDIE <= 100 C at 2.9 W with the fan on, at the measured room air (M17) and with 2 m/s or more in the gap and over the top (M15), and TREG_STAT 0 ([DS] Table 7-38); gap-only flow gives 88-115 C at 2.9 W ([LC] §8.6); the [LC] §8.6 model gives 78-90 C on a 25 C bench at g 5 mm and 2 m/s over both sides; (1)-(2) the measured R_total = (T_CCB - T_air) / P and the derived h are recorded against the [LC] §8.6 band (9.8-14.2 C/W at g 5 mm, 2 m/s), and the outlet air rise against the 10.1 C upper bound at g 5 mm, 2 m/s ([LC] §8.6c); (3)-(4) FR-50 derates and then trips before TREG_STAT sets (TREG default 120 C) and before TSHUT (150 C) ([DS] §6.5); the model gives 104-142 C at 2.7 W and 86-116 C at 2.08 W fan-off at g 5 mm on a 25 C bench ([LC] §8.7), so the trip, not the derate, must act; (5) charging resumes only by the FR-50 latch rules (§5.6) | `CHG_TDIE_DERATE_C` (starting value about 95 C) and `CHG_TDIE_TRIP_C` (about 105-110 C), TODO(calibrate); the fan, its duct and the capture fraction (30-50 % assumed, [LC] §8.9); H_u within 5-8 mm (§1.3.2 rule 3); the U501 heatsink (DNP, §3.7.4a), fitted if the fan-off case exceeds the trip margin or the fan-on case fails; verdict condition 3 | After T-K-13; with T-K-14 (its fan-on leg); before T-K-15, T-F-04 and the T-G group. An optional pre-run on FIX1 with FAN gives early values | Mixed (method IC-independent; TDIE, TREG and loss BQ25798-specific) |
 
 ### 6.5 Ordering
 
@@ -3437,13 +3990,19 @@ Every round-3 ordering rule of [WD] §0.2 and D.1 stays in force. Table 6.2 list
 | T-F-08 | Any FC window with traction load | [WD] §0.2 item 6 | Unchanged |
 | T-E-01, T-F-07, T-F-07b | `PURGE_RESCUE_ENABLED 1` | [WD] §0.2 item 5 | Unchanged |
 | T-E-13 | T-F-14 and VREG 8.40 V | [WD] T-E-13 | Unchanged |
-| T-B-19 and T-E-11 | ICHG 3.10 A image | [WD] §0.2 item 4 | T-K-14 also bounds it |
+| T-B-19 and T-E-11 | ICHG 3.10 A image | [WD] §0.2 item 4 | T-K-14 also bounds it; r2: T-K-20 with the fan on |
 | T-C-12, T-F-17 | Repeat every rebuild and every 6 months | [WD] T-C-12, T-F-17 | Unchanged |
 
 #### 6.5.2 Sequence
 
 The CCB adds three ordering facts. First, T-K-01 and T-K-02 must run while the Ag105 is still fitted. Second, the interlock
 logic is proven on stage 1 before the power stage is fitted. Third, the same-board coupling tests gate the vehicle.
+
+r2 changes the sequence in three places (operator statement, 2026-11-10). First, T-K-02 is record only, so phase 0 no
+longer holds a thermal gate; the h_s, M5, M7 and M8 records of T-K-01 still need the fitted Ag105. Second, M15 (fan
+delivery) runs on the 1:1 template before layout and again on the built CCB; T-K-20 and T-K-14 run together in phase 5
+and gate T-K-15. Third, T-K-19 is not applicable, so phase 6 has no road-retention step; T-K-17 repeats after mating
+cycles instead.
 
 1. **Phase 0, vehicle as it is (Ag105 fitted):** T-K-01, T-K-02, T-A-01, T-A-01b, T-A-01c, T-A-06c and the T-E group
    (T-E-04 first among the T-B prerequisites; T-E-09 decides R525 or R526; T-E-11).
@@ -3455,9 +4014,11 @@ logic is proven on stage 1 before the power stage is fitted. Third, the same-boa
    T-D group (FI1 for T-D-03, T-D-06 and T-D-11; T-D-02 case (a) only after T-W-01), T-K-16, and the bench parts of T-W-01
    and T-W-02.
 6. **Phase 5, vehicle fit:** PM1 only after phases 3-4 pass; T-F-01; T-K-04; fitting; T-K-17; T-K-18; T-F-12; T-K-12;
-   T-K-13; T-K-14; T-K-15; T-A-07 hot-site point; T-F-02; T-F-03; T-F-04c; T-F-05; T-F-11; T-F-13 to T-F-17.
+   T-K-13; T-K-14 with T-K-20 (r2); T-K-15; T-A-07 hot-site point; T-F-02; T-F-03; T-F-04c; T-F-05; T-F-11; T-F-13 to T-F-17.
 7. **Phase 6, FC windows and road:** T-K-19 first drive (P5 LOW); T-W-01 on the vehicle; T-F-08; then T-F-04, T-F-04b,
-   T-F-06, T-F-07, T-F-07b, T-F-09 and the T-G group in the round-3 order; T-K-19 repeats at its interval.
+   T-F-06, T-F-07, T-F-07b, T-F-09 and the T-G group in the round-3 order; T-K-19 repeats at its interval. r2: phase 6
+   runs on the testbench, and its drives are drive cycles (§6.4.4). T-K-19 is not applicable (testbench). Its two
+   positions in this list are records only.
 
 #### 6.5.3 Option: early IC-behaviour tests on a stock EVM
 
@@ -3473,8 +4034,8 @@ Table 6.3 groups the new tests by label, so that the parallel IC search can take
 
 | Label | New tests |
 |---|---|
-| IC-independent | T-K-01, T-K-02, T-K-03, T-K-04, T-K-13, T-K-17, T-K-18, T-K-19; the methods of T-K-09 and T-K-14 |
-| BQ25798-specific | T-K-06, T-K-07, T-K-08, T-K-10; the TDIE detection of T-K-15 |
+| IC-independent | T-K-01, T-K-02, T-K-03, T-K-04, T-K-13, T-K-17, T-K-18, T-K-19 (r2: not applicable, testbench); the methods of T-K-09, T-K-14 and T-K-20 (r2) |
+| BQ25798-specific | T-K-06, T-K-07, T-K-08, T-K-10; the TDIE detection of T-K-15; the TDIE and TREG criteria of T-K-20 (r2) |
 | Mixed | T-K-05 (values are BQ25798-specific, the method is not), T-K-11, T-K-12, T-K-16 |
 
 For another IC, T-K-07 keeps its method with that IC's switch-node and bootstrap absolute maxima. T-K-08 keeps its method if
@@ -3492,6 +4053,9 @@ the IC uses one external inductor. T-K-10 is rewritten for that IC's control pin
 4. **Calculations:** the TODO(calc) items of T-K-05 (expected in-circuit resistances, logic quiescent budget), T-K-06 step
    (1), T-K-09 step (5), T-B-03 (H.4 levels) and T-F-13 (CCB R_path band) all come from one re-run of `r3_calc.py` and
    [CALC] with the CCB values (O-11).
+5. **Calculations (r2):** the T-C-04 records need the OUT copper inductance from U301 OUT to the C511/C512 short. It
+   comes from the capture. They also need the D307 energy at the ideal turn-off current of up to 117 A ([TS] §(c); N-25). T-F-16 and T-K-20 need
+   the pin-18 joint temperature with forced air ([LC] §8 does not compute it). TODO(calc).
 
 ## 7. Comparison with Path A and Path B, and the review-finding ledger
 
@@ -3543,11 +4107,12 @@ The citation keys of this section are defined in section 9.
 | AS-2 | Firmware effort for Path A is 30-45 engineer-days, as [EVAL] 7 estimates (marked UNVERIFIED there) | [EVAL] 7 |
 | AS-3 | Path A-C adds FR-50, FR-51 and the scope edits of §5.3: 1-3 engineer-days (ESTIMATE) | §5.3, 5.6 |
 | AS-4 | Path A bench effort is at least the round-2 plan: S1 4-6, S2-S3 3-4, S4 2-3, S4-H20/S5 2-3 days, total 11-16 days. Round 3 grew the registry to 112 tests and recorded no new figure, so 11-16 days is a floor | [EVAL] 7; [WD] I |
-| AS-5 | Path A-C adds 19 T-K tests and modifies 21 round-3 tests: +4-8 bench days (ESTIMATE) | §6.2, 6.4 |
+| AS-5 | Path A-C adds 19 T-K tests and modifies 21 round-3 tests: +4-8 bench days (ESTIMATE). r2: 20 T-K tests (T-K-20 added; T-K-19 not applicable on the testbench; T-K-02 record only); the bench-day figure is unchanged (7.1.2, r2 note) | §6.2, 6.4 |
 | AS-6 | The B1 design figure of 2-4 engineer-weeks covers the charger block only; the round-2 rulings add the interlock, which this section books at the CR design figure of AS-7 | [PB] 2.6; [EVAL] line 961 |
 | AS-7 | CR capture and layout 50-90 h, EIB 10-20 h, review preparation 0-10 h (ESTIMATE). The netlist exists ([WD] B.8), so the work is capture, placement and routing of a double-sided 4-layer logic board at 74 % courtyard use | [WD] H.18b, PM0 |
 | AS-8 | The PCB fab-plus-ship time is 2-3 weeks for every path, and turnkey assembly adds 1-3 weeks. These are the only lead-time figures in the sources; they are round-1 estimates | [PB] 2.6 |
 | AS-9 | No source gives the probability of a first-pass layout failure. This section books one re-spin of the CCB as a planning contingency, not as a prediction. The contingency is outside the base figures: 3-6 weeks (AS-8 fab plus the PCBA cycle), USD 95-370 plus parts (Table 7.2) and about 26-62 h (ESTIMATE: re-assembly 10-22 h, layout correction 8-24 h, stage-1 and stage-2 re-bring-up T-K-05 to T-K-08 8-16 h). Tables 7.1 and 7.3 and the 7.1.8 summary list it in a separate row | 7.1.6 |
+| AS-10 | r2: the vehicle is a stationary testbench that drives flywheels, a fan may be mounted on the CCB, and the CCB has no height restriction (operator statement, 2026-11-10). Path A has the same testbench; its EVM, CR and EIB need no fan decision in the sources, and none is priced here | §0.9 r2; §1.6.3 |
 
 #### 7.1.2 Effort (Mixed)
 
@@ -3566,7 +4131,19 @@ Table 7.1 gives the effort in hours. Every row is an ESTIMATE unless a source is
 | Total with one re-spin | 431-698 h | 512-884 h | as above | as above | Total plus the contingency row |
 
 Path A-C costs about 70-155 h more than Path A. The power cell, the area reduction and the T-K tests account for the
-difference. The firmware dominates every path: it is about 54-58 % of the Path A total and 47-51 % of the Path A-C total.
+difference.
+
+r2 changes the Path A-C rows by the deltas below. Each delta is an ESTIMATE without a source, like the hours of
+Table 7.1 (C-1):
+
+- the fan bracket, the duct and the gap rule add about 4-8 h of design;
+- T-K-20 and the M15 velocity survey add about 8-16 h of bench work;
+- T-K-19 (a first drive and two inspections, about 6-12 h) is not applicable, so its hours are removed;
+- the T-K-02 heater step (about 4-8 h) becomes optional.
+
+By interval arithmetic, the net change is -8 to +14 h if the heater step is dropped, and 0 to +18 h if it is kept.
+The largest value, +18 h, is 3.7 % of the 486 h lower total. This is inside the spread of the r1 estimates, so the
+totals of Table 7.1, the 7.1.8 summary and Table 7.3a stay as in r1. The firmware dominates every path: it is about 54-58 % of the Path A total and 47-51 % of the Path A-C total.
 
 #### 7.1.3 Cost (Mixed)
 
@@ -3574,15 +4151,15 @@ Table 7.2 compares the cash cost. The figures come from section 4 and the record
 
 | Item | Path A | Path A-C | Path B1 | Path B2 |
 |---|---|---|---|---|
-| Recorded parts total | about USD 505-540, including 2 x BQ25798EVM at the verified USD 156.45 ([EVAL] 0.1a; [WD] E) | Two populated boards (build 2): USD 422-472 hand, USD 497-697 with PCBA (§4.5.2) | about USD 1-2k for 5 boards ([PB] 2.6, ESTIMATE, round 1) | about USD 2-4k over 1-2 spins ([PB] 3.3, ESTIMATE) |
-| Representative build for the test plan | One CR + EIB build; a fault-injection build is not priced, TODO(verify: [WD] T-C-05 build count) | Four populated boards (vehicle, spare, FI1, LOOP1, §6.1.4), build 4: USD 600-650 hand, USD 675-875 PCBA (§4.5.2). The LOOP1 layout variant is not included: a separate fab lot adds USD 70-120 (§4.4.1); a wire-bridge pad option on every board adds SW-node copper and a joint in the L501 path, TODO(analysis: SW-node area, T-K-07 ringing on the production board). The choice is A-4 (§6.7 item 2) | as above | as above |
+| Recorded parts total | about USD 505-540, including 2 x BQ25798EVM at the verified USD 156.45 ([EVAL] 0.1a; [WD] E) | Two populated boards (build 2): USD 470-520 hand, USD 545-745 with PCBA, including the r2 bench fan (§4.5.2) | about USD 1-2k for 5 boards ([PB] 2.6, ESTIMATE, round 1) | about USD 2-4k over 1-2 spins ([PB] 3.3, ESTIMATE) |
+| Representative build for the test plan | One CR + EIB build; a fault-injection build is not priced, TODO(verify: [WD] T-C-05 build count) | Four populated boards (vehicle, spare, FI1, LOOP1, §6.1.4), build 4: USD 652-702 hand, USD 727-927 PCBA (§4.5.2). The LOOP1 layout variant is not included: a separate fab lot adds USD 70-120 (§4.4.1); a wire-bridge pad option on every board adds SW-node copper and a joint in the L501 path, TODO(analysis: SW-node area, T-K-07 ringing on the production board). The choice is A-4 (§6.7 item 2) | as above | as above |
 | Verified share | USD 312.90 (EVMs) | USD 101.94 of build 2 (TI silicon) (§4.5.2) | none | none |
 | Re-spin contingency (AS-9) | CR/EIB lot: allowance USD 70 ([WD] E) plus logic parts | USD 95-370 (PCB 70-120, plus the stencil 25 by hand or PCBA 100-250 including the stencil, §4.4.1-4.4.3) plus parts | included in the [PB] range | included in the [PB] range |
 | Optional IC-behaviour EVM (§6.5.3) | already present | USD 156.45 (161 in TI stock on 2026-11-10, §4.2) | optional | optional |
 
-On the recorded allowances, Path A-C at two boards is USD 33-118 below Path A with hand assembly. With PCBA it is between
-USD 43 below and USD 192 above Path A (§4.5.3; full spans, §7.0.4 item 5). The test plan needs four boards (build 4). At
-four boards, Path A-C is USD 60-145 above Path A with hand assembly and USD 135-370 above it with PCBA. These deltas exclude
+On the recorded allowances, Path A-C at two boards is between USD 70 below and USD 15 above Path A with hand assembly.
+With PCBA it is USD 5-240 above Path A (§4.5.3; full spans, §7.0.4 item 5). The test plan needs four boards (build 4). At
+four boards, Path A-C is USD 112-197 above Path A with hand assembly and USD 187-422 above it with PCBA. These deltas exclude
 the LOOP1 lot and the unpriced fault-injection build of Path A. The cost case for Path A-C is therefore weak, as §4.5.3
 also concludes. Path B1 costs about two to four times Path A, but it yields five
 new boards and leaves the existing board as a bench and HIL reference ([PB] 5.1).
@@ -3607,6 +4184,11 @@ front of the charger. However, the firmware (6-9 weeks for one engineer) and T-W
 work during the fab wait therefore hides part of that delay at vehicle level. A stock EVM bought for the IC-behaviour subset
 (§6.5.3) would move the first IC data of Path A-C to about 1-3 weeks.
 
+r2 adds the bench fan, its mount and the tall-stack headers and spacers to the Path A-C parts list (§4.5.2). They are
+catalogue parts, and their stock and lead time are TODO(verify: distributor). They are not expected to lengthen the
+critical path, because the PCB fab and assembly take 3-6 weeks (Table 7.3). The M15 velocity survey on the 1:1 template
+runs during the design step.
+
 #### 7.1.5 Risk (Mixed)
 
 Table 7.4 lists the technical risks that separate the paths. Risks common to all paths (purge timing, VESC cut-off, watchdog,
@@ -3618,9 +4200,11 @@ INA253 floor) are in [WD] J and in the ledger of 7.2; they do not discriminate a
 | Hand-built inter-board wiring | 0.3 m leads, a 0.30 m ribbon, 17 physical EVM changes; [EVAL] 6.4 item 5 lists coupled glitches or ground shifts in the hand-wired carrier as a re-spin trigger | None inside the charger chain; taps remain | None | None | I |
 | Assembly of the charger IC | Done by TI | U501: 29 pads (33 lead segments), 0.4 mm pitch, no exposed pad, hidden joints carrying 3.21 A (§4.4.3); PCBA recommended | Turnkey | Turnkey | S |
 | Area | CR 74 % ([WD] H.18b) | 101 % as drawn; 78-86 % after the remedies (§3.2.3) | Free to choose | Free to choose | M |
-| Thermal coupling to the LM1084 | EVM 20 mm or more from the LM1084 on standoffs (§1.6.2) | 2.7 W at 13.4 mm from the LM1084 courtyard over a closed air layer (2.415 mm for option S); T_J about T_MB,0 + 71-86 C (option S, no gap pad) or + 55-72 C (option S, gap pad), including 11-21 C of MB self-heating; option K needs the gap pad (§3.7.2) | Placement by design | Placement by design | M |
+| Thermal coupling to the LM1084 | EVM 20 mm or more from the LM1084 on standoffs (§1.6.2) | r1 record: 2.7 W at 13.4 mm from the LM1084 courtyard over a closed air layer (2.415 mm for option S); T_J about T_MB,0 + 71-86 C (option S, no gap pad) or + 55-72 C (option S, gap pad), including 11-21 C of MB self-heating; option K needs the gap pad (§3.7.2). r2 (testbench, fan): the bench fan blows over the top and through the 5-8 mm gap; T_J - T_air is 49-61 C at 2.7 W (g 5 mm, 2 m/s both sides), that is 74-86 C on a 25 C bench, without a gap pad; T_J moves by 0.15-0.30 C per C of MB idle offset ([LC] §8.6, §8.6b; §3.7.3a). The outlet air leaves away from the LM1084 (§1.2.3) | Placement by design | Placement by design | M |
 | Battery current through header pins | CR pins 18/19 and 14/15 carry 3.21 A ([WD] A.8) | Same pins, same current; pin rating TODO(verify); option-K socket contacts add an estimated 74-116 mW each at an assumed 20 mOhm (§3.3.2) | Copper on the MB | Copper on the MB | I |
-| Retention on a moving vehicle | EVM on chassis standoffs, leads strain-relieved; CR soldered | 8-12 g cantilever on a socket and two bonded feet; no vibration specification exists (§1.7) | Board mounting as today | as B1 | I |
+| Retention (r1 title: on a moving vehicle; r2: handling and repeated insertion on the testbench) | EVM on chassis standoffs, leads strain-relieved; CR soldered | r1 record: 8-12 g cantilever on a socket and two bonded feet; no vibration specification exists (§1.7). r2: not applicable as a road risk (testbench, operator statement, 2026-11-10). Retention remains a handling and repeated-insertion item: a 10 N tab-edge force puts 18.6-22.1 N on the two feet, and the bond moment grows by H_u / 2.54 ([TS] §(e)); T-K-17 and T-K-18 step (8) | Board mounting as today | as B1 | I |
+| Bench fan (r2) | No fan decision in the sources (AS-10) | The design case needs forced air on both sides: fan-off, T_J - T_air is 79-117 C at 2.7 W (g 5 mm), so the FR-50 trip, not the derate, protects U501 ([LC] §8.7). The CCB node time constant of 164-303 s gives the guard minutes to act. The fan supply must not load the LM1084 / CO-5V rail ([LC] §8.10). Fan MPN and curve TODO(verify) | Placement by design; a fan only if needed | as B1 | M |
+| Tall header stack (r2) | CR at the r1 stack height | H_u 5.1-8.1 mm for the fan channel: +0.66-1.47 mOhm per pin; up to +10.8 nH on the pad-10 / pad-4 loop, which moves the hard-short IN peak by 0-0.3 V; a CCB-to-MB ground shift of up to 1.34 V (three pins) during a hard-short turn-off at 8 mm ([TS] §(a)-(d)); header, socket and spacer MPNs TODO(verify) | Not applicable | Not applicable | I |
 | Switching noise next to the interlock | Converter 0.3 m from the comparators | Same ground plane as MOhm comparator nodes; 10 mm separation rule is unsourced (§3.6.1) | Same as A-C, on one board | Same as A-C | M |
 | Risk to the only working board | Ag105 desolder (PM1): solid GND pads on a 1.66 mm board ([PB] 5.1: "Real") | Same desolder; option K then removes all later soldering on the MB | None; creates spares | None | I |
 | Reversibility to the Ag105 | CR soldered in the holes (PM4) | Option K accepts the Ag105 again if the socket takes its 0.64 mm pin, TODO(verify) (§1.3.3) | Old board unchanged | Old board unchanged | I |
@@ -3670,12 +4254,12 @@ both.
 |---|---|---|---|---|
 | Effort (Table 7.1) | 417-666 h | 486-822 h | 564-1048 h | about 990-1730 h |
 | Effort with one re-spin (AS-9, Table 7.1) | 431-698 h | 512-884 h | in the [PB] range | in the [PB] range |
-| Parts cost (Table 7.2) | USD 505-540; fault-injection build not priced | USD 422-697 (2 boards); USD 600-875 (test plan, build 4, without the LOOP1 lot) | USD 1-2k (5 boards) | USD 2-4k |
+| Parts cost (Table 7.2) | USD 505-540; fault-injection build not priced | USD 470-745 (2 boards); USD 652-927 (test plan, build 4, without the LOOP1 lot) | USD 1-2k (5 boards) | USD 2-4k |
 | Re-spin contingency cash (AS-9, Table 7.2) | USD 70 plus logic parts | USD 95-370 plus parts | in the [PB] range | in the [PB] range |
 | First bench charge (Table 7.3) | about 1-3 weeks | about 7-13 weeks | about 10-15 weeks | about 4-6 months ([PB]) |
 | First bench charge with one re-spin (Table 7.3) | unchanged on the modified EVM | about 10-19 weeks | not separated | not separated |
 | Round-3 findings removed at the root (7.2) | - | 29 of 203 | not assessed | not assessed |
-| Dominant hardware risk | Hand-wired leads, ribbon and EVM changes | First-pass power layout, heat beside the LM1084, header current, retention | First-pass power layout on a whole board | Two new power stages |
+| Dominant hardware risk | Hand-wired leads, ribbon and EVM changes | First-pass power layout, heat beside the LM1084, header current, retention (r2: first-pass power layout, header current, dependence on the bench fan with the FR-50 trip as the fan-off guard) | First-pass power layout on a whole board | Two new power stages |
 | Board risk | Ag105 desolder | Ag105 desolder | None | None |
 
 The Path A-C column is the path alone. The sequence that verdict condition 1 requires is in §7.1.9.
@@ -3691,8 +4275,8 @@ Every figure is a sum of rows of Tables 7.1-7.3 and [EVAL] 7, paired as §7.0.4 
 |---|---|---|---|
 | Effort | 486-822 h | 599-1032 h (15.0-25.8 engineer-weeks) | Path A-C total plus the Path A CR + EIB design 60-120 h, assembly 21-42 h and the S1 regen gates 4-6 bench days, that is 32-48 h ([EVAL] 7) |
 | Effort with one re-spin (AS-9) | 512-884 h | 625-1094 h | plus 26-62 h (AS-9) |
-| Parts cost | USD 422-697 (2 boards); USD 600-875 (4 boards) | USD 927-1237 (2 boards); USD 1105-1415 (4 boards) | Path A USD 505-540 in full plus the CCB build (§4.5.2) |
-| Cash with one re-spin | plus USD 95-370 | USD 1022-1607 (2 boards); USD 1200-1785 (4 boards) | Table 7.2 |
+| Parts cost | USD 470-745 (2 boards); USD 652-927 (4 boards) | USD 975-1285 (2 boards); USD 1157-1467 (4 boards) | Path A USD 505-540 in full plus the CCB build (§4.5.2) |
+| Cash with one re-spin | plus USD 95-370 | USD 1070-1655 (2 boards); USD 1252-1837 (4 boards) | Table 7.2; r2 parts totals with the bench fan (§4.5.2). The r1 figures were USD 1022-1607 and USD 1200-1785 |
 | First CCB bench charge | about 7-13 weeks | about 12.5-21 weeks; about 10-17 weeks if the CCB design runs during the Path A fab and assembly wait | Path A CR/EIB cycle 4.5-7 weeks (Table 7.3: design 1.5-3.0, fab 2-3, hand assembly 1), plus the S1 gates about 1 week, plus 7-13 weeks. The overlap subtracts the shorter of the CCB design (2.5-5.1 weeks) and the Path A fab and assembly wait (3-4 weeks) |
 | First CCB bench charge with one re-spin | about 10-19 weeks | about 15.5-27 weeks | plus 3-6 weeks (AS-9) |
 
@@ -3768,6 +4352,15 @@ Table 7.6 states the status of each round-6 finding.
 | 15 | `t-a-05-stale-j101-region-dims` | minor | CLOSED | No J101 (§1.12.2 item 2) | I |
 | 16 | `a6-w2-not-beside-star-pads` | minor | CHANGED | No W2; the battery return reaches pads 14/15 through the plane, in parallel with the MB GND pour, as `ground-loops-parallel-returns`; T-K-17 step (4) measures the pin currents (§1.13.2 item 2; §1.13.3) | I |
 
+r2 note on key 4 (`tc04-in-spike-criterion-omits-mb-vchgin-ratings`). The tall-stack check found that the IN-side
+transient changes on the CCB, because the 150 nH W1/W2 lead is gone (N-25; [TS] §(c)). The eFuse IN-side parts and the MB
+VCHG-IN end are unchanged, but the criterion must be re-verified with the CCB values. By the rule of 7.2.1, the status of
+this key is therefore CHANGED. Revision r2 proposes the change and does not apply it. Table 7.6, the counts of Table 7.5
+and Appendix 7.A keep the r1 status until the next review round confirms it and [LEDG] regenerates the ledger.
+TODO(edit: [LEDG], key 4 of round 6 to CHANGED). The change would move one major from KEPT to CHANGED (totals 29 / 39 /
+135). No other ledger status changes in r2. The testbench facts remove no root cause of a round 1-6 finding: they act on
+the CCB-specific items N-05, N-08, N-09 and N-24 and on the tests.
+
 #### 7.2.4 Rounds 1-5 (Mixed)
 
 The full table of all 203 keys, with the status and the reason for each, is Appendix 7.A. The items below are the rounds 1-5
@@ -3800,7 +4393,8 @@ keys whose status differs from the [STUDY] CB column or that carry most of the C
    ([EVAL] 0.1a). This is KEPT for every part of the CCB that carries round-3 content.
 2. Review run 001 found 22 verified findings in sections 0-9 (8 major, 12 minor, 2 nit; no blocker), and revision r1
    applies them (§0.9). One round does not show convergence: the round-3 history found 16 verified findings in its sixth
-   round. A further review round on revision r1 is therefore required before any order. The number of rounds it needs is
+   round. A further review round on revision r1 is therefore required before any order. Revision r2 (§0.9) applies the
+   testbench facts of the operator statement, 2026-11-10, and is not reviewed; the further round applies to r2. The number of rounds it needs is
    not predictable from the sources.
 3. Of the pre-round-1 self-review passes, P2-1 (LVC edge rate behind EIB RC filters), P3-1 (designator collisions with the EVM)
    and P3-6 (EVM JP7 on micro-USB) are CLOSED by the CCB. The other passes are KEPT ([STUDY] 3.2).
@@ -3816,11 +4410,11 @@ result. Each row names the test or open item that decides it.
 | N-02 | Loss of TI's validated EVM: the SLUSDV2C efficiency and thermal behaviour apply to the CCB only as far as its layout matches; the loss above VBUS 20 V is unmeasured | major | L-8; T-K-14 | S |
 | N-03 | Hand or PCBA assembly of the RQM package: hidden joints at 0.4 mm pitch carry 3.21 A; X-ray availability unknown; a bridge between adjacent pins can overstress ILIM_HIZ (7.38-8.38 V against 6 V) or the bootstrap pins (Table 2.6b) | major | §2.3.2, §4.4.3, B-7; T-K-06 step (1) gate in both assembly options | S |
 | N-04 | Area: 1532 mm² against 1514 mm² usable (101 %; 103 % with the battery-path corridor reserved); the remedies need 0402 logic passives, rect A' (H_u >= 2.75 mm) or the deletion of DNP options. In addition, the power-cell sketch overlaps the header keep-out and Z-E when rotated into place. The route of the 3.5 A VCHG path to pins 18/19 past L501 is not chosen; Table 3.5 books its area only. The DNP filter footprints C336, C337 and C453 add 13 mm² (about 6 mm² as 0402), which [LC] §6 does not book. With them, the utilisation is 102 % as drawn and 104 % with the corridor (§3.2.3). The 10 mm separation class does not fit the top side (§3.6.1) | major | L-1, L-11, L-12, L-13; capture DRC | M |
-| N-05 | Thermal coupling: about 2.7 W at 13.4 mm from the LM1084 courtyard; T_J about T_MB,0 + 71-86 C (option S, no gap pad), including 11-19 C of MB self-heating; the 100 C target fails above T_MB,0 of about 14-29 C without the gap pad and 28-45 C with it (option S); option K needs the compressed gap pad (16-35 C at h_k 3.0 mm, k 3) and h_k <= 5.0 mm | major | T-K-02 (with the heater step), T-K-14; FR-50; §3.7.3 | M |
-| N-06 | The LM1084 ambient rises because of the CCB; its junction margin is unmeasured | major (uncert.) | T-K-02, T-K-14; OT-4 | I |
-| N-07 | Header and socket current: one VIN+ pin and one input-return pin at <= 2.41 A; pins 18/19 at 1.93 A / 1.28 A on a 60/40 split; pin and socket ratings unverified; the round-3 pin-18 joint rise limit < 20 C fails without a gap pad (T_MB,local + 20-26 C, option S), so the modified T-F-16 uses an absolute joint limit | major | O-10; §3.7.6; T-A-05, T-K-17, T-F-16 | I |
-| N-08 | Retention on a moving vehicle: no vibration specification; socket fretting; FR-51 detects an open battery path but does not prevent it; FR-51 is blind for a pack OCV within `CHG_VBAT_OPEN_V` of VREG (FR-51 item 6) | major | T-K-17 to T-K-19; FR-51 | I |
-| N-09 | Overhang support: two nylon feet bonded to solder mask; adhesive shear strength and the solder-mask-to-copper adhesion unverified; foot-screw torque T_s unset and no threadlocker permitted (§1.7.2 rule 2); torsion, refit-cycle and gap-pad load cases added to T-K-18; option D needs a new MB hole and operator approval | minor | T-K-18, T-K-19; §1.4 | I |
+| N-05 | Thermal coupling (r1 record, superseded in r2 by the bench fan): about 2.7 W at 13.4 mm from the LM1084 courtyard; T_J about T_MB,0 + 71-86 C (option S, no gap pad), including 11-19 C of MB self-heating; the 100 C target fails above T_MB,0 of about 14-29 C without the gap pad and 28-45 C with it (option S); option K needs the compressed gap pad (16-35 C at h_k 3.0 mm, k 3) and h_k <= 5.0 mm. r2: with forced air over the top and through the 5-8 mm gap, T_J - T_air is 49-61 C at 2.7 W (g 5 mm, 2 m/s), that is 74-86 C at 2.7 W and 78-90 C at 2.9 W on a 25 C bench, without a gap pad; T_MB,0 is record only ([LC] §8.6; §3.7.3a). The fan-off case is N-26 | major | r2: T-K-20 with T-K-14; FR-50; §3.7.3a (r1: T-K-02 with the heater step, T-K-14; §3.7.3) | M |
+| N-06 | The LM1084 ambient rises because of the CCB; its junction margin is unmeasured. r2: the fan air flows along +y and leaves away from the LM1084 (§1.2.3); a fan powered from the LM1084 rail would add 0.12-0.68 W and +5 to +27 C to its junction, so the fan has its own supply ([LC] §8.10) | major (uncert.) | T-K-02 (r2: record only), T-K-14; OT-4 | I |
+| N-07 | Header and socket current: one VIN+ pin and one input-return pin at <= 2.41 A; pins 18/19 at 1.93 A / 1.28 A on a 60/40 split; pin and socket ratings unverified; the round-3 pin-18 joint rise limit < 20 C fails without a gap pad (T_MB,local + 20-26 C, option S), so the modified T-F-16 uses an absolute joint limit. r2: the tall pins add 0.66-1.47 mOhm and up to 5.5 mW per pin at H_u 5-8 mm ([TS] §(a)); the pin-18 joint with forced air is TODO(calc) | major | O-10; §3.7.6; T-A-05, T-K-17, T-F-16 | I |
+| N-08 | Retention (r1 title: on a moving vehicle; r2: the road and vibration part is not applicable on the testbench, operator statement, 2026-11-10; socket fretting from repeated insertion and the FR-51 items stay): no vibration specification; socket fretting; FR-51 detects an open battery path but does not prevent it; FR-51 is blind for a pack OCV within `CHG_VBAT_OPEN_V` of VREG (FR-51 item 6) | major (r2: minor, proposed) | T-K-17 to T-K-19 (r2: T-K-17, T-K-18 step (8); T-K-19 not applicable); FR-51 | I |
+| N-09 | Overhang support: two nylon feet bonded to solder mask; adhesive shear strength and the solder-mask-to-copper adhesion unverified; foot-screw torque T_s unset and no threadlocker permitted (§1.7.2 rule 2); torsion, refit-cycle and gap-pad load cases added to T-K-18; option D needs a new MB hole and operator approval. r2: the feet are tall spacers of length H_u (5.1-8.1 mm); a lateral force gives a bond moment 2.0-3.2 times the r1 value, and a 10 N tab-edge pull puts 18.6-22.1 N on the two feet ([TS] §(e)); the gap-pad load case is gone; handling replaces vibration | minor | T-K-18 (r2: with step (8)), T-K-19 (r2: not applicable); §1.4 | I |
 | N-10 | Switching noise on the shared plane at high-impedance comparator nodes (6.49-10 MOhm, and the unfiltered 312 kOhm N_FNP / N_RNP and 506 kOhm N_CSP with DNP filters C336, C337 and C453), the heartbeat monostable and the QUAL one-shot; the 10 mm rule is unsourced, and only 32.7 mm² of top-side Z-Q meets it (§3.6.1) | major | T-K-09, T-K-10; L-9, L-13; T-A-06 | M |
 | N-11 | Charger control pins (ILIM_HIZ, /CE, TS) beside the switch nodes: a coupled glitch could release the converter | major | T-K-10 | S |
 | N-12 | Switch-node coupling into MB nets under the CCB (MPPT-DISABLE pin 5 at y 64.48, CB-DISABLE pin 9) and into the OP-FC droop chain | major | T-K-13; L4 shield rule (§3.1.1) | M |
@@ -3835,7 +4429,10 @@ result. Each row names the test or open item that decides it.
 | N-21 | Re-spin coupling: a power-stage error forces a re-fab of the interlock logic too; Path A could re-spin the CR alone | minor | 7.1.6 | I |
 | N-22 | Test infrastructure: FIX1, FI1, LOOP1 (a layout variant) and a >= 500 MHz scope probe set | minor | §6.1.4, OT-2 | M |
 | N-23 | Conformal coating over copper above 100 C; MB probe points under the CCB lost while it is fitted | minor | §3.8 item 5, 3.9.3 | I |
-| N-24 | Envelope and reversibility: H_env above rect A unmeasured; the Ag105 plug-back depends on the socket's accepted pin range | minor | T-K-01, T-K-04; §1.3.3 | I |
+| N-24 | Envelope and reversibility: H_env above rect A unmeasured; the Ag105 plug-back depends on the socket's accepted pin range. r2: the envelope part is not applicable (no height restriction, operator statement, 2026-11-10); the reversibility part stays, now with an elevated socket of h_k 2.6-5.6 mm (§1.3.4) | minor | T-K-01 (r2: record only), T-K-04; §1.3.3 | I |
+| N-25 | r2: the IN-side transient is not unchanged on the CCB (§1.11.2 item 4 of r1 is incorrect). Without the 150 nH W1/W2 lead, 5-20 nH of OUT copper raises the ideal hard-short turn-off current from 65 A to 103-117 A and the ideal U301 IN peak from 32.8 V to 35.5-40.0 V; at 10-20 nH it exceeds the D307 VBR minimum of 36.7 V, so D307 conducts. The margins to the 60 V T-C-04 criterion and the 67 V U301 maximum stay; the MB end stays at about 20 V. The tall stack adds 0-0.3 V. D307 energy and the OUT copper inductance are TODO(calc); the real TPS26630 hot-short current is TODO(verify: SLVSE94G) ([TS] §(c)) | minor (uncert.) | T-C-04 records (a)-(b); T-A-05 (D307 energy); §6.7 item 5 | I |
+| N-26 | r2: the thermal design depends on the bench fan. With the fan off at g 5 mm on a 25 C bench, T_J is 104-142 C at 2.7 W and 86-116 C at the 2.08 W derate image, so the FR-50 trip, not the derate, must act before TREG (120 C) and TSHUT (150 C) ([LC] §8.7; [DS] §6.5). The fan MPN, airflow curve, duct capture (30-50 % assumed) and the real gap velocity are unknown; the fan must not load the LM1084 / CO-5V rail; the fan-motor noise at the MB analog nets is TODO(measure) | major | T-K-20, M15, M16; T-K-15; FR-50; §1.6.3; T-K-12 and T-K-13 fan-on / fan-off (§6.4.4) | M |
+| N-27 | r2: the tall header stack. Header, socket and spacer classes for H_u 5.1-8.1 mm have no verified MPN, seat height or withdrawal force; the CCB-to-MB ground shift at a hard-short turn-off rises to 0.08-1.34 V (three pins) at H_u 5-8 mm ([TS] §(d)); a taller cantilever flexes when cables are plugged or the board is probed | minor | T-C-04 record (c); T-K-11 step (5); T-K-17; T-K-18 step (8); O-10, B-8 | I |
 
 Note that N-11 also exists in part on Path A. Path A has the same control pins, but on the EVM, 0.3 m from the comparators,
 inside TI's layout.
@@ -3848,14 +4445,16 @@ Path A-C removes the root cause of 29 of the 203 round-3 findings, including the
 physical EVM modifications, the 0.3 m leads, the ribbon and the EIB. It gives a compact installation that plugs into the MB
 and can be withdrawn without heat on the MB.
 
-However, Path A-C keeps 136 findings and changes 38, and it opens about 24 new items. It replaces a TI-built power stage with a
+However, Path A-C keeps 136 findings and changes 38, and it opens about 27 new items (N-01 to N-27; r2 adds N-25 to
+N-27). It replaces a TI-built power stage with a
 first-pass layout of a 0.4 mm-pitch package at 101 % area use as drawn. It dissipates about 2.7 W at 13.4 mm (power cell edge) from the courtyard of the hot
-LM1084 under a closed air layer. It carries 3.21 A through header pins of unverified rating on a vehicle with no vibration
-specification. It costs about 70-155 h more effort than Path A and delays the first bench charge from about 1-3 weeks to about
+LM1084. In r2 a bench fan cools it over the top and through the 5-8 mm gap (§1.6.3), so the design depends on the fan,
+and the FR-50 trip is the fan-off guard (N-26). It carries 3.21 A through tall header pins of unverified rating. The
+testbench does not move, so road vibration does not apply (operator statement, 2026-11-10). It costs about 70-155 h more effort than Path A and delays the first bench charge from about 1-3 weeks to about
 7-13 weeks. One re-spin (AS-9) adds about 26-62 h and 3-6 weeks to these figures. On the recorded allowances, two boards cost
-USD 422-697 against USD 505-540 for Path A. The four boards that the test plan needs cost USD 600-875, which is USD 60-370
+USD 470-745 against USD 505-540 for Path A. The four boards that the test plan needs cost USD 652-927, which is USD 112-422
 above Path A before the LOOP1 lot is priced (§7.1.3). Cost therefore does not favour Path A-C. The route through verdict
-condition 1 adds the Path A rig before the CCB. That route needs about 599-1032 h and USD 1105-1415 with four CCBs, and the
+condition 1 adds the Path A rig before the CCB. That route needs about 599-1032 h and USD 1157-1467 with four CCBs, and the
 first CCB bench charge comes after about 12.5-21 weeks (§7.1.9). None of the three paths is shown to be feasible: the round-3 design is feasible on paper only and was not audited
 ([EVAL] 0.1a).
 
@@ -3866,8 +4465,8 @@ Table 7.8 states when each path is preferred. The conditions are the measurable 
 | Path | Preferred when | Label |
 |---|---|---|
 | Path A | The BQ25798 behaviour gates are still open (warm response T-B-09/T-B-10, inhibit latency T-B-06, VINDPM reload T-B-12, EN_EXTILIM T-B-21; [WD] 0.2); the parallel IC search may still change the IC; or the earliest charger data is the priority | M |
-| Path A-C | The IC is fixed by bench evidence; T-K-01 shows the envelope (planned stack 7.14 mm for option S or 7.14 + h_k mm for option K, plus 1 mm margin; h_k <= 5.0 mm); T-K-02 shows T_MB,0 at or below the admissible value of §3.7.3 with the measured R_MB (option K at h_k 3.0 mm with a compressed k 3 gap pad: 16-35 C on the modelled R_MB); a PCBA service with U501 inspection is available; and the vehicle must run the road and drive-cycle tests (T-G group) with a durable installation in place of chassis-mounted leads | M |
-| Path B1 | A re-spin is needed anyway (the S0 board-health check fails, an [EVAL] 6.4 re-spin trigger fires, or the bodge list is to be folded in); or T-K-02, T-K-17 or T-K-19 fail, since B1 places the charger by design and carries the battery current in copper | I |
+| Path A-C | The IC is fixed by bench evidence; r2: the seated gap g is 5 mm or more, preferably 5-8 mm (T-K-04, M3), and T-K-20 shows TDIE <= 100 C at 2.9 W with the fan on and an FR-50 trip before TREG_STAT with the fan off (verdict conditions 2 and 3, §0.3); a PCBA service with U501 inspection is available (verdict condition 4); and the T-G drive cycles must run on the testbench with a durable installation in place of chassis-mounted leads. r1 record, superseded by the testbench facts (operator statement, 2026-11-10): T-K-01 shows the envelope (planned stack 7.14 mm for option S or 7.14 + h_k mm for option K, plus 1 mm margin; h_k <= 5.0 mm); T-K-02 shows T_MB,0 at or below the admissible value of §3.7.3 with the measured R_MB (option K at h_k 3.0 mm with a compressed k 3 gap pad: 16-35 C on the modelled R_MB); and the vehicle must run the road and drive-cycle tests (T-G group) with a durable installation in place of chassis-mounted leads | M |
+| Path B1 | A re-spin is needed anyway (the S0 board-health check fails, an [EVAL] 6.4 re-spin trigger fires, or the bodge list is to be folded in); or T-K-02, T-K-17 or T-K-19 fail, since B1 places the charger by design and carries the battery current in copper. r2: or T-K-20 or T-K-17 fail; T-K-02 is record only and T-K-19 is not applicable (testbench) | I |
 | Path B2 | Full regen capture by construction becomes the research goal, at about 5-9 months ([PB] 3.3) | I |
 
 #### 7.3.3 Sequencing option (Mixed)
@@ -3890,9 +4489,10 @@ Table 7.9 marks which parts of this comparison change if the parallel IC search 
 | Item | Label | Effect of another IC |
 |---|---|---|
 | MB rework (7.1.7), header, feet, outline, retention, tap field | I | Unchanged if the IC fits the same outline |
-| Interlock design hours (AS-7 share) and the T-K mechanical tests (T-K-01 to T-K-04, T-K-17 to T-K-19) | I | Unchanged |
+| Interlock design hours (AS-7 share) and the T-K mechanical tests (T-K-01 to T-K-04, T-K-17 to T-K-19) | I | Unchanged (r2: T-K-19 not applicable on the testbench) |
+| Bench fan, tall header stack and the T-K-20 soak method (r2), N-25 to N-27 | I / M | Method unchanged; the loss figures and the TDIE and TREG thresholds change with the IC |
 | Power-cell hours, first-pass layout risk (7.1.6), N-01 to N-03, N-11, N-14 to N-16, N-18 | S | Re-assessed for the new package and power stage; a package with an exposed pad or a larger pitch may make hand assembly viable (§4.7) |
-| Thermal rows (N-05, N-06) | M | Method unchanged; the loss figures change |
+| Thermal rows (N-05, N-06; r2: N-26) | M | Method unchanged; the loss figures change |
 | Ledger KEPT keys with tag e (25 tag occurrences, [STUDY] 3) | S | Replaced by the new IC's behaviour unknowns |
 | Firmware hours | M | The IC-independent FRs stay; the register map, G.1 image and FR-50/FR-51 detection change (§5.9) |
 
@@ -3923,7 +4523,7 @@ EVM leads, (b) EIB and ribbon, (c) EVM modifications, (d) carrier logic, d-mech 
 | 1 | 17 | `efuse-ovp-above-bq-rating` | minor | d,e | **KEPT** | eFuse OVP 22.61-23.63 V stays and is now the only input OV device in front of U501, since the ACFET pair is omitted (§2.1.1 D2) |
 | 1 | 18 | `carrier-copper-unspecified` | minor | d-mech | **CHANGED** | Stack moves from 2 oz outer to 1 oz outer (ST1) or 2 oz inner (ST2), because the RQM land pattern has 0.2 mm gaps; current capacity moves to width (§3.1.3). Digest CB: N |
 | 1 | 19 | `btb-sense-threshold-gap` | major | d,g | **KEPT** | MB or system fact; the CCB connects to the same MB nets through the same taps (§1.12.2 item 4) |
-| 1 | 20 | `open-input-failsafe` | major | b,d | **CHANGED** | No removable conductor inside the charger chain; R467-R470 stay for cracked traces and joints on a moving vehicle (§2.3.1). Tap inputs keep their biases |
+| 1 | 20 | `open-input-failsafe` | major | b,d | **CHANGED** | No removable conductor inside the charger chain; R467-R470 stay for cracked traces and joints from handling, repeated insertion and thermal cycling on the testbench (r1: a moving vehicle; §2.3.1). Tap inputs keep their biases |
 | 1 | 21 | `readback-misses-evm-side` | major | b | **CLOSED** | U403/U404 sense the U501 ILIM_HIZ and /CE pins on their own traces (§2.3.1; §3.6.2 item 2) |
 | 1 | 22 | `raise-latency-i2c-budget` | major | a,f | **CHANGED** | FR-07 caps stay; the on-board bus (no W7) can only add margin (§5.2 FR-07, 5.3 item 1) |
 | 1 | 23 | `latent-comparator-faults` | minor | d,f | **KEPT** | Firmware requirement; the CCB removes no FR obligation (§5.3) |
@@ -4114,11 +4714,14 @@ EVM leads, (b) EIB and ribbon, (c) EVM modifications, (d) carrier logic, d-mech 
 
 The list below merges the open-item registers of §8.3 and ranks them by their effect on the path decision and on the PCB
 order. Items 1-6 gate the decision or the order. Items 7-16 gate the capture or the bring-up. Items 17-30 are clarifications
-and records. Each item names its register IDs.
+and records. Each item names its register IDs. Revision r2 appends items 31-36 without renumbering the r1 items. Item 31
+ranks with items 1-6, items 32-34 rank with items 7-16, and items 35-36 rank with items 17-30. Items 4, 25 and 27 are
+re-stated for the testbench facts (operator statement, 2026-11-10).
 
 1. **Review of this document.** Review run 001 has run, and revision r1 applies its 22 findings (§0.9). Run a further
-   round on revision r1 before any order. The ledger statuses and the severity of N-01 to N-24 stay proposals until that
-   round confirms them (C-4, C-5; §7.2.5 item 2).
+   round on revision r1 before any order. The ledger statuses and the severity of N-01 to N-27 stay proposals until that
+   round confirms them (C-4, C-5; §7.2.5 item 2). In r2, the round covers revision r2, which is not reviewed. It also covers the
+   proposed status change of key `tc04-in-spike-criterion-omits-mb-vchgin-ratings` (§7.2.3).
 2. **Path and IC decision.** Close the BQ25798 behaviour gates T-B-06, T-B-09, T-B-10, T-B-12 and T-B-21, and wait for the
    result of the parallel IC search before the CCB is chosen (§0.3; §7.3.2).
 3. **Board area and power-cell fit.** The plan books 101 % of the usable courtyard area as drawn, and 103 % with the
@@ -4130,8 +4733,13 @@ and records. Each item names its register IDs.
    §3.6.1). The capture DRC (T-A-06) decides all four, and remedies 2-4 of Table 3.6 need an operator decision.
 4. **Thermal margin beside the LM1084.** T_MB,0, the MB resistance R_MB, the LM1084 tab temperature and the LM1084 junction margin decide
    whether the 100 C junction target holds (L-5, O-16, OT-4; N-05, N-06). Efficiency above VBUS 20 V is unmeasured (L-8).
+   r2: superseded in part. With the bench fan, the fan-on and fan-off soak T-K-20 decides the 100 C target and the FR-50
+   thresholds (item 31). T_MB,0 and R_MB are record only (L-5). The LM1084 tab temperature and junction margin stay open
+   (OT-4, N-06), and L-8 stays open.
 5. **Header and socket current rating.** Pins 4 and 10 need 3 A or more; pins 14, 15, 18 and 19 need 2.0 A or more. The
    rating, the contact resistance, the retention force and the socket MPN for option K are unverified (O-10, L-7, B-8, B-9).
+   r2: the rating applies to the tall-stack classes of §1.3.2 (pins of 10.8-13.8 mm, elevated sockets of h_k 2.6-5.6 mm),
+   whose MPNs are also unverified (B-13).
 6. **Supply and cost.** Obtain two fab quotes (4-layer, stack ST1 or ST2, 0.254 mm tented vias, 0.1/0.1 mm), a stencil
    quote and a PCBA quote with an inspection method for U501 (L-2, B-5, B-6, B-7, C-2). Obtain the non-TI stock and prices,
    the TPS26630RGER price and the SN74LVC2G08DCTRE4 equivalence (B-1, B-2, B-3).
@@ -4170,21 +4778,44 @@ and records. Each item names its register IDs.
 23. **Round-3 document correction.** EM13 uses the deleted SDRV-to-BAT option; flag it to the round-3 owner (O-14;
     §5.10 row 7).
 24. **IPC-2221B clearance.** Confirm the clearance for the 16-30 V band (L-10).
-25. **Gap pad.** Select the material, the compression force and the effect on retention (L-6).
+25. **Gap pad.** Select the material, the compression force and the effect on retention (L-6). r2: not applicable
+    (testbench with the bench fan). The fan-on design case meets the 100 C target without a pad (§3.7.4). The item stays
+    as a record.
 26. **Neighbour ratings.** Confirm the CO-5V temperature rating and the BQ29200 input threshold for CB-DISABLE (OT-5).
 27. **Proposed margins.** Rule on the margins proposed without a source: the 1 mm envelope margin, 10 % below the SW
-    absolute maxima, the 0.05 mm header seat gap, the 20 N foot pull and the 20 % contact-resistance drift (OT-1).
+    absolute maxima, the 0.05 mm header seat gap, the 20 N foot pull and the 20 % contact-resistance drift (OT-1). In r2, the
+    1 mm envelope margin is record only (no height restriction). The 20 % drift now applies to the T-K-17 repeat after
+    mating cycles, not to T-K-19.
 28. **BOM tap-pin quantity.** Closed: the BOM books 21 tap pins, and Table 4.4 includes them (B-11).
 29. **Operator tooling.** Confirm the tooling for hand assembly: hot plate or oven, hot-air station, stereo microscope
     (B-10).
 30. **Estimates.** Replace the design, assembly and bench hours by the operator's own estimate (C-1). Re-estimate Path B if
     it becomes a candidate (C-3). Confirm the Path A fault-injection build count (C-6).
+31. **Bench fan and fan-off guard (r2).** Select the fan, its duct and its supply. The fan needs an MPN, an airflow
+    and static-pressure curve and a current; [LC] §8.10 assumes 0.05-0.20 A. Its rating is 3.9-11.8 CFM at 30-50 % duct
+    capture. Its static pressure exceeds the bare-channel 5.4-12.7 Pa by the duct losses ([LC] §8.9). The supply must
+    not be the LM1084 / CO-5V rail. Measure the gap and top velocities (M15). Run T-K-20 (M16) to set
+    `CHG_TDIE_DERATE_C` and `CHG_TDIE_TRIP_C` (starting values about 95 C and 105-110 C, TODO(calibrate)) (B-12, L-14;
+    N-26).
+32. **IN-side transient without the W1/W2 lead (r2).** Compute the OUT copper inductance from the capture. Compute
+    the D307 energy at the ideal turn-off current of up to 117 A. Obtain the real TPS26630 hot-short current and fall
+    time (L-15; N-25; [TS] §(c)). §1.11.2 item 4 gives the r2 statement.
+33. **Tall header stack (r2).** Select the header, socket and spacer classes for the chosen H_u; obtain the seat heights,
+    lead styles, pin alloy and socket withdrawal force (B-13; N-27; [TS] §(e)).
+34. **Pin-18 joint with forced air (r2).** Compute the joint temperature with the fan on; measure it in T-K-20 (L-14;
+    §3.7.6).
+35. **Thermal model inputs (r2).** Confirm the solder-mask and polyimide emissivity (0.90 assumed), the [DS] §6.4 row
+    order of the thermal table, and the spreading inside the CCB, which the lumped model omits (L-14).
+36. **U501 heatsink option (r2).** Select a heatsink of R_sa 60 C/W or less that fits the 4 x 4 mm package beside L501,
+    and its adhesive or clip, if T-K-20 requires it (B-12; §3.7.4a).
 
 ### 8.2 Operator measurement list
 
 The list below consolidates every measurement that no source can close. It is ordered by when the measurement is possible.
 Items 1-10 need the vehicle as it is, with the Ag105 still fitted (phase 0 of §6.5.2). Items 11-13 follow the Ag105
-removal. Items 14-21 need a built CCB.
+removal. Items 14-21 need a built CCB. Revision r2 appends items 22-24 for the bench fan without renumbering. Item 22
+runs first on the 1:1 template before layout and again on the built CCB; items 23-24 need a built CCB. Items 3, 4, 10
+and 19 are re-stated for the testbench facts (operator statement, 2026-11-10).
 
 1. **Ag105 standoff h_s (gate D-2), module top height and pin length below the MB**, at all four module corners, before the
    module is removed (M1; T-K-01).
@@ -4193,9 +4824,10 @@ removal. Items 14-21 need a built CCB.
 3. **MB surface temperature T_MB,0 and the MB resistance R_MB** under the planned power cell, x 25-35, y 55-75, at the
    worst vehicle load, with the Ag105 fitted and idle and no CCB. R_MB comes from the heater step of T-K-02. T_MB,local
    with the CCB dissipating is computed as T_MB,0 + P_MB x R_MB (§3.7.2). These values decide the 100 C junction target
-   (M12; T-K-02).
+   (M12; T-K-02). r2: **record only.** With the fan on, T_J moves by 0.15-0.30 C per C of MB idle offset ([LC] §8.6b).
+   Item 23 decides the 100 C target. The heater step is optional.
 4. **Free height H_env** above the CHG footprint and above rect A, to the lowest chassis part, cable or body panel (M6;
-   T-K-01).
+   T-K-01). r2: **record only (testbench).** The CCB has no height restriction (operator statement, 2026-11-10).
 5. **Heights of the parts near rect A**: L-FC (with the gap from its body to the tab edge y 76.40), OP-FC, MDAC-FC and
    ROP1-FC (M7; T-K-01).
 6. **LM1084 and CO-5V heights and positions** (M5; T-K-01).
@@ -4203,19 +4835,30 @@ removal. Items 14-21 need a built CCB.
 8. **Foot-spot access and surface** at (23.20, 70.64) and (32.20, 70.64) (M9, M10; T-K-01).
 9. **MB thickness and copper weight** (M13; T-K-01).
 10. **Vibration level** at the MB mounting point during a drive, if an accelerometer or an IMU log is available (M14).
+    r2: **not applicable (testbench).** The vehicle does not move (operator statement, 2026-11-10).
 11. **Hole condition** of all 22 CHG holes after the module removal (M2; T-K-04).
 12. **Header and socket seat height** on a dry fit (M3; T-K-04; an optional early value on a drilled FR-4 coupon in
-    T-K-01).
+    T-K-01). r2: it also sets the channel gap g = H_u - 0.125 mm (5 mm minimum, 5-8 mm recommended, §1.3.2 rule 3) and
+    the spacer length. Measure it at the inlet edge, at mid-body and at the tab.
 13. **Hole positions** against a 1:1 print of the pin field (M4; T-K-04).
 14. **Efficiency above VBUS 20 V**, at 21.5 V and 22.6 V (L-8; T-B-19).
-15. **SCL and SDA rise time at 400 kHz** on the CCB with the 2.7 kOhm MB pull-ups (§5.3 item 1; §5.8 item 9).
+15. **SCL and SDA rise time at 400 kHz** on the CCB with the 2.7 kOhm MB pull-ups (§5.3 item 1; §5.8 item 9). r2: the
+    tall stack adds at most 0.47 pF per line and 1.08 ns of rise time at H_u 8 mm ([TS] §(d)). The bus capacitance
+    itself remains unmeasured.
 16. **Plane noise at the comparator divider bottoms** during 1.5 MHz switching (L-9; T-K-09 step 5).
 17. **D303 board temperature and leakage** beside the LM1084 (O-12; T-A-07).
 18. **Header contact resistance and pull-out force** on pins 4, 10, 14, 15, 18 and 19 (T-K-17).
 19. **In-situ temperatures of the CCB** beside the running LM1084, which set `CHG_TDIE_DERATE_C` and `CHG_TDIE_TRIP_C`
-    (T-K-14; FR-50).
+    (T-K-14; FR-50). r2: measured with the fan on, as the fan-on leg of item 23; the thresholds come from item 23.
 20. **Monostable widths on the CCB**, which set TW_HB_MAX and TW_QQ_MAX (T-C-10).
 21. **REGN delay on the CCB**, which sets T_REGN_MAX (T-B-20, T-B-11).
+22. **Fan delivery and gap velocity (r2)** at the inlet edge, in the gap at the inlet, at mid-body, at both outlets and
+    about 5 mm above the CCB top (M15; T-K-20 step (1)). Also the fan voltage and current, and a check that the fan
+    supply is not the LM1084 / CO-5V rail. First on the 1:1 template at the chosen H_u, then on the built CCB.
+23. **Fan-on and fan-off thermal soak (r2)** at the 2.7 W and 2.9 W points and at the 2.08 W derate image, with
+    thermocouples at the M16 points and TDIE over I2C. It sets the real h and gap flow, the fan-on T_J against the 100 C
+    target and the FR-50 thresholds (M16; T-K-20).
+24. **Bench room air (r2)** at the fan inlet over a bench session, the T_air of the forced-air model (M17; T-K-20).
 
 ### 8.3 Open-item registers by section
 
@@ -4242,7 +4885,7 @@ The registers below keep the IDs that the other sections cite. Section 8.1 ranks
 | O-15 | Teensy 4.1 pad absolute maximum (basis for keeping U404) | I | TODO(verify: i.MX RT1060 datasheet) |
 | O-16 | Thermal: 2 W class charger loss ([STUDY] §1.6) beside the LM1084, ambient maximum 85 C ([DS] §6.3) | S | Layout/thermal section; T-B-16, T-B-19 re-specified |
 
-#### 8.3.2 Layout (L-1 to L-13)
+#### 8.3.2 Layout (L-1 to L-15)
 
 | ID | Item | Label | Action |
 |---|---|---|---|
@@ -4250,8 +4893,8 @@ The registers below keep the IDs that the other sections cite. Section 8.1 ranks
 | L-2 | Fab capability: 0.1 mm trace/space, 2 oz inner, 0.254 mm vias with 0.508 mm lands at 0.12-0.15 mm from a pad, 0.1 mm mask dam, stack drawing; 0.2 mm space at 2 oz outer for ST3/ST4. Filled via-in-pad is not required (3.1.5 rule 4) | I | TODO(verify: JLCPCB / PCBWay / OSH Park capability pages) |
 | L-3 | RQM pad-to-pin map; which power pads take in-pad vias | S | **Closed:** map in Table 3.8c; no pad takes a via. The SW and GND vias sit under the body (3.4.3 item 1, [TLP] §4) |
 | L-4 | L501 terminal positions, core loss at 1.5 MHz, mass | S | TODO(verify: TDK SPM6530T datasheet) |
-| L-5 | T_MB,0 and R_MB under the cell, and the LM1084 state | I | TODO(measure: M11, M12 with the T-K-02 heater step) |
-| L-6 | Gap pad: material, interface resistance, compression force at the fitted thickness (H_u - 0.125 mm, 10-30 % compression), area 114.3 mm² around C506/C508, effect on retention | I | TODO(verify: gap-pad datasheet); T-K-18 pull at F_pad; rev-A thermocouple test |
+| L-5 | T_MB,0 and R_MB under the cell, and the LM1084 state | I | TODO(measure: M11, M12 with the T-K-02 heater step). r2: T_MB,0 and R_MB are record only (fan on, [LC] §8.6b); the LM1084 state (M11) stays open |
+| L-6 | Gap pad: material, interface resistance, compression force at the fitted thickness (H_u - 0.125 mm, 10-30 % compression), area 114.3 mm² around C506/C508, effect on retention. r2: not applicable (testbench with the bench fan, §3.7.4); kept as a record | I | TODO(verify: gap-pad datasheet); T-K-18 pull at F_pad; rev-A thermocouple test |
 | L-7 | Header and socket current rating and contact resistance | I | TODO(verify: Samtec TSW / socket datasheet), T-A-05 |
 | L-8 | Efficiency above VBUS 20 V | S | TODO(measure: rev-A bench efficiency at 21.5-22.3 V) |
 | L-9 | Noise at the comparator divider bottoms during 1.5 MHz switching | I/S | TODO(measure: T-C-07 / S4-n class) |
@@ -4259,8 +4902,10 @@ The registers below keep the IDs that the other sections cite. Section 8.1 ranks
 | L-11 | The first bulk rows of the Figure 3.2 cell span about 19 mm (x -10.5 to +8.2); rotated at x 28.2 they overlap the header keep-out (SYS row) and Z-E (PMID row) | S | Two-deep bulk-capacitor arrays inside x 22.4-37.5 (3.4.2); capture DRC |
 | L-12 | The route of the 3.5 A VCHG path from the U501 BAT pins to pins 18/19 past L501 is not chosen. Table 3.5 books its top-side area below y 50.4 (25 mm²), but option (a) or (b) must be decided at capture | M | Option (a) 1.8 mm L1 neck beside L501 or option (b) U501/L501 +1.3 mm in x; in both, x 22.4-25.4 below y 50.4 reserved and Z-Q from x 25.4 (3.3.3 item 4) |
 | L-13 | Separation from the switch nodes (Tables 3.9-3.9b). The 10 mm class needs >= 52.2 mm² (R309-R316, R340-R343 alone; 65.3 mm² with the DNP filter footprints C336, C337 and C453) against 32.7 mm² in Q10-T, so part goes to Q10-B (bottom, y <= 41.5), whose free area is unknown. The SW snubber footprints have no place inside E-SW as drawn. Option (b) of L-12 cuts Q10-T to 22.0 mm² and Q10-D to 7.3 mm² | M | Separation check in the T-A-06 capture DRC (§3.6.1 rule 5); operator decision: snubber footprints inside E-SW or omitted (Table 3.6 step 3); TODO(verify: Q10-B area); TODO(verify: TDK SPM6530T land pattern, L-4) |
+| L-14 | Forced air (r2): the real gap and top velocities and h with the MB parts, the CCB underside parts and the foot spacers in the channel; the duct capture fraction (30-50 % assumed); solder-mask and polyimide emissivity (0.90 assumed); spreading inside the CCB; the pin-18 joint temperature with the fan on; the [DS] §6.4 row order of the thermal table ([LC] §8) | M | TODO(measure: M15, M16; T-K-20). TODO(calc: pin-18 joint with forced air). TODO(verify: emissivity data; [DS] §6.4) |
+| L-15 | IN-side transient without the W1/W2 lead (r2): the OUT copper inductance from U301 OUT to the C511/C512 short; D307 energy at the ideal turn-off current of up to 117 A; the real TPS26630 hot-short current and fall time ([TS] §(c)-(d); N-25) | I | TODO(calc: L_OUT from the capture; D307 energy). TODO(verify: SLVSE94G). T-C-04 records (a)-(c) |
 
-#### 8.3.3 Bill of materials (B-1 to B-11)
+#### 8.3.3 Bill of materials (B-1 to B-13)
 
 | ID | Item | Class | Action |
 |---|---|---|---|
@@ -4275,18 +4920,21 @@ The registers below keep the IDs that the other sections cite. Section 8.1 ranks
 | B-9 | Header pin current rating | I | O-10 |
 | B-10 | Operator tooling for option H (hot plate or oven, hot air, stereo microscope) | S | TODO(verify: operator) |
 | B-11 | Tap-pin quantity: the CSV line "F01-F24 tap pins" books 20 pins, while §2.5.9 has 21 fitted tap pads (F01-F21; F22 and F23 DNP; F24 spare). The roll-up of §4.5 is one pin short, USD 0.50 per board at the allowance; the 10 spares cover a build | I | **Closed:** `make_bom.py` books 21 pins; `bom.csv` and `bom_cost.json` are regenerated (Table 4.4) |
+| B-12 | Bench fan (r2): MPN, airflow and static-pressure curve, current at 5 V or its own supply voltage, frame size and mount; fan lead connector; the DNP fan regulator; the DNP U501 heatsink (R_sa <= 60 C/W, fits beside L501) and its adhesive or clip | I / S | TODO(verify: fan, connector, heatsink and adhesive datasheets); §1.6.3, §3.7.4a; M15 |
+| B-13 | Tall-stack parts (r2): header class S1-S3 (pins 10.8-13.8 mm), elevated socket class K2-K3 (h_k 2.6-5.6 mm), nylon M3 spacers of length H_u (5.1-8.1 mm); seat heights, lead styles, pin alloy and modulus, socket withdrawal force per contact | I | TODO(verify: Samtec, Harwin and spacer drawings); §1.3.2 Table 1.3a, §1.4; [TS] §(e) |
 
-#### 8.3.4 Tests (OT-1 to OT-7)
+#### 8.3.4 Tests (OT-1 to OT-8)
 
 | ID | Item | Action |
 |---|---|---|
-| OT-1 | Margins proposed in section 6 without a source: the 1 mm envelope margin (T-K-01), 10 % below the SW absolute maxima (T-K-07), 0.05 mm header seat gap and 20 N foot pull (T-K-18), 20 % contact-resistance drift (T-K-19) | Operator ruling |
+| OT-1 | Margins proposed in section 6 without a source: the 1 mm envelope margin (T-K-01), 10 % below the SW absolute maxima (T-K-07), 0.05 mm header seat gap and 20 N foot pull (T-K-18), 20 % contact-resistance drift (T-K-19). r2: the envelope margin is record only; the 20 % drift applies to the T-K-17 repeat after mating cycles; the 10 N handling force of T-K-18 step (8) is also a proposal | Operator ruling |
 | OT-2 | SCOPE-HF availability (>= 500 MHz with a tip-and-barrel probe) | TODO(verify: bench equipment) |
 | OT-3 | [DS] values not yet transcribed: ICHG accuracy, REGN range. (Resolved: VBUS absolute minimum -2 V, [DS] §6.1 p.7; TDIE in REG41, 0.5 C per LSB, [DS] §7.5.1.53) | TODO(verify: SLUSDV2C EC) |
 | OT-4 | LM1084 junction limit and KTT thermal metrics (the [LM] §5.3 text extract does not show the column assignment) | TODO(verify: LM1084 DS §5.3, §5.4) |
 | OT-5 | CO-5V temperature rating; BQ29200 input threshold for CB-DISABLE | TODO(verify: CO-5V datasheet; BQ29200 DS) |
 | OT-6 | Whether T-K-06 uses BATSIM or a fused 2S pack | TODO(operator) |
 | OT-7 | The re-run of [PIC] with the new pin-11 marker position (§1.8) | TODO(verify) before T-A-06 step 0 |
+| OT-8 | T-K-20 equipment and limits (r2): an anemometer probe that fits the 5-8 mm gap (ANEMO); the TC6 logger; the soak duration and the FR-50 starting thresholds (about 95 C and 105-110 C) | TODO(verify: bench equipment); TODO(calibrate: T-K-20) |
 
 #### 8.3.5 Comparison (C-1 to C-6)
 
@@ -4295,8 +4943,8 @@ The registers below keep the IDs that the other sections cite. Section 8.1 ranks
 | C-1 | Design, assembly and bench hours are estimates without a recorded basis for CR, EIB or CCB | I | Replace with the operator's own estimate before the decision |
 | C-2 | Fab and PCBA lead times are round-1 estimates | I | TODO(verify: two fab quotes and one PCBA quote, B-5, B-7) |
 | C-3 | Path B1 and B2 figures predate the round-2 rulings and the interlock | I | Re-estimate if Path B becomes a candidate ([EVAL] line 961) |
-| C-4 | The ledger statuses are this section's judgement on sections 1-6 | I | Review run 001 corrected five statuses (§7.2.2); confirm the revision-r1 statuses in the next review round |
-| C-5 | The severity of N-01 to N-24 is proposed, not verified | M | Same review round |
+| C-4 | The ledger statuses are this section's judgement on sections 1-6 | I | Review run 001 corrected five statuses (§7.2.2); confirm the revision-r1 statuses in the next review round. r2: confirm also the proposed CHANGED status of `tc04-in-spike-criterion-omits-mb-vchgin-ratings` (§7.2.3) and regenerate [LEDG] if it is confirmed |
+| C-5 | The severity of N-01 to N-27 is proposed, not verified (r2 adds N-25 to N-27 and re-states N-05, N-06, N-08, N-09 and N-24) | M | Same review round |
 | C-6 | Path A fault-injection build count | I | TODO(verify: [WD] T-C-05, T-D group setups) |
 
 #### 8.3.6 Items raised at assembly (A-1 to A-4)
@@ -4323,7 +4971,7 @@ Table 9.1 defines every citation key of this document. "Review folder" means
 | [DD] | The detailed design of `docs/battery_isolation_feasibility_2026-11-07.md` (post-drive inspection C-4), as quoted in [STUDY] §4 |
 | [DS] | TI SLUSDV2C, BQ25798 data sheet, revised June 2026, `references/TI_BQ25798_design_files/BQ25798_SLUSDV2C.pdf`; cited by section, table, figure or page. Equations are cited by their printed labels (Eq 4-8, pp.133-134); the [DS] prose numbers them one lower |
 | [EVAL] | `docs/charger_replacement_evaluation_2026-11-05.md` (round 2 and the round-3 summary 0.1a; §4.2 EVM modifications M1-M11; §7 schedule and cost) |
-| [LC] | Review folder: `layout_calc.py` and `layout_calc_out.txt` (conductor widths, vias, losses, lumped thermal model, area budget, pin heating) |
+| [LC] | Review folder: `layout_calc.py` and `layout_calc_out.txt` (conductor widths, vias, losses, lumped thermal model, area budget, pin heating; section 8, r2: forced air on the testbench, fan-off case, heatsink option, gap selection, fan flow and fan supply) |
 | [LEDG] | Review folder: `make_ledger.py` and `ledger_table.md` (the 203-key ledger of §7.A; the generator asserts 203 keys) |
 | [LM] | LM1084 data sheet, `references/Datasheets/LM1084ISX-5p0.pdf` |
 | [LOOP] | `docs/reviews/charger_eval_2026-11-05/round3/review_loop.md` (review rounds 1-6 and the closing passes) |
@@ -4338,6 +4986,7 @@ Table 9.1 defines every citation key of this document. "Review folder" means
 | [TID] | Review folder: [TID] (transcribed facts of SLUSDV2C and SLUUCB5E: pin table, EVM designator table, layer reading, rev-C changes); cited by section or line |
 | [TIDA] | `references/TI_BQ25798_design_files/` (fetched 2026-11-10), described in its `README.md`: SLUSDV2C, SLUUCB5E and the TIDA-050047 reference design (design guide TIDUEY1C rev C, schematic TIDM748, BOM TIDM749, assembly drawings TIDM750, layer plots TIDM751, Altium project TIDM752 REV_A1 with its PCB file, BOM `.xlsx`, Gerbers, fab notes GM10, stack-up GM12 and NC drill files) |
 | [TLP] | Review folder: `tida_layout_parse.py` and `tida_layout_parse_out.txt` (parse of the TIDA-050047 PCB file, Gerbers, drill file, rule export and schematic pin records around U1; positions in cell coordinates); cited by output section |
+| [TS] | Review folder: `tall_stack_calc.py` and `tall_stack_calc_out.txt` (r2 tall header stack checks: pin resistance and I2R, input-loop inductance, eFuse hard-short spike, signal loading, mechanical loads); cited by output section (a)-(e) |
 | [UG] | TI SLUUCB5E, BQ2579xEVM user guide, `references/TI_BQ25798_design_files/BQ2579xEVM_SLUUCB5E.pdf`: schematic Figs 4-5 to 4-7, BOM Table 4-1, layer Figs 4-1 to 4-4, layout guidelines §3 |
 | [WD] | `docs/charger_bq25798_wiring_design_2026-11-05.md`, round 3 r6 (Path A): sections A-L, cited by section letter and number |
 

@@ -492,3 +492,370 @@ r_pin_e = rho * 6e-3 / a_pin
 for i in (1.28, 1.93, 1.76, 2.41):
     print(f"  {i} A: pin body {r_pin_e*1e3:.2f} mOhm -> {i*i*r_pin_e*1e3:.1f} mW; with a 20 mOhm socket contact"
           f" (assumed, TODO) {i*i*0.020*1e3:.0f} mW")
+
+
+# =================================================================================================================
+# 8. Forced air on the testbench (r2).  Operator statement, 2026-11-10: the vehicle does not move (testbench with
+#    flywheels); a fan may be mounted on the CCB; the CCB has no height restriction.  This section is appended after
+#    section 7 so that the output of sections 1-7 stays byte-identical to r1.
+#    Reference temperature: room air at the fan inlet (T_air = 0 in this section).  The MB idle offset over room air
+#    (the old T_MB,0 - T_air) enters only as the far-end temperature of R_MB, dT_MB0; its sensitivity is printed.
+# =================================================================================================================
+print("\n== 8. Forced air on the testbench (r2) ==")
+SIGMA = 5.670e-8
+# Air at 1 atm, general handbook values (Incropera and DeWitt Table A.4, interpolated): film properties at about
+# 40 C, density at the 25 C inlet.
+K_AIR_F, NU_AIR, PR_AIR = 0.0271, 1.70e-5, 0.705
+RHO_IN, CP_AIR = 1.184, 1007.0
+EPS_SM = 0.90           # solder mask / polyimide emissivity, TODO(verify: solder-mask and polyimide emissivity)
+EPS_PP = 1 / (1 / EPS_SM + 1 / EPS_SM - 1)    # two large parallel grey plates
+T_RAD = 330.0           # K, linearisation temperature (same as T_CONTACT of 5.1)
+H_RAD_GAP = 4 * SIGMA * EPS_PP * T_RAD ** 3
+H_RAD_TOP = 4 * SIGMA * EPS_SM * 320.0 ** 3   # top surface to room surroundings, mean temperature about 47 C
+H_TOP_STILL = h_top     # 10 W/m2K, the r1 still-air value (natural convection + radiation), 5.0
+print(f"  air: k {K_AIR_F}, nu {NU_AIR:.2e}, Pr {PR_AIR}, rho_in {RHO_IN}, cp {CP_AIR}; h_rad gap (eps_eff"
+      f" {EPS_PP:.3f}) {H_RAD_GAP:.2f} W/m2K, h_rad top {H_RAD_TOP:.2f} W/m2K")
+
+# ---------------------------------------------------------------------------------------------------------------
+# 8.1 Channel geometry.  Flow along +y: low-y inlet at the body edge y 34.14, outlet at the tab end y 76.40 and at
+#     the open body edge y 67.14 for x 38.90-44.67.  The header columns (x 20.998 and 45.998; part keep-out
+#     x 19.67-22.33 and 44.67-47.33, doc 3.2.1) bound the channel sides and run parallel to the flow.  -x is closed
+#     by the J-BL/J-NTC/J-FC blocks (21.70 mm) and +x faces the LM1084 (doc 1.2.1), so neither side is an inlet.
+# ---------------------------------------------------------------------------------------------------------------
+W_CH = (44.67 - 22.33) * 1e-3                      # channel width between the column keep-outs
+A_CH = ((38.90 - 22.33) * (76.40 - 34.14) + (44.67 - 38.90) * (67.14 - 34.14)) * 1e-6
+L_CH = A_CH / W_CH                                  # mean flow length
+A_OUT = a_side - A_CH                               # underside outside the channel (column strips, edges)
+print("\n-- 8.1 channel geometry (flow low-y -> high-y) --")
+print(f"  width {W_CH*1e3:.2f} mm, CCB wall area in the channel {A_CH*1e6:.0f} mm2 of {a_side*1e6:.0f} mm2,"
+      f" mean length {L_CH*1e3:.1f} mm, underside outside the channel {A_OUT*1e6:.0f} mm2")
+print("  obstacles in the channel: MB parts 1.10 mm at x 24.5-36.0, y 48.5-53.5; CCB underside parts <= 1.0 mm"
+      " (t_bot, doc 1.3.5); C506/C508 0.5 mm; the two foot spacers at (23.20, 70.64), (32.20, 70.64) in the tab outlet")
+for g_mm in (3, 5, 8, 10, 12):
+    print(f"  g {g_mm:2d} mm: blockage of the 1.10 mm MB parts {1.10/g_mm*100:.0f} %, of a 1.0 mm CCB underside part"
+          f" {1.0/g_mm*100:.0f} %, both stacked (worst cross-section) {2.10/g_mm*100:.0f} %;"
+          f" H_u = g + 0.125 = {g_mm+0.125:.3f} mm")
+
+GAPS = (3e-3, 5e-3, 8e-3, 10e-3, 12e-3)
+VELS = (1.0, 2.0, 3.0, 4.0)
+
+
+def nu_stephan(x_star, pr):
+    """Mean Nu, simultaneously developing laminar flow between isothermal parallel plates (Stephan; Shah and London
+    1978; VDI Heat Atlas).  D_h = 2 g.  Fully developed limit 7.54."""
+    return 7.55 + 0.024 * x_star ** -1.14 / (1 + 0.0358 * pr ** 0.17 * x_star ** -0.64)
+
+
+def channel(g, v, length=None):
+    """Re, x*, Nu band and h band (W/m2K) for one wall, plus capacity rate, flow and pressure drop."""
+    length = L_CH if length is None else length
+    dh = 2 * g
+    re = v * dh / NU_AIR
+    xs = length / (dh * re * PR_AIR)
+    nu_hi = nu_stephan(xs, PR_AIR)                  # both walls heated (symmetric)
+    nu_lo = nu_hi * 4.86 / 7.54                     # one wall heated, other adiabatic (fully developed ratio)
+    h_lo, h_hi = nu_lo * K_AIR_F / dh, nu_hi * K_AIR_F / dh
+    cap = RHO_IN * CP_AIR * v * W_CH * g            # W/K
+    q = v * W_CH * g                                # m3/s
+    # pressure drop: Darcy f = 96/Re + incremental K(inf) 0.674 (Shah and London) + entry 0.5 + exit 1.0
+    dyn = 0.5 * RHO_IN * v * v
+    dp = (96 / re * length / dh + 0.674 + 0.5 + 1.0) * dyn
+    return dict(re=re, xs=xs, nu_lo=nu_lo, nu_hi=nu_hi, h_lo=h_lo, h_hi=h_hi, cap=cap, q=q, dp=dp)
+
+
+print("\n-- 8.2 (a) ducted flow in the underside gap: Re, Nu, h per wall, capacity rate, flow, pressure drop --")
+for g in GAPS:
+    for v in VELS:
+        c = channel(g, v)
+        flag = " TRANSITIONAL (Re_Dh > 2800; laminar Nu kept, conservative)" if c["re"] > 2800 else ""
+        print(f"  g {g*1e3:4.1f} mm v {v:.0f} m/s: Re_Dh {c['re']:5.0f}, x* {c['xs']:.4f}, Nu {c['nu_lo']:.1f}-"
+              f"{c['nu_hi']:.1f}, h {c['h_lo']:.1f}-{c['h_hi']:.1f} W/m2K; m cp {c['cap']:.3f} W/K, Q {c['q']*1e3:.3f} L/s"
+              f" = {c['q']*2118.88:.2f} CFM; dp {c['dp']:.1f} Pa{flag}")
+
+
+def ntu_block(h_c, h_m, a, cap):
+    """Exact lumped coupling of an isothermal wall C and an isothermal wall S through air entering at 0.
+    Returns the 2x2 conductance matrix (inlet air = reference) and NTU."""
+    hc, hm = h_c * a, h_m * a
+    h = hc + hm
+    n = h / cap
+    f = (1 - math.exp(-n)) / n
+    return np.array([[hc - hc * hc * (1 - f) / h, -hc * hm * (1 - f) / h],
+                     [-hc * hm * (1 - f) / h, hm - hm * hm * (1 - f) / h]]), n
+
+
+def forced_net(p_w, g, mode, v_gap=0.0, h_top=H_TOP_STILL, k_pin=70.0, r_mb_v=7.0, r_e=None, hband="lo",
+               d_t_mb0=0.0, rad=True, joule=True, r_pour=None):
+    """Nodes C (CCB), V (MB VCHG pour), M (MB node), S (polyimide sheet surface).  Reference = inlet/room air.
+
+    mode 'duct': forced channel flow over A_CH, still-air conduction over A_OUT; 'still': conduction over a_side.
+    """
+    h_u = g + T_SHEET
+    l_pin = h_u + T_PCB_CCB
+    r_c = r_socket(r_e)[0] if r_e else 0.0
+    r_pp = l_pin / (k_pin * a_pin) + r_c
+    if r_pour is None:
+        r_pour = r_pour_lo if k_pin >= 110.0 else r_pour_hi
+    G = np.zeros((4, 4))
+
+    def add(i, j, gg):
+        G[i, i] += gg
+        if j is None:
+            return
+        G[j, j] += gg
+        G[i, j] -= gg
+        G[j, i] -= gg
+
+    C, V, M, S = 0, 1, 2, 3
+    add(C, None, h_top * a_side)                             # top surface to room air
+    add(C, M, 3 / r_pp)                                      # pins 4, 14, 15
+    add(C, M, 1 / (r_pp + r_fin10))                          # pin 10
+    add(C, V, 2 / r_pp)                                      # pins 18, 19
+    add(V, M, 1 / r_pour)
+    add(S, M, K_SHEET * a_side / T_SHEET)                    # polyimide sheet, full area
+    if rad:
+        add(C, S, H_RAD_GAP * a_side)
+    n_tu = 0.0
+    if mode == "duct":
+        c = channel(g, v_gap)
+        hh = c["h_lo"] if hband == "lo" else c["h_hi"]
+        blk, n_tu = ntu_block(hh, hh, A_CH, c["cap"])
+        G[np.ix_([C, S], [C, S])] += blk
+        add(C, S, K_AIR_F * A_OUT / g)                       # strips outside the channel: still-air conduction
+    else:
+        add(C, S, k_air * a_side / g)                        # layer heated from above: conduction only
+    g_mb = 1 / r_mb_v
+    G[M, M] += g_mb
+    q = np.zeros(4)
+    q[C] = p_w
+    q[M] += g_mb * d_t_mb0                                   # MB far field at the idle offset over room air
+    if joule:
+        for pin, i in I_PIN.items():
+            pj = i * i * (R_PIN_BODY_E + (r_e or 0.0))
+            far = V if pin in (18, 19) else M
+            q[C] += pj / 2
+            q[far] += pj / 2
+    t = np.linalg.solve(G, q)
+    return {"tC": t[C], "tV": t[V], "tM": t[M], "tS": t[S], "R": t[C] / p_w, "ntu": n_tu,
+            "p_top": t[C] * h_top * a_side, "p_mb": (t[M] - d_t_mb0) * g_mb}
+
+
+print("\n-- 8.3 check: still-air mode, radiation off, g = 2.415 mm reproduces the r1 option-S network of 5.5 --")
+for k_pin in (70.0, 110.0):
+    for rmb in R_MB_BAND:
+        a = forced_net(2.7, MALE_BODY - T_SHEET, "still", k_pin=k_pin, r_mb_v=rmb, rad=False)
+        b = network("S", k_pin, 2.7, rmb)
+        print(f"  k_pin {k_pin:.0f}, R_MB {rmb:.2f}: section 8 tC {a['tC']:.3f} C, r1 5.5 tC {b['tC']:.3f} C")
+
+# Common band for 8.4-8.9: k_pin 70-110 W/mK, R_MB 5.49-9.21 C/W, h band one-wall/both-wall, soldered long-tail pins
+# (no contact) and socket contacts R_e 2-20 mOhm.
+PIN_CASES = [(k, re_) for k in (70.0, 110.0) for re_ in (None, 2e-3, 20e-3)]
+
+
+def band(p_w, g, mode, v_gap=0.0, h_top=H_TOP_STILL, d_t_mb0=0.0, rad=True):
+    out = []
+    for k_pin, r_e in PIN_CASES:
+        for rmb in R_MB_BAND:
+            for hb in (("lo", "hi") if mode == "duct" else ("lo",)):
+                out.append(forced_net(p_w, g, mode, v_gap, h_top, k_pin, rmb, r_e, hb, d_t_mb0, rad))
+    return out
+
+
+def tj_band(p_w, g, mode, v_gap=0.0, h_top=H_TOP_STILL, d_t_mb0=0.0, rad=True):
+    rows = band(p_w, g, mode, v_gap, h_top, d_t_mb0, rad)
+    pic = p_ic(p_w)
+    rs = [r["R"] for r in rows]
+    tj = [r["tC"] + 9.7 * pic for r in rows]
+    return min(rs), max(rs), min(tj), max(tj), rows
+
+
+def h_flat(v, length):
+    re = v * length / NU_AIR
+    nu = 0.664 * re ** 0.5 * PR_AIR ** (1 / 3)        # laminar flat plate, average, isothermal
+    return re, nu * K_AIR_F / length
+
+
+print("\n-- 8.4 (b) top-side forced flow over the CCB (laminar flat plate, isothermal, average) --")
+L_TOP = (76.40 - 34.14) * 1e-3     # along +y over the tab path (doc 1.8)
+for length in (35e-3, L_TOP):
+    for v in VELS:
+        re, hc = h_flat(v, length)
+        ht = hc + H_RAD_TOP
+        print(f"  L {length*1e3:.1f} mm v {v:.0f} m/s: Re_L {re:.0f}, h_conv {hc:.1f}, + h_rad {H_RAD_TOP:.1f} ="
+              f" {ht:.1f} W/m2K; top alone over {a_side*1e6:.0f} mm2: {1/(ht*a_side):.1f} C/W")
+print(f"  still-air top (r1): {1/(H_TOP_STILL*a_side):.1f} C/W")
+print(f"  brief check: h 30-50 W/m2K over 1219 mm2 gives {1/(50*a_side):.1f}-{1/(30*a_side):.1f} C/W")
+for v in (2.0, 4.0):
+    ht = h_flat(v, L_TOP)[1] + H_RAD_TOP
+    for g in (2.415e-3, 5e-3, 10e-3):
+        lo, hi, tjl, tjh, rows = tj_band(2.7, g, "still", h_top=ht)
+        pt = [r["p_top"] / 2.7 for r in rows]
+        print(f"  top flow {v:.0f} m/s, gap still (g {g*1e3:.3f} mm): R_total {lo:.1f}-{hi:.1f} C/W; top share"
+              f" {min(pt)*100:.0f}-{max(pt)*100:.0f} %; T_J - T_air at 2.7 W {tjl:.0f}-{tjh:.0f} C")
+
+print("\n-- 8.5 (a)+(c) ducted gap flow, top still air: R_total (CCB to room air incl. the MB path), T_J - T_air --")
+print("  bands: k_pin 70-110, R_MB 5.49-9.21, Nu one-wall/both-wall, soldered long-tail pins and socket R_e 2-20 mOhm;"
+      " dT_MB0 = 0")
+duct_tab = {}
+for g in GAPS:
+    for v in VELS:
+        lo, hi, tjl, tjh, rows = tj_band(2.7, g, "duct", v)
+        ntu = [r["ntu"] for r in rows]
+        pmb = [r["p_mb"] / 2.7 for r in rows]
+        duct_tab[(g, v)] = (lo, hi, tjl, tjh)
+        print(f"  g {g*1e3:4.1f} mm v {v:.0f} m/s: R_total {lo:.1f}-{hi:.1f} C/W; NTU {min(ntu):.2f}-{max(ntu):.2f};"
+              f" MB far-field share {min(pmb)*100:.0f}-{max(pmb)*100:.0f} %; CCB rise {2.7*lo:.0f}-{2.7*hi:.0f} C;"
+              f" T_J - T_air {tjl:.0f}-{tjh:.0f} C")
+
+print("\n-- 8.5b gap path alone (CCB underside to room air through the duct; pins, MB far field and top removed) --")
+for g in GAPS:
+    for v in (2.0, 4.0):
+        c = channel(g, v)
+        vals = []
+        for hh in (c["h_lo"], c["h_hi"]):
+            blk, _ = ntu_block(hh, hh, A_CH, c["cap"])
+            vals.append(1 / (blk[0, 0] - blk[0, 1] * blk[1, 0] / blk[1, 1]))   # MB wall adiabatic
+            vals.append(1 / blk[0, 0])                                          # MB wall held at inlet air
+        print(f"  g {g*1e3:4.1f} mm v {v:.0f} m/s: R_gap-to-air {min(vals):.1f}-{max(vals):.1f} C/W"
+              f" (MB wall from held at inlet air to adiabatic)")
+
+print("\n-- 8.6 load sweep, ducted at 2 and 3 m/s, top still air --")
+for g in (5e-3, 8e-3, 10e-3, 12e-3):
+    for v in (2.0, 3.0):
+        for p in P_CASES:
+            lo, hi, tjl, tjh, _ = tj_band(p, g, "duct", v)
+            print(f"  g {g*1e3:4.1f} mm v {v:.0f} m/s P {p} W (IC {p_ic(p):.2f} W, IC internal {9.7*p_ic(p):.1f} C):"
+                  f" CCB rise {p*lo:.0f}-{p*hi:.0f} C; T_J - T_air {tjl:.0f}-{tjh:.0f} C; 25 C bench T_J"
+                  f" {25+tjl:.0f}-{25+tjh:.0f} C")
+print("  both sides forced (gap flow + top flow at the same velocity), R_total and T_J - T_air at 2.7 W:")
+for g in (3e-3, 5e-3, 8e-3, 10e-3, 12e-3):
+    for v in (1.0, 2.0, 3.0, 4.0):
+        ht = h_flat(v, L_TOP)[1] + H_RAD_TOP
+        lo, hi, tjl, tjh, _ = tj_band(2.7, g, "duct", v, h_top=ht)
+        print(f"  g {g*1e3:4.1f} mm v {v:.0f} m/s: R_total {lo:.1f}-{hi:.1f} C/W; T_J - T_air at 2.7 W {tjl:.0f}-{tjh:.0f} C")
+
+print("  both sides forced, load sweep:")
+for g in (5e-3, 8e-3):
+    for v in (2.0, 3.0):
+        ht = h_flat(v, L_TOP)[1] + H_RAD_TOP
+        for p in P_CASES:
+            lo, hi, tjl, tjh, _ = tj_band(p, g, "duct", v, h_top=ht)
+            print(f"  g {g*1e3:4.1f} mm v {v:.0f} m/s P {p} W: CCB rise {p*lo:.0f}-{p*hi:.0f} C; T_J - T_air {tjl:.0f}-{tjh:.0f} C;"
+                  f" 25 C bench T_J {25+tjl:.0f}-{25+tjh:.0f} C")
+for d in (0.0, 10.0, 20.0):
+    ht = h_flat(2.0, L_TOP)[1] + H_RAD_TOP
+    lo, hi, tjl, tjh, _ = tj_band(2.7, 5e-3, "duct", 2.0, h_top=ht, d_t_mb0=d)
+    print(f"  both sides 2 m/s g 5 mm, dT_MB0 {d:4.1f} C: T_J - T_air {tjl:.0f}-{tjh:.0f} C")
+
+print("\n-- 8.6b sensitivity to the MB idle offset over room air (dT_MB0), g 10 mm, 2.7 W --")
+for d in (0.0, 10.0, 20.0):
+    lo, hi, tjl, tjh, _ = tj_band(2.7, 10e-3, "duct", 2.0, d_t_mb0=d)
+    print(f"  ducted 2 m/s, dT_MB0 {d:4.1f} C: T_J - T_air {tjl:.0f}-{tjh:.0f} C")
+for d in (0.0, 10.0, 20.0):
+    lo, hi, tjl, tjh, _ = tj_band(2.7, 10e-3, "still", d_t_mb0=d)
+    print(f"  fan off, dT_MB0 {d:4.1f} C: T_J - T_air {tjl:.0f}-{tjh:.0f} C")
+
+print("\n-- 8.6c air temperature rise at the duct outlet (upper bound: all 2.7 W into the duct air) --")
+for g in (5e-3, 8e-3, 10e-3, 12e-3):
+    print(f"  g {g*1e3:4.1f} mm: " + ", ".join(f"{v:.0f} m/s <= {2.7/channel(g, v)['cap']:.1f} C" for v in (1.0, 2.0, 3.0)))
+
+print("\n-- 8.7 (d) fan off, tall gap: conduction + radiation across the gap, still-air top --")
+fanoff = {}
+for g in (2.415e-3,) + GAPS:
+    for p in P_CASES + (2.08,):
+        lo, hi, tjl, tjh, _ = tj_band(p, g, "still")
+        fanoff[(g, p)] = (tjl, tjh)
+    lo, hi, tjl, tjh, _ = tj_band(2.7, g, "still")
+    lo0, hi0, tjl0, tjh0, _ = tj_band(2.7, g, "still", rad=False)
+    print(f"  g {g*1e3:6.3f} mm: R_total {lo:.1f}-{hi:.1f} C/W (no radiation {lo0:.1f}-{hi0:.1f}); T_J - T_air at 2.7 W"
+          f" {tjl:.0f}-{tjh:.0f} C (no radiation {tjl0:.0f}-{tjh0:.0f})")
+for g in (5e-3, 10e-3, 12e-3):
+    for p in (2.0, 2.08, 2.5, 2.7, 2.9):
+        tjl, tjh = fanoff[(g, p)]
+        print(f"  fan off g {g*1e3:4.1f} mm P {p} W: T_J on a 25 C bench {25+tjl:.0f}-{25+tjh:.0f} C;"
+              f" margin to TREG 120 C {120-25-tjh:.0f} to {120-25-tjl:.0f} C; to TSHUT 150 C {150-25-tjh:.0f} to"
+              f" {150-25-tjl:.0f} C")
+print("  (2.08 W = the 2.50 A derate image of FR-50, 5.8: 1.93 W charger + 0.15 W eFuse and logic)")
+# heat capacity of the CCB node: masses from doc Table 1.7, specific heats general values (assumption)
+c_ccb = 3.6e-3 * 1100 + 2.3e-3 * 385 + 1.1e-3 * 450 + 0.9e-3 * 380 + 3.0e-3 * 700
+for g in (5e-3, 10e-3):
+    lo, hi, _, _, _ = tj_band(2.7, g, "still")
+    lo_d, hi_d, _, _, _ = tj_band(2.7, g, "duct", 2.0)
+    print(f"  CCB heat capacity about {c_ccb:.1f} J/K (laminate 3.6 g x 1100, Cu 2.3 g x 385, L501 1.1 g x 450,"
+          f" pins 0.9 g x 380, parts 3 g x 700 J/kgK); g {g*1e3:.0f} mm: tau fan off {c_ccb*lo:.0f}-{c_ccb*hi:.0f} s,"
+          f" fan on 2 m/s {c_ccb*lo_d:.0f}-{c_ccb*hi_d:.0f} s (CCB node only; the MB node adds capacity)")
+
+print("\n-- 8.8 (e) optional heatsink on the U501 top; RthJC(top) 20.9 C/W, psiJT 0.5, psiJB 9.7 ([DS] 6.4) --")
+A_PKG = 4.0e-3 * 4.0e-3      # RQM body 4.0 x 4.0 mm ([DS] p.1 device information)
+for r_tim_kcm2 in (0.5, 2.0):
+    print(f"  TIM {r_tim_kcm2} K cm2/W over 16 mm2: {r_tim_kcm2*1e-4/A_PKG:.1f} C/W")
+HT2 = h_flat(2.0, L_TOP)[1] + H_RAD_TOP
+for case, g, mode, v, htop in (("both sides 2 m/s g 5 mm", 5e-3, "duct", 2.0, HT2),
+                               ("ducted g 10 mm 2 m/s", 10e-3, "duct", 2.0, H_TOP_STILL),
+                               ("fan off g 5 mm", 5e-3, "still", 0.0, H_TOP_STILL),
+                               ("fan off g 10 mm", 10e-3, "still", 0.0, H_TOP_STILL)):
+    for r_sa in (None, 120.0, 80.0, 60.0, 40.0, 20.0, 10.0, 5.0, 0.0):
+        res = []
+        for r_tim_kcm2 in (0.5, 2.0):
+            r_hs = None if r_sa is None else 20.9 + r_tim_kcm2 * 1e-4 / A_PKG + r_sa
+            for k_pin, r_e in PIN_CASES:
+                for rmb in R_MB_BAND:
+                    for hb in (("lo", "hi") if mode == "duct" else ("lo",)):
+                        p, pic = 2.7, p_ic(2.7)
+                        n1 = forced_net(p, g, mode, v, htop, k_pin, rmb, r_e, hb)
+                        n0 = forced_net(1e-9, g, mode, v, htop, k_pin, rmb, r_e, hb)   # Joule-only offset
+                        a0 = n0["tC"]
+                        b = (n1["tC"] - a0) / p
+                        if r_hs is None:
+                            tj, phs = a0 + b * p + 9.7 * pic, 0.0
+                        else:
+                            # T_J = a0 + b (p - phs) + 9.7 (pic - phs), phs = T_J / r_hs
+                            tj = (a0 + b * p + 9.7 * pic) / (1 + (b + 9.7) / r_hs)
+                            phs = tj / r_hs
+                        res.append((tj, phs))
+        lab = "no heatsink" if r_sa is None else f"R_sa {r_sa:4.1f} C/W"
+        print(f"  {case}, {lab}: T_J - T_air {min(r[0] for r in res):.0f}-{max(r[0] for r in res):.0f} C;"
+              f" heat through the top {min(r[1] for r in res):.2f}-{max(r[1] for r in res):.2f} W")
+
+print("\n-- 8.9 gap selection and fan flow --")
+for g in GAPS:
+    lo, hi, tjl, tjh = duct_tab[(g, 2.0)]
+    c = channel(g, 2.0)
+    print(f"  g {g*1e3:4.1f} mm at 2 m/s: R_total {lo:.1f}-{hi:.1f} C/W, T_J - T_air {tjl:.0f}-{tjh:.0f} C,"
+          f" channel flow {c['q']*2118.88:.2f} CFM, dp {c['dp']:.1f} Pa, worst blockage {2.10/(g*1e3)*100:.0f} %")
+for q_cfm in (0.5, 1.0, 2.0):
+    q = q_cfm / 2118.88
+    parts = []
+    for g in GAPS:
+        v = q / (W_CH * g)
+        lo, hi, tjl, tjh, _ = tj_band(2.7, g, "duct", v)
+        parts.append(f"g {g*1e3:.0f}: v {v:.2f} m/s, T_J-T_air {tjl:.0f}-{tjh:.0f}")
+    print(f"  fixed channel flow {q_cfm} CFM: " + "; ".join(parts))
+for g in (8e-3, 10e-3, 12e-3):
+    for v in (2.0, 3.0):
+        c = channel(g, v)
+        q_full = v * (48.70 - 17.70) * 1e-3 * g   # duct over the full 31.0 mm body width
+        print(f"  g {g*1e3:.0f} mm v {v:.0f} m/s: channel {c['q']*2118.88:.2f} CFM (22.34 mm), full body width"
+              f" {q_full*2118.88:.2f} CFM; fan rating at 30-50 % duct capture {q_full*2118.88/0.5:.1f}-"
+              f"{q_full*2118.88/0.3:.1f} CFM at >= {c['dp']:.1f} Pa plus duct losses (TODO(measure))")
+
+TOP_STREAM = 10e-3    # height of the top stream credited to the fan, assumption (L501 is 3.0 mm tall)
+for g in (5e-3, 8e-3):
+    for v in (2.0, 3.0):
+        q_gap = v * (48.70 - 17.70) * 1e-3 * g
+        q_top = v * (48.70 - 17.70) * 1e-3 * TOP_STREAM
+        tot = (q_gap + q_top) * 2118.88
+        print(f"  both sides, g {g*1e3:.0f} mm v {v:.0f} m/s: gap {q_gap*2118.88:.2f} + top stream (10 mm x 31.0 mm)"
+              f" {q_top*2118.88:.2f} = {tot:.2f} CFM delivered; fan rating at 30-50 % capture {tot/0.5:.1f}-{tot/0.3:.1f} CFM")
+
+print("\n-- 8.10 fan supply: LM1084 (REG-5V) load budget --")
+# LM1084 KTT RthJA 40.4 C/W (LM1084 DS thermal information; JEDEC board, indicative); dropout 1.3 V typ at VIN 8 V
+# (LM1084 DS electrical characteristics); output current 5 A (DS p.1).  Logic load Teensy + PHY 0.15-0.25 A
+# (docs/modeling/bond-graph.md, R_logic; controller_design/bench_calibration_manual.md, logic baseline about 0.25 A).
+# Fan current 0.05-0.20 A at 5 V, TODO(verify: fan datasheet).
+for v_in in (7.4, 8.0, 8.4):
+    base = [(v_in - 5.0) * i for i in (0.15, 0.25)]
+    add_ = [(v_in - 5.0) * i for i in (0.05, 0.20)]
+    print(f"  VBT {v_in} V: LM1084 now {base[0]:.2f}-{base[1]:.2f} W; a 0.05-0.20 A fan adds {add_[0]:.2f}-{add_[1]:.2f} W"
+          f" (+{add_[0]/base[1]*100:.0f} to +{add_[1]/base[0]*100:.0f} %), +{add_[0]*40.4:.0f} to +{add_[1]*40.4:.0f} C at"
+          f" RthJA 40.4 (indicative); headroom over the 1.3 V dropout {v_in-5.0-1.3:.1f} V")

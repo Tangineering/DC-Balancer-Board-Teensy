@@ -171,3 +171,276 @@ check vs H.22: 2.5 mm 2oz ext dT10 = 7.7 A; 2.0 mm 1oz ext dT10 = 4.0 A
   1.93 A: pin body 1.61 mOhm -> 6.0 mW; with a 20 mOhm socket contact (assumed, TODO) 74 mW
   1.76 A: pin body 1.61 mOhm -> 5.0 mW; with a 20 mOhm socket contact (assumed, TODO) 62 mW
   2.41 A: pin body 1.61 mOhm -> 9.4 mW; with a 20 mOhm socket contact (assumed, TODO) 116 mW
+
+== 8. Forced air on the testbench (r2) ==
+  air: k 0.0271, nu 1.70e-05, Pr 0.705, rho_in 1.184, cp 1007.0; h_rad gap (eps_eff 0.818) 6.67 W/m2K, h_rad top 6.69 W/m2K
+
+-- 8.1 channel geometry (flow low-y -> high-y) --
+  width 22.34 mm, CCB wall area in the channel 891 mm2 of 1219 mm2, mean length 39.9 mm, underside outside the channel 328 mm2
+  obstacles in the channel: MB parts 1.10 mm at x 24.5-36.0, y 48.5-53.5; CCB underside parts <= 1.0 mm (t_bot, doc 1.3.5); C506/C508 0.5 mm; the two foot spacers at (23.20, 70.64), (32.20, 70.64) in the tab outlet
+  g  3 mm: blockage of the 1.10 mm MB parts 37 %, of a 1.0 mm CCB underside part 33 %, both stacked (worst cross-section) 70 %; H_u = g + 0.125 = 3.125 mm
+  g  5 mm: blockage of the 1.10 mm MB parts 22 %, of a 1.0 mm CCB underside part 20 %, both stacked (worst cross-section) 42 %; H_u = g + 0.125 = 5.125 mm
+  g  8 mm: blockage of the 1.10 mm MB parts 14 %, of a 1.0 mm CCB underside part 12 %, both stacked (worst cross-section) 26 %; H_u = g + 0.125 = 8.125 mm
+  g 10 mm: blockage of the 1.10 mm MB parts 11 %, of a 1.0 mm CCB underside part 10 %, both stacked (worst cross-section) 21 %; H_u = g + 0.125 = 10.125 mm
+  g 12 mm: blockage of the 1.10 mm MB parts 9 %, of a 1.0 mm CCB underside part 8 %, both stacked (worst cross-section) 18 %; H_u = g + 0.125 = 12.125 mm
+
+-- 8.2 (a) ducted flow in the underside gap: Re, Nu, h per wall, capacity rate, flow, pressure drop --
+  g  3.0 mm v 1 m/s: Re_Dh   353, x* 0.0267, Nu 5.6-8.7, h 25.2-39.1 W/m2K; m cp 0.080 W/K, Q 0.067 L/s = 0.14 CFM; dp 2.4 Pa
+  g  3.0 mm v 2 m/s: Re_Dh   706, x* 0.0134, Nu 6.2-9.7, h 28.2-43.8 W/m2K; m cp 0.160 W/K, Q 0.134 L/s = 0.28 CFM; dp 7.3 Pa
+  g  3.0 mm v 3 m/s: Re_Dh  1059, x* 0.0089, Nu 6.9-10.6, h 31.0-48.0 W/m2K; m cp 0.240 W/K, Q 0.201 L/s = 0.43 CFM; dp 14.8 Pa
+  g  3.0 mm v 4 m/s: Re_Dh  1412, x* 0.0067, Nu 7.4-11.5, h 33.5-52.0 W/m2K; m cp 0.320 W/K, Q 0.268 L/s = 0.57 CFM; dp 24.9 Pa
+  g  5.0 mm v 1 m/s: Re_Dh   588, x* 0.0096, Nu 6.7-10.4, h 18.2-28.3 W/m2K; m cp 0.133 W/K, Q 0.112 L/s = 0.24 CFM; dp 1.7 Pa
+  g  5.0 mm v 2 m/s: Re_Dh  1176, x* 0.0048, Nu 8.2-12.7, h 22.3-34.6 W/m2K; m cp 0.266 W/K, Q 0.223 L/s = 0.47 CFM; dp 5.9 Pa
+  g  5.0 mm v 3 m/s: Re_Dh  1765, x* 0.0032, Nu 9.5-14.7, h 25.7-39.9 W/m2K; m cp 0.400 W/K, Q 0.335 L/s = 0.71 CFM; dp 12.7 Pa
+  g  5.0 mm v 4 m/s: Re_Dh  2353, x* 0.0024, Nu 10.6-16.5, h 28.8-44.7 W/m2K; m cp 0.533 W/K, Q 0.447 L/s = 0.95 CFM; dp 22.1 Pa
+  g  8.0 mm v 1 m/s: Re_Dh   941, x* 0.0038, Nu 9.0-13.9, h 15.2-23.5 W/m2K; m cp 0.213 W/K, Q 0.179 L/s = 0.38 CFM; dp 1.4 Pa
+  g  8.0 mm v 2 m/s: Re_Dh  1882, x* 0.0019, Nu 11.8-18.3, h 19.9-30.9 W/m2K; m cp 0.426 W/K, Q 0.357 L/s = 0.76 CFM; dp 5.4 Pa
+  g  8.0 mm v 3 m/s: Re_Dh  2824, x* 0.0013, Nu 14.0-21.8, h 23.8-36.9 W/m2K; m cp 0.639 W/K, Q 0.536 L/s = 1.14 CFM; dp 12.0 Pa TRANSITIONAL (Re_Dh > 2800; laminar Nu kept, conservative)
+  g  8.0 mm v 4 m/s: Re_Dh  3765, x* 0.0009, Nu 16.0-24.8, h 27.1-42.1 W/m2K; m cp 0.852 W/K, Q 0.715 L/s = 1.51 CFM; dp 21.2 Pa TRANSITIONAL (Re_Dh > 2800; laminar Nu kept, conservative)
+  g 10.0 mm v 1 m/s: Re_Dh  1176, x* 0.0024, Nu 10.6-16.5, h 14.4-22.3 W/m2K; m cp 0.266 W/K, Q 0.223 L/s = 0.47 CFM; dp 1.4 Pa
+  g 10.0 mm v 2 m/s: Re_Dh  2353, x* 0.0012, Nu 14.3-22.2, h 19.4-30.1 W/m2K; m cp 0.533 W/K, Q 0.447 L/s = 0.95 CFM; dp 5.3 Pa
+  g 10.0 mm v 3 m/s: Re_Dh  3529, x* 0.0008, Nu 17.2-26.7, h 23.4-36.2 W/m2K; m cp 0.799 W/K, Q 0.670 L/s = 1.42 CFM; dp 11.9 Pa TRANSITIONAL (Re_Dh > 2800; laminar Nu kept, conservative)
+  g 10.0 mm v 4 m/s: Re_Dh  4706, x* 0.0006, Nu 19.7-30.6, h 26.8-41.5 W/m2K; m cp 1.065 W/K, Q 0.894 L/s = 1.89 CFM; dp 21.0 Pa TRANSITIONAL (Re_Dh > 2800; laminar Nu kept, conservative)
+  g 12.0 mm v 1 m/s: Re_Dh  1412, x* 0.0017, Nu 12.4-19.2, h 14.0-21.7 W/m2K; m cp 0.320 W/K, Q 0.268 L/s = 0.57 CFM; dp 1.4 Pa
+  g 12.0 mm v 2 m/s: Re_Dh  2824, x* 0.0008, Nu 16.9-26.2, h 19.1-29.6 W/m2K; m cp 0.639 W/K, Q 0.536 L/s = 1.14 CFM; dp 5.3 Pa TRANSITIONAL (Re_Dh > 2800; laminar Nu kept, conservative)
+  g 12.0 mm v 3 m/s: Re_Dh  4235, x* 0.0006, Nu 20.5-31.8, h 23.1-35.9 W/m2K; m cp 0.959 W/K, Q 0.804 L/s = 1.70 CFM; dp 11.8 Pa TRANSITIONAL (Re_Dh > 2800; laminar Nu kept, conservative)
+  g 12.0 mm v 4 m/s: Re_Dh  5647, x* 0.0004, Nu 23.5-36.5, h 26.6-41.2 W/m2K; m cp 1.279 W/K, Q 1.072 L/s = 2.27 CFM; dp 20.9 Pa TRANSITIONAL (Re_Dh > 2800; laminar Nu kept, conservative)
+
+-- 8.3 check: still-air mode, radiation off, g = 2.415 mm reproduces the r1 option-S network of 5.5 --
+  k_pin 70, R_MB 5.49: section 8 tC 58.350 C, r1 5.5 tC 58.350 C
+  k_pin 70, R_MB 9.21: section 8 tC 63.704 C, r1 5.5 tC 63.704 C
+  k_pin 110, R_MB 5.49: section 8 tC 48.526 C, r1 5.5 tC 48.526 C
+  k_pin 110, R_MB 9.21: section 8 tC 54.526 C, r1 5.5 tC 54.526 C
+
+-- 8.4 (b) top-side forced flow over the CCB (laminar flat plate, isothermal, average) --
+  L 35.0 mm v 1 m/s: Re_L 2059, h_conv 20.8, + h_rad 6.7 = 27.5 W/m2K; top alone over 1219 mm2: 29.9 C/W
+  L 35.0 mm v 2 m/s: Re_L 4118, h_conv 29.4, + h_rad 6.7 = 36.1 W/m2K; top alone over 1219 mm2: 22.8 C/W
+  L 35.0 mm v 3 m/s: Re_L 6176, h_conv 36.0, + h_rad 6.7 = 42.6 W/m2K; top alone over 1219 mm2: 19.2 C/W
+  L 35.0 mm v 4 m/s: Re_L 8235, h_conv 41.5, + h_rad 6.7 = 48.2 W/m2K; top alone over 1219 mm2: 17.0 C/W
+  L 42.3 mm v 1 m/s: Re_L 2486, h_conv 18.9, + h_rad 6.7 = 25.6 W/m2K; top alone over 1219 mm2: 32.1 C/W
+  L 42.3 mm v 2 m/s: Re_L 4972, h_conv 26.7, + h_rad 6.7 = 33.4 W/m2K; top alone over 1219 mm2: 24.6 C/W
+  L 42.3 mm v 3 m/s: Re_L 7458, h_conv 32.7, + h_rad 6.7 = 39.4 W/m2K; top alone over 1219 mm2: 20.8 C/W
+  L 42.3 mm v 4 m/s: Re_L 9944, h_conv 37.8, + h_rad 6.7 = 44.5 W/m2K; top alone over 1219 mm2: 18.4 C/W
+  still-air top (r1): 82.0 C/W
+  brief check: h 30-50 W/m2K over 1219 mm2 gives 16.4-27.3 C/W
+  top flow 2 m/s, gap still (g 2.415 mm): R_total 11.3-16.7 C/W; top share 46-68 %; T_J - T_air at 2.7 W 53-68 C
+  top flow 2 m/s, gap still (g 5.000 mm): R_total 13.2-18.1 C/W; top share 54-74 %; T_J - T_air at 2.7 W 58-71 C
+  top flow 2 m/s, gap still (g 10.000 mm): R_total 15.2-19.1 C/W; top share 62-78 %; T_J - T_air at 2.7 W 63-74 C
+  top flow 4 m/s, gap still (g 2.415 mm): R_total 9.8-13.8 C/W; top share 53-75 %; T_J - T_air at 2.7 W 49-60 C
+  top flow 4 m/s, gap still (g 5.000 mm): R_total 11.2-14.7 C/W; top share 61-80 %; T_J - T_air at 2.7 W 53-62 C
+  top flow 4 m/s, gap still (g 10.000 mm): R_total 12.6-15.4 C/W; top share 68-83 %; T_J - T_air at 2.7 W 56-64 C
+
+-- 8.5 (a)+(c) ducted gap flow, top still air: R_total (CCB to room air incl. the MB path), T_J - T_air --
+  bands: k_pin 70-110, R_MB 5.49-9.21, Nu one-wall/both-wall, soldered long-tail pins and socket R_e 2-20 mOhm; dT_MB0 = 0
+  g  3.0 mm v 1 m/s: R_total 12.6-22.1 C/W; NTU 0.56-0.87; MB far-field share 35-54 %; CCB rise 34-60 C; T_J - T_air 56-82 C
+  g  3.0 mm v 2 m/s: R_total 11.6-20.4 C/W; NTU 0.31-0.49; MB far-field share 29-50 %; CCB rise 31-55 C; T_J - T_air 54-78 C
+  g  3.0 mm v 3 m/s: R_total 11.0-19.4 C/W; NTU 0.23-0.36; MB far-field share 26-47 %; CCB rise 30-52 C; T_J - T_air 52-75 C
+  g  3.0 mm v 4 m/s: R_total 10.5-18.5 C/W; NTU 0.19-0.29; MB far-field share 24-45 %; CCB rise 28-50 C; T_J - T_air 51-72 C
+  g  5.0 mm v 1 m/s: R_total 14.8-24.9 C/W; NTU 0.24-0.38; MB far-field share 33-52 %; CCB rise 40-67 C; T_J - T_air 62-90 C
+  g  5.0 mm v 2 m/s: R_total 13.6-22.8 C/W; NTU 0.15-0.23; MB far-field share 28-48 %; CCB rise 37-62 C; T_J - T_air 59-84 C
+  g  5.0 mm v 3 m/s: R_total 12.7-21.3 C/W; NTU 0.11-0.18; MB far-field share 25-45 %; CCB rise 34-58 C; T_J - T_air 57-80 C
+  g  5.0 mm v 4 m/s: R_total 12.0-20.2 C/W; NTU 0.10-0.15; MB far-field share 23-43 %; CCB rise 32-55 C; T_J - T_air 55-77 C
+  g  8.0 mm v 1 m/s: R_total 17.1-27.0 C/W; NTU 0.13-0.20; MB far-field share 31-49 %; CCB rise 46-73 C; T_J - T_air 69-95 C
+  g  8.0 mm v 2 m/s: R_total 15.3-24.3 C/W; NTU 0.08-0.13; MB far-field share 26-44 %; CCB rise 41-66 C; T_J - T_air 64-88 C
+  g  8.0 mm v 3 m/s: R_total 14.1-22.5 C/W; NTU 0.07-0.10; MB far-field share 23-41 %; CCB rise 38-61 C; T_J - T_air 61-83 C
+  g  8.0 mm v 4 m/s: R_total 13.3-21.2 C/W; NTU 0.06-0.09; MB far-field share 21-39 %; CCB rise 36-57 C; T_J - T_air 58-80 C
+  g 10.0 mm v 1 m/s: R_total 18.1-27.8 C/W; NTU 0.10-0.15; MB far-field share 31-47 %; CCB rise 49-75 C; T_J - T_air 71-98 C
+  g 10.0 mm v 2 m/s: R_total 16.1-24.9 C/W; NTU 0.06-0.10; MB far-field share 25-42 %; CCB rise 43-67 C; T_J - T_air 66-90 C
+  g 10.0 mm v 3 m/s: R_total 14.8-22.9 C/W; NTU 0.05-0.08; MB far-field share 22-39 %; CCB rise 40-62 C; T_J - T_air 62-84 C
+  g 10.0 mm v 4 m/s: R_total 13.8-21.5 C/W; NTU 0.04-0.07; MB far-field share 20-37 %; CCB rise 37-58 C; T_J - T_air 60-81 C
+  g 12.0 mm v 1 m/s: R_total 18.9-28.4 C/W; NTU 0.08-0.12; MB far-field share 30-46 %; CCB rise 51-77 C; T_J - T_air 74-99 C
+  g 12.0 mm v 2 m/s: R_total 16.7-25.3 C/W; NTU 0.05-0.08; MB far-field share 24-41 %; CCB rise 45-68 C; T_J - T_air 67-91 C
+  g 12.0 mm v 3 m/s: R_total 15.2-23.3 C/W; NTU 0.04-0.07; MB far-field share 21-37 %; CCB rise 41-63 C; T_J - T_air 64-85 C
+  g 12.0 mm v 4 m/s: R_total 14.2-21.8 C/W; NTU 0.04-0.06; MB far-field share 19-35 %; CCB rise 38-59 C; T_J - T_air 61-81 C
+
+-- 8.5b gap path alone (CCB underside to room air through the duct; pins, MB far field and top removed) --
+  g  3.0 mm v 2 m/s: R_gap-to-air 28.6-43.1 C/W (MB wall from held at inlet air to adiabatic)
+  g  3.0 mm v 4 m/s: R_gap-to-air 23.1-35.1 C/W (MB wall from held at inlet air to adiabatic)
+  g  5.0 mm v 2 m/s: R_gap-to-air 34.3-52.3 C/W (MB wall from held at inlet air to adiabatic)
+  g  5.0 mm v 4 m/s: R_gap-to-air 26.1-40.0 C/W (MB wall from held at inlet air to adiabatic)
+  g  8.0 mm v 2 m/s: R_gap-to-air 37.5-57.5 C/W (MB wall from held at inlet air to adiabatic)
+  g  8.0 mm v 4 m/s: R_gap-to-air 27.3-42.0 C/W (MB wall from held at inlet air to adiabatic)
+  g 10.0 mm v 2 m/s: R_gap-to-air 38.3-58.9 C/W (MB wall from held at inlet air to adiabatic)
+  g 10.0 mm v 4 m/s: R_gap-to-air 27.5-42.4 C/W (MB wall from held at inlet air to adiabatic)
+  g 12.0 mm v 2 m/s: R_gap-to-air 38.7-59.6 C/W (MB wall from held at inlet air to adiabatic)
+  g 12.0 mm v 4 m/s: R_gap-to-air 27.6-42.7 C/W (MB wall from held at inlet air to adiabatic)
+
+-- 8.6 load sweep, ducted at 2 and 3 m/s, top still air --
+  g  5.0 mm v 2 m/s P 2.0 W (IC 1.68 W, IC internal 16.2 C): CCB rise 27-47 C; T_J - T_air 43-63 C; 25 C bench T_J 68-88 C
+  g  5.0 mm v 2 m/s P 2.5 W (IC 2.13 W, IC internal 20.6 C): CCB rise 34-57 C; T_J - T_air 55-78 C; 25 C bench T_J 80-103 C
+  g  5.0 mm v 2 m/s P 2.7 W (IC 2.31 W, IC internal 22.4 C): CCB rise 37-62 C; T_J - T_air 59-84 C; 25 C bench T_J 84-109 C
+  g  5.0 mm v 2 m/s P 2.9 W (IC 2.49 W, IC internal 24.2 C): CCB rise 39-66 C; T_J - T_air 63-90 C; 25 C bench T_J 88-115 C
+  g  5.0 mm v 3 m/s P 2.0 W (IC 1.68 W, IC internal 16.2 C): CCB rise 25-44 C; T_J - T_air 42-60 C; 25 C bench T_J 67-85 C
+  g  5.0 mm v 3 m/s P 2.5 W (IC 2.13 W, IC internal 20.6 C): CCB rise 32-54 C; T_J - T_air 52-74 C; 25 C bench T_J 77-99 C
+  g  5.0 mm v 3 m/s P 2.7 W (IC 2.31 W, IC internal 22.4 C): CCB rise 34-58 C; T_J - T_air 57-80 C; 25 C bench T_J 82-105 C
+  g  5.0 mm v 3 m/s P 2.9 W (IC 2.49 W, IC internal 24.2 C): CCB rise 37-62 C; T_J - T_air 61-86 C; 25 C bench T_J 86-111 C
+  g  8.0 mm v 2 m/s P 2.0 W (IC 1.68 W, IC internal 16.2 C): CCB rise 31-50 C; T_J - T_air 47-66 C; 25 C bench T_J 72-91 C
+  g  8.0 mm v 2 m/s P 2.5 W (IC 2.13 W, IC internal 20.6 C): CCB rise 38-61 C; T_J - T_air 59-82 C; 25 C bench T_J 84-107 C
+  g  8.0 mm v 2 m/s P 2.7 W (IC 2.31 W, IC internal 22.4 C): CCB rise 41-66 C; T_J - T_air 64-88 C; 25 C bench T_J 89-113 C
+  g  8.0 mm v 2 m/s P 2.9 W (IC 2.49 W, IC internal 24.2 C): CCB rise 44-70 C; T_J - T_air 69-94 C; 25 C bench T_J 94-119 C
+  g  8.0 mm v 3 m/s P 2.0 W (IC 1.68 W, IC internal 16.2 C): CCB rise 28-46 C; T_J - T_air 45-62 C; 25 C bench T_J 70-87 C
+  g  8.0 mm v 3 m/s P 2.5 W (IC 2.13 W, IC internal 20.6 C): CCB rise 35-57 C; T_J - T_air 56-77 C; 25 C bench T_J 81-102 C
+  g  8.0 mm v 3 m/s P 2.7 W (IC 2.31 W, IC internal 22.4 C): CCB rise 38-61 C; T_J - T_air 61-83 C; 25 C bench T_J 86-108 C
+  g  8.0 mm v 3 m/s P 2.9 W (IC 2.49 W, IC internal 24.2 C): CCB rise 41-65 C; T_J - T_air 65-89 C; 25 C bench T_J 90-114 C
+  g 10.0 mm v 2 m/s P 2.0 W (IC 1.68 W, IC internal 16.2 C): CCB rise 32-51 C; T_J - T_air 48-67 C; 25 C bench T_J 73-92 C
+  g 10.0 mm v 2 m/s P 2.5 W (IC 2.13 W, IC internal 20.6 C): CCB rise 40-63 C; T_J - T_air 61-83 C; 25 C bench T_J 86-108 C
+  g 10.0 mm v 2 m/s P 2.7 W (IC 2.31 W, IC internal 22.4 C): CCB rise 43-67 C; T_J - T_air 66-90 C; 25 C bench T_J 91-115 C
+  g 10.0 mm v 2 m/s P 2.9 W (IC 2.49 W, IC internal 24.2 C): CCB rise 47-72 C; T_J - T_air 71-96 C; 25 C bench T_J 96-121 C
+  g 10.0 mm v 3 m/s P 2.0 W (IC 1.68 W, IC internal 16.2 C): CCB rise 30-47 C; T_J - T_air 46-63 C; 25 C bench T_J 71-88 C
+  g 10.0 mm v 3 m/s P 2.5 W (IC 2.13 W, IC internal 20.6 C): CCB rise 37-58 C; T_J - T_air 58-78 C; 25 C bench T_J 83-103 C
+  g 10.0 mm v 3 m/s P 2.7 W (IC 2.31 W, IC internal 22.4 C): CCB rise 40-62 C; T_J - T_air 62-84 C; 25 C bench T_J 87-109 C
+  g 10.0 mm v 3 m/s P 2.9 W (IC 2.49 W, IC internal 24.2 C): CCB rise 43-66 C; T_J - T_air 67-90 C; 25 C bench T_J 92-115 C
+  g 12.0 mm v 2 m/s P 2.0 W (IC 1.68 W, IC internal 16.2 C): CCB rise 33-52 C; T_J - T_air 50-68 C; 25 C bench T_J 75-93 C
+  g 12.0 mm v 2 m/s P 2.5 W (IC 2.13 W, IC internal 20.6 C): CCB rise 42-63 C; T_J - T_air 62-84 C; 25 C bench T_J 87-109 C
+  g 12.0 mm v 2 m/s P 2.7 W (IC 2.31 W, IC internal 22.4 C): CCB rise 45-68 C; T_J - T_air 67-91 C; 25 C bench T_J 92-116 C
+  g 12.0 mm v 2 m/s P 2.9 W (IC 2.49 W, IC internal 24.2 C): CCB rise 48-73 C; T_J - T_air 72-97 C; 25 C bench T_J 97-122 C
+  g 12.0 mm v 3 m/s P 2.0 W (IC 1.68 W, IC internal 16.2 C): CCB rise 31-48 C; T_J - T_air 47-64 C; 25 C bench T_J 72-89 C
+  g 12.0 mm v 3 m/s P 2.5 W (IC 2.13 W, IC internal 20.6 C): CCB rise 38-58 C; T_J - T_air 59-79 C; 25 C bench T_J 84-104 C
+  g 12.0 mm v 3 m/s P 2.7 W (IC 2.31 W, IC internal 22.4 C): CCB rise 41-63 C; T_J - T_air 64-85 C; 25 C bench T_J 89-110 C
+  g 12.0 mm v 3 m/s P 2.9 W (IC 2.49 W, IC internal 24.2 C): CCB rise 44-67 C; T_J - T_air 68-91 C; 25 C bench T_J 93-116 C
+  both sides forced (gap flow + top flow at the same velocity), R_total and T_J - T_air at 2.7 W:
+  g  3.0 mm v 1 m/s: R_total 10.2-15.9 C/W; T_J - T_air at 2.7 W 50-65 C
+  g  3.0 mm v 2 m/s: R_total 8.7-13.2 C/W; T_J - T_air at 2.7 W 46-58 C
+  g  3.0 mm v 3 m/s: R_total 7.9-11.7 C/W; T_J - T_air at 2.7 W 44-54 C
+  g  3.0 mm v 4 m/s: R_total 7.3-10.7 C/W; T_J - T_air at 2.7 W 42-51 C
+  g  5.0 mm v 1 m/s: R_total 11.6-17.3 C/W; T_J - T_air at 2.7 W 54-69 C
+  g  5.0 mm v 2 m/s: R_total 9.8-14.2 C/W; T_J - T_air at 2.7 W 49-61 C
+  g  5.0 mm v 3 m/s: R_total 8.7-12.4 C/W; T_J - T_air at 2.7 W 46-56 C
+  g  5.0 mm v 4 m/s: R_total 8.0-11.3 C/W; T_J - T_air at 2.7 W 44-53 C
+  g  8.0 mm v 1 m/s: R_total 12.9-18.3 C/W; T_J - T_air at 2.7 W 57-72 C
+  g  8.0 mm v 2 m/s: R_total 10.7-14.7 C/W; T_J - T_air at 2.7 W 51-62 C
+  g  8.0 mm v 3 m/s: R_total 9.4-12.8 C/W; T_J - T_air at 2.7 W 48-57 C
+  g  8.0 mm v 4 m/s: R_total 8.5-11.5 C/W; T_J - T_air at 2.7 W 45-54 C
+  g 10.0 mm v 1 m/s: R_total 13.5-18.6 C/W; T_J - T_air at 2.7 W 59-73 C
+  g 10.0 mm v 2 m/s: R_total 11.0-14.9 C/W; T_J - T_air at 2.7 W 52-63 C
+  g 10.0 mm v 3 m/s: R_total 9.7-13.0 C/W; T_J - T_air at 2.7 W 48-57 C
+  g 10.0 mm v 4 m/s: R_total 8.7-11.7 C/W; T_J - T_air at 2.7 W 46-54 C
+  g 12.0 mm v 1 m/s: R_total 13.9-18.9 C/W; T_J - T_air at 2.7 W 60-73 C
+  g 12.0 mm v 2 m/s: R_total 11.3-15.1 C/W; T_J - T_air at 2.7 W 53-63 C
+  g 12.0 mm v 3 m/s: R_total 9.9-13.1 C/W; T_J - T_air at 2.7 W 49-58 C
+  g 12.0 mm v 4 m/s: R_total 8.9-11.7 C/W; T_J - T_air at 2.7 W 46-54 C
+  both sides forced, load sweep:
+  g  5.0 mm v 2 m/s P 2.0 W: CCB rise 20-29 C; T_J - T_air 36-45 C; 25 C bench T_J 61-70 C
+  g  5.0 mm v 2 m/s P 2.5 W: CCB rise 24-36 C; T_J - T_air 45-56 C; 25 C bench T_J 70-81 C
+  g  5.0 mm v 2 m/s P 2.7 W: CCB rise 26-38 C; T_J - T_air 49-61 C; 25 C bench T_J 74-86 C
+  g  5.0 mm v 2 m/s P 2.9 W: CCB rise 28-41 C; T_J - T_air 53-65 C; 25 C bench T_J 78-90 C
+  g  5.0 mm v 3 m/s P 2.0 W: CCB rise 18-25 C; T_J - T_air 34-42 C; 25 C bench T_J 59-67 C
+  g  5.0 mm v 3 m/s P 2.5 W: CCB rise 22-31 C; T_J - T_air 42-52 C; 25 C bench T_J 67-77 C
+  g  5.0 mm v 3 m/s P 2.7 W: CCB rise 24-34 C; T_J - T_air 46-56 C; 25 C bench T_J 71-81 C
+  g  5.0 mm v 3 m/s P 2.9 W: CCB rise 25-36 C; T_J - T_air 49-60 C; 25 C bench T_J 74-85 C
+  g  8.0 mm v 2 m/s P 2.0 W: CCB rise 21-30 C; T_J - T_air 38-46 C; 25 C bench T_J 63-71 C
+  g  8.0 mm v 2 m/s P 2.5 W: CCB rise 27-37 C; T_J - T_air 47-58 C; 25 C bench T_J 72-83 C
+  g  8.0 mm v 2 m/s P 2.7 W: CCB rise 29-40 C; T_J - T_air 51-62 C; 25 C bench T_J 76-87 C
+  g  8.0 mm v 2 m/s P 2.9 W: CCB rise 31-43 C; T_J - T_air 55-67 C; 25 C bench T_J 80-92 C
+  g  8.0 mm v 3 m/s P 2.0 W: CCB rise 19-26 C; T_J - T_air 35-42 C; 25 C bench T_J 60-67 C
+  g  8.0 mm v 3 m/s P 2.5 W: CCB rise 23-32 C; T_J - T_air 44-53 C; 25 C bench T_J 69-78 C
+  g  8.0 mm v 3 m/s P 2.7 W: CCB rise 25-35 C; T_J - T_air 48-57 C; 25 C bench T_J 73-82 C
+  g  8.0 mm v 3 m/s P 2.9 W: CCB rise 27-37 C; T_J - T_air 51-61 C; 25 C bench T_J 76-86 C
+  both sides 2 m/s g 5 mm, dT_MB0  0.0 C: T_J - T_air 49-61 C
+  both sides 2 m/s g 5 mm, dT_MB0 10.0 C: T_J - T_air 52-63 C
+  both sides 2 m/s g 5 mm, dT_MB0 20.0 C: T_J - T_air 55-64 C
+
+-- 8.6b sensitivity to the MB idle offset over room air (dT_MB0), g 10 mm, 2.7 W --
+  ducted 2 m/s, dT_MB0  0.0 C: T_J - T_air 66-90 C
+  ducted 2 m/s, dT_MB0 10.0 C: T_J - T_air 69-92 C
+  ducted 2 m/s, dT_MB0 20.0 C: T_J - T_air 73-95 C
+  fan off, dT_MB0  0.0 C: T_J - T_air 94-128 C
+  fan off, dT_MB0 10.0 C: T_J - T_air 101-133 C
+  fan off, dT_MB0 20.0 C: T_J - T_air 108-139 C
+
+-- 8.6c air temperature rise at the duct outlet (upper bound: all 2.7 W into the duct air) --
+  g  5.0 mm: 1 m/s <= 20.3 C, 2 m/s <= 10.1 C, 3 m/s <= 6.8 C
+  g  8.0 mm: 1 m/s <= 12.7 C, 2 m/s <= 6.3 C, 3 m/s <= 4.2 C
+  g 10.0 mm: 1 m/s <= 10.1 C, 2 m/s <= 5.1 C, 3 m/s <= 3.4 C
+  g 12.0 mm: 1 m/s <= 8.4 C, 2 m/s <= 4.2 C, 3 m/s <= 2.8 C
+
+-- 8.7 (d) fan off, tall gap: conduction + radiation across the gap, still-air top --
+  g  2.415 mm: R_total 16.7-30.0 C/W (no radiation 18.0-35.0); T_J - T_air at 2.7 W 67-104 C (no radiation 71-117)
+  g  3.000 mm: R_total 17.8-31.5 C/W (no radiation 19.5-37.4); T_J - T_air at 2.7 W 71-108 C (no radiation 75-123)
+  g  5.000 mm: R_total 21.1-34.9 C/W (no radiation 23.8-42.9); T_J - T_air at 2.7 W 79-117 C (no radiation 87-138)
+  g  8.000 mm: R_total 24.7-37.7 C/W (no radiation 28.9-48.1); T_J - T_air at 2.7 W 89-124 C (no radiation 100-152)
+  g 10.000 mm: R_total 26.6-39.0 C/W (no radiation 31.8-50.6); T_J - T_air at 2.7 W 94-128 C (no radiation 108-159)
+  g 12.000 mm: R_total 28.2-40.0 C/W (no radiation 34.3-52.6); T_J - T_air at 2.7 W 99-131 C (no radiation 115-165)
+  fan off g  5.0 mm P 2.0 W: T_J on a 25 C bench 84-113 C; margin to TREG 120 C 7 to 36 C; to TSHUT 150 C 37 to 66 C
+  fan off g  5.0 mm P 2.08 W: T_J on a 25 C bench 86-116 C; margin to TREG 120 C 4 to 34 C; to TSHUT 150 C 34 to 64 C
+  fan off g  5.0 mm P 2.5 W: T_J on a 25 C bench 98-133 C; margin to TREG 120 C -13 to 22 C; to TSHUT 150 C 17 to 52 C
+  fan off g  5.0 mm P 2.7 W: T_J on a 25 C bench 104-142 C; margin to TREG 120 C -22 to 16 C; to TSHUT 150 C 8 to 46 C
+  fan off g  5.0 mm P 2.9 W: T_J on a 25 C bench 110-150 C; margin to TREG 120 C -30 to 10 C; to TSHUT 150 C 0 to 40 C
+  fan off g 10.0 mm P 2.0 W: T_J on a 25 C bench 95-121 C; margin to TREG 120 C -1 to 25 C; to TSHUT 150 C 29 to 55 C
+  fan off g 10.0 mm P 2.08 W: T_J on a 25 C bench 97-125 C; margin to TREG 120 C -5 to 23 C; to TSHUT 150 C 25 to 53 C
+  fan off g 10.0 mm P 2.5 W: T_J on a 25 C bench 112-144 C; margin to TREG 120 C -24 to 8 C; to TSHUT 150 C 6 to 38 C
+  fan off g 10.0 mm P 2.7 W: T_J on a 25 C bench 119-153 C; margin to TREG 120 C -33 to 1 C; to TSHUT 150 C -3 to 31 C
+  fan off g 10.0 mm P 2.9 W: T_J on a 25 C bench 126-162 C; margin to TREG 120 C -42 to -6 C; to TSHUT 150 C -12 to 24 C
+  fan off g 12.0 mm P 2.0 W: T_J on a 25 C bench 98-123 C; margin to TREG 120 C -3 to 22 C; to TSHUT 150 C 27 to 52 C
+  fan off g 12.0 mm P 2.08 W: T_J on a 25 C bench 101-127 C; margin to TREG 120 C -7 to 19 C; to TSHUT 150 C 23 to 49 C
+  fan off g 12.0 mm P 2.5 W: T_J on a 25 C bench 116-146 C; margin to TREG 120 C -26 to 4 C; to TSHUT 150 C 4 to 34 C
+  fan off g 12.0 mm P 2.7 W: T_J on a 25 C bench 124-156 C; margin to TREG 120 C -36 to -4 C; to TSHUT 150 C -6 to 26 C
+  fan off g 12.0 mm P 2.9 W: T_J on a 25 C bench 131-165 C; margin to TREG 120 C -45 to -11 C; to TSHUT 150 C -15 to 19 C
+  (2.08 W = the 2.50 A derate image of FR-50, 5.8: 1.93 W charger + 0.15 W eFuse and logic)
+  CCB heat capacity about 7.8 J/K (laminate 3.6 g x 1100, Cu 2.3 g x 385, L501 1.1 g x 450, pins 0.9 g x 380, parts 3 g x 700 J/kgK); g 5 mm: tau fan off 164-271 s, fan on 2 m/s 106-178 s (CCB node only; the MB node adds capacity)
+  CCB heat capacity about 7.8 J/K (laminate 3.6 g x 1100, Cu 2.3 g x 385, L501 1.1 g x 450, pins 0.9 g x 380, parts 3 g x 700 J/kgK); g 10 mm: tau fan off 207-303 s, fan on 2 m/s 125-194 s (CCB node only; the MB node adds capacity)
+
+-- 8.8 (e) optional heatsink on the U501 top; RthJC(top) 20.9 C/W, psiJT 0.5, psiJB 9.7 ([DS] 6.4) --
+  TIM 0.5 K cm2/W over 16 mm2: 3.1 C/W
+  TIM 2.0 K cm2/W over 16 mm2: 12.5 C/W
+  both sides 2 m/s g 5 mm, no heatsink: T_J - T_air 49-61 C; heat through the top 0.00-0.00 W
+  both sides 2 m/s g 5 mm, R_sa 120.0 C/W: T_J - T_air 43-53 C; heat through the top 0.28-0.36 W
+  both sides 2 m/s g 5 mm, R_sa 80.0 C/W: T_J - T_air 41-50 C; heat through the top 0.37-0.48 W
+  both sides 2 m/s g 5 mm, R_sa 60.0 C/W: T_J - T_air 40-49 C; heat through the top 0.43-0.57 W
+  both sides 2 m/s g 5 mm, R_sa 40.0 C/W: T_J - T_air 37-46 C; heat through the top 0.53-0.70 W
+  both sides 2 m/s g 5 mm, R_sa 20.0 C/W: T_J - T_air 34-42 C; heat through the top 0.67-0.91 W
+  both sides 2 m/s g 5 mm, R_sa 10.0 C/W: T_J - T_air 31-40 C; heat through the top 0.78-1.06 W
+  both sides 2 m/s g 5 mm, R_sa  5.0 C/W: T_J - T_air 29-38 C; heat through the top 0.84-1.17 W
+  both sides 2 m/s g 5 mm, R_sa  0.0 C/W: T_J - T_air 27-36 C; heat through the top 0.92-1.29 W
+  ducted g 10 mm 2 m/s, no heatsink: T_J - T_air 66-90 C; heat through the top 0.00-0.00 W
+  ducted g 10 mm 2 m/s, R_sa 120.0 C/W: T_J - T_air 56-74 C; heat through the top 0.37-0.51 W
+  ducted g 10 mm 2 m/s, R_sa 80.0 C/W: T_J - T_air 53-69 C; heat through the top 0.47-0.65 W
+  ducted g 10 mm 2 m/s, R_sa 60.0 C/W: T_J - T_air 50-66 C; heat through the top 0.55-0.77 W
+  ducted g 10 mm 2 m/s, R_sa 40.0 C/W: T_J - T_air 47-62 C; heat through the top 0.66-0.92 W
+  ducted g 10 mm 2 m/s, R_sa 20.0 C/W: T_J - T_air 42-55 C; heat through the top 0.83-1.16 W
+  ducted g 10 mm 2 m/s, R_sa 10.0 C/W: T_J - T_air 37-51 C; heat through the top 0.95-1.34 W
+  ducted g 10 mm 2 m/s, R_sa  5.0 C/W: T_J - T_air 35-48 C; heat through the top 1.03-1.44 W
+  ducted g 10 mm 2 m/s, R_sa  0.0 C/W: T_J - T_air 32-45 C; heat through the top 1.11-1.57 W
+  fan off g 5 mm, no heatsink: T_J - T_air 79-117 C; heat through the top 0.00-0.00 W
+  fan off g 5 mm, R_sa 120.0 C/W: T_J - T_air 65-91 C; heat through the top 0.43-0.63 W
+  fan off g 5 mm, R_sa 80.0 C/W: T_J - T_air 61-85 C; heat through the top 0.55-0.80 W
+  fan off g 5 mm, R_sa 60.0 C/W: T_J - T_air 58-80 C; heat through the top 0.64-0.92 W
+  fan off g 5 mm, R_sa 40.0 C/W: T_J - T_air 54-74 C; heat through the top 0.76-1.10 W
+  fan off g 5 mm, R_sa 20.0 C/W: T_J - T_air 47-65 C; heat through the top 0.94-1.35 W
+  fan off g 5 mm, R_sa 10.0 C/W: T_J - T_air 42-59 C; heat through the top 1.07-1.53 W
+  fan off g 5 mm, R_sa  5.0 C/W: T_J - T_air 39-55 C; heat through the top 1.15-1.64 W
+  fan off g 5 mm, R_sa  0.0 C/W: T_J - T_air 35-51 C; heat through the top 1.24-1.76 W
+  fan off g 10 mm, no heatsink: T_J - T_air 94-128 C; heat through the top 0.00-0.00 W
+  fan off g 10 mm, R_sa 120.0 C/W: T_J - T_air 75-98 C; heat through the top 0.50-0.67 W
+  fan off g 10 mm, R_sa 80.0 C/W: T_J - T_air 70-91 C; heat through the top 0.63-0.85 W
+  fan off g 10 mm, R_sa 60.0 C/W: T_J - T_air 66-85 C; heat through the top 0.73-0.98 W
+  fan off g 10 mm, R_sa 40.0 C/W: T_J - T_air 60-78 C; heat through the top 0.86-1.16 W
+  fan off g 10 mm, R_sa 20.0 C/W: T_J - T_air 52-68 C; heat through the top 1.05-1.42 W
+  fan off g 10 mm, R_sa 10.0 C/W: T_J - T_air 46-62 C; heat through the top 1.18-1.59 W
+  fan off g 10 mm, R_sa  5.0 C/W: T_J - T_air 42-58 C; heat through the top 1.26-1.70 W
+  fan off g 10 mm, R_sa  0.0 C/W: T_J - T_air 38-54 C; heat through the top 1.35-1.82 W
+
+-- 8.9 gap selection and fan flow --
+  g  3.0 mm at 2 m/s: R_total 11.6-20.4 C/W, T_J - T_air 54-78 C, channel flow 0.28 CFM, dp 7.3 Pa, worst blockage 70 %
+  g  5.0 mm at 2 m/s: R_total 13.6-22.8 C/W, T_J - T_air 59-84 C, channel flow 0.47 CFM, dp 5.9 Pa, worst blockage 42 %
+  g  8.0 mm at 2 m/s: R_total 15.3-24.3 C/W, T_J - T_air 64-88 C, channel flow 0.76 CFM, dp 5.4 Pa, worst blockage 26 %
+  g 10.0 mm at 2 m/s: R_total 16.1-24.9 C/W, T_J - T_air 66-90 C, channel flow 0.95 CFM, dp 5.3 Pa, worst blockage 21 %
+  g 12.0 mm at 2 m/s: R_total 16.7-25.3 C/W, T_J - T_air 67-91 C, channel flow 1.14 CFM, dp 5.3 Pa, worst blockage 18 %
+  fixed channel flow 0.5 CFM: g 3: v 3.52 m/s, T_J-T_air 51-73; g 5: v 2.11 m/s, T_J-T_air 59-83; g 8: v 1.32 m/s, T_J-T_air 67-93; g 10: v 1.06 m/s, T_J-T_air 71-97; g 12: v 0.88 m/s, T_J-T_air 75-100
+  fixed channel flow 1.0 CFM: g 3: v 7.04 m/s, T_J-T_air 48-67; g 5: v 4.23 m/s, T_J-T_air 54-76; g 8: v 2.64 m/s, T_J-T_air 62-85; g 10: v 2.11 m/s, T_J-T_air 65-89; g 12: v 1.76 m/s, T_J-T_air 69-92
+  fixed channel flow 2.0 CFM: g 3: v 14.08 m/s, T_J-T_air 44-60; g 5: v 8.45 m/s, T_J-T_air 50-68; g 8: v 5.28 m/s, T_J-T_air 56-76; g 10: v 4.23 m/s, T_J-T_air 59-80; g 12: v 3.52 m/s, T_J-T_air 62-83
+  g 8 mm v 2 m/s: channel 0.76 CFM (22.34 mm), full body width 1.05 CFM; fan rating at 30-50 % duct capture 2.1-3.5 CFM at >= 5.4 Pa plus duct losses (TODO(measure))
+  g 8 mm v 3 m/s: channel 1.14 CFM (22.34 mm), full body width 1.58 CFM; fan rating at 30-50 % duct capture 3.2-5.3 CFM at >= 12.0 Pa plus duct losses (TODO(measure))
+  g 10 mm v 2 m/s: channel 0.95 CFM (22.34 mm), full body width 1.31 CFM; fan rating at 30-50 % duct capture 2.6-4.4 CFM at >= 5.3 Pa plus duct losses (TODO(measure))
+  g 10 mm v 3 m/s: channel 1.42 CFM (22.34 mm), full body width 1.97 CFM; fan rating at 30-50 % duct capture 3.9-6.6 CFM at >= 11.9 Pa plus duct losses (TODO(measure))
+  g 12 mm v 2 m/s: channel 1.14 CFM (22.34 mm), full body width 1.58 CFM; fan rating at 30-50 % duct capture 3.2-5.3 CFM at >= 5.3 Pa plus duct losses (TODO(measure))
+  g 12 mm v 3 m/s: channel 1.70 CFM (22.34 mm), full body width 2.36 CFM; fan rating at 30-50 % duct capture 4.7-7.9 CFM at >= 11.8 Pa plus duct losses (TODO(measure))
+  both sides, g 5 mm v 2 m/s: gap 0.66 + top stream (10 mm x 31.0 mm) 1.31 = 1.97 CFM delivered; fan rating at 30-50 % capture 3.9-6.6 CFM
+  both sides, g 5 mm v 3 m/s: gap 0.99 + top stream (10 mm x 31.0 mm) 1.97 = 2.96 CFM delivered; fan rating at 30-50 % capture 5.9-9.9 CFM
+  both sides, g 8 mm v 2 m/s: gap 1.05 + top stream (10 mm x 31.0 mm) 1.31 = 2.36 CFM delivered; fan rating at 30-50 % capture 4.7-7.9 CFM
+  both sides, g 8 mm v 3 m/s: gap 1.58 + top stream (10 mm x 31.0 mm) 1.97 = 3.55 CFM delivered; fan rating at 30-50 % capture 7.1-11.8 CFM
+
+-- 8.10 fan supply: LM1084 (REG-5V) load budget --
+  VBT 7.4 V: LM1084 now 0.36-0.60 W; a 0.05-0.20 A fan adds 0.12-0.48 W (+20 to +133 %), +5 to +19 C at RthJA 40.4 (indicative); headroom over the 1.3 V dropout 1.1 V
+  VBT 8.0 V: LM1084 now 0.45-0.75 W; a 0.05-0.20 A fan adds 0.15-0.60 W (+20 to +133 %), +6 to +24 C at RthJA 40.4 (indicative); headroom over the 1.3 V dropout 1.7 V
+  VBT 8.4 V: LM1084 now 0.51-0.85 W; a 0.05-0.20 A fan adds 0.17-0.68 W (+20 to +133 %), +7 to +27 C at RthJA 40.4 (indicative); headroom over the 1.3 V dropout 2.1 V

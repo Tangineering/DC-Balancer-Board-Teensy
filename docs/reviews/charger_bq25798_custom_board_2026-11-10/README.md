@@ -8,7 +8,7 @@ a design document only: nothing is ordered, no firmware is changed and no KiCad 
 
 | File | Content | Cited in the design document as |
 |---|---|---|
-| `bom.csv` | Machine-readable BOM: 103 part lines plus the PCB line (review run 001 fixes applied). Columns include `class_IC` (I, S or M) and `carried_over_from_round3_refdes` | Section 4, [BOMGEN] |
+| `bom.csv` | Machine-readable BOM: 111 part lines plus the PCB line (review run 001 fixes applied; r2 adds the bench fan, its lead, mount and DNP regulator, the soak thermocouples, the anemometer (tool), a DNP U501 heatsink and the not-fitted r1 gap pad, and re-classes the headers and option-K sockets as tall-stack parts). Columns include `class_IC` (I, S or M) and `carried_over_from_round3_refdes` | Section 4, [BOMGEN] |
 | `make_bom.py` | Generator of the BOM and of the cost roll-up. It writes `bom.csv` and `bom_cost.json` | [BOMGEN] |
 | `bom_cost.json` | Cost roll-up for builds 1, 2, 4 and 5 (option P nets the stencil once) (verified, round-3 allowance and new allowance classes; unpriced placement counts) | §4.5 |
 | `ti_prices.json` | TI store prices of 2026-11-10, 1-99 tier, parsed from the TI part-details pages | [TI-PD] |
@@ -18,7 +18,8 @@ a design document only: nothing is ordered, no firmware is changed and no KiCad 
 | `digest_mechanics.md` | Mechanical facts extracted from the parse: pad table, neighbours, J-BL envelope, MB copper, foot spots, overhang ranking | [MECH] |
 | `digest_ti.md` | Transcribed facts of SLUSDV2C (BQ25798 data sheet) and SLUUCB5E (EVM user guide): pin table, EVM designators, layer reading, rev-C changes | [TID] |
 | `digest_study_reviews.md` | Operator rulings, requirements HR1-HR5, the round 1-6 finding table with tags, gate D-2 and the mechanical unknowns | [STUDY] |
-| `layout_calc.py`, `layout_calc_out.txt` | Layout arithmetic: conductor widths, vias, losses, lumped thermal model, area budget, pin heating | [LC] |
+| `layout_calc.py`, `layout_calc_out.txt` | Layout arithmetic: conductor widths, vias, losses, lumped thermal model, area budget, pin heating; section 8 (r2) adds forced air on the testbench, the fan-off case, the U501 heatsink option, gap selection, fan flow and fan supply. Output lines 1-173 are unchanged from r1 | [LC] |
+| `tall_stack_calc.py`, `tall_stack_calc_out.txt` | r2 tall header stack checks: pin resistance and I2R, input-loop inductance, eFuse hard-short spike, signal loading, mechanical loads | [TS] |
 | `sch_calc.py`, `sch_calc_out.txt` | Schematic arithmetic: inductor ripple and peak, VCHGOUT capacitance, inrush, PMID ripple current, header-pin currents | [CALC] |
 | `make_ledger.py`, `ledger_table.md` | Generator of the 203-key review-finding ledger and its output | §7.A, [LEDG] |
 | `tida_layout_parse.py` | Parser of the TIDA-050047 Altium outputs (`references/TI_BQ25798_design_files/TIDA-050047/altium_TIDM752/REV_A1`): layer stack and placements from the `.PcbDoc` text records, U1 pads, mask and paste openings, vias and pours from the Gerbers (gerbonara), drill sizes, the `.RUL` rule export and the schematic pin records. Positions are in the cell coordinates of §3.4. Run: `python -I tida_layout_parse.py <REV_A1 folder> [<png folder>]`; the optional second argument writes layer renders | [TLP], §3.4.6-3.4.8 |
@@ -40,6 +41,9 @@ a design document only: nothing is ordered, no firmware is changed and no KiCad 
    `references/TI_BQ25798_design_files/`, not in this folder.
 5. `tida_layout_parse.py` reads the TIDA-050047 files as data only. It needs `gerbonara` (1.6.3 in the miniforge
    environment used) and, for the renders, `matplotlib`. The renders are not kept in this folder.
+6. Revision r2 does not regenerate `ledger_table.md`. The design document (§7.2.3) proposes that round-6 key
+   `tc04-in-spike-criterion-omits-mb-vchgin-ratings` changes from KEPT to CHANGED, after the tall-stack check of
+   `tall_stack_calc_out.txt` section (c). `make_ledger.py` keeps the r1 status until a review round confirms the change.
 
 ## Adversarial review (2026-11-10)
 
