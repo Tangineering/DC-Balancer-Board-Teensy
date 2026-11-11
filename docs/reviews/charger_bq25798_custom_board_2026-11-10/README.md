@@ -464,7 +464,7 @@ one blocker, `evm-jp14-feed-joint-floating`, is CLOSED; of the 93 majors, 11 are
 CLOSED set is the EVM-modification, ribbon, EIB and lead keys. The CHANGED set is mainly layout.
 
 The CCB also opens new findings with proposed severities (Table 7.7). The table lists 27 (N-01 to N-27), of which 12 are
-proposed as major; §0.3 still states the r1 count of 24. The r2 additions are the IN-side transient (N-25), the
+proposed as major. The r2 additions are the IN-side transient (N-25), the
 dependence on the bench fan (N-26) and the tall header stack (N-27). Revision r2 does not regenerate
 `ledger_table.md`, and one proposed status change (key `tc04-in-spike-criterion-omits-mb-vchgin-ratings`) awaits review.
 
