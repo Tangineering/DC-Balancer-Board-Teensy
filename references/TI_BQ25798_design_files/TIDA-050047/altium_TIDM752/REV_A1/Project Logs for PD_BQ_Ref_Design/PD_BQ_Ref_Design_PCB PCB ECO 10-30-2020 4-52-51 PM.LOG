@@ -1,0 +1,326 @@
+Removed Pin From Net: NetName=GND Pin=U4-5
+Removed Pin From Net: NetName=PPHV Pin=U4-20-21-22
+Removed Pin From Net: NetName=VBUS Pin=U4-23-24-25
+Removed Pin From Net: NetName=VBUS Pin=U4-32-33
+Removed Pin From Net: NetName=PP5V Pin=U4-34-35
+Removed Pin From Net: NetName=NetR28_2 Pin=U5-C
+Change Component Footprint: Designator=U4 Old Footprint=RJK0038B-C01-MFG New Footprint=RJK0038B-C01-MFG
+Added Component: Designator=FID1(Fiducial10-20)
+Add component. Clean all parameters for all variants
+Add component (AddParameter): Name = "ClassName"; Value = "FiducialMark"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "CompType"; Value = "Fiducial"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Manufacturer"; Value = "N/A"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "MountType"; Value = "N/A"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "PackageReference"; Value = "N/A"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "PartNumber"; Value = "N/A"; VariantName = "[No Variations]"
+Added Component: Designator=FID2(Fiducial10-20)
+Add component. Clean all parameters for all variants
+Add component (AddParameter): Name = "ClassName"; Value = "FiducialMark"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "CompType"; Value = "Fiducial"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Manufacturer"; Value = "N/A"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "MountType"; Value = "N/A"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "PackageReference"; Value = "N/A"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "PartNumber"; Value = "N/A"; VariantName = "[No Variations]"
+Added Component: Designator=FID3(Fiducial10-20)
+Add component. Clean all parameters for all variants
+Add component (AddParameter): Name = "ClassName"; Value = "FiducialMark"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "CompType"; Value = "Fiducial"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Manufacturer"; Value = "N/A"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "MountType"; Value = "N/A"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "PackageReference"; Value = "N/A"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "PartNumber"; Value = "N/A"; VariantName = "[No Variations]"
+Added Component: Designator=FID4(Fiducial10-20)
+Add component. Clean all parameters for all variants
+Add component (AddParameter): Name = "ClassName"; Value = "FiducialMark"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "CompType"; Value = "Fiducial"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Manufacturer"; Value = "N/A"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "MountType"; Value = "N/A"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "PackageReference"; Value = "N/A"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "PartNumber"; Value = "N/A"; VariantName = "[No Variations]"
+Added Component: Designator=FID5(Fiducial10-20)
+Add component. Clean all parameters for all variants
+Add component (AddParameter): Name = "ClassName"; Value = "FiducialMark"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "CompType"; Value = "Fiducial"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Manufacturer"; Value = "N/A"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "MountType"; Value = "N/A"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "PackageReference"; Value = "N/A"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "PartNumber"; Value = "N/A"; VariantName = "[No Variations]"
+Added Component: Designator=FID6(Fiducial10-20)
+Add component. Clean all parameters for all variants
+Add component (AddParameter): Name = "ClassName"; Value = "FiducialMark"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "CompType"; Value = "Fiducial"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Manufacturer"; Value = "N/A"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "MountType"; Value = "N/A"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "PackageReference"; Value = "N/A"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "PartNumber"; Value = "N/A"; VariantName = "[No Variations]"
+Added Component: Designator=H1(NY PMS 440 0025 PH)
+Add component. Clean all parameters for all variants
+Add component (AddParameter): Name = "Alternate Manufacturer"; Value = ""; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Alternate PartNumber"; Value = ""; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "ClassName"; Value = "Mounting Holes"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "ComponentLink1Description"; Value = "Datasheet Link"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "ComponentLink1URL"; Value = "http://www.fasnetdirect.com/refguide/Nylpanms.pdf"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "CompType"; Value = "Hardware"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Key"; Value = "NY PMS 440 0025 PH"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "LatestRevisionDate"; Value = "2017-03-09"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Manufacturer"; Value = "B&F Fastener Supply"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "MountType"; Value = "N/A"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Note"; Value = ""; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "PackageReference"; Value = "Screw"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "PartNumber"; Value = "NY PMS 440 0025 PH"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Publisher"; Value = "Texas Instruments"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "RoHS"; Value = "Y"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Supplier 1"; Value = "Digi-Key"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Supplier 2"; Value = ""; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Supplier 3"; Value = ""; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Supplier Part Number 1"; Value = "H542-ND"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Supplier Part Number 2"; Value = ""; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Supplier Part Number 3"; Value = ""; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Value"; Value = ""; VariantName = "[No Variations]"
+Added Component: Designator=H2(NY PMS 440 0025 PH)
+Add component. Clean all parameters for all variants
+Add component (AddParameter): Name = "Alternate Manufacturer"; Value = ""; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Alternate PartNumber"; Value = ""; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "ClassName"; Value = "Mounting Holes"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "ComponentLink1Description"; Value = "Datasheet Link"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "ComponentLink1URL"; Value = "http://www.fasnetdirect.com/refguide/Nylpanms.pdf"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "CompType"; Value = "Hardware"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Key"; Value = "NY PMS 440 0025 PH"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "LatestRevisionDate"; Value = "2017-03-09"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Manufacturer"; Value = "B&F Fastener Supply"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "MountType"; Value = "N/A"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Note"; Value = ""; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "PackageReference"; Value = "Screw"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "PartNumber"; Value = "NY PMS 440 0025 PH"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Publisher"; Value = "Texas Instruments"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "RoHS"; Value = "Y"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Supplier 1"; Value = "Digi-Key"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Supplier 2"; Value = ""; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Supplier 3"; Value = ""; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Supplier Part Number 1"; Value = "H542-ND"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Supplier Part Number 2"; Value = ""; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Supplier Part Number 3"; Value = ""; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Value"; Value = ""; VariantName = "[No Variations]"
+Added Component: Designator=H3(NY PMS 440 0025 PH)
+Add component. Clean all parameters for all variants
+Add component (AddParameter): Name = "Alternate Manufacturer"; Value = ""; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Alternate PartNumber"; Value = ""; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "ClassName"; Value = "Mounting Holes"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "ComponentLink1Description"; Value = "Datasheet Link"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "ComponentLink1URL"; Value = "http://www.fasnetdirect.com/refguide/Nylpanms.pdf"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "CompType"; Value = "Hardware"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Key"; Value = "NY PMS 440 0025 PH"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "LatestRevisionDate"; Value = "2017-03-09"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Manufacturer"; Value = "B&F Fastener Supply"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "MountType"; Value = "N/A"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Note"; Value = ""; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "PackageReference"; Value = "Screw"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "PartNumber"; Value = "NY PMS 440 0025 PH"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Publisher"; Value = "Texas Instruments"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "RoHS"; Value = "Y"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Supplier 1"; Value = "Digi-Key"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Supplier 2"; Value = ""; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Supplier 3"; Value = ""; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Supplier Part Number 1"; Value = "H542-ND"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Supplier Part Number 2"; Value = ""; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Supplier Part Number 3"; Value = ""; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Value"; Value = ""; VariantName = "[No Variations]"
+Added Component: Designator=H4(NY PMS 440 0025 PH)
+Add component. Clean all parameters for all variants
+Add component (AddParameter): Name = "Alternate Manufacturer"; Value = ""; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Alternate PartNumber"; Value = ""; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "ClassName"; Value = "Mounting Holes"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "ComponentLink1Description"; Value = "Datasheet Link"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "ComponentLink1URL"; Value = "http://www.fasnetdirect.com/refguide/Nylpanms.pdf"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "CompType"; Value = "Hardware"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Key"; Value = "NY PMS 440 0025 PH"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "LatestRevisionDate"; Value = "2017-03-09"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Manufacturer"; Value = "B&F Fastener Supply"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "MountType"; Value = "N/A"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Note"; Value = ""; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "PackageReference"; Value = "Screw"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "PartNumber"; Value = "NY PMS 440 0025 PH"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Publisher"; Value = "Texas Instruments"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "RoHS"; Value = "Y"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Supplier 1"; Value = "Digi-Key"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Supplier 2"; Value = ""; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Supplier 3"; Value = ""; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Supplier Part Number 1"; Value = "H542-ND"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Supplier Part Number 2"; Value = ""; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Supplier Part Number 3"; Value = ""; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Value"; Value = ""; VariantName = "[No Variations]"
+Added Component: Designator=H5(Keystone_1902C)
+Add component. Clean all parameters for all variants
+Add component (AddParameter): Name = "Alternate Manufacturer"; Value = ""; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Alternate PartNumber"; Value = ""; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "ClassName"; Value = ""; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "ComponentLink1Description"; Value = "Datasheet Link"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "ComponentLink1URL"; Value = "http://www.keyelco.com/pdfs/M55-prod31.pdf"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "CompType"; Value = "Hardware"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Key"; Value = "1902C"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "LatestRevisionDate"; Value = "2017-03-09"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Manufacturer"; Value = "Keystone"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "MountType"; Value = "N/A"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Note"; Value = ""; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "PackageReference"; Value = "Standoff"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "PartNumber"; Value = "1902C"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Publisher"; Value = "Texas Instruments"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "RoHS"; Value = "Y"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Supplier 1"; Value = "Digi-Key"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Supplier 2"; Value = ""; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Supplier 3"; Value = ""; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Supplier Part Number 1"; Value = "36-1902C-ND"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Supplier Part Number 2"; Value = ""; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Supplier Part Number 3"; Value = ""; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Value"; Value = ""; VariantName = "[No Variations]"
+Added Component: Designator=H6(Keystone_1902C)
+Add component. Clean all parameters for all variants
+Add component (AddParameter): Name = "Alternate Manufacturer"; Value = ""; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Alternate PartNumber"; Value = ""; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "ClassName"; Value = ""; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "ComponentLink1Description"; Value = "Datasheet Link"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "ComponentLink1URL"; Value = "http://www.keyelco.com/pdfs/M55-prod31.pdf"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "CompType"; Value = "Hardware"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Key"; Value = "1902C"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "LatestRevisionDate"; Value = "2017-03-09"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Manufacturer"; Value = "Keystone"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "MountType"; Value = "N/A"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Note"; Value = ""; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "PackageReference"; Value = "Standoff"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "PartNumber"; Value = "1902C"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Publisher"; Value = "Texas Instruments"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "RoHS"; Value = "Y"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Supplier 1"; Value = "Digi-Key"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Supplier 2"; Value = ""; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Supplier 3"; Value = ""; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Supplier Part Number 1"; Value = "36-1902C-ND"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Supplier Part Number 2"; Value = ""; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Supplier Part Number 3"; Value = ""; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Value"; Value = ""; VariantName = "[No Variations]"
+Added Component: Designator=H7(Keystone_1902C)
+Add component. Clean all parameters for all variants
+Add component (AddParameter): Name = "Alternate Manufacturer"; Value = ""; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Alternate PartNumber"; Value = ""; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "ClassName"; Value = ""; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "ComponentLink1Description"; Value = "Datasheet Link"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "ComponentLink1URL"; Value = "http://www.keyelco.com/pdfs/M55-prod31.pdf"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "CompType"; Value = "Hardware"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Key"; Value = "1902C"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "LatestRevisionDate"; Value = "2017-03-09"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Manufacturer"; Value = "Keystone"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "MountType"; Value = "N/A"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Note"; Value = ""; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "PackageReference"; Value = "Standoff"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "PartNumber"; Value = "1902C"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Publisher"; Value = "Texas Instruments"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "RoHS"; Value = "Y"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Supplier 1"; Value = "Digi-Key"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Supplier 2"; Value = ""; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Supplier 3"; Value = ""; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Supplier Part Number 1"; Value = "36-1902C-ND"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Supplier Part Number 2"; Value = ""; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Supplier Part Number 3"; Value = ""; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Value"; Value = ""; VariantName = "[No Variations]"
+Added Component: Designator=H8(Keystone_1902C)
+Add component. Clean all parameters for all variants
+Add component (AddParameter): Name = "Alternate Manufacturer"; Value = ""; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Alternate PartNumber"; Value = ""; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "ClassName"; Value = ""; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "ComponentLink1Description"; Value = "Datasheet Link"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "ComponentLink1URL"; Value = "http://www.keyelco.com/pdfs/M55-prod31.pdf"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "CompType"; Value = "Hardware"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Key"; Value = "1902C"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "LatestRevisionDate"; Value = "2017-03-09"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Manufacturer"; Value = "Keystone"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "MountType"; Value = "N/A"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Note"; Value = ""; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "PackageReference"; Value = "Standoff"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "PartNumber"; Value = "1902C"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Publisher"; Value = "Texas Instruments"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "RoHS"; Value = "Y"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Supplier 1"; Value = "Digi-Key"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Supplier 2"; Value = ""; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Supplier 3"; Value = ""; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Supplier Part Number 1"; Value = "36-1902C-ND"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Supplier Part Number 2"; Value = ""; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Supplier Part Number 3"; Value = ""; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Value"; Value = ""; VariantName = "[No Variations]"
+Added Component: Designator=SH-J1(SNT-100-BK-G)
+Add component. Clean all parameters for all variants
+Add component (AddParameter): Name = "Alternate Manufacturer"; Value = "3M"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Alternate PartNumber"; Value = "969102-0000-DA"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "ClassName"; Value = "Shunt"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "ComponentLink1Description"; Value = "Datasheet Link"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "ComponentLink1URL"; Value = "http://www.samtec.com/ftppub/pdf/SNT.PDF"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "CompType"; Value = "Shunt"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Key"; Value = "SNT-100-BK-G"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "LatestRevisionDate"; Value = "2017-03-09"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Manufacturer"; Value = "Samtec"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "MountType"; Value = "N/A"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Note"; Value = "You can "mate" this to a header by matching the designator.  i.e. use SH-J3 for header J3"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "PackageReference"; Value = "Shunt"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "PartNumber"; Value = "SNT-100-BK-G"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Publisher"; Value = "Texas Instruments"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "RoHS"; Value = "Y"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Supplier 1"; Value = "Digi-Key"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Supplier 2"; Value = ""; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Supplier 3"; Value = ""; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Supplier Part Number 1"; Value = "SNT-100-BK-G-ND"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Supplier Part Number 2"; Value = ""; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Supplier Part Number 3"; Value = ""; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Value"; Value = "1x2"; VariantName = "[No Variations]"
+Added Component: Designator=SH-J2(SNT-100-BK-G)
+Add component. Clean all parameters for all variants
+Add component (AddParameter): Name = "Alternate Manufacturer"; Value = "3M"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Alternate PartNumber"; Value = "969102-0000-DA"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "ClassName"; Value = "Shunt"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "ComponentLink1Description"; Value = "Datasheet Link"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "ComponentLink1URL"; Value = "http://www.samtec.com/ftppub/pdf/SNT.PDF"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "CompType"; Value = "Shunt"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Key"; Value = "SNT-100-BK-G"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "LatestRevisionDate"; Value = "2017-03-09"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Manufacturer"; Value = "Samtec"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "MountType"; Value = "N/A"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Note"; Value = "You can "mate" this to a header by matching the designator.  i.e. use SH-J3 for header J3"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "PackageReference"; Value = "Shunt"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "PartNumber"; Value = "SNT-100-BK-G"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Publisher"; Value = "Texas Instruments"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "RoHS"; Value = "Y"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Supplier 1"; Value = "Digi-Key"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Supplier 2"; Value = ""; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Supplier 3"; Value = ""; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Supplier Part Number 1"; Value = "SNT-100-BK-G-ND"; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Supplier Part Number 2"; Value = ""; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Supplier Part Number 3"; Value = ""; VariantName = "[No Variations]"
+Add component (AddParameter): Name = "Value"; Value = "1x2"; VariantName = "[No Variations]"
+Added Pin To Net: NetName=GND Pin=U4-10
+Added Pin To Net: NetName=GND Pin=U4-18
+Added Pin To Net: NetName=PPHV Pin=U4-20
+Added Pin To Net: NetName=PPHV Pin=U4-21
+Added Pin To Net: NetName=PPHV Pin=U4-22
+Added Pin To Net: NetName=VBUS Pin=U4-23
+Added Pin To Net: NetName=VBUS Pin=U4-24
+Added Pin To Net: NetName=VBUS Pin=U4-25
+Added Pin To Net: NetName=VBUS Pin=U4-32
+Added Pin To Net: NetName=VBUS Pin=U4-33
+Added Pin To Net: NetName=PP5V Pin=U4-34
+Added Pin To Net: NetName=PP5V Pin=U4-35
+Added Class: Name=FiducialMark
+Added Class: Name=Mounting Holes
+Added Class: Name=Shunt
+Added Member To Class: ClassName=PD_BQ_Ref_Design_Hardware Member=Component FID1 Fiducial
+Added Member To Class: ClassName=PD_BQ_Ref_Design_Hardware Member=Component FID2 Fiducial
+Added Member To Class: ClassName=PD_BQ_Ref_Design_Hardware Member=Component FID3 Fiducial
+Added Member To Class: ClassName=PD_BQ_Ref_Design_Hardware Member=Component FID4 Fiducial
+Added Member To Class: ClassName=PD_BQ_Ref_Design_Hardware Member=Component FID5 Fiducial
+Added Member To Class: ClassName=PD_BQ_Ref_Design_Hardware Member=Component FID6 Fiducial
+Added Member To Class: ClassName=PD_BQ_Ref_Design_Hardware Member=Component H1 NY PMS 440 0025 PH
+Added Member To Class: ClassName=PD_BQ_Ref_Design_Hardware Member=Component H2 NY PMS 440 0025 PH
+Added Member To Class: ClassName=PD_BQ_Ref_Design_Hardware Member=Component H3 NY PMS 440 0025 PH
+Added Member To Class: ClassName=PD_BQ_Ref_Design_Hardware Member=Component H4 NY PMS 440 0025 PH
+Added Member To Class: ClassName=PD_BQ_Ref_Design_Hardware Member=Component H5 1902C
+Added Member To Class: ClassName=PD_BQ_Ref_Design_Hardware Member=Component H6 1902C
+Added Member To Class: ClassName=PD_BQ_Ref_Design_Hardware Member=Component H7 1902C
+Added Member To Class: ClassName=PD_BQ_Ref_Design_Hardware Member=Component H8 1902C
+Added Member To Class: ClassName=PD_BQ_Ref_Design_Hardware Member=Component SH-J1 SNT-100-BK-G
+Added Member To Class: ClassName=PD_BQ_Ref_Design_Hardware Member=Component SH-J2 SNT-100-BK-G

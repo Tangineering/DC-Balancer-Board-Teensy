@@ -1,0 +1,126 @@
+{
+ "builds": {
+  "1": {
+   "t": {
+    "V": 38.49,
+    "A3": 50.0,
+    "AL": 126.5
+   },
+   "unpriced": 124,
+   "passives_usd": 18.6,
+   "parts_excl_pcb_usd": 233.59,
+   "option_H_usd": [
+    303.59,
+    353.59
+   ],
+   "option_P_usd": [
+    378.59,
+    578.59
+   ],
+   "delta_H_vs_path_A_usd": [
+    -236.41,
+    -151.41
+   ],
+   "delta_P_vs_path_A_usd": [
+    -161.41,
+    73.59
+   ]
+  },
+  "2+sp": {
+   "t": {
+    "V": 101.94,
+    "A3": 77.5,
+    "AL": 172.0
+   },
+   "unpriced": 321,
+   "passives_usd": 48.15,
+   "parts_excl_pcb_usd": 399.59,
+   "option_H_usd": [
+    469.59,
+    519.59
+   ],
+   "option_P_usd": [
+    544.59,
+    744.59
+   ],
+   "delta_H_vs_path_A_usd": [
+    -70.41,
+    14.59
+   ],
+   "delta_P_vs_path_A_usd": [
+    4.59,
+    239.59
+   ]
+  },
+  "4+sp": {
+   "t": {
+    "V": 178.91,
+    "A3": 93.5,
+    "AL": 225.0
+   },
+   "unpriced": 565,
+   "passives_usd": 84.75,
+   "parts_excl_pcb_usd": 582.16,
+   "option_H_usd": [
+    652.16,
+    702.16
+   ],
+   "option_P_usd": [
+    727.16,
+    927.16
+   ],
+   "delta_H_vs_path_A_usd": [
+    112.16,
+    197.16
+   ],
+   "delta_P_vs_path_A_usd": [
+    187.16,
+    422.16
+   ]
+  },
+  "5+sp": {
+   "t": {
+    "V": 217.4,
+    "A3": 101.5,
+    "AL": 251.5
+   },
+   "unpriced": 687,
+   "passives_usd": 103.05,
+   "parts_excl_pcb_usd": 673.45,
+   "option_H_usd": [
+    743.45,
+    793.45
+   ],
+   "option_P_usd": [
+    818.45,
+    1018.45
+   ],
+   "delta_H_vs_path_A_usd": [
+    203.45,
+    288.45
+   ],
+   "delta_P_vs_path_A_usd": [
+    278.45,
+    513.45
+   ]
+  }
+ },
+ "ti_per_board": 38.489000000000004,
+ "fitted": 176,
+ "basis": {
+  "passive_usd_per_placement": 0.15,
+  "pcb_lot_usd": [
+   70.0,
+   120.0
+  ],
+  "pcba_usd": [
+   100.0,
+   250.0
+  ],
+  "stencil_netted_in_option_P_usd": 25.0,
+  "path_a_usd": [
+   505.0,
+   540.0
+  ]
+ }
+}

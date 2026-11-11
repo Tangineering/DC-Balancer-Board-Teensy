@@ -1,0 +1,60 @@
+Figure 1.10. Block diagram of the custom charger board (CCB), one board in the 22 Ag105 (CHG) holes.
+Labels: [I] IC-independent, [S] BQ25798-specific. Designators per section 0.5 of the design document.
+Values: design document sections 1.11-1.13 and 2 (round-3 [WD] B.1-B.8 values carried over).
+
+ MB (motherboard)                       CUSTOM CHARGER BOARD
+ ================                       ====================================================================================
+
+                                        [I] INPUT PROTECTION                         [S] POWER STAGE (U501 BQ25798RQMR)
+ VCHG-IN (D-BC-FC/D-BC-RG) --H301.10--> VCHGIN --+--C302a/b/c, D307 TVS (>=36 V)     1.5 MHz, PROG R529 6.04k, L501 1.0 uH
+  (<= 5 mm masked copper, no TP)                 |                                   +------------------------------------+
+                                                 +--> U301 TPS26630 eFuse ---------->| VBUS(2,3)  VAC1(9) VAC2(8)          |
+                                                     I_OL 2.23 A, OVP 23.12 V,       |   C511,C512 10u/50V, C513,C514 0.1u |
+                                                     UVLO 9.91 V, dVdT C301          | PMID(29) C529-531 10u/50V, C532     |
+                                                     IMON R305 -> R329 -> F18 (pin22)| SW1(28)--L501--SW2(26)  BTST C506/8 |
+                                                     FLT -> F17 (pin 35)             | SYS(25) C518, C519-523 (local only) |
+                                                     OUT: C303, D303 -> VCHGOUT      | BAT(22,23) C538,C539 ------------+  |
+                                                                                     | BATP(18) <-R515 100R- BAT        |  |
+                                                                                     | SDRV(24) -C536 1nF- GND          |  |
+                                                                                     | ACDRV1/2 -> GND, D+/D- open      |  |
+                                                                                     | REGN(5) C535 4.7u                |  |
+                                                                                     | PROG(20) R529   TS(16) R518/R524 |  |
+                                                                                     +----------------------------------|--+
+ VCHG (C-D11) -> D-BT-SQ -> pack VBT <------------------------------- H301.18/19 <-------- VCHG <---------------------+
+ GND (pack negative = PCB GND) <---------------- H301.4 (input return), H301.14/15 (battery return): the only GND contacts
+ SDA/SCL (Teensy 18/19, MB 2.7k pull-ups) ------ H301.8/7 ---------------> U501 SDA(15)/SCL(14)   (no board pull-ups)
+ J-NTC pin 1 (N$34) ---------------------------- H301.13 -- TS_EXT --R526 0R (NTC fitted)--> TS(16); XOR R525 10k TS-GND (sim)
+ Teensy 6 (CHRG-STAT) <------------------------- H301.3 -- STAT <--R475 1k-- U501 STAT(1); R307 10k -> 3V3
+ Teensy 5 (MPPT-DISABLE) ----------------------- H301.11 -- CHG_ARM (P5, R308 47k pull-down) --+
+                                                                                               |
+ FLYING TAPS (F01-F24)                   [I] INTERLOCK BLOCK (3V3 rail via R375 68R from T6)   v
+ T1  V-MOT (R170 at C-D6) --F01--> U302 H1     V-MOT > 1.089 x VBUS ---+     U305 P5N
+ T2  VBUS  (R171 at C-D2) --F03--> U302 IN-, U303 UVB (13.33/13.72 V) -+     U306-U310, U316, U318 permit gates:
+ T8/T9 BT-CURR + Kelvin  --F09/F10--> U304 BT_OK (< 19.75 mV)          |       H1q = H1.RGN_ON.FCC_OFF.UVB
+ T3  BT_BUS EN (pin 28)  --F04--> U315 BTB_OFF (< REF/3)               |       H2c = FCC_ON.BTB_OFF.BT_OK.FCI_OK.
+ T5  FC_CHARGE EN (31)   --F06--> U319 FCC_OFF, U320 FCC_ON            +--->         ((UVB.FCCEIL) + H1.RGN_ON)
+ T4  REGEN EN (30)       --F05--> U321 RGN_ON                          |       GATE = H1q + H2c
+ T22 BQ29200 OUT         --F08--> R378/D308/R379 -> U323 -> OVN        |       ILIM_PRE = GATE + QQF  (QQF = QQ.FCCN) [S]
+ T21 HB (pin 21)         --F21--> U313 heartbeat, tw 20-46 ms -> ARM_OK|       ARM_OK' = ARM_OK . OVN          (U322)
+ T10 QUAL (pin 10)       --F11--> U311 one-shot 0.20-0.46 s -> QQ [S]  |       CE_DRV   = P5 . ARM_OK'         (U314A)
+ T11 FCCEIL (pin 17)     --F12--> U316                                 |       ILIM_REL = ILIM_PRE . ARM_OK'   (U314B)
+ T19 FC_CURR (DNP)       --F23--> U317 FCI_OK option (else R337 link)  |       RFC_OFF  = FCCN + H1R           (U306B)
+ Readbacks: H1 -> F14 (pin 34), H2c -> F15 (pin 16), BT_OK -> F16 (pin 23)
+ Keep-alive (DNP): F22 (5V via F101/R172 on MB) -> U312 TPS22810 (EN = RGN) -> D301 -> R392 680R -> VCHG
+                                                                       |
+                                       ======== IC INTERFACE CONTRACT (sections 1.10.2, 1.14) ========
+                                       CE_DRV, ILIM_REL, RFC_OFF  ->      <- ILIM_SENSE, CE_SENSE, STAT
+                                                                       |
+                                        [S] CHARGER INTERFACE BLOCK (ex-EIB, now local)
+                                        CE_DRV ---R467 pd---> U401 ch1 (open drain) ---> /CE(13) <- R472, R472b 47k to REGN
+                                        ILIM_REL --R468 pd--> U401 ch2 --> Q403 BSS84 (S=REGN) -> R455 48.7k -> ILIM_HIZ(17)
+                                        ILIM_REL --R470 pd--> U402 ------> Q401 2N7002K hold (gate R452 to REGN) -> ILIM_HIZ
+                                        RFC_OFF ---R469 pd--> U401 ch3 --> Q402 2N7002K + R457 59.0k (FC clamp leg)
+                                        ILIM_HIZ: R523 49.9k, R456 200k, C452 2.2nF to quiet GND
+                                        U403 (ILIM sense, 0.587-0.650 V) -> R325 1k -> F13 (pin 33)
+                                        U404 (/CE sense, ~2.5 V)         -> R348 1k -> F20 (pin 7, MB ROS pad)
+                                        R474 10k 3V3 bleed
+
+ GROUND: one plane (net GND). Power returns: input loop -> H301.4; battery loop (SYS/BAT caps, U501 GND) -> H301.14/15.
+         Quiet returns (eFuse settings, ILIM, TS, PROG, comparator dividers, logic) join the plane away from both paths.
+         Shields T7b (F02), T17r (F19) bonded at the board end only; BT_OK Kelvin via F10 with R343 100R to the plane.

@@ -1,0 +1,169 @@
+Inductor ripple / peak (buck, [DS] Eq 5, Eq 4)
+1.5MHz 1.0uH vin=16.0 vsys=8.4 Lx1.0 rip=2.660 App ichg=3.1 pk=4.430
+1.5MHz 1.0uH vin=16.0 vsys=8.4 Lx1.0 rip=2.660 App ichg=3.21 pk=4.540
+1.5MHz 1.0uH vin=16.0 vsys=8.4 Lx0.8 rip=3.325 App ichg=3.1 pk=4.763
+1.5MHz 1.0uH vin=16.0 vsys=8.4 Lx0.8 rip=3.325 App ichg=3.21 pk=4.872
+1.5MHz 1.0uH vin=16.0 vsys=8.82 Lx1.0 rip=2.639 App ichg=3.1 pk=4.419
+1.5MHz 1.0uH vin=16.0 vsys=8.82 Lx1.0 rip=2.639 App ichg=3.21 pk=4.529
+1.5MHz 1.0uH vin=16.0 vsys=8.82 Lx0.8 rip=3.298 App ichg=3.1 pk=4.749
+1.5MHz 1.0uH vin=16.0 vsys=8.82 Lx0.8 rip=3.298 App ichg=3.21 pk=4.859
+1.5MHz 1.0uH vin=21.5 vsys=8.4 Lx1.0 rip=3.412 App ichg=3.1 pk=4.806
+1.5MHz 1.0uH vin=21.5 vsys=8.4 Lx1.0 rip=3.412 App ichg=3.21 pk=4.916
+1.5MHz 1.0uH vin=21.5 vsys=8.4 Lx0.8 rip=4.265 App ichg=3.1 pk=5.233
+1.5MHz 1.0uH vin=21.5 vsys=8.4 Lx0.8 rip=4.265 App ichg=3.21 pk=5.343
+1.5MHz 1.0uH vin=21.5 vsys=8.82 Lx1.0 rip=3.468 App ichg=3.1 pk=4.834
+1.5MHz 1.0uH vin=21.5 vsys=8.82 Lx1.0 rip=3.468 App ichg=3.21 pk=4.944
+1.5MHz 1.0uH vin=21.5 vsys=8.82 Lx0.8 rip=4.335 App ichg=3.1 pk=5.267
+1.5MHz 1.0uH vin=21.5 vsys=8.82 Lx0.8 rip=4.335 App ichg=3.21 pk=5.377
+1.5MHz 1.0uH vin=22.28 vsys=8.4 Lx1.0 rip=3.489 App ichg=3.1 pk=4.844
+1.5MHz 1.0uH vin=22.28 vsys=8.4 Lx1.0 rip=3.489 App ichg=3.21 pk=4.954
+1.5MHz 1.0uH vin=22.28 vsys=8.4 Lx0.8 rip=4.361 App ichg=3.1 pk=5.280
+1.5MHz 1.0uH vin=22.28 vsys=8.4 Lx0.8 rip=4.361 App ichg=3.21 pk=5.390
+1.5MHz 1.0uH vin=22.28 vsys=8.82 Lx1.0 rip=3.552 App ichg=3.1 pk=4.876
+1.5MHz 1.0uH vin=22.28 vsys=8.82 Lx1.0 rip=3.552 App ichg=3.21 pk=4.986
+1.5MHz 1.0uH vin=22.28 vsys=8.82 Lx0.8 rip=4.440 App ichg=3.1 pk=5.320
+1.5MHz 1.0uH vin=22.28 vsys=8.82 Lx0.8 rip=4.440 App ichg=3.21 pk=5.430
+1.5MHz 1.0uH vin=23.63 vsys=8.4 Lx1.0 rip=3.609 App ichg=3.1 pk=4.905
+1.5MHz 1.0uH vin=23.63 vsys=8.4 Lx1.0 rip=3.609 App ichg=3.21 pk=5.015
+1.5MHz 1.0uH vin=23.63 vsys=8.4 Lx0.8 rip=4.512 App ichg=3.1 pk=5.356
+1.5MHz 1.0uH vin=23.63 vsys=8.4 Lx0.8 rip=4.512 App ichg=3.21 pk=5.466
+1.5MHz 1.0uH vin=23.63 vsys=8.82 Lx1.0 rip=3.685 App ichg=3.1 pk=4.943
+1.5MHz 1.0uH vin=23.63 vsys=8.82 Lx1.0 rip=3.685 App ichg=3.21 pk=5.053
+1.5MHz 1.0uH vin=23.63 vsys=8.82 Lx0.8 rip=4.607 App ichg=3.1 pk=5.403
+1.5MHz 1.0uH vin=23.63 vsys=8.82 Lx0.8 rip=4.607 App ichg=3.21 pk=5.513
+750kHz 2.2uH vin=16.0 vsys=8.4 Lx1.0 rip=2.418 App ichg=3.1 pk=4.309
+750kHz 2.2uH vin=16.0 vsys=8.4 Lx1.0 rip=2.418 App ichg=3.21 pk=4.419
+750kHz 2.2uH vin=16.0 vsys=8.4 Lx0.8 rip=3.023 App ichg=3.1 pk=4.611
+750kHz 2.2uH vin=16.0 vsys=8.4 Lx0.8 rip=3.023 App ichg=3.21 pk=4.721
+750kHz 2.2uH vin=16.0 vsys=8.82 Lx1.0 rip=2.399 App ichg=3.1 pk=4.299
+750kHz 2.2uH vin=16.0 vsys=8.82 Lx1.0 rip=2.399 App ichg=3.21 pk=4.409
+750kHz 2.2uH vin=16.0 vsys=8.82 Lx0.8 rip=2.998 App ichg=3.1 pk=4.599
+750kHz 2.2uH vin=16.0 vsys=8.82 Lx0.8 rip=2.998 App ichg=3.21 pk=4.709
+750kHz 2.2uH vin=21.5 vsys=8.4 Lx1.0 rip=3.102 App ichg=3.1 pk=4.651
+750kHz 2.2uH vin=21.5 vsys=8.4 Lx1.0 rip=3.102 App ichg=3.21 pk=4.761
+750kHz 2.2uH vin=21.5 vsys=8.4 Lx0.8 rip=3.877 App ichg=3.1 pk=5.039
+750kHz 2.2uH vin=21.5 vsys=8.4 Lx0.8 rip=3.877 App ichg=3.21 pk=5.149
+750kHz 2.2uH vin=21.5 vsys=8.82 Lx1.0 rip=3.153 App ichg=3.1 pk=4.676
+750kHz 2.2uH vin=21.5 vsys=8.82 Lx1.0 rip=3.153 App ichg=3.21 pk=4.786
+750kHz 2.2uH vin=21.5 vsys=8.82 Lx0.8 rip=3.941 App ichg=3.1 pk=5.070
+750kHz 2.2uH vin=21.5 vsys=8.82 Lx0.8 rip=3.941 App ichg=3.21 pk=5.180
+750kHz 2.2uH vin=22.28 vsys=8.4 Lx1.0 rip=3.172 App ichg=3.1 pk=4.686
+750kHz 2.2uH vin=22.28 vsys=8.4 Lx1.0 rip=3.172 App ichg=3.21 pk=4.796
+750kHz 2.2uH vin=22.28 vsys=8.4 Lx0.8 rip=3.964 App ichg=3.1 pk=5.082
+750kHz 2.2uH vin=22.28 vsys=8.4 Lx0.8 rip=3.964 App ichg=3.21 pk=5.192
+750kHz 2.2uH vin=22.28 vsys=8.82 Lx1.0 rip=3.229 App ichg=3.1 pk=4.715
+750kHz 2.2uH vin=22.28 vsys=8.82 Lx1.0 rip=3.229 App ichg=3.21 pk=4.825
+750kHz 2.2uH vin=22.28 vsys=8.82 Lx0.8 rip=4.037 App ichg=3.1 pk=5.118
+750kHz 2.2uH vin=22.28 vsys=8.82 Lx0.8 rip=4.037 App ichg=3.21 pk=5.228
+750kHz 2.2uH vin=23.63 vsys=8.4 Lx1.0 rip=3.281 App ichg=3.1 pk=4.741
+750kHz 2.2uH vin=23.63 vsys=8.4 Lx1.0 rip=3.281 App ichg=3.21 pk=4.851
+750kHz 2.2uH vin=23.63 vsys=8.4 Lx0.8 rip=4.101 App ichg=3.1 pk=5.151
+750kHz 2.2uH vin=23.63 vsys=8.4 Lx0.8 rip=4.101 App ichg=3.21 pk=5.261
+750kHz 2.2uH vin=23.63 vsys=8.82 Lx1.0 rip=3.350 App ichg=3.1 pk=4.775
+750kHz 2.2uH vin=23.63 vsys=8.82 Lx1.0 rip=3.350 App ichg=3.21 pk=4.885
+750kHz 2.2uH vin=23.63 vsys=8.82 Lx0.8 rip=4.188 App ichg=3.1 pk=5.194
+750kHz 2.2uH vin=23.63 vsys=8.82 Lx0.8 rip=4.188 App ichg=3.21 pk=5.304
+
+PMID ripple current, [DS] Eq 7: ICIN = ICHG sqrt(D(1-D)), D = VSYS/VBUS (buck)
+VBUS sweep: 12.0 (T-K-07 low), 14.5 (FC VINDPM), 16.0, 2 x VSYS, 19.0, 21.5, 22.28, 23.63 (eFuse OVP max)
+  vsys=8.4 vbus= 12.00 D=0.7000 sqrt(D(1-D))=0.4583 ichg=3.1 ICIN=1.421 A rms  per cap (3 x 10 uF, equal share)=0.474 A
+  vsys=8.4 vbus= 12.00 D=0.7000 sqrt(D(1-D))=0.4583 ichg=3.21 ICIN=1.471 A rms  per cap (3 x 10 uF, equal share)=0.490 A
+  vsys=8.4 vbus= 14.50 D=0.5793 sqrt(D(1-D))=0.4937 ichg=3.1 ICIN=1.530 A rms  per cap (3 x 10 uF, equal share)=0.510 A
+  vsys=8.4 vbus= 14.50 D=0.5793 sqrt(D(1-D))=0.4937 ichg=3.21 ICIN=1.585 A rms  per cap (3 x 10 uF, equal share)=0.528 A
+  vsys=8.4 vbus= 16.00 D=0.5250 sqrt(D(1-D))=0.4994 ichg=3.1 ICIN=1.548 A rms  per cap (3 x 10 uF, equal share)=0.516 A
+  vsys=8.4 vbus= 16.00 D=0.5250 sqrt(D(1-D))=0.4994 ichg=3.21 ICIN=1.603 A rms  per cap (3 x 10 uF, equal share)=0.534 A
+  vsys=8.4 vbus= 16.80 D=0.5000 sqrt(D(1-D))=0.5000 ichg=3.1 ICIN=1.550 A rms  per cap (3 x 10 uF, equal share)=0.517 A
+  vsys=8.4 vbus= 16.80 D=0.5000 sqrt(D(1-D))=0.5000 ichg=3.21 ICIN=1.605 A rms  per cap (3 x 10 uF, equal share)=0.535 A
+  vsys=8.4 vbus= 17.64 D=0.4762 sqrt(D(1-D))=0.4994 ichg=3.1 ICIN=1.548 A rms  per cap (3 x 10 uF, equal share)=0.516 A
+  vsys=8.4 vbus= 17.64 D=0.4762 sqrt(D(1-D))=0.4994 ichg=3.21 ICIN=1.603 A rms  per cap (3 x 10 uF, equal share)=0.534 A
+  vsys=8.4 vbus= 19.00 D=0.4421 sqrt(D(1-D))=0.4966 ichg=3.1 ICIN=1.540 A rms  per cap (3 x 10 uF, equal share)=0.513 A
+  vsys=8.4 vbus= 19.00 D=0.4421 sqrt(D(1-D))=0.4966 ichg=3.21 ICIN=1.594 A rms  per cap (3 x 10 uF, equal share)=0.531 A
+  vsys=8.4 vbus= 21.50 D=0.3907 sqrt(D(1-D))=0.4879 ichg=3.1 ICIN=1.513 A rms  per cap (3 x 10 uF, equal share)=0.504 A
+  vsys=8.4 vbus= 21.50 D=0.3907 sqrt(D(1-D))=0.4879 ichg=3.21 ICIN=1.566 A rms  per cap (3 x 10 uF, equal share)=0.522 A
+  vsys=8.4 vbus= 22.28 D=0.3770 sqrt(D(1-D))=0.4846 ichg=3.1 ICIN=1.502 A rms  per cap (3 x 10 uF, equal share)=0.501 A
+  vsys=8.4 vbus= 22.28 D=0.3770 sqrt(D(1-D))=0.4846 ichg=3.21 ICIN=1.556 A rms  per cap (3 x 10 uF, equal share)=0.519 A
+  vsys=8.4 vbus= 23.63 D=0.3555 sqrt(D(1-D))=0.4787 ichg=3.1 ICIN=1.484 A rms  per cap (3 x 10 uF, equal share)=0.495 A
+  vsys=8.4 vbus= 23.63 D=0.3555 sqrt(D(1-D))=0.4787 ichg=3.21 ICIN=1.536 A rms  per cap (3 x 10 uF, equal share)=0.512 A
+  vsys=8.82 vbus= 12.00 D=0.7350 sqrt(D(1-D))=0.4413 ichg=3.1 ICIN=1.368 A rms  per cap (3 x 10 uF, equal share)=0.456 A
+  vsys=8.82 vbus= 12.00 D=0.7350 sqrt(D(1-D))=0.4413 ichg=3.21 ICIN=1.417 A rms  per cap (3 x 10 uF, equal share)=0.472 A
+  vsys=8.82 vbus= 14.50 D=0.6083 sqrt(D(1-D))=0.4881 ichg=3.1 ICIN=1.513 A rms  per cap (3 x 10 uF, equal share)=0.504 A
+  vsys=8.82 vbus= 14.50 D=0.6083 sqrt(D(1-D))=0.4881 ichg=3.21 ICIN=1.567 A rms  per cap (3 x 10 uF, equal share)=0.522 A
+  vsys=8.82 vbus= 16.00 D=0.5513 sqrt(D(1-D))=0.4974 ichg=3.1 ICIN=1.542 A rms  per cap (3 x 10 uF, equal share)=0.514 A
+  vsys=8.82 vbus= 16.00 D=0.5513 sqrt(D(1-D))=0.4974 ichg=3.21 ICIN=1.597 A rms  per cap (3 x 10 uF, equal share)=0.532 A
+  vsys=8.82 vbus= 16.80 D=0.5250 sqrt(D(1-D))=0.4994 ichg=3.1 ICIN=1.548 A rms  per cap (3 x 10 uF, equal share)=0.516 A
+  vsys=8.82 vbus= 16.80 D=0.5250 sqrt(D(1-D))=0.4994 ichg=3.21 ICIN=1.603 A rms  per cap (3 x 10 uF, equal share)=0.534 A
+  vsys=8.82 vbus= 17.64 D=0.5000 sqrt(D(1-D))=0.5000 ichg=3.1 ICIN=1.550 A rms  per cap (3 x 10 uF, equal share)=0.517 A
+  vsys=8.82 vbus= 17.64 D=0.5000 sqrt(D(1-D))=0.5000 ichg=3.21 ICIN=1.605 A rms  per cap (3 x 10 uF, equal share)=0.535 A
+  vsys=8.82 vbus= 19.00 D=0.4642 sqrt(D(1-D))=0.4987 ichg=3.1 ICIN=1.546 A rms  per cap (3 x 10 uF, equal share)=0.515 A
+  vsys=8.82 vbus= 19.00 D=0.4642 sqrt(D(1-D))=0.4987 ichg=3.21 ICIN=1.601 A rms  per cap (3 x 10 uF, equal share)=0.534 A
+  vsys=8.82 vbus= 21.50 D=0.4102 sqrt(D(1-D))=0.4919 ichg=3.1 ICIN=1.525 A rms  per cap (3 x 10 uF, equal share)=0.508 A
+  vsys=8.82 vbus= 21.50 D=0.4102 sqrt(D(1-D))=0.4919 ichg=3.21 ICIN=1.579 A rms  per cap (3 x 10 uF, equal share)=0.526 A
+  vsys=8.82 vbus= 22.28 D=0.3959 sqrt(D(1-D))=0.4890 ichg=3.1 ICIN=1.516 A rms  per cap (3 x 10 uF, equal share)=0.505 A
+  vsys=8.82 vbus= 22.28 D=0.3959 sqrt(D(1-D))=0.4890 ichg=3.21 ICIN=1.570 A rms  per cap (3 x 10 uF, equal share)=0.523 A
+  vsys=8.82 vbus= 23.63 D=0.3733 sqrt(D(1-D))=0.4837 ichg=3.1 ICIN=1.499 A rms  per cap (3 x 10 uF, equal share)=0.500 A
+  vsys=8.82 vbus= 23.63 D=0.3733 sqrt(D(1-D))=0.4837 ichg=3.21 ICIN=1.553 A rms  per cap (3 x 10 uF, equal share)=0.518 A
+  maximum ICIN = ICHG/2 at D = 0.5 (VBUS = 2 x VSYS = 16.80 V / 17.64 V): 1.6050 A rms total, 0.535 A per capacitor; swept maximum 1.6050 A
+  previous published value 1.57 A (21.5 V, VSYS 8.4 V row): understatement 2.4 %
+
+PMID voltage ripple, [DS] Eq 8: dVIN = D(1-D) ICHG / (CIN FSW); CIN effective 4 / 10 / 15 uF
+  fsw=1.50 MHz C=4 uF  mV p-p at 16.00V:132.3  17.64V:133.8  21.50V:129.4  23.63V:125.2  | D=0.5 max 133.8 mV (old D=8.4/21.5 value 127.4 mV, 4.8 % low)
+  fsw=1.50 MHz C=10 uF  mV p-p at 16.00V:52.9  17.64V:53.5  21.50V:51.8  23.63V:50.1  | D=0.5 max 53.5 mV (old D=8.4/21.5 value 50.9 mV, 4.8 % low)
+  fsw=1.50 MHz C=15 uF  mV p-p at 16.00V:35.3  17.64V:35.7  21.50V:34.5  23.63V:33.4  | D=0.5 max 35.7 mV (old D=8.4/21.5 value 34.0 mV, 4.8 % low)
+  fsw=0.75 MHz C=4 uF  mV p-p at 16.00V:264.7  17.64V:267.5  21.50V:258.9  23.63V:250.3  | D=0.5 max 267.5 mV (old D=8.4/21.5 value 254.7 mV, 4.8 % low)
+  fsw=0.75 MHz C=10 uF  mV p-p at 16.00V:105.9  17.64V:107.0  21.50V:103.6  23.63V:100.1  | D=0.5 max 107.0 mV (old D=8.4/21.5 value 101.9 mV, 4.8 % low)
+  fsw=0.75 MHz C=15 uF  mV p-p at 16.00V:70.6  17.64V:71.3  21.50V:69.0  23.63V:66.7  | D=0.5 max 71.3 mV (old D=8.4/21.5 value 67.9 mV, 4.8 % low)
+
+L501 current requirement (CCB-R1-03)
+  [DS] Eq 4 worst peak (23.63 V, VSYS 8.82 V, 0.8 uH, 1.5 MHz): 5.513 A; 6.5 A floor margin 1.179
+  [DS] 8.2.2.2 floor: Isat >= 2 A (PFM pulses); [DS] 7.3.6.4 PFM peak limit 2 A (OOA enabled) / 3.3 A (OOA disabled)
+  [DS] 7.3.13.1.5 VSYS_SHORT 2.1-2.3 V (EC): converter output current < 1 A
+  IBUS_OCP 7.0 / 9.0 A ([DS] EC p.9) at VBUS 14.5 V (D=0.608) maps to average I_L 11.5 / 14.8 A
+  IBUS_OCP 7.0 / 9.0 A ([DS] EC p.9) at VBUS 16.0 V (D=0.551) maps to average I_L 12.7 / 16.3 A
+  IBUS_OCP 7.0 / 9.0 A ([DS] EC p.9) at VBUS 23.63 V (D=0.373) maps to average I_L 18.8 / 24.1 A
+  -> IBUS_OCP cannot act before the average inductor current exceeds 11.5 A in buck operation; in boost operation
+     (not reached, eFuse UVLO 9.70 V > VSYS 8.82 V) I_L = I_IN and IBUS_OCP would bound it at 7.0-9.0 A average
+  IBAT_OCP 9.3 A ([DS] EC p.12, 7.3.13.1.7): SFET discharge path only (SFET omitted, D6); not an L501 current
+  Self-consistent peak: L at the peak = 0.8 uH (-20 % tolerance) x (1 - dL_sat)
+    1.5 MHz: dL_sat  0.0 %  L 0.800 uH  Eq 4 peak 5.513 A
+    1.5 MHz: dL_sat 10.0 %  L 0.720 uH  Eq 4 peak 5.769 A
+    1.5 MHz: dL_sat 12.5 %  L 0.700 uH  Eq 4 peak 5.842 A
+    1.5 MHz: dL_sat 20.0 %  L 0.640 uH  Eq 4 peak 6.089 A
+    1.5 MHz: dL_sat 30.0 %  L 0.560 uH  Eq 4 peak 6.500 A
+    750 kHz: dL_sat  0.0 %  L 1.760 uH  Eq 4 peak 5.304 A
+    750 kHz: dL_sat 12.5 %  L 1.540 uH  Eq 4 peak 5.603 A
+    750 kHz: dL_sat 30.0 %  L 1.232 uH  Eq 4 peak 6.201 A
+  Proposed criterion: L >= 0.70 uH at 6.5 A and T_max, at the -20 % tolerance limit. Eq 4 peak at 0.70 uH: 5.842 A; margin 6.5 / 5.842 = 1.113
+  Equivalent on a typical (nominal 1.0 uH) vendor curve: L_typ(6.5 A, T_max) >= 0.875 uH, i.e. dL <= 12.5 %
+  750 kHz alternate, same rule scaled: L >= 1.54 uH at 6.5 A; Eq 4 peak 5.603 A
+
+High-impedance comparator inputs (CCB-R1-04)
+  IN+ trip band 1.2085-1.2827 V (REF tolerance, drift 45 C, Vos, VHYS)
+  N_FNP / N_RNP (R388/R390 453k, R389/R391 1.00M), tap driven: R_th 312.2 kOhm; tau unfiltered (Cn 3 / 5 / 10 pF) 0.94 / 1.56 / 3.12 us; tau with 100 pF 31.2 us; with 1 nF 312 us
+  N_FNP, FCC tap open (R387 3.30M + R386 10k pull-up): R_th 790.0 kOhm; tau unfiltered (Cn 3 / 5 / 10 pF) 2.37 / 3.95 / 7.90 us; tau with 100 pF 79.0 us; with 1 nF 790 us
+  N_RNP, RGN tap open (R333 100k pull-down): R_th 356.1 kOhm; tau unfiltered (Cn 3 / 5 / 10 pF) 1.07 / 1.78 / 3.56 us; tau with 100 pF 35.6 us; with 1 nF 356 us
+  N_CSP (R462/R463 1.00M/1.00M), /CE at R472||R472b 23.5k: R_th 505.8 kOhm; tau unfiltered (Cn 3 / 5 / 10 pF) 1.52 / 2.53 / 5.06 us; tau with 100 pF 50.6 us; with 1 nF 506 us
+  U320/U321 IN+ levels: EN LOW 6.9 mV, EN HIGH 2.063-2.270 V (k = 0.68776)
+  Static noise margin at IN+: LOW state (false FCC_ON/RGN_ON, unsafe side) 1.202 V; HIGH state (false drop, safe side) 0.781 V
+  Proposed T-K-09 (5) limit (50 % of the static margin): LOW 0.60 V pk, HIGH 0.39 V pk at N_FNP / N_RNP; the 2-8 mV internal hysteresis is not a usable margin
+  U404: /CE HIGH >= 4.49 V -> N_CSP >= 2.245 V; HIGH-state margin 0.962 V; LOW-state margin needs the /CE LOW level (TODO(measure: T-K-10))
+  Coupling capacitance from SW1 needed for a false FCC_ON / RGN_ON (LOW state), node capacitance Cn:
+    dV 23.63 V, C_filter 0 pF: Cn 3 pF: edge 0.16 / CCM 0.26 pF; Cn 5 pF: edge 0.27 / CCM 0.44 pF; Cn 10 pF: edge 0.54 / CCM 0.88 pF
+    dV 23.63 V, C_filter 100 pF: Cn 3 pF: edge 5.52 / CCM 9.09 pF; Cn 5 pF: edge 5.63 / CCM 9.27 pF; Cn 10 pF: edge 5.89 / CCM 9.71 pF
+    dV 27.0 V, C_filter 0 pF: Cn 3 pF: edge 0.14 / CCM 0.23 pF; Cn 5 pF: edge 0.23 / CCM 0.38 pF; Cn 10 pF: edge 0.47 / CCM 0.76 pF
+    dV 27.0 V, C_filter 100 pF: Cn 3 pF: edge 4.80 / CCM 7.87 pF; Cn 5 pF: edge 4.89 / CCM 8.03 pF; Cn 10 pF: edge 5.12 / CCM 8.41 pF
+  SW1 HIGH time: CCM D/f = 249 ns at 23.63 V; PFM to 3.3 A at 1.0 uH = 223 ns; against the 2-4 us TLV3012 propagation delay (8.0-18.0 x)
+  Permit lags with a filter capacitor C_f (Cn 10 pF added):
+    C_f   100 pF: tau   34.3 us; FCC_ON/RGN_ON rise lag <=   33.4 us; fall lag (H2c release) <=   21.6 us
+    C_f   220 pF: tau   71.8 us; FCC_ON/RGN_ON rise lag <=   69.8 us; fall lag (H2c release) <=   45.3 us
+    C_f   470 pF: tau  149.9 us; FCC_ON/RGN_ON rise lag <=  145.7 us; fall lag (H2c release) <=   94.5 us
+    C_f  1000 pF: tau  315.4 us; FCC_ON/RGN_ON rise lag <=  306.5 us; fall lag (H2c release) <=  198.8 us
+  Fall-lag budget 10 % of the 2 ms step A -> D spacing ([WD] F.4): tau <= 317 us -> C_f + Cn <= 1016 pF
+  N_CSP with 100 pF (+10 pF): tau 55.6 us; rise lag <= 47.1 us; fall lag (REGN 5.2 V max, [DS] EC) <= 42.6 us; FR-47 persistence 2 ms ([WD] FR-47)
+
+ILIM: Eq1 V=1+0.8*I
+pins 14/15 60/40: 1.926 1.284
+net GND into board at Iin 1.76, Ibat 3.21: 1.45
+nominal C after eFuse: 51.300000000000004 uF
+inrush at 2.19 V/ms: 0.112 A
+bleed current 3.3/10k mA: 0.33
+STAT sink if pin6 driven HIGH via 1k: 3.3 mA

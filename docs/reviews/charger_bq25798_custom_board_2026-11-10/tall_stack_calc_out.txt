@@ -1,0 +1,197 @@
+﻿Tall header stack checks (r2). Baseline: r1 option S, H_u = 2.54 mm. Gaps H_u = 5, 8, 10, 12 mm.
+
+== (a) Extra pin length, DC resistance and I2R per pin ==
+  pin resistance per mm (0.64 mm square, rho 1.10e-07 ohm m): 0.269 mOhm/mm; r1 body (6 mm) 1.61 mOhm
+  pin thermal resistance per mm (k 70 W/mK): 34.9 C/W per mm (pin conduction to the MB falls as 1/length)
+  H_u 5 mm: extra length 2.46 mm; extra R 0.661 mOhm per pin; pin body total 2.27 mOhm; pin thermal R 230 C/W (r1 144 C/W, 2.54 + 1.6 mm path)
+      pin 10 VCHGIN                  1.76 A (continuous): extra I2R 2.05 mW
+      pin 10 VCHGIN                  2.41 A (<= 202 ms): extra I2R 3.84 mW
+      pin 4 GND input return         1.76 A (continuous): extra I2R 2.05 mW
+      pin 4 GND input return         2.41 A (<= 202 ms): extra I2R 3.84 mW
+      pin 18 VCHG (60 %)             1.93 A (continuous): extra I2R 2.46 mW
+      pin 19 VCHG (40 %)             1.28 A (continuous): extra I2R 1.08 mW
+      pin 14 GND batt return (60 %)  1.93 A (continuous): extra I2R 2.46 mW
+      pin 15 GND batt return (40 %)  1.28 A (continuous): extra I2R 1.08 mW
+      sum over the six power pins, continuous: 11.2 mW extra (r1 6 mm bodies at the same currents: 27.3 mW)
+  H_u 8 mm: extra length 5.46 mm; extra R 1.466 mOhm per pin; pin body total 3.08 mOhm; pin thermal R 335 C/W (r1 144 C/W, 2.54 + 1.6 mm path)
+      pin 10 VCHGIN                  1.76 A (continuous): extra I2R 4.54 mW
+      pin 10 VCHGIN                  2.41 A (<= 202 ms): extra I2R 8.52 mW
+      pin 4 GND input return         1.76 A (continuous): extra I2R 4.54 mW
+      pin 4 GND input return         2.41 A (<= 202 ms): extra I2R 8.52 mW
+      pin 18 VCHG (60 %)             1.93 A (continuous): extra I2R 5.46 mW
+      pin 19 VCHG (40 %)             1.28 A (continuous): extra I2R 2.40 mW
+      pin 14 GND batt return (60 %)  1.93 A (continuous): extra I2R 5.46 mW
+      pin 15 GND batt return (40 %)  1.28 A (continuous): extra I2R 2.40 mW
+      sum over the six power pins, continuous: 24.8 mW extra (r1 6 mm bodies at the same currents: 27.3 mW)
+  H_u 10 mm: extra length 7.46 mm; extra R 2.003 mOhm per pin; pin body total 3.61 mOhm; pin thermal R 405 C/W (r1 144 C/W, 2.54 + 1.6 mm path)
+      pin 10 VCHGIN                  1.76 A (continuous): extra I2R 6.21 mW
+      pin 10 VCHGIN                  2.41 A (<= 202 ms): extra I2R 11.64 mW
+      pin 4 GND input return         1.76 A (continuous): extra I2R 6.21 mW
+      pin 4 GND input return         2.41 A (<= 202 ms): extra I2R 11.64 mW
+      pin 18 VCHG (60 %)             1.93 A (continuous): extra I2R 7.46 mW
+      pin 19 VCHG (40 %)             1.28 A (continuous): extra I2R 3.28 mW
+      pin 14 GND batt return (60 %)  1.93 A (continuous): extra I2R 7.46 mW
+      pin 15 GND batt return (40 %)  1.28 A (continuous): extra I2R 3.28 mW
+      sum over the six power pins, continuous: 33.9 mW extra (r1 6 mm bodies at the same currents: 27.3 mW)
+  H_u 12 mm: extra length 9.46 mm; extra R 2.541 mOhm per pin; pin body total 4.15 mOhm; pin thermal R 474 C/W (r1 144 C/W, 2.54 + 1.6 mm path)
+      pin 10 VCHGIN                  1.76 A (continuous): extra I2R 7.87 mW
+      pin 10 VCHGIN                  2.41 A (<= 202 ms): extra I2R 14.76 mW
+      pin 4 GND input return         1.76 A (continuous): extra I2R 7.87 mW
+      pin 4 GND input return         2.41 A (<= 202 ms): extra I2R 14.76 mW
+      pin 18 VCHG (60 %)             1.93 A (continuous): extra I2R 9.46 mW
+      pin 19 VCHG (40 %)             1.28 A (continuous): extra I2R 4.16 mW
+      pin 14 GND batt return (60 %)  1.93 A (continuous): extra I2R 9.46 mW
+      pin 15 GND batt return (40 %)  1.28 A (continuous): extra I2R 4.16 mW
+      sum over the six power pins, continuous: 43.0 mW extra (r1 6 mm bodies at the same currents: 27.3 mW)
+
+== (b) Extra loop inductance, input pin (pad 10) with its return pin (pad 4) ==
+  pad 10 at (45.998, 61.944), pad 4 at (45.998, 46.704): spacing 15.24 mm (6 pitches); pad 14 at 25.51 mm
+  formula 1 (two-wire line, per unit length, end effects neglected): L' = (mu0/pi) acosh(D / 2r), r = GMD radius 0.286 mm
+            source: the parallel two-wire inductance (C. R. Paul, Inductance: Loop and Partial, Wiley 2010, ch. 4) TODO(verify: page)
+            L' at 2.54 mm spacing (adjacent pair, as specified): 0.868 nH/mm
+            L' at 15.24 mm (the real 4-10 pair): 1.590 nH/mm
+  formula 2 (rectangular loop w x h of round wire, Grover/Rosa HF form), increment from the r1 height;
+            vertical side h = H_u + t_MB/2 + t_CCB/2 (plane to plane); the horizontal sides stand in for the MB and CCB copper
+  H_u 5 mm (+2.46 mm): two-wire 2.54 mm 2.1 nH, two-wire 15.24 mm 3.9 nH; rectangle 2.54 mm 2.2 nH, rectangle 15.24 mm 5.2 nH -> bound used 5.2 nH
+  H_u 8 mm (+5.46 mm): two-wire 2.54 mm 4.7 nH, two-wire 15.24 mm 8.7 nH; rectangle 2.54 mm 4.9 nH, rectangle 15.24 mm 10.8 nH -> bound used 10.8 nH
+  H_u 10 mm (+7.46 mm): two-wire 2.54 mm 6.5 nH, two-wire 15.24 mm 11.9 nH; rectangle 2.54 mm 6.6 nH, rectangle 15.24 mm 14.4 nH -> bound used 14.4 nH
+  H_u 12 mm (+9.46 mm): two-wire 2.54 mm 8.2 nH, two-wire 15.24 mm 15.0 nH; rectangle 2.54 mm 8.4 nH, rectangle 15.24 mm 17.8 nH -> bound used 17.8 nH
+  note: pads 14/15 (about 25.5 mm from pad 10) carry part of the return in parallel, so the 4-10 pair is an upper bound
+
+== (c) eFuse IN-side spike at a hard-short turn-off (round-3 H.19 (b)/(d); T-C-04) ==
+  reproduction (r3 case: C_IN 3.4 uF, L_OUT 150 nH W1/W2, C_OUT 1 uF, V0 22 V, C_S 20 uF, L_IN 150 nH): IN 32.8 V, I_off 65 A, MB end 20.7 V (r3_calc_out.txt: 32.8 V, 65 A, 20.7 V)
+  step check dt 0.25 ns: IN 32.77 V vs 32.77 V at 1 ns
+  step check L_OUT 20 nH: IN 40.04 V at 0.5 ns, 40.04 V at 0.1 ns
+  step check L_OUT 5 nH: IN 35.50 V at 0.5 ns, 35.50 V at 0.1 ns
+  limits: U301 IN abs max 67 V (SLVSE94G 6.1 via r3); T-C-04 IN criterion 60 V (r3 H.19 (d)); D307 SMAJ33A-class VBR min 36.7 V (TVS starts to conduct; not modelled); MB end 35 V (C-D8/C-D10) / 40 V (RT1987 VOUT)
+  W1/W2 150 nH (r3)  C_IN eff 3.4 uF  H_u  2.54 mm (+ 0.0 nH): worst IN  32.8 V (I_off   65 A; V0 22 V, C_S 20 uF, L_IN 150 nH); worst MB end 20.7 V
+  W1/W2 150 nH (r3)  C_IN eff 3.4 uF  H_u  5.00 mm (+ 5.2 nH): worst IN  32.9 V (I_off   63 A; V0 22 V, C_S 20 uF, L_IN 150 nH); worst MB end 20.7 V
+  W1/W2 150 nH (r3)  C_IN eff 3.4 uF  H_u  8.00 mm (+10.8 nH): worst IN  33.0 V (I_off   62 A; V0 22 V, C_S 20 uF, L_IN 150 nH); worst MB end 20.7 V
+  W1/W2 150 nH (r3)  C_IN eff 3.4 uF  H_u 10.00 mm (+14.4 nH): worst IN  33.1 V (I_off   61 A; V0 22 V, C_S 20 uF, L_IN 150 nH); worst MB end 20.8 V
+  W1/W2 150 nH (r3)  C_IN eff 3.4 uF  H_u 12.00 mm (+17.8 nH): worst IN  33.2 V (I_off   60 A; V0 22 V, C_S 20 uF, L_IN 150 nH); worst MB end 20.8 V
+  W1/W2 150 nH (r3)  C_IN nom 5.8 uF  H_u  2.54 mm (+ 0.0 nH): worst IN  26.4 V (I_off   43 A; V0 22 V, C_S 20 uF, L_IN 150 nH); worst MB end 21.2 V
+  W1/W2 150 nH (r3)  C_IN nom 5.8 uF  H_u  5.00 mm (+ 5.2 nH): worst IN  26.5 V (I_off   42 A; V0 22 V, C_S 20 uF, L_IN 150 nH); worst MB end 21.2 V
+  W1/W2 150 nH (r3)  C_IN nom 5.8 uF  H_u  8.00 mm (+10.8 nH): worst IN  26.5 V (I_off   41 A; V0 22 V, C_S 20 uF, L_IN 150 nH); worst MB end 21.2 V
+  W1/W2 150 nH (r3)  C_IN nom 5.8 uF  H_u 10.00 mm (+14.4 nH): worst IN  26.6 V (I_off   40 A; V0 22 V, C_S 20 uF, L_IN 150 nH); worst MB end 21.2 V
+  W1/W2 150 nH (r3)  C_IN nom 5.8 uF  H_u 12.00 mm (+17.8 nH): worst IN  26.6 V (I_off   40 A; V0 22 V, C_S 20 uF, L_IN 150 nH); worst MB end 21.2 V
+  copper 20 nH       C_IN eff 3.4 uF  H_u  2.54 mm (+ 0.0 nH): worst IN  40.0 V (I_off  117 A; V0 22 V, C_S 20 uF, L_IN 150 nH); worst MB end 19.9 V
+  copper 20 nH       C_IN eff 3.4 uF  H_u  5.00 mm (+ 5.2 nH): worst IN  40.2 V (I_off  114 A; V0 22 V, C_S 20 uF, L_IN 150 nH); worst MB end 19.9 V
+  copper 20 nH       C_IN eff 3.4 uF  H_u  8.00 mm (+10.8 nH): worst IN  40.3 V (I_off  110 A; V0 22 V, C_S 20 uF, L_IN 150 nH); worst MB end 20.0 V
+  copper 20 nH       C_IN eff 3.4 uF  H_u 10.00 mm (+14.4 nH): worst IN  40.3 V (I_off  109 A; V0 22 V, C_S 20 uF, L_IN 150 nH); worst MB end 20.0 V
+  copper 20 nH       C_IN eff 3.4 uF  H_u 12.00 mm (+17.8 nH): worst IN  40.4 V (I_off  107 A; V0 22 V, C_S 20 uF, L_IN 150 nH); worst MB end 20.1 V
+  copper 20 nH       C_IN nom 5.8 uF  H_u  2.54 mm (+ 0.0 nH): worst IN  31.4 V (I_off   93 A; V0 22 V, C_S 20 uF, L_IN 150 nH); worst MB end 20.4 V
+  copper 20 nH       C_IN nom 5.8 uF  H_u  5.00 mm (+ 5.2 nH): worst IN  31.6 V (I_off   90 A; V0 22 V, C_S 20 uF, L_IN 150 nH); worst MB end 20.5 V
+  copper 20 nH       C_IN nom 5.8 uF  H_u  8.00 mm (+10.8 nH): worst IN  31.7 V (I_off   88 A; V0 22 V, C_S 20 uF, L_IN 150 nH); worst MB end 20.5 V
+  copper 20 nH       C_IN nom 5.8 uF  H_u 10.00 mm (+14.4 nH): worst IN  31.8 V (I_off   86 A; V0 22 V, C_S 20 uF, L_IN 150 nH); worst MB end 20.6 V
+  copper 20 nH       C_IN nom 5.8 uF  H_u 12.00 mm (+17.8 nH): worst IN  31.8 V (I_off   85 A; V0 22 V, C_S 20 uF, L_IN 150 nH); worst MB end 20.6 V
+  copper 10 nH       C_IN eff 3.4 uF  H_u  2.54 mm (+ 0.0 nH): worst IN  37.5 V (I_off  116 A; V0 22 V, C_S 20 uF, L_IN 150 nH); worst MB end 19.9 V
+  copper 10 nH       C_IN eff 3.4 uF  H_u  5.00 mm (+ 5.2 nH): worst IN  37.5 V (I_off  113 A; V0 22 V, C_S 20 uF, L_IN 150 nH); worst MB end 20.0 V
+  copper 10 nH       C_IN eff 3.4 uF  H_u  8.00 mm (+10.8 nH): worst IN  37.5 V (I_off  110 A; V0 22 V, C_S 20 uF, L_IN 150 nH); worst MB end 20.0 V
+  copper 10 nH       C_IN eff 3.4 uF  H_u 10.00 mm (+14.4 nH): worst IN  37.6 V (I_off  108 A; V0 22 V, C_S 20 uF, L_IN 150 nH); worst MB end 20.1 V
+  copper 10 nH       C_IN eff 3.4 uF  H_u 12.00 mm (+17.8 nH): worst IN  37.6 V (I_off  106 A; V0 22 V, C_S 20 uF, L_IN 150 nH); worst MB end 20.1 V
+  copper 10 nH       C_IN nom 5.8 uF  H_u  2.54 mm (+ 0.0 nH): worst IN  31.0 V (I_off  105 A; V0 22 V, C_S 20 uF, L_IN 150 nH); worst MB end 20.0 V
+  copper 10 nH       C_IN nom 5.8 uF  H_u  5.00 mm (+ 5.2 nH): worst IN  31.1 V (I_off  102 A; V0 22 V, C_S 20 uF, L_IN 150 nH); worst MB end 20.1 V
+  copper 10 nH       C_IN nom 5.8 uF  H_u  8.00 mm (+10.8 nH): worst IN  31.2 V (I_off   99 A; V0 22 V, C_S 20 uF, L_IN 150 nH); worst MB end 20.1 V
+  copper 10 nH       C_IN nom 5.8 uF  H_u 10.00 mm (+14.4 nH): worst IN  31.2 V (I_off   98 A; V0 22 V, C_S 20 uF, L_IN 150 nH); worst MB end 20.2 V
+  copper 10 nH       C_IN nom 5.8 uF  H_u 12.00 mm (+17.8 nH): worst IN  31.3 V (I_off   96 A; V0 22 V, C_S 20 uF, L_IN 150 nH); worst MB end 20.2 V
+  copper 5 nH        C_IN eff 3.4 uF  H_u  2.54 mm (+ 0.0 nH): worst IN  35.5 V (I_off  103 A; V0 22 V, C_S 20 uF, L_IN 150 nH); worst MB end 19.8 V
+  copper 5 nH        C_IN eff 3.4 uF  H_u  5.00 mm (+ 5.2 nH): worst IN  35.5 V (I_off  101 A; V0 22 V, C_S 20 uF, L_IN 150 nH); worst MB end 19.8 V
+  copper 5 nH        C_IN eff 3.4 uF  H_u  8.00 mm (+10.8 nH): worst IN  35.6 V (I_off   98 A; V0 22 V, C_S 20 uF, L_IN 150 nH); worst MB end 19.9 V
+  copper 5 nH        C_IN eff 3.4 uF  H_u 10.00 mm (+14.4 nH): worst IN  35.6 V (I_off   97 A; V0 22 V, C_S 20 uF, L_IN 150 nH); worst MB end 19.9 V
+  copper 5 nH        C_IN eff 3.4 uF  H_u 12.00 mm (+17.8 nH): worst IN  35.6 V (I_off   95 A; V0 22 V, C_S 20 uF, L_IN 150 nH); worst MB end 20.0 V
+  copper 5 nH        C_IN nom 5.8 uF  H_u  2.54 mm (+ 0.0 nH): worst IN  29.8 V (I_off  102 A; V0 22 V, C_S 20 uF, L_IN 150 nH); worst MB end 19.8 V
+  copper 5 nH        C_IN nom 5.8 uF  H_u  5.00 mm (+ 5.2 nH): worst IN  29.8 V (I_off   99 A; V0 22 V, C_S 20 uF, L_IN 150 nH); worst MB end 19.9 V
+  copper 5 nH        C_IN nom 5.8 uF  H_u  8.00 mm (+10.8 nH): worst IN  29.9 V (I_off   96 A; V0 22 V, C_S 20 uF, L_IN 150 nH); worst MB end 19.9 V
+  copper 5 nH        C_IN nom 5.8 uF  H_u 10.00 mm (+14.4 nH): worst IN  30.0 V (I_off   95 A; V0 22 V, C_S 20 uF, L_IN 150 nH); worst MB end 20.0 V
+  copper 5 nH        C_IN nom 5.8 uF  H_u 12.00 mm (+17.8 nH): worst IN  30.0 V (I_off   93 A; V0 22 V, C_S 20 uF, L_IN 150 nH); worst MB end 20.0 V
+  verdicts:
+    W1/W2 150 nH (r3), C_IN eff 3.4 uF: IN 32.8 V at 2.54 mm -> 33.2 V at 12 mm (+0.4 V); MB end 20.7 -> 20.8 V; above 36.7 V (TVS conducts): no; above 60 V: no; above 67 V: no
+    copper 20 nH, C_IN eff 3.4 uF: IN 40.0 V at 2.54 mm -> 40.4 V at 12 mm (+0.4 V); MB end 19.9 -> 20.1 V; above 36.7 V (TVS conducts): yes; above 60 V: no; above 67 V: no
+    copper 10 nH, C_IN eff 3.4 uF: IN 37.5 V at 2.54 mm -> 37.6 V at 12 mm (+0.1 V); MB end 19.9 -> 20.1 V; above 36.7 V (TVS conducts): yes; above 60 V: no; above 67 V: no
+    copper 5 nH, C_IN eff 3.4 uF: IN 35.5 V at 2.54 mm -> 35.6 V at 12 mm (+0.1 V); MB end 19.8 -> 20.0 V; above 36.7 V (TVS conducts): no; above 60 V: no; above 67 V: no
+  undepleted lossless bound (r3 verifier model, I0 65 A, C102 3.4 uF, V0 22 V), L_IN 150 nH + increment:
+    H_u  2.54 mm, C_S  4 uF: U301 IN 32.0 V, MB end 30.5 V
+    H_u  2.54 mm, C_S 20 uF: U301 IN 34.6 V, MB end 24.1 V
+    H_u  5.00 mm, C_S  4 uF: U301 IN 32.2 V, MB end 30.7 V
+    H_u  5.00 mm, C_S 20 uF: U301 IN 34.8 V, MB end 24.2 V
+    H_u  8.00 mm, C_S  4 uF: U301 IN 32.4 V, MB end 30.8 V
+    H_u  8.00 mm, C_S 20 uF: U301 IN 35.1 V, MB end 24.2 V
+    H_u 10.00 mm, C_S  4 uF: U301 IN 32.5 V, MB end 30.9 V
+    H_u 10.00 mm, C_S 20 uF: U301 IN 35.2 V, MB end 24.2 V
+    H_u 12.00 mm, C_S  4 uF: U301 IN 32.6 V, MB end 31.0 V
+    H_u 12.00 mm, C_S 20 uF: U301 IN 35.3 V, MB end 24.3 V
+
+== (d) Signals through the taller pins ==
+  header signals (document 2.5.2): pad 3 STAT, 7 SCL, 8 SDA, 11 MPPTD (CHG_ARM), 13 THERM (TS_EXT); the comparator taps F01-F24 are flying leads to
+  top-side SMT pads (document 2.5.9, 1.3.5), not header pins: the header height changes their lead length only.
+  two-wire capacitance per mm, C' = pi eps0 / acosh(D / 2r), r = 0.378 mm: 0.0148 pF/mm at 2.54 mm, 0.0107 pF/mm at 5.08 mm, 0.0093 pF/mm at 7.62 mm
+  per-pin added capacitance bound (all column neighbours within 4 pitches, both sides, as grounded): 0.0864 pF/mm
+  rise time tr = 0.8473 R_p C_b (30-70 %, UM10204): with R_p 2.7 kOhm the 300 ns Fast-mode limit allows C_b <= 131 pF
+  H_u 5 mm: added C <= 0.21 pF per I2C line; added tr <= 0.49 ns (0.16 % of 300 ns); SCL->SDA coupling C 0.036 pF; added pin L 1.8 nH (partial)
+  H_u 8 mm: added C <= 0.47 pF per I2C line; added tr <= 1.08 ns (0.36 % of 300 ns); SCL->SDA coupling C 0.081 pF; added pin L 4.2 nH (partial)
+  H_u 10 mm: added C <= 0.64 pF per I2C line; added tr <= 1.48 ns (0.49 % of 300 ns); SCL->SDA coupling C 0.110 pF; added pin L 5.9 nH (partial)
+  H_u 12 mm: added C <= 0.82 pF per I2C line; added tr <= 1.87 ns (0.62 % of 300 ns); SCL->SDA coupling C 0.140 pF; added pin L 7.7 nH (partial)
+  the bus capacitance C_b itself is unmeasured: TODO(measure: SCL/SDA rise time on the CCB, measurement item 15 / 5.8 item 9)
+  inter-board ground shift at the hard-short turn-off: the short current returns through pads 4, 14, 15 (the only GND pins; the anchors are isolated)
+    H_u  2.54 mm: one-pin partial L 1.98 nH; with 65 A (r3 worst I_off) falling in 1.0 us: 0.13 V (one pin) to 0.04 V (three pins, no mutual)
+    H_u  2.54 mm: one-pin partial L 1.98 nH; with 65 A (r3 worst I_off) falling in 0.1 us: 1.29 V (one pin) to 0.43 V (three pins, no mutual)
+    H_u  5.00 mm: one-pin partial L 3.76 nH; with 65 A (r3 worst I_off) falling in 1.0 us: 0.24 V (one pin) to 0.08 V (three pins, no mutual)
+    H_u  5.00 mm: one-pin partial L 3.76 nH; with 65 A (r3 worst I_off) falling in 0.1 us: 2.44 V (one pin) to 0.81 V (three pins, no mutual)
+    H_u  8.00 mm: one-pin partial L 6.18 nH; with 65 A (r3 worst I_off) falling in 1.0 us: 0.40 V (one pin) to 0.13 V (three pins, no mutual)
+    H_u  8.00 mm: one-pin partial L 6.18 nH; with 65 A (r3 worst I_off) falling in 0.1 us: 4.02 V (one pin) to 1.34 V (three pins, no mutual)
+    H_u 10.00 mm: one-pin partial L 7.90 nH; with 65 A (r3 worst I_off) falling in 1.0 us: 0.51 V (one pin) to 0.17 V (three pins, no mutual)
+    H_u 10.00 mm: one-pin partial L 7.90 nH; with 65 A (r3 worst I_off) falling in 0.1 us: 5.14 V (one pin) to 1.71 V (three pins, no mutual)
+    H_u 12.00 mm: one-pin partial L 9.70 nH; with 65 A (r3 worst I_off) falling in 1.0 us: 0.63 V (one pin) to 0.21 V (three pins, no mutual)
+    H_u 12.00 mm: one-pin partial L 9.70 nH; with 65 A (r3 worst I_off) falling in 0.1 us: 6.30 V (one pin) to 2.10 V (three pins, no mutual)
+    the eFuse turn-off fall time is TODO(verify: SLVSE94G); the shift is common to every signal crossing the header and to the CCB
+    reference of the comparators against the MB-referenced taps; it lasts for the turn-off edge only (fault event)
+
+== (e) Mechanical ==
+  header options by gap (seat heights and lead styles TODO(verify: maker drawing) for every class):
+  H_u 5 mm: option S total pin length >= 10.8 mm (1.0 mm tail under the MB + 1.66 MB + 5 gap + 1.6 CCB + 1.5 mm above the CCB); option K socket seat h_k = 2.46 mm
+  H_u 8 mm: option S total pin length >= 13.8 mm (1.0 mm tail under the MB + 1.66 MB + 8 gap + 1.6 CCB + 1.5 mm above the CCB); option K socket seat h_k = 5.46 mm
+  H_u 10 mm: option S total pin length >= 15.8 mm (1.0 mm tail under the MB + 1.66 MB + 10 gap + 1.6 CCB + 1.5 mm above the CCB); option K socket seat h_k = 7.46 mm
+  H_u 12 mm: option S total pin length >= 17.8 mm (1.0 mm tail under the MB + 1.66 MB + 12 gap + 1.6 CCB + 1.5 mm above the CCB); option K socket seat h_k = 9.46 mm
+  classes: S1 Samtec TSW-110/-112-xx-G-S with a long-post lead style (TODO(verify: TSW lead-style table, post and tail lengths));
+           S2 Samtec MTSW-110/-112 movable-body header, body set at the gap (TODO(verify: MTSW pin lengths));
+           S3 standard header plus a plastic spacer strip at the gap height (TODO(verify: spacer MPN));
+           K1 Samtec SSW/SSQ socket strip (SSW body 8.51 mm per document 1.3.2, TODO(verify: Samtec SSW drawing)) + TSW male: H_u = 8.51 + 2.54 = 11.05 mm;
+           K2 Samtec ESQ elevated socket strip (long tail, stacking) at the gap: TODO(verify: ESQ heights);
+           K3 Harwin M20 series female + long-pin male (TODO(verify: Harwin MPN and heights)).
+  the two strips run along y (document 1.1), so they form two walls of a y-directed duct between x 21.0 and x 46.0 (25.0 mm)
+  overhang beam: Euler-Bernoulli, width 21.2 mm (tab, document 1.8), t 1.6 mm, E 20 GPa, I 7.24 mm^4; clamp line at the last pin row,
+  load at the tab edge y 76.40; foot at y 70.64 (document 1.4) as a spring support (nylon spacer axial stiffness)
+    clamp y 64.484 (pin 11, left column end), F 5 N vertical at the tip: no foot 0.019 mm; with the feet H_u 5: 0.0052 mm (prop 11.1 N); H_u 8: 0.0059 mm (prop 10.6 N); H_u 10: 0.0063 mm (prop 10.2 N); H_u 12: 0.0066 mm (prop 9.9 N)
+    clamp y 64.484 (pin 11, left column end), F 10 N vertical at the tip: no foot 0.039 mm; with the feet H_u 5: 0.0104 mm (prop 22.1 N); H_u 8: 0.0117 mm (prop 21.1 N); H_u 10: 0.0125 mm (prop 20.5 N); H_u 12: 0.0133 mm (prop 19.9 N)
+    clamp y 61.944 (pin 10, right column end), F 5 N vertical at the tip: no foot 0.035 mm; with the feet H_u 5: 0.0056 mm (prop 9.7 N); H_u 8: 0.0061 mm (prop 9.5 N); H_u 10: 0.0064 mm (prop 9.4 N); H_u 12: 0.0068 mm (prop 9.3 N)
+    clamp y 61.944 (pin 10, right column end), F 10 N vertical at the tip: no foot 0.070 mm; with the feet H_u 5: 0.0112 mm (prop 19.3 N); H_u 8: 0.0122 mm (prop 19.0 N); H_u 10: 0.0129 mm (prop 18.8 N); H_u 12: 0.0135 mm (prop 18.6 N)
+  the vertical tip deflection is set by the plate, not by the gap; the gap sets the lateral sway and the foot length below
+  the prop force is about 2 x the tip force (lever); an upward tip pull puts the same force in tension on the foot screws and bonds,
+  independent of H_u. Excluded: pin axial compliance, socket-contact compliance (option K), bond and MB compliance (rotation of
+  the board about the pin field would add to the no-foot figure; TODO(measure: T-K-18 / dry fit)).
+  lateral sway (force in the board plane, e.g. a cable pulled sideways): 22 pins as fixed-guided columns, k = 22 x 12 E I / H^3,
+  pin E 110 GPa, I 0.0140 mm^4; option S (both ends soldered). Option K adds the socket-contact compliance TODO(verify: socket data)
+    H_u  2.54 mm, F  5 N: sway 0.0001 mm (pins 24776 N/mm, feet 52342.9 N/mm); pin bending stress 2 MPa (yield ~500 MPa)
+    H_u  2.54 mm, F 10 N: sway 0.0001 mm (pins 24776 N/mm, feet 52342.9 N/mm); pin bending stress 4 MPa (yield ~500 MPa)
+    H_u  5.00 mm, F  5 N: sway 0.0005 mm (pins 3248 N/mm, feet 6862.0 N/mm); pin bending stress 4 MPa (yield ~500 MPa)
+    H_u  5.00 mm, F 10 N: sway 0.0010 mm (pins 3248 N/mm, feet 6862.0 N/mm); pin bending stress 8 MPa (yield ~500 MPa)
+    H_u  8.00 mm, F  5 N: sway 0.0020 mm (pins 793 N/mm, feet 1675.3 N/mm); pin bending stress 7 MPa (yield ~500 MPa)
+    H_u  8.00 mm, F 10 N: sway 0.0041 mm (pins 793 N/mm, feet 1675.3 N/mm); pin bending stress 13 MPa (yield ~500 MPa)
+    H_u 10.00 mm, F  5 N: sway 0.0040 mm (pins 406 N/mm, feet 857.7 N/mm); pin bending stress 8 MPa (yield ~500 MPa)
+    H_u 10.00 mm, F 10 N: sway 0.0079 mm (pins 406 N/mm, feet 857.7 N/mm); pin bending stress 17 MPa (yield ~500 MPa)
+    H_u 12.00 mm, F  5 N: sway 0.0068 mm (pins 235 N/mm, feet 496.4 N/mm); pin bending stress 10 MPa (yield ~500 MPa)
+    H_u 12.00 mm, F 10 N: sway 0.0137 mm (pins 235 N/mm, feet 496.4 N/mm); pin bending stress 20 MPa (yield ~500 MPa)
+  the foot spacer as a bonded cantilever under a lateral force at its top (F per foot, bond torque = F x H):
+    H_u 5 mm, 2.5 N per foot: bond moment 12.5 N mm (r1 at 2.54 mm: 6.3 N mm)
+    H_u 5 mm, 5.0 N per foot: bond moment 25.0 N mm (r1 at 2.54 mm: 12.7 N mm)
+    H_u 8 mm, 2.5 N per foot: bond moment 20.0 N mm (r1 at 2.54 mm: 6.3 N mm)
+    H_u 8 mm, 5.0 N per foot: bond moment 40.0 N mm (r1 at 2.54 mm: 12.7 N mm)
+    H_u 10 mm, 2.5 N per foot: bond moment 25.0 N mm (r1 at 2.54 mm: 6.3 N mm)
+    H_u 10 mm, 5.0 N per foot: bond moment 50.0 N mm (r1 at 2.54 mm: 12.7 N mm)
+    H_u 12 mm, 2.5 N per foot: bond moment 30.0 N mm (r1 at 2.54 mm: 6.3 N mm)
+    H_u 12 mm, 5.0 N per foot: bond moment 60.0 N mm (r1 at 2.54 mm: 12.7 N mm)
+  option K without the foot screws: socket pull-out under a vertical tip force (rigid board pivoting on the pin nearest the tip,
+  contact axial forces linear in the distance from the pivot line, all contacts equal):
+    F 5 N down at y 76.40: moment 59.6 N mm about y 64.484; largest contact tension 0.29 N; sum of tensions 3.19 N
+    F 10 N down at y 76.40: moment 119.2 N mm about y 64.484; largest contact tension 0.58 N; sum of tensions 6.37 N
+    compare with the per-contact socket withdrawal force TODO(verify: socket datasheet); the foot screws remove this load path
