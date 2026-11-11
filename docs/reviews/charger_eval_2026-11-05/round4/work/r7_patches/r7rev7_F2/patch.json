@@ -1,0 +1,210 @@
+{
+ "group": "rev7-F2",
+ "edits": [
+  {
+   "old": "| 0.30 m (**r7:** until MS2; then 230 mm, or 260 mm in corridor fallback (i); r7 note below) |",
+   "new": "| 0.30 m (**r7:** until MS2; then 230 mm, or 260 mm in corridor fallback (i); r7 note below) (**superseded in r7:** a fixed build length of 0.30 m +- 10 mm at every placement; the slack is a service loop anchored on the EVM plate; r7 review 7 note below, D-F3) |",
+   "note": "D-F3 / hard-short-shorter-w1w2-not-bounded: W1 max-length cell"
+  },
+  {
+   "old": "plus a chassis cable tie within 30 mm of the CR edge (**r7:** at the MB +y edge, 29.744 mm from the tab X top edge, H.23(l));",
+   "new": "plus a chassis cable tie within 30 mm of the CR edge (**r7:** at the MB +y edge, 29.744 mm from the tab X top edge, H.23(l)) (**superseded in r7:** the anchor rule of the r7 review 7 note below: every unsupported span between two anchors is <= 30 mm along the lead; the chassis tie is an extra anchor with no distance limit);",
+   "note": "D-F2 / chassis-tie-*: W1 strain-relief sentence"
+  },
+  {
+   "old": "| 0.30 m (**r7:** until MS2; then 240 / 270 mm) | As W1 |",
+   "new": "| 0.30 m (**r7:** until MS2; then 240 / 270 mm) (**superseded in r7:** fixed 0.30 m +- 10 mm, as W1, D-F3) | As W1 |",
+   "note": "D-F3: W2 max-length cell"
+  },
+  {
+   "old": "| 18 AWG, red/white | 0.30 m (**r7:** until MS2; then 180 / 170 mm)",
+   "new": "| 18 AWG, red/white | 0.30 m (**r7:** until MS2; then 180 / 170 mm) (**superseded in r7:** until MS2; then 200 / 190 mm on the W-lead dressing path, r7 review 7 note below)",
+   "note": "D-F2: W3 max-length cell from the re-run H.23(l)"
+  },
+  {
+   "old": "| 18 AWG, black | 0.30 m (**r7:** until MS2; then 180 / 170 mm)",
+   "new": "| 18 AWG, black | 0.30 m (**r7:** until MS2; then 180 / 170 mm) (**superseded in r7:** until MS2; then 200 / 190 mm, as W3)",
+   "note": "D-F2: W4 max-length cell"
+  },
+  {
+   "old": "it is dressed clear of the tap pads so every tap stays reworkable);",
+   "new": "it is dressed clear of the tap pads so every tap stays reworkable) (**superseded in r7:** the flat cable folds once toward -x at >= 8 mm above the CR top and follows the W5 branch of the W-lead dressing path, r7 review 7 note below; it never crosses tab X);",
+   "note": "D-F2 / w-leads-and-ribbon-cross-pin10-vchgin-post, w5-w3w4-channel-and-crush: W5 fold direction"
+  },
+  {
+   "old": "| 0.30 m (**r7:** factory cable kept; route-rule maximum 200 mm, or 180 mm in fallback (i), so the cable fits) |",
+   "new": "| 0.30 m (**r7:** factory cable kept; route-rule maximum 200 mm, or 180 mm in fallback (i), so the cable fits) (**superseded in r7:** a fixed 0.30 m (304.8 mm) factory cable; the route sets a minimum fit, not a build maximum: route + 20 mm 3-D allowance (ASSUMPTION) = 222.7 mm, or 204.6 mm in fallback (i); the 82.1 mm (100.2 mm) slack is a service loop anchored on the EVM plate, D-F2) |",
+   "note": "D-F2 / w5-build-max-semantics, w5-cable-exceeds-route-max-untested: W5 length cell"
+  },
+  {
+   "old": "Lay it along W1/W2, not across the EVM inductor L2 |",
+   "new": "Lay it along W1/W2, not across the EVM inductor L2 (**superseded in r7:** on the CR it runs on spacers beside the trunk; from the MB tie base A1 it runs with the east group; past the MB +y edge it runs over the EVM plate, apart from W3/W4 and clear of L2, TODO(verify: EVM L2 position, MS2)) |",
+   "note": "D-F2 / w5-w3w4-channel-and-crush: W5 dressing past A1"
+  },
+  {
+   "old": "Corridor fallbacks (ii) and (iii) fail (H.23(l)).\n\n| Lead | Reference placement: route / build max (mm) |",
+   "new": "Corridor fallbacks (ii) and (iii) fail (H.23(l)). (**superseded in r7:** the straight route from each CR hole to the tab X top edge, the chassis tie at the MB +y edge with its 0.256 mm and 0.02 mm margins and the maxima of the following table are replaced by the r7 review 7 note below the next paragraph, D-F2 and D-F3. The straight route crossed the pin-10 post, the IN strip and the tap field.)\n\n| Lead | Reference placement: route / build max (mm) |",
+   "note": "D-F2 / w-leads-cross-unfused-vchgin, chassis-tie-*: mark the r7 rev-2 route note superseded"
+  },
+  {
+   "old": "At the 0.30 m caps used in H.11, the pairs have 19.99 mOhm and 12.57 mOhm. Every fallback (i) maximum of W1-W4, W6 and W7 is <= 0.30 m, so H.11 bounds it as well. Every reference route keeps >= 10.10 mm from the MB switched conductors (VSW-FC/VSW-BT pours, L-FC/L-BT bodies, REG-FC/REG-BT boxes). At the reference placement W3/W4 pass between the EVM right edge and the USB corridor in a channel 4.97 mm wide; the outer size of the twisted 18 AWG pair is TODO(measure: MS2/MS7).",
+   "new": "At the 0.30 m caps used in H.11, the pairs have 19.99 mOhm and 12.57 mOhm. Every fallback (i) maximum of W1-W4, W6 and W7 is <= 0.30 m, so H.11 bounds it as well. Every reference route keeps >= 10.10 mm from the MB switched conductors (VSW-FC/VSW-BT pours, L-FC/L-BT bodies, REG-FC/REG-BT boxes). At the reference placement W3/W4 pass between the EVM right edge and the USB corridor in a channel 4.97 mm wide; the outer size of the twisted 18 AWG pair is TODO(measure: MS2/MS7). (**superseded in r7:** the resistance figures, the 10.10 mm switched-conductor statement and the channel statement of this paragraph are replaced by the r7 review 7 note below.)\n\n**r7 review 7 (W-lead dressing path, D-F2; H.23(l)).** The **W-lead dressing path** replaces the straight segment from each CR hole to the tab X top edge. Every W lead leaves its CR joint inside the A.3 RTV bead and joins the **trunk**, which runs +y on the footprint along x 25.80. W3 runs up x 24.40 from its hole and pairs with W4 at y 57.00; W6/W7 join at y 59.20 and W1/W2 at y 62.60. The trunk passes onto tab Y and turns +x at y 69.60, on the -y side of the FT2 fill-hole disc. It rises to y 71.10 past the U101 courtyard and the +x pocket, and to y 71.75 past the tap pads. It leaves the CR at the tab Y +x edge (x 37.56) and reaches the MB tie base A1 at (60.50, 73.50) without crossing tab X.\n\nFrom A1 the **west group** (W1, W2, W6, W7) runs to (58.00, 76.00) and straight up x 58.00 to the MB +y edge. The **east group** (W3, W4, W5) runs up x 61.00 to (61.00, 85.50), clear of D-FC-EN and C-D1, and then to the MB tie base A2 at (71.50, 88.00). It crosses the MB +y edge within 30 mm of A2. W5 rises at J101 and folds once toward -x at >= 8 mm above the CR top to (28.70, 46.83). It runs +y over the footprint interior to (28.70, 73.10), then +x at y 73.10. It steps to y 73.80 over x 42.00-44.50, clear of the tap pads, and stays at its fold height until A1. From A1 it lies flat on the MB with the east group.\n\nThe **dressing rule** keeps every W lead >= 2 mm in plan from the pin-10 joint, the IN strip (C102a/b/c, R102, D107), the U101 courtyard and the +x pocket. The same 2 mm applies to every 1x10 and 1x12 post tip and every tap pad, and no W lead lies over the tab X tap field. The designed path meets the rule at the jacket edge: minimum 2.02 mm (W5), 2.08 mm (W3) and 2.09 mm for the other leads. It keeps 2.03 mm from the tap-field courtyard. The jacket envelopes are ASSUMPTIONS (half-width 2.37 mm for the trunk, 1.73 mm for the west group, 2.00 mm for the east group and the W3/W4 pair, 1.00 mm for one 18 AWG lead; TODO(measure: MS2/MS7)). The MB rework points C-D2 with R171, D-FC-EN with its EN bodge resistor, and C-D1 keep >= 1.5 mm: 4.21 mm, and 2.03 mm for W5.\n\nW5 has two exceptions to the 2 mm rule. Over the J101 region (x 37.00-40.75) the ribbon edge lies 0.775 mm in plan from C102b, because A.8 sets the J101 region 0.50 mm below the IN strip. There the ribbon is >= 8 mm above the CR top, held by the spacer bead S1. On tab Y the ribbon overlaps the L-FC body by 0.68 mm in plan, >= 12.3 mm above the MB (L-FC body height TODO(verify: L-FC datasheet)). Both exceptions wait for an operator ruling (J.2 item 62). W5 also passes over the FT2 fill hole at its fold height, so a re-bed of FT2 first lifts W5 from S2 and S3.\n\nThe 10 mm switched-conductor clearance of the r7 rev-2 routes cannot be met on the CR. The designed path keeps 3.39 mm from the L-FC body, and W5 overlaps it in plan by 0.68 mm. The L-FC body lies 0.862 mm past the tab Y +y edge, and the 2 mm dressing rule closes every other exit from the footprint. A raster search over every plan path that keeps the 2 mm rule gives at best 5.12 mm for the trunk bundle and 9.34 mm for a single lead. From A1 on, every lead keeps 10.38-13.01 mm. The 10 mm figure has no stated pickup basis, so its acceptance on the CR is an open operator ruling (J.2 item 62).\n\nThe **anchor rule** replaces the r5 chassis-tie rule: the unsupported lead length between two anchors is <= 30 mm, measured along the lead. The anchors are the A.3 joint beads, two CR RTV beads, three W5 spacer beads and two MB tie bases:\n\n- RTV beads (3.0 x 3.0 mm footprint, ASSUMPTION): **B1** at (25.80, 64.50) and **B3** at (35.00, 70.80);\n- W5 **spacer beads**, each an RTV bead onto an insulating spacer on the CR that holds the ribbon at its fold height: **S1** at (36.00, 46.83), **S2** at (28.70, 55.00) and **S3** at (35.00, 73.10), which merges with B3 into one spot;\n- **tie base A1**, 6 x 6 mm, centred at (60.50, 73.50) +- 1.5 mm, and **tie base A2**, 10 x 10 mm, centred at (71.50, 88.00) +- 1.5 mm, each bonded on the MB solder mask (sizes ASSUMPTION, TODO(verify: adhesive tie-base datasheet)).\n\nThe longest span between anchors is 25.8 mm (B3 to A1). Each tie-base zone (the base +- 1.5 mm) lies on the MB outside the CR shadow, clear of every MB part box (A1 0.51 mm from SNS-FC, A2 1.72 mm from CSNS-FC) and of every non-GND via. Under A1 the VBUS-FC layer-1 copper lies under solder mask; under A2 there is only the GND pour. The S1 and S2 footprints are ASSUMPTIONS that reach 0.50 mm into the J101 region and 0.25 mm from the W6/W7 pads; the T-A-06 dry fit places them clear of both. The chassis tie past the MB +y edge is an extra anchor with no distance limit, so the run from the last tie base to the chassis tie is exempt from the 30 mm rule. That run also meets the rule when the chassis tie sits within 4.4 mm (west group), 18.4 mm (W3/W4) or 19.4 mm (W5) past the MB +y edge; MS2 records the position.\n\nA **polyimide strip** (0.125 mm film with silicone adhesive, cut from the polyimide sheet stock) lies on the MB under the leads, from the tab Y +x edge to the MB +y edge. It follows the lead path within x 36.06-65.28, y 65.30-92.80 (lead envelope + 2.0 mm, via pad rims included) and stops at each tie-base footprint, so each base bonds to the MB solder mask. It covers CSNS-FC, MDAC-FC, OP-FC, ROP1-FC and SNS-FC where the leads cross them. It also covers nine untented non-GND vias (H.23(c2)): 3V3 (43.43, 71.63), (46.23, 71.63) and (61.79, 79.18); CS-MDAC-FC (49.99, 72.60); FC-CURR (51.16, 74.67), (58.93, 83.57) and (60.71, 90.42); MOSI (53.46, 73.29); and SCK (53.85, 72.14). It further covers 3V3 (51.10, 69.13) and MISO (54.00, 69.60), which W5 would cross if it touched down before A1. The CR-top tips of pins 7-10 (pin 10 VCHG-IN, 0.940 mm proud, H.23(j)) get a cured dome of the BOM RTV or a Kapton patch before any lead is dressed (PM4 (6), T-F-12).\n\n**r7 review 7 (lengths, D-F2 and D-F3; H.23(l)).** The following table gives the routes on the dressing path and the build length or maximum of each lead.\n\n| Lead | Reference placement: route / build length or maximum (mm) | Corridor fallback (i): route / build length or maximum (mm) |\n|---|---|---|\n| W1 | 199.5 / fixed **0.30 m +- 10 mm** (slack 100.5) | 225.5 / fixed **0.30 m +- 10 mm** (slack 74.5) |\n| W2 | 202.2 / fixed **0.30 m +- 10 mm** (slack 97.8) | 228.2 / fixed **0.30 m +- 10 mm** (slack 71.8) |\n| W3 | 156.6 / **200** | 150.8 / **190** |\n| W4 | 156.3 / **200** | 151.0 / **190** |\n| W6 | 106.8 / **140** | 119.2 / **150** |\n| W7 SCL | 123.7 / **160** | 150.7 / **190** |\n| W7 SDA | 125.8 / **160** | 152.8 / **200** |\n| W5 (fixed 304.8 mm factory cable) | 202.7 / minimum fit **222.7** (slack 82.1) | 184.6 / minimum fit **204.6** (slack 100.2) |\n\nW1 and W2 keep a fixed build length of 0.30 m +- 10 mm at every placement (D-F3). A shorter W1/W2 lowers the lead inductance and raises the hard-short IN-side spike at U101 (H.5). Cut to the 199.5 mm route, W1 gives 34.4 V; cut to the r7 rev-2 route of 181.6 mm, it gives 34.9 V, 1.1 V below D107 VBR(min) 36 V. At 290-300 mm the spike stays at 32.8-32.9 V, so the r3-r6 basis of H.5, H.19 and T-C-04 holds. The W1/W2 slack is a service loop anchored on the EVM plate. W3/W4, W6 and W7 keep the 0.30 m cap until MS2 and then take their route maxima; corridor fallbacks (ii) and (iii) still fail.\n\nThe route of W5 is a minimum-fit check, not a build maximum: route + a 20 mm 3-D allowance for the J101 rise and fold and the J201 drop (ASSUMPTION, T-A-06). The 0.30 m factory cable leaves 82.1 mm of slack at the reference placement and 100.2 mm in fallback (i). The slack is a service loop anchored on the EVM plate beside the EIB, and no slack lies over the CR. At 310 mm each, the W1/W2 pair has 20.65 mOhm (37.2 mV and 66.9 mW at 1.80 A), 0.66 mOhm above the H.11 figure at 0.30 m. At the 200 mm route maxima the W3/W4 pair has 8.38 mOhm (26.0 mV and 80.5 mW at 3.10 A; 26.9 mV and 86.3 mW at 3.21 A).\n\nThe USB corridor width is the Teensy 4.1 receptacle silkscreen outline from the MB `.brd`, not the plug overmold. The overmold width, thickness and length, the boot width and the bend direction are TODO(measure: MS2). W3/W4 use the 4.97 mm channel between the EVM right edge (x 88.50) and the corridor. W5 is routed around the channel over the EVM plate, so W3/W4 and W5 do not share it. The channel criterion is a clear width over y 118.04-138.73, between the EVM right edge with any clamp body and the measured plug envelope, of >= the measured W3/W4 pair OD + 1.0 mm (MS2). When it fails, corridor fallback (i) applies (A.7).",
+   "note": "D-F2/D-F3 (all W-lead findings): new r7 review 7 note, path, rules, anchors, strip, lengths, channel"
+  },
+  {
+   "old": "W5 leaves J101 toward +y\n  and crosses tab X at its fold height with W1/W2, clear of the tap pads (A.3).",
+   "new": "W5 leaves J101 toward +y\n  and crosses tab X at its fold height with W1/W2, clear of the tap pads (A.3) (**superseded in r7:** W5 folds toward -x over the footprint interior and joins the W-lead dressing path across tab Y; no W lead crosses tab X, A.3 r7 review 7 note).",
+   "note": "D-F2 / w1-w4-over-tap-field: A.7 tab content W5 sentence"
+  },
+  {
+   "old": "45.0 mm plug + bend, ASSUMPTION,\n  TODO(measure: MS2)).",
+   "new": "45.0 mm plug + bend, ASSUMPTION,\n  TODO(measure: MS2); **r7 review 7:** the corridor width is the Teensy 4.1 receptacle silkscreen outline from the MB `.brd`, not the plug overmold, whose width, thickness and length are TODO(measure: MS2)).",
+   "note": "D-F2 / usb-corridor-width-is-receptacle: A.7 corridor width hedge"
+  },
+  {
+   "old": "The chassis tie at\n  the MB +y edge lies 29.744 mm from the tab X top edge, and 29.98 mm from its corner (65.00, 68.30) for W3, W4 and W5,\n  which cross at x 68.75 (<= 30 mm, A.3).",
+   "new": "The chassis tie at\n  the MB +y edge lies 29.744 mm from the tab X top edge, and 29.98 mm from its corner (65.00, 68.30) for W3, W4 and W5,\n  which cross at x 68.75 (<= 30 mm, A.3). (**superseded in r7:** the W leads follow the A.3 dressing path to the MB tie bases A1 and A2, every span between anchors is <= 30 mm along the lead, and the chassis tie is an extra anchor with no distance limit. W5 does not use the W3/W4 channel: it crosses the MB +y edge at x 74.75 and runs over the EVM plate to J201, A.3.)",
+   "note": "D-F2 / chassis-tie-*, w5-w3w4-channel-and-crush: A.7 reference placement"
+  },
+  {
+   "old": "no lead is blocked, every chassis tie is <= 30 mm, and the build maxima are W1 260, W2 270, W3 170, W4 170,\n    W6 120, W7 SCL 180 and W7 SDA 170 mm, with W5 at 1.25 x route = 177 mm, all within 0.30 m.",
+   "new": "no lead is blocked, every chassis tie is <= 30 mm, and the build maxima are W1 260, W2 270, W3 170, W4 170,\n    W6 120, W7 SCL 180 and W7 SDA 170 mm, with W5 at 1.25 x route = 177 mm, all within 0.30 m (**superseded in r7:** on the A.3 dressing path the maxima are W3 190, W4 190, W6 150, W7 SCL 190 and W7 SDA 200 mm; W1/W2 keep the fixed 0.30 m +- 10 mm (routes 225.5 / 228.2 mm); the W5 minimum fit is 204.6 mm on the 304.8 mm cable; the anchor rule of A.3 replaces the chassis-tie distance).",
+   "note": "D-F2/D-F3: A.7 fallback (i) numbers"
+  },
+  {
+   "old": "From here on the CR is handled with the 0.30 m leads attached (**r7:** the W1-W4 leads at their A.3 build maxima, that is the 0.30 m caps until MS2 and the route-rule maxima after it).",
+   "new": "From here on the CR is handled with the 0.30 m leads attached (**r7:** the W1-W4 leads at their A.3 build maxima, that is the 0.30 m caps until MS2 and the route-rule maxima after it) (**superseded in r7:** W1/W2 at the fixed 0.30 m +- 10 mm; W3/W4 at the 0.30 m cap until MS2 and at their A.3 route maxima after it).",
+   "note": "D-F3: PM4 (2b) lead lengths"
+  },
+  {
+   "old": "dress W1-W4 over tab X toward the MB +y edge (A.3). Mate W5 and dress it per A.3, clear of the tap pads. Then solder W6, W7 and the taps (PM6)",
+   "new": "dress W1-W4 over tab X toward the MB +y edge (A.3). Mate W5 and dress it per A.3, clear of the tap pads. Then solder W6, W7 and the taps (PM6) (**superseded in r7:** the following dressing order of the A.3 r7 review 7 note, D-F2). Cover the CR-top tips of pins 7-10 with a dome of the BOM RTV or a Kapton patch. Let an RTV dome cure. Solder W7, and W6 if an NTC is fitted (A.3). Inspect each tie-base zone (A1, A2: the base +- 1.5 mm) for unrecorded parts, wires and bodges. When a zone is clear, bond its tie base on the MB solder mask at the A.3 centre. Lay the polyimide strip along the A.3 path and stop it at each tie-base footprint. Dress W1-W4, W6 and W7 along the A.3 trunk and group paths, never over tab X. Keep every jacket >= 2 mm in plan from the pin-10 joint, the IN strip, the U101 courtyard, the +x pocket and the tap pads. Mate W5 and dress it along its A.3 path on the spacers S1-S3. Apply the beads B1, B3 and S1-S3, and strap each group to A1 and A2. Dress the W1/W2 and W5 slack as service loops anchored on the EVM plate. Then solder the taps (PM6)",
+   "note": "D-F2 / w-leads-cross-unfused-vchgin, w-leads-and-ribbon-cross-pin10-vchgin-post, w-lead-unsupported-span-over-mb: PM4 (6) dressing order; leaves the '(6) (r7) after the cure and T-A-09,' prefix untouched"
+  },
+  {
+   "old": "VCHG-IN-to-GND resistance and no exposed VCHG-IN copper within 2 mm of GND or chassis (T-F-12) |",
+   "new": "VCHG-IN-to-GND resistance and no exposed VCHG-IN copper within 2 mm of GND or chassis (T-F-12). **r7 (D-F2):** after (6), the pin 7-10 covers are intact; every W lead lies on the A.3 path, >= 2 mm in plan from the pin-10 joint, the IN strip, the U101 courtyard, the +x pocket, the post tips and the tap pads (W5 exceptions of A.3 only); every anchor is in place (T-F-12) |",
+   "note": "D-F2: PM4 check column"
+  },
+  {
+   "old": "Kapton tape, cable ties | - | - | - | - |",
+   "new": "Kapton tape, cable ties | - | - | - | - |\n| **W-lead anchors and strip (r7 review 7)** | 2 tie bases (+2), 3 spacers (+3), 1 strip | adhesive cable-tie bases A1 (6 x 6 mm) and A2 (10 x 10 mm) bonded on the MB solder mask; three insulating spacers for the W5 fold (S1-S3, height to hold the ribbon >= 8 mm above the CR top); a polyimide strip under the W leads, cut from the polyimide sheet stock (A.3). The RTV beads and the pin 7-10 cover use the BOM Adhesive line or the Kapton tape of the Hardware line | no candidate MPN; tie-base size, adhesive and temperature rating TODO(verify: adhesive tie-base datasheet), T-A-05; spacer height from the T-A-06 dry fit | - | distributor or workshop | within the hardware allowance |",
+   "note": "D-F2: BOM row for tie bases, spacers and the strip (inserted after the Hardware row)"
+  },
+  {
+   "old": "0.30 m (12.0 in), conductor 1 marked |",
+   "new": "0.30 m (12.0 in), conductor 1 marked (**r7:** a fixed length; the route sets a minimum fit of 222.7 mm, or 204.6 mm in fallback (i), and the slack is a service loop on the EVM plate, A.3) |",
+   "note": "D-F2 / w5-cable-exceeds-route-max-untested: BOM W5 line"
+  },
+  {
+   "old": "D103 carries ~I_SCP 45 A for < 1 us",
+   "new": "D103 carries ~I_SCP 45 A for < 1 us (**superseded in r7:** with W1/W2 at the fixed 0.30 m +- 10 mm (145-155 nH) the quarter period is 0.60-0.62 us; the H.19 lumped model (no ESR) gives a W1/W2 lead peak, carried by D103, of 117 A at 300 mm and 119 A at 290 mm, not ~45 A; D103 pulse rating at that peak for < 1 us TODO(verify: D103 datasheet); H.23(l), D-F3)",
+   "note": "D-F3 / hard-short-shorter-w1w2-not-bounded: H.5 OUT row"
+  },
+  {
+   "old": "(65 A at turn-off); abs max 67 V (§6.1) |",
+   "new": "(65 A at turn-off); abs max 67 V (§6.1); **r7 (D-F3, H.23(l)):** the bound holds for W1/W2 at the fixed 0.30 m +- 10 mm (32.8 V / 65 A at 300 mm, 32.9 V / 65 A at 290 mm). A shorter W1 raises it: 34.4 V / 71 A (lead peak 138 A) at the 199.5 mm dressing-path route, and 34.9 V / 73 A (lead peak 144 A) at the r7 rev-2 route of 181.6 mm, 1.1 V below D107 VBR(min) 36 V (r3 `in_spike`, worst case 22 V, C_S 20 uF, L_IN 150 nH). W1/W2 are therefore never shortened |",
+   "note": "D-F3: H.5 IN-side row records the 181.6 mm numbers"
+  },
+  {
+   "old": "at the H.23(l) route maxima the input pair is 15.66 mOhm (28.2 mV, 50.7 mW at 1.80 A) and the battery pair 7.54 mOhm (23.4 mV, 72.5 mW at 3.10 A) | pass |",
+   "new": "at the H.23(l) route maxima the input pair is 15.66 mOhm (28.2 mV, 50.7 mW at 1.80 A) and the battery pair 7.54 mOhm (23.4 mV, 72.5 mW at 3.10 A) (**superseded in r7:** W1/W2 keep the fixed 0.30 m +- 10 mm, so the input pair is 19.99-20.65 mOhm (37.2 mV, 66.9 mW at 1.80 A and 310 mm); the battery pair is 8.38 mOhm at the 200 mm route maxima (26.0 mV, 80.5 mW at 3.10 A); H.23(l), D-F3) | pass |",
+   "note": "D-F3: H.11 lead figures (outside the listed sections; W-lead numbers only)"
+  },
+  {
+   "old": "pass a 4.97 mm channel between the EVM and the corridor | MS2 (plug length, bend room, chassis room) decides the placement |",
+   "new": "pass a 4.97 mm channel between the EVM and the corridor (**r7 review 7:** the corridor width is the receptacle silkscreen; the plug overmold is TODO(measure: MS2); W5 is routed around the channel over the EVM plate) | MS2 (plug length, bend room, chassis room) decides the placement (**r7 review 7:** plus the overmold width, thickness and length, and the channel clear width >= the measured W3/W4 pair OD + 1.0 mm) |",
+   "note": "D-F2 / usb-corridor-width-is-receptacle: H.23(l) placement row"
+  },
+  {
+   "old": "W3, W4 and W5 cross at x 68.75, 29.98 mm from the tab X corner (65.00, 68.30) (margin 0.02 mm) | the r6 0.30 m caps stay the T-A-02 bound until MS2; the route maxima become the build maxima after MS2 |",
+   "new": "W3, W4 and W5 cross at x 68.75, 29.98 mm from the tab X corner (65.00, 68.30) (margin 0.02 mm) (**superseded in r7:** on the W-lead dressing path (D-F2): routes W1 199.5, W2 202.2, W3 156.6, W4 156.3, W6 106.8, W7 SCL 123.7, W7 SDA 125.8 and W5 202.7 mm; maxima W3 200, W4 200, W6 140, W7 SCL 160, W7 SDA 160 mm; W1/W2 fixed 0.30 m +- 10 mm (slack 100.5 / 97.8 mm, D-F3); W5 minimum fit 222.7 mm on the 304.8 mm cable (slack 82.1 mm); W1/W2 pair 20.65 mOhm at 310 mm, W3/W4 pair 8.38 mOhm (26.0 mV / 80.5 mW at 3.10 A); dressing rule >= 2 mm met (minimum W5 2.02 mm, W3 2.08 mm, others 2.09 mm; tap-field courtyard 2.03 mm); W5 exceptions 0.775 mm to C102b over the J101 region and a 0.68 mm plan overlap of the L-FC body; switched-conductor clearance 3.39 mm on the CR (raster best 5.12 mm bundle, 9.34 mm single lead; 10.38-13.01 mm from A1); rework points 4.21 mm (W5 2.03 mm); anchors B1, B3, S1-S3, A1 (60.50, 73.50) and A2 (71.50, 88.00) +- 1.5 mm, longest span 25.8 mm; polyimide strip x 36.06-65.28, y 65.30-92.80; hard short at the 0.30 m build 32.8 V / 65 A, at 181.6 mm 34.9 V / 73 A) | the r6 0.30 m caps stay the T-A-02 bound until MS2; the route maxima become the build maxima after MS2 (**superseded in r7:** W1/W2 stay at 0.30 m +- 10 mm; W3/W4, W6 and W7 take their route maxima after MS2; W5 passes its minimum fit; the 10 mm switched-conductor clearance on the CR and the two W5 exceptions are open rulings, J.2 item 62) |",
+   "note": "D-F2/D-F3: H.23(l) route row"
+  },
+  {
+   "old": "every W1-W4/W6/W7 maximum <= 0.30 m; it needs",
+   "new": "every W1-W4/W6/W7 maximum <= 0.30 m (**superseded in r7:** on the dressing path W3 190, W4 190, W6 150, W7 SCL 190, W7 SDA 200 mm; W1/W2 fixed 0.30 m +- 10 mm, routes 225.5 / 228.2 mm; W5 minimum fit 204.6 mm, slack 100.2 mm); it needs",
+   "note": "D-F2/D-F3: H.23(l) fallback row"
+  },
+  {
+   "old": "ruler on each E lead and each W lead along its dressed route.",
+   "new": "ruler on each E lead and each W lead along its dressed route (**r7 review 7:** the A.3 dressing path; W5 checked for its minimum fit, its service loop on the EVM plate and its separation from the W3/W4 channel; the W3/W4 channel clear width measured against the pair OD).",
+   "note": "D-F2: T-A-02 method"
+  },
+  {
+   "old": "corridor fallback (i) W1 260, W2 270, W3 170, W4 170, W6 120, W7 SCL 180, W7 SDA 170 mm).",
+   "new": "corridor fallback (i) W1 260, W2 270, W3 170, W4 170, W6 120, W7 SCL 180, W7 SDA 170 mm) (**superseded in r7:** W1 and W2 290-310 mm at every placement (D-F3); W3/W4, W6 and W7 <= 0.30 m until MS2, then within the A.3 r7 review 7 maxima (reference W3 200, W4 200, W6 140, W7 SCL 160, W7 SDA 160 mm; fallback (i) W3 190, W4 190, W6 150, W7 SCL 190, W7 SDA 200 mm); W5 the 304.8 mm factory cable reaching J101-J201 with its fold >= 8 mm above the CR top and no slack over the CR; W5 outside the W3/W4 channel; channel clear width >= pair OD + 1.0 mm).",
+   "note": "D-F2/D-F3 / w5-cable-exceeds-route-max-untested: T-A-02 pass"
+  },
+  {
+   "old": "a W lead over its maximum: shorten and re-dress it, or move the EVM plate (MS2) and recompute the route maxima (H.23(l)).",
+   "new": "a W lead over its maximum: shorten and re-dress it, or move the EVM plate (MS2) and recompute the route maxima (H.23(l)) (**superseded in r7:** W1/W2 outside 290-310 mm: replace the lead, never shorten it below 290 mm (H.5, D-F3); W3/W4, W6 or W7 over its maximum: shorten and re-dress it; W5 short of its minimum fit, or a channel narrower than the pair OD + 1.0 mm: move the EVM plate or use corridor fallback (i), MS2).",
+   "note": "D-F2/D-F3: T-A-02 fail"
+  },
+  {
+   "old": "OUT excursion with the real 0.30 m W1/W2 lead (r2)**",
+   "new": "OUT excursion with the real 0.30 m W1/W2 lead (r2)** (**r7:** the built W1/W2 at the fixed 0.30 m +- 10 mm; a shorter lead is never built, H.5, D-F3)",
+   "note": "D-F3 / hard-short-shorter-w1w2-not-bounded: T-C-04 lead basis"
+  },
+  {
+   "old": "shorten or retwist W1/W2",
+   "new": "shorten or retwist W1/W2 (**superseded in r7:** retwist only; a shorter W1/W2 raises the IN-side spike, 34.9 V at 181.6 mm against D107 VBR(min) 36 V, H.5, D-F3)",
+   "note": "D-F3: T-C-04 fail branch"
+  },
+  {
+   "old": "**r7: the underside of both tabs and the FT1/FT2 beds**",
+   "new": "**r7: the underside of both tabs and the FT1/FT2 beds**; **r7 review 7: the W-lead dressing path, its anchors and the pin 7-10 covers (A.3)**",
+   "note": "D-F2: T-F-12 title"
+  },
+  {
+   "old": "chassis tie within 30 mm of the CR edge;",
+   "new": "chassis tie within 30 mm of the CR edge (**superseded in r7:** the A.3 anchor rule, every unsupported span <= 30 mm along the lead);",
+   "note": "D-F2 / chassis-tie-*: T-F-12 r5 rule"
+  },
+  {
+   "old": "W5 dressed over tab X at the fold height and clear of every tap pad (A.3); the chassis tie at the MB +y edge (29.744 mm from the tab X top edge, H.23(l)).",
+   "new": "W5 dressed over tab X at the fold height and clear of every tap pad (A.3); the chassis tie at the MB +y edge (29.744 mm from the tab X top edge, H.23(l)) (**superseded in r7:** the following W-lead items, D-F2). Under a loupe, check the pin 7-10 covers and that every W lead follows the A.3 dressing path. With calipers, measure each W-lead jacket edge to the pin-10 joint, D107, C102a/b/c, R102, the U101 courtyard, the +x pocket and the nearest tap pad. Record the position of each anchor (B1, B3, S1-S3, A1, A2) against A.3, and measure each span between anchors along the lead. Inspect the polyimide strip and the jackets over the whole MB path, and W5 at its fold height on S1-S3. Repeat the chafe and cover inspection after the T-F-18 vibration run or a road run.",
+   "note": "D-F2: T-F-12 method"
+  },
+  {
+   "old": "W5 clear of every tap pad.",
+   "new": "W5 clear of every tap pad. **r7 review 7 (D-F2):** the pin 7-10 covers intact before and after the vibration run; every W-lead jacket >= 2 mm in plan from the items measured (the two W5 exceptions of A.3 only); no W lead over tab X; every anchor within 1.5 mm of its A.3 position; every span <= 30 mm along the lead; the strip intact under every crossing; no jacket wear and no strip chafe after the vibration run.",
+   "note": "D-F2: T-F-12 pass"
+  },
+  {
+   "old": "Re-work before Run;",
+   "new": "Re-work before Run; **r7 review 7:** a W lead off the A.3 path, a missing anchor, a span over 30 mm, a breached pin 7-10 cover or chafe on the strip: re-dress, re-bead or re-cover, then repeat the inspection;",
+   "note": "D-F2: T-F-12 fail (inserted after 'Re-work before Run;', before the F1 bed clause)"
+  },
+  {
+   "old": "and the Teensy USB plug length and bend room. It decides the EVM plate\n    position and the W-lead route maxima (H.23(l)); until then every W lead keeps the 0.30 m cap (T-A-02).",
+   "new": "and the Teensy USB plug length and bend room (**r7 review 7:** the plug overmold width, thickness and length, the boot width, the bend direction with the cable in use, the W3/W4 channel clear width and the chassis-tie positions past the MB +y edge). It decides the EVM plate\n    position and the W-lead route maxima (H.23(l)); until then every W lead keeps the 0.30 m cap (T-A-02) (**superseded in r7:** W1/W2 keep the fixed 0.30 m +- 10 mm at every placement, and W5 is the fixed 0.30 m cable, D-F3).",
+   "note": "D-F2/D-F3 / usb-corridor-width-is-receptacle: J.2 item 47 (F7 may also edit item 47 for the MS2 pass criterion)"
+  },
+  {
+   "old": "R171 on C-D2 pad 1 and RENC2 inside each tab outline\n    + 0.5 mm and under each foot spot;",
+   "new": "R171 on C-D2 pad 1 and RENC2 inside each tab outline\n    + 0.5 mm and under each foot spot (**r7 review 7:** and along the W-lead path over the MB, x 36-78, y 65-98, including the A1 and A2 tie-base zones, A.3);",
+   "note": "D-F2 / w-band-over-mb-bodges: J.2 item 48 MS3 scope (the T-A-08 MS3 row needs the same scope; owned by another cluster)"
+  },
+  {
+   "old": "W3/W4 pass through a 4.97 mm channel between the EVM right edge and the corridor (H.23(l)).",
+   "new": "W3/W4 pass through a 4.97 mm channel between the EVM right edge and the corridor (H.23(l)) (**r7 review 7:** the corridor width is the receptacle silkscreen and the plug overmold is TODO(measure: MS2); W5 is routed around the channel over the EVM plate, so W3/W4 and W5 do not share it; the channel passes when its clear width is >= the measured pair OD + 1.0 mm).",
+   "note": "D-F2 / usb-corridor-width-is-receptacle, w5-w3w4-channel-and-crush: J.2 item 57"
+  },
+  {
+   "old": "no part-free 89 x 89 mm MB region exists for the EVM beside the CR.",
+   "new": "no part-free 89 x 89 mm MB region exists for the EVM beside the CR.\n62. **W-lead dressing exceptions (r7 review 7, operator ruling):** on the CR the W-lead dressing path keeps 3.39 mm from the\n    L-FC body, and W5 overlaps it in plan by 0.68 mm at >= 12.3 mm above the MB. No CR exit meets the 10 mm\n    switched-conductor clearance (raster best 5.12 mm for the bundle, 9.34 mm for one lead); from the tie base A1 on, every\n    lead keeps 10.38-13.01 mm. The 10 mm figure has no stated pickup basis. W5 also lies 0.775 mm in plan from C102b over the\n    J101 region, at >= 8 mm above the CR top. The operator rules whether these exceptions are accepted (H.23(l), A.3); the\n    L-FC body height is TODO(verify: L-FC datasheet).",
+   "note": "D-F2: J.2 new item 62 (the two results that need a ruling); renumber if another cluster also appends after item 61"
+  },
+  {
+   "old": "Every fail-safe argument of r1-r6 holds\nunchanged;",
+   "new": "Every fail-safe argument of r1-r6 holds\nunchanged (the J.1 mechanical mitigation of the VCHG-IN segment holds with the A.3 W-lead dressing path of r7 review 7, which keeps every W lead >= 2 mm in plan from the pin-10 joint and the IN strip);",
+   "note": "D-F2 / w-leads-cross-unfused-vchgin fix 6: 0.2 claim (outside the listed sections; a different sentence from any F6 edit of the EVM-plate sentence)"
+  },
+  {
+   "old": "chassis tie at the MB +y edge, 29.744 mm from the tab X top edge; W5 dressed toward +y over tab X (A.3, A.7, H.11, T-A-02, J.2 item 57) | constraint change; H.23(l) |",
+   "new": "chassis tie at the MB +y edge, 29.744 mm from the tab X top edge; W5 dressed toward +y over tab X (A.3, A.7, H.11, T-A-02, J.2 item 57) (**superseded in r7:** r7 review 7 replaces the straight route by the A.3 W-lead dressing path with RTV beads, MB tie bases A1/A2 and a polyimide strip; spans <= 30 mm between anchors; W1/W2 fixed at 0.30 m +- 10 mm (D-F3); W3 200, W4 200, W6 140, W7 SCL 160, W7 SDA 160 mm (fallback (i) 190/190/150/190/200 mm); W5 the fixed 304.8 mm cable with a 222.7 mm minimum fit, routed around the W3/W4 channel; J.2 item 62) | constraint change; H.23(l) |",
+   "note": "D-F2/D-F3: 0.3 r7-9 row (outside the listed sections; W-lead numbers only)"
+  }
+ ]
+}

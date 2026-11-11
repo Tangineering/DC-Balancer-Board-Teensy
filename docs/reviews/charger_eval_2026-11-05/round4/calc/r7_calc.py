@@ -40,10 +40,38 @@ Revision 3 (BASIS section 11): B1 FT1 at the exact max-min centre y (off the 0.0
   keep-out disc (booked in the top area); B3 T18/F22 on the low row, the REG-5V distance of the common path end and the
   post-beside check; B5 the chassis room of fallback (i) from the most negative lead point plus a bend allowance; B6
   per-net copper areas stated to +-0.3 mm2 and the unrounded r3 bottom set 435.25 mm2.
+
+Review-7 revision (round4/work/r7_review7_dispositions.md D-F1..D-F5, D-F7):
+  D-F1 H.23(i): 0.05 mm transfer-tape bond, h_f = 2.19 mm, block +0/-0.05 mm, the vertical tolerance budget of t_bed
+  (worst case, RSS, Monte-Carlo against the PM4 (2d) 0.15 / 0.45 mm gate), the T-A-09 pull options and the recommended
+  pull, the feet effect, the tab Y grip in line with FT2 (x 28.00), Gent-scaled propped f1; H.23(h) 'crossing' labels.
+  D-F2/D-F3 H.23(l): the designed W-lead dressing path (trunk, tab Y, MB tie bases A1/A2), its 2 mm hazard, 10 mm
+  switched-conductor and 1.5 mm rework-point clearances, a raster proof of the best achievable switched clearance,
+  anchors and spans <= 30 mm, MB parts and untented non-GND vias under each lead, route rule on the new path for the
+  reference placement and fallback (i), W1/W2 fixed 0.30 m +- 10 mm with the r3 in_spike hard-short rows, W5 fixed
+  cable minimum fit, W5 routed off the W3/W4 USB channel. D-F4 H.23(g): tab X assignment with adjacency exclusions,
+  adjacency check, adjacent-pad short table, dressed lengths on the legal gap path, residual LM1084/post checks (T8).
+  D-F5 H.23(e2): per-region top booking; H.23(f): comparator band vs the MB BT boost and the 5V copper, divider strip.
+  D-F7 H.23(m): sheet trims clear MB pads as well as bodies.
+
+Revision 4 (agreement with the r7 design text after the review-7 fix round; D-H operator statement 2026-11-10: no
+maximum height for the MB and its PCBs; decision: the 10 mm switched-conductor rule is a 3-D distance):
+  H.23(e2) B3 and S3 booked as one union spot; U108/U109 to the interior by the gate loop; the flexible passives stay on
+  the bottom (the whole-side H.23(e) booking is the reason); the band U on its exact area; the gates-alone figures
+  computed; the decoupler-on-top and U108-kept sensitivities. H.23(g) T8 lane with a >= 0.5 mm jacket-to-pad gap on
+  the CR (the low-edge lane is shown infeasible; an upper lane over the residual row); computed consequences of the
+  open pairs F05-F12 and F07-F12 and of the residual pairs; the extended exclusion set run as a candidate. H.23(i) the
+  adopted 0.4 N T-A-09 pull with its stress ratio on the tip-load and the distributed-load basis. H.23(j) the stack
+  top as information only (D-H). H.23(k) the A.5 E1 route through one bend. H.23(l) spacer beads S1/S2 off the J101
+  region and the W6/W7 pad exclusion; the last span to the chassis tie (maximum tie distance past the MB +y edge per
+  group with a 2 mm margin; the west-group MB tie-base search); the 3-D switched-conductor heights per lead; the
+  polyimide strip with the via pad radius and the W5 elevated-run vias; W1/W2 and W5 labelled fixed length. H.23(m)
+  relief holes enlarged to clear the pad corners by 0.5 mm (merge check) and enlarged cut-outs.
 """
 import json
 import math
 import os
+import random
 import re
 import sys
 import xml.etree.ElementTree as ET
@@ -451,6 +479,31 @@ def body_box(name):
                 pts += [mbn.xf(x, y, ex, ey, rot) for (x, y) in ((x1, y1), (x2, y1), (x2, y2), (x1, y2))]
     b = mbn.bbox(pts)
     return b if b else ELS[name]["bbox"]
+
+
+def pad_rects(name):
+    """Copper pad boxes of a part (smd dx x dy rotated; through-hole pads as the BRD diameter square), board frame."""
+    e = ELEM_XML[name]
+    pk = PKGS.get((e.get("library"), e.get("package")))
+    ex, ey, rot = float(e.get("x")), float(e.get("y")), e.get("rot", "R0")
+    out_ = []
+    if pk is None:
+        return out_
+    for g in pk:
+        if g.tag == "smd":
+            px, py = float(g.get("x")), float(g.get("y"))
+            dx, dy = float(g.get("dx")), float(g.get("dy"))
+            la = math.radians(mbn.rot_of(g.get("rot", "R0"))[1])
+            cs = [mbn.xf(px + sx * dx * math.cos(la) - sy * dy * math.sin(la),
+                         py + sx * dx * math.sin(la) + sy * dy * math.cos(la), ex, ey, rot)
+                  for sx in (-0.5, 0.5) for sy in (-0.5, 0.5)]
+            out_.append((g.get("name"), mbn.bbox(cs)))
+        elif g.tag == "pad":
+            dr = float(g.get("drill"))
+            dia = float(g.get("diameter") or 0) or (dr + 0.8)
+            c = mbn.xf(float(g.get("x")), float(g.get("y")), ex, ey, rot)
+            out_.append((g.get("name"), [c[0] - dia / 2, c[1] - dia / 2, c[0] + dia / 2, c[1] + dia / 2]))
+    return out_
 
 
 # ---------------------------------------------------------------------------------------------------------------------
@@ -1704,6 +1757,7 @@ def sec_e():
     fh = fill_hole()
     G.mark_disk(tk, fh["c"][0], fh["c"][1], fh["ko_r"])
     top = mask_and_not(reg7, tk)
+    AREA["top"] = top
     ts = part_split(G, top)
     top_tot = sum(ts)
     fill_top = top_nofill - top_tot
@@ -1829,6 +1883,213 @@ def sec_e():
 LOOP = [(36.1, 52.03, 44.55, 61.55), (30.8, 62.85, 39.3, 66.64), (39.3, 61.6, 44.3, 66.6)]   # MIN loop_distance()
 
 
+# ======================================================================================================================
+# H.23(e2) per-region booking (r7 review 7, D-F5)
+# ======================================================================================================================
+# Courtyard bookings per package: stackup_area.py CY (DOC A.8 IPC-7351 nominal + 0.25 mm; R3 H.18 for the ICs)
+CY_PKG = {"0402": 1.9 * 1.0, "0603": 3.0 * 1.45, "0805": 3.4 * 1.8, "1206": 4.75 * 2.3, "SOT-23-6": 10.0,
+          "SSOP-8": 15.0, "SC70-6": 7.0, "SC70-5": 7.0, "SOT-23": 10.0, "SOD-323": 3.4 * 1.8}
+BAND_RECT = (23.15, 35.05, 42.43, 41.63)           # BASIS D5: footprint low-y band (the freed r6 tap-field area)
+J101_REG = (37.0, 42.13, 44.5, 51.53)              # DOC A.8 r5 J101 region
+HIGHY = [(36.1, 52.03, 44.55, 61.55), (30.8, 62.85, 39.3, 66.64), (39.3, 61.6, 44.3, 66.6),
+         (44.3, 63.40, 48.2, 66.64)]               # DOC A.8: IN strip, OUT strip, U101 courtyard, +x pocket
+W67_PADS = [(27.0, 57.5), (29.0, 57.5), (31.0, 57.5), (33.0, 57.5), (35.0, 57.5)]   # DOC A.8 SMT 1.2 x 1.5 mm
+REGION_GAP = 0.5                                   # DOC A.8: >= 0.5 mm between regions
+ANCHOR_FP = 3.0                                    # mm square CR footprint of an RTV anchor bead / W5 spacer bead
+#                                                    (ASSUMPTION; TODO(measure: PM4 dry fit))
+TABY_PULLS = 0                                     # tab Y gate pull-downs / series resistors: not enumerated here
+EXTRA = {}
+
+
+def sec_e2():
+    head("H.23(e2) per-region booking of the top side (r7 review 7, D-F5): footprint low-y band, footprint interior, "
+         "tab X, tab Y; target <= 75 % per region")
+    G = GRID
+    top = AREA["top"]
+    bottom = mask_and_not(AREA["reg7"], AREA["ex"])
+    fp = G.new()
+    G.mark_rect(fp, *R6)
+    band = G.new()
+    G.mark_rect(band, *BAND_RECT)
+    other = G.new()                                   # interior exclusions (DOC A.8 regions + 0.5 mm, W pads + 0.5 mm)
+    G.mark_rect(other, BAND_RECT[0] - REGION_GAP, BAND_RECT[1] - REGION_GAP, BAND_RECT[2] + REGION_GAP,
+                BAND_RECT[3] + REGION_GAP)
+    G.mark_rect(other, J101_REG[0] - REGION_GAP, J101_REG[1] - REGION_GAP, J101_REG[2] + REGION_GAP,
+                J101_REG[3] + REGION_GAP)
+    for r in HIGHY:
+        G.mark_rect(other, r[0] - REGION_GAP, r[1] - REGION_GAP, r[2] + REGION_GAP, r[3] + REGION_GAP)
+    for (x, y, d) in W_PADS.values():
+        G.mark_disk(other, x, y, d / 2 + 0.5)
+    for (x, y) in W67_PADS:
+        G.mark_rect(other, x - 0.6 - 0.5, y - 0.75 - 0.5, x + 0.6 + 0.5, y + 0.75 + 0.5)
+    G.mark_rect(other, 18.0, 34.0, 23.15 - REGION_GAP, 41.63 + REGION_GAP)    # beside the band, outside it (left)
+    interior = mask_and_not(mask_and(top, fp), other)
+    bandm = mask_and(top, band)
+    tabx = G.new()
+    G.mark_rect(tabx, R6[2], 0, 100, 100)
+    tabxm = mask_and(top, tabx)
+    taby = G.new()
+    G.mark_rect(taby, 0, R6[3], R6[2], 100)
+    tabym = mask_and(top, taby)
+    tabyb = mask_and(bottom, taby)
+    A = {"band": count(bandm) * G.cell, "interior": count(interior) * G.cell, "tab X": count(tabxm) * G.cell,
+         "tab Y": count(tabym) * G.cell, "tab Y bottom": count(tabyb) * G.cell}
+    out("Regions (top side, strict usable mask of H.23(e)): footprint low-y band x %.2f-%.2f, y %.2f-%.2f = %.1f mm2; "
+        "footprint interior = the footprint top outside the band, the J101 region, the IN/OUT strips, the U101 "
+        "courtyard and the +x pocket (each + %.1f mm), the W1-W4 pads (+ 0.5 mm) and the W6/W7 pads (+ 0.5 mm) = %.1f "
+        "mm2; tab X top = %.1f mm2; tab Y top = %.1f mm2 (after the FT2 fill-hole disc); tab Y bottom (bottom clearance "
+        "rule, H.23(d)) = %.1f mm2." % (BAND_RECT[0], BAND_RECT[2], BAND_RECT[1], BAND_RECT[3], A["band"], REGION_GAP,
+                                        A["interior"], A["tab X"], A["tab Y"], A["tab Y bottom"]))
+    cy = CY_PKG
+    tf_res = (2 * PITCH + PAD + 0.5) * (PAD + 0.5) + (PAD + 0.5) ** 2      # H.23(e): F08-F10 row + F22
+    # revision 4: the band is a rectangle inside the strict usable mask; its U uses the exact area (raster in brackets)
+    band_exact = (BAND_RECT[2] - BAND_RECT[0]) * (BAND_RECT[3] - BAND_RECT[1])
+    A["band (raster)"] = A["band"]
+    A["band"] = band_exact
+    # revision 4: B3 and S3 are booked as the union of their two 3 x 3 mm spots at their H.23(l) positions
+    b3, s3 = WP["B3"], WP["S3"]
+    ov_b3s3 = max(0.0, ANCHOR_FP - abs(b3[0] - s3[0])) * max(0.0, ANCHOR_FP - abs(b3[1] - s3[1]))
+    u_b3s3 = 2 * ANCHOR_FP ** 2 - ov_b3s3
+    out("  band area exact %.2f mm2 (raster %.1f mm2; U below on the exact area). B3 (%.2f, %.2f) and S3 (%.2f, %.2f) lie "
+        "%.2f mm apart: their %.1f x %.1f mm spots overlap by %.2f mm2 and book %.2f mm2 as one union spot (revision 4; "
+        "the r7 review-7 calc booked one 9.00 mm2 spot)"
+        % (band_exact, A["band (raster)"], b3[0], b3[1], s3[0], s3[1], math.hypot(b3[0] - s3[0], b3[1] - s3[1]),
+           ANCHOR_FP, ANCHOR_FP, ov_b3s3, u_b3s3))
+    book = {
+        "band": [("U102 H1", cy["SOT-23-6"]), ("U103 UVB", cy["SOT-23-6"]), ("U104 BT_OK", cy["SOT-23-6"]),
+                 ("U115 BTB_OFF", cy["SOT-23-6"]), ("U119 FCC_OFF", cy["SOT-23-6"]), ("U120 FCC_ON", cy["SOT-23-6"]),
+                 ("U121 RGN_ON", cy["SOT-23-6"]), ("residual pads F08-F10 + F22 (H.23(e) booking)", tf_res)],
+        "interior": [("R109 0805 0.1 %", cy["0805"]), ("R110 0603 0.1 %", cy["0603"]), ("R111 0805 0.1 %", cy["0805"]),
+                     ("R112 0603 0.1 %", cy["0603"]), ("R114 0805 0.1 %", cy["0805"]), ("R115 0603 0.1 %", cy["0603"]),
+                     ("D104 BAV199", cy["SOT-23"]), ("D105 BAV199", cy["SOT-23"]), ("D106 BAV199", cy["SOT-23"]),
+                     ("U123 SC70-5", cy["SC70-5"]), ("D108 BAV199", cy["SOT-23"]), ("U122 SC70-5", cy["SC70-5"]),
+                     ("U111 monostable SSOP-8", cy["SSOP-8"]), ("U113 monostable SSOP-8", cy["SSOP-8"]),
+                     ("U112 DNP SOT-23-6", cy["SOT-23-6"]), ("U117 DNP SOT-23-6", cy["SOT-23-6"]),
+                     ("D101 DNP SOD-323", cy["SOD-323"]),
+                     ("W trunk RTV bead B1 (H.23(l))", ANCHOR_FP ** 2), ("W5 spacer bead S1 (H.23(l))", ANCHOR_FP ** 2),
+                     ("W5 spacer bead S2 (H.23(l))", ANCHOR_FP ** 2)],
+        "tab X": [("20 tap pads, pad + 0.25 mm courtyard (2.0 x 2.0)", 20 * (PAD + 0.5) ** 2), ("R175 1206", cy["1206"])],
+        "tab Y": [("U105 SSOP-8", cy["SSOP-8"]), ("U106 SSOP-8", cy["SSOP-8"]), ("U110 SSOP-8", cy["SSOP-8"]),
+                  ("U114 SSOP-8", cy["SSOP-8"]), ("U116 SSOP-8", cy["SSOP-8"]), ("U118 SSOP-8", cy["SSOP-8"]),
+                  ("U107 SC70-6", cy["SC70-6"]), ("U108 SC70-6", cy["SC70-6"]), ("U109 SC70-6", cy["SC70-6"]),
+                  ("W bundle RTV bead B3 + W5 spacer S3 (union spot, H.23(l))", u_b3s3)],
+        "tab Y bottom": [("decoupler %s 0603" % c, cy["0603"]) for c in ("C114", "C115", "C116", "C117", "C118", "C119",
+                                                                        "C122", "C123", "C126")],
+    }
+    # flexible parts (r3 bottom set): to the top where the region booking passes, else directly underneath on the bottom
+    # tab Y over the target: the SC70-6 gates (driven logic) move to the interior one at a time while both pass
+    gates_y0 = sum(v for n, v in book["tab Y"] if n.startswith("U"))
+    tabY_U108 = None
+    gate_moves = []
+    for g in ("U109 SC70-6", "U108 SC70-6", "U107 SC70-6"):
+        if g.startswith("U108"):
+            tabY_U108 = sum(v for _, v in book["tab Y"])            # U109 moved, U108 still on tab Y
+        sy = sum(v for _, v in book["tab Y"])
+        if sy / A["tab Y"] <= U_TARGET:
+            break
+        a = dict(book["tab Y"])[g]
+        if (sum(v for _, v in book["interior"]) + a) / A["interior"] <= U_TARGET:
+            book["tab Y"] = [z for z in book["tab Y"] if z[0] != g]
+            book["interior"].append((g + " (moved from tab Y, driven logic)", a))
+            gate_moves.append(g.split()[0])
+    flex = [("interior", "R178 0603", cy["0603"]), ("interior", "R179 0603", cy["0603"]),
+            ("interior", "C135 0603 (U123)", cy["0603"]), ("interior", "C134 0603 (U122)", cy["0603"]),
+            ("interior", "C120 0603 (U111)", cy["0603"]), ("interior", "C121 0603 (U113)", cy["0603"])] + \
+           [("band", "%s 0603 (%s)" % (c, u), cy["0603"]) for c, u in
+            (("C110", "U102"), ("C111", "U103"), ("C112", "U104"), ("C113", "U115"), ("C131", "U119"),
+             ("C132", "U120"), ("C133", "U121"))]
+    # revision 4: the flexible passives stay on the bottom directly underneath their IC. Moving the ones whose region
+    # would still pass (the review-7 calc did) raises the WHOLE-SIDE top booking of H.23(e) above the 75 % target.
+    moved, stayed, would = [], [], []
+    for reg, nm, a in flex:
+        if (sum(v for _, v in book[reg]) + sum(z[2] for z in would if z[1] == reg) + a) / A[reg] <= U_TARGET:
+            would.append((nm, reg, a))
+        stayed.append((nm, a))
+    res = {}
+    for rg in ("band", "interior", "tab X", "tab Y", "tab Y bottom"):
+        s = sum(v for _, v in book[rg])
+        res[rg] = (s, s / A[rg])
+        out("  %-13s %6.1f of %6.1f mm2 = %5.1f %% %s; parts: %s" % (rg, s, A[rg], 100 * s / A[rg],
+                                                                     "pass" if s / A[rg] <= U_TARGET else "FAIL",
+                                                                     ", ".join("%s %.2f" % (n, v) for n, v in book[rg])))
+    gates_y1 = sum(v for n, v in book["tab Y"] if n.startswith("U"))
+    out("  tab Y re-allocation: the nine LVC gates alone book %.1f mm2 = %.1f %% of tab Y top; after the move of %s to the "
+        "interior (driven logic; the interior booking passes) the seven remaining gates book %.1f mm2 = %.1f %%, and "
+        "with the B3/S3 union spot %.1f mm2 = %.2f %%; with U108 kept on tab Y (U109 moved only) %s"
+        % (gates_y0, 100 * gates_y0 / A["tab Y"], ", ".join(gate_moves) or "none", gates_y1,
+           100 * gates_y1 / A["tab Y"], res["tab Y"][0], 100 * res["tab Y"][1],
+           ("%.1f mm2 = %.2f %% (FAIL)" % (tabY_U108, 100 * tabY_U108 / A["tab Y"])) if tabY_U108 else "-"))
+    n_taby_g = sum(1 for n, _ in book["tab Y"] if n.startswith("U"))
+    dec_top = res["tab Y"][0] + n_taby_g * cy["0603"]
+    dec_top8 = (tabY_U108 + (n_taby_g + 1) * cy["0603"]) if tabY_U108 else None
+    out("  sensitivity, the gate decouplers on the tab Y top instead of underneath: adopted (%d gates) %.1f mm2 = %.1f %% "
+        "(FAIL)%s; the design's 97.7 %% figure is not reproduced by either case"
+        % (n_taby_g, dec_top, 100 * dec_top / A["tab Y"],
+           ("; with U108 kept (%d gates) %.1f mm2 = %.1f %% (FAIL)" % (n_taby_g + 1, dec_top8,
+                                                                     100 * dec_top8 / A["tab Y"]))
+           if dec_top8 else ""))
+    mv = 0.0
+    mv_all = sum(a for _, _, a in flex)
+    e_top, e_tot = RJ["e"]["adopted"]["top_mm2"], RJ["e"]["top_usable"]
+    out("  flexible passives (r3 bottom set) stay on the bottom directly underneath their IC: %s. Region bookings alone "
+        "would admit %s on the top, but all seven region-admissible passives (%s, %.2f mm2) on the top raise the H.23(e) "
+        "whole-side top booking from %.1f to %.1f mm2 = %.1f %% of %.1f mm2 (FAIL against 75 %%), so none moves "
+        "(revision 4; the r7 review-7 calc moved them)"
+        % (", ".join(n for n, _ in stayed), ", ".join("%s -> %s" % (n.split()[0], rg) for n, rg, _ in would) or "none",
+           ", ".join(n.split()[0] for n, _, _ in would), sum(a for _, _, a in would), e_top,
+           e_top + sum(a for _, _, a in would), 100 * (e_top + sum(a for _, _, a in would)) / e_tot, e_tot))
+    out("  all %d flexible passives on the top: %.1f mm2 = %.1f %% (information)" % (len(flex), e_top + mv_all,
+                                                                               100 * (e_top + mv_all) / e_tot))
+    out("  effect on the H.23(e) whole-side booking: %.2f mm2 move from the bottom to the top" % mv)
+    out("  tab X sensitivity: booked as the 6 x 4 grid envelope (pads + inter-row dressing gaps) 141.4 mm2 = %.1f %% of "
+        "%.1f mm2; the pad-courtyard booking above is the basis (the gaps carry the dressed wires, not parts)."
+        % (100 * 141.4 / A["tab X"], A["tab X"]))
+    out("  tab Y bottom also carries the gate pull-downs and series resistors (not enumerated here; T-A-06 DRC is the "
+        "gate); the decoupler booking above leaves %.1f mm2 (%.1f %% of the region) for them at the 75 %% target."
+        % (U_TARGET * A["tab Y bottom"] - res["tab Y bottom"][0],
+           100 * (U_TARGET * A["tab Y bottom"] - res["tab Y bottom"][0]) / A["tab Y bottom"]))
+    # ---- the divider strip: the interior cells next to the band that hold the six dividers at <= 75 %
+    divs = sum(v for n, v in book["interior"] if n.startswith("R1") and "0.1 %" in n)
+    need = divs / U_TARGET
+    acc, cells = 0.0, []
+    for j in range(G.ny):
+        if G.cy(j) < BAND_RECT[3]:
+            continue
+        row = [i for i in range(G.nx) if interior[j * G.nx + i] and BAND_RECT[0] <= G.cx(i) <= BAND_RECT[2]]
+        cells += [(G.cx(i), G.cy(j)) for i in row]
+        acc += len(row) * G.cell
+        if acc >= need:
+            break
+    strip = (min(c[0] for c in cells) - G.res / 2, min(c[1] for c in cells) - G.res / 2,
+             max(c[0] for c in cells) + G.res / 2, max(c[1] for c in cells) + G.res / 2)
+    d_loop_strip = min(min(rect_dist((c[0], c[1], c[0], c[1]), r) for r in LOOP) for c in cells)
+    d_int = min((min(rect_dist((G.cx(k % G.nx), G.cy(k // G.nx), G.cx(k % G.nx), G.cy(k // G.nx)), r) for r in LOOP),
+                 G.cx(k % G.nx), G.cy(k // G.nx)) for k in range(G.N) if interior[k])
+    out("  divider strip (D-F5: the six 0.1 %% dividers in the interior directly beside the band, %.2f mm2 booked at "
+        "<= 75 %% -> %.1f mm2): x %.2f-%.2f, y %.2f-%.2f; distance to the U101 commutation-loop region (H.23(f)) "
+        "%.2f mm; the interior's loop-facing corner (%.2f, %.2f) lies %.2f mm from the loop region (the A.8 region "
+        "gap), so the dividers stay in the strip and not at that corner" % (divs, need, strip[0], strip[2], strip[1],
+                                                                            strip[3], d_loop_strip, d_int[1], d_int[2],
+                                                                            d_int[0]))
+    EXTRA["e2"] = dict(strip=strip, d_loop_strip=d_loop_strip, d_int=d_int)
+    RJ["e2"] = dict(areas={k: f2(v) for k, v in A.items()},
+                    regions={rg: dict(sum=f2(res[rg][0]), U=round(100 * res[rg][1], 2), parts=[(n, f2(v)) for n, v in
+                                                                                             book[rg]])
+                             for rg in res},
+                    moved_to_top=[(n, rg, f2(a)) for n, rg, a in moved], stay_bottom=[n for n, _ in stayed],
+                    divider_strip=strip, divider_strip_to_loop=f2(d_loop_strip), interior_corner_to_loop=f2(d_int[0]))
+    summ("per-region top booking (D-F5)", "; ".join("%s %.1f/%.1f mm2 = %.1f %%" % (rg, res[rg][0], A[rg], 100 * res[rg][1])
+                                                   for rg in res) + "; target <= 75 %%: %s"
+         % ("all pass" if all(v[1] <= U_TARGET for v in res.values())
+            else "FAIL in " + ", ".join(rg for rg in res if res[rg][1] > U_TARGET)), "H.23(e2)")
+    summ("flexible parts (D-F5)", "to the top: %s; bottom: %s; whole-side effect %.2f mm2 bottom -> top"
+         % (", ".join("%s (%s)" % (n.split()[0], rg) for n, rg, _ in moved) or "none",
+            ", ".join(n.split()[0] for n, _ in stayed) or "none", mv), "H.23(e2)")
+    summ("divider strip (D-F5)", "x %.2f-%.2f, y %.2f-%.2f; %.2f mm from the U101 loop region (interior corner %.2f mm)"
+         % (strip[0], strip[2], strip[1], strip[3], d_loop_strip, d_int[0]), "H.23(e2)")
+    return res
+
+
 def sec_f():
     head("H.23(f) farthest point of the r7 outline from the U101 commutation-loop region")
     out("Loop region (MIN r7_minimal_calc.loop_distance, from DOC A.8): IN strip x 36.1-44.55, y 52.03-61.55; OUT strip "
@@ -1857,7 +2118,36 @@ def sec_f():
     out("footprint low-y band x 23.15-42.43, y 35.05-41.63 (comparator area, BASIS D5): %.2f mm from the loop band "
         "(y >= 52.03); %.2f-%.2f mm from the LM1084 box (x %.2f)" % (52.03 - band[3], reg5[0] - band[2],
                                                                      reg5[0] - band[0], reg5[0]))
-    RJ["f"] = dict(far=far, dist=d(far), n365=n365)
+    # ---- r7 review 7 (D-F5): MB aggressors of the comparator band; the interior's loop-facing edge
+    bpoly = rpoly(band)
+    agg = []
+    for nm in ("REG-BT", "C4A-BT", "C4B-BT", "C4C-BT", "L-BT"):
+        agg.append(("%s box" % nm, rect_dist(ELS[nm]["bbox"], band)))
+    for net in ("VOUT-BT", "VSW-BT"):
+        dd = min(clearance(s, bpoly) for s in SHAPES if s["net"] == net)
+        agg.append(("%s copper rim" % net, dd))
+    loop_bt = min(v for k, v in agg if not k.startswith("L-BT") and not k.startswith("VSW"))
+    d5 = d5v_rect(band)
+    cross = sorted({s["net"] for s in SHAPES if s["net"] in ("VCHG-IN", "VBT", "VCHG") and clearance(s, bpoly) <= 0.0})
+    out("comparator band against the MB BT boost (TPS61288 REG-BT; output commutation loop = REG-BT VOUT pins -> "
+        "C4A/C4B/C4C-BT -> PGND, with the VOUT-BT pour; input side L-BT and VSW-BT): %s; output-loop minimum %.2f mm"
+        % ("; ".join("%s %.2f mm" % z for z in agg), loop_bt))
+    out("comparator band against the MB 5V layer-1 copper rim (H.23(h) basis): %.2f mm (the LM1084 box distance above "
+        "is %.2f mm); MB layer-1 nets under the band: %s (TODO(measure: T-C-16 extension, D-F5))" % (d5, reg5[0] - band[2],
+                                                                                              ", ".join(cross) or "none"))
+    e2 = EXTRA.get("e2")
+    if e2:
+        out("footprint interior (H.23(e2)): loop-facing corner (%.2f, %.2f) %.2f mm from the loop region (the A.8 0.5 mm "
+            "region gap); divider strip x %.2f-%.2f, y %.2f-%.2f at %.2f mm from the loop region (r7 band: 10.40 mm)"
+            % (e2["d_int"][1], e2["d_int"][2], e2["d_int"][0], e2["strip"][0], e2["strip"][2], e2["strip"][1],
+               e2["strip"][3], e2["d_loop_strip"]))
+        summ("divider strip / interior to the U101 loop", "%.2f mm / %.2f mm (band 10.40 mm)"
+             % (e2["d_loop_strip"], e2["d_int"][0]), "H.23(f)")
+    summ("comparator band to the MB BT boost / 5V copper", "output loop (REG-BT, C4x-BT, VOUT-BT) %.2f mm; L-BT %.2f mm; "
+         "VSW-BT %.2f mm; 5V copper rim %.2f mm; layer-1 nets crossing under it: %s"
+         % (loop_bt, dict(agg)["L-BT box"], dict(agg)["VSW-BT copper rim"], d5, ", ".join(cross) or "none"), "H.23(f)")
+    RJ["f"] = dict(far=far, dist=d(far), n365=n365, band_aggressors={k: f2(v) for k, v in agg}, band_5v=f2(d5),
+                   band_bt_output_loop=f2(loop_bt), nets_under_band=cross)
     summ("farthest outline point from the U101 loop", "(%.2f, %.2f) at %.2f mm vs 36.5 mm 2-layer parity (none reaches)"
          % (far[0], far[1], d(far)), "H.23(f)")
 
@@ -1916,6 +2206,93 @@ POST = 0.64                                        # header post, 0.64 mm square
 J101_BOX = (37.0, 42.13, 44.5, 51.53)              # BASIS D7: J101 x 37.0-44.5, y 42.13-51.53 (CR footprint)
 TAPS_X_R7 = ["T1", "T7b", "T2", "T3", "T4", "T5", "T6", "T10", "T11", "T12", "T13", "T14", "T15", "T16", "T17",
              "T17r", "T20", "T21", "T19", "F24"]           # tab X pads after A2 (T18 moved off tab X)
+# r7 review 7 (D-F4): adjacency classes (DOC A.4 rows)
+GND_TAPS = {"T7b", "T17r", "T9"}
+EN_TAPS = {"T3", "T4", "T5"}
+PP_TAPS = {"T10", "T11", "T21"}                    # revision 4: push-pull Teensy outputs without an EN net (DOC A.8)
+# revision 4: inputs of the computed adjacent-pad consequences (H.23(g), item F05-F12 / F07-F12 / residual row)
+R_DRV = 40.0          # ohm per i.MX RT1062 output driver, ASSUMPTION (DOC A.8 short table; TODO(verify: i.MX RT1062
+#                       datasheet, pad output impedance and current rating))
+V_IO = 3.3            # V, Teensy 3V3 / GPIO high level
+R_EN_BODGE = 10e3     # ohm, EN-to-GND bodge resistor on every RT1987 EN net (CLAUDE.md section 2)
+VEN_R_MAX, VEN_F_MIN = 1.4, 0.6     # V, RT1987_DS-00.pdf EC table: EN rising threshold max, falling threshold min
+BQ_IOL = (30e-6, 85e-6)             # A, BQ29200_TI.pdf SLUSA52C EC: OUT low-level current at OUT 0.05 V
+BQ_IOH_MIN, BQ_IOH_SC = 100e-6, 8e-3   # A, same table: OUT high-level current at 1.75 V (min), short-circuit at 0 V
+BQ_VOUT = (6.0, 9.5)                # V, same table: OUT drive voltage at VDD 10 V, IOH 0 (min, max)
+INA_GAIN = 0.1                      # V/A, INA253A1 (CLAUDE.md section 5, K_sns)
+INA_IOUT_FIG = 7e-3                 # A, INA253A1IPWR.pdf Figure 14 covers 0-7 mA of output current only
+T8_PAD_GAP = 0.5                    # mm, revision 4: T8 jacket edge to any other residual pad edge
+PIN_TAPS = {"T3", "T4", "T5", "T10", "T11", "T12", "T13", "T14", "T15", "T16", "T17", "T19", "T20", "T21", "F24", "T8"}
+TAP_NET = {   # tap: (net / function, class) from DOC A.4 and B.2
+    "T1": ("V-MOT via R170 10 kOhm (H1 divider top)", "HV"), "T7b": ("GND, T1 shield", "GND"),
+    "T2": ("VBUS via R171 10 kOhm (H1/UVB divider tops)", "HV"),
+    "T3": ("D-BT-EN, pin 28 BT_BUS_ENABLE", "EN"), "T4": ("D-BC-RG EN, pin 30 REGEN_ENABLE", "EN"),
+    "T5": ("D-BC-FC EN, pin 31 FC_CHARGE_ENABLE", "EN"), "T6": ("Teensy 3V3 (R175 feed)", "3V3T"),
+    "T10": ("pin 10 CHG_QUAL out", "OUT"), "T11": ("pin 17 CHG_FCCEIL out", "OUT"),
+    "T12": ("pin 33 ILIM_RB in", "IN"), "T13": ("pin 34 H1_RB in", "IN"), "T14": ("pin 16 H2_RB in", "IN"),
+    "T15": ("pin 23 BTOK_RB in", "IN"), "T16": ("pin 35 EFUSE_FLT in (pad pull-up)", "IN"),
+    "T17": ("pin 22 IIN (IMON) analog in", "AIN"), "T17r": ("GND, T17 shield", "GND"),
+    "T19": ("pin 40 FC_CURRENT (option)", "AIN"), "T20": ("pin 7 CE_RB in", "IN"), "T21": ("pin 21 CHG_HB out", "OUT"),
+    "F24": ("pin 2 spare (ENC_A net, option)", "IN"),
+    "R175a": ("R175 pad, Teensy 3V3 side (F07)", "3V3T"), "R175b": ("R175 pad, CR 3V3 rail", "3V3R"),
+    "T22": ("BAL-NOK (BQ29200 OUT)", "BAL"), "T8": ("pin 41 BT-CURR analog (INA253 BT out)", "AIN"),
+    "T9": ("GND Kelvin (SNS-BT pad 15)", "GND"), "T18": ("5V via F101/R172 (option)", "5V"),
+}
+
+
+def short_effect(a, b):
+    """Consequence, detector and verdict of a solder bridge between two orthogonally adjacent pads (D-F4)."""
+    if a is None or b is None:
+        return "spare position (no pad): no bridge", "-", "-"
+    ca, cb = TAP_NET[a][1], TAP_NET[b][1]
+    k = frozenset((ca, cb)) if ca != cb else frozenset((ca,))
+    pins = ("EN", "OUT", "IN", "AIN")
+    tf = "T-F-12 tap-to-tap DMM (D-F4)"
+    if {a, b} == {"T10", "T21"}:
+        return "heartbeat couples into the U111 QUAL trigger (hardware time limit lost)", tf, "FORBIDDEN (D-F4)"
+    if ca == cb == "GND":
+        return "same net", "-", "ok"
+    if k == frozenset(("HV", "GND")):
+        return "divider top to GND through the 10 kOhm MB-end resistor (<= 2.0 mA at 19.7 V): H1/UVB read 0 (trip " \
+               "state)", "comparator state at power-up (T-C-02); " + tf, "accepted"
+    if k == frozenset(("HV",)):
+        return "V-MOT tied to VBUS through 20 kOhm: H1 compares the mean", "H1 never asserts (T-C-02); " + tf, "accepted"
+    if "HV" in k and (k & {"3V3T", "3V3R"}):
+        return "V-MOT/VBUS into the 3V3 rail through 10 kOhm (<= 2.0 mA back-feed)", tf, "accepted"
+    if "HV" in k and (k & set(pins)):
+        return "1.3-2.0 mA through 10 kOhm into an i.MX pin clamp (unrated)", tf, "FORBIDDEN (D-F4)"
+    if "HV" in k:
+        return "HV divider top tied to a CR node", tf, "accepted"
+    if ca == cb == "EN":
+        return "two RT1987 EN outputs contend (~1.65 V > VEN_R max 1.4 V): both switches may conduct", \
+               "U119 FCC_OFF / FR-08 (not proven for this fault); " + tf, "FORBIDDEN (D-F4)"
+    if k == frozenset(("EN", "GND")):
+        return "EN held LOW: switch forced OFF (safe); ~40 mA pin contention when commanded HIGH (ASSUMED 40 ohm)", \
+               "EN comparator (U115/U119-U121) disagrees with the command: FR-08; " + tf, "accepted"
+    if k == frozenset(("EN", "3V3T")):
+        return "EN forced HIGH from the Teensy 3V3: switch ON regardless of the command", tf, "FORBIDDEN (D-F4)"
+    if k == frozenset(("EN", "3V3R")):
+        return "EN pulled to the CR rail through R175 68 ohm: switch ON", "FR-08 readback; " + tf, "accepted"
+    if k == frozenset(("3V3T", "GND")):
+        return "Teensy 3V3 to GND with R175 bypassed: brown-out", tf, "FORBIDDEN (D-F4)"
+    if k == frozenset(("3V3R", "GND")):
+        return "CR rail to GND, held to 48.5 mA by R175 (designed, r4)", "CR logic dead: FR-08; " + tf, "accepted"
+    if k == frozenset(("3V3T", "3V3R")):
+        return "R175 bypassed: a later CR-side short is not current-limited", tf, "accepted"
+    if ca in pins and cb in pins:
+        return "two Teensy pins tied: contention if both are outputs, otherwise the input follows the other net", \
+               "readback plausibility (FR-08/FR-44); " + tf, "accepted"
+    if (ca in pins and cb == "GND") or (cb in pins and ca == "GND"):
+        return "pin held LOW: output contention or a readback stuck LOW", "readback plausibility; " + tf, "accepted"
+    if (ca in pins and cb in ("3V3T", "3V3R")) or (cb in pins and ca in ("3V3T", "3V3R")):
+        return "pin held HIGH: output contention or a readback stuck HIGH", "readback plausibility; " + tf, "accepted"
+    if k == frozenset(("BAL", "AIN")):
+        return "BAL-NOK level on pin 41 and U104 IN-: false BT_OK state", "T-A-01c; " + tf, "accepted"
+    if k == frozenset(("AIN", "GND")):
+        return "BT-CURR reads 0 A: U104 BT_OK reads 'no current'", "T-C-03; " + tf, "accepted"
+    return "%s to %s" % (TAP_NET[a][0], TAP_NET[b][0]), tf, "accepted"
+
+
 PAD = 1.5                                          # DOC A.4: SMT pads 1.5 x 1.5 mm
 PITCH = 2.54
 CY_PAD = 0.25                                      # pad courtyard = pad + 0.25 mm (DOC A.8 courtyard convention)
@@ -2090,7 +2467,89 @@ def sec_g():
                 best = (tot, place, r175, base)
         return best
     tot0, place0, r1750, base0 = assign(taps_r6x)
-    tot, place, r175, base = assign(TAPS_X_R7)
+    totR2, placeR2, r175R2, baseR2 = assign(TAPS_X_R7)          # the r7 rev-2 (published) assignment, length only
+
+    # ---- r7 review 7 (D-F4): adjacency exclusions; constrained local search (swaps and moves into spares)
+    def violations(pl, r175c, ext=False):
+        v = []
+        nb = {}
+        for t, p in pl.items():
+            nb[t] = [u for u, q in pl.items() if u != t and adj(p, q)]
+        for a, b in (("T1", "T7b"), ("T17", "T17r")):
+            if not adj(pl[a], pl[b]):
+                v.append("%s/%s not adjacent" % (a, b))
+        if not any(adj(pl["T6"], z) for z in r175c):
+            v.append("T6 not beside R175")
+        bad6 = [u for u in nb["T6"] if u in GND_TAPS or u in EN_TAPS]
+        if bad6:
+            v.append("T6 beside %s" % "/".join(sorted(bad6)))
+        for a in EN_TAPS:
+            for b in nb[a]:
+                if b in EN_TAPS and a < b:
+                    v.append("%s beside %s (EN-EN)" % (a, b))
+        if "T21" in nb["T10"]:
+            v.append("T10 beside T21")
+        for a in ("T1", "T2"):
+            bad = [u for u in nb[a] if u in PIN_TAPS]
+            if bad:
+                v.append("%s beside raw Teensy-pin pad(s) %s" % (a, "/".join(sorted(bad))))
+        if ext:      # revision 4 candidate (A.8 proposed closure): no EN tap and no F07 beside a push-pull pad
+            for a in sorted(EN_TAPS | {"T6"}):
+                bad = [u for u in nb[a] if u in PP_TAPS]
+                if bad:
+                    v.append("%s beside push-pull pad(s) %s" % (a, "/".join(sorted(bad))))
+        return v
+
+    def lsum(pl):
+        return sum(L(t, *pl[t]) for t in pl)
+
+    def search(taps_x, ext=False):
+        rng = random.Random(11)
+        best = None
+        for r0 in range(3):
+            r175c = [(0, r0), (0, r0 + 1)]
+            free = [p for p in pos if p not in r175c]
+            starts = [dict(placeR2) if r175R2 == r175c else None]
+            for _ in range(24):
+                cells = list(free)
+                rng.shuffle(cells)
+                starts.append({t: cells[i] for i, t in enumerate(taps_x)})
+            for st in starts:
+                if st is None:
+                    continue
+                pl = dict(st)
+
+                def cost(p_):
+                    return lsum(p_) + 1000.0 * len(violations(p_, r175c, ext))
+                c0 = cost(pl)
+                improved = True
+                while improved:
+                    improved = False
+                    occ = {v_: k_ for k_, v_ in pl.items()}
+                    bestm = None
+                    for i_, a in enumerate(taps_x):
+                        for q in free:
+                            if q == pl[a]:
+                                continue
+                            p2 = dict(pl)
+                            b = occ.get(q)
+                            p2[a] = q
+                            if b is not None:
+                                p2[b] = pl[a]
+                            c = cost(p2)
+                            if c < c0 - 1e-9 and (bestm is None or c < bestm[0]):
+                                bestm = (c, p2)
+                    if bestm is not None:
+                        c0, pl = bestm
+                        improved = True
+                if best is None or c0 < best[0] - 1e-9:
+                    best = (c0, pl, r175c)
+        return best
+    _, place, r175 = search(TAPS_X_R7)
+    _, place_ext, r175_ext = search(TAPS_X_R7, ext=True)          # revision 4: candidate, not adopted
+    tot, base = lsum(place), totR2
+    viol_new = violations(place, r175)
+    viol_r2 = violations(placeR2, r175R2)
     spare = [p for p in pos if p not in place.values() and p not in r175]
     spare0 = [p for p in pos if p not in place0.values() and p not in r1750]
     # ---- A2: T18 pad position on the footprint residual row
@@ -2122,18 +2581,21 @@ def sec_g():
     t18 = (t18r["lab"], t18r["p"], t18r["L"])
     R7_RESID = dict(RESID)
     R7_RESID["T18"] = t18[1]
-    out("  assignment: Hungarian minimum of the straight-length sum over the free positions, R175 vertical in column 1 "
-        "(rows %d-%d, the option of three with the least sum), T6/F07 forced adjacent to R175, then the T1/T7b and "
-        "T17/T17r pairs repaired onto adjacent positions (+%.1f mm). Tab X set after BASIS section 10 A2: %d pads "
-        "(T18 moved to the footprint residual row) + R175; spare grid positions %s"
-        % (r175[0][1] + 1, r175[1][1] + 1, tot - base, len(TAPS_X_R7), [(xs[c], ys[r]) for c, r in spare]))
-    chg = [(t, place0[t], place[t]) for t in TAPS_X_R7 if place0[t] != place[t]]
-    out("  assignment change against the first-run set with T18 on tab X (first run: R175 rows %d-%d, spare %s, "
-        "T18/F22 at %s): R175 rows %d-%d; %s"
-        % (r1750[0][1] + 1, r1750[1][1] + 1, [(xs[c], ys[r]) for c, r in spare0],
-           (xs[place0["T18"][0]], ys[place0["T18"][1]]), r175[0][1] + 1, r175[1][1] + 1,
-           ("; ".join("%s (%.2f, %.2f) -> (%.2f, %.2f)" % (t, xs[a[0]], ys[a[1]], xs[b[0]], ys[b[1]])
-                      for t, a, b in chg)) if chg else "no tap moves; the former T18 position becomes a spare"))
+    out("  assignment (r7 review 7, D-F4): minimum straight-length sum over the free positions subject to the adjacency "
+        "exclusions (no two of T3/T4/T5 orthogonally adjacent; T6/F07 beside R175 with no GND (T7b, T17r) or EN "
+        "(T3/T4/T5) neighbour; T10 not beside T21; T1 and T2 not beside a raw Teensy-pin pad; T1/T7b and T17/T17r on "
+        "adjacent positions; T18 off tab X, A2), by local search (single moves and swaps from the r7 rev-2 assignment "
+        "and 24 seeded random starts per R175 row option). R175 vertical in column 1, rows %d-%d. Tab X: %d pads + R175; "
+        "spare grid positions %s. Straight-length sum over the tab X pads %.1f mm (r7 rev 2, length only, %.1f mm: "
+        "%+.1f mm)." % (r175[0][1] + 1, r175[1][1] + 1, len(TAPS_X_R7), [(xs[c], ys[r]) for c, r in spare], tot, base,
+                        tot - base))
+    out("  r7 rev-2 assignment against the D-F4 exclusions: %s" % ("; ".join(viol_r2) or "none"))
+    out("  r7 review-7 assignment against the D-F4 exclusions: %s" % ("; ".join(viol_new) or "none violated"))
+    chg = [(t, placeR2[t], place[t]) for t in TAPS_X_R7 if placeR2[t] != place[t]]
+    out("  moves against r7 rev 2 (R175 rows %d-%d -> %d-%d): %s"
+        % (r175R2[0][1] + 1, r175R2[1][1] + 1, r175[0][1] + 1, r175[1][1] + 1,
+           ("; ".join("%s %s (%.2f, %.2f) -> (%.2f, %.2f)" % (t, TAPS[t][0], xs[a[0]], ys[a[1]], xs[b[0]], ys[b[1]])
+                      for t, a, b in chg)) if chg else "none"))
     out("  T18 / F22 residual position (A2; destination CO-5V pad 1 (%.3f, %.3f); straight path must not cross the "
         "REG-5V box x %.2f-%.2f, y %.2f-%.2f; F08-F10 hold k = 1-3 on the low row):" % (t18d[0], t18d[1], reg5[0],
                                                                                        reg5[2], reg5[1], reg5[3]))
@@ -2161,18 +2623,144 @@ def sec_g():
                 (ys[r175[0][1]] + ys[r175[1][1]]) / 2 + 4.75 / 2)
     out("  R175 1206 courtyard (vertical, 2.3 x 4.75 mm, DOC A.8) x %.3f-%.3f, y %.3f-%.3f"
         % (r175_box[0], r175_box[2], r175_box[1], r175_box[3]))
+    # ---- grid map and the adjacent-pad short table (D-F4)
+    cell = {}
+    r175a = next(z for z in r175 if adj(place["T6"], z))
+    for z in r175:
+        cell[z] = "R175a" if z == r175a else "R175b"
+    for t, p in place.items():
+        cell[p] = t
+    out("  grid map (row 4 at the top; R175a = the R175 pad on the F07/Teensy 3V3 side, R175b = the CR rail side, "
+        "'-' = spare, no pad):")
+    for r in (3, 2, 1, 0):
+        out("    y %.2f  %s" % (ys[r], "  ".join("%-12s" % (("%s/%s" % (cell[(c, r)], TAPS[cell[(c, r)]][0]))
+                                                            if cell.get((c, r)) in TAPS else (cell.get((c, r)) or "-"))
+                                              for c in range(6))))
+    out("    x       %s" % "  ".join("%-12.2f" % x for x in xs))
     adj_ok = {pr: adj(place[pr[0]], place[pr[1]]) for pr in (("T1", "T7b"), ("T17", "T17r"))}
-    out("  adjacency check: T1/T7b %s, T17/T17r %s, T6 next to R175 %s; T8/T9 on the residual row: adjacent"
-        % (adj_ok[("T1", "T7b")], adj_ok[("T17", "T17r")], any(adj(place["T6"], z) for z in r175)))
-    # residual row
+    out("  adjacency check (D-F4): T1/T7b %s, T17/T17r %s, T6 beside R175 %s; EN pairs adjacent: %s; T6 neighbours: %s; "
+        "T10 beside T21: %s; T1 neighbours: %s; T2 neighbours: %s"
+        % (adj_ok[("T1", "T7b")], adj_ok[("T17", "T17r")], any(adj(place["T6"], z) for z in r175),
+           [(a, b) for a in sorted(EN_TAPS) for b in sorted(EN_TAPS) if a < b and adj(place[a], place[b])] or "none",
+           sorted(cell[q] for q in pos if adj(q, place["T6"]) and q in cell),
+           adj(place["T10"], place["T21"]), sorted(cell[q] for q in pos if adj(q, place["T1"]) and q in cell),
+           sorted(cell[q] for q in pos if adj(q, place["T2"]) and q in cell)))
+    out("  adjacent-pad short table, every orthogonal pair of the 6 x 4 grid (pad gap 2.54 - 1.50 = 1.04 mm; one hand "
+        "solder bridge or stray strand per row):")
+    out("    %-14s %-14s %-12s %-74s %s" % ("pad A", "pad B", "verdict", "consequence", "detector"))
+    adj_rows = []
+    for r in range(4):
+        for c in range(6):
+            for (dc, dr) in ((1, 0), (0, 1)):
+                c2, r2 = c + dc, r + dr
+                if c2 > 5 or r2 > 3:
+                    continue
+                a, b = cell.get((c, r)), cell.get((c2, r2))
+                cons, det, ver = short_effect(a, b)
+                la = ("%s %s" % (a, TAPS[a][0])) if a in TAPS else (a or "spare")
+                lb = ("%s %s" % (b, TAPS[b][0])) if b in TAPS else (b or "spare")
+                adj_rows.append(dict(a=la, b=lb, pa=(xs[c], ys[r]), pb=(xs[c2], ys[r2]), verdict=ver, cons=cons,
+                                     det=det))
+                out("    %-14s %-14s %-12s %-74s %s" % (la, lb, ver, cons[:74], det))
+    n_forb = sum(1 for z in adj_rows if z["verdict"].startswith("FORBIDDEN"))
+    out("    %d orthogonal pairs, %d FORBIDDEN (must be 0)" % (len(adj_rows), n_forb))
+    out("  residual row (y 35.80; pitch 2.54 mm between F08-F09-F10, F22 10.16 mm from F10):")
+    res_pairs = [("T22", "T8"), ("T8", "T9"), ("T9", "T18")]
+    res_rows = []
+    for a, b in res_pairs:
+        pa, pb = (RESID.get(a) or R7_RESID[a]), (RESID.get(b) or R7_RESID[b])
+        gap = abs(pa[0] - pb[0]) - PAD
+        if gap > PITCH:
+            cons, det, ver = "not adjacent (pad gap %.2f mm)" % gap, "-", "-"
+        else:
+            cons, det, ver = short_effect(a, b)
+        res_rows.append(dict(a=a, b=b, gap=gap, verdict=ver, cons=cons, det=det))
+        out("    %s %s (%s) / %s %s (%s): pad gap %.2f mm; %s; %s; detector %s"
+            % (TAPS[a][0], a, TAP_NET[a][0], TAPS[b][0], b, TAP_NET[b][0], gap, ver, cons, det))
+    # ---- residual row
     out("  residual pads on the footprint: F08 (T22) %s, F09 (T8) %s, F10 (T9) %s (DOC A.7 r6 positions k = 1-3 on the "
         "low row y 35.80), F22 (T18) %s (A2)" % (RESID["T22"], RESID["T8"], RESID["T9"], R7_RESID["T18"]))
+    # ---- dressing rule paths (D-F4): pad -> adjacent inter-row gap -> +x past column 6 -> MB point
+    X_EXIT = xs[-1] + PITCH / 2
+    pad_sq = {t: (xs[c] - PAD / 2, ys[r] - PAD / 2, xs[c] + PAD / 2, ys[r] + PAD / 2) for t, (c, r) in place.items()}
+    res_sq = {t: (p[0] - PAD / 2, p[1] - PAD / 2, p[0] + PAD / 2, p[1] + PAD / 2) for t, p in R7_RESID.items()}
+    co5 = ELS["CO-5V"]["bbox"]
+
+    WIRE_R = 0.5                                       # 26 AWG jacket radius (OD ~1.0 mm ASSUMPTION): no jacket over a pad
+    LANE = {}
+
+    def clean(a, b, own, resid=False, gap=0.0):
+        sq = res_sq if resid else pad_sq
+        g_ = WIRE_R + gap
+        for u, s_ in sq.items():
+            if u != own and seg_hits_rect(a, b, (s_[0] - g_, s_[1] - g_, s_[2] + g_, s_[3] + g_)):
+                return False
+        if not resid and seg_hits_rect(a, b, r175_box):
+            return False
+        if crosses(a, b) or (own != "T18" and seg_hits_rect(a, b, co5)):     # T18 ends on CO-5V pad 1
+            return False
+        return True
+
+    def plen(path):
+        return sum(math.hypot(path[i + 1][0] - path[i][0], path[i + 1][1] - path[i][1]) for i in range(len(path) - 1))
+
+    def dress(t, p, d):
+        if t in R7_RESID:
+            if clean(p, d, t, resid=True):
+                return [p, d], "straight"
+            cands = []
+            # revision 4: a lane keeps the jacket >= T8_PAD_GAP from every other residual pad and lies on the CR
+            # (jacket inside the CR low edge). (**superseded:** the r7 review-7 lane y 34.40, 0.15 mm below the F10/F22
+            # pads, 0.24 mm over the CR low edge.)
+            pads_o = [s_ for u, s_ in res_sq.items() if u != t]
+            y_lo = R6[1] + WIRE_R                       # lowest centreline with the jacket on the CR
+            y_hi = min(s_[1] for s_ in pads_o) - WIRE_R - T8_PAD_GAP
+            LANE[t] = dict(low=(y_lo, y_hi))
+            if y_lo <= y_hi + 1e-9:
+                pa = [p, (p[0], y_hi), (X_EXIT - 1.27, y_hi), d]
+                if all(clean(pa[i], pa[i + 1], t, resid=True, gap=T8_PAD_GAP) for i in range(3)):
+                    cands.append((plen(pa), pa, "low-edge lane y %.2f to x %.2f" % (y_hi, X_EXIT - 1.27)))
+            right = [s_ for s_ in pads_o if s_[0] > p[0]]
+            if right:
+                y_up = max(s_[3] for s_ in right) + T8_PAD_GAP + WIRE_R
+                x_dn = max(s_[2] for s_ in right) + T8_PAD_GAP + WIRE_R
+                pu = [p, (p[0], y_up), (x_dn, y_up), (x_dn, y_lo), (X_EXIT - 1.27, y_lo), d]
+                ok_u = all(clean(pu[i], pu[i + 1], t, resid=True, gap=T8_PAD_GAP) for i in range(len(pu) - 1))
+                LANE[t].update(upper=(y_up, x_dn, y_lo), upper_ok=ok_u, upper_path=pu)
+                if ok_u:
+                    cands.append((plen(pu), pu, "upper lane y %.2f over the residual row to x %.2f, down to y %.2f, "
+                                  "to x %.2f" % (y_up, x_dn, y_lo, X_EXIT - 1.27)))
+            t9 = TAPS["T9"][2]
+            pb = [p, t9, d]
+            if all(clean(pb[i], pb[i + 1], t, resid=True, gap=T8_PAD_GAP) for i in range(2)):
+                cands.append((plen(pb), pb, "with T9 to the SNS-BT pad 15 region, then to the MB point"))
+            if not cands:
+                return [p, d], "NO LEGAL PATH"
+            c_ = min(cands, key=lambda z: z[0])
+            return c_[1], c_[2] + ("" if len(cands) == 1 else " (alternative: %s, %.1f mm)" %
+                                   ([z for z in cands if z is not c_][0][2], [z for z in cands if z is not c_][0][0]))
+        if clean(p, d, t):
+            return [p, d], "straight"
+        c, r = place[t]
+        cands = []
+        gaps = [ys[r] + PITCH / 2] if r == 0 else ([ys[r] - PITCH / 2] if r == 3 else
+                                                   [ys[r] - PITCH / 2, ys[r] + PITCH / 2])   # inter-row gaps only
+        for g in gaps:
+            pa = [p, (p[0], g), (X_EXIT, g), d]
+            if all(clean(pa[i], pa[i + 1], t) for i in range(1, 3)):
+                cands.append((plen(pa), pa, "gap y %.2f" % g))
+        if not cands:
+            return [p, d], "NO LEGAL PATH"
+        c_ = min(cands, key=lambda z: z[0])
+        return c_[1], c_[2]
     out("")
-    out("  %-5s %-4s %-30s %-18s %-18s %8s %8s %8s %6s %8s" % ("tap", "F", "MB point (BRD)", "r7 pad", "MB point xy",
-                                                              "r6 (mm)", "r7 (mm)", "delta", "LM1084", "dressed"))
+    out("  %-5s %-4s %-30s %-18s %-18s %8s %8s %8s %6s %8s  %s" % ("tap", "F", "MB point (BRD)", "r7 pad", "MB point xy",
+                                                                   "r6 (mm)", "r7 (mm)", "delta", "LM1084", "dressed",
+                                                                   "dressed path"))
     rows = []
     s6 = s7 = s7d = s6c = 0.0
     s6f08 = 0.0
+    gap_use = {}
     for t, (F, desc, dst, mm) in TAPS.items():
         if t in R7_RESID:
             p = R7_RESID[t]
@@ -2185,31 +2773,173 @@ def sec_g():
         l6 = math.hypot(p6[0] - dst[0], p6[1] - dst[1])
         l6c = math.hypot(R6_FIELD_C[0] - dst[0], R6_FIELD_C[1] - dst[1])
         l7 = math.hypot(p[0] - dst[0], p[1] - dst[1])
-        cr = t not in RESID and crosses(p, dst)
-        if cr and dst[0] >= 63.5:
-            ld = abs(63.5 - p[0]) + math.hypot(63.5 - dst[0], p[1] - dst[1])
-        else:
-            ld = l7
+        cr = crosses(p, dst)                       # r7 review 7: residual taps are tested too (T8, D-F4)
+        dpath, dlab = dress(t, p, dst)
+        ld = plen(dpath)
+        if dlab.startswith("gap"):
+            gap_use.setdefault(dlab, []).append(t)
         if t in SUM20:
             s6 += l6
             s6c += l6c
             s6f08 += l6 if t == "T22" else l6c
             s7 += l7
             s7d += ld
-        rows.append(dict(tap=t, F=F, desc=desc, pad=p, dst=dst, r6=l6, r7=l7, crosses=cr, dressed=ld, mbm=mm))
-        out("  %-5s %-4s %-30s (%6.2f,%6.2f)  (%7.3f,%7.3f) %8.1f %8.1f %+8.1f %6s %8.1f%s"
-            % (t, F, desc[:30], p[0], p[1], dst[0], dst[1], l6, l7, l7 - l6, "yes" if cr else "no", ld,
+        rows.append(dict(tap=t, F=F, desc=desc, pad=p, dst=dst, r6=l6, r7=l7, crosses=cr, dressed=ld, mbm=mm,
+                         dpath=dpath, dlab=dlab))
+        out("  %-5s %-4s %-30s (%6.2f,%6.2f)  (%7.3f,%7.3f) %8.1f %8.1f %+8.1f %6s %8.1f  %s%s"
+            % (t, F, desc[:30], p[0], p[1], dst[0], dst[1], l6, l7, l7 - l6, "yes" if cr else "no", ld, dlab,
                "" if t in SUM20 else "  (not in the 20-tap sum)"))
     out("  SUM of the 20 taps (T7b follows T1; T18, T19, F24 are options): r6 %.1f mm (F08-F10 at their r6 pads, the "
-        "rest at the r6 field centre), r7 straight %.1f mm (%+.1f %%), r7 dressed %.1f mm" % (s6, s7, 100 * (s7 / s6 - 1),
-                                                                                       s7d))
+        "rest at the r6 field centre), r7 straight %.1f mm (%+.1f %%), r7 dressed %.1f mm (%+.1f %% against r6)"
+        % (s6, s7, 100 * (s7 / s6 - 1), s7d, 100 * (s7d / s6 - 1)))
     out("  sensitivity of the r6 basis: only F08 held at its r6 position (T8, T9 at the field centre): r6 sum %.1f mm, "
         "r7 %+.1f %%; all 20 at the field centre (first-run basis): r6 sum %.1f mm, r7 %+.1f %%"
         % (s6f08, 100 * (s7 / s6f08 - 1), s6c, 100 * (s7 / s6c - 1)))
-    out("  'LM1084' = the straight line from the pad crosses the REG-5V box (x %.2f-%.2f, y %.2f-%.2f); 'dressed' = pad -> "
-        "(63.50, pad y) -> MB point for those taps (BASIS D6: wires stay at y > 56 until x > 63). T18 (CO-5V, x 50.80) "
-        "could not follow that rule from tab X; it lands on the footprint residual position (A2) with a straight path "
-        "clear of the REG-5V box." % (reg5[0], reg5[2], reg5[1], reg5[3]))
+    out("  'LM1084' = the straight line from the pad crosses the REG-5V box (x %.2f-%.2f, y %.2f-%.2f), tested for every "
+        "tap including the residual row (r7 review 7). 'dressed' = the path the A.4 / PM6 dressing rule allows (D-F4): "
+        "a tab X wire whose straight jacket (radius 0.5 mm, ASSUMPTION) crosses another pad, or whose straight line "
+        "crosses the R175 courtyard, the REG-5V box or CO-5V, leaves its "
+        "pad into the adjacent inter-row gap, runs +x in that gap to x %.2f (half a pitch past column 6; courtyard "
+        "edge %.2f) and only then turns to its MB point, so it stays at y > 56 until x > 63 and crosses no pad; a "
+        "residual wire that crosses the REG-5V box takes the shorter legal path listed. (**superseded in r7:** pad -> "
+        "(63.50, pad y) -> MB point, which ran over the row-1 pads.)" % (reg5[0], reg5[2], reg5[1], reg5[3], X_EXIT,
+                                                                       cyd[2]))
+    out("  inter-row gap occupancy (wires per 1.04 mm gap; 26 AWG OD ~1.0 mm ASSUMPTION, so more than one wire per "
+        "gap is stacked, not side by side): %s" % "; ".join("%s: %d (%s)" % (k, len(v), ", ".join(v))
+                                                           for k, v in sorted(gap_use.items())))
+    # residual straight paths against the 1x10 posts (D-F4, T8)
+    for t in ("T22", "T8", "T9"):
+        p, d = R7_RESID[t], TAPS[t][2]
+        k = min(range(len(PINS)), key=lambda i: d_rect_seg((PINS[i][0] - POST / 2, PINS[i][1] - POST / 2,
+                                                            PINS[i][0] + POST / 2, PINS[i][1] + POST / 2), p, d))
+        q = PINS[k]
+        dp = d_rect_seg((q[0] - POST / 2, q[1] - POST / 2, q[0] + POST / 2, q[1] + POST / 2), p, d)
+        out("  residual %s straight path: nearest header post (%.3f, %.3f): %s; REG-5V box %s; CO-5V box %s"
+            % (t, q[0], q[1], ("over the post square" if dp <= 0 else "beside, %.3f mm from the post square" % dp),
+               "CROSSED" if crosses(p, d) else "clear", "CROSSED" if seg_hits_rect(p, d, co5) else "clear"))
+    # ---- revision 4: the T8 lane (jacket >= 0.5 mm from the F10/F22 pads and on the CR)
+    t8row = next(r for r in rows if r["tap"] == "T8")
+    ln = LANE.get("T8", {})
+    if ln:
+        y_lo, y_hi = ln["low"]
+        out("  T8 lane (revision 4; jacket radius %.1f mm, ASSUMPTION; >= %.1f mm from every other residual pad edge, "
+            "jacket on the CR): a low-edge lane needs the centreline at y >= %.2f (jacket inside the CR low edge y %.2f) "
+            "and y <= %.2f (jacket %.1f mm below the F10/F22 pad edge y %.2f): %s"
+            % (WIRE_R, T8_PAD_GAP, y_lo, R6[1], y_hi, T8_PAD_GAP, y_hi + WIRE_R + T8_PAD_GAP,
+               ("infeasible by %.2f mm (the band between the CR edge and the pads, %.2f mm, holds a jacket of at most "
+                "%.2f mm OD with the 0.5 mm gap)" % (y_lo - y_hi, (y_hi + WIRE_R + T8_PAD_GAP) - R6[1],
+                                                     (y_hi + WIRE_R + T8_PAD_GAP) - R6[1] - T8_PAD_GAP))
+               if y_lo > y_hi + 1e-9 else "feasible"))
+        dp_ = t8row["dpath"]
+        segs = list(zip(dp_[:-1], dp_[1:]))
+        d_pads = min((d_rect_seg(s_, a, b) - WIRE_R, u) for u, s_ in res_sq.items() if u != "T8" for a, b in segs)
+        cr_pts = [q for a, b in segs for q in (a, b) if q[0] <= R6[2] + 1e-9 and q[1] < 35.0]
+        d_edge = min((q[1] - WIRE_R - R6[1] for q in cr_pts), default=float("nan"))
+        d_reg = min(d_rect_seg(reg5, a, b) for a, b in segs) - WIRE_R
+        d_co5 = min(d_rect_seg(co5, a, b) for a, b in segs) - WIRE_R
+        k_p = min(range(len(PINS)), key=lambda i: min(d_rect_seg((PINS[i][0] - POST / 2, PINS[i][1] - POST / 2,
+                                                                   PINS[i][0] + POST / 2, PINS[i][1] + POST / 2), a, b)
+                                                       for a, b in segs))
+        q_ = PINS[k_p]
+        d_post = min(d_rect_seg((q_[0] - POST / 2, q_[1] - POST / 2, q_[0] + POST / 2, q_[1] + POST / 2), a, b)
+                     for a, b in segs) - WIRE_R
+        d_land = min(d_rect_seg((q_[0] - 0.95, q_[1] - 0.95, q_[0] + 0.95, q_[1] + 0.95), a, b) for a, b in segs) - WIRE_R
+        t18p, t18d_ = R7_RESID["T18"], TAPS["T18"][2]
+        x_t18 = any(seg_x(a, b, t18p, t18d_) for a, b in segs)
+        band_over = [(max(min(a[0], b[0]), BAND_RECT[0]), min(max(a[0], b[0]), BAND_RECT[2])) for a, b in segs
+                     if abs(a[1] - b[1]) < 1e-9 and BAND_RECT[1] < a[1] < BAND_RECT[3]]
+        out("    T8 dressed path (%s): %s; %.1f mm (straight %.1f mm; r7 review 7 lane y 34.40: 86.0 mm); jacket to the "
+            "nearest other residual pad %.2f mm (%s); jacket to the CR low edge %.2f mm (inside); jacket to the REG-5V "
+            "box %.2f mm, to CO-5V %.2f mm; nearest header post pin %s (%.3f, %.3f): jacket %.2f mm from the post "
+            "square, %.2f mm from its 1.9 mm CR pad land; it crosses the T18 straight path: %s (T18 is an option); it "
+            "lies over the comparator band at y %.2f over x %s (wire over parts, not booked as area)"
+            % (t8row["dlab"], " -> ".join("(%.2f, %.2f)" % q for q in dp_), t8row["dressed"], t8row["r7"], d_pads[0],
+               TAPS[d_pads[1]][0] + " " + d_pads[1], d_edge, d_reg, d_co5, k_p + 1 - 12 if k_p >= 12 else 22 - k_p,
+               q_[0], q_[1], d_post, d_land, "yes" if x_t18 else "no", ln.get("upper", (float("nan"),))[0],
+               ", ".join("%.2f-%.2f" % z for z in band_over) or "none"))
+        LANE["T8"]["report"] = dict(path=dp_, L=f2(t8row["dressed"]), d_pads=(f2(d_pads[0]), d_pads[1]),
+                                    d_edge=f2(d_edge), d_reg5=f2(d_reg), d_co5=f2(d_co5), d_post=f2(d_post),
+                                    d_land=f2(d_land), crosses_t18=x_t18, band_over=band_over)
+    # ---- revision 4: computed consequences of the open pairs and of the residual-row pairs (DOC A.8 short table)
+    dl = {r["tap"]: r["dressed"] for r in rows}
+    v_en = V_IO * (1 / R_DRV) / (2 / R_DRV + 1 / R_EN_BODGE)
+    i_pp = V_IO / (2 * R_DRV)
+    r_w45 = R26 * (dl["T4"] + dl["T11"]) * 1e-3
+    r_w67 = R26 * (dl["T6"] + dl["T11"]) * 1e-3
+    i_37 = V_IO / (R_DRV + r_w67)
+    out("  computed consequences of the open pairs and the residual-row pairs (revision 4; R_DRV %.0f ohm per i.MX "
+        "output, ASSUMPTION; tap wires 26 AWG %.1f mOhm/m at their dressed lengths):" % (R_DRV, R26 * 1e3))
+    cons_rows = [
+        ("F05 T4 - F12 T11", "pin 30 (REGEN_ENABLE, D-BC-RG EN) - pin 17 (CHG_FCCEIL), both push-pull",
+         "outputs equal: no current. Outputs opposite: %.1f mA through both drivers (wires %.1f mOhm), %.0f mW in each; "
+         "the EN net sits at %.3f V (with the %.0f kOhm EN bodge), above VEN_R max %.1f V, so D-BC-RG turns on, and "
+         "pin 17 reads HIGH. The REGEN switch is ON whenever pin 30 OR pin 17 is HIGH (pin 17 HIGH while pin 30 commands "
+         "OFF closes REGEN); U121 RGN_ON (trip 1.75-1.88 V) reads OFF at %.2f V" % (i_pp * 1e3, r_w45 * 1e3,
+                                                                             i_pp ** 2 * R_DRV * 1e3, v_en,
+                                                                             R_EN_BODGE / 1e3, VEN_R_MAX, v_en),
+         "none in service: the closed REGEN is not proven by U121 at %.2f V; T-F-12 tap-to-tap check before power-up"
+         % v_en),
+        ("F07 T6 - F12 T11", "Teensy 3V3 (J1.29, before R175) - pin 17 push-pull",
+         "pin 17 HIGH: no current. pin 17 LOW: the driver sinks the 3V3 rail through %.1f mOhm of wire, %.1f mA and "
+         "%.0f mW in the driver (rating TODO(verify: i.MX RT1062 datasheet); Teensy 3V3 regulator load TODO(verify: "
+         "PJRC)); the node stays at the rail, so CHG_FCCEIL reads HIGH ('FC ceiling confirmed') whatever pin 17 commands"
+         % (r_w67 * 1e3, i_37 * 1e3, i_37 ** 2 * R_DRV * 1e3),
+         "none in service (no FCCEIL readback); T-F-12 tap-to-tap check before power-up"),
+        ("F08 T22 - F09 T8", "BQ29200 OUT (BAL-NOK) - INA253 BT output / pin 41 / U104 IN- (via R140)",
+         "no OV: OUT is low and sinks %.0f-%.0f uA at 0.05 V; the INA253 output (%.1f V/A x I_BT) overrides it, so pin 41 "
+         "reads the BT current (error <= the sink current into the INA253 output) and N_BAL (via R178) follows the "
+         "INA253 level, LOW below the U123 threshold: OVN correct. Pack OV: OUT sources >= %.0f uA at 1.75 V and up to "
+         "%.0f mA into a short, against the INA253 output, which INA253A1IPWR.pdf Figure 14 characterises only to "
+         "%.0f mA: either the INA253 holds the node near its own level, so N_BAL stays LOW and the BQ29200 pack-OV term "
+         "(OVN) is MASKED while the pack is over voltage, or OUT lifts the node toward its %.1f-%.1f V drive level (at "
+         "VDD 10 V) and drives pin 41 above its 3.3 V supply through the pad clamp"
+         % (BQ_IOL[0] * 1e6, BQ_IOL[1] * 1e6, INA_GAIN, BQ_IOH_MIN * 1e6, BQ_IOH_SC * 1e3, INA_IOUT_FIG * 1e3,
+            BQ_VOUT[0], BQ_VOUT[1]),
+         "none in service for the masked OVN (it appears only at a pack OV); T-A-01c and the T-F-12 tap-to-tap check "
+         "before power-up"),
+        ("F09 T8 - F10 T9", "INA253 BT output / pin 41 - GND Kelvin (SNS-BT pad 15)",
+         "the INA253 output drives a short to the Kelvin GND (current limit not in INA253A1IPWR.pdf; Figure 14 ends at "
+         "%.0f mA); pin 41 and U104 IN- read 0 A: BT current reads 0 A, U104 BT_OK takes the 'no current' state, and the "
+         "share loop loses its BT current feedback; the short current returns through the T9 Kelvin wire (%.2f mOhm), "
+         "so the U104 reference bottom moves by < 0.1 mV" % (INA_IOUT_FIG * 1e3, R26 * dl["T9"]),
+         "BT current plausibility (firmware); T-F-12 tap-to-tap check before power-up"),
+    ]
+    for pr_, nets, cons_, det_ in cons_rows:
+        out("    %s (%s): %s. Detector: %s" % (pr_, nets, cons_, det_))
+    # ---- revision 4: the extended exclusion set (A.8 proposed closure) run as a candidate
+    viol_ext_adopted = violations(place, r175, ext=True)
+    viol_ext = violations(place_ext, r175_ext, ext=True)
+    s20_ext = sum(math.hypot(xs[place_ext[t][0]] - TAPS[t][2][0], ys[place_ext[t][1]] - TAPS[t][2][1])
+                  if t in place_ext else math.hypot(R7_RESID[t][0] - TAPS[t][2][0], R7_RESID[t][1] - TAPS[t][2][1])
+                  for t in SUM20)
+    chg_ext = [(t, place[t], place_ext[t]) for t in TAPS_X_R7 if place[t] != place_ext[t]]
+    out("  candidate with the extended exclusion set (revision 4; A.8 proposed closure: no EN tap T3/T4/T5 and no F07 (T6) "
+        "beside a push-pull pad T10/T11/T21; NOT adopted here): the adopted assignment violates it at %s; the "
+        "candidate (R175 rows %d-%d) violates %s; tab X straight sum %.1f mm (adopted %.1f mm, %+.1f mm); 20-tap "
+        "straight sum %.1f mm (adopted %.1f mm, %+.1f mm); moves against the adopted assignment: %s"
+        % ("; ".join(viol_ext_adopted) or "none", r175_ext[0][1] + 1, r175_ext[1][1] + 1, "; ".join(viol_ext) or "none",
+           lsum(place_ext), tot, lsum(place_ext) - tot, s20_ext, s7, s20_ext - s7,
+           "; ".join("%s %s (%.2f, %.2f) -> (%.2f, %.2f)" % (t, TAPS[t][0], xs[a[0]], ys[a[1]], xs[b[0]], ys[b[1]])
+                     for t, a, b in chg_ext) or "none"))
+    cell_x = {}
+    r175a_x = next((z for z in r175_ext if adj(place_ext["T6"], z)), r175_ext[0])
+    for z in r175_ext:
+        cell_x[z] = "R175a" if z == r175a_x else "R175b"
+    for t_, p_ in place_ext.items():
+        cell_x[p_] = t_
+    out("    candidate grid map (row 4 at the top):")
+    for r in (3, 2, 1, 0):
+        out("      y %.2f  %s" % (ys[r], "  ".join("%-12s" % (("%s/%s" % (cell_x[(c, r)], TAPS[cell_x[(c, r)]][0]))
+                                                              if cell_x.get((c, r)) in TAPS else
+                                                              (cell_x.get((c, r)) or "-")) for c in range(6))))
+    nb_ext = {t_: sorted(cell_x[q] for q in pos if adj(q, p_) and q in cell_x) for t_, p_ in place_ext.items()}
+    out("    candidate neighbours: T4 %s; T5 %s; T3 %s; T6 %s; T11 %s; T10 %s; T21 %s; T1 %s; T2 %s"
+        % tuple(nb_ext[k] for k in ("T4", "T5", "T3", "T6", "T11", "T10", "T21", "T1", "T2")))
+    ft1b = find_feet()["ft1"]["body"]
+    over_ft1 = [(t, TAPS[t][0]) for t, s_ in pad_sq.items() if rect_overlap(s_, ft1b)]
+    out("  tab X top pads over the FT1 body on the CR underside (x %.3f-%.3f, y %.3f-%.3f): %s (their joints are "
+        "soldered after T-A-09 or T-A-09 runs after PM6, D-F1)" % (ft1b[0], ft1b[2], ft1b[1], ft1b[3],
+                                                                  ", ".join("%s/%s" % z for z in over_ft1) or "none"))
     dif = [(t, r["mbm"], r["dst"]) for t, r in ((r["tap"], r) for r in rows) if r["mbm"] and
            math.hypot(r["mbm"][0] - r["dst"][0], r["mbm"][1] - r["dst"][1]) > 0.05]
     out("  BRD point vs mb_mech_calc.py TAPS (MIN used the latter): %s"
@@ -2221,31 +2951,52 @@ def sec_g():
                  resid=R7_RESID, t18=t18)
     RJ["g"] = dict(xs=xs, ys=ys, envelope=env, courtyard=cyd, r175_box=r175_box,
                    assignment={t: (r["F"], f2(r["pad"][0]), f2(r["pad"][1]), f2(r["r6"]), f2(r["r7"]), r["crosses"],
-                                   f2(r["dressed"])) for t, r in ((r["tap"], r) for r in rows)},
+                                   f2(r["dressed"]), r["dlab"]) for t, r in ((r["tap"], r) for r in rows)},
                    sum_r6=f2(s6), sum_r6_f08_only=f2(s6f08), sum_r6_field_centre=f2(s6c), sum_r7=f2(s7),
                    sum_r7_dressed=f2(s7d), tab_x_pads=TAPS_X_R7, spare=[(xs[c], ys[r]) for c, r in spare],
-                   r175_rows=(r175[0][1] + 1, r175[1][1] + 1),
+                   r175_rows=(r175[0][1] + 1, r175[1][1] + 1), r175a=(xs[r175a[0]], ys[r175a[1]]),
+                   violations_rev2=viol_r2, violations_new=viol_new, length_sum_new=f2(tot), length_sum_rev2=f2(base),
                    assignment_changes=[(t, (xs[a[0]], ys[a[1]]), (xs[b[0]], ys[b[1]])) for t, a, b in chg],
+                   adjacent_pairs=adj_rows, residual_pairs=res_rows, gap_use=gap_use, pads_over_ft1=over_ft1,
                    t18_candidates=[dict(label=r["lab"], pad=r["p"], straight=f2(r["L"]), crosses_reg5v=r["cr"],
                                         path_to_reg5v=f2(r["dreg"]), pad_lands_crossed=r["land"],
                                         nearest_post=r["post"], centreline_to_post_centre=f2(r["dcl"]),
                                         path_to_post_square=f2(r["dpost"]), courtyard_to_j101=f2(r["dj101"]))
                                    for r in t18rows],
                    t18_pad=t18[1], t18_end_to_reg5v=f2(d_end_reg5), residual={k: v for k, v in R7_RESID.items()})
+    RJ["g"].update(t8_lane={k: v for k, v in LANE.get("T8", {}).items() if k != "upper_path"},
+                   open_pair_consequences=[dict(pair=a, nets=b, consequence=c, detector=d) for a, b, c, d in cons_rows],
+                   ext_candidate=dict(violations_adopted=viol_ext_adopted, violations=viol_ext,
+                                      r175_rows=(r175_ext[0][1] + 1, r175_ext[1][1] + 1),
+                                      place={t: (xs[c], ys[r]) for t, (c, r) in place_ext.items()},
+                                      tabx_sum=f2(lsum(place_ext)), sum20=f2(s20_ext)))
+    summ("T8 lane (revision 4)", "%s, %.1f mm dressed; jacket %.2f mm from the nearest other residual pad, %.2f mm inside "
+         "the CR low edge; a low-edge lane is infeasible by %.2f mm"
+         % (t8row["dlab"], t8row["dressed"], LANE["T8"]["report"]["d_pads"][0], LANE["T8"]["report"]["d_edge"],
+            LANE["T8"]["low"][0] - LANE["T8"]["low"][1]), "H.23(g)")
+    summ("open adjacent pairs (revision 4)", "F05-F12: EN net %.3f V > VEN_R max %.1f V, %.1f mA contention; F07-F12: "
+         "%.1f mA into pin 17 when LOW; F08-F09: BQ29200 OV term can be masked by the INA253 output"
+         % (v_en, VEN_R_MAX, i_pp * 1e3, i_37 * 1e3), "H.23(g)")
+    summ("extended exclusion candidate (revision 4)", "violations %s; 20-tap straight sum %.1f mm (%+.1f mm); not adopted"
+         % ("; ".join(viol_ext) or "none", s20_ext, s20_ext - s7), "H.23(g)")
     summ("tab X tap field pad centres", "x %s, y %s" % (xs, ys), "H.23(g)")
-    summ("tab X pads (A2)", "%d pads + R175 (rows %d-%d of column 1); spare positions %s; %s"
-         % (len(TAPS_X_R7), r175[0][1] + 1, r175[1][1] + 1, [(xs[c], ys[r]) for c, r in spare],
-            ("assignment changes: " + "; ".join("%s -> (%.2f, %.2f)" % (t, xs[b[0]], ys[b[1]]) for t, a, b in chg))
-            if chg else "no assignment change against the first run"), "H.23(g)")
+    summ("tab X pad assignment (D-F4)", "%d pads + R175 (rows %d-%d of column 1; R175a at (%.2f, %.2f)); spare positions "
+         "%s; D-F4 exclusions violated: %s (r7 rev 2: %s); moves against r7 rev 2: %s"
+         % (len(TAPS_X_R7), r175[0][1] + 1, r175[1][1] + 1, xs[r175a[0]], ys[r175a[1]],
+            [(xs[c], ys[r]) for c, r in spare], "; ".join(viol_new) or "none", "; ".join(viol_r2) or "none",
+            "; ".join("%s -> (%.2f, %.2f)" % (t, xs[b[0]], ys[b[1]]) for t, a, b in chg) or "none"), "H.23(g)")
+    summ("adjacent-pad short table (D-F4)", "%d orthogonal grid pairs, %d FORBIDDEN; residual row: F08-F09 and F09-F10 "
+         "adjacent, F10-F22 not" % (len(adj_rows), n_forb), "H.23(g)")
     summ("T18 pad (A2, B3)", "F22 at (%.2f, %.2f) on the footprint low row, straight %.2f mm to CO-5V pad 1; passes "
          "beside (not over) the pin-%d post (%.3f mm from the post square); pad courtyard %.2f mm from the J101 box; "
          "every candidate ends at CO-5V pad 1, %.3f mm from the REG-5V box (shortest candidate %s, %.2f mm, rejected: "
          "courtyard %.2f mm from the J101 box); residual pads F08 (T22), F09 (T8), F10 (T9), F22 (T18)"
          % (t18[1][0], t18[1][1], t18[2], t18r["post"], t18r["dpost"], t18r["dj101"], d_end_reg5,
             "(%.2f, %.2f)" % sh["p"], sh["L"], sh["dj101"]), "H.23(g)")
-    summ("tap straight-length sum (20 taps)", "r6 %.1f mm -> r7 %.1f mm (%+.1f %%); dressed %.1f mm (r6 basis: F08-F10 "
-         "at their r6 pads; only F08 held: r6 %.1f mm, %+.1f %%)"
-         % (s6, s7, 100 * (s7 / s6 - 1), s7d, s6f08, 100 * (s7 / s6f08 - 1)), "H.23(g)")
+    t8r = next(r for r in rows if r["tap"] == "T8")
+    summ("tap straight-length sum (20 taps)", "r6 %.1f mm -> r7 %.1f mm (%+.1f %%); dressed on the legal path %.1f mm "
+         "(D-F4); T8 crosses the REG-5V box (straight %.1f mm, dressed %.1f mm: %s)"
+         % (s6, s7, 100 * (s7 / s6 - 1), s7d, t8r["r7"], t8r["dressed"], t8r["dlab"]), "H.23(g)")
     return FIELD
 
 
@@ -2280,8 +3031,9 @@ def sec_h():
         # farthest point of the class from the rim (for areas)
         far = max(d5v(x, y) for x in (r[0], (r[0] + r[2]) / 2, r[2]) for y in (r[1], (r[1] + r[3]) / 2, r[3]))
         res[k] = (d, far)
-        out("  %-38s nearest %6.3f mm, farthest %6.3f mm -> %s" % (k, d, far,
-                                                                    "inside the band" if d <= BAND else "outside"))
+        # r7 review 7: a span that straddles the 6.4 mm boundary is 'crossing', not 'inside'
+        lab = "inside the band" if far <= BAND else ("outside" if d > BAND else "crossing the band boundary")
+        out("  %-38s nearest %6.3f mm, farthest %6.3f mm -> %s" % (k, d, far, lab))
     out("Band boundary inside tab X (largest y with distance <= %.1f mm, per x):" % BAND)
     bnd = []
     x = TAB_X[0]
@@ -2322,6 +3074,15 @@ T_CR = 1.6            # mm, CR thickness (DOC PM4 ASSUMPTION; TODO(verify: CR fa
 MF = (1.0, 2.0)       # part mass factor, MBM eq. 3
 E_RTV = (1.0, 3.0)    # MPa, BASIS D3 ASSUMPTION; TODO(verify: RTV datasheet)
 T_BED = (0.15, 0.30, 0.45)     # mm, BASIS D3: 0.30 +- 0.15
+# r7 review 7, D-F1: controlled CR-side bond and the vertical tolerance budget of the bed thickness
+T_BOND = 0.05         # mm, acrylic transfer tape CR-side bond (D-F1; TODO(verify: tape datasheet, temperature rating))
+H_HDR = 2.54          # mm, header plastic body height = CR underside to sheet (BASIS D2; TODO(verify: Samtec TSW drawing))
+H_F = H_HDR - T_BED[1] - T_BOND                    # foot block height, 2.19 mm (D-F1)
+TOL_BODY = 0.13       # mm, +- header body height (D-F1; TODO(verify: Samtec TSW drawing))
+BOW = 0.0075          # CR local bow, 0.75 % x span from the nearer pin column/row to the foot (IPC-6012 class bow/twist)
+TOL_BLOCK = (-0.05, 0.0)   # mm, foot block tolerance +0/-0.05 (D-F1)
+TOL_TAPE = (0.0, 0.05)     # mm, pressed transfer-tape thickness (0-0.05; nominal 0.05) (D-F1)
+GATE = (0.15, 0.45)   # mm, PM4 (2d) feelers: 0.15 enters, 0.45 does not (D-F1)
 A_FOOT = FOOT * FOOT
 M_MAIN = (5.0, 10.0)  # g, main CR + headers, mb_pinload.py ASSUMPTION
 RHO_A = (0.6, 0.8)    # g/cm2 populated areal mass, mb_pinload.py ASSUMPTION
@@ -2560,10 +3321,49 @@ def sec_i():
                              within or "none"))
         f["under"] = under
         f["within"] = within
-    # heights
-    out("Foot height h_f = 2.54 - t_bed = %.2f mm at t_bed %.2f mm (bed range %.2f-%.2f mm); CR underside 2.665 mm above "
-        "the MB, sheet 0.125 mm (BASIS D2/D3); the foot-to-CR RTV bond is taken as zero thickness (ASSUMPTION; "
-        "TODO(measure: T-A-09))" % (2.54 - T_BED[1], T_BED[1], T_BED[0], T_BED[2]))
+    # heights (r7 review 7, D-F1): controlled CR-side bond, tolerance budget, PM4 (2d) gate
+    out("Foot height (D-F1): h_f = %.2f - t_bed - t_bond = %.2f - %.2f - %.2f = %.2f mm (block tolerance +0/%.2f mm); "
+        "CR-side bond = %.2f mm acrylic transfer tape (TODO(verify: tape datasheet, temperature rating)); the header "
+        "bodies and the feet both stand on the sheet, so t_bed does not depend on the MB, CR or sheet thickness (CR "
+        "underside 2.665 mm above the MB, sheet 0.125 mm, BASIS D2/D3). (**superseded in r7:** h_f = 2.54 - t_bed "
+        "= 2.24 mm with a zero-thickness RTV bond, review 7 D-F1.)" % (H_HDR, H_HDR, T_BED[1], T_BOND, H_F, TOL_BLOCK[0], T_BOND))
+    tol_rows = {}
+    for nm, lever, lab in (("FT1", F["ft1"]["centre"][0] - 45.998, "x from the 1x10 column x 45.998"),
+                           ("FT2", F["ft2"]["centre"][1] - PIN11_Y, "y from the pin-11 row y %.3f" % PIN11_Y)):
+        bow = BOW * lever
+        nom = H_HDR - H_F - T_BOND
+        mean = nom - 0.5 * (TOL_BLOCK[0] + TOL_BLOCK[1]) + (T_BOND - 0.5 * (TOL_TAPE[0] + TOL_TAPE[1]))
+        halfs = (TOL_BODY, bow, 0.5 * (TOL_BLOCK[1] - TOL_BLOCK[0]), 0.5 * (TOL_TAPE[1] - TOL_TAPE[0]))
+        wc = (nom - TOL_BODY - bow - TOL_BLOCK[1] - (T_BOND - TOL_TAPE[1]),
+              nom + TOL_BODY + bow - TOL_BLOCK[0] + (T_BOND - TOL_TAPE[0]))
+        rss = math.sqrt(sum(h * h for h in halfs))
+        # Monte-Carlo with uniform contributors (deterministic seed): share of builds inside the PM4 (2d) gate
+        rng = random.Random(7)
+        n_mc, n_in, n_lo, n_hi = 200000, 0, 0, 0
+        for _ in range(n_mc):
+            t = (nom + rng.uniform(-TOL_BODY, TOL_BODY) + rng.uniform(-bow, bow) - rng.uniform(*TOL_BLOCK)
+                 + (T_BOND - rng.uniform(*TOL_TAPE)))
+            if t <= GATE[0]:
+                n_lo += 1
+            elif t >= GATE[1]:
+                n_hi += 1
+            else:
+                n_in += 1
+        tol_rows[nm] = dict(lever=lever, bow=bow, nom=nom, mean=mean, wc=wc, rss=rss, rss_band=(mean - rss, mean + rss),
+                            p_in=n_in / n_mc, p_lo=n_lo / n_mc, p_hi=n_hi / n_mc)
+        out("  %s vertical tolerance budget of t_bed: header body +-%.2f (TODO(verify: Samtec TSW drawing)); CR local bow "
+            "0.75 %% x %.3f mm (%s) = +-%.3f; block +0/%.2f -> t_bed +0..+%.2f; tape %.2f-%.2f -> t_bed +0..+%.2f. "
+            "Nominal %.3f mm, mean %.3f mm; worst case %.3f-%.3f mm; RSS (half-ranges about the mean) %.3f +- %.3f = "
+            "%.3f-%.3f mm. PM4 (2d) gate %.2f / %.2f mm feelers (D-F1): Monte-Carlo with uniform contributors "
+            "(200 000 builds, ORDER OF MAGNITUDE) %.1f %% pass, %.1f %% at or below %.2f (foot too tall: re-make), "
+            "%.1f %% at or above %.2f (foot too short: re-make)"
+            % (nm, TOL_BODY, lever, lab, bow, TOL_BLOCK[0], -TOL_BLOCK[0], TOL_TAPE[0], TOL_TAPE[1],
+               TOL_TAPE[1] - TOL_TAPE[0], nom, mean, wc[0], wc[1], mean, rss, mean - rss, mean + rss, GATE[0], GATE[1],
+               100 * n_in / n_mc, 100 * n_lo / n_mc, GATE[0], 100 * n_hi / n_mc, GATE[1]))
+    out("  the worst case reaches below the %.2f mm gate minimum (no bed, a hard prop) and above the %.2f mm gate maximum; "
+        "the PM4 (2d) dry-seat gate before the 22 joints are soldered rejects those builds, so the k_s range below "
+        "(t_bed %.2f-%.2f mm) is the GATED range, not a tolerance-free claim" % (GATE[0], GATE[1], T_BED[0], T_BED[2]))
+    F["tol"] = tol_rows
     # stiffness
     tabs = {
         "tab X": dict(L=TAB_X[2] - 45.998, b=TAB_X[3] - TAB_X[1], root=TAB_X[0] - 45.998,
@@ -2572,7 +3372,8 @@ def sec_i():
                       area=(TAB_X[2] - TAB_X[0]) * (TAB_X[3] - TAB_X[1]),
                       cg=((TAB_X[0] + TAB_X[2]) / 2, (TAB_X[1] + TAB_X[3]) / 2), foot=F["ft1"]["centre"]),
         "tab Y": dict(L=TAB_Y[3] - 64.484, b=TAB_Y[2] - TAB_Y[0], root=TAB_Y[1] - 64.484,
-                      a=F["ft2"]["centre"][1] - 64.484, tip=((TAB_Y[0] + TAB_Y[2]) / 2, TAB_Y[3]),
+                      a=F["ft2"]["centre"][1] - 64.484, tip=(F["ft2"]["centre"][0], TAB_Y[3]),   # D-F1: grip in line
+                      # with FT2 (x 28.00); r7 rev 2 used the +y edge midpoint x 27.63 with a stale x 28.00 label
                       model="plate edge-cantilever clamped along the pin-11 row y 64.484 (mb_pinload.py), width = tab Y "
                             "width 19.86 mm; upper estimate (only pin 11 lies on that line)",
                       area=(TAB_Y[2] - TAB_Y[0]) * (TAB_Y[3] - TAB_Y[1]) - CHAMFER ** 2 / 2,
@@ -2687,6 +3488,94 @@ def sec_i():
         R = reaction(res[tn]["EI"], tabs[tn]["a"], max(KS[tn]["all"]), [(tabs[tn]["L"], W)])
         rmax = max(rmax, R / areas[tn])
     out("  bed stress at 30 g (whole tab load at the tip, stiffest bed): <= %.1f kPa" % (rmax * 1e3))
+    # ---- r7 review 7 (D-F1): T-A-09 pull options against the 30 g service bed stress, per tab and per k_s
+    out("  T-A-09 pull options (D-F1; tension in the bed = the same lever model as the push; tab X grip at the tip "
+        "(%.2f, %.2f), tab Y grip in line with FT2 at (%.2f, %.2f), loop entered from the tab side, never past the tab "
+        "Y +y edge (L-FC 0.862 mm, H.23(b))):" % (tabs["tab X"]["tip"][0], tabs["tab X"]["tip"][1],
+                                                   tabs["tab Y"]["tip"][0], tabs["tab Y"]["tip"][1]))
+    pulls = {}
+    for tn in ("tab X", "tab Y"):
+        t = tabs[tn]
+        Lp = (t["tip"][0] - 45.998) if tn == "tab X" else (t["tip"][1] - 64.484)
+        W30 = RHO_A[1] * t["area"] / 100 * 1e-3 * 9.81 * 30
+        ks4 = (min(KS[tn]["all"]), KS[tn]["nom"][0], KS[tn]["nom"][1], max(KS[tn]["all"]))
+        sh = [reaction(res[tn]["EI"], t["a"], ks, [(Lp, 1.0)]) for ks in ks4]          # foot share per N at the grip
+        s30 = [reaction(res[tn]["EI"], t["a"], ks, [(t["L"], W30)]) / areas[tn] for ks in ks4]   # N/mm2 = MPa
+        p_lim = min(2.0 * s30[k] * areas[tn] / sh[k] for k in range(4))   # pull with bed stress <= 2 x the 30 g stress
+        p_lim1 = min(s30[k] * areas[tn] / sh[k] for k in range(4))        # revision 4: <= 1 x (the service range)
+        # revision 4: the distributed-load basis (the 30 g load spread from the root to the tip, as the pin-load rows)
+        nseg = 50
+        segl = (t["L"] - t["root"]) / nseg
+        dload = [(t["root"] + (j + 0.5) * segl, W30 / nseg) for j in range(nseg)]
+        s30d = [reaction(res[tn]["EI"], t["a"], ks, dload) / areas[tn] for ks in ks4]
+        pulls[tn] = dict(W30=W30, share=sh, s30=s30, p_lim=p_lim, p_lim1=p_lim1, s30d=s30d)
+        out("    %s: 30 g whole-tab load %.3f N (0.8 g/cm2 x %.1f mm2); foot share per N at the grip %s; 30 g bed stress "
+            "%s kPa (k_s %s N/mm)" % (tn, W30, t["area"], "/".join("%.3f" % v for v in sh),
+                                      "/".join("%.1f" % (v * 1e3) for v in s30), "/".join("%.0f" % v for v in ks4)))
+        out("      5 N pull: bed stress %s kPa = %s x the 30 g stress; largest pull with bed stress <= 2 x the 30 g "
+            "stress at every k_s: %.3f N" % ("/".join("%.0f" % (5.0 * v / areas[tn] * 1e3) for v in sh),
+                                             "/".join("%.1f" % (5.0 * sh[k] / areas[tn] / s30[k]) for k in range(4)),
+                                             p_lim))
+    # revision 4: the design adopts the pull inside the service range on the tip-load basis (<= 1 x the 30 g stress
+    # with the whole tab load at the tip), the governing tab setting it; 0.1 N steps. (**superseded:** the r7
+    # review-7 recommendation, the 0.1 N floor of the 2 x limit, 0.8 N.)
+    gov = min(pulls, key=lambda k: pulls[k]["p_lim1"])
+    p_rec = math.floor(10.0 * pulls[gov]["p_lim1"] + 1e-9) / 10.0
+    p_old = math.floor(10.0 * min(v["p_lim"] for v in pulls.values()) + 1e-9) / 10.0
+    for tn, v in pulls.items():
+        v["rec"] = [p_rec * v["share"][k] / areas[tn] for k in range(4)]
+        v["rec_ratio"] = [p_rec * v["share"][k] / areas[tn] / v["s30"][k] for k in range(4)]
+        v["rec_ratio_d"] = [p_rec * v["share"][k] / areas[tn] / v["s30d"][k] for k in range(4)]
+    for tn, v in pulls.items():
+        out("    %s: the pull at 1 x the 30 g stress (tip-load basis) is %.3f N; 30 g bed stress on the distributed-load "
+            "basis %s kPa (the 30 g load spread from the root to the tip; k_s as above)"
+            % (tn, v["p_lim1"], "/".join("%.1f" % (z * 1e3) for z in v["s30d"])))
+    out("    recommended T-A-09 pull (revision 4; adopted in the design): %.1f N at each grip for 10 s = the 0.1 N floor of "
+        "the 1 x tip-load limit of the governing tab (%s, %.3f N). Bed stress tab X %s kPa, tab Y %s kPa. Stress ratio "
+        "on the tip-load basis (whole 30 g tab load at the tip): tab X %.2f x, tab Y %.2f x (inside the service range); "
+        "on the distributed-load basis: tab X %.2f-%.2f x, tab Y %.2f-%.2f x (k_s range). (**superseded:** %.1f N, "
+        "the 0.1 N floor of the 2 x limit, %.2f-%.2f x on the tip-load basis.) The 5 N r6/r7 pull loads the beds "
+        "%.1f-%.1f x the 30 g stress through the sheet's silicone PSA (the A.7 removal layer; PSA strength "
+        "TODO(verify: polyimide tape datasheet)); a push-down check on the foot spot is the alternative (D-F1)"
+        % (p_rec, gov, pulls[gov]["p_lim1"], "/".join("%.1f" % (v * 1e3) for v in pulls["tab X"]["rec"]),
+           "/".join("%.1f" % (v * 1e3) for v in pulls["tab Y"]["rec"]),
+           max(pulls["tab X"]["rec_ratio"]), max(pulls["tab Y"]["rec_ratio"]),
+           min(pulls["tab X"]["rec_ratio_d"]), max(pulls["tab X"]["rec_ratio_d"]),
+           min(pulls["tab Y"]["rec_ratio_d"]), max(pulls["tab Y"]["rec_ratio_d"]), p_old,
+           min(p_old * v["share"][k] / areas[tn] / v["s30"][k] for tn, v in pulls.items() for k in range(4)),
+           max(p_old * v["share"][k] / areas[tn] / v["s30"][k] for tn, v in pulls.items() for k in range(4)),
+           min(5.0 * v["share"][k] / areas[tn] / v["s30"][k] for tn, v in pulls.items() for k in range(4)),
+           max(5.0 * v["share"][k] / areas[tn] / v["s30"][k] for tn, v in pulls.items() for k in range(4))))
+    # ---- r7 review 7 (D-F1): the feet effect stated plainly
+    cut30 = [100 * (r[3] - w) / r[3] for r in rows if r[2] == 30.0 for w in r[4]]
+    cutp = {tn: [100 * (v[0] - w) / v[0] for _, _, w in v[2]] for tn, v in pushes.items()}
+    out("  feet effect (D-F1; ORDER OF MAGNITUDE, bed confinement (Gent) not modelled): at 30 g the feet cut the worst "
+        "pin load by %.0f-%.0f %% (bed E 1-3 MPa at t 0.30 mm); a 10 N tip push loses %.0f-%.0f %% at tab X (FT1 takes "
+        "%.2f-%.2f N of it) and %.0f-%.0f %% at tab Y (FT2 takes %.2f-%.2f N); the feet take a larger share of a tip "
+        "push than of the distributed 30 g load"
+        % (min(cut30), max(cut30), min(cutp["tab X"]), max(cutp["tab X"]),
+           min(R for _, R, _ in pushes["tab X"][2]), max(R for _, R, _ in pushes["tab X"][2]),
+           min(cutp["tab Y"]), max(cutp["tab Y"]), min(R for _, R, _ in pushes["tab Y"][2]),
+           max(R for _, R, _ in pushes["tab Y"][2])))
+    gent = {}
+    for tn in ("tab X", "tab Y"):
+        S = areas[tn] / (perim[tn] * T_BED[1])
+        g = 1 + 2 * S * S
+        ph_f = res[tn]["f"]
+        gent[tn] = [(mf, f1 * math.sqrt(1 + min(KS[tn]["nom"]) * g * 1e3 * ph * ph /
+                                         ((2 * math.pi * f1) ** 2 * RHO * T_CR * 1e-3 * tabs[tn]["b"] * 1e-3 *
+                                          tabs[tn]["L"] * 1e-3 * mf / 4.0)),
+                     f1 * math.sqrt(1 + max(KS[tn]["nom"]) * g * 1e3 * ph * ph /
+                                    ((2 * math.pi * f1) ** 2 * RHO * T_CR * 1e-3 * tabs[tn]["b"] * 1e-3 *
+                                     tabs[tn]["L"] * 1e-3 * mf / 4.0)), f1 * (3.927 / 1.875) ** 2)
+                    for mf, f1, _, ph in ph_f]
+    out("  propped f1 with the Gent factor applied at t 0.30 mm (labels, D-F1/vibration finding): tab X %s; tab Y %s "
+        "(Hz, k_s nominal E 1 / 3 MPa, capped at the rigid prop): the propped figures are neither upper nor lower bounds; "
+        "the unpropped figures are upper estimates (clamped root; tab Y clamp held by pin 11 alone within its width)"
+        % ("; ".join("m_f %.0f %.0f-%.0f" % (mf, min(a, c), min(b, c)) for mf, a, b, c in gent["tab X"]),
+           "; ".join("m_f %.0f %.0f-%.0f" % (mf, min(a, c), min(b, c)) for mf, a, b, c in gent["tab Y"])))
+    F["pulls"] = dict(rec=p_rec, tabs=pulls, cut30=(min(cut30), max(cut30)),
+                      cut_push={k: (min(v), max(v)) for k, v in cutp.items()})
     def fjson(f):
         return dict(centre=f["centre"], size=(f["w"], f["h"]), body=f["body"],
                     cu_clear=f["cu_clear"] if f["cu_who"] else None, cu_who=f["cu_who"], vias=f["vias"],
@@ -2707,7 +3596,22 @@ def sec_i():
                                   f=[(mf, f2(f1), [f2(p) for p in pr]) for mf, f1, pr, _ in v["f"]])
                          for tn, v in res.items()},
                    pin_rows=[(r[0], r[1], r[2], f2(r[3]), [f2(v) for v in r[4]], f2(r[5])) for r in rows],
-                   pushes={k: (f2(v[0]), v[1], [(f2(a), f2(b), f2(c)) for a, b, c in v[2]]) for k, v in pushes.items()})
+                   pushes={k: (f2(v[0]), v[1], [(f2(a), f2(b), f2(c)) for a, b, c in v[2]]) for k, v in pushes.items()},
+                   foot_height=dict(h_f=f2(H_F), t_bond=T_BOND, t_bed_nom=T_BED[1], block_tol=TOL_BLOCK,
+                                    tape=TOL_TAPE, body_tol=TOL_BODY, gate=GATE,
+                                    budget={n: dict(lever=f2(v["lever"]), bow=f2(v["bow"]), mean=f2(v["mean"]),
+                                                    worst=[f2(x) for x in v["wc"]], rss=f2(v["rss"]),
+                                                    rss_band=[f2(x) for x in v["rss_band"]], gate_pass=f2(v["p_in"]),
+                                                    gate_low=f2(v["p_lo"]), gate_high=f2(v["p_hi"]))
+                                            for n, v in F["tol"].items()}),
+                   pulls=dict(recommended_N=F["pulls"]["rec"],
+                              tabs={k: dict(W30_N=f2(v["W30"]), share=[f2(x) for x in v["share"]],
+                                            s30_kPa=[f2(x * 1e3) for x in v["s30"]], p_limit_N=f2(v["p_lim"]),
+                                            rec_kPa=[f2(x * 1e3) for x in v["rec"]],
+                                            rec_ratio=[f2(x) for x in v["rec_ratio"]])
+                                    for k, v in F["pulls"]["tabs"].items()}),
+                   feet_effect=dict(cut30_pct=[f2(x) for x in F["pulls"]["cut30"]],
+                                    cut_push_pct={k: [f2(x) for x in v] for k, v in F["pulls"]["cut_push"].items()}))
     f1 = F["ft1"]
     kos = {n: k for n, k, lane in foot_keepouts()}
     lanes = {n: lane for n, k, lane in foot_keepouts()}
@@ -2752,7 +3656,28 @@ def sec_i():
     b = F["alts"]["relax44"]
     summ("FT1 alternative B (relaxed 4 x 4)", "(%.2f, %.2f): violates the rule, copper clearance %.3f mm (masked signal "
          "traces under the body; operator option only)" % (b["centre"][0], b["centre"][1], b["cu_clear"]), "H.23(i)")
-    summ("foot height", "h_f = 2.54 - t_bed = %.2f mm (t_bed 0.30 +- 0.15 mm)" % (2.54 - T_BED[1]), "H.23(i)")
+    tr = F["tol"]
+    summ("foot height (D-F1)", "h_f = 2.54 - t_bed - t_bond = %.2f mm (t_bed 0.30, transfer tape %.2f mm; block +0/-0.05); "
+         "t_bed budget FT1 worst %.3f-%.3f, RSS %.3f-%.3f mm; FT2 worst %.3f-%.3f, RSS %.3f-%.3f mm; PM4 (2d) gate "
+         "0.15/0.45 mm passes %.0f %% (FT1) / %.0f %% (FT2) of uniform-tolerance builds"
+         % (H_F, T_BOND, tr["FT1"]["wc"][0], tr["FT1"]["wc"][1], tr["FT1"]["rss_band"][0], tr["FT1"]["rss_band"][1],
+            tr["FT2"]["wc"][0], tr["FT2"]["wc"][1], tr["FT2"]["rss_band"][0], tr["FT2"]["rss_band"][1],
+            100 * tr["FT1"]["p_in"], 100 * tr["FT2"]["p_in"]), "H.23(i)")
+    pl = F["pulls"]
+    summ("T-A-09 pull (D-F1, revision 4)", "recommended %.1f N at each grip (tab Y grip in line with FT2, x %.2f; tab Y "
+         "governs): tip-load basis tab X %.2f x / tab Y %.2f x the 30 g service stress, distributed-load basis %.2f-%.2f x "
+         "/ %.2f-%.2f x; the 5 N pull gives %.0f-%.0f kPa at FT1"
+         % (pl["rec"], F["ft2"]["centre"][0], max(pl["tabs"]["tab X"]["rec_ratio"]),
+            max(pl["tabs"]["tab Y"]["rec_ratio"]), min(pl["tabs"]["tab X"]["rec_ratio_d"]),
+            max(pl["tabs"]["tab X"]["rec_ratio_d"]), min(pl["tabs"]["tab Y"]["rec_ratio_d"]),
+            max(pl["tabs"]["tab Y"]["rec_ratio_d"]),
+            5.0 * min(pl["tabs"]["tab X"]["share"]) / areas["tab X"] * 1e3,
+            5.0 * max(pl["tabs"]["tab X"]["share"]) / areas["tab X"] * 1e3), "H.23(i)")
+    summ("feet effect (D-F1)", "30 g worst-pin cut %.0f-%.0f %%; 10 N tip push cut tab X %.0f-%.0f %%, tab Y %.0f-%.0f %% "
+         "(ORDER OF MAGNITUDE; Gent confinement not modelled)" % (pl["cut30"][0], pl["cut30"][1],
+                                                                 pl["cut_push"]["tab X"][0], pl["cut_push"]["tab X"][1],
+                                                                 pl["cut_push"]["tab Y"][0], pl["cut_push"]["tab Y"][1]),
+         "H.23(i)")
     for tn, v in res.items():
         summ("%s f1 unpropped / propped (bed E 1-3 MPa, t 0.30)" % tn, "%.0f-%.0f Hz / %.0f-%.0f Hz (ORDER OF MAGNITUDE)"
              % (v["f"][1][1], v["f"][0][1], v["f"][1][2][1], v["f"][0][2][2]), "H.23(i)")
@@ -2771,7 +3696,7 @@ def sec_i():
 # H.23(j) header post arithmetic with the sheet; stack height
 # ======================================================================================================================
 def sec_j():
-    head("H.23(j) header post arithmetic with the 0.125 mm sheet; CR top height; stack top vs the Ag105 envelope")
+    head("H.23(j) header post arithmetic with the 0.125 mm sheet; CR top height; stack top (information only, D-H)")
     A_, B_, C_ = 10.92, 2.54, 5.84      # Samtec F-226 TSW-1xx-07: A overall, B and C the two ends (BASIS / MBM Table 7)
     BODY, SHEET, MB, CR = 2.54, 0.125, 1.6, 1.6
     out("Inputs: TSW-1xx-07 A %.2f, B %.2f, C %.2f mm, body %.2f mm (Samtec F-226; A - B - C = %.2f); sheet %.3f mm (DOC "
@@ -2797,17 +3722,27 @@ def sec_j():
     fold = 8.0
     stack = top + fold
     env = 2.54 + 1.60 + 9.0
-    out("CR underside %.3f mm, CR top %.3f mm above the MB top (unchanged from r6). W5 IDC socket + ribbon fold >= %.1f mm "
-        "above the CR top (DOC A.3): stack top >= %.3f mm + the cable thickness (TODO(verify: cable assembly drawing)) "
-        "against the nominal Ag105 envelope %.2f mm (AG105_Silvertel.pdf Fig. 11: 2.54 + 1.60 + 9): margin <= %.3f mm "
-        "before the cable; gate D-2 / MS1 decides." % (under, top, fold, stack, env, env - stack))
+    rib = 0.9                                   # mm, W5 ribbon thickness ASSUMPTION (TODO(verify: cable drawing))
+    sw3d = H_LFC + SW_GAP                       # H.23(l) 3-D rule: ribbon bottom over the L-FC plan overlap
+    out("CR underside %.3f mm, CR top %.3f mm above the MB top (unchanged from r6). Stack top, INFORMATION ONLY (D-H, "
+        "operator statement 2026-11-10: no maximum height for the MB and its PCBs; the Ag105 envelope and any lid "
+        "clearance are not limits, so no pass/fail is drawn): W5 IDC socket + ribbon fold >= %.1f mm above the CR top "
+        "(DOC A.3) -> stack top >= %.3f mm + the cable (%.3f / %.3f mm with one / two %.1f mm ribbon thicknesses, "
+        "ASSUMPTION); with the H.23(l) 3-D switched-conductor height over L-FC (ribbon bottom >= %.2f mm above the MB, "
+        "L-FC body %.1f mm ASSUMPTION) the W5 run over tab Y sits >= %.3f mm above the CR top and its top at >= %.3f mm "
+        "(one thickness). Reference only: the nominal Ag105 envelope is %.2f mm (AG105_Silvertel.pdf Fig. 11: 2.54 + "
+        "1.60 + 9). (**superseded in r7 (D-H):** 'margin <= %.3f mm before the cable; gate D-2 / MS1 decides'.)"
+        % (under, top, fold, stack, stack + rib, stack + 2 * rib, rib, sw3d, H_LFC, sw3d - top, sw3d + rib, env,
+           env - stack))
     out("  minimal proposal (no sheet): CR top 4.14 mm, MB-bottom protrusion 4.24 mm; the kept sheet adds 0.125 mm to "
         "both stack heights and removes 0.125 mm from the MB-bottom protrusion.")
-    RJ["j"] = dict(rows=[(r[0], f2(r[1]), f2(r[2])) for r in rows], cr_under=under, cr_top=top, stack=stack, env=env)
+    RJ["j"] = dict(rows=[(r[0], f2(r[1]), f2(r[2])) for r in rows], cr_under=under, cr_top=top, stack=stack, env=env,
+                   info_only=True, ribbon_assumed=rib, w5_over_lfc_bottom=f2(sw3d), w5_over_lfc_top=f2(sw3d + rib))
     summ("post arithmetic (B up, with sheet)", "CR-top protrusion %.3f mm; MB-bottom %.3f mm before the PM4 cut"
          % (rows[0][1], rows[0][2]), "H.23(j)")
-    summ("stack top", "CR top %.3f mm; W5 fold >= %.3f mm + cable vs Ag105 envelope %.2f mm (margin <= %.3f mm)"
-         % (top, stack, env, env - stack), "H.23(j)")
+    summ("stack top (information only, D-H)", "CR top %.3f mm; W5 fold >= %.3f mm + cable (%.3f / %.3f mm with one / two "
+         "%.1f mm ribbon thicknesses); W5 over L-FC (3-D rule) bottom >= %.2f mm, top >= %.3f mm; Ag105 envelope %.2f mm "
+         "for reference, not a limit" % (top, stack, stack + rib, stack + 2 * rib, rib, sw3d, sw3d + rib, env), "H.23(j)")
 
 
 # ======================================================================================================================
@@ -2821,6 +3756,10 @@ E_ROWS = {"E8": (1, "TP49"), "E3": (3, "TP33"), "E4": (4, "JP21 pin 1 (lower pos
           "E7": (7, "TP38"), "E1": (9, "JP12 pin 1 (REGN)"), "E5": (11, "TP36"), "E6": (12, "JP17 pin 1")}  # DOC A.9
 R6_EMAX = {"E8": 20, "E3": 25, "E4": 30, "E2": 35, "E7": 40, "E1": 85, "E5": 60, "E6": 60}          # DOC A.5
 CRIT = {"E3": 92.0, "E4": 59.0, "E6": 196.0}       # eib_merge_failsafe.md Table 9 (s 5 mm untwisted, class B)
+E1_BEND = (51.0, 30.6)                             # DOC A.5 r7 review 7: the one E1 bend near (51.0, 30.6) EVM mm
+EVM_JP17_2 = (54.611, 24.257)                      # EVMG Table 1: JP17 pin 2 (AGND), vacated (EM1)
+EVM_U1 = (45.448, 39.986, 49.549, 44.086)          # EVMG Table 1: U1 BQ25798 mechanical outline
+EVM_L2 = (43.672, 49.812, 51.072, 56.612)          # EVMG Table 1: L2 SPM6530T outline
 R28, R26, R20, R18 = 0.2129, 0.1339, 0.03331, 0.02095     # AWG, Ohm/m at 20 C
 MU0_PI = 4e-7                                      # mu0/pi, H/m
 A28 = 0.16e-3                                      # 28 AWG radius, EIBM loop_L
@@ -2881,6 +3820,34 @@ def sec_k():
                       e3y - 2.54 - EVM_PTS["JP21 pin 2 (upper post, AGND)"][1])
     out("  E4 to the upper JP21 post (the r6 A.5 pixel point (902, 408) = pin 2, AGND): %.1f mm (same, because the E4 row "
         "lies between the posts); the correct E4 post is pin 1 = the lower square post (75.312, 64.769)" % s_up)
+    # ---- revision 4: the A.5 E1 route through one bend (EVMG Table 1 positions; D-F6)
+    e1p = (xcol, e3y - (E_ROWS["E1"][0] - 3) * 2.54)
+    jp12 = EVM_PTS["JP12 pin 1 (REGN)"]
+    route = [e1p, E1_BEND, jp12]
+    segs = list(zip(route[:-1], route[1:]))
+    L_e1 = sum(math.hypot(b[0] - a[0], b[1] - a[1]) for a, b in segs)
+
+    def dpt_route(pt, ss):
+        return min(dpt_seg(pt[0], pt[1], a[0], a[1], b[0], b[1]) for a, b in ss)
+
+    def drect_route(r, ss):
+        return min(d_rect_seg(r, a, b) for a, b in ss)
+    straight = [(e1p, jp12)]
+    rows_e1 = []
+    for lab, f_ in (("JP17 pin 1 (E6, /CE joint)", lambda ss: dpt_route(EVM_PTS["JP17 pin 1"], ss)),
+                    ("JP17 pin 2 (vacated AGND hole, centre)", lambda ss: dpt_route(EVM_JP17_2, ss)),
+                    ("TP36 (E5)", lambda ss: dpt_route(EVM_PTS["TP36"], ss)),
+                    ("U1 outline", lambda ss: drect_route(EVM_U1, ss)),
+                    ("L2 outline", lambda ss: drect_route(EVM_L2, ss))):
+        rows_e1.append((lab, f_(segs), f_(straight)))
+    out("  E1 route (revision 4; A.5: E1 pad -> one bend -> JP12 pin 1, below U1 and L2; centre distances, EVMG Table "
+        "1): E1 pad (%.2f, %.3f) -> bend (%.1f, %.1f) -> JP12 pin 1 (%.3f, %.3f) EVM mm: %.1f mm (straight %.1f mm; "
+        "build max %d mm); %s"
+        % (e1p[0], e1p[1], E1_BEND[0], E1_BEND[1], jp12[0], jp12[1], L_e1, res["E1"][0], res["E1"][1],
+           "; ".join("%s %.2f mm (straight line %.2f mm)" % z for z in rows_e1)))
+    RJ["k_e1"] = dict(route=route, L=f2(L_e1), rows=[(a, f2(b), f2(c)) for a, b, c in rows_e1])
+    summ("E1 route (revision 4)", "E1 pad -> (%.1f, %.1f) -> JP12 pin 1: %.1f mm (max %d mm); %s"
+         % (E1_BEND[0], E1_BEND[1], L_e1, res["E1"][1], "; ".join("%s %.2f" % (a, b) for a, b, _ in rows_e1)), "H.23(k)")
     # resonance
     out("")
     out("E1 + E8 + C205 series loop (EIBM model: two-wire line of length l, spacing s 5 mm, 28 AWG radius 0.16 mm, "
@@ -2994,6 +3961,13 @@ AWG20_OD = 1.6       # mm, 20 AWG PVC hook-up wire outer diameter, ASSUMPTION (T
 BEND_ALLOW = 10.5    # mm, BASIS section 11 B5: bend radius 6 x OD (9.6 mm) + OD/2 (0.8 mm) = 10.4, rounded up to 0.5 mm
 EIB_W, EIB_H, EIB_INSET = 24.0, 36.0, 2.0    # DOC A.9 36 x 24 mm; pad row 2.0 mm from the EVM-facing edge ASSUMPTION
 SWITCHED = ("VSW-FC", "VSW-BT")
+# revision 4: conductor top heights above the MB top for the 3-D switched-conductor rule (decision 2026-11-10)
+H_LFC = 5.0          # mm, Eaton HCM1A1305V3 body height (L-FC and L-BT, BOM line 9): ASSUMPTION from the "1305" size code;
+#                      TODO(verify: Eaton HCM1A1305V3 drawing; caliper in MS3). The datasheet is not in references/.
+H_REG = 1.0          # mm, TPS61288 VQFN-HR (RQQ0011A) "1 mm max height" (references/Datasheets/TPS61288LRQQR.pdf)
+H_POUR = 0.0         # mm, VSW-FC / VSW-BT layer-1 pours: copper at the MB top (decision 2026-11-10)
+Z_CR_TOP = 4.265     # mm, CR top above the MB top (H.23(j)); a W lead on the CR lies on it
+W5_FOLD = 8.0        # mm, W5 ribbon fold height above the CR top (DOC A.3 minimum)
 
 
 def evm_to_board(p, X0, Y0):
@@ -3164,8 +4138,442 @@ def e1_resonance(Lmm):
     return dict(L=Ll, f0=f0, Z0=Z0, Q=Z0 / rl, Q_ac=Z0 / (R28 * 2 * Lm * kac + ESR205), Q_R276=Z0 / (rl + R276))
 
 
+# ---------------------------------------------------------------------------------------------------------------------
+# r7 review 7 (D-F2, D-F3): the designed W-lead dressing path, anchors, spans, MB crossings, hard short
+# ---------------------------------------------------------------------------------------------------------------------
+OD = {"W1": [AWG20_OD], "W2": [AWG20_OD], "W3": [2.0], "W4": [2.0], "W6": [1.0, 1.0], "W7 SCL": [0.8],
+      "W7 SDA": [0.8], "W7 GND": [0.8]}           # mm jacket OD: 20 AWG 1.6 (above), 18 AWG silicone 2.0, 26 AWG 1.0,
+#                                                   28 AWG 0.8 (ASSUMPTION; TODO(measure: MS2/MS7 wire OD))
+RIBBON_W = 14 * 0.635                              # mm, W5 14-way 0.635 mm flat cable width (DOC A.3)
+HAZ_GAP = 2.0                                      # mm plan gap of every W lead jacket edge to the listed CR hazards (D-F2)
+SW_GAP = 10.0                                      # mm to the MB switched conductors (route rule)
+REWORK_GAP = 1.5                                   # mm to the MB rework points C-D2/R171, D-FC-EN (EN bodge), C-D1
+BEAD_LEN = 5.0                                     # mm, A.3 RTV bead over the jackets at each CR joint (exempt span)
+SPAN_MAX = 30.0                                    # mm, unsupported lead length between anchors (D-F2)
+TIE_TOL = 1.5                                      # mm, MB tie-base position tolerance (D-F2)
+W5_ALLOW = 20.0                                    # mm, W5 3-D allowance (J101 rise and fold, J201 drop) ASSUMPTION
+W12_BUILD = (290.0, 300.0, 310.0)                  # mm, W1/W2 fixed build length 0.30 m +- 10 mm (D-F3)
+WP = dict(T0=(25.80, 57.00), J67=(25.80, 59.20), T1=(25.80, 62.60), B1=(25.80, 64.50), T2=(25.80, 69.60),
+          T3=(31.00, 69.60), B3=(35.00, 70.80), T4=(36.00, 71.10), T5=(46.00, 71.10), T6=(48.00, 71.75),
+          A1=(60.50, 73.50), WN=(58.00, 76.00), E1=(61.00, 85.50), A2=(71.50, 88.00),
+          S1=(36.00, 46.83), F1=(28.70, 46.83), S2=(28.70, 55.00), F2=(28.70, 73.10), S3=(35.00, 73.10),
+          F3=(42.00, 73.10), F4=(44.50, 73.80), A1R=(60.50, 73.80), E1R=(61.00, 85.80))
+TIE_BASES = {"A1": (WP["A1"], 6.0), "A2": (WP["A2"], 10.0)}   # centre, square base side (ASSUMPTION; TODO(verify:
+#                                                              adhesive tie-base datasheet))
+CR_ANCHORS = {"B1": WP["B1"], "B3": WP["B3"], "S1": WP["S1"], "S2": WP["S2"], "S3": WP["S3"]}
+WEST = ("W1", "W2", "W6", "W7 SCL", "W7 SDA")
+EAST = ("W3", "W4", "W5")
+X_EDGE_W = 58.00
+
+
+def hgrp(leads):
+    ods = [o for ld in leads for o in OD[ld]]
+    if len(ods) == 1:
+        return ods[0] / 2
+    return max(max(ods), 0.575 * math.sqrt(sum(o * o for o in ods)))
+
+
+H_TRUNK = hgrp(["W1", "W2", "W3", "W4", "W6", "W7 SCL", "W7 SDA", "W7 GND"])
+H_WEST = hgrp(["W1", "W2", "W6", "W7 SCL", "W7 SDA", "W7 GND"])
+H_EAST = hgrp(["W3", "W4"])                       # W3/W4 pair; W5 lies beside it flat (RIBBON_W / 2)
+
+
+def w_paths():
+    """Fixed CR + MB dressing path of each lead up to its last MB point before the MB +y edge, as [(point, h of the
+    segment that starts at this point)]; the east group's MB-edge crossing is optimised in w_routes2."""
+    P = WP
+    trunk_low = [(P["T0"], hgrp(["W3", "W4"])), (P["J67"], hgrp(["W3", "W4", "W6", "W7 SCL", "W7 SDA", "W7 GND"]))]
+    trunk = [(P["T1"], H_TRUNK), (P["B1"], H_TRUNK), (P["T2"], H_TRUNK), (P["T3"], H_TRUNK), (P["B3"], H_TRUNK),
+             (P["T4"], H_TRUNK), (P["T5"], H_TRUNK), (P["T6"], H_TRUNK)]
+    west = [(P["A1"], H_WEST), (P["WN"], H_WEST)]
+    east = [(P["A1"], hgrp(["W3", "W4"])), (P["E1"], hgrp(["W3", "W4"])), (P["A2"], hgrp(["W3", "W4"]))]
+    east5 = [(P["A1R"], RIBBON_W / 2), (P["E1R"], RIBBON_W / 2), (P["A2"], RIBBON_W / 2)]   # W5 flat on the MB from A1
+    w7h = hgrp(["W7 SCL", "W7 SDA", "W7 GND"])
+    paths = {
+        "W1": [((30.30, 61.20), hgrp(["W1", "W2"]))] + trunk + west,
+        "W2": [((27.70, 61.20), hgrp(["W1", "W2"]))] + trunk + west,
+        "W3": [((24.30, 45.40), OD["W3"][0] / 2), ((24.40, 47.00), OD["W3"][0] / 2),
+               ((24.40, 54.00), OD["W3"][0] / 2)] + trunk_low + trunk + east,
+        "W4": [((24.30, 55.60), OD["W4"][0] / 2)] + trunk_low + trunk + east,
+        "W6": [((33.00, 57.50), hgrp(["W6"])), ((33.00, 59.00), hgrp(["W6"]))] + trunk_low[1:] + trunk + west,
+        "W7 SCL": [((27.00, 57.50), w7h)] + trunk_low[1:] + trunk + west,
+        "W7 SDA": [((31.00, 57.50), w7h), ((31.00, 59.00), w7h)] + trunk_low[1:] + trunk + west,
+        # revision 4: S1/S2 are spacer positions under the ribbon (H.23(l) place_spacers), not path waypoints; the path
+        # is unchanged (S1 (36.00, 46.83) and S2 (28.70, 55.00) were collinear waypoints)
+        "W5": [((40.75, 46.83), RIBBON_W / 2), (P["F1"], RIBBON_W / 2),
+               (P["F2"], RIBBON_W / 2), (P["S3"], RIBBON_W / 2),
+               (P["F3"], RIBBON_W / 2), (P["F4"], RIBBON_W / 2)] + east5,
+    }
+    return paths
+
+
+def arclen(pts):
+    s = [0.0]
+    for i in range(1, len(pts)):
+        s.append(s[-1] + math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]))
+    return s
+
+
+def hazard_rects():
+    """CR hazards of the dressing rule (D-F2): name -> rectangle (x0, y0, x1, y1); 'field' is a never-over area."""
+    hz = {}
+    for k, (x, y) in enumerate(PINS):
+        nm = ("1x12 pin %d post" % (22 - k)) if k < 12 else ("1x10 pin %d post" % (k - 11))
+        hz[nm] = (x - POST / 2, y - POST / 2, x + POST / 2, y + POST / 2)
+    hz["pin-10 pad (VCHG-IN)"] = (45.998 - 0.95, 61.944 - 0.95, 45.998 + 0.95, 61.944 + 0.95)
+    for nm, r in (("C102c", (40.3, 60.10, 43.3, 61.55)), ("C102a", (39.8, 55.30, 42.1, 60.05)),
+                  ("R102", (42.65, 56.65, 44.45, 60.05)), ("C102b", (39.75, 52.05, 44.50, 55.25)),
+                  ("D107", (36.60, 53.40, 39.70, 60.00))):
+        hz["IN strip %s" % nm] = r
+    hz["U101 courtyard"] = (39.3, 61.6, 44.3, 66.6)
+    hz["+x pocket"] = (44.3, 63.40, 48.2, 66.64)
+    fx = FIELD
+    for t, (c, r) in fx["place"].items():
+        x, y = fx["xs"][c], fx["ys"][r]
+        hz["tap pad %s %s" % (TAPS[t][0], t)] = (x - PAD / 2, y - PAD / 2, x + PAD / 2, y + PAD / 2)
+    for t, p in fx["resid"].items():
+        hz["tap pad %s %s" % (TAPS[t][0], t)] = (p[0] - PAD / 2, p[1] - PAD / 2, p[0] + PAD / 2, p[1] + PAD / 2)
+    return hz
+
+
+def path_min(path, rects, s_from=0.0, square=False):
+    """Minimum over the path (from arc length s_from) of the jacket-edge distance to any rect: (value, rect name, s).
+    Round lead: centreline distance - h. square=True (the flat W5 ribbon): an axis-aligned segment sweeps the
+    rectangle bbox +- h (square fold corners), not extended at a cut end."""
+    pts = [p for p, _ in path]
+    s = arclen(pts)
+    best = (1e9, None, None)
+    for i in range(len(pts) - 1):
+        a, b, h = pts[i], pts[i + 1], path[i][1]
+        if s[i + 1] <= s_from:
+            continue
+        cut = s[i] < s_from
+        if cut:
+            t = (s_from - s[i]) / (s[i + 1] - s[i])
+            a = (a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1]))
+        axis = abs(a[0] - b[0]) < 1e-9 or abs(a[1] - b[1]) < 1e-9
+        sw = None
+        if square and axis:
+            sw = [min(a[0], b[0]) - h, min(a[1], b[1]) - h, max(a[0], b[0]) + h, max(a[1], b[1]) + h]
+
+            def coll(p, q, r_):
+                return abs((q[0] - p[0]) * (r_[1] - p[1]) - (q[1] - p[1]) * (r_[0] - p[0])) < 1e-9
+            # no extension along the run at a cut end or where the run continues straight (only at a fold)
+            ends = [(a, cut or (i > 0 and coll(pts[i - 1], a, b))),
+                    (b, i + 2 < len(pts) and coll(a, b, pts[i + 2]))]
+            for p_, flat in ends:
+                if not flat:
+                    continue
+                if abs(a[1] - b[1]) < 1e-9:
+                    sw[0 if p_[0] <= min(a[0], b[0]) + 1e-9 else 2] = p_[0]
+                else:
+                    sw[1 if p_[1] <= min(a[1], b[1]) + 1e-9 else 3] = p_[1]
+        for nm, r in rects.items():
+            if sw is not None:
+                d = rect_dist(sw, r) if not rect_overlap(sw, r) else -min(sw[2] - r[0], r[2] - sw[0], sw[3] - r[1],
+                                                                          r[3] - sw[1])
+            else:
+                d = d_rect_seg(r, a, b) - h
+            if d < best[0]:
+                best = (d, nm, s[i])
+    return best
+
+
+def sw_min(path, s_from=0.0):
+    sw = [s for s in SHAPES if s["net"] in SWITCHED and s["kind"] in ("poly", "wire")]
+    swb = {n: ELS[n]["bbox"] for n in ("REG-FC", "REG-BT", "L-BT")}
+    swb["L-FC (Eaton body)"] = LFC_EATON
+    pts = [p for p, _ in path]
+    best = (1e9, None)
+    for i in range(len(pts) - 1):
+        a, b, h = pts[i], pts[i + 1], path[i][1]
+        for s_ in sw:
+            if s_["closed"] and any(pip(q[0], q[1], s_["pts"]) for q in (a, b)):
+                d = -h
+            else:
+                d = min(dseg_seg(a, b, p, q) for p, q in shape_segs(s_)) - s_["r"] - h
+            if d < best[0]:
+                best = (d, "%s %s" % (s_["net"], s_["kind"]))
+        for nm, bx in swb.items():
+            d = d_rect_seg(bx, a, b) - h
+            if d < best[0]:
+                best = (d, nm)
+    return best
+
+
+def in_spike(v0, cs, lin, cin, rin=0.045, ron=0.031, cout=1.0e-6, lout=0.15e-6, dt=1e-9, tend=12e-6):
+    """round3/calc/r3_calc.py H.19(b) in_spike(), ported unchanged; it also returns the OUT-lead (W1/W2) peak current."""
+    vs, vin, vout = v0, v0, v0
+    i_in, i_fet, i_out = 0.0, 0.0, 0.0
+    t, t_cross, on, vpk, i_off, i_out_pk = 0.0, None, True, v0, 0.0, 0.0
+    while t < tend:
+        di_in = (vs - i_in * rin - vin) / lin
+        i_in += di_in * dt
+        i_fet = (vin - vout) / ron if on else 0.0
+        di_out = vout / lout
+        i_out += di_out * dt
+        i_out_pk = max(i_out_pk, i_out)
+        vs -= i_in / cs * dt
+        vin += (i_in - i_fet) / cin * dt
+        vout += (i_fet - i_out) / cout * dt
+        if on and t_cross is None and i_fet > 45.0:
+            t_cross = t
+        if on and t_cross is not None and t >= t_cross + 1e-6:
+            on = False
+            i_off = i_in
+        if not on:
+            vpk = max(vpk, vin)
+        t += dt
+    return vpk, i_off, i_out_pk
+
+
+def w_routes2(X0, Y0, evm, eib, usb, leads=None, w5_channel=None):
+    """Route rule on the designed dressing path (r7 review 7): fixed CR + MB path to the last MB anchor, MB +y edge
+    crossing (west group straight up at x 58.00; east group optimised within 30 mm of A2), then the shortest path
+    around the obstacles to the terminal's approach point. w5_channel: an extra W5 obstacle (the W3/W4 channel) with
+    the EVM not an obstacle for W5 (W5 crosses over the EVM plate)."""
+    mb = MB_OUTLINE
+    obst = [mb, evm, usb, eib]
+    j201 = (eib[2] - 3.0, (eib[1] + eib[3]) / 2)
+    paths = w_paths()
+    res = {}
+    for lead, (lab, pin, face, fc, Rw, p0) in W_TERM.items():
+        if leads is not None and lead not in leads:
+            continue
+        if face == "eib":
+            term = j201
+            app = (j201[0], eib[1] - APPROACH)
+            obs = [mb, usb] + ([w5_channel] if w5_channel else [evm])
+        else:
+            pb = evm_to_board(pin, X0, Y0)
+            if face == "-x":
+                app = (X0 + fc - APPROACH, pb[1])
+            elif face == "+x":
+                app = (X0 + fc + APPROACH, pb[1])
+            elif face == "-y":
+                app = (pb[0], Y0 + fc - APPROACH)
+            else:
+                app = (pb[0], pb[1] - APPROACH)
+            term = pb
+            obs = obst
+        blocked = None
+        for r in obs:
+            if r[0] < app[0] < r[2] and r[1] < app[1] < r[3]:
+                blocked = "approach point (%.2f, %.2f) inside %s" % (app[0], app[1], "the USB corridor" if r is usb
+                                                                     else "an obstacle")
+        fixed = paths[lead]
+        fpts = [p for p, _ in fixed]
+        Lfix = arclen(fpts)[-1]
+        last = fpts[-1]
+        if lead in WEST:
+            x2s = [X_EDGE_W]
+        else:
+            x2s = [last[0] + 0.25 * k for k in range(-112, 113)
+                   if math.hypot(0.25 * k, mb[3] - last[1]) <= SPAN_MAX and 0.0 < last[0] + 0.25 * k < mb[2]]
+        best = None
+        if blocked is None:
+            for x2 in x2s:
+                P2 = (x2, mb[3])
+                dpath, nodes = shortest(P2, app, obs)
+                L = Lfix + math.hypot(P2[0] - last[0], P2[1] - last[1]) + dpath + \
+                    math.hypot(term[0] - app[0], term[1] - app[1])
+                if best is None or L < best[0]:
+                    best = (L, P2, nodes)
+            if best[0] > 1e17:
+                blocked = "no path around the obstacles"
+            elif any(n[1] < mb[3] - 1e-3 for n in best[2][1:]):
+                blocked = "the only path runs around the MB (below its +y edge)"
+        if best is None:
+            best = (float("nan"), (float("nan"), mb[3]), [])
+        L, P2, nodes = best
+        full = fixed + [(P2, fixed[-1][1])]
+        mx = int(math.ceil(1.25 * L / 10.0 - 1e-9)) * 10 if (L == L and blocked is None) else None
+        res[lead] = dict(term=lab, L=L, max=mx, P2=P2, nodes=nodes, app=app, R=Rw, tpt=term, blocked=blocked,
+                         path=full, Lmb=arclen([p for p, _ in full])[-1])
+    return res
+
+
+def bottleneck(h, res=0.25):
+    """Largest switched-conductor clearance (jacket edge) of any plan path from the trunk start to the MB +y edge
+    that keeps the 2 mm hazard rule with half-width h (raster BFS + bisection)."""
+    x0, y0, x1, y1 = 5.0, 30.0, 80.0, 99.0
+    nx, ny = int((x1 - x0) / res), int((y1 - y0) / res)
+    hz = list(hazard_rects().items())
+    fcy = FIELD["cyd"]
+    sw = [s for s in SHAPES if s["net"] in SWITCHED and s["kind"] in ("poly", "wire")]
+    swb = [ELS[n]["bbox"] for n in ("REG-FC", "REG-BT", "L-BT")] + [LFC_EATON]
+    ok = bytearray(nx * ny)
+    swd = [0.0] * (nx * ny)
+    for j in range(ny):
+        y = y0 + (j + 0.5) * res
+        for i in range(nx):
+            x = x0 + (i + 0.5) * res
+            k = j * nx + i
+            if min(d_rect_pt(r, x, y) for _, r in hz) >= HAZ_GAP + h and d_rect_pt(fcy, x, y) >= h:
+                ok[k] = 1
+            d = min(d_rect_pt(b, x, y) for b in swb)
+            for s_ in sw:
+                if s_["closed"] and pip(x, y, s_["pts"]):
+                    d = 0.0
+                    break
+                d = min(d, min(dpt_seg(x, y, p[0], p[1], q[0], q[1]) for p, q in shape_segs(s_)) - s_["r"])
+            swd[k] = d - h
+    st = (int((WP["T0"][0] - x0) / res), int((WP["T0"][1] - y0) / res))
+
+    def reach(D):
+        seen = bytearray(nx * ny)
+        k0 = st[1] * nx + st[0]
+        seen[k0] = 1
+        q = [k0]
+        while q:
+            k = q.pop()
+            j, i = divmod(k, nx)
+            if y0 + (j + 0.5) * res >= MB_OUTLINE[3] - res:
+                return True
+            for di, dj in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                ii, jj = i + di, j + dj
+                if 0 <= ii < nx and 0 <= jj < ny:
+                    kk = jj * nx + ii
+                    if not seen[kk] and ok[kk] and swd[kk] >= D:
+                        seen[kk] = 1
+                        q.append(kk)
+        return False
+    lo, hi = -10.0, 15.0
+    if not reach(lo):
+        return None
+    for _ in range(12):
+        mid = (lo + hi) / 2
+        if reach(mid):
+            lo = mid
+        else:
+            hi = mid
+    return lo
+
+
+SPACER_JACKET_GAP = 0.5     # mm, revision 4: spacer bead footprint to any other W-lead jacket (plan), ASSUMPTION
+VIA_PAD = 0.7564            # mm, every MB via pad (H.23(c2))
+CHASSIS_MARGIN = 2.0        # mm, revision 4: margin on the 30 mm span rule for the last span to the chassis tie
+
+
+def place_spacers():
+    """Revision 4: S1 and S2 under the W5 ribbon, off the J101 region (+ the 0.5 mm region gap), off the W6/W7 pad
+    exclusion (pad + 0.5 mm), off the divider strip (+ 0.5 mm) and >= SPACER_JACKET_GAP from every other W-lead jacket
+    on the CR; S1 nearest J101, S2 as high (+y) as these allow on the ribbon run x 28.70."""
+    hf = ANCHOR_FP / 2
+    strip = EXTRA["e2"]["strip"]
+    paths = w_paths()
+    others = [(pts[i][0], pts[i + 1][0], pts[i][1]) for ld, pts in paths.items() if ld != "W5"
+              for i in range(len(pts) - 1) if pip(pts[i][0][0], pts[i][0][1], OUTLINE)]
+    w67x = [(x - 0.6 - 0.5, y - 0.75 - 0.5, x + 0.6 + 0.5, y + 0.75 + 0.5) for x, y in W67_PADS]
+    wpx = [(x - d / 2 - 0.5, y - d / 2 - 0.5, x + d / 2 + 0.5, y + d / 2 + 0.5) for x, y, d in W_PADS.values()]
+    j101x = (J101_REG[0] - REGION_GAP, J101_REG[1] - REGION_GAP, J101_REG[2] + REGION_GAP, J101_REG[3] + REGION_GAP)
+    stripx = (strip[0] - REGION_GAP, strip[1] - REGION_GAP, strip[2] + REGION_GAP, strip[3] + REGION_GAP)
+
+    def sd(r, z):          # signed plan distance: negative = overlap depth (the smaller axis)
+        if not rect_overlap(r, z):
+            return rect_dist(r, z)
+        return -min(min(r[2], z[2]) - max(r[0], z[0]), min(r[3], z[3]) - max(r[1], z[1]))
+
+    def checks(c):
+        r = (c[0] - hf, c[1] - hf, c[0] + hf, c[1] + hf)
+        jk = min((d_rect_seg(r, a, b) - h, "%s-%s" % (a, b)) for a, b, h in others)
+        return dict(rect=r, j101=sd(r, J101_REG), w67=min(sd(r, z) for z in w67x), wpads=min(sd(r, z) for z in wpx),
+                    strip=sd(r, strip), jacket=jk[0],
+                    ok=(sd(r, j101x) >= -1e-9 and min(sd(r, z) for z in w67x + wpx) >= -1e-9
+                        and sd(r, stripx) >= -1e-9 and jk[0] >= SPACER_JACKET_GAP - 1e-9))
+    y_rib = 46.83
+    s1 = (round(J101_REG[0] - REGION_GAP - hf, 2), round(max(y_rib, strip[3] + REGION_GAP + hf) + 0.004, 2))
+    xr = WP["F1"][0]
+    s2 = None
+    y = round(min(w[1] for w in w67x) - hf, 2)
+    while y > y_rib + hf:
+        c = checks((xr, y))
+        if c["ok"]:
+            s2 = (xr, y)
+            break
+        y = round(y - 0.01, 2)
+    WP["S1"], WP["S2"] = s1, s2
+    CR_ANCHORS["S1"], CR_ANCHORS["S2"] = s1, s2
+    o1, o2 = (36.00, 46.83), (28.70, 55.00)          # r7 review-7 positions
+    return {"S1": (s1, checks(s1), o1, checks(o1)), "S2": (s2, checks(s2), o2, checks(o2))}
+
+
+def sw3d(path, lead, s_elev=None):
+    """Revision 4 (decision 2026-11-10): the 10 mm switched-conductor rule as a 3-D distance. For each sample on the
+    lead path with a plan jacket-edge distance d < 10 mm to a switched conductor of top height H, the jacket bottom
+    must sit at >= H + sqrt(10^2 - d^2) above the MB top (H + 10 where d <= 0). Base height: CR top on the CR, the MB
+    top off it; W5 at its fold height (CR top + 8 mm) until s_elev (A1). Returns the intervals that need a spacer."""
+    sw = [(s_["net"] + " " + s_["kind"], s_, H_POUR) for s_ in SHAPES if s_["net"] in SWITCHED and
+          s_["kind"] in ("poly", "wire")]
+    bx = [("REG-FC box", ELS["REG-FC"]["bbox"], H_REG), ("REG-BT box", ELS["REG-BT"]["bbox"], H_REG),
+          ("L-BT body", ELS["L-BT"]["bbox"], H_LFC), ("L-FC body (Eaton)", LFC_EATON, H_LFC)]
+    pts = [p for p, _ in path]
+    sl = arclen(pts)
+    samples = []
+    for i in range(len(pts) - 1):
+        a, b, h = pts[i], pts[i + 1], path[i][1]
+        n = max(1, int(math.ceil((sl[i + 1] - sl[i]) / 0.25)))
+        for k in range(n + (1 if i == len(pts) - 2 else 0)):
+            t = k / n
+            q = (a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1]))
+            s = sl[i] + t * (sl[i + 1] - sl[i])
+            if lead == "W5" and s_elev is not None and s < s_elev - 1e-9:
+                zb, base = Z_CR_TOP + W5_FOLD, "fold (CR top + 8 mm)"
+            elif pip(q[0], q[1], OUTLINE):
+                zb, base = Z_CR_TOP, "CR top"
+            else:
+                zb, base = 0.0, "MB top"
+            need, who, dmin = 0.0, None, 1e9
+            for nm, s_, H in sw:
+                if s_["closed"] and pip(q[0], q[1], s_["pts"]):
+                    d = -h
+                else:
+                    d = min(dpt_seg(q[0], q[1], p_[0], p_[1], r_[0], r_[1]) for p_, r_ in shape_segs(s_)) - s_["r"] - h
+                if d < dmin:
+                    dmin = d
+                if d < SW_GAP:
+                    z = H + (SW_GAP if d <= 0 else math.sqrt(SW_GAP ** 2 - d * d))
+                    if z > need:
+                        need, who = z, (nm, d)
+            for nm, r_, H in bx:
+                d = d_rect_pt(r_, q[0], q[1]) - h
+                if d < dmin:
+                    dmin = d
+                if d < SW_GAP:
+                    z = H + (SW_GAP if d <= 0 else math.sqrt(SW_GAP ** 2 - d * d))
+                    if z > need:
+                        need, who = z, (nm, d)
+            samples.append((s, q, zb, base, need, who, dmin))
+    ivs, cur = [], None
+    for smp in samples:
+        s, q, zb, base, need, who, dmin = smp
+        if need > zb + 1e-9:
+            if cur is None:
+                cur = dict(s0=s, p0=q, s1=s, p1=q, need=need, at=q, who=who, rise=need - zb, base=base, zb=zb,
+                           bases={base}, per={})
+            cur.update(s1=s, p1=q)
+            cur.setdefault("prof", []).append((s, q, need, zb))
+            cur["bases"].add(base)
+            pb = cur["per"].setdefault(base, dict(s0=s, p0=q, s1=s, p1=q, need=need, at=q, who=who, zb=zb))
+            pb.update(s1=s, p1=q)
+            if need > pb["need"] + 1e-12 or (abs(need - pb["need"]) <= 1e-12 and who[1] < pb["who"][1]):
+                pb.update(need=need, at=q, who=who)
+            if need - zb > cur["rise"] + 1e-12:
+                cur.update(rise=need - zb, base=base, zb=zb)
+            if need > cur["need"] + 1e-12 or (abs(need - cur["need"]) <= 1e-12 and who[1] < cur["who"][1]):
+                cur.update(need=need, at=q, who=who)
+        elif cur is not None:
+            ivs.append(cur)
+            cur = None
+    if cur is not None:
+        ivs.append(cur)
+    return ivs, min(z[6] for z in samples)
+
+
 def sec_l():
-    head("H.23(l) EVM reference placement, Teensy USB corridor, EIB position, W-lead routes and maxima, chassis tie")
+    head("H.23(l) EVM reference placement, Teensy USB corridor, EIB position, W-lead dressing path, anchors, routes and "
+         "maxima, W1/W2 hard short")
+    spc = place_spacers()
     X0 = EVM_RIGHT - EVM_W
     Y0 = MB_OUTLINE[3] + G_J8
     evm = (X0, Y0, X0 + EVM_W, Y0 + EVM_W)
@@ -3197,31 +4605,347 @@ def sec_l():
     j201 = (eib[2] - 3.0, (eib[1] + eib[3]) / 2)
     mb = MB_OUTLINE
     tie_xmax = TIE_XMAX
-    out("Route rule (BASIS section 1): CR pad -> tab X top edge (x1 in 56-65) -> straight to the MB +y edge (x2 in 56-80, "
-        "and <= %.2f so the chassis tie at the MB edge stays <= 30 mm from the CR edge, DOC A.3 r5) -> shortest path "
-        "around the EVM, the USB corridor, the EIB and the MB -> %.0f mm straight approach normal to the terminal's "
-        "wire-entry face (ASSUMPTION) -> terminal. Plan lengths; build max = 1.25 x route rounded up to 10 mm. Switched "
-        "conductors (VSW-FC/VSW-BT pours, L-FC/L-BT bodies (Eaton), REG-FC/REG-BT boxes) must stay >= 10 mm from the "
-        "corridor segment." % (tie_xmax, APPROACH))
+    old = w_routes(X0, Y0, evm, eib, USB)
+    out("(**superseded in r7:** route rule CR pad -> straight to the tab X top edge (x1 56-65) -> MB +y edge (x2 56-68.91) "
+        "with a chassis tie at the MB edge; route / maximum mm: %s. That first segment crossed the pin-10 post, the IN "
+        "strip and the tap field; r7 review 7, D-F2.)" % ", ".join("%s %.1f / %d" % (k, v["L"], v["max"])
+                                                                   for k, v in old.items()))
+    out("Designed dressing path (r7 review 7, D-F2; board mm): every W lead leaves its CR joint inside the A.3 RTV bead "
+        "(first %.0f mm), joins the TRUNK on the footprint (x %.2f, from y %.2f; W3 runs up x 24.40 from its hole and "
+        "pairs with W4 at y %.2f, W6/W7 join at y %.2f, W1/W2 at y %.2f), passes onto tab Y, turns +x at y %.2f on the -y side of the FT2 fill-hole disc, "
+        "rises to y %.2f past the U101 courtyard and the +x pocket and to y %.2f past the tap pads (off the CR from the "
+        "tab Y edge x 37.56), and reaches the MB tie base A1 (%.2f, %.2f). From A1 the WEST group (W1, W2, W6, W7) runs "
+        "to (%.2f, %.2f) and straight up x %.2f to the MB +y edge; the EAST group (W3, W4, W5) runs up x %.2f to "
+        "(%.2f, %.2f), clear of D-FC-EN and C-D1, to the MB tie base A2 (%.2f, %.2f) and crosses the MB +y edge "
+        "within %.0f mm of A2. W5 (flat, %.2f mm wide) rises at J101, folds -x at >= 8 mm above the CR top to "
+        "(%.2f, %.2f), runs +y over the interior to (%.2f, %.2f), +x at y %.2f, steps to y %.2f over x %.2f-%.2f "
+        "(clear of the tap pads) and lies flat on the MB from A1, supported on spacer beads S1 "
+        "(%.2f, %.2f), S2 (%.2f, %.2f) and S3 (%.2f, %.2f) (S3 next to the B3 spot). Envelope half-widths (jacket edge "
+        "about the centreline; OD ASSUMPTION, TODO(measure: MS2/MS7)): trunk %.2f, west group %.2f, east group %.2f "
+        "(the ribbon), W3/W4 pair %.2f, single 18 AWG %.2f mm."
+        % (BEAD_LEN, WP["T0"][0], WP["T0"][1], WP["T0"][1], WP["J67"][1], WP["T1"][1], WP["T2"][1], WP["T4"][1],
+           WP["T6"][1], WP["A1"][0], WP["A1"][1], WP["WN"][0], WP["WN"][1], X_EDGE_W, WP["E1"][0], WP["E1"][0],
+           WP["E1"][1], WP["A2"][0], WP["A2"][1], SPAN_MAX, RIBBON_W, WP["F1"][0], WP["F1"][1], WP["F2"][0],
+           WP["F2"][1], WP["F2"][1], WP["F4"][1], WP["F3"][0], WP["F4"][0], WP["S1"][0], WP["S1"][1], WP["S2"][0],
+           WP["S2"][1], WP["S3"][0], WP["S3"][1],
+           H_TRUNK, H_WEST, H_EAST, hgrp(["W3", "W4"]), OD["W3"][0] / 2))
+    for nm, (c, ck, c0, ck0) in spc.items():
+        out("  spacer bead %s (revision 4; %.1f x %.1f mm footprint, ASSUMPTION) at (%.2f, %.2f), under the ribbon (offset "
+            "%.2f mm from its centreline): J101 region %.2f mm (region gap >= %.1f), W6/W7 pads %.2f mm from their + 0.5 "
+            "mm exclusion, W1-W4 pad exclusion %.2f mm, divider strip %.2f mm, nearest other W-lead jacket %.2f mm (rule "
+            ">= %.1f): %s (**superseded in r7:** (%.2f, %.2f): J101 region %.2f mm, W6/W7 exclusion %.2f mm, jacket "
+            "%.2f mm)"
+            % (nm, ANCHOR_FP, ANCHOR_FP, c[0], c[1], abs(c[1] - 46.83) if nm == "S1" else abs(c[0] - WP["F1"][0]),
+               ck["j101"], REGION_GAP, ck["w67"], ck["wpads"], ck["strip"], ck["jacket"], SPACER_JACKET_GAP,
+               "pass" if ck["ok"] else "FAIL", c0[0], c0[1], ck0["j101"], ck0["w67"], ck0["jacket"]))
+    res = w_routes2(X0, Y0, evm, eib, USB, w5_channel=(evm[2], MB_OUTLINE[3], USB[0], USB[3]))
+    hz = hazard_rects()
+    rework = {"C-D2 (R171 / T2 joint)": ELS["C-D2"]["bbox"], "D-FC-EN (EN bodge)": ELS["D-FC-EN"]["bbox"],
+              "C-D1": ELS["C-D1"]["bbox"]}
     out("")
-    out("  %-7s %-30s %-20s %-36s %8s %8s %8s %8s" % ("lead", "terminal", "approach point", "route nodes (board)",
-                                                       "route", "max", "tie", "sw min"))
-    res = w_routes(X0, Y0, evm, eib, USB)
+    out("  per lead (CR + MB span from the joint to the MB +y edge; clearance = jacket edge, the first %.0f mm in the "
+        "bead excluded; W5 from the J101 region edge x 37.0):" % BEAD_LEN)
+    chk = {}
     for lead, r in res.items():
-        p0 = T[lead][5]
-        out("  %-7s %-30s (%7.2f,%7.2f)  %-36s %8.1f %8d %8.2f %8.2f"
-            % (lead, r["term"][:30], r["app"][0], r["app"][1],
-               " ".join("(%.1f,%.1f)" % n for n in [p0, r["P1"]] + r["nodes"] + [r["tpt"]])[:36], r["L"], r["max"],
-               r["tie"], r["sw"]))
-        out("          full path: %s" % " -> ".join("(%.2f, %.2f)" % n for n in [p0, r["P1"]] + r["nodes"] + [r["tpt"]]))
-    # J5 approach points and the channel between the EVM right edge and the corridor
+        path = r["path"]
+        sq = lead == "W5"
+        s0 = (40.75 - J101_REG[0]) if sq else BEAD_LEN
+        hmin = path_min(path, hz, s0, square=sq)
+        hbead = path_min(path, hz, 1e-9, square=sq)
+        fmin = path_min(path, {"tap field courtyard": FIELD["cyd"]}, s0, square=sq)
+        swm = sw_min(path)
+        rwm = path_min(path, rework, 0.0)
+        chk[lead] = dict(haz=hmin, bead=hbead, field=fmin, sw=swm, rework=rwm)
+        out("  %-7s hazards (>= %.1f): %.2f mm (%s)%s; tap field courtyard %.2f mm; switched conductors (>= %.0f): "
+            "%.2f mm (%s); MB rework points (>= %.1f): %.2f mm (%s)"
+            % (lead, HAZ_GAP, hmin[0], hmin[1], ("; inside the joint bead / J101 zone %.2f mm (%s)" % (hbead[0], hbead[1]))
+               if hbead[0] < hmin[0] - 1e-6 else "", fmin[0], SW_GAP, swm[0], swm[1], REWORK_GAP, rwm[0], rwm[1]))
+    zr = (J101_REG[0], 46.83 - RIBBON_W / 2, 40.75, 46.83 + RIBBON_W / 2)
+    zmin = min(((rect_dist(zr, r), nm) for nm, r in hz.items() if nm.startswith("IN strip")), key=lambda z: z[0])
+    lfc_ov = WP["F2"][1] + RIBBON_W / 2 - LFC_EATON[1]
+    out("  W5 exceptions (flat ribbon, square fold corners): over the J101 region x %.2f-40.75 (the riser and the fold, "
+        ">= 8 mm above the CR top) the ribbon edge lies %.3f mm in plan from %s, because A.8 sets the J101 region "
+        "0.50 mm below the IN strip; the S1 spacer bead holds the fold height there. The tab Y run at y %.2f +- %.3f "
+        "overlaps the L-FC body (y >= %.3f) by %.2f mm in plan, %.1f mm or more above the MB (8 mm fold height + the "
+        "4.265 mm CR top), L-FC body height TODO(verify: L-FC datasheet)." % (J101_REG[0], zmin[0], zmin[1], WP["F2"][1],
+                                                                             RIBBON_W / 2, LFC_EATON[1], lfc_ov,
+                                                                             8.0 + 4.265))
+    bad_h = [k for k, v in chk.items() if v["haz"][0] < HAZ_GAP - 1e-6 or v["field"][0] < 0]
+    bad_rw = [k for k, v in chk.items() if v["rework"][0] < REWORK_GAP - 1e-6]
+    sw_all = min(v["sw"][0] for v in chk.values())
+    out("  dressing rule (D-F2): hazard gap %s; tap field never crossed %s; MB rework points %s"
+        % ("met by every lead" if not [k for k in bad_h if chk[k]["haz"][0] < HAZ_GAP - 1e-6] else
+           "FAILS for " + ", ".join(bad_h), "yes" if all(v["field"][0] >= 0 for v in chk.values()) else "NO",
+           "met" if not bad_rw else "below 1.5 mm for " + ", ".join(bad_rw)))
+    b_tr = bottleneck(H_TRUNK)
+    b_1 = bottleneck(0.5)
+    out("  switched-conductor rule (>= %.0f mm): the designed path keeps %.2f mm (worst lead). FEASIBILITY: the L-FC "
+        "body (Eaton 12.9 mm, y >= %.3f) lies 0.862 mm past the tab Y +y edge, so every point of tab Y and the footprint "
+        "strip y > %.2f is within 10 mm of it, and the 2 mm hazard rule closes every other exit (U101/+x pocket/IN "
+        "strip/pin-10 post and the tap pads). Raster check (0.25 mm, BFS from the trunk start to the MB +y edge over "
+        "all plan paths that keep the 2 mm hazard rule): largest achievable switched clearance %.2f mm for the trunk "
+        "bundle (half-width %.2f) and %.2f mm for a single 1.0 mm lead; no CR exit meets 10 mm. The 10 mm rule can be "
+        "met only on the MB span (from the tie base A1 on: %s)."
+        % (SW_GAP, sw_all, LFC_EATON[1], LFC_EATON[1] - SW_GAP, b_tr if b_tr is not None else float("nan"), H_TRUNK,
+           b_1 if b_1 is not None else float("nan"),
+           ", ".join("%s %.2f" % (k, sw_min(v["path"][[z[0] for z in v["path"]].index(WP["A1R"] if k == "W5" else
+                                                                                         WP["A1"]):])[0])
+                     for k, v in res.items())))
+    # ---- revision 4: the 10 mm switched-conductor rule as a 3-D distance (decision 2026-11-10, D-H no height limit)
+    out("  3-D switched-conductor rule (revision 4; decision 2026-11-10 with the D-H statement of no height limit): where "
+        "the plan jacket-edge distance d to a switched conductor is < %.0f mm, the lead is held by insulating spacers / "
+        "RTV beads so that its jacket bottom sits at >= H + sqrt(%.0f^2 - d^2) above the MB top (H + %.0f where it "
+        "overlaps in plan); conductor tops H: VSW-FC/VSW-BT pours %.1f mm (copper at the MB top), REG-FC/REG-BT %.1f mm "
+        "(TPS61288LRQQR.pdf VQFN-HR 1 mm max height), L-FC/L-BT %.1f mm (ASSUMPTION from the HCM1A1305V3 size code; "
+        "TODO(verify: Eaton HCM1A1305V3 drawing), MS3 caliper); lead bases: CR top %.3f mm on the CR, MB top off it, "
+        "W5 at its fold (CR top + %.0f mm = %.3f mm) until A1. A spacer is needed where the requirement exceeds the base:"
+        % (SW_GAP, SW_GAP, SW_GAP, H_POUR, H_REG, H_LFC, Z_CR_TOP, W5_FOLD, Z_CR_TOP + W5_FOLD))
+    sw3d_res = {}
+    prof_done = set()
+    for lead, r in res.items():
+        pts_ = [p for p, _ in r["path"]]
+        s_el = arclen(pts_)[pts_.index(WP["A1R"])] if lead == "W5" else None
+        ivs, dmin = sw3d(r["path"], lead, s_el)
+        sw3d_res[lead] = ivs
+        if not ivs:
+            out("    %-7s no spacer needed (minimum plan distance %.2f mm)" % (lead, dmin))
+            continue
+        for iv in ivs:
+            out("    %-7s s %.1f-%.1f mm, (%.2f, %.2f) -> (%.2f, %.2f): %s"
+                % (lead, iv["s0"], iv["s1"], iv["p0"][0], iv["p0"][1], iv["p1"][0], iv["p1"][1],
+                   "; ".join("over the %s (%.3f mm) from (%.2f, %.2f) to (%.2f, %.2f): jacket bottom >= %.2f mm above "
+                             "the MB top = a spacer %.2f mm above the %s (controlling: %s at plan %.2f mm, at "
+                             "(%.2f, %.2f))" % (b, pb["zb"], pb["p0"][0], pb["p0"][1], pb["p1"][0], pb["p1"][1],
+                                                pb["need"], pb["need"] - pb["zb"], b, pb["who"][0], pb["who"][1],
+                                                pb["at"][0], pb["at"][1])
+                             for b, pb in sorted(iv["per"].items(), key=lambda z: z[1]["s0"]))))
+            key_ = (round(iv["p0"][0], 2), round(iv["p0"][1], 2), round(iv["p1"][0], 2), round(iv["p1"][1], 2))
+            if key_ not in prof_done:
+                prof_done.add(key_)
+                pr_, last_s = [], -1e9
+                for s_, q_, nd_, zb_ in iv["prof"]:
+                    if s_ - last_s >= 2.5 - 1e-9 or s_ == iv["prof"][-1][0]:
+                        pr_.append("(%.2f, %.2f) %.2f" % (q_[0], q_[1], nd_))
+                        last_s = s_
+                out("            required jacket-bottom height above the MB top along this run (every 2.5 mm; shared by "
+                    "every lead with the same run): %s" % ", ".join(pr_))
+    out("    the plan raster bound above stays as information: no plan path meets 10 mm on the CR, so the rule is met in "
+        "3-D by the spacer heights listed (W5: the fold height over tab Y is raised to the listed bottom height)")
+    # ---- anchors: CR beads, MB tie bases (position, tolerance, part and via check), spans along each lead
+    out("  anchors (D-F2): CR RTV beads (footprint %.1f x %.1f mm each, ASSUMPTION) %s; MB adhesive tie bases:"
+        % (ANCHOR_FP, ANCHOR_FP, ", ".join("%s (%.2f, %.2f)" % (k, v[0], v[1]) for k, v in CR_ANCHORS.items())))
+    tb_chk = {}
+    for nm, (c, side) in TIE_BASES.items():
+        zone = (c[0] - side / 2 - TIE_TOL, c[1] - side / 2 - TIE_TOL, c[0] + side / 2 + TIE_TOL, c[1] + side / 2 + TIE_TOL)
+        dp = min((rect_dist(p["bbox"], zone) if not rect_overlap(p["bbox"], zone) else -1.0, p["name"]) for p in PARTS)
+        vz = [(v["net"], f2(v["x"]), f2(v["y"])) for v in VIAS if zone[0] - via_dia(v) / 2 < v["x"] < zone[2] +
+              via_dia(v) / 2 and zone[1] - via_dia(v) / 2 < v["y"] < zone[3] + via_dia(v) / 2]
+        cu = sorted({s["net"] for s in NONGND if s["kind"] in ("wire", "poly") and clearance(s, rpoly(zone)) <= 0.0})
+        on_mb = zone[0] >= 0 and zone[3] <= MB_OUTLINE[3] and zone[1] >= TAB_X[3]
+        tb_chk[nm] = dict(zone=zone, part=dp, vias=vz, cu=cu, on_mb=on_mb)
+        out("    %s: %.1f x %.1f mm base (ASSUMPTION; TODO(verify: adhesive tie-base datasheet)) centred (%.2f, %.2f) +- %.1f "
+            "mm -> zone x %.2f-%.2f, y %.2f-%.2f: nearest MB part box %.2f mm (%s); vias under the zone: %s "
+            "(non-GND: %s); non-GND layer-1 copper under the zone: %s; on the MB outside the CR shadow: %s"
+            % (nm, side, side, c[0], c[1], TIE_TOL, zone[0], zone[2], zone[1], zone[3], dp[0], dp[1],
+               len(vz), [z for z in vz if z[0] != "GND"] or "none", ", ".join(cu) or "none (GND pour)",
+               "yes" if on_mb else "NO"))
+    spans = {}
+    for lead, r in res.items():
+        pts = [p for p, _ in r["path"]]
+        s = arclen(pts)
+        # revision 4: the S spacer beads carry W5 only (anywhere under the ribbon); the B beads carry the round leads
+        anc = {k: v for k, v in CR_ANCHORS.items() if (k.startswith("S") == (lead == "W5"))}
+        anc.update({k: v[0] for k, v in TIE_BASES.items()})
+        pos = []
+        for nm, q in anc.items():
+            tol = (TIE_BASES[nm][1] / 2) if nm in TIE_BASES else \
+                ((RIBBON_W / 2 - ANCHOR_FP / 2) if nm.startswith("S") else 0.05)   # a lead tied over a base anywhere on it
+            for i in range(len(pts) - 1):
+                if dpt_seg(q[0], q[1], pts[i][0], pts[i][1], pts[i + 1][0], pts[i + 1][1]) < tol:
+                    a, b = pts[i], pts[i + 1]
+                    L_ = math.hypot(b[0] - a[0], b[1] - a[1])
+                    tt = max(0.0, min(1.0, ((q[0] - a[0]) * (b[0] - a[0]) + (q[1] - a[1]) * (b[1] - a[1])) / L_ ** 2))
+                    pos.append((s[i] + tt * L_, nm))
+                    break
+        pos.sort()
+        first = (40.75 - WP["S1"][0], "S1 (J101 fold)") if lead == "W5" else (BEAD_LEN, "joint bead end")
+        chain = [first] + [z for z in pos if z[0] > first[0] + 1e-6] + [(s[-1], "MB +y edge")]
+        sp = [(chain[i][1], chain[i + 1][1], chain[i + 1][0] - chain[i][0]) for i in range(len(chain) - 1)]
+        spans[lead] = sp
+        last = sp[-1][2]
+        out("    %-7s spans: %s; max %.1f mm %s; the last span runs on past the MB +y edge to the chassis tie: tie <= "
+            "%.1f mm past the edge (along the lead) for <= 30 mm, <= %.1f mm with the %.0f mm margin"
+            % (lead, "; ".join("%s -> %s %.1f" % z for z in sp), max(z[2] for z in sp),
+               "<= 30 ok" if max(z[2] for z in sp) <= SPAN_MAX + 1e-6 else "EXCEEDS 30", SPAN_MAX - last,
+               SPAN_MAX - CHASSIS_MARGIN - last, CHASSIS_MARGIN))
+    grp_tie = {}
+    for gname, members in (("west group (W1, W2, W6, W7)", WEST), ("W3/W4", ("W3", "W4")), ("W5", ("W5",))):
+        lastg = max(spans[m][-1][2] for m in members)
+        grp_tie[gname] = (lastg, SPAN_MAX - lastg, SPAN_MAX - CHASSIS_MARGIN - lastg)
+    # west-group MB tie base nearer the edge: search along the west run (part-box clear, no non-GND via in the zone)
+    a3 = {}
+    for side, tol in ((6.0, TIE_TOL), (4.0, 1.0)):
+        best = None
+        for i_ in range(-60, 61):
+            cx = X_EDGE_W + 0.05 * i_
+            if abs(cx - X_EDGE_W) > side / 2 - 1.0:
+                continue
+            for j_ in range(0, 480):
+                cy = WP["WN"][1] + 0.05 * j_
+                z = (cx - side / 2 - tol, cy - side / 2 - tol, cx + side / 2 + tol, cy + side / 2 + tol)
+                if z[3] > MB_OUTLINE[3]:
+                    break
+                dp = min((rect_dist(p["bbox"], z) if not rect_overlap(p["bbox"], z) else -1.0, p["name"]) for p in PARTS)
+                if dp[0] < 0:
+                    continue
+                if any(v["net"] != "GND" and z[0] - VIA_PAD / 2 < v["x"] < z[2] + VIA_PAD / 2 and
+                       z[1] - VIA_PAD / 2 < v["y"] < z[3] + VIA_PAD / 2 for v in VIAS):
+                    continue
+                if best is None or cy > best[1] + 1e-9:
+                    best = (cx, cy, dp)
+        a3[(side, tol)] = best
+    out("    west-group MB tie base nearer the edge (revision 4 search along x %.2f +- (side/2 - 1 mm), zone = base + "
+        "tolerance clear of every MB part box and every non-GND via): %s"
+        % (X_EDGE_W, "; ".join(("%.0f x %.0f mm +- %.1f: %s" % (k[0], k[0], k[1], ("highest fit at (%.2f, %.2f), %.2f "
+                                                                                 "mm from %s, %.2f mm below the MB "
+                                                                                 "+y edge" % (v[0], v[1], v[2][0],
+                                                                                              v[2][1], MB_OUTLINE[3] -
+                                                                                              v[1])) if v else
+                                                              "no position (C4C-FC, SNS-FC and the FC-CURR vias "
+                                                              "(58.93, 83.57) / (60.71, 90.42) close the run)"))
+                               for k, v in a3.items())))
+    out("    chassis tie (revision 4; the last span from the last MB anchor runs past the MB +y edge to the chassis "
+        "tie, so the tie position closes it; choice: no further MB tie base, because the A1-size base has no fit on "
+        "the west run and the only fit is a 4 x 4 mm base +- 1.0 mm touching C4C-FC): %s. (**superseded in r7:** "
+        "'the chassis tie is an extra anchor with no distance limit'; the r7 rev-2 tie at the MB +y edge 29.744 mm "
+        "from the tab X top edge, margins 0.256 / 0.02 mm.)"
+        % "; ".join("%s last span to the edge %.1f mm: tie <= %.1f mm past the edge (rule), <= %.1f mm with the %.0f mm "
+                    "margin" % (g, v[0], v[1], v[2], CHASSIS_MARGIN) for g, v in grp_tie.items()))
+    # ---- MB parts and untented non-GND vias under each lead (polyimide protection strip extents)
+    out("  MB parts and untented non-GND vias under each lead off the CR (plan envelope; every MB via is untented, "
+        "H.23(c2)); the polyimide strip covers their union + 2.0 mm:")
+    cross = {}
+    near_parts = [p for p in PARTS if rect_dist(p["bbox"], (30.0, 64.0, 80.0, 100.0)) < 6.0]
+    near_vias = [v for v in VIAS if v["net"] != "GND" and 30.0 - 6 < v["x"] < 86.0 and 58.0 < v["y"] < 100.0]
+    for lead, r in res.items():
+        pts = [p for p, _ in r["path"]]
+        hs = [h for _, h in r["path"]]
+        sl = arclen(pts)
+        s_mb = sl[pts.index(WP["A1R"])] if lead == "W5" else 0.0       # W5 is elevated on spacers until A1
+        parts_x, vias_x = set(), set()
+        for i in range(len(pts) - 1):
+            a, b, h = pts[i], pts[i + 1], hs[i]
+            n = max(1, int(math.hypot(b[0] - a[0], b[1] - a[1]) / 0.25))
+            for k in range(n + 1):
+                q = (a[0] + (b[0] - a[0]) * k / n, a[1] + (b[1] - a[1]) * k / n)
+                if sl[i] + (sl[i + 1] - sl[i]) * k / n < s_mb - 1e-9 or pip(q[0], q[1], OUTLINE):
+                    continue                                       # on (or elevated above) the CR, not on the MB
+                for p in near_parts:
+                    if d_rect_pt(p["bbox"], q[0], q[1]) <= h:
+                        parts_x.add(p["name"])
+                for v in near_vias:
+                    if math.hypot(v["x"] - q[0], v["y"] - q[1]) <= h + via_dia(v) / 2:
+                        vias_x.add((v["net"], round(v["x"], 3), round(v["y"], 3)))
+        cross[lead] = (sorted(parts_x), sorted(vias_x))
+        out("    %-7s parts: %s; non-GND vias: %s" % (lead, ", ".join(sorted(parts_x)) or "none",
+                                                      ", ".join("%s (%.2f, %.2f)" % v for v in sorted(vias_x)) or "none"))
+    # revision 4: the vias under W5's elevated run off the CR (tab Y edge to A1), which W5 would cross if it touched down
+    # before A1; listed and added to the strip when they lie inside it
+    w5p = res["W5"]["path"]
+    w5pts = [p for p, _ in w5p]
+    w5s = arclen(w5pts)
+    s_a1r = w5s[w5pts.index(WP["A1R"])]
+    w5_desc = set()
+    for i in range(len(w5pts) - 1):
+        a, b, h = w5pts[i], w5pts[i + 1], w5p[i][1]
+        n = max(1, int(math.hypot(b[0] - a[0], b[1] - a[1]) / 0.25))
+        for k in range(n + 1):
+            q = (a[0] + (b[0] - a[0]) * k / n, a[1] + (b[1] - a[1]) * k / n)
+            if w5s[i] + (w5s[i + 1] - w5s[i]) * k / n > s_a1r + 1e-9 or pip(q[0], q[1], OUTLINE):
+                continue
+            for v in near_vias:
+                if math.hypot(v["x"] - q[0], v["y"] - q[1]) <= h + via_dia(v) / 2:
+                    w5_desc.add((v["net"], round(v["x"], 3), round(v["y"], 3)))
+    w5_desc = sorted(w5_desc)
+    allp = sorted({p for v in cross.values() for p in v[0]})
+    allv0 = sorted({x for v in cross.values() for x in v[1]})
+    vr = VIA_PAD / 2
+    bbs = [ELS[p]["bbox"] for p in allp if p in ELS] + [(v[1] - vr, v[2] - vr, v[1] + vr, v[2] + vr) for v in allv0]
+    strip_ext = (min(b[0] for b in bbs) - 2.0, min(b[1] for b in bbs) - 2.0, max(b[2] for b in bbs) + 2.0,
+                 min(max(b[3] for b in bbs) + 2.0, MB_OUTLINE[3])) if bbs else None
+    strip_old_ymax = min(max([ELS[p]["bbox"][3] for p in allp if p in ELS] + [v[2] for v in allv0]) + 2.0,
+                         MB_OUTLINE[3]) if bbs else None
+    in_strip = [v for v in w5_desc if strip_ext and strip_ext[0] <= v[1] - vr and v[1] + vr <= strip_ext[2] and
+                strip_ext[1] <= v[2] - vr and v[2] + vr <= strip_ext[3]]
+    allv = sorted(set(allv0) | set(in_strip))
+    if strip_ext:
+        out("    W5 elevated run off the CR (tab Y edge to A1, at its fold height): non-GND vias under it %s; inside the "
+            "strip extent: %s" % (", ".join("%s (%.2f, %.2f)" % v for v in w5_desc) or "none",
+                                  ", ".join("%s (%.2f, %.2f)" % v for v in in_strip) or "none"))
+        out("    polyimide strip: covers %s and %d non-GND vias (%d under the leads on the MB + %d more under the W5 elevated "
+            "run only); extent of the crossed features + 2.0 mm, via pads at their %.4f mm diameter: x %.2f-%.2f, y %.2f-%.2f "
+            "(laid along the lead path, not a full rectangle) (**superseded in r7:** y max %.2f with the via centres as "
+            "points)" % (", ".join(allp), len(allv), len(allv0), len(allv) - len(allv0), VIA_PAD, strip_ext[0], strip_ext[2],
+                         strip_ext[1], strip_ext[3], strip_old_ymax))
+    # ---- routes, maxima, W1/W2 fixed length, W5 minimum fit, the USB channel
+    out("")
+    out("  %-7s %-30s %-20s %9s %9s %14s  %s" % ("lead", "terminal", "approach point", "CR+MB", "route",
+                                                "build (mm)", "MB-edge crossing -> nodes -> terminal"))
+    for lead, r in res.items():
+        lab_b = ("fixed 300+-10" if lead in ("W1", "W2") else ("fixed 304.8" if lead == "W5" else
+                                                               "max %d" % r["max"]))     # revision 4 labels
+        out("  %-7s %-30s (%7.2f,%7.2f) %9.1f %9.1f %14s  (%.2f, %.3f) -> %s -> (%.2f, %.2f)"
+            % (lead, r["term"][:30], r["app"][0], r["app"][1], r["Lmb"], r["L"], lab_b, r["P2"][0], r["P2"][1],
+               " -> ".join("(%.2f, %.2f)" % n for n in r["nodes"][1:]) or "-", r["tpt"][0], r["tpt"][1]))
+        out("          full path: %s" % " -> ".join("(%.2f, %.2f)" % n for n in [p for p, _ in r["path"]] +
+                                                   list(r["nodes"][1:]) + [r["tpt"]]))
+    for lead in ("W1", "W2"):
+        L_ = res[lead]["L"]
+        out("  %s fixed build length 0.30 m +- 10 mm (D-F3): route %.1f mm; slack %.1f mm at 300 mm (%.1f-%.1f mm over "
+            "290-310 mm), dressed as an anchored service loop" % (lead, L_, 300 - L_, 290 - L_, 310 - L_))
+    lw1 = res["W1"]["L"]
+    hs_rows = []
+    for lab, Lm in (("shortest W1 route (this path)", lw1), ("r7 rev-2 W1 route", 181.6),
+                    ("0.30 m build, short limit 290 mm", W12_BUILD[0]), ("0.30 m build length", W12_BUILD[1])):
+        worst = None
+        for v0 in (16.0, 22.0):
+            for cs in (5e-6, 20e-6):
+                for lin in (50e-9, 150e-9):
+                    vpk, ioff, ipk = in_spike(v0, cs, lin, 3.4e-6, lout=0.5e-6 * Lm / 1000.0)
+                    if worst is None or vpk > worst[0]:
+                        worst = (vpk, ioff, ipk, v0, cs, lin)
+        hs_rows.append((lab, Lm, worst))
+        out("  hard short at the EVM J1 end (round3 r3_calc.py H.19(b) in_spike, C_IN 3.4 uF, lead 0.5 uH/m x %.1f mm = "
+            "%.0f nH; worst of V0 16/22 V, C_S 5/20 uF, L_IN 50/150 nH): %s -> IN peak %.1f V, %.0f A at turn-off, "
+            "lead peak %.0f A (V0 %.0f V, C_S %.0f uF, L_IN %.0f nH); D107 VBR(min) 36 V margin %.1f V"
+            % (Lm, 0.5 * Lm, lab, worst[0], worst[1], worst[2], worst[3], worst[4] * 1e6, worst[5] * 1e9,
+               36.0 - worst[0]))
+    out("  D-F3 reason: a W1/W2 cut to its route raises the IN-side spike to %.1f V (%.1f V below D107 VBR(min) 36 V); "
+        "the fixed 0.30 m +- 10 mm build length keeps the r3-r6 H.5/H.19/T-C-04 basis (%.1f V at 300 mm, %.1f V at the "
+        "290 mm short limit)." % (hs_rows[0][2][0], 36.0 - hs_rows[0][2][0], hs_rows[3][2][0], hs_rows[2][2][0]))
+    w5 = res["W5"]
+    out("  W5 fixed 0.30 m factory cable (12.00 in = 304.8 mm): plan route %.1f mm + %.0f mm 3-D allowance (J101 rise and "
+        "fold, J201 drop; ASSUMPTION) = %.1f mm minimum fit -> slack %.1f mm, stowed as a service loop anchored on the "
+        "EVM plate (D-F2); the route figure is a minimum-fit check for W5, not a build maximum"
+        % (w5["L"], W5_ALLOW, w5["L"] + W5_ALLOW, 304.8 - w5["L"] - W5_ALLOW))
+    ch = (evm[2], MB_OUTLINE[3], USB[0], USB[3])
+    in_ch = {lead: any(seg_hits_rect(n1, n2, (ch[0] + 0.01, evm[1] + 0.01, ch[2] - 0.01, ch[3] - 0.01))
+                       for n1, n2 in zip([r["P2"]] + r["nodes"][1:], r["nodes"][1:] + [r["app"]]))
+             for lead, r in res.items() if lead in ("W3", "W4", "W5")}
+    out("  USB channel x %.2f-%.2f (EVM right edge to the corridor; the corridor width is the receptacle silkscreen, the "
+        "plug overmold width TODO(measure: MS2)), %.2f mm wide: W3 %s, W4 %s, W5 %s. W5 is routed around it over the "
+        "EVM plate (W5 obstacle set: MB, corridor, channel; the EVM is not an obstacle for W5; clear of the EVM L2, "
+        "TODO(verify: EVM L2 position, MS2)), so W3/W4 and W5 do not share the channel."
+        % (ch[0], ch[2], ch[2] - ch[0], "uses it" if in_ch["W3"] else "clear", "uses it" if in_ch["W4"] else "clear",
+           "uses it" if in_ch["W5"] else "clear"))
+    EXTRA["l"] = W_EXTRA = dict(chk=chk, spans=spans, cross=cross, strip=strip_ext, tie_bases=tb_chk, hard_short=hs_rows,
+                   bottleneck=(b_tr, b_1), in_channel=in_ch, old={k: (v["L"], v["max"]) for k, v in old.items()},
+                   strip_vias=allv, w5_run_vias=w5_desc, grp_tie=grp_tie, a3=a3, sw3d=sw3d_res, spacers=spc)
+    # J5 approach points
     for lead in ("W3", "W4"):
         a = res[lead]["app"]
         out("  %s J5 approach point (%.2f, %.2f) lies in the corridor x band, %.2f mm beyond the assumed corridor end "
             "y %.2f" % (lead, a[0], a[1], a[1] - USB[3], USB[3]))
-    out("  W3/W4 pass between the EVM right edge (x %.2f) and the corridor (x %.2f): channel %.2f mm wide (twisted 18 AWG "
-        "pair outer size TODO(measure: MS2/MS7)); with a longer plug + bend allowance or clamp bodies past the EVM edge, "
-        "the pair routes around the corridor's +x side instead." % (evm[2], USB[0], USB[0] - evm[2]))
     # pairs and resistance
     out("")
     pr = {"W1/W2 input pair (20 AWG)": ("W1", "W2", R20, (1.80,)), "W3/W4 battery pair (18 AWG)": ("W3", "W4", R18,
@@ -3233,26 +4957,26 @@ def sec_l():
            3.10 * awg_chk[1] * 1e3, 3.10 ** 2 * awg_chk[1] * 1e3))
     pres = {}
     for lab, (a, b, Rw, Is) in pr.items():
-        La, Lb = res[a]["max"] / 1000.0, res[b]["max"] / 1000.0
+        if a == "W1":
+            La, Lb = W12_BUILD[2] / 1000.0, W12_BUILD[2] / 1000.0      # fixed 0.30 m +- 10 mm: the long limit
+            what = "fixed build 0.30 m +- 10 mm (310 mm each, D-F3)"
+        else:
+            La, Lb = res[a]["max"] / 1000.0, res[b]["max"] / 1000.0
+            what = "build maxima %d / %d mm" % (res[a]["max"], res[b]["max"])
         Rmax = Rw * (La + Lb)
         R03 = Rw * 0.60
         pres[lab] = (La, Lb, Rmax, R03)
-        out("  %-28s build maxima %d / %d mm: pair %.2f mOhm (%s); at 0.30 m each: %.2f mOhm (%s)"
-            % (lab, res[a]["max"], res[b]["max"], Rmax * 1e3,
+        out("  %-28s %s: pair %.2f mOhm (%s); at 0.30 m each: %.2f mOhm (%s)"
+            % (lab, what, Rmax * 1e3,
                ", ".join("%.1f mV / %.1f mW at %.2f A" % (I * Rmax * 1e3, I * I * Rmax * 1e3, I) for I in Is),
                R03 * 1e3, ", ".join("%.1f mV / %.1f mW at %.2f A" % (I * R03 * 1e3, I * I * R03 * 1e3, I) for I in Is)))
     for lead in ("W6", "W7 SCL", "W7 SDA"):
         r = res[lead]
         out("  %-28s build max %d mm: %.1f mOhm per conductor (signal; 0.30 m: %.1f mOhm)"
             % (lead, r["max"], r["R"] * r["max"], r["R"] * 300))
-    out("  W5 ribbon: route %.1f mm, 1.25 x route %.1f mm against the 0.30 m factory cable assembly (DOC A.3): %s"
-        % (res["W5"]["L"], 1.25 * res["W5"]["L"], "fits" if 1.25 * res["W5"]["L"] <= 300 else "LONGER than 0.30 m"))
-    out("  Until MS2 confirms the placement, the r6 0.30 m caps stay the T-A-02 bound (BASIS D7).")
-    tie = mb[3] - TAB_X[3]
-    out("Chassis-tie distance from the tab X top edge (y %.2f) to the MB +y edge (y %.3f): %.3f mm (DOC A.3 r5: tie "
-        "within 30 mm of the CR edge) -> margin %.3f mm" % (TAB_X[3], mb[3], tie, 30 - tie))
-    out("Note: DOC A.3 W5 folds the ribbon 'toward -x over the tap field' and runs it along W1/W2; with the W leads "
-        "leaving over tab X and 18 taps on tab X, that fold direction needs restating (r7 design text).")
+    out("  Until MS2 confirms the placement, the r6 0.30 m caps stay the T-A-02 bound for W3/W4, W6 and W7 (BASIS D7); "
+        "W1/W2 stay at 0.30 m +- 10 mm and W5 at the 0.30 m factory cable (D-F2, D-F3).")
+    tie = MB_OUTLINE[3] - TAB_X[3]
     # ---- BASIS section 10 A4: fallbacks for an open-ended corridor -----------------------------------------------
     out("")
     out("USB corridor fallbacks (BASIS section 10 A4): open-ended corridor x %.2f-%.2f from y %.2f upward (no end). At "
@@ -3266,24 +4990,26 @@ def sec_l():
             if r["blocked"]:
                 out("    %-7s BLOCKED: %s" % (lead, r["blocked"]))
             else:
-                out("    %-7s route %6.1f mm, build max %3d mm, x2 %.2f, chassis tie %.2f mm, approach (%.2f, %.2f)"
-                    % (lead, r["L"], r["max"], r["P2"][0], r["tie"], r["app"][0], r["app"][1]))
+                out("    %-7s route %6.1f mm, %s, MB-edge crossing x %.2f, CR+MB span %.1f mm, approach (%.2f, %.2f)"
+                    % (lead, r["L"], ("W5 minimum fit %.1f mm, slack %.1f mm on the 304.8 mm cable"
+                                      % (r["L"] + W5_ALLOW, 304.8 - r["L"] - W5_ALLOW)) if lead == "W5" else
+                       (("fixed 0.30 m, slack %.1f mm" % (300 - r["L"])) if lead in ("W1", "W2") else
+                        "build max %3d mm" % r["max"]), r["P2"][0], r["Lmb"], r["app"][0], r["app"][1]))
     # (i) whole EVM + EIB group shifted -x
     sh_i = max(eib[2], res["W3"]["app"][0], res["W4"]["app"][0]) - (USB[0] - 3.0)
     X0i = X0 - sh_i
     evm_i = (evm[0] - sh_i, evm[1], evm[2] - sh_i, evm[3])
     eib_i = (eib[0] - sh_i, eib[1], eib[2] - sh_i, eib[3])
-    r_i = w_routes(X0i, Y0, evm_i, eib_i, USB_OPEN)
+    r_i = w_routes2(X0i, Y0, evm_i, eib_i, USB_OPEN)
     out("  (i) EVM + EIB group shifted -x by %.2f mm (the EIB rectangle and the W3/W4 J5 approach points >= 3.0 mm left "
         "of x %.2f): EVM x %.2f-%.2f (left edge %.2f, overhang past the MB -x edge x 0: %.2f mm; the leads reach "
         "further, see the chassis-room line); EIB x %.2f-%.2f; J5 approach points x %.2f; E-leads unchanged (EIB fixed "
-        "to the EVM). "
-        "W-lead routes (route rule, x2 <= %.2f, chassis tie <= 30 mm):"
-        % (sh_i, USB[0], evm_i[0], evm_i[2], evm_i[0], -evm_i[0], eib_i[0], eib_i[2], r_i["W3"]["app"][0], TIE_XMAX))
+        "to the EVM). W-lead routes on the designed dressing path (r7 review 7):"
+        % (sh_i, USB[0], evm_i[0], evm_i[2], evm_i[0], -evm_i[0], eib_i[0], eib_i[2], r_i["W3"]["app"][0]))
     route_lines(r_i)
-    ok_i = all(r["blocked"] is None for r in r_i.values()) and all(r["tie"] <= 30.0 + 1e-9 for r in r_i.values())
-    over300 = [k for k, r in r_i.items() if r["max"] is not None and r["max"] > 300 and k != "W5"]
-    w5_fit = r_i["W5"]["L"] * 1.25 <= 300 if r_i["W5"]["blocked"] is None else False
+    ok_i = all(r["blocked"] is None for r in r_i.values())
+    over300 = [k for k, r in r_i.items() if r["max"] is not None and r["max"] > 300 and k not in ("W1", "W2", "W5")]
+    w5_fit = (r_i["W5"]["L"] + W5_ALLOW) <= 304.8 if r_i["W5"]["blocked"] is None else False
     # BASIS section 11 B5: chassis room past the MB -x edge = the most negative x of any approach point, route node or
     # terminal of the shifted group, plus a 20 AWG bend allowance (the lead turns into its 10 mm straight approach at
     # the approach point; a bend of radius R tangent to that approach reaches R + OD/2 beyond it)
@@ -3299,20 +5025,22 @@ def sec_l():
         "harness volume (MS2 measures both). The 'EVM rotated' variant is not evaluated (open item)."
         % (xmin_i[2][0], xmin_i[0], xmin_i[1], xmin_i[2][0], xmin_i[2][1], -evm_i[0], BEND_ALLOW, AWG20_OD,
            6 * AWG20_OD, 6.5 * AWG20_OD, room_i))
-    v_i = ("PASSES geometrically: no lead blocked, every chassis tie <= 30 mm, build maxima %s; %s; W5 1.25 x route "
-           "%.0f mm %s the 0.30 m ribbon; it needs %.1f mm of chassis room past the MB -x edge (%s %s at x %.2f + "
-           "%.1f mm bend allowance; the EVM itself overhangs %.1f mm), clear of the J-BL/J-FC/J-NTC harnesses (MS2)"
-           % (", ".join("%s %d" % (k, r["max"]) for k, r in r_i.items()),
-              ("maxima above the 0.30 m T-A-02 cap: %s" % over300) if over300 else "every W1-W4/W6/W7 maximum <= 0.30 m",
-              1.25 * r_i["W5"]["L"], "fits" if w5_fit else "EXCEEDS", room_i, xmin_i[0], xmin_i[1], xmin_i[2][0],
-              BEND_ALLOW, -evm_i[0])) if ok_i else \
+    v_i = ("PASSES geometrically: no lead blocked; build maxima %s; W1/W2 routes %.1f / %.1f mm against the fixed 0.30 m "
+           "(slack %.1f / %.1f mm); %s; W5 minimum fit %.0f mm %s the 304.8 mm cable (slack %.0f mm); it needs %.1f mm "
+           "of chassis room past the MB -x edge (%s %s at x %.2f + %.1f mm bend allowance; the EVM itself overhangs "
+           "%.1f mm), clear of the J-BL/J-FC/J-NTC harnesses (MS2)"
+           % (", ".join("%s %d" % (k, r["max"]) for k, r in r_i.items() if k not in ("W1", "W2", "W5")),
+              r_i["W1"]["L"], r_i["W2"]["L"], 300 - r_i["W1"]["L"], 300 - r_i["W2"]["L"],
+              ("maxima above the 0.30 m T-A-02 cap: %s" % over300) if over300 else "every W3/W4/W6/W7 maximum <= 0.30 m",
+              r_i["W5"]["L"] + W5_ALLOW, "fits" if w5_fit else "EXCEEDS", 304.8 - r_i["W5"]["L"] - W5_ALLOW, room_i,
+              xmin_i[0], xmin_i[1], xmin_i[2][0], BEND_ALLOW, -evm_i[0])) if ok_i else \
         "FAILS: %s" % "; ".join("%s %s" % (k, r["blocked"]) for k, r in r_i.items() if r["blocked"])
     out("    verdict (i): %s" % v_i)
     fb["i"] = dict(shift=f2(sh_i), evm=evm_i, eib=eib_i, overhang=f2(-evm_i[0]), xmin=(xmin_i[0], xmin_i[1],
                                                                                         xmin_i[2]),
                    bend_allowance=BEND_ALLOW, chassis_room=f2(room_i),
-                   routes={k: dict(L=f2(r["L"]) if r["L"] == r["L"] else None, max=r["max"], tie=f2(r["tie"]) if
-                                   r["tie"] == r["tie"] else None, blocked=r["blocked"]) for k, r in r_i.items()},
+                   routes={k: dict(L=f2(r["L"]) if r["L"] == r["L"] else None, max=r["max"], x2=f2(r["P2"][0]),
+                                   blocked=r["blocked"]) for k, r in r_i.items()},
                    passes=ok_i, verdict=v_i)
     # (ii) EIB moved to the corridor's +x side, EVM unchanged
     eib_ii = (USB[2] + 3.0, eib[1], USB[2] + 3.0 + EIB_W, eib[3])
@@ -3335,7 +5063,7 @@ def sec_l():
     out("    E1 + E8 + C205 at the new E1 maximum %d mm: f0 %.3f MHz, Z0 %.3f Ohm, undamped Q %.1f (DC wire resistance; "
         "%.1f with the skin-effect Rac), %.3f with R276 (overdamped)" % (e_ii["E1"][1], rz["f0"] / 1e6, rz["Z0"], rz["Q"],
                                                                         rz["Q_ac"], rz["Q_R276"]))
-    r_ii = w_routes(X0, Y0, evm, eib_ii, USB_OPEN, leads=("W3", "W4", "W5"))
+    r_ii = w_routes2(X0, Y0, evm, eib_ii, USB_OPEN, leads=("W3", "W4", "W5"))
     out("    W3/W4/W5 routes with the open-ended corridor:")
     route_lines(r_ii)
     ys_e = (Y0 + EVM_PTS["TP33"][1] + 5.0 - 9 * 2.54, Y0 + EVM_PTS["TP33"][1] + 5.0 + 2 * 2.54)
@@ -3377,19 +5105,113 @@ def sec_l():
         "fallback, decided by MS2): %s" % (first or "none"))
     RJ["l"] = dict(evm=evm, usb=USB, eib=eib, eib_overlaps_usb=ov, eib_choice=eib_choice, j201=j201,
                    fallbacks=fb, first_passing_fallback=first,
-                   routes={k: dict(term=v["term"], L=f2(v["L"]), max=v["max"], P1=v["P1"], P2=v["P2"],
-                                   nodes=v["nodes"], tie=f2(v["tie"]), sw=f2(v["sw"])) for k, v in res.items()},
+                   routes={k: dict(term=v["term"], L=f2(v["L"]),
+                                   max=v["max"] if k not in ("W1", "W2", "W5") else None,
+                                   build=("fixed 0.30 m +- 10 mm" if k in ("W1", "W2") else
+                                          ("fixed 304.8 mm cable" if k == "W5" else "route maximum")),
+                                   P2=v["P2"], nodes=v["nodes"],
+                                   cr_mb_path=[(p, f2(h)) for p, h in v["path"]], cr_mb_len=f2(v["Lmb"]))
+                           for k, v in res.items()},
+                   dressing=dict(waypoints=WP, half_widths=dict(trunk=f2(H_TRUNK), west=f2(H_WEST), east=f2(H_EAST)),
+                                 checks={k: dict(hazard=(f2(c["haz"][0]), c["haz"][1]),
+                                                 in_bead=(f2(c["bead"][0]), c["bead"][1]),
+                                                 field=f2(c["field"][0]), switched=(f2(c["sw"][0]), c["sw"][1]),
+                                                 rework=(f2(c["rework"][0]), c["rework"][1]))
+                                         for k, c in W_EXTRA["chk"].items()},
+                                 bottleneck_switched=dict(trunk=f2(W_EXTRA["bottleneck"][0]) if W_EXTRA["bottleneck"][0]
+                                                          is not None else None,
+                                                          single=f2(W_EXTRA["bottleneck"][1]) if W_EXTRA["bottleneck"][1]
+                                                          is not None else None),
+                                 anchors=dict(cr=CR_ANCHORS, tie_bases={k: dict(centre=v[0], side=v[1], tol=TIE_TOL,
+                                                                                zone=W_EXTRA["tie_bases"][k]["zone"],
+                                                                                part=(f2(W_EXTRA["tie_bases"][k]["part"][0]),
+                                                                                      W_EXTRA["tie_bases"][k]["part"][1]),
+                                                                                vias=W_EXTRA["tie_bases"][k]["vias"],
+                                                                                cu=W_EXTRA["tie_bases"][k]["cu"])
+                                                                         for k, v in TIE_BASES.items()}),
+                                 spans={k: [(a, b, f2(s)) for a, b, s in v] for k, v in W_EXTRA["spans"].items()},
+                                 mb_crossings={k: dict(parts=v[0], vias=v[1]) for k, v in W_EXTRA["cross"].items()},
+                                 polyimide_strip=W_EXTRA["strip"], usb_channel_use=W_EXTRA["in_channel"],
+                                 superseded_routes={k: (f2(v[0]), v[1]) for k, v in W_EXTRA["old"].items()}),
+                   hard_short=[dict(case=lab, lead_mm=f2(Lm), in_peak_V=f2(w[0]), i_turnoff_A=f2(w[1]),
+                                    lead_peak_A=f2(w[2]), v0=w[3], cs_uF=f2(w[4] * 1e6), lin_nH=f2(w[5] * 1e9))
+                               for lab, Lm, w in W_EXTRA["hard_short"]],
                    pairs={k: dict(La=v[0], Lb=v[1], R_max_mOhm=f2(v[2] * 1e3), R_030_mOhm=f2(v[3] * 1e3))
-                          for k, v in pres.items()}, tie=tie)
+                          for k, v in pres.items()},
+                   tie=tie, tie_note="superseded in r7 review 7 (D-F2): tab X top edge to the MB +y edge, kept for "
+                                     "make_svgs_r7.py; the anchors are the CR beads and the MB tie bases A1/A2",
+                   rev4=dict(spacers={k: dict(pos=v[0], checks={kk: (f2(vv) if isinstance(vv, float) else vv)
+                                                                 for kk, vv in v[1].items()},
+                                              old=v[2]) for k, v in spc.items()},
+                             chassis_tie={g: dict(last_span=f2(v[0]), tie_max=f2(v[1]), tie_max_margin=f2(v[2]))
+                                          for g, v in grp_tie.items()},
+                             west_tie_base_search={"%gx%g+-%g" % (k[0], k[0], k[1]):
+                                                   (None if v is None else dict(c=(f2(v[0]), f2(v[1])), part=v[2]))
+                                                   for k, v in a3.items()},
+                             sw3d={k: [dict(s=(f2(iv["s0"]), f2(iv["s1"])), p0=iv["p0"], p1=iv["p1"],
+                                            need=f2(iv["need"]), who=iv["who"][0], d_plan=f2(iv["who"][1]),
+                                            rise=f2(iv["rise"]), base=iv["base"],
+                                            per={b: dict(p0=pb["p0"], p1=pb["p1"], need=f2(pb["need"]),
+                                                         spacer=f2(pb["need"] - pb["zb"]), who=pb["who"][0],
+                                                         d_plan=f2(pb["who"][1]), at=pb["at"])
+                                                 for b, pb in iv["per"].items()}) for iv in v]
+                                   for k, v in sw3d_res.items()},
+                             heights=dict(H_LFC=H_LFC, H_REG=H_REG, H_POUR=H_POUR),
+                             strip_vias=allv, w5_run_vias=w5_desc))
+    summ("spacer beads S1/S2 (revision 4)", "; ".join("%s (%.2f, %.2f): J101 %.2f mm, W6/W7 exclusion %.2f mm, jacket "
+                                                      "%.2f mm" % (k, v[0][0], v[0][1], v[1]["j101"], v[1]["w67"],
+                                                                   v[1]["jacket"]) for k, v in spc.items()), "H.23(l)")
+    summ("chassis tie past the MB +y edge (revision 4)", "; ".join("%s: last span %.1f mm, tie <= %.1f mm past the edge "
+                                                                   "(<= %.1f mm with the 2 mm margin)"
+                                                                   % (g, v[0], v[1], v[2]) for g, v in grp_tie.items()),
+         "H.23(l)")
+    summ("3-D switched-conductor heights (revision 4)", "; ".join(
+        "%s %s" % (k, ", ".join(", ".join("%s: bottom >= %.2f mm above the MB (spacer %.2f mm; %s)"
+                                          % (b, pb["need"], pb["need"] - pb["zb"], pb["who"][0])
+                                          for b, pb in sorted(iv["per"].items(), key=lambda z: z[1]["s0"]))
+                                for iv in v) or "none")
+        for k, v in sw3d_res.items()), "H.23(l)")
     summ("EVM reference placement", "x %.2f-%.2f, y %.3f-%.3f (g %.0f mm, right edge %.2f); EVM-to-USB-corridor %.2f mm"
          % (evm[0], evm[2], evm[1], evm[3], G_J8, EVM_RIGHT, USB[0] - evm[2]), "H.23(l)")
     summ("EIB position (r6 rule)", "x %.2f-%.2f, y %.2f-%.2f; USB corridor (45 mm ASSUMPTION): %s, %.2f mm beyond its end"
          % (eib[0], eib[2], eib[1], eib[3], "overlap" if ov else "clear", gap_y), "H.23(l)")
-    summ("W-lead build maxima (route rule)", ", ".join("%s %d mm" % (k, v["max"]) for k, v in res.items()), "H.23(l)")
+    WX = W_EXTRA
+    summ("W-lead routes on the dressing path (D-F2)", ", ".join("%s %.1f" % (k, v["L"]) for k, v in res.items()) +
+         " mm; build maxima (route rule) %s; W1/W2 fixed 0.30 m +- 10 mm (D-F3); W5 fixed 304.8 mm cable"
+         % ", ".join("%s %d" % (k, v["max"]) for k, v in res.items() if k not in ("W1", "W2", "W5")), "H.23(l)")
+    summ("W1/W2 slack at 0.30 m (D-F3)", "W1 %.1f mm, W2 %.1f mm (routes %.1f / %.1f mm)"
+         % (300 - res["W1"]["L"], 300 - res["W2"]["L"], res["W1"]["L"], res["W2"]["L"]), "H.23(l)")
+    hsr = WX["hard_short"]
+    summ("hard short vs W1 length (D-F3)", "; ".join("%s %.1f mm: %.1f V / %.0f A at turn-off / lead %.0f A"
+                                                    % (lab, Lm, w[0], w[1], w[2]) for lab, Lm, w in hsr), "H.23(l)")
+    summ("W5 cable fit (D-F2)", "route %.1f mm + %.0f mm 3-D allowance = %.1f mm minimum; slack %.1f mm on 304.8 mm; "
+         "W3/W4 channel: W3 %s, W4 %s, W5 %s" % (res["W5"]["L"], W5_ALLOW, res["W5"]["L"] + W5_ALLOW,
+                                               304.8 - res["W5"]["L"] - W5_ALLOW,
+                                               "in" if WX["in_channel"]["W3"] else "out",
+                                               "in" if WX["in_channel"]["W4"] else "out",
+                                               "in" if WX["in_channel"]["W5"] else "out (over the EVM plate)"), "H.23(l)")
+    summ("W dressing clearances (D-F2)", "hazards min %.2f mm (%s); switched conductors min %.2f mm (rule 10 mm "
+         "NOT met on the CR; best achievable %.2f mm bundle / %.2f mm single lead); MB rework points min %.2f mm"
+         % (min(c["haz"][0] for c in WX["chk"].values()),
+            min(WX["chk"].items(), key=lambda kv: kv[1]["haz"][0])[0],
+            min(c["sw"][0] for c in WX["chk"].values()),
+            WX["bottleneck"][0] if WX["bottleneck"][0] is not None else float("nan"),
+            WX["bottleneck"][1] if WX["bottleneck"][1] is not None else float("nan"),
+            min(c["rework"][0] for c in WX["chk"].values())), "H.23(l)")
+    summ("W anchors and spans (D-F2)", "CR beads %s; MB tie bases %s; max span %.1f mm (%s)"
+         % (", ".join("%s (%.2f, %.2f)" % (k, v[0], v[1]) for k, v in CR_ANCHORS.items()),
+            ", ".join("%s %.0f x %.0f mm at (%.2f, %.2f) +- %.1f" % (k, v[1], v[1], v[0][0], v[0][1], TIE_TOL)
+                      for k, v in TIE_BASES.items()),
+            max(s for v in WX["spans"].values() for _, _, s in v),
+            max(((k, s) for k, v in WX["spans"].items() for _, _, s in v), key=lambda z: z[1])[0]), "H.23(l)")
+    if WX["strip"]:
+        summ("polyimide strip under the W leads (D-F2)", "x %.2f-%.2f, y %.2f-%.2f (crossed parts %s; %d non-GND vias)"
+             % (WX["strip"][0], WX["strip"][2], WX["strip"][1], WX["strip"][3],
+                ", ".join(sorted({p for v in WX["cross"].values() for p in v[0]})),
+                len(WX["strip_vias"])), "H.23(l)")
     for lab, v in pres.items():
-        summ("%s resistance" % lab, "%.2f mOhm at the route maxima vs %.2f mOhm at 0.30 m" % (v[2] * 1e3, v[3] * 1e3),
-             "H.23(l)")
-    summ("chassis-tie distance", "%.3f mm (tab X top edge to MB +y edge; <= 30 mm)" % tie, "H.23(l)")
+        summ("%s resistance" % lab, "%.2f mOhm at the %s vs %.2f mOhm at 0.30 m"
+             % (v[2] * 1e3, "0.31 m long limit" if lab.startswith("W1") else "route maxima", v[3] * 1e3), "H.23(l)")
     summ("corridor fallback (i): group shifted -x", "shift %.2f mm, EVM x %.2f-%.2f (EVM overhang %.2f mm past the MB "
          "-x edge; chassis room needed %.1f mm); %s" % (sh_i, evm_i[0], evm_i[2], -evm_i[0], room_i, v_i), "H.23(l)")
     summ("corridor fallback (ii): EIB at x >= %.2f" % (USB[2] + 3.0), "E-lead maxima %s; E1 %d mm: f0 %.3f MHz, Q %.3f "
@@ -3403,6 +5225,8 @@ def sec_l():
 # H.23(m) r6 sheet vs MB part bodies; r7 sheet outline with trims
 # ======================================================================================================================
 SHEET_R6 = (16.70, 33.14, 49.70, 68.14)            # DOC A.7 r5/r6: CR outline + 1 mm
+SNAP = 1.0                                         # mm: a sheet sliver shorter than this beside a notch is cut away
+CUT_TOL = 0.2                                      # mm, hand-cut tolerance of a trimmed edge (information, D-F7)
 CUTOUT_PARTS = ("D-BT-SQ", "C-D11", "C-D12", "C-DC11", "C-DC12")   # DOC A.7 five cut-outs
 
 
@@ -3438,11 +5262,21 @@ def insert_notch(poly, trim):
             if y0 >= y1:
                 continue
             xin = trim[0] if pip(x - 1e-3, (y0 + y1) / 2, poly) else trim[2]
+            # r7 review 7: a sliver shorter than SNAP between the notch and the edge end joins the notch (no sliver)
+            end_b = (yhi - y1 < SNAP) if a[1] < b[1] else (y0 - ylo < SNAP)
             if a[1] < b[1]:
-                new = [(x, y0), (xin, y0), (xin, y1), (x, y1)]
+                new = [(x, y0), (xin, y0)] + ([] if end_b else [(xin, y1), (x, y1)])
             else:
-                new = [(x, y1), (xin, y1), (xin, y0), (x, y0)]
-            return poly[:i + 1] + new + poly[i + 1:], (i, "vertical x %.3f -> %.3f over y %.3f-%.3f" % (x, xin, y0, y1))
+                new = [(x, y1), (xin, y1)] + ([] if end_b else [(xin, y0), (x, y0)])
+            p2 = list(poly)
+            if end_b:
+                j = (i + 1) % n
+                p2[j] = (xin, p2[j][1])
+            lo = ylo if (end_b and a[1] > b[1]) else y0
+            hi = yhi if (end_b and a[1] < b[1]) else y1
+            return p2[:i + 1] + new + p2[i + 1:], (i, "vertical x %.3f -> %.3f over y %.3f-%.3f%s"
+                                                     % (x, xin, lo, hi, " (carried to the sheet corner)" if end_b
+                                                        else ""))
         if abs(a[1] - b[1]) < 1e-9:            # horizontal edge
             y = a[1]
             if not (trim[1] < y < trim[3]):
@@ -3463,8 +5297,10 @@ def insert_notch(poly, trim):
 def sec_m():
     head("H.23(m) polyimide sheet: the r6 sheet against MB part bodies; the r7 sheet outline with trims")
     out("Part body = layers 21 + 51 straight wires and rectangles of the package (pin-1 arcs, circles and polygons "
-        "excluded); L-FC also as the Eaton 12.9 mm body centred on its origin (ASSUMPTION). Rule (BASIS D4): the sheet "
-        "keeps >= 0.5 mm from every MB part body; the five r6 cut-outs %s stay." % (CUTOUT_PARTS,))
+        "excluded); L-FC also as the Eaton 12.9 mm body centred on its origin (ASSUMPTION). Rule (BASIS D4; r7 review 7 "
+        "D-F7): the sheet keeps >= 0.5 mm from every MB part body and every MB copper pad (smd dx x dy rotated, "
+        "through-hole pad diameter), so a trim notch = (body joined with its pads) + 0.5 mm, and a sheet sliver shorter "
+        "than %.1f mm beside a notch is cut away with it; the five r6 cut-outs %s stay." % (SNAP, CUTOUT_PARTS))
     bodies = {n: body_box(n) for n in ELS if n != "CHG"}
     bodies["L-FC (Eaton 12.9 mm)"] = LFC_EATON
     # r6 sheet
@@ -3492,31 +5328,127 @@ def sec_m():
         % ", ".join("(%.3f, %.3f)" % p for p in base))
     poly = list(base)
     trims = []
+    # r7 review 7 (D-F7): the trim obstacle of a part = its body box joined with its copper pad boxes
+    pads = {n: pad_rects(n) for n in bodies if n in ELEM_XML}
+    obst = {}
+    for n, b in bodies.items():
+        pr = pads.get(n, [])
+        obst[n] = mbn.bbox([(b[0], b[1]), (b[2], b[3])] + [(r[0], r[1]) for _, r in pr] + [(r[2], r[3]) for _, r in pr])
     for n, b in sorted(bodies.items()):
         if n in CUTOUT_PARTS or n == "L-FC":
             continue
-        d = clearance(dict(kind="box", pts=rpoly(b), closed=True, r=0.0), poly)
+        ob = obst[n]
+        d = clearance(dict(kind="box", pts=rpoly(ob), closed=True, r=0.0), poly)
         if d < 0.5:
-            tr = (b[0] - 0.5, b[1] - 0.5, b[2] + 0.5, b[3] + 0.5)
+            db = clearance(dict(kind="box", pts=rpoly(b), closed=True, r=0.0), poly)
+            dp = min([clearance(dict(kind="box", pts=rpoly(r), closed=True, r=0.0), poly) for _, r in pads.get(n, [])]
+                     or [float("inf")])
+            tr = (ob[0] - 0.5, ob[1] - 0.5, ob[2] + 0.5, ob[3] + 0.5)
             poly2, info = insert_notch(poly, tr)
-            trims.append((n, b, d, info))
+            trims.append((n, ob, d, info, db, dp))
             poly = poly2
-    for n, b, d, info in trims:
-        out("  trim for %-22s body (%.3f,%.3f)-(%.3f,%.3f), clearance before %+.3f mm: %s"
-            % (n, b[0], b[1], b[2], b[3], d, info[1] if info else "NOT a single-edge notch (handle by hand)"))
-    # verify
+    for n, b, d, info, db, dp in trims:
+        out("  trim for %-22s body + pads (%.3f,%.3f)-(%.3f,%.3f), clearance before %+.3f mm (body %+.3f, pads %s): %s"
+            % (n, b[0], b[1], b[2], b[3], d, db, ("%+.3f" % dp) if dp != float("inf") else "-",
+               info[1] if info else "NOT a single-edge notch (handle by hand)"))
+    # verify: every part body and every MB pad (layer-1 smd or through-hole pad) >= 0.5 mm from the sheet
     bad = []
+    pad_min = (1e9, None)
     for n, b in bodies.items():
         if n in CUTOUT_PARTS or n == "L-FC":
             continue
         d = clearance(dict(kind="box", pts=rpoly(b), closed=True, r=0.0), poly)
         if d < 0.5 - 1e-6:
             bad.append((n, round(d, 3)))
+        for pn, r in pads.get(n, []):
+            dpp = clearance(dict(kind="box", pts=rpoly(r), closed=True, r=0.0), poly)
+            if dpp < pad_min[0]:
+                pad_min = (dpp, "%s pad %s" % (n, pn))
+            if dpp < 0.5 - 1e-6:
+                bad.append(("%s pad %s" % (n, pn), round(dpp, 3)))
     inside_cr = [p for p in poly if pip(p[0], p[1], OUTLINE) and min(dpt_seg(p[0], p[1], a[0], a[1], c[0], c[1])
                                                                      for a, c in edges(OUTLINE)) > 1e-6]
     out("r7 sheet after trims: %d vertices: %s" % (len(poly), ", ".join("(%.3f, %.3f)" % p for p in poly)))
-    out("  check: bodies within 0.5 mm after the trims: %s; trimmed vertices inside the CR outline: %s; area %.1f mm2; "
-        "bbox %s" % (bad or "none", inside_cr or "none", area_poly(poly), [round(v, 3) for v in mbn.bbox(poly)]))
+    out("  check: part bodies and MB pads within 0.5 mm after the trims: %s; nearest MB pad %.3f mm (%s; %.3f mm after a "
+        "+-%.1f mm hand-cut tolerance, information); trimmed vertices inside the CR outline: %s; area %.1f mm2; bbox %s"
+        % (bad or "none", pad_min[0], pad_min[1], pad_min[0] - CUT_TOL, CUT_TOL, inside_cr or "none", area_poly(poly),
+           [round(v, 3) for v in mbn.bbox(poly)]))
+    co_pad = []
+    for n in CUTOUT_PARTS:
+        cb = (bodies[n][0] - 0.5, bodies[n][1] - 0.5, bodies[n][2] + 0.5, bodies[n][3] + 0.5)
+        dmin = min(min(r[0] - cb[0], r[1] - cb[1], cb[2] - r[2], cb[3] - r[3]) for _, r in pads.get(n, []))             if pads.get(n) else float("nan")
+        co_pad.append((n, dmin))
+    out("  cut-outs (body + 0.5 mm) against their own pads (smallest pad-edge to cut-out-edge margin; information, the "
+        "cut-out rule is unchanged): %s" % ", ".join("%s %.3f mm" % z for z in co_pad))
+    # ---- revision 4: relief holes enlarged to clear the 1.650 mm square pad corners by >= 0.5 mm; enlarged cut-outs
+    sq_pad = 1.650
+    d_req = sq_pad * math.sqrt(2) + 2 * 0.5
+    d_new = math.ceil(d_req * 10 - 1e-9) / 10.0
+    rh = d_new / 2
+    corner = rh - sq_pad * math.sqrt(2) / 2
+    flats = rh - sq_pad / 2
+    cols = {}
+    for (x, y) in PINS:
+        cols.setdefault(round(x, 3), []).append(y)
+    web = min(min(abs(b - a) for a, b in zip(sorted(v)[:-1], sorted(v)[1:])) for v in cols.values()) - d_new
+    slots = {x: (x - rh, min(v) - rh, x + rh, max(v) + rh) for x, v in cols.items()}
+    edge_d = min((min(dpt_seg(x, y, a[0], a[1], c[0], c[1]) for a, c in edges(poly)) - rh, (x, y)) for (x, y) in PINS)
+    inside = all(pip(x, y, poly) for (x, y) in PINS)
+    co_rect = {n: (bodies[n][0] - 0.5, bodies[n][1] - 0.5, bodies[n][2] + 0.5, bodies[n][3] + 0.5) for n in CUTOUT_PARTS}
+    co_d = min((d_rect_pt(r, x, y) - rh, n, (x, y)) for n, r in co_rect.items() for (x, y) in PINS)
+    co_d22 = min((d_rect_pt(r, x, y) - 1.1, n, (x, y)) for n, r in co_rect.items() for (x, y) in PINS)
+    body_w = 2.54
+    out("  relief holes against the MB CHG pads (revision 4): a hole that clears the %.3f mm square pad corners by >= 0.5 "
+        "mm needs a diameter >= %.3f mm; chosen %.1f mm: it clears the pad corners by %.3f mm and the flats by %.3f mm "
+        "(the 2.2 mm holes: flats 0.275 mm, corners covered by up to 0.067 mm). At the %.2f mm pitch the web between "
+        "neighbouring holes is %.2f mm, so the holes of each column MERGE into one slot: %s. Each slot is %.2f mm wide, "
+        "wider than the %.2f mm header body, so the header bodies lose their seat on the sheet and stand %.3f mm lower "
+        "(on the MB mask), while FT1/FT2 stand on the sheet: the nominal t_bed falls from 0.300 to %.3f mm (PM4 (2d) "
+        "gate 0.15-0.45 mm). Sheet edge: nearest hole edge %.2f mm from the sheet outline (hole at (%.3f, %.3f)); all "
+        "hole centres inside the sheet: %s. Cut-outs: nearest %.2f mm (%s, hole (%.3f, %.3f)); with the 2.2 mm holes "
+        "%.2f mm. A square opening that clears the pad by 0.5 mm (%.2f mm) merges as well (%.2f mm > %.2f mm pitch)."
+        % (sq_pad, d_req, d_new, corner, flats, PITCH, web, "; ".join("x %.3f: x %.2f-%.2f, y %.2f-%.2f" %
+                                                                      (x, s[0], s[2], s[1], s[3])
+                                                                      for x, s in slots.items()),
+           d_new, body_w, 0.125, 0.300 - 0.125, edge_d[0], edge_d[1][0], edge_d[1][1], "yes" if inside else "NO",
+           co_d[0], co_d[1], co_d[2][0], co_d[2][1], co_d22[0], sq_pad + 1.0, sq_pad + 1.0, PITCH))
+    co_big = {}
+    for n in CUTOUT_PARTS:
+        pr = pads.get(n, [])
+        ob = obst[n]
+        co_big[n] = (ob[0] - 0.5, ob[1] - 0.5, ob[2] + 0.5, ob[3] + 0.5)
+    merges = [(a, b) for i, a in enumerate(CUTOUT_PARTS) for b in CUTOUT_PARTS[i + 1:] if rect_overlap(co_big[a], co_big[b])]
+    big_rows = []
+    for n, r in co_big.items():
+        grow = max(co_rect[n][0] - r[0], co_rect[n][1] - r[1], r[2] - co_rect[n][2], r[3] - co_rect[n][3])
+        own = min(min(q[0] - r[0], q[1] - r[1], r[2] - q[2], r[3] - q[3]) for _, q in pads.get(n, [])) \
+            if pads.get(n) else float("nan")
+        dh = min(d_rect_pt(r, x, y) for (x, y) in PINS)
+        de = min(min(dpt_seg(c_[0], c_[1], a[0], a[1], b[0], b[1]) for a, b in edges(poly)) for c_ in rpoly(r))
+        others_ = [(nm, round(d, 3)) for nm, b in bodies.items() if nm not in CUTOUT_PARTS and nm != "L-FC"
+                   for d in [rect_dist(b, r)] if d < 0.5]
+        big_rows.append((n, r, grow, own, dh - 1.1, dh - rh, de, others_))
+    out("  enlarged cut-outs (revision 4 proposal: (part body joined with its own pads) + 0.5 mm, so each clears its own "
+        "pads by >= 0.5 mm):")
+    for n, r, grow, own, dh22, dh34, de, oth in big_rows:
+        out("    %-8s x %.3f-%.3f, y %.3f-%.3f (grows by up to %.3f mm over body + 0.5): own pads %.3f mm; nearest "
+            "relief hole edge %.2f mm (2.2 mm hole) / %.2f mm (%.1f mm hole); sheet outline %.2f mm from its nearest "
+            "corner; "
+            "other MB bodies within 0.5 mm: %s" % (n, r[0], r[2], r[1], r[3], grow, own, dh22, dh34, d_new, de,
+                                                   oth or "none"))
+    out("    enlarged cut-outs that overlap and form one opening: %s" % (", ".join("%s + %s" % z for z in merges) or "none"))
+    m_rev4 = dict(relief=dict(d_req=f2(d_req), d_new=d_new, corner=f2(corner), flats=f2(flats), web=f2(web),
+                               slots={str(k): v for k, v in slots.items()}, edge=f2(edge_d[0]), cutout=f2(co_d[0]),
+                               t_bed_nominal_after=f2(0.300 - 0.125)),
+                   cutouts_enlarged={n: dict(rect=[f2(v) for v in r], grow=f2(g), own=f2(o), hole22=f2(a),
+                                             hole_new=f2(b), others=ot)
+                                     for n, r, g, o, a, b, _, ot in big_rows}, cutout_merges=merges)
+    summ("relief holes (revision 4)", "%.1f mm holes clear the pad corners by %.3f mm but MERGE at the 2.54 mm pitch "
+         "(web %.2f mm): one %.2f mm slot per column, the header bodies lose the sheet seat and t_bed falls to %.3f mm"
+         % (d_new, corner, web, d_new, 0.300 - 0.125), "H.23(m)")
+    summ("enlarged cut-outs (revision 4)", "; ".join("%s grows %.3f mm, own pads %.3f mm" % (n, g, o)
+                                                     for n, _, g, o, _, _, _, _ in big_rows) +
+         "; merges: %s" % (", ".join("%s + %s" % z for z in merges) or "none"), "H.23(m)")
     out("  relief holes (DOC A.7, unchanged): 2.2 mm diameter at the 22 header pads (DOC A.8 table); cut-outs (body + "
         "0.5 mm, unchanged): %s" % ({n: [round(v, 3) for v in (bodies[n][0] - 0.5, bodies[n][1] - 0.5,
                                                                   bodies[n][2] + 0.5, bodies[n][3] + 0.5)]
@@ -3525,12 +5457,17 @@ def sec_m():
         % (mbn.bbox(poly)[2] - mbn.bbox(poly)[0], mbn.bbox(poly)[3] - mbn.bbox(poly)[1]))
     RJ["m"] = dict(r6_rows=[(r[0], r[1], r[2], f2(r[3]), [f2(v) for v in r[4]]) for r in r6rows],
                    r7_base=base, r7_sheet=poly, trims=[(n, b, f2(d), info[1] if info else None)
-                                                         for n, b, d, info in trims], residual=bad)
+                                                         for n, b, d, info, _, _ in trims], residual=bad,
+                   nearest_pad=(f2(pad_min[0]), pad_min[1]), cutout_own_pads=co_pad,
+                   area=f2(area_poly(poly)), bbox=[f2(v) for v in mbn.bbox(poly)])
+    RJ["m"].update(m_rev4)
     if co:
         r = co[0]
         summ("r6 sheet vs CO-5V body", "OVERLAP %.3f mm in x over %.3f mm (%.2f mm2): the r6 sheet drapes onto the 2.1 mm "
              "tantalum" % (r[4][0], r[4][1], r[4][0] * r[4][1]) if r[2] else "clearance %.3f mm" % r[3], "H.23(m)")
-    summ("r7 sheet trims", "; ".join("%s: %s" % (n, info[1] if info else "-") for n, b, d, info in trims), "H.23(m)")
+    summ("r7 sheet trims (bodies + pads, D-F7)", "; ".join("%s: %s" % (n, info[1] if info else "-")
+                                                          for n, b, d, info, _, _ in trims) +
+         "; nearest MB pad %.3f mm (%s)" % pad_min, "H.23(m)")
     summ("r7 sheet", "%d vertices, area %.1f mm2, bbox %.2f x %.2f mm" % (len(poly), area_poly(poly),
                                                                        mbn.bbox(poly)[2] - mbn.bbox(poly)[0],
                                                                        mbn.bbox(poly)[3] - mbn.bbox(poly)[1]), "H.23(m)")
@@ -3548,6 +5485,7 @@ def main():
     find_feet()
     sec_d()
     sec_e()
+    sec_e2()
     sec_f()
     sec_g()
     sec_h()

@@ -1,0 +1,140 @@
+{
+ "group": "rev7-F5",
+ "edits": [
+  {
+   "old": "the comparators U102-U104, U115, U119-U121 move to the footprint low-y band (the freed r6 tap-field area); top 73.55 % (795.1 mm²), bottom 69.04 % (392.9 of 569.1 mm²); the r6 \"~678 of ~881 mm²\" booking and its 95-103 % use of the strict usable area (A.8) retire; the farthest outline point is 25.66 mm from the U101 loop against 36.5 mm for 2-layer parity (A.8, H.22(k)) | H.23(e), H.23(f) |",
+   "new": "the comparators U102-U104, U115, U119-U121 move to the footprint low-y band (the freed r6 tap-field area), and the six 0.1 % dividers sit in the footprint interior directly above it, in the divider strip x 23.15-36.50, y 42.14-45.69; the LVC gates U105, U106, U107, U110, U114, U116 and U118 go to tab Y top and U108/U109 to the footprint interior (new in r7; r6 gave the gates no region), each with its 100 nF decoupler directly underneath on the bottom; U111, U113, U122, U123, D104-D106 and D108 sit in the footprint interior; per-region top booking: band 69.5 %, interior 63.2 %, tab X 52.5 %, tab Y top 73.45 %, tab Y bottom 29.4 %, each <= 75 % (H.23(e2)); top 73.55 % (795.1 mm²), bottom 69.04 % (392.9 of 569.1 mm²); the r6 \"~678 of ~881 mm²\" booking and its 95-103 % use of the strict usable area (A.8) retire; the farthest outline point is 25.66 mm from the U101 loop against 36.5 mm for 2-layer parity (A.8, H.23(f)) | H.23(e), H.23(e2), H.23(f) |",
+   "note": "r7-5: dividers to the interior divider strip, tab Y gate allocation (new in r7), per-region booking; H.22(k) -> H.23(f) cross-reference"
+  },
+  {
+   "old": "Tab Y carries on its top the LVC gates U105-U110, U114, U116 and U118 with their decouplers;",
+   "new": "Tab Y carries on its top the LVC gates U105, U106, U107, U110, U114, U116 and U118 (U108 and U109 sit in the footprint interior, A.8, H.23(e2));",
+   "note": "A.7 tab content: tab Y gate list after the per-region booking (U108/U109 to the interior); decouplers stay underneath (A.8)"
+  },
+  {
+   "old": "MS4 replaces\n  the estimate and confirms the split.",
+   "new": "MS4 replaces\n  the estimate and confirms the split. The 6.4 mm width is the geometric Band A (1.4-6.4 mm) of\n  `round4/work/proposal_tapside.md`, carried forward; it is not a thermal criterion. At 6.4 mm the Table 4 worst estimate is\n  a 15.6 C rise (linear between 17.0 C at 5 mm and 11.9 C at 10 mm). The comparator band on the footprint lies 7.10-26.38 mm\n  from the same rim (H.23(f)). There the `round4/work/mb_mechanical.md` 5.3 rule applies: comparators, references, BAV199\n  clamps and dividers at >= 10 mm from the rim. The 0.1 % dividers sit in the interior divider strip (>= 13.03 mm), and\n  D104-D106, U123 and D108 sit in the footprint interior. A comparator courtyard at x 39.53-42.43 (7.10-10.0 mm from the rim,\n  worst estimated rise 14.9 C) stands only on the MS4b reading (A.8, T-A-08).",
+   "note": "A.7 thermal band: basis of 6.4 mm stated (geometric, not thermal); comparator band against the 10 mm rule; MS4b condition"
+  },
+  {
+   "old": "| LVC gates U105-U110, U114, U116 and U118 (driven logic only) with their 100 nF decouplers C114-C119, C122, C123 and C126 (B.8) at each VCC pin, on the top or directly underneath on the bottom |",
+   "new": "| LVC gates U105, U106, U107, U110, U114, U116 and U118 (driven logic only); U108 and U109 go to the footprint interior (row below) so that tab Y top stays <= 75 %; the W-lead RTV bead B3 and the W5 spacer bead S3 (H.23(l)); the 100 nF decouplers C114-C119, C122, C123 and C126 (B.8) sit directly underneath each VCC pin on the bottom; booked 112.9 of 153.7 mm² = 73.45 % (H.23(e2)); B3 and S3 lie 2.30 mm apart, so their 3 x 3 mm spots overlap and book 15.90 mm² as one union; with U108 kept on tab Y the booking is 78.0 %, and with the decouplers on the top 97.7 %; neither is adopted |",
+   "note": "A.8 tab Y top: gates on tab Y top, U108/U109 to the interior, decouplers fixed to the bottom, per-region booking with the B3/S3 union"
+  },
+  {
+   "old": "| logic pull-downs, series resistors and decouplers of the tab Y gates, inside the 133.2 mm² left by the bottom clearance rule (H.23(d)) |",
+   "new": "| logic pull-downs, series resistors and decouplers of the tab Y gates, inside the 133.2 mm² left by the bottom clearance rule (H.23(d)); the nine gate decouplers book 39.15 mm² = 29.4 % (an upper bound, because the decouplers of U108 and U109 sit under those gates in the interior); 60.8 mm² remain for the pull-downs and series resistors at the 75 % target (H.23(e2); the T-A-06 DRC is the gate) |",
+   "note": "A.8 tab Y bottom: decoupler booking and the room left for pull-downs and series resistors"
+  },
+  {
+   "old": "| **Footprint low-y band** (r7: the comparator region) x 23.15-42.43, y 35.05-41.63 | top: comparators U102-U104, U115 and U119-U121 (already top-side) with their 0.1 % dividers R109, R110, R111, R112, R114 and R115 (moved from the bottom in r7); residual tap pads F08 (T22), F09 (T8), F10 (T9) and F22 (T18) on the low row y 35.80; U123 with R178/R179/D108 stays beside F08 (r6). Bottom: the comparator input filter capacitors C106, C107, C108 and C140 and the other comparator passives of the r3 bottom set | 10.40 mm from the U101 loop band (y >= 52.03) and 8.54-27.82 mm from the LM1084 box (x 50.97) (H.23(f)); bottom courtyards under the bottom clearance rule against the MB VBT and VCHG-IN copper; 0.50 mm below the J101 region |",
+   "new": "| **Footprint low-y band** (r7: the comparator region) x 23.15-42.43, y 35.05-41.63 (126.86 mm²) | top: comparators U102-U104, U115 and U119-U121 (already top-side) and the residual tap pads F08 (T22), F09 (T8), F10 (T9) and F22 (T18) on the low row y 35.80; booked 88.2 mm² = 69.5 % (H.23(e2)); the 0.1 % dividers and U123 with D108 sit in the footprint interior (row below), because with them the band books 114 %. Bottom: the comparator input filter capacitors C106, C107, C108 and C140 and the other comparator passives of the r3 bottom set (C110-C113 and C131-C133 directly underneath their comparators) | 10.40 mm from the U101 loop band (y >= 52.03); 7.10-26.38 mm from the MB 5V copper rim (x 49.53) and 8.54-27.82 mm from the LM1084 box (x 50.97) (H.23(f)); comparators at x <= 39.53 (>= 10 mm from the 5V copper rim, `round4/work/mb_mechanical.md` 5.3) where the placement DRC allows; a comparator courtyard at x 39.53-42.43 (7.10-10.0 mm from the rim, worst estimated rise 14.9 C) stands only on the MS4b reading (T-A-08), else it moves into the interior; MB aggressors beside the band: the BT boost output loop (C4A-BT 2.58 mm, VOUT-BT copper 5.13 mm) and the VBT and VCHG-IN layer-1 traces under it (H.23(f), T-C-16b); bottom courtyards under the bottom clearance rule against the MB VBT and VCHG-IN copper; 0.50 mm below the J101 region |\n| **Footprint interior** (r7, H.23(e2)): the footprint top outside the band, the J101 region, the IN and OUT strips, the U101 courtyard and the +x pocket (each + 0.5 mm), the W1-W4 pads and the W6/W7 pads (each + 0.5 mm); 288.8 mm² | top: the 0.1 % dividers R109, R110, R111, R112, R114 and R115 (moved from the bottom in r7) in the **divider strip** x 23.15-36.50, y 42.14-45.69, directly above the band and outside the W3 pad exclusion; U123 with D108, U122, the BAV199 clamps D104-D106, the monostables U111 and U113, the gates U108 and U109 (from tab Y), the DNP footprints U112, U117 and D101, and the W-lead RTV bead B1 and the W5 spacer beads S1 and S2 (H.23(l)); booked 182.5 mm² = 63.2 % (H.23(e2)). Bottom: R178/R179 under U123 and the decouplers C120, C121, C134 and C135 and those of U108/U109 directly underneath their ICs (r3 bottom set kept) | divider strip 6.37 mm from the U101 loop region; the interior's loop-facing corner (36.12, 51.52) lies 0.52 mm from that region (the A.8 region gap), so the dividers stay in the strip, not at that corner (H.23(f)); divider strip >= 13.03 mm from the MB 5V copper rim; bottom courtyards under the bottom clearance rule; region gaps >= 0.5 mm |",
+   "note": "A.8: band row re-booked (comparators + residual pads only; dividers/U123/D108 out), thermal x <= 39.53 rule with the MS4b condition, MB aggressors cited; new interior row with the divider strip and the H.23(f) corner check"
+  },
+  {
+   "old": "band with the other comparators, and the area booking follows H.23(e), below).",
+   "new": "band with the other comparators, U122, U123 and D108 sit in the footprint interior with R178/R179 on the bottom under U123,\nand the area booking follows H.23(e) and H.23(e2), below).",
+   "note": "A.8 r6 additions: superseded marker names the r7 interior placement of U122/U123/D108"
+  },
+  {
+   "old": "already top-side in the r3 booking; r7 moves their placement region to the footprint low-y band, not their side.\n",
+   "new": "already top-side in the r3 booking; r7 moves their placement region to the footprint low-y band, not their side.\n\n**r7 per-region booking (H.23(e2)).** The whole-side booking above hides a local overrun. With the dividers and the U123\ngroup, the footprint low-y band books 145.3 mm², which is 114 % of its area. Each placement region is therefore booked on its\nown, against the same <= 75 % target. The courtyards are those of H.23(e), and each region is cut from the strict usable\nmask. The following table lists the adopted case.\n\n| Region | Area mm² | Content (top unless stated) | Booked mm² | U |\n|---|---|---|---|---|\n| Footprint low-y band | 126.86 | U102-U104, U115, U119-U121; residual pads F08-F10, F22 | 88.2 | 69.5 % |\n| Footprint interior | 288.8 | R109-R112, R114, R115 (divider strip); U122, U123, D108, D104-D106, U111, U113, U108, U109; DNP U112, U117, D101; beads B1, S1, S2 | 182.5 | 63.2 % |\n| Tab X top | 173.3 | 20 tap pad courtyards, R175 | 90.9 | 52.5 % |\n| Tab Y top | 153.7 | U105, U106, U107, U110, U114, U116, U118; bead spot B3/S3 (union 15.90 mm²) | 112.9 | 73.45 % |\n| Tab Y bottom | 133.2 | the nine gate decouplers (upper bound) | 39.15 | 29.4 % |\n\nEvery region meets the target. U108 and U109 leave tab Y; with U108 on tab Y the tab Y top booking is 78.0 %. The flexible\npassives R178, R179, C110, C120, C121, C134 and C135 stay on the bottom under their ICs, so the whole-side figures above do not\nchange. With those seven passives on the top, the top side would book 825.6 mm² = 76.4 %, above the whole-side target. The\ntab X figure books pad courtyards; booked as the 6 x 4 grid envelope, tab X reaches 81.6 %, but the inter-row gaps carry the\ndressed wires, not parts. The bead spots B1, S1, S2 and B3/S3 are booked as 3 x 3 mm courtyards at their H.23(l) positions.\n",
+   "note": "A.8: new per-region booking paragraph and table (H.23(e2)) after the whole-side booking"
+  },
+  {
+   "old": "L4 2 oz GND pour stitched at <= 5 mm, every L4 via tented",
+   "new": "L4 2 oz GND pour around the bottom-side parts, stitched at <= 5 mm, every L4 via tented",
+   "note": "A.8 stack-up: L4 pour around the bottom-side parts (consistent with the T-A-06 L4 criterion)"
+  },
+  {
+   "old": "the r7 tap-field courtyards book 159.6 mm² against the 168.0 mm² of the stack-up demand (-8.4 mm²) | **pass** (<= 75 % each side);",
+   "new": "the r7 tap-field courtyards book 159.6 mm² against the 168.0 mm² of the stack-up demand (-8.4 mm²); the per-region booking is H.23(e2) | **pass** (<= 75 % each side; each region in H.23(e2));",
+   "note": "H.23(e): pointer to the per-region booking"
+  },
+  {
+   "old": "\n| H.23 | **(f) Distance from the U101 commutation loop (r7)**",
+   "new": "\n| H.23 | **(e2) Per-region booking of the top side (r7)** (`round4/calc/r7_calc.py` H.23(e2); courtyards of H.23(e) from `round4/work/stackup_area.py`; each region cut from the strict usable mask of H.23(e)) | footprint low-y band 126.86 mm² (127.4 mm² raster): the seven comparators and the residual pads F08-F10 and F22, 88.2 mm² = 69.5 %; footprint interior 288.8 mm²: the six 0.1 % dividers in the divider strip x 23.15-36.50, y 42.14-45.69, U122, U123, D108, D104-D106, U111, U113, U108, U109, the DNP footprints U112, U117 and D101, and the beads B1, S1 and S2, 182.5 mm² = 63.2 %; tab X top 173.3 mm²: 20 pad courtyards and R175, 90.9 mm² = 52.5 % (81.6 % booked as the grid envelope); tab Y top 153.7 mm²: U105, U106, U107, U110, U114, U116, U118 and the B3/S3 spot (union 15.90 mm²), 112.9 mm² = 73.45 % (78.0 % with U108 kept there); tab Y bottom 133.2 mm²: the nine gate decouplers, 39.15 mm² = 29.4 %, 60.8 mm² left for the pull-downs and series resistors at 75 %; the flexible passives R178, R179, C110, C120, C121, C134 and C135 stay on the bottom (on the top they would raise the whole-side top booking to 825.6 mm² = 76.4 %) | **pass** (<= 75 % in each region; the H.23(e) whole-side figures unchanged); U108 and U109 leave tab Y; the dividers, U123 and D108 leave the band (114 % with them); T-A-06 placement DRC is the gate |\n| H.23 | **(f) Distance from the U101 commutation loop (r7)**",
+   "note": "H.23: new (e2) row with the per-region booking"
+  },
+  {
+   "old": "10.40 mm from the loop band (y >= 52.03) and 8.54-27.82 mm from the LM1084 box | 4-layer CR stays; comparators U102-U104, U115, U119-U121 with their dividers in the low-y band (A.8) |",
+   "new": "10.40 mm from the loop band (y >= 52.03), 7.10-26.38 mm from the MB 5V copper rim (x 49.53) and 8.54-27.82 mm from the LM1084 box; the footprint interior's divider strip x 23.15-36.50, y 42.14-45.69 lies 6.37 mm from the loop region, and the interior's loop-facing corner (36.12, 51.52) lies 0.52 mm from it (the A.8 region gap), so the dividers stay in the strip; MB aggressors to the band (copper rims and part boxes from the `.brd`): C4A-BT 2.58 mm, C4B-BT 5.08 mm, C4C-BT 8.60 mm, REG-BT 12.60 mm, VOUT-BT copper 5.13 mm, VSW-BT copper 11.94 mm and L-BT 14.27 mm (the r6 interior: VOUT-BT 13.97 mm, VSW-BT 18.89 mm), and the VBT and VCHG-IN layer-1 traces cross under the band; ESTIMATE by the dipole method of `round4/work/eib_merge_failsafe.md` 6.2: the boost ripple (3.8 A/us) couples <= 1.7 mV into a 5 x 60 mm external loop at this distance, and the CR top-side divider loops over L2/L4 GND with the R140/C140 filter (1/314 at 500 kHz) bring the BT_OK term into the uV range against the 6-34 mV BT_OK threshold band; the VCHG-IN hard short (H.5, <= 100 A/us for < 1 us) bounds at <= 16 mV unshielded and <= 0.7 mV after the 470 pF divider filters; TODO(measure: T-C-16b) | 4-layer CR stays; comparators U102-U104, U115, U119-U121 in the low-y band and their 0.1 % dividers in the interior divider strip (A.8, H.23(e2)); a comparator at x > 39.53 only with the MS4b reading (T-A-08); T-C-16b measures the band pickup |",
+   "note": "H.23(f): 5V copper-rim distance, interior divider strip and loop-facing corner, MB BT boost and VCHG-IN aggressors with the estimate and TODO(measure)"
+  },
+  {
+   "old": "edge ~14 ns | pass; T-C-07 |",
+   "new": "edge ~14 ns | pass; T-C-07; **r7:** T-A-05 derates R175 to the MS4 5 mm reading: 0.160 W against 0.210 W allowed at 83.5 C (60 C + the 23.5 C worst 1 mm rise, an overbound for a courtyard >= 5.511 mm from the rim), on a full-to-70 C, zero-at-155 C derating, TODO(verify: Vishay CRCW datasheet); the rating is reached at 100.6 C |",
+   "note": "H.20 R175 row: derating arithmetic and T-A-05 reference"
+  },
+  {
+   "old": "T-A-05 (fuse opening time; r7: F101/R172 temperature derating beside the LM1084 body) |",
+   "new": "T-A-05 (fuse opening time; r7: F101/R172 temperature derating to the MS4a reading on the 5V pour at CO-5V pad 1, d = 0; until MS4a is recorded, to the Table 4 pour column, up to a 55.0 C rise at 1.08 W) |",
+   "note": "H.20 T18 row: derating input is the 5V pour temperature (MS4a), not the 1 mm transect"
+  },
+  {
+   "old": "derated to the board temperature beside the LM1084 (MS4, T-A-07)**.",
+   "new": "derated to the 5V pour temperature at that joint (MS4a, T-A-07)**; **R175 (0.160 W in a CR short, H.20) derated to the MS4 5 mm reading**.",
+   "note": "T-A-05 procedure: MS4a for F101/R172; R175 derating added"
+  },
+  {
+   "old": "F101 and R172 within rating after derating to the MS4 board temperature.",
+   "new": "F101 and R172 within rating after derating to the MS4a temperature (CO-5V pad 1, on the 5V pour); until MS4a is recorded, derate to the Table 4 pour column (up to a 55.0 C rise at 1.08 W); R175 within rating after derating to the MS4 5 mm reading (0.160 W against 0.210 W allowed at 83.5 C; rating reached at 100.6 C, H.20).",
+   "note": "T-A-05 pass: MS4a basis for F101/R172; R175 criterion"
+  },
+  {
+   "old": "F101 or R172 below rating after derating: a higher-rated part on the same footprint, or T18 not fitted (it is an option).",
+   "new": "F101 or R172 below rating after derating: a higher-rated part on the same footprint, or T18 not fitted (it is an option); R175 below rating after derating: a 2010 68 ohm part on the tab X rows 2-3 site.",
+   "note": "T-A-05 fallback: R175 fallback added"
+  },
+  {
+   "old": "(3) L4 solder-mask Gerber check;",
+   "new": "(3) L4 solder-mask Gerber check against the bottom-side pad list of the A.8 allocation;",
+   "note": "T-A-06 step (3): check against the bottom-side pad list"
+  },
+  {
+   "old": "(5) the comparators U102-U104, U115, U119-U121 with R109-R112, R114 and R115 in the footprint low-y band x 23.15-42.43, y 35.05-41.63 (H.23(e), H.23(f));",
+   "new": "(5) the comparators U102-U104, U115, U119-U121 in the footprint low-y band x 23.15-42.43, y 35.05-41.63, R109-R112, R114 and R115 in the divider strip x 23.15-36.50, y 42.14-45.69, and the rest of the A.8 region assignment, with the courtyard sum of each region against its area (H.23(e2), H.23(f));",
+   "note": "T-A-06 step (5): dividers in the interior divider strip; per-region booking check"
+  },
+  {
+   "old": "L4 solder-mask openings only at W1-W4 and the 22 header rings;",
+   "new": "on L4, solder-mask openings only at the pads of the bottom-side parts of the A.8 allocation, at W1-W4, at the 22 header rings and at the FT2 1.0 mm NPTH (no copper annulus); every L4 via tented; no other exposed L4 copper on the footprint or either tab, and none inside the FT1/FT2 keep-outs; every L4 pad opening meets the bottom clearance rule (H.23(d));",
+   "note": "T-A-06 pass: L4 mask criterion admits the bottom-side pads and the FT2 NPTH"
+  },
+  {
+   "old": "top U <= 75 % and bottom U <= 75 % (adopted allocation 73.55 % / 69.04 %, H.23(e));",
+   "new": "top U <= 75 % and bottom U <= 75 % (adopted allocation 73.55 % / 69.04 %, H.23(e)); every A.8 region <= 75 % (band 69.5 %, interior 63.2 %, tab X 52.5 %, tab Y top 73.45 %, tab Y bottom <= 29.4 %, H.23(e2)); a comparator courtyard at x > 39.53 only with the MS4b reading (A.8);",
+   "note": "T-A-06 pass: per-region criterion and the comparator thermal condition"
+  },
+  {
+   "old": "V_batt 8.4 V and 7.4 V, 30 min soak; LM1084 input current.",
+   "new": "V_batt 8.4 V and 7.4 V, 30 min soak; LM1084 input current; in the same soak, MS4a on the CO-5V pad 1 / T18 joint (50.80, 41.084), on the 5V pour (d = 0), and MS4b on the MB surface at the comparator band's +x end (42.43, 39.50), 7.10 mm from the rim.",
+   "note": "T-A-08 MS4: points MS4a (CO-5V joint) and MS4b (comparator band)"
+  },
+  {
+   "old": "MS4 rise at 5 mm within or below the 3.3-17.0 C estimate (H.23(h)) and every part outside the band within its rated temperature;",
+   "new": "MS4 rise at 5 mm within or below the 3.3-17.0 C estimate (H.23(h)) and every part outside the band within its rated temperature; MS4a recorded as the F101/R172 derating input (T-A-05); MS4b rise <= 14.9 C (the Table 4 worst estimate at 7.10 mm), the condition for a comparator courtyard at x > 39.53 (A.8);",
+   "note": "T-A-08 pass: MS4a and MS4b criteria"
+  },
+  {
+   "old": "MS4 rise above a part rating: widen the thermal band and move the part |",
+   "new": "MS4 rise above a part rating: widen the thermal band and move the part; MS4b rise above 14.9 C: move every comparator at x > 39.53 into the footprint interior (A.8) and re-run `round4/calc/r7_calc.py` H.23(e2) |",
+   "note": "T-A-08 fail: MS4b action"
+  },
+  {
+   "old": "\n| T-D-01 | Teensy held in reset",
+   "new": "\n| T-C-16b | **Comparator band pickup from the MB BT boost and the VCHG-IN hard short (r7)** | The comparator band lies 2.58 mm from C4A-BT and 5.13 mm from the VOUT-BT copper, over the VBT and VCHG-IN layer-1 traces (H.23(f)); the ESTIMATE is uV-range sustained pickup and <= 0.7 mV after the divider filters in a hard short, against the 6-34 mV BT_OK threshold band | Run the BT boost at its full vehicle load (>= 3 A per channel). Then run a T-C-04 hard short. In both runs, scope U104 IN+ and IN-, U102 and U103 IN+ and the H1, UVB and BT_OK outputs at >= 100 MS/s | no comparator output transition; less than 3 mV differential excursion at each comparator input outside the 1 us hard-short window | Record the coupling path; move the affected comparator into the footprint interior (A.8), re-run `round4/calc/r7_calc.py` H.23(e2) and H.23(f), and repeat |\n| T-D-01 | Teensy held in reset",
+   "note": "New T-C-16b row: comparator band pickup measurement (the H.23(f) TODO(measure))"
+  },
+  {
+   "old": "decides the thermal-band split; the estimate is a 3.3-17.0 C rise at 5 mm (H.23(h)), and the F101/R172 derating at\n    CO-5V pad 1 uses the same reading (T-A-05).",
+   "new": "decides the thermal-band split; the estimate is a 3.3-17.0 C rise at 5 mm (H.23(h)). The R175 derating uses the 5 mm\n    reading (T-A-05). Two more points are logged in the same soak. MS4a sits on the CO-5V pad 1 / T18 joint (50.80, 41.084)\n    on the 5V pour (d = 0) and is the F101/R172 derating input (T-A-05). MS4b sits at the comparator band's +x end\n    (42.43, 39.50), 7.10 mm from the rim; it decides whether a comparator may sit at x > 39.53 (A.8; worst estimate 14.9 C).",
+   "note": "J.2 item 49: MS4a/MS4b and the R175 derating input"
+  },
+  {
+   "old": "U102, U103 and T8/T9).",
+   "new": "U102, U103 and T8/T9). This 20 mm radius applies to the EVM power stage in a G1 merge only; the MB BT boost\n    aggressors of the adopted r7 layout are bounded in H.23(f) and measured in T-C-16b.",
+   "note": "J.2 item 60: scope of the 20 mm radius (separate sentence; the following D-F6 sentence is untouched)"
+  }
+ ]
+}

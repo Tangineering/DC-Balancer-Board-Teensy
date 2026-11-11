@@ -1,0 +1,60 @@
+{
+ "group": "rev7-Z",
+ "edits": [
+  {
+   "note": "Z1 T-A-05 procedure: stale h_f 2.24 mm (F1 changed every other site to 2.19 mm) and the RTV item still read 'neutral cure' while the pass column (F1) requires alkoxy cure for both grades",
+   "old": "the FT1/FT2 foot blocks (PA66 or PBT; FT1 body 4.0 x 1.6 mm, FT2 body 4.0 x 4.0 mm with the 1.0 mm fill hole, h_f 2.24 mm, H.23(i)); the RTV (neutral cure, temperature rating, adhesion to polyimide without primer, modulus; acetoxy cure excluded; E_RTV 1-3 MPa is assumed in H.23(i));",
+   "new": "the FT1/FT2 foot blocks (PA66 or PBT; FT1 body 4.0 x 1.6 mm, FT2 body 4.0 x 4.0 mm with the 1.0 mm fill hole, h_f 2.19 mm +0/-0.05 mm, H.23(i)) (**superseded in r7:** h_f 2.24 mm); the foot transfer tape (0.05 mm, temperature rating); both RTV grades of E (alkoxy neutral cure only, oxime and acetoxy cure excluded, A.7; temperature rating, adhesion to polyimide without primer, modulus; E_RTV 1-3 MPa is assumed in H.23(i)) (**superseded in r7:** \"the RTV (neutral cure ...; acetoxy cure excluded)\");"
+  },
+  {
+   "note": "Z2 J.2 item 50: F1 relabelled the H.23(i) figures (unpropped = upper estimates, propped = neither bound); item 50 still called every first-mode figure an upper estimate",
+   "old": "It decides whether the feet suffice; the H.23(i) first-mode figures are order-of-magnitude upper estimates,\n    and T-F-18 confirms after the build.",
+   "new": "It decides whether the feet suffice. The unpropped H.23(i) first-mode figures are order-of-magnitude upper\n    estimates, and the propped figures are neither bound (**superseded in r7:** \"the H.23(i) first-mode figures are\n    order-of-magnitude upper estimates\"). T-F-18 confirms after the build."
+  },
+  {
+   "note": "Z3 H.23(j): F7 split MS1 into MS1a (gate D-2) and MS1b; the H.23(j) row still cited gate D-2 as MS1",
+   "old": "PM4 header orientation and post option unchanged; gate D-2 (MS1); MS6;",
+   "new": "PM4 header orientation and post option unchanged; gate D-2 (MS1a); MS6;"
+  },
+  {
+   "note": "Z4 PM4 (4): F7's edit closed the outer parenthesis early and left an unmatched ')' after H.23(j); the r7 protrusion note becomes its own parenthesis",
+   "old": "cut them to <= min(1.0 mm, MS2 under-MB clearance - 0.5 mm), T-A-08); r7: the MB-bottom protrusion is 4.115 mm before the cut, H.23(j)); the W1-W4",
+   "new": "cut them to <= min(1.0 mm, MS2 under-MB clearance - 0.5 mm), T-A-08) (r7: the MB-bottom protrusion is 4.115 mm before the cut, H.23(j)); the W1-W4"
+  },
+  {
+   "note": "Z5a PM6 gate cell: F1 named the pads over FT1 by tap ID only; F4 (A.4, A.8, H.23(g)) names them F20 (T20) and F21 (T21)",
+   "old": "**r7:** the tap pads T20 and T21 lie over the FT1 body (H.23(g))",
+   "new": "**r7:** the tap pads F20 (T20) and F21 (T21) lie over the FT1 body (H.23(g))"
+  },
+  {
+   "note": "Z5b T-A-09 order: same pad naming as F4",
+   "old": "again for FT1 after PM6, because the tap pads T20 and T21 lie over the FT1 body (H.23(g))",
+   "new": "again for FT1 after PM6, because the tap pads F20 (T20) and F21 (T21) lie over the FT1 body (H.23(g))"
+  },
+  {
+   "note": "Z6a T-A-06 item (8): F7 moved R171 out of MS3 and made PM3 rely on the T-A-06 item (8) dry fit, but item (8) only listed the MS3 items",
+   "old": "(8) dry fit of both tabs on the MB with the MS3 items in place:",
+   "new": "(8) dry fit of both tabs on the MB with the MS3 items and R171 (fitted in PM3) in place:"
+  },
+  {
+   "note": "Z6b T-A-06 pass: R171 clearance added to the dry-fit criterion to match PM3",
+   "old": "both tabs seat without touching an MB part or an MS3 item;",
+   "new": "both tabs seat without touching an MB part, an MS3 item or R171;"
+  },
+  {
+   "note": "Z7 0.3 r7-17: F5 added T-C-16b and F2 added J.2 item 62; the r7-17 summary listed neither",
+   "old": "T-C-16 (E1/C205 ring with and without R276) and T-F-18 (tab vibration and joint integrity)",
+   "new": "T-C-16 (E1/C205 ring with and without R276), T-C-16b (comparator band pickup from the MB BT boost and the VCHG-IN hard short) and T-F-18 (tab vibration and joint integrity)"
+  },
+  {
+   "note": "Z7b 0.3 r7-17: J.2 range now ends at item 62 (F2)",
+   "old": "after the same vehicle run); J.2 items 46-61;",
+   "new": "after the same vehicle run); J.2 items 46-62;"
+  },
+  {
+   "note": "Z8 D103 row: 'W1/W2 as short as possible' contradicts D-F3 (fixed 0.30 m +- 10 mm; a shorter lead raises the IN-side spike, H.5)",
+   "old": "the only other lever is the OUT-loop inductance (W1/W2 tightly twisted and as short as possible).",
+   "new": "the only other lever is the OUT-loop inductance (W1/W2 tightly twisted and as short as possible) (**superseded in r7:** W1/W2 tightly twisted at the fixed 0.30 m +- 10 mm; a shorter W1/W2 raises the hard-short IN-side spike at U101, H.5, D-F3)."
+  }
+ ]
+}

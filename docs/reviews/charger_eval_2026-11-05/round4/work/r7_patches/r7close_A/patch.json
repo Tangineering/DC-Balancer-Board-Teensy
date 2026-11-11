@@ -1,0 +1,445 @@
+{
+ "group": "r7close_A",
+ "edits": [
+  {
+   "old": "**Status (2026-11-10, revision r7 after the round-4 carrier change; r6 after review round 6;",
+   "new": "**Status (2026-11-10, revision r7 after the round-4 carrier change and review round 7; r6 after review round 6;",
+   "note": "status line: review round 7"
+  },
+  {
+   "old": "straight-length sum 1308.0 -> 859.3 mm (-34.3 %), 895.5 mm dressed;",
+   "new": "straight-length sum 1308.0 -> 859.3 mm (-34.3 %), 898.7 mm dressed (-31.3 %; **superseded in r7:** 895.5 mm with the review-7 low-edge lane of T8, which calc revision 4 found infeasible, A.4);",
+   "note": "r7-6: dressed sum calc rev 4"
+  },
+  {
+   "old": "W5 the fixed 304.8 mm cable with a 222.7 mm minimum fit, routed around the W3/W4 channel; J.2 item 62)",
+   "new": "W5 the fixed 304.8 mm cable with a 222.7 mm minimum fit, routed around the W3/W4 channel; J.2 item 62; **review 7 close (calc revision 4, D-H):** the 10 mm switched-conductor rule is applied as a 3-D distance with spacer heights, S1 and S2 move, and the chassis tie closes the last span, <= 2.4 / 16.4 / 17.4 mm past the MB +y edge, A.3)",
+   "note": "r7-9: close-round note"
+  },
+  {
+   "old": "(total about USD 505-590)",
+   "new": "(total about USD 505-590; **superseded in r7:** about USD 520-630 after review round 7, which adds the foot transfer tape, the bed RTV and the W-lead anchors, spacers and strip, E)",
+   "note": "r7-16: E total"
+  },
+  {
+   "old": "MS1a gates PM1, the MS6 reading at the CHG holes gates PM4, the other items gate PM0)",
+   "new": "MS1a gates PM1, the MS6 reading at the CHG holes gates PM4, the other items gate PM0) (**superseded in r7 (D-H):** MS1a is taken before PM1 because the module must be fitted, and it gates nothing; gate D-2 and the MS2 lid clearance retire; J.2 items 46-63)",
+   "note": "r7-17: MS1a gate retired"
+  },
+  {
+   "old": "| r7-18 | **Proposals for files this design does not edit (new D.5):** CLAUDE.md gains the D.4 record only once built; no `teensy_controller.ino` change; one WORK_QUEUE.md item for MS1-MS8 with their gates; no IO CSV change (D.5) | constraint change |\n\n### 0.4 Review-design loop",
+   "new": "| r7-18 | **Proposals for files this design does not edit (new D.5):** CLAUDE.md gains the D.4 record only once built; no `teensy_controller.ino` change; one WORK_QUEUE.md item for MS1-MS8 with their gates; no IO CSV change (D.5) | constraint change |\n\n**Round 4 r7, review round 7 and its close** (60 verified findings: 33 confirmed and 27 partially confirmed, 0 refuted, none a\nblocker; by the verifier's severity 10 major and 50 minor; 7 nits unverified and applied as well; dispositions D-F1 to D-F7 and\nD-H in `round4/work/r7_review7_dispositions.md`; the close re-ran `round4/calc/r7_calc.py` as revision 4; dispositions that\ndiffer from the finding as written are in section L.7):\n\n| # | Change | Finding keys |\n|---|---|---|\n| rv7-1 | **Feet, controlled bond and gated bed (D-F1):** each foot is taped to the CR with 0.05 mm acrylic transfer tape, h_f 2.19 mm (+0/-0.05 mm); the t_bed tolerance budget (header body, CR bow, block, tape) is printed (FT1 RSS 0.171-0.529 mm); PM4 (2d) dry-seats the CR before the 22 joints with 0.05 / 0.15 / 0.45 mm feelers; bottom-silkscreen outlines, an FT1 axis tick and an FT2 locating pin place the feet; PM4 (3) is an ordered fixture procedure; the beds use a flowable alkoxy-cure RTV only (no oxime, no acetoxy, no paste), and FT2 is filled through its hole until a witness shows at three faces; T-A-09 pulls 0.4 N at each grip; the taps over FT1 are soldered last and FT1 is re-checked; the feet effect is stated (7-21 % worst-pin cut at 30 g, ORDER OF MAGNITUDE), and the propped first modes are labelled as neither bound; T-A-06 gets an FT1/FT2 exception to its air rule (A.7, D.1, E, H.23(i), I) | foot-height-stackup-unbounded, foot-height-ignores-cr-side-bond-line, foot-bed-stackup-omits-bond-line, foot-bond-thickness-assumption-dropped, foot-placement-no-locator-or-check, foot-placement-tolerance-no-aid-no-test, bed-injection-process, ft2-bed-uninspectable-and-unfillable, rtv-bom-admits-oxime-cure, ta09-pull-overloads-psa-path, feet-not-justified-by-own-numbers, vibration-figures-not-bounds, tap-pads-over-ft1-soldered-after-bond-check, tap-soldering-over-ft1-after-ta09, pm4-seating-fixture-undefined, pm4-step3-props-unspecified |\n| rv7-2 | **W-lead dressing path and anchors (D-F2):** a trunk across tab Y to the MB tie base A1 replaces the straight segment to tab X; every W lead keeps >= 2 mm in plan from the pin-10 joint, the IN strip, the U101 courtyard, the +x pocket, every post tip and every tap pad, and none lies over tab X; the pin 7-10 tips get an RTV dome or a Kapton patch; the anchor rule (<= 30 mm between anchors along the lead) with the RTV beads B1/B3, the W5 spacer beads S1-S3 and the MB tie bases A1/A2 replaces the 30 mm chassis-tie rule; a polyimide strip covers the MB parts and the untented non-GND vias under the leads; MS3 covers the W-lead path (A.3, A.7, D.1 PM4, E, I T-F-12) | w-leads-cross-unfused-vchgin, w-leads-and-ribbon-cross-pin10-vchgin-post, w-lead-unsupported-span-over-mb, chassis-tie-30mm-unbuildable, chassis-tie-30mm-unachievable, chassis-tie-0p02mm-margin-untested, chassis-tie-margin-0p02mm, w1-w4-over-tap-field, w-band-over-mb-bodges |\n| rv7-3 | **W5 and the USB corridor (D-F2):** W5 is the fixed 304.8 mm factory cable; its route is a minimum-fit check (222.7 mm with a 20 mm 3-D allowance), and the slack is a service loop anchored on the EVM plate; the corridor width is the Teensy receptacle silkscreen, and MS2 measures the plug overmold; W5 runs around the 4.97 mm W3/W4 channel over the EVM plate (A.3, A.7, H.23(l), J.2 item 57) | w5-cable-exceeds-route-max-untested, w5-build-max-semantics, w5-w3w4-channel-and-crush, usb-corridor-width-is-receptacle |\n| rv7-4 | **W1/W2 fixed at 0.30 m +- 10 mm (D-F3):** a lead cut to its route raises the hard-short IN-side spike to 34.4 V (199.5 mm) or 34.9 V (181.6 mm), against 32.8-32.9 V at 290-300 mm and the D107 VBR(min) of 36 V; the slack is an anchored service loop; W3/W4, W6 and W7 take their route maxima after MS2 (A.3, H.23(l)) | hard-short-shorter-w1w2-not-bounded |\n| rv7-5 | **Tab X tap assignment and dressing (D-F4):** the assignment minimises the straight-length sum under six adjacency exclusions (none violated); an adjacent-pad short table names the consequence and the detector of every pair; the dressed lengths run on the legal gap path, and the LM1084 crossing is tested for every tap; T8 takes a dedicated lane; T-F-12 states attainable tap-isolation criteria; PM3 routes the T2 wire on the gap path (A.4, A.8, D.1, H.23(g), I) | tabx-tap-pad-adjacency-unanalysed, tap-adjacency-hv-taps-next-to-teensy-pins, dressed-length-path-crosses-pads, a4-dressing-rule-vs-calc-path, t8-residual-tap-crosses-lm1084-misreported, t8-crosses-lm1084-unflagged, tf12-r7-tap-isolation-criterion-unattainable, pm3-t2-away-from-tab-x-contradiction |\n| rv7-6 | **Per-region booking (D-F5):** H.23(e2) books the footprint low-y band, the footprint interior, tab X and tab Y (top and bottom) against 75 % each; the band keeps the comparators and the residual pads, the 0.1 % dividers sit in the interior divider strip, and U109 and then U108 move from tab Y to the interior; the gate decouplers sit underneath on tab Y bottom; the band's distances to the MB BT boost and the 5V copper are printed, and T-C-16b measures the pickup; MS4a (the CO-5V joint) and MS4b (the band end) are added, with the R175 and F101/R172 derating in T-A-05; the T-A-06 L4 mask criterion admits the bottom-side pads (0.3 r7-5, A.8, H.23(e2), H.23(f), I) | low-y-band-overbooked, r7-table-omits-tab-y-allocation, comparator-band-near-mb-bt-boost, thermal-rule-misses-comparator-band, r175-thermal-band-no-derating, ms4-survey-misses-co5v-joint-and-comparator-region, f101-r172-derating-input-not-measured, ta06-l4-mask-criterion-contradicts-bottom-parts, t-a-06-l4-mask-criterion-single-sided |\n| rv7-7 | **E leads, EIB and EVM plate (D-F6):** T-C-16 gets an abort limit and a criterion tied to the prediction, with the E8 shared-return pickup booked against the E3/E4 budgets; E1 takes a bent route below U1 and L2 (70.8 mm against 90 mm); Kapton covers the E-pad joints against the USB corridor; the EVM and the EIB share one plate (not one rigid body), with a retention specification, lateral stops and the T-F-18b re-check; the G1 distance rationale is re-quantified; the one-sided R276 effect on regen absorption is stated (A.5, A.7, B.6, H.23(k), I, J.2 item 60) | r276-shared-e8-budget-tc16-criterion, tc16-bridged-run-no-abort-loose-pass, e1-dressing-vs-90mm-and-fault-limit, eib-epads-inside-usb-corridor-band, evm-eib-not-one-rigid-body, evm-plate-mount-untested-in-vibration, g1-distance-rationale-misquantified, r276-safe-direction-one-sided |\n| rv7-8 | **Procedure and documentation (D-F7):** the T-A-08 gates are ordered so that none is circular (MS1b after PM1 gates nothing; MS6 at the CHG holes gates PM4), and MS2 has a pass criterion; MS5 and T-F-18 get measurable criteria and an accelerometer mass limit; the supporting-files table is complete; the superset claim of the bottom clearance rule is corrected; the sheet trims also clear the MB pads by >= 0.5 mm; small numbers, the JP21 post and the PM3 C-D2 reference are corrected (A.7, D.1, H.23(m), I, J.2) | ta08-gates-circular-or-unexecutable, ta08-ms2-no-pass-criterion, ms1-mass-after-removal-gates-removal, ms5-tf18-criteria-not-measurable, tf18-accelerometer-mass-loading-and-soft-criteria, supporting-files-table-incomplete, bottom-rule-superset-claim, sheet-trims-ignore-pads, procedure-ste-and-measurement-nits, pm3-cd2-distance-wrong-reference, stale-jp21-bottom-terminal-and-small-number-drift |\n| rv7-9 | **No height limit (D-H, operator statement 2026-11-10):** the 13.14 mm Ag105 envelope and the lid clearance stop being limits; the stack top becomes information (H.23(j)); gate D-2 and the MS2 lid item retire, MS1a keeps the standoff reading, and J.2 item 59 closes; every rejection that rested on height is re-assessed on its remaining reasons, and each stays rejected (A.7, J.2 item 61) | w5-stack-height-fails-by-construction |\n| rv7-10 | **Close of review 7 (calc revision 4):** the 10 mm switched-conductor rule is applied as a 3-D distance with spacer heights (trunk jacket bottom >= 10.14 mm above the CR top, W5 ribbon bottom >= 10.735 mm; J.2 item 62); S1 and S2 move clear of the J101 region and the W3/W4 jacket (longest span 26.0 mm); the chassis tie closes the last span (<= 2.4 / 16.4 / 17.4 mm past the MB +y edge with a 2 mm margin); the cut-outs clear their own pads by 0.5 mm, and the 2.2 mm relief holes stay (3.4 mm holes merge into slots); T8 takes the upper lane (89.2 mm; a low-edge lane is infeasible by 0.59 mm); the open adjacent pairs are computed, and the extended exclusion set goes to a ruling (J.2 item 63); the E1 route distances come from the calc; the E total becomes about USD 520-630 (A.3, A.4, A.5, A.7, A.8, D.1, E, H.23, I, J.2) | close round, no finding key |\n\n### 0.4 Review-design loop",
+   "note": "0.3: review-round-7 block"
+  },
+  {
+   "old": "The round-4 log, including review round 7, is `round4/review_loop.md`.",
+   "new": "The round-4 log, including review round 7, is `round4/review_loop.md`. **Review round 7** produced 60 verified findings (33 confirmed, 27 partially confirmed, 0 refuted, none a blocker; by the verifier's severity 10 major and 50 minor) and 7 unverified nits. All are applied (review-round-7 block in 0.3), and the differing implementations are in section L.7. The closing pass re-ran `round4/calc/r7_calc.py` as revision 4, applied the operator statement of 2026-11-10 that the MB and its PCBs have no maximum height (D-H), and applied the 10 mm switched-conductor rule as a 3-D distance (A.3).",
+   "note": "0.4: review round 7"
+  },
+  {
+   "old": "the chassis tie is an extra anchor with no distance limit); pull check in T-F-12",
+   "new": "the chassis tie is an extra anchor with no distance limit) (**superseded in r7:** the chassis tie closes the last span and sits <= 2.4 mm past the MB +y edge for W1/W2, A.3 review 7 close note); pull check in T-F-12",
+   "note": "A.3 W1 row: chassis tie limit"
+  },
+  {
+   "old": "follows the W5 branch of the W-lead dressing path, r7 review 7 note below; it never crosses tab X)",
+   "new": "follows the W5 branch of the W-lead dressing path, r7 review 7 note below; it never crosses tab X; **r7 review 7 close:** from S2 on, spacers hold it >= 10.735 mm above the CR top, A.3 3-D rule)",
+   "note": "A.3 W5 row: 3-D height"
+  },
+  {
+   "old": "clear of the tap pads, and stays at its fold height until A1.",
+   "new": "clear of the tap pads, and stays at its fold height until A1 (**superseded in r7:** at >= 15.00 mm above the MB over tab Y and down to the fold height at (47.25, 73.80), under the 3-D rule below).",
+   "note": "A.3 W5 path height"
+  },
+  {
+   "old": "On tab Y the ribbon overlaps the L-FC body by 0.68 mm in plan, >= 12.3 mm above the MB (L-FC body height TODO(verify: L-FC datasheet)). Both exceptions wait for an operator ruling (J.2 item 62).",
+   "new": "On tab Y the ribbon overlaps the L-FC body by 0.68 mm in plan, >= 12.3 mm above the MB (L-FC body height TODO(verify: L-FC datasheet)) (**superseded in r7:** the 3-D rule below sets the ribbon bottom there >= 15.00 mm above the MB). Both exceptions wait for an operator ruling (J.2 item 62) (**superseded in r7:** the 3-D rule closes the L-FC overlap; the C102b exception stays open, J.2 item 62).",
+   "note": "A.3 W5 exceptions"
+  },
+  {
+   "old": "The 10 mm figure has no stated pickup basis, so its acceptance on the CR is an open operator ruling (J.2 item 62).",
+   "new": "The 10 mm figure has no stated pickup basis, so its acceptance on the CR is an open operator ruling (J.2 item 62). (**superseded in r7:** the decision of 2026-11-10 below applies the rule as a 3-D distance.)\n\n**r7 review 7 close (3-D switched-conductor rule, decision 2026-11-10; H.23(l)).** The 10 mm switched-conductor rule is applied\nas a 3-D distance. The switched conductors are the VSW-FC and VSW-BT pours, the L-FC and L-BT bodies and the REG-FC and REG-BT\nboxes. Where the plan distance d from a jacket edge to a switched conductor is < 10 mm, insulating spacers or RTV beads hold\nthe jacket bottom at >= H + sqrt(10² - d²) above the MB top, and at >= H + 10 mm where the two overlap in plan. H is the\nconductor top: 0 mm for the pours, 1.0 mm for REG-FC/REG-BT (VQFN-HR, `TPS61288LRQQR.pdf`) and 5.0 mm for L-FC/L-BT\n(ASSUMPTION from the HCM1A1305V3 size code, TODO(verify: Eaton HCM1A1305V3 drawing), MS3 caliper). The decision rests on the\noperator statement of 2026-11-10 that the MB and its PCBs have no maximum height (D-H). The L-FC body controls every lead:\n\n- The round leads W1-W4, W6 and W7 share one run from B1 (25.80, 64.50) to (50.45, 72.09). On the CR the jacket bottom must be\n  >= 14.41 mm above the MB, that is 10.14 mm above the CR top; the worst point is (36.00, 71.10), 3.39 mm in plan from L-FC.\n  Off the CR, from (37.75, 71.10) to (50.45, 72.09), it must be >= 14.35 mm above the MB. The required height is 5.48 mm at\n  B1, 13.72 mm at y 69.60, 14.41 mm at x 36.5, 13.45 mm at x 41.5, 11.95 mm at x 44.0, 8.61 mm at x 46.7 and 3.27 mm at\n  x 49.2.\n- W5, from (28.70, 65.67) to (47.25, 73.80), needs a ribbon bottom >= 15.00 mm above the MB. The ribbon therefore rises from\n  its 8 mm fold to >= 10.735 mm above the CR top (+2.73 mm). It still overlaps L-FC by 0.68 mm in plan.\n- From A1 on, no spacer is needed (10.38-13.01 mm in plan).\n\nThe requirement reaches 7.56 mm above the CR top only 2.7 mm past B1 (hand calculation from the H.23(l) profile). B1 and B3\nare therefore insulating spacer posts that hold the trunk level at >= 10.14 mm above the CR top from B1 to the tab Y +x edge.\nS2 and S3 hold the W5 ribbon level at >= 10.735 mm above the CR top, and S1 keeps the 8 mm fold at J101. A lead that runs\nstraight from 14.41 mm at B3 down to the MB top at A1 stands at about 10.8 mm at x 41.5, against the 13.45 mm required there\n(hand calculation along the path). An insulating support therefore holds both runs on the H.23(l) profile off the CR,\nbetween x 37.75 and 46.7. Its position and form are TODO(design: T-A-06 dry fit): a support on the MB clear of every MB part\nbox (the OP-FC box x 40.22-45.12, y 67.30-75.28 lies under the run), or a rigid insulating bridge from the tab Y +x edge to\npast x 46.7. T-F-12 measures the jacket-bottom heights at the controlling points. The plan raster bound (5.12 mm for the\nbundle, 9.34 mm for one lead) stays as information.",
+   "note": "A.3: 3-D switched-conductor rule"
+  },
+  {
+   "old": "- RTV beads (3.0 x 3.0 mm footprint, ASSUMPTION): **B1** at (25.80, 64.50) and **B3** at (35.00, 70.80);",
+   "new": "- RTV beads (3.0 x 3.0 mm footprint, ASSUMPTION): **B1** at (25.80, 64.50) and **B3** at (35.00, 70.80) (**r7 review 7 close:** each also an insulating spacer post that holds the trunk >= 10.14 mm above the CR top, 3-D rule above);",
+   "note": "A.3 anchors: B1/B3 posts"
+  },
+  {
+   "old": "**S1** at (36.00, 46.83), **S2** at (28.70, 55.00) and **S3** at (35.00, 73.10), which merges with B3 into one spot;",
+   "new": "**S1** at (35.00, 47.69), **S2** at (28.70, 53.42) and **S3** at (35.00, 73.10), which merges with B3 into one spot (**superseded in r7:** S1 at (36.00, 46.83) and S2 at (28.70, 55.00); calc revision 4 moved them, below);",
+   "note": "A.3 anchors: S1/S2 positions"
+  },
+  {
+   "old": "The longest span between anchors is 25.8 mm (B3 to A1).",
+   "new": "The longest span between anchors is 25.8 mm (B3 to A1) (**superseded in r7:** 26.0 mm, S2 to S3, with the revision-4 S2; the W5 spans are S1-S2 12.9, S2-S3 26.0, S3-A1 25.6, A1-A2 22.7 and A2 to the MB +y edge 10.6 mm, measured in plan).",
+   "note": "A.3 longest span"
+  },
+  {
+   "old": "The S1 and S2 footprints are ASSUMPTIONS that reach 0.50 mm into the J101 region and 0.25 mm from the W6/W7 pads; the T-A-06 dry fit places them clear of both.",
+   "new": "The S1 and S2 footprints are ASSUMPTIONS that reach 0.50 mm into the J101 region and 0.25 mm from the W6/W7 pads; the T-A-06 dry fit places them clear of both (**superseded in r7:** calc revision 4 moved S1 to (35.00, 47.69) and S2 to (28.70, 53.42). The old S2 also overlapped the W3/W4 trunk jacket by 0.51 mm. S1 now keeps 0.50 mm from the J101 region and from the divider strip and 7.33 mm from the nearest jacket. S2 keeps 1.33 mm from the W6/W7 pad exclusion and 0.51 mm from the W3/W4 jacket, against the >= 0.5 mm rule. The 3.0 x 3.0 mm footprints stay ASSUMPTIONS, and the T-A-06 dry fit confirms them).",
+   "note": "A.3 S1/S2 clearances"
+  },
+  {
+   "old": "That run also meets the rule when the chassis tie sits within 4.4 mm (west group), 18.4 mm (W3/W4) or 19.4 mm (W5) past the MB +y edge; MS2 records the position.",
+   "new": "That run also meets the rule when the chassis tie sits within 4.4 mm (west group), 18.4 mm (W3/W4) or 19.4 mm (W5) past the MB +y edge; MS2 records the position. (**superseded in r7:** the chassis tie is no longer exempt. It closes the last span from the last MB anchor, so it sits <= 4.4 mm past the MB +y edge for the west group (W1, W2, W6, W7; last span 25.6 mm), <= 18.4 mm for W3/W4 (11.6 mm) and <= 19.4 mm for W5 (10.6 mm). With a 2 mm margin the limits are 2.4, 16.4 and 17.4 mm, so the west-group tie sits effectively at the MB +y edge. No further MB tie base is added: a 6 x 6 mm +- 1.5 mm base, the A1 size, has no position on the west run, because C4C-FC, SNS-FC and the FC-CURR vias at (58.93, 83.57) and (60.71, 90.42) block it. The only fit is a 4 x 4 mm +- 1.0 mm base at (58.80, 95.00), 0.03 mm from C4C-FC (H.23(l)). MS2 records the tie positions against these limits.)",
+   "note": "A.3 chassis tie limits"
+  },
+  {
+   "old": "It further covers 3V3 (51.10, 69.13) and MISO (54.00, 69.60), which W5 would cross if it touched down before A1.",
+   "new": "It further covers 3V3 (51.10, 69.13) and MISO (54.00, 69.60), which W5 would cross if it touched down before A1. Both lie inside the strip extent, so the strip covers 11 non-GND vias (calc revision 4).",
+   "note": "A.3 strip vias"
+  },
+  {
+   "old": "and 895.5 mm dressed on the path that the dressing rule allows (**superseded in r7:** 850.9 mm straight",
+   "new": "and 898.7 mm dressed (-31.3 %) on the path that the dressing rule allows (**superseded in r7:** 895.5 mm dressed with the review-7 T8 lane; before review 7, 850.9 mm straight",
+   "note": "A.4 dressed sum"
+  },
+  {
+   "old": "because every r7 straight and dressed length is at most 57 % of its maximum (T8, 86.0 mm dressed against 0.15 m)",
+   "new": "because every r7 straight and dressed length is at most 59.5 % of its maximum (T8, 89.2 mm dressed against 0.15 m) (**superseded in r7:** 57 %, T8 86.0 mm in the review-7 lane)",
+   "note": "A.4 ratio 59.5 %"
+  },
+  {
+   "old": "T8 therefore takes the **low-edge lane**: from F09 toward -y to y 34.40, along y 34.40 to x 63.50, then to J2.31 (86.0 mm dressed). In that lane the T8 jacket passes 0.15 mm below the F10 and F22 pads, overhangs the CR low edge (y 34.14) by up to 0.24 mm and passes 1.97 mm below the REG-5V box.",
+   "new": "T8 therefore takes the **upper lane** (calc revision 4): from F09 (28.98, 35.80) toward +y to (28.98, 37.55), along y 37.55 to x 43.43, down to (43.43, 34.64), along y 34.64 to x 63.50, then to J2.31 (89.2 mm dressed, 82.8 mm straight). The jacket (radius 0.5 mm, ASSUMPTION) keeps 0.50 mm from the F22 pad and lies inside the CR low edge (0 mm). It keeps 1.73 mm from the REG-5V box, 2.13 mm from CO-5V and 2.05 mm from the pin-1 post square (1.22 mm from its 1.9 mm CR pad land). It passes over the comparator band at y 37.55 over x 28.98-42.43, a wire over parts that is not booked as area, and it crosses the T18 option path. (**superseded in r7:** the review-7 **low-edge lane**, from F09 toward -y to y 34.40, 86.0 mm dressed; its jacket overhung the CR low edge by up to 0.24 mm and passed 0.15 mm below the F10 and F22 pads. A low-edge lane is infeasible by 0.59 mm: the jacket centre needs y >= 34.64 to stay on the CR and y <= 34.05 to keep 0.5 mm from the pads.)",
+   "note": "A.4 T8 upper lane"
+  },
+  {
+   "old": "82.8 mm straight, 86.0 mm dressed in the low-edge lane) | J2.31",
+   "new": "82.8 mm straight, 89.2 mm dressed in the upper lane (**superseded in r7:** 86.0 mm in the low-edge lane)) | J2.31",
+   "note": "A.4 T8 row length"
+  },
+  {
+   "old": "Twisted with T9 at F09/F10 only: the T8 low-edge lane and the T9 straight path part after F10",
+   "new": "Twisted with T9 at F09/F10 only: the T8 upper lane and the T9 straight path part there (**superseded in r7:** the T8 low-edge lane)",
+   "note": "A.4 T8 row notes"
+  },
+  {
+   "old": "The bend keeps E1 5.0 mm from the JP17 pin-1 joint (E6, /CE), 10.2 mm from TP36 (E5), 9.0 mm from the U1 outline and 17.1 mm from the L2 outline. The straight line would pass 1.97 mm from JP17 pin 1 and 0.11 mm from the vacated JP17 pin-2 hole. Hand calculation on the `round4/work/evm_geometry.md` Table 1 positions; T-A-06 records the length)",
+   "new": "The bend keeps E1 5.02 mm from the JP17 pin-1 joint (E6, /CE), 6.57 mm from the centre of the vacated JP17 pin-2 hole, 10.20 mm from TP36 (E5), 9.03 mm from the U1 outline and 17.12 mm from the L2 outline. The straight line (69.0 mm) would pass 1.97 mm from JP17 pin 1 and 0.11 mm from the centre of the vacated JP17 pin-2 hole, that is through the hole. `round4/calc/r7_calc.py` H.23(k), revision 4, on the `round4/work/evm_geometry.md` Table 1 positions (**superseded in r7:** a hand calculation that stated the pin-2 figure as a distance to the hole); T-A-06 records the length)",
+   "note": "A.5 E1 route"
+  },
+  {
+   "old": "(-34.3 %; 895.5 mm dressed,",
+   "new": "(-34.3 %; 898.7 mm dressed with the T8 upper lane, 895.5 mm before calc revision 4,",
+   "note": "A.7 tab content dressed sum"
+  },
+  {
+   "old": "raised stack and cover the FC droop analog or a boost switching node.",
+   "new": "raised stack and cover the FC droop analog or a boost switching node (**superseded in r7 (D-H):** the raised stack is no longer an objection; the coverage is, re-assessment below).",
+   "note": "A.7 rejected zones: raised stack"
+  },
+  {
+   "old": "Mounting the EVM on the CR covers the whole FC boost channel, which has an open undiagnosed fault.",
+   "new": "Mounting the EVM on the CR covers the whole FC boost channel, which has an open undiagnosed fault.\n- **Rejected zones re-assessed without a height limit (r7 review 7 close, D-H).** The operator statement of 2026-11-10 removes\n  every maximum height for the MB and its PCBs. A raised stack, a taller header body or a taller connector therefore stops\n  being an objection by itself. Each rejection is re-assessed on its remaining reasons (`round4/work/mb_mechanical.md`\n  Table 1, `round4/work/proposal_evm_on_cr.md` section 2.1); no new layout is adopted:\n  - the -x zone and the zone past x = 0 cover the J-BL/J-FC wire entries and screws and the J-NTC push buttons; a header body\n    of >= 22.7 mm would clear the blocks in height, but not the access: still rejected;\n  - the -y zone covers BAL pad 8 (T22, PM11), RB1A and CBL2 and lies 2.96 mm from VSW-BT; it had no height reason: still\n    rejected;\n  - the +y wide zone (x 17.70-48.70, y 67.14-76.51) had one height reason, a 2.75 mm header body over OP-FC. It still covers\n    the FC droop analog (OP-FC, MDAC-FC, RD/RINJ and the VDROOP-FC, N$7 and N$8 nets) and blocks OP-FC and MDAC-FC, whose\n    AD5443/OPA197 DMM block measurement is an open bench item: still rejected;\n  - the +y and -y zones to the MB edge lie over a boost switching node (L-FC, REG-FC and VSW-FC; L-BT, REG-BT and VSW-BT) and\n    cover the boost, droop or BAL parts: still rejected;\n  - the extension past x 65.00 is a 34.2 mm cantilever over the 16 V VBUS pour with its tip 0.5 mm from RENC2; it had no\n    height reason: still rejected;\n  - the EVM on the CR covers the FC boost channel and puts the EVM mass on the 22 pins; it had no height reason: still\n    rejected;\n  - the mezzanine over the MB loses its height objection; its remaining reasons still reject it for this round (J.2 item 61).",
+   "note": "A.7 rejected zones re-assessed (D-H)"
+  },
+  {
+   "old": "  nominal Ag105 envelope is 13.14 mm (`AG105_Silvertel.pdf` Figure 11 p.21), so the margin is <= 0.875 mm before the cable. With a ribbon of about 0.9 mm (ASSUMPTION, TODO(verify: cable assembly\n  drawing)), one or two thicknesses at the fold give an expected margin of -0.03 to -0.93 mm, so gate D-2 is expected to\n  fail on the nominal envelope. The fallback is a right-angle or low-profile 1.27 mm IDC at J101, or an MS2 lid-clearance\n  basis in place of the Ag105 envelope (operator ruling, J.2 item 59). Gate D-2\n  (MS1a: the measured Ag105 standoff and module top height; `docs/reviews/battery_isolation_2026-11-07/detailed_design_IC1.md`\n  section 15.2) decides before PM1.",
+   "new": "  nominal Ag105 envelope is 13.14 mm (`AG105_Silvertel.pdf` Figure 11 p.21) and is a reference only. **r7 review 7 close (D-H,\n  operator statement 2026-11-10):** the MB and its PCBs have no maximum height, so neither the Ag105 envelope nor a lid\n  clearance is a limit, and the stack top is information (H.23(j)). It is >= 12.265 mm plus the cable, that is 13.165 / 14.065 mm\n  with one / two 0.9 mm ribbon thicknesses (ASSUMPTION). Under the 3-D switched-conductor rule (A.3) the W5 run over tab Y sits\n  >= 10.735 mm above the CR top, with its bottom >= 15.00 mm and its top >= 15.90 mm above the MB; the round leads run\n  >= 10.14 mm above the CR top near L-FC. (**superseded in r7 (D-H):** the margin <= 0.875 mm before the cable, the expected\n  margin of -0.03 to -0.93 mm, gate D-2, which MS1a decided before PM1, and its fallback of a right-angle or low-profile IDC\n  or an MS2 lid-clearance basis, J.2 item 59.) MS1a still records the Ag105 standoff at the four corners before PM1 as the\n  seating reference (`docs/reviews/battery_isolation_2026-11-07/detailed_design_IC1.md` section 15.2), with no pass/fail.",
+   "note": "A.7 header stack: stack top information only"
+  },
+  {
+   "old": "No trimmed vertex lies inside the CR outline. The 22 relief holes and\n    the five cut-outs are unchanged; the two foot fallback cut-outs (feet bullets below) are the only further openings.",
+   "new": "No trimmed vertex lies inside the CR outline. The 22 relief holes are unchanged. The five cut-outs grow to their part body joined with its own pads + 0.5 mm (next bullet) (**superseded in r7:** the five cut-outs unchanged). The two foot fallback cut-outs (feet bullets below) are the only further openings.",
+   "note": "A.7 sheet outline: cut-outs"
+  },
+  {
+   "old": "  - **Relief holes and cut-outs against the MB pads (r7, H.23(m)):** the 22 relief holes are an exception to the pad rule.\n    Each 2.2 mm hole clears the flats of its 1.650 mm square CHG pad by 0.275 mm and covers each pad corner by up to\n    0.067 mm. A hole that kept 0.5 mm from the pad corners would need a diameter >= 3.33 mm. At the 2.54 mm pitch such holes\n    merge, and the header bodies, which set the stack height (H.23(j)), would lose their seat on the sheet. The five r5\n    cut-outs keep their part body + 0.5 mm rule and clear their own pads by 0.100-0.285 mm. The D-BT-SQ and C-DC12 cut-outs\n    overlap (x 27.718-28.990, y 51.449-52.226) and form one opening.",
+   "new": "  - **Relief holes and cut-outs against the MB pads (r7, H.23(m)):** the 22 relief holes are an exception to the pad rule.\n    Each 2.2 mm hole clears the flats of its 1.650 mm square CHG pad by 0.275 mm and covers each pad corner by up to\n    0.067 mm. Calc revision 4 evaluated the compliant hole. A hole that clears the pad corners by >= 0.5 mm needs a diameter\n    >= 3.333 mm; a 3.4 mm hole clears the corners by 0.533 mm and the flats by 0.875 mm. At the 2.54 mm pitch the web between\n    two such holes is -0.86 mm, so each column merges into one slot (x 19.30-22.70, y 34.84-66.18 and x 44.30-47.70,\n    y 37.38-63.64). The 3.40 mm slot is wider than the 2.54 mm header body, so the bodies lose their seat on the sheet and\n    stand 0.125 mm lower on the MB mask, while FT1 and FT2 stay on the sheet. The nominal t_bed then falls from 0.300 to\n    0.175 mm, against the 0.15 mm lower limit of the PM4 (2d) gate. A square opening that clears the pad by 0.5 mm (2.65 mm)\n    merges as well. The 2.2 mm holes therefore stay; the nearest hole edge lies 1.10 mm from the sheet outline.\n    The five r5 cut-outs (part body + 0.5 mm) cleared their own pads by only 0.100-0.285 mm. Each now grows to its part body\n    joined with its own pads + 0.5 mm, so it clears its own pads by 0.500 mm: D-BT-SQ x 27.318-32.118, y 47.849-52.226\n    (+0.400 mm), C-D11 x 24.615-27.709, y 48.334-52.250 (+0.358 mm), C-D12 x 32.743-35.837, y 48.080-51.996 (+0.358 mm),\n    C-DC11 x 32.771-35.301, y 51.195-53.453 (+0.215 mm) and C-DC12 x 26.675-29.205, y 51.449-53.707 (+0.215 mm). They merge\n    into two openings: D-BT-SQ, C-D11 and C-DC12 on the left, and C-D12 and C-DC11 on the right. The web between the two\n    openings is 0.625 mm wide (x 32.118-32.743; hand calculation from these coordinates). T-A-06 checks on the 1:1 print that\n    the web lies flat; otherwise the web is cut away and the openings join. The nearest enlarged cut-out (C-D11) lies 2.52 mm\n    from a relief-hole edge, and no other MB body lies within 0.5 mm of an enlarged cut-out. (**superseded in r7:** the five\n    cut-outs kept the part body + 0.5 mm, cleared their own pads by 0.100-0.285 mm, and only the D-BT-SQ and C-DC12 cut-outs\n    overlapped, x 27.718-28.990, y 51.449-52.226.)",
+   "note": "A.7 relief holes and enlarged cut-outs"
+  },
+  {
+   "old": "and the chassis tie is an extra anchor with no distance limit. W5 does not use",
+   "new": "and the chassis tie closes the last span, <= 2.4 mm (west group), 16.4 mm (W3/W4) and 17.4 mm (W5) past the MB +y edge with a 2 mm margin (calc revision 4; it superseded 'an extra anchor with no distance limit'). W5 does not use",
+   "note": "A.7 EVM placement: chassis tie limit"
+  },
+  {
+   "old": "| while pin 17 drives LOW, its output sinks the Teensy 3V3 directly (current set by the pin driver, TODO(verify: i.MX RT1062 datasheet, pad output current rating)); otherwise FCCEIL reads HIGH (\"FC ceiling confirmed\") whatever the firmware commands |",
+   "new": "| while pin 17 drives LOW, its output sinks the Teensy 3V3 directly: about 82.5 mA and 272 mW in the driver (40 ohm per driver ASSUMPTION, 12.3 mOhm of wire; calc revision 4; driver rating TODO(verify: i.MX RT1062 datasheet, pad output current rating), Teensy 3V3 regulator load TODO(verify: PJRC)); the node stays at the rail, so FCCEIL reads HIGH (\"FC ceiling confirmed\") whatever the firmware commands |",
+   "note": "A.8 F07-F12 row"
+  },
+  {
+   "old": "| two outputs tied without a series resistor; with pin 30 LOW and pin 17 HIGH the REGEN EN net sits near 1.65 V, above the RT1987 VEN_R maximum 1.4 V, so D-BC-RG can conduct while commanded off; U121 RGN_ON (trip 1.75-1.88 V) reads OFF |",
+   "new": "| two outputs tied without a series resistor; with the outputs opposite, 41.2 mA flows through both drivers (68 mW in each), and the EN net sits at 1.647 V with the 10 kOhm EN bodge, above the RT1987 VEN_R maximum 1.4 V (calc revision 4). D-BC-RG therefore turns on whenever pin 30 or pin 17 is HIGH: pin 17 HIGH closes REGEN while pin 30 commands it off, and pin 17 reads HIGH. U121 RGN_ON (trip 1.75-1.88 V) reads OFF at 1.65 V |",
+   "note": "A.8 F05-F12 row"
+  },
+  {
+   "old": "| the BAL-NOK level appears on pin 41 and U104 IN-: a false BT current and a false BT_OK state | T-A-01c; BT current plausibility (firmware) |",
+   "new": "| no pack OV: OUT is LOW and sinks only 30-85 uA at 0.05 V, so the INA253 output (0.1 V/A x I_BT) dominates: pin 41 reads the BT current, N_BAL (via R178) follows the INA253 level below the U123 threshold, and OVN stays correct. Pack OV: OUT sources >= 100 uA at 1.75 V and up to 8 mA into a short, against the INA253 output, which `INA253A1IPWR.pdf` Figure 14 characterises only to 7 mA. Either the INA253 holds the node near its own level, so N_BAL stays LOW and the BQ29200 pack-OV term OVN is **masked** while the pack is over voltage, or OUT lifts the node toward its 6.0-9.5 V drive level and drives pin 41 above its 3.3 V supply through the pad clamp (calc revision 4) (**superseded in r7:** 'a false BT current and a false BT_OK state') | **none in service** for the masked OVN (it appears only at a pack OV); T-A-01c and the T-F-12 tap-to-tap check before power-up; **open, see below** |",
+   "note": "A.8 F08-F09 row"
+  },
+  {
+   "old": "| pin 41 and U104 IN- held at 0 V: BT current reads 0 A and BT_OK takes a false state; the INA253 BT output drives GND | BT current plausibility (firmware) |",
+   "new": "| the INA253 BT output is shorted to the Kelvin GND (its current limit is not in `INA253A1IPWR.pdf`, whose Figure 14 ends at 7 mA): pin 41 and U104 IN- read 0 A, U104 BT_OK takes the 'no current' state, and the share loop loses its BT current feedback; the short current returns through the T9 wire (3.44 mOhm), so the U104 reference bottom moves by < 0.1 mV (calc revision 4) | BT current plausibility (firmware) |",
+   "note": "A.8 F09-F10 row"
+  },
+  {
+   "old": "Two rows lie outside the H.23(g) exclusion set but carry the hazard class that the set excludes. F05-F12 ties two push-pull\noutputs on an RT1987 EN net, as an EN-EN pair does. F07-F12 lets a push-pull output sink the unlimited Teensy 3V3, as a GND\nneighbour of F07 does. Neither row has a detector in service. Both stand only behind the T-F-12 tap-to-tap check until a\nruling. The proposed closure adds one exclusion (no EN tap and no F07 beside a push-pull pad: T10, T11 or T21) and re-runs\nH.23(g), TODO(calc: r7_calc.py H.23(g) with the added exclusion). One candidate swaps F12 (T11) and F24, so that only the\nunfitted F24 option sits beside F05 and F07.",
+   "new": "Three rows carry a hazard that the H.23(g) exclusion set does not exclude. F05-F12 ties two push-pull outputs on an RT1987 EN\nnet, as an EN-EN pair does. F07-F12 lets a push-pull output sink the unlimited Teensy 3V3, as a GND neighbour of F07 does. The\nresidual-row pair F08-F09 can mask the BQ29200 pack-OV term. None of the three has a detector in service, and each stands\nonly behind the T-F-12 tap-to-tap check before power-up. Calc revision 4 computed the consequences in the rows above (40 ohm\nper i.MX driver is an ASSUMPTION). It also ran the proposed closure, an extended exclusion set: no EN tap (T3, T4, T5) and no\nF07 (T6) beside a push-pull pad (T10, T11, T21) (**superseded in r7:** TODO(calc: r7_calc.py H.23(g) with the added\nexclusion)). The adopted assignment violates the extended set at T4 and T6, both beside T11. The search found a candidate with\nno violation (H.23(g)). Its tab X straight sum is 887.2 mm, 1.0 mm below the adopted 888.2 mm, so the adopted assignment is\nnot the minimum of its own objective. Its 20-tap straight sum is 860.5 mm (+1.2 mm), and it creates the new adjacent pairs\nT10-T11, T6-T2 and T6-T17. The single F12/F24 swap of review 7 also satisfies the extended set; by hand calculation it\nchanges the 20-tap sum by -0.14 mm (not printed by `r7_calc.py`). Neither candidate is adopted in this revision, because the\nmap, the short table, the dressed lengths and the PM6 dressing above are the calc-printed basis of the adopted assignment.\nThe choice is an operator ruling (J.2 item 63). An adopted candidate re-runs H.23(g) and replaces the map, the short table\nand the T-F-12 pair list together. F08-F09 lies on the residual row, which no tab X assignment changes.",
+   "note": "A.8 open pairs: TODO(calc) closed"
+  },
+  {
+   "old": "; with U108 kept on tab Y the booking is 78.0 %, and with the decouplers on the top 97.7 %; neither is adopted |",
+   "new": "; with U108 kept on tab Y the booking is 78.0 %; with the decouplers on the top it is 93.3 % (the seven gates) or 100.6 % (U108 kept); none is adopted (**superseded in r7:** 97.7 % with the decouplers on the top, which calc revision 4 does not reproduce: it is the nine gates and their decouplers without the bead spot, 111.0 + 39.15 = 150.2 of 153.7 mm², hand calculation) |",
+   "note": "A.8 tab Y top row: decoupler sensitivity"
+  },
+  {
+   "old": "Every region meets the target. U108 and U109 leave tab Y; with U108 on tab Y the tab Y top booking is 78.0 %.",
+   "new": "Every region meets the target. The nine LVC gates alone book 111.0 mm² = 72.2 % of tab Y top, and with the B3/S3 spot they exceed 75 %. U109 and then U108 therefore move to the interior (driven logic; the interior booking passes). The seven remaining gates book 97.0 mm² = 63.1 %, and 112.9 mm² = 73.45 % with the spot. With U108 kept on tab Y the tab Y top booking is 78.0 %.",
+   "note": "A.8 per-region: gate move"
+  },
+  {
+   "old": "With those seven passives on the top, the top side would book 825.6 mm² = 76.4 %, above the whole-side target.",
+   "new": "Region bookings alone would admit seven of them to the top (R178, R179, C135, C134, C120 and C121 to the interior, C110 to the band; 30.45 mm²). With those seven passives on the top, the top side would book 825.5 mm² = 76.4 % of 1081.1 mm², above the whole-side target (**superseded in r7:** 825.6 mm², a rounding difference).",
+   "note": "A.8 per-region: flexible passives"
+  },
+  {
+   "old": "its MS1a part gates PM1, and its MS6 reading at the CHG holes gates PM4) gates PM0",
+   "new": "its MS1a part gates PM1, and its MS6 reading at the CHG holes gates PM4) gates PM0 (**superseded in r7 (D-H):** MS1a is taken before PM1 and gates nothing)",
+   "note": "PM0: MS1a gate retired"
+  },
+  {
+   "old": "**r7:** record MS1a first (gate D-2, unchanged; `docs/reviews/battery_isolation_2026-11-07/detailed_design_IC1.md` section 15.2): the Ag105 standoff at the four corners and the module top height above the MB (T-A-08). MS1a decides the r7 stack top, >= 12.265 mm plus the cable, against the nominal 13.14 mm Ag105 envelope (H.23(j)).",
+   "new": "**r7:** record MS1a first (`docs/reviews/battery_isolation_2026-11-07/detailed_design_IC1.md` section 15.2): the Ag105 standoff at the four corners and the module top height above the MB (T-A-08). The module must be in place for this reading, so it comes before the removal; it has no pass/fail (D-H). (**superseded in r7 (D-H):** 'gate D-2, unchanged' and 'MS1a decides the r7 stack top, >= 12.265 mm plus the cable, against the nominal 13.14 mm Ag105 envelope (H.23(j))'.)",
+   "note": "PM1: MS1a information"
+  },
+  {
+   "old": ", 2.2 mm relief holes at the 22 header pads, cut-outs over D-BT-SQ, C-D11, C-D12, C-DC11, C-DC12) on the MB;",
+   "new": ", 2.2 mm relief holes at the 22 header pads, cut-outs over D-BT-SQ, C-D11, C-D12, C-DC11, C-DC12 (**r7 review 7 close:** each cut to its part body joined with its own pads + 0.5 mm, in two openings, A.7)) on the MB;",
+   "note": "PM4 (1): enlarged cut-outs"
+  },
+  {
+   "old": "Mate W5 and dress it along its A.3 path on the spacers S1-S3. Apply the beads B1, B3 and S1-S3, and strap each group to A1 and A2.",
+   "new": "Mate W5 and dress it along its A.3 path on the spacers S1-S3. Apply the beads B1, B3 and S1-S3, and strap each group to A1 and A2. **(r7 review 7 close, 3-D switched-conductor rule, A.3):** Set the B1 and B3 spacer posts so that the trunk jacket bottom is >= 10.14 mm above the CR top. Set S2 and S3 so that the W5 ribbon bottom is >= 10.735 mm above the CR top. Keep S1 at the 8 mm fold. Fit the off-CR support of A.3 so that both runs follow the H.23(l) profile between x 37.75 and 46.7. Fit the W1, W2, W6 and W7 chassis tie <= 2.4 mm past the MB +y edge. Fit the W3/W4 tie <= 16.4 mm and the W5 tie <= 17.4 mm past it.",
+   "note": "PM4 (6): spacer heights and tie limits"
+  },
+  {
+   "old": "(W5 exceptions of A.3 only); every anchor is in place (T-F-12) |",
+   "new": "(W5 exceptions of A.3 only); every anchor is in place (T-F-12); **r7 review 7 close:** every jacket-bottom height meets the A.3 3-D rule at its controlling points, and every chassis tie is within its A.3 limit (T-F-12) |",
+   "note": "PM4 check column: heights and ties"
+  },
+  {
+   "old": "Dress T8 from F09 toward -y into the low-edge lane y 34.40, then along the lane to x 63.50.",
+   "new": "Dress T8 from F09 toward +y to y 37.55, then along y 37.55 to x 43.43. Dress it down to y 34.64, then along y 34.64 to x 63.50 (the A.4 upper lane). (**superseded in r7:** the low-edge lane y 34.40, which calc revision 4 found infeasible.)",
+   "note": "PM6: T8 upper lane"
+  },
+  {
+   "old": "The 20 straight lengths sum to 859.3 mm and the dressed lengths to 895.5 mm (r6 1308.0 mm",
+   "new": "The 20 straight lengths sum to 859.3 mm and the dressed lengths to 898.7 mm (**superseded in r7:** 895.5 mm) (r6 1308.0 mm",
+   "note": "PM6: dressed sum"
+  },
+  {
+   "old": "  Gates: MS1a (Ag105 standoff at four corners, module top height; gate D-2) before PM1; MS1b (module mass) after",
+   "new": "  Order: MS1a (Ag105 standoff at four corners, module top height; information, no gate) before PM1; MS1b (module mass) after",
+   "note": "D.5: MS1a no gate"
+  },
+  {
+   "old": "MS2 enclosure and chassis room (lid clearance, EVM plate position,",
+   "new": "MS2 enclosure and chassis room (EVM plate position, chassis-tie positions,",
+   "note": "D.5: MS2 lid item dropped"
+  },
+  {
+   "old": "  within 0.30 m (T-A-02).\n```",
+   "new": "  within 0.30 m (T-A-02).\n```\n\n(**superseded in r7 (D-H):** the queue item named gate D-2 at MS1a and an MS2 lid clearance; both retire with the operator statement of 2026-11-10 that the MB and its PCBs have no maximum height.)",
+   "note": "D.5: superseded note"
+  },
+  {
+   "old": "| **W-lead anchors and strip (r7 review 7)** | 2 tie bases (+2), 3 spacers (+3), 1 strip | adhesive cable-tie bases A1 (6 x 6 mm) and A2 (10 x 10 mm) bonded on the MB solder mask; three insulating spacers for the W5 fold (S1-S3, height to hold the ribbon >= 8 mm above the CR top); a polyimide strip under the W leads, cut from the polyimide sheet stock (A.3). The RTV beads and the pin 7-10 cover use the BOM Adhesive line or the Kapton tape of the Hardware line | no candidate MPN; tie-base size, adhesive and temperature rating TODO(verify: adhesive tie-base datasheet), T-A-05; spacer height from the T-A-06 dry fit | - | distributor or workshop | within the hardware allowance |",
+   "new": "| **W-lead anchors, spacers and strip (r7 review 7)** | 2 tie bases (+2), 5 spacer posts (+3), 1 off-CR support, 1 strip | adhesive cable-tie bases A1 (6 x 6 mm) and A2 (10 x 10 mm) bonded on the MB solder mask; insulating spacer posts at B1 and B3 for the trunk (>= 10.14 mm above the CR top), at S2 and S3 for W5 (>= 10.735 mm above the CR top) and at S1 for the 8 mm W5 fold; one insulating off-CR support for the 3-D switched-conductor rule (A.3, TODO(design: T-A-06 dry fit)); a polyimide strip under the W leads, cut from the polyimide sheet stock (A.3). The RTV beads and the RTV dome or Kapton patch over the pin 7-10 tips use the BOM Adhesive line or the Kapton tape of the Hardware line (**superseded in r7:** three spacers for the W5 fold at >= 8 mm above the CR top, within the hardware allowance) | no candidate MPN; tie-base size, adhesive and temperature rating TODO(verify: adhesive tie-base datasheet), T-A-05; spacer material insulating, temperature rating checked in T-A-05; spacer heights from A.3 and the T-A-06 dry fit | - | distributor or workshop | allowance USD 0-15 |",
+   "note": "E: anchors, spacers, strip allowance"
+  },
+  {
+   "old": "2.2 mm relief holes at the 22 header pads, cut-outs over D-BT-SQ, C-D11, C-D12, C-DC11, C-DC12) | sheet or",
+   "new": "2.2 mm relief holes at the 22 header pads, cut-outs over D-BT-SQ, C-D11, C-D12, C-DC11, C-DC12; **r7 review 7 close:** cut-outs to the part body joined with its own pads + 0.5 mm, in two openings, A.7) | sheet or",
+   "note": "E: sheet line cut-outs"
+  },
+  {
+   "old": "stock size checked in T-A-05);",
+   "new": "stock size checked in T-A-05; the W-lead strip of A.3 comes from the same stock);",
+   "note": "E: sheet line strip"
+  },
+  {
+   "old": "(895.5 mm dressed), H.23(g), so the r6 quantity stays an upper bound)",
+   "new": "(898.7 mm dressed; **superseded in r7:** 895.5 mm), H.23(g), so the r6 quantity stays an upper bound)",
+   "note": "E: wire line dressed sum"
+  },
+  {
+   "old": "**Total about USD 505-590 (r7)**, with the EVMs at USD 312.90).",
+   "new": "**Total about USD 505-590 (r7)**, with the EVMs at USD 312.90) (**superseded in r7:** review round 7 adds the foot transfer tape USD 0-10, the bed RTV USD 15 and the W-lead anchors, spacers and strip USD 0-15, so r7 adds USD 15-90 in all. Carrier, EIB, parts, wire and hardware: allowance USD 205-315. **Total about USD 520-630 (r7 review 7)**, with the EVMs at USD 312.90).",
+   "note": "E: total recomputed"
+  },
+  {
+   "old": "859.3 mm (895.5 mm dressed) against 1308.0 mm in r6",
+   "new": "859.3 mm (898.7 mm dressed; **superseded in r7:** 895.5 mm) against 1308.0 mm in r6",
+   "note": "H.20 row: dressed sum"
+  },
+  {
+   "old": "(on the top they would raise the whole-side top booking to 825.6 mm² = 76.4 %)",
+   "new": "(region bookings alone would admit seven of them, but on the top they would raise the whole-side top booking to 825.5 mm² = 76.4 %; **superseded in r7:** 825.6 mm², rounding); the nine gates alone book 111.0 mm² = 72.2 % of tab Y top and the seven remaining 97.0 mm² = 63.1 %; with the decouplers on the top tab Y top books 93.3 % (seven gates) or 100.6 % (U108 kept)",
+   "note": "H.23(e2) row"
+  },
+  {
+   "old": "dressed on the A.4 gap path 895.5 mm (**superseded in r7:** 850.9 mm",
+   "new": "dressed on the A.4 gap path 898.7 mm (-31.3 %) (**superseded in r7:** 895.5 mm with the T8 low-edge lane; before review 7, 850.9 mm",
+   "note": "H.23(g) row: dressed sum"
+  },
+  {
+   "old": "T8 crosses the REG-5V box and CO-5V and passes over the pin-1 post when straight (82.8 mm) and dresses to 86.0 mm in the low-edge lane y 34.40.",
+   "new": "T8 crosses the REG-5V box and CO-5V and passes over the pin-1 post when straight (82.8 mm) and dresses to 89.2 mm in the upper lane (y 37.55 to x 43.43, y 34.64 to x 63.50; jacket 0.50 mm from F22, inside the CR low edge, 1.73 mm from REG-5V, 2.13 mm from CO-5V, 2.05 mm from the pin-1 post; a low-edge lane is infeasible by 0.59 mm) (**superseded in r7:** 86.0 mm in the low-edge lane y 34.40).",
+   "note": "H.23(g) row: T8 lane"
+  },
+  {
+   "old": "two pairs (F05-F12, F07-F12) carry the excluded hazard class and are open (A.8).",
+   "new": "two pairs (F05-F12, F07-F12) carry the excluded hazard class and are open (A.8). Calc revision 4 (40 ohm per driver ASSUMPTION): F05-F12 41.2 mA and 68 mW per driver, EN net 1.647 V above the 1.4 V VEN_R maximum, so REGEN is on whenever pin 30 or pin 17 is HIGH; F07-F12 82.5 mA and 272 mW in the pin-17 driver; F08-F09 can mask OVN at a pack OV; F09-F10 reads the BT current as 0 A. The extended exclusion set gives a candidate with no violation (tab X 887.2 mm against the adopted 888.2 mm; 20-tap 860.5 mm, +1.2 mm; new pairs T10-T11, T6-T2, T6-T17), not adopted (J.2 item 63).",
+   "note": "H.23(g) row: open pairs computed"
+  },
+  {
+   "old": "| the A.4 maxima stay upper bounds (largest ratio T8, 86.0 mm against 0.15 m);",
+   "new": "| the A.4 maxima stay upper bounds (largest ratio T8, 89.2 mm against 0.15 m = 59.5 %; **superseded in r7:** 86.0 mm);",
+   "note": "H.23(g) row: ratio"
+  },
+  {
+   "old": "the adopted 0.4 N pull gives 0.87 x / 0.97 x; a 5 N pull gives",
+   "new": "the adopted 0.4 N pull (the 0.1 N floor of the tab Y limit 0.413 N; tab X limit 0.461 N) gives 0.87 x / 0.97 x on the tip-load basis and 1.93 x / 1.92 x on the distributed-load basis (the 30 g load spread from root to tip: 7.8-28.5 kPa at FT1, 1.1-6.6 kPa at FT2), so it lies inside the service range only on the tip-load basis; the bed stress at 0.4 N is 15.1-54.9 kPa (FT1) and 2.0-12.7 kPa (FT2) (**superseded in r7:** 0.8 N, the 0.1 N floor of the 2 x limit, 1.74-1.94 x on the tip-load basis); a 5 N pull gives",
+   "note": "H.23(i) row: T-A-09 0.4 N basis"
+  },
+  {
+   "old": "stack top >= 12.265 mm + cable against the nominal Ag105 envelope 13.14 mm: margin <= 0.875 mm before the cable | PM4 header orientation and post option unchanged; gate D-2 (MS1a); MS6; cable thickness TODO(verify: cable assembly drawing) |",
+   "new": "stack top, information only (D-H): >= 12.265 mm + cable (13.165 / 14.065 mm with one / two 0.9 mm ribbon thicknesses, ASSUMPTION); W5 over L-FC under the 3-D rule (A.3, H.23(l)): bottom >= 15.00 mm, top >= 15.90 mm above the MB; the nominal Ag105 envelope 13.14 mm is a reference, not a limit (**superseded in r7 (D-H):** 'against the nominal Ag105 envelope 13.14 mm: margin <= 0.875 mm before the cable') | PM4 header orientation and post option unchanged; MS6; cable thickness TODO(verify: cable assembly drawing) (**superseded in r7 (D-H):** gate D-2 (MS1a)) |",
+   "note": "H.23(j) row: information only"
+  },
+  {
+   "old": "E3 0.27 of 92 mm, E4 0.51 of 59 mm, E6 0.31 of 196 mm | supersedes H.22(i);",
+   "new": "E3 0.27 of 92 mm, E4 0.51 of 59 mm, E6 0.31 of 196 mm; E1 route (revision 4): E1 pad -> bend (51.0, 30.6) -> JP12 pin 1, 70.8 mm against 90 mm, 5.02 mm from JP17 pin 1, 6.57 mm from the JP17 pin-2 hole centre (the straight line passes 0.11 mm from that centre, through the hole), 10.20 mm from TP36, 9.03 mm from the U1 outline and 17.12 mm from the L2 outline | supersedes H.22(i);",
+   "note": "H.23(k) row: E1 route"
+  },
+  {
+   "old": "anchors B1, B3, S1-S3, A1 (60.50, 73.50) and A2 (71.50, 88.00) +- 1.5 mm, longest span 25.8 mm; polyimide strip x 36.06-65.28, y 65.30-92.80;",
+   "new": "anchors B1, B3, S1-S3, A1 (60.50, 73.50) and A2 (71.50, 88.00) +- 1.5 mm, longest span 25.8 mm (**superseded in r7:** calc revision 4: S1 (35.00, 47.69), S2 (28.70, 53.42), longest span 26.0 mm, S2-S3; chassis tie <= 4.4 / 18.4 / 19.4 mm past the MB +y edge for the west group / W3-W4 / W5, 2.4 / 16.4 / 17.4 mm with a 2 mm margin; no further MB tie base, because a 6 x 6 mm base has no west-run position; 3-D switched-conductor rule: round-lead jacket bottom >= 14.41 mm above the MB on the CR (10.14 mm above the CR top) and >= 14.35 mm off it, W5 ribbon bottom >= 15.00 mm (fold +2.73 mm), L-FC 5.0 mm ASSUMPTION); polyimide strip x 36.06-65.28, y 65.30-92.80 (11 non-GND vias);",
+   "note": "H.23(l) row: anchors, ties, 3-D heights"
+  },
+  {
+   "old": "the 10 mm switched-conductor clearance on the CR and the two W5 exceptions are open rulings, J.2 item 62) |",
+   "new": "the 10 mm switched-conductor clearance on the CR and the two W5 exceptions are open rulings, J.2 item 62) (**superseded in r7:** the 10 mm rule is met in 3-D by the spacer heights (decision 2026-11-10, A.3); the C102b exception stays open, J.2 item 62; T-F-12 measures the heights and the chassis-tie positions) |",
+   "note": "H.23(l) row: ruling closed"
+  },
+  {
+   "old": "the five cut-outs (body + 0.5 mm) unchanged, 0.100-0.285 mm from their own pads |",
+   "new": "the five cut-outs (body + 0.5 mm) unchanged, 0.100-0.285 mm from their own pads (**superseded in r7:** calc revision 4: each cut-out grows to its body joined with its own pads + 0.5 mm, 0.500 mm from its own pads, and they merge into two openings (D-BT-SQ, C-D11, C-DC12; C-D12, C-DC11); 3.4 mm relief holes would clear the pad corners by 0.533 mm but merge into one 3.40 mm slot per column, so the header bodies would lose the sheet seat and the nominal t_bed would fall to 0.175 mm: the 2.2 mm holes stay, nearest sheet edge 1.10 mm) |",
+   "note": "H.23(m) row: holes and cut-outs"
+  },
+  {
+   "old": "(7) 1:1 print of the r7 sheet laid on the bare MB, scored against the MB part bodies and the MB copper pads;",
+   "new": "(7) 1:1 print of the r7 sheet laid on the bare MB, scored against the MB part bodies and the MB copper pads (**r7 review 7 close:** with the two enlarged cut-out openings and the 0.625 mm web between them, A.7);",
+   "note": "T-A-06 (7): enlarged cut-outs"
+  },
+  {
+   "old": "(8) dry fit of both tabs on the MB with the MS3 items and R171 (fitted in PM3) in place:",
+   "new": "(8) dry fit of both tabs on the MB with the MS3 items and R171 (fitted in PM3) in place (**r7 review 7 close:** with the B1/B3 spacer posts, S1-S3 and the off-CR support of A.3, whose position and form this dry fit sets):",
+   "note": "T-A-06 (8): spacers in the dry fit"
+  },
+  {
+   "old": "**Pre-capture survey (r7; MS1a gates PM1; MS2-MS5",
+   "new": "**Pre-capture survey (r7; MS1a is taken before PM1 and gates nothing (D-H; **superseded:** MS1a gates PM1); MS2-MS5",
+   "note": "T-A-08: MS1a gate retired"
+  },
+  {
+   "old": "MS1a (before PM1): Ag105 standoff at four corners and module top height.",
+   "new": "MS1a (before PM1, with the module in place): Ag105 standoff at four corners (the seating reference) and module top height (information, D-H).",
+   "note": "T-A-08: MS1a content"
+  },
+  {
+   "old": "MS2: lid clearance over the footprint and both tabs; chassis room past the MB +y edge for the EVM plate",
+   "new": "MS2 (**superseded in r7 (D-H):** the lid clearance over the footprint and both tabs, no longer measured): chassis room past the MB +y edge for the EVM plate and the chassis-tie points (A.3 limits)",
+   "note": "T-A-08: MS2 lid dropped"
+  },
+  {
+   "old": "L-FC body by caliper (R171 is fitted in PM3",
+   "new": "L-FC body by caliper, in plan and in height (the height sets the A.3 3-D rule) (R171 is fitted in PM3",
+   "note": "T-A-08: L-FC height"
+  },
+  {
+   "old": "stack top (>= 12.265 mm + the W5 cable, H.23(j)) within the MS1a module envelope (nominal 13.14 mm);",
+   "new": "(**superseded in r7 (D-H):** stack top (>= 12.265 mm + the W5 cable, H.23(j)) within the MS1a module envelope (nominal 13.14 mm); MS1a and the stack top are now recorded as information); MS3 L-FC height <= 5.0 mm, the H.23(l) basis (a taller body re-runs H.23(l));",
+   "note": "T-A-08 pass: stack top information"
+  },
+  {
+   "old": "MS2 lid clearance >= 1.0 mm above the tallest CR item under it (over J101 the W5 stack top, >= 12.265 mm + the W5 cable, H.23(j); over each tab the CR top, 4.265 mm, plus the dressed W leads and tap wires);",
+   "new": "(**superseded in r7 (D-H):** MS2 lid clearance >= 1.0 mm above the tallest CR item under it, over J101 the W5 stack top and over each tab the CR top plus the dressed W leads and tap wires); MS2 chassis-tie points within the A.3 limits (<= 2.4 / 16.4 / 17.4 mm past the MB +y edge);",
+   "note": "T-A-08 pass: MS2 lid dropped, tie points"
+  },
+  {
+   "old": "MS1a envelope exceeded: PM1 holds (A.7); MS2 lid clearance below its bound: PM0 holds, and the W5 socket orientation or a low-profile connector is re-designed (J.2 item 59);",
+   "new": "(**superseded in r7 (D-H):** MS1a envelope exceeded: PM1 holds; MS2 lid clearance below its bound: PM0 holds and the W5 socket is re-designed, J.2 item 59); no chassis-tie point within the A.3 limits: add an MB tie base nearer the MB +y edge and re-run `round4/calc/r7_calc.py` H.23(l); MS3 L-FC height above 5.0 mm: re-run H.23(l) and reset the A.3 spacer heights;",
+   "note": "T-A-08 fail: retired branches"
+  },
+  {
+   "old": "The 0.4 N pull keeps the bed stress at 0.87 x (FT1) and 0.97 x (FT2) the 30 g service stress, whole tab load at the tip (H.23(i))",
+   "new": "The 0.4 N pull keeps the bed stress at 0.87 x (FT1) and 0.97 x (FT2) the 30 g service stress, whole tab load at the tip (H.23(i)). On the distributed-load basis (the 30 g load spread from root to tip) the ratios are 1.93 x and 1.92 x, so 0.4 N lies inside the service range only on the tip-load basis. 0.4 N is the 0.1 N floor of the tab Y limit 0.413 N (tab X limit 0.461 N). The bed stress at 0.4 N is 15.1-54.9 kPa at FT1 and 2.0-12.7 kPa at FT2 (**superseded in r7:** a 0.8 N pull at 1.74-1.94 x on the tip-load basis)",
+   "note": "T-A-09: 0.4 N basis"
+  },
+  {
+   "old": "Inspect the polyimide strip and the jackets over the whole MB path, and W5 at its fold height on S1-S3.",
+   "new": "Inspect the polyimide strip and the jackets over the whole MB path, and W5 at its fold height on S1-S3. **r7 review 7 close (3-D rule, A.3):** with a height gauge, measure the trunk jacket bottom above the MB at (36.00, 71.10) and (37.75, 71.10), and at x 41.5, 44.0 and 46.7 on the off-CR run. Measure the W5 ribbon bottom above the MB at (28.70, 73.10) and at x 42.68 and 45.25. Measure the distance of each chassis tie past the MB +y edge, and each span between anchors along the lead in 3-D.",
+   "note": "T-F-12 method: heights and ties"
+  },
+  {
+   "old": "(the two W5 exceptions of A.3 only)",
+   "new": "(the W5 C102b exception of A.3 only; **superseded in r7:** the two W5 exceptions)",
+   "note": "T-F-12 pass: one W5 exception"
+  },
+  {
+   "old": "every anchor within 1.5 mm of its A.3 position; every span <= 30 mm along the lead;",
+   "new": "every anchor within 1.5 mm of its A.3 position; every span <= 30 mm along the lead; **r7 review 7 close:** every measured jacket-bottom height at or above the A.3 / H.23(l) profile (trunk 14.41 mm on the CR and 14.35 mm at (37.75, 71.10); 13.45 / 11.95 / 8.61 mm at x 41.5 / 44.0 / 46.7; W5 15.00 mm over tab Y, 14.60 / 13.69 mm at x 42.68 / 45.25; H.23(l) re-run first if the MS3 L-FC height exceeds 5.0 mm); each chassis tie <= 2.4 mm (W1, W2, W6, W7), <= 16.4 mm (W3/W4) and <= 17.4 mm (W5) past the MB +y edge;",
+   "note": "T-F-12 pass: heights and ties"
+  },
+  {
+   "old": "a W lead off the A.3 path, a missing anchor, a span over 30 mm,",
+   "new": "a W lead off the A.3 path or below its 3-D height, a missing anchor, a span over 30 mm, a chassis tie past its limit,",
+   "note": "T-F-12 fail"
+  },
+  {
+   "old": "46. **MS1a, Ag105 envelope (r7; gates PM1):** Ag105 standoff at four corners and module top height. MS1a decides whether the CR stack top (>= 12.265 mm + the W5 cable, H.23(j)) stays within the measured module\n    envelope (nominal 13.14 mm, AG105_Silvertel.pdf Figure 11) (T-A-08). MS1b, the module mass, is recorded after PM1 and\n    gates nothing.",
+   "new": "46. **MS1a, Ag105 standoff (r7; taken before PM1, no gate after D-H):** the Ag105 standoff at four corners (the seating\n    reference) and the module top height (information). The module must be in place, so MS1a comes before PM1. MS1b, the\n    module mass, is recorded after PM1 as information and gates nothing. (**superseded in r7 (D-H):** 'MS1a, Ag105 envelope\n    (r7; gates PM1)' and 'MS1a decides whether the CR stack top (>= 12.265 mm + the W5 cable, H.23(j)) stays within the\n    measured module envelope (nominal 13.14 mm, AG105_Silvertel.pdf Figure 11)'; the operator statement of 2026-11-10 sets\n    no maximum height for the MB and its PCBs.)",
+   "note": "J.2 item 46"
+  },
+  {
+   "old": "47. **MS2, enclosure and chassis (r7; gate for PM0):** the pass criteria are a lid clearance >= 1.0 mm above the tallest CR\n    item under it and an under-MB clearance >= 1.5 mm (T-A-08). MS2 measures the lid clearance over the footprint and both tabs, chassis room past the MB +y edge",
+   "new": "47. **MS2, enclosure and chassis (r7; gate for PM0):** the pass criteria are an under-MB clearance >= 1.5 mm and chassis-tie\n    points within the A.3 limits (T-A-08) (**superseded in r7 (D-H):** a lid clearance >= 1.0 mm above the tallest CR item\n    under it, and its measurement over the footprint and both tabs). MS2 measures the chassis room past the MB +y edge",
+   "note": "J.2 item 47"
+  },
+  {
+   "old": "56. **L-FC body (r7):** the Eaton listing gives a 12.9 mm body against the 12.6 mm silkscreen; centred, the 12.9 mm body\n    lies 0.862 mm from the tab Y top edge (1.012 mm at the silkscreen, H.23(b)). TODO(verify: Eaton HCM1A1305V3 drawing);\n    the MS3 caliper reading decides.",
+   "new": "56. **L-FC body (r7):** the Eaton listing gives a 12.9 mm body against the 12.6 mm silkscreen; centred, the 12.9 mm body\n    lies 0.862 mm from the tab Y top edge (1.012 mm at the silkscreen, H.23(b)). TODO(verify: Eaton HCM1A1305V3 drawing);\n    the MS3 caliper reading decides. **r7 review 7 close:** the L-FC body height (5.0 mm, ASSUMPTION from the size code)\n    also sets the 3-D switched-conductor heights (A.3, H.23(l)); MS3 measures it, and a taller body re-runs H.23(l).",
+   "note": "J.2 item 56: L-FC height"
+  },
+  {
+   "old": "59. **W5 stack height (r7):** the W5 IDC socket and ribbon fold reach >= 12.265 mm above the MB plus the cable thickness\n    (TODO(verify: cable assembly drawing)) against the nominal 13.14 mm Ag105 envelope: the margin is <= 0.875 mm before\n    the cable (H.23(j)). With a ribbon of about 0.9 mm (ASSUMPTION, TODO(verify: cable assembly drawing)) the expected margin\n    is -0.03 to -0.93 mm (one or two thicknesses at the fold), so the gate is expected to fail on the nominal envelope.\n    The fallback is a right-angle or low-profile 1.27 mm IDC at J101, or an MS2 lid-clearance basis (T-A-08) in place of\n    the Ag105 envelope, by operator ruling. MS1a decides.",
+   "new": "59. **W5 stack height (r7; closed by D-H):** the W5 IDC socket and ribbon fold reach >= 12.265 mm above the MB plus the cable\n    thickness (TODO(verify: cable assembly drawing)), and over tab Y the 3-D switched-conductor rule raises the ribbon bottom\n    to >= 15.00 mm (A.3, H.23(j)). These figures are information: the operator statement of 2026-11-10 sets no maximum height\n    for the MB and its PCBs, so the Ag105 envelope and a lid clearance are not limits, and no fallback connector is needed.\n    (**superseded in r7 (D-H):** the margin <= 0.875 mm against the nominal 13.14 mm Ag105 envelope, the expected -0.03 to\n    -0.93 mm, the right-angle or low-profile IDC fallback and the MS2 lid-clearance basis.) The item is closed.",
+   "note": "J.2 item 59 closed"
+  },
+  {
+   "old": "61. **Mezzanine over the MB (r7, option, not adopted):** an EVM carrier over the MB is recorded for a later round by\n    operator ruling; no part-free 89 x 89 mm MB region exists for the EVM beside the CR.",
+   "new": "61. **Mezzanine over the MB (r7, option, not adopted):** an EVM carrier over the MB is recorded for a later round by\n    operator ruling; no part-free 89 x 89 mm MB region exists for the EVM beside the CR. **r7 review 7 close (D-H):** the\n    mezzanine loses its height objection (an EVM top at about h_J1 + 20.2 mm over J1/J2, or an enclosure height of about\n    41.4 mm, against the 21.70 mm lid evidence; `round4/work/proposal_evm_on_cr.md` section 2.1, `round4/work/proposal_tapside.md`).\n    Its remaining reasons still reject it for this round: it would cover the Teensy USB and SD access and the J1/J2 tap pins,\n    block the J-BL and J-FC screws driven from the top, and sit within 20 mm of the LM1084 or over the Teensy. It would\n    shorten every lead, and the EVM plate clamp mount (A.7) answers the lack of EVM mounting holes. It stays an option for a\n    later round.",
+   "note": "J.2 item 61 mezzanine re-assessed"
+  },
+  {
+   "old": "62. **W-lead dressing exceptions (r7 review 7, operator ruling):** on the CR the W-lead dressing path keeps 3.39 mm from the\n    L-FC body, and W5 overlaps it in plan by 0.68 mm at >= 12.3 mm above the MB. No CR exit meets the 10 mm\n    switched-conductor clearance (raster best 5.12 mm for the bundle, 9.34 mm for one lead); from the tie base A1 on, every\n    lead keeps 10.38-13.01 mm. The 10 mm figure has no stated pickup basis. W5 also lies 0.775 mm in plan from C102b over the\n    J101 region, at >= 8 mm above the CR top. The operator rules whether these exceptions are accepted (H.23(l), A.3); the\n    L-FC body height is TODO(verify: L-FC datasheet).",
+   "new": "62. **W-lead dressing exceptions (r7 review 7; the switched-conductor part closed 2026-11-10):** on the CR the W-lead\n    dressing path keeps 3.39 mm in plan from the L-FC body, and W5 overlaps it in plan by 0.68 mm. No CR exit meets the 10 mm\n    switched-conductor clearance in plan (raster best 5.12 mm for the bundle, 9.34 mm for one lead); from the tie base A1 on,\n    every lead keeps 10.38-13.01 mm. **Decision 2026-11-10 (with D-H):** the rule is applied as a 3-D distance. Spacer posts\n    hold the trunk jacket bottom >= 14.41 mm above the MB on the CR (10.14 mm above the CR top) and >= 14.35 mm off it, and\n    the W5 ribbon bottom >= 15.00 mm (A.3, H.23(l)). The L-FC body height (5.0 mm) is an ASSUMPTION, TODO(verify: Eaton\n    HCM1A1305V3 drawing), measured by the MS3 caliper; the off-CR support is TODO(design: T-A-06 dry fit); T-F-12 measures\n    the heights. The 10 mm figure still has no stated pickup basis. W5 also lies 0.775 mm in plan from C102b over the J101\n    region, at >= 8 mm above the CR top, that is >= 5.5 mm above the about 2.5 mm C102b body (hand calculation). That\n    exception to the 2 mm hazard rule stays open for an operator ruling (H.23(l), A.3). (**superseded in r7:** 'the operator\n    rules whether these exceptions are accepted' for both exceptions, and 'the L-FC body height is TODO(verify: L-FC\n    datasheet)'.)\n63. **Tab X tap assignment, extended exclusion set (r7 review 7 close, operator ruling):** the adopted assignment leaves\n    F05-F12 (the REGEN EN net at 1.647 V, above the VEN_R maximum 1.4 V, whenever pin 17 is HIGH; 41.2 mA of contention) and\n    F07-F12 (82.5 mA and 272 mW in the pin-17 driver) without a detector in service, and the residual-row pair F08-F09 can\n    mask OVN at a pack OV (A.8). Calc revision 4 found a candidate with no violation of the extended set (+1.2 mm on the\n    20-tap sum; new pairs T10-T11, T6-T2 and T6-T17), and the F12/F24 swap also satisfies it (-0.14 mm, hand calculation).\n    The operator rules whether one is adopted; the adoption re-runs H.23(g) and replaces the A.8 map, the short table, the\n    PM6 dressing and the T-F-12 pair list. The residual pair F08-F09 needs a separate measure, TODO(design). Until then the\n    T-F-12 tap-to-tap check before power-up is the only detector of all three.",
+   "note": "J.2 item 62 updated, item 63 added"
+  },
+  {
+   "old": "`AG105_Silvertel.pdf` Figure 11 p.21 (module envelope 13.14 mm).",
+   "new": "`AG105_Silvertel.pdf` Figure 11 p.21 (module envelope 13.14 mm; a reference only after D-H).",
+   "note": "K: envelope reference"
+  },
+  {
+   "old": "requires it to be kept; the item now says so.\n\nNo finding was rejected.",
+   "new": "requires it to be kept; the item now says so.\n\nNo finding was rejected.\n\n### L.7 Round 7\n\nAll 60 verified findings were applied (33 confirmed, 27 partially confirmed, 0 refuted, none a blocker), and the seven\nunverified nits as well. The per-finding log is `round4/review_loop.md`, \"Review round 7\"; the dispositions D-F1 to D-F7 and\nD-H are in `round4/work/r7_review7_dispositions.md`. Applied as written, or as amended by the verifier, unless listed here:\n\n| Finding | Proposed | Applied instead | Why |\n|---|---|---|---|\n| hard-short-shorter-w1w2-not-bounded | bound the hard short at the routed length (<= 35 V at 181.6 mm) in H.5, H.19 and T-C-04 | W1/W2 keep a fixed build length of 0.30 m +- 10 mm at every placement; the slack is a service loop anchored on the EVM plate (D-F3) | at the routed lengths the IN-side spike is 34.4-34.9 V, 1.1-1.6 V below the D107 VBR(min) of 36 V; at 290-300 mm it stays at 32.8-32.9 V, so the r3-r6 basis of H.5, H.19 and T-C-04 holds unchanged |\n| w-leads-cross-unfused-vchgin, w-lead-unsupported-span-over-mb | W1-W4 across tab Y to tab X at x 56, or RTV beads at the tab X top edge with a re-route through the tab X corner | a trunk across tab Y that leaves the CR at the tab Y +x edge and reaches the MB tie base A1 without crossing tab X | D-F2 keeps every W lead off the tab X tap field, where it would chafe the 20 tap joints and block tap rework |\n| chassis-tie-30mm-unbuildable | an MB tie base at (62.0, 94.5) +- 1.5 mm and a chassis tie with no distance limit | tie bases A1 (60.50, 73.50) and A2 (71.50, 88.00); calc revision 4 limits the chassis tie to <= 4.4 / 18.4 / 19.4 mm past the MB +y edge (2.4 / 16.4 / 17.4 mm with a 2 mm margin), and no west-group base is added | an A1-size base has no position on the west run (C4C-FC, SNS-FC and two FC-CURR vias block it; the only fit, 4 x 4 mm, lies 0.03 mm from C4C-FC); a tie with no limit would leave the last span unbounded |\n| (close round) the 10 mm switched-conductor rule of the r7 rev-2 routes | a plan clearance >= 10 mm, or its acceptance on the CR as an operator ruling (J.2 item 62) | the rule applied as a 3-D distance: spacer posts at B1/B3 hold the trunk jacket bottom >= 10.14 mm and spacers S2/S3 the W5 ribbon bottom >= 10.735 mm above the CR top, and an off-CR support follows the H.23(l) profile (decision 2026-11-10) | no plan path off the CR meets 10 mm (best 3.39 mm; W5 -0.68 mm over L-FC); the operator statement of 2026-11-10 removes every height limit, so a vertical separation needs only spacers |\n| low-y-band-overbooked, r7-table-omits-tab-y-allocation | the dividers, U123/D108/R178/R179 and the decouplers to the interior; the nine gates on tab Y top, decouplers underneath (97.7 % with them on the top) | the dividers, U123 and D108 to the interior; U109 and then U108 also move from tab Y to the interior; R178, R179 and the other flexible passives stay on the bottom | with the nine gates and the B3/S3 spot tab Y top would book 82.6 % (hand calculation: 111.0 + 15.9 of 153.7 mm²), and 78.0 % with U108 kept; the seven region-admissible passives on the top would raise the whole-side top booking to 825.5 mm² = 76.4 %; the 97.7 % is the nine gates with their decouplers on the top and no bead spot |\n| ta09-pull-overloads-psa-path | a 2 N pull at the tab X tip | 0.4 N at each grip (tab Y in line with FT2), the 0.1 N floor of the tab Y limit 0.413 N | 2 N would load FT2 to about 4.8 x the 30 g service stress (hand calculation, linear in the pull); 0.4 N gives 0.87 x / 0.97 x on the tip-load basis, though 1.93 x / 1.92 x on the distributed-load basis |\n| foot-height-stackup-unbounded | no pre-bond (each foot bedded on both faces in one operation), or a 0.50 mm nominal bed | the pre-bond kept as a 0.05 mm acrylic transfer tape (h_f 2.19 mm), with the PM4 (2d) dry-seat feeler gate before the 22 joints | a dry tape adds no wet adhesive while the joints are soldered and fixes the foot position; the (2d) gate rejects the worst-case builds, where a thicker bed would lower k_s on every build |\n| tabx-tap-pad-adjacency-unanalysed | a hand permutation that uses the spare positions | a local search under six exclusions (none violated) with a calc-printed short table; the extended exclusion set (no EN tap and no F07 beside a push-pull pad) is computed in calc revision 4 but not adopted | the hand permutation was not length-checked; the extended-set candidate adds 1.2 mm and three new pairs, and its adoption needs a full H.23(g) re-run, so it goes to an operator ruling (J.2 item 63) |\n| t8-residual-tap-crosses-lm1084-misreported | T8 dressed through the SNS-BT pad 15 point (88.7 mm) | the upper lane (y 37.55 to x 43.43, y 34.64 to x 63.50; 89.2 mm) | the review-7 low-edge lane overhung the CR edge and is infeasible by 0.59 mm; the upper lane keeps the jacket on the CR and 0.50 mm from F22, within 0.5 mm of the length of the SNS-BT path |\n| w5-w3w4-channel-and-crush | the W5 slack Z-folded and tied >= 10 mm from W3/W4 | W5 routed around the 4.97 mm channel over the EVM plate; the slack is a service loop anchored on the EVM plate beside the EIB | the ribbon no longer shares the channel, so no crush can occur there |\n| sheet-trims-ignore-pads | trims with a +-0.2 mm cut tolerance (0.7 mm design distance) | the 0.5 mm rule to bodies and pads, with the +-0.2 mm tolerance stated as information (0.300 mm at CO-5V pad 1); the five cut-outs grow to the body joined with its own pads + 0.5 mm; the 22 relief holes stay 2.2 mm as the exception | compliant 3.4 mm holes merge into one slot per column, so the header bodies would lose the sheet seat and the nominal t_bed would fall to 0.175 mm |\n| w5-stack-height-fails-by-construction | state the expected negative margin and name a fallback connector before MS1 | retired: no fallback connector; the stack top is information (D-H) | the operator statement of 2026-11-10 sets no maximum height for the MB and its PCBs |\n| e1-dressing-vs-90mm-and-fault-limit | E1 straight from its pad to JP12 pin 1 | one bend near (51.0, 30.6) EVM mm, 70.8 mm | the straight line passes 1.97 mm from the JP17 pin-1 joint and through the vacated pin-2 hole (0.11 mm from its centre); the bend keeps 5.02 mm and 6.57 mm |\n\nNo finding was rejected.",
+   "note": "L.7 added"
+  }
+ ]
+}

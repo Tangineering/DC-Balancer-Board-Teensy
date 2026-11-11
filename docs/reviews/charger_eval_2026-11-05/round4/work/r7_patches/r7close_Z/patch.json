@@ -1,0 +1,120 @@
+{
+  "group": "r7close_Z",
+  "edits": [
+    {
+      "note": "0.2 verdict: E-point distances to the r7 outline recomputed on one basis (E1 was to the outline, the others to the tab X top edge)",
+      "old": "E leads lie 69.4-130.1 mm from the CR edge, and JP12 pin 1 (E1) lies 55.8 mm from it.",
+      "new": "E leads lie 64.3-129.4 mm from the CR edge, and JP12 pin 1 (E1) lies 55.8 mm from it (hand calculation: the plan\n  distance from each `round4/work/evm_geometry.md` Table 1 point to the nearest r7 outline point, the tab Y corner\n  (37.56, 76.00); **superseded in r7:** 69.4-130.1 mm, of which every point but E1 was measured to the tab X top edge)."
+    },
+    {
+      "note": "J.2 item 60: the same E-point distances on one basis",
+      "old": "lie 55.8-130.1 mm from the CR edge (E1 55.8, E5 69.4, E6 76.5,\n    E7 109.4, E3 114.2, E2 114.7, E4 114.9, E8 130.1 mm; the EVM board edge lies 42.0 mm from tab Y).",
+      "new": "lie 55.8-129.4 mm from the CR edge (E1 55.8, E5 64.3, E6 70.8,\n    E7 105.5, E2 111.9, E4 113.2, E3 113.6, E8 129.4 mm, each to the nearest r7 outline point, the tab Y corner\n    (37.56, 76.00), hand calculation on the `round4/work/evm_geometry.md` Table 1 points; the EVM board edge lies 42.0 mm\n    from tab Y) (**superseded in r7:** E5 69.4, E6 76.5, E7 109.4, E3 114.2, E2 114.7, E4 114.9 and E8 130.1 mm, measured\n    to the tab X top edge)."
+    },
+    {
+      "note": "0.3 r7-17: J.2 item 63 was added in the review-7 close",
+      "old": "same vehicle run); J.2 items 46-62;",
+      "new": "same vehicle run); J.2 items 46-63;"
+    },
+    {
+      "note": "H.23(e2) source path: stackup_area.py lives in calc/, not work/",
+      "old": "`round4/work/stackup_area.py`",
+      "new": "`round4/calc/stackup_area.py`"
+    },
+    {
+      "note": "L.1: no reference to a chat session",
+      "old": "no CAD tool is available in this session;",
+      "new": "no CAD tool was available to the design rounds;"
+    },
+    {
+      "note": "L.7 close-round row: 3.39 mm is the designed path, not the best achievable (raster best 5.12 / 9.34 mm, H.23(l))",
+      "old": "no plan path off the CR meets 10 mm (best 3.39 mm; W5 -0.68 mm over L-FC)",
+      "new": "no plan path from the CR meets 10 mm (the designed path keeps 3.39 mm and W5 overlaps L-FC by 0.68 mm in plan; the raster best is 5.12 mm for the bundle and 9.34 mm for one lead)"
+    },
+    {
+      "note": "Supporting files: dispositions row names D-H",
+      "old": "and the dispositions D-F1 to D-F7 that settle conflicting fixes |",
+      "new": "and the dispositions D-F1 to D-F7 that settle conflicting fixes, with D-H, the operator statement of 2026-11-10 that the MB and its PCBs have no maximum height |"
+    },
+    {
+      "note": "Supporting files: output files of listed scripts",
+      "old": "| `calc/mb_neighbours.py` | MB geometry",
+      "new": "| `calc/mb_neighbours.py` (+ `mb_neighbours_out.txt`, `mb_neighbours_out.json`) | MB geometry"
+    },
+    {
+      "note": "Supporting files: output file of stackup_area.py",
+      "old": "| `calc/stackup_area.py` | Area booking",
+      "new": "| `calc/stackup_area.py` (+ `stackup_area_out.txt`) | Area booking"
+    },
+    {
+      "note": "Supporting files: outputs of the proposal calculations",
+      "old": "(+ `work/minimal_calc/`, `work/tapside_calc.py`, `work/r7_evm_on_cr_calc.py`) |",
+      "new": "(+ `work/minimal_calc/`, `work/tapside_calc.py` with `tapside_calc_out.txt`, `work/r7_evm_on_cr_calc.py` with `r7_evm_on_cr_calc_out.txt` and `r7_evm_on_cr_map.png`) |"
+    },
+    {
+      "note": "Supporting files: EIB merge calc output",
+      "old": "| `work/mb_pinload.py`, `work/eib_merge_calc.py` |",
+      "new": "| `work/mb_pinload.py`, `work/eib_merge_calc.py` (+ `eib_merge_calc_out.txt`) |"
+    },
+    {
+      "note": "Supporting files: rows for the unlisted round-4 files",
+      "old": "| `work/r7_check/`, `work/r7_check2/`, `work/r7_check3/`, `work/r7_check4/` | Independent re-computations of the H.23 figures |",
+      "new": "| `work/r7_check/`, `work/r7_check2/`, `work/r7_check3/`, `work/r7_check4/` | Independent re-computations of the H.23 figures |\n| `work/mb_mech_calc.py` (+ `mb_mech_calc_out.txt`, `mb_mech_calc_out.json`, `mb_mech_map.png`), `work/mb_support_spots.py` (+ `mb_support_spots_out.txt`), `work/heights_40mm.txt` | The calculations behind `work/mb_mechanical.md`: the MB part heights near the CHG footprint, the extension-zone map and the candidate far-end support spots |\n| `work/evm/` | SLUUCB5E rev E (`sluucb5e.pdf`, its text extract and page renders) and the EVM BOM extract, the inputs of `work/evm_geometry.md` |\n| `work/svg_png/` | PNG renders of the three r7 SVGs |\n| `calc/apply_patches.py`, `work/r7_patches/` | The text patch sets of the r7 revision rounds and the script that applies each set to this document atomically |"
+    },
+    {
+      "note": "H.11 ICHG row: the W3/W4 figures at the 200 mm route maxima (8.38 mOhm, H.23(l))",
+      "old": "(0.30 m caps; r7: 24.2 mV / 77.7 mW at the H.23(l) route maxima)",
+      "new": "(0.30 m caps; r7: 26.9 mV / 86.3 mW at the 200 mm H.23(l) route maxima; **superseded in r7:** 24.2 mV / 77.7 mW at the r7 rev-2 maxima)"
+    },
+    {
+      "note": "A.7 stack top: the 12.265 mm figure is the stack at J101; the W5 run over tab Y is higher under the 3-D rule",
+      "old": "The stack top is >= 12.265 mm plus the cable thickness",
+      "new": "At J101 the stack top is >= 12.265 mm plus the cable thickness"
+    },
+    {
+      "note": "A.7 stack top: name the highest point of the stack",
+      "old": "It is >= 12.265 mm plus the cable, that is 13.165 / 14.065 mm",
+      "new": "At J101 it is >= 12.265 mm plus the cable, that is 13.165 / 14.065 mm"
+    },
+    {
+      "note": "A.7 stack top: the W5 run over tab Y is the highest point",
+      "old": "  >= 10.14 mm above the CR top near L-FC. (**superseded in r7 (D-H):** the margin <= 0.875 mm before the cable",
+      "new": "  >= 10.14 mm above the CR top near L-FC. The W5 run over tab Y is therefore the highest point of the stack (information).\n  (**superseded in r7 (D-H):** the margin <= 0.875 mm before the cable"
+    },
+    {
+      "note": "D.5 queue item: W1/W2 are 0.30 m +- 10 mm and W5 is the fixed cable, so 'every W lead within 0.30 m' is wrong (D-F2, D-F3)",
+      "old": "Until MS2, every W lead stays\n  within 0.30 m (T-A-02).",
+      "new": "Until MS2, W3, W4, W6 and W7 stay\n  within 0.30 m; W1/W2 are 0.30 m +- 10 mm at every placement, and W5 is the fixed 0.30 m cable (T-A-02)."
+    },
+    {
+      "note": "D.5 queue item: MS3 L-FC height also sets the 3-D spacer heights",
+      "old": "MS3 unrecorded items inside each tab outline + 0.5 mm and under each foot spot, L-FC body -> tab outlines;",
+      "new": "MS3 unrecorded items inside each tab outline + 0.5 mm and under each foot spot, L-FC body -> tab outlines\n  and the 3-D spacer heights;"
+    },
+    {
+      "note": "D.5: superseded marker for the queue-item length sentence",
+      "old": "both retire with the operator statement of 2026-11-10 that the MB and its PCBs have no maximum height.)",
+      "new": "both retire with the operator statement of 2026-11-10 that the MB and its PCBs have no maximum height.) (**superseded in r7:** 'Until MS2, every W lead stays within 0.30 m', which the fixed W1/W2 length of 0.30 m +- 10 mm exceeds by up to 10 mm, D-F3.)"
+    },
+    {
+      "note": "J.2 item 48 (MS3): the L-FC height also decides the 3-D spacer heights",
+      "old": "the L-FC body by caliper. It decides the tab outlines (T-A-08).",
+      "new": "the L-FC body by caliper, width and height. It decides the tab outlines and, by the L-FC height, the 3-D switched-conductor spacer heights (A.3, H.23(l), T-A-08)."
+    },
+    {
+      "note": "0.3 rv7-10: both heights are above the CR top",
+      "old": "(trunk jacket bottom >= 10.14 mm above the CR top, W5 ribbon bottom >= 10.735 mm; J.2 item 62)",
+      "new": "(trunk jacket bottom >= 10.14 mm and W5 ribbon bottom >= 10.735 mm above the CR top; J.2 item 62)"
+    },
+    {
+      "note": "H.23(f): source of the r6-interior figures (not printed by r7_calc.py)",
+      "old": "(the r6 interior: VOUT-BT 13.97 mm, VSW-BT 18.89 mm)",
+      "new": "(the r6 interior: VOUT-BT 13.97 mm, VSW-BT 18.89 mm, from the review-7 verification in `round4/work/r7_review7_findings.json`)"
+    },
+    {
+      "note": "E Adhesive line: superseded marker for the deleted example MPN class and phrase",
+      "old": "e.g. a Dow 3145-class electronics RTV (MPN and corrosivity statement checked in T-A-05)",
+      "new": "e.g. a Dow 3145-class electronics RTV (MPN and corrosivity statement checked in T-A-05; **superseded in r7:** 'Dow 3145 / 3140-class' and 'no acetoxy RTV near copper')"
+    }
+  ]
+}

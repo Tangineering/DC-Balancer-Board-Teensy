@@ -1,0 +1,200 @@
+{
+ "group": "rev7-F4",
+ "edits": [
+  {
+   "old": "R175 stands vertical in grid column 1, rows 2-3 (courtyard x 49.650-51.950, y 60.375-65.125), beside F07.",
+   "new": "R175 stands vertical in grid column 1, rows 2-3 (courtyard x 49.650-51.950, y 60.375-65.125). Its pad R175a (row 3, y 64.02) is the F07 / Teensy 3V3 side and sits beside F07; its pad R175b (row 2, y 61.48) is the CR rail side.",
+   "note": "A.4: name the two R175 pads (finding tap-adjacency-hv-taps-next-to-teensy-pins, adjacent item)"
+  },
+  {
+   "old": "Two grid positions stay spare: (53.34, 64.02) and (50.80, 66.56).",
+   "new": "Two grid positions stay spare: (53.34, 61.48) and (53.34, 66.56) (**superseded in r7:** (53.34, 64.02) and (50.80, 66.56)). A.8 gives the pad assignment, its adjacency exclusions and the adjacent-pad short table.",
+   "note": "A.4: spare positions of the D-F4 assignment (H.23(g))"
+  },
+  {
+   "old": "the band admits pads, wires, the RTV bead and temperature-insensitive passives such as R175.\n\n**r7 lengths (information):**",
+   "new": "the band admits pads, wires, the RTV bead and temperature-insensitive passives such as R175. The F20 (T20) and F21 (T21) pads lie over the FT1 body on the CR underside (x 59.720-63.720, y 65.905-67.505); D.1 (PM4, PM6) and T-A-09 set their soldering order against the FT1 bed check.\n\n**r7 lengths (information):**",
+   "note": "A.4: pads over FT1 are now F20/F21 (H.23(g)); the order itself is the D-F1 text"
+  },
+  {
+   "old": "falls from 1308.0 mm (r6) to 850.9 mm straight (-34.9 %) and 856.7 mm dressed. The Length column keeps the r6 maxima; they stay valid upper bounds, because every r7 straight and dressed length is shorter.",
+   "new": "falls from 1308.0 mm (r6) to 859.3 mm straight (-34.3 %) and 895.5 mm dressed on the path that the dressing rule allows (**superseded in r7:** 850.9 mm straight (-34.9 %) and 856.7 mm dressed, on a dressed path that ran over the row-1 pads). The Length column keeps the r6 maxima. They stay valid upper bounds, because every r7 straight and dressed length is at most 57 % of its maximum (T8, 86.0 mm dressed against 0.15 m) (**superseded in r7:** \"because every r7 straight and dressed length is shorter\"; the T8 dressed length exceeds its r6 straight length).",
+   "note": "A.4: lengths from the D-F4 re-run (findings dressed-length-path-crosses-pads, t8-*)"
+  },
+  {
+   "old": "**r7 dressing rule:** wires from tab X stay at y > 56 until x > 63 and never pass over the LM1084 body (REG-5V box x 50.97-62.31, y 36.87-54.51). The straight lines of T1, T7b and T5 cross the REG-5V box. These three wires are dressed toward +y in the inter-row gaps, never across neighbouring pads.",
+   "new": "**r7 dressing rule:** wires from tab X stay at y > 56 until x > 63. No tap wire passes over the REG-5V box (x 50.97-62.31, y 36.87-54.51: the LM1084 leads, body and tab), over CO-5V or over a CR header post (**superseded in r7:** \"never pass over the LM1084 body\", scoped to wires from tab X). The straight lines of T1 and T7b cross the REG-5V box (**superseded in r7:** \"T1, T7b and T5\"; T5 now sits at (58.42, 58.94) and its straight line clears the box). A tab X wire whose straight jacket crosses another pad, R175, the REG-5V box or CO-5V takes the **gap path**. The gap path leaves the pad into the adjacent inter-row gap (y 60.21, 62.75 or 65.29) and runs toward +x in that gap to x 64.77. x 64.77 lies half a pitch past column 6 and beyond the 64.50 mm courtyard edge; only there does the wire turn to its MB point (**superseded in r7:** \"These three wires are dressed toward +y in the inter-row gaps, never across neighbouring pads\"; the r7 dressed lengths were computed on a pad -> (63.50, pad y) path that ran over the row-1 pads). The gap y 60.21 carries 8 wires (T1, T7b, T4, T5, T12, T13, T16, T17r), the gap y 62.75 carries T6 and the gap y 65.29 carries 7 (T2, T11, T14, T15, T17, T21, F24). One 26 AWG jacket (OD ~1.0 mm, ASSUMPTION) fills a 1.04 mm gap, so the further wires of a gap stack above it; no stripped conductor extends past its own pad. The residual row is checked by the same rule. The straight T8 path from F09 to J2.31 crosses the REG-5V box and CO-5V and passes over the pin-1 post. T8 therefore takes the **low-edge lane**: from F09 toward -y to y 34.40, along y 34.40 to x 63.50, then to J2.31 (86.0 mm dressed). In that lane the T8 jacket passes 0.15 mm below the F10 and F22 pads, overhangs the CR low edge (y 34.14) by up to 0.24 mm and passes 1.97 mm below the REG-5V box. The straight T22 and T9 paths clear the REG-5V box, CO-5V and every header post.",
+   "note": "A.4 dressing rule restated on the legal gap path and the residual-row check (findings a4-dressing-rule-vs-calc-path, dressed-length-path-crosses-pads, t8-residual-tap-crosses-lm1084-misreported, t8-crosses-lm1084-unflagged)"
+  },
+  {
+   "old": "F01 (**r7:** (50.80, 58.94); 63.4 mm straight, 67.3 mm dressed)",
+   "new": "F01 (**r7:** (50.80, 58.94); 63.4 mm straight, 70.1 mm dressed on the gap path (**superseded in r7:** 67.3 mm dressed))",
+   "note": "A.4 table: H.23(g) D-F4 position and lengths"
+  },
+  {
+   "old": "F02 (**r7:** (53.34, 58.94); 59.5 mm straight, 62.5 mm dressed)",
+   "new": "F02 (**r7:** (53.34, 58.94); 59.5 mm straight, 65.2 mm dressed on the gap path (**superseded in r7:** 62.5 mm dressed))",
+   "note": "A.4 table: H.23(g) D-F4 position and lengths"
+  },
+  {
+   "old": "F03 (**r7:** (58.42, 66.56); 9.9 mm straight)",
+   "new": "F03 (**r7:** (50.80, 66.56), beside R175a; 17.2 mm straight, 20.7 mm dressed (**superseded in r7:** (58.42, 66.56), 9.9 mm straight))",
+   "note": "A.4 table: H.23(g) D-F4 position and lengths"
+  },
+  {
+   "old": "F04 (**r7:** (55.88, 61.48); 36.3 mm straight)",
+   "new": "F04 (**r7:** (63.50, 58.94); 28.5 mm straight (**superseded in r7:** (55.88, 61.48), 36.3 mm))",
+   "note": "A.4 table: H.23(g) D-F4 position and lengths"
+  },
+  {
+   "old": "F05 (**r7:** (58.42, 58.94); 35.6 mm straight)",
+   "new": "F05 (**r7:** (55.88, 61.48); 39.2 mm straight, 41.8 mm dressed (**superseded in r7:** (58.42, 58.94), 35.6 mm))",
+   "note": "A.4 table: H.23(g) D-F4 position and lengths"
+  },
+  {
+   "old": "F06 (**r7:** (55.88, 58.94); 39.2 mm straight, 41.0 mm dressed)",
+   "new": "F06 (**r7:** (58.42, 58.94); 37.2 mm straight, 41.1 mm dressed (**superseded in r7:** (55.88, 58.94), 39.2 mm straight, 41.0 mm dressed))",
+   "note": "A.4 table: H.23(g) D-F4 position and lengths"
+  },
+  {
+   "old": "F07 (**r7:** (53.34, 61.48), beside R175; 34.3 mm straight)",
+   "new": "F07 (**r7:** (53.34, 64.02), beside R175a; 34.8 mm straight, 36.2 mm dressed (**superseded in r7:** (53.34, 61.48), 34.3 mm))",
+   "note": "A.4 table: H.23(g) D-F4 position and lengths"
+  },
+  {
+   "old": "F09 (**r7:** residual pad on the footprint, (28.98, 35.80); 82.8 mm straight)",
+   "new": "F09 (**r7:** residual pad on the footprint, (28.98, 35.80); 82.8 mm straight, 86.0 mm dressed in the low-edge lane)",
+   "note": "A.4 table: H.23(g) D-F4 position and lengths"
+  },
+  {
+   "old": "F12 (**r7:** (58.42, 64.02); 51.7 mm straight)",
+   "new": "F12 (**r7:** (55.88, 64.02); 54.3 mm straight, 55.5 mm dressed (**superseded in r7:** (58.42, 64.02), 51.7 mm))",
+   "note": "A.4 table: H.23(g) D-F4 position and lengths"
+  },
+  {
+   "old": "F13 (**r7:** (60.96, 58.94); 55.6 mm straight)",
+   "new": "F13 (**r7:** (55.88, 58.94); 60.1 mm straight, 63.0 mm dressed (**superseded in r7:** (60.96, 58.94), 55.6 mm))",
+   "note": "A.4 table: H.23(g) D-F4 position and lengths"
+  },
+  {
+   "old": "F14 (**r7:** (63.50, 58.94); 52.1 mm straight)",
+   "new": "F14 (**r7:** (60.96, 58.94); 54.4 mm straight, 56.7 mm dressed (**superseded in r7:** (63.50, 58.94), 52.1 mm))",
+   "note": "A.4 table: H.23(g) D-F4 position and lengths"
+  },
+  {
+   "old": "F15 (**r7:** (63.50, 61.48); 46.7 mm straight)",
+   "new": "F15 (**r7:** (58.42, 64.02); 51.6 mm straight, 52.8 mm dressed (**superseded in r7:** (63.50, 61.48), 46.7 mm))",
+   "note": "A.4 table: H.23(g) D-F4 position and lengths"
+  },
+  {
+   "old": "F16 (**r7:** (55.88, 66.56); 56.7 mm straight)",
+   "new": "F16 (**r7:** (58.42, 66.56); 54.3 mm straight, 56.4 mm dressed (**superseded in r7:** (55.88, 66.56), 56.7 mm))",
+   "note": "A.4 table: H.23(g) D-F4 position and lengths"
+  },
+  {
+   "old": "F17 (**r7:** (58.42, 61.48); 56.7 mm straight)",
+   "new": "F17 (**r7:** (58.42, 61.48); 56.7 mm straight, 58.1 mm dressed)",
+   "note": "A.4 table: H.23(g) D-F4 position and lengths"
+  },
+  {
+   "old": "F18 (**r7:** (60.96, 66.56); 51.1 mm straight)",
+   "new": "F18 (**r7:** (60.96, 64.02); 51.9 mm straight, 53.0 mm dressed (**superseded in r7:** (60.96, 66.56), 51.1 mm))",
+   "note": "A.4 table: H.23(g) D-F4 position and lengths"
+  },
+  {
+   "old": "F19 (**r7:** (60.96, 64.02); 49.7 mm straight)",
+   "new": "F19 (**r7:** (60.96, 61.48); 49.4 mm straight, 50.5 mm dressed (**superseded in r7:** (60.96, 64.02), 49.7 mm))",
+   "note": "A.4 table: H.23(g) D-F4 position and lengths"
+  },
+  {
+   "old": "F20 (**r7:** (55.88, 64.02); 26.3 mm straight)",
+   "new": "F20 (**r7:** (63.50, 66.56), over the FT1 body; 18.3 mm straight (**superseded in r7:** (55.88, 64.02), 26.3 mm))",
+   "note": "A.4 table: H.23(g) D-F4 position and lengths"
+  },
+  {
+   "old": "F21 (**r7:** (63.50, 66.56); 48.0 mm straight)",
+   "new": "F21 (**r7:** (60.96, 66.56), over the FT1 body; 50.5 mm straight, 52.2 mm dressed (**superseded in r7:** (63.50, 66.56), 48.0 mm))",
+   "note": "A.4 table: H.23(g) D-F4 position and lengths"
+  },
+  {
+   "old": "F23 (**r7:** (60.96, 61.48); 50.2 mm straight)",
+   "new": "F23 (**r7:** (63.50, 61.48); 47.8 mm straight (**superseded in r7:** (60.96, 61.48), 50.2 mm))",
+   "note": "A.4 table: H.23(g) D-F4 position and lengths"
+  },
+  {
+   "old": "F24 (**r7:** (53.34, 66.56); 37.8 mm straight)",
+   "new": "F24 (**r7:** (55.88, 66.56); 35.6 mm straight, 39.0 mm dressed (**superseded in r7:** (53.34, 66.56), 37.8 mm))",
+   "note": "A.4 table: H.23(g) D-F4 position and lengths"
+  },
+  {
+   "old": "| U104 IN- via R140 10 kOhm; R144 1.00 MOhm pull-up on the CR side | 0.15 m | Twisted with T9 |",
+   "new": "| U104 IN- via R140 10 kOhm; R144 1.00 MOhm pull-up on the CR side | 0.15 m | Twisted with T9 at F09/F10 only: the T8 low-edge lane and the T9 straight path part after F10 |",
+   "note": "A.4 T8 note (finding t8-crosses-lm1084-unflagged, adjacent item)"
+  },
+  {
+   "old": "**r7 tab X pad assignment (H.23(g)).** Row y 58.94: F01 T1 (50.80), F02 T7b (53.34), F06 T5 (55.88), F05 T4 (58.42), F13 T12\n(60.96), F14 T13 (63.50). Row y 61.48: R175 (50.80, rows 2-3), F07 T6 (53.34), F04 T3 (55.88), F17 T16 (58.42), F23 T19 (60.96),\nF15 T14 (63.50). Row y 64.02: R175, spare (53.34), F20 T20 (55.88), F12 T11 (58.42), F19 T17r (60.96), F11 T10 (63.50). Row\ny 66.56: spare (50.80), F24 option (53.34), F16 T15 (55.88), F03 T2 (58.42), F18 T17 (60.96), F21 T21 (63.50). T1/T7b and T17/T17r\nsit on adjacent positions, and F07 (T6) sits beside R175.",
+   "new": "**r7 tab X pad assignment (H.23(g); finding tabx-tap-pad-adjacency-unanalysed).** Row y 58.94: F01 T1 (50.80), F02 T7b (53.34),\nF13 T12 (55.88), F06 T5 (58.42), F14 T13 (60.96), F04 T3 (63.50). Row y 61.48: R175b (50.80, the CR rail pad), spare (53.34),\nF05 T4 (55.88), F17 T16 (58.42), F19 T17r (60.96), F23 T19 (63.50). Row y 64.02: R175a (50.80, the F07 / Teensy 3V3 pad),\nF07 T6 (53.34), F12 T11 (55.88), F15 T14 (58.42), F18 T17 (60.96), F11 T10 (63.50). Row y 66.56: F03 T2 (50.80), spare (53.34),\nF24 option (55.88), F16 T15 (58.42), F21 T21 (60.96), F20 T20 (63.50). (**superseded in r7:** the length-only assignment: Row y 58.94: F01 T1 (50.80), F02 T7b (53.34), F06 T5 (55.88), F05 T4 (58.42), F13 T12 (60.96), F14 T13 (63.50). Row y 61.48: R175 (50.80, rows 2-3), F07 T6 (53.34), F04 T3 (55.88), F17 T16 (58.42), F23 T19 (60.96), F15 T14 (63.50). Row y 64.02: R175, spare (53.34), F20 T20 (55.88), F12 T11 (58.42), F19 T17r (60.96), F11 T10 (63.50). Row y 66.56: spare (50.80), F24 option (53.34), F16 T15 (55.88), F03 T2 (58.42), F18 T17 (60.96), F21 T21 (63.50). T1/T7b and T17/T17r sit on adjacent positions, and F07 (T6) sits beside R175. It put F07 (T6) beside F02 (T7b, GND) and F04 (T3), the EN taps T3/T5 and T4/T5 side by side, F11 (T10) beside F21 (T21) and F03 (T2) beside F12, F16 and F18.)\nThe assignment minimises the straight-length sum under six adjacency exclusions:\n\n- no two of T3, T4 and T5 (the RT1987 EN taps) on orthogonally adjacent positions;\n- F07 (T6, the raw Teensy 3V3) beside R175, with no GND (T7b, T17r) and no EN (T3, T4, T5) neighbour;\n- T10 (`CHG_QUAL`) not beside T21 (`CHG_HB`);\n- T1 and T2 (the V-MOT and VBUS divider taps) not beside a raw Teensy-pin pad;\n- T1/T7b and T17/T17r on adjacent positions;\n- T18 off tab X.\n\nH.23(g) finds none of the six violated. F01 (T1) has the neighbours R175b and F02 (T7b), F03 (T2) has only R175a, and F07 (T6)\nhas R175a and F12 (T11). R175a is the Teensy 3V3 supply node (J1.29), not a GPIO, so the T2 exclusion holds; the F03-R175a row of\nthe short table below gives the back-feed. F20 (T20) and F21 (T21) lie over the FT1 body (A.4).",
+   "note": "A.8 assignment paragraph: the D-F4 re-run (H.23(g))"
+  },
+  {
+   "old": "and its pad courtyard lies 5.33 mm from the J101 region.",
+   "new": "and its pad courtyard lies 5.33 mm from the J101 region.\n\n**r7 adjacent-pad short table (finding tabx-tap-pad-adjacency-unanalysed, H.23(g)).** The pad gap is 2.54 - 1.50 = 1.04 mm. Each\nrow assumes one hand-solder bridge or one stray strand across that gap. The 6 x 4 grid has 38 orthogonal pairs. Seven of them\ncontain a spare position and cannot bridge: (50.80, 61.48)-(53.34, 61.48), (53.34, 61.48)-(55.88, 61.48), (50.80, 66.56)-(53.34, 66.56),\n(53.34, 66.56)-(55.88, 66.56), (53.34, 58.94)-(53.34, 61.48), (53.34, 61.48)-(53.34, 64.02) and (53.34, 64.02)-(53.34, 66.56). The\nother 31 pairs and the residual-row pairs are listed below. A **push-pull pad** is a pad whose tap wire runs straight to a Teensy\noutput pin. The CR series resistors of A.4 sit behind the pads, so they do not limit a bridge between two tap wires. The\ncontention figures take about 40 ohm per i.MX output driver (ASSUMPTION, not measured). The T-F-12 tap-to-tap check detects\nevery row before the first power-up; the last column names the detector in service.\n\n| Pair | Nets | Consequence of a bridge | Detector in service |\n|---|---|---|---|\n| F01 T1 - F02 T7b | V-MOT (R170 10 kOhm at the MB end) - GND | R170 carries <= 2.0 mA at 19.7 V V-MOT (the tap-to-GND case of B.2 and H.1); H1 IN+ reads 0 V | H1 state against V-MOT (T-C-02) |\n| F02 T7b - F13 T12 | GND - pin 33 (ILIM_SENSE readback, R125 1 kOhm) | pin 33 reads LOW; U203 drives GND through R265 + R125 (1.47 kOhm, <= 2.3 mA) | readback plausibility (FR-08/FR-44) |\n| F13 T12 - F06 T5 | pin 33 - pin 31 push-pull (FC_CHARGE_ENABLE) | pin 33 reads the pin-31 level; U203 contends with pin 31 through 1.47 kOhm (<= 2.3 mA), so the EN net follows pin 31 | readback plausibility (FR-08/FR-44) |\n| F06 T5 - F14 T13 | pin 31 push-pull - pin 34 (H1 readback, R126 1 kOhm) | pin 34 reads the pin-31 level; U102 contends through R126 (<= 3.3 mA), so the EN net follows pin 31 | readback plausibility (FR-08/FR-44) |\n| F14 T13 - F04 T3 | pin 34 - pin 28 push-pull (BT_BUS_ENABLE) | pin 34 reads the pin-28 level; U102 contends through R126 (<= 3.3 mA), so the EN net follows pin 28 | readback plausibility (FR-08/FR-44) |\n| F05 T4 - F17 T16 | pin 30 push-pull (REGEN_ENABLE) - pin 35 (`CHG_EFUSE_FLT`, open drain, Teensy pull-up) | pin 35 reads the pin-30 level, so an eFuse fault reads \"no fault\" while pin 30 is HIGH; an asserted FLT sinks pin 30 without a series resistor, which pulls the REGEN EN net only toward off | announces itself: pin 35 reads \"fault\" whenever pin 30 is LOW (FR-08) |\n| F06 T5 - F17 T16 | pin 31 push-pull (FC_CHARGE_ENABLE) - pin 35 | as the F05-F17 row, with pin 31 and the FC_CHARGE EN net | announces itself: pin 35 reads \"fault\" whenever pin 31 is LOW (FR-08) |\n| F17 T16 - F19 T17r | pin 35 - GND | pin 35 reads \"eFuse fault\" permanently; charging is refused | announces itself (FR-08) |\n| F17 T16 - F15 T14 | pin 35 - pin 16 (H2C readback, R127 1 kOhm) | pins 35 and 16 read one level; an asserted FLT sinks U108 H2C through R127 (<= 3.3 mA) | readback plausibility (FR-08/FR-44) |\n| F19 T17r - F23 T19 | GND - pin 40 (FC_CURRENT, INA253 FC output; U117 option) | option fitted: the INA253 FC output and pin 40 held at GND, FC current reads 0 A; option not fitted: no consequence | FC current plausibility (firmware) |\n| F14 T13 - F19 T17r | pin 34 - GND | pin 34 reads LOW; U102 drives GND through R126 (<= 3.3 mA) | readback plausibility (FR-08/FR-44) |\n| F19 T17r - F18 T17 | GND - pin 22 (`CHG_IIN`, eFuse IMON through R129 10 kOhm) | pin 22 reads 0 A; the IMON current returns to GND through R129 | `CHG_IIN` plausibility against the charge current (firmware) |\n| R175a - F07 T6 | one net (Teensy 3V3) | none: designed 0 ohm | - |\n| F07 T6 - F12 T11 | Teensy 3V3 - pin 17 push-pull (`CHG_FCCEIL`) | while pin 17 drives LOW, its output sinks the Teensy 3V3 directly (current set by the pin driver, TODO(verify: i.MX RT1062 datasheet, pad output current rating)); otherwise FCCEIL reads HIGH (\"FC ceiling confirmed\") whatever the firmware commands | none in service (no FCCEIL readback); **open, see below** |\n| F12 T11 - F15 T14 | pin 17 push-pull - pin 16 (H2C readback) | pin 16 reads FCCEIL; U108 contends with pin 17 through R127 (<= 3.3 mA) | readback plausibility (FR-08/FR-44) |\n| F15 T14 - F18 T17 | pin 16 - pin 22 (IMON) | pin 22 reads the H2C level; U108 drives N_IMON through R127 + R129 (11 kOhm, <= 0.3 mA) | `CHG_IIN` plausibility (firmware) |\n| F18 T17 - F11 T10 | pin 22 - pin 10 push-pull (`CHG_QUAL`) | pin 22 reads the QUAL level; pin 10 drives N_IMON through R129 (<= 0.33 mA) | `CHG_IIN` plausibility (firmware) |\n| F05 T4 - F12 T11 | pin 30 push-pull (REGEN_ENABLE) - pin 17 push-pull | two outputs tied without a series resistor; with pin 30 LOW and pin 17 HIGH the REGEN EN net sits near 1.65 V, above the RT1987 VEN_R maximum 1.4 V, so D-BC-RG can conduct while commanded off; U121 RGN_ON (trip 1.75-1.88 V) reads OFF | none in service (U121 cannot see 1.65 V); **open, see below** |\n| F12 T11 - F24 | pin 17 - J1.07 (pin 2, option) | F24 not fitted (baseline): no consequence; F24 fitted: pin 2 reads FCCEIL and pin 17 drives the ENC_A net (RENC1) | - |\n| F13 T12 - F05 T4 | pin 33 - pin 30 push-pull | pin 33 reads the pin-30 level; U203 contends through 1.47 kOhm (<= 2.3 mA), so the EN net follows pin 30 | readback plausibility (FR-08/FR-44) |\n| F01 T1 - R175b | V-MOT (R170) - CR 3V3 rail | R170 back-feeds <= 2.0 mA into the CR rail (rail load 1.82 mA, H.20; the surplus flows through R175 into the Teensy 3V3); H1 IN+ sees the rail, not V-MOT | H1 state against V-MOT (T-C-02) |\n| R175b - R175a | CR 3V3 rail - Teensy 3V3 | R175 bypassed: a later CR or ribbon short is no longer held to 48.5 mA (r4) | none in service; T-F-12 reads R175 (68 ohm) |\n| R175a - F03 T2 | Teensy 3V3 - VBUS (R171 10 kOhm at the MB end) | R171 back-feeds <= 2.0 mA into the 3V3; UVB and H1 IN- see 3.3 V in place of VBUS, so UVB drops as for a lost T2 (A.4) | announces itself (UVB LOW, T-C-02) |\n| F15 T14 - F16 T15 | pin 16 - pin 23 (BT_OK readback, R128 1 kOhm) | pins 16 and 23 read one level; U108 and U104 contend through R127 + R128 (2 kOhm, <= 1.7 mA) | readback plausibility (FR-08/FR-44) |\n| F18 T17 - F21 T21 | pin 22 - pin 21 push-pull (`CHG_HB`) | pin 22 reads the heartbeat; pin 21 drives N_IMON through R129 (<= 0.33 mA) | `CHG_IIN` plausibility (firmware) |\n| F04 T3 - F23 T19 | pin 28 push-pull - pin 40 (U117 option) | option fitted: pin 28 and the INA253 FC output tied without a series resistor, FC current reads the EN level; option not fitted: no consequence | FC current plausibility (firmware) |\n| F23 T19 - F11 T10 | pin 40 (U117 option) - pin 10 push-pull | as the F04-F23 row, with pin 10 | FC current plausibility (firmware) |\n| F11 T10 - F20 T20 | pin 10 push-pull - pin 7 (CE_SENSE readback, R148 + R264, 1.47 kOhm) | pin 7 reads the QUAL level; U204 contends through 1.47 kOhm (<= 2.3 mA) | readback plausibility (FR-08(b)) |\n| F24 - F16 T15 | J1.07 (pin 2, option) - pin 23 | F24 not fitted (baseline): no consequence; F24 fitted: pin 2 reads BT_OK | - |\n| F16 T15 - F21 T21 | pin 23 - pin 21 push-pull | pin 23 reads the heartbeat; U104 contends through R128 (<= 3.3 mA) | readback plausibility (FR-08/FR-44) |\n| F21 T21 - F20 T20 | pin 21 push-pull - pin 7 | pin 7 reads the heartbeat; U204 contends through 1.47 kOhm (<= 2.3 mA) | readback plausibility (FR-08(b)) |\n| F08 T22 - F09 T8 (residual row) | BAL-NOK (BQ29200 OUT) - pin 41 / U104 IN- (BT-CURR) | the BAL-NOK level appears on pin 41 and U104 IN-: a false BT current and a false BT_OK state | T-A-01c; BT current plausibility (firmware) |\n| F09 T8 - F10 T9 (residual row) | BT-CURR - GND (Kelvin) | pin 41 and U104 IN- held at 0 V: BT current reads 0 A and BT_OK takes a false state; the INA253 BT output drives GND | BT current plausibility (firmware) |\n| F10 T9 - F22 T18 (residual row) | not adjacent (pad gap 8.66 mm) | - | - |\n\nTwo rows lie outside the H.23(g) exclusion set but carry the hazard class that the set excludes. F05-F12 ties two push-pull\noutputs on an RT1987 EN net, as an EN-EN pair does. F07-F12 lets a push-pull output sink the unlimited Teensy 3V3, as a GND\nneighbour of F07 does. Neither row has a detector in service. Both stand only behind the T-F-12 tap-to-tap check until a\nruling. The proposed closure adds one exclusion (no EN tap and no F07 beside a push-pull pad: T10, T11 or T21) and re-runs\nH.23(g), TODO(calc: r7_calc.py H.23(g) with the added exclusion). One candidate swaps F12 (T11) and F24, so that only the\nunfitted F24 option sits beside F05 and F07.",
+   "note": "A.8 adjacent-pad short table (finding tabx-tap-pad-adjacency-unanalysed; H.23(g) table with consequence and detector)"
+  },
+  {
+   "old": "tap wires dressed toward +y until x > 63 (A.4) |",
+   "new": "tap wires on the A.4 gap path (into the adjacent inter-row gap, toward +x to x 64.77; **superseded in r7:** \"dressed toward +y until x > 63\") |",
+   "note": "A.8 tab X top row: dressing wording (finding dressed-length-path-crosses-pads)"
+  },
+  {
+   "old": "**r7:** C-D2 pad 1 lies outside tab X (the C-D2 box is 3.64 mm from the FT1 body, H.23(i)); orient R171 and the T2 wire away from tab X.",
+   "new": "**r7:** C-D2 pad 1 lies outside tab X: the C-D2 box is 2.181 mm and the R171/T2 joint 3.118 mm from the tab X right edge (H.23(b)) (**superseded in r7:** \"the C-D2 box is 3.64 mm from the FT1 body, H.23(i); orient R171 and the T2 wire away from tab X\"). Point the R171 body toward +y, away from tab X and from C-D2 pad 2. Do not lay R171 across C-D2. Run the T2 wire from F03 (50.80, 66.56) into the gap y 65.29 and along it to x 64.77. Then run it over the tab X right edge to the R171 free end (20.7 mm dressed, A.4). Do not route the T2 wire under the tab overhang.",
+   "note": "PM3 (findings pm3-t2-away-from-tab-x-contradiction, pm3-cd2-distance-wrong-reference); route adapted to the new F03"
+  },
+  {
+   "old": "Dress each tab X wire toward +y in the inter-row gaps until x > 63. Never dress it across the REG-5V box (x 50.97-62.31, y 36.87-54.51) or a neighbouring pad; T1, T7b and T5 need this dressing.",
+   "new": "Dress each tab X wire on the A.4 gap path. Lead the wire from its pad into the adjacent inter-row gap. Run it toward +x in that gap to x 64.77. Then turn it to its MB point. Never dress a wire across the REG-5V box (x 50.97-62.31, y 36.87-54.51), CO-5V, a header post or a neighbouring pad. Keep the stripped length of each wire on its own pad. Dress T8 from F09 toward -y into the low-edge lane y 34.40, then along the lane to x 63.50. (**superseded in r7:** \"Dress each tab X wire toward +y in the inter-row gaps until x > 63 ... T1, T7b and T5 need this dressing\".) After the taps, before the first power-up, do the r7 T-F-12 tap-to-tap check and the loupe check of every 1.04 mm pad gap.",
+   "note": "PM6 dressing on the legal path, T8 lane, tap-to-tap check (findings dressed-length-path-crosses-pads, t8-crosses-lm1084-unflagged, tabx-tap-pad-adjacency-unanalysed)"
+  },
+  {
+   "old": "The 20 straight lengths sum to 850.9 mm (r6 1308.0 mm, -34.9 %, H.23(g))",
+   "new": "The 20 straight lengths sum to 859.3 mm and the dressed lengths to 895.5 mm (r6 1308.0 mm, -34.3 %, H.23(g); **superseded in r7:** 850.9 mm, -34.9 %)",
+   "note": "PM6 length sum (H.23(g) D-F4 re-run)"
+  },
+  {
+   "old": "6 x 4 grid at 2.54 mm, pad centres x 50.80-63.50, y 58.94-66.56: 20 pads (F01-F07, F11-F21, F23, F24) + R175 (vertical, rows 2-3 of column 1); spare positions (53.34, 64.02) and (50.80, 66.56); courtyard margins right 0.500 / top 0.740 / low 1.640 mm; low pad edge 2.233 mm from the 5V copper rim (rule >= 2.0 mm). Residual row on the footprint at y 35.80: F08 (T22) x 26.44, F09 (T8) 28.98, F10 (T9) 31.52, F22 (T18) 41.68 (10.54 mm straight to CO-5V pad 1, beside the pin-1 post at 0.240 mm from its square, pad courtyard 5.33 mm from the J101 box). Straight-length sum of the 20 taps r6 1308.0 mm -> r7 **850.9 mm (-34.9 %)**, dressed 856.7 mm; T1, T7b and T5 cross the LM1084 box when straight and are dressed toward +y (67.3 / 62.5 / 41.0 mm) | the A.4 maxima stay upper bounds; the r7 straight lengths are information; T-A-06 |",
+   "new": "6 x 4 grid at 2.54 mm, pad centres x 50.80-63.50, y 58.94-66.56: 20 pads (F01-F07, F11-F21, F23, F24) + R175 (vertical, rows 2-3 of column 1; R175a, the F07 / Teensy 3V3 pad, at (50.80, 64.02)); spare positions (53.34, 61.48) and (53.34, 66.56) (**superseded in r7:** (53.34, 64.02) and (50.80, 66.56)); courtyard margins right 0.500 / top 0.740 / low 1.640 mm; low pad edge 2.233 mm from the 5V copper rim (rule >= 2.0 mm). Assignment: minimum straight-length sum under the six A.8 adjacency exclusions; violations none (the length-only assignment had five: T6 beside T3/T7b, T3-T5, T4-T5, T10-T21, T2 beside T11/T15/T17). Adjacent-pad short table (A.8): 38 orthogonal grid pairs, 7 with a spare position, 0 forbidden; residual row F08-F09 and F09-F10 adjacent (1.04 mm gap), F10-F22 not (8.66 mm); two pairs (F05-F12, F07-F12) carry the excluded hazard class and are open (A.8). Residual row on the footprint at y 35.80: F08 (T22) x 26.44, F09 (T8) 28.98, F10 (T9) 31.52, F22 (T18) 41.68 (10.54 mm straight to CO-5V pad 1, beside the pin-1 post at 0.240 mm from its square, pad courtyard 5.33 mm from the J101 box). Straight-length sum of the 20 taps r6 1308.0 mm -> r7 **859.3 mm (-34.3 %)**, dressed on the A.4 gap path 895.5 mm (**superseded in r7:** 850.9 mm (-34.9 %), dressed 856.7 mm on a path over the row-1 pads). The REG-5V crossing is tested for every tap, the residual row included: T1 and T7b cross when straight and dress to 70.1 / 65.2 mm (**superseded in r7:** T1, T7b and T5 at 67.3 / 62.5 / 41.0 mm); T8 crosses the REG-5V box and CO-5V and passes over the pin-1 post when straight (82.8 mm) and dresses to 86.0 mm in the low-edge lane y 34.40. Gap occupancy: 8 wires in the gap y 60.21, 1 in y 62.75, 7 in y 65.29. F20 (T20) and F21 (T21) lie over the FT1 body | the A.4 maxima stay upper bounds (largest ratio T8, 86.0 mm against 0.15 m); the r7 straight lengths are information; T-A-06; T-F-12 tap-to-tap check |",
+   "note": "H.23(g) row from the D-F4 re-run"
+  },
+  {
+   "old": "DMM from every tab X tap pad to the MB nets under tab X (3V3, CB-DISABLE, CHRG-STAT, CS-MDAC-FC, MPPT-DISABLE, SCL, SDA; H.23(c));",
+   "new": "power off and with the Teensy unplugged from J1/J2 (its pin clamps would otherwise join the pin taps through its 3V3 rail), DMM resistance at <= 10 V test voltage in both polarities: from every tab X tap pad and both R175 pads to the MB nets under tab X (3V3, CB-DISABLE, CHRG-STAT, CS-MDAC-FC, MPPT-DISABLE, SCL, SDA; H.23(c)); between the two pads of every adjacent pair of the A.8 short table (31 grid pairs, R175 pads included, plus F08-F09 and F09-F10; finding tabx-tap-pad-adjacency-unanalysed); after PM6 and again after a vibration or road run, every reading recorded; a loupe on every 1.04 mm pad gap of tab X and of the residual row, and on the tap dressing (no tap wire over the REG-5V box x 50.97-62.31, y 36.87-54.51, over CO-5V or over a header post);",
+   "note": "T-F-12 method: tap-to-tap step and the measurement state (findings tabx-tap-pad-adjacency-unanalysed, tf12-r7-tap-isolation-criterion-unattainable)"
+  },
+  {
+   "old": "every tab X tap pad >= 1 MOhm to the MB nets under tab X;",
+   "new": "to the MB nets under tab X: F07 and R175a < 1 ohm to MB 3V3 (the T6 tap itself), R175b 68 ohm within the R175 1 % tolerance, F07 and R175a 2.7 kOhm to SCL and SDA (the MB RSDA/RSCL pull-ups), every other pad-to-net reading >= 1 kOhm in at least one polarity; tap to tap: F07-R175a < 1 ohm, R175a-R175b 68 ohm within 1 %, every other pair >= 1 kOhm in at least one polarity (a solder bridge, a strand or a short to an exposed via ring reads < 10 ohm in both polarities; a designed diode path, for example F17 through the U101 FLT output to F19, reads low in one polarity only); no bridge under the loupe; after the vibration or road run, no reading more than 10 % below its after-PM6 value in either polarity (the T-F-18 criterion \"no change in the T-F-12 readings\" uses this rule) (**superseded in r7:** \"every tab X tap pad >= 1 MOhm to the MB nets under tab X\", which a correct build fails at F07);",
+   "note": "T-F-12 pass: attainable tap isolation and tap-to-tap criterion (finding tf12-r7-tap-isolation-criterion-unattainable, alternative form)"
+  },
+  {
+   "old": "straight-length sum 1308.0 -> 850.9 mm (-34.9 %); tab X wires are dressed toward +y until x > 63;",
+   "new": "straight-length sum 1308.0 -> 859.3 mm (-34.3 %), 895.5 mm dressed; the assignment keeps the A.8 adjacency exclusions and has an adjacent-pad short table; tab X wires take the A.4 gap path (**superseded in r7:** 850.9 mm (-34.9 %); dressed toward +y until x > 63);",
+   "note": "0.3 r7-6 (summary row; other owner, different sentence): D-F4 numbers and wording"
+  },
+  {
+   "old": "The straight-length sum of the 20 taps falls from 1308.0 mm to 850.9 mm (-34.9 %; 856.7 mm dressed,\n  H.23(g)). Tap wires from tab X are dressed toward +y until x > 63, never over the LM1084 body (A.4).",
+   "new": "The straight-length sum of the 20 taps falls from 1308.0 mm to 859.3 mm (-34.3 %; 895.5 mm dressed,\n  H.23(g); **superseded in r7:** 850.9 mm, 856.7 mm dressed). Tap wires from tab X take the A.4 gap path and never pass over the\n  REG-5V box, CO-5V or a header post (A.4).",
+   "note": "A.7 tab content (other owner, different sentences): D-F4 numbers and dressing wording"
+  },
+  {
+   "old": "**r7:** the 20 straight tap lengths fall from 1308.0 to 850.9 mm, H.23(g), so the r6 quantity stays an upper bound",
+   "new": "**r7:** the 20 straight tap lengths fall from 1308.0 to 859.3 mm (895.5 mm dressed), H.23(g), so the r6 quantity stays an upper bound",
+   "note": "E Wire line (other owner, different sentence): D-F4 numbers"
+  },
+  {
+   "old": "the r7 straight-length sum of the 20 taps is 850.9 mm against 1308.0 mm in r6, H.23(g)",
+   "new": "the r7 straight-length sum of the 20 taps is 859.3 mm (895.5 mm dressed) against 1308.0 mm in r6, H.23(g)",
+   "note": "H.20 26 AWG row (other owner, different sentence): D-F4 numbers"
+  }
+ ]
+}

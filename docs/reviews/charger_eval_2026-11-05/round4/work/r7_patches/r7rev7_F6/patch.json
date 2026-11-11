@@ -1,0 +1,180 @@
+{
+ "group": "rev7-F6",
+ "edits": [
+  {
+   "old": "- EIB merge onto the CR: no; with the EVM 0.10-0.30 m from the CR edge, a merge would export the unbuffered ILIM_HIZ node,\n  REGN, /CE and STAT, so the EIB stays (B.6, J.2 item 60).",
+   "new": "- EIB merge onto the CR: no; the EVM plate stands on the chassis and the CR sits on the MB, so the two are not one rigid\n  co-mount, which is a G1 condition (J.2 item 60). At the H.23(l) reference placement, seven of the eight EVM points of the\n  E leads lie 69.4-130.1 mm from the CR edge, and JP12 pin 1 (E1) lies 55.8 mm from it. A merge would export the\n  unbuffered ILIM_HIZ node, REGN, /CE and STAT over those lengths, so the EIB stays (B.6).",
+   "note": "g1-distance-rationale-misquantified: 0.2 bullet; co-mount reason first, per-pin distances from the H.23(l) placement replace the round-3 0.10-0.30 m figure"
+  },
+  {
+   "old": "the EIB stands on its two M3 nylon standoffs on the same plate (one rigid body); EVM copper to plate and chassis > 1 MOhm (T-A-02); the four EVM M3 standoffs are deleted; plate and clamp geometry TODO(design: from MS2 and MS7)",
+   "new": "the EIB stands on its two M3 nylon standoffs on the same plate (one mounting plate; the bumpons allow 0.03-0.12 mm of E-lead relative motion at 30 g, ASSUMED materials, and lateral stops with <= 0.3 mm play per axis bound it; each bumpon compresses <= 1.0 mm under the clamps); EVM copper to plate and chassis > 1 MOhm (T-A-02, repeated after the vehicle run in T-F-18b); the four EVM M3 standoffs are deleted; plate, clamp and stop geometry TODO(design: from MS2, MS5 and MS7)",
+   "note": "evm-eib-not-one-rigid-body / evm-plate-mount-untested-in-vibration: r7-8 restated as one mounting plate with stops and a preload cap"
+  },
+  {
+   "old": "release level 1.786 mV lower = IINDPM 2.23 mA lower (safe direction); T-C-16 (A.5, A.9, B.6, B.8, C EM5, H.22(i))",
+   "new": "release level 1.786 mV lower = IINDPM 2.23 mA lower (the safe direction for the converter and the eFuse; 0.13-0.17 % of the 1.33-1.76 A regen clamp, so no H.7 effect); without R276 the E1 loop current also shifts EIB AGND through the shared E8 return (20-31 mV per 10 mV of REGN ripple, 0.17 mV with R276); T-C-16 with an abort limit and a 0.2 ratio criterion (A.5, A.9, B.6, B.8, C EM5; H.22(i) is superseded by H.23(k))",
+   "note": "r276-safe-direction-one-sided, r276-shared-e8-budget-tc16-criterion, stale-jp21-bottom-terminal-and-small-number-drift item 3 (r7-10 part only): r7-10 summary"
+  },
+  {
+   "old": "and T-F-18 (tab vibration and joint integrity)",
+   "new": "and T-F-18 (tab vibration and joint integrity) with T-F-18b (EVM plate retention and E-lead joints after the same vehicle run)",
+   "note": "evm-plate-mount-untested-in-vibration: r7-17 lists the post-run EVM check"
+  },
+  {
+   "old": "so the EIB and the EVM form one rigid body, A.7)",
+   "new": "so the EIB and the EVM share one mounting plate; the bumpons allow a small relative motion, bounded by lateral stops, A.5, A.7)",
+   "note": "evm-eib-not-one-rigid-body: B table EIB row"
+  },
+  {
+   "old": "so the r6 straight distances were 1.0-3.0 % short;",
+   "new": "so the r6 straight distances were 0.7-2.9 % short (E8 to E5);",
+   "note": "stale-jp21-bottom-terminal-and-small-number-drift item 2: E8 13.5 -> 13.6 mm is 0.7 %, E5 47.7 -> 49.1 mm is 2.9 %"
+  },
+  {
+   "old": "The EIB stands on the EVM plate with the EVM (A.7), so the two ends of every E lead move as one body.",
+   "new": "The EIB stands on the EVM plate with the EVM (A.7), so the two ends of every E lead share one mount. The EVM is held by friction on compliant bumpons, so the E leads see a small relative motion: 0.03-0.12 mm at 30 g without slip (ASSUMED: bumpon stiffness 50-200 N/mm, EVM mass 50-80 g, TODO(measure: MS7)). If the clamp friction is exceeded, the lateral stops bound the motion at 0.3 mm (A.7). Both values are far below the smallest slack within a build maximum, 6.4 mm in plan for E8, so the loop areas and the pickup ratios above stay valid.",
+   "note": "evm-eib-not-one-rigid-body / evm-plate-mount-untested-in-vibration: A.5 r7 note"
+  },
+  {
+   "old": "; dressed along the EVM bottom edge, away from L2 and the SW nodes |",
+   "new": "; dressed along the EVM bottom edge, away from L2 and the SW nodes (**superseded in r7:** any EVM-edge route is at least 96.05 mm long, over the 90 mm maximum. **r7:** E1 runs from the E1 pad to one bend near (51.0, 30.6) EVM mm and then to JP12 pin 1, below U1 and L2; its length is 70.8 mm against the 90 mm maximum. The bend keeps E1 5.0 mm from the JP17 pin-1 joint (E6, /CE), 10.2 mm from TP36 (E5), 9.0 mm from the U1 outline and 17.1 mm from the L2 outline. The straight line would pass 1.97 mm from JP17 pin 1 and 0.11 mm from the vacated JP17 pin-2 hole. Hand calculation on the `round4/work/evm_geometry.md` Table 1 positions; T-A-06 records the length) |",
+   "note": "e1-dressing-vs-90mm-and-fault-limit: the r6 edge route (>= 96.05 mm) contradicts the 90 mm maximum; brief D-F6 asks for a route that meets 90 mm and the /CE-pad distance"
+  },
+  {
+   "old": "T-C-16 checks the ring.",
+   "new": "T-C-16 checks the ring. E8 is the only DC ground of the EIB (A.6), so the E1 loop current returns through it. Without R276, the E8 drop at f0 is 20-31 mV per 10 mV of REGN ripple (E8 partial inductance 19.1 nH at its 20 mm maximum; hand calculation on the H.23(k) loop). That drop shifts EIB AGND, which carries the U203/U204 REF and the Q201 hold, against TP49. It therefore draws on the E3 (75 mV) and E4 (48 mV) budgets of `round4/work/eib_merge_failsafe.md` Table 8. With R276 the drop is 0.17 mV per 10 mV of ripple.",
+   "note": "r276-shared-e8-budget-tc16-criterion fix 1: A.5 states the common-impedance consequence"
+  },
+  {
+   "old": "This is the safe direction (less input current).",
+   "new": "This is the safe direction for the converter and the eFuse (less input current). For regen absorption (H.7) it is the adverse direction, but 2.23 mA is 0.13-0.17 % of the 1.33-1.76 A regen clamp, so no H.7 margin changes.",
+   "note": "r276-safe-direction-one-sided: both directions stated"
+  },
+  {
+   "old": "chassis, and the EVM is not drilled. Plate and clamp geometry: TODO(design: from MS2 and MS7).",
+   "new": "chassis, and the EVM is not drilled. Positive lateral stops (edge fences, locating pins or the clamp lips) sit at the\n  EVM board edges with at most 0.3 mm of play per axis, clear of FID1-FID6, the terminal wire faces and J8. The clamp\n  preload holds the EVM by friction against the MS5 peak acceleration times the MS7 mass; the stops bound the motion if\n  the friction is exceeded or the pads relax. The preload is limited so that each bumpon compresses by no more than\n  1.0 mm. This keeps the 2.4 mm terminal tails at least 1 mm off the plate (2.68 mm nominal; MS7 confirms the tail\n  protrusion and the board thickness). Plate, clamp and stop geometry: TODO(design: from MS2, MS5 and MS7).",
+   "note": "evm-eib-not-one-rigid-body fix 2 + evm-plate-mount-untested-in-vibration fix 1: stops <= 0.3 mm, preload from MS5 x MS7, compression cap 1.0 mm"
+  },
+  {
+   "old": "T-A-02 checks the clamp fit and the insulation of the EVM copper\n  (TP49, J1 pin 1) to the plate and the chassis (> 1 MOhm with W1-W7 disconnected).",
+   "new": "T-A-02 checks the clamp fit, the stop play, the bumpon\n  compression and the insulation of the EVM copper (TP49, J1 pin 1) to the plate and the chassis (> 1 MOhm with W1-W7\n  disconnected). T-F-18b repeats these checks after the vehicle run.",
+   "note": "evm-plate-mount-untested-in-vibration: static check plus post-run re-check"
+  },
+  {
+   "old": "The two M3 x 10 mm nylon standoffs stand on the EVM plate, so the EVM and the EIB form one rigid body and\n  the E leads see no relative motion.",
+   "new": "The two M3 x 10 mm nylon standoffs stand on the EVM plate, so the EVM and the EIB share one mounting\n  plate. The EVM is held by friction on compliant bumpons, so the E leads see a small relative motion (0.03-0.12 mm at\n  30 g, ASSUMED materials; at most the 0.3 mm stop play; A.5). Each E lead keeps at least 3 mm of slack within its A.5\n  build maximum and is tacked to the EIB with an RTV dot within 10 mm of its pad. T-F-18b inspects the E-lead joints\n  after the vehicle run.",
+   "note": "evm-eib-not-one-rigid-body fix 1 (alt.: 3 mm slack instead of a 5 mm loop, so E8 fits inside its 6.4 mm plan slack)"
+  },
+  {
+   "old": "so a USB cable that runs straight +y for more than 65.9 mm would meet it.",
+   "new": "so a USB cable that runs straight +y for more than 65.9 mm would meet it. Only the insulated cable jacket can reach the\n  EIB, because the plug shell (MB GND) ends inside the 45 mm corridor, 20.92 mm short of the EIB. The USB cable is\n  dressed and tied >= 5 mm clear of the EIB (T-A-02). After T-A-06, Kapton tape covers the E-pad joints on both EIB\n  faces, so that loose metal (an unplugged plug or a tool) cannot short E1 (REGN) or E5 (nCE_DRV) to GND.",
+   "note": "eib-epads-inside-usb-corridor-band: cable-dress requirement and tape cover"
+  },
+  {
+   "old": "which lowers IINDPM by 2.23 mA (safe direction)",
+   "new": "which lowers IINDPM by 2.23 mA (the safe direction for the converter and the eFuse; 0.13-0.17 % of the 1.33-1.76 A regen clamp, so no H.7 effect)",
+   "note": "r276-safe-direction-one-sided: B.6 R276 row"
+  },
+  {
+   "old": "R276 shorted restores the undamped r6 circuit (T-A-02 meters R276 at 10.0 ohm +-1 %) |",
+   "new": "R276 shorted restores the undamped r6 circuit, which is also a pickup-budget fault on E3/E4 through the shared E8 return (A.5); T-A-02 meters R276 at 10.0 ohm +-1 %, and T-C-16 fails a shorted R276 (predicted C205/TP27 ratio 7.8-8.8 against the 0.2 limit) |",
+   "note": "r276-shared-e8-budget-tc16-criterion fix 2: B.6 consequence wording"
+  },
+  {
+   "old": "so the EVM and the EIB move as one rigid body.",
+   "new": "so the EVM and the EIB share one mounting plate (E-lead relative motion 0.03-0.12 mm at 30 g, ASSUMED materials, and at most the 0.3 mm stop play; A.5, A.7).",
+   "note": "evm-eib-not-one-rigid-body: B.6 r7 paragraph"
+  },
+  {
+   "old": "Do not drill the EVM. Plate and clamp geometry: TODO(design: from MS2 and MS7) |",
+   "new": "Do not drill the EVM. Fit lateral stops at the EVM board edges with at most 0.3 mm of play per axis. Limit the clamp preload so that each bumpon compresses by no more than 1.0 mm. Tack each E lead to the EIB within 10 mm of its pad. Plate, clamp and stop geometry: TODO(design: from MS2, MS5 and MS7) |",
+   "note": "evm-eib-not-one-rigid-body / evm-plate-mount-untested-in-vibration: EM23 instruction"
+  },
+  {
+   "old": "One plate for the EVM and the EIB makes one rigid body, so the E leads see no relative motion (A.5 maxima).",
+   "new": "One plate carries the EVM and the EIB, so the two ends of every E lead share one mount. The bumpons allow 0.03-0.12 mm of relative motion at 30 g (ASSUMED materials), and the stops bound it at 0.3 mm, far below the 6.4 mm smallest E-lead slack (A.5 maxima). The 1.0 mm compression cap keeps the 2.4 mm terminal tails at least 1 mm off the plate.",
+   "note": "evm-eib-not-one-rigid-body: EM23 rationale"
+  },
+  {
+   "old": "T-A-02 checks the clamp fit and the insulation (EVM copper to plate and chassis > 1 MOhm);",
+   "new": "T-A-02 checks the clamp fit, the stop play, the bumpon compression and the insulation (EVM copper to plate and chassis > 1 MOhm); T-F-18b repeats these checks after the vehicle run;",
+   "note": "evm-plate-mount-untested-in-vibration: EM23 check"
+  },
+  {
+   "old": "under edge clamps (no drilling)",
+   "new": "under edge clamps with lateral stops (no drilling)",
+   "note": "evm-plate-mount-untested-in-vibration: D.4 record wording follows A.7"
+  },
+  {
+   "old": "28 AWG Kynar 2 m;",
+   "new": "28 AWG Kynar 2 m (**r7:** stranded 7/36 stock preferred, TODO(verify: stock listing); each E lead is tacked to the EIB within 10 mm of its pad, A.7);",
+   "note": "evm-plate-mount-untested-in-vibration fix 2 (alt.: TODO(verify) on the stock instead of asserting it; the tack applies to any stock)"
+  },
+  {
+   "old": "4 corner L-clamps, with 0.5 mm silicone pads |",
+   "new": "4 corner L-clamps, with 0.5 mm silicone pads and lateral stops |",
+   "note": "evm-eib-not-one-rigid-body fix 2: BOM row"
+  },
+  {
+   "old": "the fiducials (EM23, A.7) | plate and clamp geometry TODO(design: from MS2 and MS7);",
+   "new": "the fiducials; lateral stops at the EVM board edges with <= 0.3 mm play per axis; clamp preload limited to <= 1.0 mm bumpon compression (EM23, A.7) | plate, clamp and stop geometry TODO(design: from MS2, MS5 and MS7);",
+   "note": "evm-eib-not-one-rigid-body fix 2: BOM row"
+  },
+  {
+   "old": "passes a 1.5 MHz REGN ripple to C205 at 0.106 of its EVM amplitude | R276 fitted (B.6); T-C-16 (ring at C205 <= REGN ripple at TP27) |",
+   "new": "passes a 1.5 MHz REGN ripple to C205 at 0.106 of its EVM amplitude (7.8-8.8 with R276 bridged); E8 common-impedance drop at f0 per 10 mV of REGN ripple: 20-31 mV undamped, 0.17 mV with R276 (E8 partial inductance 19.1 nH at 20 mm; hand calculation, not printed by `r7_calc.py`) | R276 fitted (B.6); T-C-16 (C205 <= 0.2 x the TP27 ripple; E8 pad and U203 IN+ <= 4.8 mV; bridged-run abort at 5.5 V peak or 0.5 V p-p) |",
+   "note": "tc16-bridged-run-no-abort-loose-pass + r276-shared-e8-budget-tc16-criterion: H.23(k) consequence cell"
+  },
+  {
+   "old": "the released level moves in the safe direction (less input current); T-A-02 (R276 10.0 ohm +-1 %) |",
+   "new": "the released level moves in the safe direction for the converter and the eFuse (less input current); for regen absorption (H.7) it is the adverse direction by 0.13-0.17 % of the 1.33-1.76 A regen clamp, which changes no H.7 margin; T-A-02 (R276 10.0 ohm +-1 %, 4-wire or lead-zeroed DMM) |",
+   "note": "r276-safe-direction-one-sided; procedure-ste-and-measurement-nits (R276 DMM part only)"
+  },
+  {
+   "old": "R256/C252 bottom terminal (JP21 pin 2) to AGND (TP49)",
+   "new": "R256/C252 bottom terminal (JP21 pin 2) (**superseded in r7:** the R256/C252 terminal on JP21 pin 2, the upper post, A.5) to AGND (TP49)",
+   "note": "stale-jp21-bottom-terminal-and-small-number-drift item 1: T-A-02 method"
+  },
+  {
+   "old": "seat the EIB on its two M3 nylon standoffs on the same plate; before E1 is fitted, DMM across R276 at the EIB E1 pad;",
+   "new": "feeler gauge on the lateral-stop play on both axes; caliper on the EVM top-to-plate height at each bumpon before and after clamping (the compression); seat the EIB on its two M3 nylon standoffs on the same plate; before E1 is fitted, a 4-wire or lead-zeroed DMM across R276 at the EIB E1 pad (the +-0.1 ohm tolerance is comparable to 2-wire lead resistance); after the E leads are fitted, inspect the RTV tack of each E lead, the USB cable dress beside the EIB and the Kapton tape over the E-pad joints;",
+   "note": "evm-plate-mount-untested-in-vibration, evm-eib-not-one-rigid-body, eib-epads-inside-usb-corridor-band, procedure-ste-and-measurement-nits (R276 DMM): T-A-02 method"
+  },
+  {
+   "old": "the EIB on the same plate; R276 10.0 ohm +-1 %;",
+   "new": "the EIB on the same plate; lateral-stop play <= 0.3 mm per axis; each bumpon compressed <= 1.0 mm; R276 10.0 ohm +-1 %; each E lead tacked within 10 mm of its pad; the USB cable tied >= 5 mm clear of the EIB and Kapton tape over the E-pad joints (A.7);",
+   "note": "T-A-02 pass criteria for the stops, the compression cap, the tacks and the cable dress (eib-epads: placed in T-A-02, not T-A-08 MS2)"
+  },
+  {
+   "old": "re-cut or re-pad the clamp and re-measure)",
+   "new": "re-cut or re-pad the clamp and re-measure; stop play > 0.3 mm or a bumpon compressed > 1.0 mm: re-shim the stop or reduce the clamp preload and re-measure)",
+   "note": "T-A-02 fail column for the new criteria"
+  },
+  {
+   "old": "| T-C-16 | **E1/C205 ring with R276 (r7)** | E1 with its E8 return and C205 (100 nF) form a series LC at 1.430 MHz at the 90 mm E1 maximum, near the 1.5 MHz switching frequency; undamped Q 19.1 with the DC wire resistance (about 13.0 with the skin effect), 0.111 with R276 (H.23(k)); R276 x C205 passes 0.106 of the EVM REGN ripple at 1.5 MHz | Charger converting at the regen image (ICHG 3.10 A); SCOPE with ground springs on REGN at C205 against E8 on the EIB and at TP27 against TP49 on the EVM, on one time base; first with R276 bridged by a temporary link, then with R276 in circuit; E1 and E8 at their built lengths | with R276: the ring amplitude at C205 does not exceed the REGN ripple at TP27; the bridged run is recorded as characterisation | Check the R276 value and its position at the E1 pad (A.9); shorten E1 and E8 toward their straight lengths; recompute H.23(k) with the measured lengths and repeat |",
+   "new": "| T-C-16 | **E1/C205 ring and E8 pickup with R276 (r7)** | E1 with its E8 return and C205 (100 nF) form a series LC at 1.430 MHz at the 90 mm E1 maximum, near the 1.5 MHz switching frequency; undamped Q 19.1 with the DC wire resistance (about 13.0 with the skin effect), 0.111 with R276 (H.23(k)); R276 x C205 passes 0.106 of the EVM REGN ripple at 1.5 MHz (7.8-8.8 with R276 bridged); E8 is the only DC ground of the EIB, so the loop current shifts EIB AGND against TP49 by 20-31 mV per 10 mV of REGN ripple without R276 and by 0.17 mV with it (A.5); the TP27 ripple amplitude is not specified, TODO(verify: SLUUCB5E/SLUSDV2C) | Charger converting at the regen image (ICHG 3.10 A); SCOPE with ground springs, one time base; E1 and E8 at their built lengths. (1) With R276 in circuit, measure the 1.5 MHz component at TP27 against TP49, at C205 against the E8 pad, at the E8 pad against TP49, and at U203 IN+ and U204 IN+ against EIB AGND. (2) If 8.8 x the TP27 component exceeds 0.5 V p-p (TP27 above 57 mV p-p), omit the bridged run. (3) Otherwise, bridge R276 with a temporary link and measure at C205 and TP27. (4) If REGN at C205 exceeds 5.5 V peak or its 1.5 MHz component exceeds 0.5 V p-p, remove power at once | With R276: the 1.5 MHz component at C205 <= 0.2 x that at TP27 (H.23(k) predicts 0.106; the 0.2 limit admits only R276 >= 5.3 ohm, loop Q <= 0.21, overdamped); the E8 pad against TP49 and U203 IN+ against EIB AGND <= 4.8 mV (10 % of the E4 budget, 48 mV; the smallest budget, so it also covers the E3 share of 7.5 mV); U204 IN+ against EIB AGND <= 15.9 mV (10 % of the E6 budget, 159 mV). The budgets are those of `round4/work/eib_merge_failsafe.md` Table 8, already the 10 % shares of the margins; the prediction with R276 (0.17 mV per 10 mV) passes for a TP27 ripple below about 280 mV. Bridged run: characterisation only; the C205/TP27 ratio (predicted 7.8-8.8) or the abort is recorded | A value over its limit with R276: check the R276 value (T-A-02) and its position at the E1 pad (A.9); shorten E1 and E8 toward their straight lengths; recompute H.23(k) with the measured lengths and repeat |",
+   "note": "tc16-bridged-run-no-abort-loose-pass (abort, 0.2 ratio, TP27 pre-measurement) + r276-shared-e8-budget-tc16-criterion fix 3 (protected-node limits; alt.: U204 at 10 % of its own E6 budget, which the verifier left unassigned)"
+  },
+  {
+   "old": "\n| T-G-01 | Regen decels, regen-armed",
+   "new": "\n| T-F-18b | **EVM plate retention and E-lead joints after the vehicle run (r7)** | The EVM is held by friction on compliant bumpons with lateral stops (A.7, EM23); the E leads see 0.03-0.12 mm of relative motion at 30 g (ASSUMED materials) and at most the 0.3 mm stop play; the E-lead joints at the EVM end and the W-lead joints carry that motion; no other test repeats the T-A-02 insulation check after a run | The T-F-18 vehicle run. Before the run, paint witness marks across each clamp lip, each lateral stop and the adjacent EVM edge. After the run, inspect the witness marks under a loupe. Inspect the E-lead joints at TP33, TP36, TP38 and TP49 and on the JP12, JP14, JP17 and JP21 posts, the EIB tacks and the W-lead joints. Repeat the T-A-02 r7 insulation check, the T1 step-6 release proof and the /CE sense | no witness-mark offset > 0.3 mm; no cracked E-lead or W-lead joint; EVM copper (TP49, J1 pin 1) to the plate and to the chassis > 1 MOhm with W1-W7 disconnected; the T1 step-6 release proof and the /CE sense pass | A failed item: stop vehicle runs with the EVM; re-pad or re-cut the clamps or re-shim the stops, re-solder, repeat T-A-02 and find the cause before the next run |\n| T-G-01 | Regen decels, regen-armed",
+   "note": "evm-plate-mount-untested-in-vibration fix 3 + evm-eib-not-one-rigid-body fix 3: EVM leg of the T-F-18 run as its own row so the T-F-18 cells (D-F1/D-F7) stay untouched"
+  },
+  {
+   "old": "54. **EVM plate and clamp design (r7, EM23):** the plate and clamp geometry is TODO(design: from MS2 and MS7); the EVM rests\n    on its stock bumpons, no fastener or adhesive bonds EVM copper to the plate, the CR or the chassis, and T-A-02 checks the\n    insulation (> 1 MOhm).",
+   "new": "54. **EVM plate and clamp design (r7, EM23):** the plate, clamp and stop geometry is TODO(design: from MS2, MS5 and MS7);\n    the EVM rests on its stock bumpons, and no fastener or adhesive bonds EVM copper to the plate, the CR or the chassis.\n    The clamps preload the EVM against the MS5 peak acceleration times the MS7 mass. Lateral stops at the EVM board edges\n    keep the EVM displacement relative to the plate <= 0.3 mm per axis, independent of bumpon or pad relaxation. The\n    preload compresses each bumpon by no more than 1.0 mm, so the 2.4 mm terminal tails stay at least 1 mm off the plate.\n    T-A-02 checks the stops, the compression and the insulation (> 1 MOhm); T-F-18b repeats the checks after the vehicle\n    run.",
+   "note": "evm-plate-mount-untested-in-vibration fix 1 (MS5 added as an input) + evm-eib-not-one-rigid-body fix 2: J.2 item 54"
+  },
+  {
+   "old": "a USB cable that runs straight +y for more than 65.9 mm would meet\n    it.",
+   "new": "a USB cable that runs straight +y for more than 65.9 mm would meet\n    it. Only the insulated cable jacket can reach the EIB, because the plug shell (MB GND) ends inside the 45 mm corridor.\n    The USB cable is tied >= 5 mm clear of the EIB, and Kapton tape covers the E-pad joints on both EIB faces (A.7,\n    T-A-02).",
+   "note": "eib-epads-inside-usb-corridor-band: J.2 item 57 gains the same requirement"
+  },
+  {
+   "old": "    aggressors of the adopted r7 layout are bounded in H.23(f) and measured in T-C-16b. With the EVM off the MB (0.10-0.30 m from the CR edge) a direct merge exports the unbuffered\n    ILIM_HIZ node, REGN, /CE and STAT.\n",
+   "new": "    aggressors of the adopted r7 layout are bounded in H.23(f) and measured in T-C-16b. The EVM plate stands on the\n    chassis and is not on one rigid co-mount with the CR, so the merge fails the co-mount condition. At the H.23(l)\n    reference placement the EVM points of the E leads lie 55.8-130.1 mm from the CR edge (E1 55.8, E5 69.4, E6 76.5,\n    E7 109.4, E3 114.2, E2 114.7, E4 114.9, E8 130.1 mm; the EVM board edge lies 42.0 mm from tab Y). Over those\n    lengths a direct merge exports the unbuffered ILIM_HIZ node, REGN, /CE and STAT.\n",
+   "note": "g1-distance-rationale-misquantified fix 2: J.2 item 60 [integrator: re-anchored after F5's T-C-16b sentence; F5 sentence kept, F6 text unchanged]"
+  }
+ ]
+}

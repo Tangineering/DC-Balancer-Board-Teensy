@@ -1933,13 +1933,290 @@
    "extra": null
   }
  },
+ "e2": {
+  "areas": {
+   "band": 126.862,
+   "interior": 288.8,
+   "tab X": 173.278,
+   "tab Y": 153.713,
+   "tab Y bottom": 133.235,
+   "band (raster)": 127.38
+  },
+  "regions": {
+   "band": {
+    "sum": 88.16,
+    "U": 69.49,
+    "parts": [
+     [
+      "U102 H1",
+      10.0
+     ],
+     [
+      "U103 UVB",
+      10.0
+     ],
+     [
+      "U104 BT_OK",
+      10.0
+     ],
+     [
+      "U115 BTB_OFF",
+      10.0
+     ],
+     [
+      "U119 FCC_OFF",
+      10.0
+     ],
+     [
+      "U120 FCC_ON",
+      10.0
+     ],
+     [
+      "U121 RGN_ON",
+      10.0
+     ],
+     [
+      "residual pads F08-F10 + F22 (H.23(e) booking)",
+      18.16
+     ]
+    ]
+   },
+   "interior": {
+    "sum": 182.53,
+    "U": 63.2,
+    "parts": [
+     [
+      "R109 0805 0.1 %",
+      6.12
+     ],
+     [
+      "R110 0603 0.1 %",
+      4.35
+     ],
+     [
+      "R111 0805 0.1 %",
+      6.12
+     ],
+     [
+      "R112 0603 0.1 %",
+      4.35
+     ],
+     [
+      "R114 0805 0.1 %",
+      6.12
+     ],
+     [
+      "R115 0603 0.1 %",
+      4.35
+     ],
+     [
+      "D104 BAV199",
+      10.0
+     ],
+     [
+      "D105 BAV199",
+      10.0
+     ],
+     [
+      "D106 BAV199",
+      10.0
+     ],
+     [
+      "U123 SC70-5",
+      7.0
+     ],
+     [
+      "D108 BAV199",
+      10.0
+     ],
+     [
+      "U122 SC70-5",
+      7.0
+     ],
+     [
+      "U111 monostable SSOP-8",
+      15.0
+     ],
+     [
+      "U113 monostable SSOP-8",
+      15.0
+     ],
+     [
+      "U112 DNP SOT-23-6",
+      10.0
+     ],
+     [
+      "U117 DNP SOT-23-6",
+      10.0
+     ],
+     [
+      "D101 DNP SOD-323",
+      6.12
+     ],
+     [
+      "W trunk RTV bead B1 (H.23(l))",
+      9.0
+     ],
+     [
+      "W5 spacer bead S1 (H.23(l))",
+      9.0
+     ],
+     [
+      "W5 spacer bead S2 (H.23(l))",
+      9.0
+     ],
+     [
+      "U109 SC70-6 (moved from tab Y, driven logic)",
+      7.0
+     ],
+     [
+      "U108 SC70-6 (moved from tab Y, driven logic)",
+      7.0
+     ]
+    ]
+   },
+   "tab X": {
+    "sum": 90.925,
+    "U": 52.47,
+    "parts": [
+     [
+      "20 tap pads, pad + 0.25 mm courtyard (2.0 x 2.0)",
+      80.0
+     ],
+     [
+      "R175 1206",
+      10.925
+     ]
+    ]
+   },
+   "tab Y": {
+    "sum": 112.9,
+    "U": 73.45,
+    "parts": [
+     [
+      "U105 SSOP-8",
+      15.0
+     ],
+     [
+      "U106 SSOP-8",
+      15.0
+     ],
+     [
+      "U110 SSOP-8",
+      15.0
+     ],
+     [
+      "U114 SSOP-8",
+      15.0
+     ],
+     [
+      "U116 SSOP-8",
+      15.0
+     ],
+     [
+      "U118 SSOP-8",
+      15.0
+     ],
+     [
+      "U107 SC70-6",
+      7.0
+     ],
+     [
+      "W bundle RTV bead B3 + W5 spacer S3 (union spot, H.23(l))",
+      15.9
+     ]
+    ]
+   },
+   "tab Y bottom": {
+    "sum": 39.15,
+    "U": 29.38,
+    "parts": [
+     [
+      "decoupler C114 0603",
+      4.35
+     ],
+     [
+      "decoupler C115 0603",
+      4.35
+     ],
+     [
+      "decoupler C116 0603",
+      4.35
+     ],
+     [
+      "decoupler C117 0603",
+      4.35
+     ],
+     [
+      "decoupler C118 0603",
+      4.35
+     ],
+     [
+      "decoupler C119 0603",
+      4.35
+     ],
+     [
+      "decoupler C122 0603",
+      4.35
+     ],
+     [
+      "decoupler C123 0603",
+      4.35
+     ],
+     [
+      "decoupler C126 0603",
+      4.35
+     ]
+    ]
+   }
+  },
+  "moved_to_top": [],
+  "stay_bottom": [
+   "R178 0603",
+   "R179 0603",
+   "C135 0603 (U123)",
+   "C134 0603 (U122)",
+   "C120 0603 (U111)",
+   "C121 0603 (U113)",
+   "C110 0603 (U102)",
+   "C111 0603 (U103)",
+   "C112 0603 (U104)",
+   "C113 0603 (U115)",
+   "C131 0603 (U119)",
+   "C132 0603 (U120)",
+   "C133 0603 (U121)"
+  ],
+  "divider_strip": [
+   23.150000000000002,
+   42.14,
+   36.5,
+   45.69
+  ],
+  "divider_strip_to_loop": 6.365,
+  "interior_corner_to_loop": 0.515
+ },
  "f": {
   "far": [
    17.7,
    34.13999999999999
   ],
   "dist": 25.6634389745412,
-  "n365": 0
+  "n365": 0,
+  "band_aggressors": {
+   "REG-BT box": 12.597,
+   "C4A-BT box": 2.583,
+   "C4B-BT box": 5.077,
+   "C4C-BT box": 8.598,
+   "L-BT box": 14.272,
+   "VOUT-BT copper rim": 5.13,
+   "VSW-BT copper rim": 11.936
+  },
+  "band_5v": 7.1,
+  "band_bt_output_loop": 2.583,
+  "nets_under_band": [
+   "VBT",
+   "VCHG-IN"
+  ]
  },
  "g": {
   "xs": [
@@ -1982,7 +2259,8 @@
     68.599,
     63.377,
     true,
-    67.33
+    70.091,
+    "gap y 60.21"
    ],
    "T7b": [
     "F02",
@@ -1991,52 +2269,58 @@
     67.714,
     59.516,
     true,
-    62.525
+    65.224,
+    "gap y 60.21"
    ],
    "T2": [
     "F03",
-    58.42,
+    50.8,
     66.56,
     47.031,
-    9.851,
+    17.222,
     false,
-    9.851
+    20.663,
+    "gap y 65.29"
    ],
    "T3": [
     "F04",
-    55.88,
-    61.48,
+    63.5,
+    58.94,
     54.525,
-    36.336,
+    28.539,
     false,
-    36.336
+    28.539,
+    "straight"
    ],
    "T4": [
     "F05",
-    58.42,
-    58.94,
+    55.88,
+    61.48,
     54.334,
-    35.62,
+    39.174,
     false,
-    35.62
+    41.779,
+    "gap y 60.21"
    ],
    "T5": [
     "F06",
-    55.88,
+    58.42,
     58.94,
     54.417,
-    39.174,
-    true,
-    41.035
+    37.18,
+    false,
+    41.084,
+    "gap y 60.21"
    ],
    "T6": [
     "F07",
     53.34,
-    61.48,
+    64.02,
     57.016,
-    34.285,
+    34.809,
     false,
-    34.285
+    36.16,
+    "gap y 62.75"
    ],
    "T22": [
     "F08",
@@ -2045,7 +2329,8 @@
     5.392,
     5.392,
     false,
-    5.392
+    5.392,
+    "straight"
    ],
    "T8": [
     "F09",
@@ -2053,8 +2338,9 @@
     35.8,
     82.826,
     82.826,
-    false,
-    82.826
+    true,
+    89.188,
+    "upper lane y 37.55 over the residual row to x 43.43, down to y 34.64, to x 63.50"
    ],
    "T9": [
     "F10",
@@ -2063,7 +2349,8 @@
     25.67,
     25.67,
     false,
-    25.67
+    25.67,
+    "straight"
    ],
    "T10": [
     "F11",
@@ -2072,52 +2359,58 @@
     59.769,
     23.635,
     false,
-    23.635
+    23.635,
+    "straight"
    ],
    "T11": [
     "F12",
-    58.42,
+    55.88,
     64.02,
     82.812,
-    51.741,
+    54.273,
     false,
-    51.741
+    55.474,
+    "gap y 65.29"
    ],
    "T12": [
     "F13",
-    60.96,
+    55.88,
     58.94,
     77.393,
-    55.572,
+    60.101,
     false,
-    55.572
+    63.049,
+    "gap y 60.21"
    ],
    "T13": [
     "F14",
-    63.5,
+    60.96,
     58.94,
     77.252,
-    52.145,
+    54.422,
     false,
-    52.145
+    56.697,
+    "gap y 60.21"
    ],
    "T14": [
     "F15",
-    63.5,
-    61.48,
+    58.42,
+    64.02,
     81.926,
-    46.681,
+    51.592,
     false,
-    46.681
+    52.835,
+    "gap y 65.29"
    ],
    "T15": [
     "F16",
-    55.88,
+    58.42,
     66.56,
     89.465,
-    56.712,
+    54.294,
     false,
-    56.712
+    56.386,
+    "gap y 65.29"
    ],
    "T16": [
     "F17",
@@ -2126,43 +2419,48 @@
     77.194,
     56.72,
     false,
-    56.72
+    58.061,
+    "gap y 60.21"
    ],
    "T17": [
     "F18",
     60.96,
-    66.56,
+    64.02,
     88.208,
-    51.112,
+    51.888,
     false,
-    51.112
+    52.952,
+    "gap y 65.29"
    ],
    "T17r": [
     "F19",
     60.96,
-    64.02,
+    61.48,
     79.104,
-    49.735,
+    49.37,
     false,
-    49.735
+    50.524,
+    "gap y 60.21"
    ],
    "T20": [
     "F20",
-    55.88,
-    64.02,
+    63.5,
+    66.56,
     58.013,
-    26.296,
+    18.322,
     false,
-    26.296
+    18.322,
+    "straight"
    ],
    "T21": [
     "F21",
-    63.5,
+    60.96,
     66.56,
     87.008,
-    47.988,
+    50.452,
     false,
-    47.988
+    52.178,
+    "gap y 65.29"
    ],
    "T18": [
     "F22",
@@ -2171,32 +2469,35 @@
     18.218,
     10.54,
     false,
-    10.54
+    10.54,
+    "straight"
    ],
    "T19": [
     "F23",
-    60.96,
+    63.5,
     61.48,
     78.151,
-    50.227,
+    47.751,
     false,
-    50.227
+    47.751,
+    "straight"
    ],
    "F24": [
     "F24",
-    53.34,
+    55.88,
     66.56,
     70.692,
-    37.821,
+    35.571,
     false,
-    37.821
+    39.033,
+    "gap y 65.29"
    ]
   },
   "sum_r6": 1307.952,
   "sum_r6_f08_only": 1303.609,
   "sum_r6_field_centre": 1308.726,
-  "sum_r7": 850.87,
-  "sum_r7_dressed": 856.683,
+  "sum_r7": 859.259,
+  "sum_r7_dressed": 898.679,
   "tab_x_pads": [
    "T1",
    "T7b",
@@ -2222,10 +2523,10 @@
   "spare": [
    [
     53.34,
-    64.02
+    61.48
    ],
    [
-    50.8,
+    53.34,
     66.56
    ]
   ],
@@ -2233,37 +2534,62 @@
    2,
    3
   ],
+  "r175a": [
+   50.8,
+   64.02
+  ],
+  "violations_rev2": [
+   "T6 beside T3/T7b",
+   "T4 beside T5 (EN-EN)",
+   "T3 beside T5 (EN-EN)",
+   "T10 beside T21",
+   "T2 beside raw Teensy-pin pad(s) T11/T15/T17"
+  ],
+  "violations_new": [],
+  "length_sum_new": 888.208,
+  "length_sum_rev2": 884.545,
   "assignment_changes": [
    [
-    "T1",
+    "T2",
     [
-     53.34,
-     58.94
+     58.42,
+     66.56
     ],
     [
      50.8,
+     66.56
+    ]
+   ],
+   [
+    "T3",
+    [
+     55.88,
+     61.48
+    ],
+    [
+     63.5,
      58.94
     ]
    ],
    [
-    "T7b",
+    "T4",
     [
-     55.88,
+     58.42,
      58.94
     ],
     [
-     53.34,
-     58.94
+     55.88,
+     61.48
     ]
    ],
    [
     "T5",
     [
-     53.34,
-     61.48
+     55.88,
+     58.94
     ],
     [
-     55.88,
+     58.42,
      58.94
     ]
    ],
@@ -2271,12 +2597,765 @@
     "T6",
     [
      53.34,
-     64.02
+     61.48
     ],
     [
      53.34,
+     64.02
+    ]
+   ],
+   [
+    "T11",
+    [
+     58.42,
+     64.02
+    ],
+    [
+     55.88,
+     64.02
+    ]
+   ],
+   [
+    "T12",
+    [
+     60.96,
+     58.94
+    ],
+    [
+     55.88,
+     58.94
+    ]
+   ],
+   [
+    "T13",
+    [
+     63.5,
+     58.94
+    ],
+    [
+     60.96,
+     58.94
+    ]
+   ],
+   [
+    "T14",
+    [
+     63.5,
+     61.48
+    ],
+    [
+     58.42,
+     64.02
+    ]
+   ],
+   [
+    "T15",
+    [
+     55.88,
+     66.56
+    ],
+    [
+     58.42,
+     66.56
+    ]
+   ],
+   [
+    "T17",
+    [
+     60.96,
+     66.56
+    ],
+    [
+     60.96,
+     64.02
+    ]
+   ],
+   [
+    "T17r",
+    [
+     60.96,
+     64.02
+    ],
+    [
+     60.96,
      61.48
     ]
+   ],
+   [
+    "T20",
+    [
+     55.88,
+     64.02
+    ],
+    [
+     63.5,
+     66.56
+    ]
+   ],
+   [
+    "T21",
+    [
+     63.5,
+     66.56
+    ],
+    [
+     60.96,
+     66.56
+    ]
+   ],
+   [
+    "T19",
+    [
+     60.96,
+     61.48
+    ],
+    [
+     63.5,
+     61.48
+    ]
+   ],
+   [
+    "F24",
+    [
+     53.34,
+     66.56
+    ],
+    [
+     55.88,
+     66.56
+    ]
+   ]
+  ],
+  "adjacent_pairs": [
+   {
+    "a": "T1 F01",
+    "b": "T7b F02",
+    "pa": [
+     50.8,
+     58.94
+    ],
+    "pb": [
+     53.34,
+     58.94
+    ],
+    "verdict": "accepted",
+    "cons": "divider top to GND through the 10 kOhm MB-end resistor (<= 2.0 mA at 19.7 V): H1/UVB read 0 (trip state)",
+    "det": "comparator state at power-up (T-C-02); T-F-12 tap-to-tap DMM (D-F4)"
+   },
+   {
+    "a": "T1 F01",
+    "b": "R175b",
+    "pa": [
+     50.8,
+     58.94
+    ],
+    "pb": [
+     50.8,
+     61.48
+    ],
+    "verdict": "accepted",
+    "cons": "V-MOT/VBUS into the 3V3 rail through 10 kOhm (<= 2.0 mA back-feed)",
+    "det": "T-F-12 tap-to-tap DMM (D-F4)"
+   },
+   {
+    "a": "T7b F02",
+    "b": "T12 F13",
+    "pa": [
+     53.34,
+     58.94
+    ],
+    "pb": [
+     55.88,
+     58.94
+    ],
+    "verdict": "accepted",
+    "cons": "pin held LOW: output contention or a readback stuck LOW",
+    "det": "readback plausibility; T-F-12 tap-to-tap DMM (D-F4)"
+   },
+   {
+    "a": "T7b F02",
+    "b": "spare",
+    "pa": [
+     53.34,
+     58.94
+    ],
+    "pb": [
+     53.34,
+     61.48
+    ],
+    "verdict": "-",
+    "cons": "spare position (no pad): no bridge",
+    "det": "-"
+   },
+   {
+    "a": "T12 F13",
+    "b": "T5 F06",
+    "pa": [
+     55.88,
+     58.94
+    ],
+    "pb": [
+     58.42,
+     58.94
+    ],
+    "verdict": "accepted",
+    "cons": "two Teensy pins tied: contention if both are outputs, otherwise the input follows the other net",
+    "det": "readback plausibility (FR-08/FR-44); T-F-12 tap-to-tap DMM (D-F4)"
+   },
+   {
+    "a": "T12 F13",
+    "b": "T4 F05",
+    "pa": [
+     55.88,
+     58.94
+    ],
+    "pb": [
+     55.88,
+     61.48
+    ],
+    "verdict": "accepted",
+    "cons": "two Teensy pins tied: contention if both are outputs, otherwise the input follows the other net",
+    "det": "readback plausibility (FR-08/FR-44); T-F-12 tap-to-tap DMM (D-F4)"
+   },
+   {
+    "a": "T5 F06",
+    "b": "T13 F14",
+    "pa": [
+     58.42,
+     58.94
+    ],
+    "pb": [
+     60.96,
+     58.94
+    ],
+    "verdict": "accepted",
+    "cons": "two Teensy pins tied: contention if both are outputs, otherwise the input follows the other net",
+    "det": "readback plausibility (FR-08/FR-44); T-F-12 tap-to-tap DMM (D-F4)"
+   },
+   {
+    "a": "T5 F06",
+    "b": "T16 F17",
+    "pa": [
+     58.42,
+     58.94
+    ],
+    "pb": [
+     58.42,
+     61.48
+    ],
+    "verdict": "accepted",
+    "cons": "two Teensy pins tied: contention if both are outputs, otherwise the input follows the other net",
+    "det": "readback plausibility (FR-08/FR-44); T-F-12 tap-to-tap DMM (D-F4)"
+   },
+   {
+    "a": "T13 F14",
+    "b": "T3 F04",
+    "pa": [
+     60.96,
+     58.94
+    ],
+    "pb": [
+     63.5,
+     58.94
+    ],
+    "verdict": "accepted",
+    "cons": "two Teensy pins tied: contention if both are outputs, otherwise the input follows the other net",
+    "det": "readback plausibility (FR-08/FR-44); T-F-12 tap-to-tap DMM (D-F4)"
+   },
+   {
+    "a": "T13 F14",
+    "b": "T17r F19",
+    "pa": [
+     60.96,
+     58.94
+    ],
+    "pb": [
+     60.96,
+     61.48
+    ],
+    "verdict": "accepted",
+    "cons": "pin held LOW: output contention or a readback stuck LOW",
+    "det": "readback plausibility; T-F-12 tap-to-tap DMM (D-F4)"
+   },
+   {
+    "a": "T3 F04",
+    "b": "T19 F23",
+    "pa": [
+     63.5,
+     58.94
+    ],
+    "pb": [
+     63.5,
+     61.48
+    ],
+    "verdict": "accepted",
+    "cons": "two Teensy pins tied: contention if both are outputs, otherwise the input follows the other net",
+    "det": "readback plausibility (FR-08/FR-44); T-F-12 tap-to-tap DMM (D-F4)"
+   },
+   {
+    "a": "R175b",
+    "b": "spare",
+    "pa": [
+     50.8,
+     61.48
+    ],
+    "pb": [
+     53.34,
+     61.48
+    ],
+    "verdict": "-",
+    "cons": "spare position (no pad): no bridge",
+    "det": "-"
+   },
+   {
+    "a": "R175b",
+    "b": "R175a",
+    "pa": [
+     50.8,
+     61.48
+    ],
+    "pb": [
+     50.8,
+     64.02
+    ],
+    "verdict": "accepted",
+    "cons": "R175 bypassed: a later CR-side short is not current-limited",
+    "det": "T-F-12 tap-to-tap DMM (D-F4)"
+   },
+   {
+    "a": "spare",
+    "b": "T4 F05",
+    "pa": [
+     53.34,
+     61.48
+    ],
+    "pb": [
+     55.88,
+     61.48
+    ],
+    "verdict": "-",
+    "cons": "spare position (no pad): no bridge",
+    "det": "-"
+   },
+   {
+    "a": "spare",
+    "b": "T6 F07",
+    "pa": [
+     53.34,
+     61.48
+    ],
+    "pb": [
+     53.34,
+     64.02
+    ],
+    "verdict": "-",
+    "cons": "spare position (no pad): no bridge",
+    "det": "-"
+   },
+   {
+    "a": "T4 F05",
+    "b": "T16 F17",
+    "pa": [
+     55.88,
+     61.48
+    ],
+    "pb": [
+     58.42,
+     61.48
+    ],
+    "verdict": "accepted",
+    "cons": "two Teensy pins tied: contention if both are outputs, otherwise the input follows the other net",
+    "det": "readback plausibility (FR-08/FR-44); T-F-12 tap-to-tap DMM (D-F4)"
+   },
+   {
+    "a": "T4 F05",
+    "b": "T11 F12",
+    "pa": [
+     55.88,
+     61.48
+    ],
+    "pb": [
+     55.88,
+     64.02
+    ],
+    "verdict": "accepted",
+    "cons": "two Teensy pins tied: contention if both are outputs, otherwise the input follows the other net",
+    "det": "readback plausibility (FR-08/FR-44); T-F-12 tap-to-tap DMM (D-F4)"
+   },
+   {
+    "a": "T16 F17",
+    "b": "T17r F19",
+    "pa": [
+     58.42,
+     61.48
+    ],
+    "pb": [
+     60.96,
+     61.48
+    ],
+    "verdict": "accepted",
+    "cons": "pin held LOW: output contention or a readback stuck LOW",
+    "det": "readback plausibility; T-F-12 tap-to-tap DMM (D-F4)"
+   },
+   {
+    "a": "T16 F17",
+    "b": "T14 F15",
+    "pa": [
+     58.42,
+     61.48
+    ],
+    "pb": [
+     58.42,
+     64.02
+    ],
+    "verdict": "accepted",
+    "cons": "two Teensy pins tied: contention if both are outputs, otherwise the input follows the other net",
+    "det": "readback plausibility (FR-08/FR-44); T-F-12 tap-to-tap DMM (D-F4)"
+   },
+   {
+    "a": "T17r F19",
+    "b": "T19 F23",
+    "pa": [
+     60.96,
+     61.48
+    ],
+    "pb": [
+     63.5,
+     61.48
+    ],
+    "verdict": "accepted",
+    "cons": "pin held LOW: output contention or a readback stuck LOW",
+    "det": "readback plausibility; T-F-12 tap-to-tap DMM (D-F4)"
+   },
+   {
+    "a": "T17r F19",
+    "b": "T17 F18",
+    "pa": [
+     60.96,
+     61.48
+    ],
+    "pb": [
+     60.96,
+     64.02
+    ],
+    "verdict": "accepted",
+    "cons": "pin held LOW: output contention or a readback stuck LOW",
+    "det": "readback plausibility; T-F-12 tap-to-tap DMM (D-F4)"
+   },
+   {
+    "a": "T19 F23",
+    "b": "T10 F11",
+    "pa": [
+     63.5,
+     61.48
+    ],
+    "pb": [
+     63.5,
+     64.02
+    ],
+    "verdict": "accepted",
+    "cons": "two Teensy pins tied: contention if both are outputs, otherwise the input follows the other net",
+    "det": "readback plausibility (FR-08/FR-44); T-F-12 tap-to-tap DMM (D-F4)"
+   },
+   {
+    "a": "R175a",
+    "b": "T6 F07",
+    "pa": [
+     50.8,
+     64.02
+    ],
+    "pb": [
+     53.34,
+     64.02
+    ],
+    "verdict": "accepted",
+    "cons": "R175 pad, Teensy 3V3 side (F07) to Teensy 3V3 (R175 feed)",
+    "det": "T-F-12 tap-to-tap DMM (D-F4)"
+   },
+   {
+    "a": "R175a",
+    "b": "T2 F03",
+    "pa": [
+     50.8,
+     64.02
+    ],
+    "pb": [
+     50.8,
+     66.56
+    ],
+    "verdict": "accepted",
+    "cons": "V-MOT/VBUS into the 3V3 rail through 10 kOhm (<= 2.0 mA back-feed)",
+    "det": "T-F-12 tap-to-tap DMM (D-F4)"
+   },
+   {
+    "a": "T6 F07",
+    "b": "T11 F12",
+    "pa": [
+     53.34,
+     64.02
+    ],
+    "pb": [
+     55.88,
+     64.02
+    ],
+    "verdict": "accepted",
+    "cons": "pin held HIGH: output contention or a readback stuck HIGH",
+    "det": "readback plausibility; T-F-12 tap-to-tap DMM (D-F4)"
+   },
+   {
+    "a": "T6 F07",
+    "b": "spare",
+    "pa": [
+     53.34,
+     64.02
+    ],
+    "pb": [
+     53.34,
+     66.56
+    ],
+    "verdict": "-",
+    "cons": "spare position (no pad): no bridge",
+    "det": "-"
+   },
+   {
+    "a": "T11 F12",
+    "b": "T14 F15",
+    "pa": [
+     55.88,
+     64.02
+    ],
+    "pb": [
+     58.42,
+     64.02
+    ],
+    "verdict": "accepted",
+    "cons": "two Teensy pins tied: contention if both are outputs, otherwise the input follows the other net",
+    "det": "readback plausibility (FR-08/FR-44); T-F-12 tap-to-tap DMM (D-F4)"
+   },
+   {
+    "a": "T11 F12",
+    "b": "F24 F24",
+    "pa": [
+     55.88,
+     64.02
+    ],
+    "pb": [
+     55.88,
+     66.56
+    ],
+    "verdict": "accepted",
+    "cons": "two Teensy pins tied: contention if both are outputs, otherwise the input follows the other net",
+    "det": "readback plausibility (FR-08/FR-44); T-F-12 tap-to-tap DMM (D-F4)"
+   },
+   {
+    "a": "T14 F15",
+    "b": "T17 F18",
+    "pa": [
+     58.42,
+     64.02
+    ],
+    "pb": [
+     60.96,
+     64.02
+    ],
+    "verdict": "accepted",
+    "cons": "two Teensy pins tied: contention if both are outputs, otherwise the input follows the other net",
+    "det": "readback plausibility (FR-08/FR-44); T-F-12 tap-to-tap DMM (D-F4)"
+   },
+   {
+    "a": "T14 F15",
+    "b": "T15 F16",
+    "pa": [
+     58.42,
+     64.02
+    ],
+    "pb": [
+     58.42,
+     66.56
+    ],
+    "verdict": "accepted",
+    "cons": "two Teensy pins tied: contention if both are outputs, otherwise the input follows the other net",
+    "det": "readback plausibility (FR-08/FR-44); T-F-12 tap-to-tap DMM (D-F4)"
+   },
+   {
+    "a": "T17 F18",
+    "b": "T10 F11",
+    "pa": [
+     60.96,
+     64.02
+    ],
+    "pb": [
+     63.5,
+     64.02
+    ],
+    "verdict": "accepted",
+    "cons": "two Teensy pins tied: contention if both are outputs, otherwise the input follows the other net",
+    "det": "readback plausibility (FR-08/FR-44); T-F-12 tap-to-tap DMM (D-F4)"
+   },
+   {
+    "a": "T17 F18",
+    "b": "T21 F21",
+    "pa": [
+     60.96,
+     64.02
+    ],
+    "pb": [
+     60.96,
+     66.56
+    ],
+    "verdict": "accepted",
+    "cons": "two Teensy pins tied: contention if both are outputs, otherwise the input follows the other net",
+    "det": "readback plausibility (FR-08/FR-44); T-F-12 tap-to-tap DMM (D-F4)"
+   },
+   {
+    "a": "T10 F11",
+    "b": "T20 F20",
+    "pa": [
+     63.5,
+     64.02
+    ],
+    "pb": [
+     63.5,
+     66.56
+    ],
+    "verdict": "accepted",
+    "cons": "two Teensy pins tied: contention if both are outputs, otherwise the input follows the other net",
+    "det": "readback plausibility (FR-08/FR-44); T-F-12 tap-to-tap DMM (D-F4)"
+   },
+   {
+    "a": "T2 F03",
+    "b": "spare",
+    "pa": [
+     50.8,
+     66.56
+    ],
+    "pb": [
+     53.34,
+     66.56
+    ],
+    "verdict": "-",
+    "cons": "spare position (no pad): no bridge",
+    "det": "-"
+   },
+   {
+    "a": "spare",
+    "b": "F24 F24",
+    "pa": [
+     53.34,
+     66.56
+    ],
+    "pb": [
+     55.88,
+     66.56
+    ],
+    "verdict": "-",
+    "cons": "spare position (no pad): no bridge",
+    "det": "-"
+   },
+   {
+    "a": "F24 F24",
+    "b": "T15 F16",
+    "pa": [
+     55.88,
+     66.56
+    ],
+    "pb": [
+     58.42,
+     66.56
+    ],
+    "verdict": "accepted",
+    "cons": "two Teensy pins tied: contention if both are outputs, otherwise the input follows the other net",
+    "det": "readback plausibility (FR-08/FR-44); T-F-12 tap-to-tap DMM (D-F4)"
+   },
+   {
+    "a": "T15 F16",
+    "b": "T21 F21",
+    "pa": [
+     58.42,
+     66.56
+    ],
+    "pb": [
+     60.96,
+     66.56
+    ],
+    "verdict": "accepted",
+    "cons": "two Teensy pins tied: contention if both are outputs, otherwise the input follows the other net",
+    "det": "readback plausibility (FR-08/FR-44); T-F-12 tap-to-tap DMM (D-F4)"
+   },
+   {
+    "a": "T21 F21",
+    "b": "T20 F20",
+    "pa": [
+     60.96,
+     66.56
+    ],
+    "pb": [
+     63.5,
+     66.56
+    ],
+    "verdict": "accepted",
+    "cons": "two Teensy pins tied: contention if both are outputs, otherwise the input follows the other net",
+    "det": "readback plausibility (FR-08/FR-44); T-F-12 tap-to-tap DMM (D-F4)"
+   }
+  ],
+  "residual_pairs": [
+   {
+    "a": "T22",
+    "b": "T8",
+    "gap": 1.0399999999999991,
+    "verdict": "accepted",
+    "cons": "BAL-NOK level on pin 41 and U104 IN-: false BT_OK state",
+    "det": "T-A-01c; T-F-12 tap-to-tap DMM (D-F4)"
+   },
+   {
+    "a": "T8",
+    "b": "T9",
+    "gap": 1.0399999999999991,
+    "verdict": "accepted",
+    "cons": "pin held LOW: output contention or a readback stuck LOW",
+    "det": "readback plausibility; T-F-12 tap-to-tap DMM (D-F4)"
+   },
+   {
+    "a": "T9",
+    "b": "T18",
+    "gap": 8.66,
+    "verdict": "-",
+    "cons": "not adjacent (pad gap 8.66 mm)",
+    "det": "-"
+   }
+  ],
+  "gap_use": {
+   "gap y 60.21": [
+    "T1",
+    "T7b",
+    "T4",
+    "T5",
+    "T12",
+    "T13",
+    "T16",
+    "T17r"
+   ],
+   "gap y 65.29": [
+    "T2",
+    "T11",
+    "T14",
+    "T15",
+    "T17",
+    "T21",
+    "F24"
+   ],
+   "gap y 62.75": [
+    "T6"
+   ]
+  },
+  "pads_over_ft1": [
+   [
+    "T20",
+    "F20"
+   ],
+   [
+    "T21",
+    "F21"
    ]
   ],
   "t18_candidates": [
@@ -2405,6 +3484,184 @@
     41.68,
     35.8
    ]
+  },
+  "t8_lane": {
+   "low": [
+    34.64,
+    34.05
+   ],
+   "upper": [
+    37.55,
+    43.43,
+    34.64
+   ],
+   "upper_ok": true,
+   "report": {
+    "path": [
+     [
+      28.98,
+      35.8
+     ],
+     [
+      28.98,
+      37.55
+     ],
+     [
+      43.43,
+      37.55
+     ],
+     [
+      43.43,
+      34.64
+     ],
+     [
+      63.49999999999999,
+      34.64
+     ],
+     [
+      109.982,
+      53.086
+     ]
+    ],
+    "L": 89.188,
+    "d_pads": [
+     0.5,
+     "T18"
+    ],
+    "d_edge": 0.0,
+    "d_reg5": 1.734,
+    "d_co5": 2.126,
+    "d_post": 2.055,
+    "d_land": 1.22,
+    "crosses_t18": true,
+    "band_over": [
+     [
+      28.98,
+      42.43
+     ]
+    ]
+   }
+  },
+  "open_pair_consequences": [
+   {
+    "pair": "F05 T4 - F12 T11",
+    "nets": "pin 30 (REGEN_ENABLE, D-BC-RG EN) - pin 17 (CHG_FCCEIL), both push-pull",
+    "consequence": "outputs equal: no current. Outputs opposite: 41.2 mA through both drivers (wires 13.0 mOhm), 68 mW in each; the EN net sits at 1.647 V (with the 10 kOhm EN bodge), above VEN_R max 1.4 V, so D-BC-RG turns on, and pin 17 reads HIGH. The REGEN switch is ON whenever pin 30 OR pin 17 is HIGH (pin 17 HIGH while pin 30 commands OFF closes REGEN); U121 RGN_ON (trip 1.75-1.88 V) reads OFF at 1.65 V",
+    "detector": "none in service: the closed REGEN is not proven by U121 at 1.65 V; T-F-12 tap-to-tap check before power-up"
+   },
+   {
+    "pair": "F07 T6 - F12 T11",
+    "nets": "Teensy 3V3 (J1.29, before R175) - pin 17 push-pull",
+    "consequence": "pin 17 HIGH: no current. pin 17 LOW: the driver sinks the 3V3 rail through 12.3 mOhm of wire, 82.5 mA and 272 mW in the driver (rating TODO(verify: i.MX RT1062 datasheet); Teensy 3V3 regulator load TODO(verify: PJRC)); the node stays at the rail, so CHG_FCCEIL reads HIGH ('FC ceiling confirmed') whatever pin 17 commands",
+    "detector": "none in service (no FCCEIL readback); T-F-12 tap-to-tap check before power-up"
+   },
+   {
+    "pair": "F08 T22 - F09 T8",
+    "nets": "BQ29200 OUT (BAL-NOK) - INA253 BT output / pin 41 / U104 IN- (via R140)",
+    "consequence": "no OV: OUT is low and sinks 30-85 uA at 0.05 V; the INA253 output (0.1 V/A x I_BT) overrides it, so pin 41 reads the BT current (error <= the sink current into the INA253 output) and N_BAL (via R178) follows the INA253 level, LOW below the U123 threshold: OVN correct. Pack OV: OUT sources >= 100 uA at 1.75 V and up to 8 mA into a short, against the INA253 output, which INA253A1IPWR.pdf Figure 14 characterises only to 7 mA: either the INA253 holds the node near its own level, so N_BAL stays LOW and the BQ29200 pack-OV term (OVN) is MASKED while the pack is over voltage, or OUT lifts the node toward its 6.0-9.5 V drive level (at VDD 10 V) and drives pin 41 above its 3.3 V supply through the pad clamp",
+    "detector": "none in service for the masked OVN (it appears only at a pack OV); T-A-01c and the T-F-12 tap-to-tap check before power-up"
+   },
+   {
+    "pair": "F09 T8 - F10 T9",
+    "nets": "INA253 BT output / pin 41 - GND Kelvin (SNS-BT pad 15)",
+    "consequence": "the INA253 output drives a short to the Kelvin GND (current limit not in INA253A1IPWR.pdf; Figure 14 ends at 7 mA); pin 41 and U104 IN- read 0 A: BT current reads 0 A, U104 BT_OK takes the 'no current' state, and the share loop loses its BT current feedback; the short current returns through the T9 Kelvin wire (3.44 mOhm), so the U104 reference bottom moves by < 0.1 mV",
+    "detector": "BT current plausibility (firmware); T-F-12 tap-to-tap check before power-up"
+   }
+  ],
+  "ext_candidate": {
+   "violations_adopted": [
+    "T4 beside push-pull pad(s) T11",
+    "T6 beside push-pull pad(s) T11"
+   ],
+   "violations": [],
+   "r175_rows": [
+    2,
+    3
+   ],
+   "place": {
+    "T1": [
+     50.8,
+     58.94
+    ],
+    "T7b": [
+     53.34,
+     58.94
+    ],
+    "T2": [
+     53.34,
+     66.56
+    ],
+    "T3": [
+     63.5,
+     58.94
+    ],
+    "T4": [
+     55.88,
+     61.48
+    ],
+    "T5": [
+     58.42,
+     58.94
+    ],
+    "T6": [
+     53.34,
+     64.02
+    ],
+    "T10": [
+     60.96,
+     61.48
+    ],
+    "T11": [
+     60.96,
+     64.02
+    ],
+    "T12": [
+     55.88,
+     58.94
+    ],
+    "T13": [
+     60.96,
+     58.94
+    ],
+    "T14": [
+     63.5,
+     64.02
+    ],
+    "T15": [
+     60.96,
+     66.56
+    ],
+    "T16": [
+     58.42,
+     61.48
+    ],
+    "T17": [
+     55.88,
+     64.02
+    ],
+    "T17r": [
+     55.88,
+     66.56
+    ],
+    "T20": [
+     58.42,
+     64.02
+    ],
+    "T21": [
+     63.5,
+     66.56
+    ],
+    "T19": [
+     63.5,
+     61.48
+    ],
+    "F24": [
+     58.42,
+     66.56
+    ]
+   },
+   "tabx_sum": 887.244,
+   "sum20": 860.504
   }
  },
  "h": {
@@ -7599,22 +8856,22 @@
    [
     35.556,
     0.551,
-    2.916
+    2.904
    ],
    [
     53.333,
     0.815,
-    2.848
+    2.836
    ],
    [
     160.0,
     2.263,
-    2.472
+    2.459
    ],
    [
     320.0,
     4.071,
-    2.002
+    1.99
    ]
   ],
   "ft2_fill_hole": {
@@ -7866,7 +9123,7 @@
     ]
    ],
    "tab Y": [
-    3.06,
+    3.047,
     [
      20.998,
      64.484
@@ -7875,25 +9132,156 @@
      [
       35.556,
       0.818,
-      2.832
+      2.82
      ],
      [
       53.333,
       1.193,
-      2.727
+      2.715
      ],
      [
       160.0,
       3.08,
-      2.202
+      2.19
      ],
      [
       320.0,
       5.094,
-      1.642
+      1.63
      ]
     ]
    ]
+  },
+  "foot_height": {
+   "h_f": 2.19,
+   "t_bond": 0.05,
+   "t_bed_nom": 0.3,
+   "block_tol": [
+    -0.05,
+    0.0
+   ],
+   "tape": [
+    0.0,
+    0.05
+   ],
+   "body_tol": 0.13,
+   "gate": [
+    0.15,
+    0.45
+   ],
+   "budget": {
+    "FT1": {
+     "lever": 15.722,
+     "bow": 0.118,
+     "mean": 0.35,
+     "worst": [
+      0.052,
+      0.648
+     ],
+     "rss": 0.179,
+     "rss_band": [
+      0.171,
+      0.529
+     ],
+     "gate_pass": 0.797,
+     "gate_low": 0.022,
+     "gate_high": 0.181
+    },
+    "FT2": {
+     "lever": 8.766,
+     "bow": 0.066,
+     "mean": 0.35,
+     "worst": [
+      0.104,
+      0.596
+     ],
+     "rss": 0.15,
+     "rss_band": [
+      0.2,
+      0.5
+     ],
+     "gate_pass": 0.858,
+     "gate_low": 0.002,
+     "gate_high": 0.14
+    }
+   }
+  },
+  "pulls": {
+   "recommended_N": 0.4,
+   "tabs": {
+    "tab X": {
+     "W30_N": 0.461,
+     "share": [
+      0.241,
+      0.331,
+      0.66,
+      0.879
+     ],
+     "s30_kPa": [
+      17.346,
+      23.831,
+      47.519,
+      63.233
+     ],
+     "p_limit_N": 0.921,
+     "rec_kPa": [
+      15.066,
+      20.699,
+      41.275,
+      54.923
+     ],
+     "rec_ratio": [
+      0.869,
+      0.869,
+      0.869,
+      0.869
+     ]
+    },
+    "tab Y": {
+     "W30_N": 0.413,
+     "share": [
+      0.082,
+      0.119,
+      0.308,
+      0.509
+     ],
+     "s30_kPa": [
+      2.111,
+      3.081,
+      7.953,
+      13.152
+     ],
+     "p_limit_N": 0.826,
+     "rec_kPa": [
+      2.044,
+      2.984,
+      7.701,
+      12.735
+     ],
+     "rec_ratio": [
+      0.968,
+      0.968,
+      0.968,
+      0.968
+     ]
+    }
+   }
+  },
+  "feet_effect": {
+   "cut30_pct": [
+    6.849,
+    20.813
+   ],
+   "cut_push_pct": {
+    "tab X": [
+     26.035,
+     80.619
+    ],
+    "tab Y": [
+     7.469,
+     46.525
+    ]
+   }
   }
  },
  "j": {
@@ -7912,7 +9300,55 @@
   "cr_under": 2.665,
   "cr_top": 4.265000000000001,
   "stack": 12.265,
-  "env": 13.14
+  "env": 13.14,
+  "info_only": true,
+  "ribbon_assumed": 0.9,
+  "w5_over_lfc_bottom": 15.0,
+  "w5_over_lfc_top": 15.9
+ },
+ "k_e1": {
+  "route": [
+   [
+    95.9,
+    53.25899999999999
+   ],
+   [
+    51.0,
+    30.6
+   ],
+   [
+    39.37,
+    13.741
+   ]
+  ],
+  "L": 70.775,
+  "rows": [
+   [
+    "JP17 pin 1 (E6, /CE joint)",
+    5.023,
+    1.968
+   ],
+   [
+    "JP17 pin 2 (vacated AGND hole, centre)",
+    6.574,
+    0.113
+   ],
+   [
+    "TP36 (E5)",
+    10.196,
+    4.564
+   ],
+   [
+    "U1 outline",
+    9.033,
+    15.678
+   ],
+   [
+    "L2 outline",
+    17.119,
+    22.859
+   ]
+  ]
  },
  "k": {
   "emax": {
@@ -8105,56 +9541,56 @@
     "chassis_room": 45.326,
     "routes": {
      "W1": {
-      "L": 207.535,
-      "max": 260,
-      "tie": 29.744,
+      "L": 225.512,
+      "max": 290,
+      "x2": 58.0,
       "blocked": null
      },
      "W2": {
-      "L": 215.081,
-      "max": 270,
-      "tie": 29.744,
+      "L": 228.191,
+      "max": 290,
+      "x2": 58.0,
       "blocked": null
      },
      "W3": {
-      "L": 128.188,
-      "max": 170,
-      "tie": 29.744,
+      "L": 150.756,
+      "max": 190,
+      "x2": 71.0,
       "blocked": null
      },
      "W4": {
-      "L": 133.255,
-      "max": 170,
-      "tie": 29.744,
+      "L": 151.046,
+      "max": 190,
+      "x2": 71.0,
       "blocked": null
      },
      "W6": {
-      "L": 92.788,
-      "max": 120,
-      "tie": 29.744,
+      "L": 119.181,
+      "max": 150,
+      "x2": 58.0,
       "blocked": null
      },
      "W7 SCL": {
-      "L": 136.194,
-      "max": 180,
-      "tie": 29.744,
+      "L": 150.706,
+      "max": 190,
+      "x2": 58.0,
       "blocked": null
      },
      "W7 SDA": {
-      "L": 129.945,
-      "max": 170,
-      "tie": 29.744,
+      "L": 152.793,
+      "max": 200,
+      "x2": 58.0,
       "blocked": null
      },
      "W5": {
-      "L": 141.563,
-      "max": 180,
-      "tie": 29.849,
+      "L": 184.643,
+      "max": 240,
+      "x2": 74.0,
       "blocked": null
      }
     },
     "passes": true,
-    "verdict": "PASSES geometrically: no lead blocked, every chassis tie <= 30 mm, build maxima W1 260, W2 270, W3 170, W4 170, W6 120, W7 SCL 180, W7 SDA 170, W5 180; every W1-W4/W6/W7 maximum <= 0.30 m; W5 1.25 x route 177 mm fits the 0.30 m ribbon; it needs 45.3 mm of chassis room past the MB -x edge (W1 approach point at x -34.83 + 10.5 mm bend allowance; the EVM itself overhangs 27.4 mm), clear of the J-BL/J-FC/J-NTC harnesses (MS2)"
+    "verdict": "PASSES geometrically: no lead blocked; build maxima W3 190, W4 190, W6 150, W7 SCL 190, W7 SDA 200; W1/W2 routes 225.5 / 228.2 mm against the fixed 0.30 m (slack 74.5 / 71.8 mm); every W3/W4/W6/W7 maximum <= 0.30 m; W5 minimum fit 205 mm fits the 304.8 mm cable (slack 100 mm); it needs 45.3 mm of chassis room past the MB -x edge (W1 approach point at x -34.83 + 10.5 mm bend allowance; the EVM itself overhangs 27.4 mm), clear of the J-BL/J-FC/J-NTC harnesses (MS2)"
    },
    "ii": {
     "eib": [
@@ -8217,13 +9653,13 @@
       "blocked": "approach point (96.09, 152.40) inside the USB corridor"
      },
      "W5": {
-      "L": 519.185,
+      "L": 573.308,
       "max": null,
-      "blocked": "the only path runs around the MB (below its +y edge): the corridor walls off the +x side"
+      "blocked": "the only path runs around the MB (below its +y edge)"
      }
     },
     "passes": false,
-    "verdict": "FAILS: the E-lead bundle (EIB pad rows y 163.68-191.62) and the shared EVM plate (one rigid body, D7/D8) must span the corridor band x 93.47-101.09; W3 approach point (96.09, 142.24) inside the USB corridor; W4 approach point (96.09, 152.40) inside the USB corridor; W5 the only path runs around the MB (below its +y edge): the corridor walls off the +x side; E-lead maxima above D7: E8 30 (D7 20), E3 35 (D7 25), E4 40 (D7 30), E2 45 (D7 35), E7 55 (D7 40), E1 100 (D7 90), E5 75 (D7 65), E6 70 (D7 60); E4 at 0.68 of its criterion limit"
+    "verdict": "FAILS: the E-lead bundle (EIB pad rows y 163.68-191.62) and the shared EVM plate (one rigid body, D7/D8) must span the corridor band x 93.47-101.09; W3 approach point (96.09, 142.24) inside the USB corridor; W4 approach point (96.09, 152.40) inside the USB corridor; W5 the only path runs around the MB (below its +y edge); E-lead maxima above D7: E8 30 (D7 20), E3 35 (D7 25), E4 40 (D7 30), E2 45 (D7 35), E7 55 (D7 40), E1 100 (D7 90), E5 75 (D7 65), E6 70 (D7 60); E4 at 0.68 of its criterion limit"
    },
    "iii": {
     "eib": [
@@ -8274,19 +9710,16 @@
   "routes": {
    "W1": {
     "term": "J1 pin 2 VIN1",
-    "L": 181.583,
-    "max": 230,
-    "P1": [
-     56.0,
-     68.3
-    ],
+    "L": 199.502,
+    "max": null,
+    "build": "fixed 0.30 m +- 10 mm",
     "P2": [
-     56.0,
+     58.0,
      98.044
     ],
     "nodes": [
      [
-      56.0,
+      58.0,
       98.044
      ],
      [
@@ -8298,24 +9731,106 @@
       168.843
      ]
     ],
-    "tie": 29.744,
-    "sw": 10.104
+    "cr_mb_path": [
+     [
+      [
+       30.3,
+       61.2
+      ],
+      1.6
+     ],
+     [
+      [
+       25.8,
+       62.6
+      ],
+      2.374
+     ],
+     [
+      [
+       25.8,
+       64.5
+      ],
+      2.374
+     ],
+     [
+      [
+       25.8,
+       69.6
+      ],
+      2.374
+     ],
+     [
+      [
+       31.0,
+       69.6
+      ],
+      2.374
+     ],
+     [
+      [
+       35.0,
+       70.8
+      ],
+      2.374
+     ],
+     [
+      [
+       36.0,
+       71.1
+      ],
+      2.374
+     ],
+     [
+      [
+       46.0,
+       71.1
+      ],
+      2.374
+     ],
+     [
+      [
+       48.0,
+       71.75
+      ],
+      2.374
+     ],
+     [
+      [
+       60.5,
+       73.5
+      ],
+      1.729
+     ],
+     [
+      [
+       58.0,
+       76.0
+      ],
+      1.729
+     ],
+     [
+      [
+       58.0,
+       98.044
+      ],
+      1.729
+     ]
+    ],
+    "cr_mb_len": 72.437
    },
    "W2": {
     "term": "J1 pin 1 PGND",
-    "L": 189.129,
-    "max": 240,
-    "P1": [
-     56.0,
-     68.3
-    ],
+    "L": 202.181,
+    "max": null,
+    "build": "fixed 0.30 m +- 10 mm",
     "P2": [
-     56.0,
+     58.0,
      98.044
     ],
     "nodes": [
      [
-      56.0,
+      58.0,
       98.044
      ],
      [
@@ -8327,24 +9842,106 @@
       173.923
      ]
     ],
-    "tie": 29.744,
-    "sw": 10.104
+    "cr_mb_path": [
+     [
+      [
+       27.7,
+       61.2
+      ],
+      1.6
+     ],
+     [
+      [
+       25.8,
+       62.6
+      ],
+      2.374
+     ],
+     [
+      [
+       25.8,
+       64.5
+      ],
+      2.374
+     ],
+     [
+      [
+       25.8,
+       69.6
+      ],
+      2.374
+     ],
+     [
+      [
+       31.0,
+       69.6
+      ],
+      2.374
+     ],
+     [
+      [
+       35.0,
+       70.8
+      ],
+      2.374
+     ],
+     [
+      [
+       36.0,
+       71.1
+      ],
+      2.374
+     ],
+     [
+      [
+       46.0,
+       71.1
+      ],
+      2.374
+     ],
+     [
+      [
+       48.0,
+       71.75
+      ],
+      2.374
+     ],
+     [
+      [
+       60.5,
+       73.5
+      ],
+      1.729
+     ],
+     [
+      [
+       58.0,
+       76.0
+      ],
+      1.729
+     ],
+     [
+      [
+       58.0,
+       98.044
+      ],
+      1.729
+     ]
+    ],
+    "cr_mb_len": 70.085
    },
    "W3": {
     "term": "J5 pin 1 BATTERY",
-    "L": 139.228,
-    "max": 180,
-    "P1": [
-     56.0,
-     68.3
-    ],
+    "L": 156.635,
+    "max": 200,
+    "build": "route maximum",
     "P2": [
-     68.75,
+     77.25,
      98.044
     ],
     "nodes": [
      [
-      68.75,
+      77.25,
       98.044
      ],
      [
@@ -8360,24 +9957,141 @@
       142.237
      ]
     ],
-    "tie": 29.979,
-    "sw": 15.302
+    "cr_mb_path": [
+     [
+      [
+       24.3,
+       45.4
+      ],
+      1.0
+     ],
+     [
+      [
+       24.4,
+       47.0
+      ],
+      1.0
+     ],
+     [
+      [
+       24.4,
+       54.0
+      ],
+      1.0
+     ],
+     [
+      [
+       25.8,
+       57.0
+      ],
+      2.0
+     ],
+     [
+      [
+       25.8,
+       59.2
+      ],
+      2.0
+     ],
+     [
+      [
+       25.8,
+       62.6
+      ],
+      2.374
+     ],
+     [
+      [
+       25.8,
+       64.5
+      ],
+      2.374
+     ],
+     [
+      [
+       25.8,
+       69.6
+      ],
+      2.374
+     ],
+     [
+      [
+       31.0,
+       69.6
+      ],
+      2.374
+     ],
+     [
+      [
+       35.0,
+       70.8
+      ],
+      2.374
+     ],
+     [
+      [
+       36.0,
+       71.1
+      ],
+      2.374
+     ],
+     [
+      [
+       46.0,
+       71.1
+      ],
+      2.374
+     ],
+     [
+      [
+       48.0,
+       71.75
+      ],
+      2.374
+     ],
+     [
+      [
+       60.5,
+       73.5
+      ],
+      2.0
+     ],
+     [
+      [
+       61.0,
+       85.5
+      ],
+      2.0
+     ],
+     [
+      [
+       71.5,
+       88.0
+      ],
+      2.0
+     ],
+     [
+      [
+       77.25,
+       98.044
+      ],
+      2.0
+     ]
+    ],
+    "cr_mb_len": 94.036
    },
    "W4": {
     "term": "J5 pin 3 PGND",
-    "L": 143.801,
-    "max": 180,
-    "P1": [
-     56.0,
-     68.3
-    ],
+    "L": 156.303,
+    "max": 200,
+    "build": "route maximum",
     "P2": [
-     68.75,
+     77.25,
      98.044
     ],
     "nodes": [
      [
-      68.75,
+      77.25,
       98.044
      ],
      [
@@ -8389,24 +10103,127 @@
       152.397
      ]
     ],
-    "tie": 29.979,
-    "sw": 15.25
+    "cr_mb_path": [
+     [
+      [
+       24.3,
+       55.6
+      ],
+      1.0
+     ],
+     [
+      [
+       25.8,
+       57.0
+      ],
+      2.0
+     ],
+     [
+      [
+       25.8,
+       59.2
+      ],
+      2.0
+     ],
+     [
+      [
+       25.8,
+       62.6
+      ],
+      2.374
+     ],
+     [
+      [
+       25.8,
+       64.5
+      ],
+      2.374
+     ],
+     [
+      [
+       25.8,
+       69.6
+      ],
+      2.374
+     ],
+     [
+      [
+       31.0,
+       69.6
+      ],
+      2.374
+     ],
+     [
+      [
+       35.0,
+       70.8
+      ],
+      2.374
+     ],
+     [
+      [
+       36.0,
+       71.1
+      ],
+      2.374
+     ],
+     [
+      [
+       46.0,
+       71.1
+      ],
+      2.374
+     ],
+     [
+      [
+       48.0,
+       71.75
+      ],
+      2.374
+     ],
+     [
+      [
+       60.5,
+       73.5
+      ],
+      2.0
+     ],
+     [
+      [
+       61.0,
+       85.5
+      ],
+      2.0
+     ],
+     [
+      [
+       71.5,
+       88.0
+      ],
+      2.0
+     ],
+     [
+      [
+       77.25,
+       98.044
+      ],
+      2.0
+     ]
+    ],
+    "cr_mb_len": 84.174
    },
    "W6": {
     "term": "J7 pin 1 EXT_TS",
-    "L": 81.87,
-    "max": 110,
-    "P1": [
-     56.0,
-     68.3
-    ],
+    "L": 106.818,
+    "max": 140,
+    "build": "route maximum",
     "P2": [
-     60.5,
+     58.0,
      98.044
     ],
     "nodes": [
      [
-      60.5,
+      58.0,
       98.044
      ],
      [
@@ -8414,24 +10231,120 @@
       110.817
      ]
     ],
-    "tie": 29.744,
-    "sw": 12.274
+    "cr_mb_path": [
+     [
+      [
+       33.0,
+       57.5
+      ],
+      1.0
+     ],
+     [
+      [
+       33.0,
+       59.0
+      ],
+      1.0
+     ],
+     [
+      [
+       25.8,
+       59.2
+      ],
+      2.0
+     ],
+     [
+      [
+       25.8,
+       62.6
+      ],
+      2.374
+     ],
+     [
+      [
+       25.8,
+       64.5
+      ],
+      2.374
+     ],
+     [
+      [
+       25.8,
+       69.6
+      ],
+      2.374
+     ],
+     [
+      [
+       31.0,
+       69.6
+      ],
+      2.374
+     ],
+     [
+      [
+       35.0,
+       70.8
+      ],
+      2.374
+     ],
+     [
+      [
+       36.0,
+       71.1
+      ],
+      2.374
+     ],
+     [
+      [
+       46.0,
+       71.1
+      ],
+      2.374
+     ],
+     [
+      [
+       48.0,
+       71.75
+      ],
+      2.374
+     ],
+     [
+      [
+       60.5,
+       73.5
+      ],
+      1.729
+     ],
+     [
+      [
+       58.0,
+       76.0
+      ],
+      1.729
+     ],
+     [
+      [
+       58.0,
+       98.044
+      ],
+      1.729
+     ]
+    ],
+    "cr_mb_len": 79.827
    },
    "W7 SCL": {
     "term": "J8 pin 2 SCL (pin tip)",
-    "L": 109.24,
-    "max": 140,
-    "P1": [
-     56.0,
-     68.3
-    ],
+    "L": 123.746,
+    "max": 160,
+    "build": "route maximum",
     "P2": [
-     56.0,
+     58.0,
      98.044
     ],
     "nodes": [
      [
-      56.0,
+      58.0,
       98.044
      ],
      [
@@ -8439,24 +10352,113 @@
       101.804
      ]
     ],
-    "tie": 29.744,
-    "sw": 10.104
+    "cr_mb_path": [
+     [
+      [
+       27.0,
+       57.5
+      ],
+      0.8
+     ],
+     [
+      [
+       25.8,
+       59.2
+      ],
+      2.0
+     ],
+     [
+      [
+       25.8,
+       62.6
+      ],
+      2.374
+     ],
+     [
+      [
+       25.8,
+       64.5
+      ],
+      2.374
+     ],
+     [
+      [
+       25.8,
+       69.6
+      ],
+      2.374
+     ],
+     [
+      [
+       31.0,
+       69.6
+      ],
+      2.374
+     ],
+     [
+      [
+       35.0,
+       70.8
+      ],
+      2.374
+     ],
+     [
+      [
+       36.0,
+       71.1
+      ],
+      2.374
+     ],
+     [
+      [
+       46.0,
+       71.1
+      ],
+      2.374
+     ],
+     [
+      [
+       48.0,
+       71.75
+      ],
+      2.374
+     ],
+     [
+      [
+       60.5,
+       73.5
+      ],
+      1.729
+     ],
+     [
+      [
+       58.0,
+       76.0
+      ],
+      1.729
+     ],
+     [
+      [
+       58.0,
+       98.044
+      ],
+      1.729
+     ]
+    ],
+    "cr_mb_len": 73.205
    },
    "W7 SDA": {
     "term": "J8 pin 3 SDA (pin tip)",
-    "L": 103.0,
-    "max": 130,
-    "P1": [
-     56.0,
-     68.3
-    ],
+    "L": 125.841,
+    "max": 160,
+    "build": "route maximum",
     "P2": [
-     56.0,
+     58.0,
      98.044
     ],
     "nodes": [
      [
-      56.0,
+      58.0,
       98.044
      ],
      [
@@ -8464,32 +10466,124 @@
       101.804
      ]
     ],
-    "tie": 29.744,
-    "sw": 10.104
+    "cr_mb_path": [
+     [
+      [
+       31.0,
+       57.5
+      ],
+      0.8
+     ],
+     [
+      [
+       31.0,
+       59.0
+      ],
+      0.8
+     ],
+     [
+      [
+       25.8,
+       59.2
+      ],
+      2.0
+     ],
+     [
+      [
+       25.8,
+       62.6
+      ],
+      2.374
+     ],
+     [
+      [
+       25.8,
+       64.5
+      ],
+      2.374
+     ],
+     [
+      [
+       25.8,
+       69.6
+      ],
+      2.374
+     ],
+     [
+      [
+       31.0,
+       69.6
+      ],
+      2.374
+     ],
+     [
+      [
+       35.0,
+       70.8
+      ],
+      2.374
+     ],
+     [
+      [
+       36.0,
+       71.1
+      ],
+      2.374
+     ],
+     [
+      [
+       46.0,
+       71.1
+      ],
+      2.374
+     ],
+     [
+      [
+       48.0,
+       71.75
+      ],
+      2.374
+     ],
+     [
+      [
+       60.5,
+       73.5
+      ],
+      1.729
+     ],
+     [
+      [
+       58.0,
+       76.0
+      ],
+      1.729
+     ],
+     [
+      [
+       58.0,
+       98.044
+      ],
+      1.729
+     ]
+    ],
+    "cr_mb_len": 77.828
    },
    "W5": {
     "term": "EIB J201, 3 mm inside the EIB +x edge (ASSUMPTION)",
-    "L": 159.777,
-    "max": 200,
-    "P1": [
-     56.0,
-     68.3
-    ],
+    "L": 202.659,
+    "max": null,
+    "build": "fixed 304.8 mm cable",
     "P2": [
-     68.75,
+     74.75,
      98.044
     ],
     "nodes": [
      [
-      68.75,
+      74.75,
       98.044
      ],
      [
-      88.5001,
-      118.0439
-     ],
-     [
-      93.4699,
+      88.4999,
       138.73010000000002
      ],
      [
@@ -8497,25 +10591,1725 @@
       149.65300000000002
      ]
     ],
-    "tie": 29.979,
-    "sw": 15.302
+    "cr_mb_path": [
+     [
+      [
+       40.75,
+       46.83
+      ],
+      4.445
+     ],
+     [
+      [
+       28.7,
+       46.83
+      ],
+      4.445
+     ],
+     [
+      [
+       28.7,
+       73.1
+      ],
+      4.445
+     ],
+     [
+      [
+       35.0,
+       73.1
+      ],
+      4.445
+     ],
+     [
+      [
+       42.0,
+       73.1
+      ],
+      4.445
+     ],
+     [
+      [
+       44.5,
+       73.8
+      ],
+      4.445
+     ],
+     [
+      [
+       60.5,
+       73.8
+      ],
+      4.445
+     ],
+     [
+      [
+       61.0,
+       85.8
+      ],
+      4.445
+     ],
+     [
+      [
+       71.5,
+       88.0
+      ],
+      4.445
+     ],
+     [
+      [
+       74.75,
+       98.044
+      ],
+      4.445
+     ]
+    ],
+    "cr_mb_len": 103.511
    }
   },
+  "dressing": {
+   "waypoints": {
+    "T0": [
+     25.8,
+     57.0
+    ],
+    "J67": [
+     25.8,
+     59.2
+    ],
+    "T1": [
+     25.8,
+     62.6
+    ],
+    "B1": [
+     25.8,
+     64.5
+    ],
+    "T2": [
+     25.8,
+     69.6
+    ],
+    "T3": [
+     31.0,
+     69.6
+    ],
+    "B3": [
+     35.0,
+     70.8
+    ],
+    "T4": [
+     36.0,
+     71.1
+    ],
+    "T5": [
+     46.0,
+     71.1
+    ],
+    "T6": [
+     48.0,
+     71.75
+    ],
+    "A1": [
+     60.5,
+     73.5
+    ],
+    "WN": [
+     58.0,
+     76.0
+    ],
+    "E1": [
+     61.0,
+     85.5
+    ],
+    "A2": [
+     71.5,
+     88.0
+    ],
+    "S1": [
+     35.0,
+     47.69
+    ],
+    "F1": [
+     28.7,
+     46.83
+    ],
+    "S2": [
+     28.7,
+     53.42
+    ],
+    "F2": [
+     28.7,
+     73.1
+    ],
+    "S3": [
+     35.0,
+     73.1
+    ],
+    "F3": [
+     42.0,
+     73.1
+    ],
+    "F4": [
+     44.5,
+     73.8
+    ],
+    "A1R": [
+     60.5,
+     73.8
+    ],
+    "E1R": [
+     61.0,
+     85.8
+    ]
+   },
+   "half_widths": {
+    "trunk": 2.374,
+    "west": 1.729,
+    "east": 2.0
+   },
+   "checks": {
+    "W1": {
+     "hazard": [
+      2.086,
+      "+x pocket"
+     ],
+     "in_bead": [
+      2.086,
+      "+x pocket"
+     ],
+     "field": 2.026,
+     "switched": [
+      3.388,
+      "L-FC (Eaton body)"
+     ],
+     "rework": [
+      4.21,
+      "D-FC-EN (EN bodge)"
+     ]
+    },
+    "W2": {
+     "hazard": [
+      2.086,
+      "+x pocket"
+     ],
+     "in_bead": [
+      2.086,
+      "+x pocket"
+     ],
+     "field": 2.026,
+     "switched": [
+      3.388,
+      "L-FC (Eaton body)"
+     ],
+     "rework": [
+      4.21,
+      "D-FC-EN (EN bodge)"
+     ]
+    },
+    "W3": {
+     "hazard": [
+      2.082,
+      "1x12 pin 16 post"
+     ],
+     "in_bead": [
+      2.038,
+      "1x12 pin 18 post"
+     ],
+     "field": 2.026,
+     "switched": [
+      3.388,
+      "L-FC (Eaton body)"
+     ],
+     "rework": [
+      4.21,
+      "D-FC-EN (EN bodge)"
+     ]
+    },
+    "W4": {
+     "hazard": [
+      2.086,
+      "+x pocket"
+     ],
+     "in_bead": [
+      2.086,
+      "+x pocket"
+     ],
+     "field": 2.026,
+     "switched": [
+      3.388,
+      "L-FC (Eaton body)"
+     ],
+     "rework": [
+      4.21,
+      "D-FC-EN (EN bodge)"
+     ]
+    },
+    "W6": {
+     "hazard": [
+      2.086,
+      "+x pocket"
+     ],
+     "in_bead": [
+      2.086,
+      "+x pocket"
+     ],
+     "field": 2.026,
+     "switched": [
+      3.388,
+      "L-FC (Eaton body)"
+     ],
+     "rework": [
+      4.21,
+      "D-FC-EN (EN bodge)"
+     ]
+    },
+    "W7 SCL": {
+     "hazard": [
+      2.086,
+      "+x pocket"
+     ],
+     "in_bead": [
+      2.086,
+      "+x pocket"
+     ],
+     "field": 2.026,
+     "switched": [
+      3.388,
+      "L-FC (Eaton body)"
+     ],
+     "rework": [
+      4.21,
+      "D-FC-EN (EN bodge)"
+     ]
+    },
+    "W7 SDA": {
+     "hazard": [
+      2.086,
+      "+x pocket"
+     ],
+     "in_bead": [
+      2.086,
+      "+x pocket"
+     ],
+     "field": 2.026,
+     "switched": [
+      3.388,
+      "L-FC (Eaton body)"
+     ],
+     "rework": [
+      4.21,
+      "D-FC-EN (EN bodge)"
+     ]
+    },
+    "W5": {
+     "hazard": [
+      2.015,
+      "+x pocket"
+     ],
+     "in_bead": [
+      0.775,
+      "IN strip C102b"
+     ],
+     "field": 1.795,
+     "switched": [
+      -0.683,
+      "L-FC (Eaton body)"
+     ],
+     "rework": [
+      2.028,
+      "D-FC-EN (EN bodge)"
+     ]
+    }
+   },
+   "bottleneck_switched": {
+    "trunk": 5.125,
+    "single": 9.342
+   },
+   "anchors": {
+    "cr": {
+     "B1": [
+      25.8,
+      64.5
+     ],
+     "B3": [
+      35.0,
+      70.8
+     ],
+     "S1": [
+      35.0,
+      47.69
+     ],
+     "S2": [
+      28.7,
+      53.42
+     ],
+     "S3": [
+      35.0,
+      73.1
+     ]
+    },
+    "tie_bases": {
+     "A1": {
+      "centre": [
+       60.5,
+       73.5
+      ],
+      "side": 6.0,
+      "tol": 1.5,
+      "zone": [
+       56.0,
+       69.0,
+       65.0,
+       78.0
+      ],
+      "part": [
+       0.514,
+       "SNS-FC"
+      ],
+      "vias": [
+       [
+        "GND",
+        64.008,
+        70.866
+       ],
+       [
+        "GND",
+        64.262,
+        74.422
+       ]
+      ],
+      "cu": [
+       "VBUS-FC"
+      ]
+     },
+     "A2": {
+      "centre": [
+       71.5,
+       88.0
+      ],
+      "side": 10.0,
+      "tol": 1.5,
+      "zone": [
+       65.0,
+       81.5,
+       78.0,
+       94.5
+      ],
+      "part": [
+       1.717,
+       "CSNS-FC"
+      ],
+      "vias": [
+       [
+        "GND",
+        70.866,
+        89.408
+       ],
+       [
+        "GND",
+        77.978,
+        84.328
+       ],
+       [
+        "GND",
+        65.532,
+        82.042
+       ],
+       [
+        "GND",
+        73.152,
+        81.28
+       ]
+      ],
+      "cu": []
+     }
+    }
+   },
+   "spans": {
+    "W1": [
+     [
+      "joint bead end",
+      "B1",
+      1.613
+     ],
+     [
+      "B1",
+      "B3",
+      14.476
+     ],
+     [
+      "B3",
+      "A1",
+      25.769
+     ],
+     [
+      "A1",
+      "MB +y edge",
+      25.58
+     ]
+    ],
+    "W2": [
+     [
+      "joint bead end",
+      "B3",
+      13.736
+     ],
+     [
+      "B3",
+      "A1",
+      25.769
+     ],
+     [
+      "A1",
+      "MB +y edge",
+      25.58
+     ]
+    ],
+    "W3": [
+     [
+      "joint bead end",
+      "B1",
+      14.414
+     ],
+     [
+      "B1",
+      "B3",
+      14.476
+     ],
+     [
+      "B3",
+      "A1",
+      25.769
+     ],
+     [
+      "A1",
+      "A2",
+      22.804
+     ],
+     [
+      "A2",
+      "MB +y edge",
+      11.573
+     ]
+    ],
+    "W4": [
+     [
+      "joint bead end",
+      "B1",
+      4.552
+     ],
+     [
+      "B1",
+      "B3",
+      14.476
+     ],
+     [
+      "B3",
+      "A1",
+      25.769
+     ],
+     [
+      "A1",
+      "A2",
+      22.804
+     ],
+     [
+      "A2",
+      "MB +y edge",
+      11.573
+     ]
+    ],
+    "W6": [
+     [
+      "joint bead end",
+      "B1",
+      9.003
+     ],
+     [
+      "B1",
+      "B3",
+      14.476
+     ],
+     [
+      "B3",
+      "A1",
+      25.769
+     ],
+     [
+      "A1",
+      "MB +y edge",
+      25.58
+     ]
+    ],
+    "W7 SCL": [
+     [
+      "joint bead end",
+      "B1",
+      2.381
+     ],
+     [
+      "B1",
+      "B3",
+      14.476
+     ],
+     [
+      "B3",
+      "A1",
+      25.769
+     ],
+     [
+      "A1",
+      "MB +y edge",
+      25.58
+     ]
+    ],
+    "W7 SDA": [
+     [
+      "joint bead end",
+      "B1",
+      7.004
+     ],
+     [
+      "B1",
+      "B3",
+      14.476
+     ],
+     [
+      "B3",
+      "A1",
+      25.769
+     ],
+     [
+      "A1",
+      "MB +y edge",
+      25.58
+     ]
+    ],
+    "W5": [
+     [
+      "S1 (J101 fold)",
+      "S2",
+      12.89
+     ],
+     [
+      "S2",
+      "S3",
+      25.98
+     ],
+     [
+      "S3",
+      "A1",
+      25.596
+     ],
+     [
+      "A1",
+      "A2",
+      22.738
+     ],
+     [
+      "A2",
+      "MB +y edge",
+      10.557
+     ]
+    ]
+   },
+   "mb_crossings": {
+    "W1": {
+     "parts": [
+      "MDAC-FC",
+      "OP-FC",
+      "ROP1-FC",
+      "SNS-FC"
+     ],
+     "vias": [
+      [
+       "3V3",
+       43.434,
+       71.628
+      ],
+      [
+       "3V3",
+       46.228,
+       71.628
+      ],
+      [
+       "CS-MDAC-FC",
+       49.995,
+       72.601
+      ],
+      [
+       "FC-CURR",
+       51.158,
+       74.673
+      ],
+      [
+       "FC-CURR",
+       58.928,
+       83.566
+      ],
+      [
+       "MOSI",
+       53.457,
+       73.289
+      ],
+      [
+       "SCK",
+       53.848,
+       72.136
+      ]
+     ]
+    },
+    "W2": {
+     "parts": [
+      "MDAC-FC",
+      "OP-FC",
+      "ROP1-FC",
+      "SNS-FC"
+     ],
+     "vias": [
+      [
+       "3V3",
+       43.434,
+       71.628
+      ],
+      [
+       "3V3",
+       46.228,
+       71.628
+      ],
+      [
+       "CS-MDAC-FC",
+       49.995,
+       72.601
+      ],
+      [
+       "FC-CURR",
+       51.158,
+       74.673
+      ],
+      [
+       "FC-CURR",
+       58.928,
+       83.566
+      ],
+      [
+       "MOSI",
+       53.457,
+       73.289
+      ],
+      [
+       "SCK",
+       53.848,
+       72.136
+      ]
+     ]
+    },
+    "W3": {
+     "parts": [
+      "CSNS-FC",
+      "MDAC-FC",
+      "OP-FC",
+      "ROP1-FC",
+      "SNS-FC"
+     ],
+     "vias": [
+      [
+       "3V3",
+       43.434,
+       71.628
+      ],
+      [
+       "3V3",
+       46.228,
+       71.628
+      ],
+      [
+       "3V3",
+       61.794,
+       79.176
+      ],
+      [
+       "CS-MDAC-FC",
+       49.995,
+       72.601
+      ],
+      [
+       "FC-CURR",
+       51.158,
+       74.673
+      ],
+      [
+       "FC-CURR",
+       58.928,
+       83.566
+      ],
+      [
+       "MOSI",
+       53.457,
+       73.289
+      ],
+      [
+       "SCK",
+       53.848,
+       72.136
+      ]
+     ]
+    },
+    "W4": {
+     "parts": [
+      "CSNS-FC",
+      "MDAC-FC",
+      "OP-FC",
+      "ROP1-FC",
+      "SNS-FC"
+     ],
+     "vias": [
+      [
+       "3V3",
+       43.434,
+       71.628
+      ],
+      [
+       "3V3",
+       46.228,
+       71.628
+      ],
+      [
+       "3V3",
+       61.794,
+       79.176
+      ],
+      [
+       "CS-MDAC-FC",
+       49.995,
+       72.601
+      ],
+      [
+       "FC-CURR",
+       51.158,
+       74.673
+      ],
+      [
+       "FC-CURR",
+       58.928,
+       83.566
+      ],
+      [
+       "MOSI",
+       53.457,
+       73.289
+      ],
+      [
+       "SCK",
+       53.848,
+       72.136
+      ]
+     ]
+    },
+    "W6": {
+     "parts": [
+      "MDAC-FC",
+      "OP-FC",
+      "ROP1-FC",
+      "SNS-FC"
+     ],
+     "vias": [
+      [
+       "3V3",
+       43.434,
+       71.628
+      ],
+      [
+       "3V3",
+       46.228,
+       71.628
+      ],
+      [
+       "CS-MDAC-FC",
+       49.995,
+       72.601
+      ],
+      [
+       "FC-CURR",
+       51.158,
+       74.673
+      ],
+      [
+       "FC-CURR",
+       58.928,
+       83.566
+      ],
+      [
+       "MOSI",
+       53.457,
+       73.289
+      ],
+      [
+       "SCK",
+       53.848,
+       72.136
+      ]
+     ]
+    },
+    "W7 SCL": {
+     "parts": [
+      "MDAC-FC",
+      "OP-FC",
+      "ROP1-FC",
+      "SNS-FC"
+     ],
+     "vias": [
+      [
+       "3V3",
+       43.434,
+       71.628
+      ],
+      [
+       "3V3",
+       46.228,
+       71.628
+      ],
+      [
+       "CS-MDAC-FC",
+       49.995,
+       72.601
+      ],
+      [
+       "FC-CURR",
+       51.158,
+       74.673
+      ],
+      [
+       "FC-CURR",
+       58.928,
+       83.566
+      ],
+      [
+       "MOSI",
+       53.457,
+       73.289
+      ],
+      [
+       "SCK",
+       53.848,
+       72.136
+      ]
+     ]
+    },
+    "W7 SDA": {
+     "parts": [
+      "MDAC-FC",
+      "OP-FC",
+      "ROP1-FC",
+      "SNS-FC"
+     ],
+     "vias": [
+      [
+       "3V3",
+       43.434,
+       71.628
+      ],
+      [
+       "3V3",
+       46.228,
+       71.628
+      ],
+      [
+       "CS-MDAC-FC",
+       49.995,
+       72.601
+      ],
+      [
+       "FC-CURR",
+       51.158,
+       74.673
+      ],
+      [
+       "FC-CURR",
+       58.928,
+       83.566
+      ],
+      [
+       "MOSI",
+       53.457,
+       73.289
+      ],
+      [
+       "SCK",
+       53.848,
+       72.136
+      ]
+     ]
+    },
+    "W5": {
+     "parts": [
+      "CSNS-FC",
+      "SNS-FC"
+     ],
+     "vias": [
+      [
+       "3V3",
+       61.794,
+       79.176
+      ],
+      [
+       "FC-CURR",
+       58.928,
+       83.566
+      ],
+      [
+       "FC-CURR",
+       60.706,
+       90.424
+      ]
+     ]
+    }
+   },
+   "polyimide_strip": [
+    36.0611,
+    65.3048,
+    65.2831,
+    92.80220000000001
+   ],
+   "usb_channel_use": {
+    "W3": true,
+    "W4": true,
+    "W5": false
+   },
+   "superseded_routes": {
+    "W1": [
+     181.583,
+     230
+    ],
+    "W2": [
+     189.129,
+     240
+    ],
+    "W3": [
+     139.228,
+     180
+    ],
+    "W4": [
+     143.801,
+     180
+    ],
+    "W6": [
+     81.87,
+     110
+    ],
+    "W7 SCL": [
+     109.24,
+     140
+    ],
+    "W7 SDA": [
+     103.0,
+     130
+    ],
+    "W5": [
+     159.777,
+     200
+    ]
+   }
+  },
+  "hard_short": [
+   {
+    "case": "shortest W1 route (this path)",
+    "lead_mm": 199.502,
+    "in_peak_V": 34.443,
+    "i_turnoff_A": 70.602,
+    "lead_peak_A": 138.144,
+    "v0": 22.0,
+    "cs_uF": 20.0,
+    "lin_nH": 150.0
+   },
+   {
+    "case": "r7 rev-2 W1 route",
+    "lead_mm": 181.6,
+    "in_peak_V": 34.895,
+    "i_turnoff_A": 72.568,
+    "lead_peak_A": 143.619,
+    "v0": 22.0,
+    "cs_uF": 20.0,
+    "lin_nH": 150.0
+   },
+   {
+    "case": "0.30 m build, short limit 290 mm",
+    "lead_mm": 290.0,
+    "in_peak_V": 32.896,
+    "i_turnoff_A": 65.181,
+    "lead_peak_A": 118.975,
+    "v0": 22.0,
+    "cs_uF": 20.0,
+    "lin_nH": 150.0
+   },
+   {
+    "case": "0.30 m build length",
+    "lead_mm": 300.0,
+    "in_peak_V": 32.771,
+    "i_turnoff_A": 64.817,
+    "lead_peak_A": 117.45,
+    "v0": 22.0,
+    "cs_uF": 20.0,
+    "lin_nH": 150.0
+   }
+  ],
   "pairs": {
    "W1/W2 input pair (20 AWG)": {
-    "La": 0.23,
-    "Lb": 0.24,
-    "R_max_mOhm": 15.656,
+    "La": 0.31,
+    "Lb": 0.31,
+    "R_max_mOhm": 20.652,
     "R_030_mOhm": 19.986
    },
    "W3/W4 battery pair (18 AWG)": {
-    "La": 0.18,
-    "Lb": 0.18,
-    "R_max_mOhm": 7.542,
+    "La": 0.2,
+    "Lb": 0.2,
+    "R_max_mOhm": 8.38,
     "R_030_mOhm": 12.57
    }
   },
-  "tie": 29.744
+  "tie": 29.744,
+  "tie_note": "superseded in r7 review 7 (D-F2): tab X top edge to the MB +y edge, kept for make_svgs_r7.py; the anchors are the CR beads and the MB tie bases A1/A2",
+  "rev4": {
+   "spacers": {
+    "S1": {
+     "pos": [
+      35.0,
+      47.69
+     ],
+     "checks": {
+      "rect": [
+       33.5,
+       46.19,
+       36.5,
+       49.19
+      ],
+      "j101": 0.5,
+      "w67": 7.06,
+      "wpads": 7.45,
+      "strip": 0.5,
+      "jacket": 7.325,
+      "ok": true
+     },
+     "old": [
+      36.0,
+      46.83
+     ]
+    },
+    "S2": {
+     "pos": [
+      28.7,
+      53.42
+     ],
+     "checks": {
+      "rect": [
+       27.2,
+       51.92,
+       30.2,
+       54.92
+      ],
+      "j101": 6.811,
+      "w67": 1.33,
+      "wpads": 1.15,
+      "strip": 6.23,
+      "jacket": 0.507,
+      "ok": true
+     },
+     "old": [
+      28.7,
+      55.0
+     ]
+    }
+   },
+   "chassis_tie": {
+    "west group (W1, W2, W6, W7)": {
+     "last_span": 25.58,
+     "tie_max": 4.42,
+     "tie_max_margin": 2.42
+    },
+    "W3/W4": {
+     "last_span": 11.573,
+     "tie_max": 18.427,
+     "tie_max_margin": 16.427
+    },
+    "W5": {
+     "last_span": 10.557,
+     "tie_max": 19.443,
+     "tie_max_margin": 17.443
+    }
+   },
+   "west_tie_base_search": {
+    "6x6+-1.5": null,
+    "4x4+-1": {
+     "c": [
+      58.8,
+      95.0
+     ],
+     "part": [
+      0.026299999999999102,
+      "C4C-FC"
+     ]
+    }
+   },
+   "sw3d": {
+    "W1": [
+     {
+      "s": [
+       6.613,
+       36.711
+      ],
+      "p0": [
+       25.8,
+       64.5
+      ],
+      "p1": [
+       50.450980392156865,
+       72.09313725490196
+      ],
+      "need": 14.408,
+      "who": "L-FC body (Eaton)",
+      "d_plan": 3.388,
+      "rise": 14.348,
+      "base": "MB top",
+      "per": {
+       "CR top": {
+        "p0": [
+         25.8,
+         64.5
+        ],
+        "p1": [
+         37.5,
+         71.1
+        ],
+        "need": 14.408,
+        "spacer": 10.143,
+        "who": "L-FC body (Eaton)",
+        "d_plan": 3.388,
+        "at": [
+         36.0,
+         71.1
+        ]
+       },
+       "MB top": {
+        "p0": [
+         37.75,
+         71.1
+        ],
+        "p1": [
+         50.450980392156865,
+         72.09313725490196
+        ],
+        "need": 14.348,
+        "spacer": 14.348,
+        "who": "L-FC body (Eaton)",
+        "d_plan": 3.553,
+        "at": [
+         37.75,
+         71.1
+        ]
+       }
+      }
+     }
+    ],
+    "W2": [
+     {
+      "s": [
+       4.26,
+       34.358
+      ],
+      "p0": [
+       25.8,
+       64.5
+      ],
+      "p1": [
+       50.450980392156865,
+       72.09313725490196
+      ],
+      "need": 14.408,
+      "who": "L-FC body (Eaton)",
+      "d_plan": 3.388,
+      "rise": 14.348,
+      "base": "MB top",
+      "per": {
+       "CR top": {
+        "p0": [
+         25.8,
+         64.5
+        ],
+        "p1": [
+         37.5,
+         71.1
+        ],
+        "need": 14.408,
+        "spacer": 10.143,
+        "who": "L-FC body (Eaton)",
+        "d_plan": 3.388,
+        "at": [
+         36.0,
+         71.1
+        ]
+       },
+       "MB top": {
+        "p0": [
+         37.75,
+         71.1
+        ],
+        "p1": [
+         50.450980392156865,
+         72.09313725490196
+        ],
+        "need": 14.348,
+        "spacer": 14.348,
+        "who": "L-FC body (Eaton)",
+        "d_plan": 3.553,
+        "at": [
+         37.75,
+         71.1
+        ]
+       }
+      }
+     }
+    ],
+    "W3": [
+     {
+      "s": [
+       19.414,
+       49.512
+      ],
+      "p0": [
+       25.8,
+       64.5
+      ],
+      "p1": [
+       50.450980392156865,
+       72.09313725490196
+      ],
+      "need": 14.408,
+      "who": "L-FC body (Eaton)",
+      "d_plan": 3.388,
+      "rise": 14.348,
+      "base": "MB top",
+      "per": {
+       "CR top": {
+        "p0": [
+         25.8,
+         64.5
+        ],
+        "p1": [
+         37.5,
+         71.1
+        ],
+        "need": 14.408,
+        "spacer": 10.143,
+        "who": "L-FC body (Eaton)",
+        "d_plan": 3.388,
+        "at": [
+         36.0,
+         71.1
+        ]
+       },
+       "MB top": {
+        "p0": [
+         37.75,
+         71.1
+        ],
+        "p1": [
+         50.450980392156865,
+         72.09313725490196
+        ],
+        "need": 14.348,
+        "spacer": 14.348,
+        "who": "L-FC body (Eaton)",
+        "d_plan": 3.553,
+        "at": [
+         37.75,
+         71.1
+        ]
+       }
+      }
+     }
+    ],
+    "W4": [
+     {
+      "s": [
+       9.552,
+       39.65
+      ],
+      "p0": [
+       25.8,
+       64.5
+      ],
+      "p1": [
+       50.450980392156865,
+       72.09313725490196
+      ],
+      "need": 14.408,
+      "who": "L-FC body (Eaton)",
+      "d_plan": 3.388,
+      "rise": 14.348,
+      "base": "MB top",
+      "per": {
+       "CR top": {
+        "p0": [
+         25.8,
+         64.5
+        ],
+        "p1": [
+         37.5,
+         71.1
+        ],
+        "need": 14.408,
+        "spacer": 10.143,
+        "who": "L-FC body (Eaton)",
+        "d_plan": 3.388,
+        "at": [
+         36.0,
+         71.1
+        ]
+       },
+       "MB top": {
+        "p0": [
+         37.75,
+         71.1
+        ],
+        "p1": [
+         50.450980392156865,
+         72.09313725490196
+        ],
+        "need": 14.348,
+        "spacer": 14.348,
+        "who": "L-FC body (Eaton)",
+        "d_plan": 3.553,
+        "at": [
+         37.75,
+         71.1
+        ]
+       }
+      }
+     }
+    ],
+    "W6": [
+     {
+      "s": [
+       14.003,
+       44.101
+      ],
+      "p0": [
+       25.8,
+       64.5
+      ],
+      "p1": [
+       50.450980392156865,
+       72.09313725490196
+      ],
+      "need": 14.408,
+      "who": "L-FC body (Eaton)",
+      "d_plan": 3.388,
+      "rise": 14.348,
+      "base": "MB top",
+      "per": {
+       "CR top": {
+        "p0": [
+         25.8,
+         64.5
+        ],
+        "p1": [
+         37.5,
+         71.1
+        ],
+        "need": 14.408,
+        "spacer": 10.143,
+        "who": "L-FC body (Eaton)",
+        "d_plan": 3.388,
+        "at": [
+         36.0,
+         71.1
+        ]
+       },
+       "MB top": {
+        "p0": [
+         37.75,
+         71.1
+        ],
+        "p1": [
+         50.450980392156865,
+         72.09313725490196
+        ],
+        "need": 14.348,
+        "spacer": 14.348,
+        "who": "L-FC body (Eaton)",
+        "d_plan": 3.553,
+        "at": [
+         37.75,
+         71.1
+        ]
+       }
+      }
+     }
+    ],
+    "W7 SCL": [
+     {
+      "s": [
+       7.381,
+       37.479
+      ],
+      "p0": [
+       25.8,
+       64.5
+      ],
+      "p1": [
+       50.450980392156865,
+       72.09313725490196
+      ],
+      "need": 14.408,
+      "who": "L-FC body (Eaton)",
+      "d_plan": 3.388,
+      "rise": 14.348,
+      "base": "MB top",
+      "per": {
+       "CR top": {
+        "p0": [
+         25.8,
+         64.5
+        ],
+        "p1": [
+         37.5,
+         71.1
+        ],
+        "need": 14.408,
+        "spacer": 10.143,
+        "who": "L-FC body (Eaton)",
+        "d_plan": 3.388,
+        "at": [
+         36.0,
+         71.1
+        ]
+       },
+       "MB top": {
+        "p0": [
+         37.75,
+         71.1
+        ],
+        "p1": [
+         50.450980392156865,
+         72.09313725490196
+        ],
+        "need": 14.348,
+        "spacer": 14.348,
+        "who": "L-FC body (Eaton)",
+        "d_plan": 3.553,
+        "at": [
+         37.75,
+         71.1
+        ]
+       }
+      }
+     }
+    ],
+    "W7 SDA": [
+     {
+      "s": [
+       12.004,
+       42.102
+      ],
+      "p0": [
+       25.8,
+       64.5
+      ],
+      "p1": [
+       50.450980392156865,
+       72.09313725490196
+      ],
+      "need": 14.408,
+      "who": "L-FC body (Eaton)",
+      "d_plan": 3.388,
+      "rise": 14.348,
+      "base": "MB top",
+      "per": {
+       "CR top": {
+        "p0": [
+         25.8,
+         64.5
+        ],
+        "p1": [
+         37.5,
+         71.1
+        ],
+        "need": 14.408,
+        "spacer": 10.143,
+        "who": "L-FC body (Eaton)",
+        "d_plan": 3.388,
+        "at": [
+         36.0,
+         71.1
+        ]
+       },
+       "MB top": {
+        "p0": [
+         37.75,
+         71.1
+        ],
+        "p1": [
+         50.450980392156865,
+         72.09313725490196
+        ],
+        "need": 14.348,
+        "spacer": 14.348,
+        "who": "L-FC body (Eaton)",
+        "d_plan": 3.553,
+        "at": [
+         37.75,
+         71.1
+        ]
+       }
+      }
+     }
+    ],
+    "W5": [
+     {
+      "s": [
+       30.885,
+       56.966
+      ],
+      "p0": [
+       28.7,
+       65.66509433962264
+      ],
+      "p1": [
+       47.25,
+       73.8
+      ],
+      "need": 15.0,
+      "who": "L-FC body (Eaton)",
+      "d_plan": -0.683,
+      "rise": 2.735,
+      "base": "fold (CR top + 8 mm)",
+      "per": {
+       "fold (CR top + 8 mm)": {
+        "p0": [
+         28.7,
+         65.66509433962264
+        ],
+        "p1": [
+         47.25,
+         73.8
+        ],
+        "need": 15.0,
+        "spacer": 2.735,
+        "who": "L-FC body (Eaton)",
+        "d_plan": -0.683,
+        "at": [
+         28.7,
+         73.1
+        ]
+       }
+      }
+     }
+    ]
+   },
+   "heights": {
+    "H_LFC": 5.0,
+    "H_REG": 1.0,
+    "H_POUR": 0.0
+   },
+   "strip_vias": [
+    [
+     "3V3",
+     43.434,
+     71.628
+    ],
+    [
+     "3V3",
+     46.228,
+     71.628
+    ],
+    [
+     "3V3",
+     51.097,
+     69.131
+    ],
+    [
+     "3V3",
+     61.794,
+     79.176
+    ],
+    [
+     "CS-MDAC-FC",
+     49.995,
+     72.601
+    ],
+    [
+     "FC-CURR",
+     51.158,
+     74.673
+    ],
+    [
+     "FC-CURR",
+     58.928,
+     83.566
+    ],
+    [
+     "FC-CURR",
+     60.706,
+     90.424
+    ],
+    [
+     "MISO",
+     53.998,
+     69.596
+    ],
+    [
+     "MOSI",
+     53.457,
+     73.289
+    ],
+    [
+     "SCK",
+     53.848,
+     72.136
+    ]
+   ],
+   "w5_run_vias": [
+    [
+     "3V3",
+     43.434,
+     71.628
+    ],
+    [
+     "3V3",
+     46.228,
+     71.628
+    ],
+    [
+     "3V3",
+     51.097,
+     69.131
+    ],
+    [
+     "CS-MDAC-FC",
+     49.995,
+     72.601
+    ],
+    [
+     "FC-CURR",
+     51.158,
+     74.673
+    ],
+    [
+     "MISO",
+     53.998,
+     69.596
+    ],
+    [
+     "MOSI",
+     53.457,
+     73.289
+    ],
+    [
+     "SCK",
+     53.848,
+     72.136
+    ]
+   ]
+  }
  },
  "m": {
   "r6_rows": [
@@ -8682,19 +12476,19 @@
    ],
    [
     49.7,
-    37.274
+    36.76635
    ],
    [
     48.8,
-    37.274
+    36.76635
    ],
    [
     48.8,
-    41.974000000000004
+    42.48165
    ],
    [
     49.7,
-    41.974000000000004
+    42.48165
    ],
    [
     49.7,
@@ -8717,27 +12511,35 @@
     68.14
    ],
    [
+    45.6245,
+    68.14
+   ],
+   [
+    45.6245,
+    67.4798
+   ],
+   [
+    39.7195,
+    67.4798
+   ],
+   [
+    39.7195,
+    68.14
+   ],
+   [
     38.56,
     68.14
    ],
    [
     38.56,
-    73.299
+    72.93445
    ],
    [
     37.5611,
-    73.299
+    72.93445
    ],
    [
     37.5611,
-    75.999
-   ],
-   [
-    38.56,
-    75.999
-   ],
-   [
-    38.56,
     77.0
    ],
    [
@@ -8786,12 +12588,12 @@
     "CO-5V",
     [
      49.3,
-     37.774,
+     37.26635,
      52.3,
-     41.474000000000004
+     41.98165
     ],
     0.0,
-    "vertical x 49.700 -> 48.800 over y 37.274-41.974"
+    "vertical x 49.700 -> 48.800 over y 36.766-42.482"
    ],
    [
     "J-NTC",
@@ -8816,18 +12618,171 @@
     "horizontal y 77.000 -> 76.362 over x 22.064-36.864"
    ],
    [
+    "OP-FC",
+    [
+     40.2195,
+     67.9798,
+     45.1245,
+     75.2762
+    ],
+    0.0,
+    "horizontal y 68.140 -> 67.480 over x 39.719-45.624"
+   ],
+   [
     "ROP1-FC",
     [
      38.0611,
-     73.799,
+     73.43445,
      39.6629,
-     75.499
+     75.86355
     ],
     0.0,
-    "vertical x 38.560 -> 37.561 over y 73.299-75.999"
+    "vertical x 38.560 -> 37.561 over y 72.934-77.000 (carried to the sheet corner)"
    ]
   ],
-  "residual": []
+  "residual": [],
+  "nearest_pad": [
+   0.5,
+   "CO-5V pad 1"
+  ],
+  "cutout_own_pads": [
+   [
+    "D-BT-SQ",
+    0.10000000000000142
+   ],
+   [
+    "C-D11",
+    0.14229999999999876
+   ],
+   [
+    "C-D12",
+    0.14229999999999876
+   ],
+   [
+    "C-DC11",
+    0.28539999999999566
+   ],
+   [
+    "C-DC12",
+    0.2853999999999992
+   ]
+  ],
+  "area": 1554.594,
+  "bbox": [
+   16.7,
+   33.14,
+   66.0,
+   77.0
+  ],
+  "relief": {
+   "d_req": 3.333,
+   "d_new": 3.4,
+   "corner": 0.533,
+   "flats": 0.875,
+   "web": -0.86,
+   "slots": {
+    "20.998": [
+     19.298000000000002,
+     34.843999999999994,
+     22.698,
+     66.184
+    ],
+    "45.998": [
+     44.297999999999995,
+     37.384,
+     47.698,
+     63.644000000000005
+    ]
+   },
+   "edge": 1.102,
+   "cutout": 1.917,
+   "t_bed_nominal_after": 0.175
+  },
+  "cutouts_enlarged": {
+   "D-BT-SQ": {
+    "rect": [
+     27.318,
+     47.849,
+     32.118,
+     52.226
+    ],
+    "grow": 0.4,
+    "own": 0.5,
+    "hole22": 5.22,
+    "hole_new": 4.62,
+    "others": []
+   },
+   "C-D11": {
+    "rect": [
+     24.615,
+     48.334,
+     27.709,
+     52.25
+    ],
+    "grow": 0.358,
+    "own": 0.5,
+    "hole22": 2.517,
+    "hole_new": 1.917,
+    "others": []
+   },
+   "C-D12": {
+    "rect": [
+     32.743,
+     48.08,
+     35.837,
+     51.996
+    ],
+    "grow": 0.358,
+    "own": 0.5,
+    "hole22": 9.061,
+    "hole_new": 8.461,
+    "others": []
+   },
+   "C-DC11": {
+    "rect": [
+     32.771,
+     51.195,
+     35.301,
+     53.453
+    ],
+    "grow": 0.215,
+    "own": 0.5,
+    "hole22": 9.597,
+    "hole_new": 8.997,
+    "others": []
+   },
+   "C-DC12": {
+    "rect": [
+     26.675,
+     51.449,
+     29.205,
+     53.707
+    ],
+    "grow": 0.215,
+    "own": 0.5,
+    "hole22": 4.577,
+    "hole_new": 3.977,
+    "others": []
+   }
+  },
+  "cutout_merges": [
+   [
+    "D-BT-SQ",
+    "C-D11"
+   ],
+   [
+    "D-BT-SQ",
+    "C-DC12"
+   ],
+   [
+    "C-D11",
+    "C-DC12"
+   ],
+   [
+    "C-D12",
+    "C-DC11"
+   ]
+  ]
  },
  "summary": [
   {
@@ -8941,9 +12896,49 @@
    "source": "H.23(e)"
   },
   {
+   "key": "per-region top booking (D-F5)",
+   "value": "band 88.2/126.9 mm2 = 69.5 %; interior 182.5/288.8 mm2 = 63.2 %; tab X 90.9/173.3 mm2 = 52.5 %; tab Y 112.9/153.7 mm2 = 73.4 %; tab Y bottom 39.1/133.2 mm2 = 29.4 %; target <= 75 %: all pass",
+   "source": "H.23(e2)"
+  },
+  {
+   "key": "flexible parts (D-F5)",
+   "value": "to the top: none; bottom: R178, R179, C135, C134, C120, C121, C110, C111, C112, C113, C131, C132, C133; whole-side effect 0.00 mm2 bottom -> top",
+   "source": "H.23(e2)"
+  },
+  {
+   "key": "divider strip (D-F5)",
+   "value": "x 23.15-36.50, y 42.14-45.69; 6.37 mm from the U101 loop region (interior corner 0.52 mm)",
+   "source": "H.23(e2)"
+  },
+  {
+   "key": "divider strip / interior to the U101 loop",
+   "value": "6.37 mm / 0.52 mm (band 10.40 mm)",
+   "source": "H.23(f)"
+  },
+  {
+   "key": "comparator band to the MB BT boost / 5V copper",
+   "value": "output loop (REG-BT, C4x-BT, VOUT-BT) 2.58 mm; L-BT 14.27 mm; VSW-BT 11.94 mm; 5V copper rim 7.10 mm; layer-1 nets crossing under it: VBT, VCHG-IN",
+   "source": "H.23(f)"
+  },
+  {
    "key": "farthest outline point from the U101 loop",
    "value": "(17.70, 34.14) at 25.66 mm vs 36.5 mm 2-layer parity (none reaches)",
    "source": "H.23(f)"
+  },
+  {
+   "key": "T8 lane (revision 4)",
+   "value": "upper lane y 37.55 over the residual row to x 43.43, down to y 34.64, to x 63.50, 89.2 mm dressed; jacket 0.50 mm from the nearest other residual pad, 0.00 mm inside the CR low edge; a low-edge lane is infeasible by 0.59 mm",
+   "source": "H.23(g)"
+  },
+  {
+   "key": "open adjacent pairs (revision 4)",
+   "value": "F05-F12: EN net 1.647 V > VEN_R max 1.4 V, 41.2 mA contention; F07-F12: 82.5 mA into pin 17 when LOW; F08-F09: BQ29200 OV term can be masked by the INA253 output",
+   "source": "H.23(g)"
+  },
+  {
+   "key": "extended exclusion candidate (revision 4)",
+   "value": "violations none; 20-tap straight sum 860.5 mm (+1.2 mm); not adopted",
+   "source": "H.23(g)"
   },
   {
    "key": "tab X tap field pad centres",
@@ -8951,8 +12946,13 @@
    "source": "H.23(g)"
   },
   {
-   "key": "tab X pads (A2)",
-   "value": "20 pads + R175 (rows 2-3 of column 1); spare positions [(53.34, 64.02), (50.8, 66.56)]; assignment changes: T1 -> (50.80, 58.94); T7b -> (53.34, 58.94); T5 -> (55.88, 58.94); T6 -> (53.34, 61.48)",
+   "key": "tab X pad assignment (D-F4)",
+   "value": "20 pads + R175 (rows 2-3 of column 1; R175a at (50.80, 64.02)); spare positions [(53.34, 61.48), (53.34, 66.56)]; D-F4 exclusions violated: none (r7 rev 2: T6 beside T3/T7b; T4 beside T5 (EN-EN); T3 beside T5 (EN-EN); T10 beside T21; T2 beside raw Teensy-pin pad(s) T11/T15/T17); moves against r7 rev 2: T2 -> (50.80, 66.56); T3 -> (63.50, 58.94); T4 -> (55.88, 61.48); T5 -> (58.42, 58.94); T6 -> (53.34, 64.02); T11 -> (55.88, 64.02); T12 -> (55.88, 58.94); T13 -> (60.96, 58.94); T14 -> (58.42, 64.02); T15 -> (58.42, 66.56); T17 -> (60.96, 64.02); T17r -> (60.96, 61.48); T20 -> (63.50, 66.56); T21 -> (60.96, 66.56); T19 -> (63.50, 61.48); F24 -> (55.88, 66.56)",
+   "source": "H.23(g)"
+  },
+  {
+   "key": "adjacent-pad short table (D-F4)",
+   "value": "38 orthogonal grid pairs, 0 FORBIDDEN; residual row: F08-F09 and F09-F10 adjacent, F10-F22 not",
    "source": "H.23(g)"
   },
   {
@@ -8962,7 +12962,7 @@
   },
   {
    "key": "tap straight-length sum (20 taps)",
-   "value": "r6 1308.0 mm -> r7 850.9 mm (-34.9 %); dressed 856.7 mm (r6 basis: F08-F10 at their r6 pads; only F08 held: r6 1303.6 mm, -34.7 %)",
+   "value": "r6 1308.0 mm -> r7 859.3 mm (-34.3 %); dressed on the legal path 898.7 mm (D-F4); T8 crosses the REG-5V box (straight 82.8 mm, dressed 89.2 mm: upper lane y 37.55 over the residual row to x 43.43, down to y 34.64, to x 63.50)",
    "source": "H.23(g)"
   },
   {
@@ -9006,8 +13006,18 @@
    "source": "H.23(i)"
   },
   {
-   "key": "foot height",
-   "value": "h_f = 2.54 - t_bed = 2.24 mm (t_bed 0.30 +- 0.15 mm)",
+   "key": "foot height (D-F1)",
+   "value": "h_f = 2.54 - t_bed - t_bond = 2.19 mm (t_bed 0.30, transfer tape 0.05 mm; block +0/-0.05); t_bed budget FT1 worst 0.052-0.648, RSS 0.171-0.529 mm; FT2 worst 0.104-0.596, RSS 0.200-0.500 mm; PM4 (2d) gate 0.15/0.45 mm passes 80 % (FT1) / 86 % (FT2) of uniform-tolerance builds",
+   "source": "H.23(i)"
+  },
+  {
+   "key": "T-A-09 pull (D-F1, revision 4)",
+   "value": "recommended 0.4 N at each grip (tab Y grip in line with FT2, x 28.00; tab Y governs): tip-load basis tab X 0.87 x / tab Y 0.97 x the 30 g service stress, distributed-load basis 1.93-1.93 x / 1.92-1.92 x; the 5 N pull gives 188-687 kPa at FT1",
+   "source": "H.23(i)"
+  },
+  {
+   "key": "feet effect (D-F1)",
+   "value": "30 g worst-pin cut 7-21 %; 10 N tip push cut tab X 26-81 %, tab Y 7-47 % (ORDER OF MAGNITUDE; Gent confinement not modelled)",
    "source": "H.23(i)"
   },
   {
@@ -9042,7 +13052,7 @@
   },
   {
    "key": "10 N push at the tab Y tip: worst pin",
-   "value": "3.06 N without foot; 1.64-2.83 N with foot",
+   "value": "3.05 N without foot; 1.63-2.82 N with foot",
    "source": "H.23(i)"
   },
   {
@@ -9051,9 +13061,14 @@
    "source": "H.23(j)"
   },
   {
-   "key": "stack top",
-   "value": "CR top 4.265 mm; W5 fold >= 12.265 mm + cable vs Ag105 envelope 13.14 mm (margin <= 0.875 mm)",
+   "key": "stack top (information only, D-H)",
+   "value": "CR top 4.265 mm; W5 fold >= 12.265 mm + cable (13.165 / 14.065 mm with one / two 0.9 mm ribbon thicknesses); W5 over L-FC (3-D rule) bottom >= 15.00 mm, top >= 15.900 mm; Ag105 envelope 13.14 mm for reference, not a limit",
    "source": "H.23(j)"
+  },
+  {
+   "key": "E1 route (revision 4)",
+   "value": "E1 pad -> (51.0, 30.6) -> JP12 pin 1: 70.8 mm (max 90 mm); JP17 pin 1 (E6, /CE joint) 5.02; JP17 pin 2 (vacated AGND hole, centre) 6.57; TP36 (E5) 10.20; U1 outline 9.03; L2 outline 17.12",
+   "source": "H.23(k)"
   },
   {
    "key": "E-lead build maxima (mm)",
@@ -9076,6 +13091,21 @@
    "source": "H.23(k)"
   },
   {
+   "key": "spacer beads S1/S2 (revision 4)",
+   "value": "S1 (35.00, 47.69): J101 0.50 mm, W6/W7 exclusion 7.06 mm, jacket 7.33 mm; S2 (28.70, 53.42): J101 6.81 mm, W6/W7 exclusion 1.33 mm, jacket 0.51 mm",
+   "source": "H.23(l)"
+  },
+  {
+   "key": "chassis tie past the MB +y edge (revision 4)",
+   "value": "west group (W1, W2, W6, W7): last span 25.6 mm, tie <= 4.4 mm past the edge (<= 2.4 mm with the 2 mm margin); W3/W4: last span 11.6 mm, tie <= 18.4 mm past the edge (<= 16.4 mm with the 2 mm margin); W5: last span 10.6 mm, tie <= 19.4 mm past the edge (<= 17.4 mm with the 2 mm margin)",
+   "source": "H.23(l)"
+  },
+  {
+   "key": "3-D switched-conductor heights (revision 4)",
+   "value": "W1 CR top: bottom >= 14.41 mm above the MB (spacer 10.14 mm; L-FC body (Eaton)), MB top: bottom >= 14.35 mm above the MB (spacer 14.35 mm; L-FC body (Eaton)); W2 CR top: bottom >= 14.41 mm above the MB (spacer 10.14 mm; L-FC body (Eaton)), MB top: bottom >= 14.35 mm above the MB (spacer 14.35 mm; L-FC body (Eaton)); W3 CR top: bottom >= 14.41 mm above the MB (spacer 10.14 mm; L-FC body (Eaton)), MB top: bottom >= 14.35 mm above the MB (spacer 14.35 mm; L-FC body (Eaton)); W4 CR top: bottom >= 14.41 mm above the MB (spacer 10.14 mm; L-FC body (Eaton)), MB top: bottom >= 14.35 mm above the MB (spacer 14.35 mm; L-FC body (Eaton)); W6 CR top: bottom >= 14.41 mm above the MB (spacer 10.14 mm; L-FC body (Eaton)), MB top: bottom >= 14.35 mm above the MB (spacer 14.35 mm; L-FC body (Eaton)); W7 SCL CR top: bottom >= 14.41 mm above the MB (spacer 10.14 mm; L-FC body (Eaton)), MB top: bottom >= 14.35 mm above the MB (spacer 14.35 mm; L-FC body (Eaton)); W7 SDA CR top: bottom >= 14.41 mm above the MB (spacer 10.14 mm; L-FC body (Eaton)), MB top: bottom >= 14.35 mm above the MB (spacer 14.35 mm; L-FC body (Eaton)); W5 fold (CR top + 8 mm): bottom >= 15.00 mm above the MB (spacer 2.73 mm; L-FC body (Eaton))",
+   "source": "H.23(l)"
+  },
+  {
    "key": "EVM reference placement",
    "value": "x -0.40-88.50, y 118.044-206.944 (g 20 mm, right edge 88.50); EVM-to-USB-corridor 4.97 mm",
    "source": "H.23(l)"
@@ -9086,33 +13116,58 @@
    "source": "H.23(l)"
   },
   {
-   "key": "W-lead build maxima (route rule)",
-   "value": "W1 230 mm, W2 240 mm, W3 180 mm, W4 180 mm, W6 110 mm, W7 SCL 140 mm, W7 SDA 130 mm, W5 200 mm",
+   "key": "W-lead routes on the dressing path (D-F2)",
+   "value": "W1 199.5, W2 202.2, W3 156.6, W4 156.3, W6 106.8, W7 SCL 123.7, W7 SDA 125.8, W5 202.7 mm; build maxima (route rule) W3 200, W4 200, W6 140, W7 SCL 160, W7 SDA 160; W1/W2 fixed 0.30 m +- 10 mm (D-F3); W5 fixed 304.8 mm cable",
+   "source": "H.23(l)"
+  },
+  {
+   "key": "W1/W2 slack at 0.30 m (D-F3)",
+   "value": "W1 100.5 mm, W2 97.8 mm (routes 199.5 / 202.2 mm)",
+   "source": "H.23(l)"
+  },
+  {
+   "key": "hard short vs W1 length (D-F3)",
+   "value": "shortest W1 route (this path) 199.5 mm: 34.4 V / 71 A at turn-off / lead 138 A; r7 rev-2 W1 route 181.6 mm: 34.9 V / 73 A at turn-off / lead 144 A; 0.30 m build, short limit 290 mm 290.0 mm: 32.9 V / 65 A at turn-off / lead 119 A; 0.30 m build length 300.0 mm: 32.8 V / 65 A at turn-off / lead 117 A",
+   "source": "H.23(l)"
+  },
+  {
+   "key": "W5 cable fit (D-F2)",
+   "value": "route 202.7 mm + 20 mm 3-D allowance = 222.7 mm minimum; slack 82.1 mm on 304.8 mm; W3/W4 channel: W3 in, W4 in, W5 out (over the EVM plate)",
+   "source": "H.23(l)"
+  },
+  {
+   "key": "W dressing clearances (D-F2)",
+   "value": "hazards min 2.02 mm (W5); switched conductors min -0.68 mm (rule 10 mm NOT met on the CR; best achievable 5.12 mm bundle / 9.34 mm single lead); MB rework points min 2.03 mm",
+   "source": "H.23(l)"
+  },
+  {
+   "key": "W anchors and spans (D-F2)",
+   "value": "CR beads B1 (25.80, 64.50), B3 (35.00, 70.80), S1 (35.00, 47.69), S2 (28.70, 53.42), S3 (35.00, 73.10); MB tie bases A1 6 x 6 mm at (60.50, 73.50) +- 1.5, A2 10 x 10 mm at (71.50, 88.00) +- 1.5; max span 26.0 mm (W5)",
+   "source": "H.23(l)"
+  },
+  {
+   "key": "polyimide strip under the W leads (D-F2)",
+   "value": "x 36.06-65.28, y 65.30-92.80 (crossed parts CSNS-FC, MDAC-FC, OP-FC, ROP1-FC, SNS-FC; 11 non-GND vias)",
    "source": "H.23(l)"
   },
   {
    "key": "W1/W2 input pair (20 AWG) resistance",
-   "value": "15.66 mOhm at the route maxima vs 19.99 mOhm at 0.30 m",
+   "value": "20.65 mOhm at the 0.31 m long limit vs 19.99 mOhm at 0.30 m",
    "source": "H.23(l)"
   },
   {
    "key": "W3/W4 battery pair (18 AWG) resistance",
-   "value": "7.54 mOhm at the route maxima vs 12.57 mOhm at 0.30 m",
-   "source": "H.23(l)"
-  },
-  {
-   "key": "chassis-tie distance",
-   "value": "29.744 mm (tab X top edge to MB +y edge; <= 30 mm)",
+   "value": "8.38 mOhm at the route maxima vs 12.57 mOhm at 0.30 m",
    "source": "H.23(l)"
   },
   {
    "key": "corridor fallback (i): group shifted -x",
-   "value": "shift 27.03 mm, EVM x -27.43-61.47 (EVM overhang 27.43 mm past the MB -x edge; chassis room needed 45.3 mm); PASSES geometrically: no lead blocked, every chassis tie <= 30 mm, build maxima W1 260, W2 270, W3 170, W4 170, W6 120, W7 SCL 180, W7 SDA 170, W5 180; every W1-W4/W6/W7 maximum <= 0.30 m; W5 1.25 x route 177 mm fits the 0.30 m ribbon; it needs 45.3 mm of chassis room past the MB -x edge (W1 approach point at x -34.83 + 10.5 mm bend allowance; the EVM itself overhangs 27.4 mm), clear of the J-BL/J-FC/J-NTC harnesses (MS2)",
+   "value": "shift 27.03 mm, EVM x -27.43-61.47 (EVM overhang 27.43 mm past the MB -x edge; chassis room needed 45.3 mm); PASSES geometrically: no lead blocked; build maxima W3 190, W4 190, W6 150, W7 SCL 190, W7 SDA 200; W1/W2 routes 225.5 / 228.2 mm against the fixed 0.30 m (slack 74.5 / 71.8 mm); every W3/W4/W6/W7 maximum <= 0.30 m; W5 minimum fit 205 mm fits the 304.8 mm cable (slack 100 mm); it needs 45.3 mm of chassis room past the MB -x edge (W1 approach point at x -34.83 + 10.5 mm bend allowance; the EVM itself overhangs 27.4 mm), clear of the J-BL/J-FC/J-NTC harnesses (MS2)",
    "source": "H.23(l)"
   },
   {
    "key": "corridor fallback (ii): EIB at x >= 104.09",
-   "value": "E-lead maxima E8 30, E3 35, E4 40, E2 45, E7 55, E1 100, E5 75, E6 70; E1 100 mm: f0 1.356 MHz, Q 0.117 with R276; FAILS: the E-lead bundle (EIB pad rows y 163.68-191.62) and the shared EVM plate (one rigid body, D7/D8) must span the corridor band x 93.47-101.09; W3 approach point (96.09, 142.24) inside the USB corridor; W4 approach point (96.09, 152.40) inside the USB corridor; W5 the only path runs around the MB (below its +y edge): the corridor walls off the +x side; E-lead maxima above D7: E8 30 (D7 20), E3 35 (D7 25), E4 40 (D7 30), E2 45 (D7 35), E7 55 (D7 40), E1 100 (D7 90), E5 75 (D7 65), E6 70 (D7 60); E4 at 0.68 of its criterion limit",
+   "value": "E-lead maxima E8 30, E3 35, E4 40, E2 45, E7 55, E1 100, E5 75, E6 70; E1 100 mm: f0 1.356 MHz, Q 0.117 with R276; FAILS: the E-lead bundle (EIB pad rows y 163.68-191.62) and the shared EVM plate (one rigid body, D7/D8) must span the corridor band x 93.47-101.09; W3 approach point (96.09, 142.24) inside the USB corridor; W4 approach point (96.09, 152.40) inside the USB corridor; W5 the only path runs around the MB (below its +y edge); E-lead maxima above D7: E8 30 (D7 20), E3 35 (D7 25), E4 40 (D7 30), E2 45 (D7 35), E7 55 (D7 40), E1 100 (D7 90), E5 75 (D7 65), E6 70 (D7 60); E4 at 0.68 of its criterion limit",
    "source": "H.23(l)"
   },
   {
@@ -9121,18 +13176,28 @@
    "source": "H.23(l)"
   },
   {
+   "key": "relief holes (revision 4)",
+   "value": "3.4 mm holes clear the pad corners by 0.533 mm but MERGE at the 2.54 mm pitch (web -0.86 mm): one 3.40 mm slot per column, the header bodies lose the sheet seat and t_bed falls to 0.175 mm",
+   "source": "H.23(m)"
+  },
+  {
+   "key": "enlarged cut-outs (revision 4)",
+   "value": "D-BT-SQ grows 0.400 mm, own pads 0.500 mm; C-D11 grows 0.358 mm, own pads 0.500 mm; C-D12 grows 0.358 mm, own pads 0.500 mm; C-DC11 grows 0.215 mm, own pads 0.500 mm; C-DC12 grows 0.215 mm, own pads 0.500 mm; merges: D-BT-SQ + C-D11, D-BT-SQ + C-DC12, C-D11 + C-DC12, C-D12 + C-DC11",
+   "source": "H.23(m)"
+  },
+  {
    "key": "r6 sheet vs CO-5V body",
    "value": "OVERLAP 0.400 mm in x over 3.700 mm (1.48 mm2): the r6 sheet drapes onto the 2.1 mm tantalum",
    "source": "H.23(m)"
   },
   {
-   "key": "r7 sheet trims",
-   "value": "CO-5V: vertical x 49.700 -> 48.800 over y 37.274-41.974; J-NTC: vertical x 16.700 -> 16.752 over y 52.414-67.854; L-FC (Eaton 12.9 mm): horizontal y 77.000 -> 76.362 over x 22.064-36.864; ROP1-FC: vertical x 38.560 -> 37.561 over y 73.299-75.999",
+   "key": "r7 sheet trims (bodies + pads, D-F7)",
+   "value": "CO-5V: vertical x 49.700 -> 48.800 over y 36.766-42.482; J-NTC: vertical x 16.700 -> 16.752 over y 52.414-67.854; L-FC (Eaton 12.9 mm): horizontal y 77.000 -> 76.362 over x 22.064-36.864; OP-FC: horizontal y 68.140 -> 67.480 over x 39.719-45.624; ROP1-FC: vertical x 38.560 -> 37.561 over y 72.934-77.000 (carried to the sheet corner); nearest MB pad 0.500 mm (CO-5V pad 1)",
    "source": "H.23(m)"
   },
   {
    "key": "r7 sheet",
-   "value": "27 vertices, area 1560.8 mm2, bbox 49.30 x 43.86 mm",
+   "value": "29 vertices, area 1554.6 mm2, bbox 49.30 x 43.86 mm",
    "source": "H.23(m)"
   }
  ]

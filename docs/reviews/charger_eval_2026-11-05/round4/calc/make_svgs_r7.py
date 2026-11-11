@@ -10,7 +10,11 @@ Writes, into round4/:
 Edit this generator, not the SVGs. Coordinate sources (no coordinate is typed in by hand except where a comment cites the
 design section it comes from):
   r7_calc_out.json  H.23(a) outline, (g) tap field, (h) thermal band, (i) feet, (d) foot keep-outs, (l) EVM placement,
-                    (m) r7 polyimide sheet and the L-FC Eaton body;
+                    (m) r7 polyimide sheet, its enlarged cut-outs and the L-FC Eaton body; calc revision 4 adds
+                    g.r175a (R175 pads), l.routes[*].cr_mb_path (W-lead dressing path with jacket half-widths),
+                    l.dressing.anchors (beads B1/B3, W5 spacers S1-S3, MB tie bases A1/A2 with tolerance),
+                    l.dressing.polyimide_strip, l.rev4.sw3d (3-D switched-conductor spans), l.rev4.chassis_tie,
+                    i.foot_height (h_f);
   r7_calc_out.txt   H.23(l) "full path" lines (W-lead routes including the CR pad and the terminal);
   design A.8 / A.7  CR header pads, W1-W4, W6/W7, J101 region, r6 rectangle and r6 chamfer, comparator band (BASIS D5);
   .brd              MB part boxes (mb_neighbours.element_records via r7_calc.ELS) and MB layer-1 copper (r7_calc.SHAPES).
@@ -171,6 +175,7 @@ class Svg:
 
 # ===================================================================== wiring diagram (round 3 + r7 changes)
 W_CAP = "<= 0.30 m until MS2; route maxima after MS2"     # BASIS D7: 0.30 m caps stay the T-A-02 bound until MS2
+W12_LEN = "fixed 0.30 m +- 10 mm (D-F3); slack = service loop"  # r7 review 7 D-F3 (A.3): W1/W2 are never cut to the route
 
 
 def wiring():
@@ -251,7 +256,7 @@ def wiring():
     # ---------------- r7: EVM plate carrying the EIB and the EVM (BASIS D7, section 1 "EVM plate"); drawn first (background)
     s.box(1062, 74, 690, 1150, "EVM plate (insulating, on the chassis)", "#fafaf7", MUTE, 1.4, "8,4", 13)
     s.text(1072, 300, "EVM on its stock bumpons, held by edge clamps;", 10, color=MUTE)
-    s.text(1072, 316, "EIB on its two M3 nylon standoffs (one rigid body)", 10, color=MUTE)
+    s.text(1072, 316, "EIB on its two M3 nylon standoffs (EVM and EIB on one plate)", 10, color=MUTE)
 
     # ---------------- carrier
     cx, cy, cw, ch = 650, 110, 400, 1000
@@ -290,10 +295,11 @@ def wiring():
     s.text(cx + 30, cy + 831, "SCL/SDA/GND pads -> W7 to EVM J8; R145/R146 DNP", 10)
     s.text(cx + 20, cy + 870, "Power star: CR GND = pads 4, 14, 15", 10, color=GNDC, weight="bold")
     s.text(cx + 20, cy + 888, "STAT pad 3: R107 10k to 3V3 -> W5 pin 4", 10, color=SIG)
-    s.text(cx + 20, cy + 942, "3V3: T6 -> R175 68R; R176/R177 200R -> W5 1/2 (r4)", 10, color=SIG)
+    s.text(cx + 20, cy + 942, "3V3: T6 -> R175 68R (pad R175a -> R175b); R176/R177 -> W5 1/2", 10, color=SIG)
     s.text(cx + 20, cy + 906, "THERM pad 13 -> W6 (only if NTC, T-E-09)", 10, color=SIG)
     s.text(cx + 20, cy + 924, "readback in: W5 11 -> R125 -> T12; W5 13 -> R148 -> T20 (pin 7)", 10, color=SIG)
     s.text(cx + 20, cy + 960, "r7: Eagle coords, +y UP; chamfer at the tab Y -x/+y corner (17.70, 76.00), pin-11 side", 10, color=MUTE)
+    s.text(cx + 20, cy + 978, "r7: W leads on the A.3 dressing path (B1/B3, S1-S3, A1/A2)", 10, color=MUTE)
 
     s.line([(pad["22"][0] + 10, fy + 160), (cx, fy + 160)], MUTE, 6, "2,4")
     s.text(620, fy + 150, "22 pins", 10, "middle", MUTE)
@@ -348,7 +354,7 @@ def wiring():
     s.line([(cx + cw, cy + 90), (1260, cy + 90), (1260, anchors["J1"]), (vx + 15, anchors["J1"])], PWR, 3)
     s.line([(cx + cw, cy + 100), (1250, cy + 100), (1250, anchors["J1"] + 17), (vx + 15, anchors["J1"] + 17)], INK, 3)
     s.text(1070, cy + 84, "W1/W2  20 AWG twisted pair", 10, color=PWR)
-    s.text(1070, cy + 116, W_CAP, 10, color=PWR)                                                         # r7
+    s.text(1070, cy + 116, W12_LEN, 10, color=PWR)                                                       # r7 review 7 (D-F3)
     s.line([(cx + cw, cy + 950), (1395, cy + 950), (1395, anchors["J5"]), (vx + 15, anchors["J5"])], BAT, 3.4)
     s.line([(cx + cw, cy + 960), (1405, cy + 960), (1405, anchors["J5"] + 34), (vx + 15, anchors["J5"] + 34)], INK, 3.4)
     s.text(1070, cy + 984, "W3/W4  18 AWG twisted pair", 10, color=BAT)
@@ -358,7 +364,7 @@ def wiring():
     s.text(1070, cy + 843, W_CAP, 10, color=SIG)                                                         # r7
     s.line([(cx + cw, cy + 761), (1090, cy + 761), (1090, ey + 200), (ex, ey + 200)], SIG, 2.2)
     s.box(1080, ey - 88, 300, 80, None, "#fff", stroke=SIG, sw=1)
-    s.text(1088, ey - 71, "W5  14-way 0.635 mm ribbon, <= 0.30 m (J101 -> J201)", 10, color=SIG)
+    s.text(1088, ey - 71, "W5  14-way 0.635 mm ribbon, fixed 0.30 m cable (J101 -> J201)", 10, color=SIG)
     s.text(1088, ey - 54, "1 3V3  2 3V3  3 GND  4 STAT  5 CE_DRV", 9, color=SIG)
     s.text(1088, ey - 39, "6 KEY (pin omitted)  7 REL_A  8 REL_B  9 GND", 9, color=SIG)
     s.text(1088, ey - 24, "10 RFC_OFF  11 ILIM_SNS  12 GND  13 CE_SNS  14 GND", 9, color=SIG)
@@ -708,6 +714,43 @@ def full_paths():
     return paths
 
 
+def subpath(path, p0, p1):
+    """Part of a polyline between the projections of p0 and p1 (both lie on it, H.23(l) l.rev4.sw3d)."""
+    acc, segs = 0.0, []
+    for a, b in zip(path[:-1], path[1:]):
+        L = math.hypot(b[0] - a[0], b[1] - a[1])
+        segs.append((a, b, acc, L))
+        acc += L
+
+    def proj(p):
+        best = None
+        for a, b, s0, L in segs:
+            if L == 0:
+                continue
+            t = max(0.0, min(1.0, ((p[0] - a[0]) * (b[0] - a[0]) + (p[1] - a[1]) * (b[1] - a[1])) / L ** 2))
+            q = (a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1]))
+            d = math.hypot(p[0] - q[0], p[1] - q[1])
+            if best is None or d < best[0]:
+                best = (d, s0 + t * L)
+        return best[1]
+
+    s0, s1 = sorted((proj(p0), proj(p1)))
+
+    def at(sv):
+        for a, b, st, L in segs:
+            if st <= sv <= st + L + 1e-9 and L > 0:
+                t = (sv - st) / L
+                return (a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1]))
+        return path[-1]
+
+    out = [at(s0)]
+    for a, b, st, L in segs:
+        if s0 < st < s1:
+            out.append(a)
+    out.append(at(s1))
+    return out
+
+
 def poly_dist(b, poly):
     """Plan distance from a rectangle to a polygon outline (0 when they overlap)."""
     rp = R.rpoly(b)
@@ -727,8 +770,10 @@ def layout():
     s = Svg(W, H, "CHG carrier r7 (round 4): outline, tabs, feet, tap field")
     s.text(PX0, 50, "Top view, Eagle .brd board coordinates in mm (+y up), 8 px/mm. Sources: r7_calc_out.json H.23 (a), (d), (g), (h), (i), (l), (m); "
                     "design A.7/A.8; MB parts and layer-1 copper from the .brd (mb_neighbours.py via r7_calc.py).", 10, color=MUTE)
-    s.text(PX0, 66, "Drawn on the CR top side: outlines, header pads, W1-W4, W6/W7, tap pads, J101 and comparator regions. Drawn under the CR: "
-                    "MB parts, MB copper, feet (CR bottom), polyimide sheet.", 10, color=MUTE)
+    s.text(PX0, 66, "Drawn on the CR top side: outlines, header pads, W1-W4 holes, W6/W7 pads, tap pads, R175 pads, J101 and comparator regions, "
+                    "the W-lead dressing path, beads B1/B3 and W5 spacers S1-S3 (calc revision 4).", 10, color=MUTE)
+    s.text(PX0, 80, "Drawn under the CR or on the MB: MB parts, MB copper, feet (CR bottom), polyimide sheet with relief holes and cut-outs, "
+                    "polyimide strip, tie bases A1/A2.", 10, color=MUTE)
     s.raw('<defs>'
           '<pattern id="hFoot" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">'
           '<rect width="6" height="6" fill="#c8e6c9"/><line x1="0" y1="0" x2="0" y2="6" stroke="#1b5e20" stroke-width="1.6"/></pattern>'
@@ -762,6 +807,8 @@ def layout():
         y += 0.02
     band_end = (tab_x[2], round(yb, 2))
     lfc_eaton = [t[1] for t in J["m"]["trims"] if t[0].startswith("L-FC")][0]
+    Ld = J["l"]["dressing"]
+    routes = J["l"]["routes"]
     pins_a = [(20.998, 36.544 + 2.54 * k) for k in range(12)]     # DOC A.8 pins 22..11 (x 20.998)
     pins_b = [(45.998, 39.084 + 2.54 * k) for k in range(10)]     # DOC A.8 pins 1..10 (x 45.998)
     pad_d = 1.9                                                   # DOC A.8 "pad >= 1.9 mm" (drawn at the minimum)
@@ -830,6 +877,28 @@ def layout():
           % (X(mb[0]), Y(mb[3]), (mb[2] - mb[0]) * S, (mb[3] - mb[1]) * S))
     # polyimide sheet (r7, H.23(m)), CR bottom side
     s.raw('<polygon points="%s" fill="none" stroke="#00897b" stroke-width="1.5" stroke-dasharray="1.5,2.5"/>' % pts_attr(sheet))
+    # sheet openings (A.7 r7, H.23(m)): 2.2 mm relief holes at the 22 header pads (kept: the 3.4 mm holes merge into slots
+    # and drop t_bed to 0.175 mm) and the five enlarged cut-outs (part body joined with its own pads + 0.5 mm; they merge)
+    for (x, y) in pins_a + pins_b:
+        s.raw('<circle cx="%.2f" cy="%.2f" r="%.2f" fill="none" stroke="#00897b" stroke-width="1.1" stroke-dasharray="1.5,1.5"/>'
+              % (X(x), Y(y), 2.2 / 2 * S))
+    for nm, co in J["m"]["cutouts_enlarged"].items():
+        p = rect_px(co["rect"])
+        s.raw('<rect x="%.2f" y="%.2f" width="%.2f" height="%.2f" fill="#e0f2f1" fill-opacity="0.5" stroke="#00897b" stroke-width="1.1" '
+              'stroke-dasharray="1.5,2.5"/>' % (p[0], p[1], p[2] - p[0], p[3] - p[1]))
+    # polyimide strip (A.3 r7, H.23(l) l.dressing.polyimide_strip): on the MB under the leads, lead envelope + 2.0 mm, clipped to
+    # its extent and to the MB side of the tab Y +x edge (x 37.56)
+    strip = Ld["polyimide_strip"]
+    sx0 = max(strip[0], tab_y[2])
+    s.raw('<clipPath id="cStrip"><rect x="%.2f" y="%.2f" width="%.2f" height="%.2f"/></clipPath>'
+          % (X(sx0), Y(strip[3]), (strip[2] - sx0) * S, (strip[3] - strip[1]) * S))
+    s.raw('<g clip-path="url(#cStrip)" opacity="0.45">')
+    for lead in ("W1", "W3", "W5"):
+        cp = routes[lead]["cr_mb_path"]
+        for (a_, ha), (b_, hb) in zip(cp[:-1], cp[1:]):
+            s.raw('<line x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke="#80cbc4" stroke-width="%.2f" stroke-linecap="round"/>'
+                  % (X(a_[0]), Y(a_[1]), X(b_[0]), Y(b_[1]), 2 * (max(ha, hb) + 2.0) * S))
+    s.raw('</g>')
     # r7 outline (fill), r6 outline (dashed)
     s.raw('<polygon points="%s" fill="#e3f2fd" fill-opacity="0.45" stroke="none"/>' % pts_attr(r7))
     # thermal band (part of tab X within 6.4 mm of the MB 5V rim)
@@ -873,6 +942,14 @@ def layout():
     rb = rect_px(g["r175_box"])
     s.raw('<rect x="%.2f" y="%.2f" width="%.2f" height="%.2f" fill="#fffde7" stroke="#8d6e63" stroke-width="1"/>'
           % (rb[0], rb[1], rb[2] - rb[0], rb[3] - rb[1]))
+    # R175 pads on the grid (H.23(g) g.r175a; R175b one row below in the same column, R175 rows 2-3): a = Teensy 3V3 (F07) side
+    r175a = tuple(g["r175a"])
+    r175b = (r175a[0], g["ys"][g["ys"].index(r175a[1]) - 1])
+    for (x, y), t in ((r175a, "a"), (r175b, "b")):
+        p = rect_px((x - 0.75, y - 0.75, x + 0.75, y + 0.75))
+        s.raw('<rect x="%.2f" y="%.2f" width="%.2f" height="%.2f" fill="#a1887f" stroke="#5d4037" stroke-width="0.8"/>'
+              % (p[0], p[1], p[2] - p[0], p[3] - p[1]))
+        s.text(X(x), Y(y) + 2.2, t, 6.5, anchor="middle", color="#ffffff", weight="bold")
     for fid, x, y, tname in taps:
         p = rect_px((x - 0.75, y - 0.75, x + 0.75, y + 0.75))       # DOC A.4: 1.5 x 1.5 mm SMT pads
         s.raw('<rect x="%.2f" y="%.2f" width="%.2f" height="%.2f" fill="%s" stroke="#1b5e20" stroke-width="0.8"/>'
@@ -897,6 +974,48 @@ def layout():
         p = rect_px((x - W_SMT[0] / 2, W_SMT_Y - W_SMT[1] / 2, x + W_SMT[0] / 2, W_SMT_Y + W_SMT[1] / 2))
         s.raw('<rect x="%.2f" y="%.2f" width="%.2f" height="%.2f" fill="#bbdefb" stroke="%s" stroke-width="1.1"/>'
               % (p[0], p[1], p[2] - p[0], p[3] - p[1], SIG))
+    # MB tie bases A1/A2 (A.3 r7, H.23(l) l.dressing.anchors.tie_bases): base solid, base + tolerance zone dashed
+    tbs = Ld["anchors"]["tie_bases"]
+    for nm, tb in tbs.items():
+        z = rect_px(tb["zone"])
+        s.raw('<rect x="%.2f" y="%.2f" width="%.2f" height="%.2f" fill="none" stroke="#5d4037" stroke-width="1.1" stroke-dasharray="4,2"/>'
+              % (z[0], z[1], z[2] - z[0], z[3] - z[1]))
+        c, h = tb["centre"], tb["side"] / 2
+        b_ = rect_px((c[0] - h, c[1] - h, c[0] + h, c[1] + h))
+        s.raw('<rect x="%.2f" y="%.2f" width="%.2f" height="%.2f" fill="#d7ccc8" fill-opacity="0.85" stroke="#5d4037" stroke-width="1.4"/>'
+              % (b_[0], b_[1], b_[2] - b_[0], b_[3] - b_[1]))
+    # W-lead jacket envelopes (H.23(l) cr_mb_path half-widths; one group so overlaps do not darken), W5 ribbon band
+    s.raw('<g opacity="0.22">')
+    for lead in ("W1", "W3", "W4", "W6", "W7 SCL", "W7 SDA"):
+        cp = routes[lead]["cr_mb_path"]
+        for (a_, ha), (b_, hb) in zip(cp[:-1], cp[1:]):
+            s.raw('<line x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke="#546e7a" stroke-width="%.2f" stroke-linecap="round"/>'
+                  % (X(a_[0]), Y(a_[1]), X(b_[0]), Y(b_[1]), 2 * max(ha, hb) * S))
+    s.raw('</g>')
+    cp5 = routes["W5"]["cr_mb_path"]
+    s.raw('<polyline points="%s" fill="none" stroke="#0b8f8f" stroke-opacity="0.16" stroke-width="%.2f" stroke-linejoin="miter"/>'
+          % (pts_attr([q[0] for q in cp5]), 2 * cp5[0][1] * S))
+    # CR beads B1/B3 (RTV spacer posts) and W5 spacer beads S1-S3, 3.0 x 3.0 mm footprints (ASSUMPTION, H.23(l))
+    for nm, (x, y) in Ld["anchors"]["cr"].items():
+        fill, st = ("#e1bee7", "#6a1b9a") if nm.startswith("B") else ("#b2ebf2", "#00838f")
+        p = rect_px((x - 1.5, y - 1.5, x + 1.5, y + 1.5))
+        s.raw('<rect x="%.2f" y="%.2f" width="%.2f" height="%.2f" fill="%s" fill-opacity="0.85" stroke="%s" stroke-width="1.3"/>'
+              % (p[0], p[1], p[2] - p[0], p[3] - p[1], fill, st))
+    # 3-D switched-conductor spans (H.23(l) l.rev4.sw3d): the run held above the MB on spacers, dashed purple under the centre line
+    for lead in ("W1", "W5"):
+        for seg in J["l"]["rev4"]["sw3d"][lead]:
+            for base, pr in seg["per"].items():
+                sp = subpath([q[0] for q in routes[lead]["cr_mb_path"]], pr["p0"], pr["p1"])
+                s.raw('<polyline points="%s" fill="none" stroke="#8e24aa" stroke-width="6" stroke-opacity="0.75" '
+                      'stroke-dasharray="4,3" stroke-linejoin="round"/>' % pts_attr(sp))
+    # centre lines (one colour per lead; the shared trunk shows the last drawn)
+    lstyle = {"W1": (PWR, 1.6, None), "W2": (INK, 1.2, None), "W3": (BAT, 1.6, None), "W4": (INK, 1.2, None),
+              "W6": (SIG, 1.0, "4,2"), "W7 SCL": (SIG, 1.0, None), "W7 SDA": (SIG, 1.0, None), "W5": ("#0b8f8f", 1.6, "6,2")}
+    for lead in ("W5", "W6", "W7 SCL", "W7 SDA", "W4", "W2", "W3", "W1"):
+        col, sw, da = lstyle[lead]
+        d = ' stroke-dasharray="%s"' % da if da else ""
+        s.raw('<polyline points="%s" fill="none" stroke="%s" stroke-width="%s" stroke-linejoin="round"%s/>'
+              % (pts_attr([q[0] for q in routes[lead]["cr_mb_path"]]), col, sw, d))
     s.raw('</g>')
 
     # ------------------------------------------------------------- main panel labels (manual, registered first)
@@ -908,7 +1027,7 @@ def layout():
               % (X(p[0]), Y(p[1]), X(q[0]), Y(q[1]), color))
 
     lab(53.4, 69.7, "tab X", 12, color="#0d47a1", bold=True)
-    lab(31.2, 68.6, "tab Y", 12, color="#0d47a1", bold=True)
+    lab(18.3, 69.5, "tab Y", 12, color="#0d47a1", bold=True)        # clear of the trunk (x 23.4-28.2)
     lab(37.6, 66.0, "r6 footprint", 9, color="#546e7a", bold=True)
     lab(18.9, 77.05, "chamfer r7", 7.5, color="#0d47a1")      # above tab Y, clear of the FT2 labels
     leader((18.8, 76.8), (18.15, 75.65), "#0d47a1")
@@ -929,15 +1048,14 @@ def layout():
     lab(32.8, 39.2, "U102-U104, U115, U119-U121,", 7.5, anchor="middle", color="#0d47a1")
     lab(32.8, 38.0, "0.1 % dividers, filter caps", 7.5, anchor="middle", color="#0d47a1")
     lab(51.9, 56.85, "thermal band (6.4 mm)", 7.5, color="#bf360c", bold=True)
-    lab(50.8, 63.0, "R175", 6.5, anchor="middle", color="#5d4037")
+    lab(50.8, 62.45, "R175", 6.5, anchor="middle", color="#5d4037")
     # adopted feet (H.23(i)): label "FTn <w> x <h> mm, +-tx/ty" in two lines
     f1, f2 = ft["ft1"], ft["ft2"]
-    lab(61.6, 71.45, "FT1 %.1f x %.1f mm" % tuple(f1["size"]), 8.5, anchor="middle", color="#1b5e20", bold=True)
-    lab(62.75, 70.15, "±%.3f/%.3f mm" % (f1["tx"], f1["ty"]), 7.5, anchor="middle", color="#1b5e20")
-    leader((61.6, 69.75), (61.72, 67.6), "#1b5e20")
+    lab(66.3, 67.35, "FT1 %.1f x %.1f mm" % tuple(f1["size"]), 8.5, color="#1b5e20", bold=True)
+    lab(66.3, 66.15, "±%.3f/%.3f mm" % (f1["tx"], f1["ty"]), 7.5, color="#1b5e20")
+    leader((66.2, 67.0), (63.72, 66.9), "#1b5e20")
     fc2 = f2["centre"]
-    lab(f2["body"][2] + 0.75, fc2[1] - 0.4, "FT2", 9, color="#1b5e20", bold=True)   # right of the keep-out (x 30.5)
-    lab(25.35, 74.2, "%.1f x %.1f mm" % tuple(f2["size"]), 7.5, anchor="end", color="#1b5e20", bold=True)
+    lab(25.35, 74.2, "FT2 %.1f x %.1f" % tuple(f2["size"]), 7.5, anchor="end", color="#1b5e20", bold=True)   # W5 runs right of FT2
     lab(25.35, 73.0, "±%.3f/%.3f" % (f2["tx"], f2["ty"]), 7.5, anchor="end", color="#1b5e20")
     lab(25.35, 71.8, "%.1f mm fill hole" % fh["d"], 7.5, anchor="end", color="#1b5e20")
     lab(70.0, 50.0, "VBUS L1", 8, color="#c62828", bold=True)
@@ -956,6 +1074,14 @@ def layout():
     s.line([(X(b1[2]), Y(75.55)), (X(45.2), Y(75.55)), (X(45.4), Y(75.2))], "#78909c", 0.8)
     lab((b2[0] + b2[2]) / 2, b2[3] + 0.33, "ROP2-FC", 8.5, anchor="middle", color="#263238", bold=True)
     manual = {"ROP1-FC", "ROP2-FC"}
+    # dressing path, beads, spacers, tie bases (A.3 r7 review 7; H.23(l))
+    for nm, tb in tbs.items():
+        c = tb["centre"]
+        lab(c[0] + tb["side"] / 2 - 0.3, c[1] - tb["side"] / 2 + 0.4, nm, 9, anchor="end", color="#3e2723", bold=True)   # inside the base
+    lab(23.9, 66.6, "B1", 7.5, anchor="end", color="#6a1b9a", bold=True)
+    lab(35.0, 74.95, "B3/S3", 7.5, anchor="middle", color="#6a1b9a", bold=True)
+    lab(35.0, 45.2, "S1", 7.5, anchor="middle", color="#00838f", bold=True)
+    lab(30.4, 53.1, "S2", 7.5, color="#00838f", bold=True)
 
     # ------------------------------------------------------------- MB part names (automatic placement)
     pan = (X(WIN[0]) + 1, Y(WIN[3]) + 1, X(WIN[2]) - 1, Y(WIN[1]) - 1)
@@ -1066,7 +1192,7 @@ def layout():
     j201 = L["j201"]
     s.raw('<rect x="%.2f" y="%.2f" width="6" height="6" fill="#0b8f8f"/>' % (X2(j201[0]) - 3, Y2(j201[1]) - 3))
     s.raw('</g>')
-    # P2 crossings of the MB +y edge (chassis tie at the MB edge)
+    # P2 crossings of the MB +y edge (the chassis tie closes the last span past it, A.3 anchor rule)
     for p2 in sorted({tuple(v["P2"]) for v in L["routes"].values()}):
         s.raw('<line x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke="#37474f" stroke-width="1.6"/>'
               % (X2(p2[0]), Y2(p2[1]) - 4, X2(p2[0]), Y2(p2[1]) + 4))
@@ -1080,8 +1206,12 @@ def layout():
     lab2(105.5, 190.0, "EIB", 9, anchor="middle", bold=True)
     lab2(105.5, 185.5, "J201", 7.5, anchor="start", color="#0b8f8f")
     lab2(3.0, 26.0, "MB 131.064 x 98.044 mm", 8.5, bold=True, color="#37474f")
-    lab2(3.0, 19.5, "Ticks on the MB +y edge: W leads cross at x 56.00-68.75;", 7.5, color="#37474f")
-    lab2(3.0, 14.5, "chassis tie at that edge %.2f mm from the tab X edge (A.3: <= 30 mm)." % L["tie"], 7.5, color="#37474f")
+    xs_p2 = {lead: v["P2"][0] for lead, v in L["routes"].items()}
+    ct = L["rev4"]["chassis_tie"]
+    lab2(3.0, 19.5, "Ticks on the MB +y edge: x %.2f (W1, W2, W6, W7), %.2f (W5), %.2f (W3, W4)."
+         % (xs_p2["W1"], xs_p2["W5"], xs_p2["W3"]), 7.5, color="#37474f")
+    lab2(3.0, 14.5, "Chassis tie past that edge <= %.1f / %.1f / %.1f mm (A.3 anchor rule)."
+         % (ct["west group (W1, W2, W6, W7)"]["tie_max"], ct["W5"]["tie_max"], ct["W3/W4"]["tie_max"]), 7.5, color="#37474f")
     lab2(91.0, 62.0, "Teensy", 7.5, color="#263238")
     lab2(102.5, 128.0, "USB", 7.5, color="#4527a0", bold=True)
     lab2(102.5, 124.0, "corridor", 7.5, color="#4527a0")
@@ -1137,6 +1267,16 @@ def layout():
         ("rect", dict(fill="none", stroke="#37474f", sw=2.6), "MB outline"),
         ("sq", dict(fill="#ffffff", stroke="#1b5e20", dash="2,1.5"), "spare tab X grid position (sp)"),
         ("rect", dict(fill="none", stroke="#e65100", sw=1.2, dash="5,3"), "fallback (i) EVM + EIB position"),
+        ("sq", dict(fill="#a1887f", stroke="#5d4037"), "R175 pad: a Teensy 3V3 (F07) side, b rail side"),
+        ("circle", dict(fill="none", stroke="#00897b", sw=1.1, dash="1.5,1.5"), "sheet relief hole 2.2 mm (kept, A.7)"),
+        ("rect", dict(fill="#e0f2f1", stroke="#00897b", sw=1.1, dash="1.5,2.5"), "sheet cut-out, enlarged (body + pads + 0.5 mm)"),
+        ("band", dict(stroke="#546e7a", sw=1.6, op=0.22, line=PWR), "W-lead path: centre line, band = jacket envelope"),
+        ("band", dict(stroke="#0b8f8f", sw=1.6, op=0.16, line="#0b8f8f", dash="6,2"), "W5 ribbon: centre line, 8.89 mm band"),
+        ("line", dict(stroke="#8e24aa", sw=6, op=0.75, dash="4,3"), "3-D rule: span held above the MB on spacers"),
+        ("sq", dict(fill="#e1bee7", stroke="#6a1b9a"), "RTV bead / spacer post B1, B3 (3 x 3 mm)"),
+        ("sq", dict(fill="#b2ebf2", stroke="#00838f"), "W5 spacer bead S1-S3 (3 x 3 mm)"),
+        ("rect", dict(fill="#d7ccc8", stroke="#5d4037", sw=1.4), "MB tie base A1/A2; dashed: +-1.5 mm zone"),
+        ("rect", dict(fill="#80cbc4", stroke="#80cbc4", sw=1, op=0.45), "polyimide strip on the MB (envelope + 2 mm)"),
     ]
     cols, colw, rowh = 3, 290, 17
     for i, (kind, st, t) in enumerate(items):
@@ -1148,8 +1288,16 @@ def layout():
             s.raw('<rect x="%.1f" y="%.1f" width="30" height="11" fill="%s"%s stroke="%s" stroke-width="%s"%s/>'
                   % (x0, y0, st["fill"], op, st["stroke"], st.get("sw", 1), dash))
         elif kind == "circle":
-            s.raw('<circle cx="%.1f" cy="%.1f" r="5.5" fill="%s" stroke="%s" stroke-width="%s"/>'
-                  % (x0 + 15, y0 + 5.5, st["fill"], st["stroke"], st.get("sw", 1.3)))
+            s.raw('<circle cx="%.1f" cy="%.1f" r="5.5" fill="%s" stroke="%s" stroke-width="%s"%s/>'
+                  % (x0 + 15, y0 + 5.5, st["fill"], st["stroke"], st.get("sw", 1.3), dash))
+        elif kind == "band":
+            s.raw('<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f" stroke="%s" stroke-opacity="%s" stroke-width="11"/>'
+                  '<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f" stroke="%s" stroke-width="%s"%s/>'
+                  % (x0, y0 + 5.5, x0 + 30, y0 + 5.5, st["stroke"], st["op"], x0, y0 + 5.5, x0 + 30, y0 + 5.5, st["line"],
+                     st["sw"], dash))
+        elif kind == "line":
+            s.raw('<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f" stroke="%s" stroke-opacity="%s" stroke-width="%s"%s/>'
+                  % (x0, y0 + 5.5, x0 + 30, y0 + 5.5, st["stroke"], st["op"], st["sw"], dash))
         elif kind == "hole":
             s.raw('<circle cx="%.1f" cy="%.1f" r="8" fill="none" stroke="%s" stroke-width="1" stroke-dasharray="3,2"/>'
                   '<circle cx="%.1f" cy="%.1f" r="4" fill="%s" stroke="%s" stroke-width="1.4"/>'
@@ -1165,17 +1313,20 @@ def layout():
     notes = [
         "r7 outline: r6 rectangle x 17.70-48.70, y 34.14-67.14 + tab X x 48.70-65.00, y 56.30-68.30 + tab Y x 17.70-37.56, y 67.14-76.00; "
         "%.2f mm2 (H.23(a)); the 1.0 mm x 45 deg pin-11 chamfer moved to (17.70, 76.00)." % a["area_total"],
-        "Tap field: %d pads + R175 on tab X in a 6 x 4 grid at 2.54 mm (x %.2f-%.2f, y %.2f-%.2f; H.23(g)), spares %s (sp). "
-        "Pad number = F-number; the tap of each F-pad is in A.4."
-        % (len(g["tab_x_pads"]), g["xs"][0], g["xs"][-1], g["ys"][0], g["ys"][-1],
+        "Tap field (calc revision 4, D-F4 adjacency exclusions): %d pads + R175 on tab X in a 6 x 4 grid at 2.54 mm (x %.2f-%.2f, y %.2f-%.2f; H.23(g)); "
+        "R175 pads R175a (%.2f, %.2f) and R175b (%.2f, %.2f); spares %s (sp)."
+        % (len(g["tab_x_pads"]), g["xs"][0], g["xs"][-1], g["ys"][0], g["ys"][-1], r175a[0], r175a[1], r175b[0], r175b[1],
            " and ".join("(%.2f, %.2f)" % tuple(p) for p in g["spare"])),
-        "Residual tap pads on the footprint low-y band (H.23(g)): %s; F22 is the shortest compliant T18 position (straight %.2f mm to CO-5V pad 1)."
+        "    Pad number = F-number; the tap of each F-pad is in A.4. Every orthogonal pair is in the H.23(g) short table; none is forbidden.",
+        "Residual tap pads on the footprint low-y band (H.23(g)): %s; F22 is the low-row T18 position nearest CO-5V (BASIS B3; straight %.2f mm to CO-5V pad 1)."
         % (", ".join("%s (%s) at (%.2f, %.2f)" % (g["assignment"][t][0], t, v[0], v[1]) for t, v in g["residual"].items()),
            [c["straight"] for c in g["t18_candidates"] if tuple(c["pad"]) == tuple(g["t18_pad"])][0]),
         "FT1 = %.1f x %.1f mm at (%.2f, %.2f), tx/ty ±%.3f/%.3f mm, bound by the %s; "
         "FT2 = %.1f x %.1f mm at (%.2f, %.2f), tx/ty ±%.3f/%.3f mm, bound by the %s (H.23(i))."
         % (f1["size"][0], f1["size"][1], f1["centre"][0], f1["centre"][1], f1["tx"], f1["ty"], re.sub(r" w[\d.]+ \(.*?\)-\(.*?\)", "", f1["bind"]),
            f2["size"][0], f2["size"][1], f2["centre"][0], f2["centre"][1], f2["tx"], f2["ty"], f2["bind"]),
+        "Foot block height h_f = 2.54 - t_bed %.2f - t_bond %.2f = %.2f mm (block +0/-0.05 mm; 0.05 mm acrylic transfer tape on the CR bottom; H.23(i))."
+        % (i1["foot_height"]["t_bed_nom"], i1["foot_height"]["t_bond"], i1["foot_height"]["h_f"]),
         "Foot keep-out = body + 0.5 mm; FT1 has an RTV lane to the tab X top edge (bedded before the W leads and taps, B1), FT2 has no lane (H.23(d)).",
         "FT2 sits at the far edge of tab Y (B2: largest lever from the pin-11 row with t >= 0.25 mm); its +y lane is behind the L-FC body, so it is "
         "bedded through a %.1f mm NPTH fill hole at (%.2f, %.2f)," % (fh["d"], fh["centre"][0], fh["centre"][1]),
@@ -1186,8 +1337,23 @@ def layout():
         "Copper rim = polygon vertex path or trace centre line + half the outline width (r7_calc convention); vias at the 0.7564 mm pad. "
         "Only the 5V set near tab X and the VBUS pour near tab X are drawn.",
         "W6/W7 pads: A.8 gives 1.2 x 1.5 mm; the orientation (1.2 mm along x) is an ASSUMPTION. Header pads are drawn at the A.8 minimum 1.9 mm.",
-        "W-lead route maxima after MS2 (H.23(l), route rule): " + ", ".join("%s %d" % (k, v["max"]) for k, v in routes.items())
-        + " mm; until MS2 the r6 0.30 m caps stay the T-A-02 bound.",
+        "W-lead dressing path (A.3, H.23(l)): trunk +y on x 25.80, +x across tab Y at y 69.60-71.75, off the CR at x 37.56 to tie base A1; west group "
+        "(W1, W2, W6, W7) up x 58.00, east group (W3, W4, W5) via A2.",
+        "    Anchors: beads B1/B3 and W5 spacers S1-S3 on the CR (3.0 x 3.0 mm, ASSUMPTION; B3 and S3 merge), tie bases A1 %.0f x %.0f mm +- %.1f and "
+        "A2 %.0f x %.0f mm +- %.1f on the MB (zone dashed); longest span 26.0 mm (<= 30 mm)."
+        % (tbs["A1"]["side"], tbs["A1"]["side"], tbs["A1"]["tol"], tbs["A2"]["side"], tbs["A2"]["side"], tbs["A2"]["tol"]),
+        "3-D switched-conductor rule (decision 2026-11-10, no height limit): the round leads are held >= %.2f mm above the MB from B1 to (%.2f, %.2f), "
+        "W5 >= %.2f mm (L-FC top 5.0 mm, ASSUMPTION)."
+        % (J["l"]["rev4"]["sw3d"]["W1"][0]["need"], J["l"]["rev4"]["sw3d"]["W1"][0]["p1"][0], J["l"]["rev4"]["sw3d"]["W1"][0]["p1"][1],
+           J["l"]["rev4"]["sw3d"]["W5"][0]["need"]),
+        "Polyimide strip on the MB under the leads off the CR: lead envelope + 2.0 mm within x %.2f-%.2f, y %.2f-%.2f (drawn from the tab Y +x edge); "
+        "it stops at each tie-base footprint." % tuple(Ld["polyimide_strip"][k] for k in (0, 2, 1, 3)),
+        "W1/W2: fixed build length 0.30 m +- 10 mm (routes %.1f / %.1f mm; slack = service loop on the EVM plate, D-F3). Route maxima after MS2: %s mm; "
+        "until MS2 the 0.30 m caps stay the T-A-02 bound."
+        % (routes["W1"]["L"], routes["W2"]["L"], ", ".join("%s %d" % (k, v["max"]) for k, v in routes.items() if v["max"])),
+        "    W5: fixed 304.8 mm factory cable; route %.1f mm + 20 mm 3-D allowance = %.1f mm minimum fit." % (routes["W5"]["L"], routes["W5"]["L"] + 20.0),
+        "Sheet openings (H.23(m)): 2.2 mm relief holes at the 22 header pads (3.4 mm holes would merge into slots and drop t_bed to %.3f mm); "
+        "five enlarged cut-outs merge into two openings." % J["m"]["relief"]["t_bed_nominal_after"],
         "EVM panel: EVM, EIB, USB corridor and routes from H.23(l); the EVM bottom edge sits 20 mm past the MB +y edge (J8 mating gap); "
         "J1/J5/J7/J8 dots are the route terminals; the USB plug + bend length is TODO(measure: MS2).",
         "CHG header pads: pin 1 (45.998, 39.084), pins 1-10 on x 45.998; pin 11 (20.998, 64.484), pins 11-22 on x 20.998 (A.8).",

@@ -1,0 +1,243 @@
+{
+ "group": "rev7-F7",
+ "edits": [
+  {
+   "old": "reads the `.brd` through `calc/mb_neighbours.py` and the MB solder-mask Gerbers; sources in the header |",
+   "new": "reads the `.brd` through `calc/mb_neighbours.py` and the MB solder-mask Gerbers; it also reads the `.brd` directly and the round-4 notes and scripts tagged BASIS (`work/r7_design_basis.md`), EVMG (`work/evm_geometry.md`, `work/evm_calc/evm_geom_out.txt`), MBM (`work/mb_mechanical.md`, `work/mb_pinload.py`), STK, MIN (`work/proposal_minimal.md`, `work/minimal_calc/*.py`) and EIBM (`work/eib_merge_calc.py`, `work/eib_merge_failsafe.md` Table 9); sources in the header |",
+   "note": "supporting-files-table-incomplete: r7_calc.py inputs completed from its header tags"
+  },
+  {
+   "old": "| `work/stackup_area.md` | Layer count, stack-up and area booking of the extended carrier |",
+   "new": "| `work/stackup_area.md` | Layer count, stack-up and area booking of the extended carrier |\n| `review_loop.md` | The round-4 review-design loop: the design phase (fact-finding, proposals and assessment, decisions and calculation, in-place revision), review round 7 and the final independent audit |\n| `work/r7_design_basis.md` | The r7 decisions D1-D11 with their addenda (sections 10 and 11) and the coined terms; the inputs tagged BASIS in `calc/r7_calc.py` |\n| `work/proposal_minimal.md`, `work/proposal_tapside.md`, `work/proposal_evm_on_cr.md` (+ `work/minimal_calc/`, `work/tapside_calc.py`, `work/r7_evm_on_cr_calc.py`) | The three candidate carrier layouts and their calculations; the minimal proposal was adopted (tag MIN in `calc/r7_calc.py`) |\n| `work/mb_pinload.py`, `work/eib_merge_calc.py` | The pin-group load model (tag MBM) and the E1/C205 loop-inductance model (tag EIBM) that `calc/r7_calc.py` uses |\n| `work/r7_review7_findings.json`, `work/r7_review7_dispositions.md` | Review round 7: the verified findings with the verifier's fix, and the dispositions D-F1 to D-F7 that settle conflicting fixes |\n| `work/r7_check/`, `work/r7_check2/`, `work/r7_check3/`, `work/r7_check4/` | Independent re-computations of the H.23 figures |",
+   "note": "supporting-files-table-incomplete: rows for review_loop.md, r7_design_basis.md, the proposals, MBM/EIBM scripts, r7_review7_*, r7_check*"
+  },
+  {
+   "old": "`round4/work/`, and the r7 table in 0.3 lists the resulting changes.",
+   "new": "`round4/work/`, and the r7 table in 0.3 lists the resulting changes. The decisions are recorded in `round4/work/r7_design_basis.md`. The round-4 log, including review round 7, is `round4/review_loop.md`.",
+   "note": "supporting-files-table-incomplete: 0.4 r7 names the decision record and the round-4 log"
+  },
+  {
+   "old": "(Table 9 pickup criterion; section 7 G1 merge conditions), `round4/work/stackup_area.md`; `round4/calc/r7_calc.py` with",
+   "new": "(Table 9 pickup criterion; section 7 G1 merge conditions), `round4/work/stackup_area.md`, `round4/work/r7_design_basis.md` (the r7 decisions), `round4/work/proposal_minimal.md` (the adopted proposal), `round4/work/mb_pinload.py`, `round4/work/eib_merge_calc.py`; `round4/calc/r7_calc.py` with",
+   "note": "supporting-files-table-incomplete: K round-4 work notes list"
+  },
+  {
+   "old": "(**superseded in r7:** the named keep-out\n  retires; the bottom clearance rule below covers it.)",
+   "new": "(**superseded in r7:** the named keep-out\n  retires; the bottom clearance rule below covers its five parts.)",
+   "note": "bottom-rule-superset-claim: line 682"
+  },
+  {
+   "old": "It applies on the footprint and on both tabs, and it is a superset of the shadow and of the\n  keep-out (the five parts under the footprint are MB part boxes).",
+   "new": "It applies on the footprint and on both tabs. It is a superset of the shadow. It covers the\n  five parts of the retired keep-out (D-BT-SQ, C-D11, C-D12, C-DC11, C-DC12) by their MB part boxes + 1.0 mm, which exceeds\n  the keep-out's part + 0.5 mm. However, it releases 2.4 mm² of the keep-out rectangle between those boxes (H.23(d): footprint\n  376.9 -> 379.3 mm²); that area is >= 1.0 mm from every non-GND MB copper rim.",
+   "note": "bottom-rule-superset-claim: the rule is not a superset of the keep-out rectangle"
+  },
+  {
+   "old": "(**superseded in r7:** the bottom clearance rule covers that rectangle, H.23(d))",
+   "new": "(**superseded in r7:** the bottom clearance rule covers the five parts in that rectangle by their part boxes + 1.0 mm and releases 2.4 mm² between them, H.23(d))",
+   "note": "bottom-rule-superset-claim: same claim in the T-A-06 pass column"
+  },
+  {
+   "old": "  - **r7 sheet outline (H.23(m)):** the r7 outline + 1 mm on every side (mitred offset), trimmed to >= 0.5 mm from every MB part\n    body it would otherwise meet: CO-5V (x 49.700 -> 48.800 over y 37.274-41.974), J-NTC (x 16.700 -> 16.752 over y\n    52.414-67.854), L-FC with the Eaton 12.9 mm body (y 77.000 -> 76.362 over x 22.064-36.864) and ROP1-FC (x 38.560 -> 37.561\n    over y 73.299-75.999). The trimmed sheet has 27 vertices: (16.700, 33.140), (49.700, 33.140), (49.700, 37.274), (48.800,\n    37.274), (48.800, 41.974), (49.700, 41.974), (49.700, 55.300), (66.000, 55.300), (66.000, 69.300), (47.700, 69.300),\n    (47.700, 68.140), (38.560, 68.140), (38.560, 73.299), (37.561, 73.299), (37.561, 75.999), (38.560, 75.999), (38.560,\n    77.000), (36.864, 77.000), (36.864, 76.362), (22.064, 76.362), (22.064, 77.000), (18.286, 77.000), (16.700, 75.414),\n    (16.700, 67.854), (16.752, 67.854), (16.752, 52.414), (16.700, 52.414). Its area is 1560.8 mm² and its bounding box 49.30 x\n    43.86 mm (r6: 33.0 x 35.0 mm; T-A-05 checks the sheet stock size). After the trims no MB part body lies within 0.5 mm of the\n    sheet and no trimmed vertex lies inside the CR outline. The 22 relief holes and the five cut-outs are unchanged; the two\n    foot fallback cut-outs (feet bullets below) are the only further openings.",
+   "new": "  - **r7 sheet outline (H.23(m)):** the r7 outline + 1 mm on every side (mitred offset), trimmed to >= 0.5 mm from every MB part\n    body and every MB copper pad it would otherwise meet (SMD pads as rotated in the `.brd`, through-hole pads by their\n    diameter). A sheet sliver shorter than 1.0 mm beside a trim is cut away with it. The five trims are CO-5V (x 49.700 ->\n    48.800 over y 36.766-42.482), J-NTC (x 16.700 -> 16.752 over y 52.414-67.854), L-FC with the Eaton 12.9 mm body (y\n    77.000 -> 76.362 over x 22.064-36.864), OP-FC (y 68.140 -> 67.480 over x 39.719-45.624) and ROP1-FC (x 38.560 -> 37.561\n    from y 72.934 to the sheet top y 77.000). The trimmed sheet has 29 vertices: (16.700, 33.140), (49.700, 33.140), (49.700, 36.766), (48.800, 36.766), (48.800, 42.482), (49.700, 42.482), (49.700, 55.300), (66.000, 55.300), (66.000, 69.300), (47.700, 69.300), (47.700, 68.140), (45.624, 68.140), (45.624, 67.480), (39.719, 67.480), (39.719, 68.140), (38.560, 68.140), (38.560, 72.934), (37.561, 72.934), (37.561, 77.000), (36.864, 77.000), (36.864, 76.362), (22.064, 76.362), (22.064, 77.000), (18.286, 77.000), (16.700, 75.414), (16.700, 67.854), (16.752, 67.854), (16.752, 52.414), (16.700, 52.414).\n    Its area is 1554.6 mm² and its bounding box 49.30 x 43.86 mm (r6: 33.0 x 35.0 mm; T-A-05 checks the sheet stock size).\n    After the trims no MB part body or MB pad lies within 0.5 mm of the sheet. The nearest is CO-5V pad 1 at 0.500 mm, which\n    a +-0.2 mm hand-cut tolerance reduces to 0.300 mm. No trimmed vertex lies inside the CR outline. The 22 relief holes and\n    the five cut-outs are unchanged; the two foot fallback cut-outs (feet bullets below) are the only further openings.\n  - **Relief holes and cut-outs against the MB pads (r7, H.23(m)):** the 22 relief holes are an exception to the pad rule.\n    Each 2.2 mm hole clears the flats of its 1.650 mm square CHG pad by 0.275 mm and covers each pad corner by up to\n    0.067 mm. A hole that kept 0.5 mm from the pad corners would need a diameter >= 3.33 mm. At the 2.54 mm pitch such holes\n    merge, and the header bodies, which set the stack height (H.23(j)), would lose their seat on the sheet. The five r5\n    cut-outs keep their part body + 0.5 mm rule and clear their own pads by 0.100-0.285 mm. The D-BT-SQ and C-DC12 cut-outs\n    overlap (x 27.718-28.990, y 51.449-52.226) and form one opening.",
+   "note": "sheet-trims-ignore-pads: A.7 r7 sheet outline re-derived on bodies + pads (r7_calc H.23(m)); relief-hole exception (check 4 error 3)"
+  },
+  {
+   "old": "trimmed at CO-5V, J-NTC, L-FC and ROP1-FC; 27 vertices, 1560.8 mm², bounding box 49.30 x 43.86 mm",
+   "new": "trimmed to >= 0.5 mm from every MB part body and MB pad at CO-5V, J-NTC, L-FC, OP-FC and ROP1-FC; 29 vertices, 1554.6 mm², bounding box 49.30 x 43.86 mm",
+   "note": "sheet-trims-ignore-pads: r7-3 row"
+  },
+  {
+   "old": "trimmed to >= 0.5 mm from the CO-5V, J-NTC, L-FC and ROP1-FC bodies, bounding box 49.30 x 43.86 mm, H.23(m)",
+   "new": "trimmed to >= 0.5 mm from the CO-5V, J-NTC, L-FC, OP-FC and ROP1-FC bodies and pads, bounding box 49.30 x 43.86 mm, H.23(m)",
+   "note": "sheet-trims-ignore-pads: PM4 (1)"
+  },
+  {
+   "old": "the r7 sheet = the r7 outline + 1 mm with the CO-5V, J-NTC, L-FC and ROP1-FC trims, 27 vertices, bbox 49.30 x 43.86 mm, H.23(m);",
+   "new": "the r7 sheet = the r7 outline + 1 mm with the CO-5V, J-NTC, L-FC, OP-FC and ROP1-FC trims, 29 vertices, bbox 49.30 x 43.86 mm, H.23(m);",
+   "note": "sheet-trims-ignore-pads: T-A-06 method"
+  },
+  {
+   "old": "(7) 1:1 print of the r7 sheet laid on the bare MB;",
+   "new": "(7) 1:1 print of the r7 sheet laid on the bare MB, scored against the MB part bodies and the MB copper pads;",
+   "note": "sheet-trims-ignore-pads: T-A-06 item (7) scores pads too"
+  },
+  {
+   "old": "every r7 sheet edge >= 0.5 mm from every MB part body on the print;",
+   "new": "every r7 sheet edge >= 0.5 mm from every MB part body and every MB copper pad on the print (the 22 relief holes excepted, A.7);",
+   "note": "sheet-trims-ignore-pads: T-A-06 pass"
+  },
+  {
+   "old": "the r7 sheet outline with its four trims, bounding box 49.30 x 43.86 mm, H.23(m))",
+   "new": "the r7 sheet outline with its five trims, bounding box 49.30 x 43.86 mm, H.23(m))",
+   "note": "sheet-trims-ignore-pads: E BOM line"
+  },
+  {
+   "old": "(`round4/calc/r7_calc.py` H.23(m); part bodies from `.brd` layers 21 + 51; rule: sheet >= 0.5 mm from every MB part body) | the r6 sheet x 16.70-49.70, y 33.14-68.14 **overlapped the CO-5V body by 0.400 x 3.700 mm (1.48 mm²)** (a latent r6 defect against the r5 \"cut-outs, not a drape\") and kept 0.448 mm from J-NTC. r7 sheet = r7 outline + 1 mm, trimmed: CO-5V x 49.700 -> 48.800 over y 37.274-41.974; J-NTC x 16.700 -> 16.752 over y 52.414-67.854; L-FC (Eaton 12.9 mm) y 77.000 -> 76.362 over x 22.064-36.864; ROP1-FC x 38.560 -> 37.561 over y 73.299-75.999; after the trims no MB body lies within 0.5 mm; 27 vertices, 1560.8 mm², bounding box 49.30 x 43.86 mm (r6 33.0 x 35.0 mm); relief holes and the five cut-outs unchanged |",
+   "new": "(`round4/calc/r7_calc.py` H.23(m); part bodies from `.brd` layers 21 + 51, MB copper pads from the `.brd` (SMD rotated, through-hole by diameter); rule: sheet >= 0.5 mm from every MB part body and every MB pad, slivers < 1.0 mm cut away) | the r6 sheet x 16.70-49.70, y 33.14-68.14 **overlapped the CO-5V body by 0.400 x 3.700 mm (1.48 mm²)** (a latent r6 defect against the r5 \"cut-outs, not a drape\") and kept 0.448 mm from J-NTC. r7 sheet = r7 outline + 1 mm, trimmed: CO-5V x 49.700 -> 48.800 over y 36.766-42.482; J-NTC x 16.700 -> 16.752 over y 52.414-67.854; L-FC (Eaton 12.9 mm) y 77.000 -> 76.362 over x 22.064-36.864; OP-FC y 68.140 -> 67.480 over x 39.719-45.624; ROP1-FC x 38.560 -> 37.561 over y 72.934-77.000 (carried to the sheet top); after the trims no MB body or pad lies within 0.5 mm (nearest CO-5V pad 1, 0.500 mm; 0.300 mm after a +-0.2 mm hand-cut tolerance); 29 vertices, 1554.6 mm², bounding box 49.30 x 43.86 mm (r6 33.0 x 35.0 mm); the 2.2 mm relief holes clear the flats of their 1.650 mm square pads by 0.275 mm and cover the pad corners by up to 0.067 mm (exception, A.7); the five cut-outs (body + 0.5 mm) unchanged, 0.100-0.285 mm from their own pads |",
+   "note": "sheet-trims-ignore-pads: H.23(m) row"
+  },
+  {
+   "old": "**r7:** T-A-08 (the pre-capture survey MS1-MS8; its MS1 part gates PM1) gates PM0;",
+   "new": "**r7:** T-A-08 (the pre-capture survey MS1-MS8; its MS1a part gates PM1, and its MS6 reading at the CHG holes gates PM4) gates PM0;",
+   "note": "ms1-mass-after-removal-gates-removal / ta08-gates-circular: PM0 gate cell"
+  },
+  {
+   "old": "**r7:** record MS1 first (gate D-2, unchanged; `docs/reviews/battery_isolation_2026-11-07/detailed_design_IC1.md` section 15.2): the Ag105 standoff at the four corners, the module top height above the MB and the module mass after removal (T-A-08). MS1 decides the r7 stack top, >= 12.265 mm plus the cable, against the nominal 13.14 mm Ag105 envelope (H.23(j))",
+   "new": "**r7:** record MS1a first (gate D-2, unchanged; `docs/reviews/battery_isolation_2026-11-07/detailed_design_IC1.md` section 15.2): the Ag105 standoff at the four corners and the module top height above the MB (T-A-08). MS1a decides the r7 stack top, >= 12.265 mm plus the cable, against the nominal 13.14 mm Ag105 envelope (H.23(j)). After the removal, weigh the module and record the mass as MS1b (T-A-08; it gates nothing). Before PM4, measure the MB thickness at the empty CHG holes by caliper (MS6, T-A-08)",
+   "note": "ms1-mass-after-removal-gates-removal + ta08-gates-circular (3): PM1"
+  },
+  {
+   "old": "MS3 records the R171 position and height (T-A-08)",
+   "new": "Record the R171 position and height. Before PM4, confirm in the T-A-06 item (8) tab dry fit that R171 is clear of tab X",
+   "note": "ta08-gates-circular (6): R171 leaves MS3; PM3 precedes the T-A-06 (8) dry fit"
+  },
+  {
+   "old": "(4) cut the MB-bottom tails to <= 1.0 mm (or less if the chassis clearance under the MB requires it, measured in T-A-06 (**superseded in r7:** measured in MS2, T-A-08);",
+   "new": "(4) cut the MB-bottom tails to <= 1.0 mm (or less if the chassis clearance under the MB requires it, measured in T-A-06) (**superseded in r7:** cut them to <= min(1.0 mm, MS2 under-MB clearance - 0.5 mm), T-A-08);",
+   "note": "ta08-ms2-no-pass-criterion (3): PM4 (4) tail target"
+  },
+  {
+   "old": "MB-bottom tails <= 1.0 mm (or the measured chassis clearance)",
+   "new": "MB-bottom tails <= 1.0 mm (or the measured chassis clearance) (**superseded in r7:** <= min(1.0 mm, MS2 under-MB clearance - 0.5 mm))",
+   "note": "ta08-ms2-no-pass-criterion (3): T-A-06 pass, zero-margin wording replaced"
+  },
+  {
+   "old": "(c) after fabrication, before soldering: dry-fit the bare CR on loose header pins",
+   "new": "(c) after fabrication, before soldering: measure the CR finished thickness by caliper (MS6) and dry-fit the bare CR on loose header pins",
+   "note": "ta08-gates-circular (3): CR thickness measured where the CR exists"
+  },
+  {
+   "old": "**Pre-capture survey (r7; gate for PM0; the MS1 part gates PM1):**",
+   "new": "**Pre-capture survey (r7; MS1a gates PM1; MS2-MS5, MS7, MS8 and the MS6 board-edge reading gate PM0; the MS6 reading at the CHG holes, taken after PM1, gates PM4; MS1b gates nothing):**",
+   "note": "ta08-gates-circular (1) + ms1 split: T-A-08 gates per item"
+  },
+  {
+   "old": "MS1: Ag105 standoff at four corners, module top height and module mass after removal.",
+   "new": "MS1a (before PM1): Ag105 standoff at four corners and module top height. MS1b (after PM1, information only): module mass after removal.",
+   "note": "ms1-mass-after-removal-gates-removal: T-A-08 method"
+  },
+  {
+   "old": "the 2026-08-16 encoder reroute wires, R171 on C-D2 pad 1 and RENC2; L-FC body by caliper.",
+   "new": "the 2026-08-16 encoder reroute wires and RENC2; the same items along the W-lead path over the MB (x 36-78, y 65-98, including the A1 and A2 tie-base zones, A.3); L-FC body by caliper (R171 is fitted in PM3 and checked in the T-A-06 item (8) dry fit).",
+   "note": "ta08-gates-circular (6): R171 out of MS3; MS3 scope extended to the W-lead path (D-F2, w-band-over-mb-bodges, as in J.2 item 48)"
+  },
+  {
+   "old": "MS6: MB thickness at the CHG holes (caliper); CR finished thickness and laminate modulus from the fab.",
+   "new": "MS6: before PM0, MB thickness at the board edge (caliper; the provisional post-arithmetic input); after PM1 and before PM4, MB thickness at the empty CHG holes (caliper); after fabrication, CR finished thickness (caliper, T-A-06 step (c)); laminate modulus from the fab stack-up (MS8).",
+   "note": "ta08-gates-circular (3): MS6 split by when each item exists"
+  },
+  {
+   "old": "within the MS1 module envelope (nominal 13.14 mm);",
+   "new": "within the MS1a module envelope (nominal 13.14 mm);",
+   "note": "ms1 split: T-A-08 pass"
+  },
+  {
+   "old": "MS5 spectrum consistent with the feet (H.23(i), order of magnitude);",
+   "new": "MS5 peak MB acceleration (0.1-8 kHz) <= 30 g, the H.23(i) pin-load basis (the spectrum is recorded for T-F-18);",
+   "note": "ms5-tf18-criteria-not-measurable (a): numeric MS5 pass"
+  },
+  {
+   "old": "; MS7 heights clear of the clamp and plate design; MS8 router radius and copper rules met by the r7 capture |",
+   "new": "; MS2 lid clearance >= 1.0 mm above the tallest CR item under it (over J101 the W5 stack top, >= 12.265 mm + the W5 cable, H.23(j); over each tab the CR top, 4.265 mm, plus the dressed W leads and tap wires); MS2 chassis clearance under the MB >= 1.5 mm (the PM4 step-4 1.0 mm tail + 0.5 mm air); MS7 dimensions recorded (T-A-02 checks the clamp and plate fit once the J.2 item 54 design exists); MS8 figures recorded and entered as the PM0 capture and DRC rules (the T-A-06 DRC checks the capture against them) |",
+   "note": "ta08-ms2-no-pass-criterion (1) + ta08-gates-circular (4)(5): MS2 criteria, MS7/MS8 passes executable before PM0"
+  },
+  {
+   "old": "MS1 envelope exceeded: PM1 holds (A.7);",
+   "new": "MS1a envelope exceeded: PM1 holds (A.7); MS2 lid clearance below its bound: PM0 holds, and the W5 socket orientation or a low-profile connector is re-designed (J.2 item 59); MS2 under-MB clearance < 1.5 mm: set the PM4 step-4 tail target to (clearance - 0.5 mm), and below 0.5 mm PM4 holds for an insulating-spacer ruling; MS5 peak above 30 g: re-run `round4/calc/r7_calc.py` with the measured peak in place of the 30 g basis, and the operator rules on the feet and the header joints from the scaled pin loads before PM0;",
+   "note": "ta08-ms2-no-pass-criterion (2) + ms5-tf18 (a): fail branches"
+  },
+  {
+   "old": "46. **MS1, Ag105 envelope (r7; gates PM1):** Ag105 standoff at four corners, module top height and module mass after\n    removal. It decides",
+   "new": "46. **MS1a, Ag105 envelope (r7; gates PM1):** Ag105 standoff at four corners and module top height. MS1a decides",
+   "note": "ms1-mass-after-removal-gates-removal: J.2 item 46 (1/2)"
+  },
+  {
+   "old": "envelope (nominal 13.14 mm, AG105_Silvertel.pdf Figure 11) (T-A-08).\n47.",
+   "new": "envelope (nominal 13.14 mm, AG105_Silvertel.pdf Figure 11) (T-A-08). MS1b, the module mass, is recorded after PM1 and\n    gates nothing.\n47.",
+   "note": "ms1-mass-after-removal-gates-removal: J.2 item 46 (2/2)"
+  },
+  {
+   "old": "47. **MS2, enclosure and chassis (r7):** lid clearance over the footprint and both tabs,",
+   "new": "47. **MS2, enclosure and chassis (r7; gate for PM0):** the pass criteria are a lid clearance >= 1.0 mm above the tallest CR\n    item under it and an under-MB clearance >= 1.5 mm (T-A-08). MS2 measures the lid clearance over the footprint and both tabs,",
+   "note": "ta08-ms2-no-pass-criterion + ta08-gates (7): J.2 item 47"
+  },
+  {
+   "old": "the 2026-08-16 encoder reroute wires, R171 on C-D2 pad 1 and RENC2 inside each tab outline",
+   "new": "the 2026-08-16 encoder reroute wires and RENC2 inside each tab outline",
+   "note": "ta08-gates-circular (6): J.2 item 48"
+  },
+  {
+   "old": "50. **MS5, vibration (r7):** MB acceleration near the CHG footprint",
+   "new": "50. **MS5, vibration (r7; gate for PM0; pass: peak MB acceleration <= 30 g, the H.23(i) pin-load basis, T-A-08):** MB\n    acceleration near the CHG footprint",
+   "note": "ms5-tf18 (d): J.2 item 50 pass"
+  },
+  {
+   "old": "jumper headers with shunts and the test points. It decides the clamp design and the plate clearances.",
+   "new": "jumper headers with shunts and the test points. It decides the clamp design and the plate clearances, which T-A-02\n    checks once the J.2 item 54 design exists. MS7 is recorded before PM0.",
+   "note": "ta08-gates-circular (5): J.2 item 52"
+  },
+  {
+   "old": "53. **MS8, fab rules (r7):**",
+   "new": "53. **MS8, fab rules (r7; gate for PM0):**",
+   "note": "ta08-gates (7): J.2 item 53 gate"
+  },
+  {
+   "old": "It decides the PM0 DFM check (copper weight) and the three concave\n    tab-root corners (H.23(a)).",
+   "new": "It decides the PM0 DFM check (copper weight) and the three concave\n    tab-root corners (H.23(a)). The figures are entered as PM0 capture and DRC rules, and the T-A-06 DRC checks the capture.",
+   "note": "ta08-gates-circular (4): J.2 item 53"
+  },
+  {
+   "old": "  Gates: MS1 (Ag105 standoff at four corners, module top height, module mass; gate D-2) before PM1.\n  MS2-MS7 before PM0: MS2",
+   "new": "  Gates: MS1a (Ag105 standoff at four corners, module top height; gate D-2) before PM1; MS1b (module mass) after\n  PM1, information only. MS2-MS5 and MS7 before PM0; MS6 MB thickness at the board edge before PM0, at the CHG holes\n  after PM1 and before PM4. MS2",
+   "note": "ms1 split + ta08-gates (7): D.5 gates"
+  },
+  {
+   "old": "  MS6 MB and CR thickness -> post arithmetic, foot height; MS7 EVM as received -> clamp design.",
+   "new": "  MS6 MB and CR thickness (the CR in T-A-06 step (c)) -> post arithmetic; MS7 EVM as received -> clamp design.",
+   "note": "ta08-gates (3) + D-F1: MS6 no longer sets the foot height"
+  },
+  {
+   "old": "PM1 records MS1 first; PM3 notes C-D2 3.64 mm from FT1;",
+   "new": "PM1 records MS1a first, then MS1b and the MS6 CHG-hole thickness after the removal; PM3 notes C-D2 2.181 mm from tab X;",
+   "note": "ms1 split + pm3-cd2 nit: r7-16"
+  },
+  {
+   "old": "new T-A-08 (pre-capture survey MS1-MS8, gate for PM0; MS1 gates PM1)",
+   "new": "new T-A-08 (pre-capture survey MS1-MS8; MS1a gates PM1, the MS6 reading at the CHG holes gates PM4, the other items gate PM0)",
+   "note": "ms1 split + ta08-gates: r7-17"
+  },
+  {
+   "old": "so the margin is <= 0.875 mm before the cable. Gate D-2\n  (MS1: the measured Ag105 standoff and module top height;",
+   "new": "so the margin is <= 0.875 mm before the cable. With a ribbon of about 0.9 mm (ASSUMPTION, TODO(verify: cable assembly\n  drawing)), one or two thicknesses at the fold give an expected margin of -0.03 to -0.93 mm, so gate D-2 is expected to\n  fail on the nominal envelope. The fallback is a right-angle or low-profile 1.27 mm IDC at J101, or an MS2 lid-clearance\n  basis in place of the Ag105 envelope (operator ruling, J.2 item 59). Gate D-2\n  (MS1a: the measured Ag105 standoff and module top height;",
+   "note": "w5-stack-height-fails-by-construction (nit) + ms1 split: A.7 header stack"
+  },
+  {
+   "old": "the cable (H.23(j)). MS1 decides.",
+   "new": "the cable (H.23(j)). With a ribbon of about 0.9 mm (ASSUMPTION, TODO(verify: cable assembly drawing)) the expected margin\n    is -0.03 to -0.93 mm (one or two thicknesses at the fold), so the gate is expected to fail on the nominal envelope.\n    The fallback is a right-angle or low-profile 1.27 mm IDC at J101, or an MS2 lid-clearance basis (T-A-08) in place of\n    the Ag105 envelope, by operator ruling. MS1a decides.",
+   "note": "w5-stack-height-fails-by-construction (nit): J.2 item 59"
+  },
+  {
+   "old": "That joint sits 0.172 mm from the REG-5V box",
+   "new": "The CO-5V pad 1 joint sits 0.172 mm from the REG-5V box",
+   "note": "procedure-ste-and-measurement-nits: PM7 ambiguous referent"
+  },
+  {
+   "old": "51. **MS6, thicknesses (r7):** MB thickness at the CHG holes, CR finished thickness and laminate modulus.",
+   "new": "51. **MS6, thicknesses (r7; the board-edge reading gates PM0, the CHG-hole reading after PM1 gates PM4):** MB thickness at\n    the board edge (before PM0) and at the empty CHG holes (after PM1), CR finished thickness (T-A-06 step (c)) and laminate\n    modulus (MS8 stack-up).",
+   "note": "ta08-gates-circular (3): J.2 item 51 heading and readings (the h_f clause is D-F1's edit)"
+  },
+  {
+   "old": "no unrecorded item inside a tab outline + 0.5 mm or under a foot spot;",
+   "new": "no unrecorded item inside a tab outline + 0.5 mm, under a foot spot or inside the A1/A2 tie-base zones (A.3);",
+   "note": "w-band-over-mb-bodges (D-F2 note): T-A-08 MS3 pass matches the extended scope"
+  }
+ ],
+ "withdrawn_by_integrator": [
+  {
+   "old": "(the C-D2 box is 3.64 mm from the FT1 body, H.23(i))",
+   "new": "(the C-D2 box is 2.181 mm from the tab X right edge, and the R171/T2 joint on C-D2 pad 1 is 3.118 mm from tab X, H.23(b))",
+   "note": "pm3-cd2-distance-wrong-reference (nit)",
+   "reason": "duplicate of F4 PM3 edit, which already replaced this clause with the 2.181 / 3.118 mm H.23(b) figures and marked the 3.64 mm text superseded"
+  }
+ ]
+}

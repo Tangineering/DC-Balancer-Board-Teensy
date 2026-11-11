@@ -183,7 +183,7 @@
 <rect x="1062.0" y="74.0" width="690.0" height="1150.0" rx="6" fill="#fafaf7" stroke="#5b6470" stroke-width="1.4" stroke-dasharray="8,4"/>
 <text x="1070.0" y="92.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="13" text-anchor="start" fill="#1b1f24" font-weight="bold">EVM plate (insulating, on the chassis)</text>
 <text x="1072.0" y="300.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#5b6470" font-weight="normal">EVM on its stock bumpons, held by edge clamps;</text>
-<text x="1072.0" y="316.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#5b6470" font-weight="normal">EIB on its two M3 nylon standoffs (one rigid body)</text>
+<text x="1072.0" y="316.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#5b6470" font-weight="normal">EIB on its two M3 nylon standoffs (EVM and EIB on one plate)</text>
 <rect x="650.0" y="110.0" width="400.0" height="1000.0" rx="6" fill="#eef6ff" stroke="#1b1f24" stroke-width="1.4"/>
 <text x="658.0" y="128.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="13" text-anchor="start" fill="#1b1f24" font-weight="bold">CR r7: r6 footprint + tab X + tab Y, FT1/FT2</text>
 <text x="660.0" y="150.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#5b6470" font-weight="normal">1x10 + 1x12 header pins = CHG pads (A.2); netlist B.8</text>
@@ -229,10 +229,11 @@
 <text x="680.0" y="941.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1b1f24" font-weight="normal">SCL/SDA/GND pads -&gt; W7 to EVM J8; R145/R146 DNP</text>
 <text x="670.0" y="980.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#444" font-weight="bold">Power star: CR GND = pads 4, 14, 15</text>
 <text x="670.0" y="998.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1f6fb2" font-weight="normal">STAT pad 3: R107 10k to 3V3 -&gt; W5 pin 4</text>
-<text x="670.0" y="1052.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1f6fb2" font-weight="normal">3V3: T6 -&gt; R175 68R; R176/R177 200R -&gt; W5 1/2 (r4)</text>
+<text x="670.0" y="1052.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1f6fb2" font-weight="normal">3V3: T6 -&gt; R175 68R (pad R175a -&gt; R175b); R176/R177 -&gt; W5 1/2</text>
 <text x="670.0" y="1016.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1f6fb2" font-weight="normal">THERM pad 13 -&gt; W6 (only if NTC, T-E-09)</text>
 <text x="670.0" y="1034.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1f6fb2" font-weight="normal">readback in: W5 11 -&gt; R125 -&gt; T12; W5 13 -&gt; R148 -&gt; T20 (pin 7)</text>
 <text x="670.0" y="1070.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#5b6470" font-weight="normal">r7: Eagle coords, +y UP; chamfer at the tab Y -x/+y corner (17.70, 76.00), pin-11 side</text>
+<text x="670.0" y="1088.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#5b6470" font-weight="normal">r7: W leads on the A.3 dressing path (B1/B3, S1-S3, A1/A2)</text>
 <polyline points="550.0,590.0 650.0,590.0" fill="none" stroke="#5b6470" stroke-width="6" stroke-dasharray="2,4"/>
 <text x="620.0" y="580.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="middle" fill="#5b6470" font-weight="normal">22 pins</text>
 <polyline points="568.0,820.0 612.0,820.0 612.0,900.0 650.0,889.0" fill="none" stroke="#2e8b57" stroke-width="0.8"/>
@@ -326,7 +327,7 @@
 <polyline points="1050.0,200.0 1260.0,200.0 1260.0,190.0 1435.0,190.0" fill="none" stroke="#c0392b" stroke-width="3"/>
 <polyline points="1050.0,210.0 1250.0,210.0 1250.0,207.0 1435.0,207.0" fill="none" stroke="#1b1f24" stroke-width="3"/>
 <text x="1070.0" y="194.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#c0392b" font-weight="normal">W1/W2  20 AWG twisted pair</text>
-<text x="1070.0" y="226.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#c0392b" font-weight="normal">&lt;= 0.30 m until MS2; route maxima after MS2</text>
+<text x="1070.0" y="226.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#c0392b" font-weight="normal">fixed 0.30 m +- 10 mm (D-F3); slack = service loop</text>
 <polyline points="1050.0,1060.0 1395.0,1060.0 1395.0,290.0 1435.0,290.0" fill="none" stroke="#8e44ad" stroke-width="3.4"/>
 <polyline points="1050.0,1070.0 1405.0,1070.0 1405.0,324.0 1435.0,324.0" fill="none" stroke="#1b1f24" stroke-width="3.4"/>
 <text x="1070.0" y="1094.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#8e44ad" font-weight="normal">W3/W4  18 AWG twisted pair</text>
@@ -336,7 +337,7 @@
 <text x="1070.0" y="953.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1f6fb2" font-weight="normal">&lt;= 0.30 m until MS2; route maxima after MS2</text>
 <polyline points="1050.0,871.0 1090.0,871.0 1090.0,670.0 1110.0,670.0" fill="none" stroke="#1f6fb2" stroke-width="2.2"/>
 <rect x="1080.0" y="382.0" width="300.0" height="80.0" rx="6" fill="#fff" stroke="#1f6fb2" stroke-width="1"/>
-<text x="1088.0" y="399.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1f6fb2" font-weight="normal">W5  14-way 0.635 mm ribbon, &lt;= 0.30 m (J101 -&gt; J201)</text>
+<text x="1088.0" y="399.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="10" text-anchor="start" fill="#1f6fb2" font-weight="normal">W5  14-way 0.635 mm ribbon, fixed 0.30 m cable (J101 -&gt; J201)</text>
 <text x="1088.0" y="416.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="start" fill="#1f6fb2" font-weight="normal">1 3V3  2 3V3  3 GND  4 STAT  5 CE_DRV</text>
 <text x="1088.0" y="431.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="start" fill="#1f6fb2" font-weight="normal">6 KEY (pin omitted)  7 REL_A  8 REL_B  9 GND</text>
 <text x="1088.0" y="446.0" font-family="DejaVu Sans, Arial, sans-serif" font-size="9" text-anchor="start" fill="#1f6fb2" font-weight="normal">10 RFC_OFF  11 ILIM_SNS  12 GND  13 CE_SNS  14 GND</text>
