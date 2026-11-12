@@ -1,5 +1,8 @@
 # CR interactive routing instance (2026-11-12)
 
+**Superseded.** The operator-approved outline change of 2026-11-12 (plug-on CR, outline x 18.584-67, y 7-94) replaces
+the r7 outline this board uses. See `../../OUTLINE_CHANGE_REASSESSMENT_2026-11-12.md`. This folder is kept as a record.
+
 This folder is a self-contained KiCad 9 project for the interactive routing pass on the CR. The generator never
 writes into this folder: `gen/make_board.sh cr` rebuilds `cr/cr.kicad_pcb` only.
 

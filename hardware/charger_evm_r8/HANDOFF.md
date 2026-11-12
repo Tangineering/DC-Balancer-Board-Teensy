@@ -10,7 +10,8 @@ This note gives the starting point for the next session. `LAYOUT_DECISIONS.md` i
 | CR (4 layers, r7 outline 47.30 x 41.86 mm) | schematic complete (ERC 0); placement complete; power pours and straps complete; **95 signal nets not routed** |
 | CR board file | `cr/cr.kicad_pcb` = placed + pours, DNP tier 3 removed, VCHGOUT L4 strap keep-out (D-34) (DRC: 200 unconnected, 4 starved thermals, 2 silkscreen items; section 7) |
 | CR routing study (2026-11-12) | stopped after round 2 without a gain verdict; best r1_B seed 3, 177/199 signal, 27 GND open; see `MORNING_REVIEW_2026-11-12.md` |
-| CR interactive pass (2026-11-12) | operator routes `cr/interactive/` (start: r2_A seed 1, 173/199 signal, 31 GND open); via in pad (plain) allowed; divider-top rule is a soft metric (D-36) |
+| CR outline change (2026-11-12) | operator-approved plug-on outline x 18.584-67, y 7-94, reflow assembly; re-assessment in `OUTLINE_CHANGE_REASSESSMENT_2026-11-12.md`; regeneration waits on its section 10 decisions and the change-request survey. Supersedes the r7 interactive pass below. |
+| CR interactive pass (2026-11-12, superseded) | operator routes `cr/interactive/` (start: r2_A seed 1, 173/199 signal, 31 GND open); via in pad (plain) allowed; divider-top rule is a soft metric (D-36) |
 | Best partial CR routing | `cr/attempts/cr_pathfinder_0p1mm_partial.kicad_pcb` (reference only; 516 clearance violations) |
 | Ordering BOM | `bom_2026-11-11/ordering_bom.csv`: 116 rows in the reference format; no price, stock or SKU read on a live page (bot checks) |
 | Netlist audit | three independent reviewers, 216 parts against B.8/E: no discrepancy |
