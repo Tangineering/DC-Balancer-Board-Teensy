@@ -118,9 +118,14 @@ Add a row for every routed attempt. Write "Resume here" before every long comman
   run because the first iterations are flat.
 - If many nets are still in conflict when the run ends ("legalising iteration N (M nets in conflict)" in the
   log), the result comes from the legalisation, not from a negotiated solution. Say so with the result.
-- Time for 20 iterations: 45 x 40 mm 4-layer board with 95 nets at a 0.127 mm grid, 8 to 16 minutes (longer when
-  other jobs run); 24 x 38 mm 2-layer board with 34 nets, 5 to 30 seconds at the default grid, minutes at a
-  quarter of it. Run a command that can exceed 2 minutes in the background and follow its log.
+- Measured run times of one run (up to 60 iterations), with 12 to 16 runs at once on a 24-core machine: 45 x 40 mm
+  4-layer board with 95 nets at a 0.127 mm grid, 40 to 60 minutes; 24 x 38 mm 2-layer board with 34 nets, about 1
+  minute at a 0.127 mm grid and 15 to 40 minutes at 0.0635 mm. A run alone is about twice as fast. Run every
+  routing command in the background and follow its log. Plan a study around these times: four seeds of one plan
+  on the 4-layer board are about one hour.
+- `seeds.py compare` judges connections only. On a 2-layer board with a ground pour, also compare the pour
+  islands of the scored seeds by hand; a closed seed with more islands than the unrouted board fails review
+  row 5.
 - On a 4-layer board, draft the next plan while a run is in progress.
 
 ## 7. Requests for design changes
