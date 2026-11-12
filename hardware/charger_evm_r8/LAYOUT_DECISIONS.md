@@ -296,7 +296,21 @@ variant, if any, becomes the base.
 2 mm from any logic trace, without a layer scope. The rule binds logic-net copper on F.Cu and logic-net vias of any
 span within 2.0 mm of each part. Logic tracks on In2.Cu and B.Cu may pass under the parts, because L2 is a solid GND
 plane between them and F.Cu and the via ban keeps L2 free of antipads in the zone. /GND, /3V3 and the analog band
-nets are not logic nets. The routing study measures this form and the all-layer form. The conflict report of attempt 4 showed
+nets are not logic nets. The routing study measures this form and the all-layer form.
+
+The placement itself puts logic pads inside the zone. Two groups are treated differently:
+
+- Pins of the A.8-fixed parts are exempt, each with its pad and one F.Cu escape that leaves the zone with no via
+  inside it. These pins are J1.7 /SCL, J1.8 /SDA, J101.7 /ILIM_REL_A, J101.11 /ILIM_SENSE, J101.13 /CE_SENSE,
+  U102.1 /H1 and U103.1 /UVB.
+- Three pads of packer-placed parts are also inside the zone: U109.1 /H1 (0.41 mm), U109.3 /RGN_ON (0.40 mm) and
+  U105.5 /P5N (0.58 mm).
+
+A placement variant tried to keep packer-placed top logic courtyards out of the zone (R109/R111/R114 pinned, zone
+buffer 1.82 mm). It left U111 unplaced at the first attempt. With the tab Y gate fallback moved after the top ICs, it
+left U105 and U118 unplaced, so the variant was withdrawn. The three pads therefore carry the same interim exemption
+(pad plus one escape) until the operator rules. The constraint check reports them in the row "D-35 packer-placed logic
+ICs", and its row "Every part inside the outline" catches a part that the packer parks off the board. The conflict report of attempt 4 showed
 the conflicts spread over the whole interior (x 25-45, y 40-65), not at one point: the CR lacks routing capacity
 for the 6/6-mil rules, and the 0.05 mm grid (whose clearance model is about 10 % conservative, against 20 % at
 0.1 mm) gives the best trajectory so far.

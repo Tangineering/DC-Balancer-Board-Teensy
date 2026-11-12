@@ -11,6 +11,7 @@ This document records the overnight work on the CR routing and the decisions tha
 | 2 | Comparator analog nets kept out of the U101 loop region as a preference, not a gate. Violations are reported rather than rejected. | design owner | A.8 places the comparators 10.40 mm from the loop band (H.23(f)); no design row states a routing rule | Make it a gate, or drop it |
 | 3 | The routing study's via rule is renamed "VR-1" in requests. `LAYOUT_DECISIONS.md` D-20 is the stack-up row, so the old name clashed. | design owner | Terminology | None needed |
 | 4 | Layer scope of the A.8 rule "divider tops R102/R109/R111/R114 at least 2 mm from any logic trace". The rule binds logic-net copper on F.Cu and logic-net vias on any layer within 2.0 mm. Logic tracks on In2.Cu and B.Cu may pass under the four parts. /3V3, /GND and the analog band nets are not "logic". | design owner, on a question from the routing orchestrator | The A.8 row states no layer and no rationale. The round-4 tap-side proposal treats L3 striplines between GND layers as compliant, so GND shielding is the intended mechanism. L2 is solid GND between F.Cu and In2.Cu, and the via ban keeps L2 free of antipads in the zone. | Make the rule bind on all layers. The orchestrator runs both forms, so section 3 states the cost of the all-layer form. |
+| 5 | The A.8-fixed pins inside the divider-top zone (J1.7, J1.8, J101.7, J101.11, J101.13, U102.1, U103.1) are exempt, each with its pad and one F.Cu escape. U105.5, U109.1 and U109.3 carry the same exemption on an interim basis (item 4.1). | design owner | A.8 fixes those parts, and the rule says "trace". A placement variant that kept packer-placed logic out of the zone left U111, or U105 and U118, unplaced. | Hand-place U105 and U109, or make the rule bind on pads as well |
 
 ## 2. Board state at the start of the study
 
@@ -49,4 +50,14 @@ Pending: the round 2 results on variants A and B.
 
 ## 4. Items for the operator
 
-Pending.
+1. **Divider-top rule against the placement (D-35).** The A.8 rule keeps logic copper at least 2 mm from R102, R109,
+   R111 and R114. The placement does not meet it, so routing alone cannot meet it either:
+   - Seven pins of A.8-fixed parts lie inside the zone (J1.7, J1.8, J101.7, J101.11, J101.13, U102.1, U103.1). The
+     design owner exempted these pins, each with its pad and one escape.
+   - Three pads of packer-placed parts lie inside the zone: U109.1 /H1, U109.3 /RGN_ON and U105.5 /P5N, at 0.40 to
+     0.58 mm. A placement variant that kept them out left one or two logic ICs unplaced, so they carry an interim
+     exemption.
+   - The question is whether the operator accepts these exemptions. The alternatives are to hand-place U105 and U109
+     outside the zone or to change the rule itself.
+2. **Layer scope of the same rule** (decision 4): F.Cu plus vias, or all layers. Section 3 will state the cost of
+   each form.

@@ -61,6 +61,31 @@ if BOARD == "cr":
     row("A.7 r7 outline V1-V11, chamfer at (17.70, 76.00)", "Edge.Cuts", "%d vertices, bbox %.2f x %.2f mm, area %.2f mm2"
         % (len(pts), L.P.bounds[2] - L.P.bounds[0], L.P.bounds[3] - L.P.bounds[1], L.P.area), "47.30 x 41.86, 1394.06",
         abs(L.P.area - 1394.06) < 0.05)
+    # every part on the board (a part the packer could not place is parked outside the outline)
+    board_only = {r[0] for r in L.BOARD_ONLY}
+    out = sorted(r for r, fp in FP.items() if r not in board_only and not r.startswith("#")
+                 and not crt(r, fr).is_empty and not L.P.buffer(0.01).contains(crt(r, fr)))
+    row("Every part inside the outline (packer placed all parts)", ", ".join(out) or "all", "%d outside" % len(out), "0",
+        not out)
+    # D-35: divider tops R102/R109/R111/R114 >= 2.0 mm from logic copper on F.Cu; packer-placed ICs are checked here,
+    # the A.8-fixed J1/J101/U102/U103 pins are exempt with one escape each (D-35)
+    def _pbox(p):
+        bb = p.GetBoundingBox()
+        return box(pcbnew.ToMM(bb.GetLeft()), L.YOFF - pcbnew.ToMM(bb.GetBottom()), pcbnew.ToMM(bb.GetRight()),
+                   L.YOFF - pcbnew.ToMM(bb.GetTop()))
+    hull = unary_union([_pbox(p).convex_hull for r in ("R102", "R109", "R111", "R114") for p in FP[r].Pads()])
+    near = []
+    for r, fp in FP.items():
+        if not r.startswith("U") or fp.IsFlipped() or r in L.FIXED or r in L.ANALOG_ICS:
+            continue
+        for p in fp.Pads():
+            if p.GetNetname() in ("/GND", "/3V3") or not p.GetNetname().startswith("/"):
+                continue
+            d = _pbox(p).distance(hull)
+            if d < 2.0:
+                near.append("%s.%s %s %.2f" % (r, p.GetNumber(), p.GetNetname(), d))
+    row("D-35 packer-placed logic ICs >= 2.0 mm from divider tops (F.Cu pads)", "; ".join(near) or "none",
+        "%d pads inside" % len(near), "0 (operator item; interim exemption, D-35)", "info")
     # fixed pads
     for ref, (x, y) in {"W1": (30.3, 61.2), "W2": (27.7, 61.2), "W3": (24.3, 45.4), "W4": (24.3, 55.6)}.items():
         e = pads_e(ref, fr)["1"]

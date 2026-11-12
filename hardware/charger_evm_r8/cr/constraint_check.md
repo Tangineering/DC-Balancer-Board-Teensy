@@ -2,6 +2,8 @@
 |---|---|---|---|---|
 | A.8 CHG holes, 22 pins (pin identity) | J1 | max position error 0.0000 mm | 0.001 mm | pass |
 | A.7 r7 outline V1-V11, chamfer at (17.70, 76.00) | Edge.Cuts | 11 vertices, bbox 47.30 x 41.86 mm, area 1394.06 mm2 | 47.30 x 41.86, 1394.06 | pass |
+| Every part inside the outline (packer placed all parts) | all | 0 outside | 0 | pass |
+| D-35 packer-placed logic ICs >= 2.0 mm from divider tops (F.Cu pads) | U109.1 /H1 0.41; U109.3 /RGN_ON 0.40; U105.5 /P5N 0.58 | 3 pads inside | 0 (operator item; interim exemption, D-35) | info |
 | A.8 added pads | W1 | (30.300, 61.200) | (30.30, 61.20) | pass |
 | A.8 added pads | W2 | (27.700, 61.200) | (27.70, 61.20) | pass |
 | A.8 added pads | W3 | (24.300, 45.400) | (24.30, 45.40) | pass |
