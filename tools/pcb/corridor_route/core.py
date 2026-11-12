@@ -415,6 +415,16 @@ class Ctx:
                 self.assign[net] = a
         for net in self.routable:
             self.assign.setdefault(net, dict(dflt))
+        # per-net additions written by layer_assign.py and global_route.py; they work on top of the groups
+        for net, d in self.P.get("net_layer_cost", {}).items():
+            if net in self.assign:
+                self.assign[net] = dict(self.assign[net], layer_cost=dict(self.assign[net].get("layer_cost") or {}, **d))
+        for net, route in self.P.get("net_route", {}).items():
+            if net in self.assign:
+                for cid, _ in self.flat_route(route):
+                    if cid not in corr:
+                        self.plan_errors.append("net_route %s: unknown corridor %s" % (net, cid))
+                self.assign[net] = dict(self.assign[net], mode="corridor", route=route)
         for net, a in self.assign.items():
             if a["width"] < self.track - 1e-9:
                 self.plan_errors.append("net %s: width %.3f is below rules.track %.3f" % (net, a["width"], self.track))

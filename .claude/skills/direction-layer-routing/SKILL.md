@@ -55,6 +55,13 @@ Read `tools/pcb/corridor_route/reference/common.md` first. The plan format is in
 3. Apply, score and render as in `reference/common.md` section 2 (attempt folder `W/vN`, label
    `direction-vN`). The first attempt is the unconstrained baseline (no `directions`), for comparison.
 
+### Step 2a. Layer assignment from crossings
+
+Run `layer_assign.py` on the baseline plan (`reference/shared-options.md` section 4) and route
+`W/plan_la.json` as one attempt, without `directions`. On a 2-layer board add the `--layer-weight` of the pour
+layer. Compare it with the baseline and with the direction plan: connections, and on a 2-layer board the pour
+islands. A direction plan and a layer assignment may be combined only after each was tested alone.
+
 ### Step 3. Tune
 
 Change one thing for each attempt and record it in `STATUS.md`.
@@ -75,7 +82,8 @@ Change one thing for each attempt and record it in `STATUS.md`.
 Use the repair classes of `reference/failure-repair.md` for single nets. Stop when every connection is made,
 or when two consecutive attempts do not reduce the open connections by more than the noise band
 (`reference/common.md` section 5). On a 4-layer board try the swap once, unless `flows.md` shows one clearly
-dominant direction through the narrowest channel. Report the baseline if no direction plan beats it.
+dominant direction through the narrowest channel. Report the baseline if no direction plan beats it. On the best attempt, run a finishing pass
+(`reference/shared-options.md` section 3).
 
 ### Step 4. Review
 

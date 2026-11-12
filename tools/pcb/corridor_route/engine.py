@@ -38,6 +38,7 @@ class Router:
         self.reserve_cost = float(costs.get("reserve", 6.0))
         self.dir_pen = float(costs.get("direction", 3.0))
         self.thermal_cost = float(costs.get("thermal", 8.0))
+        self.guide_cost = float(costs.get("guide", 3.0))
         NL, ny, nx = C.NL, C.ny, C.nx
         self.occT = np.zeros((NL, ny, nx), np.float32)
         self.occV = np.zeros((NL, ny, nx), np.float32)
@@ -123,6 +124,24 @@ class Router:
             self._resv[key] = m
         return self._resv[key]
 
+    def guide_mult(self, net, j0, j1, i0, i1):
+        """cost multiplier [NL, h, w] outside the guide corridors of the net (plan `net_guide`), or None"""
+        C = self.C
+        ids = C.P.get("net_guide", {}).get(net)
+        if not ids:
+            return None
+        import shapely
+        corr = C.corridors()
+        m = np.full((C.NL, j1 - j0, i1 - i0), self.guide_cost, np.float64)
+        X, Y = C.X[j0:j1, i0:i1], C.Y[j0:j1, i0:i1]
+        for cid in ids:
+            c = corr.get(cid)
+            if c:
+                inside = shapely.contains_xy(c["geom"], X, Y)
+                for l in c["layers"]:
+                    m[l][inside] = 1.0
+        return m
+
     def dir_mult(self, net):
         C = self.C
         d = dict(C.P.get("directions", {}))
@@ -184,6 +203,9 @@ class Router:
         rm = self.reserve_mult(net)
         if rm is not None:
             base *= rm[sl]
+        gm = self.guide_mult(net, j0, j1, i0, i1)
+        if gm is not None:
+            base *= gm
         base += np.where((pn != FREE) & (pn != n), self.pour_penalty, 0.0)
         base += np.where(C.ring[sl], self.thermal_cost, 0.0)
         vc0 = C.assign[net].get("via_cost")

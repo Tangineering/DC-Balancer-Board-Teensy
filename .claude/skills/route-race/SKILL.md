@@ -36,6 +36,12 @@ Read `tools/pcb/corridor_route/reference/common.md` first. The scripts are in `t
      2. This is the reference; two seeds measure the noise.
    - `corridor`: the `corridor-routing` skill.
    - `direction`: the `direction-layer-routing` skill.
+   Optional entries for a board that did not close in an earlier round or run:
+   - `staged`: the `autorouter-routing` skill, variant S (staged routing).
+   - `global`: the `corridor-routing` skill, Step 0 and Step 0a only: the automatic corridors of
+     `global_route.py` in mode guide, at two seeds, with tile sizes 2.0 and 1.0. No hand corridors.
+   - `layers`: the `direction-layer-routing` skill, Step 0 and Step 2a only: the layer assignment of
+     `layer_assign.py`, at two seeds, with two values of `--cost`. No `directions`.
    With several placement variants, give each variant the two `auto` entries, and add `corridor` and
    `direction` only for the variant that the design owner marks as the main one. Entry names end in the variant
    name (`auto-s1-B`).
@@ -61,7 +67,7 @@ Start one worker agent for each entry, in a single message so that they run in p
   classes and places, the requests.
 
 Do not give one worker the findings of another during the phase. Do not route an entry yourself.
-The machine runs about six 4-layer routing jobs at a time; with more entries, start them in batches.
+The machine runs about eight 4-layer routing jobs at a time; with more entries, start them in batches.
 
 ### Step 3. Rank
 
@@ -72,7 +78,13 @@ The machine runs about six 4-layer routing jobs at a time; with more entries, st
    compare the means.
 3. Check the best attempt yourself, do not trust the worker's summary: `score.md` (open connections, validity,
    parity run), `REVIEW.md` rows 6, 10, 11 and 12, the images, the constrained nets of the brief.
-4. If the board is closed (0 open connections, valid, review passed), go to section 5.
+4. Finishing pass: run `staged.py finish` on the best valid attempt yourself
+   (`reference/shared-options.md` section 3; it is a test on a result, not a race entry), in
+   `RACE/rN/finish`. Apply and score it. If it is valid and has more connections, it is the start result of
+   the relief phase, and `RANKING.md` gets a row `finish`.
+5. Order test: if the two `auto` seeds differ by more than 4 connections, the brief of the next round asks the
+   `auto` entries for `--order short` and `--order long`.
+6. If the board is closed (0 open connections, valid, review passed), go to section 5.
 
 ## 3. Relief phase
 

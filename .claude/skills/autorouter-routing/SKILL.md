@@ -32,6 +32,12 @@ Read `tools/pcb/corridor_route/reference/common.md` first.
 4. Route, apply and score (`reference/common.md` section 2), attempt folder `W/a`, label `auto-A`. If the task
    gives a seed, pass `--seed` to every routing run.
 
+### Variant S. Staged (when the task names it, or when constrained nets fail their design rows)
+
+Same plan as variant A, with the constrained nets and the rails without a pour in priority 1 and long
+constrained nets in priority 2. Route it with `staged.py staged` (`reference/shared-options.md` section 2),
+attempt folder `W/s`, label `auto-S`. Check the priority-1 table of `W/s/stage_1.md` against the design rows.
+
 ### Variant B. Freerouting (a reference, optional)
 
 Freerouting completed fewer connections than variant A on every test board and its results were not valid: it
@@ -59,6 +65,8 @@ Record each attempt in `STATUS.md`. Use `--keep-routes` of the best attempt when
 | New `starved_thermal` items | `costs.thermal` 30 |
 | More pour islands or long signal length on the pour layer (2-layer) | `reference/failure-repair.md` section 3 |
 | The best result differs from the next by less than 5 connections | Run both at `--seed 2` |
+| Two seeds differ by more than 4 connections | `--order short` and `--order long` (`reference/shared-options.md` section 1) |
+| Up to about 10 % of the connections open after the best attempt | Finishing pass (`reference/shared-options.md` section 3) |
 
 If the board does not close, the result of this method is the reference for the planned methods, together with
 the report of where the nets are lost.

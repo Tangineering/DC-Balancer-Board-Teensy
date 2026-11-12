@@ -39,6 +39,18 @@ the other reference files at the step that names them.
    2-layer board), not on completion. On such a board the plan has few levers; say so if no plan beats the
    baseline.
 
+### Step 0a. Measure the channels (global routing)
+
+Run `global_route.py` on `W/plan_free.json` (`reference/shared-options.md` section 5) while the baseline
+routes. Read `W/global.md` before you draw anything.
+
+- A border above capacity is a measured bottleneck: a hand corridor there is justified, on the layer and with
+  the nets that the row names.
+- Overflow 0, also at `--tile 1.0`: the channels are sufficient. Do not draw corridors for flows; the open
+  connections are local pockets, and they go to the requests.
+- If the task names the automatic-corridor entry, route `W/plan_g.json` (mode guide) as an attempt, at two
+  seeds, and compare it with the baseline.
+
 ### Step 1. Classify, then plan
 
 1. Classify every net with `reference/net-classes.md`.
@@ -75,7 +87,8 @@ the other reference files at the step that names them.
    (in the background on a 4-layer board; `reference/common.md` section 6). A new folder `W/vN` for each attempt.
 2. Read `W/vN/route_report.md`. Repair with `reference/failure-repair.md`. Go back to Step 2. Use
    `--keep-routes` of the best attempt for a repair, so that nets that routed are not lost.
-3. Stop when every connection is made, or when two consecutive repairs do not reduce the open connections by
+3. On the best attempt, run a finishing pass (`reference/shared-options.md` section 3).
+4. Stop when every connection is made, or when two consecutive repairs do not reduce the open connections by
    more than the noise band (`reference/common.md` section 5).
 
 ### Step 4. Apply, score, review

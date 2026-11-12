@@ -40,9 +40,13 @@ One plan format serves every method. A method uses the parts it needs.
 | `soft_pours` / `hard_pours` | Zone names or net names. A hard pour of another net is an obstacle with the zone's clearance. A soft pour only costs (`costs.pour`); a track may cut it and the refill pulls the pour back. Default: a low-priority fill is soft, every other pour is hard. |
 | `costs.via` | Cost of one via in cell steps (default 10). Raise it to keep nets on their layer. |
 | `costs.reserve` | Cost multiplier inside a reserved corridor for nets that are not assigned to it (default 6). |
+| `costs.guide` | Cost multiplier outside the guide corridors of a net (`net_guide`, default 3). |
 | `costs.direction` | Cost multiplier of a step against the preferred direction of a layer (default 3). |
 | `layer_cost` | Cost multiplier of a layer for every net. A group can override it. |
 | `directions` | Preferred direction of each layer: `h` (along x), `v` (along y) or `any`. A group can override it. |
+| `net_layer_cost` | `{net: {layer: multiplier}}`. A layer preference for single nets on top of their group; written by `layer_assign.py`. |
+| `net_guide` | `{net: [corridor ids]}`. The net may leave these corridors, but cells outside them cost `costs.guide` times more; written by `global_route.py`. |
+| `net_route` | `{net: [corridor ids]}`. Holds a single net inside these corridors, whatever the mode of its group (`global_route.py --mode hold`). |
 | `regions` | Named areas for `flows.py` and the images. They do not constrain the router. |
 
 ## Corridors

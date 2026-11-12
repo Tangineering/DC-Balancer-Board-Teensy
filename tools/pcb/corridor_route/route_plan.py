@@ -4,6 +4,7 @@ Usage (venv with numpy + shapely):
   python -u route_plan.py <model.json> <plan.json> <routes.json> [--report route_report.md] [--iters 20]
                           [--seed 1] [--max-seconds S] [--patience 8] [--keep-routes prev_routes.json]
                           [--only-groups g1,g2] [--via-cost V] [--pour-penalty P]
+                          [--order cross|short|long] [--max-priority N] [--ripup-radius MM]
 
 Stages:
  1. Negotiation. Each routable net is routed pad to pad by a negotiated-congestion grid search (PathFinder)
@@ -23,6 +24,12 @@ The output never contains a clearance violation between routed nets.
 --keep-routes: the nets that were complete in an earlier routes.json (same model, same grid) are kept exactly
 as they were and are obstacles; only the other nets are routed. Use it to repair open nets without losing nets
 that already routed.
+--ripup-radius (with --keep-routes): a finishing pass. Kept nets whose copper passes within this distance of an
+open pad of the earlier result are routed again together with the open nets; nets of priority 1 stay kept.
+--max-priority: route only the nets with a priority number up to N (staged routing; staged.py drives it).
+--order: the order of the first iteration inside one priority class. cross = fewest crossings first (default),
+short = shortest net first, long = longest net first. A result that changes much with the order is an
+ordering failure; a result that does not is a capacity failure.
 --seed: the order of rerouting is random after the first iteration. Two seeds of one plan differ by a few
 connections; compare plans on two seeds before claiming a difference smaller than that."""
 import argparse
@@ -49,6 +56,9 @@ ap.add_argument("--seed", type=int, default=1)
 ap.add_argument("--max-seconds", type=float, default=0)
 ap.add_argument("--patience", type=int, default=8)
 ap.add_argument("--keep-routes", default=None)
+ap.add_argument("--order", default="cross", choices=("cross", "short", "long"))
+ap.add_argument("--max-priority", type=float, default=None)
+ap.add_argument("--ripup-radius", type=float, default=0.0)
 A = ap.parse_args()
 random.seed(A.seed)
 import os
@@ -63,7 +73,8 @@ RT = Router(C, A.via_cost, A.pour_penalty)
 R, NL = C.R, C.NL
 LAYERS = C.LAYERS
 only = {g for g in A.only_groups.split(",") if g}
-todo_nets = [n for n in sorted(C.routable) if (not only or C.assign[n]["group"] in only) and C.connections(n) > 0]
+todo_nets = [n for n in sorted(C.routable) if (not only or C.assign[n]["group"] in only) and C.connections(n) > 0
+             and (A.max_priority is None or C.assign[n]["priority"] <= A.max_priority)]
 total_conn = sum(C.connections(n) for n in todo_nets)
 routes, unreached = RT.routes, RT.unreached
 
@@ -72,8 +83,26 @@ if A.keep_routes:
     K = json.load(open(A.keep_routes))
     if abs(K["params"]["res"] - R) > 1e-9:
         raise SystemExit("--keep-routes: grid %.4f differs from this plan's grid %.4f" % (K["params"]["res"], R))
+    rip_pts = []
+    if A.ripup_radius > 0:
+        res_of = {r["net"]: r for r in K["results"]}
+        for net in K.get("open", []):
+            want = set(res_of[net]["open_pads"]) if net in res_of and res_of[net].get("open_pads") else None
+            rip_pts += [(p[2], p[3]) for p in C.pad_centres(net) if want is None or "%s.%s" % (p[0], p[1]) in want]
+    ripped = []
     for r in K["results"]:
         if r["net"] in todo_nets and not r.get("open_pads") and "cells" in r:
+            if rip_pts and C.assign[r["net"]]["priority"] > 1:
+                near = False
+                for (px, py) in rip_pts:
+                    pj, pi = C.cell(px, py)
+                    k_ = A.ripup_radius / R
+                    if any((c[1] - pj) ** 2 + (c[2] - pi) ** 2 <= k_ * k_ for c in r["cells"]):
+                        near = True
+                        break
+                if near:
+                    ripped.append(r["net"])
+                    continue
             # keep the net only if its old copper is still legal on this model (a part may have moved)
             n_ = C.nid(r["net"])
             cs_ = {tuple(c) for c in r["cells"]}
@@ -87,14 +116,19 @@ if A.keep_routes:
             RT.contribute(r["net"], routes[r["net"]], +1.0)
             fixed.add(r["net"])
     RT.freeze()
+    if A.ripup_radius > 0:
+        print("finishing pass: %d open pads, %d kept nets within %.1f mm routed again (%s)" % (
+            len(rip_pts), len(ripped), A.ripup_radius, ", ".join(ripped[:12])), flush=True)
 print("grid %d x %d x %d (res %.4f, pitch %.3f), nets %d (%d kept from an earlier run), connections %d, %.1f s" % (
     C.nx, C.ny, NL, R, C.pitch, len(todo_nets), len(fixed), total_conn, time.time() - t0), flush=True)
 if C.grid_sealed:
     print("warning: %d pads have no legal track start at this grid (see capacity.py check 1)" % len(C.grid_sealed))
 
 cross = RT.crossing_counts(todo_nets)
-order = [n for n in sorted(todo_nets, key=lambda net: (C.assign[net]["priority"], len(cross[net]), C.npads[net]))
-         if n not in fixed]
+mst_len = {n: sum(((a - c) ** 2 + (b - d) ** 2) ** 0.5 for (a, b, c, d) in C.mst(n)) for n in todo_nets}
+okey = {"cross": lambda net: (len(cross[net]), C.npads[net]), "short": lambda net: (mst_len[net],),
+        "long": lambda net: (-mst_len[net],)}[A.order]
+order = [n for n in sorted(todo_nets, key=lambda net: (C.assign[net]["priority"],) + okey(net)) if n not in fixed]
 bad = set()
 history = []
 best, best_it, stop_why = None, 0, "iteration limit"
@@ -276,6 +310,7 @@ for net in todo_nets:
 full = [n for n in todo_nets if n in kept and not unreached.get(n)]
 summary = dict(nets=len(todo_nets), nets_complete=len(full), connections=total_conn, connections_made=conn_made,
                vias=nvias, iterations=len(history), seconds=round(time.time() - t0), seed=A.seed, stopped=stop_why,
+               order=A.order, kept=len(fixed),
                blocked=sorted(n for n in diag if diag[n] == "BLOCKED"),
                congested=sorted(n for n in diag if diag[n] == "CONGESTED"))
 json.dump(dict(results=results, open=sorted(open_nets), routed_nets=todo_nets, summary=summary, net_stats=stats,

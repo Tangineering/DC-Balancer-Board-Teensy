@@ -28,10 +28,15 @@ T="<repository root>/tools/pcb/corridor_route"
 | Images | `"$MPL" -I render.py W/model/model.json W/img --labels [--plan P.json] [--routes R.json] [--tag NAME] [--window x0 y0 x1 y1]` |
 | Flows | `"$PY" flows.py W/model/model.json W/plan.json W/flows.md` |
 | Plan check | `"$PY" capacity.py W/model/model.json W/plan.json W/capacity_report.md` |
-| Route | `"$PY" -u route_plan.py W/model/model.json W/plan.json W/vN/routes.json --report W/vN/route_report.md [--iters 20] [--seed 1] [--max-seconds S] [--keep-routes W/vM/routes.json]` |
+| Route | `"$PY" -u route_plan.py W/model/model.json W/plan.json W/vN/routes.json --report W/vN/route_report.md [--iters 20] [--seed 1] [--max-seconds S] [--keep-routes W/vM/routes.json] [--order cross|short|long]` |
+| Staged route | `"$PY" -u staged.py staged W/model/model.json W/plan.json W/vN [--seed S]` |
+| Finishing pass | `"$PY" -u staged.py finish W/model/model.json W/plan.json W/vN_fin --start W/vN/routes.json [--radius 2.0]` |
+| Layer assignment | `"$PY" layer_assign.py W/model/model.json W/plan.json W/plan_la.json --report W/layer_assign.md` |
+| Global routing | `"$PY" global_route.py W/model/model.json W/plan.json W/plan_g.json --report W/global.md [--tile 2.0]` |
 | Apply | `"$PY" apply_routes.py W/<board>.kicad_pcb W/vN/routes.json W/vN/board` |
 | Score | `"$PY" score.py W/vN/board/<board>.kicad_pcb W/<board>.kicad_pcb W/vN/score --plane-nets <nets> [--test-pour NET:LAYER] --label <method>-vN` |
 
+- The last four rows are the shared options of `reference/shared-options.md`. Every method may use them.
 - `render.py` takes the file `model.json`, not the folder. With `--routes` give the plan of the same attempt.
 - `apply_routes.py` takes an output folder; the routed board keeps the input's file name inside it.
 - `score.py` takes an output prefix: `W/vN/score` writes `W/vN/score.md`, `score.json` and `score_drc.json`.
