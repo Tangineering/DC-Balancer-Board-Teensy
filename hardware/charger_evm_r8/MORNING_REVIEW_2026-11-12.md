@@ -24,7 +24,9 @@ The base is commit `5ddc21a`, branch `charger-evm-round4`. The CR (`cr/cr.kicad_
 
 The placement images `cr/placement_*.png` show the board before tier 3. They were not regenerated because matplotlib is not installed in the pcbnew venv.
 
-The `main` branch is at `d6bc969`, one commit behind `5ddc21a`. To bring it level, run `git merge --ff-only charger-evm-round4` in the primary checkout.
+At the end of the night, `main` is at `d6bc969`. The branch `charger-evm-round4` is six commits ahead (`5ddc21a` to
+the commit that holds this review). To bring `main` level, run `git merge --ff-only charger-evm-round4` in the primary
+checkout.
 
 ## 3. Routing study results
 
