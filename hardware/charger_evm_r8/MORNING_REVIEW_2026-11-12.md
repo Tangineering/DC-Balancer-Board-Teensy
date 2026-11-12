@@ -38,7 +38,7 @@ of 199 connections, so 25 to 30 stay open. Nine nets are open at every seed: /BT
 re-running it in two compliant forms.
 
 No tested change showed a gain. The design owner decided the round 1 change requests as follows
-(`cr/variants/r1_decisions.json`):
+(`archive_r7_outline/cr/variants/r1_decisions.json`):
 
 - CR1-03 (R147 enclosed by the VCHGOUT L4 strap; tap grid row gaps 0.34-0.35 mm) was accepted as modified, in two
   variants for round 2 (LAYOUT_DECISIONS.md D-34):

@@ -4,7 +4,7 @@ This document lists the changes that can make the CR routable on its 4-layer OSH
 the physical changes and section 3 the functional changes. Section 4 lists the constraints that fix each
 footprint, so that the operator can check them against the hardware. Section 5 gives a recommended order.
 
-The analyses are in `routability_2026-11-12/`:
+The analyses are in `archive_r7_outline/routability_2026-11-12/`:
 
 - `footprint_options.md`: the physical analysis.
 - `functional_options.md`: the functional analysis.

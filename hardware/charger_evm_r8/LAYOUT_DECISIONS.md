@@ -273,7 +273,7 @@ nets after tiers 1 and 2 (GND, VCHGIN, VCHGOUT and VCHG are pours).
 | 6 | PathFinder, 0.1 mm grid, 60 iterations | 0.127 / 0.127 mm | tiers 1 and 2, A.8 tab Y set | 0 sealed; conflicts 79 -> 47 at iteration 35 -> 53 at iteration 60 |
 | 7 | PathFinder, 0.05 mm grid, stopped at iteration 15 | 0.127 / 0.127 mm | same as 6 | conflicts 73 -> 29 at iteration 11, 30-35 at iterations 12-15 |
 
-Attempt 6 is saved as `cr/attempts/cr_pathfinder_0p1mm_partial.kicad_pcb` with its DRC report; it is a reference,
+Attempt 6 is saved as `archive_r7_outline/cr/attempts/cr_pathfinder_0p1mm_partial.kicad_pcb` with its DRC report; it is a reference,
 not a deliverable (516 clearance violations from the remaining conflicts).
 
 **D-34. Routing-study placement variants, round 1.** The routing study (route-race skill, request CR1-03) found pad
@@ -281,10 +281,10 @@ R147.2 (/QUAL) enclosed on three sides by the VCHGOUT L4 strap (`route_cr.VOUT_I
 empty board. The packer did not know the strap outline. The environment variable `CR_PLACE_VARIANT` selects two
 variants; with the variable unset, the generator builds the base placement unchanged.
 
-- Variant A (`cr/variants/r1_A/`): the strap outline grown by 0.15 mm is a bottom keep-out for the packer. The strap
+- Variant A (`archive_r7_outline/cr/variants/r1_A/`): the strap outline grown by 0.15 mm is a bottom keep-out for the packer. The strap
   shape is unchanged (D-22 holds). Seven bottom parts move, R147 to (30.05, 66.25) and R107 to tab X; no B.Cu SMD
   pad lies within 0.381 mm of the strap outline.
-- Variant B (`cr/variants/r1_B/`): A plus courtyards of C129, R107, R122, R126, R128, R129, R147, R190 and R191 grown
+- Variant B (`archive_r7_outline/cr/variants/r1_B/`): A plus courtyards of C129, R107, R122, R126, R128, R129, R147, R190 and R191 grown
   by 0.225 mm (a row pitch of about 1.75 mm, `layout_cr.CRT_GROW`). The packer disperses the grid rather than keeping
   it in place, and 30 bottom parts move.
 
@@ -362,7 +362,7 @@ signal to disable charging." The following changes apply:
   for the BAV199 clamps D104-D106 until the new outline is placed.
 
 The netlist after D-38 has 145 CR parts; ERC is 0 and the schematic matches `cr/cr.net`. `cr/cr.kicad_pcb` and the
-boards under `cr/interactive/`, `cr/variants/` and `cr/attempts/` are stale against this netlist until the next
+boards under `cr/interactive/`, `archive_r7_outline/cr/variants/` and `archive_r7_outline/cr/attempts/` are stale against this netlist until the next
 layout build.
 
 ## 9. Verification
