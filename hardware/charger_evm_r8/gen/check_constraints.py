@@ -109,8 +109,8 @@ if BOARD == "cr":
     row("A.8 OUT strip: C103 pad to pins 17/18", "C103 pad 1", "%.2f mm" % dd, "<= 3.0 mm", dd <= 3.0)
     dd = pad_poly("R102", "2", fr).distance(pad_poly("U101", "6", fr))
     row("A.8 IN strip: R102 N_UV pad to pin 6 (design 2.1 mm)", "R102", "%.2f mm" % dd, "information", "info")
-    # rim rule: comparators, clamps, U123/D108, dividers x <= 39.53 (A.7 thermal band, mb_mechanical 5.3)
-    for ref in ("U102", "U103", "U104", "U115", "U119", "U120", "U121", "D104", "D105", "D106", "D108", "U123",
+    # rim rule: comparators, clamps, dividers (U123/D108 removed, D-38) x <= 39.53 (A.7 thermal band, mb_mechanical 5.3)
+    for ref in ("U102", "U103", "U104", "U115", "U119", "U120", "U121", "D104", "D105", "D106",
                 "R109", "R110", "R111", "R112", "R114", "R115"):
         mx = crt(ref, fr).bounds[2]
         ok = mx <= 39.53 + 1e-6
@@ -123,7 +123,7 @@ if BOARD == "cr":
         row("A.8 divider strip x 23.15-36.50, y 42.14-45.69", ref, "inside" if strip.buffer(1e-3).contains(crt(ref, fr))
             else "outside", "inside", strip.buffer(1e-3).contains(crt(ref, fr)))
     # distance of analog parts from the U101 loop region
-    for ref in ("U102", "U103", "U104", "U115", "U119", "U120", "U121", "D104", "D105", "D106", "D108", "U123"):
+    for ref in ("U102", "U103", "U104", "U115", "U119", "U120", "U121", "D104", "D105", "D106"):
         dd = crt(ref, fr).distance(L.LOOP)
         row("H.23(f) distance from the U101 loop region (information)", ref, "%.2f mm" % dd, "band 10.40 mm", "info")
     # R106s

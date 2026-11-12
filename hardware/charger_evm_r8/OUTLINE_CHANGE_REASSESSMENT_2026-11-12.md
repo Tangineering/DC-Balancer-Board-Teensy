@@ -62,7 +62,8 @@ request section 3.2 lists D-FC-EN, C-DC1 and C-DC2 as covered; C-DC1 and C-DC2 a
 section 3.2 list of examples omits C2/C3/C5/C6-BT, CC-BT, RINJ-BT, C-D11, C-D12, C-DC11, C-DC12, MDAC-BT and OP-BT.
 
 The bodge parts under the outline have no recorded height: the two 10 kΩ EN-to-GND resistors at D-BT-SQ and
-D-BT-EN, any OPA197 5 V wire, and the planned tap joints T9, T22 and T18.
+D-BT-EN, any OPA197 5 V wire, and the planned tap joints T9 and T18. D-38 (2026-11-12) removes tap T22 and its
+joint at BQ29200 pin 8.
 
 ### 3.2 Switching nodes and heat
 
@@ -150,8 +151,9 @@ attachment (bonded base or a new drilled hole) is an operator item.
 
 ### 6.1 Leads
 
-The 21 tap conductors split as follows: 14 end in Dubox pins on the MB headers, 5 are soldered on the MB (T1, T2, T9,
-T20, T22), and 2 are shields with no far end (T7b, T17r). Tap currents are at most 1.82 mA in service and 48.5 mA in
+The 20 tap conductors split as follows: 14 end in Dubox pins on the MB headers, 4 are soldered on the MB (T1, T2, T9,
+T20), and 2 are shields with no far end (T7b, T17r). D-38 (2026-11-12) removes tap T22 (BQ29200 pin 8) and its pad
+F08, and pack-voltage protection moves to firmware. Tap currents are at most 1.82 mA in service and 48.5 mA in
 the T6 fault. W1/W2 carry up to 2.41 A for up to 202 ms (normally 1.76 A) and W3/W4 up to 3.21 A. W5 is an IDC cable
 and is already removable.
 
@@ -166,13 +168,12 @@ Every lead unplugs at a connector on the CR (option A):
 
 These connectors need about 660-960 mm² (16-23 % of the outline). The fixed W1/W2 build length of 0.30 m ± 10 mm
 (D-F3) is a spike-safety limit; it is measured to the plug, and the plug adds to the W1/W2 loop inductance and
-resistance in H.5 and H.19. T9 and T22 leave the MB under the CR; T22 has 41.1 mm of straight run to the +x edge
-against a 50 mm maximum, so a J-TAP on the +x edge probably exceeds the A.4 limit, TODO(calc). The cavity map can
-close the open short-table hazards F05-F12, F07-F12 and F08-F09 with the J.2 item 63 exclusion set, plus a new
-exclusion "T22 not beside T8".
+resistance in H.5 and H.19. T9 leaves the MB under the CR. The cavity map can close the open short-table hazards
+F05-F12 and F07-F12 with the J.2 item 63 exclusion set. The F08-F09 hazard no longer exists, because D-38 removes
+pad F08.
 
 The alternative (option B) keeps the leads soldered to the CR and unplugs them at their far ends, with one
-connector for the 5 MB-soldered taps.
+connector for the 4 MB-soldered taps.
 
 ## 7. Assembly conformance
 

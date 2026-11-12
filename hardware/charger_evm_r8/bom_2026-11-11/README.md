@@ -9,7 +9,7 @@ section C and the motherboard (MB) rework of section D.1. Nothing has been order
 
 The folder contains three files:
 
-- `ordering_bom.csv`, the ordering list (116 rows);
+- `ordering_bom.csv`, the ordering list (113 rows);
 - `footprint_relevant_choices.md`, the land-pattern facts for the parts that constrain the PCB capture;
 - this README.
 
@@ -39,8 +39,8 @@ The CSV copies the 35 columns and the summary cells of
 The summary cells have these definitions:
 
 - **Total Assembly Cost** is the sum of `Assembly Cost` over rows with a known price. No price was verified (section 3), so every row is excluded and the total is USD 0.00. The total is therefore not a cost estimate. Design section E gives a budget of USD 520-630 including the EVMs.
-- **PCB components** (161) is the count of fitted reference designators on the CR and the EIB. R142 counts once. Spares, kit values, EVM and MB rework parts, wire, materials and hardware are not counted.
-- **PCB unique parts** (62) is the count of distinct MPNs among those fitted CR/EIB parts. The R142 kit rows are not counted.
+- **PCB components** (154) is the count of fitted reference designators on the CR and the EIB. R142 counts once. Spares, kit values, EVM and MB rework parts, wire, materials and hardware are not counted.
+- **PCB unique parts** (60) is the count of distinct MPNs among those fitted CR/EIB parts. The R142 kit rows are not counted.
 
 ### 2.3 Build quantity basis
 
@@ -125,6 +125,11 @@ The following DNP parts are excluded: R106, R134, R145, R146, C105, C124, C127, 
 (TPS22810DBVR), U117 (TLV3012), R160, R161 (and its select-on-test kit), R162, R163, D101
 (BAT54HT1G), R_KA, R172, F101 and the fallback-2 fused link kit. The EVM R20 removal needs no
 part.
+
+r8-17 (2026-11-12, D-38): the T22 input stage (R178, D108, R179, U123), the AND gate U122, their
+decouplers C134 and C135, and the 30 AWG Kynar wire for T22 are removed by operator ruling. Pack-voltage
+protection moves to firmware. The SN74LVC1G08 and SN74LVC1G14 rows and the 30 AWG wire row are deleted, and
+the BAV199, 100 kOhm, 1.00 MOhm and 100 nF quantities are reduced.
 
 The optional MB overlay wire of section E is included, because section E lists a quantity for it.
 It is cut from the 24 AWG bus-wire spool, the same stock as the T-F-13 fallback wire.

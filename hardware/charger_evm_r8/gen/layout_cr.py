@@ -38,7 +38,8 @@ FIXED = {
     "F03": (50.80, 66.56, 0), "F24": (55.88, 66.56, 0), "F16": (58.42, 66.56, 0), "F21": (60.96, 66.56, 0),
     "F20": (63.50, 66.56, 0),
     # footprint low row y 35.80
-    "F08": (26.44, 35.80, 0), "F09": (28.98, 35.80, 0), "F10": (31.52, 35.80, 0), "F22": (41.68, 35.80, 0),
+    "F09": (28.98, 35.80, 0),   # F08 (T22) removed (D-38)
+    "F10": (31.52, 35.80, 0), "F22": (41.68, 35.80, 0),
     "R175": (50.80, 62.75, 0),                 # 1206 vertical between R175b (61.48) and R175a (64.02)
     # eFuse cluster (A.8 per-region table; D-09 shifts of <= 0.80 mm: KiCad courtyards and the U101 +y escape channel)
     "U101": (41.70, 63.65, 0),
@@ -172,21 +173,21 @@ def rule_areas():
 GRID_BOUNDS = (17.0, 33.5, 66.0, 77.0)
 RIM_X = 39.53                    # courtyard limit: >= 10 mm from the MB 5V copper rim x 49.53 (A.7 thermal band)
 LFC_Y = 66.862                   # 10 mm below the L-FC body edge y 76.862 (H.23(b)/(l) ESTIMATE; A.8 tab Y rule)
-BAND_W = box(22.20, 34.64, 25.40, 38.62)   # D-07: band corner left of F08, BAV199 clamps only
+BAND_W = box(22.20, 34.64, 25.40, 38.62)   # D-07: band corner left of the former F08 site (removed, D-38), BAV199 clamps only
 BAND_E = box(43.40, 34.64, 44.80, 41.63).union(box(42.80, 34.64, 48.20, 37.85))  # D-07: below the pin-1 post, logic and DNP only
 INT_ANY = INTERIOR
 LOOP = unary_union([OUT_STRIP, U101_CRT, IN_STRIP, POCKET])   # U101 commutation-loop region (A.8, H.23(f))
 INT_ANALOG = INTERIOR.intersection(box(0, 0, RIM_X, 100)).difference(LOOP.buffer(3.0)).union(BAND_W)
 
-INTERIOR_ICS = ["U108", "U109", "U122", "U123", "D108", "D104", "D105", "D106", "U111", "U113"]
+INTERIOR_ICS = ["U108", "U109", "D104", "D105", "D106", "U111", "U113"]
 TABY_ICS = ["U114", "U110", "U106", "U116", "U118", "U105", "U107"]   # the A.8 tab Y set; U108/U109 interior
-ANALOG_ICS = {"D104", "D105", "D106", "D108", "U123"}
+ANALOG_ICS = {"D104", "D105", "D106"}   # D108, U123 removed (D-38)
 TIMING_ICS = {"U111", "U113"}
 DIVIDERS = ["R109", "R111", "R114", "R110", "R112", "R115"]
 DECOUPLE = {"C110": "U102", "C111": "U103", "C112": "U104", "C113": "U115", "C114": "U105", "C115": "U106",
             "C116": "U107", "C117": "U108", "C118": "U109", "C119": "U110", "C120": "U111", "C121": "U113",
-            "C122": "U114", "C123": "U116", "C126": "U118", "C131": "U119", "C132": "U120", "C133": "U121",
-            "C134": "U122", "C135": "U123"}
+            "C122": "U114", "C123": "U116", "C126": "U118", "C131": "U119", "C132": "U120", "C133": "U121"}
+# C134/U122 and C135/U123 removed (D-38)
 # R103/R104 take the A.8 +x pocket fallback: on the bottom at y >= 63.71, x 44.3-48.2 (D-09)
 POCKET_BOT = {"R104"}
 TABX_OK = {"R106s", "R121", "R122", "R147", "R135", "R125", "R126", "R127", "R128", "R148", "R130", "R131A",
@@ -194,7 +195,7 @@ TABX_OK = {"R106s", "R121", "R122", "R147", "R135", "R125", "R126", "R127", "R12
 # comparator input, reference, hysteresis, filter and timing passives: not on tab X bottom (A.7 thermal band
 # content rule) and not within 10 mm of the L-FC body (A.8 tab Y rule)
 ANALOG_BOT = {"C106", "C107", "C108", "C140", "C109", "C127", "C130", "R113", "R116", "R119", "R117", "R118",
-              "R120", "R140", "R141", "R142", "R143", "R144", "R160", "R161", "R162", "R163", "R178", "R179",
+              "R120", "R140", "R141", "R142", "R143", "R144", "R160", "R161", "R162", "R163",
               "R184", "R185", "R186", "R187", "R188", "R189", "R190", "R191", "C150", "C151", "R150", "R151",
               "R129", "C129", "R105"}
 # logic resistors driven by or feeding the tab Y gates (A.8 tab Y bottom content), packed there first
@@ -342,6 +343,6 @@ def target(ref, fps, fr, pinnet):
 def rotations(ref):
     if ref[0] in "RC":
         return (0, 90)
-    if ref.startswith("D1") and ref not in ("D104", "D105", "D106", "D108"):
+    if ref.startswith("D1") and ref not in ("D104", "D105", "D106"):
         return (0, 90)
     return (0, 90, 180, 270)

@@ -346,6 +346,25 @@ Filled and capped vias stay excluded. D-36 is not revoked; it becomes the fallba
 `docs/reviews/cr_routing_2026-11-12/CR_OUTLINE_CHANGE_REQUEST_2026-11-12.md` in the main checkout, section 5,
 item 7.
 
+**D-38. Tap T22 and the pack-OV permit removed (operator ruling 2026-11-12; design-doc revision r8-17).** A 30 AWG
+wire cannot practically be soldered to the outer toe of BQ29200 pin 8 (DRB pad 0.35 mm wide, 0.65 mm pitch to VDD).
+The operator accepted the safety downgrade: "Let's go with option 2 and use firmware for pack-voltage protection. The
+safety downgrade is acceptable in this case. The firmware can read the battery voltage directly anyways as an OVP
+signal to disable charging." The following changes apply:
+
+- Pad F08, R178, D108, R179, U123, U122 and the decouplers C134/C135 are removed from the netlist. ARM_OK drives
+  both U114 inputs directly, as before r6. The nets T22_BAL, N_BAL, OVN and ARM_OKP are gone.
+- Pack-voltage protection rests on firmware: FR-46 read-back, the slot-5 verify, FR-47(a) (BT_VOLTAGE above
+  LIMIT_V_BATT_MAX 8.5 V drops P5; a firmware requirement, not yet implemented) and the OV_BATT fault.
+- Charging no longer needs the balance lead J-BL.
+- The entries above that name F08, T22_BAL, D108 or U123 (the tap map, the fixed pads, D-12, the analog interior
+  list and row P-04) describe the r7 layout. D-12's band corner loses its D108 user; it remains a candidate corner
+  for the BAV199 clamps D104-D106 until the new outline is placed.
+
+The netlist after D-38 has 145 CR parts; ERC is 0 and the schematic matches `cr/cr.net`. `cr/cr.kicad_pcb` and the
+boards under `cr/interactive/`, `cr/variants/` and `cr/attempts/` are stale against this netlist until the next
+layout build.
+
 ## 9. Verification
 
 ### 9.1 ERC and DRC

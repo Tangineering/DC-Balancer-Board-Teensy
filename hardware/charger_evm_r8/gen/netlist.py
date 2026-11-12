@@ -161,14 +161,9 @@ CR = [
     tlv3012("U121", "RGN_ON", "N_RNP", "REF121", "REF121"),
     R("R190", "453k 1%", "R0603", "RGN", "N_RNP", side="B", mpn="CRCW0603453KFKEA", **VISH01),
     R("R191", "1.00M 1%", "R0603", "N_RNP", GND, side="B", mpn="CRCW06031M00FKEA", **VISH01),
-    # ---- BAL input (r6)
-    R("R178", "100k 1%", "R0603", "T22_BAL", "N_BAL", side="B", mpn="CRCW0603100KFKEA", **VISH01),
-    bav199("D108", "N_BAL"),
-    R("R179", "1.00M 1%", "R0603", "N_BAL", V33, side="B", mpn="CRCW06031M00FKEA", **VISH01),
-    ("U123", "LVC1G14", "SN74LVC1G14", "SC70-5", {"1": GND, "2": "N_BAL", "3": GND, "4": "OVN", "5": V33},
-     dict(mpn="SN74LVC1G14DCKR", mfr="Texas Instruments")),
-    ("U122", "LVC1G08", "SN74LVC1G08", "SC70-5", {"1": "ARM_OK", "2": "OVN", "3": GND, "4": "ARM_OKP", "5": V33},
-     dict(mpn="SN74LVC1G08DCKR", mfr="Texas Instruments")),
+    # ---- BAL input (r6) removed: R178, D108, R179, U123 (T22 input stage) and U122 (ARM_OK AND OVN)
+    #      (D-38, operator ruling 2026-11-12; pack-voltage protection moves to firmware). ARM_OK feeds both
+    #      U114 inputs directly, as before r6. Pad F08 (T22) removed.
     # ---- logic pull-downs and tap series resistors
     R("R108", "47.0k 1%", "R0603", "CHG_ARM", GND, side="B", mpn="CRCW060347K0FKEA", **VISH01),
     R("R147", "1.00k 1%", "R0603", "QUAL_TAP", "QUAL", side="B", mpn="CRCW06031K00FKEA", **VISH01),
@@ -191,7 +186,7 @@ CR = [
     lvc1g123("U113", GND, "HB", V33, "ARM_OK", "N_CX113", "N_RC113"),
     C("C151", "330nF 16V X7R", "C0603", "N_CX113", "N_RC113", side="B", mpn="GRM188R71C334KA01D", mfr="Murata"),
     R("R151", "100k 1%", "R0603", "N_RC113", V33, side="B", mpn="CRCW0603100KFKEA", **VISH01),
-    lvc2g("U114", "LVC2G08", "CHG_ARM", "ARM_OKP", "CE_DRV", "ILIM_PRE", "ARM_OKP", "ILIM_REL"),
+    lvc2g("U114", "LVC2G08", "CHG_ARM", "ARM_OK", "CE_DRV", "ILIM_PRE", "ARM_OK", "ILIM_REL"),  # D-38: ARM_OK direct
     lvc2g("U116", "LVC2G08", "UVB", "FCCEIL", "UF", "FCCN", "UVB", "W"),
     lvc2g("U118", "LVC2G08", "H1", "RGN_ON", "H1R", "QQ", "FCCN", "QQF"),
     # ---- readbacks (B.8 "Readbacks")
@@ -222,7 +217,7 @@ CR = [
     # ---- decoupling (B.8 "Decoupling"): every VCC/V+ cap is placed under its IC on the bottom
     *[C(c, "100nF 50V X7R", "C0603", V33, GND, side="B", mpn="GRM188R71H104KA93D", mfr="Murata")
       for c in ("C110", "C111", "C112", "C113", "C114", "C115", "C116", "C117", "C118", "C119", "C120", "C121",
-                "C122", "C123", "C126", "C131", "C132", "C133", "C134", "C135")],
+                "C122", "C123", "C126", "C131", "C132", "C133")],   # C134/C135 removed with U122/U123 (D-38)
     # ---- power and lead pads (B.8 "Power holes and pads (r5)")
     ("W1", "PAD1", "W1 VCHGOUT", "WPTH_1.3", {"1": "VCHGOUT"}, {}),
     ("W2", "PAD1", "W2 GND", "WPTH_1.3", {"1": GND}, {}),
@@ -232,7 +227,7 @@ CR = [
     ("W7", "PAD3", "W7 SCL/GND/SDA", "WSMD_3", {"1": "SCL", "2": GND, "3": "SDA"}, {}),
     # ---- tap field F01-F24 (B.8 "Tap field"; A.8 r7 assignment)
     tap("F01", "T1_VMOT"), tap("F02", GND), tap("F03", "T2C"), tap("F04", "BTB"), tap("F05", "RGN_TAP"),
-    tap("F06", "FCC_TAP"), tap("F07", "T6_3V3"), tap("F08", "T22_BAL"), tap("F09", "BT_CURR"),
+    tap("F06", "FCC_TAP"), tap("F07", "T6_3V3"), tap("F09", "BT_CURR"),   # F08 (T22) removed (D-38)
     tap("F10", "KELVIN"), tap("F11", "QUAL_TAP"), tap("F12", "FCCEIL"), tap("F13", "ILIM_SENSE_RB"),
     tap("F14", "H1_RB"), tap("F15", "H2C_RB"), tap("F16", "BTOK_RB"), tap("F17", "CHG_EFUSE_FLT"),
     tap("F18", "CHG_IIN"), tap("F19", GND), tap("F20", "CE_SENSE_RB"), tap("F21", "HB_TAP"),
