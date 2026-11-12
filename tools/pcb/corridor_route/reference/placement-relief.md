@@ -15,8 +15,8 @@ a hold-out or a re-placement variant (`route-race` section 4).
 - The start result: the board copy, its `model.json`, the plan and the `routes.json` of one scored seed.
   **Refresh the site from this result first**: a net that the request names but that is complete in
   `route_report.md` of the start result is not part of the site.
-- The move limits of the task. Defaults (the operator may raise the translation limit for scratch tests):
-  - translation of one part by at most 0.5 mm;
+- The move limits of the task. Defaults for scratch tests (operator ruling of 2026-11-11):
+  - translation of one part by at most 2.0 mm;
   - rotation by 90 or 180 degrees;
   - swap of two parts with the same footprint;
   - only parts without fixed coordinates in the design document. Never a connector, a wire pad, a test pad, a
@@ -83,7 +83,8 @@ statement of what the site needs (a larger move, a re-pack, a pour change).
   placement shows the effect of a full run.
 - A move changes thermal, loop-area and assembly properties that this procedure does not see. The constraint
   check and the design owner cover those.
-- In the dry test on the CR board, moves of up to 0.5 mm, rotations and swaps gave no accepted change at four
-  sites. Three of the four sites needed a change of another kind.
+- In the dry test on the CR board, with a limit of 0.5 mm, moves, rotations and swaps gave no accepted change
+  at four sites. Three of the four sites needed a change of another kind. The limit was raised to 2.0 mm after
+  that test.
 - Removing parts (DNP) and adding pours are not placement relief. Test them with `whatif.py holdout` and send
   them as requests.

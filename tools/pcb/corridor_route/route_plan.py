@@ -344,9 +344,38 @@ for net in todo_nets:
                         cells=[list(c) for c in routes[net][0]], via_cells=[list(v) for v in routes[net][1]],
                         paths=[[list(c) for c in p] for p in RT.paths_of.get(net, [])]))
 full = [n for n in todo_nets if n in kept and not unreached.get(n)]
+
+# ---------------------------------------------------------------- plane nets: is a via site left beside each pad?
+# The plane-via step of the project connects each SMD pad of a plane net by a via beside the pad. Count the pads
+# that have no free via site within PLANE_REACH of the pad after this routing. The test is a screen: it does not
+# route the stub from the pad to the via.
+PLANE_REACH = 1.2
+import numpy as np
+plane_pads, plane_no_site = 0, []
+if C.planes:
+    drilled = {(it.get("ref"), it.get("num")) for it in C.D["items"] if it["kind"] == "hole"}
+    occV_any = RT.occV.max(axis=0) > 0
+    pours = [(z["net"], set(z["layers"]), C.geom_of(z)) for z in C.D["items"]
+             if z["kind"] == "zone" and z["net"] in C.planes]
+    for it in C.D["items"]:
+        if it["kind"] != "pad" or it["net"] not in C.planes or (it.get("ref"), it.get("num")) in drilled:
+            continue
+        cen = C.geom_of(it).centroid
+        in_pour = any(zn == it["net"] and (zl & set(it["layers"])) and zg.contains(cen) for zn, zl, zg in pours)
+        plane_pads += 1
+        n_ = C.nid(it["net"])
+        j0, j1, i0, i1, m = C.raster(C.geom_of(it, PLANE_REACH))
+        if not m.size:
+            continue
+        oV = C.ownV[:, j0:j1, i0:i1]
+        ok = m & np.all((oV == -1) | (oV == n_), axis=0) & ~C.holeBan[j0:j1, i0:i1] & ~occV_any[j0:j1, i0:i1]
+        if not ok.any():
+            c_ = C.geom_of(it).centroid
+            plane_no_site.append("%s.%s at (%.1f, %.1f)%s" % ((it.get("ref"), it.get("num")) + C.d(c_.x, c_.y) + (
+                " (in a pour outline)" if in_pour else "",)))
 summary = dict(nets=len(todo_nets), nets_complete=len(full), connections=total_conn, connections_made=conn_made,
                vias=nvias, iterations=len(history), seconds=round(time.time() - t0), seed=A.seed, stopped=stop_why,
-               order=A.order, kept=len(fixed),
+               order=A.order, kept=len(fixed), plane_pads=plane_pads, plane_pads_no_via_site=plane_no_site,
                blocked=sorted(n for n in diag if diag[n] == "BLOCKED"),
                congested=sorted(n for n in diag if diag[n] == "CONGESTED"))
 json.dump(dict(results=results, open=sorted(open_nets), routed_nets=todo_nets, summary=summary, net_stats=stats,
@@ -372,6 +401,11 @@ L = ["# Routing report", "",
          conn_made, total_conn, len(full), len(todo_nets), nvias, len(history), stop_why, A.seed, time.time() - t0),
      "Rules: track %.3f, clearance %.3f, via %.2f/%.2f, grid %.4f, track pitch %.3f mm." % (
          C.track, C.clear, C.via, C.drill, R, C.pitch), "",
+     "Plane nets (%s): %d SMD pads; %d have no free via site within %.1f mm after this routing%s. A pad in a "
+     "pour outline of its net may still connect through the pour, if the fill reaches it. For the others the "
+     "project's plane-via step has no site. Only the finish test (plane vias, refill, DRC) decides." % (
+         ", ".join(sorted(C.planes)) or "none", plane_pads, len(plane_no_site), PLANE_REACH,
+         (": " + ", ".join(plane_no_site[:20])) if plane_no_site else ""), "",
      "A connection is one pad-to-pad link; a net with n pads has n - 1 connections. Count connections, not nets. "
      "Two seeds of one plan differ by a few connections.", "",
      "## By group", "", "| Group | Nets | Complete | Connections made / total | Track length by layer (mm) |",

@@ -35,8 +35,8 @@ Read `tools/pcb/corridor_route/reference/common.md` first. The scripts are in `t
 
 1. Choose an empty folder `RACE/rN` for round N, outside the board's folder.
    `python race.py init <board.kicad_pcb> RACE/rN --entries ref`.
-2. Model the board and write the plain plan `RACE/rN/ref/plan.json` (`autorouter-routing` skill, variant A,
-   steps 1 to 3). Run `capacity.py`; follow a GRID message.
+2. Model the board and write the plain plan `RACE/rN/ref/plan.json` (`board-routing` skill, section 2,
+   steps 1 to 5). Run `capacity.py`; follow a GRID message.
 3. `"$PY" -u seeds.py run RACE/rN/ref/model/model.json RACE/rN/ref/plan.json RACE/rN/ref/seeds --seeds 1,2,3,4`
    (in the background; `reference/common.md` section 6 for the run time and the number of jobs).
 4. Read `SEEDS.md`: mean, minimum, maximum, the nets open at every seed and the nets open at some seeds.
@@ -76,9 +76,9 @@ options, and uses the seeds of stage 1.
 | A part move, rotation or swap at one site | `whatif.py move`, the constraint check, `board_model.py`, then `relief_trial.py` | its verdict |
 | A larger re-placement of a named block; a pour change; a rule or via-size change | The orchestrator builds the variant on a scratch copy (or asks the design owner for it), models it, `seeds.py run`, `seeds.py compare` | `compare` verdict |
 
-- Plans come from the diagnosis, or from a method skill run by a worker agent (`corridor-routing`,
-  `direction-layer-routing`, the layer assignment and guide corridors of `reference/shared-options.md`). A worker
-  delivers a plan and a `capacity.py` PASS; the orchestrator runs the seeds.
+- Plans come from the diagnosis, or from a worker agent that follows `board-routing` section 3 (layer
+  assignment, guide corridors, a priority, the 2-layer pour pattern, one hand corridor). A worker delivers a plan
+  and a `capacity.py` PASS; the orchestrator runs the seeds.
 - A **relief worker** (`reference/placement-relief.md`) is started only for a site that the diagnosis names as
   a lane of at most 3 nets. Start one worker first. Start the others after the first has finished one trial,
   so that a tool fault is found once.

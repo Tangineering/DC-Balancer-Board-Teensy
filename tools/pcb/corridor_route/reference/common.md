@@ -1,7 +1,6 @@
 # Common rules for the routing skills
 
-This file applies to every routing method skill (`corridor-routing`, `direction-layer-routing`,
-`autorouter-routing`) and to the orchestrator (`route-race`). Read it once before the first command.
+This file applies to the routing skill (`board-routing`) and to the study orchestrator (`route-race`). Read it once before the first command.
 
 ## 1. Environment
 

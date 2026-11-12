@@ -51,7 +51,8 @@ def run():
         J = json.load(open(os.path.join(outdir, "s%d" % s, "routes.json")))
         done[s] = dict(made=J["summary"]["connections_made"], total=J["summary"]["connections"],
                        vias=J["summary"]["vias"], seconds=J["summary"]["seconds"],
-                       iterations=J["summary"]["iterations"], stopped=J["summary"]["stopped"], open=J["open"])
+                       iterations=J["summary"]["iterations"], stopped=J["summary"]["stopped"], open=J["open"],
+                       plane_no_site=len(J["summary"].get("plane_pads_no_via_site", [])))
         print("seed %d: %d of %d (%s)" % (s, done[s]["made"], done[s]["total"], done[s]["stopped"]), flush=True)
     made = [done[s]["made"] for s in seeds]
     always = sorted(set.intersection(*[set(done[s]["open"]) for s in seeds]))
@@ -61,9 +62,11 @@ def run():
              open_every_seed=always, open_some_seeds=once)
     json.dump(S, open(os.path.join(outdir, "SEEDS.json"), "w"), indent=1)
     L = ["# Seeds", "", "Plan `%s`, options `%s`." % (os.path.basename(plan), " ".join(extra) or "none"), "",
-         "| Seed | Connections made / total | Vias | Iterations | Stopped | Seconds |", "|---|---|---|---|---|---|"]
-    L += ["| %d | %d / %d | %d | %d | %s | %d |" % (s, done[s]["made"], done[s]["total"], done[s]["vias"],
-                                                    done[s]["iterations"], done[s]["stopped"], done[s]["seconds"])
+         "| Seed | Connections made / total | Vias | Plane pads without a via site | Iterations | Stopped | Seconds |",
+         "|---|---|---|---|---|---|---|"]
+    L += ["| %d | %d / %d | %d | %d | %d | %s | %d |" % (s, done[s]["made"], done[s]["total"], done[s]["vias"],
+                                                         done[s]["plane_no_site"], done[s]["iterations"],
+                                                         done[s]["stopped"], done[s]["seconds"])
           for s in seeds]
     L += ["", "Mean %.1f, minimum %d, maximum %d of %d (n = %d)." % (S["mean"], S["min"], S["max"], S["total"], len(seeds)),
           "", "Open at every seed (%d nets): %s" % (len(always), ", ".join(always) or "none"),
