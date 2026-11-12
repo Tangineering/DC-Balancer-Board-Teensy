@@ -33,7 +33,7 @@ One plan format serves every method. A method uses the parts it needs.
 | Key | Meaning |
 |---|---|
 | `frame.y_flip_offset` | The plan uses design coordinates with y up; KiCad y = offset - y. Omit it to plan in the KiCad frame. |
-| `rules` | `track`, `clear`, `via`, `drill` in mm. Default: the board minimums. Optional `res` (grid); the default `(track + clear) / 2` gives the exact fab pitch. Do not set `res` without a reason. |
+| `rules` | `track`, `clear`, `via`, `drill` in mm. Default: the board minimums. Optional `res` (grid): the default is half the fab pitch `(track + clear) / 2`, or a quarter of it when half is above 0.13 mm; both keep the exact fab pitch. Set `res` only when `capacity.py` check 1 prints a GRID message, to the value it gives. Optional `thermal_keepout` (default 0.35 mm): width of the cost ring around a through-hole pad of a poured net (`costs.thermal`, default 8). |
 | `keep_nets` | Nets that are not routed. Every net with a pour is kept automatically. |
 | `plane_net` | The net (or list of nets) that a plane layer connects. It is kept; the project's plane-via step connects it. |
 | `route_nets` | Nets with a pour that are routed anyway. |
@@ -47,12 +47,22 @@ One plan format serves every method. A method uses the parts it needs.
 
 ## Corridors
 
+- A group in mode `corridor` may use only the area of its corridors plus the escape discs of its pads. A path
+  corridor that covers only a bottleneck leaves the rest of the way unreachable. Either let the corridors of
+  the `route` list overlap from pad to pad, or add one region corridor that covers the rest of the board to the
+  same `route` list: `{"id": "BODY", "layers": ["F.Cu", "In2.Cu", "B.Cu"], "polygon": [...]}` with
+  `"route": ["NECK", "BODY"]`.
+- Two corridors join only where they overlap. Corridors that end 0.5 mm apart are not connected.
 - A **path corridor** has `path` (polyline) and `width`, on one `layer` or a list `layers`. `capacity.py` checks
-  its capacity at every station.
+  its capacity at every station except the last 0.5 mm of each end. Do not put a path vertex on a concave
+  corner of the outline; the narrowest station then sits on the corner.
 - A **region corridor** has `polygon`. It gets no capacity check; checks 5 and 6 of `capacity.py` cover it.
 - `reserve: true` makes the corridor expensive for nets that are not assigned to it. Without it, other nets route
   through the corridor freely.
-- Two path corridors that overlap on a shared layer are one physical channel. `capacity.py` adds their demand.
+- Two path corridors that run parallel (within 30 degrees) and overlap on a shared layer are one physical
+  channel. `capacity.py` adds their demand. Corridors that cross are not added.
+- Every net of a group counts in every corridor of the group's `route` list (1/k for an alternative). A net that
+  uses only one corridor of a chain needs its own group.
 
 ## Groups
 

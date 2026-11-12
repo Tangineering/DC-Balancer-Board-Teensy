@@ -1,21 +1,30 @@
 """Plan-driven router: detailed routing inside the regions that a plan allows.
 
 Usage (venv with numpy + shapely):
-  python -u route_plan.py <model.json> <plan.json> <routes.json> [--iters 30] [--report route_report.md]
-                          [--only-groups g1,g2] [--seed 1] [--via-cost V] [--pour-penalty P]
+  python -u route_plan.py <model.json> <plan.json> <routes.json> [--report route_report.md] [--iters 20]
+                          [--seed 1] [--max-seconds S] [--patience 8] [--keep-routes prev_routes.json]
+                          [--only-groups g1,g2] [--via-cost V] [--pour-penalty P]
 
 Stages:
  1. Negotiation. Each routable net is routed pad to pad by a negotiated-congestion grid search (PathFinder)
-    inside its allowed region. A contested cell costs more each iteration until one net moves.
+    inside its allowed region. A contested cell costs more each iteration until one net moves. The conflict count
+    normally stays near flat for the first 6 to 8 iterations and falls after that. The loop ends at --iters, when
+    no conflict is left, when the best count has not improved for --patience iterations (after iteration 10), or
+    at --max-seconds; the later stages always run, so a time limit still gives a legal result.
  2. Legalisation. Nets that still overlap are removed, one at a time, until the remaining copper is legal. The
     net removed is the one with the highest priority number; among equals, the one that conflicts with the most
     nets per connection it carries.
  3. Recovery. Each removed net is routed again with all kept copper as hard obstacles. Whatever connects is
     kept (a net may be kept in part); the pads that stay open are reported.
- 4. Diagnosis. Each open net is routed alone on the empty board. A net that fails alone is BLOCKED (its allowed
-    region does not connect its pads); a net that routes alone is CONGESTED, and the report names the nets and
-    the place that it lost to.
-The output never contains a clearance violation between routed nets."""
+ 4. Diagnosis. Each open net is routed alone on the empty board. A net that fails alone is BLOCKED; a net that
+    routes alone is CONGESTED, and the report names the nets and the place that it lost to.
+The output never contains a clearance violation between routed nets.
+
+--keep-routes: the nets that were complete in an earlier routes.json (same model, same grid) are kept exactly
+as they were and are obstacles; only the other nets are routed. Use it to repair open nets without losing nets
+that already routed.
+--seed: the order of rerouting is random after the first iteration. Two seeds of one plan differ by a few
+connections; compare plans on two seeds before claiming a difference smaller than that."""
 import argparse
 import json
 import random
@@ -31,14 +40,21 @@ ap = argparse.ArgumentParser()
 ap.add_argument("model")
 ap.add_argument("plan")
 ap.add_argument("out")
-ap.add_argument("--iters", type=int, default=30)
+ap.add_argument("--iters", type=int, default=20)
 ap.add_argument("--via-cost", type=float, default=None)
 ap.add_argument("--pour-penalty", type=float, default=None)
 ap.add_argument("--report", default=None)
 ap.add_argument("--only-groups", default="")
 ap.add_argument("--seed", type=int, default=1)
+ap.add_argument("--max-seconds", type=float, default=0)
+ap.add_argument("--patience", type=int, default=8)
+ap.add_argument("--keep-routes", default=None)
 A = ap.parse_args()
 random.seed(A.seed)
+import os
+for f_ in (A.out, A.report):                # the output folders must exist before a long run starts
+    if f_ and os.path.dirname(f_):
+        os.makedirs(os.path.dirname(f_), exist_ok=True)
 t0 = time.time()
 C = Ctx(A.model, A.plan)
 if C.plan_errors:
@@ -49,14 +65,32 @@ LAYERS = C.LAYERS
 only = {g for g in A.only_groups.split(",") if g}
 todo_nets = [n for n in sorted(C.routable) if (not only or C.assign[n]["group"] in only) and C.connections(n) > 0]
 total_conn = sum(C.connections(n) for n in todo_nets)
-print("grid %d x %d x %d (res %.4f, pitch %.3f), nets %d, connections %d, %.1f s" % (
-    C.nx, C.ny, NL, R, C.pitch, len(todo_nets), total_conn, time.time() - t0), flush=True)
+routes, unreached = RT.routes, RT.unreached
+
+fixed = set()
+if A.keep_routes:
+    K = json.load(open(A.keep_routes))
+    if abs(K["params"]["res"] - R) > 1e-9:
+        raise SystemExit("--keep-routes: grid %.4f differs from this plan's grid %.4f" % (K["params"]["res"], R))
+    for r in K["results"]:
+        if r["net"] in todo_nets and not r.get("open_pads") and "cells" in r:
+            routes[r["net"]] = ([tuple(c) for c in r["cells"]], [tuple(v) for v in r["via_cells"]])
+            RT.paths_of[r["net"]] = [[tuple(c) for c in p] for p in r["paths"]]
+            unreached[r["net"]] = []
+            RT.contribute(r["net"], routes[r["net"]], +1.0)
+            fixed.add(r["net"])
+    RT.freeze()
+print("grid %d x %d x %d (res %.4f, pitch %.3f), nets %d (%d kept from an earlier run), connections %d, %.1f s" % (
+    C.nx, C.ny, NL, R, C.pitch, len(todo_nets), len(fixed), total_conn, time.time() - t0), flush=True)
+if C.grid_sealed:
+    print("warning: %d pads have no legal track start at this grid (see capacity.py check 1)" % len(C.grid_sealed))
 
 cross = RT.crossing_counts(todo_nets)
-order = sorted(todo_nets, key=lambda net: (C.assign[net]["priority"], len(cross[net]), C.npads[net]))
-routes, unreached = RT.routes, RT.unreached
+order = [n for n in sorted(todo_nets, key=lambda net: (C.assign[net]["priority"], len(cross[net]), C.npads[net]))
+         if n not in fixed]
 bad = set()
 history = []
+best, best_it, stop_why = None, 0, "iteration limit"
 for it_ in range(A.iters):
     todo = order if it_ == 0 else [n_ for n_ in order if n_ in bad or unreached.get(n_)]
     if it_ > 0:
@@ -71,6 +105,8 @@ for it_ in range(A.iters):
         RT.contribute(net, r, +1.0)
     bad = set()
     for net, r in routes.items():
+        if net in fixed:
+            continue
         RT.contribute(net, r, -1.0)
         cc = RT.conflict_cells(net, r)
         if cc:
@@ -86,14 +122,24 @@ for it_ in range(A.iters):
     history.append((it_, len(todo), len(bad), nopath))
     print("iter %d: rerouted %d, in conflict %d, with open pads %d, %.0f s" % (it_, len(todo), len(bad), nopath,
                                                                              time.time() - t0), flush=True)
+    if best is None or len(bad) < best:
+        best, best_it = len(bad), it_
     if not bad:
+        stop_why = "no conflict left"
         break
+    if it_ >= 10 and it_ - best_it >= A.patience:
+        stop_why = "no improvement for %d iterations" % A.patience
+        break
+    if A.max_seconds and time.time() - t0 > A.max_seconds:
+        stop_why = "time limit %.0f s" % A.max_seconds
+        break
+print("negotiation ended: %s" % stop_why, flush=True)
 
 # ---------------------------------------------------------------- legalise
 kept = set(routes)
 cellmap, viamap = RT.maps(kept)
 conf, cc_of = {}, {}
-for net in kept:
+for net in kept - fixed:
     RT.contribute(net, routes[net], -1.0)
     cc = RT.conflict_cells(net, routes[net])
     RT.contribute(net, routes[net], +1.0)
@@ -130,12 +176,15 @@ for net in sorted(lost_to, key=lambda x: (C.assign[x]["priority"], -C.connection
         kept.add(net)
         if not un:
             recovered.append(net)
-for net in sorted(kept, key=lambda x: (C.assign[x]["priority"], -C.connections(x))):
+for net in sorted(kept - fixed, key=lambda x: (C.assign[x]["priority"], -C.connections(x))):
     if unreached.get(net) and net not in lost_to:      # a kept net with open pads: try the open pads once more
         RT.contribute(net, routes[net], -1.0)
+        old_paths = RT.paths_of.get(net)
         r, un = RT.route_net(net, hard=True)
         if len(un) < len(unreached[net]):
             routes[net], unreached[net] = r, un
+        else:
+            RT.paths_of[net] = old_paths
         RT.contribute(net, routes[net], +1.0)
 print("recovery: %d removed nets fully recovered, %.0f s" % (len(recovered), time.time() - t0), flush=True)
 
@@ -143,65 +192,86 @@ print("recovery: %d removed nets fully recovered, %.0f s" % (len(recovered), tim
 open_nets = [n for n in todo_nets if unreached.get(n) or n not in kept]
 diag = {}
 for net in open_nets:
+    saved = RT.paths_of.get(net)
     _, un = RT.route_net(net, solo=True)
+    RT.paths_of[net] = saved
     diag[net] = "BLOCKED" if un else "CONGESTED"
 
 
-def runs(seg):
-    out = []
-    if len(seg) < 2:
-        return out
-    start = seg[0]
-    d0 = (seg[1][1] - seg[0][1], seg[1][2] - seg[0][2])
-    for a, b2 in zip(seg[:-1], seg[1:]):
-        d = (b2[1] - a[1], b2[2] - a[2])
-        if d != d0:
-            out.append((LAYERS[a[0]], C.bx0 + start[2] * R, C.by0 + start[1] * R, C.bx0 + a[2] * R, C.by0 + a[1] * R))
-            start, d0 = a, d
-    last = seg[-1]
-    out.append((LAYERS[last[0]], C.bx0 + start[2] * R, C.by0 + start[1] * R, C.bx0 + last[2] * R, C.by0 + last[1] * R))
-    return out
-
-
-def to_copper(cells):
+# ---------------------------------------------------------------- copper: prune dangling ends, merge runs
+def copper(net):
+    """(tracks [(layer, xa, ya, xb, yb)], via cells [(j, i)]) from the net's paths, without dangling ends"""
+    adj = {}
+    for path in RT.paths_of.get(net, []):
+        for a, b in zip(path[:-1], path[1:]):
+            if a != b:
+                adj.setdefault(a, set()).add(b)
+                adj.setdefault(b, set()).add(a)
+    protect = set()
+    for key, cs in C.padcells.get(net, {}).items():
+        protect |= set(cs)
+    leaves = [n_ for n_, nb in adj.items() if len(nb) == 1 and n_ not in protect]
+    while leaves:
+        n_ = leaves.pop()
+        if n_ not in adj or len(adj[n_]) != 1 or n_ in protect:
+            continue
+        (m,) = adj.pop(n_)
+        adj[m].discard(n_)
+        if len(adj[m]) == 1 and m not in protect:
+            leaves.append(m)
+        elif not adj[m]:
+            adj.pop(m)
+    vias = sorted({(a[1], a[2]) for a, nb in adj.items() for b in nb if a[0] != b[0]})
     tracks = []
-    if not cells:
-        return tracks
-    seg = [cells[0]]
-    for a, b2 in zip(cells[:-1], cells[1:]):
-        if a[0] == b2[0] and max(abs(a[1] - b2[1]), abs(a[2] - b2[2])) == 1:
-            seg.append(b2)
-        else:
-            tracks += runs(seg)
-            seg = [b2]
-    return tracks + runs(seg)
+    for d in ((0, 1), (1, 0), (1, 1), (1, -1)):
+        for a in sorted(adj):
+            nxt = (a[0], a[1] + d[0], a[2] + d[1])
+            prv = (a[0], a[1] - d[0], a[2] - d[1])
+            if nxt in adj[a] and not (prv in adj and a in adj[prv]):
+                e = nxt
+                while True:
+                    n2 = (e[0], e[1] + d[0], e[2] + d[1])
+                    if n2 in adj.get(e, ()):
+                        e = n2
+                    else:
+                        break
+                xa, ya = C.xy(a[1], a[2])
+                xb, yb = C.xy(e[1], e[2])
+                tracks.append((LAYERS[a[0]], xa, ya, xb, yb))
+    return tracks, vias
 
 
 results = []
 conn_made = 0
 length = Counter()
 nvias = 0
+stats = {}
 for net in todo_nets:
     if net not in kept or not routes[net][0]:
         continue
-    cells, vias = routes[net]
-    trk = to_copper(cells)
+    trk, vs = copper(net)
     w = RT.width(net)
-    vs = sorted(set(vias))
     un = unreached.get(net, [])
     conn_made += C.connections(net) - len(un)
     nvias += len(vs)
+    per = Counter()
     for (ln, xa, ya, xb, yb) in trk:
-        length[(C.assign[net]["group"], ln)] += ((xa - xb) ** 2 + (ya - yb) ** 2) ** 0.5
+        d = ((xa - xb) ** 2 + (ya - yb) ** 2) ** 0.5
+        length[(C.assign[net]["group"], ln)] += d
+        per[ln] += d
+    stats[net] = dict(length=round(sum(per.values()), 2), by_layer={k: round(v, 2) for k, v in per.items()},
+                      vias=len(vs), open=len(un))
     results.append(dict(net=net, replace=True, tracks=[list(t) for t in trk], widths=[w] * len(trk),
-                        vias=[[C.bx0 + i * R, C.by0 + j * R] for (j, i) in vs], via_d=[C.via] * len(vs),
-                        open_pads=["%s.%s" % k for k in un if k[0] != "locked"]))
+                        vias=[list(C.xy(j, i)) for (j, i) in vs], via_d=[C.via] * len(vs),
+                        open_pads=["%s.%s" % k for k in un if k[0] != "locked"],
+                        cells=[list(c) for c in routes[net][0]], via_cells=[list(v) for v in routes[net][1]],
+                        paths=[[list(c) for c in p] for p in RT.paths_of.get(net, [])]))
 full = [n for n in todo_nets if n in kept and not unreached.get(n)]
 summary = dict(nets=len(todo_nets), nets_complete=len(full), connections=total_conn, connections_made=conn_made,
-               vias=nvias, iterations=len(history), seconds=round(time.time() - t0),
+               vias=nvias, iterations=len(history), seconds=round(time.time() - t0), seed=A.seed, stopped=stop_why,
                blocked=sorted(n for n in diag if diag[n] == "BLOCKED"),
                congested=sorted(n for n in diag if diag[n] == "CONGESTED"))
-json.dump(dict(results=results, open=sorted(open_nets), summary=summary,
+json.dump(dict(results=results, open=sorted(open_nets), routed_nets=todo_nets, summary=summary, net_stats=stats,
                params=dict(track=C.track, clear=C.clear, via=C.via, drill=C.drill, res=R)), open(A.out, "w"))
 
 # ---------------------------------------------------------------- report
@@ -220,11 +290,12 @@ def padtxt(net, keys):
 
 
 L = ["# Routing report", "",
-     "Connections made: %d of %d. Nets complete: %d of %d. Vias: %d. Iterations: %d. Run time: %d s." % (
-         conn_made, total_conn, len(full), len(todo_nets), nvias, len(history), time.time() - t0),
+     "Connections made: %d of %d. Nets complete: %d of %d. Vias: %d. Iterations: %d (%s). Seed: %d. Run time: %d s." % (
+         conn_made, total_conn, len(full), len(todo_nets), nvias, len(history), stop_why, A.seed, time.time() - t0),
      "Rules: track %.3f, clearance %.3f, via %.2f/%.2f, grid %.4f, track pitch %.3f mm." % (
          C.track, C.clear, C.via, C.drill, R, C.pitch), "",
-     "A connection is one pad-to-pad link; a net with n pads has n - 1 connections. Count connections, not nets.", "",
+     "A connection is one pad-to-pad link; a net with n pads has n - 1 connections. Count connections, not nets. "
+     "Two seeds of one plan differ by a few connections.", "",
      "## By group", "", "| Group | Nets | Complete | Connections made / total | Track length by layer (mm) |",
      "|---|---|---|---|---|"]
 groups = {}
@@ -254,12 +325,27 @@ for net in sorted(open_nets, key=lambda x: (diag[x], C.assign[x]["group"], x)):
                                                  (" (+%d)" % (len(part) - 6) if len(part) > 6 else ""), "; ".join(pts)))
 if not open_nets:
     L.append("| none | | | | | |")
+prio1 = [n for n in todo_nets if C.assign[n]["priority"] <= 1]
+if prio1:
+    L += ["", "## Priority-1 nets (constrained nets and rails): routed geometry", "",
+          "Check each row against the design limit of the net (length, layer, vias). The straight-line length is the "
+          "length of the net's minimum spanning tree.", "",
+          "| Net | Group | Routed length (mm) | Straight-line (mm) | Vias | Length by layer | Open |", "|---|---|---|---|---|---|---|"]
+    for n in sorted(prio1):
+        st = stats.get(n)
+        mst = sum(((x1 - x2) ** 2 + (y1 - y2) ** 2) ** 0.5 for (x1, y1, x2, y2) in C.mst(n))
+        if st:
+            L.append("| %s | %s | %.1f | %.1f | %d | %s | %d |" % (n, C.assign[n]["group"], st["length"], mst, st["vias"],
+                                                               ", ".join("%s %.1f" % kv for kv in st["by_layer"].items()),
+                                                               st["open"]))
+        else:
+            L.append("| %s | %s | not routed | %.1f | - | - | all |" % (n, C.assign[n]["group"], mst))
 L += ["", "## Negotiation history", "", "| Iteration | Rerouted | In conflict | With open pads |", "|---|---|---|---|"]
 L += ["| %d | %d | %d | %d |" % h for h in history]
-L += ["", "A conflict count that stays flat for many iterations means a channel is full: more iterations will not "
-      "help; change the plan.", "",
-      "## Recovery", "", "Removed in legalisation: %d. Fully recovered: %d (%s)." % (
-          len(lost_to), len(recovered), ", ".join(recovered) or "none")]
+L += ["", "The count normally stays near flat for the first 6 to 8 iterations and then falls. A count that is still "
+      "flat after iteration 12 means the board or a channel is full: more iterations will not help; change the plan.",
+      "", "## Recovery", "", "Removed in legalisation: %d. Fully recovered: %d (%s). Kept from an earlier run: %d." % (
+          len(lost_to), len(recovered), ", ".join(recovered) or "none", len(fixed))]
 txt = "\n".join(L) + "\n"
 if A.report:
     open(A.report, "w", encoding="utf-8").write(txt)

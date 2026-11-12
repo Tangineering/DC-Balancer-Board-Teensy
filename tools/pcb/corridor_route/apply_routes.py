@@ -25,6 +25,8 @@ try:  # a wxWidgets debug assert opens a modal dialog that blocks an unattended 
 except Exception:
     pass
 
+if len(sys.argv) != 4 or sys.argv[1] in ("-h", "--help"):
+    raise SystemExit(__doc__)
 src, routes, outdir = sys.argv[1], sys.argv[2], sys.argv[3]
 if outdir.lower().endswith(".kicad_pcb"):
     raise SystemExit("give an output FOLDER; the routed board keeps the input's file name")
@@ -55,7 +57,7 @@ Rj = json.load(open(routes))
 P = Rj["params"]
 ALL = [pcbnew.F_Cu, pcbnew.In1_Cu, pcbnew.In2_Cu, pcbnew.In3_Cu, pcbnew.In4_Cu, pcbnew.B_Cu]
 LID = {b.GetLayerName(l): l for l in ALL}
-names = {r["net"] for r in Rj["results"]}
+names = {r["net"] for r in Rj["results"]} | set(Rj.get("routed_nets", []))
 before = len(b.GetTracks())
 doomed = [t for t in b.GetTracks() if t.GetNetname() in names and not t.IsLocked()]
 for t in doomed:

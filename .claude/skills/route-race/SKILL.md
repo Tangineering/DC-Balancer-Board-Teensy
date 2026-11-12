@@ -36,7 +36,8 @@ Start one worker agent for each entry, in a single message so that they run in p
 - the method skill to follow, by name, and that it is the only method the worker uses;
 - the work folder `W = RACE/<entry>`, and that the worker writes nowhere else;
 - the path of `RACE/BRIEF.md`;
-- the limits: wall time (default 60 minutes), routed attempts (default 6);
+- the limits: wall time (default 75 minutes on a 4-layer board, 30 on a 2-layer board), routed attempts
+  (default 5), and one routing run at a time for each worker;
 - the deliverables: `STATUS.md`, `REQUESTS.md`, `REVIEW.md`, and a `score.json` for every attempt;
 - that the final message is a short summary: the best attempt's folder, its rank vector, the open nets with
   their classes, and the requests.
@@ -48,12 +49,17 @@ slowing each one much; with more entries, start them in batches of three.
 
 ### Step 3. Rank
 
-1. When all workers have reported: `python race.py rank RACE`. Read `RACE/RANKING.md`.
-2. Check the winner yourself, do not trust the worker's summary:
+1. When all workers have reported: `python race.py rank RACE`. Read `RACE/RANKING.md`. An attempt that
+   `score.md` marks "Result valid: NO" is not a candidate.
+2. Noise: two seeds of one plan differ by 2 to 4 connections. If the first two entries differ by less than 5
+   connections, run both winning plans at `--seed 2` yourself (this is scoring, not routing) and rank the means.
+3. Check the winner yourself, do not trust the worker's summary:
    - `score.md` of the winning attempt: open connections, the column New, parity run;
    - `REVIEW.md` rows 6, 10, 11 and 12 (the checks that the score does not see); open the images;
    - the constrained nets of the brief against the routed board.
-3. If the winner fails a review row, take the next attempt in the ranking that passes.
+4. If the winner fails a review row, take the next attempt in the ranking that passes.
+5. Compare the requests of all workers. A request that two or more methods make for the same place is the
+   strongest finding of a race that does not close; list it first.
 
 ### Step 4. Second round (optional, at most one)
 
@@ -81,7 +87,7 @@ real board.
 
 - One score for all: `score.py` against the same unrouted board. A method is not allowed its own measure.
 - Completion is counted in connections, not nets.
-- An attempt with new DRC violations never wins over an attempt without them at the same completion.
+- An attempt with a new DRC violation other than `starved_thermal` is not valid and cannot win.
 - Workers do not change placement, pours, rules or the netlist. They write requests.
 - A race folder is never reused.
 

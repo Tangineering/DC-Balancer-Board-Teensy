@@ -6,11 +6,11 @@ Do this review on the attempt that is reported. Write the table into `W/REVIEW.m
 | # | Check | Evidence | Pass when |
 |---|---|---|---|
 | 1 | Completion | `score.md`: open connections, non-plane nets | 0, or each open connection listed with class and request |
-| 2 | Plane nets | `score.md`: open connections, plane nets, after the plane-via step | 0 after the plane-via step; before it, equal to the unrouted board or lower |
-| 3 | New DRC violations | `score.md`: column New | 0 for clearance, hole, edge, keep-out and short types |
+| 2 | Plane nets | `score.md`: open connections, plane nets, after the project's plane-via step | 0 after the plane-via step. In a routing-only task the step is not run: write "not run" and the count |
+| 3 | New DRC violations | `score.md`: "Result valid" and column New | Result valid: yes. Each `starved_thermal` item listed with its pad |
 | 4 | Schematic parity | `score.md` | Run, and no issue |
-| 5 | Pour integrity | `score.md`: zone islands, trial pour | No pour with more islands than on the unrouted board |
-| 6 | Constrained nets | Design rows against the routed geometry (image window, track list in `routes.json`) | Each limit of the design document holds: layer, length, distance from the named aggressor, pair routed together |
+| 5 | Pour integrity | `score.md`: pour islands, trial pour | No hard pour and no trial pour with more islands than on the unrouted board. Soft fills are information |
+| 6 | Constrained nets | Design rows against the "Priority-1 nets" table of `route_report.md` (routed length, straight-line length, vias, layers) and an image window | Each limit of the design document holds. Without a design row: routed length under twice the straight-line length and at most 2 vias, or the net is reported |
 | 7 | Track width for current | `routes.json` widths against `net-classes.md` section 2 | No net below its width |
 | 8 | Vias | `score.md`; image | No via under a part pad that is not its own; no via in a keep-out |
 | 9 | Board edge and keep-outs | New `copper_edge_clearance` and `items_not_allowed` | 0 |

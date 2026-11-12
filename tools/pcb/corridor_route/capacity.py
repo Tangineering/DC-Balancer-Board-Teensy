@@ -44,7 +44,12 @@ if C.plan_errors:
     fail = True
     L += ["- ERROR: " + e for e in C.plan_errors]
 L += ["- warning: " + w for w in C.plan_warnings]
-if not C.plan_errors and not C.plan_warnings:
+if C.grid_sealed:
+    L.append("- GRID: %d pad(s) have no legal track start at grid %.4f mm (%s). The pad pitch is too fine for this "
+             "grid. Set `rules.res` to %.4f and run again; a net at such a pad can otherwise leave it with a "
+             "clearance error or not at all." % (len(C.grid_sealed), R, ", ".join(
+                 "%s.%s %s" % (r_, n_, net) for net, r_, n_ in C.grid_sealed[:8]), R / 2))
+if not C.plan_errors and not C.plan_warnings and not C.grid_sealed:
     L.append("No errors.")
 by_group = {}
 for net, a in C.assign.items():
@@ -163,8 +168,19 @@ for cid, c in corr.items():
             dx, dy = -dx, -dy
         nrm = math.hypot(dx, dy) or 1.0
         ux, uy = -dy / nrm, dx / nrm
-        shared = [d for d, cd in corr.items() if d != cid and cd["path"] is not None
-                  and set(cd["layers"]) & set(c["layers"]) and cd["geom"].contains(p)]
+        if min(s, line.length - s) < 0.5 and line.length > 2.0:   # skip the end caps: nets fan out there
+            s += 0.25
+            continue
+        shared = []
+        for d, cd in corr.items():
+            if d == cid or cd["path"] is None or not (set(cd["layers"]) & set(c["layers"])) or not cd["geom"].contains(p):
+                continue
+            ld = LineString(cd["path"])
+            sd = ld.project(p)
+            a1, a2 = ld.interpolate(max(sd - 0.2, 0)), ld.interpolate(min(sd + 0.2, ld.length))
+            n2 = math.hypot(a2.x - a1.x, a2.y - a1.y) or 1.0
+            if abs((a2.x - a1.x) / n2 * dx / nrm + (a2.y - a1.y) / n2 * dy / nrm) >= 0.85:   # within about 30 degrees
+                shared.append(d)
         dem = dict(users.get(cid, {}))
         for d in shared:
             for net, w in users.get(d, {}).items():
@@ -215,7 +231,20 @@ if blocked:
     fail = True
     L += ["- " + b for b in blocked]
     L += ["", "Each net above fails with the board to itself. Extend a corridor to the pad, raise `escape` until the "
-          "disc contains a via site, add a layer, or widen `margin`."]
+          "disc contains a via site, add a layer, or widen `margin`. Two corridors join only where they overlap."]
+    from shapely.ops import unary_union as _uu
+    for net in sorted(C.routable):
+        a = C.assign[net]
+        if a["mode"] != "corridor":
+            continue
+        geoms = [corr[cid]["geom"] for cid, _ in C.flat_route(a["route"]) if cid in corr]
+        geoms += [Point(p_[2], p_[3]).buffer(a["escape"]) for p_ in C.pad_centres(net)]
+        u = _uu(geoms)
+        if u.geom_type == "MultiPolygon":
+            parts = sorted(u.geoms, key=lambda g: -g.area)
+            gap = min(parts[0].distance(g) for g in parts[1:])
+            L.append("- %s: its corridors and escape discs form %d separate pieces; the smallest gap is %.2f mm near %s"
+                     % (net, len(parts), gap, fmt(parts[1].centroid.x, parts[1].centroid.y)))
 else:
     L.append("Every net routes alone inside its allowed region.")
 L.append("")

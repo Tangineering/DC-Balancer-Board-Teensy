@@ -16,14 +16,21 @@ connects every net; the plan is then judged on the pour measures, not on complet
 ## 2. Pattern
 
 1. Name the pour layer (normally `B.Cu`) and the signal layer.
-2. Ground net without a pour yet: route it on the pour layer only. Its tracks merge into the later pour.
-   `{"name": "gnd", "nets": ["/AGND"], "mode": "free", "layers": ["B.Cu"], "escape": 1.2, "priority": 9}`.
-   Each ground pad on the signal side gets a via inside its escape disc.
-3. Signals: prefer the signal layer by cost, do not forbid the pour layer.
+2. Signals: prefer the signal layer by cost, do not forbid the pour layer.
    `"layer_cost": {"B.Cu": 4}` at plan level, and `"costs": {"via": 20}`.
    A plan that forbids the pour layer for all signals fails: one layer is not planar.
+3. Ground net without a pour yet. There are two patterns; route both and keep the better score.
+   - **Ground free on both layers** at priority 9 with `"layer_cost": {"B.Cu": 1}` for its group. This is the
+     default. It completed on every test board.
+   - **Ground on the pour layer only**:
+     `{"name": "gnd", "nets": ["/AGND"], "mode": "free", "layers": ["B.Cu"], "escape": 1.2, "priority": 9}`.
+     Each ground pad on the signal side gets a via inside its escape disc, and the tracks merge into the later
+     pour. Use it only when the rules are fine enough that a via fits beside every ground pad; at coarse rules
+     it left 17 of 19 ground connections open in the dry test.
+   The score does not charge ground vias (vias on the trial-pour net are outside the rank).
 4. Read `capacity.py` check 5 and `flows.py` for the crossings. Each crossing needs a bridge on the pour layer.
-   Keep bridges short and parallel to the long axis of the pour, so that they do not cut the pour across.
+   Keep bridges short. Two parallel bridges 0.3 to 0.6 mm apart leave a strip of pour between them; `score.md`
+   lists every piece of the trial pour with its position, so find the strip and move or merge the bridges.
 5. A local net with many crossings may use both layers (`layer_cost` 1 for its group).
 6. Supply rails (3V3 and similar): signal layer, `priority: 2`, a width for the current.
 

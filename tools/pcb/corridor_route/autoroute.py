@@ -49,7 +49,26 @@ b = pcbnew.LoadBoard(out)
 if b is None:
     raise SystemExit("cannot load %s (write paths as C:/..., not /c/...)" % out)
 dsn, ses = stem + ".dsn", stem + ".ses"
+# Freerouting takes its widths and clearances from the default net class in the DSN, not from the fab rule file.
+ds0 = b.GetDesignSettings()
+trk = A.track or max(pcbnew.ToMM(ds0.m_TrackMinWidth), 0.127)
+clr = A.clear or max(pcbnew.ToMM(ds0.m_MinClearance), 0.127)
+try:
+    nc = ds0.m_NetSettings.GetDefaultNetclass()
+    nc.SetTrackWidth(pcbnew.FromMM(trk))
+    nc.SetClearance(pcbnew.FromMM(clr))
+    nc.SetViaDiameter(pcbnew.FromMM(A.via))
+    nc.SetViaDrill(pcbnew.FromMM(A.drill))
+except Exception as e:
+    print("warning: could not set the default net class (%s); Freerouting uses the project's own values" % e)
 pcbnew.ExportSpecctraDSN(b, dsn)
+import re as _re
+txt = open(dsn, encoding="utf-8").read()
+um = lambda v: ("%.1f" % (v * 1000)).rstrip("0").rstrip(".")
+txt2 = _re.sub(r"\(width [\d.]+\)", "(width %s)" % um(trk), txt)
+txt2 = _re.sub(r"\(clearance [\d.]+\)", "(clearance %s)" % um(clr), txt2)
+if txt2 != txt:
+    open(dsn, "w", encoding="utf-8").write(txt2)
 if os.path.exists(ses):
     os.remove(ses)
 cmd = [A.java, "-Djava.awt.headless=true", "-jar", A.jar, "--gui.enabled=false",
@@ -61,6 +80,12 @@ with open(os.path.join(A.outdir, "freerouting.log"), "w", encoding="utf-8") as f
 if not os.path.exists(ses):
     raise SystemExit("Freerouting produced no session file (see freerouting.log)")
 pcbnew.ImportSpecctraSES(b, ses)
+narrow = 0
+for t in b.GetTracks():          # Freerouting necks tracks down at pads; restore the fab width and let DRC judge
+    if t.GetClass() != "PCB_VIA" and pcbnew.ToMM(t.GetWidth()) < trk - 1e-6:
+        t.SetWidth(pcbnew.FromMM(trk))
+        narrow += 1
+print("tracks widened back to %.4f mm: %d" % (trk, narrow))
 b.Save(out)
 b2 = pcbnew.LoadBoard(out)
 b2.BuildConnectivity()
@@ -82,8 +107,7 @@ open_nets -= plane
 all_nets = {p.GetNetname() for fp in b2.GetFootprints() for p in fp.Pads() if p.GetNetname()}
 keep = sorted((all_nets - open_nets) | plane)
 ds = b2.GetDesignSettings()
-rules = dict(track=A.track or max(pcbnew.ToMM(ds.m_TrackMinWidth), 0.127),
-             clear=A.clear or max(pcbnew.ToMM(ds.m_MinClearance), 0.127), via=A.via, drill=A.drill)
+rules = dict(track=trk, clear=clr, via=A.via, drill=A.drill)
 plan = dict(rules=rules, keep_nets=keep, default=dict(mode="free", priority=5),
             note="autorouter stage 2: nets left open by Freerouting, routed free against the kept copper")
 if A.y_flip_offset is not None:
@@ -91,5 +115,8 @@ if A.y_flip_offset is not None:
 if plane:
     plan["plane_net"] = sorted(plane)[0]
 json.dump(plan, open(os.path.join(A.outdir, "plan_leftover.json"), "w"), indent=1)
+nv = len(D.get("violations", []))
+print("note: %d DRC items on the Freerouting result (all types, inherited ones included). Freerouting can narrow a "
+      "track at a fine-pitch pad below the fab width and can cut a pour; score the board before it is used." % nv)
 print("Freerouting done -> %s; nets with open connections: %d (%s); plan_leftover.json written" % (
     out, len(open_nets), ", ".join(sorted(open_nets)[:12]) + (" ..." if len(open_nets) > 12 else "")))

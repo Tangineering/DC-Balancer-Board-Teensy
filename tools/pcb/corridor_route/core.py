@@ -75,7 +75,9 @@ class Ctx:
                               ("edge_clear", self.edge_clear, br.get("edge_clear", 0.0))):
             if val < lo - 1e-9:
                 self.plan_errors.append("rules.%s = %.3f is below the board setup minimum %.3f" % (name, val, lo))
-        self.R = float(r.get("res", round((self.track + self.clear) / 2, 4)))
+        half = (self.track + self.clear) / 2
+        self.R = float(r.get("res", round(half if half <= 0.13 else half / 2, 4)))
+        self.thermal = float(r.get("thermal_keepout", 0.35))    # cost ring around through-hole pads on a pour
         self.pitch_cells = int(math.ceil((self.track + self.clear) / self.R - 1e-9))
         self.pitch = self.pitch_cells * self.R
         if self.pitch > (self.track + self.clear) * 1.25:
@@ -184,12 +186,17 @@ class Ctx:
         D, NL = self.D, self.NL
         rT = self.clear + self.track / 2
         rV = self.clear + self.via / 2
-        rT += self.sag(rT)
-        rV += self.sag(rV)
+        rT += self.sag(rT) + 0.01        # 0.01 mm: pad outlines are polygons that lie just inside the true arcs
+        rV += self.sag(rV) + 0.01
+        # header and wire pads only (drill >= 0.6 mm): a via-in-pad of an exposed pad has no thermal spokes
+        th_pads = {(it.get("ref"), it.get("num")) for it in D["items"]
+                   if it["kind"] == "hole" and (it.get("drill") or 0) >= 0.6}
+        zone_on = {(it["net"], ln) for it in D["items"] if it["kind"] == "zone" for ln in it["layers"]}
         self.ownT = np.full((NL, self.ny, self.nx), FREE, np.int32)
         self.ownV = np.full((NL, self.ny, self.nx), FREE, np.int32)
         self.pourN = np.full((NL, self.ny, self.nx), FREE, np.int32)
         self.holeBan = np.zeros((self.ny, self.nx), bool)        # via centres too close to a drilled hole
+        self.ring = np.zeros((NL, self.ny, self.nx), bool)        # thermal-spoke rings of poured through-hole pads
         self.selfban = {}        # net -> [(layer index, geometry for tracks, geometry for vias)]
         self.routable = set()
         for it in D["items"]:
@@ -252,8 +259,15 @@ class Ctx:
                     if it.get("no_vias", True):
                         self._claim(self.ownV, li, g.buffer(self.via / 2), BLOCK)
                 else:
+                    # a through-hole pad of a poured net needs room for its thermal spokes
                     self._claim(self.ownT, li, self.geom_of(it, rT), n)
                     self._claim(self.ownV, li, self.geom_of(it, rV), n)
+                    if (kind == "pad" and (it["net"], ln) in zone_on
+                            and (it.get("ref"), it.get("num")) in th_pads and self.thermal > 0):
+                        # room for the thermal spokes: a cost ring, so a track uses it only without another way
+                        j0, j1, i0, i1, m = self.raster(self.geom_of(it, rT + self.thermal))
+                        if m.size:
+                            self.ring[li, j0:j1, i0:i1] |= m
         self.net_name = {v: k for k, v in self.nets.items()}
 
     def cells_of(self, it):
@@ -279,8 +293,19 @@ class Ctx:
             if it["kind"] in ("track", "via") and it.get("locked") and it["net"] in self.routable:
                 pads_of.setdefault(it["net"], {})[("locked", id(it))] = [it]
         self.pads_of = pads_of
-        self.padcells = {net: {key: [c for it in grp for c in self.cells_of(it)] for key, grp in groups.items()}
-                         for net, groups in pads_of.items()}
+        # A pad cell is a legal track start only when a track centred on it clears the neighbouring copper.
+        # A pad with no legal cell at this grid is "grid-sealed": it keeps all its cells and is reported.
+        self.grid_sealed = []
+        self.padcells = {}
+        for net, groups in pads_of.items():
+            n = self.nid(net)
+            self.padcells[net] = {}
+            for key, grp in groups.items():
+                cells = [c for it in grp for c in self.cells_of(it)]
+                legal = [c for c in cells if self.ownT[c] == n]
+                if not legal and key[0] != "locked" and cells:
+                    self.grid_sealed.append((net, key[0], key[1]))
+                self.padcells[net][key] = legal or cells
         self.own = {net: {c for key, cs in groups.items() if key[0] != "locked" for c in cs}
                     for net, groups in self.padcells.items()}
         self.npads = {net: sum(1 for k in g if k[0] != "locked") for net, g in pads_of.items()}

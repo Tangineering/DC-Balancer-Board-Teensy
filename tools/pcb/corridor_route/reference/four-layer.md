@@ -13,13 +13,20 @@ routing layer.
   request for a pour or an L3 rail.
 - Hard pours and straps on L1, L3 and L4 are walls. `capacity.py` counts them. A pad sealed by a pour is a
   request, not a routing task.
+- Soft ground fills on L1 and L4 are cut by tracks. Their islands and the plane-net open count rise; both are
+  listed for information and are restored by the project's plane-via and stitching step.
+- A through-hole pad connects only on the layers where the board flashes it. On an inner layer without a pad the
+  hole is an obstacle for every net, the pad's own net included.
 
 ## 2. Layer use
 
 - Long flows: L3 (inner). It has no parts, so its capacity is the highest away from through-hole rows and
   straps.
 - Local nets: L1 and L4, the side where their parts are.
-- Two flows that cross: different layers, or directions per layer (`directions`).
+- Two flows that cross: different layers, or directions per layer (`directions`). The direction of a layer
+  follows the flows through the narrowest channel of the board (a neck, a gap row), not the count of long nets.
+- Constrained local nets at priority 1 take the inner layer first. Give their groups `layer_cost` 2 on the
+  inner layer when the long flows lose there.
 - Every change between L1 and L4 passes a via that also blocks L3. In a dense block, via sites are the scarce
   resource, not track space: raise `escape` only where the report shows a missing via site, and keep `costs.via`
   at 10 or above in dense areas.

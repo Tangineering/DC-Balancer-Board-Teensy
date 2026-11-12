@@ -37,6 +37,7 @@ class Router:
         self.pour_penalty = float(pour_penalty if pour_penalty is not None else costs.get("pour", 30.0))
         self.reserve_cost = float(costs.get("reserve", 6.0))
         self.dir_pen = float(costs.get("direction", 3.0))
+        self.thermal_cost = float(costs.get("thermal", 8.0))
         NL, ny, nx = C.NL, C.ny, C.nx
         self.occT = np.zeros((NL, ny, nx), np.float32)
         self.occV = np.zeros((NL, ny, nx), np.float32)
@@ -44,6 +45,9 @@ class Router:
         self.pres = 1.0
         self._disc = {}
         self._resv = {}
+        self.fixT = None          # cells claimed by nets kept from an earlier run: hard obstacles
+        self.fixV = None
+        self.paths_of = {}        # net -> [path, ...], each path a list of (layer, j, i); set by route_net
         self.routes = {}          # net -> (cells, vias)
         self.unreached = {}       # net -> [pad keys]
 
@@ -92,6 +96,11 @@ class Router:
             for l in range(C.NL):
                 self._stamp(self.occT, np.int64(l), v[:, 0], v[:, 1], self.disc(r["VT"]), val)
                 self._stamp(self.occV, np.int64(l), v[:, 0], v[:, 1], self.disc(r["VV"]), val)
+
+    def freeze(self):
+        """the occupancy stamped so far (nets kept from an earlier run) becomes a hard obstacle for every other net"""
+        self.fixT = self.occT > 0
+        self.fixV = self.occV.max(axis=0) > 0
 
     # ------------------------------------------------------------ per-net cost pieces
     def reserve_mult(self, net):
@@ -176,6 +185,7 @@ class Router:
         if rm is not None:
             base *= rm[sl]
         base += np.where((pn != FREE) & (pn != n), self.pour_penalty, 0.0)
+        base += np.where(C.ring[sl], self.thermal_cost, 0.0)
         vc0 = C.assign[net].get("via_cost")
         vc0 = self.via_cost if vc0 is None else float(vc0)
         if solo:
@@ -187,6 +197,9 @@ class Router:
         else:
             costT = base * (1.0 + self.hist[sl]) * (1.0 + self.pres * occT)
             costV = vc0 * (1.0 + self.hist[sl].max(axis=0)) * (1.0 + self.pres * occV)
+        if self.fixT is not None and not solo:
+            passT = passT & ~self.fixT[sl]
+            passV = passV & ~self.fixV[j0:j1, i0:i1]
         costT = np.where(passT, costT, INF)
         costV = np.where(passV, costV, INF)
         cT = [costT[l].ravel().tolist() for l in range(NL)]
@@ -202,7 +215,7 @@ class Router:
         keys = sorted(groups, key=lambda k: -len(groups[k]))
         tree = loc(groups[keys[0]])
         rest = [(k, loc(groups[k])) for k in keys[1:]]
-        cells, vias, unreached = [], [], []
+        cells, vias, unreached, paths = [], [], [], []
         while rest:
             tj = sum(c[1] for c in tree) / len(tree)
             ti = sum(c[2] for c in tree) / len(tree)
@@ -281,7 +294,10 @@ class Router:
                 if a[0] != b2[0]:
                     vias.append((a[1] + j0, a[2] + i0))
             cells += [(l, j + j0, i + i0) for (l, j, i) in path]
+            paths.append([(l, j + j0, i + i0) for (l, j, i) in path])
             tree |= set(path) | tgt
+        if not solo:
+            self.paths_of[net] = paths
         return (cells, vias), unreached
 
     # ------------------------------------------------------------ conflicts

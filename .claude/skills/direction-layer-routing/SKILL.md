@@ -29,25 +29,31 @@ Read `tools/pcb/corridor_route/reference/common.md` first. The plan format is in
 ### Step 1. Choose the directions
 
 1. Add `regions` to a draft plan and run `"$PY" flows.py W/model/model.json W/plan.json W/flows.md`.
-2. Find the dominant direction of the long flows (the axis along which most flow nets travel) and the direction
-   in which the walls let tracks pass (a through-hole column passes tracks across it, between its pads).
+2. Find the narrowest channel of the board (an outline neck, a gap row in a through-hole wall, the strip
+   beside a strap) and the direction in which the flows pass it. That direction decides, not the count of long
+   nets.
 3. Assign directions:
-   - 4-layer board (routing layers L1, L3, L4): the inner layer takes the dominant direction of the long
-     flows. The outer layer with fewer parts takes the other direction. The third layer is `any` and serves
-     the local nets.
-   - 2-layer board: the signal layer is `any`; the pour layer takes the direction of the long axis of the pour
-     and a `layer_cost` of 3 to 5, so that bridges are short and parallel (`reference/two-layer.md`).
-4. Classify the nets (`reference/net-classes.md`). Constrained nets: priority 1, `mode: local`, small margin,
-   `directions` override `any` for their group. Rail without a pour: priority 1, `mode: free`.
+   - 4-layer board (routing layers L1, L3, L4): the inner layer takes the direction of the flows through the
+     narrowest channel. One outer layer takes the other direction. The third layer is `any` and serves the
+     local nets. The second assignment to try ("the swap") exchanges the directions of the inner layer and
+     that outer layer.
+   - 2-layer board: both layers `any`, pour layer `layer_cost` 4 to 8 and `costs.via` 20
+     (`reference/two-layer.md`). A preferred direction on the pour layer made more pour islands in the dry
+     tests; do not set one. On a 2-layer board this method is cost tuning, and there is no swap.
+4. Classify the nets (`reference/net-classes.md`). The groups of constrained nets set every layer to `any`
+   (`"directions": {"F.Cu": "any", "In2.Cu": "any", "B.Cu": "any"}`). Rail without a pour: priority 1,
+   `mode: free`.
 5. Default group: `{"mode": "free", "priority": 5}`.
 6. Write `W/plan.json`. Start with `"costs": {"via": 10, "direction": 3}`.
 
 ### Step 2. Check and route
 
-1. `"$PY" capacity.py W/model/model.json W/plan.json W/capacity_report.md`. Sealed pads become requests.
-   Read check 6 (congestion): a cell above 0.6 is where the directions matter most.
+1. `"$PY" capacity.py W/model/model.json W/plan.json W/capacity_report.md`. If check 1 prints a GRID message,
+   set `rules.res` as it says. Sealed pads become requests. Read check 6 (congestion): a cell above 0.6 is
+   where the directions matter most.
 2. `"$PY" -u route_plan.py W/model/model.json W/plan.json W/routes.json --report W/route_report.md`.
-3. Apply and score as in `reference/common.md` section 4 (attempt folder `W/vN`, label `direction-vN`).
+3. Apply, score and render as in `reference/common.md` section 2 (attempt folder `W/vN`, label
+   `direction-vN`). The first attempt is the unconstrained baseline (no `directions`), for comparison.
 
 ### Step 3. Tune
 
@@ -57,15 +63,19 @@ Change one thing for each attempt and record it in `STATUS.md`.
 |---|---|
 | Open nets cluster where two flows cross on one layer | Swap the directions of the two layers that serve that area, or give the group of one flow a `directions` override |
 | Many vias, short stubs between them | Raise `costs.via` (15 to 25) |
-| Nets detour far to stay on a layer | Lower `costs.via` (5 to 8) or lower `costs.direction` (2) |
+| Nets detour far to stay on a layer, and the inner layer is not the full one | Lower `costs.direction` (2). Do not lower `costs.via` when the inner layer is full: it sends more nets there |
+| Open nets cluster on the inner layer, lost to priority-1 local nets | `layer_cost` 2 on the inner layer for the constrained groups |
+| New `starved_thermal` items | `costs.thermal` 30 |
+| More pour islands than the baseline | `reference/failure-repair.md` section 3 |
 | A dense block has no via sites left | `layer_cost` above 1 on the layer that the block's parts occupy, for the long nets only (a group) |
 | Local nets block the long nets | A group for the local nets of that area with `mode: local`, a `margin` of 1.5 and priority 3 |
 | One rail is in conflict with many nets | Priority 1 for the rail; a request for a pour |
 | Conflict count flat from the first iterations | `reference/failure-repair.md`, last rows: capacity, not direction |
 
 Use the repair classes of `reference/failure-repair.md` for single nets. Stop when every connection is made,
-or when two consecutive attempts do not reduce the open connections. Try at least the two direction
-assignments (dominant direction on the inner layer, and the swap) before stopping.
+or when two consecutive attempts do not reduce the open connections by more than the noise band
+(`reference/common.md` section 5). On a 4-layer board try the swap once, unless `flows.md` shows one clearly
+dominant direction through the narrowest channel. Report the baseline if no direction plan beats it.
 
 ### Step 4. Review
 
