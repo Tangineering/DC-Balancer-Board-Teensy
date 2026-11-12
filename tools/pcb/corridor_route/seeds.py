@@ -15,7 +15,11 @@ prints the paired differences (same seed), their mean, and the verdict:
   B worse      every paired difference is negative, with 4 or more seeds;
   not separated  anything else.
 A difference of means alone is never a result: on the test boards two seeds of one plan differed by up to 9
-connections."""
+connections.
+A whatif.py holdout folder can be given for A or B: compare reads its held side (<folder>/held), counted on the
+nets that remain. `seeds.py compare <folder>/base <folder>/held` gives the hold-out verdict again; a hold-out
+against another plan's run counts the open connections of the held-out nets on the other side only (a bias towards
+the hold-out, the same as any compare of runs with different totals)."""
 import json
 import os
 import subprocess
@@ -77,9 +81,21 @@ def run():
     print("\n".join(L))
 
 
+def load_seeds(d):
+    """SEEDS.json of a seeds.py run, or of a whatif.py holdout folder (its held side, counted on the remaining nets)."""
+    f = os.path.join(d, "SEEDS.json")
+    if not os.path.exists(f) and os.path.exists(os.path.join(d, "held", "SEEDS.json")):
+        f = os.path.join(d, "held", "SEEDS.json")
+        print("%s is a whatif.py holdout folder: using its held side (%s)" % (d, f))
+    if not os.path.exists(f):
+        raise SystemExit("no SEEDS.json in %s (a holdout folder made before 2026-11-12 has none: compare it by hand "
+                         "from its WHATIF.md, or run the holdout again)" % d)
+    return json.load(open(f))
+
+
 def compare():
-    A = json.load(open(os.path.join(sys.argv[2], "SEEDS.json")))
-    B = json.load(open(os.path.join(sys.argv[3], "SEEDS.json")))
+    A = load_seeds(sys.argv[2])
+    B = load_seeds(sys.argv[3])
     if A["seeds"] != B["seeds"]:
         raise SystemExit("the two runs have different seeds: %s, %s" % (A["seeds"], B["seeds"]))
     # a what-if that removes nets changes the total: compare open connections, not connections made

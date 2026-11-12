@@ -25,6 +25,8 @@ Read `tools/pcb/corridor_route/reference/common.md` first. The scripts are in `t
 - **The constrained nets and their limits, from the design owner** (length, layer, vias, pairing). If the design
   gives none, ask for them before the study; without them the score has no quality term and workers class nets
   by name.
+- The via-in-pad ruling: none, a list of pads, or unlimited (`board-routing` section 2, step 4).
+- Soft rules that are scored as metrics, not limits (for example a keep-away zone), with their exempt nets.
 - The list of fixed parts and the project's constraint check command.
 - The move limits for scratch tests (`reference/placement-relief.md` section 1).
 - The design owner (a session or the user) and where the batch goes.
@@ -35,20 +37,25 @@ Read `tools/pcb/corridor_route/reference/common.md` first. The scripts are in `t
 
 1. Choose an empty folder `RACE/rN` for round N, outside the board's folder.
    `python race.py init <board.kicad_pcb> RACE/rN --entries ref`.
+   When the base board is new (a new commit, or a variant that comes back), compare it with the previous base:
+   `"$PY" cmp_place.py <previous base> <new base>`. If placement, pad nets and zones are equal, do not route
+   the reference again. Use the earlier runs as the control and write the comparison in `STATUS.md`. Run the
+   new seeds only for the changes that the round tests (a new plan rule, for example).
 2. Model the board and write the plain plan `RACE/rN/ref/plan.json` (`board-routing` skill, section 2,
    steps 1 to 5). Run `capacity.py`; follow a GRID message.
 3. `"$PY" -u seeds.py run RACE/rN/ref/model/model.json RACE/rN/ref/plan.json RACE/rN/ref/seeds --seeds 1,2,3,4`
    (in the background; `reference/common.md` section 6 for the run time and the number of jobs).
 4. Read `SEEDS.md`: mean, minimum, maximum, the nets open at every seed and the nets open at some seeds.
-5. Apply and score the best seed (`reference/common.md` section 2). If the board is closed (0 open
-   connections, valid, review passed), go to section 6.
+5. Finish every seed with the pipeline of `board-routing` section 2, step 7: apply, score, plane vias, apply,
+   score, constraint metrics. Read the plane-net result and `vias_on_smd_pads` of each seed. If the board is
+   closed (0 open connections, valid, review passed), go to section 6.
 6. `"$PY" global_route.py ... --no-corridors --report RACE/rN/ref/global.md`, at tile 2.0 and 1.0.
 
 ## 3. Stage 2: diagnosis (one agent)
 
 Start one agent. Its prompt: the paths of `SEEDS.md`, the `route_report.md` of every seed, both `global.md`
-files, the images of the best seed, the constrained nets, the fixed parts; and the output format below. It does
-not route.
+files, the images of the best seed, the constrained nets, the fixed parts, the `plane_vias.md` and
+`nosite_why.py` output of each seed; and the output format below. It does not route.
 
 The agent writes `RACE/rN/diagnosis/requests.json` and `REQUESTS.md` (`reference/common.md` section 7). Each
 entry is a hypothesis with:
@@ -75,7 +82,8 @@ options, and uses the seeds of stage 1.
 | Hypothesis | Test | Judged by |
 |---|---|---|
 | A plan (layer assignment, guide corridors, a priority, a direction, a hand corridor) | `seeds.py run` on the plan, then `seeds.py compare RACE/rN/ref/seeds <plan seeds>` | `compare` verdict |
-| Nets leave the task (DNP removal; a pour or rail for a net) | `whatif.py holdout ... --nets <nets>` | its verdict line |
+| Nets leave the task (DNP removal; a pour or rail for a net) | `whatif.py holdout ... --nets <nets>`; `seeds.py compare` reads the folder as its held side | its verdict line |
+| A soft keep-away rule | A plan with reserved zone corridors at `costs.reserve` 30 and exempt groups (`board-routing` section 2, step 4); `seeds.py run`, `seeds.py compare`; `parallel_metric.py` on every seed of both runs | `compare` verdict for completion; the metric at every seed |
 | A part move, rotation or swap at one site | `whatif.py move`, the constraint check, `board_model.py`, then `relief_trial.py` | its verdict |
 | A larger re-placement of a named block; a pour change; a rule or via-size change | The orchestrator builds the variant on a scratch copy (or asks the design owner for it), models it, `seeds.py run`, `seeds.py compare` | `compare` verdict |
 
@@ -89,6 +97,8 @@ options, and uses the seeds of stage 1.
 - Bias of a hold-out figure, to state in the batch: a DNP hold-out understates the gain (the parts stay on the
   board); a pour or rail hold-out overstates it (the pour takes layer space that the test does not charge).
 - Test the combination of the two strongest changes as well: effects on a congested board do not add.
+- Finish the seeds of a test with the same pipeline as the reference (stage 1, step 5) when the plane nets or
+  a constraint metric are part of the hypothesis.
 
 When all tests have finished, write `RACE/rN/tested.json` from the `tested.json` and `trial.json` files (add
 the `match` field), and run `python merge_requests.py RACE/rN --round N --tested RACE/rN/tested.json
@@ -98,6 +108,9 @@ the `match` field), and run `python merge_requests.py RACE/rN --round N --tested
 
 1. Check `CHANGE_REQUESTS.md`: each row has evidence, a verdict (gain, not separated, refuted) or the word
    "untested", its tier and its design rows. A refuted request stays in the list as refuted.
+   Before you send a number from a constraint checker, verify the checker on one pad whose position you know
+   (`board-routing` section 2, step 7). In the CR study a scratch checker used the wrong frame, and its wrong
+   counts went to the design owner.
 2. For each accepted move, check `placement_diff.json`: frame, old and new coordinates, rotation, the commit of
    the board it was tested on (`reference/placement-relief.md` section 3).
 3. Put the batch where the design owner reads it (the shared notes folder that the task names):
@@ -117,6 +130,10 @@ the `match` field), and run `python merge_requests.py RACE/rN --round N --tested
 Report to the owner of the board:
 
 - the reference: mean, minimum and maximum of n seeds, and the scored best seed with its validity;
+- the via-in-pad rule and `vias_on_smd_pads` of each seed; with `via_in_pad: true`, say that the count is not
+  limited;
+- the plane-net connections open after the plane-via step, per seed, and what blocks the pieces without a via
+  site;
 - whether the board is closed (open connections 0, valid, review passed, finish test of
   `reference/review-checklist.md` passed);
 - every test with its verdict and its n, the "not separated" ones included;
@@ -137,6 +154,7 @@ The best board stays in its race folder. Copying it into the project is the owne
   on an SMD pad. A valid result is not a finished board.
 - Agents propose, scripts judge. Scratch copies only. A race folder is never reused.
 - A request is sent with a verdict or marked "untested". An estimate is never sent as a fact.
+- A checker's number is sent only after its frame check on a known pad.
 
 ## 8. What the dry tests showed (three rounds, four boards, Opus workers)
 
@@ -149,10 +167,17 @@ The best board stays in its race folder. Copying it into the project is the owne
 - A fresh agent ran this skill's earlier form end to end on a 2-layer board and closed it.
 - The router was changed after these tests (negotiation schedule, via rule, reproducible seeds); numbers from
   before the change are not comparable with numbers after it.
+- The CR study of 2026-11-12 (three rounds, after the change): the plane-via step without the unflashed-pad
+  rule shorted GND pads to In2.Cu tracks at 3 of 4 seeds; `plane_vias.py` now applies the rule by default.
+  `via_in_pad: true` gave 102 to 119 vias in SMD pads per seed. A soft keep-away zone at reserve 30 cut the
+  parallel logic length in the zone sharply at no separated completion cost, but did not clear all logic vias.
+  The round-3 base had the same placement as a round-2 variant; `cmp_place.py` finds such a case before a
+  reference is routed again. `board-routing` section 6 has the figures.
 
 ## 9. Limits
 
 - A relief trial shows the effect of a move with the rest of the board held. Only the next round on the new
   placement shows the effect of a full run.
-- Plane nets are connected by the project's plane-via step after the study; the finish test covers it.
+- Plane nets are connected by `plane_vias.py` in the finish pipeline of each seed. Pieces without a via site
+  stay open; a track move in the GUI or a request closes them. The finish test covers the result.
 - This skill was written for small mixed-signal power boards. Revise it when the tools or the models change.

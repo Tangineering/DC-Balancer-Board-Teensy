@@ -8,7 +8,8 @@ Usage (pcbnew venv):
 holdout: tests a request that takes nets out of the routing problem (DNP removal, a new pour or rail for a net).
   It routes the plan as it is and with the named nets added to `keep_nets`, at each seed, in parallel, and
   compares the open connections on the nets that remain. Writes <outdir>/WHATIF.md and <outdir>/tested.json
-  (an entry for merge_requests.py --tested; add the "match" field by hand).
+  (an entry for merge_requests.py --tested; add the "match" field by hand), and <outdir>/base/SEEDS.json and
+  <outdir>/held/SEEDS.json counted on the remaining nets, which `seeds.py compare` reads.
 move: tests a placement request. It writes a copy of the board to <outdir> with one part moved by (dx, dy) in
   the plan frame (y up when --y-flip-offset is given) and rotated by --rot degrees, refills the zones, and
   reports the DRC items that the move adds (courtyard overlaps, clearance). Then build a model of the copy and
@@ -80,6 +81,20 @@ if sys.argv[1] == "holdout":
           "a positive difference at every seed." % (mean, n_, verdict,
                                                    sum(C.connections(n) for n in held if n in C.routable))]
     open(os.path.join(outdir, "WHATIF.md"), "w", encoding="utf-8").write("\n".join(L) + "\n")
+    # SEEDS.json for each side, counted on the remaining nets only, so that `seeds.py compare` can read a hold-out
+    # (outdir/base, outdir/held; `seeds.py compare <x> <outdir>` takes outdir/held)
+    for tag, pl in (("base", plan), ("held", plan2)):
+        runs = {}
+        for s in seeds:
+            st = json.load(open(os.path.join(outdir, "%s_s%d.json" % (tag, s)))).get("net_stats", {})
+            runs[str(s)] = dict(made=total - res[(tag, s)], total=total,
+                                open=sorted(n for n in rest if (st[n]["open"] if n in st else C.connections(n)) > 0))
+        made = [runs[str(s)]["made"] for s in seeds]
+        os.makedirs(os.path.join(outdir, tag), exist_ok=True)
+        json.dump(dict(plan=os.path.abspath(pl), seeds=seeds, options=["--iters", iters], runs=runs,
+                       mean=sum(made) / len(made), min=min(made), max=max(made), total=total,
+                       counted_on="the %d nets that remain after the hold-out of %s" % (len(rest), ", ".join(held))),
+                  open(os.path.join(outdir, tag, "SEEDS.json"), "w"), indent=1)
     json.dump([dict(match=dict(kind="?", parts=[]), gain=round(mean, 1), verdict=verdict, seeds=seeds,
                     how="held out %s; open connections on the remaining nets %s -> %s" % (
                         ", ".join(held), [res[("base", s)] for s in seeds], [res[("held", s)] for s in seeds]))],

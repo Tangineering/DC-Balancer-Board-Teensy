@@ -36,17 +36,55 @@ score, seeds, run time). Read the other reference files at the step that names t
    - A net flagged NO POUR (12 or more pads, no pour): a group with `"mode": "free", "priority": 1`.
    - Constrained nets: groups as in `reference/net-classes.md`, each with the design row that limits it. If the
      design gives no row, write "no design row" in `STATUS.md` and ask the design owner; do not invent limits.
+   - A soft keep-away rule (a net class kept away from a zone, scored as a metric): the router has no per-net
+     keep-out. Draw the zone as region corridors with `"reserve": true` on the layers of the rule. Set
+     `costs.reserve` to 30. Put the exempt nets in groups whose `route` lists the zone corridors and one `BODY`
+     region over the rest of the board (`reference/plan-format.md`). Measure the result with
+     `parallel_metric.py` (step 7). Test the plan against the plain plan (section 3). If the rule is a hard limit,
+     this plan does not meet it (section 6): write a request.
    - 2-layer board with a ground pour: the pattern of `reference/two-layer.md` section 2.
-   - Vias: the router places no via on an SMD pad or in its mask opening. If the design uses filled vias, or
-     accepts vias at named pads, set `rules.via_in_pad` (`reference/plan-format.md`). This is a decision of the
-     design owner; it changes the completion much (section 6).
+   - Vias: the router places no via on an SMD pad or in its mask opening. Set `rules.via_in_pad` only on a ruling
+     of the design owner (`reference/plan-format.md`). It changes the completion much (section 6). The value
+     `false` (default) allows no via in an SMD pad. A list of pads (`["U101.25"]`) allows it at those pads only;
+     use the list when the ruling limits via-in-pad to a count, a part or a net. The value `true` is unlimited:
+     the router puts no cost on a via in a pad and uses it freely (102 to 119 per seed on the CR board). Use
+     `true` only when the ruling accepts any number. `plane_vias.py` reads the rule from the plan. Give
+     `score.py` the option `--allow-via-in-pad` whenever the plan allows a via in any pad. With a list,
+     `score.py` does not check the list: compare the vias on SMD pads that `score.md` lists with the list.
+     Report `vias_on_smd_pads` of `score.json` for every seed.
 5. `"$PY" capacity.py W/model/model.json W/plan.json W/capacity_report.md`. If check 1 prints a GRID message,
    set `rules.res` as it says. Sealed pads become requests.
 6. Route at four seeds, in the background:
    `"$PY" -u seeds.py run W/model/model.json W/plan.json W/plain --seeds 1,2,3,4`.
    Read `W/plain/SEEDS.md`: mean, minimum, maximum, nets open at every seed, nets open at some seeds.
-7. Apply and score the best seed (`reference/common.md` section 2). Read "Result valid", the new violations,
-   the added vias on SMD pads.
+7. Finish each seed in this order: apply, score, plane vias, apply, score, constraint metrics. Finish the best
+   seed always, and every seed when the plane nets or a constraint metric decide between plans. Run every step
+   with the pcbnew venv `"$PY"`; shapely is in that venv, not in miniforge (`"$MPL"`).
+
+   ```bash
+   D=W/plain/s<N>; B=<board>.kicad_pcb; V="--allow-via-in-pad"   # V empty when the plan allows no via in a pad
+   "$PY" apply_routes.py W/$B $D/routes.json $D/board
+   "$PY" score.py $D/board/$B W/$B $D/score --plane-nets <nets> $V --label plain-s<N>
+   "$PY" plane_vias.py W/model/model.json W/plan.json $D/routes.json $D/board/$B $D/plane_routes.json --report $D/plane_vias.md
+   "$PY" apply_routes.py $D/board/$B $D/plane_routes.json $D/board_pv
+   "$PY" score.py $D/board_pv/$B W/$B $D/score_pv --plane-nets <nets> $V --label plain-s<N>-pv
+   "$PY" parallel_metric.py W/model/model.json $D/routes.json --zone-parts <refs> --analog-nets <nets> --json $D/parallel.json
+   ```
+
+   - Read "Result valid", the new violations and `vias_on_smd_pads` in both scores. The open connections of the
+     plane nets in `score_pv.md` are the plane-via result.
+   - `plane_vias.py` keeps each via off the unflashed layers of its own net's through-hole pads. Do not give
+     `--no-respect-unflashed`. Without the rule, KiCad flashed GND pads J1.14 and J1.15 on In2.Cu onto routed
+     tracks on the CR board, at 3 of 4 seeds.
+   - Run `parallel_metric.py` only when a soft keep-away rule applies (step 4). Run the project's constraint
+     check as well.
+   - When `plane_vias.md` lists pieces without a via site, run `nosite_why.py` on `board_pv` with the inputs of
+     `plane_vias.py`. A piece that routed copper on one layer blocks needs one track moved; on the CR board, an
+     In2.Cu track by about 0.85 mm, in the GUI. A piece that obstacles or holes block becomes a request.
+   - Before you use the numbers of a constraint checker, verify its frame on one pad whose position you know.
+     `model.json` and `routes.json` are in the KiCad frame; a design-frame limit can use y = Y0 - y. Use
+     `parallel_metric.py --check-pad REF.PAD [--y-flip-offset Y0]`, or print one pad from your own checker. A
+     checker in the wrong frame gave wrong counts that went to the design owner (CR study, 2026-11-12).
 8. `"$MPL" -I render.py W/model/model.json W/plain/img --plan W/plan.json --routes W/plain/s<N>/routes.json`.
    Open the images.
 
@@ -87,7 +125,9 @@ Open connections that no plan closes are for the design owner. Write each as a r
 seed, the place in the plan frame, the nets that hold the space, the kind of change, and the test that would
 decide it. In a race, stop there: the orchestrator tests the requests (`route-race`). Outside a race, test
 them yourself: `whatif.py holdout` for nets that would leave the task, `reference/placement-relief.md` for a
-part move; the scripts give the verdict.
+part move; the scripts give the verdict. A hold-out folder holds `base/SEEDS.json` and `held/SEEDS.json`;
+`seeds.py compare` reads the folder as its held side. A hold-out folder made before 2026-11-12 has no
+`SEEDS.json`; compare it by hand from its `WHATIF.md`.
 
 ## 5. Review and report
 
@@ -96,6 +136,10 @@ need the images. Report:
 
 - the plain plan: mean, minimum and maximum of n seeds, the iteration limit;
 - the scored result: rank vector, "Result valid", open connections by net, new starved thermals;
+- the via-in-pad rule of the plan and `vias_on_smd_pads` of each scored seed;
+- the plane-via result: plane-net connections open after the step, pieces without a via site and what blocks
+  them (`nosite_why.py`);
+- each constraint metric with its frame check;
 - each hypothesis with its verdict;
 - that a valid result is not a finished board, until the finish-test rows of the review pass.
 
@@ -111,9 +155,16 @@ Four boards, three rounds, Opus workers; 4-layer board "CR" with 210 connections
   is the one place where a plan choice was worth its time.
 - The negotiation schedule matters: on the CR board the present schedule made 181 to 188 connections where the
   earlier one made 178 to 182 (4 seeds each, vias on pads allowed in both).
-- The via rule matters more: earlier results had 70 to 110 vias on SMD pads. With the ban the same board
-  makes fewer connections (see `STATUS` of the last test for the figure). Decide the via rule with the design
-  owner before the numbers are compared with anything.
+- The via rule matters more: earlier results had 70 to 110 vias on SMD pads. With the ban the CR plain plan
+  made 169 to 174 connections of 199 (4 seeds). With `via_in_pad: true` it made 179 to 182 on the next
+  placement (one part moved, not separated from the first under the ban), with 102 to 119 vias in SMD pads per
+  seed. Decide the via rule with the design owner before the numbers are compared with anything.
+- A soft keep-away zone (reserved corridors at `costs.reserve` 30, exempt groups routed through them) cut the
+  logic track parallel to analog track in the CR divider zone from 7.2-12.1 mm to 0.0-1.8 mm (same layer) at
+  every seed. The completion was not separated (179.5 against 180.5). However, it did not remove all logic
+  vias from the zone: a cost of 300 still left 2 to 9 per seed. A hard per-net keep-out needs a router change.
+- After the plane-via step, 11 to 19 GND connections stayed open on the CR board. In2.Cu tracks blocked most
+  of the remaining via sites.
 - Two seeds of one plan differed by up to 9 connections. One run is not a result.
 
 ## 7. Limits
