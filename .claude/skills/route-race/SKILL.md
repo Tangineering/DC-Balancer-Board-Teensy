@@ -62,7 +62,10 @@ Rules for the diagnosis:
 - With tens of nets still in conflict at the end of a run, the "Lost to" places show where the router gave
   up, not where the board lacks capacity. A capacity claim needs the same nets at the same place at every seed,
   and a border at or above capacity in `global.md` or a lane count from the image.
-- One request is one decision: one place, the smallest set of parts.
+- One request is one decision: one place, the smallest set of parts. A placement request states the move
+  (old and new position and rotation of each part, the frame, the board commit).
+- If the request asks for more than a relief trial can test (a block of parts), say that it is a re-placement
+  variant for the design owner, and state what is untested.
 
 ## 4. Stage 3: tests (scripts; agents only where named)
 

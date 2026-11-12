@@ -132,6 +132,12 @@ The routing agent does not move parts, swap pins or change pours. It records the
 | # | Kind (placement / pin swap / pour / rule / layer / outline) | What | Why (evidence: report section, numbers) | Connections it would close |
 ```
 
+A placement or pin-swap request states the move itself: for each part the old and the new position and
+rotation, the frame, and the board commit (`"moves": [{"ref": "R130", "old": [29.30, 67.80, 180], "new": [24.75,
+69.85, 90]}], "frame": "plan (y up, y_flip_offset 100)", "board": "cr.kicad_pcb of commit 71ecdef"`). A request
+that asks for "more room at" a place, without a move, is not a placement request: file it as evidence for the
+diagnosis. If a move was tested, the request describes the tested move, not a different one.
+
 A request states evidence from a report (a sealed pad, a channel with capacity 14 and demand 16, two nets that
 need the one lane at a named place in every attempt). The session that owns the design decides.
 

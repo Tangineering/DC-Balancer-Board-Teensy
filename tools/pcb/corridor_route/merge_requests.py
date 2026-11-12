@@ -69,6 +69,8 @@ def same(a, b):
         return True
     if a.get("pour") and a.get("pour") == b.get("pour"):
         return True
+    if a["kind"] in ("placement", "pin_swap") and (a.get("parts") or b.get("parts")):
+        return False            # two moves of different parts are two decisions, however close they are
     if a.get("at") and b.get("at"):
         return math.hypot(a["at"][0] - b["at"][0], a["at"][1] - b["at"][1]) <= radius
     return False
