@@ -210,12 +210,25 @@ PHASE_MARGIN = {}
 PLACED = set()
 PARK = (70.0, 50.0)
 
+# Routing-study placement variants (round 1, D-34). CR_PLACE_VARIANT unset = the base placement of 5ddc21a.
+#   A: the VCHGOUT L4 strap (route_cr.VOUT_IN, D-22 shape unchanged) plus 0.15 mm is a bottom keep-out, so no
+#      bottom pad sits inside the strap outline (R147.2 /QUAL was enclosed on three sides; CR1-03).
+#   B: A plus the B.Cu tap/divider grid packed at a row pitch of 1.75 mm (each courtyard grown by 0.225 mm):
+#      0.80 mm row gaps between 0603 pads and >= 0.9 mm from the R107/R122/R128 column to R129/C129 (CR1-03).
+VARIANT = os.environ.get("CR_PLACE_VARIANT", "").upper()
+VOUT_L4_KO = unary_union([box(29.10, 60.00, 31.50, 62.40), box(29.10, 62.30, 36.90, 64.10)]).buffer(
+    0.15, join_style=2)                        # = route_cr.VOUT_IN (kept equal by check_constraints)
+GRID_REPACK = ("C129", "R107", "R122", "R126", "R128", "R129", "R147", "R190", "R191")
+CRT_GROW = {r: 0.225 for r in GRID_REPACK} if VARIANT == "B" else {}
+
 
 def setup(fps):
     global PHASES
     bot = INSET.difference(mbk()).difference(FT1_KO).difference(FT2_KO).difference(PRE_VIA_KO).difference(
         unary_union([Point(30.3, 61.2).buffer(1.15 + 0.5), Point(27.7, 61.2).buffer(1.15 + 0.5),
                      Point(24.3, 45.4).buffer(1.25 + 0.5), Point(24.3, 55.6).buffer(1.25 + 0.5)]))
+    if VARIANT in ("A", "B"):
+        bot = bot.difference(VOUT_L4_KO)
     REGIONS.update({
         "taby_logic": TABY_TOP.union(INT_ANY).union(BAND_E),
         "taby_only": TABY_TOP,

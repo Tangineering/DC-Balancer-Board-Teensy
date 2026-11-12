@@ -274,7 +274,29 @@ nets after tiers 1 and 2 (GND, VCHGIN, VCHGOUT and VCHG are pours).
 | 7 | PathFinder, 0.05 mm grid, stopped at iteration 15 | 0.127 / 0.127 mm | same as 6 | conflicts 73 -> 29 at iteration 11, 30-35 at iterations 12-15 |
 
 Attempt 6 is saved as `cr/attempts/cr_pathfinder_0p1mm_partial.kicad_pcb` with its DRC report; it is a reference,
-not a deliverable (516 clearance violations from the remaining conflicts). The conflict report of attempt 4 showed
+not a deliverable (516 clearance violations from the remaining conflicts).
+
+**D-34. Routing-study placement variants, round 1.** The routing study (route-race skill, request CR1-03) found pad
+R147.2 (/QUAL) enclosed on three sides by the VCHGOUT L4 strap (`route_cr.VOUT_IN`, D-22) and unreachable on an
+empty board. The packer did not know the strap outline. The environment variable `CR_PLACE_VARIANT` selects two
+variants; with the variable unset, the generator builds the base placement unchanged.
+
+- Variant A (`cr/variants/r1_A/`): the strap outline grown by 0.15 mm is a bottom keep-out for the packer. The strap
+  shape is unchanged (D-22 holds). Seven bottom parts move, R147 to (30.05, 66.25) and R107 to tab X; no B.Cu SMD
+  pad lies within 0.381 mm of the strap outline.
+- Variant B (`cr/variants/r1_B/`): A plus courtyards of C129, R107, R122, R126, R128, R129, R147, R190 and R191 grown
+  by 0.225 mm (a row pitch of about 1.75 mm, `layout_cr.CRT_GROW`). The packer disperses the grid rather than keeping
+  it in place, and 30 bottom parts move.
+
+Both variants give ERC 0, DRC equal to the base (200 unconnected, 4 starved thermals, 2 silkscreen items) and 0 FAIL
+in the constraint check. Each folder holds a `placement_diff.json` against commit `5ddc21a`. The study decides which
+variant, if any, becomes the base.
+
+**D-35. Scope of the divider-top rule.** A.8 Analog requires the divider tops R102, R109, R111 and R114 to be at least
+2 mm from any logic trace, without a layer scope. The rule binds logic-net copper on F.Cu and logic-net vias of any
+span within 2.0 mm of each part. Logic tracks on In2.Cu and B.Cu may pass under the parts, because L2 is a solid GND
+plane between them and F.Cu and the via ban keeps L2 free of antipads in the zone. /GND, /3V3 and the analog band
+nets are not logic nets. The routing study measures this form and the all-layer form. The conflict report of attempt 4 showed
 the conflicts spread over the whole interior (x 25-45, y 40-65), not at one point: the CR lacks routing capacity
 for the 6/6-mil rules, and the 0.05 mm grid (whose clearance model is about 10 % conservative, against 20 % at
 0.1 mm) gives the best trajectory so far.

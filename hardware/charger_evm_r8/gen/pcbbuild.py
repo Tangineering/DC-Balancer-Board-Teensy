@@ -284,11 +284,13 @@ def greedy(b, fr, fps, L, pinnet):
     fixed = set(L.FIXED) | {r[0] for r in L.BOARD_ONLY}
     occ = {"F": np.zeros((grid.ny, grid.nx), bool), "B": np.zeros((grid.ny, grid.nx), bool)}
 
+    grow = getattr(L, "CRT_GROW", {})   # per-part courtyard growth (routing-study variants, D-34)
     def mark(fp):
         side = "B" if fp.IsFlipped() else "F"
         for s_, g in ((side, crt_rect(fp, fr)), ("F" if side == "B" else "B", other_crt_rect(fp, fr))):
             if g is not None and not g.is_empty:
-                occ[s_] |= grid.mask(g.buffer(packer.MARGIN))
+                occ[s_] |= grid.mask(g.buffer(packer.MARGIN + grow.get(fp.GetReference(), 0.0),
+                                                    join_style=2))
 
     for ref in fixed:
         mark(fps[ref])
@@ -308,6 +310,8 @@ def greedy(b, fr, fps, L, pinnet):
             if rn not in masks:
                 masks[rn] = grid.mask(L.REGIONS[rn])
             rects = local_rects(fp, fr, L.rotations(ref))
+            gr = grow.get(ref, 0.0)
+            rects = {k: (v[0] - gr, v[1] - gr, v[2] + gr, v[3] + gr) for k, v in rects.items()}
             (dx0, dy0, dx1, dy1) = rects[min(rects)]
             parts.append(dict(ref=ref, region=rn, rects=rects,
                               target=None if L.fill(ref, phase_name) else L.target(ref, fps, fr, pinnet),
