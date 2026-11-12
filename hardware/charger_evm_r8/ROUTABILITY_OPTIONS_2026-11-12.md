@@ -119,4 +119,37 @@ Table 3. Fixed footprints and positions.
 
 ## 6. Round 3 results
 
-Pending.
+Round 3 routed the adopted placement (`13a14fc`, equal to r1_A) at seeds 1-4 with 60 iterations, vias in SMD pads
+allowed and the current 0.6/0.3 mm via. Two plans ran: the plain reference (ref_vip) and the reference with the
+divider-top zones on all layers as a soft cost (soft_vip). All eight boards are valid after the plane-via step.
+Table 4 gives the results.
+
+Table 4. Round 3, seeds 1-4.
+
+| Measure | Round 2 (r1_A, no via in pad) | ref_vip | soft_vip |
+|---|---|---|---|
+| Signal connections made of 199 | 173/162/170/171 (mean 169.0) | 180/181/182/179 (mean 180.5) | 178/181/180/179 (mean 179.5) |
+| GND connections open after plane vias | 31-43 | 18/18/18/13 | 11/14/19/17 |
+| GND pieces without a via site | 33-34 | 13-23 | 13-23 |
+| Same-layer logic-analog parallel length in the zones (mm) | — | 7.2-12.1 | 0.0-1.8 |
+| In2.Cu/B.Cu broadside parallel length (mm) | — | 5.5-7.5 | 0.0-0.5 |
+| Logic vias in the zones | 6-11 | 5-14 | 3-5 |
+| Signal vias in SMD pads | 0 | 102-119 | 102-119 (same range) |
+
+The via ruling adds about 11 signal connections per seed and cuts the open GND connections by about half. The
+soft divider cost reduces the parallel length to near zero at every seed. Its cost in completion (1.0 connection
+on the mean) is not separated from the seed spread. The parallel-length metric counts logic copper within 0.5 mm
+edge to edge of analog copper and within 20 degrees of its direction; these two parameters are open to change.
+
+The remaining GND pieces lack a via site mainly because routed In2.Cu copper covers the candidate cells. The
+router applies no cost to a via in a pad, so it places 102-119 of them per seed. A per-pad allow list can limit
+this if solder wicking at hand assembly is a concern.
+
+The best boards are soft_vip seed 1 (178 made, 11 GND open, 1.8 mm parallel, 3 logic vias in the zones) and
+soft_vip seed 2 (181 made, 14 GND open, 0.1 mm parallel). Both still leave 18-21 signal connections open, so the
+4-layer board does not close by routing alone with the 0.6/0.3 mm via. P1 (smaller via) and P2 are the next
+untested changes that cost no part or function.
+
+The study found one tool fault. A plane via beside J1 pad 14 or 15 made KiCad flash the pad on In2.Cu over routed
+tracks, which caused shorts on three ref_vip seeds and the round 1 J1.14 fault. The option
+`plane_vias.py --respect-unflashed` corrects it.
