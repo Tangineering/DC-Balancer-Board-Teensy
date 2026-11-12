@@ -14,7 +14,7 @@ Read `tools/pcb/corridor_route/reference/common.md` first.
 
 - Input: a work folder `W` with a copy of a placed board whose power copper is in place.
 - Output in `W`: one sub-folder for each attempt with the routed board and `score.md`; `STATUS.md`;
-  `REQUESTS.md`; `REVIEW.md`.
+  `REQUESTS.md` with `requests.json`; `REVIEW.md`.
 
 ## 2. Procedure
 
@@ -29,7 +29,8 @@ Read `tools/pcb/corridor_route/reference/common.md` first.
    - Constrained nets: one group, `reference/net-classes.md`.
 3. `"$PY" capacity.py W/model/model.json W/plan_a.json W/capacity_a.md`. If check 1 prints a GRID message, set
    `rules.res` as it says. Sealed pads become requests.
-4. Route, apply and score (`reference/common.md` section 2), attempt folder `W/a`, label `auto-A`.
+4. Route, apply and score (`reference/common.md` section 2), attempt folder `W/a`, label `auto-A`. If the task
+   gives a seed, pass `--seed` to every routing run.
 
 ### Variant B. Freerouting (a reference, optional)
 
@@ -66,7 +67,14 @@ the report of where the nets are lost.
 
 Fill `W/REVIEW.md` from `reference/review-checklist.md` for the attempt that is reported.
 
-## 3. Limits
+## 3. When routing stops short
+
+Open connections that the repair guide cannot close are placement limits. Write each as a request with report
+evidence in `REQUESTS.md` and `requests.json` (`reference/common.md` section 7). In a race, stop there: the
+relief phase tests the requests. Outside a race, test the placement requests yourself with
+`reference/placement-relief.md` and report the placement diff; the design owner applies it.
+
+## 4. Limits
 
 - Freerouting does not know the board's keep-out rules for vias inside footprints, the copper-to-edge rule or
   the design's constraints on analog nets. Every constrained net must be checked after routing.

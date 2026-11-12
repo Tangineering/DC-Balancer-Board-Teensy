@@ -16,7 +16,7 @@ Read `tools/pcb/corridor_route/reference/common.md` first. The plan format is in
 
 - Input: a work folder `W` with a copy of a placed board whose power copper is in place.
 - Output in `W`: `plan.json`, `flows.md`, `capacity_report.md`, `route_report.md`, a routed board and `score.md`
-  for each attempt, images, `STATUS.md`, `REQUESTS.md`, `REVIEW.md`.
+  for each attempt, images, `STATUS.md`, `REQUESTS.md` with `requests.json`, `REVIEW.md`.
 
 ## 2. Procedure
 
@@ -81,7 +81,14 @@ dominant direction through the narrowest channel. Report the baseline if no dire
 
 Fill `W/REVIEW.md` from `reference/review-checklist.md` for the attempt that is reported.
 
-## 3. Limits
+## 3. When routing stops short
+
+Open connections that the repair guide cannot close are placement limits. Write each as a request with report
+evidence in `REQUESTS.md` and `requests.json` (`reference/common.md` section 7). In a race, stop there: the
+relief phase tests the requests. Outside a race, test the placement requests yourself with
+`reference/placement-relief.md` and report the placement diff; the design owner applies it.
+
+## 4. Limits
 
 - The direction is a cost, not a rule. Near pads every net moves in any direction.
 - The method has no capacity check for a bottleneck. If `capacity.py` check 6 or the report shows one channel

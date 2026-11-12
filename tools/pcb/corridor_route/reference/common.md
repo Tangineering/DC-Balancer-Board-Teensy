@@ -110,6 +110,30 @@ The routing agent does not move parts, swap pins or change pours. It records the
 A request states evidence from a report (a sealed pad, a channel with capacity 14 and demand 16, two nets that
 need the one lane at a named place in every attempt). The session that owns the design decides.
 
+Write the same requests as data in `W/requests.json`, one entry for each row. A race merges these files.
+
+```json
+[{"id": "R-auto-s1-03",
+  "kind": "placement",
+  "parts": ["R101", "C101"], "pour": null, "at": [44.4, 63.4], "layer": "F.Cu",
+  "what": "open a second F.Cu lane in the U101 +x pocket",
+  "evidence": {"open_nets": ["/N_OV", "/N_DVDT"], "lost_to": ["/N_UV"], "capacity": 1, "demand": 2,
+               "report": "v3/route_report.md, Open nets rows 3-4"},
+  "closes_estimate": 2, "design_rows": ["D-09", "D-32"]}]
+```
+
+- `kind`: `plan` (a priority, corridor or direction for the next round), `placement` (move, rotate or swap
+  parts), `pin_swap`, `dnp` (remove parts that are not fitted), `pour_or_rail` (`pour` names the net),
+  `rule`, `layers`, `outline`.
+- `parts`: the candidate parts to move, or the parts to remove. `at`: the place in plan coordinates.
+- `evidence.report` is required, with `open_nets` or `capacity` and `demand`. A request without report evidence
+  is not filed.
+- `closes_estimate` is an estimate. It is never passed on as a fact; the race tests the request.
+- `design_rows`: the rows that the design owner must check for this change.
+
+The routing agent may test a placement request itself after its stop rule, outside a race, with
+`reference/placement-relief.md`. In a race, relief runs in its own phase; routing workers do not move parts.
+
 ## 8. Steps that agents skip
 
 Check each line before the task is reported as complete.
@@ -123,4 +147,5 @@ Check each line before the task is reported as complete.
 - A hard pour was not cut into islands (score, "Pour islands").
 - The images of the reported attempt were opened, layer by layer.
 - A claim that one plan beats another rests on more than the noise band (section 5).
-- `STATUS.md`, `REQUESTS.md` and `REVIEW.md` are current.
+- `STATUS.md`, `REQUESTS.md`, `requests.json` and `REVIEW.md` are current, and every request has report
+  evidence.

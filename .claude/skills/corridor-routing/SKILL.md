@@ -19,7 +19,7 @@ the other reference files at the step that names them.
 - Input: a work folder `W` with a copy of a placed board whose power copper (pours, straps, locked tracks) is
   in place, and the design document rows that constrain nets.
 - Output in `W`: `plan.json`, `flows.md`, `capacity_report.md`, `route_report.md`, a routed board and
-  `score.md` for each attempt, images, `STATUS.md`, `REQUESTS.md`, `REVIEW.md`.
+  `score.md` for each attempt, images, `STATUS.md`, `REQUESTS.md` with `requests.json`, `REVIEW.md`.
 
 ## 2. Procedure
 
@@ -101,7 +101,14 @@ the other reference files at the step that names them.
 - When the design document limits a net, encode the limit in the plan and cite the design row.
 - Never change the placement, the pours, the rules or the netlist. Write a request.
 
-## 4. Limits
+## 4. When routing stops short
+
+Open connections that the repair guide cannot close are placement limits. Write each as a request with report
+evidence in `REQUESTS.md` and `requests.json` (`reference/common.md` section 7). In a race, stop there: the
+relief phase tests the requests. Outside a race, test the placement requests yourself with
+`reference/placement-relief.md` and report the placement diff; the design owner applies it.
+
+## 5. Limits
 
 - The capacity check counts parallel tracks. It does not model the order in which nets enter a corridor.
 - On the boards tested, the unconstrained router was the best or tied result on three of four boards. One

@@ -74,6 +74,13 @@ if A.keep_routes:
         raise SystemExit("--keep-routes: grid %.4f differs from this plan's grid %.4f" % (K["params"]["res"], R))
     for r in K["results"]:
         if r["net"] in todo_nets and not r.get("open_pads") and "cells" in r:
+            # keep the net only if its old copper is still legal on this model (a part may have moved)
+            n_ = C.nid(r["net"])
+            cs_ = {tuple(c) for c in r["cells"]}
+            legal = all(C.ownT[c] in (-1, n_) for c in cs_) and all(
+                cs_ & set(pc) for k_, pc in C.padcells.get(r["net"], {}).items() if k_[0] != "locked")
+            if not legal:
+                continue
             routes[r["net"]] = ([tuple(c) for c in r["cells"]], [tuple(v) for v in r["via_cells"]])
             RT.paths_of[r["net"]] = [[tuple(c) for c in p] for p in r["paths"]]
             unreached[r["net"]] = []
