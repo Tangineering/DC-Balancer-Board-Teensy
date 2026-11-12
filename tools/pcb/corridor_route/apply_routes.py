@@ -59,7 +59,7 @@ ALL = [pcbnew.F_Cu, pcbnew.In1_Cu, pcbnew.In2_Cu, pcbnew.In3_Cu, pcbnew.In4_Cu, 
 LID = {b.GetLayerName(l): l for l in ALL}
 names = {r["net"] for r in Rj["results"]} | set(Rj.get("routed_nets", []))
 before = len(b.GetTracks())
-doomed = [t for t in b.GetTracks() if t.GetNetname() in names and not t.IsLocked()]
+doomed = [] if Rj.get("keep_existing") else [t for t in b.GetTracks() if t.GetNetname() in names and not t.IsLocked()]
 for t in doomed:
     b.Remove(t)     # the list keeps the proxies alive until the save
 nt = nv = 0
