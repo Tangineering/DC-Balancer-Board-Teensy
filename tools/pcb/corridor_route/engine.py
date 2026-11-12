@@ -148,6 +148,10 @@ class Router:
         passT = (oT == FREE) | (oT == n)
         oV = C.ownV[sl]
         passV = np.all((oV == FREE) | (oV == n), axis=0) & ~C.holeBan[j0:j1, i0:i1]
+        ban = C.self_ban(net, j0, j1, i0, i1)
+        if ban is not None:
+            passT = passT & ~ban[0]
+            passV = passV & ~ban[1]
         occT = self.occT[sl]
         occV = self.occV[sl].max(axis=0)
         e = (self.width(net) - C.track) / 2

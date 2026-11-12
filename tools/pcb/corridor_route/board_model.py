@@ -63,6 +63,8 @@ for fp in b.GetFootprints():
             c = p.GetPosition()
             items.append(dict(kind="hole", net=p.GetNetname(), layers=layers, drill=mm(p.GetDrillSizeX()),
                               flashed=ls,
+                              pad_poly=(poly_pts(p.GetEffectivePolygon(LID[ls[0]], pcbnew.ERROR_INSIDE), 0)
+                                        if ls else None),
                               ref=fp.GetReference(), num=p.GetNumber(),
                               circ=(mm(c.x), mm(c.y), mm(p.GetDrillSizeX()) / 2 + 0.127)))
 for t in b.GetTracks():

@@ -190,6 +190,7 @@ class Ctx:
         self.ownV = np.full((NL, self.ny, self.nx), FREE, np.int32)
         self.pourN = np.full((NL, self.ny, self.nx), FREE, np.int32)
         self.holeBan = np.zeros((self.ny, self.nx), bool)        # via centres too close to a drilled hole
+        self.selfban = {}        # net -> [(layer index, geometry for tracks, geometry for vias)]
         self.routable = set()
         for it in D["items"]:
             if it["kind"] in ("track", "via") and it["net"] not in self.keep and not it.get("locked"):
@@ -238,6 +239,11 @@ class Ctx:
                     # flash the full pad on this layer, into the space that other nets were given
                     self._claim(self.ownT, li, self.geom_of(it, rT), BLOCK)
                     self._claim(self.ownV, li, self.geom_of(it, rV), BLOCK)
+                    if it.get("pad_poly") and it["net"]:
+                        # copper of the pad's own net inside the pad outline would also flash the pad here
+                        pg = Polygon(it["pad_poly"]).buffer(0)
+                        self.selfban.setdefault(it["net"], []).append(
+                            (li, pg.buffer(self.track / 2 + self.R), pg.buffer(self.via / 2 + self.R)))
                     continue
                 if kind == "keepout":
                     g = self.geom_of(it)
@@ -278,6 +284,21 @@ class Ctx:
         self.own = {net: {c for key, cs in groups.items() if key[0] != "locked" for c in cs}
                     for net, groups in self.padcells.items()}
         self.npads = {net: sum(1 for k in g if k[0] != "locked") for net, g in pads_of.items()}
+
+    def self_ban(self, net, j0, j1, i0, i1):
+        """(banT[NL, h, w], banV[h, w]) cells the net itself must not use (its own unflashed pads), or None"""
+        if net not in self.selfban:
+            return None
+        banT = np.zeros((self.NL, j1 - j0, i1 - i0), bool)
+        banV = np.zeros((j1 - j0, i1 - i0), bool)
+        X, Y = self.X[j0:j1, i0:i1], self.Y[j0:j1, i0:i1]
+        for li, gt, gv in self.selfban[net]:
+            b = gt.bounds
+            if b[2] < X[0, 0] or b[0] > X[0, -1] or b[3] < Y[0, 0] or b[1] > Y[-1, 0]:
+                continue
+            banT[li] |= shapely.contains_xy(gt, X, Y)
+            banV |= shapely.contains_xy(gv, X, Y)
+        return banT, banV
 
     def connections(self, net):
         return max(self.npads.get(net, 0) - 1, 0)
