@@ -1,3 +1,0 @@
-(fp_lib_table (version 7)
-  (lib (name "charger_r8_eib")(type "KiCad")(uri "${KIPRJMOD}/charger_r8_eib.pretty")(options "")(descr "project-local, generated"))
-)
