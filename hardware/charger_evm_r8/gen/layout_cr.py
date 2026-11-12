@@ -178,7 +178,7 @@ INT_ANY = INTERIOR
 LOOP = unary_union([OUT_STRIP, U101_CRT, IN_STRIP, POCKET])   # U101 commutation-loop region (A.8, H.23(f))
 INT_ANALOG = INTERIOR.intersection(box(0, 0, RIM_X, 100)).difference(LOOP.buffer(3.0)).union(BAND_W)
 
-INTERIOR_ICS = ["U108", "U109", "U122", "U123", "D108", "D104", "D105", "D106", "U111", "U113", "U117"]
+INTERIOR_ICS = ["U108", "U109", "U122", "U123", "D108", "D104", "D105", "D106", "U111", "U113"]
 TABY_ICS = ["U114", "U110", "U106", "U116", "U118", "U105", "U107"]   # the A.8 tab Y set; U108/U109 interior
 ANALOG_ICS = {"D104", "D105", "D106", "D108", "U123"}
 TIMING_ICS = {"U111", "U113"}
@@ -186,7 +186,7 @@ DIVIDERS = ["R109", "R111", "R114", "R110", "R112", "R115"]
 DECOUPLE = {"C110": "U102", "C111": "U103", "C112": "U104", "C113": "U115", "C114": "U105", "C115": "U106",
             "C116": "U107", "C117": "U108", "C118": "U109", "C119": "U110", "C120": "U111", "C121": "U113",
             "C122": "U114", "C123": "U116", "C126": "U118", "C131": "U119", "C132": "U120", "C133": "U121",
-            "C134": "U122", "C135": "U123", "C124": "U117"}
+            "C134": "U122", "C135": "U123"}
 # R103/R104 take the A.8 +x pocket fallback: on the bottom at y >= 63.71, x 44.3-48.2 (D-09)
 POCKET_BOT = {"R104"}
 TABX_OK = {"R106s", "R121", "R122", "R147", "R135", "R125", "R126", "R127", "R128", "R148", "R130", "R131A",
@@ -258,8 +258,6 @@ def region_name(ref):
         return "int_analog"
     if ref in TABY_ICS:
         return "taby_logic"
-    if ref in ("U117",):
-        return "taby_logic"          # DNP option footprints: interior or tab Y top (D-07)
     if ref in INTERIOR_ICS or ref in TIMING_ICS:
         return "int_logic"
     if ref in ANALOG_BOT:

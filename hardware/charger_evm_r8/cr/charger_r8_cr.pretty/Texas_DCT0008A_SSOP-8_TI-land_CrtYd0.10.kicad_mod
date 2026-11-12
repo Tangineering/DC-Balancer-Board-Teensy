@@ -1,6 +1,6 @@
 (footprint "Texas_DCT0008A_SSOP-8_TI-land_CrtYd0.10" (version 20241229) (generator pcbnew)
   (layer "F.Cu")
-  (tedit 6af47750)
+  (tedit 6af4ecd5)
   (descr "SSOP-8 2.9 x2.8mm Pitch 0.65mm")
   (tags "SSOP-8 2.95x2.8mm Pitch 0.65mm")
   (property "Reference" "REF**")

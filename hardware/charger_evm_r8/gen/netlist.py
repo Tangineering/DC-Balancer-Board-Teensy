@@ -139,15 +139,7 @@ CR = [
     C("C109", "100nF 50V X7R", "C0603", "N_BBP", GND, side="B", mpn="GRM188R71H104KA93D", mfr="Murata"),
     R("R120", "10.0k 1%", "R0603", "BTB", "N_BBM", side="B", mpn="CRCW060310K0FKEA", **VISH01),
     R("R119", "10.0M 1%", "R0603", "N_BBM", V33, side="B", mpn="CRCW060310M0FKEA", **VISH01),
-    # ---- U117 FCI_OK option (all DNP); R137 fitted
-    tlv3012("U117", "FCI_OK", "N_FCP", "N_FCM", "REF117", dnp=True),
-    R("R160", "10.0k 1%", "R0603", "REF117", "N_FCP", side="B", dnp=True, mpn="CRCW060310K0FKEA", **VISH01),
-    R("R161", "1.18k SOT", "R0603", "N_FCP", GND, side="B", dnp=True, mpn="CRCW06031K18FKEA", **VISH01),
-    R("R162", "10.0k 1%", "R0603", "T19_FCI", "N_FCM", side="B", dnp=True, mpn="CRCW060310K0FKEA", **VISH01),
-    C("C127", "10nF 50V X7R", "C0603", "N_FCM", GND, side="B", dnp=True, mpn="GRM188R71H103KA01D",
-      mfr="Murata"),
-    R("R163", "1.00M 1%", "R0603", "FCI_OK", "N_FCP", side="B", dnp=True, mpn="CRCW06031M00FKEA", **VISH01),
-    C("C124", "100nF 50V X7R", "C0603", V33, GND, side="B", dnp=True, mpn="GRM188R71H104KA93D", mfr="Murata"),
+    # U117, R160-R163, C127, C124 removed: DNP tier 3 (D-31; FC-current permit option). R137 stays fitted.
     R("R137", "0", "R0603", "FCI_OK", V33, side="B", mpn="CRCW06030000Z0EA", **VISH01),
     # ---- RGN / FCC taps
     R("R121", "1.00k 1%", "R0603", "RGN_TAP", "RGN", side="B", mpn="CRCW06031K00FKEA", **VISH01),
@@ -245,7 +237,7 @@ CR = [
     tap("F14", "H1_RB"), tap("F15", "H2C_RB"), tap("F16", "BTOK_RB"), tap("F17", "CHG_EFUSE_FLT"),
     tap("F18", "CHG_IIN"), tap("F19", GND), tap("F20", "CE_SENSE_RB"), tap("F21", "HB_TAP"),
     tap("F22", None),  # T18 pad kept, no CR net after DNP tier 2 (D-31)
-    tap("F23", "T19_FCI"), tap("F24", None),
+    tap("F23", None), tap("F24", None),  # F23 (T19) pad kept, no CR net after DNP tier 3 (D-31)
 ]
 
 # --------------------------------------------------------------------------------------------

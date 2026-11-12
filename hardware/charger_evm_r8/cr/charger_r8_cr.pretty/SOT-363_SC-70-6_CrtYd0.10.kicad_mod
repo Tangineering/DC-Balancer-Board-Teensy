@@ -1,6 +1,6 @@
 (footprint "SOT-363_SC-70-6_CrtYd0.10" (version 20241229) (generator kicad-footprint-generator)
   (layer "F.Cu")
-  (tedit 6af47750)
+  (tedit 6af4ecd5)
   (descr "SOT, 6 Pin (https://home.jeita.or.jp/tsc/std-pdf/ED-7500A.pdf#page=170, JEDEC MO-203, variant AB, https://www.jedec.org/document_search?search_api_views_fulltext=MO-203), generated with kicad-footprint-generator ipc_gullwing_generator.py")
   (tags "SOT TO_SOT_SMD SC-88 SOT-363 SC-70-6 US6 UMT6 S-Mini6 TSSOP6")
   (property "Reference" "REF**")

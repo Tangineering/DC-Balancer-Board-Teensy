@@ -1,6 +1,6 @@
 (footprint "Texas_DCK-5_SC-70-5_CrtYd0.10" (version 20241229) (generator pcbnew)
   (layer "F.Cu")
-  (tedit 6af47750)
+  (tedit 6af4ecd5)
   (descr "DCK R-PDSO-G5, JEDEC MO-203C Var AA, https://www.ti.com/lit/ds/symlink/tmp20.pdf#page=23")
   (tags "DCK R-PDSO-G5 MO-203C")
   (property "Reference" "REF**")

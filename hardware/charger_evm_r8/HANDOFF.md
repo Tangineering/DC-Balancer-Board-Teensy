@@ -8,7 +8,7 @@ This note gives the starting point for the next session. `LAYOUT_DECISIONS.md` i
 |---|---|
 | EIB (2 layers, 24 x 38 mm) | complete: ERC 0, DRC 0 with schematic parity; fab package `fab/eib_2026-11-11/` |
 | CR (4 layers, r7 outline 47.30 x 41.86 mm) | schematic complete (ERC 0); placement complete; power pours and straps complete; **95 signal nets not routed** |
-| CR board file | `cr/cr.kicad_pcb` = placed + pours (DRC: 212 unconnected, 2 starved thermals, 2 silkscreen items) |
+| CR board file | `cr/cr.kicad_pcb` = placed + pours, DNP tier 3 removed (DRC: 200 unconnected, 4 starved thermals, 2 silkscreen items; section 7) |
 | Best partial CR routing | `cr/attempts/cr_pathfinder_0p1mm_partial.kicad_pcb` (reference only; 516 clearance violations) |
 | Ordering BOM | `bom_2026-11-11/ordering_bom.csv`: 116 rows in the reference format; no price, stock or SKU read on a live page (bot checks) |
 | Netlist audit | three independent reviewers, 216 parts against B.8/E: no discrepancy |
@@ -17,7 +17,7 @@ This note gives the starting point for the next session. `LAYOUT_DECISIONS.md` i
 
 - CR at 5/5 mil (0.127 mm) with 1 oz outer copper; rule file `tools/pcb/fab_rules/fab_4layer_5mil_oshpark_pcbway.kicad_dru` (D-29).
 - EIB at 6/6 mil.
-- DNP tiers 1 and 2 removed (D-31). Tier 3 (U117, R160-R163, C127, C124; R137 stays; F23 pad stays) is the next lever and is approved by the operator as part of the next session's methods.
+- DNP tiers 1, 2 and 3 removed (D-31). Tier 3 = U117, R160-R163, C127, C124; R137 stays; the F23 pad stays with no net.
 - F22 and F24 pads stay without a CR net.
 
 ## 3. How to run
@@ -41,7 +41,7 @@ about 47-53. Conflicts are spread over the interior; the CR lacks capacity rathe
 
 ## 5. Candidate methods for the orchestrator
 
-1. DNP tier 3, then PathFinder at 0.05 mm with 60+ iterations.
+1. DNP tier 3 (applied 2026-11-11), then PathFinder at 0.05 mm with 60+ iterations.
 2. PathFinder tuning: slower present-cost growth, larger history increment, 6 mm search window, rip-up of only the conflicting branch.
 3. Placement relief: a larger packer routing margin where area allows; tab X series resistors re-sited so fewer nets cross the CHG pin-1..10 wall; U105/U118 back to tab Y with a better tab Y packing (A.8 set).
 4. Interactive push-and-shove routing in the KiCad GUI by a person, keeping the scripted placement, pours, rule areas, DRC and exports.

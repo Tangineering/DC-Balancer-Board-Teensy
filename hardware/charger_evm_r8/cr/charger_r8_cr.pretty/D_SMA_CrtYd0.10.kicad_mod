@@ -1,6 +1,6 @@
 (footprint "D_SMA_CrtYd0.10" (version 20241229) (generator pcbnew)
   (layer "F.Cu")
-  (tedit 6af47750)
+  (tedit 6af4ecd5)
   (descr "Diode SMA (DO-214AC)")
   (tags "Diode SMA (DO-214AC)")
   (property "Reference" "REF**")

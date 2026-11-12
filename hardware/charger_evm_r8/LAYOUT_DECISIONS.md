@@ -18,7 +18,7 @@ Status on 2026-11-11:
 | Board | Schematic | Placement | Routing | ERC | DRC | Fab package |
 |---|---|---|---|---|---|---|
 | EIB | complete | complete | complete | 0 | 0 (schematic parity checked) | `fab/eib_2026-11-11/` |
-| CR | complete | complete | power pours and straps only; 95 signal nets not routed | 0 | 212 unconnected items, 2 starved thermals, 2 silkscreen items | not produced |
+| CR | complete | complete | power pours and straps only; signal nets not routed | 0 | 200 unconnected items, 4 starved thermals (3 U101 thermal-pad vias; J1 pad 10 to two VCHGIN_L1 slivers of 0.65 and 0.50 mm2), 2 silkscreen items | not produced |
 
 The CR signal routing does not close with the methods of section 7. Section 8 records every attempt and its
 result, and `HANDOFF.md` gives the starting point for the next session.
@@ -87,8 +87,8 @@ mark GND, 3V3 and VCHGIN on the CR, and 3V3 and AGND on the EIB.
 **D-05. Net names.** Where B.8 names a net, the net carries that name verbatim. Where B.8 names only a pad, the
 net takes a descriptive name: F01 `T1_VMOT`, F03 `T2C`, F04 `BTB`, F05 `RGN_TAP`, F06 `FCC_TAP`, F07 `T6_3V3`,
 F08 `T22_BAL`, F09 `BT_CURR`, F10 `KELVIN`, F11 `QUAL_TAP`, F12 `FCCEIL`, F13 `ILIM_SENSE_RB`, F14 `H1_RB`, F15
-`H2C_RB`, F16 `BTOK_RB`, F17 `CHG_EFUSE_FLT`, F18 `CHG_IIN`, F20 `CE_SENSE_RB`, F21 `HB_TAP`, F23 `T19_FCI`; F02 and
-F19 are GND; F22 and F24 have no net (D-31). The ribbon pins take `J3V3_1`, `J3V3_2`, `CE_DRV_J`, `ILIM_REL_A`,
+`H2C_RB`, F16 `BTOK_RB`, F17 `CHG_EFUSE_FLT`, F18 `CHG_IIN`, F20 `CE_SENSE_RB`, F21 `HB_TAP`; F02 and
+F19 are GND; F22, F23 and F24 have no net (D-31; F23 carried `T19_FCI` until DNP tier 3). The ribbon pins take `J3V3_1`, `J3V3_2`, `CE_DRV_J`, `ILIM_REL_A`,
 `ILIM_REL_B`, `RFC_OFF_J`. U111/U113 timing nodes are `N_CX11x` (pin 6) and `N_RC11x` (pin 7).
 
 **D-06. R106 footprint omitted (CR).** B.8 keeps a DNP R106 footprint between `CHG_EFUSE_FLT` and 3V3. The r8
@@ -102,7 +102,9 @@ CR, the operator ruled that the DNP option footprints are removed tier by tier u
   the MB 3V3 side, A.2).
 - Tier 2 (removed): the keep-alive option U112, C152, D101 and R_KA (B.5: "do not populate in the baseline"), and
   R134 (FCC pull-down, DNP since r6). The F22 (T18) pad stays, with no CR net.
-- Tier 3 (not yet removed; next step): the FC-current permit option U117, R160-R163, C127, C124. R137 stays fitted.
+- Tier 3 (removed 2026-11-11, approved by the operator with the tier 1-2 ruling as the next lever): the FC-current
+  permit option U117, R160-R163, C127, C124. R137 stays fitted (`FCI_OK` to 3V3). The F23 (T19) pad stays, with no
+  CR net. The rebuild moved only bottom passives (`cr/placement_log.txt`); every fixed coordinate and top IC is unchanged.
 
 The DNP parts are not on the ordering BOM, so the BOM does not change. P-09 records the matching B.8 change.
 
@@ -308,7 +310,7 @@ operator ruling unless marked as already ruled.
 | P-06 | B.8 R106 row, E R107 row | Delete the DNP R106 footprint | the r8 F17 exposed-copper rule (D-06) |
 | P-07 | A.8 per-region tables | State courtyards on the IPC least-density basis (0.10 mm) or enlarge the regions | D-03 |
 | P-08 | B.4 / B.8 U101 MODE, SHDN | Record that MODE open selects latch-off and that SHDN open enables with 0.48 V margin; only UVLO or a power cycle resets a latch | `lib_verification` section 2 |
-| P-09 | B.8, B.5 (ruled 2026-11-11) | Delete the DNP tier 1 and tier 2 footprints (D-31); tier 3 next if needed | CR routing capacity |
+| P-09 | B.8, B.5 (ruled 2026-11-11) | Delete the DNP tier 1, 2 and 3 footprints (D-31); B.8 loses U117, R160-R163, C127, C124 and the F23 `T19_FCI` net | CR routing capacity |
 | P-10 | A.8 +x pocket row, U101 centre | U101 and the IN strip 0.40 mm toward -y; R103 in the pocket, R104 on the bottom within 5 mm of pin 7 | U101 pin 13/14 escape and the bottom clearance rule (D-09, D-32) |
 | P-11 | A.8 stack-up and Copper (ruled 2026-11-11) | CR at 5/5 mil with 1 oz outer copper; CHG pads 1.9 mm on the outer layers only | D-29, D-30 |
 
