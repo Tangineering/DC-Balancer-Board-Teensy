@@ -50,14 +50,15 @@ ap = argparse.ArgumentParser()
 ap.add_argument("model")
 ap.add_argument("plan")
 ap.add_argument("out")
-ap.add_argument("--iters", type=int, default=20)
+ap.add_argument("--iters", type=int, default=60)
+ap.add_argument("--schedule", default="new", choices=("new", "old"))
 ap.add_argument("--via-cost", type=float, default=None)
 ap.add_argument("--pour-penalty", type=float, default=None)
 ap.add_argument("--report", default=None)
 ap.add_argument("--only-groups", default="")
 ap.add_argument("--seed", type=int, default=1)
 ap.add_argument("--max-seconds", type=float, default=0)
-ap.add_argument("--patience", type=int, default=8)
+ap.add_argument("--patience", type=int, default=15)
 ap.add_argument("--keep-routes", default=None)
 ap.add_argument("--order", default="cross", choices=("cross", "short", "long"))
 ap.add_argument("--max-priority", type=float, default=None)
@@ -74,6 +75,9 @@ C = Ctx(A.model, A.plan)
 if C.plan_errors:
     raise SystemExit("plan errors:\n  " + "\n  ".join(C.plan_errors))
 RT = Router(C, A.via_cost, A.pour_penalty)
+if A.schedule == "old":                  # the schedule of the first three test rounds, kept for comparison
+    RT.pres, RT.hist_add = 1.0, False
+PRES_GROW, PRES_CAP, HIST_INC = (1.6, 1e30, 0.5) if A.schedule == "old" else (1.3, 100.0, 1.0)
 R, NL = C.R, C.NL
 LAYERS = C.LAYERS
 only = {g for g in A.only_groups.split(",") if g}
@@ -137,14 +141,17 @@ if C.grid_sealed:
 
 cross = RT.crossing_counts(todo_nets)
 mst_len = {n: sum(((a - c) ** 2 + (b - d) ** 2) ** 0.5 for (a, b, c, d) in C.mst(n)) for n in todo_nets}
-okey = {"cross": lambda net: (len(cross[net]), C.npads[net]), "short": lambda net: (mst_len[net],),
-        "long": lambda net: (-mst_len[net],)}[A.order]
+okey = {"cross": lambda net: (len(cross[net]), C.npads[net], net), "short": lambda net: (mst_len[net], net),
+        "long": lambda net: (-mst_len[net], net)}[A.order]
 order = [n for n in sorted(todo_nets, key=lambda net: (C.assign[net]["priority"],) + okey(net)) if n not in fixed]
 bad = set()
 history = []
 best, best_it, stop_why = None, 0, "iteration limit"
+best_state = None
 for it_ in range(A.iters):
     todo = order if it_ == 0 else [n_ for n_ in order if n_ in bad or unreached.get(n_)]
+    if A.schedule == "new" and it_ > 0 and it_ - best_it >= 3 and (it_ - best_it) % 3 == 0:
+        todo = list(order)               # the conflict count has stopped falling: every net may move
     if it_ > 0:
         random.shuffle(todo)
         todo.sort(key=lambda net: C.assign[net]["priority"])
@@ -165,33 +172,47 @@ for it_ in range(A.iters):
             bad.add(net)
             for (l, j, i) in cc:
                 if l >= 0:
-                    RT.hist[l, j, i] += 0.5
+                    RT.hist[l, j, i] += HIST_INC
                 else:
-                    RT.hist[:, j, i] += 0.5
+                    RT.hist[:, j, i] += HIST_INC
         RT.contribute(net, r, +1.0)
-    RT.pres *= 1.6
+    RT.pres = min(RT.pres * PRES_GROW, PRES_CAP)
     nopath = sum(1 for n_ in routes if unreached.get(n_))
     history.append((it_, len(todo), len(bad), nopath))
     print("iter %d: rerouted %d, in conflict %d, with open pads %d, %.0f s" % (it_, len(todo), len(bad), nopath,
                                                                              time.time() - t0), flush=True)
     if best is None or len(bad) < best:
         best, best_it = len(bad), it_
+        best_state = (dict(routes), dict(unreached), dict(RT.paths_of))
     if not bad:
         stop_why = "no conflict left"
         break
-    if it_ >= 10 and it_ - best_it >= A.patience:
+    if it_ >= (10 if A.schedule == "old" else 20) and it_ - best_it >= A.patience:
         stop_why = "no improvement for %d iterations" % A.patience
         break
     if A.max_seconds and time.time() - t0 > A.max_seconds:
         stop_why = "time limit %.0f s" % A.max_seconds
         break
 print("negotiation ended: %s" % stop_why, flush=True)
+if A.schedule == "new" and best_state is not None and best_it != len(history) - 1:
+    # legalise the iteration with the fewest nets in conflict, not the last one
+    for net, r in routes.items():
+        RT.contribute(net, r, -1.0)
+    routes.clear()
+    routes.update(best_state[0])
+    unreached.clear()
+    unreached.update(best_state[1])
+    RT.paths_of.clear()
+    RT.paths_of.update(best_state[2])
+    for net, r in routes.items():
+        RT.contribute(net, r, +1.0)
+    print("legalising iteration %d (%d nets in conflict)" % (best_it, best), flush=True)
 
 # ---------------------------------------------------------------- legalise
 kept = set(routes)
 cellmap, viamap = RT.maps(kept)
 conf, cc_of = {}, {}
-for net in kept - fixed:
+for net in sorted(kept - fixed):
     RT.contribute(net, routes[net], -1.0)
     cc = RT.conflict_cells(net, routes[net])
     RT.contribute(net, routes[net], +1.0)
@@ -200,13 +221,14 @@ for net in kept - fixed:
         conf[net] = RT.partners(net, cc, cellmap, viamap)
 lost_to = {}
 while conf:
-    net = max(conf, key=lambda x: (C.assign[x]["priority"], len(conf[x]) / max(1, C.connections(x)), len(cc_of[x])))
+    net = max(sorted(conf), key=lambda x: (C.assign[x]["priority"], len(conf[x]) / max(1, C.connections(x)),
+                                           len(cc_of[x])))
     lost_to[net] = (sorted(conf[net]), cc_of[net])
     RT.contribute(net, routes[net], -1.0)
     kept.discard(net)
     del conf[net]
     cellmap, viamap = RT.maps(kept)
-    for other in list(conf):
+    for other in sorted(conf):
         RT.contribute(other, routes[other], -1.0)
         cc = RT.conflict_cells(other, routes[other])
         RT.contribute(other, routes[other], +1.0)
@@ -219,7 +241,7 @@ print("legalised: kept %d, removed %d, %.0f s" % (len(kept), len(lost_to), time.
 
 # ---------------------------------------------------------------- recovery: removed nets against hard obstacles
 recovered = []
-for net in sorted(lost_to, key=lambda x: (C.assign[x]["priority"], -C.connections(x))):
+for net in sorted(lost_to, key=lambda x: (C.assign[x]["priority"], -C.connections(x), x)):
     r, un = RT.route_net(net, hard=True)
     routes[net] = r
     unreached[net] = un
@@ -228,7 +250,7 @@ for net in sorted(lost_to, key=lambda x: (C.assign[x]["priority"], -C.connection
         kept.add(net)
         if not un:
             recovered.append(net)
-for net in sorted(kept - fixed, key=lambda x: (C.assign[x]["priority"], -C.connections(x))):
+for net in sorted(kept - fixed, key=lambda x: (C.assign[x]["priority"], -C.connections(x), x)):
     if unreached.get(net) and net not in lost_to:      # a kept net with open pads: try the open pads once more
         RT.contribute(net, routes[net], -1.0)
         old_paths = RT.paths_of.get(net)
@@ -381,9 +403,9 @@ for net in sorted(open_nets, key=lambda x: (diag[x], C.assign[x]["group"], x)):
                                                  (" (+%d)" % (len(part) - 6) if len(part) > 6 else ""), "; ".join(pts)))
 if not open_nets:
     L.append("| none | | | | | |")
-prio1 = [n for n in todo_nets if C.assign[n]["priority"] <= 1]
+prio1 = [n for n in todo_nets if C.assign[n]["priority"] <= 2]
 if prio1:
-    L += ["", "## Priority-1 nets (constrained nets and rails): routed geometry", "",
+    L += ["", "## Priority 1 and 2 nets (constrained nets and rails): routed geometry", "",
           "Check each row against the design limit of the net (length, layer, vias). The straight-line length is the "
           "length of the net's minimum spanning tree.", "",
           "| Net | Group | Routed length (mm) | Straight-line (mm) | Vias | Length by layer | Open |", "|---|---|---|---|---|---|---|"]

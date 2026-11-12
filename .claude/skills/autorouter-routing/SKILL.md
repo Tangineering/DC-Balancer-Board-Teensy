@@ -29,14 +29,16 @@ Read `tools/pcb/corridor_route/reference/common.md` first.
    - Constrained nets: one group, `reference/net-classes.md`.
 3. `"$PY" capacity.py W/model/model.json W/plan_a.json W/capacity_a.md`. If check 1 prints a GRID message, set
    `rules.res` as it says. Sealed pads become requests.
-4. Route, apply and score (`reference/common.md` section 2), attempt folder `W/a`, label `auto-A`. If the task
-   gives a seed, pass `--seed` to every routing run.
+4. Route at 4 seeds: `"$PY" -u seeds.py run W/model/model.json W/plan_a.json W/a --seeds 1,2,3,4` (in the
+   background). Read `W/a/SEEDS.md`. Apply and score the best seed (`reference/common.md` section 2), label
+   `auto-A`. If the task gives one seed, run that seed only and say that the result is one run.
 
-### Variant S. Staged (when the task names it, or when constrained nets fail their design rows)
+### Variant S. Staged (a diagnostic, only when the task names it)
 
-Same plan as variant A, with the constrained nets and the rails without a pour in priority 1 and long
-constrained nets in priority 2. Route it with `staged.py staged` (`reference/shared-options.md` section 2),
-attempt folder `W/s`, label `auto-S`. Check the priority-1 table of `W/s/stage_1.md` against the design rows.
+`staged.py staged` (`reference/shared-options.md` section 2) routes the priority classes in sequence. In the dry
+test it lost 13 to 17 connections against variant A and made the constrained nets longer. Use it to see whether
+the constrained nets route with the board to themselves (`W/s/stage_1.md`); never put a rail in class 1; do not
+report its result as the routing of the board.
 
 ### Variant B. Freerouting (a reference, optional)
 
@@ -57,16 +59,15 @@ Record each attempt in `STATUS.md`. Use `--keep-routes` of the best attempt when
 
 | Sign | Change |
 |---|---|
-| Conflict count still falling at the last iteration | `--iters 40` |
-| Conflict count flat after iteration 12 | No tuning closes it. Report the bottleneck with `reference/failure-repair.md`. |
+| Conflict count still falling at the last iteration | `--iters 100` (the same seed repeats the first 60) |
+| Tens of nets in conflict when the run ends | The result comes from the legalisation. Report it as such; name the nets open at every seed. |
 | Many open nets lost to one large net | Priority 1 group for that net |
 | Constrained nets come out long or with many vias | Their group gets `via_cost` 40 and priority 1 (short) or 2 (long) |
 | Two nets lose one lane to each other in alternate attempts | Priority for the constrained one; a placement request for the lane |
 | New `starved_thermal` items | `costs.thermal` 30 |
 | More pour islands or long signal length on the pour layer (2-layer) | `reference/failure-repair.md` section 3 |
-| The best result differs from the next by less than 5 connections | Run both at `--seed 2` |
-| Two seeds differ by more than 4 connections | `--order short` and `--order long` (`reference/shared-options.md` section 1) |
-| Up to about 10 % of the connections open after the best attempt | Finishing pass (`reference/shared-options.md` section 3) |
+| Two plans differ | `seeds.py compare`; only a "B better" verdict is a result |
+| At most 10 pads open after the best attempt | Finishing pass (`reference/shared-options.md` section 3) |
 
 If the board does not close, the result of this method is the reference for the planned methods, together with
 the report of where the nets are lost.

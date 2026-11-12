@@ -43,7 +43,8 @@ class Router:
         self.occT = np.zeros((NL, ny, nx), np.float32)
         self.occV = np.zeros((NL, ny, nx), np.float32)
         self.hist = np.zeros((NL, ny, nx), np.float32)
-        self.pres = 1.0
+        self.pres = 0.5
+        self.hist_add = True      # history is added to the base cost (False: the earlier multiplied form)
         self._disc = {}
         self._resv = {}
         self.fixT = None          # cells claimed by nets kept from an earlier run: hard obstacles
@@ -217,8 +218,12 @@ class Router:
             costT = np.where(occT > 0, INF, base)
             costV = np.where(occV > 0, INF, vc0)
         else:
-            costT = base * (1.0 + self.hist[sl]) * (1.0 + self.pres * occT)
-            costV = vc0 * (1.0 + self.hist[sl].max(axis=0)) * (1.0 + self.pres * occV)
+            if self.hist_add:
+                costT = (base + self.hist[sl]) * (1.0 + self.pres * occT)
+                costV = (vc0 + self.hist[sl].max(axis=0)) * (1.0 + self.pres * occV)
+            else:
+                costT = base * (1.0 + self.hist[sl]) * (1.0 + self.pres * occT)
+                costV = vc0 * (1.0 + self.hist[sl].max(axis=0)) * (1.0 + self.pres * occV)
         if self.fixT is not None and not solo:
             passT = passT & ~self.fixT[sl]
             passV = passV & ~self.fixV[j0:j1, i0:i1]

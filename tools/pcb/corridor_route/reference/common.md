@@ -18,6 +18,10 @@ T="<repository root>/tools/pcb/corridor_route"
 - Run the scripts with `cd "$T"` first; they import `core.py` and `engine.py` from that folder.
 - The interpreter `PY` belongs to another checkout. If it does not exist, read `tools/pcb/TOOLCHAIN.md`
   section 2 and stop; do not install packages.
+- Always start a script with `"$PY"` (or `"$MPL"` for `render.py`). The bare command `python` is a Windows
+  Store alias on this machine and does not run.
+- Frames: the plan, the reports, the images and the requests use the plan frame (design coordinates, y up, when
+  the plan has `frame.y_flip_offset`). `model.json`, `routes.json` and `score.md` use the KiCad frame (y down).
 - Every pcbnew script prints four "Adding duplicate image handler" lines; ignore them (`2>&1 | grep -v duplicate`).
 
 ## 2. Commands
@@ -33,6 +37,7 @@ T="<repository root>/tools/pcb/corridor_route"
 | Finishing pass | `"$PY" -u staged.py finish W/model/model.json W/plan.json W/vN_fin --start W/vN/routes.json [--radius 2.0]` |
 | Layer assignment | `"$PY" layer_assign.py W/model/model.json W/plan.json W/plan_la.json --report W/layer_assign.md` |
 | Global routing | `"$PY" global_route.py W/model/model.json W/plan.json W/plan_g.json --report W/global.md [--tile 2.0]` |
+| Seeds | `"$PY" -u seeds.py run W/model/model.json W/plan.json W/vN_seeds --seeds 1,2,3,4` and `"$PY" seeds.py compare W/A_seeds W/B_seeds` |
 | Apply | `"$PY" apply_routes.py W/<board>.kicad_pcb W/vN/routes.json W/vN/board` |
 | Score | `"$PY" score.py W/vN/board/<board>.kicad_pcb W/<board>.kicad_pcb W/vN/score --plane-nets <nets> [--test-pour NET:LAYER] --label <method>-vN` |
 
@@ -74,10 +79,17 @@ Add a row for every routed attempt. Write "Resume here" before every long comman
 - Completion is counted in connections (one pad-to-pad link), not in nets. A 59-pad net has 58 connections.
 - Plane nets are the nets that a plane layer or a later pour connects; they are counted separately. Their open
   count rises when tracks cut a soft ground fill; that is expected before the project's plane-via step.
-- DRC is compared with the unrouted board by violation type. Only an increase is a routing defect. `score.md`
-  lists each new violation with its position; `score_drc.json` is the full report.
-- **Validity.** An attempt with a new violation of any type other than `starved_thermal` is not a valid result.
-  It cannot be reported as the best attempt, whatever its completion.
+- DRC is compared with the unrouted board violation by violation (type, items and position). A violation that
+  the unrouted board does not have is new. `score.md` lists each new violation with its position;
+  `score_drc.json` is the full report.
+- **Vias on SMD pads.** The router places no via on an SMD pad or inside its solder-mask opening, also not for
+  the pad's own net: solder runs into the hole, and KiCad DRC does not report it. `rules.via_in_pad` in the plan
+  allows it for named pads (`["U101.25"]`) or for all (`true`) when the design uses filled vias. `score.py` counts
+  the added vias on SMD pads.
+- **Validity.** An attempt with a new violation of any type other than `starved_thermal`, or with an added via
+  on an SMD pad, is not a valid result. It cannot be reported as the best attempt, whatever its completion.
+- **Valid is not finished.** A valid result still has the plane nets open and may have new starved thermals.
+  A board is finished only after the finish test (`review-checklist.md`, rows 2 and 3).
 - `starved_thermal` items come from tracks that pass beside a through-hole pad on a pour. The router adds a cost
   (`costs.thermal`, default 8) in a ring of `rules.thermal_keepout` (default 0.35 mm) around such pads, so a
   track enters the ring only when it has no other way. Raise `costs.thermal` to 30 if such items remain. An
@@ -86,18 +98,27 @@ Add a row for every routed attempt. Write "Resume here" before every long comman
   fills are listed for information.
 - The rank vector is: open connections on non-plane nets, new DRC violations, extra pour islands, vias that are
   not on plane or pour nets, track length. Lower is better, compared left to right.
-- **Noise.** The router reroutes in a random order after the first iteration. Two seeds of one plan differ by
-  about 2 to 4 connections on a board that does not close, and by a few vias on one that does. A difference
-  inside that band is not a result. Before one plan is reported as better than another by less than 5
-  connections, run both at a second seed (`--seed 2`) and compare the means.
+- **Seeds.** The router reroutes in a random order after the first iteration. The same plan, model, options
+  and seed give the same result. Two seeds of one plan differed by up to 9 connections on the 4-layer test
+  board. One run is therefore never a result.
+  - Report a plan as the mean, minimum and maximum of 4 or more seeds (`seeds.py run`), with the iteration
+    limit.
+  - Plan B is better than plan A only when it has fewer open connections at every one of 4 or more seeds
+    (`seeds.py compare`). Anything else is "not separated".
+  - Compare like with like: the same model, the same seeds, the same iteration limit, no time cap on one side.
+  - A net that is open at every seed is evidence about the board. A net that is open at one seed is not.
 
 ## 6. Run time and stopping
 
-- `route_plan.py` runs 20 iterations by default. It stops earlier when no conflict is left, or when the best
-  conflict count has not improved for 8 iterations (after iteration 10). `--max-seconds` sets a time limit;
-  the run then still legalises and writes a valid result.
-- The conflict count normally stays near flat for the first 6 to 8 iterations and falls after that. Do not stop a
+- `route_plan.py` runs up to 60 iterations by default. It stops earlier when no conflict is left, or when the
+  best conflict count has not improved for 15 iterations (after iteration 20). It then legalises the iteration
+  with the fewest nets in conflict. `--max-seconds` sets a time limit; the run then still legalises and writes a
+  result. Do not cap one side of a comparison.
+- The same seed repeats the same iterations: `--iters 80` at the same seed repeats the first 60 and adds 20.
+- The conflict count normally stays near flat for the first iterations and falls after that. Do not stop a
   run because the first iterations are flat.
+- If many nets are still in conflict when the run ends ("legalising iteration N (M nets in conflict)" in the
+  log), the result comes from the legalisation, not from a negotiated solution. Say so with the result.
 - Time for 20 iterations: 45 x 40 mm 4-layer board with 95 nets at a 0.127 mm grid, 8 to 16 minutes (longer when
   other jobs run); 24 x 38 mm 2-layer board with 34 nets, 5 to 30 seconds at the default grid, minutes at a
   quarter of it. Run a command that can exceed 2 minutes in the background and follow its log.

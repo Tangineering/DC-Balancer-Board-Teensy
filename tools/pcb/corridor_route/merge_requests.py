@@ -11,7 +11,8 @@ within --radius mm of each other. Support is the list of workers and of methods 
 <racedir> is the worker; its name up to the first "-" is the method). Support from different methods ranks above
 support from several workers of one method.
 Tested gain: --tested is a JSON list of {"match": {"kind": ..., "parts": [...]} or {"id": "<merged id>"},
-"gain": <connections>, "seeds": [..], "how": "..."} written by the orchestrator from whatif.py runs. A request
+"gain": <mean connections>, "seeds": [..], "verdict": "...", "lost": [nets], "how": "..."} written by
+whatif.py holdout (WHATIF tested.json) and relief_trial.py (trial.json); the orchestrator adds "match". A request
 without a tested gain is marked "untested"; the workers' estimates are shown as estimates only.
 Tier: plan (the orchestrator decides), placement (the design session decides), ruling (the operator decides).
 Hold-back: --history is the decisions file of earlier rounds (list of {"key": ..., "decision": "accepted" |
@@ -49,9 +50,10 @@ for f in sorted(glob.glob(os.path.join(race, "**", "requests.json"), recursive=T
         continue
     for r in items:
         ev = r.get("evidence") or {}
-        if not ev.get("report") or not (ev.get("open_nets") or ev.get("capacity") is not None):
+        if not ev.get("report"):
             problems.append("%s %s: no report evidence; not merged" % (worker, r.get("id", "?")))
             continue
+        # a request without open nets is a quality request (a pour island, a long constrained net): it is kept
         if r.get("kind") not in TIER:
             problems.append("%s %s: unknown kind %r; not merged" % (worker, r.get("id", "?"), r.get("kind")))
             continue
@@ -101,6 +103,8 @@ for k, g in enumerate(groups):
         if mt.get("id") == m["id"] or (mt.get("kind") == m["kind"] and set(mt.get("parts") or []) & set(parts)) or \
                 (mt.get("kind") == m["kind"] and mt.get("pour") and mt.get("pour") == m["pour"]):
             m["tested_gain"], m["tested_how"] = t.get("gain"), "%s (seeds %s)" % (t.get("how", ""), t.get("seeds"))
+            m["verdict"] = t.get("verdict") or ("refuted" if t.get("refuted") else "tested")
+            m["lost"] = t.get("lost") or []
     merged.append(m)
 
 held, send = [], []
@@ -122,7 +126,9 @@ json.dump(dict(round=rnd, send=send, held=held, problems=problems),
 
 
 def row(m):
-    gain = ("%+d" % m["tested_gain"]) if m["tested_gain"] is not None else "untested"
+    gain = ("%+.1f, %s%s" % (m["tested_gain"], m.get("verdict", "tested"),
+                             ("; loses " + ", ".join(m["lost"])) if m.get("lost") else "")
+            ) if m["tested_gain"] is not None else "untested"
     est = ("%s (estimate)" % "-".join(str(e) for e in (m["estimates"][:1] + m["estimates"][-1:] if len(m["estimates"]) > 1
                                                       else m["estimates"]))) if m["estimates"] else "-"
     return "| %s | %s | %s | %s | %s | %d workers, %d methods (%s) | %s | %s | %s |" % (

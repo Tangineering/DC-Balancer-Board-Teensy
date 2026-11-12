@@ -44,13 +44,34 @@ def rank(racedir):
         rel = os.path.relpath(f, racedir).replace("\\", "/")
         rows.append((S["rank"], rel.split("/")[0], rel, S))
     rows.sort(key=lambda r: r[0])
+    # only attempts on the race board itself compete: a relief trial or a what-if copy has another baseline
+    import hashlib
+
+    def digest(path):
+        try:
+            return hashlib.md5(open(path, "rb").read()).hexdigest()
+        except OSError:
+            return None
+    try:
+        race_board = digest(json.load(open(os.path.join(racedir, "race.json")))["board"])
+    except Exception:
+        race_board = None
+    cache = {}
+    for r in rows:
+        bl = r[3].get("baseline")
+        if bl not in cache:
+            cache[bl] = digest(bl) if bl else None
+        r[3]["_same_board"] = (race_board is None or cache[bl] == race_board)
     L = ["# Race ranking", "",
          "Sorted by: open connections on non-plane nets, new DRC violations, extra pour islands, vias, track length.",
-         "", "| # | Entry | Attempt (score file) | Open connections | New DRC | Extra islands | Vias | Length (mm) | Label |",
-         "|---|---|---|---|---|---|---|---|---|"]
+         "An attempt competes only if it is valid and was scored against the race board itself.",
+         "", "| # | Entry | Attempt (score file) | Open connections | New DRC | Extra islands | Vias | Length (mm) | Valid | Race board | Label |",
+         "|---|---|---|---|---|---|---|---|---|---|---|"]
     for i, (rk, entry, rel, S) in enumerate(rows):
-        L.append("| %d | %s | %s | %d | %d | %d | %d | %.0f | %s |" % (i + 1, entry, rel, rk[0], rk[1], rk[2], rk[3], rk[4],
-                                                                    S.get("label", "")))
+        L.append("| %d | %s | %s | %d | %d | %d | %d | %.0f | %s | %s | %s |" % (
+            i + 1, entry, rel, rk[0], rk[1], rk[2], rk[3], rk[4], "yes" if S.get("valid") else "NO",
+            "yes" if S["_same_board"] else "other", S.get("label", "")))
+    rows = [r for r in rows if r[3].get("valid") and r[3]["_same_board"]]
     if rows:
         best = {}
         for rk, entry, rel, S in rows:
@@ -62,7 +83,7 @@ def rank(racedir):
             w[1], w[2], ", ".join("%s %d" % kv for kv in sorted(w[3].get("open_by_net", {}).items(),
                                                                 key=lambda kv: -kv[1])) or "none")]
     else:
-        L.append("| - | no score.json found | | | | | | | |")
+        L += ["", "No valid attempt on the race board."]
     txt = "\n".join(L) + "\n"
     open(os.path.join(racedir, "RANKING.md"), "w", encoding="utf-8").write(txt)
     print(txt)

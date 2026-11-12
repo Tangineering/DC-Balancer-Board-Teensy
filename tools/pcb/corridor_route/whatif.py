@@ -2,7 +2,7 @@
 a request is sent to the design owner, so that the request carries a measured gain and not a worker's estimate.
 
 Usage (pcbnew venv):
-  python whatif.py holdout <model.json> <plan.json> <outdir> --nets /A,/B [--seeds 1,2] [--iters 20]
+  python whatif.py holdout <model.json> <plan.json> <outdir> --nets /A,/B [--seeds 1,2,3,4] [--iters 60]
   python whatif.py move <board.kicad_pcb> <outdir> --part R101 [--dx 0.4] [--dy 0] [--rot 90] [--y-flip-offset Y0]
 
 holdout: tests a request that takes nets out of the routing problem (DNP removal, a new pour or rail for a net).
@@ -35,8 +35,8 @@ os.makedirs(outdir, exist_ok=True)
 if sys.argv[1] == "holdout":
     model, plan = sys.argv[2], sys.argv[3]
     held = [n for n in arg("--nets", "").split(",") if n]
-    seeds = [int(s) for s in arg("--seeds", "1,2").split(",")]
-    iters = arg("--iters", "20")
+    seeds = [int(s) for s in arg("--seeds", "1,2,3,4").split(",")]
+    iters = arg("--iters", "60")
     P = json.load(open(plan))
     P2 = dict(P)
     P2["keep_nets"] = sorted(set(P.get("keep_nets", [])) | set(held))
@@ -72,11 +72,15 @@ if sys.argv[1] == "holdout":
              len(rest), total, os.path.basename(plan), iters), "",
          "| Seed | Plan as it is | Nets held out | Gain |", "|---|---|---|---|"]
     L += ["| %d | %d | %d | %+d |" % (s, res[("base", s)], res[("held", s)], g) for s, g in zip(seeds, gains)]
-    L += ["", "Mean gain: %+.1f connections on the remaining nets. The held-out nets themselves (%d connections) "
-          "leave the routing problem. A gain inside the noise band of 2 to 4 connections is not a result." % (
-              mean, sum(C.connections(n) for n in held if n in C.routable))]
+    n_ = len(gains)
+    verdict = ("gain" if n_ >= 4 and all(g > 0 for g in gains) else
+               "loss" if n_ >= 4 and all(g < 0 for g in gains) else "not separated")
+    L += ["", "Mean gain: %+.1f connections on the remaining nets (n = %d). Verdict: **%s**. The held-out nets "
+          "themselves (%d connections) leave the routing problem. A gain is a result only with 4 or more seeds and "
+          "a positive difference at every seed." % (mean, n_, verdict,
+                                                   sum(C.connections(n) for n in held if n in C.routable))]
     open(os.path.join(outdir, "WHATIF.md"), "w", encoding="utf-8").write("\n".join(L) + "\n")
-    json.dump([dict(match=dict(kind="?", parts=[]), gain=round(mean), seeds=seeds,
+    json.dump([dict(match=dict(kind="?", parts=[]), gain=round(mean, 1), verdict=verdict, seeds=seeds,
                     how="held out %s; open connections on the remaining nets %s -> %s" % (
                         ", ".join(held), [res[("base", s)] for s in seeds], [res[("held", s)] for s in seeds]))],
               open(os.path.join(outdir, "tested.json"), "w"), indent=1)

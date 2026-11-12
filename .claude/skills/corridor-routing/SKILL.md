@@ -46,8 +46,8 @@ routes. Read `W/global.md` before you draw anything.
 
 - A border above capacity is a measured bottleneck: a hand corridor there is justified, on the layer and with
   the nets that the row names.
-- Overflow 0, also at `--tile 1.0`: the channels are sufficient. Do not draw corridors for flows; the open
-  connections are local pockets, and they go to the requests.
+- Overflow 0, also at `--tile 1.0`: no corridor is justified. Skip Step 1.4. The open connections go to the
+  requests, with the borders at capacity as evidence.
 - If the task names the automatic-corridor entry, route `W/plan_g.json` (mode guide) as an attempt, at two
   seeds, and compare it with the baseline.
 
@@ -59,8 +59,8 @@ routes. Read `W/global.md` before you draw anything.
    between flows.
 3. Find the walls: through-hole rows, hard pours, keep-outs, the outline neck. Each wall has gaps; each gap
    passes a number of tracks on each layer.
-4. Draw a path corridor only for a flow that the baseline left open at a wall or a neck. State the gap and
-   the layer in the corridor `note`. Do not draw a corridor for a flow that the baseline routed, even through a
+4. Draw a path corridor only at a border that `W/global.md` lists above capacity (Step 0a), for a flow that
+   the baseline left open there at every seed. State the gap and the layer in the corridor `note`. Do not draw a corridor for a flow that the baseline routed, even through a
    wall: in the dry tests such a corridor lost 6 of the 10 nets of its own group. Start with one corridor at
    the worst bottleneck; add the next one only after the first one gained connections.
 5. Give flows that cross different layers. Give flows that run side by side one corridor on one layer.
@@ -87,9 +87,10 @@ routes. Read `W/global.md` before you draw anything.
    (in the background on a 4-layer board; `reference/common.md` section 6). A new folder `W/vN` for each attempt.
 2. Read `W/vN/route_report.md`. Repair with `reference/failure-repair.md`. Go back to Step 2. Use
    `--keep-routes` of the best attempt for a repair, so that nets that routed are not lost.
-3. On the best attempt, run a finishing pass (`reference/shared-options.md` section 3).
-4. Stop when every connection is made, or when two consecutive repairs do not reduce the open connections by
-   more than the noise band (`reference/common.md` section 5).
+3. Judge a plan against the baseline with `seeds.py run` and `seeds.py compare` (`reference/common.md`
+   section 5). If the plan gained its own flow but the board lost more, the verdict is "not separated" or "B
+   worse": drop the corridor.
+4. Stop when every connection is made, or when a plan is not better than the baseline at 4 seeds.
 
 ### Step 4. Apply, score, review
 
@@ -124,8 +125,9 @@ relief phase tests the requests. Outside a race, test the placement requests you
 ## 5. Limits
 
 - The capacity check counts parallel tracks. It does not model the order in which nets enter a corridor.
-- On the boards tested, the unconstrained router was the best or tied result on three of four boards. One
-  corridor at a measured bottleneck gained 6 connections on the fourth. Expect a small gain, not a rescue.
+- In three rounds of dry tests no corridor plan was separated from the plain router on a 4-layer board, and
+  each hand corridor on the CR board lost more connections elsewhere than it gained (179 against 184 in the
+  last round, one seed). Treat a corridor as a hypothesis to test, not as a method that helps.
 - Region corridors have no capacity check.
 - The router is a grid search at the fab pitch; tracks are staircases of 45-degree and straight steps.
 - This skill was written for small mixed-signal power boards without high-speed nets. Revise it when the

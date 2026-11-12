@@ -78,6 +78,10 @@ class Ctx:
         half = (self.track + self.clear) / 2
         self.R = float(r.get("res", round(half if half <= 0.13 else half / 2, 4)))
         self.thermal = float(r.get("thermal_keepout", 0.35))    # cost ring around through-hole pads on a pour
+        # via-in-pad: False (default) = no via copper on or beside any SMD pad; True = allowed everywhere;
+        # a list of "REF.PAD" = allowed at these pads only
+        self.via_in_pad = r.get("via_in_pad", False)
+        self.mask_margin = float(r.get("mask_margin", br.get("mask_margin", 0.05)))
         self.pitch_cells = int(math.ceil((self.track + self.clear) / self.R - 1e-9))
         self.pitch = self.pitch_cells * self.R
         if self.pitch > (self.track + self.clear) * 1.25:
@@ -192,6 +196,9 @@ class Ctx:
         th_pads = {(it.get("ref"), it.get("num")) for it in D["items"]
                    if it["kind"] == "hole" and (it.get("drill") or 0) >= 0.6}
         zone_on = {(it["net"], ln) for it in D["items"] if it["kind"] == "zone" for ln in it["layers"]}
+        drilled = {(it.get("ref"), it.get("num")) for it in D["items"] if it["kind"] == "hole"}
+        vip_ok = set(self.via_in_pad) if isinstance(self.via_in_pad, list) else set()
+        smd_ban = []
         self.ownT = np.full((NL, self.ny, self.nx), FREE, np.int32)
         self.ownV = np.full((NL, self.ny, self.nx), FREE, np.int32)
         self.pourN = np.full((NL, self.ny, self.nx), FREE, np.int32)
@@ -262,12 +269,21 @@ class Ctx:
                     # a through-hole pad of a poured net needs room for its thermal spokes
                     self._claim(self.ownT, li, self.geom_of(it, rT), n)
                     self._claim(self.ownV, li, self.geom_of(it, rV), n)
+                    if (kind == "pad" and (it.get("ref"), it.get("num")) not in drilled and self.via_in_pad is not True
+                            and "%s.%s" % (it.get("ref"), it.get("num")) not in vip_ok):
+                        smd_ban.append((li, it))
                     if (kind == "pad" and (it["net"], ln) in zone_on
                             and (it.get("ref"), it.get("num")) in th_pads and self.thermal > 0):
                         # room for the thermal spokes: a cost ring, so a track uses it only without another way
                         j0, j1, i0, i1, m = self.raster(self.geom_of(it, rT + self.thermal))
                         if m.size:
                             self.ring[li, j0:j1, i0:i1] |= m
+        # a via on an SMD pad, or with its copper inside the pad's solder-mask opening, takes solder from the
+        # joint. KiCad DRC does not report it. The ban holds for the pad's own net too: a via joins a pad
+        # through a track.
+        vr = self.via / 2 + self.mask_margin
+        for li, it in smd_ban:
+            self._claim(self.ownV, li, self.geom_of(it, vr + self.sag(vr) + 0.01), BLOCK)
         self.net_name = {v: k for k, v in self.nets.items()}
 
     def cells_of(self, it):

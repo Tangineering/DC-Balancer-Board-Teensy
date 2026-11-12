@@ -82,8 +82,9 @@ Change one thing for each attempt and record it in `STATUS.md`.
 Use the repair classes of `reference/failure-repair.md` for single nets. Stop when every connection is made,
 or when two consecutive attempts do not reduce the open connections by more than the noise band
 (`reference/common.md` section 5). On a 4-layer board try the swap once, unless `flows.md` shows one clearly
-dominant direction through the narrowest channel. Report the baseline if no direction plan beats it. On the best attempt, run a finishing pass
-(`reference/shared-options.md` section 3).
+dominant direction through the narrowest channel. Report the baseline if no direction plan is better at 4 seeds (`seeds.py compare`). In the dry tests no
+direction plan was separated from the baseline on a 4-layer board; on a 2-layer board with a ground pour the
+choice of pattern changed the pour islands (1 against 18), and that is where this method is worth its time.
 
 ### Step 4. Review
 
