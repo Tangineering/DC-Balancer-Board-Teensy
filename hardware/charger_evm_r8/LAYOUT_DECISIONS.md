@@ -289,8 +289,12 @@ variants; with the variable unset, the generator builds the base placement uncha
   it in place, and 30 bottom parts move.
 
 Both variants give ERC 0, DRC equal to the base (200 unconnected, 4 starved thermals, 2 silkscreen items) and 0 FAIL
-in the constraint check. Each folder holds a `placement_diff.json` against commit `5ddc21a`. The study decides which
-variant, if any, becomes the base.
+in the constraint check. Each folder holds a `placement_diff.json` against commit `5ddc21a`.
+
+Round 2 measured both variants under the binding divider-top plan. A made 169.0 connections on average and B made
+169.2, against 166.2 for the base; neither gain is separated at four seeds. The strap keep-out of variant A is now the
+default placement because it removes a real defect (R147.2 unreachable). `CR_PLACE_VARIANT=BASE0` rebuilds the
+`5ddc21a` placement. The grid growth of variant B is not adopted.
 
 **D-35. Scope of the divider-top rule.** A.8 Analog requires the divider tops R102, R109, R111 and R114 to be at least
 2 mm from any logic trace, without a layer scope. The rule binds logic-net copper on F.Cu and logic-net vias of any

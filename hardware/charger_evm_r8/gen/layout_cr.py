@@ -227,7 +227,7 @@ def setup(fps):
     bot = INSET.difference(mbk()).difference(FT1_KO).difference(FT2_KO).difference(PRE_VIA_KO).difference(
         unary_union([Point(30.3, 61.2).buffer(1.15 + 0.5), Point(27.7, 61.2).buffer(1.15 + 0.5),
                      Point(24.3, 45.4).buffer(1.25 + 0.5), Point(24.3, 55.6).buffer(1.25 + 0.5)]))
-    if VARIANT in ("A", "B"):
+    if VARIANT != "BASE0":   # D-34: strap keep-out adopted as the default (round 2); BASE0 = the 5ddc21a placement
         bot = bot.difference(VOUT_L4_KO)
     REGIONS.update({
         "taby_logic": TABY_TOP.union(INT_ANY).union(BAND_E),

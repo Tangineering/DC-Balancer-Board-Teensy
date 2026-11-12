@@ -109,16 +109,16 @@ R137   B taby_bot     (35.450, 70.200) rot 90  target -
 R176   B taby_bot     (19.600, 70.400) rot 0  target -
 R177   B taby_bot     (31.350, 71.350) rot 90  target -
 phase tab Y bottom logic done
-packer: best try 8 placed 11 of 11, cost 94.3
-R107   B bot_logic    (35.750, 59.500) rot 0  target (44.32, 46.77)
-R121   B bot_logic    (48.450, 59.950) rot 90  target (44.00, 59.84)
-R122   B bot_logic    (35.750, 60.800) rot 0  target (42.16, 56.33)
+packer: best try 149 placed 11 of 11, cost 101.2
+R107   B bot_logic    (48.450, 59.950) rot 90  target (44.32, 46.77)
+R121   B bot_logic    (50.600, 66.250) rot 0  target (44.00, 59.84)
+R122   B bot_logic    (36.500, 60.250) rot 90  target (42.16, 56.33)
 R125   B bot_logic    (49.750, 61.250) rot 90  target (47.22, 51.61)
-R126   B bot_logic    (32.950, 59.500) rot 0  target (40.27, 44.83)
+R126   B bot_logic    (34.450, 59.500) rot 0  target (40.27, 44.83)
 R127   B bot_logic    (35.650, 66.250) rot 0  target (39.12, 62.68)
-R128   B bot_logic    (35.850, 62.100) rot 0  target (41.51, 57.65)
+R128   B bot_logic    (34.450, 60.800) rot 0  target (41.51, 57.65)
 R133   B bot_logic    (29.050, 58.200) rot 90  target (32.12, 58.20)
 R135   B bot_logic    (32.850, 66.250) rot 0  target (38.99, 61.30)
-R147   B bot_logic    (33.000, 61.550) rot 90  target (38.72, 60.97)
-R148   B bot_logic    (51.050, 66.250) rot 0  target (51.03, 54.79)
+R147   B bot_logic    (30.050, 66.250) rot 0  target (38.72, 60.97)
+R148   B bot_logic    (53.400, 66.250) rot 0  target (51.03, 54.79)
 phase bottom passives done

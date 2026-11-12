@@ -55,7 +55,7 @@
 | A.8 r8 R106s on the tab X bottom beside F17 | R106s | bottom, 3.92 mm from the F17 centre | tab X bottom | pass |
 | A.8 tab X top: tap pads and R175 only | F01, F02, F03, F04, F05, F06, F07, F11, F12, F13, F14, F15, F16, F17, F18, F19, F20, F21, F23, F24, R175 | 21 footprints | F pads + R175 | pass |
 | A.8 tab Y top: driven logic only | FT2H, U106, U107, U110, U114, U116 | 6 footprints | LVC gates (U105-U118 class) | pass |
-| A.7/A.8 tab X bottom: 1 % logic series resistors and pull-downs only | R106s, R121, R125, R148 | 4 | R class | pass |
+| A.7/A.8 tab X bottom: 1 % logic series resistors and pull-downs only | R106s, R107, R121, R125, R148 | 5 | R class | pass |
 | A.8 per-region booking (KiCad courtyards, information) | footprint low-y band | 90.1 of 126.9 mm2 = 71.0 % | <= 75 % target | info |
 | A.8 per-region booking (KiCad courtyards, information) | tab Y top | 70.2 of 157.4 mm2 = 44.6 % | <= 75 % target | info |
 | A.8 every via tented (L4) / r8 F17-R106s rule | board setup | front True, back True | both tented | pass |

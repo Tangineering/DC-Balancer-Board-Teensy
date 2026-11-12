@@ -8,7 +8,8 @@ This note gives the starting point for the next session. `LAYOUT_DECISIONS.md` i
 |---|---|
 | EIB (2 layers, 24 x 38 mm) | complete: ERC 0, DRC 0 with schematic parity; fab package `fab/eib_2026-11-11/` |
 | CR (4 layers, r7 outline 47.30 x 41.86 mm) | schematic complete (ERC 0); placement complete; power pours and straps complete; **95 signal nets not routed** |
-| CR board file | `cr/cr.kicad_pcb` = placed + pours, DNP tier 3 removed (DRC: 200 unconnected, 4 starved thermals, 2 silkscreen items; section 7) |
+| CR board file | `cr/cr.kicad_pcb` = placed + pours, DNP tier 3 removed, VCHGOUT L4 strap keep-out (D-34) (DRC: 200 unconnected, 4 starved thermals, 2 silkscreen items; section 7) |
+| CR routing study (2026-11-12) | stopped after round 2 without a gain verdict; best r1_B seed 3, 177/199 signal, 27 GND open; see `MORNING_REVIEW_2026-11-12.md` |
 | Best partial CR routing | `cr/attempts/cr_pathfinder_0p1mm_partial.kicad_pcb` (reference only; 516 clearance violations) |
 | Ordering BOM | `bom_2026-11-11/ordering_bom.csv`: 116 rows in the reference format; no price, stock or SKU read on a live page (bot checks) |
 | Netlist audit | three independent reviewers, 216 parts against B.8/E: no discrepancy |
