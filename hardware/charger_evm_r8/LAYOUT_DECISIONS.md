@@ -334,6 +334,18 @@ default placement). The operator also ruled as follows:
   placement with the round 2 routes of plan `r2_A`, seed 1, and the scripted GND plane vias (173 of 199 signal
   connections, 31 GND connections open).
 
+**D-37. Via-in-pad order of use (operator ruling 2026-11-12, with the CR outline change request).** The operator
+assembles the CR by stencil, solder paste and reflow. An unfilled via in a pasted pad can draw solder down the barrel
+and starve the joint. The routing on the new outline therefore proceeds in this order:
+
+1. Route with no via on an SMD pad or in its mask opening.
+2. Only if that attempt fails on the new outline, use plain unfilled vias in SMD pads (D-36), and list each such via
+   for operator review.
+
+Filled and capped vias stay excluded. D-36 is not revoked; it becomes the fallback. The change request is
+`docs/reviews/cr_routing_2026-11-12/CR_OUTLINE_CHANGE_REQUEST_2026-11-12.md` in the main checkout, section 5,
+item 7.
+
 ## 9. Verification
 
 ### 9.1 ERC and DRC
