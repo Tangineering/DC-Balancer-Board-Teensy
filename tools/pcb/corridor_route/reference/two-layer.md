@@ -1,0 +1,37 @@
+# Two-layer boards
+
+A 2-layer board has one signal layer and one layer that should stay a ground pour. Whether every net connects is
+only half of the result: the other half is how much signal copper cuts the pour.
+
+## 1. Measures of success
+
+- Open connections: 0.
+- Signal track length on the pour layer: as low as the crossings allow.
+- Islands of a trial pour (`score.py --test-pour <ground net>:<pour layer>`): no more than the unrouted board
+  gives, plus the islands that the design accepts.
+
+Run the unconstrained baseline first (`default: {"mode": "free"}`). On a small 2-layer board it normally
+connects every net; the plan is then judged on the pour measures, not on completion.
+
+## 2. Pattern
+
+1. Name the pour layer (normally `B.Cu`) and the signal layer.
+2. Ground net without a pour yet: route it on the pour layer only. Its tracks merge into the later pour.
+   `{"name": "gnd", "nets": ["/AGND"], "mode": "free", "layers": ["B.Cu"], "escape": 1.2, "priority": 9}`.
+   Each ground pad on the signal side gets a via inside its escape disc.
+3. Signals: prefer the signal layer by cost, do not forbid the pour layer.
+   `"layer_cost": {"B.Cu": 4}` at plan level, and `"costs": {"via": 20}`.
+   A plan that forbids the pour layer for all signals fails: one layer is not planar.
+4. Read `capacity.py` check 5 and `flows.py` for the crossings. Each crossing needs a bridge on the pour layer.
+   Keep bridges short and parallel to the long axis of the pour, so that they do not cut the pour across.
+5. A local net with many crossings may use both layers (`layer_cost` 1 for its group).
+6. Supply rails (3V3 and similar): signal layer, `priority: 2`, a width for the current.
+
+## 3. Limits found in the dry tests
+
+- Through-hole header rows: the gap between pads can be too narrow for a track. Pins of the inner row then leave
+  only through the channel between the rows or by a via. `capacity.py` check 3 measures this correctly when a
+  path corridor is drawn through the channel.
+- Forbidding the pour layer for one net moves the crossing to another net. The total crossing demand is set by
+  the placement.
+- Escape discs exist on every layer, so a `layers` restriction is never strict near a pad.

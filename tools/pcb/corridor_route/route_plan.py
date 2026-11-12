@@ -1,33 +1,39 @@
-"""Corridor router steps L5-L6: detailed routing inside the planned corridors.
+"""Plan-driven router: detailed routing inside the regions that a plan allows.
 
 Usage (venv with numpy + shapely):
   python -u route_plan.py <model.json> <plan.json> <routes.json> [--iters 30] [--report route_report.md]
-                          [--only-groups g1,g2] [--seed 1]
+                          [--only-groups g1,g2] [--seed 1] [--via-cost V] [--pour-penalty P]
 
-Each routable net is routed pad to pad by a negotiated-congestion grid search (PathFinder) that may use only the
-net's allowed region: its corridors on their layers plus an escape disc around each pad (mode "corridor"), the
-pad bounding box plus a margin (mode "local"), or the whole board (mode "free"). Nets of other groups compete
-for the same cells; a contested cell costs more each iteration until one net moves. At the end, nets that still
-overlap are dropped one by one until the remaining copper is legal, so the output never contains a clearance
-violation between routed nets. The report attributes every failed or dropped net to its group and corridors."""
+Stages:
+ 1. Negotiation. Each routable net is routed pad to pad by a negotiated-congestion grid search (PathFinder)
+    inside its allowed region. A contested cell costs more each iteration until one net moves.
+ 2. Legalisation. Nets that still overlap are removed, one at a time, until the remaining copper is legal. The
+    net removed is the one with the highest priority number; among equals, the one that conflicts with the most
+    nets per connection it carries.
+ 3. Recovery. Each removed net is routed again with all kept copper as hard obstacles. Whatever connects is
+    kept (a net may be kept in part); the pads that stay open are reported.
+ 4. Diagnosis. Each open net is routed alone on the empty board. A net that fails alone is BLOCKED (its allowed
+    region does not connect its pads); a net that routes alone is CONGESTED, and the report names the nets and
+    the place that it lost to.
+The output never contains a clearance violation between routed nets."""
 import argparse
-import heapq
 import json
-import math
 import random
 import time
+from collections import Counter
 
-import numpy as np
+from shapely.geometry import Point
 
-from core import FREE, Ctx
+from core import Ctx
+from engine import Router
 
 ap = argparse.ArgumentParser()
 ap.add_argument("model")
 ap.add_argument("plan")
 ap.add_argument("out")
 ap.add_argument("--iters", type=int, default=30)
-ap.add_argument("--via-cost", type=float, default=10.0)
-ap.add_argument("--pour-penalty", type=float, default=30.0)
+ap.add_argument("--via-cost", type=float, default=None)
+ap.add_argument("--pour-penalty", type=float, default=None)
 ap.add_argument("--report", default=None)
 ap.add_argument("--only-groups", default="")
 ap.add_argument("--seed", type=int, default=1)
@@ -37,212 +43,108 @@ t0 = time.time()
 C = Ctx(A.model, A.plan)
 if C.plan_errors:
     raise SystemExit("plan errors:\n  " + "\n  ".join(C.plan_errors))
-R, NL, nx, ny = C.R, C.NL, C.nx, C.ny
+RT = Router(C, A.via_cost, A.pour_penalty)
+R, NL = C.R, C.NL
 LAYERS = C.LAYERS
 only = {g for g in A.only_groups.split(",") if g}
-todo_nets = [n for n in C.routable if not only or C.assign[n]["group"] in only]
-print("grid %d x %d x %d, routable nets %d (%d selected), %.1f s" % (nx, ny, NL, len(C.routable), len(todo_nets),
-                                                                   time.time() - t0), flush=True)
+todo_nets = [n for n in sorted(C.routable) if (not only or C.assign[n]["group"] in only) and C.connections(n) > 0]
+total_conn = sum(C.connections(n) for n in todo_nets)
+print("grid %d x %d x %d (res %.4f, pitch %.3f), nets %d, connections %d, %.1f s" % (
+    C.nx, C.ny, NL, R, C.pitch, len(todo_nets), total_conn, time.time() - t0), flush=True)
 
-
-def disk(r):
-    k = int(math.ceil(r / R))
-    return [(dj, di) for dj in range(-k, k + 1) for di in range(-k, k + 1) if math.hypot(dj, di) * R <= r + 1e-9]
-
-
-DT_T = disk(C.track + C.clear + R * 0.5)
-DT_V = disk(C.via / 2 + C.clear + C.track / 2 + R * 0.5)
-DV_V = disk(C.via + C.clear + R * 0.5)
-occT = np.zeros((NL, ny, nx), np.float32)
-occV = np.zeros((NL, ny, nx), np.float32)
-hist = np.zeros((NL, ny, nx), np.float32)
-
-
-def stamp(arr, l, j, i, offs, val):
-    for dj, di in offs:
-        jj, ii = j + dj, i + di
-        if 0 <= jj < ny and 0 <= ii < nx:
-            arr[l, jj, ii] += val
-
-
-def contribute(net, route, val):
-    cells, vias = route
-    own = C.own.get(net, ())
-    for (l, j, i) in cells:
-        if (l, j, i) in own:
-            continue
-        stamp(occT, l, j, i, DT_T, val)
-        stamp(occV, l, j, i, DT_V, val)
-    for (j, i) in vias:
-        for l in range(NL):
-            stamp(occT, l, j, i, DT_V, val)
-            stamp(occV, l, j, i, DV_V, val)
-
-
-SQ2 = math.sqrt(2)
-NB = [(1, 0, 1.0), (-1, 0, 1.0), (0, 1, 1.0), (0, -1, 1.0), (1, 1, SQ2), (1, -1, SQ2), (-1, 1, SQ2), (-1, -1, SQ2)]
-PRES = 1.0
-
-
-def route_net(net):
-    """returns ((cells, vias), ok, unreached pad keys)"""
-    n = C.nid(net)
-    groups = {k: v for k, v in C.padcells.get(net, {}).items() if v}
-    if len(groups) < 2:
-        return ([], []), True, []
-    j0, j1, i0, i1, allow = C.allowed(net)
-    W, H = i1 - i0, j1 - j0
-    oT = C.ownT[:, j0:j1, i0:i1]
-    passT = ((oT == FREE) | (oT == n)) & allow
-    oV = C.ownV[:, j0:j1, i0:i1]
-    passV = np.all((oV == FREE) | (oV == n), axis=0)
-    pn = C.pourN[:, j0:j1, i0:i1]
-    costT = ((1.0 + hist[:, j0:j1, i0:i1]) * (1.0 + PRES * occT[:, j0:j1, i0:i1])
-             + np.where((pn != FREE) & (pn != n), A.pour_penalty, 0.0))
-    costT = np.where(passT, costT, np.inf).astype(np.float64)
-    costV = A.via_cost * (1.0 + hist[:, j0:j1, i0:i1].max(axis=0)) * (1.0 + PRES * occV[:, j0:j1, i0:i1].max(axis=0))
-    costV = np.where(passV, costV, np.inf).astype(np.float64)
-    cT = [costT[l].ravel().tolist() for l in range(NL)]
-    cV = costV.ravel().tolist()
-
-    def loc(cs):
-        return set((l, j - j0, i - i0) for (l, j, i) in cs if j0 <= j < j1 and i0 <= i < i1)
-
-    keys = sorted(groups, key=lambda k: -len(groups[k]))
-    tree = loc(groups[keys[0]])
-    rest = [(k, loc(groups[k])) for k in keys[1:]]
-    cells, vias, unreached = [], [], []
-    while rest:
-        tj = sum(c[1] for c in tree) / len(tree)
-        ti = sum(c[2] for c in tree) / len(tree)
-        rest.sort(key=lambda kg: min(math.hypot(c[1] - tj, c[2] - ti) for c in list(kg[1])[:4]) if kg[1] else 1e9)
-        key, tgt = rest.pop(0)
-        if not tgt:
-            unreached.append(key)
-            continue
-        cy_ = sum(c[1] for c in tgt) / len(tgt)
-        cx_ = sum(c[2] for c in tgt) / len(tgt)
-        rad = max(math.hypot(c[1] - cy_, c[2] - cx_) for c in tgt)
-        g, prev, pq = {}, {}, []
-        for s in tree:
-            g[s] = 0.0
-            prev[s] = None
-            heapq.heappush(pq, (max(0.0, math.hypot(s[1] - cy_, s[2] - cx_) - rad), 0.0, s))
-        found = None
-        while pq:
-            f, gc, s = heapq.heappop(pq)
-            if gc > g.get(s, 1e30):
-                continue
-            if s in tgt:
-                found = s
-                break
-            l, j, i = s
-            row = cT[l]
-            for dj, di, c in NB:
-                jj, ii = j + dj, i + di
-                if not (0 <= jj < H and 0 <= ii < W):
-                    continue
-                t = (l, jj, ii)
-                cost = row[jj * W + ii]
-                if cost == math.inf:
-                    if t not in tgt:
-                        continue
-                    cost = 1.0
-                if dj and di and (row[j * W + ii] == math.inf or row[jj * W + i] == math.inf):
-                    continue
-                nc = gc + c * cost
-                if nc < g.get(t, 1e30):
-                    g[t] = nc
-                    prev[t] = s
-                    heapq.heappush(pq, (nc + max(0.0, math.hypot(jj - cy_, ii - cx_) - rad), nc, t))
-            vc = cV[j * W + i]
-            if vc != math.inf and row[j * W + i] != math.inf:
-                for l2 in range(NL):
-                    if l2 == l or cT[l2][j * W + i] == math.inf:
-                        continue
-                    t = (l2, j, i)
-                    nc = gc + vc
-                    if nc < g.get(t, 1e30):
-                        g[t] = nc
-                        prev[t] = s
-                        heapq.heappush(pq, (nc + max(0.0, math.hypot(j - cy_, i - cx_) - rad), nc, t))
-        if found is None:
-            unreached.append(key)
-            tree |= tgt
-            continue
-        path = [found]
-        while prev[path[-1]] is not None:
-            path.append(prev[path[-1]])
-        path.reverse()
-        for a, b2 in zip(path[:-1], path[1:]):
-            if a[0] != b2[0]:
-                vias.append((a[1] + j0, a[2] + i0))
-        cells += [(l, j + j0, i + i0) for (l, j, i) in path]
-        tree |= set(path) | tgt
-    return (cells, vias), not unreached, unreached
-
-
-def conflict_cells(net, route):
-    cells, vias = route
-    own = C.own.get(net, ())
-    out = [(l, j, i) for (l, j, i) in cells if (l, j, i) not in own and occT[l, j, i] > 0]
-    out += [(0, j, i) for (j, i) in vias if max(occV[l, j, i] for l in range(NL)) > 0]
-    return out
-
-
-routes, failed = {}, {}
-order = sorted(todo_nets, key=lambda net: (C.assign[net]["priority"], len(C.padcells.get(net, {}))))
+cross = RT.crossing_counts(todo_nets)
+order = sorted(todo_nets, key=lambda net: (C.assign[net]["priority"], len(cross[net]), C.npads[net]))
+routes, unreached = RT.routes, RT.unreached
 bad = set()
+history = []
 for it_ in range(A.iters):
-    todo = order if it_ == 0 else [n_ for n_ in order if n_ in bad or n_ in failed]
+    todo = order if it_ == 0 else [n_ for n_ in order if n_ in bad or unreached.get(n_)]
     if it_ > 0:
         random.shuffle(todo)
         todo.sort(key=lambda net: C.assign[net]["priority"])
     for net in todo:
         if net in routes:
-            contribute(net, routes[net], -1.0)
-        r, ok, unreached = route_net(net)
+            RT.contribute(net, routes[net], -1.0)
+        r, un = RT.route_net(net)
         routes[net] = r
-        contribute(net, r, +1.0)
-        if ok:
-            failed.pop(net, None)
-        else:
-            failed[net] = unreached
+        unreached[net] = un
+        RT.contribute(net, r, +1.0)
     bad = set()
     for net, r in routes.items():
-        contribute(net, r, -1.0)
-        cc = conflict_cells(net, r)
+        RT.contribute(net, r, -1.0)
+        cc = RT.conflict_cells(net, r)
         if cc:
             bad.add(net)
             for (l, j, i) in cc:
-                hist[l, j, i] += 0.5
-        contribute(net, r, +1.0)
-    PRES *= 1.6
-    print("iter %d: rerouted %d, in conflict %d, no path %d, %.0f s" % (it_, len(todo), len(bad), len(failed),
-                                                                      time.time() - t0), flush=True)
+                if l >= 0:
+                    RT.hist[l, j, i] += 0.5
+                else:
+                    RT.hist[:, j, i] += 0.5
+        RT.contribute(net, r, +1.0)
+    RT.pres *= 1.6
+    nopath = sum(1 for n_ in routes if unreached.get(n_))
+    history.append((it_, len(todo), len(bad), nopath))
+    print("iter %d: rerouted %d, in conflict %d, with open pads %d, %.0f s" % (it_, len(todo), len(bad), nopath,
+                                                                             time.time() - t0), flush=True)
     if not bad:
         break
 
-# ---------------------------------------------------------------- legalise: drop conflicting nets, worst first
-dropped = {}
-while True:
-    worst = None
-    for net, r in routes.items():
-        if net in dropped or net in failed:
-            continue
-        contribute(net, r, -1.0)
-        cc = conflict_cells(net, r)
-        contribute(net, r, +1.0)
-        if cc and (worst is None or (C.assign[net]["priority"], len(cc)) > worst[0]):
-            worst = ((C.assign[net]["priority"], len(cc)), net, cc)
-    if worst is None:
-        break
-    _, net, cc = worst
-    contribute(net, routes[net], -1.0)
-    dropped[net] = cc
-for net in failed:       # partial copper of a net with an unreached pad is not kept
-    if net not in dropped:
-        contribute(net, routes[net], -1.0)
+# ---------------------------------------------------------------- legalise
+kept = set(routes)
+cellmap, viamap = RT.maps(kept)
+conf, cc_of = {}, {}
+for net in kept:
+    RT.contribute(net, routes[net], -1.0)
+    cc = RT.conflict_cells(net, routes[net])
+    RT.contribute(net, routes[net], +1.0)
+    if cc:
+        cc_of[net] = cc
+        conf[net] = RT.partners(net, cc, cellmap, viamap)
+lost_to = {}
+while conf:
+    net = max(conf, key=lambda x: (C.assign[x]["priority"], len(conf[x]) / max(1, C.connections(x)), len(cc_of[x])))
+    lost_to[net] = (sorted(conf[net]), cc_of[net])
+    RT.contribute(net, routes[net], -1.0)
+    kept.discard(net)
+    del conf[net]
+    cellmap, viamap = RT.maps(kept)
+    for other in list(conf):
+        RT.contribute(other, routes[other], -1.0)
+        cc = RT.conflict_cells(other, routes[other])
+        RT.contribute(other, routes[other], +1.0)
+        if cc:
+            cc_of[other] = cc
+            conf[other] = RT.partners(other, cc, cellmap, viamap)
+        else:
+            del conf[other]
+print("legalised: kept %d, removed %d, %.0f s" % (len(kept), len(lost_to), time.time() - t0), flush=True)
+
+# ---------------------------------------------------------------- recovery: removed nets against hard obstacles
+recovered = []
+for net in sorted(lost_to, key=lambda x: (C.assign[x]["priority"], -C.connections(x))):
+    r, un = RT.route_net(net, hard=True)
+    routes[net] = r
+    unreached[net] = un
+    if r[0]:
+        RT.contribute(net, r, +1.0)
+        kept.add(net)
+        if not un:
+            recovered.append(net)
+for net in sorted(kept, key=lambda x: (C.assign[x]["priority"], -C.connections(x))):
+    if unreached.get(net) and net not in lost_to:      # a kept net with open pads: try the open pads once more
+        RT.contribute(net, routes[net], -1.0)
+        r, un = RT.route_net(net, hard=True)
+        if len(un) < len(unreached[net]):
+            routes[net], unreached[net] = r, un
+        RT.contribute(net, routes[net], +1.0)
+print("recovery: %d removed nets fully recovered, %.0f s" % (len(recovered), time.time() - t0), flush=True)
+
+# ---------------------------------------------------------------- diagnosis of open nets
+open_nets = [n for n in todo_nets if unreached.get(n) or n not in kept]
+diag = {}
+for net in open_nets:
+    _, un = RT.route_net(net, solo=True)
+    diag[net] = "BLOCKED" if un else "CONGESTED"
 
 
 def runs(seg):
@@ -276,54 +178,88 @@ def to_copper(cells):
 
 
 results = []
-for net, (cells, vias) in routes.items():
-    if net in failed or net in dropped:
+conn_made = 0
+length = Counter()
+nvias = 0
+for net in todo_nets:
+    if net not in kept or not routes[net][0]:
         continue
+    cells, vias = routes[net]
     trk = to_copper(cells)
-    results.append(dict(net=net, replace=True, tracks=[list(t) for t in trk], widths=[C.track] * len(trk),
-                        vias=[[C.bx0 + i * R, C.by0 + j * R] for (j, i) in sorted(set(vias))],
-                        via_d=[C.via] * len(set(vias))))
-json.dump(dict(results=results, failed=sorted(failed), dropped=sorted(dropped),
+    w = RT.width(net)
+    vs = sorted(set(vias))
+    un = unreached.get(net, [])
+    conn_made += C.connections(net) - len(un)
+    nvias += len(vs)
+    for (ln, xa, ya, xb, yb) in trk:
+        length[(C.assign[net]["group"], ln)] += ((xa - xb) ** 2 + (ya - yb) ** 2) ** 0.5
+    results.append(dict(net=net, replace=True, tracks=[list(t) for t in trk], widths=[w] * len(trk),
+                        vias=[[C.bx0 + i * R, C.by0 + j * R] for (j, i) in vs], via_d=[C.via] * len(vs),
+                        open_pads=["%s.%s" % k for k in un if k[0] != "locked"]))
+full = [n for n in todo_nets if n in kept and not unreached.get(n)]
+summary = dict(nets=len(todo_nets), nets_complete=len(full), connections=total_conn, connections_made=conn_made,
+               vias=nvias, iterations=len(history), seconds=round(time.time() - t0),
+               blocked=sorted(n for n in diag if diag[n] == "BLOCKED"),
+               congested=sorted(n for n in diag if diag[n] == "CONGESTED"))
+json.dump(dict(results=results, open=sorted(open_nets), summary=summary,
                params=dict(track=C.track, clear=C.clear, via=C.via, drill=C.drill, res=R)), open(A.out, "w"))
 
-# ---------------------------------------------------------------- report with attribution
+# ---------------------------------------------------------------- report
 corr = C.corridors()
 
 
 def where(l, j, i):
-    from shapely.geometry import Point
-    x, y = C.bx0 + i * R, C.by0 + j * R
-    ids = [cid for cid, c in corr.items() if l in c["layers"] and c["geom"].contains(Point(x, y))]
-    return "%s (%.1f, %.1f)%s" % ((LAYERS[l],) + C.d(x, y) + ((" in " + "/".join(ids)) if ids else " outside corridors",))
+    x, y = C.xy(j, i)
+    ids = [cid for cid, c in corr.items() if (l < 0 or l in c["layers"]) and c["geom"].contains(Point(x, y))]
+    return "%s (%.1f, %.1f)%s" % (("via" if l < 0 else LAYERS[l],) + C.d(x, y) + ((" in " + "/".join(ids)) if ids else "",))
 
 
-L = ["# Corridor routing report", "",
-     "Routed %d of %d selected nets; no path %d; dropped for conflicts %d; %d iterations, %.0f s." % (
-         len(results), len(todo_nets), len(failed), len(dropped), it_ + 1, time.time() - t0), "",
-     "## By group", "", "| Group | Nets | Routed | No path | Dropped |", "|---|---|---|---|---|"]
+def padtxt(net, keys):
+    pcs = {(p[0], p[1]): p for p in C.pad_centres(net)}
+    return ", ".join("%s.%s at (%.1f, %.1f)" % ((k[0], k[1]) + C.d(pcs[k][2], pcs[k][3])) for k in keys if k in pcs)
+
+
+L = ["# Routing report", "",
+     "Connections made: %d of %d. Nets complete: %d of %d. Vias: %d. Iterations: %d. Run time: %d s." % (
+         conn_made, total_conn, len(full), len(todo_nets), nvias, len(history), time.time() - t0),
+     "Rules: track %.3f, clearance %.3f, via %.2f/%.2f, grid %.4f, track pitch %.3f mm." % (
+         C.track, C.clear, C.via, C.drill, R, C.pitch), "",
+     "A connection is one pad-to-pad link; a net with n pads has n - 1 connections. Count connections, not nets.", "",
+     "## By group", "", "| Group | Nets | Complete | Connections made / total | Track length by layer (mm) |",
+     "|---|---|---|---|---|"]
 groups = {}
 for net in todo_nets:
     g = groups.setdefault(C.assign[net]["group"], [0, 0, 0, 0])
     g[0] += 1
-    g[1 + (1 if net in failed else 2 if net in dropped else 0)] += 1
+    g[1] += 1 if net in full else 0
+    g[2] += (C.connections(net) - len(unreached.get(net, []))) if net in kept and routes[net][0] else 0
+    g[3] += C.connections(net)
 for name, g in sorted(groups.items()):
-    L.append("| %s | %d | %d | %d | %d |" % (name, g[0], g[1], g[2], g[3]))
-L += ["", "## Nets with no path", "",
-      "The allowed region does not connect these pads (a sealed pad, a corridor that does not reach the pad's escape "
-      "disc, or a missing layer change). Fix the plan entry named here.", ""]
-for net in sorted(failed):
+    ll = ", ".join("%s %.0f" % (ln, length[(name, ln)]) for ln in LAYERS if length[(name, ln)] > 0)
+    L.append("| %s | %d | %d | %d / %d | %s |" % (name, g[0], g[1], g[2], g[3], ll))
+L += ["", "## Open nets", "",
+      "BLOCKED: the net does not route even alone. Its allowed region does not connect its pads: a corridor does "
+      "not reach the pad's escape disc, no via site exists where it must change layer, a pour or keep-out seals "
+      "the pad, or the layer list is too narrow. Repair the plan entry or report the placement.",
+      "CONGESTED: the net routes alone but lost its space to the nets named. Repair by priority, layer, corridor "
+      "width or a second corridor at the place named.", "",
+      "| Net | Group | Class | Open pads | Lost to | Where |", "|---|---|---|---|---|---|"]
+for net in sorted(open_nets, key=lambda x: (diag[x], C.assign[x]["group"], x)):
     a = C.assign[net]
-    pcs = {(p[0], p[1]): p for p in C.pad_centres(net)}
-    pads = ", ".join("%s.%s at (%.1f, %.1f)" % ((k[0], k[1]) + C.d(pcs[k][2], pcs[k][3])) for k in failed[net] if k in pcs)
-    L.append("- %s [group %s, mode %s, route %s]: unreached %s" % (net, a["group"], a["mode"], a["route"], pads))
-L += ["", "## Nets dropped for conflicts", "",
-      "These nets found a path only by overlapping other nets. The locations name the contested corridor.", ""]
-for net in sorted(dropped):
-    a = C.assign[net]
-    cc = dropped[net]
-    pts = sorted({where(l, j, i) for (l, j, i) in cc[:: max(1, len(cc) // 4)]})
-    L.append("- %s [group %s, route %s]: %d contested cells, e.g. %s" % (net, a["group"], a["route"], len(cc),
-                                                                     "; ".join(pts[:4])))
+    un = [k for k in unreached.get(net, []) if k[0] != "locked"]
+    part, cc = lost_to.get(net, ([], []))
+    pts = sorted({where(l, j, i) for (l, j, i) in cc[:: max(1, len(cc) // 4)]})[:3]
+    state = "all" if (net not in kept or not routes[net][0]) else padtxt(net, un)
+    L.append("| %s | %s | %s | %s | %s | %s |" % (net, a["group"], diag[net], state, ", ".join(part[:6]) +
+                                                 (" (+%d)" % (len(part) - 6) if len(part) > 6 else ""), "; ".join(pts)))
+if not open_nets:
+    L.append("| none | | | | | |")
+L += ["", "## Negotiation history", "", "| Iteration | Rerouted | In conflict | With open pads |", "|---|---|---|---|"]
+L += ["| %d | %d | %d | %d |" % h for h in history]
+L += ["", "A conflict count that stays flat for many iterations means a channel is full: more iterations will not "
+      "help; change the plan.", "",
+      "## Recovery", "", "Removed in legalisation: %d. Fully recovered: %d (%s)." % (
+          len(lost_to), len(recovered), ", ".join(recovered) or "none")]
 txt = "\n".join(L) + "\n"
 if A.report:
     open(A.report, "w", encoding="utf-8").write(txt)
