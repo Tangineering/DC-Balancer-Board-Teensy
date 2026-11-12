@@ -22,11 +22,20 @@ FP = {
     "J2x7_NOPIN6": ("custom", "Samtec_FTSH-107-01-DV_2x07_P1.27mm_SMD_NoPin6"),
     "J2x7_EIB": ("custom", "Samtec_FTSH-107-01-DV_2x07_P1.27mm_SMD"),
     "CHG22": ("custom", "Ag105_CHG_Carrier_22pin_P2.54mm"),
+    # J-TAP (J102, 2026-11-12 tap-connector decision): PLACEHOLDER = the KiCad 9 stock Micro-Fit 3.0 2 x 5 vertical
+    # footprint, copied unchanged. The header P/N, orientation (vertical or right-angle), pegs and cavity numbering
+    # are TODO(verify: Molex 43045 drawing); the 0.25 mm courtyard rule (D-03 re-basis) is applied in generator step 4.
+    "MF3_2x5": ("stock:Connector_Molex", "Molex_Micro-Fit_3.0_43045-1012_2x05_P3.00mm_Vertical"),
     "TAP_1.5": ("custom", "TapPad_SMD_1.5x1.5mm"),
     "WPTH_1.3": ("custom", "LeadPad_PTH_D1.3mm_P2.3mm"),
     "WPTH_1.5": ("custom", "LeadPad_PTH_D1.5mm_P2.5mm"),
-    "WSMD_2": ("custom", "LeadPads_SMD_1x02_1.2x1.5mm_P2.0mm"),
-    "WSMD_3": ("custom", "LeadPads_SMD_1x03_1.2x1.5mm_P2.0mm"),
+    "WSMD_2": ("custom", "LeadPads_SMD_1x02_1.2x1.5mm_P2.0mm"),   # superseded in r9 (W6/W7 now WPTH_2 / WPTH_3)
+    "WSMD_3": ("custom", "LeadPads_SMD_1x03_1.2x1.5mm_P2.0mm"),   # superseded in r9
+    # W6/W7 (2026-11-12 lead decision, D-45, B.8 r9-4): plated through-hole lead pads. PLACEHOLDER geometry = the A.9
+    # E-pad (1.0 mm hole, 1.8 mm pad, the project's 28 AWG lead pad) at 2.54 mm pitch; hole, pad and pitch are
+    # TODO(verify: 26 AWG (W6) / 28 AWG (W7) conductor and insulation OD).
+    "WPTH_2": ("custom", "LeadPads_PTH_1x02_D1.0mm_Pad1.8mm_P2.54mm_Placeholder"),
+    "WPTH_3": ("custom", "LeadPads_PTH_1x03_D1.0mm_Pad1.8mm_P2.54mm_Placeholder"),
     "EPTH_1.0": ("custom", "LeadPad_PTH_D1.0mm_P1.8mm"),
     # board-only (no schematic symbol)
     "FT2_HOLE": ("custom", "FT2_FillHole_NPTH_1.0mm_KeepOut"),

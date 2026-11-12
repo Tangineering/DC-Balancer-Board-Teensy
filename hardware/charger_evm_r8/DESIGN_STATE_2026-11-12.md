@@ -4,9 +4,13 @@
 
 This document records the operator decisions of 2026-11-12, the ramifications of the tap review, and the
 decisions that remain open before the next design round. The decision records are in `decisions_2026-11-12/`. The
-ramification analyses and their three independent checks are in `decisions_2026-11-12/ramifications/`. No design
-document row, generator file or netlist has been changed for these decisions yet, except D-37 and D-38, which are
-already applied.
+ramification analyses and their three independent checks are in `decisions_2026-11-12/ramifications/`.
+
+**Status update (2026-11-12, later).** The second-round decisions (`decisions_2026-11-12/round2/`) closed every
+open group of section 4. They are applied as design-document revision r9 (change rows r9-1 to r9-8), LAYOUT_DECISIONS
+D-39 to D-50, the ordering BOM and the EIB DNP set. The CR netlist was regenerated: 78 parts (145 before), ERC 0
+errors and 0 warnings. The stale r7-outline layout work, including `cr/interactive/`, is in `archive_r7_outline/`.
+Sections 2 to 4 below are the record as it stood before the second round.
 
 ## 2. Decisions taken
 

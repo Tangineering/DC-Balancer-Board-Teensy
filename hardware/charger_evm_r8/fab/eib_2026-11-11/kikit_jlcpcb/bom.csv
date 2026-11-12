@@ -1,7 +1,7 @@
 Comment,Designator,Footprint,LCSC
 SN74LVC3G06,U201,charger_r8_eib:Texas_DCT0008A_SSOP-8_TI-land_CrtYd0.10,SN74LVC3G06DCTR
-100nF 50V X7R,"C201,C202,C203,C204,C205",charger_r8_eib:C_0603_1608Metric_CrtYd0.10,GRM188R71H104KA93D
-10.0k 1%,"R258,R260,R261,R274",charger_r8_eib:R_0603_1608Metric_CrtYd0.10,CRCW060310K0FKEA
+100nF 50V X7R,"C201,C202,C205",charger_r8_eib:C_0603_1608Metric_CrtYd0.10,GRM188R71H104KA93D
+10.0k 1%,R274,charger_r8_eib:R_0603_1608Metric_CrtYd0.10,CRCW060310K0FKEA
 1.00k 1%,"R250,R251,R253,R266,R275",charger_r8_eib:R_0603_1608Metric_CrtYd0.10,CRCW06031K00FKEA
 47.0k 1%,"R252,R254,R267,R268,R269,R270,R271",charger_r8_eib:R_0603_1608Metric_CrtYd0.10,CRCW060347K0FKEA
 SN74LVC1G06,U202,charger_r8_eib:Texas_DCK-5_SC-70-5_CrtYd0.10,SN74LVC1G06DCKR
@@ -9,17 +9,11 @@ BSS84,Q203,charger_r8_eib:SOT-23_CrtYd0.10,BSS84LT1G
 48.7k 1%,R255,charger_r8_eib:R_0603_1608Metric_CrtYd0.10,CRCW060348K7FKEA
 2N7002K,"Q201,Q202",charger_r8_eib:SOT-23_CrtYd0.10,2N7002KT1G
 59.0k 1%,R257,charger_r8_eib:R_0603_1608Metric_CrtYd0.10,CRCW060359K0FKEA
-TLV3012B,"U203,U204",charger_r8_eib:SOT-23-6_CrtYd0.10,TLV3012BIDBVR
-470 1%,"R264,R265",charger_r8_eib:R_0603_1608Metric_CrtYd0.10,CRCW0603470RFKEA
-10.0M 1%,R259,charger_r8_eib:R_0603_1608Metric_CrtYd0.10,CRCW060310M0FKEA
-1.00M 1%,"R262,R263",charger_r8_eib:R_0603_1608Metric_CrtYd0.10,CRCW06031M00FKEA
 10.0 1%,"R273,R276",charger_r8_eib:R_0603_1608Metric_CrtYd0.10,CRCW060310R0FKEA
 W5 header,J201,charger_r8_eib:Samtec_FTSH-107-01-DV_2x07_P1.27mm_SMD,Samtec FTSH/SHF-107 class (T-A-05)
 E1 REGN (JP12),E1,charger_r8_eib:LeadPad_PTH_D1.0mm_P1.8mm,
 E2 ILIM feed,E2,charger_r8_eib:LeadPad_PTH_D1.0mm_P1.8mm,
 E3 ILIM hold,E3,charger_r8_eib:LeadPad_PTH_D1.0mm_P1.8mm,
-E4 ILIM sense,E4,charger_r8_eib:LeadPad_PTH_D1.0mm_P1.8mm,
 E5 nCE drive,E5,charger_r8_eib:LeadPad_PTH_D1.0mm_P1.8mm,
-E6 nCE sense,E6,charger_r8_eib:LeadPad_PTH_D1.0mm_P1.8mm,
 E7 STAT (TP38),E7,charger_r8_eib:LeadPad_PTH_D1.0mm_P1.8mm,
 E8 AGND (TP49),E8,charger_r8_eib:LeadPad_PTH_D1.0mm_P1.8mm,

@@ -29,17 +29,9 @@ FIXED = {
     "J1": (45.998, 39.084, 0),                 # CHG element pin 1 (A.8 table)
     "W1": (30.3, 61.2, 0), "W2": (27.7, 61.2, 0), "W3": (24.3, 45.4, 0), "W4": (24.3, 55.6, 0),
     "W7": (29.0, 57.5, 0), "W6": (34.0, 57.5, 0),  # pads at 27/29/31 and 33/35 (A.8)
-    # tab X tap grid (A.8 r7 assignment)
-    "F01": (50.80, 58.94, 0), "F02": (53.34, 58.94, 0), "F13": (55.88, 58.94, 0), "F06": (58.42, 58.94, 0),
-    "F14": (60.96, 58.94, 0), "F04": (63.50, 58.94, 0),
-    "F05": (55.88, 61.48, 0), "F17": (58.42, 61.48, 0), "F19": (60.96, 61.48, 0), "F23": (63.50, 61.48, 0),
-    "F07": (53.34, 64.02, 0), "F12": (55.88, 64.02, 0), "F15": (58.42, 64.02, 0), "F18": (60.96, 64.02, 0),
-    "F11": (63.50, 64.02, 0),
-    "F03": (50.80, 66.56, 0), "F24": (55.88, 66.56, 0), "F16": (58.42, 66.56, 0), "F21": (60.96, 66.56, 0),
-    "F20": (63.50, 66.56, 0),
-    # footprint low row y 35.80
-    "F09": (28.98, 35.80, 0),   # F08 (T22) removed (D-38)
-    "F10": (31.52, 35.80, 0), "F22": (41.68, 35.80, 0),
+    # The tap field F01-F24 (A.8 r7 tab X grid and footprint low row) is removed: the 10 kept taps land on the J-TAP
+    # header J102 (2026-11-12 tap review and tap-connector decision). J102 has no fixed position yet; its placement
+    # (+x side, latch access, A.4 maxima) belongs to the new-outline generator step.
     "R175": (50.80, 62.75, 0),                 # 1206 vertical between R175b (61.48) and R175a (64.02)
     # eFuse cluster (A.8 per-region table; D-09 shifts of <= 0.80 mm: KiCad courtyards and the U101 +y escape channel)
     "U101": (41.70, 63.65, 0),
@@ -55,13 +47,15 @@ FIXED = {
     "R101": (45.275, 63.90, 0), "C101": (47.225, 63.90, 0),
     "R105": (45.275, 65.06, 0), "R103": (47.225, 65.06, 0),   # R103 takes the freed C105 slot (D-09, D-31)
     "J101": (40.60, 46.83, 0),
-    # comparators (footprint low-y band; D-05)
-    "U115": (25.165, 40.10, 0), "U119": (29.195, 40.10, 0), "U103": (33.225, 40.10, 0),
-    "U102": (37.255, 40.10, 0), "U104": (34.56, 36.60, 0),
-    # D-05: U120 and U121 do not fit the band at x <= 39.53; they take the band positions that A.8 makes
+    # comparators (footprint low-y band; D-05). U104, U115 and U121 removed (2026-11-12 tap review).
+    "U119": (29.195, 40.10, 0), "U103": (33.225, 40.10, 0), "U102": (37.255, 40.10, 0),
+    # D-05: U120 does not fit the band at x <= 39.53; it takes the band position that A.8 makes
     # conditional on the MS4b reading (T-A-08), TODO(verify: T-A-08 MS4b), fallback = footprint interior.
-    "U120": (38.61, 36.60, 0), "U121": (41.315, 40.10, 0),
+    "U120": (38.61, 36.60, 0),
 }
+# NOTE (2026-11-12): FIXED, the regions and the phases below still encode the r7 outline. Only the part lists and the
+# side flags were brought into line with the 2026-11-12 decisions; the plug-on outline (x 18.584-67, y 7-94) needs
+# the new region table of OUTLINE_CHANGE_REASSESSMENT_2026-11-12.md section 8 before any placement run.
 # polarity / orientation: (pad, direction of that pad from the part centre)
 ORIENT = {
     "R175": ("1", "+y"),       # pad 1 (T6_3V3) = R175a at y 64.02
@@ -179,28 +173,25 @@ INT_ANY = INTERIOR
 LOOP = unary_union([OUT_STRIP, U101_CRT, IN_STRIP, POCKET])   # U101 commutation-loop region (A.8, H.23(f))
 INT_ANALOG = INTERIOR.intersection(box(0, 0, RIM_X, 100)).difference(LOOP.buffer(3.0)).union(BAND_W)
 
-INTERIOR_ICS = ["U108", "U109", "D104", "D105", "D106", "U111", "U113"]
-TABY_ICS = ["U114", "U110", "U106", "U116", "U118", "U105", "U107"]   # the A.8 tab Y set; U108/U109 interior
+# 2026-11-12: U108, U109, U111, U113, U114 and U116 removed (5-LVC gate of ramifications/gate.md)
+INTERIOR_ICS = ["D104", "D105", "D106"]
+TABY_ICS = ["U110", "U106", "U118", "U105", "U107"]   # the A.8 tab Y set
 ANALOG_ICS = {"D104", "D105", "D106"}   # D108, U123 removed (D-38)
-TIMING_ICS = {"U111", "U113"}
+TIMING_ICS = set()                      # U111/U113 one-shots removed (2026-11-12)
 DIVIDERS = ["R109", "R111", "R114", "R110", "R112", "R115"]
-DECOUPLE = {"C110": "U102", "C111": "U103", "C112": "U104", "C113": "U115", "C114": "U105", "C115": "U106",
-            "C116": "U107", "C117": "U108", "C118": "U109", "C119": "U110", "C120": "U111", "C121": "U113",
-            "C122": "U114", "C123": "U116", "C126": "U118", "C131": "U119", "C132": "U120", "C133": "U121"}
-# C134/U122 and C135/U123 removed (D-38)
-# R103/R104 take the A.8 +x pocket fallback: on the bottom at y >= 63.71, x 44.3-48.2 (D-09)
-POCKET_BOT = {"R104"}
-TABX_OK = {"R106s", "R121", "R122", "R147", "R135", "R125", "R126", "R127", "R128", "R148", "R130", "R131A",
-           "R131B", "R132", "R176", "R177", "R108", "R123", "R124", "R136", "R133", "R107"}
+DECOUPLE = {"C110": "U102", "C111": "U103", "C114": "U105", "C115": "U106", "C116": "U107", "C119": "U110",
+            "C126": "U118", "C131": "U119", "C132": "U120"}
+# C134/U122 and C135/U123 removed (D-38); C112, C113, C117, C118, C120, C121, C122, C123, C133 removed (2026-11-12)
+# 2026-11-12 parts/assembly decision 1: every SMT part on the top side; R104 moves to the top (D-32 retires), so the
+# bottom-side lists below are empty or inert (no netlist part is flipped).
+POCKET_BOT = set()
+TABX_OK = {"R106s", "R122", "R147", "R126", "R130", "R131A", "R131B", "R132", "R176", "R177", "R108", "R123", "R107"}
 # comparator input, reference, hysteresis, filter and timing passives: not on tab X bottom (A.7 thermal band
 # content rule) and not within 10 mm of the L-FC body (A.8 tab Y rule)
-ANALOG_BOT = {"C106", "C107", "C108", "C140", "C109", "C127", "C130", "R113", "R116", "R119", "R117", "R118",
-              "R120", "R140", "R141", "R142", "R143", "R144", "R160", "R161", "R162", "R163",
-              "R184", "R185", "R186", "R187", "R188", "R189", "R190", "R191", "C150", "C151", "R150", "R151",
+ANALOG_BOT = {"C106", "C107", "C108", "C130", "R113", "R116", "R184", "R185", "R186", "R187", "R188", "R189",
               "R129", "C129", "R105"}
 # logic resistors driven by or feeding the tab Y gates (A.8 tab Y bottom content), packed there first
-TABY_BOT = {"R130", "R131A", "R131B", "R132", "R124", "R108", "R137", "R176", "R177", "R136", "R123", "R145",
-            "R146"}
+TABY_BOT = {"R130", "R131A", "R131B", "R132", "R108", "R176", "R177", "R123"}
 POWER_NETS = {"/GND", "/3V3", "/VCHGIN", "/VCHGOUT", "/VCHG"}
 REGIONS = {}
 PHASES = []
@@ -219,7 +210,7 @@ PARK = (70.0, 50.0)
 VARIANT = os.environ.get("CR_PLACE_VARIANT", "").upper()
 VOUT_L4_KO = unary_union([box(29.10, 60.00, 31.50, 62.40), box(29.10, 62.30, 36.90, 64.10)]).buffer(
     0.15, join_style=2)                        # = route_cr.VOUT_IN (kept equal by check_constraints)
-GRID_REPACK = ("C129", "R107", "R122", "R126", "R128", "R129", "R147", "R190", "R191")
+GRID_REPACK = ("C129", "R107", "R122", "R126", "R129", "R147")   # R128, R190, R191 removed (2026-11-12)
 CRT_GROW = {r: 0.225 for r in GRID_REPACK} if VARIANT == "B" else {}
 
 
@@ -327,7 +318,7 @@ def target(ref, fps, fr, pinnet):
     if ref == "C125":
         return (50.8, 61.0)
     if ref == "R106s":
-        return (58.42, 61.48)            # tab X bottom beside F17 (A.8 r8 R106s placement)
+        return (58.42, 61.48)            # r7 site of pad F17 (A.8 r8 R106s placement); F17 -> J102 pin 9 (2026-11-12)
     if ref in TABY_ICS:
         return (27.0, 71.0)              # fill tab Y first (A.8 tab Y top content)
     pts = []

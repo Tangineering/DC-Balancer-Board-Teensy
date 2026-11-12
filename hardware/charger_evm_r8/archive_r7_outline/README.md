@@ -14,5 +14,5 @@ kept as reference only; no file in this folder is an input to the generator or t
 - `routability_2026-11-12/`: the footprint and functional routability options and their claim checks, cited by
   `ROUTABILITY_OPTIONS_2026-11-12.md`.
 
-The interactive-routing project `cr/interactive/` belongs in this folder as well. It stays at
-`hardware/charger_evm_r8/cr/interactive/` until KiCad releases the project files; its README marks it as superseded.
+- `cr/interactive/`: the interactive-routing project on the r7 outline (r2_A seed 1 routes and plane vias); its
+  README marks it as superseded.

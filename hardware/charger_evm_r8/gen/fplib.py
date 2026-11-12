@@ -138,6 +138,21 @@ def lead_smd(outdir, name, n):
     write(outdir, name, L)
 
 
+def lead_pth_n(outdir, name, n, drill=1.0, dia=1.8, pitch=2.54):
+    """W6/W7 plated through-hole lead pads (2026-11-12 lead decision, D-45, B.8 r9-4). PLACEHOLDER: the A.9 E-pad
+    geometry at 2.54 mm pitch; hole, pad and pitch TODO(verify: 26 AWG / 28 AWG conductor and insulation OD).
+    Courtyard at the r9-3 rule, pad + 0.25 mm (D-03 re-basis)."""
+    L = hdr(name, "Lead pads, %d x %.1f mm plated hole, %.1f mm pad at %.2f mm, PLACEHOLDER (A.8 W6/W7; "
+                  "TODO(verify: 26/28 AWG OD))" % (n, drill, dia, pitch), smd=False)
+    x0 = -(n - 1) * pitch / 2
+    for i in range(n):
+        L.append(pth_pad(str(i + 1), x0 + pitch * i, 0, dia, drill, shape="rect" if i == 0 else "circle"))
+    r = dia / 2 + 0.25
+    for lay in ("F.CrtYd", "B.CrtYd"):
+        L.append(rect(lay, x0 - r, -r, -x0 + r, r))
+    write(outdir, name, L)
+
+
 def epad(outdir, name):
     L = hdr(name, "EIB E lead pad, 1.0 mm plated hole, 1.8 mm pad (A.9)", smd=False)
     L.append(pth_pad("1", 0, 0, 1.8, 1.0))
@@ -317,6 +332,7 @@ CUSTOM = {
     "CHG22": chg22, "TAP_1.5": tap,
     "WPTH_1.3": lambda o, n: lead_pth(o, n, 1.3, 2.3), "WPTH_1.5": lambda o, n: lead_pth(o, n, 1.5, 2.5),
     "WSMD_2": lambda o, n: lead_smd(o, n, 2), "WSMD_3": lambda o, n: lead_smd(o, n, 3),
+    "WPTH_2": lambda o, n: lead_pth_n(o, n, 2), "WPTH_3": lambda o, n: lead_pth_n(o, n, 3),
     "EPTH_1.0": epad, "FT2_HOLE": ft2_hole,
     "FT1_MARK": lambda o, n: foot_mark(o, n, 4.0, 1.6, True), "FT2_MARK": lambda o, n: foot_mark(o, n, 4.0, 4.0, False),
     "M3": m3, "VQFN24": vqfn24,

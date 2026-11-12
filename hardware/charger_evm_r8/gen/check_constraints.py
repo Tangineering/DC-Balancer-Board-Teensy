@@ -95,10 +95,12 @@ if BOARD == "cr":
         got = [e[str(i + 1)] for i in range(len(want))]
         d = max(math.hypot(g[0] - w[0], g[1] - w[1]) for g, w in zip(got, want))
         row("A.8 added SMT lead pads", ref, "max error %.4f mm" % d, "0.001 mm", d < 1e-3)
-    taps = {k: v for k, v in L.FIXED.items() if k.startswith("F") and k[1:].isdigit()}
-    d = max(math.hypot(pads_e(k, fr)["1"][0] - v[0], pads_e(k, fr)["1"][1] - v[1]) for k, v in taps.items())
-    row("A.8 r7 tab X assignment and low row (F01-F24)", "%d pads" % len(taps), "max error %.4f mm" % d, "0.001 mm",
-        d < 1e-3)
+    # 2026-11-12: the F01-F24 tap pads are replaced by the J-TAP header J102 (Micro-Fit 3.0 2 x 5); its position is
+    # not fixed yet (new-outline generator step), so only its presence and cavity count are checked here.
+    jt = FP.get("J102")
+    row("J-TAP header (tap-connector decision 2026-11-12)", "J102", "%d pads" % (sum(
+        1 for p in jt.Pads() if p.GetNumber()) if jt else 0), "10 cavities", bool(jt) and sum(
+        1 for p in jt.Pads() if p.GetNumber()) == 10)
     # eFuse distances (A.8 IN / OUT strip rows)
     u = {n: pad_poly("U101", n, fr) for n in ("1", "2", "5", "17", "18")}
     inpins = unary_union([u["1"], u["2"], u["5"]])
@@ -110,11 +112,11 @@ if BOARD == "cr":
     dd = pad_poly("R102", "2", fr).distance(pad_poly("U101", "6", fr))
     row("A.8 IN strip: R102 N_UV pad to pin 6 (design 2.1 mm)", "R102", "%.2f mm" % dd, "information", "info")
     # rim rule: comparators, clamps, dividers (U123/D108 removed, D-38) x <= 39.53 (A.7 thermal band, mb_mechanical 5.3)
-    for ref in ("U102", "U103", "U104", "U115", "U119", "U120", "U121", "D104", "D105", "D106",
+    for ref in ("U102", "U103", "U119", "U120", "D104", "D105", "D106",   # U104/U115/U121 removed 2026-11-12
                 "R109", "R110", "R111", "R112", "R114", "R115"):
         mx = crt(ref, fr).bounds[2]
         ok = mx <= 39.53 + 1e-6
-        if ref in ("U120", "U121") and not ok:
+        if ref == "U120" and not ok:
             ok = "conditional (MS4b, T-A-08)"
         row("A.7/A.8 >= 10 mm from the MB 5V rim (courtyard x <= 39.53)", ref, "courtyard x max %.2f" % mx, "<= 39.53", ok)
     # dividers in the divider strip
@@ -123,25 +125,22 @@ if BOARD == "cr":
         row("A.8 divider strip x 23.15-36.50, y 42.14-45.69", ref, "inside" if strip.buffer(1e-3).contains(crt(ref, fr))
             else "outside", "inside", strip.buffer(1e-3).contains(crt(ref, fr)))
     # distance of analog parts from the U101 loop region
-    for ref in ("U102", "U103", "U104", "U115", "U119", "U120", "U121", "D104", "D105", "D106"):
+    for ref in ("U102", "U103", "U119", "U120", "D104", "D105", "D106"):
         dd = crt(ref, fr).distance(L.LOOP)
         row("H.23(f) distance from the U101 loop region (information)", ref, "%.2f mm" % dd, "band 10.40 mm", "info")
-    # R106s
-    e = pads_e("R106s", fr)
-    f17 = pads_e("F17", fr)["1"]
-    side = "bottom" if FP["R106s"].IsFlipped() else "top"
-    dd = min(math.hypot(v[0] - f17[0], v[1] - f17[1]) for v in e.values())
-    row("A.8 r8 R106s on the tab X bottom beside F17", "R106s", "%s, %.2f mm from the F17 centre" % (side, dd),
-        "tab X bottom", side == "bottom" and L.TAB_X.contains(crt("R106s", fr)))
+    # 2026-11-12 parts/assembly decision 1: every SMT part on the top side (supersedes the r8 R106s tab X bottom row)
+    bot = sorted(r for r, fp in FP.items() if fp.IsFlipped() and not r.startswith(("FT", "#")))
+    row("All SMT parts on the top side (2026-11-12 assembly decision 1)", ", ".join(bot) or "none",
+        "%d flipped" % len(bot), "0", not bot)
     # tab contents
     topX = sorted(r for r, fp in FP.items() if not fp.IsFlipped() and not crt(r, fr).is_empty
                   and crt(r, fr).intersection(L.TAB_X).area > 0.01)
-    row("A.8 tab X top: tap pads and R175 only", ", ".join(topX), "%d footprints" % len(topX), "F pads + R175",
-        all(r == "R175" or (r.startswith("F") and r[1:].isdigit()) or r.startswith("FT") for r in topX))
+    row("A.8 tab X top: J-TAP header and R175 only (r7 outline)", ", ".join(topX), "%d footprints" % len(topX),
+        "J102 + R175", all(r in ("R175", "J102") or r.startswith("FT") for r in topX))
     topY = sorted(r for r, fp in FP.items() if not fp.IsFlipped() and not crt(r, fr).is_empty
                   and crt(r, fr).intersection(L.TAB_Y).area > 0.01)
     row("A.8 tab Y top: driven logic only", ", ".join(topY), "%d footprints" % len(topY), "LVC gates (U105-U118 class)",
-        all(r.startswith(("U10", "U11", "FT")) or r in ("U117", "U112", "D101") for r in topY))
+        all(r.startswith(("U10", "U11", "FT")) for r in topY))
     botX = sorted(r for r, fp in FP.items() if fp.IsFlipped() and crt(r, fr).intersection(L.TAB_X).area > 0.01)
     row("A.7/A.8 tab X bottom: 1 % logic series resistors and pull-downs only", ", ".join(botX), "%d" % len(botX),
         "R class", all(r in L.TABX_OK for r in botX))
