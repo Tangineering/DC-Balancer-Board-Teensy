@@ -54,3 +54,18 @@ about 47-53. Conflicts are spread over the interior; the CR lacks capacity rathe
 - `PCB_VIA::GetWidth()` needs a layer argument in KiCad 9.
 - Freerouting ignores the fab copper-to-edge rule; the router keep-out band (`EDGE_BAND`) handles it.
 - Fixed power vias must be placement keep-outs (D-33), and the U101 top-edge pins need the +y channel (D-09).
+
+## 7. Operator rulings (2026-11-11, after this handoff)
+
+- **Fab.** The CR is built at OSH Park (4-layer: 1 oz outer, 0.5 oz inner). OSH Park does not offer filled and
+  capped vias, so via in pad is not available. The D-20 via rule ("no via on an SMD pad or in its mask opening")
+  stays in force without exception, J101 included. Rule file: `tools/pcb/fab_rules/fab_4layer_5mil_oshpark_pcbway.kicad_dru`.
+- **/3V3.** The choice of tracks, a fill or a rail for /3V3 belongs to the PCB design session that orchestrates the
+  routing attempts. The effect on the L4 ground pour (D-20, D-23) is part of that decision.
+- **Routing skills.** `route-race` and `board-routing` (`.claude/skills/`) and the tools in `tools/pcb/corridor_route/`
+  are merged to main. `tools/pcb/corridor_route/reference/design-intake.md` describes the change-request intake.
+  The routing study measured 42, 39, 40, 39 open connections of 210 at seeds 1 to 4 on a copy of commit 71ecdef
+  under D-20; with tier 3 DNP and /3V3 held out, 20 to 23. The U101 +x pocket has one F.Cu lane for /N_UV, /N_OV and
+  /N_DVDT; relief needs R105 about 0.3 mm and R101 about 0.6 mm further in +y, with the /N_UV via out of the lane.
+- **Finishing scripts.** In a scratch test, `gen/finish.sh` ripped up routed nets and added DRC violations on the
+  corridor router's output. Use `tools/pcb/corridor_route/plane_vias.py` for plane vias with that router.
