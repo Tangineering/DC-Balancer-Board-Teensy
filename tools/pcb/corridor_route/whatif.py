@@ -133,8 +133,7 @@ else:
     b0.BuildConnectivity()
     pcbnew.ZONE_FILLER(b0).Fill(b0.Zones())
     b0.Save(base)
-    v0, v1 = viol(base), viol(out)
-    shutil.rmtree(base_dir, ignore_errors=True)
+    v0, v1 = viol(base), viol(out)      # _base stays: it is the control board of relief_trial.py
     new = {t: v1[t] - v0.get(t, 0) for t in v1 if v1[t] > v0.get(t, 0)}
     # silkscreen is fixed up later; a starved thermal does not make a result invalid (common.md section 5)
     blocking = {t: n for t, n in new.items() if not t.startswith("silk") and t != "starved_thermal"}

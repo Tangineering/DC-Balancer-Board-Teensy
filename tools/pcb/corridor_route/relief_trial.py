@@ -2,17 +2,19 @@
 does not.
 
 Usage (venv with numpy + shapely):
-  python -u relief_trial.py <start model.json> <moved model.json> <plan.json> <start routes.json> <outdir>
+  python -u relief_trial.py <control model.json> <moved model.json> <plan.json> <start routes.json> <outdir>
                             --site X,Y,R --nets /A,/B [--seeds 1,2,3,4] [--iters 30]
 
-For each seed the script routes twice with the same options: the control on the start model and the trial on the
+<control model.json> is the model of the refilled copy of the start board that whatif.py move writes beside the
+moved copy (<move folder>/_base). It is the same board as the trial without the move, with the same zone refill.
+For each seed the script routes twice with the same options: the control on that model and the trial on the
 moved model. Both keep the complete nets of the start result, except the nets that pass within R mm of the site
 (X, Y in the plan frame), which are routed again together with the open nets. The only difference between the
 two runs is the move.
 
 The move is ACCEPTED when all three hold at every seed:
   1. every net named with --nets is complete in the trial;
-  2. no net that was complete in the start result is open in the trial;
+  2. no net that is complete in the start result and in the control is open in the trial;
   3. the trial has more connections than the control.
 Otherwise it is REJECTED, and the report says which rule failed. A move that passes rule 3 at every seed but
 fails rule 1 is reported as "gain without closure": it is not a relief of the site, but the gain may be sent
@@ -33,9 +35,9 @@ def arg(name, default=None):
     return sys.argv[sys.argv.index(name) + 1] if name in sys.argv else default
 
 
-if len(sys.argv) < 7 or not arg("--site") or not arg("--nets"):
+if len(sys.argv) < 6 or not arg("--site") or not arg("--nets") or any(a.startswith("--") for a in sys.argv[1:6]):
     raise SystemExit(__doc__)
-m0, m1, plan, start, outdir = sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5], os.path.abspath(sys.argv[6])
+m0, m1, plan, start, outdir = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4], os.path.abspath(sys.argv[5])
 site, nets = arg("--site"), [n for n in arg("--nets").split(",") if n]
 seeds = [int(s) for s in arg("--seeds", "1,2,3,4").split(",")]
 iters = arg("--iters", "30")
@@ -63,7 +65,7 @@ rows, fails = [], set()
 for s in seeds:
     c, t = res[("control", s)], res[("trial", s)]
     still = [n for n in nets if n in t["open"]]
-    lost = sorted(complete0 & t["open"])
+    lost = sorted((complete0 - c["open"]) & t["open"])
     r1, r2, r3 = not still, not lost, t["made"] > c["made"]
     for ok, name in ((r1, "1 (named nets complete)"), (r2, "2 (no complete net lost)"), (r3, "3 (more than the control)")):
         if not ok:

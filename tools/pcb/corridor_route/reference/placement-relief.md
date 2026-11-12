@@ -45,9 +45,12 @@ Work in `W/relief/<site>/`. One move for each trial; each trial in its own folde
    The script compares the DRC of the moved copy with a refilled copy of the start board. If it says that the
    move is not legal, discard the trial. Do not route it.
 3. Run the constraint check on the copy. A row that passed on the start board and fails now rejects the move.
-4. Model the copy: `"$PY" board_model.py W/relief/<site>/mN/<board>.kicad_pcb W/relief/<site>/mN/model ...`.
+4. Model the moved copy and its control. `whatif.py move` writes `mN/_base/<board>.kicad_pcb`: the start board
+   with the same zone refill and no move.
+   `"$PY" board_model.py W/relief/<site>/mN/<board>.kicad_pcb W/relief/<site>/mN/model ...` and
+   `"$PY" board_model.py W/relief/<site>/mN/_base/<board>.kicad_pcb W/relief/<site>/mN/_base/model ...`.
 5. Let the script judge the move:
-   `"$PY" -u relief_trial.py W/model/model.json W/relief/<site>/mN/model/model.json W/plan.json <start routes.json> W/relief/<site>/mN/trial --site X,Y,R --nets <site nets>`.
+   `"$PY" -u relief_trial.py W/relief/<site>/mN/_base/model/model.json W/relief/<site>/mN/model/model.json W/plan.json <start routes.json> W/relief/<site>/mN/trial --site X,Y,R --nets <site nets>`.
    - `R` is the radius around the site inside which kept nets are routed again (1.5 to 3 mm: enough to free the
      nets that hold the lane, not more).
    - The script routes a control (no move) and the trial with the same options at 4 seeds, and prints
@@ -83,6 +86,9 @@ statement of what the site needs (a larger move, a re-pack, a pour change).
   placement shows the effect of a full run.
 - A move changes thermal, loop-area and assembly properties that this procedure does not see. The constraint
   check and the design owner cover those.
+- A move of one part often needs a neighbour to move first (a courtyard stops it). Chain the moves on one
+  copy (`whatif.py move` on the output of the move before) and judge the chain as one trial; report it as a
+  re-pack of the named parts.
 - In the dry test on the CR board, with a limit of 0.5 mm, moves, rotations and swaps gave no accepted change
   at four sites. Three of the four sites needed a change of another kind. The limit was raised to 2.0 mm after
   that test.
