@@ -26,6 +26,9 @@ as they were and are obstacles; only the other nets are routed. Use it to repair
 that already routed.
 --ripup-radius (with --keep-routes): a finishing pass. Kept nets whose copper passes within this distance of an
 open pad of the earlier result are routed again together with the open nets; nets of priority 1 stay kept.
+--ripup-site X,Y,R (with --keep-routes): the same, but only the kept nets that pass within R mm of the place (X, Y)
+(plan frame) are routed again. Placement relief uses it: the nets at the site may move, the rest of the board
+is held.
 --max-priority: route only the nets with a priority number up to N (staged routing; staged.py drives it).
 --order: the order of the first iteration inside one priority class. cross = fewest crossings first (default),
 short = shortest net first, long = longest net first. A result that changes much with the order is an
@@ -59,6 +62,7 @@ ap.add_argument("--keep-routes", default=None)
 ap.add_argument("--order", default="cross", choices=("cross", "short", "long"))
 ap.add_argument("--max-priority", type=float, default=None)
 ap.add_argument("--ripup-radius", type=float, default=0.0)
+ap.add_argument("--ripup-site", default=None)
 A = ap.parse_args()
 random.seed(A.seed)
 import os
@@ -84,7 +88,11 @@ if A.keep_routes:
     if abs(K["params"]["res"] - R) > 1e-9:
         raise SystemExit("--keep-routes: grid %.4f differs from this plan's grid %.4f" % (K["params"]["res"], R))
     rip_pts = []
-    if A.ripup_radius > 0:
+    if A.ripup_site:                        # "x,y,r" in the plan frame: rip up only around one place
+        sx, sy, sr = [float(v) for v in A.ripup_site.split(",")]
+        A.ripup_radius = sr
+        rip_pts = [C.k((sx, sy))]
+    elif A.ripup_radius > 0:
         res_of = {r["net"]: r for r in K["results"]}
         for net in K.get("open", []):
             want = set(res_of[net]["open_pads"]) if net in res_of and res_of[net].get("open_pads") else None
@@ -108,6 +116,9 @@ if A.keep_routes:
             cs_ = {tuple(c) for c in r["cells"]}
             legal = all(C.ownT[c] in (-1, n_) for c in cs_) and all(
                 cs_ & set(pc) for k_, pc in C.padcells.get(r["net"], {}).items() if k_[0] != "locked")
+            # its vias too: a via needs every layer free of other copper and of drilled holes
+            legal = legal and all((not C.holeBan[v[0], v[1]]) and all(C.ownV[l_, v[0], v[1]] in (-1, n_)
+                                                                      for l_ in range(NL)) for v in r["via_cells"])
             if not legal:
                 continue
             routes[r["net"]] = ([tuple(c) for c in r["cells"]], [tuple(v) for v in r["via_cells"]])
@@ -268,11 +279,14 @@ def copper(net):
         for a in sorted(adj):
             nxt = (a[0], a[1] + d[0], a[2] + d[1])
             prv = (a[0], a[1] - d[0], a[2] - d[1])
-            if nxt in adj[a] and not (prv in adj and a in adj[prv]):
+            # a run starts at its first cell and at every junction, and ends at every junction: each track end
+            # then lies on the end of another track (KiCad reports a short track that ends on the middle of
+            # another track as dangling)
+            if nxt in adj[a] and (not (prv in adj and a in adj[prv]) or len(adj[a]) > 2):
                 e = nxt
                 while True:
                     n2 = (e[0], e[1] + d[0], e[2] + d[1])
-                    if n2 in adj.get(e, ()):
+                    if n2 in adj.get(e, ()) and len(adj[e]) <= 2:
                         e = n2
                     else:
                         break

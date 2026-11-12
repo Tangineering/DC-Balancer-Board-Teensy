@@ -29,7 +29,7 @@ def arg(name, default=None):
 if len(sys.argv) < 5 or sys.argv[1] not in ("holdout", "move"):
     raise SystemExit(__doc__)
 HERE = os.path.dirname(os.path.abspath(__file__))
-outdir = sys.argv[4] if sys.argv[1] == "holdout" else sys.argv[3]
+outdir = os.path.abspath(sys.argv[4] if sys.argv[1] == "holdout" else sys.argv[3])
 os.makedirs(outdir, exist_ok=True)
 
 if sys.argv[1] == "holdout":
@@ -121,9 +121,19 @@ else:
             c[v["type"]] = c.get(v["type"], 0) + 1
         return c
 
-    v0, v1 = viol(board), viol(out)
+    # the baseline is a refilled copy of the unmoved board: the same zone fill as the moved copy
+    import shutil
+    base_dir = os.path.join(outdir, "_base")
+    base = copy_project(board, base_dir, with_board=True)
+    b0 = pcbnew.LoadBoard(base)
+    b0.BuildConnectivity()
+    pcbnew.ZONE_FILLER(b0).Fill(b0.Zones())
+    b0.Save(base)
+    v0, v1 = viol(base), viol(out)
+    shutil.rmtree(base_dir, ignore_errors=True)
     new = {t: v1[t] - v0.get(t, 0) for t in v1 if v1[t] > v0.get(t, 0)}
-    blocking = {t: n for t, n in new.items() if not t.startswith("silk")}   # silkscreen is fixed up later
+    # silkscreen is fixed up later; a starved thermal does not make a result invalid (common.md section 5)
+    blocking = {t: n for t, n in new.items() if not t.startswith("silk") and t != "starved_thermal"}
     print("moved %s by (%.3f, %.3f) mm, rotated %.0f deg -> %s" % (part, dx, dy if arg("--y-flip-offset") is None else -dy,
                                                                   rot, out))
     json.dump(dict(part=part, dx=dx, dy=(dy if arg("--y-flip-offset") is None else -dy), rot=rot,
