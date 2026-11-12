@@ -319,6 +319,21 @@ the conflicts spread over the whole interior (x 25-45, y 40-65), not at one poin
 for the 6/6-mil rules, and the 0.05 mm grid (whose clearance model is about 10 % conservative, against 20 % at
 0.1 mm) gives the best trajectory so far.
 
+**D-36. Operator rulings of 2026-11-12.** The operator approved decisions 1 to 6 of `MORNING_REVIEW_2026-11-12.md`
+(tier 3 DNP, the comparator preference, the VR-1 name, the D-35 scope and exemptions, and the strap keep-out as the
+default placement). The operator also ruled as follows:
+
+- **Via in pad.** Plain unfilled vias inside SMD pads are acceptable. Only filled and capped vias are excluded,
+  because OSH Park does not offer them. This replaces the strict reading of D-20 and VR-1 recorded in `HANDOFF.md`
+  section 7.
+- **Divider-top rule.** The rule binds on all layers; this replaces the F.Cu-plus-vias scope of D-35. The rule is
+  an optimization metric, not a gate: the metric is the length of logic-net copper that runs parallel to analog-net
+  copper inside the 2.0 mm zone, and a lower value is better. Exemptions are acceptable where no other route exists.
+  The D-35 exemptions, including U105.5, U109.1 and U109.3, are approved.
+- **Finish method.** The operator routes the CR interactively in `cr/interactive/`. The start board is the adopted
+  placement with the round 2 routes of plan `r2_A`, seed 1, and the scripted GND plane vias (173 of 199 signal
+  connections, 31 GND connections open).
+
 ## 9. Verification
 
 ### 9.1 ERC and DRC

@@ -10,6 +10,7 @@ This note gives the starting point for the next session. `LAYOUT_DECISIONS.md` i
 | CR (4 layers, r7 outline 47.30 x 41.86 mm) | schematic complete (ERC 0); placement complete; power pours and straps complete; **95 signal nets not routed** |
 | CR board file | `cr/cr.kicad_pcb` = placed + pours, DNP tier 3 removed, VCHGOUT L4 strap keep-out (D-34) (DRC: 200 unconnected, 4 starved thermals, 2 silkscreen items; section 7) |
 | CR routing study (2026-11-12) | stopped after round 2 without a gain verdict; best r1_B seed 3, 177/199 signal, 27 GND open; see `MORNING_REVIEW_2026-11-12.md` |
+| CR interactive pass (2026-11-12) | operator routes `cr/interactive/` (start: r2_A seed 1, 173/199 signal, 31 GND open); via in pad (plain) allowed; divider-top rule is a soft metric (D-36) |
 | Best partial CR routing | `cr/attempts/cr_pathfinder_0p1mm_partial.kicad_pcb` (reference only; 516 clearance violations) |
 | Ordering BOM | `bom_2026-11-11/ordering_bom.csv`: 116 rows in the reference format; no price, stock or SKU read on a live page (bot checks) |
 | Netlist audit | three independent reviewers, 216 parts against B.8/E: no discrepancy |
@@ -61,6 +62,8 @@ about 47-53. Conflicts are spread over the interior; the CR lacks capacity rathe
 - **Fab.** The CR is built at OSH Park (4-layer: 1 oz outer, 0.5 oz inner). OSH Park does not offer filled and
   capped vias, so via in pad is not available. The D-20 via rule ("no via on an SMD pad or in its mask opening")
   stays in force without exception, J101 included. Rule file: `tools/pcb/fab_rules/fab_4layer_5mil_oshpark_pcbway.kicad_dru`.
+- **Superseded 2026-11-12 (D-36):** plain unfilled vias inside SMD pads are acceptable; only filled and capped
+  vias are excluded.
 - **/3V3.** The choice of tracks, a fill or a rail for /3V3 belongs to the PCB design session that orchestrates the
   routing attempts. The effect on the L4 ground pour (D-20, D-23) is part of that decision.
 - **Routing skills.** `route-race` and `board-routing` (`.claude/skills/`) and the tools in `tools/pcb/corridor_route/`
