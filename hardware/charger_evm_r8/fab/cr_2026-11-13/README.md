@@ -11,7 +11,7 @@
 | Thickness | 1.6 mm |
 | Copper | 1 oz outer / 0.5 oz inner (D-29) |
 | Surface finish | ENIG |
-| Quantity | 5 (E BOM) |
+| Quantity | 6 (operator ruling 2026-11-13: "Use 6"; OSH Park sells boards in multiples of 3; the E BOM asks for 5) |
 | Solder mask / silkscreen | both sides; every via tented on both sides |
 | Design rules | `tools/pcb/fab_rules/fab_4layer_oshpark_only.kicad_dru` (0.1524 mm track/space, 0.254 mm minimum hole, 0.15 mm annular ring, 0.381 mm copper to edge) |
 | ERC | 0 messages (`reports/erc.rpt`) |

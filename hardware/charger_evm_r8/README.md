@@ -869,16 +869,19 @@ stitched, straightened and gap-filled). (**Superseded 2026-11-13, D-61:** "The p
 board after D-60".) The size row of the package README section 1 gives the D-62 outline: 10 corners with 1.0 mm fillets,
 edges at 0/30/45/60/90/120/135/150 degrees, the 40.02 x 64.81 mm bounding box and the 2327.7 mm2 area. The OSH Park
 quote is outside the scope of the project (section 11, Table 11.1). The OSH Park row of the package README states the
-confirmed 4-layer stack-up and that OSH Park sells boards in multiples of 3; the quantity stays "5 (E BOM)" (section 11
-item 26). (**Superseded 2026-11-13, D-62:** "The package was re-exported in `437d2d7` from the trimmed, stitched,
-straightened and gap-filled board of D-61"; "The D-60 outline and holes are unchanged by D-61. The size row of the
-package README section 1 gives the convex 18-vertex outline, the 40.02 x 64.81 mm bounding box and the 2241.6 mm2 area,
-which is the input for the OSH Park quote".) The status line of the package README, written by `gen/fab_readme.py`,
-names D-62 (fixed in `b3437ef`). (**Superseded 2026-11-13, `b3437ef`:** "still names the D-60 trim and 19 F.Fab
-references; the size row of the package README and this document give the current values".) The NPTH drill file carries
-tool T2 at 3.70 mm for the four 6-32 holes. The fab is OSH Park, which makes bare boards only, and the board uses the
-OSH Park-only rule file `tools/pcb/fab_rules/fab_4layer_oshpark_only.kicad_dru`. The package holds the Gerber and
-Excellon files and the OSH Park upload `kikit_oshpark/gerbers.zip`. It also holds the assembly files
+confirmed 4-layer stack-up and that OSH Park sells boards in multiples of 3. The quantity is 6, two OSH Park lots of 3
+against the 5 of the E BOM (one spare), by operator ruling 2026-11-13 (design session, chat 2026-11-13: "Use 6");
+section 1 of the package README reads "6 (operator ruling 2026-11-13: "Use 6"; OSH Park sells boards in multiples of 3;
+the E BOM asks for 5)" (section 11 item 26). (**Superseded 2026-11-13, quantity ruling:** "the quantity stays "5 (E
+BOM)" (section 11 item 26)".) (**Superseded 2026-11-13, D-62:** "The package was re-exported in `437d2d7` from the
+trimmed, stitched, straightened and gap-filled board of D-61"; "The D-60 outline and holes are unchanged by D-61. The
+size row of the package README section 1 gives the convex 18-vertex outline, the 40.02 x 64.81 mm bounding box and the
+2241.6 mm2 area, which is the input for the OSH Park quote".) The status line of the package README, written by
+`gen/fab_readme.py`, names D-62 (fixed in `b3437ef`). (**Superseded 2026-11-13, `b3437ef`:** "still names the D-60 trim
+and 19 F.Fab references; the size row of the package README and this document give the current values".) The NPTH drill
+file carries tool T2 at 3.70 mm for the four 6-32 holes. The fab is OSH Park, which makes bare boards only, and the
+board uses the OSH Park-only rule file `tools/pcb/fab_rules/fab_4layer_oshpark_only.kicad_dru`. The package holds the
+Gerber and Excellon files and the OSH Park upload `kikit_oshpark/gerbers.zip`. It also holds the assembly files
 (`assembly/cr-pos.csv`, `assembly/cr-bom.csv`, `assembly/cr_ibom.html`), the schematic, layer PDFs, STEP model, netlist,
 and the ERC, DRC and KiKit reports. The KiKit JLCPCB and PCBWay assembly presets wrote no `bom.csv` for the CR (an
 `int()` parse error, probably on the letter-suffixed references). This failure does not affect an OSH Park bare-board
@@ -982,10 +985,12 @@ The operator approved all fixes on 2026-11-12. Rulings R1 to R6 are the orchestr
 change row r9-12, and the operator may override any of them. The next operator action is check-in 4: the pre-order
 review of the routed CR, the CR fab package `fab/cr_2026-11-13/` and the EIB fab package `fab/eib_2026-11-13/`. No
 operator-review item blocks the bare-board order (item 29 closes the VCHGOUT necks by acceptance). `LAYOUT_DECISIONS.md`
-section 11 item 3, the drilled-versus-finished TSW hole question under item 5 of that section, and item 26 of this
-section stay open and do not block the order. `MORNING_REVIEW_2026-11-13.md` gives the decisions of the routing round
-with their reversal paths and the items for this review. (Superseded 2026-11-13: "The next operator action is check-in 3
-(placement images)".) (**Superseded 2026-11-13:** ", with the VCHGOUT ruling of item 29".)
+section 11 item 3 and the drilled-versus-finished TSW hole question under item 5 of that section stay open and do not
+block the order; item 26 (the order quantity, 6) is closed by operator ruling 2026-11-13 (design session, chat
+2026-11-13: "Use 6"). `MORNING_REVIEW_2026-11-13.md` gives the decisions of the routing round with their reversal paths
+and the items for this review. (Superseded 2026-11-13: "The next operator action is check-in 3 (placement images)".)
+(**Superseded 2026-11-13:** ", with the VCHGOUT ruling of item 29".) (**Superseded 2026-11-13, quantity ruling:** "the
+drilled-versus-finished TSW hole question under item 5 of that section, and item 26 of this section stay open".)
 
 1. Closed 2026-11-12: check-in 1 passed; the operator reviewed this README and approved the D-50 round order (ruling (b)).
 2. Closed 2026-11-12: the operator accepted the J-TAP map with T5 (A4) diagonal to T10 (B5) (D-46, J.2 item 63).
@@ -1050,11 +1055,15 @@ with their reversal paths and the items for this review. (Superseded 2026-11-13:
     outline (x 18.584-58.60, y 7.83-72.64, 2327.7 mm2), and confirm which of REG-5V, REG-FC, REG-BT, L-FC and L-BT lie
     under it (section 8.1). (**Superseded 2026-11-13, D-62:** "against the D-60 trimmed outline (x 18.58-58.60, y
     7.83-72.64)".)
-26. Decide the CR order quantity. The CR fab package README (`fab/cr_2026-11-13/README.md`, section 1) gives a
-    quantity of 5, but OSH Park sells boards in multiples of 3. The Review 2/2 session raised this question, and the
-    operator has not answered it; no file is changed. Amended 2026-11-13: the package README as re-exported in
-    `89c2d72` still gives a quantity of 5 in section 1, and its OSH Park row now states that order quantities come in
-    multiples of 3. The question stays open; it does not block the bare-board order.
+26. Closed 2026-11-13: the CR order quantity is 6, two OSH Park lots of 3; the E BOM asks for 5, so one board is a
+    spare. Operator ruling 2026-11-13 (design session, chat 2026-11-13: "Use 6"). Section 1 of the CR fab package
+    README (`fab/cr_2026-11-13/README.md`) now reads "6 (operator ruling 2026-11-13: "Use 6"; OSH Park sells boards in
+    multiples of 3; the E BOM asks for 5)". (**Superseded 2026-11-13, quantity ruling:** "Decide the CR order
+    quantity. The CR fab package README (`fab/cr_2026-11-13/README.md`, section 1) gives a quantity of 5, but OSH Park
+    sells boards in multiples of 3. The Review 2/2 session raised this question, and the operator has not answered
+    it; no file is changed. Amended 2026-11-13: the package README as re-exported in `89c2d72` still gives a quantity
+    of 5 in section 1, and its OSH Park row now states that order quantities come in multiples of 3. The question
+    stays open; it does not block the bare-board order.")
 27. Amended 2026-11-13: the question is moot. The D-62 re-export in `89c2d72` replaced the OSH Park row of the CR fab
     package README; the row now states the confirmed 4-layer stack-up (1.6 mm, 1 oz outer / 0.5 oz inner clad, ENIG,
     FR408-HR), which matches section 1 of that README and the D-29 copper (section 8.2). The quoted sentence no

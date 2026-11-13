@@ -54,7 +54,7 @@ CR_SIZE = ("%d-corner outline with %.1f mm corner fillets, edges at %s degrees (
                _b[0], _b[2], _b[1], _b[3], G.P_FINAL.area, G.HOLE_DRILL))
 INFO = {
     "cr": dict(name="CR, CHG adapter carrier (plug-on)", layers=4, size=CR_SIZE, thick="1.6 mm",
-               copper="1 oz outer / 0.5 oz inner (D-29)", finish="ENIG", qty="5 (E BOM)",
+               copper="1 oz outer / 0.5 oz inner (D-29)", finish="ENIG", qty="6 (operator ruling 2026-11-13: \"Use 6\"; OSH Park sells boards in multiples of 3; the E BOM asks for 5)",
                layers_list="F.Cu (L1, signals and power pours), In1.Cu (L2, solid GND), In2.Cu (L3, signals), "
                "B.Cu (L4, solid GND facing the MB, D-20)"),
     "eib": dict(name="EIB, EVM interface board", layers=2, size="24.0 x 38.0 mm (D-13 / P-05; A.9 states 36.0 x 24.0 mm)",

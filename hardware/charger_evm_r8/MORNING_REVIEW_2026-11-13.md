@@ -172,11 +172,14 @@ The order blockers of `LAYOUT_DECISIONS.md` section 1, section 11 items 2, 3, 5,
 ruling 2026-11-13 (Review 2/2: BAV199, strap, OSH Park (fab checks), local_6e36c3a4-f328-44cd-8c31-05ea2fa7bfa3, chat
 2026-11-13), and item 10 (the SOT-23 reflow footprint) is closed with them. The VCHGIN half of item 2 is closed; the
 VCHGOUT half is item 5 above and is closed by acceptance. No operator-review item blocks the bare-board order. Section
-11 item 3 (non-functional inner pads, checked at submission), the drilled-versus-finished TSW hole question under
-section 11 item 5 and the order quantity below stay open and do not block the order. Table 3 gives the disposition of
-each item. (**Superseded 2026-11-13, VCHGOUT ruling:** "The VCHGOUT half is item 5 above and stays open. Apart from item
-5, no bare-board order blocker remains from the operator review items.") (**Superseded 2026-11-13, R9.H26:** "The D-20
-stitching of D-61 is not an order item"; "No bare-board order blocker remains from the operator review items.")
+11 item 3 (non-functional inner pads, checked at submission) and the drilled-versus-finished TSW hole question under
+section 11 item 5 stay open and do not block the order; the order quantity below is closed at 6 by operator ruling
+2026-11-13 (design session, chat 2026-11-13: "Use 6"). Table 3 gives the disposition of each item. (**Superseded
+2026-11-13, VCHGOUT ruling:** "The VCHGOUT half is item 5 above and stays open. Apart from item 5, no bare-board order
+blocker remains from the operator review items.") (**Superseded 2026-11-13, R9.H26:** "The D-20 stitching of D-61 is not
+an order item"; "No bare-board order blocker remains from the operator review items.") (**Superseded 2026-11-13,
+quantity ruling:** "the drilled-versus-finished TSW hole question under section 11 item 5 and the order quantity below
+stay open".)
 (**Superseded 2026-11-13:** "The order blockers remain those of `LAYOUT_DECISIONS.md` section 1: section 11 items 2, 3,
 5, 7 and 9. Review 2/2 of the operator is in progress on them.") Items 14, 16 (the header half) and 25 and the W6/W7
 lead pads of D-45 are closed by the operator ruling of 2026-11-13 (Review 1/2; item 2 above). (**Superseded
@@ -194,13 +197,17 @@ Table 3. Disposition of the order blockers by operator ruling 2026-11-13 (Review
 | 7: OSH Park quote | Closed as out of scope | "Quote is outside the scope of the project" |
 | 3: non-functional inner pads at connector holes | Amended: open as an assumption that is checked at submission; not an order blocker. The OSH Park page states nothing on non-functional pads. The plated-drill-to-internal-copper rule of 10 mil (0.254 mm) is met (inner pours 0.27 mm, DRC 0). All vias keep their inner pads; only J1 (22 pads), J102 (10 pads), W1 to W4, W6 and W7 have their unused inner pads removed | "Let's assume they will accept it. I will find out later when I submit the board if not."; on the decision, "We will decide once that time comes" |
 
-The Review 2/2 session raised two questions that the operator has not answered. The first stays open for the
-operator; the D-62 re-export in `89c2d72` made the second moot:
+The Review 2/2 session raised two questions. Operator ruling 2026-11-13 closes the first; the D-62 re-export in
+`89c2d72` made the second moot:
 
-- Decide the CR order quantity. The CR fab package README (`fab/cr_2026-11-13/README.md`, section 1) gives a quantity
-  of 5, but OSH Park sells boards in multiples of 3. Amended 2026-11-13: the package README as re-exported in
-  `89c2d72` still gives a quantity of 5, and its OSH Park row now states that order quantities come in multiples of 3.
-  The question stays open; it does not block the bare-board order.
+- Closed 2026-11-13: the CR order quantity is 6, two OSH Park lots of 3; the E BOM asks for 5, so one board is a
+  spare. Operator ruling 2026-11-13 (design session, chat 2026-11-13: "Use 6"). Section 1 of the CR fab package README
+  (`fab/cr_2026-11-13/README.md`) now reads "6 (operator ruling 2026-11-13: "Use 6"; OSH Park sells boards in
+  multiples of 3; the E BOM asks for 5)". (**Superseded 2026-11-13, quantity ruling:** "Decide the CR order quantity.
+  The CR fab package README (`fab/cr_2026-11-13/README.md`, section 1) gives a quantity of 5, but OSH Park sells boards
+  in multiples of 3. Amended 2026-11-13: the package README as re-exported in `89c2d72` still gives a quantity of 5,
+  and its OSH Park row now states that order quantities come in multiples of 3. The question stays open; it does not
+  block the bare-board order.")
 - Amended 2026-11-13: moot. The D-62 re-export in `89c2d72` replaced the OSH Park row of the CR fab package README;
   the row now states the confirmed 4-layer stack-up (1.6 mm, 1 oz outer / 0.5 oz inner clad, ENIG, FR408-HR), which
   matches section 1 of that README. (**Superseded 2026-11-13:** "Decide whether to correct the OSH Park row of the CR
@@ -209,7 +216,8 @@ operator; the D-62 re-export in `89c2d72` made the second moot:
   row.")
 
 (**Superseded 2026-11-13:** "Both stay open for the operator, and no file is changed"; the list items were numbered 5
-and 6.)
+and 6.) (**Superseded 2026-11-13, quantity ruling:** "The Review 2/2 session raised two questions that the operator has
+not answered. The first stays open for the operator".)
 
 ### 3.2 Standing defaults from 2026-11-12
 

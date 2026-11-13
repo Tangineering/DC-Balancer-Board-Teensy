@@ -36,15 +36,17 @@ order."; the design-session ruling closes the VCHGOUT half.) (**Superseded 2026-
 non-functional inner pads, stays open as an assumption that the operator checks when the board is submitted. The
 drilled-versus-finished reading of the 1.1 mm TSW holes stays open in item 5. It does not block the order, because a
 finished hole down to the 1.02 mm drawing value still gives about 0.06 mm of corner clearance on the 0.64 mm post
-(D-41). The open rest of item 16 is a parts check and does not block the order."; restated as the list below.) Four
-items stay open, and none of them blocks the order:
+(D-41). The open rest of item 16 is a parts check and does not block the order."; restated as the list below.) Operator
+ruling 2026-11-13 (design session, chat 2026-11-13: "Use 6") closes the quantity question (second paragraph below).
+Three items stay open, and none of them blocks the order:
 
 - item 3, the OSH Park policy on non-functional inner pads, as an assumption that the operator checks when the board
   is submitted;
 - the drilled-versus-finished reading of the 1.1 mm TSW holes under item 5, because a finished hole down to the
   1.02 mm drawing value still gives about 0.06 mm of corner clearance on the 0.64 mm post (D-41);
-- the open rest of item 16, a parts check on the cable;
-- the quantity "5 (E BOM)" in the package README against the OSH Park multiples of 3 (second paragraph below).
+- the open rest of item 16, a parts check on the cable. (**Superseded 2026-11-13:** "Four items stay open, and none of
+  them blocks the order:"; the list also named "the quantity '5 (E BOM)' in the package README against the OSH Park
+  multiples of 3 (second paragraph below)", which the ruling closes.)
 
 The VCHGOUT half of section 11 item 2 is closed by acceptance. The copper sections of the VCHGOUT path from U101 OUT
 to W1 were measured on the D-62 board layout and checked against the 3.21 A basis (`round4/calc/r9_calc.py` R9.H26).
@@ -67,9 +69,14 @@ two necks.) (**Superseded 2026-11-13:** "The VCHGOUT half of item 2 (the In2.Cu 
 the ruling and stays open. No current check of the VCHGOUT path at 3.21 A is on record, so it is not established whether
 this half blocks the order."; R9.H26 measures the path.)
 
-One follow-up that the Review 2/2 session raised has no operator answer and stays open: the fab package README gives a
-quantity of "5 (E BOM)", but OSH Park sells boards in multiples of 3. The D-62 re-export states the multiples of 3 in
-the OSH Park row of the README and keeps the quantity until the operator rules on it. The same row now states the
+The quantity follow-up that the Review 2/2 session raised is closed. The operator was asked whether the package README
+quantity is 6 or stays 5. Operator ruling 2026-11-13 (design session, chat 2026-11-13: "Use 6") sets it to 6. The CR
+order quantity is 6, that is two OSH Park lots of 3; the E BOM asks for 5, so one board is a spare. Section 1 of the
+package README reads "6 (operator ruling 2026-11-13: 'Use 6'; OSH Park sells boards in multiples of 3; the E BOM asks
+for 5)". Closed 2026-11-13. (**Superseded 2026-11-13:** "One follow-up that the Review 2/2 session raised has no
+operator answer and stays open: the fab package README gives a quantity of '5 (E BOM)', but OSH Park sells boards in
+multiples of 3. The D-62 re-export states the multiples of 3 in the OSH Park row of the README and keeps the quantity
+until the operator rules on it."; the ruling sets the quantity to 6.) The OSH Park row of the package README states the
 confirmed OSH Park stack-up (section 11 item 5). The outline is the D-62 outline (operator ruling 2026-11-13, route-race
 request R9-04: edges at 0, 30, 45 or 60 degrees to the axes and 1.0 mm fillets), and the status table, the
 constraint-check counts and `fab/cr_2026-11-13/` are for the D-62 board. The status line of the package README names
@@ -1513,8 +1520,10 @@ request R9-04).**
   status line of the package README still names the D-60 outline and 19 F.Fab references; it is corrected at the next
   re-export."; `b3437ef` corrects the status line.) The fab package `fab/cr_2026-11-13/` and the figures were
   re-exported. The size row of the package README describes the D-62 outline. Its OSH Park row states the confirmed
-  stack-up (section 11 item 5) and that OSH Park sells boards in multiples of 3; the quantity stays "5 (E BOM)" until
-  the operator rules on it. No part, track or via moved in the trim itself. Reversal: restore `cr/cr.kicad_pcb` and the
+  stack-up (section 11 item 5) and that OSH Park sells boards in multiples of 3. The quantity is 6 (operator ruling
+  2026-11-13, design session, chat 2026-11-13: "Use 6"; two OSH Park lots of 3, one spare against the 5 of the E BOM).
+  (**Superseded 2026-11-13:** "the quantity stays '5 (E BOM)' until the operator rules on it."; the ruling sets the
+  quantity to 6.) No part, track or via moved in the trim itself. Reversal: restore `cr/cr.kicad_pcb` and the
   `gen/cr_geometry.py` outline and hole data of the D-61 board (`437d2d7`, lineage `b8e3762`) and run `gen/export.sh`
   again. **Amended 2026-11-13:** on the D-62 board, two F.Cu-only necks of the VCHGOUT path fail the IPC-2152
   long-conductor basis at 3.21 A (R9.H26: 21.9 C and 14.3 C). Operator ruling 2026-11-13 (design session, chat
