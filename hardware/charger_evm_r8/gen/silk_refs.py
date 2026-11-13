@@ -14,11 +14,25 @@ try:  # a wxWidgets debug assert opens a modal dialog that blocks an unattended 
     wx.DisableAsserts()
 except Exception:
     pass
-from shapely.geometry import LineString, box
+from shapely.geometry import Polygon, LineString, box
 from shapely.ops import polygonize, unary_union
 from shapely.strtree import STRtree
 
 mm = pcbnew.ToMM
+
+
+def board_outline(board):
+    """Board shape from Edge.Cuts through KiCad (segments and arcs; D-62 fillets), as a shapely polygon (KiCad frame)."""
+    sps = pcbnew.SHAPE_POLY_SET()
+    board.GetBoardPolygonOutlines(sps)
+    out = []
+    for i in range(sps.OutlineCount()):
+        o = sps.Outline(i)
+        pts = [(mm(o.CPoint(k).x), mm(o.CPoint(k).y)) for k in range(o.PointCount())]
+        if len(pts) >= 3:
+            out.append(Polygon(pts).buffer(0))
+    return unary_union(out)
+
 MASK_GAP = 0.05       # silk to mask-opening margin (DRC min_silk_clearance is 0)
 SILK_GAP = 0.10       # text to other silkscreen
 EDGE_BAND = 0.25      # silk to board edge (silk_fix.py uses the same band)
@@ -37,9 +51,7 @@ def bb(item):
     return box(mm(r.GetLeft()), mm(r.GetTop()), mm(r.GetRight()), mm(r.GetBottom()))
 
 
-segs = [LineString([(mm(d.GetStart().x), mm(d.GetStart().y)), (mm(d.GetEnd().x), mm(d.GetEnd().y))])
-        for d in b.GetDrawings() if d.GetLayer() == pcbnew.Edge_Cuts and d.GetShape() == pcbnew.SHAPE_T_SEGMENT]
-board_in = unary_union(list(polygonize(unary_union(segs)))).buffer(-EDGE_BAND, join_style=2)
+board_in = board_outline(b).buffer(-EDGE_BAND, join_style=2)   # segments and arcs (D-62)
 
 # static obstacles: top mask openings (pads on F.Cu / F.Mask and every hole) and footprint silk graphics
 mask = []

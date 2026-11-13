@@ -7,7 +7,7 @@
 | Item | Value |
 |---|---|
 | Layers | 4 (F.Cu (L1, signals and power pours), In1.Cu (L2, solid GND), In2.Cu (L3, signals), B.Cu (L4, solid GND facing the MB, D-20)) |
-| Size | convex 18-vertex outline, 40.02 x 64.81 mm bounding box (MB frame x 18.58-58.60, y 7.83-72.64), 2241.6 mm2, trimmed after routing inside the D-39 rectangle (D-60); four 6-32 NPTH holes, 3.70 mm (MH1-MH4, D-60) |
+| Size | 10-corner outline with 1.0 mm corner fillets, edges at 0/30/45/60/90/120/135/150 degrees (D-62), 40.02 x 64.81 mm bounding box (MB frame x 18.58-58.60, y 7.83-72.64), 2327.7 mm2, trimmed after routing inside the D-39 rectangle; four 6-32 NPTH holes, 3.70 mm (MH1-MH4, D-60) |
 | Thickness | 1.6 mm |
 | Copper | 1 oz outer / 0.5 oz inner (D-29) |
 | Surface finish | ENIG |
@@ -21,7 +21,7 @@
 
 | Fab | Upload | Notes |
 |---|---|---|
-| OSH Park | `kikit_oshpark/gerbers.zip` | OSH Park makes bare boards only. Its 4-layer service is 1 oz outer / 0.5 oz inner, so a 4-layer order there uses the 1 oz fallback of the Copper row above. |
+| OSH Park | `kikit_oshpark/gerbers.zip` | OSH Park makes bare boards only. Its 4-layer service (1.6 mm, 1 oz outer / 0.5 oz inner clad, ENIG, FR408-HR) matches section 1 (docs.oshpark.com/services/four-layer/, read 2026-11-13). Order quantities come in multiples of 3. |
 | PCBWay | `kikit_pcbway/gerbers.zip`; for assembly also `kikit_pcbway/bom.csv` and `kikit_pcbway/pos.csv` | Select the layer count, thickness, copper weight and finish of section 1 in the order form. |
 | JLCPCB | `kikit_jlcpcb/gerbers.zip`; for assembly also `kikit_jlcpcb/bom.csv` and `kikit_jlcpcb/pos.csv` | The BOM has no LCSC part numbers; JLCPCB assembly needs them matched by hand (KiKit ran with `--missingWarn`). |
 | Any other fab | `cr_gerbers_drill.zip` (Gerber X2 layers, Excellon PTH and NPTH, drill maps) | Same files as `gerbers/` and `drill/`. |

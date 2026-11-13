@@ -28,7 +28,10 @@ if "(reference \"MH1\")" in open(board, encoding="utf-8").read() or '"Reference"
 args = [sys.executable, tool, board, work, "--y-flip-offset", "%g" % G.YOFF, "--margin", "%g" % G.TRIM_MARGIN,
         "--ear", "%g,%g,%g,%g" % G.KEY_EAR, "--hole-drill", "%g" % G.HOLE_DRILL,
         "--hole-keepout", "%g" % G.HOLE_KEEPOUT, "--hole-board", "%g" % G.HOLE_HEAD,
-        "--flip-centre", "%g,%g" % G.CHG_CENTRE]
+        "--flip-centre", "%g,%g" % G.CHG_CENTRE,
+        # D-62 (operator ruling 2026-11-13, R9-04): limited edge angles and filleted corners
+        "--angles", ",".join(str(a) for a in G.TRIM_ANGLES), "--min-edge", "%g" % G.TRIM_MIN_EDGE,
+        "--fillet", "%g" % G.FILLET]
 for t in G.TERMINALS:   # TB005-762 bodies on .brd layer 51 (D-41 key)
     e = M.extent(M.part(t), [M.L_DOCU], False, ("wire",))
     args += ["--flip-block", "%s:%g,%g,%g,%g" % ((t,) + tuple(e))]

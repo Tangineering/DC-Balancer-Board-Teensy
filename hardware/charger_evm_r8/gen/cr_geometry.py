@@ -36,13 +36,17 @@ YOFF = 100.0                                        # D-01: KiCad Y = 100 - y, K
 # 3D-printed support; MB clearance under them is not a criterion); keep a +x key ear (D-41). The D-39 rectangle P
 # stays the placement frame; the board is trimmed after routing by gen/trim_cr.py (tools/pcb/corridor_route/
 # trim_outline.py with the arguments below), which asserts that the result equals these values.
-# D-61: the trim runs before the stitching and the straightening (finish order: route, plane vias, trim, stitch,
-# straighten, references), so the outline is the D-60 trim of the routed board 621fb28. Superseded (8521bf8, trim after
-# stitching and straightening): 19 vertices, 2248.3 mm2, MH2 (55.10, 67.54), MH4 (24.23, 25.18).
-FINAL_OUTLINE = [(26.05, 72.64), (24.85, 72.37), (24.09, 71.93), (18.58, 67.09), (18.58, 33.64), (21.15, 23.80),
-                 (21.39, 23.33), (21.93, 22.63), (22.94, 21.93), (53.47, 8.10), (54.67, 7.83), (55.38, 7.87),
-                 (56.23, 8.10), (57.27, 8.76), (57.84, 9.43), (58.24, 10.22), (58.45, 11.25), (58.60, 71.00)]
-P_FINAL = Polygon(FINAL_OUTLINE)
+# D-62 (operator ruling 2026-11-13, route-race R9-04): "Keep the trim rectilinear, or with 30, 45, or 60deg angles.
+# Fillets on corners is good though." FINAL_OUTLINE holds the corners before the fillets (edges at 0, 30, 45, 60, 90,
+# 120, 135 or 150 degrees; slanted edges >= 2.0 mm); every corner is rounded with a 1.0 mm arc (true Edge.Cuts arcs).
+# Superseded (D-60/D-61): the convex 18-vertex hull, 2241.6 mm2, MH2 (54.85, 63.79).
+TRIM_ANGLES = (0, 30, 45, 60, 90, 120, 135, 150)
+TRIM_MIN_EDGE = 2.0
+FILLET = 1.0
+FINAL_OUTLINE = [(58.600, 71.043), (55.835, 72.640), (25.266, 72.640), (22.564, 71.079), (18.584, 67.100),
+                 (18.584, 28.193), (21.845, 22.545), (47.332, 7.830), (56.928, 7.830), (58.600, 10.726)]
+P_CORNERS = Polygon(FINAL_OUTLINE)
+P_FINAL = P_CORNERS.buffer(-FILLET, 64, join_style=1).buffer(FILLET, 64, join_style=1)   # every corner convex (D-62)
 KEY_EAR = (50.0, 52.0, 58.6, 71.0)                  # +x key ear kept by the trim (operator choice, D-41 key)
 TRIM_MARGIN = 1.0                                   # trim margin around the used area (mm)
 HOLE_DRILL = 3.70                                   # NPTH, #6 free fit for a 6-32 screw
@@ -51,7 +55,7 @@ HOLE_HEAD = 3.6                                     # screw-head disc radius kep
 # trim_outline.py rounds the hull to 0.01 mm and simplifies it with a 0.05 mm tolerance, so the outline may cut up to
 # 0.05 mm into the ear and the head discs, and its -x vertices sit at x 18.58 (0.004 mm outside the D-39 edge).
 TRIM_TOL = 0.06                                     # 0.05 mm simplify + 0.01 mm rounding of the hole centres
-MOUNTING_HOLES = {"MH1": (26.23, 69.04), "MH2": (54.85, 63.79), "MH3": (54.85, 11.43), "MH4": (24.48, 25.18)}
+MOUNTING_HOLES = {"MH1": (26.23, 69.04), "MH2": (54.85, 68.79), "MH3": (54.85, 11.43), "MH4": (24.48, 25.18)}
 FINAL_INSET = P_FINAL.buffer(-INSET_MM, join_style=2)
 
 # ------------------------------------------------------------------ D-41 stack (heights above the MB top, mm)
@@ -208,17 +212,29 @@ def rows():
         abs(P.area - 48.416 * 87.0) < 0.01 and len(OUTLINE) == 4)
     row("H.23(a) successor: courtyard inset 0.5 mm (A.8)", "INSET", "%.2f mm2" % INSET.area, "information", "info")
     # D-60 (route-race R9-02): the final outline after routing, inside the D-39 placement frame, and the holes
-    convex = abs(P_FINAL.convex_hull.area - P_FINAL.area) < 1e-6
-    row("D-60 final outline (trimmed after routing), inside the D-39 rectangle", "FINAL_OUTLINE",
-        "%d vertices, area %.1f mm2 (%.0f %% of D-39), x %.3f-%.3f, y %.2f-%.2f, %s" % (
+    convex = abs(P_CORNERS.convex_hull.area - P_CORNERS.area) < 1e-6
+    # D-62: every edge direction in TRIM_ANGLES (mod 180, 0.5 deg), every slanted edge >= TRIM_MIN_EDGE
+    bad_edges = []
+    for k in range(len(FINAL_OUTLINE)):
+        (x1_, y1_), (x2_, y2_) = FINAL_OUTLINE[k], FINAL_OUTLINE[(k + 1) % len(FINAL_OUTLINE)]
+        ang = math.degrees(math.atan2(y2_ - y1_, x2_ - x1_)) % 180.0
+        ln = math.hypot(x2_ - x1_, y2_ - y1_)
+        dev = min(min(abs(ang - a_), 180.0 - abs(ang - a_)) for a_ in TRIM_ANGLES)
+        if dev > 0.5 or (min(abs(ang - 0), abs(ang - 90), abs(ang - 180)) > 0.5 and ln < TRIM_MIN_EDGE - 1e-6):
+            bad_edges.append("%d (%.1f deg, %.2f mm)" % (k, ang, ln))
+    row("D-62 final outline (trimmed after routing, %.1f mm fillets), inside the D-39 rectangle" % FILLET,
+        "FINAL_OUTLINE", "%d corners, filleted area %.1f mm2 (%.0f %% of D-39), x %.3f-%.3f, y %.2f-%.2f, %s; "
+        "edges off the angle set or short: %s" % (
             (len(FINAL_OUTLINE), P_FINAL.area, 100 * P_FINAL.area / P.area) + P_FINAL.bounds[0::2]
-            + P_FINAL.bounds[1::2] + ("convex" if convex else "not convex",)),
-        "inside the D-39 rectangle within 0.01 mm (trim rounding); -x edge at x %.3f (D-51)" % X0,
-        P.buffer(0.01).contains(P_FINAL) and abs(P_FINAL.bounds[0] - X0) < 0.01 and P_FINAL.is_valid)
+            + P_FINAL.bounds[1::2] + ("convex" if convex else "not convex", ", ".join(bad_edges) or "none")),
+        "inside the D-39 rectangle; -x edge at x %.3f (D-51); edges at %s deg, slanted >= %.1f mm" % (
+            X0, "/".join(str(a_) for a_ in TRIM_ANGLES), TRIM_MIN_EDGE),
+        P.buffer(0.01).contains(P_FINAL) and abs(P_FINAL.bounds[0] - X0) < 0.01 and P_FINAL.is_valid and not bad_edges)
     ear = box(*KEY_EAR)
-    row("D-60 +x key ear kept (D-41)", "KEY_EAR", "box x %.1f-%.1f, y %.1f-%.1f; %.3f mm2 outside the outline" % (
+    row("D-60 +x key ear kept (D-41)", "KEY_EAR", "box x %.1f-%.1f, y %.1f-%.1f; %.3f mm2 cut by the corner fillets" % (
         KEY_EAR[0], KEY_EAR[2], KEY_EAR[1], KEY_EAR[3], ear.difference(P_FINAL).area),
-        "inside the final outline within the 0.06 mm trim tolerance", P_FINAL.buffer(TRIM_TOL).contains(ear))
+        "inside the outline corners (before the D-62 fillets) within the 0.06 mm trim tolerance; the D-41 key row is the "
+        "functional check", P_CORNERS.buffer(TRIM_TOL).contains(ear))
     for h, (x, y) in MOUNTING_HOLES.items():
         c = Point(x, y)
         edge = P_FINAL.exterior.distance(c) - HOLE_DRILL / 2

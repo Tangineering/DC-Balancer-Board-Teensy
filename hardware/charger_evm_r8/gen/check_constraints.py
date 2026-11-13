@@ -71,9 +71,10 @@ if BOARD == "cr":
             xs.append(e[0])
             ys.append(e[1])
     bb = (min(xs), min(ys), max(xs), max(ys)) if xs else (0, 0, 0, 0)
-    from shapely.ops import polygonize
-    edge_poly = unary_union(list(polygonize(unary_union([LineString([fr.e(d.GetStart()), fr.e(d.GetEnd())])
-                                                         for d in ec]))))
+    sps_ = pcbnew.SHAPE_POLY_SET()
+    b.GetBoardPolygonOutlines(sps_)          # segments and arcs (D-62 fillets)
+    edge_poly = unary_union([Polygon([fr.e(sps_.Outline(i).CPoint(k)) for k in range(sps_.Outline(i).PointCount())])
+                             .buffer(0) for i in range(sps_.OutlineCount())])
     TRIMMED = len(ec) != 4      # D-60: the routed board is trimmed by gen/trim_cr.py; before the trim it is the D-39 box
     if not TRIMMED:
         ok = all(abs(a - b_) < 1e-3 for a, b_ in zip(bb, (G.X0, G.Y0, G.X1, G.Y1)))
@@ -82,11 +83,13 @@ if BOARD == "cr":
             ok)
     else:
         dev = edge_poly.symmetric_difference(G.P_FINAL).area
-        row("D-60 final outline (Edge.Cuts) = cr_geometry.FINAL_OUTLINE, inside the D-39 rectangle", "Edge.Cuts",
-            "%d segments, x %.3f-%.3f, y %.3f-%.3f, area %.1f mm2; area differing from FINAL_OUTLINE %.4f mm2" % (
-                (len(ec),) + bb[0::2] + bb[1::2] + (edge_poly.area, dev)),
-            "%d segments; difference < 0.01 mm2" % len(G.FINAL_OUTLINE),
-            len(ec) == len(G.FINAL_OUTLINE) and dev < 0.01 and G.P.buffer(0.01).contains(edge_poly))
+        narc = sum(1 for d in ec if d.GetShape() == pcbnew.SHAPE_T_ARC)
+        row("D-62 final outline (Edge.Cuts, segments and fillet arcs) = cr_geometry.FINAL_OUTLINE with FILLET, inside the "
+            "D-39 rectangle", "Edge.Cuts",
+            "%d items (%d arcs), x %.3f-%.3f, y %.3f-%.3f, area %.1f mm2; area differing from the filleted "
+            "FINAL_OUTLINE %.4f mm2" % ((len(ec), narc) + bb[0::2] + bb[1::2] + (edge_poly.area, dev)),
+            "%d arcs; difference < 0.05 mm2 (arc sampling)" % len(G.FINAL_OUTLINE),
+            narc == len(G.FINAL_OUTLINE) and dev < 0.05 and G.P.buffer(0.01).contains(edge_poly))
         for h, (x, y) in G.MOUNTING_HOLES.items():
             fp = FP.get(h)
             got = "missing"

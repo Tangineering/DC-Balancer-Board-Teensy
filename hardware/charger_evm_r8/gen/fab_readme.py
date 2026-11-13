@@ -47,10 +47,11 @@ ne = re.search(r"ERC messages: (\d+)", erc)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import cr_geometry as G  # noqa: E402   (the D-60 outline and holes; the size row is computed, never typed)
 _b = G.P_FINAL.bounds
-CR_SIZE = ("convex %d-vertex outline, %.2f x %.2f mm bounding box (MB frame x %.2f-%.2f, y %.2f-%.2f), %.1f mm2, "
-           "trimmed after routing inside the D-39 rectangle (D-60); four 6-32 NPTH holes, %.2f mm (MH1-MH4, D-60)" % (
-               len(G.FINAL_OUTLINE), _b[2] - _b[0], _b[3] - _b[1], _b[0], _b[2], _b[1], _b[3], G.P_FINAL.area,
-               G.HOLE_DRILL))
+CR_SIZE = ("%d-corner outline with %.1f mm corner fillets, edges at %s degrees (D-62), %.2f x %.2f mm bounding box "
+           "(MB frame x %.2f-%.2f, y %.2f-%.2f), %.1f mm2, trimmed after routing inside the D-39 rectangle; four 6-32 "
+           "NPTH holes, %.2f mm (MH1-MH4, D-60)" % (
+               len(G.FINAL_OUTLINE), G.FILLET, "/".join(str(a) for a in G.TRIM_ANGLES), _b[2] - _b[0], _b[3] - _b[1],
+               _b[0], _b[2], _b[1], _b[3], G.P_FINAL.area, G.HOLE_DRILL))
 INFO = {
     "cr": dict(name="CR, CHG adapter carrier (plug-on)", layers=4, size=CR_SIZE, thick="1.6 mm",
                copper="1 oz outer / 0.5 oz inner (D-29)", finish="ENIG", qty="5 (E BOM)",
@@ -96,7 +97,7 @@ txt = f"""# {INFO['name']}: fabrication package ({D})
 
 | Fab | Upload | Notes |
 |---|---|---|
-| OSH Park | `kikit_oshpark/gerbers.zip` | OSH Park makes bare boards only. Its 4-layer service is 1 oz outer / 0.5 oz inner, so a {INFO['layers']}-layer order there uses the 1 oz fallback of the Copper row above. |
+| OSH Park | `kikit_oshpark/gerbers.zip` | OSH Park makes bare boards only. {"Its 4-layer service (1.6 mm, 1 oz outer / 0.5 oz inner clad, ENIG, FR408-HR) matches section 1 (docs.oshpark.com/services/four-layer/, read 2026-11-13). " if B == "cr" else ""}Order quantities come in multiples of 3. |
 | PCBWay | `kikit_pcbway/gerbers.zip`; for assembly also `kikit_pcbway/bom.csv` and `kikit_pcbway/pos.csv` | Select the layer count, thickness, copper weight and finish of section 1 in the order form. |
 | JLCPCB | `kikit_jlcpcb/gerbers.zip`; for assembly also `kikit_jlcpcb/bom.csv` and `kikit_jlcpcb/pos.csv` | The BOM has no LCSC part numbers; JLCPCB assembly needs them matched by hand (KiKit ran with `--missingWarn`). |
 | Any other fab | `{B}_gerbers_drill.zip` (Gerber X2 layers, Excellon PTH and NPTH, drill maps) | Same files as `gerbers/` and `drill/`. |
