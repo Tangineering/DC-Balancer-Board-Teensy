@@ -172,6 +172,38 @@ need the images. Report:
 - each hypothesis with its verdict;
 - that a valid result is not a finished board, until the finish-test rows of the review pass.
 
+## 5a. Final step: trim the outline and add mounting holes
+
+A board outline that was sized for routing room keeps empty area after routing. When the board is routed and the
+review passes, propose a trimmed outline with corner mounting holes:
+
+```bash
+"$PY" trim_outline.py W/<board>.kicad_pcb W/trim --y-flip-offset Y0 [--ear X0,Y0,X1,Y1 ...] \
+    [--flip-centre CX,CY --flip-block NAME:X0,Y0,X1,Y1 ...] --apply
+```
+
+1. Find the mechanical reasons for the present outline in the design record before you trim: an overhang that keys
+   the board, a cover over parts below, a connector reach. Keep each such area as an `--ear` box (plan frame). A
+   board that is keyed by landing on parts when it is turned the wrong way keeps the key only while its outline
+   still covers them: give those parts as `--flip-block` with the turn centre, and compare the overlap of the
+   present and the proposed outline in `TRIM.md`.
+2. The tool never grows the outline: an edge that the design fixed (for example a clearance to parts beside the
+   board) stays. The defaults suit 6-32 screws (drill 3.7 mm, head disc 3.6 mm, copper keep-out 4.0 mm); set
+   `--hole-*` for another screw. Ask the owner what the holes hold: a standoff that rests on the board below needs a
+   clear spot there as well, which the tool does not check.
+3. Read `TRIM.md`: area before and after, hole sites, ears, flip overlap, warnings. Check each hole against the
+   nearest courtyard and copper; the keep-out must clear them by the gap.
+4. `--apply` writes a checked copy: the new edge, the holes and their keep-outs, the board-wide zones and the edge
+   band moved to the new edge, a refill. Run DRC and the project's constraint check on the copy. A row that tests
+   the old outline fails until the owner amends it.
+5. The outline belongs to the project's generator. Send the proposal (`TRIM.md`, `trim.json`, the DRC of the copy)
+   to the design owner as a request of kind `outline`; do not write the outline into the project board yourself.
+   When the owner's commit comes back, run DRC and the constraint check on it.
+
+On the r9 CR board the step proposed 2242 mm2 against 4212 mm2 (53 %), with four 6-32 holes, a +x ear that keeps
+the board landing on two of the three terminal blocks when it is turned by 180 degrees (7.7 and 7.6 mm of overlap),
+DRC unchanged (124 silk items, 0 unconnected) and one constraint row failing as expected (the old rectangle).
+
 ## 6. What the dry tests showed
 
 Four boards, three rounds, Opus workers; 4-layer board "CR" with 210 connections at 5/5 mil, 2-layer board

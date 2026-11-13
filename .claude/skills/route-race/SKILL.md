@@ -160,6 +160,10 @@ orchestrator for the routed board on a branch. Then:
    project's constraint check on that file. Only the violations that the owner accepts (for example silk) may remain.
 5. Commit with the plan, the seed, the DRC and the constraint figures in the message. Do not push. Report the branch
    tip to the owner.
+6. Run the final step of `board-routing` section 5a on the committed board: a trimmed outline with mounting holes,
+   proposed to the owner as one request. When the owner's commit with the new outline comes back, merge it and run
+   DRC and the constraint check again. Trimming removes only empty area, so no re-route is needed unless the owner
+   moved parts or copper.
 
 ## 7. Rules
 

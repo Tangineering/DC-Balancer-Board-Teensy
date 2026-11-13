@@ -43,6 +43,7 @@ T="<repository root>/tools/pcb/corridor_route"
 | No via site | `"$PY" nosite_why.py W/model/model.json W/plan.json W/vN/routes.json W/vN/board_pv/<board>.kicad_pcb` |
 | Parallel metric | `"$PY" parallel_metric.py W/model/model.json W/vN/routes.json --zone-parts <refs> --analog-nets <nets> [--ignore-nets <nets>] [--exempt-pins REF.PAD,...] [--check-pad REF.PAD] [--json out.json]` |
 | Base compare | `"$PY" cmp_place.py <previous base>.kicad_pcb <new base>.kicad_pcb` |
+| Trim outline | `"$PY" trim_outline.py W/vN/board_pv/<board>.kicad_pcb W/trim [--y-flip-offset Y0] [--ear X0,Y0,X1,Y1] [--flip-centre CX,CY --flip-block NAME:X0,Y0,X1,Y1] [--apply]` |
 
 - The last four rows are the shared options of `reference/shared-options.md`. Every method may use them.
 - `render.py` takes the file `model.json`, not the folder. With `--routes` give the plan of the same attempt.
