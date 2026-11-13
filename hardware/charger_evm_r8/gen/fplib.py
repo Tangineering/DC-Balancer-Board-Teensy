@@ -266,10 +266,14 @@ def vqfn24(outdir, name):
 
     D-55 (review M-1, m-6), no pad number or net changes:
     - Paste: the stock four 1.17 x 1.17 mm apertures at +/-0.675 mm overlapped all nine via drills (gap between the
-      apertures 0.18 mm < the 0.3 mm drill). They are replaced by window-pane apertures, 0.50 x 0.50 mm at the four
-      cell centres of the 1.1 mm via grid (+/-0.55 mm): each aperture clears each drill edge by 0.15 mm (D-40, A.8).
-      Paste coverage 4 x 0.25 / 7.29 = 13.7 % of the 2.7 x 2.7 mm pad. TODO(verify: SLVSE94G section 11, stencil
-      vendor) the coverage target; a higher coverage needs a different via pattern or apertures closer to the drills.
+      apertures 0.18 mm < the 0.3 mm drill). They are replaced by window-pane apertures at the four cell centres of
+      the 1.1 mm via grid (+/-0.55 mm).
+      D-56 (review r9b N-6): the apertures are 0.675 x 0.675 mm, the largest square that keeps >= 0.15 mm from each
+      drill edge (D-40, A.8). The binding distance is the diagonal one from an aperture corner to the four drills
+      around the cell: (0.55 - 0.3375) x sqrt(2) - 0.15 = 0.1505 mm (the limit side is 2 x (0.55 - 0.30 / sqrt(2)) =
+      0.6757 mm). Paste coverage 4 x 0.675^2 / 7.29 = 25.0 % of the 2.7 x 2.7 mm pad; web between apertures 0.425 mm.
+      Superseded (D-55): 0.50 x 0.50 mm, 0.274 mm gap, 13.7 %. TODO(verify: SLVSE94G section 11, stencil vendor) the
+      coverage target; a higher coverage needs a different via pattern or apertures closer to the drills.
     - The stock B.Cu copy of the exposed pad (pad 25, copper only, no mask and no paste) is dropped: D-44 allows no
       SMD pad on B.Cu, and the L4 GND pour already joins the nine vias. Pad 25 stays on F.Cu."""
     import copy
@@ -282,7 +286,7 @@ def vqfn24(outdir, name):
     for k, (ax, ay) in enumerate(((-0.55, -0.55), (-0.55, 0.55), (0.55, -0.55), (0.55, 0.55))):
         ap = copy.deepcopy(proto)
         ap.position = Position(X=ax, Y=ay)
-        ap.size = Position(X=0.5, Y=0.5)
+        ap.size = Position(X=0.675, Y=0.675)   # D-56 (review r9b N-6); superseded (D-55): 0.5 x 0.5 mm
         ap.shape = "rect"
         ap.roundrectRatio = None
         fp.pads.insert(k, ap)

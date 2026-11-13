@@ -108,8 +108,11 @@ HDR_PADS = unary_union([box(45.998 - 1.2, 39.084 - 1.2, 45.998 + 1.2, 61.944 + 1
 # D-55 (review M-2): the two C102b-end vias at (40.35 / 40.95, 51.62) overlapped the C102b pad-1 copper after the
 # D-09 shift; they are re-sited off the pad and its mask opening, and a sixth C102b-end via is added (A.8 IN strip
 # row, "6 vias each end"). The list is the same as route_cr.PRE_VIAS.
+# D-56 (review r9b N-1, N-3; R9.H25): a third C102c-end VCHGIN via (39.75, 59.65) and the /GND pre-via under C103
+# pad 2 (38.08, 62.90) are added, as in route_cr.PRE_VIAS.
 PRE_VIA_SITES = [(39.45, 51.80), (39.45, 52.60), (39.45, 53.40), (39.45, 54.20), (39.45, 55.00), (40.65, 51.40),
-                 (39.75, 60.35), (39.75, 61.05), (34.00, 63.35), (34.80, 63.35), (35.60, 63.35), (36.40, 63.35)]
+                 (39.75, 59.65), (39.75, 60.35), (39.75, 61.05), (34.00, 63.35), (34.80, 63.35), (35.60, 63.35),
+                 (36.40, 63.35), (38.08, 62.90)]
 PRE_VIA_KO = unary_union([Point(c).buffer(0.30 + 0.25) for c in PRE_VIA_SITES])
 # VCHGOUT L1 corridor from W1 to the D103 cathode below the D103 anode (D-22): no top part
 VOUT_BELT = box(29.00, 59.00, 37.30, 64.20)
@@ -137,8 +140,13 @@ U101_NET_REGION = {"R101": "north", "C101": "north", "R105": "north", "R103": "p
                    "R129": "pocket", "R106s": "pocket", "C129": "pocket_win"}
 U101_NET_ROT = {"R104": (0,), "R103": (0,), "R129": (0,), "R106s": (0,), "C129": (0,),
                 "R101": (90,), "C101": (90,), "R105": (90,)}
-U101_NET_TARGET = {"R104": (45.95, 64.20), "R103": (45.95, 65.80), "R129": (45.95, 67.40), "R106s": (45.95, 69.00),
-                   "C129": (49.05, 65.80), "R101": (43.60, 68.45), "C101": (42.00, 68.45), "R105": (40.40, 68.45)}
+# D-56 (review r9b N-4): the R101/C101 slots and the R103/R104 rows are exchanged, so the slot order follows the U101
+# pin order (pin 9 N_DVDT before pin 10 N_ILIM; the N_UV row below the N_OV row). This removes the N_DVDT/N_ILIM and
+# N_UV/N_OV F.Cu crossings. Row 1 is outside the D-20 window and row 2 inside, so R104 now passes and R103 is the
+# listed exemption. R129 and R106s stay (the N_IMON/N_FLT pair is a route-race item). Superseded (D-55): R104 (45.95, 64.20), R103 (45.95, 65.80), R101 (43.60, 68.45), C101 (42.00,
+# 68.45).
+U101_NET_TARGET = {"R103": (45.95, 64.20), "R104": (45.95, 65.80), "R129": (45.95, 67.40), "R106s": (45.95, 69.00),
+                   "C129": (49.05, 65.80), "C101": (43.60, 68.45), "R101": (42.00, 68.45), "R105": (40.40, 68.45)}
 # J101 east-channel parts (D-55, review m-4): R177 (J101 pin 2 to the CR 3V3) and R107 (STAT pull-up, J101 pin 4)
 # sat east of the CHG column, so J3V3_2 and 3V3 crossed it. They are packed west of the column, under J101, so their
 # tracks reach J101 pins 2 and 4 through the channel between J101 and the column. Region: the interior west of the

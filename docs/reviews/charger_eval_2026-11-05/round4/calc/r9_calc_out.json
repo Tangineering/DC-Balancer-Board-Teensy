@@ -630,5 +630,61 @@
    "verdict": "confirmed",
    "value": "no R106 on cr.net (R106s is the FLT series resistor)"
   }
- ]
+ ],
+ "h25": {
+  "I_A": 2.41,
+  "rise_degC": 10.0,
+  "t_inner_mm": 0.0175,
+  "area_req_mil2": 87.3607,
+  "width_req_mm": 3.2207,
+  "width_req_ipc2221_internal_mm": 5.2583,
+  "necks": [
+   {
+    "case": "D-55 strap, y 60.15 (pad 10 also fed on L1)",
+    "width_mm": 1.9955,
+    "area_mil2": 54.128,
+    "i_cap_A": 1.8889,
+    "rise_at_I_degC": 17.6917,
+    "ipc2221_internal_A": 1.1938,
+    "ok": false
+   },
+   {
+    "case": "review r9b trial 4, y 59.55",
+    "width_mm": 2.5955,
+    "area_mil2": 70.4031,
+    "i_cap_A": 2.1593,
+    "rise_at_I_degC": 12.8892,
+    "ipc2221_internal_A": 1.4445,
+    "ok": false
+   },
+   {
+    "case": "D-56 strap, y 58.50 (board-measured section 3.645 mm at x 42.75)",
+    "width_mm": 3.645,
+    "area_mil2": 98.8708,
+    "i_cap_A": 2.5667,
+    "rise_at_I_degC": 8.6626,
+    "ipc2221_internal_A": 1.8477,
+    "ok": true
+   }
+  ],
+  "j110_thermal_mm": 2.4,
+  "j110_solid_mm": 3.4558,
+  "via_A": 1.3325,
+  "vias": [
+   {
+    "case": "C102c end, D-55 (39.75, 60.35 / 61.05)",
+    "n": 2,
+    "i_total_A": 2.6651,
+    "margin": 1.1058,
+    "ok": true
+   },
+   {
+    "case": "C102c end, D-56 (+ 39.75, 59.65)",
+    "n": 3,
+    "i_total_A": 3.9976,
+    "margin": 1.6588,
+    "ok": true
+   }
+  ]
+ }
 }

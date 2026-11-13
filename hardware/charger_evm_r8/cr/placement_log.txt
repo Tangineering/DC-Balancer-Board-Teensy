@@ -2,10 +2,10 @@ packer: best try 0 placed 1 of 1, cost 0.0
 J102   F jtap         (48.579, 20.000) rot 90  target (50.50, 26.00)
 phase J-TAP done
 packer: best try 0 placed 8 of 8, cost 0.1
-R101   F north        (43.584, 68.450) rot 90  target (43.60, 68.45)
-C101   F north        (41.984, 68.450) rot 90  target (42.00, 68.45)
-R103   F pocket       (45.934, 65.800) rot 0  target (45.95, 65.80)
-R104   F pocket       (45.934, 64.200) rot 0  target (45.95, 64.20)
+R101   F north        (41.984, 68.450) rot 90  target (42.00, 68.45)
+C101   F north        (43.584, 68.450) rot 90  target (43.60, 68.45)
+R103   F pocket       (45.934, 64.200) rot 0  target (45.95, 64.20)
+R104   F pocket       (45.934, 65.800) rot 0  target (45.95, 65.80)
 R129   F pocket       (45.934, 67.400) rot 0  target (45.95, 67.40)
 R106s  F pocket       (45.934, 69.000) rot 0  target (45.95, 69.00)
 R105   F north        (40.384, 68.450) rot 90  target (40.40, 68.45)

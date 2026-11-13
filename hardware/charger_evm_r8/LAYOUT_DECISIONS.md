@@ -413,6 +413,10 @@ C102c). This strap is not to be cut back: it keeps C102b within its 2 nH loop bu
 **Kept, conditional (2026-11-12).** The rule stays. It is re-checked once the eFuse cluster is re-placed on the new
 outline (D-09). An L3 strap keeps the IPC-2152 inner-layer check of D-29 open.
 
+**Amended 2026-11-13 (D-56).** The L1 pour no longer reaches pad 10; the L3 strap is the only pad-10 path. It is
+widened to a 3.645 mm narrowest section, joins pad 10 solid and has three vias at the C102c end; design-document row
+H.25 checks it (2.57 A at 10 C against the 2.41 A basis on a curve fit of the IPC-2152 chart).
+
 **D-22. VCHGOUT (P-02).** VCHGOUT runs as one L1 pour from OUT 17/18 over C103 and the D103 cathode, and from
 there below the D103 anode to W1 through a 2.8 mm corridor (`route_cr.VOUT_L1`, box x 29.10-36.80, y 60.00-63.80),
 with no part on the top of that belt. Four vias under the cathode join a parallel L4 strap to W1. The earlier L3
@@ -1124,6 +1128,43 @@ paragraph of D-54 is closed by M-4. Item 4 (/N_OV open) is re-tested at the rout
 mm from pin 7 on the +x side, but the N_UV and N_OV escapes still cross the VCHGIN L1 pour, which since M-3 also
 rings pad 10. Items 1, 6 and 7 stay open.
 
+**D-56. Fix round on the r9b re-review of the D-55 board (2026-11-13).**
+
+- Decision: findings N-1, N-2, N-3, N-4 (both free slot exchanges), N-6 and N-7 of `cr/placement_review_r9b.md` are
+  applied in the generator, the U101 footprint and the constraint check, and the live board is rebuilt with the
+  documented placement half of `gen/make_board.sh` and `ROUTE_SKIP_FR=1 gen/route.py cr ../cr` (variant B, pour
+  stage). The M-3 pad-10 ring and the L1 extension of D-55 are superseded: J1 pad 10 feeds U101 through the L3
+  (In2.Cu) VCHGIN strap alone, as D-21 and the r9 review intended. N-5 (router defect in `tools/pcb/corridor_route`)
+  and N-8 (process items) are not in this round; the routing session owns the router.
+- Reason: the D-55 `VCHGIN_L1` extension sealed U101 pins 6, 7 and 9 and R102 pad 2 on F.Cu, with the strap under
+  them on In2.Cu, so no via could reach them either (four connections open at every probe seed). It also isolated the
+  C102c ground pad, and the C103 ground pad had no plane-via site (present since D-54).
+- Consequence: with J1.10 on L3 alone, the strap carries the whole 2.41 A input. Row H.25 of the design document
+  (`round4/calc/r9_calc.py` R9.H25, change row r9-15) checks it on 0.5 oz (17.5 um) inner copper against a curve fit
+  of the IPC-2152 baseline chart at the 10 C rise of the A.8 Copper basis. The review width 2.596 mm fails (2.16 A
+  at 10 C); the strap is widened to a 3.645 mm narrowest section (2.57 A, 8.7 C at 2.41 A, required 3.221 mm). The
+  J1.10 joint on In2 becomes solid, because four 0.6 mm thermal spokes give 2.40 mm. A third C102c-end via gives
+  4.00 A of via capacity (two vias: 2.67 A). The IPC-2152 chart reading stays TODO(verify: IPC-2152 Figure 5-1);
+  the IPC-2221 internal formula still fails (1.85 A). The solid joint adds heat demand when the TSW tail at pad 10 is
+  soldered; the strap is 0.5 oz and about 51 mm2. The netlist is unchanged: the date-stripped `cr/cr.net` sha256 is
+  `da64c37a...f484` and `gen/netlist.py` is `f78b38f1...abb4`; no pad number or net changed.
+
+Table D-56. Findings of the r9b re-review and the applied fixes.
+
+| Finding | Fix | Result on the rebuilt board |
+|---|---|---|
+| N-1 L1 extension seals the U101 +x pads | `gen/route_cr.py` `VIN_L1` = the D-54 main body plus `box(42.35, 60.60, 43.10, 61.55)` (pin 5 tie), no copper at pad 10; `VIN_L3` pad-10 band `box(39.15, 58.50, 47.10, 62.75)` (review y 59.55); the strap zone joins THT pads solid (optional sixth field of `power_zones()`, read by `gen/route.py`); third VCHGIN via (39.75, 59.65) with its track in `PRE_VIAS`, `PRE_TRACKS` and `layout_cr.PRE_VIA_SITES` | `VCHGIN_L1` one piece, 26.77 mm2, holds U101 pins 1, 2 and 5; `VCHGIN_L3_strap` one piece, 50.68 mm2, narrowest section 3.645 mm at x 42.75 (D-55: 1.160 mm at the pad-10 thermal relief), J1.10 joint solid; escape rows U101.6, .7, .9 and R102.2 pass |
+| N-2 C102c ground pad isolated | removed with the N-1 enclosure | C102c.2 in the main `GND_L1_fill` piece (3622.87 mm2); D-55 island 0.80 mm2 gone |
+| N-3 C103 ground pad without a plane connection | `VOUT_L1` notch `box(37.40, 62.60, 38.80, 63.40)`; /GND pre-via (38.08, 62.90) in `PRE_VIAS` and `PRE_VIA_SITES` | C103.2 island 4.93 mm2 tied to the plane by the via; via annulus 0.179 mm from the C103.2 pad plus its mask expansion |
+| N-4 slot order against the U101 pin order | `gen/layout_cr.py` `U101_NET_TARGET`: C101 (43.60, 68.45), R101 (42.00, 68.45), R103 (45.95, 64.20), R104 (45.95, 65.80); R129 and R106s unchanged | R101.1 4.09 mm to pin 10, C101.1 4.28 mm to pin 9, R103.2 3.58 mm and R104.1 3.69 mm to pin 7 (centre to centre). Row 1 lies outside the D-20 window (rim distance), so R104 now passes and R103 is the listed exemption (the review expected both inside). The N_IMON/N_FLT pair stays a route-race test item |
+| N-6 paste coverage 13.7 % | `gen/fplib.py` `vqfn24()` apertures 0.675 x 0.675 mm at the same four centres, the largest square with >= 0.15 mm to every drill (limit 0.6757 mm); the U101 footprint in `cr/charger_r8_cr.pretty/` edited by hand from the scratch library build (the other twelve files differ in stamps only) | smallest aperture-to-drill gap 0.151 mm; coverage 25.0 %; aperture web 0.425 mm; the check row now asks gap >= 0.15 mm; TODO(verify: SLVSE94G section 11, stencil vendor) the coverage target |
+| N-7 no row detects a sealed pad | `gen/check_constraints.py` escape rows (method of the review section 1) for U101.6, .7, .9, .10, .13, .14, R102.2, C102c.2 and C103.2: a pad passes when its free F.Cu component reaches a same-net pad or via, or holds a 0.6 mm via site that is clear of the hard non-/GND pours on the other layers, the SMD pads plus mask (D-37) and the drills | all nine pass on the D-56 board; on the D-55 board the row reproduces the review (U101.6 0.03 mm2, U101.7 0.14 mm2, U101.9 0.20 mm2, R102.2 0.97 mm2, C102c.2 and C103.2 FAIL) |
+
+The constraint check gives 97 pass rows, 0 FAIL, 3 listed D-20 exemptions (R102, R103, R129) and 16 information
+rows. DRC reports 124 violations (75 silk over copper, 49 silk overlap, all reference fields), 107 unconnected items
+and 0 parity issues; the two removed unconnected items are the D-55 /GND fill islands, as review trial 4 predicted.
+Open: the 4-seed probe re-run on this board (step 6 entry), N-5 and N-8.
+
 ## 9. Verification
 
 ### 9.1 ERC and DRC
@@ -1142,6 +1183,11 @@ clearance, 4 starved thermals, 124 silkscreen items), 108 unconnected items and 
 copper and 49 silk overlap, all reference fields; no courtyard overlap, clearance or starved-thermal item), 109
 unconnected items and 0 parity issues (`cr/drc_place.rpt`). The constraint check gives 88 pass, 0 FAIL, 3 listed
 D-20 exemptions and 16 information rows (`cr/constraint_check.md`).
+
+**D-56 (2026-11-13):** after the r9b fix round, DRC with the same options reports 124 violations (75 silk over copper
+and 49 silk overlap, all reference fields), 107 unconnected items and 0 parity issues. The constraint check gives 97
+pass, 0 FAIL, 3 listed D-20 exemptions (R102, R103, R129) and 16 information rows, with the nine new escape rows
+passing.
 
 ### 9.2 Constraint measurements
 
@@ -1183,7 +1229,7 @@ Layout and fabrication:
 
 1. TODO(verify: T-A-08 MS4b reading) for U120/U121 at x > 39.53 (D-11). **Retired 2026-11-12:** U121 is removed and
    the r7 band retires; the successor is TODO(measure: operator, MS4) for the heat sources under the new outline (D-11).
-2. TODO(verify: IPC-2152 internal-layer chart) for the L3/L4 straps on 0.5 oz inner copper at 2.41 A and 3.21 A (D-29). **Amended 2026-11-12:** open only if VCHGOUT or the VCHGIN strap uses L3; L4 carries no strap (D-20, D-22).
+2. TODO(verify: IPC-2152 internal-layer chart) for the L3/L4 straps on 0.5 oz inner copper at 2.41 A and 3.21 A (D-29). **Amended 2026-11-12:** open only if VCHGOUT or the VCHGIN strap uses L3; L4 carries no strap (D-20, D-22). **Amended 2026-11-13 (D-56):** the VCHGIN strap is checked in design-document row H.25 on a curve fit of the IPC-2152 baseline chart; the chart reading itself stays open.
 3. TODO(verify) that A.8's 1.9 mm CHG pad rule targets the outer layers only, and the fabs' inner annular-ring rule for the removed inner pads (D-30). **Amended 2026-11-12:** the CHG pads become TSW pads (D-03); the open item is TODO(verify: OSH Park) the non-functional-pad policy on connector holes.
 4. TODO(verify: MS8) the minimum inside-corner radius at the three concave outline corners (A.7). **Retired 2026-11-12:** the new outline is a rectangle with no concave corner.
 5. TODO(verify: OSH Park) whether the 10 mil minimum drill is drilled or finished (the vias use 0.3 mm drill), and OSH Park's temporary alternate 4-layer stack-up (`tools/pcb/fab_rules`). **Amended 2026-11-12:** the drill question is moot for vias, because 0.3 mm clears both readings (D-29); the stack-up item stays.

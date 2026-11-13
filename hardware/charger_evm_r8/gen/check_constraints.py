@@ -252,7 +252,9 @@ if BOARD == "cr":
     # U101's own network, held within 5 mm of pins 6-7 by A.8. R129 (IMON node) and C129 (CHG_IIN filter) are
     # U101-network parts since D-55; R129 sits in pocket row 3 above the window top (A.8 IMON <= 5 mm binds; the two
     # window rows hold R104 and R103), a listed exemption that replaces the D-54 item-7 deviation.
-    for ref, why in (("R103", "listed exemption: U101 network, A.8 <= 5 mm (D-55)"),
+    # D-56 (review r9b N-4): R103 and R104 exchange rows. Row 1 (y 64.20) is outside the window (rim distance), row 2
+    # inside, so the listed exemption moves from R104 to R103; both stay listed, and a part inside passes.
+    for ref, why in (("R103", "listed exemption: U101 network, A.8 <= 5 mm (D-55, D-56)"),
                      ("R104", "listed exemption: U101 network, A.8 <= 5 mm (D-55)"),
                      ("R129", "listed exemption: U101 network, A.8 IMON <= 5 mm (D-55)"),
                      ("C129", "deviation: outside the window (D-55)")):
@@ -315,7 +317,95 @@ if BOARD == "cr":
     cov = 100 * unary_union(aps).area / (2.7 * 2.7) if aps else 0.0
     row("D-40 / A.8 U101 exposed-pad paste apertures clear of every via drill (window pane; D-55)", "U101.25",
         "%d apertures; smallest gap to a drill %.3f mm; coverage %.1f %%" % (len(aps), gap, cov),
-        "gap > 0; coverage TODO(verify: SLVSE94G section 11, stencil vendor)", gap > 0)
+        "gap >= 0.15 mm (D-56, N-6); coverage TODO(verify: SLVSE94G section 11, stencil vendor)", gap >= 0.15 - 1e-4)
+    # D-56 (review r9b N-7): F.Cu escape of the U101 network pads and the U101 ground pads of C102c and C103. Method of
+    # cr/placement_review_r9b.md section 1: obstacles are the F.Cu fill of every pour of another net (the /GND fills
+    # excepted: /GND is the plane net and the router cuts it), every F.Cu pad, track and via of another net and every
+    # F.Cu keep-out that forbids tracks, each grown by the Default clearance plus half the Default track
+    # (route_cr.CLEAR + route_cr.TRACK / 2). The free space is the outline less the route_cr.EDGE_BAND band less the
+    # grown obstacles. A pad passes when the free component(s) that touch it reach another same-net pad or via, or
+    # hold a 0.6 mm via site: a point off every SMD pad plus its mask expansion plus the via radius (D-37), at least
+    # via radius + clearance from every other-net obstacle on F.Cu and from every non-/GND pour fill of another net on
+    # the inner layers and B.Cu (hard pours), >= 0.127 mm hole to hole from every drill, and inside the edge band.
+    import route_cr as RC
+
+    def _sps(sps):
+        polys = []
+        for i in range(sps.OutlineCount()):
+            o = sps.Outline(i)
+            ext = [fr.e(o.CPoint(k)) for k in range(o.PointCount())]
+            holes = [[fr.e(sps.Hole(i, j).CPoint(k)) for k in range(sps.Hole(i, j).PointCount())]
+                     for j in range(sps.HoleCount(i))]
+            if len(ext) >= 3:
+                polys.append(Polygon(ext, [h for h in holes if len(h) >= 3]).buffer(0))
+        return unary_union(polys)
+
+    def _pad_geom(p, lay):
+        return _sps(p.GetEffectivePolygon(lay, pcbnew.ERROR_INSIDE)).union(
+            Point(fr.e(p.GetPosition())).buffer(pcbnew.ToMM(p.GetDrillSizeX()) / 2, 32)
+            if p.GetDrillSizeX() > 0 else Polygon())
+
+    grow = RC.CLEAR + RC.TRACK / 2
+    vr = RC.VIA[0] / 2
+    lays = {"F": pcbnew.F_Cu, "In1": pcbnew.In1_Cu, "In2": pcbnew.In2_Cu, "B": pcbnew.B_Cu}
+    fills = {k: [] for k in lays}   # (net, geometry) of every non-rule-area zone fill, per layer
+    for z in b.Zones():
+        if z.GetIsRuleArea():
+            continue
+        for k, lay in lays.items():
+            if z.IsOnLayer(lay) and z.HasFilledPolysForLayer(lay):
+                fills[k].append((z.GetNetname(), _sps(z.GetFilledPolysList(lay))))
+    keepf = unary_union([_sps(z.Outline()) for z in b.Zones() if z.GetIsRuleArea() and z.IsOnLayer(pcbnew.F_Cu)
+                         and z.GetDoNotAllowTracks() and z.GetZoneName() != "edge_band_router"])
+    fpads = [(fp.GetReference(), p.GetNumber(), p.GetNetname(), _pad_geom(p, pcbnew.F_Cu))
+             for fp in b.GetFootprints() for p in fp.Pads() if p.IsOnLayer(pcbnew.F_Cu)]
+    vias = [(t.GetNetname(), Point(fr.e(t.GetPosition())), pcbnew.ToMM(t.GetWidth(pcbnew.F_Cu)) / 2)
+            for t in b.GetTracks() if t.GetClass() == "PCB_VIA"]
+    trks = [(t.GetNetname(), LineString([fr.e(t.GetStart()), fr.e(t.GetEnd())]).buffer(pcbnew.ToMM(t.GetWidth()) / 2))
+            for t in b.GetTracks() if t.GetClass() == "PCB_TRACK" and t.GetLayer() == pcbnew.F_Cu]
+    drills = [Point(fr.e(p.GetPosition())).buffer(pcbnew.ToMM(p.GetDrillSizeX()) / 2, 32) for fp in b.GetFootprints()
+              for p in fp.Pads() if p.GetDrillSizeX() > 0] + [c.buffer(RC.VIA[1] / 2, 32) for _, c, _ in vias]
+    smd_mask = unary_union([g for _, _, g in smd])   # every SMD pad plus its mask expansion (D-37 row above)
+    inset = L.P.buffer(-RC.EDGE_BAND, join_style=2)
+    via_inset = L.P.buffer(-(RC.EDGE_BAND + vr), join_style=2)
+
+    def escape(ref, num):
+        me = [q for q in fpads if q[0] == ref and q[1] == num][0]
+        net, pg = me[2], me[3]
+        obs = [g for n, g in fills["F"] if n != net and n != "/GND"]
+        obs += [g for r, nm, n, g in fpads if n != net]
+        obs += [g for n, g in trks if n != net]
+        obs += [c.buffer(rad, 32) for n, c, rad in vias if n != net]
+        raw = unary_union(obs + [keepf])
+        free = inset.difference(raw.buffer(grow, 16))
+        comps = [c for c in getattr(free, "geoms", [free]) if not c.is_empty and c.intersects(pg)]
+        comp = unary_union(comps)
+        reach = sorted({"%s.%s" % (r, nm) for r, nm, n, g in fpads if n == net and (r, nm) != (ref, num)
+                        and g.intersects(comp)} | {"via(%.2f,%.2f)" % (c.x, c.y) for n, c, rad in vias
+                                                    if n == net and c.distance(comp) < 1e-6})
+        # via site inside the component (F.Cu), clear on the other layers (hard non-/GND pours of another net)
+        site = comp.intersection(via_inset).difference(raw.buffer(vr + RC.CLEAR, 16)).difference(
+            smd_mask.buffer(vr, 16))
+        hard = unary_union([g for k in ("In1", "In2", "B") for n, g in fills[k] if n != net and n != "/GND"])
+        site = site.difference(hard.buffer(vr + RC.CLEAR, 16)).difference(
+            unary_union(drills).buffer(RC.VIA[1] / 2 + 0.127, 16))
+        from shapely.ops import nearest_points
+        sp = nearest_points(site, pg)[0] if not site.is_empty else None   # the via site nearest the pad
+        ok = bool(reach) or sp is not None
+        meas = "free %.2f mm2; reaches %s; via site %s" % (
+            comp.area, ", ".join(reach[:4]) + (" +%d" % (len(reach) - 4) if len(reach) > 4 else "") if reach
+            else "no same-net pad", "(%.2f, %.2f), %.2f mm from the pad" % (sp.x, sp.y, sp.distance(pg))
+            if sp is not None else "none")
+        return net, meas, ok
+
+    for ref, num in (("U101", "6"), ("U101", "7"), ("U101", "9"), ("U101", "10"), ("U101", "13"), ("U101", "14"),
+                     ("R102", "2"), ("C102c", "2"), ("C103", "2")):
+        if ref not in FP:
+            continue
+        net, meas, ok = escape(ref, num)
+        row("D-56 (r9b N-7) F.Cu escape: a %.4f mm track leaves the pad to a same-net pad or a 0.6 mm via site "
+            "(hard pours, other-net copper, keep-outs)" % RC.TRACK, "%s.%s %s" % (ref, num, net), meas,
+            "reaches a same-net pad/via or holds a via site", ok)
     # geometry rows that do not need the board (terminal clearance D-51, rotated key, CHG columns, J-TAP region)
     for gr in G.rows():
         rows.append("| %s | %s | %s | %s | %s |" % (gr["rule"], gr["item"], gr["measured"], gr["limit"],

@@ -38,13 +38,13 @@
 | A.8 IN strip: pad edge to pins 1/2/5 | D107 pad 1 | 2.43 mm | <= 3.0 mm | pass |
 | A.8 OUT strip: C103 pad to pins 17/18 | C103 pad 1 | 1.52 mm | <= 3.0 mm | pass |
 | A.8 IN strip: R102 N_UV pad to pin 6 (design 2.1 mm) | R102 | 2.09 mm | information | info |
-| A.8 ILIM node within 5 mm of U101 pins 7-13 (pad to pin, centre to centre; D-55) | R101.1 -> U101.10 | 3.73 mm | <= 5 mm | pass |
-| A.8 dVdT node within 5 mm of U101 pins 7-13 (pad to pin, centre to centre; D-55) | C101.1 -> U101.9 | 4.59 mm | <= 5 mm | pass |
-| A.8 OVP node within 5 mm of U101 pins 7-13 (pad to pin, centre to centre; D-55) | R103.2 -> U101.7 | 4.60 mm | <= 5 mm | pass |
-| A.8 OVP node within 5 mm of U101 pins 7-13 (pad to pin, centre to centre; D-55) | R104.1 -> U101.7 | 2.31 mm | <= 5 mm | pass |
+| A.8 ILIM node within 5 mm of U101 pins 7-13 (pad to pin, centre to centre; D-55) | R101.1 -> U101.10 | 4.09 mm | <= 5 mm | pass |
+| A.8 dVdT node within 5 mm of U101 pins 7-13 (pad to pin, centre to centre; D-55) | C101.1 -> U101.9 | 4.28 mm | <= 5 mm | pass |
+| A.8 OVP node within 5 mm of U101 pins 7-13 (pad to pin, centre to centre; D-55) | R103.2 -> U101.7 | 3.58 mm | <= 5 mm | pass |
+| A.8 OVP node within 5 mm of U101 pins 7-13 (pad to pin, centre to centre; D-55) | R104.1 -> U101.7 | 3.69 mm | <= 5 mm | pass |
 | A.8 IMON node within 5 mm of U101 pins 7-13 (pad to pin, centre to centre; D-55) | R105.1 -> U101.13 | 3.26 mm | <= 5 mm | pass |
 | A.8 IMON node within 5 mm of U101 pins 7-13 (pad to pin, centre to centre; D-55) | R129.1 -> U101.13 | 2.80 mm | <= 5 mm | pass |
-| A.8 N_UV: R103 to U101 pin 6 (information; pin 6 is outside pins 7-13) | R103.1 -> U101.6 | 4.64 mm | information | info |
+| A.8 N_UV: R103 to U101 pin 6 (information; pin 6 is outside pins 7-13) | R103.1 -> U101.6 | 3.31 mm | information | info |
 | A.8 (r9-3) R106s as near to U101 pin 14 as the courtyard check allows (D-55) | R106s.1 -> U101.14 | 4.31 mm | <= 5 mm (target; r6 pocket figure) | pass |
 | D-55 (B-1, m-4) ratsnest edges crossing the CHG +x pin column (MST per net, straight line) | none | 0 edges | 0 | pass |
 | D-20 window y 30.8-66.86 and >= 10 mm from the MB 5V copper rim (preferred; exemption if outside) | U102 | inside | inside | pass |
@@ -61,8 +61,8 @@
 | D-20 window y 30.8-66.86 and >= 10 mm from the MB 5V copper rim (preferred; exemption if outside) | R112 | inside | inside | pass |
 | D-20 window y 30.8-66.86 and >= 10 mm from the MB 5V copper rim (preferred; exemption if outside) | R115 | inside | inside | pass |
 | D-20 window y 30.8-66.86 and >= 10 mm from the MB 5V copper rim (preferred; exemption if outside) | R102 | outside: courtyard x 42.60-44.49, y 56.09-59.43 | inside | exemption (D-20) |
-| D-20 window y 30.8-66.86 and >= 10 mm from the MB 5V copper rim (U101 network and CHG_IIN filter) | R103 | inside | inside | pass |
-| D-20 window y 30.8-66.86 and >= 10 mm from the MB 5V copper rim (U101 network and CHG_IIN filter) | R104 | outside: courtyard x 44.46-47.40, y 63.48-64.92 | inside | listed exemption: U101 network, A.8 <= 5 mm (D-55) |
+| D-20 window y 30.8-66.86 and >= 10 mm from the MB 5V copper rim (U101 network and CHG_IIN filter) | R103 | outside: courtyard x 44.46-47.40, y 63.48-64.92 | inside | listed exemption: U101 network, A.8 <= 5 mm (D-55, D-56) |
+| D-20 window y 30.8-66.86 and >= 10 mm from the MB 5V copper rim (U101 network and CHG_IIN filter) | R104 | inside | inside | pass |
 | D-20 window y 30.8-66.86 and >= 10 mm from the MB 5V copper rim (U101 network and CHG_IIN filter) | R129 | outside: courtyard x 44.46-47.40, y 66.68-68.12 | inside | listed exemption: U101 network, A.8 IMON <= 5 mm (D-55) |
 | D-20 window y 30.8-66.86 and >= 10 mm from the MB 5V copper rim (U101 network and CHG_IIN filter) | C129 | inside | inside | pass |
 | D-35 / D-36 logic-IC pads within 2.0 mm of the divider tops (metric, F.Cu pads) | none | 0 pads | metric: lower is better (D-36) | info |
@@ -83,7 +83,16 @@
 | H.23(e) successor: top-side courtyard booking (KiCad courtyards, information) | top | 911.5 of 4077.8 mm2 = 22.4 % | <= 75 % target | info |
 | D-20 every via tented on both sides | board setup | front True, back True | both tented | pass |
 | A.8 U101 thermal pad >= 9 vias 0.3 mm (D-40 exempt from D-37) | U101 | 9 vias | >= 9 | pass |
-| D-40 / A.8 U101 exposed-pad paste apertures clear of every via drill (window pane; D-55) | U101.25 | 4 apertures; smallest gap to a drill 0.274 mm; coverage 13.7 % | gap > 0; coverage TODO(verify: SLVSE94G section 11, stencil vendor) | pass |
+| D-40 / A.8 U101 exposed-pad paste apertures clear of every via drill (window pane; D-55) | U101.25 | 4 apertures; smallest gap to a drill 0.151 mm; coverage 25.0 % | gap >= 0.15 mm (D-56, N-6); coverage TODO(verify: SLVSE94G section 11, stencil vendor) | pass |
+| D-56 (r9b N-7) F.Cu escape: a 0.1524 mm track leaves the pad to a same-net pad or a 0.6 mm via site (hard pours, other-net copper, keep-outs) | U101.6 /N_UV | free 3454.00 mm2; reaches R102.2, R103.1; via site (44.51, 63.20), 1.83 mm from the pad | reaches a same-net pad/via or holds a via site | pass |
+| D-56 (r9b N-7) F.Cu escape: a 0.1524 mm track leaves the pad to a same-net pad or a 0.6 mm via site (hard pours, other-net copper, keep-outs) | U101.7 /N_OV | free 3453.62 mm2; reaches R103.2, R104.1; via site (44.51, 63.20), 0.83 mm from the pad | reaches a same-net pad/via or holds a via site | pass |
+| D-56 (r9b N-7) F.Cu escape: a 0.1524 mm track leaves the pad to a same-net pad or a 0.6 mm via site (hard pours, other-net copper, keep-outs) | U101.9 /N_DVDT | free 3451.96 mm2; reaches C101.1; via site (44.43, 63.48), 0.35 mm from the pad | reaches a same-net pad/via or holds a via site | pass |
+| D-56 (r9b N-7) F.Cu escape: a 0.1524 mm track leaves the pad to a same-net pad or a 0.6 mm via site (hard pours, other-net copper, keep-outs) | U101.10 /N_ILIM | free 3451.84 mm2; reaches R101.1; via site (44.53, 63.40), 0.61 mm from the pad | reaches a same-net pad/via or holds a via site | pass |
+| D-56 (r9b N-7) F.Cu escape: a 0.1524 mm track leaves the pad to a same-net pad or a 0.6 mm via site (hard pours, other-net copper, keep-outs) | U101.13 /N_IMON | free 3453.62 mm2; reaches R105.1, R129.1; via site (43.03, 66.38), 0.35 mm from the pad | reaches a same-net pad/via or holds a via site | pass |
+| D-56 (r9b N-7) F.Cu escape: a 0.1524 mm track leaves the pad to a same-net pad or a 0.6 mm via site (hard pours, other-net copper, keep-outs) | U101.14 /N_FLT | free 3451.84 mm2; reaches R106s.1; via site (42.53, 66.38), 0.35 mm from the pad | reaches a same-net pad/via or holds a via site | pass |
+| D-56 (r9b N-7) F.Cu escape: a 0.1524 mm track leaves the pad to a same-net pad or a 0.6 mm via site (hard pours, other-net copper, keep-outs) | R102.2 /N_UV | free 3454.00 mm2; reaches R103.1, U101.6; via site (44.87, 58.05), 0.69 mm from the pad | reaches a same-net pad/via or holds a via site | pass |
+| D-56 (r9b N-7) F.Cu escape: a 0.1524 mm track leaves the pad to a same-net pad or a 0.6 mm via site (hard pours, other-net copper, keep-outs) | C102c.2 /GND | free 3597.71 mm2; reaches C101.2, C102a.2, C102b.2, C106.2 +57; via site (44.87, 58.05), 2.63 mm from the pad | reaches a same-net pad/via or holds a via site | pass |
+| D-56 (r9b N-7) F.Cu escape: a 0.1524 mm track leaves the pad to a same-net pad or a 0.6 mm via site (hard pours, other-net copper, keep-outs) | C103.2 /GND | free 3.85 mm2; reaches via(38.08,62.90); via site (38.38, 62.60), 0.83 mm from the pad | reaches a same-net pad/via or holds a via site | pass |
 | H.23(a) successor: plug-on outline (D-39) | Edge.Cuts | 4 vertices, 48.416 x 87.000 mm, area 4212.19 mm2, KiCad Y 6.00-93.00 | 48.416 x 87.000 mm, 4212.19 mm2 | pass |
 | H.23(a) successor: courtyard inset 0.5 mm (A.8) | INSET | 4077.78 mm2 | information | info |
 | D-51 (operator ruling 2026-11-12 (a)): CR -x edge x 18.584 clears the terminal body in plan | J-BL (CUI_TB005_-762-03BE) | body +x 16.130 -> gap 2.454 mm; silk outer +x 16.194 -> 2.390 mm; keep-out +x 16.380 -> 2.204 mm; y overlap with the outline 22.86 mm | gap > 0 (no plan overlap) | pass |

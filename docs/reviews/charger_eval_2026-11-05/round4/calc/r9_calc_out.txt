@@ -196,6 +196,19 @@ R9.H24(c) Figures quoted in the proposed IO CSV rows of design-document section 
   row 35     carrier R106 not fitted                          confirmed    no R106 on cr.net (R106s is the FLT series resistor)
 
 ==============================================================================================================
+R9.H25 VCHGIN L3 strap as the only J1.10 feed: IPC-2152 inner-layer width, the J1.10 joint and the via count (r9-15, D-56)
+==============================================================================================================
+  basis: I = 2.41 A (eFuse I_OL max, H.5), rise 10 degC (A.8 Copper, H.22(c)), inner copper 17.5 um (D-29)
+  required cross-section: IPC-2152 baseline fit 87.4 mil2 = 0.0564 mm2 -> width 3.221 mm at 17.5 um; comparison IPC-2221 internal (k 0.024) 142.6 mil2 -> 5.258 mm, IPC-2221 external (k 0.048) 54.8 mil2 -> 2.021 mm
+  neck D-55 strap, y 60.15 (pad 10 also fed on L1)                    1.995 mm =  54.1 mil2: IPC-2152 1.89 A at 10 degC, rise 17.7 degC at 2.41 A; IPC-2221 internal 1.19 A -> FAIL
+  neck review r9b trial 4, y 59.55                                    2.596 mm =  70.4 mil2: IPC-2152 2.16 A at 10 degC, rise 12.9 degC at 2.41 A; IPC-2221 internal 1.44 A -> FAIL
+  neck D-56 strap, y 58.50 (board-measured section 3.645 mm at x 42.75) 3.645 mm =  98.9 mil2: IPC-2152 2.57 A at 10 degC, rise 8.7 degC at 2.41 A; IPC-2221 internal 1.85 A -> pass
+  J1.10 joint on In2: thermal relief 4 x 0.6 mm = 2.40 mm of spoke (FAIL; superseded); solid connection (D-56): barrel perimeter pi x 1.10 mm = 3.456 mm -> pass (short-conductor case; the long-conductor chart is conservative here)
+  vias C102c end, D-55 (39.75, 60.35 / 61.05)       2 x 1.33 A = 2.67 A (1.11 x the basis, equal sharing ASSUMPTION) -> pass
+  vias C102c end, D-56 (+ 39.75, 59.65)             3 x 1.33 A = 4.00 A (1.66 x the basis, equal sharing ASSUMPTION) -> pass
+  per via: drill 0.30 mm, plating 20 um, barrel 27.3 mil2 (0.0176 mm2), IPC-2152 fit 1.33 A at 10 degC; the C102b-end vias (6) carry the C102b branch only, not the J1.10 DC path
+
+==============================================================================================================
 R9 retired rows (whole subject removed in r9; history only, no re-run)
 ==============================================================================================================
   H.3 BT_OK trip                                   U104, R141-R144, taps T8/T9 removed (r9-1)

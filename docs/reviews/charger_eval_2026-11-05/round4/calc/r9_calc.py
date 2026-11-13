@@ -11,6 +11,8 @@ the removed parts stripped, from the r9 CR netlist `hardware/charger_evm_r8/cr/c
   H.24(d) (r9-12, check-in 2 ruling R2) the R132 / R131B series value for J.2 item 70(a) option (a).
 It also adds R9.H21(r) (r9-12, audit run 002 ADV-R2-04 and ADV-R2-05): the FR-41(iii) ramp-step schedule and cadence
 at 100 and 400 kHz, the FR-41(vii) hold-deadline resolution on the FR-45 tick grid and the T4 edge-to-step-3 restore deadline.
+It also adds R9.H25 (r9-15, LAYOUT_DECISIONS D-56): the VCHGIN L3 strap as the only J1.10 feed, its IPC-2152 inner-layer
+width at 2.41 A and a 10 degC rise, the J1.10 joint on In2 and the L3-to-L1 via count at the C102c end.
 
 The script does not import or modify round3/calc/r3_calc.py or round4/calc/r7_calc.py: importing r3_calc.py would rewrite
 round3/calc/r3_calc_out.json, and r7_calc.py parses the .brd. The models used here are copied from those scripts, with the
@@ -984,6 +986,103 @@ def sec_h24c(v_cr, vol6, fcc, en):
 
 
 # ======================================================================================================================
+# H.25 (r9-15, LAYOUT_DECISIONS D-56, placement review r9b N-1/N-2): the VCHGIN L3 strap as the only J1.10 feed
+# ======================================================================================================================
+H25_I = 2.41            # A: the VCHGIN current basis, the eFuse I_OL maximum (H.5; A.8 Copper "VCHGIN ... <= 2.41 A")
+H25_DT = 10.0           # degC: the A.8 Copper / H.22(c) rise basis of the CR power copper ("at 10 C rise")
+H25_T_IN = 0.0175       # mm: 0.5 oz inner copper, 17.5 um (D-29 and stackup_fabrules_decisions_2026-11-12.md section 3:
+                        # OSH Park 4-layer, 1 oz outer / 0.5 oz inner); finished thickness TODO(verify: OSH Park)
+H25_MIL2 = 0.0254 ** 2  # mm2 per mil2
+# narrowest strap sections on In2.Cu (vertical cut through the filled VCHGIN_L3_strap at the U101 thermal-via column,
+# where the GND via at (42.80, 62.55) cuts the top edge at y 62.1455), board-measured with pcbnew on the D-56 pour stage
+H25_NECKS = (("D-55 strap, y 60.15 (pad 10 also fed on L1)", 62.1455 - 60.15),
+             ("review r9b trial 4, y 59.55", 62.1455 - 59.55),
+             ("D-56 strap, y 58.50 (board-measured section 3.645 mm at x 42.75)", 3.645))
+H25_THERMAL = (4, 0.6)  # superseded J1.10 thermal relief on In2: spokes x width (gen/route.py add_zone)
+H25_DRILL = 1.10        # mm: J1 CHG hole (A.8)
+H25_VIA = (0.30, 0.020)  # via drill and barrel plating (IPC-6012 class 2 minimum average 20 um, ASSUMPTION;
+                         # TODO(verify: OSH Park plating thickness))
+H25_VIAS = (("C102c end, D-55 (39.75, 60.35 / 61.05)", 2), ("C102c end, D-56 (+ 39.75, 59.65)", 3))
+
+
+def ipc2152_area_mil2(i, dt):
+    """IPC-2152 baseline chart (Figure 5-1, no modifiers) in a published curve-fit form; area in mil2.
+    TODO(verify: IPC-2152 Figure 5-1 chart reading against this fit). No board-thickness or plane modifier is credited
+    (the L2 GND plane lies about 0.2 mm from L3 and would lower the rise), so the figure is conservative."""
+    return (117.555 * dt ** -0.913 + 1.15) * i ** (0.84 * dt ** -0.018 + 1.159)
+
+
+def ipc2152_current(a_mil2, dt):
+    lo, hi = 0.0, 100.0
+    for _ in range(100):
+        m = 0.5 * (lo + hi)
+        lo, hi = (m, hi) if ipc2152_area_mil2(m, dt) < a_mil2 else (lo, m)
+    return lo
+
+
+def ipc2152_rise(a_mil2, i):
+    lo, hi = 0.1, 200.0
+    for _ in range(100):
+        m = 0.5 * (lo + hi)
+        lo, hi = (lo, m) if ipc2152_area_mil2(i, m) < a_mil2 else (m, hi)
+    return hi
+
+
+def ipc2221_current(a_mil2, dt, k):
+    return k * dt ** 0.44 * a_mil2 ** 0.725
+
+
+def sec_h25():
+    head("R9.H25 VCHGIN L3 strap as the only J1.10 feed: IPC-2152 inner-layer width, the J1.10 joint and the via count "
+         "(r9-15, D-56)")
+    a_req = ipc2152_area_mil2(H25_I, H25_DT)
+    w_req = a_req * H25_MIL2 / H25_T_IN
+    a_2221i = (H25_I / (0.024 * H25_DT ** 0.44)) ** (1 / 0.725)
+    a_2221e = (H25_I / (0.048 * H25_DT ** 0.44)) ** (1 / 0.725)
+    out("  basis: I = %.2f A (eFuse I_OL max, H.5), rise %.0f degC (A.8 Copper, H.22(c)), inner copper %.1f um (D-29)"
+        % (H25_I, H25_DT, H25_T_IN * 1e3))
+    out("  required cross-section: IPC-2152 baseline fit %.1f mil2 = %.4f mm2 -> width %.3f mm at %.1f um; comparison "
+        "IPC-2221 internal (k 0.024) %.1f mil2 -> %.3f mm, IPC-2221 external (k 0.048) %.1f mil2 -> %.3f mm"
+        % (a_req, a_req * H25_MIL2, w_req, H25_T_IN * 1e3, a_2221i, a_2221i * H25_MIL2 / H25_T_IN, a_2221e,
+           a_2221e * H25_MIL2 / H25_T_IN))
+    necks = []
+    for name, w in H25_NECKS:
+        a = w * H25_T_IN / H25_MIL2
+        i_cap = ipc2152_current(a, H25_DT)
+        dt = ipc2152_rise(a, H25_I)
+        ok = w >= w_req
+        necks.append(dict(case=name, width_mm=r4(w), area_mil2=r4(a), i_cap_A=r4(i_cap), rise_at_I_degC=r4(dt),
+                          ipc2221_internal_A=r4(ipc2221_current(a, H25_DT, 0.024)), ok=ok))
+        out("  neck %-62s %.3f mm = %5.1f mil2: IPC-2152 %.2f A at %.0f degC, rise %.1f degC at %.2f A; IPC-2221 "
+            "internal %.2f A -> %s" % (name, w, a, i_cap, H25_DT, dt, H25_I, ipc2221_current(a, H25_DT, 0.024),
+                                       "pass" if ok else "FAIL"))
+    # J1.10 barrel to the strap: the copper perimeter that carries the current into L3
+    n_sp, w_sp = H25_THERMAL
+    w_th = n_sp * w_sp
+    w_solid = math.pi * H25_DRILL
+    out("  J1.10 joint on In2: thermal relief %d x %.1f mm = %.2f mm of spoke (%s; superseded); solid connection "
+        "(D-56): barrel perimeter pi x %.2f mm = %.3f mm -> %s (short-conductor case; the long-conductor chart is "
+        "conservative here)" % (n_sp, w_sp, w_th, "pass" if w_th >= w_req else "FAIL", H25_DRILL, w_solid,
+                                "pass" if w_solid >= w_req else "FAIL"))
+    # via transitions L3 -> L1 at the C102c end
+    d, t = H25_VIA
+    a_via = math.pi * ((d / 2) ** 2 - (d / 2 - t) ** 2) / H25_MIL2
+    i_via = ipc2152_current(a_via, H25_DT)
+    vias = []
+    for name, n in H25_VIAS:
+        ok = n * i_via >= H25_I
+        vias.append(dict(case=name, n=n, i_total_A=r4(n * i_via), margin=r4(n * i_via / H25_I), ok=ok))
+        out("  vias %-44s %d x %.2f A = %.2f A (%.2f x the basis, equal sharing ASSUMPTION) -> %s"
+            % (name, n, i_via, n * i_via, n * i_via / H25_I, "pass" if ok else "FAIL"))
+    out("  per via: drill %.2f mm, plating %.0f um, barrel %.1f mil2 (%.4f mm2), IPC-2152 fit %.2f A at %.0f degC; "
+        "the C102b-end vias (6) carry the C102b branch only, not the J1.10 DC path"
+        % (d, t * 1e3, a_via, a_via * H25_MIL2, i_via, H25_DT))
+    RJ["h25"] = dict(I_A=H25_I, rise_degC=H25_DT, t_inner_mm=H25_T_IN, area_req_mil2=r4(a_req), width_req_mm=r4(w_req),
+                     width_req_ipc2221_internal_mm=r4(a_2221i * H25_MIL2 / H25_T_IN), necks=necks,
+                     j110_thermal_mm=w_th, j110_solid_mm=r4(w_solid), via_A=r4(i_via), vias=vias)
+
+
+# ======================================================================================================================
 def sec_retired():
     head("R9 retired rows (whole subject removed in r9; history only, no re-run)")
     for k, why in (("H.3 BT_OK trip", "U104, R141-R144, taps T8/T9 removed (r9-1)"),
@@ -1014,6 +1113,7 @@ def main():
     sec_h24d(v_cr, i_cr_only, i_eib)
     en = sec_h24b(v_cr)
     sec_h24c(v_cr, vol6, fcc, en)
+    sec_h25()
     sec_retired()
     with open(OUT_TXT, "w", encoding="ascii", errors="replace") as f:
         f.write("\n".join(LINES) + "\n")
