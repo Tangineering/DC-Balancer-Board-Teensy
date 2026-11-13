@@ -29,30 +29,53 @@ and is not on the CR panel. Neither package has been ordered. The operator's pre
 two packages (D-50 check-in 4) took place in two parts on 2026-11-13. Operator ruling 2026-11-13 (Review 2/2: BAV199,
 strap, OSH Park (fab checks), local_6e36c3a4-f328-44cd-8c31-05ea2fa7bfa3, chat 2026-11-13) closes section 11 items 9 and
 10 and the VCHGIN half of item 2, closes the stack-up and mask-expansion parts of item 5, closes item 7 as out of scope
-and amends item 3. Apart from the VCHGOUT half of section 11 item 2 (next paragraph), no operator-review item now blocks
-the CR bare-board order. Item 3, the OSH Park policy on non-functional inner pads, stays open as an assumption that the
-operator checks when the board is submitted. The drilled-versus-finished reading of the 1.1 mm TSW holes stays open in
-item 5. It does not block the order, because a finished hole down to the 1.02 mm drawing value still gives about 0.06 mm
-of corner clearance on the 0.64 mm post (D-41). The open rest of item 16 is a parts check and does not block the order.
+and amends item 3. Operator ruling 2026-11-13 (design session, chat 2026-11-13: "Accept short necks") closes the VCHGOUT
+half of item 2 (next paragraph). No operator-review item now blocks the CR bare-board order. (**Superseded 2026-11-13:**
+"Apart from the VCHGOUT half of section 11 item 2 (next paragraph), no operator-review item now blocks the CR bare-board
+order."; the design-session ruling closes the VCHGOUT half.) (**Superseded 2026-11-13:** "Item 3, the OSH Park policy on
+non-functional inner pads, stays open as an assumption that the operator checks when the board is submitted. The
+drilled-versus-finished reading of the 1.1 mm TSW holes stays open in item 5. It does not block the order, because a
+finished hole down to the 1.02 mm drawing value still gives about 0.06 mm of corner clearance on the 0.64 mm post
+(D-41). The open rest of item 16 is a parts check and does not block the order."; restated as the list below.) Four
+items stay open, and none of them blocks the order:
 
-The one open engineering item is the VCHGOUT half of section 11 item 2, which is outside the Review 2/2 ruling. The
-copper sections of the VCHGOUT path from U101 OUT to W1 were measured on the D-62 board layout and checked against the
-3.21 A basis (`round4/calc/r9_calc.py` R9.H26). Two short necks carry the current on F.Cu only, because the In2.Cu
-`VCHGOUT_L3_strap` ends at x 36.90: 1.469 mm over about 1.75 mm (U101 OUT pins to C103) and 2.082 mm over about 1.25 mm
-(C103 ground pad and the D-56 /GND via notch). On the IPC-2152 long-conductor basis, these necks carry 2.30 A and 2.75 A
-at a 10 C rise and fail the 3.21 A basis. Whether this blocks the order needs an operator ruling: accept the two short
-necks, widen the copper, or measure the rise on the bench (section 11 item 2). (**Superseded 2026-11-13:** "The VCHGOUT
-half of item 2 (the In2.Cu `VCHGOUT_L3_strap` at 3.21 A) is outside the ruling and stays open. No current check of the
-VCHGOUT path at 3.21 A is on record, so it is not established whether this half blocks the order."; R9.H26 measures the
-path.)
+- item 3, the OSH Park policy on non-functional inner pads, as an assumption that the operator checks when the board
+  is submitted;
+- the drilled-versus-finished reading of the 1.1 mm TSW holes under item 5, because a finished hole down to the
+  1.02 mm drawing value still gives about 0.06 mm of corner clearance on the 0.64 mm post (D-41);
+- the open rest of item 16, a parts check on the cable;
+- the quantity "5 (E BOM)" in the package README against the OSH Park multiples of 3 (second paragraph below).
+
+The VCHGOUT half of section 11 item 2 is closed by acceptance. The copper sections of the VCHGOUT path from U101 OUT
+to W1 were measured on the D-62 board layout and checked against the 3.21 A basis (`round4/calc/r9_calc.py` R9.H26).
+Two short necks carry the current on F.Cu only, because the In2.Cu `VCHGOUT_L3_strap` ends at x 36.90: 1.469 mm over
+about 1.75 mm (U101 OUT pins to C103) and 2.082 mm over about 1.25 mm (C103 ground pad and the D-56 /GND via notch).
+On the IPC-2152 long-conductor basis, these necks carry 2.30 A and 2.75 A at a 10 C rise, and the rise at 3.21 A is
+21.9 C and 14.3 C. The operator, asked whether to accept the two short necks, widen the copper or measure the rise on
+the bench, ruled "Accept short necks" (operator ruling 2026-11-13, design session, chat 2026-11-13). The two necks
+stay as they are, and the board does not change. The long-conductor chart is expected to be conservative for necks
+this short, because heat spreads into the wider pour. However, no short-neck calculation is on record, so the
+acceptance rests on the ruling and not on a passed check (section 11 item 2). (**Superseded 2026-11-13:** "The one open
+engineering item is the VCHGOUT half of section 11 item 2, which is outside the Review 2/2 ruling. The copper sections
+of the VCHGOUT path from U101 OUT to W1 were measured on the D-62 board layout and checked against the 3.21 A basis
+(`round4/calc/r9_calc.py` R9.H26). Two short necks carry the current on F.Cu only, because the In2.Cu `VCHGOUT_L3_strap`
+ends at x 36.90: 1.469 mm over about 1.75 mm (U101 OUT pins to C103) and 2.082 mm over about 1.25 mm (C103 ground pad
+and the D-56 /GND via notch). On the IPC-2152 long-conductor basis, these necks carry 2.30 A and 2.75 A at a 10 C rise
+and fail the 3.21 A basis. Whether this blocks the order needs an operator ruling: accept the two short necks, widen the
+copper, or measure the rise on the bench (section 11 item 2)."; operator ruling 2026-11-13 (design session) accepts the
+two necks.) (**Superseded 2026-11-13:** "The VCHGOUT half of item 2 (the In2.Cu `VCHGOUT_L3_strap` at 3.21 A) is outside
+the ruling and stays open. No current check of the VCHGOUT path at 3.21 A is on record, so it is not established whether
+this half blocks the order."; R9.H26 measures the path.)
 
 One follow-up that the Review 2/2 session raised has no operator answer and stays open: the fab package README gives a
 quantity of "5 (E BOM)", but OSH Park sells boards in multiples of 3. The D-62 re-export states the multiples of 3 in
 the OSH Park row of the README and keeps the quantity until the operator rules on it. The same row now states the
 confirmed OSH Park stack-up (section 11 item 5). The outline is the D-62 outline (operator ruling 2026-11-13, route-race
 request R9-04: edges at 0, 30, 45 or 60 degrees to the axes and 1.0 mm fillets), and the status table, the
-constraint-check counts and `fab/cr_2026-11-13/` are for the D-62 board. The status line of the package README still
-names the D-60 outline and 19 F.Fab references; it is corrected at the next re-export. (**Superseded 2026-11-13:** "Two
+constraint-check counts and `fab/cr_2026-11-13/` are for the D-62 board. The status line of the package README names
+the D-62 outline (corrected in `b3437ef`). (**Superseded 2026-11-13:** "The status line of the package README still
+names the D-60 outline and 19 F.Fab references; it is corrected at the next re-export."; `b3437ef` corrects the
+status line.) (**Superseded 2026-11-13:** "Two
 follow-ups that the Review 2/2 session raised have no operator answer and stay open without a change. First, the fab
 package README gives a quantity of 5, but OSH Park sells boards in multiples of 3. Second, its OSH Park row refers to
 'the 1 oz fallback', but the OSH Park 4-layer stack-up already is 1 oz outer and 0.5 oz inner copper. In addition, a
@@ -413,9 +436,11 @@ OSH Park 2-layer 6/6 mil, OSH Park 4-layer 5/5 mil, PCBWay 6/6 mil on 1 oz or 2 
 therefore uses `tools/pcb/fab_rules/fab_4layer_5mil_oshpark_pcbway.kicad_dru` (track and clearance 0.127 mm, all
 other rules unchanged) and **1 oz outer copper**, which A.8 admits as the Copper fallback with power pours >= 2.0
 mm wide. OSH Park 4-layer is 1 oz outer / 0.5 oz inner. The L3/L4 straps on 0.5 oz inner copper need a width
-check for 2.41 A and 3.21 A: TODO(verify: IPC-2152 internal-layer chart). (**Amended 2026-11-13:** closed for the
-VCHGIN strap at 2.41 A by operator ruling 2026-11-13 (Review 2/2), section 11 item 2; the VCHGOUT L3 strap check at
-3.21 A stays open there.) The EIB stays at 6/6 mil.
+check for 2.41 A and 3.21 A: TODO(verify: IPC-2152 internal-layer chart). (**Amended 2026-11-13:** closed for the VCHGIN
+strap at 2.41 A by operator ruling 2026-11-13 (Review 2/2), section 11 item 2; the VCHGOUT L3 strap check at 3.21 A
+stays open there.) (**Amended 2026-11-13:** the VCHGOUT half of section 11 item 2 is closed by acceptance of the two
+short F.Cu necks, operator ruling 2026-11-13 (design session, chat 2026-11-13: "Accept short necks").) The EIB stays at
+6/6 mil.
 
 **Amended 2026-11-12** (`decisions_2026-11-12/stackup_fabrules_decisions_2026-11-12.md` section 3). The CR is built at
 OSH Park only, and a new OSH Park-only CR rule file replaces the shared OSH Park/PCBWay file:
@@ -480,8 +505,9 @@ C102c). This strap is not to be cut back: it keeps C102b within its 2 nH loop bu
 
 **Kept, conditional (2026-11-12).** The rule stays. It is re-checked once the eFuse cluster is re-placed on the new
 outline (D-09). An L3 strap keeps the IPC-2152 inner-layer check of D-29 open. (**Amended 2026-11-13:** the check is
-closed for the VCHGIN strap by operator ruling 2026-11-13 (Review 2/2), section 11 item 2; the VCHGOUT L3 strap
-check stays open there.)
+closed for the VCHGIN strap by operator ruling 2026-11-13 (Review 2/2), section 11 item 2; the VCHGOUT L3 strap check
+stays open there.) (**Amended 2026-11-13:** the VCHGOUT half of section 11 item 2 is closed by acceptance of the two
+short F.Cu necks, operator ruling 2026-11-13 (design session, chat 2026-11-13: "Accept short necks").)
 
 **Amended 2026-11-13 (D-56).** The L1 pour no longer reaches pad 10; the L3 strap is the only pad-10 path. It is
 widened to a 3.645 mm narrowest section, joins pad 10 solid and has three vias at the C102c end; design-document row
@@ -1295,9 +1321,11 @@ local_923ffa1c-f985-43ad-8510-7faea2e5f5d7, chat 2026-11-13), D-46; the THT-tail
   J1.10 joint on In2 becomes solid, because four 0.6 mm thermal spokes give 2.40 mm. A third C102c-end via gives
   4.00 A of via capacity (two vias: 2.67 A). The IPC-2152 chart reading stays TODO(verify: IPC-2152 Figure 5-1).
   (**Amended 2026-11-13:** closed for the VCHGIN strap by operator ruling 2026-11-13 (Review 2/2), section 11 item 2;
-  the VCHGOUT L3 strap check stays open there.) The IPC-2221 internal formula still fails (1.85 A). The solid joint adds heat demand when the TSW tail at pad 10 is
-  soldered; the strap is 0.5 oz and about 51 mm2. The netlist is unchanged: the date-stripped `cr/cr.net` sha256 is
-  `da64c37a...f484` and `gen/netlist.py` is `f78b38f1...abb4`; no pad number or net changed.
+  the VCHGOUT L3 strap check stays open there.) (**Amended 2026-11-13:** the VCHGOUT half of section 11 item 2 is closed
+  by acceptance, operator ruling 2026-11-13 (design session, chat 2026-11-13: "Accept short necks").) The IPC-2221
+  internal formula still fails (1.85 A). The solid joint adds heat demand when the TSW tail at pad 10 is soldered; the
+  strap is 0.5 oz and about 51 mm2. The netlist is unchanged: the date-stripped `cr/cr.net` sha256 is `da64c37a...f484`
+  and `gen/netlist.py` is `f78b38f1...abb4`; no pad number or net changed.
 
 Table D-56. Findings of the r9b re-review and the applied fixes.
 
@@ -1481,12 +1509,17 @@ request R9-04).**
   R147, R184-R189, U110 and W3. C110 is back on the silkscreen (D-59, D-60). `gen/sync_fields.py` wrote the J102 part
   number 43045-1012 and the cable 2147561101 (D-41 Review 1/2 ruling). The largest D-20 stitching gap is 3.51 mm at
   (43.0, 44.8) in the constraint check, against 3.54 mm (`stitch_gaps.py`, sampling at 0.50 mm, reports 3.52 mm). The
+  status line of the package README names the D-62 outline (corrected in `b3437ef`). (**Superseded 2026-11-13:** "The
   status line of the package README still names the D-60 outline and 19 F.Fab references; it is corrected at the next
-  re-export. The fab package `fab/cr_2026-11-13/` and the figures were re-exported. The size row of the package README
-  describes the D-62 outline. Its OSH Park row states the confirmed stack-up (section 11 item 5) and that OSH Park sells
-  boards in multiples of 3; the quantity stays "5 (E BOM)" until the operator rules on it. No part, track or via moved
-  in the trim itself. Reversal: restore `cr/cr.kicad_pcb` and the `gen/cr_geometry.py` outline and hole data of the D-61
-  board (`437d2d7`, lineage `b8e3762`) and run `gen/export.sh` again.
+  re-export."; `b3437ef` corrects the status line.) The fab package `fab/cr_2026-11-13/` and the figures were
+  re-exported. The size row of the package README describes the D-62 outline. Its OSH Park row states the confirmed
+  stack-up (section 11 item 5) and that OSH Park sells boards in multiples of 3; the quantity stays "5 (E BOM)" until
+  the operator rules on it. No part, track or via moved in the trim itself. Reversal: restore `cr/cr.kicad_pcb` and the
+  `gen/cr_geometry.py` outline and hole data of the D-61 board (`437d2d7`, lineage `b8e3762`) and run `gen/export.sh`
+  again. **Amended 2026-11-13:** on the D-62 board, two F.Cu-only necks of the VCHGOUT path fail the IPC-2152
+  long-conductor basis at 3.21 A (R9.H26: 21.9 C and 14.3 C). Operator ruling 2026-11-13 (design session, chat
+  2026-11-13: "Accept short necks") accepts them, so no part, track, via or pour changes, and the D-62 package stays the
+  order package (section 11 item 2).
 
 ## 9. Verification
 
@@ -1583,8 +1616,11 @@ Layout and fabrication:
 1. TODO(verify: T-A-08 MS4b reading) for U120/U121 at x > 39.53 (D-11). **Retired 2026-11-12:** U121 is removed and
    the r7 band retires; the successor is TODO(measure: operator, MS4) for the heat sources under the new outline (D-11).
 2. **Amended 2026-11-13** (operator ruling 2026-11-13 (Review 2/2: BAV199, strap, OSH Park (fab checks),
-   local_6e36c3a4-f328-44cd-8c31-05ea2fa7bfa3, chat 2026-11-13); D-29, D-56, D-57): the VCHGIN half is closed and the
-   VCHGOUT half stays open. For the VCHGIN half, the operator accepted the IPC-2152
+   local_6e36c3a4-f328-44cd-8c31-05ea2fa7bfa3, chat 2026-11-13); D-29, D-56, D-57): the VCHGIN half is closed.
+   **Closed 2026-11-13** for the VCHGOUT half by acceptance (operator ruling 2026-11-13 (design session, chat
+   2026-11-13): "Accept short necks"; see the end of this item). Both halves are closed. (**Superseded 2026-11-13:**
+   "the VCHGIN half is closed and the VCHGOUT half stays open."; the design-session ruling closes the VCHGOUT half.)
+   For the VCHGIN half, the operator accepted the IPC-2152
    reading for the In2.Cu VCHGIN strap ("Accept, use IPC-2152") and the 0.5 oz inner copper basis ("Yes"). At
    17.5 um the IPC-2152 baseline fit requires 87.4 mil2, that is a 3.221 mm section. The D-57 strap section of
    4.174 mm (113.2 mil2) gives 2.75 A at a 10 C rise, and the rise at 2.41 A is 7.4 C. The OSH Park 4-layer page
@@ -1609,10 +1645,17 @@ Layout and fabrication:
 
    The IPC-2152 chart is a long-conductor basis. A neck of 1-2 mm spreads heat into the wide pour on both sides, so
    the chart is expected to be conservative for the two failing necks. However, no short-neck method is on record,
-   so the size of that margin is not established. The VCHGOUT half stays open and needs an operator ruling: accept
-   the two short necks, widen the /VCHGOUT copper at the two necks (a routing change; the x 37.50-38.75 neck is
+   so the size of that margin is not established. The operator was asked how to handle the two short VCHGOUT necks,
+   with the options to accept them, to widen the /VCHGOUT copper or to measure the rise on the bench, and ruled
+   "Accept short necks" (operator ruling 2026-11-13, design session, chat 2026-11-13). The VCHGOUT half closes by
+   acceptance. The two F.Cu-only necks (x 39.25-41.00, 1.469 mm, rise 21.9 C at 3.21 A; x 37.50-38.75, 2.082 mm, rise
+   14.3 C) stay as they are, and the board does not change. The acceptance rests on the ruling and not on a passed
+   check, because no short-neck calculation is on record. The TODO(ruling: operator) and TODO(measure: operator)
+   markers of this half close. (**Superseded 2026-11-13:** "The VCHGOUT half stays open and needs an operator ruling:
+   accept the two short necks, widen the /VCHGOUT copper at the two necks (a routing change; the x 37.50-38.75 neck is
    bounded by the D-56 /GND via notch), or measure the temperature rise on the bench at 3.21 A (D-22, D-29).
-   TODO(ruling: operator) accept the two F.Cu necks or widen them, or TODO(measure: operator) the rise at 3.21 A.
+   TODO(ruling: operator) accept the two F.Cu necks or widen them, or TODO(measure: operator) the rise at 3.21 A.";
+   operator ruling 2026-11-13 (design session) accepts the two necks.)
    (**Superseded 2026-11-13:** "and no check of it is on record. The VCHGOUT half stays
    open: TODO(verify: IPC-2152) the In2.Cu VCHGOUT_L3_strap at 3.21 A, or a check that the 1 oz L1 VCHGOUT pour alone
    carries 3.21 A (D-22, D-29)."; R9.H26 measures the path.)

@@ -863,26 +863,26 @@ Nothing is ordered, and no price, stock or SKU is verified on a live vendor page
 
 ### 9.3 CR fab package
 
-The CR package `fab/cr_2026-11-13/` is generated from the routed board of section 9.1 and is not ordered; it awaits
-the operator's pre-order review (section 11). The package was re-exported in `89c2d72` from the D-62 board (trimmed,
-stitched, straightened and gap-filled). (**Superseded 2026-11-13, D-61:** "The package was re-exported from the
-trimmed board after D-60".) The size row of the package README section 1 gives the D-62 outline: 10 corners with
-1.0 mm fillets, edges at 0/30/45/60/90/120/135/150 degrees, the 40.02 x 64.81 mm bounding box and the 2327.7 mm2 area.
-The OSH Park quote is outside the scope of the project (section 11, Table 11.1). The OSH Park row of the package README
-states the confirmed 4-layer stack-up and that OSH Park sells boards in multiples of 3; the quantity stays "5 (E BOM)"
-(section 11 item 26). (**Superseded 2026-11-13, D-62:** "The package was re-exported in `437d2d7` from the trimmed,
-stitched, straightened and gap-filled board of D-61"; "The D-60 outline and holes are unchanged by D-61. The size row
-of the package README section 1 gives the convex 18-vertex outline, the 40.02 x 64.81 mm bounding box and the
-2241.6 mm2 area, which is the input for the OSH Park quote".) The status line of the package README, written by
-`gen/fab_readme.py`, still names the D-60 trim and 19 F.Fab references; the size row of the package
-README and this document give the current values. The NPTH drill file carries tool T2 at 3.70 mm for the four 6-32 holes. The fab is OSH
-Park, which makes bare boards only, and the board uses the OSH Park-only rule file
-`tools/pcb/fab_rules/fab_4layer_oshpark_only.kicad_dru`. The package holds the Gerber and Excellon files and the OSH
-Park upload `kikit_oshpark/gerbers.zip`. It also holds the assembly files (`assembly/cr-pos.csv`, `assembly/cr-bom.csv`,
-`assembly/cr_ibom.html`), the schematic, layer PDFs, STEP model,
-netlist, and the ERC, DRC and KiKit reports. The KiKit JLCPCB and PCBWay assembly presets wrote no `bom.csv` for the
-CR (an `int()` parse error, probably on the letter-suffixed references). This failure does not affect an OSH Park
-bare-board order. `assembly/cr-bom.csv` is the assembly BOM. The package README is `fab/cr_2026-11-13/README.md`.
+The CR package `fab/cr_2026-11-13/` is generated from the routed board of section 9.1 and is not ordered; it awaits the
+operator's pre-order review (section 11). The package was re-exported in `89c2d72` from the D-62 board (trimmed,
+stitched, straightened and gap-filled). (**Superseded 2026-11-13, D-61:** "The package was re-exported from the trimmed
+board after D-60".) The size row of the package README section 1 gives the D-62 outline: 10 corners with 1.0 mm fillets,
+edges at 0/30/45/60/90/120/135/150 degrees, the 40.02 x 64.81 mm bounding box and the 2327.7 mm2 area. The OSH Park
+quote is outside the scope of the project (section 11, Table 11.1). The OSH Park row of the package README states the
+confirmed 4-layer stack-up and that OSH Park sells boards in multiples of 3; the quantity stays "5 (E BOM)" (section 11
+item 26). (**Superseded 2026-11-13, D-62:** "The package was re-exported in `437d2d7` from the trimmed, stitched,
+straightened and gap-filled board of D-61"; "The D-60 outline and holes are unchanged by D-61. The size row of the
+package README section 1 gives the convex 18-vertex outline, the 40.02 x 64.81 mm bounding box and the 2241.6 mm2 area,
+which is the input for the OSH Park quote".) The status line of the package README, written by `gen/fab_readme.py`,
+names D-62 (fixed in `b3437ef`). (**Superseded 2026-11-13, `b3437ef`:** "still names the D-60 trim and 19 F.Fab
+references; the size row of the package README and this document give the current values".) The NPTH drill file carries
+tool T2 at 3.70 mm for the four 6-32 holes. The fab is OSH Park, which makes bare boards only, and the board uses the
+OSH Park-only rule file `tools/pcb/fab_rules/fab_4layer_oshpark_only.kicad_dru`. The package holds the Gerber and
+Excellon files and the OSH Park upload `kikit_oshpark/gerbers.zip`. It also holds the assembly files
+(`assembly/cr-pos.csv`, `assembly/cr-bom.csv`, `assembly/cr_ibom.html`), the schematic, layer PDFs, STEP model, netlist,
+and the ERC, DRC and KiKit reports. The KiKit JLCPCB and PCBWay assembly presets wrote no `bom.csv` for the CR (an
+`int()` parse error, probably on the letter-suffixed references). This failure does not affect an OSH Park bare-board
+order. `assembly/cr-bom.csv` is the assembly BOM. The package README is `fab/cr_2026-11-13/README.md`.
 
 The EIB is a 2-layer board, so at OSH Park it is a separate order and is not on the CR panel.
 
@@ -917,8 +917,9 @@ RT1987 EN-net level with an undriven pad, and the figures of the IO CSV rows. `r
 rows (H.23 successor row, `gen/cr_geometry.py`). Row H.25 (change row r9-15, D-56) checks the VCHGIN L3 strap, the
 J1.10 joint and the C102c-end vias as the only J1.10 feed at 2.41 A and a 10 C rise. Row R9.H26 (2026-11-13, after
 Review 2/2) checks the VCHGOUT path from U101 OUT to W1 at 3.21 A and a 10 C rise on IPC-2152, with the necks measured
-on the D-62 board; two F.Cu-only necks fail on the long-conductor basis, and section 11 item 29 gives the result and
-the options for the operator. The IPC-2221 rows of the output print as comparisons; the "-> pass" that earlier
+on the D-62 board; two F.Cu-only necks fail on the long-conductor basis, and operator ruling 2026-11-13 accepts them
+as they are (section 11 item 29). (**Superseded 2026-11-13:** "and section 11 item 29 gives the result and the options
+for the operator".) The IPC-2221 rows of the output print as comparisons; the "-> pass" that earlier
 followed an IPC-2221 figure was the IPC-2152 verdict.
 
 ### 9.7 IO CSV
@@ -945,8 +946,10 @@ committed in `89c2d72` with its finish re-run and the fab package re-export; its
 D-61 figures of this document are superseded by the D-62 board (section 11 item 28)".) (**Superseded 2026-11-13:** "A
 further outline trim, D-62, is in progress and not committed".) Check-in 3 (placement images) was not held separately: on 2026-11-12/13 the operator authorized autonomous work to the end of the PCB design, and the placement
 is reviewed with the routed board. The next operator action is check-in 4, the pre-order review of the routed CR and
-of the CR and EIB fab packages, with the VCHGOUT ruling of section 11 item 29. Table 10.1 lists each step with its inputs, outputs and blocking items. (Superseded
-2026-11-13: "check-in 3 is next, and three steps remain after it".)
+of the CR and EIB fab packages; no operator-review item blocks the bare-board order (section 11 item 29 closes the
+VCHGOUT necks by acceptance). Table 10.1 lists each step with its inputs, outputs and blocking items. (Superseded
+2026-11-13: "check-in 3 is next, and three steps remain after it".) (**Superseded 2026-11-13, VCHGOUT ruling:** ",
+with the VCHGOUT ruling of section 11 item 29".)
 
 Table 10.1. Round order (D-50).
 
@@ -959,7 +962,7 @@ Table 10.1. Round order (D-50).
 | 5. Placement on the frozen netlist, all SMT on the top (done, D-54) | Frozen netlist, generator | `cr/cr.kicad_pcb` (variant B; pour stage at step 5, routed at step 6, D-58), `cr/placement_F.png`, `cr/placement_B.png`, `cr/constraint_check.md`, `cr/drc_place.rpt`; variant records in `cr/variants_r9/` | Check-in 3 was not held separately; the placement items (the R103 and R129 D-20 exemptions, the J1.10 solid joint on L3, the D-54 open items) are reviewed at check-in 4 with the routed board |
 | 6. Full route-race (done, D-57, D-58) | Placed board, power geometry | D-57 /GND pre-via and VIN_L3 strap extension (change request R9-01); routed board, plan softum seed 1: 107 of 107 connections, 148 router vias, 830.8 mm of track, 0 vias on SMD pads; router via ban on the square-cornered mask opening (`114ad04`) | None |
 | 7. Outline trim, GND stitching, straightening, DRC and constraint check (done, D-59 to D-62) | Routed board | Outline trimmed to the D-62 outline, 2327.7 mm2 with 1.0 mm fillets, and four 6-32 holes added (`gen/trim_cr.py`, change requests R9-02 and R9-04); /GND stitching vias on a 2.5 mm grid inside the trimmed fill (`plane_vias.py --stitch 2.5`; 279 vias), straightened tracks (`straighten.py`; 769 segments, 824.5 mm) and a stitching gap fill (`stitch_gaps.py`; 3 vias), in the D-61 order; 288 /GND vias in all; reference designators re-placed after the trim (`gen/silk_refs.py`, `cr/silk_refs.md`; 60 on silk, 18 on F.Fab) and fields synchronized (`gen/sync_fields.py`); ERC 0; DRC 0 violations, 0 unconnected, 0 parity; `cr/constraint_check.md` 109 pass, 0 FAIL (D-20 stitching row 3.51 mm against 3.54 mm), 3 exemption rows (R102 under D-20; R103 and R129 as listed U101-network exemptions) (**Superseded 2026-11-13, D-61:** "108 pass". **Superseded 2026-11-13, D-60:** "98 pass". **Superseded 2026-11-13, D-62:** "Outline trimmed to 2241.6 mm2"; "269 vias"; "768 segments, 823.9 mm"; "278 /GND vias in all"; "3.47 mm against 3.54 mm", the D-61 board) | None |
-| 8. Fab package (done; `gen/export.sh`, `gen/fab_readme.py`) | Checked board | `fab/cr_2026-11-13/` (not ordered; re-exported after D-62 in `89c2d72`); figures in `figures/cr_routed_2026-11-13/` (regenerated after D-62) (**Superseded 2026-11-13, D-61:** "re-exported after D-60", "regenerated after D-60". **Superseded 2026-11-13, D-62:** "re-exported after D-61 in `437d2d7`", "regenerated after D-61") | **Check-in 4** (pre-order review, next); the operator review items of section 11 item 22 are disposed of by operator ruling 2026-11-13 (Review 2/2) (item 3 is an assumption checked at submission; the quote is out of scope); open: the VCHGOUT necks of R9.H26, which need an operator ruling (section 11 item 29); open question: section 11 item 26 (item 27 is moot after `89c2d72`); BOM verification (T-A-05) before the parts order (**Superseded 2026-11-13, D-62 and R9.H26:** "so none blocks the bare-board order"; "the D-62 outline trim is committed in `89c2d72` (finish re-run, fab package and figures re-exported) and its design record is pending (item 28); the D-61 figures in this row are superseded by the D-62 board".) (**Superseded 2026-11-13:** "the bare-board blockers of section 11 item 22; fab quote (input 2241.6 mm2) and stack-up"; "open questions: section 11 items 26 and 27; the D-62 outline trim is pending (item 28)") |
+| 8. Fab package (done; `gen/export.sh`, `gen/fab_readme.py`) | Checked board | `fab/cr_2026-11-13/` (not ordered; re-exported after D-62 in `89c2d72`); figures in `figures/cr_routed_2026-11-13/` (regenerated after D-62) (**Superseded 2026-11-13, D-61:** "re-exported after D-60", "regenerated after D-60". **Superseded 2026-11-13, D-62:** "re-exported after D-61 in `437d2d7`", "regenerated after D-61") | **Check-in 4** (pre-order review, next); the operator review items of section 11 item 22 are disposed of by operator ruling 2026-11-13 (Review 2/2) (item 3 is an assumption checked at submission; the quote is out of scope); the VCHGOUT necks of R9.H26 are accepted by operator ruling 2026-11-13 (section 11 item 29), so no operator-review item blocks the bare-board order; open question, not order-blocking: section 11 item 26 (item 27 is moot after `89c2d72`); the drilled-versus-finished TSW hole question under LAYOUT_DECISIONS section 11 item 5; BOM verification (T-A-05) before the parts order (**Superseded 2026-11-13, VCHGOUT ruling:** "open: the VCHGOUT necks of R9.H26, which need an operator ruling (section 11 item 29); open question: section 11 item 26".) (**Superseded 2026-11-13, D-62 and R9.H26:** "so none blocks the bare-board order"; "the D-62 outline trim is committed in `89c2d72` (finish re-run, fab package and figures re-exported) and its design record is pending (item 28); the D-61 figures in this row are superseded by the D-62 board".) (**Superseded 2026-11-13:** "the bare-board blockers of section 11 item 22; fab quote (input 2241.6 mm2) and stack-up"; "open questions: section 11 items 26 and 27; the D-62 outline trim is pending (item 28)") |
 
 The netlist is frozen (D-53), so placement is no longer blocked. D-51 closed the MB height survey: the D-41 stack
 is taken to clear every MB part except the power terminals, and the CR -x edge clears J-BL and J-FC by 2.454 mm (also on
@@ -975,11 +978,14 @@ T-W-01a then gates any charging, and the full T-W-01 gates FC windows.
 
 The following decisions belong to the operator. Each item names its record. Check-in 2 (items 15 to 21, from audit run
 002, `docs/reviews/charger-design/run-002-2026-11-12.md`, section "Items for operator ruling at check-in 2") is closed.
-The operator approved all fixes on 2026-11-12. Rulings R1 to R6 are the orchestrator's defaults, recorded in design change
-row r9-12, and the operator may override any of them. The next operator action is check-in 4: the pre-order review
-of the routed CR, the CR fab package `fab/cr_2026-11-13/` and the EIB fab package `fab/eib_2026-11-13/`, with the
-VCHGOUT ruling of item 29. `MORNING_REVIEW_2026-11-13.md` gives the decisions of the routing round with their reversal paths and the items for
-this review. (Superseded 2026-11-13: "The next operator action is check-in 3 (placement images)".)
+The operator approved all fixes on 2026-11-12. Rulings R1 to R6 are the orchestrator's defaults, recorded in design
+change row r9-12, and the operator may override any of them. The next operator action is check-in 4: the pre-order
+review of the routed CR, the CR fab package `fab/cr_2026-11-13/` and the EIB fab package `fab/eib_2026-11-13/`. No
+operator-review item blocks the bare-board order (item 29 closes the VCHGOUT necks by acceptance). `LAYOUT_DECISIONS.md`
+section 11 item 3, the drilled-versus-finished TSW hole question under item 5 of that section, and item 26 of this
+section stay open and do not block the order. `MORNING_REVIEW_2026-11-13.md` gives the decisions of the routing round
+with their reversal paths and the items for this review. (Superseded 2026-11-13: "The next operator action is check-in 3
+(placement images)".) (**Superseded 2026-11-13:** ", with the VCHGOUT ruling of item 29".)
 
 1. Closed 2026-11-12: check-in 1 passed; the operator reviewed this README and approved the D-50 round order (ruling (b)).
 2. Closed 2026-11-12: the operator accepted the J-TAP map with T5 (A4) diagonal to T10 (B5) (D-46, J.2 item 63).
@@ -1024,8 +1030,10 @@ this review. (Superseded 2026-11-13: "The next operator action is check-in 3 (pl
     (Review 2/2: BAV199, strap, OSH Park (fab checks), local_6e36c3a4-f328-44cd-8c31-05ea2fa7bfa3, chat 2026-11-13).
     `LAYOUT_DECISIONS.md` section 11 items 2, 5, 9 and 10 are closed, item 7 (the quote) is closed as outside the
     scope of the project, and item 3 stays an assumption that is checked when the board is submitted. The OSH Park
-    solder-mask expansion of 0.0508 mm is confirmed. Item 2 is closed for the VCHGIN strap only; its VCHGOUT half is
-    item 29 and needs an operator ruling. The check-in 4 review also covers the D-59 reference-designator result as
+    solder-mask expansion of 0.0508 mm is confirmed. Item 2 is closed for the VCHGIN strap by Review 2/2 and for the
+    VCHGOUT half by acceptance (item 29), so no operator-review item blocks the bare-board order. (**Superseded
+    2026-11-13, VCHGOUT ruling:** "Item 2 is closed for the VCHGIN strap only; its VCHGOUT half is item 29 and needs an
+    operator ruling.") The check-in 4 review also covers the D-59 reference-designator result as
     re-placed after D-62 (section 8.3), the D-62 trimmed outline and the four 6-32 holes (section 8.1), and the GND
     stitching and straightened tracks of the D-61 order on the D-62 board (section 9.1). (**Superseded 2026-11-13,
     D-62 and R9.H26:** "No bare-board order blocker remains from the operator review items"; "as re-placed after D-60
@@ -1046,7 +1054,7 @@ this review. (Superseded 2026-11-13: "The next operator action is check-in 3 (pl
     quantity of 5, but OSH Park sells boards in multiples of 3. The Review 2/2 session raised this question, and the
     operator has not answered it; no file is changed. Amended 2026-11-13: the package README as re-exported in
     `89c2d72` still gives a quantity of 5 in section 1, and its OSH Park row now states that order quantities come in
-    multiples of 3. The question stays open.
+    multiples of 3. The question stays open; it does not block the bare-board order.
 27. Amended 2026-11-13: the question is moot. The D-62 re-export in `89c2d72` replaced the OSH Park row of the CR fab
     package README; the row now states the confirmed 4-layer stack-up (1.6 mm, 1 oz outer / 0.5 oz inner clad, ENIG,
     FR408-HR), which matches section 1 of that README and the D-29 copper (section 8.2). The quoted sentence no
@@ -1068,38 +1076,47 @@ this review. (Superseded 2026-11-13: "The next operator action is check-in 3 (pl
     committed D-62 board.") (**Superseded 2026-11-13:** "A further outline trim, D-62, is in progress and not
     committed ... Until D-62 is recorded, the outline, the checks and the fab package in this document are those of
     the D-61 board.")
-29. Open, new 2026-11-13: rule on the VCHGOUT path from U101 OUT to W1, the VCHGOUT half of `LAYOUT_DECISIONS.md`
-    section 11 item 2 that Review 2/2 kept open. Calculation R9.H26
+29. Closed 2026-11-13 by acceptance: the VCHGOUT path from U101 OUT to W1, the VCHGOUT half of
+    `LAYOUT_DECISIONS.md` section 11 item 2 that Review 2/2 kept open. Operator ruling 2026-11-13 (design session, chat
+    2026-11-13), asked "How should the two short VCHGOUT necks be handled?" with the options accept, widen and measure
+    on the bench: "Accept short necks". The two F.Cu-only necks of Table 11.3 (1.469 mm over about 1.75 mm, 21.9 C at
+    3.21 A; 2.082 mm over about 1.25 mm, 14.3 C) stay as they are, and the board does not change. The long-conductor
+    chart is expected to be conservative for necks this short, because heat spreads into the wider pour; however, no
+    short-neck calculation is on record, so the acceptance rests on the ruling and not on a pass. No operator-review
+    item blocks the bare-board order. The record of the calculation follows. Calculation R9.H26
     (`docs/reviews/charger_eval_2026-11-05/round4/calc/r9_calc.py`, output `r9_calc_out.txt`) uses a 3.21 A basis, a
     10 C rise and 1 oz outer copper counted as the 35 um clad only (plating not credited). On that basis the IPC-2152
     baseline fit needs 153.4 mil2, that is 2.828 mm on F.Cu alone. The necks were measured on the D-62 board as
     vertical chords of the filled /VCHGOUT copper, pads not counted; Table 11.3 gives the result. The In2.Cu
     `VCHGOUT_L3_strap` ends at x 36.90, so the two necks that fail are on L1 only. The IPC-2152 chart is a long-conductor basis. A
-    neck of 1 to 2 mm spreads heat into the wide pour on both sides, so the chart is conservative for these necks;
-    however, no short-neck method is on record, so the margin is not quantified. The operator chooses one of three
-    options: accept the two short necks; widen the VCHGOUT copper at the necks, which is a routing change followed by
-    DRC, the constraint check and a package re-export before the order; or measure the rise on the bench at 3.21 A.
-    Only the second option changes the board, so the ruling decides whether this item blocks the bare-board order.
-    The bench measurement needs an assembled board, so this option orders the board as it is and accepts a re-spin if
-    the measured rise exceeds 10 C.
+    neck of 1 to 2 mm spreads heat into the wide pour on both sides, so the chart is expected to be conservative for
+    these necks; however, no short-neck method is on record, so the margin is not quantified. (**Superseded
+    2026-11-13, VCHGOUT ruling:** "Open, new 2026-11-13: rule on the VCHGOUT path"; "so the chart is conservative for
+    these necks"; "The operator chooses one of three options: accept the two short necks; widen the VCHGOUT copper at
+    the necks, which is a routing change followed by DRC, the constraint check and a package re-export before the
+    order; or measure the rise on the bench at 3.21 A. Only the second option changes the board, so the ruling decides
+    whether this item blocks the bare-board order. The bench measurement needs an assembled board, so this option
+    orders the board as it is and accepts a re-spin if the measured rise exceeds 10 C.")
 
 Table 11.1 lists the former CR bare-board blockers and their disposition. Item numbers in the Record column refer to
 `LAYOUT_DECISIONS.md` section 11. Operator ruling 2026-11-13 (Review 2/2: BAV199, strap, OSH Park (fab checks),
-local_6e36c3a4-f328-44cd-8c31-05ea2fa7bfa3, chat 2026-11-13) disposes of every row. Item 3 stays an assumption that
-is checked when the board is submitted, and the quote of item 7 is outside the scope of the project. The VCHGOUT half
-of item 2 was outside that ruling; it is open as section 11 item 29 of this document (Table 11.3) and needs an
-operator ruling. (**Superseded 2026-11-13, R9.H26:** "No bare-board order blocker remains from the operator review
-items.") (**Superseded 2026-11-13:** "Table 11.1 lists the items
-that block the CR bare-board order."; "Review 2/2 of the operator is in progress on these items.")
+local_6e36c3a4-f328-44cd-8c31-05ea2fa7bfa3, chat 2026-11-13) disposes of every row. Item 3 stays an assumption that is
+checked when the board is submitted, and the quote of item 7 is outside the scope of the project. The VCHGOUT half of
+item 2 was outside that ruling; operator ruling 2026-11-13 (design session, chat 2026-11-13: "Accept short necks")
+closes it by acceptance (section 11 item 29 of this document, Table 11.3). No operator-review item blocks the bare-board
+order. (**Superseded 2026-11-13, VCHGOUT ruling:** "it is open as section 11 item 29 of this document (Table 11.3) and
+needs an operator ruling".) (**Superseded 2026-11-13, R9.H26:** "No bare-board order blocker remains from the operator
+review items.") (**Superseded 2026-11-13:** "Table 11.1 lists the items that block the CR bare-board order."; "Review
+2/2 of the operator is in progress on these items.")
 
-Table 11.1. Former CR bare-board blockers (operator ruling 2026-11-13, Review 2/2).
+Table 11.1. Former CR bare-board blockers (operator ruling 2026-11-13, Review 2/2; the VCHGOUT row by operator ruling 2026-11-13, design session).
 
 | Item | Disposition | Record |
 |---|---|---|
 | BAV199 D104 to D106 (SOT-23) pinout | Closed 2026-11-13. Nexperia BAV199 product data sheet v.4 (1 April 2023; supersedes v.3 of 2020-09-01, whose only change is "Product changed to non automotive", Table 8), section 5 Table 2: pin 1 A1 (anode, diode 1), pin 2 K2 (cathode, diode 2), pin 3 K1 and A2. The board matches: pad 1 /GND, pad 2 /3V3, pad 3 /N_H1P (D104), /N_H1M (D105) and /N_UVP (D106). Operator: "Yes" | Item 9 |
 | SOT-23 reflow footprint of D104 to D106 | Closed 2026-11-13. The footprint `SOT-23_CrtYd0.25` has 1.475 x 0.6 mm pads at 1.9 mm pitch, with the pad rows 1.875 mm apart (pads 0.20 to 1.675 mm from the centre line). The data-sheet Fig. 8 lead width is 0.38 to 0.48 mm, below the 0.6 mm pad width, and the lead tips lie 1.05 to 1.25 mm from the centre line, which leaves a toe pad of 0.43 mm or more. The Fig. 9 reflow lands are about 0.6 x 0.7 mm, with the rows about 2.0 mm apart. The KiCad pads are longer toward the body; this is a fillet difference, not a connectivity difference. The land-pattern refinement is dropped. Operator: "Close, no need to refine if the current footprint is verified compatible" | Item 10 |
 | In2.Cu VCHGIN strap | Closed 2026-11-13 on IPC-2152. The required section is 87.4 mil2, which is 3.221 mm at 17.5 um. The strap section of 4.174 mm (113.2 mil2) gives 2.75 A at a 10 degC rise, and a 7.4 degC rise at the 2.41 A basis. The OSH Park 4-layer page (`docs.oshpark.com/services/four-layer/`, read 2026-11-13) gives the inner layers as "0.68 mil (0.0175mm) 0.5 oz copper clad"; clad copper is not plated, so the finished thickness is 17.5 um (at 17.3 um the result is 2.73 A). The IPC-2221 internal formula gives 2.04 A, below the 2.41 A basis, and needs 5.258 mm (`docs/reviews/charger_eval_2026-11-05/round4/calc/r9_calc_out.txt`); it does not pass, and the closure rests on IPC-2152 alone. Operator: "Accept, use IPC-2152"; on 0.5 oz inner copper, "Yes" | Item 2; design document H.25 |
-| VCHGOUT path, U101 OUT to W1 (the half of item 2 outside the ruling) | Open 2026-11-13. R9.H26 finds two F.Cu-only necks below the IPC-2152 long-conductor basis at 3.21 A (Table 11.3); the operator chooses acceptance, wider copper or a bench measurement | Item 2; section 11 item 29 of this document |
+| VCHGOUT path, U101 OUT to W1 (the half of item 2 outside the ruling) | Closed 2026-11-13 by acceptance. R9.H26 finds two F.Cu-only necks below the IPC-2152 long-conductor basis at 3.21 A (Table 11.3); they stay as they are, and the board does not change. The acceptance rests on the ruling, not on a pass: no short-neck calculation is on record. Operator (design session, chat 2026-11-13): "Accept short necks" (**Superseded 2026-11-13, VCHGOUT ruling:** "Open 2026-11-13"; "the operator chooses acceptance, wider copper or a bench measurement") | Item 2; section 11 item 29 of this document |
 | OSH Park 4-layer stack-up | Closed 2026-11-13. The OSH Park 4-layer page (read 2026-11-13) gives 63 mil (1.6 mm), 1 oz outer copper (clad and plated), 0.5 oz inner copper, FR408-HR at 190 degC Tg, ENIG, purple SMOBC on both sides, and via tenting "Yes (filled hole and flat surface not guaranteed)". The alternate-stack-up notices are commented out in the page source, so none is active. Operator: "Yes" | Item 5 |
 | OSH Park quote | Closed 2026-11-13 as out of scope. Operator: "Quote is outside the scope of the project" | Item 7 |
 | OSH Park solder-mask expansion | Closed 2026-11-13; the TODO(verify) of the rule file is closed. The OSH Park KiCad design-rules page gives "Solder Mask Expansion should usually be set to 2mil (0.0508mm)". The 4-layer page gives a maximum mask alignment error of 3 mil (0.0762 mm) and a minimum mask web of 4 mil (0.1016 mm), which is the board setting. The smallest different-net via-to-mask gap, 0.115 mm (about 0.094 mm with square-cornered openings, section 9.1), is larger than the 0.0762 mm alignment error. Operator: "Yes" | Section 11 item 22; `MORNING_REVIEW_2026-11-13.md` section 3.1 |
@@ -1165,8 +1182,11 @@ Table 11.3. VCHGOUT necks from U101 OUT to W1 (R9.H26).
 | W1 approach, x 31.50 | F.Cu 2.249 mm + In2.Cu 2.450 mm (188.5 mil2) | 3.56 A | 7.9 C | pass |
 
 In Table 11.3, the two necks that fail carry F.Cu copper only, because the In2.Cu `VCHGOUT_L3_strap` ends at x 36.90. Both
-are about 1.25 to 1.75 mm long, so the long-conductor chart is conservative for them; no short-neck method is on
-record, so the margin is not quantified.
+are about 1.25 to 1.75 mm long, so the long-conductor chart is expected to be conservative for them; no short-neck
+method is on record, so the margin is not quantified. (**Superseded 2026-11-13, VCHGOUT ruling:** "so the
+long-conductor chart is conservative for them".) Operator ruling 2026-11-13 (design session, chat 2026-11-13:
+"Accept short necks") accepts both necks as they are; the two FAIL rows remain the calculation result, and the
+acceptance rests on the ruling, not on a pass (item 29).
 
 ## 12. Where the detail lives
 
