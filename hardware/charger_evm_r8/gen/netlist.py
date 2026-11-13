@@ -226,7 +226,7 @@ CR = [
     #        row B: T6  T2   T17   T16 T10
     #      Row A column c = pin c, row B column c = pin 5 + c, following the numbering of the placeholder stock
     #      footprint; TODO(verify: Molex 43045 drawing / 43025 housing cavity numbering, header P/N, vertical or
-    #      right-angle, pegs). Open item for operator confirmation: T5 (A4) is diagonal to T10 (B5); the gate rule
+    #      right-angle, pegs). Accepted by the operator 2026-11-12: T5 (A4) is diagonal to T10 (B5); the gate rule
     #      (T5/T6/T10 pairwise non-adjacent including the opposite row) is met, the recommended diagonal clearance
     #      is not. The map is not changed here.
     #      Nets are the former pad nets: T1 = F01, T7b = F02 (shield, GND), T2 = F03, T5 = F06, T6 = F07, T10 = F11,

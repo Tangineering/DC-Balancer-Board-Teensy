@@ -715,7 +715,7 @@ digest, and its reconciliation notes bind where a record disagrees.
   harness, and the R175 bypass check stays. T1/T7b and T17/T17r are twisted by hand. Open items:
   TODO(verify: Molex 2147581101) the circuits, wire gauge, length and housing; TODO(verify: Molex 43045 header and
   43025 housing drawings) the header P/N, orientation, pegs and the physical pin numbers of the cavity map; the wire
-  gauge against the R170/R171 joints at C-D6 and C-D2 (A.4 assumed 26 AWG). **Open item for operator confirmation:** T5
+  gauge against the R170/R171 joints at C-D6 and C-D2 (A.4 assumed 26 AWG). **Accepted by the operator (2026-11-12):** T5
   (A4) is diagonal to T10 (B5). The gate rule (T5, T6 and T10 pairwise non-adjacent, the opposite row included) is
   met; the recommended diagonal separation is not. The map is not changed. Record:
   `decisions_2026-11-12/round2/tap_connector/dec_tap_connector_2026-11-12.md`;
@@ -859,7 +859,7 @@ Layout and fabrication, added 2026-11-12:
 16. TODO(verify: Molex 43045 header and 43025 housing drawings) the J-TAP header P/N, orientation, pegs and the
     physical pin numbers of the cavity map; TODO(verify: Molex 2147581101) the cable circuits, wire gauge, length and
     housing (D-46).
-17. Operator confirmation: J-TAP T5 (A4) is diagonal to T10 (B5); the recommended diagonal separation is not met (D-46).
+17. Closed 2026-11-12: the operator accepted the J-TAP T5 (A4) to T10 (B5) diagonal (D-46).
 18. TODO(verify: TI Pin Functions tables) the DBV pinout of SN74LVC1G11DBVR against the DCK pinout, pin by pin
     against B.8 (D-03, D-44).
 19. TODO(verify: Murata) GRM188R71H223KA01D (22 nF 50 V X7R 0603) for C101 (D-44).

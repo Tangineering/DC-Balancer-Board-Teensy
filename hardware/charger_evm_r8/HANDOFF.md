@@ -98,7 +98,7 @@ Firmware preconditions (design-document requirements; no firmware is edited in t
 10. **Operator check-in 4:** before the fab package and any order. Then the fab package
     (`gen/export.sh`, `gen/fab_readme.py`).
 
-Open items for the operator at check-in 1: the J-TAP T5 (A4) to T10 (B5) diagonal (D-46); the change-request
+Open items for the operator at check-in 1: the J-TAP T5 (A4) to T10 (B5) diagonal (D-46; accepted 2026-11-12); the change-request
 section 6 survey (L-FC/L-BT heights, bodge parts, J-BT and J-BL faces, the -x edge bodies) (D-39); the EIB package
 review before an order (D-49).
 

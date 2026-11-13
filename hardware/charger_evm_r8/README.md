@@ -584,7 +584,7 @@ Table 8.4. J-TAP cavity map (columns 1-5).
 | B | T6 (3V3) | T2 (VBUS) | T17 (CHG_IIN) | T16 (CHG_EFUSE_FLT) | T10 (CHG_QUAL) |
 
 In Table 8.4, T5 (A4) sits diagonal to T10 (B5), which meets the non-adjacency rule but not the recommended diagonal
-separation. Housing polarization is required, because a 180-degree flip puts T6 on the T10 circuit.
+separation. The operator accepted this diagonal on 2026-11-12. Housing polarization is required, because a 180-degree flip puts T6 on the T10 circuit.
 
 At the far end, T5, T6, T10, T13, T16 and T17 use the operator's 0.100 in crimps. Each crimp sits in the second
 position of its MB J1/J2 pair. T1 and T2 are soldered to R170 and R171 (10.0 kOhm 0.1 %) at C-D6 and C-D2; T7b and T17r are cut back and
@@ -709,8 +709,7 @@ T-W-01a then gates any charging, and the full T-W-01 gates FC windows.
 The following decisions belong to the operator. Each item names its record.
 
 1. Review the step-1 diff summary at check-in 1 (HANDOFF section 3).
-2. Confirm the J-TAP map with T5 (A4) diagonal to T10 (B5). The non-adjacency rule is met; the recommended diagonal
-   separation is not (D-46, J.2 item 63).
+2. Closed 2026-11-12: the operator accepted the J-TAP map with T5 (A4) diagonal to T10 (B5) (D-46, J.2 item 63).
 3. Retire T-F-16 or re-specify its method, now that the thermocouple is removed (D-43, J.2 item 72).
 4. Complete the change-request section 6 survey (D-39, survey item MS3). It covers the L-FC/L-BT heights (5.0 mm
    listing vs 6.5 mm sibling), the bodge-part heights and the J-BT and J-BL face positions. It also checks whether
