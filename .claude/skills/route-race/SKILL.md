@@ -1,6 +1,6 @@
 ---
 name: route-race
-description: Run a routability study on a placed KiCad board - a scripted reference at four or more seeds, one diagnosis of where and why connections stay open, scripted tests of every proposed change (plans, nets held out, part moves) against an equal control, and one batch of tested change requests to the design owner; the study repeats on the placement variants that come back. Use it when the user asks to "race the routing methods", "run the routing race", "run a routability study", "try the routing approaches in parallel", or when a board must be routed and a single run does not close it. The orchestrator never edits the real board.
+description: Run a routability study on a placed KiCad board - a scripted reference at four or more seeds, one diagnosis of where and why connections stay open, scripted tests of every proposed change (plans, nets held out, part moves) against an equal control, and one batch of tested change requests to the design owner; the study repeats on the placement variants that come back. Use it when the user asks to "race the routing methods", "run the routing race", "run a routability study", "try the routing approaches in parallel", or when a board must be routed and a single run does not close it. The orchestrator never edits the real board, except to commit the chosen routed board on a branch of its own when the design owner asks for it.
 ---
 
 # Routing race (routability study)
@@ -99,6 +99,12 @@ options, and uses the seeds of stage 1.
 - Test the combination of the two strongest changes as well: effects on a congested board do not add.
 - Finish the seeds of a test with the same pipeline as the reference (stage 1, step 5) when the plane nets or
   a constraint metric are part of the hypothesis.
+- When the reference closes at every seed, the tests compare quality: router vias, the vias of constrained nets,
+  the soft-rule metrics and the plane-net connections open after the plane-via step (`board-routing` section 2,
+  end). Finish every seed of every test. `seeds.py compare` judges connections only; compare the other measures
+  seed by seed from the scores, with the same rule: lower at every seed.
+- A plane-net pad open at every seed of every plan, with no via site because of obstacles, is a request at once
+  (`board-routing` section 3, step 2). Send it in the batch; no test can close it.
 
 When all tests have finished, write `RACE/rN/tested.json` from the `tested.json` and `trial.json` files (add
 the `match` field), and run `python merge_requests.py RACE/rN --round N --tested RACE/rN/tested.json
@@ -142,7 +148,22 @@ Report to the owner of the board:
 State every number with its n, its iteration limit and its plan. Do not report the best of several attempts as
 the result of a method.
 
-The best board stays in its race folder. Copying it into the project is the owner's step.
+The best board stays in its race folder. Copying it into the project is the owner's step, unless the owner asks the
+orchestrator for the routed board on a branch. Then:
+
+1. Create a worktree of your own on a new branch from the owner's commit. Never write the owner's worktree.
+2. When the owner sends a new commit (an approved request), merge it into your branch, archive its board into a new
+   round folder, compare it with `cmp_place.py`, model it and route the chosen plan at four seeds.
+3. Copy `board_pv/<board>.kicad_pcb` of the chosen seed over the board in your worktree. Check with `git status` that
+   only the board file changed; the project file and the rule file must stay byte-identical.
+4. Run `kicad-cli pcb drc --severity-all --schematic-parity` (`tools/pcb/TOOLCHAIN.md` gives the path) and the
+   project's constraint check on that file. Only the violations that the owner accepts (for example silk) may remain.
+5. Commit with the plan, the seed, the DRC and the constraint figures in the message. Do not push. Report the branch
+   tip to the owner.
+6. Run the final step of `board-routing` section 5a on the committed board: a trimmed outline with mounting holes,
+   proposed to the owner as one request. When the owner's commit with the new outline comes back, merge it and run
+   DRC and the constraint check again. Trimming removes only empty area, so no re-route is needed unless the owner
+   moved parts or copper.
 
 ## 7. Rules
 
@@ -173,6 +194,12 @@ The best board stays in its race folder. Copying it into the project is the owne
   parallel logic length in the zone sharply at no separated completion cost, but did not clear all logic vias.
   The round-3 base had the same placement as a round-2 variant; `cmp_place.py` finds such a case before a
   reference is routed again. `board-routing` section 6 has the figures.
+- The r9 CR race of 2026-11-13 (one round, one request, a re-route on the owner's fix): the plain plan closed at
+  every seed, so the race compared quality, and a combined plan (soft zones plus a high via cost on four nets) was
+  better at every seed. One /GND pad was enclosed at every seed of every plan; the owner closed it with a pre-via.
+  Two tool faults came to light: an exposed pad escaped the via ban because its thermal vias shared its number,
+  and the ban used a round margin where a rectangular pad's mask opening has square corners. Both are fixed; the
+  project's constraint check found the second after DRC and `score.py` had passed the board.
 
 ## 9. Limits
 
