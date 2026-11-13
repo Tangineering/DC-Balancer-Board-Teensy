@@ -504,9 +504,16 @@ window y 30.8 to 66.86.
 
 Every SMT part sits on the CR top and is assembled with one stencil in one reflow pass; THT parts are hand-soldered last.
 Every chip passive is 0603 or larger. IC pitch is 0.65 mm minimum, with U101 TPS26630RGER (0.5 mm VQFN-24) as the one
-approved exception. Single-gate logic uses SOT-23 (DBV); U107 is SN74LVC1G11DBVR. Reference designators are printed on
-the top silkscreen. Courtyards follow the IPC-7351 nominal 0.25 mm rule, which is not yet applied in the footprint
-library.
+approved exception. Single-gate logic uses SOT-23 (DBV); U107 is SN74LVC1G11DBVR. Courtyards follow the IPC-7351
+nominal 0.25 mm rule, and the CR library is built on that basis (`_CrtYd0.25` names, LAYOUT_DECISIONS D-52).
+(Superseded 2026-11-13, D-52: "which is not yet applied in the footprint library".)
+
+`gen/silk_refs.py` places the reference designators (LAYOUT_DECISIONS D-59). 60 of the 78 references are on the top
+silkscreen at 1.0 mm or 0.8 mm text height with a 0.15 mm stroke; 26 of them sit over the courtyard of another part
+and are hidden after assembly. 18 references are on F.Fab only: C107, C115, C130, C132, D105, D106, R122, R130,
+R131B, R147, R184 to R189, U110 and W3. In the dense rows, a reference can sit up to 3.0 mm from the courtyard of its
+part, so the interactive BOM (`fab/cr_2026-11-13/assembly/cr_ibom.html`) is the assembly reference. `cr/silk_refs.md` lists every reference. (Superseded 2026-11-13, D-59: "Reference designators are
+printed on the top silkscreen".)
 
 ### 8.4 Permit gate implementation
 
@@ -640,7 +647,9 @@ inside the outline. A routability probe at two seeds ranks B above variant A: bo
 needs about 35 % less track and about 12 % fewer vias (Table D-54). The constraint check gives 74 pass rows and 1 FAIL.
 The FAIL is the B.Cu heatsink pad U101.25 of the TPS26630 footprint under the D-44 row. DRC reports 3 courtyard
 overlaps from fixed coordinates and 0 clearance errors. The placement images are `cr/placement_F.png` and
-`cr/placement_B.png`. The netlist is unchanged against the D-53 freeze.
+`cr/placement_B.png`. The netlist is unchanged against the D-53 freeze. (**Superseded 2026-11-13, D-58:** "at the
+power-pour stage, with no signal routing" and the D-54 check figures; the board is now routed, see the D-57 to D-59
+paragraphs below.)
 
 A placement review of variant B (`cr/placement_review_r9.md`) found 1 blocker, 4 major and 9 minor findings, and
 the fix round of LAYOUT_DECISIONS D-55 applies all of them in the generator. The U101 programming and monitor parts
@@ -660,6 +669,40 @@ notch and a GND via tie C103 to the plane. Two slot exchanges (R101/C101, R103/R
 paste apertures grow to 0.675 mm (25.0 % coverage, 0.151 mm to the nearest drill). A new escape row checks the
 U101 network and ground pads. The rebuilt board gives 97 pass rows, 0 FAIL and 3 listed D-20 exemptions (R102, R103,
 R129); every escape row passes. DRC reports 124 silkscreen items, 107 unconnected items and 0 parity issues.
+(**Superseded 2026-11-13, D-57 to D-59:** the 3.645 mm strap section, the 2.57 A rating, the check counts and the
+DRC counts of this paragraph; the final figures are in the next three paragraphs. The D-56 board measures 3.630 mm on
+the D-57 chord method; LAYOUT_DECISIONS D-57.)
+
+The fix round of LAYOUT_DECISIONS D-57 (route-race change request R9-01) adds a /GND via at (42.30, 59.30) for C102c
+pad 2, which the route race had found open at every seed of every plan. The L3 (In2.Cu) VCHGIN strap gains an
+extension under R102, so the current passes below the via cut-out. The board-measured minimum strap section is
+4.174 mm against the 3.221 mm that row R9.H25 requires; the curve fit gives 2.75 A at a 10 C rise against the 2.41 A
+basis. Placement, the netlist and the signal ratsnest are unchanged.
+
+The signal nets are routed by the corridor router with route-race r9 plan softum, seed 1 (LAYOUT_DECISIONS D-58).
+The routed board closes 107 of 107 connections with 148 router vias and 830.8 mm of track. Every router track is 0.1524 mm,
+and every via is 0.6/0.3 mm; the D-57 pre-via joins C102c pad 2 with a 0.4 mm F.Cu track. No via sits on an SMD pad. The divider-top same-layer metric is 0.00 mm, and 0.7 mm of
+logic track and one logic via (the /CE_DRV_J escape) lie in the divider zone. The U101 high-impedance nets carry
+these via counts: /N_UV 2, /N_OV 0, /N_DVDT 2, /N_ILIM 2, /N_IMON 3 and /N_FLT 2. Tools commit `114ad04` (merged as
+`a919337`) bans router vias from the square-cornered mask opening of a pad, so later plans do not need the 0.075 mm
+mask margin of plan softum; the routed board is unchanged by it.
+
+The final checks on the routed board give ERC 0 messages and DRC (`--severity-all --schematic-parity`) 0 violations,
+0 unconnected items and 0 parity issues. The constraint check `cr/constraint_check.md` gives 98 pass rows, 0 FAIL and
+2 listed exemptions. The smallest gap from a via annulus to a pad plus its mask opening is 0.027 mm; that via is the
+pad's own same-net escape via. The smallest gap between different nets is 0.115 mm (C116 pad 1 /3V3 to a /QUAL via),
+about 0.094 mm with square-cornered mask openings. Section 8.3 gives the reference-designator result of D-59.
+
+Figure 9.1 shows the routed CR in an isometric 3-D view of the top side.
+
+![Figure 9.1. Routed CR, isometric 3-D view of the top side (D-58, references D-59).](figures/cr_routed_2026-11-13/3d_iso.png)
+
+Figure 9.1. Routed CR, isometric 3-D view of the top side (`figures/cr_routed_2026-11-13/3d_iso.png`).
+
+In Figure 9.1, all parts sit on the top side, grouped at the CR J1 end of the board between the J1 pin columns and
+J102; the far end carries no parts. The copper layers are shown in `cr-F_Cu.png` to `cr-B_Cu.png`. The folder
+`figures/cr_routed_2026-11-13/` also holds the top and bottom 3-D views, one image per copper layer, the silkscreen
+and F.Fab layers, a combined F.Cu and In2.Cu signal view, and PDF copies.
 
 The build uses the OSH Park-only rule file `tools/pcb/fab_rules/fab_4layer_oshpark_only.kicad_dru`, which
 `gen/make_board.sh` copies to `cr/cr.kicad_dru` (D-29, D-55). The board Default net class is 0.1524 / 0.1524 mm, and
@@ -678,7 +721,20 @@ support rows stay stale until the A.3 lead route is re-derived on the new outlin
 them.
 Nothing is ordered, and no price, stock or SKU is verified on a live vendor page.
 
-### 9.3 EIB fab package
+### 9.3 CR fab package
+
+The CR package `fab/cr_2026-11-13/` is generated from the routed board of section 9.1 and is not ordered; it awaits
+the operator's pre-order review (section 11). The fab is OSH Park, which makes bare boards only, and the board uses
+the OSH Park-only rule file `tools/pcb/fab_rules/fab_4layer_oshpark_only.kicad_dru`. The package holds the Gerber and
+Excellon files and the OSH Park upload `kikit_oshpark/gerbers.zip`. It also holds the assembly files
+(`assembly/cr-pos.csv`, `assembly/cr-bom.csv`, `assembly/cr_ibom.html`), the schematic, layer PDFs, STEP model,
+netlist, and the ERC, DRC and KiKit reports. The KiKit JLCPCB and PCBWay assembly presets wrote no `bom.csv` for the
+CR (an `int()` parse error, probably on the letter-suffixed references). This failure does not affect an OSH Park
+bare-board order. `assembly/cr-bom.csv` is the assembly BOM. The package README is `fab/cr_2026-11-13/README.md`.
+
+The EIB is a 2-layer board, so at OSH Park it is a separate order and is not on the CR panel.
+
+### 9.4 EIB fab package
 
 The EIB package `fab/eib_2026-11-13/` passes ERC (0 messages) and DRC (0 violations, schematic parity checked) and is not
 ordered; it awaits operator review. The schematic and board carry the KiCad DNP attribute on U203, U204, C203, C204,
@@ -686,7 +742,7 @@ R258-R265, E4 and E6, so the generator writes the BOM, position, KiKit and iBOM 
 Excellon file is identical to the 2026-11-11 package apart from the creation dates. The 2026-11-11 package, with its
 hand-edited assembly files, is kept as the record.
 
-### 9.4 Archive and certification
+### 9.5 Archive and certification
 
 The r7-outline layout work (interactive project, variants, attempts, routability study) is archived in
 `archive_r7_outline/` as reference only. Audit run 001 (L.8) no longer certifies the design, because the 2026-11-12
@@ -699,7 +755,7 @@ all 29 agreed fixes, and design change row r9-12 applies them with the six check
 21). The verify pass of the r9-12 fixes is clean (2026-11-12; run-002 record, section "Fix round r9-12 verification";
 design document L.9), so the certification condition of L.9 is met for the run-002 findings.
 
-### 9.5 Calculations
+### 9.6 Calculations
 
 `docs/reviews/charger_eval_2026-11-05/round4/calc/r9_calc.py` re-derives every section H row that rests on a part
 removed in r9 (D-50 step 2, change row r9-9). It reads `cr/cr.net` and `eib/eib.net` with the r9-2 DNP set, and its
@@ -709,7 +765,7 @@ RT1987 EN-net level with an undriven pad, and the figures of the IO CSV rows. `r
 rows (H.23 successor row, `gen/cr_geometry.py`). Row H.25 (change row r9-15, D-56) checks the VCHGIN L3 strap, the
 J1.10 joint and the C102c-end vias as the only J1.10 feed at 2.41 A and a 10 C rise.
 
-### 9.6 IO CSV
+### 9.7 IO CSV
 
 The D.3 rows are applied to `references/Scale Car Teensy IO - IO - 2026-11-12.csv` (section 7.5). No IO CSV action remains for the
 charger path.
@@ -721,7 +777,13 @@ charger path.
 The round order is D-50, in eight steps with four operator check-ins. Steps 1 to 4 are done, and check-in 1 has passed
 (operator ruling 2026-11-12 (b)). Check-in 2 is closed, and the r9-12 fix round is applied. The netlist step is done
 and the netlist is frozen (D-53). The verify pass of the r9-12 fixes is clean. Step 5 is done (D-54: variant B at the
-pour stage; D-55: the fix round on its placement review; D-56: the fix round on the r9b re-review), check-in 3 is next, and three steps remain after it. Table 10.1 lists each step with its inputs, outputs and blocking items.
+pour stage; D-55: the fix round on its placement review; D-56: the fix round on the r9b re-review). Steps 6 to 8 are
+done (D-57 and D-58: the route race and the routed board; D-59 and the final checks; the CR fab package
+`fab/cr_2026-11-13/`). Check-in 3 (placement images) was not held separately: on 2026-11-12/13 the operator
+authorized autonomous work to the end of the PCB design, and the placement is reviewed with the routed board. The
+next operator action is check-in 4, the pre-order review of the routed CR and of the CR and EIB fab packages. Table
+10.1 lists each step with its inputs, outputs and blocking items. (Superseded 2026-11-13: "check-in 3 is next, and
+three steps remain after it".)
 
 Table 10.1. Round order (D-50).
 
@@ -731,10 +793,10 @@ Table 10.1. Round order (D-50).
 | 2. Re-run section H on the r9 netlist (done, r9-9) | r9 netlist `cr/cr.net`, `eib/eib.net` | `round4/calc/r9_calc.py` with its output; H.4, H.5, H.7, H.12, H.13, H.15, H.19-H.22, H.23(n), (x), (y) re-derived; H.24(a)-(c) new; `r3_calc.py` and `r7_calc.py` kept as the r8 record | None; the ribbon-short ruling moved to check-in 2 (section 11, item 16) |
 | 3. Audit run 002 (done, r9-10; check-in 2 closed; fixes applied in r9-12) | Step-2 numbers; Table L.9-1 | `docs/reviews/charger-design/run-002-2026-11-12.md`; L.9 and Table L.9-1 final; 29 findings: 0 blocker, 8 major, 21 minor; all 29 fixes applied in r9-12; verify pass clean | None (the verify pass, the netlist step and the netlist freeze are done) |
 | 4. New-outline generator (done, D-51, D-52) | `outline_change_2026-11-12/retired.md` section 4 | `gen/mb_brd.py`, `gen/cr_geometry.py`, `gen/layout_cr.py` rewritten (Table D-52 regions), CR rows of `gen/check_constraints.py` rebuilt, 0.25 mm courtyards, VCHGOUT strap on L3, `cr/geometry_check.md` (H.23 successor) | Placeholders that do not block step 5: Molex 43045 header drawing (J102 P/N, pegs, latch side, cavity numbering), TSW pad and drill, W6/W7 hole sizes, MS4 rim distance. The height survey is closed by D-51 |
-| 5. Placement on the frozen netlist, all SMT on the top (done, D-54) | Frozen netlist, generator | `cr/cr.kicad_pcb` (variant B, pour stage), `cr/placement_F.png`, `cr/placement_B.png`, `cr/constraint_check.md`, `cr/drc_place.rpt`; variant records in `cr/variants_r9/` | **Check-in 3** (placement images after the D-56 fix round; the R103 and R129 D-20 exemptions (D-56; the D-55 R104 exemption moved to R103); the J1.10 solid joint on L3 (D-56); the D-54 open items 1, 4, 6 and 7) |
-| 6. Full route-race | Placed board, power geometry | Routed board and one batch of change requests | the 4-seed probe re-run on the D-56 board (review r9b trial 4 predicts 0 sealed pads; the escape rows pass; /N_OV at U101.7 was open at every D-54 and D-55 probe seed); the N_IMON/N_FLT crossing pair (review r9b N-4, a route-race test item); the router SMD-ban defect of review r9b N-5 (`tools/pcb/corridor_route`, owned by the routing session); confirm that `plane_vias.py` keeps vias off U101.25 (fixed in D-55); the T1_VMOT/T2C guide corridors (`gen/route_cr.py` `GUIDE_CORRIDORS`); via-in-pad fallbacks listed for review; `gen/make_cr_all.sh` must drop B.Cu from the PathFinder layer set (D-20 rule area). Closed in D-55: the OSH Park-only rule file and `gen/make_board.sh`; `gen/route_cr.py` TRACK 0.1524 mm |
-| 7. DRC and constraint check | Routed board | Clean DRC and constraint reports | Not applicable |
-| 8. Fab package (`gen/export.sh`, `gen/fab_readme.py`) | Checked board | CR fab package | **Check-in 4** (before the fab package and any order); fab quotes; BOM verification (T-A-05) |
+| 5. Placement on the frozen netlist, all SMT on the top (done, D-54) | Frozen netlist, generator | `cr/cr.kicad_pcb` (variant B; pour stage at step 5, routed at step 6, D-58), `cr/placement_F.png`, `cr/placement_B.png`, `cr/constraint_check.md`, `cr/drc_place.rpt`; variant records in `cr/variants_r9/` | Check-in 3 was not held separately; the placement items (the R103 and R129 D-20 exemptions, the J1.10 solid joint on L3, the D-54 open items) are reviewed at check-in 4 with the routed board |
+| 6. Full route-race (done, D-57, D-58) | Placed board, power geometry | D-57 /GND pre-via and VIN_L3 strap extension (change request R9-01); routed board, plan softum seed 1: 107 of 107 connections, 148 router vias, 830.8 mm of track, 0 vias on SMD pads; router via ban on the square-cornered mask opening (`114ad04`) | None |
+| 7. DRC and constraint check (done, D-59) | Routed board | Reference designators re-placed (`gen/silk_refs.py`, `cr/silk_refs.md`); ERC 0; DRC 0 violations, 0 unconnected, 0 parity; `cr/constraint_check.md` 98 pass, 0 FAIL, 2 listed exemptions | None |
+| 8. Fab package (done; `gen/export.sh`, `gen/fab_readme.py`) | Checked board | `fab/cr_2026-11-13/` (not ordered); figures in `figures/cr_routed_2026-11-13/` | **Check-in 4** (pre-order review, next); the bare-board blockers of section 11 item 22; fab quote and stack-up; BOM verification (T-A-05) before the parts order |
 
 The netlist is frozen (D-53), so placement is no longer blocked. D-51 closed the MB height survey: the D-41 stack
 is taken to clear every MB part except the power terminals, and the CR -x edge clears J-BL and J-FC by 2.454 mm and J-BT
@@ -750,7 +812,10 @@ T-W-01a then gates any charging, and the full T-W-01 gates FC windows.
 The following decisions belong to the operator. Each item names its record. Check-in 2 (items 15 to 21, from audit run
 002, `docs/reviews/charger-design/run-002-2026-11-12.md`, section "Items for operator ruling at check-in 2") is closed.
 The operator approved all fixes on 2026-11-12. Rulings R1 to R6 are the orchestrator's defaults, recorded in design change
-row r9-12, and the operator may override any of them. The next operator action is check-in 3 (placement images).
+row r9-12, and the operator may override any of them. The next operator action is check-in 4: the pre-order review
+of the routed CR, the CR fab package `fab/cr_2026-11-13/` and the EIB fab package `fab/eib_2026-11-13/`.
+`MORNING_REVIEW_2026-11-13.md` gives the decisions of the routing round with their reversal paths and the items for
+this review. (Superseded 2026-11-13: "The next operator action is check-in 3 (placement images)".)
 
 1. Closed 2026-11-12: check-in 1 passed; the operator reviewed this README and approved the D-50 round order (ruling (b)).
 2. Closed 2026-11-12: the operator accepted the J-TAP map with T5 (A4) diagonal to T10 (B5) (D-46, J.2 item 63).
@@ -758,7 +823,7 @@ row r9-12, and the operator may override any of them. The next operator action i
 4. Closed 2026-11-12 by D-51: the change-request section 6 height survey. The D-41 stack is taken to clear every MB part
    except the power terminals J-BL, J-FC and J-BT, and `cr/geometry_check.md` confirms the plan clearance of the CR -x
    edge (2.454 mm at J-BL and J-FC, 2.200 mm at J-BT).
-5. Review the EIB fab package before any order (D-49).
+5. Review the EIB fab package before any order (D-49). This review is part of check-in 4.
 6. Decide whether UVB stuck HIGH stays latent or gets a readback on a freed pin (F.3, audit item).
 7. Rule on the W1/W2 wire: Alpha 3053 stranding 10/30 against the specified 19/32 or 7/28 (BOM README section 7 item 11).
 8. Find a home for the stray-shunt check and level criteria of the withdrawn T-B-03 (design document I, T-B-03; J.2
@@ -789,6 +854,49 @@ row r9-12, and the operator may override any of them. The next operator action i
 20. Closed 2026-11-12 (check-in 2): the operator approved all 29 agreed fixes ("Approve all fixes"). Design change row
     r9-12 applies them without the refuted parts (Table L.9-2). SR-SR-17 was already moot under r9-11.
 21. Closed 2026-11-12 (check-in 2, ruling R6, default): the membership of Table L.9-1 is confirmed as written.
+22. Confirm the CR bare-board blockers of Table 11.1 before the CR order, in addition to the check-in 4 review. The
+    check-in 4 review also covers the D-59 reference-designator result (section 8.3) and the OSH Park solder-mask
+    expansion of 0.0508 mm (`MORNING_REVIEW_2026-11-13.md` section 3.1).
+23. Confirm the parts-order and assembly items of Table 11.2 before the parts order; they do not block the bare-board
+    order.
+24. After a generator rebuild, restore `cr/cr.kicad_pro` from git and refill the zones, because `gen/route.py`
+    resets the board minimums in that file. A full `gen/make_board.sh` run also rewrites `cr/cr.net` and the library
+    files. These tool residuals do not block an order.
+
+Table 11.1 lists the items that block the CR bare-board order. Item numbers in the Record column refer to
+`LAYOUT_DECISIONS.md` section 11.
+
+Table 11.1. CR bare-board blockers.
+
+| Item | Open question | Record |
+|---|---|---|
+| J102 J-TAP header (Molex 43045) | P/N, pegs, pin numbering and latch side against the Molex drawing | Items 16 and 25 |
+| CR J1 pads for TSW-110/112-07-L-S | Placeholder drill 1.1 mm and pad 1.9 mm | Item 14 |
+| W6/W7 lead pads | Placeholder 1.0 mm hole, 1.8 mm pad, 2.54 mm pitch | D-45 |
+| BAV199 D104 to D106 (SOT-23) | Pinout from a secondary source only | Item 9 |
+| In2.Cu VCHGIN strap | IPC-2152 chart reading; about 30 % width margin on the curve fit | Item 2; design document H.25 |
+| OSH Park order | Quote and 4-layer stack-up | Items 5 and 7 |
+| CR connector holes | OSH Park policy on non-functional inner pads | Item 3 |
+
+A wrong drill, pad or pitch in Table 11.1 is not repairable on a fabricated board. Two former items of
+`LAYOUT_DECISIONS.md` section 11 are closed. Item 18 is closed: TI SCES487I (rev. November 2024) Figure 4-1 and Table
+4-1 give one pinout for the SN74LVC1G11 DBV and DCK packages, and the U107 copper matches it. Item 24 (the J101 9-10
+short) is closed in substance by ruling R2 (R132 and R131B 4.99 kOhm; D-49 r9-12 bullet).
+
+Table 11.2 lists the items that block the parts order or assembly but not the bare-board order. Item numbers in the
+Record column refer to `LAYOUT_DECISIONS.md` section 11 unless marked otherwise.
+
+Table 11.2. Parts-order and assembly items.
+
+| Item | Open question | Record |
+|---|---|---|
+| Ordering BOM | Every SKU, price, stock level and MOQ | `bom_2026-11-11/README.md` section 7 |
+| T-A-05 datasheet checks | D103, D107, J101, J201, W5 | Design document I |
+| Capacitors and MOSFET | C102a/b DC bias; C101 Murata part; BSS84 VGS(th) | Item 19 (C101) |
+| U101 stencil | Window-pane apertures for the exposed pad | Item 22 |
+| Leads | Molex 2147581101 cable details; W1/W2 stranding (section 11 item 7 of this document); W3/W4 1.5 mm hole against the Alpha 5857 conductor diameter | `bom_2026-11-11/README.md` section 7 |
+| TSW/SSQ contacts | Derating with four powered pins | Item 15 |
+| Workshop and consumables | BOM rows not yet verified | `bom_2026-11-11/README.md` section 7 item 20 |
 
 ## 12. Where the detail lives
 
@@ -813,8 +921,12 @@ Table 12.1. Topic index.
 | Tests (T-A to T-W) | Design document | I |
 | Accepted residuals and open items | Design document | J.1, J.2 |
 | Audit runs | Design document; run-002 record `docs/reviews/charger-design/run-002-2026-11-12.md` | L.8 (no longer certifying), L.9 (adjudicated; fixes applied in r9-12; verify pass clean) |
-| Layout decisions D-01 to D-53 | `LAYOUT_DECISIONS.md` | D-38 to D-53 for 2026-11-12 |
-| Current state and next steps | `HANDOFF.md` | 1-3 |
+| Layout decisions D-01 to D-59 | `LAYOUT_DECISIONS.md` | D-38 to D-53 for 2026-11-12; D-54 to D-59 for 2026-11-13; section 11 for open TODO(verify) items |
+| Current state, routing-round decisions with reversal paths, items for the operator | `MORNING_REVIEW_2026-11-13.md` | 1-3 |
+| Current state and next steps | `HANDOFF.md` | Status block (2026-11-13), section 3a |
+| Routed CR checks and reference designators | `cr/constraint_check.md`, `cr/silk_refs.md` | Not applicable |
+| CR fab package | `fab/cr_2026-11-13/README.md` | 1, 2, 4 |
+| Figures of the routed CR | `figures/cr_routed_2026-11-13/` | Not applicable |
 | Pre-round-2 state record | `DESIGN_STATE_2026-11-12.md` | Superseded where round 2 differs |
 | First-round decision records | `decisions_2026-11-12/` | One file per decision |
 | Second-round decision records | `decisions_2026-11-12/round2/` | `orchestrator_digest.md` |
@@ -869,7 +981,7 @@ Table A.2. Identifier families.
 |---|---|---|
 | R1-R9, R3' | Operator rulings of 2026-11-05 | Design document 0.1 |
 | r8-17, r9-1 to r9-8 | Revision-log rows of 2026-11-12 | Design document 0.2 |
-| D-01 to D-50 | Layout decisions | `LAYOUT_DECISIONS.md` |
+| D-01 to D-59 | Layout decisions | `LAYOUT_DECISIONS.md` |
 | D2-1 to D2-5 | Operator rulings on hang defence | `decisions_2026-11-12/round2/` |
 | T1-T17r | Tap conductors from the MB to the CR | Design document A.4 |
 | F.5-T1 to F.5-T10 | Mode transitions, named here with the prefix F.5 to keep them apart from the taps | Design document F.5 |
