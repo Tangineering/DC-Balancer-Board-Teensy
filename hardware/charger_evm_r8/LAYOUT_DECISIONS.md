@@ -1187,6 +1187,45 @@ Open: the 4-seed probe re-run on this board (step 6 entry), N-5 and N-8.
   of In2.Cu routing area under R102. Placement, the netlist and the signal ratsnest are unchanged; the
   only new copper is the via and its track.
 
+**D-58. CR signal routing: route-race r9 plan softum, seed 1 (2026-11-13).**
+
+- Decision: the signal nets of the D-57 board are routed by the corridor router (`tools/pcb/corridor_route/`, board-routing
+  method) with plan softum and seed 1. Plan softum is plan softu with `rules.mask_margin` 0.075 mm. Plan softu sets soft
+  keep-out zones at the four divider tops (R102, R109, R111, R114) on F.Cu and In2.Cu with reserve 30, and via cost 200
+  on /N_UV, /N_OV, /N_DVDT and /N_ILIM. The router output passes through the plane-via step; the zones are not refilled
+  afterwards.
+- Reason: in round 2 of the r9 route-race, plan softu routed 107 of 107 connections at all four seeds on the D-57
+  board, with no via on an SMD pad. Seed 1 is the best of the four: 148 router vias, 830.8 mm of track, divider-top
+  same-layer metric 0.00 mm, logic track in the divider zone 0.7 mm, and one logic via in the zone (the /CE_DRV_J
+  escape). The /GND net after the plane-via step was open at seed 3 only (one In2.Cu-blocked GND_L1_fill piece).
+- Consequence: the U101 high-impedance nets carry these via counts: /N_UV 2, /N_OV 0, /N_DVDT 2, /N_ILIM 2, /N_IMON 3,
+  /N_FLT 2. With the default round mask margin of 0.05 mm, seed 2 of plan softu placed two own-net vias (/CHG_ARM at
+  U106.1, /3V3 at U118.8) 0.0045 mm inside the square-cornered mask opening of a rectangular pad; the opening corner
+  sits 0.072 mm out for a 0.0508 mm expansion. The mask margin 0.075 mm clears this case. The router and its score
+  script model the opening with a round margin; until they use the mitred opening, every plan for this board needs
+  `mask_margin` >= 0.075 mm. The smallest via-annulus gap to a pad plus its mask opening is 0.027 mm (constraint check,
+  D-37 row). The VIN_L3 extension of D-57 gave no measurable routing cost: plan softu gave 147/150/153/145 vias on the
+  D-57 board against 145/143/144/148 on the D-56 board. The route-race record is in the routing session's notes
+  (`routing_r9_cr/REVIEW_r2.md`, `TABLE_r2.md`, `plan_softum.json`).
+
+**D-59. Reference designators on the routed CR (2026-11-13).**
+
+- Decision: `gen/silk_refs.py` moves each reference field to the nearest position within 3.0 mm of its courtyard that
+  is clear of every top mask opening (plus 0.05 mm), every other silkscreen item (plus 0.10 mm) and a 0.25 mm band
+  inside the board edge. The text height is 1.0 mm, or 0.8 mm where 1.0 mm does not fit; the stroke is 0.15 mm (rule
+  `fab_silk_text`, 0.8 / 0.15 mm). A position over the courtyard of another part is used only where no free position
+  exists. A reference with no clear position moves to F.Fab. Copper, nets and footprint positions are not changed.
+- Reason: after routing, DRC reported 124 silkscreen items (75 silk clipped by the solder mask, 49 silk overlaps), all
+  reference fields at the 1.27 mm default height. `gen/export.sh` writes a package only from a board with no DRC
+  violation.
+- Consequence: 60 of 78 references are on the top silkscreen; 26 of them sit over another part's courtyard and are
+  hidden after assembly. 18 references are on F.Fab only: C107, C115, C130, C132, D105, D106, R122, R130, R131B, R147,
+  R184-R189, U110 and W3. This is a partial reversal of D-12a reversed (every reference on the silkscreen); the
+  interactive BOM and the F.Fab layer identify those 18 parts. In the dense rows, a reference can sit up to 3.0 mm from
+  its part, so the interactive BOM is the assembly reference. `cr/silk_refs.md` lists each reference with its text
+  height, angle and gap to its own courtyard. Reversal: restore the reference fields from 621fb28 (DRC then reports the
+  124 items again), or move every small-part reference to F.Fab (D-12a as first written).
+
 ## 9. Verification
 
 ### 9.1 ERC and DRC
@@ -1217,6 +1256,11 @@ reaches the pad's own via. Build note: `gen/route.py` saves `cr/cr.kicad_pcb` fr
 board minimums in `cr/cr.kicad_pro` (hole clearance 0.25 mm instead of 0.254 mm), so its zone fill leaves the J102
 NPTH pegs 0.2505 mm from the GND pours (six DRC items). Restore `cr/cr.kicad_pro` from git and refill the zones with
 the board loaded as `cr/cr.kicad_pcb`; the six items then clear.
+
+**D-58 / D-59 (2026-11-13):** on the routed board after the reference placement, DRC (`--severity-all
+--schematic-parity`) reports 0 violations, 0 unconnected items and 0 parity issues. The constraint check gives 98 pass
+rows and 0 FAIL. Before the reference placement, the routed board gave the 124 silkscreen items of D-57 and 0
+unconnected items.
 
 ### 9.2 Constraint measurements
 
