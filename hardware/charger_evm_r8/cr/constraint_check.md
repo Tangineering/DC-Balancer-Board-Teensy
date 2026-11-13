@@ -2,7 +2,11 @@
 |---|---|---|---|---|
 | A.8 CHG holes, 22 pins (pin identity, D-02) | J1 | max position error 0.0000 mm | 0.001 mm | pass |
 | D-02 / D-41: CHG footprint on F.Cu (no flip) | J1 | F.Cu | F.Cu | pass |
-| D-39 plug-on outline x 18.584-67, y 7-94 (Edge.Cuts) | Edge.Cuts | 4 segments, x 18.584-67.000, y 7.000-94.000 | 4 segments, the D-39 rectangle | pass |
+| D-60 final outline (Edge.Cuts) = cr_geometry.FINAL_OUTLINE, inside the D-39 rectangle | Edge.Cuts | 18 segments, x 18.580-58.600, y 7.830-72.640, area 2241.6 mm2; area differing from FINAL_OUTLINE 0.0000 mm2 | 18 segments; difference < 0.01 mm2 | pass |
+| D-60 6-32 mounting hole on the board (NPTH 3.70 mm) with its all-layer keep-out | MH1 | (26.23, 69.04), 1 pad, NPTH, drill 3.70 mm; keep-out zone present | (26.23, 69.04), NPTH 3.70 mm, keep-out r 4.0 mm | pass |
+| D-60 6-32 mounting hole on the board (NPTH 3.70 mm) with its all-layer keep-out | MH2 | (54.85, 63.79), 1 pad, NPTH, drill 3.70 mm; keep-out zone present | (54.85, 63.79), NPTH 3.70 mm, keep-out r 4.0 mm | pass |
+| D-60 6-32 mounting hole on the board (NPTH 3.70 mm) with its all-layer keep-out | MH3 | (54.85, 11.43), 1 pad, NPTH, drill 3.70 mm; keep-out zone present | (54.85, 11.43), NPTH 3.70 mm, keep-out r 4.0 mm | pass |
+| D-60 6-32 mounting hole on the board (NPTH 3.70 mm) with its all-layer keep-out | MH4 | (24.48, 25.18), 1 pad, NPTH, drill 3.70 mm; keep-out zone present | (24.48, 25.18), NPTH 3.70 mm, keep-out r 4.0 mm | pass |
 | Every part inside the outline (packer placed all parts) | all | 0 outside | 0 | pass |
 | D-44 every SMT part on the top side | none | 0 flipped | 0 | pass |
 | D-44 no SMD pad on B.Cu (one stencil, one reflow) | none | 0 pads | 0 | pass |
@@ -10,7 +14,7 @@
 | D-39 IC pitch >= 0.65 mm (U101 0.5 mm approved, D-40) | U101 | 0.50 mm | >= 0.65 mm or U101 | pass |
 | D-39 IC pitch >= 0.65 mm | U102, U103, U105, U106, U107, U110, U118, U119, U120 | 9 ICs checked | minimum pad-centre spacing | pass (rows above list any exception) |
 | D-03 (amended 2026-11-12) courtyard basis 0.25 mm | none | 0 on the 0.10 mm basis | 0 | pass |
-| D-37 via annulus on an SMD pad or its mask opening (fallback only; each listed for operator review) | none | 0 vias; smallest annulus gap to a pad + mask 0.089 mm | 0 unless listed | pass |
+| D-37 via annulus on an SMD pad or its mask opening (fallback only; each listed for operator review) | none | 0 vias; smallest annulus gap to a pad + mask 0.027 mm | 0 unless listed | pass |
 | A.8 IN strip: VCHGIN vias at the C102b end (A.8 6 each end; D-21 five) | C102b pad 1 | 6 vias within 3 mm | >= 6 | pass |
 | D-20 L4 (B.Cu): no tracks, GND pour only | B.Cu | 0 tracks; pour nets /GND | 0 tracks; /GND only | pass |
 | A.8 W1-W4 lead pads (D-45; D-08 re-derived at placement; W2 D-55) | W1 | (30.300, 61.200) | (30.30, 61.20) | pass |
@@ -84,26 +88,32 @@
 | D-20 every via tented on both sides | board setup | front True, back True | both tented | pass |
 | A.8 U101 thermal pad >= 9 vias 0.3 mm (D-40 exempt from D-37) | U101 | 9 vias | >= 9 | pass |
 | D-40 / A.8 U101 exposed-pad paste apertures clear of every via drill (window pane; D-55) | U101.25 | 4 apertures; smallest gap to a drill 0.151 mm; coverage 25.0 % | gap >= 0.15 mm (D-56, N-6); coverage TODO(verify: SLVSE94G section 11, stencil vendor) | pass |
-| D-56 (r9b N-7) F.Cu escape: a 0.1524 mm track leaves the pad to a same-net pad or a 0.6 mm via site (hard pours, other-net copper, keep-outs) | U101.6 /N_UV | free 3453.86 mm2; reaches R102.2, R103.1; via site (44.51, 63.20), 1.83 mm from the pad | reaches a same-net pad/via or holds a via site | pass |
-| D-56 (r9b N-7) F.Cu escape: a 0.1524 mm track leaves the pad to a same-net pad or a 0.6 mm via site (hard pours, other-net copper, keep-outs) | U101.7 /N_OV | free 3453.49 mm2; reaches R103.2, R104.1; via site (44.51, 63.20), 0.83 mm from the pad | reaches a same-net pad/via or holds a via site | pass |
-| D-56 (r9b N-7) F.Cu escape: a 0.1524 mm track leaves the pad to a same-net pad or a 0.6 mm via site (hard pours, other-net copper, keep-outs) | U101.9 /N_DVDT | free 3451.82 mm2; reaches C101.1; via site (44.43, 63.48), 0.35 mm from the pad | reaches a same-net pad/via or holds a via site | pass |
-| D-56 (r9b N-7) F.Cu escape: a 0.1524 mm track leaves the pad to a same-net pad or a 0.6 mm via site (hard pours, other-net copper, keep-outs) | U101.10 /N_ILIM | free 3451.70 mm2; reaches R101.1; via site (44.53, 63.40), 0.61 mm from the pad | reaches a same-net pad/via or holds a via site | pass |
-| D-56 (r9b N-7) F.Cu escape: a 0.1524 mm track leaves the pad to a same-net pad or a 0.6 mm via site (hard pours, other-net copper, keep-outs) | U101.13 /N_IMON | free 3453.49 mm2; reaches R105.1, R129.1; via site (43.03, 66.38), 0.35 mm from the pad | reaches a same-net pad/via or holds a via site | pass |
-| D-56 (r9b N-7) F.Cu escape: a 0.1524 mm track leaves the pad to a same-net pad or a 0.6 mm via site (hard pours, other-net copper, keep-outs) | U101.14 /N_FLT | free 3451.70 mm2; reaches R106s.1; via site (42.53, 66.38), 0.35 mm from the pad | reaches a same-net pad/via or holds a via site | pass |
-| D-56 (r9b N-7) F.Cu escape: a 0.1524 mm track leaves the pad to a same-net pad or a 0.6 mm via site (hard pours, other-net copper, keep-outs) | R102.2 /N_UV | free 3453.86 mm2; reaches R103.1, U101.6; via site (44.87, 58.05), 0.69 mm from the pad | reaches a same-net pad/via or holds a via site | pass |
-| D-56 (r9b N-7) F.Cu escape: a 0.1524 mm track leaves the pad to a same-net pad or a 0.6 mm via site (hard pours, other-net copper, keep-outs) | C102c.2 /GND | free 3598.00 mm2; reaches C101.2, C102a.2, C102b.2, C106.2 +58; via site (44.87, 58.05), 2.63 mm from the pad | reaches a same-net pad/via or holds a via site | pass |
+| D-56 (r9b N-7) F.Cu escape: a 0.1524 mm track leaves the pad to a same-net pad or a 0.6 mm via site (hard pours, other-net copper, keep-outs) | U101.6 /N_UV | free 1205.65 mm2; reaches R102.2, via(44.98,57.85); via site (46.58, 63.22), 3.69 mm from the pad | reaches a same-net pad/via or holds a via site | pass |
+| D-56 (r9b N-7) F.Cu escape: a 0.1524 mm track leaves the pad to a same-net pad or a 0.6 mm via site (hard pours, other-net copper, keep-outs) | U101.7 /N_OV | free 1206.45 mm2; reaches R103.2, R104.1; via site (45.26, 63.20), 1.39 mm from the pad | reaches a same-net pad/via or holds a via site | pass |
+| D-56 (r9b N-7) F.Cu escape: a 0.1524 mm track leaves the pad to a same-net pad or a 0.6 mm via site (hard pours, other-net copper, keep-outs) | U101.9 /N_DVDT | free 0.61 mm2; reaches via(44.52,63.34); via site none | reaches a same-net pad/via or holds a via site | pass |
+| D-56 (r9b N-7) F.Cu escape: a 0.1524 mm track leaves the pad to a same-net pad or a 0.6 mm via site (hard pours, other-net copper, keep-outs) | U101.10 /N_ILIM | free 1204.88 mm2; reaches R101.1, via(42.61,68.29), via(44.21,65.47); via site (44.53, 65.00), 1.09 mm from the pad | reaches a same-net pad/via or holds a via site | pass |
+| D-56 (r9b N-7) F.Cu escape: a 0.1524 mm track leaves the pad to a same-net pad or a 0.6 mm via site (hard pours, other-net copper, keep-outs) | U101.13 /N_IMON | free 1206.62 mm2; reaches R105.1, R129.1, via(41.01,68.29), via(43.30,66.31) +1; via site (43.43, 65.48), 0.35 mm from the pad | reaches a same-net pad/via or holds a via site | pass |
+| D-56 (r9b N-7) F.Cu escape: a 0.1524 mm track leaves the pad to a same-net pad or a 0.6 mm via site (hard pours, other-net copper, keep-outs) | U101.14 /N_FLT | free 1204.30 mm2; reaches R106s.1, via(42.46,66.47), via(44.52,69.74); via site (42.03, 66.48), 0.56 mm from the pad | reaches a same-net pad/via or holds a via site | pass |
+| D-56 (r9b N-7) F.Cu escape: a 0.1524 mm track leaves the pad to a same-net pad or a 0.6 mm via site (hard pours, other-net copper, keep-outs) | R102.2 /N_UV | free 1205.65 mm2; reaches U101.6, via(44.98,57.85); via site (44.74, 56.26), 2.03 mm from the pad | reaches a same-net pad/via or holds a via site | pass |
+| D-56 (r9b N-7) F.Cu escape: a 0.1524 mm track leaves the pad to a same-net pad or a 0.6 mm via site (hard pours, other-net copper, keep-outs) | C102c.2 /GND | free 1.37 mm2; reaches via(42.30,59.30); via site none | reaches a same-net pad/via or holds a via site | pass |
 | D-56 (r9b N-7) F.Cu escape: a 0.1524 mm track leaves the pad to a same-net pad or a 0.6 mm via site (hard pours, other-net copper, keep-outs) | C103.2 /GND | free 3.85 mm2; reaches via(38.08,62.90); via site (38.38, 62.60), 0.83 mm from the pad | reaches a same-net pad/via or holds a via site | pass |
 | H.23(a) successor: plug-on outline (D-39) | Edge.Cuts | 4 vertices, 48.416 x 87.000 mm, area 4212.19 mm2, KiCad Y 6.00-93.00 | 48.416 x 87.000 mm, 4212.19 mm2 | pass |
 | H.23(a) successor: courtyard inset 0.5 mm (A.8) | INSET | 4077.78 mm2 | information | info |
+| D-60 final outline (trimmed after routing), inside the D-39 rectangle | FINAL_OUTLINE | 18 vertices, area 2241.6 mm2 (53 % of D-39), x 18.580-58.600, y 7.83-72.64, convex | inside the D-39 rectangle within 0.01 mm (trim rounding); -x edge at x 18.584 (D-51) | pass |
+| D-60 +x key ear kept (D-41) | KEY_EAR | box x 50.0-58.6, y 52.0-71.0; 0.453 mm2 outside the outline | inside the final outline within the 0.06 mm trim tolerance | pass |
+| D-60 6-32 mounting hole (NPTH 3.70 mm; head disc r 3.6 mm on the board; keep-out r 4.0 mm) | MH1 | (26.23, 69.04); hole edge 1.70 mm from the board edge; head disc overhang 0.048 mm | head disc inside the final outline within the 0.06 mm trim tolerance | pass |
+| D-60 6-32 mounting hole (NPTH 3.70 mm; head disc r 3.6 mm on the board; keep-out r 4.0 mm) | MH2 | (54.85, 63.79); hole edge 1.88 mm from the board edge; head disc overhang 0.000 mm | head disc inside the final outline within the 0.06 mm trim tolerance | pass |
+| D-60 6-32 mounting hole (NPTH 3.70 mm; head disc r 3.6 mm on the board; keep-out r 4.0 mm) | MH3 | (54.85, 11.43); hole edge 1.70 mm from the board edge; head disc overhang 0.049 mm | head disc inside the final outline within the 0.06 mm trim tolerance | pass |
+| D-60 6-32 mounting hole (NPTH 3.70 mm; head disc r 3.6 mm on the board; keep-out r 4.0 mm) | MH4 | (24.48, 25.18); hole edge 1.70 mm from the board edge; head disc overhang 0.052 mm | head disc inside the final outline within the 0.06 mm trim tolerance | pass |
 | D-51 (operator ruling 2026-11-12 (a)): CR -x edge x 18.584 clears the terminal body in plan | J-BL (CUI_TB005_-762-03BE) | body +x 16.130 -> gap 2.454 mm; silk outer +x 16.194 -> 2.390 mm; keep-out +x 16.380 -> 2.204 mm; y overlap with the outline 22.86 mm | gap > 0 (no plan overlap) | pass |
 | D-51 (operator ruling 2026-11-12 (a)): CR -x edge x 18.584 clears the terminal body in plan | J-FC (CUI_TB005-762-02BE) | body +x 16.130 -> gap 2.454 mm; silk outer +x 16.194 -> 2.390 mm; keep-out +x 16.380 -> 2.204 mm; y overlap with the outline 15.24 mm | gap > 0 (no plan overlap) | pass |
 | D-51 (operator ruling 2026-11-12 (a)): CR -x edge x 18.584 clears the terminal body in plan | J-BT (CUI_TB005-762-02BE) | body +x 16.384 -> gap 2.200 mm; silk outer +x 16.448 -> 2.136 mm; keep-out +x 16.634 -> 1.950 mm; y overlap with the outline 15.24 mm | gap > 0 (no plan overlap) | pass |
-| D-41 key: CR rotated 180 deg about (33.498, 50.514) lands on the terminals | J-BL, J-FC, J-BT | rotated outline x -0.004-48.412; engagement start 16.89 mm, terminal top 21.70 mm, margin 4.81 mm | all three hit; engagement start < 21.70 mm | pass |
+| D-41 key: CR rotated 180 deg about (33.498, 50.514) lands on the terminals | J-BL, J-FC | rotated outline x 8.396-48.416; engagement start 16.89 mm, terminal top 21.70 mm, margin 4.81 mm | J-BL and J-FC hit (D-41 as amended by D-60; J-BT not needed); engagement start < 21.70 mm | pass |
 | H.23(j) successor: D-41 stack heights | TSW on SSQ | CR underside 11.05 mm, CR top 12.65 mm, engagement start 16.89 mm | underside 11.05 mm (D-41) | pass |
 | A.8 CHG holes in the .brd = the A.8 table (pin identity, D-02) | MB CHG package | max error 0.0000 mm | 0.001 mm | pass |
-| H.23 successor: CHG pad (1.9 mm, PLACEHOLDER) to the outline edge | J1 pads | 1.464 mm | >= 0.5 mm (A.8 inset) | pass |
-| H.23 successor: TSW body + 0.25 mm courtyard inside the 0.5 mm inset (D-41, D-03) | TSW-110 (pins 1-10) | margin 18.982 mm | >= 0 | pass |
-| H.23 successor: TSW body + 0.25 mm courtyard inside the 0.5 mm inset (D-41, D-03) | TSW-112 (pins 11-22) | margin 0.394 mm | >= 0 | pass |
+| H.23 successor: CHG pad (1.9 mm, PLACEHOLDER) to the outline edge | J1 pads | 1.468 mm | >= 0.5 mm (A.8 inset) | pass |
+| H.23 successor: TSW body + 0.25 mm courtyard inside the 0.5 mm inset (D-41, D-03) | TSW-110 (pins 1-10) | margin 7.584 mm | >= 0 | pass |
+| H.23 successor: TSW body + 0.25 mm courtyard inside the 0.5 mm inset (D-41, D-03) | TSW-112 (pins 11-22) | margin 0.398 mm | >= 0 | pass |
 | H.23(h) successor: D-20 window y 30.8-66.86 less 10 mm from the MB 5V copper rim (D-11 interim) | analog window | 839.3 mm2, x 19.08-66.50 | information; TODO(measure: operator, MS4) | info |
 | H.23(l) successor: J-TAP region, +x half, every straight-line A.4 maximum met | J102 region | 2038.9 mm2, x 42.79-66.50, y 7.50-93.50 | non-empty | pass |
 | H.23(l) successor: J-TAP straight-line run, +x half of the CR (lower bound of the dressed run) | T2 (J102.1) -> C-D2.1 (67.705, 69.850) | 1.2-67.1 mm | <= 100 mm (A.4) | pass |
@@ -116,4 +126,4 @@
 | H.23(l) successor: J-TAP straight-line run, +x half of the CR (lower bound of the dressed run) | T7b (J102.8) -> C-D6.2 (97.790, 19.363) | 31.3-92.3 mm | <= 150 mm (A.4) | pass |
 | H.23(l) successor: J-TAP straight-line run, +x half of the CR (lower bound of the dressed run) | T16 (J102.9) -> J2.43 (109.982, 37.846) | 43.5-87.2 mm | <= 150 mm (A.4) | pass |
 | H.23(l) successor: J-TAP straight-line run, +x half of the CR (lower bound of the dressed run) | T10 (J102.10) -> J2.47 (109.982, 32.766) | 43.5-90.6 mm | <= 150 mm (A.4) | pass |
-| H.23(b) successor: MB parts crossing the outline edge (information; heights closed by D-51) | C-D4, C-DC3, C1-BT, C1-FC, CBL2, CHG, MDAC-BT, OP-BT, RB2, RB3 | 10 parts | information | info |
+| H.23(b) successor: MB parts crossing the outline edge (information; heights closed by D-51) | CBL2, CHG, L-BT, MDAC-FC, OP-FC, RB1A, RB2, RD2-BT, REG-5V, RINJ-BT, SNS-BT | 11 parts | information | info |

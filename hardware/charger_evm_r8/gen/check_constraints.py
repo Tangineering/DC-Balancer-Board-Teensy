@@ -12,7 +12,7 @@ try:  # a wxWidgets debug assert opens a modal dialog that blocks an unattended 
     wx.DisableAsserts()
 except Exception:
     pass
-from shapely.geometry import Polygon, box, Point
+from shapely.geometry import LineString, Polygon, box, Point
 from shapely.ops import unary_union
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -71,12 +71,42 @@ if BOARD == "cr":
             xs.append(e[0])
             ys.append(e[1])
     bb = (min(xs), min(ys), max(xs), max(ys)) if xs else (0, 0, 0, 0)
-    ok = all(abs(a - b_) < 1e-3 for a, b_ in zip(bb, (G.X0, G.Y0, G.X1, G.Y1))) and len(ec) == 4
-    row("D-39 plug-on outline x 18.584-67, y 7-94 (Edge.Cuts)", "Edge.Cuts", "%d segments, x %.3f-%.3f, y %.3f-%.3f"
-        % ((len(ec),) + bb[0::2] + bb[1::2]), "4 segments, the D-39 rectangle", ok)
+    from shapely.ops import polygonize
+    edge_poly = unary_union(list(polygonize(unary_union([LineString([fr.e(d.GetStart()), fr.e(d.GetEnd())])
+                                                         for d in ec]))))
+    TRIMMED = len(ec) != 4      # D-60: the routed board is trimmed by gen/trim_cr.py; before the trim it is the D-39 box
+    if not TRIMMED:
+        ok = all(abs(a - b_) < 1e-3 for a, b_ in zip(bb, (G.X0, G.Y0, G.X1, G.Y1)))
+        row("D-39 plug-on outline x 18.584-67, y 7-94 (Edge.Cuts; placement frame, before the D-60 trim)", "Edge.Cuts",
+            "%d segments, x %.3f-%.3f, y %.3f-%.3f" % ((len(ec),) + bb[0::2] + bb[1::2]), "4 segments, the D-39 rectangle",
+            ok)
+    else:
+        dev = edge_poly.symmetric_difference(G.P_FINAL).area
+        row("D-60 final outline (Edge.Cuts) = cr_geometry.FINAL_OUTLINE, inside the D-39 rectangle", "Edge.Cuts",
+            "%d segments, x %.3f-%.3f, y %.3f-%.3f, area %.1f mm2; area differing from FINAL_OUTLINE %.4f mm2" % (
+                (len(ec),) + bb[0::2] + bb[1::2] + (edge_poly.area, dev)),
+            "%d segments; difference < 0.01 mm2" % len(G.FINAL_OUTLINE),
+            len(ec) == len(G.FINAL_OUTLINE) and dev < 0.01 and G.P.buffer(0.01).contains(edge_poly))
+        for h, (x, y) in G.MOUNTING_HOLES.items():
+            fp = FP.get(h)
+            got = "missing"
+            ok = False
+            if fp is not None:
+                pd = list(fp.Pads())
+                e = fr.e(fp.GetPosition())
+                got = "(%.2f, %.2f), %d pad, %s, drill %.2f mm" % (
+                    e[0], e[1], len(pd), "NPTH" if pd and pd[0].GetAttribute() == pcbnew.PAD_ATTRIB_NPTH else "not NPTH",
+                    pcbnew.ToMM(pd[0].GetDrillSizeX()) if pd else 0)
+                ok = (len(pd) == 1 and pd[0].GetAttribute() == pcbnew.PAD_ATTRIB_NPTH and
+                      abs(pcbnew.ToMM(pd[0].GetDrillSizeX()) - G.HOLE_DRILL) < 1e-3 and math.hypot(e[0] - x, e[1] - y) < 0.01)
+            kz = [z for z in b.Zones() if z.GetIsRuleArea() and z.GetZoneName() == h + "_keepout"]
+            row("D-60 6-32 mounting hole on the board (NPTH %.2f mm) with its all-layer keep-out" % G.HOLE_DRILL, h,
+                got + ("; keep-out zone present" if kz else "; keep-out zone MISSING"),
+                "(%.2f, %.2f), NPTH %.2f mm, keep-out r %.1f mm" % (x, y, G.HOLE_DRILL, G.HOLE_KEEPOUT), ok and bool(kz))
+    BOARD_P = edge_poly if TRIMMED else L.P
     # every part inside the outline (a part the packer could not place is parked outside it)
     out = sorted(r for r, fp in FP.items() if not r.startswith("#")
-                 and not crt(r, fr).is_empty and not L.P.buffer(0.01).contains(crt(r, fr)))
+                 and not crt(r, fr).is_empty and not BOARD_P.buffer(0.01).contains(crt(r, fr)))
     row("Every part inside the outline (packer placed all parts)", ", ".join(out) or "all", "%d outside" % len(out), "0",
         not out)
     # D-44: one SMT side
@@ -366,8 +396,8 @@ if BOARD == "cr":
     drills = [Point(fr.e(p.GetPosition())).buffer(pcbnew.ToMM(p.GetDrillSizeX()) / 2, 32) for fp in b.GetFootprints()
               for p in fp.Pads() if p.GetDrillSizeX() > 0] + [c.buffer(RC.VIA[1] / 2, 32) for _, c, _ in vias]
     smd_mask = unary_union([g for _, _, g in smd])   # every SMD pad plus its mask expansion (D-37 row above)
-    inset = L.P.buffer(-RC.EDGE_BAND, join_style=2)
-    via_inset = L.P.buffer(-(RC.EDGE_BAND + vr), join_style=2)
+    inset = BOARD_P.buffer(-RC.EDGE_BAND, join_style=2)          # D-60: the final outline once trimmed
+    via_inset = BOARD_P.buffer(-(RC.EDGE_BAND + vr), join_style=2)
 
     def escape(ref, num):
         me = [q for q in fpads if q[0] == ref and q[1] == num][0]
