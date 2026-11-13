@@ -57,9 +57,11 @@ Table 2. Decisions of the overnight round.
 2. Confirm the placeholder footprints against their drawings before the order. The J-TAP header (Molex 43045, items 16
    and 25 of `LAYOUT_DECISIONS.md` section 11), the TSW-110/112-07-L-S pins (item 14) and the W6/W7 lead pads (D-45) use
    placeholder pad and drill geometry. A wrong drill or pitch on these parts is not repairable on a fabricated board.
-3. Confirm the OSH Park solder-mask registration against the 0.027 mm via-to-mask-opening gap. The vias are tented, so
-   a registration error exposes part of a via annulus next to a pad of another net. The gap is positive, and DRC and the
-   constraint check pass.
+3. Confirm the OSH Park solder-mask expansion (0.0508 mm, TODO(verify) in the rule file). The 0.027 mm via-to-mask-
+   opening gap of Table 1 is between a pad and its own same-net escape via, so a registration error can at most let
+   solder wick onto that via. The smallest different-net gap is 0.115 mm (C116.1 /3V3 to a /QUAL via), about 0.094 mm
+   with square-cornered openings. Superseded: "a registration error exposes part of a via annulus next to a pad of
+   another net".
 4. Confirm the quote and the 4-layer stack-up (section 11 items 5 and 7).
 
 ### 3.2 Standing defaults from 2026-11-12
