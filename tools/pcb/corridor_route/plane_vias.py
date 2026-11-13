@@ -209,6 +209,7 @@ if A.stitch > 0:
                     fills.append(Polygon(pts, [h for h in hs if len(h) >= 3]).buffer(0))
     from shapely.prepared import prep as _prep
     fill_in = _prep(unary_union(fills).buffer(-(C.via / 2 + 0.05))) if fills else None
+    fill_any = _prep(unary_union(fills)) if fills else None
     have = [(x, y) for (x, y) in ties.get(snet, [])]
     if fill_in is not None:
         x0, y0, x1, y1 = unary_union(fills).bounds
@@ -232,7 +233,7 @@ if A.stitch > 0:
                             if fill_in.contains(Point(*C.xy(j, i))) and via_ok(n, j, i):
                                 best = (d2, j, i)
                     if best is None:
-                        st_empty += 1
+                        st_empty += 1 if fill_any.contains(Point(xx, yy)) else 0      # nodes off the fill do not count
                     else:
                         _, j, i = best
                         placed.setdefault(n, []).append((j, i))

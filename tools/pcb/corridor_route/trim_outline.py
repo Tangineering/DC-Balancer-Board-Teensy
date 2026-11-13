@@ -167,6 +167,17 @@ if A.holes:
         hull = unary_union([hull, Point(*best[1]).buffer(A.hole_board, 32)]).convex_hull
 new = hull.intersection(old)
 new = Polygon([(round(x, 2), round(y, 2)) for x, y in new.exterior.coords]).simplify(0.05)
+# A vertex that the 0.01 mm rounding put within 0.011 mm of the clip edge (the present outline) goes back onto that
+# edge: on the r9 CR the rounding put the -x vertices 0.004 mm outside the D-39 edge. The simplification above keeps a
+# subset of the vertices and does not move them, so the vertex list is the same as without this step.
+_snap = []
+for x, y in list(new.exterior.coords)[:-1]:
+    q = Point(x, y)
+    if old.exterior.distance(q) < 0.011:
+        q = old.exterior.interpolate(old.exterior.project(q))
+        x, y = round(q.x, 4), round(q.y, 4)
+    _snap.append((x, y))
+new = Polygon(_snap)
 warn = []
 for i, (x, y) in enumerate(holes, 1):
     d = new.exterior.distance(Point(x, y)) - A.hole_drill / 2
@@ -194,7 +205,7 @@ newp = plan_geom(new)
 res = dict(board=os.path.abspath(A.board), frame="plan (y = %s - KiCad y)" % Y0 if Y0 is not None else "KiCad",
            area_present_mm2=round(old.area, 1), area_proposed_mm2=round(new.area, 1),
            used_bounds_plan=[round(v, 2) for v in plan_geom(U0).bounds], margin=A.margin,
-           outline_plan=[[round(x, 2), round(y, 2)] for x, y in list(newp.exterior.coords)[:-1]],
+           outline_plan=[[round(x, 4), round(y, 4)] for x, y in list(newp.exterior.coords)[:-1]],
            ears_plan=A.ear, holes_plan=[list(to_plan(x, y)) for x, y in holes], hole_drill=A.hole_drill,
            hole_keepout=A.hole_keepout, board_wide_zones=wide, flip=flip, warnings=warn)
 

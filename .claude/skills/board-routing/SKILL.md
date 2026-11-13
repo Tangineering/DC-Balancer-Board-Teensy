@@ -93,8 +93,9 @@ score, seeds, run time). Read the other reference files at the step that names t
      most 5 mm"), give `plane_vias.py --stitch PITCH`. It adds vias of the plane net on a grid of that pitch inside
      the plane net's fill, with the same site rules as the plane vias (routed copper, holes, SMD pads and their mask
      openings, unflashed pads, keep-outs), and reports the grid nodes without a legal site. On the r9 CR board,
-     2.5 mm gave 585 vias over the whole outline, 50 nodes without a site, and no new DRC item; the trim step
-     (section 5a) removes the vias outside the new outline.
+     2.5 mm gave 585 vias over the untrimmed outline and 269 on the final trimmed outline, with no new DRC item.
+     When the outline will be trimmed (section 5a), stitch and straighten after the trim: both read the new edge
+     and the hole keep-outs from the board.
    - Straightening, for the delivered seed: the router steps cell by cell, so free stretches come out as
      staircases. `"$PY" straighten.py $D/board_pv/$B $D/board_st --plan W/plan.json --routes-out
      $D/routes_st.json` replaces each run that it can by one straight or 45-degree segment, or by one 45-degree and
