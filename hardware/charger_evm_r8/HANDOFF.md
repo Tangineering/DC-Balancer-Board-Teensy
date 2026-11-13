@@ -1,6 +1,32 @@
 # Charger EVM r8 capture: handoff (2026-11-11, updated 2026-11-13)
 
-**Status (2026-11-13, current: CR routed and trimmed, both fab packages exported, not ordered).** D-60 trims the
+**Status (2026-11-13, current: CR routed, trimmed, stitched and straightened; both fab packages exported, not
+ordered).** D-61 sets the finish order of the routed CR: route, plane vias, `gen/trim_cr.py`, /GND stitching vias on a
+2.5 mm grid inside the trimmed GND fill (`tools/pcb/corridor_route/plane_vias.py --stitch 2.5`), the straightening pass
+(`straighten.py`), the stitching gap fill (`tools/pcb/corridor_route/stitch_gaps.py`), then `gen/silk_refs.py`
+(operator requests 2026-11-13, relayed by the routing session). The D-60 outline (18 vertices, 2241.6 mm²) and the
+holes MH1 (26.23, 69.04), MH2 (54.85, 63.79), MH3 (54.85, 11.43) and MH4 (24.48, 25.18) do not change. The D-58 to D-60
+board had only 6 /GND vias, because the `ROUTE_SKIP_FR=1` build skips `route.py stitch()`. The D-20 rule (L4 stitched
+to L2 at a pitch of at most 5 mm) was therefore not met, and no check measured it.
+
+The D-61 board has 278 /GND vias: 269 grid stitching vias, 3 gap-fill vias, and the pre-vias and plane vias. The grid
+stitching left a 4.08 mm gap at (36.0, 26.7); the gap fill added /GND vias at (36.04, 26.87), (34.34, 33.62) and
+(34.04, 59.52) (`cr/stitch_gaps.md`; routing request R9-03, closed). The gap-fill report samples the pour at 0.50 mm
+and gives 4.09 mm before and 3.43 mm after; the constraint-check row (4.08 mm, 3.47 mm) is the measure of record. A new
+constraint-check row measures D-20: with 296 stitch points (/GND vias and /GND plated holes), the largest distance over
+the filled L4 pour is 3.47 mm at (31.0, 34.7), against 3.54 mm for a 5 mm square pitch, and the row passes.
+Straightening reduces the track segments from 1791 to 768 and the track length from 830.8 to 823.9 mm; vias, pads and
+locked pre-tracks do not move. The references do not change (59 on F.Silkscreen, 19 on F.Fab only).
+
+On this board, ERC reports 0 messages, DRC (`--severity-all --schematic-parity`) reports 0 violations, 0 unconnected
+items and 0 parity issues, and the constraint check gives 109 pass rows, 0 FAIL and 3 exemption rows. The CR fab
+package `fab/cr_2026-11-13/` and the figures `figures/cr_routed_2026-11-13/` were re-exported from this board in
+`437d2d7`; the EIB fab package is `fab/eib_2026-11-13/`; neither is ordered. The D-20 stitching does not block the
+order. The intermediate board `8521bf8` (stitching before the trim, 19-vertex outline of 2248.3 mm²) is superseded, and
+its values are not current. **The next action is operator check-in 4: the pre-order review of the routed CR and the
+two packages** (section 3a lists the items that block the order).
+
+**Status (2026-11-13, D-60: CR routed and trimmed, both fab packages exported, not ordered).** D-60 trims the
 routed CR to a convex 18-vertex outline inside the D-39 rectangle: 2241.6 mm² (was 4212.2 mm², 53 %), bounding box
 40.02 x 64.81 mm, MB frame x 18.58-58.60, y 7.83-72.64. The outline keeps a +x key ear for the D-41 key. D-60 also
 adds four NPTH 3.70 mm holes (6-32 free fit): MH1 (26.23, 69.04), MH2 (54.85, 63.79), MH3 (54.85, 11.43) and MH4
@@ -12,7 +38,9 @@ constraint check gives 108 pass rows and 0 FAIL, with 3 exemption rows (R102 und
 U101-network exemptions, D-55 and D-56). The CR fab package `fab/cr_2026-11-13/` was re-exported from the trimmed
 board (`779c419`); the EIB fab package is `fab/eib_2026-11-13/`; neither is ordered. **The next action is operator
 check-in 4: the pre-order review of the routed CR and the two packages** (section 3a lists the items that block the
-order).
+order). (**Superseded 2026-11-13, D-61:** "current: CR routed and trimmed" in the heading; "the constraint check
+gives 108 pass rows and 0 FAIL" (the D-60 board had no D-20 stitching row and 6 /GND vias); "The CR fab package
+`fab/cr_2026-11-13/` was re-exported from the trimmed board (`779c419`)"; see the current status above.)
 
 **Status (2026-11-13, D-57 to D-59: CR routed, both fab packages exported, not ordered).** The CR board
 `cr/cr.kicad_pcb` is placed, poured and routed. D-57 adds a /GND pre-via at (42.30, 59.30) for C102c pad 2 and
@@ -57,9 +85,9 @@ silkscreen reference-field items only, 109 unconnected, 0 parity. The netlist is
 operator check-in 3, on the new images. (**Superseded 2026-11-13:** D-56 to D-59 follow; the next action is check-in 4,
 see the current status above.)
 
-This note gives the starting point for the next session. `LAYOUT_DECISIONS.md` is the full record. The 2026-11-12
-decisions are D-39 to D-50 there, the 2026-11-12 and 2026-11-13 board decisions are D-51 to D-60, and every older
-entry carries its 2026-11-12 classification (retired, re-derive, amended or kept).
+This note gives the starting point for the next session. `LAYOUT_DECISIONS.md` is the full record (D-01 to D-61).
+The 2026-11-12 decisions are D-39 to D-50 there, the 2026-11-12 and 2026-11-13 board decisions are D-51 to D-61, and
+every older entry carries its 2026-11-12 classification (retired, re-derive, amended or kept).
 
 ## 1. State
 
@@ -69,8 +97,8 @@ entry carries its 2026-11-12 classification (retired, re-derive, amended or kept
 | CR outline | **plug-on placement frame x 18.584-67, y 7-94 (MB frame), 48.416 x 87 mm, stencil and reflow assembly (D-39); final board outline: the D-60 trim, 2241.6 mm², 40.02 x 64.81 mm; applied to the documents** (`LAYOUT_DECISIONS.md`, `OUTLINE_CHANGE_REASSESSMENT_2026-11-12.md`). The generator is built on it (D-52: `gen/mb_brd.py`, `gen/cr_geometry.py`, `gen/layout_cr.py`, `gen/check_constraints.py`); `cr/geometry_check.md` passes every check. The height survey is closed by D-51. The CR board file is built and routed on the outline (CR board file row). **After routing, the board is trimmed to the D-60 outline:** a convex 18-vertex outline inside the D-39 rectangle, 2241.6 mm² (the rectangle is 4212.2 mm²; 53 %), bounding box 40.02 x 64.81 mm, MB frame x 18.58-58.60, y 7.83-72.64, with a +x key ear for the D-41 key and four 6-32 holes (CR board file row). The D-39 rectangle stays the placement frame. `gen/cr_geometry.py` holds `FINAL_OUTLINE`, `KEY_EAR` and `MOUNTING_HOLES`; `gen/trim_cr.py` applies them through `tools/pcb/corridor_route/trim_outline.py` and refuses when the result differs by more than 0.01 mm. (**Superseded 2026-11-13:** "No board file is built on the outline yet".) |
 | 2026-11-12 decisions | first round (`DESIGN_STATE_2026-11-12.md` Table 1) and second round (`decisions_2026-11-12/round2/`, digest `orchestrator_digest.md`) **recorded**; LAYOUT_DECISIONS D-39 to D-50 and the classification of D-01 to D-38 applied this round |
 | CR netlist | regenerated from `gen/netlist.py` on the reduced design (D-47, D-31, D-44): 78 parts (r8: 145). W6 and W7 carry the through-hole placeholder footprints of D-45. `cr/charger_r8_cr.pretty` was rebuilt with `gen/fplib.py` and now holds the J102 Micro-Fit footprint, so ERC reports 0 errors and 0 warnings. The netlist export reports "schematic has annotation errors"; the cause is the six letter-suffix references C102a, C102b, C102c, R106s, R131A and R131B (the message disappears when all six are renamed to numeric references in a scratch copy). These references are the B.8 designators and are accepted. The generator applies the 0.25 mm courtyard basis (`_CrtYd0.25`, D-52). **Frozen 2026-11-12 (D-53):** R132 and R131B are 4.99 kOhm (r9-12, ruling R2); `cr/charger_r8_cr.pretty`, `cr/cr.kicad_sch` and `cr/cr.net` were regenerated without placement; 78 parts, 79 nets, connectivity unchanged, ERC 0 errors and 0 warnings, sha256 `e98f4e49e22f60cab729c1db3f93439ce24fda5507423080c31d613b8f340833` (superseded in r9-13). **Re-frozen 2026-11-12 (D-53 amendment, r9-13):** the J-TAP re-map changes connectivity only at J102 pins 1, 2, 7 and 8; `cr/cr.kicad_sch`, `cr/charger_r8_cr.kicad_sym` and `cr/cr.net` regenerated, ERC 0 errors and 0 warnings, sha256 `608bbf977803bc40118baf7a9f7635c60a9d3da6e1ca88ca0b95b1db1f64909b` |
-| CR board file | **Plug-on outline, variant B, placed, poured, routed and trimmed (2026-11-13, D-57 to D-60).** 78 parts, all on the top, 0 outside the outline. D-60 (`779c419`; operator rulings 2026-11-13, route-race change request R9-02): after routing, `gen/trim_cr.py` trims the board to the convex 18-vertex `FINAL_OUTLINE` of `gen/cr_geometry.py` (2241.6 mm², bounding box 40.02 x 64.81 mm, MB frame x 18.58-58.60, y 7.83-72.64, +x key ear kept) and adds four NPTH 3.70 mm holes for 6-32 screws that hold a 3D-printed support: MH1 (26.23, 69.04), MH2 (54.85, 63.79), MH3 (54.85, 11.43), MH4 (24.48, 25.18), each with an all-layer copper keep-out of radius 4.0 mm and a 3.6 mm head disc on the board. No part, track or via moved. A CR rotated 180 degrees now lands on J-BL (7.73 mm of x overlap) and J-FC (7.63 mm), not on J-BT (D-41 amended). After the trim, `gen/silk_refs.py` puts 59 of 78 references on F.Silkscreen, 27 of them over another courtyard; C110 moved to F.Fab, so 19 are on F.Fab only (C107, C110, C115, C130, C132, D105, D106, R122, R130, R131B, R147, R184-R189, U110, W3); `cr/silk_refs.md` lists them. Checks on the trimmed board: ERC 0; DRC (`--severity-all --schematic-parity`, OSH Park-only rule file) 0 violations, 0 unconnected items, 0 parity issues; constraint check 108 pass rows, 0 FAIL, 3 exemption rows (R102 under D-20; R103 and R129 as listed U101-network exemptions, D-55 and D-56). The figures in `figures/cr_routed_2026-11-13/` (3D views and layer images) are regenerated from the trimmed board. D-57 (`0e7f22b`): /GND pre-via at (42.30, 59.30) for C102c pad 2 and the extension of the VCHGIN L3 strap (`VIN_L3`); strap minimum section 4.174 mm against 3.221 mm required (R9.H25), 2.75 A at a 10 degC rise against the 2.41 A basis. D-58 (route-race r9, plan softum = plan softu with `mask_margin` 0.075 mm, seed 1; committed as `621fb28`): 107 of 107 connections, 148 router vias, 830.8 mm of router track, every router track 0.1524 mm, vias 0.6 / 0.3 mm only, 0 vias on SMD pads, divider-top same-layer metric 0.00 mm, 0.7 mm of logic track and 1 logic via (/CE_DRV_J) in the divider zone; U101 high-impedance via counts /N_UV 2, /N_OV 0, /N_DVDT 2, /N_ILIM 2, /N_IMON 3, /N_FLT 2. Tools commit `114ad04` (merged as `a919337`) makes the router and its score script ban vias from the square-cornered mask opening of SMD pads, so new plans do not need `mask_margin` 0.075 mm; the routed board is unchanged. D-59 (`6ae73df`) first placed the references with `gen/silk_refs.py` (1.0 / 0.8 mm text, 0.15 mm stroke; counts superseded by D-60, see the note below). The smallest via-annulus gap to a pad plus its mask opening is 0.027 mm and is same-net (a pad's own escape via); the smallest different-net gap is 0.115 mm (C116.1 /3V3 to a /QUAL via), about 0.094 mm with square-cornered openings. Rebuild procedure: section 4. (**Superseded 2026-11-13, D-60:** "Plug-on outline, variant B, placed, poured and routed (2026-11-13, D-57 to D-59)"; the D-59 reference placement "60 of 78 references on F.Silkscreen ..., 26 of them over another courtyard; 18 are on F.Fab only"; "constraint check 98 pass, 0 FAIL, 2 listed exemptions"; the figures as made from the untrimmed board.) (**Superseded 2026-11-13, D-57 to D-59:** "Plug-on outline, variant B, pour stage, after the D-56 fix round on the r9b re-review (2026-11-13). ... Constraint check 97 pass, 0 FAIL, 3 listed D-20 exemptions (R102, R103, R129) ... J1.10 is fed through the L3 VCHGIN strap alone (3.645 mm narrowest section ...) ... DRC ...: 124 violations ..., 107 unconnected, 0 parity issues. Next: the 4-seed probe re-run (step 6 entry)".) (**Superseded 2026-11-13, D-56:** "after the D-55 fix round ... 88 pass ... (R102, R104, R129) ... 109 unconnected".) Pour-stage rebuild (the D-56 record; section 4 is the current procedure) from `hardware/charger_evm_r8`: the placement half of `gen/make_board.sh` (`gen/pcbbuild.py cr ../cr` from `gen/`, copy `tools/pcb/fab_rules/fab_4layer_oshpark_only.kicad_dru` to `cr/cr.kicad_dru`, `apply_board_setup.py`, the OSH Park minima and the 0.1524 mm Default net class, `gen/silk_fix.py`), then `ROUTE_SKIP_FR=1 route.py cr ../cr` from `gen/`, `check_constraints.py cr ../cr > ../cr/constraint_check.md`, `kicad-cli pcb drc --severity-all --schematic-parity -o cr/drc_place.rpt`, `plot_place.py dump` (venv) and `plot_place.py plot` (miniforge). **Pitfalls:** `route.py` without `ROUTE_SKIP_FR=1` runs Freerouting into the live board; `check_constraints.py` prints to stdout; a full `make_board.sh cr` still rewrites the `cr/cr.net` date line and 13 library files (stamp-only; restore them, or build `gen/fplib.py` into a scratch folder and copy only the changed footprints, as D-55 did). Variant A: `LAYOUT_VARIANT=A`, record in `cr/variants_r9/A/` (predates D-55). (**Superseded 2026-11-13, D-55:** the D-54 row "constraint check 74 pass, 1 FAIL (D-44: U101.25); DRC 131 violations, 3 courtyard overlaps, 4 starved thermals; rebuild with `cr/variants_r9/B/cr.kicad_dru`; a full `make_board.sh cr` copies the shared OSH Park/PCBWay rule file back in".) |
-| CR fab package | `fab/cr_2026-11-13/`, re-exported by `gen/export.sh cr 2026-11-13` from the trimmed D-60 board (`779c419`); **not ordered**. The package README section 1 size row gives the D-60 outline (2241.6 mm²), and the NPTH drill file has tool T2, 3.70 mm, for the four 6-32 holes. (**Superseded 2026-11-13, D-60:** "`fab/cr_2026-11-13/` (`cb1def6`; README corrected in `c16313b`), written by `gen/export.sh cr 2026-11-13` on the D-59 board".) The fab is OSH Park (bare board); the rule file is `tools/pcb/fab_rules/fab_4layer_oshpark_only.kicad_dru`. The KiKit `jlcpcb` and `pcbway` presets with `--assembly` wrote no `bom.csv` (an `int()` parse error, probably on the letter-suffix references such as R131B and C102a); this does not affect an OSH Park bare-board order, and `assembly/cr-bom.csv` is the assembly BOM. The EIB package `fab/eib_2026-11-13/` (EIB row) is 2-layer, so at OSH Park it is a separate order and is not on the CR panel |
+| CR board file | **Plug-on outline, variant B, placed, poured, routed, trimmed, stitched and straightened (2026-11-13, D-57 to D-61).** 78 parts, all on the top, 0 outside the outline. D-61 (routing session `07a6181`, merged as `b8e3762`; gap fill merged as `437d2d7`; operator requests 2026-11-13, relayed by the routing session): after `gen/trim_cr.py`, `tools/pcb/corridor_route/plane_vias.py --stitch 2.5` places /GND stitching vias on a 2.5 mm grid inside the trimmed GND fill, `straighten.py` replaces staircase runs of unlocked signal tracks by straight or 45-degree runs, `tools/pcb/corridor_route/stitch_gaps.py` adds /GND vias where the filled L4 pour is more than 3.54 mm from a stitch point, and `gen/silk_refs.py` runs last. The D-60 outline and holes do not change. The board has 278 /GND vias: 269 grid stitching vias, 3 gap-fill vias at (36.04, 26.87), (34.34, 33.62) and (34.04, 59.52), and the pre-vias and plane vias (the D-58 to D-60 board had 6, because the `ROUTE_SKIP_FR=1` build skips `route.py stitch()`). Straightening reduces the track segments from 1791 to 768 and the track length from 830.8 to 823.9 mm; vias, pads and locked pre-tracks do not move, and the references do not change (59 on F.Silkscreen, 19 on F.Fab only). Checks on the D-61 board: ERC 0; DRC (`--severity-all --schematic-parity`, OSH Park-only rule file) 0 violations, 0 unconnected items, 0 parity issues; constraint check 109 pass rows, 0 FAIL, 3 exemption rows. The new D-20 stitching row measures 296 stitch points (/GND vias and /GND plated holes); the largest distance to the nearest one over the filled L4 pour is 3.47 mm at (31.0, 34.7), against 3.54 mm for a 5 mm square pitch, so the row passes. Before the gap fill the row read FAIL (293 stitch points, 4.08 mm at (36.0, 26.7)); routing request R9-03 closed it. The figures in `figures/cr_routed_2026-11-13/` are regenerated from the D-61 board. The intermediate board `8521bf8` (stitching before the trim, 19-vertex outline of 2248.3 mm²) is superseded; do not use its values. D-60 (`779c419`; operator rulings 2026-11-13, route-race change request R9-02): after routing, `gen/trim_cr.py` trims the board to the convex 18-vertex `FINAL_OUTLINE` of `gen/cr_geometry.py` (2241.6 mm², bounding box 40.02 x 64.81 mm, MB frame x 18.58-58.60, y 7.83-72.64, +x key ear kept) and adds four NPTH 3.70 mm holes for 6-32 screws that hold a 3D-printed support: MH1 (26.23, 69.04), MH2 (54.85, 63.79), MH3 (54.85, 11.43), MH4 (24.48, 25.18), each with an all-layer copper keep-out of radius 4.0 mm and a 3.6 mm head disc on the board. No part, track or via moved. A CR rotated 180 degrees now lands on J-BL (7.73 mm of x overlap) and J-FC (7.63 mm), not on J-BT (D-41 amended). After the trim, `gen/silk_refs.py` puts 59 of 78 references on F.Silkscreen, 27 of them over another courtyard; C110 moved to F.Fab, so 19 are on F.Fab only (C107, C110, C115, C130, C132, D105, D106, R122, R130, R131B, R147, R184-R189, U110, W3); `cr/silk_refs.md` lists them. Checks on the trimmed board: ERC 0; DRC (`--severity-all --schematic-parity`, OSH Park-only rule file) 0 violations, 0 unconnected items, 0 parity issues; constraint check 108 pass rows, 0 FAIL, 3 exemption rows (R102 under D-20; R103 and R129 as listed U101-network exemptions, D-55 and D-56). The figures in `figures/cr_routed_2026-11-13/` (3D views and layer images) are regenerated from the trimmed board. D-57 (`0e7f22b`): /GND pre-via at (42.30, 59.30) for C102c pad 2 and the extension of the VCHGIN L3 strap (`VIN_L3`); strap minimum section 4.174 mm against 3.221 mm required (R9.H25), 2.75 A at a 10 degC rise against the 2.41 A basis. D-58 (route-race r9, plan softum = plan softu with `mask_margin` 0.075 mm, seed 1; committed as `621fb28`): 107 of 107 connections, 148 router vias, 830.8 mm of router track, every router track 0.1524 mm, vias 0.6 / 0.3 mm only, 0 vias on SMD pads, divider-top same-layer metric 0.00 mm, 0.7 mm of logic track and 1 logic via (/CE_DRV_J) in the divider zone; U101 high-impedance via counts /N_UV 2, /N_OV 0, /N_DVDT 2, /N_ILIM 2, /N_IMON 3, /N_FLT 2. Tools commit `114ad04` (merged as `a919337`) makes the router and its score script ban vias from the square-cornered mask opening of SMD pads, so new plans do not need `mask_margin` 0.075 mm; the routed board is unchanged. D-59 (`6ae73df`) first placed the references with `gen/silk_refs.py` (1.0 / 0.8 mm text, 0.15 mm stroke; counts superseded by D-60, see the note below). The smallest via-annulus gap to a pad plus its mask opening is 0.027 mm and is same-net (a pad's own escape via); the smallest different-net gap is 0.115 mm (C116.1 /3V3 to a /QUAL via), about 0.094 mm with square-cornered openings. Rebuild procedure: section 4. (**Superseded 2026-11-13, D-61:** "Plug-on outline, variant B, placed, poured, routed and trimmed (2026-11-13, D-57 to D-60)"; the D-60 checks "constraint check 108 pass rows, 0 FAIL, 3 exemption rows" (no D-20 stitching row existed); "The figures in `figures/cr_routed_2026-11-13/` ... are regenerated from the trimmed board" (the D-60 board, 6 /GND vias). The D-61 board gives the same DRC result and reference counts as the D-60 board.) (**Superseded 2026-11-13, D-60:** "Plug-on outline, variant B, placed, poured and routed (2026-11-13, D-57 to D-59)"; the D-59 reference placement "60 of 78 references on F.Silkscreen ..., 26 of them over another courtyard; 18 are on F.Fab only"; "constraint check 98 pass, 0 FAIL, 2 listed exemptions"; the figures as made from the untrimmed board.) (**Superseded 2026-11-13, D-57 to D-59:** "Plug-on outline, variant B, pour stage, after the D-56 fix round on the r9b re-review (2026-11-13). ... Constraint check 97 pass, 0 FAIL, 3 listed D-20 exemptions (R102, R103, R129) ... J1.10 is fed through the L3 VCHGIN strap alone (3.645 mm narrowest section ...) ... DRC ...: 124 violations ..., 107 unconnected, 0 parity issues. Next: the 4-seed probe re-run (step 6 entry)".) (**Superseded 2026-11-13, D-56:** "after the D-55 fix round ... 88 pass ... (R102, R104, R129) ... 109 unconnected".) Pour-stage rebuild (the D-56 record; section 4 is the current procedure) from `hardware/charger_evm_r8`: the placement half of `gen/make_board.sh` (`gen/pcbbuild.py cr ../cr` from `gen/`, copy `tools/pcb/fab_rules/fab_4layer_oshpark_only.kicad_dru` to `cr/cr.kicad_dru`, `apply_board_setup.py`, the OSH Park minima and the 0.1524 mm Default net class, `gen/silk_fix.py`), then `ROUTE_SKIP_FR=1 route.py cr ../cr` from `gen/`, `check_constraints.py cr ../cr > ../cr/constraint_check.md`, `kicad-cli pcb drc --severity-all --schematic-parity -o cr/drc_place.rpt`, `plot_place.py dump` (venv) and `plot_place.py plot` (miniforge). **Pitfalls:** `route.py` without `ROUTE_SKIP_FR=1` runs Freerouting into the live board; `check_constraints.py` prints to stdout; a full `make_board.sh cr` still rewrites the `cr/cr.net` date line and 13 library files (stamp-only; restore them, or build `gen/fplib.py` into a scratch folder and copy only the changed footprints, as D-55 did). Variant A: `LAYOUT_VARIANT=A`, record in `cr/variants_r9/A/` (predates D-55). (**Superseded 2026-11-13, D-55:** the D-54 row "constraint check 74 pass, 1 FAIL (D-44: U101.25); DRC 131 violations, 3 courtyard overlaps, 4 starved thermals; rebuild with `cr/variants_r9/B/cr.kicad_dru`; a full `make_board.sh cr` copies the shared OSH Park/PCBWay rule file back in".) |
+| CR fab package | `fab/cr_2026-11-13/`, re-exported by `gen/export.sh cr 2026-11-13` from the D-61 board (trimmed, stitched, straightened and gap-filled; `437d2d7`); **not ordered**. The package README section 1 size row gives the D-60 outline (2241.6 mm²), and the NPTH drill file has tool T2, 3.70 mm, for the four 6-32 holes. (**Superseded 2026-11-13, D-61:** "from the trimmed D-60 board (`779c419`)".) (**Superseded 2026-11-13, D-60:** "`fab/cr_2026-11-13/` (`cb1def6`; README corrected in `c16313b`), written by `gen/export.sh cr 2026-11-13` on the D-59 board".) The fab is OSH Park (bare board); the rule file is `tools/pcb/fab_rules/fab_4layer_oshpark_only.kicad_dru`. The KiKit `jlcpcb` and `pcbway` presets with `--assembly` wrote no `bom.csv` (an `int()` parse error, probably on the letter-suffix references such as R131B and C102a); this does not affect an OSH Park bare-board order, and `assembly/cr-bom.csv` is the assembly BOM. The EIB package `fab/eib_2026-11-13/` (EIB row) is 2-layer, so at OSH Park it is a separate order and is not on the CR panel |
 | Current-state record | `MORNING_REVIEW_2026-11-13.md`: the check results (Table 1), the decisions of the overnight round with reversal paths (Table 2) and the items for the operator (section 3) |
 | CR interactive pass (2026-11-12) | **superseded** by the new outline and the route-race (D-36, D-50). The project is archived at `archive_r7_outline/cr/interactive/` (move staged this round; KiCad must not hold the old path open) |
 | r7 layout work | archived in `archive_r7_outline/` (variants, attempts, images, routability study); reference only |
@@ -151,10 +179,14 @@ Items 1 to 5 below are done (2026-11-12). Check-in 1 passed (operator ruling (b)
 `round4/calc/r9_calc.py`, and the earlier scripts stay unmodified as the r8 record. Items 6, 8 and 9 and the fab
 package of item 10 are done (2026-11-13). The list numbers include the operator check-ins; D-50 steps 5 to 8 are
 items 6, 8, 9 and 10. As part of item 9, the routed CR was trimmed to the D-60 outline with four 6-32 holes (operator
-rulings 2026-11-13), and the fab package of item 10 was re-exported from the trimmed board (`779c419`). Item 7
-(check-in 3) was not held separately, because the operator authorized the design owner to continue without a stop to
-the end of the PCB design (2026-11-12/13 overnight). The open item is check-in 4 (item 10), and section 3a lists the
-items that block the order.
+rulings 2026-11-13), and the fab package of item 10 was re-exported from the trimmed board (`779c419`). After the
+trim, D-61 added /GND stitching vias, straightened the tracks and filled the last stitching gap (operator requests
+2026-11-13); the fab package was re-exported from that board (`437d2d7`). The new D-20 stitching row of the constraint
+check passes. (**Superseded 2026-11-13, D-61:** "the fab package of item 10 was re-exported from the trimmed board
+(`779c419`)" as the current package.)
+Item 7 (check-in 3) was not held separately, because the operator authorized the design owner to continue without a
+stop to the end of the PCB design (2026-11-12/13 overnight). The open item is check-in 4 (item 10), and section 3a
+lists the items that block the order.
 
 1. **Operator check-in 1:** a diff summary of the design-document and netlist update (done).
 2. Re-derive H.4, H.19, H.20, H.22 and every row that rests on a removed part, and mark the r7-outline H.23 rows
@@ -194,15 +226,19 @@ items that block the order.
 8. The full route-race (`route-race` skill: reference at four or more seeds, diagnosis, tested change requests, one
    design-owner batch). (Done, D-57 and D-58: change request R9-01 applied as D-57; plan softum, seed 1, 107 of 107
    connections.)
-9. DRC and the constraint check. (Done, D-58 to D-60: the outline trimmed and the four 6-32 holes added by
-   `gen/trim_cr.py` (D-60), the reference designators re-placed by `gen/silk_refs.py`; DRC 0 violations, 0
-   unconnected items, 0 parity issues; constraint check 108 pass rows, 0 FAIL, 3 exemption rows (R102 under D-20;
-   R103 and R129 as listed U101-network exemptions, D-55 and D-56).)
+9. DRC and the constraint check. (Done, D-58 to D-61: constraint check 109 pass rows, 0 FAIL, 3 exemption rows
+   (R102 under D-20; R103 and R129 as listed U101-network exemptions, D-55 and D-56); the D-20 stitching row reads
+   3.47 mm against 3.54 mm and passes; DRC 0 violations, 0 unconnected items, 0 parity issues. The outline was trimmed
+   and the four 6-32 holes added by `gen/trim_cr.py` (D-60); `plane_vias.py --stitch 2.5`, `straighten.py` and
+   `stitch_gaps.py` then ran, and `gen/silk_refs.py` re-placed the reference designators last (D-61).)
+   (**Superseded 2026-11-13, D-61:** "Done, D-58 to D-60: ... constraint check 108 pass rows, 0 FAIL, 3 exemption
+   rows" as the current result; the D-60 board had no D-20 stitching row.)
    (**Superseded 2026-11-13, D-60:** "Done, D-58 and D-59: ... constraint check 98 pass, 0 FAIL, 2 listed
    exemptions".)
 10. **Operator check-in 4:** the pre-order review of the routed CR and the two fab packages, before any order. The fab
-    packages are exported (`fab/cr_2026-11-13/`, re-exported from the trimmed D-60 board in `779c419`;
-    `fab/eib_2026-11-13/`) and not ordered. The packages were exported before this check-in under the same overnight authorization; D-50
+    packages are exported (`fab/cr_2026-11-13/`, re-exported from the D-61 board in `437d2d7`;
+    `fab/eib_2026-11-13/`) and not ordered. (**Superseded 2026-11-13, D-61:** "re-exported from the trimmed D-60
+    board in `779c419`".) The packages were exported before this check-in under the same overnight authorization; D-50
     placed the check-in before the fab package. (**Superseded 2026-11-13:**
     "before the fab package and any order. Then the fab package (`gen/export.sh`, `gen/fab_readme.py`)".)
 
@@ -224,6 +260,11 @@ Besides the operator's review (check-in 4), these items block the order of the C
 6. The OSH Park quote and the 4-layer stack-up (items 5 and 7). The quote input is the D-60 outline area,
    2241.6 mm² (bounding box 40.02 x 64.81 mm).
 7. The OSH Park policy on non-functional inner pads at connector holes (item 3).
+
+These are the order blockers of `LAYOUT_DECISIONS.md` section 1: section 11 items 2, 3, 5, 7, 9, 14, 16 and 25, and
+the W6/W7 lead pads of D-45. The D-20 L2-L4 GND stitching is not an order blocker: on the D-61 board, the largest
+distance over the filled L4 pour to the nearest of the 296 stitch points is 3.47 mm, against the 3.54 mm limit for a
+5 mm square pitch (routing request R9-03, closed by the D-61 gap fill).
 
 The D-46 J-TAP latch finger access stays open and is not on this list. It is now relevant to the trimmed board: MH3
 and R175 are on the +x/-y side of J102.
@@ -250,7 +291,12 @@ the rail stays at 3.024 V or more (D-49, r9-12 bullet).
 ## 4. How to run (plug-on CR, 2026-11-13)
 
 From `hardware/charger_evm_r8` in Git Bash (set `MSYS_NO_PATHCONV=1`, or net names such as `/GND` become paths).
-`$PY` is the pcbnew venv Python (path below). The sequence below built the 2026-11-13 board, trimmed board included.
+`$PY` is the pcbnew venv Python (path below). The sequence below built the 2026-11-13 board, trimmed, stitched and
+straightened board included (D-61 finish order: route, plane vias, trim, stitching vias, straightening, stitching gap
+fill, references).
+(**Superseded 2026-11-13, D-61:** "The sequence below built the 2026-11-13 board, trimmed board included."; the D-60
+sequence had eight steps; the stitching, straightening and gap-fill steps 6 to 8 are new; the old steps 6 to 8 are
+now 9 to 11.)
 (**Superseded 2026-11-13, D-60:** "The sequence below built the 2026-11-13 board."; the sequence had seven steps and
 no outline trim, step 5 is new, and the old steps 5 to 7 are now 6 to 8.)
 
@@ -275,13 +321,35 @@ no outline trim, step 5 is new, and the old steps 5 to 7 are now 6 to 8.)
    `tools/pcb/corridor_route/trim_outline.py`. It refuses when the result differs from that data by more than 0.01 mm.
    The work dir receives the tool output. The script copies the trimmed board back over `cr/cr.kicad_pcb`; it does not
    change `cr/cr.kicad_pro`. `--check-only` checks without applying. Run it after step 4 and before step 6, because
-   the reference placement depends on the final edge and holes.
-6. Reference designators: `"$PY" gen/silk_refs.py cr/cr.kicad_pcb cr/silk_refs.md` (D-59, re-run after D-60).
-7. Checks: `cd gen && "$PY" check_constraints.py cr ../cr > ../cr/constraint_check.md` (the script prints to stdout),
-   and `kicad-cli pcb drc --severity-all --schematic-parity` on `cr/cr.kicad_pcb`.
-8. Fab package, once DRC is clean: `bash gen/export.sh cr <date>`, then `"$PY" gen/fab_readme.py cr <date>
-   [<reference package dir>]`. `export.sh` runs ERC and DRC first and writes the package only from a board that
-   passes both.
+   the stitching vias, the straightening pass, the gap fill and the reference placement depend on the final edge and
+   holes. The script refuses a board that is already trimmed, so rebuild from the routed, untrimmed board.
+   (**Superseded 2026-11-13, D-61:** "Run it after step 4 and before step 6, because the reference placement depends
+   on the final edge and holes.")
+6. GND stitching vias: `"$PY" ../../tools/pcb/corridor_route/plane_vias.py <model> <plan> <routes> cr/cr.kicad_pcb
+   <out routes> --stitch 2.5` on the trimmed board (D-61; the routing session holds the model, plan and routes files).
+   It places /GND stitching vias on a 2.5 mm grid inside the trimmed GND fill and applies the plane-via site rules
+   (routed copper, holes, SMD pads and mask openings, unflashed pads, keep-outs). The script writes a routes file, not
+   a board; `"$PY" ../../tools/pcb/corridor_route/apply_routes.py cr/cr.kicad_pcb <out routes> <out dir>` writes
+   the board as `<out dir>/cr.kicad_pcb` (zones refilled). Copy the output board back over `cr/cr.kicad_pcb` before
+   the next step. On the routed CR, this step replaces `route.py stitch()` of the generator. Do not run both on one
+   board. Keep `ROUTE_SKIP_FR=1` in step 2: that build skips `route.py stitch()`.
+7. Straightening: `"$PY" ../../tools/pcb/corridor_route/straighten.py cr/cr.kicad_pcb <out dir>` (D-61) replaces
+   staircase runs of unlocked signal tracks by straight or 45-degree runs. Vias, pads and locked pre-tracks do not
+   move. The script writes `<out dir>/cr.kicad_pcb`. Copy the output board back over `cr/cr.kicad_pcb` before the
+   next step.
+8. Stitching gap fill: `"$PY" ../../tools/pcb/corridor_route/stitch_gaps.py cr/cr.kicad_pcb <out dir>
+   --y-flip-offset 100` (D-61). While a point of the filled L4 /GND pour lies more than 3.54 mm from a /GND via or /GND plated hole, the
+   script adds a /GND via at the nearest legal site to the worst point. The script writes `<out dir>/cr.kicad_pcb`
+   (zones refilled) and `<out dir>/STITCH_GAPS.md` (the current record is `cr/stitch_gaps.md`: 3 vias added). Copy
+   the output board back over `cr/cr.kicad_pcb` before the next step.
+9. Reference designators: `"$PY" gen/silk_refs.py cr/cr.kicad_pcb cr/silk_refs.md` (D-59, re-run after D-60 and
+   D-61). This step runs last on the board.
+10. Checks: `cd gen && "$PY" check_constraints.py cr ../cr > ../cr/constraint_check.md` (the script prints to stdout),
+    and `kicad-cli pcb drc --severity-all --schematic-parity` on `cr/cr.kicad_pcb`. The constraint check includes
+    the D-20 stitching row (D-61); on the current board it passes at 3.47 mm against 3.54 mm.
+11. Fab package, once DRC is clean: `bash gen/export.sh cr <date>`, then `"$PY" gen/fab_readme.py cr <date>
+    [<reference package dir>]`. `export.sh` runs ERC and DRC first and writes the package only from a board that
+    passes both.
 
 (**Superseded 2026-11-13:** the r7-outline sequence "`bash gen/make_board.sh cr` ...; `ROUTE_SKIP_FR=1 route.py cr
 ../cr` ...; copy the result to `cr/cr_pours.kicad_pcb`; `PF_ITERS=60 bash gen/route_cr_pf.sh` (PathFinder, finishing
