@@ -287,7 +287,9 @@ blocks the order (operator ruling 2026-11-13 (Review 2/2))".)
    status is closed by operator ruling 2026-11-13 (Review 1/2); section 3a.) Regenerate the EIB schematic, board and fab exports so that the
    `dnp=True` set in `gen/netlist.py` drives `eib-bom.csv`, `eib-pos.csv`, the kikit files and `eib_ibom.html`.
    (Done for the CR generator, D-51, D-52. The EIB export regeneration from the `dnp=True` set is closed
-   2026-11-13: `fab/eib_2026-11-13/`, copper identical (section 1, EIB row). Open placeholders: the MS4 rim distance. The Molex 43045 drawing, the TSW pad and drill
+   2026-11-13: `fab/eib_2026-11-13/`, copper identical (section 1, EIB row). (**Amended 2026-11-13** (D-63): the package
+   was re-exported after the EIB track straightening, the top-layer AGND pour and the AGND stitching vias; the copper
+   and the PTH drill now differ from `fab/eib_2026-11-11`.) Open placeholders: the MS4 rim distance. The Molex 43045 drawing, the TSW pad and drill
    and the W6/W7 holes are closed by operator ruling 2026-11-13 (Review 1/2; section 3a). (**Superseded 2026-11-13:**
    "Open placeholders: the Molex 43045 drawing, the TSW pad and drill, the W6/W7 holes and the MS4 rim distance.") For steps 5 and 6: `gen/make_cr_all.sh` must drop B.Cu from the PathFinder layer set, and
    `gen/route_cr.py` TRACK is 0.127 mm against the D-29 0.1524 mm default; closed in D-55: TRACK and CLEAR are

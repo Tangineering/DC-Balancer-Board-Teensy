@@ -4,7 +4,7 @@
 set -e
 B="$1"; D="${2:-2026-11-11}"
 K="/c/Program Files/KiCad/9.0/bin/kicad-cli.exe"
-VENV="/c/Life Ops/School/Thesis/DC-Balancer-round4/tools/pcb/.venv/Scripts"
+VENV="/c/Life Ops/School/Thesis/DC-Balancer-Board-Teensy/tools/pcb/.venv/Scripts"
 O="fab/${B}_${D}"
 rm -rf "$O"; mkdir -p "$O"/gerbers "$O"/drill "$O"/assembly "$O"/docs "$O"/reports
 SCH="$B/$B.kicad_sch"; PCB="$B/$B.kicad_pcb"

@@ -3,7 +3,7 @@
 # PathFinder, GND plane vias and leftovers, stitching vias. Run from hardware/charger_evm_r8.
 set -e
 export MSYS_NO_PATHCONV=1
-PY="/c/Life Ops/School/Thesis/DC-Balancer-round4/tools/pcb/.venv/Scripts/python.exe"
+PY="/c/Life Ops/School/Thesis/DC-Balancer-Board-Teensy/tools/pcb/.venv/Scripts/python.exe"
 K="/c/Program Files/KiCad/9.0/bin/kicad-cli.exe"
 cp cr/cr_pours.kicad_pcb cr/cr.kicad_pcb
 "$K" pcb drc --format report --severity-all --schematic-parity -o cr/drc_finish.rpt cr/cr.kicad_pcb >/dev/null || true

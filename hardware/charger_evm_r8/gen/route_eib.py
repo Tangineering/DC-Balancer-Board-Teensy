@@ -27,7 +27,9 @@ def gnd_pours():
     # A.9: AGND pour on the bottom layer, joined to E8; added after routing so the router completes AGND as
     # tracks (a plane present during routing is split by bottom crossings into islands the router cannot see)
     inset = L.P.buffer(-0.45, join_style=2).difference(L.HOLE_KO)
-    return [("AGND_L2_pour", inset, "B", "/AGND", 1)]
+    # D-63: a matching top-layer AGND pour, tied to the bottom pour by the stitching vias of the finish step
+    # (straighten.py, then stitch_gaps.py on F.Cu and B.Cu); still one net, so the single-point ground holds
+    return [("AGND_L2_pour", inset, "B", "/AGND", 1), ("AGND_L1_pour", inset, "F", "/AGND", 1)]
 
 
 def stitching():

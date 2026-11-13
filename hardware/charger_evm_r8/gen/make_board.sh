@@ -3,7 +3,7 @@
 # placed board. Usage: bash gen/make_board.sh <cr|eib>   (run from hardware/charger_evm_r8)
 set -e
 B="$1"
-PY="/c/Life Ops/School/Thesis/DC-Balancer-round4/tools/pcb/.venv/Scripts/python.exe"
+PY="/c/Life Ops/School/Thesis/DC-Balancer-Board-Teensy/tools/pcb/.venv/Scripts/python.exe"
 K="/c/Program Files/KiCad/9.0/bin/kicad-cli.exe"
 "$PY" gen/fplib.py "$B" "$B" 2>&1 | grep -v "memory leak" || true
 "$PY" gen/sch.py "$B" "$B" >/dev/null

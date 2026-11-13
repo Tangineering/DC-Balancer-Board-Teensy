@@ -1,12 +1,12 @@
 # EIB, EVM interface board: fabrication package (2026-11-13)
 
-**Status: not ordered.** This package awaits operator review before order (dec2-eib decision 1, 2026-11-12).
+**Status: not ordered.** This package awaits operator review before order (dec2-eib decision 1, 2026-11-12). The routing is D-28; the straightened tracks, the F.Cu AGND pour and the AGND stitching vias are D-63 (`eib/straighten.md`, `eib/stitch_gaps.md`).
 
 ## 1. Board
 
 | Item | Value |
 |---|---|
-| Layers | 2 (F.Cu, B.Cu (AGND pour)) |
+| Layers | 2 (F.Cu (signals, AGND pour), B.Cu (signals, AGND pour); the two AGND pours stitched by vias (D-63)) |
 | Size | 24.0 x 38.0 mm (D-13 / P-05; A.9 states 36.0 x 24.0 mm) |
 | Thickness | 1.6 mm |
 | Copper | 1 oz |
@@ -73,21 +73,21 @@ and J201.13 end on the empty R265 and R264 pads.
 ## 6. Copper and drill comparison
 
 Every Gerber and Excellon file of this package was compared line by line with `fab/eib_2026-11-11`,
-with the creation-date lines ignored. Result: all files identical.
+with the creation-date lines ignored. Result: DIFFERENCES FOUND.
 
 | File | Result |
 |---|---|
-| `gerbers/eib-B_Cu.gbl` | identical (2454 lines) |
+| `gerbers/eib-B_Cu.gbl` | DIFFERENT |
 | `gerbers/eib-B_Mask.gbs` | identical (645 lines) |
 | `gerbers/eib-B_Paste.gbp` | identical (13 lines) |
 | `gerbers/eib-B_Silkscreen.gbo` | identical (913 lines) |
 | `gerbers/eib-Edge_Cuts.gm1` | identical (24 lines) |
-| `gerbers/eib-F_Cu.gtl` | identical (1402 lines) |
+| `gerbers/eib-F_Cu.gtl` | DIFFERENT |
 | `gerbers/eib-F_Mask.gts` | identical (6117 lines) |
 | `gerbers/eib-F_Paste.gtp` | identical (253 lines) |
 | `gerbers/eib-F_Silkscreen.gto` | identical (6415 lines) |
 | `gerbers/eib-job.gbrjob` | identical (126 lines) |
 | `drill/eib-NPTH-drl_map.gbr` | identical (920 lines) |
 | `drill/eib-NPTH.drl` | identical (15 lines) |
-| `drill/eib-PTH-drl_map.gbr` | identical (1631 lines) |
-| `drill/eib-PTH.drl` | identical (76 lines) |
+| `drill/eib-PTH-drl_map.gbr` | DIFFERENT |
+| `drill/eib-PTH.drl` | DIFFERENT |

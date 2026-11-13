@@ -893,9 +893,12 @@ The EIB is a 2-layer board, so at OSH Park it is a separate order and is not on 
 
 The EIB package `fab/eib_2026-11-13/` passes ERC (0 messages) and DRC (0 violations, schematic parity checked) and is not
 ordered; it awaits operator review. The schematic and board carry the KiCad DNP attribute on U203, U204, C203, C204,
-R258-R265, E4 and E6, so the generator writes the BOM, position, KiKit and iBOM files with that DNP set. Every Gerber and
-Excellon file is identical to the 2026-11-11 package apart from the creation dates. The 2026-11-11 package, with its
-hand-edited assembly files, is kept as the record.
+R258-R265, E4 and E6, so the generator writes the BOM, position, KiKit and iBOM files with that DNP set. The board
+carries the D-63 finish: straightened tracks, a top-layer AGND pour and 44 AGND stitching vias that tie it to the bottom
+pour. Against the 2026-11-11 package, both copper layers and the PTH drill differ; the masks, silkscreens, paste layers,
+outline and NPTH drill are identical (the new vias are tented). The OSH Park upload is
+`fab/eib_2026-11-13/kikit_oshpark/gerbers.zip`. The 2026-11-11 package, with its hand-edited assembly files, is kept
+as the record.
 
 ### 9.5 Archive and certification
 

@@ -1,5 +1,5 @@
 Drill report for eib.kicad_pcb
-Created on 2026-11-13T05:17:41-0800
+Created on 2026-11-13T13:58:25-0800
 
 Copper Layer Stackup:
     =============================================================
@@ -10,10 +10,10 @@ Copper Layer Stackup:
 Drill file 'eib-PTH.drl' contains
     plated through holes:
     =============================================================
-    T1  0.300mm  0.0118"  (52 holes)
+    T1  0.300mm  0.0118"  (96 holes)
     T2  1.000mm  0.0394"  (8 holes)
 
-    Total plated holes count 60
+    Total plated holes count 104
 
 
 Drill file 'eib-NPTH.drl' contains

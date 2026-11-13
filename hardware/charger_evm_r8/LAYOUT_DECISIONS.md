@@ -563,7 +563,39 @@ E6 leads are not fitted.
 
 **D-28. EIB routing and ground.** Signals run on both layers (0.2 mm tracks and clearance, 0.6/0.3 mm vias),
 routed by Freerouting in three rounds. The AGND pour on the bottom layer is added after routing and joins E8 (A.9
-Ground row); R273 links the J201 GND pins (`GND_J`) to AGND.
+Ground row); R273 links the J201 GND pins (`GND_J`) to AGND. (**Amended 2026-11-13** (D-63): a matching AGND pour is
+added on the top layer, and AGND stitching vias tie the two pours.)
+
+**D-63. Straightened EIB tracks, a top-layer AGND pour and AGND stitching vias (operator request 2026-11-13).** The
+operator asked for the trace-bend cleanup and ground stitching on the EIB, the EIB counterpart of D-61, followed by
+a new fabrication package. The finish ran on the routed D-28 board in this order:
+
+1. `tools/pcb/corridor_route/straighten.py --clear 0.2` (the D-28 clearance), twice. The two runs reduced the
+   unlocked signal track segments from 479 to 418 (421 after the first run) and the track length from 608.4 mm to
+   604.0 mm; the second run changed 2 nets and converged (`eib/straighten.md`).
+2. A top-layer AGND pour, `AGND_L1_pour`, with the outline, priority, clearance and thermal settings of the bottom
+   pour (`gen/route_eib.py` `gnd_pours()`). Without it, an AGND via has no top-layer copper to tie, so stitching
+   requires the second pour. The pour is the same net, so no via touches `GND_J`, R273 stays the only `GND_J`-to-AGND
+   path and AGND still joins the EVM only at E8 (A.9 Ground row).
+3. `tools/pcb/corridor_route/stitch_gaps.py --net /AGND --clear 0.2 --hole-gap 0.28` on F.Cu and then on B.Cu, with
+   the island removal of the top pour off during the run so that every top island receives a via where a legal site
+   exists. The runs added 42 and 2 vias (AGND vias 5 to 49; `eib/stitch_gaps.md`). The limit is the CR D-20 value,
+   3.54 mm (a 5 mm square pitch); no EIB design row sets a stitching limit. The largest remaining distance is 4.99 mm
+   on F.Cu and 4.72 mm on B.Cu, both in the J201 pad field (x 18-23 mm, y 28-32 mm, KiCad frame), where no legal via
+   site exists.
+4. Island removal of the top pour restored to the bottom pour's mode (isolated islands removed), zones refilled.
+
+The top pour fills 458.0 mm² and the bottom pour 577.7 mm², each in 6 pieces. The bottom pour previously lost the
+regions enclosed by bottom-layer tracks as unconnected islands; the stitching vias now tie those regions. No via lies
+on an SMD pad or its mask opening (smallest gap 0.044 mm, R270.2). The new vias are tented, so the masks, silkscreens,
+paste layers, outline and NPTH drill of the package are identical to `fab/eib_2026-11-11`; both copper layers and the
+PTH drill differ (`fab/eib_2026-11-13/README.md` section 6).
+
+Tool fix found in this step: `stitch_gaps.py` read keep-out rule areas from `BOARD.Zones()` only, which omits
+footprint-owned zones, and placed 4 vias inside the H1 and H2 mounting-hole keep-outs (DRC `items_not_allowed`).
+The tool now also reads footprint zones, and `straighten.py` received the same change for track keep-outs (no EIB
+track was affected). The board in the repository was produced with the corrected tool. Reversal: restore
+`eib/eib.kicad_pcb` and `gen/route_eib.py` from the commit before D-63 and run `gen/export.sh eib 2026-11-13` again.
 
 ## 8. CR routing attempts
 
@@ -1582,6 +1614,10 @@ the field synchronization, ERC reports 0 items. DRC (`--severity-all --schematic
 rows compare the board Edge.Cuts (20 items, 10 of them arcs) with the filleted `FINAL_OUTLINE` (area difference
 0.0103 mm²) and check the edge angles and the 2.0 mm minimum slanted edge. The D-20 stitching row reads 3.51 mm at
 (43.0, 44.8) with 306 stitch points, against 3.54 mm.
+
+**D-63 (2026-11-13):** on the straightened and stitched EIB with the top AGND pour, ERC reports 0 messages and DRC
+(`--severity-all --schematic-parity`) reports 0 violations, 0 unconnected items and 0 parity issues. The EIB
+constraint check is unchanged (`eib/constraint_check.md`). The three KiKit presets ran without messages.
 
 ### 9.2 Constraint measurements
 

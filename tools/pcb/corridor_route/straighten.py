@@ -79,6 +79,9 @@ def poly_of(sps):
 
 b = pcbnew.LoadBoard(A.board)
 TRACKS, ZONES = list(b.GetTracks()), list(b.Zones())
+# footprint-owned zones too (b.Zones() omits them), so footprint keep-outs that forbid tracks are obstacles
+# (stitch_gaps.py placed vias in the EIB H1/H2 footprint keep-outs for the same reason, 2026-11-13)
+ZONES += [z for fp in b.GetFootprints() for z in fp.Zones()]
 lname = {b.GetLayerName(l): l for l in range(pcbnew.PCB_LAYER_ID_COUNT) if b.GetLayerName(l)}
 cu_layers = [n for n in ("F.Cu", "In1.Cu", "In2.Cu", "B.Cu") if n in lname]
 sps = pcbnew.SHAPE_POLY_SET()

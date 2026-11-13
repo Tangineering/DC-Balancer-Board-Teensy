@@ -64,11 +64,11 @@ The venv was created from KiCad's Python with `--system-site-packages`, so `pcbn
 `kiutils` import together. To activate it in PowerShell:
 
 ```powershell
-& "C:\Life Ops\School\Thesis\DC-Balancer-round4\tools\pcb\.venv\Scripts\Activate.ps1"
+& "C:\Life Ops\School\Thesis\DC-Balancer-Board-Teensy\tools\pcb\.venv\Scripts\Activate.ps1"
 ```
 
 Alternatively, call the interpreter directly:
-`"C:\Life Ops\School\Thesis\DC-Balancer-round4\tools\pcb\.venv\Scripts\python.exe"`.
+`"C:\Life Ops\School\Thesis\DC-Balancer-Board-Teensy\tools\pcb\.venv\Scripts\python.exe"`.
 The venv contains a `.gitignore` with `*`, so git ignores it.
 
 ## 3. Verified commands
@@ -77,7 +77,7 @@ The examples use these PowerShell variables:
 
 ```powershell
 $k  = "C:\Program Files\KiCad\9.0\bin\kicad-cli.exe"
-$py = "C:\Life Ops\School\Thesis\DC-Balancer-round4\tools\pcb\.venv\Scripts\python.exe"
+$py = "C:\Life Ops\School\Thesis\DC-Balancer-Board-Teensy\tools\pcb\.venv\Scripts\python.exe"
 $jv = "C:\Tools\jdk-25.0.5+8\bin\java.exe"
 $fr = "C:\Tools\freerouting\freerouting-2.5.0.jar"
 ```
@@ -163,7 +163,7 @@ package. STEP export included the stock 3D model (`R_0603_1608Metric.step`).
 ### 3.7 LCSC parts with easyeda2kicad
 
 ```powershell
-& "C:\Life Ops\School\Thesis\DC-Balancer-round4\tools\pcb\.venv\Scripts\easyeda2kicad.exe" --full --lcsc_id=C2876593 --output <dir>\lcsc --overwrite
+& "C:\Life Ops\School\Thesis\DC-Balancer-Board-Teensy\tools\pcb\.venv\Scripts\easyeda2kicad.exe" --full --lcsc_id=C2876593 --output <dir>\lcsc --overwrite
 ```
 
 The command writes `<dir>\lcsc.kicad_sym`, `<dir>\lcsc.pretty\*.kicad_mod` and
@@ -176,7 +176,7 @@ with the manufacturer datasheet before use.
 ### 3.8 Fab packages with KiKit
 
 ```powershell
-$kk = "C:\Life Ops\School\Thesis\DC-Balancer-round4\tools\pcb\.venv\Scripts\kikit.exe"
+$kk = "C:\Life Ops\School\Thesis\DC-Balancer-Board-Teensy\tools\pcb\.venv\Scripts\kikit.exe"
 & $kk fab jlcpcb --drc --assembly --missingWarn --schematic board.kicad_sch board.kicad_pcb out_jlc
 & $kk fab pcbway --drc --assembly --schematic board.kicad_sch board.kicad_pcb out_pcbway
 & $kk fab oshpark --drc board.kicad_pcb out_osh
@@ -194,7 +194,7 @@ manufacturer and part-number fields (`--manufacturer`, `--partNumber`). KiKit 1.
 ```powershell
 $env:INTERACTIVE_HTML_BOM_CLI_MODE = '1'
 $env:INTERACTIVE_HTML_BOM_NO_DISPLAY = '1'
-& "C:\Life Ops\School\Thesis\DC-Balancer-round4\tools\pcb\.venv\Scripts\generate_interactive_bom.exe" --no-browser --dest-dir <outdir> --name-format "%f_ibom" board.kicad_pcb
+& "C:\Life Ops\School\Thesis\DC-Balancer-Board-Teensy\tools\pcb\.venv\Scripts\generate_interactive_bom.exe" --no-browser --dest-dir <outdir> --name-format "%f_ibom" board.kicad_pcb
 ```
 
 The test board gave `rtest_ibom.html` (172 kB, exit code 0, about 1 s). The "Adding duplicate

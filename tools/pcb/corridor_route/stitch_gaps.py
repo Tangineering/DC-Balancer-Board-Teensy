@@ -69,6 +69,9 @@ def poly(sps):
 
 b = pcbnew.LoadBoard(A.board)
 TRACKS, ZONES = list(b.GetTracks()), list(b.Zones())
+# footprint-owned zones too (b.Zones() omits them): the mounting-hole keep-outs of the EIB H1/H2 footprints
+# forbid vias, and the pass placed 4 stitching vias inside them before this (EIB, 2026-11-13, DRC items_not_allowed)
+ZONES += [z for fp in b.GetFootprints() for z in fp.Zones()]
 ds = b.GetDesignSettings()
 VIA_D = mm(ds.GetCurrentViaSize()) or 0.6
 VIA_DR = mm(ds.GetCurrentViaDrill()) or 0.3

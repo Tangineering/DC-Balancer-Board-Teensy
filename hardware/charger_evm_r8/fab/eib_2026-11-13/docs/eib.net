@@ -1,7 +1,7 @@
 (export (version "E")
   (design
-    (source "C:\\Life Ops\\School\\Thesis\\DC-Balancer-round4\\hardware\\charger_evm_r8\\eib\\eib.kicad_sch")
-    (date "2026-11-13T05:17:40-0800")
+    (source "C:\\Life Ops\\School\\Thesis\\DC-Balancer-Board-Teensy\\hardware\\charger_evm_r8\\eib\\eib.kicad_sch")
+    (date "2026-11-13T13:58:24-0800")
     (tool "Eeschema 9.0.9")
     (sheet (number "1") (name "/") (tstamps "/")
       (title_block
@@ -857,7 +857,7 @@
         (pin (num "6") (name "V+") (type "power_in")))))
   (libraries
     (library (logical "charger_r8_eib")
-      (uri "C:\\Life Ops\\School\\Thesis\\DC-Balancer-round4\\hardware\\charger_evm_r8\\eib/charger_r8_eib.kicad_sym")))
+      (uri "C:\\Life Ops\\School\\Thesis\\DC-Balancer-Board-Teensy\\hardware\\charger_evm_r8\\eib/charger_r8_eib.kicad_sym")))
   (nets
     (net (code "1") (name "/3V3") (class "Default")
       (node (ref "C201") (pin "1") (pintype "passive"))

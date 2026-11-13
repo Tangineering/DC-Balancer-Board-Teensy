@@ -2,7 +2,7 @@
 # Finishing router loop: DRC -> dump -> A* -> apply, until no unconnected items remain or no progress.
 # Usage (from hardware/charger_evm_r8): bash gen/finish.sh <board> <layers> <via_d> <drill> [plane_net] [rounds]
 B="$1"; LAYERS="$2"; VIA="$3"; DRILL="$4"; PLANE="$5"; ROUNDS="${6:-4}"; RES="${7:-0.1}"; CLEAR="${8:-0.16}"
-PY="/c/Life Ops/School/Thesis/DC-Balancer-round4/tools/pcb/.venv/Scripts/python.exe"
+PY="/c/Life Ops/School/Thesis/DC-Balancer-Board-Teensy/tools/pcb/.venv/Scripts/python.exe"
 NP="$PY"
 K="/c/Program Files/KiCad/9.0/bin/kicad-cli.exe"
 prev=999999

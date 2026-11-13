@@ -59,13 +59,14 @@ INFO = {
                "B.Cu (L4, solid GND facing the MB, D-20)"),
     "eib": dict(name="EIB, EVM interface board", layers=2, size="24.0 x 38.0 mm (D-13 / P-05; A.9 states 36.0 x 24.0 mm)",
                 thick="1.6 mm", copper="1 oz", finish="ENIG", qty="5 (E BOM; a separate 2-layer order at OSH Park)",
-                layers_list="F.Cu, B.Cu (AGND pour)"),
+                layers_list="F.Cu (signals, AGND pour), B.Cu (signals, AGND pour); the two AGND pours stitched by vias (D-63)"),
 }[B]
 DNP, FIT = dnp_split()
 # the rule file each board is checked against (cr/cr.kicad_dru is a copy of the OSH Park-only file, D-29, D-55)
 RULES = {"cr": "fab_4layer_oshpark_only.kicad_dru", "eib": "fab_2layer_oshpark_pcbway.kicad_dru"}[B]
 STATUS = ("**Status: not ordered.** This package awaits operator review before order (dec2-eib decision 1, "
-          "2026-11-12).\n\n" if B == "eib" else
+          "2026-11-12). The routing is D-28; the straightened tracks, the F.Cu AGND pour and the AGND stitching vias "
+          "are D-63 (`eib/straighten.md`, `eib/stitch_gaps.md`).\n\n" if B == "eib" else
           "**Status: not ordered.** This package awaits operator review before order. The fab is OSH Park (operator "
           "ruling 2026-11-12). The routing is D-58; the outline is D-62 and the 6-32 holes are D-60; the GND stitching "
           "and straightened tracks are D-61; the reference designators are D-59 (`cr/silk_refs.md` lists those on F.Fab "

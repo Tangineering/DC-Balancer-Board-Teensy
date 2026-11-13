@@ -3,7 +3,7 @@
 # pours, PathFinder signal routing, GND plane vias and leftovers, stitching vias.
 set -e
 export MSYS_NO_PATHCONV=1      # keep net names such as /GND and /3V3 intact on the command line
-PY="/c/Life Ops/School/Thesis/DC-Balancer-round4/tools/pcb/.venv/Scripts/python.exe"
+PY="/c/Life Ops/School/Thesis/DC-Balancer-Board-Teensy/tools/pcb/.venv/Scripts/python.exe"
 K="/c/Program Files/KiCad/9.0/bin/kicad-cli.exe"
 bash gen/make_board.sh cr
 cp cr/cr.kicad_pcb cr/cr_placed.kicad_pcb
