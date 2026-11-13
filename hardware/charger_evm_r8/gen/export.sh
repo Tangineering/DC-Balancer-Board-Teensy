@@ -33,7 +33,9 @@ LAYERS="$CU,F.Paste,B.Paste,F.SilkS,B.SilkS,F.Mask,B.Mask,Edge.Cuts"
   --ref-range-delimiter "" -o "$O/assembly/${B}-bom.csv" "$SCH" >/dev/null
 INTERACTIVE_HTML_BOM_CLI_MODE=1 INTERACTIVE_HTML_BOM_NO_DISPLAY=1 "$VENV/generate_interactive_bom.exe" --no-browser \
   --dest-dir "$(cd "$O/assembly" && pwd -W)" --name-format "%f_ibom" --extra-fields "MPN,Manufacturer" \
-  --dnp-field "" "$PCB" >/dev/null 2>&1 || echo "ibom FAILED"
+  --dnp-field kicad_dnp "$PCB" >/dev/null 2>&1 || echo "ibom FAILED"
+# (--dnp-field kicad_dnp: InteractiveHtmlBom sets kicad_dnp from the board footprint DNP attribute, so DNP
+#  parts are left out of the BOM table (iBOM "skipped" set); the former --dnp-field "" showed them as fitted, 2026-11-13)
 
 # documentation
 "$K" sch export pdf -o "$O/docs/${B}-schematic.pdf" "$SCH" >/dev/null

@@ -38,8 +38,8 @@ below is classified against these decisions:
 
 The r7-outline status table above, the placement of section 5 and the routing record of section 8 are history. The
 r7 layout work, including the interactive-routing project, is in `archive_r7_outline/`. The EIB
-fab package `fab/eib_2026-11-11/` has not been ordered; its BOM and position files need DNP flags before an order
-(D-49).
+fab package `fab/eib_2026-11-13/` carries the D-49 DNP set from the schematic and board attributes, with copper and
+drill files identical to `fab/eib_2026-11-11/`; it has not been ordered and awaits operator review (D-49).
 
 ## 2. Sources and reproduction
 
@@ -791,7 +791,9 @@ digest, and its reconciliation notes bind where a record disagrees.
 - Reason: the reduced gate needs neither the far-end ILIM sense (U203) nor the /CE sense (U204). Fitting U204 as a
   build-time check would need R262/R263, and R263 would pull /CE LOW in the R272/R272b double-open fault.
 - Consequence: `eib-bom.csv` and `eib-pos.csv` are regenerated with DNP flags, and `fab/eib_2026-11-11/` is reviewed
-  by the operator before an order. The R272 + R272b double-open leaves /CE floating; this is latent, and T-C-05
+  by the operator before an order. (Regeneration closed 2026-11-13: `fab/eib_2026-11-13/` is generated from the
+  schematic and board DNP attributes; every Gerber and Excellon file is identical to `fab/eib_2026-11-11/` apart from
+  the creation dates. The operator review now applies to `fab/eib_2026-11-13/`.) The R272 + R272b double-open leaves /CE floating; this is latent, and T-C-05
   metering is the only check. A J101 pin 9 (GND) to pin 10 (RFC_OFF) short drives about 33 mA through R132 (100 ohm),
   above the LVC output current; the B.6 text that calls it safe is corrected, TODO(calc: B.6 9-10 short against the
   LVC IOL). Record: `decisions_2026-11-12/round2/dec2_eib_2026-11-12.md`.
