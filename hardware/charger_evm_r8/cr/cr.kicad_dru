@@ -2,7 +2,8 @@
 # 4-layer fab rules, OSH Park only (CR). LAYOUT_DECISIONS D-29 amended 2026-11-12;
 # decisions_2026-11-12/stackup_fabrules_decisions_2026-11-12.md section 3 ("OSH Park-only (Recommended)").
 # Source of every value: [OSH] https://docs.oshpark.com/services/four-layer/ (as read on 2026-11-10 for
-# fab_4layer_oshpark_pcbway.kicad_dru). The PCBWay minima of that file drop out; a PCBWay order needs a re-check.
+# fab_4layer_oshpark_pcbway.kicad_dru; mask expansion and stack-up re-read 2026-11-13). The PCBWay minima of that
+# file drop out; a PCBWay order needs a re-check.
 # Router net-class default is 0.1524 / 0.1524 mm (6/6 mil); 0.127 mm is the rule-file minimum, used at necks only.
 # Vias: 0.6 / 0.3 mm is the only via on the CR (D-29); the rule minimum below is the fab limit, not the via size.
 
@@ -48,4 +49,16 @@
   (constraint text_thickness (min 0.15mm)))
 
 # Board-setup values (apply_board_setup.py and the OSH-only overrides): mask web 0.1016 mm [OSH] 4 mil;
-# mask expansion 0.0508 mm TODO(verify); board 1.6 mm; copper 1 oz outer / 0.5 oz inner.
+# mask expansion 0.0508 mm; board 1.6 mm; copper 1 oz outer / 0.5 oz inner.
+# Mask expansion: Closed 2026-11-13 (operator ruling 2026-11-13 (Review 2/2: BAV199, strap, OSH Park (fab checks),
+# local_6e36c3a4-f328-44cd-8c31-05ea2fa7bfa3, chat 2026-11-13): Q3 "Yes" for the mask; full record
+# hardware/charger_evm_r8/LAYOUT_DECISIONS.md section 11 item 5). The OSH Park KiCad design-rules page (read
+# 2026-11-13; URL not recorded in the review record) states "Solder Mask Expansion should usually be set to
+# 2mil (0.0508mm)". [OSH] 4-layer page (read 2026-11-13): maximum mask alignment 3 mil (0.0762 mm), minimum
+# mask web 4 mil (0.1016 mm) = the board setting. The smallest different-net via-to-mask gap on the CR is
+# 0.115 mm (about 0.094 mm with square corners), which exceeds the 0.0762 mm alignment.
+# Stack-up: Closed 2026-11-13 (operator ruling 2026-11-13 (Review 2/2): Q1 "Yes" for the stack-up). [OSH]
+# 4-layer page (read 2026-11-13): 63 mil (1.6 mm), 1 oz outer clad and plated, inner "0.68 mil (0.0175mm) 0.5 oz
+# copper clad", FR408-HR 190 Tg, ENIG, purple SMOBC both sides, via tenting "Yes (filled hole and flat surface
+# not guaranteed)". The alternate-stack-up notices are commented out in the page source; no alternate stack-up
+# was active on 2026-11-13.

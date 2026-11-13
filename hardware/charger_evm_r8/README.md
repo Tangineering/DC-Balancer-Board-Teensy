@@ -508,6 +508,10 @@ Table 8.2. CR stack-up.
 
 The two GND layers in Table 8.2 enclose L3, and L4 faces the MB switching nodes below the CR.
 
+The OSH Park 4-layer service page (read 2026-11-13) gives this stack-up: 63 mil (1.6 mm), 1 oz outer copper, 0.5 oz
+inner copper, FR408-HR, ENIG and purple solder mask on both sides. Operator ruling 2026-11-13 (Review 2/2) approves
+the stack-up and the 0.0508 mm solder-mask expansion; section 11, Table 11.1 gives the record.
+
 The L4-to-L2 stitching of D-20 is placed by the router after the outline trim (LAYOUT_DECISIONS D-61): /GND vias on a
 2.5 mm grid inside the trimmed GND fill, then a gap fill that, while a point of the pour lies more than 3.54 mm from a
 stitch point, adds a /GND via at the nearest legal site to the worst point (`tools/pcb/corridor_route/stitch_gaps.py`).
@@ -883,8 +887,10 @@ done (D-57 and D-58: the route race and the routed board; D-59 and the final che
 6-32 holes and the reference re-placement, with the final checks repeated; D-61: the GND stitching and the
 straightened tracks on the trimmed board, with the stitching gap fill of request R9-03; the CR fab package
 `fab/cr_2026-11-13/`, re-exported after D-61 in `437d2d7`). The D-61 constraint check gives 109 pass rows and 0
-FAIL. (**Superseded 2026-11-13, D-61:** "re-exported after D-60".) Check-in 3 (placement images) was not held
-separately: on 2026-11-12/13 the operator authorized autonomous work to the end of the PCB design, and the placement
+FAIL. (**Superseded 2026-11-13, D-61:** "re-exported after D-60".) A further outline trim, D-62, is committed in
+`89c2d72` with its finish re-run and the fab package re-export; its design record is pending, and the D-61 figures of
+this document are superseded by the D-62 board (section 11 item 28). (**Superseded 2026-11-13:** "A further outline
+trim, D-62, is in progress and not committed".) Check-in 3 (placement images) was not held separately: on 2026-11-12/13 the operator authorized autonomous work to the end of the PCB design, and the placement
 is reviewed with the routed board. The next operator action is check-in 4, the pre-order review of the routed CR and
 of the CR and EIB fab packages. Table 10.1 lists each step with its inputs, outputs and blocking items. (Superseded
 2026-11-13: "check-in 3 is next, and three steps remain after it".)
@@ -900,7 +906,7 @@ Table 10.1. Round order (D-50).
 | 5. Placement on the frozen netlist, all SMT on the top (done, D-54) | Frozen netlist, generator | `cr/cr.kicad_pcb` (variant B; pour stage at step 5, routed at step 6, D-58), `cr/placement_F.png`, `cr/placement_B.png`, `cr/constraint_check.md`, `cr/drc_place.rpt`; variant records in `cr/variants_r9/` | Check-in 3 was not held separately; the placement items (the R103 and R129 D-20 exemptions, the J1.10 solid joint on L3, the D-54 open items) are reviewed at check-in 4 with the routed board |
 | 6. Full route-race (done, D-57, D-58) | Placed board, power geometry | D-57 /GND pre-via and VIN_L3 strap extension (change request R9-01); routed board, plan softum seed 1: 107 of 107 connections, 148 router vias, 830.8 mm of track, 0 vias on SMD pads; router via ban on the square-cornered mask opening (`114ad04`) | None |
 | 7. Outline trim, GND stitching, straightening, DRC and constraint check (done, D-59 to D-61) | Routed board | Outline trimmed to 2241.6 mm2 and four 6-32 holes added (`gen/trim_cr.py`, change request R9-02); /GND stitching vias on a 2.5 mm grid inside the trimmed fill (`plane_vias.py --stitch 2.5`; 269 vias), straightened tracks (`straighten.py`; 768 segments, 823.9 mm) and a stitching gap fill (`stitch_gaps.py`; 3 vias, request R9-03), D-61; 278 /GND vias in all; reference designators re-placed after the trim (`gen/silk_refs.py`, `cr/silk_refs.md`); ERC 0; DRC 0 violations, 0 unconnected, 0 parity; `cr/constraint_check.md` 109 pass, 0 FAIL (D-20 stitching row 3.47 mm against 3.54 mm), 3 exemption rows (R102 under D-20; R103 and R129 as listed U101-network exemptions) (**Superseded 2026-11-13, D-61:** "108 pass". **Superseded 2026-11-13, D-60:** "98 pass") | None |
-| 8. Fab package (done; `gen/export.sh`, `gen/fab_readme.py`) | Checked board | `fab/cr_2026-11-13/` (not ordered; re-exported after D-61 in `437d2d7`); figures in `figures/cr_routed_2026-11-13/` (regenerated after D-61) (**Superseded 2026-11-13, D-61:** "re-exported after D-60", "regenerated after D-60") | **Check-in 4** (pre-order review, next); the bare-board blockers of section 11 item 22; fab quote (input 2241.6 mm2) and stack-up; BOM verification (T-A-05) before the parts order |
+| 8. Fab package (done; `gen/export.sh`, `gen/fab_readme.py`) | Checked board | `fab/cr_2026-11-13/` (not ordered; re-exported after D-61 in `437d2d7`); figures in `figures/cr_routed_2026-11-13/` (regenerated after D-61) (**Superseded 2026-11-13, D-61:** "re-exported after D-60", "regenerated after D-60") | **Check-in 4** (pre-order review, next); the operator review items of section 11 item 22 are disposed of by operator ruling 2026-11-13 (Review 2/2), so none blocks the bare-board order (item 3 is an assumption checked at submission; the quote is out of scope); open question: section 11 item 26 (item 27 is moot after `89c2d72`); the D-62 outline trim is committed in `89c2d72` (finish re-run, fab package and figures re-exported) and its design record is pending (item 28); the D-61 figures in this row are superseded by the D-62 board; BOM verification (T-A-05) before the parts order (**Superseded 2026-11-13:** "the bare-board blockers of section 11 item 22; fab quote (input 2241.6 mm2) and stack-up"; "open questions: section 11 items 26 and 27; the D-62 outline trim is pending (item 28)") |
 
 The netlist is frozen (D-53), so placement is no longer blocked. D-51 closed the MB height survey: the D-41 stack
 is taken to clear every MB part except the power terminals, and the CR -x edge clears J-BL and J-FC by 2.454 mm (2.45 mm or
@@ -959,10 +965,16 @@ this review. (Superseded 2026-11-13: "The next operator action is check-in 3 (pl
 20. Closed 2026-11-12 (check-in 2): the operator approved all 29 agreed fixes ("Approve all fixes"). Design change row
     r9-12 applies them without the refuted parts (Table L.9-2). SR-SR-17 was already moot under r9-11.
 21. Closed 2026-11-12 (check-in 2, ruling R6, default): the membership of Table L.9-1 is confirmed as written.
-22. Confirm the CR bare-board blockers of Table 11.1 before the CR order, in addition to the check-in 4 review. The
-    check-in 4 review also covers the D-59 reference-designator result as re-placed after D-60 (section 8.3), the D-60
-    trimmed outline and the four 6-32 holes (section 8.1), the D-61 GND stitching and straightened tracks (section
-    9.1), and the OSH Park solder-mask expansion of 0.0508 mm (`MORNING_REVIEW_2026-11-13.md` section 3.1).
+22. Amended 2026-11-13: the CR bare-board blockers of Table 11.1 are disposed of by operator ruling 2026-11-13
+    (Review 2/2: BAV199, strap, OSH Park (fab checks), local_6e36c3a4-f328-44cd-8c31-05ea2fa7bfa3, chat 2026-11-13).
+    `LAYOUT_DECISIONS.md` section 11 items 2, 5, 9 and 10 are closed, item 7 (the quote) is closed as outside the
+    scope of the project, and item 3 stays an assumption that is checked when the board is submitted. The OSH Park
+    solder-mask expansion of 0.0508 mm is confirmed. No bare-board order blocker remains from the operator review
+    items. The check-in 4 review also covers the D-59 reference-designator result as re-placed after D-60 (section
+    8.3), the D-60 trimmed outline and the four 6-32 holes (section 8.1), and the D-61 GND stitching and straightened
+    tracks (section 9.1). (**Superseded 2026-11-13:** "Confirm the CR bare-board blockers of Table 11.1 before the CR
+    order, in addition to the check-in 4 review."; "and the OSH Park solder-mask expansion of 0.0508 mm
+    (`MORNING_REVIEW_2026-11-13.md` section 3.1)".)
 23. Confirm the parts-order and assembly items of Table 11.2 before the parts order; they do not block the bare-board
     order.
 24. After a generator rebuild, restore `cr/cr.kicad_pro` from git and refill the zones, because `gen/route.py`
@@ -971,18 +983,54 @@ this review. (Superseded 2026-11-13: "The next operator action is check-in 3 (pl
 25. Re-derive the count of MB parts under the CR (67 under the D-39 rectangle) and Table 8.1 against the D-60 trimmed
     outline (x 18.58-58.60, y 7.83-72.64), and confirm which of REG-5V, REG-FC, REG-BT, L-FC and L-BT lie under it
     (section 8.1).
+26. Decide the CR order quantity. The CR fab package README (`fab/cr_2026-11-13/README.md`, section 1) gives a
+    quantity of 5, but OSH Park sells boards in multiples of 3. The Review 2/2 session raised this question, and the
+    operator has not answered it; no file is changed. Amended 2026-11-13: the package README as re-exported in
+    `89c2d72` still gives a quantity of 5 in section 1, and its OSH Park row now states that order quantities come in
+    multiples of 3. The question stays open.
+27. Amended 2026-11-13: the question is moot. The D-62 re-export in `89c2d72` replaced the OSH Park row of the CR fab
+    package README; the row now states the confirmed 4-layer stack-up (1.6 mm, 1 oz outer / 0.5 oz inner clad, ENIG,
+    FR408-HR), which matches section 1 of that README and the D-29 copper (section 8.2). The quoted sentence no
+    longer exists in the tree. (**Superseded 2026-11-13:** "Decide whether to correct the OSH Park row of the CR fab
+    package README. The row says that a 4-layer order at OSH Park "uses the 1 oz fallback of the Copper row above",
+    but the OSH Park 4-layer stack-up already is 1 oz outer and 0.5 oz inner, which is the D-29 copper of the Copper
+    row (section 8.2). The Review 2/2 session raised this question, and the operator has not answered it; no file is
+    changed.")
+28. Amended 2026-11-13: the further outline trim D-62 (operator ruling 2026-11-13, relayed by the routing session:
+    rectilinear edges or edges at 30, 45 or 60 degrees, and 1.0 mm fillets) is committed in `89c2d72`. The D-62 board
+    has a 10-corner outline of 2327.7 mm2 with 1.0 mm fillets, 279 grid stitching vias and 3 gap-fill vias, and
+    769 track segments of 824.5 mm in all. DRC gives 0 violations, 0 unconnected items and 0 parity issues; the
+    constraint check gives 109 pass rows and 0 FAIL, and the D-20 stitching row passes at 3.51 mm with 306 stitch
+    points. The fab package `fab/cr_2026-11-13/` and the figures in `figures/cr_routed_2026-11-13/` are re-exported
+    from the D-62 board. The design record (`LAYOUT_DECISIONS.md` D-62 and the D-61 figures in this document) is
+    pending. The D-61 figures quoted elsewhere in this document (2241.6 mm2, 3.47 mm, 278 /GND vias) are superseded
+    by the committed D-62 board. (**Superseded 2026-11-13:** "A further outline trim, D-62, is in progress and not
+    committed ... Until D-62 is recorded, the outline, the checks and the fab package in this document are those of
+    the D-61 board.")
 
-Table 11.1 lists the items that block the CR bare-board order. Item numbers in the Record column refer to
-`LAYOUT_DECISIONS.md` section 11. Review 2/2 of the operator is in progress on these items.
+Table 11.1 lists the former CR bare-board blockers and their disposition. Item numbers in the Record column refer to
+`LAYOUT_DECISIONS.md` section 11. Operator ruling 2026-11-13 (Review 2/2: BAV199, strap, OSH Park (fab checks),
+local_6e36c3a4-f328-44cd-8c31-05ea2fa7bfa3, chat 2026-11-13) disposes of every row. No bare-board order blocker
+remains from the operator review items. Item 3 stays an assumption that is checked when the board is submitted, and
+the quote of item 7 is outside the scope of the project. (**Superseded 2026-11-13:** "Table 11.1 lists the items
+that block the CR bare-board order."; "Review 2/2 of the operator is in progress on these items.")
 
-Table 11.1. CR bare-board blockers.
+Table 11.1. Former CR bare-board blockers (operator ruling 2026-11-13, Review 2/2).
 
-| Item | Open question | Record |
+| Item | Disposition | Record |
 |---|---|---|
-| BAV199 D104 to D106 (SOT-23) | Pinout from a secondary source only | Item 9 |
-| In2.Cu VCHGIN strap | IPC-2152 chart reading; about 30 % width margin on the curve fit | Item 2; design document H.25 |
-| OSH Park order | Quote (input 2241.6 mm2, the D-60 outline) and 4-layer stack-up | Items 5 and 7 |
-| CR connector holes | OSH Park policy on non-functional inner pads | Item 3 |
+| BAV199 D104 to D106 (SOT-23) pinout | Closed 2026-11-13. Nexperia BAV199 product data sheet v.4 (1 April 2023; supersedes v.3 of 2020-09-01, whose only change is "Product changed to non automotive", Table 8), section 5 Table 2: pin 1 A1 (anode, diode 1), pin 2 K2 (cathode, diode 2), pin 3 K1 and A2. The board matches: pad 1 /GND, pad 2 /3V3, pad 3 /N_H1P (D104), /N_H1M (D105) and /N_UVP (D106). Operator: "Yes" | Item 9 |
+| SOT-23 reflow footprint of D104 to D106 | Closed 2026-11-13. The footprint `SOT-23_CrtYd0.25` has 1.475 x 0.6 mm pads at 1.9 mm pitch, with the pad rows 1.875 mm apart (pads 0.20 to 1.675 mm from the centre line). The data-sheet Fig. 8 lead width is 0.38 to 0.48 mm, below the 0.6 mm pad width, and the lead tips lie 1.05 to 1.25 mm from the centre line, which leaves a toe pad of 0.43 mm or more. The Fig. 9 reflow lands are about 0.6 x 0.7 mm, with the rows about 2.0 mm apart. The KiCad pads are longer toward the body; this is a fillet difference, not a connectivity difference. The land-pattern refinement is dropped. Operator: "Close, no need to refine if the current footprint is verified compatible" | Item 10 |
+| In2.Cu VCHGIN strap | Closed 2026-11-13 on IPC-2152. The required section is 87.4 mil2, which is 3.221 mm at 17.5 um. The strap section of 4.174 mm (113.2 mil2) gives 2.75 A at a 10 degC rise, and a 7.4 degC rise at the 2.41 A basis. The OSH Park 4-layer page (`docs.oshpark.com/services/four-layer/`, read 2026-11-13) gives the inner layers as "0.68 mil (0.0175mm) 0.5 oz copper clad"; clad copper is not plated, so the finished thickness is 17.5 um (at 17.3 um the result is 2.73 A). The IPC-2221 internal formula gives 2.04 A, below the 2.41 A basis, and needs 5.258 mm (`docs/reviews/charger_eval_2026-11-05/round4/calc/r9_calc_out.txt`); it does not pass, and the closure rests on IPC-2152 alone. Operator: "Accept, use IPC-2152"; on 0.5 oz inner copper, "Yes" | Item 2; design document H.25 |
+| OSH Park 4-layer stack-up | Closed 2026-11-13. The OSH Park 4-layer page (read 2026-11-13) gives 63 mil (1.6 mm), 1 oz outer copper (clad and plated), 0.5 oz inner copper, FR408-HR at 190 degC Tg, ENIG, purple SMOBC on both sides, and via tenting "Yes (filled hole and flat surface not guaranteed)". The alternate-stack-up notices are commented out in the page source, so none is active. Operator: "Yes" | Item 5 |
+| OSH Park quote | Closed 2026-11-13 as out of scope. Operator: "Quote is outside the scope of the project" | Item 7 |
+| OSH Park solder-mask expansion | Closed 2026-11-13; the TODO(verify) of the rule file is closed. The OSH Park KiCad design-rules page gives "Solder Mask Expansion should usually be set to 2mil (0.0508mm)". The 4-layer page gives a maximum mask alignment error of 3 mil (0.0762 mm) and a minimum mask web of 4 mil (0.1016 mm), which is the board setting. The smallest different-net via-to-mask gap, 0.115 mm (about 0.094 mm with square-cornered openings, section 9.1), is larger than the 0.0762 mm alignment error. Operator: "Yes" | Section 11 item 22; `MORNING_REVIEW_2026-11-13.md` section 3.1 |
+| CR connector holes: non-functional inner pads | Amended 2026-11-13: open as an assumption that is checked at submission; not an order blocker. The OSH Park page states nothing on non-functional pads. Its plated-drill-to-internal-copper rule of 10 mil (0.254 mm) is met: the inner pours keep 0.27 mm against the 0.254 mm rule, and DRC reports 0 violations. All vias keep their inner pads; only J1 (22 pads), J102 (10 pads), W1 to W4, W6 and W7 have their unused inner pads removed. Operator: "Let's assume they will accept it. I will find out later when I submit the board if not."; on the decision, "We will decide once that time comes" | Item 3 |
+
+(**Superseded 2026-11-13:** Table 11.1 "CR bare-board blockers", rows "BAV199 D104 to D106 (SOT-23) | Pinout from a
+secondary source only | Item 9"; "In2.Cu VCHGIN strap | IPC-2152 chart reading; about 30 % width margin on the curve
+fit | Item 2; design document H.25"; "OSH Park order | Quote (input 2241.6 mm2, the D-60 outline) and 4-layer
+stack-up | Items 5 and 7"; "CR connector holes | OSH Park policy on non-functional inner pads | Item 3".)
 
 Three former rows of Table 11.1 are closed by operator ruling 2026-11-13 (Review 1/2: J102, J1-TSW, W6-W7
 (connector and lead-pad geometry), local_923ffa1c-f985-43ad-8510-7faea2e5f5d7, chat 2026-11-13). These rows were

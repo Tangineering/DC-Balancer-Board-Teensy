@@ -25,9 +25,27 @@ On the routed, trimmed and stitched CR (D-60, D-61), the constraint check (`cr/c
 rows (R102 under D-20; R103 and R129 as listed U101-network exemptions, D-55/D-56) and 16 information rows (D-56).
 The fabricator of the CR is OSH Park (bare board), with the rule file
 `tools/pcb/fab_rules/fab_4layer_oshpark_only.kicad_dru`. The EIB is a 2-layer board; at OSH Park it is a separate
-order and is not on the CR panel. Neither package has been ordered. The next step is the operator's pre-order review
-of the routed CR and the two packages (D-50 check-in 4). Section 11 lists the open items that the review must close
-before the CR bare-board order: items 2, 3, 5, 7 and 9. (**Superseded 2026-11-13:** "items 2, 3, 5, 7, 9, 14, 16 and
+order and is not on the CR panel. Neither package has been ordered. The operator's pre-order review of the routed CR
+and the two packages (D-50 check-in 4) took place in two parts on 2026-11-13. Operator ruling 2026-11-13 (Review 2/2:
+BAV199, strap, OSH Park (fab checks), local_6e36c3a4-f328-44cd-8c31-05ea2fa7bfa3, chat 2026-11-13) closes section 11
+items 9 and 10 and the VCHGIN half of item 2, closes the stack-up and mask-expansion parts of item 5, closes item 7 as
+out of scope and amends item 3. No operator-review item now blocks the CR bare-board order. Item 3, the OSH Park
+policy on non-functional inner pads, stays open as an assumption that the operator checks when the board is
+submitted. The drilled-versus-finished reading of the 1.1 mm TSW holes stays open in item 5. It does not block the
+order, because a finished hole down to the 1.02 mm drawing value still gives about 0.06 mm of corner clearance on
+the 0.64 mm post (D-41). The VCHGOUT half of item 2 (the In2.Cu `VCHGOUT_L3_strap` at 3.21 A) is outside the ruling
+and stays open. No current check of the VCHGOUT path at 3.21 A is on record, so it is not established whether this
+half blocks the order. The open rest of item 16 is a parts check and does not block the order.
+
+Two follow-ups that the Review 2/2 session raised have no operator answer and stay open without a change. First, the
+fab package README gives a quantity of 5, but OSH Park sells boards in multiples of 3. Second, its OSH Park row refers to
+"the 1 oz fallback", but the OSH Park 4-layer stack-up already is 1 oz outer and 0.5 oz inner copper. In addition, a
+further outline trim (D-62; operator ruling 2026-11-13 relayed by the routing session: rectilinear or 30/45/60 degree
+edges, 1.0 mm fillets) is in progress and not yet committed. The status table above, the constraint-check counts and
+`fab/cr_2026-11-13/` are for the D-61 board until D-62 is recorded. (**Superseded 2026-11-13:** "The next step is the
+operator's pre-order review of the routed CR and the two packages (D-50 check-in 4). Section 11 lists the open items
+that the review must close before the CR bare-board order: items 2, 3, 5, 7 and 9."; operator ruling 2026-11-13
+(Review 2/2) closes or amends these items, section 11.) (**Superseded 2026-11-13:** "items 2, 3, 5, 7, 9, 14, 16 and
 25, and the W6/W7 lead pads of D-45, and the D-20 stitching gap of D-61"; the gap fill of D-61 closes the stitching
 gap, and operator ruling 2026-11-13 (Review 1/2: J102, J1-TSW, W6-W7 (connector and lead-pad geometry),
 local_923ffa1c-f985-43ad-8510-7faea2e5f5d7, chat 2026-11-13) closes items 14 and 25, the header half of item 16 and
@@ -379,7 +397,9 @@ OSH Park 2-layer 6/6 mil, OSH Park 4-layer 5/5 mil, PCBWay 6/6 mil on 1 oz or 2 
 therefore uses `tools/pcb/fab_rules/fab_4layer_5mil_oshpark_pcbway.kicad_dru` (track and clearance 0.127 mm, all
 other rules unchanged) and **1 oz outer copper**, which A.8 admits as the Copper fallback with power pours >= 2.0
 mm wide. OSH Park 4-layer is 1 oz outer / 0.5 oz inner. The L3/L4 straps on 0.5 oz inner copper need a width
-check for 2.41 A and 3.21 A: TODO(verify: IPC-2152 internal-layer chart). The EIB stays at 6/6 mil.
+check for 2.41 A and 3.21 A: TODO(verify: IPC-2152 internal-layer chart). (**Amended 2026-11-13:** closed for the
+VCHGIN strap at 2.41 A by operator ruling 2026-11-13 (Review 2/2), section 11 item 2; the VCHGOUT L3 strap check at
+3.21 A stays open there.) The EIB stays at 6/6 mil.
 
 **Amended 2026-11-12** (`decisions_2026-11-12/stackup_fabrules_decisions_2026-11-12.md` section 3). The CR is built at
 OSH Park only, and a new OSH Park-only CR rule file replaces the shared OSH Park/PCBWay file:
@@ -443,7 +463,9 @@ wide). The L3 strap also implements the A.8 C102b row (L3 join, via cluster at e
 C102c). This strap is not to be cut back: it keeps C102b within its 2 nH loop budget.
 
 **Kept, conditional (2026-11-12).** The rule stays. It is re-checked once the eFuse cluster is re-placed on the new
-outline (D-09). An L3 strap keeps the IPC-2152 inner-layer check of D-29 open.
+outline (D-09). An L3 strap keeps the IPC-2152 inner-layer check of D-29 open. (**Amended 2026-11-13:** the check is
+closed for the VCHGIN strap by operator ruling 2026-11-13 (Review 2/2), section 11 item 2; the VCHGOUT L3 strap
+check stays open there.)
 
 **Amended 2026-11-13 (D-56).** The L1 pour no longer reaches pad 10; the L3 strap is the only pad-10 path. It is
 widened to a 3.645 mm narrowest section, joins pad 10 solid and has three vias at the C102c end; design-document row
@@ -1253,8 +1275,9 @@ local_923ffa1c-f985-43ad-8510-7faea2e5f5d7, chat 2026-11-13), D-46; the THT-tail
   of the IPC-2152 baseline chart at the 10 C rise of the A.8 Copper basis. The review width 2.596 mm fails (2.16 A
   at 10 C); the strap is widened to a 3.645 mm narrowest section (2.57 A, 8.7 C at 2.41 A, required 3.221 mm). The
   J1.10 joint on In2 becomes solid, because four 0.6 mm thermal spokes give 2.40 mm. A third C102c-end via gives
-  4.00 A of via capacity (two vias: 2.67 A). The IPC-2152 chart reading stays TODO(verify: IPC-2152 Figure 5-1);
-  the IPC-2221 internal formula still fails (1.85 A). The solid joint adds heat demand when the TSW tail at pad 10 is
+  4.00 A of via capacity (two vias: 2.67 A). The IPC-2152 chart reading stays TODO(verify: IPC-2152 Figure 5-1).
+  (**Amended 2026-11-13:** closed for the VCHGIN strap by operator ruling 2026-11-13 (Review 2/2), section 11 item 2;
+  the VCHGOUT L3 strap check stays open there.) The IPC-2221 internal formula still fails (1.85 A). The solid joint adds heat demand when the TSW tail at pad 10 is
   soldered; the strap is 0.5 oz and about 51 mm2. The netlist is unchanged: the date-stripped `cr/cr.net` sha256 is
   `da64c37a...f484` and `gen/netlist.py` is `f78b38f1...abb4`; no pad number or net changed.
 
@@ -1289,10 +1312,13 @@ Open: the 4-seed probe re-run on this board (step 6 entry), N-5 and N-8.
   The cut-out alone leaves a 2.3-2.6 mm strap section at the trial sites, below the 3.221 mm R9.H25 requirement.
   With the extension, the board-measured minimum section (total vertical chord of the filled strap, x 41.96-45.00) is
   4.174 mm at x 42.535 (D-56: 3.630 mm at x 42.76 on the same measurement). R9.H25 gives 2.75 A at a 10 C rise
-  (7.4 C at 2.41 A); the IPC-2221 internal formula now also passes (2.04 A). The section sums two parallel paths
-  around the via; a single conductor of the same width is the conservative case. The extension takes about 3.1 mm2
-  of In2.Cu routing area under R102. Placement, the netlist and the signal ratsnest are unchanged; the
-  only new copper is the via and its track.
+  (7.4 C at 2.41 A). The IPC-2221 internal formula gives 2.04 A, below the 2.41 A basis, and needs a 5.258 mm
+  section (`round4/calc/r9_calc_out.txt`, R9.H25; the file's "-> pass" label on this row is superseded); it is
+  superseded by IPC-2152 per operator ruling 2026-11-13 (Review 2/2), section 11 item 2. (**Superseded 2026-11-13:**
+  "the IPC-2221 internal formula now also passes (2.04 A)".) The section sums two parallel paths around the via; a
+  single conductor of the same width is the conservative case. The extension takes about 3.1 mm2 of In2.Cu routing
+  area under R102. Placement, the netlist and the signal ratsnest are unchanged; the only new copper is the via and
+  its track.
 
 **D-58. CR signal routing: route-race r9 plan softum, seed 1 (2026-11-13).**
 
@@ -1484,18 +1510,81 @@ Layout and fabrication:
 
 1. TODO(verify: T-A-08 MS4b reading) for U120/U121 at x > 39.53 (D-11). **Retired 2026-11-12:** U121 is removed and
    the r7 band retires; the successor is TODO(measure: operator, MS4) for the heat sources under the new outline (D-11).
-2. TODO(verify: IPC-2152 internal-layer chart) for the L3/L4 straps on 0.5 oz inner copper at 2.41 A and 3.21 A (D-29). **Amended 2026-11-12:** open only if VCHGOUT or the VCHGIN strap uses L3; L4 carries no strap (D-20, D-22). **Amended 2026-11-13 (D-56):** the VCHGIN strap is checked in design-document row H.25 on a curve fit of the IPC-2152 baseline chart; the chart reading itself stays open.
-3. TODO(verify) that A.8's 1.9 mm CHG pad rule targets the outer layers only, and the fabs' inner annular-ring rule for the removed inner pads (D-30). **Amended 2026-11-12:** the CHG pads become TSW pads (D-03); the open item is TODO(verify: OSH Park) the non-functional-pad policy on connector holes.
+2. **Amended 2026-11-13** (operator ruling 2026-11-13 (Review 2/2: BAV199, strap, OSH Park (fab checks),
+   local_6e36c3a4-f328-44cd-8c31-05ea2fa7bfa3, chat 2026-11-13); D-29, D-56, D-57): the VCHGIN half is closed and the
+   VCHGOUT half stays open. For the VCHGIN half, the operator accepted the IPC-2152
+   reading for the In2.Cu VCHGIN strap ("Accept, use IPC-2152") and the 0.5 oz inner copper basis ("Yes"). At
+   17.5 um the IPC-2152 baseline fit requires 87.4 mil2, that is a 3.221 mm section. The D-57 strap section of
+   4.174 mm (113.2 mil2) gives 2.75 A at a 10 C rise, and the rise at 2.41 A is 7.4 C. The OSH Park 4-layer page
+   (docs.oshpark.com/services/four-layer/, read 2026-11-13) gives the inner layers as "0.68 mil (0.0175mm) 0.5 oz
+   copper clad". The inner copper is clad and not plated, so the finished thickness is 17.5 um; at 17.3 um the strap
+   gives 2.73 A. The IPC-2221 internal formula gives 2.04 A, below the 2.41 A basis, and is superseded by IPC-2152
+   (D-57). The TODO(verify: IPC-2152 Figure 5-1) of D-56 closes for the VCHGIN strap. The ruling covers the VCHGIN
+   strap only. The In2.Cu VCHGOUT strap (`VCHGOUT_L3_strap`, `gen/route_cr.py`, D-22) is a parallel path to the 1 oz
+   L1 VCHGOUT pour, and no check of it is on record. The VCHGOUT half stays open: TODO(verify: IPC-2152) the In2.Cu
+   VCHGOUT_L3_strap at 3.21 A, or a check that the 1 oz L1 VCHGOUT pour alone carries 3.21 A (D-22, D-29).
+   (**Superseded:** "TODO(verify: IPC-2152 internal-layer chart) for the L3/L4 straps on 0.5 oz inner copper at
+   2.41 A and 3.21 A (D-29). **Amended 2026-11-12:** open only if VCHGOUT or the VCHGIN strap uses L3; L4 carries no
+   strap (D-20, D-22). **Amended 2026-11-13 (D-56):** the VCHGIN strap is checked in design-document row H.25 on a
+   curve fit of the IPC-2152 baseline chart; the chart reading itself stays open.")
+3. **Amended 2026-11-13** (operator ruling 2026-11-13 (Review 2/2: BAV199, strap, OSH Park (fab checks),
+   local_6e36c3a4-f328-44cd-8c31-05ea2fa7bfa3, chat 2026-11-13); D-30): the item stays open as an assumption to verify
+   at submission; it is not an order blocker. The operator ruled "Let's assume they will accept it. I will find out
+   later when I submit the board if not." and, on the action if OSH Park does not accept it, "We will decide once that
+   time comes". The OSH Park 4-layer page (read 2026-11-13) has no statement on non-functional pads. Its plated drill
+   to internal copper rule of 10 mil (0.254 mm) is met: the inner pours keep 0.27 mm against the 0.254 mm rule, and
+   DRC reports 0 items. All vias keep their inner pads; only J1 (22 pads), J102 (10 pads), W1-W4, W6 and W7 remove
+   the unused inner pads. TODO(verify: OSH Park, at submission) the non-functional-pad policy on these holes.
+   (**Superseded:** "TODO(verify) that A.8's 1.9 mm CHG pad rule targets the outer layers only, and the fabs' inner
+   annular-ring rule for the removed inner pads (D-30). **Amended 2026-11-12:** the CHG pads become TSW pads (D-03);
+   the open item is TODO(verify: OSH Park) the non-functional-pad policy on connector holes.")
 4. TODO(verify: MS8) the minimum inside-corner radius at the three concave outline corners (A.7). **Retired 2026-11-12:** the new outline is a rectangle with no concave corner.
-5. TODO(verify: OSH Park) whether the 10 mil minimum drill is drilled or finished (the vias use 0.3 mm drill), and OSH Park's temporary alternate 4-layer stack-up (`tools/pcb/fab_rules`). **Amended 2026-11-12:** the drill question is moot for vias, because 0.3 mm clears both readings (D-29); the stack-up item stays.
+5. **Amended 2026-11-13** (operator ruling 2026-11-13 (Review 2/2: BAV199, strap, OSH Park (fab checks),
+   local_6e36c3a4-f328-44cd-8c31-05ea2fa7bfa3, chat 2026-11-13); D-29): the stack-up and mask-expansion parts are
+   closed and the drilled-versus-finished reading of the TSW holes stays open. The operator approved the stack-up ("Yes") and
+   the solder-mask expansion ("Yes"). The OSH Park 4-layer page (docs.oshpark.com/services/four-layer/, read
+   2026-11-13) gives 63 mil (1.6 mm) FR408-HR (190 Tg), 1 oz outer copper (clad and plated), 0.5 oz inner copper, ENIG
+   finish, purple SMOBC on both sides, and via tenting "Yes (filled hole and flat surface not guaranteed)". The
+   alternate-stack-up notices are commented out in the page source, so no alternate stack-up is active. The mask
+   expansion is 0.0508 mm, from the OSH Park KiCad design-rules page ("Solder Mask Expansion should usually be set to
+   2mil (0.0508mm)"). The 4-layer page gives a maximum mask alignment error of 3 mil (0.0762 mm) and a minimum mask
+   web of 4 mil (0.1016 mm), which is the board setting. The smallest different-net via-to-mask gap on the CR is
+   0.115 mm (about 0.094 mm with square pad corners), which is more than the 0.0762 mm alignment error. The 0.027 mm
+   via-to-mask-opening gap of the constraint check (D-37 row) is between a pad and its own same-net escape via, so the
+   0.115 mm different-net minimum is the figure that the alignment error is compared with
+   (`MORNING_REVIEW_2026-11-13.md`, item 3). This closes
+   the mask-expansion TODO(verify) of the OSH Park rule set; the code comment in
+   `tools/pcb/fab_rules/apply_board_setup.py` still carries the marker. The ruling does not address the
+   drilled-versus-finished reading that item 14 passed to this item, and that part stays open: TODO(verify: OSH Park)
+   the drilled or finished reading for the 1.1 mm TSW holes (items 14, D-41). It does not block the order (section 1).
+   (**Superseded:** "TODO(verify: OSH Park) whether the
+   10 mil minimum drill is drilled or finished (the vias use 0.3 mm drill), and OSH Park's temporary alternate 4-layer
+   stack-up (`tools/pcb/fab_rules`). **Amended 2026-11-12:** the drill question is moot for vias, because 0.3 mm
+   clears both readings (D-29); the stack-up item stays.")
 6. TODO(verify: PCBWay) the base-price track/space option, the hole-to-hole edge-to-edge reading and the preferred mask expansion (`tools/pcb/fab_rules`). **Retired 2026-11-12:** the CR rule file is OSH Park-only (D-29).
-7. TODO(verify: fab quote) for the CR and the EIB.
+7. Closed 2026-11-13 as out of scope (operator ruling 2026-11-13 (Review 2/2: BAV199, strap, OSH Park (fab checks),
+   local_6e36c3a4-f328-44cd-8c31-05ea2fa7bfa3, chat 2026-11-13)): the operator ruled "Quote is outside the scope of the
+   project". (**Superseded:** "TODO(verify: fab quote) for the CR and the EIB.")
 8. TODO(verify: KiCad 9 IPC API docs) whether push-and-shove routing can be driven by script. **Retired 2026-11-12:** the interactive finish retires (D-36, D-50).
 
 Parts and land patterns (`lib_verification_2026-11-11.md`):
 
-9. TODO(verify: Nexperia BAV199 datasheet rev. 01092020, Table "Pinning information", original PDF).
-10. TODO(verify: Nexperia SOT23 reflow footprint).
+9. Closed 2026-11-13 (operator ruling 2026-11-13 (Review 2/2: BAV199, strap, OSH Park (fab checks),
+   local_6e36c3a4-f328-44cd-8c31-05ea2fa7bfa3, chat 2026-11-13)): the operator approved the pinout ("Yes"). The
+   source is the Nexperia BAV199 product data sheet v.4 (1 April 2023), which supersedes v.3 (20200901); its only
+   change is "Product changed to non automotive" (Table 8). Section 5, Table 2 "Pinning information", gives pin 1 =
+   A1 (anode of diode 1), pin 2 = K2 (cathode of diode 2) and pin 3 = K1, A2. The board matches: D104, D105 and D106
+   have pad 1 on /GND, pad 2 on /3V3 and pad 3 on /N_H1P, /N_H1M and /N_UVP. (**Superseded:** "TODO(verify: Nexperia
+   BAV199 datasheet rev. 01092020, Table "Pinning information", original PDF).")
+10. Closed 2026-11-13 (operator ruling 2026-11-13 (Review 2/2: BAV199, strap, OSH Park (fab checks),
+    local_6e36c3a4-f328-44cd-8c31-05ea2fa7bfa3, chat 2026-11-13)): the operator ruled "Close, no need to refine if
+    the current footprint is verified compatible". The footprint `SOT-23_CrtYd0.25` has 1.475 x 0.6 mm pads at 1.9 mm
+    pitch, with the pad rows 1.875 mm apart, so the pads span 0.20 to 1.675 mm from the centre line. Data sheet v.4
+    Fig. 8 gives a lead width of 0.38 to 0.48 mm, which is less than the 0.6 mm pad, and the lead tips at 1.05 to
+    1.25 mm from the centre line, which leaves a toe pad of at least 0.43 mm. Fig. 9 gives reflow lands of about
+    0.6 x 0.7 mm with the rows about 2.0 mm apart. The KiCad pads are longer toward the body; this is a fillet
+    difference and does not change the connectivity. The land-pattern refinement is dropped. (**Superseded:**
+    "TODO(verify: Nexperia SOT23 reflow footprint).")
 11. TODO(verify: Littelfuse SMAJ datasheet, polarity and pad layout).
 12. Closed 2026-11-13 (operator ruling 2026-11-13 (Review 1/2: J102, J1-TSW, W6-W7 (connector and lead-pad
     geometry), local_923ffa1c-f985-43ad-8510-7faea2e5f5d7, chat 2026-11-13); D-41): the operator confirmed the D-41

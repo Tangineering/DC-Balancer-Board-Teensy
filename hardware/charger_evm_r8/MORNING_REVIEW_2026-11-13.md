@@ -11,7 +11,13 @@ design record. Nothing was ordered, no firmware was changed, and nothing was pus
 
 The CR (`cr/cr.kicad_pcb`, branch `charger-evm-round4` at `437d2d7`) is placed, poured, routed, trimmed to its final
 outline (D-60), stitched to /GND and straightened (D-61). Table 1 gives the check results on the final board. All
-checks pass: 0 FAIL rows, with the three exemption rows of Table 1. (**Superseded 2026-11-13:** "The CR
+checks pass: 0 FAIL rows, with the three exemption rows of Table 1. A further outline trim, D-62 (operator ruling
+2026-11-13, relayed by the routing session: rectilinear edges or edges at 30, 45 or 60 degrees, and 1.0 mm fillets),
+is committed in `89c2d72` with its finish re-run and the fab package re-export; its design record is pending.
+Table 1 gives the D-61 checks, which the D-62 re-run supersedes: 10-corner outline of 2327.7 mm2, DRC 0, constraint
+check 109 pass and 0 FAIL, D-20 stitching 3.51 mm at (43.0, 44.8) with 306 stitch points. (**Superseded
+2026-11-13:** "is in progress and not committed; Table 1 describes the committed D-61 board".) (**Superseded
+2026-11-13:** "The CR
 (`cr/cr.kicad_pcb`, branch `charger-evm-round4` at `779c419`) is placed, poured, routed and trimmed to its final
 outline (D-60)."; "The CR (`cr/cr.kicad_pcb`, branch `charger-evm-round4` at `cb1def6`) is placed, poured and routed.")
 
@@ -91,19 +97,62 @@ Table 2. Decisions of the overnight round, D-60 and D-61.
    header (Molex 43045, items 16 and 25 of `LAYOUT_DECISIONS.md` section 11), the TSW-110/112-07-L-S pins (item 14)
    and the W6/W7 lead pads (D-45) use placeholder pad and drill geometry. ... The D-46 J-TAP latch finger access stays
    open".)
-3. Confirm the OSH Park solder-mask expansion (0.0508 mm, TODO(verify) in the rule file). The 0.027 mm via-to-mask-
-   opening gap of Table 1 is between a pad and its own same-net escape via, so a registration error can at most let
-   solder wick onto that via. The smallest different-net gap is 0.115 mm (C116.1 /3V3 to a /QUAL via), about 0.094 mm
-   with square-cornered openings. (**Superseded 2026-11-13:** "a registration error exposes part of a via annulus
-   next to a pad of another net".)
-4. Confirm the quote and the 4-layer stack-up (section 11 items 5 and 7). The quote input is the trimmed outline area,
-   2241.6 mm2.
+3. Closed 2026-11-13: the OSH Park solder-mask expansion of 0.0508 mm (the TODO(verify) in the rule file is closed),
+   by operator ruling 2026-11-13 (Review 2/2: BAV199, strap, OSH Park (fab checks),
+   local_6e36c3a4-f328-44cd-8c31-05ea2fa7bfa3, chat 2026-11-13). Operator: "Yes". The OSH Park KiCad design-rules
+   page gives "Solder Mask Expansion should usually be set to 2mil (0.0508mm)". The OSH Park 4-layer page gives a
+   maximum mask alignment error of 3 mil (0.0762 mm) and a minimum mask web of 4 mil (0.1016 mm), which is the board
+   setting. The 0.027 mm via-to-mask-opening gap of Table 1 is between a pad and its own same-net escape via, so a
+   registration error can at most let solder wick onto that via. The smallest different-net gap is 0.115 mm (C116.1
+   /3V3 to a /QUAL via), about 0.094 mm with square-cornered openings, which is larger than the 0.0762 mm alignment
+   error. (**Superseded 2026-11-13:** "Confirm the OSH Park solder-mask expansion (0.0508 mm, TODO(verify) in the rule file)."; "a
+   registration error exposes part of a via annulus next to a pad of another net".)
+4. Closed 2026-11-13: the 4-layer stack-up (section 11 item 5), and the quote (section 11 item 7) as outside the
+   scope of the project, by operator ruling 2026-11-13 (Review 2/2). Operator, on the stack-up: "Yes"; on the quote:
+   "Quote is outside the scope of the project". The OSH Park 4-layer page (`docs.oshpark.com/services/four-layer/`,
+   read 2026-11-13) gives 63 mil (1.6 mm), 1 oz outer copper (clad and plated), 0.5 oz inner copper, FR408-HR at
+   190 degC Tg, ENIG, purple SMOBC on both sides, and via tenting "Yes (filled hole and flat surface not
+   guaranteed)"; the alternate-stack-up notices are commented out in the page source, so none is active.
+   (**Superseded 2026-11-13:** "Confirm the quote and the 4-layer stack-up (section 11 items 5 and 7). The quote input
+   is the trimmed outline area, 2241.6 mm2.")
 
-The D-20 stitching of D-61 is not an order item: its constraint-check row passes (Table 1). The order blockers remain
-those of `LAYOUT_DECISIONS.md` section 1: section 11 items 2, 3, 5, 7 and 9. Review 2/2 of the operator is in progress
-on them. Items 14, 16 (the header half) and 25 and the W6/W7 lead pads of D-45 are closed by the operator ruling of
+The D-20 stitching of D-61 is not an order item: its constraint-check row passes (Table 1). The order blockers of
+`LAYOUT_DECISIONS.md` section 1, section 11 items 2, 3, 5, 7 and 9, are disposed of by operator ruling 2026-11-13
+(Review 2/2: BAV199, strap, OSH Park (fab checks), local_6e36c3a4-f328-44cd-8c31-05ea2fa7bfa3, chat 2026-11-13),
+and item 10 (the SOT-23 reflow footprint) is closed with them. No bare-board order blocker remains from the operator
+review items. Table 3 gives the disposition of each item. (**Superseded 2026-11-13:** "The order blockers remain those
+of `LAYOUT_DECISIONS.md` section 1: section 11 items 2, 3, 5, 7 and 9. Review 2/2 of the operator is in progress on
+them.") Items 14, 16 (the header half) and 25 and the W6/W7 lead pads of D-45 are closed by the operator ruling of
 2026-11-13 (Review 1/2; item 2 above). (**Superseded 2026-11-13:** "section 11 items 2, 3, 5, 7, 9, 14, 16 and 25,
 and the W6/W7 lead pads of D-45".)
+
+Table 3. Disposition of the order blockers by operator ruling 2026-11-13 (Review 2/2).
+
+| Item (`LAYOUT_DECISIONS.md` section 11) | Disposition | Operator's words |
+|---|---|---|
+| 9: BAV199 D104 to D106 pinout | Closed. Nexperia BAV199 product data sheet v.4 (1 April 2023; supersedes v.3 of 2020-09-01, whose only change is "Product changed to non automotive", Table 8), section 5 Table 2: pin 1 A1 (anode, diode 1), pin 2 K2 (cathode, diode 2), pin 3 K1 and A2. The board matches: pad 1 /GND, pad 2 /3V3, pad 3 /N_H1P (D104), /N_H1M (D105) and /N_UVP (D106) | "Yes" |
+| 10: SOT-23 reflow footprint | Closed. `SOT-23_CrtYd0.25` has 1.475 x 0.6 mm pads at 1.9 mm pitch, with the rows 1.875 mm apart (pads 0.20 to 1.675 mm from the centre line). The Fig. 8 lead width is 0.38 to 0.48 mm, below the 0.6 mm pad width, and the lead tips lie 1.05 to 1.25 mm from the centre line (toe pad 0.43 mm or more). The Fig. 9 reflow lands are about 0.6 x 0.7 mm, with the rows about 2.0 mm apart. The KiCad pads are longer toward the body, a fillet difference, not a connectivity difference. The land-pattern refinement is dropped | "Close, no need to refine if the current footprint is verified compatible" |
+| 2: In2.Cu VCHGIN strap | Closed on IPC-2152. Required section 87.4 mil2 = 3.221 mm at 17.5 um; the 4.174 mm strap (113.2 mil2) gives 2.75 A at a 10 degC rise (7.4 degC rise at 2.41 A). OSH Park gives the inner layers as "0.68 mil (0.0175mm) 0.5 oz copper clad" (not plated, so 17.5 um finished; 2.73 A at 17.3 um). The IPC-2221 internal formula gives 2.04 A, below the 2.41 A basis, and needs 5.258 mm (`docs/reviews/charger_eval_2026-11-05/round4/calc/r9_calc_out.txt`); it does not pass | "Accept, use IPC-2152"; on 0.5 oz inner copper, "Yes" |
+| 5: OSH Park 4-layer stack-up | Closed (item 4 of this section) | "Yes" |
+| 7: OSH Park quote | Closed as out of scope | "Quote is outside the scope of the project" |
+| 3: non-functional inner pads at connector holes | Amended: open as an assumption that is checked at submission; not an order blocker. The OSH Park page states nothing on non-functional pads. The plated-drill-to-internal-copper rule of 10 mil (0.254 mm) is met (inner pours 0.27 mm, DRC 0). All vias keep their inner pads; only J1 (22 pads), J102 (10 pads), W1 to W4, W6 and W7 have their unused inner pads removed | "Let's assume they will accept it. I will find out later when I submit the board if not."; on the decision, "We will decide once that time comes" |
+
+The Review 2/2 session raised two questions that the operator has not answered. The first stays open for the
+operator; the D-62 re-export in `89c2d72` made the second moot:
+
+- Decide the CR order quantity. The CR fab package README (`fab/cr_2026-11-13/README.md`, section 1) gives a quantity
+  of 5, but OSH Park sells boards in multiples of 3. Amended 2026-11-13: the package README as re-exported in
+  `89c2d72` still gives a quantity of 5, and its OSH Park row now states that order quantities come in multiples of 3.
+  The question stays open.
+- Amended 2026-11-13: moot. The D-62 re-export in `89c2d72` replaced the OSH Park row of the CR fab package README;
+  the row now states the confirmed 4-layer stack-up (1.6 mm, 1 oz outer / 0.5 oz inner clad, ENIG, FR408-HR), which
+  matches section 1 of that README. (**Superseded 2026-11-13:** "Decide whether to correct the OSH Park row of the CR
+  fab package README. The row says that a 4-layer order at OSH Park "uses the 1 oz fallback of the Copper row above",
+  but the OSH Park 4-layer stack-up already is 1 oz outer and 0.5 oz inner, which is the D-29 copper of the Copper
+  row.")
+
+(**Superseded 2026-11-13:** "Both stay open for the operator, and no file is changed"; the list items were numbered 5
+and 6.)
 
 ### 3.2 Standing defaults from 2026-11-12
 

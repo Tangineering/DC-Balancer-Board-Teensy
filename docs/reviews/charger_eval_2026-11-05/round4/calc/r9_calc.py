@@ -991,7 +991,14 @@ def sec_h24c(v_cr, vol6, fcc, en):
 H25_I = 2.41            # A: the VCHGIN current basis, the eFuse I_OL maximum (H.5; A.8 Copper "VCHGIN ... <= 2.41 A")
 H25_DT = 10.0           # degC: the A.8 Copper / H.22(c) rise basis of the CR power copper ("at 10 C rise")
 H25_T_IN = 0.0175       # mm: 0.5 oz inner copper, 17.5 um (D-29 and stackup_fabrules_decisions_2026-11-12.md section 3:
-                        # OSH Park 4-layer, 1 oz outer / 0.5 oz inner); finished thickness TODO(verify: OSH Park)
+                        # OSH Park 4-layer, 1 oz outer / 0.5 oz inner). Finished thickness closed 2026-11-13
+                        # (operator ruling 2026-11-13 (Review 2/2: BAV199, strap, OSH Park (fab checks),
+                        # local_6e36c3a4-f328-44cd-8c31-05ea2fa7bfa3, chat 2026-11-13): Q2 "Yes" to 0.5 oz inner
+                        # copper; full record LAYOUT_DECISIONS.md section 11 item 2): the OSH Park 4-layer page
+                        # (docs.oshpark.com/services/four-layer/, read 2026-11-13) gives the inner layers as
+                        # "0.68 mil (0.0175mm) 0.5 oz copper clad"; clad, not plated, so finished = 17.5 um
+                        # (sensitivity, not computed by this script: at a 17.3 um finished thickness the D-57 strap
+                        # section is 111.9 mil2 and IPC-2152 gives 2.73 A at 10 degC, above the 2.41 A basis).
 H25_MIL2 = 0.0254 ** 2  # mm2 per mil2
 # narrowest strap sections on In2.Cu (vertical cut through the filled VCHGIN_L3_strap at the U101 thermal-via column,
 # where the GND via at (42.80, 62.55) cuts the top edge at y 62.1455), board-measured with pcbnew on the D-56 pour stage
