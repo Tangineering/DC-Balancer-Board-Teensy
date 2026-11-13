@@ -93,15 +93,15 @@
   },
   {
    "rule": "H.23(l) successor: J-TAP straight-line run, +x half of the CR (lower bound of the dressed run)",
-   "item": "T1 (J102.1) -> C-D6.1 (97.790, 16.412)",
-   "measured": "31.3-94.7 mm",
-   "limit": "<= 150 mm (A.4)",
+   "item": "T2 (J102.1) -> C-D2.1 (67.705, 69.850)",
+   "measured": "1.2-67.1 mm",
+   "limit": "<= 100 mm (A.4)",
    "result": "pass"
   },
   {
    "rule": "H.23(l) successor: J-TAP straight-line run, +x half of the CR (lower bound of the dressed run)",
-   "item": "T7b (J102.2) -> C-D6.2 (97.790, 19.363)",
-   "measured": "31.3-92.3 mm",
+   "item": "T17 (J102.2) -> J2.09 (109.982, 81.026)",
+   "measured": "43.5-99.6 mm",
    "limit": "<= 150 mm (A.4)",
    "result": "pass"
   },
@@ -135,15 +135,15 @@
   },
   {
    "rule": "H.23(l) successor: J-TAP straight-line run, +x half of the CR (lower bound of the dressed run)",
-   "item": "T2 (J102.7) -> C-D2.1 (67.705, 69.850)",
-   "measured": "1.2-67.1 mm",
-   "limit": "<= 100 mm (A.4)",
+   "item": "T1 (J102.7) -> C-D6.1 (97.790, 16.412)",
+   "measured": "31.3-94.7 mm",
+   "limit": "<= 150 mm (A.4)",
    "result": "pass"
   },
   {
    "rule": "H.23(l) successor: J-TAP straight-line run, +x half of the CR (lower bound of the dressed run)",
-   "item": "T17 (J102.8) -> J2.09 (109.982, 81.026)",
-   "measured": "43.5-99.6 mm",
+   "item": "T7b (J102.8) -> C-D6.2 (97.790, 19.363)",
+   "measured": "31.3-92.3 mm",
    "limit": "<= 150 mm (A.4)",
    "result": "pass"
   },

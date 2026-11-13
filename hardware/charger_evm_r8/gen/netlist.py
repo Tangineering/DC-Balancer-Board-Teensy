@@ -225,22 +225,25 @@ CR = [
     ("W7", "PAD3", "W7 SCL/GND/SDA", "WPTH_3", {"1": "SCL", "2": GND, "3": "SDA"}, {}),
     # ---- J-TAP (refdes J102): one Molex Micro-Fit 3.0 2 x 5 THT header, hand-soldered last, replaces the tap
     #      field F01-F24 (2026-11-12 tap review: 10 conductors kept, 13 pads removed; tap-connector decision).
-    #      Cavity map (dec_tap_connector section 2), columns 1-5:
-    #        row A: T1  T7b  T17r  T5  T13
-    #        row B: T6  T2   T17   T16 T10
+    #      Cavity map (D-46 as re-mapped in r9-13, 2026-11-12; superseded in r9-13: row A T1 T7b T17r T5 T13,
+    #      row B T6 T2 T17 T16 T10), columns 1-5:
+    #        row A: T2  T17  T17r  T5  T13
+    #        row B: T6  T1   T7b   T16 T10
+    #      r9-13 moves four cavities (A1, A2, B2, B3): it removes the severity-3 diagonals T6-T7b (Teensy 3V3 to GND)
+    #      and T5-T17 and keeps T7b-T17 as the one severity-3 pair (exhaustive search, design A.8 Table A.8-T2b).
     #      Row A column c = pin c, row B column c = pin 5 + c, following the numbering of the placeholder stock
     #      footprint; TODO(verify: Molex 43045 drawing / 43025 housing cavity numbering, header P/N, vertical or
     #      right-angle, pegs). Accepted by the operator 2026-11-12: T5 (A4) is diagonal to T10 (B5); the gate rule
     #      (T5/T6/T10 pairwise non-adjacent including the opposite row) is met, the recommended diagonal clearance
-    #      is not. The map is not changed here.
+    #      is not.
     #      Nets are the former pad nets: T1 = F01, T7b = F02 (shield, GND), T2 = F03, T5 = F06, T6 = F07, T10 = F11,
     #      T13 = F14, T16 = F17, T17 = F18, T17r = F19 (shield, GND).
     ("J102", "MF2x5", "J-TAP Micro-Fit 3.0 2x5", "MF3_2x5",
-     {"1": "T1_VMOT", "2": GND, "3": GND, "4": "FCC_TAP", "5": "H1_RB",
-      "6": "T6_3V3", "7": "T2C", "8": "CHG_IIN", "9": "CHG_EFUSE_FLT", "10": "QUAL_TAP"},
+     {"1": "T2C", "2": "CHG_IIN", "3": GND, "4": "FCC_TAP", "5": "H1_RB",
+      "6": "T6_3V3", "7": "T1_VMOT", "8": GND, "9": "CHG_EFUSE_FLT", "10": "QUAL_TAP"},
      dict(mpn="Molex Micro-Fit 3.0 2x5 THT header, 43045 series, TODO(verify: Molex 43045 drawing)", mfr="Molex",
           note="J-TAP; mates cable assembly Molex 2147581101, TODO(verify: Molex 2147581101); polarized; "
-               "A1 T1, A2 T7b, A3 T17r, A4 T5, A5 T13, B1 T6, B2 T2, B3 T17, B4 T16, B5 T10")),
+               "A1 T2, A2 T17, A3 T17r, A4 T5, A5 T13, B1 T6, B2 T1, B3 T7b, B4 T16, B5 T10")),
 ]
 
 # --------------------------------------------------------------------------------------------

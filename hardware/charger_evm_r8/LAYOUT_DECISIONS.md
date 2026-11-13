@@ -698,12 +698,15 @@ digest, and its reconciliation notes bind where a record disagrees.
 
 - Decision: J-TAP is a Molex Micro-Fit 3.0 dual-row 2 x 5 through-hole header (3.00 mm) on the CR, hand-soldered last.
   All 10 positions are used. The cable is the Molex assembly 2147581101; its far ends take the operator's own .100"
-  crimp terminals. The cavity map is:
+  crimp terminals. The cavity map (r9-13) is:
 
   | Row | Col 1 | Col 2 | Col 3 | Col 4 | Col 5 |
   |---|---|---|---|---|---|
-  | A | T1 | T7b | T17r | T5 | T13 |
-  | B | T6 | T2 | T17 | T16 | T10 |
+  | A | T2 | T17 | T17r | T5 | T13 |
+  | B | T6 | T1 | T7b | T16 | T10 |
+
+  Superseded in r9-13: row A T1 T7b T17r T5 T13, row B T6 T2 T17 T16 T10 (the map of the 2026-11-12 tap-connector
+  decision, kept unchanged by r9-12).
 
 - Reason: ten conductors remain after the tap review (D-47). Cable assemblies are in stock for 2 x 5. The map keeps
   T5, T6 and T10 pairwise non-adjacent, including the opposite-row pin, and keeps T1 and T2 away from T5 and T10. A
@@ -723,14 +726,23 @@ digest, and its reconciliation notes bind where a record disagrees.
   43025 housing drawings) the header P/N, orientation, pegs and the physical pin numbers of the cavity map; the wire
   gauge against the R170/R171 joints at C-D6 and C-D2 (A.4 assumed 26 AWG). **Accepted by the operator (2026-11-12):** T5
   (A4) is diagonal to T10 (B5). The gate rule (T5, T6 and T10 pairwise non-adjacent, the opposite row included) is
-  met; the recommended diagonal separation is not. The map is not changed. Record:
+  met; the recommended diagonal separation is not. The r9-13 re-map keeps this diagonal. Record:
   `decisions_2026-11-12/round2/tap_connector/dec_tap_connector_2026-11-12.md`;
   `decisions_2026-11-12/round2/permit_gate_decisions_2026-11-12.md` decision 5.
-- r9-12 (audit run 002 SR-SR-01; check-in 2 ruling R1, 2026-11-12, a default the operator may override): the cavity map
-  is unchanged. On the diagonals, T6-T7b (the Teensy 3V3 to GND, no limiting resistor), T7b-T17 and T5-T17 are severity 3
-  under the `order.py` weights. An exhaustive search of all 10! assignments found no 2 x 5 map without a severity-3 pair;
-  the best four-cavity alternative still keeps T7b-T17. The three pairs are accepted as a J.2 item 63 entry, and T-F-12
-  checks all 21 cavity pairs (design A.8 Table A.8-T2b). No placement rule changes.
+- r9-12 (audit run 002 SR-SR-01; check-in 2 ruling R1, 2026-11-12, a default the operator may override), superseded in
+  r9-13: the cavity map is unchanged. On the diagonals, T6-T7b (the Teensy 3V3 to GND, no limiting resistor), T7b-T17
+  and T5-T17 are severity 3 under the `order.py` weights. An exhaustive search of all 10! assignments found no 2 x 5 map
+  without a severity-3 pair; the best four-cavity alternative still keeps T7b-T17. The three pairs are accepted as a
+  J.2 item 63 entry, and T-F-12 checks all 21 cavity pairs (design A.8 Table A.8-T2b). No placement rule changes.
+- r9-13 (orchestrator default 2026-11-12 that replaces the r9-12 R1 fallback; the operator may revert it): the cavity
+  map changes at four cavities (A1, A2, B2 and B3) to the table above. The exhaustive search scored all 10! maps with
+  the `order.py` weights over the 13 orthogonal and 8 diagonal pairs. No map has zero severity-3 pairs. Among the maps
+  with one severity-3 pair, this map moves the fewest cavities. The re-map removes T6-T7b and T5-T17. One severity-3
+  pair remains, T7b-T17 (B3-A2 diagonal): its fault reads as a false pass of proof (d), and the lead-alive rule (FR-11)
+  guards it. Both twisted pairs stay orthogonally adjacent (T1-T7b at B2-B3, T17-T17r at A2-A3), and the operator-
+  accepted T5-T10 diagonal stays. The weighted sum falls from 25.0 to 21.5, and the severity-3 count falls from 3 to 1
+  (design A.8 Tables A.8-T2 and A.8-T2b). The placement constraints above do not change, because they are stated per
+  tap; the J-TAP region of D-52 does not depend on the cavity assignment. The netlist change is recorded in D-53.
 
 **D-47. Reduced tap set and permit gate (operator rulings 2026-11-12).**
 
@@ -881,7 +893,7 @@ replaces the r7 constant x 39.53, TODO(measure: operator, MS4). J102 is packed t
 short (D-46). The headless booking of the 78 CR parts at the 0.25 mm basis is 917.0 of 4077.8 mm² (22.5 %), which
 closes section 11 item 23.
 
-**D-53. Netlist frozen (D-50, after check-in 2; design document r9-12).**
+**D-53. Netlist frozen (D-50, after check-in 2; design document r9-12; amended in r9-13).**
 
 - Decision: the CR netlist `cr/cr.net` is frozen as regenerated on 2026-11-12. Placement (D-50 step 5) and every later
   step build on it. Table D-53 gives the identity of the frozen netlist.
@@ -892,7 +904,7 @@ closes section 11 item 23.
     CRCW06034K99FKEA (design document H.24(d); `round4/calc/r9_calc.py` R9.H24(d)). The footprint and the top-side
     placement (D-44) do not change. R130 and R131A stay 100 ohm.
   - Ruling R1: the J-TAP cavity map and the J102 pin assignment of D-46 do not change, because the re-map search
-    found no 2 x 5 map without a severity-3 pair.
+    found no 2 x 5 map without a severity-3 pair. **Superseded in r9-13** (amendment below).
   - No other run-002 fix changes a part or a net.
 - Method: `gen/netlist.py` was edited, then `gen/fplib.py cr cr`, `gen/sch.py cr cr`, `kicad-cli sch erc` and
   `kicad-cli sch export netlist` (KiCad 9.0.9) were run. These are the first four steps of `gen/make_board.sh cr`.
@@ -904,8 +916,39 @@ closes section 11 item 23.
   on a constant for the r9-9 100 ohm basis; every computed figure is unchanged. Step 5 is no longer blocked.
 - Rule: a later change to a part, a value or a net reopens the freeze. Such a change needs a new decision entry, a
   new hash and a design-document change row.
+- Amendment r9-13 (2026-11-12, design document change row r9-13; an orchestrator default that the operator may revert):
+  the J-TAP re-map of D-46 reopens the freeze. `gen/netlist.py` assigns J102 pin 1 T2C, 2 CHG_IIN, 3 GND, 4 FCC_TAP,
+  5 H1_RB, 6 T6_3V3, 7 T1_VMOT, 8 GND, 9 CHG_EFUSE_FLT and 10 QUAL_TAP. The cavity-to-pin convention does not change
+  (row A column c = pin c, row B column c = pin 5 + c). `gen/sch.py` carries the new J102 pin names, and
+  `gen/cr_geometry.py` carries the new pad-to-tap table (`JTAP`); the J-TAP region does not depend on that table.
+  `cr/geometry_check.md` and `cr/geometry_check.json` were regenerated: only the J102 pad numbers of the T1, T2, T7b
+  and T17 run rows change, and every row still passes.
+  `gen/sch.py cr cr`, `kicad-cli sch erc` and `kicad-cli sch export netlist` (KiCad 9.0.9) were re-run.
+  `gen/fplib.py cr cr` was also run; it changed only the `(tedit ...)` stamps of 13 footprints, so the library was kept
+  at its r9-12 content. `gen/pcbbuild.py` was not run. Against the r9-12 `cr/cr.net`, connectivity changes only at
+  J102: `/T2C` moves from pin 7 to pin 1, `/CHG_IIN` from pin 8 to pin 2, `/T1_VMOT` from pin 1 to pin 7, and the GND
+  pin moves from 2 to 8 (pin 3 stays GND). Parts, values, footprints and every other node are unchanged. The ERC reports
+  0 errors and 0 warnings. Table D-53 gives the identity of the re-frozen netlist; Table D-53a keeps the r9-12 record.
 
-Table D-53. Identity of the frozen CR netlist.
+Table D-53. Identity of the frozen CR netlist (r9-13).
+
+| Item | Value |
+|---|---|
+| File | `cr/cr.net` (KiCad s-expression netlist, version E, exported 2026-11-12T22:05:57-0800) |
+| sha256 | `608bbf977803bc40118baf7a9f7635c60a9d3da6e1ca88ca0b95b1db1f64909b` |
+| sha256 without the two `(date ...)` lines (export time, title block; `grep -v '(date ' cr/cr.net \| sha256sum`) | `da64c37a33b1343de252eda6739449a5e932c99f497bec6b3169616d2a60f484` |
+| Generator | `gen/netlist.py`, sha256 `f78b38f1d10a1625342599aea84c192f41835b871c40a19fd36735b49582abb4`; `gen/sch.py`, sha256 `15cdcb28ff9c942227226f409af284f96b372ff503a752dd8479e1cc711302c1` |
+| Parts | 78 |
+| Nets | 79: 54 connected nets and 25 single-pin `unconnected-` nets; 262 pin nodes |
+| Connectivity against the r9-12 `cr/cr.net` | J102 pins 1, 2, 7 and 8 only (the four re-mapped cavities A1, A2, B2 and B3) |
+| Value changes against the r9-12 `cr/cr.net` | none |
+| Footprint names | as Table D-53a |
+| ERC (`cr/erc.rpt`) | 0 errors, 0 warnings |
+| Netlist export message | as Table D-53a |
+
+A re-export from the unchanged schematic changes only the export-time `(date ...)` line; the second hash reproduces.
+
+Table D-53a. Identity of the r9-12 freeze (**superseded in r9-13**; history only).
 
 | Item | Value |
 |---|---|

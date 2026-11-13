@@ -8,7 +8,9 @@ generator (D-51, D-52; `cr/geometry_check.md`). The D.3 rows are applied to `ref
 (r9-11). Check-in 2 is closed (2026-11-12, later): the operator approved all 29 audit fixes, and design change row r9-12
 applies them with rulings R1 to R6 as orchestrator defaults (README section 11 items 15 to 21). The netlist step is
 done: R132 and R131B are 4.99 kOhm and the CR netlist is frozen (LAYOUT_DECISIONS D-53). The verify pass of the
-r9-12 fixes is clean (run-002 record, section "Fix round r9-12 verification"). The next action is placement (step 5).
+r9-12 fixes is clean (run-002 record, section "Fix round r9-12 verification"). Design change row r9-13 re-maps four
+J-TAP cavities (an orchestrator default that the operator may revert), and the netlist is re-frozen (D-53 amendment).
+The next action is placement (step 5).
 
 This note gives the starting point for the next session. `LAYOUT_DECISIONS.md` is the full record. The 2026-11-12
 decisions are D-39 to D-50 there, and every older entry carries its 2026-11-12 classification (retired, re-derive,
@@ -21,7 +23,7 @@ amended or kept).
 | EIB (2 layers, 24 x 38 mm) | complete: ERC 0, DRC 0 with schematic parity; fab package `fab/eib_2026-11-11/`, **not ordered**. Copper unchanged; U203, U204, C203, C204 and R258-R265 DNP, E4/E6 leads not fitted (D-49). The DNP set is applied by hand in `assembly/eib-bom.csv` and `assembly/eib-pos.csv`; `assembly/eib_ibom.html` is not regenerated and still shows the DNP parts as fitted. `gen/netlist.py` now carries `dnp=True` on the same 14 items (U203, U204, C203, C204, R258-R265, E4, E6); the EIB schematic, board and fab exports are not yet regenerated from it (open item). The operator reviews the package before an order |
 | CR outline | **plug-on outline x 18.584-67, y 7-94 (MB frame), 48.416 x 87 mm, stencil and reflow assembly (D-39); applied to the documents** (`LAYOUT_DECISIONS.md`, `OUTLINE_CHANGE_REASSESSMENT_2026-11-12.md`). The generator is built on it (D-52: `gen/mb_brd.py`, `gen/cr_geometry.py`, `gen/layout_cr.py`, `gen/check_constraints.py`); `cr/geometry_check.md` passes every check. The height survey is closed by D-51. No board file is built on the outline yet |
 | 2026-11-12 decisions | first round (`DESIGN_STATE_2026-11-12.md` Table 1) and second round (`decisions_2026-11-12/round2/`, digest `orchestrator_digest.md`) **recorded**; LAYOUT_DECISIONS D-39 to D-50 and the classification of D-01 to D-38 applied this round |
-| CR netlist | regenerated from `gen/netlist.py` on the reduced design (D-47, D-31, D-44): 78 parts (r8: 145). W6 and W7 carry the through-hole placeholder footprints of D-45. `cr/charger_r8_cr.pretty` was rebuilt with `gen/fplib.py` and now holds the J102 Micro-Fit footprint, so ERC reports 0 errors and 0 warnings. The netlist export reports "schematic has annotation errors"; the cause is the six letter-suffix references C102a, C102b, C102c, R106s, R131A and R131B (the message disappears when all six are renamed to numeric references in a scratch copy). These references are the B.8 designators and are accepted. The generator applies the 0.25 mm courtyard basis (`_CrtYd0.25`, D-52). **Frozen 2026-11-12 (D-53):** R132 and R131B are 4.99 kOhm (r9-12, ruling R2); `cr/charger_r8_cr.pretty`, `cr/cr.kicad_sch` and `cr/cr.net` were regenerated without placement; 78 parts, 79 nets, connectivity unchanged, ERC 0 errors and 0 warnings, sha256 `e98f4e49e22f60cab729c1db3f93439ce24fda5507423080c31d613b8f340833` |
+| CR netlist | regenerated from `gen/netlist.py` on the reduced design (D-47, D-31, D-44): 78 parts (r8: 145). W6 and W7 carry the through-hole placeholder footprints of D-45. `cr/charger_r8_cr.pretty` was rebuilt with `gen/fplib.py` and now holds the J102 Micro-Fit footprint, so ERC reports 0 errors and 0 warnings. The netlist export reports "schematic has annotation errors"; the cause is the six letter-suffix references C102a, C102b, C102c, R106s, R131A and R131B (the message disappears when all six are renamed to numeric references in a scratch copy). These references are the B.8 designators and are accepted. The generator applies the 0.25 mm courtyard basis (`_CrtYd0.25`, D-52). **Frozen 2026-11-12 (D-53):** R132 and R131B are 4.99 kOhm (r9-12, ruling R2); `cr/charger_r8_cr.pretty`, `cr/cr.kicad_sch` and `cr/cr.net` were regenerated without placement; 78 parts, 79 nets, connectivity unchanged, ERC 0 errors and 0 warnings, sha256 `e98f4e49e22f60cab729c1db3f93439ce24fda5507423080c31d613b8f340833` (superseded in r9-13). **Re-frozen 2026-11-12 (D-53 amendment, r9-13):** the J-TAP re-map changes connectivity only at J102 pins 1, 2, 7 and 8; `cr/cr.kicad_sch`, `cr/charger_r8_cr.kicad_sym` and `cr/cr.net` regenerated, ERC 0 errors and 0 warnings, sha256 `608bbf977803bc40118baf7a9f7635c60a9d3da6e1ca88ca0b95b1db1f64909b` |
 | CR board file | `cr/cr.kicad_pcb` is the **r7-outline** build (placed + pours, DRC 200 unconnected, 4 starved thermals, 2 silkscreen items). It is stale against the new outline and the reduced netlist; it is not an input to the next build |
 | CR interactive pass (2026-11-12) | **superseded** by the new outline and the route-race (D-36, D-50). The project is archived at `archive_r7_outline/cr/interactive/` (move staged this round; KiCad must not hold the old path open) |
 | r7 layout work | archived in `archive_r7_outline/` (variants, attempts, images, routability study); reference only |
@@ -55,8 +57,9 @@ Mechanics and leads:
 - No standoffs; the CR is held by the 22-pin friction fit (D-42).
 - Taps go to one CR connector, J-TAP; the W leads stay soldered on the CR as through-hole leads and unplug at the
   existing EVM terminals (D-45).
-- J-TAP: Molex Micro-Fit 3.0 2 x 5 THT, hand-soldered last, cable 2147581101; cavity map row A T1 T7b T17r T5 T13,
-  row B T6 T2 T17 T16 T10; placement constraints in D-46.
+- J-TAP: Molex Micro-Fit 3.0 2 x 5 THT, hand-soldered last, cable 2147581101; cavity map (r9-13) row A T2 T17 T17r T5
+  T13, row B T6 T1 T7b T16 T10 (superseded in r9-13: row A T1 T7b T17r T5 T13, row B T6 T2 T17 T16 T10); placement
+  constraints in D-46. The re-map is an orchestrator default that the operator may revert.
 
 Stack-up and fab rules:
 

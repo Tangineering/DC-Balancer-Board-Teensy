@@ -57,11 +57,12 @@ TSW_BODIES = {
 
 # ------------------------------------------------------------------ J-TAP far ends (A.4 r9-4; D-46)
 # J102 pad -> (tap, MB part, MB pad, A.4 maximum run in mm). Pad numbering is the placeholder stock footprint
-# (row A = pads 1-5, row B = pads 6-10; netlist.py J102), TODO(verify: Molex 43045 drawing).
+# (row A = pads 1-5, row B = pads 6-10; netlist.py J102), TODO(verify: Molex 43045 drawing). Cavity map as
+# re-mapped in r9-13 (D-46); superseded in r9-13: pad 1 T1, pad 2 T7b, pad 7 T2, pad 8 T17.
 JTAP = {
-    "1": ("T1", "C-D6", "1", 150.0), "2": ("T7b", "C-D6", "2", 150.0), "3": ("T17r", "J2", "29", 150.0),
+    "1": ("T2", "C-D2", "1", 100.0), "2": ("T17", "J2", "09", 150.0), "3": ("T17r", "J2", "29", 150.0),
     "4": ("T5", "J1", "45", 120.0), "5": ("T13", "J2", "45", 150.0), "6": ("T6", "J1", "29", 120.0),
-    "7": ("T2", "C-D2", "1", 100.0), "8": ("T17", "J2", "09", 150.0), "9": ("T16", "J2", "43", 150.0),
+    "7": ("T1", "C-D6", "1", 150.0), "8": ("T7b", "C-D6", "2", 150.0), "9": ("T16", "J2", "43", 150.0),
     "10": ("T10", "J2", "47", 150.0),
 }
 

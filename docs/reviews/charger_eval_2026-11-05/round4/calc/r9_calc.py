@@ -531,12 +531,15 @@ def sec_h22(v_cr):
 # ======================================================================================================================
 def sec_h23(v_cr):
     head("R9.H23(n) R106s FLT bridges on the J-TAP cavity map; H.23(x) rows (3)-(4); H.23(y) rows (1) and (7)")
-    # J-TAP map (A.4 / A.8, r9-4): row A T1 T7b T17r T5 T13, row B T6 T2 T17 T16 T10; orthogonal neighbours of T16 (B4)
+    # J-TAP map (A.4 / A.8, r9-13): row A T2 T17 T17r T5 T13, row B T6 T1 T7b T16 T10; orthogonal neighbours of T16 (B4).
+    # Superseded in r9-13: row A T1 T7b T17r T5 T13, row B T6 T2 T17 T16 T10 (T17 in B3). The T16-T17 bridge below is kept
+    # as the record of that map (design A.8, history table of Table A.8-T2).
     R_FLT = (36.0, 70.0, 130.0)
     i_max = V_IO[2] / (0.0 + R106S * 0.99 + R_FLT[0])
     i_min = V_IO[0] / (R_DRV + R106S * 1.01 + R_FLT[2])
     v_en_min = min(v - v / (R_DRV + r + rf) * R_DRV for v in V_IO for r in (R106S * 0.99, R106S * 1.01) for rf in R_FLT)
-    out("  T16 (B4) orthogonal neighbours: A4 T5 (pin 31 push-pull), B5 T10 (pin 33 push-pull), B3 T17 (pin 22 analog)")
+    out("  T16 (B4) orthogonal neighbours (r9-13 map): A4 T5 (pin 31 push-pull), B5 T10 (pin 33 push-pull), B3 T7b (GND); "
+        "the r9-12 map had B3 T17 (pin 22 analog), whose T16-T17 bridge stays below as history")
     out("  T5-T16 or T10-T16 bridge, output HIGH, FLT asserted: FLT current %.3f mA max (3V3 %.3f V, 0 ohm driver, R106s %.0f ohm, "
         "R(FLT) 36 ohm) = %.3f of the 10 mA abs max; %.3f mA min; the bridged output stays >= %.3f V (40 ohm driver), so the EN net "
         "(T5) or QUAL (T10, through R147) follows its command and pin 35 reads that output level (a fault is masked while it is HIGH); "

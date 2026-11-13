@@ -66,10 +66,11 @@ IC = {
     "J2x7": ([(str(n), str(n), "passive") for n in (1, 3, 5, 7, 9, 11, 13)],
              [(str(n), str(n), "passive") for n in (2, 4, 6, 8, 10, 12, 14)]),
     # J-TAP (J102), Micro-Fit 3.0 2 x 5: row A cavities on the left, row B on the right (cavity map of the
-    # 2026-11-12 tap-connector decision; pin numbers TODO(verify: Molex 43045 drawing))
-    "MF2x5": ([("1", "A1 T1", "passive"), ("2", "A2 T7b", "passive"), ("3", "A3 T17r", "passive"),
+    # 2026-11-12 tap-connector decision as re-mapped in r9-13, D-46; superseded in r9-13: A1 T1, A2 T7b, B2 T2,
+    # B3 T17; pin numbers TODO(verify: Molex 43045 drawing))
+    "MF2x5": ([("1", "A1 T2", "passive"), ("2", "A2 T17", "passive"), ("3", "A3 T17r", "passive"),
                ("4", "A4 T5", "passive"), ("5", "A5 T13", "passive")],
-              [("6", "B1 T6", "passive"), ("7", "B2 T2", "passive"), ("8", "B3 T17", "passive"),
+              [("6", "B1 T6", "passive"), ("7", "B2 T1", "passive"), ("8", "B3 T7b", "passive"),
                ("9", "B4 T16", "passive"), ("10", "B5 T10", "passive")]),
     "TAP": ([], [("1", "1", "passive")]),
     "PAD1": ([], [("1", "1", "passive")]),

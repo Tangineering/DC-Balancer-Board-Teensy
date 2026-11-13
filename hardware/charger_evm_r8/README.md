@@ -536,14 +536,21 @@ R131A/R131B and checks the release at the EVM pin. It also meters R272 and R272b
 ### 8.5 J-TAP and leads
 
 J-TAP (J102) is a Molex Micro-Fit 3.0 dual-row 2 x 5 THT header at 3.00 mm pitch on the +x side of the CR. It mates
-with the Molex 2147581101 cable assembly. Table 8.4 gives the cavity map.
+with the Molex 2147581101 cable assembly. Table 8.4 gives the cavity map of design change row r9-13 (D-46).
 
-Table 8.4. J-TAP cavity map (columns 1-5).
+Table 8.4. J-TAP cavity map (columns 1-5; J102 pin = column for row A, 5 + column for row B).
 
 | Row | 1 | 2 | 3 | 4 | 5 |
 |---|---|---|---|---|---|
-| A | T1 (V-MOT) | T7b (GND shield) | T17r (GND shield) | T5 (FCC tap) | T13 (CHG_H1_RB) |
-| B | T6 (3V3) | T2 (VBUS) | T17 (CHG_IIN) | T16 (CHG_EFUSE_FLT) | T10 (CHG_QUAL) |
+| A | T2 (VBUS) | T17 (CHG_IIN) | T17r (GND shield) | T5 (FCC tap) | T13 (CHG_H1_RB) |
+| B | T6 (3V3) | T1 (V-MOT) | T7b (GND shield) | T16 (CHG_EFUSE_FLT) | T10 (CHG_QUAL) |
+
+The r9-13 map moves four cavities (A1, A2, B2 and B3). It replaces the map row A T1 T7b T17r T5 T13, row B T6 T2 T17 T16
+T10 (superseded in r9-13). The re-map removes the severity-3 diagonals T6-T7b (the Teensy 3V3 to GND, with no limiting
+resistor) and T5-T17. One severity-3 pair remains, T17-T7b on the A2-B3 diagonal: a short makes proof (d) pass falsely,
+and the lead-alive rule of FR-11 guards it. T-F-12 checks all 21 cavity pairs before the first power-up (design
+document A.8, Tables A.8-T2 and A.8-T2b). The re-map is an orchestrator default, and the operator may revert it (section
+11, item 15).
 
 In Table 8.4, T5 (A4) sits diagonal to T10 (B5), which meets the non-adjacency rule but not the recommended diagonal
 separation. The operator accepted this diagonal on 2026-11-12. Housing polarization is required, because a 180-degree flip puts T6 on the T10 circuit.
@@ -611,8 +618,10 @@ The MB keeps every trace (PM8: no trace cuts) and keeps ROS fitted. Steps PM7, P
 
 The CR netlist `cr/cr.net` is regenerated from `gen/netlist.py` with 78 parts (145 in r8) and passes ERC with 0 errors
 and 0 warnings. Check-in 2 approved the audit-run-002 fixes on 2026-11-12. The netlist step changed R132 and R131B to
-4.99 kOhm (design document H.24(d)), and the netlist is frozen (LAYOUT_DECISIONS D-53, sha256 `e98f4e49e22f60ca...`; 78 parts, 79 nets,
-ERC 0 / 0, connectivity unchanged). The netlist export reports
+4.99 kOhm (design document H.24(d)), and the netlist is frozen (LAYOUT_DECISIONS D-53; 78 parts, 79 nets, ERC 0 / 0).
+The r9-13 J-TAP re-map amends the freeze: connectivity changes only at J102 pins 1, 2, 7 and 8, and the netlist is
+re-frozen at sha256 `608bbf977803bc40...` (D-53, Table D-53; superseded in r9-13: `e98f4e49e22f60ca...`, the r9-12
+freeze with connectivity unchanged against r9-11). The netlist export reports
 annotation errors for the six letter-suffix designators C102a, C102b, C102c, R106s, R131A and R131B; these references are
 accepted.
 
@@ -730,8 +739,11 @@ row r9-12, and the operator may override any of them. The next operator action i
 13. Decide whether FR-47(a) also writes EN_CHG = 0 on the P5 drop and verifies that the charge current falls (dec2-gate
     suggestion, round-2 digest).
 14. Decide the tolerance and action of a pin-25 plausibility check against the BQ25798 VBAT ADC (J.2 item 39).
-15. Closed 2026-11-12 (check-in 2, ruling R1, default): SR-SR-01. No 2 x 5 cavity map is free of severity-3 pairs, so
-    the map is kept. T6-T7b, T7b-T17 and T5-T17 are a J.2 item 63 entry with T-F-12 as the build check.
+15. Closed 2026-11-12 (r9-13, orchestrator default, which replaces the ruling R1 fallback): SR-SR-01. No 2 x 5
+    cavity map is free of severity-3 pairs. The r9-13 map (section 8.5) moves four cavities and leaves one severity-3
+    pair, T17-T7b, as a J.2 item 63 entry with T-F-12 as the build check. The operator may revert to the r9-12 map.
+    (Superseded in r9-13: "No 2 x 5 cavity map is free of severity-3 pairs, so the map is kept. T6-T7b, T7b-T17 and
+    T5-T17 are a J.2 item 63 entry with T-F-12 as the build check.")
 16. Closed 2026-11-12 (check-in 2, ruling R2, default): ADV-R2-06 and SR-SR-02. Option (a) is selected: R132 and R131B
     rise to 4.99 kOhm 1 % (design document H.24(d)); the netlist step applied the value (D-53).
 17. Closed 2026-11-12 (check-in 2, ruling R3, default): SR-SR-04. Option (b) is selected: the B.6 cells read "not

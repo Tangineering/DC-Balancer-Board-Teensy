@@ -291,7 +291,7 @@ def fig2_1():
         "Permit gate (Figure 5.1)\nComparators U102 H1,\nU103 UVB, U119 FCC_OFF,\nU120 FCC_ON\n"
         "Logic U105, U106, U107,\nU110, U118\nJ-TAP T1, T2, T5, T6, T10 in;\nT13 out (H1 readback)", fs=FS_S,
         weight="normal")
-    # eFuse readbacks: U101.14 N_FLT -> R106s -> J102.9 (T16); U101.13 IMON -> R129 -> J102.8 (T17) (cr/cr.net)
+    # eFuse readbacks: U101.14 N_FLT -> R106s -> J102.9 (T16); U101.13 IMON -> R129 -> J102.2 (T17, r9-13 map) (cr/cr.net)
     wire(ax, [(84, 53), (81, 53), (81, 13.5), (78.5, 13.5)], "logic", hops=[(81, 43.5), (81, 32), (81, 27), (81, 21)])
     text(ax, 82.0, 48.2, "FLT -> T16, IMON -> T17 (readbacks)", fs=FS_XS, ha="left", color=LOGIC)
     wire(ax, [(66, 21), (82.5, 21)], "logic")
