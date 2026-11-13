@@ -1,39 +1,39 @@
-"""CR placement data. Every coordinate is an Eagle board coordinate (A.2 convention) taken from
-docs/charger_bq25798_wiring_design_2026-11-05.md r8 A.7 / A.8 / B.8; deviations carry a D-nn tag that
-LAYOUT_DECISIONS.md explains."""
-import contextlib
-import io
-import math
+"""CR placement data on the plug-on outline (D-39; generator step 4 of D-50, LAYOUT_DECISIONS D-51, D-52).
+
+Every coordinate is an Eagle board coordinate (A.2 convention, MB frame, +y up; D-01) taken from
+docs/charger_bq25798_wiring_design_2026-11-05.md r9 A.8 / B.8; deviations carry a D-nn tag that LAYOUT_DECISIONS.md
+explains. The outline, the MB data and the region geometry come from `cr_geometry.py`.
+
+Retired with the r7 outline (D-39; outline_change_2026-11-12/retired.md section 4): the 11-vertex outline and its
+chamfer, the tab X / tab Y regions, the F01-F24 tap grid and low row, the feet FT1/FT2 and the fill hole, the B1R
+wedge and the bead spots, the comparator band and its corners, the MB bottom-clearance rule (mb_bottom_clearance,
+r7_calc), every bottom-side region and phase (D-17, D-18, D-19, D-32, D-34, D-44), and the RIM_X / LFC_Y constants.
+"""
 import os
 import sys
 
 import pcbnew
-from shapely.geometry import Polygon, box, Point, LineString
+from shapely.geometry import Point, box
 from shapely.ops import unary_union
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-CALC = os.path.normpath(os.path.join(HERE, "..", "..", "..", "docs", "reviews", "charger_eval_2026-11-05", "round4",
-                                     "calc"))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import cr_geometry as G  # noqa: E402
 
-YOFF = 100.0
+YOFF = G.YOFF
 LAYERS = 4
 
-# A.7 r7 outline V1..V11 (counter-clockwise from the -x/-y corner)
-OUTLINE = [(17.70, 34.14), (48.70, 34.14), (48.70, 56.30), (65.00, 56.30), (65.00, 68.30), (48.70, 68.30),
-           (48.70, 67.14), (37.56, 67.14), (37.56, 76.00), (18.70, 76.00), (17.70, 75.00)]
-P = Polygon(OUTLINE)
-INSET = P.buffer(-0.5, join_style=2)          # A.8: every courtyard >= 0.5 mm inside the outline
+OUTLINE = G.OUTLINE          # rectangle x 18.584-67, y 7-94 (D-39)
+P = G.P
+INSET = G.INSET              # A.8: every courtyard >= 0.5 mm inside the outline
 
 # ------------------------------------------------------------------ fixed placements (x, y, rot)
+# The power block keeps its A.8 / D-09 coordinates (outline_change_2026-11-12/routing.md 5.1): it lies inside the
+# new outline, and the route_cr.py power copper (D-21, D-22, D-23, D-33) is drawn around it. D-09 is re-derived at
+# placement (step 5); these are the start values.
 FIXED = {
-    "J1": (45.998, 39.084, 0),                 # CHG element pin 1 (A.8 table)
-    "W1": (30.3, 61.2, 0), "W2": (27.7, 61.2, 0), "W3": (24.3, 45.4, 0), "W4": (24.3, 55.6, 0),
-    "W7": (29.0, 57.5, 0), "W6": (34.0, 57.5, 0),  # pads at 27/29/31 and 33/35 (A.8)
-    # The tap field F01-F24 (A.8 r7 tab X grid and footprint low row) is removed: the 10 kept taps land on the J-TAP
-    # header J102 (2026-11-12 tap review and tap-connector decision). J102 has no fixed position yet; its placement
-    # (+x side, latch access, A.4 maxima) belongs to the new-outline generator step.
-    "R175": (50.80, 62.75, 0),                 # 1206 vertical between R175b (61.48) and R175a (64.02)
-    # eFuse cluster (A.8 per-region table; D-09 shifts of <= 0.80 mm: KiCad courtyards and the U101 +y escape channel)
+    "J1": (45.998, 39.084, 0),                 # CHG element pin 1 (A.8 table); CR side of the D-41 TSW stack
+    "W1": (30.3, 61.2, 0), "W2": (27.7, 61.2, 0), "W3": (24.3, 45.4, 0), "W4": (24.3, 55.6, 0),   # A.8 / D-45
+    # eFuse cluster (A.8 per-region table; D-09 shifts of <= 0.80 mm)
     "U101": (41.70, 63.65, 0),
     "C102c": (41.80, 60.27, 0),
     "C102a": (40.95, 57.14, 0),
@@ -42,23 +42,13 @@ FIXED = {
     "D107": (37.90, 56.30, 0),
     "C103": (38.08, 64.88, 0),
     "D103": (33.50, 64.84, 0),
-    # D-09: R101 in line with U101 pin 10 (y 63.90), C101 reached along y 63.40 from pin 9, R105 below the
-    # +y-edge IMON escape; C105 removed (DNP tier 1, D-31)
-    "R101": (45.275, 63.90, 0), "C101": (47.225, 63.90, 0),
-    "R105": (45.275, 65.06, 0), "R103": (47.225, 65.06, 0),   # R103 takes the freed C105 slot (D-09, D-31)
-    "J101": (40.60, 46.83, 0),
-    # comparators (footprint low-y band; D-05). U104, U115 and U121 removed (2026-11-12 tap review).
-    "U119": (29.195, 40.10, 0), "U103": (33.225, 40.10, 0), "U102": (37.255, 40.10, 0),
-    # D-05: U120 does not fit the band at x <= 39.53; it takes the band position that A.8 makes
-    # conditional on the MS4b reading (T-A-08), TODO(verify: T-A-08 MS4b), fallback = footprint interior.
-    "U120": (38.61, 36.60, 0),
+    "J101": (40.60, 46.83, 0),                 # D-10 (kept: bounded by internal regions, not by the outline)
 }
-# NOTE (2026-11-12): FIXED, the regions and the phases below still encode the r7 outline. Only the part lists and the
-# side flags were brought into line with the 2026-11-12 decisions; the plug-on outline (x 18.584-67, y 7-94) needs
-# the new region table of OUTLINE_CHANGE_REASSESSMENT_2026-11-12.md section 8 before any placement run.
-# polarity / orientation: (pad, direction of that pad from the part centre)
+# Not fixed any more (D-52): the comparators U102, U103, U119, U120 (r7 band retired; packed in the analog window,
+# D-11 re-derived), R175 (r7 tab X; now behind the J-TAP T6 cavity, D-46), W6/W7 (plated through-hole pads at
+# 2.54 mm pitch, D-45: the r8 SMT coordinates overlap at the new pitch), the +x pocket R101/C101/R105/R103 (0603 now,
+# D-44; packed toward U101 pins 7-13 by connectivity) and J102 (J-TAP, packed in its own region, D-46).
 ORIENT = {
-    "R175": ("1", "+y"),       # pad 1 (T6_3V3) = R175a at y 64.02
     "U101": ("3", "-y"),       # IN/IN_SYS edge (pins 1-6) facing -y (A.8, r4)
     "C102a": ("1", "+y"),      # VCHGIN pad at the top
     "R102": ("2", "+y"),       # N_UV pad at the top
@@ -67,229 +57,122 @@ ORIENT = {
     "D103": ("1", "+x"),       # cathode at the +x end
 }
 
-BOARD_ONLY = [
-    ("FT2H", "FT2_FillHole_NPTH_1.0mm_KeepOut", 28.00, 73.250, 0, "F"),
-    ("FT1M", "FT1_Foot_4.0x1.6mm_BottomMark", 61.72, 66.705, 0, "F"),
-    ("FT2M", "FT2_Foot_4.0x4.0mm_BottomMark", 28.00, 73.250, 0, "F"),
-]
-PARK = (70.0, 50.0)
+BOARD_ONLY = []                # no foot, fill hole or mounting hole on the plug-on CR (D-19, D-42, D-43)
+PARK = (75.0, 50.0)            # outside the outline (x > 67): a part the packer cannot place is visible there
 
-# ------------------------------------------------------------------ regions
-FP_RECT = box(18.2, 34.64, 48.2, 66.64)
-BAND = box(23.15, 35.05, 42.43, 41.63)
-DIV_STRIP = box(23.15, 42.14, 36.50, 45.69).difference(Point(24.3, 45.4).buffer(1.25 + 0.5))
+# ------------------------------------------------------------------ regions (MB frame)
+DIV_STRIP = box(23.15, 42.14, 36.50, 45.69).difference(Point(24.3, 45.4).buffer(1.25 + 0.5))   # A.8 / D-13
 J101_REG = box(37.0, 42.13, 44.5, 51.53)
 IN_STRIP = box(36.1, 52.03, 44.55, 61.55)
 OUT_STRIP = box(30.8, 62.85, 39.3, 66.64)
 POCKET = box(44.3, 63.40, 48.2, 66.64)
 U101_CRT = box(41.70 - 2.59, 63.65 - 2.59, 41.70 + 2.59, 63.65 + 2.59)
 W_PADS = unary_union([Point(30.3, 61.2).buffer(1.15 + 0.5), Point(27.7, 61.2).buffer(1.15 + 0.5),
-                      Point(24.3, 45.4).buffer(1.25 + 0.5), Point(24.3, 55.6).buffer(1.25 + 0.5),
-                      box(26.4 - 0.5, 56.75 - 0.5, 31.6 + 0.5, 58.25 + 0.5), box(32.4 - 0.5, 56.75 - 0.5,
-                                                                                 35.6 + 0.5, 58.25 + 0.5)])
+                      Point(24.3, 45.4).buffer(1.25 + 0.5), Point(24.3, 55.6).buffer(1.25 + 0.5)])
 HDR_PADS = unary_union([box(45.998 - 1.2, 39.084 - 1.2, 45.998 + 1.2, 61.944 + 1.2),
                         box(20.998 - 1.2, 36.544 - 1.2, 20.998 + 1.2, 64.484 + 1.2)])
-B1R = box(23.55, 62.54, 26.05, 67.10)             # r8 B1R wedge footprint (A.8, H.23(s))
-SPOTS = unary_union([box(c[0] - 1.5, c[1] - 1.5, c[0] + 1.5, c[1] + 1.5) for c in
-                     ((35.00, 47.69), (28.70, 53.42), (35.00, 70.80), (35.00, 73.10))])  # S1, S2, B3, S3
-FT2_DISC = Point(28.00, 73.250).buffer(1.0)        # 2.0 mm keep-out disc (B.8 Mechanical)
-TAB_X = box(48.70, 56.30, 65.00, 68.30)
-TAB_Y = box(17.70, 67.14, 37.56, 76.00)
-FT1_KO = box(59.220, 65.405, 64.220, 68.300)       # keep-out + RTV lane (A.8)
-FT2_KO = box(25.500, 70.750, 30.500, 75.750)
-L_FC_BOX = None  # tab Y "no comparator input / timing node within 10 mm of L-FC" holds by part class (D-06)
 
-# fixed power vias of route_cr (VCHGIN C102b/C102c clusters, VCHGOUT under the D103 cathode): no part on either side
+# fixed power vias of route_cr (VCHGIN C102b/C102c clusters, VCHGOUT under the D103 cathode): no part (D-33)
 PRE_VIA_SITES = [(39.45, 52.60), (39.45, 53.40), (39.45, 54.20), (40.35, 51.62), (40.95, 51.62), (39.75, 60.35),
                  (39.75, 61.05), (34.00, 63.35), (34.80, 63.35), (35.60, 63.35), (36.40, 63.35)]
 PRE_VIA_KO = unary_union([Point(c).buffer(0.30 + 0.25) for c in PRE_VIA_SITES])
 # VCHGOUT L1 corridor from W1 to the D103 cathode below the D103 anode (D-22): no top part
 VOUT_BELT = box(29.00, 59.00, 37.30, 64.20)
-INTERIOR = (FP_RECT.difference(BAND.buffer(0.5, join_style=2)).difference(J101_REG.buffer(0.5, join_style=2))
+INTERIOR = (INSET.difference(J101_REG.buffer(0.5, join_style=2))
             .difference(IN_STRIP.buffer(0.5, join_style=2)).difference(OUT_STRIP.buffer(0.5, join_style=2))
             .difference(U101_CRT.buffer(0.5, join_style=2)).difference(POCKET.buffer(0.5, join_style=2))
-            .difference(W_PADS).difference(HDR_PADS).difference(DIV_STRIP.buffer(0.01)).difference(B1R)
-            .difference(SPOTS).difference(VOUT_BELT).difference(PRE_VIA_KO))
-TABY_TOP = TAB_Y.intersection(INSET).difference(FT2_DISC).difference(SPOTS)
-
-
-def mb_bottom_clearance():
-    """Bottom clearance rule (A.7 r7): every CR bottom courtyard >= 1.0 mm in plan from every MB layer-1
-    feature that is not GND, and from the MB part boxes under the CR. Geometry from round4/calc/r7_calc.py."""
-    sys.path.insert(0, CALC)
-    with contextlib.redirect_stdout(io.StringIO()):
-        import r7_calc as rc  # noqa: E402
-    geoms = []
-    for s in rc.NONGND:
-        if s["kind"] == "wire":
-            g = LineString(s["pts"]).buffer(s["r"])
-        elif s["kind"] == "poly":
-            g = Polygon(s["pts"]).buffer(0).buffer(s["r"])
-        elif s["kind"] == "via":
-            g = Point(s["pts"][0]).buffer(s["r"])
-        elif s["kind"] == "pad":
-            c = s["pts"][0]
-            g = box(c[0] - s["r"], c[1] - s["r"], c[0] + s["r"], c[1] + s["r"]) if s.get("square") \
-                else Point(c).buffer(s["r"])
-        else:
-            continue
-        if g.distance(P) < 1.5:
-            geoms.append(g.buffer(1.0))
-    for p in rc.PARTS:
-        bx = box(*p["bbox"])
-        if bx.distance(P) < 1.5:
-            geoms.append(bx.buffer(1.0, join_style=2))
-    return unary_union(geoms).intersection(P.buffer(0.2)).simplify(0.01)
-
-
-_MBK = None
-
-
-def mbk():
-    global _MBK
-    if _MBK is None:
-        _MBK = mb_bottom_clearance()
-    return _MBK
+            .difference(W_PADS).difference(HDR_PADS).difference(DIV_STRIP.buffer(0.01))
+            .difference(VOUT_BELT).difference(PRE_VIA_KO))
+LOOP = unary_union([OUT_STRIP, U101_CRT, IN_STRIP, POCKET])   # U101 commutation-loop region (A.8, H.23(f))
+# Analog window (D-20 window y 30.8-66.86; D-11 interim 10 mm rim to the MB 5V copper, TODO(measure: operator,
+# MS4)); 3 mm from the U101 loop region as in r7. Preferred, not hard (D-20): the wide window is the fallback and
+# check_constraints lists every analog part outside the strict window as an exemption.
+ANALOG_STRICT = INTERIOR.intersection(G.analog_window()).difference(LOOP.buffer(3.0))
+ANALOG_WIDE = INTERIOR.intersection(box(G.X0, G.WIN_Y[0], G.X1, G.WIN_Y[1])).difference(LOOP.buffer(3.0))
+# J-TAP (D-46): +x half of the CR, every straight-line A.4 maximum met (cr_geometry.jtap_region), clear of the fixed
+# power block. Latch finger access: TODO(verify: Molex 43045 header drawing) the latch side; checked at placement.
+JTAP_REG = INTERIOR.intersection(G.jtap_region())
 
 
 def rule_areas():
-    F, B = pcbnew.F_Cu, pcbnew.B_Cu
-    return [
-        ("MB_bottom_clearance", mbk(), [B], dict(fps=True)),
-        ("FT1_keepout", FT1_KO, [B], dict(fps=True)),
-        ("FT2_keepout", FT2_KO, [B], dict(fps=True)),
-        ("B1R_wedge", B1R, [F], dict(fps=True)),
-        ("bead_spots", SPOTS, [F], dict(fps=True)),
-    ]
+    """D-20 (amended 2026-11-12): L4 (B.Cu) is a solid GND plane with no signals and no power straps. A rule area
+    over the whole outline forbids tracks on B.Cu; pours, pads and vias stay allowed. No footprint rule area: every
+    SMT part is on the top (D-44), and the r7 bottom-clearance, feet, B1R and bead-spot areas retire (D-52)."""
+    B = pcbnew.B_Cu
+    return [("L4_no_tracks", P, [B], dict(tracks=True, vias=False, pads=False, pour=False, fps=False))]
 
 
 # ------------------------------------------------------------------ packer regions and phases
-GRID_BOUNDS = (17.0, 33.5, 66.0, 77.0)
-RIM_X = 39.53                    # courtyard limit: >= 10 mm from the MB 5V copper rim x 49.53 (A.7 thermal band)
-LFC_Y = 66.862                   # 10 mm below the L-FC body edge y 76.862 (H.23(b)/(l) ESTIMATE; A.8 tab Y rule)
-BAND_W = box(22.20, 34.64, 25.40, 38.62)   # D-07: band corner left of the former F08 site (removed, D-38), BAV199 clamps only
-BAND_E = box(43.40, 34.64, 44.80, 41.63).union(box(42.80, 34.64, 48.20, 37.85))  # D-07: below the pin-1 post, logic and DNP only
-INT_ANY = INTERIOR
-LOOP = unary_union([OUT_STRIP, U101_CRT, IN_STRIP, POCKET])   # U101 commutation-loop region (A.8, H.23(f))
-INT_ANALOG = INTERIOR.intersection(box(0, 0, RIM_X, 100)).difference(LOOP.buffer(3.0)).union(BAND_W)
+GRID_BOUNDS = (G.X0 - 0.5, G.Y0 - 0.5, G.X1 + 0.5, G.Y1 + 0.5)
 
-# 2026-11-12: U108, U109, U111, U113, U114 and U116 removed (5-LVC gate of ramifications/gate.md)
-INTERIOR_ICS = ["D104", "D105", "D106"]
-TABY_ICS = ["U110", "U106", "U118", "U105", "U107"]   # the A.8 tab Y set
-ANALOG_ICS = {"D104", "D105", "D106"}   # D108, U123 removed (D-38)
-TIMING_ICS = set()                      # U111/U113 one-shots removed (2026-11-12)
+ANALOG_ICS = ["U102", "U103", "U119", "U120", "D104", "D105", "D106"]   # comparators and BAV199 clamps (D-11)
+LOGIC_ICS = ["U105", "U106", "U107", "U110", "U118"]                    # the 5-LVC gate (D-47)
 DIVIDERS = ["R109", "R111", "R114", "R110", "R112", "R115"]
 DECOUPLE = {"C110": "U102", "C111": "U103", "C114": "U105", "C115": "U106", "C116": "U107", "C119": "U110",
             "C126": "U118", "C131": "U119", "C132": "U120"}
-# C134/U122 and C135/U123 removed (D-38); C112, C113, C117, C118, C120, C121, C122, C123, C133 removed (2026-11-12)
-# 2026-11-12 parts/assembly decision 1: every SMT part on the top side; R104 moves to the top (D-32 retires), so the
-# bottom-side lists below are empty or inert (no netlist part is flipped).
-POCKET_BOT = set()
-TABX_OK = {"R106s", "R122", "R147", "R126", "R130", "R131A", "R131B", "R132", "R176", "R177", "R108", "R123", "R107"}
-# comparator input, reference, hysteresis, filter and timing passives: not on tab X bottom (A.7 thermal band
-# content rule) and not within 10 mm of the L-FC body (A.8 tab Y rule)
-ANALOG_BOT = {"C106", "C107", "C108", "C130", "R113", "R116", "R184", "R185", "R186", "R187", "R188", "R189",
-              "R129", "C129", "R105"}
-# logic resistors driven by or feeding the tab Y gates (A.8 tab Y bottom content), packed there first
-TABY_BOT = {"R130", "R131A", "R131B", "R132", "R108", "R176", "R177", "R123"}
+# comparator input, reference, hysteresis, filter and timing passives: in the analog window (A.7 thermal band
+# content rule carried to the D-20 window)
+ANALOG_PASSIVES = {"C106", "C107", "C108", "C130", "R113", "R116", "R184", "R185", "R186", "R187", "R188", "R189",
+                   "R129", "C129"}
+LEADS = ["W6", "W7"]
 POWER_NETS = {"/GND", "/3V3", "/VCHGIN", "/VCHGOUT", "/VCHG"}
 REGIONS = {}
 PHASES = []
 TRIES = 150
 PACK_MARGIN = 0.08   # routing channel kept around every courtyard (D-15)
-# tab Y gates: 0.15 mm so every gate pin has an escape (a 0.08 mm pack sealed U108/U109 inputs, D-15)
 PHASE_MARGIN = {}
 PLACED = set()
-PARK = (70.0, 50.0)
-
-# Routing-study placement variants (round 1, D-34). CR_PLACE_VARIANT unset = the base placement of 5ddc21a.
-#   A: the VCHGOUT L4 strap (route_cr.VOUT_IN, D-22 shape unchanged) plus 0.15 mm is a bottom keep-out, so no
-#      bottom pad sits inside the strap outline (R147.2 /QUAL was enclosed on three sides; CR1-03).
-#   B: A plus the B.Cu tap/divider grid packed at a row pitch of 1.75 mm (each courtyard grown by 0.225 mm):
-#      0.80 mm row gaps between 0603 pads and >= 0.9 mm from the R107/R122/R128 column to R129/C129 (CR1-03).
-VARIANT = os.environ.get("CR_PLACE_VARIANT", "").upper()
-VOUT_L4_KO = unary_union([box(29.10, 60.00, 31.50, 62.40), box(29.10, 62.30, 36.90, 64.10)]).buffer(
-    0.15, join_style=2)                        # = route_cr.VOUT_IN (kept equal by check_constraints)
-GRID_REPACK = ("C129", "R107", "R122", "R126", "R129", "R147")   # R128, R190, R191 removed (2026-11-12)
-CRT_GROW = {r: 0.225 for r in GRID_REPACK} if VARIANT == "B" else {}
+CRT_GROW = {}        # the r7 routing-study variants (D-34) retire with the bottom side
 
 
 def setup(fps):
     global PHASES
-    bot = INSET.difference(mbk()).difference(FT1_KO).difference(FT2_KO).difference(PRE_VIA_KO).difference(
-        unary_union([Point(30.3, 61.2).buffer(1.15 + 0.5), Point(27.7, 61.2).buffer(1.15 + 0.5),
-                     Point(24.3, 45.4).buffer(1.25 + 0.5), Point(24.3, 55.6).buffer(1.25 + 0.5)]))
-    if VARIANT != "BASE0":   # D-34: strap keep-out adopted as the default (round 2); BASE0 = the 5ddc21a placement
-        bot = bot.difference(VOUT_L4_KO)
     REGIONS.update({
-        "taby_logic": TABY_TOP.union(INT_ANY).union(BAND_E),
-        "taby_only": TABY_TOP,
-        "int_logic": INT_ANY.union(BAND_E),
-        "int_analog": INT_ANALOG,
+        "jtap": JTAP_REG,
+        "int_analog": ANALOG_STRICT,
+        "int_analog_wide": ANALOG_WIDE,
         "div": DIV_STRIP,
-        "bot_logic": bot,
-        "bot_core": bot.difference(TAB_X),
-        "bot_analog": bot.difference(TAB_X).difference(box(0, LFC_Y, 100, 100)),
-        "taby_bot": bot.intersection(TAB_Y),
-        "pocket_bot": bot.intersection(box(44.3, 63.71, 48.2, 66.64)),
-        # A.8 +x pocket row: ILIM/dVdT/OVP/IMON nodes <= 5 mm from pins 7-13 (pin 7 at (43.66, 62.40))
-        # D-32: the 5 mm A.8 rule has no free bottom spot after the power-via keep-outs; 6 mm admitted
-        "bot_near_u101": bot.difference(TAB_X).intersection(Point(43.66, 62.40).buffer(6.0)),
+        "int_logic": INTERIOR,
     })
-    top_ics = INTERIOR_ICS + TABY_ICS
-    bottom = [r for r, fp in fps.items() if fp.IsFlipped() and r not in FIXED]
-    first = [r for r in bottom if r in DECOUPLE or r in ("C125", "R106s")]
-    rest = [r for r in bottom if r not in first]
-    others_top = [r for r, fp in fps.items() if not fp.IsFlipped() and r not in FIXED and r not in top_ics
-                  + DIVIDERS and not r.startswith(("FT", "#"))]
-    tyb = [r for r in rest if r in TABY_BOT]
-    rest = [r for r in rest if r not in TABY_BOT]
-    first = [r for r in first if r not in POCKET_BOT]
-    rest = [r for r in rest if r not in POCKET_BOT]
-    PHASES = [("tab Y gates", "F", TABY_ICS, "int_logic", "taby_only"),
-              ("pocket bottom", "B", sorted(POCKET_BOT), "bot_near_u101"),
-              ("top ICs", "F", INTERIOR_ICS + others_top), ("dividers", "F", DIVIDERS),
-              ("bottom decouplers", "B", first), ("bottom analog", "B", [r for r in rest if r in ANALOG_BOT]),
-              ("tab Y bottom logic", "B", tyb, "bot_logic", "taby_bot"),
-              ("bottom passives", "B", [r for r in rest if r not in ANALOG_BOT])]
+    named = set(FIXED) | set(ANALOG_ICS) | set(LOGIC_ICS) | set(DIVIDERS) | set(DECOUPLE) | ANALOG_PASSIVES \
+        | set(LEADS) | {"J102"}
+    rest = sorted(r for r in fps if r not in named and not r.startswith("#"))
+    flipped = sorted(r for r, fp in fps.items() if fp.IsFlipped())
+    if flipped:   # D-44: every SMT part on the top; the netlist carries no side="B" since 2026-11-12
+        raise SystemExit("bottom-side parts in the netlist (D-44 forbids): %s" % ", ".join(flipped))
+    PHASES = [("J-TAP", "F", ["J102"]),
+              ("analog ICs", "F", [r for r in ANALOG_ICS if r in fps], "int_analog_wide"),
+              ("dividers", "F", [r for r in DIVIDERS if r in fps]),
+              ("logic ICs", "F", [r for r in LOGIC_ICS if r in fps]),
+              ("decouplers", "F", [r for r in DECOUPLE if r in fps]),
+              ("analog passives", "F", sorted(r for r in ANALOG_PASSIVES if r in fps), "int_analog_wide"),
+              ("lead pads", "F", [r for r in LEADS if r in fps]),
+              ("other parts", "F", rest)]
 
 
 def region_name(ref):
-    if ref in POCKET_BOT:
-        return "pocket_bot"
+    if ref == "J102":
+        return "jtap"
     if ref in DIVIDERS:
         return "div"
-    if ref in ANALOG_ICS:
+    if ref in ANALOG_ICS or ref in ANALOG_PASSIVES:
         return "int_analog"
-    if ref in TABY_ICS:
-        return "taby_logic"
-    if ref in INTERIOR_ICS or ref in TIMING_ICS:
-        return "int_logic"
-    if ref in ANALOG_BOT:
-        return "bot_analog"
-    if ref in TABX_OK:
-        return "bot_logic"
-    if ref in DECOUPLE or ref == "C125":
-        return "bot_core"
-    if _FPS is not None and not _FPS[ref].IsFlipped():
-        return "int_logic"
-    return "bot_core"
+    if ref in DECOUPLE and DECOUPLE[ref] in ANALOG_ICS:
+        return "int_analog_wide"
+    return "int_logic"
 
 
 def fill(ref, phase):
-    """True: pack bottom-left first (dense) instead of nearest to the connection centroid."""
-    return phase.startswith(("tab Y gates", "tab Y bottom logic"))
+    """True: pack bottom-left first (dense) instead of nearest to the connection centroid. Not used (D-52)."""
+    return False
 
 
 def prio(ref):
     if ref in DECOUPLE:
         return 2
-    if ref in ANALOG_ICS or ref in TIMING_ICS:
+    if ref in ANALOG_ICS:
         return 1
     return 0
-
-
-_FPS = None
 
 
 def _pads_of_net(net, fps, fr, exclude):
@@ -304,23 +187,17 @@ def _pads_of_net(net, fps, fr, exclude):
 
 
 def target(ref, fps, fr, pinnet):
-    global _FPS
-    _FPS = fps
     fp = fps[ref]
     if ref in DECOUPLE:
         ic = fps[DECOUPLE[ref]]
         if DECOUPLE[ref] in FIXED or DECOUPLE[ref] in PLACED:
-            fid = ic.GetFPID().GetLibItemName().wx_str()
-            pin = "8" if "DCT" in fid else ("5" if ("SC-70" in fid or "DCK" in fid) else "6")
-            for p in ic.Pads():
-                if p.GetNumber() == pin:
+            for p in ic.Pads():                 # the supply pad of the IC, found by net (no pin-number table)
+                if p.GetNetname() == "/3V3":
                     return fr.e(p.GetPosition())
-    if ref == "C125":
-        return (50.8, 61.0)
-    if ref == "R106s":
-        return (58.42, 61.48)            # r7 site of pad F17 (A.8 r8 R106s placement); F17 -> J102 pin 9 (2026-11-12)
-    if ref in TABY_ICS:
-        return (27.0, 71.0)              # fill tab Y first (A.8 tab Y top content)
+    if ref == "J102":
+        # D-46: keep the T2 run short to C-D2 (x 67.4-69.7, y 69.9): target the point of the region nearest C-D2.1
+        from shapely.ops import nearest_points
+        return nearest_points(JTAP_REG, Point(G.far_end("7")[1]))[0].coords[0]
     pts = []
     for p in fp.Pads():
         n = p.GetNetname()

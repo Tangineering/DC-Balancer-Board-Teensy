@@ -12,11 +12,11 @@ nv = re.search(r"Found (\d+) DRC violations", drc)
 nu = re.search(r"Found (\d+) unconnected pads", drc)
 ne = re.search(r"ERC messages: (\d+)", erc)
 INFO = {
-    "cr": dict(name="CR, CHG adapter carrier", layers=4, size="47.30 x 41.86 mm bounding box (r7 outline, 11 vertices, "
-               "three concave corners, one 1.0 mm NPTH), 1394.06 mm2", thick="1.6 mm",
-               copper="2 oz outer / 1 oz inner (A.8 stack-up); 1 oz outer is allowed by the PM0 DFM check because "
-               "every power pour is >= 2.0 mm wide (A.8 Copper fallback)", finish="ENIG", qty="5 (E BOM)",
-               layers_list="F.Cu, In1.Cu (L2, solid GND), In2.Cu (L3, signals), B.Cu (L4, GND pour)"),
+    "cr": dict(name="CR, CHG adapter carrier (plug-on)", layers=4, size="48.416 x 87.000 mm rectangle (D-39, MB frame "
+               "x 18.584-67, y 7-94), 4212.19 mm2, no hole (D-42)", thick="1.6 mm",
+               copper="1 oz outer / 0.5 oz inner (D-29)", finish="ENIG", qty="5 (E BOM)",
+               layers_list="F.Cu (L1, signals and power pours), In1.Cu (L2, solid GND), In2.Cu (L3, signals), "
+               "B.Cu (L4, solid GND facing the MB, D-20)"),
     "eib": dict(name="EIB, EVM interface board", layers=2, size="24.0 x 38.0 mm (D-13 / P-05; A.9 states 36.0 x 24.0 mm)",
                 thick="1.6 mm", copper="1 oz", finish="ENIG", qty="5 (E BOM, may share the CR panel)",
                 layers_list="F.Cu, B.Cu (AGND pour)"),

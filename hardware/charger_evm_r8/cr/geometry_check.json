@@ -1,0 +1,262 @@
+{
+ "rows": [
+  {
+   "rule": "H.23(a) successor: plug-on outline (D-39)",
+   "item": "Edge.Cuts",
+   "measured": "4 vertices, 48.416 x 87.000 mm, area 4212.19 mm2, KiCad Y 6.00-93.00",
+   "limit": "48.416 x 87.000 mm, 4212.19 mm2",
+   "result": "pass"
+  },
+  {
+   "rule": "H.23(a) successor: courtyard inset 0.5 mm (A.8)",
+   "item": "INSET",
+   "measured": "4077.78 mm2",
+   "limit": "information",
+   "result": "info"
+  },
+  {
+   "rule": "D-51 (operator ruling 2026-11-12 (a)): CR -x edge x 18.584 clears the terminal body in plan",
+   "item": "J-BL (CUI_TB005_-762-03BE)",
+   "measured": "body +x 16.130 -> gap 2.454 mm; silk outer +x 16.194 -> 2.390 mm; keep-out +x 16.380 -> 2.204 mm; y overlap with the outline 22.86 mm",
+   "limit": "gap > 0 (no plan overlap)",
+   "result": "pass"
+  },
+  {
+   "rule": "D-51 (operator ruling 2026-11-12 (a)): CR -x edge x 18.584 clears the terminal body in plan",
+   "item": "J-FC (CUI_TB005-762-02BE)",
+   "measured": "body +x 16.130 -> gap 2.454 mm; silk outer +x 16.194 -> 2.390 mm; keep-out +x 16.380 -> 2.204 mm; y overlap with the outline 15.24 mm",
+   "limit": "gap > 0 (no plan overlap)",
+   "result": "pass"
+  },
+  {
+   "rule": "D-51 (operator ruling 2026-11-12 (a)): CR -x edge x 18.584 clears the terminal body in plan",
+   "item": "J-BT (CUI_TB005-762-02BE)",
+   "measured": "body +x 16.384 -> gap 2.200 mm; silk outer +x 16.448 -> 2.136 mm; keep-out +x 16.634 -> 1.950 mm; y overlap with the outline 15.24 mm",
+   "limit": "gap > 0 (no plan overlap)",
+   "result": "pass"
+  },
+  {
+   "rule": "D-41 key: CR rotated 180 deg about (33.498, 50.514) lands on the terminals",
+   "item": "J-BL, J-FC, J-BT",
+   "measured": "rotated outline x -0.004-48.412; engagement start 16.89 mm, terminal top 21.70 mm, margin 4.81 mm",
+   "limit": "all three hit; engagement start < 21.70 mm",
+   "result": "pass"
+  },
+  {
+   "rule": "H.23(j) successor: D-41 stack heights",
+   "item": "TSW on SSQ",
+   "measured": "CR underside 11.05 mm, CR top 12.65 mm, engagement start 16.89 mm",
+   "limit": "underside 11.05 mm (D-41)",
+   "result": "pass"
+  },
+  {
+   "rule": "A.8 CHG holes in the .brd = the A.8 table (pin identity, D-02)",
+   "item": "MB CHG package",
+   "measured": "max error 0.0000 mm",
+   "limit": "0.001 mm",
+   "result": "pass"
+  },
+  {
+   "rule": "H.23 successor: CHG pad (1.9 mm, PLACEHOLDER) to the outline edge",
+   "item": "J1 pads",
+   "measured": "1.464 mm",
+   "limit": ">= 0.5 mm (A.8 inset)",
+   "result": "pass"
+  },
+  {
+   "rule": "H.23 successor: TSW body + 0.25 mm courtyard inside the 0.5 mm inset (D-41, D-03)",
+   "item": "TSW-110 (pins 1-10)",
+   "measured": "margin 18.982 mm",
+   "limit": ">= 0",
+   "result": "pass"
+  },
+  {
+   "rule": "H.23 successor: TSW body + 0.25 mm courtyard inside the 0.5 mm inset (D-41, D-03)",
+   "item": "TSW-112 (pins 11-22)",
+   "measured": "margin 0.394 mm",
+   "limit": ">= 0",
+   "result": "pass"
+  },
+  {
+   "rule": "H.23(h) successor: D-20 window y 30.8-66.86 less 10 mm from the MB 5V copper rim (D-11 interim)",
+   "item": "analog window",
+   "measured": "839.3 mm2, x 19.08-66.50",
+   "limit": "information; TODO(measure: operator, MS4)",
+   "result": "info"
+  },
+  {
+   "rule": "H.23(l) successor: J-TAP region, +x half, every straight-line A.4 maximum met",
+   "item": "J102 region",
+   "measured": "2038.9 mm2, x 42.79-66.50, y 7.50-93.50",
+   "limit": "non-empty",
+   "result": "pass"
+  },
+  {
+   "rule": "H.23(l) successor: J-TAP straight-line run, +x half of the CR (lower bound of the dressed run)",
+   "item": "T1 (J102.1) -> C-D6.1 (97.790, 16.412)",
+   "measured": "31.3-94.7 mm",
+   "limit": "<= 150 mm (A.4)",
+   "result": "pass"
+  },
+  {
+   "rule": "H.23(l) successor: J-TAP straight-line run, +x half of the CR (lower bound of the dressed run)",
+   "item": "T7b (J102.2) -> C-D6.2 (97.790, 19.363)",
+   "measured": "31.3-92.3 mm",
+   "limit": "<= 150 mm (A.4)",
+   "result": "pass"
+  },
+  {
+   "rule": "H.23(l) successor: J-TAP straight-line run, +x half of the CR (lower bound of the dressed run)",
+   "item": "T17r (J102.3) -> J2.29 (109.982, 55.626)",
+   "measured": "43.5-82.6 mm",
+   "limit": "<= 150 mm (A.4)",
+   "result": "pass"
+  },
+  {
+   "rule": "H.23(l) successor: J-TAP straight-line run, +x half of the CR (lower bound of the dressed run)",
+   "item": "T5 (J102.4) -> J1.45 (87.122, 35.306)",
+   "measured": "20.6-73.2 mm",
+   "limit": "<= 120 mm (A.4)",
+   "result": "pass"
+  },
+  {
+   "rule": "H.23(l) successor: J-TAP straight-line run, +x half of the CR (lower bound of the dressed run)",
+   "item": "T13 (J102.5) -> J2.45 (109.982, 35.306)",
+   "measured": "43.5-88.9 mm",
+   "limit": "<= 150 mm (A.4)",
+   "result": "pass"
+  },
+  {
+   "rule": "H.23(l) successor: J-TAP straight-line run, +x half of the CR (lower bound of the dressed run)",
+   "item": "T6 (J102.6) -> J1.29 (87.122, 55.626)",
+   "measured": "20.6-65.4 mm",
+   "limit": "<= 120 mm (A.4)",
+   "result": "pass"
+  },
+  {
+   "rule": "H.23(l) successor: J-TAP straight-line run, +x half of the CR (lower bound of the dressed run)",
+   "item": "T2 (J102.7) -> C-D2.1 (67.705, 69.850)",
+   "measured": "1.2-67.1 mm",
+   "limit": "<= 100 mm (A.4)",
+   "result": "pass"
+  },
+  {
+   "rule": "H.23(l) successor: J-TAP straight-line run, +x half of the CR (lower bound of the dressed run)",
+   "item": "T17 (J102.8) -> J2.09 (109.982, 81.026)",
+   "measured": "43.5-99.6 mm",
+   "limit": "<= 150 mm (A.4)",
+   "result": "pass"
+  },
+  {
+   "rule": "H.23(l) successor: J-TAP straight-line run, +x half of the CR (lower bound of the dressed run)",
+   "item": "T16 (J102.9) -> J2.43 (109.982, 37.846)",
+   "measured": "43.5-87.2 mm",
+   "limit": "<= 150 mm (A.4)",
+   "result": "pass"
+  },
+  {
+   "rule": "H.23(l) successor: J-TAP straight-line run, +x half of the CR (lower bound of the dressed run)",
+   "item": "T10 (J102.10) -> J2.47 (109.982, 32.766)",
+   "measured": "43.5-90.6 mm",
+   "limit": "<= 150 mm (A.4)",
+   "result": "pass"
+  },
+  {
+   "rule": "H.23(b) successor: MB parts crossing the outline edge (information; heights closed by D-51)",
+   "item": "C-D4, C-DC3, C1-BT, C1-FC, CBL2, CHG, MDAC-BT, OP-BT, RB2, RB3",
+   "measured": "10 parts",
+   "limit": "information",
+   "result": "info"
+  },
+  {
+   "rule": "H.23(e) successor: top-side courtyard booking, 78 parts, 0.25 mm basis (D-44, D-52)",
+   "item": "largest: J102 182.2, J1 99.5, J101 70.1, U101 27.6, D107 24.5 mm2",
+   "measured": "917.0 of 4077.8 mm2 = 22.5 %",
+   "limit": "<= 75 % (A.8 booking target)",
+   "result": "pass"
+  }
+ ],
+ "terminals": [
+  {
+   "ref": "J-BL",
+   "package": "CUI_TB005_-762-03BE",
+   "body": [
+    3.529999999999996,
+    26.669999999999998,
+    16.13,
+    49.53
+   ],
+   "silk": [
+    3.466499999999996,
+    26.606499999999997,
+    16.1935,
+    49.5935
+   ],
+   "keep": [
+    3.279999999999996,
+    26.419999999999998,
+    16.38,
+    49.78
+   ],
+   "gap_body": 2.4540000000000006,
+   "gap_silk": 2.3904999999999994,
+   "gap_keep": 2.2040000000000006,
+   "y_overlap": 22.860000000000003,
+   "plan_overlap": 0.0
+  },
+  {
+   "ref": "J-FC",
+   "package": "CUI_TB005-762-02BE",
+   "body": [
+    3.5299999999999976,
+    72.38999999999999,
+    16.13,
+    87.63
+   ],
+   "silk": [
+    3.4664999999999977,
+    72.32649999999998,
+    16.1935,
+    87.6935
+   ],
+   "keep": [
+    3.2799999999999976,
+    72.13999999999999,
+    16.38,
+    87.88
+   ],
+   "gap_body": 2.4540000000000006,
+   "gap_silk": 2.3904999999999994,
+   "gap_keep": 2.2040000000000006,
+   "y_overlap": 15.240000000000009,
+   "plan_overlap": 0.0
+  },
+  {
+   "ref": "J-BT",
+   "package": "CUI_TB005-762-02BE",
+   "body": [
+    3.783999999999997,
+    8.128,
+    16.384,
+    23.368
+   ],
+   "silk": [
+    3.7204999999999973,
+    8.0645,
+    16.4475,
+    23.4315
+   ],
+   "keep": [
+    3.533999999999997,
+    7.877999999999999,
+    16.634,
+    23.618
+   ],
+   "gap_body": 2.1999999999999993,
+   "gap_silk": 2.136499999999998,
+   "gap_keep": 1.9499999999999993,
+   "y_overlap": 15.239999999999998,
+   "plan_overlap": 0.0
+  }
+ ]
+}

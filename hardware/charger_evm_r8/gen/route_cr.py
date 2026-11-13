@@ -10,15 +10,22 @@ CLEAR = 0.127    # 5/5 mil (operator ruling 2026-11-11; D-29)
 VIA = (0.6, 0.3)       # TOOLCHAIN: 0.3 mm via drill (OSH Park drilled/finished hole TODO)
 PASSES = 30
 EDGE_BAND = 0.40   # >= the 0.381 mm fab copper-to-edge rule; opens the U101 +y escape channel (D-09)
-SILK_REFS = {"J1", "J101"}
+class _AllRefs:
+    """D-12a reversed (D-03 amended 2026-11-12): every reference designator stays on the top silkscreen."""
+    def __contains__(self, ref):
+        return True
+
+
+SILK_REFS = _AllRefs()
 P = L.P
 
 # --- pre-routing copper ------------------------------------------------------------------------------------
 # VCHGIN L3 strap (A.8 IN strip row: C102b VCHGIN pad joins the pad-10 / C102c pour on L3, 2.5 mm wide, <= 8 mm,
 # vias at each end) and the pad-10 -> U101 L3 parallel path (D-09).
 VIN_L3 = unary_union([box(39.15, 51.25, 41.95, 61.45), box(39.15, 60.15, 47.10, 62.75)])
-# VCHGOUT L3 / L4 straps from the D103 cathode via cluster to W1 (A.8 OUT strip row; D-10: the L1 corridor between
-# D103 and W1 is 1.5 mm, so L3 and L4 carry the W1 leg in parallel).
+# VCHGOUT inner strap from the D103 cathode via cluster to W1 (A.8 OUT strip row; D-22: the L1 corridor between
+# D103 and W1 is 1.5 mm). D-20 (amended 2026-11-12): L4 carries no strap, so the r8 L4 strap moves to L3 (In2.Cu),
+# where it does not meet the VCHGIN L3 strap (x >= 39.15). Interim until the D-22 re-derivation at placement (D-52).
 VOUT_IN = unary_union([box(29.10, 60.00, 31.50, 62.40), box(29.10, 62.30, 36.90, 64.10)])
 
 PRE_VIAS = (
@@ -42,7 +49,7 @@ def power_zones():
     return [
         ("GND_L2_plane", P.buffer(-0.45, join_style=2), "In1", "/GND", 0),   # A.8 stack-up: L2 solid GND
         ("VCHGIN_L3_strap", VIN_L3, "In2", "/VCHGIN", 3),
-        ("VCHGOUT_L4_strap", VOUT_IN, "B", "/VCHGOUT", 3),
+        ("VCHGOUT_L3_strap", VOUT_IN, "In2", "/VCHGOUT", 3),   # D-20, D-22 (was B.Cu in r8)
     ]
 
 
@@ -63,11 +70,12 @@ def gnd_pours():
         ("VCHG_L1", VCHG_L1, "F", "/VCHG", 3),
         ("GND_L1_star", GND_L1_STAR, "F", "/GND", 2),
         ("GND_L1_fill", inset, "F", "/GND", 1),
-        ("GND_L4_pour", inset, "B", "/GND", 1),     # A.8 stack-up: L4 GND pour, stitched <= 5 mm
+        ("GND_L4_pour", inset, "B", "/GND", 1),     # D-20: L4 solid GND facing the MB, stitched to L2 <= 5 mm
     ]
 
 
 def stitching():
-    keep = unary_union([L.FT2_DISC.buffer(0.6), L.FT1_KO.buffer(0.0, join_style=2)]).union(
-        unary_union([Point(x, y).buffer(1.0) for x, y in [(28.0, 73.25)]]))
+    # D-20: L2-L4 GND stitching at 2.5 mm grid (<= 5 mm pitch). The r7 FT1/FT2 and fill-hole keep-outs retire with
+    # the feet (D-19, D-52); no mounting hole exists (D-42).
+    keep = Point(-100.0, -100.0).buffer(0.1)   # empty keep-out placeholder outside the board
     return [("/GND", 2.5, P.buffer(-0.9, join_style=2), keep)]

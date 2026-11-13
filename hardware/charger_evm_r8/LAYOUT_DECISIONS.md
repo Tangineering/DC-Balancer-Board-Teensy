@@ -390,8 +390,10 @@ CR stack-up on the new outline is as follows:
   stitched to L2 at a pitch of at most 5 mm and keeps its solder mask. The GND plane meets the MB only through the CHG
   GND pins, which keeps the A.6 single-point bond.
 - Air gap: at least 1.5 mm from the lowest CR feature, THT tails included, to the tallest MB part below it. The basis
-  counts CR bow only, not MB bow; TODO(measure: operator) the L-FC/L-BT height (5.0 mm family value against 6.5 mm
-  for the sibling part) and the bodge part heights.
+  counts CR bow only, not MB bow. **D-51 (operator ruling 2026-11-12):** the D-41 stack is taken to meet the air gap
+  over every MB part except the power terminals, which the CR clears in plan. (**Superseded:** "TODO(measure:
+  operator) the L-FC/L-BT height (5.0 mm family value against 6.5 mm for the sibling part) and the bodge part
+  heights.")
 - Sensitive-part window: the 0.1 % dividers, the comparator inputs and the references are placed preferably in
   y 30.8-66.86 (MB frame). The window is preferred, not hard; a part outside it is listed as an exemption.
 
@@ -603,9 +605,11 @@ digest, and its reconciliation notes bind where a record disagrees.
   `gen/check_constraints.py`, `gen/fplib.py`, `gen/fpmap.py`, `gen/netlist.py`, `gen/fab_readme.py` and
   `gen/pcbbuild.py` is replaced (`outline_change_2026-11-12/retired.md` section 4). Both boost switching nodes, both
   inductors and REG-5V now lie under the CR (D-11, D-20). Record: `OUTLINE_CHANGE_REASSESSMENT_2026-11-12.md`;
-  `docs/reviews/cr_routing_2026-11-12/CR_OUTLINE_CHANGE_REQUEST_2026-11-12.md` (main checkout). The section 6 survey
-  of the change request stays open: the L-FC and L-BT heights, the bodge parts and their heights, the J-BT and J-BL
-  face positions, and whether the C1-BT, C1-FC, CBL2, RB2 and RB3 bodies clear x 18.584.
+  `docs/reviews/cr_routing_2026-11-12/CR_OUTLINE_CHANGE_REQUEST_2026-11-12.md` (main checkout). **Closed by D-51
+  (operator ruling 2026-11-12):** the section 6 survey of the change request is closed; the only height requirement
+  kept is the -x terminal clearance, which holds with a gap of at least 2.200 mm. (**Superseded:** "The section 6
+  survey of the change request stays open: the L-FC and L-BT heights, the bodge parts and their heights, the J-BT and
+  J-BL face positions, and whether the C1-BT, C1-FC, CBL2, RB2 and RB3 bodies clear x 18.584.")
 
 **D-40. U101 package (operator ruling 2026-11-12).**
 
@@ -780,6 +784,92 @@ digest, and its reconciliation notes bind where a record disagrees.
   that encode r7 geometry retire, and a new-outline geometry calculation is added with the generator. The route-race
   needs the new region table, the side flags and the power geometry first. Record:
   `decisions_2026-11-12/round2/dec_process_2026-11-12.md`.
+- Step 4 status (2026-11-12, D-51, D-52): the height-survey item that blocked the outline freeze is closed by D-51.
+  The new region table, the side flags (every SMT part on the top) and the 0.25 mm footprint re-basis are in the
+  generator (D-52). The power geometry keeps the A.8 / D-09 block, with the VCHGOUT strap moved from L4 to L3. Step 5
+  is blocked only by the frozen netlist; the placeholder footprints of D-52 do not block it.
+
+**D-51. Height survey closed except the -x terminal clearance (operator ruling 2026-11-12).**
+
+- Decision: the D-41 stack-up, with the CR underside 11.05 mm above the MB top, is taken to clear every MB component
+  under the CR except the power terminals J-BL, J-FC and J-BT (21.70 mm). The only height requirement kept is a plan
+  requirement: no part of the CR outline overlaps a terminal body, so the CR -x edge x 18.584 clears the bodies in the
+  -x direction.
+- Reason: the operator ruled that the planned TSW/SSQ header stack-up clears all other MB components. If the operator
+  finds an interference later, the operator raises it.
+- Consequence: the change-request section 6 height survey is closed on this basis (D-39). The D-20 air-gap
+  TODO(measure: operator) for the L-FC/L-BT and bodge part heights closes, and so does section 11 item 21. The D-20
+  air gap of 1.5 mm and the README section 8.2 THT-tail shadow rule rest on that survey; both are taken as met and are
+  not checked by the generator. `gen/cr_geometry.py` checks the terminal clearance; Table D-51 gives the result. Every
+  terminal clears the edge, so no blocker exists. Record: operator ruling 2026-11-12 (later in the day), relayed with
+  the D-50 step-4 task.
+
+Table D-51. Plan clearance from the terminal bodies to the CR -x edge x 18.584 (MB frame).
+
+| Terminal | Package (`.brd`) | Body +x (mm) | Gap to the body (mm) | Gap to the silkscreen outer edge (mm) | Gap to the keep-out (mm) | y range of the body (mm) |
+|---|---|---|---|---|---|---|
+| J-BL | CUI_TB005_-762-03BE | 16.130 | 2.454 | 2.390 | 2.204 | 26.67-49.53 |
+| J-FC | CUI_TB005-762-02BE | 16.130 | 2.454 | 2.390 | 2.204 | 72.39-87.63 |
+| J-BT | CUI_TB005-762-02BE | 16.384 | 2.200 | 2.136 | 1.950 | 8.13-23.37 |
+
+The body in Table D-51 is the package outline on `.brd` layer 51 (tDocu) of `references/Scale Car Board PCB
+20260625.brd`. It spans -7.90 to +4.70 mm across the pin row, placed with R270 at the element origin. The
+TB005-762 datasheet (`TB005-762_CUI.pdf` section A-A) puts the pins 4.70 mm from the rear face
+(`round4/work/mb_mechanical.md` section 3.1), which agrees with the +4.70 mm edge. The silkscreen edge is layer 21
+with half the line width added, and the keep-out is layer 39. The y range of every body lies inside the outline y
+7-94 (J-BT from y 8.13), so the x gap decides the plan clearance.
+
+**D-52. New-outline generator (D-50 step 4, 2026-11-12).**
+
+- Decision: the generator builds the CR on the D-39 rectangle. The outline, the MB data and the region geometry come
+  from the new modules `gen/cr_geometry.py` and `gen/mb_brd.py`; `gen/layout_cr.py` holds the region table and the
+  phases. Table D-52 lists the regions.
+- Reason: D-39 and D-50 retire every construct that encodes the r7 geometry (`outline_change_2026-11-12/retired.md`
+  section 4). Reading the `.brd` directly replaces the hand-typed MB boxes and the `r7_calc` import.
+- Consequence: the following changes apply.
+  - Footprints: the CR library uses the 0.25 mm courtyard basis (`fpmap.FP_CR`, suffix `_CrtYd0.25`). The EIB keeps
+    the 0.10 mm basis, and its generated library is identical to the previous one apart from the KiCad edit
+    timestamps, so the EIB exports are unchanged.
+  - CHG footprint: the name `Ag105_CHG_Carrier_22pin_P2.54mm` stays (D-02). The bottom courtyards are the TSW bodies
+    plus 0.25 mm, and a pin-1 arrow is on the top silkscreen. The 1.1 mm drill and 1.9 mm pad stay as placeholders,
+    TODO(verify: Samtec TSW drawing, CR pad and drill).
+  - J102: the stock Micro-Fit 43045-1012 vertical pattern with the courtyard redrawn at 0.25 mm. P/N, orientation,
+    pegs, latch side and cavity numbering are TODO(verify: Molex 43045 header drawing).
+  - W1-W4 keep the A.8 hole and pad sizes and positions; W6/W7 keep the D-45 placeholder. Every CR through-hole pad
+    has its unused inner pads removed (D-30, P-11). W6/W7 are packer-placed, because their r8 SMT coordinates overlap
+    at the 2.54 mm pitch. Their hole and pitch are TODO(verify: 26 AWG / 28 AWG conductor and insulation OD).
+  - Placement: every SMT part is on the top; the build stops if a netlist part is flipped (D-44). The power block
+    (J1, W1-W4, the eFuse cluster and J101) keeps its A.8 / D-09 coordinates. The comparators, R175, the +x pocket
+    parts, W6/W7 and J102 are packer-placed.
+  - Rule areas: the r7 bottom-clearance, feet, B1R and bead-spot areas are removed. One B.Cu rule area forbids tracks
+    over the whole outline (D-20). The route-race layer set must therefore exclude B.Cu; the r7 PathFinder call in
+    `gen/make_cr_all.sh` still lists B.Cu.
+  - Routing data: the VCHGOUT strap moves from L4 to L3, where it does not meet the VCHGIN strap. The FT stitching
+    keep-outs are removed, and every reference designator stays on the silkscreen (D-12a reversed). The router track
+    width in `gen/route_cr.py` stays 0.127 mm; the 0.1524 mm default of D-29 is applied in the route-race.
+  - Constraint check: `gen/check_constraints.py` replaces the r7 rows (outline V1-V11, the x 39.53 rim rule, the tab X
+    and tab Y contents, the R106s tab X row, the tab bookings). The new rows cover the D-39 outline, one SMT side, chip
+    size, IC pitch, the 0.25 mm basis, the D-37 via-in-pad listing, L4 without tracks, the J-TAP placement and runs,
+    and the D-20 window. The board-independent rows of `cr_geometry.py` run headless and are written to
+    `cr/geometry_check.md`.
+  - The next `gen/make_board.sh cr` writes the new footprint names into `cr/cr.net`; the connectivity does not change.
+    The current `cr/` library and board stay on the r7 build until step 5.
+
+Table D-52. Placement regions on the plug-on outline (MB frame; areas from `gen/layout_cr.py`).
+
+| Region | Definition | Area (mm²) | Parts |
+|---|---|---|---|
+| Inset | outline less 0.5 mm (A.8) | 4077.8 | every courtyard |
+| Interior | inset less the power block, J101, the CHG pads, W1-W4, the divider strip, the VCHGOUT belt and the power-via keep-outs | 3584.9 | logic, decouplers, other parts |
+| Analog, strict | interior inside y 30.8-66.86 (D-20), at least 10 mm from the MB 5V copper rim (D-11 interim), at least 3 mm from the U101 loop region | 467.4 | comparators, BAV199 clamps, analog passives |
+| Analog, wide (fallback) | as the strict region without the 10 mm rim | 1165.1 | the same parts; each one is listed as a D-20 exemption |
+| Divider strip | x 23.15-36.50, y 42.14-45.69 less the W3 pad (A.8, D-13) | 42.3 | R109-R112, R114, R115 |
+| J-TAP | interior at x >= 42.792 (the +x half, D-46), where every straight-line A.4 maximum is met | 1911.5 | J102 |
+
+The 10 mm rim in Table D-52 is measured from the 5V layer-1 pour rim and the REG-5V keep-out box of the `.brd`. It
+replaces the r7 constant x 39.53, TODO(measure: operator, MS4). J102 is packed toward C-D2 pad 1 to keep the T2 run
+short (D-46). The headless booking of the 78 CR parts at the 0.25 mm basis is 917.0 of 4077.8 mm² (22.5 %), which
+closes section 11 item 23.
 
 ## 9. Verification
 
@@ -801,7 +891,9 @@ The figures of sections 9.1 and 9.2 are for the r7-outline CR. On the new outlin
 new rows (`outline_change_2026-11-12/retired.md` section 4): the TSW pads against the A.8 hole table, one SMT side,
 chip size at least 0402 (0603 preferred) (r9-3 / D-44: no 0402 part remains; every chip passive is 0603 or larger), IC pitch at least 0.65 mm with the U101 exception, the D-37 via-in-pad
 listing, the D-20 air gap and the D-46 J-TAP placement constraints. The rows for the r7 outline, the 10 mm rim rule,
-the tab contents and the tab X R106s location retire.
+the tab contents and the tab X R106s location retire. **D-52 (2026-11-12):** the rows are implemented in
+`gen/check_constraints.py` and `gen/cr_geometry.py`; the D-20 air-gap row is not implemented, because D-51 closes the
+height survey. `cr/geometry_check.md` holds the board-independent rows.
 
 ## 10. Proposed design changes
 
@@ -866,9 +958,14 @@ Layout and fabrication, added 2026-11-12:
     against B.8 (D-03, D-44).
 19. TODO(verify: Murata) GRM188R71H223KA01D (22 nF 50 V X7R 0603) for C101 (D-44).
 20. TODO(verify: OSH Park) the silkscreen text minimums for the reference designators (D-12a).
-21. TODO(measure: operator) the L-FC/L-BT height and the bodge part heights for the D-20 air gap, and the rest of the
-    change-request section 6 survey (D-39).
+21. Closed 2026-11-12 (D-51, operator ruling): the stack-up clears every MB component except the power terminals,
+    and the -x terminal clearance holds (gap at least 2.200 mm). (**Superseded:** "TODO(measure: operator) the
+    L-FC/L-BT height and the bodge part heights for the D-20 air gap, and the rest of the change-request section 6
+    survey (D-39).")
 22. TODO(verify: SLVSE94G section 11 layout example) the window-pane stencil apertures for the U101 exposed pad
     (D-40).
-23. TODO(calc) the area booking with the reduced part list, the 0603 and DBV parts and the 0.25 mm courtyards (D-44).
+23. Closed 2026-11-12 (D-52): the 78 CR parts at the 0.25 mm basis book 917.0 of 4077.8 mm² (22.5 %) of the top
+    inset, against the 75 % target (`cr/geometry_check.md`). (**Superseded:** "TODO(calc) the area booking with the
+    reduced part list, the 0603 and DBV parts and the 0.25 mm courtyards (D-44).")
 24. TODO(calc: B.6 9-10 short against the LVC IOL) for J101 pins 9 and 10 (D-49).
+25. TODO(verify: Molex 43045 header drawing) the J-TAP latch side and the finger-access keep-out (D-46, D-52).

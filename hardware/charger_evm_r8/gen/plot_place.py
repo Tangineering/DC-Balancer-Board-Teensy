@@ -25,7 +25,8 @@ if sys.argv[1] == "dump":
     for name, poly, layers, opts in L.rule_areas():
         geoms = [poly] if poly.geom_type == "Polygon" else list(poly.geoms)
         out["keep"][name] = [[list(g.exterior.coords), [list(h.coords) for h in g.interiors]] for g in geoms]
-    regs = {k: getattr(L, k) for k in ("INTERIOR", "TABY_TOP", "DIV_STRIP", "BAND") if hasattr(L, k)}
+    regs = {k: getattr(L, k) for k in ("INTERIOR", "TABY_TOP", "DIV_STRIP", "BAND", "ANALOG_STRICT", "JTAP_REG")
+            if hasattr(L, k)}   # TABY_TOP and BAND exist on the r7 outline only (D-52)
     out["regions"] = {k: [list(g.exterior.coords) for g in ([v] if v.geom_type == "Polygon" else list(v.geoms))]
                       for k, v in regs.items()}
     json.dump(out, open(os.path.join(sys.argv[3], "placement_dump.json"), "w"))

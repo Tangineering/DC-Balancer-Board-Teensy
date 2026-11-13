@@ -1,5 +1,12 @@
 # Charger EVM r8 capture: handoff (2026-11-11, updated 2026-11-12)
 
+**Status (2026-11-12, end of D-50 steps 2-4).** Steps 1 to 4 of the D-50 round order are done, and check-in 1 has
+passed. Step 2 is the section H re-run (`docs/reviews/charger_eval_2026-11-05/round4/calc/r9_calc.py`, design change
+row r9-9). Step 3 is audit run 002, adjudicated in `docs/reviews/charger-design/run-002-2026-11-12.md` (r9-10): 29
+findings, 0 blocker, 8 major and 21 minor after verification, with no fix applied. Step 4 is the new-outline
+generator (D-51, D-52; `cr/geometry_check.md`). The D.3 rows are applied to `references/Scale Car Teensy IO - IO - 2026-11-12.csv`
+(r9-11). The next action is operator check-in 2: README section 11 items 15 to 21.
+
 This note gives the starting point for the next session. `LAYOUT_DECISIONS.md` is the full record. The 2026-11-12
 decisions are D-39 to D-50 there, and every older entry carries its 2026-11-12 classification (retired, re-derive,
 amended or kept).
@@ -9,14 +16,17 @@ amended or kept).
 | Item | State |
 |---|---|
 | EIB (2 layers, 24 x 38 mm) | complete: ERC 0, DRC 0 with schematic parity; fab package `fab/eib_2026-11-11/`, **not ordered**. Copper unchanged; U203, U204, C203, C204 and R258-R265 DNP, E4/E6 leads not fitted (D-49). The DNP set is applied by hand in `assembly/eib-bom.csv` and `assembly/eib-pos.csv`; `assembly/eib_ibom.html` is not regenerated and still shows the DNP parts as fitted. `gen/netlist.py` now carries `dnp=True` on the same 14 items (U203, U204, C203, C204, R258-R265, E4, E6); the EIB schematic, board and fab exports are not yet regenerated from it (open item). The operator reviews the package before an order |
-| CR outline | **plug-on outline x 18.584-67, y 7-94 (MB frame), 48.416 x 87 mm, stencil and reflow assembly (D-39); applied to the documents** (`LAYOUT_DECISIONS.md`, `OUTLINE_CHANGE_REASSESSMENT_2026-11-12.md`). No generator file or board file is built on it yet |
+| CR outline | **plug-on outline x 18.584-67, y 7-94 (MB frame), 48.416 x 87 mm, stencil and reflow assembly (D-39); applied to the documents** (`LAYOUT_DECISIONS.md`, `OUTLINE_CHANGE_REASSESSMENT_2026-11-12.md`). The generator is built on it (D-52: `gen/mb_brd.py`, `gen/cr_geometry.py`, `gen/layout_cr.py`, `gen/check_constraints.py`); `cr/geometry_check.md` passes every check. The height survey is closed by D-51. No board file is built on the outline yet |
 | 2026-11-12 decisions | first round (`DESIGN_STATE_2026-11-12.md` Table 1) and second round (`decisions_2026-11-12/round2/`, digest `orchestrator_digest.md`) **recorded**; LAYOUT_DECISIONS D-39 to D-50 and the classification of D-01 to D-38 applied this round |
-| CR netlist | regenerated from `gen/netlist.py` on the reduced design (D-47, D-31, D-44): 78 parts (r8: 145). W6 and W7 carry the through-hole placeholder footprints of D-45. `cr/charger_r8_cr.pretty` was rebuilt with `gen/fplib.py` and now holds the J102 Micro-Fit footprint, so ERC reports 0 errors and 0 warnings. The netlist export reports "schematic has annotation errors"; the cause is the six letter-suffix references C102a, C102b, C102c, R106s, R131A and R131B (the message disappears when all six are renamed to numeric references in a scratch copy). These references are the B.8 designators and are accepted. Open: the courtyards are still 0.10 mm (`*_CrtYd0.10` names) against the 0.25 mm rule of D-03; the fplib re-basis and footprint rename are generator step 4. The netlist is frozen only after the r9 audit adjudication (D-50) |
+| CR netlist | regenerated from `gen/netlist.py` on the reduced design (D-47, D-31, D-44): 78 parts (r8: 145). W6 and W7 carry the through-hole placeholder footprints of D-45. `cr/charger_r8_cr.pretty` was rebuilt with `gen/fplib.py` and now holds the J102 Micro-Fit footprint, so ERC reports 0 errors and 0 warnings. The netlist export reports "schematic has annotation errors"; the cause is the six letter-suffix references C102a, C102b, C102c, R106s, R131A and R131B (the message disappears when all six are renamed to numeric references in a scratch copy). These references are the B.8 designators and are accepted. The generator now applies the 0.25 mm courtyard basis (`_CrtYd0.25`, D-52); the `cr/` library and `cr/cr.net` keep the 0.10 mm names until the next `gen/make_board.sh cr` in step 5 (connectivity unchanged). The netlist is frozen only after check-in 2 approves the run-002 fixes |
 | CR board file | `cr/cr.kicad_pcb` is the **r7-outline** build (placed + pours, DRC 200 unconnected, 4 starved thermals, 2 silkscreen items). It is stale against the new outline and the reduced netlist; it is not an input to the next build |
 | CR interactive pass (2026-11-12) | **superseded** by the new outline and the route-race (D-36, D-50). The project is archived at `archive_r7_outline/cr/interactive/` (move staged this round; KiCad must not hold the old path open) |
 | r7 layout work | archived in `archive_r7_outline/` (variants, attempts, images, routability study); reference only |
 | Best partial CR routing (r7) | `archive_r7_outline/cr/attempts/cr_pathfinder_0p1mm_partial.kicad_pcb` (reference only; 516 clearance violations) |
 | Ordering BOM | `bom_2026-11-11/ordering_bom.csv`: r9 rows applied on the reduced part list (TSW/SSQ, J-TAP and cable assembly, 0603 and DBV rows; README section 8); the r9-5 mechanical rows are applied as well (feet, bed RTV and bond coupon rows deleted, 467MP re-scoped to the B1R wedge, CR PCB row on the plug-on outline with 1 oz / 0.5 oz copper, stencil and paste row added). No price, stock or SKU read on a live page (bot checks). The B1R wedge, posts and off-CR support rows wait for the A.3 lead route on the new outline |
+| Section H re-run (step 2) | done: `round4/calc/r9_calc.py` with `r9_calc_out.txt` and `.json`; design change row r9-9; H.24(a)-(c) new |
+| Audit run 002 (step 3) | adjudicated: `docs/reviews/charger-design/run-002-2026-11-12.md`; L.9 and Table L.9-1 final; 0 blocker, 8 major, 21 minor; no fix applied until check-in 2 |
+| IO CSV | done: D.3 rows applied to `references/Scale Car Teensy IO - IO - 2026-11-12.csv` under the operator's delegation; the undated CSV is deleted; freed pins named FREE_10, FREE_16, FREE_17, FREE_21, FREE_23 (r9-11) |
 | Netlist audit (r8) | three independent reviewers, 216 parts against B.8/E: no discrepancy. About 18 section-L dispositions rest on removed parts, so L.8 no longer certifies the design; the r9 audit (L.9) replaces it |
 
 ## 2. Rulings in force
@@ -62,7 +72,7 @@ Circuit:
   buffered by U106A; R108 47 kOhm (D-47).
 - No DNP option re-admitted; B.5 retired; the F22, F23 and F24 pads removed (D-31).
 - Tap T22 and the BQ29200 pack-OV permit removed; pack OV is firmware-only (D-38).
-- CHG_QUAL on Teensy pin 33; pin 10 is a freed pin (D-48). The operator edits the IO CSV.
+- CHG_QUAL on Teensy pin 33; pin 10 is a freed pin (D-48). The IO CSV is amended in `references/Scale Car Teensy IO - IO - 2026-11-12.csv` (2026-11-12).
 - EIB sense branch DNP; J101 pins 11 and 13 NC (D-49).
 
 Firmware preconditions (design-document requirements; no firmware is edited in this round):
@@ -76,12 +86,17 @@ Firmware preconditions (design-document requirements; no firmware is edited in t
 
 ## 3. Next steps (D-50)
 
-1. **Operator check-in 1:** a diff summary of the design-document and netlist update.
-2. Strip the removed parts from `round3/calc/r3_calc.py` and `round4/calc/r7_calc.py`, re-run both, re-derive H.4,
-   H.19, H.20, H.22 and every changed row, and mark the r7-outline H.23 rows retired. This step runs before the audit.
+Steps 1 to 4 below are done (2026-11-12). Check-in 1 passed (operator ruling (b)); step 2 became the new script
+`round4/calc/r9_calc.py`, and the earlier scripts stay unmodified as the r8 record.
+
+1. **Operator check-in 1:** a diff summary of the design-document and netlist update (done).
+2. Re-derive H.4, H.19, H.20, H.22 and every row that rests on a removed part, and mark the r7-outline H.23 rows
+   retired. This step runs before the audit. (Done, r9-9: the new script `round4/calc/r9_calc.py` does the re-run;
+   `round3/calc/r3_calc.py` and `round4/calc/r7_calc.py` stay unmodified as the r8 record. Superseded: "Strip the
+   removed parts from `round3/calc/r3_calc.py` and `round4/calc/r7_calc.py`, re-run both".)
 3. The r9 audit (hybrid: adversarial-doc-review on B.1, F.3, F.5, G.3, J.1 and the reopened section-L items;
    self-review on B.3, B.6, B.7, F.2, F.4, G.2 and the A.8 adjacent-pair short table for the J-TAP order). The result
-   is L.9, which replaces L.8.
+   is L.9, which replaces L.8 (done, r9-10).
 4. In parallel with step 3: the new-outline generator. Replace every r7 construct listed in
    `outline_change_2026-11-12/retired.md` section 4 (outline, `GRID_BOUNDS`, `PARK`, `RIM_X`, `LFC_Y`,
    `mb_bottom_clearance()`, tab regions, feet, the r7 power geometry), add the TSW, J-TAP and W-pad footprints, the
@@ -90,7 +105,12 @@ Firmware preconditions (design-document requirements; no firmware is edited in t
    (open until done; the W6/W7 placeholders already use 0.25 mm), and replace the W6/W7 placeholder geometry
    once the 26/28 AWG OD is verified. Regenerate the EIB schematic, board and fab exports so that the
    `dnp=True` set in `gen/netlist.py` drives `eib-bom.csv`, `eib-pos.csv`, the kikit files and `eib_ibom.html`.
-5. **Operator check-in 2:** the audit adjudication and fix approval; the netlist is frozen afterwards.
+   (Done for the CR generator, D-51, D-52. Still open from this step: the EIB export regeneration from the
+   `dnp=True` set (section 1, EIB row), because D-52 leaves the EIB exports unchanged. Open placeholders: the Molex 43045 drawing, the TSW pad and drill, the W6/W7 holes and the
+   MS4 rim distance. For steps 5 and 6: `gen/make_cr_all.sh` must drop B.Cu from the PathFinder layer set, and
+   `gen/route_cr.py` TRACK is 0.127 mm against the D-29 0.1524 mm default.)
+5. **Operator check-in 2 (next):** the audit adjudication and fix approval; the netlist is frozen afterwards. The
+   rulings are README section 11 items 15 to 21.
 6. Placement on the frozen netlist, all SMT on the top side.
 7. **Operator check-in 3:** placement images, before routing.
 8. The full route-race (`route-race` skill: reference at four or more seeds, diagnosis, tested change requests, one
@@ -99,11 +119,14 @@ Firmware preconditions (design-document requirements; no firmware is edited in t
 10. **Operator check-in 4:** before the fab package and any order. Then the fab package
     (`gen/export.sh`, `gen/fab_readme.py`).
 
-Open items for the operator at check-in 1: the J-TAP T5 (A4) to T10 (B5) diagonal (D-46; accepted 2026-11-12); the change-request
-section 6 survey (L-FC/L-BT heights, bodge parts, J-BT and J-BL faces, the -x edge bodies) (D-39); the EIB package
-review before an order (D-49).
+Open items for the operator at check-in 2: README section 11 items 15 to 21, and the EIB package review before an
+order (D-49). The check-in 1 items are closed: the T5-T10 diagonal was accepted (D-46), and the section 6 survey was
+closed by D-51.
 
 ## 4. How to run (r7 outline; the scripts change with step 4)
+
+Step 4 has changed the generator (D-52); the steps below are the r7 sequence and need the step-5 and step-6 changes
+listed in section 3 before the next build.
 
 From `hardware/charger_evm_r8` in Git Bash (set `MSYS_NO_PATHCONV=1`, or net names such as `/GND` become paths):
 

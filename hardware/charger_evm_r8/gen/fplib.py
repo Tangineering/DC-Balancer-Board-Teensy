@@ -15,6 +15,11 @@ import fpmap  # noqa: E402
 import netlist  # noqa: E402
 
 STOCK = r"C:\Program Files\KiCad\9.0\share\kicad\footprints"
+# Courtyard excess beyond the union of pads and body (D-03). build() sets it per board: 0.25 mm (IPC-7351 nominal)
+# for the CR on the plug-on outline (D-03 amended 2026-11-12, D-52); 0.10 mm (least density) for the EIB, which is
+# kept as fabricated (D-49), so the EIB library output is unchanged.
+CRT = 0.10
+BOARD = None
 
 
 def hdr(name, descr, smd=True, board_only=False, exclude_bom=False):
@@ -81,10 +86,16 @@ def write(outdir, name, lines):
 # ------------------------------------------------------------------ custom footprints
 def chg22(outdir, name):
     """22-hole Ag105 pattern (A.8 table). Origin = pin 1 (45.998, 39.084). KiCad y = -(eagle y - 39.084).
-    Pins 1-10 at x 0; pins 11-22 at x -25.000. Drill 1.1 mm plated, pad 1.9 mm (A.8: pad >= 1.9 mm).
-    The 2.54 mm header plastic bodies sit on the CR underside (A.8 +x pocket row: the 1x10 body to y 63.21),
-    so the body courtyards are on B.CrtYd."""
-    L = hdr(name, "Ag105 CHG footprint, 22 header pins (Samtec TSW-110/TSW-112), design r8 A.2/A.8", smd=False)
+    Pins 1-10 at x 0; pins 11-22 at x -25.000.
+
+    CR side of the D-41 stack (2026-11-12): TSW-110-07-L-S (pins 1-10) and TSW-112-07-L-S (pins 11-22), bodies on the
+    CR underside, post C down into the MB SSQ sockets, tails up through the CR and hand-soldered from the top. The
+    footprint stays on F.Cu (no flip: a flip mirrors the pad x and breaks pin identity, D-02).
+    Pad and drill: PLACEHOLDER = the r8 A.8 values (1.1 mm plated drill, 1.9 mm pad on L1/L4, D-30);
+    TODO(verify: Samtec TSW drawing, CR pad and drill for TSW-110/112-07-L-S, 0.025 in square tail).
+    Bottom courtyard = the TSW body 2.54 x 2.54*N mm (25.40 / 30.48 mm; D-03 amended, D-41) + CRT."""
+    L = hdr(name, "Ag105 CHG footprint, CR side of the Samtec TSW-110/112-07-L-S on SSQ-110/112-01-L-S stack (D-41); "
+                  "pad/drill PLACEHOLDER TODO(verify: Samtec TSW drawing)", smd=False)
     pos = {}
     for n in range(1, 11):
         pos[n] = (0.0, -(n - 1) * 2.54)
@@ -94,15 +105,16 @@ def chg22(outdir, name):
     for n, (x, y) in pos.items():
         # D-30: 1.9 mm pads on L1/L4 (A.8 pad >= 1.9 mm); not flashed on L2/L3 where the pin has no inner connection
         L.append(pth_pad(str(n), x, y, 1.9, 1.1, "rect" if n in (1, 11) else "circle", inner_unused_removed=True))
-    # B side: header bodies 2.54 mm wide (A.8 header strips)
-    L.append(rect("B.CrtYd", -1.27 - 0.25, 1.27 + 0.25, 1.27 + 0.25, -(9 * 2.54) - 1.27 - 0.25))
-    L.append(rect("B.CrtYd", -25.0 - 1.27 - 0.25, 2.54 + 1.27 + 0.25, -25.0 + 1.27 + 0.25,
-                  -(64.484 - 39.084) - 1.27 - 0.25))
-    L.append(rect("B.Fab", -1.27, 1.27, 1.27, -(9 * 2.54) - 1.27, 0.1))
-    L.append(rect("B.Fab", -26.27, 2.54 + 1.27, -23.73, -(64.484 - 39.084) - 1.27, 0.1))
-    # F side courtyard: one circle per pad, pad + 0.10 mm (D-03); the top side between the pins stays usable
+    # B side: TSW bodies 2.54 mm wide, 2.54 mm per position, centred on each pin column (D-41); courtyard + CRT
+    for (xc, ytop, ybot) in ((0.0, 1.27, -(9 * 2.54) - 1.27), (-25.0, 2.54 + 1.27, -(64.484 - 39.084) - 1.27)):
+        L.append(rect("B.CrtYd", xc - 1.27 - CRT, ytop + CRT, xc + 1.27 + CRT, ybot - CRT))
+        L.append(rect("B.Fab", xc - 1.27, ytop, xc + 1.27, ybot, 0.1))
+    # F side courtyard: one circle per pad, pad + CRT (D-03); the top side between the pins stays usable
     for n, (x, y) in pos.items():
-        L.append(circ("F.CrtYd", x, y, 0.95 + 0.10))
+        L.append(circ("F.CrtYd", x, y, 0.95 + CRT))
+    # pin-1 orientation arrow on the top silkscreen (D-02 re-derived: the only orientation mark; no key, D-41)
+    L.append('(fp_poly (pts (xy 2.2 0) (xy 3.2 -0.5) (xy 3.2 0.5)) (stroke (width 0.12) (type solid)) (fill yes) '
+             '(layer "F.SilkS"))')
     # pin-1 and pin-11 identity marks on both silk layers (T-A-06 step 0)
     for lay in ("F.SilkS", "B.SilkS"):
         L.append('(fp_text user "1" (at 1.9 0 0) (layer "%s") (effects (font (size 0.8 0.8) (thickness 0.15))%s))'
@@ -121,8 +133,9 @@ def tap(outdir, name):
 
 def lead_pth(outdir, name, drill, dia):
     L = hdr(name, "Lead pad, %.1f mm plated hole, %.1f mm pad (A.8 W1-W4)" % (drill, dia), smd=False)
-    L.append(pth_pad("1", 0, 0, dia, drill))
-    r = dia / 2 + 0.10   # D-03 least-density excess; W1-W2 are 2.6 mm apart with 2.3 mm pads (A.8)
+    # CR (D-52): unused inner pads removed on every THT pad (D-30, P-11)
+    L.append(pth_pad("1", 0, 0, dia, drill, inner_unused_removed=(BOARD == "cr")))
+    r = dia / 2 + CRT   # D-03 courtyard excess (0.25 mm on the CR, D-52)
     L.append(circ("F.CrtYd", 0, 0, r))
     L.append(circ("B.CrtYd", 0, 0, r))
     write(outdir, name, L)
@@ -146,7 +159,8 @@ def lead_pth_n(outdir, name, n, drill=1.0, dia=1.8, pitch=2.54):
                   "TODO(verify: 26/28 AWG OD))" % (n, drill, dia, pitch), smd=False)
     x0 = -(n - 1) * pitch / 2
     for i in range(n):
-        L.append(pth_pad(str(i + 1), x0 + pitch * i, 0, dia, drill, shape="rect" if i == 0 else "circle"))
+        L.append(pth_pad(str(i + 1), x0 + pitch * i, 0, dia, drill, shape="rect" if i == 0 else "circle",
+                         inner_unused_removed=True))   # D-30, P-11: unused inner pads removed on every CR THT pad
     r = dia / 2 + 0.25
     for lay in ("F.CrtYd", "B.CrtYd"):
         L.append(rect(lay, x0 - r, -r, -x0 + r, r))
@@ -257,7 +271,7 @@ def vqfn24(outdir, name):
             pad.size = Position(X=0.61, Y=0.61)
             pad.drill.diameter = 0.3
     x0, y0, x1, y1 = _extent(fp, with_fab=False)
-    c = round(max(-x0, -y0, x1, y1) + 0.10, 3)
+    c = round(max(-x0, -y0, x1, y1) + CRT, 3)   # 0.25 mm on the CR from 2026-11-12 (D-03 amended, D-52)
     _set_courtyard(fp, -c, -c, c, c)
     _strip_silk(fp)
     fp.to_file(os.path.join(outdir, name + ".kicad_mod"))
@@ -274,7 +288,7 @@ def ssop_ti(outdir, name):
             rotated = (pad.position.angle or 0) % 180 != 0
             pad.size = Position(X=0.4, Y=1.1) if rotated else Position(X=1.1, Y=0.4)
     x0, y0, x1, y1 = _extent(fp)
-    _set_courtyard(fp, round(x0 - 0.1, 3), round(y0 - 0.1, 3), round(x1 + 0.1, 3), round(y1 + 0.1, 3))
+    _set_courtyard(fp, round(x0 - CRT, 3), round(y0 - CRT, 3), round(x1 + CRT, 3), round(y1 + CRT, 3))
     _strip_silk(fp)
     fp.to_file(os.path.join(outdir, name + ".kicad_mod"))
 
@@ -284,7 +298,7 @@ def tight(outdir, name, lib, stock):
     (IPC-7351 least-density courtyard excess; D-03). Pads, silk, fab and 3D model unchanged."""
     fp = _load(lib, stock, name)
     x0, y0, x1, y1 = _extent(fp)
-    _set_courtyard(fp, round(x0 - 0.1, 3), round(y0 - 0.1, 3), round(x1 + 0.1, 3), round(y1 + 0.1, 3))
+    _set_courtyard(fp, round(x0 - CRT, 3), round(y0 - CRT, 3), round(x1 + CRT, 3), round(y1 + CRT, 3))
     _strip_silk(fp)
     fp.to_file(os.path.join(outdir, name + ".kicad_mod"))
 
@@ -301,14 +315,44 @@ def ftsh(outdir, name, drop6):
         x = -2.035 if n % 2 else 2.035
         y = -3.81 + ((n - 1) // 2) * 1.27
         L.append(smd_pad(str(n), x, y, 2.79, 0.74, "rect"))
-    cx = 2.035 + 2.79 / 2 + 0.10
-    cy = max(3.81 + 0.37, 9.02 / 2) + 0.10
+    cx = 2.035 + 2.79 / 2 + CRT
+    cy = max(3.81 + 0.37, 9.02 / 2) + CRT
     L.append(rect("F.CrtYd", -cx, -cy, cx, cy))
     L.append(rect("F.Fab", -1.715, -4.51, 1.715, 4.51, 0.1))
     L.append(line("F.SilkS", -1.7, -4.75, 1.7, -4.75, 0.12))   # body ends, clear of the pads (pad ends +-4.18)
     L.append(line("F.SilkS", -1.7, 4.75, 1.7, 4.75, 0.12))
     L.append(line("F.SilkS", -3.0, -4.85, -2.2, -4.85, 0.15))  # pin-1 mark above pad 1
     write(outdir, name, L)
+
+
+def mf3_2x5(outdir, name):
+    """J-TAP (J102, D-46): the KiCad 9 stock Molex_Micro-Fit_3.0_43045-1012_2x05_P3.00mm_Vertical with pads, pegs,
+    fab, silk and 3D model unchanged; the courtyard is redrawn at CRT (0.25 mm) beyond the union of the pads and the
+    F.Fab body (stock: 0.50 mm), and the unused inner pads are removed on the ten plated pads (D-30, P-11).
+    PLACEHOLDER: TODO(verify: Molex 43045 header drawing) the P/N, vertical or right-angle, the pegs, the latch side
+    and the cavity numbering against the D-46 map."""
+    fp = _load("Connector_Molex", "Molex_Micro-Fit_3.0_43045-1012_2x05_P3.00mm_Vertical", name)
+    for pad in fp.pads:
+        if pad.type == "thru_hole":
+            pad.removeUnusedLayers = True
+            pad.keepEndLayers = True
+    fp.graphicItems = [g for g in fp.graphicItems if getattr(g, "layer", "") != "F.CrtYd"]
+    xs, ys = [], []
+    for pad in fp.pads:
+        xs += [pad.position.X - pad.size.X / 2, pad.position.X + pad.size.X / 2]
+        ys += [pad.position.Y - pad.size.Y / 2, pad.position.Y + pad.size.Y / 2]
+    for g in fp.graphicItems:
+        if getattr(g, "layer", "") == "F.Fab":
+            for att in ("start", "end"):
+                if hasattr(g, att):
+                    xs.append(getattr(g, att).X)
+                    ys.append(getattr(g, att).Y)
+            for pt in getattr(g, "coordinates", []) or []:
+                xs.append(pt.X)
+                ys.append(pt.Y)
+    _set_courtyard(fp, round(min(xs) - CRT, 3), round(min(ys) - CRT, 3), round(max(xs) + CRT, 3),
+                   round(max(ys) + CRT, 3))
+    fp.to_file(os.path.join(outdir, name + ".kicad_mod"))
 
 
 CUSTOM = {
@@ -335,13 +379,17 @@ CUSTOM = {
     "WPTH_2": lambda o, n: lead_pth_n(o, n, 2), "WPTH_3": lambda o, n: lead_pth_n(o, n, 3),
     "EPTH_1.0": epad, "FT2_HOLE": ft2_hole,
     "FT1_MARK": lambda o, n: foot_mark(o, n, 4.0, 1.6, True), "FT2_MARK": lambda o, n: foot_mark(o, n, 4.0, 4.0, False),
-    "M3": m3, "VQFN24": vqfn24,
+    "M3": m3, "VQFN24": vqfn24, "MF3_2x5": mf3_2x5,
     "J2x7_NOPIN6": lambda o, n: ftsh(o, n, True), "J2x7_EIB": lambda o, n: ftsh(o, n, False),
 }
-EXTRA = {"cr": ["FT2_HOLE", "FT1_MARK", "FT2_MARK"], "eib": ["M3"]}
+# board-only footprints; the CR feet and fill hole retire with the r7 outline (D-19, D-39, D-42: no mounting hole)
+EXTRA = {"cr": [], "eib": ["M3"]}
 
 
 def build(board, outdir):
+    global CRT, BOARD
+    CRT = 0.25 if board == "cr" else 0.10
+    BOARD = board
     lib = "charger_r8_%s" % board
     pdir = os.path.join(outdir, lib + ".pretty")
     if os.path.isdir(pdir):
@@ -349,7 +397,7 @@ def build(board, outdir):
     os.makedirs(pdir)
     pkgs = sorted({p[3] for p in netlist.BOARDS[board]} | set(EXTRA[board]))
     for k in pkgs:
-        src, name = fpmap.FP[k]
+        src, name = fpmap.fp(board, k)
         if src.startswith("stock:"):
             shutil.copy(os.path.join(STOCK, src[6:] + ".pretty", name + ".kicad_mod"), pdir)
         else:

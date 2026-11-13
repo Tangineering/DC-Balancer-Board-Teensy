@@ -12,6 +12,13 @@ D-39 to D-50, the ordering BOM and the EIB DNP set. The CR netlist was regenerat
 errors and 0 warnings. The stale r7-outline layout work, including `cr/interactive/`, is in `archive_r7_outline/`.
 Sections 2 to 4 below are the record as it stood before the second round.
 
+**Status update (2026-11-12, end of D-50 steps 2-4).** The section H re-run is done in
+`docs/reviews/charger_eval_2026-11-05/round4/calc/r9_calc.py` (design change row r9-9). Audit run 002 is adjudicated
+in `docs/reviews/charger-design/run-002-2026-11-12.md` (r9-10): 29 findings, 0 blocker, 8 major and 21 minor after
+verification; no fix is applied before operator check-in 2. The new-outline generator is built (LAYOUT_DECISIONS
+D-51, D-52), and `cr/geometry_check.md` passes; D-51 closes the height survey. The D.3 IO CSV rows are applied to
+`references/Scale Car Teensy IO - IO - 2026-11-12.csv` (r9-11).
+
 ## 2. Decisions taken
 
 Table 1 lists the decisions taken on 2026-11-12.

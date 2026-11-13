@@ -158,7 +158,7 @@ def pin_points(kind):
 
 
 def footprint_name(board, pkg):
-    return "charger_r8_%s:%s" % (board, fpmap.FP[pkg][1])
+    return "charger_r8_%s:%s" % (board, fpmap.fp(board, pkg)[1])
 
 
 GROUPS_CR = [

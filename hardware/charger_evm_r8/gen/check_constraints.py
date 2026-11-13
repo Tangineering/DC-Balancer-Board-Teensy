@@ -1,5 +1,7 @@
-"""Measure a built board against the r8 design constraints (A.2, A.7, A.8, A.9) and print a markdown table.
-Usage (pcbnew venv): python check_constraints.py <cr|eib> <projdir>"""
+"""Measure a built board against the design constraints and print a markdown table. CR: the r9 plug-on outline
+(D-39 to D-52; A.2, A.8; the H.23 successor rows of cr_geometry.py). EIB: A.9, as fabricated (D-49).
+Usage (pcbnew venv): python check_constraints.py <cr|eib> <projdir>
+The board-independent CR rows run headless: python cr_geometry.py [<projdir>]."""
 import math
 import os
 import sys
@@ -47,60 +49,110 @@ def crt(ref, fr):
 
 
 if BOARD == "cr":
+    # Plug-on outline (D-39), rows rebuilt in D-50 step 4 (D-52). Retired with the r7 outline: the V1-V11 outline and
+    # chamfer row, the 10 mm rim rule at x <= 39.53 (D-11, re-derived as the analog-window rows below), the tab X /
+    # tab Y content rows, the tab X bottom and R106s-location rows (D-16, D-17, D-32), the per-region tab bookings
+    # (H.23(e2)), the W6/W7 r8 SMT coordinates (D-45) and the D-35 packer-pad scope of the r7 placement.
     import layout_cr as L
+    import cr_geometry as G
     fr = pb.Frame(L.YOFF)
-    # A.8 CHG hole table (pin identity, T-A-06 step 0)
-    tab = {1: 39.084, 2: 41.624, 3: 44.164, 4: 46.704, 5: 49.244, 6: 51.784, 7: 54.324, 8: 56.864, 9: 59.404,
-           10: 61.944}
-    tab.update({11 + k: 64.484 - 2.54 * k for k in range(12)})
+    # A.8 CHG hole table (pin identity, T-A-06 step 0; D-02)
     pe = pads_e("J1", fr)
-    err = max(math.hypot(pe[str(n)][0] - (45.998 if n <= 10 else 20.998), pe[str(n)][1] - y) for n, y in tab.items())
-    row("A.8 CHG holes, 22 pins (pin identity)", "J1", "max position error %.4f mm" % err, "0.001 mm", err < 1e-3)
-    # outline
-    pts = [(round(x, 3), round(y, 3)) for x, y in L.OUTLINE]
-    row("A.7 r7 outline V1-V11, chamfer at (17.70, 76.00)", "Edge.Cuts", "%d vertices, bbox %.2f x %.2f mm, area %.2f mm2"
-        % (len(pts), L.P.bounds[2] - L.P.bounds[0], L.P.bounds[3] - L.P.bounds[1], L.P.area), "47.30 x 41.86, 1394.06",
-        abs(L.P.area - 1394.06) < 0.05)
-    # every part on the board (a part the packer could not place is parked outside the outline)
-    board_only = {r[0] for r in L.BOARD_ONLY}
-    out = sorted(r for r, fp in FP.items() if r not in board_only and not r.startswith("#")
+    err = max(math.hypot(pe[str(n)][0] - x, pe[str(n)][1] - y) for n, (x, y) in G.CHG_TABLE.items())
+    row("A.8 CHG holes, 22 pins (pin identity, D-02)", "J1", "max position error %.4f mm" % err, "0.001 mm", err < 1e-3)
+    row("D-02 / D-41: CHG footprint on F.Cu (no flip)", "J1", "flipped" if FP["J1"].IsFlipped() else "F.Cu",
+        "F.Cu", not FP["J1"].IsFlipped())
+    # outline (D-39) read back from Edge.Cuts
+    ec = [d for d in b.GetDrawings() if d.GetLayer() == pcbnew.Edge_Cuts]
+    xs, ys = [], []
+    for d in ec:
+        for pt in (d.GetStart(), d.GetEnd()):
+            e = fr.e(pt)
+            xs.append(e[0])
+            ys.append(e[1])
+    bb = (min(xs), min(ys), max(xs), max(ys)) if xs else (0, 0, 0, 0)
+    ok = all(abs(a - b_) < 1e-3 for a, b_ in zip(bb, (G.X0, G.Y0, G.X1, G.Y1))) and len(ec) == 4
+    row("D-39 plug-on outline x 18.584-67, y 7-94 (Edge.Cuts)", "Edge.Cuts", "%d segments, x %.3f-%.3f, y %.3f-%.3f"
+        % ((len(ec),) + bb[0::2] + bb[1::2]), "4 segments, the D-39 rectangle", ok)
+    # every part inside the outline (a part the packer could not place is parked outside it)
+    out = sorted(r for r, fp in FP.items() if not r.startswith("#")
                  and not crt(r, fr).is_empty and not L.P.buffer(0.01).contains(crt(r, fr)))
     row("Every part inside the outline (packer placed all parts)", ", ".join(out) or "all", "%d outside" % len(out), "0",
         not out)
-    # D-35: divider tops R102/R109/R111/R114 >= 2.0 mm from logic copper on F.Cu; packer-placed ICs are checked here,
-    # the A.8-fixed J1/J101/U102/U103 pins are exempt with one escape each (D-35)
-    def _pbox(p):
-        bb = p.GetBoundingBox()
-        return box(pcbnew.ToMM(bb.GetLeft()), L.YOFF - pcbnew.ToMM(bb.GetBottom()), pcbnew.ToMM(bb.GetRight()),
-                   L.YOFF - pcbnew.ToMM(bb.GetTop()))
-    hull = unary_union([_pbox(p).convex_hull for r in ("R102", "R109", "R111", "R114") for p in FP[r].Pads()])
-    near = []
-    for r, fp in FP.items():
-        if not r.startswith("U") or fp.IsFlipped() or r in L.FIXED or r in L.ANALOG_ICS:
+    # D-44: one SMT side
+    bot = sorted(r for r, fp in FP.items() if fp.IsFlipped() and not r.startswith("#"))
+    row("D-44 every SMT part on the top side", ", ".join(bot) or "none", "%d flipped" % len(bot), "0", not bot)
+    smd_b = sorted("%s.%s" % (r, p.GetNumber()) for r, fp in FP.items() for p in fp.Pads()
+                   if p.GetAttribute() == pcbnew.PAD_ATTRIB_SMD and p.IsOnLayer(pcbnew.B_Cu))
+    row("D-44 no SMD pad on B.Cu (one stencil, one reflow)", ", ".join(smd_b[:8]) or "none", "%d pads" % len(smd_b), "0",
+        not smd_b)
+    # D-44 / r9-3: every chip passive 0603 or larger
+    small = sorted(r for r, fp in FP.items() if r[0] in "RC" and ("0402" in fp.GetFPID().GetLibItemName().wx_str()
+                                                                  or "0201" in fp.GetFPID().GetLibItemName().wx_str()))
+    row("D-44 chip passives >= 0603 (r9-3)", ", ".join(small) or "none", "%d below 0603" % len(small), "0", not small)
+    # D-39 / D-40: IC pitch >= 0.65 mm, U101 (0.5 mm VQFN-24) the one approved exception
+    for r, fp in sorted(FP.items()):
+        if not r.startswith("U"):
             continue
-        for p in fp.Pads():
-            if p.GetNetname() in ("/GND", "/3V3") or not p.GetNetname().startswith("/"):
-                continue
-            d = _pbox(p).distance(hull)
-            if d < 2.0:
-                near.append("%s.%s %s %.2f" % (r, p.GetNumber(), p.GetNetname(), d))
-    row("D-35 packer-placed logic ICs >= 2.0 mm from divider tops (F.Cu pads)", "; ".join(near) or "none",
-        "%d pads inside" % len(near), "0 (operator item; interim exemption, D-35)", "info")
-    # fixed pads
+        cs = [fr.e(p.GetPosition()) for p in fp.Pads() if p.GetAttribute() == pcbnew.PAD_ATTRIB_SMD
+              and p.GetNumber() not in ("", "25")]   # pad 25 = the U101 exposed pad (D-40)
+        pitch = min((math.hypot(a[0] - c[0], a[1] - c[1]) for i, a in enumerate(cs) for c in cs[i + 1:]),
+                    default=float("nan"))
+        ok = pitch >= 0.65 - 1e-3 or (r == "U101" and abs(pitch - 0.5) < 1e-3)
+        if r == "U101" or pitch < 0.65 - 1e-3:
+            row("D-39 IC pitch >= 0.65 mm (U101 0.5 mm approved, D-40)", r, "%.2f mm" % pitch, ">= 0.65 mm or U101",
+                ok)
+    others = sorted(r for r in FP if r.startswith("U") and r != "U101")
+    row("D-39 IC pitch >= 0.65 mm", ", ".join(others), "%d ICs checked" % len(others), "minimum pad-centre spacing",
+        "pass (rows above list any exception)")
+    # D-03 amended: every CR footprint on the 0.25 mm courtyard basis
+    old = sorted(r for r, fp in FP.items() if "CrtYd0.10" in fp.GetFPID().GetLibItemName().wx_str())
+    row("D-03 (amended 2026-11-12) courtyard basis 0.25 mm", ", ".join(old) or "none", "%d on the 0.10 mm basis"
+        % len(old), "0", not old)
+    # D-37 via-in-pad listing (U101 exposed-pad vias are footprint pads, exempt by D-40)
+    smd = [(r, p) for r, fp in FP.items() for p in fp.Pads() if p.GetAttribute() == pcbnew.PAD_ATTRIB_SMD]
+    vip = []
+    for t in b.GetTracks():
+        if t.GetClass() != "PCB_VIA":
+            continue
+        for r, p in smd:
+            if p.HitTest(t.GetPosition()):
+                vip.append("%s.%s" % (r, p.GetNumber()))
+    row("D-37 via in an SMD pad (fallback only; each listed for operator review)", ", ".join(sorted(vip)) or "none",
+        "%d vias" % len(vip), "0 unless listed", "info" if vip else True)
+    # D-20 (amended): L4 solid GND, no signal or strap track on B.Cu
+    l4 = sum(1 for t in b.GetTracks() if t.GetClass() == "PCB_TRACK" and t.GetLayer() == pcbnew.B_Cu)
+    l4z = sorted({z.GetNetname() for z in b.Zones() if not z.GetIsRuleArea() and z.IsOnLayer(pcbnew.B_Cu)})
+    row("D-20 L4 (B.Cu): no tracks, GND pour only", "B.Cu", "%d tracks; pour nets %s" % (l4, ", ".join(l4z) or "none"),
+        "0 tracks; /GND only", l4 == 0 and all(n == "/GND" for n in l4z))
+    # fixed pads (A.8; D-45 kept W1-W4 positions pending the step-5 D-08 re-derivation)
     for ref, (x, y) in {"W1": (30.3, 61.2), "W2": (27.7, 61.2), "W3": (24.3, 45.4), "W4": (24.3, 55.6)}.items():
         e = pads_e(ref, fr)["1"]
-        row("A.8 added pads", ref, "(%.3f, %.3f)" % e, "(%.2f, %.2f)" % (x, y), math.hypot(e[0] - x, e[1] - y) < 1e-3)
-    for ref, want in {"W7": [(27.0, 57.5), (29.0, 57.5), (31.0, 57.5)], "W6": [(33.0, 57.5), (35.0, 57.5)]}.items():
-        e = pads_e(ref, fr)
-        got = [e[str(i + 1)] for i in range(len(want))]
-        d = max(math.hypot(g[0] - w[0], g[1] - w[1]) for g, w in zip(got, want))
-        row("A.8 added SMT lead pads", ref, "max error %.4f mm" % d, "0.001 mm", d < 1e-3)
-    # 2026-11-12: the F01-F24 tap pads are replaced by the J-TAP header J102 (Micro-Fit 3.0 2 x 5); its position is
-    # not fixed yet (new-outline generator step), so only its presence and cavity count are checked here.
+        row("A.8 W1-W4 lead pads (D-45; D-08 re-derived at placement)", ref, "(%.3f, %.3f)" % e, "(%.2f, %.2f)" % (x, y),
+            math.hypot(e[0] - x, e[1] - y) < 1e-3)
+    for ref, n in (("W6", 2), ("W7", 3)):
+        fp = FP.get(ref)
+        np_ = sum(1 for p in fp.Pads() if p.GetAttribute() == pcbnew.PAD_ATTRIB_PTH) if fp else 0
+        row("D-45 W6/W7 plated through-hole lead pads (PLACEHOLDER geometry)", ref, "%d PTH pads" % np_, "%d" % n,
+            np_ == n)
+    # D-46 J-TAP
     jt = FP.get("J102")
-    row("J-TAP header (tap-connector decision 2026-11-12)", "J102", "%d pads" % (sum(
-        1 for p in jt.Pads() if p.GetNumber()) if jt else 0), "10 cavities", bool(jt) and sum(
-        1 for p in jt.Pads() if p.GetNumber()) == 10)
+    npads = sum(1 for p in jt.Pads() if p.GetNumber()) if jt else 0
+    row("D-46 J-TAP header, Micro-Fit 3.0 2 x 5", "J102", "%d pads" % npads, "10 cavities", bool(jt) and npads == 10)
+    if jt:
+        c = crt("J102", fr)
+        row("D-46 J-TAP on the +x side of the CR (courtyard in the +x half, x >= %.3f)" % G.X_MID, "J102",
+            "courtyard x %.2f-%.2f, y %.2f-%.2f" % (c.bounds[0], c.bounds[2], c.bounds[1], c.bounds[3]),
+            "x min >= %.3f" % G.X_MID, c.bounds[0] >= G.X_MID - 1e-6)
+        jp = pads_e("J102", fr)
+        for pad in sorted(G.JTAP, key=int):
+            tap, xy, mx = G.far_end(pad)
+            d = math.hypot(jp[pad][0] - xy[0], jp[pad][1] - xy[1])
+            row("H.23(l) successor: J-TAP straight-line run (lower bound of the dressed run; A.4 maximum)",
+                "%s J102.%s -> %s.%s" % (tap, pad, G.JTAP[pad][1], G.JTAP[pad][2]), "%.1f mm" % d,
+                "<= %.0f mm" % mx, d <= mx)
+        row("D-46 J-TAP latch finger access", "J102", "latch side not modelled",
+            "TODO(verify: Molex 43045 header drawing)", "info")
     # eFuse distances (A.8 IN / OUT strip rows)
     u = {n: pad_poly("U101", n, fr) for n in ("1", "2", "5", "17", "18")}
     inpins = unary_union([u["1"], u["2"], u["5"]])
@@ -111,15 +163,32 @@ if BOARD == "cr":
     row("A.8 OUT strip: C103 pad to pins 17/18", "C103 pad 1", "%.2f mm" % dd, "<= 3.0 mm", dd <= 3.0)
     dd = pad_poly("R102", "2", fr).distance(pad_poly("U101", "6", fr))
     row("A.8 IN strip: R102 N_UV pad to pin 6 (design 2.1 mm)", "R102", "%.2f mm" % dd, "information", "info")
-    # rim rule: comparators, clamps, dividers (U123/D108 removed, D-38) x <= 39.53 (A.7 thermal band, mb_mechanical 5.3)
-    for ref in ("U102", "U103", "U119", "U120", "D104", "D105", "D106",   # U104/U115/U121 removed 2026-11-12
-                "R109", "R110", "R111", "R112", "R114", "R115"):
-        mx = crt(ref, fr).bounds[2]
-        ok = mx <= 39.53 + 1e-6
-        if ref == "U120" and not ok:
-            ok = "conditional (MS4b, T-A-08)"
-        row("A.7/A.8 >= 10 mm from the MB 5V rim (courtyard x <= 39.53)", ref, "courtyard x max %.2f" % mx, "<= 39.53", ok)
-    # dividers in the divider strip
+    # D-20 sensitive-part window and the D-11 interim 10 mm rim (successor of the x <= 39.53 rim rule)
+    strict = G.analog_window().buffer(1e-3)   # the window itself (the placement regions also cut the U101 loop)
+    for ref in L.ANALOG_ICS + L.DIVIDERS + ["R102"]:
+        if ref not in FP:
+            continue
+        g = crt(ref, fr)
+        row("D-20 window y 30.8-66.86 and >= 10 mm from the MB 5V copper rim (preferred; exemption if outside)", ref,
+            "inside" if strict.contains(g) else "outside: courtyard x %.2f-%.2f, y %.2f-%.2f" % (
+                g.bounds[0], g.bounds[2], g.bounds[1], g.bounds[3]),
+            "inside", True if strict.contains(g) else "exemption (D-20)")
+    # divider-top rule (A.8 Analog; D-35 scope, D-36: an all-layer metric, not a gate): logic-IC signal pads within
+    # 2.0 mm of the divider tops R102, R109, R111, R114 (the r7 packer-pad interim exemptions retire with the r7
+    # placement)
+    def _pbox(p):
+        bb_ = p.GetBoundingBox()
+        return box(pcbnew.ToMM(bb_.GetLeft()), L.YOFF - pcbnew.ToMM(bb_.GetBottom()), pcbnew.ToMM(bb_.GetRight()),
+                   L.YOFF - pcbnew.ToMM(bb_.GetTop()))
+    hull = unary_union([_pbox(p).convex_hull for r in ("R102", "R109", "R111", "R114") if r in FP
+                        for p in FP[r].Pads()])
+    near = ["%s.%s %s %.2f" % (r, p.GetNumber(), p.GetNetname(), _pbox(p).distance(hull))
+            for r in L.LOGIC_ICS if r in FP for p in FP[r].Pads()
+            if p.GetNetname().startswith("/") and p.GetNetname() not in ("/GND", "/3V3")
+            and _pbox(p).distance(hull) < 2.0]
+    row("D-35 / D-36 logic-IC pads within 2.0 mm of the divider tops (metric, F.Cu pads)", "; ".join(near) or "none",
+        "%d pads" % len(near), "metric: lower is better (D-36)", "info")
+    # dividers in the divider strip (A.8 / D-13)
     strip = box(23.15, 42.14, 36.50, 45.69)
     for ref in ("R109", "R110", "R111", "R112", "R114", "R115"):
         row("A.8 divider strip x 23.15-36.50, y 42.14-45.69", ref, "inside" if strip.buffer(1e-3).contains(crt(ref, fr))
@@ -127,34 +196,22 @@ if BOARD == "cr":
     # distance of analog parts from the U101 loop region
     for ref in ("U102", "U103", "U119", "U120", "D104", "D105", "D106"):
         dd = crt(ref, fr).distance(L.LOOP)
-        row("H.23(f) distance from the U101 loop region (information)", ref, "%.2f mm" % dd, "band 10.40 mm", "info")
-    # 2026-11-12 parts/assembly decision 1: every SMT part on the top side (supersedes the r8 R106s tab X bottom row)
-    bot = sorted(r for r, fp in FP.items() if fp.IsFlipped() and not r.startswith(("FT", "#")))
-    row("All SMT parts on the top side (2026-11-12 assembly decision 1)", ", ".join(bot) or "none",
-        "%d flipped" % len(bot), "0", not bot)
-    # tab contents
-    topX = sorted(r for r, fp in FP.items() if not fp.IsFlipped() and not crt(r, fr).is_empty
-                  and crt(r, fr).intersection(L.TAB_X).area > 0.01)
-    row("A.8 tab X top: J-TAP header and R175 only (r7 outline)", ", ".join(topX), "%d footprints" % len(topX),
-        "J102 + R175", all(r in ("R175", "J102") or r.startswith("FT") for r in topX))
-    topY = sorted(r for r, fp in FP.items() if not fp.IsFlipped() and not crt(r, fr).is_empty
-                  and crt(r, fr).intersection(L.TAB_Y).area > 0.01)
-    row("A.8 tab Y top: driven logic only", ", ".join(topY), "%d footprints" % len(topY), "LVC gates (U105-U118 class)",
-        all(r.startswith(("U10", "U11", "FT")) for r in topY))
-    botX = sorted(r for r, fp in FP.items() if fp.IsFlipped() and crt(r, fr).intersection(L.TAB_X).area > 0.01)
-    row("A.7/A.8 tab X bottom: 1 % logic series resistors and pull-downs only", ", ".join(botX), "%d" % len(botX),
-        "R class", all(r in L.TABX_OK for r in botX))
-    # region bookings (top), information
-    for name, reg in (("footprint low-y band", L.BAND), ("tab Y top", L.TAB_Y.intersection(L.INSET))):
-        a = sum(crt(r, fr).intersection(reg).area for r, fp in FP.items() if not fp.IsFlipped())
-        row("A.8 per-region booking (KiCad courtyards, information)", name, "%.1f of %.1f mm2 = %.1f %%" %
-            (a, reg.area, 100 * a / reg.area), "<= 75 % target", "info")
+        row("H.23(f) distance from the U101 loop region (information)", ref, "%.2f mm" % dd, ">= 3.0 mm (region rule)",
+            "info")
+    # H.23(e) successor: whole-side booking on the placed board
+    a = sum(crt(r, fr).area for r, fp in FP.items() if not fp.IsFlipped() and not crt(r, fr).is_empty)
+    row("H.23(e) successor: top-side courtyard booking (KiCad courtyards, information)", "top",
+        "%.1f of %.1f mm2 = %.1f %%" % (a, L.INSET.area, 100 * a / L.INSET.area), "<= 75 % target", "info")
     ds = b.GetDesignSettings()
-    row("A.8 every via tented (L4) / r8 F17-R106s rule", "board setup", "front %s, back %s" % (ds.m_TentViasFront,
-                                                                                          ds.m_TentViasBack),
+    row("D-20 every via tented on both sides", "board setup", "front %s, back %s" % (ds.m_TentViasFront,
+                                                                               ds.m_TentViasBack),
         "both tented", bool(ds.m_TentViasFront and ds.m_TentViasBack))
     nv = sum(1 for p in FP["U101"].Pads() if p.GetAttribute() == pcbnew.PAD_ATTRIB_PTH)
-    row("A.8 U101 thermal pad >= 9 vias 0.3 mm", "U101", "%d vias" % nv, ">= 9", nv >= 9)
+    row("A.8 U101 thermal pad >= 9 vias 0.3 mm (D-40 exempt from D-37)", "U101", "%d vias" % nv, ">= 9", nv >= 9)
+    # geometry rows that do not need the board (terminal clearance D-51, rotated key, CHG columns, J-TAP region)
+    for gr in G.rows():
+        rows.append("| %s | %s | %s | %s | %s |" % (gr["rule"], gr["item"], gr["measured"], gr["limit"],
+                                                     gr["result"]))
 else:
     import layout_eib as L
     fr = pb.Frame(L.YOFF)
