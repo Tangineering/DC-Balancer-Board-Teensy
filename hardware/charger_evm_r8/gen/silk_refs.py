@@ -102,7 +102,8 @@ def candidates(fp, ref):
     return out
 
 
-refs = [(fp, fp.Reference()) for fp in b.GetFootprints() if fp.Reference().GetLayer() == pcbnew.F_SilkS]
+refs = [(fp, fp.Reference()) for fp in b.GetFootprints()
+        if fp.Reference().GetLayer() == pcbnew.F_SilkS and fp.Reference().IsVisible()]   # MH1-MH4 hidden (D-60)
 saved = {fp.GetReference(): (ref.GetPosition(), ref.GetTextSize(), ref.GetTextThickness(), ref.GetTextAngleDegrees())
          for fp, ref in refs}
 cand = {}

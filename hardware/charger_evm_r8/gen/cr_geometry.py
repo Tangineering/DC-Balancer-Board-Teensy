@@ -30,6 +30,27 @@ INSET_MM = 0.5                                      # A.8: every courtyard >= 0.
 INSET = P.buffer(-INSET_MM, join_style=2)
 YOFF = 100.0                                        # D-01: KiCad Y = 100 - y, KiCad Y 6.00-93.00
 
+# ------------------------------------------------------------------ final outline and holes (D-60, route-race R9-02)
+# Operator rulings 2026-11-13 (given to the routing session): "trim away the unused area of the board"; "The final
+# board outline does not need to be rectangular"; "add holes in the corners for 6-32 screws" (the holes hold a
+# 3D-printed support; MB clearance under them is not a criterion); keep a +x key ear (D-41). The D-39 rectangle P
+# stays the placement frame; the board is trimmed after routing by gen/trim_cr.py (tools/pcb/corridor_route/
+# trim_outline.py with the arguments below), which asserts that the result equals these values.
+FINAL_OUTLINE = [(26.05, 72.64), (24.85, 72.37), (24.09, 71.93), (18.58, 67.09), (18.58, 33.64), (21.15, 23.80),
+                 (21.39, 23.33), (21.93, 22.63), (22.94, 21.93), (53.47, 8.10), (54.67, 7.83), (55.38, 7.87),
+                 (56.23, 8.10), (57.27, 8.76), (57.84, 9.43), (58.24, 10.22), (58.45, 11.25), (58.60, 71.00)]
+P_FINAL = Polygon(FINAL_OUTLINE)
+KEY_EAR = (50.0, 52.0, 58.6, 71.0)                  # +x key ear kept by the trim (operator choice, D-41 key)
+TRIM_MARGIN = 1.0                                   # trim margin around the used area (mm)
+HOLE_DRILL = 3.70                                   # NPTH, #6 free fit for a 6-32 screw
+HOLE_KEEPOUT = 4.0                                  # all-layer copper keep-out radius
+HOLE_HEAD = 3.6                                     # screw-head disc radius kept on the board
+# trim_outline.py rounds the hull to 0.01 mm and simplifies it with a 0.05 mm tolerance, so the outline may cut up to
+# 0.05 mm into the ear and the head discs, and its -x vertices sit at x 18.58 (0.004 mm outside the D-39 edge).
+TRIM_TOL = 0.06                                     # 0.05 mm simplify + 0.01 mm rounding of the hole centres
+MOUNTING_HOLES = {"MH1": (26.23, 69.04), "MH2": (54.85, 63.79), "MH3": (54.85, 11.43), "MH4": (24.48, 25.18)}
+FINAL_INSET = P_FINAL.buffer(-INSET_MM, join_style=2)
+
 # ------------------------------------------------------------------ D-41 stack (heights above the MB top, mm)
 SSQ_INSULATOR = 8.51          # SSQ-1xx-01 insulator height (Samtec SSQ TH catalogue; D-41)
 TSW_BODY = 2.54               # TSW body (Samtec TSW TH catalogue, dimension B body; D-41)
@@ -133,13 +154,14 @@ def terminal_clearance():
         yov = min(body[3], Y1) - max(body[1], Y0)
         out.append(dict(ref=t, package=p["package"], body=body, silk=silk, keep=keep,
                         gap_body=X0 - body[2], gap_silk=X0 - silk[2], gap_keep=X0 - keep[2], y_overlap=yov,
-                        plan_overlap=P.intersection(box(*body)).area))
+                        plan_overlap=P_FINAL.intersection(box(*body)).area))
     return out
 
 
 def rotated_key():
-    """D-41 key: a CR rotated 180 degrees about the CHG centre lands on the terminal blocks before its pins engage."""
-    rp = rotate(P, 180, origin=CHG_CENTRE)
+    """D-41 key: a CR rotated 180 degrees about the CHG centre lands on the terminal blocks before its pins engage.
+    D-60: measured on the final (trimmed) outline."""
+    rp = rotate(P_FINAL, 180, origin=CHG_CENTRE)
     hits = [t for t in TERMINALS if rp.intersection(box(*M.extent(M.part(t), [M.L_DOCU], False, ("wire",)))).area
             > 0]
     return rp.bounds, hits
@@ -149,11 +171,11 @@ def chg_rows():
     brd = M.pads_in_order("CHG")
     err = max(math.hypot(brd[n - 1][0] - CHG_TABLE[n][0], brd[n - 1][1] - CHG_TABLE[n][1]) for n in CHG_TABLE)
     pads = unary_union([Point(xy).buffer(CHG_PAD / 2, 64) for xy in CHG_TABLE.values()])
-    edge = P.exterior.distance(pads)
+    edge = P_FINAL.exterior.distance(pads)
     bodies = {k: v.buffer(CRT, join_style=2) for k, v in TSW_BODIES.items()}
-    inset_ok = {k: INSET.buffer(1e-6).contains(v) for k, v in bodies.items()}
-    margin = {k: min(v.bounds[0] - INSET.bounds[0], INSET.bounds[2] - v.bounds[2], v.bounds[1] - INSET.bounds[1],
-                     INSET.bounds[3] - v.bounds[3]) for k, v in bodies.items()}
+    inset_ok = {k: FINAL_INSET.buffer(1e-6).contains(v) for k, v in bodies.items()}
+    margin = {k: (FINAL_INSET.exterior.distance(v) if inset_ok[k] else -v.difference(FINAL_INSET).area)
+              for k, v in bodies.items()}
     return err, edge, inset_ok, margin
 
 
@@ -165,7 +187,7 @@ def edge_parts():
         if e is None:
             continue
         g = box(*e)
-        if g.intersects(P) and not P.contains(g):
+        if g.intersects(P_FINAL) and not P_FINAL.contains(g):
             out.append(name)
     return sorted(out)
 
@@ -182,6 +204,27 @@ def rows():
         "KiCad Y %.2f-%.2f" % (X1 - X0, Y1 - Y0, P.area, YOFF - Y1, YOFF - Y0), "48.416 x 87.000 mm, 4212.19 mm2",
         abs(P.area - 48.416 * 87.0) < 0.01 and len(OUTLINE) == 4)
     row("H.23(a) successor: courtyard inset 0.5 mm (A.8)", "INSET", "%.2f mm2" % INSET.area, "information", "info")
+    # D-60 (route-race R9-02): the final outline after routing, inside the D-39 placement frame, and the holes
+    convex = abs(P_FINAL.convex_hull.area - P_FINAL.area) < 1e-6
+    row("D-60 final outline (trimmed after routing), inside the D-39 rectangle", "FINAL_OUTLINE",
+        "%d vertices, area %.1f mm2 (%.0f %% of D-39), x %.3f-%.3f, y %.2f-%.2f, %s" % (
+            (len(FINAL_OUTLINE), P_FINAL.area, 100 * P_FINAL.area / P.area) + P_FINAL.bounds[0::2]
+            + P_FINAL.bounds[1::2] + ("convex" if convex else "not convex",)),
+        "inside the D-39 rectangle within 0.01 mm (trim rounding); -x edge at x %.3f (D-51)" % X0,
+        P.buffer(0.01).contains(P_FINAL) and abs(P_FINAL.bounds[0] - X0) < 0.01 and P_FINAL.is_valid)
+    ear = box(*KEY_EAR)
+    row("D-60 +x key ear kept (D-41)", "KEY_EAR", "box x %.1f-%.1f, y %.1f-%.1f; %.3f mm2 outside the outline" % (
+        KEY_EAR[0], KEY_EAR[2], KEY_EAR[1], KEY_EAR[3], ear.difference(P_FINAL).area),
+        "inside the final outline within the 0.06 mm trim tolerance", P_FINAL.buffer(TRIM_TOL).contains(ear))
+    for h, (x, y) in MOUNTING_HOLES.items():
+        c = Point(x, y)
+        edge = P_FINAL.exterior.distance(c) - HOLE_DRILL / 2
+        row("D-60 6-32 mounting hole (NPTH %.2f mm; head disc r %.1f mm on the board; keep-out r %.1f mm)" % (
+            HOLE_DRILL, HOLE_HEAD, HOLE_KEEPOUT), h,
+            "(%.2f, %.2f); hole edge %.2f mm from the board edge; head disc overhang %.3f mm" % (
+                x, y, edge, max(0.0, HOLE_HEAD - P_FINAL.exterior.distance(c))),
+            "head disc inside the final outline within the 0.06 mm trim tolerance",
+            P_FINAL.buffer(TRIM_TOL + 1e-6).contains(c.buffer(HOLE_HEAD, 64)))
     # operator ruling (a) 2026-11-12: -x terminal clearance
     for t in terminal_clearance():
         ok = t["gap_body"] > 0 and t["plan_overlap"] == 0
@@ -195,7 +238,8 @@ def rows():
     row("D-41 key: CR rotated 180 deg about (%.3f, %.3f) lands on the terminals" % CHG_CENTRE, ", ".join(hits),
         "rotated outline x %.3f-%.3f; engagement start %.2f mm, terminal top %.2f mm, margin %.2f mm" % (
             bounds[0], bounds[2], ENGAGE_START, TERMINAL_H, TERMINAL_H - ENGAGE_START),
-        "all three hit; engagement start < 21.70 mm", len(hits) == 3 and ENGAGE_START < TERMINAL_H)
+        "J-BL and J-FC hit (D-41 as amended by D-60; J-BT not needed); engagement start < 21.70 mm",
+        {"J-BL", "J-FC"} <= set(hits) and ENGAGE_START < TERMINAL_H)
     # H.23(j) successor: stack heights (D-41), information
     row("H.23(j) successor: D-41 stack heights", "TSW on SSQ", "CR underside %.2f mm, CR top %.2f mm, engagement "
         "start %.2f mm" % (CR_UNDERSIDE, CR_TOP, ENGAGE_START), "underside 11.05 mm (D-41)",

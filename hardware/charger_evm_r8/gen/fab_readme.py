@@ -45,8 +45,9 @@ nv = re.search(r"Found (\d+) DRC violations", drc)
 nu = re.search(r"Found (\d+) unconnected pads", drc)
 ne = re.search(r"ERC messages: (\d+)", erc)
 INFO = {
-    "cr": dict(name="CR, CHG adapter carrier (plug-on)", layers=4, size="48.416 x 87.000 mm rectangle (D-39, MB frame "
-               "x 18.584-67, y 7-94), 4212.19 mm2, no mounting hole (D-42)", thick="1.6 mm",
+    "cr": dict(name="CR, CHG adapter carrier (plug-on)", layers=4, size="convex 18-vertex outline, 40.02 x 64.81 mm "
+               "bounding box (MB frame x 18.58-58.60, y 7.83-72.64), 2241.6 mm2, trimmed after routing inside the D-39 "
+               "rectangle (D-60); four 6-32 NPTH holes, 3.70 mm (MH1-MH4, D-60)", thick="1.6 mm",
                copper="1 oz outer / 0.5 oz inner (D-29)", finish="ENIG", qty="5 (E BOM)",
                layers_list="F.Cu (L1, signals and power pours), In1.Cu (L2, solid GND), In2.Cu (L3, signals), "
                "B.Cu (L4, solid GND facing the MB, D-20)"),
@@ -60,8 +61,8 @@ RULES = {"cr": "fab_4layer_oshpark_only.kicad_dru", "eib": "fab_2layer_oshpark_p
 STATUS = ("**Status: not ordered.** This package awaits operator review before order (dec2-eib decision 1, "
           "2026-11-12).\n\n" if B == "eib" else
           "**Status: not ordered.** This package awaits operator review before order. The fab is OSH Park (operator "
-          "ruling 2026-11-12). The routing is D-58; the reference designators are D-59, with 18 references on F.Fab "
-          "only.\n\n")
+          "ruling 2026-11-12). The routing is D-58, the outline trim and the 6-32 holes are D-60, and the reference "
+          "designators are D-59 (19 references on F.Fab only after the trim).\n\n")
 ASSY = ("\nThe CR needs a hot-air or reflow step for U101 (VQFN-24, A.8 hand assembly row), or a PCB assembly "
         "service.\n" if B == "cr" else "")
 for _fab in ("jlcpcb", "pcbway"):

@@ -18,9 +18,9 @@ Status on 2026-11-13:
 | Board | Schematic | Placement | Routing | ERC | DRC | Fab package |
 |---|---|---|---|---|---|---|
 | EIB | complete | complete | complete | 0 | 0 (schematic parity checked) | `fab/eib_2026-11-13/` (D-49 DNP set; copper and drill identical to `fab/eib_2026-11-11/`); not ordered |
-| CR | complete | complete (D-54 to D-56) | complete (D-58; power copper D-57; references D-59) | 0 | 0 violations, 0 unconnected items, 0 parity issues (`--severity-all --schematic-parity`) | `fab/cr_2026-11-13/`; not ordered |
+| CR | complete | complete (D-54 to D-56) | complete (D-58; power copper D-57; outline trim and holes D-60; references D-59) | 0 | 0 violations, 0 unconnected items, 0 parity issues (`--severity-all --schematic-parity`) | `fab/cr_2026-11-13/` (re-exported after D-60); not ordered |
 
-On the routed CR, the constraint check (`cr/constraint_check.md`) gives 98 pass rows, 0 FAIL, 3 exemption
+On the routed and trimmed CR (D-60), the constraint check (`cr/constraint_check.md`) gives 108 pass rows, 0 FAIL, 3 exemption
 rows (R102 under D-20; R103 and R129 as listed U101-network exemptions, D-55/D-56) and 16 information rows (D-56).
 The fabricator of the CR is OSH Park (bare board), with the rule file
 `tools/pcb/fab_rules/fab_4layer_oshpark_only.kicad_dru`. The EIB is a 2-layer board; at OSH Park it is a separate
@@ -636,6 +636,8 @@ digest, and its reconciliation notes bind where a record disagrees.
   kept is the -x terminal clearance, which holds with a gap of at least 2.200 mm. (**Superseded:** "The section 6
   survey of the change request stays open: the L-FC and L-BT heights, the bodge parts and their heights, the J-BT and
   J-BL face positions, and whether the C1-BT, C1-FC, CBL2, RB2 and RB3 bodies clear x 18.584.")
+  **Amended 2026-11-13 (D-60):** the rectangle stays the placement frame; after routing, the board is trimmed to the
+  D-60 convex outline (2241.6 mm²) inside it, with the -x edge kept.
 
 **D-40. U101 package (operator ruling 2026-11-12).**
 
@@ -658,7 +660,8 @@ digest, and its reconciliation notes bind where a record disagrees.
   pin 10.
   TSW mated with SSQ is rated 6.3 A per pin with two positions powered (Samtec F-226). A CR rotated by 180 degrees
   lands on the J-BL, J-FC and J-BT terminal blocks (21.70 mm) before the pins engage at 16.89 mm, so the blocks key the
-  board.
+  board. **Amended 2026-11-13 (D-60):** on the trimmed outline, the rotated CR lands on J-BL (7.73 mm of x overlap) and
+  J-FC (7.63 mm) at the two ends, not on J-BT; the +x key ear keeps this overlap.
 - Consequence: the engagement-start height (seated underside plus post insertion) must stay below 21.70 mm; a taller
   stack needs a real key. The sockets on the MB keep the live MB pins touch-safe with the CR removed. The assembly
   order is: solder the SSQ sockets to the MB; plug the TSW strips in; set the reflowed CR on their bodies; solder the
@@ -675,7 +678,9 @@ digest, and its reconciliation notes bind where a record disagrees.
   part, is the operator's remedy if one is needed.
 - Consequence: the CR has no mounting hole. The re-run site search (NW, SE, NE and an SW rest foot) is kept for a
   later round; it found the candidate SO2 free radius at 2.49 mm with the REG-5V body modelled in full. Record:
-  `decisions_2026-11-12/dec_standoffs_2026-11-12.md`.
+  `decisions_2026-11-12/dec_standoffs_2026-11-12.md`. **Amended 2026-11-13 (D-60):** the CR now has four 6-32 holes
+  that hold a 3D-printed support; there are still no standoffs on the MB. (**Superseded:** "the CR has no mounting
+  hole".)
 
 **D-43. Polyimide sheet and thermocouple retired (operator ruling 2026-11-12).**
 
@@ -1251,6 +1256,33 @@ Open: the 4-seed probe re-run on this board (step 6 entry), N-5 and N-8.
   height, angle and gap to its own courtyard. Reversal: restore the reference fields from 621fb28 (DRC then reports the
   124 items again), or move every small-part reference to F.Fab (D-12a as first written).
 
+**D-60. Trimmed CR outline and four 6-32 holes (operator rulings 2026-11-13; route-race r9 change request R9-02).**
+
+- Decision: after routing, the CR is trimmed to a convex 18-vertex outline inside the D-39 rectangle, and four
+  non-plated 3.70 mm holes (6-32 free fit) are added: MH1 (26.23, 69.04), MH2 (54.85, 63.79), MH3 (54.85, 11.43) and
+  MH4 (24.48, 25.18), MB frame. Each hole has an all-layer copper keep-out of radius 4.0 mm and keeps a 3.6 mm
+  screw-head disc on the board. The outline is the convex hull of the used area (courtyards, pads, signal copper and
+  local pours, plus 1.0 mm), the +x key ear box x 50-58.6, y 52-71 and the four head discs. `gen/cr_geometry.py`
+  holds the outline (`FINAL_OUTLINE`), the ear and the holes. `gen/trim_cr.py` applies them to the routed board through
+  `tools/pcb/corridor_route/trim_outline.py` and refuses when the tool's result differs from that data by more than
+  0.01 mm. The board-wide GND zones keep their 0.45 mm inset from the new edge, and the router edge band keeps
+  0.40 mm. The D-39 rectangle stays the placement frame.
+- Reason: the operator ruled on 2026-11-13, in a conversation with the routing session: "trim away the unused area
+  of the board"; "The final board outline does not need to be rectangular"; "add holes in the corners for 6-32
+  screws". By explicit choice, the holes hold a 3D-printed support (the MB clearance under each hole is not a
+  criterion), a +x key ear is kept for the D-41 key, and the design owner implements the trim in the generator.
+- Consequence: the outline area falls from 4212.2 to 2241.6 mm² (53 %); the bounding box is 40.02 x 64.81 mm. The
+  nearest item to each hole centre is 4.50 mm (MH1, D103 courtyard), 4.53 mm (MH2, C129 courtyard), 4.75 mm (MH3, J102
+  courtyard) and 4.65 mm (MH4, /T2C track). No part, track or via moved, and no plane copper was removed. The trim tool
+  rounds the outline to 0.01 mm and simplifies it with a 0.05 mm tolerance: the -x vertices sit at x 18.58 (0.004 mm
+  outside the D-39 edge; the D-51 terminal gap stays 2.45 mm or more) and a head disc can overhang the edge by up to
+  0.052 mm. A CR rotated 180 degrees lands on J-BL and J-FC only (D-41 amended). After the trim, `gen/silk_refs.py`
+  re-placed the references: C110 had no clear position and moved to F.Fab, so 19 references are on F.Fab only (D-59).
+  The fab package `fab/cr_2026-11-13/` was re-exported. The D-46 J-TAP latch finger access stays open; MH3 and R175
+  lie on the +x/-y side of J102. Reversal: restore `cr/cr.kicad_pcb` from the D-59 commit and run `gen/silk_refs.py`
+  and `gen/export.sh` again, or change `FINAL_OUTLINE`, `KEY_EAR` or `MOUNTING_HOLES` and run `gen/trim_cr.py` on the
+  routed board. The proposal record is the routing session's `routing_r9_cr/outline_trim/TRIM.md`.
+
 ## 9. Verification
 
 ### 9.1 ERC and DRC
@@ -1286,6 +1318,11 @@ the board loaded as `cr/cr.kicad_pcb`; the six items then clear.
 --schematic-parity`) reports 0 violations, 0 unconnected items and 0 parity issues. The constraint check gives 98 pass
 rows and 0 FAIL. Before the reference placement, the routed board gave the 124 silkscreen items of D-57 and 0
 unconnected items.
+
+**D-60 (2026-11-13):** after the trim, the holes and the reference re-placement, DRC (`--severity-all
+--schematic-parity`) reports 0 violations, 0 unconnected items and 0 parity issues. Before the reference re-placement,
+the trimmed board gave 4 silkscreen items (2 silk to edge, 2 silk over a hole mask opening). The constraint check gives
+108 pass rows and 0 FAIL, including the new D-60 outline, ear and hole rows and the D-41 key row on the trimmed outline.
 
 ### 9.2 Constraint measurements
 

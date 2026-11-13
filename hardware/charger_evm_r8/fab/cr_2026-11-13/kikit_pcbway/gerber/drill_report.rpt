@@ -1,5 +1,5 @@
 Drill report for cr.kicad_pcb
-Created on 2026-11-13T08:47:50-0800
+Created on 2026-11-13T10:26:46-0800
 
 Copper Layer Stackup:
     =============================================================
@@ -27,5 +27,6 @@ Drill file 'cr-NPTH.drl' contains
     unplated through holes:
     =============================================================
     T1  1.020mm  0.0402"  (2 holes)
+    T2  3.700mm  0.1457"  (4 holes)
 
-    Total unplated holes count 2
+    Total unplated holes count 6
