@@ -27,8 +27,12 @@ The fabricator of the CR is OSH Park (bare board), with the rule file
 `tools/pcb/fab_rules/fab_4layer_oshpark_only.kicad_dru`. The EIB is a 2-layer board; at OSH Park it is a separate
 order and is not on the CR panel. Neither package has been ordered. The next step is the operator's pre-order review
 of the routed CR and the two packages (D-50 check-in 4). Section 11 lists the open items that the review must close
-before the CR bare-board order: items 2, 3, 5, 7, 9, 14, 16 and 25, and the W6/W7 lead pads of D-45. (**Superseded
-2026-11-13:** "and the D-20 stitching gap of D-61"; the gap fill of D-61 closes it.)
+before the CR bare-board order: items 2, 3, 5, 7 and 9. (**Superseded 2026-11-13:** "items 2, 3, 5, 7, 9, 14, 16 and
+25, and the W6/W7 lead pads of D-45, and the D-20 stitching gap of D-61"; the gap fill of D-61 closes the stitching
+gap, and operator ruling 2026-11-13 (Review 1/2: J102, J1-TSW, W6-W7 (connector and lead-pad geometry),
+local_923ffa1c-f985-43ad-8510-7faea2e5f5d7, chat 2026-11-13) closes items 14 and 25, the header half of item 16 and
+the W6/W7 lead pads (D-41, D-45, D-46). The open rest of item 16, the cable wire gauge and insulation, is a parts
+check and does not block the bare-board order.)
 
 Status on 2026-11-11 (history; superseded by the table above):
 
@@ -138,6 +142,9 @@ The table above records the r7 footprints. The following rules replace it on the
 - **CHG header row.** The 22-pin CHG footprint becomes the CR side of the D-41 stack: TSW-110-07-L-S (pins 1-10) and
   TSW-112-07-L-S (pins 11-22), kept on F.Cu (no flip). The bottom courtyard is the TSW body, 2.54 x 25.40 mm and
   2.54 x 30.48 mm. Pad and drill come from the Samtec TSW drawing, TODO(verify: Samtec TSW drawing, CR pad and drill).
+  (**Superseded 2026-11-13:** "TODO(verify: Samtec TSW drawing, CR pad and drill)"; closed by operator ruling
+  2026-11-13 (Review 1/2: J102, J1-TSW, W6-W7 (connector and lead-pad geometry),
+  local_923ffa1c-f985-43ad-8510-7faea2e5f5d7, chat 2026-11-13), D-41.)
 - **U101.** The footprint stays (D-40). The nine exposed-pad thermal vias stay, exempt from D-37, with window-pane
   stencil apertures and L4 tenting.
 - **0603 passives.** R101, R103, R104, R105, R106s and C101 change from 0402 to 0603 (D-44).
@@ -145,7 +152,9 @@ The table above records the r7 footprints. The following rules replace it on the
   (D-44, D-47). TODO(verify: TI Pin Functions tables) the DBV pinout against the DCK pinout, pin by pin against B.8.
 - **SN74LVC DCT row.** It applies to U105, U106, U110 and U118, which keep the DCT package (D-44).
 - **J-TAP.** A Molex Micro-Fit 3.0 2 x 5 through-hole header is added (D-46). Its footprint comes from the Molex
-  drawing, TODO(verify: Molex 43045 header drawing).
+  drawing, TODO(verify: Molex 43045 header drawing). (**Superseded 2026-11-13:** "TODO(verify: Molex 43045 header
+  drawing)"; closed by operator ruling 2026-11-13 (Review 1/2: J102, J1-TSW, W6-W7 (connector and lead-pad geometry),
+  local_923ffa1c-f985-43ad-8510-7faea2e5f5d7, chat 2026-11-13), D-46.)
 - **W1-W4, W6/W7.** The through-hole lead pads stay on the CR (D-45). The F01-F24 tap pads are removed (D-46). The
   E1-E8 pads on the EIB are unchanged.
 - **Silkscreen.** Reference designators are on the silkscreen for every part (D-12a reversed).
@@ -671,6 +680,20 @@ digest, and its reconciliation notes bind where a record disagrees.
   The ordering BOM changes the TSW rows from -G to -L plating and adds the two SSQ rows. The 12.0 mm stack and the
   keying-blank options of the re-assessment are retired. The derating for four powered pins at pins 14/15/18/19
   (1.93 A each) is TODO(verify: Samtec derating). Record: `decisions_2026-11-12/cr_decision_mating_connector_2026-11-12.md`.
+- **Amended 2026-11-13** (operator ruling 2026-11-13 (Review 1/2: J102, J1-TSW, W6-W7 (connector and lead-pad
+  geometry), local_923ffa1c-f985-43ad-8510-7faea2e5f5d7, chat 2026-11-13)): the CR J1 TSW-110/112-07-L-S footprint is
+  approved as placed. The operator supplied the Samtec drawing ("Here is the Samtec datasheet"): the "Recommended P.C.
+  Board Layout for (X)TSW Single, Double & Triple (Thru-Hole & Right Angle)", Rev A, file
+  TSW-XXX-XX-X-X-XX-XXX-FOOTPRINT. It gives a hole of .040 in [1.02 mm] DIA TYP at a pitch of .100 in [2.54 mm]; it
+  states no tolerance, no drilled or finished reading and no pad size. The operator ruled "Keep 1.1 mm" for the drill.
+  The 1.1 mm drill is 0.08 mm over the drawing value, kept for plug-in alignment: the 0.64 mm square post has about
+  0.10 mm of corner clearance per side, against about 0.06 mm at 1.02 mm. To the request to confirm the 11.05 mm stack
+  of this entry and the 1.9 mm CHG pad (D-03, D-30), the operator answered "Confirm both". The heights were not
+  checked against a Samtec print in the review session; the 11.05 mm and 12.65 mm figures rest on the operator's
+  confirmation of this record. The drilled-versus-finished reading of the OSH Park drill stays with section 11 item 5, and the four-pin
+  derating stays open as section 11 item 15. The footprint description still reads "pad/drill PLACEHOLDER
+  TODO(verify: Samtec TSW drawing)"; it changes at the next footprint-library regeneration. Section 11 items 12 and 14
+  are closed.
 
 **D-42. Standoffs (operator ruling 2026-11-12).**
 
@@ -724,14 +747,24 @@ digest, and its reconciliation notes bind where a record disagrees.
 - Generator (2026-11-12): W6 and W7 use the plated through-hole placeholder footprints
   `LeadPads_PTH_1x02_D1.0mm_Pad1.8mm_P2.54mm_Placeholder` and `LeadPads_PTH_1x03_D1.0mm_Pad1.8mm_P2.54mm_Placeholder`
   (`gen/fpmap.py` WPTH_2 / WPTH_3, `gen/fplib.py` `lead_pth_n`). The geometry is the A.9 E-pad (1.0 mm hole, 1.8 mm
-  pad) at 2.54 mm pitch with a 0.25 mm courtyard; hole, pad and pitch are TODO(verify: 26 AWG (W6) / 28 AWG (W7)
-  conductor and insulation OD), as in B.8. (**Superseded:** the r8 SMT pads `LeadPads_SMD_1x0n_1.2x1.5mm_P2.0mm`.)
+  pad) at 2.54 mm pitch with a 0.25 mm courtyard; hole, pad and pitch are closed by the 2026-11-13 amendment below
+  (the names keep the `_Placeholder` suffix). (**Superseded 2026-11-13:** "hole, pad and pitch are TODO(verify: 26 AWG
+  (W6) / 28 AWG (W7) conductor and insulation OD), as in B.8".) (**Superseded:** the r8 SMT pads
+  `LeadPads_SMD_1x0n_1.2x1.5mm_P2.0mm`.)
+- **Amended 2026-11-13** (operator ruling 2026-11-13 (Review 1/2: J102, J1-TSW, W6-W7 (connector and lead-pad
+  geometry), local_923ffa1c-f985-43ad-8510-7faea2e5f5d7, chat 2026-11-13)): the placeholder status of the W6 and W7
+  lead pads is closed. The proposal kept the 1.0 mm hole, the 1.8 mm pad and the 2.54 mm pitch for both footprints and
+  kept the footprint names with the `_Placeholder` suffix; the operator answered "Approve, close it". The wires are
+  those of the ordering BOM: W6 is Alpha Wire 3049, 26 AWG stranded PVC, WH005 white (/TS_EXT) and BL005 blue (/GND)
+  as a twisted pair; W7 is a Jonard 28 AWG Kynar triple (R28R, R28BLK, R28Y). The insulation OD was not read, so the
+  ordering BOM keeps its TODO items (ordering item 13).
 
 **D-46. Tap connector J-TAP (operator ruling 2026-11-12).**
 
 - Decision: J-TAP is a Molex Micro-Fit 3.0 dual-row 2 x 5 through-hole header (3.00 mm) on the CR, hand-soldered last.
-  All 10 positions are used. The cable is the Molex assembly 2147581101; its far ends take the operator's own .100"
-  crimp terminals. The cavity map (r9-13) is:
+  All 10 positions are used. The cable is the Molex assembly 2147561101; its far ends take the operator's own .100"
+  crimp terminals. (**Superseded 2026-11-13:** "the Molex assembly 2147581101"; see the 2026-11-13 amendment below.)
+  The cavity map (r9-13) is:
 
   | Row | Col 1 | Col 2 | Col 3 | Col 4 | Col 5 |
   |---|---|---|---|---|---|
@@ -757,10 +790,11 @@ digest, and its reconciliation notes bind where a record disagrees.
 
   A PM step unplugs the tap plug before the CR is lifted. T-F-12 becomes a cavity-to-cavity check on the mated
   harness, and the R175 bypass check stays. T1/T7b and T17/T17r are twisted by hand. Open items:
-  TODO(verify: Molex 2147581101) the circuits, wire gauge, length and housing; TODO(verify: Molex 43045 header and
-  43025 housing drawings) the header P/N, orientation, pegs and the physical pin numbers of the cavity map; the wire
-  gauge against the R170/R171 joints at C-D6 and C-D2 (A.4 assumed 26 AWG). **Accepted by the operator (2026-11-12):** T5
-  (A4) is diagonal to T10 (B5). The gate rule (T5, T6 and T10 pairwise non-adjacent, the opposite row included) is
+  TODO(verify: Molex 2147561101) the wire gauge and insulation; the wire gauge against the R170/R171 joints at C-D6 and
+  C-D2 (A.4 assumed 26 AWG). (**Superseded 2026-11-13:** "TODO(verify: Molex 2147581101) the circuits, wire gauge,
+  length and housing; TODO(verify: Molex 43045 header and 43025 housing drawings) the header P/N, orientation, pegs and
+  the physical pin numbers of the cavity map"; see the 2026-11-13 amendment below.) **Accepted by the operator
+  (2026-11-12):** T5 (A4) is diagonal to T10 (B5). The gate rule (T5, T6 and T10 pairwise non-adjacent, the opposite row included) is
   met; the recommended diagonal separation is not. The r9-13 re-map keeps this diagonal. Record:
   `decisions_2026-11-12/round2/tap_connector/dec_tap_connector_2026-11-12.md`;
   `decisions_2026-11-12/round2/permit_gate_decisions_2026-11-12.md` decision 5.
@@ -778,6 +812,35 @@ digest, and its reconciliation notes bind where a record disagrees.
   accepted T5-T10 diagonal stays. The weighted sum falls from 25.0 to 21.5, and the severity-3 count falls from 3 to 1
   (design A.8 Tables A.8-T2 and A.8-T2b). The placement constraints above do not change, because they are stated per
   tap; the J-TAP region of D-52 does not depend on the cavity assignment. The netlist change is recorded in D-53.
+- **Amended 2026-11-13** (operator ruling 2026-11-13 (Review 1/2: J102, J1-TSW, W6-W7 (connector and lead-pad
+  geometry), local_923ffa1c-f985-43ad-8510-7faea2e5f5d7, chat 2026-11-13)): J102 is approved with one change, the
+  cable P/N. The operator's words were: "Here is the PCB layout from the drawing for 43056-1012, which looks like the
+  correct part. Also attached is the drawing showing the physical pin locations relative to the mechanical
+  assembly."; then "That was a typo, I meant 43045-1012"; on the latch room, "That is enough room"; on the cable, "For
+  the cable, 2147581101 is actually the male version of the cable, and we need female. Or, a female header instead of
+  43056-1012"; and the choice "(A). 2147561101 is the correct cable and is in stock at Digikey". Option A keeps the
+  43045-1012 male header on the CR and orders cable 2147561101; option B, a female receptacle on the CR, is rejected.
+  - Header: the Molex 43045 PCB layout (component side; drawing number and revision not visible) gives a pin hole of
+    1.02 +/- 0.05 mm TYP (pegs also 1.02 mm), a pitch and row spacing of 3.00 +/- 0.10 mm, pegs 3.00 +/- 0.08 mm
+    outboard of the end columns and 0.94 +/- 0.05 mm beyond the last-circuit row, and a recommended PCB thickness of
+    1.57 mm. The footprint matches each value: pegs at (-3, 3.94) and (15, 3.94), a 3.00 mm grid and 1.02 mm holes.
+    The Molex part page 430451012 lists a vertical header, 3.00 mm pitch, dual row, 10 circuits, PCB polarizing peg,
+    tin plating, 8.5 A per contact, mating with 43025, 214755 and 214756.
+  - Pin numbering: circuits 1-5 are in the row away from the pegs and circuits 6-10 in the peg-side row, with circuit
+    6 opposite circuit 1. The footprint is the drawing rotated 180 degrees, not mirrored, so the cavity map above is
+    physically correct (row A pads 1-5: T2 T17 T17r T5 T13; row B pads 6-10: T6 T1 T7b T16 T10).
+  - Latch: the latch is on the last-circuit (peg) edge and faces +x. On the final board the latch nub is at about MB x
+    53.5-54.9, y 25.3-26.7; the trimmed edge is about 3.6 mm beyond it, R175 about 3 mm toward -y and MH3 about 14 mm
+    toward -y. The operator ruled "That is enough room", so the finger-access constraint above is met.
+  - Cable: the Molex page for 2147561101 lists a Micro-Fit 3.0 Female-to-Pigtail off-the-shelf assembly, dual row,
+    150 mm, tin, 10 circuits, active. The page does not give the wire gauge or the insulation, so the gauge stays
+    TODO(verify: Molex 2147561101) as a parts check, and the open item on the wire gauge against the R170/R171 joints
+    stays open.
+  - Already applied in commit `6804a16`: the schematic and board MPN field reads 43045-1012, the Note field names
+    cable 2147561101, and the fab package BOM shows 43045-1012.
+  - Consequence: section 11 item 25 is closed; section 11 item 16 is closed for the header P/N, orientation, pegs and
+    physical pin numbering and amended for the cable; D-54 open item 1 is closed for the latch-finger access. The
+    superseded open items are quoted at the Decision bullet above.
 
 **D-47. Reduced tap set and permit gate (operator rulings 2026-11-12).**
 
@@ -890,12 +953,22 @@ with half the line width added, and the keep-out is layer 39. The y range of eve
     timestamps, so the EIB exports are unchanged.
   - CHG footprint: the name `Ag105_CHG_Carrier_22pin_P2.54mm` stays (D-02). The bottom courtyards are the TSW bodies
     plus 0.25 mm, and a pin-1 arrow is on the top silkscreen. The 1.1 mm drill and 1.9 mm pad stay as placeholders,
-    TODO(verify: Samtec TSW drawing, CR pad and drill).
+    TODO(verify: Samtec TSW drawing, CR pad and drill). (**Superseded 2026-11-13:** "The 1.1 mm drill and 1.9 mm pad
+    stay as placeholders, TODO(verify: Samtec TSW drawing, CR pad and drill)"; closed by operator ruling 2026-11-13
+    (Review 1/2: J102, J1-TSW, W6-W7 (connector and lead-pad geometry), local_923ffa1c-f985-43ad-8510-7faea2e5f5d7,
+    chat 2026-11-13), D-41. The drilled-versus-finished reading of the drill stays with section 11 item 5.)
   - J102: the stock Micro-Fit 43045-1012 vertical pattern with the courtyard redrawn at 0.25 mm. P/N, orientation,
-    pegs, latch side and cavity numbering are TODO(verify: Molex 43045 header drawing).
+    pegs, latch side and cavity numbering are TODO(verify: Molex 43045 header drawing). (**Superseded 2026-11-13:**
+    "P/N, orientation, pegs, latch side and cavity numbering are TODO(verify: Molex 43045 header drawing)"; closed by
+    operator ruling 2026-11-13 (Review 1/2: J102, J1-TSW, W6-W7 (connector and lead-pad geometry),
+    local_923ffa1c-f985-43ad-8510-7faea2e5f5d7, chat 2026-11-13), D-46. Only the cable wire gauge and insulation stay
+    open.)
   - W1-W4 keep the A.8 hole and pad sizes and positions; W6/W7 keep the D-45 placeholder. Every CR through-hole pad
     has its unused inner pads removed (D-30, P-11). W6/W7 are packer-placed, because their r8 SMT coordinates overlap
     at the 2.54 mm pitch. Their hole and pitch are TODO(verify: 26 AWG / 28 AWG conductor and insulation OD).
+    (**Superseded 2026-11-13:** "Their hole and pitch are TODO(verify: 26 AWG / 28 AWG conductor and insulation OD)";
+    closed by operator ruling 2026-11-13 (Review 1/2: J102, J1-TSW, W6-W7 (connector and lead-pad geometry),
+    local_923ffa1c-f985-43ad-8510-7faea2e5f5d7, chat 2026-11-13), D-45.)
   - Placement: every SMT part is on the top; the build stops if a netlist part is flipped (D-44). The power block
     (J1, W1-W4, the eFuse cluster and J101) keeps its A.8 / D-09 coordinates. The comparators, R175, the +x pocket
     parts, W6/W7 and J102 are packer-placed.
@@ -1095,6 +1168,10 @@ Open items after step 5:
 
 1. TODO(verify: Molex 43045 header drawing) the J102 latch-finger access and the D-46 THT-tail and MB clearance at the
    new J102 position. C116, C129 and R147 sit about 0.1-0.2 mm from the -x side of the J102 courtyard.
+   **Closed 2026-11-13** for the latch-finger access (operator ruling 2026-11-13 (Review 1/2: J102, J1-TSW, W6-W7
+   (connector and lead-pad geometry), local_923ffa1c-f985-43ad-8510-7faea2e5f5d7, chat 2026-11-13); D-46): the latch
+   faces +x with the trimmed edge about 3.6 mm beyond the nub, and the operator ruled "That is enough room". The
+   ruling does not address the THT-tail and MB clearance half of this item.
 2. The D-44 row fails on U101.25, the B.Cu heatsink copper pad of the TPS26630 ThermalVias footprint (no paste, no mask
    opening). Either the pad leaves the footprint, or `gen/check_constraints.py` exempts a copper-only heatsink pad.
 3. Three courtyard overlaps come from fixed coordinates. W1/W2 overlap by 0.193 mm at the A.8 2.6 mm pitch with the
@@ -1156,7 +1233,9 @@ Superseded D-54 open items: item 2 (the D-44 FAIL on U101.25) and item 3 (the co
 item 5 (`plane_vias.py` via in U101.25) is closed in the tool and is confirmed at the route-race; the rule-file
 paragraph of D-54 is closed by M-4. Item 4 (/N_OV open) is re-tested at the route-race: R103 and R104 now sit 2.3-4.6
 mm from pin 7 on the +x side, but the N_UV and N_OV escapes still cross the VCHGIN L1 pour, which since M-3 also
-rings pad 10. Items 1, 6 and 7 stay open.
+rings pad 10. Items 1, 6 and 7 stay open. (**Amended 2026-11-13:** the latch-finger access half of item 1 is closed
+by operator ruling 2026-11-13 (Review 1/2: J102, J1-TSW, W6-W7 (connector and lead-pad geometry),
+local_923ffa1c-f985-43ad-8510-7faea2e5f5d7, chat 2026-11-13), D-46; the THT-tail and MB clearance half stays open.)
 
 **D-56. Fix round on the r9b re-review of the D-55 board (2026-11-13).**
 
@@ -1281,7 +1360,9 @@ Open: the 4-seed probe re-run on this board (step 6 entry), N-5 and N-8.
   0.052 mm. A CR rotated 180 degrees lands on J-BL and J-FC only (D-41 amended). After the trim, `gen/silk_refs.py`
   re-placed the references: C110 had no clear position and moved to F.Fab, so 19 references are on F.Fab only (D-59).
   The fab package `fab/cr_2026-11-13/` was re-exported. The D-46 J-TAP latch finger access stays open; MH3 and R175
-  lie on the +x/-y side of J102. Reversal: restore `cr/cr.kicad_pcb` from the D-59 commit and run `gen/silk_refs.py`
+  lie on the +x/-y side of J102. (**Superseded 2026-11-13:** "The D-46 J-TAP latch finger access stays open"; operator
+  ruling 2026-11-13 (Review 1/2: J102, J1-TSW, W6-W7 (connector and lead-pad geometry),
+  local_923ffa1c-f985-43ad-8510-7faea2e5f5d7, chat 2026-11-13) closes it, "That is enough room" (D-46).) Reversal: restore `cr/cr.kicad_pcb` from the D-59 commit and run `gen/silk_refs.py`
   and `gen/export.sh` again, or change `FINAL_OUTLINE`, `KEY_EAR` or `MOUNTING_HOLES` and run `gen/trim_cr.py` on the
   routed board. The proposal record is the routing session's `routing_r9_cr/outline_trim/TRIM.md`.
 
@@ -1416,8 +1497,12 @@ Parts and land patterns (`lib_verification_2026-11-11.md`):
 9. TODO(verify: Nexperia BAV199 datasheet rev. 01092020, Table "Pinning information", original PDF).
 10. TODO(verify: Nexperia SOT23 reflow footprint).
 11. TODO(verify: Littelfuse SMAJ datasheet, polarity and pad layout).
-12. TODO(verify: Samtec TSW-1XX-XX-XXX-S MKT print, pin size .025 SQ). **Amended 2026-11-12:** this becomes the TSW
-    to SSQ mating check of D-41.
+12. Closed 2026-11-13 (operator ruling 2026-11-13 (Review 1/2: J102, J1-TSW, W6-W7 (connector and lead-pad
+    geometry), local_923ffa1c-f985-43ad-8510-7faea2e5f5d7, chat 2026-11-13); D-41): the operator confirmed the D-41
+    TSW to SSQ stack ("Confirm both"), with the CR underside 11.05 mm above the MB top. The heights were not checked
+    against a Samtec print in the review session; the closure rests on the operator's confirmation.
+    (**Superseded:** "TODO(verify: Samtec TSW-1XX-XX-XXX-S MKT print, pin size .025 SQ). **Amended 2026-11-12:** this
+    becomes the TSW to SSQ mating check of D-41.")
 13. TODO(verify: Samtec FTSH MKT sheet 2, Fig. 2) the -K plan-view envelope, and the exact order string for J101 with position 6 removed.
 
 Ordering BOM (`bom_2026-11-11/README.md` section 7, items 1-22): every Digi-Key SKU, price, stock and MOQ is
@@ -1425,16 +1510,31 @@ unverified, because Digi-Key, Mouser and the other distributors served bot check
 candidates need their T-A-05 datasheet checks; the W1/W2 wire stranding needs a ruling (Alpha 3053 is 10/30, the
 r8 spec names 19/32 or 7/28). The 2026-11-12 decisions change the ordering BOM: the TSW rows move to -L plating and
 the SSQ rows are added (D-41); the six 0603 parts and SN74LVC1G11DBVR replace their predecessors (D-44); the J-TAP
-header and the Molex 2147581101 assembly are added, and the TSW-101 tap-pin row shrinks (D-46); the removed gate and
-comparator parts leave the BOM (D-47). The BOM is updated from the regenerated netlist.
+header and the Molex 2147561101 assembly are added, and the TSW-101 tap-pin row shrinks (D-46); the removed gate and
+comparator parts leave the BOM (D-47). The BOM is updated from the regenerated netlist. (**Superseded 2026-11-13:**
+"the Molex 2147581101 assembly"; 2147581101 is the male cable, and the operator selected the female 2147561101,
+D-46.)
 
 Layout and fabrication, added 2026-11-12:
 
-14. TODO(verify: Samtec TSW drawing) the CR pad and drill for TSW-110/112-07-L-S (D-03, D-41).
+14. Closed 2026-11-13 (operator ruling 2026-11-13 (Review 1/2: J102, J1-TSW, W6-W7 (connector and lead-pad
+    geometry), local_923ffa1c-f985-43ad-8510-7faea2e5f5d7, chat 2026-11-13); D-41): the Samtec "Recommended P.C. Board
+    Layout for (X)TSW Single, Double & Triple (Thru-Hole & Right Angle)", Rev A, gives a hole of .040 in [1.02 mm] DIA
+    TYP at .100 in [2.54 mm], with no tolerance, no drilled or finished reading and no pad size. The operator ruled
+    "Keep 1.1 mm" (0.08 mm over the drawing value, for plug-in alignment) and confirmed the 1.9 mm pad ("Confirm
+    both"). The drilled-versus-finished reading stays with item 5. The footprint description text "pad/drill
+    PLACEHOLDER TODO(verify: Samtec TSW drawing)" changes at the next footprint-library regeneration.
+    (**Superseded:** "TODO(verify: Samtec TSW drawing) the CR pad and drill for TSW-110/112-07-L-S (D-03, D-41).")
 15. TODO(verify: Samtec derating) the four-powered-pin case at CHG pins 14/15/18/19, 1.93 A each (D-41).
-16. TODO(verify: Molex 43045 header and 43025 housing drawings) the J-TAP header P/N, orientation, pegs and the
-    physical pin numbers of the cavity map; TODO(verify: Molex 2147581101) the cable circuits, wire gauge, length and
-    housing (D-46).
+16. **Amended 2026-11-13** (operator ruling 2026-11-13 (Review 1/2: J102, J1-TSW, W6-W7 (connector and lead-pad
+    geometry), local_923ffa1c-f985-43ad-8510-7faea2e5f5d7, chat 2026-11-13); D-46): the header half is closed. The
+    header is 43045-1012 ("That was a typo, I meant 43045-1012"); the Molex 43045 PCB layout confirms the orientation,
+    the pegs and the physical pin numbering of the cavity map. The cable P/N is amended to 2147561101 ("(A).
+    2147561101 is the correct cable and is in stock at Digikey"); its circuits are confirmed as 10, dual row, 150 mm,
+    female-to-pigtail. TODO(verify: Molex 2147561101) the wire gauge and insulation stay open as a parts check.
+    (**Superseded:** "TODO(verify: Molex 43045 header and 43025 housing drawings) the J-TAP header P/N, orientation,
+    pegs and the physical pin numbers of the cavity map; TODO(verify: Molex 2147581101) the cable circuits, wire gauge,
+    length and housing (D-46).")
 17. Closed 2026-11-12: the operator accepted the J-TAP T5 (A4) to T10 (B5) diagonal (D-46).
 18. Closed 2026-11-13: TI SCES487I (rev. November 2024) Figure 4-1 ("DBV or DCK Package") and Table 4-1 give one
     pinout for both packages: A 1, GND 2, B 3, Y 4, VCC 5, C 6. The U107 copper matches it (pad 1 /QUAL, 2 /GND,
@@ -1457,4 +1557,9 @@ Layout and fabrication, added 2026-11-12:
 24. Closed 2026-11-12 (D-49 r9-12 bullet, D-53 ruling R2): R132 and R131B are 4.99 kOhm 1 % 0603, so a J101
     pin 9-10 or 8-9 short draws at most 0.687 mA and the CR rail stays at or above 3.024 V (design H.24(d)).
     (**Superseded:** "TODO(calc: B.6 9-10 short against the LVC IOL) for J101 pins 9 and 10 (D-49).")
-25. TODO(verify: Molex 43045 header drawing) the J-TAP latch side and the finger-access keep-out (D-46, D-52).
+25. Closed 2026-11-13 (operator ruling 2026-11-13 (Review 1/2: J102, J1-TSW, W6-W7 (connector and lead-pad
+    geometry), local_923ffa1c-f985-43ad-8510-7faea2e5f5d7, chat 2026-11-13); D-46): the latch is on the last-circuit
+    (peg) edge and faces +x. The latch nub is at about MB x 53.5-54.9, y 25.3-26.7; the trimmed edge is about 3.6 mm
+    beyond it, R175 about 3 mm toward -y and MH3 about 14 mm toward -y. The operator ruled "That is enough room".
+    (**Superseded:** "TODO(verify: Molex 43045 header drawing) the J-TAP latch side and the finger-access keep-out
+    (D-46, D-52).")

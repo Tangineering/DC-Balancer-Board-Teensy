@@ -70,11 +70,27 @@ Table 2. Decisions of the overnight round, D-60 and D-61.
    In the dense rows a reference can sit up to 3.0 mm from its part, so the interactive BOM (`assembly/cr_ibom.html`)
    is the assembly reference. The alternative is all small-part references on F.Fab, which gives a cleaner silkscreen
    and the same assembly method.
-2. Confirm the placeholder footprints against their drawings before the order. The J-TAP header (Molex 43045, items 16
-   and 25 of `LAYOUT_DECISIONS.md` section 11), the TSW-110/112-07-L-S pins (item 14) and the W6/W7 lead pads (D-45) use
-   placeholder pad and drill geometry. A wrong drill or pitch on these parts is not repairable on a fabricated board.
-   The D-46 J-TAP latch finger access stays open: the hole MH3 (54.85, 11.43) and R175 are on the +x/-y side of
-   J102, so include them when you examine the latch access.
+2. Closed 2026-11-13: the placeholder footprints of J102, CR J1 and W6/W7, by operator ruling 2026-11-13 (Review 1/2:
+   J102, J1-TSW, W6-W7 (connector and lead-pad geometry), local_923ffa1c-f985-43ad-8510-7faea2e5f5d7, chat
+   2026-11-13).
+   - J102 (`LAYOUT_DECISIONS.md` section 11 items 16 (the header half) and 25): the header is Molex 43045-1012 ("That was a typo, I meant
+     43045-1012"). The Molex 43045 PCB layout matches the footprint: 1.02 mm holes and pegs, 3.00 mm pitch and row
+     spacing, pegs 3.00 mm outboard of the end columns and 0.94 mm beyond the last-circuit row. The footprint is the
+     drawing rotated 180 degrees, not mirrored, so the D-46 cavity map is physically correct. The latch is on the peg
+     edge, facing +x; the operator ruled the finger access sufficient ("That is enough room"). The cable is Molex
+     2147561101 ("(A). 2147561101 is the correct cable and is in stock at Digikey"). Its wire gauge and insulation stay
+     open as a parts check.
+   - CR J1 TSW-110/112-07-L-S (item 14): the 1.1 mm drill is kept ("Keep 1.1 mm"), and the 1.9 mm pad
+     and the D-41 stack of 11.05 mm are confirmed ("Confirm both"; operator confirmation of the D-41 record, not
+     checked against a Samtec print). The Samtec layout gives a 1.02 mm hole; the 0.08 mm excess is kept on purpose for plug-in alignment. The OSH Park
+     drilled-versus-finished question stays with item 5.
+   - W6/W7 lead pads (D-45): the 1.0 mm hole, 1.8 mm pad and 2.54 mm pitch are kept, and the placeholder status is
+     closed ("Approve, close it"). The footprint names keep the `_Placeholder` suffix.
+
+   (**Superseded 2026-11-13:** "Confirm the placeholder footprints against their drawings before the order. The J-TAP
+   header (Molex 43045, items 16 and 25 of `LAYOUT_DECISIONS.md` section 11), the TSW-110/112-07-L-S pins (item 14)
+   and the W6/W7 lead pads (D-45) use placeholder pad and drill geometry. ... The D-46 J-TAP latch finger access stays
+   open".)
 3. Confirm the OSH Park solder-mask expansion (0.0508 mm, TODO(verify) in the rule file). The 0.027 mm via-to-mask-
    opening gap of Table 1 is between a pad and its own same-net escape via, so a registration error can at most let
    solder wick onto that via. The smallest different-net gap is 0.115 mm (C116.1 /3V3 to a /QUAL via), about 0.094 mm
@@ -84,7 +100,10 @@ Table 2. Decisions of the overnight round, D-60 and D-61.
    2241.6 mm2.
 
 The D-20 stitching of D-61 is not an order item: its constraint-check row passes (Table 1). The order blockers remain
-those of `LAYOUT_DECISIONS.md` section 1: section 11 items 2, 3, 5, 7, 9, 14, 16 and 25, and the W6/W7 lead pads of D-45.
+those of `LAYOUT_DECISIONS.md` section 1: section 11 items 2, 3, 5, 7 and 9. Review 2/2 of the operator is in progress
+on them. Items 14, 16 (the header half) and 25 and the W6/W7 lead pads of D-45 are closed by the operator ruling of
+2026-11-13 (Review 1/2; item 2 above). (**Superseded 2026-11-13:** "section 11 items 2, 3, 5, 7, 9, 14, 16 and 25,
+and the W6/W7 lead pads of D-45".)
 
 ### 3.2 Standing defaults from 2026-11-12
 
