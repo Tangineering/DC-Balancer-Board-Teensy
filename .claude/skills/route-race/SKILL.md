@@ -154,9 +154,9 @@ orchestrator for the routed board on a branch. Then:
 1. Create a worktree of your own on a new branch from the owner's commit. Never write the owner's worktree.
 2. When the owner sends a new commit (an approved request), merge it into your branch, archive its board into a new
    round folder, compare it with `cmp_place.py`, model it and route the chosen plan at four seeds.
-3. Finish the chosen seed for delivery: plane vias with `--stitch` when the design asks for stitching, then the
-   straightening pass (`board-routing` section 2, step 7). Copy `board_st/<board>.kicad_pcb` over the board in your
-   worktree. Check with `git status` that
+3. Finish the chosen seed for delivery up to the plane vias (`board-routing` section 2, step 7). Copy
+   `board_pv/<board>.kicad_pcb` over the board in your worktree. Stitching and straightening come after the trim
+   (step 7). Check with `git status` that
    only the board file changed; the project file and the rule file must stay byte-identical.
 4. Run `kicad-cli pcb drc --severity-all --schematic-parity` (`tools/pcb/TOOLCHAIN.md` gives the path) and the
    project's constraint check on that file. Only the violations that the owner accepts (for example silk) may remain.

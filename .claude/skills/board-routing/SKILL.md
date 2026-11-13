@@ -69,8 +69,10 @@ score, seeds, run time). Read the other reference files at the step that names t
 6. Route at four seeds, in the background:
    `"$PY" -u seeds.py run W/model/model.json W/plan.json W/plain --seeds 1,2,3,4`.
    Read `W/plain/SEEDS.md`: mean, minimum, maximum, nets open at every seed, nets open at some seeds.
-7. Finish each seed in this order: apply, score, plane vias (with stitching), apply, score, constraint metrics.
-   For the seed that you deliver, add the straightening pass at the end (below). Finish the best
+7. Finish each seed in this order: apply, score, plane vias, apply, score, constraint metrics. For the seed that
+   you deliver, the outline trim comes next (section 5a), and then stitching, straightening and the stitching gap
+   fill on the trimmed board (below), in that order: stitching after the trim keeps the trimmed outline independent
+   of the stitching and the straightening. On a board that is not trimmed, run them after the plane vias. Finish the best
    seed always, and every seed when the plane nets or a constraint metric decide between plans. Run every step
    with the pcbnew venv `"$PY"`; shapely is in that venv, not in miniforge (`"$MPL"`).
 
