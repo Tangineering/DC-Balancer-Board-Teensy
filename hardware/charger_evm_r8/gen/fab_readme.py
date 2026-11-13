@@ -56,9 +56,17 @@ INFO = {
 }[B]
 DNP, FIT = dnp_split()
 STATUS = ("**Status: not ordered.** This package awaits operator review before order (dec2-eib decision 1, "
-          "2026-11-12).\n\n" if B == "eib" else "")
+          "2026-11-12).\n\n" if B == "eib" else
+          "**Status: not ordered.** This package awaits operator review before order. The fab is OSH Park (operator "
+          "ruling 2026-11-12). The routing is D-58; the reference designators are D-59, with 18 references on F.Fab "
+          "only.\n\n")
 ASSY = ("\nThe CR needs a hot-air or reflow step for U101 (VQFN-24, A.8 hand assembly row), or a PCB assembly "
         "service.\n" if B == "cr" else "")
+for _fab in ("jlcpcb", "pcbway"):
+    if not os.path.exists(os.path.join(O, "kikit_" + _fab, "bom.csv")):
+        ASSY += (f"\nKiKit `fab {_fab} --assembly` wrote no `bom.csv` for this board (`reports/kikit_{_fab}.log`: "
+                 f"\"invalid literal for int()\"); its `gerbers.zip` is complete. Use `assembly/{B}-bom.csv` for "
+                 f"assembly quotes.\n")
 txt = f"""# {INFO['name']}: fabrication package ({D})
 
 {STATUS}## 1. Board
