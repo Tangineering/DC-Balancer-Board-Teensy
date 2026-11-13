@@ -2,7 +2,7 @@
 
 Usage (pcbnew venv with numpy + shapely):
   python plane_vias.py <model.json> <plan.json> <routes.json> <routed.kicad_pcb> <out_routes.json>
-                       [--report plane_vias.md] [--min-area 0.3]
+                       [--report plane_vias.md] [--min-area 0.3] [--no-respect-unflashed]
 
 <routes.json> is the routing result that was applied to make <routed.kicad_pcb> (zones refilled). Tracks cut the
 ground fills of the outer layers into pieces. A piece that holds no via and no through-hole pad of its net is not
@@ -14,7 +14,13 @@ Output: <out_routes.json> with one entry for each plane net (vias to ADD; nothin
 ROUTED board:  python apply_routes.py <routed board> <out_routes.json> <new folder>
 then score the new board against the unrouted baseline: the open connections of the plane nets are the test.
 The report lists the pieces that got no via; each is a request (no via site in the piece), or a sliver that
-the island removal of the zone will delete."""
+the island removal of the zone will delete.
+
+Unflashed through-hole pads: by default a new via is kept off the unflashed layers of the through-hole pads of its
+own net (Ctx.selfban, the rule the router uses for tracks). A plane via beside such a pad makes KiCad flash the pad
+on that inner layer, onto the tracks that the router ran there (CR board, 2026-11-12: shorts at J1 pads 14 and 15
+on In2.Cu at 3 of 4 seeds). On the round-3 CR seeds the rule cost 1 via site in 8 runs and no GND connection.
+--no-respect-unflashed restores the earlier behaviour (no check), for comparison with results made before it."""
 import argparse
 import json
 
@@ -39,6 +45,8 @@ ap.add_argument("board")
 ap.add_argument("out")
 ap.add_argument("--report", default=None)
 ap.add_argument("--min-area", type=float, default=0.3)
+# default on; --respect-unflashed is still accepted (it was the opt-in form), --no-respect-unflashed turns it off
+ap.add_argument("--respect-unflashed", action=argparse.BooleanOptionalAction, default=True)
 A = ap.parse_args()
 C = Ctx(A.model, A.plan)
 RT = Router(C)
@@ -70,6 +78,10 @@ def via_ok(n, j, i):
     oV = C.ownV[:, j, i]
     if not np.all((oV == FREE) | (oV == n)):
         return False
+    if A.respect_unflashed:
+        x, y = C.xy(j, i)
+        if any(gv.contains(Point(x, y)) for _, _, gv in C.selfban.get(C.net_name.get(n, ""), [])):
+            return False
     return all((vj - j) ** 2 + (vi - i) ** 2 >= vgap * vgap for (vj, vi) in placed.get(n, []))
 
 
@@ -137,6 +149,8 @@ L = ["# Plane-via step", "",
      "Pieces of the fills of the plane nets (%s) on the routing layers: %d. Tied by a new via: %d. Without a via "
      "site: %d. Below %.1f mm2 and not tied (slivers, left to the island removal): %d." % (
          ", ".join(sorted(C.planes)), pieces, len(done), len(failed), A.min_area, small), "",
+     "Vias kept off the unflashed layers of their own net's through-hole pads: %s." % (
+         "yes" if A.respect_unflashed else "NO (--no-respect-unflashed; check the score for new DRC items)"), "",
      "## Pieces without a via site", ""] + (["- " + f for f in failed] or ["None."])
 L += ["", "Apply the output to the routed board with `apply_routes.py`, then score the result against the unrouted "
       "board. The open connections of the plane nets in `score.md` are the test: 0 is a pass."]

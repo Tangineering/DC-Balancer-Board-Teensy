@@ -38,7 +38,11 @@ T="<repository root>/tools/pcb/corridor_route"
 | Global routing | `"$PY" global_route.py W/model/model.json W/plan.json W/plan_g.json --report W/global.md [--tile 2.0]` |
 | Seeds | `"$PY" -u seeds.py run W/model/model.json W/plan.json W/vN_seeds --seeds 1,2,3,4` and `"$PY" seeds.py compare W/A_seeds W/B_seeds` |
 | Apply | `"$PY" apply_routes.py W/<board>.kicad_pcb W/vN/routes.json W/vN/board` |
-| Score | `"$PY" score.py W/vN/board/<board>.kicad_pcb W/<board>.kicad_pcb W/vN/score --plane-nets <nets> [--test-pour NET:LAYER] --label <method>-vN` |
+| Score | `"$PY" score.py W/vN/board/<board>.kicad_pcb W/<board>.kicad_pcb W/vN/score --plane-nets <nets> [--test-pour NET:LAYER] [--allow-via-in-pad] --label <method>-vN` |
+| Plane vias | `"$PY" plane_vias.py W/model/model.json W/plan.json W/vN/routes.json W/vN/board/<board>.kicad_pcb W/vN/plane_routes.json --report W/vN/plane_vias.md` (then apply onto `W/vN/board` and score) |
+| No via site | `"$PY" nosite_why.py W/model/model.json W/plan.json W/vN/routes.json W/vN/board_pv/<board>.kicad_pcb` |
+| Parallel metric | `"$PY" parallel_metric.py W/model/model.json W/vN/routes.json --zone-parts <refs> --analog-nets <nets> [--ignore-nets <nets>] [--exempt-pins REF.PAD,...] [--check-pad REF.PAD] [--json out.json]` |
+| Base compare | `"$PY" cmp_place.py <previous base>.kicad_pcb <new base>.kicad_pcb` |
 
 - The last four rows are the shared options of `reference/shared-options.md`. Every method may use them.
 - `render.py` takes the file `model.json`, not the folder. With `--routes` give the plan of the same attempt.
