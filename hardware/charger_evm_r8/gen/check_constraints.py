@@ -332,6 +332,43 @@ if BOARD == "cr":
     row("D-20 every via tented on both sides", "board setup", "front %s, back %s" % (ds.m_TentViasFront,
                                                                                ds.m_TentViasBack),
         "both tented", bool(ds.m_TentViasFront and ds.m_TentViasBack))
+    # D-20 / D-61: L2-L4 GND stitching. Stitch points = every /GND via and /GND plated hole. Over the filled L4 pour,
+    # sampled on a 0.5 mm grid, the largest distance to the nearest stitch point; a 5 mm square pitch gives 3.54 mm.
+    from shapely.strtree import STRtree
+    stitch_pts = [Point(fr.e(t.GetPosition())) for t in b.GetTracks()
+                  if t.Type() == pcbnew.PCB_VIA_T and t.GetNetname() == "/GND"]
+    stitch_pts += [Point(fr.e(p.GetPosition())) for fp_ in b.GetFootprints() for p in fp_.Pads()
+                   if p.GetNetname() == "/GND" and p.GetAttribute() == pcbnew.PAD_ATTRIB_PTH]
+    l4 = [z for z in b.Zones() if not z.GetIsRuleArea() and z.GetNetname() == "/GND" and z.IsOnLayer(pcbnew.B_Cu)]
+    fill = []
+    for z in l4:
+        fp_set = z.GetFilledPolysList(pcbnew.B_Cu)
+        for i in range(fp_set.OutlineCount()):
+            o = fp_set.Outline(i)
+            pts_ = [fr.e(o.CPoint(k)) for k in range(o.PointCount())]
+            if len(pts_) >= 3:
+                fill.append(Polygon(pts_).buffer(0))
+    fillu = unary_union(fill)
+    worst, worst_xy = 0.0, None
+    if stitch_pts and not fillu.is_empty:
+        st = STRtree(stitch_pts)
+        x0_, y0_, x1_, y1_ = fillu.bounds
+        from shapely.prepared import prep
+        pf = prep(fillu)
+        yy = y0_
+        while yy <= y1_:
+            xx = x0_
+            while xx <= x1_:
+                q = Point(xx, yy)
+                if pf.contains(q):
+                    d_ = q.distance(stitch_pts[st.nearest(q)])
+                    if d_ > worst:
+                        worst, worst_xy = d_, (xx, yy)
+                xx += 0.5
+            yy += 0.5
+    row("D-20 L2-L4 GND stitching (/GND vias and plated holes) over the filled L4 pour (D-61)", "/GND",
+        "%d stitch points; largest distance to the nearest one %.2f mm at (%.1f, %.1f)" % (
+            len(stitch_pts), worst, *(worst_xy or (0, 0))), "<= 3.54 mm (5 mm square pitch, D-20)", worst <= 3.54)
     nv = sum(1 for p in FP["U101"].Pads() if p.GetAttribute() == pcbnew.PAD_ATTRIB_PTH)
     row("A.8 U101 thermal pad >= 9 vias 0.3 mm (D-40 exempt from D-37)", "U101", "%d vias" % nv, ">= 9", nv >= 9)
     # D-55 (review M-1): window-pane paste apertures clear every thermal-via drill; coverage of the 2.7 mm pad
