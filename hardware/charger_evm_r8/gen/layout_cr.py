@@ -112,7 +112,7 @@ HDR_PADS = unary_union([box(45.998 - 1.2, 39.084 - 1.2, 45.998 + 1.2, 61.944 + 1
 # pad 2 (38.08, 62.90) are added, as in route_cr.PRE_VIAS.
 PRE_VIA_SITES = [(39.45, 51.80), (39.45, 52.60), (39.45, 53.40), (39.45, 54.20), (39.45, 55.00), (40.65, 51.40),
                  (39.75, 59.65), (39.75, 60.35), (39.75, 61.05), (34.00, 63.35), (34.80, 63.35), (35.60, 63.35),
-                 (36.40, 63.35), (38.08, 62.90)]
+                 (36.40, 63.35), (38.08, 62.90), (42.30, 59.30)]   # D-57: C102c GND pre-via (inside IN_STRIP)
 PRE_VIA_KO = unary_union([Point(c).buffer(0.30 + 0.25) for c in PRE_VIA_SITES])
 # VCHGOUT L1 corridor from W1 to the D103 cathode below the D103 anode (D-22): no top part
 VOUT_BELT = box(29.00, 59.00, 37.30, 64.20)

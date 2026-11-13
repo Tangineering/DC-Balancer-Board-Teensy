@@ -997,7 +997,10 @@ H25_MIL2 = 0.0254 ** 2  # mm2 per mil2
 # where the GND via at (42.80, 62.55) cuts the top edge at y 62.1455), board-measured with pcbnew on the D-56 pour stage
 H25_NECKS = (("D-55 strap, y 60.15 (pad 10 also fed on L1)", 62.1455 - 60.15),
              ("review r9b trial 4, y 59.55", 62.1455 - 59.55),
-             ("D-56 strap, y 58.50 (board-measured section 3.645 mm at x 42.75)", 3.645))
+             ("D-56 strap, y 58.50 (board-measured section 3.645 mm at x 42.75)", 3.645),
+             # D-57 (route-race r9 R9-01): /GND pre-via (42.30, 59.30) cut out of the strap, extension box(41.95,
+             # 57.00, 44.00, 58.50) below it; total vertical chord of the fill, board-measured on the D-57 pour stage
+             ("D-57 strap, C102c GND via cut-out + extension (4.174 mm at x 42.535)", 4.174))
 H25_THERMAL = (4, 0.6)  # superseded J1.10 thermal relief on In2: spokes x width (gen/route.py add_zone)
 H25_DRILL = 1.10        # mm: J1 CHG hole (A.8)
 H25_VIA = (0.30, 0.020)  # via drill and barrel plating (IPC-6012 class 2 minimum average 20 um, ASSUMPTION;
