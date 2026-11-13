@@ -44,10 +44,15 @@ erc = open(os.path.join(O, "reports", "erc.rpt"), encoding="utf-8").read()
 nv = re.search(r"Found (\d+) DRC violations", drc)
 nu = re.search(r"Found (\d+) unconnected pads", drc)
 ne = re.search(r"ERC messages: (\d+)", erc)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import cr_geometry as G  # noqa: E402   (the D-60 outline and holes; the size row is computed, never typed)
+_b = G.P_FINAL.bounds
+CR_SIZE = ("convex %d-vertex outline, %.2f x %.2f mm bounding box (MB frame x %.2f-%.2f, y %.2f-%.2f), %.1f mm2, "
+           "trimmed after routing inside the D-39 rectangle (D-60); four 6-32 NPTH holes, %.2f mm (MH1-MH4, D-60)" % (
+               len(G.FINAL_OUTLINE), _b[2] - _b[0], _b[3] - _b[1], _b[0], _b[2], _b[1], _b[3], G.P_FINAL.area,
+               G.HOLE_DRILL))
 INFO = {
-    "cr": dict(name="CR, CHG adapter carrier (plug-on)", layers=4, size="convex 18-vertex outline, 40.02 x 64.81 mm "
-               "bounding box (MB frame x 18.58-58.60, y 7.83-72.64), 2241.6 mm2, trimmed after routing inside the D-39 "
-               "rectangle (D-60); four 6-32 NPTH holes, 3.70 mm (MH1-MH4, D-60)", thick="1.6 mm",
+    "cr": dict(name="CR, CHG adapter carrier (plug-on)", layers=4, size=CR_SIZE, thick="1.6 mm",
                copper="1 oz outer / 0.5 oz inner (D-29)", finish="ENIG", qty="5 (E BOM)",
                layers_list="F.Cu (L1, signals and power pours), In1.Cu (L2, solid GND), In2.Cu (L3, signals), "
                "B.Cu (L4, solid GND facing the MB, D-20)"),

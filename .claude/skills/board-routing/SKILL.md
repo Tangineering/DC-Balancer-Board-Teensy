@@ -94,8 +94,13 @@ score, seeds, run time). Read the other reference files at the step that names t
      the plane net's fill, with the same site rules as the plane vias (routed copper, holes, SMD pads and their mask
      openings, unflashed pads, keep-outs), and reports the grid nodes without a legal site. On the r9 CR board,
      2.5 mm gave 585 vias over the untrimmed outline and 269 on the final trimmed outline, with no new DRC item.
-     When the outline will be trimmed (section 5a), stitch and straighten after the trim: both read the new edge
-     and the hole keep-outs from the board.
+     The grid places a via only within half a pitch of each node, so a dense area can keep a gap. On the final
+     board (after straightening and any trim) run `"$PY" stitch_gaps.py <board> <out> --limit L`: it measures the
+     distance from every point of the plane pour to the nearest via or plated hole of the net, and adds a via at
+     the nearest legal site of the real board copper until the largest distance is at most L (default 3.54 mm, a
+     5 mm square pitch). It works on the board geometry, so it is right after straightening, when the router's grid
+     occupancy is out of date; do not run `plane_vias.py` on a straightened board. On the r9 CR board the project's
+     stitching row failed at 3.80 mm in the comparator cluster; 4 added vias gave 3.44 mm, DRC 0.
    - Straightening, for the delivered seed: the router steps cell by cell, so free stretches come out as
      staircases. `"$PY" straighten.py $D/board_pv/$B $D/board_st --plan W/plan.json --routes-out
      $D/routes_st.json` replaces each run that it can by one straight or 45-degree segment, or by one 45-degree and

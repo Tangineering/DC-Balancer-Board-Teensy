@@ -7,7 +7,7 @@
 | Item | Value |
 |---|---|
 | Layers | 4 (F.Cu (L1, signals and power pours), In1.Cu (L2, solid GND), In2.Cu (L3, signals), B.Cu (L4, solid GND facing the MB, D-20)) |
-| Size | convex 18-vertex outline, 40.02 x 64.81 mm bounding box (MB frame x 18.58-58.60, y 7.83-72.64), 2241.6 mm2, trimmed after routing inside the D-39 rectangle (D-60); four 6-32 NPTH holes, 3.70 mm (MH1-MH4, D-60) |
+| Size | convex 19-vertex outline, 40.12 x 64.81 mm bounding box (MB frame x 18.58-58.70, y 7.83-72.64), 2248.3 mm2, trimmed after routing inside the D-39 rectangle (D-60); four 6-32 NPTH holes, 3.70 mm (MH1-MH4, D-60) |
 | Thickness | 1.6 mm |
 | Copper | 1 oz outer / 0.5 oz inner (D-29) |
 | Surface finish | ENIG |

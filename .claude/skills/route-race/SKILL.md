@@ -166,11 +166,11 @@ orchestrator for the routed board on a branch. Then:
    proposed to the owner as one request. When the owner's commit with the new outline comes back, merge it and run
    DRC and the constraint check again. Trimming removes only empty area, so no re-route is needed unless the owner
    moved parts or copper.
-7. The finish order on the final outline is: the owner's trimmed board, then plane vias with `--stitch`, then
-   straightening, then the project's silk step. Stitching and straightening read the new edge and the hole
-   keep-outs from the board, so they belong after the trim. If the owner's trimmed board was made from a board
-   without them (r9 CR: D-60 was cut from the routed board before stitching), take the owner's board in the merge
-   and run the steps again on it; do not merge two different boards line by line.
+7. The finish order is: plane vias with `--stitch`, straightening, the trim (the owner's generator, which removes the
+   vias outside the new outline), then `stitch_gaps.py` on the final board, then the project's silk step and checks.
+   `plane_vias.py` needs the router's grid occupancy, so it runs before straightening; `stitch_gaps.py` reads the
+   real copper, so it closes the stitching gaps last. If the owner trims a board that lacks a step, take the owner's
+   board in the merge and run the missing steps on it; do not merge two different boards line by line.
 
 ## 7. Rules
 

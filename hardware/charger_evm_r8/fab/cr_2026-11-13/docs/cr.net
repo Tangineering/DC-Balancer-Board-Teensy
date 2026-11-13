@@ -1,7 +1,7 @@
 (export (version "E")
   (design
     (source "C:\\Life Ops\\School\\Thesis\\DC-Balancer-round4\\hardware\\charger_evm_r8\\cr\\cr.kicad_sch")
-    (date "2026-11-13T10:26:42-0800")
+    (date "2026-11-13T10:33:13-0800")
     (tool "Eeschema 9.0.9")
     (sheet (number "1") (name "/") (tstamps "/")
       (title_block
