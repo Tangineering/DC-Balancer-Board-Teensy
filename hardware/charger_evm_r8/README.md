@@ -22,65 +22,12 @@ J1/J2** are the Teensy 4.1 Dubox receptacles, and **EVM J1** is the charger VIN 
 Figure 2.1 shows the power and signal architecture of the charger path. Power flows from VBUS or V-MOT into the EVM and
 returns to the pack through CR J1 pads 18/19.
 
+![Figure 2.1. Charger path, block diagram (r9).](figures/fig2_1_block_diagram.png)
+
 Figure 2.1. Charger path, block diagram (r9).
 
-```text
- FUEL CELL (H-20)                       BATTERY PACK 2S (VBT), pack V- = PCB GND
-      |                                      ^                  |
-  FC boost TPS61288                          | D-BT-SQ          BT boost TPS61288
-      |  (FC_REG_ENABLE 3)                   | (BT_SEQ 32)      |  (BT_REG_ENABLE 4)
-  D-FC-EN (FC_BUS 27)                        |              D-BT-EN (BT_BUS 28)
-      |                                      |                  |
-      +============ VBUS 16.0 V ============ ) =================+
-      |                  |                   |
-      |              D-MT-EN (MOT_PWR 29)    |  VCHG (MB net)
-      |                  |                   |
-      |               V-MOT ---- VESC/motor  |
-      |                  |                   |
-  D-BC-FC (FC_CHARGE 31) D-BC-RG (REGEN 30)  |
-      |                  |                   |
-      +------> VCHG-IN <-+  (pin 38 CHG_VOLTAGE divider R1-CHG)
-                  |                          |
- ===MB============|==========================|============================================
-                  | CR J1 pad 10             ^ CR J1 pads 18/19     pads 4, 14, 15 = GND
- ===CR (plug-on: SSQ sockets on the MB, TSW strips on the CR)=============================
-                  v                          |
-        eFuse U101 TPS26630 + D103           |
-                  |  VCHGOUT                 |  VCHG
-                  |  W1/W2 20 AWG            |  W3/W4 18 AWG
-                  v                          |
- ===EVM (BQ25798EVM on an insulating plate)==|============================================
-   EVM J1 VIN ---> BQ25798 buck-boost ---> EVM J5 BATTERY
-                  ^       ^           |
-                 /CE   ILIM_HIZ      STAT
-                  |       |           v
- ===EIB (2-layer, beside the EVM)==========================================================
-   U201/U202 open-drain drivers, Q201-Q203; leads E1, E2, E3, E5, E7, E8 to EVM test points
-                  ^                   |
-                  | CE_DRV,           | STAT
-                  | ILIM_REL_A/B,     v
-                  | RFC_OFF, 3V3 x 2      W5 14-way ribbon: CR J101 <-> EIB J201
- ===CR permit gate=========================================================================
-   Comparators U102 H1, U103 UVB, U119 FCC_OFF, U120 FCC_ON
-   Logic U105, U106, U107, U110, U118  ->  CE_DRV, ILIM_REL_A/B, RFC_OFF
-                  ^                                   ^
-                  | J-TAP J102 (Micro-Fit 2 x 5)      | CR J1 pad 11 CHG_ARM (Teensy pin 5)
-                  |  10 tap conductors                |
- ===Taps==========|===================================|====================================
-   T1  V-MOT  (C-D6, R170)      T2 VBUS (C-D2, R171)     T7b, T17r shields
-   T5  pin-31 EN net (MB J1.45) T6 3V3  (MB J1.29)       T10 pin 33 CHG_QUAL (MB J2.47)
-   T13 pin 34 CHG_H1_RB         T16 pin 35 CHG_EFUSE_FLT T17 pin 22 CHG_IIN
-                  ^                                   ^
- ===Teensy 4.1 on MB J1/J2 (Dubox 2 x 24)=================================================
-
- CR J1 signal pads outside the permit gate:
-   pad 3 STAT          EVM STAT -> E7 -> EIB -> W5 -> CR -> CR J1 pad 3 -> Teensy pin 6
-   pads 8/7 SDA/SCL    Teensy pins 18/19 -> CR J1 pads 8/7 -> CR -> W7 -> EVM J8 (I2C 0x6B)
-   pad 13 TS_EXT       MB J-NTC -> CR J1 pad 13 -> CR -> W6 -> EVM J7 pin 1 (only with a pack NTC)
-```
-
-The diagram is schematic and not to scale. The mark ")" on the VBUS bar is a crossing with no connection: VCHG passes
-VBUS without joining it. Only CR J1 pad 11 and the J-TAP conductors enter the permit gate. Table 2.2, section 8.6 and
+The diagram is schematic and not to scale. Thick red conductors carry power and thin blue lines carry logic or analog
+signals; a bridge marks a crossing with no connection. The source is `gen/readme_figures.py`. Only CR J1 pad 11 and the J-TAP conductors enter the permit gate. Table 2.2, section 8.6 and
 design-document sections A.5 and C give the EIB-to-EVM leads and the EVM modifications.
 
 ### 2.2 Blocks
@@ -126,7 +73,7 @@ leads W1-W4. All logic crosses CR J1, J-TAP, W5, W6, W7 or the E leads.
 
 ## 3. What changed on 2026-11-12
 
-The thermocouple and the polyimide sheet are removed, and no charging of any kind runs before the R5 build flag
+The thermocouple and the polyimide sheet are removed, T-F-16 is retired, and no charging of any kind runs before the R5 build flag
 (section 7.2). Sections 3.1 to 3.3 give the full change record.
 
 ### 3.1 Physical and functional changes
@@ -139,7 +86,7 @@ Table 3.1. Changes of 2026-11-12.
 
 | Area | Before (r8 or r7) | Now (r9) | Record |
 |---|---|---|---|
-| Thermocouple on the MB VBT trace | Fitted under the polyimide sheet, read in T-F-16 | **Removed.** No replacement. The MB VBT trace, at its IPC-2221 10 C rise at 3.21 A on 1 oz, is unmeasured until T-F-16 is retired or re-specified (J.2 items 45, 72(a)) | D-43 |
+| Thermocouple on the MB VBT trace | Fitted under the polyimide sheet, read in T-F-16 | **Removed.** No replacement. The MB VBT trace, at its IPC-2221 10 C rise at 3.21 A on 1 oz, is accepted unmeasured; T-F-16 is retired (operator ruling 2026-11-12, design-document J.1 item 25) | D-43 |
 | Polyimide sheet over 368 untented MB vias | 0.125 mm sheet bonded under the CR | **Retired.** Protection is the >= 1.5 mm air gap and the solder-masked L4 GND | D-43 |
 | CR outline | r7 outline with tab X, tab Y, chamfer and feet FT1/FT2 | **Plug-on rectangle** x 18.584-67, y 7-94 (48.416 x 87 mm), removable | D-39 |
 | MB parts under the CR | None of the switching parts | Both boost switching nodes, L-FC, L-BT, REG-5V: about 1.6-3.3 W, BT boost TODO(calc) (Table 8.1) | D-39 |
@@ -184,7 +131,7 @@ Table 3.2. Withdrawn or re-scoped tests, requirements and MB steps.
 | PM7 (taps T18, T19) | Deleted | r9-3 |
 | PM10, T-A-01b, T-E-02 | Withdrawn | r9-4 |
 | T-A-09 | Withdrawn | r9-5 |
-| T-F-16 | Open: retire or re-specify | r9-5 |
+| T-F-16 | Withdrawn (operator ruling 2026-11-12; trace rise accepted unmeasured, J.1 item 25) | r9-5 |
 | T-F-18 | Re-scoped to CR vibration and contact retention | r9-5 |
 | FR-08(a), FR-08(c) | Withdrawn; FR-08(b) replaced by an I2C latch trip | r9-7 |
 | FR-09, FR-34, FR-35, FR-47(b), I-7, T-C-10, T-D-09 | Withdrawn | r9-7 |
@@ -294,6 +241,16 @@ ILIM_REL = (H1 AND UVB) OR (FCC_ON AND NOT FCC_OFF) OR (QUAL AND FCC_OFF AND NOT
 CE_DRV   = P5 (buffered), so /CE = NOT P5
 RFC_OFF  = FCC_OFF OR (H1 AND UVB)
 ```
+
+Figure 5.1 shows the same equations as a gate-level diagram, with the comparators, the package sections of Table 8.3,
+the pull-downs and the output resistors to J101.
+
+![Figure 5.1. Permit gate, logic diagram (r9).](figures/fig5_1_permit_gate.png)
+
+Figure 5.1. Permit gate, logic diagram (r9).
+
+In Figure 5.1, the small grey numbers are package pin numbers from design-document B.8. The U107 DBV pin numbers are
+still TODO(verify: SCES487I).
 
 The first release term (H1U) is the regen release. The second term (FCCP) is the FC-window release; it needs both
 comparators to agree, so a stuck-HIGH U120 alone does not release the converter. The third term (QF) releases the
@@ -710,7 +667,7 @@ The following decisions belong to the operator. Each item names its record.
 
 1. Review the step-1 diff summary at check-in 1 (HANDOFF section 3).
 2. Closed 2026-11-12: the operator accepted the J-TAP map with T5 (A4) diagonal to T10 (B5) (D-46, J.2 item 63).
-3. Retire T-F-16 or re-specify its method, now that the thermocouple is removed (D-43, J.2 item 72).
+3. Closed 2026-11-12: the operator retired T-F-16; the MB VBT trace rise is accepted unmeasured (D-43, J.1 item 25).
 4. Complete the change-request section 6 survey (D-39, survey item MS3). It covers the L-FC/L-BT heights (5.0 mm
    listing vs 6.5 mm sibling), the bodge-part heights and the J-BT and J-BL face positions. It also checks whether
    C1-BT, C1-FC, CBL2, RB2 and RB3 clear x 18.584.

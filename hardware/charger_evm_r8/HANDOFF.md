@@ -52,7 +52,8 @@ Stack-up and fab rules:
 - VCHGOUT routing is the design owner's call on L1 and, if needed, L3 (D-22).
 - OSH Park-only CR rule file; router default 6/6 mil (0.1524 mm), 5/5 mil (0.127 mm) only at necks; 1 oz outer /
   0.5 oz inner; unused inner pads removed on every THT pad (D-29, D-30). The EIB stays at 6/6 mil.
-- No polyimide sheet and no thermocouple (D-43).
+- No polyimide sheet and no thermocouple (D-43). T-F-16 is retired (operator ruling 2026-11-12); the MB VBT trace rise
+  under the CR is accepted unmeasured (design document J.1 item 25), so no T-F-16 open item remains.
 
 Circuit:
 

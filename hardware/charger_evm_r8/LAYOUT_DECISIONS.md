@@ -654,7 +654,9 @@ digest, and its reconciliation notes bind where a record disagrees.
 - Reason: the operator chose "Retire entirely" for the sheet, against local tape and a full film. The operator judged
   the thermocouple an unnecessary complication for the amount of risk mitigation.
 - Consequence: the protection against the exposed MB via rings rests on the air gap and the masked L4 only (D-20).
-  T-F-16 needs a new method or retirement (design owner). Kapton uses unrelated to the sheet (the pin 7-10 tip patch)
+  T-F-16 is retired (operator ruling 2026-11-12, "retire T-F-16"; design document r9-5, J.1 item 25): the MB VBT
+  trace rise under the CR, the IPC-2221 10 C rise at 3.21 A on 1 oz, is accepted unmeasured (superseded: "T-F-16 needs a
+  new method or retirement (design owner)"). Kapton uses unrelated to the sheet (the pin 7-10 tip patch)
   are not retired by this ruling. Record: `decisions_2026-11-12/stackup_fabrules_decisions_2026-11-12.md` sections 2
   and 3a.
 
