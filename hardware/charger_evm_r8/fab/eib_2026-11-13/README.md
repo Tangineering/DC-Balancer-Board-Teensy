@@ -1,6 +1,6 @@
 # EIB, EVM interface board: fabrication package (2026-11-13)
 
-**Status: not ordered.** This package awaits operator review before order (dec2-eib decision 1, 2026-11-12). The routing is D-28; the straightened tracks, the F.Cu AGND pour and the AGND stitching vias are D-63 (`eib/straighten.md`, `eib/stitch_gaps.md`).
+**Status: not ordered.** This package awaits operator review before order (dec2-eib decision 1, 2026-11-12). The routing is D-28; the straightened tracks, the F.Cu AGND pour and the AGND stitching vias are D-63 (`eib/straighten.md`, `eib/stitch_gaps.md`); the reference designators are D-64 (`eib/silk_refs.md` lists those on F.Fab only).
 
 ## 1. Board
 
@@ -85,7 +85,7 @@ with the creation-date lines ignored. Result: DIFFERENCES FOUND.
 | `gerbers/eib-F_Cu.gtl` | DIFFERENT |
 | `gerbers/eib-F_Mask.gts` | identical (6117 lines) |
 | `gerbers/eib-F_Paste.gtp` | identical (253 lines) |
-| `gerbers/eib-F_Silkscreen.gto` | identical (6415 lines) |
+| `gerbers/eib-F_Silkscreen.gto` | DIFFERENT |
 | `gerbers/eib-job.gbrjob` | identical (126 lines) |
 | `drill/eib-NPTH-drl_map.gbr` | identical (920 lines) |
 | `drill/eib-NPTH.drl` | identical (15 lines) |

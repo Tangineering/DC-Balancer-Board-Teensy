@@ -66,7 +66,8 @@ DNP, FIT = dnp_split()
 RULES = {"cr": "fab_4layer_oshpark_only.kicad_dru", "eib": "fab_2layer_oshpark_pcbway.kicad_dru"}[B]
 STATUS = ("**Status: not ordered.** This package awaits operator review before order (dec2-eib decision 1, "
           "2026-11-12). The routing is D-28; the straightened tracks, the F.Cu AGND pour and the AGND stitching vias "
-          "are D-63 (`eib/straighten.md`, `eib/stitch_gaps.md`).\n\n" if B == "eib" else
+          "are D-63 (`eib/straighten.md`, `eib/stitch_gaps.md`); the reference designators are D-64 (`eib/silk_refs.md` "
+          "lists those on F.Fab only).\n\n" if B == "eib" else
           "**Status: not ordered.** This package awaits operator review before order. The fab is OSH Park (operator "
           "ruling 2026-11-12). The routing is D-58; the outline is D-62 and the 6-32 holes are D-60; the GND stitching "
           "and straightened tracks are D-61; the reference designators are D-59 (`cr/silk_refs.md` lists those on F.Fab "

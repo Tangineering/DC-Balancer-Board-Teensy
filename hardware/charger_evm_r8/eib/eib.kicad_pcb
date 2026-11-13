@@ -122,13 +122,12 @@
 		(descr "Resistor SMD 0603 (1608 Metric), square (rectangular) end terminal, IPC-7351 nominal, (Body size source: IPC-SM-782 page 72, https://www.pcb-3d.com/wordpress/wp-content/uploads/ipc-sm-782a_amendment_1_and_2.pdf), generated with kicad-footprint-generator")
 		(tags "resistor")
 		(property "Reference" "R267"
-			(at 0 0 0)
+			(at 3 4.2 0)
 			(layer "F.SilkS")
-			(hide yes)
 			(uuid "959bc6bc-9309-4768-b5b3-675cd0ce8882")
 			(effects
 				(font
-					(size 1.27 1.27)
+					(size 1 1)
 					(thickness 0.15)
 				)
 			)
@@ -262,13 +261,12 @@
 		(descr "Resistor SMD 0603 (1608 Metric), square (rectangular) end terminal, IPC-7351 nominal, (Body size source: IPC-SM-782 page 72, https://www.pcb-3d.com/wordpress/wp-content/uploads/ipc-sm-782a_amendment_1_and_2.pdf), generated with kicad-footprint-generator")
 		(tags "resistor")
 		(property "Reference" "R265"
-			(at 0 0 0)
+			(at 5.4 -2.7 0)
 			(layer "F.SilkS")
-			(hide yes)
 			(uuid "03485167-f6ee-4215-8a7f-c452c3199380")
 			(effects
 				(font
-					(size 1.27 1.27)
+					(size 0.8 0.8)
 					(thickness 0.15)
 				)
 			)
@@ -402,13 +400,12 @@
 		(descr "DCK R-PDSO-G5, JEDEC MO-203C Var AA, https://www.ti.com/lit/ds/symlink/tmp20.pdf#page=23")
 		(tags "DCK R-PDSO-G5 MO-203C")
 		(property "Reference" "U202"
-			(at 0 0 90)
+			(at 2.55 4.65 0)
 			(layer "F.SilkS")
-			(hide yes)
 			(uuid "4a946d58-3831-404b-b6f9-711cfef54bae")
 			(effects
 				(font
-					(size 1.27 1.27)
+					(size 1 1)
 					(thickness 0.15)
 				)
 			)
@@ -604,13 +601,12 @@
 		(descr "Resistor SMD 0603 (1608 Metric), square (rectangular) end terminal, IPC-7351 nominal, (Body size source: IPC-SM-782 page 72, https://www.pcb-3d.com/wordpress/wp-content/uploads/ipc-sm-782a_amendment_1_and_2.pdf), generated with kicad-footprint-generator")
 		(tags "resistor")
 		(property "Reference" "R263"
-			(at 0 0 0)
+			(at 1.199999 1.649999 0)
 			(layer "F.SilkS")
-			(hide yes)
 			(uuid "98dc13fb-df00-4334-a1fb-2b908bda9592")
 			(effects
 				(font
-					(size 1.27 1.27)
+					(size 1 1)
 					(thickness 0.15)
 				)
 			)
@@ -744,13 +740,12 @@
 		(descr "Resistor SMD 0603 (1608 Metric), square (rectangular) end terminal, IPC-7351 nominal, (Body size source: IPC-SM-782 page 72, https://www.pcb-3d.com/wordpress/wp-content/uploads/ipc-sm-782a_amendment_1_and_2.pdf), generated with kicad-footprint-generator")
 		(tags "resistor")
 		(property "Reference" "R271"
-			(at 0 0 90)
+			(at -4.95 -3.9 0)
 			(layer "F.SilkS")
-			(hide yes)
 			(uuid "017520e4-0173-4f27-bab5-71b288f1a675")
 			(effects
 				(font
-					(size 1.27 1.27)
+					(size 1 1)
 					(thickness 0.15)
 				)
 			)
@@ -884,13 +879,12 @@
 		(descr "Capacitor SMD 0603 (1608 Metric), square (rectangular) end terminal, IPC-7351 nominal, (Body size source: IPC-SM-782 page 76, https://www.pcb-3d.com/wordpress/wp-content/uploads/ipc-sm-782a_amendment_1_and_2.pdf), generated with kicad-footprint-generator")
 		(tags "capacitor")
 		(property "Reference" "C205"
-			(at 0 0 0)
+			(at -4.05 0.15 0)
 			(layer "F.SilkS")
-			(hide yes)
 			(uuid "b369e0d9-2d1d-4840-87be-b861f10a96b4")
 			(effects
 				(font
-					(size 1.27 1.27)
+					(size 0.8 0.8)
 					(thickness 0.15)
 				)
 			)
@@ -1024,13 +1018,12 @@
 		(descr "Resistor SMD 0603 (1608 Metric), square (rectangular) end terminal, IPC-7351 nominal, (Body size source: IPC-SM-782 page 72, https://www.pcb-3d.com/wordpress/wp-content/uploads/ipc-sm-782a_amendment_1_and_2.pdf), generated with kicad-footprint-generator")
 		(tags "resistor")
 		(property "Reference" "R255"
-			(at 0 0 90)
+			(at 3.45 -0.750001 90)
 			(layer "F.SilkS")
-			(hide yes)
 			(uuid "5c675b23-2953-4113-8687-483c4ba89789")
 			(effects
 				(font
-					(size 1.27 1.27)
+					(size 1 1)
 					(thickness 0.15)
 				)
 			)
@@ -1164,13 +1157,12 @@
 		(descr "Resistor SMD 0603 (1608 Metric), square (rectangular) end terminal, IPC-7351 nominal, (Body size source: IPC-SM-782 page 72, https://www.pcb-3d.com/wordpress/wp-content/uploads/ipc-sm-782a_amendment_1_and_2.pdf), generated with kicad-footprint-generator")
 		(tags "resistor")
 		(property "Reference" "R259"
-			(at 0 0 90)
+			(at 1.2 4.5 0)
 			(layer "F.SilkS")
-			(hide yes)
 			(uuid "08bd1c2d-2f31-4f84-8b57-668f1775c873")
 			(effects
 				(font
-					(size 1.27 1.27)
+					(size 1 1)
 					(thickness 0.15)
 				)
 			)
@@ -1304,13 +1296,12 @@
 		(descr "Resistor SMD 0603 (1608 Metric), square (rectangular) end terminal, IPC-7351 nominal, (Body size source: IPC-SM-782 page 72, https://www.pcb-3d.com/wordpress/wp-content/uploads/ipc-sm-782a_amendment_1_and_2.pdf), generated with kicad-footprint-generator")
 		(tags "resistor")
 		(property "Reference" "R251"
-			(at 0 0 0)
+			(at -3.150001 2.549999 0)
 			(layer "F.SilkS")
-			(hide yes)
 			(uuid "4d244b72-521b-4bfa-bf4a-207a93ad16d2")
 			(effects
 				(font
-					(size 1.27 1.27)
+					(size 0.8 0.8)
 					(thickness 0.15)
 				)
 			)
@@ -1444,13 +1435,12 @@
 		(descr "Resistor SMD 0603 (1608 Metric), square (rectangular) end terminal, IPC-7351 nominal, (Body size source: IPC-SM-782 page 72, https://www.pcb-3d.com/wordpress/wp-content/uploads/ipc-sm-782a_amendment_1_and_2.pdf), generated with kicad-footprint-generator")
 		(tags "resistor")
 		(property "Reference" "R276"
-			(at 0 0 0)
+			(at -3.75 3.299999 0)
 			(layer "F.SilkS")
-			(hide yes)
 			(uuid "27d5d435-b8dc-484d-94ee-bce0f96a6121")
 			(effects
 				(font
-					(size 1.27 1.27)
+					(size 0.8 0.8)
 					(thickness 0.15)
 				)
 			)
@@ -1756,13 +1746,12 @@
 		(descr "Capacitor SMD 0603 (1608 Metric), square (rectangular) end terminal, IPC-7351 nominal, (Body size source: IPC-SM-782 page 76, https://www.pcb-3d.com/wordpress/wp-content/uploads/ipc-sm-782a_amendment_1_and_2.pdf), generated with kicad-footprint-generator")
 		(tags "capacitor")
 		(property "Reference" "C201"
-			(at 0 0 0)
+			(at -5.700001 -1.2 0)
 			(layer "F.SilkS")
-			(hide yes)
 			(uuid "125b1501-39db-4a0b-b2f5-eb560e37130b")
 			(effects
 				(font
-					(size 1.27 1.27)
+					(size 1 1)
 					(thickness 0.15)
 				)
 			)
@@ -2102,12 +2091,11 @@
 		(tags "resistor")
 		(property "Reference" "R274"
 			(at 0 0 0)
-			(layer "F.SilkS")
-			(hide yes)
+			(layer "F.Fab")
 			(uuid "ad0f0fe9-8429-4dfd-a174-0e12f8410aaa")
 			(effects
 				(font
-					(size 1.27 1.27)
+					(size 1 1)
 					(thickness 0.15)
 				)
 			)
@@ -2242,12 +2230,11 @@
 		(tags "resistor")
 		(property "Reference" "R275"
 			(at 0 0 0)
-			(layer "F.SilkS")
-			(hide yes)
+			(layer "F.Fab")
 			(uuid "5e986ac6-52ae-42ae-9810-b051cd80ae35")
 			(effects
 				(font
-					(size 1.27 1.27)
+					(size 1 1)
 					(thickness 0.15)
 				)
 			)
@@ -2467,13 +2454,12 @@
 		(descr "Resistor SMD 0603 (1608 Metric), square (rectangular) end terminal, IPC-7351 nominal, (Body size source: IPC-SM-782 page 72, https://www.pcb-3d.com/wordpress/wp-content/uploads/ipc-sm-782a_amendment_1_and_2.pdf), generated with kicad-footprint-generator")
 		(tags "resistor")
 		(property "Reference" "R254"
-			(at 0 0 90)
+			(at 1.800001 1.5 90)
 			(layer "F.SilkS")
-			(hide yes)
 			(uuid "5656821b-2eed-48ce-84ab-ee036f534ba4")
 			(effects
 				(font
-					(size 1.27 1.27)
+					(size 0.8 0.8)
 					(thickness 0.15)
 				)
 			)
@@ -2606,13 +2592,12 @@
 		(at 20 31)
 		(descr "Samtec FTSH-107-01-x-DV, 2x07 1.27 mm SMT vertical")
 		(property "Reference" "J201"
-			(at 0 -2 0)
+			(at 1.65 7.5 0)
 			(layer "F.SilkS")
-			(hide yes)
 			(uuid "341851b9-6b75-477d-bf5a-6affeac4d32d")
 			(effects
 				(font
-					(size 0.8 0.8)
+					(size 1 1)
 					(thickness 0.15)
 				)
 			)
@@ -2836,13 +2821,12 @@
 		(descr "SOT, 3 Pin (JEDEC TO-236 Var AB https://www.jedec.org/document_search?search_api_views_fulltext=TO-236), generated with kicad-footprint-generator ipc_gullwing_generator.py")
 		(tags "SOT TO_SOT_SMD")
 		(property "Reference" "Q203"
-			(at 0 0 0)
+			(at -3.900001 -0.300001 0)
 			(layer "F.SilkS")
-			(hide yes)
 			(uuid "91417109-e570-466c-b797-9e6f4f246653")
 			(effects
 				(font
-					(size 1.27 1.27)
+					(size 1 1)
 					(thickness 0.15)
 				)
 			)
@@ -2985,13 +2969,12 @@
 		(descr "Resistor SMD 0603 (1608 Metric), square (rectangular) end terminal, IPC-7351 nominal, (Body size source: IPC-SM-782 page 72, https://www.pcb-3d.com/wordpress/wp-content/uploads/ipc-sm-782a_amendment_1_and_2.pdf), generated with kicad-footprint-generator")
 		(tags "resistor")
 		(property "Reference" "R262"
-			(at 0 0 0)
+			(at -1.2 2.7 90)
 			(layer "F.SilkS")
-			(hide yes)
 			(uuid "3fff2fa5-9d4d-40b7-8af8-127bef09ca8f")
 			(effects
 				(font
-					(size 1.27 1.27)
+					(size 1 1)
 					(thickness 0.15)
 				)
 			)
@@ -3126,12 +3109,11 @@
 		(tags "SSOP-8 2.95x2.8mm Pitch 0.65mm")
 		(property "Reference" "U201"
 			(at 0 0 0)
-			(layer "F.SilkS")
-			(hide yes)
+			(layer "F.Fab")
 			(uuid "d5433768-f7c6-42d7-81fd-6bed199a7901")
 			(effects
 				(font
-					(size 1.27 1.27)
+					(size 1 1)
 					(thickness 0.15)
 				)
 			)
@@ -3342,13 +3324,12 @@
 		(descr "Resistor SMD 0603 (1608 Metric), square (rectangular) end terminal, IPC-7351 nominal, (Body size source: IPC-SM-782 page 72, https://www.pcb-3d.com/wordpress/wp-content/uploads/ipc-sm-782a_amendment_1_and_2.pdf), generated with kicad-footprint-generator")
 		(tags "resistor")
 		(property "Reference" "R257"
-			(at 0 0 0)
+			(at -3.45 0.15 0)
 			(layer "F.SilkS")
-			(hide yes)
 			(uuid "564c13bc-1cae-4c1f-8194-516740ddd3fd")
 			(effects
 				(font
-					(size 1.27 1.27)
+					(size 1 1)
 					(thickness 0.15)
 				)
 			)
@@ -3687,13 +3668,12 @@
 		(descr "Resistor SMD 0603 (1608 Metric), square (rectangular) end terminal, IPC-7351 nominal, (Body size source: IPC-SM-782 page 72, https://www.pcb-3d.com/wordpress/wp-content/uploads/ipc-sm-782a_amendment_1_and_2.pdf), generated with kicad-footprint-generator")
 		(tags "resistor")
 		(property "Reference" "R250"
-			(at 0 0 0)
+			(at 5.7 -2.850001 0)
 			(layer "F.SilkS")
-			(hide yes)
 			(uuid "ab3bf1bf-015d-4b67-b7c7-82d73370d8fe")
 			(effects
 				(font
-					(size 1.27 1.27)
+					(size 1 1)
 					(thickness 0.15)
 				)
 			)
@@ -3913,13 +3893,12 @@
 		(descr "Resistor SMD 0603 (1608 Metric), square (rectangular) end terminal, IPC-7351 nominal, (Body size source: IPC-SM-782 page 72, https://www.pcb-3d.com/wordpress/wp-content/uploads/ipc-sm-782a_amendment_1_and_2.pdf), generated with kicad-footprint-generator")
 		(tags "resistor")
 		(property "Reference" "R270"
-			(at 0 0 0)
+			(at 5.399999 -2.55 0)
 			(layer "F.SilkS")
-			(hide yes)
 			(uuid "e67f670a-0f40-45e3-b4bb-f0951af25fbb")
 			(effects
 				(font
-					(size 1.27 1.27)
+					(size 0.8 0.8)
 					(thickness 0.15)
 				)
 			)
@@ -4053,13 +4032,12 @@
 		(descr "Resistor SMD 0603 (1608 Metric), square (rectangular) end terminal, IPC-7351 nominal, (Body size source: IPC-SM-782 page 72, https://www.pcb-3d.com/wordpress/wp-content/uploads/ipc-sm-782a_amendment_1_and_2.pdf), generated with kicad-footprint-generator")
 		(tags "resistor")
 		(property "Reference" "R258"
-			(at 0 0 0)
+			(at 3.449999 -0.900001 0)
 			(layer "F.SilkS")
-			(hide yes)
 			(uuid "475a5f7e-9849-4048-8d8b-ab903ea348f6")
 			(effects
 				(font
-					(size 1.27 1.27)
+					(size 1 1)
 					(thickness 0.15)
 				)
 			)
@@ -4193,13 +4171,12 @@
 		(descr "Resistor SMD 0603 (1608 Metric), square (rectangular) end terminal, IPC-7351 nominal, (Body size source: IPC-SM-782 page 72, https://www.pcb-3d.com/wordpress/wp-content/uploads/ipc-sm-782a_amendment_1_and_2.pdf), generated with kicad-footprint-generator")
 		(tags "resistor")
 		(property "Reference" "R260"
-			(at 0 0 0)
+			(at 2.699999 -1.5 0)
 			(layer "F.SilkS")
-			(hide yes)
 			(uuid "b8f1d0f7-e8f6-4734-a69c-9f724f33f810")
 			(effects
 				(font
-					(size 1.27 1.27)
+					(size 1 1)
 					(thickness 0.15)
 				)
 			)
@@ -4334,12 +4311,11 @@
 		(tags "capacitor")
 		(property "Reference" "C202"
 			(at 0 0 0)
-			(layer "F.SilkS")
-			(hide yes)
+			(layer "F.Fab")
 			(uuid "1939909d-973b-4cff-a902-0c0e1a89ae36")
 			(effects
 				(font
-					(size 1.27 1.27)
+					(size 1 1)
 					(thickness 0.15)
 				)
 			)
@@ -4473,13 +4449,12 @@
 		(descr "Resistor SMD 0603 (1608 Metric), square (rectangular) end terminal, IPC-7351 nominal, (Body size source: IPC-SM-782 page 72, https://www.pcb-3d.com/wordpress/wp-content/uploads/ipc-sm-782a_amendment_1_and_2.pdf), generated with kicad-footprint-generator")
 		(tags "resistor")
 		(property "Reference" "R273"
-			(at 0 0 0)
+			(at -1.65 3.45 0)
 			(layer "F.SilkS")
-			(hide yes)
 			(uuid "67d0c9f0-db91-4476-a6f2-4dc6a367f1fe")
 			(effects
 				(font
-					(size 1.27 1.27)
+					(size 1 1)
 					(thickness 0.15)
 				)
 			)
@@ -4613,13 +4588,12 @@
 		(descr "Resistor SMD 0603 (1608 Metric), square (rectangular) end terminal, IPC-7351 nominal, (Body size source: IPC-SM-782 page 72, https://www.pcb-3d.com/wordpress/wp-content/uploads/ipc-sm-782a_amendment_1_and_2.pdf), generated with kicad-footprint-generator")
 		(tags "resistor")
 		(property "Reference" "R261"
-			(at 0 0 90)
+			(at 3.900001 2.55 90)
 			(layer "F.SilkS")
-			(hide yes)
 			(uuid "22ae7ee2-92e6-4359-b6f1-1b7dc70c1c5b")
 			(effects
 				(font
-					(size 1.27 1.27)
+					(size 0.8 0.8)
 					(thickness 0.15)
 				)
 			)
@@ -4753,13 +4727,12 @@
 		(descr "Resistor SMD 0603 (1608 Metric), square (rectangular) end terminal, IPC-7351 nominal, (Body size source: IPC-SM-782 page 72, https://www.pcb-3d.com/wordpress/wp-content/uploads/ipc-sm-782a_amendment_1_and_2.pdf), generated with kicad-footprint-generator")
 		(tags "resistor")
 		(property "Reference" "R269"
-			(at 0 0 0)
+			(at 3.149999 3.45 0)
 			(layer "F.SilkS")
-			(hide yes)
 			(uuid "e7dcc893-7141-4be1-b915-b77d04379a7e")
 			(effects
 				(font
-					(size 1.27 1.27)
+					(size 1 1)
 					(thickness 0.15)
 				)
 			)
@@ -4893,13 +4866,12 @@
 		(descr "Resistor SMD 0603 (1608 Metric), square (rectangular) end terminal, IPC-7351 nominal, (Body size source: IPC-SM-782 page 72, https://www.pcb-3d.com/wordpress/wp-content/uploads/ipc-sm-782a_amendment_1_and_2.pdf), generated with kicad-footprint-generator")
 		(tags "resistor")
 		(property "Reference" "R264"
-			(at 0 0 0)
+			(at 3.75 2.85 0)
 			(layer "F.SilkS")
-			(hide yes)
 			(uuid "0954f471-99a8-4c44-aa70-dc12d971a418")
 			(effects
 				(font
-					(size 1.27 1.27)
+					(size 1 1)
 					(thickness 0.15)
 				)
 			)
@@ -5206,12 +5178,11 @@
 		(tags "resistor")
 		(property "Reference" "R253"
 			(at 0 0 0)
-			(layer "F.SilkS")
-			(hide yes)
+			(layer "F.Fab")
 			(uuid "611f37d3-4558-4652-9a58-c46bd385f238")
 			(effects
 				(font
-					(size 1.27 1.27)
+					(size 1 1)
 					(thickness 0.15)
 				)
 			)
@@ -5345,13 +5316,12 @@
 		(descr "Resistor SMD 0603 (1608 Metric), square (rectangular) end terminal, IPC-7351 nominal, (Body size source: IPC-SM-782 page 72, https://www.pcb-3d.com/wordpress/wp-content/uploads/ipc-sm-782a_amendment_1_and_2.pdf), generated with kicad-footprint-generator")
 		(tags "resistor")
 		(property "Reference" "R268"
-			(at 0 0 90)
+			(at -4.35 1.5 0)
 			(layer "F.SilkS")
-			(hide yes)
 			(uuid "5f2553e1-c075-452f-97f7-1dc7233c0169")
 			(effects
 				(font
-					(size 1.27 1.27)
+					(size 1 1)
 					(thickness 0.15)
 				)
 			)
@@ -5485,13 +5455,12 @@
 		(descr "SOT, 6 Pin (JEDEC MO-178 Var AB https://www.jedec.org/document_search?search_api_views_fulltext=MO-178), generated with kicad-footprint-generator ipc_gullwing_generator.py")
 		(tags "SOT TO_SOT_SMD")
 		(property "Reference" "U203"
-			(at 0 0 90)
+			(at 5.250001 1.2 0)
 			(layer "F.SilkS")
-			(hide yes)
 			(uuid "0f406374-3143-4eca-bad1-491713d0fbdb")
 			(effects
 				(font
-					(size 1.27 1.27)
+					(size 0.8 0.8)
 					(thickness 0.15)
 				)
 			)
@@ -5658,13 +5627,12 @@
 		(descr "Capacitor SMD 0603 (1608 Metric), square (rectangular) end terminal, IPC-7351 nominal, (Body size source: IPC-SM-782 page 76, https://www.pcb-3d.com/wordpress/wp-content/uploads/ipc-sm-782a_amendment_1_and_2.pdf), generated with kicad-footprint-generator")
 		(tags "capacitor")
 		(property "Reference" "C204"
-			(at 0 0 90)
+			(at 3.45 -1.5 90)
 			(layer "F.SilkS")
-			(hide yes)
 			(uuid "b43f5bfa-251c-4988-9ca4-dab1634be1c8")
 			(effects
 				(font
-					(size 1.27 1.27)
+					(size 1 1)
 					(thickness 0.15)
 				)
 			)
@@ -5799,12 +5767,11 @@
 		(tags "capacitor")
 		(property "Reference" "C203"
 			(at 0 0 90)
-			(layer "F.SilkS")
-			(hide yes)
+			(layer "F.Fab")
 			(uuid "3c1147a5-45f5-4f2a-9382-f396e23282e3")
 			(effects
 				(font
-					(size 1.27 1.27)
+					(size 1 1)
 					(thickness 0.15)
 				)
 			)
@@ -5938,13 +5905,12 @@
 		(descr "SOT, 3 Pin (JEDEC TO-236 Var AB https://www.jedec.org/document_search?search_api_views_fulltext=TO-236), generated with kicad-footprint-generator ipc_gullwing_generator.py")
 		(tags "SOT TO_SOT_SMD")
 		(property "Reference" "Q202"
-			(at 0 0 90)
+			(at 3.9 5.25 90)
 			(layer "F.SilkS")
-			(hide yes)
 			(uuid "b2c8109a-5d8d-491b-851e-8203a886a7b2")
 			(effects
 				(font
-					(size 1.27 1.27)
+					(size 1 1)
 					(thickness 0.15)
 				)
 			)
@@ -6087,13 +6053,12 @@
 		(descr "SOT, 6 Pin (JEDEC MO-178 Var AB https://www.jedec.org/document_search?search_api_views_fulltext=MO-178), generated with kicad-footprint-generator ipc_gullwing_generator.py")
 		(tags "SOT TO_SOT_SMD")
 		(property "Reference" "U204"
-			(at 0 0 0)
+			(at 4.05 2.4 0)
 			(layer "F.SilkS")
-			(hide yes)
 			(uuid "729c7f0b-5db0-4d46-8d23-69b7bf5f8fa6")
 			(effects
 				(font
-					(size 1.27 1.27)
+					(size 1 1)
 					(thickness 0.15)
 				)
 			)
@@ -6261,12 +6226,11 @@
 		(tags "resistor")
 		(property "Reference" "R266"
 			(at 0 0 0)
-			(layer "F.SilkS")
-			(hide yes)
+			(layer "F.Fab")
 			(uuid "554d879b-d1e9-4544-b4cf-8fa2ceb5b014")
 			(effects
 				(font
-					(size 1.27 1.27)
+					(size 1 1)
 					(thickness 0.15)
 				)
 			)
@@ -6400,13 +6364,12 @@
 		(descr "SOT, 3 Pin (JEDEC TO-236 Var AB https://www.jedec.org/document_search?search_api_views_fulltext=TO-236), generated with kicad-footprint-generator ipc_gullwing_generator.py")
 		(tags "SOT TO_SOT_SMD")
 		(property "Reference" "Q201"
-			(at 0 0 0)
+			(at 6.449999 -2.7 0)
 			(layer "F.SilkS")
-			(hide yes)
 			(uuid "37e09096-3f04-47f2-8865-6869188be72f")
 			(effects
 				(font
-					(size 1.27 1.27)
+					(size 0.8 0.8)
 					(thickness 0.15)
 				)
 			)
@@ -6549,13 +6512,12 @@
 		(descr "Resistor SMD 0603 (1608 Metric), square (rectangular) end terminal, IPC-7351 nominal, (Body size source: IPC-SM-782 page 72, https://www.pcb-3d.com/wordpress/wp-content/uploads/ipc-sm-782a_amendment_1_and_2.pdf), generated with kicad-footprint-generator")
 		(tags "resistor")
 		(property "Reference" "R252"
-			(at 0 0 90)
+			(at 1.95 1.35 90)
 			(layer "F.SilkS")
-			(hide yes)
 			(uuid "9e71bac1-7713-406c-810e-a5eb9d27b424")
 			(effects
 				(font
-					(size 1.27 1.27)
+					(size 0.8 0.8)
 					(thickness 0.15)
 				)
 			)

@@ -17,7 +17,7 @@ Status on 2026-11-13:
 
 | Board | Schematic | Placement | Routing | ERC | DRC | Fab package |
 |---|---|---|---|---|---|---|
-| EIB | complete | complete | complete | 0 | 0 (schematic parity checked) | `fab/eib_2026-11-13/` (D-49 DNP set; copper and drill identical to `fab/eib_2026-11-11/`); not ordered |
+| EIB | complete | complete | complete (D-28; straightened tracks, top AGND pour and stitching D-63; references D-64) | 0 | 0 (schematic parity checked) | `fab/eib_2026-11-13/` (D-49 DNP set; re-exported after D-64); not ordered |
 | CR | complete | complete (D-54 to D-56) | complete (D-58; power copper D-57; outline D-62, holes D-60 and D-62; GND stitching and straightened tracks D-61, re-run in D-62; references D-59 and D-62) | 0 | 0 violations, 0 unconnected items, 0 parity issues (`--severity-all --schematic-parity`) | `fab/cr_2026-11-13/` (re-exported after D-62); not ordered |
 
 On the routed CR with the D-62 outline and the re-run stitching (D-60 to D-62), the constraint check
@@ -596,6 +596,17 @@ footprint-owned zones, and placed 4 vias inside the H1 and H2 mounting-hole keep
 The tool now also reads footprint zones, and `straighten.py` received the same change for track keep-outs (no EIB
 track was affected). The board in the repository was produced with the corrected tool. Reversal: restore
 `eib/eib.kicad_pcb` and `gen/route_eib.py` from the commit before D-63 and run `gen/export.sh eib 2026-11-13` again.
+
+**D-64. EIB reference designators on the top silkscreen (operator request 2026-11-13).** The D-12a reversal of
+2026-11-12 put the reference designators on the CR silkscreen only; all 48 EIB reference fields stayed hidden, so the
+EIB top silkscreen carried no part labels. The 38 reference fields of the passives, transistors, ICs and J201 were made
+visible on F.Silkscreen at 1.0 / 0.15 mm, and `gen/silk_refs.py` (the D-59 tool) placed them. H1 and H2 stay hidden,
+as on the CR mounting holes. E1-E8 stay hidden on the top, because their labels are on B.Silkscreen (D-12a). Result:
+31 references on F.Silkscreen (9 of them over another part's courtyard) and 7 on F.Fab, which had no clear position:
+C202, C203, R253, R266, R274, R275 and U201 (`eib/silk_refs.md`). Copper, nets and footprint positions do not change;
+of the package Gerbers, only `eib-F_Silkscreen.gto` differs from the D-63 export. The board text "EIB r8 2026-11-11"
+is unchanged. Reversal: restore `eib/eib.kicad_pcb` from the commit before D-64 and run `gen/export.sh eib
+2026-11-13` and `gen/fab_readme.py eib 2026-11-13 fab/eib_2026-11-11` again.
 
 ## 8. CR routing attempts
 
@@ -1618,6 +1629,9 @@ rows compare the board Edge.Cuts (20 items, 10 of them arcs) with the filleted `
 **D-63 (2026-11-13):** on the straightened and stitched EIB with the top AGND pour, ERC reports 0 messages and DRC
 (`--severity-all --schematic-parity`) reports 0 violations, 0 unconnected items and 0 parity issues. The EIB
 constraint check is unchanged (`eib/constraint_check.md`). The three KiKit presets ran without messages.
+
+**D-64 (2026-11-13):** after the EIB reference placement, DRC (`--severity-all --schematic-parity`) reports 0
+violations, 0 unconnected items and 0 parity issues, and the EIB constraint check is unchanged.
 
 ### 9.2 Constraint measurements
 
