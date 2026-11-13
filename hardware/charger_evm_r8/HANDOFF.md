@@ -10,7 +10,12 @@ applies them with rulings R1 to R6 as orchestrator defaults (README section 11 i
 done: R132 and R131B are 4.99 kOhm and the CR netlist is frozen (LAYOUT_DECISIONS D-53). The verify pass of the
 r9-12 fixes is clean (run-002 record, section "Fix round r9-12 verification"). Design change row r9-13 re-maps four
 J-TAP cavities (an orchestrator default that the operator may revert), and the netlist is re-frozen (D-53 amendment).
-The next action is placement (step 5).
+
+**Status (2026-11-13, D-50 step 5 done).** The CR is placed on the plug-on outline (LAYOUT_DECISIONS D-54). The live
+board `cr/cr.kicad_pcb` is variant B of `gen/layout_cr.py` (now the default) at the power-pour stage. A two-seed
+routability probe ranked B above variant A: both close 106 of 107 connections, and B needs 860-897 mm of track
+against 1342-1391 mm and 161-162 vias against 181-185. The next action is **operator check-in 3** on
+`cr/placement_F.png` and `cr/placement_B.png`, then the full route-race (step 6) on variant B.
 
 This note gives the starting point for the next session. `LAYOUT_DECISIONS.md` is the full record. The 2026-11-12
 decisions are D-39 to D-50 there, and every older entry carries its 2026-11-12 classification (retired, re-derive,
@@ -24,7 +29,7 @@ amended or kept).
 | CR outline | **plug-on outline x 18.584-67, y 7-94 (MB frame), 48.416 x 87 mm, stencil and reflow assembly (D-39); applied to the documents** (`LAYOUT_DECISIONS.md`, `OUTLINE_CHANGE_REASSESSMENT_2026-11-12.md`). The generator is built on it (D-52: `gen/mb_brd.py`, `gen/cr_geometry.py`, `gen/layout_cr.py`, `gen/check_constraints.py`); `cr/geometry_check.md` passes every check. The height survey is closed by D-51. No board file is built on the outline yet |
 | 2026-11-12 decisions | first round (`DESIGN_STATE_2026-11-12.md` Table 1) and second round (`decisions_2026-11-12/round2/`, digest `orchestrator_digest.md`) **recorded**; LAYOUT_DECISIONS D-39 to D-50 and the classification of D-01 to D-38 applied this round |
 | CR netlist | regenerated from `gen/netlist.py` on the reduced design (D-47, D-31, D-44): 78 parts (r8: 145). W6 and W7 carry the through-hole placeholder footprints of D-45. `cr/charger_r8_cr.pretty` was rebuilt with `gen/fplib.py` and now holds the J102 Micro-Fit footprint, so ERC reports 0 errors and 0 warnings. The netlist export reports "schematic has annotation errors"; the cause is the six letter-suffix references C102a, C102b, C102c, R106s, R131A and R131B (the message disappears when all six are renamed to numeric references in a scratch copy). These references are the B.8 designators and are accepted. The generator applies the 0.25 mm courtyard basis (`_CrtYd0.25`, D-52). **Frozen 2026-11-12 (D-53):** R132 and R131B are 4.99 kOhm (r9-12, ruling R2); `cr/charger_r8_cr.pretty`, `cr/cr.kicad_sch` and `cr/cr.net` were regenerated without placement; 78 parts, 79 nets, connectivity unchanged, ERC 0 errors and 0 warnings, sha256 `e98f4e49e22f60cab729c1db3f93439ce24fda5507423080c31d613b8f340833` (superseded in r9-13). **Re-frozen 2026-11-12 (D-53 amendment, r9-13):** the J-TAP re-map changes connectivity only at J102 pins 1, 2, 7 and 8; `cr/cr.kicad_sch`, `cr/charger_r8_cr.kicad_sym` and `cr/cr.net` regenerated, ERC 0 errors and 0 warnings, sha256 `608bbf977803bc40118baf7a9f7635c60a9d3da6e1ca88ca0b95b1db1f64909b` |
-| CR board file | `cr/cr.kicad_pcb` is the **r7-outline** build (placed + pours, DRC 200 unconnected, 4 starved thermals, 2 silkscreen items). It is stale against the new outline and the reduced netlist; it is not an input to the next build |
+| CR board file | **Plug-on outline, variant B, pour stage (D-54, 2026-11-13).** 78 parts, all on the top, 0 outside the outline. Constraint check 74 pass, 1 FAIL (D-44: U101.25 B.Cu heatsink pad of the TPS26630 footprint), 1 D-20 exemption (R102, fixed). DRC with the OSH Park-only rule file: 131 violations (3 courtyard overlaps from fixed coordinates: W1/W2 counted twice and C102b/J101; 0 clearance; 4 starved thermals; 124 silkscreen), 108 unconnected, 0 parity issues. Rebuild: `gen/pcbbuild.py cr ../cr` from `gen/`, copy `cr/variants_r9/B/cr.kicad_dru` to `cr/cr.kicad_dru`, `apply_board_setup.py`, set the OSH Park minima (D-54), then `ROUTE_SKIP_FR=1 route.py cr ../cr`. **Pitfalls:** `route.py` without `ROUTE_SKIP_FR=1` runs Freerouting into the live board; `check_constraints.py` prints to stdout, so redirect it to `cr/constraint_check.md`; a full `make_board.sh cr` copies the shared OSH Park/PCBWay rule file back in and rewrites the `cr/cr.net` date line and 13 library files. Variant A: `LAYOUT_VARIANT=A`, record in `cr/variants_r9/A/` |
 | CR interactive pass (2026-11-12) | **superseded** by the new outline and the route-race (D-36, D-50). The project is archived at `archive_r7_outline/cr/interactive/` (move staged this round; KiCad must not hold the old path open) |
 | r7 layout work | archived in `archive_r7_outline/` (variants, attempts, images, routability study); reference only |
 | Best partial CR routing (r7) | `archive_r7_outline/cr/attempts/cr_pathfinder_0p1mm_partial.kicad_pcb` (reference only; 516 clearance violations) |
@@ -117,8 +122,11 @@ Steps 1 to 4 below are done (2026-11-12). Check-in 1 passed (operator ruling (b)
    `gen/route_cr.py` TRACK is 0.127 mm against the D-29 0.1524 mm default.)
 5. **Operator check-in 2 (closed 2026-11-12):** all fixes approved; r9-12 applies them with rulings R1 to R6 (README
    section 11 items 15 to 21). The netlist step is done and the netlist is frozen (D-53). The verify pass is clean.
-6. Placement on the frozen netlist, all SMT on the top side.
-7. **Operator check-in 3:** placement images, before routing.
+6. Placement on the frozen netlist, all SMT on the top side. (Done, D-54: variant B at the pour stage.)
+7. **Operator check-in 3:** placement images (`cr/placement_F.png`, `cr/placement_B.png`), before routing. Items for
+   the operator: the R129/C129 deviation from the D-20 window (D-54 item 7) and the D-54 open items (J102 latch and
+   THT-tail clearance, the U101.25 D-44 row, the fixed-coordinate courtyard overlaps). Before step 8, commit the
+   OSH Park-only rule file under `tools/pcb/fab_rules/` and point `gen/make_board.sh` at it.
 8. The full route-race (`route-race` skill: reference at four or more seeds, diagnosis, tested change requests, one
    design-owner batch).
 9. DRC and the constraint check.

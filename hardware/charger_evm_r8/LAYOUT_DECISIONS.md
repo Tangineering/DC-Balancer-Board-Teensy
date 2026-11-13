@@ -33,7 +33,8 @@ below is classified against these decisions:
   by the new-outline generator;
 - entries marked **Amended 2026-11-12** or **Reversed 2026-11-12** state the rule in force;
 - entries marked **Kept** and entries without a mark stay in force unchanged;
-- D-39 to D-53 are new entries for the 2026-11-12 decisions (section 8, after D-38).
+- D-39 to D-53 are new entries for the 2026-11-12 decisions (section 8, after D-38); D-54 records the step-5
+  placement (2026-11-13).
 
 The r7-outline status table above, the placement of section 5 and the routing record of section 8 are history. The
 r7 layout work, including the interactive-routing project, is in `archive_r7_outline/`. The EIB
@@ -967,6 +968,112 @@ Table D-53a. Identity of the r9-12 freeze (**superseded in r9-13**; history only
 A re-export from the unchanged schematic was checked: it changes only the export-time `(date ...)` line. The second
 hash therefore identifies the frozen content.
 
+**D-54. CR placement on the plug-on outline: variant B (D-50 step 5, 2026-11-13).**
+
+- Decision: the live CR placement is variant B of `gen/layout_cr.py`. `LAYOUT_VARIANT` defaults to `B`; variant A
+  stays reproducible with `LAYOUT_VARIANT=A`. The live board `cr/cr.kicad_pcb` is at the power-pour stage: placement,
+  then `ROUTE_SKIP_FR=1` `gen/route.py cr ../cr` (power zones, pre-vias, 21 pre-tracks, GND pours), with no signal
+  routing. The records of both variants are in `cr/variants_r9/A/` and `cr/variants_r9/B/`.
+- Reason: a routability probe routed both variants with the same plain plan at two seeds (board-routing method;
+  Table D-54). Both variants reach 106 of 107 connections at both seeds, with the same open connection. Variant B
+  needs about 35 % less track, about 12 % fewer router vias and about 60 % less length on the divider and
+  comparator-input nets, and B has the lower divider-top metric. Each difference holds at both seeds and is larger than
+  the seed-to-seed spread. Both variants have the same constraint result (74 pass, 1 FAIL, 1 exemption), so no
+  constraint row decides between them.
+- Scope of the evidence: two seeds is below the four-seed minimum of the route-race, so the probe ranks the
+  variants and does not certify routability. The full route-race (D-50 step 6) runs on variant B.
+- Consequence: the B entries change only the packer inputs of the gate-logic and comparator cluster, J102, C125 and the
+  CHG_IIN filter. Every fixed coordinate, region rule and constraint of A stays in force. The netlist is unchanged:
+  the date-stripped `cr/cr.net` sha256 is `da64c37a...f484` and `gen/netlist.py` is `f78b38f1...abb4` (Table D-53).
+
+Table D-54. Routability probe of the two placement variants (plain plan, 6/6 mil, via 0.6 / 0.3 mm, no via in an SMD
+pad, routing layers F.Cu and In2.Cu, plane net /GND; seeds 1 and 2; lengths in mm).
+
+| Measure | A, seed 1 | A, seed 2 | B, seed 1 | B, seed 2 |
+|---|---|---|---|---|
+| Connections open (non-plane, of 107) | 1 (/N_OV) | 1 (/N_OV) | 1 (/N_OV) | 1 (/N_OV) |
+| New DRC violations | 0 | 0 | 0 | 0 |
+| Vias added by the router | 185 | 181 | 161 | 162 |
+| Track length, F.Cu and In2.Cu | 1342 | 1391 | 860 | 897 |
+| Divider and comparator-input nets: length / vias | 451.4 / 55 | 430.6 / 44 | 176.1 / 28 | 174.2 / 31 |
+| /GND connections open before / after the plane-via step | 7 / 6 | 8 / 7 | 5 / 5 | 3 / 3 |
+| Divider-top metric: logic track parallel to analog track, same layer | 12.63 | 8.25 | 2.90 | 6.27 |
+| Straight-line ratsnest, all signal nets (pad positions) | 817.9 | 817.9 | 556.1 | 556.1 |
+| Ratsnest edge crossings, all nets / J101 nets | 146 / 29 | 146 / 29 | 103 / 17 | 103 / 17 |
+
+The live variant-B board gives the placement results of Table D-54a. `gen/check_constraints.py` writes
+`cr/constraint_check.md`, and `kicad-cli pcb drc --severity-all --schematic-parity` writes `cr/drc_place.rpt`.
+
+Table D-54a. Placement checks of the live board (variant B, pour stage).
+
+| Check | Result |
+|---|---|
+| Parts placed, outside the outline, flipped | 78, 0, 0 |
+| Constraint rows | 74 pass, 1 FAIL (D-44: U101.25 on B.Cu), 1 D-20 exemption (R102, a fixed part), 14 information |
+| D-20 window, comparators, clamps and dividers | 13 of 13 inside the strict window |
+| Divider-top metric (logic pads within 2 mm of the divider tops) | 0 pads |
+| Distance from the U101 loop region, comparators and clamps (information; rule 3 mm or more) | 10.09-19.38 mm |
+| Top-side courtyard booking | 911.5 of 4077.8 mm² (22.4 %) |
+| J102 | (48.579, 20.000) rot 90; courtyard x 45.86-55.12, y 16.18-35.82 |
+| J-TAP straight-line runs (A.4 maxima) | T2 53.4 mm (A: 59.0 mm); T17 84.5, T17r 68.2, T5 39.1, T13 61.5, T6 50.3, T1 46.7, T7b 46.7, T16 59.1, T10 58.4 mm; all pass |
+| DRC | 131 violations: 3 courtyard overlaps, 0 clearance, 4 starved thermals, 75 silk over copper, 47 silk overlap, 2 silk to edge; 108 unconnected items; 0 schematic-parity issues |
+
+The variant-B entries in `gen/layout_cr.py` are these:
+
+1. J102 targets (50.5, 26.0) at rot 90 and lands at (48.579, 20.000). Row A (T2C, CHG_IIN, FCC_TAP, H1_RB) is on the
+   -x pad column, so the westbound tap nets enter the logic box and the comparator pocket directly.
+2. The comparators have explicit targets in the lower row of the pocket (U102, U103, U120, U119 from -x to +x) at
+   rot 180. IN+ and IN- face the dividers, OUT faces the logic box and VCC faces the decoupler.
+3. The gate ICs are packed in the logic box (interior within x 35-45, y 16-41.6, less the strict window at x < 40).
+   Each gate IC is followed at once by its decoupler, so the decoupler keeps the 3V3 pad.
+4. R130, R131A, R131B and R132 stand in one row under J101 at rot 90. The outer pair and the inner pair use separate
+   channels to the J101 pad columns. The four resistors are excluded from the "other parts" phase, which removes a
+   double placement.
+5. The FCC networks are packed before the H1/UVB networks, and the clamps after the comparators.
+6. C125 (the 3V3 bulk capacitor) targets the centre of its loads and lands at (33.034, 28.025).
+7. R129 may use the wide window and lands at (48.084, 44.300), east of the J1 +x column. C129 lands at J102,
+   (44.984, 21.100), outside the D-20 window. A keeps both parts in the strict window.
+
+Item 7 is a deviation from the `ANALOG_PASSIVES` rule (A.7 thermal-band content carried to the D-20 window). The D-20
+window is preferred, not hard, and `gen/check_constraints.py` does not test R129 or C129, so no row fails. However,
+the CHG_IIN filter now spans J102 to U101 pin 13, and the operator approves or reverts the deviation at check-in 3.
+
+The step-5 build needed three generator fixes. These fixes are common to both variants:
+
+1. The divider strip uses a 0.03 mm packer margin (`PHASE_MARGIN`) and dense fill packing. With the D-15 channel of
+   0.08 mm, two rows of an 0805 and an 0603 courtyard need 3.65 mm of the 3.55 mm strip, and R109 and R112 stayed
+   unplaced.
+2. With `THT_BOTH_SIDES = True` (CR only), a phase that holds a through-hole part packs against the courtyards of both
+   sides. W6 and W7 overlapped the B.CrtYd courtyards of the J1 TSW rows before this fix. The EIB build is unchanged.
+3. `gen/plot_place.py` follows the outline and the park spot, and draws the `L4_no_tracks` area on the bottom plot
+   only.
+
+The build used the OSH Park-only rule file of D-29 (amended 2026-11-12;
+`decisions_2026-11-12/stackup_fabrules_decisions_2026-11-12.md` section 3), not the shared file that
+`gen/make_board.sh` copies. The OSH Park-only file exists only as `cr/cr.kicad_dru` (also in both variant folders). The
+board minima were set to match it: annular ring 0.1016 mm, via 0.4572 mm, hole-to-hole 0.127 mm, track and clearance
+0.127 mm. A run of `gen/make_board.sh cr` copies `fab_4layer_5mil_oshpark_pcbway.kicad_dru` back in. The file must
+move to `tools/pcb/fab_rules/`, and `gen/make_board.sh` must name it, before the route-race.
+
+Open items after step 5:
+
+1. TODO(verify: Molex 43045 header drawing) the J102 latch-finger access and the D-46 THT-tail and MB clearance at the
+   new J102 position. C116, C129 and R147 sit about 0.1-0.2 mm from the -x side of the J102 courtyard.
+2. The D-44 row fails on U101.25, the B.Cu heatsink copper pad of the TPS26630 ThermalVias footprint (no paste, no mask
+   opening). Either the pad leaves the footprint, or `gen/check_constraints.py` exempts a copper-only heatsink pad.
+3. Three courtyard overlaps come from fixed coordinates. W1/W2 overlap by 0.193 mm at the A.8 2.6 mm pitch with the
+   0.25 mm courtyard basis (DRC counts the F and B courtyards). C102b overlaps J101 by 0.040 mm in y at the D-09 start
+   values; a +0.05 mm move in y stays inside the D-09 allowance of 0.80 mm.
+4. /N_OV (U101.7) is open at every probe seed. It loses its lane in the fixed U101 +x pocket to /N_UV. The route-race
+   tries a priority or via-cost change first; a placement request for R103/R104 follows if that fails.
+5. `plane_vias.py` adds a /GND via inside U101.25 at every seed. D-40 exempts only the nine thermal vias, so the
+   route-race must exclude that pad from the plane-via step.
+6. The variant-A J102 target `G.far_end("7")` is stale after the r9-13 re-map (pad 7 is T1 to C-D6). It is kept so that
+   A reproduces; a re-run of A must target pad 1.
+7. A full `gen/make_board.sh cr` rewrites the `cr/cr.net` date line and 13 footprint files of `cr/charger_r8_cr.pretty`
+   (whole-file text differences, content not compared). The step-5 builds restored both from backups, so the library
+   and the netlist are those of r9-13.
+
 ## 9. Verification
 
 ### 9.1 ERC and DRC
@@ -976,6 +1083,10 @@ with `--severity-all --schematic-parity --exit-code-violations` against `fab_2la
 after `apply_board_setup.py` (0 violations, 0 unconnected items). No waiver is used. The CR at the pour stage
 reports only the unrouted connections, 2 starved thermals (the L1 GND fill against two U101 thermal-via pads) and
 2 silkscreen items.
+
+**D-54 (2026-11-13):** the CR on the plug-on outline (variant B, pour stage) is checked against the OSH Park-only rule
+file with `--severity-all --schematic-parity`: 131 violations (3 courtyard overlaps from fixed coordinates, 0
+clearance, 4 starved thermals, 124 silkscreen items), 108 unconnected items and 0 parity issues (Table D-54a).
 
 ### 9.2 Constraint measurements
 

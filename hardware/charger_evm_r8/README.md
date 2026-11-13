@@ -553,7 +553,10 @@ document A.8, Tables A.8-T2 and A.8-T2b). The re-map is an orchestrator default,
 11, item 15).
 
 In Table 8.4, T5 (A4) sits diagonal to T10 (B5), which meets the non-adjacency rule but not the recommended diagonal
-separation. The operator accepted this diagonal on 2026-11-12. Housing polarization is required, because a 180-degree flip puts T6 on the T10 circuit.
+separation. The operator accepted this diagonal on 2026-11-12. Housing polarization is required, because a 180-degree rotation of the plug would exchange T6 with T13, T2 with T10, T5 with T1, T17 with T16 and T17r with T7b (r9-14).
+Only a mirror that reverses the column order within each row puts T6 on T10; a mated plug cannot produce it, and the
+PM6 check of the header against the cavity map catches a mirrored capture (design document A.8). (Superseded in r9-14:
+"a 180-degree flip puts T6 on the T10 circuit".)
 
 At the far end, T5, T6, T10, T13, T16 and T17 use the operator's 0.100 in crimps. Each crimp sits in the second
 position of its MB J1/J2 pair. T1 and T2 are soldered to R170 and R171 (10.0 kOhm 0.1 %) at C-D6 and C-D2; T7b and T17r are cut back and
@@ -631,10 +634,16 @@ section of `gen/check_constraints.py` is rebuilt for the plug-on outline. The ge
 0.25 mm courtyard basis (`_CrtYd0.25` names) and moves the VCHGOUT strap to L3. The board-independent checks are in
 `cr/geometry_check.md`, and every check passes (design document H.23 successor row).
 
-The files in `cr/` stay on the r7 build until step 5. The library and `cr/cr.net` still carry the 0.10 mm courtyard
-names; the next `gen/make_board.sh cr` writes the `_CrtYd0.25` names into `cr/cr.net` without a connectivity change.
-The board file `cr/cr.kicad_pcb` is the stale r7-outline build and is not an input to the next build. No board file
-exists on the plug-on outline yet.
+The CR is placed on the plug-on outline (D-50 step 5, LAYOUT_DECISIONS D-54). The live board `cr/cr.kicad_pcb` is
+variant B of `gen/layout_cr.py` at the power-pour stage, with no signal routing. All 78 parts are on the top side and
+inside the outline. A routability probe at two seeds ranks B above variant A: both close 106 of 107 connections, and B
+needs about 35 % less track and about 12 % fewer vias (Table D-54). The constraint check gives 74 pass rows and 1 FAIL.
+The FAIL is the B.Cu heatsink pad U101.25 of the TPS26630 footprint under the D-44 row. DRC reports 3 courtyard
+overlaps from fixed coordinates and 0 clearance errors. The placement images are `cr/placement_F.png` and
+`cr/placement_B.png`. The netlist is unchanged against the D-53 freeze.
+
+The build uses an OSH Park-only rule file, `cr/cr.kicad_dru`, as D-29 requires. `gen/make_board.sh` still copies the
+shared OSH Park/PCBWay file, so the OSH Park-only file must move to `tools/pcb/fab_rules/` before the next full run.
 
 ### 9.2 BOM
 
@@ -686,7 +695,8 @@ charger path.
 
 The round order is D-50, in eight steps with four operator check-ins. Steps 1 to 4 are done, and check-in 1 has passed
 (operator ruling 2026-11-12 (b)). Check-in 2 is closed, and the r9-12 fix round is applied. The netlist step is done
-and the netlist is frozen (D-53). The verify pass of the r9-12 fixes is clean, and four steps remain. Table 10.1 lists each step with its inputs, outputs and blocking items.
+and the netlist is frozen (D-53). The verify pass of the r9-12 fixes is clean. Step 5 is done (D-54: variant B at the
+pour stage), check-in 3 is next, and three steps remain after it. Table 10.1 lists each step with its inputs, outputs and blocking items.
 
 Table 10.1. Round order (D-50).
 
@@ -696,8 +706,8 @@ Table 10.1. Round order (D-50).
 | 2. Re-run section H on the r9 netlist (done, r9-9) | r9 netlist `cr/cr.net`, `eib/eib.net` | `round4/calc/r9_calc.py` with its output; H.4, H.5, H.7, H.12, H.13, H.15, H.19-H.22, H.23(n), (x), (y) re-derived; H.24(a)-(c) new; `r3_calc.py` and `r7_calc.py` kept as the r8 record | None; the ribbon-short ruling moved to check-in 2 (section 11, item 16) |
 | 3. Audit run 002 (done, r9-10; check-in 2 closed; fixes applied in r9-12) | Step-2 numbers; Table L.9-1 | `docs/reviews/charger-design/run-002-2026-11-12.md`; L.9 and Table L.9-1 final; 29 findings: 0 blocker, 8 major, 21 minor; all 29 fixes applied in r9-12; verify pass clean | None (the verify pass, the netlist step and the netlist freeze are done) |
 | 4. New-outline generator (done, D-51, D-52) | `outline_change_2026-11-12/retired.md` section 4 | `gen/mb_brd.py`, `gen/cr_geometry.py`, `gen/layout_cr.py` rewritten (Table D-52 regions), CR rows of `gen/check_constraints.py` rebuilt, 0.25 mm courtyards, VCHGOUT strap on L3, `cr/geometry_check.md` (H.23 successor) | Placeholders that do not block step 5: Molex 43045 header drawing (J102 P/N, pegs, latch side, cavity numbering), TSW pad and drill, W6/W7 hole sizes, MS4 rim distance. The height survey is closed by D-51 |
-| 5. Placement on the frozen netlist, all SMT on the top | Frozen netlist, generator | Placed board | Frozen netlist: done (D-53; `cr/cr.net` carries the `_CrtYd0.25` names); **check-in 3** (placement images) |
-| 6. Full route-race | Placed board, power geometry | Routed board and one batch of change requests | Via-in-pad fallbacks listed for review; `gen/make_cr_all.sh` must drop B.Cu from the PathFinder layer set (D-20 rule area); `gen/route_cr.py` TRACK 0.127 mm against the D-29 0.1524 mm default |
+| 5. Placement on the frozen netlist, all SMT on the top (done, D-54) | Frozen netlist, generator | `cr/cr.kicad_pcb` (variant B, pour stage), `cr/placement_F.png`, `cr/placement_B.png`, `cr/constraint_check.md`, `cr/drc_place.rpt`; variant records in `cr/variants_r9/` | **Check-in 3** (placement images; the R129/C129 window deviation of D-54; the D-54 open items) |
+| 6. Full route-race | Placed board, power geometry | Routed board and one batch of change requests | The OSH Park-only rule file into `tools/pcb/fab_rules/` and `gen/make_board.sh`; /N_OV at U101.7 open at every probe seed; `plane_vias.py` must not put a via in U101.25; Via-in-pad fallbacks listed for review; `gen/make_cr_all.sh` must drop B.Cu from the PathFinder layer set (D-20 rule area); `gen/route_cr.py` TRACK 0.127 mm against the D-29 0.1524 mm default |
 | 7. DRC and constraint check | Routed board | Clean DRC and constraint reports | Not applicable |
 | 8. Fab package (`gen/export.sh`, `gen/fab_readme.py`) | Checked board | CR fab package | **Check-in 4** (before the fab package and any order); fab quotes; BOM verification (T-A-05) |
 

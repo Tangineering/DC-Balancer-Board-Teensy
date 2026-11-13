@@ -120,9 +120,76 @@ REGIONS = {}
 PHASES = []
 TRIES = 150
 PACK_MARGIN = 0.08   # routing channel kept around every courtyard (D-15)
-PHASE_MARGIN = {}
+# r9 step-5 placement fix: on the 0.25 mm courtyard basis (D-52) an 0805 row (1.89 mm) and an 0603 row (1.44 mm)
+# need 3.33 mm of the 3.55 mm divider strip (A.8, D-13). With the 0.08 mm channel on every side of each courtyard
+# (4 x 0.08 = 0.32 mm) two rows need 3.65 mm and do not fit, and one row is too long for the strip, so R109 and R112
+# were left unplaced. The strip phase uses the packer default 0.03 mm (two rows need 3.45 mm); a deviation from the
+# D-15 channel inside the strip only.
+PHASE_MARGIN = {"dividers": 0.03}
 PLACED = set()
 CRT_GROW = {}        # the r7 routing-study variants (D-34) retire with the bottom side
+THT_BOTH_SIDES = True   # r9 step-5 fix: through-hole parts are packed against the courtyards of both sides
+
+# ------------------------------------------------------------------ placement variants (r9 step 5)
+# LAYOUT_VARIANT selects the packer inputs. "B" (the default since D-54) re-arranges the inputs of the gate-logic and
+# comparator cluster for routability (cr/variants_r9/B). "A" is the r9 step-5 baseline (cr/variants_r9/A), kept
+# reproducible and not changed by any B entry below. Every fixed coordinate, region rule and constraint of A and B is
+# the same. LAYOUT_DECISIONS D-54 selects B on the routability probe.
+VARIANT = os.environ.get("LAYOUT_VARIANT", "B").strip().upper()
+if VARIANT not in ("A", "B"):
+    raise SystemExit("LAYOUT_VARIANT must be A or B, not %r" % VARIANT)
+# B: the logic box is the free area below J101 (the J101 region + 0.5 mm starts at y 41.63), left of the J1 +x
+# column and outside the -x part of the strict analog window (x < 40.0), so the gate ICs sit between the comparator
+# outputs and J101 and leave the window pocket to the comparators and their networks. The strict window reaches
+# x ~42 at y 31-41 (its 5V-rim edge is diagonal there); that corner is given to the logic ICs.
+B_LOGIC_BOX = INTERIOR.intersection(box(35.0, 16.0, 45.0, 41.6)).difference(
+    ANALOG_STRICT.intersection(box(G.X0, G.Y0, 40.0, G.Y1)))
+# B: explicit packer targets (MB frame).
+# - J102 at the -x end of the +x half, east of the logic box: the tap nets enter the logic box (QUAL_TAP) and the
+#   comparator pocket (FCC_TAP, H1_RB, T2C, T1_VMOT) from the +x side, and the T2 run to C-D2 is shorter than in A.
+# - The comparators form the lower row of the pocket, west to east U102, U103 (under the dividers that feed them),
+#   U120, U119 (U119 drives FCCN into three gate ICs, so it sits next to the logic box).
+# - The J101 ribbon resistors stand in one row under J101 in the order R130, R131A, R131B, R132: R130 (pin 5) and
+#   R131A (pin 7) reach the -x pad column through the channel outside it, the outer track to the higher pin; R131B
+#   (pin 8) and R132 (pin 10) reach the +x column through the channel between the columns, the track next to the
+#   pads to the lower pin. U110 (ILIM_REL to R131A and R131B, the two middle positions) sits below the row and U106
+#   (CE_DRV to R130, RFC_OFF to R132, the two outer positions) below U110, so the U106 pair can pass outside the
+#   U110 pair on each side.
+# - The rest of the gate sits below the comparator row: U105 (FCCN in from U119, FCCNN and P5N out) next to U119,
+#   U118 (H1, UVB, FCC_ON in from the row) below it, U107 (QUAL from J102, QF to U110) next to the J102 -x column.
+B_TARGETS = {
+    "J102": (50.5, 26.0),
+    "U102": (26.5, 33.0), "U103": (30.1, 33.0), "U120": (33.7, 33.0), "U119": (37.3, 33.0),
+    "R130": (37.4, 40.2), "R131A": (38.8, 40.2), "R131B": (40.2, 40.2), "R132": (41.6, 40.2),
+    "U110": (42.4, 36.6), "U106": (42.4, 32.3), "U105": (38.0, 28.0), "U107": (42.6, 27.0), "U118": (38.0, 24.2),
+    # C125 (10 uF, the 3V3 bulk capacitor; the rail enters through R176/R177 from J101 pins 1 and 2) has no signal
+    # net, so A packs it into the bottom-left corner by fill; in B it sits at the centre of its loads.
+    "C125": (36.0, 30.0),
+}
+# B: rotations. J102 rot 90 puts row A (T2C, CHG_IIN, FCC_TAP, H1_RB) on the -x column. A comparator at rot 180
+# has IN+ (pin 3) and IN- (pin 4) at the top corners (toward the dividers), OUT (pin 1) at the bottom right
+# (toward the logic box) and VCC (pin 6) at the bottom left (its decoupler below it). The ribbon resistors stand
+# vertical (rot 90) so their tracks run straight up to J101.
+B_ROT = {"J102": (90,), "U102": (180,), "U103": (180,), "U119": (180,), "U120": (180,),
+         "R130": (90,), "R131A": (90,), "R131B": (90,), "R132": (90,)}
+B_COMPARATORS = ["U102", "U103", "U119", "U120"]
+B_CLAMPS = ["D104", "D105", "D106"]
+B_J101_SERIES = ["R130", "R131A", "R132", "R131B"]
+B_COMP_DECOUPLE = ["C110", "C111", "C131", "C132"]
+B_LOGIC_DECOUPLE = ["C114", "C115", "C116", "C119", "C126"]
+# B: each gate IC is packed in its own phase and its decoupler at once after it, so the next IC cannot take the
+# space at the 3V3 pad (with one phase for all five ICs and one for the five decouplers, the decouplers landed
+# 2.1-5.7 mm from their 3V3 pads). The order is the J101 end first.
+B_LOGIC_ORDER = ["U110", "U106", "U105", "U107", "U118"]
+# B: the CHG_IIN filter joins J102 pad 2 to U101 pin 13 (N_IMON). In B, R129 may use the whole D-20 window
+# (int_analog_wide), so it sits east of the J1 +x column on the J102-U101 path instead of in the comparator pocket,
+# and C129 (CHG_IIN to GND) sits at J102 pad 2. Neither is a comparator-network part, and check_constraints does not
+# test them against the strict window.
+B_WIDE_PASSIVES = {"R129"}
+B_TAP_PASSIVES = {"C129"}
+# B: the FCC comparator networks (U119, U120) are packed before the H1/UVB networks (U102, U103), so they keep the
+# pocket space next to their comparators at the +x end.
+B_FCC_PASSIVES = ["C130", "R184", "R185", "R186", "R187", "R188", "R189"]
 
 
 def setup(fps):
@@ -136,10 +203,34 @@ def setup(fps):
     })
     named = set(FIXED) | set(ANALOG_ICS) | set(LOGIC_ICS) | set(DIVIDERS) | set(DECOUPLE) | ANALOG_PASSIVES \
         | set(LEADS) | {"J102"}
+    if VARIANT == "B":
+        named |= set(B_J101_SERIES)   # placed in their own phase in B, never again in "other parts"
     rest = sorted(r for r in fps if r not in named and not r.startswith("#"))
     flipped = sorted(r for r, fp in fps.items() if fp.IsFlipped())
     if flipped:   # D-44: every SMT part on the top; the netlist carries no side="B" since 2026-11-12
         raise SystemExit("bottom-side parts in the netlist (D-44 forbids): %s" % ", ".join(flipped))
+    if VARIANT == "B":
+        REGIONS["logic_box"] = B_LOGIC_BOX
+        # B order: J102 first, then the fixed-size divider strip, then the comparators (explicit targets), each IC
+        # group followed at once by its decouplers so the 3V3 pad keeps its neighbour, the BAV199 clamps after the
+        # comparators (their centroid then includes the comparator input pins), the ribbon resistors before the
+        # gate ICs, and the FCC networks before the H1/UVB networks inside the window.
+        PHASES = [("J-TAP", "F", ["J102"]),
+                  ("dividers", "F", [r for r in DIVIDERS if r in fps]),
+                  ("comparators", "F", [r for r in B_COMPARATORS if r in fps], "int_analog_wide"),
+                  ("comparator decouplers", "F", [r for r in B_COMP_DECOUPLE if r in fps]),
+                  ("clamps", "F", [r for r in B_CLAMPS if r in fps], "int_analog_wide"),
+                  ("J101 series", "F", [r for r in B_J101_SERIES if r in fps], "int_logic"),
+                  ] + [ph for ic in B_LOGIC_ORDER if ic in fps for ph in (
+                      ("logic IC " + ic, "F", [ic], "int_logic"),
+                      ("logic decoupler " + ic, "F", [c for c in B_LOGIC_DECOUPLE if DECOUPLE[c] == ic and c in fps]))
+                  ] + [
+                  ("FCC passives", "F", [r for r in B_FCC_PASSIVES if r in fps], "int_analog_wide"),
+                  ("analog passives", "F", sorted(r for r in ANALOG_PASSIVES if r in fps and r not in B_FCC_PASSIVES),
+                   "int_analog_wide"),
+                  ("lead pads", "F", [r for r in LEADS if r in fps]),
+                  ("other parts", "F", rest)]
+        return
     PHASES = [("J-TAP", "F", ["J102"]),
               ("analog ICs", "F", [r for r in ANALOG_ICS if r in fps], "int_analog_wide"),
               ("dividers", "F", [r for r in DIVIDERS if r in fps]),
@@ -151,6 +242,15 @@ def setup(fps):
 
 
 def region_name(ref):
+    if VARIANT == "B":
+        if ref in LOGIC_ICS:
+            return "logic_box"
+        if ref in B_WIDE_PASSIVES:
+            return "int_analog_wide"
+        if ref in B_J101_SERIES or ref in B_COMP_DECOUPLE or ref in B_TAP_PASSIVES:
+            # the ribbon resistors straddle the window edge under J101; a comparator decoupler sits below the VCC
+            # pad of its comparator, under the window bottom (no D-20 rule binds a decoupler)
+            return "int_logic"
     if ref == "J102":
         return "jtap"
     if ref in DIVIDERS:
@@ -163,8 +263,11 @@ def region_name(ref):
 
 
 def fill(ref, phase):
-    """True: pack bottom-left first (dense) instead of nearest to the connection centroid. Not used (D-52)."""
-    return False
+    """True: pack bottom-left first (dense) instead of nearest to the connection centroid.
+    Used for the divider strip only (r9 step-5 placement fix): the strip is 3.55 mm high, so it holds the six
+    dividers only as two dense rows; centroid-nearest packing centred R111/R114 in the strip and left R109 and
+    R112 unplaced (parked off the board)."""
+    return phase.startswith("dividers")
 
 
 def prio(ref):
@@ -187,6 +290,8 @@ def _pads_of_net(net, fps, fr, exclude):
 
 
 def target(ref, fps, fr, pinnet):
+    if VARIANT == "B" and ref in B_TARGETS:
+        return B_TARGETS[ref]
     fp = fps[ref]
     if ref in DECOUPLE:
         ic = fps[DECOUPLE[ref]]
@@ -209,6 +314,8 @@ def target(ref, fps, fr, pinnet):
 
 
 def rotations(ref):
+    if VARIANT == "B" and ref in B_ROT:
+        return B_ROT[ref]
     if ref[0] in "RC":
         return (0, 90)
     if ref.startswith("D1") and ref not in ("D104", "D105", "D106"):

@@ -316,7 +316,22 @@ def greedy(b, fr, fps, L, pinnet):
             parts.append(dict(ref=ref, region=rn, rects=rects,
                               target=None if L.fill(ref, phase_name) else L.target(ref, fps, fr, pinnet),
                               size=(dx1 - dx0) * (dy1 - dy0), prio=L.prio(ref)))
-        res = packer.pack(grid, parts, occ[side], masks, tries=L.TRIES, seed=7, log=log)
+        occupied = occ[side]
+        if getattr(L, "THT_BOTH_SIDES", False):
+            # r9 step-5 fix: a through-hole part (W6/W7, J102) has a courtyard on both sides, so it must also clear
+            # the other side's courtyards (e.g. the CHG TSW bodies of J1 on B.CrtYd); packing against the own side
+            # only put W6 and W7 onto the J1 bottom courtyards.
+            other = "B" if side == "F" else "F"
+            for ref in refs:
+                fp = fps[ref]
+                fp.SetPosition(fr.v(0, 0))
+                g = other_crt_rect(fp, fr)
+                if g is not None and not g.is_empty:
+                    occupied = occ[side] | occ[other]
+                    log.append("phase %s: %s has a %s courtyard; packed against both sides" % (phase_name, ref,
+                                                                                              other))
+                    break
+        res = packer.pack(grid, parts, occupied, masks, tries=L.TRIES, seed=7, log=log)
         for p in parts:
             fp = fps[p["ref"]]
             if p["ref"] in res:
