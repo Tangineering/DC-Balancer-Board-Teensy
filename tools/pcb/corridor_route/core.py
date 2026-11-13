@@ -269,7 +269,11 @@ class Ctx:
                     # a through-hole pad of a poured net needs room for its thermal spokes
                     self._claim(self.ownT, li, self.geom_of(it, rT), n)
                     self._claim(self.ownV, li, self.geom_of(it, rV), n)
-                    if (kind == "pad" and (it.get("ref"), it.get("num")) not in drilled and self.via_in_pad is not True
+                    # SMD pad: decided from the pad item itself (N-5, 2026-11-13). Keyed on (ref, number), the
+                    # U101.25 exposed pad escaped the ban because its nine thermal vias are holes numbered 25.
+                    # Models made before the "drilled" field fall back to the (ref, number) test.
+                    is_smd = (not it["drilled"]) if "drilled" in it else (it.get("ref"), it.get("num")) not in drilled
+                    if (kind == "pad" and is_smd and self.via_in_pad is not True
                             and "%s.%s" % (it.get("ref"), it.get("num")) not in vip_ok):
                         smd_ban.append((li, it))
                     if (kind == "pad" and (it["net"], ln) in zone_on

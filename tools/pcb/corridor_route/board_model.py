@@ -55,8 +55,10 @@ for fp in b.GetFootprints():
         for ln in ls:
             sps = p.GetEffectivePolygon(LID[ln], pcbnew.ERROR_INSIDE)
             for i in range(sps.OutlineCount()):
+                # drilled: the pad item has its own hole. The router bans vias on pads without one (SMD pads);
+                # a pad number shared with plated holes (an exposed pad and its thermal vias) does not count
                 items.append(dict(kind="pad", net=p.GetNetname(), layers=[ln], poly=poly_pts(sps, i),
-                                  ref=fp.GetReference(), num=p.GetNumber()))
+                                  ref=fp.GetReference(), num=p.GetNumber(), drilled=p.GetDrillSizeX() > 0))
         if p.GetDrillSizeX() > 0:
             # the hole blocks every routing layer; 0.127 mm is added so that the router's copper clearance also
             # covers a 0.254 mm plated-hole-to-inner-copper fab rule

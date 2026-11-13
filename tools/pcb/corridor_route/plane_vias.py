@@ -24,7 +24,8 @@ on In2.Cu at 3 of 4 seeds). On the round-3 CR seeds the rule cost 1 via site in 
 
 SMD pads (2026-11-13): a new via is kept off every SMD pad of any net, grown by the pad's solder-mask expansion and
 the via radius (charger EVM D-37, D-55: the step had put a /GND via inside the U101 exposed pad at every seed).
---allow-via-in-pad restores the earlier behaviour."""
+The keep-out follows the plan's rules.via_in_pad as the router does: true admits every SMD pad, a list admits the
+named pads. --allow-via-in-pad restores the earlier behaviour (no keep-out at all)."""
 import argparse
 import json
 
@@ -82,11 +83,14 @@ occV_any = RT.occV.max(axis=0) > 0
 from shapely.ops import unary_union  # noqa: E402
 from shapely.prepared import prep  # noqa: E402
 _smd = []
+_vip = set(C.via_in_pad) if isinstance(C.via_in_pad, list) else set()
 if not A.allow_via_in_pad:
     for fp in b.GetFootprints():
         for p in fp.Pads():
             if p.GetAttribute() != pcbnew.PAD_ATTRIB_SMD:
                 continue
+            if C.via_in_pad is True or "%s.%s" % (fp.GetReference(), p.GetNumber()) in _vip:
+                continue                          # the plan allows a via in this pad (rules.via_in_pad)
             for lay, mlay in ((pcbnew.F_Cu, pcbnew.F_Mask), (pcbnew.B_Cu, pcbnew.B_Mask)):
                 if not p.IsOnLayer(lay):
                     continue
