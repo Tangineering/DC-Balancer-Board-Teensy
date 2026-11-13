@@ -1,6 +1,6 @@
-(footprint "R_1206_3216Metric_CrtYd0.10" (version 20241229) (generator kicad-footprint-generator)
+(footprint "R_1206_3216Metric_CrtYd0.25" (version 20241229) (generator kicad-footprint-generator)
   (layer "F.Cu")
-  (tedit 6af5db02)
+  (tedit 6af6347c)
   (descr "Resistor SMD 1206 (3216 Metric), square (rectangular) end terminal, IPC-7351 nominal, (Body size source: IPC-SM-782 page 72, https://www.pcb-3d.com/wordpress/wp-content/uploads/ipc-sm-782a_amendment_1_and_2.pdf), generated with kicad-footprint-generator")
   (tags "resistor")
   (property "Reference" "REF**")
@@ -10,7 +10,7 @@
   (fp_text user "${REFERENCE}" (at 0 0 0) (layer "F.Fab")
     (effects (font (size 0.8 0.8) (thickness 0.12)))
   )
-  (fp_rect (start -2.125 -0.975) (end 2.125 0.975) (layer "F.CrtYd") (width 0.12))
+  (fp_rect (start -2.275 -1.125) (end 2.275 1.125) (layer "F.CrtYd") (width 0.12))
   (pad "1" smd roundrect (at -1.4625 0) (size 1.125 1.75) (layers "F.Cu" "F.Mask" "F.Paste") (roundrect_rratio 0.222222))
   (pad "2" smd roundrect (at 1.4625 0) (size 1.125 1.75) (layers "F.Cu" "F.Mask" "F.Paste") (roundrect_rratio 0.222222))
   (model "${KICAD9_3DMODEL_DIR}/Resistor_SMD.3dshapes/R_1206_3216Metric.step"

@@ -7,7 +7,10 @@ the removed parts stripped, from the r9 CR netlist `hardware/charger_evm_r8/cr/c
 `hardware/charger_evm_r8/eib/eib.net` (r9-2 DNP set applied: U203, U204, C203, C204, R258-R265). It adds the H.24 rows:
   H.24(a) ribbon 9-10 and 8-9 short currents against the LVC output-current limits, with the R175 rail sag (J.2 item 70(a));
   H.24(b) the RT1987 EN-net level on pins 27-32 with the pad left INPUT_PULLUP, high-Z or with a keeper, r9 pull-downs only;
-  H.24(c) every numeric figure quoted in the proposed IO CSV rows of design-document section D.3.
+  H.24(c) every numeric figure quoted in the proposed IO CSV rows of design-document section D.3;
+  H.24(d) (r9-12, check-in 2 ruling R2) the R132 / R131B series value for J.2 item 70(a) option (a).
+It also adds R9.H21(r) (r9-12, audit run 002 ADV-R2-04 and ADV-R2-05): the FR-41(iii) ramp-step schedule and cadence
+at 100 and 400 kHz, the FR-41(vii) hold-deadline resolution on the FR-45 tick grid and the T4 edge-to-step-3 restore deadline.
 
 The script does not import or modify round3/calc/r3_calc.py or round4/calc/r7_calc.py: importing r3_calc.py would rewrite
 round3/calc/r3_calc_out.json, and r7_calc.py parses the .brd. The models used here are copied from those scripts, with the
@@ -187,7 +190,7 @@ def sec_netlist():
               ("R111", "R111", 442e3), ("R112", "R112", 56.2e3), ("R113 H1 hysteresis", "R113", 6.49e6),
               ("R114", "R114", 1.00e6), ("R115", "R115", 104e3), ("R116", "R116", 10.0e6), ("R122 T5 series", "R122", 1.00e3),
               ("R123 QUAL pull-down", "R123", 47.0e3), ("R126 H1_RB series", "R126", 1.00e3), ("R129 CHG_IIN series", "R129", 10.0e3),
-              ("R130 CE_DRV series", "R130", 100.0), ("R131A", "R131A", 100.0), ("R131B", "R131B", 100.0), ("R132", "R132", 100.0),
+              ("R130 CE_DRV series", "R130", 100.0), ("R131A", "R131A", 100.0), ("R131B", "R131B", 4.99e3), ("R132", "R132", 4.99e3),
               ("R147 QUAL series", "R147", 1.00e3), ("R175 3V3 limiter", "R175", 68.0), ("R176", "R176", 200.0),
               ("R177", "R177", 200.0), ("R184 REF/3 top", "R184", 20.0e3), ("R185 REF/3 bottom", "R185", 10.0e3),
               ("R186", "R186", 10.0e3), ("R187 FCC pull-up", "R187", 3.30e6), ("R188 FCC_ON top", "R188", 453e3),
@@ -544,7 +547,8 @@ def sec_h23(v_cr):
     out("  T16-T17 bridge, FLT released: the pin-35 pull-up feeds R129 + R105 (%.1f kOhm): node %.3f V nominal (%.3f-%.3f V over "
         "11-33 kOhm), read on pin 22 as %.2f A at 0.764 V/A and on pin 35 inside the undefined band VIL %.2f-%.2f / VIH %.2f-%.2f V; "
         "FLT asserted: the node falls toward 0 V through R106s + R(FLT) (CHG_IIN reads ~0 A); the CHG_IIN/IBUS cross-check (FR-11) "
-        "sees both cases" % (rs / 1e3, v_iin[0], v_iin[2], v_iin[1], v_iin[0] / 0.764, VIL_FRAC * V_IO[0], VIL_FRAC * V_IO[2],
+        "sees the FLT-released case only: FR-23 attempts no I2C with FLT asserted and no zero-current plausibility check "
+        "exists, so the asserted case is latent until FLT releases (r9-12, audit run 002 ADV-R2-07)" % (rs / 1e3, v_iin[0], v_iin[2], v_iin[1], v_iin[0] / 0.764, VIL_FRAC * V_IO[0], VIL_FRAC * V_IO[2],
                              VIH_FRAC * V_IO[0], VIH_FRAC * V_IO[2]))
     out("  retired: the F17-F15 bridge (T14, pin 16 H2c, U108; r8 H.23(n) <= 1.719 mA and H.23(y) row (1) node 1.60-1.93 V): T14 "
         "and U108 are removed and no J-TAP cavity carries H2c")
@@ -566,30 +570,35 @@ def sec_h23(v_cr):
 
 
 # ======================================================================================================================
+# r9-12 (netlist step, D-53): cr.net now carries R132 = R131B = 4.99 kOhm (ruling R2). H.24(a) stays the r9-9 record on
+# the superseded 100 ohm basis, so it uses this constant instead of the netlist value; H.24(d) evaluates the new value.
+R_SER_R9 = 100.0          # ohm, R132 / R131B before r9-12 (superseded in r9)
+
+
 def sec_h24a(v_cr, i_cr_only, i_eib):
     head("R9.H24(a) Ribbon 9-10 (RFC_OFF, U106B) and 8-9 (ILIM_REL_B, U110B) shorts with the R175 sag (J.2 item 70(a))")
     out("  model: Teensy 3V3 -> R175 %.0f ohm -> CR rail (base load as a constant current) -> LVC driver (Rout %.1f-%.1f ohm, VCC = "
-        "the CR rail) -> R132 / R131B %.0f ohm -> J101 pin 9 (GND). The EIB rail follows the CR rail through R176 || R177."
-        % (R175, ROUT_LVC[0], ROUT_LVC[1], R132))
+        "the CR rail) -> R132 / R131B %.0f ohm (r9-9 basis) -> J101 pin 9 (GND). The EIB rail follows the CR rail through R176 || R177."
+        % (R175, ROUT_LVC[0], ROUT_LVC[1], R_SER_R9))
     base = {"CR + EIB worst static (R9.H15) less the shorted path's own EIB input": i_cr_only + i_eib - 3.3 / (100 + R250 + R267),
             "minimum: comparators, LVC, REF divider, R274 only (STAT HIGH, drivers LOW)": 4 * 1e-6 + 5 * 1e-6 + VREF[0] / (R184 + R185) + 3.0 / R274}
     rows = []
     for vio in V_IO:
         for bl, ib in base.items():
             for ro in ROUT_LVC:
-                rsh = ro + R132
+                rsh = ro + R_SER_R9
                 v = (vio - R175 * ib) / (1 + R175 / rsh)
                 i = v / rsh
                 rows.append((vio, bl, ro, i, v))
     i_all = [r[3] for r in rows]
     v_all = [r[4] for r in rows]
     nom = [r for r in rows if r[0] == V_IO[1] and r[2] == 0.0][0]
-    out("  without R175 (the r9-2 finding's figure): 3.30 V / 100 ohm = %.1f mA" % (3.3 / R132 * 1e3))
+    out("  without R175 (the r9-2 finding's figure): 3.30 V / 100 ohm = %.1f mA" % (3.3 / R_SER_R9 * 1e3))
     for vio, bl, ro, i, v in rows:
         out("    3V3 %.3f V, %-78s Rout %4.1f ohm: short %.2f mA, CR rail %.3f V" % (vio, bl[:78], ro, i * 1e3, v))
     v_eib = min(v_all) - i_eib * par(R176, R177)
     out("  range: short current %.2f-%.2f mA; CR rail %.3f-%.3f V (EIB rail >= %.3f V); R132 / R131B dissipation <= %.1f mW (0603 0.1 W); "
-        "R175 <= %.1f mW" % (min(i_all) * 1e3, max(i_all) * 1e3, min(v_all), max(v_all), v_eib, max(i_all) ** 2 * R132 * 1e3,
+        "R175 <= %.1f mW" % (min(i_all) * 1e3, max(i_all) * 1e3, min(v_all), max(v_all), v_eib, max(i_all) ** 2 * R_SER_R9 * 1e3,
                              max((r[0] - r[4]) ** 2 / R175 for r in rows) * 1e3))
     out("  limits (SCES201N, TODO(verify)): continuous output current abs max 50 mA -> not exceeded (factor %.1f); recommended IOH "
         "-24 mA at VCC 3.0 V, -8 mA at 2.3 V, -4 mA at 1.65 V: the driver sources %.1f-%.1f mA at VCC %.2f-%.2f V, above the "
@@ -611,7 +620,7 @@ def sec_h24a(v_cr, i_cr_only, i_eib):
     out("  when each short draws current: 9-10 while RFC_OFF = FCC_OFF + H1.UVB is HIGH, i.e. whenever FC_CHARGE is off (most of "
         "Idle and Run); 8-9 while ILIM_REL (release) is HIGH. The converter side is safe in both (9-10: Q202 FC leg on, FC clamp; "
         "8-9: U202 holds ILIM_HIZ)")
-    RJ["h24a"] = dict(no_r175_mA=r4(3.3 / R132 * 1e3), short_mA=[r4(min(i_all) * 1e3), r4(max(i_all) * 1e3)],
+    RJ["h24a"] = dict(no_r175_mA=r4(3.3 / R_SER_R9 * 1e3), short_mA=[r4(min(i_all) * 1e3), r4(max(i_all) * 1e3)],
                       cr_rail_V=[r4(min(v_all)), r4(max(v_all))], eib_rail_min_V=r4(v_eib), nominal=dict(mA=r4(nom[3] * 1e3), V=r4(nom[4])),
                       abs_max_factor=r4(LVC_IO_ABS / max(i_all)), h1_hyst_V=[r4(h1n[0] - h1n[1]), r4(h1s[0] - h1s[1])],
                       uvb_fall_V=[r4(uf), r4(ufs)])
@@ -626,6 +635,241 @@ def interp_ioh(vcc):
         if v0 <= vcc <= v1:
             return i0 + (i1 - i0) * (vcc - v0) / (v1 - v0)
     return pts[-1][1]
+
+
+# ======================================================================================================================
+# H.24(d) J.2 item 70(a) option (a): the R132 / R131B value that keeps the CR rail in the LVC VCC 3.0 V row during a
+# ribbon 9-10 / 8-9 short and still meets the EIB input and timing requirements (r9-12, check-in 2 ruling R2)
+# ======================================================================================================================
+E96 = [1.00, 1.02, 1.05, 1.07, 1.10, 1.13, 1.15, 1.18, 1.21, 1.24, 1.27, 1.30, 1.33, 1.37, 1.40, 1.43, 1.47, 1.50, 1.54,
+       1.58, 1.62, 1.65, 1.69, 1.74, 1.78, 1.82, 1.87, 1.91, 1.96, 2.00, 2.05, 2.10, 2.15, 2.21, 2.26, 2.32, 2.37, 2.43, 2.49,
+       2.55, 2.61, 2.67, 2.74, 2.80, 2.87, 2.94, 3.01, 3.09, 3.16, 3.24, 3.32, 3.40, 3.48, 3.57, 3.65, 3.74, 3.83, 3.92, 4.02,
+       4.12, 4.22, 4.32, 4.42, 4.53, 4.64, 4.75, 4.87, 4.99, 5.11, 5.23, 5.36, 5.49, 5.62, 5.76, 5.90, 6.04, 6.19, 6.34, 6.49,
+       6.65, 6.81, 6.98, 7.15, 7.32, 7.50, 7.68, 7.87, 8.06, 8.25, 8.45, 8.66, 8.87, 9.09, 9.31, 9.53, 9.76]
+LVC_VCC_ROW = 3.0          # V, SCES201N / SCES198N VCC 3.0 V row (IOH -24 mA recommended, VOH >= 2.4 V at -16 mA), TODO(verify)
+LVC_VIH_EIB = 2.0          # V, SN74LVC3G06 / SN74LVC1G06 VIH at VCC 2.7-3.6 V, TODO(verify: SCES datasheets section 6.3)
+LVC_VIL_EIB = 0.8          # V, same row, TODO(verify)
+NOISE_MARGIN = 0.4         # V, the LVC family's own VOH (2.4 V) - VIH (2.0 V) margin at VCC 3.0 V, adopted as the HIGH margin
+I_LEAK_LVC = 5e-6          # A, LVC input leakage II max, TODO(verify: SCES datasheets section 6.5)
+C_RIBBON_PER_M = 150e-12   # F/m, 0.635 mm flat cable, conductor to both neighbours, ASSUMPTION (conservative), TODO(verify: W5 MPN, T-A-05)
+L_RIBBON = 0.3048          # m, W5 factory cable 0.30 m (design document B.6, W5 row)
+C_CONN = 10e-12            # F, J101 + J201 + traces, ASSUMPTION
+C_IN_LVC = 5e-12           # F, LVC input capacitance, ASSUMPTION, TODO(verify: SCES datasheets section 6.5, Ci)
+T_GATE_RC = 47.0e3 * 50e-12   # s, EIB R252 / R254 47.0 kOhm (eib.net) x Ciss 50 pF (H.13 assumption): the downstream gate edge
+T_TICK = 1e-3              # s, the 1 kHz firmware tick
+R_SEL = 4.99e3             # ohm, the selected E96 value (r9-12, ruling R2)
+R253 = parse_value(EIB_COMPS["R253"]); R269 = parse_value(EIB_COMPS["R269"])   # EIB RFC_OFF input series / pull-down
+assert parse_value(EIB_COMPS["R266"]) == R253 and parse_value(EIB_COMPS["R270"]) == R269   # ILIM_REL_B path identical
+
+
+def h24d_case(r_ser, i_cr_only, i_eib):
+    """Worst corners for one series value: short (min CR rail, max current), EIB input levels, ribbon RC edge."""
+    path_own = 3.3 / (r_ser + R250 + R267)
+    base_short = (i_cr_only + i_eib - 3.3 / (100 + R250 + R267),
+                  4 * 1e-6 + 5 * 1e-6 + VREF[0] / (R184 + R185) + 3.0 / R274)
+    v_min, i_max, sag_max = 1e9, 0.0, 0.0
+    for vio in V_IO:
+        for ib in base_short:
+            for ro in ROUT_LVC:
+                for tol in (-0.01, 0.01):
+                    for t175 in (-0.01, 0.01):
+                        r175 = R175 * (1 + t175)
+                        rsh = ro + r_ser * (1 + tol)
+                        v = (vio - r175 * ib) / (1 + r175 / rsh)
+                        v_min, i_max = min(v_min, v), max(i_max, v / rsh)
+                        sag_max = max(sag_max, (vio - r175 * ib) - v)
+    # signal: Teensy 3V3 low corner, full worst static load with this path HIGH (100 ohm basis of R9.H15 + the delta)
+    i_full = i_cr_only + i_eib - 3.3 / (100 + R250 + R267) + path_own
+    v_cr_lo = V_IO[0] - R175 * 1.01 * i_full
+    v_eib_lo = v_cr_lo - i_eib * R176 * 1.01      # one ribbon 3V3 conductor open
+    rs_hi, rin_hi, rpd_lo = r_ser * 1.01, R253 * 1.01, R269 * 0.99
+    i_path = v_cr_lo / (rs_hi + rin_hi + rpd_lo)
+    v_drv = v_cr_lo - ROUT_LVC[1] * i_path
+    v_in_hi = v_drv * rpd_lo / (rs_hi + rin_hi + rpd_lo) - I_LEAK_LVC * par(rs_hi + rin_hi, rpd_lo)
+    v_in_lo = I_LEAK_LVC * par(rs_hi + rin_hi + ROUT_LVC[1], R269 * 1.01)
+    c_tot = C_RIBBON_PER_M * L_RIBBON + C_CONN + C_IN_LVC
+    tau = par(rs_hi + rin_hi, R269 * 1.01) * c_tot
+    vf = v_in_hi + I_LEAK_LVC * par(rs_hi + rin_hi, rpd_lo)
+    t_rise = tau * math.log(vf / max(vf - LVC_VIH_EIB, 1e-9))
+    t_fall = tau * math.log(vf / LVC_VIL_EIB)
+    return dict(v_min=v_min, i_max=i_max, sag_max=sag_max, v_cr_lo=v_cr_lo, v_eib_lo=v_eib_lo, v_in_hi=v_in_hi,
+                v_in_lo=v_in_lo, tau=tau, t_rise=t_rise, t_fall=t_fall, c_tot=c_tot, p_short=i_max ** 2 * r_ser * 1.01,
+                p_norm=(V_IO[2] / (r_ser + R250 + R267)) ** 2 * r_ser)
+
+
+def h24d_ok(c):
+    return dict(rail=c["v_min"] >= LVC_VCC_ROW, ioh=c["i_max"] <= LVC_IOH_REC[3.0],
+                vih=c["v_in_hi"] >= LVC_VIH_EIB + NOISE_MARGIN, vil=c["v_in_lo"] <= LVC_VIL_EIB,
+                timing=max(c["t_rise"], c["t_fall"]) <= T_GATE_RC)
+
+
+def sec_h24d(v_cr, i_cr_only, i_eib):
+    head("R9.H24(d) J.2 item 70(a) option (a): R132 / R131B value for a ribbon 9-10 / 8-9 short (ruling R2, r9-12)")
+    out("  topology (eib.net): RFC_OFF_J (J201.10) -> R253 %.2fk -> /N_RFIN = U201 3A (SN74LVC3G06), R269 %.1fk to AGND; "
+        "ILIM_REL_B (J201.8) -> R266 %.2fk -> /N_RBIN = U202 A (SN74LVC1G06), R270 %.1fk to AGND. No other EIB load; no "
+        "CR-side consumer between U106B / U110B and R132 / R131B (cr.net /RFC_OFF, /ILIM_REL)."
+        % (R253 / 1e3, R269 / 1e3, parse_value(EIB_COMPS["R266"]) / 1e3, parse_value(EIB_COMPS["R270"]) / 1e3))
+    out("  criteria: (1) short: CR rail >= %.1f V at every corner (every CR LVC part stays in the VCC 3.0 V row; the TLV3012 "
+        "1.8 V and LVC 1.65 V minimums are kept by >= 1.2 V), Teensy 3V3 3.135-3.465 V, both R9.H24(a) base loads, Rout "
+        "0-37.5 ohm, R and R175 +-1 %%; (2) driver current <= the recommended IOH %.0f mA at VCC 3.0 V; (3) EIB HIGH input "
+        ">= VIH %.1f V + %.1f V (the LVC VOH 2.4 V - VIH 2.0 V margin) at the Teensy 3V3 low corner, Rout 37.5 ohm, resistors "
+        "at the adverse 1 %%, II %.0f uA; (4) LOW input <= VIL %.1f V; (5) the ribbon RC edge to VIH / VIL <= the downstream "
+        "EIB gate RC %.2f us (R252 / R254 47.0k x Ciss 50 pF, H.13), which is %.3f %% of the 1 ms tick"
+        % (LVC_VCC_ROW, LVC_IOH_REC[3.0] * 1e3, LVC_VIH_EIB, NOISE_MARGIN, I_LEAK_LVC * 1e6, LVC_VIL_EIB, T_GATE_RC * 1e6,
+           T_GATE_RC / T_TICK * 100))
+    out("  capacitance: ribbon %.0f pF/m x %.4f m + connectors %.0f pF + LVC Ci %.0f pF = %.1f pF (ASSUMPTION, "
+        "TODO(verify: W5 flat-cable MPN in T-A-05; SCES Ci)); the 100 ohm basis edge is %.3f us"
+        % (C_RIBBON_PER_M * 1e12, L_RIBBON, C_CONN * 1e12, C_IN_LVC * 1e12,
+           (C_RIBBON_PER_M * L_RIBBON + C_CONN + C_IN_LVC) * 1e12, h24d_case(100.0, i_cr_only, i_eib)["t_rise"] * 1e6))
+    feas = []
+    for dec in (1e3, 1e4):
+        for m in E96:
+            r = m * dec
+            if r > 20e3:
+                continue
+            if all(h24d_ok(h24d_case(r, i_cr_only, i_eib)).values()):
+                feas.append(r)
+    lo_r, hi_r = min(feas), max(feas)
+    out("  feasible E96 window (1.00k-20.0k swept): %.2fk-%.2fk (%d values); below it criterion (1) fails, above it (3) or "
+        "(5) fails" % (lo_r / 1e3, hi_r / 1e3, len(feas)))
+    for r in sorted({100.0, 1.00e3, 2.00e3, lo_r, R_SEL, 10.0e3, hi_r, 20.0e3}):
+        c = h24d_case(r, i_cr_only, i_eib)
+        ok = h24d_ok(c)
+        out("    R %7.0f ohm: short <= %6.3f mA, CR rail >= %.3f V (sag <= %5.1f mV); EIB HIGH >= %.3f V; LOW <= %.3f V; "
+            "edge rise %.3f / fall %.3f us; %s"
+            % (r, c["i_max"] * 1e3, c["v_min"], c["sag_max"] * 1e3, c["v_in_hi"], c["v_in_lo"], c["t_rise"] * 1e6,
+               c["t_fall"] * 1e6, "PASS" if all(ok.values()) else "fail " + ",".join(k for k, v in ok.items() if not v)))
+    c = h24d_case(R_SEL, i_cr_only, i_eib)
+    ok = h24d_ok(c)
+    assert all(ok.values()), ok
+    ib = i_cr_only + i_eib - 3.3 / (100 + R250 + R267)
+    vs = (3.30 - R175 * ib) / (1 + R175 / R_SEL)
+    h1n, h1s = h1_trips(16.0, v_cr), h1_trips(16.0, vs)
+    _, uf = uvb_trips_nom(v_cr)
+    _, ufs = uvb_trips_nom(vs)
+    pin34 = min((vio - R175 * 1.01 * ib) / (1 + R175 * 1.01 / (R_SEL * 0.99)) * R_PD_IMX / (R126 + R_PD_IMX) - VIH_FRAC * vio
+                for vio in V_IO)
+    d_load = 2 * (3.3 / (100 + R250 + R267) - 3.3 / (R_SEL + R250 + R267))
+    out("  selected: R132 = R131B = %.2f kOhm 1 %% 0603 (E96; same R_0603_1608Metric footprint, top side, D-44; value change "
+        "only): short <= %.3f mA (%.0f x below the 24 mA recommended IOH; r9 100 ohm basis 14.9-20.5 mA), CR rail >= %.3f V "
+        "(%.0f mV above the 3.0 V row; TLV3012 1.8 V / LVC 1.65 V minimums kept by >= %.2f V); EIB rail (one 3V3 conductor "
+        "open, no short) >= %.3f V"
+        % (R_SEL / 1e3, c["i_max"] * 1e3, LVC_IOH_REC[3.0] / c["i_max"], c["v_min"], (c["v_min"] - LVC_VCC_ROW) * 1e3,
+           c["v_min"] - TLV_VS_MIN, c["v_eib_lo"]))
+    out("    signal: EIB HIGH >= %.3f V against VIH 2.0 V (margin %.3f V >= 0.4 V); LOW <= %.4f V; edge rise %.3f us / fall "
+        "%.3f us at %.1f pF (tau %.3f us) against the %.2f us gate RC and the 1 ms tick; at twice the capacitance the edge is "
+        "%.3f us"
+        % (c["v_in_hi"], c["v_in_hi"] - LVC_VIH_EIB, c["v_in_lo"], c["t_rise"] * 1e6, c["t_fall"] * 1e6, c["c_tot"] * 1e12,
+           c["tau"] * 1e6, T_GATE_RC * 1e6, 2 * max(c["t_rise"], c["t_fall"]) * 1e6))
+    out("    dissipation: <= %.2f mW shorted, <= %.3f mW in normal HIGH (0603 0.1 W); the normal 3V3 load falls by %.1f uA "
+        "(two paths; R9.H15 kept on the 100 ohm basis, conservative)" % (c["p_short"] * 1e3, c["p_norm"] * 1e3, d_load * 1e6))
+    out("    sag effect at 3.30 V (CR rail %.4f -> %.4f V): H1 hysteresis %.4f -> %.4f V, UVB fall %.3f -> %.3f V; the pin-34 H1 "
+        "readback HIGH exceeds 0.7 x OVDD by >= %.3f V at every Teensy 3V3 corner during the short (the SR-SR-02 undefined "
+        "band does not occur; VIH fraction ASSUMPTION, TODO(verify: IMXRT1060CEC))"
+        % (v_cr, vs, h1n[0] - h1n[1], h1s[0] - h1s[1], uf, ufs, pin34))
+    out("    the larger series R adds a low-pass at the EIB input (tau %.3f us), so the H.13 0.1 / 1 us release-glitch rows are "
+        "not worsened; R131A stays 100 ohm (conductor 7 neighbours: key position 6 and ILIM_REL_B 8; a 7-8 short ties one "
+        "signal); a double fault 7-8 + 8-9 exposes R131A as in r9 (outside the single-fault scope)" % (c["tau"] * 1e6))
+    RJ["h24d"] = dict(selected_ohm=R_SEL, part="4.99k 1% 0603 (R_0603_1608Metric, E96)", feasible_ohm=[lo_r, hi_r],
+                      short_mA_max=r4(c["i_max"] * 1e3), cr_rail_min_V=r4(c["v_min"]), sag_max_mV=r4(c["sag_max"] * 1e3),
+                      eib_high_min_V=r4(c["v_in_hi"]), eib_low_max_V=r4(c["v_in_lo"]), edge_rise_us=r4(c["t_rise"] * 1e6),
+                      edge_fall_us=r4(c["t_fall"] * 1e6), c_total_pF=r4(c["c_tot"] * 1e12), gate_rc_us=r4(T_GATE_RC * 1e6),
+                      p_short_mW=r4(c["p_short"] * 1e3), h1_hyst_V=[r4(h1n[0] - h1n[1]), r4(h1s[0] - h1s[1])],
+                      uvb_fall_V=[r4(uf), r4(ufs)], pin34_margin_V=r4(pin34), viable=True)
+
+
+# ======================================================================================================================
+# R9.H21(r) (r9-12, audit run 002 ADV-R2-04): FR-41(iii) ramp-step transaction schedule and cadence, and the FR-41(vii)
+# hold-deadline resolution on the FR-45 tick grid. Bit conventions copied from round4/calc/r7_calc.py H.23(o) (i2c_bits_write,
+# i2c_bits_read, I2C_TBUF, I2C_CAP); the ramp model copied from round3/calc/r3_calc.py H.21(b) ff_ramp(), with the r3 fixed
+# 0.5 ms "in force after its tick" replaced by the verified write-ACK instant and a one-step-in-flight rule (the next step
+# is computed from the read-back IINDPM_now, FR-41(iii), so it starts only on the first tick after the read-back completes).
+H21R_TBUF = {100e3: 4.7e-6, 400e3: 1.3e-6}   # s, t_BUF Sm / Fm (NXP UM10204, not in references/, ASSUMPTION as in r7_calc.py)
+H21R_CAP = {100e3: 0.50e-3, 400e3: 0.35e-3}  # s, DOC FR-07 longest-transaction cap (the in-flight wait)
+T_HOLD_ACK = {100e3: 1.5e-3, 400e3: 1.0e-3}  # s, DOC FR-41(vii) hold deadline
+H21R_RACE = (0.448, 0.706)                   # A, DOC F.3 / H.20 race floor at 18.9 / 23 W, 0.4 mF
+T_H1_EARLIEST = 0.74e-3                      # s, DOC F.3 item 2: earliest H1 rise after bus traction reaches zero
+
+
+def h21r_wbits(n):
+    return (2 + n) * 9 + 2
+
+
+def h21r_rbits(n):
+    return (3 + n) * 9 + 3
+
+
+def h21r_ramp(i_tr0, t_dec, t_ack, t_rb, i0=0.30, aux=0.15, icap=1.20, mff=0.10, draw=0.89, dt=1e-5, tend=0.03):
+    t, ii, pend, ifc_max, tz, i_at, next_tick, busy = 0.0, i0, [], 0.0, None, {}, 0.0, -1.0
+    while t < tend:
+        tr = max(0.0, i_tr0 * (1 - t / t_dec))
+        if tr == 0.0 and tz is None:
+            tz = t
+        for (te, v) in list(pend):
+            if t >= te:
+                ii = v
+                pend.remove((te, v))
+        ifc = aux + tr + min(ii, draw)
+        ifc_max = max(ifc_max, ifc)
+        if t >= next_tick - 1e-12:
+            if t >= busy:
+                tgt = min(0.90, ii + (icap - mff - ifc))
+                if tgt - ii >= 0.05 or tgt < ii:
+                    pend.append((t + t_ack, max(0.0, tgt)))
+                    busy = t + t_rb
+            next_tick += T_TICK
+        if tz is not None:
+            for k in (T_H1_EARLIEST, 2e-3):
+                if k not in i_at and t >= tz + k:
+                    i_at[k] = ii
+        t += dt
+    return ifc_max, i_at
+
+
+def sec_h21r():
+    head("R9.H21(r) FR-41(iii) ramp-step schedule and cadence at 100 / 400 kHz; FR-41(vii) deadline on the FR-45 tick grid "
+         "(r9-12, audit run 002 ADV-R2-04)")
+    out("  one ramp step = W(REG06:07) %d bits + t_BUF + R(REG01:02) %d bits + t_BUF + R(REG06:07) %d bits (FR-41(iii) 'each "
+        "read back'; FR-46 read of REG01:02 and the register just written) = %d bits; worst case behind one in-flight "
+        "transaction at the FR-07 cap; IINDPM in force at the write ACK; the next step starts on the first tick after the "
+        "read-back" % (h21r_wbits(2), h21r_rbits(2), h21r_rbits(2), h21r_wbits(2) + 2 * h21r_rbits(2)))
+    res = {}
+    for f in (400e3, 100e3):
+        tb, cap = H21R_TBUF[f], H21R_CAP[f]
+        w2, r2 = h21r_wbits(2) / f, h21r_rbits(2) / f
+        step = w2 + tb + r2 + tb + r2
+        t_ack = cap + tb + w2
+        t_rb = t_ack + 2 * (tb + r2)
+        cad = int(math.ceil(t_rb / T_TICK - 1e-9))
+        dl = math.ceil(T_HOLD_ACK[f] / T_TICK - 1e-9) * T_TICK
+        lab = "%.0f kHz" % (f / 1e3)
+        out("  %s: step %.3f ms alone, %.3f ms behind a capped transaction (ACK at %.3f ms); cadence one step per %d tick(s); "
+            "FR-41(vii) T_HOLD_ACK %.1f ms expires at the first FR-45 tick at or after it: %.1f ms after the post"
+            % (lab, step * 1e3, (cap + tb + step) * 1e3, t_ack * 1e3, cad, T_HOLD_ACK[f] * 1e3, dl * 1e3))
+        rows = {}
+        for i_tr0 in (0.30, 0.50, 0.65):
+            for t_dec in (2e-3, 5e-3, 10e-3):
+                m, a = h21r_ramp(i_tr0, t_dec, t_ack, t_rb)
+                rows["%.2f|%.0f" % (i_tr0, t_dec * 1e3)] = (r4(m), r4(a[T_H1_EARLIEST]), r4(a[2e-3]))
+        lo = min(v[1] for v in rows.values())
+        hi = max(v[1] for v in rows.values())
+        lo2 = min(v[2] for v in rows.values())
+        mx = max(v[0] for v in rows.values())
+        out("    residual traction 0.30-0.65 A over 2-10 ms: IINDPM %.3f-%.3f A at the earliest H1 rise (+%.2f ms), >= %.3f A at "
+            "+2 ms; max I_fc %.3f A (I_cap - m_ff 1.10 A); race floor %.3f / %.3f A (18.9 / 23 W, 0.4 mF): %s"
+            % (lo, hi, T_H1_EARLIEST * 1e3, lo2, mx, H21R_RACE[0], H21R_RACE[1],
+               "held" if lo >= H21R_RACE[1] else "NOT held at the earliest H1 rise"))
+        # T4 restore (F.5 T4, ADV-R2-05): edge-posted at the queue head; in-flight term <= the FR-07 cap (a raising write
+        # in flight completes, W(REG03-05) 0.470 / 0.117 ms <= cap); step 1 W(REG06:07) + W(REG03:04), then its FR-46 field
+        # reads R(REG01:02), R(REG06:07), R(REG03:04); step 2 is a critical section with no bus time; step 3 W(REG05). The
+        # step-3 read-back follows after the deadline, as for T3 (H.23(o)). ISR latency is not in the bus budget.
+        t4 = cap + tb + w2 + tb + w2 + 3 * (tb + r2) + tb + h21r_wbits(1) / f
+        out("    T4 restore, falling edge to the step-3 VINDPM write complete: %.3f ms (in-flight %.2f ms + W(REG06:07) + W(REG03:04) "
+            "+ three field reads + W(REG05), t_BUF between; ISR latency excluded)" % (t4 * 1e3, cap * 1e3))
+        res["%.0fk" % (f / 1e3)] = dict(step_ms=r4(step * 1e3), step_behind_cap_ms=r4((cap + tb + step) * 1e3), t4_edge_to_step3_ms=r4(t4 * 1e3),
+                                        ack_ms=r4(t_ack * 1e3), cadence_ticks=cad, hold_deadline_ms=r4(dl * 1e3),
+                                        iindpm_h1_A=[lo, hi], iindpm_2ms_min_A=lo2, ifc_max_A=mx, rows=rows)
+    RJ["h21r"] = res
 
 
 # ======================================================================================================================
@@ -760,9 +1004,11 @@ def main():
     sec_h19()
     sec_h20_misc()
     vol6 = sec_h21(v_cr)
+    sec_h21r()
     fcc = sec_h22(v_cr)
     sec_h23(v_cr)
     sec_h24a(v_cr, i_cr_only, i_eib)
+    sec_h24d(v_cr, i_cr_only, i_eib)
     en = sec_h24b(v_cr)
     sec_h24c(v_cr, vol6, fcc, en)
     sec_retired()

@@ -610,7 +610,9 @@ The MB keeps every trace (PM8: no trace cuts) and keeps ROS fitted. Steps PM7, P
 ### 9.1 Netlist and board files
 
 The CR netlist `cr/cr.net` is regenerated from `gen/netlist.py` with 78 parts (145 in r8) and passes ERC with 0 errors
-and 0 warnings. It is frozen only after check-in 2 approves the audit-run-002 fixes. The netlist export reports
+and 0 warnings. Check-in 2 approved the audit-run-002 fixes on 2026-11-12. The netlist step changed R132 and R131B to
+4.99 kOhm (design document H.24(d)), and the netlist is frozen (LAYOUT_DECISIONS D-53, sha256 `e98f4e49e22f60ca...`; 78 parts, 79 nets,
+ERC 0 / 0, connectivity unchanged). The netlist export reports
 annotation errors for the six letter-suffix designators C102a, C102b, C102c, R106s, R131A and R131B; these references are
 accepted.
 
@@ -650,8 +652,10 @@ decisions removed parts on which its dispositions rest.
 
 Audit run 002 is adjudicated in `docs/reviews/charger-design/run-002-2026-11-12.md` (design document L.9, change row
 r9-10). It raised 29 findings; after verification, none is a blocker, 8 are major and 21 are minor. Table L.9-1 is final:
-of its 37 dispositions, 25 hold with change, 1 no longer holds and 11 retire. No fix is applied. The fixes wait for the
-operator's approval at check-in 2, and the design is not certified until they are applied (section 11, items 15 to 21).
+of its 37 dispositions, 25 hold with change, 1 no longer holds and 11 retire. Check-in 2 is closed: the operator approved
+all 29 agreed fixes, and design change row r9-12 applies them with the six check-in 2 rulings (section 11, items 15 to
+21). The verify pass of the r9-12 fixes is clean (2026-11-12; run-002 record, section "Fix round r9-12 verification";
+design document L.9), so the certification condition of L.9 is met for the run-002 findings.
 
 ### 9.5 Calculations
 
@@ -672,7 +676,8 @@ charger path.
 ### 10.1 Round order
 
 The round order is D-50, in eight steps with four operator check-ins. Steps 1 to 4 are done, and check-in 1 has passed
-(operator ruling 2026-11-12 (b)). Check-in 2 is the next action, and four steps remain after it. Table 10.1 lists each step with its inputs, outputs and blocking items.
+(operator ruling 2026-11-12 (b)). Check-in 2 is closed, and the r9-12 fix round is applied. The netlist step is done
+and the netlist is frozen (D-53). The verify pass of the r9-12 fixes is clean, and four steps remain. Table 10.1 lists each step with its inputs, outputs and blocking items.
 
 Table 10.1. Round order (D-50).
 
@@ -680,14 +685,14 @@ Table 10.1. Round order (D-50).
 |---|---|---|---|
 | 1. Apply decisions to the design document and CR netlist (done) | 2026-11-12 decision records | Design document r9, `cr/cr.net` (78 parts), BOM, LAYOUT_DECISIONS D-38 to D-50 | **Check-in 1**: diff review; section 11 items 1, 2, 4 and 5 |
 | 2. Re-run section H on the r9 netlist (done, r9-9) | r9 netlist `cr/cr.net`, `eib/eib.net` | `round4/calc/r9_calc.py` with its output; H.4, H.5, H.7, H.12, H.13, H.15, H.19-H.22, H.23(n), (x), (y) re-derived; H.24(a)-(c) new; `r3_calc.py` and `r7_calc.py` kept as the r8 record | None; the ribbon-short ruling moved to check-in 2 (section 11, item 16) |
-| 3. Audit run 002 (done, r9-10; awaits check-in 2) | Step-2 numbers; Table L.9-1 | `docs/reviews/charger-design/run-002-2026-11-12.md`; L.9 and Table L.9-1 final; 29 findings: 0 blocker, 8 major, 21 minor; no fix applied | **Check-in 2**: section 11 items 15 to 21, then the fix round and the netlist freeze |
+| 3. Audit run 002 (done, r9-10; check-in 2 closed; fixes applied in r9-12) | Step-2 numbers; Table L.9-1 | `docs/reviews/charger-design/run-002-2026-11-12.md`; L.9 and Table L.9-1 final; 29 findings: 0 blocker, 8 major, 21 minor; all 29 fixes applied in r9-12; verify pass clean | None (the verify pass, the netlist step and the netlist freeze are done) |
 | 4. New-outline generator (done, D-51, D-52) | `outline_change_2026-11-12/retired.md` section 4 | `gen/mb_brd.py`, `gen/cr_geometry.py`, `gen/layout_cr.py` rewritten (Table D-52 regions), CR rows of `gen/check_constraints.py` rebuilt, 0.25 mm courtyards, VCHGOUT strap on L3, `cr/geometry_check.md` (H.23 successor) | Placeholders that do not block step 5: Molex 43045 header drawing (J102 P/N, pegs, latch side, cavity numbering), TSW pad and drill, W6/W7 hole sizes, MS4 rim distance. The height survey is closed by D-51 |
-| 5. Placement on the frozen netlist, all SMT on the top | Frozen netlist, generator | Placed board | Frozen netlist (after check-in 2); the next `gen/make_board.sh cr` writes the `_CrtYd0.25` names into `cr/cr.net`; **check-in 3** (placement images) |
+| 5. Placement on the frozen netlist, all SMT on the top | Frozen netlist, generator | Placed board | Frozen netlist: done (D-53; `cr/cr.net` carries the `_CrtYd0.25` names); **check-in 3** (placement images) |
 | 6. Full route-race | Placed board, power geometry | Routed board and one batch of change requests | Via-in-pad fallbacks listed for review; `gen/make_cr_all.sh` must drop B.Cu from the PathFinder layer set (D-20 rule area); `gen/route_cr.py` TRACK 0.127 mm against the D-29 0.1524 mm default |
 | 7. DRC and constraint check | Routed board | Clean DRC and constraint reports | Not applicable |
 | 8. Fab package (`gen/export.sh`, `gen/fab_readme.py`) | Checked board | CR fab package | **Check-in 4** (before the fab package and any order); fab quotes; BOM verification (T-A-05) |
 
-Placement waits only for the frozen netlist, which follows check-in 2. D-51 closed the MB height survey: the D-41 stack
+The netlist is frozen (D-53), so placement is no longer blocked. D-51 closed the MB height survey: the D-41 stack
 is taken to clear every MB part except the power terminals, and the CR -x edge clears J-BL and J-FC by 2.454 mm and J-BT
 by 2.200 mm. The D-20 air gap and the section 8.2 THT-tail rule rest on that ruling and are taken as met.
 
@@ -698,9 +703,10 @@ T-W-01a then gates any charging, and the full T-W-01 gates FC windows.
 
 ## 11. Open items for the operator
 
-The following decisions belong to the operator. Each item names its record. The next operator action is check-in 2,
-items 15 to 21, which come from audit run 002 (`docs/reviews/charger-design/run-002-2026-11-12.md`, section "Items for
-operator ruling at check-in 2").
+The following decisions belong to the operator. Each item names its record. Check-in 2 (items 15 to 21, from audit run
+002, `docs/reviews/charger-design/run-002-2026-11-12.md`, section "Items for operator ruling at check-in 2") is closed.
+The operator approved all fixes on 2026-11-12. Rulings R1 to R6 are the orchestrator's defaults, recorded in design change
+row r9-12, and the operator may override any of them. The next operator action is check-in 3 (placement images).
 
 1. Closed 2026-11-12: check-in 1 passed; the operator reviewed this README and approved the D-50 round order (ruling (b)).
 2. Closed 2026-11-12: the operator accepted the J-TAP map with T5 (A4) diagonal to T10 (B5) (D-46, J.2 item 63).
@@ -724,18 +730,18 @@ operator ruling at check-in 2").
 13. Decide whether FR-47(a) also writes EN_CHG = 0 on the P5 drop and verifies that the charge current falls (dec2-gate
     suggestion, round-2 digest).
 14. Decide the tolerance and action of a pin-25 plausibility check against the BQ25798 VBAT ADC (J.2 item 39).
-15. Check-in 2, SR-SR-01: accept the T6-T7b diagonal of the J-TAP map (Teensy 3V3 to GND with no resistor) as a J.2
-    item 63 entry with T-F-12 as the build check, or re-map T6.
-16. Check-in 2, ADV-R2-06 and SR-SR-02: choose the J.2 item 70(a) fail-safe option for the ribbon 9-10 and 8-9 shorts:
-    (a) raise R132/R131B, (b) add an H1-readback-LOW against V_rgn plausibility flag, or (c) accept under T-C-05/T-C-07.
-17. Check-in 2, SR-SR-04: choose option (a), a new non-latching "release not arriving" flag, or option (b), "not
-    detected in service" as the B.6 detection cells.
-18. Check-in 2, L.1 readback-misses-evm-side: accept the unobserved EVM-side /CE node in J.1 item 13.
-19. Check-in 2, SR-SR-11: add a V_bus-sag branch to FR-17, or leave the case to UV_BUS.
-20. Check-in 2: approve the fixes of the 8 major and 21 minor findings (run record, adjudication table). SR-SR-17, the
-    IO CSV pointer, is already moot under r9-11.
-21. Check-in 2, ruling (c): confirm or override the default membership of Table L.9-1 (the two added L.4 dispositions
-    and the retired outline-only dispositions).
+15. Closed 2026-11-12 (check-in 2, ruling R1, default): SR-SR-01. No 2 x 5 cavity map is free of severity-3 pairs, so
+    the map is kept. T6-T7b, T7b-T17 and T5-T17 are a J.2 item 63 entry with T-F-12 as the build check.
+16. Closed 2026-11-12 (check-in 2, ruling R2, default): ADV-R2-06 and SR-SR-02. Option (a) is selected: R132 and R131B
+    rise to 4.99 kOhm 1 % (design document H.24(d)); the netlist step applied the value (D-53).
+17. Closed 2026-11-12 (check-in 2, ruling R3, default): SR-SR-04. Option (b) is selected: the B.6 cells read "not
+    detected in service", and no firmware flag is added (J.2 item 73 keeps option (a) open).
+18. Closed 2026-11-12 (check-in 2, ruling R4, default): the unobserved EVM-side /CE node is accepted in J.1 item 13.
+19. Closed 2026-11-12 (check-in 2, ruling R5, default): SR-SR-11. The V_bus-sag case is left to UV_BUS, and
+    PURGE_RESCUE_ENABLED stays 0; the shed-latency precondition is in T-F-07 and H.22.
+20. Closed 2026-11-12 (check-in 2): the operator approved all 29 agreed fixes ("Approve all fixes"). Design change row
+    r9-12 applies them without the refuted parts (Table L.9-2). SR-SR-17 was already moot under r9-11.
+21. Closed 2026-11-12 (check-in 2, ruling R6, default): the membership of Table L.9-1 is confirmed as written.
 
 ## 12. Where the detail lives
 
@@ -759,8 +765,8 @@ Table 12.1. Topic index.
 | Plug-on outline geometry checks | `cr/geometry_check.md`, from `gen/cr_geometry.py` | H.23 successor row; LAYOUT_DECISIONS D-51 |
 | Tests (T-A to T-W) | Design document | I |
 | Accepted residuals and open items | Design document | J.1, J.2 |
-| Audit runs | Design document; run-002 record `docs/reviews/charger-design/run-002-2026-11-12.md` | L.8 (no longer certifying), L.9 (adjudicated; fixes wait for check-in 2) |
-| Layout decisions D-01 to D-52 | `LAYOUT_DECISIONS.md` | D-38 to D-52 for 2026-11-12 |
+| Audit runs | Design document; run-002 record `docs/reviews/charger-design/run-002-2026-11-12.md` | L.8 (no longer certifying), L.9 (adjudicated; fixes applied in r9-12; verify pass clean) |
+| Layout decisions D-01 to D-53 | `LAYOUT_DECISIONS.md` | D-38 to D-53 for 2026-11-12 |
 | Current state and next steps | `HANDOFF.md` | 1-3 |
 | Pre-round-2 state record | `DESIGN_STATE_2026-11-12.md` | Superseded where round 2 differs |
 | First-round decision records | `decisions_2026-11-12/` | One file per decision |

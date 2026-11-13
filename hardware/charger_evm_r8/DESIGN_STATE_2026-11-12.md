@@ -19,6 +19,11 @@ verification; no fix is applied before operator check-in 2. The new-outline gene
 D-51, D-52), and `cr/geometry_check.md` passes; D-51 closes the height survey. The D.3 IO CSV rows are applied to
 `references/Scale Car Teensy IO - IO - 2026-11-12.csv` (r9-11).
 
+**Status update (2026-11-12, check-in 2 closed).** The operator approved all 29 agreed fixes of audit run 002.
+Design change row r9-12 applies them, with the six check-in 2 rulings R1 to R6 recorded as orchestrator defaults that
+the operator may override. The J-TAP cavity map is kept (R1), and R132 and R131B rise to 4.99 kOhm (R2); the netlist step
+applied that value, and the CR netlist is frozen (LAYOUT_DECISIONS D-53). The certification stands once a verify pass of the r9-12 fixes is clean (design document L.9).
+
 ## 2. Decisions taken
 
 Table 1 lists the decisions taken on 2026-11-12.

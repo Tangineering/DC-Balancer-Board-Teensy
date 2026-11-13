@@ -5,7 +5,7 @@ R9.0 Netlist basis (cr.net 78 parts, eib.net with the r9-2 DNP set)
 ==============================================================================================================
 cr.net: 78 components; eib.net: 46 components (12 DNP by r9-2: C203, C204, R258, R259, R260, R261, R262, R263, R264, R265, U203, U204)
 r9-removed CR designators checked absent from cr.net: 69 checked, present: none
-values used below, parsed from cr.net: R105 27.4k 1%, R106s 1.00k 1%, R107 10.0k 1%, R108 47.0k 1%, R109 487k 0.1%, R110 56.2k 0.1%, R111 442k 0.1%, R112 56.2k 0.1%, R113 6.49M 1%, R114 1.00M 0.1%, R115 104k 0.1%, R116 10.0M 1%, R122 1.00k 1%, R123 47.0k 1%, R126 1.00k 1%, R129 10.0k 1%, R130 100 1%, R131A 100 1%, R131B 100 1%, R132 100 1%, R147 1.00k 1%, R175 68.0 1% 0.25W, R176 200 1%, R177 200 1%, R184 20.0k 1%, R185 10.0k 1%, R186 10.0k 1%, R187 3.30M 1%, R188 453k 1%, R189 1.00M 1%, C129 1.0nF 50V C0G
+values used below, parsed from cr.net: R105 27.4k 1%, R106s 1.00k 1%, R107 10.0k 1%, R108 47.0k 1%, R109 487k 0.1%, R110 56.2k 0.1%, R111 442k 0.1%, R112 56.2k 0.1%, R113 6.49M 1%, R114 1.00M 0.1%, R115 104k 0.1%, R116 10.0M 1%, R122 1.00k 1%, R123 47.0k 1%, R126 1.00k 1%, R129 10.0k 1%, R130 100 1%, R131A 100 1%, R131B 4.99k 1%, R132 4.99k 1%, R147 1.00k 1%, R175 68.0 1% 0.25W, R176 200 1%, R177 200 1%, R184 20.0k 1%, R185 10.0k 1%, R186 10.0k 1%, R187 3.30M 1%, R188 453k 1%, R189 1.00M 1%, C129 1.0nF 50V C0G
 mismatches against the section H basis: none
   topology STAT: J1.3 (MB pin 6), J101.4, R107 to /3V3                                                  OK
   topology CHG_ARM: J1.11 (pin 5), R108 to GND                                                          OK
@@ -82,6 +82,17 @@ R9.H21 EIB R275 STAT series with CE_DRV driven push-pull by U106A (r9-1; was U11
   normal STAT LOW at pin 6 with R275: 0.293-0.315 V (STAT sink 0-80 ohm) against VIL 0.940 V (0.30 x 3.135 V, ASSUMPTION); sink 0.293 mA; 3-4 short: pin 6 stuck LOW, R275 limits the STAT-pin current to <= 3.23 mA
 
 ==============================================================================================================
+R9.H21(r) FR-41(iii) ramp-step schedule and cadence at 100 / 400 kHz; FR-41(vii) deadline on the FR-45 tick grid (r9-12, audit run 002 ADV-R2-04)
+==============================================================================================================
+  one ramp step = W(REG06:07) 38 bits + t_BUF + R(REG01:02) 48 bits + t_BUF + R(REG06:07) 48 bits (FR-41(iii) 'each read back'; FR-46 read of REG01:02 and the register just written) = 134 bits; worst case behind one in-flight transaction at the FR-07 cap; IINDPM in force at the write ACK; the next step starts on the first tick after the read-back
+  400 kHz: step 0.338 ms alone, 0.689 ms behind a capped transaction (ACK at 0.446 ms); cadence one step per 1 tick(s); FR-41(vii) T_HOLD_ACK 1.0 ms expires at the first FR-45 tick at or after it: 1.0 ms after the post
+    residual traction 0.30-0.65 A over 2-10 ms: IINDPM 0.850-0.900 A at the earliest H1 rise (+0.74 ms), >= 0.850 A at +2 ms; max I_fc 1.100 A (I_cap - m_ff 1.10 A); race floor 0.448 / 0.706 A (18.9 / 23 W, 0.4 mF): held
+    T4 restore, falling edge to the step-3 VINDPM write complete: 0.980 ms (in-flight 0.35 ms + W(REG06:07) + W(REG03:04) + three field reads + W(REG05), t_BUF between; ISR latency excluded)
+  100 kHz: step 1.349 ms alone, 1.854 ms behind a capped transaction (ACK at 0.885 ms); cadence one step per 2 tick(s); FR-41(vii) T_HOLD_ACK 1.5 ms expires at the first FR-45 tick at or after it: 2.0 ms after the post
+    residual traction 0.30-0.65 A over 2-10 ms: IINDPM 0.300-0.890 A at the earliest H1 rise (+0.74 ms), >= 0.850 A at +2 ms; max I_fc 1.100 A (I_cap - m_ff 1.10 A); race floor 0.448 / 0.706 A (18.9 / 23 W, 0.4 mF): NOT held at the earliest H1 rise
+    T4 restore, falling edge to the step-3 VINDPM write complete: 3.018 ms (in-flight 0.50 ms + W(REG06:07) + W(REG03:04) + three field reads + W(REG05), t_BUF between; ISR latency excluded)
+
+==============================================================================================================
 R9.H22 FCC_OFF / FCC_ON at the pin-31 EN net (U119, U120; RGN_ON U121 and the RGN tap removed); rescue case (c)
 ==============================================================================================================
   FCC_OFF (U119) threshold at IN-: 0.387-0.441 V (REF/3 by R184 20.0k / R185 10.0k 1 %, REF drift 0-45 C, Vos 9 mV, VHYS/2); referred to the pin-31 EN net through R122 + R186 with the R187 current: 0.377-0.432 V (R187 shift 9.2 mV); below VEN_F min 0.6 V by >= 0.159 V
@@ -95,7 +106,7 @@ R9.H23(n) R106s FLT bridges on the J-TAP cavity map; H.23(x) rows (3)-(4); H.23(
 ==============================================================================================================
   T16 (B4) orthogonal neighbours: A4 T5 (pin 31 push-pull), B5 T10 (pin 33 push-pull), B3 T17 (pin 22 analog)
   T5-T16 or T10-T16 bridge, output HIGH, FLT asserted: FLT current 3.377 mA max (3V3 3.465 V, 0 ohm driver, R106s 990 ohm, R(FLT) 36 ohm) = 0.338 of the 10 mA abs max; 2.657 mA min; the bridged output stays >= 3.017 V (40 ohm driver), so the EN net (T5) or QUAL (T10, through R147) follows its command and pin 35 reads that output level (a fault is masked while it is HIGH); the figures equal the r8 F06-F17 case
-  T16-T17 bridge, FLT released: the pin-35 pull-up feeds R129 + R105 (37.4 kOhm): node 2.078 V nominal (1.665-2.678 V over 11-33 kOhm), read on pin 22 as 2.72 A at 0.764 V/A and on pin 35 inside the undefined band VIL 0.94-1.04 / VIH 2.19-2.43 V; FLT asserted: the node falls toward 0 V through R106s + R(FLT) (CHG_IIN reads ~0 A); the CHG_IIN/IBUS cross-check (FR-11) sees both cases
+  T16-T17 bridge, FLT released: the pin-35 pull-up feeds R129 + R105 (37.4 kOhm): node 2.078 V nominal (1.665-2.678 V over 11-33 kOhm), read on pin 22 as 2.72 A at 0.764 V/A and on pin 35 inside the undefined band VIL 0.94-1.04 / VIH 2.19-2.43 V; FLT asserted: the node falls toward 0 V through R106s + R(FLT) (CHG_IIN reads ~0 A); the CHG_IIN/IBUS cross-check (FR-11) sees the FLT-released case only: FR-23 attempts no I2C with FLT asserted and no zero-current plausibility check exists, so the asserted case is latent until FLT releases (r9-12, audit run 002 ADV-R2-07)
   retired: the F17-F15 bridge (T14, pin 16 H2c, U108; r8 H.23(n) <= 1.719 mA and H.23(y) row (1) node 1.60-1.93 V): T14 and U108 are removed and no J-TAP cavity carries H2c
   FLT readback LOW (no bridge): 0.153 V typ, 0.325 V max vs VIL 0.940 V (unchanged from r8)
   H.23(x)(3) / (y)(7) T1 increment (r9): the heartbeat pause, step 8b and step 8c are removed; step 8 adds <= one T_TICK_MAX (1.0 ms) of QUAL-LOW wait + the FR-46 pre-edge read 1.849 ms at 100 kHz with four t_BUF = 2.849 ms (r8 128.5 ms); QUAL normally falls at step 6, so the wait is usually already met
@@ -104,7 +115,7 @@ R9.H23(n) R106s FLT bridges on the J-TAP cavity map; H.23(x) rows (3)-(4); H.23(
 ==============================================================================================================
 R9.H24(a) Ribbon 9-10 (RFC_OFF, U106B) and 8-9 (ILIM_REL_B, U110B) shorts with the R175 sag (J.2 item 70(a))
 ==============================================================================================================
-  model: Teensy 3V3 -> R175 68 ohm -> CR rail (base load as a constant current) -> LVC driver (Rout 0.0-37.5 ohm, VCC = the CR rail) -> R132 / R131B 100 ohm -> J101 pin 9 (GND). The EIB rail follows the CR rail through R176 || R177.
+  model: Teensy 3V3 -> R175 68 ohm -> CR rail (base load as a constant current) -> LVC driver (Rout 0.0-37.5 ohm, VCC = the CR rail) -> R132 / R131B 100 ohm (r9-9 basis) -> J101 pin 9 (GND). The EIB rail follows the CR rail through R176 || R177.
   without R175 (the r9-2 finding's figure): 3.30 V / 100 ohm = 33.0 mA
     3V3 3.135 V, CR + EIB worst static (R9.H15) less the shorted path's own EIB input           Rout  0.0 ohm: short 18.25 mA, CR rail 1.825 V
     3V3 3.135 V, CR + EIB worst static (R9.H15) less the shorted path's own EIB input           Rout 37.5 ohm: short 14.92 mA, CR rail 2.052 V
@@ -122,6 +133,27 @@ R9.H24(a) Ribbon 9-10 (RFC_OFF, U106B) and 8-9 (ILIM_REL_B, U110B) shorts with t
   limits (SCES201N, TODO(verify)): continuous output current abs max 50 mA -> not exceeded (factor 2.4); recommended IOH -24 mA at VCC 3.0 V, -8 mA at 2.3 V, -4 mA at 1.65 V: the driver sources 14.9-20.5 mA at VCC 1.83-2.30 V, above the recommended IOH for that VCC (interpolated 5.1-8.1 mA), so VOH is not specified there; VCC stays above the LVC 1.65 V and TLV3012 1.8 V minimums by >= 0.025 V
   sag effect at the nominal case (CR rail 1.924 V): H1 hysteresis (R113 swing) 0.297 -> 0.197 V at VBUS 16.0 V (rise 17.423 V unchanged, fall 17.126 -> 17.226 V: H1 drops earlier); UVB fall 13.336 -> 13.471 V, rise 13.724 V (UVB drops earlier): both shifts remove the regen release earlier; REF 1.242 V needs VS >= 1.8 V (met); LVC VIH at VCC 1.92 V falls with VCC, and the Teensy-driven inputs (P5, QUAL) are 5.5 V tolerant. Fail-safe ruling: audit run 002 (J.2 item 70(a))
   when each short draws current: 9-10 while RFC_OFF = FCC_OFF + H1.UVB is HIGH, i.e. whenever FC_CHARGE is off (most of Idle and Run); 8-9 while ILIM_REL (release) is HIGH. The converter side is safe in both (9-10: Q202 FC leg on, FC clamp; 8-9: U202 holds ILIM_HIZ)
+
+==============================================================================================================
+R9.H24(d) J.2 item 70(a) option (a): R132 / R131B value for a ribbon 9-10 / 8-9 short (ruling R2, r9-12)
+==============================================================================================================
+  topology (eib.net): RFC_OFF_J (J201.10) -> R253 1.00k -> /N_RFIN = U201 3A (SN74LVC3G06), R269 47.0k to AGND; ILIM_REL_B (J201.8) -> R266 1.00k -> /N_RBIN = U202 A (SN74LVC1G06), R270 47.0k to AGND. No other EIB load; no CR-side consumer between U106B / U110B and R132 / R131B (cr.net /RFC_OFF, /ILIM_REL).
+  criteria: (1) short: CR rail >= 3.0 V at every corner (every CR LVC part stays in the VCC 3.0 V row; the TLV3012 1.8 V and LVC 1.65 V minimums are kept by >= 1.2 V), Teensy 3V3 3.135-3.465 V, both R9.H24(a) base loads, Rout 0-37.5 ohm, R and R175 +-1 %; (2) driver current <= the recommended IOH 24 mA at VCC 3.0 V; (3) EIB HIGH input >= VIH 2.0 V + 0.4 V (the LVC VOH 2.4 V - VIH 2.0 V margin) at the Teensy 3V3 low corner, Rout 37.5 ohm, resistors at the adverse 1 %, II 5 uA; (4) LOW input <= VIL 0.8 V; (5) the ribbon RC edge to VIH / VIL <= the downstream EIB gate RC 2.35 us (R252 / R254 47.0k x Ciss 50 pF, H.13), which is 0.235 % of the 1 ms tick
+  capacitance: ribbon 150 pF/m x 0.3048 m + connectors 10 pF + LVC Ci 5 pF = 60.7 pF (ASSUMPTION, TODO(verify: W5 flat-cable MPN in T-A-05; SCES Ci)); the 100 ohm basis edge is 0.073 us
+  feasible E96 window (1.00k-20.0k swept): 3.16k-10.50k (51 values); below it criterion (1) fails, above it (3) or (5) fails
+    R     100 ohm: short <= 20.692 mA, CR rail >= 1.810 V (sag <= 1409.4 mV); EIB HIGH >= 2.982 V; LOW <= 0.006 V; edge rise 0.073 / fall 0.087 us; fail rail
+    R    1000 ohm: short <=  3.255 mA, CR rail >= 2.867 V (sag <= 223.2 mV); EIB HIGH >= 2.922 V; LOW <= 0.010 V; edge rise 0.135 / fall 0.153 us; fail rail
+    R    2000 ohm: short <=  1.681 mA, CR rail >= 2.963 V (sag <= 115.4 mV); EIB HIGH >= 2.858 V; LOW <= 0.014 V; edge rise 0.206 / fall 0.221 us; fail rail
+    R    3160 ohm: short <=  1.077 mA, CR rail >= 3.000 V (sag <=  73.9 mV); EIB HIGH >= 2.787 V; LOW <= 0.019 V; edge rise 0.292 / fall 0.294 us; PASS
+    R    4990 ohm: short <=  0.687 mA, CR rail >= 3.024 V (sag <=  47.2 mV); EIB HIGH >= 2.681 V; LOW <= 0.027 V; edge rise 0.437 / fall 0.397 us; PASS
+    R   10000 ohm: short <=  0.345 mA, CR rail >= 3.045 V (sag <=  23.7 mV); EIB HIGH >= 2.426 V; LOW <= 0.045 V; edge rise 0.907 / fall 0.616 us; PASS
+    R   10500 ohm: short <=  0.329 mA, CR rail >= 3.046 V (sag <=  22.6 mV); EIB HIGH >= 2.403 V; LOW <= 0.047 V; edge rise 0.961 / fall 0.634 us; PASS
+    R   20000 ohm: short <=  0.173 mA, CR rail >= 3.056 V (sag <=  11.9 mV); EIB HIGH >= 2.030 V; LOW <= 0.073 V; edge rise 2.688 / fall 0.860 us; fail vih,timing
+  selected: R132 = R131B = 4.99 kOhm 1 % 0603 (E96; same R_0603_1608Metric footprint, top side, D-44; value change only): short <= 0.687 mA (35 x below the 24 mA recommended IOH; r9 100 ohm basis 14.9-20.5 mA), CR rail >= 3.024 V (24 mV above the 3.0 V row; TLV3012 1.8 V / LVC 1.65 V minimums kept by >= 1.22 V); EIB rail (one 3V3 conductor open, no short) >= 2.991 V
+    signal: EIB HIGH >= 2.681 V against VIH 2.0 V (margin 0.681 V >= 0.4 V); LOW <= 0.0270 V; edge rise 0.437 us / fall 0.397 us at 60.7 pF (tau 0.326 us) against the 2.35 us gate RC and the 1 ms tick; at twice the capacitance the edge is 0.874 us
+    dissipation: <= 2.38 mW shorted, <= 0.021 mW in normal HIGH (0603 0.1 W); the normal 3V3 load falls by 12.7 uA (two paths; R9.H15 kept on the 100 ohm basis, conservative)
+    sag effect at 3.30 V (CR rail 3.2272 -> 3.1884 V): H1 hysteresis 0.2967 -> 0.2938 V, UVB fall 13.336 -> 13.340 V; the pin-34 H1 readback HIGH exceeds 0.7 x OVDD by >= 0.800 V at every Teensy 3V3 corner during the short (the SR-SR-02 undefined band does not occur; VIH fraction ASSUMPTION, TODO(verify: IMXRT1060CEC))
+    the larger series R adds a low-pass at the EIB input (tau 0.326 us), so the H.13 0.1 / 1 us release-glitch rows are not worsened; R131A stays 100 ohm (conductor 7 neighbours: key position 6 and ILIM_REL_B 8; a 7-8 short ties one signal); a double fault 7-8 + 8-9 exposes R131A as in r9 (outside the single-fault scope)
 
 ==============================================================================================================
 R9.H24(b) RT1987 EN-net level on pins 27-32 with the pad not driven (INPUT_PULLUP, high-Z, keeper), r9 pull-downs

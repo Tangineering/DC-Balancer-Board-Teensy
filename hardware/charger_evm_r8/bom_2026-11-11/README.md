@@ -10,7 +10,7 @@ EVM interface board (EIB), two BQ25798EVM modules, the EVM rework of section C a
 
 The folder contains three files:
 
-- `ordering_bom.csv`, the ordering list (101 rows; 113 before the r9 edit);
+- `ordering_bom.csv`, the ordering list (102 rows after r9-12, section 8.5; **superseded in r9:** 101 rows; 113 before the r9 edit);
 - `footprint_relevant_choices.md`, the land-pattern facts for the parts that constrain the PCB capture;
 - this README.
 
@@ -45,7 +45,7 @@ The summary cells have these definitions:
 
 - **Total Assembly Cost** is the sum of `Assembly Cost` over rows with a known price. No price was verified (section 3), so every row is excluded and the total is USD 0.00. The total is therefore not a cost estimate. Design section E gives a budget of USD 520-630 including the EVMs.
 - **PCB components** (98; 154 before r9) is the count of fitted reference designators on the CR and the EIB, excluding the solder pads W1-W7, E1-E8 and the tap field F01-F24. J1 (the CHG header pair) counts once. Spares, kit values, EVM and MB rework parts, wire, materials and hardware are not counted. The r9 figure was computed from the `gen/netlist.py` r9 working copy (78 CR entries, 46 EIB entries) with the EIB DNP set of section 8.4 applied: 72 CR parts and 26 EIB parts. The same computation on the r8 netlist reproduces 154.
-- **PCB unique parts** (51; 60 before r9) is the count of distinct MPN strings among those fitted CR/EIB parts, by the same computation.
+- **PCB unique parts** (52 after r9-12, section 8.5; **superseded in r9:** 51; 60 before r9) is the count of distinct MPN strings among those fitted CR/EIB parts, by the same computation.
 
 ### 2.3 Build quantity basis
 
@@ -276,3 +276,14 @@ The design quantity of the new J102 header is 1 with no spare listed; the operat
 
 U203, U204, C203, C204 and R258-R265 are DNP, and the E4 and E6 leads are not built. R274 stays fitted. The
 EIB fabrication package (`fab/eib_2026-11-11/`) carries the same set. The EIB copper is unchanged.
+
+### 8.5 r9-12 (2026-11-12): R131B and R132 value change
+
+Check-in 2 ruling R2 (J.2 item 70(a), option (a)) raises R131B and R132 from 100 Ohm to 4.99 kOhm 1 % 0603. The
+basis is design section H.24(d) and `round4/calc/r9_calc.py` R9.H24(d). The footprint does not change.
+
+- The CRCW0603100RFKEA row now carries R130 and R131A only, and its quantity changes from 4 to 2.
+- A new CRCW06034K99FKEA row carries R131B and R132, quantity 2. The ordering code is TODO(verify: Vishay doc 20035).
+- The PCB components cell stays 98. The PCB unique parts cell changes from 51 to 52, because CRCW06034K99FKEA is a
+  new MPN among the fitted CR/EIB parts.
+- The CR netlist `cr/cr.net` carries the same values (LAYOUT_DECISIONS D-53).

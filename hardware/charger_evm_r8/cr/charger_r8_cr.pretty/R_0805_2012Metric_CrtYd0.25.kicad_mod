@@ -1,6 +1,6 @@
-(footprint "R_0805_2012Metric_CrtYd0.10" (version 20241229) (generator kicad-footprint-generator)
+(footprint "R_0805_2012Metric_CrtYd0.25" (version 20241229) (generator kicad-footprint-generator)
   (layer "F.Cu")
-  (tedit 6af5db02)
+  (tedit 6af6347c)
   (descr "Resistor SMD 0805 (2012 Metric), square (rectangular) end terminal, IPC-7351 nominal, (Body size source: IPC-SM-782 page 72, https://www.pcb-3d.com/wordpress/wp-content/uploads/ipc-sm-782a_amendment_1_and_2.pdf), generated with kicad-footprint-generator")
   (tags "resistor")
   (property "Reference" "REF**")
@@ -10,7 +10,7 @@
   (fp_text user "${REFERENCE}" (at 0 0 0) (layer "F.Fab")
     (effects (font (size 0.5 0.5) (thickness 0.08)))
   )
-  (fp_rect (start -1.525 -0.8) (end 1.525 0.8) (layer "F.CrtYd") (width 0.12))
+  (fp_rect (start -1.675 -0.95) (end 1.675 0.95) (layer "F.CrtYd") (width 0.12))
   (pad "1" smd roundrect (at -0.9125 0) (size 1.025 1.4) (layers "F.Cu" "F.Mask" "F.Paste") (roundrect_rratio 0.243902))
   (pad "2" smd roundrect (at 0.9125 0) (size 1.025 1.4) (layers "F.Cu" "F.Mask" "F.Paste") (roundrect_rratio 0.243902))
   (model "${KICAD9_3DMODEL_DIR}/Resistor_SMD.3dshapes/R_0805_2012Metric.step"

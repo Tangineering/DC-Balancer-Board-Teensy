@@ -33,7 +33,7 @@ below is classified against these decisions:
   by the new-outline generator;
 - entries marked **Amended 2026-11-12** or **Reversed 2026-11-12** state the rule in force;
 - entries marked **Kept** and entries without a mark stay in force unchanged;
-- D-39 to D-50 are new entries for the 2026-11-12 decisions (section 8, after D-38).
+- D-39 to D-53 are new entries for the 2026-11-12 decisions (section 8, after D-38).
 
 The r7-outline status table above, the placement of section 5 and the routing record of section 8 are history. The
 r7 layout work, including the interactive-routing project, is in `archive_r7_outline/`. The EIB
@@ -183,7 +183,7 @@ on the new outline. The operator nevertheless re-admitted no part:
 
 Sections 5.1-5.4 record the placement on the r7 outline. The classification of each entry follows
 `OUTLINE_CHANGE_REASSESSMENT_2026-11-12.md` Table 4 and `outline_change_2026-11-12/retired.md` section 2. The
-placement on the new outline waits for the frozen netlist, after the r9 audit (D-50).
+placement on the new outline waits for the frozen netlist, after the r9 audit (D-50). The netlist is frozen (D-53).
 
 ### 5.1 Fixed coordinates (A.8)
 
@@ -726,6 +726,11 @@ digest, and its reconciliation notes bind where a record disagrees.
   met; the recommended diagonal separation is not. The map is not changed. Record:
   `decisions_2026-11-12/round2/tap_connector/dec_tap_connector_2026-11-12.md`;
   `decisions_2026-11-12/round2/permit_gate_decisions_2026-11-12.md` decision 5.
+- r9-12 (audit run 002 SR-SR-01; check-in 2 ruling R1, 2026-11-12, a default the operator may override): the cavity map
+  is unchanged. On the diagonals, T6-T7b (the Teensy 3V3 to GND, no limiting resistor), T7b-T17 and T5-T17 are severity 3
+  under the `order.py` weights. An exhaustive search of all 10! assignments found no 2 x 5 map without a severity-3 pair;
+  the best four-cavity alternative still keeps T7b-T17. The three pairs are accepted as a J.2 item 63 entry, and T-F-12
+  checks all 21 cavity pairs (design A.8 Table A.8-T2b). No placement rule changes.
 
 **D-47. Reduced tap set and permit gate (operator rulings 2026-11-12).**
 
@@ -771,6 +776,10 @@ digest, and its reconciliation notes bind where a record disagrees.
   metering is the only check. A J101 pin 9 (GND) to pin 10 (RFC_OFF) short drives about 33 mA through R132 (100 ohm),
   above the LVC output current; the B.6 text that calls it safe is corrected, TODO(calc: B.6 9-10 short against the
   LVC IOL). Record: `decisions_2026-11-12/round2/dec2_eib_2026-11-12.md`.
+- r9-12 (check-in 2 ruling R2, J.2 item 70(a) option (a)): R132 and R131B on the CR become 4.99 kOhm 1 % 0603, a value
+  change on the same top-side footprint (D-44). A 9-10 or 8-9 ribbon short then draws <= 0.687 mA, and the CR rail
+  stays >= 3.024 V (design H.24(d)). The 33 mA statement and the TODO(calc) above are superseded in r9. R131A stays
+  100 ohm.
 
 **D-50. Round order and finish method (operator ruling 2026-11-12).**
 
@@ -853,7 +862,8 @@ with half the line width added, and the keep-out is layer 39. The y range of eve
     and the D-20 window. The board-independent rows of `cr_geometry.py` run headless and are written to
     `cr/geometry_check.md`.
   - The next `gen/make_board.sh cr` writes the new footprint names into `cr/cr.net`; the connectivity does not change.
-    The current `cr/` library and board stay on the r7 build until step 5.
+    The current `cr/` library and board stay on the r7 build until step 5. **Amended by D-53:** the `cr/` library and
+    `cr/cr.net` are regenerated; the board stays on the r7 build until step 5.
 
 Table D-52. Placement regions on the plug-on outline (MB frame; areas from `gen/layout_cr.py`).
 
@@ -870,6 +880,49 @@ The 10 mm rim in Table D-52 is measured from the 5V layer-1 pour rim and the REG
 replaces the r7 constant x 39.53, TODO(measure: operator, MS4). J102 is packed toward C-D2 pad 1 to keep the T2 run
 short (D-46). The headless booking of the 78 CR parts at the 0.25 mm basis is 917.0 of 4077.8 mm² (22.5 %), which
 closes section 11 item 23.
+
+**D-53. Netlist frozen (D-50, after check-in 2; design document r9-12).**
+
+- Decision: the CR netlist `cr/cr.net` is frozen as regenerated on 2026-11-12. Placement (D-50 step 5) and every later
+  step build on it. Table D-53 gives the identity of the frozen netlist.
+- Reason: D-50 freezes the netlist after the audit adjudication. The operator approved all 29 agreed fixes of audit
+  run 002, and the check-in 2 rulings R1 to R6 are the orchestrator defaults (design document 0.3, row r9-12).
+- Changes carried from r9-12:
+  - Ruling R2 (J.2 item 70(a), option (a)): R131B and R132 change from 100 ohm to 4.99 kOhm 1 % 0603,
+    CRCW06034K99FKEA (design document H.24(d); `round4/calc/r9_calc.py` R9.H24(d)). The footprint and the top-side
+    placement (D-44) do not change. R130 and R131A stay 100 ohm.
+  - Ruling R1: the J-TAP cavity map and the J102 pin assignment of D-46 do not change, because the re-map search
+    found no 2 x 5 map without a severity-3 pair.
+  - No other run-002 fix changes a part or a net.
+- Method: `gen/netlist.py` was edited, then `gen/fplib.py cr cr`, `gen/sch.py cr cr`, `kicad-cli sch erc` and
+  `kicad-cli sch export netlist` (KiCad 9.0.9) were run. These are the first four steps of `gen/make_board.sh cr`.
+  `gen/pcbbuild.py` (placement) was not run.
+- Consequence: the footprint library `cr/charger_r8_cr.pretty` now holds the 0.25 mm courtyard basis of D-52, and
+  `cr/cr.net` names it. `cr/cr.kicad_pcb` is still the r7 build and references the retired `_CrtYd0.10` names;
+  step 5 replaces it. The ordering BOM (`bom_2026-11-11/ordering_bom.csv`, README section 8.5) and design section E
+  carry the new values. `round4/calc/r9_calc.py` now expects 4.99 kOhm in its `cr.net` value check and holds H.24(a)
+  on a constant for the r9-9 100 ohm basis; every computed figure is unchanged. Step 5 is no longer blocked.
+- Rule: a later change to a part, a value or a net reopens the freeze. Such a change needs a new decision entry, a
+  new hash and a design-document change row.
+
+Table D-53. Identity of the frozen CR netlist.
+
+| Item | Value |
+|---|---|
+| File | `cr/cr.net` (KiCad s-expression netlist, version E, exported 2026-11-12T21:49:49-0800) |
+| sha256 | `e98f4e49e22f60cab729c1db3f93439ce24fda5507423080c31d613b8f340833` |
+| sha256 without the two `(date ...)` lines (export time, title block) | `65dbfeb7e1f4073b0f52458d65a7e6bb90d0e47f1a2766b4ec87974206b5dd0b` |
+| Generator | `gen/netlist.py`, sha256 `a1c71e9350d878b6cf06ddd0e9c12fad8db7359cf02e82f1c3b827d28dd07555` |
+| Parts | 78 |
+| Nets | 79: 54 connected nets and 25 single-pin `unconnected-` nets; 262 pin nodes |
+| Connectivity against the previous `cr/cr.net` (r9-11) | identical, net by net |
+| Value changes against the previous `cr/cr.net` | R131B and R132, 100 ohm to 4.99 kOhm |
+| Footprint names | 75 parts carry the `_CrtYd0.25` names (D-52); J1 (`Ag105_CHG_Carrier_22pin_P2.54mm`, D-02) and W6/W7 (D-45 placeholders) keep their names |
+| ERC (`cr/erc.rpt`) | 0 errors, 0 warnings |
+| Netlist export message | "schematic has annotation errors": the accepted letter-suffix references C102a, C102b, C102c, R106s, R131A and R131B (HANDOFF) |
+
+A re-export from the unchanged schematic was checked: it changes only the export-time `(date ...)` line. The second
+hash therefore identifies the frozen content.
 
 ## 9. Verification
 

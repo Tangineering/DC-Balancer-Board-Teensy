@@ -5,7 +5,10 @@ passed. Step 2 is the section H re-run (`docs/reviews/charger_eval_2026-11-05/ro
 row r9-9). Step 3 is audit run 002, adjudicated in `docs/reviews/charger-design/run-002-2026-11-12.md` (r9-10): 29
 findings, 0 blocker, 8 major and 21 minor after verification, with no fix applied. Step 4 is the new-outline
 generator (D-51, D-52; `cr/geometry_check.md`). The D.3 rows are applied to `references/Scale Car Teensy IO - IO - 2026-11-12.csv`
-(r9-11). The next action is operator check-in 2: README section 11 items 15 to 21.
+(r9-11). Check-in 2 is closed (2026-11-12, later): the operator approved all 29 audit fixes, and design change row r9-12
+applies them with rulings R1 to R6 as orchestrator defaults (README section 11 items 15 to 21). The netlist step is
+done: R132 and R131B are 4.99 kOhm and the CR netlist is frozen (LAYOUT_DECISIONS D-53). The verify pass of the
+r9-12 fixes is clean (run-002 record, section "Fix round r9-12 verification"). The next action is placement (step 5).
 
 This note gives the starting point for the next session. `LAYOUT_DECISIONS.md` is the full record. The 2026-11-12
 decisions are D-39 to D-50 there, and every older entry carries its 2026-11-12 classification (retired, re-derive,
@@ -18,14 +21,14 @@ amended or kept).
 | EIB (2 layers, 24 x 38 mm) | complete: ERC 0, DRC 0 with schematic parity; fab package `fab/eib_2026-11-11/`, **not ordered**. Copper unchanged; U203, U204, C203, C204 and R258-R265 DNP, E4/E6 leads not fitted (D-49). The DNP set is applied by hand in `assembly/eib-bom.csv` and `assembly/eib-pos.csv`; `assembly/eib_ibom.html` is not regenerated and still shows the DNP parts as fitted. `gen/netlist.py` now carries `dnp=True` on the same 14 items (U203, U204, C203, C204, R258-R265, E4, E6); the EIB schematic, board and fab exports are not yet regenerated from it (open item). The operator reviews the package before an order |
 | CR outline | **plug-on outline x 18.584-67, y 7-94 (MB frame), 48.416 x 87 mm, stencil and reflow assembly (D-39); applied to the documents** (`LAYOUT_DECISIONS.md`, `OUTLINE_CHANGE_REASSESSMENT_2026-11-12.md`). The generator is built on it (D-52: `gen/mb_brd.py`, `gen/cr_geometry.py`, `gen/layout_cr.py`, `gen/check_constraints.py`); `cr/geometry_check.md` passes every check. The height survey is closed by D-51. No board file is built on the outline yet |
 | 2026-11-12 decisions | first round (`DESIGN_STATE_2026-11-12.md` Table 1) and second round (`decisions_2026-11-12/round2/`, digest `orchestrator_digest.md`) **recorded**; LAYOUT_DECISIONS D-39 to D-50 and the classification of D-01 to D-38 applied this round |
-| CR netlist | regenerated from `gen/netlist.py` on the reduced design (D-47, D-31, D-44): 78 parts (r8: 145). W6 and W7 carry the through-hole placeholder footprints of D-45. `cr/charger_r8_cr.pretty` was rebuilt with `gen/fplib.py` and now holds the J102 Micro-Fit footprint, so ERC reports 0 errors and 0 warnings. The netlist export reports "schematic has annotation errors"; the cause is the six letter-suffix references C102a, C102b, C102c, R106s, R131A and R131B (the message disappears when all six are renamed to numeric references in a scratch copy). These references are the B.8 designators and are accepted. The generator now applies the 0.25 mm courtyard basis (`_CrtYd0.25`, D-52); the `cr/` library and `cr/cr.net` keep the 0.10 mm names until the next `gen/make_board.sh cr` in step 5 (connectivity unchanged). The netlist is frozen only after check-in 2 approves the run-002 fixes |
+| CR netlist | regenerated from `gen/netlist.py` on the reduced design (D-47, D-31, D-44): 78 parts (r8: 145). W6 and W7 carry the through-hole placeholder footprints of D-45. `cr/charger_r8_cr.pretty` was rebuilt with `gen/fplib.py` and now holds the J102 Micro-Fit footprint, so ERC reports 0 errors and 0 warnings. The netlist export reports "schematic has annotation errors"; the cause is the six letter-suffix references C102a, C102b, C102c, R106s, R131A and R131B (the message disappears when all six are renamed to numeric references in a scratch copy). These references are the B.8 designators and are accepted. The generator applies the 0.25 mm courtyard basis (`_CrtYd0.25`, D-52). **Frozen 2026-11-12 (D-53):** R132 and R131B are 4.99 kOhm (r9-12, ruling R2); `cr/charger_r8_cr.pretty`, `cr/cr.kicad_sch` and `cr/cr.net` were regenerated without placement; 78 parts, 79 nets, connectivity unchanged, ERC 0 errors and 0 warnings, sha256 `e98f4e49e22f60cab729c1db3f93439ce24fda5507423080c31d613b8f340833` |
 | CR board file | `cr/cr.kicad_pcb` is the **r7-outline** build (placed + pours, DRC 200 unconnected, 4 starved thermals, 2 silkscreen items). It is stale against the new outline and the reduced netlist; it is not an input to the next build |
 | CR interactive pass (2026-11-12) | **superseded** by the new outline and the route-race (D-36, D-50). The project is archived at `archive_r7_outline/cr/interactive/` (move staged this round; KiCad must not hold the old path open) |
 | r7 layout work | archived in `archive_r7_outline/` (variants, attempts, images, routability study); reference only |
 | Best partial CR routing (r7) | `archive_r7_outline/cr/attempts/cr_pathfinder_0p1mm_partial.kicad_pcb` (reference only; 516 clearance violations) |
 | Ordering BOM | `bom_2026-11-11/ordering_bom.csv`: r9 rows applied on the reduced part list (TSW/SSQ, J-TAP and cable assembly, 0603 and DBV rows; README section 8); the r9-5 mechanical rows are applied as well (feet, bed RTV and bond coupon rows deleted, 467MP re-scoped to the B1R wedge, CR PCB row on the plug-on outline with 1 oz / 0.5 oz copper, stencil and paste row added). No price, stock or SKU read on a live page (bot checks). The B1R wedge, posts and off-CR support rows wait for the A.3 lead route on the new outline |
 | Section H re-run (step 2) | done: `round4/calc/r9_calc.py` with `r9_calc_out.txt` and `.json`; design change row r9-9; H.24(a)-(c) new |
-| Audit run 002 (step 3) | adjudicated: `docs/reviews/charger-design/run-002-2026-11-12.md`; L.9 and Table L.9-1 final; 0 blocker, 8 major, 21 minor; no fix applied until check-in 2 |
+| Audit run 002 (step 3) | adjudicated: `docs/reviews/charger-design/run-002-2026-11-12.md`; L.9 and Table L.9-1 final; 0 blocker, 8 major, 21 minor; check-in 2 closed and all 29 fixes applied in r9-12; verify pass clean (run-002 record, section "Fix round r9-12 verification") |
 | IO CSV | done: D.3 rows applied to `references/Scale Car Teensy IO - IO - 2026-11-12.csv` under the operator's delegation; the undated CSV is deleted; freed pins named FREE_10, FREE_16, FREE_17, FREE_21, FREE_23 (r9-11) |
 | Netlist audit (r8) | three independent reviewers, 216 parts against B.8/E: no discrepancy. About 18 section-L dispositions rest on removed parts, so L.8 no longer certifies the design; the r9 audit (L.9) replaces it |
 
@@ -109,8 +112,8 @@ Steps 1 to 4 below are done (2026-11-12). Check-in 1 passed (operator ruling (b)
    `dnp=True` set (section 1, EIB row), because D-52 leaves the EIB exports unchanged. Open placeholders: the Molex 43045 drawing, the TSW pad and drill, the W6/W7 holes and the
    MS4 rim distance. For steps 5 and 6: `gen/make_cr_all.sh` must drop B.Cu from the PathFinder layer set, and
    `gen/route_cr.py` TRACK is 0.127 mm against the D-29 0.1524 mm default.)
-5. **Operator check-in 2 (next):** the audit adjudication and fix approval; the netlist is frozen afterwards. The
-   rulings are README section 11 items 15 to 21.
+5. **Operator check-in 2 (closed 2026-11-12):** all fixes approved; r9-12 applies them with rulings R1 to R6 (README
+   section 11 items 15 to 21). The netlist step is done and the netlist is frozen (D-53). The verify pass is clean.
 6. Placement on the frozen netlist, all SMT on the top side.
 7. **Operator check-in 3:** placement images, before routing.
 8. The full route-race (`route-race` skill: reference at four or more seeds, diagnosis, tested change requests, one
@@ -119,8 +122,8 @@ Steps 1 to 4 below are done (2026-11-12). Check-in 1 passed (operator ruling (b)
 10. **Operator check-in 4:** before the fab package and any order. Then the fab package
     (`gen/export.sh`, `gen/fab_readme.py`).
 
-Open items for the operator at check-in 2: README section 11 items 15 to 21, and the EIB package review before an
-order (D-49). The check-in 1 items are closed: the T5-T10 diagonal was accepted (D-46), and the section 6 survey was
+Check-in 2 items (README section 11 items 15 to 21) are closed under r9-12; rulings R1 to R6 are defaults the operator
+may override. The EIB package review before an order (D-49) stays open. The check-in 1 items are closed: the T5-T10 diagonal was accepted (D-46), and the section 6 survey was
 closed by D-51.
 
 ## 4. How to run (r7 outline; the scripts change with step 4)

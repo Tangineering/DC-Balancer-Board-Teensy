@@ -187,8 +187,12 @@ CR = [
     # ---- ribbon drivers
     R("R130", "100 1%", "R0603", "CE_DRV", "CE_DRV_J", mpn="CRCW0603100RFKEA", **VISH01),
     R("R131A", "100 1%", "R0603", "ILIM_REL", "ILIM_REL_A", mpn="CRCW0603100RFKEA", **VISH01),
-    R("R131B", "100 1%", "R0603", "ILIM_REL", "ILIM_REL_B", mpn="CRCW0603100RFKEA", **VISH01),
-    R("R132", "100 1%", "R0603", "RFC_OFF", "RFC_OFF_J", mpn="CRCW0603100RFKEA", **VISH01),
+    # r9-12 (run 002 ADV-R2-06 / J.2 item 70(a), ruling R2 option (a)): R131B and R132 raised from 100 to
+    # 4.99k, so a ribbon 8-9 or 9-10 short (conductor 9 = GND) draws <= 0.687 mA and the CR 3V3 rail stays >= 3.024 V.
+    # Basis: r9_calc.py R9.H24(d), feasible E96 window 3.16k-10.5k; same 0603 footprint, top side (D-44).
+    # R131A stays 100 ohm (conductor 7 has no GND neighbour; 6 is the key, 8 carries the same ILIM_REL).
+    R("R131B", "4.99k 1%", "R0603", "ILIM_REL", "ILIM_REL_B", mpn="CRCW06034K99FKEA", **VISH01),
+    R("R132", "4.99k 1%", "R0603", "RFC_OFF", "RFC_OFF_J", mpn="CRCW06034K99FKEA", **VISH01),
     # ---- 3V3 feed (r4)
     R("R175", "68.0 1% 0.25W", "R1206", "T6_3V3", V33, mpn="CRCW120668R0FKEA", **VISH01),
     R("R176", "200 1%", "R0603", V33, "J3V3_1", mpn="CRCW0603200RFKEA", **VISH01),
