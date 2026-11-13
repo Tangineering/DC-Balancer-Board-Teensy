@@ -202,8 +202,16 @@ review passes, propose a trimmed outline with corner mounting holes:
 
 ```bash
 "$PY" trim_outline.py W/<board>.kicad_pcb W/trim --y-flip-offset Y0 [--ear X0,Y0,X1,Y1 ...] \
-    [--flip-centre CX,CY --flip-block NAME:X0,Y0,X1,Y1 ...] --apply
+    [--flip-centre CX,CY --flip-block NAME:X0,Y0,X1,Y1 ...] \
+    --angles 0,30,45,60,90,120,135,150 --min-edge 2.0 --fillet 1.0 --apply
 ```
+
+Outline rules (operator, 2026-11-13): edges only at 0, 30, 45, 60 or 90 degrees (and their mirror directions), no
+other angle; fillets on the corners are good. Give `--angles` and `--fillet` always; without `--angles` the tool
+makes a free-angle convex hull, which the operator rejected. A fab charges for the enclosing rectangle, so the trim
+inside the rectangle is mainly for looks and to leave more of the board below exposed; it does not reduce the cost.
+The silk and reference step of a project must read arcs on Edge.Cuts (`GetBoardPolygonOutlines()`); a step that
+reads only straight segments loses the whole outline when the corners are filleted.
 
 1. Find the mechanical reasons for the present outline in the design record before you trim: an overhang that keys
    the board, a cover over parts below, a connector reach. Keep each such area as an `--ear` box (plan frame). A
@@ -225,7 +233,10 @@ review passes, propose a trimmed outline with corner mounting holes:
 
 On the r9 CR board the step proposed 2242 mm2 against 4212 mm2 (53 %), with four 6-32 holes, a +x ear that keeps
 the board landing on two of the three terminal blocks when it is turned by 180 degrees (7.7 and 7.6 mm of overlap),
-DRC unchanged (124 silk items, 0 unconnected) and one constraint row failing as expected (the old rectangle).
+DRC unchanged (124 silk items, 0 unconnected) and one constraint row failing as expected (the old rectangle). The
+operator then asked for limited angles: with `--angles 0,30,45,60,90,120,135,150 --min-edge 2 --fillet 1` the outline
+has 10 corners (vertical and horizontal sides, chamfers at 30, 45 and 60 degrees), 2328 mm2, the same flip overlap,
+and after the full finish DRC 0 and only the rows that hold the old outline failing.
 
 ## 6. What the dry tests showed
 

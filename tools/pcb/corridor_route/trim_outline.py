@@ -3,7 +3,8 @@
 Usage (pcbnew venv):
   python trim_outline.py <routed board.kicad_pcb> <out dir> [--y-flip-offset Y0] [--margin 1.0]
       [--ear X0,Y0,X1,Y1 ...] [--holes 4] [--hole-drill 3.7] [--hole-keepout 4.0] [--hole-gap 0.5]
-      [--flip-centre CX,CY --flip-block NAME:X0,Y0,X1,Y1 ...] [--apply]
+      [--flip-centre CX,CY --flip-block NAME:X0,Y0,X1,Y1 ...] [--angles 0,30,45,60,90,120,135,150]
+      [--min-edge 2.0] [--fillet 1.0] [--apply]
 
 The used area is the union of every footprint courtyard and pad, every track and via, and every zone that is not a
 board-wide fill (a zone larger than half the board, such as a ground fill or a plane), grown by --margin. Each --ear
@@ -13,6 +14,14 @@ at each corner of the bounding box of that area: within --hole-search mm of the 
 present outline, and that adds the least area to the outline. The proposed outline is the convex hull of the used
 area, the ears and the --hole-board discs, clipped to the present outline (the outline never grows).
 Defaults suit a 6-32 screw: drill 3.7 mm (#6 free fit), head disc 3.6 mm, copper keep-out 4.0 mm.
+
+With --angles (edge directions in degrees, modulo 180), the outline is instead the smallest convex polygon with edges
+in those directions only that holds the same area: the intersection of the supporting half-planes of the hull for
+each allowed edge direction. An edge shorter than --min-edge in a direction other than 0 or 90 degrees is removed
+(its half-plane is dropped and the polygon rebuilt), so no short facet remains. The hole sites are chosen with the
+same rule on that polygon. --fillet rounds every corner with an arc of that radius (smaller where the adjacent edges
+are short), and Edge.Cuts gets true arcs. A fab charges for the enclosing rectangle, so the trim inside the
+rectangle is mainly for looks and to leave more of the board below exposed.
 
 With --flip-centre and --flip-block (plan frame), the outline is turned by 180 degrees about the centre and its overlap
 with each block is reported: a board that relies on landing on those blocks when it is fitted the wrong way round
@@ -54,6 +63,9 @@ ap.add_argument("--flip-centre", default=None)
 ap.add_argument("--flip-block", action="append", default=[])
 ap.add_argument("--plane-nets", default="/GND")
 ap.add_argument("--edge-clear", type=float, default=0.5, help="plane copper closer than this to the new edge is removed")
+ap.add_argument("--angles", default=None, help="allowed edge directions in degrees (mod 180), e.g. 0,30,45,60,90,120,135,150")
+ap.add_argument("--min-edge", type=float, default=2.0, help="shortest slanted edge kept with --angles (mm)")
+ap.add_argument("--fillet", type=float, default=0.0, help="corner fillet radius (mm)")
 ap.add_argument("--apply", action="store_true")
 A = ap.parse_args()
 mm, FMM = pcbnew.ToMM, pcbnew.FromMM
@@ -141,8 +153,57 @@ U = U0.buffer(A.margin, join_style=2)
 ears = [kicad_box(*map(float, e.split(","))) for e in A.ear]
 core = unary_union([U] + ears)
 
+ANG = sorted({float(a) % 180.0 for a in A.angles.split(",")}) if A.angles else None
+
+
+def halfplane(nx, ny, h, far=1000.0):
+    """the region n.p <= h as a large polygon"""
+    tx, ty = -ny, nx
+    px, py = nx * h, ny * h
+    return Polygon([(px + tx * far, py + ty * far), (px - tx * far, py - ty * far),
+                    (px - tx * far - nx * far, py - ty * far - ny * far),
+                    (px + tx * far - nx * far, py + ty * far - ny * far)])
+
+
+def dop(g, angles):
+    """smallest convex polygon with edge directions in angles (degrees mod 180) that holds g; short slanted edges
+    are removed by dropping their half-plane"""
+    pts = list(g.convex_hull.exterior.coords)
+    normals = []
+    for a in angles:
+        r = math.radians(a)
+        nx, ny = -math.sin(r), math.cos(r)                  # normal of an edge in direction a
+        normals += [(a, nx, ny), (a, -nx, -ny)]
+    while True:
+        poly = box(*g.buffer(200).bounds)
+        for _, nx, ny in normals:
+            poly = poly.intersection(halfplane(nx, ny, max(nx * x + ny * y for x, y in pts)))
+        cs = list(poly.exterior.coords)
+        short = None
+        for k in range(len(cs) - 1):
+            (x1, y1), (x2, y2) = cs[k], cs[k + 1]
+            ln = math.hypot(x2 - x1, y2 - y1)
+            if ln < 1e-9:
+                continue
+            ea = math.degrees(math.atan2(y2 - y1, x2 - x1)) % 180.0
+            if min(abs(ea), abs(ea - 180), abs(ea - 90)) < 0.01 or ln >= A.min_edge:
+                continue
+            ex, ey = (x2 - x1) / ln, (y2 - y1) / ln
+            for m, (a, nx, ny) in enumerate(normals):           # the half-plane whose boundary holds this edge
+                if abs(nx * ex + ny * ey) < 1e-6 and abs((nx * x1 + ny * y1) - max(nx * x + ny * y for x, y in pts)) < 1e-6:
+                    if short is None or ln < short[0]:
+                        short = (ln, m)
+        if short is None:
+            return poly
+        normals.pop(short[1])
+
+
+def outline_of(g):
+    return dop(g, ANG) if ANG else g.convex_hull
+
+
 holes = []
-hull = core.convex_hull
+hull = outline_of(core)
 if A.holes:
     from shapely.prepared import prep
     clear = prep(U0.buffer(A.hole_gap))
@@ -157,16 +218,20 @@ if A.holes:
                 pt = Point(x, y)
                 if not inside.contains(pt) or clear.intersects(pt.buffer(A.hole_keepout, 16)):
                     continue
-                area = unary_union([hull, pt.buffer(A.hole_board, 16)]).convex_hull.area
+                area = (outline_of(unary_union([hull, pt.buffer(A.hole_board, 16)])).area if ANG else
+                        unary_union([hull, pt.buffer(A.hole_board, 16)]).convex_hull.area)
                 key = (round(area, 1), math.hypot(x - cx, y - cy))
                 if best is None or key < best[0]:
                     best = (key, (round(x, 2), round(y, 2)))
         if best is None:
             raise SystemExit("no hole site within %.1f mm of the corner (%.2f, %.2f)" % (A.hole_search, *to_plan(cx, cy)))
         holes.append(best[1])
-        hull = unary_union([hull, Point(*best[1]).buffer(A.hole_board, 32)]).convex_hull
+        hull = outline_of(unary_union([hull, Point(*best[1]).buffer(A.hole_board, 32)]))
 new = hull.intersection(old)
-new = Polygon([(round(x, 2), round(y, 2)) for x, y in new.exterior.coords]).simplify(0.05)
+if ANG:
+    new = Polygon([(round(x, 4), round(y, 4)) for x, y in new.exterior.coords])    # exact angles: no simplify
+else:
+    new = Polygon([(round(x, 2), round(y, 2)) for x, y in new.exterior.coords]).simplify(0.05)
 # A vertex that the 0.01 mm rounding put within 0.011 mm of the clip edge (the present outline) goes back onto that
 # edge: on the r9 CR the rounding put the -x vertices 0.004 mm outside the D-39 edge. The simplification above keeps a
 # subset of the vertices and does not move them, so the vertex list is the same as without this step.
@@ -178,11 +243,82 @@ for x, y in list(new.exterior.coords)[:-1]:
         x, y = round(q.x, 4), round(q.y, 4)
     _snap.append((x, y))
 new = Polygon(_snap)
+_cs = []
+for q in list(new.exterior.coords)[:-1]:                # the polygon before the fillets (its vertices are reported),
+    if not _cs or math.dist(q, _cs[-1]) > 1e-4:         # without the repeats that the clip and the rounding leave
+        _cs.append(q)
+if len(_cs) > 3 and math.dist(_cs[0], _cs[-1]) <= 1e-4:
+    _cs.pop()
+corners = Polygon(_cs)
+
+
+def fillet(poly, r, steps=16):
+    """(shapely polygon with sampled arcs, [(kind, data)] Edge.Cuts elements); counter-clockwise; convex corners"""
+    from shapely.geometry.polygon import orient
+    raw = list(orient(poly, 1.0).exterior.coords)[:-1]
+    cs = []
+    for q in raw:                                       # drop repeated points left by the clip and the rounding
+        if not cs or math.dist(q, cs[-1]) > 1e-4:
+            cs.append(q)
+    if len(cs) > 1 and math.dist(cs[0], cs[-1]) <= 1e-4:
+        cs.pop()
+    k = 0
+    while k < len(cs) and len(cs) > 3:                  # drop collinear points
+        a_, b_, c_ = cs[k - 1], cs[k], cs[(k + 1) % len(cs)]
+        if abs((b_[0] - a_[0]) * (c_[1] - b_[1]) - (b_[1] - a_[1]) * (c_[0] - b_[0])) < 1e-6:
+            cs.pop(k)
+        else:
+            k += 1
+    n = len(cs)
+    if r <= 0:
+        return poly, [("seg", (cs[k], cs[(k + 1) % n])) for k in range(n)]
+    tang = []
+    for k in range(n):
+        p0, p, p1 = cs[k - 1], cs[k], cs[(k + 1) % n]
+        u1 = ((p0[0] - p[0]), (p0[1] - p[1]))
+        u2 = ((p1[0] - p[0]), (p1[1] - p[1]))
+        l1, l2 = math.hypot(*u1), math.hypot(*u2)
+        u1, u2 = (u1[0] / l1, u1[1] / l1), (u2[0] / l2, u2[1] / l2)
+        phi = math.acos(max(-1.0, min(1.0, u1[0] * u2[0] + u1[1] * u2[1])))      # interior angle
+        d = min(r / math.tan(phi / 2), 0.45 * l1, 0.45 * l2)
+        rr = d * math.tan(phi / 2)
+        t1 = (p[0] + u1[0] * d, p[1] + u1[1] * d)
+        t2 = (p[0] + u2[0] * d, p[1] + u2[1] * d)
+        bx, by = u1[0] + u2[0], u1[1] + u2[1]
+        bl = math.hypot(bx, by)
+        c = (p[0] + bx / bl * rr / math.sin(phi / 2), p[1] + by / bl * rr / math.sin(phi / 2))
+        tang.append((t1, t2, c, rr))
+    pts, elems = [], []
+    for k in range(n):
+        t1, t2, c, rr = tang[k]
+        a1 = math.atan2(t1[1] - c[1], t1[0] - c[0])
+        a2 = math.atan2(t2[1] - c[1], t2[0] - c[0])
+        da = (a2 - a1) % (2 * math.pi)
+        if da > math.pi:
+            da -= 2 * math.pi
+        arc = [(c[0] + rr * math.cos(a1 + da * q / steps), c[1] + rr * math.sin(a1 + da * q / steps))
+               for q in range(steps + 1)]
+        pts += arc
+        mid = arc[steps // 2]
+        elems.append(("arc", (t1, mid, t2)))
+        nxt = tang[(k + 1) % n][0]
+        elems.append(("seg", (t2, nxt)))
+    return Polygon(pts).buffer(0), elems
+
+
+new, EDGE = fillet(new, A.fillet)
 warn = []
 for i, (x, y) in enumerate(holes, 1):
     d = new.exterior.distance(Point(x, y)) - A.hole_drill / 2
     if not new.contains(Point(x, y)) or d < 1.0:
         warn.append("MH%d: hole edge %.2f mm from the new edge (below 1.0 mm); the present outline limits it" % (i, d))
+crt = U0.difference(new)
+if crt.area > 1e-6:
+    warn.append("used area (courtyards, pads, copper) outside the proposed edge (%.3f mm2)" % crt.area)
+for i, (x, y) in enumerate(holes, 1):
+    ov = Point(x, y).buffer(A.hole_board, 64).difference(new).area
+    if ov > 1e-4:
+        warn.append("MH%d: screw-head disc overhangs the edge (%.4f mm2)" % (i, ov))
 outside = unary_union(signal_cu).difference(new.buffer(-0.381)) if signal_cu else Polygon()
 if outside.area > 1e-6:
     warn.append("routed signal copper lies within 0.381 mm of or outside the proposed edge (%.3f mm2)" % outside.area)
@@ -205,7 +341,8 @@ newp = plan_geom(new)
 res = dict(board=os.path.abspath(A.board), frame="plan (y = %s - KiCad y)" % Y0 if Y0 is not None else "KiCad",
            area_present_mm2=round(old.area, 1), area_proposed_mm2=round(new.area, 1),
            used_bounds_plan=[round(v, 2) for v in plan_geom(U0).bounds], margin=A.margin,
-           outline_plan=[[round(x, 4), round(y, 4)] for x, y in list(newp.exterior.coords)[:-1]],
+           outline_plan=[[round(x, 4), round(y, 4)] for x, y in list(plan_geom(corners).exterior.coords)[:-1]],
+           angles=ANG, min_edge=A.min_edge if ANG else None, fillet=A.fillet,
            ears_plan=A.ear, holes_plan=[list(to_plan(x, y)) for x, y in holes], hole_drill=A.hole_drill,
            hole_keepout=A.hole_keepout, board_wide_zones=wide, flip=flip, warnings=warn)
 
@@ -304,14 +441,21 @@ if A.apply:
     for d in list(b.GetDrawings()):
         if d.GetLayer() == pcbnew.Edge_Cuts:
             b.Remove(d)
-    pts = list(new.exterior.coords)[:-1]
-    for k in range(len(pts)):
+    def V(p_):
+        return pcbnew.VECTOR2I(FMM(p_[0]), FMM(p_[1]))
+    for kind, dat in EDGE:
+        if kind == "seg" and math.dist(dat[0], dat[1]) < 1e-4:
+            continue
         s = pcbnew.PCB_SHAPE(b)
-        s.SetShape(pcbnew.SHAPE_T_SEGMENT)
         s.SetLayer(pcbnew.Edge_Cuts)
         s.SetWidth(FMM(0.05))
-        s.SetStart(pcbnew.VECTOR2I(FMM(pts[k][0]), FMM(pts[k][1])))
-        s.SetEnd(pcbnew.VECTOR2I(FMM(pts[(k + 1) % len(pts)][0]), FMM(pts[(k + 1) % len(pts)][1])))
+        if kind == "seg":
+            s.SetShape(pcbnew.SHAPE_T_SEGMENT)
+            s.SetStart(V(dat[0]))
+            s.SetEnd(V(dat[1]))
+        else:
+            s.SetShape(pcbnew.SHAPE_T_ARC)
+            s.SetArcGeometry(V(dat[0]), V(dat[1]), V(dat[2]))
         b.Add(s)
     b.Save(dst)
     b2 = pcbnew.LoadBoard(dst)                 # refill in a fresh load of the saved file
@@ -331,7 +475,11 @@ L = ["# Trimmed outline proposal", "",
      "| Margin around the used area | %.2f mm |" % A.margin,
      "| Ears kept | %s |" % ("; ".join(A.ear) or "none"),
      "| Board-wide zones (follow the outline) | %s |" % (", ".join(wide) or "none"), "",
-     "Proposed outline vertices: %s" % ", ".join("(%.2f, %.2f)" % tuple(v) for v in res["outline_plan"]), ""]
+     "| Edge directions | %s |" % ("any (convex hull)" if not ANG else ", ".join("%g" % a for a in ANG) +
+                                     " degrees; slanted edges at least %.1f mm" % A.min_edge),
+     "| Corner fillet | %s |" % ("none" if A.fillet <= 0 else "%.2f mm" % A.fillet), "",
+     "Proposed outline vertices (corners before the fillets): %s" % ", ".join(
+         "(%.3f, %.3f)" % tuple(v) for v in res["outline_plan"]), ""]
 if holes:
     L += ["Mounting holes (non-plated, drill %.2f mm, copper keep-out radius %.2f mm on every layer):" % (
         A.hole_drill, A.hole_keepout), ""]
