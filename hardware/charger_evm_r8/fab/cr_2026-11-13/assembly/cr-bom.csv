@@ -13,7 +13,7 @@
 "D107","TVS 33V SMA","charger_r8_cr:D_SMA_CrtYd0.25","SMAJ33A (candidate, T-A-05)","Littelfuse","","1"
 "J1","Ag105 CHG header","charger_r8_cr:Ag105_CHG_Carrier_22pin_P2.54mm","TSW-110-07-L-S + TSW-112-07-L-S","Samtec","","1"
 "J101","W5 header","charger_r8_cr:Samtec_FTSH-107-01-DV_2x07_P1.27mm_SMD_NoPin6_CrtYd0.25","FTSH-107-01-L-DV class (T-A-05)","Samtec","","1"
-"J102","J-TAP Micro-Fit 3.0 2x5","charger_r8_cr:Molex_Micro-Fit_3.0_43045-1012_2x05_P3.00mm_Vertical_CrtYd0.25","Molex Micro-Fit 3.0 2x5 THT header, 43045 series, TODO(verify: Molex 43045 drawing)","Molex","","1"
+"J102","J-TAP Micro-Fit 3.0 2x5","charger_r8_cr:Molex_Micro-Fit_3.0_43045-1012_2x05_P3.00mm_Vertical_CrtYd0.25","43045-1012","Molex","","1"
 "R101","8.06k 1%","charger_r8_cr:R_0603_1608Metric_CrtYd0.25","CRCW06038K06FKEA","Vishay Dale","","1"
 "R102","845k 0.1%","charger_r8_cr:R_0805_2012Metric_CrtYd0.25","TNPW0805845KBEEA","Vishay Dale","","1"
 "R103","66.5k 0.1%","charger_r8_cr:R_0603_1608Metric_CrtYd0.25","TNPW060366K5BEEA","Vishay Dale","","1"

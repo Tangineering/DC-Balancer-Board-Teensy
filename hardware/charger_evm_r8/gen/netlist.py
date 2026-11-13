@@ -241,8 +241,11 @@ CR = [
     ("J102", "MF2x5", "J-TAP Micro-Fit 3.0 2x5", "MF3_2x5",
      {"1": "T2C", "2": "CHG_IIN", "3": GND, "4": "FCC_TAP", "5": "H1_RB",
       "6": "T6_3V3", "7": "T1_VMOT", "8": GND, "9": "CHG_EFUSE_FLT", "10": "QUAL_TAP"},
-     dict(mpn="Molex Micro-Fit 3.0 2x5 THT header, 43045 series, TODO(verify: Molex 43045 drawing)", mfr="Molex",
-          note="J-TAP; mates cable assembly Molex 2147581101, TODO(verify: Molex 2147581101); polarized; "
+     # operator ruling 2026-11-13 (Review 1/2): 43045-1012 confirmed against the Molex 43045 PCB layout; the cable is
+     # 2147561101 (female-to-pigtail). Superseded: "43045 series, TODO(verify: Molex 43045 drawing)"; "2147581101".
+     dict(mpn="43045-1012", mfr="Molex",
+          note="J-TAP; Micro-Fit 3.0 vertical header 2x5 with PCB pegs; mates cable assembly Molex 2147561101 "
+               "(wire gauge TODO(verify: Molex 2147561101)); polarized; "
                "A1 T2, A2 T17, A3 T17r, A4 T5, A5 T13, B1 T6, B2 T1, B3 T7b, B4 T16, B5 T10")),
 ]
 

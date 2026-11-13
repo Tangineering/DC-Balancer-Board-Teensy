@@ -1027,7 +1027,7 @@
 				)
 			)
 		)
-		(property "MPN" "Molex Micro-Fit 3.0 2x5 THT header, 43045 series, TODO(verify: Molex 43045 drawing)"
+		(property "MPN" "43045-1012"
 			(at 0 0 90)
 			(layer "F.SilkS")
 			(hide yes)
@@ -1051,7 +1051,7 @@
 				)
 			)
 		)
-		(property "Note" "J-TAP; mates cable assembly Molex 2147581101, TODO(verify: Molex 2147581101); polarized; A1 T2, A2 T17, A3 T17r, A4 T5, A5 T13, B1 T6, B2 T1, B3 T7b, B4 T16, B5 T10"
+		(property "Note" "J-TAP; Micro-Fit 3.0 vertical header 2x5 with PCB pegs; mates cable assembly Molex 2147561101 (wire gauge TODO(verify: Molex 2147561101)); polarized; A1 T2, A2 T17, A3 T17r, A4 T5, A5 T13, B1 T6, B2 T1, B3 T7b, B4 T16, B5 T10"
 			(at 0 0 90)
 			(layer "F.SilkS")
 			(hide yes)
