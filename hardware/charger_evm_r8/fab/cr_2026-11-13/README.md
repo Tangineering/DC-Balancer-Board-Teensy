@@ -7,13 +7,13 @@
 | Item | Value |
 |---|---|
 | Layers | 4 (F.Cu (L1, signals and power pours), In1.Cu (L2, solid GND), In2.Cu (L3, signals), B.Cu (L4, solid GND facing the MB, D-20)) |
-| Size | 48.416 x 87.000 mm rectangle (D-39, MB frame x 18.584-67, y 7-94), 4212.19 mm2, no hole (D-42) |
+| Size | 48.416 x 87.000 mm rectangle (D-39, MB frame x 18.584-67, y 7-94), 4212.19 mm2, no mounting hole (D-42) |
 | Thickness | 1.6 mm |
 | Copper | 1 oz outer / 0.5 oz inner (D-29) |
 | Surface finish | ENIG |
 | Quantity | 5 (E BOM) |
 | Solder mask / silkscreen | both sides; every via tented on both sides |
-| Design rules | `tools/pcb/fab_rules/fab_4layer_oshpark_pcbway.kicad_dru` (0.1524 mm track/space, 0.254 mm minimum hole, 0.15 mm annular ring, 0.381 mm copper to edge) |
+| Design rules | `tools/pcb/fab_rules/fab_4layer_oshpark_only.kicad_dru` (0.1524 mm track/space, 0.254 mm minimum hole, 0.15 mm annular ring, 0.381 mm copper to edge) |
 | ERC | 0 messages (`reports/erc.rpt`) |
 | DRC | 0 violations, 0 unconnected pads, schematic parity checked (`reports/drc.rpt`) |
 
@@ -53,6 +53,6 @@ decisions and the open `TODO(verify)` items are in `hardware/charger_evm_r8/LAYO
 
 ## 4. Before you order
 
-1. Read `LAYOUT_DECISIONS.md` section 9 (proposed design changes) and section 10 (open items).
+1. Read `LAYOUT_DECISIONS.md` section 10 (proposed design changes) and section 11 (open TODO(verify) items).
 2. Confirm the copper weight and the fab rule items marked `TODO(verify)` in `tools/pcb/fab_rules`.
 3. Do not order until the operator has reviewed this package and the ordering BOM.

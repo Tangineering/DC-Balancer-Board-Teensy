@@ -11,7 +11,7 @@
 | Thickness | 1.6 mm |
 | Copper | 1 oz |
 | Surface finish | ENIG |
-| Quantity | 5 (E BOM, may share the CR panel) |
+| Quantity | 5 (E BOM; a separate 2-layer order at OSH Park) |
 | Solder mask / silkscreen | both sides; every via tented on both sides |
 | Design rules | `tools/pcb/fab_rules/fab_2layer_oshpark_pcbway.kicad_dru` (0.1524 mm track/space, 0.254 mm minimum hole, 0.15 mm annular ring, 0.381 mm copper to edge) |
 | ERC | 0 messages (`reports/erc.rpt`) |
@@ -47,7 +47,7 @@ decisions and the open `TODO(verify)` items are in `hardware/charger_evm_r8/LAYO
 
 ## 4. Before you order
 
-1. Read `LAYOUT_DECISIONS.md` section 9 (proposed design changes) and section 10 (open items).
+1. Read `LAYOUT_DECISIONS.md` section 10 (proposed design changes) and section 11 (open TODO(verify) items).
 2. Confirm the copper weight and the fab rule items marked `TODO(verify)` in `tools/pcb/fab_rules`.
 3. Do not order until the operator has reviewed this package and the ordering BOM.
 4. Do not fit the DNP parts of section 5.

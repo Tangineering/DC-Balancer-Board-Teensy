@@ -46,15 +46,17 @@ nu = re.search(r"Found (\d+) unconnected pads", drc)
 ne = re.search(r"ERC messages: (\d+)", erc)
 INFO = {
     "cr": dict(name="CR, CHG adapter carrier (plug-on)", layers=4, size="48.416 x 87.000 mm rectangle (D-39, MB frame "
-               "x 18.584-67, y 7-94), 4212.19 mm2, no hole (D-42)", thick="1.6 mm",
+               "x 18.584-67, y 7-94), 4212.19 mm2, no mounting hole (D-42)", thick="1.6 mm",
                copper="1 oz outer / 0.5 oz inner (D-29)", finish="ENIG", qty="5 (E BOM)",
                layers_list="F.Cu (L1, signals and power pours), In1.Cu (L2, solid GND), In2.Cu (L3, signals), "
                "B.Cu (L4, solid GND facing the MB, D-20)"),
     "eib": dict(name="EIB, EVM interface board", layers=2, size="24.0 x 38.0 mm (D-13 / P-05; A.9 states 36.0 x 24.0 mm)",
-                thick="1.6 mm", copper="1 oz", finish="ENIG", qty="5 (E BOM, may share the CR panel)",
+                thick="1.6 mm", copper="1 oz", finish="ENIG", qty="5 (E BOM; a separate 2-layer order at OSH Park)",
                 layers_list="F.Cu, B.Cu (AGND pour)"),
 }[B]
 DNP, FIT = dnp_split()
+# the rule file each board is checked against (cr/cr.kicad_dru is a copy of the OSH Park-only file, D-29, D-55)
+RULES = {"cr": "fab_4layer_oshpark_only.kicad_dru", "eib": "fab_2layer_oshpark_pcbway.kicad_dru"}[B]
 STATUS = ("**Status: not ordered.** This package awaits operator review before order (dec2-eib decision 1, "
           "2026-11-12).\n\n" if B == "eib" else
           "**Status: not ordered.** This package awaits operator review before order. The fab is OSH Park (operator "
@@ -80,7 +82,7 @@ txt = f"""# {INFO['name']}: fabrication package ({D})
 | Surface finish | {INFO['finish']} |
 | Quantity | {INFO['qty']} |
 | Solder mask / silkscreen | both sides; every via tented on both sides |
-| Design rules | `tools/pcb/fab_rules/fab_{INFO['layers']}layer_oshpark_pcbway.kicad_dru` (0.1524 mm track/space, 0.254 mm minimum hole, 0.15 mm annular ring, 0.381 mm copper to edge) |
+| Design rules | `tools/pcb/fab_rules/{RULES}` (0.1524 mm track/space, 0.254 mm minimum hole, 0.15 mm annular ring, 0.381 mm copper to edge) |
 | ERC | {ne.group(1) if ne else '?'} messages (`reports/erc.rpt`) |
 | DRC | {nv.group(1) if nv else '?'} violations, {nu.group(1) if nu else '?'} unconnected pads, schematic parity checked (`reports/drc.rpt`) |
 
@@ -114,7 +116,7 @@ decisions and the open `TODO(verify)` items are in `hardware/charger_evm_r8/LAYO
 
 ## 4. Before you order
 
-1. Read `LAYOUT_DECISIONS.md` section 9 (proposed design changes) and section 10 (open items).
+1. Read `LAYOUT_DECISIONS.md` section 10 (proposed design changes) and section 11 (open TODO(verify) items).
 2. Confirm the copper weight and the fab rule items marked `TODO(verify)` in `tools/pcb/fab_rules`.
 3. Do not order until the operator has reviewed this package and the ordering BOM.
 """
