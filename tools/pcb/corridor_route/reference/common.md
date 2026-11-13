@@ -89,6 +89,12 @@ Add a row for every routed attempt. Write "Resume here" before every long comman
   the pad's own net: solder runs into the hole, and KiCad DRC does not report it. `rules.via_in_pad` in the plan
   allows it for named pads (`["U101.25"]`) or for all (`true`) when the design uses filled vias. `score.py` counts
   the added vias on SMD pads.
+  - The mask opening is the pad grown by its own solder-mask expansion (`mask_exp` in `model.json`, read by
+    `board_model.py`), at least `rules.mask_margin`, with square corners: KiCad grows a rectangular pad to a
+    rectangle. The router, `score.py` and `smd_ban_test.py` use the same shape. A round margin let two vias of the
+    r9 CR board 0.0045 mm into the corners of U106.1 and U118.8 (expansion 0.0508 mm); only the project's D-37
+    constraint row found them. Rebuild a model made before 2026-11-13 so that its pads carry `mask_exp`.
+  - Check the ban on a new board: `"$PY" smd_ban_test.py W/model/model.json W/plan.json [--pad REF.PAD ...]`.
 - **Validity.** An attempt with a new violation of any type other than `starved_thermal`, or with an added via
   on an SMD pad, is not a valid result. It cannot be reported as the best attempt, whatever its completion.
 - **Valid is not finished.** A valid result still has the plane nets open and may have new starved thermals.

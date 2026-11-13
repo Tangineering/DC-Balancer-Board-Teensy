@@ -57,8 +57,13 @@ for fp in b.GetFootprints():
             for i in range(sps.OutlineCount()):
                 # drilled: the pad item has its own hole. The router bans vias on pads without one (SMD pads);
                 # a pad number shared with plated holes (an exposed pad and its thermal vias) does not count
+                # mask_exp: the pad's solder-mask expansion on this layer (0 on a layer without a mask). The
+                # router bans vias from the pad grown by it with square corners, as KiCad grows a rectangle
+                mlay = {"F.Cu": pcbnew.F_Mask, "B.Cu": pcbnew.B_Mask}.get(ln)
+                mexp = mm(p.GetSolderMaskExpansion(mlay)) if mlay is not None and p.IsOnLayer(mlay) else 0.0
                 items.append(dict(kind="pad", net=p.GetNetname(), layers=[ln], poly=poly_pts(sps, i),
-                                  ref=fp.GetReference(), num=p.GetNumber(), drilled=p.GetDrillSizeX() > 0))
+                                  ref=fp.GetReference(), num=p.GetNumber(), drilled=p.GetDrillSizeX() > 0,
+                                  mask_exp=round(mexp, 4)))
         if p.GetDrillSizeX() > 0:
             # the hole blocks every routing layer; 0.127 mm is added so that the router's copper clearance also
             # covers a 0.254 mm plated-hole-to-inner-copper fab rule

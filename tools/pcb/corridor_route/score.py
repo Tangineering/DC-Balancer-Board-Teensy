@@ -17,8 +17,8 @@ Measures:
                        identified by its type, its items and its position, so a new violation cannot hide behind
                        one that the routing removed. Each new violation is listed with its position.
   vias on SMD pads     vias added by the routing whose copper lies on an SMD pad or inside its solder-mask
-                       opening (--mask-margin, default 0.05 mm). KiCad DRC does not report them; solder runs into
-                       the hole. They make a result not valid unless --allow-via-in-pad is given.
+                       opening: the pad grown by its own mask expansion, at least --mask-margin (default 0.05 mm),
+                       with square corners. KiCad DRC does not report them; solder runs into the hole. They make a result not valid unless --allow-via-in-pad is given.
   pour islands         filled outlines of at least --min-island mm2 per zone, baseline and routed. Only hard
                        pours (zone priority above 1) and the trial pour count in the rank; soft fills (priority 0
                        or 1) are listed for information, because a later stitching step joins them.
@@ -43,6 +43,8 @@ import tempfile
 from collections import Counter
 
 import pcbnew
+from shapely.geometry import Point, Polygon
+from shapely.ops import unary_union
 try:
     import wx
     wx.DisableAsserts()
@@ -127,9 +129,15 @@ def copper(board):
     for fp in b.GetFootprints():
         for p in fp.Pads():
             if p.GetAttribute() == pcbnew.PAD_ATTRIB_SMD:
-                for lid in (pcbnew.F_Cu, pcbnew.B_Cu):
+                for lid, mlid in ((pcbnew.F_Cu, pcbnew.F_Mask), (pcbnew.B_Cu, pcbnew.B_Mask)):
                     if p.IsOnLayer(lid):
-                        smd.append((p.GetBoundingBox(), p.GetEffectivePolygon(lid, pcbnew.ERROR_INSIDE),
+                        sps = p.GetEffectivePolygon(lid, pcbnew.ERROR_INSIDE)
+                        cu = unary_union([Polygon([(mm(sps.Outline(i).CPoint(k).x), mm(sps.Outline(i).CPoint(k).y))
+                                                   for k in range(sps.Outline(i).PointCount())]).buffer(0)
+                                          for i in range(sps.OutlineCount())])
+                        exp = mm(p.GetSolderMaskExpansion(mlid)) if p.IsOnLayer(mlid) else 0.0
+                        # the mask opening: the pad grown by its expansion (at least --mask-margin), square corners
+                        smd.append((cu, cu.buffer(max(exp, A.mask_margin), join_style=2),
                                     "%s.%s" % (fp.GetReference(), p.GetNumber())))
     via_pos, in_pad = set(), []
     for t in b.GetTracks():
@@ -137,12 +145,11 @@ def copper(board):
             vias += 1
             c = t.GetPosition()
             via_pos.add((c.x, c.y))
-            r = t.GetWidth(pcbnew.F_Cu) // 2 + pcbnew.FromMM(A.mask_margin)
-            for bb, poly, name in smd:
-                if (bb.GetLeft() - r <= c.x <= bb.GetRight() + r and bb.GetTop() - r <= c.y <= bb.GetBottom() + r
-                        and poly.Collide(c, r)):
-                    in_pad.append((c.x, c.y, "centre in pad" if poly.Contains(c) else "on the pad edge", name,
-                                   t.GetNetname()))
+            ann = Point(mm(c.x), mm(c.y)).buffer(mm(t.GetWidth(pcbnew.F_Cu)) / 2, 64)
+            for cu, opening, name in smd:
+                if opening.intersects(ann):
+                    in_pad.append((c.x, c.y, "centre in pad" if cu.contains(Point(mm(c.x), mm(c.y)))
+                                   else "on the pad edge or in its mask opening", name, t.GetNetname()))
                     break
             if t.GetNetname() not in plane and t.GetNetname() != pour_net:
                 sig_vias += 1
