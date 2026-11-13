@@ -154,9 +154,9 @@ orchestrator for the routed board on a branch. Then:
 1. Create a worktree of your own on a new branch from the owner's commit. Never write the owner's worktree.
 2. When the owner sends a new commit (an approved request), merge it into your branch, archive its board into a new
    round folder, compare it with `cmp_place.py`, model it and route the chosen plan at four seeds.
-3. Finish the chosen seed for delivery: plane vias with `--stitch` when the design asks for stitching, then the
-   straightening pass (`board-routing` section 2, step 7). Copy `board_st/<board>.kicad_pcb` over the board in your
-   worktree. Check with `git status` that
+3. Finish the chosen seed for delivery up to the plane vias (`board-routing` section 2, step 7). Copy
+   `board_pv/<board>.kicad_pcb` over the board in your worktree. Stitching and straightening come after the trim
+   (step 7). Check with `git status` that
    only the board file changed; the project file and the rule file must stay byte-identical.
 4. Run `kicad-cli pcb drc --severity-all --schematic-parity` (`tools/pcb/TOOLCHAIN.md` gives the path) and the
    project's constraint check on that file. Only the violations that the owner accepts (for example silk) may remain.
@@ -166,10 +166,10 @@ orchestrator for the routed board on a branch. Then:
    proposed to the owner as one request. When the owner's commit with the new outline comes back, merge it and run
    DRC and the constraint check again. Trimming removes only empty area, so no re-route is needed unless the owner
    moved parts or copper.
-7. The finish order is: plane vias with `--stitch`, straightening, the trim (the owner's generator, which removes the
-   vias outside the new outline), then `stitch_gaps.py` on the final board, then the project's silk step and checks.
-   `plane_vias.py` needs the router's grid occupancy, so it runs before straightening; `stitch_gaps.py` reads the
-   real copper, so it closes the stitching gaps last. If the owner trims a board that lacks a step, take the owner's
+7. The finish order (r9 CR record, D-61) is: route, plane vias, the trim (the owner's generator), plane vias with
+   `--stitch` on the trimmed board, straightening, `stitch_gaps.py`, then the project's reference and silk step and
+   its checks. `plane_vias.py` needs the router's grid occupancy, so it runs before straightening; `stitch_gaps.py`
+   reads the real copper, so it closes the stitching gaps last. Run the project's stitching check after it. If the owner trims a board that lacks a step, take the owner's
    board in the merge and run the missing steps on it; do not merge two different boards line by line.
 
 ## 7. Rules
