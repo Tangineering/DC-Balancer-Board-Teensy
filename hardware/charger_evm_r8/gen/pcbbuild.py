@@ -284,11 +284,13 @@ def greedy(b, fr, fps, L, pinnet):
     fixed = set(L.FIXED) | {r[0] for r in L.BOARD_ONLY}
     occ = {"F": np.zeros((grid.ny, grid.nx), bool), "B": np.zeros((grid.ny, grid.nx), bool)}
 
+    grow = getattr(L, "CRT_GROW", {})   # per-part courtyard growth (routing-study variants, D-34)
     def mark(fp):
         side = "B" if fp.IsFlipped() else "F"
         for s_, g in ((side, crt_rect(fp, fr)), ("F" if side == "B" else "B", other_crt_rect(fp, fr))):
             if g is not None and not g.is_empty:
-                occ[s_] |= grid.mask(g.buffer(packer.MARGIN))
+                occ[s_] |= grid.mask(g.buffer(packer.MARGIN + grow.get(fp.GetReference(), 0.0),
+                                                    join_style=2))
 
     for ref in fixed:
         mark(fps[ref])
@@ -308,11 +310,28 @@ def greedy(b, fr, fps, L, pinnet):
             if rn not in masks:
                 masks[rn] = grid.mask(L.REGIONS[rn])
             rects = local_rects(fp, fr, L.rotations(ref))
+            gr = grow.get(ref, 0.0)
+            rects = {k: (v[0] - gr, v[1] - gr, v[2] + gr, v[3] + gr) for k, v in rects.items()}
             (dx0, dy0, dx1, dy1) = rects[min(rects)]
             parts.append(dict(ref=ref, region=rn, rects=rects,
                               target=None if L.fill(ref, phase_name) else L.target(ref, fps, fr, pinnet),
                               size=(dx1 - dx0) * (dy1 - dy0), prio=L.prio(ref)))
-        res = packer.pack(grid, parts, occ[side], masks, tries=L.TRIES, seed=7, log=log)
+        occupied = occ[side]
+        if getattr(L, "THT_BOTH_SIDES", False):
+            # r9 step-5 fix: a through-hole part (W6/W7, J102) has a courtyard on both sides, so it must also clear
+            # the other side's courtyards (e.g. the CHG TSW bodies of J1 on B.CrtYd); packing against the own side
+            # only put W6 and W7 onto the J1 bottom courtyards.
+            other = "B" if side == "F" else "F"
+            for ref in refs:
+                fp = fps[ref]
+                fp.SetPosition(fr.v(0, 0))
+                g = other_crt_rect(fp, fr)
+                if g is not None and not g.is_empty:
+                    occupied = occ[side] | occ[other]
+                    log.append("phase %s: %s has a %s courtyard; packed against both sides" % (phase_name, ref,
+                                                                                              other))
+                    break
+        res = packer.pack(grid, parts, occupied, masks, tries=L.TRIES, seed=7, log=log)
         for p in parts:
             fp = fps[p["ref"]]
             if p["ref"] in res:

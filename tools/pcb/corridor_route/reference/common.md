@@ -39,10 +39,13 @@ T="<repository root>/tools/pcb/corridor_route"
 | Seeds | `"$PY" -u seeds.py run W/model/model.json W/plan.json W/vN_seeds --seeds 1,2,3,4` and `"$PY" seeds.py compare W/A_seeds W/B_seeds` |
 | Apply | `"$PY" apply_routes.py W/<board>.kicad_pcb W/vN/routes.json W/vN/board` |
 | Score | `"$PY" score.py W/vN/board/<board>.kicad_pcb W/<board>.kicad_pcb W/vN/score --plane-nets <nets> [--test-pour NET:LAYER] [--allow-via-in-pad] --label <method>-vN` |
-| Plane vias | `"$PY" plane_vias.py W/model/model.json W/plan.json W/vN/routes.json W/vN/board/<board>.kicad_pcb W/vN/plane_routes.json --report W/vN/plane_vias.md` (then apply onto `W/vN/board` and score) |
+| Plane vias | `"$PY" plane_vias.py W/model/model.json W/plan.json W/vN/routes.json W/vN/board/<board>.kicad_pcb W/vN/plane_routes.json --report W/vN/plane_vias.md [--stitch PITCH]` (then apply onto `W/vN/board` and score) |
+| Straighten | `"$PY" straighten.py W/vN/board_pv/<board>.kicad_pcb W/vN/board_st --plan W/plan.json --routes-out W/vN/routes_st.json` (then score) |
+| Stitching gaps | `"$PY" stitch_gaps.py <final board>.kicad_pcb W/gaps [--net /GND] [--layer B.Cu] [--limit 3.54] [--y-flip-offset Y0]` (then DRC) |
 | No via site | `"$PY" nosite_why.py W/model/model.json W/plan.json W/vN/routes.json W/vN/board_pv/<board>.kicad_pcb` |
 | Parallel metric | `"$PY" parallel_metric.py W/model/model.json W/vN/routes.json --zone-parts <refs> --analog-nets <nets> [--ignore-nets <nets>] [--exempt-pins REF.PAD,...] [--check-pad REF.PAD] [--json out.json]` |
 | Base compare | `"$PY" cmp_place.py <previous base>.kicad_pcb <new base>.kicad_pcb` |
+| Trim outline | `"$PY" trim_outline.py W/vN/board_pv/<board>.kicad_pcb W/trim [--y-flip-offset Y0] [--ear X0,Y0,X1,Y1] [--flip-centre CX,CY --flip-block NAME:X0,Y0,X1,Y1] [--apply]` |
 
 - The last four rows are the shared options of `reference/shared-options.md`. Every method may use them.
 - `render.py` takes the file `model.json`, not the folder. With `--routes` give the plan of the same attempt.
@@ -89,6 +92,12 @@ Add a row for every routed attempt. Write "Resume here" before every long comman
   the pad's own net: solder runs into the hole, and KiCad DRC does not report it. `rules.via_in_pad` in the plan
   allows it for named pads (`["U101.25"]`) or for all (`true`) when the design uses filled vias. `score.py` counts
   the added vias on SMD pads.
+  - The mask opening is the pad grown by its own solder-mask expansion (`mask_exp` in `model.json`, read by
+    `board_model.py`), at least `rules.mask_margin`, with square corners: KiCad grows a rectangular pad to a
+    rectangle. The router, `score.py` and `smd_ban_test.py` use the same shape. A round margin let two vias of the
+    r9 CR board 0.0045 mm into the corners of U106.1 and U118.8 (expansion 0.0508 mm); only the project's D-37
+    constraint row found them. Rebuild a model made before 2026-11-13 so that its pads carry `mask_exp`.
+  - Check the ban on a new board: `"$PY" smd_ban_test.py W/model/model.json W/plan.json [--pad REF.PAD ...]`.
 - **Validity.** An attempt with a new violation of any type other than `starved_thermal`, or with an added via
   on an SMD pad, is not a valid result. It cannot be reported as the best attempt, whatever its completion.
 - **Valid is not finished.** A valid result still has the plane nets open and may have new starved thermals.

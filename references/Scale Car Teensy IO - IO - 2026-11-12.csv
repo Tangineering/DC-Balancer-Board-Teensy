@@ -1,0 +1,41 @@
+Pin Number,Input/Output,Functionality,Assignment,Code Name,Notes
+0,Comminication,UART,RX,RX,Used for VESC
+1,Comminication,UART,TX,TX,Used for VESC
+3,Output,Digital,FC regulator enable,FC_REG_ENABLE,
+4,Output,Digital,BT regulator enable,BT_REG_ENABLE,
+5,Output,Digital,Charger arm (BQ25798 /CE through the CHG carrier),CHG_ARM,HIGH = charging allowed (carrier drives /CE LOW through EIB U201). LOW or high-Z = inhibited (47 kOhm pull-down on the carrier). CHG_QUAL acts only while this pin is LOW. Was MPPT_DISABLE (Ag105 removed)
+6,Input,Digital,Charger status (BQ25798 STAT),CHARGER_STAT,"Open drain: LOW = charging, HIGH = complete/disabled/HIZ, 1 Hz blink = fault (SLUSDV2C Table 7-11). 10 kOhm pull-up to 3V3 on the carrier; 1.00 kOhm in series at the EIB (STAT LOW reads ~0.31 V). Plausibility-checked against REG1C CHG_STAT and CHG_ARM (FR-44)"
+7,Output,Digital,Enable optical sensor,ENC_ENABLE,No longer in use
+9,Output,Digital,Cell balancing disable,CBAL_DISABLE,
+10,Unused,Digital,Free (freed-pin rule),FREE_10,"Unassigned (freed by the 2026-11-12 charger tap review). INPUT_PULLDOWN early in setup() and a boot read; HIGH -> non-blocking UNEXPECTED_LEAD flag (freed-pin rule, FR-01). Teensy SPI CS0 default: no SPI or other peripheral may claim it. Was CHG_QUAL in the r8 design"
+11,Communication,SPI,MOSI,MOSI,Used for MDAC
+12,Communication,SPI,MISO,MISO,Used for MDAC
+13,Communication,SPI,SCK,SCK,Used for MDAC
+14,Input,Interrupt,Encoder-A,ENC_A,
+15,Input,Interrupt,Encoder-B,ENC_B,
+16,Unused,Digital,Free (freed-pin rule),FREE_16,"Unassigned (freed by the 2026-11-12 charger tap review). INPUT_PULLDOWN early in setup() and a boot read; HIGH -> non-blocking UNEXPECTED_LEAD flag (freed-pin rule, FR-01)"
+17,Unused,Digital,Free (freed-pin rule),FREE_17,"Unassigned (freed by the 2026-11-12 charger tap review). INPUT_PULLDOWN early in setup() and a boot read; HIGH -> non-blocking UNEXPECTED_LEAD flag (freed-pin rule, FR-01)"
+18,Communication,I2C,SDA,SDA,Used for battery charger
+19,Communication,I2C,SCL,SCL,"Used for battery charger (BQ25798 on the EVM, I2C 0x6B; MB RSDA/RSCL 2.7 kOhm). Never route WDOG1_B here (AD_B1_00 ALT4): WDOG1_B goes to pin 20 only"
+20,Reserved,Digital,MCU watchdog output (WDOG1_B; R5 future work),WDOG1_B_RSVD,Do not assign. WDOG1_B is routed only here (AD_B1_10 ALT1); never to pin 19 (SCL) or pin 34 (CHG_H1_RB). Left unconfigured until the R5 watchdog lands
+21,Unused,Digital,Free (freed-pin rule),FREE_21,"Unassigned (freed by the 2026-11-12 charger tap review). INPUT_PULLDOWN early in setup() and a boot read; HIGH -> non-blocking UNEXPECTED_LEAD flag (freed-pin rule, FR-01). The CHG_HB heartbeat is deleted (operator ruling D2-5). EWM_OUT_B (AD_B1_11 ALT1, TODO(verify: IMXRT1060RM)) is not used"
+22,Input,Analog,Charger input current (eFuse IMON),CHG_IIN,"TPS26630 IMON 27.9 uA/A into 27.4 kOhm = 0.764 V/A; 10 kOhm + 1 nF to the pin. pinMode INPUT_DISABLE (pad keeper off) before the first analogRead: 37 kOhm source, 1 uA of keeper current = 49 mA error"
+23,Unused,Digital,Free (freed-pin rule),FREE_23,"Unassigned (freed by the 2026-11-12 charger tap review). INPUT_PULLDOWN early in setup() and a boot read; HIGH -> non-blocking UNEXPECTED_LEAD flag (freed-pin rule, FR-01)"
+24,Input,Analog,Fuel cell voltage measurement,FC_VOLTAGE,
+25,Input,Analog,Battery voltage measurement,BT_VOLTAGE,
+26,Input,Analog,Bus voltage measurement,BUS_VOLTAGE,
+27,Output,Digital,Fuel cell bus enable,FC_BUS_ENABLE,"Allow fuel cell regulator to contribute to Vbus. Driven OUTPUT LOW early in setup(); never INPUT_PULLUP, never a pad keeper (RT1987 EN may turn on anywhere up to 1.4 V)"
+28,Output,Digital,Battery bus enable,BT_BUS_ENABLE,"Allow battery regulator to contribute to Vbus. LOW is the FC-window loop barrier; never HIGH together with FC_CHARGE_ENABLE. Never INPUT_PULLUP, never a pad keeper: a pull-up lifts the EN net to about 1.02 V (0.69-1.68 V over tolerance, design document H.24(b)), which can exceed the RT1987 VEN_R max 1.4 V and turn the switch on"
+29,Output,Digital,Motor power enable,MOT_PWR_ENABLE,"Allow power to flow to VESC / motor. Driven OUTPUT early in setup(); never INPUT_PULLUP, never a pad keeper (RT1987 EN band up to 1.4 V)"
+30,Output,Digital,Regen charging enable,REGEN_ENABLE,"Allow regen power to flow to the battery charger. Held HIGH through Run in the always-powered regen design (operator ruling 2026-11-05). Never INPUT_PULLUP, never a pad keeper: a pull-up lifts the EN net to about 1.02 V (0.69-1.68 V over tolerance, design document H.24(b)), which can exceed the RT1987 VEN_R max 1.4 V and turn the switch on"
+31,Output,Digital,Fuel cell charging enable,FC_CHARGE_ENABLE,"Allow Vbus (fuel cell) to flow to the battery charger. BT_BUS_ENABLE *must* be off before this is turned on, and the two are never on together. Outside State 98 firmware raises this only with REGEN_ENABLE HIGH (FR-49; operator rulings 2026-11-05 R7 and 2026-11-12). Read by the carrier permit logic (FCC_OFF comparator below 0.39-0.44 V, FCC_ON comparator above 1.75-1.88 V). Never INPUT_PULLUP, never a pad keeper: a pull-up lifts the EN net to about 1.02 V (0.69-1.68 V over tolerance, design document H.24(b)), which can exceed the RT1987 VEN_R max 1.4 V and turn the switch on"
+32,Output,Digital,Battery sequencing enable,BT_SEQUENCE_ENABLE,"Must initialize in off state, turn on once system is powered up and does not need to be turned off after. Driven OUTPUT LOW early in setup(); never INPUT_PULLUP, never a pad keeper"
+33,Output,Digital,Charger input-qualification release request,CHG_QUAL,"Level: HIGH releases ILIM_HIZ for the charger qualification read only while CHG_ARM is LOW and FC_CHARGE is proven off (carrier FCC_OFF comparator). No hardware time limit: firmware drops it when the read completes and at T_QUAL_MAX 0.46 s at the latest (FR-04, FR-45). Raise only after EN_CHG = 0 is read back; LOW for at least one 1 kHz tick before CHG_ARM rises. Driven OUTPUT LOW early in setup(); no SPI or other peripheral may claim this pin. 47 kOhm pull-down on the carrier. Moved from pin 10 (the SPI CS0 default) 2026-11-12"
+34,Input,Digital,V-MOT above bus comparator readback,CHG_H1_RB,"HIGH = V-MOT > 1.089 x VBUS (+0.30 V hysteresis). Pad GPIO_B1_13: keep it GPIO, never WDOG1_B (ALT0). INPUT_PULLDOWN"
+35,Input,Digital,Charger input eFuse fault,CHG_EFUSE_FLT,"Open drain, LOW = fault. INPUT_PULLUP (the Teensy pad is the only pull-up; carrier R106 not fitted), so an open tap reads no fault. Plausibility-checked against the charger VBUS_PRESENT_STAT"
+36,Communication,SPI,CS-MDAC-FC,CS_MDAC_FC,Used for MDAC
+37,Communication,SPI,CS-MDAC-BT,CS_MDAC_BT,Used for MDAC
+38,Input,Analog,Charger input voltage measurement,CHG_VOLTAGE,
+39,Input,Analog,Regen node voltage,RGN_VOLTAGE,
+40,Input,Analog,Fuel cell current measurement,FC_CURRENT,
+41,Input,Analog,Battery current measurement,BT_CURRENT,

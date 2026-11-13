@@ -1,0 +1,406 @@
+﻿[
+    {
+        "item":  "retired (r7-geometry retirement / classification report for the CR outline change request)",
+        "errors":  [
+                       {
+                           "claim":  "Finding 4, operator question 2, the D-20 and D-36 rows and the key figures say that CR request Â§5.6 forbids via in pad and that VR-1 against D-36 is an open conflict.",
+                           "problem":  "The citation is wrong and the \u0027open conflict\u0027 framing is out of date. CR request Â§5 item 6 is the \u0027Stencil\u0027 rule. The via rule is Â§5 item 7, and it does not forbid via in pad outright. It sets an order: route with no via in pad first, then use plain unfilled vias (D-36) only as a last resort, and list each one for operator review. LAYOUT_DECISIONS.md already records this order as D-37, which the report never mentions.",
+                           "correction":  "Cite CR request Â§5 item 7 (`:162-166`) and D-37 (`LAYOUT_DECISIONS.md:337-347`). Treat the ordering as settled: D-36 is the fallback, not revoked. The real open question is narrower: does D-37 step 1 apply to the U101 EP thermal vias? Those vias are a footprint feature (D-03 U101 row: 3 x 3 vias, 0.30 mm drill), not a routing via, so the ruling does not clearly cover them.",
+                           "evidence":  "CR_OUTLINE_CHANGE_REQUEST_2026-11-12.md:155-166 (items 6 and 7); LAYOUT_DECISIONS.md:337-347 (D-37: \u0027D-36 is not revoked; it becomes the fallback\u0027)."
+                       },
+                       {
+                           "claim":  "Key figures: \u0027D-01..D-36: 35 decisions exist (D-07 absent)\u0027. The classification table also stops at D-36.",
+                           "problem":  "D-37 exists. The real set is D-01 to D-37 without D-07, which is 36 decisions, and D-37 is the decision that matters most for finding 4. The RETIRE/RE-DERIVE/KEEP counts leave it out.",
+                           "correction":  "Count 36 decisions and add a D-37 row (KEEP; it governs routing on the new outline).",
+                           "evidence":  "grep of LAYOUT_DECISIONS.md: decision headers at lines 47-337; D-37 at :337."
+                       },
+                       {
+                           "claim":  "D-22 row: \u0027The 1.5 mm corridor and the L4 strap existed because of the r6 +y edge and the W1 position.\u0027",
+                           "problem":  "No source gives a 1.5 mm VCHGOUT corridor. D-22 says 2.8 mm (route_cr.VOUT_L1, box x 29.10-36.80, y 60.00-63.80), and the design doc has no \u00271.5 mm corridor\u0027 either.",
+                           "correction":  "2.8 mm corridor (D-22).",
+                           "evidence":  "LAYOUT_DECISIONS.md:230-233; grep for \u00271.5 mm corridor\u0027 returns nothing in the design doc or in LAYOUT_DECISIONS.md."
+                       },
+                       {
+                           "claim":  "Finding 3: \u0027the PWP parts (TPS26631/33/36/37) behave differently (design doc :1453-1456, SLVSE94G Â§4)\u0027.",
+                           "problem":  "The cited design-doc passage says only that the TPS26631 differs (2x pulse-current support instead of the 1x active limit). It lists TPS26633/36/37 as PWP parts but makes no behavioural claim about them. The report widens the claim to all four parts without support.",
+                           "correction":  "Say: \u0027TPS26631 has 2x pulse-current support (design doc :1454-1455). The other PWP variants would need I_OL, the fault response and the B.8 pin map re-derived (design doc :1456), TODO(verify: SLVSE94G device comparison table).\u0027",
+                           "evidence":  "docs/charger_bq25798_wiring_design_2026-11-05.md:1452-1456."
+                       },
+                       {
+                           "claim":  "Line citations: \u0027CR request Table 3 (:172)\u0027 for the U101 row, and \u0027EIB ... meets Â§5.1-5.4 (CR request :178)\u0027.",
+                           "problem":  "The line numbers are off. :172 is a sentence in front of Table 3; the U101 row is at :177. Line :178 is the 0402 row; the statement that the EIB meets rules 5.1 to 5.4 is at :183.",
+                           "correction":  "U101 row :177; EIB statement :183.",
+                           "evidence":  "CR_OUTLINE_CHANGE_REQUEST_2026-11-12.md:170-183."
+                       },
+                       {
+                           "claim":  "Finding 5: \u0027A removable CR can be plugged one pitch off along y ... The standoff holes can key the CR if they are asymmetric.\u0027",
+                           "problem":  "The mechanism is mis-framed. If the four standoffs pass through CR holes, the holes alone stop a translation of one pitch; asymmetry is not needed for that. Asymmetry guards against a 180-degree rotation, and the report does not check that case. The 11-of-12 and 9-of-10 arithmetic is correct: both columns are continuous at 2.54 mm, x 20.998 y 36.544-64.484 and x 45.998 y 39.084-61.944.",
+                           "correction":  "Check the 180-degree rotation case: after a rotation about the footprint centre, the 12-pin strip lands on the 10-pin column. State that the hole pattern prevents translation whenever the standoff holes are through-holes, and that asymmetry is what keys against rotation.",
+                           "evidence":  "layout_cr.py:95-96 (HDR_PADS column extents); fplib.py:84-90 (pins 1-10 at x 0, pins 11-22 at x -25.000)."
+                       },
+                       {
+                           "claim":  "D-03 row: \u0027The 0.10 mm courtyards were justified by \"hand-assembledâ€¦ dense board\"\u0027.",
+                           "problem":  "This misquotes D-03. D-03 says the CR is \u0027hand-assembled with hot air or reflow\u0027, so reflow was already in the basis. \u0027dense board\u0027 is the reason given for the no-silkscreen row (D-12a), not for the courtyard excess. The switch to stencil reflow does not by itself remove the D-03 basis.",
+                           "correction":  "Say that D-03 already anticipated reflow, and that the courtyard question reopens because of the area, not because of the assembly method.",
+                           "evidence":  "LAYOUT_DECISIONS.md:67-72 and the D-03 table\u0027s last row."
+                       }
+                   ],
+        "unsupported":  [
+                            "Finding 2: the 26-28 % single-sided figure divides an r7 demand (booked against the 1081.1 mmÂ² usable area) by the 4212 mmÂ² gross area. It also leaves out the demand that the change request itself adds: 0402 parts to 0603 (CR request Â§5 item 4, Table 3 :178), SOT-23/SOIC replacements for the DCT/SC-70 parts (:179), and any return from the 0.10 mm courtyards to IPC nominal courtyards. The percentage is labelled ESTIMATE, but it understates the demand.",
+                            "Finding 6: \u0027on the new rectangle, the rule would forbid bottom parts over both boost channels\u0027. This is plausible because r7_calc.NONGND/PARTS cover the whole MB (r7_calc.py:579-586). However, it was not computed; no run of mb_bottom_clearance() against the new polygon is cited.",
+                            "D-36 row: the claim that the r2_A finish-method start board retires is reasoning, not a ruling. D-36 (`LAYOUT_DECISIONS.md:332-335`) records it as the operator\u0027s start board, so retiring it needs operator confirmation.",
+                            "\u0027MB vias not tented\u0027, \u0027MB content under tabs\u0027 and the thermal-band rows (design doc :952-982) were not re-checked against the .brd in this pass; the RETIRE/RE-DERIVE classes for those rows are reasoning only.",
+                            "Stack-up row: the farthest-point figure of \u0027about 60 mm (ESTIMATE)\u0027 has no stated computation."
+                        ],
+        "overall":  "Most of the report\u0027s anchors check out against the sources:\n- D-07 is absent.\n- The stale tags at layout_cr.py:57/60 (D-05 should be D-11), :105 (D-06 should be D-18) and :175-176 (D-07 should be D-12) are confirmed.\n- These figures and line references are correct: GRID_BOUNDS (17.0, 33.5, 66.0, 77.0) at :172, RIM_X 39.53, LFC_Y 66.862, the distance(P) \u003c 1.5 filter at :141 (and :145 for the part boxes), the 101.8-109.9 % single-sided demand of 1081.1 mmÂ² (design doc :1375, :1389-1390), the area of 4212 mmÂ², the conversion of KiCad Y 6.00-93.00, PARK (70, 50) lying outside x \u003c= 67, the 9 thermal vias in the U101 EP, the \u0027no leaded TPS26630\u0027 line, and MORNING_REVIEW :95 (34 of 56).\n- The generator-construct line inventory is accurate.\n\nThe main error is the via-in-pad framing. The report cites CR request Â§5.6, which is the stencil rule, and presents VR-1 against D-36 as an open conflict. The governing text is Â§5 item 7, which LAYOUT_DECISIONS.md records as D-37: no via in pad first, D-36 as the listed fallback. The report omits D-37 entirely, so finding 4, operator question 2 and the decision count (36, not 35) need correction. The U101 EP-via question survives only in a narrower form.\n\nSmaller errors:\n- The D-22 corridor width is 2.8 mm, not 1.5 mm.\n- TPS26633/36/37 are described as behaving differently, which the source does not say.\n- Two CR request line numbers are wrong.\n- The keying argument is framed around translation, which the standoff holes already prevent; rotation is the case asymmetry must cover.\n- D-03\u0027s courtyard basis is misquoted.\n\nThe single-sided feasibility estimate is directionally reasonable but omits the package upsizing that the change request itself requires."
+    },
+    {
+        "item":  "assembly",
+        "errors":  [
+                       {
+                           "claim":  "Â§1.7 and operator question 2: \u0027Under change request Â§5.6 (VR-1 stays) these vias are forbidden ... The ruling is needed before the U101 footprint is frozen.\u0027 The report treats via-in-pad as an open VR-1 vs D-36 conflict.",
+                           "problem":  "Section 5 has no rule 5.6 on vias. Rule 5.6 is \u0027Stencil\u0027, and via in pad is rule 7 (CR_OUTLINE_CHANGE_REQUEST_2026-11-12.md lines 158-166). That rule does not simply keep VR-1. It sets an order of use, and the operator has already ruled on that order as D-37 (LAYOUT_DECISIONS.md:337-347, commit fb250aa at HEAD): first route with no via on an SMD pad or in its mask opening; if that fails on the new outline, fall back to D-36 plain unfilled vias and list each one for operator review. D-36 is not revoked. The report never mentions D-37.",
+                           "correction":  "Cite CR Â§5 rule 7 / D-37. Treat the order of use as settled: the U101 EP thermal vias (9 x 0.30 mm today) are first designed out, or moved outside the pad, and fall back to D-36 vias only after a failed no-via attempt, listed for review. Operator question 2 should be reduced to \u0027confirm that D-37 applies to exposed thermal pads (EP) as well as to signal pads\u0027.",
+                           "evidence":  "CR_OUTLINE_CHANGE_REQUEST_2026-11-12.md:158-166 (rule 7 text); LAYOUT_DECISIONS.md:337-347 (D-37); git log fb250aa \u0027D-37 via-in-pad order of use (no via in pad first; D-36 is the fallback)\u0027."
+                       },
+                       {
+                           "claim":  "Â§1.2(a): with PGTH and PGOOD tied to GND \u0027the internal power-good state may never assert ... TODO(verify: TI E2E / SLVSE94G, whether the PGOOD state with PGTH at GND blocks the 2x mode).\u0027",
+                           "problem":  "The datasheet already answers this, so the TODO is unnecessary. Table 5-1 says PGOOD high \u0027indicates PGTH has crossed the V(PGTHR) threshold\u0027. V(PGTHR) is 1.176-1.224 V (Â§6.5). Â§8.3.7.1.2 (p.23) says the 2x pulse support \u0027is activated only after PGOOD goes high\u0027; otherwise \u0027the device limits the current at I(OL) level\u0027. With PGTH at 0 V the threshold is never crossed.",
+                           "correction":  "State that with B.4\u0027s PGTH = GND, a TPS26631 never enters 2x mode and behaves as a 1x limiter. The remaining deltas against the TPS26630 are the 3x fast-trip (6.15-7.23 A from I_OL 2.05-2.41 A), the HTSSOP pin map and MSL 2. If option B is taken, B.4 should record that PGTH must stay at GND to keep 1x behaviour.",
+                           "evidence":  "tps2663.pdf (SLVSE94G) Table 5-1 PGOOD row; Â§6.5 V(PGTHR) 1.176/1.2/1.224 V; Â§8.3.7.1.2 p.23."
+                       },
+                       {
+                           "claim":  "Â§1.2 TPS26600PWP is offered as a fallback, with \u0027hot-short behaviour and the MODE-open response TODO(verify)\u0027, and \u0027150 mOhm RON (about 0.46 W at 1.76 A)\u0027.",
+                           "problem":  "The overload response is already in SLVSDG2G Â§5 (Device Comparison Table) and Â§7.5 (MODE_SEL \u0027Circuit breaker mode\u0027 with MODE open). The TPS2660x is a circuit breaker with auto-retry or latch, not the 1x active current limiter that B.4/H.5 rely on, so it is not a like-for-like fallback. The RON figure is the 25 C typical; Â§7.5 gives 80/150/250 mOhm over -40 C to TJ max and 210 mOhm max at 85 C, so dissipation at 1.76 A is up to about 0.65-0.77 W, not 0.46 W. Also, the external OVP setting is capped at OVPMAX 55 V; that does not affect 23.12 V but belongs in the comparison.",
+                           "correction":  "Record the TPS26600 as a circuit-breaker part whose fault response differs from B.4, which needs an H.5 re-derivation rather than a TODO. Give RON as 150 mOhm typical and 250 mOhm max, and dissipation as 0.46 W typical and up to ~0.77 W worst case.",
+                           "evidence":  "https://www.ti.com/lit/ds/symlink/tps2660.pdf (SLVSDG2G rev Dec 2019): Â§5 comparison table \u0027Circuit breaker with auto-retry / latch\u0027; Â§7.5 RON rows 140/150/160 (25 C), 210 max (85 C), 80/150/250 (full range); OVPMAX 55 V; MODE_SEL \u0027Circuit breaker mode\u0027."
+                       },
+                       {
+                           "claim":  "Â§1.6: R108, R131B and R176 have their courtyard -x edge at 18.16, and U114 and U116 at 18.155.",
+                           "problem":  "These values cannot be reproduced from cr.kicad_pcb. Read with pcbnew, all five courtyard polygons have min x = 18.280, and all five footprint bounding boxes (without text) start at 18.215. The report also omits that the copper pads cross the new edge: each of these five footprints has pads reaching x = 18.375, which is below 18.584. The list of five parts is correct.",
+                           "correction":  "Courtyard -x edge 18.28 mm for all five (bbox 18.215); pads reach 18.375 mm, so copper as well as courtyard lies outside the new edge.",
+                           "evidence":  "pcbnew read of hardware/charger_evm_r8/cr/cr.kicad_pcb (script assembly_check/c.py and u.py in the scratchpad): F/B courtyard bounds minx 18.28 for U114, U116, R108, R131B, R176; pad min x 18.374999."
+                       },
+                       {
+                           "claim":  "Table 1: \u0027CHG pad field (J1 courtyard) 75.4 mmÂ²\u0027.",
+                           "problem":  "This figure cannot be reproduced. The J1 courtyards in cr.kicad_pcb are 3.4 mmÂ² (F.CrtYd) and 93.8 mmÂ² (B.CrtYd). Change request item 4.1 replaces J1 with a receptacle footprint anyway, so no current J1 figure is the right basis.",
+                           "correction":  "Book the receptacle footprint as TODO(verify: receptacle selection, CR Â§6 item 3), or use the 93.8 mmÂ² B.CrtYd figure as a placeholder. This changes the total by less than 2 %, so the 27 % conclusion holds.",
+                           "evidence":  "pcbnew courtyard areas: top J1 3.4, bottom J1 93.8 mmÂ²."
+                       },
+                       {
+                           "claim":  "Â§1.5: \u0027The EIB routes at 64 % single-sided (A.9, line 1462).\u0027",
+                           "problem":  "The design doc at line 1462 states 64 % of 864 mmÂ², which is the 36.0 x 24.0 mm outline. D-25 superseded that outline with 24.0 x 38.0 mm = 912 mmÂ², where 555 mmÂ² is about 61 %.",
+                           "correction":  "Cite about 61 % of 912 mmÂ² (D-25), or say that the 64 % figure was on the superseded 36 x 24 mm basis.",
+                           "evidence":  "docs/charger_bq25798_wiring_design_2026-11-05.md:1462; LAYOUT_DECISIONS.md:243-247 (D-25)."
+                       }
+                   ],
+        "unsupported":  [
+                            "Table 1 books the 24 tap pads (95.0 mmÂ²) and the W lead pads (39.7 mmÂ²) at their current SMD and PTH pad sizes. Change request item 4.3 requires the taps and W leads to end in connectors on the CR, or to be justified as soldered, for removability. That makes the \u0027about 1116 mmÂ² / 27 %\u0027 booking a lower bound; the report does not address item 4.3.",
+                            "The claim that the SN74LVC2G08 and SN74LVC1G123 have no package coarser than DCT rests on product-page reads I did not re-fetch, and the 2G32/3G04/3G06 extension is itself marked TODO. I did not verify it.",
+                            "The \u0027U101 to PWP-20 +26.6 mmÂ² (6.6 x 7.3 mm land + 0.1)\u0027 figure is an estimate with no land-pattern source; the report marks it TODO correctly. The arithmetic (51.0 - 24.4 = 26.6) checks.",
+                            "I did not verify that GRM188R71H223KA01D exists or is active (report marks it TODO).",
+                            "The TPS26600 \u002762 V abs max, 2 V margin against Vc \u003c= 60 V\u0027 is correct, but the report does not note the external OVP ceiling (OVPMAX 55 V) or that the PowerPad ties to RTN (SLVSDG2G Table 6-1). Neither is checked against B.4."
+                        ],
+        "overall":  "The load-bearing census and area figures reproduce exactly from cr.kicad_pcb with pcbnew. These are the six 0402 parts; 8 DCT, 3 SC-70-6 and 2 SC-70-5 parts; 78 bottom passives (74 x 0603, 2 x 0805, 2 x 0402); top SMT courtyard 402.7, bottom 235.8 and J101 64.9 mmÂ²; the U101 courtyard of 24.4 mmÂ²; and nine 0.30 mm vias in the U101 EP. The upsizing deltas are consistent with the measured courtyards: SC70-6 6.22, SC70-5 7.21, DCT 15.22 and SOT-23-6 10.2 mmÂ². The SLVSE94G claims also check: TPS26630 is RGE only and PWP exists for 31/33/36/37; the fast-trip is 2x I(OL) for TPS26630 and 3x for TPS26631; the HTSSOP pin map is as stated; MSL is 2 for PWP and 1 for RGE; IN_SYS abs max is 67 V. The cited design-doc lines match.\n\nThere are six errors. The most important is the via-in-pad framing. The report calls it an open VR-1 vs D-36 conflict and cites a nonexistent \u0027Â§5.6\u0027. In fact CR Â§5 rule 7 and D-37 (LAYOUT_DECISIONS.md:337-347, at HEAD) already rule no via in pad first, with D-36 as a listed fallback. The second is that the TPS26631 PGOOD/2x question is answered by the datasheet: with PGTH at GND the 2x mode is never armed, so the part stays a 1x limiter. The third is that the TPS26600 fallback is a circuit-breaker part, not an active limiter, which the report leaves as a TODO although the datasheet states it, and its RON dissipation is quoted at the typical value only. The remaining three are minor: the edge-strip coordinates do not reproduce (18.28, not 18.16/18.155, and the pads at 18.375 also cross the edge); the J1 area figure does not reproduce; and the EIB 64 % figure is on the superseded outline. The single-side conclusion (about 27 % booking) holds, but it is a lower bound because item 4.3 connectors are not booked."
+    },
+    {
+        "item":  "connector",
+        "errors":  [
+                       {
+                           "claim":  "Â§2.5 keying: on a CR rotated 180Â°, the MB pins at (20.998, 36.544) and (20.998, 64.484) land beyond the ends of the 10-socket body and \u0027strike the CR laminate\u0027. A no-hole keying blank of 1.0 mm radius at CR-frame (45.998, 36.544)/(45.998, 64.484) therefore keys the connector.",
+                           "problem":  "With the report\u0027s own stack, the TSW-1xx-07 post top is 2.54 + 5.84 = 8.38 mm above the MB top, and the CR underside is 12.0 mm. The two surplus posts end 3.62 mm below the laminate, beside the 8.51 mm socket body, so nothing touches them. The other 10 MB pins of the 12-pin column enter the 10 sockets. The 10 pins of the 10-pin column enter sockets 2-11 of the 12-socket strip. A 180Â°-rotated CR therefore mates fully: VIN+ (pin 10) and VBAT+ swap columns. The blank rule gives no key. The same holds on the -14 variant, where the post top is 10.67 mm and the underside is 14.0 mm.",
+                           "correction":  "Remove the keying-blank claim. Use a real key. One option is the SSQ \u0027polarized position\u0027 option (\u0027-\"XXX\"\u0027, listed on the SSQ F-226 page), paired with one MB TSW pin removed at an NC position whose 180Â° image is a populated pin. Example: plug socket 5 (NC1) and leave MB pin 5 out. Under rotation, socket 5 sits over pin 16 (VLOAD-1, populated), so the plug blocks it. The cost is that Q5 \u0027populate all 22\u0027 becomes 21. Otherwise key with asymmetric standoff or outline geometry, TODO(measure: operator).",
+                           "evidence":  "Stack arithmetic from the report\u0027s own figures. Samtec TSW F-226 (-07: A 10.92, B 2.54, C 5.84 mm). Samtec SSQ F-226 (insulator 8.51 mm, polarized position option). Both columns are centred on y 50.514 (design doc :1205-1215; pin_identity_check.py docstring, \u0027symmetric under a y-mirror\u0027). Rotating about (33.498, 50.514) maps each column onto the other."
+                       },
+                       {
+                           "claim":  "Â§2.1 assembly step 2-3: plug the TSW strips into the SSQ strips of the finished CR, set the CR on the standoffs and solder the TSW tails from the MB underside. This aligns the strips at the true stack height.",
+                           "problem":  "If the strips are plugged fully home, the TSW body sits against the socket face (g = 0). With the CR on 12.0 mm standoffs, the TSW body bottom is then 12.0 - 8.51 - 2.54 = 0.95 mm above the MB top. The 2.54 mm tail reaches 2.54 - 0.95 = 1.59 mm, which is 0.01 mm short of the underside of an assumed 1.6 mm MB. The tail does not protrude, the body is unseated, and the joint is marginal or missing. Insertion depth then becomes 5.84 mm, not the 4.89 mm design value.",
+                           "correction":  "Change the order. Seat the TSW strips in the MB holes with the bodies flat on the MB (tail protrusion 0.94 mm). Plug the CR onto them and let it rest on the standoffs, so the strips self-align at partial insertion (g = 0.95 mm). Then solder from the MB underside. Add a check that the bodies are seated before soldering.",
+                           "evidence":  "TSW -07 B 2.54 mm, body 2.54 mm. SSQ insulator 8.51 mm (Samtec F-226 pages, extracted with pdftotext from https://suddendocs.samtec.com/catalog_english/tsw_th.pdf and ssq_th.pdf). MB 1.6 mm per the report\u0027s own ASSUMPTION (design doc :852-856)."
+                       },
+                       {
+                           "claim":  "F6 / Â§2.5: the outline chamfer that D-02 used as the mirror key no longer exists, so a physical key is needed in its place.",
+                           "problem":  "In D-02 the chamfer is a check against a y-mirrored capture in CAD. It never was a physical key against mis-plugging. Under r7 the CR was soldered and could not be plugged in the wrong way. The report treats the two as one thing.",
+                           "correction":  "Keep two separate items. (1) The capture-mirror gate, which pin_identity_check.py already covers. (2) A new physical anti-rotation key, which r8 needs because the CR is removable. The keying-blank rule does not provide (2); see the first error.",
+                           "evidence":  "hardware/charger_evm_r8/LAYOUT_DECISIONS.md:52-58 (D-02: \u0027a y-mirrored capture would move the chamfer to a low-y corner\u0027)."
+                       },
+                       {
+                           "claim":  "F2 / Â§2.1: 6.3 A per pin, so 2.6x margin on the pad-10 load and 3.3x on the 1.93 A VBAT+ load.",
+                           "problem":  "The 6.3 A figure is Samtec\u0027s \u00272 positions powered\u0027 rating. Pins 14, 15, 18 and 19 are four powered positions inside a six-position span (14-19) of one strip. Samtec\u0027s rating does not cover that case, so the 3.3x margin is unsupported as stated.",
+                           "correction":  "Keep 6.3 A as the 2-positions-powered figure. Mark the 4-in-6 derating TODO(verify: Samtec TSW/SSQ power report or derating curve). Pin 10 and pin 4 are isolated and stay covered by the 2-position figure.",
+                           "evidence":  "TSW F-226: \u0027TSW mated with ... SSQ 6.3 A ... 2 POSITIONS POWERED\u0027. Pin order from .brd:1771-1781 (VBAT-1/2 = 14/15, VBAT+1/2 = 18/19)."
+                       }
+                   ],
+        "unsupported":  [
+                            "The ordering BOM -G question is raised only for TSW-110 and TSW-112. Row 78 (tap pins, TSW-101-07-G-S) carries the same -G code and is not mentioned (ordering_bom.csv:78). Distributors such as Octopart and LCSC still list TSW-110-07-G-S, so -G may be a legacy code that is still orderable rather than obsolete. Its active status remains TODO(verify: Samtec part page).",
+                            "F4 insertion and withdrawal forces come from older third-party sheets and are already marked TODO. The current SSQ F-226 page does not state them, so they could not be checked.",
+                            "Option C (WÃ¼rth WR-PHD): part numbers, 3 A rating and heights are not checked; the report already marks them TODO.",
+                            "\u0027The four corner standoffs are 180Â° symmetric\u0027 is an assumption. The standoff positions are TODO(measure: operator) (CR request :122-123).",
+                            "The 7.0 mm clearance over L-FC and L-BT assumes no CR bottom-side parts. The current CR has 78 bottom-side parts (CR request :180), so the figure holds only after the single-side rework. The 5.0 mm inductor height is still TODO(verify: Eaton)."
+                        ],
+        "overall":  "Most of the report\u0027s figures check out. The CHG pad coordinates are right (recomputed from .brd:1755-1781 with the R180 transform at (47.498, 34.544), .brd:3508), and the restring rule (.brd:2491-2499) matches. The cited design-doc and LAYOUT_DECISIONS lines say what the report says they do. The Samtec catalogue figures match F-226:\n- TSW mated with SSQ: 6.3 A per pin, 2 positions powered.\n- SSQ: insulator 8.51 mm, insertion 3.68-6.35 mm, single-row body 2.41 mm, length 2.54N + 0.51 mm, -01 tail 2.64 mm, 100 cycles at 10 Âµin Au, LIF not available with tin.\n- TSW -07: 10.92 / 2.54 / 5.84 mm; TSW -14: 13.46 / 2.79 / 8.13 mm.\n- The current TSW sheet lists plating F, GF, L and T only.\n\nThe stack windows recompute correctly: 11.05-13.21 mm with 4.89 mm insertion at 12.0 mm, and 12.83-15.50 mm with 5.18 mm insertion at 14.0 mm.\n\nTwo load-bearing errors remain:\n1. The keying-blank rule does not key. The surplus posts stop 3.62 mm below the CR, so a 180Â°-rotated CR mates fully and swaps VIN+ and VBAT+ between columns. A polarized SSQ position with one NC pin left off the MB header, or an asymmetric standoff, is needed.\n2. The plug-then-solder sequence lifts the TSW bodies 0.95 mm off the MB, which leaves the tails without protrusion. Seat the strips in the MB first.\n\nTwo smaller points: the 6.3 A margin does not account for four powered pins in pins 14-19, and the D-02 chamfer was a CAD capture check, not a physical key."
+    },
+    {
+        "item":  "leads",
+        "errors":  [
+                       {
+                           "claim":  "Six taps are soldered on the MB, including \u0027T7b, at C-D6 pad 2\u0027. Fifteen taps end in a TSW male pin pushed into J1/J2, including T17r.",
+                           "problem":  "T7b and T17r are shields bonded at the CR end only. T7b is insulated at C-D6, and T17r is insulated at J2.29. Neither has an MB joint or a Dubox pin.",
+                           "correction":  "14 taps end in Dubox pins (T3-T6, T8, T10-T17, T21). 5 are soldered on the MB (T1, T2, T9, T20, T22). 2 are shields with no far-end termination (T7b, which travels in the T1 pair, and T17r, which travels in the T17 pair). The break-point count and the J-TAP cavity rationale must use 5 MB joints, not 6.",
+                           "evidence":  "DD:660 (T7b \u0027bonded at the CR end only (insulated at C-D6)\u0027); DD:677 (T17r \u0027bonded at the CR end only (insulated at J2.29)\u0027)."
+                       },
+                       {
+                           "claim":  "Screw plugs keep the W1/W2 fixed build length of 0.30 m +-10 mm (D-F3) adjustable at the bench.",
+                           "problem":  "D-F3 fixes the W1/W2 length because the length sets the IN-side spike. A lead cut to its route raises the hard-short spike to 34.4-34.9 V against the D107 VBR(min) of 36 V. Bench adjustability is therefore a hazard, not a benefit.",
+                           "correction":  "Keep 0.30 m +-10 mm as a fixed length measured to the plug. List the plug as a new element of the W1/W2 loop inductance and resistance to re-check in H.5/H.19 (the report already flags those calcs).",
+                           "evidence":  "DD:365 (rv7-4 \u0027W1/W2 fixed at 0.30 m +- 10 mm (D-F3): a lead cut to its route raises the hard-short IN-side spike to 34.4 V ... against ... D107 VBR(min) of 36 V\u0027); DD:480."
+                       },
+                       {
+                           "claim":  "Section 4: follow \u0027CRQ Â§5.6 (no via in pad)\u0027 until the VR-1/D-36 conflict is resolved.",
+                           "problem":  "The via-in-pad rule is item 7 of CRQ section 5; item 6 is \u0027Stencil\u0027. Item 7 also does not ban vias in pads outright. It orders their use: route with no via in an SMD pad first; plain unfilled D-36 vias are a last resort after a failed no-via attempt, each listed for operator review. Branch commit fb250aa (D-37) already records this order.",
+                           "correction":  "Cite CRQ section 5 item 7 and D-37. State the rule as \u0027no via in pad first, D-36 vias only as a listed last resort\u0027, not as an open prohibition.",
+                           "evidence":  "CR_OUTLINE_CHANGE_REQUEST_2026-11-12.md:162-166; git log fb250aa \u0027D-37 via-in-pad order of use (no via in pad first; D-36 is the fallback)\u0027."
+                       },
+                       {
+                           "claim":  "The extended exclusion set of J.2 item 63 is: no EN tap and no T6 beside a push-pull pad, and T22 not beside T8.",
+                           "problem":  "The J.2 item 63 / calc revision 4 extended set covers only the EN taps (T3, T4, T5) and F07/T6 beside the push-pull pads (T10, T11, T21). \u0027T22 not beside T8\u0027 is not part of it. The F08-F09 hazard came from the residual-row geometry, which no tab X assignment could change.",
+                           "correction":  "Name \u0027T22 not beside T8\u0027 as a new exclusion this proposal adds, separate from the item 63 set.",
+                           "evidence":  "DD:1309-1311, DD:1318 (\u0027F08-F09 lies on the residual row, which no tab X assignment changes\u0027), DD:3572-3576."
+                       },
+                       {
+                           "claim":  "08-50-0114 status TODO(verify: Molex, listed obsolete by RS).",
+                           "problem":  "The repo\u0027s obsolescence flag comes from the Digi-Key index, not RS. The BOM already names a drop-in replacement.",
+                           "correction":  "Cite ordering_bom.csv: the Digi-Key index shows 08-50-0114 as OBSOLETE, and the nearest drop-in is 08-50-0113 (same 2759 terminal, 22-30 AWG, ACTIVE per index, TODO(verify)).",
+                           "evidence":  "hardware/charger_evm_r8/bom_2026-11-11/ordering_bom.csv, W7 mate (J8 pins 2/3) row note."
+                       },
+                       {
+                           "claim":  "Micro-Fit up to 8.5 A per contact (Heilind 43030-0007); the 26-30 AWG crimp part number is TODO(verify).",
+                           "problem":  "8.5 A is the series maximum with heavy wire, not the rating of a 26-30 AWG contact. The cited 43030-0007 is not the 26-30 AWG terminal. The 26-30 AWG female terminals exist and are findable: 43030-0010 (tin) and 43030-0011/-0012 (gold); -0004/-0005 are also listed for 26-30 AWG. The Heilind URL now redirects to heilind.com and returned an empty page.",
+                           "correction":  "Cite a 26-30 AWG terminal (for example 43030-0010 or a gold variant) and its own rating, or keep the rating as TODO(verify: Molex 43030 drawing). The mA need makes the rating non-critical, so this does not change the proposal.",
+                           "evidence":  "Distributor listings: https://www.testequity.com/product/10189241-43030-0010, https://heilind.com/mol43030-0011.html, https://ie.rs-online.com/web/p/crimp-contacts/2333021 (30-26 AWG); https://www.heilind.com/mol43030-0007.html returned no content on 2026-11-12."
+                       },
+                       {
+                           "claim":  "The A.4 maximum for T22 is 0.05 m, which a route to the +x edge exceeds (TODO(calc)).",
+                           "problem":  "This is stated as fact but was not computed. The horizontal distance from BAL pin 8 (25.86, 30.44) to x 67 is 41.1 mm, below 50 mm. Whether the route exceeds 0.05 m depends on the J-TAP position, the rise height and the dressing, and none of these is fixed.",
+                           "correction":  "Write: \u0027the straight run to the +x edge is 41.1 mm of the 50 mm maximum before the rise and the run to J-TAP; likely to exceed it at the proposed J-TAP position (~x 52-66, y 55-75), TODO(calc)\u0027.",
+                           "evidence":  "mb_part_extents.py on \u0027Scale Car Board PCB 20260625.brd\u0027 (BAL origin 24.384, 29.464); DD:666 (pin 8 at (25.86, 30.44), max 0.05 m)."
+                       },
+                       {
+                           "claim":  "The W leads leave the CR at the +y edge inside the A.3 crossing band x 56-68.91.",
+                           "problem":  "The band \u0027x 56-68.91\u0027 appears in DD only inside a superseded r7 clause; r8 retired the r7 route to the MB +y edge. The band also extends 1.91 mm past the new +x edge (x 67).",
+                           "correction":  "Treat the crossing band as retired along with the dressing path, and re-derive it. Its +x limit on the CR cannot exceed x 67.",
+                           "evidence":  "DD:484 (W5 \u0027(superseded in r8: ... the r7 rev-2 route ... crossing the MB +y edge in the W-lead band x 56-68.91 ...)\u0027); CRQ Table 1."
+                       },
+                       {
+                           "claim":  "Four short-table rows disappear when R175 leaves the pad field, including R175b-R175a.",
+                           "problem":  "R175b-R175a is a bridge across R175\u0027s own two pads. It is not a tap-to-tap adjacency and remains a possible fault wherever R175 is placed. It disappears only from the pad-field table, not as a hazard.",
+                           "correction":  "Remove three rows (R175a-F03, R175b-F01, R175a-F07) as adjacency rows. Keep an R175-bypass check (T-F-12 reads 68 ohm) wherever R175 sits.",
+                           "evidence":  "DD:1291 (\u0027R175 bypassed ... T-F-12 reads R175 (68 ohm)\u0027)."
+                       }
+                   ],
+        "unsupported":  [
+                            "The \u002721 baseline tap conductors\u0027 figure is not reconciled with CRQ section 4 item 3, which says \u002720 taps\u0027. The two agree only if T7b is counted separately: the DD 20-tap sum excludes T7b, DD:653. Neither the report nor the request states this.",
+                            "\u0027THT is recommended because the standoffs carry the cable loads only once the load reaches the board\u0027: no load figure is computed. The pull and vibration loads (DD H.23(w) row 5, 2 N pull, 30 g) are not applied to the proposed headers.",
+                            "Connector courtyard areas (390-510, 60-120, 120-200, 90-130 mmÂ²) are pitch arithmetic only. No body dimension was read from a Molex, JST or Phoenix drawing; the report marks this TODO. The arithmetic itself checks: 660-960 mmÂ² = 15.7-22.8 % of 4212 mmÂ²; 470-770 mmÂ² = 16.7-27.3 % of the 2817.9 mmÂ² gain.",
+                            "Phoenix 1803578 (8 A, 28-16 AWG): the phoenixcontact.com page returned HTTP 403 and was not verified here. The header MPN for MC 1,5/2-G-3,81 is not given.",
+                            "The \u0027freed about 190 mmÂ²\u0027 figure itemises only the tab X courtyard (141 mmÂ², which checks: 14.7 x 9.62, DD:1252-1253). The residual row and the W-pad share (~49 mmÂ²) are not computed.",
+                            "\u0027A partly mated J-TAP fails safe in the same way as a lost tap\u0027: this is not checked against the T6 (3V3 feed) and shield cavities. A partly mated contact that touches its neighbour is the cavity-adjacency case, not an open tap.",
+                            "\u0027W5 J101 Samtec FTSH\u0027: confirmed (ordering_bom.csv FTSH-107-01-L-DV), but the report cites no source for it.",
+                            "\u0027SPH-002T-P0.5S AWG 24-30, insulation OD 0.8-1.5 mm\u0027 and \u0027PH 2 A at AWG 24\u0027 are cited to a SparkFun copy of the JST sheet, not to the manufacturer. They are plausible but were not re-opened here."
+                        ],
+        "overall":  "The geometry checks out. I recomputed the far-end positions from the .brd with mb_part_extents.py: SNS-BT (55.118, 23.622), BAL (24.384, 29.464), CO-5V, J1/J2, ROS, C-D6, and C-D2 at x 67.416-69.743, which is wholly outside the outline and 0.42 mm clear of the +x edge. The distances also check: T9 is 11.56 mm from the +x edge, and T22 is 23.4 mm from the -y edge and 41.1 mm from the +x edge. The W currents (DD:489), the pad-table lines (DD:1221-1230), the three open hazard pairs (DD:1305-1307), the D-31 F22/F23 status and the area arithmetic all match their sources.\n\nThere are two errors of substance:\n1. The tap termination inventory is wrong. T7b and T17r are insulated shields with no MB end, so the correct split is 14 Dubox pins, 5 MB-soldered joints and 2 unterminated shields, not 15 and 6.\n2. The report presents W1/W2 length adjustability as a benefit. The fixed length is a spike-safety constraint (D-F3, DD:365).\n\nThe other errors are smaller:\n- The via-in-pad rule is mis-cited (CRQ section 5 item 7, not Â§5.6). It is an order of use already recorded as D-37, not an open conflict.\n- \u0027T22 not beside T8\u0027 is wrongly attributed to the J.2 item 63 extended set.\n- The 08-50-0114 obsolescence is wrongly attributed to RS; the BOM source is the Digi-Key index.\n- The Micro-Fit rating is cited from a terminal that is not the 26-30 AWG one.\n- The T22 0.05 m exceedance is asserted without a calculation.\n- A superseded r7 crossing band is reused.\n\nThe proposal itself (option A with connectors on the CR) is not undermined by these errors. However, the counts, the D-F3 statement and the via-in-pad citation must be corrected before the design-doc rows are drafted."
+    },
+    {
+        "item":  "routing",
+        "errors":  [
+                       {
+                           "claim":  "Section 4: new F.Cu free area = 3823 less SMD pads (580), PTH pads (109) and power pours (â‰ˆ 136).",
+                           "problem":  "The report\u0027s own F.Cu pour figures (VCHGIN 36.3 + VCHGOUT 56.3 + VCHG 23.6) sum to 116.2 mmÂ², not 136. The KEY FIGURES line also says ~116, so the report contradicts itself.",
+                           "correction":  "Power pours â‰ˆ 116 mmÂ²; F.Cu free = 3823 âˆ’ 580 âˆ’ 109 âˆ’ 116 = 3018 mmÂ². The â‰ˆ 3000 figure and the utilisation results do not change.",
+                           "evidence":  "Arithmetic on the report\u0027s section 1 item 2; recomputed in shapely: 3017.8."
+                       },
+                       {
+                           "claim":  "Section 1 item 3: the four 6 mm standoff discs sit \u0027at the CHG corners\u0027.",
+                           "problem":  "pack_new.py places the discs at (19.9, 35.5), (47.2, 35.5), (19.9, 65.8) and (47.2, 65.8). These are the corners of the r7 FP_RECT box (18.2-48.2 x 34.64-66.64), pulled inward. They are not the CHG silk corners (17.134-49.262 x 32.780-67.708) that finding 4 uses. The -x disc at (19.9, 35.5) is 1.5 mm from the J1 pad at (20.998, 36.544), so it overlaps a pin, which is physically impossible for a standoff.",
+                           "correction":  "Say that the keep-outs are placeholder discs at the r7 FP_RECT corners, inconsistent with finding 4, and that the -x discs overlap J1 end pins. The 3823 mmÂ² free area (reproduced: 3822.9) rests on that placeholder.",
+                           "evidence":  "scratchpad\\outline\\routing\\pack_new.py:25-28; gen/layout_cr.py:83 (FP_RECT); mb_part_extents.py rerun on the .brd: CHG layer 21 x 17.134..49.262, y 32.780..67.708."
+                       },
+                       {
+                           "claim":  "Section 5 item 1: the +x pocket (R101-R105) at x 44-50, y 62-67 \u0027now lies inside the outline\u0027, so D-32 retires.",
+                           "problem":  "That region already lay inside the r7 outline. The r6 rectangle reaches x 48.70 and y 67.14, and tab X covers x 48.70-65.00, y 56.30-68.30. D-32 came from local congestion in the pocket, not from the outline.",
+                           "correction":  "Retiring D-32 has to rest on the top-only repack freeing pocket area (an unrouted estimate), not on the pocket newly entering the outline.",
+                           "evidence":  "gen/layout_cr.py:22-23 OUTLINE vertices (48.70,56.30)-(65.00,68.30)-(48.70,67.14); design doc :336 row r7-1; LAYOUT_DECISIONS.md:142."
+                       },
+                       {
+                           "claim":  "Section 5 item 2: the analog window y 31-67 keeps â‰¥ 10 mm from L-FC (y â‰¥ 76.9).",
+                           "problem":  "The L-FC silk edge is at y 76.948, so y 67 is only 9.95 mm away. The report\u0027s own finding 5 gives the limit as y 66.9, and the generator uses LFC_Y = 66.862.",
+                           "correction":  "The analog window upper edge is y â‰¤ 66.86-66.95, not 67.",
+                           "evidence":  "mb_part_extents.py: L-FC layer 21 y 76.948..89.675; gen/layout_cr.py:174 LFC_Y = 66.862."
+                       },
+                       {
+                           "claim":  "Section 5 item 4: \u0027The EVM reference placement is past the MB +y edge (design doc :435), so the lead connectors go on the +y edge.\u0027",
+                           "problem":  "Line 435 marks that r7 wording as superseded. The r8 text reads \u0027on M3 nylon standoffs on the chassis, \u003e= 20 mm from the LM1084 side of MB\u0027. The +y premise is stale, so the +y connector recommendation has no current support.",
+                           "correction":  "Cite the r8 placement (\u0027\u003e= 20 mm from the LM1084 side of MB\u0027) and derive the connector edge from it, or leave it as an operator question.",
+                           "evidence":  "docs/charger_bq25798_wiring_design_2026-11-05.md:435, \u0027(superseded in r8: on M3 nylon standoffs on the chassis, \u003e= 20 mm from the LM1084 side of MB ...)\u0027."
+                       },
+                       {
+                           "claim":  "Section 4: the inner gap is about 0.93 mm (D-30, LAYOUT_DECISIONS.md:208).",
+                           "problem":  "Wrong line. Line 208 is about strap copper weight. D-30 starts at :211, and the 0.93 mm figure is at :213 (L3 gap between CHG holes). The figure also applies to the current soldered TSW footprint, which CR Â§4 item 1 replaces with a receptacle footprint.",
+                           "correction":  "Cite LAYOUT_DECISIONS.md:211-213, and note that the J1 pin-gap capacity must be re-derived for the receptacle footprint.",
+                           "evidence":  "LAYOUT_DECISIONS.md:211-213; CR_OUTLINE_CHANGE_REQUEST Â§4 item 1."
+                       },
+                       {
+                           "claim":  "Section 2 line citations: regions :75-110, RIM_X/LFC_Y :167-168, mbk() :121-150.",
+                           "problem":  "The line numbers are off. FP_RECT, BAND, DIV_STRIP, TAB_X, TAB_Y, FT1_KO, B1R and SPOTS are at :83-103. RIM_X and LFC_Y are at :173-174, and mbk() is at :153. Section 5 item 2 also cites RIM_X as :167.",
+                           "correction":  "Use gen/layout_cr.py:83-103, :153, :173-174.",
+                           "evidence":  "grep -n on gen/layout_cr.py."
+                       },
+                       {
+                           "claim":  "Finding 5: REG-FC x 42.9-45.5 and REG-5V y 36.8-52.4, from the \u0027same extraction\u0027 (layer 21).",
+                           "problem":  "These two ranges come from layer 51 (tDocu), not silk. The silk ranges are REG-FC x 43.171-45.509 and REG-5V y 36.774-46.387. The layers are mixed under one label.",
+                           "correction":  "State the layer for each range, or use one layer throughout.",
+                           "evidence":  "mb_part_extents.py rerun on Scale Car Board PCB 20260625.brd."
+                       },
+                       {
+                           "claim":  "Finding 5: the window y 30.8-66.9 is \u0027the same band as the J1 span (y 36.5-64.5)\u0027.",
+                           "problem":  "The two bands are not the same. The window contains the J1 span with about 5.7 mm and 2.4 mm to spare.",
+                           "correction":  "Say the window contains the J1 span.",
+                           "evidence":  "CHG pad centres y 36.544..64.484 (brd extraction)."
+                       }
+                   ],
+        "unsupported":  [
+                            "The verdict \u0027the 4-layer stack ... should close\u0027 uses a whole-board area-utilisation metric (9.7 %/12.9 %). That metric did not predict failure on r7: 38 % utilisation still left 17-37 connections open. ROUTABILITY_OPTIONS Â§1 traces those failures to local cut capacity (x 38-40 column, comparator band, tab Y root), which a global ratio cannot capture. Nothing supports a closure threshold.",
+                            "The 10 mm switching-node clearance is measured only to the L-BT/L-FC/REG body extents. The VSW copper polygons on the MB (REG pin to inductor) were not extracted, so \u0027the analog window is \u003e= 10 mm from both switching nodes\u0027 has not been checked against the copper.",
+                            "Comparing 24 % to the r7 bookings 73.55 % / 69.04 % mixes bases. The r7 figures are on the H.23(e) strict basis (795.1 mmÂ² top including pours, against a usable area). The 24 % is raw courtyard area summed over both sides, divided by one side\u0027s free area. The 26.1 % in section 1 is a third basis (courtyard bounding boxes, pack_new.py:135).",
+                            "\u0027Each GND pad gets a fan-out via beside it; the 0603 pads leave room for one\u0027 has not been tested on any placement.",
+                            "Q5 asks the operator to approve the 0.5 mm VQFN without saying that TI lists an HTSSOP (PWP, 20-pin) package for the TPS2663 family (https://www.ti.com/product/TPS2663). Lead pitch, pin-function parity with the 24-pin RGE, and TPS26630 orderability in PWP are TODO(verify: tps2663.pdf). The CR Â§5.1 table itself asks for a coarser-pitch alternative.",
+                            "The r7 row \u0027162-182 of 199\u0027 merges r2_A (162-173) with the placement variants (up to 182). The base being extrapolated (173) is r2_A seed 1 only. MORNING_REVIEW:95 gives 177 for a different run."
+                        ],
+        "overall":  "The measured inputs reproduce exactly when measure.py is rerun on cr/interactive/cr.kicad_pcb: 156 parts (78 F / 78 B), courtyards 680.9 / 235.8 mmÂ², 91 nets / 199 connections, MST 1639 mm, HPWL 1873 mm, tracks F 354 / In2 1230 / B 461 mm, 256 vias. The rest of the arithmetic also checks out: inset area 4077.8 mmÂ², free area 3822.9 mmÂ², 917 / 3823 = 24.0 %, 2045 x 199/173 = 2352 mm, new demand 565 mmÂ², via disc 0.573 mmÂ² (x 256 = 147 mmÂ²), and utilisation of 38 / 9.7 / 12.9 %. The CHG silk extents and the 1.45 mm -x overhang reproduce from the .brd, the D-37 ordering matches CR Â§5 item 7, and U101 is the RGE VQFN-24 with 3x3 x 0.30 mm thermal vias (LAYOUT_DECISIONS.md:75). Two errors are substantive. First, the +y lead-connector recommendation rests on r7 EVM-placement text that the design doc marks superseded in r8 (:435). Second, the claim that D-32 retires because the +x pocket \u0027now lies inside the outline\u0027 is wrong: the pocket was already inside the r7 outline. Two further problems: the standoff keep-outs in the repack sit at r7 FP_RECT corners and overlap the J1 -x end pins, which contradicts finding 4; and the analog window\u0027s top edge (y 67) is 0.05 mm short of the 10 mm L-FC rule. The rest are a 116-vs-136 mmÂ² pour inconsistency and several line-number citation errors. The \u0027should close\u0027 verdict rests on a global utilisation ratio that did not predict r7\u0027s local cut failures. Treat it as a plausibility argument, with the routed run as the gate the report already names."
+    },
+    {
+        "item":  "standoffs",
+        "errors":  [
+                       {
+                           "claim":  "F3: \u0027The free MB-top disc at the SW, SE and NE corners has a radius of only 2.6-3.3 mm (Table 2). Only NW has a free disc of 6.07 mm radius\u0027, so adhesive-base supports do not fit at three of four corners.",
+                           "problem":  "Table 2 lists the nearest centre that just passes each threshold (freedisc.py, \u0027closest centre ... with a free MB-top disc of radius \u003e= thr\u0027). It does not list the largest free disc near each corner. The same script\u0027s own first block reports larger discs. NE has 4.99 mm at (50.6, 65.0), 3.0 mm from the corner, 6.89 mm at (51.1, 63.1) and 8.13 mm at (55.2, 62.4). SE has 3.48 mm at (56.9, 34.2). NW has 8.80 mm at (25.0, 68.2). Inside the former Ag105 footprint, between the header columns, the free radius reaches 11.8 mm at (28.6, 65.2). The 8.98 mm half-diagonal is the sufficient test for a 12.7 mm square base. The necessary test is the 6.35 mm inscribed radius. Several sites pass 6.35 mm, so \u0027do not fit\u0027 is not shown.",
+                           "correction":  "State the local maxima. Under the script\u0027s own obstacle model, a 12.7 mm adhesive base is undetermined at NE (7.89-8.13 mm free) and probably fits inside the old CHG footprint between the columns. F3\u0027s conclusion is unsupported.",
+                           "evidence":  "freedisc.py re-run with R_CR 3.4 on references/Scale Car Board PCB 20260625.brd (\u0027NE within 3 mm: (50.6, 65.0) free radius 4.99\u0027; \u0027within 8 mm: (55.2, 62.4) 8.13\u0027; \u0027NW within 8 mm: (25.0, 68.2) 8.80\u0027). Scratch check standoffs_chk2.py gives a global maximum of 11.81 at (28.58, 65.2)."
+                       },
+                       {
+                           "claim":  "SO3 (22.0, 69.2) free radius 6.07 mm (F4 Table 2, key figures); this is the reason NW is the roomiest site.",
+                           "problem":  "The obstacle set excludes everything named CHG. It therefore omits the male header bodies that this change request adds in the CHG holes. SO3 lies directly above the end of the x 20.998 column, 3.45 mm from pin 11 + 1.27 mm. With 2.54 mm header bodies included (assumption: standard 0.1 in body, Â±1.27 mm past the end pins), the SO3 free radius drops to 3.45 mm. NW-8 (25.0, 68.2) drops from 8.80 mm to 3.70 mm and NE-3 from 4.99 mm to 3.75 mm. SO1, SO2 and SO4 do not change.",
+                           "correction":  "SO3 free MB-top radius â‰ˆ 3.45 mm (it still passes r_base 3.2 for M2.5, with only 0.25 mm spare), TODO(verify: chosen male header body drawing). Add the MB header bodies to the obstacle model.",
+                           "evidence":  "Scratch standoffs_chk3.py: \u0027SO3 6.07 with MB header bodies 3.45\u0027; \u0027NW8 8.8 â†’ 3.7\u0027; \u0027NE3 4.99 â†’ 3.75\u0027; \u0027NE8 8.13 â†’ 7.89\u0027."
+                       },
+                       {
+                           "claim":  "F6: \u0027The support polygon also leaves pins 21/22 (x 20.998, y \u003c= 39.1) slightly outside it at the -x/-y side.\u0027",
+                           "problem":  "The SO1-SO3 edge runs from (26.03, 35.58) to (22.03, 69.21). It lies at x â‰¥ 22.03 everywhere, so every pin of the x 20.998 column (pins 11-22) lies outside the polygon. Pins 21/22 are not the only ones outside.",
+                           "correction":  "The whole x 20.998 column (12 pins, y 36.544-64.484) lies 1.0-4.9 mm outside the SO1-SO4 support polygon. A CR push at that column levers about the SO1-SO3 line and loads the pins.",
+                           "evidence":  "standoffs_chk2.py point-in-polygon test: every (20.998, y) for y in 36.544, 39.084, 50, 61.944, 64.484 returns False; every (45.998, y) returns True."
+                       },
+                       {
+                           "claim":  "P5: \u0027the CR moves within the 0.2 mm radial hole clearance\u0027.",
+                           "problem":  "A 2.7 mm hole on an M2.5 screw leaves 0.2 mm of diametral clearance, which is 0.1 mm radial.",
+                           "correction":  "0.1 mm radial (0.2 mm diametral). The total possible shift is 0.2 mm, and only when the screw is offset to the other side.",
+                           "evidence":  "2.7 âˆ’ 2.5 = 0.2 mm diametral; ISO 273 fine series M2.5 = 2.7 mm."
+                       },
+                       {
+                           "claim":  "Section 3: \u0027A.7 / A.8 FT1, FT2 rows (A.8 FT1/FT2 rows, `:80`, `:86`): delete.\u0027",
+                           "problem":  "Lines 80 and 86 are the r7 summary paragraph at the top of the design doc, not the A.7/A.8 rows. The FT1/FT2 rows are A.7 \u0027Far-end support feet\u0027 at :983-1091 (table row FT1 at :991) and the A.8 row at :1231. Lines 337, 351, 362 and 389 (0.3 change log r7-2, r7-16, rv7-1, r8-10) also carry foot content.",
+                           "correction":  "Cite A.7 :983-1091 (FT table :991 ff.) and A.8 :1231, and treat :80/:86 as the summary text that needs a matching edit.",
+                           "evidence":  "docs/charger_bq25798_wiring_design_2026-11-05.md: grep FT1 gives lines 80, 86, 337, 362, 991, 1231; the A.7 heading is at :769 and the A.8 heading at :1196."
+                       },
+                       {
+                           "claim":  "F9: WA-SMSI \u0027Heights are 1-10 mm; it is MSL 1 and meant for reflow\u0027.",
+                           "problem":  "The WÃ¼rth catalogue page lists lengths from 0.5 mm to 12.5 mm (0.5, 1, 1.5 ... 10, 12.5). It does not state MSL or a reflow rating. It gives only solder-paste thickness 150 Âµm and an operating range of âˆ’55 to +150 Â°C.",
+                           "correction":  "Heights 0.5-12.5 mm per the catalogue. Mark MSL 1 / reflow rating as TODO(verify: WA-SMSI datasheet) unless the cited SparkFun-hosted PDF states it.",
+                           "evidence":  "https://www.we-online.com/catalog/en/SMSI_SMT_STEEL_SPACER_M2_5_THREAD_INTERNAL (fetched 2026-11-12)."
+                       },
+                       {
+                           "claim":  "F1: standoff centres on the x 20.998 column \u0027fall at y \u003c= 32.0 or y \u003e= 69.15\u0027.",
+                           "problem":  "With the report\u0027s own assumptions (receptacle 1.27 mm past the end pin plus a 3.4 mm keep-out), the limit is 36.544 âˆ’ 1.27 âˆ’ 3.4 = 31.874 mm.",
+                           "correction":  "y â‰¤ 31.87 or y â‰¥ 69.15.",
+                           "evidence":  "Arithmetic from freedisc.py HDR box (y 35.274-65.754) and R_CR 3.4."
+                       },
+                       {
+                           "claim":  "Table 2 centres SO1 (26.0, 35.6), SO2 (56.4, 34.4), SO3 (22.0, 69.2), SO4 (49.3, 66.7).",
+                           "problem":  "These are %.1f-printed values of grid points cx + iÂ·0.1. The evaluated centres are (26.034, 35.580), (56.362, 34.380), (22.034, 69.208) and (49.262, 66.708). The difference matters at SO1 and SO3, which sit 0.03-0.05 mm inside the 3.4 mm limits (SO3 x 22.034 against the minimum 21.984; SO1 is 3.436 mm from the receptacle box). A layout that uses the rounded 22.0 or 26.0 lands 0.03 mm short of the stated rule.",
+                           "correction":  "Quote the evaluated coordinates to 3 decimals, or re-check the rounded values against the 3.4 mm limits.",
+                           "evidence":  "freedisc.py grid construction (x, y = cx + i*0.1, cy + j*0.1) and its print format \u0027%.1f\u0027."
+                       },
+                       {
+                           "claim":  "F2 Table 1 SW row: \u0027CBL2 2.08\u0027; F2 \u0027both layers carry GND pours over all four corners\u0027.",
+                           "problem":  "The CBL2 body box is at 1.83 mm and its pad at 2.08 mm, which mixes the two metrics. In addition, the scan\u0027s \u0027pour\u0027 is the Eagle polygon outline, not the poured copper. At the SW corner the point sits on a VBAL+ L1 trace (0.00 mm), so L1 GND copper is not present at that point after isolation.",
+                           "correction":  "Give CBL2 as body 1.83 / pad 2.08. Say \u0027inside the GND polygon outlines on both layers\u0027, not \u0027GND pour copper\u0027.",
+                           "evidence":  "scan.py output: \u00271.83 body 21 CBL2\u0027, \u00272.08 smd CBL2.2\u0027, \u00270.00 trace 1 VBAL+\u0027, \u00270.00 pour 1 GND\u0027."
+                       }
+                   ],
+        "unsupported":  [
+                            "F3: \u0027catalogue snap-lock adhesive supports have 12.7 x 12.7 mm or 17.8 x 17.8 mm bases\u0027. LCBSBM\u0027s 12.7 mm base is confirmed (RS listing title, https://au.rs-online.com/web/p/pcb-supports/7214714; the page itself returns 403 to automated fetch). LCBSB 17.8 mm was not verified. No search was shown for smaller-base adhesive supports, so presenting these two as the catalogue range is unsupported. Note also that LCBSBM needs a 3.18 mm CR hole and is rated âˆ’20 to +90 Â°C with a rubber adhesive, which is relevant to F8.",
+                            "F5: \u0027a new MB hole is feasible only at SO3\u0027. Only the four Table 2 points were drill-checked. The F6 end sites and NE8 (55.2, 62.4) were not; NE8 has non-GND copper at 0.10 mm and so is rejected too. The claim holds for the sampled points only.",
+                            "F5 and freedisc.py: \u0027nearest non-GND copper\u0027. The nongnd set tests n.split(\u0027.\u0027)[0] != \u0027GND\u0027. For pads n is \u0027PART.pad\u0027, so every pad counts as non-GND whatever its net. The result is conservative (it never under-reports), but the label overstates what was computed.",
+                            "Obstacle model: package rectangles, polygons and circles on layers 21/51 are ignored. 38 such primitives exist in the .brd libraries (standoffs_chk2.py). The report acknowledges this generally. However, the 6.07 mm SO3 figure and the F6 end-site radii are quoted as if measured.",
+                            "F6 end-site radii: ends.py gives (63.6, 10.6) at 10.01 mm, but non-GND copper lies 0.12 mm away, so this site is bond-only. The report also omits (63.6, 90.4), which has 4.98 mm free.",
+                            "P4: L-FC / L-BT 5.0 mm and the claim that they are the tallest covered parts; REG-5V is 4.83 mm (package name TO254P1524X483-4N, .brd line 654, confirmed). L-FC / L-BT are correctly marked TODO(verify); no Eaton datasheet is in references/Datasheets.",
+                            "F9: MSL 1 is attributed to the WÃ¼rth catalogue, which does not state it."
+                        ],
+        "overall":  "The report\u0027s coordinates come from the analyst\u0027s scripts, and those scripts reproduce exactly: the CHG silkscreen corners match the AG105 package at (47.498, 34.544) R180 with 0.127 mm lines, and the free radii 3.24 / 3.23 / 6.07 / 3.29 and the via and copper distances in Tables 1 and 2 re-run as stated. The A.8 pin coordinates, the D-19 1.0 mm NPTH, the A.6 lines 731-741, ISO 273 (2.7 / 2.2 mm), the M2.5 pan head dk 5.0 mm and the 5.77 mm hex corner are also correct.\n\nTwo load-bearing conclusions do not hold:\n1. F3 reads threshold-passing nearest points as local maxima. The script\u0027s own output has 4.99-8.13 mm free discs near NE and 8.80 mm near NW, and up to 11.8 mm between the header columns. \u0027Adhesive bases do not fit\u0027 is therefore unsupported.\n2. The obstacle model omits the new MB male header bodies. This cuts SO3 from 6.07 mm to about 3.45 mm.\n\nF6 understates the support-polygon problem: the entire x 20.998 pin column lies outside it, not just pins 21/22.\n\nSmaller errors: the 0.2 mm \u0027radial\u0027 clearance is diametral; the design-doc cite for the FT1/FT2 rows (:80, :86) points at the summary paragraph rather than A.7 :983-1091 and A.8 :1231; the WA-SMSI height range (0.5-12.5 mm) is wrong and its MSL claim is unsourced; and the rounded Table 2 coordinates sit 0.03 mm short of the stated 3.4 mm limits at SO1 and SO3.\n\nThe proposal\u0027s structure (NPTH, no copper, nylon hardware, the Î´_i shim rule) is not contradicted. However, the site selection should be re-run with the header bodies included and with maxima rather than nearest-threshold points. That re-run should also consider sites inside the old CHG footprint, which would also bring the x 20.998 column inside the support polygon."
+    },
+    {
+        "item":  "mbparts",
+        "errors":  [
+                       {
+                           "claim":  "Â§1.2: D-FC-EN (68.834, 74.168), C-DC1 and C-DC2 are outside the outline (x \u003e= 67.4).",
+                           "problem":  "The parts are outside, but the bound is wrong for D-FC-EN. The analyst\u0027s own parser, run over the whole board, gives D-FC-EN (rot R90) at x 67.08-70.58. That is 0.08 mm outside the x = 67 edge, not at x \u003e= 67.4. C-DC1 starts at x 70.49 and C-DC2 at x 70.75.",
+                           "correction":  "D-FC-EN starts at x 67.08, only 0.08 mm outside the edge, so it is a borderline neighbour like C-DC3 and C-D4. C-DC1 (x \u003e= 70.49) and C-DC2 (x \u003e= 70.75) are well clear. The Â§3.2 listing is still an error in the change request.",
+                           "evidence":  "Scale Car Board PCB 20260625.brd line 3404 (D-FC-EN x=68.834 rot R90). parts.py rerun with an unbounded window: D-FC-EN x 67.08-70.58, C-DC1 x 70.49-71.75, C-DC2 x 70.75-72.00. Output is in C:\\Users\\ricky\\AppData\\Local\\Temp\\claude\\3fe373bc8dcb48b3\\88ddad5f-e7e9-4a73-b399-a08cdcf77486\\scratchpad\\outline\\mbparts_check\\all.txt"
+                       },
+                       {
+                           "claim":  "Â§1.2: Â§3.2 omits C2/C3/C5/C6-FC and CC-FC (among others).",
+                           "problem":  "Â§3.2 does list these parts. Its FC-boost bullet reads \u0027C1-FC to C6-FC, CC-FC\u0027. Â§3.2 also says \u0027Examples\u0027 and \u0027The design session must list the full set from the .brd\u0027, so calling the omissions \u0027errors\u0027 overstates them.",
+                           "correction":  "The real omissions from the Â§3.2 examples are C2/C3/C5/C6-BT, CC-BT, RINJ-BT, C-D11, C-D12, C-DC11, C-DC12, MDAC-BT and OP-BT. C-DC3 is covered in Â§3.1.3. Frame these as completions of an example list, not errors.",
+                           "evidence":  "CR_OUTLINE_CHANGE_REQUEST_2026-11-12.md lines 84-97"
+                       },
+                       {
+                           "claim":  "Â§1.1: there are 8 partial parts: C1-BT, C1-FC, CBL2, RB2, RB3, MDAC-BT, OP-BT and C-DC3.",
+                           "problem":  "C-D4 is missing. Change request Â§3.1.3 records that the C-D4 silkscreen crosses the +x edge (x 66.962, overlap 0.038 mm). The analyst\u0027s line-centre extent puts C-D4 at x 67.03, just outside. Its own method is inconsistent with the source it is checking, and the report does not mention the borderline.",
+                           "correction":  "Name C-D4 (x 67.03 by line centre, 66.962 by silkscreen per Â§3.1.3) and D-FC-EN (x 67.08) as +x-edge borderline parts beside C-DC3.",
+                           "evidence":  "CR_OUTLINE_CHANGE_REQUEST_2026-11-12.md Â§3.1.3 line ~78. The parts.py rerun gives C-D4 x 67.03-69.12."
+                       },
+                       {
+                           "claim":  "Â§1.5: the boost loss is approximately P_out(1/Î· âˆ’ 1): 1.2-2.2 W at 14.6 W and 1.9-3.6 W at 3 A Ã— 8 V, for Î· 0.92-0.85.",
+                           "problem":  "The stated formula does not give the stated numbers. 14.644 Ã— (1/0.85 âˆ’ 1) = 2.58 W, not 2.2 W, and 24 Ã— (1/0.85 âˆ’ 1) = 4.24 W, not 3.6 W. The numbers were computed as P_in(1 âˆ’ Î·). In addition, 14.6 W is the FC stack-side median only (CLAUDE.md campaign II), not a per-channel figure for both boosts. \u00273 A Ã— 8 V\u0027 misreads the RC-BT record: there, \u0027â‰¤ ~3 A/channel\u0027 is a per-channel current in an RHPZ-margin argument, and 8 V input is not stated. If the 3 A is the output current at 16 V, the throughput is about 48 W.",
+                           "correction":  "State loss = P_in(1 âˆ’ Î·): 1.17-2.20 W for the FC channel at a 14.6 W input. Mark the BT channel and the \u00273 A\u0027 case unsupported, or recompute with an explicit input/output basis. The inductor copper figure 3Â² Ã— 5.29 mÎ© also assumes a 3 A inductor current. At 3 A output and a boost ratio of about 2 from 8 V, the inductor current is about 6 A, which gives about 0.19 W.",
+                           "evidence":  "Arithmetic. CLAUDE.md 2026-09-09 phase-B addendum (14.644 W = p_fc_w / ETA_BOOST, stack-side). CLAUDE.md RC-BT bodge record (\u0027â‰¤ ~3 A/channel\u0027)."
+                       },
+                       {
+                           "claim":  "Â§2.4: the bottom-0603 case floor is 5.0 + 0.95 + 1.5 = 7.45 mm.",
+                           "problem":  "Two problems. First, the report\u0027s own Table 1 gives 0603 capacitors (CAPC1608X85) as 0.85 mm, not 0.95. Second, change request Table 3 records that the r7 CR bottom side also carries 2 Ã— 0805 parts (CAPC2012X110 = 1.10 mm). If the bottom passives stay as captured, the 0805 sets the band.",
+                           "correction":  "Use 5.0 + 1.10 + 1.5 = 7.6 mm if the bottom 0805s stay. Use 5.0 + 0.85 + 1.5 = 7.35 mm if the bottom carries only IPC-nominal 0603s. The datasheet maximum stays TODO(verify).",
+                           "evidence":  "Report Table 1 row 0.85 (0603 C). CR_OUTLINE_CHANGE_REQUEST_2026-11-12.md Table 3, line 180 (\u002774 x 0603, 2 x 0805, 2 x 0402\u0027)."
+                       },
+                       {
+                           "claim":  "Table 1 and Â§1.5 source path `round4/work/mb_mechanical.md:92`.",
+                           "problem":  "No such path exists from the repo root.",
+                           "correction":  "docs/reviews/charger_eval_2026-11-05/round4/work/mb_mechanical.md:92 (L-FC/L-BT row). The LM1084 thermal estimate is at lines 225-272 of the same file. The figures quoted (0.40/0.63/1.08 W; 9.7-55 Â°C; 2.4-11.9 Â°C at 10 mm) match.",
+                           "evidence":  "git ls-files | grep mb_mechanical"
+                       },
+                       {
+                           "claim":  "Â§2.3: free area for sensitive parts is 1783.6 mmÂ², with keep-outs including â‰¥ 5 mm from U101.",
+                           "problem":  "keepout.py applies only the 5V rim, boost and SNS buffers. It contains no U101 keep-out and no D-BT-SQ or D-BT-EN term. 1783.6 mmÂ² is therefore an upper bound under the stated rule set, not the result of it.",
+                           "correction":  "Say the U101 keep-out is not subtracted (U101 is re-placed in any case), or recompute once U101 is placed.",
+                           "evidence":  "scratchpad\\outline\\mbparts\\keepout.py lines 3-9. The rerun reproduces 1783.6 / 2027.6 / 741.5 mmÂ² with only those buffers."
+                       }
+                   ],
+        "unsupported":  [
+                            "Â§1.4: the 16 V / 5 ns edge rate and the resulting ~0.2 mA displacement current. The arithmetic checks (Îµ0Â·42.3 mmÂ²/6.5 mm = 0.058 pF), but the edge rate is assumed. The report does mark it TODO(verify: scope).",
+                            "Â§2.4: the 1.5 mm gap. IPC-6012 0.75 % bow/twist Ã— 87 mm considers only the CR. It ignores the MB\u0027s own bow over its 131 Ã— 98 mm and the standoff height tolerance. Because the standoffs (not the header stack) set the CR underside height (change request Â§2), the \u0027receptacle body â‰¥ 3.96 mm\u0027 requirement is a mating-depth question, not the height floor.",
+                            "Â§1.5: the TPS61288 RÎ¸JA 33.6 (EVM) / 71.4 (standard) Â°C/W. The text extraction of p.5 Â§7.4 is scrambled. 33.6/71.4 is the first numeric row, and attributing it to RÎ¸JA is plausible but not checked against the rendered PDF.",
+                            "Â§1.1: the L-FC/L-BT height of 5.0 mm. The HCM1A1305 family and the V2-2R2 listings give 5.0 mm, but no V3 datasheet was found. The report correctly keeps this TODO(verify: Eaton ELX1488). It is also unstated whether 5.0 is a nominal or a maximum height.",
+                            "Â§1.3: the RD1 = 215 k retune is attributed to both RD1-FC and RD1-BT. CLAUDE.md records \u0027the RD1 = 215k FB retune\u0027 without naming the channel(s).",
+                            "Â§1.5: U101 R_ON and \u0027IÂ²R_ON at â‰¤ 3.21 A\u0027. The 3.21 A figure is uncited (marked TODO only for R_ON)."
+                        ],
+        "overall":  "Most of the load-bearing figures reproduce. Rerunning the analyst\u0027s parser gives 59 IN + 8 PARTIAL + CHG, with no bottom-side MB parts. These figures also match their sources:\n- the VSW-FC 28.8 mmÂ², VSW-BT 42.3 mmÂ², 5V 153.1 mmÂ² and VBUS pours from the .brd;\n- fSW 500 kHz (440-600) at 7.2 V to 16 V, TPS61288 DS;\n- LM1084 TO-263 4.83 mm max;\n- INA253 2 mÎ© shunt and TSSOP-20 package;\n- RT1987 VDFN-12 3x3 package;\n- the r7 strip result (U114, U116, R108, R131B and R176 pads at x 18.375; GND zones from x 18.15; no tracks or vias);\n- the keep-out areas 1783.6 / 2027.6 / 741.5 mmÂ²;\n- D-01 KiCad Y 6-93;\n- the 4212.2 mmÂ² outline.\n\nThe errors to fix are listed below.\n1. The boost-loss formula/number mismatch: P_out(1/Î· âˆ’ 1) is stated, but the numbers use P_in(1 âˆ’ Î·). The 14.6 W figure is FC-only, and the 3 A Ã— 8 V basis is unsupported.\n2. D-FC-EN starts at x 67.08, not at x \u003e= 67.4.\n3. The claim that Â§3.2 omits C2-C6-FC and CC-FC is false, and the \u0027errors\u0027 framing is overstated for a list that Â§3.2 calls examples.\n4. C-D4 is missing from the +x borderline set.\n5. The bottom-passive floor uses 0.95 mm for 0603, which contradicts the report\u0027s own 0.85 mm, and ignores the r7 bottom 0805s (7.6 mm).\n6. The mb_mechanical.md path is wrong.\n\nNone of these changes the main conclusion: a CR underside of at least about 6.5 mm with no bottom SMT, set by L-FC/L-BT at a nominal 5.0 mm (still unverified for V3).\n\nSources: [datasheets.com HCM1305-2R2-R](https://www.datasheets.com/eaton/hcm1305-2r2-r), [Farnell HCM1A1305V2-2R2-R](https://it.farnell.com/en-IT/eaton-bussmann/hcm1a1305v2-2r2-r/inductor-aec-q200-2-2uh-shielded/dp/3269853), [Eaton HCM1A1307V3 ELX1489](https://www.eaton.com/content/dam/eaton/products/electronic-components/resources/data-sheet/eaton-hcm1a1307v3-automotive-power-inductor-data-sheet-elx1489-en.pdf)."
+    }
+]

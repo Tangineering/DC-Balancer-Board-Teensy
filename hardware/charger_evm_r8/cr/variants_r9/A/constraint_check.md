@@ -1,0 +1,93 @@
+| Rule (design row) | Item | Measured | Limit | Result |
+|---|---|---|---|---|
+| A.8 CHG holes, 22 pins (pin identity, D-02) | J1 | max position error 0.0000 mm | 0.001 mm | pass |
+| D-02 / D-41: CHG footprint on F.Cu (no flip) | J1 | F.Cu | F.Cu | pass |
+| D-39 plug-on outline x 18.584-67, y 7-94 (Edge.Cuts) | Edge.Cuts | 4 segments, x 18.584-67.000, y 7.000-94.000 | 4 segments, the D-39 rectangle | pass |
+| Every part inside the outline (packer placed all parts) | all | 0 outside | 0 | pass |
+| D-44 every SMT part on the top side | none | 0 flipped | 0 | pass |
+| D-44 no SMD pad on B.Cu (one stencil, one reflow) | U101.25 | 1 pads | 0 | FAIL |
+| D-44 chip passives >= 0603 (r9-3) | none | 0 below 0603 | 0 | pass |
+| D-39 IC pitch >= 0.65 mm (U101 0.5 mm approved, D-40) | U101 | 0.50 mm | >= 0.65 mm or U101 | pass |
+| D-39 IC pitch >= 0.65 mm | U102, U103, U105, U106, U107, U110, U118, U119, U120 | 9 ICs checked | minimum pad-centre spacing | pass (rows above list any exception) |
+| D-03 (amended 2026-11-12) courtyard basis 0.25 mm | none | 0 on the 0.10 mm basis | 0 | pass |
+| D-37 via in an SMD pad (fallback only; each listed for operator review) | none | 0 vias | 0 unless listed | pass |
+| D-20 L4 (B.Cu): no tracks, GND pour only | B.Cu | 0 tracks; pour nets /GND | 0 tracks; /GND only | pass |
+| A.8 W1-W4 lead pads (D-45; D-08 re-derived at placement) | W1 | (30.300, 61.200) | (30.30, 61.20) | pass |
+| A.8 W1-W4 lead pads (D-45; D-08 re-derived at placement) | W2 | (27.700, 61.200) | (27.70, 61.20) | pass |
+| A.8 W1-W4 lead pads (D-45; D-08 re-derived at placement) | W3 | (24.300, 45.400) | (24.30, 45.40) | pass |
+| A.8 W1-W4 lead pads (D-45; D-08 re-derived at placement) | W4 | (24.300, 55.600) | (24.30, 55.60) | pass |
+| D-45 W6/W7 plated through-hole lead pads (PLACEHOLDER geometry) | W6 | 2 PTH pads | 2 | pass |
+| D-45 W6/W7 plated through-hole lead pads (PLACEHOLDER geometry) | W7 | 3 PTH pads | 3 | pass |
+| D-46 J-TAP header, Micro-Fit 3.0 2 x 5 | J102 | 10 pads | 10 cavities | pass |
+| D-46 J-TAP on the +x side of the CR (courtyard in the +x half, x >= 42.792) | J102 | courtyard x 57.11-66.37, y 7.58-27.22 | x min >= 42.792 | pass |
+| H.23(l) successor: J-TAP straight-line run (lower bound of the dressed run; A.4 maximum) | T2 J102.1 -> C-D2.1 | 59.0 mm | <= 100 mm | pass |
+| H.23(l) successor: J-TAP straight-line run (lower bound of the dressed run; A.4 maximum) | T17 J102.2 -> J2.09 | 83.4 mm | <= 150 mm | pass |
+| H.23(l) successor: J-TAP straight-line run (lower bound of the dressed run; A.4 maximum) | T17r J102.3 -> J2.29 | 63.1 mm | <= 150 mm | pass |
+| H.23(l) successor: J-TAP straight-line run (lower bound of the dressed run; A.4 maximum) | T5 J102.4 -> J1.45 | 31.1 mm | <= 120 mm | pass |
+| H.23(l) successor: J-TAP straight-line run (lower bound of the dressed run; A.4 maximum) | T13 J102.5 -> J2.45 | 51.5 mm | <= 150 mm | pass |
+| H.23(l) successor: J-TAP straight-line run (lower bound of the dressed run; A.4 maximum) | T6 J102.6 -> J1.29 | 50.5 mm | <= 120 mm | pass |
+| H.23(l) successor: J-TAP straight-line run (lower bound of the dressed run; A.4 maximum) | T1 J102.7 -> C-D6.1 | 35.0 mm | <= 150 mm | pass |
+| H.23(l) successor: J-TAP straight-line run (lower bound of the dressed run; A.4 maximum) | T7b J102.8 -> C-D6.2 | 35.0 mm | <= 150 mm | pass |
+| H.23(l) successor: J-TAP straight-line run (lower bound of the dressed run; A.4 maximum) | T16 J102.9 -> J2.43 | 50.3 mm | <= 150 mm | pass |
+| H.23(l) successor: J-TAP straight-line run (lower bound of the dressed run; A.4 maximum) | T10 J102.10 -> J2.47 | 48.1 mm | <= 150 mm | pass |
+| D-46 J-TAP latch finger access | J102 | latch side not modelled | TODO(verify: Molex 43045 header drawing) | info |
+| A.8 IN strip: pad edge to pins 1/2/5 | C102c pad 1 | 0.53 mm | <= 3.0 mm | pass |
+| A.8 IN strip: pad edge to pins 1/2/5 | C102a pad 1 | 2.09 mm | <= 3.0 mm | pass |
+| A.8 IN strip: pad edge to pins 1/2/5 | D107 pad 1 | 2.43 mm | <= 3.0 mm | pass |
+| A.8 OUT strip: C103 pad to pins 17/18 | C103 pad 1 | 1.52 mm | <= 3.0 mm | pass |
+| A.8 IN strip: R102 N_UV pad to pin 6 (design 2.1 mm) | R102 | 2.09 mm | information | info |
+| D-20 window y 30.8-66.86 and >= 10 mm from the MB 5V copper rim (preferred; exemption if outside) | U102 | inside | inside | pass |
+| D-20 window y 30.8-66.86 and >= 10 mm from the MB 5V copper rim (preferred; exemption if outside) | U103 | inside | inside | pass |
+| D-20 window y 30.8-66.86 and >= 10 mm from the MB 5V copper rim (preferred; exemption if outside) | U119 | inside | inside | pass |
+| D-20 window y 30.8-66.86 and >= 10 mm from the MB 5V copper rim (preferred; exemption if outside) | U120 | inside | inside | pass |
+| D-20 window y 30.8-66.86 and >= 10 mm from the MB 5V copper rim (preferred; exemption if outside) | D104 | inside | inside | pass |
+| D-20 window y 30.8-66.86 and >= 10 mm from the MB 5V copper rim (preferred; exemption if outside) | D105 | inside | inside | pass |
+| D-20 window y 30.8-66.86 and >= 10 mm from the MB 5V copper rim (preferred; exemption if outside) | D106 | inside | inside | pass |
+| D-20 window y 30.8-66.86 and >= 10 mm from the MB 5V copper rim (preferred; exemption if outside) | R109 | inside | inside | pass |
+| D-20 window y 30.8-66.86 and >= 10 mm from the MB 5V copper rim (preferred; exemption if outside) | R111 | inside | inside | pass |
+| D-20 window y 30.8-66.86 and >= 10 mm from the MB 5V copper rim (preferred; exemption if outside) | R114 | inside | inside | pass |
+| D-20 window y 30.8-66.86 and >= 10 mm from the MB 5V copper rim (preferred; exemption if outside) | R110 | inside | inside | pass |
+| D-20 window y 30.8-66.86 and >= 10 mm from the MB 5V copper rim (preferred; exemption if outside) | R112 | inside | inside | pass |
+| D-20 window y 30.8-66.86 and >= 10 mm from the MB 5V copper rim (preferred; exemption if outside) | R115 | inside | inside | pass |
+| D-20 window y 30.8-66.86 and >= 10 mm from the MB 5V copper rim (preferred; exemption if outside) | R102 | outside: courtyard x 42.60-44.49, y 56.09-59.43 | inside | exemption (D-20) |
+| D-35 / D-36 logic-IC pads within 2.0 mm of the divider tops (metric, F.Cu pads) | none | 0 pads | metric: lower is better (D-36) | info |
+| A.8 divider strip x 23.15-36.50, y 42.14-45.69 | R109 | inside | inside | pass |
+| A.8 divider strip x 23.15-36.50, y 42.14-45.69 | R110 | inside | inside | pass |
+| A.8 divider strip x 23.15-36.50, y 42.14-45.69 | R111 | inside | inside | pass |
+| A.8 divider strip x 23.15-36.50, y 42.14-45.69 | R112 | inside | inside | pass |
+| A.8 divider strip x 23.15-36.50, y 42.14-45.69 | R114 | inside | inside | pass |
+| A.8 divider strip x 23.15-36.50, y 42.14-45.69 | R115 | inside | inside | pass |
+| H.23(f) distance from the U101 loop region (information) | U102 | 22.24 mm | >= 3.0 mm (region rule) | info |
+| H.23(f) distance from the U101 loop region (information) | U103 | 20.09 mm | >= 3.0 mm (region rule) | info |
+| H.23(f) distance from the U101 loop region (information) | U119 | 18.67 mm | >= 3.0 mm (region rule) | info |
+| H.23(f) distance from the U101 loop region (information) | U120 | 18.16 mm | >= 3.0 mm (region rule) | info |
+| H.23(f) distance from the U101 loop region (information) | D104 | 18.16 mm | >= 3.0 mm (region rule) | info |
+| H.23(f) distance from the U101 loop region (information) | D105 | 17.98 mm | >= 3.0 mm (region rule) | info |
+| H.23(f) distance from the U101 loop region (information) | D106 | 16.13 mm | >= 3.0 mm (region rule) | info |
+| H.23(e) successor: top-side courtyard booking (KiCad courtyards, information) | top | 911.5 of 4077.8 mm2 = 22.4 % | <= 75 % target | info |
+| D-20 every via tented on both sides | board setup | front True, back True | both tented | pass |
+| A.8 U101 thermal pad >= 9 vias 0.3 mm (D-40 exempt from D-37) | U101 | 9 vias | >= 9 | pass |
+| H.23(a) successor: plug-on outline (D-39) | Edge.Cuts | 4 vertices, 48.416 x 87.000 mm, area 4212.19 mm2, KiCad Y 6.00-93.00 | 48.416 x 87.000 mm, 4212.19 mm2 | pass |
+| H.23(a) successor: courtyard inset 0.5 mm (A.8) | INSET | 4077.78 mm2 | information | info |
+| D-51 (operator ruling 2026-11-12 (a)): CR -x edge x 18.584 clears the terminal body in plan | J-BL (CUI_TB005_-762-03BE) | body +x 16.130 -> gap 2.454 mm; silk outer +x 16.194 -> 2.390 mm; keep-out +x 16.380 -> 2.204 mm; y overlap with the outline 22.86 mm | gap > 0 (no plan overlap) | pass |
+| D-51 (operator ruling 2026-11-12 (a)): CR -x edge x 18.584 clears the terminal body in plan | J-FC (CUI_TB005-762-02BE) | body +x 16.130 -> gap 2.454 mm; silk outer +x 16.194 -> 2.390 mm; keep-out +x 16.380 -> 2.204 mm; y overlap with the outline 15.24 mm | gap > 0 (no plan overlap) | pass |
+| D-51 (operator ruling 2026-11-12 (a)): CR -x edge x 18.584 clears the terminal body in plan | J-BT (CUI_TB005-762-02BE) | body +x 16.384 -> gap 2.200 mm; silk outer +x 16.448 -> 2.136 mm; keep-out +x 16.634 -> 1.950 mm; y overlap with the outline 15.24 mm | gap > 0 (no plan overlap) | pass |
+| D-41 key: CR rotated 180 deg about (33.498, 50.514) lands on the terminals | J-BL, J-FC, J-BT | rotated outline x -0.004-48.412; engagement start 16.89 mm, terminal top 21.70 mm, margin 4.81 mm | all three hit; engagement start < 21.70 mm | pass |
+| H.23(j) successor: D-41 stack heights | TSW on SSQ | CR underside 11.05 mm, CR top 12.65 mm, engagement start 16.89 mm | underside 11.05 mm (D-41) | pass |
+| A.8 CHG holes in the .brd = the A.8 table (pin identity, D-02) | MB CHG package | max error 0.0000 mm | 0.001 mm | pass |
+| H.23 successor: CHG pad (1.9 mm, PLACEHOLDER) to the outline edge | J1 pads | 1.464 mm | >= 0.5 mm (A.8 inset) | pass |
+| H.23 successor: TSW body + 0.25 mm courtyard inside the 0.5 mm inset (D-41, D-03) | TSW-110 (pins 1-10) | margin 18.982 mm | >= 0 | pass |
+| H.23 successor: TSW body + 0.25 mm courtyard inside the 0.5 mm inset (D-41, D-03) | TSW-112 (pins 11-22) | margin 0.394 mm | >= 0 | pass |
+| H.23(h) successor: D-20 window y 30.8-66.86 less 10 mm from the MB 5V copper rim (D-11 interim) | analog window | 839.3 mm2, x 19.08-66.50 | information; TODO(measure: operator, MS4) | info |
+| H.23(l) successor: J-TAP region, +x half, every straight-line A.4 maximum met | J102 region | 2038.9 mm2, x 42.79-66.50, y 7.50-93.50 | non-empty | pass |
+| H.23(l) successor: J-TAP straight-line run, +x half of the CR (lower bound of the dressed run) | T2 (J102.1) -> C-D2.1 (67.705, 69.850) | 1.2-67.1 mm | <= 100 mm (A.4) | pass |
+| H.23(l) successor: J-TAP straight-line run, +x half of the CR (lower bound of the dressed run) | T17 (J102.2) -> J2.09 (109.982, 81.026) | 43.5-99.6 mm | <= 150 mm (A.4) | pass |
+| H.23(l) successor: J-TAP straight-line run, +x half of the CR (lower bound of the dressed run) | T17r (J102.3) -> J2.29 (109.982, 55.626) | 43.5-82.6 mm | <= 150 mm (A.4) | pass |
+| H.23(l) successor: J-TAP straight-line run, +x half of the CR (lower bound of the dressed run) | T5 (J102.4) -> J1.45 (87.122, 35.306) | 20.6-73.2 mm | <= 120 mm (A.4) | pass |
+| H.23(l) successor: J-TAP straight-line run, +x half of the CR (lower bound of the dressed run) | T13 (J102.5) -> J2.45 (109.982, 35.306) | 43.5-88.9 mm | <= 150 mm (A.4) | pass |
+| H.23(l) successor: J-TAP straight-line run, +x half of the CR (lower bound of the dressed run) | T6 (J102.6) -> J1.29 (87.122, 55.626) | 20.6-65.4 mm | <= 120 mm (A.4) | pass |
+| H.23(l) successor: J-TAP straight-line run, +x half of the CR (lower bound of the dressed run) | T1 (J102.7) -> C-D6.1 (97.790, 16.412) | 31.3-94.7 mm | <= 150 mm (A.4) | pass |
+| H.23(l) successor: J-TAP straight-line run, +x half of the CR (lower bound of the dressed run) | T7b (J102.8) -> C-D6.2 (97.790, 19.363) | 31.3-92.3 mm | <= 150 mm (A.4) | pass |
+| H.23(l) successor: J-TAP straight-line run, +x half of the CR (lower bound of the dressed run) | T16 (J102.9) -> J2.43 (109.982, 37.846) | 43.5-87.2 mm | <= 150 mm (A.4) | pass |
+| H.23(l) successor: J-TAP straight-line run, +x half of the CR (lower bound of the dressed run) | T10 (J102.10) -> J2.47 (109.982, 32.766) | 43.5-90.6 mm | <= 150 mm (A.4) | pass |
+| H.23(b) successor: MB parts crossing the outline edge (information; heights closed by D-51) | C-D4, C-DC3, C1-BT, C1-FC, CBL2, CHG, MDAC-BT, OP-BT, RB2, RB3 | 10 parts | information | info |

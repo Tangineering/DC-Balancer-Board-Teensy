@@ -269,7 +269,11 @@ class Ctx:
                     # a through-hole pad of a poured net needs room for its thermal spokes
                     self._claim(self.ownT, li, self.geom_of(it, rT), n)
                     self._claim(self.ownV, li, self.geom_of(it, rV), n)
-                    if (kind == "pad" and (it.get("ref"), it.get("num")) not in drilled and self.via_in_pad is not True
+                    # SMD pad: decided from the pad item itself (N-5, 2026-11-13). Keyed on (ref, number), the
+                    # U101.25 exposed pad escaped the ban because its nine thermal vias are holes numbered 25.
+                    # Models made before the "drilled" field fall back to the (ref, number) test.
+                    is_smd = (not it["drilled"]) if "drilled" in it else (it.get("ref"), it.get("num")) not in drilled
+                    if (kind == "pad" and is_smd and self.via_in_pad is not True
                             and "%s.%s" % (it.get("ref"), it.get("num")) not in vip_ok):
                         smd_ban.append((li, it))
                     if (kind == "pad" and (it["net"], ln) in zone_on
@@ -281,9 +285,14 @@ class Ctx:
         # a via on an SMD pad, or with its copper inside the pad's solder-mask opening, takes solder from the
         # joint. KiCad DRC does not report it. The ban holds for the pad's own net too: a via joins a pad
         # through a track.
-        vr = self.via / 2 + self.mask_margin
+        # The opening is the pad grown by its mask expansion with square corners (KiCad grows a rectangular pad to
+        # a rectangle), at least rules.mask_margin; a round margin let a via annulus into the corner of the opening
+        # (CR r9: 0.0045 mm at U106.1 and U118.8 with expansion 0.0508 mm and margin 0.05). Models without
+        # "mask_exp" use rules.mask_margin alone.
         for li, it in smd_ban:
-            self._claim(self.ownV, li, self.geom_of(it, vr + self.sag(vr) + 0.01), BLOCK)
+            grow = max(it.get("mask_exp") or 0.0, self.mask_margin)
+            rv = self.via / 2 + self.sag(self.via / 2 + grow) + 0.01
+            self._claim(self.ownV, li, self.geom_of(it).buffer(grow, join_style=2).buffer(rv), BLOCK)
         self.net_name = {v: k for k, v in self.nets.items()}
 
     def cells_of(self, it):

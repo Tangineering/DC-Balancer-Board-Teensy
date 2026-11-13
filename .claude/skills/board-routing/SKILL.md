@@ -38,8 +38,10 @@ score, seeds, run time). Read the other reference files at the step that names t
      design gives no row, write "no design row" in `STATUS.md` and ask the design owner; do not invent limits.
    - A soft keep-away rule (a net class kept away from a zone, scored as a metric): the router has no per-net
      keep-out. Draw the zone as region corridors with `"reserve": true` on the layers of the rule. Set
-     `costs.reserve` to 30. Put the exempt nets in groups whose `route` lists the zone corridors and one `BODY`
-     region over the rest of the board (`reference/plan-format.md`). Measure the result with
+     `costs.reserve` to 30. Put the exempt nets in groups whose `route` lists the zone corridors. Give each such
+     group its `mode` (`free` or `local`) explicitly: the group then keeps its own area, and the `route` list only
+     exempts it from the reserve cost. A group with `route` and no `mode` becomes a corridor group and needs one
+     `BODY` region over the rest of the board (`reference/plan-format.md`). Measure the result with
      `parallel_metric.py` (step 7). Test the plan against the plain plan (section 3). If the rule is a hard limit,
      this plan does not meet it (section 6): write a request.
    - 2-layer board with a ground pour: the pattern of `reference/two-layer.md` section 2.
@@ -52,12 +54,25 @@ score, seeds, run time). Read the other reference files at the step that names t
      `score.py` the option `--allow-via-in-pad` whenever the plan allows a via in any pad. With a list,
      `score.py` does not check the list: compare the vias on SMD pads that `score.md` lists with the list.
      Report `vias_on_smd_pads` of `score.json` for every seed.
+   - The ban covers the mask opening: each pad grown by its own mask expansion (`mask_exp` in the model), at
+     least `rules.mask_margin`, with square corners, plus the via radius. A model made before 2026-11-13 has no
+     `mask_exp`, and in it an exposed pad whose number is shared with its thermal vias is not banned. Rebuild
+     such a model (step 1).
+   - High-impedance nets that should stay on one layer: give them their own group with `via_cost` 200. At the
+     default cost the router prefers a via pair to a few millimetres of a soft ground fill, so every short net
+     near a busy IC can take two vias (all six U101 nodes on the r9 CR board). Do not raise the cost on a net
+     that must cross another net: the other net then cannot route (section 3, step 2).
 5. `"$PY" capacity.py W/model/model.json W/plan.json W/capacity_report.md`. If check 1 prints a GRID message,
-   set `rules.res` as it says. Sealed pads become requests.
+   set `rules.res` as it says. Sealed pads become requests. Then check the via ban:
+   `"$PY" smd_ban_test.py W/model/model.json W/plan.json [--pad REF.PAD ...]`. It must print PASS. Name the
+   exposed pads and every pad whose number is shared with holes.
 6. Route at four seeds, in the background:
    `"$PY" -u seeds.py run W/model/model.json W/plan.json W/plain --seeds 1,2,3,4`.
    Read `W/plain/SEEDS.md`: mean, minimum, maximum, nets open at every seed, nets open at some seeds.
-7. Finish each seed in this order: apply, score, plane vias, apply, score, constraint metrics. Finish the best
+7. Finish each seed in this order: apply, score, plane vias, apply, score, constraint metrics. For the seed that
+   you deliver, the outline trim comes next (section 5a), and then stitching, straightening and the stitching gap
+   fill on the trimmed board (below), in that order: stitching after the trim keeps the trimmed outline independent
+   of the stitching and the straightening. On a board that is not trimmed, run them after the plane vias. Finish the best
    seed always, and every seed when the plane nets or a constraint metric decide between plans. Run every step
    with the pcbnew venv `"$PY"`; shapely is in that venv, not in miniforge (`"$MPL"`).
 
@@ -65,7 +80,7 @@ score, seeds, run time). Read the other reference files at the step that names t
    D=W/plain/s<N>; B=<board>.kicad_pcb; V="--allow-via-in-pad"   # V empty when the plan allows no via in a pad
    "$PY" apply_routes.py W/$B $D/routes.json $D/board
    "$PY" score.py $D/board/$B W/$B $D/score --plane-nets <nets> $V --label plain-s<N>
-   "$PY" plane_vias.py W/model/model.json W/plan.json $D/routes.json $D/board/$B $D/plane_routes.json --report $D/plane_vias.md
+   "$PY" plane_vias.py W/model/model.json W/plan.json $D/routes.json $D/board/$B $D/plane_routes.json --report $D/plane_vias.md [--stitch 2.5]
    "$PY" apply_routes.py $D/board/$B $D/plane_routes.json $D/board_pv
    "$PY" score.py $D/board_pv/$B W/$B $D/score_pv --plane-nets <nets> $V --label plain-s<N>-pv
    "$PY" parallel_metric.py W/model/model.json $D/routes.json --zone-parts <refs> --analog-nets <nets> --json $D/parallel.json
@@ -76,8 +91,32 @@ score, seeds, run time). Read the other reference files at the step that names t
    - `plane_vias.py` keeps each via off the unflashed layers of its own net's through-hole pads. Do not give
      `--no-respect-unflashed`. Without the rule, KiCad flashed GND pads J1.14 and J1.15 on In2.Cu onto routed
      tracks on the CR board, at 3 of 4 seeds.
-   - Run `parallel_metric.py` only when a soft keep-away rule applies (step 4). Run the project's constraint
-     check as well.
+   - Stitching: when the design asks for plane stitching (for example "L2 and L4 GND stitched at a pitch of at
+     most 5 mm"), give `plane_vias.py --stitch PITCH`. It adds vias of the plane net on a grid of that pitch inside
+     the plane net's fill, with the same site rules as the plane vias (routed copper, holes, SMD pads and their mask
+     openings, unflashed pads, keep-outs), and reports the grid nodes without a legal site. On the r9 CR board,
+     2.5 mm gave 585 vias over the untrimmed outline and 269 on the final trimmed outline, with no new DRC item.
+     The grid places a via only within half a pitch of each node, so a dense area can keep a gap. On the final
+     board (after straightening and any trim) run `"$PY" stitch_gaps.py <board> <out> --limit L`: it measures the
+     distance from every point of the plane pour to the nearest via or plated hole of the net, and adds a via at
+     the nearest legal site of the real board copper until the largest distance is at most L (default 3.54 mm, a
+     5 mm square pitch). It works on the board geometry, so it is right after straightening, when the router's grid
+     occupancy is out of date; do not run `plane_vias.py` on a straightened board. On the r9 CR board the project's
+     stitching row failed at 4.08 mm (four regions in the logic and comparator area); 3 added vias gave 3.47 mm, DRC 0.
+   - Straightening, for the delivered seed: the router steps cell by cell, so free stretches come out as
+     staircases. `"$PY" straighten.py $D/board_pv/$B $D/board_st --plan W/plan.json --routes-out
+     $D/routes_st.json` replaces each run that it can by one straight or 45-degree segment, or by one 45-degree and
+     one straight segment. It keeps the clearance to all other copper, the edge, keep-outs, thermal rings, the
+     unflashed own pads and the reserved plan corridors, and makes no acute bend; hard spots stay as they are.
+     Score `board_st` again: it must stay valid with no more plane-net opens, and run the constraint metrics on
+     `routes_st.json`. On the r9 CR board it cut 1791 track segments to 762 and 830.8 mm to 824.4 mm, DRC
+     unchanged, divider metric unchanged.
+   - Run `parallel_metric.py` only when a soft keep-away rule applies (step 4).
+   - Run the project's constraint check on the board that you report. It knows design rules that KiCad DRC and
+     `score.py` do not: on the r9 CR board it found two router vias inside the corners of pad mask openings
+     after DRC and the score had passed the board (the tools are fixed since).
+   - Finish the seeds of one plan one after another. Four `apply_routes.py` jobs started at once, while routing
+     runs used the cores, stalled at start-up with no CPU use; the sequential rerun took minutes.
    - When `plane_vias.md` lists pieces without a via site, run `nosite_why.py` on `board_pv` with the inputs of
      `plane_vias.py`. A piece that routed copper on one layer blocks needs one track moved; on the CR board, an
      In2.Cu track by about 0.85 mm, in the GUI. A piece that obstacles or holes block becomes a request.
@@ -88,7 +127,11 @@ score, seeds, run time). Read the other reference files at the step that names t
 8. `"$MPL" -I render.py W/model/model.json W/plain/img --plan W/plan.json --routes W/plain/s<N>/routes.json`.
    Open the images.
 
-If every seed connects everything, the plain plan is the result. Go to section 5.
+If every seed connects everything, the plain plan is the result for completion. Plans can still improve a
+quality measure: router vias, the vias of constrained nets, a keep-away metric, or the plane-net connections open
+after the plane-via step. Judge each measure like completion: a plan is a gain on a measure only when it is lower
+at every seed (finish every seed of both plans). Then go to section 5. To choose the seed that you apply, take
+the seeds with 0 plane-net connections open after the plane-via step first, then the fewest vias.
 
 ## 3. When the board does not close
 
@@ -98,6 +141,15 @@ If every seed connects everything, the plain plan is the result. Go to section 5
    - open at every seed, at the same place: a limit of the board there. It becomes a request with evidence
      (section 4), or a hypothesis for a plan (below);
    - open at some seeds: not evidence. More iterations or another seed may close it.
+   - a plane-net pad open at every seed of every plan, whose piece `nosite_why.py` shows blocked by obstacles
+     (pours, other-net pads) on every layer, not by routed copper: the fixed copper and one signal path that
+     every route must take enclose the pad. No plan closes it; write the request at once (r9 CR: C102c.2 /GND,
+     enclosed by the U101 pin escapes, the J1 column and the VCHGIN pour and strap; the owner closed it with a
+     /GND pre-via and a strap change).
+   - two nets that cross by topology: the pin order of an IC and the sides of the parts that its nets reach
+     disagree, so one of the two nets needs a via pair. A higher via cost on one opens the other (r9 CR: /N_IMON
+     at via cost 200 left /N_FLT open at every seed). Only a placement change removes such a crossing; test it
+     with a swap or a move and the project's constraint check.
    - If the log says that tens of nets were still in conflict at the end, the "Lost to" places show where the
      router gave up, not proven capacity limits. Say so.
 3. Try a plan only as a hypothesis, one at a time, each judged by
@@ -143,6 +195,49 @@ need the images. Report:
 - each hypothesis with its verdict;
 - that a valid result is not a finished board, until the finish-test rows of the review pass.
 
+## 5a. Final step: trim the outline and add mounting holes
+
+A board outline that was sized for routing room keeps empty area after routing. When the board is routed and the
+review passes, propose a trimmed outline with corner mounting holes:
+
+```bash
+"$PY" trim_outline.py W/<board>.kicad_pcb W/trim --y-flip-offset Y0 [--ear X0,Y0,X1,Y1 ...] \
+    [--flip-centre CX,CY --flip-block NAME:X0,Y0,X1,Y1 ...] \
+    --angles 0,30,45,60,90,120,135,150 --min-edge 2.0 --fillet 1.0 --apply
+```
+
+Outline rules (operator, 2026-11-13): edges only at 0, 30, 45, 60 or 90 degrees (and their mirror directions), no
+other angle; fillets on the corners are good. Give `--angles` and `--fillet` always; without `--angles` the tool
+makes a free-angle convex hull, which the operator rejected. A fab charges for the enclosing rectangle, so the trim
+inside the rectangle is mainly for looks and to leave more of the board below exposed; it does not reduce the cost.
+The silk and reference step of a project must read arcs on Edge.Cuts (`GetBoardPolygonOutlines()`); a step that
+reads only straight segments loses the whole outline when the corners are filleted.
+
+1. Find the mechanical reasons for the present outline in the design record before you trim: an overhang that keys
+   the board, a cover over parts below, a connector reach. Keep each such area as an `--ear` box (plan frame). A
+   board that is keyed by landing on parts when it is turned the wrong way keeps the key only while its outline
+   still covers them: give those parts as `--flip-block` with the turn centre, and compare the overlap of the
+   present and the proposed outline in `TRIM.md`.
+2. The tool never grows the outline: an edge that the design fixed (for example a clearance to parts beside the
+   board) stays. The defaults suit 6-32 screws (drill 3.7 mm, head disc 3.6 mm, copper keep-out 4.0 mm); set
+   `--hole-*` for another screw. Ask the owner what the holes hold: a standoff that rests on the board below needs a
+   clear spot there as well, which the tool does not check.
+3. Read `TRIM.md`: area before and after, hole sites, ears, flip overlap, warnings. Check each hole against the
+   nearest courtyard and copper; the keep-out must clear them by the gap.
+4. `--apply` writes a checked copy: the new edge, the holes and their keep-outs, the board-wide zones and the edge
+   band moved to the new edge, a refill. Run DRC and the project's constraint check on the copy. A row that tests
+   the old outline fails until the owner amends it.
+5. The outline belongs to the project's generator. Send the proposal (`TRIM.md`, `trim.json`, the DRC of the copy)
+   to the design owner as a request of kind `outline`; do not write the outline into the project board yourself.
+   When the owner's commit comes back, run DRC and the constraint check on it.
+
+On the r9 CR board the step proposed 2242 mm2 against 4212 mm2 (53 %), with four 6-32 holes, a +x ear that keeps
+the board landing on two of the three terminal blocks when it is turned by 180 degrees (7.7 and 7.6 mm of overlap),
+DRC unchanged (124 silk items, 0 unconnected) and one constraint row failing as expected (the old rectangle). The
+operator then asked for limited angles: with `--angles 0,30,45,60,90,120,135,150 --min-edge 2 --fillet 1` the outline
+has 10 corners (vertical and horizontal sides, chamfers at 30, 45 and 60 degrees), 2328 mm2, the same flip overlap,
+and after the full finish DRC 0 and only the rows that hold the old outline failing.
+
 ## 6. What the dry tests showed
 
 Four boards, three rounds, Opus workers; 4-layer board "CR" with 210 connections at 5/5 mil, 2-layer board
@@ -166,6 +261,11 @@ Four boards, three rounds, Opus workers; 4-layer board "CR" with 210 connections
 - After the plane-via step, 11 to 19 GND connections stayed open on the CR board. In2.Cu tracks blocked most
   of the remaining via sites.
 - Two seeds of one plan differed by up to 9 connections. One run is not a result.
+- r9 CR board (107 connections, F.Cu and In2.Cu, solid GND on In1.Cu and B.Cu, no via in a pad): the plain plan
+  closed at 4 of 4 seeds, so the race compared quality. Soft divider-top zones plus via cost 200 on four U101
+  nodes gave 143-148 router vias against 149-155, 0.1-0.2 mm of logic track in the zone against 7.3-24.4 mm,
+  and 9 U101 vias against 13-14, each at every seed. Guide corridors for two long tap nets cut 1-5 vias but made
+  those nets 10-25 mm longer, and added nothing to the zones.
 
 ## 7. Limits
 

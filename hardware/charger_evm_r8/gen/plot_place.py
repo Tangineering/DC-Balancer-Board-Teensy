@@ -25,7 +25,8 @@ if sys.argv[1] == "dump":
     for name, poly, layers, opts in L.rule_areas():
         geoms = [poly] if poly.geom_type == "Polygon" else list(poly.geoms)
         out["keep"][name] = [[list(g.exterior.coords), [list(h.coords) for h in g.interiors]] for g in geoms]
-    regs = {k: getattr(L, k) for k in ("INTERIOR", "TABY_TOP", "DIV_STRIP", "BAND") if hasattr(L, k)}
+    regs = {k: getattr(L, k) for k in ("INTERIOR", "TABY_TOP", "DIV_STRIP", "BAND", "ANALOG_STRICT", "JTAP_REG")
+            if hasattr(L, k)}   # TABY_TOP and BAND exist on the r7 outline only (D-52)
     out["regions"] = {k: [list(g.exterior.coords) for g in ([v] if v.geom_type == "Polygon" else list(v.geoms))]
                       for k, v in regs.items()}
     json.dump(out, open(os.path.join(sys.argv[3], "placement_dump.json"), "w"))
@@ -40,7 +41,7 @@ else:
         ol = d["outline"] + [d["outline"][0]]
         ax.plot([p[0] for p in ol], [p[1] for p in ol], "k-", lw=1.5)
         for name, gs in d["keep"].items():
-            if (side == "B") == (name in ("MB_bottom_clearance", "FT1_keepout", "FT2_keepout")):
+            if (side == "B") == (name in ("MB_bottom_clearance", "FT1_keepout", "FT2_keepout", "L4_no_tracks")):
                 for ext, holes in gs:
                     ax.add_patch(MP(ext, closed=True, fc=(1, 0.6, 0.6, 0.45), ec="r", lw=0.4))
                     for h in holes:
@@ -53,6 +54,10 @@ else:
             ax.add_patch(MP(pts, closed=True, fc=(0.6, 0.7, 1, 0.5), ec="b", lw=0.5))
             xs = [p[0] for p in pts]; ys = [p[1] for p in pts]
             ax.text(sum(xs) / len(xs), sum(ys) / len(ys), ref, fontsize=5, ha="center", va="center")
-        ax.set_xlim(16, 72); ax.set_ylim(33, 77); ax.set_aspect("equal"); ax.grid(True, lw=0.2)
+        # view from the outline (D-39 plug-on outline y 7-94; the fixed r7 window y 33-77 cut it off) plus the
+        # PARK spot at x 75 so a part the packer could not place stays visible
+        oxs = [p[0] for p in d["outline"]]; oys = [p[1] for p in d["outline"]]
+        ax.set_xlim(min(oxs) - 3, max(max(oxs), 75.0) + 3); ax.set_ylim(min(oys) - 3, max(oys) + 3)
+        ax.set_aspect("equal"); ax.grid(True, lw=0.2)
         ax.set_title("CR %s courtyards (Eagle board coordinates, top view)" % ("top" if side == "F" else "bottom"))
         fig.savefig(os.path.join(sys.argv[2], "placement_%s.png" % side), dpi=110, bbox_inches="tight")

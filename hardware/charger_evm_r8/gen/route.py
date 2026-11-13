@@ -197,8 +197,9 @@ def main(board_name, projdir):
     for lname in getattr(L, "POWER_LAYERS", []):
         b.SetLayerType(LAYER[lname], pcbnew.LT_POWER)   # router uses the layer only for plane connections
     # 2. power zones, pre-placed vias and tracks
-    for name, poly, layer, net, prio in L.power_zones():
-        add_zone(b, fr, poly, LAYER[layer], net, prio, name)
+    for zdef in L.power_zones():   # optional sixth field: thermal relief on THT pads (D-56; default True)
+        name, poly, layer, net, prio = zdef[:5]
+        add_zone(b, fr, poly, LAYER[layer], net, prio, name, thermal_tht=zdef[5] if len(zdef) > 5 else True)
     for x, y, net in L.PRE_VIAS:
         add_via(b, fr, x, y, net)
     for pts, net, w, layer in L.PRE_TRACKS:
