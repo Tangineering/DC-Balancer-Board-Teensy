@@ -1201,9 +1201,13 @@ Open: the 4-seed probe re-run on this board (step 6 entry), N-5 and N-8.
 - Consequence: the U101 high-impedance nets carry these via counts: /N_UV 2, /N_OV 0, /N_DVDT 2, /N_ILIM 2, /N_IMON 3,
   /N_FLT 2. With the default round mask margin of 0.05 mm, seed 2 of plan softu placed two own-net vias (/CHG_ARM at
   U106.1, /3V3 at U118.8) 0.0045 mm inside the square-cornered mask opening of a rectangular pad; the opening corner
-  sits 0.072 mm out for a 0.0508 mm expansion. The mask margin 0.075 mm clears this case. The router and its score
-  script model the opening with a round margin; until they use the mitred opening, every plan for this board needs
-  `mask_margin` >= 0.075 mm. The smallest via-annulus gap to a pad plus its mask opening is 0.027 mm (constraint check,
+  sits 0.072 mm out for a 0.0508 mm expansion. The mask margin 0.075 mm clears this case. Tools commit `114ad04`
+  (after the routing) makes the router and its score script ban vias from the square-cornered mask opening (pad grown
+  by the larger of its mask expansion and `mask_margin`, plus the via radius). With it, plan softu at the default
+  0.05 mm margin routed 107/107 at four of four seeds, all valid, and the score script marks the old softu seed 2 board
+  not valid; the applied softum seed 1 board stays valid. Board models built before `114ad04` carry no mask expansion
+  and fall back to the round margin, so they need a rebuild. Superseded: "until they use the mitred opening, every
+  plan for this board needs `mask_margin` >= 0.075 mm". The smallest via-annulus gap to a pad plus its mask opening is 0.027 mm (constraint check,
   D-37 row). The VIN_L3 extension of D-57 gave no measurable routing cost: plan softu gave 147/150/153/145 vias on the
   D-57 board against 145/143/144/148 on the D-56 board. The route-race record is in the routing session's notes
   (`routing_r9_cr/REVIEW_r2.md`, `TABLE_r2.md`, `plan_softum.json`).

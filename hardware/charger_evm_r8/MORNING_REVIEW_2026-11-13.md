@@ -72,8 +72,9 @@ Table 2. Decisions of the overnight round.
 
 1. `gen/route.py` resets the board minimums in `cr/cr.kicad_pro` on a rebuild, so its zone fill leaves six J102 peg
    items. Restore the file from git and refill (D-57 verification note). The generator itself is not changed.
-2. The router and its score script model a pad's mask opening with a round margin. Until they use the mitred opening,
-   every plan for this board needs `mask_margin` >= 0.075 mm (D-58).
+2. Tools commit `114ad04` (merged as `a919337`) makes the router and its score script ban vias from a pad's
+   square-cornered mask opening, so plans no longer need `mask_margin` 0.075 mm. Board models built before it need a
+   rebuild (D-58). The routed board is unchanged.
 3. The D-57 strap extension takes about 3.1 mm2 of In2.Cu area under R102 and C102a. The route race measured no
    routing cost from it.
 
