@@ -1620,7 +1620,7 @@
 		(descr "Resistor SMD 0603 (1608 Metric), square (rectangular) end terminal, IPC-7351 nominal, (Body size source: IPC-SM-782 page 72, https://www.pcb-3d.com/wordpress/wp-content/uploads/ipc-sm-782a_amendment_1_and_2.pdf), generated with kicad-footprint-generator")
 		(tags "resistor")
 		(property "Reference" "R129"
-			(at 3.75 -0.75 0)
+			(at 3.75 -0.9 0)
 			(layer "F.SilkS")
 			(uuid "77ebca89-d0f5-41bb-b9c5-e55caaa24170")
 			(effects
@@ -4654,12 +4654,12 @@
 		(descr "Capacitor SMD 0603 (1608 Metric), square (rectangular) end terminal, IPC-7351 nominal, (Body size source: IPC-SM-782 page 76, https://www.pcb-3d.com/wordpress/wp-content/uploads/ipc-sm-782a_amendment_1_and_2.pdf), generated with kicad-footprint-generator")
 		(tags "capacitor")
 		(property "Reference" "C129"
-			(at 4.95 -1.650001 0)
+			(at 3.15 -0.750001 0)
 			(layer "F.SilkS")
 			(uuid "629d299c-d13f-4f1b-9909-755829ba6299")
 			(effects
 				(font
-					(size 1 1)
+					(size 0.8 0.8)
 					(thickness 0.15)
 				)
 			)
@@ -6235,7 +6235,7 @@
 		(descr "Resistor SMD 0603 (1608 Metric), square (rectangular) end terminal, IPC-7351 nominal, (Body size source: IPC-SM-782 page 72, https://www.pcb-3d.com/wordpress/wp-content/uploads/ipc-sm-782a_amendment_1_and_2.pdf), generated with kicad-footprint-generator")
 		(tags "resistor")
 		(property "Reference" "R176"
-			(at 2.4 -0.9 0)
+			(at 2.4 -1.350001 0)
 			(layer "F.SilkS")
 			(uuid "1d300847-bb75-4b57-9d71-03e0dea8ab1a")
 			(effects
@@ -7176,7 +7176,7 @@
 		(descr "Capacitor SMD 0603 (1608 Metric), square (rectangular) end terminal, IPC-7351 nominal, (Body size source: IPC-SM-782 page 76, https://www.pcb-3d.com/wordpress/wp-content/uploads/ipc-sm-782a_amendment_1_and_2.pdf), generated with kicad-footprint-generator")
 		(tags "capacitor")
 		(property "Reference" "C108"
-			(at -1.95 -4.500001 90)
+			(at -2.4 -4.500001 90)
 			(layer "F.SilkS")
 			(uuid "32e3dafb-ed90-4e28-8b1e-e562e9dd1c51")
 			(effects
@@ -10024,12 +10024,12 @@
 		(descr "Resistor SMD 0603 (1608 Metric), square (rectangular) end terminal, IPC-7351 nominal, (Body size source: IPC-SM-782 page 72, https://www.pcb-3d.com/wordpress/wp-content/uploads/ipc-sm-782a_amendment_1_and_2.pdf), generated with kicad-footprint-generator")
 		(tags "resistor")
 		(property "Reference" "R108"
-			(at -0.9 -4.5 90)
+			(at -1.05 -4.2 90)
 			(layer "F.SilkS")
 			(uuid "3c7a3afb-f209-4a53-a330-1a89a1cceb6a")
 			(effects
 				(font
-					(size 1 1)
+					(size 0.8 0.8)
 					(thickness 0.15)
 				)
 			)
@@ -16839,6 +16839,14 @@
 		(uuid "3c3e828b-0e58-44ba-b43a-edd261dee443")
 	)
 	(via
+		(at 36.04 73.126)
+		(size 0.6)
+		(drill 0.3)
+		(layers "F.Cu" "B.Cu")
+		(net 14)
+		(uuid "3c51eec4-fb5f-476f-b3c7-445b51132101")
+	)
+	(via
 		(at 55.2624 64.243)
 		(size 0.6)
 		(drill 0.3)
@@ -17413,6 +17421,14 @@
 		(layers "F.Cu" "B.Cu")
 		(net 14)
 		(uuid "7ba4378c-73d6-4c72-a215-afdbfdba1ce5")
+	)
+	(via
+		(at 34.34 66.376)
+		(size 0.6)
+		(drill 0.3)
+		(layers "F.Cu" "B.Cu")
+		(net 14)
+		(uuid "80611128-3495-4950-9d2e-e2357e3c44f3")
 	)
 	(via
 		(at 57.7008 49.2316)
@@ -18445,6 +18461,14 @@
 		(layers "F.Cu" "B.Cu")
 		(net 14)
 		(uuid "fd46ba48-6f33-4e1f-bcf4-358688aa45d3")
+	)
+	(via
+		(at 34.04 40.476)
+		(size 0.6)
+		(drill 0.3)
+		(layers "F.Cu" "B.Cu")
+		(net 14)
+		(uuid "ffdc3e19-f0e9-4d6f-9ec7-b26727825638")
 	)
 	(segment
 		(start 23.7156 64.700199)

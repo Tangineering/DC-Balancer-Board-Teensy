@@ -20,15 +20,15 @@ Status on 2026-11-13:
 | EIB | complete | complete | complete | 0 | 0 (schematic parity checked) | `fab/eib_2026-11-13/` (D-49 DNP set; copper and drill identical to `fab/eib_2026-11-11/`); not ordered |
 | CR | complete | complete (D-54 to D-56) | complete (D-58; power copper D-57; outline trim and holes D-60; GND stitching and straightened tracks D-61; references D-59) | 0 | 0 violations, 0 unconnected items, 0 parity issues (`--severity-all --schematic-parity`) | `fab/cr_2026-11-13/` (re-exported after D-61); not ordered |
 
-On the routed, stitched and trimmed CR (D-60, D-61), the constraint check (`cr/constraint_check.md`) gives 108 pass rows, 1 FAIL
-(the new D-20 stitching row: largest gap 4.08 mm against 3.54 mm, D-61), 3 exemption
+On the routed, trimmed and stitched CR (D-60, D-61), the constraint check (`cr/constraint_check.md`) gives 109 pass rows,
+0 FAIL (including the D-20 stitching row added in D-61), 3 exemption
 rows (R102 under D-20; R103 and R129 as listed U101-network exemptions, D-55/D-56) and 16 information rows (D-56).
 The fabricator of the CR is OSH Park (bare board), with the rule file
 `tools/pcb/fab_rules/fab_4layer_oshpark_only.kicad_dru`. The EIB is a 2-layer board; at OSH Park it is a separate
 order and is not on the CR panel. Neither package has been ordered. The next step is the operator's pre-order review
 of the routed CR and the two packages (D-50 check-in 4). Section 11 lists the open items that the review must close
-before the CR bare-board order: items 2, 3, 5, 7, 9, 14, 16 and 25, the W6/W7 lead pads of D-45, and the D-20
-stitching gap of D-61.
+before the CR bare-board order: items 2, 3, 5, 7, 9, 14, 16 and 25, and the W6/W7 lead pads of D-45. (**Superseded
+2026-11-13:** "and the D-20 stitching gap of D-61"; the gap fill of D-61 closes it.)
 
 Status on 2026-11-11 (history; superseded by the table above):
 
@@ -1289,8 +1289,10 @@ Open: the 4-seed probe re-run on this board (step 6 entry), N-5 and N-8.
 
 - Decision: the finish order of the routed CR is: route, plane vias, `gen/trim_cr.py` (D-60), /GND stitching vias on
   a 2.5 mm grid inside the trimmed GND fill (`tools/pcb/corridor_route/plane_vias.py --stitch 2.5`), the straightening
-  pass (`straighten.py`, staircase runs of unlocked signal tracks replaced by straight or 45-degree runs), then
-  `gen/silk_refs.py`. The board is the routing session's `07a6181` (merge `75f4504` of the D-60 board `779c419`),
+  pass (`straighten.py`, staircase runs of unlocked signal tracks replaced by straight or 45-degree runs), the
+  stitching gap fill (`tools/pcb/corridor_route/stitch_gaps.py <board> <out dir> --y-flip-offset 100`: while a point of
+  the filled L4 /GND pour lies more than 3.54 mm from a /GND via or plated hole, a via is added at the nearest legal
+  site to the worst point), then `gen/silk_refs.py`. The board is the routing session's `07a6181` (merge `75f4504` of the D-60 board `779c419`),
   merged here. The D-60 outline and holes do not change. For the routed CR, the router's stitching replaces the
   generator's `route.py stitch()`; the two must not both run on one board. `gen/trim_cr.py` refuses a board that is
   already trimmed.
@@ -1305,7 +1307,11 @@ Open: the 4-seed probe re-run on this board (step 6 entry), N-5 and N-8.
   and locked pre-tracks do not move. The references are unchanged (59 on F.Silkscreen, 19 on F.Fab). A new
   constraint-check row measures D-20 over the filled L4 pour: with 293 stitch points (/GND vias and /GND plated holes),
   the largest distance to the nearest point is 4.08 mm at (36.0, 26.7), against 3.54 mm for a 5 mm square pitch, so the
-  row reads FAIL. The gap is open and is returned to the routing session (request R9-03). An intermediate board
+  row read FAIL. The 2.5 mm grid places a via only within 1.25 mm of each node, and the comparator cluster blocks most
+  sites near (32.5, 33.7) (routing session, request R9-03). The gap fill added three /GND vias at (36.04, 26.87),
+  (34.34, 33.62) and (34.04, 59.52) (`cr/stitch_gaps.md`); with 296 stitch points the largest distance is 3.47 mm at
+  (31.0, 34.7), and the row passes. (**Superseded 2026-11-13:** "The gap is open and is returned to the routing session
+  (request R9-03).") An intermediate board
   (`8521bf8`: stitching and straightening before the trim; 19-vertex outline of 2248.3 mm², MH2 (55.10, 67.54), MH4
   (24.23, 25.18); largest stitching gap 3.80 mm) is superseded by this order. Reversal: restore `cr/cr.kicad_pcb` from
   `779c419`; the D-20 stitching then fails with 6 /GND vias.
@@ -1353,7 +1359,8 @@ the trimmed board gave 4 silkscreen items (2 silk to edge, 2 silk over a hole ma
 
 **D-61 (2026-11-13):** on the trimmed, stitched and straightened board after the reference placement, DRC
 (`--severity-all --schematic-parity`) reports 0 violations, 0 unconnected items and 0 parity issues. The constraint
-check gives 108 pass rows and 1 FAIL, the new D-20 stitching row (4.08 mm against 3.54 mm).
+check gave 108 pass rows and 1 FAIL, the new D-20 stitching row (4.08 mm against 3.54 mm). After the stitching gap
+fill (three /GND vias), it gives 109 pass rows and 0 FAIL (D-20 row 3.47 mm); DRC is unchanged at 0 items.
 
 ### 9.2 Constraint measurements
 

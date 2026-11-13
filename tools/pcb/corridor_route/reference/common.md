@@ -41,6 +41,7 @@ T="<repository root>/tools/pcb/corridor_route"
 | Score | `"$PY" score.py W/vN/board/<board>.kicad_pcb W/<board>.kicad_pcb W/vN/score --plane-nets <nets> [--test-pour NET:LAYER] [--allow-via-in-pad] --label <method>-vN` |
 | Plane vias | `"$PY" plane_vias.py W/model/model.json W/plan.json W/vN/routes.json W/vN/board/<board>.kicad_pcb W/vN/plane_routes.json --report W/vN/plane_vias.md [--stitch PITCH]` (then apply onto `W/vN/board` and score) |
 | Straighten | `"$PY" straighten.py W/vN/board_pv/<board>.kicad_pcb W/vN/board_st --plan W/plan.json --routes-out W/vN/routes_st.json` (then score) |
+| Stitching gaps | `"$PY" stitch_gaps.py <final board>.kicad_pcb W/gaps [--net /GND] [--layer B.Cu] [--limit 3.54] [--y-flip-offset Y0]` (then DRC) |
 | No via site | `"$PY" nosite_why.py W/model/model.json W/plan.json W/vN/routes.json W/vN/board_pv/<board>.kicad_pcb` |
 | Parallel metric | `"$PY" parallel_metric.py W/model/model.json W/vN/routes.json --zone-parts <refs> --analog-nets <nets> [--ignore-nets <nets>] [--exempt-pins REF.PAD,...] [--check-pad REF.PAD] [--json out.json]` |
 | Base compare | `"$PY" cmp_place.py <previous base>.kicad_pcb <new base>.kicad_pcb` |

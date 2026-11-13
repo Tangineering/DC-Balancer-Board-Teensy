@@ -13,7 +13,7 @@
 | C119 | 0.8 | 0 | 0.00 | over another courtyard |
 | C125 | 1.0 | 0 | 1.96 |  |
 | C126 | 1.0 | 0 | 1.91 |  |
-| C129 | 1.0 | 0 | 1.31 |  |
+| C129 | 0.8 | 0 | 0.00 |  |
 | C130 | - | - | - | F.Fab (kept from an earlier run) |
 | C131 | 1.0 | 0 | 2.06 | over another courtyard |
 | C132 | - | - | - | F.Fab (kept from an earlier run) |
@@ -34,7 +34,7 @@
 | R104 | 1.0 | 0 | 1.91 |  |
 | R105 | 1.0 | 0 | 1.16 |  |
 | R107 | 1.0 | 0 | 2.90 | over another courtyard |
-| R108 | 1.0 | 90 | 1.61 | over another courtyard |
+| R108 | 0.8 | 90 | 1.67 | over another courtyard |
 | R109 | 1.0 | 0 | 2.59 | over another courtyard |
 | R110 | 1.0 | 0 | 2.96 | over another courtyard |
 | R111 | 1.0 | 90 | 1.60 | over another courtyard |
