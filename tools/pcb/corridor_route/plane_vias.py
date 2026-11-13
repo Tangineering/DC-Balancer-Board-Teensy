@@ -27,6 +27,7 @@ the via radius (charger EVM D-37, D-55: the step had put a /GND via inside the U
 The keep-out follows the plan's rules.via_in_pad as the router does: true admits every SMD pad, a list admits the
 named pads. --allow-via-in-pad restores the earlier behaviour (no keep-out at all)."""
 import argparse
+import math
 import json
 
 import numpy as np
@@ -52,6 +53,9 @@ ap.add_argument("--report", default=None)
 ap.add_argument("--min-area", type=float, default=0.3)
 # default on; --respect-unflashed is still accepted (it was the opt-in form), --no-respect-unflashed turns it off
 ap.add_argument("--respect-unflashed", action=argparse.BooleanOptionalAction, default=True)
+ap.add_argument("--stitch", type=float, default=0.0,
+                help="also add stitching vias of the plane net on a grid of this pitch (mm); 0 = off")
+ap.add_argument("--stitch-net", default=None, help="the plane net to stitch (default: the first plane net)")
 ap.add_argument("--allow-via-in-pad", action="store_true",
                 help="admit a new via on an SMD pad (the behaviour before 2026-11-13)")
 A = ap.parse_args()
@@ -176,6 +180,70 @@ for z in b.Zones():
             e["vias"].append([x, y])
             e["via_d"].append(C.via)
             done.append(label)
+# Stitching (opt-in, --stitch PITCH): the plane layers (here a solid GND on the inner and back layers) are joined
+# through the board by vias of the plane net at most PITCH apart. A grid node that already has a via or a
+# through-hole pad of the net within PITCH/2 is covered. Otherwise the nearest legal site within PITCH/2 of the node
+# is used (the same via_ok as above: routed copper with clearance, holes, SMD pads and their mask openings,
+# unflashed pads, keep-outs, other stitching vias), inside a fill of the net on a routing layer so that the via ties
+# that fill as well. A node without such a site is left empty and counted.
+stitched, st_empty = 0, 0
+if A.stitch > 0:
+    snet = A.stitch_net or sorted(C.planes)[0]
+    n = C.nid(snet)
+    fills = []
+    for z in b.Zones():
+        if z.GetIsRuleArea() or z.GetNetname() != snet:
+            continue
+        for lay in z.GetLayerSet().Seq():
+            if b.GetLayerName(lay) not in C.LAYERS:
+                continue
+            fl = z.GetFilledPolysList(lay)
+            for k in range(fl.OutlineCount()):
+                o = fl.Outline(k)
+                pts = [(mm(o.CPoint(q).x), mm(o.CPoint(q).y)) for q in range(o.PointCount())]
+                hs = []
+                for h in range(fl.HoleCount(k)):
+                    ho = fl.Hole(k, h)
+                    hs.append([(mm(ho.CPoint(q).x), mm(ho.CPoint(q).y)) for q in range(ho.PointCount())])
+                if len(pts) >= 3:
+                    fills.append(Polygon(pts, [h for h in hs if len(h) >= 3]).buffer(0))
+    from shapely.prepared import prep as _prep
+    fill_in = _prep(unary_union(fills).buffer(-(C.via / 2 + 0.05))) if fills else None
+    have = [(x, y) for (x, y) in ties.get(snet, [])]
+    if fill_in is not None:
+        x0, y0, x1, y1 = unary_union(fills).bounds
+        half = A.stitch / 2
+        rc = int(math.ceil(half / R))
+        yy = y0 + half
+        while yy < y1:
+            xx = x0 + half
+            while xx < x1:
+                if not any((hx - xx) ** 2 + (hy - yy) ** 2 <= half * half for hx, hy in have):
+                    cj, ci = C.cell(xx, yy)
+                    best = None
+                    for dj in range(-rc, rc + 1):
+                        for di in range(-rc, rc + 1):
+                            j, i = cj + dj, ci + di
+                            if not (0 <= j < C.ny and 0 <= i < C.nx) or (dj * dj + di * di) * R * R > half * half:
+                                continue
+                            d2 = dj * dj + di * di
+                            if best is not None and d2 >= best[0]:
+                                continue
+                            if fill_in.contains(Point(*C.xy(j, i))) and via_ok(n, j, i):
+                                best = (d2, j, i)
+                    if best is None:
+                        st_empty += 1
+                    else:
+                        _, j, i = best
+                        placed.setdefault(n, []).append((j, i))
+                        x, y = C.xy(j, i)
+                        have.append((x, y))
+                        e = res.setdefault(snet, dict(net=snet, replace=False, tracks=[], widths=[], vias=[], via_d=[]))
+                        e["vias"].append([x, y])
+                        e["via_d"].append(C.via)
+                        stitched += 1
+                xx += A.stitch
+            yy += A.stitch
 json.dump(dict(results=list(res.values()), keep_existing=True, routed_nets=[],
                params=dict(track=C.track, clear=C.clear, via=C.via, drill=C.drill, res=R)), open(A.out, "w"))
 L = ["# Plane-via step", "",
@@ -184,6 +252,8 @@ L = ["# Plane-via step", "",
          ", ".join(sorted(C.planes)), pieces, len(done), len(failed), A.min_area, small), "",
      "Vias kept off the unflashed layers of their own net's through-hole pads: %s." % (
          "yes" if A.respect_unflashed else "NO (--no-respect-unflashed; check the score for new DRC items)"), "",
+     "Stitching: %s." % ("%d vias at pitch %.2f mm; %d grid nodes without a legal site" % (stitched, A.stitch, st_empty)
+                         if A.stitch > 0 else "off"), "",
      "## Pieces without a via site", ""] + (["- " + f for f in failed] or ["None."])
 L += ["", "Apply the output to the routed board with `apply_routes.py`, then score the result against the unrouted "
       "board. The open connections of the plane nets in `score.md` are the test: 0 is a pass."]

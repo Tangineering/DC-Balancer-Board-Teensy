@@ -69,7 +69,8 @@ score, seeds, run time). Read the other reference files at the step that names t
 6. Route at four seeds, in the background:
    `"$PY" -u seeds.py run W/model/model.json W/plan.json W/plain --seeds 1,2,3,4`.
    Read `W/plain/SEEDS.md`: mean, minimum, maximum, nets open at every seed, nets open at some seeds.
-7. Finish each seed in this order: apply, score, plane vias, apply, score, constraint metrics. Finish the best
+7. Finish each seed in this order: apply, score, plane vias (with stitching), apply, score, constraint metrics.
+   For the seed that you deliver, add the straightening pass at the end (below). Finish the best
    seed always, and every seed when the plane nets or a constraint metric decide between plans. Run every step
    with the pcbnew venv `"$PY"`; shapely is in that venv, not in miniforge (`"$MPL"`).
 
@@ -77,7 +78,7 @@ score, seeds, run time). Read the other reference files at the step that names t
    D=W/plain/s<N>; B=<board>.kicad_pcb; V="--allow-via-in-pad"   # V empty when the plan allows no via in a pad
    "$PY" apply_routes.py W/$B $D/routes.json $D/board
    "$PY" score.py $D/board/$B W/$B $D/score --plane-nets <nets> $V --label plain-s<N>
-   "$PY" plane_vias.py W/model/model.json W/plan.json $D/routes.json $D/board/$B $D/plane_routes.json --report $D/plane_vias.md
+   "$PY" plane_vias.py W/model/model.json W/plan.json $D/routes.json $D/board/$B $D/plane_routes.json --report $D/plane_vias.md [--stitch 2.5]
    "$PY" apply_routes.py $D/board/$B $D/plane_routes.json $D/board_pv
    "$PY" score.py $D/board_pv/$B W/$B $D/score_pv --plane-nets <nets> $V --label plain-s<N>-pv
    "$PY" parallel_metric.py W/model/model.json $D/routes.json --zone-parts <refs> --analog-nets <nets> --json $D/parallel.json
@@ -88,6 +89,20 @@ score, seeds, run time). Read the other reference files at the step that names t
    - `plane_vias.py` keeps each via off the unflashed layers of its own net's through-hole pads. Do not give
      `--no-respect-unflashed`. Without the rule, KiCad flashed GND pads J1.14 and J1.15 on In2.Cu onto routed
      tracks on the CR board, at 3 of 4 seeds.
+   - Stitching: when the design asks for plane stitching (for example "L2 and L4 GND stitched at a pitch of at
+     most 5 mm"), give `plane_vias.py --stitch PITCH`. It adds vias of the plane net on a grid of that pitch inside
+     the plane net's fill, with the same site rules as the plane vias (routed copper, holes, SMD pads and their mask
+     openings, unflashed pads, keep-outs), and reports the grid nodes without a legal site. On the r9 CR board,
+     2.5 mm gave 585 vias over the whole outline, 50 nodes without a site, and no new DRC item; the trim step
+     (section 5a) removes the vias outside the new outline.
+   - Straightening, for the delivered seed: the router steps cell by cell, so free stretches come out as
+     staircases. `"$PY" straighten.py $D/board_pv/$B $D/board_st --plan W/plan.json --routes-out
+     $D/routes_st.json` replaces each run that it can by one straight or 45-degree segment, or by one 45-degree and
+     one straight segment. It keeps the clearance to all other copper, the edge, keep-outs, thermal rings, the
+     unflashed own pads and the reserved plan corridors, and makes no acute bend; hard spots stay as they are.
+     Score `board_st` again: it must stay valid with no more plane-net opens, and run the constraint metrics on
+     `routes_st.json`. On the r9 CR board it cut 1791 track segments to 762 and 830.8 mm to 824.4 mm, DRC
+     unchanged, divider metric unchanged.
    - Run `parallel_metric.py` only when a soft keep-away rule applies (step 4).
    - Run the project's constraint check on the board that you report. It knows design rules that KiCad DRC and
      `score.py` do not: on the r9 CR board it found two router vias inside the corners of pad mask openings
