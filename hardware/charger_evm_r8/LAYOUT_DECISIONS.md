@@ -18,39 +18,55 @@ Status on 2026-11-13:
 | Board | Schematic | Placement | Routing | ERC | DRC | Fab package |
 |---|---|---|---|---|---|---|
 | EIB | complete | complete | complete | 0 | 0 (schematic parity checked) | `fab/eib_2026-11-13/` (D-49 DNP set; copper and drill identical to `fab/eib_2026-11-11/`); not ordered |
-| CR | complete | complete (D-54 to D-56) | complete (D-58; power copper D-57; outline trim and holes D-60; GND stitching and straightened tracks D-61; references D-59) | 0 | 0 violations, 0 unconnected items, 0 parity issues (`--severity-all --schematic-parity`) | `fab/cr_2026-11-13/` (re-exported after D-61); not ordered |
+| CR | complete | complete (D-54 to D-56) | complete (D-58; power copper D-57; outline D-62, holes D-60 and D-62; GND stitching and straightened tracks D-61, re-run in D-62; references D-59 and D-62) | 0 | 0 violations, 0 unconnected items, 0 parity issues (`--severity-all --schematic-parity`) | `fab/cr_2026-11-13/` (re-exported after D-62); not ordered |
 
-On the routed, trimmed and stitched CR (D-60, D-61), the constraint check (`cr/constraint_check.md`) gives 109 pass rows,
-0 FAIL (including the D-20 stitching row added in D-61), 3 exemption
-rows (R102 under D-20; R103 and R129 as listed U101-network exemptions, D-55/D-56) and 16 information rows (D-56).
-The fabricator of the CR is OSH Park (bare board), with the rule file
-`tools/pcb/fab_rules/fab_4layer_oshpark_only.kicad_dru`. The EIB is a 2-layer board; at OSH Park it is a separate
-order and is not on the CR panel. Neither package has been ordered. The operator's pre-order review of the routed CR
-and the two packages (D-50 check-in 4) took place in two parts on 2026-11-13. Operator ruling 2026-11-13 (Review 2/2:
-BAV199, strap, OSH Park (fab checks), local_6e36c3a4-f328-44cd-8c31-05ea2fa7bfa3, chat 2026-11-13) closes section 11
-items 9 and 10 and the VCHGIN half of item 2, closes the stack-up and mask-expansion parts of item 5, closes item 7 as
-out of scope and amends item 3. No operator-review item now blocks the CR bare-board order. Item 3, the OSH Park
-policy on non-functional inner pads, stays open as an assumption that the operator checks when the board is
-submitted. The drilled-versus-finished reading of the 1.1 mm TSW holes stays open in item 5. It does not block the
-order, because a finished hole down to the 1.02 mm drawing value still gives about 0.06 mm of corner clearance on
-the 0.64 mm post (D-41). The VCHGOUT half of item 2 (the In2.Cu `VCHGOUT_L3_strap` at 3.21 A) is outside the ruling
-and stays open. No current check of the VCHGOUT path at 3.21 A is on record, so it is not established whether this
-half blocks the order. The open rest of item 16 is a parts check and does not block the order.
+On the routed CR with the D-62 outline and the re-run stitching (D-60 to D-62), the constraint check
+(`cr/constraint_check.md`) gives 109 pass rows, 0 FAIL (including the D-20 stitching row of D-61, 3.51 mm against 3.54
+mm, and the D-62 outline rows), 3 exemption rows (R102 under D-20; R103 and R129 as listed U101-network exemptions,
+D-55/D-56) and 16 information rows (D-56). The fabricator of the CR is OSH Park (bare board), with the rule file
+`tools/pcb/fab_rules/fab_4layer_oshpark_only.kicad_dru`. The EIB is a 2-layer board; at OSH Park it is a separate order
+and is not on the CR panel. Neither package has been ordered. The operator's pre-order review of the routed CR and the
+two packages (D-50 check-in 4) took place in two parts on 2026-11-13. Operator ruling 2026-11-13 (Review 2/2: BAV199,
+strap, OSH Park (fab checks), local_6e36c3a4-f328-44cd-8c31-05ea2fa7bfa3, chat 2026-11-13) closes section 11 items 9 and
+10 and the VCHGIN half of item 2, closes the stack-up and mask-expansion parts of item 5, closes item 7 as out of scope
+and amends item 3. Apart from the VCHGOUT half of section 11 item 2 (next paragraph), no operator-review item now blocks
+the CR bare-board order. Item 3, the OSH Park policy on non-functional inner pads, stays open as an assumption that the
+operator checks when the board is submitted. The drilled-versus-finished reading of the 1.1 mm TSW holes stays open in
+item 5. It does not block the order, because a finished hole down to the 1.02 mm drawing value still gives about 0.06 mm
+of corner clearance on the 0.64 mm post (D-41). The open rest of item 16 is a parts check and does not block the order.
 
-Two follow-ups that the Review 2/2 session raised have no operator answer and stay open without a change. First, the
-fab package README gives a quantity of 5, but OSH Park sells boards in multiples of 3. Second, its OSH Park row refers to
-"the 1 oz fallback", but the OSH Park 4-layer stack-up already is 1 oz outer and 0.5 oz inner copper. In addition, a
+The one open engineering item is the VCHGOUT half of section 11 item 2, which is outside the Review 2/2 ruling. The
+copper sections of the VCHGOUT path from U101 OUT to W1 were measured on the D-62 board layout and checked against the
+3.21 A basis (`round4/calc/r9_calc.py` R9.H26). Two short necks carry the current on F.Cu only, because the In2.Cu
+`VCHGOUT_L3_strap` ends at x 36.90: 1.469 mm over about 1.75 mm (U101 OUT pins to C103) and 2.082 mm over about 1.25 mm
+(C103 ground pad and the D-56 /GND via notch). On the IPC-2152 long-conductor basis, these necks carry 2.30 A and 2.75 A
+at a 10 C rise and fail the 3.21 A basis. Whether this blocks the order needs an operator ruling: accept the two short
+necks, widen the copper, or measure the rise on the bench (section 11 item 2). (**Superseded 2026-11-13:** "The VCHGOUT
+half of item 2 (the In2.Cu `VCHGOUT_L3_strap` at 3.21 A) is outside the ruling and stays open. No current check of the
+VCHGOUT path at 3.21 A is on record, so it is not established whether this half blocks the order."; R9.H26 measures the
+path.)
+
+One follow-up that the Review 2/2 session raised has no operator answer and stays open: the fab package README gives a
+quantity of "5 (E BOM)", but OSH Park sells boards in multiples of 3. The D-62 re-export states the multiples of 3 in
+the OSH Park row of the README and keeps the quantity until the operator rules on it. The same row now states the
+confirmed OSH Park stack-up (section 11 item 5). The outline is the D-62 outline (operator ruling 2026-11-13, route-race
+request R9-04: edges at 0, 30, 45 or 60 degrees to the axes and 1.0 mm fillets), and the status table, the
+constraint-check counts and `fab/cr_2026-11-13/` are for the D-62 board. The status line of the package README still
+names the D-60 outline and 19 F.Fab references; it is corrected at the next re-export. (**Superseded 2026-11-13:** "Two
+follow-ups that the Review 2/2 session raised have no operator answer and stay open without a change. First, the fab
+package README gives a quantity of 5, but OSH Park sells boards in multiples of 3. Second, its OSH Park row refers to
+'the 1 oz fallback', but the OSH Park 4-layer stack-up already is 1 oz outer and 0.5 oz inner copper. In addition, a
 further outline trim (D-62; operator ruling 2026-11-13 relayed by the routing session: rectilinear or 30/45/60 degree
 edges, 1.0 mm fillets) is in progress and not yet committed. The status table above, the constraint-check counts and
-`fab/cr_2026-11-13/` are for the D-61 board until D-62 is recorded. (**Superseded 2026-11-13:** "The next step is the
-operator's pre-order review of the routed CR and the two packages (D-50 check-in 4). Section 11 lists the open items
-that the review must close before the CR bare-board order: items 2, 3, 5, 7 and 9."; operator ruling 2026-11-13
-(Review 2/2) closes or amends these items, section 11.) (**Superseded 2026-11-13:** "items 2, 3, 5, 7, 9, 14, 16 and
-25, and the W6/W7 lead pads of D-45, and the D-20 stitching gap of D-61"; the gap fill of D-61 closes the stitching
-gap, and operator ruling 2026-11-13 (Review 1/2: J102, J1-TSW, W6-W7 (connector and lead-pad geometry),
-local_923ffa1c-f985-43ad-8510-7faea2e5f5d7, chat 2026-11-13) closes items 14 and 25, the header half of item 16 and
-the W6/W7 lead pads (D-41, D-45, D-46). The open rest of item 16, the cable wire gauge and insulation, is a parts
-check and does not block the bare-board order.)
+`fab/cr_2026-11-13/` are for the D-61 board until D-62 is recorded."; D-62 is recorded, and the re-export corrects the
+OSH Park row.) (**Superseded 2026-11-13:** "The next step is the operator's pre-order review of the routed CR and the
+two packages (D-50 check-in 4). Section 11 lists the open items that the review must close before the CR bare-board
+order: items 2, 3, 5, 7 and 9."; operator ruling 2026-11-13 (Review 2/2) closes or amends these items, section 11.)
+(**Superseded 2026-11-13:** "items 2, 3, 5, 7, 9, 14, 16 and 25, and the W6/W7 lead pads of D-45, and the D-20 stitching
+gap of D-61"; the gap fill of D-61 closes the stitching gap, and operator ruling 2026-11-13 (Review 1/2: J102, J1-TSW,
+W6-W7 (connector and lead-pad geometry), local_923ffa1c-f985-43ad-8510-7faea2e5f5d7, chat 2026-11-13) closes items 14
+and 25, the header half of item 16 and the W6/W7 lead pads (D-41, D-45, D-46). The open rest of item 16, the cable wire
+gauge and insulation, is a parts check and does not block the bare-board order.)
 
 Status on 2026-11-11 (history; superseded by the table above):
 
@@ -670,7 +686,8 @@ digest, and its reconciliation notes bind where a record disagrees.
   survey of the change request stays open: the L-FC and L-BT heights, the bodge parts and their heights, the J-BT and
   J-BL face positions, and whether the C1-BT, C1-FC, CBL2, RB2 and RB3 bodies clear x 18.584.")
   **Amended 2026-11-13 (D-60):** the rectangle stays the placement frame; after routing, the board is trimmed to the
-  D-60 convex outline (2241.6 mm²) inside it, with the -x edge kept.
+  D-60 convex outline (2241.6 mm²) inside it, with the -x edge kept. **Amended 2026-11-13 (D-62):** the trimmed outline
+  is the D-62 outline of 10 filleted corners (2327.7 mm²), with the -x vertices exactly on x 18.584.
 
 **D-40. U101 package (operator ruling 2026-11-12).**
 
@@ -694,7 +711,8 @@ digest, and its reconciliation notes bind where a record disagrees.
   TSW mated with SSQ is rated 6.3 A per pin with two positions powered (Samtec F-226). A CR rotated by 180 degrees
   lands on the J-BL, J-FC and J-BT terminal blocks (21.70 mm) before the pins engage at 16.89 mm, so the blocks key the
   board. **Amended 2026-11-13 (D-60):** on the trimmed outline, the rotated CR lands on J-BL (7.73 mm of x overlap) and
-  J-FC (7.63 mm) at the two ends, not on J-BT; the +x key ear keeps this overlap.
+  J-FC (7.63 mm) at the two ends, not on J-BT; the +x key ear keeps this overlap. **Amended 2026-11-13 (D-62):** on the
+  D-62 outline, the rotated CR lands on J-BL (7.73 mm) and J-FC (7.73 mm). (**Superseded:** "J-FC (7.63 mm)".)
 - Consequence: the engagement-start height (seated underside plus post insertion) must stay below 21.70 mm; a taller
   stack needs a real key. The sockets on the MB keep the live MB pins touch-safe with the CR removed. The assembly
   order is: solder the SSQ sockets to the MB; plug the TSW strips in; set the reflowed CR on their bodies; solder the
@@ -1391,6 +1409,12 @@ Open: the 4-seed probe re-run on this board (step 6 entry), N-5 and N-8.
   local_923ffa1c-f985-43ad-8510-7faea2e5f5d7, chat 2026-11-13) closes it, "That is enough room" (D-46).) Reversal: restore `cr/cr.kicad_pcb` from the D-59 commit and run `gen/silk_refs.py`
   and `gen/export.sh` again, or change `FINAL_OUTLINE`, `KEY_EAR` or `MOUNTING_HOLES` and run `gen/trim_cr.py` on the
   routed board. The proposal record is the routing session's `routing_r9_cr/outline_trim/TRIM.md`.
+  **Amended 2026-11-13 (D-62):** the 18-vertex outline is replaced by the D-62 outline (10 corners with 1.0 mm
+  fillets, edges at multiples of 30 or 45 degrees, 2327.7 mm²; bounding box unchanged at 40.02 x 64.81 mm). MH2 moves
+  to (54.85, 68.79); MH1, MH3 and MH4 do not move. The -x vertices sit exactly on x 18.584, so the 0.004 mm overhang
+  stated above no longer applies; the largest head-disc overhang is 0.001 mm (MH1, MH4). C110 is back on the
+  silkscreen, so 18 references are on F.Fab only. The area, MH2 position, overhang and F.Fab count above, and the
+  4.53 mm nearest-item distance of MH2, are for the D-60 board; the D-62 nearest-item distance of MH2 is not recorded.
 
 **D-61. GND stitching vias and straightened tracks on the trimmed CR (operator requests 2026-11-13).**
 
@@ -1421,7 +1445,48 @@ Open: the 4-seed probe re-run on this board (step 6 entry), N-5 and N-8.
   (request R9-03).") An intermediate board
   (`8521bf8`: stitching and straightening before the trim; 19-vertex outline of 2248.3 mm², MH2 (55.10, 67.54), MH4
   (24.23, 25.18); largest stitching gap 3.80 mm) is superseded by this order. Reversal: restore `cr/cr.kicad_pcb` from
-  `779c419`; the D-20 stitching then fails with 6 /GND vias.
+  `779c419`; the D-20 stitching then fails with 6 /GND vias. **Amended 2026-11-13 (D-62):** the finish was re-run in
+  this order on the D-62 outline; the stitching, straightening and reference counts of this entry are for the D-61
+  board (`437d2d7`).
+
+**D-62. CR outline with limited edge angles and filleted corners (operator ruling 2026-11-13; route-race r9 change
+request R9-04).**
+
+- Decision: the D-60 trim is redone under three rules. Every outline edge runs at 0, 30, 45, 60, 90, 120, 135 or
+  150 degrees (`TRIM_ANGLES` in `gen/cr_geometry.py`). A slanted edge is at least 2.0 mm long (`TRIM_MIN_EDGE`). Every
+  corner carries a 1.0 mm fillet, drawn as a true Edge.Cuts arc (`FILLET`). Before the fillets, `FINAL_OUTLINE` has
+  10 corners: (58.600, 71.043), (55.835, 72.640), (25.266, 72.640), (22.564, 71.079), (18.584, 67.100),
+  (18.584, 28.193), (21.845, 22.545), (47.332, 7.830), (56.928, 7.830) and (58.600, 10.726), MB frame. The holes are
+  MH1 (26.23, 69.04), MH2 (54.85, 68.79), MH3 (54.85, 11.43) and MH4 (24.48, 25.18); MH2 moves from (54.85, 63.79)
+  (D-60), and the other three holes do not move. `gen/trim_cr.py` passes `--angles`, `--min-edge` and `--fillet` to
+  `tools/pcb/corridor_route/trim_outline.py` and reproduces the outline from the routed board `621fb28`.
+  `gen/silk_refs.py` and `gen/check_constraints.py` read the outline with `GetBoardPolygonOutlines`, so the arcs are
+  part of the outline that they check. The D-60 hole keep-outs, head discs, zone inset and router edge band are
+  unchanged.
+- Reason: the operator ruled on 2026-11-13, in a conversation with the routing session: "Keep the trim rectilinear,
+  or with 30, 45, or 60deg angles. Fillets on corners is good though. Note that PCB fabs will charge based on the
+  enclosing rectangle, so trimming away material within the rectangle is generally unnecessary, though it may look
+  better. In our case, keeping more of the MB exposed underneath is a small benefit. Redo the trim with my new
+  ruleset."
+- Consequence: the filleted outline area is 2327.7 mm² (D-60: 2241.6 mm²), that is 55.3 % of the D-39 rectangle. The
+  bounding box stays 40.02 x 64.81 mm, so the enclosing rectangle that the fabricator charges for does not change. The
+  -x vertices now sit exactly on x 18.584, because `trim_outline.py` snaps them to the D-39 edge; the 0.004 mm overhang
+  of D-60 is gone. A CR rotated 180 degrees lands on J-BL (7.73 mm of x overlap) and J-FC (7.73 mm), so the D-41 key
+  holds. The fillet at the corner (58.600, 71.043) clips 0.027 mm² off the D-60 ear box. Therefore the ear row of the
+  constraint check is measured against the corners before the fillets, and the D-41 key row is the functional check. The
+  routing session re-ran the D-61 finish on the trimmed board: `plane_vias.py --stitch 2.5` placed 279 vias,
+  `straighten.py` reduced the track segments from 1791 to 769 and the track length from 830.8 to 824.5 mm, and
+  `stitch_gaps.py` added three /GND vias at (36.04, 26.88), (34.29, 33.53) and (33.54, 59.53). Then `gen/silk_refs.py`
+  placed 60 references on F.Silkscreen and 18 on F.Fab only: C107, C115, C130, C132, D105, D106, R122, R130, R131B,
+  R147, R184-R189, U110 and W3. C110 is back on the silkscreen (D-59, D-60). `gen/sync_fields.py` wrote the J102 part
+  number 43045-1012 and the cable 2147561101 (D-41 Review 1/2 ruling). The largest D-20 stitching gap is 3.51 mm at
+  (43.0, 44.8) in the constraint check, against 3.54 mm (`stitch_gaps.py`, sampling at 0.50 mm, reports 3.52 mm). The
+  status line of the package README still names the D-60 outline and 19 F.Fab references; it is corrected at the next
+  re-export. The fab package `fab/cr_2026-11-13/` and the figures were re-exported. The size row of the package README
+  describes the D-62 outline. Its OSH Park row states the confirmed stack-up (section 11 item 5) and that OSH Park sells
+  boards in multiples of 3; the quantity stays "5 (E BOM)" until the operator rules on it. No part, track or via moved
+  in the trim itself. Reversal: restore `cr/cr.kicad_pcb` and the `gen/cr_geometry.py` outline and hole data of the D-61
+  board (`437d2d7`, lineage `b8e3762`) and run `gen/export.sh` again.
 
 ## 9. Verification
 
@@ -1468,6 +1533,13 @@ the trimmed board gave 4 silkscreen items (2 silk to edge, 2 silk over a hole ma
 (`--severity-all --schematic-parity`) reports 0 violations, 0 unconnected items and 0 parity issues. The constraint
 check gave 108 pass rows and 1 FAIL, the new D-20 stitching row (4.08 mm against 3.54 mm). After the stitching gap
 fill (three /GND vias), it gives 109 pass rows and 0 FAIL (D-20 row 3.47 mm); DRC is unchanged at 0 items.
+
+**D-62 (2026-11-13):** on the board trimmed to the D-62 outline, after the re-run finish, the reference placement and
+the field synchronization, ERC reports 0 items. DRC (`--severity-all --schematic-parity`) reports 0 violations,
+0 unconnected items and 0 parity issues. The constraint check gives 109 pass rows and 0 FAIL. The two D-62 outline
+rows compare the board Edge.Cuts (20 items, 10 of them arcs) with the filleted `FINAL_OUTLINE` (area difference
+0.0103 mm²) and check the edge angles and the 2.0 mm minimum slanted edge. The D-20 stitching row reads 3.51 mm at
+(43.0, 44.8) with 306 stitch points, against 3.54 mm.
 
 ### 9.2 Constraint measurements
 
@@ -1521,8 +1593,29 @@ Layout and fabrication:
    gives 2.73 A. The IPC-2221 internal formula gives 2.04 A, below the 2.41 A basis, and is superseded by IPC-2152
    (D-57). The TODO(verify: IPC-2152 Figure 5-1) of D-56 closes for the VCHGIN strap. The ruling covers the VCHGIN
    strap only. The In2.Cu VCHGOUT strap (`VCHGOUT_L3_strap`, `gen/route_cr.py`, D-22) is a parallel path to the 1 oz
-   L1 VCHGOUT pour, and no check of it is on record. The VCHGOUT half stays open: TODO(verify: IPC-2152) the In2.Cu
-   VCHGOUT_L3_strap at 3.21 A, or a check that the 1 oz L1 VCHGOUT pour alone carries 3.21 A (D-22, D-29).
+   L1 VCHGOUT pour. **Amended 2026-11-13 (D-62; `round4/calc/r9_calc.py` R9.H26):** the copper sections of the VCHGOUT
+   path from U101 OUT to W1 are measured on the D-62 board layout. The basis is 3.21 A at a 10 C rise, with the 1 oz
+   outer copper counted as the 35 um clad only (the plating is not credited) and the inner copper at 17.5 um. The
+   IPC-2152 baseline fit then requires 153.4 mil2, that is 2.828 mm on F.Cu alone. Each neck section is a vertical
+   chord of the filled /VCHGOUT copper, with pads not counted. The In2.Cu `VCHGOUT_L3_strap` ends at x 36.90, so the
+   two necks at the U101 end are F.Cu only. Table 11-2a gives the four necks.
+
+   | Neck | x (mm) | F.Cu + In2.Cu width (mm) | Length (mm) | Section (mil2) | IPC-2152 at 10 C | Rise at 3.21 A | Result |
+   |---|---|---|---|---|---|---|---|
+   | U101 OUT pins to C103 | 39.25-41.00 | 1.469 + 0 | about 1.75 | 79.7 | 2.30 A | 21.9 C | FAIL (long-conductor basis) |
+   | C103 ground pad and D-56 /GND via notch | 37.50-38.75 | 2.082 + 0 | about 1.25 | 112.9 | 2.75 A | 14.3 C | FAIL (long-conductor basis) |
+   | D103 belt | 31.75-33.25 | 3.800 + 1.800 | about 1.50 | 255.0 | 4.16 A | 5.6 C | pass |
+   | W1 approach | 31.50 | 2.249 + 2.450 | about 0.25 | 188.5 | 3.56 A | 7.9 C | pass |
+
+   The IPC-2152 chart is a long-conductor basis. A neck of 1-2 mm spreads heat into the wide pour on both sides, so
+   the chart is expected to be conservative for the two failing necks. However, no short-neck method is on record,
+   so the size of that margin is not established. The VCHGOUT half stays open and needs an operator ruling: accept
+   the two short necks, widen the /VCHGOUT copper at the two necks (a routing change; the x 37.50-38.75 neck is
+   bounded by the D-56 /GND via notch), or measure the temperature rise on the bench at 3.21 A (D-22, D-29).
+   TODO(ruling: operator) accept the two F.Cu necks or widen them, or TODO(measure: operator) the rise at 3.21 A.
+   (**Superseded 2026-11-13:** "and no check of it is on record. The VCHGOUT half stays
+   open: TODO(verify: IPC-2152) the In2.Cu VCHGOUT_L3_strap at 3.21 A, or a check that the 1 oz L1 VCHGOUT pour alone
+   carries 3.21 A (D-22, D-29)."; R9.H26 measures the path.)
    (**Superseded:** "TODO(verify: IPC-2152 internal-layer chart) for the L3/L4 straps on 0.5 oz inner copper at
    2.41 A and 3.21 A (D-29). **Amended 2026-11-12:** open only if VCHGOUT or the VCHGIN strap uses L3; L4 carries no
    strap (D-20, D-22). **Amended 2026-11-13 (D-56):** the VCHGIN strap is checked in design-document row H.25 on a

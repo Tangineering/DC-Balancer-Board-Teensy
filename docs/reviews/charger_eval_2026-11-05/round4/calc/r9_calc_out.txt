@@ -200,14 +200,23 @@ R9.H25 VCHGIN L3 strap as the only J1.10 feed: IPC-2152 inner-layer width, the J
 ==============================================================================================================
   basis: I = 2.41 A (eFuse I_OL max, H.5), rise 10 degC (A.8 Copper, H.22(c)), inner copper 17.5 um (D-29)
   required cross-section: IPC-2152 baseline fit 87.4 mil2 = 0.0564 mm2 -> width 3.221 mm at 17.5 um; comparison IPC-2221 internal (k 0.024) 142.6 mil2 -> 5.258 mm, IPC-2221 external (k 0.048) 54.8 mil2 -> 2.021 mm
-  neck D-55 strap, y 60.15 (pad 10 also fed on L1)                    1.995 mm =  54.1 mil2: IPC-2152 1.89 A at 10 degC, rise 17.7 degC at 2.41 A; IPC-2221 internal 1.19 A -> FAIL
-  neck review r9b trial 4, y 59.55                                    2.596 mm =  70.4 mil2: IPC-2152 2.16 A at 10 degC, rise 12.9 degC at 2.41 A; IPC-2221 internal 1.44 A -> FAIL
-  neck D-56 strap, y 58.50 (board-measured section 3.645 mm at x 42.75) 3.645 mm =  98.9 mil2: IPC-2152 2.57 A at 10 degC, rise 8.7 degC at 2.41 A; IPC-2221 internal 1.85 A -> pass
-  neck D-57 strap, C102c GND via cut-out + extension (4.174 mm at x 42.535) 4.174 mm = 113.2 mil2: IPC-2152 2.75 A at 10 degC, rise 7.4 degC at 2.41 A; IPC-2221 internal 2.04 A -> pass
+  neck D-55 strap, y 60.15 (pad 10 also fed on L1)                    1.995 mm =  54.1 mil2: IPC-2152 1.89 A at 10 degC, rise 17.7 degC at 2.41 A -> FAIL (IPC-2152); comparison IPC-2221 internal 1.19 A (below the basis)
+  neck review r9b trial 4, y 59.55                                    2.596 mm =  70.4 mil2: IPC-2152 2.16 A at 10 degC, rise 12.9 degC at 2.41 A -> FAIL (IPC-2152); comparison IPC-2221 internal 1.44 A (below the basis)
+  neck D-56 strap, y 58.50 (board-measured section 3.645 mm at x 42.75) 3.645 mm =  98.9 mil2: IPC-2152 2.57 A at 10 degC, rise 8.7 degC at 2.41 A -> pass (IPC-2152); comparison IPC-2221 internal 1.85 A (below the basis)
+  neck D-57 strap, C102c GND via cut-out + extension (4.174 mm at x 42.535) 4.174 mm = 113.2 mil2: IPC-2152 2.75 A at 10 degC, rise 7.4 degC at 2.41 A -> pass (IPC-2152); comparison IPC-2221 internal 2.04 A (below the basis)
   J1.10 joint on In2: thermal relief 4 x 0.6 mm = 2.40 mm of spoke (FAIL; superseded); solid connection (D-56): barrel perimeter pi x 1.10 mm = 3.456 mm -> pass (short-conductor case; the long-conductor chart is conservative here)
   vias C102c end, D-55 (39.75, 60.35 / 61.05)       2 x 1.33 A = 2.67 A (1.11 x the basis, equal sharing ASSUMPTION) -> pass
   vias C102c end, D-56 (+ 39.75, 59.65)             3 x 1.33 A = 4.00 A (1.66 x the basis, equal sharing ASSUMPTION) -> pass
   per via: drill 0.30 mm, plating 20 um, barrel 27.3 mil2 (0.0176 mm2), IPC-2152 fit 1.33 A at 10 degC; the C102b-end vias (6) carry the C102b branch only, not the J1.10 DC path
+
+==============================================================================================================
+R9.H26 VCHGOUT path from U101 OUT to W1: IPC-2152 width at 3.21 A, board-measured necks (Review 2/2 follow-up, 2026-11-13)
+==============================================================================================================
+  basis: I = 3.21 A, rise 10 degC, outer copper 35 um (clad only), inner 17.5 um; required IPC-2152 baseline fit 153.4 mil2 -> 2.828 mm on F.Cu alone (long-conductor chart; a neck of a few mm spreads heat into the wider pour on both sides, so the chart is conservative for short necks)
+  neck U101 OUT pins to C103, x 39.25-41.00 (F.Cu only)                       F.Cu 1.469 + In2 0.000 mm, 1.75 mm long =  79.7 mil2: IPC-2152 2.30 A at 10 degC, rise 21.9 degC at 3.21 A -> FAIL (long-conductor basis)
+  neck C103 ground pad and D-56 /GND via notch, x 37.50-38.75 (F.Cu only)     F.Cu 2.082 + In2 0.000 mm, 1.25 mm long = 112.9 mil2: IPC-2152 2.75 A at 10 degC, rise 14.3 degC at 3.21 A -> FAIL (long-conductor basis)
+  neck D103 belt, x 31.75-33.25 (F.Cu + In2.Cu strap)                         F.Cu 3.800 + In2 1.800 mm, 1.50 mm long = 255.0 mil2: IPC-2152 4.16 A at 10 degC, rise 5.6 degC at 3.21 A -> pass
+  neck W1 approach, x 31.50 (F.Cu + In2.Cu)                                   F.Cu 2.249 + In2 2.450 mm, 0.25 mm long = 188.5 mil2: IPC-2152 3.56 A at 10 degC, rise 7.9 degC at 3.21 A -> pass
 
 ==============================================================================================================
 R9 retired rows (whole subject removed in r9; history only, no re-run)

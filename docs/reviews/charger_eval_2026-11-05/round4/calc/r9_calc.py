@@ -1063,9 +1063,13 @@ def sec_h25():
         ok = w >= w_req
         necks.append(dict(case=name, width_mm=r4(w), area_mil2=r4(a), i_cap_A=r4(i_cap), rise_at_I_degC=r4(dt),
                           ipc2221_internal_A=r4(ipc2221_current(a, H25_DT, 0.024)), ok=ok))
-        out("  neck %-62s %.3f mm = %5.1f mil2: IPC-2152 %.2f A at %.0f degC, rise %.1f degC at %.2f A; IPC-2221 "
-            "internal %.2f A -> %s" % (name, w, a, i_cap, H25_DT, dt, H25_I, ipc2221_current(a, H25_DT, 0.024),
-                                       "pass" if ok else "FAIL"))
+        # Review 2/2 (operator ruling 2026-11-13): the verdict is the IPC-2152 one; IPC-2221 internal is a comparison
+        # only. Superseded print: "IPC-2221 internal %.2f A -> pass", which read as an IPC-2221 pass.
+        i2221 = ipc2221_current(a, H25_DT, 0.024)
+        out("  neck %-62s %.3f mm = %5.1f mil2: IPC-2152 %.2f A at %.0f degC, rise %.1f degC at %.2f A -> %s (IPC-2152); "
+            "comparison IPC-2221 internal %.2f A (%s the basis)" % (name, w, a, i_cap, H25_DT, dt, H25_I,
+                                                                "pass" if ok else "FAIL", i2221,
+                                                                "above" if i2221 >= H25_I else "below"))
     # J1.10 barrel to the strap: the copper perimeter that carries the current into L3
     n_sp, w_sp = H25_THERMAL
     w_th = n_sp * w_sp
@@ -1107,6 +1111,41 @@ def sec_retired():
         out("  %-48s %s" % (k, why))
 
 
+H26_I = 3.21            # A: the VCHGOUT current basis (D-29 "2.41 A and 3.21 A"; A.8 OUT strip)
+H26_T_OUT = 0.035       # mm: 1 oz outer copper, clad thickness only (OSH Park 1 oz clad + plated; plating not credited)
+# Board-measured sections of the routed CR (fab/cr_2026-11-13 from commit 89c2d72, D-62): total vertical chord of the
+# filled /VCHGOUT copper (zone fills and tracks, pads not counted) per layer for the x-directed current from U101
+# OUT 17/18 (x 40.45-40.95) to W1 (x 30.30), scanned every 0.05 mm (orchestrator script, 2026-11-13). The In2.Cu strap
+# VOUT_IN ends at x 36.90. (name, F.Cu chord mm, In2.Cu chord mm, neck length mm)
+H26_NECKS = (("U101 OUT pins to C103, x 39.25-41.00 (F.Cu only)", 1.469, 0.0, 1.75),
+             ("C103 ground pad and D-56 /GND via notch, x 37.50-38.75 (F.Cu only)", 2.082, 0.0, 1.25),
+             ("D103 belt, x 31.75-33.25 (F.Cu + In2.Cu strap)", 3.800, 1.800, 1.5),
+             ("W1 approach, x 31.50 (F.Cu + In2.Cu)", 2.249, 2.450, 0.25))
+
+
+def sec_h26():
+    head("R9.H26 VCHGOUT path from U101 OUT to W1: IPC-2152 width at 3.21 A, board-measured necks (Review 2/2 follow-up, "
+         "2026-11-13)")
+    a_req = ipc2152_area_mil2(H26_I, H25_DT)
+    w_req = a_req * H25_MIL2 / H26_T_OUT
+    out("  basis: I = %.2f A, rise %.0f degC, outer copper %.0f um (clad only), inner %.1f um; required IPC-2152 baseline "
+        "fit %.1f mil2 -> %.3f mm on F.Cu alone (long-conductor chart; a neck of a few mm spreads heat into the wider pour "
+        "on both sides, so the chart is conservative for short necks)" % (H26_I, H25_DT, H26_T_OUT * 1e3, H25_T_IN * 1e3,
+                                                                        a_req, w_req))
+    rows = []
+    for name, wf, wi, ln in H26_NECKS:
+        a = (wf * H26_T_OUT + wi * H25_T_IN) / H25_MIL2
+        i_cap = ipc2152_current(a, H25_DT)
+        dt = ipc2152_rise(a, H26_I)
+        ok = a >= a_req
+        rows.append(dict(case=name, f_cu_mm=wf, in2_mm=wi, length_mm=ln, area_mil2=r4(a), i_cap_A=r4(i_cap),
+                         rise_at_I_degC=r4(dt), ok=ok))
+        out("  neck %-70s F.Cu %.3f + In2 %.3f mm, %.2f mm long = %5.1f mil2: IPC-2152 %.2f A at %.0f degC, rise %.1f "
+            "degC at %.2f A -> %s" % (name, wf, wi, ln, a, i_cap, H25_DT, dt, H26_I, "pass" if ok else "FAIL (long-conductor basis)"))
+    RJ["h26"] = dict(I_A=H26_I, rise_degC=H25_DT, t_outer_mm=H26_T_OUT, area_req_mil2=r4(a_req), width_req_mm=r4(w_req),
+                     necks=rows)
+
+
 def main():
     out("r9_calc.py - r9 re-run of the section H checks (change row r9-9). Netlists: %s, %s"
         % (os.path.relpath(CR_NET, REPO), os.path.relpath(EIB_NET, REPO)))
@@ -1124,6 +1163,7 @@ def main():
     en = sec_h24b(v_cr)
     sec_h24c(v_cr, vol6, fcc, en)
     sec_h25()
+    sec_h26()
     sec_retired()
     with open(OUT_TXT, "w", encoding="ascii", errors="replace") as f:
         f.write("\n".join(LINES) + "\n")
