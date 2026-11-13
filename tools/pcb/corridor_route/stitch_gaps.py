@@ -167,6 +167,31 @@ def worst(pts):
 
 d = worst(stitch)
 before = float(d.max())
+
+
+def regions(dist):
+    """the samples over the limit, grouped into connected regions (neighbours within 1.5 sample steps):
+    [(worst distance, worst x, worst y, number of samples, area mm2)] worst first"""
+    over = np.nonzero(dist > A.limit)[0]
+    left, out = set(over.tolist()), []
+    while left:
+        k = left.pop()
+        grp, stack = [k], [k]
+        while stack:
+            q = stack.pop()
+            near = [m for m in list(left)
+                    if abs(samples[m, 0] - samples[q, 0]) <= 1.5 * A.sample
+                    and abs(samples[m, 1] - samples[q, 1]) <= 1.5 * A.sample]
+            for m in near:
+                left.discard(m)
+                grp.append(m)
+                stack.append(m)
+        w = max(grp, key=lambda m: dist[m])
+        out.append((float(dist[w]), float(samples[w, 0]), float(samples[w, 1]), len(grp), len(grp) * A.sample ** 2))
+    return sorted(out, reverse=True)
+
+
+reg_before = regions(d)
 added, skipped = [], []
 skip = np.zeros(len(samples), bool)
 while len(added) < A.max_add:
@@ -199,6 +224,7 @@ while len(added) < A.max_add:
     dtree = STRtree(drills)
     d = np.minimum(d, np.hypot(samples[:, 0] - x, samples[:, 1] - y))
 after = float(np.where(skip, -1, d).max()) if len(samples) else 0.0
+reg_after = regions(d)
 after_all = float(d.max()) if len(samples) else 0.0
 
 netinfo = b.FindNet(A.net)
@@ -232,6 +258,13 @@ L = ["# Stitching gap fill", "",
      "| Largest distance after | %.2f mm |" % after_all, ""]
 L += ["Added vias (%s frame):" % ("design" if Y0 is not None else "KiCad"), ""]
 L += ["- (%.2f, %.2f)" % plan(x, y) for x, y in added] or ["- none"]
+for name, reg in (("before", reg_before), ("after", reg_after)):
+    L += ["", "Regions over the limit %s (%d):" % (name, len(reg)), ""]
+    if reg:
+        L += ["| Worst point | Worst distance mm | Samples | Area mm2 |", "|---|---|---|---|"]
+        L += ["| (%.2f, %.2f) | %.2f | %d | %.2f |" % (plan(x, y) + (w, n, a)) for w, x, y, n, a in reg]
+    else:
+        L += ["None."]
 L += ["", "Samples above the limit with no legal site within the limit:", ""]
 L += ["- (%.2f, %.2f): %.2f mm" % (plan(x, y) + (dd_,)) for x, y, dd_ in skipped] or ["- none"]
 txt = "\n".join(L) + "\n"

@@ -115,6 +115,11 @@ order = sorted(refs, key=lambda fr: len(cand[fr[0].GetReference()]))
 placed = []
 rows = []
 fab = []
+# references already on F.Fab from an earlier run stay there and are listed in the report (D-61)
+kept_fab = sorted(fp.GetReference() for fp in b.GetFootprints()
+                  if fp.Reference().GetLayer() == pcbnew.F_Fab and fp.Reference().IsVisible())
+for r_ in kept_fab:
+    rows.append((r_, "-", "-", "-", "F.Fab (kept from an earlier run)"))
 for fp, ref in order:
     r = fp.GetReference()
     pos0, size0, th0, ang0 = saved[r]
@@ -144,8 +149,8 @@ for fp, ref in order:
 
 b.Save(sys.argv[1])
 n_over = sum(1 for row in rows if row[4] == "over another courtyard")
-print(f"references placed: {len(rows) - len(fab)} on F.Silkscreen ({n_over} over another courtyard), "
-      f"{len(fab)} moved to F.Fab: {', '.join(sorted(fab)) or 'none'}")
+print(f"references placed: {len(rows) - len(fab) - len(kept_fab)} on F.Silkscreen ({n_over} over another courtyard), "
+      f"{len(fab)} moved to F.Fab: {', '.join(sorted(fab)) or 'none'}; {len(kept_fab)} already on F.Fab")
 if len(sys.argv) > 2:
     def key(r):
         return (''.join(ch for ch in r[0] if ch.isalpha()), int(''.join(ch for ch in r[0] if ch.isdigit()) or 0))

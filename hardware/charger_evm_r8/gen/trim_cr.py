@@ -22,6 +22,9 @@ os.makedirs(work, exist_ok=True)
 here = os.path.dirname(os.path.abspath(__file__))
 tool = os.path.normpath(os.path.join(here, "..", "..", "..", "tools", "pcb", "corridor_route", "trim_outline.py"))
 board = os.path.normpath(os.path.join(here, "..", "cr", "cr.kicad_pcb"))
+if "(reference \"MH1\")" in open(board, encoding="utf-8").read() or '"Reference" "MH1"' in open(board, encoding="utf-8").read():
+    raise SystemExit("refused: cr/cr.kicad_pcb is already trimmed (MH1 present). Run gen/trim_cr.py on the routed board "
+                     "before the trim; the finish order is route, plane vias, trim, stitching, straightening, references (D-61).")
 args = [sys.executable, tool, board, work, "--y-flip-offset", "%g" % G.YOFF, "--margin", "%g" % G.TRIM_MARGIN,
         "--ear", "%g,%g,%g,%g" % G.KEY_EAR, "--hole-drill", "%g" % G.HOLE_DRILL,
         "--hole-keepout", "%g" % G.HOLE_KEEPOUT, "--hole-board", "%g" % G.HOLE_HEAD,

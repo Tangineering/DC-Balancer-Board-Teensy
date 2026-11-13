@@ -100,7 +100,7 @@ score, seeds, run time). Read the other reference files at the step that names t
      the nearest legal site of the real board copper until the largest distance is at most L (default 3.54 mm, a
      5 mm square pitch). It works on the board geometry, so it is right after straightening, when the router's grid
      occupancy is out of date; do not run `plane_vias.py` on a straightened board. On the r9 CR board the project's
-     stitching row failed at 3.80 mm in the comparator cluster; 4 added vias gave 3.44 mm, DRC 0.
+     stitching row failed at 4.08 mm (four regions in the logic and comparator area); 3 added vias gave 3.47 mm, DRC 0.
    - Straightening, for the delivered seed: the router steps cell by cell, so free stretches come out as
      staircases. `"$PY" straighten.py $D/board_pv/$B $D/board_st --plan W/plan.json --routes-out
      $D/routes_st.json` replaces each run that it can by one straight or 45-degree segment, or by one 45-degree and

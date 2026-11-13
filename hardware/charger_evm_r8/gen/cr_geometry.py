@@ -36,13 +36,12 @@ YOFF = 100.0                                        # D-01: KiCad Y = 100 - y, K
 # 3D-printed support; MB clearance under them is not a criterion); keep a +x key ear (D-41). The D-39 rectangle P
 # stays the placement frame; the board is trimmed after routing by gen/trim_cr.py (tools/pcb/corridor_route/
 # trim_outline.py with the arguments below), which asserts that the result equals these values.
-# D-61: re-derived on the stitched and straightened board (routing branch f328b3e). Superseded (D-60, board 621fb28):
-# 18 vertices ... (18.58, 33.64), (21.15, 23.80), (21.39, 23.33), (21.93, 22.63), (22.94, 21.93) ... (58.60, 71.00),
-# 2241.6 mm2; MH2 (54.85, 63.79), MH4 (24.48, 25.18).
-FINAL_OUTLINE = [(26.05, 72.64), (24.85, 72.37), (24.09, 71.93), (18.58, 67.09), (18.58, 33.59), (20.90, 23.80),
-                 (21.14, 23.33), (21.68, 22.63), (22.69, 21.93), (53.47, 8.10), (54.67, 7.83), (55.38, 7.87),
-                 (56.23, 8.10), (57.27, 8.76), (57.84, 9.43), (58.24, 10.22), (58.45, 11.25), (58.70, 67.54),
-                 (58.60, 71.00)]
+# D-61: the trim runs before the stitching and the straightening (finish order: route, plane vias, trim, stitch,
+# straighten, references), so the outline is the D-60 trim of the routed board 621fb28. Superseded (8521bf8, trim after
+# stitching and straightening): 19 vertices, 2248.3 mm2, MH2 (55.10, 67.54), MH4 (24.23, 25.18).
+FINAL_OUTLINE = [(26.05, 72.64), (24.85, 72.37), (24.09, 71.93), (18.58, 67.09), (18.58, 33.64), (21.15, 23.80),
+                 (21.39, 23.33), (21.93, 22.63), (22.94, 21.93), (53.47, 8.10), (54.67, 7.83), (55.38, 7.87),
+                 (56.23, 8.10), (57.27, 8.76), (57.84, 9.43), (58.24, 10.22), (58.45, 11.25), (58.60, 71.00)]
 P_FINAL = Polygon(FINAL_OUTLINE)
 KEY_EAR = (50.0, 52.0, 58.6, 71.0)                  # +x key ear kept by the trim (operator choice, D-41 key)
 TRIM_MARGIN = 1.0                                   # trim margin around the used area (mm)
@@ -52,7 +51,7 @@ HOLE_HEAD = 3.6                                     # screw-head disc radius kep
 # trim_outline.py rounds the hull to 0.01 mm and simplifies it with a 0.05 mm tolerance, so the outline may cut up to
 # 0.05 mm into the ear and the head discs, and its -x vertices sit at x 18.58 (0.004 mm outside the D-39 edge).
 TRIM_TOL = 0.06                                     # 0.05 mm simplify + 0.01 mm rounding of the hole centres
-MOUNTING_HOLES = {"MH1": (26.23, 69.04), "MH2": (55.10, 67.54), "MH3": (54.85, 11.43), "MH4": (24.23, 25.18)}
+MOUNTING_HOLES = {"MH1": (26.23, 69.04), "MH2": (54.85, 63.79), "MH3": (54.85, 11.43), "MH4": (24.48, 25.18)}
 FINAL_INSET = P_FINAL.buffer(-INSET_MM, join_style=2)
 
 # ------------------------------------------------------------------ D-41 stack (heights above the MB top, mm)
