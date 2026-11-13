@@ -642,8 +642,19 @@ The FAIL is the B.Cu heatsink pad U101.25 of the TPS26630 footprint under the D-
 overlaps from fixed coordinates and 0 clearance errors. The placement images are `cr/placement_F.png` and
 `cr/placement_B.png`. The netlist is unchanged against the D-53 freeze.
 
-The build uses an OSH Park-only rule file, `cr/cr.kicad_dru`, as D-29 requires. `gen/make_board.sh` still copies the
-shared OSH Park/PCBWay file, so the OSH Park-only file must move to `tools/pcb/fab_rules/` before the next full run.
+A placement review of variant B (`cr/placement_review_r9.md`) found 1 blocker, 4 major and 9 minor findings, and
+the fix round of LAYOUT_DECISIONS D-55 applies all of them in the generator. The U101 programming and monitor parts
+now sit in the +x pocket and in a strip over the U101 +y edge, each within 5 mm of its U101 pin, and no ratsnest line
+crosses the CHG pin column. The rebuilt board gives 88 pass rows, 0 FAIL and 3 listed D-20 exemptions (R102, R104,
+R129) in the constraint check. DRC reports no courtyard, clearance or starved-thermal item; the 124 remaining items
+are silkscreen reference fields. The exposed pad of U101 has window-pane paste apertures (13.7 % coverage,
+TODO(verify: SLVSE94G section 11, stencil vendor)).
+
+The build uses the OSH Park-only rule file `tools/pcb/fab_rules/fab_4layer_oshpark_only.kicad_dru`, which
+`gen/make_board.sh` copies to `cr/cr.kicad_dru` (D-29, D-55). The board Default net class is 0.1524 / 0.1524 mm, and
+0.127 mm stays the board minimum for necks. (**Superseded 2026-11-13, D-55:** "`gen/make_board.sh` still copies the
+shared OSH Park/PCBWay file, so the OSH Park-only file must move to `tools/pcb/fab_rules/` before the next full
+run.")
 
 ### 9.2 BOM
 
@@ -696,7 +707,7 @@ charger path.
 The round order is D-50, in eight steps with four operator check-ins. Steps 1 to 4 are done, and check-in 1 has passed
 (operator ruling 2026-11-12 (b)). Check-in 2 is closed, and the r9-12 fix round is applied. The netlist step is done
 and the netlist is frozen (D-53). The verify pass of the r9-12 fixes is clean. Step 5 is done (D-54: variant B at the
-pour stage), check-in 3 is next, and three steps remain after it. Table 10.1 lists each step with its inputs, outputs and blocking items.
+pour stage; D-55: the fix round on its placement review), check-in 3 is next, and three steps remain after it. Table 10.1 lists each step with its inputs, outputs and blocking items.
 
 Table 10.1. Round order (D-50).
 
@@ -706,8 +717,8 @@ Table 10.1. Round order (D-50).
 | 2. Re-run section H on the r9 netlist (done, r9-9) | r9 netlist `cr/cr.net`, `eib/eib.net` | `round4/calc/r9_calc.py` with its output; H.4, H.5, H.7, H.12, H.13, H.15, H.19-H.22, H.23(n), (x), (y) re-derived; H.24(a)-(c) new; `r3_calc.py` and `r7_calc.py` kept as the r8 record | None; the ribbon-short ruling moved to check-in 2 (section 11, item 16) |
 | 3. Audit run 002 (done, r9-10; check-in 2 closed; fixes applied in r9-12) | Step-2 numbers; Table L.9-1 | `docs/reviews/charger-design/run-002-2026-11-12.md`; L.9 and Table L.9-1 final; 29 findings: 0 blocker, 8 major, 21 minor; all 29 fixes applied in r9-12; verify pass clean | None (the verify pass, the netlist step and the netlist freeze are done) |
 | 4. New-outline generator (done, D-51, D-52) | `outline_change_2026-11-12/retired.md` section 4 | `gen/mb_brd.py`, `gen/cr_geometry.py`, `gen/layout_cr.py` rewritten (Table D-52 regions), CR rows of `gen/check_constraints.py` rebuilt, 0.25 mm courtyards, VCHGOUT strap on L3, `cr/geometry_check.md` (H.23 successor) | Placeholders that do not block step 5: Molex 43045 header drawing (J102 P/N, pegs, latch side, cavity numbering), TSW pad and drill, W6/W7 hole sizes, MS4 rim distance. The height survey is closed by D-51 |
-| 5. Placement on the frozen netlist, all SMT on the top (done, D-54) | Frozen netlist, generator | `cr/cr.kicad_pcb` (variant B, pour stage), `cr/placement_F.png`, `cr/placement_B.png`, `cr/constraint_check.md`, `cr/drc_place.rpt`; variant records in `cr/variants_r9/` | **Check-in 3** (placement images; the R129/C129 window deviation of D-54; the D-54 open items) |
-| 6. Full route-race | Placed board, power geometry | Routed board and one batch of change requests | The OSH Park-only rule file into `tools/pcb/fab_rules/` and `gen/make_board.sh`; /N_OV at U101.7 open at every probe seed; `plane_vias.py` must not put a via in U101.25; Via-in-pad fallbacks listed for review; `gen/make_cr_all.sh` must drop B.Cu from the PathFinder layer set (D-20 rule area); `gen/route_cr.py` TRACK 0.127 mm against the D-29 0.1524 mm default |
+| 5. Placement on the frozen netlist, all SMT on the top (done, D-54) | Frozen netlist, generator | `cr/cr.kicad_pcb` (variant B, pour stage), `cr/placement_F.png`, `cr/placement_B.png`, `cr/constraint_check.md`, `cr/drc_place.rpt`; variant records in `cr/variants_r9/` | **Check-in 3** (placement images after the D-55 fix round; the R104 and R129 D-20 exemptions of D-55; the D-54 open items 1, 4, 6 and 7) |
+| 6. Full route-race | Placed board, power geometry | Routed board and one batch of change requests | /N_OV at U101.7 re-tested (open at every D-54 probe seed, before the D-55 pocket); confirm that `plane_vias.py` keeps vias off U101.25 (fixed in D-55); the T1_VMOT/T2C guide corridors (`gen/route_cr.py` `GUIDE_CORRIDORS`); via-in-pad fallbacks listed for review; `gen/make_cr_all.sh` must drop B.Cu from the PathFinder layer set (D-20 rule area). Closed in D-55: the OSH Park-only rule file and `gen/make_board.sh`; `gen/route_cr.py` TRACK 0.1524 mm |
 | 7. DRC and constraint check | Routed board | Clean DRC and constraint reports | Not applicable |
 | 8. Fab package (`gen/export.sh`, `gen/fab_readme.py`) | Checked board | CR fab package | **Check-in 4** (before the fab package and any order); fab quotes; BOM verification (T-A-05) |
 

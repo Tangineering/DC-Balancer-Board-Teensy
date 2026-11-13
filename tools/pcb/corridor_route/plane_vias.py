@@ -20,7 +20,11 @@ Unflashed through-hole pads: by default a new via is kept off the unflashed laye
 own net (Ctx.selfban, the rule the router uses for tracks). A plane via beside such a pad makes KiCad flash the pad
 on that inner layer, onto the tracks that the router ran there (CR board, 2026-11-12: shorts at J1 pads 14 and 15
 on In2.Cu at 3 of 4 seeds). On the round-3 CR seeds the rule cost 1 via site in 8 runs and no GND connection.
---no-respect-unflashed restores the earlier behaviour (no check), for comparison with results made before it."""
+--no-respect-unflashed restores the earlier behaviour (no check), for comparison with results made before it.
+
+SMD pads (2026-11-13): a new via is kept off every SMD pad of any net, grown by the pad's solder-mask expansion and
+the via radius (charger EVM D-37, D-55: the step had put a /GND via inside the U101 exposed pad at every seed).
+--allow-via-in-pad restores the earlier behaviour."""
 import argparse
 import json
 
@@ -47,6 +51,8 @@ ap.add_argument("--report", default=None)
 ap.add_argument("--min-area", type=float, default=0.3)
 # default on; --respect-unflashed is still accepted (it was the opt-in form), --no-respect-unflashed turns it off
 ap.add_argument("--respect-unflashed", action=argparse.BooleanOptionalAction, default=True)
+ap.add_argument("--allow-via-in-pad", action="store_true",
+                help="admit a new via on an SMD pad (the behaviour before 2026-11-13)")
 A = ap.parse_args()
 C = Ctx(A.model, A.plan)
 RT = Router(C)
@@ -70,10 +76,33 @@ for fp in b.GetFootprints():
 vgap = (C.drill + C.hole2hole) / R
 placed = {}
 occV_any = RT.occV.max(axis=0) > 0
+# No new via on any SMD pad of any net, own net included, grown by the pad's solder-mask expansion and the via
+# radius (charger EVM D-37: no via on an SMD pad or in its mask opening; D-55 / review m-9: the step put a /GND via
+# inside the U101 exposed pad, a /GND SMD pad, at every probe seed). --allow-via-in-pad restores the earlier rule.
+from shapely.ops import unary_union  # noqa: E402
+from shapely.prepared import prep  # noqa: E402
+_smd = []
+if not A.allow_via_in_pad:
+    for fp in b.GetFootprints():
+        for p in fp.Pads():
+            if p.GetAttribute() != pcbnew.PAD_ATTRIB_SMD:
+                continue
+            for lay, mlay in ((pcbnew.F_Cu, pcbnew.F_Mask), (pcbnew.B_Cu, pcbnew.B_Mask)):
+                if not p.IsOnLayer(lay):
+                    continue
+                sps = p.GetEffectivePolygon(lay, pcbnew.ERROR_INSIDE)
+                exp = mm(p.GetSolderMaskExpansion(mlay)) if p.IsOnLayer(mlay) else 0.0
+                for q in range(sps.OutlineCount()):
+                    o = sps.Outline(q)
+                    pg = Polygon([(mm(o.CPoint(k).x), mm(o.CPoint(k).y)) for k in range(o.PointCount())])
+                    _smd.append(pg.buffer(0).buffer(max(exp, 0.0) + C.via / 2, join_style=2))
+SMD_KO = prep(unary_union(_smd)) if _smd else None
 
 
 def via_ok(n, j, i):
     if C.holeBan[j, i] or occV_any[j, i]:
+        return False
+    if SMD_KO is not None and SMD_KO.contains(Point(*C.xy(j, i))):
         return False
     oV = C.ownV[:, j, i]
     if not np.all((oV == FREE) | (oV == n)):

@@ -32,13 +32,16 @@ INSET = G.INSET              # A.8: every courtyard >= 0.5 mm inside the outline
 # placement (step 5); these are the start values.
 FIXED = {
     "J1": (45.998, 39.084, 0),                 # CHG element pin 1 (A.8 table); CR side of the D-41 TSW stack
-    "W1": (30.3, 61.2, 0), "W2": (27.7, 61.2, 0), "W3": (24.3, 45.4, 0), "W4": (24.3, 55.6, 0),   # A.8 / D-45
+    # A.8 / D-45. W2 x 27.7 -> 27.2 (D-55, review m-1): at the A.8 2.6 mm pitch the 2.3 mm W1 (VCHGOUT) and W2 (GND)
+    # pads were 0.307 mm apart and their courtyards overlapped; at 3.1 mm the pad gap is 0.80 mm and the W2 courtyard
+    # stays 0.85 mm from W6. route_cr.GND_L1_STAR moves with W2.
+    "W1": (30.3, 61.2, 0), "W2": (27.2, 61.2, 0), "W3": (24.3, 45.4, 0), "W4": (24.3, 55.6, 0),
     # eFuse cluster (A.8 per-region table; D-09 shifts of <= 0.80 mm)
     "U101": (41.70, 63.65, 0),
     "C102c": (41.80, 60.27, 0),
     "C102a": (40.95, 57.14, 0),
     "R102": (43.55, 57.76, 0),
-    "C102b": (42.125, 53.14, 0),
+    "C102b": (42.125, 53.19, 0),               # y 53.14 -> 53.19 (D-55, review m-5): clears the J101 courtyard
     "D107": (37.90, 56.30, 0),
     "C103": (38.08, 64.88, 0),
     "D103": (33.50, 64.84, 0),
@@ -46,8 +49,9 @@ FIXED = {
 }
 # Not fixed any more (D-52): the comparators U102, U103, U119, U120 (r7 band retired; packed in the analog window,
 # D-11 re-derived), R175 (r7 tab X; now behind the J-TAP T6 cavity, D-46), W6/W7 (plated through-hole pads at
-# 2.54 mm pitch, D-45: the r8 SMT coordinates overlap at the new pitch), the +x pocket R101/C101/R105/R103 (0603 now,
-# D-44; packed toward U101 pins 7-13 by connectivity) and J102 (J-TAP, packed in its own region, D-46).
+# 2.54 mm pitch, D-45: the r8 SMT coordinates overlap at the new pitch), the U101 network R101/C101/R103/R104/R105/
+# R129/R106s (0603 now, D-44; packed in the +x pocket and the north strip toward their U101 pins, D-55) and J102
+# (J-TAP, packed in its own region, D-46).
 ORIENT = {
     "U101": ("3", "-y"),       # IN/IN_SYS edge (pins 1-6) facing -y (A.8, r4)
     "C102a": ("1", "+y"),      # VCHGIN pad at the top
@@ -61,26 +65,58 @@ BOARD_ONLY = []                # no foot, fill hole or mounting hole on the plug
 PARK = (75.0, 50.0)            # outside the outline (x > 67): a part the packer cannot place is visible there
 
 # ------------------------------------------------------------------ regions (MB frame)
-DIV_STRIP = box(23.15, 42.14, 36.50, 45.69).difference(Point(24.3, 45.4).buffer(1.25 + 0.5))   # A.8 / D-13
+# A.8 / D-13 divider strip. D-55 (review m-3): the W3 keep-out is stretched 0.7 mm toward +x (the union of the
+# 1.75 mm circle and its +0.7 mm copy), so the dense fill packing shifts all six dividers +0.7 mm in x. R110 (the
+# 0.1 % bottom of the H1 IN+ divider) then sits about 1.48 mm from the W3 18 AWG hand-solder pad instead of 0.78 mm;
+# the strip has 0.90 mm of slack at its +x end.
+DIV_W3_SHIFT = 0.7
+_W3_KO = Point(24.3, 45.4).buffer(1.25 + 0.5)
+# The strip left of x 26.13 (the r9 step-5 R109 courtyard edge 25.464 + 0.7 - the 0.03 mm packer margin) is closed
+# as well; otherwise an 0603 fits under the circle and lands nearer to W3.
+DIV_STRIP = box(23.15, 42.14, 36.50, 45.69).difference(
+    unary_union([_W3_KO, Point(24.3 + DIV_W3_SHIFT, 45.4).buffer(1.25 + 0.5), box(24.3, 43.65, 24.3 + DIV_W3_SHIFT,
+                                                                                   47.15),
+                 box(23.15, 42.14, 25.464 + DIV_W3_SHIFT - 0.03, 45.69)]))
 J101_REG = box(37.0, 42.13, 44.5, 51.53)
 IN_STRIP = box(36.1, 52.03, 44.55, 61.55)
 OUT_STRIP = box(30.8, 62.85, 39.3, 66.64)
-POCKET = box(44.3, 63.40, 48.2, 66.64)
+# U101 network regions (D-55, review B-1). Until D-55 no region owned the A.8 +x pocket: INTERIOR subtracted it, so
+# region_name() returned int_logic and the packer put R101, C101, R103, R104, R105, R129 and R106s across the CHG pin
+# column, up to 23 mm from their U101 pins. A.8 keeps the ILIM, dVdT, OVP and IMON nodes within 5 mm of U101 pins
+# 7-13 and R106s as near to pin 14 as the courtyard check allows. The A.8 upper bound y 66.64 was the r6 +y edge;
+# the plug-on outline (+y edge y 94, D-09 re-derive note) makes the larger pocket below reachable.
+# - POCKET: east of the U101 courtyard and above the J1 pad-10 annulus. The bottom y 63.40 keeps every courtyard
+#   >= 0.5 mm from pad 10 (pad top y 62.894). Review start value x 44.40-50.50, y 63.40-69.00; widened to x 51.40,
+#   y 70.00 (nothing else is placed there). The 5 mm A.8 radius about pins 7-13 (x 43.66) reaches only x ~47.9 at
+#   the pocket height, so the near column x 44.40-47.90 holds four 0603 rows (rot 0, 1.60 mm pitch with the packer
+#   channel): R104 and R103 (OVP; pin 7), R129 (IMON; pin 13) and R106s (FLT; pin 14), each with pad 1 (the U101
+#   node) at -x and pad 2 at +x. C129 (the CHG_IIN filter capacitor) sits east of the column, in the D-20 window,
+#   beside R129 pad 2: the CHG_IIN and CHG_EFUSE_FLT lines then leave for J102 east of the CHG pin column.
+# - NORTH: the strip over the U101 +y edge (pins 13-18), clear of the VCHGOUT L1 pour (x <= 41.15, y <= 66.64), for
+#   R101 (ILIM; pin 10), C101 (dVdT; pin 9) and R105 (IMON to GND), standing (rot 90, pad 1 at -y toward U101).
+# Superseded (first D-55 build): R129 and R106s in an east sub-pocket at x >= 46.40 and R101/C101 in the pocket; the
+# packer then left R103/R104 or R129 unplaced, or put them more than 5 mm from their pins.
+POCKET = box(44.40, 63.40, 51.40, 70.00)
+NORTH = box(39.20, 66.90, 44.40, 70.60)
 U101_CRT = box(41.70 - 2.59, 63.65 - 2.59, 41.70 + 2.59, 63.65 + 2.59)
-W_PADS = unary_union([Point(30.3, 61.2).buffer(1.15 + 0.5), Point(27.7, 61.2).buffer(1.15 + 0.5),
+W_PADS = unary_union([Point(30.3, 61.2).buffer(1.15 + 0.5), Point(27.2, 61.2).buffer(1.15 + 0.5),
                       Point(24.3, 45.4).buffer(1.25 + 0.5), Point(24.3, 55.6).buffer(1.25 + 0.5)])
 HDR_PADS = unary_union([box(45.998 - 1.2, 39.084 - 1.2, 45.998 + 1.2, 61.944 + 1.2),
                         box(20.998 - 1.2, 36.544 - 1.2, 20.998 + 1.2, 64.484 + 1.2)])
 
 # fixed power vias of route_cr (VCHGIN C102b/C102c clusters, VCHGOUT under the D103 cathode): no part (D-33)
-PRE_VIA_SITES = [(39.45, 52.60), (39.45, 53.40), (39.45, 54.20), (40.35, 51.62), (40.95, 51.62), (39.75, 60.35),
-                 (39.75, 61.05), (34.00, 63.35), (34.80, 63.35), (35.60, 63.35), (36.40, 63.35)]
+# D-55 (review M-2): the two C102b-end vias at (40.35 / 40.95, 51.62) overlapped the C102b pad-1 copper after the
+# D-09 shift; they are re-sited off the pad and its mask opening, and a sixth C102b-end via is added (A.8 IN strip
+# row, "6 vias each end"). The list is the same as route_cr.PRE_VIAS.
+PRE_VIA_SITES = [(39.45, 51.80), (39.45, 52.60), (39.45, 53.40), (39.45, 54.20), (39.45, 55.00), (40.65, 51.40),
+                 (39.75, 60.35), (39.75, 61.05), (34.00, 63.35), (34.80, 63.35), (35.60, 63.35), (36.40, 63.35)]
 PRE_VIA_KO = unary_union([Point(c).buffer(0.30 + 0.25) for c in PRE_VIA_SITES])
 # VCHGOUT L1 corridor from W1 to the D103 cathode below the D103 anode (D-22): no top part
 VOUT_BELT = box(29.00, 59.00, 37.30, 64.20)
 INTERIOR = (INSET.difference(J101_REG.buffer(0.5, join_style=2))
             .difference(IN_STRIP.buffer(0.5, join_style=2)).difference(OUT_STRIP.buffer(0.5, join_style=2))
             .difference(U101_CRT.buffer(0.5, join_style=2)).difference(POCKET.buffer(0.5, join_style=2))
+            .difference(NORTH.buffer(0.5, join_style=2))
             .difference(W_PADS).difference(HDR_PADS).difference(DIV_STRIP.buffer(0.01))
             .difference(VOUT_BELT).difference(PRE_VIA_KO))
 LOOP = unary_union([OUT_STRIP, U101_CRT, IN_STRIP, POCKET])   # U101 commutation-loop region (A.8, H.23(f))
@@ -92,6 +128,23 @@ ANALOG_WIDE = INTERIOR.intersection(box(G.X0, G.WIN_Y[0], G.X1, G.WIN_Y[1])).dif
 # J-TAP (D-46): +x half of the CR, every straight-line A.4 maximum met (cr_geometry.jtap_region), clear of the fixed
 # power block. Latch finger access: TODO(verify: Molex 43045 header drawing) the latch side; checked at placement.
 JTAP_REG = INTERIOR.intersection(G.jtap_region())
+# U101 network (D-55, review B-1): the part, the U101 pin its node serves (A.8) and its region. The phase "U101
+# network" packs these parts straight after J-TAP, each toward its slot target (the courtyard centre of its row or
+# column, MB frame); C129 joins the phase (D-55, D-54 item 7).
+U101_NET = {"R101": "10", "C101": "9", "R103": "7", "R104": "7", "R129": "13", "R106s": "14", "R105": "13",
+            "C129": None}
+U101_NET_REGION = {"R101": "north", "C101": "north", "R105": "north", "R103": "pocket", "R104": "pocket",
+                   "R129": "pocket", "R106s": "pocket", "C129": "pocket_win"}
+U101_NET_ROT = {"R104": (0,), "R103": (0,), "R129": (0,), "R106s": (0,), "C129": (0,),
+                "R101": (90,), "C101": (90,), "R105": (90,)}
+U101_NET_TARGET = {"R104": (45.95, 64.20), "R103": (45.95, 65.80), "R129": (45.95, 67.40), "R106s": (45.95, 69.00),
+                   "C129": (49.05, 65.80), "R101": (43.60, 68.45), "C101": (42.00, 68.45), "R105": (40.40, 68.45)}
+# J101 east-channel parts (D-55, review m-4): R177 (J101 pin 2 to the CR 3V3) and R107 (STAT pull-up, J101 pin 4)
+# sat east of the CHG column, so J3V3_2 and 3V3 crossed it. They are packed west of the column, under J101, so their
+# tracks reach J101 pins 2 and 4 through the channel between J101 and the column. Region: the interior west of the
+# column (x <= 44.90) and below the J101 region (y <= 41.63).
+J101_EAST = {"R177": "2", "R107": "4"}
+J101_EAST_REG = INTERIOR.intersection(box(40.90, G.Y0, 44.90, 41.63))
 
 
 def rule_areas():
@@ -113,7 +166,7 @@ DECOUPLE = {"C110": "U102", "C111": "U103", "C114": "U105", "C115": "U106", "C11
 # comparator input, reference, hysteresis, filter and timing passives: in the analog window (A.7 thermal band
 # content rule carried to the D-20 window)
 ANALOG_PASSIVES = {"C106", "C107", "C108", "C130", "R113", "R116", "R184", "R185", "R186", "R187", "R188", "R189",
-                   "R129", "C129"}
+                   }   # R129 and C129 moved to the U101 network (U101_NET, D-55)
 LEADS = ["W6", "W7"]
 POWER_NETS = {"/GND", "/3V3", "/VCHGIN", "/VCHGOUT", "/VCHG"}
 REGIONS = {}
@@ -181,12 +234,11 @@ B_LOGIC_DECOUPLE = ["C114", "C115", "C116", "C119", "C126"]
 # space at the 3V3 pad (with one phase for all five ICs and one for the five decouplers, the decouplers landed
 # 2.1-5.7 mm from their 3V3 pads). The order is the J101 end first.
 B_LOGIC_ORDER = ["U110", "U106", "U105", "U107", "U118"]
-# B: the CHG_IIN filter joins J102 pad 2 to U101 pin 13 (N_IMON). In B, R129 may use the whole D-20 window
-# (int_analog_wide), so it sits east of the J1 +x column on the J102-U101 path instead of in the comparator pocket,
-# and C129 (CHG_IIN to GND) sits at J102 pad 2. Neither is a comparator-network part, and check_constraints does not
-# test them against the strict window.
-B_WIDE_PASSIVES = {"R129"}
-B_TAP_PASSIVES = {"C129"}
+# B: the CHG_IIN filter joins J102 pad 2 to U101 pin 13 (N_IMON). Superseded by D-55: "In B, R129 may use the whole
+# D-20 window (int_analog_wide), so it sits east of the J1 +x column on the J102-U101 path instead of in the
+# comparator pocket, and C129 (CHG_IIN to GND) sits at J102 pad 2". Both are U101-network parts now (U101_NET).
+B_WIDE_PASSIVES = set()
+B_TAP_PASSIVES = set()
 # B: the FCC comparator networks (U119, U120) are packed before the H1/UVB networks (U102, U103), so they keep the
 # pocket space next to their comparators at the +x end.
 B_FCC_PASSIVES = ["C130", "R184", "R185", "R186", "R187", "R188", "R189"]
@@ -200,9 +252,16 @@ def setup(fps):
         "int_analog_wide": ANALOG_WIDE,
         "div": DIV_STRIP,
         "int_logic": INTERIOR,
+        "pocket": POCKET,
+        "pocket_win": POCKET.intersection(G.analog_window()),
+        "north": NORTH,
+        "j101_east": J101_EAST_REG,
     })
     named = set(FIXED) | set(ANALOG_ICS) | set(LOGIC_ICS) | set(DIVIDERS) | set(DECOUPLE) | ANALOG_PASSIVES \
-        | set(LEADS) | {"J102"}
+        | set(LEADS) | {"J102"} | set(U101_NET) | set(J101_EAST)
+    # D-55 (review B-1): the U101 network is packed in its own phase straight after J-TAP, in both variants.
+    u101_phase = ("U101 network", "F", [r for r in U101_NET if r in fps])
+    j101_east_phase = ("J101 east-channel parts", "F", [r for r in J101_EAST if r in fps])
     if VARIANT == "B":
         named |= set(B_J101_SERIES)   # placed in their own phase in B, never again in "other parts"
     rest = sorted(r for r in fps if r not in named and not r.startswith("#"))
@@ -216,11 +275,13 @@ def setup(fps):
         # comparators (their centroid then includes the comparator input pins), the ribbon resistors before the
         # gate ICs, and the FCC networks before the H1/UVB networks inside the window.
         PHASES = [("J-TAP", "F", ["J102"]),
+                  u101_phase,
                   ("dividers", "F", [r for r in DIVIDERS if r in fps]),
                   ("comparators", "F", [r for r in B_COMPARATORS if r in fps], "int_analog_wide"),
                   ("comparator decouplers", "F", [r for r in B_COMP_DECOUPLE if r in fps]),
                   ("clamps", "F", [r for r in B_CLAMPS if r in fps], "int_analog_wide"),
                   ("J101 series", "F", [r for r in B_J101_SERIES if r in fps], "int_logic"),
+                  j101_east_phase,
                   ] + [ph for ic in B_LOGIC_ORDER if ic in fps for ph in (
                       ("logic IC " + ic, "F", [ic], "int_logic"),
                       ("logic decoupler " + ic, "F", [c for c in B_LOGIC_DECOUPLE if DECOUPLE[c] == ic and c in fps]))
@@ -232,16 +293,22 @@ def setup(fps):
                   ("other parts", "F", rest)]
         return
     PHASES = [("J-TAP", "F", ["J102"]),
+              u101_phase,
               ("analog ICs", "F", [r for r in ANALOG_ICS if r in fps], "int_analog_wide"),
               ("dividers", "F", [r for r in DIVIDERS if r in fps]),
               ("logic ICs", "F", [r for r in LOGIC_ICS if r in fps]),
               ("decouplers", "F", [r for r in DECOUPLE if r in fps]),
+              j101_east_phase,
               ("analog passives", "F", sorted(r for r in ANALOG_PASSIVES if r in fps), "int_analog_wide"),
               ("lead pads", "F", [r for r in LEADS if r in fps]),
               ("other parts", "F", rest)]
 
 
 def region_name(ref):
+    if ref in U101_NET_REGION:      # D-55: the U101 network regions, both variants
+        return U101_NET_REGION[ref]
+    if ref in J101_EAST:            # D-55: west of the CHG column, under J101
+        return "j101_east"
     if VARIANT == "B":
         if ref in LOGIC_ICS:
             return "logic_box"
@@ -289,7 +356,18 @@ def _pads_of_net(net, fps, fr, exclude):
     return pts
 
 
+def _pad_pos(fps, fr, ref, num):
+    for p in fps[ref].Pads():
+        if p.GetNumber() == num:
+            return fr.e(p.GetPosition())
+    return None
+
+
 def target(ref, fps, fr, pinnet):
+    if ref in U101_NET_TARGET:      # D-55: the slot of the part (A.8 <= 5 mm to its U101 pin)
+        return U101_NET_TARGET[ref]
+    if ref in J101_EAST:            # D-55: the J101 pin the part serves
+        return _pad_pos(fps, fr, "J101", J101_EAST[ref])
     if VARIANT == "B" and ref in B_TARGETS:
         return B_TARGETS[ref]
     fp = fps[ref]
@@ -314,6 +392,8 @@ def target(ref, fps, fr, pinnet):
 
 
 def rotations(ref):
+    if ref in U101_NET_ROT:
+        return U101_NET_ROT[ref]
     if VARIANT == "B" and ref in B_ROT:
         return B_ROT[ref]
     if ref[0] in "RC":

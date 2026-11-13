@@ -119,7 +119,9 @@ def chg22(outdir, name):
     for lay in ("F.SilkS", "B.SilkS"):
         L.append('(fp_text user "1" (at 1.9 0 0) (layer "%s") (effects (font (size 0.8 0.8) (thickness 0.15))%s))'
                  % (lay, " (justify mirror)" if lay.startswith("B") else ""))
-        L.append('(fp_text user "11" (at -26.9 -25.4 0) (layer "%s") (effects (font (size 0.8 0.8) '
+        # D-55 (review m-7): the "11" mark moves to the +x side of pin 11 (x 22.90 on the board); at -26.9 it lay at
+        # x 19.10, 0.52 mm from the -x edge (silk-to-edge DRC item). Superseded: (at -26.9 -25.4 0)
+        L.append('(fp_text user "11" (at -23.1 -25.4 0) (layer "%s") (effects (font (size 0.8 0.8) '
                  '(thickness 0.15))%s))' % (lay, " (justify mirror)" if lay.startswith("B") else ""))
     write(outdir, name, L)
 
@@ -260,14 +262,38 @@ def vqfn24(outdir, name):
     """Derived from stock Texas_RGE0024H_VQFN-24-1EP_4x4mm_P0.5mm_EP2.7x2.7mm_ThermalVias (TI RGE0024H land,
     lib_verification_2026-11-11.md row 1): the 3 x 3 thermal vias drilled 0.30 mm with a 0.55 mm land (A.8: >= 9
     vias of 0.3 mm, SLVSE94G section 11) on a 0.61 mm land (0.155 mm ring >= fab 0.15 mm), numbered 25 (EP net), and the courtyard at the IPC-7351 least-density
-    excess (0.10 mm beyond the pad toes) instead of 0.25 mm (D-03)."""
+    excess (0.10 mm beyond the pad toes) instead of 0.25 mm (D-03).
+
+    D-55 (review M-1, m-6), no pad number or net changes:
+    - Paste: the stock four 1.17 x 1.17 mm apertures at +/-0.675 mm overlapped all nine via drills (gap between the
+      apertures 0.18 mm < the 0.3 mm drill). They are replaced by window-pane apertures, 0.50 x 0.50 mm at the four
+      cell centres of the 1.1 mm via grid (+/-0.55 mm): each aperture clears each drill edge by 0.15 mm (D-40, A.8).
+      Paste coverage 4 x 0.25 / 7.29 = 13.7 % of the 2.7 x 2.7 mm pad. TODO(verify: SLVSE94G section 11, stencil
+      vendor) the coverage target; a higher coverage needs a different via pattern or apertures closer to the drills.
+    - The stock B.Cu copy of the exposed pad (pad 25, copper only, no mask and no paste) is dropped: D-44 allows no
+      SMD pad on B.Cu, and the L4 GND pour already joins the nine vias. Pad 25 stays on F.Cu."""
+    import copy
     from kiutils.items.common import Position
     fp = _load("Package_DFN_QFN", "Texas_RGE0024H_VQFN-24-1EP_4x4mm_P0.5mm_EP2.7x2.7mm_ThermalVias", name)
+    fp.pads = [p for p in fp.pads if not (p.type == "smd" and p.number == "25" and list(p.layers) == ["B.Cu"])]
+    paste = [p for p in fp.pads if p.type == "smd" and p.number == "" and list(p.layers) == ["F.Paste"]]
+    proto = paste[0]
+    fp.pads = [p for p in fp.pads if p not in paste]
+    for k, (ax, ay) in enumerate(((-0.55, -0.55), (-0.55, 0.55), (0.55, -0.55), (0.55, 0.55))):
+        ap = copy.deepcopy(proto)
+        ap.position = Position(X=ax, Y=ay)
+        ap.size = Position(X=0.5, Y=0.5)
+        ap.shape = "rect"
+        ap.roundrectRatio = None
+        fp.pads.insert(k, ap)
     for pad in fp.pads:
         if pad.type == "smd" and pad.number == "25":
             pad.solderMaskMargin = 0.0   # EP 0.20 mm from the pin toes: 0.149 mm web with the 0.0508 mm pin expansion
         if pad.type == "thru_hole":
             pad.number = "25"
+            # D-55: solid zone connection; the vias lie inside the F.Cu exposed pad, and a thermal relief to the L1
+            # GND fill there gave three starved-thermal DRC items (one spoke each).
+            pad.zoneConnect = 2
             pad.size = Position(X=0.61, Y=0.61)
             pad.drill.diameter = 0.3
     x0, y0, x1, y1 = _extent(fp, with_fab=False)

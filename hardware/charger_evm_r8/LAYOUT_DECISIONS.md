@@ -34,7 +34,7 @@ below is classified against these decisions:
 - entries marked **Amended 2026-11-12** or **Reversed 2026-11-12** state the rule in force;
 - entries marked **Kept** and entries without a mark stay in force unchanged;
 - D-39 to D-53 are new entries for the 2026-11-12 decisions (section 8, after D-38); D-54 records the step-5
-  placement (2026-11-13).
+  placement (2026-11-13), and D-55 the placement fix round on its review (2026-11-13).
 
 The r7-outline status table above, the placement of section 5 and the routing record of section 8 are history. The
 r7 layout work, including the interactive-routing project, is in `archive_r7_outline/`. The EIB
@@ -713,7 +713,9 @@ digest, and its reconciliation notes bind where a record disagrees.
   T5, T6 and T10 pairwise non-adjacent, including the opposite-row pin, and keeps T1 and T2 away from T5 and T10. A
   search of all 1664 feasible 2 x 5 maps found none with fewer than two severity-2 pairs (T5-T13 and T13-T10).
 - Consequence: the F01-F24 pads, the tab X grid and the low-row pads retire (D-05, D-08). The Micro-Fit polarization
-  is required, because a 180-degree flip puts T6 on T10. The design owner places J-TAP under these constraints:
+  is required, because a 180-degree rotation of the plug puts T6 on T13; only a column reversal puts T6 on T10
+  (design change row r9-14). (**Superseded 2026-11-13, D-55:** "a 180-degree flip puts T6 on T10".) The design owner
+  places J-TAP under these constraints:
   - on the +x side of the CR, because every far end lies at +x;
   - with the T2 run short to C-D2 (x 67.4-69.7, y 69.9);
   - with every run inside its A.4 maximum: T1 0.15 m to C-D6 at (97.8, 17.9), T2 0.10 m, J1 taps 0.12 m, J2 taps
@@ -1074,6 +1076,54 @@ Open items after step 5:
    (whole-file text differences, content not compared). The step-5 builds restored both from backups, so the library
    and the netlist are those of r9-13.
 
+**D-55. Placement fix round on the variant-B review (2026-11-13).**
+
+- Decision: every finding of `cr/placement_review_r9.md` (B-1, M-1 to M-4, m-1 to m-9) is applied in the generator,
+  the footprint library and the tool scripts, and the live board `cr/cr.kicad_pcb` is rebuilt from them (variant B,
+  pour stage). The rebuild uses the documented placement half of `gen/make_board.sh` (`gen/pcbbuild.py`, the rule
+  copy, `apply_board_setup.py`, the OSH Park minima, `gen/silk_fix.py`) and then `ROUTE_SKIP_FR=1 gen/route.py cr
+  ../cr`.
+- Reason: the review found one blocker (no region owned the A.8 +x pocket, so the U101 programming and monitor parts
+  were packed across the CHG pin column, up to 23 mm from their pins), four majors and nine minors. Each has a local
+  fix that changes no net.
+- Consequence: the constraint check gives 88 pass rows, 0 FAIL, 3 listed D-20 exemptions (R102, R104, R129) and 16
+  information rows (D-54: 74 pass, 1 FAIL). DRC gives 124 violations (75 silk over copper, 49 silk overlap; no
+  courtyard overlap, clearance, starved-thermal or silk-to-edge item), 109 unconnected items and 0 parity issues.
+  The netlist is unchanged: the date-stripped `cr/cr.net` sha256 is `da64c37a...f484` and `gen/netlist.py` is
+  `f78b38f1...abb4`. Variant A shares every change except the B-only packer inputs; its record in
+  `cr/variants_r9/A/` predates D-55 and is not rebuilt.
+
+Table D-55. Findings of the variant-B placement review and the applied fixes.
+
+| Finding | Fix | Result on the rebuilt board |
+|---|---|---|
+| B-1 pocket unowned | `gen/layout_cr.py`: regions `pocket` (x 44.40-51.40, y 63.40-70.00), `pocket_win` (pocket inside the D-20 window) and `north` (x 39.20-44.40, y 66.90-70.60), subtracted from the interior; the phase "U101 network" straight after J-TAP in both variants, with a slot target and a fixed rotation per part (`U101_NET_TARGET`, `U101_NET_ROT`). Near column x 44.40-47.90, rot 0, pad 1 at -x: R104, R103, R129, R106s from -y to +y. North strip, rot 90, pad 1 at -y: R105, C101, R101. C129 joins the phase, east of R129 inside the window. New check rows: A.8 node distances, R106s to pin 14, CHG-column crossings | R101 3.73 mm to pin 10, C101 4.59 mm to pin 9, R103 4.60 mm and R104 2.31 mm to pin 7, R105 3.26 mm and R129 2.80 mm to pin 13 (all <= 5 mm); R106s 4.31 mm to pin 14; CHG-column crossings 0 (review: 6) |
+| M-1 paste on the via drills | `gen/fplib.py` `vqfn24()`: four 0.50 x 0.50 mm window-pane apertures at +/-0.55 mm | smallest aperture-to-drill gap 0.274 mm (diagonal); paste coverage 13.7 %; TODO(verify: SLVSE94G section 11, stencil vendor) the coverage target |
+| M-2 pre-vias on the C102b pad | `gen/route_cr.py` `PRE_VIAS` and `PRE_TRACKS`, `gen/layout_cr.py` `PRE_VIA_SITES`: (40.35 / 40.95, 51.62) replaced by (39.45, 51.80) and (40.65, 51.40), and a sixth via at (39.45, 55.00); the D-37 row tests the via annulus against the pad plus its mask expansion | 0 vias on a pad or mask opening, smallest gap 0.089 mm; 6 C102b-end vias (A.8 6 each end met; D-21 five; the C102c end keeps 2) |
+| M-3 pad 10 on an L1 island | `gen/route_cr.py` `VIN_L1`: the area east of C102c and above the R102 N_UV pad (x 42.35-44.85, y 57.95-62.10) and a ring around pad 10 (x 43.90-48.20, y 60.55-63.60) | no starved thermal at J1.10 (DRC minimum 2 spokes met); the corridor between R102 and the J1 +x column is 0.40 mm wide |
+| M-4 rule file and net class | new `tools/pcb/fab_rules/fab_4layer_oshpark_only.kicad_dru` (the content of the former hand-copied `cr/cr.kicad_dru`); `gen/make_board.sh` copies it, sets the D-54 minima and the Default net class 0.1524 / 0.1524 mm (via 0.6 / 0.3 mm); `gen/route_cr.py` TRACK and CLEAR 0.1524 mm | board minimum track and clearance 0.127 mm, annular ring 0.1016 mm, via 0.4572 mm, hole to hole 0.127 mm; Default net class 0.1524 / 0.1524 mm |
+| m-1 W1/W2 | W2 x 27.7 to 27.2; `GND_L1_STAR` W2 piece -0.5 mm in x | pad gap 0.807 mm, no courtyard overlap |
+| m-2 R103/R104 not in the D-20 rows | listed exemptions with the R102 reason (U101 network under A.8) | R104 and R129 outside the window and listed; R103 and C129 inside |
+| m-3 W3 at R110 | the divider-strip W3 keep-out stretched 0.7 mm in +x, and the strip left of x 26.13 closed | all six dividers +0.70 mm in x; W3 to R110 pad gap 1.47 mm (0.78 mm before) |
+| m-4 R177, R107 east of the column | region `j101_east` (x 40.90-44.90, below the J101 region), targets J101 pins 2 and 4, phase after "J101 series" | R177 (43.584, 40.100), R107 (42.634, 37.750) |
+| m-5 C102b/J101 courtyards | C102b y 53.14 to 53.19 | no courtyard overlap |
+| m-6 B.Cu pad 25 | `vqfn24()` drops the B.Cu copy of pad 25; the nine thermal-via pads get a solid zone connection | D-44 rows pass; the three U101 starved-thermal items are gone |
+| m-7 silkscreen | `gen/silk_fix.py` runs in the CR placement half of `gen/make_board.sh`; the J1 "11" mark moves to the +x side of pin 11 (x 22.90) | silk to edge 0 (2 before); silk over copper 75 and silk overlap 49 remain, all reference fields (D-12a keeps them on the silkscreen; to be resolved before the fab package) |
+| m-8 divider-top nets | `gen/route_cr.py` `GUIDE_CORRIDORS` for T1_VMOT and T2C (south band y 7.90-15.80, -x band x 19.60-23.00 to y 34.90); data for the route-race, read by no generator script | divider-top metric 0 pads |
+| m-9 plane via in U101.25 | `tools/pcb/corridor_route/plane_vias.py` keeps a new via off every SMD pad grown by its mask expansion and the via radius; `--allow-via-in-pad` restores the earlier rule | to be confirmed at the route-race |
+
+The B-1 slot layout follows from the 5 mm A.8 radius. Pins 7-12 lie at x 43.66, so the radius reaches only about
+x 47.9 at the pocket height, and the near column holds four 0603 rows. The two lowest rows are the only ones inside
+the D-20 window; R104 and R103 (the OVP node, pin 7) need them, so R129 sits in row 3, above the window top. This is
+a listed exemption (A.8 IMON <= 5 mm binds), and it replaces the D-54 item-7 deviation. C129 now sits inside the
+window beside R129, so the CHG_IIN filter has no window deviation.
+
+Superseded D-54 open items: item 2 (the D-44 FAIL on U101.25) and item 3 (the courtyard overlaps) are closed;
+item 5 (`plane_vias.py` via in U101.25) is closed in the tool and is confirmed at the route-race; the rule-file
+paragraph of D-54 is closed by M-4. Item 4 (/N_OV open) is re-tested at the route-race: R103 and R104 now sit 2.3-4.6
+mm from pin 7 on the +x side, but the N_UV and N_OV escapes still cross the VCHGIN L1 pour, which since M-3 also
+rings pad 10. Items 1, 6 and 7 stay open.
+
 ## 9. Verification
 
 ### 9.1 ERC and DRC
@@ -1087,6 +1137,11 @@ reports only the unrouted connections, 2 starved thermals (the L1 GND fill again
 **D-54 (2026-11-13):** the CR on the plug-on outline (variant B, pour stage) is checked against the OSH Park-only rule
 file with `--severity-all --schematic-parity`: 131 violations (3 courtyard overlaps from fixed coordinates, 0
 clearance, 4 starved thermals, 124 silkscreen items), 108 unconnected items and 0 parity issues (Table D-54a).
+
+**D-55 (2026-11-13):** after the placement fix round, DRC with the same options reports 124 violations (75 silk over
+copper and 49 silk overlap, all reference fields; no courtyard overlap, clearance or starved-thermal item), 109
+unconnected items and 0 parity issues (`cr/drc_place.rpt`). The constraint check gives 88 pass, 0 FAIL, 3 listed
+D-20 exemptions and 16 information rows (`cr/constraint_check.md`).
 
 ### 9.2 Constraint measurements
 

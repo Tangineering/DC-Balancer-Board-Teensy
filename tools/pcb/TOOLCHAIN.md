@@ -211,7 +211,14 @@ unattended run until someone dismisses it.
 The folder `tools\pcb\fab_rules\` contains these files:
 
 - `fab_2layer_oshpark_pcbway.kicad_dru` for the EIB.
-- `fab_4layer_oshpark_pcbway.kicad_dru` for the CR.
+- `fab_4layer_oshpark_pcbway.kicad_dru` for the CR (superseded for the charger EVM CR, see the next item).
+- `fab_4layer_oshpark_only.kicad_dru` for the charger EVM CR (OSH Park only, 2026-11-13;
+  `hardware/charger_evm_r8/LAYOUT_DECISIONS.md` D-29 amended and D-55). Track and clearance minimum
+  0.127 mm, annular ring 0.1016 mm, via diameter 0.4572 mm, hole to hole 0.127 mm. `gen/make_board.sh`
+  copies it and then lowers the board-setup minimums to these values after `apply_board_setup.py`;
+  the board Default net class stays 0.1524 / 0.1524 mm.
+- `fab_4layer_5mil_oshpark_pcbway.kicad_dru`: the shared OSH Park/PCBWay 5/5 mil file of D-29
+  (2026-11-11), superseded for the CR by the OSH Park-only file.
 - `apply_board_setup.py`, which writes the same minimums into the board setup. It also sets
   the solder-mask expansion, the solder-mask web and the board thickness, which custom rules
   cannot express.

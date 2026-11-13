@@ -110,26 +110,55 @@ if BOARD == "cr":
     row("D-03 (amended 2026-11-12) courtyard basis 0.25 mm", ", ".join(old) or "none", "%d on the 0.10 mm basis"
         % len(old), "0", not old)
     # D-37 via-in-pad listing (U101 exposed-pad vias are footprint pads, exempt by D-40)
-    smd = [(r, p) for r, fp in FP.items() for p in fp.Pads() if p.GetAttribute() == pcbnew.PAD_ATTRIB_SMD]
-    vip = []
+    # D-55 (review M-2): the via annulus (not only its centre) is tested against the pad copper grown by the pad's
+    # solder-mask expansion, on the layer of the pad. Superseded: a HitTest of the via centre only.
+    smd = []
+    for r, fp in FP.items():
+        for p in fp.Pads():
+            if p.GetAttribute() != pcbnew.PAD_ATTRIB_SMD:
+                continue
+            for lay, mlay in ((pcbnew.F_Cu, pcbnew.F_Mask), (pcbnew.B_Cu, pcbnew.B_Mask)):
+                if not p.IsOnLayer(lay):
+                    continue
+                sps = p.GetEffectivePolygon(lay, pcbnew.ERROR_INSIDE)
+                g = unary_union([Polygon([fr.e(sps.Outline(i).CPoint(k)) for k in range(sps.Outline(i).PointCount())])
+                                 for i in range(sps.OutlineCount())])
+                exp = pcbnew.ToMM(p.GetSolderMaskExpansion(mlay)) if p.IsOnLayer(mlay) else 0.0
+                smd.append((r, p.GetNumber(), g.buffer(max(exp, 0.0), join_style=2)))
+    vip, vgap = [], []
     for t in b.GetTracks():
         if t.GetClass() != "PCB_VIA":
             continue
-        for r, p in smd:
-            if p.HitTest(t.GetPosition()):
-                vip.append("%s.%s" % (r, p.GetNumber()))
-    row("D-37 via in an SMD pad (fallback only; each listed for operator review)", ", ".join(sorted(vip)) or "none",
-        "%d vias" % len(vip), "0 unless listed", "info" if vip else True)
+        ann = Point(fr.e(t.GetPosition())).buffer(pcbnew.ToMM(t.GetWidth(pcbnew.F_Cu)) / 2, 64)
+        for r, num, g in smd:
+            if ann.intersects(g):
+                vip.append("%s.%s" % (r, num))
+            else:
+                vgap.append(ann.distance(g))
+    row("D-37 via annulus on an SMD pad or its mask opening (fallback only; each listed for operator review)",
+        ", ".join(sorted(vip)) or "none", "%d vias; smallest annulus gap to a pad + mask %.3f mm" % (
+            len(vip), min(vgap) if vgap else float("nan")), "0 unless listed", "info" if vip else True)
+    # D-55 (review M-2): C102b-end VCHGIN vias against the A.8 IN-strip row ("6 vias each end") and D-21 (five)
+    c2 = pad_poly("C102b", "1", fr).centroid
+    nvb = sum(1 for t in b.GetTracks() if t.GetClass() == "PCB_VIA" and t.GetNetname() == "/VCHGIN"
+              and Point(fr.e(t.GetPosition())).distance(c2) < 3.0)
+    row("A.8 IN strip: VCHGIN vias at the C102b end (A.8 6 each end; D-21 five)", "C102b pad 1", "%d vias within 3 mm"
+        % nvb, ">= 6", nvb >= 6)
     # D-20 (amended): L4 solid GND, no signal or strap track on B.Cu
     l4 = sum(1 for t in b.GetTracks() if t.GetClass() == "PCB_TRACK" and t.GetLayer() == pcbnew.B_Cu)
     l4z = sorted({z.GetNetname() for z in b.Zones() if not z.GetIsRuleArea() and z.IsOnLayer(pcbnew.B_Cu)})
     row("D-20 L4 (B.Cu): no tracks, GND pour only", "B.Cu", "%d tracks; pour nets %s" % (l4, ", ".join(l4z) or "none"),
         "0 tracks; /GND only", l4 == 0 and all(n == "/GND" for n in l4z))
     # fixed pads (A.8; D-45 kept W1-W4 positions pending the step-5 D-08 re-derivation)
-    for ref, (x, y) in {"W1": (30.3, 61.2), "W2": (27.7, 61.2), "W3": (24.3, 45.4), "W4": (24.3, 55.6)}.items():
+    # W2 x 27.7 -> 27.2 (D-55, review m-1; D-08 re-derived)
+    for ref, (x, y) in {"W1": (30.3, 61.2), "W2": (27.2, 61.2), "W3": (24.3, 45.4), "W4": (24.3, 55.6)}.items():
         e = pads_e(ref, fr)["1"]
-        row("A.8 W1-W4 lead pads (D-45; D-08 re-derived at placement)", ref, "(%.3f, %.3f)" % e, "(%.2f, %.2f)" % (x, y),
-            math.hypot(e[0] - x, e[1] - y) < 1e-3)
+        row("A.8 W1-W4 lead pads (D-45; D-08 re-derived at placement; W2 D-55)", ref, "(%.3f, %.3f)" % e,
+            "(%.2f, %.2f)" % (x, y), math.hypot(e[0] - x, e[1] - y) < 1e-3)
+    dd = pad_poly("W1", "1", fr).distance(pad_poly("W2", "1", fr))
+    ov = crt("W1", fr).intersection(crt("W2", fr)).area
+    row("D-55 (m-1) W1 (VCHGOUT) to W2 (GND) pad gap and courtyard overlap", "W1-W2",
+        "pad gap %.3f mm; courtyard overlap %.3f mm2" % (dd, ov), ">= 0.5 mm; 0 mm2", dd >= 0.5 and ov < 1e-6)
     for ref, n in (("W6", 2), ("W7", 3)):
         fp = FP.get(ref)
         np_ = sum(1 for p in fp.Pads() if p.GetAttribute() == pcbnew.PAD_ATTRIB_PTH) if fp else 0
@@ -163,6 +192,52 @@ if BOARD == "cr":
     row("A.8 OUT strip: C103 pad to pins 17/18", "C103 pad 1", "%.2f mm" % dd, "<= 3.0 mm", dd <= 3.0)
     dd = pad_poly("R102", "2", fr).distance(pad_poly("U101", "6", fr))
     row("A.8 IN strip: R102 N_UV pad to pin 6 (design 2.1 mm)", "R102", "%.2f mm" % dd, "information", "info")
+    # D-55 (review B-1): the U101 network, centre to centre from the part pad on the node to the U101 pin it serves.
+    up = pads_e("U101", fr)
+    for ref, pad, pin, node in (("R101", "1", "10", "ILIM"), ("C101", "1", "9", "dVdT"), ("R103", "2", "7", "OVP"),
+                                ("R104", "1", "7", "OVP"), ("R105", "1", "13", "IMON"), ("R129", "1", "13", "IMON")):
+        if ref not in FP:
+            continue
+        q = pads_e(ref, fr)[pad]
+        dd = math.hypot(q[0] - up[pin][0], q[1] - up[pin][1])
+        row("A.8 %s node within 5 mm of U101 pins 7-13 (pad to pin, centre to centre; D-55)" % node,
+            "%s.%s -> U101.%s" % (ref, pad, pin), "%.2f mm" % dd, "<= 5 mm", dd <= 5.0)
+    q = pads_e("R103", fr)["1"]
+    dd = math.hypot(q[0] - up["6"][0], q[1] - up["6"][1])
+    row("A.8 N_UV: R103 to U101 pin 6 (information; pin 6 is outside pins 7-13)", "R103.1 -> U101.6", "%.2f mm" % dd,
+        "information", "info")
+    q = pads_e("R106s", fr)["1"]
+    dd = math.hypot(q[0] - up["14"][0], q[1] - up["14"][1])
+    row("A.8 (r9-3) R106s as near to U101 pin 14 as the courtyard check allows (D-55)", "R106s.1 -> U101.14",
+        "%.2f mm" % dd, "<= 5 mm (target; r6 pocket figure)", dd <= 5.0)
+    # D-55 (review B-1, m-4): straight-line ratsnest crossings of the CHG +x pin column. Per net (all nets except /GND,
+    # the plane, and the single-pin nets), a minimum spanning tree over the pad centres; an edge counts when it
+    # meets the column copper envelope (pins 1-10, x 45.048-46.948, y 38.134-62.894) and neither end is a column pad.
+    from shapely.geometry import LineString
+    colbox = box(45.998 - 0.95, 39.084 - 0.95, 45.998 + 0.95, 61.944 + 0.95)
+    netpts = {}
+    for r, fp in FP.items():
+        for p in fp.Pads():
+            n = p.GetNetname()
+            if n and n != "/GND" and not n.startswith("unconnected-"):
+                netpts.setdefault(n, []).append(fr.e(p.GetPosition()))
+    cross = []
+    for n, pts in sorted(netpts.items()):
+        if len(pts) < 2:
+            continue
+        inside, edges = {0}, []
+        while len(inside) < len(pts):
+            d, i, j = min((math.hypot(pts[i][0] - pts[j][0], pts[i][1] - pts[j][1]), i, j)
+                          for i in inside for j in range(len(pts)) if j not in inside)
+            inside.add(j)
+            edges.append((pts[i], pts[j]))
+        for a, c in edges:
+            if colbox.contains(Point(a)) or colbox.contains(Point(c)):
+                continue
+            if LineString([a, c]).intersects(colbox):
+                cross.append(n)
+    row("D-55 (B-1, m-4) ratsnest edges crossing the CHG +x pin column (MST per net, straight line)",
+        ", ".join(cross) or "none", "%d edges" % len(cross), "0", not cross)
     # D-20 sensitive-part window and the D-11 interim 10 mm rim (successor of the x <= 39.53 rim rule)
     strict = G.analog_window().buffer(1e-3)   # the window itself (the placement regions also cut the U101 loop)
     for ref in L.ANALOG_ICS + L.DIVIDERS + ["R102"]:
@@ -173,6 +248,22 @@ if BOARD == "cr":
             "inside" if strict.contains(g) else "outside: courtyard x %.2f-%.2f, y %.2f-%.2f" % (
                 g.bounds[0], g.bounds[2], g.bounds[1], g.bounds[3]),
             "inside", True if strict.contains(g) else "exemption (D-20)")
+    # D-55 (review m-2): R103 and R104 (0.1 % eFuse UV/OV divider) are listed exemptions with the reason of R102:
+    # U101's own network, held within 5 mm of pins 6-7 by A.8. R129 (IMON node) and C129 (CHG_IIN filter) are
+    # U101-network parts since D-55; R129 sits in pocket row 3 above the window top (A.8 IMON <= 5 mm binds; the two
+    # window rows hold R104 and R103), a listed exemption that replaces the D-54 item-7 deviation.
+    for ref, why in (("R103", "listed exemption: U101 network, A.8 <= 5 mm (D-55)"),
+                     ("R104", "listed exemption: U101 network, A.8 <= 5 mm (D-55)"),
+                     ("R129", "listed exemption: U101 network, A.8 IMON <= 5 mm (D-55)"),
+                     ("C129", "deviation: outside the window (D-55)")):
+        if ref not in FP:
+            continue
+        g = crt(ref, fr)
+        ins = strict.contains(g)
+        row("D-20 window y 30.8-66.86 and >= 10 mm from the MB 5V copper rim (U101 network and CHG_IIN filter)", ref,
+            "inside" if ins else "outside: courtyard x %.2f-%.2f, y %.2f-%.2f" % (g.bounds[0], g.bounds[2],
+                                                                                 g.bounds[1], g.bounds[3]),
+            "inside", True if ins else why)
     # divider-top rule (A.8 Analog; D-35 scope, D-36: an all-layer metric, not a gate): logic-IC signal pads within
     # 2.0 mm of the divider tops R102, R109, R111, R114 (the r7 packer-pad interim exemptions retire with the r7
     # placement)
@@ -193,6 +284,9 @@ if BOARD == "cr":
     for ref in ("R109", "R110", "R111", "R112", "R114", "R115"):
         row("A.8 divider strip x 23.15-36.50, y 42.14-45.69", ref, "inside" if strip.buffer(1e-3).contains(crt(ref, fr))
             else "outside", "inside", strip.buffer(1e-3).contains(crt(ref, fr)))
+    dd = pad_poly("R110", "1", fr).distance(Point(pads_e("W3", fr)["1"]).buffer(1.25, 64))
+    row("D-55 (m-3) W3 18 AWG joint to the R110 0.1 % divider pad (pad gap; information)", "W3 - R110.1",
+        "%.2f mm" % dd, "information (r9 step 5: 0.78 mm)", "info")
     # distance of analog parts from the U101 loop region
     for ref in ("U102", "U103", "U119", "U120", "D104", "D105", "D106"):
         dd = crt(ref, fr).distance(L.LOOP)
@@ -208,6 +302,20 @@ if BOARD == "cr":
         "both tented", bool(ds.m_TentViasFront and ds.m_TentViasBack))
     nv = sum(1 for p in FP["U101"].Pads() if p.GetAttribute() == pcbnew.PAD_ATTRIB_PTH)
     row("A.8 U101 thermal pad >= 9 vias 0.3 mm (D-40 exempt from D-37)", "U101", "%d vias" % nv, ">= 9", nv >= 9)
+    # D-55 (review M-1): window-pane paste apertures clear every thermal-via drill; coverage of the 2.7 mm pad
+    drills = [Point(fr.e(p.GetPosition())).buffer(pcbnew.ToMM(p.GetDrillSizeX()) / 2, 64) for p in FP["U101"].Pads()
+              if p.GetAttribute() == pcbnew.PAD_ATTRIB_PTH]
+    aps = []
+    for p in FP["U101"].Pads():
+        if p.IsOnLayer(pcbnew.F_Paste) and not p.IsOnLayer(pcbnew.F_Cu):
+            bb_ = p.GetBoundingBox()
+            aps.append(box(pcbnew.ToMM(bb_.GetLeft()), L.YOFF - pcbnew.ToMM(bb_.GetBottom()),
+                           pcbnew.ToMM(bb_.GetRight()), L.YOFF - pcbnew.ToMM(bb_.GetTop())))
+    gap = min(a.distance(d) for a in aps for d in drills) if aps and drills else float("nan")
+    cov = 100 * unary_union(aps).area / (2.7 * 2.7) if aps else 0.0
+    row("D-40 / A.8 U101 exposed-pad paste apertures clear of every via drill (window pane; D-55)", "U101.25",
+        "%d apertures; smallest gap to a drill %.3f mm; coverage %.1f %%" % (len(aps), gap, cov),
+        "gap > 0; coverage TODO(verify: SLVSE94G section 11, stencil vendor)", gap > 0)
     # geometry rows that do not need the board (terminal clearance D-51, rotated key, CHG columns, J-TAP region)
     for gr in G.rows():
         rows.append("| %s | %s | %s | %s | %s |" % (gr["rule"], gr["item"], gr["measured"], gr["limit"],
