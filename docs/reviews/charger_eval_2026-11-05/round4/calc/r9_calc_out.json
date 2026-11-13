@@ -665,6 +665,15 @@
     "rise_at_I_degC": 8.6626,
     "ipc2221_internal_A": 1.8477,
     "ok": true
+   },
+   {
+    "case": "D-57 strap, C102c GND via cut-out + extension (4.174 mm at x 42.535)",
+    "width_mm": 4.174,
+    "area_mil2": 113.22,
+    "i_cap_A": 2.75,
+    "rise_at_I_degC": 7.4127,
+    "ipc2221_internal_A": 2.0385,
+    "ok": true
    }
   ],
   "j110_thermal_mm": 2.4,

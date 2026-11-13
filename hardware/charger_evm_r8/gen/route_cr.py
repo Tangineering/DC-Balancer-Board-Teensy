@@ -30,7 +30,12 @@ P = L.P
 # Review value y 59.55 (2.596 mm neck); the IPC-2152 baseline check of R9.H25 at 2.41 A and a 10 degC rise asks for
 # >= 3.22 mm, so the band starts at y 58.50 (neck about 3.6 mm). Superseded: box(39.15, 60.15, 47.10, 62.75) (D-21,
 # D-55) and the review figure box(39.15, 59.55, 47.10, 62.75).
-VIN_L3 = unary_union([box(39.15, 51.25, 41.95, 61.45), box(39.15, 58.50, 47.10, 62.75)])
+# D-57 (route-race r9 R9-01): the /GND pre-via (42.30, 59.30) of the C102c ground pad needs a strap cut-out, which
+# alone leaves a 2.3-2.6 mm section at the trial via sites (below the 3.221 mm R9.H25 requirement). The box(41.95,
+# 57.00, 44.00, 58.50) extension gives the current a second path below the cut-out; the board-measured minimum
+# section is 4.174 mm at x 42.535 (LAYOUT_DECISIONS D-57). Superseded (D-56): the union without the extension box.
+VIN_L3 = unary_union([box(39.15, 51.25, 41.95, 61.45), box(39.15, 58.50, 47.10, 62.75),
+                      box(41.95, 57.00, 44.00, 58.50)])
 # VCHGOUT inner strap from the D103 cathode via cluster to W1 (A.8 OUT strip row; D-22: the L1 corridor between
 # D103 and W1 is 1.5 mm). D-20 (amended 2026-11-12): L4 carries no strap, so the r8 L4 strap moves to L3 (In2.Cu),
 # where it does not meet the VCHGIN L3 strap (x >= 39.15). Interim until the D-22 re-derivation at placement (D-52).
@@ -54,12 +59,19 @@ PRE_VIAS = (
     # L2 plane (the island inside VCHGOUT_L1 had no plane-via site). In2 is free there (VOUT_IN x <= 36.90, VIN_L3
     # x >= 39.15). Review trial 4 used y 62.98; y 62.90 adds 0.08 mm to the annulus-to-pad margin.
     + [(38.08, 62.90, "/GND")]
+    # D-57 (route-race r9 change request R9-01): /GND pre-via for the C102c ground pad. Every routed /N_UV path from
+    # U101.6 to R102.2 cut the pad off the L1 fill, and the In2 strap left no plane-via site in the piece (probe_d56
+    # 4.1). The via sits below the pad: annulus-to-pad gaps 0.195 mm to C102c.2, 0.239 mm to C102a.1 and 0.330 mm to
+    # R102.2 (pcbnew pad shapes), outside every mask opening (D-37). The VIN_L3 extension restores the strap section.
+    + [(42.30, 59.30, "/GND")]
 )
 PRE_TRACKS = (
     [([(x, 63.35), (x, 64.30)], "/VCHGOUT", 0.5, "F") for x in (34.00, 34.80, 35.60, 36.40)]
     + [([(39.45, 51.80), (39.45, 55.00)], "/VCHGIN", 0.5, "F"), ([(39.45, 53.19), (40.65, 53.19)], "/VCHGIN", 0.6, "F"),
        ([(40.65, 51.40), (40.65, 52.50)], "/VCHGIN", 0.5, "F"),
        ([(39.75, 59.65), (39.75, 61.05)], "/VCHGIN", 0.5, "F"), ([(39.75, 60.67), (41.025, 60.67)], "/VCHGIN", 0.5, "F")]
+    # D-57: C102c.2 to its /GND pre-via
+    + [([(42.575, 60.27), (42.30, 59.30)], "/GND", 0.4, "F")]
 )
 
 

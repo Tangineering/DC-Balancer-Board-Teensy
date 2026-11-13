@@ -38,8 +38,8 @@ below is classified against these decisions:
 
 The r7-outline status table above, the placement of section 5 and the routing record of section 8 are history. The
 r7 layout work, including the interactive-routing project, is in `archive_r7_outline/`. The EIB
-fab package `fab/eib_2026-11-11/` has not been ordered; its BOM and position files need DNP flags before an order
-(D-49).
+fab package `fab/eib_2026-11-13/` carries the D-49 DNP set from the schematic and board attributes, with copper and
+drill files identical to `fab/eib_2026-11-11/`; it has not been ordered and awaits operator review (D-49).
 
 ## 2. Sources and reproduction
 
@@ -791,7 +791,9 @@ digest, and its reconciliation notes bind where a record disagrees.
 - Reason: the reduced gate needs neither the far-end ILIM sense (U203) nor the /CE sense (U204). Fitting U204 as a
   build-time check would need R262/R263, and R263 would pull /CE LOW in the R272/R272b double-open fault.
 - Consequence: `eib-bom.csv` and `eib-pos.csv` are regenerated with DNP flags, and `fab/eib_2026-11-11/` is reviewed
-  by the operator before an order. The R272 + R272b double-open leaves /CE floating; this is latent, and T-C-05
+  by the operator before an order. (Regeneration closed 2026-11-13: `fab/eib_2026-11-13/` is generated from the
+  schematic and board DNP attributes; every Gerber and Excellon file is identical to `fab/eib_2026-11-11/` apart from
+  the creation dates. The operator review now applies to `fab/eib_2026-11-13/`.) The R272 + R272b double-open leaves /CE floating; this is latent, and T-C-05
   metering is the only check. A J101 pin 9 (GND) to pin 10 (RFC_OFF) short drives about 33 mA through R132 (100 ohm),
   above the LVC output current; the B.6 text that calls it safe is corrected, TODO(calc: B.6 9-10 short against the
   LVC IOL). Record: `decisions_2026-11-12/round2/dec2_eib_2026-11-12.md`.
@@ -1165,6 +1167,26 @@ rows. DRC reports 124 violations (75 silk over copper, 49 silk overlap, all refe
 and 0 parity issues; the two removed unconnected items are the D-55 /GND fill islands, as review trial 4 predicted.
 Open: the 4-seed probe re-run on this board (step 6 entry), N-5 and N-8.
 
+**D-57. C102c ground pad: /GND pre-via and strap extension (2026-11-13; route-race r9 change request R9-01).**
+
+- Decision: a /GND pre-via at (42.30, 59.30), joined to C102c pad 2 by a 0.4 mm F.Cu track, is added to
+  `gen/route_cr.py` `PRE_VIAS`/`PRE_TRACKS` and to `gen/layout_cr.py` `PRE_VIA_SITES`. The VCHGIN L3 strap `VIN_L3`
+  gains `box(41.95, 57.00, 44.00, 58.50)`, so the current passes below the via cut-out. The board is rebuilt with the
+  D-56 procedure (placement half of `gen/make_board.sh`, then `ROUTE_SKIP_FR=1 gen/route.py cr ../cr`).
+- Reason: in round 1 of the r9 route-race, C102c.2 was open after the plane-via step at every seed of every plan
+  (probe_d56 section 4.1). The /N_UV track from U101.6 to R102.2 encloses the pad's GND_L1_fill piece; VCHGIN copper,
+  R102 and the J1 +x column close the other sides, and the In2 strap left no plane-via site. Of the three probe
+  candidates, the via in a strap cut-out changes no placement and no signal route.
+- Consequence: the via annulus clears C102c.2 by 0.195 mm, C102a.1 by 0.239 mm and R102.2 by 0.330 mm (pcbnew pad
+  shapes; outside every mask opening, D-37). A first site at (42.55, 59.20) was 0.061 mm from R102.2 and is not used.
+  The cut-out alone leaves a 2.3-2.6 mm strap section at the trial sites, below the 3.221 mm R9.H25 requirement.
+  With the extension, the board-measured minimum section (total vertical chord of the filled strap, x 41.96-45.00) is
+  4.174 mm at x 42.535 (D-56: 3.630 mm at x 42.76 on the same measurement). R9.H25 gives 2.75 A at a 10 C rise
+  (7.4 C at 2.41 A); the IPC-2221 internal formula now also passes (2.04 A). The section sums two parallel paths
+  around the via; a single conductor of the same width is the conservative case. The extension takes about 3.1 mm2
+  of In2.Cu routing area under R102. Placement, the netlist and the signal ratsnest are unchanged; the
+  only new copper is the via and its track.
+
 ## 9. Verification
 
 ### 9.1 ERC and DRC
@@ -1188,6 +1210,13 @@ D-20 exemptions and 16 information rows (`cr/constraint_check.md`).
 and 49 silk overlap, all reference fields), 107 unconnected items and 0 parity issues. The constraint check gives 97
 pass, 0 FAIL, 3 listed D-20 exemptions (R102, R103, R129) and 16 information rows, with the nine new escape rows
 passing.
+
+**D-57 (2026-11-13):** after the C102c pre-via and the strap extension, DRC reports the same 124 silk violations, 107
+unconnected items and 0 parity issues. The constraint check gives 97 pass and 0 FAIL; the C102c.2 escape row now
+reaches the pad's own via. Build note: `gen/route.py` saves `cr/cr.kicad_pcb` from `cr_placed.kicad_pcb` and resets the
+board minimums in `cr/cr.kicad_pro` (hole clearance 0.25 mm instead of 0.254 mm), so its zone fill leaves the J102
+NPTH pegs 0.2505 mm from the GND pours (six DRC items). Restore `cr/cr.kicad_pro` from git and refill the zones with
+the board loaded as `cr/cr.kicad_pcb`; the six items then clear.
 
 ### 9.2 Constraint measurements
 

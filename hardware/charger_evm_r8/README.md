@@ -680,9 +680,11 @@ Nothing is ordered, and no price, stock or SKU is verified on a live vendor page
 
 ### 9.3 EIB fab package
 
-The EIB package `fab/eib_2026-11-11/` passes ERC and DRC and is not ordered; it awaits operator review. The DNP set is
-applied by hand to the BOM and position CSV files. `assembly/eib_ibom.html` and the schematic and PCB PDFs still show the
-DNP parts as fitted. A re-run of `gen/export.sh eib` or `gen/fab_readme.py` would overwrite the hand edits.
+The EIB package `fab/eib_2026-11-13/` passes ERC (0 messages) and DRC (0 violations, schematic parity checked) and is not
+ordered; it awaits operator review. The schematic and board carry the KiCad DNP attribute on U203, U204, C203, C204,
+R258-R265, E4 and E6, so the generator writes the BOM, position, KiKit and iBOM files with that DNP set. Every Gerber and
+Excellon file is identical to the 2026-11-11 package apart from the creation dates. The 2026-11-11 package, with its
+hand-edited assembly files, is kept as the record.
 
 ### 9.4 Archive and certification
 
@@ -819,7 +821,7 @@ Table 12.1. Topic index.
 | Outline change rationale | `OUTLINE_CHANGE_REASSESSMENT_2026-11-12.md` | 2, 3, 8 |
 | Ordering BOM | `bom_2026-11-11/ordering_bom.csv`, `README.md` | 8.2-8.3 for r9 changes |
 | CR netlist and generator | `cr/cr.net`, `gen/netlist.py` | Not applicable |
-| EIB fab package | `fab/eib_2026-11-11/README.md` | 1, 5 |
+| EIB fab package | `fab/eib_2026-11-13/README.md` | 1, 5, 6 |
 | Stale r7-outline work | `archive_r7_outline/` | Reference only |
 
 Table 12.1 points to the design document for every technical value in this README. The other files hold decision
