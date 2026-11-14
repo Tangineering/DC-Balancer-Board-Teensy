@@ -916,6 +916,8 @@ as the record.
 
 **Amended 2026-11-13 (D-66):** J201 is now a 3 x 3 grid of plated wire pads for the nine soldered W5 wires, and the area around it was re-routed (`LAYOUT_DECISIONS.md` D-66). The current package is `fab/eib_2026-11-13b/` (ERC 0, DRC 0 / 0 / 0); `fab/eib_2026-11-13/` is superseded.
 
+**Amended 2026-11-13 (D-68):** the AGND pours keep 0.5 mm from the hand-soldered E lead pads on both layers (operator ruling 2026-11-13, chat: "Widen clearance"; `LAYOUT_DECISIONS.md` D-68). The current package is `fab/eib_2026-11-13c/` (ERC 0, DRC 0 / 0 / 0); `fab/eib_2026-11-13b/` is superseded. The order quantity is 3 (operator ruling 2026-11-13, chat: "Order 3").
+
 ### 9.5 Archive and certification
 
 The r7-outline layout work (interactive project, variants, attempts, routability study) is archived in

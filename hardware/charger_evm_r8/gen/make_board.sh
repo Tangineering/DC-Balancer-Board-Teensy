@@ -15,7 +15,8 @@ K="/c/Program Files/KiCad/9.0/bin/kicad-cli.exe"
 # fab rules (tools/pcb/TOOLCHAIN.md section 3.9). CR: the OSH Park-only file (D-29 amended 2026-11-12, D-55);
 # superseded: fab_4layer_5mil_oshpark_pcbway.kicad_dru (shared OSH Park/PCBWay 5/5 mil file, 2026-11-11)
 if [ "$B" = cr ]; then cp ../../tools/pcb/fab_rules/fab_4layer_oshpark_only.kicad_dru "$B/$B.kicad_dru"; else
-  cp ../../tools/pcb/fab_rules/fab_2layer_oshpark_pcbway.kicad_dru "$B/$B.kicad_dru"; fi
+  cp ../../tools/pcb/fab_rules/fab_2layer_oshpark_pcbway.kicad_dru "$B/$B.kicad_dru"
+  cat gen/eib_pour_rules.kicad_dru >> "$B/$B.kicad_dru"; fi   # D-68: 0.5 mm pour clearance at the E lead pads
 "$PY" ../../tools/pcb/fab_rules/apply_board_setup.py "$B/$B.kicad_pcb" 2>&1 | grep -v "memory leak"
 if [ "$B" = cr ]; then   # OSH Park-only board minimums (D-29 amended, D-54) and the 6/6 mil Default net class (D-55)
   "$PY" -c "

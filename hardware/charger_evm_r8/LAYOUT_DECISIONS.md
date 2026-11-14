@@ -17,7 +17,7 @@ Status on 2026-11-13:
 
 | Board | Schematic | Placement | Routing | ERC | DRC | Fab package |
 |---|---|---|---|---|---|---|
-| EIB | complete | complete | complete (D-28; straightened tracks, top AGND pour and stitching D-63; references D-64; J201 wire pads and local re-route D-66) | 0 | 0 (schematic parity checked) | `fab/eib_2026-11-13b/` (D-49 DNP set; exported after D-66); not ordered |
+| EIB | complete | complete | complete (D-28; straightened tracks, top AGND pour and stitching D-63; references D-64; J201 wire pads and local re-route D-66; E-pad pour clearance D-68) | 0 | 0 (schematic parity checked) | `fab/eib_2026-11-13c/` (D-49 DNP set; exported after D-68; order 3); not ordered |
 | CR | complete | complete (D-54 to D-56) | complete (D-58; power copper D-57; outline D-62, holes D-60 and D-62; GND stitching and straightened tracks D-61, re-run in D-62; references D-59 and D-62; operator cleanup `547dc11`; via merges D-65; J101 wire pads D-66; U101 TCKE1401NM D-67) | 0 | 0 violations, 0 unconnected items, 0 parity issues (`--severity-all --schematic-parity`) | `fab/cr_2026-11-13e/` (exported after D-67; copper equals `fab/cr_2026-11-13d/`); not ordered |
 
 On the routed CR with the D-62 outline and the re-run stitching (D-60 to D-62), the constraint check
@@ -1696,6 +1696,22 @@ segments, 420 vias, 0 differences). The parts come from Mouser (`bom_2026-11-13/
 pads differ in the F.Cu Gerber. Reversal: restore `gen/netlist.py`, `gen/sch.py` and the `cr/` files of the commit before
 D-67 and export again.
 
+**D-68. AGND pours keep 0.5 mm from the EIB E lead pads (operator ruling 2026-11-13, chat: "Widen clearance").** The pre-order review
+(`bom_2026-11-13/PREORDER_REVIEW.md` item 3.2.1, finding EIB-4) found that the E pads carrying hand-soldered leads (E1, E2,
+E3, E5, E7) kept only the 0.20 mm zone clearance to the AGND pours on both layers (the F.Cu pour is D-63), with a 0.05 mm
+mask expansion, so a solder blob or flux residue could bridge a lead to AGND. A custom rule now holds the pours 0.5 mm
+from any pad of an E footprint on another net (`eib_E_pad_pour_clearance`; E8 is AGND and keeps its connection). The rule
+applies to zones only, so tracks and every other spacing keep the fab rule file. It is in `eib/eib.kicad_dru`, and
+`gen/make_board.sh` appends it from `gen/eib_pour_rules.kicad_dru` after copying the fab rules, so a regeneration keeps
+it. After the refill, the AGND stitching via at (0.81, 43.81), in the corner beside E6, lost its B.Cu pour connection,
+because the strip between the E pads and the board edge closed; the via was deleted. Result: the smallest copper gap from
+a live E pad to the pours is 0.501 mm on both layers (E7; 0.157 mm measured before, polygon to polygon), the F.Cu pour
+area falls from 532.3 to 511.9 mm2 and the B.Cu pour from 585.7 to 562.7 mm2, and the board has 48 AGND vias (49
+before). ERC gives 0 messages, DRC (`--severity-all --schematic-parity`) 0 / 0 / 0, and the EIB constraint check 5 pass
+and 0 FAIL. Package `fab/eib_2026-11-13c/`; against `fab/eib_2026-11-13b/` only the two copper layers and the PTH drill
+file differ. Reversal: restore `eib/eib.kicad_pcb`, `eib/eib.kicad_dru` and `gen/make_board.sh` from the commit before
+D-68 and export again.
+
 ## 9. Verification
 
 ### 9.1 ERC and DRC
@@ -1765,6 +1781,8 @@ violations, 0 unconnected items and 0 parity issues on both boards. The CR const
 the EIB constraint check is unchanged. The KiKit OSH Park preset ran without messages on both boards.
 
 **D-67 (2026-11-13):** after the U101 change, CR ERC reports 0 messages and DRC (`--severity-all --schematic-parity`) 0 violations, 0 unconnected items and 0 parity issues. The CR constraint check gives 108 pass rows and 0 FAIL. The KiKit JLCPCB and PCBWay presets fail on the assembly BOM as before.
+
+**D-68 (2026-11-13):** after the E-pad pour clearance change, EIB ERC reports 0 messages and DRC (`--severity-all --schematic-parity`) 0 violations, 0 unconnected items and 0 parity issues; the EIB constraint check gives 5 pass rows and 0 FAIL. The KiKit OSH Park preset ran without messages.
 
 ### 9.2 Constraint measurements
 

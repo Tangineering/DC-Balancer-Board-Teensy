@@ -68,7 +68,8 @@ STATUS = ("**Status: not ordered.** This package awaits operator review before o
           "2026-11-12). The routing is D-28; the straightened tracks, the F.Cu AGND pour and the AGND stitching vias "
           "are D-63 (`eib/straighten.md`, `eib/stitch_gaps.md`); the reference designators are D-64 (`eib/silk_refs.md` "
           "lists those on F.Fab only). J201 is a 3 x 3 grid of plated wire pads for the soldered W5 wires; the FTSH "
-          "header and the ribbon are retired, and the area around J201 was re-routed (D-66, `gen/swap_wire9.py`).\n\n"
+          "header and the ribbon are retired, and the area around J201 was re-routed (D-66, `gen/swap_wire9.py`). The "
+          "AGND pours keep 0.5 mm from the hand-soldered E lead pads (D-68, rule in `gen/eib_pour_rules.kicad_dru`).\n\n"
           if B == "eib" else
           "**Status: not ordered.** This package awaits operator review before order. The fab is OSH Park (operator "
           "ruling 2026-11-12). The routing is D-58; the outline is D-62 and the 6-32 holes are D-60; the GND stitching "

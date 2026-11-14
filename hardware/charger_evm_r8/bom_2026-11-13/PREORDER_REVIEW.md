@@ -60,7 +60,7 @@ The current full package is `fab/cr_2026-11-13e/`, exported after D-67 (U101 TCK
 
 ### 3.2 EIB
 
-1. **E-pad clearance to the AGND pours (EIB-4).** The E pads that carry hand-soldered leads (E1, E2, E3, E5, E7)
+1. **Closed 2026-11-13 by D-68 (operator ruling 2026-11-13, chat: "Widen clearance"):** the pours keep 0.501 mm from the live E pads on both layers; package `fab/eib_2026-11-13c/`. **E-pad clearance to the AGND pours (EIB-4).** The E pads that carry hand-soldered leads (E1, E2, E3, E5, E7)
    keep 0.20 mm of copper clearance to the AGND pours on both layers, with a 0.05 mm mask expansion. Since D-63 the
    top layer also has a pour. Either increase the pour clearance around the E pads before the order, or add a build
    step: clean the flux, then measure each E pad to AGND before power-up.

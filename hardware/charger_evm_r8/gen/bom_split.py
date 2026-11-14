@@ -113,8 +113,8 @@ PCB_SPEC = {
     "eib": ("2-layer, 1.6 mm, 1 oz, ENIG, 24.0 x 38.0 mm (D-25), two M3 holes; AGND pours on both layers stitched "
             "by vias (D-63); J201 as wire pads (D-66)",
             "A separate 2-layer order at OSH Park (not on the CR panel). OSH Park sells boards in multiples of 3; the "
-            "E BOM asked for 5; order 3, one lot (operator ruling 2026-11-13, chat: \"Order 3\"). Upload: fab/eib_2026-11-13b/kikit_oshpark/gerbers.zip "
-            "(fab/eib_2026-11-13/ is superseded).",
+            "E BOM asked for 5; order 3, one lot (operator ruling 2026-11-13, chat: \"Order 3\"). Upload: fab/eib_2026-11-13c/kikit_oshpark/gerbers.zip "
+            "(D-68; fab/eib_2026-11-13/ and fab/eib_2026-11-13b/ are superseded).",
             "OSH Park"),
 }
 SYS_DQ = re.compile(r"design qty (\d+)")

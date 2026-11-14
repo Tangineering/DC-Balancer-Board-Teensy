@@ -1,5 +1,7 @@
 # EIB, EVM interface board: fabrication package (2026-11-13b)
 
+**Superseded 2026-11-13 (D-68) by `fab/eib_2026-11-13c/`: the AGND pours there keep 0.5 mm from the E lead pads.**
+
 **Status: not ordered.** This package awaits operator review before order (dec2-eib decision 1, 2026-11-12). The routing is D-28; the straightened tracks, the F.Cu AGND pour and the AGND stitching vias are D-63 (`eib/straighten.md`, `eib/stitch_gaps.md`); the reference designators are D-64 (`eib/silk_refs.md` lists those on F.Fab only). J201 is a 3 x 3 grid of plated wire pads for the soldered W5 wires; the FTSH header and the ribbon are retired, and the area around J201 was re-routed (D-66, `gen/swap_wire9.py`).
 
 ## 1. Board
