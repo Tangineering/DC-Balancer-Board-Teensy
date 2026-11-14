@@ -17,8 +17,8 @@ Status on 2026-11-13:
 
 | Board | Schematic | Placement | Routing | ERC | DRC | Fab package |
 |---|---|---|---|---|---|---|
-| EIB | complete | complete | complete (D-28; straightened tracks, top AGND pour and stitching D-63; references D-64) | 0 | 0 (schematic parity checked) | `fab/eib_2026-11-13/` (D-49 DNP set; re-exported after D-64); not ordered |
-| CR | complete | complete (D-54 to D-56) | complete (D-58; power copper D-57; outline D-62, holes D-60 and D-62; GND stitching and straightened tracks D-61, re-run in D-62; references D-59 and D-62; operator cleanup `547dc11`; via merges D-65) | 0 | 0 violations, 0 unconnected items, 0 parity issues (`--severity-all --schematic-parity`) | `fab/cr_2026-11-13c/` (exported after D-65); not ordered |
+| EIB | complete | complete | complete (D-28; straightened tracks, top AGND pour and stitching D-63; references D-64; J201 wire pads and local re-route D-66) | 0 | 0 (schematic parity checked) | `fab/eib_2026-11-13b/` (D-49 DNP set; exported after D-66); not ordered |
+| CR | complete | complete (D-54 to D-56) | complete (D-58; power copper D-57; outline D-62, holes D-60 and D-62; GND stitching and straightened tracks D-61, re-run in D-62; references D-59 and D-62; operator cleanup `547dc11`; via merges D-65; J101 wire pads D-66) | 0 | 0 violations, 0 unconnected items, 0 parity issues (`--severity-all --schematic-parity`) | `fab/cr_2026-11-13d/` (exported after D-66); not ordered |
 
 On the routed CR with the D-62 outline and the re-run stitching (D-60 to D-62), the constraint check
 (`cr/constraint_check.md`) gives 109 pass rows, 0 FAIL (including the D-20 stitching row of D-61, 3.51 mm against 3.54
@@ -1601,6 +1601,66 @@ largest distance to the nearest one 3.51 mm, unchanged against the 3.54 mm limit
 from `e1f05d4` exactly (0 tracks or vias differ). Package: `fab/cr_2026-11-13c/`. Reversal: restore
 `cr/cr.kicad_pcb` from `e1f05d4` and export again.
 
+**D-66. W5 by soldered wires: J101 and J201 become 3 x 3 grids of plated wire pads (operator rulings
+2026-11-13).** The operator ruled (forked design session, chat 2026-11-13): "Let's remove the J101 and J201", and then
+"Change the footprints to through-hole wire pads". The W5 ribbon (FFSD-07-D-12.00-01-N), the two Samtec FTSH-107
+headers (CR J101 FTSH-107-01-L-DV, EIB J201 FTSH-107-01-L-DV-K) and the pin-6 key are retired. This closes the J101
+part choice and the pin-6 key (section 11 item 13; `bom_2026-11-13/PREORDER_REVIEW.md` items 3.1.3, 3.2.2 and 4.1).
+The same rulings keep J1 ("it gives the required board height") and J102 (premade cable), and the EVM J8 lead is
+soldered to the J8 pins (no KK housing).
+
+The footprint `WirePads_PTH_3x3_D1.0mm_Pad1.8mm_P2.54mm` (`gen/fplib.py` `wire9`, package key `WIRE9`) uses the
+E-pad / W6 / W7 lead-pad geometry: 1.0 mm plated hole, 1.8 mm pad, 2.54 mm pitch, pad 1 square (hole and pad
+PLACEHOLDER for 26/28 AWG, TODO(verify: conductor and insulation OD)). The FTSH pin numbers are kept, so every wire
+joins J101.n to J201.n. Nine wires remain: pins 1 to 5 and 7 to 10. Pins 11 and 13 were not connected on the CR, and
+pins 12 and 14 were redundant ground returns of the ribbon. On the EIB, R265.2 (was ILIM_SENSE to J201.11) and R264.2
+(was CE_SENSE to J201.13) are now not connected; both resistors are DNP, and the senses were already dead because CR
+J101.11 and J101.13 were not connected (dec2-eib section 4). Table D-66 gives the wire list.
+
+| Wire (J101.n to J201.n) | CR net | EIB net | CR grid position (row, column) | EIB grid position (row, column) |
+|---|---|---|---|---|
+| 1 | J3V3_1 (R176) | 3V3 | 1, 1 (square pad) | 1, 1 (square pad) |
+| 2 | J3V3_2 (R177) | 3V3 | 1, 3 | 2, 2 |
+| 3 | GND | GND_J | 1, 2 | 2, 3 |
+| 4 | STAT | STAT | 2, 3 | 1, 2 |
+| 5 | CE_DRV_J | CE_DRV_J | 2, 1 | 2, 1 |
+| 7 | ILIM_REL_A | ILIM_REL_A | 2, 2 | 3, 1 |
+| 8 | ILIM_REL_B | ILIM_REL_B | 3, 2 | 1, 3 |
+| 9 | GND | GND_J | 3, 1 | 3, 3 |
+| 10 | RFC_OFF_J | RFC_OFF_J | 3, 3 | 3, 2 |
+
+Row 1 is the top row of the board view and column 1 the left column. The two grids differ by design: the EIB order
+puts each net on the side where its route leaves the grid (up: STAT and ILIM_REL_B; left: CE_DRV_J and ILIM_REL_A;
+down: RFC_OFF_J and the GND_J pair to R273), because the CR order forced crossings that the EIB router could not close
+(two attempts, with rip-up of up to thirteen nets). The F.Fab layer of each footprint shows the pin numbers.
+
+The change was made in place on the routed boards, without a full re-route:
+
+1. `gen/fplib.py`, `gen/fpmap.py`, `gen/sch.py` and `gen/netlist.py` carry the new footprint, symbol (`JW9`) and
+   nets; the schematics and netlists were regenerated (ERC 0 on both boards).
+2. `gen/swap_wire9.py <board>` replaces the header at the old centre (CR (40.60, 53.17), EIB (20.00, 31.00)), deletes
+   the other-net copper that the plated pads violate and the open-ended tracks of the affected nets.
+   `gen/eib_sense_nc.py` takes R264.2 and R265.2 off their nets.
+3. `gen/prune_dangling.py <board> <nets>` deletes the dead-end tracks and vias of the affected nets, and
+   `gen/finish.sh` (the finishing A* router) closes the unconnected items: CR on F.Cu and In2.Cu (B.Cu stays track-free,
+   D-20), 0.1524 mm track; EIB on F.Cu and B.Cu, 0.2 mm track and clearance (D-28).
+4. `tools/pcb/corridor_route/straighten.py` straightens the result (CR: the affected nets; EIB: all signal nets,
+   three passes, 596 to 332 segments).
+5. CR only: `gen/wire9_padvias.py` removes the vias that the router put on the wire pads and ends their tracks in the
+   pad, and `gen/wire9_stitch.py` adds three /GND stitching vias between the wire pads at (41.87, 54.44),
+   (41.87, 51.90) and (39.33, 51.90), because the D-20 row read 3.70 mm after the swap. One /GND via was moved from
+   (36.725, 51.025) to (36.605, 51.025), 0.084 mm to 0.204 mm from the pad 1 mask opening.
+
+On the CR the change is local: J3V3_1, J3V3_2, STAT, CE_DRV_J, ILIM_REL_A, ILIM_REL_B, RFC_OFF_J and CHG_ARM (whose
+In2 run crossed the grid and now runs on F.Cu) were re-routed; 428 to 417 vias, 838.1 to 818.7 mm of track. On the EIB
+the router also ripped up and re-routed 3V3, N_RAIN, nCE_DRV, N_RFIN, N_ISP, N_ISM, Q201_G, Q202_G, REF203, REGN and
+N_U203O, and the straightening pass changed 18 nets; 96 to 94 vias (49 AGND unchanged), 604.0 to 500.7 mm of track. The AGND pours,
+the AGND stitching (D-63) and the single R273 link between GND_J and AGND are unchanged. Result: DRC
+(`--severity-all --schematic-parity`) 0 / 0 / 0 on both boards; CR constraint check 108 pass and 0 FAIL (D-20 3.49 mm,
+D-37 "none"); EIB constraint check unchanged (5 pass, 0 FAIL); no via within 0.12 mm of an other-net mask opening on the
+EIB, and on the CR none closer than 0.110 mm. Packages: `fab/cr_2026-11-13d/`, `fab/eib_2026-11-13b/`. Reversal: restore
+the `cr/`, `eib/` and `gen/` files of the commit before D-66 and export again.
+
 ## 9. Verification
 
 ### 9.1 ERC and DRC
@@ -1664,6 +1724,10 @@ violations, 0 unconnected items and 0 parity issues, and the EIB constraint chec
 **D-65 (2026-11-13):** after the via merges, DRC (`--severity-all --schematic-parity`) reports 0 violations, 0
 unconnected items and 0 parity issues. The constraint check gives 108 pass rows and 0 FAIL (`cr/constraint_check.md`).
 The KiKit OSH Park preset ran without messages; the JLCPCB and PCBWay presets fail on the assembly BOM as before.
+
+**D-66 (2026-11-13):** after the wire-pad change, ERC reports 0 messages on both boards and DRC (`--severity-all --schematic-parity`) 0
+violations, 0 unconnected items and 0 parity issues on both boards. The CR constraint check gives 108 pass rows and 0 FAIL;
+the EIB constraint check is unchanged. The KiKit OSH Park preset ran without messages on both boards.
 
 ### 9.2 Constraint measurements
 

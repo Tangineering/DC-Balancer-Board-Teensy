@@ -200,11 +200,13 @@ CR = [
     C("C125", "10uF 10V X7R", "C0805", V33, GND, mpn="GRM21BR71A106KE51L", mfr="Murata"),
     # ---- J101 ribbon header (2x7 1.27 mm SMT, position 6 omitted = key). dec2-eib decision 4: stays 2 x 7, pins 11
     #      and 13 not connected (superseded 2026-11-12: 11 ILIM_SENSE, 13 CE_SENSE).
-    ("J101", "J2x7K", "W5 header", "J2x7_NOPIN6",
+    #      D-66 (operator ruling 2026-11-13: "Change the footprints to through-hole wire pads"): the W5 ribbon and the
+    #      FTSH header are replaced by nine soldered wires on a 3 x 3 grid of PTH lead pads, FTSH pin numbers kept;
+    #      pins 11-14 dropped (11/13 NC, 12/14 redundant GND returns). Superseded: J2x7K / J2x7_NOPIN6, FTSH-107-01-L-DV.
+    ("J101", "JW9", "W5 wire pads", "WIRE9",
      {"1": "J3V3_1", "2": "J3V3_2", "3": GND, "4": "STAT", "5": "CE_DRV_J", "7": "ILIM_REL_A",
-      "8": "ILIM_REL_B", "9": GND, "10": "RFC_OFF_J", "11": None, "12": GND, "13": None,
-      "14": GND},
-     dict(mpn="FTSH-107-01-L-DV class (T-A-05)", mfr="Samtec")),
+      "8": "ILIM_REL_B", "9": GND, "10": "RFC_OFF_J"},
+     dict(note="lead pads for W5 wires (D-66), no part")),
     R("R107", "10.0k 1%", "R0603", "STAT", V33, mpn="CRCW060310K0FKEA", **VISH01),
     # R145, R146 removed: DNP tier 1 (D-31; the I2C pull-ups stay on the MB 3V3 side, A.2); not re-admitted 2026-11-12
     # ---- keep-alive option B.5 (U112, C152, D101, R_KA): retired 2026-11-12 (parts/assembly decision 3b).
@@ -287,7 +289,9 @@ EIB = [
      {"1": "N_U203O", "2": AG, "3": "N_ISP", "4": "N_ISM", "5": "REF203", "6": V33},
      dict(mpn="TLV3012BIDBVR", mfr="Texas Instruments", dnp=True)),
     C("C203", "100nF 50V X7R", "C0603", V33, AG, mpn="GRM188R71H104KA93D", mfr="Murata", dnp=True),
-    R("R265", "470 1%", "R0603", "N_U203O", "ILIM_SENSE", mpn="CRCW0603470RFKEA", **VISH01, dnp=True),
+    # D-66: pin 2 was ILIM_SENSE to J201.11; J201.11 is gone, so the pad is not connected (the sense was dead since
+    # CR J101.11 became NC, dec2-eib section 4)
+    R("R265", "470 1%", "R0603", "N_U203O", None, mpn="CRCW0603470RFKEA", **VISH01, dnp=True),
     R("R258", "10.0k 1%", "R0603", "ILIM_SNS", "N_ISP", mpn="CRCW060310K0FKEA", **VISH01, dnp=True),
     R("R259", "10.0M 1%", "R0603", "N_ISP", V33, mpn="CRCW060310M0FKEA", **VISH01, dnp=True),
     R("R260", "10.0k 1%", "R0603", "REF203", "N_ISM", mpn="CRCW060310K0FKEA", **VISH01, dnp=True),
@@ -296,18 +300,21 @@ EIB = [
      {"1": "N_U204O", "2": AG, "3": "N_CSP", "4": "REF204", "5": "REF204", "6": V33},
      dict(mpn="TLV3012BIDBVR", mfr="Texas Instruments", dnp=True)),
     C("C204", "100nF 50V X7R", "C0603", V33, AG, mpn="GRM188R71H104KA93D", mfr="Murata", dnp=True),
-    R("R264", "470 1%", "R0603", "N_U204O", "CE_SENSE", mpn="CRCW0603470RFKEA", **VISH01, dnp=True),
+    # D-66: pin 2 was CE_SENSE to J201.13; not connected, as R265.2
+    R("R264", "470 1%", "R0603", "N_U204O", None, mpn="CRCW0603470RFKEA", **VISH01, dnp=True),
     R("R262", "1.00M 1%", "R0603", "nCE_SNS", "N_CSP", mpn="CRCW06031M00FKEA", **VISH01, dnp=True),
     R("R263", "1.00M 1%", "R0603", "N_CSP", AG, mpn="CRCW06031M00FKEA", **VISH01, dnp=True),
     R("R275", "1.00k 1%", "R0603", "STAT_E", "STAT", mpn="CRCW06031K00FKEA", **VISH01),
     R("R276", "10.0 1%", "R0603", "REGN_E1", "REGN", mpn="CRCW060310R0FKEA", **VISH01),
     C("C205", "100nF 50V X7R", "C0603", "REGN", AG, mpn="GRM188R71H104KA93D", mfr="Murata"),
     R("R273", "10.0 1%", "R0603", "GND_J", AG, mpn="CRCW060310R0FKEA", **VISH01),
-    ("J201", "J2x7", "W5 header", "J2x7_EIB",
-     {"1": V33, "2": V33, "3": "GND_J", "4": "STAT", "5": "CE_DRV_J", "6": None, "7": "ILIM_REL_A",
-      "8": "ILIM_REL_B", "9": "GND_J", "10": "RFC_OFF_J", "11": "ILIM_SENSE", "12": "GND_J", "13": "CE_SENSE",
-      "14": "GND_J"},
-     dict(mpn="Samtec FTSH/SHF-107 class (T-A-05)", mfr="Samtec")),
+    # D-66: J201 as J101 (nine PTH wire pads, FTSH pin numbers kept). Pins 6 and 11-14 dropped; ILIM_SENSE (was
+    # pin 11) and CE_SENSE (was pin 13) now end on the DNP R265 / R264 pads only. Superseded: J2x7 / J2x7_EIB,
+    # FTSH-107-01-L-DV-K.
+    ("J201", "JW9", "W5 wire pads", "WIRE9",
+     {"1": V33, "2": V33, "3": "GND_J", "4": "STAT", "5": "CE_DRV_J", "7": "ILIM_REL_A",
+      "8": "ILIM_REL_B", "9": "GND_J", "10": "RFC_OFF_J"},
+     dict(note="lead pads for W5 wires (D-66), no part")),
     # E pads (A.9 order top to bottom: E8, -, E3, E4, E2, -, E7, -, E1, -, E5, E6)
     ("E1", "PAD1", "E1 REGN (JP12)", "EPTH_1.0", {"1": "REGN_E1"}, {}),
     ("E2", "PAD1", "E2 ILIM feed", "EPTH_1.0", {"1": "ILIM_FEED"}, {}),

@@ -169,6 +169,41 @@ def lead_pth_n(outdir, name, n, drill=1.0, dia=1.8, pitch=2.54):
     write(outdir, name, L)
 
 
+# D-66 (operator ruling 2026-11-13): the W5 ribbon is replaced by soldered wires. J101 (CR) and J201 (EIB) become a
+# 3 x 3 grid of plated through-hole lead pads in the E-pad / W6 / W7 geometry (1.0 mm hole, 1.8 mm pad, 2.54 mm
+# pitch). The FTSH pin numbers are kept, so the wire list reads J101.n to J201.n; pins 6 and 11-14 are dropped.
+# Grid (pin number at column x, row y, in pitches). CR: row 1: 1 3 2; row 2: 5 7 4; row 3: 9 8 10. EIB: each net sits
+# on the side its route leaves (up: 4 STAT, 8 ILIM_REL_B; left: 5 CE_DRV_J, 7 ILIM_REL_A; down: 10 RFC_OFF_J, 9 GND_J
+# to R273), so no route crosses the grid: row 1: 1 4 8; row 2: 5 2 3; row 3: 7 10 9. The wires join equal pin numbers.
+WIRE9_GRID = {"cr": {"1": (-1, -1), "3": (0, -1), "2": (1, -1),
+                     "5": (-1, 0), "7": (0, 0), "4": (1, 0),
+                     "9": (-1, 1), "8": (0, 1), "10": (1, 1)},
+              "eib": {"1": (-1, -1), "4": (0, -1), "8": (1, -1),
+                      "5": (-1, 0), "2": (0, 0), "3": (1, 0),
+                      "7": (-1, 1), "10": (0, 1), "9": (1, 1)}}
+
+
+def wire9(outdir, name, drill=1.0, dia=1.8, pitch=2.54):
+    """J101 / J201 wire pads (D-66): nine plated through-hole lead pads on a 3 x 3 grid, pad 1 square. The pin
+    numbers of the retired FTSH-107 header are kept. Hole and pad as lead_pth_n (PLACEHOLDER for 26/28 AWG,
+    TODO(verify: conductor and insulation OD)). Unused inner pads removed on the CR (D-30, P-11)."""
+    L = hdr(name, "Wire pads, 9 x %.1f mm plated hole, %.1f mm pad, 3 x 3 at %.2f mm, FTSH pin numbers kept "
+                  "(D-66)" % (drill, dia, pitch), smd=False)
+    for num, (cx, cy) in WIRE9_GRID[BOARD].items():
+        x, y = cx * pitch, cy * pitch
+        L.append(pth_pad(num, x, y, dia, drill, shape="rect" if num == "1" else "circle",
+                         inner_unused_removed=(BOARD == "cr")))
+        L.append('(fp_text user "%s" (at %.4f %.4f 0) (layer "F.Fab") (effects (font (size 0.6 0.6) '
+                 '(thickness 0.1))))' % (num, x, y))
+    r = pitch + dia / 2 + CRT
+    for lay in ("F.CrtYd", "B.CrtYd"):
+        L.append(rect(lay, -r, -r, r, r))
+    e = pitch + dia / 2
+    L.append(rect("F.Fab", -e, -e, e, e, 0.1))
+    L.append(line("F.SilkS", -e - 0.3, -pitch - 0.9, -e - 0.3, -pitch + 0.9, 0.15))   # pin-1 mark left of pad 1
+    write(outdir, name, L)
+
+
 def epad(outdir, name):
     L = hdr(name, "EIB E lead pad, 1.0 mm plated hole, 1.8 mm pad (A.9)", smd=False)
     L.append(pth_pad("1", 0, 0, 1.8, 1.0))
@@ -411,6 +446,7 @@ CUSTOM = {
     "FT1_MARK": lambda o, n: foot_mark(o, n, 4.0, 1.6, True), "FT2_MARK": lambda o, n: foot_mark(o, n, 4.0, 4.0, False),
     "M3": m3, "VQFN24": vqfn24, "MF3_2x5": mf3_2x5,
     "J2x7_NOPIN6": lambda o, n: ftsh(o, n, True), "J2x7_EIB": lambda o, n: ftsh(o, n, False),
+    "WIRE9": wire9,
 }
 # board-only footprints; the CR feet and fill hole retire with the r7 outline (D-19, D-39, D-42: no mounting hole)
 EXTRA = {"cr": [], "eib": ["M3"]}

@@ -65,6 +65,9 @@ IC = {
               [(str(n), str(n), "passive") for n in (2, 4, 8, 10, 12, 14)]),
     "J2x7": ([(str(n), str(n), "passive") for n in (1, 3, 5, 7, 9, 11, 13)],
              [(str(n), str(n), "passive") for n in (2, 4, 6, 8, 10, 12, 14)]),
+    # J101 / J201 wire pads (D-66): the FTSH pin numbers kept, pins 6 and 11-14 dropped
+    "JW9": ([(str(n), str(n), "passive") for n in (1, 3, 5, 7, 9)],
+            [(str(n), str(n), "passive") for n in (2, 4, 8, 10)]),
     # J-TAP (J102), Micro-Fit 3.0 2 x 5: row A cavities on the left, row B on the right (cavity map of the
     # 2026-11-12 tap-connector decision as re-mapped in r9-13, D-46; superseded in r9-13: A1 T1, A2 T7b, B2 T2,
     # B3 T17; pin numbers TODO(verify: Molex 43045 drawing))
@@ -122,7 +125,7 @@ def lib_symbol(kind, libname, full=True):
     out.append("(exclude_from_sim no) (in_bom %s) (on_board %s)" % (("no", "no") if kind == "PWR_FLAG" else
                                                                     ("yes", "yes")))
     pfx = REFPREFIX.get(kind, {"R": "R", "C": "C", "D": "D", "BAV199": "D", "NMOS": "Q", "PMOS": "Q",
-                               "CHG22": "J", "J2x7K": "J", "J2x7": "J", "MF2x5": "J"}.get(kind, "U"))
+                               "CHG22": "J", "J2x7K": "J", "J2x7": "J", "JW9": "J", "MF2x5": "J"}.get(kind, "U"))
     out.append('(property "Reference" "%s" (at 0 0 0) %s)' % (pfx, font()))
     out.append('(property "Value" "%s" (at 0 -2.54 0) %s)' % (kind, font()))
     out.append('(property "Footprint" "" (at 0 0 0) %s)' % font(hide=True))

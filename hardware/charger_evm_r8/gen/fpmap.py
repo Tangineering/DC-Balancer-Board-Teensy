@@ -41,6 +41,8 @@ FP = {
     "WPTH_2": ("custom", "LeadPads_PTH_1x02_D1.0mm_Pad1.8mm_P2.54mm_Placeholder"),
     "WPTH_3": ("custom", "LeadPads_PTH_1x03_D1.0mm_Pad1.8mm_P2.54mm_Placeholder"),
     "EPTH_1.0": ("custom", "LeadPad_PTH_D1.0mm_P1.8mm"),
+    # J101 / J201 wire pads (D-66; superseded: J2x7_NOPIN6 / J2x7_EIB, the Samtec FTSH-107 headers of the W5 ribbon)
+    "WIRE9": ("custom", "WirePads_PTH_3x3_D1.0mm_Pad1.8mm_P2.54mm_CrtYd0.10"),
     # board-only (no schematic symbol)
     "FT2_HOLE": ("custom", "FT2_FillHole_NPTH_1.0mm_KeepOut"),
     "FT1_MARK": ("custom", "FT1_Foot_4.0x1.6mm_BottomMark"),
@@ -66,6 +68,7 @@ FP_CR = {
     "SSOP-8": ("custom", "Texas_DCT0008A_SSOP-8_TI-land_CrtYd0.25"),
     "VQFN24": ("custom", "TPS26630_RGE0024_VQFN-24_4x4mm_P0.5mm_ThermalVias_CrtYd0.25"),
     "J2x7_NOPIN6": ("custom", "Samtec_FTSH-107-01-DV_2x07_P1.27mm_SMD_NoPin6_CrtYd0.25"),
+    "WIRE9": ("custom", "WirePads_PTH_3x3_D1.0mm_Pad1.8mm_P2.54mm_CrtYd0.25"),   # J101 (D-66)
     # J-TAP (J102): PLACEHOLDER pad pattern = KiCad 9 stock 43045-1012 (vertical, with two 1.02 mm NPTH pegs);
     # TODO(verify: Molex 43045 header drawing) P/N, vertical or right-angle, pegs and cavity numbering (D-46).
     "MF3_2x5": ("custom", "Molex_Micro-Fit_3.0_43045-1012_2x05_P3.00mm_Vertical_CrtYd0.25"),

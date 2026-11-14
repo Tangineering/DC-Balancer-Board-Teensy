@@ -897,6 +897,8 @@ re-exported with `gen/export.sh cr <date>` once the board is final.
 
 **Amended 2026-11-13 (D-65):** the short In2 via pairs of the cleaned-up board were merged onto F.Cu (SDA, SCL and TS_EXT among them), and the /GND via on J101 pad 9 and the vias at the two tight mask gaps were deleted (`LAYOUT_DECISIONS.md` D-65). The current package is `fab/cr_2026-11-13c/`, a full package exported from that board; its OSH Park upload is `kikit_oshpark/gerbers.zip`. DRC gives 0 violations, 0 unconnected items and 0 parity issues, and the constraint check gives 108 pass rows and 0 FAIL, with the D-37 row at "none". `fab/cr_2026-11-13/` and `fab/cr_2026-11-13b_oshpark/` are superseded and kept as the record.
 
+**Amended 2026-11-13 (D-66):** J101 is now a 3 x 3 grid of plated wire pads; the W5 ribbon is replaced by nine soldered wires (`LAYOUT_DECISIONS.md` D-66, wire list in Table D-66). The current package is `fab/cr_2026-11-13d/` (DRC 0 / 0 / 0, constraint check 108 pass and 0 FAIL); `fab/cr_2026-11-13c/` is superseded.
+
 The EIB is a 2-layer board, so at OSH Park it is a separate order and is not on the CR panel.
 
 ### 9.4 EIB fab package
@@ -909,6 +911,8 @@ pour. Against the 2026-11-11 package, both copper layers and the PTH drill diffe
 outline and NPTH drill are identical (the new vias are tented). The OSH Park upload is
 `fab/eib_2026-11-13/kikit_oshpark/gerbers.zip`. The 2026-11-11 package, with its hand-edited assembly files, is kept
 as the record.
+
+**Amended 2026-11-13 (D-66):** J201 is now a 3 x 3 grid of plated wire pads for the nine soldered W5 wires, and the area around it was re-routed (`LAYOUT_DECISIONS.md` D-66). The current package is `fab/eib_2026-11-13b/` (ERC 0, DRC 0 / 0 / 0); `fab/eib_2026-11-13/` is superseded.
 
 ### 9.5 Archive and certification
 

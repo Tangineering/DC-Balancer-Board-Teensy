@@ -1,5 +1,7 @@
 # EIB, EVM interface board: fabrication package (2026-11-13)
 
+**Superseded 2026-11-13 (D-66, wire pads at J101/J201) by `fab/eib_2026-11-13b/`; do not upload these files.**
+
 **Status: not ordered.** This package awaits operator review before order (dec2-eib decision 1, 2026-11-12). The routing is D-28; the straightened tracks, the F.Cu AGND pour and the AGND stitching vias are D-63 (`eib/straighten.md`, `eib/stitch_gaps.md`); the reference designators are D-64 (`eib/silk_refs.md` lists those on F.Fab only).
 
 ## 1. Board

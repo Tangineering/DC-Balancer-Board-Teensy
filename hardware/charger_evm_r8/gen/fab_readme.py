@@ -67,12 +67,16 @@ RULES = {"cr": "fab_4layer_oshpark_only.kicad_dru", "eib": "fab_2layer_oshpark_p
 STATUS = ("**Status: not ordered.** This package awaits operator review before order (dec2-eib decision 1, "
           "2026-11-12). The routing is D-28; the straightened tracks, the F.Cu AGND pour and the AGND stitching vias "
           "are D-63 (`eib/straighten.md`, `eib/stitch_gaps.md`); the reference designators are D-64 (`eib/silk_refs.md` "
-          "lists those on F.Fab only).\n\n" if B == "eib" else
+          "lists those on F.Fab only). J201 is a 3 x 3 grid of plated wire pads for the soldered W5 wires; the FTSH "
+          "header and the ribbon are retired, and the area around J201 was re-routed (D-66, `gen/swap_wire9.py`).\n\n"
+          if B == "eib" else
           "**Status: not ordered.** This package awaits operator review before order. The fab is OSH Park (operator "
           "ruling 2026-11-12). The routing is D-58; the outline is D-62 and the 6-32 holes are D-60; the GND stitching "
           "and straightened tracks are D-61; the reference designators are D-59 (`cr/silk_refs.md` lists those on F.Fab "
           "only). After the operator's routing cleanup in KiCad (`547dc11`), the short In2 via pairs were merged onto "
-          "F.Cu and three /GND stitching vias at J101 and C129 were deleted (D-65, `gen/via_merge_cr.py`).\n\n")
+          "F.Cu and three /GND stitching vias at J101 and C129 were deleted (D-65, `gen/via_merge_cr.py`). J101 is a "
+          "3 x 3 grid of plated wire pads for the soldered W5 wires; the FTSH header and the ribbon are retired (D-66, "
+          "`gen/swap_wire9.py`).\n\n")
 ASSY = ("\nThe CR needs a hot-air or reflow step for U101 (VQFN-24, A.8 hand assembly row), or a PCB assembly "
         "service.\n" if B == "cr" else "")
 for _fab in ("jlcpcb", "pcbway"):
@@ -152,8 +156,8 @@ the copper, mask and paste layers still carry their pads; a paste stencil prints
     if B == "eib":
         txt += """
 The EIB DNP set is operator decision dec2-eib (`decisions_2026-11-12/round2/dec2_eib_2026-11-12.md`, D-49). E4
-(ILIM sense) and E6 (/CE sense) are lead pads: their leads are not built and the pads stay unconnected. J201.11
-and J201.13 end on the empty R265 and R264 pads.
+(ILIM sense) and E6 (/CE sense) are lead pads: their leads are not built and the pads stay unconnected. Since D-66,
+R265.2 and R264.2 are not connected (J201.11 and J201.13 no longer exist).
 """
 if REF:
     rows = compare(REF)
