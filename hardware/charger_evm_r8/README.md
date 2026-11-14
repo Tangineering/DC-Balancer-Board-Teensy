@@ -41,7 +41,7 @@ Table 2.1. Blocks of the charger path.
 | MB RT1987 switches D-BC-FC, D-BC-RG | Route VBUS (FC charging) or V-MOT (regen) into VCHG-IN | MB, existing parts |
 | MB D-BT-SQ (RT1987) | Connects the charger output net VCHG to the pack VBT | MB, existing part |
 | CR J1 (22-pin CHG header) | Mates the CR to the 22 former Ag105 holes | CR underside, TSW strips in MB SSQ sockets |
-| eFuse U101 TPS26630RGER | Input current limit 2.23 A nominal, UVLO 9.91 V, OVP 23.12 V; fault output and IMON | CR top |
+| eFuse U101 TCKE1401NM (D-67; superseded: TPS26630RGER) | Input current limit 2.37 A typical, UVLO 9.86 V, OVP 23.19 V; fault output (FLAG) and IMON | CR top |
 | Permit gate | Four comparators and five LVC packages; holds the converter off unless a release term is true | CR top |
 | J-TAP (J102) | Brings the ten tap conductors onto the CR | CR, THT header, +x side |
 | EVM (BQ25798) | Buck-boost charger, I2C address 0x6B | Off-board, on an insulating plate fixed to the chassis |
@@ -558,8 +558,8 @@ window y 30.8 to 66.86.
 ### 8.3 Parts and assembly
 
 Every SMT part sits on the CR top and is assembled with one stencil in one reflow pass; THT parts are hand-soldered last.
-Every chip passive is 0603 or larger. IC pitch is 0.65 mm minimum, with U101 TPS26630RGER (0.5 mm VQFN-24) as the one
-approved exception. Single-gate logic uses SOT-23 (DBV); U107 is SN74LVC1G11DBVR. Courtyards follow the IPC-7351
+Every chip passive is 0603 or larger. IC pitch is 0.65 mm minimum, with U101 (0.5 mm VQFN-24; TCKE1401NM since D-67,
+superseded: TPS26630RGER) as the one approved exception. Single-gate logic uses SOT-23 (DBV); U107 is SN74LVC1G11DBVR. Courtyards follow the IPC-7351
 nominal 0.25 mm rule, and the CR library is built on that basis (`_CrtYd0.25` names, LAYOUT_DECISIONS D-52).
 (Superseded 2026-11-13, D-52: "which is not yet applied in the footprint library".)
 
@@ -898,6 +898,8 @@ re-exported with `gen/export.sh cr <date>` once the board is final.
 **Amended 2026-11-13 (D-65):** the short In2 via pairs of the cleaned-up board were merged onto F.Cu (SDA, SCL and TS_EXT among them), and the /GND via on J101 pad 9 and the vias at the two tight mask gaps were deleted (`LAYOUT_DECISIONS.md` D-65). The current package is `fab/cr_2026-11-13c/`, a full package exported from that board; its OSH Park upload is `kikit_oshpark/gerbers.zip`. DRC gives 0 violations, 0 unconnected items and 0 parity issues, and the constraint check gives 108 pass rows and 0 FAIL, with the D-37 row at "none". `fab/cr_2026-11-13/` and `fab/cr_2026-11-13b_oshpark/` are superseded and kept as the record.
 
 **Amended 2026-11-13 (D-66):** J101 is now a 3 x 3 grid of plated wire pads; the W5 ribbon is replaced by nine soldered wires (`LAYOUT_DECISIONS.md` D-66, wire list in Table D-66). The current package is `fab/cr_2026-11-13d/` (DRC 0 / 0 / 0, constraint check 108 pass and 0 FAIL); `fab/cr_2026-11-13c/` is superseded.
+
+**Amended 2026-11-13 (D-67):** U101 is the Toshiba TCKE1401NM on the unchanged footprint, with R101 8.45 kOhm, R103 64.9 kOhm and R104 51.1 kOhm (`LAYOUT_DECISIONS.md` D-67). The current package is `fab/cr_2026-11-13e/`; its copper equals `fab/cr_2026-11-13d/`, and its assembly files carry the new values. DRC gives 0 / 0 / 0 and the constraint check 108 pass and 0 FAIL.
 
 The EIB is a 2-layer board, so at OSH Park it is a separate order and is not on the CR panel.
 

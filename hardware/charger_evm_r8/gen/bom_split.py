@@ -32,6 +32,10 @@ NON_PART_REFS = {"J101", "J201"}
 # rows off the BOM by operator ruling 2026-11-13 (see RULED_OUT below): never treated as system rows
 RULED_OUT_MPNS = {"FTSH-107-01-L-DV", "FTSH-107-01-L-DV-K", "FFSD-07-D-12.00-01-N", "22-01-3047", "08-50-0114"}
 RULED_OUT_PARTS = {"Polarising plug for FFSD socket hole 6"}
+# D-67 (operator ruling 2026-11-13: "Use TCKE1401NM for U101"): the 2026-11-11 row MPN -> the MPN the netlist now
+# carries; the rows are replaced through SUBST below and ordered from Mouser
+D67_NETLIST = {"TPS26630RGER": "TCKE1401NM,R1F", "CRCW06038K06FKEA": "CRCW06038K45FKEA",
+               "TNPW060366K5BEEA": "ERA-3AEB6492V", "TNPW060349K9BEEA": "TNPW060351K1BEEA"}
 
 
 def netlist(path):
@@ -87,8 +91,12 @@ for b, parts in boards.items():
         nm = parts[ref]["mpn"].replace(" ", "").lower()
         for k in ks:
             row_mpn = DATA[k][C["Mft. SKU"]].replace(" ", "").lower()
-            # the netlist may carry a placeholder (T-A-05 class) or the MPN without its packaging suffix
-            if nm and row_mpn not in nm and not row_mpn.startswith(nm) and not re.search(r"t-a-05|class|selected", nm):
+            # the netlist may carry a placeholder (T-A-05 class) or the MPN without its packaging suffix; since D-67
+            # it carries the U101 change set, which replaces the 2026-11-11 row MPN (D67_NETLIST)
+            d67 = D67_NETLIST.get(DATA[k][C["Mft. SKU"]].strip(), "").replace(" ", "").lower()
+            if nm and d67 and nm == d67:
+                pass
+            elif nm and row_mpn not in nm and not row_mpn.startswith(nm) and not re.search(r"t-a-05|class|selected", nm):
                 errors.append("%s %s: netlist MPN %r vs row MPN %r" % (b, ref, parts[ref]["mpn"], DATA[k][C["Mft. SKU"]]))
             groups.setdefault(k, []).append(ref)
             used.add(k)
@@ -312,13 +320,31 @@ SUBST = {
                        "SSQ-112-01-L-S is a non-stock item at Digi-Key (MOQ 1,445, est. 04-Jan-2027, 2026-11-13); "
                        "SSQ-112-01-G-S differs only in the heavier gold plating on the contacts. Operator ruling "
                        "2026-11-13 (chat): \"Yes, use -G\"."),
+    # ---- D-67: U101 TCKE1401NM and its divider / current-limit resistors (Mouser order, MOUSER below)
+    "TPS26630RGER": ("TCKE1401NM,R1F", "Toshiba", "",
+                     "eFuse 4.7-75 V (80 V abs max), 44.5 mOhm, 6 A, adjustable OVP/UVLO/ILIM, IMON, FLAG, latch-off; "
+                     "VQFN24D 4 x 4 mm, 0.5 mm, pin- and land-compatible with TPS26630 RGE",
+                     "TPS26630RGER has no authorized stock (Digi-Key restock 08-Jul-2027; Mouser and TME 0, 2026-11-13); "
+                     "operator ruling 2026-11-13 (chat): \"Use TCKE1401NM for U101\" (D-67, RESPIN_HANDOFF_2026-11-13.md "
+                     "section 2). Digi-Key sells it only as a 3,000-piece reel; Mouser sells it from 1 piece."),
+    "CRCW06038K06FKEA": ("CRCW06038K45FKEA", "Vishay Dale", "", "8.45 kOhm 1 % 0603 (U101 ILIM)",
+                         "D-67: I_LIM = 18.9/R(kOhm) + 0.13 A = 2.37 A typ for TCKE1401NM (DS Formula 9); was 8.06k "
+                         "for TPS26630 (2.23 A)."),
+    "TNPW060366K5BEEA": ("ERA-3AEB6492V", "Panasonic Industry", "", "64.9 kOhm 0.1 % 25 ppm/K 0603 thin film",
+                         "D-67: divider R102/R103/R104 = 845k/64.9k/51.1k for the TCKE1401NM references: OVP 23.19 V, "
+                         "UVLO 9.86 V typ. 64.9k because 64.2k 0.1 % is not stocked."),
+    "TNPW060349K9BEEA": ("TNPW060351K1BEEA", "Vishay Dale", "", "51.1 kOhm 0.1 % 25 ppm/K 0603 thin film",
+                         "D-67: divider R102/R103/R104 = 845k/64.9k/51.1k for the TCKE1401NM references."),
 }
-# kept on the BOM but held out of the Digi-Key file: no authorized stock
-DK_HOLD = {
-    "TPS26630RGER": "U101: 0 stock at Digi-Key (restock 08-Jul-2027), Mouser and TME (2026-11-13); every TPS2663x and "
-                    "TPS1663x variant is also at 0 authorized stock. Source decision pending (TI store, broker or "
-                    "Digi-Key backorder).",
+# rows ordered from Mouser (D-67): MPN -> Mouser part number (findchips.com listing of Mouser stock, 2026-11-13)
+MOUSER = {
+    "TCKE1401NM,R1F": "757-TCKE1401NMR1F",        # 1,984 in stock, $4.61 at 1
+    "CRCW06038K45FKEA": "71-CRCW0603-8.45K-E3",   # 705,867 in stock, $0.10 at 1
+    "ERA-3AEB6492V": "667-ERA-3AEB6492V",         # 1,948 in stock, $0.10 at 1
+    "TNPW060351K1BEEA": "71-TNPW060351K1BEEA",    # 6,705 in stock, $0.26 at 1
 }
+# kept on the BOM but held out of the Digi-Key file: no authorized stock (D-67 resolved the U101 hold)
+DK_HOLD = {}
 # Digi-Key order quantity above the BOM quantity (sellable minimum)
 ORDER_QTY = {"0008500113": (100, "Digi-Key cut-tape minimum")}
 
@@ -335,6 +361,7 @@ PRICE_Q1 = {
     "SN74LVC1G06DCKT": 0.93, "2N7002BK,215": 0.19, "C1608C0G1H222J080AA": 0.17, "GMC21X5R106K50NT": 1.76,
     "SMAJ33A": 0.47, "3200014": 0.18, "SSQ-110-01-G-S": 2.56, "SSQ-112-01-G-S": 3.05,
     "GRM188R72A104KA35D": 0.16,
+    "TCKE1401NM,R1F": 4.61, "CRCW06038K45FKEA": 0.10, "ERA-3AEB6492V": 0.10, "TNPW060351K1BEEA": 0.26,
 }
 CHEAP, MID = 0.25, 1.00
 
@@ -356,10 +383,15 @@ for b in ("cr", "eib", "system"):
         r[C["Mft. SKU"]], r[C["Manufacturer"]], r[C["Vendor SKU"]] = new, mfr, sku
         if spec:
             r[C["Specification"]] = spec
-        r[C["Vendor"]] = "Digikey"
-        r[C["Link"]] = "https://www.digikey.com/en/products/result?keywords=" + new.replace(" ", "%20")
         r[C["Datasheet"]] = ""
-        r[C["Notes"]] = "Replaced 2026-11-13 (Digi-Key upload review): %s %s" % (why, r[C["Notes"]])
+        if new in MOUSER:
+            r[C["Vendor"]], r[C["Vendor SKU"]] = "Mouser", MOUSER[new]
+            r[C["Link"]] = "https://www.mouser.com/c/?q=" + new.replace(" ", "%20").replace(",", "%2C")
+            r[C["Notes"]] = "Replaced 2026-11-13 (D-67, U101 change): %s %s" % (why, r[C["Notes"]])
+        else:
+            r[C["Vendor"]] = "Digikey"
+            r[C["Link"]] = "https://www.digikey.com/en/products/result?keywords=" + new.replace(" ", "%20")
+            r[C["Notes"]] = "Replaced 2026-11-13 (Digi-Key upload review): %s %s" % (why, r[C["Notes"]])
         subst_log.append((b, old, new))
 
 # Digi-Key part numbers of the unchanged rows, from the upload result (keyed by the requested MPN)
@@ -375,7 +407,7 @@ if os.path.exists(UPLOAD):
 for b in ("cr", "eib", "system"):
     for r in out_rows[b]:
         mpn = r[C["Mft. SKU"]].strip()
-        if mpn in dk_pn and mpn not in {s[1] for s in SUBST.values()}:
+        if mpn in dk_pn and mpn not in {s[0] for s in SUBST.values()}:
             r[C["Vendor SKU"]] = dk_pn[mpn]
 
 os.makedirs(OUT, exist_ok=True)
@@ -403,6 +435,7 @@ sysr = write("system_bom.csv", out_rows["system"])
 
 # Digi-Key import: identified MPNs at Digi-Key, merged by MPN
 dk = OrderedDict()
+mo = OrderedDict()   # Mouser lines (D-67)
 skipped = [("SYS", r[C["Part"]], r[C["Mft. SKU"]].strip(), "workshop stock (operator ruling 2026-11-13; off the BOM)")
            for r in workshop] + [(t, r[C["Part"]], r[C["Mft. SKU"]].strip(), "off the BOM: " + why) for t, r, why in ruled]
 for tag, rs in (("CR", cr), ("EIB", eib), ("SYS", sysr)):
@@ -411,10 +444,14 @@ for tag, rs in (("CR", cr), ("EIB", eib), ("SYS", sysr)):
         if mpn in DK_HOLD:
             skipped.append((tag, r[C["Part"]], mpn, "held out of the Digi-Key file: " + DK_HOLD[mpn]))
             continue
-        if "digi" not in vendor.lower() or not mpn or "NOT IDENTIFIED" in mpn.upper() or r[C["Category"]] == "PCB":
+        if vendor.strip().lower() == "mouser":
+            target = mo
+        elif "digi" not in vendor.lower() or not mpn or "NOT IDENTIFIED" in mpn.upper() or r[C["Category"]] == "PCB":
             skipped.append((tag, r[C["Part"]], mpn, vendor))
             continue
-        e = dk.setdefault(mpn, dict(qty=0, sku=r[C["Vendor SKU"]].strip(), mfr=r[C["Manufacturer"]].strip(),
+        else:
+            target = dk
+        e = target.setdefault(mpn, dict(qty=0, sku=r[C["Vendor SKU"]].strip(), mfr=r[C["Manufacturer"]].strip(),
                                     desc=r[C["Specification"]].strip(), uses=OrderedDict(), refs=[]))
         q = int(r[C["BOM Qty"]])
         e["qty"] += q
@@ -507,11 +544,26 @@ with open(os.path.join(OUT, "digikey_import.csv"), "w", encoding="utf-8", newlin
                 qty = max(qty, ORDER_QTY[mpn][0])
             w.writerow([qty, e["sku"], mpn, e["mfr"], e["desc"][:120], cr_, "; ".join(refs), bom_q,
                         "" if price is None else "%.2f" % price])
+
+# Mouser import (D-67): the rows whose vendor is Mouser, with the same Customer Part Number text, attrition rule and
+# extra columns as the Digi-Key file. Mouser's BOM tool maps the columns at upload.
+with open(os.path.join(OUT, "mouser_import.csv"), "w", encoding="utf-8", newline="") as f:
+    w = csv.writer(f, lineterminator="\r\n")
+    w.writerow(["Mouser Part Number", "Manufacturer Part Number", "Manufacturer", "Description", "Quantity",
+                "Customer Part Number", "Reference Designators", "BOM Quantity", "Unit Price (qty 1, 2026-11-13)"])
+    for mpn, e in mo.items():
+        groups = merge_tags(e["groups"])
+        cref = customer_ref(groups)
+        assert cref, ("Mouser Customer Part Number too long", mpn)
+        price = PRICE_Q1.get(mpn)
+        w.writerow([e["sku"], mpn, e["mfr"], e["desc"][:120], order_qty(e["qty"], price), cref, "; ".join(e["refs"]),
+                    e["qty"], "" if price is None else "%.2f" % price])
 with open(os.path.join(OUT, "digikey_skipped.csv"), "w", encoding="utf-8", newline="") as f:
     w = csv.writer(f, lineterminator="\r\n")
     w.writerow(["BOM", "Part", "MPN", "Vendor"])
     w.writerows(skipped)
-print("cr rows %d (parts %d), eib rows %d (parts %d), system rows %d, digikey lines %d, skipped %d" % (
-    len(cr), sum(int(r[C["BOM Qty"]]) for r in cr if r[C["Category"]] not in ("PCB", "Assembly")),
-    len(eib), sum(int(r[C["BOM Qty"]]) for r in eib if r[C["Category"]] not in ("PCB", "Assembly")),
-    len(sysr), len(dk), len(skipped)))
+print("cr rows %d (parts %d), eib rows %d (parts %d), system rows %d, digikey lines %d, mouser lines %d, "
+      "skipped %d" % (
+          len(cr), sum(int(r[C["BOM Qty"]]) for r in cr if r[C["Category"]] not in ("PCB", "Assembly")),
+          len(eib), sum(int(r[C["BOM Qty"]]) for r in eib if r[C["Category"]] not in ("PCB", "Assembly")),
+          len(sysr), len(dk), len(mo), len(skipped)))

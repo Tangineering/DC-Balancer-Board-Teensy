@@ -14,10 +14,7 @@ Quantity,Digi-Key Part Number,Manufacturer Part Number,Manufacturer,Description,
 3,612-TSW-110-07-L-S-ND,TSW-110-07-L-S,Samtec,"TSW 1x10, 2.54 mm, 0.64 mm square post, -07 (post 5.84 mm into the SSQ socket, tail 2.54 mm through the CR), -L plating ",CR J1,CR: J1,1,0.84
 1,612-TSW-112-07-L-S-ND,TSW-112-07-L-S,Samtec,"TSW 1x12, 2.54 mm, 0.64 mm square post, -07 (post 5.84 mm into the SSQ socket, tail 2.54 mm through the CR), -L plating ",CR J1,CR: J1,1,1.10
 1,WM1793-ND,43045-1012,Molex,"Molex Micro-Fit 3.0 43045-1012, vertical header, 3.00 mm pitch, dual row, 10 circuits, PCB polarizing pegs, tin, 8.5 A p",CR J102,CR: J102,1,1.89
-10,541-8.06KHCT-ND,CRCW06038K06FKEA,Vishay Dale,8.06 kOhm 1 % 100 ppm/K 0603 thick film,CR R101,CR: R101,1,0.10
 10,P845KDACT-ND,ERA-6AEB8453V,Panasonic Industry,845 kOhm 0.1 % 25 ppm/K 0805 thin film,CR R102,CR: R102,1,0.10
-3,541-3701-1-ND,TNPW060366K5BEEA,Vishay Dale,66.5 kOhm 0.1 % 25 ppm/K 0603 thin film,CR R103,CR: R103,1,0.26
-3,TNP49.9KAACT-ND,TNPW060349K9BEEA,Vishay Dale,49.9 kOhm 0.1 % 25 ppm/K 0603 thin film,CR R104,CR: R104,1,0.26
 10,541-27.4KHCT-ND,CRCW060327K4FKEA,Vishay Dale,27.4 kOhm 1 % 100 ppm/K 0603 thick film,CR R105,CR: R105,1,0.10
 14,541-1.00KHCT-ND,CRCW06031K00FKEA,Vishay Dale,1.00 kOhm 1 % 100 ppm/K 0603 thick film,"CR R106s,122,126,147 EIB R250,251,253,266,275","CR: R106s,R122,R126,R147; EIB: R250,R251,R253,R266,R275",9,0.10
 10,541-10.0KHCT-ND,CRCW060310K0FKEA,Vishay Dale,10.0 kOhm 1 % 100 ppm/K 0603 thick film,"CR R107,129,185,186 EIB R274","CR: R107,R129,R185,R186; EIB: R274",5,0.10

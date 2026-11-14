@@ -1,5 +1,7 @@
 # CR, CHG adapter carrier (plug-on): fabrication package (2026-11-13d)
 
+**Superseded 2026-11-13 (D-67) by `fab/cr_2026-11-13e/`: same copper, but the assembly files of this package name the TPS26630RGER and the old R101/R103/R104 values.**
+
 **Status: not ordered.** This package awaits operator review before order. The fab is OSH Park (operator ruling 2026-11-12). The routing is D-58; the outline is D-62 and the 6-32 holes are D-60; the GND stitching and straightened tracks are D-61; the reference designators are D-59 (`cr/silk_refs.md` lists those on F.Fab only). After the operator's routing cleanup in KiCad (`547dc11`), the short In2 via pairs were merged onto F.Cu and three /GND stitching vias at J101 and C129 were deleted (D-65, `gen/via_merge_cr.py`). J101 is a 3 x 3 grid of plated wire pads for the soldered W5 wires; the FTSH header and the ribbon are retired (D-66, `gen/swap_wire9.py`).
 
 ## 1. Board

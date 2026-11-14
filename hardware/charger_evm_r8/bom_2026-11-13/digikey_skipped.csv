@@ -19,7 +19,6 @@ SYS,"Cable assembly, 14-way 1.27 mm IDC both ends, 12.0 in",FFSD-07-D-12.00-01-N
 SYS,Polarising plug for FFSD socket hole 6,NOT IDENTIFIED,off the BOM: W5 key removed with J101/J201 (operator ruling 2026-11-13)
 SYS,"Receptacle housing, KK 254, 4 position",22-01-3047,off the BOM: EVM J8 lead soldered to the pins; no KK mate (operator ruling 2026-11-13)
 SYS,"Crimp terminal, KK 254",08-50-0114,off the BOM: EVM J8 lead soldered to the pins; no KK crimps (operator ruling 2026-11-13)
-CR,eFuse,TPS26630RGER,"held out of the Digi-Key file: U101: 0 stock at Digi-Key (restock 08-Jul-2027), Mouser and TME (2026-11-13); every TPS2663x and TPS1663x variant is also at 0 authorized stock. Source decision pending (TI store, broker or Digi-Key backorder)."
 CR,Stencil and solder paste,NOT IDENTIFIED,stencil vendor / distributor
 CR,Carrier PCB (CR),CR PCB (from PM0 Gerbers),OSH Park
 EIB,EVM interface PCB (EIB),EIB PCB (from PM0 Gerbers),OSH Park

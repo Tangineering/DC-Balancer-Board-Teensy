@@ -18,7 +18,7 @@ Status on 2026-11-13:
 | Board | Schematic | Placement | Routing | ERC | DRC | Fab package |
 |---|---|---|---|---|---|---|
 | EIB | complete | complete | complete (D-28; straightened tracks, top AGND pour and stitching D-63; references D-64; J201 wire pads and local re-route D-66) | 0 | 0 (schematic parity checked) | `fab/eib_2026-11-13b/` (D-49 DNP set; exported after D-66); not ordered |
-| CR | complete | complete (D-54 to D-56) | complete (D-58; power copper D-57; outline D-62, holes D-60 and D-62; GND stitching and straightened tracks D-61, re-run in D-62; references D-59 and D-62; operator cleanup `547dc11`; via merges D-65; J101 wire pads D-66) | 0 | 0 violations, 0 unconnected items, 0 parity issues (`--severity-all --schematic-parity`) | `fab/cr_2026-11-13d/` (exported after D-66); not ordered |
+| CR | complete | complete (D-54 to D-56) | complete (D-58; power copper D-57; outline D-62, holes D-60 and D-62; GND stitching and straightened tracks D-61, re-run in D-62; references D-59 and D-62; operator cleanup `547dc11`; via merges D-65; J101 wire pads D-66; U101 TCKE1401NM D-67) | 0 | 0 violations, 0 unconnected items, 0 parity issues (`--severity-all --schematic-parity`) | `fab/cr_2026-11-13e/` (exported after D-67; copper equals `fab/cr_2026-11-13d/`); not ordered |
 
 On the routed CR with the D-62 outline and the re-run stitching (D-60 to D-62), the constraint check
 (`cr/constraint_check.md`) gives 109 pass rows, 0 FAIL (including the D-20 stitching row of D-61, 3.51 mm against 3.54
@@ -1652,7 +1652,7 @@ The change was made in place on the routed boards, without a full re-route:
    (36.725, 51.025) to (36.605, 51.025), 0.084 mm to 0.204 mm from the pad 1 mask opening.
 
 On the CR the change is local: J3V3_1, J3V3_2, STAT, CE_DRV_J, ILIM_REL_A, ILIM_REL_B, RFC_OFF_J and CHG_ARM (whose
-In2 run crossed the grid and now runs on F.Cu) were re-routed; 428 to 417 vias, 838.1 to 818.7 mm of track. On the EIB
+In2 run crossed the grid and now runs on F.Cu) were re-routed; 428 to 417 vias (corrected 2026-11-13: 420 by count in the board file, including the three `wire9_stitch.py` vias), 838.1 to 818.7 mm of track. On the EIB
 the router also ripped up and re-routed 3V3, N_RAIN, nCE_DRV, N_RFIN, N_ISP, N_ISM, Q201_G, Q202_G, REF203, REGN and
 N_U203O, and the straightening pass changed 18 nets; 96 to 94 vias (49 AGND unchanged), 604.0 to 500.7 mm of track. The AGND pours,
 the AGND stitching (D-63) and the single R273 link between GND_J and AGND are unchanged. Result: DRC
@@ -1660,6 +1660,41 @@ the AGND stitching (D-63) and the single R273 link between GND_J and AGND are un
 D-37 "none"); EIB constraint check unchanged (5 pass, 0 FAIL); no via within 0.12 mm of an other-net mask opening on the
 EIB, and on the CR none closer than 0.110 mm. Packages: `fab/cr_2026-11-13d/`, `fab/eib_2026-11-13b/`. Reversal: restore
 the `cr/`, `eib/` and `gen/` files of the commit before D-66 and export again.
+
+**D-67. U101 changes to the Toshiba TCKE1401NM on the unchanged footprint (operator ruling 2026-11-13).** The
+TPS26630RGER has no authorized stock (Digi-Key restock 8-Jul-2027; Mouser and TME 0; every TPS2663x and TPS1663x variant
+also 0; `RESPIN_HANDOFF_2026-11-13.md` section 2). The operator ruled (chat 2026-11-13): "Use TCKE1401NM for U101." The
+TCKE1401NM,R1F (datasheet Rev. 3.0, 2026-10-09, `references/Datasheets/tcke1401nm.pdf`) has the TPS26630 RGE pin map
+(Fig 5.1: VIN, BGATE, DRV, VSYS, UVLO, OVP, GND, dV/dT, ILIM, MODE, EN, IMON, FLAG, PGTH, PGOOD, VOUT, DNC, EP on the same
+pin numbers) and a land that the fitted footprint covers (Fig 13.2: 0.24 x 0.58 mm pads on a 3.825 mm span, EP 2.7 mm), so
+the footprint, the nets and the copper do not change. The KiCad footprint keeps its name
+`TPS26630_RGE0024_VQFN-24_4x4mm_P0.5mm_ThermalVias_CrtYd0.25`. The values change for the TCKE1401NM references:
+
+- **R101** 8.06 kOhm -> **8.45 kOhm 1 %** (CRCW06038K45FKEA): I_LIM = 18.9/R(kOhm) + 0.13 A = 2.37 A typical (Formula 9).
+  The datasheet tabulates only the 9 kOhm row (1.84-2.59 A over temperature); scaled, 8.45 kOhm gives about 1.97-2.77 A
+  (an extrapolation, TODO(verify: T-C-04)), about 0.21 A above the 1.76 A regen-clamp maximum (TPS26630: 0.30 A).
+- **R103** 66.5 kOhm -> **64.9 kOhm 0.1 %** (Panasonic ERA-3AEB6492V; 64.2 kOhm 0.1 % is not stocked) and **R104**
+  49.9 kOhm -> **51.1 kOhm 0.1 %** (TNPW060351K1BEEA); R102 stays 845 kOhm. With V_OVPR 1.233 V (1.18-1.298 V) and
+  V_UVLOR 1.19 V (1.142-1.224 V): OVP rising 23.19 V typical, 22.19-24.41 V; UVLO rising 9.86 V typical, 9.46-10.14 V.
+  The OVP band no longer fits 22.6-23.6 V: its low end is 0.09 V below the 22.28 V design clamp (a nuisance OVP trip is
+  possible at the tolerance limit) and its high end is 0.41 V above the BQ25798 recommended VBUS maximum (24 V), below the
+  BQ25798 VBUS_OVP (25.2-26.2 V). The operator accepted both with the part choice. The UVLO maximum keeps 0.06 V below the
+  FR-30 10.2 V threshold.
+- R105 (27.4 kOhm, IMON 0.764 V/A typical), R106s, R129/C129, C101 (22 nF: 7.28 ms at 15.9 V, Formula 2), C102a-c, C103,
+  D103 and D107 are unchanged. The IMON gain spreads wider (22.3-33.5 uA/A at 1-2 A, against 25.66-30.14), which T-B-14
+  calibration absorbs. TODO(verify: Toshiba) Table 10.1 Note 13 ("1 kOhm <= RIMON <= 10 kOhm" when VSYS < 9 V).
+- Overload: regulated at I_LIM for tCL_PLIM 130-190 ms, then latch-off (MODE open), against 129-202 ms; FLAG asserts
+  1.0-3.5 ms into current limiting. The absolute maximum of VIN is 80 V (TPS26630: 67 V), so the D107 clamp (<= 60 V) has
+  20 V of margin.
+
+`gen/netlist.py` (U101, R101, R103, R104) and `gen/sch.py` (symbol `TCKE1401NM` with the Toshiba pin names) were changed
+and the schematic, ERC and netlist regenerated without `pcbbuild.py`. `gen/sync_fields.py` now also copies Value and
+Manufacturer onto the board footprints. Renaming the pins renamed the eight single-pad no-connect nets of U101 (B_GATE ->
+BGATE, ~{SHDN} -> EN, NC -> DNC); they were renamed on the board to match. Copper is unchanged (`gen/pcbdiff.py`: 692
+segments, 420 vias, 0 differences). The parts come from Mouser (`bom_2026-11-13/mouser_import.csv`). Package
+`fab/cr_2026-11-13e/`; its copper equals `fab/cr_2026-11-13d/`, and only the X2 net attributes of the eight U101 no-connect
+pads differ in the F.Cu Gerber. Reversal: restore `gen/netlist.py`, `gen/sch.py` and the `cr/` files of the commit before
+D-67 and export again.
 
 ## 9. Verification
 
@@ -1728,6 +1763,8 @@ The KiKit OSH Park preset ran without messages; the JLCPCB and PCBWay presets fa
 **D-66 (2026-11-13):** after the wire-pad change, ERC reports 0 messages on both boards and DRC (`--severity-all --schematic-parity`) 0
 violations, 0 unconnected items and 0 parity issues on both boards. The CR constraint check gives 108 pass rows and 0 FAIL;
 the EIB constraint check is unchanged. The KiKit OSH Park preset ran without messages on both boards.
+
+**D-67 (2026-11-13):** after the U101 change, CR ERC reports 0 messages and DRC (`--severity-all --schematic-parity`) 0 violations, 0 unconnected items and 0 parity issues. The CR constraint check gives 108 pass rows and 0 FAIL. The KiKit JLCPCB and PCBWay presets fail on the assembly BOM as before.
 
 ### 9.2 Constraint measurements
 

@@ -146,16 +146,16 @@
 	(net 63 "unconnected-(J1-P20-Pad20)")
 	(net 64 "unconnected-(J1-P21-Pad21)")
 	(net 65 "unconnected-(J1-P22-Pad22)")
-	(net 66 "unconnected-(U101-B_GATE-Pad3)")
+	(net 66 "unconnected-(U101-BGATE-Pad3)")
 	(net 67 "unconnected-(U101-DRV-Pad4)")
 	(net 68 "unconnected-(U101-MODE-Pad11)")
-	(net 69 "unconnected-(U101-NC-Pad19)")
-	(net 70 "unconnected-(U101-NC-Pad20)")
-	(net 71 "unconnected-(U101-NC-Pad21)")
-	(net 72 "unconnected-(U101-NC-Pad22)")
-	(net 73 "unconnected-(U101-NC-Pad23)")
-	(net 74 "unconnected-(U101-NC-Pad24)")
-	(net 75 "unconnected-(U101-~{SHDN}-Pad12)")
+	(net 69 "unconnected-(U101-DNC-Pad19)")
+	(net 70 "unconnected-(U101-DNC-Pad20)")
+	(net 71 "unconnected-(U101-DNC-Pad21)")
+	(net 72 "unconnected-(U101-DNC-Pad22)")
+	(net 73 "unconnected-(U101-DNC-Pad23)")
+	(net 74 "unconnected-(U101-DNC-Pad24)")
+	(net 75 "unconnected-(U101-EN-Pad12)")
 	(net 76 "unconnected-(U102-REF-Pad5)")
 	(net 77 "unconnected-(U105-3Y-Pad2)")
 	(footprint "charger_r8_cr:LeadPad_PTH_D1.5mm_Pad2.5mm_CrtYd0.25"
@@ -7929,7 +7929,7 @@
 				)
 			)
 		)
-		(property "Value" "8.06k 1%"
+		(property "Value" "8.45k 1%"
 			(at 0 0 90)
 			(layer "F.Fab")
 			(uuid "ac84b3f6-45ec-4a87-b69d-5e03ea066ac0")
@@ -7964,7 +7964,7 @@
 				)
 			)
 		)
-		(property "MPN" "CRCW06038K06FKEA"
+		(property "MPN" "CRCW06038K45FKEA"
 			(at 0 0 90)
 			(layer "F.SilkS")
 			(hide yes)
@@ -10446,7 +10446,7 @@
 				)
 			)
 		)
-		(property "Value" "TPS26630RGER"
+		(property "Value" "TCKE1401NM"
 			(at 0 0 90)
 			(layer "F.Fab")
 			(uuid "ebe92eeb-770d-41aa-b8af-23a035f46186")
@@ -10481,7 +10481,7 @@
 				)
 			)
 		)
-		(property "MPN" "TPS26630RGER"
+		(property "MPN" "TCKE1401NM,R1F"
 			(at 0 0 90)
 			(layer "F.SilkS")
 			(hide yes)
@@ -10493,7 +10493,7 @@
 				)
 			)
 		)
-		(property "Manufacturer" "Texas Instruments"
+		(property "Manufacturer" "Toshiba"
 			(at 0 0 90)
 			(layer "F.SilkS")
 			(hide yes)
@@ -10585,7 +10585,7 @@
 			(size 0.825 0.25)
 			(layers "F.Cu" "F.Mask" "F.Paste")
 			(roundrect_rratio 0.25)
-			(net 66 "unconnected-(U101-B_GATE-Pad3)")
+			(net 66 "unconnected-(U101-BGATE-Pad3)")
 			(uuid "a2865f45-fb07-444e-8d24-0d5a7de59c0e")
 		)
 		(pad "4" smd roundrect
@@ -10657,7 +10657,7 @@
 			(size 0.25 0.825)
 			(layers "F.Cu" "F.Mask" "F.Paste")
 			(roundrect_rratio 0.25)
-			(net 75 "unconnected-(U101-~{SHDN}-Pad12)")
+			(net 75 "unconnected-(U101-EN-Pad12)")
 			(uuid "fadb4b4c-1d9f-47d2-b35b-5ee0f7831fb1")
 		)
 		(pad "13" smd roundrect
@@ -10713,7 +10713,7 @@
 			(size 0.25 0.825)
 			(layers "F.Cu" "F.Mask" "F.Paste")
 			(roundrect_rratio 0.25)
-			(net 69 "unconnected-(U101-NC-Pad19)")
+			(net 69 "unconnected-(U101-DNC-Pad19)")
 			(uuid "e98ff3a1-cf92-4ac3-8cc6-b2e2827b9bb1")
 		)
 		(pad "20" smd roundrect
@@ -10721,7 +10721,7 @@
 			(size 0.25 0.825)
 			(layers "F.Cu" "F.Mask" "F.Paste")
 			(roundrect_rratio 0.25)
-			(net 70 "unconnected-(U101-NC-Pad20)")
+			(net 70 "unconnected-(U101-DNC-Pad20)")
 			(uuid "623523a7-15fe-4bd0-8129-179782d0b5c9")
 		)
 		(pad "21" smd roundrect
@@ -10729,7 +10729,7 @@
 			(size 0.25 0.825)
 			(layers "F.Cu" "F.Mask" "F.Paste")
 			(roundrect_rratio 0.25)
-			(net 71 "unconnected-(U101-NC-Pad21)")
+			(net 71 "unconnected-(U101-DNC-Pad21)")
 			(uuid "2c76e869-35a8-4a38-b46f-a3cb82fd5599")
 		)
 		(pad "22" smd roundrect
@@ -10737,7 +10737,7 @@
 			(size 0.25 0.825)
 			(layers "F.Cu" "F.Mask" "F.Paste")
 			(roundrect_rratio 0.25)
-			(net 72 "unconnected-(U101-NC-Pad22)")
+			(net 72 "unconnected-(U101-DNC-Pad22)")
 			(uuid "3d17bd47-de58-4d2e-996d-23478dd4da41")
 		)
 		(pad "23" smd roundrect
@@ -10745,7 +10745,7 @@
 			(size 0.25 0.825)
 			(layers "F.Cu" "F.Mask" "F.Paste")
 			(roundrect_rratio 0.25)
-			(net 73 "unconnected-(U101-NC-Pad23)")
+			(net 73 "unconnected-(U101-DNC-Pad23)")
 			(uuid "ca27f636-33c5-4074-90f5-85c1a15b1e43")
 		)
 		(pad "24" smd roundrect
@@ -10753,7 +10753,7 @@
 			(size 0.25 0.825)
 			(layers "F.Cu" "F.Mask" "F.Paste")
 			(roundrect_rratio 0.25)
-			(net 74 "unconnected-(U101-NC-Pad24)")
+			(net 74 "unconnected-(U101-DNC-Pad24)")
 			(uuid "1cbc9f4f-df8b-4af9-9ec1-2458cdfa7992")
 		)
 		(pad "25" thru_hole circle
@@ -10913,7 +10913,7 @@
 				)
 			)
 		)
-		(property "Value" "66.5k 0.1%"
+		(property "Value" "64.9k 0.1%"
 			(at 0 0 0)
 			(layer "F.Fab")
 			(uuid "77e8ce4f-5bc4-4e78-943f-c563d9a431f0")
@@ -10948,7 +10948,7 @@
 				)
 			)
 		)
-		(property "MPN" "TNPW060366K5BEEA"
+		(property "MPN" "ERA-3AEB6492V"
 			(at 0 0 0)
 			(layer "F.SilkS")
 			(hide yes)
@@ -10960,7 +10960,7 @@
 				)
 			)
 		)
-		(property "Manufacturer" "Vishay Dale"
+		(property "Manufacturer" "Panasonic"
 			(at 0 0 0)
 			(layer "F.SilkS")
 			(hide yes)
@@ -11695,7 +11695,7 @@
 				)
 			)
 		)
-		(property "Value" "49.9k 0.1%"
+		(property "Value" "51.1k 0.1%"
 			(at 0 0 0)
 			(layer "F.Fab")
 			(uuid "cb60a53e-89d5-4ed0-8dd7-34665e1dcb20")
@@ -11730,7 +11730,7 @@
 				)
 			)
 		)
-		(property "MPN" "TNPW060349K9BEEA"
+		(property "MPN" "TNPW060351K1BEEA"
 			(at 0 0 0)
 			(layer "F.SilkS")
 			(hide yes)

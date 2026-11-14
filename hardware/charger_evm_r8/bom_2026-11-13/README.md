@@ -15,7 +15,8 @@ The folder contains these files:
 - `eib_bom.csv`, the parts of one EIB and the EIB PCB;
 - `system_bom.csv`, the rest of one build;
 - `digikey_import.csv`, the Digi-Key lines of the three BOMs, merged by MPN, for upload to Digi-Key;
-- `digikey_skipped.csv`, the rows that are not in the Digi-Key file, with their vendor or the reason;
+- `digikey_skipped.csv`, the rows that are not in the Digi-Key or Mouser file, with their vendor or the reason;
+- `mouser_import.csv`, the Mouser lines (U101 and its three resistors, D-67), for upload to Mouser's BOM tool;
 - `digikey_upload_result_2026-11-13.csv`, the result of the operator's first upload to Digi-Key (status, stock, Digi-Key part number and lead time per line), which section 4 acts on;
 - `PREORDER_REVIEW.md`, the pre-order review of the boards and these BOMs, with the items to settle before each
   order;
@@ -131,13 +132,17 @@ milliwatt range. GRM1885C1H471JA01D (C106, C107) is "Not For New Designs" but in
 The schematic and board MPN fields still name the original parts; the fab package assembly BOMs therefore list
 the original MPNs. Take each part from this BOM at assembly.
 
-### 4.3 Held out of the Digi-Key file
+### 4.3 U101 from Mouser (D-67)
 
-TPS26630RGER (U101) has no authorized stock: Digi-Key 0 (restock 8-Jul-2027), Mouser 0, TME 0 (2026-11-13). Every
-TPS2663x and TPS1663x variant is also at 0 authorized stock; only brokers list it, with counterfeit risk. The row
-stays on `cr_bom.csv` and is not in the Digi-Key file. The source is an operator decision: the TI store (ti.com,
-which the built-in browser could not read), a Digi-Key backorder (the part number is 296-TPS26630RGERCT-ND), or a
-broker with authenticity checks.
+TPS26630RGER (U101) had no authorized stock: Digi-Key 0 (restock 8-Jul-2027), Mouser 0 and TME 0 on 2026-11-13, and every
+TPS2663x and TPS1663x variant was also at 0. The operator ruled (chat 2026-11-13): "Use TCKE1401NM for U101." The
+Toshiba TCKE1401NM,R1F fits the existing footprint (`LAYOUT_DECISIONS.md` D-67) and needs new values for R101
+(8.45 kOhm), R103 (64.9 kOhm 0.1 %) and R104 (51.1 kOhm 0.1 %). Digi-Key sells the TCKE1401NM only as a 3,000-piece
+reel, so the four parts are ordered from Mouser (section 4.8). The Digi-Key file lost the three superseded
+resistor lines: CRCW06038K06FKEA (8.06 kOhm), TNPW060366K5BEEA (66.5 kOhm) and TNPW060349K9BEEA (49.9 kOhm).
+Delete those three lines from the Digi-Key list that was built from the second upload (section 4.7).
+
+(**Superseded 2026-11-13, D-67:** TPS26630RGER (U101) has no authorized stock: Digi-Key 0 (restock 8-Jul-2027), Mouser 0, TME 0 (2026-11-13). Every TPS2663x and TPS1663x variant is also at 0 authorized stock; only brokers list it, with counterfeit risk. The row stays on `cr_bom.csv` and is not in the Digi-Key file. The source is an operator decision: the TI store (ti.com, which the built-in browser could not read), a Digi-Key backorder (the part number is 296-TPS26630RGERCT-ND), or a broker with authenticity checks.)
 
 ### 4.4 Open items
 
@@ -190,4 +195,21 @@ part numbers of the file, with the requested quantities and the Customer Referen
 stock. The extended total is $99.85 at the order quantities. Two lines carry a note that needs no action:
 GRM1885C1H471JA01D (C106, C107) is "Not For New Designs" and in stock (93,987), and Digi-Key writes 43045-1012 as
 0430451012, the same Molex part. TPS26630RGER (U101) is not in the file (section 4.3).
+
+### 4.8 Mouser order (D-67)
+
+`mouser_import.csv` holds the rows whose vendor is Mouser, with the same Customer Part Number text, attrition rule and
+extra columns as the Digi-Key file. The Mouser part numbers and stock were read from the Mouser listing on findchips.com on
+2026-11-13 (the Mouser site was not read directly):
+
+| Ref | MPN | Mouser | Stock | Unit price at 1 | Order quantity |
+|---|---|---|---|---|---|
+| U101 | TCKE1401NM,R1F (Toshiba) | 757-TCKE1401NMR1F | 1,984 | $4.61 | 1 |
+| R101 | CRCW06038K45FKEA (Vishay Dale) | 71-CRCW0603-8.45K-E3 | 705,867 | $0.10 | 10 |
+| R103 | ERA-3AEB6492V (Panasonic) | 667-ERA-3AEB6492V | 1,948 | $0.10 | 10 |
+| R104 | TNPW060351K1BEEA (Vishay Dale) | 71-TNPW060351K1BEEA | 6,705 | $0.26 | 3 |
+
+To upload the file, open Mouser's BOM tool, upload the CSV and map the columns to Mouser Part Number, Manufacturer Part
+Number, Quantity and Customer Part Number (Mouser prints the customer number on the bag label; the longest here is 7
+characters). The attrition rule gives one U101 (above $1.00); a spare U101 for the 0.5 mm reflow is the operator's choice.
 

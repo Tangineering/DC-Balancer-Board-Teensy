@@ -31,8 +31,11 @@ datasheet. Stock was read on Digi-Key and on findchips.com (Mouser, Newark) on 2
 TCKE1401NM is the only stocked part that fits the existing footprint, so it avoids a respin. It needs new values for
 R101 (9.09 kOhm for 2.21 A typical, or 8.45 kOhm for 2.37 A), R103 (64.2 kOhm 0.1 %) and R104 (51.1 kOhm 0.1 %), and
 an operator ruling on the OVP band, the I_LIM spread and the UVLO margin. Datasheet: Toshiba TCKE1401NM Rev. 3.0
-(2026-10-09). These B.4 changes are proposed, not applied. If the ruling rejects TCKE1401NM, the next candidate is
-TPS26601RHFR, which needs the respin of section 3.
+(2026-10-09). **Decision (operator ruling 2026-11-13, chat: "Use TCKE1401NM for U101"):** TCKE1401NM is fitted without a
+respin (`LAYOUT_DECISIONS.md` D-67), with R101 8.45 kOhm, R103 64.9 kOhm (64.2 kOhm 0.1 % is not stocked) and R104
+51.1 kOhm, ordered from Mouser (`bom_2026-11-13/mouser_import.csv`). The respin of section 3 is therefore not
+required now; section 3 stays the reference for any later board change. TPS26601RHFR remains the fallback if the
+TCKE1401NM fails its bench tests (T-C-04).
 
 ## 3. Edits a respin must keep
 

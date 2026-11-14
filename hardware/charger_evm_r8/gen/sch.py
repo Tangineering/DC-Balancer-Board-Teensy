@@ -46,13 +46,15 @@ IC = {
     "LVC1G123": ([("1", "A", "input"), ("2", "B", "input"), ("3", "~{CLR}", "input"), ("8", "VCC", "power_in"),
                   ("4", "GND", "power_in")], [("5", "Q", "output"), ("6", "Cext", "passive"),
                                               ("7", "Rext/Cext", "passive")]),
-    "TPS26630": ([("1", "IN", "power_in"), ("2", "IN", "power_in"), ("5", "IN_SYS", "power_in"),
-                  ("6", "UVLO", "input"), ("7", "OVP", "input"), ("11", "MODE", "input"), ("12", "~{SHDN}", "input"),
-                  ("15", "PGTH", "input"), ("9", "dVdT", "passive"), ("10", "ILIM", "passive"),
-                  ("8", "GND", "power_in"), ("25", "PAD", "passive")],
-                 [("17", "OUT", "passive"), ("18", "OUT", "passive"), ("3", "B_GATE", "passive"),
-                  ("4", "DRV", "passive"), ("13", "IMON", "passive"), ("14", "~{FLT}", "open_collector"),
-                  ("16", "PGOOD", "passive")] + [(str(n), "NC", "no_connect") for n in range(19, 25)]),
+    # U101 (D-67, 2026-11-13): Toshiba TCKE1401NM pin names (DS Rev. 3.0 Fig 5.1 / Table 6.1); the pin numbers and
+    # functions equal the former TPS26630 RGE symbol (superseded: IN, IN_SYS, ~{SHDN}, PAD, OUT, B_GATE, ~{FLT}, NC)
+    "TCKE1401NM": ([("1", "VIN", "power_in"), ("2", "VIN", "power_in"), ("5", "VSYS", "power_in"),
+                    ("6", "UVLO", "input"), ("7", "OVP", "input"), ("11", "MODE", "input"), ("12", "EN", "input"),
+                    ("15", "PGTH", "input"), ("9", "dV/dT", "passive"), ("10", "ILIM", "passive"),
+                    ("8", "GND", "power_in"), ("25", "EP", "passive")],
+                   [("17", "VOUT", "passive"), ("18", "VOUT", "passive"), ("3", "BGATE", "passive"),
+                    ("4", "DRV", "passive"), ("13", "IMON", "passive"), ("14", "~{FLAG}", "open_collector"),
+                    ("16", "PGOOD", "passive")] + [(str(n), "DNC", "no_connect") for n in range(19, 25)]),
     "TPS22810": ([("1", "VIN", "passive"), ("3", "EN/UVLO", "passive"), ("4", "CT", "passive"),
                   ("2", "GND", "passive")], [("6", "VOUT", "passive"), ("5", "QOD", "passive")]),
     "BAV199": ([("3", "COM", "passive")], [("2", "K_up", "passive"), ("1", "A_lo", "passive")]),
@@ -97,7 +99,7 @@ def ic_geom(kind):
     left, right = IC[kind]
     n = max(len(left), len(right), 1)
     w = 15.24 if kind not in ("TAP", "PAD1", "PAD2", "PAD3", "PWR_FLAG", "D") else 5.08
-    if kind == "TPS26630":
+    if kind == "TCKE1401NM":
         w = 20.32
     h = n * G + G
     top = (n * G) / 2.0

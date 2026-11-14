@@ -76,9 +76,10 @@ STATUS = ("**Status: not ordered.** This package awaits operator review before o
           "only). After the operator's routing cleanup in KiCad (`547dc11`), the short In2 via pairs were merged onto "
           "F.Cu and three /GND stitching vias at J101 and C129 were deleted (D-65, `gen/via_merge_cr.py`). J101 is a "
           "3 x 3 grid of plated wire pads for the soldered W5 wires; the FTSH header and the ribbon are retired (D-66, "
-          "`gen/swap_wire9.py`).\n\n")
-ASSY = ("\nThe CR needs a hot-air or reflow step for U101 (VQFN-24, A.8 hand assembly row), or a PCB assembly "
-        "service.\n" if B == "cr" else "")
+          "`gen/swap_wire9.py`). U101 is the Toshiba TCKE1401NM on the unchanged footprint, with R101 8.45k, R103 "
+          "64.9k and R104 51.1k (D-67); the copper equals the D-66 package `fab/cr_2026-11-13d/`.\n\n")
+ASSY = ("\nThe CR needs a hot-air or reflow step for U101 (TCKE1401NM, VQFN24D, 0.5 mm pitch, A.8 hand assembly row), or "
+        "a PCB assembly service.\n" if B == "cr" else "")
 for _fab in ("jlcpcb", "pcbway"):
     if not os.path.exists(os.path.join(O, "kikit_" + _fab, "bom.csv")):
         ASSY += (f"\nKiKit `fab {_fab} --assembly` wrote no `bom.csv` for this board (`reports/kikit_{_fab}.log`: "

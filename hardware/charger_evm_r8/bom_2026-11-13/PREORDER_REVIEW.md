@@ -53,8 +53,10 @@ The order gates are as follows:
    choice precedes the CR order.
 4. **Optional identification (FAB-5).** The CR has no board name, revision or date on any layer.
 
-The full package `fab/cr_2026-11-13c/` was exported after D-65. If item 3 changes the J101 footprint (-K route), re-run
-`gen/export.sh cr <date>` and `gen/fab_readme.py cr <date>`.
+The current full package is `fab/cr_2026-11-13e/`, exported after D-67 (U101 TCKE1401NM); its copper equals
+`fab/cr_2026-11-13d/` (D-66, J101 wire pads). (**Superseded 2026-11-13, D-66 and D-67:** "The full package
+`fab/cr_2026-11-13c/` was exported after D-65. If item 3 changes the J101 footprint (-K route), re-run `gen/export.sh cr
+<date>` and `gen/fab_readme.py cr <date>`.")
 
 ### 3.2 EIB
 
@@ -85,7 +87,7 @@ The full package `fab/cr_2026-11-13c/` was exported after D-65. If item 3 change
 5. **Free-text MPNs (DK-4, DK-6).** **Updated 2026-11-13 (Digi-Key upload review, README section 4):** closed; the wire and tape rows are off the BOM (workshop stock).  The Alpha "297" and "296" bus-wire lines are series numbers, and the 3M 467MP
    line is free text. Digi-Key will not match them. Select the products by hand (the 467MP row links Digi-Key
    product 467MP-0.5-4(5)), or cut the JP3 and JP5 links from wire on hand.
-6. **Stock checks (CR-BOM-3, DK-7).** **Updated 2026-11-13 (Digi-Key upload review, README section 4):** C102b is now TDK CNC6P1X7R2A475K250AE (DC-bias check open). TPS26630RGER has no authorized stock (Digi-Key restock 8-Jul-2027) and is held out of the Digi-Key file; the source is open.  Confirm stock of C3225X7S2A475K200AB (C102b; flagged NRND or zero stock at
+6. **Stock checks (CR-BOM-3, DK-7).** **Updated 2026-11-13 (Digi-Key upload review, README section 4):** C102b is now TDK CNC6P1X7R2A475K250AE (DC-bias check open). TPS26630RGER has no authorized stock (Digi-Key restock 8-Jul-2027); **closed by D-67:** U101 is the Toshiba TCKE1401NM from Mouser, with new R101/R103/R104 values (README sections 4.3 and 4.8).  Confirm stock of C3225X7S2A475K200AB (C102b; flagged NRND or zero stock at
    secondary sources) and TPS26630RGER (U101). For C102b, the fallbacks are GRM32ER72A475KA35L or 2 x 2.2 uF 100 V
    1210, after a DC-bias check of at least 3 uF at 23.6 V.
 7. **Unidentified build items (SYS-6, DK-8).** Heat-shrink tubing (EM7, PM6, A.3), the two adhesive tie bases and

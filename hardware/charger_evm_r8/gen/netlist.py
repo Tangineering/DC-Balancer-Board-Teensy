@@ -98,16 +98,24 @@ CR = [
     C("C102c", "100nF 100V X7R", "C0603", "VCHGIN", GND, mpn="GRM188R72A104KA35D", mfr="Murata"),
     ("D107", "D", "TVS 33V SMA", "SMA", {"1": "VCHGIN", "2": GND},
      dict(mpn="SMAJ33A (candidate, T-A-05)", mfr="Littelfuse")),
-    ("U101", "TPS26630", "TPS26630RGER", "VQFN24",
+    # U101: Toshiba TCKE1401NM (operator ruling 2026-11-13, "Use TCKE1401NM for U101"; the TPS26630RGER has no
+    # authorized stock). Pin- and land-compatible with the TPS26630 RGE (TCKE1401NM DS Rev. 3.0 Fig 5.1, Fig 13.2), so
+    # the footprint and every net are unchanged; R101, R103 and R104 are recomputed for its references (D-67).
+    # (superseded 2026-11-13: TPS26630RGER, Texas Instruments)
+    ("U101", "TCKE1401NM", "TCKE1401NM", "VQFN24",
      {"1": "VCHGIN", "2": "VCHGIN", "3": None, "4": None, "5": "VCHGIN", "6": "N_UV", "7": "N_OV",
       "8": GND, "9": "N_DVDT", "10": "N_ILIM", "11": None, "12": None, "13": "N_IMON", "14": "N_FLT",
       "15": GND, "16": GND, "17": "VCHGOUT", "18": "VCHGOUT", "19": None, "20": None, "21": None,
       "22": None, "23": None, "24": None, "25": GND},
-     dict(mpn="TPS26630RGER", mfr="Texas Instruments")),
+     dict(mpn="TCKE1401NM,R1F", mfr="Toshiba")),
     R("R102", "845k 0.1%", "R0805", "VCHGIN", "N_UV", mpn="TNPW0805845KBEEA", **VISH01),
-    R("R103", "66.5k 0.1%", "R0603", "N_UV", "N_OV", mpn="TNPW060366K5BEEA", **VISH01),   # was 0402 TNPW040266K5BEED
-    R("R104", "49.9k 0.1%", "R0603", "N_OV", GND, mpn="TNPW060349K9BEEA", **VISH01),      # was 0402 bottom (D-32)
-    R("R101", "8.06k 1%", "R0603", "N_ILIM", GND, mpn="CRCW06038K06FKEA", **VISH01),      # was 0402 CRCW04028K06FKED
+    # D-67 divider for the TCKE1401NM references (V_OVPR 1.233 V, V_UVLOR 1.19 V typ): OVP 23.19 V, UVLO 9.86 V typ.
+    # 64.9k because 64.2k 0.1 % is not stocked (superseded 2026-11-13: R103 66.5k TNPW060366K5BEEA, R104 49.9k
+    # TNPW060349K9BEEA)
+    R("R103", "64.9k 0.1%", "R0603", "N_UV", "N_OV", mpn="ERA-3AEB6492V", mfr="Panasonic"),
+    R("R104", "51.1k 0.1%", "R0603", "N_OV", GND, mpn="TNPW060351K1BEEA", **VISH01),
+    # D-67: I_LIM = 18.9/R(kOhm) + 0.13 A = 2.37 A typ (TCKE1401NM Formula 9) (superseded 2026-11-13: 8.06k, CRCW06038K06FKEA)
+    R("R101", "8.45k 1%", "R0603", "N_ILIM", GND, mpn="CRCW06038K45FKEA", **VISH01),
     C("C101", "22nF 50V X7R", "C0603", "N_DVDT", GND, mpn="GRM188R71H223KA01D", mfr="Murata",
       note="TODO(verify: Murata GRM188R71H223KA01D, 22 nF 50 V X7R 0603)"),               # was 0402 GRM155R71H223KA12D
     C("C103", "1uF 50V X7R", "C0805", "VCHGOUT", GND, mpn="GRM21BR71H105KA12L", mfr="Murata"),

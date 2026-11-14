@@ -1,7 +1,7 @@
 # Charger EVM r8 capture: handoff (2026-11-11, updated 2026-11-13)
 
 **Respin input (2026-11-13, read first before any CR or EIB board change):** U101 (TPS26630RGER) has no authorized
-stock. `RESPIN_HANDOFF_2026-11-13.md` lists the alternatives (TCKE1401NM fits the existing footprint; the others need a
+stock; by D-67 U101 is the Toshiba TCKE1401NM on the unchanged footprint, so no respin is required now. `RESPIN_HANDOFF_2026-11-13.md` lists the alternatives (TCKE1401NM fits the existing footprint; the others need a
 respin) and inventories every post-generation edit a respin must keep: the operator's KiCad routing cleanup `547dc11`,
 D-63 to D-66 and the BOM substitutions. No script sequence reproduces the current CR, so a respin edits the current
 board in place. The D-58 routing plan is copied to `cr/routing_r9_notes/`, and `gen/pcbdiff.py` checks that a rebuilt
