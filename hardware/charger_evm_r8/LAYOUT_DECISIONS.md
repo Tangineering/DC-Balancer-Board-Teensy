@@ -1682,7 +1682,7 @@ the footprint, the nets and the copper do not change. The KiCad footprint keeps 
   FR-30 10.2 V threshold.
 - R105 (27.4 kOhm, IMON 0.764 V/A typical), R106s, R129/C129, C101 (22 nF: 7.28 ms at 15.9 V, Formula 2), C102a-c, C103,
   D103 and D107 are unchanged. The IMON gain spreads wider (22.3-33.5 uA/A at 1-2 A, against 25.66-30.14), which T-B-14
-  calibration absorbs. TODO(verify: Toshiba) Table 10.1 Note 13 ("1 kOhm <= RIMON <= 10 kOhm" when VSYS < 9 V).
+  calibration absorbs. Table 10.1 Note 13 ("1 kOhm <= RIMON <= 10 kOhm" when VSYS < 9 V) is accepted as a risk and R105 stays 27.4 kOhm (operator ruling 2026-11-13, chat: "Keep 27.4k"): the note binds only below 9 V, during the UVLO falling band, where CHG_IIN is not used; a 10.0 kOhm 0603 in the parts order allows a swap at assembly. (**Superseded 2026-11-13:** "TODO(verify: Toshiba) Table 10.1 Note 13.")
 - Overload: regulated at I_LIM for tCL_PLIM 130-190 ms, then latch-off (MODE open), against 129-202 ms; FLAG asserts
   1.0-3.5 ms into current limiting. The absolute maximum of VIN is 80 V (TPS26630: 67 V), so the D107 clamp (<= 60 V) has
   20 V of margin.
