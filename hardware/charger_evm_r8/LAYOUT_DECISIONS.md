@@ -73,7 +73,7 @@ The quantity follow-up that the Review 2/2 session raised is closed. The operato
 quantity is 6 or stays 5. Operator ruling 2026-11-13 (design session, chat 2026-11-13: "Use 6") sets it to 6. The CR
 order quantity is 6, that is two OSH Park lots of 3; the E BOM asks for 5, so one board is a spare. Section 1 of the
 package README reads "6 (operator ruling 2026-11-13: 'Use 6'; OSH Park sells boards in multiples of 3; the E BOM asks
-for 5)". Closed 2026-11-13. (**Superseded 2026-11-13:** "One follow-up that the Review 2/2 session raised has no
+for 5)". Closed 2026-11-13. The EIB order quantity is 3, one OSH Park lot (operator ruling 2026-11-13, chat: "Order 3"); the EIB package README section 1 reads "3". (**Superseded 2026-11-13:** "One follow-up that the Review 2/2 session raised has no
 operator answer and stays open: the fab package README gives a quantity of '5 (E BOM)', but OSH Park sells boards in
 multiples of 3. The D-62 re-export states the multiples of 3 in the OSH Park row of the README and keeps the quantity
 until the operator rules on it."; the ruling sets the quantity to 6.) The OSH Park row of the package README states the

@@ -11,7 +11,7 @@
 | Thickness | 1.6 mm |
 | Copper | 1 oz |
 | Surface finish | ENIG |
-| Quantity | 5 (E BOM; a separate 2-layer order at OSH Park) |
+| Quantity | 3 (operator ruling 2026-11-13: "Order 3"; one OSH Park lot of 3; a separate 2-layer order at OSH Park) |
 | Solder mask / silkscreen | both sides; every via tented on both sides |
 | Design rules | `tools/pcb/fab_rules/fab_2layer_oshpark_pcbway.kicad_dru` (0.1524 mm track/space, 0.254 mm minimum hole, 0.15 mm annular ring, 0.381 mm copper to edge) |
 | ERC | 0 messages (`reports/erc.rpt`) |

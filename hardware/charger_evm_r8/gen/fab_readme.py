@@ -58,7 +58,7 @@ INFO = {
                layers_list="F.Cu (L1, signals and power pours), In1.Cu (L2, solid GND), In2.Cu (L3, signals), "
                "B.Cu (L4, solid GND facing the MB, D-20)"),
     "eib": dict(name="EIB, EVM interface board", layers=2, size="24.0 x 38.0 mm (D-13 / P-05; A.9 states 36.0 x 24.0 mm)",
-                thick="1.6 mm", copper="1 oz", finish="ENIG", qty="5 (E BOM; a separate 2-layer order at OSH Park)",
+                thick="1.6 mm", copper="1 oz", finish="ENIG", qty="3 (operator ruling 2026-11-13: \"Order 3\"; one OSH Park lot of 3; a separate 2-layer order at OSH Park)",
                 layers_list="F.Cu (signals, AGND pour), B.Cu (signals, AGND pour); the two AGND pours stitched by vias (D-63)"),
 }[B]
 DNP, FIT = dnp_split()

@@ -41,7 +41,7 @@ J201 carry placeholders, and C102b carries the TDK part number without its packa
 
 The PCB rows restate the current boards from the fab package READMEs. The CR row gives the D-62 outline and the four
 D-60 holes, and the EIB row gives 24.0 x 38.0 mm (D-25) and the D-63 pours. The per-unit quantity is one board; the
-order quantity is in the row note (CR 6 by operator ruling 2026-11-13; EIB not ruled).
+order quantity is in the row note (CR 6 by operator ruling 2026-11-13; EIB 3 by operator ruling 2026-11-13, chat: "Order 3").
 
 ### 2.2 System BOM
 

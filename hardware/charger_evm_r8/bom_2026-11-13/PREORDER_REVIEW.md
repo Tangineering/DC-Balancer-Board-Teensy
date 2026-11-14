@@ -67,7 +67,7 @@ The current full package is `fab/cr_2026-11-13e/`, exported after D-67 (U101 TCK
 2. **Closed 2026-11-13 (operator connector rulings, README section 4.5):** J201 is removed. **J201 -K shroud envelope (EIB-2; section 11 item 13).** The footprint models the plain FTSH body, and the -K key
    envelope is TODO(verify). The nearest fitted parts sit 0.89 mm beyond each body end (R266; R253 and R273). Check
    the Samtec -K drawing against that margin. No collision is established.
-3. **Order quantity (known).** The EIB quantity is not ruled; OSH Park sells boards in multiples of 3 and the E BOM
+3. **Closed 2026-11-13 (operator ruling 2026-11-13, chat: "Order 3"): 3 EIBs, one OSH Park lot; one is fitted per build, two are spares.** **Order quantity (known).** The EIB quantity is not ruled; OSH Park sells boards in multiples of 3 and the E BOM
    asks for 5.
 4. **Optional (EIB-5).** The top silkscreen still reads 2026-11-11.
 
