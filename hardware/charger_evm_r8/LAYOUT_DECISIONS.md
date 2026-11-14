@@ -1961,7 +1961,7 @@ Layout and fabrication, added 2026-11-12:
     PLACEHOLDER TODO(verify: Samtec TSW drawing)" changes at the next footprint-library regeneration.
     (**Superseded:** "TODO(verify: Samtec TSW drawing) the CR pad and drill for TSW-110/112-07-L-S (D-03, D-41).")
 15. TODO(verify: Samtec derating) the four-powered-pin case at CHG pins 14/15/18/19, 1.93 A each (D-41).
-16. **Amended 2026-11-13** (operator ruling 2026-11-13 (Review 1/2: J102, J1-TSW, W6-W7 (connector and lead-pad
+16. **Closed 2026-11-13** (operator ruling, chat: "I'll deal with the J-TAP cable with whatever materials I have in my workshop"): the J102 mate is built from workshop stock and the 2147561101 cable is off the BOM; the J102 header (43045-1012) stays. **Amended 2026-11-13** (operator ruling 2026-11-13 (Review 1/2: J102, J1-TSW, W6-W7 (connector and lead-pad
     geometry), local_923ffa1c-f985-43ad-8510-7faea2e5f5d7, chat 2026-11-13); D-46): the header half is closed. The
     header is 43045-1012 ("That was a typo, I meant 43045-1012"); the Molex 43045 PCB layout confirms the orientation,
     the pegs and the physical pin numbering of the cavity map. The cable P/N is amended to 2147561101 ("(A).

@@ -53,7 +53,6 @@ Quantity,Digi-Key Part Number,Manufacturer Part Number,Manufacturer,Description,
 10,541-2.70KHCT-ND,CRCW06032K70FKEA,Vishay Dale,2.70 kOhm 1 % 100 ppm/K 0603 thick film,"MB RSDA,MB RSCL","SYS: MB RSDA,MB RSCL",2,0.11
 10,445-1297-1-ND,C1608C0G1H222J080AA,TDK,2.2 nF 50 V C0G 0603,C252 (on EVM),SYS: C252 (on EVM),1,0.17
 7,4713-GMC21X5R106K50NTCT-ND,GMC21X5R106K50NT,"Cal-Chip Electronics, Inc.",10 uF 50 V X5R 0805 (1.50 mm max thickness),"C (MB) x2, C (EVM) x5","SYS: C (MB) x2, C (EVM) x5",7,1.76
-1,900-2147561101-ND,2147561101,Molex,"Molex Micro-Fit 3.0 female-to-pigtail OTS cable assembly, 10 circuits, dual row, 150 mm, tin, active (Molex page); wire ","J102 mate (J-TAP cable, leads T1-T17r)","SYS: J102 mate: J-TAP leads T1, T2, T5, T6, T7b, T10, T13, T16, T17, T17r",1,6.48
 1,612-SSQ-110-01-G-S-ND,SSQ-110-01-G-S,Samtec Inc.,"SSQ 1x10, 2.54 mm, standard-force contacts (-01), -G plating (gold mating), through-hole; mates TSW-110-07-L-S",MB CHG column x 45.998 (pins 1-10),SYS: MB CHG column x 45.998 (pins 1-10),1,2.56
 1,612-SSQ-112-01-G-S-ND,SSQ-112-01-G-S,Samtec Inc.,"SSQ 1x12, 2.54 mm, standard-force contacts (-01), -G plating (gold mating), through-hole; mates TSW-112-07-L-S",MB CHG column x 20.998 (pins 11-22),SYS: MB CHG column x 20.998 (pins 11-22),1,3.05
 10,S9001-ND,SPC02SYAN,Sullins Connector Solutions,"1x2 closed-top shunt, 2.54 mm, gold flash, 3 A",EVM JP4,SYS: EVM JP4,1,0.10

@@ -208,8 +208,17 @@ if errors:
 # Operator ruling 2026-11-13 (chat): "Let's take the wire and tape off of the BOM, I'll use what I have in my
 # workshop." These rows leave the system BOM and are listed in digikey_skipped.csv as workshop stock.
 WORKSHOP_TAPE = {'467MP 0.5" x 4"', "5413 AMBER 1/4 IN X 36 YD"}
+# Operator ruling 2026-11-13 (chat): "I'll deal with the J-TAP cable with whatever materials I have in my workshop."
+# The J102 mate cable leaves the BOM; the J102 header on the CR stays.
+WORKSHOP_TAPE.add("2147561101")
 workshop = [r for r in out_rows["system"] if r[C["Category"]] == "Wire" or r[C["Mft. SKU"]].strip() in WORKSHOP_TAPE]
 out_rows["system"] = [r for r in out_rows["system"] if not any(r is w for w in workshop)]
+# Operator ruling 2026-11-13 (chat): "no second BQ25798EVM": one EVM per build (section E ordered 2)
+for r in out_rows["system"]:
+    if r[C["Mft. SKU"]].strip() == "BQ25798EVM":
+        r[C["BOM Qty"]] = "1"
+        r[C["Notes"]] = ("Per-unit qty = 1 (one build; operator ruling 2026-11-13, chat: \"no second BQ25798EVM\"; "
+                         "section E ordered 2). " + re.sub(r"^Per-unit qty = \d+ \(one build\)\.\s*", "", r[C["Notes"]]))
 
 # Operator connector rulings 2026-11-13 (forked side session, relayed): "Let's remove the J101 and J201." (the W5
 # ribbon, its key plug and both FTSH headers go; the link becomes direct-soldered wires) and "The EVM J8 KK I'll

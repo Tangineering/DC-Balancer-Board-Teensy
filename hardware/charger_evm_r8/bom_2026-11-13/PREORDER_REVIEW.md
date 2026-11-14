@@ -75,7 +75,7 @@ The current full package is `fab/cr_2026-11-13e/`, exported after D-67 (U101 TCK
 
 1. **Closed 2026-11-13 (operator connector rulings, README section 4.5):** the W5 ribbon and its key are off the BOM. **J101 and the W5 key.** See item 3.1.3. The W5 key row books 2 plugs, but only the J101-end socket hole 6 can
    take a plug, because J201 has post 6 (EIB-3). One plug and a spare are enough; never plug the J201 end.
-2. **J-TAP cable (SYS-2; section 11 item 16).** Distributor listings give Molex 2147561101 as 18 AWG UL 1061 and
+2. **Closed 2026-11-13 (operator ruling, chat: "I'll deal with the J-TAP cable with whatever materials I have in my workshop"):** the 2147561101 cable is off the BOM; the J102 header stays. **J-TAP cable (SYS-2; section 11 item 16).** Distributor listings give Molex 2147561101 as 18 AWG UL 1061 and
    mark it discontinued. A Molex page does not confirm either fact. The far-end terminations and the R170/R171 0805
    joints assume about 26 AWG. Confirm the gauge and the status, then choose a finer cable or 18 AWG terminations
    with strain relief.
@@ -87,12 +87,12 @@ The current full package is `fab/cr_2026-11-13e/`, exported after D-67 (U101 TCK
 5. **Free-text MPNs (DK-4, DK-6).** **Updated 2026-11-13 (Digi-Key upload review, README section 4):** closed; the wire and tape rows are off the BOM (workshop stock).  The Alpha "297" and "296" bus-wire lines are series numbers, and the 3M 467MP
    line is free text. Digi-Key will not match them. Select the products by hand (the 467MP row links Digi-Key
    product 467MP-0.5-4(5)), or cut the JP3 and JP5 links from wire on hand.
-6. **Stock checks (CR-BOM-3, DK-7).** **Updated 2026-11-13 (Digi-Key upload review, README section 4):** C102b is now TDK CNC6P1X7R2A475K250AE (DC-bias check open). TPS26630RGER has no authorized stock (Digi-Key restock 8-Jul-2027); **closed by D-67:** U101 is the Toshiba TCKE1401NM from Mouser, with new R101/R103/R104 values (README sections 4.3 and 4.8).  Confirm stock of C3225X7S2A475K200AB (C102b; flagged NRND or zero stock at
+6. **C102b DC-bias closed 2026-11-13:** TDK characteristic data (TDK Product Center DC-bias graph, read 2026-11-13): CNC6P1X7R2A475K250AE 3.84 uF at 16 V and 2.90 uF at 25 V, so about 3.04 uF typical at 23.6 V and 2.96 uF at the 24.41 V D-67 OVP maximum; the former C3225X7S2A475K200AB gives 3.81 uF at 16 V and 2.99 uF at 25 V, about 3.11 uF at 23.6 V. The replacement is within 2 % of the original, and both sit at the 3 uF figure as typical curves (K tolerance +-10 %). The figure comes from the H.19 IN-spike simulation; D107 (<= 60 V) and the TCKE1401NM 80 V absolute maximum back it up, and T-A-04 measures the fitted part. **Stock checks (CR-BOM-3, DK-7).** **Updated 2026-11-13 (Digi-Key upload review, README section 4):** C102b is now TDK CNC6P1X7R2A475K250AE (DC-bias check open). TPS26630RGER has no authorized stock (Digi-Key restock 8-Jul-2027); **closed by D-67:** U101 is the Toshiba TCKE1401NM from Mouser, with new R101/R103/R104 values (README sections 4.3 and 4.8).  Confirm stock of C3225X7S2A475K200AB (C102b; flagged NRND or zero stock at
    secondary sources) and TPS26630RGER (U101). For C102b, the fallbacks are GRM32ER72A475KA35L or 2 x 2.2 uF 100 V
    1210, after a DC-bias check of at least 3 uF at 23.6 V.
 7. **Unidentified build items (SYS-6, DK-8).** Heat-shrink tubing (EM7, PM6, A.3), the two adhesive tie bases and
    the solder paste have no MPN. Choose them if they join the order.
-8. **Second EVM (SYS-5).** Section E orders 2 BQ25798EVM, while the rework set covers one. Confirm that the second
+8. **Closed 2026-11-13 (operator ruling, chat: "no second BQ25798EVM"):** one EVM per build. **Second EVM (SYS-5).** Section E orders 2 BQ25798EVM, while the rework set covers one. Confirm that the second
    EVM is an unreworked spare; otherwise add a second rework set.
 9. **6-32 screws (known).** The D-60 holes have no screw row; the length depends on the 3D-printed support.
 
