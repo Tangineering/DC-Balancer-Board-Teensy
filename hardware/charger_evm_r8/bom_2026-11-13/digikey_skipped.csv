@@ -1,0 +1,15 @@
+BOM,Part,MPN,Vendor
+CR,Stencil and solder paste,NOT IDENTIFIED,stencil vendor / distributor
+CR,Carrier PCB (CR),CR PCB (from PM0 Gerbers),OSH Park
+EIB,EVM interface PCB (EIB),EIB PCB (from PM0 Gerbers),OSH Park
+SYS,BQ25798 evaluation module,BQ25798EVM,TI
+SYS,Polarising plug for FFSD socket hole 6,NOT IDENTIFIED,Samtec
+SYS,"Electronics RTV, non-slumping, alkoxy cure",DOWSIL 3145 RTV Clear 90 ml (Dow 2768003),Graco Roberts
+SYS,Heat-shrink tubing,NOT IDENTIFIED,Digikey
+SYS,Adhesive cable-tie base 6 x 6 mm,NOT IDENTIFIED,Digikey
+SYS,Adhesive cable-tie base 10 x 10 mm,NOT IDENTIFIED,Digikey
+SYS,B1R wedge,,
+SYS,Insulating posts,,
+SYS,Off-CR insulating support,,
+SYS,EVM plate and clamps,,
+SYS,Silicone pads 0.5 mm,,

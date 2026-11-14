@@ -71,7 +71,8 @@ STATUS = ("**Status: not ordered.** This package awaits operator review before o
           "**Status: not ordered.** This package awaits operator review before order. The fab is OSH Park (operator "
           "ruling 2026-11-12). The routing is D-58; the outline is D-62 and the 6-32 holes are D-60; the GND stitching "
           "and straightened tracks are D-61; the reference designators are D-59 (`cr/silk_refs.md` lists those on F.Fab "
-          "only).\n\n")
+          "only). After the operator's routing cleanup in KiCad (`547dc11`), the short In2 via pairs were merged onto "
+          "F.Cu and three /GND stitching vias at J101 and C129 were deleted (D-65, `gen/via_merge_cr.py`).\n\n")
 ASSY = ("\nThe CR needs a hot-air or reflow step for U101 (VQFN-24, A.8 hand assembly row), or a PCB assembly "
         "service.\n" if B == "cr" else "")
 for _fab in ("jlcpcb", "pcbway"):
@@ -121,7 +122,8 @@ txt = f"""# {INFO['name']}: fabrication package ({D})
 | `kikit_*` | KiKit 1.8.1 `fab jlcpcb`, `fab pcbway`, `fab oshpark` outputs |
 | `reports/` | ERC, DRC and KiKit logs |
 
-The ordering BOM with vendor rows is `hardware/charger_evm_r8/bom_2026-11-11/ordering_bom.csv`. The layout
+The per-unit BOMs and the Digi-Key import file are in `hardware/charger_evm_r8/bom_2026-11-13/`
+(`PREORDER_REVIEW.md` there lists the items to settle before each order). The layout
 decisions and the open `TODO(verify)` items are in `hardware/charger_evm_r8/LAYOUT_DECISIONS.md`.
 
 ## 4. Before you order

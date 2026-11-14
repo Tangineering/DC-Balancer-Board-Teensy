@@ -1,5 +1,7 @@
 # CR, CHG adapter carrier (plug-on): fabrication package (2026-11-13)
 
+**Superseded 2026-11-13 by `fab/cr_2026-11-13c/` (operator routing cleanup `547dc11`, then D-65); do not upload these files.**
+
 **Status: not ordered.** This package awaits operator review before order. The fab is OSH Park (operator ruling 2026-11-12). The routing is D-58; the outline is D-62 and the 6-32 holes are D-60; the GND stitching and straightened tracks are D-61; the reference designators are D-59 (`cr/silk_refs.md` lists those on F.Fab only).
 
 ## 1. Board

@@ -887,6 +887,16 @@ and the ERC, DRC and KiKit reports. The KiKit JLCPCB and PCBWay assembly presets
 `int()` parse error, probably on the letter-suffixed references). This failure does not affect an OSH Park bare-board
 order. `assembly/cr-bom.csv` is the assembly BOM. The package README is `fab/cr_2026-11-13/README.md`.
 
+**Amended 2026-11-13 (operator routing cleanup, `547dc11`):** the operator cleaned up the CR routing in KiCad after
+the package above was exported, so `fab/cr_2026-11-13/` no longer matches `cr/cr.kicad_pcb`. The Gerber and drill
+set of the current board is `fab/cr_2026-11-13b_oshpark/cr_oshpark_gerbers.zip` (its README states the scope). It has
+no assembly files. On the current board the constraint check gives 107 pass rows and 0 FAIL, with the D-37 row at
+"info" for a /GND via that overlaps J101 pad 9 (`cr/constraint_check.md`). The pre-order review of
+`bom_2026-11-13/PREORDER_REVIEW.md` lists the items to settle before the order, and the CR package is to be
+re-exported with `gen/export.sh cr <date>` once the board is final.
+
+**Amended 2026-11-13 (D-65):** the short In2 via pairs of the cleaned-up board were merged onto F.Cu (SDA, SCL and TS_EXT among them), and the /GND via on J101 pad 9 and the vias at the two tight mask gaps were deleted (`LAYOUT_DECISIONS.md` D-65). The current package is `fab/cr_2026-11-13c/`, a full package exported from that board; its OSH Park upload is `kikit_oshpark/gerbers.zip`. DRC gives 0 violations, 0 unconnected items and 0 parity issues, and the constraint check gives 108 pass rows and 0 FAIL, with the D-37 row at "none". `fab/cr_2026-11-13/` and `fab/cr_2026-11-13b_oshpark/` are superseded and kept as the record.
+
 The EIB is a 2-layer board, so at OSH Park it is a separate order and is not on the CR panel.
 
 ### 9.4 EIB fab package

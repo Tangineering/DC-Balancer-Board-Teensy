@@ -18,7 +18,7 @@ Status on 2026-11-13:
 | Board | Schematic | Placement | Routing | ERC | DRC | Fab package |
 |---|---|---|---|---|---|---|
 | EIB | complete | complete | complete (D-28; straightened tracks, top AGND pour and stitching D-63; references D-64) | 0 | 0 (schematic parity checked) | `fab/eib_2026-11-13/` (D-49 DNP set; re-exported after D-64); not ordered |
-| CR | complete | complete (D-54 to D-56) | complete (D-58; power copper D-57; outline D-62, holes D-60 and D-62; GND stitching and straightened tracks D-61, re-run in D-62; references D-59 and D-62) | 0 | 0 violations, 0 unconnected items, 0 parity issues (`--severity-all --schematic-parity`) | `fab/cr_2026-11-13/` (re-exported after D-62); not ordered |
+| CR | complete | complete (D-54 to D-56) | complete (D-58; power copper D-57; outline D-62, holes D-60 and D-62; GND stitching and straightened tracks D-61, re-run in D-62; references D-59 and D-62; operator cleanup `547dc11`; via merges D-65) | 0 | 0 violations, 0 unconnected items, 0 parity issues (`--severity-all --schematic-parity`) | `fab/cr_2026-11-13c/` (exported after D-65); not ordered |
 
 On the routed CR with the D-62 outline and the re-run stitching (D-60 to D-62), the constraint check
 (`cr/constraint_check.md`) gives 109 pass rows, 0 FAIL (including the D-20 stitching row of D-61, 3.51 mm against 3.54
@@ -1573,6 +1573,34 @@ request R9-04).**
   2026-11-13: "Accept short necks") accepts them, so no part, track, via or pour changes, and the D-62 package stays the
   order package (section 11 item 2).
 
+**D-65. Short In2 via pairs merged onto F.Cu and the J101/C129 stitching vias deleted (operator request
+2026-11-13).** The routed board of the operator's cleanup (`547dc11`) has same-net via pairs whose only purpose is a
+0.4 to 1.4 mm jog on In2.Cu. The operator asked that SDA, SCL and TS_EXT run on F.Cu without the In2 jog, and that
+every other such pair be removed or consolidated without a re-route. In addition, the pre-order review
+(`bom_2026-11-13/PREORDER_REVIEW.md` items 3.1.1 and 3.1.2) found a /GND via on J101 pad 9 (D-37) and three /GND vias
+0.076 mm from the mask openings of other nets, which equals the OSH Park 4-layer mask alignment of 0.0762 mm.
+`gen/via_merge_cr.py` makes the change on the routed board as follows:
+
+- **Both vias deleted** (the F.Cu link is a single segment from pad track to pad track): SDA, SCL, TS_EXT and
+  J3V3_1.
+- **One via deleted** (the kept via carries the In2 route onward; the deleted one only hopped to it): N_H1M, N_FNP,
+  N_UVP and four /3V3 vias at U105, C125 and the two In2 trunk ends at (35.91, 71.86) and (45.74, 69.04).
+- **Trackless /GND stitching vias deleted:** (37.50, 53.97) on J101.9, which was also 0.076 mm from the J101.7 mask;
+  (48.47, 35.10) at C129.1; (36.78, 56.26) at J101.11.
+
+In total, 18 vias and 32 In2.Cu segments were deleted, and 11 F.Cu segments of the existing 0.1524 mm width were
+added (446 to 428 vias). The GATE pair at (42.46, 64.93) and (43.91, 64.78) was tested and kept, because its F.Cu link
+crosses /QF. The VCHGIN and VCHGOUT via arrays are current-carrying arrays and were not considered. Via pairs of two
+different nets cannot be merged; the closest remaining pairs are 0.15 to 0.17 mm apart edge to edge (CHG_ARM / N_FOP,
+FCCNN / FCC_ON, GATE / QF) and stay. No track was rerouted, and no footprint moved.
+
+Result: DRC (`--severity-all --schematic-parity`) gives 0 violations, 0 unconnected items and 0 parity issues. The
+constraint check gives 108 pass rows and 0 FAIL, and the D-37 row reads "none". The smallest via-annulus gap to an
+other-net mask opening is now 0.110 mm (/GND via at U120.4). The D-20 stitching row reads 300 stitch points with the
+largest distance to the nearest one 3.51 mm, unchanged against the 3.54 mm limit. The script reproduces the board
+from `e1f05d4` exactly (0 tracks or vias differ). Package: `fab/cr_2026-11-13c/`. Reversal: restore
+`cr/cr.kicad_pcb` from `e1f05d4` and export again.
+
 ## 9. Verification
 
 ### 9.1 ERC and DRC
@@ -1632,6 +1660,10 @@ constraint check is unchanged (`eib/constraint_check.md`). The three KiKit prese
 
 **D-64 (2026-11-13):** after the EIB reference placement, DRC (`--severity-all --schematic-parity`) reports 0
 violations, 0 unconnected items and 0 parity issues, and the EIB constraint check is unchanged.
+
+**D-65 (2026-11-13):** after the via merges, DRC (`--severity-all --schematic-parity`) reports 0 violations, 0
+unconnected items and 0 parity issues. The constraint check gives 108 pass rows and 0 FAIL (`cr/constraint_check.md`).
+The KiKit OSH Park preset ran without messages; the JLCPCB and PCBWay presets fail on the assembly BOM as before.
 
 ### 9.2 Constraint measurements
 
