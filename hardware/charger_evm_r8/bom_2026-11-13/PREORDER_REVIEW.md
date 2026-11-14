@@ -98,7 +98,7 @@ The current full package is `fab/cr_2026-11-13e/`, exported after D-67 (U101 TCK
 
 ## 5. Items before assembly and the build
 
-1. **Stencil (CR-BOM-2; section 11 item 22).** The stencil row has no thickness or paste. The U101 exposed-pad paste
+1. **Closed 2026-11-13 by D-69 (operator rulings 2026-11-13, chat: "I would order from OSH Stencil" and "Yes, do both"):** 4 mil stainless, one OSH Stencils stencil per board; U101 exposed-pad coverage 54.6 %. The solder paste is still not identified. **Stencil (CR-BOM-2; section 11 item 22).** The stencil row has no thickness or paste. The U101 exposed-pad paste
    coverage is 25 % (four 0.675 mm panes on the 2.7 mm pad), against the 78 % of the TI example at 0.125 mm. Record
    the thickness and the paste, and accept the coverage or close item 22.
 2. **D103 fields (CR-BOM-4).** The board and the assembly BOM show D103 as "Schottky 40V SMA" (B340A-13-F

@@ -215,3 +215,6 @@ To upload the file, open Mouser's BOM tool, upload the CSV and map the columns t
 Number, Quantity and Customer Part Number (Mouser prints the customer number on the bag label; the longest here is 7
 characters). The attrition rule gives one U101 (above $1.00); no spare is ordered (operator ruling 2026-11-13, chat: "No spare U101").
 
+### 4.9 Stencils (D-69)
+
+The operator orders the stencils from OSH Stencils (operator rulings 2026-11-13, chat: "I would order from OSH Stencil" and "Yes, do both"). `cr_bom.csv` and `eib_bom.csv` each carry one 4 mil (0.1 mm) stainless steel frameless stencil, ordered together. Upload `fab/cr_2026-11-13f/gerbers/cr-F_Paste.gtp` and `fab/eib_2026-11-13c/gerbers/eib-F_Paste.gtp`; neither board has bottom paste. OSH Stencils charges $1.60 per square inch for 4 mil stainless (pricing page, read 2026-11-13) and engraves the border free, so mark the stencils "CR r8 D-69" and "EIB r8 D-68". The solder paste is not identified.

@@ -20,8 +20,9 @@ SYS,"Cable assembly, 14-way 1.27 mm IDC both ends, 12.0 in",FFSD-07-D-12.00-01-N
 SYS,Polarising plug for FFSD socket hole 6,NOT IDENTIFIED,off the BOM: W5 key removed with J101/J201 (operator ruling 2026-11-13)
 SYS,"Receptacle housing, KK 254, 4 position",22-01-3047,off the BOM: EVM J8 lead soldered to the pins; no KK mate (operator ruling 2026-11-13)
 SYS,"Crimp terminal, KK 254",08-50-0114,off the BOM: EVM J8 lead soldered to the pins; no KK crimps (operator ruling 2026-11-13)
-CR,Stencil and solder paste,NOT IDENTIFIED,stencil vendor / distributor
+CR,Solder paste stencil (CR top side),"Stainless steel 4 mil, frameless",OSH Stencils
 CR,Carrier PCB (CR),CR PCB (from PM0 Gerbers),OSH Park
+EIB,Solder paste stencil (EIB top side),"Stainless steel 4 mil, frameless",OSH Stencils
 EIB,EVM interface PCB (EIB),EIB PCB (from PM0 Gerbers),OSH Park
 SYS,BQ25798 evaluation module,BQ25798EVM,TI
 SYS,"Electronics RTV, non-slumping, alkoxy cure",DOWSIL 3145 RTV Clear 90 ml (Dow 2768003),Graco Roberts

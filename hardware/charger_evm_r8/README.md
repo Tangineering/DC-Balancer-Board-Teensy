@@ -901,6 +901,8 @@ re-exported with `gen/export.sh cr <date>` once the board is final.
 
 **Amended 2026-11-13 (D-67):** U101 is the Toshiba TCKE1401NM on the unchanged footprint, with R101 8.45 kOhm, R103 64.9 kOhm and R104 51.1 kOhm (`LAYOUT_DECISIONS.md` D-67). The current package is `fab/cr_2026-11-13e/`; its copper equals `fab/cr_2026-11-13d/`, and its assembly files carry the new values. DRC gives 0 / 0 / 0 and the constraint check 108 pass and 0 FAIL.
 
+**Amended 2026-11-13 (D-69):** the stencils are 4 mil stainless from OSH Stencils, one per board, and the U101 exposed-pad paste windows follow the via keep-outs at about 55 % coverage (`LAYOUT_DECISIONS.md` D-69). The current package is `fab/cr_2026-11-13f/`; only its top paste layer differs from `fab/cr_2026-11-13e/`. Stencil uploads: `fab/cr_2026-11-13f/gerbers/cr-F_Paste.gtp` and `fab/eib_2026-11-13c/gerbers/eib-F_Paste.gtp`.
+
 The EIB is a 2-layer board, so at OSH Park it is a separate order and is not on the CR panel.
 
 ### 9.4 EIB fab package

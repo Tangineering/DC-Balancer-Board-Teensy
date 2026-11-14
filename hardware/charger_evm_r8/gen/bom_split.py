@@ -108,8 +108,8 @@ PCB_SPEC = {
     "cr": ("4-layer, 1.6 mm, 1 oz outer / 0.5 oz inner (OSH Park 4-layer, D-29), ENIG; 10-corner outline with 1.0 mm "
            "fillets (D-62), 40.02 x 64.81 mm bounding box, 2327.7 mm2; four 3.70 mm NPTH for 6-32 (MH1-MH4, D-60)",
            "Order 6 (operator ruling 2026-11-13: \"Use 6\"; OSH Park sells boards in multiples of 3). Upload: "
-           "fab/cr_2026-11-13d/kikit_oshpark/gerbers.zip (the board after D-66, J101 as wire pads); "
-           "fab/cr_2026-11-13/, fab/cr_2026-11-13b_oshpark/ and fab/cr_2026-11-13c/ are superseded.", "OSH Park"),
+           "fab/cr_2026-11-13f/kikit_oshpark/gerbers.zip (the board after D-69; copper as D-66); "
+           "fab/cr_2026-11-13/, fab/cr_2026-11-13b_oshpark/, 13c, 13d and 13e are superseded.", "OSH Park"),
     "eib": ("2-layer, 1.6 mm, 1 oz, ENIG, 24.0 x 38.0 mm (D-25), two M3 holes; AGND pours on both layers stitched "
             "by vias (D-63); J201 as wire pads (D-66)",
             "A separate 2-layer order at OSH Park (not on the CR panel). OSH Park sells boards in multiples of 3; the "
@@ -174,8 +174,23 @@ for k, r in enumerate(DATA):
         r[C["Specification"]], r[C["Notes"]], r[C["Vendor"]] = PCB_SPEC[b]
         out_rows[b].append(per_unit(r, 1, None, "Per-unit qty = 1 board."))
         continue
-    if cat == "Assembly":                                  # the CR stencil
-        out_rows["cr"].append(per_unit(r, 1, None, "Per-unit qty = 1."))
+    if cat == "Assembly":                                  # the stencils (D-69: one per board, OSH Stencils)
+        for b_, pkg in (("cr", "fab/cr_2026-11-13f/gerbers/cr-F_Paste.gtp"),
+                        ("eib", "fab/eib_2026-11-13c/gerbers/eib-F_Paste.gtp")):
+            s_ = list(r)
+            s_[C["Part"]] = "Solder paste stencil (%s top side)" % b_.upper()
+            s_[C["Manufacturer"]], s_[C["Vendor"]] = "OSH Stencils", "OSH Stencils"
+            s_[C["Mft. SKU"]] = "Stainless steel 4 mil, frameless"
+            s_[C["Vendor SKU"]], s_[C["Link"]] = "", "https://www.oshstencils.com/"
+            s_[C["Specification"]] = ("Stainless steel 4 mil (0.1 mm) frameless stencil, top side only (no bottom "
+                                      "paste); upload %s. Solder paste NOT IDENTIFIED (a Type 4 paste is the usual "
+                                      "choice for the 0.5 mm U101 pitch)" % pkg)
+            s_[C["Notes"]] = ("Operator ruling 2026-11-13 (chat: \"I would order from OSH Stencil\"; \"Yes, do both\"): "
+                              "4 mil stainless, one stencil per board in one order (OSH Stencils prices by area per "
+                              "material, so a combined sheet saves only the border). Smallest area ratio at 4 mil: "
+                              "U101 pins 0.96 (CR), U202 SC-70 1.24 (EIB); at 5 mil 0.76 and 0.98; IPC-7525 asks >= 0.66. "
+                              "U101 exposed-pad windows about 55 %% coverage (D-69). Superseded: %s" % r[C["Notes"]])
+            out_rows[b_].append(per_unit(s_, 1, None, "Per-unit qty = 1."))
         continue
     m = SYS_DQ.search(r[C["Notes"]])
     q = r[C["BOM Qty"]].strip()

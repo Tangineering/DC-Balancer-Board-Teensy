@@ -380,14 +380,17 @@ if BOARD == "cr":
     aps = []
     for p in FP["U101"].Pads():
         if p.IsOnLayer(pcbnew.F_Paste) and not p.IsOnLayer(pcbnew.F_Cu):
-            bb_ = p.GetBoundingBox()
-            aps.append(box(pcbnew.ToMM(bb_.GetLeft()), L.YOFF - pcbnew.ToMM(bb_.GetBottom()),
-                           pcbnew.ToMM(bb_.GetRight()), L.YOFF - pcbnew.ToMM(bb_.GetTop())))
+            # D-69: the apertures are polygons that follow the via keep-outs, so the pad's effective polygon is
+            # measured (superseded: its bounding box, exact only for the D-56 squares)
+            sps_ = p.GetEffectivePolygon(pcbnew.F_Paste, pcbnew.ERROR_INSIDE)
+            aps.append(unary_union([Polygon([fr.e(sps_.Outline(i).CPoint(k))
+                                             for k in range(sps_.Outline(i).PointCount())])
+                                    for i in range(sps_.OutlineCount())]))
     gap = min(a.distance(d) for a in aps for d in drills) if aps and drills else float("nan")
     cov = 100 * unary_union(aps).area / (2.7 * 2.7) if aps else 0.0
-    row("D-40 / A.8 U101 exposed-pad paste apertures clear of every via drill (window pane; D-55)", "U101.25",
+    row("D-40 / A.8 U101 exposed-pad paste apertures clear of every via drill (window pane; D-55; via-following polygons D-69)", "U101.25",
         "%d apertures; smallest gap to a drill %.3f mm; coverage %.1f %%" % (len(aps), gap, cov),
-        "gap >= 0.15 mm (D-56, N-6); coverage TODO(verify: SLVSE94G section 11, stencil vendor)", gap >= 0.15 - 1e-4)
+        "gap >= 0.15 mm (D-56, N-6); coverage about 55 % for the 4 mil stainless stencil (D-69)", gap >= 0.15 - 1e-4)
     # D-56 (review r9b N-7): F.Cu escape of the U101 network pads and the U101 ground pads of C102c and C103. Method of
     # cr/placement_review_r9b.md section 1: obstacles are the F.Cu fill of every pour of another net (the /GND fills
     # excepted: /GND is the plane net and the router cuts it), every F.Cu pad, track and via of another net and every

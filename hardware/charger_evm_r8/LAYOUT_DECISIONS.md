@@ -18,7 +18,7 @@ Status on 2026-11-13:
 | Board | Schematic | Placement | Routing | ERC | DRC | Fab package |
 |---|---|---|---|---|---|---|
 | EIB | complete | complete | complete (D-28; straightened tracks, top AGND pour and stitching D-63; references D-64; J201 wire pads and local re-route D-66; E-pad pour clearance D-68) | 0 | 0 (schematic parity checked) | `fab/eib_2026-11-13c/` (D-49 DNP set; exported after D-68; order 3); not ordered |
-| CR | complete | complete (D-54 to D-56) | complete (D-58; power copper D-57; outline D-62, holes D-60 and D-62; GND stitching and straightened tracks D-61, re-run in D-62; references D-59 and D-62; operator cleanup `547dc11`; via merges D-65; J101 wire pads D-66; U101 TCKE1401NM D-67) | 0 | 0 violations, 0 unconnected items, 0 parity issues (`--severity-all --schematic-parity`) | `fab/cr_2026-11-13e/` (exported after D-67; copper equals `fab/cr_2026-11-13d/`); not ordered |
+| CR | complete | complete (D-54 to D-56) | complete (D-58; power copper D-57; outline D-62, holes D-60 and D-62; GND stitching and straightened tracks D-61, re-run in D-62; references D-59 and D-62; operator cleanup `547dc11`; via merges D-65; J101 wire pads D-66; U101 TCKE1401NM D-67; U101 paste windows D-69) | 0 | 0 violations, 0 unconnected items, 0 parity issues (`--severity-all --schematic-parity`) | `fab/cr_2026-11-13f/` (exported after D-69; copper equals `fab/cr_2026-11-13d/`); not ordered |
 
 On the routed CR with the D-62 outline and the re-run stitching (D-60 to D-62), the constraint check
 (`cr/constraint_check.md`) gives 109 pass rows, 0 FAIL (including the D-20 stitching row of D-61, 3.51 mm against 3.54
@@ -1712,6 +1712,8 @@ and 0 FAIL. Package `fab/eib_2026-11-13c/`; against `fab/eib_2026-11-13b/` only 
 file differ. Reversal: restore `eib/eib.kicad_pcb`, `eib/eib.kicad_dru` and `gen/make_board.sh` from the commit before
 D-68 and export again.
 
+**D-69. Stencils: 4 mil stainless from OSH Stencils, and U101 exposed-pad paste windows at about 55 % coverage (operator rulings 2026-11-13, chat: "I would order from OSH Stencil" and "Yes, do both").** Both boards are top-side only (no B.Paste). The stencil is 4 mil (0.1 mm) stainless steel, one frameless stencil per board in one order: OSH Stencils prices by area per material and combines the stencils of an order for the discount, so one shared sheet would save only the border between the designs. The smallest paste apertures set the thickness. U101 pins (0.25 x 0.825 mm) give an area ratio of 0.96 at 4 mil and 0.76 at 5 mil; the EIB U202 SC-70 pads give 1.24 and 0.98; IPC-7525 asks at least 0.66. OSH Stencils states 0.001" minimum aperture and 0.0007" laser spot for stainless steel, and limits polyimide to a few uses and parts 0402 or larger. The D-56 window-pane apertures (four 0.675 mm squares, 25.0 %) gave too little paste under the U101 exposed pad at 4 mil. `gen/fplib.py` (vqfn24) now makes each quadrant aperture a polygon: the square from the 0.125 mm half-web to 0.05 mm inside the 2.7 mm pad edge, minus a 0.31 mm keep-out circle around each of the nine via centres. Measured on the board (`cr/constraint_check.md`): 4 apertures, 54.6 % coverage, smallest gap to a via drill 0.160 mm (D-56 asks 0.15 mm), web 0.25 mm. `gen/u101_paste_swap.py` replaced the four paste-only pads of U101 on the board; pins, nets and copper are unchanged (`gen/pcbdiff.py`: 0 differences). DRC (`--severity-all --schematic-parity`) gives 0 / 0 / 0 and the constraint check 108 pass and 0 FAIL; the check now measures the aperture polygons instead of their bounding boxes. Package `fab/cr_2026-11-13f/`; against `fab/cr_2026-11-13e/` only `cr-F_Paste.gtp` differs, so the OSH Park order may use either package, and the stencil uses 13f. The solder paste is not identified (a Type 4 paste is the usual choice for 0.5 mm pitch). Reversal: restore `gen/fplib.py`, the U101 library footprint and `cr/cr.kicad_pcb` from the commit before D-69 and export again.
+
 ## 9. Verification
 
 ### 9.1 ERC and DRC
@@ -1783,6 +1785,8 @@ the EIB constraint check is unchanged. The KiKit OSH Park preset ran without mes
 **D-67 (2026-11-13):** after the U101 change, CR ERC reports 0 messages and DRC (`--severity-all --schematic-parity`) 0 violations, 0 unconnected items and 0 parity issues. The CR constraint check gives 108 pass rows and 0 FAIL. The KiKit JLCPCB and PCBWay presets fail on the assembly BOM as before.
 
 **D-68 (2026-11-13):** after the E-pad pour clearance change, EIB ERC reports 0 messages and DRC (`--severity-all --schematic-parity`) 0 violations, 0 unconnected items and 0 parity issues; the EIB constraint check gives 5 pass rows and 0 FAIL. The KiKit OSH Park preset ran without messages.
+
+**D-69 (2026-11-13):** after the U101 paste-window change, CR DRC (`--severity-all --schematic-parity`) reports 0 violations, 0 unconnected items and 0 parity issues; the CR constraint check gives 108 pass rows and 0 FAIL, with the U101 aperture row at 54.6 % and 0.160 mm.
 
 ### 9.2 Constraint measurements
 
@@ -1984,7 +1988,7 @@ Layout and fabrication, added 2026-11-12:
     and the -x terminal clearance holds (gap at least 2.200 mm). (**Superseded:** "TODO(measure: operator) the
     L-FC/L-BT height and the bodge part heights for the D-20 air gap, and the rest of the change-request section 6
     survey (D-39).")
-22. TODO(verify: SLVSE94G section 11 layout example) the window-pane stencil apertures for the U101 exposed pad
+22. **Closed 2026-11-13 by D-69 (operator rulings 2026-11-13, chat: "I would order from OSH Stencil" and "Yes, do both"):** 4 mil stainless stencil from OSH Stencils; the U101 exposed-pad apertures follow the via keep-outs at 54.6 % coverage, 0.160 mm from the drills. (**Superseded:**) TODO(verify: SLVSE94G section 11 layout example) the window-pane stencil apertures for the U101 exposed pad
     (D-40).
 23. Closed 2026-11-12 (D-52): the 78 CR parts at the 0.25 mm basis book 917.0 of 4077.8 mm² (22.5 %) of the top
     inset, against the 75 % target (`cr/geometry_check.md`). (**Superseded:** "TODO(calc) the area booking with the

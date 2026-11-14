@@ -1,5 +1,7 @@
 # CR, CHG adapter carrier (plug-on): fabrication package (2026-11-13e)
 
+**Superseded 2026-11-13 (D-69) by `fab/cr_2026-11-13f/`: same copper; only the top paste layer (U101 exposed-pad windows) differs.**
+
 **Status: not ordered.** This package awaits operator review before order. The fab is OSH Park (operator ruling 2026-11-12). The routing is D-58; the outline is D-62 and the 6-32 holes are D-60; the GND stitching and straightened tracks are D-61; the reference designators are D-59 (`cr/silk_refs.md` lists those on F.Fab only). After the operator's routing cleanup in KiCad (`547dc11`), the short In2 via pairs were merged onto F.Cu and three /GND stitching vias at J101 and C129 were deleted (D-65, `gen/via_merge_cr.py`). J101 is a 3 x 3 grid of plated wire pads for the soldered W5 wires; the FTSH header and the ribbon are retired (D-66, `gen/swap_wire9.py`). U101 is the Toshiba TCKE1401NM on the unchanged footprint, with R101 8.45k, R103 64.9k and R104 51.1k (D-67); the copper equals the D-66 package `fab/cr_2026-11-13d/`.
 
 ## 1. Board

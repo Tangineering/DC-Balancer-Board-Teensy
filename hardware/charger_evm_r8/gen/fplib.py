@@ -307,8 +307,10 @@ def vqfn24(outdir, name):
       drill edge (D-40, A.8). The binding distance is the diagonal one from an aperture corner to the four drills
       around the cell: (0.55 - 0.3375) x sqrt(2) - 0.15 = 0.1505 mm (the limit side is 2 x (0.55 - 0.30 / sqrt(2)) =
       0.6757 mm). Paste coverage 4 x 0.675^2 / 7.29 = 25.0 % of the 2.7 x 2.7 mm pad; web between apertures 0.425 mm.
-      Superseded (D-55): 0.50 x 0.50 mm, 0.274 mm gap, 13.7 %. TODO(verify: SLVSE94G section 11, stencil vendor) the
-      coverage target; a higher coverage needs a different via pattern or apertures closer to the drills.
+      Superseded (D-55): 0.50 x 0.50 mm, 0.274 mm gap, 13.7 %. (Superseded D-69: "TODO(verify: SLVSE94G section 11,
+      stencil vendor) the coverage target; a higher coverage needs a different via pattern or apertures closer to the
+      drills.")
+      D-69 (2026-11-13): four polygon apertures that follow the via keep-outs, about 55 % coverage (see the code).
     - The stock B.Cu copy of the exposed pad (pad 25, copper only, no mask and no paste) is dropped: D-44 allows no
       SMD pad on B.Cu, and the L4 GND pour already joins the nine vias. Pad 25 stays on F.Cu."""
     import copy
@@ -318,12 +320,30 @@ def vqfn24(outdir, name):
     paste = [p for p in fp.pads if p.type == "smd" and p.number == "" and list(p.layers) == ["F.Paste"]]
     proto = paste[0]
     fp.pads = [p for p in fp.pads if p not in paste]
-    for k, (ax, ay) in enumerate(((-0.55, -0.55), (-0.55, 0.55), (0.55, -0.55), (0.55, 0.55))):
+    # D-69 (operator ruling 2026-11-13, chat: "Yes, do both"; 4 mil stainless stencil from OSH Stencils): one polygon
+    # aperture per quadrant of the 2.7 mm pad, the quadrant square from the 0.125 mm half-web to 0.05 mm inside the pad
+    # edge, minus a 0.31 mm keep-out circle around each of the nine via centres (0.15 mm drill radius + 0.16 mm), so
+    # every aperture keeps >= 0.16 mm from every drill (D-56 asks 0.15 mm). Coverage 4 x 1.01 / 7.29 = about 55 %.
+    # Superseded (D-56): four 0.675 x 0.675 mm squares at the cell centres (+/-0.55 mm), 25.0 % coverage.
+    from shapely.geometry import box as _box, Point as _Pt
+    from shapely.ops import unary_union as _uu
+    from kiutils.footprint import PadOptions
+    from kiutils.items.gritems import GrPoly
+    _vias = [(x, y) for x in (-1.1, 0.0, 1.1) for y in (-1.1, 0.0, 1.1)]
+    _keep = _uu([_Pt(v).buffer(0.31, 16) for v in _vias])
+    for k, (sx, sy) in enumerate(((-1, -1), (-1, 1), (1, -1), (1, 1))):
+        q = _box(0.125, 0.125, 1.30, 1.30).difference(_keep)
+        assert q.geom_type == "Polygon", q.geom_type
+        pts = [(round(sx * x, 4), round(sy * y, 4)) for x, y in list(q.exterior.coords)[:-1]]
+        cx, cy = round(sx * 0.70, 3), round(sy * 0.70, 3)   # anchor inside the aperture
         ap = copy.deepcopy(proto)
-        ap.position = Position(X=ax, Y=ay)
-        ap.size = Position(X=0.675, Y=0.675)   # D-56 (review r9b N-6); superseded (D-55): 0.5 x 0.5 mm
-        ap.shape = "rect"
+        ap.position = Position(X=cx, Y=cy)
+        ap.size = Position(X=0.2, Y=0.2)
+        ap.shape = "custom"
         ap.roundrectRatio = None
+        ap.customPadOptions = PadOptions(clearance="outline", anchor="rect")
+        ap.customPadPrimitives = [GrPoly(coordinates=[Position(X=round(x - cx, 4), Y=round(y - cy, 4)) for x, y in pts],
+                                         width=0.0, fill="yes")]
         fp.pads.insert(k, ap)
     for pad in fp.pads:
         if pad.type == "smd" and pad.number == "25":

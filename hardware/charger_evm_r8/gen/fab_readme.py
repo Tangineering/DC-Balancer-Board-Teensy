@@ -78,7 +78,9 @@ STATUS = ("**Status: not ordered.** This package awaits operator review before o
           "F.Cu and three /GND stitching vias at J101 and C129 were deleted (D-65, `gen/via_merge_cr.py`). J101 is a "
           "3 x 3 grid of plated wire pads for the soldered W5 wires; the FTSH header and the ribbon are retired (D-66, "
           "`gen/swap_wire9.py`). U101 is the Toshiba TCKE1401NM on the unchanged footprint, with R101 8.45k, R103 "
-          "64.9k and R104 51.1k (D-67); the copper equals the D-66 package `fab/cr_2026-11-13d/`.\n\n")
+          "64.9k and R104 51.1k (D-67); the copper equals the D-66 package `fab/cr_2026-11-13d/`. The U101 exposed-pad "
+          "paste windows follow the via keep-outs, about 55 % coverage, for a 4 mil stainless OSH Stencils stencil "
+          "(D-69).\n\n")
 ASSY = ("\nThe CR needs a hot-air or reflow step for U101 (TCKE1401NM, VQFN24D, 0.5 mm pitch, A.8 hand assembly row), or "
         "a PCB assembly service.\n" if B == "cr" else "")
 for _fab in ("jlcpcb", "pcbway"):
