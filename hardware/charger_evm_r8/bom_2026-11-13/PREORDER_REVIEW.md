@@ -42,7 +42,7 @@ The order gates are as follows:
    openings of other nets (C129.1 /CHG_IIN, J101.7 /ILIM_REL_A, J101.11 NC). OSH Park's 4-layer mask alignment
    error is 0.0762 mm. Before the cleanup the minimum was 0.111 mm, and the closure of LAYOUT_DECISIONS section 11
    item 5 (0.115 mm) relied on that value. Move these vias or accept the margin. The vias are tented.
-3. **J101 part (CR-BOM-1, SYS-4, DK-2; LAYOUT_DECISIONS section 11 item 13).** The board has no pad 6 at J101. The
+3. **Closed 2026-11-13 (operator connector rulings, README section 4.5):** J101 and J201 are removed and become through-hole wire pads. **J101 part (CR-BOM-1, SYS-4, DK-2; LAYOUT_DECISIONS section 11 item 13).** The board has no pad 6 at J101. The
    Digi-Key line SAM1161-07-ND is the stock 14-pin FTSH-107-01-L-DV, and the FFSD hole-6 plug is not identified,
    so the CR end of W5 has no key. Choose one of these routes:
    - a Samtec order for the position-6-omitted variant, with the Digi-Key line removed;
@@ -62,7 +62,7 @@ The full package `fab/cr_2026-11-13c/` was exported after D-65. If item 3 change
    keep 0.20 mm of copper clearance to the AGND pours on both layers, with a 0.05 mm mask expansion. Since D-63 the
    top layer also has a pour. Either increase the pour clearance around the E pads before the order, or add a build
    step: clean the flux, then measure each E pad to AGND before power-up.
-2. **J201 -K shroud envelope (EIB-2; section 11 item 13).** The footprint models the plain FTSH body, and the -K key
+2. **Closed 2026-11-13 (operator connector rulings, README section 4.5):** J201 is removed. **J201 -K shroud envelope (EIB-2; section 11 item 13).** The footprint models the plain FTSH body, and the -K key
    envelope is TODO(verify). The nearest fitted parts sit 0.89 mm beyond each body end (R266; R253 and R273). Check
    the Samtec -K drawing against that margin. No collision is established.
 3. **Order quantity (known).** The EIB quantity is not ruled; OSH Park sells boards in multiples of 3 and the E BOM
@@ -71,21 +71,21 @@ The full package `fab/cr_2026-11-13c/` was exported after D-65. If item 3 change
 
 ## 4. Items before the parts order
 
-1. **J101 and the W5 key.** See item 3.1.3. The W5 key row books 2 plugs, but only the J101-end socket hole 6 can
+1. **Closed 2026-11-13 (operator connector rulings, README section 4.5):** the W5 ribbon and its key are off the BOM. **J101 and the W5 key.** See item 3.1.3. The W5 key row books 2 plugs, but only the J101-end socket hole 6 can
    take a plug, because J201 has post 6 (EIB-3). One plug and a spare are enough; never plug the J201 end.
 2. **J-TAP cable (SYS-2; section 11 item 16).** Distributor listings give Molex 2147561101 as 18 AWG UL 1061 and
    mark it discontinued. A Molex page does not confirm either fact. The far-end terminations and the R170/R171 0805
    joints assume about 26 AWG. Confirm the gauge and the status, then choose a finer cable or 18 AWG terminations
    with strain relief.
-3. **Ferrule part numbers (DK-3).** 3200894 is the 1000-piece AI 0,75-8 GY pack, and "AI 0,5-8 WH" is a type
+3. **Ferrule part numbers (DK-3).** **Updated 2026-11-13 (Digi-Key upload review, README section 4):** closed. Digi-Key sells 3200894 per piece (277-5469-ND), and AI 0,5-8 WH is Phoenix 3200014 (277-2185-ND).  3200894 is the 1000-piece AI 0,75-8 GY pack, and "AI 0,5-8 WH" is a type
    designation, not an order number. Choose the loose-piece order numbers and set the quantities to the sellable
    unit.
-4. **Obsolete KK crimp (DK-7, SYS-7).** 08-50-0114 (WM1114-ND) is listed as obsolete. The 2026-11-11 README names
+4. **Closed 2026-11-13 (operator connector rulings, README section 4.5):** the EVM J8 lead is soldered to the pins, so the KK housing and crimps are off the BOM. **Obsolete KK crimp (DK-7, SYS-7).**  08-50-0114 (WM1114-ND) is listed as obsolete. The 2026-11-11 README names
    08-50-0113 as the drop-in. Order 5 or more, and confirm that the workshop has a KK crimper and a ferrule crimper.
-5. **Free-text MPNs (DK-4, DK-6).** The Alpha "297" and "296" bus-wire lines are series numbers, and the 3M 467MP
+5. **Free-text MPNs (DK-4, DK-6).** **Updated 2026-11-13 (Digi-Key upload review, README section 4):** closed; the wire and tape rows are off the BOM (workshop stock).  The Alpha "297" and "296" bus-wire lines are series numbers, and the 3M 467MP
    line is free text. Digi-Key will not match them. Select the products by hand (the 467MP row links Digi-Key
    product 467MP-0.5-4(5)), or cut the JP3 and JP5 links from wire on hand.
-6. **Stock checks (CR-BOM-3, DK-7).** Confirm stock of C3225X7S2A475K200AB (C102b; flagged NRND or zero stock at
+6. **Stock checks (CR-BOM-3, DK-7).** **Updated 2026-11-13 (Digi-Key upload review, README section 4):** C102b is now TDK CNC6P1X7R2A475K250AE (DC-bias check open). TPS26630RGER has no authorized stock (Digi-Key restock 8-Jul-2027) and is held out of the Digi-Key file; the source is open.  Confirm stock of C3225X7S2A475K200AB (C102b; flagged NRND or zero stock at
    secondary sources) and TPS26630RGER (U101). For C102b, the fallbacks are GRM32ER72A475KA35L or 2 x 2.2 uF 100 V
    1210, after a DC-bias check of at least 3 uF at 23.6 V.
 7. **Unidentified build items (SYS-6, DK-8).** Heat-shrink tubing (EM7, PM6, A.3), the two adhesive tie bases and
@@ -120,7 +120,8 @@ The full package `fab/cr_2026-11-13c/` was exported after D-65. If item 3 change
 - The mating pairs are complete: TSW/SSQ, J102/2147561101, J201/FFSD and J8/KK. The EVM and MB rework sets, the EIB
   standoffs and screws, and the wire spools cover one build. The J-TAP pigtail reaches every tap.
 - `digikey_import.csv` holds every Digi-Key row of the three BOMs with the summed quantity. Its encoding and quoting
-  are valid, and every Customer Reference is 13 characters or fewer.
+  are valid. (**Amended 2026-11-13:** the Customer Reference now carries the reference designators, at most 48
+  characters; README section 2.3.)
 - The CR zip holds the 4 copper layers in the right order, both masks, silkscreens and paste layers, the outline
   and a merged drill file. The drill file has 446 vias, the connector and lead holes and four 3.70 mm NPTH. All zone
   fills are unchanged by the cleanup, so the R9.H25 and R9.H26 copper figures hold.

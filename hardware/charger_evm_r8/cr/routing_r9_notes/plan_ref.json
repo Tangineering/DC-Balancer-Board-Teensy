@@ -1,0 +1,13 @@
+{
+  "frame": {"y_flip_offset": 100.0},
+  "rules": {"track": 0.1524, "clear": 0.1524, "via": 0.6, "drill": 0.3, "via_in_pad": false},
+  "plane_net": "/GND",
+  "groups": [
+    {"name": "rail3v3", "nets": ["/3V3"], "mode": "free", "priority": 1},
+    {"name": "analog_short", "nets": ["/N_UV", "/N_OV", "/REF103", "/REF119", "/REF120", "/N_DVDT", "/N_ILIM"],
+     "mode": "local", "margin": 2.5, "priority": 1, "via_cost": 40},
+    {"name": "analog_long", "nets": ["/N_H1P", "/N_UVP", "/N_H1M", "/N_FOP", "/N_FNP", "/N_FOM", "/T2C", "/T1_VMOT"],
+     "mode": "free", "priority": 2, "via_cost": 40}
+  ],
+  "default": {"mode": "free", "priority": 5}
+}

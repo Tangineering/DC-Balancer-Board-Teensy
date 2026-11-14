@@ -1,9 +1,29 @@
 BOM,Part,MPN,Vendor
+SYS,Hook-up wire 20 AWG red,3053 RD005,workshop stock (operator ruling 2026-11-13; off the BOM)
+SYS,Hook-up wire 20 AWG black,3053 BK005,workshop stock (operator ruling 2026-11-13; off the BOM)
+SYS,Hook-up wire 18 AWG PTFE red,5857 RD005,workshop stock (operator ruling 2026-11-13; off the BOM)
+SYS,Hook-up wire 18 AWG PTFE black,5857 BK005,workshop stock (operator ruling 2026-11-13; off the BOM)
+SYS,Hook-up wire 26 AWG colour A (white),3049 WH005,workshop stock (operator ruling 2026-11-13; off the BOM)
+SYS,Hook-up wire 26 AWG colour B (blue),3049 BL005,workshop stock (operator ruling 2026-11-13; off the BOM)
+SYS,Kynar (PVDF) wire 28 AWG red,R28R-0100,workshop stock (operator ruling 2026-11-13; off the BOM)
+SYS,Kynar (PVDF) wire 28 AWG black,R28BLK-0100,workshop stock (operator ruling 2026-11-13; off the BOM)
+SYS,Kynar (PVDF) wire 28 AWG yellow,R28Y-0100,workshop stock (operator ruling 2026-11-13; off the BOM)
+SYS,Bus wire 24 AWG (0.51 mm) tinned copper,299 SV005,workshop stock (operator ruling 2026-11-13; off the BOM)
+SYS,Bus wire 20 AWG tinned copper,297,workshop stock (operator ruling 2026-11-13; off the BOM)
+SYS,Bus wire 18 AWG tinned copper,296,workshop stock (operator ruling 2026-11-13; off the BOM)
+SYS,Adhesive transfer tape 0.05 mm acrylic,"467MP 0.5"" x 4""",workshop stock (operator ruling 2026-11-13; off the BOM)
+SYS,Kapton tape,5413 AMBER 1/4 IN X 36 YD,workshop stock (operator ruling 2026-11-13; off the BOM)
+SYS,"Header, 2x7 1.27 mm SMT vertical, unshrouded, keyed by omitted pin 6",FTSH-107-01-L-DV,off the BOM: J101 removed (operator ruling 2026-11-13)
+SYS,"Header, 2x7 1.27 mm SMT vertical, keying shroud",FTSH-107-01-L-DV-K,off the BOM: J201 removed (operator ruling 2026-11-13)
+SYS,"Cable assembly, 14-way 1.27 mm IDC both ends, 12.0 in",FFSD-07-D-12.00-01-N,off the BOM: W5 ribbon removed with J101/J201 (operator ruling 2026-11-13)
+SYS,Polarising plug for FFSD socket hole 6,NOT IDENTIFIED,off the BOM: W5 key removed with J101/J201 (operator ruling 2026-11-13)
+SYS,"Receptacle housing, KK 254, 4 position",22-01-3047,off the BOM: EVM J8 lead soldered to the pins; no KK mate (operator ruling 2026-11-13)
+SYS,"Crimp terminal, KK 254",08-50-0114,off the BOM: EVM J8 lead soldered to the pins; no KK crimps (operator ruling 2026-11-13)
+CR,eFuse,TPS26630RGER,"held out of the Digi-Key file: U101: 0 stock at Digi-Key (restock 08-Jul-2027), Mouser and TME (2026-11-13); every TPS2663x and TPS1663x variant is also at 0 authorized stock. Source decision pending (TI store, broker or Digi-Key backorder)."
 CR,Stencil and solder paste,NOT IDENTIFIED,stencil vendor / distributor
 CR,Carrier PCB (CR),CR PCB (from PM0 Gerbers),OSH Park
 EIB,EVM interface PCB (EIB),EIB PCB (from PM0 Gerbers),OSH Park
 SYS,BQ25798 evaluation module,BQ25798EVM,TI
-SYS,Polarising plug for FFSD socket hole 6,NOT IDENTIFIED,Samtec
 SYS,"Electronics RTV, non-slumping, alkoxy cure",DOWSIL 3145 RTV Clear 90 ml (Dow 2768003),Graco Roberts
 SYS,Heat-shrink tubing,NOT IDENTIFIED,Digikey
 SYS,Adhesive cable-tie base 6 x 6 mm,NOT IDENTIFIED,Digikey
